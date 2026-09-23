@@ -1,4 +1,4 @@
-const { V1BitableGateway, textValue } = require('./v1BitableGateway');
+const { V1BitableGateway, linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
 const { logError, logInfo } = require('../utils/logger');
 
@@ -9,6 +9,8 @@ const positiveNumber = (value, label) => {
   if (!Number.isFinite(result) || result <= 0) throw new Error(`${label}必须大于 0`);
   return result;
 };
+
+const sameNumber = (left, right) => Math.abs(Number(left || 0) - Number(right || 0)) < 0.000001;
 
 const allocatePaidAmounts = (items, totalPaid) => {
   const receivables = items.map((item) => money(item.quantity * item.unitPrice - (item.discountAmount || 0)));
@@ -69,72 +71,277 @@ class V1PostingService {
     return textValue(record?.fields?.[fieldName]) || recordId;
   }
 
-  async preflightInventory(items, direction) {
-    const snapshots = [];
-    const virtualInventory = new Map();
-    for (const item of items) {
-      const stockKey = `${item.productRecordId}|${item.size}`;
-      let state = virtualInventory.get(stockKey);
-      if (!state) {
-        const liveRecord = await this.references.findLiveInventory(item.productRecordId, item.size);
-        const quantityField = this.gateway.table('liveInventory').fields.quantity;
-        state = {
-          liveRecord,
-          quantity: Number(textValue(liveRecord?.fields?.[quantityField]) || 0),
-        };
-      }
-      const before = state.quantity;
-      const change = direction * item.quantity;
-      const after = before + change;
-      if (after < 0) {
-        throw new Error(`库存不足：${item.productNumber || item.itemNo || item.productRecordId} ${item.size}码，当前${before}，需要${item.quantity}`);
-      }
-      snapshots.push({ ...item, liveRecord: state.liveRecord, beforeQuantity: before, change, afterQuantity: after });
-      virtualInventory.set(stockKey, { liveRecord: state.liveRecord, quantity: after });
-    }
-    return snapshots;
+  field(tableKey, record, semanticKey) {
+    const fieldName = this.gateway.table(tableKey).fields[semanticKey];
+    return record?.fields?.[fieldName];
   }
 
-  async applyInventory({ items, behaviorRecordId, sourceNo, sourceRecords, operatorOpenId, occurredAt }) {
-    const results = [];
-    const liveRecordIds = new Map();
-    for (let index = 0; index < items.length; index += 1) {
-      const item = items[index];
-      const sourceRecordId = sourceRecords[index];
-      const stockKey = `${item.productRecordId}|${item.size}`;
-      const ledger = await this.gateway.create('inventoryLedger', {
-        sourceRecordId,
-        sourceNo,
-        quantityChange: item.change,
-        beforeQuantity: item.beforeQuantity,
-        afterQuantity: item.afterQuantity,
-        occurredAt,
-        operator: person(operatorOpenId),
-        postingStatus: '已入账',
-        size: item.size,
-        product: relation(item.productRecordId),
-        behavior: relation(behaviorRecordId),
-      });
+  relationHas(tableKey, record, semanticKey, recordId) {
+    return linkedRecordIds(this.field(tableKey, record, semanticKey)).includes(recordId);
+  }
 
-      let liveRecordId = liveRecordIds.get(stockKey) || item.liveRecord?.record_id;
-      if (liveRecordId) {
-        await this.gateway.update('liveInventory', liveRecordId, {
-          quantity: item.afterQuantity,
-          operator: person(operatorOpenId),
-          updatedAt: occurredAt,
+  async listRecords(tableKey) {
+    if (typeof this.gateway.listAll !== 'function') return [];
+    return this.gateway.listAll(tableKey);
+  }
+
+  consumeMatching(records, usedRecordIds, predicate) {
+    const record = records.find((candidate) => !usedRecordIds.has(candidate.record_id) && predicate(candidate));
+    if (record) usedRecordIds.add(record.record_id);
+    return record || null;
+  }
+
+  async reconcileSaleDetails(items, salesEntryRecordId, paymentMethodRecordId, occurredAt) {
+    const existing = (await this.listRecords('salesDetail')).filter((record) =>
+      this.relationHas('salesDetail', record, 'salesEntry', salesEntryRecordId)
+    );
+    const used = new Set();
+    const rows = items.map((item) => {
+      const record = this.consumeMatching(existing, used, (candidate) => {
+        const productMatches = this.relationHas('salesDetail', candidate, 'product', item.productRecordId);
+        const paymentMatches = paymentMethodRecordId
+          ? this.relationHas('salesDetail', candidate, 'paymentMethod', paymentMethodRecordId)
+          : linkedRecordIds(this.field('salesDetail', candidate, 'paymentMethod')).length === 0;
+        return (
+          productMatches &&
+          paymentMatches &&
+          sameNumber(textValue(this.field('salesDetail', candidate, 'size')), item.size) &&
+          sameNumber(textValue(this.field('salesDetail', candidate, 'quantity')), item.quantity) &&
+          sameNumber(textValue(this.field('salesDetail', candidate, 'unitPrice')), item.unitPrice) &&
+          sameNumber(textValue(this.field('salesDetail', candidate, 'paidAmount')), item.paidAmount) &&
+          sameNumber(textValue(this.field('salesDetail', candidate, 'discountAmount')), item.discountAmount)
+        );
+      });
+      return { item, record, recordId: record?.record_id || '' };
+    });
+    if (existing.some((record) => !used.has(record.record_id))) {
+      throw new Error('销售录单已存在与当前草稿不一致的销售明细，已停止自动重试');
+    }
+    return rows;
+  }
+
+  async reconcilePurchaseInbound(items, batchRecordId) {
+    const existing = (await this.listRecords('purchaseInbound')).filter((record) =>
+      this.relationHas('purchaseInbound', record, 'batch', batchRecordId)
+    );
+    const used = new Set();
+    const rows = items.map((item) => {
+      const record = this.consumeMatching(existing, used, (candidate) =>
+        this.relationHas('purchaseInbound', candidate, 'product', item.productRecordId) &&
+        sameNumber(textValue(this.field('purchaseInbound', candidate, 'size')), item.size) &&
+        sameNumber(textValue(this.field('purchaseInbound', candidate, 'quantity')), item.quantity) &&
+        sameNumber(textValue(this.field('purchaseInbound', candidate, 'unitCost')), item.unitCost)
+      );
+      return { item, record, recordId: record?.record_id || '' };
+    });
+    if (existing.some((record) => !used.has(record.record_id))) {
+      throw new Error('采购到货批次已存在与当前草稿不一致的入库明细，已停止自动重试');
+    }
+    return rows;
+  }
+
+  async createMissingSaleDetails(rows, salesEntryRecordId, paymentMethodRecordId, occurredAt) {
+    for (const row of rows) {
+      if (row.recordId) continue;
+      const detail = await this.gateway.create('salesDetail', {
+        product: relation(row.item.productRecordId),
+        quantity: row.item.quantity,
+        size: row.item.size,
+        paidAmount: row.item.paidAmount,
+        discountAmount: row.item.discountAmount,
+        gift: Boolean(row.item.gift),
+        paymentMethod: relation(paymentMethodRecordId),
+        soldAt: occurredAt,
+        salesEntry: relation(salesEntryRecordId),
+        unitPrice: row.item.unitPrice,
+      });
+      row.recordId = detail.recordId;
+    }
+    return rows;
+  }
+
+  async createMissingPurchaseInbound(rows, batchRecordId, operatorOpenId, occurredAt) {
+    for (const row of rows) {
+      if (row.recordId) continue;
+      const inbound = await this.gateway.create('purchaseInbound', {
+        size: row.item.size,
+        quantity: row.item.quantity,
+        operator: person(operatorOpenId),
+        confirmed: true,
+        batch: relation(batchRecordId),
+        supplierOrder: relation(row.item.supplierOrderRecordId),
+        product: relation(row.item.productRecordId),
+        inboundAt: occurredAt,
+        unitCost: row.item.unitCost,
+      });
+      row.recordId = inbound.recordId;
+    }
+    return rows;
+  }
+
+  async findMoneyFlow(sourceNo, direction, amount, supplierRecordId = '', paymentMethodRecordId = '') {
+    const records = await this.listRecords('moneyLedger');
+    const candidates = records.filter((record) => {
+        const supplierMatches = supplierRecordId
+          ? this.relationHas('moneyLedger', record, 'supplier', supplierRecordId)
+          : true;
+        return (
+          supplierMatches &&
+          String(textValue(this.field('moneyLedger', record, 'sourceNo'))) === String(sourceNo) &&
+          String(textValue(this.field('moneyLedger', record, 'direction'))) === direction
+        );
+      });
+    if (candidates.length > 1) throw new Error(`来源单号 ${sourceNo} 存在重复资金流水，已停止自动重试`);
+    const record = candidates[0] || null;
+    if (!record) return null;
+    const amountMatches = sameNumber(textValue(this.field('moneyLedger', record, 'amount')), amount);
+    const paymentMethodMatches = paymentMethodRecordId
+      ? this.relationHas('moneyLedger', record, 'paymentMethod', paymentMethodRecordId)
+      : true;
+    if (!amountMatches || !paymentMethodMatches) {
+      throw new Error(`来源单号 ${sourceNo} 的资金流水与当前付款信息不一致，已停止自动重试`);
+    }
+    return record;
+  }
+
+  async findSupplierPayable(sourceNo, change, supplierRecordId) {
+    const records = await this.listRecords('supplierPayable');
+    const candidates = records.filter(
+        (record) =>
+          this.relationHas('supplierPayable', record, 'supplier', supplierRecordId) &&
+          String(textValue(this.field('supplierPayable', record, 'sourceNo'))) === String(sourceNo) &&
+          Math.sign(Number(textValue(this.field('supplierPayable', record, 'payableChange')))) === Math.sign(change)
+    );
+    if (candidates.length > 1) throw new Error(`来源单号 ${sourceNo} 存在重复供应商往来流水，已停止自动重试`);
+    const record = candidates[0] || null;
+    if (!record) return null;
+    if (!sameNumber(textValue(this.field('supplierPayable', record, 'payableChange')), change)) {
+      throw new Error(`来源单号 ${sourceNo} 的供应商往来流水与当前金额不一致，已停止自动重试`);
+    }
+    return record;
+  }
+
+  async prepareInventory(rows, direction) {
+    const ledgers = await this.listRecords('inventoryLedger');
+    const groups = new Map();
+
+    for (const row of rows) {
+      const stockKey = `${row.item.productRecordId}|${row.item.size}`;
+      if (!groups.has(stockKey)) {
+        const liveRecord = await this.references.findLiveInventory(row.item.productRecordId, row.item.size);
+        const quantityField = this.gateway.table('liveInventory').fields.quantity;
+        groups.set(stockKey, {
+          stockKey,
+          productRecordId: row.item.productRecordId,
+          size: row.item.size,
+          liveRecord,
+          currentQuantity: Number(textValue(liveRecord?.fields?.[quantityField]) || 0),
+          rows: [],
         });
+      }
+      row.ledger = row.recordId
+        ? ledgers.find(
+            (record) => String(textValue(this.field('inventoryLedger', record, 'sourceRecordId'))) === row.recordId
+          ) || null
+        : null;
+      groups.get(stockKey).rows.push(row);
+    }
+
+    for (const group of groups.values()) {
+      const firstExisting = group.rows.find((row) => row.ledger);
+      let cursor = firstExisting
+        ? Number(textValue(this.field('inventoryLedger', firstExisting.ledger, 'beforeQuantity')))
+        : group.currentQuantity;
+      const allowedCurrentQuantities = new Set([cursor]);
+      let sawMissingLedger = false;
+
+      for (const row of group.rows) {
+        const expectedChange = direction * row.item.quantity;
+        if (row.ledger) {
+          if (sawMissingLedger) throw new Error(`库存流水顺序异常：${group.stockKey}`);
+          const before = Number(textValue(this.field('inventoryLedger', row.ledger, 'beforeQuantity')));
+          const after = Number(textValue(this.field('inventoryLedger', row.ledger, 'afterQuantity')));
+          const change = Number(textValue(this.field('inventoryLedger', row.ledger, 'quantityChange')));
+          if (!sameNumber(before, cursor) || !sameNumber(change, expectedChange) || !sameNumber(after, before + change)) {
+            throw new Error(`库存流水与待入账内容不一致：${group.stockKey}`);
+          }
+          row.beforeQuantity = before;
+          row.afterQuantity = after;
+          row.change = change;
+          cursor = after;
+          allowedCurrentQuantities.add(after);
+          continue;
+        }
+
+        sawMissingLedger = true;
+        row.beforeQuantity = cursor;
+        row.change = expectedChange;
+        row.afterQuantity = cursor + expectedChange;
+        if (row.afterQuantity < 0) {
+          throw new Error(
+            `库存不足：${row.item.productNumber || row.item.itemNo || row.item.productRecordId} ${row.item.size}码，当前${cursor}，需要${row.item.quantity}`
+          );
+        }
+        cursor = row.afterQuantity;
+      }
+
+      if (firstExisting && ![...allowedCurrentQuantities].some((value) => sameNumber(value, group.currentQuantity))) {
+        throw new Error(`实时库存与恢复点冲突：${group.stockKey}，当前${group.currentQuantity}`);
+      }
+      group.targetQuantity = cursor;
+    }
+
+    return { rows, groups };
+  }
+
+  async applyPreparedInventory({ plan, behaviorRecordId, sourceNo, operatorOpenId, occurredAt }) {
+    const results = [];
+    for (const row of plan.rows) {
+      if (!row.recordId) throw new Error('业务明细未返回 record_id，不能写库存流水');
+      if (!row.ledger) {
+        const created = await this.gateway.create('inventoryLedger', {
+          sourceRecordId: row.recordId,
+          sourceNo,
+          quantityChange: row.change,
+          beforeQuantity: row.beforeQuantity,
+          afterQuantity: row.afterQuantity,
+          occurredAt,
+          operator: person(operatorOpenId),
+          postingStatus: '已入账',
+          size: row.item.size,
+          product: relation(row.item.productRecordId),
+          behavior: relation(behaviorRecordId),
+        });
+        row.ledger = { record_id: created.recordId };
+      }
+    }
+
+    for (const group of plan.groups.values()) {
+      let liveRecordId = group.liveRecord?.record_id || '';
+      if (liveRecordId) {
+        if (!sameNumber(group.currentQuantity, group.targetQuantity)) {
+          await this.gateway.update('liveInventory', liveRecordId, {
+            quantity: group.targetQuantity,
+            operator: person(operatorOpenId),
+            updatedAt: occurredAt,
+          });
+        }
       } else {
         const live = await this.gateway.create('liveInventory', {
-          product: relation(item.productRecordId),
-          size: item.size,
-          quantity: item.afterQuantity,
+          product: relation(group.productRecordId),
+          size: group.size,
+          quantity: group.targetQuantity,
           operator: person(operatorOpenId),
           updatedAt: occurredAt,
         });
         liveRecordId = live.recordId;
       }
-      liveRecordIds.set(stockKey, liveRecordId);
-      results.push({ ledgerRecordId: ledger.recordId, liveRecordId });
+      group.liveRecordId = liveRecordId;
+    }
+
+    for (const row of plan.rows) {
+      const stockKey = `${row.item.productRecordId}|${row.item.size}`;
+      results.push({ ledgerRecordId: row.ledger.record_id, liveRecordId: plan.groups.get(stockKey).liveRecordId });
     }
     return results;
   }
@@ -172,31 +379,31 @@ class V1PostingService {
         discountAmount: money(item.discountAmount || 0),
       }));
       const allocated = allocatePaidAmounts(normalized, input.totalPaid);
-      const inventory = await this.preflightInventory(allocated, -1);
       const sourceNo = await this.getDocumentNo('salesEntry', salesEntryRecordId, 'orderNo');
+      const detailRows = await this.reconcileSaleDetails(
+        allocated,
+        salesEntryRecordId,
+        paymentMethod?.recordId || '',
+        occurredAt
+      );
+      const inventoryPlan = await this.prepareInventory(detailRows, -1);
+      const recovery = {
+        detail_count: detailRows.filter((row) => row.recordId).length,
+        inventory_ledger_count: inventoryPlan.rows.filter((row) => row.ledger).length,
+        money_flow_count: 0,
+      };
+      await this.createMissingSaleDetails(
+        detailRows,
+        salesEntryRecordId,
+        paymentMethod?.recordId || '',
+        occurredAt
+      );
+      const detailRecordIds = detailRows.map((row) => row.recordId);
 
-      const detailRecordIds = [];
-      for (const item of allocated) {
-        const detail = await this.gateway.create('salesDetail', {
-          product: relation(item.productRecordId),
-          quantity: item.quantity,
-          size: item.size,
-          paidAmount: item.paidAmount,
-          discountAmount: item.discountAmount,
-          gift: Boolean(item.gift),
-          paymentMethod: relation(paymentMethod?.recordId),
-          soldAt: occurredAt,
-          salesEntry: relation(salesEntryRecordId),
-          unitPrice: item.unitPrice,
-        });
-        detailRecordIds.push(detail.recordId);
-      }
-
-      const inventoryResults = await this.applyInventory({
-        items: inventory,
+      const inventoryResults = await this.applyPreparedInventory({
+        plan: inventoryPlan,
         behaviorRecordId: behavior.recordId,
         sourceNo,
-        sourceRecords: detailRecordIds,
         operatorOpenId: input.operatorOpenId,
         occurredAt,
       });
@@ -204,18 +411,31 @@ class V1PostingService {
       const paidTotal = money(allocated.reduce((sum, item) => sum + item.paidAmount, 0));
       let moneyRecordId = '';
       if (paidTotal > 0) {
-        const flow = await this.gateway.create('moneyLedger', {
+        const existingFlow = await this.findMoneyFlow(
           sourceNo,
-          direction: '收入',
-          amount: paidTotal,
-          paymentMethod: relation(paymentMethod?.recordId),
-          occurredAt,
-          operator: person(input.operatorOpenId),
-          postingStatus: '已入账',
-          remark: input.remark || '',
-          behavior: relation(behavior.recordId),
-        });
-        moneyRecordId = flow.recordId;
+          '收入',
+          paidTotal,
+          '',
+          paymentMethod?.recordId || ''
+        );
+        if (existingFlow) {
+          moneyRecordId = existingFlow.record_id;
+          recovery.money_flow_count = 1;
+        }
+        else {
+          const flow = await this.gateway.create('moneyLedger', {
+            sourceNo,
+            direction: '收入',
+            amount: paidTotal,
+            paymentMethod: relation(paymentMethod?.recordId),
+            occurredAt,
+            operator: person(input.operatorOpenId),
+            postingStatus: '已入账',
+            remark: input.remark || '',
+            behavior: relation(behavior.recordId),
+          });
+          moneyRecordId = flow.recordId;
+        }
       }
 
       await this.gateway.update('salesEntry', salesEntryRecordId, {
@@ -223,7 +443,13 @@ class V1PostingService {
         postedAt: occurredAt,
         behavior: relation(behavior.recordId),
       });
-      logInfo('v1.sale.posted', { sales_entry_record_id: salesEntryRecordId, item_count: allocated.length });
+      logInfo('v1.sale.posted', {
+        sales_entry_record_id: salesEntryRecordId,
+        item_count: allocated.length,
+        recovered_detail_count: recovery.detail_count,
+        recovered_inventory_ledger_count: recovery.inventory_ledger_count,
+        recovered_money_flow_count: recovery.money_flow_count,
+      });
       return { sourceNo, detailRecordIds, inventoryResults, moneyRecordId };
     } catch (error) {
       await this.gateway
@@ -272,44 +498,42 @@ class V1PostingService {
         ...item,
         unitCost: positiveNumber(item.unitCost, '入库单价'),
       }));
-      const inventory = await this.preflightInventory(normalized, 1);
       const sourceNo = await this.getDocumentNo('purchaseBatch', batchRecordId, 'batchNo');
+      const inboundRows = await this.reconcilePurchaseInbound(normalized, batchRecordId);
+      const inventoryPlan = await this.prepareInventory(inboundRows, 1);
+      const recovery = {
+        inbound_count: inboundRows.filter((row) => row.recordId).length,
+        inventory_ledger_count: inventoryPlan.rows.filter((row) => row.ledger).length,
+        payable_count: 0,
+        money_flow_count: 0,
+        payable_payment_count: 0,
+      };
+      await this.createMissingPurchaseInbound(inboundRows, batchRecordId, input.operatorOpenId, occurredAt);
+      const inboundRecordIds = inboundRows.map((row) => row.recordId);
 
-      const inboundRecordIds = [];
-      for (const item of normalized) {
-        const inbound = await this.gateway.create('purchaseInbound', {
-          size: item.size,
-          quantity: item.quantity,
-          operator: person(input.operatorOpenId),
-          confirmed: true,
-          batch: relation(batchRecordId),
-          supplierOrder: relation(item.supplierOrderRecordId),
-          product: relation(item.productRecordId),
-          inboundAt: occurredAt,
-          unitCost: item.unitCost,
-        });
-        inboundRecordIds.push(inbound.recordId);
-      }
-
-      const inventoryResults = await this.applyInventory({
-        items: inventory,
+      const inventoryResults = await this.applyPreparedInventory({
+        plan: inventoryPlan,
         behaviorRecordId: behavior.recordId,
         sourceNo,
-        sourceRecords: inboundRecordIds,
         operatorOpenId: input.operatorOpenId,
         occurredAt,
       });
 
       const payableTotal = money(normalized.reduce((sum, item) => sum + item.quantity * item.unitCost, 0));
-      const payable = await this.gateway.create('supplierPayable', {
-        supplier: relation(input.supplierRecordId),
-        sourceNo,
-        payableChange: payableTotal,
-        occurredAt,
-        operator: person(input.operatorOpenId),
-        postingStatus: '已入账',
-        behavior: relation(behavior.recordId),
-      });
+      let payable = await this.findSupplierPayable(sourceNo, payableTotal, input.supplierRecordId);
+      if (payable) recovery.payable_count = 1;
+      else {
+        const created = await this.gateway.create('supplierPayable', {
+          supplier: relation(input.supplierRecordId),
+          sourceNo,
+          payableChange: payableTotal,
+          occurredAt,
+          operator: person(input.operatorOpenId),
+          postingStatus: '已入账',
+          behavior: relation(behavior.recordId),
+        });
+        payable = { record_id: created.recordId };
+      }
 
       let paymentResult = null;
       if (input.payment?.amount) {
@@ -317,36 +541,60 @@ class V1PostingService {
         if (paymentAmount > payableTotal) throw new Error('本次付款金额不能大于本批次入库应付金额');
         const paymentBehavior = await this.references.resolveBehavior('SUPPLIER_PAYMENT');
         const paymentMethod = await this.references.resolvePaymentMethod(input.payment.method);
-        const moneyFlow = await this.gateway.create('moneyLedger', {
+        let moneyFlow = await this.findMoneyFlow(
           sourceNo,
-          direction: '支出',
-          amount: paymentAmount,
-          paymentMethod: relation(paymentMethod?.recordId),
-          occurredAt,
-          operator: person(input.operatorOpenId),
-          postingStatus: '已入账',
-          supplier: relation(input.supplierRecordId),
-          behavior: relation(paymentBehavior.recordId),
-        });
-        const payablePayment = await this.gateway.create('supplierPayable', {
-          supplier: relation(input.supplierRecordId),
-          sourceNo,
-          payableChange: -paymentAmount,
-          occurredAt,
-          operator: person(input.operatorOpenId),
-          postingStatus: '已入账',
-          behavior: relation(paymentBehavior.recordId),
-        });
-        paymentResult = { moneyRecordId: moneyFlow.recordId, payableRecordId: payablePayment.recordId };
+          '支出',
+          paymentAmount,
+          input.supplierRecordId,
+          paymentMethod?.recordId || ''
+        );
+        if (moneyFlow) recovery.money_flow_count = 1;
+        else {
+          const created = await this.gateway.create('moneyLedger', {
+            sourceNo,
+            direction: '支出',
+            amount: paymentAmount,
+            paymentMethod: relation(paymentMethod?.recordId),
+            occurredAt,
+            operator: person(input.operatorOpenId),
+            postingStatus: '已入账',
+            supplier: relation(input.supplierRecordId),
+            behavior: relation(paymentBehavior.recordId),
+          });
+          moneyFlow = { record_id: created.recordId };
+        }
+        let payablePayment = await this.findSupplierPayable(sourceNo, -paymentAmount, input.supplierRecordId);
+        if (payablePayment) recovery.payable_payment_count = 1;
+        else {
+          const created = await this.gateway.create('supplierPayable', {
+            supplier: relation(input.supplierRecordId),
+            sourceNo,
+            payableChange: -paymentAmount,
+            occurredAt,
+            operator: person(input.operatorOpenId),
+            postingStatus: '已入账',
+            behavior: relation(paymentBehavior.recordId),
+          });
+          payablePayment = { record_id: created.recordId };
+        }
+        paymentResult = { moneyRecordId: moneyFlow.record_id, payableRecordId: payablePayment.record_id };
       }
 
       await this.gateway.update('purchaseBatch', batchRecordId, { confirmStatus: '已入账' });
-      logInfo('v1.purchase.posted', { batch_record_id: batchRecordId, item_count: normalized.length });
+      logInfo('v1.purchase.posted', {
+        batch_record_id: batchRecordId,
+        item_count: normalized.length,
+        recovered_inbound_count: recovery.inbound_count,
+        recovered_inventory_ledger_count: recovery.inventory_ledger_count,
+        recovered_payable_count: recovery.payable_count,
+        recovered_money_flow_count: recovery.money_flow_count,
+        recovered_payable_payment_count: recovery.payable_payment_count,
+      });
       return {
         sourceNo,
         inboundRecordIds,
         inventoryResults,
-        payableRecordId: payable.recordId,
+        payableRecordId: payable.record_id,
         paymentResult,
       };
     } catch (error) {
