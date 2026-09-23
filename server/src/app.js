@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const path = require('path');
+const crypto = require('node:crypto');
 const { logError, logInfo } = require('./utils/logger');
 const { uploadDir } = require('./utils/upload');
 const { startUploadCleanup } = require('./utils/uploadCleanup');
@@ -18,6 +19,26 @@ if (process.env.ENABLE_CORS === 'true') {
 }
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use((req, res, next) => {
+  const requestId = String(req.get('x-request-id') || crypto.randomUUID());
+  req.requestId = requestId;
+  res.set('x-request-id', requestId);
+  const startedAt = Date.now();
+  res.on('finish', () => {
+    logInfo('http.request.completed', {
+      request_id: requestId,
+      method: req.method,
+      path: req.path,
+      status_code: res.statusCode,
+      duration_ms: Date.now() - startedAt,
+    });
+  });
+  next();
+});
+
+// Feishu callbacks do not carry the project's x-api-key, so mount the verified
+// Lark event endpoint before the generic /api authentication middleware.
+app.use('/api/lark/events', require('./routes/larkEvents').createLarkEventsRouter());
 
 // Basic health check route
 app.get('/health', (req, res) => {
@@ -26,17 +47,19 @@ app.get('/health', (req, res) => {
 
 // Routes
 app.use('/api', require('./middleware/auth'));
-app.use('/api/recognition', require('./routes/recognition'));
-app.use('/api/sync', require('./routes/sync'));
-app.use('/api/query', require('./routes/query'));
-app.use('/api/analytics', require('./routes/analytics'));
-app.use('/api/sales/tasks', require('./routes/salesTasks'));
+if (process.env.ENABLE_LEGACY_WECHAT !== 'false') {
+  app.use('/api', require('./routes/legacyWechat').createLegacyWechatRouter());
+  logInfo('legacy.wechat.enabled', { removal_state: 'frozen' });
+} else {
+  logInfo('legacy.wechat.disabled');
+}
 
 // Error handling middleware
 app.use((err, req, res, next) => {
   logError('http.unhandled_error', {
     method: req.method,
     path: req.path,
+    request_id: req.requestId,
     error: err.message,
     stack: err.stack,
   });

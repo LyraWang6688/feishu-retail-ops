@@ -23,6 +23,66 @@ class DoubaoService {
     return this.client;
   }
 
+  async parseSalesText(text) {
+    this.apiKey = process.env.ARK_API_KEY;
+    this.endpointId = process.env.ARK_MODEL_ENDPOINT;
+    if (!this.apiKey || !this.endpointId) {
+      throw new Error('ARK_API_KEY or ARK_MODEL_ENDPOINT is not configured in .env');
+    }
+    const originalText = String(text || '').trim();
+    if (!originalText) throw new Error('销售原文不能为空');
+
+    const prompt = `
+你是鞋店销售录入助手。请把用户的一条销售原话解析为严格 JSON，不得猜测缺失信息。
+
+输出结构：
+{
+  "intent": "sale",
+  "items": [
+    {
+      "product_number": "货品编号；没有则为空字符串",
+      "item_no": "货号；没有则为空字符串",
+      "color": "颜色；没有则为空字符串",
+      "size": 38,
+      "quantity": 1,
+      "unit_price": 199,
+      "discount_amount": 0,
+      "gift": false
+    }
+  ],
+  "total_paid": 199,
+  "payment_method": "微信/支付宝/现金/工商银行等原文中的方式",
+  "remark": "",
+  "missing_fields": []
+}
+
+规则：
+1. intent 只能是 sale 或 unsupported。退货、换货、赔货、预售先返回 unsupported。
+2. 每个商品必须有可定位商品的信息、尺码、数量、销售单价。
+3. 缺少的信息写入 missing_fields，例如 items[0].size、items[0].unit_price、payment_method。
+4. “一双”数量为1；没有数量时，如果语义明确是一件商品，可以填写1。
+5. 只输出 JSON，不输出 Markdown 或说明。
+
+用户原话：${originalText}
+    `.trim();
+
+    const response = await this.getClient().chat.completions.create({
+      model: this.endpointId,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0,
+      response_format: { type: 'json_object' },
+    });
+    const content = response.choices?.[0]?.message?.content || '';
+    try {
+      const result = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
+      if (!Array.isArray(result.items)) result.items = [];
+      if (!Array.isArray(result.missing_fields)) result.missing_fields = [];
+      return result;
+    } catch (error) {
+      throw new Error(`销售文字解析失败: ${error.message}`);
+    }
+  }
+
   /**
    * Recognize shoe box labels from a local image file.
    * @param {string} filePath - Path to the image file.
