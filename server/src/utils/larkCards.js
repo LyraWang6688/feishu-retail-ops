@@ -5,7 +5,8 @@ const itemLines = (items, priceKey) =>
     .map((item, index) => {
       const product = item.product_number || item.productNumber || item.item_no || item.itemNo || '未知货品';
       const price = item[priceKey] ?? item.unitPrice ?? item.unitCost;
-      return `${index + 1}. ${text(product)} ${text(item.color)} ${text(item.size)}码 × ${text(item.quantity || 1)}${price ? ` ￥${price}` : ''}`;
+      const gift = item.gift ? `\n   赠品：${text(item.gift_description || '有')}` : '';
+      return `${index + 1}. ${text(product)} ${text(item.size)}码 × ${text(item.quantity || 1)}${price ? ` ￥${price}` : ''}${gift}`;
     })
     .join('\n');
 
@@ -20,10 +21,10 @@ const salesConfirmationCard = (draftId, draft) => ({
   config: { wide_screen_mode: true },
   header: { template: 'blue', title: { tag: 'plain_text', content: '请确认销售录单' } },
   elements: [
-    { tag: 'markdown', content: itemLines(draft.items, 'unit_price') || '未识别到商品' },
+    { tag: 'markdown', content: itemLines(draft.items) || '未识别到商品' },
     {
       tag: 'markdown',
-      content: `**实收：** ￥${text(draft.total_paid)}\n**收款方式：** ${text(draft.payment_method)}`,
+      content: `**销售行为：** ${text(draft.sales_behavior)}\n**实收：** ￥${text(draft.total_paid)}\n**收款方式：** ${text(draft.payment_method)}`,
     },
     {
       tag: 'action',

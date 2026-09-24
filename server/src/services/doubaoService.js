@@ -3,6 +3,35 @@ const fs = require('fs');
 const { getModuleDefinition } = require('../config/modules');
 const { logError, logInfo } = require('../utils/logger');
 
+const positiveOrEmpty = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : '';
+};
+
+const normalizeSalesResult = (result = {}) => {
+  const normalized = {
+    intent: result.intent === 'sale' ? 'sale' : 'unsupported',
+    sales_behavior: String(result.sales_behavior || '').trim(),
+    behavior_code: String(result.behavior_code || '').trim(),
+    product_number: String(result.product_number || '').trim(),
+    size: positiveOrEmpty(result.size),
+    quantity: positiveOrEmpty(result.quantity) || 1,
+    gift: result.gift === true,
+    gift_description: String(result.gift_description || '').trim(),
+    total_paid: positiveOrEmpty(result.total_paid),
+    payment_method: String(result.payment_method || '').trim(),
+  };
+  const missing = new Set();
+  if (normalized.intent !== 'sale' || normalized.behavior_code !== 'SALE_CASH') {
+    missing.add('当前只支持现货销售');
+  }
+  for (const key of ['product_number', 'size', 'quantity', 'total_paid', 'payment_method']) {
+    if (!normalized[key]) missing.add(key);
+  }
+  normalized.missing_fields = [...missing];
+  return normalized;
+};
+
 /**
  * Doubao (Volcengine Ark) Vision Service
  * Uses OpenAI SDK to interact with the Doubao LLM.
@@ -33,35 +62,34 @@ class DoubaoService {
     if (!originalText) throw new Error('销售原文不能为空');
 
     const prompt = `
-你是鞋店销售录入助手。请把用户的一条销售原话解析为严格 JSON，不得猜测缺失信息。
+你是鞋店现货销售录入助手。请把用户的一条销售原话解析为严格 JSON，不得猜测缺失信息。
+
+当前 V1 的业务边界：一条消息只表示一笔销售、一种商品和一个尺码，只处理“现货销售”。
 
 输出结构：
 {
   "intent": "sale",
-  "items": [
-    {
-      "product_number": "货品编号；没有则为空字符串",
-      "item_no": "货号；没有则为空字符串",
-      "color": "颜色；没有则为空字符串",
-      "size": 38,
-      "quantity": 1,
-      "unit_price": 199,
-      "discount_amount": 0,
-      "gift": false
-    }
-  ],
-  "total_paid": 199,
-  "payment_method": "微信/支付宝/现金/工商银行等原文中的方式",
-  "remark": "",
+  "sales_behavior": "现货销售",
+  "behavior_code": "SALE_CASH",
+  "product_number": "货品完整编号",
+  "size": 38,
+  "quantity": 1,
+  "gift": false,
+  "gift_description": "",
+  "total_paid": 230,
+  "payment_method": "微信",
   "missing_fields": []
 }
 
 规则：
-1. intent 只能是 sale 或 unsupported。退货、换货、赔货、预售先返回 unsupported。
-2. 每个商品必须有可定位商品的信息、尺码、数量、销售单价。
-3. 缺少的信息写入 missing_fields，例如 items[0].size、items[0].unit_price、payment_method。
-4. “一双”数量为1；没有数量时，如果语义明确是一件商品，可以填写1。
-5. 只输出 JSON，不输出 Markdown 或说明。
+1. 普通当场交货的销售：intent=\"sale\"，sales_behavior=\"现货销售\"，behavior_code=\"SALE_CASH\"。
+2. 退货、换货、赔货、预付或抖音团购券等非现货销售，intent=\"unsupported\"；仍要在 sales_behavior 中识别出行为名称，behavior_code 留空。
+3. product_number 是“货品信息”中的完整“编号”，不要拆分为货号和颜色，也不要输出货号、颜色或销售单价。
+4. 示例：“8088-26棕38，230元微信，赠袜子一双”中，product_number=\"8088-26棕\"，size=38，quantity=1，gift=true，gift_description=\"袜子一双\"，total_paid=230，payment_method=\"微信\"。
+5. “一双”数量为 1；没写数量但语义明确为单件商品时，quantity=1。“赠”“送”后的物品是赠品，不是销售商品数量。
+6. 必填业务要素为 product_number、size、quantity、total_paid、payment_method。缺少时在 missing_fields 中使用这些字段名。gift 未提及时为 false，gift_description 为空字符串。
+7. 销售单价、应收金额、优惠金额等由多维表格公式自动计算，不要输出。
+8. 只输出 JSON，不输出 Markdown 或说明。
 
 用户原话：${originalText}
     `.trim();
@@ -75,9 +103,7 @@ class DoubaoService {
     const content = response.choices?.[0]?.message?.content || '';
     try {
       const result = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
-      if (!Array.isArray(result.items)) result.items = [];
-      if (!Array.isArray(result.missing_fields)) result.missing_fields = [];
-      return result;
+      return normalizeSalesResult(result);
     } catch (error) {
       throw new Error(`销售文字解析失败: ${error.message}`);
     }
@@ -187,3 +213,4 @@ ${supplierRule}
 }
 
 module.exports = new DoubaoService();
+module.exports.normalizeSalesResult = normalizeSalesResult;

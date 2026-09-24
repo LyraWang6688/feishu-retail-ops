@@ -88,3 +88,67 @@ test('recognized purchase items with same SKU and size are aggregated', () => {
     [{ item_no: 'A100', color: '黑', size: 38, quantity: 3 }]
   );
 });
+
+test('sales intake writes only source metadata and recognized cash-sale behavior before confirmation', async () => {
+  const store = makeStore();
+  const calls = [];
+  const cards = [];
+  const service = new LarkMvpService({
+    client: {},
+    gateway: {
+      validateTables: async () => [],
+      create: async (tableKey, fields) => {
+        calls.push({ operation: 'create', tableKey, fields });
+        return { recordId: 'rec_sales_entry' };
+      },
+      update: async (tableKey, recordId, fields) => {
+        calls.push({ operation: 'update', tableKey, recordId, fields });
+      },
+    },
+    references: {
+      resolveBehavior: async (code) => {
+        assert.equal(code, 'SALE_CASH');
+        return { recordId: 'rec_behavior_cash' };
+      },
+    },
+    posting: {},
+    recognizer: {
+      parseSalesText: async () => ({
+        intent: 'sale',
+        sales_behavior: '现货销售',
+        behavior_code: 'SALE_CASH',
+        product_number: '8088-26棕',
+        size: 38,
+        quantity: 1,
+        gift: true,
+        gift_description: '袜子一双',
+        total_paid: 230,
+        payment_method: '微信',
+        missing_fields: [],
+      }),
+    },
+    store,
+  });
+  service.sendCard = async (openId, card) => cards.push({ openId, card });
+  await store.create({
+    task_id: 'sale_test',
+    type: 'sale',
+    status: 'received',
+    message_id: 'om_internal_only',
+    sender_open_id: 'ou_1',
+    sent_at: 1000,
+    original_text: '8088-26棕38，230元微信，赠袜子一双',
+  });
+
+  await service.processSalesTask('sale_test');
+
+  const created = calls.find((call) => call.operation === 'create');
+  assert.equal(created.tableKey, 'salesEntry');
+  assert.equal('messageId' in created.fields, false);
+  const parsedUpdate = calls.find(
+    (call) => call.operation === 'update' && call.fields.parseStatus === '解析成功'
+  );
+  assert.deepEqual(parsedUpdate.fields.behavior, ['rec_behavior_cash']);
+  assert.equal(cards.length, 1);
+  assert.match(JSON.stringify(cards[0].card), /现货销售/);
+});

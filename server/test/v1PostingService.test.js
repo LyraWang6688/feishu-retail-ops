@@ -12,10 +12,9 @@ const TABLES = {
       quantity: '数量',
       size: '尺码',
       paidAmount: '实付金额',
-      discountAmount: '优惠金额',
+      gift: '赠品',
       paymentMethod: '支付方式',
       salesEntry: '销售单',
-      unitPrice: '销售单价',
     },
   },
   purchaseInbound: {
@@ -105,7 +104,7 @@ test('sale posting writes detail, negative stock flow, live inventory and money 
     operatorOpenId: 'ou_user',
     paymentMethod: '微信',
     totalPaid: 190,
-    items: [{ itemNo: 'A100', size: 38, quantity: 2, unitPrice: 100, discountAmount: 10 }],
+    items: [{ productNumber: 'A100', size: 38, quantity: 2, gift: false }],
   });
 
   assert.equal(result.sourceNo, 'XS-001');
@@ -130,32 +129,29 @@ test('sale posting rejects insufficient inventory before creating business detai
       service.postSale({
         salesEntryRecordId: 'rec_sale_entry',
         paymentMethod: '微信',
-        items: [{ itemNo: 'A100', size: 38, quantity: 2, unitPrice: 100 }],
+        totalPaid: 200,
+        items: [{ productNumber: 'A100', size: 38, quantity: 2 }],
       }),
     /库存不足/
   );
   assert.equal(gateway.calls.some((call) => call.operation === 'create'), false);
 });
 
-test('duplicate SKU lines consume virtual inventory in sequence', async () => {
+test('V1 sale posting rejects more than one sales detail', async () => {
   const gateway = makeGateway();
   const service = new V1PostingService({ gateway, references: makeReferences(3) });
-  await service.postSale({
-    salesEntryRecordId: 'rec_sale_entry',
-    paymentMethod: '现金',
-    totalPaid: 200,
-    items: [
-      { itemNo: 'A100', size: 38, quantity: 1, unitPrice: 100 },
-      { itemNo: 'A100', size: 38, quantity: 1, unitPrice: 100 },
-    ],
-  });
-  const ledgers = gateway.calls.filter((call) => call.operation === 'create' && call.tableKey === 'inventoryLedger');
-  assert.deepEqual(
-    ledgers.map((call) => [call.fields.beforeQuantity, call.fields.afterQuantity]),
-    [
-      [3, 2],
-      [2, 1],
-    ]
+  await assert.rejects(
+    () =>
+      service.postSale({
+        salesEntryRecordId: 'rec_sale_entry',
+        paymentMethod: '现金',
+        totalPaid: 200,
+        items: [
+          { productNumber: 'A100', size: 38, quantity: 1 },
+          { productNumber: 'A100', size: 38, quantity: 1 },
+        ],
+      }),
+    /只能包含一条商品明细/
   );
 });
 
@@ -204,7 +200,7 @@ test('sale retry reuses a committed inventory ledger after the response is lost'
     paymentMethod: '微信',
     totalPaid: 200,
     occurredAt: 1790172000000,
-    items: [{ itemNo: 'A100', size: 38, quantity: 2, unitPrice: 100 }],
+    items: [{ productNumber: 'A100', size: 38, quantity: 2 }],
   };
 
   await assert.rejects(() => service.postSale(input), /simulated response loss/);
@@ -225,7 +221,7 @@ test('sale retry reuses a committed money flow after the response is lost', asyn
     paymentMethod: '现金',
     totalPaid: 100,
     occurredAt: 1790172000000,
-    items: [{ itemNo: 'A100', size: 38, quantity: 1, unitPrice: 100 }],
+    items: [{ productNumber: 'A100', size: 38, quantity: 1 }],
   };
 
   await assert.rejects(() => service.postSale(input), /simulated response loss/);
@@ -246,7 +242,7 @@ test('sale retry tolerates a committed live inventory update after the response 
     paymentMethod: '微信',
     totalPaid: 100,
     occurredAt: 1790172000000,
-    items: [{ itemNo: 'A100', size: 38, quantity: 1, unitPrice: 100 }],
+    items: [{ productNumber: 'A100', size: 38, quantity: 1 }],
   };
 
   await assert.rejects(() => service.postSale(input), /simulated response loss/);
@@ -263,8 +259,9 @@ test('sale retry rejects a changed draft after a partial write', async () => {
   const original = {
     salesEntryRecordId: 'rec_sale_entry',
     paymentMethod: '微信',
+    totalPaid: 100,
     occurredAt: 1790172000000,
-    items: [{ itemNo: 'A100', size: 38, quantity: 1, unitPrice: 100 }],
+    items: [{ productNumber: 'A100', size: 38, quantity: 1 }],
   };
 
   await assert.rejects(() => service.postSale(original), /simulated response loss/);

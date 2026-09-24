@@ -183,41 +183,51 @@ class LarkMvpService {
     logInfo('lark.sales.processing.started', { task_id: taskId });
     await this.ensureIntakeSchema('sales_intake', ['salesEntry']);
     const task = await this.store.get(taskId);
-    const existing = await this.gateway.findOneByText('salesEntry', 'messageId', task.message_id);
-    const created = existing
-      ? null
-      : await this.gateway.create('salesEntry', {
-          originalText: task.original_text,
-          sender: person(task.sender_open_id),
-          sentAt: task.sent_at,
-          parseStatus: '解析中',
-          confirmStatus: '待确认',
-          messageId: task.message_id,
-        });
-    const salesEntryRecordId = existing?.record_id || created?.recordId;
+    const created = await this.gateway.create('salesEntry', {
+      originalText: task.original_text,
+      sender: person(task.sender_open_id),
+      sentAt: task.sent_at,
+      parseStatus: '解析中',
+      confirmStatus: '待确认',
+    });
+    const salesEntryRecordId = created?.recordId;
     if (!salesEntryRecordId) throw new Error('销售录单未返回 record_id');
     await this.store.update(taskId, { sales_entry_record_id: salesEntryRecordId, status: 'parsing' });
 
     const parsed = await this.recognizer.parseSalesText(task.original_text);
-    if (parsed.intent !== 'sale') parsed.missing_fields = [...new Set([...(parsed.missing_fields || []), '当前只支持现货销售'])];
+    const behavior =
+      parsed.behavior_code === 'SALE_CASH' ? await this.references.resolveBehavior(parsed.behavior_code) : null;
+    const draft = {
+      ...parsed,
+      items: [
+        {
+          product_number: parsed.product_number,
+          size: parsed.size,
+          quantity: parsed.quantity,
+          gift: parsed.gift,
+          gift_description: parsed.gift_description,
+        },
+      ],
+    };
     await this.gateway.update('salesEntry', salesEntryRecordId, {
-      parseStatus: parsed.missing_fields?.length ? '需补充' : '解析成功',
-      parseSummary: JSON.stringify(parsed),
-      failureReason: parsed.missing_fields?.length ? parsed.missing_fields.join('、') : '',
+      parseStatus: draft.missing_fields?.length ? '需补充' : '解析成功',
+      parseSummary: JSON.stringify(draft),
+      failureReason: draft.missing_fields?.length ? draft.missing_fields.join('、') : '',
+      behavior: relation(behavior?.recordId),
     });
     await this.store.update(taskId, {
-      status: parsed.missing_fields?.length ? 'needs_info' : 'ready_to_confirm',
-      draft: parsed,
+      status: draft.missing_fields?.length ? 'needs_info' : 'ready_to_confirm',
+      draft,
     });
-    if (parsed.missing_fields?.length) {
-      await this.sendText(task.sender_open_id, `销售信息还缺：${parsed.missing_fields.join('、')}。请补充后重新发送完整销售信息。`);
+    if (draft.missing_fields?.length) {
+      await this.sendText(task.sender_open_id, `销售信息还缺：${draft.missing_fields.join('、')}。请补充后重新发送完整销售信息。`);
       return;
     }
-    await this.sendCard(task.sender_open_id, salesConfirmationCard(taskId, parsed));
+    await this.sendCard(task.sender_open_id, salesConfirmationCard(taskId, draft));
     logInfo('lark.sales.processing.completed', {
       task_id: taskId,
       sales_entry_record_id: salesEntryRecordId,
-      item_count: parsed.items?.length || 0,
+      item_count: 1,
       duration_ms: Date.now() - startedAt,
       result: 'awaiting_confirmation',
     });
@@ -366,17 +376,13 @@ class LarkMvpService {
       const result = await this.posting.postSale({
         salesEntryRecordId: task.sales_entry_record_id,
         operatorOpenId,
+        behaviorCode: task.draft.behavior_code,
         paymentMethod: task.draft.payment_method,
         totalPaid: task.draft.total_paid,
-        remark: task.draft.remark,
         items: task.draft.items.map((item) => ({
           productNumber: item.product_number,
-          itemNo: item.item_no,
-          color: item.color,
           size: item.size,
           quantity: item.quantity,
-          unitPrice: item.unit_price,
-          discountAmount: item.discount_amount,
           gift: item.gift,
         })),
       });

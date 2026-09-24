@@ -107,9 +107,8 @@ class V1PostingService {
           paymentMatches &&
           sameNumber(textValue(this.field('salesDetail', candidate, 'size')), item.size) &&
           sameNumber(textValue(this.field('salesDetail', candidate, 'quantity')), item.quantity) &&
-          sameNumber(textValue(this.field('salesDetail', candidate, 'unitPrice')), item.unitPrice) &&
           sameNumber(textValue(this.field('salesDetail', candidate, 'paidAmount')), item.paidAmount) &&
-          sameNumber(textValue(this.field('salesDetail', candidate, 'discountAmount')), item.discountAmount)
+          Boolean(this.field('salesDetail', candidate, 'gift')) === Boolean(item.gift)
         );
       });
       return { item, record, recordId: record?.record_id || '' };
@@ -148,12 +147,10 @@ class V1PostingService {
         quantity: row.item.quantity,
         size: row.item.size,
         paidAmount: row.item.paidAmount,
-        discountAmount: row.item.discountAmount,
         gift: Boolean(row.item.gift),
         paymentMethod: relation(paymentMethodRecordId),
         soldAt: occurredAt,
         salesEntry: relation(salesEntryRecordId),
-        unitPrice: row.item.unitPrice,
       });
       row.recordId = detail.recordId;
     }
@@ -373,12 +370,9 @@ class V1PostingService {
       const behavior = await this.references.resolveBehavior(input.behaviorCode || 'SALE_CASH');
       const paymentMethod = await this.references.resolvePaymentMethod(input.paymentMethod);
       const resolved = await this.resolveItems(input.items);
-      const normalized = resolved.map((item) => ({
-        ...item,
-        unitPrice: positiveNumber(item.unitPrice, '销售单价'),
-        discountAmount: money(item.discountAmount || 0),
-      }));
-      const allocated = allocatePaidAmounts(normalized, input.totalPaid);
+      if (resolved.length !== 1) throw new Error('V1 一条销售消息只能包含一条商品明细');
+      const paidTotal = positiveNumber(input.totalPaid, '实收金额');
+      const allocated = [{ ...resolved[0], paidAmount: paidTotal }];
       const sourceNo = await this.getDocumentNo('salesEntry', salesEntryRecordId, 'orderNo');
       const detailRows = await this.reconcileSaleDetails(
         allocated,
@@ -408,7 +402,6 @@ class V1PostingService {
         occurredAt,
       });
 
-      const paidTotal = money(allocated.reduce((sum, item) => sum + item.paidAmount, 0));
       let moneyRecordId = '';
       if (paidTotal > 0) {
         const existingFlow = await this.findMoneyFlow(
