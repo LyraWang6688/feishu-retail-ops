@@ -331,17 +331,38 @@ class LarkMvpService {
     if (!salesEntryRecordId) throw new Error('销售录单未返回 record_id');
     await this.store.update(taskId, { sales_entry_record_id: salesEntryRecordId, status: 'parsing' });
 
+    let product = null;
+    let productMatchError = '';
+    if (!parsed.missing_fields?.length) {
+      try {
+        product = await this.references.resolveProduct({ itemNo: parsed.item_no, color: parsed.color });
+      } catch (error) {
+        productMatchError = error.message;
+      }
+    }
+    const productTable = this.gateway.table?.('product');
+    const configuredNumber = product
+      ? textValue(product.record?.fields?.[productTable?.fields?.number]) || parsed.item_no
+      : '';
+    const missingFields = [...(parsed.missing_fields || [])];
+    if (productMatchError) missingFields.push(productMatchError);
+
     const draft = {
       ...parsed,
+      product_number: configuredNumber,
       items: [
         {
-          product_number: parsed.product_number,
+          product_record_id: product?.recordId || '',
+          product_number: configuredNumber,
+          item_no: parsed.item_no,
+          color: parsed.color,
           size: parsed.size,
           quantity: parsed.quantity,
           gift: parsed.gift,
           gift_description: parsed.gift_description,
         },
       ],
+      missing_fields: missingFields,
     };
     await this.gateway.update('salesEntry', salesEntryRecordId, {
       parseStatus: draft.missing_fields?.length ? '需补充' : '解析成功',
@@ -525,7 +546,9 @@ class LarkMvpService {
         paymentMethod: task.draft.payment_method,
         totalPaid: task.draft.total_paid,
         items: task.draft.items.map((item) => ({
-          productNumber: item.product_number,
+          productRecordId: item.product_record_id,
+          itemNo: item.item_no,
+          color: item.color,
           size: item.size,
           quantity: item.quantity,
           gift: item.gift,

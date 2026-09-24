@@ -13,7 +13,8 @@ const normalizeSalesResult = (result = {}) => {
     intent: result.intent === 'sale' ? 'sale' : 'unsupported',
     sales_behavior: String(result.sales_behavior || '').trim(),
     behavior_code: String(result.behavior_code || '').trim(),
-    product_number: String(result.product_number || '').trim(),
+    item_no: String(result.item_no || '').trim(),
+    color: String(result.color || '').trim(),
     size: positiveOrEmpty(result.size),
     quantity: positiveOrEmpty(result.quantity) || 1,
     gift: result.gift === true,
@@ -25,7 +26,7 @@ const normalizeSalesResult = (result = {}) => {
   if (normalized.intent !== 'sale' || normalized.behavior_code !== 'SALE_CASH') {
     missing.add('当前只支持现货销售');
   }
-  for (const key of ['product_number', 'size', 'quantity', 'total_paid', 'payment_method']) {
+  for (const key of ['item_no', 'size', 'quantity', 'total_paid', 'payment_method']) {
     if (!normalized[key]) missing.add(key);
   }
   normalized.missing_fields = [...missing];
@@ -71,7 +72,8 @@ class DoubaoService {
   "intent": "sale",
   "sales_behavior": "现货销售",
   "behavior_code": "SALE_CASH",
-  "product_number": "货品完整编号",
+  "item_no": "8088-26",
+  "color": "棕",
   "size": 38,
   "quantity": 1,
   "gift": false,
@@ -84,12 +86,13 @@ class DoubaoService {
 规则：
 1. 普通当场交货的销售：intent=\"sale\"，sales_behavior=\"现货销售\"，behavior_code=\"SALE_CASH\"。
 2. 退货、换货、赔货、预付或抖音团购券等非现货销售，intent=\"unsupported\"；仍要在 sales_behavior 中识别出行为名称，behavior_code 留空。
-3. product_number 是“货品信息”中的完整“编号”，不要拆分为货号和颜色，也不要输出货号、颜色或销售单价。
-4. 示例：“8088-26棕38，230元微信，赠袜子一双”中，product_number=\"8088-26棕\"，size=38，quantity=1，gift=true，gift_description=\"袜子一双\"，total_paid=230，payment_method=\"微信\"。
-5. “一双”数量为 1；没写数量但语义明确为单件商品时，quantity=1。“赠”“送”后的物品是赠品，不是销售商品数量。
-6. 必填业务要素为 product_number、size、quantity、total_paid、payment_method。缺少时在 missing_fields 中使用这些字段名。gift 未提及时为 false，gift_description 为空字符串。
-7. 销售单价、应收金额、优惠金额等由多维表格公式自动计算，不要输出。
-8. 只输出 JSON，不输出 Markdown 或说明。
+3. item_no 只填写用户原话中的货号，不要把颜色、尺码或品类拼进货号。用户可能用任意顺序和标点表达，但货号中的数字和字母必须原样保留。
+4. color 单独填写颜色；“棕色”规范为“棕”、“黑色”规范为“黑”。没有提到颜色时留空，不得猜测。
+5. 示例：“8088-26棕38，230元微信，赠袜子一双”中，item_no=\"8088-26\"，color=\"棕\"，size=38，quantity=1，gift=true，gift_description=\"袜子一双\"，total_paid=230，payment_method=\"微信\"。
+6. “一双”数量为 1；没写数量但语义明确为单件商品时，quantity=1。“赠”“送”后的物品是赠品，不是销售商品数量。
+7. 必填业务要素为 item_no、size、quantity、total_paid、payment_method。缺少时在 missing_fields 中使用这些字段名。color 不是全局必填项；如果同一货号对应多个颜色，后端会要求用户补充。gift 未提及时为 false，gift_description 为空字符串。
+8. 销售单价、应收金额、优惠金额等由多维表格公式自动计算，不要输出。
+9. 只输出 JSON，不输出 Markdown 或说明。
 
 用户原话：${originalText}
     `.trim();

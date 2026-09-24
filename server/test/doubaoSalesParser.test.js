@@ -2,12 +2,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { normalizeSalesResult } = require('../src/services/doubaoService');
 
-test('normalizes one cash sale using product number and leaves formula fields out', () => {
+test('normalizes one cash sale using item number and color and leaves formula fields out', () => {
   const result = normalizeSalesResult({
     intent: 'sale',
     sales_behavior: '现货销售',
     behavior_code: 'SALE_CASH',
-    product_number: '8088-26棕',
+    item_no: '8088-26',
+    color: '棕',
     size: 38,
     quantity: 1,
     gift: true,
@@ -21,7 +22,8 @@ test('normalizes one cash sale using product number and leaves formula fields ou
     intent: 'sale',
     sales_behavior: '现货销售',
     behavior_code: 'SALE_CASH',
-    product_number: '8088-26棕',
+    item_no: '8088-26',
+    color: '棕',
     size: 38,
     quantity: 1,
     gift: true,
@@ -37,7 +39,8 @@ test('blocks non-cash-sale behavior in V1', () => {
   const result = normalizeSalesResult({
     intent: 'unsupported',
     sales_behavior: '换货',
-    product_number: '8088-26棕',
+    item_no: '8088-26',
+    color: '棕',
     size: 38,
     quantity: 1,
     total_paid: 0,

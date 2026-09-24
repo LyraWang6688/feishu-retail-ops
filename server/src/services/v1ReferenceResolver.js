@@ -7,6 +7,8 @@ const normalizeText = (value) =>
     .replace(/\s+/g, '')
     .replace(/[|｜._-]/g, '');
 
+const normalizeColor = (value) => normalizeText(value).replace(/色$/, '');
+
 const relation = (recordId) => (recordId ? [recordId] : undefined);
 const person = (openId) => (openId ? [{ id: openId }] : undefined);
 
@@ -21,7 +23,7 @@ class V1ReferenceResolver {
     const records = await this.gateway.listAll('product');
     const wantedNumber = normalizeText(input.productNumber || input.number);
     const wantedItemNo = normalizeText(input.itemNo);
-    const wantedColor = normalizeText(input.color);
+    const wantedColor = normalizeColor(input.color);
 
     const candidates = records.map((record) => {
       const fields = record.fields || {};
@@ -29,7 +31,8 @@ class V1ReferenceResolver {
         record,
         number: normalizeText(textValue(fields[table.fields.number])),
         itemNo: normalizeText(textValue(fields[table.fields.itemNo])),
-        color: normalizeText(textValue(fields[table.fields.color])),
+        color: normalizeColor(textValue(fields[table.fields.color])),
+        colorDisplay: textValue(fields[table.fields.color]),
       };
     });
 
@@ -53,6 +56,11 @@ class V1ReferenceResolver {
       throw new Error(`找不到货品：${input.productNumber || input.itemNo || ''}${input.color || ''}`);
     }
     if (matches.length > 1) {
+      if (wantedItemNo) {
+        const colors = [...new Set(matches.map((candidate) => candidate.colorDisplay).filter(Boolean))];
+        const colorHint = colors.length ? `（${colors.join('、')}）` : '';
+        throw new Error(`货号 ${input.itemNo} 对应多个货品，请补充颜色${colorHint}`);
+      }
       throw new Error(`货品匹配不唯一：${input.productNumber || input.itemNo || ''}${input.color || ''}`);
     }
     return { recordId: matches[0].record.record_id, record: matches[0].record };
@@ -107,6 +115,7 @@ class V1ReferenceResolver {
 
 module.exports = {
   V1ReferenceResolver,
+  normalizeColor,
   normalizeText,
   person,
   relation,

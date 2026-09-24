@@ -114,6 +114,7 @@ test('sales intake keeps behavior in draft and writes only intake metadata befor
     client: {},
     gateway: {
       validateTables: async () => [],
+      table: () => ({ fields: { number: '编号' } }),
       create: async (tableKey, fields) => {
         calls.push({ operation: 'create', tableKey, fields });
         return { recordId: 'rec_sales_entry' };
@@ -122,14 +123,20 @@ test('sales intake keeps behavior in draft and writes only intake metadata befor
         calls.push({ operation: 'update', tableKey, recordId, fields });
       },
     },
-    references: {},
+    references: {
+      resolveProduct: async () => ({
+        recordId: 'rec_product',
+        record: { fields: { 编号: '8088-26|棕|女鞋' } },
+      }),
+    },
     posting: {},
     recognizer: {
       parseSalesText: async () => ({
         intent: 'sale',
         sales_behavior: '现货销售',
         behavior_code: 'SALE_CASH',
-        product_number: '8088-26棕',
+        item_no: '8088-26',
+        color: '棕',
         size: 38,
         quantity: 1,
         gift: true,
@@ -163,6 +170,9 @@ test('sales intake keeps behavior in draft and writes only intake metadata befor
   assert.equal('behavior' in parsedUpdate.fields, false);
   assert.equal(cards.length, 1);
   assert.match(JSON.stringify(cards[0].card), /现货销售/);
+  assert.match(JSON.stringify(cards[0].card), /8088-26\|棕\|女鞋/);
+  const task = await store.get('sale_test');
+  assert.equal(task.draft.items[0].product_record_id, 'rec_product');
 });
 
 test('unsupported text is parsed but does not create a sales entry record', async () => {
