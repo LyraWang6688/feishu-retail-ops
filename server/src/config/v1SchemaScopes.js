@@ -1,6 +1,14 @@
 const V1_SCHEMA_SCOPES = {
   sales: ['product', 'behavior', 'paymentMethod', 'salesEntry', 'salesDetail'],
-  purchase: ['product', 'supplier', 'purchaseBatch', 'purchaseInbound'],
+  purchase: [
+    'product',
+    'supplier',
+    'purchaseReport',
+    'purchaseRequest',
+    'purchaseOrderBatch',
+    'purchaseArrival',
+    'purchaseInbound',
+  ],
   inventory: ['product', 'salesDetail', 'purchaseInbound', 'inventoryLedger', 'liveInventory'],
 };
 

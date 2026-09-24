@@ -12,6 +12,7 @@ dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 const app = express();
 const port = process.env.PORT || 3000;
+const workbenchPath = path.join(__dirname, '../public/workbench');
 
 // Middleware
 if (process.env.ENABLE_CORS === 'true') {
@@ -39,6 +40,12 @@ app.use((req, res, next) => {
 // Feishu callbacks do not carry the project's x-api-key, so mount the verified
 // Lark event endpoint before the generic /api authentication middleware.
 app.use('/api/lark/events', require('./routes/larkEvents').createLarkEventsRouter());
+// Feishu Base workflows send only the newly-created record_id. These endpoints
+// acknowledge immediately and process the record asynchronously.
+app.use('/api/purchase', require('./routes/purchaseWebhooks').createPurchaseWebhookRouter());
+// The read-only workbench has its own token so a browser never receives API_KEY.
+app.use('/api/workbench', require('./routes/workbench').createWorkbenchRouter());
+app.use('/workbench', express.static(workbenchPath, { index: 'index.html' }));
 
 // Basic health check route
 app.get('/health', (req, res) => {

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>邯美数智经营工作台</title>
+  <link rel="stylesheet" href="/workbench/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="header">
+      <div><div class="eyebrow">邯美数智经营工作台</div><h1>经营查询</h1></div>
+      <div class="auth"><input id="token" type="password" placeholder="工作台访问令牌"><button id="save-token">保存</button></div>
+    </header>
+    <nav class="tabs"><button class="tab active" data-tab="sales">今日销售明细</button><button class="tab" data-tab="inventory">实时库存</button></nav>
+    <section id="sales-panel" class="panel">
+      <div class="toolbar"><div><h2>今日销售明细</h2><p id="sales-date" class="muted"></p></div><button id="refresh-sales">刷新</button></div>
+      <div id="sales-summary" class="summary"></div>
+      <div class="table-wrap"><table><thead><tr><th>时间</th><th>销售行为</th><th>编号</th><th>尺码</th><th>数量</th><th>实收</th><th>支付方式</th><th>赠品</th><th>销售单号</th></tr></thead><tbody id="sales-rows"></tbody></table></div>
+      <p id="sales-empty" class="empty hidden">今天还没有已确认的销售明细。</p>
+    </section>
+    <section id="inventory-panel" class="panel hidden">
+      <div class="toolbar"><div><h2>实时库存</h2><p class="muted">按库存键、编号、货号或颜色查询</p></div><button id="refresh-inventory">刷新</button></div>
+      <div class="filters"><input id="inventory-keyword" placeholder="输入编号/货号/颜色"><input id="inventory-size" placeholder="尺码"><button id="search-inventory">查询</button></div>
+      <div id="inventory-warning" class="warning hidden"></div>
+      <div class="table-wrap"><table><thead><tr><th>库存键</th><th>编号</th><th>货号</th><th>颜色</th><th>尺码</th><th>当前数量</th><th>更新时间</th></tr></thead><tbody id="inventory-rows"></tbody></table></div>
+      <p id="inventory-empty" class="empty hidden">没有匹配的库存记录。</p>
+    </section>
+    <p id="error" class="error hidden"></p>
+  </main>
+  <script src="/workbench/app.js"></script>
+</body>
+</html>

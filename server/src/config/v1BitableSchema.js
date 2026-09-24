@@ -71,6 +71,7 @@ const V1_BITABLE_SCHEMA = {
         behavior: '销售行为',
       },
     },
+    // Legacy private-chat purchase intake table. Kept for the frozen path.
     purchaseBatch: {
       tableName: '采购到货批次',
       tableId: getEnv('FEISHU_V1_PURCHASE_BATCH_TABLE_ID', 'tblvLOXKESNTbZ7v'),
@@ -86,6 +87,37 @@ const V1_BITABLE_SCHEMA = {
         messageIds: '飞书消息ID列表',
       },
     },
+    purchaseReport: {
+      tableName: '供应商报单',
+      tableId: getEnv('FEISHU_V1_PURCHASE_REPORT_TABLE_ID', 'tblo0ffzFt7vyQw2'),
+      fields: {
+        batchNo: '报单批次号', detailId: '明细ID', detailKey: '报单明细ID', behavior: '采购行为',
+        product: '编号', description: '报单说明', reportedAt: '报单时间', operator: '经办人', supplier: '供应商',
+        status: '处理状态', failureReason: '解析失败原因', request: '关联采购申请',
+      },
+    },
+    purchaseRequest: {
+      tableName: '采购申请',
+      tableId: getEnv('FEISHU_V1_PURCHASE_REQUEST_TABLE_ID', 'tbli1ygPtss5CWCH'),
+      fields: {
+        batchNo: '报货批次号', behavior: '采购行为', product: '编号', size: '尺码', quantity: '数量',
+        supplier: '供应商', reportedAt: '报单时间', operator: '经办人', arrivalStatus: '到货状态',
+      },
+    },
+    purchaseArrival: {
+      tableName: '采购到货',
+      tableId: getEnv('FEISHU_V1_PURCHASE_ARRIVAL_TABLE_ID', 'tblvLOXKESNTbZ7v'),
+      fields: {
+        arrivalAt: '到货日', images: '鞋盒图片', batch: '报货批次号', creator: '创建者',
+        recognitionStatus: '识别状态', confirmStatus: '确认状态', failureReason: '识别失败原因',
+      },
+    },
+    purchaseOrderBatch: {
+      tableName: '报货批次',
+      // Current V1 tenant default; forks can override it with the environment variable.
+      tableId: getEnv('FEISHU_V1_PURCHASE_ORDER_BATCH_TABLE_ID', 'tblwezby9wRea9qi'),
+      fields: { batchNo: '报货批次号', supplier: '供应商', createdAt: '创建时间', creator: '创建人' },
+    },
     purchaseInbound: {
       tableName: '采购入库',
       tableId: getEnv('FEISHU_V1_PURCHASE_INBOUND_TABLE_ID', 'tblK3Uzd0nN1GJrr'),
@@ -96,7 +128,8 @@ const V1_BITABLE_SCHEMA = {
         operator: '录入人员',
         confirmed: '入库确认',
         batch: '采购到货批次',
-        supplierOrder: '关联供应商报单',
+        supplierOrder: '采购申请',
+        purchaseRequest: '采购申请',
         product: '编号',
         inboundAt: '实际入库时间',
         unitCost: '入库单价',

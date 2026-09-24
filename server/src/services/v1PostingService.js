@@ -138,8 +138,7 @@ class V1PostingService {
       const record = this.consumeMatching(existing, used, (candidate) =>
         this.relationHas('purchaseInbound', candidate, 'product', item.productRecordId) &&
         sameNumber(textValue(this.field('purchaseInbound', candidate, 'size')), item.size) &&
-        sameNumber(textValue(this.field('purchaseInbound', candidate, 'quantity')), item.quantity) &&
-        sameNumber(textValue(this.field('purchaseInbound', candidate, 'unitCost')), item.unitCost)
+        sameNumber(textValue(this.field('purchaseInbound', candidate, 'quantity')), item.quantity)
       );
       return { item, record, recordId: record?.record_id || '' };
     });
@@ -179,7 +178,6 @@ class V1PostingService {
         supplierOrder: relation(row.item.supplierOrderRecordId),
         product: relation(row.item.productRecordId),
         inboundAt: occurredAt,
-        unitCost: row.item.unitCost,
       });
       row.recordId = inbound.recordId;
     }
@@ -284,10 +282,8 @@ class V1PostingService {
         supplier: relation(input.supplierRecordId),
       });
       const resolved = await this.resolveItems(input.items);
-      const normalized = resolved.map((item) => ({
-        ...item,
-        unitCost: positiveNumber(item.unitCost, '入库单价'),
-      }));
+      // 入库单价、入库金额是多维表格的公式/查找字段；后端只写业务事实。
+      const normalized = resolved;
       const sourceNo = await this.getDocumentNo('purchaseBatch', batchRecordId, 'batchNo');
       const inboundRows = await this.reconcilePurchaseInbound(normalized, batchRecordId);
       const recoveredInboundCount = inboundRows.filter((row) => row.recordId).length;

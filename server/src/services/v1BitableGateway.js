@@ -56,6 +56,7 @@ class V1BitableGateway {
 
   async listFields(tableKey, options = {}) {
     const table = this.table(tableKey);
+    if (!table.tableId) throw new Error(`“${table.tableName}”未配置 table_id，请设置对应的 FEISHU_V1_*_TABLE_ID`);
     if (!options.refresh && this.fieldCache.has(tableKey)) return this.fieldCache.get(tableKey);
 
     const fields = [];

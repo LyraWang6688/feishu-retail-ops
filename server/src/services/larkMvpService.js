@@ -7,6 +7,8 @@ const doubaoService = require('./doubaoService');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { V1BitableGateway, textValue } = require('./v1BitableGateway');
 const { V1PostingService } = require('./v1PostingService');
+const { PurchaseDraftBuilder } = require('./purchaseDraftBuilder');
+const { PurchaseWebhookService } = require('./purchaseWebhookService');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
 const { purchaseConfirmationCard, salesConfirmationCard, todaySalesCard } = require('../utils/larkCards');
 const { logError, logInfo, logWarn } = require('../utils/logger');
@@ -62,8 +64,15 @@ class LarkMvpService {
     }
     this.gateway = options.gateway || new V1BitableGateway({ client: this.client });
     this.references = options.references || new V1ReferenceResolver(this.gateway);
-    this.posting = options.posting || new V1PostingService({ gateway: this.gateway, references: this.references });
     this.recognizer = options.recognizer || doubaoService;
+    this.posting = options.posting || new V1PostingService({ gateway: this.gateway, references: this.references });
+    this.draftBuilder = options.draftBuilder || new PurchaseDraftBuilder({ references: this.references });
+    this.purchaseWebhooks = options.purchaseWebhooks || new PurchaseWebhookService({
+      client: this.client,
+      gateway: this.gateway,
+      references: this.references,
+      recognizer: this.recognizer,
+    });
     this.store =
       options.store ||
       new JsonTaskStore({ dir: path.join(__dirname, '../../data/lark_mvp_tasks'), idField: 'task_id' });
@@ -444,35 +453,25 @@ class LarkMvpService {
       await fs.promises.rm(tempDir, { recursive: true, force: true });
     }
 
-    const items = aggregateRecognizedItems(recognized).map((item) => ({
-      item_no: item.item_no || '',
-      color: item.color || '',
-      size: item.size,
-      quantity: item.quantity || 1,
-      unit_cost: item.unit_cost,
-    }));
-    const suppliers = [...new Set(recognized.map((item) => item.supplier).filter(Boolean))];
-    const supplier = suppliers.length === 1 ? suppliers[0] : '';
-    const missingFields = [];
-    if (!supplier) missingFields.push('供应商');
-    if (items.some((item) => !item.unit_cost)) missingFields.push('入库单价');
-    const draft = { items, supplier, missing_fields: missingFields };
+    // PurchaseDraftBuilder 完成：聚合相同SKU → 货品匹配（货号+颜色→完整编号）→ 供应商匹配 → 缺失字段校验
+    // 货品匹配提前到这里完成，用户在确认卡上就能看到匹配结果，匹配失败提前知道要去上架
+    const draft = await this.draftBuilder.buildDraft(recognized);
     await this.store.update(taskId, {
-      status: missingFields.length ? 'needs_info' : 'ready_to_confirm',
+      status: draft.missing_fields.length ? 'needs_info' : 'ready_to_confirm',
       batch_record_id: batchRecordId,
       draft,
     });
     await this.sendCard(task.sender_open_id, purchaseConfirmationCard(taskId, draft));
-    if (missingFields.length) {
-      await this.sendText(task.sender_open_id, '请回复“供应商 XXX，入库单价 100”。如果已付款，可加上“已付款 500，微信”。');
+    if (draft.missing_fields.length) {
+      await this.sendText(task.sender_open_id, '请回复”供应商 XXX，入库单价 100”。如果已付款，可加上”已付款 500，微信”。货品未匹配的请先到货品信息表上架。');
     }
     logInfo('lark.purchase.processing.completed', {
       task_id: taskId,
       purchase_batch_record_id: batchRecordId,
-      item_count: items.length,
-      missing_field_count: missingFields.length,
+      item_count: draft.items.length,
+      missing_field_count: draft.missing_fields.length,
       duration_ms: Date.now() - startedAt,
-      result: missingFields.length ? 'needs_info' : 'awaiting_confirmation',
+      result: draft.missing_fields.length ? 'needs_info' : 'awaiting_confirmation',
     });
   }
 
@@ -485,14 +484,22 @@ class LarkMvpService {
     const paidMatch = originalText.match(/(?:已付款|付款)\s*[:：]?\s*(\d+(?:\.\d+)?)/);
     const methodMatch = originalText.match(/(微信|支付宝|现金|工商银行)/);
     if (!supplierMatch && !priceMatch && !paidMatch) return false;
-    const draft = { ...task.draft, items: task.draft.items.map((item) => ({ ...item })) };
-    if (supplierMatch) draft.supplier = supplierMatch[1];
-    if (priceMatch) draft.items.forEach((item) => (item.unit_cost = Number(priceMatch[1])));
-    if (paidMatch) draft.payment = { amount: Number(paidMatch[1]), method: methodMatch?.[1] || '' };
-    draft.missing_fields = [];
-    if (!draft.supplier) draft.missing_fields.push('供应商');
-    if (draft.items.some((item) => !item.unit_cost)) draft.missing_fields.push('入库单价');
-    if (draft.payment?.amount && !draft.payment.method) draft.missing_fields.push('付款方式');
+
+    // 从已有 draft 提取原始识别字段，应用用户补充后重新走 DraftBuilder（聚合→货品匹配→供应商匹配→校验）
+    // 这样补充供应商后会重新匹配供应商 record_id，补充单价后会重新校验缺失字段
+    const recognizedItems = task.draft.items.map((item) => ({
+      item_no: item.item_no,
+      color: item.color,
+      size: item.size,
+      quantity: item.quantity,
+      unit_cost: priceMatch ? Number(priceMatch[1]) : item.unit_cost,
+      supplier: supplierMatch ? supplierMatch[1] : item.supplier,
+    }));
+    const payment = paidMatch
+      ? { amount: Number(paidMatch[1]), method: methodMatch?.[1] || '' }
+      : task.draft.payment;
+
+    const draft = await this.draftBuilder.buildDraft(recognizedItems, { payment });
     await this.store.update(taskId, {
       status: draft.missing_fields.length ? 'needs_info' : 'ready_to_confirm',
       draft,
@@ -507,6 +514,8 @@ class LarkMvpService {
     const action = value.action;
     const operatorOpenId =
       event?.operator?.operator_id?.open_id || event?.operator?.open_id || event?.event?.operator?.operator_id?.open_id;
+    const procurementResult = await this.purchaseWebhooks.handleCardAction(value, operatorOpenId);
+    if (procurementResult) return procurementResult;
     const task = await this.store.get(draftId);
     if (!task) throw new Error('确认草稿不存在或已过期');
     if (task.sender_open_id !== operatorOpenId) throw new Error('只能由原始发送人确认该草稿');
@@ -574,12 +583,13 @@ class LarkMvpService {
 
     if (action === 'confirm_purchase' && task.type === 'purchase') {
       const startedAt = Date.now();
-      const supplier = await this.references.resolveSupplier(task.draft.supplier);
+      // draft 在构建阶段已经完成货品匹配和供应商匹配，直接使用 record_id，不重复 resolve
       const result = await this.posting.postPurchase({
         batchRecordId: task.batch_record_id,
         operatorOpenId,
-        supplierRecordId: supplier.recordId,
+        supplierRecordId: task.draft.supplier_record_id,
         items: task.draft.items.map((item) => ({
+          productRecordId: item.product_record_id,
           itemNo: item.item_no,
           color: item.color,
           size: item.size,

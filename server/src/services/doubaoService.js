@@ -112,6 +112,47 @@ class DoubaoService {
     }
   }
 
+  async parsePurchaseReportText(text) {
+    this.apiKey = process.env.ARK_API_KEY;
+    this.endpointId = process.env.ARK_MODEL_ENDPOINT;
+    if (!this.apiKey || !this.endpointId) throw new Error('ARK_API_KEY or ARK_MODEL_ENDPOINT is not configured in .env');
+    const originalText = String(text || '').trim();
+    if (!originalText) throw new Error('采购报单说明不能为空');
+    const prompt = `
+你是鞋店采购报单解析助手。请把一段采购报单说明解析为严格 JSON 数组，只识别尺码和数量，不要猜测未出现的内容。
+输出格式：{"items":[{"size":39,"quantity":1}]}
+规则：
+1. “39-42各一双”表示39、40、41、42，每个数量1。
+2. “39到42各两双”表示39、40、41、42，每个数量2。
+3. “4042各一双”表示40和42各1双。
+4. “39一双、40两双”分别输出两条。
+5. 尺码必须是数字，数量必须是正整数；无法确定时不要猜测，返回空数组。
+6. 只输出 JSON，不输出 Markdown 或说明。
+采购报单说明：${originalText}`.trim();
+    const response = await this.getClient().chat.completions.create({
+      model: this.endpointId,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0,
+      response_format: { type: 'json_object' },
+    });
+    const content = response.choices?.[0]?.message?.content || '';
+    try {
+      const parsed = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
+      const items = Array.isArray(parsed) ? parsed : parsed.items;
+      if (!Array.isArray(items) || !items.length) throw new Error('未识别出有效尺码数量');
+      return items.map((item) => {
+        const size = Number(item.size);
+        const quantity = Number(item.quantity);
+        if (!Number.isFinite(size) || !Number.isFinite(quantity) || size <= 0 || quantity <= 0) {
+          throw new Error('采购报单中的尺码或数量无效');
+        }
+        return { size, quantity };
+      });
+    } catch (error) {
+      throw new Error(`采购报单解析失败: ${error.message}`);
+    }
+  }
+
   /**
    * Recognize shoe box labels from a local image file.
    * @param {string} filePath - Path to the image file.
