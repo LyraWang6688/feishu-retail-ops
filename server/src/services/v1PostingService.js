@@ -13,6 +13,8 @@ const positiveNumber = (value, label) => {
 
 const sameNumber = (left, right) => Math.abs(Number(left || 0) - Number(right || 0)) < 0.000001;
 
+const giftText = (item) => (item.gift ? String(item.giftDescription || '有赠品').trim() : '');
+
 const allocatePaidAmounts = (items, totalPaid) => {
   const receivables = items.map((item) => money(item.quantity * item.unitPrice - (item.discountAmount || 0)));
   const receivableTotal = money(receivables.reduce((sum, value) => sum + value, 0));
@@ -97,7 +99,7 @@ class V1PostingService {
     return record || null;
   }
 
-  async reconcileSaleDetails(items, salesEntryRecordId, paymentMethodRecordId, behaviorRecordId, occurredAt) {
+  async reconcileSaleDetails(items, salesEntryRecordId, paymentMethodRecordId, behaviorRecordId) {
     const existing = (await this.listRecords('salesDetail')).filter((record) =>
       this.relationHas('salesDetail', record, 'salesEntry', salesEntryRecordId)
     );
@@ -116,7 +118,7 @@ class V1PostingService {
           sameNumber(textValue(this.field('salesDetail', candidate, 'size')), item.size) &&
           sameNumber(textValue(this.field('salesDetail', candidate, 'quantity')), item.quantity) &&
           sameNumber(textValue(this.field('salesDetail', candidate, 'paidAmount')), item.paidAmount) &&
-          Boolean(this.field('salesDetail', candidate, 'gift')) === Boolean(item.gift)
+          textValue(this.field('salesDetail', candidate, 'gift')) === giftText(item)
         );
       });
       return { item, record, recordId: record?.record_id || '' };
@@ -147,7 +149,7 @@ class V1PostingService {
     return rows;
   }
 
-  async createMissingSaleDetails(rows, salesEntryRecordId, paymentMethodRecordId, behaviorRecordId, occurredAt) {
+  async createMissingSaleDetails(rows, salesEntryRecordId, paymentMethodRecordId, behaviorRecordId) {
     for (const row of rows) {
       if (row.recordId) continue;
       const detail = await this.gateway.create('salesDetail', {
@@ -155,9 +157,8 @@ class V1PostingService {
         quantity: row.item.quantity,
         size: row.item.size,
         paidAmount: row.item.paidAmount,
-        gift: Boolean(row.item.gift),
+        gift: giftText(row.item),
         paymentMethod: relation(paymentMethodRecordId),
-        soldAt: occurredAt,
         salesEntry: relation(salesEntryRecordId),
         behavior: relation(behaviorRecordId),
       });
@@ -212,7 +213,6 @@ class V1PostingService {
         salesEntryRecordId,
         paymentMethod?.recordId || '',
         behavior.recordId,
-        occurredAt
       );
       const recoveredDetailCount = detailRows.filter((row) => row.recordId).length;
       await this.createMissingSaleDetails(
@@ -220,7 +220,6 @@ class V1PostingService {
         salesEntryRecordId,
         paymentMethod?.recordId || '',
         behavior.recordId,
-        occurredAt
       );
       const detailRecordIds = detailRows.map((row) => row.recordId);
       const inventoryResults = [];

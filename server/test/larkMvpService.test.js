@@ -215,6 +215,43 @@ test('unsupported text is parsed but does not create a sales entry record', asyn
   assert.match(sent[0].message, /未写入销售录单/);
 });
 
+test('failed card posting returns the draft to a retryable state', async () => {
+  const store = makeStore();
+  await store.create({
+    task_id: 'sale_retry',
+    type: 'sale',
+    status: 'ready_to_confirm',
+    sender_open_id: 'ou_1',
+    sales_entry_record_id: 'rec_entry',
+    draft: {
+      behavior_code: 'SALE_CASH',
+      payment_method: '微信',
+      total_paid: 230,
+      items: [{ product_record_id: 'rec_product', item_no: '8088-26', color: '棕', size: 38, quantity: 1 }],
+    },
+  });
+  const service = new LarkMvpService({
+    client: {},
+    gateway: {},
+    references: {},
+    posting: { postSale: async () => { throw new Error('temporary failure'); } },
+    recognizer: {},
+    store,
+  });
+
+  await assert.rejects(
+    service.handleCardAction({
+      operator: { operator_id: { open_id: 'ou_1' } },
+      action: { value: { action: 'confirm_sale', draft_id: 'sale_retry' } },
+    }),
+    /temporary failure/,
+  );
+
+  const task = await store.get('sale_retry');
+  assert.equal(task.status, 'ready_to_confirm');
+  assert.equal(task.posting_error, 'temporary failure');
+});
+
 test('today sales menu returns only confirmed detail rows from the Shanghai calendar day', async () => {
   const cards = [];
   const fields = {

@@ -58,11 +58,13 @@ test('sale confirmation writes sales detail without requiring inventory or money
   const service = new V1PostingService({ gateway, references: makeReferences(), inventory: {} });
   const result = await service.postSale({
     salesEntryRecordId: 'rec_sale_entry', paymentMethod: '微信', totalPaid: 230,
-    items: [{ productNumber: '8088-26棕', size: 38, quantity: 1, gift: true }],
+    items: [{ productNumber: '8088-26棕', size: 38, quantity: 1, gift: true, giftDescription: '袜子一双' }],
   });
   assert.equal(result.inventoryApplied, false);
   assert.equal(result.detailRecordIds.length, 1);
-  assert.equal(gateway.calls.some((call) => call.tableKey === 'salesDetail' && call.operation === 'create'), true);
+  const detailCreate = gateway.calls.find((call) => call.tableKey === 'salesDetail' && call.operation === 'create');
+  assert.equal(detailCreate.fields.gift, '袜子一双');
+  assert.equal('soldAt' in detailCreate.fields, false);
   assert.equal(gateway.calls.some((call) => call.tableKey === 'inventoryLedger'), false);
 });
 

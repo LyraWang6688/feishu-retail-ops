@@ -537,6 +537,7 @@ class LarkMvpService {
     }
 
     await this.store.update(draftId, { status: 'posting' });
+    try {
     if (action === 'confirm_sale' && task.type === 'sale') {
       const startedAt = Date.now();
       const result = await this.posting.postSale({
@@ -552,6 +553,7 @@ class LarkMvpService {
           size: item.size,
           quantity: item.quantity,
           gift: item.gift,
+          giftDescription: item.gift_description,
         })),
       });
       await this.store.update(draftId, { status: 'posted', posting_result: result });
@@ -602,6 +604,14 @@ class LarkMvpService {
       };
     }
     throw new Error(`不支持的卡片动作: ${action}`);
+    } catch (error) {
+      // Posting services are idempotent. Restore the draft so a corrected configuration or
+      // transient Feishu failure can be retried from the same card instead of staying stuck.
+      await this.store
+        .update(draftId, { status: 'ready_to_confirm', posting_error: error.message })
+        .catch(() => undefined);
+      throw error;
+    }
   }
 
   async handleTaskFailure(taskId, error) {
