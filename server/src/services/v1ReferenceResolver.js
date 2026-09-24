@@ -23,14 +23,31 @@ class V1ReferenceResolver {
     const wantedItemNo = normalizeText(input.itemNo);
     const wantedColor = normalizeText(input.color);
 
-    const matches = records.filter((record) => {
+    const candidates = records.map((record) => {
       const fields = record.fields || {};
-      const number = normalizeText(textValue(fields[table.fields.number]));
-      const itemNo = normalizeText(textValue(fields[table.fields.itemNo]));
-      const color = normalizeText(textValue(fields[table.fields.color]));
-      if (wantedNumber && number === wantedNumber) return true;
-      return Boolean(wantedItemNo && itemNo === wantedItemNo && (!wantedColor || color === wantedColor));
+      return {
+        record,
+        number: normalizeText(textValue(fields[table.fields.number])),
+        itemNo: normalizeText(textValue(fields[table.fields.itemNo])),
+        color: normalizeText(textValue(fields[table.fields.color])),
+      };
     });
+
+    // “编号”可以包含品类等展示信息，而用户日常通常只说“货号+颜色”。
+    // 先匹配完整编号；找不到时再使用配置字段“货号+颜色”作为唯一别名。
+    let matches = wantedNumber
+      ? candidates.filter((candidate) => candidate.number === wantedNumber)
+      : [];
+    if (matches.length === 0 && wantedNumber) {
+      matches = candidates.filter(
+        (candidate) => candidate.itemNo && candidate.color && `${candidate.itemNo}${candidate.color}` === wantedNumber,
+      );
+    }
+    if (matches.length === 0 && wantedItemNo) {
+      matches = candidates.filter(
+        (candidate) => candidate.itemNo === wantedItemNo && (!wantedColor || candidate.color === wantedColor),
+      );
+    }
 
     if (matches.length === 0) {
       throw new Error(`找不到货品：${input.productNumber || input.itemNo || ''}${input.color || ''}`);
@@ -38,7 +55,7 @@ class V1ReferenceResolver {
     if (matches.length > 1) {
       throw new Error(`货品匹配不唯一：${input.productNumber || input.itemNo || ''}${input.color || ''}`);
     }
-    return { recordId: matches[0].record_id, record: matches[0] };
+    return { recordId: matches[0].record.record_id, record: matches[0].record };
   }
 
   async resolveBehavior(code) {
