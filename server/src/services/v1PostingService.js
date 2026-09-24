@@ -438,7 +438,6 @@ class V1PostingService {
 
       await this.gateway.update('salesEntry', salesEntryRecordId, {
         confirmStatus: '已入账',
-        postedAt: occurredAt,
       });
       logInfo('v1.sale.posted', {
         sales_entry_record_id: salesEntryRecordId,

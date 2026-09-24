@@ -53,7 +53,6 @@ const V1_BITABLE_SCHEMA = {
         editedAt: '消息编辑时间',
         parseSummary: '解析结果摘要',
         failureReason: '失败原因',
-        postedAt: '入账时间',
       },
     },
     salesDetail: {
