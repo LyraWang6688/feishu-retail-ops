@@ -67,7 +67,7 @@ const V1_BITABLE_SCHEMA = {
         gift: '赠品',
         paymentMethod: '支付方式',
         soldAt: '销售日',
-        salesEntry: '销售单',
+        salesEntry: '销售单号',
         behavior: '销售行为',
       },
     },

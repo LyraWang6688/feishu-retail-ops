@@ -14,7 +14,7 @@ const TABLES = {
       paidAmount: '实付金额',
       gift: '赠品',
       paymentMethod: '支付方式',
-      salesEntry: '销售单',
+      salesEntry: '销售单号',
       behavior: '销售行为',
     },
   },
