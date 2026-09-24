@@ -99,7 +99,7 @@ const makeReferences = (liveQuantity = 10) => ({
 
 test('sale posting writes detail, negative stock flow, live inventory and money income', async () => {
   const gateway = makeGateway();
-  const service = new V1PostingService({ gateway, references: makeReferences(5) });
+  const service = new V1PostingService({ gateway, references: makeReferences(5), enableSaleSideEffects: true });
   const result = await service.postSale({
     salesEntryRecordId: 'rec_sale_entry',
     operatorOpenId: 'ou_user',
@@ -122,9 +122,27 @@ test('sale posting writes detail, negative stock flow, live inventory and money 
   assert.equal(money.fields.amount, 190);
 });
 
+test('sale posting defaults to sales detail only while inventory and money design is paused', async () => {
+  const gateway = makeGateway();
+  const service = new V1PostingService({ gateway, references: makeReferences(5) });
+  const result = await service.postSale({
+    salesEntryRecordId: 'rec_sale_entry',
+    operatorOpenId: 'ou_user',
+    paymentMethod: '微信',
+    totalPaid: 230,
+    items: [{ productNumber: '8088-26棕', size: 38, quantity: 1, gift: true }],
+  });
+
+  assert.equal(result.sideEffectsApplied, false);
+  assert.equal(result.detailRecordIds.length, 1);
+  assert.equal(gateway.calls.some((call) => call.operation === 'create' && call.tableKey === 'inventoryLedger'), false);
+  assert.equal(gateway.calls.some((call) => call.operation === 'update' && call.tableKey === 'liveInventory'), false);
+  assert.equal(gateway.calls.some((call) => call.operation === 'create' && call.tableKey === 'moneyLedger'), false);
+});
+
 test('sale posting rejects insufficient inventory before creating business details', async () => {
   const gateway = makeGateway();
-  const service = new V1PostingService({ gateway, references: makeReferences(1) });
+  const service = new V1PostingService({ gateway, references: makeReferences(1), enableSaleSideEffects: true });
   await assert.rejects(
     () =>
       service.postSale({
@@ -140,7 +158,7 @@ test('sale posting rejects insufficient inventory before creating business detai
 
 test('V1 sale posting rejects more than one sales detail', async () => {
   const gateway = makeGateway();
-  const service = new V1PostingService({ gateway, references: makeReferences(3) });
+  const service = new V1PostingService({ gateway, references: makeReferences(3), enableSaleSideEffects: true });
   await assert.rejects(
     () =>
       service.postSale({
@@ -194,7 +212,7 @@ test('paid purchase creates cash outflow and a negative payable movement', async
 
 test('sale retry reuses a committed inventory ledger after the response is lost', async () => {
   const gateway = makeGateway({ failOnceAfterCommit: 'inventoryLedger' });
-  const service = new V1PostingService({ gateway, references: makeReferences(5) });
+  const service = new V1PostingService({ gateway, references: makeReferences(5), enableSaleSideEffects: true });
   const input = {
     salesEntryRecordId: 'rec_sale_entry',
     operatorOpenId: 'ou_user',
@@ -215,7 +233,7 @@ test('sale retry reuses a committed inventory ledger after the response is lost'
 
 test('sale retry reuses a committed money flow after the response is lost', async () => {
   const gateway = makeGateway({ failOnceAfterCommit: 'moneyLedger' });
-  const service = new V1PostingService({ gateway, references: makeReferences(5) });
+  const service = new V1PostingService({ gateway, references: makeReferences(5), enableSaleSideEffects: true });
   const input = {
     salesEntryRecordId: 'rec_sale_entry',
     operatorOpenId: 'ou_user',
@@ -236,7 +254,7 @@ test('sale retry reuses a committed money flow after the response is lost', asyn
 
 test('sale retry tolerates a committed live inventory update after the response is lost', async () => {
   const gateway = makeGateway({ failOnceAfterUpdateCommit: 'liveInventory' });
-  const service = new V1PostingService({ gateway, references: makeReferences(5) });
+  const service = new V1PostingService({ gateway, references: makeReferences(5), enableSaleSideEffects: true });
   const input = {
     salesEntryRecordId: 'rec_sale_entry',
     operatorOpenId: 'ou_user',
@@ -256,7 +274,7 @@ test('sale retry tolerates a committed live inventory update after the response 
 
 test('sale retry rejects a changed draft after a partial write', async () => {
   const gateway = makeGateway({ failOnceAfterCommit: 'salesDetail' });
-  const service = new V1PostingService({ gateway, references: makeReferences(5) });
+  const service = new V1PostingService({ gateway, references: makeReferences(5), enableSaleSideEffects: true });
   const original = {
     salesEntryRecordId: 'rec_sale_entry',
     paymentMethod: '微信',

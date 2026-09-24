@@ -5,10 +5,10 @@ const path = require('node:path');
 const lark = require('@larksuiteoapi/node-sdk');
 const doubaoService = require('./doubaoService');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
-const { V1BitableGateway } = require('./v1BitableGateway');
+const { V1BitableGateway, textValue } = require('./v1BitableGateway');
 const { V1PostingService } = require('./v1PostingService');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
-const { purchaseConfirmationCard, salesConfirmationCard } = require('../utils/larkCards');
+const { purchaseConfirmationCard, salesConfirmationCard, todaySalesCard } = require('../utils/larkCards');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
 
@@ -38,6 +38,21 @@ const aggregateRecognizedItems = (items) => {
   return [...map.values()];
 };
 
+const looksLikeSalesText = (text) => /\d/.test(String(text || ''));
+
+const shanghaiDay = (now = new Date()) => {
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const dateLabel = `${values.year}-${values.month}-${values.day}`;
+  const start = Date.parse(`${dateLabel}T00:00:00+08:00`);
+  return { dateLabel, start, end: start + 24 * 60 * 60 * 1000 };
+};
+
 class LarkMvpService {
   constructor(options = {}) {
     if (options.client) this.client = options.client;
@@ -53,6 +68,18 @@ class LarkMvpService {
       options.store ||
       new JsonTaskStore({ dir: path.join(__dirname, '../../data/lark_mvp_tasks'), idField: 'task_id' });
     this.intakeSchemaValidation = new Map();
+    this.senderQueues = new Map();
+  }
+
+  enqueueForSender(senderOpenId, work) {
+    const previous = this.senderQueues.get(senderOpenId) || Promise.resolve();
+    const next = previous.catch(() => undefined).then(work);
+    this.senderQueues.set(senderOpenId, next);
+    const cleanup = () => {
+      if (this.senderQueues.get(senderOpenId) === next) this.senderQueues.delete(senderOpenId);
+    };
+    next.then(cleanup, cleanup);
+    return next;
   }
 
   async ensureIntakeSchema(scope, tableKeys) {
@@ -87,6 +114,83 @@ class LarkMvpService {
     if (response.code !== 0) throw new Error(`发送飞书卡片失败: ${response.msg} (Code: ${response.code})`);
   }
 
+  async sendTodaySales(openId, now = new Date()) {
+    await this.ensureIntakeSchema('today_sales', ['salesDetail']);
+    const { dateLabel, start, end } = shanghaiDay(now);
+    const table = this.gateway.table('salesDetail');
+    const records = await this.gateway.listAll('salesDetail');
+    const rows = records
+      .filter((record) => {
+        const soldAt = Number(textValue(record?.fields?.[table.fields.soldAt]));
+        return soldAt >= start && soldAt < end;
+      })
+      .map((record) => ({
+        product: textValue(record.fields?.[table.fields.product]) || '未知编号',
+        size: textValue(record.fields?.[table.fields.size]),
+        quantity: Number(textValue(record.fields?.[table.fields.quantity]) || 0),
+        amount: Number(textValue(record.fields?.[table.fields.paidAmount]) || 0),
+        paymentMethod: textValue(record.fields?.[table.fields.paymentMethod]) || '未填写',
+        behavior: textValue(record.fields?.[table.fields.behavior]) || '未填写',
+      }));
+    const totalQuantity = rows.reduce((sum, row) => sum + row.quantity, 0);
+    const totalAmount = Math.round(rows.reduce((sum, row) => sum + row.amount, 0) * 100) / 100;
+    await this.sendCard(openId, todaySalesCard({ dateLabel, rows, totalQuantity, totalAmount }));
+    logInfo('lark.sales.today.sent', {
+      operator_open_id: openId,
+      date: dateLabel,
+      detail_count: rows.length,
+      total_quantity: totalQuantity,
+      total_amount: totalAmount,
+    });
+    return { rows, totalQuantity, totalAmount };
+  }
+
+  async handleBotMenu(event) {
+    const eventKey = event?.event_key || event?.event?.event_key;
+    const openId =
+      event?.operator?.operator_id?.open_id || event?.operator?.open_id || event?.event?.operator?.operator_id?.open_id;
+    if (!openId) throw new Error('机器人菜单事件缺少用户 open_id');
+    if (eventKey !== 'query_today_sales') throw new Error(`不支持的机器人菜单事件: ${eventKey}`);
+    return this.sendTodaySales(openId);
+  }
+
+  async replyText(messageId, message) {
+    const response = await this.client.im.message.reply({
+      path: { message_id: messageId },
+      data: { msg_type: 'text', content: JSON.stringify({ text: message }) },
+    });
+    if (response.code !== 0) throw new Error(`回复飞书消息失败: ${response.msg} (Code: ${response.code})`);
+    return response.data?.message_id || '';
+  }
+
+  async replyCard(messageId, card) {
+    const response = await this.client.im.message.reply({
+      path: { message_id: messageId },
+      data: { msg_type: 'interactive', content: JSON.stringify(card) },
+    });
+    if (response.code !== 0) throw new Error(`回复飞书卡片失败: ${response.msg} (Code: ${response.code})`);
+    return response.data?.message_id || '';
+  }
+
+  async acknowledgeMessage(messageId) {
+    const results = await Promise.allSettled([
+      this.client.im.messageReaction.create({
+        path: { message_id: messageId },
+        data: { reaction_type: { emoji_type: 'OK' } },
+      }),
+      this.replyText(messageId, '👀 已收到，正在识别销售信息，请稍候…'),
+    ]);
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        logWarn('lark.sales.acknowledgement.failed', {
+          message_id: messageId,
+          channel: index === 0 ? 'reaction' : 'reply',
+          error: result.reason?.message || String(result.reason),
+        });
+      }
+    });
+  }
+
   async acceptMessage(event) {
     const message = event?.message;
     const senderOpenId = event?.sender?.sender_id?.open_id;
@@ -111,6 +215,15 @@ class LarkMvpService {
   }
 
   async acceptSalesText({ message, senderOpenId, originalText }) {
+    if (!looksLikeSalesText(originalText)) {
+      logInfo('lark.message.ignored', {
+        message_id: message.message_id,
+        sender_open_id: senderOpenId,
+        reason: 'not_sales_candidate',
+        text_length: originalText.length,
+      });
+      return { accepted: false, reason: 'not_sales_candidate' };
+    }
     const taskId = idFor('sale', message.message_id);
     if (await this.store.get(taskId)) return { accepted: false, reason: 'duplicate', taskId };
     const task = await this.store.create({
@@ -128,7 +241,12 @@ class LarkMvpService {
       sender_open_id: senderOpenId,
       text_length: originalText.length,
     });
-    setImmediate(() => this.processSalesTask(taskId).catch((error) => this.handleTaskFailure(taskId, error)));
+    await this.acknowledgeMessage(message.message_id);
+    setImmediate(() =>
+      this.enqueueForSender(senderOpenId, () => this.processSalesTask(taskId)).catch((error) =>
+        this.handleTaskFailure(taskId, error)
+      )
+    );
     return { accepted: true, type: 'sale', taskId: task.task_id };
   }
 
@@ -181,8 +299,21 @@ class LarkMvpService {
   async processSalesTask(taskId) {
     const startedAt = Date.now();
     logInfo('lark.sales.processing.started', { task_id: taskId });
-    await this.ensureIntakeSchema('sales_intake', ['salesEntry']);
     const task = await this.store.get(taskId);
+    const parsed = await this.recognizer.parseSalesText(task.original_text);
+    if (parsed.intent !== 'sale') {
+      await this.store.update(taskId, { status: 'ignored', draft: parsed });
+      logInfo('lark.sales.processing.ignored', {
+        task_id: taskId,
+        sender_open_id: task.sender_open_id,
+        duration_ms: Date.now() - startedAt,
+        reason: 'unsupported_intent',
+      });
+      await this.sendText(task.sender_open_id, '未识别为当前支持的现货销售，未写入销售录单。');
+      return;
+    }
+
+    await this.ensureIntakeSchema('sales_intake', ['salesEntry']);
     const created = await this.gateway.create('salesEntry', {
       originalText: task.original_text,
       sender: person(task.sender_open_id),
@@ -194,7 +325,6 @@ class LarkMvpService {
     if (!salesEntryRecordId) throw new Error('销售录单未返回 record_id');
     await this.store.update(taskId, { sales_entry_record_id: salesEntryRecordId, status: 'parsing' });
 
-    const parsed = await this.recognizer.parseSalesText(task.original_text);
     const draft = {
       ...parsed,
       items: [
@@ -220,7 +350,7 @@ class LarkMvpService {
       await this.sendText(task.sender_open_id, `销售信息还缺：${draft.missing_fields.join('、')}。请补充后重新发送完整销售信息。`);
       return;
     }
-    await this.sendCard(task.sender_open_id, salesConfirmationCard(taskId, draft));
+    await this.replyCard(task.message_id, salesConfirmationCard(taskId, draft));
     logInfo('lark.sales.processing.completed', {
       task_id: taskId,
       sales_entry_record_id: salesEntryRecordId,
@@ -367,6 +497,15 @@ class LarkMvpService {
       return { toast: { type: 'info', content: '已取消' } };
     }
 
+    if (action === 'modify_sale' && task.type === 'sale') {
+      await this.store.update(draftId, { status: 'awaiting_correction' });
+      if (task.sales_entry_record_id) {
+        await this.gateway.update('salesEntry', task.sales_entry_record_id, { confirmStatus: '待修改' });
+      }
+      await this.sendText(operatorOpenId, '请重新发送一条完整、正确的销售信息；原草稿不会入账。');
+      return { toast: { type: 'info', content: '请重新发送修正后的完整销售信息' } };
+    }
+
     await this.store.update(draftId, { status: 'posting' });
     if (action === 'confirm_sale' && task.type === 'sale') {
       const startedAt = Date.now();
@@ -391,7 +530,12 @@ class LarkMvpService {
         duration_ms: Date.now() - startedAt,
         result: 'posted',
       });
-      return { toast: { type: 'success', content: '销售已入账，库存已更新' } };
+      return {
+        toast: {
+          type: 'success',
+          content: result.sideEffectsApplied ? '销售已入账，库存已更新' : '销售明细已确认',
+        },
+      };
     }
 
     if (action === 'confirm_purchase' && task.type === 'purchase') {
@@ -437,5 +581,6 @@ module.exports = {
   LarkMvpService,
   aggregateRecognizedItems,
   idFor,
+  looksLikeSalesText,
   parseContent,
 };

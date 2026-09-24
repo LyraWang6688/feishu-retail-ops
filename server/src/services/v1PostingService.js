@@ -34,6 +34,8 @@ class V1PostingService {
     this.references = options.references || new V1ReferenceResolver(this.gateway);
     this.queue = Promise.resolve();
     this.schemaValidation = new Map();
+    this.enableSaleSideEffects =
+      options.enableSaleSideEffects ?? process.env.ENABLE_SALE_SIDE_EFFECTS === 'true';
   }
 
   async ensureSchema(scope, tableKeys) {
@@ -351,16 +353,15 @@ class V1PostingService {
   }
 
   async _postSale(input) {
-    await this.ensureSchema('sale', [
+    const tableKeys = [
       'product',
       'behavior',
       'paymentMethod',
       'salesEntry',
       'salesDetail',
-      'inventoryLedger',
-      'liveInventory',
-      'moneyLedger',
-    ]);
+    ];
+    if (this.enableSaleSideEffects) tableKeys.push('inventoryLedger', 'liveInventory', 'moneyLedger');
+    await this.ensureSchema('sale', tableKeys);
     const occurredAt = Number(input.occurredAt || Date.now());
     const salesEntryRecordId = input.salesEntryRecordId;
     if (!salesEntryRecordId) throw new Error('缺少销售录单 record_id');
@@ -384,10 +385,10 @@ class V1PostingService {
         behavior.recordId,
         occurredAt
       );
-      const inventoryPlan = await this.prepareInventory(detailRows, -1);
+      const inventoryPlan = this.enableSaleSideEffects ? await this.prepareInventory(detailRows, -1) : null;
       const recovery = {
         detail_count: detailRows.filter((row) => row.recordId).length,
-        inventory_ledger_count: inventoryPlan.rows.filter((row) => row.ledger).length,
+        inventory_ledger_count: inventoryPlan?.rows.filter((row) => row.ledger).length || 0,
         money_flow_count: 0,
       };
       await this.createMissingSaleDetails(
@@ -399,16 +400,18 @@ class V1PostingService {
       );
       const detailRecordIds = detailRows.map((row) => row.recordId);
 
-      const inventoryResults = await this.applyPreparedInventory({
-        plan: inventoryPlan,
-        behaviorRecordId: behavior.recordId,
-        sourceNo,
-        operatorOpenId: input.operatorOpenId,
-        occurredAt,
-      });
+      const inventoryResults = this.enableSaleSideEffects
+        ? await this.applyPreparedInventory({
+            plan: inventoryPlan,
+            behaviorRecordId: behavior.recordId,
+            sourceNo,
+            operatorOpenId: input.operatorOpenId,
+            occurredAt,
+          })
+        : [];
 
       let moneyRecordId = '';
-      if (paidTotal > 0) {
+      if (this.enableSaleSideEffects && paidTotal > 0) {
         const existingFlow = await this.findMoneyFlow(
           sourceNo,
           '收入',
@@ -445,8 +448,15 @@ class V1PostingService {
         recovered_detail_count: recovery.detail_count,
         recovered_inventory_ledger_count: recovery.inventory_ledger_count,
         recovered_money_flow_count: recovery.money_flow_count,
+        side_effects_applied: this.enableSaleSideEffects,
       });
-      return { sourceNo, detailRecordIds, inventoryResults, moneyRecordId };
+      return {
+        sourceNo,
+        detailRecordIds,
+        inventoryResults,
+        moneyRecordId,
+        sideEffectsApplied: this.enableSaleSideEffects,
+      };
     } catch (error) {
       await this.gateway
         .update('salesEntry', salesEntryRecordId, {

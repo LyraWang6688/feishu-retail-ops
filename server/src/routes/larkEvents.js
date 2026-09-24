@@ -66,6 +66,20 @@ const createLarkEventsRouter = (options = {}) => {
       });
       return { toast: { type: 'info', content: '已收到，正在处理' } };
     },
+    'application.bot.menu_v6': (event) => {
+      checkToken(event);
+      const openId =
+        event?.operator?.operator_id?.open_id || event?.operator?.open_id || event?.event?.operator?.operator_id?.open_id;
+      const eventKey = event?.event_key || event?.event?.event_key;
+      logInfo('lark.bot.menu.received', { event_key: eventKey, operator_open_id: openId });
+      setImmediate(() => {
+        service.handleBotMenu(event).catch(async (error) => {
+          logError('lark.bot.menu.failed', { event_key: eventKey, error: error.message });
+          if (openId) await service.sendText(openId, `查询失败：${error.message}`).catch(() => undefined);
+        });
+      });
+      return {};
+    },
   });
 
   router.post('/', lark.adaptExpress(dispatcher, { autoChallenge: true }));

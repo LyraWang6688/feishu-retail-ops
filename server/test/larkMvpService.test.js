@@ -4,7 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
-const { LarkMvpService, aggregateRecognizedItems } = require('../src/services/larkMvpService');
+const { LarkMvpService, aggregateRecognizedItems, looksLikeSalesText } = require('../src/services/larkMvpService');
 
 const makeStore = () =>
   new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'lark-mvp-test-')), idField: 'task_id' });
@@ -20,6 +20,7 @@ const makeService = () => {
     store: makeStore(),
   });
   service.sendText = async (openId, message) => sent.push({ openId, message });
+  service.acknowledgeMessage = async () => undefined;
   service.processSalesTask = async () => undefined;
   return { service, sent };
 };
@@ -55,6 +56,22 @@ test('group messages are ignored even when message content is valid', async () =
     },
   });
   assert.deepEqual(result, { accepted: false, reason: 'not_p2p' });
+});
+
+test('ordinary private chat without numbers is not accepted as a sales task', async () => {
+  const { service } = makeService();
+  const result = await service.acceptMessage({
+    sender: { sender_id: { open_id: 'ou_1' } },
+    message: {
+      message_id: 'om_chat',
+      chat_type: 'p2p',
+      message_type: 'text',
+      content: JSON.stringify({ text: '好的' }),
+    },
+  });
+  assert.deepEqual(result, { accepted: false, reason: 'not_sales_candidate' });
+  assert.equal(looksLikeSalesText('好的'), false);
+  assert.equal(looksLikeSalesText('8088-26棕38，230元微信'), true);
 });
 
 test('purchase images are isolated by private-chat sender and wait for explicit completion', async () => {
@@ -124,7 +141,7 @@ test('sales intake keeps behavior in draft and writes only intake metadata befor
     },
     store,
   });
-  service.sendCard = async (openId, card) => cards.push({ openId, card });
+  service.replyCard = async (messageId, card) => cards.push({ messageId, card });
   await store.create({
     task_id: 'sale_test',
     type: 'sale',
@@ -146,4 +163,94 @@ test('sales intake keeps behavior in draft and writes only intake metadata befor
   assert.equal('behavior' in parsedUpdate.fields, false);
   assert.equal(cards.length, 1);
   assert.match(JSON.stringify(cards[0].card), /现货销售/);
+});
+
+test('unsupported text is parsed but does not create a sales entry record', async () => {
+  const store = makeStore();
+  let createCount = 0;
+  const sent = [];
+  const service = new LarkMvpService({
+    client: {},
+    gateway: {
+      create: async () => {
+        createCount += 1;
+        return { recordId: 'unexpected' };
+      },
+    },
+    references: {},
+    posting: {},
+    recognizer: {
+      parseSalesText: async () => ({
+        intent: 'unsupported',
+        sales_behavior: '换货',
+        behavior_code: '',
+        missing_fields: ['当前只支持现货销售'],
+      }),
+    },
+    store,
+  });
+  service.sendText = async (openId, message) => sent.push({ openId, message });
+  await store.create({
+    task_id: 'sale_unsupported',
+    type: 'sale',
+    status: 'received',
+    sender_open_id: 'ou_2',
+    original_text: '换8088-26棕38码',
+  });
+
+  await service.processSalesTask('sale_unsupported');
+
+  assert.equal(createCount, 0);
+  assert.equal((await store.get('sale_unsupported')).status, 'ignored');
+  assert.match(sent[0].message, /未写入销售录单/);
+});
+
+test('today sales menu returns only confirmed detail rows from the Shanghai calendar day', async () => {
+  const cards = [];
+  const fields = {
+    product: '编号',
+    size: '尺码',
+    quantity: '数量',
+    paidAmount: '实付金额',
+    paymentMethod: '支付方式',
+    behavior: '销售行为',
+    soldAt: '销售日',
+  };
+  const service = new LarkMvpService({
+    client: {},
+    gateway: {
+      validateTables: async () => [],
+      table: () => ({ fields }),
+      listAll: async () => [
+        {
+          record_id: 'today',
+          fields: {
+            编号: [{ text: '8088-26棕' }],
+            尺码: 38,
+            数量: 1,
+            实付金额: 230,
+            支付方式: [{ text: '微信' }],
+            销售行为: [{ text: '现货销售' }],
+            销售日: Date.parse('2026-09-24T10:00:00+08:00'),
+          },
+        },
+        {
+          record_id: 'yesterday',
+          fields: { 销售日: Date.parse('2026-09-23T10:00:00+08:00') },
+        },
+      ],
+    },
+    references: {},
+    posting: {},
+    recognizer: {},
+    store: makeStore(),
+  });
+  service.sendCard = async (openId, card) => cards.push({ openId, card });
+
+  const result = await service.sendTodaySales('ou_1', new Date('2026-09-24T02:00:00Z'));
+
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.totalQuantity, 1);
+  assert.equal(result.totalAmount, 230);
+  assert.match(JSON.stringify(cards[0].card), /8088-26棕/);
 });
