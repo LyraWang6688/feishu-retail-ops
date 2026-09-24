@@ -174,10 +174,16 @@ class LarkMvpService {
 
   async acknowledgeMessage(messageId) {
     const results = await Promise.allSettled([
-      this.client.im.messageReaction.create({
-        path: { message_id: messageId },
-        data: { reaction_type: { emoji_type: 'OK' } },
-      }),
+      this.client.im.messageReaction
+        .create({
+          path: { message_id: messageId },
+          data: { reaction_type: { emoji_type: 'OK' } },
+        })
+        .then((response) => {
+          if (response.code !== 0) {
+            throw new Error(`添加飞书表情回复失败: ${response.msg} (Code: ${response.code})`);
+          }
+        }),
       this.replyText(messageId, '👀 已收到，正在识别销售信息，请稍候…'),
     ]);
     results.forEach((result, index) => {
@@ -485,6 +491,9 @@ class LarkMvpService {
     if (task.sender_open_id !== operatorOpenId) throw new Error('只能由原始发送人确认该草稿');
     if (['posted', 'cancelled'].includes(task.status)) return { toast: { type: 'info', content: '该草稿已处理' } };
     if (task.status === 'posting') return { toast: { type: 'info', content: '正在入账，请勿重复点击' } };
+    if (task.status === 'awaiting_correction' && action !== 'cancel') {
+      return { toast: { type: 'info', content: '该草稿正在等待修正，请重新发送完整销售信息' } };
+    }
 
     if (action === 'cancel') {
       await this.store.update(draftId, { status: 'cancelled' });
