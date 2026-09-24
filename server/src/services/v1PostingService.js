@@ -91,7 +91,7 @@ class V1PostingService {
     return record || null;
   }
 
-  async reconcileSaleDetails(items, salesEntryRecordId, paymentMethodRecordId, occurredAt) {
+  async reconcileSaleDetails(items, salesEntryRecordId, paymentMethodRecordId, behaviorRecordId, occurredAt) {
     const existing = (await this.listRecords('salesDetail')).filter((record) =>
       this.relationHas('salesDetail', record, 'salesEntry', salesEntryRecordId)
     );
@@ -102,9 +102,11 @@ class V1PostingService {
         const paymentMatches = paymentMethodRecordId
           ? this.relationHas('salesDetail', candidate, 'paymentMethod', paymentMethodRecordId)
           : linkedRecordIds(this.field('salesDetail', candidate, 'paymentMethod')).length === 0;
+        const behaviorMatches = this.relationHas('salesDetail', candidate, 'behavior', behaviorRecordId);
         return (
           productMatches &&
           paymentMatches &&
+          behaviorMatches &&
           sameNumber(textValue(this.field('salesDetail', candidate, 'size')), item.size) &&
           sameNumber(textValue(this.field('salesDetail', candidate, 'quantity')), item.quantity) &&
           sameNumber(textValue(this.field('salesDetail', candidate, 'paidAmount')), item.paidAmount) &&
@@ -139,7 +141,7 @@ class V1PostingService {
     return rows;
   }
 
-  async createMissingSaleDetails(rows, salesEntryRecordId, paymentMethodRecordId, occurredAt) {
+  async createMissingSaleDetails(rows, salesEntryRecordId, paymentMethodRecordId, behaviorRecordId, occurredAt) {
     for (const row of rows) {
       if (row.recordId) continue;
       const detail = await this.gateway.create('salesDetail', {
@@ -151,6 +153,7 @@ class V1PostingService {
         paymentMethod: relation(paymentMethodRecordId),
         soldAt: occurredAt,
         salesEntry: relation(salesEntryRecordId),
+        behavior: relation(behaviorRecordId),
       });
       row.recordId = detail.recordId;
     }
@@ -378,6 +381,7 @@ class V1PostingService {
         allocated,
         salesEntryRecordId,
         paymentMethod?.recordId || '',
+        behavior.recordId,
         occurredAt
       );
       const inventoryPlan = await this.prepareInventory(detailRows, -1);
@@ -390,6 +394,7 @@ class V1PostingService {
         detailRows,
         salesEntryRecordId,
         paymentMethod?.recordId || '',
+        behavior.recordId,
         occurredAt
       );
       const detailRecordIds = detailRows.map((row) => row.recordId);
@@ -434,7 +439,6 @@ class V1PostingService {
       await this.gateway.update('salesEntry', salesEntryRecordId, {
         confirmStatus: '已入账',
         postedAt: occurredAt,
-        behavior: relation(behavior.recordId),
       });
       logInfo('v1.sale.posted', {
         sales_entry_record_id: salesEntryRecordId,

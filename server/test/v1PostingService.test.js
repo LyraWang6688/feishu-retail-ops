@@ -15,6 +15,7 @@ const TABLES = {
       gift: '赠品',
       paymentMethod: '支付方式',
       salesEntry: '销售单',
+      behavior: '销售行为',
     },
   },
   purchaseInbound: {

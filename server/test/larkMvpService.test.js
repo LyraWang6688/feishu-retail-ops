@@ -89,7 +89,7 @@ test('recognized purchase items with same SKU and size are aggregated', () => {
   );
 });
 
-test('sales intake writes only source metadata and recognized cash-sale behavior before confirmation', async () => {
+test('sales intake keeps behavior in draft and writes only intake metadata before confirmation', async () => {
   const store = makeStore();
   const calls = [];
   const cards = [];
@@ -105,12 +105,7 @@ test('sales intake writes only source metadata and recognized cash-sale behavior
         calls.push({ operation: 'update', tableKey, recordId, fields });
       },
     },
-    references: {
-      resolveBehavior: async (code) => {
-        assert.equal(code, 'SALE_CASH');
-        return { recordId: 'rec_behavior_cash' };
-      },
-    },
+    references: {},
     posting: {},
     recognizer: {
       parseSalesText: async () => ({
@@ -148,7 +143,7 @@ test('sales intake writes only source metadata and recognized cash-sale behavior
   const parsedUpdate = calls.find(
     (call) => call.operation === 'update' && call.fields.parseStatus === '解析成功'
   );
-  assert.deepEqual(parsedUpdate.fields.behavior, ['rec_behavior_cash']);
+  assert.equal('behavior' in parsedUpdate.fields, false);
   assert.equal(cards.length, 1);
   assert.match(JSON.stringify(cards[0].card), /现货销售/);
 });

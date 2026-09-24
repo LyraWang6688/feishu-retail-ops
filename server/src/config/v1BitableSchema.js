@@ -54,7 +54,6 @@ const V1_BITABLE_SCHEMA = {
         parseSummary: '解析结果摘要',
         failureReason: '失败原因',
         postedAt: '入账时间',
-        behavior: '销售行为',
       },
     },
     salesDetail: {
@@ -70,6 +69,7 @@ const V1_BITABLE_SCHEMA = {
         paymentMethod: '支付方式',
         soldAt: '销售日',
         salesEntry: '销售单',
+        behavior: '销售行为',
       },
     },
     purchaseBatch: {

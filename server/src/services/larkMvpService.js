@@ -195,8 +195,6 @@ class LarkMvpService {
     await this.store.update(taskId, { sales_entry_record_id: salesEntryRecordId, status: 'parsing' });
 
     const parsed = await this.recognizer.parseSalesText(task.original_text);
-    const behavior =
-      parsed.behavior_code === 'SALE_CASH' ? await this.references.resolveBehavior(parsed.behavior_code) : null;
     const draft = {
       ...parsed,
       items: [
@@ -213,7 +211,6 @@ class LarkMvpService {
       parseStatus: draft.missing_fields?.length ? '需补充' : '解析成功',
       parseSummary: JSON.stringify(draft),
       failureReason: draft.missing_fields?.length ? draft.missing_fields.join('、') : '',
-      behavior: relation(behavior?.recordId),
     });
     await this.store.update(taskId, {
       status: draft.missing_fields?.length ? 'needs_info' : 'ready_to_confirm',
