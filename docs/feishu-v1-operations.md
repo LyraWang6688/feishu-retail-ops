@@ -4,8 +4,10 @@
 
 飞书私聊机器人是 V1 唯一继续开发的业务入口：
 
-- 销售：用户发送自然语言，系统解析后发确认卡片；确认后写销售明细、库存流水、实时库存和资金流水。
-- 采购：用户连续发送到货图片并回复“采购完成”；系统识别、补充信息并确认后写采购入库、库存流水、实时库存和供应商往来款。
+- 销售：用户发送自然语言，系统解析后发确认卡片；确认后写销售明细。启用销售库存开关后，再新增负数库存流水并扣减实时库存。
+- 采购：用户连续发送到货图片并回复“采购完成”；系统识别、补充信息并确认后写采购入库。启用采购库存开关后，再新增正数库存流水并增加实时库存。
+- 资金：当前不使用独立资金流水和供应商往来表，金额和支付方式保存在销售、采购业务表中。
+- 库存联动默认关闭；库存 Schema 验证通过后，分别用 `ENABLE_SALES_INVENTORY=true` 和 `ENABLE_PURCHASE_INVENTORY=true` 启用。
 - 网页工作台：后续复用同一套业务服务和数据访问层，不复制入账逻辑。
 - 微信小程序：冻结，不新增功能；当前保留，仅用于平稳退役。
 
@@ -79,7 +81,9 @@ pm2 show box2bitable-server
 pm2 logs box2bitable-server --lines 200
 curl -sS http://127.0.0.1:5000/health
 curl -sS http://127.0.0.1:5000/api/lark/events/health
-pnpm run v1:schema-check
+pnpm run v1:schema-check:sales
+pnpm run v1:schema-check:purchase
+pnpm run v1:schema-check:inventory
 ```
 
 按一条业务排查时，优先用 `message_id`、`task_id`、`source_no` 或
@@ -98,7 +102,7 @@ pm2 logs box2bitable-server --nostream --lines 2000 | grep 'bitable.record.*fail
 4. AI 解析是否完成；
 5. 用户是否点击确认卡片；
 6. 每一张表是否返回 `record_id`；
-7. 最后回读销售录单/采购批次、库存流水、实时库存和资金或往来流水。
+7. 最后回读销售录单/采购批次；启用库存模块后，再核对库存流水和实时库存。
 
 “事件已收到”不等于“已入账”；只有出现 `posting.completed`，且相关飞书记录回读一致，才算完成。
 

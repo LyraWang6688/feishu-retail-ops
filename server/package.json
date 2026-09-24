@@ -9,7 +9,11 @@
     "pm2:start": "pm2 start ecosystem.config.js",
     "pm2:reload": "pm2 reload ecosystem.config.js --only box2bitable-server",
     "generate:modules": "node scripts/generate_modules.js",
-    "v1:schema-check": "node scripts/validate_v1_schema.js",
+    "v1:schema-check": "node scripts/validate_v1_schema.js sales",
+    "v1:schema-check:sales": "node scripts/validate_v1_schema.js sales",
+    "v1:schema-check:purchase": "node scripts/validate_v1_schema.js purchase",
+    "v1:schema-check:inventory": "node scripts/validate_v1_schema.js inventory",
+    "v1:schema-check:all": "node scripts/validate_v1_schema.js all",
     "sales:sample": "node scripts/write_sales_sample.js",
     "test": "node --test \"test/**/*.test.js\""
   },

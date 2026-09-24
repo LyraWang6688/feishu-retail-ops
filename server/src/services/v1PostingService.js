@@ -1,5 +1,6 @@
 const { V1BitableGateway, linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
+const { InventoryService } = require('./inventoryService');
 const { logError, logInfo } = require('../utils/logger');
 
 const money = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
@@ -32,10 +33,13 @@ class V1PostingService {
   constructor(options = {}) {
     this.gateway = options.gateway || new V1BitableGateway();
     this.references = options.references || new V1ReferenceResolver(this.gateway);
+    this.inventory = options.inventory || new InventoryService({ gateway: this.gateway });
     this.queue = Promise.resolve();
     this.schemaValidation = new Map();
-    this.enableSaleSideEffects =
-      options.enableSaleSideEffects ?? process.env.ENABLE_SALE_SIDE_EFFECTS === 'true';
+    this.enableSalesInventory =
+      options.enableSalesInventory ?? process.env.ENABLE_SALES_INVENTORY === 'true';
+    this.enablePurchaseInventory =
+      options.enablePurchaseInventory ?? process.env.ENABLE_PURCHASE_INVENTORY === 'true';
   }
 
   async ensureSchema(scope, tableKeys) {
@@ -181,187 +185,12 @@ class V1PostingService {
     return rows;
   }
 
-  async findMoneyFlow(sourceNo, direction, amount, supplierRecordId = '', paymentMethodRecordId = '') {
-    const records = await this.listRecords('moneyLedger');
-    const candidates = records.filter((record) => {
-        const supplierMatches = supplierRecordId
-          ? this.relationHas('moneyLedger', record, 'supplier', supplierRecordId)
-          : true;
-        return (
-          supplierMatches &&
-          String(textValue(this.field('moneyLedger', record, 'sourceNo'))) === String(sourceNo) &&
-          String(textValue(this.field('moneyLedger', record, 'direction'))) === direction
-        );
-      });
-    if (candidates.length > 1) throw new Error(`来源单号 ${sourceNo} 存在重复资金流水，已停止自动重试`);
-    const record = candidates[0] || null;
-    if (!record) return null;
-    const amountMatches = sameNumber(textValue(this.field('moneyLedger', record, 'amount')), amount);
-    const paymentMethodMatches = paymentMethodRecordId
-      ? this.relationHas('moneyLedger', record, 'paymentMethod', paymentMethodRecordId)
-      : true;
-    if (!amountMatches || !paymentMethodMatches) {
-      throw new Error(`来源单号 ${sourceNo} 的资金流水与当前付款信息不一致，已停止自动重试`);
-    }
-    return record;
-  }
-
-  async findSupplierPayable(sourceNo, change, supplierRecordId) {
-    const records = await this.listRecords('supplierPayable');
-    const candidates = records.filter(
-        (record) =>
-          this.relationHas('supplierPayable', record, 'supplier', supplierRecordId) &&
-          String(textValue(this.field('supplierPayable', record, 'sourceNo'))) === String(sourceNo) &&
-          Math.sign(Number(textValue(this.field('supplierPayable', record, 'payableChange')))) === Math.sign(change)
-    );
-    if (candidates.length > 1) throw new Error(`来源单号 ${sourceNo} 存在重复供应商往来流水，已停止自动重试`);
-    const record = candidates[0] || null;
-    if (!record) return null;
-    if (!sameNumber(textValue(this.field('supplierPayable', record, 'payableChange')), change)) {
-      throw new Error(`来源单号 ${sourceNo} 的供应商往来流水与当前金额不一致，已停止自动重试`);
-    }
-    return record;
-  }
-
-  async prepareInventory(rows, direction) {
-    const ledgers = await this.listRecords('inventoryLedger');
-    const groups = new Map();
-
-    for (const row of rows) {
-      const stockKey = `${row.item.productRecordId}|${row.item.size}`;
-      if (!groups.has(stockKey)) {
-        const liveRecord = await this.references.findLiveInventory(row.item.productRecordId, row.item.size);
-        const quantityField = this.gateway.table('liveInventory').fields.quantity;
-        groups.set(stockKey, {
-          stockKey,
-          productRecordId: row.item.productRecordId,
-          size: row.item.size,
-          liveRecord,
-          currentQuantity: Number(textValue(liveRecord?.fields?.[quantityField]) || 0),
-          rows: [],
-        });
-      }
-      row.ledger = row.recordId
-        ? ledgers.find(
-            (record) => String(textValue(this.field('inventoryLedger', record, 'sourceRecordId'))) === row.recordId
-          ) || null
-        : null;
-      groups.get(stockKey).rows.push(row);
-    }
-
-    for (const group of groups.values()) {
-      const firstExisting = group.rows.find((row) => row.ledger);
-      let cursor = firstExisting
-        ? Number(textValue(this.field('inventoryLedger', firstExisting.ledger, 'beforeQuantity')))
-        : group.currentQuantity;
-      const allowedCurrentQuantities = new Set([cursor]);
-      let sawMissingLedger = false;
-
-      for (const row of group.rows) {
-        const expectedChange = direction * row.item.quantity;
-        if (row.ledger) {
-          if (sawMissingLedger) throw new Error(`库存流水顺序异常：${group.stockKey}`);
-          const before = Number(textValue(this.field('inventoryLedger', row.ledger, 'beforeQuantity')));
-          const after = Number(textValue(this.field('inventoryLedger', row.ledger, 'afterQuantity')));
-          const change = Number(textValue(this.field('inventoryLedger', row.ledger, 'quantityChange')));
-          if (!sameNumber(before, cursor) || !sameNumber(change, expectedChange) || !sameNumber(after, before + change)) {
-            throw new Error(`库存流水与待入账内容不一致：${group.stockKey}`);
-          }
-          row.beforeQuantity = before;
-          row.afterQuantity = after;
-          row.change = change;
-          cursor = after;
-          allowedCurrentQuantities.add(after);
-          continue;
-        }
-
-        sawMissingLedger = true;
-        row.beforeQuantity = cursor;
-        row.change = expectedChange;
-        row.afterQuantity = cursor + expectedChange;
-        if (row.afterQuantity < 0) {
-          throw new Error(
-            `库存不足：${row.item.productNumber || row.item.itemNo || row.item.productRecordId} ${row.item.size}码，当前${cursor}，需要${row.item.quantity}`
-          );
-        }
-        cursor = row.afterQuantity;
-      }
-
-      if (firstExisting && ![...allowedCurrentQuantities].some((value) => sameNumber(value, group.currentQuantity))) {
-        throw new Error(`实时库存与恢复点冲突：${group.stockKey}，当前${group.currentQuantity}`);
-      }
-      group.targetQuantity = cursor;
-    }
-
-    return { rows, groups };
-  }
-
-  async applyPreparedInventory({ plan, behaviorRecordId, sourceNo, operatorOpenId, occurredAt }) {
-    const results = [];
-    for (const row of plan.rows) {
-      if (!row.recordId) throw new Error('业务明细未返回 record_id，不能写库存流水');
-      if (!row.ledger) {
-        const created = await this.gateway.create('inventoryLedger', {
-          sourceRecordId: row.recordId,
-          sourceNo,
-          quantityChange: row.change,
-          beforeQuantity: row.beforeQuantity,
-          afterQuantity: row.afterQuantity,
-          occurredAt,
-          operator: person(operatorOpenId),
-          postingStatus: '已入账',
-          size: row.item.size,
-          product: relation(row.item.productRecordId),
-          behavior: relation(behaviorRecordId),
-        });
-        row.ledger = { record_id: created.recordId };
-      }
-    }
-
-    for (const group of plan.groups.values()) {
-      let liveRecordId = group.liveRecord?.record_id || '';
-      if (liveRecordId) {
-        if (!sameNumber(group.currentQuantity, group.targetQuantity)) {
-          await this.gateway.update('liveInventory', liveRecordId, {
-            quantity: group.targetQuantity,
-            operator: person(operatorOpenId),
-            updatedAt: occurredAt,
-          });
-        }
-      } else {
-        const live = await this.gateway.create('liveInventory', {
-          product: relation(group.productRecordId),
-          size: group.size,
-          quantity: group.targetQuantity,
-          operator: person(operatorOpenId),
-          updatedAt: occurredAt,
-        });
-        liveRecordId = live.recordId;
-      }
-      group.liveRecordId = liveRecordId;
-    }
-
-    for (const row of plan.rows) {
-      const stockKey = `${row.item.productRecordId}|${row.item.size}`;
-      results.push({ ledgerRecordId: row.ledger.record_id, liveRecordId: plan.groups.get(stockKey).liveRecordId });
-    }
-    return results;
-  }
-
   postSale(input) {
     return this.runSerial(() => this._postSale(input));
   }
 
   async _postSale(input) {
-    const tableKeys = [
-      'product',
-      'behavior',
-      'paymentMethod',
-      'salesEntry',
-      'salesDetail',
-    ];
-    if (this.enableSaleSideEffects) tableKeys.push('inventoryLedger', 'liveInventory', 'moneyLedger');
-    await this.ensureSchema('sale', tableKeys);
+    await this.ensureSchema('sale', ['product', 'behavior', 'paymentMethod', 'salesEntry', 'salesDetail']);
     const occurredAt = Number(input.occurredAt || Date.now());
     const salesEntryRecordId = input.salesEntryRecordId;
     if (!salesEntryRecordId) throw new Error('缺少销售录单 record_id');
@@ -385,12 +214,7 @@ class V1PostingService {
         behavior.recordId,
         occurredAt
       );
-      const inventoryPlan = this.enableSaleSideEffects ? await this.prepareInventory(detailRows, -1) : null;
-      const recovery = {
-        detail_count: detailRows.filter((row) => row.recordId).length,
-        inventory_ledger_count: inventoryPlan?.rows.filter((row) => row.ledger).length || 0,
-        money_flow_count: 0,
-      };
+      const recoveredDetailCount = detailRows.filter((row) => row.recordId).length;
       await this.createMissingSaleDetails(
         detailRows,
         salesEntryRecordId,
@@ -399,43 +223,18 @@ class V1PostingService {
         occurredAt
       );
       const detailRecordIds = detailRows.map((row) => row.recordId);
-
-      const inventoryResults = this.enableSaleSideEffects
-        ? await this.applyPreparedInventory({
-            plan: inventoryPlan,
-            behaviorRecordId: behavior.recordId,
-            sourceNo,
-            operatorOpenId: input.operatorOpenId,
-            occurredAt,
-          })
-        : [];
-
-      let moneyRecordId = '';
-      if (this.enableSaleSideEffects && paidTotal > 0) {
-        const existingFlow = await this.findMoneyFlow(
-          sourceNo,
-          '收入',
-          paidTotal,
-          '',
-          paymentMethod?.recordId || ''
-        );
-        if (existingFlow) {
-          moneyRecordId = existingFlow.record_id;
-          recovery.money_flow_count = 1;
-        }
-        else {
-          const flow = await this.gateway.create('moneyLedger', {
-            sourceNo,
-            direction: '收入',
-            amount: paidTotal,
-            paymentMethod: relation(paymentMethod?.recordId),
-            occurredAt,
-            operator: person(input.operatorOpenId),
-            postingStatus: '已入账',
-            remark: input.remark || '',
-            behavior: relation(behavior.recordId),
-          });
-          moneyRecordId = flow.recordId;
+      const inventoryResults = [];
+      if (this.enableSalesInventory) {
+        for (const row of detailRows) {
+          inventoryResults.push(
+            await this.inventory.applySale({
+              salesDetailRecordId: row.recordId,
+              productRecordId: row.item.productRecordId,
+              size: row.item.size,
+              quantity: row.item.quantity,
+              occurredAt,
+            })
+          );
         }
       }
 
@@ -445,17 +244,14 @@ class V1PostingService {
       logInfo('v1.sale.posted', {
         sales_entry_record_id: salesEntryRecordId,
         item_count: allocated.length,
-        recovered_detail_count: recovery.detail_count,
-        recovered_inventory_ledger_count: recovery.inventory_ledger_count,
-        recovered_money_flow_count: recovery.money_flow_count,
-        side_effects_applied: this.enableSaleSideEffects,
+        recovered_detail_count: recoveredDetailCount,
+        inventory_applied: this.enableSalesInventory,
       });
       return {
         sourceNo,
         detailRecordIds,
         inventoryResults,
-        moneyRecordId,
-        sideEffectsApplied: this.enableSaleSideEffects,
+        inventoryApplied: this.enableSalesInventory,
       };
     } catch (error) {
       await this.gateway
@@ -474,17 +270,7 @@ class V1PostingService {
   }
 
   async _postPurchase(input) {
-    await this.ensureSchema('purchase', [
-      'product',
-      'behavior',
-      'supplier',
-      'purchaseBatch',
-      'purchaseInbound',
-      'inventoryLedger',
-      'liveInventory',
-      'supplierPayable',
-      'moneyLedger',
-    ]);
+    await this.ensureSchema('purchase', ['product', 'supplier', 'purchaseBatch', 'purchaseInbound']);
     const occurredAt = Number(input.occurredAt || Date.now());
     const batchRecordId = input.batchRecordId;
     if (!batchRecordId) throw new Error('缺少采购到货批次 record_id');
@@ -498,7 +284,6 @@ class V1PostingService {
       await this.gateway.update('purchaseBatch', batchRecordId, {
         supplier: relation(input.supplierRecordId),
       });
-      const behavior = await this.references.resolveBehavior('PURCHASE_IN');
       const resolved = await this.resolveItems(input.items);
       const normalized = resolved.map((item) => ({
         ...item,
@@ -506,102 +291,36 @@ class V1PostingService {
       }));
       const sourceNo = await this.getDocumentNo('purchaseBatch', batchRecordId, 'batchNo');
       const inboundRows = await this.reconcilePurchaseInbound(normalized, batchRecordId);
-      const inventoryPlan = await this.prepareInventory(inboundRows, 1);
-      const recovery = {
-        inbound_count: inboundRows.filter((row) => row.recordId).length,
-        inventory_ledger_count: inventoryPlan.rows.filter((row) => row.ledger).length,
-        payable_count: 0,
-        money_flow_count: 0,
-        payable_payment_count: 0,
-      };
+      const recoveredInboundCount = inboundRows.filter((row) => row.recordId).length;
       await this.createMissingPurchaseInbound(inboundRows, batchRecordId, input.operatorOpenId, occurredAt);
       const inboundRecordIds = inboundRows.map((row) => row.recordId);
-
-      const inventoryResults = await this.applyPreparedInventory({
-        plan: inventoryPlan,
-        behaviorRecordId: behavior.recordId,
-        sourceNo,
-        operatorOpenId: input.operatorOpenId,
-        occurredAt,
-      });
-
-      const payableTotal = money(normalized.reduce((sum, item) => sum + item.quantity * item.unitCost, 0));
-      let payable = await this.findSupplierPayable(sourceNo, payableTotal, input.supplierRecordId);
-      if (payable) recovery.payable_count = 1;
-      else {
-        const created = await this.gateway.create('supplierPayable', {
-          supplier: relation(input.supplierRecordId),
-          sourceNo,
-          payableChange: payableTotal,
-          occurredAt,
-          operator: person(input.operatorOpenId),
-          postingStatus: '已入账',
-          behavior: relation(behavior.recordId),
-        });
-        payable = { record_id: created.recordId };
-      }
-
-      let paymentResult = null;
-      if (input.payment?.amount) {
-        const paymentAmount = positiveNumber(input.payment.amount, '付款金额');
-        if (paymentAmount > payableTotal) throw new Error('本次付款金额不能大于本批次入库应付金额');
-        const paymentBehavior = await this.references.resolveBehavior('SUPPLIER_PAYMENT');
-        const paymentMethod = await this.references.resolvePaymentMethod(input.payment.method);
-        let moneyFlow = await this.findMoneyFlow(
-          sourceNo,
-          '支出',
-          paymentAmount,
-          input.supplierRecordId,
-          paymentMethod?.recordId || ''
-        );
-        if (moneyFlow) recovery.money_flow_count = 1;
-        else {
-          const created = await this.gateway.create('moneyLedger', {
-            sourceNo,
-            direction: '支出',
-            amount: paymentAmount,
-            paymentMethod: relation(paymentMethod?.recordId),
-            occurredAt,
-            operator: person(input.operatorOpenId),
-            postingStatus: '已入账',
-            supplier: relation(input.supplierRecordId),
-            behavior: relation(paymentBehavior.recordId),
-          });
-          moneyFlow = { record_id: created.recordId };
+      const inventoryResults = [];
+      if (this.enablePurchaseInventory) {
+        for (const row of inboundRows) {
+          inventoryResults.push(
+            await this.inventory.applyPurchase({
+              purchaseInboundRecordId: row.recordId,
+              productRecordId: row.item.productRecordId,
+              size: row.item.size,
+              quantity: row.item.quantity,
+              occurredAt,
+            })
+          );
         }
-        let payablePayment = await this.findSupplierPayable(sourceNo, -paymentAmount, input.supplierRecordId);
-        if (payablePayment) recovery.payable_payment_count = 1;
-        else {
-          const created = await this.gateway.create('supplierPayable', {
-            supplier: relation(input.supplierRecordId),
-            sourceNo,
-            payableChange: -paymentAmount,
-            occurredAt,
-            operator: person(input.operatorOpenId),
-            postingStatus: '已入账',
-            behavior: relation(paymentBehavior.recordId),
-          });
-          payablePayment = { record_id: created.recordId };
-        }
-        paymentResult = { moneyRecordId: moneyFlow.record_id, payableRecordId: payablePayment.record_id };
       }
 
       await this.gateway.update('purchaseBatch', batchRecordId, { confirmStatus: '已入账' });
       logInfo('v1.purchase.posted', {
         batch_record_id: batchRecordId,
         item_count: normalized.length,
-        recovered_inbound_count: recovery.inbound_count,
-        recovered_inventory_ledger_count: recovery.inventory_ledger_count,
-        recovered_payable_count: recovery.payable_count,
-        recovered_money_flow_count: recovery.money_flow_count,
-        recovered_payable_payment_count: recovery.payable_payment_count,
+        recovered_inbound_count: recoveredInboundCount,
+        inventory_applied: this.enablePurchaseInventory,
       });
       return {
         sourceNo,
         inboundRecordIds,
         inventoryResults,
-        payableRecordId: payable.record_id,
-        paymentResult,
+        inventoryApplied: this.enablePurchaseInventory,
       };
     } catch (error) {
       await this.gateway

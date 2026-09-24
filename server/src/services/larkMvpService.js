@@ -542,7 +542,7 @@ class LarkMvpService {
       return {
         toast: {
           type: 'success',
-          content: result.sideEffectsApplied ? '销售已入账，库存已更新' : '销售明细已确认',
+          content: result.inventoryApplied ? '销售已确认，库存已更新' : '销售明细已确认',
         },
       };
     }
@@ -571,7 +571,12 @@ class LarkMvpService {
         duration_ms: Date.now() - startedAt,
         result: 'posted',
       });
-      return { toast: { type: 'success', content: '采购已入库，库存与应付已更新' } };
+      return {
+        toast: {
+          type: 'success',
+          content: result.inventoryApplied ? '采购已入库，库存已更新' : '采购入库明细已确认',
+        },
+      };
     }
     throw new Error(`不支持的卡片动作: ${action}`);
   }
