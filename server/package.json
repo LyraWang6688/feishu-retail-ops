@@ -15,7 +15,7 @@
     "v1:schema-check:inventory": "node scripts/validate_v1_schema.js inventory",
     "v1:schema-check:all": "node scripts/validate_v1_schema.js all",
     "sales:sample": "node scripts/write_sales_sample.js",
-    "test": "node --test \"test/**/*.test.js\""
+    "test": "node --test"
   },
   "keywords": [
     "shoe-box",
