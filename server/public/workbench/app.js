@@ -1,9 +1,8 @@
 const $ = (id) => document.getElementById(id);
-const tokenKey = 'feishu-workbench-token';
 const money = (value) => `¥${Number(value || 0).toFixed(2)}`;
 const dateTime = (value) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '-';
 const showError = (message = '') => { $('error').textContent = message; $('error').classList.toggle('hidden', !message); };
-const headers = () => { const token = sessionStorage.getItem(tokenKey); return token ? { 'X-Workbench-Token': token } : {}; };
+const headers = () => ({});
 
 async function getJson(path) {
   const separator = path.includes('?') ? '&' : '?';
@@ -37,17 +36,17 @@ async function loadInventory() { showError(''); try { renderInventory(await getJ
 async function initAuth() {
   const response = await fetch(`/api/auth/feishu/me?_=${Date.now()}`, { credentials: 'include', cache: 'no-store' });
   const body = await response.json().catch(() => ({}));
+  if (!body.enabled) {
+    showError('飞书身份认证尚未启用，请联系管理员');
+    return false;
+  }
   if (body.enabled && !body.authenticated) {
     window.location.href = `/api/auth/feishu/start?return_to=${encodeURIComponent(location.pathname + location.search)}`;
     return false;
   }
   if (body.enabled && body.authenticated) {
     $('auth-status').textContent = `已登录：${body.user?.name || '飞书用户'}`;
-    $('token').classList.add('hidden');
-    $('save-token').classList.add('hidden');
     $('logout').classList.remove('hidden');
-  } else {
-    $('auth-status').textContent = '令牌模式';
   }
   return true;
 }
@@ -58,11 +57,9 @@ document.querySelectorAll('.tab').forEach((button) => button.addEventListener('c
   $('inventory-panel').classList.toggle('hidden', button.dataset.tab !== 'inventory');
   if (button.dataset.tab === 'inventory' && !$('inventory-rows').children.length) loadInventory();
 }));
-$('save-token').addEventListener('click', () => { sessionStorage.setItem(tokenKey, $('token').value.trim()); loadSales(); });
 $('logout').addEventListener('click', async () => { await fetch('/api/auth/feishu/logout', { method: 'POST', credentials: 'include' }); window.location.reload(); });
 $('refresh-sales').addEventListener('click', loadSales);
 $('refresh-inventory').addEventListener('click', loadInventory);
 $('search-inventory').addEventListener('click', loadInventory);
 $('inventory-keyword').addEventListener('keydown', (event) => { if (event.key === 'Enter') loadInventory(); });
-$('token').value = sessionStorage.getItem(tokenKey) || '';
 initAuth().then((ready) => { if (ready) loadSales(); }).catch((error) => showError(`登录状态检查失败：${error.message}`));
