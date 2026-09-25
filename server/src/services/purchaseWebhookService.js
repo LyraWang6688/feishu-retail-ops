@@ -286,15 +286,19 @@ class PurchaseWebhookService {
     const arrival = task.draft;
     const requestTable = this.gateway.table('purchaseRequest');
     const inboundTable = this.gateway.table('purchaseInbound');
-    // 幂等保护：查询该到货批次已有的入库记录，重试时跳过已创建的明细
+    // 幂等保护第一层：从 task 持久化记录中读取已创建的入库明细（防止飞书查询延迟导致重复）
+    const persistedCreated = { ...(task.draft?.inbound_created || {}) };
+    const existingByKey = new Map(Object.entries(persistedCreated));
+    // 幂等保护第二层：飞书查询兜底
     const existingInbounds = await this.gateway.listAll('purchaseInbound');
-    const existingByKey = new Map();
     for (const record of existingInbounds) {
       const batchIds = linkedRecordIds(record.fields?.[inboundTable.fields.batch]);
       if (!batchIds.includes(arrival.arrival_record_id)) continue;
       const productId = linkedRecordIds(record.fields?.[inboundTable.fields.product])[0];
       const size = number(record.fields?.[inboundTable.fields.size]);
-      if (productId) existingByKey.set(`${productId}|${size}`, record.record_id);
+      if (productId && !existingByKey.has(`${productId}|${size}`)) {
+        existingByKey.set(`${productId}|${size}`, record.record_id);
+      }
     }
     const created = [];
     for (const item of arrival.actual || []) {
@@ -317,6 +321,9 @@ class PurchaseWebhookService {
         inboundAt: Date.now(),
       });
       created.push(inbound.recordId);
+      // 立即持久化已创建记录，防止中途失败后重试时因飞书查询延迟重复创建
+      persistedCreated[key] = inbound.recordId;
+      await this.store.update(taskId, { draft: { ...task.draft, inbound_created: persistedCreated } }).catch(() => undefined);
       if (this.enablePurchaseInventory) {
         await this.inventory.applyPurchase({
           purchaseInboundRecordId: inbound.recordId,

@@ -409,3 +409,68 @@ test('arrival confirm retries after partial failure without duplicating inbound 
   const taskAfterRetry = await store.get(accepted.taskId);
   assert.equal(taskAfterRetry.status, 'posted');
 });
+
+test('arrival confirm retry survives feishu list latency — persisted inbound_created prevents duplicate', async () => {
+  // 模拟飞书写入后立即读取有延迟：重试时 listAll('purchaseInbound') 返回空，
+  // 但 task.draft.inbound_created 已持久化第1条记录，验证不会重复创建。
+  const inventory = makeInventory();
+  const records = {
+    purchaseArrival: [{ record_id: 'arr_latency', fields: { 确认状态: '待确认', 识别状态: '识别成功', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 创建者: [{ id: 'ou_1' }] } }],
+    purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
+    purchaseRequest: [],
+    purchaseInbound: [],
+  };
+  let inboundCreateCount = 0;
+  let failOnSecondCreate = true;
+  let simulateListLatency = false;
+  const baseGateway = makeGateway(records);
+  const gateway = {
+    ...baseGateway,
+    listAll: async (tableKey) => {
+      if (tableKey === 'purchaseInbound' && simulateListLatency) return [];
+      return baseGateway.listAll(tableKey);
+    },
+    create: async (tableKey, semanticValues) => {
+      if (tableKey === 'purchaseInbound') {
+        inboundCreateCount += 1;
+        if (failOnSecondCreate && inboundCreateCount === 2) throw new Error('模拟入库写入中途失败');
+      }
+      return baseGateway.create(tableKey, semanticValues);
+    },
+  };
+  const { service, store } = makeService({
+    inventory,
+    gateway,
+    recognizer: makeRecognizer({ recognizeLabels: async () => [
+      { item_no: '8088', color: '灰色', size: 36, quantity: 1 },
+      { item_no: '8088', color: '灰色', size: 37, quantity: 1 },
+    ] }),
+  });
+  const accepted = await service.accept('arrival', 'arr_latency');
+  await wait(80);
+
+  // 第一次确认：第1条（36码）成功并持久化到 inbound_created，第2条（37码）失败
+  await assert.rejects(
+    () => service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1'),
+    /模拟入库写入中途失败/,
+  );
+  const taskAfterFirst = await store.get(accepted.taskId);
+  assert.ok(taskAfterFirst.draft?.inbound_created, '失败后应已持久化 inbound_created');
+  const persistedKeys = Object.keys(taskAfterFirst.draft.inbound_created);
+  assert.equal(persistedKeys.length, 1, '应只持久化第1条成功的记录');
+  assert.ok(persistedKeys[0].includes('36'), '持久化的应是36码的记录');
+
+  // 重试：开启 listAll 延迟模拟（返回空），不再失败
+  simulateListLatency = true;
+  failOnSecondCreate = false;
+  const result = await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
+  assert.ok(result.toast.content.includes('采购已入库'), result.toast.content);
+
+  // 验证：即使 listAll 返回空，因为 inbound_created 持久化了第1条，也不会重复创建
+  const inboundsAfterRetry = await baseGateway.listAll('purchaseInbound');
+  assert.equal(inboundsAfterRetry.length, 2, '重试后应总共2条入库记录，36码不重复');
+  assert.equal(inventory.calls.length, 2, '重试后应总共2次库存更新，36码不重复');
+
+  const sizes = inboundsAfterRetry.map((r) => r.fields.尺码).sort();
+  assert.deepEqual(sizes, [36, 37]);
+});
