@@ -8,8 +8,8 @@ const gatewayFor = (records) => ({ listAll: async (key) => records[key] || [] })
 test('two shoes in one order retain their own receivables and count the receipt once', async () => {
   const gateway = gatewayFor({
     salesDetail: [
-      { record_id: 'd1', fields: { 编号: ['p1'], 尺码: 36, 数量: 1, 销售单号: ['o1'], 销售日: [{ text: String(day) }], 应收金额: [{ text: '100' }] } },
-      { record_id: 'd2', fields: { 编号: ['p2'], 尺码: 37, 数量: 1, 销售单号: ['o1'], 销售日: day, 应收金额: 150 } },
+      { record_id: 'd1', fields: { 编号: ['p1'], 尺码: 36, 数量: 1, 销售单号: ['o1'], 销售日: [{ text: String(day) }], 成交金额: [{ text: '100' }], 应收金额: 120 } },
+      { record_id: 'd2', fields: { 编号: ['p2'], 尺码: 37, 数量: 1, 销售单号: ['o1'], 销售日: day, 成交金额: 150, 应收金额: 200 } },
       { record_id: 'undated', fields: { 编号: ['p1'], 尺码: 38, 数量: 1, 销售单号: ['o2'], 应收金额: 99 } },
     ],
     salesEntry: [
@@ -25,6 +25,7 @@ test('two shoes in one order retain their own receivables and count the receipt 
   });
   const report = await createWorkbenchService(gateway).getTodaySales({ date: '2026-09-25' });
   assert.deepEqual(report.rows.map((row) => row.receivable_amount), [100, 150]);
+  assert.deepEqual(report.rows.map((row) => row.list_amount), [120, 200]);
   assert.equal(report.summary.order_count, 1);
   assert.equal(report.summary.receivable_amount, 250);
   assert.equal(report.summary.paid_amount, 250);

@@ -8,10 +8,11 @@ const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { V1BitableGateway, textValue } = require('./v1BitableGateway');
 const { V1PostingService } = require('./v1PostingService');
 const { createWorkbenchService } = require('./v1WorkbenchService');
+const { SalesDeliveryService } = require('./salesDeliveryService');
 const { PurchaseDraftBuilder } = require('./purchaseDraftBuilder');
 const { PurchaseWebhookService } = require('./purchaseWebhookService');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
-const { purchaseConfirmationCard, salesConfirmationCard, todaySalesCard } = require('../utils/larkCards');
+const { purchaseConfirmationCard, salesConfirmationCard, salesStatusCard, todaySalesCard } = require('../utils/larkCards');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
 
@@ -67,6 +68,7 @@ class LarkMvpService {
     this.references = options.references || new V1ReferenceResolver(this.gateway);
     this.recognizer = options.recognizer || doubaoService;
     this.posting = options.posting || new V1PostingService({ gateway: this.gateway, references: this.references });
+    this.delivery = options.delivery || new SalesDeliveryService({ gateway: this.gateway });
     this.draftBuilder = options.draftBuilder || new PurchaseDraftBuilder({ references: this.references });
     this.purchaseWebhooks = options.purchaseWebhooks || new PurchaseWebhookService({
       client: this.client,
@@ -129,7 +131,7 @@ class LarkMvpService {
     const report = await createWorkbenchService(this.gateway).getTodaySales({ date: dateLabel });
     const rows = report.rows.map((row) => ({
       product: row.product_number || '未知编号', size: row.size, quantity: row.quantity,
-      amount: row.receivable_amount, paymentMethod: row.payment_method, behavior: row.sales_behavior,
+      amount: row.receivable_amount, paymentMethod: row.payment_method,
     }));
     const totalQuantity = report.summary.quantity;
     const totalAmount = report.summary.paid_amount;
@@ -169,6 +171,27 @@ class LarkMvpService {
     });
     if (response.code !== 0) throw new Error(`回复飞书卡片失败: ${response.msg} (Code: ${response.code})`);
     return response.data?.message_id || '';
+  }
+
+  async updateSalesActionCard(task, event, card) {
+    const messageId = event?.context?.open_message_id || event?.open_message_id || task.card_message_id;
+    if (!messageId) {
+      logWarn('lark.sales.card.update.skipped', { task_id: task.task_id, reason: 'missing_message_id' });
+      return false;
+    }
+    try {
+      const patch = this.client.im?.v1?.message?.patch || this.client.im?.message?.patch;
+      if (!patch) throw new Error('飞书客户端不支持更新消息卡片');
+      const response = await patch.call(this.client.im?.v1?.message || this.client.im.message, {
+        path: { message_id: messageId },
+        data: { content: JSON.stringify(card) },
+      });
+      if (response.code !== 0) throw new Error(`${response.msg} (Code: ${response.code})`);
+      return true;
+    } catch (error) {
+      logWarn('lark.sales.card.update.failed', { task_id: task.task_id, error: error.message });
+      return false;
+    }
   }
 
   async acknowledgeMessage(messageId) {
@@ -333,8 +356,6 @@ class LarkMvpService {
     const productTable = this.gateway.table?.('product');
     const missingFields = [...(parsed.missing_fields || [])];
     const items = [];
-    let formulaTotal = 0;
-    let pricesAvailable = true;
     for (const [index, item] of (parsed.items?.length ? parsed.items : [parsed]).entries()) {
       let product;
       if (item.item_no && item.size) {
@@ -344,18 +365,14 @@ class LarkMvpService {
       const configuredNumber = product
         ? textValue(product.record?.fields?.[productTable?.fields?.number]) || item.item_no
         : '';
-      const unitPrice = Number(textValue(product?.record?.fields?.[productTable?.fields?.price]).replace(/[¥,\s]/g, ''));
-      if (!product || !Number.isFinite(unitPrice) || unitPrice <= 0) pricesAvailable = false;
-      else formulaTotal += unitPrice * Number(item.quantity || 0);
       items.push({ ...item, product_record_id: product?.recordId || '', product_number: configuredNumber });
     }
-    if (parsed.agreed_total) {
-      if (Number(parsed.total_paid || 0) > parsed.agreed_total) missingFields.push('已收金额不能超过本单成交金额');
-      if (!pricesAvailable) missingFields.push('无法核对货品单价与本单成交金额');
-      else if (Math.abs(formulaTotal - parsed.agreed_total) > 0.005) {
-        missingFields.push(`成交金额￥${parsed.agreed_total}与销售明细公式金额￥${formulaTotal.toFixed(2)}不一致，当前表结构无法保存差价`);
-      }
+    const actualTotal = Math.round(items.reduce((sum, item) => sum + Number(item.actual_amount || 0), 0) * 100) / 100;
+    if (items.some((item) => !Number(item.actual_amount))) missingFields.push('请逐件说明成交金额');
+    if (parsed.agreed_total && Math.abs(actualTotal - Number(parsed.agreed_total)) > 0.005) {
+      missingFields.push('逐件成交金额合计与整单成交金额不一致');
     }
+    if (Number(parsed.total_paid || 0) > actualTotal) missingFields.push('已收金额不能超过本单成交金额');
 
     const draft = {
       ...parsed,
@@ -376,7 +393,8 @@ class LarkMvpService {
       await this.sendText(task.sender_open_id, `销售信息还缺：${draft.missing_fields.join('、')}。请补充后重新发送完整销售信息。`);
       return;
     }
-    await this.replyCard(task.message_id, salesConfirmationCard(taskId, draft));
+    const cardMessageId = await this.replyCard(task.message_id, salesConfirmationCard(taskId, draft));
+    if (cardMessageId) await this.store.update(taskId, { card_message_id: cardMessageId });
     logInfo('lark.sales.processing.completed', {
       task_id: taskId,
       sales_entry_record_id: salesEntryRecordId,
@@ -509,7 +527,7 @@ class LarkMvpService {
     const task = await this.store.get(draftId);
     if (!task) throw new Error('确认草稿不存在或已过期');
     if (task.sender_open_id !== operatorOpenId) throw new Error('只能由原始发送人确认该草稿');
-    if (['posted', 'cancelled'].includes(task.status)) return { toast: { type: 'info', content: '该草稿已处理' } };
+    if (['posted', 'posted_delivery_pending', 'cancelled'].includes(task.status)) return { toast: { type: 'info', content: '该草稿已处理' } };
     if (task.status === 'posting') return { toast: { type: 'info', content: '正在入账，请勿重复点击' } };
     if (task.status === 'awaiting_correction' && action !== 'cancel') {
       return { toast: { type: 'info', content: '该草稿正在等待修正，请重新发送完整销售信息' } };
@@ -519,6 +537,7 @@ class LarkMvpService {
       await this.store.update(draftId, { status: 'cancelled' });
       if (task.type === 'sale' && task.sales_entry_record_id) {
         await this.gateway.update('salesEntry', task.sales_entry_record_id, { confirmStatus: '已取消' });
+        await this.updateSalesActionCard(task, event, salesStatusCard(task.draft, '销售录单已取消', '原草稿不会入账。'));
       }
       if (task.type === 'purchase' && task.batch_record_id) {
         await this.gateway.update('purchaseBatch', task.batch_record_id, { confirmStatus: '已取消' });
@@ -531,18 +550,21 @@ class LarkMvpService {
       if (task.sales_entry_record_id) {
         await this.gateway.update('salesEntry', task.sales_entry_record_id, { confirmStatus: '待修改' });
       }
+      await this.updateSalesActionCard(task, event, salesStatusCard(task.draft, '等待重新发送', '原草稿不会入账；请重新发送完整销售信息。', 'orange'));
       await this.sendText(operatorOpenId, '请重新发送一条完整、正确的销售信息；原草稿不会入账。');
       return { toast: { type: 'info', content: '请重新发送修正后的完整销售信息' } };
     }
 
     await this.store.update(draftId, { status: 'posting' });
     try {
-    if (action === 'confirm_sale' && task.type === 'sale') {
+    if (['confirm_sale', 'confirm_sale_pending', 'confirm_sale_delivered'].includes(action) && task.type === 'sale') {
+      const cardUpdated = await this.updateSalesActionCard(task, event,
+        salesStatusCard(task.draft, '销售订单处理中', '已收到确认，正在写入销售记录和收款；请勿重复点击。'));
+      if (!cardUpdated) await this.sendText(operatorOpenId, '已收到确认，正在写入销售记录和收款，请稍候。').catch(() => undefined);
       const startedAt = Date.now();
       const result = await this.posting.postSale({
         salesEntryRecordId: task.sales_entry_record_id,
         operatorOpenId,
-        behaviorCode: task.draft.behavior_code,
         paymentMethod: task.draft.payment_method,
         totalPaid: task.draft.total_paid,
         payments: (task.draft.payments || []).map((payment) => ({
@@ -554,11 +576,26 @@ class LarkMvpService {
           color: item.color,
           size: item.size,
           quantity: item.quantity,
+          actualAmount: item.actual_amount,
           gift: item.gift,
           giftDescription: item.gift_description,
         })),
       });
+      await this.store.update(draftId, { status: 'posted_delivery_pending', posting_result: result });
+      if (action === 'confirm_sale_delivered') {
+        try {
+          await this.delivery.deliver({ salesEntryRecordId: task.sales_entry_record_id,
+            detailRecordIds: result.detailRecordIds, state: '门盒', operatorOpenId });
+        } catch (error) {
+          await this.updateSalesActionCard(task, event, salesStatusCard(task.draft,
+            '订单已入账，交付待处理', `销售单号：${result.sourceNo}。库存交付未完成：${error.message}。请在工作台待交付列表核对并处理。`, 'orange'));
+          logError('lark.sales.delivery.failed', { task_id: draftId, error: error.message });
+          return { toast: { type: 'warning', content: '订单已入账，库存交付待处理' } };
+        }
+      }
       await this.store.update(draftId, { status: 'posted', posting_result: result });
+      await this.updateSalesActionCard(task, event, salesStatusCard(task.draft,
+        '销售订单已入账', `销售单号：${result.sourceNo}；${result.detailRecordIds?.length || 0} 条明细已写入。${action === 'confirm_sale_delivered' ? '已交付并扣库存。' : '尚未交付，库存未扣减。'}`, 'green'));
       logInfo('lark.sales.posting.completed', {
         task_id: draftId,
         source_no: result.sourceNo,
@@ -569,7 +606,7 @@ class LarkMvpService {
       return {
         toast: {
           type: 'success',
-          content: '销售订单已确认，交付时再扣库存',
+          content: action === 'confirm_sale_delivered' ? '销售已确认并交付，库存已更新' : '销售已确认，交付时再扣库存',
         },
       };
     }
@@ -613,6 +650,13 @@ class LarkMvpService {
       await this.store
         .update(draftId, { status: 'ready_to_confirm', posting_error: error.message })
         .catch(() => undefined);
+      if (['confirm_sale', 'confirm_sale_pending', 'confirm_sale_delivered'].includes(action) && task.type === 'sale') {
+        const retryCard = salesConfirmationCard(draftId, task.draft);
+        retryCard.elements.splice(1, 0, { tag: 'note', elements: [
+          { tag: 'plain_text', content: `入账失败：${error.message}。请核对后重试。` },
+        ] });
+        await this.updateSalesActionCard(task, event, retryCard);
+      }
       throw error;
     }
   }

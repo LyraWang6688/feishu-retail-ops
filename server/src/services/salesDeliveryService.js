@@ -1,12 +1,14 @@
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { InventoryService } = require('./inventoryService');
+const { SalesProgressService } = require('./salesProgressService');
 const { logInfo } = require('../utils/logger');
 
 class SalesDeliveryService {
-  constructor({ gateway, inventory } = {}) {
+  constructor({ gateway, inventory, progress } = {}) {
     if (!gateway) throw new Error('SalesDeliveryService requires gateway');
     this.gateway = gateway;
     this.inventory = inventory || new InventoryService({ gateway });
+    this.progress = progress || new SalesProgressService({ gateway });
     this.queue = Promise.resolve();
   }
 
@@ -64,10 +66,7 @@ class SalesDeliveryService {
     const deliveredTotal = details.reduce((sum, detail) =>
       sum + Number(textValue(detail.fields?.[fields.deliveredQuantity]) || 0), 0);
     const total = details.reduce((sum, detail) => sum + Number(textValue(detail.fields?.[fields.quantity]) || 0), 0);
-    await this.gateway.update('salesEntry', salesEntryRecordId, {
-      deliveredQuantity: deliveredTotal,
-      fulfillmentStatus: deliveredTotal === total ? '已交付' : deliveredTotal > 0 ? '部分交付' : '未交付',
-    });
+    await this.progress.sync(salesEntryRecordId);
     logInfo('sales.delivery.completed', { sales_entry_record_id: salesEntryRecordId,
       detail_count: results.length, delivered_quantity: deliveredTotal });
     return { salesEntryRecordId, results, deliveredQuantity: deliveredTotal, totalQuantity: total };

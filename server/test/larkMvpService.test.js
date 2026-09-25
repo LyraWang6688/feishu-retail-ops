@@ -106,7 +106,7 @@ test('recognized purchase items with same SKU and size are aggregated', () => {
   );
 });
 
-test('sales intake keeps behavior in draft and writes only intake metadata before confirmation', async () => {
+test('sales intake writes only intake metadata and retains actual amount before confirmation', async () => {
   const store = makeStore();
   const calls = [];
   const cards = [];
@@ -139,6 +139,8 @@ test('sales intake keeps behavior in draft and writes only intake metadata befor
         color: '棕',
         size: 38,
         quantity: 1,
+        actual_amount: 230,
+        agreed_total: 230,
         gift: true,
         gift_description: '袜子一双',
         total_paid: 230,
@@ -169,7 +171,7 @@ test('sales intake keeps behavior in draft and writes only intake metadata befor
   );
   assert.equal('behavior' in parsedUpdate.fields, false);
   assert.equal(cards.length, 1);
-  assert.match(JSON.stringify(cards[0].card), /现货销售/);
+  assert.doesNotMatch(JSON.stringify(cards[0].card), /现货销售/);
   assert.match(JSON.stringify(cards[0].card), /8088-26\|棕\|女鞋/);
   const task = await store.get('sale_test');
   assert.equal(task.draft.items[0].product_record_id, 'rec_product');
@@ -195,8 +197,8 @@ test('two products and two payments stay in one sales draft and confirmation car
     posting: {},
     recognizer: { parseSalesText: async () => normalizeSalesResult({ intent: 'sale', behavior_code: 'SALE_CASH',
       sales_behavior: '现货销售', agreed_total: 250,
-      items: [{ item_no: '93827', color: '黑', size: 43, quantity: 1 },
-        { item_no: '2115', color: '米', size: 37, quantity: 1 }],
+      items: [{ item_no: '93827', color: '黑', size: 43, quantity: 1, actual_amount: 100 },
+        { item_no: '2115', color: '米', size: 37, quantity: 1, actual_amount: 150 }],
       payments: [{ amount: 150, method: '微信' }, { amount: 100, method: '现金' }],
     }) },
     store,
@@ -214,7 +216,7 @@ test('two products and two payments stay in one sales draft and confirmation car
   assert.match(JSON.stringify(cards[0]), /现金/);
 });
 
-test('quoted sale amount differing from Bitable formula price requires correction', async () => {
+test('quoted actual sale amount may differ from Bitable list price', async () => {
   const store = makeStore();
   const messages = [];
   const { normalizeSalesResult } = require('../src/services/doubaoService');
@@ -228,11 +230,13 @@ test('quoted sale amount differing from Bitable formula price requires correctio
     store,
   });
   service.sendText = async (_openId, message) => messages.push(message);
+  service.replyCard = async () => 'card_1';
   await store.create({ task_id: 'unpaid_sale', type: 'sale', status: 'received', message_id: 'om_unpaid',
     sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '815195B-6黑39码260元未付' });
   await service.processSalesTask('unpaid_sale');
-  assert.equal((await store.get('unpaid_sale')).status, 'needs_info');
-  assert.match(messages[0], /当前表结构无法保存差价/);
+  assert.equal((await store.get('unpaid_sale')).status, 'ready_to_confirm');
+  assert.equal((await store.get('unpaid_sale')).draft.items[0].actual_amount, 260);
+  assert.equal(messages.length, 0);
 });
 
 test('unsupported text is parsed but does not create a sales entry record', async () => {
@@ -310,6 +314,98 @@ test('failed card posting returns the draft to a retryable state', async () => {
   const task = await store.get('sale_retry');
   assert.equal(task.status, 'ready_to_confirm');
   assert.equal(task.posting_error, 'temporary failure');
+});
+
+test('sale card shows processing immediately and becomes action-free after posting', async () => {
+  const store = makeStore();
+  const cards = [];
+  await store.create({
+    task_id: 'sale_card_progress', type: 'sale', status: 'ready_to_confirm',
+    sender_open_id: 'ou_1', sales_entry_record_id: 'rec_entry', card_message_id: 'om_card',
+    draft: { items: [{ item_no: 'A100', size: 38, quantity: 1 }], payments: [], agreed_total: 100 },
+  });
+  const service = new LarkMvpService({
+    client: { im: { v1: { message: { patch: async ({ path, data }) => {
+      cards.push({ messageId: path.message_id, card: JSON.parse(data.content) });
+      return { code: 0 };
+    } } } } },
+    gateway: {}, references: {}, recognizer: {}, store,
+    posting: { postSale: async () => {
+      assert.match(cards[0].card.header.title.content, /处理中/);
+      return { sourceNo: 'XSD-001', detailRecordIds: ['detail_1'] };
+    } },
+  });
+  const result = await service.handleCardAction({
+    operator: { operator_id: { open_id: 'ou_1' } },
+    action: { value: { action: 'confirm_sale', draft_id: 'sale_card_progress' } },
+  });
+  assert.equal(result.toast.type, 'success');
+  assert.deepEqual(cards.map((item) => item.messageId), ['om_card', 'om_card']);
+  assert.match(cards[1].card.header.title.content, /已入账/);
+  assert.ok(cards.every((item) => !item.card.elements.some((element) => element.tag === 'action')));
+  assert.equal((await store.get('sale_card_progress')).status, 'posted');
+});
+
+test('delivered confirmation writes sale first then delegates stock to delivery owner', async () => {
+  const store = makeStore();
+  const calls = [];
+  await store.create({ task_id: 'sale_delivered', type: 'sale', status: 'ready_to_confirm',
+    sender_open_id: 'ou_1', sales_entry_record_id: 'entry_1',
+    draft: { items: [{ item_no: 'A100', size: 38, quantity: 1, actual_amount: 220,
+      product_record_id: 'product_1' }], payments: [{ method: '微信', amount: 220 }], agreed_total: 220 },
+  });
+  const service = new LarkMvpService({ client: {}, gateway: {}, references: {}, recognizer: {}, store,
+    posting: { postSale: async (input) => {
+      calls.push(['post', input.items[0].actualAmount]);
+      return { sourceNo: 'XSD-001', detailRecordIds: ['detail_1'] };
+    } },
+    delivery: { deliver: async (input) => calls.push(['deliver', input.detailRecordIds, input.state]) },
+  });
+  const result = await service.handleCardAction({ operator: { operator_id: { open_id: 'ou_1' } },
+    action: { value: { action: 'confirm_sale_delivered', draft_id: 'sale_delivered' } } });
+  assert.equal(result.toast.type, 'success');
+  assert.deepEqual(calls, [['post', 220], ['deliver', ['detail_1'], '门盒']]);
+  assert.equal((await store.get('sale_delivered')).status, 'posted');
+});
+
+test('stock failure after sale posting is not presented as sale posting failure', async () => {
+  const store = makeStore();
+  await store.create({ task_id: 'sale_stock_error', type: 'sale', status: 'ready_to_confirm',
+    sender_open_id: 'ou_1', sales_entry_record_id: 'entry_1',
+    draft: { items: [{ item_no: 'A100', size: 38, quantity: 1, actual_amount: 220 }], payments: [], agreed_total: 220 },
+  });
+  const service = new LarkMvpService({ client: {}, gateway: {}, references: {}, recognizer: {}, store,
+    posting: { postSale: async () => ({ sourceNo: 'XSD-002', detailRecordIds: ['detail_2'] }) },
+    delivery: { deliver: async () => { throw new Error('门盒库存不足'); } },
+  });
+  const result = await service.handleCardAction({ operator: { operator_id: { open_id: 'ou_1' } },
+    action: { value: { action: 'confirm_sale_delivered', draft_id: 'sale_stock_error' } } });
+  assert.match(result.toast.content, /库存交付待处理/);
+  assert.equal((await store.get('sale_stock_error')).status, 'posted_delivery_pending');
+});
+
+test('failed sale posting restores action buttons for retry', async () => {
+  const store = makeStore();
+  const cards = [];
+  await store.create({ task_id: 'sale_card_retry', type: 'sale', status: 'ready_to_confirm',
+    sender_open_id: 'ou_1', sales_entry_record_id: 'rec_entry', card_message_id: 'om_card',
+    draft: { items: [{ item_no: 'A100', size: 38, quantity: 1 }] } });
+  const service = new LarkMvpService({
+    client: { im: { v1: { message: { patch: async ({ data }) => {
+      cards.push(JSON.parse(data.content));
+      return { code: 0 };
+    } } } } },
+    gateway: {}, references: {}, recognizer: {}, store,
+    posting: { postSale: async () => { throw new Error('temporary failure'); } },
+  });
+  await assert.rejects(() => service.handleCardAction({
+    operator: { operator_id: { open_id: 'ou_1' } },
+    action: { value: { action: 'confirm_sale', draft_id: 'sale_card_retry' } },
+  }), /temporary failure/);
+  assert.equal(cards.length, 2);
+  assert.match(JSON.stringify(cards[1]), /入账失败/);
+  assert.ok(cards[1].elements.some((element) => element.tag === 'action'));
+  assert.equal((await store.get('sale_card_retry')).status, 'ready_to_confirm');
 });
 
 test('today sales menu returns only confirmed detail rows from the Shanghai calendar day', async () => {

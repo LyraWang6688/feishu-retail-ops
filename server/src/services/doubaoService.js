@@ -7,6 +7,10 @@ const positiveOrEmpty = (value) => {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : '';
 };
+const moneyOrEmpty = (value) => {
+  const number = positiveOrEmpty(value);
+  return number && Math.abs(number * 100 - Math.round(number * 100)) < 1e-6 ? number : '';
+};
 
 const normalizeSalesResult = (result = {}) => {
   const rawItems = Array.isArray(result.items) && result.items.length ? result.items : [result];
@@ -26,6 +30,7 @@ const normalizeSalesResult = (result = {}) => {
       color: String(item.color || '').trim(),
       size: positiveOrEmpty(item.size),
       quantity: positiveOrEmpty(item.quantity) || 1,
+      actual_amount: moneyOrEmpty(item.actual_amount),
       gift,
       gift_description: giftDescription,
     });
@@ -36,28 +41,34 @@ const normalizeSalesResult = (result = {}) => {
       ? [{ amount: result.total_paid, method: result.payment_method }]
       : [];
   const payments = rawPayments.map((payment) => ({
-    amount: positiveOrEmpty(payment.amount), method: String(payment.method || '').trim(),
+    amount: moneyOrEmpty(payment.amount), method: String(payment.method || '').trim(),
   }));
+  let agreedTotal = moneyOrEmpty(result.agreed_total);
+  if (items.length === 1 && !items[0].actual_amount && agreedTotal) items[0].actual_amount = agreedTotal;
+  if (!agreedTotal && items.length && items.every((item) => item.actual_amount)) {
+    agreedTotal = Math.round(items.reduce((sum, item) => sum + Number(item.actual_amount), 0) * 100) / 100;
+  }
   const first = items[0] || {};
   const normalized = {
     intent: result.intent === 'sale' ? 'sale' : 'unsupported',
-    sales_behavior: String(result.sales_behavior || '').trim(),
-    behavior_code: String(result.behavior_code || '').trim(),
+    delivery_status: ['已交付', '未交付'].includes(result.delivery_status) ? result.delivery_status : '待确认',
     ...first,
     items,
     payments,
-    agreed_total: positiveOrEmpty(result.agreed_total),
+    agreed_total: agreedTotal,
     total_paid: payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0) || '',
     payment_method: payments.map((payment) => payment.method).filter(Boolean).join('＋'),
   };
   const missing = new Set();
-  if (normalized.intent !== 'sale' || normalized.behavior_code !== 'SALE_CASH') {
-    missing.add('当前只支持现货销售');
-  }
+  if (normalized.intent !== 'sale') missing.add('当前只支持商品销售录单');
   for (const [index, item] of items.entries()) {
-    for (const key of ['item_no', 'size', 'quantity']) {
+    for (const key of ['item_no', 'size', 'quantity', 'actual_amount']) {
       if (!item[key]) missing.add(`items[${index}].${key}`);
     }
+  }
+  if (items.length && items.every((item) => item.actual_amount) && agreedTotal &&
+    Math.abs(items.reduce((sum, item) => sum + Number(item.actual_amount), 0) - agreedTotal) > 0.005) {
+    missing.add('逐双成交金额合计与整单成交金额不一致');
   }
   for (const [index, payment] of payments.entries()) {
     if (!payment.amount) missing.add(`payments[${index}].amount`);
@@ -99,28 +110,27 @@ class DoubaoService {
     const prompt = `
 你是鞋店销售首单录入助手。请把用户的一条销售原话解析为严格 JSON，不得猜测缺失信息。
 
-一条消息表示一笔销售，可以包含多双鞋和多种付款方式。只处理现货商品销售，交付与补款后续通过表单完成。
+一条消息表示一笔销售，可以包含多双鞋和多种付款方式。只解析事实，不计算售价或猜测交付。
 
 输出结构：
 {
   "intent": "sale",
-  "sales_behavior": "现货销售",
-  "behavior_code": "SALE_CASH",
-  "items": [{"item_no":"8088-26","color":"棕","size":38,"quantity":1,"gift":false,"gift_description":""}],
+  "delivery_status": "待确认",
+  "items": [{"item_no":"8088-26","color":"棕","size":38,"quantity":1,"actual_amount":230,"gift":false,"gift_description":""}],
   "payments": [{"amount":230,"method":"微信"}],
   "agreed_total": 230
 }
 
 规则：
-1. 销售一双或多双鞋：intent=\"sale\"，sales_behavior=\"现货销售\"，behavior_code=\"SALE_CASH\"。不要根据付款或交货时间改变销售行为。
-2. 退货、换货、赔货等非现货销售，intent=\"unsupported\"；预付和先交货后付款仍属于现货销售。后续交付和补款由表单处理。
+1. 商品销售（含当场收款、预付、先交货后付款）intent=\"sale\"；退货、换货、赔货 intent=\"unsupported\"。不输出销售行为字段。
+2. 明确说已拿走/已交给顾客时 delivery_status=\"已交付\"；明确说还没货、之后来拿时为\"未交付\"；否则为\"待确认\"。最终由用户在确认卡选择，不凭付款情况推断交付。
 3. item_no 只填写用户原话中的货号，不要把颜色、尺码或品类拼进货号。用户可能用任意顺序和标点表达，但货号中的数字和字母必须原样保留。
 4. color 单独填写颜色；“棕色”规范为“棕”、“黑色”规范为“黑”。没有提到颜色时留空，不得猜测。
 5. “628-6米紫361一双”是货号 628-6、颜色米紫、36码、数量1；末尾的 1 是数量，不是 361 码。
-6. “93827黑43码、2115米37一双，总共两双250元现金”是同一订单的两个 items，每件数量1；payments 只有现金250一笔。
+6. 多双鞋必须从原话分别提取每件成交金额，actual_amount 是该明细数量对应的成交总额。只给整单金额而未给各件金额时，各件 actual_amount 留空，要求补充；严禁按标价分摊或猜测。
 7. “150元微信，100元现金”必须输出两笔 payments；“260元未付”是 agreed_total=260、payments=[]，不得输出已收款；“定金50元”但未说支付方式时，payments 包含 amount=50、method=""，供用户补充。
 8. “一双”数量为 1；没写数量但语义明确为单件商品时，quantity=1。“赠”“送”后的物品是赠品，不是销售商品数量。赠品必须写进前一件销售商品的 gift=true、gift_description，不得作为新 item。例如“赠袜子一双”写 gift_description="袜子一双"；“赠鞋垫一双”写 gift_description="鞋垫一双"。
-9. agreed_total 只记录用户明确表达的订单成交总额或未付金额；仅有“定金”时不要把定金当订单总额。销售单价、应收金额、优惠金额由多维表格公式计算，不输出这些字段。
+9. 单件商品明确说了总成交金额，可将其作为该件 actual_amount；仅有“定金”不能作为成交金额。多件逐件金额已知时可求和为 agreed_total。标价与自动公式不参与成交金额判断。
 10. 只输出 JSON，不输出 Markdown 或说明。
 
 用户原话：${originalText}

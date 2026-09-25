@@ -28,7 +28,7 @@ let salesOrders = [];
 function renderSelectedOrder() {
   const order = salesOrders.find((item) => item.record_id === $('followup-order').value);
   $('order-details').textContent = order
-    ? `履约：${order.fulfillment_status}；已记录收款 ${order.payments.length} 笔`
+    ? `收款：${order.payment_status || '待核对'}，成交 ${order.receivable_amount === null ? '待录入' : money(order.receivable_amount)}，已收 ${money(order.paid_amount)}，待收 ${order.pending_amount === null ? '待核对' : money(order.pending_amount)}；履约：${order.fulfillment_status}，待交付 ${order.pending_delivery_quantity} 双`
     : '请选择销售单';
   $('delivery-details').replaceChildren();
   for (const detail of order?.details || []) {
@@ -40,6 +40,32 @@ function renderSelectedOrder() {
     input.disabled = detail.delivered_quantity >= detail.quantity;
     label.append(input, document.createTextNode(`${detail.product || detail.record_id}｜${detail.size}码 × ${detail.quantity}${input.disabled ? '（已交付）' : ''}`));
     $('delivery-details').append(label);
+  }
+}
+
+function renderPendingOrders() {
+  for (const [targetId, predicate, label] of [
+    ['pending-payments', (order) => order.pending_amount > 0, (order) => `待收 ${money(order.pending_amount)}`],
+    ['pending-deliveries', (order) => order.pending_delivery_quantity > 0, (order) => `待交付 ${order.pending_delivery_quantity} 双`],
+  ]) {
+    const target = $(targetId);
+    target.replaceChildren();
+    const pending = salesOrders.filter(predicate);
+    if (!pending.length) { target.textContent = '暂无待办'; continue; }
+    for (const order of pending) {
+      const card = document.createElement('div'); card.className = 'pending-card';
+      const summary = document.createElement('span');
+      summary.textContent = `${order.order_no} · ${label(order)} · ${order.details.map((item) => `${item.product} ${item.size}码`).join('、')}`;
+      const button = document.createElement('button'); button.type = 'button'; button.textContent = targetId === 'pending-payments' ? '去收款' : '去交付';
+      button.addEventListener('click', () => {
+        $('followup-order').value = order.record_id;
+        renderSelectedOrder();
+        if (targetId === 'pending-payments') $('payment-amount').value = order.pending_amount;
+        else $('delivery-details').querySelectorAll('input:not(:disabled)').forEach((input) => { input.checked = true; });
+        $(targetId === 'pending-payments' ? 'payment-form' : 'delivery-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+      card.append(summary, button); target.append(card);
+    }
   }
 }
 
@@ -56,6 +82,7 @@ async function loadOrders(selectedId = '') {
     methodSelect.replaceChildren();
     for (const method of result.methods || []) methodSelect.add(new Option(method, method));
     renderSelectedOrder();
+    renderPendingOrders();
   } catch (error) { showError(error.message); }
 }
 
@@ -64,12 +91,12 @@ function renderSales(data) {
   $('sales-date').textContent = `日期：${data.date || '-'}`;
   $('sales-summary').innerHTML = [
     ['销售笔数', summary.order_count || 0], ['销售明细', summary.detail_count || 0],
-    ['销售数量', summary.quantity || 0], ['明细应收合计', summary.receivable_amount === null ? '待公式计算' : money(summary.receivable_amount)],
+    ['销售数量', summary.quantity || 0], ['成交金额合计', summary.receivable_amount === null ? '待录入' : money(summary.receivable_amount)],
     ['这些订单累计已收', money(summary.paid_amount)],
   ].map(([label, value]) => `<div class="metric"><span>${html(label)}</span><strong>${html(value)}</strong></div>`).join('');
   $('sales-rows').innerHTML = (data.rows || []).map((row) => `<tr>${[
-    dateTime(row.sold_at), row.sales_behavior || '-', row.product_number || '-', row.size || '-',
-    row.quantity, row.receivable_amount === null ? '待公式计算' : money(row.receivable_amount),
+    dateTime(row.sold_at), row.product_number || '-', row.size || '-',
+    row.quantity, row.receivable_amount === null ? '待录入' : money(row.receivable_amount),
     row.payment_method || '-', row.gift || '-', row.sales_order_no || '-',
   ].map((value) => `<td>${html(value)}</td>`).join('')}</tr>`).join('');
   $('sales-empty').classList.toggle('hidden', Boolean(data.rows?.length));

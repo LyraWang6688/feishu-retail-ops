@@ -114,11 +114,11 @@ const createWorkbenchService = (gateway, options = {}) => {
           ...buildProductLabel(schema, productsById, productIds),
           size: asText(schema, 'salesDetail', record, 'size'),
           quantity: asNumber(fieldValue(schema, 'salesDetail', record, 'quantity')),
-          receivable_amount: asOptionalNumber(fieldValue(schema, 'salesDetail', record, 'receivableAmount')),
+          receivable_amount: asOptionalNumber(fieldValue(schema, 'salesDetail', record, 'actualAmount')),
+          list_amount: asOptionalNumber(fieldValue(schema, 'salesDetail', record, 'receivableAmount')),
           gift: asText(schema, 'salesDetail', record, 'gift'),
           payment_method: [...new Set(receiptRows.map((payment) => relationLabel(schema, 'paymentMethod', paymentsById,
             asLinks(schema, 'paymentRecord', payment, 'method'), 'name')))].filter(Boolean).join('＋') || '未收款',
-          sales_behavior: '现货销售',
           confirmed: asText(schema, 'salesEntry', order, 'confirmStatus') === '已入账',
         };
       })

@@ -70,16 +70,26 @@ const salesConfirmationCard = (draftId, draft) => ({
   elements: [
     {
       tag: 'markdown',
-      content: `**销售行为：** ${text(draft.sales_behavior)}\n${itemLines(draft.items || [], 'unitPrice')}\n**成交总额：** ${draft.agreed_total ? `￥${text(draft.agreed_total)}` : '以多维表格公式为准'}\n**本次收款：** ${(draft.payments || []).length ? draft.payments.map((payment) => `${text(payment.method)} ￥${text(payment.amount)}`).join('；') : '尚未收款'}\n**交付：** 后续在工作台确认`,
+      content: `${itemLines(draft.items || [], 'actual_amount')}\n**成交总额：** ￥${text(draft.agreed_total)}\n**本次收款：** ${(draft.payments || []).length ? draft.payments.map((payment) => `${text(payment.method)} ￥${text(payment.amount)}`).join('；') : '尚未收款'}\n**交付：** ${text(draft.delivery_status || '待确认')}（请按实际情况选择）`,
     },
     {
       tag: 'action',
       actions: [
-        actionButton('确认销售', 'confirm_sale', draftId, 'primary'),
+        actionButton('确认已交付（扣库存）', 'confirm_sale_delivered', draftId, draft.delivery_status === '已交付' ? 'primary' : 'default'),
+        actionButton('确认未交付', 'confirm_sale_pending', draftId, draft.delivery_status === '已交付' ? 'default' : 'primary'),
         actionButton('修改', 'modify_sale', draftId),
         actionButton('取消', 'cancel', draftId, 'danger'),
       ],
     },
+  ],
+});
+
+const salesStatusCard = (draft, title, message, template = 'blue') => ({
+  config: { wide_screen_mode: true },
+  header: { template, title: { tag: 'plain_text', content: title } },
+  elements: [
+    { tag: 'markdown', content: itemLines(draft?.items || [], 'actual_amount') || '销售订单' },
+    { tag: 'note', elements: [{ tag: 'plain_text', content: message }] },
   ],
 });
 
@@ -93,7 +103,7 @@ const todaySalesCard = ({ dateLabel, rows, totalQuantity, totalAmount }) => ({
         ? rows
             .map(
               (row, index) =>
-                `${index + 1}. **${text(row.product)}**｜${text(row.size)}码｜×${text(row.quantity)}｜明细应收 ${row.amount == null ? '待公式计算' : `￥${text(row.amount)}`}｜订单收款方式 ${text(row.paymentMethod)}｜${text(row.behavior)}`
+                `${index + 1}. **${text(row.product)}**｜${text(row.size)}码｜×${text(row.quantity)}｜成交金额 ${row.amount == null ? '待录入' : `￥${text(row.amount)}`}｜订单收款方式 ${text(row.paymentMethod)}`
             )
             .join('\n')
         : '今天还没有已确认的销售明细。',
@@ -200,5 +210,6 @@ module.exports = {
   purchaseRequestConfirmationCard,
   purchaseArrivalComparisonCard,
   salesConfirmationCard,
+  salesStatusCard,
   todaySalesCard,
 };

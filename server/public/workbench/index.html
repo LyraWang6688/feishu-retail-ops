@@ -17,7 +17,7 @@
     <section id="sales-panel" class="panel">
       <div class="toolbar"><div><h2>今日销售明细</h2><p id="sales-date" class="muted"></p></div><button id="refresh-sales">刷新</button></div>
       <div id="sales-summary" class="summary"></div>
-      <div class="table-wrap"><table><thead><tr><th>时间</th><th>销售行为</th><th>编号</th><th>尺码</th><th>数量</th><th>明细应收</th><th>订单收款方式</th><th>赠品</th><th>销售单号</th></tr></thead><tbody id="sales-rows"></tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>时间</th><th>编号</th><th>尺码</th><th>数量</th><th>成交金额</th><th>订单收款方式</th><th>赠品</th><th>销售单号</th></tr></thead><tbody id="sales-rows"></tbody></table></div>
       <p id="sales-empty" class="empty hidden">今天还没有已确认的销售明细。</p>
     </section>
     <section id="inventory-panel" class="panel hidden">
@@ -29,6 +29,7 @@
     </section>
     <section id="followup-panel" class="panel hidden">
       <div class="toolbar"><div><h2>后续收款与交付</h2><p class="muted">选择已有销售单；收款不会再次扣库存，交付成功后才扣库存。</p></div><button id="refresh-orders">刷新</button></div>
+      <div class="pending-grid"><section><h3>待收款</h3><div id="pending-payments" class="pending-list"></div></section><section><h3>待交付</h3><div id="pending-deliveries" class="pending-list"></div></section></div>
       <label class="form-field">销售单<select id="followup-order"></select></label>
       <div id="order-details" class="order-details"></div>
       <form id="payment-form" class="action-form">

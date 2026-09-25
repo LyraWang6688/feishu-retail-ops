@@ -42,7 +42,7 @@ test('first sale creates one master, multiple details and one receipt; retry cre
   const gateway = fake();
   const service = new SalesOrderService({ gateway, references });
   const input = { salesEntryRecordId: 'order_1', totalPaid: 230, paymentMethod: '微信',
-    items: [{ itemNo: 'A100', size: 38, quantity: 1 }, { itemNo: 'B200', size: 39, quantity: 1 }] };
+    items: [{ itemNo: 'A100', size: 38, quantity: 1, actualAmount: 100 }, { itemNo: 'B200', size: 39, quantity: 1, actualAmount: 130 }] };
   await service.confirm(input);
   await service.confirm(input);
   assert.equal(gateway.records.get('salesEntry').length, 1);
@@ -55,7 +55,7 @@ test('mixed payment creates two receipts for the same order and retry is idempot
   const gateway = fake();
   const service = new SalesOrderService({ gateway, references });
   const input = { salesEntryRecordId: 'order_1',
-    items: [{ itemNo: 'A100', size: 41, quantity: 1, gift: true, giftDescription: '鞋垫一双' }],
+    items: [{ itemNo: 'A100', size: 41, quantity: 1, actualAmount: 250, gift: true, giftDescription: '鞋垫一双' }],
     payments: [{ method: '微信', amount: 150 }, { method: '现金', amount: 100 }] };
   await service.confirm(input);
   await service.confirm(input);
@@ -70,7 +70,7 @@ test('invalid initial receipt cannot silently become unpaid', async () => {
   const gateway = fake();
   const service = new SalesOrderService({ gateway, references });
   await assert.rejects(service.confirm({ salesEntryRecordId: 'order_1',
-    items: [{ itemNo: 'A100', size: 41, quantity: 1 }],
+    items: [{ itemNo: 'A100', size: 41, quantity: 1, actualAmount: 100 }],
     payments: [{ method: '微信', amount: '' }] }), /收款金额/);
   assert.equal(gateway.records.get('paymentRecord'), undefined);
   assert.equal(gateway.records.get('salesEntry')[0].fields['确认状态'], '入账失败');
@@ -79,7 +79,7 @@ test('invalid initial receipt cannot silently become unpaid', async () => {
 test('unpaid sale can be delivered once, then later payment does not touch inventory', async () => {
   const gateway = fake();
   const sales = new SalesOrderService({ gateway, references });
-  const posted = await sales.confirm({ salesEntryRecordId: 'order_1', items: [{ itemNo: 'A100', size: 38, quantity: 1 }] });
+  const posted = await sales.confirm({ salesEntryRecordId: 'order_1', items: [{ itemNo: 'A100', size: 38, quantity: 1, actualAmount: 100 }] });
   assert.equal(gateway.records.get('paymentRecord'), undefined);
   const calls = [];
   const delivery = new SalesDeliveryService({ gateway, inventory: { applySale: async (input) => { calls.push(input); return { quantity: 0 }; } } });
@@ -105,7 +105,7 @@ test('confirmed sale delivery writes positive stock movement and removes exactly
   ]);
   const sale = new SalesOrderService({ gateway, references });
   const posted = await sale.confirm({ salesEntryRecordId: 'order_1',
-    items: [{ itemNo: 'A100', size: 38, quantity: 1 }],
+    items: [{ itemNo: 'A100', size: 38, quantity: 1, actualAmount: 220 }],
     payments: [{ method: '微信', amount: 220 }] });
   assert.equal(gateway.records.get('inventoryLedger'), undefined);
   const inventory = new InventoryService({ gateway, store: new JsonTaskStore({
