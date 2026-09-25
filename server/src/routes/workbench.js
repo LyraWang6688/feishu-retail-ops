@@ -25,6 +25,12 @@ const requireWorkbenchAccess = (req, res, next) => {
 
 const createWorkbenchRouter = () => {
   const router = express.Router();
+  router.use((req, res, next) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    next();
+  });
   router.use(requireWorkbenchAccess);
   router.get('/sales/today', controller.queryTodaySales);
   router.get('/inventory', controller.queryInventory);

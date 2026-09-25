@@ -6,7 +6,8 @@ const showError = (message = '') => { $('error').textContent = message; $('error
 const headers = () => { const token = sessionStorage.getItem(tokenKey); return token ? { 'X-Workbench-Token': token } : {}; };
 
 async function getJson(path) {
-  const response = await fetch(path, { headers: headers() });
+  const separator = path.includes('?') ? '&' : '?';
+  const response = await fetch(`${path}${separator}_=${Date.now()}`, { headers: headers(), cache: 'no-store' });
   const body = await response.json().catch(() => ({}));
   if (!response.ok || body.success === false) throw new Error(body.error || `请求失败（${response.status}）`);
   return body;
