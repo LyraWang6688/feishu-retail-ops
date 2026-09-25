@@ -34,6 +34,24 @@ function renderInventory(data) {
 async function loadSales() { showError(''); try { renderSales(await getJson('/api/workbench/sales/today')); } catch (error) { showError(error.message); } }
 async function loadInventory() { showError(''); try { renderInventory(await getJson(`/api/workbench/inventory?keyword=${encodeURIComponent($('inventory-keyword').value)}&size=${encodeURIComponent($('inventory-size').value)}`)); } catch (error) { showError(error.message); } }
 
+async function initAuth() {
+  const response = await fetch(`/api/auth/feishu/me?_=${Date.now()}`, { credentials: 'include', cache: 'no-store' });
+  const body = await response.json().catch(() => ({}));
+  if (body.enabled && !body.authenticated) {
+    window.location.href = `/api/auth/feishu/start?return_to=${encodeURIComponent(location.pathname + location.search)}`;
+    return false;
+  }
+  if (body.enabled && body.authenticated) {
+    $('auth-status').textContent = `已登录：${body.user?.name || '飞书用户'}`;
+    $('token').classList.add('hidden');
+    $('save-token').classList.add('hidden');
+    $('logout').classList.remove('hidden');
+  } else {
+    $('auth-status').textContent = '令牌模式';
+  }
+  return true;
+}
+
 document.querySelectorAll('.tab').forEach((button) => button.addEventListener('click', () => {
   document.querySelectorAll('.tab').forEach((item) => item.classList.toggle('active', item === button));
   $('sales-panel').classList.toggle('hidden', button.dataset.tab !== 'sales');
@@ -41,9 +59,10 @@ document.querySelectorAll('.tab').forEach((button) => button.addEventListener('c
   if (button.dataset.tab === 'inventory' && !$('inventory-rows').children.length) loadInventory();
 }));
 $('save-token').addEventListener('click', () => { sessionStorage.setItem(tokenKey, $('token').value.trim()); loadSales(); });
+$('logout').addEventListener('click', async () => { await fetch('/api/auth/feishu/logout', { method: 'POST', credentials: 'include' }); window.location.reload(); });
 $('refresh-sales').addEventListener('click', loadSales);
 $('refresh-inventory').addEventListener('click', loadInventory);
 $('search-inventory').addEventListener('click', loadInventory);
 $('inventory-keyword').addEventListener('keydown', (event) => { if (event.key === 'Enter') loadInventory(); });
 $('token').value = sessionStorage.getItem(tokenKey) || '';
-loadSales();
+initAuth().then((ready) => { if (ready) loadSales(); }).catch((error) => showError(`登录状态检查失败：${error.message}`));

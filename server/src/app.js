@@ -43,6 +43,8 @@ app.use('/api/lark/events', require('./routes/larkEvents').createLarkEventsRoute
 // Feishu Base workflows send only the newly-created record_id. These endpoints
 // acknowledge immediately and process the record asynchronously.
 app.use('/api/purchase', require('./routes/purchaseWebhooks').createPurchaseWebhookRouter());
+// Feishu web-app OAuth routes are mounted before generic /api authentication.
+app.use('/api/auth/feishu', require('./routes/feishuWebAuth').createFeishuWebAuthRouter());
 // The read-only workbench has its own token so a browser never receives API_KEY.
 app.use('/api/workbench', require('./routes/workbench').createWorkbenchRouter());
 app.use('/workbench', express.static(workbenchPath, { index: 'index.html' }));
