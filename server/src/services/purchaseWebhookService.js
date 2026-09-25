@@ -292,7 +292,6 @@ class PurchaseWebhookService {
         size: item.size,
         quantity: item.quantity,
         operator: person(operatorOpenId),
-        confirmed: true,
         batch: relation(arrival.arrival_record_id),
         purchaseRequest: match?.request_record_id ? relation(match.request_record_id) : undefined,
         inboundAt: Date.now(),

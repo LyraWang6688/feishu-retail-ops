@@ -173,7 +173,6 @@ class V1PostingService {
         size: row.item.size,
         quantity: row.item.quantity,
         operator: person(operatorOpenId),
-        confirmed: true,
         batch: relation(batchRecordId),
         supplierOrder: relation(row.item.supplierOrderRecordId),
         product: relation(row.item.productRecordId),
