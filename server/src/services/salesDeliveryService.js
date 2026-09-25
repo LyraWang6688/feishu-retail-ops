@@ -1,6 +1,7 @@
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { InventoryService } = require('./inventoryService');
 const { SalesProgressService } = require('./salesProgressService');
+const { readSaleLinkedRecord } = require('./salesRecordReader');
 const { logInfo } = require('../utils/logger');
 
 class SalesDeliveryService {
@@ -18,23 +19,25 @@ class SalesDeliveryService {
     return next;
   }
 
-  async _deliver({ salesEntryRecordId, detailRecordIds, state = '门盒', occurredAt } = {}) {
+  async _deliver({ salesEntryRecordId, detailRecordIds, paymentRecordIds = [], occurredAt } = {}) {
     if (!salesEntryRecordId) throw new Error('交付缺少销售主表 record_id');
     if (!Array.isArray(detailRecordIds) || !detailRecordIds.length) throw new Error('请选择交付的销售明细');
     if (new Set(detailRecordIds).size !== detailRecordIds.length) throw new Error('交付明细不能重复');
-    if (!['门盒', '样品', '仓库'].includes(state)) throw new Error('库存所属状态无效');
     await this.gateway.validateTables?.(['salesEntry', 'salesDetail', 'behavior', 'inventoryLedger', 'liveInventory']);
     const entry = await this.gateway.get('salesEntry', salesEntryRecordId);
     if (!entry) throw new Error('销售主表记录不存在');
     const entryFields = this.gateway.table('salesEntry').fields;
     if (textValue(entry.fields?.[entryFields.confirmStatus]) !== '已入账') throw new Error('销售订单尚未确认入账');
     const fields = this.gateway.table('salesDetail').fields;
-    const details = (await this.gateway.listAll('salesDetail')).filter((record) =>
+    const listedDetails = (await this.gateway.listAll('salesDetail')).filter((record) =>
       linkedRecordIds(record.fields?.[fields.salesEntry]).includes(salesEntryRecordId));
-    const byId = new Map(details.map((record) => [record.record_id, record]));
+    const byId = new Map(listedDetails.map((record) => [record.record_id, record]));
     for (const id of detailRecordIds) {
-      const detail = byId.get(id);
-      if (!detail) throw new Error(`销售明细 ${id} 不属于此订单`);
+      // The caller has exact IDs from creation. Do not depend on a freshly
+      // created relation already appearing in Bitable's list response.
+      const detail = await readSaleLinkedRecord(this.gateway, 'salesDetail', id,
+        fields.salesEntry, salesEntryRecordId);
+      byId.set(id, detail);
       const quantity = Number(textValue(detail.fields?.[fields.quantity]));
       const delivered = Number(textValue(detail.fields?.[fields.deliveredQuantity]) || 0);
       if (!Number.isInteger(quantity) || quantity <= 0 || !Number.isInteger(delivered) || delivered < 0 || delivered > quantity) {
@@ -49,27 +52,36 @@ class SalesDeliveryService {
       const detail = byId.get(id);
       const quantity = Number(textValue(detail.fields?.[fields.quantity]));
       if (Number(textValue(detail.fields?.[fields.deliveredQuantity]) || 0) === quantity) {
-        results.push({ detailRecordId: id, duplicate: true });
+        const inventoryResult = await this.inventory.getSaleResult?.(id);
+        results.push({ detailRecordId: id, duplicate: true, inventoryResult });
         continue;
       }
       const productIds = linkedRecordIds(detail.fields?.[fields.product]);
       if (productIds.length !== 1) throw new Error(`销售明细 ${id} 必须关联一个货品`);
       const inventoryResult = await this.inventory.applySale({
         salesDetailRecordId: id, productRecordId: productIds[0],
-        size: Number(textValue(detail.fields?.[fields.size])), quantity, state,
+        size: Number(textValue(detail.fields?.[fields.size])), quantity,
         occurredAt: Number(occurredAt || Date.now()),
       });
       await this.gateway.update('salesDetail', id, { deliveredQuantity: quantity });
       detail.fields[fields.deliveredQuantity] = quantity;
       results.push({ detailRecordId: id, inventoryResult });
     }
+    const details = [...byId.values()];
     const deliveredTotal = details.reduce((sum, detail) =>
       sum + Number(textValue(detail.fields?.[fields.deliveredQuantity]) || 0), 0);
     const total = details.reduce((sum, detail) => sum + Number(textValue(detail.fields?.[fields.quantity]) || 0), 0);
-    await this.progress.sync(salesEntryRecordId);
+    await this.progress.sync(salesEntryRecordId, { detailRecordIds, paymentRecordIds });
     logInfo('sales.delivery.completed', { sales_entry_record_id: salesEntryRecordId,
       detail_count: results.length, delivered_quantity: deliveredTotal });
-    return { salesEntryRecordId, results, deliveredQuantity: deliveredTotal, totalQuantity: total };
+    const sampleReplacements = results.filter((item) => item.inventoryResult?.sampleConsumedQuantity > 0)
+      .map((item) => ({ salesDetailRecordId: item.detailRecordId,
+        productRecordId: item.inventoryResult.productRecordId,
+        sampleConsumedQuantity: item.inventoryResult.sampleConsumedQuantity,
+        consumedLiveRecordIds: item.inventoryResult.consumedLiveRecordIds || [],
+        remainingSizes: item.inventoryResult.remainingSizes || [] }));
+    return { salesEntryRecordId, results, deliveredQuantity: deliveredTotal, totalQuantity: total,
+      sampleReplacements };
   }
 }
 

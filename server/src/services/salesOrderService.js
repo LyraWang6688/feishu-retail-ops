@@ -86,7 +86,7 @@ class SalesOrderService {
       await this.gateway.update('salesEntry', salesEntryRecordId, {
         confirmStatus: '已入账',
       });
-      await this.progress.sync(salesEntryRecordId);
+      await this.progress.sync(salesEntryRecordId, { detailRecordIds, paymentRecordIds });
       const order = await this.gateway.get('salesEntry', salesEntryRecordId);
       const sourceNo = textValue(order?.fields?.[this.gateway.table('salesEntry').fields.orderNo]) || salesEntryRecordId;
       logInfo('v1.sale.posted', { sales_entry_record_id: salesEntryRecordId, detail_count: detailRecordIds.length,

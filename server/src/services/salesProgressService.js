@@ -1,4 +1,5 @@
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const { readSaleLinkedRecord } = require('./salesRecordReader');
 
 const cents = (value, label) => {
   const number = Number(value);
@@ -49,21 +50,37 @@ class SalesProgressService {
     this.gateway = gateway;
   }
 
-  async forOrder(salesEntryRecordId) {
+  async forOrder(salesEntryRecordId, expected = {}) {
     const [allDetails, allReceipts] = await Promise.all([
       this.gateway.listAll('salesDetail'), this.gateway.listAll('paymentRecord'),
     ]);
     const detailFields = this.gateway.table('salesDetail').fields;
     const paymentFields = this.gateway.table('paymentRecord').fields;
-    const details = allDetails.filter((record) =>
-      linkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(salesEntryRecordId));
-    const receipts = allReceipts.filter((record) =>
-      linkedRecordIds(record.fields?.[paymentFields.salesEntry]).includes(salesEntryRecordId));
+    const detailsById = new Map(allDetails.filter((record) =>
+      linkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(salesEntryRecordId))
+      .map((record) => [record.record_id, record]));
+    const receiptsById = new Map(allReceipts.filter((record) =>
+      linkedRecordIds(record.fields?.[paymentFields.salesEntry]).includes(salesEntryRecordId))
+      .map((record) => [record.record_id, record]));
+    // Bitable's list endpoint can lag behind a successful create. Read the
+    // record IDs returned by that create directly before deriving statuses.
+    for (const id of expected.detailRecordIds || []) {
+      const record = await readSaleLinkedRecord(this.gateway, 'salesDetail', id,
+        detailFields.salesEntry, salesEntryRecordId);
+      detailsById.set(id, record);
+    }
+    for (const id of expected.paymentRecordIds || []) {
+      const record = await readSaleLinkedRecord(this.gateway, 'paymentRecord', id,
+        paymentFields.salesEntry, salesEntryRecordId);
+      receiptsById.set(id, record);
+    }
+    const details = [...detailsById.values()];
+    const receipts = [...receiptsById.values()];
     return progressFromRecords(details, receipts, detailFields, paymentFields);
   }
 
-  async sync(salesEntryRecordId) {
-    const progress = await this.forOrder(salesEntryRecordId);
+  async sync(salesEntryRecordId, expected = {}) {
+    const progress = await this.forOrder(salesEntryRecordId, expected);
     const fields = { orderStatus: progress.orderStatus, fulfillmentStatus: progress.fulfillmentStatus };
     if (progress.paymentStatus) fields.paymentStatus = progress.paymentStatus;
     await this.gateway.update('salesEntry', salesEntryRecordId, fields);

@@ -42,7 +42,7 @@
         <h3>确认交付</h3>
         <p class="muted">勾选已交付的商品明细。当前一条明细只支持一次性交付全部数量。</p>
         <div id="delivery-details"></div>
-        <label class="form-field">从哪个库存状态交付<select id="delivery-state"><option value="门盒">门盒</option><option value="样品">样品</option><option value="仓库">仓库</option></select></label>
+        <p class="muted">系统优先扣减门盒；门盒不足时扣减样品并提醒补选。仓库库存不会自动用于销售。</p>
         <button type="submit">确认交付并扣库存</button>
       </form>
       <p id="followup-result" role="status"></p>

@@ -79,7 +79,7 @@ class SalesFollowupService {
         if (existing.fingerprint !== fingerprint) throw new Error('request_id 对应的收款内容不一致');
         if (existing.status === 'completed') return existing.result;
         if (existing.status === 'recorded') {
-          await this.progress.sync(input.salesEntryRecordId);
+          await this.progress.sync(input.salesEntryRecordId, { paymentRecordIds: [existing.result.recordId] });
           await this.store.update(taskId, { status: 'completed' });
           return existing.result;
         }
@@ -99,7 +99,7 @@ class SalesFollowupService {
       const created = await this.payments.record(input);
       const result = { recordId: created.recordId };
       await this.store.update(taskId, { status: 'recorded', result });
-      await this.progress.sync(input.salesEntryRecordId);
+      await this.progress.sync(input.salesEntryRecordId, { paymentRecordIds: [created.recordId] });
       await this.store.update(taskId, { status: 'completed', result });
       return result;
     };

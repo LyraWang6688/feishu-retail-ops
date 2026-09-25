@@ -9,6 +9,7 @@ const { V1BitableGateway, textValue } = require('./v1BitableGateway');
 const { V1PostingService } = require('./v1PostingService');
 const { createWorkbenchService } = require('./v1WorkbenchService');
 const { SalesDeliveryService } = require('./salesDeliveryService');
+const { SampleReplacementService } = require('./sampleReplacementService');
 const { PurchaseDraftBuilder } = require('./purchaseDraftBuilder');
 const { PurchaseWebhookService } = require('./purchaseWebhookService');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
@@ -79,6 +80,12 @@ class LarkMvpService {
     this.store =
       options.store ||
       new JsonTaskStore({ dir: path.join(__dirname, '../../data/lark_mvp_tasks'), idField: 'task_id' });
+    this.sampleReplacements = options.sampleReplacements || new SampleReplacementService({
+      gateway: this.gateway, inventory: this.delivery.inventory, store: this.store, client: this.client,
+      sendCard: (openId, card) => this.sendCard(openId, card),
+      sendText: (openId, message) => this.sendText(openId, message),
+      updateCard: (task, event, card) => this.updateSalesActionCard(task, event, card),
+    });
     this.intakeSchemaValidation = new Map();
     this.senderQueues = new Map();
   }
@@ -124,6 +131,11 @@ class LarkMvpService {
       },
     });
     if (response.code !== 0) throw new Error(`发送飞书卡片失败: ${response.msg} (Code: ${response.code})`);
+    return response.data?.message_id || '';
+  }
+
+  async notifySampleReplacements(deliveryResult, operatorOpenId) {
+    return this.sampleReplacements.notifySampleReplacements(deliveryResult, operatorOpenId);
   }
 
   async sendTodaySales(openId, now = new Date()) {
@@ -522,6 +534,9 @@ class LarkMvpService {
     const action = value.action;
     const operatorOpenId =
       event?.operator?.operator_id?.open_id || event?.operator?.open_id || event?.event?.operator?.operator_id?.open_id;
+    if (['choose_sample_replacement', 'refresh_sample_replacement'].includes(action)) {
+      return this.sampleReplacements.handleCardAction(value, event, operatorOpenId);
+    }
     const procurementResult = await this.purchaseWebhooks.handleCardAction(value, operatorOpenId);
     if (procurementResult) return procurementResult;
     const task = await this.store.get(draftId);
@@ -584,8 +599,10 @@ class LarkMvpService {
       await this.store.update(draftId, { status: 'posted_delivery_pending', posting_result: result });
       if (action === 'confirm_sale_delivered') {
         try {
-          await this.delivery.deliver({ salesEntryRecordId: task.sales_entry_record_id,
-            detailRecordIds: result.detailRecordIds, state: '门盒', operatorOpenId });
+          const deliveryResult = await this.delivery.deliver({ salesEntryRecordId: task.sales_entry_record_id,
+            detailRecordIds: result.detailRecordIds, paymentRecordIds: result.paymentRecordIds });
+          await this.notifySampleReplacements(deliveryResult, operatorOpenId).catch((error) =>
+            logWarn('lark.sales.sample_notice.failed', { task_id: draftId, error: error.message }));
         } catch (error) {
           await this.updateSalesActionCard(task, event, salesStatusCard(task.draft,
             '订单已入账，交付待处理', `销售单号：${result.sourceNo}。库存交付未完成：${error.message}。请在工作台待交付列表核对并处理。`, 'orange'));

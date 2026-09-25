@@ -93,6 +93,29 @@ const salesStatusCard = (draft, title, message, template = 'blue') => ({
   ],
 });
 
+const sampleReplacementCard = (taskId, { productNumber, remainingSizes = [] } = {}) => {
+  const lines = remainingSizes.map((item) =>
+    `${text(item.size)}码：门盒 ${text(item.doorBoxCount)}、样品 ${text(item.sampleCount)}、仓库 ${text(item.warehouseCount)}`);
+  const choices = remainingSizes.filter((item) => item.doorBoxCount > 0);
+  const elements = [{ tag: 'markdown', content:
+    `**${text(productNumber || '该货品')} 的样品已售出。**\n请选择同货号现有门盒中的一个尺码补作样品；仓库鞋需另行调拨。\n${lines.join('\n') || '目前没有剩余库存。'}` }];
+  for (let index = 0; index < choices.length; index += 4) {
+    elements.push({ tag: 'action', actions: choices.slice(index, index + 4).map((item) => ({
+      ...actionButton(`选 ${text(item.size)} 码`, 'choose_sample_replacement', taskId),
+      value: { action: 'choose_sample_replacement', draft_id: taskId, size: item.size },
+    })) });
+  }
+  elements.push({ tag: 'action', actions: [actionButton('刷新可选尺码', 'refresh_sample_replacement', taskId)] });
+  return { config: { wide_screen_mode: true },
+    header: { template: 'orange', title: { tag: 'plain_text', content: '请补选展示样品' } }, elements };
+};
+
+const sampleReplacementStatusCard = (productNumber, message) => ({
+  config: { wide_screen_mode: true },
+  header: { template: 'green', title: { tag: 'plain_text', content: '样品已补选' } },
+  elements: [{ tag: 'markdown', content: `${text(productNumber || '该货品')}：${text(message)}` }],
+});
+
 const todaySalesCard = ({ dateLabel, rows, totalQuantity, totalAmount }) => ({
   config: { wide_screen_mode: true },
   header: { template: 'blue', title: { tag: 'plain_text', content: `${dateLabel} 销售明细` } },
@@ -211,5 +234,7 @@ module.exports = {
   purchaseArrivalComparisonCard,
   salesConfirmationCard,
   salesStatusCard,
+  sampleReplacementCard,
+  sampleReplacementStatusCard,
   todaySalesCard,
 };

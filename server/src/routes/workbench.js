@@ -2,7 +2,8 @@ const express = require('express');
 const controller = require('../controllers/workbenchController');
 const { enabled: feishuAuthEnabled, getSessionUser, allowedOpenIds } = require('./feishuWebAuth');
 const { SalesFollowupService } = require('../services/salesFollowupService');
-const { logError } = require('../utils/logger');
+const { SampleReplacementService } = require('../services/sampleReplacementService');
+const { logError, logWarn } = require('../utils/logger');
 
 const requireWorkbenchAccess = (req, res, next) => {
   if (!feishuAuthEnabled()) return res.status(503).json({ success: false, error: '飞书身份认证尚未启用' });
@@ -51,8 +52,14 @@ const createWorkbenchRouter = (options = {}) => {
       const result = await followup.delivery.deliver({
         salesEntryRecordId: req.body?.salesEntryRecordId,
         detailRecordIds: req.body?.detailRecordIds,
-        state: req.body?.state,
       });
+      if (result.sampleReplacements?.length) {
+        const notifier = options.sampleNotifier || new SampleReplacementService({
+          gateway: followup.gateway, inventory: followup.delivery.inventory,
+        });
+        await notifier.notifySampleReplacements(result, req.workbenchUser.open_id).catch((error) =>
+          logWarn('workbench.sales.sample_notice.failed', { request_id: req.requestId, error: error.message }));
+      }
       return res.json({ success: true, ...result });
     } catch (error) {
       logError('workbench.sales.delivery.failed', { request_id: req.requestId, error: error.message });

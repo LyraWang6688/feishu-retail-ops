@@ -27,6 +27,13 @@ const gatewayFor = (live, behaviors = [
       return { recordId };
     },
     delete: async (key, id) => records.set(key, records.get(key).filter((row) => row.record_id !== id)),
+    get: async (key, id) => (records.get(key) || []).find((row) => row.record_id === id),
+    update: async (key, id, values) => {
+      const record = (records.get(key) || []).find((row) => row.record_id === id);
+      Object.assign(record.fields, Object.fromEntries(Object.entries(values)
+        .map(([name, value]) => [V1_BITABLE_SCHEMA.tables[key].fields[name], value])));
+      return record;
+    },
   };
 };
 const store = () => new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'inventory-mvp-')), idField: 'operation_id' });
@@ -83,11 +90,61 @@ test('inventory preflight checks both sale and purchase behavior settings', asyn
   assert.equal(gateway.records.get('inventoryLedger'), undefined);
 });
 
-test('stock is not deducted before a sale has enough matching units', async () => {
-  const gateway = gatewayFor([unit('sample_1', '样品')]);
+test('sale consumes a sample only after door-box stock is exhausted and reports remaining sizes', async () => {
+  const gateway = gatewayFor([
+    unit('sample_1', '样品'),
+    { record_id: 'door_40', fields: { 编号: ['product_1'], 尺码: 40, 所属状态: '门盒' } },
+    { record_id: 'warehouse_41', fields: { 编号: ['product_1'], 尺码: 41, 所属状态: '仓库' } },
+  ]);
+  const inventory = new InventoryService({ gateway, store: store() });
+  const request = { salesDetailRecordId: 'detail_1', productRecordId: 'product_1', size: 38, quantity: 1 };
+  const result = await inventory.applySale(request);
+  assert.deepEqual(result.liveRecordIds, ['sample_1']);
+  assert.equal(result.sampleConsumedQuantity, 1);
+  assert.deepEqual(result.remainingSizes, [
+    { size: 40, doorBoxCount: 1, sampleCount: 0, warehouseCount: 0 },
+    { size: 41, doorBoxCount: 0, sampleCount: 0, warehouseCount: 1 },
+  ]);
+  await inventory.applySale(request);
+  assert.equal(gateway.records.get('inventoryLedger').length, 1);
+  assert.deepEqual(gateway.records.get('liveInventory').map((row) => row.record_id), ['door_40', 'warehouse_41']);
+});
+
+test('a sale never consumes warehouse stock and does not write a ledger when total floor stock is short', async () => {
+  const gateway = gatewayFor([unit('sample_1', '样品'), unit('warehouse_1', '仓库')]);
   const inventory = new InventoryService({ gateway, store: store() });
   await assert.rejects(inventory.applySale({ salesDetailRecordId: 'detail_1', productRecordId: 'product_1',
-    size: 38, quantity: 1, state: '门盒' }), /不能执行销售扣减/);
+    size: 38, quantity: 2 }), /门盒和样品库存不足/);
   assert.equal(gateway.records.get('inventoryLedger'), undefined);
-  assert.equal(gateway.records.get('liveInventory').length, 1);
+  assert.equal(gateway.records.get('liveInventory').length, 2);
+});
+
+test('sample replacement moves one selected door-box pair without changing total quantity and is idempotent', async () => {
+  const gateway = gatewayFor([
+    { record_id: 'door_40', fields: { 编号: ['product_1'], 尺码: 40, 所属状态: '门盒' } },
+    { record_id: 'door_41', fields: { 编号: ['product_1'], 尺码: 41, 所属状态: '门盒' } },
+  ], [behavior('behavior_sample', '门盒转样品', '不影响')]);
+  const inventory = new InventoryService({ gateway, store: store() });
+  const request = { salesDetailRecordId: 'detail_sold_sample', productRecordId: 'product_1', size: 40 };
+  const first = await inventory.promoteToSample(request);
+  const again = await inventory.promoteToSample(request);
+  assert.deepEqual(again, first);
+  assert.equal(gateway.records.get('liveInventory').length, 2);
+  assert.equal(gateway.records.get('liveInventory')[0].fields['所属状态'], '样品');
+  assert.equal(gateway.records.get('liveInventory')[1].fields['所属状态'], '门盒');
+  assert.equal(gateway.records.get('inventoryLedger').length, 1);
+  assert.deepEqual(gateway.records.get('inventoryLedger')[0].fields, {
+    编号: ['product_1'], 尺码: 40, 变动数量: 0,
+    库存行为: ['behavior_sample'], 关联销售: ['detail_sold_sample'],
+  });
+  await assert.rejects(inventory.promoteToSample({ ...request, size: 41 }), /已选择其他补样品尺码/);
+});
+
+test('sample replacement refuses an unconfigured behavior before writing records', async () => {
+  const gateway = gatewayFor([unit('door_1', '门盒')], [behavior('behavior_sample', '门盒转样品', null)]);
+  const inventory = new InventoryService({ gateway, store: store() });
+  await assert.rejects(inventory.promoteToSample({ salesDetailRecordId: 'detail_1',
+    productRecordId: 'product_1', size: 38 }), /库存方向设置为“不影响”/);
+  assert.equal(gateway.records.get('inventoryLedger'), undefined);
+  assert.equal(gateway.records.get('liveInventory')[0].fields['所属状态'], '门盒');
 });

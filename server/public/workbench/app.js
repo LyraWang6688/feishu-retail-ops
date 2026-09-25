@@ -168,15 +168,15 @@ $('delivery-form').addEventListener('submit', async (event) => {
   const orderId = $('followup-order').value;
   const detailRecordIds = [...$('delivery-details').querySelectorAll('input:checked')].map((item) => item.value);
   if (!orderId || !detailRecordIds.length) return showError('请先选择销售单和待交付明细');
-  if (!window.confirm('确认这些商品已实际交付？确认后将扣减对应状态的库存。')) return;
+  if (!window.confirm('确认这些商品已实际交付？系统会先扣门盒，门盒不足时再扣样品。')) return;
   const button = event.submitter;
   button.disabled = true;
   showError('');
   try {
-    await postJson('/api/workbench/sales/deliveries', {
-      salesEntryRecordId: orderId, detailRecordIds, state: $('delivery-state').value,
-    });
-    $('followup-result').textContent = '交付已记录，库存已更新';
+    const result = await postJson('/api/workbench/sales/deliveries', { salesEntryRecordId: orderId, detailRecordIds });
+    $('followup-result').textContent = result.sampleReplacements?.length
+      ? '交付已记录，库存已扣减；有样品售出，请查看机器人补选样品提醒。'
+      : '交付已记录，库存已更新';
     await loadOrders(orderId);
   } catch (error) { showError(error.message); }
   finally { button.disabled = false; }

@@ -120,3 +120,23 @@ test('confirmed sale delivery writes positive stock movement and removes exactly
   });
   assert.equal(gateway.records.get('salesEntry')[0].fields['履约状态'], '已交付');
 });
+
+test('newly created detail and receipt are resolved by record ID when list results lag', async () => {
+  const gateway = fake();
+  const listAll = gateway.listAll;
+  gateway.listAll = async (key) => ['salesDetail', 'paymentRecord'].includes(key) ? [] : listAll(key);
+  const sale = new SalesOrderService({ gateway, references });
+  const posted = await sale.confirm({ salesEntryRecordId: 'order_1',
+    items: [{ itemNo: 'A100', size: 38, quantity: 1, actualAmount: 89 }],
+    payments: [{ method: '微信', amount: 89 }] });
+  const order = await gateway.get('salesEntry', 'order_1');
+  assert.equal(order.fields['收款状态'], '已收清');
+  const delivery = new SalesDeliveryService({ gateway, inventory: {
+    applySale: async () => ({ sampleConsumedQuantity: 0 }),
+  } });
+  await delivery.deliver({ salesEntryRecordId: 'order_1', detailRecordIds: posted.detailRecordIds,
+    paymentRecordIds: posted.paymentRecordIds });
+  assert.equal(order.fields['履约状态'], '已交付');
+  assert.equal(order.fields['收款状态'], '已收清');
+  assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['交付数量'], 1);
+});

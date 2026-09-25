@@ -106,6 +106,42 @@ test('recognized purchase items with same SKU and size are aggregated', () => {
   );
 });
 
+test('selling a sample sends a per-order size choice card and only its recipient can promote a door-box pair', async () => {
+  const store = makeStore();
+  const cards = [];
+  const promoted = [];
+  const delivery = { inventory: {
+    sampleReplacementCandidates: async () => [
+      { size: 40, doorBoxCount: 1, sampleCount: 0, warehouseCount: 0 },
+      { size: 41, doorBoxCount: 0, sampleCount: 0, warehouseCount: 1 },
+    ],
+    promoteToSample: async (input) => { promoted.push(input); return { liveRecordId: 'door_40' }; },
+  } };
+  const service = new LarkMvpService({ client: {}, store,
+    gateway: { table: () => ({ fields: { number: '编号' } }),
+      get: async () => ({ fields: { 编号: 'A100黑' } }) },
+    references: {}, posting: {}, recognizer: {}, purchaseWebhooks: {}, delivery });
+  service.sendCard = async (_openId, card) => { cards.push(card); return 'om_sample_card'; };
+  service.updateSalesActionCard = async (_task, _event, card) => { cards.push(card); return true; };
+  const delivered = { sampleReplacements: [{ salesDetailRecordId: 'detail_1',
+    productRecordId: 'product_1', sampleConsumedQuantity: 1 }] };
+  await service.notifySampleReplacements(delivered, 'ou_seller');
+  await service.notifySampleReplacements(delivered, 'ou_seller');
+  assert.equal(cards.length, 1);
+  assert.match(JSON.stringify(cards[0]), /A100黑/);
+  assert.match(JSON.stringify(cards[0]), /40码：门盒 1/);
+  assert.ok(!JSON.stringify(cards[0]).includes('选 41 码'));
+  const choose = (openId) => ({ action: { value: { action: 'choose_sample_replacement',
+    draft_id: cards[0].elements[1].actions[0].value.draft_id, size: 40 } },
+    operator: { operator_id: { open_id: openId } } });
+  await assert.rejects(service.handleCardAction(choose('ou_other')), /只能由收到提醒的用户/);
+  const result = await service.handleCardAction(choose('ou_seller'));
+  assert.equal(result.toast.type, 'success');
+  assert.equal(promoted.length, 1);
+  assert.equal((await service.handleCardAction(choose('ou_seller'))).toast.type, 'info');
+  assert.equal(promoted.length, 1);
+});
+
 test('sales intake writes only intake metadata and retains actual amount before confirmation', async () => {
   const store = makeStore();
   const calls = [];
@@ -359,12 +395,13 @@ test('delivered confirmation writes sale first then delegates stock to delivery 
       calls.push(['post', input.items[0].actualAmount]);
       return { sourceNo: 'XSD-001', detailRecordIds: ['detail_1'] };
     } },
-    delivery: { deliver: async (input) => calls.push(['deliver', input.detailRecordIds, input.state]) },
+    delivery: { deliver: async (input) => { calls.push(['deliver', input.detailRecordIds, input.paymentRecordIds]);
+      return { sampleReplacements: [] }; } },
   });
   const result = await service.handleCardAction({ operator: { operator_id: { open_id: 'ou_1' } },
     action: { value: { action: 'confirm_sale_delivered', draft_id: 'sale_delivered' } } });
   assert.equal(result.toast.type, 'success');
-  assert.deepEqual(calls, [['post', 220], ['deliver', ['detail_1'], '门盒']]);
+  assert.deepEqual(calls, [['post', 220], ['deliver', ['detail_1'], undefined]]);
   assert.equal((await store.get('sale_delivered')).status, 'posted');
 });
 
