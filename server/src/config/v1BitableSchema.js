@@ -155,7 +155,6 @@ const V1_BITABLE_SCHEMA = {
         stockKey: '库存键',
         product: '编号',
         size: '尺码',
-        quantity: '数量',
         updatedAt: '更新时间',
       },
     },

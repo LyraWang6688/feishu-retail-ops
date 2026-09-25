@@ -80,11 +80,11 @@ class InventoryService {
         if (existingLedger) {
           throw new Error(`来源明细 ${input.sourceRecordId} 已有库存流水，但缺少可恢复任务，请人工核对实时库存`);
         }
-        const live = await this.findLiveInventory(input.productRecordId, size);
-        if (!live && input.quantityChange < 0) {
+        const liveRecords = await this.findLiveInventory(input.productRecordId, size);
+        const currentQuantity = liveRecords.length;
+        if (input.quantityChange < 0 && currentQuantity < Math.abs(input.quantityChange)) {
           throw new Error(`实时库存中找不到库存键 ${stockKey}，不能执行销售扣减`);
         }
-        const currentQuantity = live ? this.liveQuantity(live) : 0;
         const targetQuantity = currentQuantity + Number(input.quantityChange);
         if (targetQuantity < 0) {
           throw new Error(`库存不足：${stockKey} 当前${currentQuantity}，本次变化${input.quantityChange}`);
@@ -100,7 +100,11 @@ class InventoryService {
           quantity_change: Number(input.quantityChange),
           source_record_id: input.sourceRecordId,
           occurred_at: Number(input.occurredAt || Date.now()),
-          live_record_id: live?.record_id || '',
+          live_record_ids: input.quantityChange < 0
+            ? liveRecords.slice(0, Math.abs(input.quantityChange)).map((record) => record.record_id)
+            : [],
+          removed_live_record_ids: [],
+          created_live_record_ids: [],
           current_quantity: currentQuantity,
           target_quantity: targetQuantity,
         });
@@ -135,32 +139,38 @@ class InventoryService {
       ledger_record_id: ledger.record_id,
     });
 
-    let liveRecordId = operation.live_record_id;
-    if (liveRecordId) {
-      await this.gateway.update('liveInventory', liveRecordId, {
-        quantity: operation.target_quantity,
-        updatedAt: operation.occurred_at,
-      });
+    const liveRecordIds = operation.live_record_ids || [];
+    const removedIds = operation.removed_live_record_ids || [];
+    const createdIds = operation.created_live_record_ids || [];
+    if (operation.quantity_change < 0) {
+      for (const recordId of liveRecordIds) {
+        if (removedIds.includes(recordId)) continue;
+        await this.gateway.delete('liveInventory', recordId);
+        removedIds.push(recordId);
+        operation = await this.store.update(operation.operation_id, { removed_live_record_ids: removedIds });
+      }
     } else {
-      const created = await this.gateway.create('liveInventory', {
-        product: relation(operation.product_record_id),
-        size: operation.size,
-        quantity: operation.target_quantity,
-        updatedAt: operation.occurred_at,
-      });
-      liveRecordId = created.recordId;
+      const expectedCreates = Number(operation.quantity_change);
+      while (createdIds.length < expectedCreates) {
+        const created = await this.gateway.create('liveInventory', {
+          product: relation(operation.product_record_id),
+          size: operation.size,
+          updatedAt: operation.occurred_at,
+        });
+        createdIds.push(created.recordId);
+        operation = await this.store.update(operation.operation_id, { created_live_record_ids: createdIds });
+      }
     }
 
     const result = {
       stockKey: operation.stock_key,
       ledgerRecordId: ledger.record_id,
-      liveRecordId,
+      liveRecordIds: operation.quantity_change < 0 ? removedIds : createdIds,
       quantityChange: operation.quantity_change,
       quantity: operation.target_quantity,
     };
     await this.store.update(operation.operation_id, {
       status: 'completed',
-      live_record_id: liveRecordId,
       result,
     });
     logInfo('inventory.change.applied', {
@@ -170,7 +180,7 @@ class InventoryService {
       quantity_change: operation.quantity_change,
       target_quantity: operation.target_quantity,
       ledger_record_id: ledger.record_id,
-      live_record_id: liveRecordId,
+      live_record_ids: result.liveRecordIds,
     });
     return result;
   }
@@ -187,20 +197,11 @@ class InventoryService {
   async findLiveInventory(productRecordId, size) {
     const table = this.gateway.table('liveInventory');
     const records = await this.gateway.listAll('liveInventory');
-    const matches = records.filter(
+    return records.filter(
       (record) =>
         linkedRecordIds(record.fields?.[table.fields.product]).includes(productRecordId) &&
         Number(textValue(record.fields?.[table.fields.size])) === Number(size)
     );
-    if (matches.length > 1) throw new Error(`实时库存存在重复库存键: ${productRecordId}|${size}`);
-    return matches[0] || null;
-  }
-
-  liveQuantity(record) {
-    const fieldName = this.gateway.table('liveInventory').fields.quantity;
-    const quantity = Number(textValue(record.fields?.[fieldName]) || 0);
-    if (!Number.isFinite(quantity)) throw new Error(`实时库存数量不是有效数字: ${record.record_id}`);
-    return quantity;
   }
 }
 

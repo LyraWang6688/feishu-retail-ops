@@ -169,6 +169,15 @@ class V1BitableGateway {
     return response.data?.record;
   }
 
+  async delete(tableKey, recordId) {
+    const table = this.table(tableKey);
+    const response = await this.client.bitable.appTableRecord.delete({
+      path: { app_token: this.schema.appToken, table_id: table.tableId, record_id: recordId },
+    });
+    this.assertSuccess(response, `删除“${table.tableName}”记录`);
+    return true;
+  }
+
   async listAll(tableKey) {
     const table = this.table(tableKey);
     const records = [];

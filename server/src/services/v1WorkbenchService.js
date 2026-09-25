@@ -107,7 +107,7 @@ const createWorkbenchService = (gateway, options = {}) => {
     const [inventory, products] = await Promise.all([gateway.listAll('liveInventory'), gateway.listAll('product')]);
     const productsById = indexByRecordId(products);
     const normalizedKeyword = String(keyword).trim().toLowerCase();
-    const rows = inventory.map((record) => {
+    const rawRows = inventory.map((record) => {
       const productIds = asLinks(schema, 'liveInventory', record, 'product');
       const product = buildProductLabel(schema, productsById, productIds);
       return {
@@ -115,17 +115,25 @@ const createWorkbenchService = (gateway, options = {}) => {
         stock_key: asText(schema, 'liveInventory', record, 'stockKey'),
         ...product,
         size: asText(schema, 'liveInventory', record, 'size'),
-        quantity: asNumber(fieldValue(schema, 'liveInventory', record, 'quantity')),
         updated_at: asDate(fieldValue(schema, 'liveInventory', record, 'updatedAt'))?.toISOString() || '',
       };
     }).filter((row) => {
       const matchesKeyword = !normalizedKeyword || [row.stock_key, row.product_number, row.item_no, row.color].some((value) => String(value).toLowerCase().includes(normalizedKeyword));
       const matchesSize = !String(size).trim() || row.size === String(size).trim();
       return matchesKeyword && matchesSize;
-    }).sort((a, b) => String(a.stock_key).localeCompare(String(b.stock_key), 'zh-CN'));
-    const duplicateKeys = [...rows.reduce((map, row) => map.set(row.stock_key, (map.get(row.stock_key) || 0) + 1), new Map())]
-      .filter(([, count]) => count > 1).map(([stockKey]) => stockKey);
-    return { rows, duplicate_stock_keys: duplicateKeys };
+    });
+    const grouped = new Map();
+    rawRows.forEach((row) => {
+      const current = grouped.get(row.stock_key);
+      if (current) {
+        current.quantity += 1;
+        if (row.updated_at > current.updated_at) current.updated_at = row.updated_at;
+      } else {
+        grouped.set(row.stock_key, { ...row, quantity: 1 });
+      }
+    });
+    const rows = [...grouped.values()].sort((a, b) => String(a.stock_key).localeCompare(String(b.stock_key), 'zh-CN'));
+    return { rows, duplicate_stock_keys: [] };
   };
 
   return { getTodaySales, getLiveInventory };
