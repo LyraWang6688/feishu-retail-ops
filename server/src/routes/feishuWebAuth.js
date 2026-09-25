@@ -45,7 +45,9 @@ const jsonFetch = async (url, options) => {
   const response = await fetch(url, options);
   const body = await response.json().catch(() => ({}));
   if (!response.ok || body.code) throw new Error(body.msg || body.message || `飞书接口请求失败（${response.status}）`);
-  return body;
+  // Feishu auth endpoints are not completely uniform: some return the
+  // payload at the top level while others wrap it in `data`.
+  return body.data && typeof body.data === 'object' ? body.data : body;
 };
 
 const createFeishuWebAuthRouter = () => {
@@ -77,7 +79,7 @@ const createFeishuWebAuthRouter = () => {
       const appToken = await jsonFetch('https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app_id: process.env.LARK_AGENT_APP_ID, app_secret: process.env.LARK_AGENT_APP_SECRET }) });
       const token = await jsonFetch('https://open.feishu.cn/open-apis/authen/v1/access_token', { method: 'POST', headers: { Authorization: `Bearer ${appToken.app_access_token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ grant_type: 'authorization_code', code: req.query.code }) });
       const info = await jsonFetch('https://open.feishu.cn/open-apis/authen/v1/user_info', { headers: { Authorization: `Bearer ${token.access_token}` } });
-      const user = info.data || info;
+      const user = info;
       const allowed = allowedOpenIds();
       if (allowed.size && !allowed.has(user.open_id)) return res.status(403).send('当前飞书账号未被授权使用工作台');
       res.setHeader('Set-Cookie', `${COOKIE_NAME}=${encodeSession(user)}; Path=/; Max-Age=28800; HttpOnly; Secure; SameSite=Lax`);
