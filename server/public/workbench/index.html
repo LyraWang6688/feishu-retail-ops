@@ -13,19 +13,38 @@
       <div><div class="eyebrow">邯美数智经营工作台</div><h1>经营查询</h1></div>
       <div class="auth"><span id="auth-status" class="muted">正在检查飞书登录状态…</span><button id="logout" class="hidden">退出登录</button></div>
     </header>
-    <nav class="tabs"><button class="tab active" data-tab="sales">今日销售明细</button><button class="tab" data-tab="inventory">实时库存</button></nav>
+    <nav class="tabs"><button class="tab active" data-tab="sales">今日销售明细</button><button class="tab" data-tab="inventory">实时库存</button><button class="tab" data-tab="followup">后续收款/交付</button></nav>
     <section id="sales-panel" class="panel">
       <div class="toolbar"><div><h2>今日销售明细</h2><p id="sales-date" class="muted"></p></div><button id="refresh-sales">刷新</button></div>
       <div id="sales-summary" class="summary"></div>
-      <div class="table-wrap"><table><thead><tr><th>时间</th><th>销售行为</th><th>编号</th><th>尺码</th><th>数量</th><th>实收</th><th>支付方式</th><th>赠品</th><th>销售单号</th></tr></thead><tbody id="sales-rows"></tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>时间</th><th>销售行为</th><th>编号</th><th>尺码</th><th>数量</th><th>明细应收</th><th>订单收款方式</th><th>赠品</th><th>销售单号</th></tr></thead><tbody id="sales-rows"></tbody></table></div>
       <p id="sales-empty" class="empty hidden">今天还没有已确认的销售明细。</p>
     </section>
     <section id="inventory-panel" class="panel hidden">
       <div class="toolbar"><div><h2>实时库存</h2><p class="muted">按库存键、编号、货号或颜色查询</p></div><button id="refresh-inventory">刷新</button></div>
       <div class="filters"><input id="inventory-keyword" placeholder="输入编号/货号/颜色"><input id="inventory-size" placeholder="尺码"><button id="search-inventory">查询</button></div>
       <div id="inventory-warning" class="warning hidden"></div>
-      <div class="table-wrap"><table><thead><tr><th>库存键</th><th>编号</th><th>货号</th><th>颜色</th><th>尺码</th><th>当前数量</th><th>更新时间</th></tr></thead><tbody id="inventory-rows"></tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>库存键</th><th>编号</th><th>货号</th><th>颜色</th><th>尺码</th><th>所属状态</th><th>当前数量</th><th>更新时间</th></tr></thead><tbody id="inventory-rows"></tbody></table></div>
       <p id="inventory-empty" class="empty hidden">没有匹配的库存记录。</p>
+    </section>
+    <section id="followup-panel" class="panel hidden">
+      <div class="toolbar"><div><h2>后续收款与交付</h2><p class="muted">选择已有销售单；收款不会再次扣库存，交付成功后才扣库存。</p></div><button id="refresh-orders">刷新</button></div>
+      <label class="form-field">销售单<select id="followup-order"></select></label>
+      <div id="order-details" class="order-details"></div>
+      <form id="payment-form" class="action-form">
+        <h3>补充收款</h3>
+        <label class="form-field">收款金额<input id="payment-amount" type="number" min="0.01" step="0.01" required></label>
+        <label class="form-field">支付方式<select id="payment-method" required></select></label>
+        <button type="submit">确认新增收款</button>
+      </form>
+      <form id="delivery-form" class="action-form">
+        <h3>确认交付</h3>
+        <p class="muted">勾选已交付的商品明细。当前一条明细只支持一次性交付全部数量。</p>
+        <div id="delivery-details"></div>
+        <label class="form-field">从哪个库存状态交付<select id="delivery-state"><option value="门盒">门盒</option><option value="样品">样品</option><option value="仓库">仓库</option></select></label>
+        <button type="submit">确认交付并扣库存</button>
+      </form>
+      <p id="followup-result" role="status"></p>
     </section>
     <p id="error" class="error hidden"></p>
   </main>

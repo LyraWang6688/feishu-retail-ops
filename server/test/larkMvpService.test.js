@@ -175,6 +175,66 @@ test('sales intake keeps behavior in draft and writes only intake metadata befor
   assert.equal(task.draft.items[0].product_record_id, 'rec_product');
 });
 
+test('two products and two payments stay in one sales draft and confirmation card', async () => {
+  const store = makeStore();
+  const cards = [];
+  const { normalizeSalesResult } = require('../src/services/doubaoService');
+  const prices = { '93827': 100, '2115': 150 };
+  const service = new LarkMvpService({
+    client: {},
+    gateway: {
+      validateTables: async () => [],
+      table: () => ({ fields: { number: '编号', price: '单价' } }),
+      create: async () => ({ recordId: 'order_2' }),
+      update: async () => undefined,
+    },
+    references: {
+      resolveProduct: async ({ itemNo }) => ({ recordId: `product_${itemNo}`,
+        record: { fields: { 编号: itemNo, 单价: prices[itemNo] } } }),
+    },
+    posting: {},
+    recognizer: { parseSalesText: async () => normalizeSalesResult({ intent: 'sale', behavior_code: 'SALE_CASH',
+      sales_behavior: '现货销售', agreed_total: 250,
+      items: [{ item_no: '93827', color: '黑', size: 43, quantity: 1 },
+        { item_no: '2115', color: '米', size: 37, quantity: 1 }],
+      payments: [{ amount: 150, method: '微信' }, { amount: 100, method: '现金' }],
+    }) },
+    store,
+  });
+  service.replyCard = async (_messageId, card) => cards.push(card);
+  await store.create({ task_id: 'multi_sale', type: 'sale', status: 'received', message_id: 'om_multi',
+    sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '两双鞋，250元' });
+  await service.processSalesTask('multi_sale');
+  const task = await store.get('multi_sale');
+  assert.equal(task.status, 'ready_to_confirm');
+  assert.equal(task.draft.items.length, 2);
+  assert.equal(task.draft.payments.length, 2);
+  assert.match(JSON.stringify(cards[0]), /93827/);
+  assert.match(JSON.stringify(cards[0]), /2115/);
+  assert.match(JSON.stringify(cards[0]), /现金/);
+});
+
+test('quoted sale amount differing from Bitable formula price requires correction', async () => {
+  const store = makeStore();
+  const messages = [];
+  const { normalizeSalesResult } = require('../src/services/doubaoService');
+  const service = new LarkMvpService({ client: {},
+    gateway: { validateTables: async () => [], table: () => ({ fields: { number: '编号', price: '单价' } }),
+      create: async () => ({ recordId: 'order_3' }), update: async () => undefined },
+    references: { resolveProduct: async () => ({ recordId: 'product_1', record: { fields: { 编号: '815195B-6黑', 单价: 300 } } }) },
+    posting: {},
+    recognizer: { parseSalesText: async () => normalizeSalesResult({ intent: 'sale', behavior_code: 'SALE_CASH',
+      items: [{ item_no: '815195B-6', color: '黑', size: 39, quantity: 1 }], payments: [], agreed_total: 260 }) },
+    store,
+  });
+  service.sendText = async (_openId, message) => messages.push(message);
+  await store.create({ task_id: 'unpaid_sale', type: 'sale', status: 'received', message_id: 'om_unpaid',
+    sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '815195B-6黑39码260元未付' });
+  await service.processSalesTask('unpaid_sale');
+  assert.equal((await store.get('unpaid_sale')).status, 'needs_info');
+  assert.match(messages[0], /当前表结构无法保存差价/);
+});
+
 test('unsupported text is parsed but does not create a sales entry record', async () => {
   const store = makeStore();
   let createCount = 0;
@@ -212,7 +272,7 @@ test('unsupported text is parsed but does not create a sales entry record', asyn
 
   assert.equal(createCount, 0);
   assert.equal((await store.get('sale_unsupported')).status, 'ignored');
-  assert.match(sent[0].message, /未写入销售录单/);
+  assert.match(sent[0].message, /未写入销售主表/);
 });
 
 test('failed card posting returns the draft to a retryable state', async () => {
@@ -254,38 +314,23 @@ test('failed card posting returns the draft to a retryable state', async () => {
 
 test('today sales menu returns only confirmed detail rows from the Shanghai calendar day', async () => {
   const cards = [];
-  const fields = {
-    product: '编号',
-    size: '尺码',
-    quantity: '数量',
-    paidAmount: '实付金额',
-    paymentMethod: '支付方式',
-    behavior: '销售行为',
-    soldAt: '销售日',
+  const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+  const records = {
+    salesDetail: [
+      { record_id: 'today', fields: { 编号: ['product_1'], 尺码: 38, 数量: 1, 销售单号: ['order_1'], 销售日: Date.parse('2026-09-24T10:00:00+08:00') } },
+      { record_id: 'yesterday', fields: { 编号: ['product_1'], 尺码: 38, 数量: 1, 销售单号: ['order_1'], 销售日: Date.parse('2026-09-23T10:00:00+08:00') } },
+    ],
+    product: [{ record_id: 'product_1', fields: { 编号: '8088-26棕' } }],
+    salesEntry: [{ record_id: 'order_1', fields: { 销售单号: 'XSD-001', 确认状态: '已入账' } }],
+    paymentMethod: [{ record_id: 'method_1', fields: { 收款方式: '微信' } }],
+    paymentRecord: [{ record_id: 'payment_1', fields: { 关联销售单: ['order_1'], 支付方式: ['method_1'], 收款金额: 230 } }],
   };
   const service = new LarkMvpService({
     client: {},
     gateway: {
       validateTables: async () => [],
-      table: () => ({ fields }),
-      listAll: async () => [
-        {
-          record_id: 'today',
-          fields: {
-            编号: [{ text: '8088-26棕' }],
-            尺码: 38,
-            数量: 1,
-            实付金额: 230,
-            支付方式: [{ text: '微信' }],
-            销售行为: [{ text: '现货销售' }],
-            销售日: Date.parse('2026-09-24T10:00:00+08:00'),
-          },
-        },
-        {
-          record_id: 'yesterday',
-          fields: { 销售日: Date.parse('2026-09-23T10:00:00+08:00') },
-        },
-      ],
+      table: (key) => V1_BITABLE_SCHEMA.tables[key],
+      listAll: async (key) => records[key] || [],
     },
     references: {},
     posting: {},

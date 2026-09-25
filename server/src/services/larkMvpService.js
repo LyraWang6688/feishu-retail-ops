@@ -7,6 +7,7 @@ const doubaoService = require('./doubaoService');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { V1BitableGateway, textValue } = require('./v1BitableGateway');
 const { V1PostingService } = require('./v1PostingService');
+const { createWorkbenchService } = require('./v1WorkbenchService');
 const { PurchaseDraftBuilder } = require('./purchaseDraftBuilder');
 const { PurchaseWebhookService } = require('./purchaseWebhookService');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
@@ -124,25 +125,14 @@ class LarkMvpService {
   }
 
   async sendTodaySales(openId, now = new Date()) {
-    await this.ensureIntakeSchema('today_sales', ['salesDetail']);
-    const { dateLabel, start, end } = shanghaiDay(now);
-    const table = this.gateway.table('salesDetail');
-    const records = await this.gateway.listAll('salesDetail');
-    const rows = records
-      .filter((record) => {
-        const soldAt = Number(textValue(record?.fields?.[table.fields.soldAt]));
-        return soldAt >= start && soldAt < end;
-      })
-      .map((record) => ({
-        product: textValue(record.fields?.[table.fields.product]) || '未知编号',
-        size: textValue(record.fields?.[table.fields.size]),
-        quantity: Number(textValue(record.fields?.[table.fields.quantity]) || 0),
-        amount: Number(textValue(record.fields?.[table.fields.paidAmount]) || 0),
-        paymentMethod: textValue(record.fields?.[table.fields.paymentMethod]) || '未填写',
-        behavior: textValue(record.fields?.[table.fields.behavior]) || '未填写',
-      }));
-    const totalQuantity = rows.reduce((sum, row) => sum + row.quantity, 0);
-    const totalAmount = Math.round(rows.reduce((sum, row) => sum + row.amount, 0) * 100) / 100;
+    const { dateLabel } = shanghaiDay(now);
+    const report = await createWorkbenchService(this.gateway).getTodaySales({ date: dateLabel });
+    const rows = report.rows.map((row) => ({
+      product: row.product_number || '未知编号', size: row.size, quantity: row.quantity,
+      amount: row.receivable_amount, paymentMethod: row.payment_method, behavior: row.sales_behavior,
+    }));
+    const totalQuantity = report.summary.quantity;
+    const totalAmount = report.summary.paid_amount;
     await this.sendCard(openId, todaySalesCard({ dateLabel, rows, totalQuantity, totalAmount }));
     logInfo('lark.sales.today.sent', {
       operator_open_id: openId,
@@ -324,7 +314,7 @@ class LarkMvpService {
         duration_ms: Date.now() - startedAt,
         reason: 'unsupported_intent',
       });
-      await this.sendText(task.sender_open_id, '未识别为当前支持的现货销售，未写入销售录单。');
+      await this.sendText(task.sender_open_id, '未识别为当前支持的现货销售，未写入销售主表。');
       return;
     }
 
@@ -337,40 +327,40 @@ class LarkMvpService {
       confirmStatus: '待确认',
     });
     const salesEntryRecordId = created?.recordId;
-    if (!salesEntryRecordId) throw new Error('销售录单未返回 record_id');
+    if (!salesEntryRecordId) throw new Error('销售主表未返回 record_id');
     await this.store.update(taskId, { sales_entry_record_id: salesEntryRecordId, status: 'parsing' });
 
-    let product = null;
-    let productMatchError = '';
-    if (!parsed.missing_fields?.length) {
-      try {
-        product = await this.references.resolveProduct({ itemNo: parsed.item_no, color: parsed.color });
-      } catch (error) {
-        productMatchError = error.message;
+    const productTable = this.gateway.table?.('product');
+    const missingFields = [...(parsed.missing_fields || [])];
+    const items = [];
+    let formulaTotal = 0;
+    let pricesAvailable = true;
+    for (const [index, item] of (parsed.items?.length ? parsed.items : [parsed]).entries()) {
+      let product;
+      if (item.item_no && item.size) {
+        try { product = await this.references.resolveProduct({ itemNo: item.item_no, color: item.color }); }
+        catch (error) { missingFields.push(`第${index + 1}件：${error.message}`); }
+      }
+      const configuredNumber = product
+        ? textValue(product.record?.fields?.[productTable?.fields?.number]) || item.item_no
+        : '';
+      const unitPrice = Number(textValue(product?.record?.fields?.[productTable?.fields?.price]).replace(/[¥,\s]/g, ''));
+      if (!product || !Number.isFinite(unitPrice) || unitPrice <= 0) pricesAvailable = false;
+      else formulaTotal += unitPrice * Number(item.quantity || 0);
+      items.push({ ...item, product_record_id: product?.recordId || '', product_number: configuredNumber });
+    }
+    if (parsed.agreed_total) {
+      if (Number(parsed.total_paid || 0) > parsed.agreed_total) missingFields.push('已收金额不能超过本单成交金额');
+      if (!pricesAvailable) missingFields.push('无法核对货品单价与本单成交金额');
+      else if (Math.abs(formulaTotal - parsed.agreed_total) > 0.005) {
+        missingFields.push(`成交金额￥${parsed.agreed_total}与销售明细公式金额￥${formulaTotal.toFixed(2)}不一致，当前表结构无法保存差价`);
       }
     }
-    const productTable = this.gateway.table?.('product');
-    const configuredNumber = product
-      ? textValue(product.record?.fields?.[productTable?.fields?.number]) || parsed.item_no
-      : '';
-    const missingFields = [...(parsed.missing_fields || [])];
-    if (productMatchError) missingFields.push(productMatchError);
 
     const draft = {
       ...parsed,
-      product_number: configuredNumber,
-      items: [
-        {
-          product_record_id: product?.recordId || '',
-          product_number: configuredNumber,
-          item_no: parsed.item_no,
-          color: parsed.color,
-          size: parsed.size,
-          quantity: parsed.quantity,
-          gift: parsed.gift,
-          gift_description: parsed.gift_description,
-        },
-      ],
+      product_number: items[0]?.product_number || '',
+      items,
       missing_fields: missingFields,
     };
     await this.gateway.update('salesEntry', salesEntryRecordId, {
@@ -390,7 +380,7 @@ class LarkMvpService {
     logInfo('lark.sales.processing.completed', {
       task_id: taskId,
       sales_entry_record_id: salesEntryRecordId,
-      item_count: 1,
+      item_count: items.length,
       duration_ms: Date.now() - startedAt,
       result: 'awaiting_confirmation',
     });
@@ -555,6 +545,9 @@ class LarkMvpService {
         behaviorCode: task.draft.behavior_code,
         paymentMethod: task.draft.payment_method,
         totalPaid: task.draft.total_paid,
+        payments: (task.draft.payments || []).map((payment) => ({
+          amount: payment.amount, method: payment.method, operatorOpenId,
+        })),
         items: task.draft.items.map((item) => ({
           productRecordId: item.product_record_id,
           itemNo: item.item_no,
@@ -576,7 +569,7 @@ class LarkMvpService {
       return {
         toast: {
           type: 'success',
-          content: result.inventoryApplied ? '销售已确认，库存已更新' : '销售明细已确认',
+          content: '销售订单已确认，交付时再扣库存',
         },
       };
     }

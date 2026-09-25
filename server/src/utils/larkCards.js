@@ -66,16 +66,16 @@ const actionButton = (label, action, draftId, type = 'default') => ({
 
 const salesConfirmationCard = (draftId, draft) => ({
   config: { wide_screen_mode: true },
-  header: { template: 'blue', title: { tag: 'plain_text', content: '请确认销售录单' } },
+  header: { template: 'blue', title: { tag: 'plain_text', content: '请确认销售订单' } },
   elements: [
     {
       tag: 'markdown',
-      content: `**销售行为：** ${text(draft.sales_behavior)}\n**编号：** ${text(draft.product_number)}\n**尺码：** ${text(draft.size)}\n**数量：** ${text(draft.quantity)}\n**金额：** ￥${text(draft.total_paid)}\n**支付方式：** ${text(draft.payment_method)}${draft.gift ? `\n**赠品：** ${text(draft.gift_description || '有')}` : ''}`,
+      content: `**销售行为：** ${text(draft.sales_behavior)}\n${itemLines(draft.items || [], 'unitPrice')}\n**成交总额：** ${draft.agreed_total ? `￥${text(draft.agreed_total)}` : '以多维表格公式为准'}\n**本次收款：** ${(draft.payments || []).length ? draft.payments.map((payment) => `${text(payment.method)} ￥${text(payment.amount)}`).join('；') : '尚未收款'}\n**交付：** 后续在工作台确认`,
     },
     {
       tag: 'action',
       actions: [
-        actionButton('确认入账', 'confirm_sale', draftId, 'primary'),
+        actionButton('确认销售', 'confirm_sale', draftId, 'primary'),
         actionButton('修改', 'modify_sale', draftId),
         actionButton('取消', 'cancel', draftId, 'danger'),
       ],
@@ -93,7 +93,7 @@ const todaySalesCard = ({ dateLabel, rows, totalQuantity, totalAmount }) => ({
         ? rows
             .map(
               (row, index) =>
-                `${index + 1}. **${text(row.product)}**｜${text(row.size)}码｜×${text(row.quantity)}｜￥${text(row.amount)}｜${text(row.paymentMethod)}｜${text(row.behavior)}`
+                `${index + 1}. **${text(row.product)}**｜${text(row.size)}码｜×${text(row.quantity)}｜明细应收 ${row.amount == null ? '待公式计算' : `￥${text(row.amount)}`}｜订单收款方式 ${text(row.paymentMethod)}｜${text(row.behavior)}`
             )
             .join('\n')
         : '今天还没有已确认的销售明细。',
@@ -103,7 +103,7 @@ const todaySalesCard = ({ dateLabel, rows, totalQuantity, totalAmount }) => ({
       elements: [
         {
           tag: 'plain_text',
-          content: `共 ${rows.length} 条明细，${text(totalQuantity)} 件，实收合计 ￥${text(totalAmount)}`,
+          content: `共 ${rows.length} 条明细，${text(totalQuantity)} 件；这些订单截至当前累计已收 ￥${text(totalAmount)}`,
         },
       ],
     },

@@ -13,14 +13,17 @@ const asText = (schema, tableKey, record, semanticKey) => textValue(fieldValue(s
 const asLinks = (schema, tableKey, record, semanticKey) => linkedRecordIds(fieldValue(schema, tableKey, record, semanticKey));
 const asNumber = (value) => {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
-  const parsed = Number(String(value ?? '').replace(/,/g, '').replace(/¥/g, '').trim());
+  const parsed = Number(textValue(value).replace(/,/g, '').replace(/¥/g, '').trim());
   return Number.isFinite(parsed) ? parsed : 0;
 };
+const asOptionalNumber = (value) => textValue(value).trim() === '' ? null : asNumber(value);
 
 const asDate = (value) => {
   if (value == null || value === '') return null;
-  if (typeof value === 'number') return new Date(value < 1e12 ? value * 1000 : value);
-  const date = new Date(value);
+  const raw = typeof value === 'number' ? value : textValue(value).trim();
+  if (raw === '') return null;
+  const timestamp = typeof raw === 'number' || /^\d{10,13}$/.test(raw) ? Number(raw) : null;
+  const date = timestamp === null ? new Date(raw) : new Date(timestamp < 1e12 ? timestamp * 1000 : timestamp);
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
@@ -75,54 +78,72 @@ const buildProductLabel = (schema, productsById, ids) => {
 const createWorkbenchService = (gateway, options = {}) => {
   const schema = options.schema || V1_BITABLE_SCHEMA;
 
-  const getTodaySales = async ({ date = todayKey(), now, requestId } = {}) => {
-    const [sales, products, payments, behaviors, entries] = await Promise.all([
+  const getTodaySales = async ({ date = todayKey(), requestId } = {}) => {
+    const [sales, products, paymentMethods, entries, receipts] = await Promise.all([
       listAllWithRetry(gateway, 'salesDetail', requestId),
       listAllWithRetry(gateway, 'product', requestId),
       listAllWithRetry(gateway, 'paymentMethod', requestId),
-      listAllWithRetry(gateway, 'behavior', requestId),
       listAllWithRetry(gateway, 'salesEntry', requestId),
+      listAllWithRetry(gateway, 'paymentRecord', requestId),
     ]);
     const productsById = indexByRecordId(products);
-    const paymentsById = indexByRecordId(payments);
-    const behaviorsById = indexByRecordId(behaviors);
+    const paymentsById = indexByRecordId(paymentMethods);
     const entriesById = indexByRecordId(entries);
+    const receiptsByOrder = new Map();
+    for (const receipt of receipts) {
+      const orderId = asLinks(schema, 'paymentRecord', receipt, 'salesEntry')[0];
+      if (!orderId) continue;
+      if (!receiptsByOrder.has(orderId)) receiptsByOrder.set(orderId, []);
+      receiptsByOrder.get(orderId).push(receipt);
+    }
     const rows = sales
       .map((record) => {
         const soldAt = fieldValue(schema, 'salesDetail', record, 'soldAt');
         const productIds = asLinks(schema, 'salesDetail', record, 'product');
         const salesEntryIds = asLinks(schema, 'salesDetail', record, 'salesEntry');
-        const behaviorIds = asLinks(schema, 'salesDetail', record, 'behavior');
-        const paymentIds = asLinks(schema, 'salesDetail', record, 'paymentMethod');
+        const orderId = salesEntryIds[0] || '';
+        const order = entriesById.get(orderId);
+        const receiptRows = receiptsByOrder.get(orderId) || [];
+        const saleDate = asDate(soldAt) || asDate(fieldValue(schema, 'salesEntry', order, 'sentAt'));
         return {
           record_id: record.record_id,
           detail_id: asText(schema, 'salesDetail', record, 'detailId'),
           sales_entry_record_id: salesEntryIds[0] || '',
           sales_order_no: relationLabel(schema, 'salesEntry', entriesById, salesEntryIds, 'orderNo') || asText(schema, 'salesDetail', record, 'salesEntry'),
-          sold_at: asDate(soldAt)?.toISOString() || '',
+          sold_at: saleDate?.toISOString() || '',
           ...buildProductLabel(schema, productsById, productIds),
           size: asText(schema, 'salesDetail', record, 'size'),
           quantity: asNumber(fieldValue(schema, 'salesDetail', record, 'quantity')),
-          paid_amount: asNumber(fieldValue(schema, 'salesDetail', record, 'paidAmount')),
+          receivable_amount: asOptionalNumber(fieldValue(schema, 'salesDetail', record, 'receivableAmount')),
           gift: asText(schema, 'salesDetail', record, 'gift'),
-          payment_method: relationLabel(schema, 'paymentMethod', paymentsById, paymentIds, 'name') || asText(schema, 'salesDetail', record, 'paymentMethod'),
-          sales_behavior: relationLabel(schema, 'behavior', behaviorsById, behaviorIds, 'name') || asText(schema, 'salesDetail', record, 'behavior'),
+          payment_method: [...new Set(receiptRows.map((payment) => relationLabel(schema, 'paymentMethod', paymentsById,
+            asLinks(schema, 'paymentRecord', payment, 'method'), 'name')))].filter(Boolean).join('＋') || '未收款',
+          sales_behavior: '现货销售',
+          confirmed: asText(schema, 'salesEntry', order, 'confirmStatus') === '已入账',
         };
       })
-      .filter((row) => shanghaiDayKey(row.sold_at || now) === date)
+      .filter((row) => row.confirmed && row.sold_at && shanghaiDayKey(row.sold_at) === date)
       .sort((a, b) => String(b.sold_at).localeCompare(String(a.sold_at)));
 
     const paymentSummary = {};
     const orderIds = new Set();
     const summary = rows.reduce((result, row) => {
       result.quantity += row.quantity;
-      result.paid_amount += row.paid_amount;
       if (row.sales_entry_record_id) orderIds.add(row.sales_entry_record_id);
-      const key = row.payment_method || '未填写';
-      paymentSummary[key] = (paymentSummary[key] || 0) + row.paid_amount;
       return result;
     }, { detail_count: rows.length, order_count: 0, quantity: 0, paid_amount: 0 });
     summary.order_count = orderIds.size || rows.length;
+    summary.receivable_amount = rows.every((row) => row.receivable_amount !== null)
+      ? rows.reduce((sum, row) => sum + row.receivable_amount, 0) : null;
+    for (const orderId of orderIds) {
+      for (const receipt of receiptsByOrder.get(orderId) || []) {
+        const paid = asNumber(fieldValue(schema, 'paymentRecord', receipt, 'amount'));
+        const method = relationLabel(schema, 'paymentMethod', paymentsById,
+          asLinks(schema, 'paymentRecord', receipt, 'method'), 'name') || '未填写';
+        summary.paid_amount += paid;
+        paymentSummary[method] = (paymentSummary[method] || 0) + paid;
+      }
+    }
     return { date, summary: { ...summary, payment_summary: paymentSummary }, rows };
   };
 
@@ -141,6 +162,7 @@ const createWorkbenchService = (gateway, options = {}) => {
         stock_key: asText(schema, 'liveInventory', record, 'stockKey'),
         ...product,
         size: asText(schema, 'liveInventory', record, 'size'),
+        state: asText(schema, 'liveInventory', record, 'state'),
         updated_at: asDate(fieldValue(schema, 'liveInventory', record, 'updatedAt'))?.toISOString() || '',
       };
     }).filter((row) => {
@@ -150,12 +172,13 @@ const createWorkbenchService = (gateway, options = {}) => {
     });
     const grouped = new Map();
     rawRows.forEach((row) => {
-      const current = grouped.get(row.stock_key);
+      const key = `${row.product_record_id}|${row.size}|${row.state}`;
+      const current = grouped.get(key);
       if (current) {
         current.quantity += 1;
         if (row.updated_at > current.updated_at) current.updated_at = row.updated_at;
       } else {
-        grouped.set(row.stock_key, { ...row, quantity: 1 });
+        grouped.set(key, { ...row, quantity: 1 });
       }
     });
     const rows = [...grouped.values()].sort((a, b) => String(a.stock_key).localeCompare(String(b.stock_key), 'zh-CN'));

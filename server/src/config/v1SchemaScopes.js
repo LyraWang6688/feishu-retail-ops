@@ -1,5 +1,5 @@
 const V1_SCHEMA_SCOPES = {
-  sales: ['product', 'behavior', 'paymentMethod', 'salesEntry', 'salesDetail'],
+  sales: ['product', 'paymentMethod', 'salesEntry', 'salesDetail', 'paymentRecord'],
   purchase: [
     'product',
     'supplier',

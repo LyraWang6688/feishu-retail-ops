@@ -45,7 +45,8 @@ app.use('/api/lark/events', require('./routes/larkEvents').createLarkEventsRoute
 app.use('/api/purchase', require('./routes/purchaseWebhooks').createPurchaseWebhookRouter());
 // Feishu web-app OAuth routes are mounted before generic /api authentication.
 app.use('/api/auth/feishu', require('./routes/feishuWebAuth').createFeishuWebAuthRouter());
-// The read-only workbench has its own token so a browser never receives API_KEY.
+// The workbench uses Feishu web sessions; its query and follow-up endpoints
+// never expose the service credentials to the browser.
 app.use('/api/workbench', require('./routes/workbench').createWorkbenchRouter());
 app.use('/workbench', express.static(workbenchPath, { index: 'index.html' }));
 // Feishu web apps commonly open the configured homepage as "/".

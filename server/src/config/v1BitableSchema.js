@@ -41,7 +41,7 @@ const V1_BITABLE_SCHEMA = {
       },
     },
     salesEntry: {
-      tableName: '销售录单',
+      tableName: '销售主表',
       tableId: getEnv('FEISHU_V1_SALES_ENTRY_TABLE_ID', 'tblLjFe3NjU61xKB'),
       fields: {
         orderNo: '销售单号',
@@ -53,6 +53,10 @@ const V1_BITABLE_SCHEMA = {
         editedAt: '消息编辑时间',
         parseSummary: '解析结果摘要',
         failureReason: '失败原因',
+        orderStatus: '订单状态',
+        fulfillmentStatus: '履约状态',
+        paymentStatus: '收款状态',
+        deliveredQuantity: '已交付数量',
       },
     },
     salesDetail: {
@@ -63,12 +67,23 @@ const V1_BITABLE_SCHEMA = {
         product: '编号',
         quantity: '数量',
         size: '尺码',
-        paidAmount: '实付金额',
         gift: '赠品',
-        paymentMethod: '支付方式',
         soldAt: '销售日',
         salesEntry: '销售单号',
-        behavior: '销售行为',
+        deliveredQuantity: '交付数量',
+        receivableAmount: '应收金额',
+      },
+    },
+    paymentRecord: {
+      tableName: '收款记录',
+      tableId: getEnv('FEISHU_V1_PAYMENT_RECORD_TABLE_ID', 'tblTpLOtTLhWxXvm'),
+      fields: {
+        recordNo: '收款记录ID',
+        salesEntry: '关联销售单',
+        method: '支付方式',
+        amount: '收款金额',
+        receivedAt: '收款时间',
+        operator: '操作人',
       },
     },
     // Legacy private-chat purchase intake table. Kept for the frozen path.
@@ -146,6 +161,8 @@ const V1_BITABLE_SCHEMA = {
         salesDetail: '关联销售明细',
         purchaseInbound: '关联采购入库',
         occurredAt: '发生时间',
+        changeType: '变化类型',
+        stateChange: '状态变化',
       },
     },
     liveInventory: {
@@ -156,6 +173,7 @@ const V1_BITABLE_SCHEMA = {
         product: '编号',
         size: '尺码',
         updatedAt: '更新时间',
+        state: '所属状态',
       },
     },
   },
