@@ -45,7 +45,7 @@ class PurchaseWebhookService {
     this.queues.set(key, next);
     next.finally(() => {
       if (this.queues.get(key) === next) this.queues.delete(key);
-    });
+    }).catch(() => {});
     return next;
   }
 
@@ -87,6 +87,9 @@ class PurchaseWebhookService {
       await this.store.update(taskId, { status: 'failed', error: error.message }).catch(() => undefined);
       if (kind === 'supplier-report') {
         await this.gateway.update('purchaseReport', recordId, { status: '解析失败', failureReason: error.message }).catch(() => undefined);
+      }
+      if (kind === 'arrival') {
+        await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别失败', failureReason: error.message }).catch(() => undefined);
       }
       throw error;
     }
@@ -282,8 +285,25 @@ class PurchaseWebhookService {
     if (task.status === 'posted') return { toast: { type: 'info', content: '采购到货已入库' } };
     const arrival = task.draft;
     const requestTable = this.gateway.table('purchaseRequest');
+    const inboundTable = this.gateway.table('purchaseInbound');
+    // 幂等保护：查询该到货批次已有的入库记录，重试时跳过已创建的明细
+    const existingInbounds = await this.gateway.listAll('purchaseInbound');
+    const existingByKey = new Map();
+    for (const record of existingInbounds) {
+      const batchIds = linkedRecordIds(record.fields?.[inboundTable.fields.batch]);
+      if (!batchIds.includes(arrival.arrival_record_id)) continue;
+      const productId = linkedRecordIds(record.fields?.[inboundTable.fields.product])[0];
+      const size = number(record.fields?.[inboundTable.fields.size]);
+      if (productId) existingByKey.set(`${productId}|${size}`, record.record_id);
+    }
     const created = [];
     for (const item of arrival.actual || []) {
+      const key = `${item.product_record_id}|${item.size}`;
+      const existingId = existingByKey.get(key);
+      if (existingId) {
+        created.push(existingId);
+        continue;
+      }
       const match = (arrival.differences || []).find(
         (row) => row.product_record_id === item.product_record_id && Number(row.size) === Number(item.size)
       );
