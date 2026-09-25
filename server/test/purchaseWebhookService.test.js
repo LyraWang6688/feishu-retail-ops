@@ -474,3 +474,64 @@ test('arrival confirm retry survives feishu list latency — persisted inbound_c
   const sizes = inboundsAfterRetry.map((r) => r.fields.尺码).sort();
   assert.deepEqual(sizes, [36, 37]);
 });
+
+test('arrival confirm retries after inventory update failure — continues applying inventory for existing inbound', async () => {
+  // 场景：第1条入库记录创建成功，但库存更新失败；重试时应继续执行第1条的库存更新，不重复创建入库记录
+  let inventoryCallCount = 0;
+  let failInventory = true;
+  const inventoryCalls = [];
+  const inventory = {
+    applyPurchase: async (input) => {
+      inventoryCallCount += 1;
+      inventoryCalls.push(input);
+      if (failInventory && inventoryCallCount === 1) throw new Error('模拟库存更新失败');
+      return { stockKey: `${input.productRecordId}|${input.size}`, ledgerRecordId: 'ledger_1', liveRecordIds: ['live_1'], movementQuantity: input.quantity, direction: '增加', quantity: input.quantity };
+    },
+  };
+  const records = {
+    purchaseArrival: [{ record_id: 'arr_invfail', fields: { 确认状态: '待确认', 识别状态: '识别成功', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 创建者: [{ id: 'ou_1' }] } }],
+    purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
+    purchaseRequest: [],
+    purchaseInbound: [],
+  };
+  const { service, store, gateway } = makeService({
+    inventory,
+    gateway: makeGateway(records),
+    recognizer: makeRecognizer({ recognizeLabels: async () => [
+      { item_no: '8088', color: '灰色', size: 36, quantity: 1 },
+      { item_no: '8088', color: '灰色', size: 37, quantity: 1 },
+    ] }),
+  });
+  const accepted = await service.accept('arrival', 'arr_invfail');
+  await wait(80);
+
+  // 第一次确认：36码入库创建成功，但库存更新失败
+  await assert.rejects(
+    () => service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1'),
+    /模拟库存更新失败/,
+  );
+  const inboundsAfterFirst = await gateway.listAll('purchaseInbound');
+  assert.equal(inboundsAfterFirst.length, 1, '第一次失败后应只有1条入库记录（36码）');
+  assert.equal(inventoryCallCount, 1, '第一次应只调用1次库存更新（36码，失败）');
+  const taskAfterFirst = await store.get(accepted.taskId);
+  const entry36 = Object.values(taskAfterFirst.draft.inbound_created).find((e) => e.recordId === inboundsAfterFirst[0].record_id);
+  assert.equal(entry36.inventoryApplied, false, '库存更新失败后 inventoryApplied 应为 false');
+
+  // 重试：库存更新不再失败
+  failInventory = false;
+  const result = await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
+  assert.ok(result.toast.content.includes('采购已入库'), result.toast.content);
+
+  // 验证：36码不重复创建，但库存更新被重新执行；37码正常创建和更新
+  const inboundsAfterRetry = await gateway.listAll('purchaseInbound');
+  assert.equal(inboundsAfterRetry.length, 2, '重试后应总共2条入库记录，36码不重复');
+  assert.equal(inventoryCallCount, 3, '重试后应总共3次库存更新：36码第1次失败 + 36码重试 + 37码');
+
+  // 验证36码的库存更新被重试了（用同一个 purchaseInboundRecordId）
+  const inbound36Id = inboundsAfterFirst[0].record_id;
+  const retryCallsFor36 = inventoryCalls.filter((c) => c.purchaseInboundRecordId === inbound36Id);
+  assert.equal(retryCallsFor36.length, 2, '36码的库存更新应被调用2次（第1次失败，重试成功）');
+
+  const sizes = inboundsAfterRetry.map((r) => r.fields.尺码).sort();
+  assert.deepEqual(sizes, [36, 37]);
+});
