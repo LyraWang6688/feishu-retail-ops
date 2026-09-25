@@ -46,6 +46,8 @@ app.use('/api/purchase', require('./routes/purchaseWebhooks').createPurchaseWebh
 // The read-only workbench has its own token so a browser never receives API_KEY.
 app.use('/api/workbench', require('./routes/workbench').createWorkbenchRouter());
 app.use('/workbench', express.static(workbenchPath, { index: 'index.html' }));
+// Feishu web apps commonly open the configured homepage as "/".
+app.get('/', (req, res) => res.sendFile(path.join(workbenchPath, 'index.html')));
 
 // Basic health check route
 app.get('/health', (req, res) => {
