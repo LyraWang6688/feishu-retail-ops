@@ -2,6 +2,7 @@ const path = require('node:path');
 require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 
 const { V1BitableGateway } = require('../src/services/v1BitableGateway');
+const { InventoryService } = require('../src/services/inventoryService');
 const { getV1SchemaScope } = require('../src/config/v1SchemaScopes');
 
 const requiredCredentials = ['LARK_AGENT_APP_ID', 'LARK_AGENT_APP_SECRET'];
@@ -16,6 +17,9 @@ const { key: scope, tables: tableKeys } = getV1SchemaScope(process.argv[2] || 's
 (async () => {
   const gateway = new V1BitableGateway();
   const result = await gateway.validateTables(tableKeys);
+  if (scope === 'inventory' || scope === 'all') {
+    await new InventoryService({ gateway }).validateStockBehaviors();
+  }
   console.log(`Schema scope: ${scope}`);
   result.forEach((item) => console.log(`OK ${item.tableKey} ${item.tableId} fields=${item.fieldCount}`));
 })().catch((error) => {

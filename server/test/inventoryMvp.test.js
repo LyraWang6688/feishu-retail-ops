@@ -7,8 +7,14 @@ const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { InventoryService } = require('../src/services/inventoryService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
-const gatewayFor = (live) => {
-  const records = new Map([['liveInventory', live]]);
+const behavior = (recordId, name, direction) => ({ record_id: recordId,
+  fields: { 行为名称: name, 库存方向: direction, 是否启用: true } });
+
+const gatewayFor = (live, behaviors = [
+  behavior('behavior_sale', '销售减少', '减少'),
+  behavior('behavior_purchase', '采购增加', '增加'),
+]) => {
+  const records = new Map([['liveInventory', live], ['behavior', behaviors]]);
   let seq = 0;
   return { records, table: (key) => V1_BITABLE_SCHEMA.tables[key], validateTables: async () => [],
     listAll: async (key) => records.get(key) || [],
@@ -34,7 +40,10 @@ test('sale deducts one matching door-box unit, preserves sample, and is idempote
   await inventory.applySale(request);
   assert.deepEqual(gateway.records.get('liveInventory').map((row) => row.record_id).sort(), ['door_2', 'sample_1']);
   assert.equal(gateway.records.get('inventoryLedger').length, 1);
-  assert.equal(gateway.records.get('inventoryLedger')[0].fields['数量变化'], -1);
+  assert.deepEqual(gateway.records.get('inventoryLedger')[0].fields, {
+    编号: ['product_1'], 尺码: 38, 变动数量: 1,
+    库存行为: ['behavior_sale'], 关联销售: ['detail_1'],
+  });
 });
 
 test('purchase adds one live record per pair', async () => {
@@ -44,4 +53,41 @@ test('purchase adds one live record per pair', async () => {
     quantity: 2, state: '仓库' });
   assert.equal(gateway.records.get('liveInventory').length, 2);
   assert.ok(gateway.records.get('liveInventory').every((row) => row.fields['所属状态'] === '仓库'));
+  assert.deepEqual(gateway.records.get('inventoryLedger')[0].fields, {
+    编号: ['product_1'], 尺码: 38, 变动数量: 2,
+    库存行为: ['behavior_purchase'], 关联采购: ['inbound_1'],
+  });
+  assert.ok(gateway.records.get('liveInventory').every((row) => !Object.hasOwn(row.fields, '更新时间')));
+});
+
+test('a missing or opposite behavior direction never writes stock records', async () => {
+  for (const direction of [null, '增加']) {
+    const gateway = gatewayFor([unit('door_1', '门盒')], [behavior('behavior_sale', '销售减少', direction)]);
+    const inventory = new InventoryService({ gateway, store: store() });
+    await assert.rejects(inventory.applySale({ salesDetailRecordId: 'detail_1', productRecordId: 'product_1',
+      size: 38, quantity: 1 }), /库存方向设置为“减少”/);
+    assert.equal(gateway.records.get('inventoryLedger'), undefined);
+    assert.equal(gateway.records.get('liveInventory').length, 1);
+  }
+});
+
+test('inventory preflight checks both sale and purchase behavior settings', async () => {
+  const gateway = gatewayFor([], [
+    behavior('behavior_sale', '销售减少', '减少'),
+    { ...behavior('behavior_purchase', '采购增加', '增加'), fields: {
+      行为名称: '采购增加', 库存方向: '增加', 是否启用: false,
+    } },
+  ]);
+  const inventory = new InventoryService({ gateway, store: store() });
+  await assert.rejects(inventory.validateStockBehaviors(), /请启用行为管理中的“采购增加”/);
+  assert.equal(gateway.records.get('inventoryLedger'), undefined);
+});
+
+test('stock is not deducted before a sale has enough matching units', async () => {
+  const gateway = gatewayFor([unit('sample_1', '样品')]);
+  const inventory = new InventoryService({ gateway, store: store() });
+  await assert.rejects(inventory.applySale({ salesDetailRecordId: 'detail_1', productRecordId: 'product_1',
+    size: 38, quantity: 1, state: '门盒' }), /不能执行销售扣减/);
+  assert.equal(gateway.records.get('inventoryLedger'), undefined);
+  assert.equal(gateway.records.get('liveInventory').length, 1);
 });

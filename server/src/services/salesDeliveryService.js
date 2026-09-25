@@ -21,7 +21,7 @@ class SalesDeliveryService {
     if (!Array.isArray(detailRecordIds) || !detailRecordIds.length) throw new Error('请选择交付的销售明细');
     if (new Set(detailRecordIds).size !== detailRecordIds.length) throw new Error('交付明细不能重复');
     if (!['门盒', '样品', '仓库'].includes(state)) throw new Error('库存所属状态无效');
-    await this.gateway.validateTables?.(['salesEntry', 'salesDetail', 'inventoryLedger', 'liveInventory']);
+    await this.gateway.validateTables?.(['salesEntry', 'salesDetail', 'behavior', 'inventoryLedger', 'liveInventory']);
     const entry = await this.gateway.get('salesEntry', salesEntryRecordId);
     if (!entry) throw new Error('销售主表记录不存在');
     const entryFields = this.gateway.table('salesEntry').fields;

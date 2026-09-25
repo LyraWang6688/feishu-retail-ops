@@ -1,7 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { SalesOrderService } = require('../src/services/salesOrderService');
 const { SalesDeliveryService } = require('../src/services/salesDeliveryService');
+const { InventoryService } = require('../src/services/inventoryService');
 const { PaymentService } = require('../src/services/paymentService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
@@ -26,6 +31,7 @@ const fake = () => {
         .map(([name, value]) => [V1_BITABLE_SCHEMA.tables[key].fields[name], value])));
       return record;
     },
+    delete: async (key, id) => records.set(key, (records.get(key) || []).filter((row) => row.record_id !== id)),
   };
   return gateway;
 };
@@ -86,4 +92,31 @@ test('unpaid sale can be delivered once, then later payment does not touch inven
   await payment.record({ salesEntryRecordId: 'order_1', method: '微信', amount: 100 });
   assert.equal(gateway.records.get('paymentRecord').length, 1);
   assert.equal(calls.length, 1);
+});
+
+test('confirmed sale delivery writes positive stock movement and removes exactly one door-box unit', async () => {
+  const gateway = fake();
+  gateway.records.set('behavior', [{ record_id: 'behavior_sale', fields: {
+    行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
+  } }]);
+  gateway.records.set('liveInventory', [
+    { record_id: 'door_1', fields: { 编号: ['product_A100'], 尺码: 38, 所属状态: '门盒' } },
+    { record_id: 'sample_1', fields: { 编号: ['product_A100'], 尺码: 38, 所属状态: '样品' } },
+  ]);
+  const sale = new SalesOrderService({ gateway, references });
+  const posted = await sale.confirm({ salesEntryRecordId: 'order_1',
+    items: [{ itemNo: 'A100', size: 38, quantity: 1 }],
+    payments: [{ method: '微信', amount: 220 }] });
+  assert.equal(gateway.records.get('inventoryLedger'), undefined);
+  const inventory = new InventoryService({ gateway, store: new JsonTaskStore({
+    dir: fs.mkdtempSync(path.join(os.tmpdir(), 'sale-delivery-')), idField: 'operation_id',
+  }) });
+  const delivery = new SalesDeliveryService({ gateway, inventory });
+  await delivery.deliver({ salesEntryRecordId: 'order_1', detailRecordIds: posted.detailRecordIds });
+  assert.deepEqual(gateway.records.get('liveInventory').map((row) => row.record_id), ['sample_1']);
+  assert.deepEqual(gateway.records.get('inventoryLedger')[0].fields, {
+    编号: ['product_A100'], 尺码: 38, 变动数量: 1,
+    库存行为: ['behavior_sale'], 关联销售: posted.detailRecordIds,
+  });
+  assert.equal(gateway.records.get('salesEntry')[0].fields['履约状态'], '已交付');
 });
