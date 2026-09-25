@@ -1,5 +1,6 @@
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const { logWarn } = require('../utils/logger');
 
 const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
 
@@ -33,6 +34,28 @@ const todayKey = (now = new Date()) => shanghaiDayKey(now);
 
 const indexByRecordId = (records) => new Map(records.map((record) => [record.record_id, record]));
 
+const isDataNotReady = (error) => /1254607|data not ready|数据未准备好/i.test(String(error?.message || error || ''));
+const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+const listAllWithRetry = async (gateway, tableKey, requestId) => {
+  const delays = [0, 1000, 3000];
+  for (let attempt = 0; attempt < delays.length; attempt += 1) {
+    if (delays[attempt]) await wait(delays[attempt]);
+    try {
+      return await gateway.listAll(tableKey);
+    } catch (error) {
+      if (!isDataNotReady(error) || attempt === delays.length - 1) throw error;
+      logWarn('workbench.query.retry', {
+        request_id: requestId,
+        table_key: tableKey,
+        attempt: attempt + 1,
+        reason: 'feishu_data_not_ready',
+      });
+    }
+  }
+  return [];
+};
+
 const relationLabel = (schema, tableKey, recordsById, ids, semanticKey) => {
   const labels = ids.map((id) => asText(schema, tableKey, recordsById.get(id), semanticKey)).filter(Boolean);
   return labels.join('、');
@@ -52,13 +75,13 @@ const buildProductLabel = (schema, productsById, ids) => {
 const createWorkbenchService = (gateway, options = {}) => {
   const schema = options.schema || V1_BITABLE_SCHEMA;
 
-  const getTodaySales = async ({ date = todayKey(), now } = {}) => {
+  const getTodaySales = async ({ date = todayKey(), now, requestId } = {}) => {
     const [sales, products, payments, behaviors, entries] = await Promise.all([
-      gateway.listAll('salesDetail'),
-      gateway.listAll('product'),
-      gateway.listAll('paymentMethod'),
-      gateway.listAll('behavior'),
-      gateway.listAll('salesEntry'),
+      listAllWithRetry(gateway, 'salesDetail', requestId),
+      listAllWithRetry(gateway, 'product', requestId),
+      listAllWithRetry(gateway, 'paymentMethod', requestId),
+      listAllWithRetry(gateway, 'behavior', requestId),
+      listAllWithRetry(gateway, 'salesEntry', requestId),
     ]);
     const productsById = indexByRecordId(products);
     const paymentsById = indexByRecordId(payments);
@@ -103,8 +126,11 @@ const createWorkbenchService = (gateway, options = {}) => {
     return { date, summary: { ...summary, payment_summary: paymentSummary }, rows };
   };
 
-  const getLiveInventory = async ({ keyword = '', size = '' } = {}) => {
-    const [inventory, products] = await Promise.all([gateway.listAll('liveInventory'), gateway.listAll('product')]);
+  const getLiveInventory = async ({ keyword = '', size = '', requestId } = {}) => {
+    const [inventory, products] = await Promise.all([
+      listAllWithRetry(gateway, 'liveInventory', requestId),
+      listAllWithRetry(gateway, 'product', requestId),
+    ]);
     const productsById = indexByRecordId(products);
     const normalizedKeyword = String(keyword).trim().toLowerCase();
     const rawRows = inventory.map((record) => {
