@@ -51,7 +51,6 @@ const createPurchaseQueryService = (gateway) => {
         size: asNumber(record?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseRequest.fields.size]),
         quantity: asNumber(record?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseRequest.fields.quantity]),
         arrival_status: asText('purchaseRequest', record, 'arrivalStatus'),
-        reported_at: asDate(record?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseRequest.fields.reportedAt]),
         supplier_record_id: supplierIds[0] || '',
       };
     });

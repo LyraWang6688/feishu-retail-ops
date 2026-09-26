@@ -117,14 +117,14 @@ const V1_BITABLE_SCHEMA = {
       tableId: getEnv('FEISHU_V1_PURCHASE_REQUEST_TABLE_ID', 'tbli1ygPtss5CWCH'),
       fields: {
         batchNo: '报货批次号', behavior: '采购行为', product: '编号', size: '尺码', quantity: '数量',
-        reportedAt: '报单时间', arrivalStatus: '到货状态',
+        arrivalStatus: '到货状态',
       },
     },
     purchaseArrival: {
       tableName: '采购到货',
       tableId: getEnv('FEISHU_V1_PURCHASE_ARRIVAL_TABLE_ID', 'tblvLOXKESNTbZ7v'),
       fields: {
-        arrivalAt: '到货日', images: '鞋盒图片', batch: '报货批次号', creator: '创建者', inspector: '验收人',
+        arrivalAt: '到货日', images: '鞋盒图片', batch: '报货批次号', inspector: '验收人',
         recognitionStatus: '识别状态', confirmStatus: '确认状态', failureReason: '识别失败原因',
       },
     },
