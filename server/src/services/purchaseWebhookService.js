@@ -320,9 +320,8 @@ class PurchaseWebhookService {
       const allLiveRecords = await this.gateway.listAll('liveInventory');
       const table = this.gateway.table('liveInventory');
       const sampleRecords = allLiveRecords.filter((record) => {
-        const productIds = Array.isArray(record.fields?.[table.fields.product])
-          ? record.fields[table.fields.product].map((p) => p?.record_id || p?.id)
-          : [];
+        // 使用 linkedRecordIds 处理关联字段，兼容飞书API返回的多种格式
+        const productIds = linkedRecordIds(record.fields?.[table.fields.product]);
         // 单选字段可能返回字符串或数组，统一处理
         const stateValue = record.fields?.[table.fields.state];
         const state = Array.isArray(stateValue) ? stateValue[0] : stateValue;
