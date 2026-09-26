@@ -466,7 +466,6 @@ class PurchaseWebhookService {
     // 创建报货批次记录
     const batch = await this.gateway.create('purchaseOrderBatch', {
       batchNo,
-      supplier: relation(draft.supplier_record_id),
     });
     // 逐条创建采购申请
     const requestIds = [];

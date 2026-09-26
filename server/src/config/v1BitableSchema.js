@@ -132,13 +132,14 @@ const V1_BITABLE_SCHEMA = {
       tableName: '报货批次',
       // Current V1 tenant default; forks can override it with the environment variable.
       tableId: getEnv('FEISHU_V1_PURCHASE_ORDER_BATCH_TABLE_ID', 'tblwezby9wRea9qi'),
-      fields: { batchNo: '报货批次号', supplier: '供应商', createdAt: '创建时间', creator: '创建人' },
+      fields: { batchNo: '报货批次号', createdAt: '创建时间', creator: '创建人' },
     },
     purchaseInbound: {
       tableName: '采购入库',
       tableId: getEnv('FEISHU_V1_PURCHASE_INBOUND_TABLE_ID', 'tblK3Uzd0nN1GJrr'),
       fields: {
         detailId: '入库明细ID',
+        behavior: '采购行为',
         size: '尺码',
         quantity: '数量',
         operator: '录入人员',

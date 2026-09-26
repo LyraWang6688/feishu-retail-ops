@@ -13,8 +13,8 @@ test('listPurchaseRequests maps fields and filters by batchNo', async () => {
       { record_id: 'req_2', fields: { 报货批次号: 'BH-002', 编号: ['prod_2'], 尺码: 37, 数量: 1, 到货状态: '未到货', 报单时间: 1758931200000 } },
     ],
     product: [
-      { record_id: 'prod_1', fields: { 编号: '8088灰' } },
-      { record_id: 'prod_2', fields: { 编号: '9099黑' } },
+      { record_id: 'prod_1', fields: { 编号: '8088灰', 供应商: ['sup_1'] } },
+      { record_id: 'prod_2', fields: { 编号: '9099黑', 供应商: ['sup_2'] } },
     ],
     purchaseOrderBatch: [
       { record_id: 'batch_1', fields: { 报货批次号: 'BH-001', 供应商: ['sup_1'] } },
@@ -62,7 +62,7 @@ test('listPurchaseArrivals maps fields and resolves batch link', async () => {
   assert.equal(all[0].confirm_status, '待确认');
   assert.equal(all[0].failure_reason, '没有鞋盒图片');
   assert.equal(all[0].image_count, 0);
-  assert.equal(all[0].supplier_record_id, 'sup_2');
+  assert.equal(all[0].supplier_record_id, '');
 
   assert.equal(all[1].record_id, 'arr_1');
   assert.equal(all[1].image_count, 2);

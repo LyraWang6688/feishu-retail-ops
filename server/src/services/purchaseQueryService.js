@@ -32,20 +32,17 @@ const createPurchaseQueryService = (gateway) => {
   if (!gateway) throw new Error('PurchaseQueryService requires gateway');
 
   const listPurchaseRequests = async (filters = {}) => {
-    const [requests, products, batches] = await Promise.all([
+    const [requests, products] = await Promise.all([
       gateway.listAll('purchaseRequest'),
       gateway.listAll('product'),
-      gateway.listAll('purchaseOrderBatch'),
     ]);
     const productMap = indexByRecordId(products);
-    const batchMap = indexByRecordId(batches);
 
     const rows = requests.map((record) => {
       const productIds = asLinks('purchaseRequest', record, 'product');
       const product = productIds.length ? productMap.get(productIds[0]) : null;
       const batchNo = asText('purchaseRequest', record, 'batchNo');
-      const batch = [...batchMap.values()].find((b) => asText('purchaseOrderBatch', b, 'batchNo') === batchNo);
-      const supplierIds = batch ? asLinks('purchaseOrderBatch', batch, 'supplier') : [];
+      const supplierIds = product ? asLinks('product', product, 'supplier') : [];
       return {
         record_id: record.record_id,
         batch_no: batchNo,
@@ -77,14 +74,13 @@ const createPurchaseQueryService = (gateway) => {
       const batchIds = asLinks('purchaseArrival', record, 'batch');
       const batch = batchIds.length ? batchMap.get(batchIds[0]) : null;
       const batchNo = batch ? asText('purchaseOrderBatch', batch, 'batchNo') : '';
-      const supplierIds = batch ? asLinks('purchaseOrderBatch', batch, 'supplier') : [];
       const images = record?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseArrival.fields.images];
       const imageCount = Array.isArray(images) ? images.length : 0;
       return {
         record_id: record.record_id,
         batch_no: batchNo,
         batch_record_id: batchIds[0] || '',
-        supplier_record_id: supplierIds[0] || '',
+        supplier_record_id: '',
         arrival_at: asDate(record?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseArrival.fields.arrivalAt]),
         recognition_status: asText('purchaseArrival', record, 'recognitionStatus'),
         confirm_status: asText('purchaseArrival', record, 'confirmStatus'),
