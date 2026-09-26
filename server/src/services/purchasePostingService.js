@@ -57,7 +57,7 @@ class PurchasePostingService {
         if (row.recordId) continue;
         const created = await this.gateway.create('purchaseInbound', {
           size: row.item.size, quantity: row.item.quantity,
-          operator: person(input.operatorOpenId), batch: relation(batchRecordId),
+          batch: relation(batchRecordId),
           supplierOrder: relation(row.item.supplierOrderRecordId),
           product: relation(row.item.productRecordId), inboundAt: occurredAt,
         });
