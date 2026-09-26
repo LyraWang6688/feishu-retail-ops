@@ -2,6 +2,7 @@ const OpenAI = require('openai');
 const fs = require('fs');
 const { getModuleDefinition } = require('../config/modules');
 const { logError, logInfo } = require('../utils/logger');
+const { applyGroupBuyVoucherPolicy } = require('./groupBuyVoucherPolicy');
 
 const positiveOrEmpty = (value) => {
   const number = Number(value);
@@ -12,7 +13,7 @@ const moneyOrEmpty = (value) => {
   return number && Math.abs(number * 100 - Math.round(number * 100)) < 1e-6 ? number : '';
 };
 
-const normalizeSalesResult = (result = {}) => {
+const normalizeSalesResult = (result = {}, sourceText = '') => {
   const rawItems = Array.isArray(result.items) && result.items.length ? result.items : [result];
   const items = [];
   for (const item of rawItems) {
@@ -40,13 +41,19 @@ const normalizeSalesResult = (result = {}) => {
     : result.total_paid || result.payment_method
       ? [{ amount: result.total_paid, method: result.payment_method }]
       : [];
-  const payments = rawPayments.map((payment) => ({
+  let payments = rawPayments.map((payment) => ({
     amount: moneyOrEmpty(payment.amount), method: String(payment.method || '').trim(),
   }));
   let agreedTotal = moneyOrEmpty(result.agreed_total);
   if (items.length === 1 && !items[0].actual_amount && agreedTotal) items[0].actual_amount = agreedTotal;
   if (!agreedTotal && items.length && items.every((item) => item.actual_amount)) {
     agreedTotal = Math.round(items.reduce((sum, item) => sum + Number(item.actual_amount), 0) * 100) / 100;
+  }
+  const voucherPolicy = applyGroupBuyVoucherPolicy({ sourceText, items, payments, agreedTotal });
+  if (voucherPolicy?.items) {
+    items.splice(0, items.length, ...voucherPolicy.items);
+    payments = voucherPolicy.payments;
+    agreedTotal = voucherPolicy.agreedTotal;
   }
   const first = items[0] || {};
   const normalized = {
@@ -56,10 +63,13 @@ const normalizeSalesResult = (result = {}) => {
     items,
     payments,
     agreed_total: agreedTotal,
-    total_paid: payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0) || '',
+    total_paid: payments.filter((payment) => payment.status !== '待平台结算')
+      .reduce((sum, payment) => sum + Number(payment.amount || 0), 0) || '',
+    total_covered: payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0) || '',
     payment_method: payments.map((payment) => payment.method).filter(Boolean).join('＋'),
   };
-  const missing = new Set();
+  if (voucherPolicy?.voucher) normalized.voucher = voucherPolicy.voucher;
+  const missing = new Set(voucherPolicy?.issues || []);
   if (normalized.intent !== 'sale') missing.add('当前只支持商品销售录单');
   for (const [index, item] of items.entries()) {
     for (const key of ['item_no', 'size', 'quantity', 'actual_amount']) {
@@ -131,7 +141,8 @@ class DoubaoService {
 7. “150元微信，100元现金”必须输出两笔 payments；“260元未付”是 agreed_total=260、payments=[]，不得输出已收款；“定金50元”但未说支付方式时，payments 包含 amount=50、method=""，供用户补充。
 8. “一双”数量为 1；没写数量但语义明确为单件商品时，quantity=1。“赠”“送”后的物品是赠品，不是销售商品数量。赠品必须写进前一件销售商品的 gift=true、gift_description，不得作为新 item。例如“赠袜子一双”写 gift_description="袜子一双"；“赠鞋垫一双”写 gift_description="鞋垫一双"。
 9. 单件商品明确说了总成交金额，可将其作为该件 actual_amount；仅有“定金”不能作为成交金额。多件逐件金额已知时可求和为 agreed_total。标价与自动公式不参与成交金额判断。
-10. 只输出 JSON，不输出 Markdown 或说明。
+10. 遇到“89.9/89块9抵100”的团购券，只把实际付给门店的微信/现金等放入 payments；券的购买价 89.9 元和抵扣面额 100 元都不是门店已收现金，不要把它们当成 payments。不要猜测平台结算金额，后端会按已配置券种确定性换算。单鞋券后成交金额无法从原话直接确定时可留空，由后端结合实际支付和券种换算。
+11. 只输出 JSON，不输出 Markdown 或说明。
 
 用户原话：${originalText}
     `.trim();
@@ -145,11 +156,11 @@ class DoubaoService {
     const content = response.choices?.[0]?.message?.content || '';
     try {
       const result = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
-      const normalized = normalizeSalesResult(result);
+      const normalized = normalizeSalesResult(result, originalText);
       // For the one-shoe MVP, a gift explicitly present in the source text
       // must not disappear just because the model omitted gift fields.
       if (normalized.items.length === 1 && !normalized.items[0].gift) {
-        const explicitGift = originalText.match(/(?:赠送?|送)([^，,。；;、]+?)(?=[，,。；;、]|$)/);
+        const explicitGift = originalText.match(/(?:赠送?|送)(?:了)?\s*([^，,。；;、]+?)(?=[，,。；;、]|$)/);
         if (explicitGift) {
           normalized.items[0].gift = true;
           normalized.items[0].gift_description = explicitGift[1].trim();

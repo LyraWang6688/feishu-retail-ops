@@ -384,7 +384,9 @@ class LarkMvpService {
     if (parsed.agreed_total && Math.abs(actualTotal - Number(parsed.agreed_total)) > 0.005) {
       missingFields.push('逐件成交金额合计与整单成交金额不一致');
     }
-    if (Number(parsed.total_paid || 0) > actualTotal) missingFields.push('已收金额不能超过本单成交金额');
+    if (Number(parsed.total_covered ?? parsed.total_paid ?? 0) > actualTotal) {
+      missingFields.push('已收金额和待平台结算金额不能超过本单成交金额');
+    }
 
     const draft = {
       ...parsed,
@@ -583,7 +585,7 @@ class LarkMvpService {
         paymentMethod: task.draft.payment_method,
         totalPaid: task.draft.total_paid,
         payments: (task.draft.payments || []).map((payment) => ({
-          amount: payment.amount, method: payment.method, operatorOpenId,
+          amount: payment.amount, method: payment.method, status: payment.status, operatorOpenId,
         })),
         items: task.draft.items.map((item) => ({
           productRecordId: item.product_record_id,

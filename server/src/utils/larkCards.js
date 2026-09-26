@@ -162,7 +162,13 @@ const salesConfirmationCard = (draftId, draft) => ({
   elements: [
     {
       tag: 'markdown',
-      content: `${itemLines(draft.items || [], 'actual_amount')}\n**成交总额：** ￥${text(draft.agreed_total)}\n**本次收款：** ${(draft.payments || []).length ? draft.payments.map((payment) => `${text(payment.method)} ￥${text(payment.amount)}`).join('；') : '尚未收款'}\n**交付：** ${text(draft.delivery_status || '待确认')}（请按实际情况选择）`,
+      content: `${itemLines(draft.items || [], 'actual_amount')}\n**成交总额：** ￥${text(draft.agreed_total)}` +
+        (draft.voucher ? `\n**团购券：** ￥${text(draft.voucher.purchase_price)} 抵 ￥${text(draft.voucher.face_value)}；平台预计结算 ￥${text(draft.voucher.settlement_amount)}` : '') +
+        `\n**本次已收：** ${(draft.payments || []).filter((payment) => payment.status !== '待平台结算').length ?
+          draft.payments.filter((payment) => payment.status !== '待平台结算').map((payment) => `${text(payment.method)} ￥${text(payment.amount)}`).join('；') : '尚未收款'}` +
+        ((draft.payments || []).some((payment) => payment.status === '待平台结算') ?
+          `\n**待平台结算：** ${draft.payments.filter((payment) => payment.status === '待平台结算').map((payment) => `${text(payment.method)} ￥${text(payment.amount)}`).join('；')}` : '') +
+        `\n**交付：** ${text(draft.delivery_status || '待确认')}（请按实际情况选择）`,
     },
     {
       tag: 'action',

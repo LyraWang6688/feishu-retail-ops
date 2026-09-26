@@ -91,3 +91,74 @@ test('explicit gift in one-shoe source survives model omission', async () => {
     else process.env.ARK_MODEL_ENDPOINT = oldModel;
   }
 });
+
+test('one 89.9-for-100 voucher is converted to pending 85.4, not received 89.9 or 100', async () => {
+  const oldKey = process.env.ARK_API_KEY;
+  const oldModel = process.env.ARK_MODEL_ENDPOINT;
+  const oldGetClient = salesParser.getClient;
+  process.env.ARK_API_KEY = 'test-key';
+  process.env.ARK_MODEL_ENDPOINT = 'test-model';
+  try {
+    // Even when the AI wrongly calls the voucher a 100-yuan payment and omits
+    // the gift, the deterministic policy must correct the cash/settlement split.
+    salesParser.getClient = () => ({ chat: { completions: { create: async () => ({ choices: [{ message: { content: JSON.stringify({
+      intent: 'sale', items: [{ item_no: '2A831-18', color: '黑', size: 44, quantity: 1, actual_amount: 269 }],
+      payments: [{ method: '微信', amount: 169 }, { method: '抖音团购券', amount: 100 }], agreed_total: 269,
+    }) } }] }) } } });
+    const result = await salesParser.parseSalesText('2A831-18黑色44的，是169元微信，然后一张89块9抵100的代金券，然后赠了一双袜子');
+    assert.equal(result.items[0].actual_amount, 254.4);
+    assert.equal(result.items[0].gift_description, '一双袜子');
+    assert.equal(result.agreed_total, 254.4);
+    assert.equal(result.total_paid, 169);
+    assert.equal(result.total_covered, 254.4);
+    assert.deepEqual(result.payments, [
+      { amount: 169, method: '微信', status: '已收清' },
+      { method: '抖音团购券', amount: 85.4, status: '待平台结算' },
+    ]);
+    assert.deepEqual(result.missing_fields, []);
+  } finally {
+    salesParser.getClient = oldGetClient;
+    if (oldKey === undefined) delete process.env.ARK_API_KEY;
+    else process.env.ARK_API_KEY = oldKey;
+    if (oldModel === undefined) delete process.env.ARK_MODEL_ENDPOINT;
+    else process.env.ARK_MODEL_ENDPOINT = oldModel;
+  }
+});
+
+test('49.9-for-100 voucher uses configured 47.4 settlement', () => {
+  const result = normalizeSalesResult({ intent: 'sale', items: [
+    { item_no: 'A100', size: 38, quantity: 1 }], payments: [{ method: '微信', amount: 169 }],
+  }, 'A100黑38，169元微信，一张49.9抵100代金券');
+  assert.equal(result.agreed_total, 216.4);
+  assert.equal(result.payments[1].amount, 47.4);
+  assert.equal(result.payments[1].status, '待平台结算');
+  assert.deepEqual(result.missing_fields, []);
+});
+
+test('spoken cash facts override an AI payment array that mistakes voucher face value for cash', () => {
+  const result = normalizeSalesResult({ intent: 'sale', items: [
+    { item_no: '2A831-18', color: '黑', size: 44, quantity: 1 }],
+    payments: [{ method: '现金', amount: 100 }],
+  }, '2A831-18黑44，169元微信，一张89.9抵100代金券');
+  assert.deepEqual(result.payments, [
+    { method: '微信', amount: 169, status: '已收清' },
+    { method: '抖音团购券', amount: 85.4, status: '待平台结算' },
+  ]);
+  assert.deepEqual(result.missing_fields, []);
+});
+
+test('unknown voucher or multiple shoes cannot silently create a settled receipt', () => {
+  const unknown = normalizeSalesResult({ intent: 'sale', items: [
+    { item_no: 'A100', size: 38, quantity: 1, actual_amount: 269 }],
+    payments: [{ method: '微信', amount: 169 }, { method: '团购券', amount: 100 }],
+    agreed_total: 269,
+  }, 'A100黑38，169元微信，一张79.9抵100团购券');
+  assert.ok(unknown.missing_fields.some((field) => field.includes('未配置')));
+  const multiple = normalizeSalesResult({ intent: 'sale', items: [
+    { item_no: 'A100', size: 38, quantity: 1, actual_amount: 100 },
+    { item_no: 'B200', size: 39, quantity: 1, actual_amount: 169 }],
+    payments: [{ method: '微信', amount: 169 }, { method: '团购券', amount: 100 }],
+    agreed_total: 269,
+  }, 'A100黑38和B200黑39，169元微信，一张89.9抵100团购券');
+  assert.ok(multiple.missing_fields.some((field) => field.includes('一单一双')));
+});

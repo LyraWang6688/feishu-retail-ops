@@ -252,6 +252,47 @@ test('two products and two payments stay in one sales draft and confirmation car
   assert.match(JSON.stringify(cards[0]), /现金/);
 });
 
+test('voucher sale card and posting retain separate settled and platform-pending receipts', async () => {
+  const { normalizeSalesResult } = require('../src/services/doubaoService');
+  const store = makeStore();
+  const cards = [];
+  let posted;
+  const source = '2A831-18黑色44的，是169元微信，然后一张89块9抵100的代金券，然后赠了一双袜子';
+  const parsed = normalizeSalesResult({ intent: 'sale', items: [
+    { item_no: '2A831-18', color: '黑', size: 44, quantity: 1, actual_amount: 269,
+      gift: true, gift_description: '一双袜子' }],
+    payments: [{ method: '微信', amount: 169 }, { method: '团购券', amount: 100 }],
+    agreed_total: 269,
+  }, source);
+  const service = new LarkMvpService({ client: {}, store,
+    gateway: { validateTables: async () => [], table: () => ({ fields: { number: '编号' } }),
+      create: async () => ({ recordId: 'entry_voucher' }), update: async () => undefined },
+    references: { resolveProduct: async () => ({ recordId: 'product_voucher',
+      record: { fields: { 编号: '2A831-18黑' } } }) },
+    recognizer: { parseSalesText: async () => parsed },
+    posting: { postSale: async (input) => { posted = input;
+      return { sourceNo: 'XSD-VOUCHER', detailRecordIds: ['detail_voucher'],
+        paymentRecordIds: ['cash_receipt', 'voucher_receipt'] }; } },
+  });
+  service.replyCard = async (_messageId, card) => { cards.push(card); return 'card_voucher'; };
+  await store.create({ task_id: 'sale_voucher', type: 'sale', status: 'received',
+    message_id: 'om_voucher', sender_open_id: 'ou_1', sent_at: Date.now(), original_text: source });
+  await service.processSalesTask('sale_voucher');
+  assert.equal((await store.get('sale_voucher')).status, 'ready_to_confirm');
+  const card = JSON.stringify(cards[0]);
+  assert.match(card, /本次已收/);
+  assert.match(card, /待平台结算/);
+  assert.match(card, /85.4/);
+  await service.handleCardAction({ operator: { operator_id: { open_id: 'ou_1' } },
+    action: { value: { action: 'confirm_sale_pending', draft_id: 'sale_voucher' } } });
+  assert.equal(posted.items[0].actualAmount, 254.4);
+  assert.equal(posted.items[0].giftDescription, '一双袜子');
+  assert.deepEqual(posted.payments.map(({ amount, method, status }) => ({ amount, method, status })), [
+    { amount: 169, method: '微信', status: '已收清' },
+    { amount: 85.4, method: '抖音团购券', status: '待平台结算' },
+  ]);
+});
+
 test('quoted actual sale amount may differ from Bitable list price', async () => {
   const store = makeStore();
   const messages = [];
