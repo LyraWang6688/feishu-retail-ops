@@ -587,6 +587,13 @@ class PurchaseWebhookService {
     const arrival = task.draft;
     const requestTable = this.gateway.table('purchaseRequest');
     const inboundTable = this.gateway.table('purchaseInbound');
+    // 查询"采购入库"行为的 record_id（采购行为是关联字段，不能直接传字符串）
+    const behaviorTable = this.gateway.table('behavior');
+    const behaviorMatches = (await this.gateway.listAll('behavior')).filter(
+      (record) => textValue(record.fields?.[behaviorTable.fields.name]).trim() === '采购入库'
+    );
+    if (behaviorMatches.length !== 1) throw new Error('行为管理中"采购入库"必须且只能有一条记录');
+    const purchaseInboundBehaviorId = behaviorMatches[0].record_id;
     if (!this.inflightInbound.has(taskId)) this.inflightInbound.set(taskId, new Map());
     const inflightMap = this.inflightInbound.get(taskId);
     const normalizeEntry = (value) => (typeof value === 'string' ? { recordId: value, inventoryApplied: false } : value);
@@ -648,7 +655,7 @@ class PurchaseWebhookService {
         product: relation(item.product_record_id),
         size: item.size,
         quantity: item.quantity,
-        behavior: '采购入库',
+        behavior: relation(purchaseInboundBehaviorId),
         batch: relation(arrival.arrival_record_id),
         supplierOrder: match?.request_record_id ? relation(match.request_record_id) : undefined,
         inboundAt: Date.now(),

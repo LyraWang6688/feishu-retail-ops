@@ -28,7 +28,12 @@ const makeGateway = (records = {}) => ({
     const list = records[tableKey] || [];
     return list.find((r) => r.record_id === recordId) || null;
   },
-  listAll: async (tableKey) => records[tableKey] || [],
+  listAll: async (tableKey) => {
+    if (tableKey === 'behavior' && !records.behavior) {
+      return [{ record_id: 'behavior_purchase_in', fields: { '行为名称': '采购入库', '行为编码': 'PURCHASE_IN', '库存方向': '增加', '是否启用': true } }];
+    }
+    return records[tableKey] || [];
+  },
   create: async (tableKey, semanticValues) => {
     const fields = mapFields(tableKey, semanticValues);
     const recordId = `new_${tableKey}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
