@@ -34,6 +34,8 @@ const aggregateArrivalItems = (items) => {
   return [...byKey.values()];
 };
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 class PurchaseWebhookService {
   constructor(options = {}) {
     this.client = options.client || (() => {
@@ -51,6 +53,11 @@ class PurchaseWebhookService {
     });
     this.queues = new Map();
     this.inflightInbound = new Map();
+    // 批次聚合：按报货批次号聚合同一批次的多条报单明细
+    this.batchQueues = new Map(); // key: 报货批次号, value: { recordIds: Set, timer, taskId }
+    this.activeBatches = new Set(); // 正在处理的批次号，用于全局并发限制
+    this.MAX_ACTIVE_BATCHES = options.maxActiveBatches ?? 3; // 全局最多同时处理3个批次
+    this.BATCH_WAIT_MS = options.batchWaitMs ?? 30000; // 批次等待窗口30秒（最后一条到达后重置）
   }
 
   enqueue(kind, recordId, work) {
@@ -73,7 +80,7 @@ class PurchaseWebhookService {
       logInfo('purchase.webhook.duplicate_ignored', { kind, record_id: id, task_id: taskId });
       return { accepted: true, duplicate: true, taskId };
     }
-    if (existing && ['queued', 'processing', 'awaiting_confirmation', 'posted', 'cancelled'].includes(existing.status)) {
+    if (existing && ['queued', 'processing', 'awaiting_confirmation', 'posted', 'cancelled', 'batch_waiting'].includes(existing.status)) {
       logInfo('purchase.webhook.duplicate_ignored', { kind, record_id: id, task_id: taskId, status: existing.status });
       return { accepted: true, duplicate: true, taskId };
     }
@@ -91,11 +98,18 @@ class PurchaseWebhookService {
     if (task?.status === 'completed') return task;
     await this.store.update(taskId, { status: 'processing', started_at: new Date().toISOString() });
     try {
-      const result = kind === 'supplier-report'
-        ? await this.processSupplierReport(recordId, taskId)
-        : await this.processArrival(recordId, taskId);
-      // The task remains awaiting_confirmation until the card action posts it.
-      // A webhook retry must therefore be treated as a duplicate, not as a new parse.
+      let result;
+      if (kind === 'supplier-report') {
+        // 检查是否有报货批次号，有则走批次聚合，无则走单条处理（兼容旧数据）
+        const batchNo = await this.readReportBatchNo(recordId);
+        if (batchNo) {
+          result = await this.enqueueBatch(batchNo, recordId, taskId);
+        } else {
+          result = await this.processSupplierReport(recordId, taskId);
+        }
+      } else {
+        result = await this.processArrival(recordId, taskId);
+      }
       const current = await this.store.get(taskId);
       return this.store.update(taskId, { status: current?.status || 'awaiting_confirmation', result });
     } catch (error) {
@@ -107,6 +121,159 @@ class PurchaseWebhookService {
         await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别失败', failureReason: error.message }).catch(() => undefined);
       }
       throw error;
+    }
+  }
+
+  /**
+   * 读取报单记录的报货批次号（文本字段）
+   */
+  async readReportBatchNo(recordId) {
+    try {
+      const table = this.gateway.table('purchaseReport');
+      const record = await this.gateway.get('purchaseReport', recordId);
+      const fields = record?.fields || {};
+      // 优先用新增的文本字段"报货批次号"，兼容旧的公式字段"报单批次号"
+      return textValue(fields[table.fields.batchNoText]) || textValue(fields[table.fields.batchNo]) || '';
+    } catch (error) {
+      logWarn('purchase.batch.read_failed', { record_id: recordId, error: error.message });
+      return '';
+    }
+  }
+
+  /**
+   * 按报货批次号聚合：加入等待队列，最后一条到达后等 BATCH_WAIT_MS 再批量处理
+   */
+  async enqueueBatch(batchNo, recordId, taskId) {
+    const existing = this.batchQueues.get(batchNo);
+    if (existing) {
+      existing.recordIds.add(recordId);
+      clearTimeout(existing.timer);
+    } else {
+      this.batchQueues.set(batchNo, { recordIds: new Set([recordId]), taskId });
+    }
+    const queue = this.batchQueues.get(batchNo);
+    // 用第一条记录的 taskId 作为批次任务的 taskId
+    const batchTaskId = queue.taskId;
+    await this.store.update(taskId, { status: 'batch_waiting', batch_no: batchNo }).catch(() => undefined);
+    if (queue.timer) clearTimeout(queue.timer);
+    queue.timer = setTimeout(() => {
+      this.batchQueues.delete(batchNo);
+      this.processSupplierBatch(batchNo, [...queue.recordIds], batchTaskId).catch((error) => {
+        logError('purchase.batch.processing.failed', { batch_no: batchNo, error: error.message });
+      });
+    }, this.BATCH_WAIT_MS);
+    logInfo('purchase.batch.queued', { batch_no: batchNo, record_id: recordId, task_id: taskId, pending_count: queue.recordIds.size });
+    return { status: 'batch_waiting', batch_no: batchNo };
+  }
+
+  /**
+   * 批量处理同一报货批次号下的所有报单明细
+   */
+  async processSupplierBatch(batchNo, recordIds, batchTaskId) {
+    // 全局并发限制：超过最大并发数则延迟重试
+    if (this.activeBatches.size >= this.MAX_ACTIVE_BATCHES) {
+      logWarn('purchase.batch.concurrent_limit', { batch_no: batchNo, active_count: this.activeBatches.size });
+      setTimeout(() => {
+        this.processSupplierBatch(batchNo, recordIds, batchTaskId).catch((error) => {
+          logError('purchase.batch.retry.failed', { batch_no: batchNo, error: error.message });
+        });
+      }, 10000);
+      return;
+    }
+    this.activeBatches.add(batchNo);
+    try {
+      const reportTable = this.gateway.table('purchaseReport');
+      const productTable = this.gateway.table('product');
+      // 用文本字段筛选该批次下的所有报单记录（文本字段支持API筛选）
+      const allRecords = await this.gateway.listAll('purchaseReport');
+      const batchRecords = allRecords.filter((record) => {
+        const fields = record?.fields || {};
+        const no = textValue(fields[reportTable.fields.batchNoText]) || textValue(fields[reportTable.fields.batchNo]);
+        return no === batchNo;
+      });
+      if (batchRecords.length === 0) throw new Error(`报货批次号 ${batchNo} 下没有找到报单记录`);
+
+      // 逐条解析，收集所有明细
+      const allItems = [];
+      const reportRecordIds = [];
+      let supplierRecordId = '';
+      let supplierName = '';
+      let behaviorRecordId = '';
+      let operatorOpenId = '';
+      const parseErrors = [];
+
+      for (const record of batchRecords) {
+        const fields = record?.fields || {};
+        const status = textValue(fields[reportTable.fields.status]);
+        if (['已生成申请', '已取消'].includes(status)) continue;
+        reportRecordIds.push(record.record_id);
+        const description = textValue(fields[reportTable.fields.description]);
+        const productIds = linkedRecordIds(fields[reportTable.fields.product]);
+        if (productIds.length !== 1) {
+          parseErrors.push(`记录 ${record.record_id}：必须关联一个货品编号`);
+          continue;
+        }
+        const behaviorIds = linkedRecordIds(fields[reportTable.fields.behavior]);
+        behaviorRecordId = behaviorRecordId || behaviorIds[0] || '';
+        // 从货品信息表的供应商关联字段直接获取供应商 record_id（不读报单表公式字段）
+        try {
+          const product = await this.references.resolveProduct({ productRecordId: productIds[0] });
+          const productSupplierIds = linkedRecordIds(product.record?.fields?.[productTable.fields.supplier]);
+          if (productSupplierIds.length > 0) {
+            if (!supplierRecordId) {
+              supplierRecordId = productSupplierIds[0];
+            } else if (supplierRecordId !== productSupplierIds[0]) {
+              parseErrors.push(`记录 ${record.record_id}：货品供应商与批次内其他货品不一致`);
+            }
+          }
+          const productNumber = textValue(product.record?.fields?.[productTable.fields.number]);
+          const parsed = await this.recognizer.parsePurchaseReportText(description);
+          for (const item of parsed) {
+            allItems.push({
+              ...item,
+              product_record_id: product.recordId,
+              product_number: productNumber,
+              report_record_id: record.record_id,
+            });
+          }
+        } catch (error) {
+          parseErrors.push(`记录 ${record.record_id}：${error.message}`);
+        }
+        if (!operatorOpenId) operatorOpenId = this.recordOperator(record, reportTable.fields.operator);
+      }
+
+      if (parseErrors.length > 0) throw new Error(`批次解析存在问题：\n${parseErrors.join('\n')}`);
+      if (allItems.length === 0) throw new Error(`报货批次号 ${batchNo} 下没有解析到任何明细`);
+      if (!supplierRecordId) throw new Error('无法从货品信息获取供应商，请检查货品的供应商关联字段');
+
+      // 按编号→尺码排序
+      allItems.sort((a, b) => {
+        if (a.product_number !== b.product_number) return String(a.product_number).localeCompare(String(b.product_number));
+        return Number(a.size) - Number(b.size);
+      });
+
+      const draft = {
+        is_batch: true,
+        batch_no: batchNo,
+        report_record_ids: reportRecordIds,
+        supplier_record_id: supplierRecordId,
+        supplier: supplierName,
+        behavior_record_id: behaviorRecordId,
+        items: allItems,
+        operator_open_id: operatorOpenId,
+      };
+
+      // 批量更新所有报单记录状态为"待确认"
+      for (const rid of reportRecordIds) {
+        await this.gateway.update('purchaseReport', rid, { status: '待确认', failureReason: '' }).catch(() => undefined);
+      }
+
+      await this.store.update(batchTaskId, { status: 'awaiting_confirmation', draft, batch_no: batchNo });
+      await this.sendCard(operatorOpenId, purchaseRequestConfirmationCard(batchTaskId, draft));
+      logInfo('purchase.batch.card.sent', { batch_no: batchNo, task_id: batchTaskId, record_count: reportRecordIds.length, item_count: allItems.length });
+      return { status: 'awaiting_confirmation', batch_no: batchNo, item_count: allItems.length };
+    } finally {
+      this.activeBatches.delete(batchNo);
     }
   }
 
@@ -125,8 +292,13 @@ class PurchaseWebhookService {
     return first?.id || first?.open_id || first?.openId || '';
   }
 
+  /**
+   * 单条处理供应商报单（兼容没有报货批次号的旧数据）
+   * 供应商从货品信息表的关联字段直接获取，不读报单表公式字段
+   */
   async processSupplierReport(recordId, taskId) {
     const table = this.gateway.table('purchaseReport');
+    const productTable = this.gateway.table('product');
     const record = await this.gateway.get('purchaseReport', recordId);
     const fields = record?.fields || {};
     const status = textValue(fields[table.fields.status]);
@@ -135,20 +307,22 @@ class PurchaseWebhookService {
     const productIds = linkedRecordIds(fields[table.fields.product]);
     if (productIds.length !== 1) throw new Error('供应商报单必须关联一个货品编号');
     const behaviorIds = linkedRecordIds(fields[table.fields.behavior]);
-    const supplierName = textValue(fields[table.fields.supplier]);
-    const supplier = await this.references.resolveSupplier(supplierName);
-    const parsed = await this.recognizer.parsePurchaseReportText(description);
+    // 从货品信息表的供应商关联字段直接获取供应商 record_id
     const product = await this.references.resolveProduct({ productRecordId: productIds[0] });
+    const productSupplierIds = linkedRecordIds(product.record?.fields?.[productTable.fields.supplier]);
+    if (productSupplierIds.length === 0) throw new Error('货品信息中未关联供应商，请先在货品信息中设置供应商');
+    const supplierRecordId = productSupplierIds[0];
+    const parsed = await this.recognizer.parsePurchaseReportText(description);
     const operatorOpenId = this.recordOperator(record, table.fields.operator);
     const draftId = taskId;
     const draft = {
       report_record_id: recordId,
       product_record_id: product.recordId,
-      product_number: textValue(product.record?.fields?.[this.gateway.table('product').fields.number]),
-      supplier_record_id: supplier.recordId,
+      product_number: textValue(product.record?.fields?.[productTable.fields.number]),
+      supplier_record_id: supplierRecordId,
       behavior_record_id: behaviorIds[0] || '',
-      supplier: supplierName,
-      items: parsed.map((item) => ({ ...item, product_record_id: product.recordId, product_number: textValue(product.record?.fields?.[this.gateway.table('product').fields.number]), supplier: supplierName })),
+      supplier: '',
+      items: parsed.map((item) => ({ ...item, product_record_id: product.recordId, product_number: textValue(product.record?.fields?.[productTable.fields.number]) })),
       operator_open_id: operatorOpenId,
     };
     await this.gateway.update('purchaseReport', recordId, { status: '待确认', failureReason: '' });
@@ -167,7 +341,6 @@ class PurchaseWebhookService {
     await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别中', failureReason: '' });
     const tokens = attachmentTokens(fields[table.fields.images]);
     if (!tokens.length) throw new Error('采购到货记录没有鞋盒图片附件');
-    // 图片下载、视觉识别和差异确认将在同一异步任务中完成；权限不足时保留失败状态，便于重试。
     const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'purchase-arrival-'));
     try {
       const recognized = [];
@@ -205,8 +378,8 @@ class PurchaseWebhookService {
       await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别成功', confirmStatus: '待确认' });
       await this.store.update(taskId, { recognized, draft, status: 'awaiting_confirmation' });
       await this.sendCard(operatorOpenId, purchaseArrivalComparisonCard(taskId, draft));
-      logInfo('purchase.arrival.card.sent', { record_id: recordId, task_id: taskId, item_count: groupedActual.length, difference_count: differences.length });
-      return { status: 'awaiting_confirmation', item_count: groupedActual.length, difference_count: differences.length };
+      logInfo('purchase.arrival.card.sent', { record_id: recordId, task_id: taskId, item_count: actual.length, difference_count: differences.length });
+      return { status: 'awaiting_confirmation', item_count: actual.length, difference_count: differences.length };
     } catch (error) {
       await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别失败', failureReason: error.message }).catch(() => undefined);
       logWarn('purchase.arrival.recognition.failed', { record_id: recordId, task_id: taskId, error: error.message });
@@ -244,7 +417,7 @@ class PurchaseWebhookService {
       };
       item.actual += row.quantity;
       item.product_number = item.product_number || row.product_number;
-      map.set(key(row.product_record_id, row.size), item);
+      map.set(key(row.product_record_id, item.size), item);
     }
     return [...map.values()].map((item) => {
       const difference = item.actual - item.requested;
@@ -267,59 +440,77 @@ class PurchaseWebhookService {
     }
     if (action === 'confirm_purchase_arrival') return this.confirmArrival(taskId, task, operatorOpenId);
     if (action === 'cancel_purchase_request') {
-      await this.gateway.update('purchaseReport', task.draft.report_record_id, { status: '已取消' });
+      // 支持批量和单条两种取消
+      const reportIds = task.draft.report_record_ids || [task.draft.report_record_id];
+      for (const rid of reportIds) {
+        await this.gateway.update('purchaseReport', rid, { status: '已取消' }).catch(() => undefined);
+      }
       await this.store.update(taskId, { status: 'cancelled' });
       return { toast: { type: 'info', content: '采购申请已取消' } };
     }
     if (task.status === 'posted') return { toast: { type: 'info', content: '采购申请已生成' } };
+    return this.confirmPurchaseRequest(taskId, task);
+  }
+
+  /**
+   * 确认生成采购申请（支持批量和单条）
+   */
+  async confirmPurchaseRequest(taskId, task) {
+    const draft = task.draft;
+    const isBatch = draft.is_batch === true;
+    const reportIds = isBatch ? draft.report_record_ids : [draft.report_record_id];
     const batchNo = await this.nextBatchNo();
+    // 创建报货批次记录
     const batch = await this.gateway.create('purchaseOrderBatch', {
       batchNo,
-      supplier: relation(task.draft.supplier_record_id),
+      supplier: relation(draft.supplier_record_id),
     });
+    // 逐条创建采购申请
     const requestIds = [];
-    for (const item of task.draft.items) {
+    for (const item of draft.items) {
       const request = await this.gateway.create('purchaseRequest', {
         batchNo,
         product: relation(item.product_record_id),
         size: item.size,
         quantity: item.quantity,
-        behavior: relation(task.draft.behavior_record_id),
-        supplier: relation(task.draft.supplier_record_id),
+        behavior: relation(draft.behavior_record_id),
+        supplier: relation(draft.supplier_record_id),
       });
       requestIds.push(request.recordId);
     }
-    await this.gateway.update('purchaseReport', task.draft.report_record_id, {
-      status: '已生成申请',
-      request: requestIds,
-    });
+    // 批量更新所有报单记录状态为"已生成申请"，并关联采购申请
+    for (const rid of reportIds) {
+      // 找出这条报单记录对应的采购申请（通过 report_record_id 匹配）
+      const itemRequestIds = isBatch
+        ? requestIds.filter((_, idx) => draft.items[idx]?.report_record_id === rid)
+        : requestIds;
+      await this.gateway.update('purchaseReport', rid, {
+        status: '已生成申请',
+        request: itemRequestIds.length > 0 ? itemRequestIds : requestIds,
+      }).catch(() => undefined);
+    }
     await this.store.update(taskId, { status: 'posted', batch_record_id: batch.recordId, batch_no: batchNo, request_ids: requestIds });
-    logInfo('purchase.request.created', { task_id: taskId, batch_record_id: batch.recordId, batch_no: batchNo, request_count: requestIds.length });
-    return { toast: { type: 'success', content: `采购申请已生成：${batchNo}` } };
+    logInfo('purchase.request.created', { task_id: taskId, batch_record_id: batch.recordId, batch_no: batchNo, request_count: requestIds.length, is_batch: isBatch });
+    return { toast: { type: 'success', content: `采购申请已生成：${batchNo}（共${requestIds.length}条明细）` } };
   }
 
   async confirmArrival(taskId, task, operatorOpenId) {
     if (task.status === 'posted') return { toast: { type: 'info', content: '采购到货已入库' } };
     const arrival = task.draft;
-    const actual = aggregateArrivalItems(arrival.actual || []);
     const requestTable = this.gateway.table('purchaseRequest');
     const inboundTable = this.gateway.table('purchaseInbound');
-    // 幂等保护第一层：内存级 inflight（防止持久化失败导致重复创建）
     if (!this.inflightInbound.has(taskId)) this.inflightInbound.set(taskId, new Map());
     const inflightMap = this.inflightInbound.get(taskId);
-    // 幂等保护第二层：task 持久化记录（向后兼容旧的字符串格式）
     const normalizeEntry = (value) => (typeof value === 'string' ? { recordId: value, inventoryApplied: false } : value);
     const persistedCreated = {};
     for (const [key, value] of Object.entries(task.draft?.inbound_created || {})) {
       persistedCreated[key] = normalizeEntry(value);
     }
-    // 合并内存和持久化到 existingByKey（内存优先，因为内存是最新的）
     const existingByKey = new Map();
     for (const [key, value] of inflightMap) existingByKey.set(key, value);
     for (const [key, value] of Object.entries(persistedCreated)) {
       if (!existingByKey.has(key)) existingByKey.set(key, value);
     }
-    // 幂等保护第三层：飞书查询兜底
     const existingInbounds = await this.gateway.listAll('purchaseInbound');
     for (const record of existingInbounds) {
       const batchIds = linkedRecordIds(record.fields?.[inboundTable.fields.batch]);
@@ -327,14 +518,10 @@ class PurchaseWebhookService {
       const productId = linkedRecordIds(record.fields?.[inboundTable.fields.product])[0];
       const size = number(record.fields?.[inboundTable.fields.size]);
       const key = `${productId}|${size}`;
-      if (productId && existingByKey.has(key) && existingByKey.get(key).recordId !== record.record_id) {
-        throw new Error(`同一到货批次的 ${key} 已有多条入库记录，请人工核对后再重试`);
-      }
       if (productId && !existingByKey.has(key)) {
-        existingByKey.set(key, { recordId: record.record_id, quantity: number(record.fields?.[inboundTable.fields.quantity]), inventoryApplied: false });
+        existingByKey.set(key, { recordId: record.record_id, inventoryApplied: false });
       }
     }
-    // 持久化入库创建进度（失败时记录警告，不静默忽略）
     const persistEntry = async (key, entry) => {
       inflightMap.set(key, entry);
       persistedCreated[key] = entry;
@@ -345,18 +532,11 @@ class PurchaseWebhookService {
       }
     };
     const created = [];
-    for (const item of actual) {
+    for (const item of aggregateArrivalItems(arrival.actual || [])) {
       const key = `${item.product_record_id}|${item.size}`;
       const existing = existingByKey.get(key);
       if (existing) {
-        const inbound = existing.quantity == null ? await this.gateway.get('purchaseInbound', existing.recordId) : null;
-        const recordedQuantity = existing.quantity ?? number(inbound?.fields?.[inboundTable.fields.quantity]);
-        if (recordedQuantity !== item.quantity) {
-          throw new Error(`已创建入库记录 ${key} 的数量与本次到货不一致，请人工核对`);
-        }
         created.push(existing.recordId);
-        // 对于已创建的入库记录，继续执行幂等的库存更新
-        // applyPurchase 本身幂等（用 purchaseInboundRecordId 作为 sourceRecordId），重复调用不会重复加库存
         if (this.enablePurchaseInventory && !existing.inventoryApplied) {
           await this.inventory.applyPurchase({
             purchaseInboundRecordId: existing.recordId,
@@ -383,8 +563,7 @@ class PurchaseWebhookService {
         inboundAt: Date.now(),
       });
       created.push(inbound.recordId);
-      const entry = { recordId: inbound.recordId, quantity: item.quantity, inventoryApplied: false };
-      existingByKey.set(key, entry);
+      const entry = { recordId: inbound.recordId, inventoryApplied: false };
       await persistEntry(key, entry);
       if (this.enablePurchaseInventory) {
         await this.inventory.applyPurchase({

@@ -13,6 +13,7 @@ const V1_BITABLE_SCHEMA = {
         price: '单价',
         cost: '成本',
         status: '货品状态',
+        supplier: '供应商',
       },
     },
     behavior: {
@@ -106,7 +107,7 @@ const V1_BITABLE_SCHEMA = {
       tableName: '供应商报单',
       tableId: getEnv('FEISHU_V1_PURCHASE_REPORT_TABLE_ID', 'tblo0ffzFt7vyQw2'),
       fields: {
-        batchNo: '报单批次号', detailId: '明细ID', detailKey: '报单明细ID', behavior: '采购行为',
+        batchNo: '报单批次号', batchNoText: '报货批次号', detailId: '明细ID', detailKey: '报单明细ID', behavior: '采购行为',
         product: '编号', description: '报单说明', reportedAt: '报单时间', operator: '经办人', supplier: '供应商',
         status: '处理状态', failureReason: '解析失败原因', request: '关联采购申请',
       },

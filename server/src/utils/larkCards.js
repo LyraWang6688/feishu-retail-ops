@@ -14,20 +14,21 @@ const itemLines = (items, priceKey) =>
  * 采购确认卡的分组展示：供应商 → 编号 → 尺码从小到大
  * 匹配成功的货品显示完整编号，匹配失败的标注"未匹配"
  */
-const purchaseItemLinesGrouped = (items) => {
+const purchaseItemLinesGrouped = (items, options = {}) => {
   if (!items?.length) return '未识别到商品';
+  const skipSupplierGroup = options.skipSupplierGroup === true;
 
-  // 第一层：按供应商分组（供应商为空的归到"待补充供应商"）
+  // 第一层：按供应商分组（批量模式跳过，直接归到一组）
   const bySupplier = new Map();
   for (const item of items) {
-    const supplier = item.supplier || '待补充供应商';
+    const supplier = skipSupplierGroup ? '__batch__' : (item.supplier || '待补充供应商');
     if (!bySupplier.has(supplier)) bySupplier.set(supplier, []);
     bySupplier.get(supplier).push(item);
   }
 
   const lines = [];
   for (const [supplier, supplierItems] of bySupplier) {
-    lines.push(`**━━━ 供应商：${text(supplier)} ━━━**`);
+    if (!skipSupplierGroup) lines.push(`**━━━ 供应商：${text(supplier)} ━━━**`);
 
     // 第二层：按编号分组（匹配成功用 product_record_id 做 key，匹配失败用货号+颜色）
     const byProduct = new Map();
@@ -51,7 +52,7 @@ const purchaseItemLinesGrouped = (items) => {
         lines.push(`  ${text(item.size)}码 × ${text(item.quantity || 1)}${price}${matchNote}`);
       }
     }
-    lines.push(''); // 供应商之间空行分隔
+    if (!skipSupplierGroup) lines.push(''); // 供应商之间空行分隔
   }
 
   return lines.join('\n');
@@ -193,11 +194,17 @@ const purchaseConfirmationCard = (draftId, draft) => {
   };
 };
 
-const purchaseRequestConfirmationCard = (draftId, draft) => ({
+const purchaseRequestConfirmationCard = (draftId, draft) => {
+  const isBatch = draft.is_batch === true;
+  const headerTitle = isBatch ? '请确认采购申请（批次）' : '请确认采购申请';
+  const batchInfo = isBatch
+    ? `**报货批次号：** ${text(draft.batch_no)}\n**明细数量：** ${text(draft.items?.length || 0)} 条\n\n`
+    : '';
+  return {
   config: { wide_screen_mode: true },
-  header: { template: 'orange', title: { tag: 'plain_text', content: '请确认采购申请' } },
+  header: { template: 'orange', title: { tag: 'plain_text', content: headerTitle } },
   elements: [
-    { tag: 'markdown', content: purchaseItemLinesGrouped(draft.items || []) },
+    { tag: 'markdown', content: batchInfo + purchaseItemLinesGrouped(draft.items || [], { skipSupplierGroup: isBatch }) },
     {
       tag: 'action',
       actions: [
@@ -206,7 +213,8 @@ const purchaseRequestConfirmationCard = (draftId, draft) => ({
       ],
     },
   ],
-});
+  };
+};
 
 const purchaseArrivalComparisonCard = (draftId, draft) => {
   const lines = (draft.differences || []).map((item) =>

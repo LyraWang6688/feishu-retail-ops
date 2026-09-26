@@ -46,7 +46,7 @@ const makeGateway = (records = {}) => ({
 });
 
 const makeReferences = (overrides = {}) => ({
-  resolveProduct: overrides.resolveProduct || (async () => ({ recordId: 'prod_1', record: { record_id: 'prod_1', fields: { 编号: '8088灰' } } })),
+  resolveProduct: overrides.resolveProduct || (async () => ({ recordId: 'prod_1', record: { record_id: 'prod_1', fields: { 编号: '8088灰', 供应商: ['sup_1'] } } })),
   resolveSupplier: overrides.resolveSupplier || (async () => ({ recordId: 'sup_1', record: { record_id: 'sup_1', fields: { 供应商名称: '测试供应商' } } })),
 });
 
@@ -565,4 +565,103 @@ test('arrival confirm retries after inventory update failure — continues apply
 
   const sizes = inboundsAfterRetry.map((r) => r.fields.尺码).sort();
   assert.deepEqual(sizes, [36, 37]);
+});
+
+// ─── 供应商报单批次聚合链路 ───
+
+test('supplier report with batch number enters batch_waiting state', async () => {
+  const { service, store } = makeService({
+    gateway: makeGateway({
+      purchaseReport: [{ record_id: 'rep_batch_1', fields: { 处理状态: '待解析', 报单说明: '36码2双', 编号: ['prod_1'], 采购行为: ['beh_1'], 报货批次号: 'BATCH-001', 经办人: [{ id: 'ou_1' }] } }],
+    }),
+  });
+  service.BATCH_WAIT_MS = 10;
+  const result = await service.accept('supplier-report', 'rep_batch_1');
+  assert.equal(result.accepted, true);
+  await wait(50);
+  const task = await store.get(result.taskId);
+  assert.ok(['batch_waiting', 'awaiting_confirmation'].includes(task.status), `实际状态: ${task.status}`);
+});
+
+test('batch aggregation processes all records in same batch and sends one card', async () => {
+  const messages = [];
+  const { service, gateway } = makeService({
+    client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
+    gateway: makeGateway({
+      purchaseReport: [
+        { record_id: 'rep_b1', fields: { 处理状态: '待解析', 报单说明: '36码2双', 编号: ['prod_1'], 采购行为: ['beh_1'], 报货批次号: 'BATCH-MULTI', 经办人: [{ id: 'ou_1' }] } },
+        { record_id: 'rep_b2', fields: { 处理状态: '待解析', 报单说明: '37码1双', 编号: ['prod_1'], 采购行为: ['beh_1'], 报货批次号: 'BATCH-MULTI', 经办人: [{ id: 'ou_1' }] } },
+      ],
+    }),
+    recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => text.includes('36') ? [{ size: 36, quantity: 2 }] : [{ size: 37, quantity: 1 }] }),
+  });
+  service.BATCH_WAIT_MS = 20;
+  await service.accept('supplier-report', 'rep_b1');
+  await service.accept('supplier-report', 'rep_b2');
+  await wait(100);
+  assert.equal(messages.length, 1, `应只发1张批量确认卡，实际发了${messages.length}张`);
+  const cardContent = JSON.parse(messages[0].data.content);
+  const markdown = cardContent.elements[0].content;
+  assert.ok(markdown.includes('36码'), '确认卡应包含36码明细');
+  assert.ok(markdown.includes('37码'), '确认卡应包含37码明细');
+  assert.ok(markdown.includes('BATCH-MULTI'), '确认卡应包含批次号');
+});
+
+test('batch confirm generates requests and updates all report records', async () => {
+  const { service, store, gateway } = makeService({
+    gateway: makeGateway({
+      purchaseReport: [
+        { record_id: 'rep_c1', fields: { 处理状态: '待解析', 报单说明: '36码2双', 编号: ['prod_1'], 采购行为: ['beh_1'], 报货批次号: 'BATCH-CONF', 经办人: [{ id: 'ou_1' }] } },
+        { record_id: 'rep_c2', fields: { 处理状态: '待解析', 报单说明: '37码1双', 编号: ['prod_1'], 采购行为: ['beh_1'], 报货批次号: 'BATCH-CONF', 经办人: [{ id: 'ou_1' }] } },
+      ],
+      purchaseOrderBatch: [],
+      purchaseRequest: [],
+    }),
+    recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => text.includes('36') ? [{ size: 36, quantity: 2 }] : [{ size: 37, quantity: 1 }] }),
+  });
+  service.BATCH_WAIT_MS = 20;
+  const first = await service.accept('supplier-report', 'rep_c1');
+  await service.accept('supplier-report', 'rep_c2');
+  await wait(100);
+  const task = await store.get(first.taskId);
+  assert.equal(task.status, 'awaiting_confirmation');
+  assert.ok(task.draft.is_batch === true);
+  assert.equal(task.draft.items.length, 2);
+  const result = await service.handleCardAction({ draft_id: first.taskId, action: 'confirm_purchase_request' }, 'ou_1');
+  assert.ok(result.toast.content.includes('采购申请已生成'));
+  const requests = await gateway.listAll('purchaseRequest');
+  assert.equal(requests.length, 2);
+  const r1 = await gateway.get('purchaseReport', 'rep_c1');
+  const r2 = await gateway.get('purchaseReport', 'rep_c2');
+  assert.equal(r1.fields.处理状态, '已生成申请');
+  assert.equal(r2.fields.处理状态, '已生成申请');
+});
+
+test('supplier report without batch number falls back to single processing', async () => {
+  const { service, store } = makeService({
+    gateway: makeGateway({
+      purchaseReport: [{ record_id: 'rep_nobatch', fields: { 处理状态: '待解析', 报单说明: '36码1双', 编号: ['prod_1'], 经办人: [{ id: 'ou_1' }] } }],
+    }),
+  });
+  const result = await service.accept('supplier-report', 'rep_nobatch');
+  await wait(50);
+  const task = await store.get(result.taskId);
+  assert.equal(task.status, 'awaiting_confirmation');
+  assert.ok(!task.draft.is_batch);
+});
+
+test('product without supplier association throws clear error', async () => {
+  const { service, store } = makeService({
+    gateway: makeGateway({
+      purchaseReport: [{ record_id: 'rep_nosup', fields: { 处理状态: '待解析', 报单说明: '36码1双', 编号: ['prod_nosup'], 经办人: [{ id: 'ou_1' }] } }],
+    }),
+    references: makeReferences({
+      resolveProduct: async () => ({ recordId: 'prod_nosup', record: { record_id: 'prod_nosup', fields: { 编号: '8088灰' } } }),
+    }),
+  });
+  const result = await service.accept('supplier-report', 'rep_nosup');
+  await wait(50);
+  const task = await store.get(result.taskId);
+  assert.equal(task.status, 'failed');
+  assert.ok(task.error.includes('货品信息中未关联供应商'));
 });
