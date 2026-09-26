@@ -474,7 +474,6 @@ class PurchaseWebhookService {
         size: item.size,
         quantity: item.quantity,
         behavior: relation(draft.behavior_record_id),
-        supplier: relation(draft.supplier_record_id),
       });
       requestIds.push(request.recordId);
     }

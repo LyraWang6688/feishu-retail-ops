@@ -117,7 +117,7 @@ const V1_BITABLE_SCHEMA = {
       tableId: getEnv('FEISHU_V1_PURCHASE_REQUEST_TABLE_ID', 'tbli1ygPtss5CWCH'),
       fields: {
         batchNo: '报货批次号', behavior: '采购行为', product: '编号', size: '尺码', quantity: '数量',
-        supplier: '供应商', reportedAt: '报单时间', operator: '经办人', arrivalStatus: '到货状态',
+        reportedAt: '报单时间', operator: '经办人', arrivalStatus: '到货状态',
       },
     },
     purchaseArrival: {
