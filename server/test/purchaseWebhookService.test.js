@@ -87,6 +87,8 @@ const makeService = (options = {}) => {
   const service = new PurchaseWebhookService({
     gateway, references, recognizer, inventory: inventory.applyPurchase ? inventory : undefined,
     client, store, enablePurchaseInventory: options.enablePurchaseInventory ?? true,
+    batchReadMaxRetries: options.batchReadMaxRetries ?? 1,
+    batchReadRetryDelay: options.batchReadRetryDelay ?? 0,
   });
   return { service, store, gateway, references, recognizer, inventory, client, dir };
 };

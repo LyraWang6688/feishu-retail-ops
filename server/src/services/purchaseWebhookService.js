@@ -52,6 +52,8 @@ class PurchaseWebhookService {
       idField: 'task_id',
     });
     this.queues = new Map();
+    this.batchReadMaxRetries = options.batchReadMaxRetries ?? 3;
+    this.batchReadRetryDelay = options.batchReadRetryDelay ?? 1000;
     this.inflightInbound = new Map();
     // 批次聚合：按报货批次号聚合同一批次的多条报单明细
     this.batchQueues = new Map(); // key: 报货批次号, value: { recordIds: Set, timer, taskId }
@@ -126,18 +128,30 @@ class PurchaseWebhookService {
 
   /**
    * 读取报单记录的报货批次号（文本字段）
+   * 遇到飞书 Data not ready 时自动重试，最多3次
    */
   async readReportBatchNo(recordId) {
-    try {
-      const table = this.gateway.table('purchaseReport');
-      const record = await this.gateway.get('purchaseReport', recordId);
-      const fields = record?.fields || {};
-      // 优先用新增的文本字段"报货批次号"，兼容旧的公式字段"报单批次号"
-      return textValue(fields[table.fields.batchNoText]) || '';
-    } catch (error) {
-      logWarn('purchase.batch.read_failed', { record_id: recordId, error: error.message });
-      return '';
+    const maxRetries = this.batchReadMaxRetries;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const table = this.gateway.table('purchaseReport');
+        const record = await this.gateway.get('purchaseReport', recordId);
+        const fields = record?.fields || {};
+        const batchNo = textValue(fields[table.fields.batchNoText]) || '';
+        if (batchNo) return batchNo;
+        // 批次号为空时也重试（可能是数据还没同步）
+        if (attempt < maxRetries) {
+          logWarn('purchase.batch.batch_no_empty', { record_id: recordId, attempt });
+          await new Promise(resolve => setTimeout(resolve, this.batchReadRetryDelay * attempt));
+        }
+      } catch (error) {
+        logWarn('purchase.batch.read_failed', { record_id: recordId, attempt, error: error.message });
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+        }
+      }
     }
+    return '';
   }
 
   /**
