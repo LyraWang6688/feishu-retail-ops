@@ -131,17 +131,21 @@ const createWorkbenchService = (gateway, options = {}) => {
       result.quantity += row.quantity;
       if (row.sales_entry_record_id) orderIds.add(row.sales_entry_record_id);
       return result;
-    }, { detail_count: rows.length, order_count: 0, quantity: 0, paid_amount: 0 });
+    }, { detail_count: rows.length, order_count: 0, quantity: 0, paid_amount: 0, platform_pending_amount: 0 });
     summary.order_count = orderIds.size || rows.length;
     summary.receivable_amount = rows.every((row) => row.receivable_amount !== null)
       ? rows.reduce((sum, row) => sum + row.receivable_amount, 0) : null;
     for (const orderId of orderIds) {
       for (const receipt of receiptsByOrder.get(orderId) || []) {
         const paid = asNumber(fieldValue(schema, 'paymentRecord', receipt, 'amount'));
+        const status = asText(schema, 'paymentRecord', receipt, 'status') || '已收清';
         const method = relationLabel(schema, 'paymentMethod', paymentsById,
           asLinks(schema, 'paymentRecord', receipt, 'method'), 'name') || '未填写';
-        summary.paid_amount += paid;
-        paymentSummary[method] = (paymentSummary[method] || 0) + paid;
+        if (status === '待平台结算') summary.platform_pending_amount += paid;
+        else {
+          summary.paid_amount += paid;
+          paymentSummary[method] = (paymentSummary[method] || 0) + paid;
+        }
       }
     }
     return { date, summary: { ...summary, payment_summary: paymentSummary }, rows };

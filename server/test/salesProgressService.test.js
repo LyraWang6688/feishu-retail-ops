@@ -3,11 +3,25 @@ const assert = require('node:assert/strict');
 const { progressFromRecords } = require('../src/services/salesProgressService');
 
 const detailFields = { actualAmount: '成交金额', quantity: '数量', deliveredQuantity: '交付数量' };
-const paymentFields = { amount: '收款金额' };
+const paymentFields = { amount: '收款金额', status: '收款状态' };
 const shoe = (amount, quantity = 1, delivered = 0) => ({ fields: {
   成交金额: amount, 数量: quantity, 交付数量: delivered,
 } });
-const receipt = (amount) => ({ fields: { 收款金额: amount } });
+const receipt = (amount, status) => ({ fields: { 收款金额: amount, 收款状态: status } });
+
+test('platform voucher is not cash received or a customer balance', () => {
+  const result = progressFromRecords([shoe(254.4, 1, 1)],
+    [receipt(169, '已收清'), receipt(85.4, '待平台结算')], detailFields, paymentFields);
+  assert.equal(result.paidAmount, 169);
+  assert.equal(result.platformPendingAmount, 85.4);
+  assert.equal(result.pendingAmount, 0);
+  assert.equal(result.paymentStatus, '待平台结算');
+  assert.equal(result.orderStatus, '已确认');
+  const settled = progressFromRecords([shoe(254.4, 1, 1)],
+    [receipt(169, '已收清'), receipt(85.4, '已收清')], detailFields, paymentFields);
+  assert.equal(settled.paidAmount, 254.4);
+  assert.equal(settled.paymentStatus, '已收清');
+});
 
 test('cash sale is fully paid and delivered only when both facts exist', () => {
   const result = progressFromRecords([shoe(220, 1, 1)], [receipt(220)], detailFields, paymentFields);

@@ -66,6 +66,40 @@ test('mixed payment creates two receipts for the same order and retry is idempot
   assert.equal(gateway.records.get('inventoryLedger'), undefined);
 });
 
+test('platform voucher has no receipt time until verified settlement', async () => {
+  const gateway = fake();
+  const payments = new PaymentService({ gateway, references });
+  const cash = await payments.record({ salesEntryRecordId: 'order_1', method: '微信', amount: 169 });
+  const voucher = await payments.record({ salesEntryRecordId: 'order_1', method: '抖音团购券',
+    amount: 85.4, status: '待平台结算' });
+  assert.equal((await gateway.get('paymentRecord', cash.recordId)).fields['收款状态'], '已收清');
+  assert.ok((await gateway.get('paymentRecord', cash.recordId)).fields['收款时间'] > 0);
+  assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['收款状态'], '待平台结算');
+  assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['收款时间'], undefined);
+  await payments.settlePlatformReceipt(voucher.recordId, 1234567890000);
+  assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['收款状态'], '已收清');
+  assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['收款时间'], 1234567890000);
+});
+
+test('sale records cash and pending voucher on one order without treating voucher as received', async () => {
+  const gateway = fake();
+  const sale = new SalesOrderService({ gateway, references });
+  await sale.confirm({ salesEntryRecordId: 'order_1',
+    items: [{ itemNo: '2A831-18', size: 44, quantity: 1, actualAmount: 254.4 }],
+    payments: [{ method: '微信', amount: 169 },
+      { method: '抖音团购券', amount: 85.4, status: '待平台结算' }] });
+  const receipts = gateway.records.get('paymentRecord');
+  assert.equal(receipts.length, 2);
+  assert.equal(receipts[0].fields['收款时间'] > 0, true);
+  assert.equal(receipts[1].fields['收款时间'], undefined);
+  assert.equal(gateway.records.get('salesEntry')[0].fields['收款状态'], '待平台结算');
+  await sale.confirm({ salesEntryRecordId: 'order_1',
+    items: [{ itemNo: '2A831-18', size: 44, quantity: 1, actualAmount: 254.4 }],
+    payments: [{ method: '微信', amount: 169 },
+      { method: '抖音团购券', amount: 85.4, status: '待平台结算' }] });
+  assert.equal(gateway.records.get('paymentRecord').length, 2);
+});
+
 test('invalid initial receipt cannot silently become unpaid', async () => {
   const gateway = fake();
   const service = new SalesOrderService({ gateway, references });

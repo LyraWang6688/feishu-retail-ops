@@ -25,16 +25,28 @@ const progressFromRecords = (details, receipts, detailFields, paymentFields) => 
     quantity += lineQuantity;
     delivered += lineDelivered;
   }
-  const paidCents = receipts.reduce((sum, receipt) =>
-    sum + cents(textValue(receipt.fields?.[paymentFields.amount]), '收款金额'), 0);
-  if (amountKnown && paidCents > amountCents) throw new Error('累计收款超过成交金额，请核对销售明细或收款记录');
+  let paidCents = 0;
+  let platformPendingCents = 0;
+  for (const receipt of receipts) {
+    const status = textValue(receipt.fields?.[paymentFields.status]) || '已收清';
+    const value = cents(textValue(receipt.fields?.[paymentFields.amount]), '收款金额');
+    if (status === '待平台结算') platformPendingCents += value;
+    else if (status === '已收清' || status === '已结清') paidCents += value;
+    else throw new Error(`未知收款状态：${status}`);
+  }
+  if (amountKnown && paidCents + platformPendingCents > amountCents) {
+    throw new Error('累计收款及待平台结算金额超过成交金额，请核对销售明细或收款记录');
+  }
   const fulfillmentStatus = delivered === 0 ? '未交付' : delivered === quantity ? '已交付' : '部分交付';
-  const paymentStatus = !amountKnown ? '' : paidCents === 0 ? '未收款' :
-    paidCents === amountCents ? '已收清' : '部分收款';
+  const customerPendingCents = amountCents - paidCents - platformPendingCents;
+  const paymentStatus = !amountKnown ? '' : paidCents === amountCents ? '已收清' :
+    customerPendingCents === 0 && platformPendingCents > 0 ? '待平台结算' :
+    paidCents === 0 && platformPendingCents === 0 ? '未收款' : '部分收款';
   return {
     receivableAmount: amountKnown ? amountCents / 100 : null,
     paidAmount: paidCents / 100,
-    pendingAmount: amountKnown ? (amountCents - paidCents) / 100 : null,
+    pendingAmount: amountKnown ? customerPendingCents / 100 : null,
+    platformPendingAmount: platformPendingCents / 100,
     quantity,
     deliveredQuantity: delivered,
     pendingDeliveryQuantity: quantity - delivered,

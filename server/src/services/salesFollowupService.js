@@ -47,6 +47,7 @@ class SalesFollowupService {
           receivable_amount: progress.receivableAmount,
           paid_amount: progress.paidAmount,
           pending_amount: progress.pendingAmount,
+          platform_pending_amount: progress.platformPendingAmount,
           pending_delivery_quantity: progress.pendingDeliveryQuantity,
           details: orderDetails
             .map((detail) => ({
@@ -61,6 +62,8 @@ class SalesFollowupService {
             .map((payment) => ({
               record_id: payment.record_id,
               amount: Number(textValue(payment.fields?.[paymentFields.amount])),
+              status: textValue(payment.fields?.[paymentFields.status]) || '已收清',
+              received_at: payment.fields?.[paymentFields.receivedAt] || null,
               method: methodById.get(linkedRecordIds(payment.fields?.[paymentFields.method])[0]) || '',
             })),
         }; })

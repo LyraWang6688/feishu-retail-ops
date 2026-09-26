@@ -22,8 +22,11 @@ class PaymentService {
       linkedRecordIds(record.fields?.[field]).includes(salesEntryRecordId));
   }
 
-  async record({ salesEntryRecordId, method, amount: rawAmount, operatorOpenId, receivedAt }) {
+  async record({ salesEntryRecordId, method, amount: rawAmount, operatorOpenId, receivedAt,
+    status = '已收清' }) {
     if (!salesEntryRecordId) throw new Error('收款缺少销售主表 record_id');
+    if (!['已收清', '待平台结算'].includes(status)) throw new Error('收款状态无效');
+    if (status === '待平台结算' && receivedAt != null) throw new Error('待平台结算不能填写收款时间');
     const paid = amount(rawAmount);
     const paymentMethod = await this.references.resolvePaymentMethod(method);
     if (!paymentMethod) throw new Error('收款缺少支付方式');
@@ -31,9 +34,23 @@ class PaymentService {
       salesEntry: relation(salesEntryRecordId),
       method: relation(paymentMethod.recordId),
       amount: paid,
-      receivedAt: Number(receivedAt || Date.now()),
+      status,
+      receivedAt: status === '已收清' ? Number(receivedAt ?? Date.now()) : undefined,
       operator: person(operatorOpenId),
     });
+  }
+
+  async settlePlatformReceipt(recordId, receivedAt = Date.now()) {
+    if (!recordId) throw new Error('缺少收款记录 record_id');
+    const timestamp = Number(receivedAt);
+    if (!Number.isFinite(timestamp) || timestamp <= 0) throw new Error('实际收款时间无效');
+    const record = await this.gateway.get('paymentRecord', recordId);
+    if (!record) throw new Error('收款记录不存在');
+    const fields = this.gateway.table('paymentRecord').fields;
+    const status = textValue(record.fields?.[fields.status]);
+    if (status === '已收清') return record;
+    if (status !== '待平台结算') throw new Error('只有待平台结算的收款可结清');
+    return this.gateway.update('paymentRecord', recordId, { status: '已收清', receivedAt: timestamp });
   }
 
   // First confirmation may contain multiple payment methods. Match existing
@@ -54,7 +71,8 @@ class PaymentService {
       const paid = amount(payment.amount);
       const match = existing.find((record) => !used.has(record.record_id) &&
         linkedRecordIds(record.fields?.[fields.method]).includes(method.recordId) &&
-        Number(textValue(record.fields?.[fields.amount])) === paid);
+        Number(textValue(record.fields?.[fields.amount])) === paid &&
+        (textValue(record.fields?.[fields.status]) || '已收清') === (payment.status || '已收清'));
       if (match) used.add(match.record_id);
       rows.push({ payment, recordId: match?.record_id || '' });
     }

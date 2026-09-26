@@ -81,6 +81,7 @@ const V1_BITABLE_SCHEMA = {
         salesEntry: '关联销售单',
         method: '支付方式',
         amount: '收款金额',
+        status: '收款状态',
         receivedAt: '收款时间',
         operator: '操作人',
       },
