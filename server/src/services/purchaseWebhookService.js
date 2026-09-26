@@ -7,7 +7,7 @@ const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { V1BitableGateway, linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
 const doubaoService = require('./doubaoService');
-const { purchaseRequestConfirmationCard, purchaseArrivalComparisonCard, purchaseStatusCard } = require('../utils/larkCards');
+const { purchaseRequestConfirmationCard, purchaseArrivalComparisonCard, purchaseArrivalDetailCard, purchaseStatusCard } = require('../utils/larkCards');
 const { InventoryService } = require('./inventoryService');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
@@ -428,7 +428,7 @@ class PurchaseWebhookService {
       const draft = { arrival_record_id: recordId, batch_record_id: batchIds[0], batch_no: batchNo, operator_open_id: operatorOpenId, requests, actual: groupedActual, differences, unrecognized };
       await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别成功', confirmStatus: '待确认' });
       await this.store.update(taskId, { recognized, draft, status: 'awaiting_confirmation' });
-      await this.sendCard(operatorOpenId, purchaseArrivalComparisonCard(taskId, draft));
+      await this.sendCard(operatorOpenId, purchaseArrivalDetailCard(taskId, draft));
       logInfo("purchase.arrival.card.sent", { record_id: recordId, task_id: taskId, item_count: actual.length, unrecognized_count: unrecognized.length, difference_count: differences.length });
       return { status: 'awaiting_confirmation', item_count: actual.length, difference_count: differences.length };
     } catch (error) {
@@ -648,7 +648,7 @@ class PurchaseWebhookService {
         product: relation(item.product_record_id),
         size: item.size,
         quantity: item.quantity,
-        
+        behavior: '采购入库',
         batch: relation(arrival.arrival_record_id),
         supplierOrder: match?.request_record_id ? relation(match.request_record_id) : undefined,
         inboundAt: Date.now(),

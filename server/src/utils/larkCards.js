@@ -330,6 +330,80 @@ const purchaseArrivalComparisonCard = (draftId, draft) => {
 };
 
 
+/**
+ * 第一步：采购到货明细确认卡片
+ * 显示实际到货明细（按编号分区）+ 未匹配货品 + 鞋盒总数统计
+ */
+const purchaseArrivalDetailCard = (draftId, draft) => {
+  const elements = [];
+
+  // 报货批次号
+  elements.push({ tag: 'markdown', content: `**报货批次号：** ${text(draft.batch_no)}` });
+
+  // 实际到货明细（按编号分区显示）
+  const matchedItems = (draft.actual || []).map(item => ({
+    ...item,
+    product_number: item.product_number,
+    product_record_id: item.product_record_id,
+  }));
+  if (matchedItems.length > 0) {
+    elements.push({ tag: 'hr' });
+    elements.push({ tag: 'markdown', content: `**📦 实际到货明细（共 ${matchedItems.length} 条）**` });
+    elements.push(...purchaseItemElements(matchedItems, { skipSupplierGroup: true }));
+  }
+
+  // 未匹配货品
+  const unrecognized = draft.unrecognized || [];
+  if (unrecognized.length > 0) {
+    elements.push({ tag: 'hr' });
+    elements.push({ tag: 'markdown', content: `**⚠️ 未匹配货品（共 ${unrecognized.length} 个，无法在货品表中找到）**` });
+    const unrecognizedLines = unrecognized.map(u =>
+      `- ${text(u.item_no || '未知')} ${text(u.color || '')} ${text(u.size || '')}码 ×${text(u.quantity || 1)}`
+    );
+    elements.push({ tag: 'markdown', content: unrecognizedLines.join('\n') });
+    elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: '提示：未匹配的货品不会入库，可能是 OCR 识别错误，请核对鞋盒标签' }] });
+  }
+
+  // 鞋盒总数统计
+  const totalBoxes = matchedItems.length + unrecognized.length;
+  elements.push({ tag: 'hr' });
+  elements.push({
+    tag: 'column_set',
+    flex_mode: 'none',
+    background_style: 'grey',
+    horizontal_spacing: 'default',
+    columns: [
+      {
+        tag: 'column', width: 'weighted', weight: 1, vertical_align: 'center',
+        elements: [{ tag: 'markdown', content: `**识别鞋盒总数**\n${totalBoxes} 个`, text_align: 'center' }],
+      },
+      {
+        tag: 'column', width: 'weighted', weight: 1, vertical_align: 'center',
+        elements: [{ tag: 'markdown', content: `**匹配成功**\n${matchedItems.length} 个`, text_align: 'center' }],
+      },
+      {
+        tag: 'column', width: 'weighted', weight: 1, vertical_align: 'center',
+        elements: [{ tag: 'markdown', content: `**未匹配**\n${unrecognized.length} 个`, text_align: 'center' }],
+      },
+    ],
+  });
+
+  // 确认/取消按钮
+  elements.push({
+    tag: 'action',
+    actions: [
+      actionButton('确认入库', 'confirm_purchase_arrival', draftId, 'primary'),
+      actionButton('取消', 'cancel_purchase_arrival', draftId, 'danger'),
+    ],
+  });
+
+  return {
+    config: { wide_screen_mode: true },
+    header: { template: 'orange', title: { tag: 'plain_text', content: '请确认采购到货明细' } },
+    elements,
+  };
+};
+
 const purchaseStatusCard = (draft, title, message, template = 'blue') => {
   const isBatch = draft?.is_batch === true;
   const elements = [];
@@ -345,6 +419,7 @@ module.exports = {
   purchaseConfirmationCard,
   purchaseRequestConfirmationCard,
   purchaseArrivalComparisonCard,
+  purchaseArrivalDetailCard,
   purchaseStatusCard,
   salesConfirmationCard,
   salesStatusCard,
