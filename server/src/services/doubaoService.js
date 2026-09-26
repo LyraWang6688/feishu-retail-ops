@@ -177,8 +177,9 @@ class DoubaoService {
 2. “39到42各两双”表示39、40、41、42，每个数量2。
 3. “4042各一双”表示40和42各1双。
 4. “39一双、40两双”分别输出两条。
-5. 尺码必须是数字，数量必须是正整数；无法确定时不要猜测，返回空数组。
-6. 只输出 JSON，不输出 Markdown 或说明。
+5. 鞋码通常在35-48之间。如果出现"421双"、"441双"这样的写法，表示"42码1双"、"44码1双"（最后一位数字是数量，前面的数字是尺码）。类似地，"402双"=40码2双，"383双"=38码3双。
+6. 尺码必须是数字且在35-48之间，数量必须是正整数；无法确定时不要猜测，返回空数组。
+7. 只输出 JSON，不输出 Markdown 或说明。
 采购报单说明：${originalText}`.trim();
     const response = await this.getClient().chat.completions.create({
       model: this.endpointId,
@@ -192,10 +193,20 @@ class DoubaoService {
       const items = Array.isArray(parsed) ? parsed : parsed.items;
       if (!Array.isArray(items) || !items.length) throw new Error('未识别出有效尺码数量');
       return items.map((item) => {
-        const size = Number(item.size);
-        const quantity = Number(item.quantity);
-        if (!Number.isFinite(size) || !Number.isFinite(quantity) || size <= 0 || quantity <= 0) {
-          throw new Error('采购报单中的尺码或数量无效');
+        let size = Number(item.size);
+        let quantity = Number(item.quantity);
+        // 兜底：如果尺码超出35-48范围，尝试拆分为"尺码+数量"（如421=42码1双）
+        if (Number.isFinite(size) && size > 48 && String(size).length >= 2) {
+          const sizeStr = String(size);
+          const possibleSize = Number(sizeStr.slice(0, -1));
+          const possibleQty = Number(sizeStr.slice(-1));
+          if (possibleSize >= 35 && possibleSize <= 48 && possibleQty > 0) {
+            size = possibleSize;
+            quantity = possibleQty;
+          }
+        }
+        if (!Number.isFinite(size) || !Number.isFinite(quantity) || size < 35 || size > 48 || quantity <= 0) {
+          throw new Error('采购报单中的尺码或数量无效（尺码需在35-48之间）');
         }
         return { size, quantity };
       });
