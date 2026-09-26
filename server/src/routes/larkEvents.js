@@ -127,7 +127,16 @@ const createLarkEventsRouter = (options = {}) => {
     createLarkEventHandlers(service),
   );
 
-  router.post('/', lark.adaptExpress(dispatcher, { autoChallenge: true }));
+  // 手动处理飞书 URL 验证的 challenge 请求（SDK 的 autoChallenge 未生效）
+  router.post('/', (req, res, next) => {
+    if (req.body?.challenge) {
+      logInfo('lark.event.challenge', { challenge: req.body.challenge });
+      return res.json({ challenge: req.body.challenge });
+    }
+    next();
+  });
+
+  router.post('/', lark.adaptExpress(dispatcher));
   router.get('/health', (_req, res) => {
     logInfo('lark.mvp.health.checked');
     res.json({ success: true, mode: 'p2p', schema: 'v1' });
