@@ -208,6 +208,7 @@ class PurchaseWebhookService {
         if (['已生成申请', '已取消'].includes(status)) continue;
         reportRecordIds.push(record.record_id);
         const description = textValue(fields[reportTable.fields.description]);
+        const detailId = textValue(fields[reportTable.fields.detailId]);
         const productIds = linkedRecordIds(fields[reportTable.fields.product]);
         if (productIds.length !== 1) {
           parseErrors.push(`记录 ${record.record_id}：必须关联一个货品编号`);
@@ -234,6 +235,7 @@ class PurchaseWebhookService {
               product_record_id: product.recordId,
               product_number: productNumber,
               report_record_id: record.record_id,
+              detail_id: detailId,
             });
           }
         } catch (error) {
@@ -246,9 +248,9 @@ class PurchaseWebhookService {
       if (allItems.length === 0) throw new Error(`报货批次号 ${batchNo} 下没有解析到任何明细`);
       if (!supplierRecordId) throw new Error('无法从货品信息获取供应商，请检查货品的供应商关联字段');
 
-      // 按编号→尺码排序
+      // 按明细ID→尺码排序（明细ID决定货号展示顺序）
       allItems.sort((a, b) => {
-        if (a.product_number !== b.product_number) return String(a.product_number).localeCompare(String(b.product_number));
+        if (String(a.detail_id) !== String(b.detail_id)) return String(a.detail_id).localeCompare(String(b.detail_id));
         return Number(a.size) - Number(b.size);
       });
 
@@ -304,6 +306,7 @@ class PurchaseWebhookService {
     const status = textValue(fields[table.fields.status]);
     if (['已生成申请', '已取消'].includes(status)) return { ignored: true, status };
     const description = textValue(fields[table.fields.description]);
+    const detailId = textValue(fields[table.fields.detailId]);
     const productIds = linkedRecordIds(fields[table.fields.product]);
     if (productIds.length !== 1) throw new Error('供应商报单必须关联一个货品编号');
     const behaviorIds = linkedRecordIds(fields[table.fields.behavior]);
@@ -322,7 +325,7 @@ class PurchaseWebhookService {
       supplier_record_id: supplierRecordId,
       behavior_record_id: behaviorIds[0] || '',
       supplier: '',
-      items: parsed.map((item) => ({ ...item, product_record_id: product.recordId, product_number: textValue(product.record?.fields?.[productTable.fields.number]) })),
+      items: parsed.map((item) => ({ ...item, product_record_id: product.recordId, product_number: textValue(product.record?.fields?.[productTable.fields.number]), detail_id: detailId })),
       operator_open_id: operatorOpenId,
     };
     await this.gateway.update('purchaseReport', recordId, { status: '待确认', failureReason: '' });
