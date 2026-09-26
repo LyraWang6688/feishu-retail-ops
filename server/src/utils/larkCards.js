@@ -58,6 +58,97 @@ const purchaseItemLinesGrouped = (items, options = {}) => {
   return lines.join('\n');
 };
 
+
+/**
+ * 采购商品明细 - 网格布局（按编号分区，尺码每行4个）
+ * 返回飞书卡片元素数组
+ */
+const purchaseItemElements = (items, options = {}) => {
+  if (!items?.length) return [{ tag: 'markdown', content: '未识别到商品' }];
+  const skipSupplierGroup = options.skipSupplierGroup === true;
+
+  // 第一层：按供应商分组（批量模式跳过，直接归到一组）
+  const bySupplier = new Map();
+  for (const item of items) {
+    const supplier = skipSupplierGroup ? '__batch__' : (item.supplier || '待补充供应商');
+    if (!bySupplier.has(supplier)) bySupplier.set(supplier, []);
+    bySupplier.get(supplier).push(item);
+  }
+
+  const elements = [];
+  let isFirstSupplier = true;
+
+  for (const [supplier, supplierItems] of bySupplier) {
+    if (!skipSupplierGroup) {
+      if (!isFirstSupplier) elements.push({ tag: 'hr' });
+      elements.push({ tag: 'markdown', content: `**━━━ 供应商：${text(supplier)} ━━━**` });
+      isFirstSupplier = false;
+    }
+
+    // 第二层：按编号分组
+    const byProduct = new Map();
+    for (const item of supplierItems) {
+      const productLabel = item.product_number || `${item.item_no}${item.color ? ' ' + item.color : ''}`;
+      const key = item.product_record_id || `unmatched:${item.item_no}|${item.color}`;
+      if (!byProduct.has(key)) byProduct.set(key, { label: productLabel, items: [] });
+      byProduct.get(key).items.push(item);
+    }
+
+    let isFirstProduct = true;
+    for (const [, product] of byProduct) {
+      // 编号分区之间的分隔
+      if (!isFirstProduct || (!skipSupplierGroup && !isFirstSupplier)) {
+        elements.push({ tag: 'hr' });
+      }
+      isFirstProduct = false;
+
+      const hasMatch = product.items.some((item) => item.product_record_id);
+      const prefix = hasMatch ? '🏷' : '⚠️';
+
+      // 编号标题
+      elements.push({
+        tag: 'markdown',
+        content: `**${prefix} ${text(product.label)}**`,
+      });
+
+      // 第三层：按尺码从小到大排序
+      const sorted = [...product.items].sort((a, b) => Number(a.size) - Number(b.size));
+
+      // 每4个尺码一行，生成 column_set
+      for (let i = 0; i < sorted.length; i += 4) {
+        const rowItems = sorted.slice(i, i + 4);
+        const columns = rowItems.map((item) => {
+          const price = item.unit_cost ? ` ￥${item.unit_cost}/双` : '';
+          const matchNote = item.match_error ? `（未匹配）` : '';
+          return {
+            tag: 'column',
+            width: 'weighted',
+            weight: 1,
+            vertical_align: 'center',
+            elements: [
+              {
+                tag: 'markdown',
+                content: `**${text(item.size)}码**\n× ${text(item.quantity || 1)}${price}${matchNote}`,
+                text_align: 'center',
+              },
+            ],
+          };
+        });
+        elements.push({
+          tag: 'column_set',
+          flex_mode: 'none',
+          background_style: 'grey',
+          horizontal_spacing: 'default',
+          columns,
+        });
+      }
+    }
+    if (!skipSupplierGroup) elements.push({ tag: 'hr' }); // 供应商之间分隔
+  }
+
+  return elements;
+};
+
 const actionButton = (label, action, draftId, type = 'default') => ({
   tag: 'button',
   text: { tag: 'plain_text', content: label },
@@ -156,7 +247,7 @@ const purchaseConfirmationCard = (draftId, draft) => {
   );
 
   const elements = [
-    { tag: 'markdown', content: purchaseItemLinesGrouped(items) },
+    ...purchaseItemElements(items),
     {
       tag: 'note',
       elements: [
@@ -239,17 +330,13 @@ const purchaseArrivalComparisonCard = (draftId, draft) => {
 
 const purchaseStatusCard = (draft, title, message, template = 'blue') => {
   const isBatch = draft?.is_batch === true;
-  const batchInfo = isBatch && draft?.batch_no
-    ? `**报货批次号：** ${text(draft.batch_no)}\n\n`
-    : '';
-  return {
-    config: { wide_screen_mode: true },
-    header: { template, title: { tag: 'plain_text', content: title } },
-    elements: [
-      { tag: 'markdown', content: batchInfo + (purchaseItemLinesGrouped(draft?.items || [], { skipSupplierGroup: isBatch }) || '采购申请') },
-      { tag: 'note', elements: [{ tag: 'plain_text', content: message }] },
-    ],
-  };
+  const elements = [];
+  if (isBatch && draft?.batch_no) {
+    elements.push({ tag: 'markdown', content: `**报货批次号：** ${text(draft.batch_no)}` });
+  }
+  elements.push(...purchaseItemElements(draft?.items || [], { skipSupplierGroup: isBatch }));
+  elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: message }] });
+  return { config: { wide_screen_mode: true }, header: { template, title: { tag: 'plain_text', content: title } }, elements };
 };
 
 module.exports = {
