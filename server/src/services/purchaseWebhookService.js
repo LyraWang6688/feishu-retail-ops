@@ -379,23 +379,32 @@ class PurchaseWebhookService {
         (item) => textValue(item.fields?.[requestTable.fields.batchNo]) === batchNo
       );
       const actual = [];
+      const unrecognized = [];
       for (const raw of recognized) {
-        const product = await this.references.resolveProduct({ itemNo: raw.item_no, color: raw.color });
-        actual.push({
-          product_record_id: product.recordId,
-          product_number: textValue(product.record?.fields?.[this.gateway.table('product').fields.number]),
-          size: Number(raw.size),
-          quantity: Number(raw.quantity || 1),
-        });
+        try {
+          const product = await this.references.resolveProduct({ itemNo: raw.item_no, color: raw.color });
+          actual.push({
+            product_record_id: product.recordId,
+            product_number: textValue(product.record?.fields?.[this.gateway.table('product').fields.number]),
+            size: Number(raw.size),
+            quantity: Number(raw.quantity || 1),
+          });
+        } catch (error) {
+          unrecognized.push({ ...raw, error: error.message });
+          logWarn('purchase.arrival.product_not_found', { record_id: recordId, item_no: raw.item_no, color: raw.color, size: raw.size, error: error.message });
+        }
+      }
+      if (actual.length === 0) {
+        throw new Error(`所有货品都识别失败：${unrecognized.map(u => `${u.item_no || ''}${u.color || ''}`).join('、')}`);
       }
       const groupedActual = aggregateArrivalItems(actual);
       const differences = this.compareArrival(requests, groupedActual, requestTable);
       const operatorOpenId = this.recordOperator(record, arrivalTable.fields.inspector);
-      const draft = { arrival_record_id: recordId, batch_record_id: batchIds[0], batch_no: batchNo, operator_open_id: operatorOpenId, requests, actual: groupedActual, differences };
+      const draft = { arrival_record_id: recordId, batch_record_id: batchIds[0], batch_no: batchNo, operator_open_id: operatorOpenId, requests, actual: groupedActual, differences, unrecognized };
       await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别成功', confirmStatus: '待确认' });
       await this.store.update(taskId, { recognized, draft, status: 'awaiting_confirmation' });
       await this.sendCard(operatorOpenId, purchaseArrivalComparisonCard(taskId, draft));
-      logInfo('purchase.arrival.card.sent', { record_id: recordId, task_id: taskId, item_count: actual.length, difference_count: differences.length });
+      logInfo("purchase.arrival.card.sent", { record_id: recordId, task_id: taskId, item_count: actual.length, unrecognized_count: unrecognized.length, difference_count: differences.length });
       return { status: 'awaiting_confirmation', item_count: actual.length, difference_count: differences.length };
     } catch (error) {
       await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别失败', failureReason: error.message }).catch(() => undefined);
