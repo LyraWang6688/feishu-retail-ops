@@ -1,0 +1,65 @@
+/* 采购管理面板样式 — 独立文件，由集成负责人接入或合并到 styles.css */
+
+.purchase-section { margin-bottom: 28px; }
+.purchase-section:last-child { margin-bottom: 0; }
+
+.purchase-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.purchase-form-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px;
+  border: 1px solid #e3e8f0;
+  border-radius: 12px;
+  background: #f7f9fc;
+  text-decoration: none;
+  color: inherit;
+  position: relative;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.purchase-form-card:hover {
+  border-color: #185abd;
+  box-shadow: 0 4px 16px rgba(24, 90, 189, 0.1);
+  background: #edf4ff;
+}
+
+.purchase-form-card strong { font-size: 16px; color: #185abd; }
+.purchase-form-card .muted { font-size: 13px; margin: 0; }
+.purchase-form-arrow {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 20px;
+  color: #185abd;
+  font-weight: 700;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.status-pending { background: #fff4e5; color: #b45309; }
+.status-partial { background: #e0f2fe; color: #0369a1; }
+.status-done { background: #dcfce7; color: #15803d; }
+.status-failed { background: #fee2e2; color: #b91c1c; }
+
+.row-failed { background: #fff5f5; }
+.row-failed .failure-reason { color: #b91c1c; font-weight: 500; }
+.failure-reason { max-width: 240px; white-space: normal; word-break: break-all; }
+
+@media (max-width: 700px) {
+  .purchase-form-grid { grid-template-columns: 1fr; }
+  .purchase-form-arrow { display: none; }
+}

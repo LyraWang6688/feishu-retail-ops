@@ -36,6 +36,7 @@ class PurchaseWebhookService {
       idField: 'task_id',
     });
     this.queues = new Map();
+    this.inflightInbound = new Map();
   }
 
   enqueue(kind, recordId, work) {
@@ -45,7 +46,7 @@ class PurchaseWebhookService {
     this.queues.set(key, next);
     next.finally(() => {
       if (this.queues.get(key) === next) this.queues.delete(key);
-    });
+    }).catch(() => {});
     return next;
   }
 
@@ -87,6 +88,9 @@ class PurchaseWebhookService {
       await this.store.update(taskId, { status: 'failed', error: error.message }).catch(() => undefined);
       if (kind === 'supplier-report') {
         await this.gateway.update('purchaseReport', recordId, { status: '解析失败', failureReason: error.message }).catch(() => undefined);
+      }
+      if (kind === 'arrival') {
+        await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别失败', failureReason: error.message }).catch(() => undefined);
       }
       throw error;
     }
@@ -243,6 +247,7 @@ class PurchaseWebhookService {
     if (action === 'cancel_purchase_arrival') {
       await this.gateway.update('purchaseArrival', task.draft.arrival_record_id, { confirmStatus: '已取消' });
       await this.store.update(taskId, { status: 'cancelled' });
+      this.inflightInbound.delete(taskId);
       return { toast: { type: 'info', content: '采购到货已取消' } };
     }
     if (action === 'confirm_purchase_arrival') return this.confirmArrival(taskId, task, operatorOpenId);
@@ -282,8 +287,65 @@ class PurchaseWebhookService {
     if (task.status === 'posted') return { toast: { type: 'info', content: '采购到货已入库' } };
     const arrival = task.draft;
     const requestTable = this.gateway.table('purchaseRequest');
+    const inboundTable = this.gateway.table('purchaseInbound');
+    // 幂等保护第一层：内存级 inflight（防止持久化失败导致重复创建）
+    if (!this.inflightInbound.has(taskId)) this.inflightInbound.set(taskId, new Map());
+    const inflightMap = this.inflightInbound.get(taskId);
+    // 幂等保护第二层：task 持久化记录（向后兼容旧的字符串格式）
+    const normalizeEntry = (value) => (typeof value === 'string' ? { recordId: value, inventoryApplied: false } : value);
+    const persistedCreated = {};
+    for (const [key, value] of Object.entries(task.draft?.inbound_created || {})) {
+      persistedCreated[key] = normalizeEntry(value);
+    }
+    // 合并内存和持久化到 existingByKey（内存优先，因为内存是最新的）
+    const existingByKey = new Map();
+    for (const [key, value] of inflightMap) existingByKey.set(key, value);
+    for (const [key, value] of Object.entries(persistedCreated)) {
+      if (!existingByKey.has(key)) existingByKey.set(key, value);
+    }
+    // 幂等保护第三层：飞书查询兜底
+    const existingInbounds = await this.gateway.listAll('purchaseInbound');
+    for (const record of existingInbounds) {
+      const batchIds = linkedRecordIds(record.fields?.[inboundTable.fields.batch]);
+      if (!batchIds.includes(arrival.arrival_record_id)) continue;
+      const productId = linkedRecordIds(record.fields?.[inboundTable.fields.product])[0];
+      const size = number(record.fields?.[inboundTable.fields.size]);
+      const key = `${productId}|${size}`;
+      if (productId && !existingByKey.has(key)) {
+        existingByKey.set(key, { recordId: record.record_id, inventoryApplied: false });
+      }
+    }
+    // 持久化入库创建进度（失败时记录警告，不静默忽略）
+    const persistEntry = async (key, entry) => {
+      inflightMap.set(key, entry);
+      persistedCreated[key] = entry;
+      try {
+        await this.store.update(taskId, { draft: { ...task.draft, inbound_created: persistedCreated } });
+      } catch (error) {
+        logWarn('purchase.arrival.inbound_created.persist_failed', { task_id: taskId, key, error: error.message });
+      }
+    };
     const created = [];
     for (const item of arrival.actual || []) {
+      const key = `${item.product_record_id}|${item.size}`;
+      const existing = existingByKey.get(key);
+      if (existing) {
+        created.push(existing.recordId);
+        // 对于已创建的入库记录，继续执行幂等的库存更新
+        // applyPurchase 本身幂等（用 purchaseInboundRecordId 作为 sourceRecordId），重复调用不会重复加库存
+        if (this.enablePurchaseInventory && !existing.inventoryApplied) {
+          await this.inventory.applyPurchase({
+            purchaseInboundRecordId: existing.recordId,
+            productRecordId: item.product_record_id,
+            size: item.size,
+            quantity: item.quantity,
+            occurredAt: Date.now(),
+          });
+          existing.inventoryApplied = true;
+          await persistEntry(key, existing);
+        }
+        continue;
+      }
       const match = (arrival.differences || []).find(
         (row) => row.product_record_id === item.product_record_id && Number(row.size) === Number(item.size)
       );
@@ -297,6 +359,8 @@ class PurchaseWebhookService {
         inboundAt: Date.now(),
       });
       created.push(inbound.recordId);
+      const entry = { recordId: inbound.recordId, inventoryApplied: false };
+      await persistEntry(key, entry);
       if (this.enablePurchaseInventory) {
         await this.inventory.applyPurchase({
           purchaseInboundRecordId: inbound.recordId,
@@ -305,6 +369,8 @@ class PurchaseWebhookService {
           quantity: item.quantity,
           occurredAt: Date.now(),
         });
+        entry.inventoryApplied = true;
+        await persistEntry(key, entry);
       }
     }
     for (const request of arrival.requests || []) {
@@ -319,6 +385,7 @@ class PurchaseWebhookService {
     }
     await this.gateway.update('purchaseArrival', arrival.arrival_record_id, { confirmStatus: '已确认' });
     await this.store.update(taskId, { status: 'posted', inbound_record_ids: created });
+    this.inflightInbound.delete(taskId);
     logInfo('purchase.arrival.posted', { task_id: taskId, arrival_record_id: arrival.arrival_record_id, inbound_count: created.length, inventory_applied: this.enablePurchaseInventory });
     return { toast: { type: 'success', content: this.enablePurchaseInventory ? '采购已入库，库存已更新' : '采购入库已确认' } };
   }
