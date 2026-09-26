@@ -323,8 +323,10 @@ class PurchaseWebhookService {
         const productIds = Array.isArray(record.fields?.[table.fields.product])
           ? record.fields[table.fields.product].map((p) => p?.record_id || p?.id)
           : [];
-        const state = record.fields?.[table.fields.state];
-        return productIds.includes(productRecordId) && state === '样品';
+        // 单选字段可能返回字符串或数组，统一处理
+        const stateValue = record.fields?.[table.fields.state];
+        const state = Array.isArray(stateValue) ? stateValue[0] : stateValue;
+        return productIds.includes(productRecordId) && String(state) === '样品';
       });
       return sampleRecords.length === 0 ? '样品' : '门盒';
     } catch (error) {
