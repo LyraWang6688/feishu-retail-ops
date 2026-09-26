@@ -459,7 +459,7 @@ class PurchaseWebhookService {
     const draft = task.draft;
     const isBatch = draft.is_batch === true;
     const reportIds = isBatch ? draft.report_record_ids : [draft.report_record_id];
-    const batchNo = await this.nextBatchNo();
+    const batchNo = draft.batch_no || (await this.nextBatchNo());
     // 创建报货批次记录
     const batch = await this.gateway.create('purchaseOrderBatch', {
       batchNo,
