@@ -407,14 +407,29 @@ class PurchaseWebhookService {
       );
       const actual = [];
       const unrecognized = [];
+      const supplierNameCache = {};
+      const productTable = this.gateway.table('product');
+      const supplierTable = this.gateway.table('supplier');
       for (const raw of recognized) {
         try {
           const product = await this.references.resolveProduct({ itemNo: raw.item_no, color: raw.color });
+          // 从货品信息表关联获取供应商名称
+          const productSupplierIds = linkedRecordIds(product.record?.fields?.[productTable.fields.supplier]);
+          let supplierName = raw.supplier || '';
+          if (productSupplierIds.length > 0) {
+            const supplierId = productSupplierIds[0];
+            if (!supplierNameCache[supplierId]) {
+              const supplierRecord = await this.gateway.get('supplier', supplierId);
+              supplierNameCache[supplierId] = textValue(supplierRecord?.fields?.[supplierTable.fields.name]);
+            }
+            supplierName = supplierNameCache[supplierId] || supplierName;
+          }
           actual.push({
             product_record_id: product.recordId,
-            product_number: textValue(product.record?.fields?.[this.gateway.table('product').fields.number]),
+            product_number: textValue(product.record?.fields?.[productTable.fields.number]),
             size: Number(raw.size),
             quantity: Number(raw.quantity || 1),
+            supplier: supplierName,
           });
         } catch (error) {
           unrecognized.push({ ...raw, error: error.message });
