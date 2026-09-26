@@ -487,9 +487,18 @@ class PurchaseWebhookService {
       await this.gateway.update('purchaseArrival', task.draft.arrival_record_id, { confirmStatus: '已取消' });
       await this.store.update(taskId, { status: 'cancelled' });
       this.inflightInbound.delete(taskId);
+      await this.updatePurchaseActionCard(task, event, purchaseStatusCard(task.draft, '采购到货已取消', '用户已取消本次采购到货。', 'grey'));
       return { toast: { type: 'info', content: '采购到货已取消' } };
     }
-    if (action === 'confirm_purchase_arrival') return this.confirmArrival(taskId, task, operatorOpenId);
+    if (action === 'confirm_purchase_arrival') {
+      if (task.status === 'posted') return { toast: { type: 'info', content: '采购到货已入库' } };
+      // 立即更新卡片为"处理中"状态，防止重复点击
+      await this.updatePurchaseActionCard(task, event, purchaseStatusCard(task.draft, '采购到货处理中', '已收到确认，正在入库；请勿重复点击。', 'blue'));
+      const result = await this.confirmArrival(taskId, task, operatorOpenId);
+      // 处理完成后更新卡片为"已入库"状态
+      await this.updatePurchaseActionCard(task, event, purchaseStatusCard(task.draft, '采购到货已入库', '入库完成，库存已更新。', 'green'));
+      return result;
+    }
     if (action === 'cancel_purchase_request') {
       // 支持批量和单条两种取消
       const reportIds = task.draft.report_record_ids || [task.draft.report_record_id];
