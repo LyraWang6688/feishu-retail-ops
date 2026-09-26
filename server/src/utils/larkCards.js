@@ -288,23 +288,19 @@ const purchaseConfirmationCard = (draftId, draft) => {
 const purchaseRequestConfirmationCard = (draftId, draft) => {
   const isBatch = draft.is_batch === true;
   const headerTitle = isBatch ? '请确认采购申请（批次）' : '请确认采购申请';
-  const batchInfo = isBatch
-    ? `**报货批次号：** ${text(draft.batch_no)}\n**明细数量：** ${text(draft.items?.length || 0)} 条\n\n`
-    : '';
-  return {
-  config: { wide_screen_mode: true },
-  header: { template: 'orange', title: { tag: 'plain_text', content: headerTitle } },
-  elements: [
-    { tag: 'markdown', content: batchInfo + purchaseItemLinesGrouped(draft.items || [], { skipSupplierGroup: isBatch }) },
-    {
-      tag: 'action',
-      actions: [
-        actionButton('确认生成采购申请', 'confirm_purchase_request', draftId, 'primary'),
-        actionButton('取消', 'cancel_purchase_request', draftId, 'danger'),
-      ],
-    },
-  ],
-  };
+  const elements = [];
+  if (isBatch) {
+    elements.push({ tag: 'markdown', content: `**报货批次号：** ${text(draft.batch_no)}\n**明细数量：** ${text(draft.items?.length || 0)} 条` });
+  }
+  elements.push(...purchaseItemElements(draft.items || [], { skipSupplierGroup: isBatch }));
+  elements.push({
+    tag: 'action',
+    actions: [
+      actionButton('确认生成采购申请', 'confirm_purchase_request', draftId, 'primary'),
+      actionButton('取消', 'cancel_purchase_request', draftId, 'danger'),
+    ],
+  });
+  return { config: { wide_screen_mode: true }, header: { template: 'orange', title: { tag: 'plain_text', content: headerTitle } }, elements };
 };
 
 const purchaseArrivalComparisonCard = (draftId, draft) => {

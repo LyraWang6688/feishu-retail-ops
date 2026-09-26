@@ -601,10 +601,10 @@ test('batch aggregation processes all records in same batch and sends one card',
   await wait(100);
   assert.equal(messages.length, 1, `应只发1张批量确认卡，实际发了${messages.length}张`);
   const cardContent = JSON.parse(messages[0].data.content);
-  const markdown = cardContent.elements[0].content;
-  assert.ok(markdown.includes('36码'), '确认卡应包含36码明细');
-  assert.ok(markdown.includes('37码'), '确认卡应包含37码明细');
-  assert.ok(markdown.includes('BATCH-MULTI'), '确认卡应包含批次号');
+  const allText = JSON.stringify(cardContent.elements);
+  assert.ok(allText.includes('BATCH-MULTI'), '确认卡应包含批次号');
+  assert.ok(allText.includes('36码'), '确认卡应包含36码明细');
+  assert.ok(allText.includes('37码'), '确认卡应包含37码明细');
 });
 
 test('batch confirm generates requests and updates all report records', async () => {
