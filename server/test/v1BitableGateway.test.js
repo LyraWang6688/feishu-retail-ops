@@ -38,5 +38,8 @@ test('relation and display helpers support Feishu record field shapes', () => {
     'rec_3',
   ]);
   assert.deepEqual(linkedRecordIds({ link_record_ids: ['rec_4'] }), ['rec_4']);
+  assert.deepEqual(linkedRecordIds([{ record_ids: ['rec_5'], table_id: 'tbl_order',
+    text: 'XSD-20260925-0062', type: 'text' }]), ['rec_5']);
+  assert.deepEqual(linkedRecordIds({ record_ids: ['rec_6', 'rec_7'] }), ['rec_6', 'rec_7']);
   assert.equal(textValue([{ text: 'A' }, { name: 'B' }]), 'A,B');
 });

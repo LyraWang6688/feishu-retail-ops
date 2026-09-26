@@ -53,6 +53,22 @@ test('sale deducts one matching door-box unit, preserves sample, and is idempote
   });
 });
 
+test('sale matches live inventory when Feishu returns product links as record_ids', async () => {
+  const linked = [{ record_ids: ['product_1'], text: '6681-1|黑灰|A', type: 'text' }];
+  const gateway = gatewayFor([
+    { record_id: 'sample_42', fields: { 编号: linked, 尺码: '42', 所属状态: ['样品'] } },
+    { record_id: 'door_44', fields: { 编号: linked, 尺码: '44', 所属状态: ['门盒'] } },
+  ]);
+  const inventory = new InventoryService({ gateway, store: store() });
+  const result = await inventory.applySale({ salesDetailRecordId: 'detail_42',
+    productRecordId: 'product_1', size: 42, quantity: 1 });
+  assert.deepEqual(result.liveRecordIds, ['sample_42']);
+  assert.equal(result.sampleConsumedQuantity, 1);
+  assert.deepEqual(result.remainingSizes, [
+    { size: 44, doorBoxCount: 1, sampleCount: 0, warehouseCount: 0 },
+  ]);
+});
+
 test('purchase adds one live record per pair', async () => {
   const gateway = gatewayFor([]);
   const inventory = new InventoryService({ gateway, store: store() });

@@ -24,19 +24,15 @@ const textValue = (value) => {
 };
 
 const linkedRecordIds = (value) => {
-  const values = Array.isArray(value)
-    ? value
-    : Array.isArray(value?.link_record_ids)
-      ? value.link_record_ids
-      : [];
-  return values
-    .map((item) => {
-      if (typeof item === 'string') return item;
-      if (Array.isArray(item?.link_record_ids)) return item.link_record_ids;
-      return item?.record_id || item?.recordId || item?.id || '';
-    })
-    .flat()
-    .filter(Boolean);
+  if (Array.isArray(value)) return value.flatMap(linkedRecordIds);
+  if (typeof value === 'string') return value ? [value] : [];
+  if (!value || typeof value !== 'object') return [];
+  // Feishu's record GET returns link cells as [{ record_ids: ['rec...'], text: '...' }].
+  // Other endpoints return link_record_ids or direct { id } objects.
+  const nested = [value.record_ids, value.link_record_ids].filter(Array.isArray);
+  if (nested.length) return nested.flatMap(linkedRecordIds);
+  const id = value.record_id || value.recordId || value.id;
+  return id ? [id] : [];
 };
 
 class V1BitableGateway {

@@ -140,3 +140,41 @@ test('newly created detail and receipt are resolved by record ID when list resul
   assert.equal(order.fields['收款状态'], '已收清');
   assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['交付数量'], 1);
 });
+
+test('Feishu record_ids link shape reuses an existing order, receipt, and detail before delivery', async () => {
+  const gateway = fake();
+  const sale = new SalesOrderService({ gateway, references });
+  const input = { salesEntryRecordId: 'order_1',
+    items: [
+      { itemNo: 'A100', size: 42, quantity: 1, actualAmount: 89 },
+      { itemNo: 'B200', size: 42, quantity: 1, actualAmount: 59 },
+      { itemNo: 'C300', size: 40, quantity: 1, actualAmount: 39 },
+    ], payments: [{ method: '微信', amount: 187 }] };
+  const first = await sale.confirm(input);
+  const receipt = await gateway.get('paymentRecord', first.paymentRecordIds[0]);
+  const linked = (recordId) => [{ record_ids: [recordId], text: 'display', type: 'text' }];
+  for (const [index, recordId] of first.detailRecordIds.entries()) {
+    const detail = await gateway.get('salesDetail', recordId);
+    detail.fields['销售单号'] = linked('order_1');
+    detail.fields['编号'] = linked(`product_${input.items[index].itemNo}`);
+  }
+  receipt.fields['关联销售单'] = linked('order_1');
+  receipt.fields['支付方式'] = linked('method_微信');
+  (await gateway.get('salesEntry', 'order_1')).fields['确认状态'] = '入账失败';
+
+  const retried = await sale.confirm(input);
+  assert.deepEqual(retried.detailRecordIds, first.detailRecordIds);
+  assert.deepEqual(retried.paymentRecordIds, first.paymentRecordIds);
+  assert.equal(gateway.records.get('salesDetail').length, 3);
+  assert.equal(gateway.records.get('paymentRecord').length, 1);
+  const stockCalls = [];
+  const delivery = new SalesDeliveryService({ gateway, inventory: {
+    applySale: async (request) => { stockCalls.push(request); return { sampleConsumedQuantity: 0 }; },
+  } });
+  await delivery.deliver({ salesEntryRecordId: 'order_1', detailRecordIds: first.detailRecordIds,
+    paymentRecordIds: first.paymentRecordIds });
+  assert.equal(stockCalls.length, 3);
+  assert.deepEqual(stockCalls.map((call) => call.productRecordId),
+    ['product_A100', 'product_B200', 'product_C300']);
+  assert.equal((await gateway.get('salesEntry', 'order_1')).fields['履约状态'], '已交付');
+});
