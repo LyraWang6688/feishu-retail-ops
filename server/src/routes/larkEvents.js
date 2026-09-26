@@ -127,20 +127,6 @@ const createLarkEventsRouter = (options = {}) => {
     createLarkEventHandlers(service),
   );
 
-  // 调试用：打印所有收到的事件，确认飞书是否推送成功
-  router.post('/', (req, res, next) => {
-    const eventType = req.body?.header?.event_type || req.body?.event_type || 'unknown';
-    const tableId = req.body?.event?.table_id || 'unknown';
-    const actionCount = req.body?.event?.action_list?.length || 0;
-    logInfo('lark.event.raw_received', {
-      event_type: eventType,
-      table_id: tableId,
-      action_count: actionCount,
-      has_challenge: !!req.body?.challenge,
-    });
-    next();
-  });
-
   router.post('/', lark.adaptExpress(dispatcher, { autoChallenge: true }));
   router.get('/health', (_req, res) => {
     logInfo('lark.mvp.health.checked');
