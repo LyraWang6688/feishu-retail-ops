@@ -134,13 +134,19 @@ async function initAuth() {
   return true;
 }
 
+let purchasePanelInitialized = false;
 document.querySelectorAll('.tab').forEach((button) => button.addEventListener('click', () => {
   document.querySelectorAll('.tab').forEach((item) => item.classList.toggle('active', item === button));
   $('sales-panel').classList.toggle('hidden', button.dataset.tab !== 'sales');
   $('inventory-panel').classList.toggle('hidden', button.dataset.tab !== 'inventory');
   $('followup-panel').classList.toggle('hidden', button.dataset.tab !== 'followup');
+  $('purchase-panel').classList.toggle('hidden', button.dataset.tab !== 'purchase');
   if (button.dataset.tab === 'inventory' && !$('inventory-rows').children.length) loadInventory();
   if (button.dataset.tab === 'followup') loadOrders();
+  if (button.dataset.tab === 'purchase' && !purchasePanelInitialized) {
+    initPurchasePanel($('purchase-panel'));
+    purchasePanelInitialized = true;
+  }
 }));
 $('followup-order').addEventListener('change', renderSelectedOrder);
 $('refresh-orders').addEventListener('click', () => loadOrders($('followup-order').value));

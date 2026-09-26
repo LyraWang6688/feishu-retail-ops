@@ -6,6 +6,7 @@
   <title>邯美数智经营工作台</title>
   <script src="https://sf1-scmcdn-cn.feishucdn.com/obj/feishu-static/op/fe/devtools_frontend/remote-debug-0.0.1-alpha.6.js"></script>
   <link rel="stylesheet" href="/workbench/styles.css">
+  <link rel="stylesheet" href="/workbench/purchase.css">
 </head>
 <body>
   <main class="shell">
@@ -13,7 +14,7 @@
       <div><div class="eyebrow">邯美数智经营工作台</div><h1>经营查询</h1></div>
       <div class="auth"><span id="auth-status" class="muted">正在检查飞书登录状态…</span><button id="logout" class="hidden">退出登录</button></div>
     </header>
-    <nav class="tabs"><button class="tab active" data-tab="sales">今日销售明细</button><button class="tab" data-tab="inventory">实时库存</button><button class="tab" data-tab="followup">后续收款/交付</button></nav>
+    <nav class="tabs"><button class="tab active" data-tab="sales">今日销售明细</button><button class="tab" data-tab="inventory">实时库存</button><button class="tab" data-tab="followup">后续收款/交付</button><button class="tab" data-tab="purchase">采购管理</button></nav>
     <section id="sales-panel" class="panel">
       <div class="toolbar"><div><h2>今日销售明细</h2><p id="sales-date" class="muted"></p></div><button id="refresh-sales">刷新</button></div>
       <div id="sales-summary" class="summary"></div>
@@ -47,8 +48,10 @@
       </form>
       <p id="followup-result" role="status"></p>
     </section>
+    <section id="purchase-panel" class="panel hidden"></section>
     <p id="error" class="error hidden"></p>
   </main>
+  <script src="/workbench/purchase.js"></script>
   <script src="/workbench/app.js"></script>
 </body>
 </html>

@@ -20,6 +20,20 @@ const attachmentTokens = (value) => (Array.isArray(value) ? value : [])
   .map((item) => item?.file_token || item?.fileToken || item?.token || '')
   .filter(Boolean);
 
+const aggregateArrivalItems = (items) => {
+  const byKey = new Map();
+  for (const item of items) {
+    const size = Number(item.size);
+    const quantity = Number(item.quantity);
+    if (!item.product_record_id || !Number.isInteger(size) || size <= 0 ||
+      !Number.isInteger(quantity) || quantity <= 0) throw new Error('到货识别结果的货品、尺码或数量无效');
+    const key = `${item.product_record_id}|${size}`;
+    if (byKey.has(key)) byKey.get(key).quantity += quantity;
+    else byKey.set(key, { ...item, size, quantity });
+  }
+  return [...byKey.values()];
+};
+
 class PurchaseWebhookService {
   constructor(options = {}) {
     this.client = options.client || (() => {
@@ -184,14 +198,15 @@ class PurchaseWebhookService {
           quantity: Number(raw.quantity || 1),
         });
       }
-      const differences = this.compareArrival(requests, actual, requestTable);
+      const groupedActual = aggregateArrivalItems(actual);
+      const differences = this.compareArrival(requests, groupedActual, requestTable);
       const operatorOpenId = this.recordOperator(record, arrivalTable.fields.creator);
-      const draft = { arrival_record_id: recordId, batch_record_id: batchIds[0], batch_no: batchNo, operator_open_id: operatorOpenId, requests, actual, differences };
+      const draft = { arrival_record_id: recordId, batch_record_id: batchIds[0], batch_no: batchNo, operator_open_id: operatorOpenId, requests, actual: groupedActual, differences };
       await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别成功', confirmStatus: '待确认' });
       await this.store.update(taskId, { recognized, draft, status: 'awaiting_confirmation' });
       await this.sendCard(operatorOpenId, purchaseArrivalComparisonCard(taskId, draft));
-      logInfo('purchase.arrival.card.sent', { record_id: recordId, task_id: taskId, item_count: actual.length, difference_count: differences.length });
-      return { status: 'awaiting_confirmation', item_count: actual.length, difference_count: differences.length };
+      logInfo('purchase.arrival.card.sent', { record_id: recordId, task_id: taskId, item_count: groupedActual.length, difference_count: differences.length });
+      return { status: 'awaiting_confirmation', item_count: groupedActual.length, difference_count: differences.length };
     } catch (error) {
       await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别失败', failureReason: error.message }).catch(() => undefined);
       logWarn('purchase.arrival.recognition.failed', { record_id: recordId, task_id: taskId, error: error.message });
@@ -286,6 +301,7 @@ class PurchaseWebhookService {
   async confirmArrival(taskId, task, operatorOpenId) {
     if (task.status === 'posted') return { toast: { type: 'info', content: '采购到货已入库' } };
     const arrival = task.draft;
+    const actual = aggregateArrivalItems(arrival.actual || []);
     const requestTable = this.gateway.table('purchaseRequest');
     const inboundTable = this.gateway.table('purchaseInbound');
     // 幂等保护第一层：内存级 inflight（防止持久化失败导致重复创建）
@@ -311,8 +327,11 @@ class PurchaseWebhookService {
       const productId = linkedRecordIds(record.fields?.[inboundTable.fields.product])[0];
       const size = number(record.fields?.[inboundTable.fields.size]);
       const key = `${productId}|${size}`;
+      if (productId && existingByKey.has(key) && existingByKey.get(key).recordId !== record.record_id) {
+        throw new Error(`同一到货批次的 ${key} 已有多条入库记录，请人工核对后再重试`);
+      }
       if (productId && !existingByKey.has(key)) {
-        existingByKey.set(key, { recordId: record.record_id, inventoryApplied: false });
+        existingByKey.set(key, { recordId: record.record_id, quantity: number(record.fields?.[inboundTable.fields.quantity]), inventoryApplied: false });
       }
     }
     // 持久化入库创建进度（失败时记录警告，不静默忽略）
@@ -326,10 +345,15 @@ class PurchaseWebhookService {
       }
     };
     const created = [];
-    for (const item of arrival.actual || []) {
+    for (const item of actual) {
       const key = `${item.product_record_id}|${item.size}`;
       const existing = existingByKey.get(key);
       if (existing) {
+        const inbound = existing.quantity == null ? await this.gateway.get('purchaseInbound', existing.recordId) : null;
+        const recordedQuantity = existing.quantity ?? number(inbound?.fields?.[inboundTable.fields.quantity]);
+        if (recordedQuantity !== item.quantity) {
+          throw new Error(`已创建入库记录 ${key} 的数量与本次到货不一致，请人工核对`);
+        }
         created.push(existing.recordId);
         // 对于已创建的入库记录，继续执行幂等的库存更新
         // applyPurchase 本身幂等（用 purchaseInboundRecordId 作为 sourceRecordId），重复调用不会重复加库存
@@ -359,7 +383,8 @@ class PurchaseWebhookService {
         inboundAt: Date.now(),
       });
       created.push(inbound.recordId);
-      const entry = { recordId: inbound.recordId, inventoryApplied: false };
+      const entry = { recordId: inbound.recordId, quantity: item.quantity, inventoryApplied: false };
+      existingByKey.set(key, entry);
       await persistEntry(key, entry);
       if (this.enablePurchaseInventory) {
         await this.inventory.applyPurchase({

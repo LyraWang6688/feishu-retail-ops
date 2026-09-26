@@ -234,6 +234,37 @@ test('arrival confirm creates inbound records and updates request arrival status
   assert.equal(arrival.fields.确认状态, '已确认');
 });
 
+test('two identical product sizes in one arrival create one inbound for two pairs, including on retry', async () => {
+  const inventory = makeInventory();
+  const { service, store, gateway } = makeService({
+    inventory,
+    recognizer: makeRecognizer({ recognizeLabels: async () => [
+      { item_no: '8088', color: '灰色', size: 36, quantity: 1 },
+      { item_no: '8088', color: '灰色', size: 36, quantity: 1 },
+    ] }),
+    gateway: makeGateway({
+      purchaseArrival: [{ record_id: 'arr_two_same', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 创建者: [{ id: 'ou_1' }] } }],
+      purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
+      purchaseRequest: [{ record_id: 'req_1', fields: { 报货批次号: 'BH-001', 编号: ['prod_1'], 尺码: 36, 数量: 2 } }],
+      purchaseInbound: [],
+    }),
+  });
+  const accepted = await service.accept('arrival', 'arr_two_same');
+  await wait(80);
+  const draft = (await store.get(accepted.taskId)).draft;
+  assert.equal(draft.actual.length, 1);
+  assert.equal(draft.actual[0].quantity, 2);
+  assert.equal(draft.differences[0].label, '一致');
+  await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
+  await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
+  const inbounds = await gateway.listAll('purchaseInbound');
+  assert.equal(inbounds.length, 1);
+  assert.equal(inbounds[0].fields.数量, 2);
+  assert.equal(inventory.calls.length, 1);
+  assert.equal(inventory.calls[0].quantity, 2);
+  assert.equal((await gateway.get('purchaseRequest', 'req_1')).fields.到货状态, '全部到货');
+});
+
 test('arrival confirm with inventory enabled actually calls inventory.applyPurchase', async () => {
   const inventory = makeInventory();
   const { service, store } = makeService({

@@ -2,6 +2,8 @@ const express = require('express');
 const controller = require('../controllers/workbenchController');
 const { enabled: feishuAuthEnabled, getSessionUser, allowedOpenIds } = require('./feishuWebAuth');
 const { SalesFollowupService } = require('../services/salesFollowupService');
+const { V1BitableGateway } = require('../services/v1BitableGateway');
+const { createPurchaseQueryRouter } = require('./purchaseQuery');
 const { SampleReplacementService } = require('../services/sampleReplacementService');
 const { logError, logWarn } = require('../utils/logger');
 
@@ -25,6 +27,7 @@ const createWorkbenchRouter = (options = {}) => {
     next();
   });
   router.use(requireWorkbenchAccess);
+  router.use('/purchase', createPurchaseQueryRouter({ gateway: options.gateway || new V1BitableGateway() }));
   router.get('/sales/today', controller.queryTodaySales);
   router.get('/inventory', controller.queryInventory);
   router.get('/sales/orders', async (req, res) => {
