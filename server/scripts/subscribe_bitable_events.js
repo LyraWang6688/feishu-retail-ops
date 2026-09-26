@@ -9,8 +9,46 @@
  */
 
 const https = require('https');
+const fs = require('fs');
+const path = require('path');
 
 const BASE_TOKEN = 'QrXlbwXMLaJ2TNsxSfFcIA3rnwh'; // 进销存管理多维表格
+
+/**
+ * 简易 .env 文件加载器（不依赖 dotenv 库）
+ * 从项目根目录的 .env 文件读取环境变量
+ */
+function loadEnvFile() {
+  const envPath = path.resolve(__dirname, '..', '.env');
+  if (!fs.existsSync(envPath)) {
+    return;
+  }
+  try {
+    const content = fs.readFileSync(envPath, 'utf8');
+    const lines = content.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIndex = trimmed.indexOf('=');
+      if (eqIndex === -1) continue;
+      const key = trimmed.slice(0, eqIndex).trim();
+      let value = trimmed.slice(eqIndex + 1).trim();
+      // 去除引号
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      if (key && !process.env[key]) {
+        process.env[key] = value;
+      }
+    }
+    console.log(`已加载环境变量文件: ${envPath}`);
+  } catch (error) {
+    console.warn(`警告：加载 .env 文件失败: ${error.message}`);
+  }
+}
+
+// 脚本启动时自动加载 .env 文件
+loadEnvFile();
 
 function httpsPost(url, data, headers = {}) {
   return new Promise((resolve, reject) => {
