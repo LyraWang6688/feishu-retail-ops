@@ -40,9 +40,6 @@ app.use((req, res, next) => {
 // Feishu callbacks do not carry the project's x-api-key, so mount the verified
 // Lark event endpoint before the generic /api authentication middleware.
 app.use('/api/lark/events', require('./routes/larkEvents').createLarkEventsRouter());
-// Feishu Base workflows send only the newly-created record_id. These endpoints
-// acknowledge immediately and process the record asynchronously.
-app.use('/api/purchase', require('./routes/purchaseWebhooks').createPurchaseWebhookRouter());
 // Feishu web-app OAuth routes are mounted before generic /api authentication.
 app.use('/api/auth/feishu', require('./routes/feishuWebAuth').createFeishuWebAuthRouter());
 // The workbench uses Feishu web sessions; its query and follow-up endpoints

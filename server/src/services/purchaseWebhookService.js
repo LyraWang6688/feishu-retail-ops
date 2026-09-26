@@ -46,7 +46,7 @@ class PurchaseWebhookService {
     this.references = options.references || new V1ReferenceResolver(this.gateway);
     this.recognizer = options.recognizer || doubaoService;
     this.inventory = options.inventory || new InventoryService({ gateway: this.gateway });
-    this.enablePurchaseInventory = options.enablePurchaseInventory ?? process.env.ENABLE_PURCHASE_INVENTORY === 'true';
+    this.enablePurchaseInventory = true;
     this.store = options.store || new JsonTaskStore({
       dir: path.join(__dirname, '../../data/purchase_webhook_tasks'),
       idField: 'task_id',

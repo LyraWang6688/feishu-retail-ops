@@ -289,25 +289,6 @@ test('arrival confirm with inventory enabled actually calls inventory.applyPurch
   assert.ok(inventory.calls[0].purchaseInboundRecordId);
 });
 
-test('arrival confirm with inventory disabled does NOT call inventory.applyPurchase', async () => {
-  const inventory = makeInventory();
-  const { service, store } = makeService({
-    inventory,
-    enablePurchaseInventory: false,
-    gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_noinv', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-      purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
-      purchaseRequest: [],
-      purchaseInbound: [],
-    }),
-  });
-  const accepted = await service.accept('arrival', 'arr_noinv');
-  await wait(80);
-  const result = await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
-  assert.ok(result.toast.content.includes('采购入库已确认'));
-  assert.ok(!result.toast.content.includes('库存已更新'));
-  assert.equal(inventory.calls.length, 0);
-});
 
 test('arrival confirm is idempotent — second confirm does not create duplicate inbound', async () => {
   const inventory = makeInventory();

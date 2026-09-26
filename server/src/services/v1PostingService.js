@@ -13,7 +13,7 @@ class V1PostingService {
     this.sales = options.sales || new SalesOrderService({ gateway, references });
     this.purchase = options.purchase || new PurchasePostingService({
       gateway, references, inventory: options.inventory,
-      enablePurchaseInventory: options.enablePurchaseInventory,
+
     });
   }
 

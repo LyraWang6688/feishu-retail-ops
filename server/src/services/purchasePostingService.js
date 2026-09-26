@@ -8,7 +8,7 @@ class PurchasePostingService {
     this.gateway = options.gateway || new V1BitableGateway();
     this.references = options.references || new V1ReferenceResolver(this.gateway);
     this.inventory = options.inventory || new InventoryService({ gateway: this.gateway });
-    this.enabled = options.enablePurchaseInventory ?? process.env.ENABLE_PURCHASE_INVENTORY === 'true';
+    this.enabled = true;
     this.queue = Promise.resolve();
   }
 
