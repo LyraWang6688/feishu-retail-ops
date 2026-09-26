@@ -410,7 +410,7 @@ const purchaseStatusCard = (draft, title, message, template = 'blue') => {
   if (isBatch && draft?.batch_no) {
     elements.push({ tag: 'markdown', content: `**报货批次号：** ${text(draft.batch_no)}` });
   }
-  elements.push(...purchaseItemElements(draft?.items || [], { skipSupplierGroup: isBatch }));
+  elements.push(...purchaseItemElements(draft?.items || draft?.actual || [], { skipSupplierGroup: isBatch }));
   elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: message }] });
   return { config: { wide_screen_mode: true }, header: { template, title: { tag: 'plain_text', content: title } }, elements };
 };
