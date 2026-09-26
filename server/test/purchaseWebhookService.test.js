@@ -68,11 +68,16 @@ const makeClient = (overrides = {}) => ({
   },
 });
 
-const makeInventory = () => {
+const makeInventory = (options = {}) => {
   const calls = [];
+  const sampleRecords = options.sampleRecords || []; // 模拟样品库存记录
   return {
     calls,
     applyPurchase: async (input) => { calls.push(input); return { stockKey: `${input.productRecordId}|${input.size}`, ledgerRecordId: 'ledger_1', liveRecordIds: ['live_1'], movementQuantity: input.quantity, direction: '增加', quantity: input.quantity }; },
+    findLiveInventory: async (productRecordId, size, state) => {
+      // 默认返回空数组（表示没有样品库存），测试时可通过 options.sampleRecords 配置
+      return sampleRecords;
+    },
   };
 };
 
