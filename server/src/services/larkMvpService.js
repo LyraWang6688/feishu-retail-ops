@@ -537,7 +537,7 @@ class LarkMvpService {
     if (['choose_sample_replacement', 'refresh_sample_replacement'].includes(action)) {
       return this.sampleReplacements.handleCardAction(value, event, operatorOpenId);
     }
-    const procurementResult = await this.purchaseWebhooks.handleCardAction(value, operatorOpenId);
+    const procurementResult = await this.purchaseWebhooks.handleCardAction(value, operatorOpenId, event);
     if (procurementResult) return procurementResult;
     const task = await this.store.get(draftId);
     if (!task) throw new Error('确认草稿不存在或已过期');

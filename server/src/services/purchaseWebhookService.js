@@ -7,7 +7,7 @@ const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { V1BitableGateway, linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
 const doubaoService = require('./doubaoService');
-const { purchaseRequestConfirmationCard, purchaseArrivalComparisonCard } = require('../utils/larkCards');
+const { purchaseRequestConfirmationCard, purchaseArrivalComparisonCard, purchaseStatusCard } = require('../utils/larkCards');
 const { InventoryService } = require('./inventoryService');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
@@ -428,7 +428,32 @@ class PurchaseWebhookService {
     });
   }
 
-  async handleCardAction(value, operatorOpenId) {
+
+  /**
+   * 更新采购消息卡片（类似销售的 updateSalesActionCard）
+   */
+  async updatePurchaseActionCard(task, event, card) {
+    const messageId = event?.context?.open_message_id || event?.open_message_id || task.card_message_id;
+    if (!messageId) {
+      console.warn('lark.purchase.card.update.skipped', { task_id: task.task_id, reason: 'missing_message_id' });
+      return false;
+    }
+    try {
+      const patch = this.client.im?.v1?.message?.patch || this.client.im?.message?.patch;
+      if (!patch) return false;
+      const response = await patch.call(this.client.im?.v1?.message || this.client.im.message, {
+        path: { message_id: messageId },
+        data: { content: JSON.stringify(card) },
+      });
+      if (response.code !== 0) throw new Error(response.msg + ' (Code: ' + response.code + ')');
+      return true;
+    } catch (error) {
+      console.warn('lark.purchase.card.update.failed', { task_id: task.task_id, error: error.message });
+      return false;
+    }
+  }
+
+  async handleCardAction(value, operatorOpenId, event = {}) {
     const taskId = value?.draft_id;
     const action = value?.action;
     if (!taskId || !['confirm_purchase_request', 'cancel_purchase_request', 'confirm_purchase_arrival', 'cancel_purchase_arrival'].includes(action)) return null;
@@ -449,16 +474,19 @@ class PurchaseWebhookService {
         await this.gateway.update('purchaseReport', rid, { status: '已取消' }).catch(() => undefined);
       }
       await this.store.update(taskId, { status: 'cancelled' });
+      await this.updatePurchaseActionCard(task, event, purchaseStatusCard(task.draft, '采购申请已取消', '用户已取消本次采购申请。', 'grey'));
       return { toast: { type: 'info', content: '采购申请已取消' } };
     }
     if (task.status === 'posted') return { toast: { type: 'info', content: '采购申请已生成' } };
-    return this.confirmPurchaseRequest(taskId, task);
+    // 立即更新卡片为"处理中"状态，防止重复点击
+    await this.updatePurchaseActionCard(task, event, purchaseStatusCard(task.draft, '采购申请处理中', '已收到确认，正在生成采购申请；请勿重复点击。', 'blue'));
+    return this.confirmPurchaseRequest(taskId, task, event);
   }
 
   /**
    * 确认生成采购申请（支持批量和单条）
    */
-  async confirmPurchaseRequest(taskId, task) {
+  async confirmPurchaseRequest(taskId, task, event = {}) {
     const draft = task.draft;
     const isBatch = draft.is_batch === true;
     const reportIds = isBatch ? draft.report_record_ids : [draft.report_record_id];
@@ -492,6 +520,8 @@ class PurchaseWebhookService {
     }
     await this.store.update(taskId, { status: 'posted', batch_record_id: batch.recordId, batch_no: batchNo, request_ids: requestIds });
     logInfo('purchase.request.created', { task_id: taskId, batch_record_id: batch.recordId, batch_no: batchNo, request_count: requestIds.length, is_batch: isBatch });
+    // 更新卡片为"已完成"状态
+    await this.updatePurchaseActionCard(task, event, purchaseStatusCard({ ...draft, batch_no: batchNo }, '采购申请已生成', `报货批次号：${batchNo}；共 ${requestIds.length} 条明细已写入。`, 'green'));
     return { toast: { type: 'success', content: `采购申请已生成：${batchNo}（共${requestIds.length}条明细）` } };
   }
 

@@ -236,10 +236,27 @@ const purchaseArrivalComparisonCard = (draftId, draft) => {
   };
 };
 
+
+const purchaseStatusCard = (draft, title, message, template = 'blue') => {
+  const isBatch = draft?.is_batch === true;
+  const batchInfo = isBatch && draft?.batch_no
+    ? `**报货批次号：** ${text(draft.batch_no)}\n\n`
+    : '';
+  return {
+    config: { wide_screen_mode: true },
+    header: { template, title: { tag: 'plain_text', content: title } },
+    elements: [
+      { tag: 'markdown', content: batchInfo + (purchaseItemLinesGrouped(draft?.items || [], { skipSupplierGroup: isBatch }) || '采购申请') },
+      { tag: 'note', elements: [{ tag: 'plain_text', content: message }] },
+    ],
+  };
+};
+
 module.exports = {
   purchaseConfirmationCard,
   purchaseRequestConfirmationCard,
   purchaseArrivalComparisonCard,
+  purchaseStatusCard,
   salesConfirmationCard,
   salesStatusCard,
   sampleReplacementCard,
