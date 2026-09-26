@@ -238,7 +238,7 @@ class PurchaseWebhookService {
             if (!supplierRecordId) {
               supplierRecordId = productSupplierIds[0];
             } else if (supplierRecordId !== productSupplierIds[0]) {
-              parseErrors.push(`记录 ${record.record_id}：货品供应商与批次内其他货品不一致`);
+              logInfo("purchase.batch.multi_supplier", { batch_no: batchNo, record_id: record.record_id, supplier: productSupplierIds[0] });
             }
           }
           const productNumber = textValue(product.record?.fields?.[productTable.fields.number]);
