@@ -310,16 +310,25 @@ class PurchaseWebhookService {
 
   /**
    * 决定采购入库的库存状态：
-   * - 如果该编号+尺码没有样品库存，则先作为样品入库
-   * - 如果该编号+尺码已有样品库存，则作为门盒入库
+   * - 如果该编号（货号）下完全没有样品库存（不管哪个尺码），则先作为样品入库
+   * - 如果该编号下已有任意尺码的样品库存，则作为门盒入库
    * 这和销售相反（销售先卖门盒，再卖样品）
    */
-  async resolvePurchaseInboundState(productRecordId, size) {
+  async resolvePurchaseInboundState(productRecordId) {
     try {
-      const sampleRecords = await this.inventory.findLiveInventory(productRecordId, size, '样品');
+      // 查询该编号下所有尺码的样品库存记录（不指定尺码）
+      const allLiveRecords = await this.gateway.listAll('liveInventory');
+      const table = this.gateway.table('liveInventory');
+      const sampleRecords = allLiveRecords.filter((record) => {
+        const productIds = Array.isArray(record.fields?.[table.fields.product])
+          ? record.fields[table.fields.product].map((p) => p?.record_id || p?.id)
+          : [];
+        const state = record.fields?.[table.fields.state];
+        return productIds.includes(productRecordId) && state === '样品';
+      });
       return sampleRecords.length === 0 ? '样品' : '门盒';
     } catch (error) {
-      logWarn('purchase.inbound.state_check.failed', { product_record_id: productRecordId, size, error: error.message });
+      logWarn('purchase.inbound.state_check.failed', { product_record_id: productRecordId, error: error.message });
       return '门盒'; // 查询失败时默认入门盒
     }
   }
@@ -614,7 +623,7 @@ class PurchaseWebhookService {
     for (const item of aggregateArrivalItems(arrival.actual || [])) {
       const key = `${item.product_record_id}|${item.size}`;
       // 决定入库状态：没有样品则入样品库，有样品则入门盒库
-      const inboundState = await this.resolvePurchaseInboundState(item.product_record_id, item.size);
+      const inboundState = await this.resolvePurchaseInboundState(item.product_record_id);
       const existing = existingByKey.get(key);
       if (existing) {
         created.push(existing.recordId);
