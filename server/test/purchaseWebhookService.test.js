@@ -177,7 +177,7 @@ test('arrival webhook accepts, recognizes images, and sends comparison card', as
   const { service, store, gateway } = makeService({
     client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
     gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_1', fields: { 确认状态: '待确认', 识别状态: '待识别', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 创建者: [{ id: 'ou_1' }] } }],
+      purchaseArrival: [{ record_id: 'arr_1', fields: { 确认状态: '待确认', 识别状态: '待识别', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
       purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-20260925-0001', 供应商: ['sup_1'] } }],
       purchaseRequest: [{ record_id: 'req_1', fields: { 报货批次号: 'BH-20260925-0001', 编号: ['prod_1'], 尺码: 36, 数量: 2 } }],
     }),
@@ -200,7 +200,7 @@ test('arrival webhook accepts, recognizes images, and sends comparison card', as
 test('arrival duplicate webhook is ignored', async () => {
   const { service } = makeService({
     gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_dup', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 创建者: [{ id: 'ou_1' }] } }],
+      purchaseArrival: [{ record_id: 'arr_dup', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
       purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
       purchaseRequest: [],
     }),
@@ -216,7 +216,7 @@ test('arrival confirm creates inbound records and updates request arrival status
   const { service, store, gateway } = makeService({
     inventory,
     gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_conf', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 创建者: [{ id: 'ou_1' }] } }],
+      purchaseArrival: [{ record_id: 'arr_conf', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
       purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
       purchaseRequest: [{ record_id: 'req_1', fields: { 报货批次号: 'BH-001', 编号: ['prod_1'], 尺码: 36, 数量: 2 } }],
       purchaseInbound: [],
@@ -245,7 +245,7 @@ test('two identical product sizes in one arrival create one inbound for two pair
       { item_no: '8088', color: '灰色', size: 36, quantity: 1 },
     ] }),
     gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_two_same', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 创建者: [{ id: 'ou_1' }] } }],
+      purchaseArrival: [{ record_id: 'arr_two_same', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
       purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
       purchaseRequest: [{ record_id: 'req_1', fields: { 报货批次号: 'BH-001', 编号: ['prod_1'], 尺码: 36, 数量: 2 } }],
       purchaseInbound: [],
@@ -273,7 +273,7 @@ test('arrival confirm with inventory enabled actually calls inventory.applyPurch
     inventory,
     enablePurchaseInventory: true,
     gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_inv', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 创建者: [{ id: 'ou_1' }] } }],
+      purchaseArrival: [{ record_id: 'arr_inv', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
       purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
       purchaseRequest: [],
       purchaseInbound: [],
@@ -295,7 +295,7 @@ test('arrival confirm with inventory disabled does NOT call inventory.applyPurch
     inventory,
     enablePurchaseInventory: false,
     gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_noinv', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 创建者: [{ id: 'ou_1' }] } }],
+      purchaseArrival: [{ record_id: 'arr_noinv', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
       purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
       purchaseRequest: [],
       purchaseInbound: [],
@@ -314,7 +314,7 @@ test('arrival confirm is idempotent — second confirm does not create duplicate
   const { service, store, gateway } = makeService({
     inventory,
     gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_idem', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 创建者: [{ id: 'ou_1' }] } }],
+      purchaseArrival: [{ record_id: 'arr_idem', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
       purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
       purchaseRequest: [],
       purchaseInbound: [],
@@ -333,7 +333,7 @@ test('arrival confirm is idempotent — second confirm does not create duplicate
 test('arrival cancel updates confirm status', async () => {
   const { service, store, gateway } = makeService({
     gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_cancel', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 创建者: [{ id: 'ou_1' }] } }],
+      purchaseArrival: [{ record_id: 'arr_cancel', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
       purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
       purchaseRequest: [],
     }),
@@ -348,7 +348,7 @@ test('arrival cancel updates confirm status', async () => {
 test('arrival with no images throws recognition failure', async () => {
   const { service, store, gateway } = makeService({
     gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_noimg', fields: { 确认状态: '待确认', 识别状态: '待识别', 报货批次号: ['batch_1'], 鞋盒图片: [], 创建者: [{ id: 'ou_1' }] } }],
+      purchaseArrival: [{ record_id: 'arr_noimg', fields: { 确认状态: '待确认', 识别状态: '待识别', 报货批次号: ['batch_1'], 鞋盒图片: [], 验收人: [{ id: 'ou_1' }] } }],
       purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
       purchaseRequest: [],
     }),
@@ -370,7 +370,7 @@ test('invalid record_id is rejected', async () => {
 test('only original operator can confirm', async () => {
   const { service, store } = makeService({
     gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_auth', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 创建者: [{ id: 'ou_owner' }] } }],
+      purchaseArrival: [{ record_id: 'arr_auth', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_owner' }] } }],
       purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
       purchaseRequest: [],
     }),
@@ -386,7 +386,7 @@ test('only original operator can confirm', async () => {
 test('arrival confirm retries after partial failure without duplicating inbound or inventory', async () => {
   const inventory = makeInventory();
   const records = {
-    purchaseArrival: [{ record_id: 'arr_partial', fields: { 确认状态: '待确认', 识别状态: '识别成功', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 创建者: [{ id: 'ou_1' }] } }],
+    purchaseArrival: [{ record_id: 'arr_partial', fields: { 确认状态: '待确认', 识别状态: '识别成功', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
     purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
     purchaseRequest: [],
     purchaseInbound: [],
@@ -448,7 +448,7 @@ test('arrival confirm retry survives feishu list latency — persisted inbound_c
   // 但 task.draft.inbound_created 已持久化第1条记录，验证不会重复创建。
   const inventory = makeInventory();
   const records = {
-    purchaseArrival: [{ record_id: 'arr_latency', fields: { 确认状态: '待确认', 识别状态: '识别成功', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 创建者: [{ id: 'ou_1' }] } }],
+    purchaseArrival: [{ record_id: 'arr_latency', fields: { 确认状态: '待确认', 识别状态: '识别成功', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
     purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
     purchaseRequest: [],
     purchaseInbound: [],
@@ -522,7 +522,7 @@ test('arrival confirm retries after inventory update failure — continues apply
     },
   };
   const records = {
-    purchaseArrival: [{ record_id: 'arr_invfail', fields: { 确认状态: '待确认', 识别状态: '识别成功', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 创建者: [{ id: 'ou_1' }] } }],
+    purchaseArrival: [{ record_id: 'arr_invfail', fields: { 确认状态: '待确认', 识别状态: '识别成功', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
     purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
     purchaseRequest: [],
     purchaseInbound: [],

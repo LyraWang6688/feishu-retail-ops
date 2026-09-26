@@ -390,7 +390,7 @@ class PurchaseWebhookService {
       }
       const groupedActual = aggregateArrivalItems(actual);
       const differences = this.compareArrival(requests, groupedActual, requestTable);
-      const operatorOpenId = this.recordOperator(record, arrivalTable.fields.creator);
+      const operatorOpenId = this.recordOperator(record, arrivalTable.fields.inspector);
       const draft = { arrival_record_id: recordId, batch_record_id: batchIds[0], batch_no: batchNo, operator_open_id: operatorOpenId, requests, actual: groupedActual, differences };
       await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别成功', confirmStatus: '待确认' });
       await this.store.update(taskId, { recognized, draft, status: 'awaiting_confirmation' });
