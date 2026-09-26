@@ -133,7 +133,7 @@ class PurchaseWebhookService {
       const record = await this.gateway.get('purchaseReport', recordId);
       const fields = record?.fields || {};
       // 优先用新增的文本字段"报货批次号"，兼容旧的公式字段"报单批次号"
-      return textValue(fields[table.fields.batchNoText]) || textValue(fields[table.fields.batchNo]) || '';
+      return textValue(fields[table.fields.batchNoText]) || '';
     } catch (error) {
       logWarn('purchase.batch.read_failed', { record_id: recordId, error: error.message });
       return '';
@@ -188,7 +188,7 @@ class PurchaseWebhookService {
       const allRecords = await this.gateway.listAll('purchaseReport');
       const batchRecords = allRecords.filter((record) => {
         const fields = record?.fields || {};
-        const no = textValue(fields[reportTable.fields.batchNoText]) || textValue(fields[reportTable.fields.batchNo]);
+        const no = textValue(fields[reportTable.fields.batchNoText]);
         return no === batchNo;
       });
       if (batchRecords.length === 0) throw new Error(`报货批次号 ${batchNo} 下没有找到报单记录`);
