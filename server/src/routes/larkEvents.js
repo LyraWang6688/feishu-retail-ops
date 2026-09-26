@@ -55,6 +55,51 @@ const createLarkEventHandlers = (service) => ({
     });
     return {};
   },
+  // 多维表格记录变更事件（替代自动化工作流，无运行次数限制）
+  'drive.file.bitable_record_changed_v1': (event) => {
+    const fileToken = event?.file_token || event?.fileToken;
+    const tableId = event?.table_id || event?.tableId;
+    const action = event?.action;
+    // record_id 可能在多个位置，兼容不同版本
+    const recordId = event?.record_id || event?.recordId || event?.record?.record_id || event?.records?.[0]?.record_id;
+
+    logInfo('lark.bitable.record_changed', { file_token: fileToken, table_id: tableId, action, record_id: recordId });
+
+    // 只处理我们的多维表格
+    if (fileToken !== 'QrXlbwXMLaJ2TNsxSfFcIA3rnwh') {
+      return {};
+    }
+    // 只处理新增记录
+    if (action !== 'record_added') {
+      return {};
+    }
+    if (!recordId) {
+      logError('lark.bitable.record_changed.no_record_id', { table_id: tableId });
+      return {};
+    }
+
+    // 判断是哪个表，调用对应的采购处理逻辑
+    setImmediate(() => {
+      try {
+        // 供应商报单表
+        if (tableId === 'tblo0ffzFt7vyQw2') {
+          service.purchaseWebhooks.accept('supplier-report', recordId).catch((error) => {
+            logError('lark.bitable.supplier_report.failed', { record_id: recordId, error: error.message });
+          });
+        }
+        // 采购到货表
+        else if (tableId === 'tblvLOXKESNTbZ7v') {
+          service.purchaseWebhooks.accept('arrival', recordId).catch((error) => {
+            logError('lark.bitable.arrival.failed', { record_id: recordId, error: error.message });
+          });
+        }
+      } catch (error) {
+        logError('lark.bitable.record_changed.handler_error', { error: error.message });
+      }
+    });
+
+    return {};
+  },
 });
 
 const createLarkEventsRouter = (options = {}) => {
