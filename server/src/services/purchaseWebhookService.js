@@ -469,7 +469,7 @@ class PurchaseWebhookService {
     const requestIds = [];
     for (const item of draft.items) {
       const request = await this.gateway.create('purchaseRequest', {
-        batchNo,
+        batchNo: relation(batch.recordId),
         product: relation(item.product_record_id),
         size: item.size,
         quantity: item.quantity,

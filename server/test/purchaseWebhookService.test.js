@@ -150,7 +150,7 @@ test('supplier report confirm generates purchase order batch and requests', asyn
   assert.ok(batches[0].fields.报货批次号.startsWith('BH-'));
   const requests = await gateway.listAll('purchaseRequest');
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].fields.报货批次号, batches[0].fields.报货批次号);
+  assert.deepEqual(requests[0].fields.报货批次号, [batches[0].record_id]);
   const updatedReport = await gateway.get('purchaseReport', 'rep_conf');
   assert.equal(updatedReport.fields.处理状态, '已生成申请');
 });
