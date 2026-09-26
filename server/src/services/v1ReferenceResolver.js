@@ -12,6 +12,54 @@ const normalizeColor = (value) => normalizeText(value).replace(/色$/, '');
 const relation = (recordId) => (recordId ? [recordId] : undefined);
 const person = (openId) => (openId ? [{ id: openId }] : undefined);
 
+// OCR 相似字符映射：用于识别错误时的纠正
+// 注意：normalizeText 会转小写，所以这里只处理小写字母和数字
+const SIMILAR_CHARS = {
+  'w': ['9'],
+  '9': ['w'],
+  'o': ['0'],
+  '0': ['o'],
+  'i': ['1'],
+  'l': ['1'],
+  '1': ['i', 'l'],
+  's': ['5'],
+  '5': ['s'],
+  'z': ['2'],
+  '2': ['z'],
+  'b': ['8'],
+  '8': ['b'],
+  'g': ['6'],
+  '6': ['g'],
+};
+
+/**
+ * 生成货号的所有相似字符纠正组合
+ * 例如："86w02" → ["86902", "86wo2", ...]
+ * 不包含原始字符串
+ */
+function generateCorrections(text) {
+  if (!text || text.length === 0) return [];
+  const chars = text.split('');
+  let results = [''];
+  for (const char of chars) {
+    const alternatives = SIMILAR_CHARS[char] || [];
+    const currentLength = results.length;
+    // 为每个已有结果添加替代字符
+    for (let i = 0; i < currentLength; i++) {
+      for (const alt of alternatives) {
+        results.push(results[i] + alt);
+      }
+    }
+    // 为每个已有结果添加原始字符
+    for (let i = 0; i < currentLength; i++) {
+      results[i] += char;
+    }
+  }
+  // 去掉原始字符串（第一个），只返回纠正后的组合
+  // 限制最多返回 32 种组合，避免指数爆炸
+  return results.slice(1, 33);
+}
+
 class V1ReferenceResolver {
   constructor(gateway) {
     this.gateway = gateway;
@@ -54,6 +102,22 @@ class V1ReferenceResolver {
       matches = candidates.filter(
         (candidate) => candidate.itemNo === wantedItemNo && (!wantedColor || candidate.color === wantedColor),
       );
+    }
+
+    // 相似字符纠正：如果正常匹配失败，尝试纠正货号后再匹配
+    // 例如 OCR 把 "86902" 识别成 "86w02"，纠正后能匹配到
+    if (matches.length === 0 && wantedItemNo) {
+      const corrections = generateCorrections(wantedItemNo);
+      for (const correctedItemNo of corrections) {
+        const correctedMatches = candidates.filter(
+          (candidate) => candidate.itemNo === correctedItemNo && (!wantedColor || candidate.color === wantedColor),
+        );
+        if (correctedMatches.length === 1) {
+          matches = correctedMatches;
+          console.log(`[v1ReferenceResolver] 货号相似字符纠正成功: "${wantedItemNo}" -> "${correctedItemNo}"`);
+          break;
+        }
+      }
     }
 
     if (matches.length === 0) {
