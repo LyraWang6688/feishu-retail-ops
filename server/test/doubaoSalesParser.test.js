@@ -50,12 +50,36 @@ test('multi-shoe sale requires each actual price and does not allocate an order 
   assert.ok(result.missing_fields.includes('items[1].actual_amount'));
 });
 
+test('two pairs in one AI line must be restated as two individually priced lines', () => {
+  const result = normalizeSalesResult({ intent: 'sale', items: [
+    { item_no: 'A100', size: 38, quantity: 2, actual_amount: 178 },
+  ], payments: [{ method: '微信', amount: 178 }] });
+  assert.ok(result.missing_fields.some((issue) => issue.includes('逐双列出成交金额')));
+});
+
 test('deposit alone cannot be mistaken for a shoe transaction price', () => {
   const result = normalizeSalesResult({ intent: 'sale', items: [{ item_no: '9A207-0', size: 43, quantity: 1 }],
     payments: [{ method: '微信', amount: 50 }], delivery_status: '未交付' });
   assert.equal(result.agreed_total, '');
   assert.equal(result.delivery_status, '未交付');
   assert.ok(result.missing_fields.includes('items[0].actual_amount'));
+});
+
+test('future balance is not recorded as cash received, and ambiguous tail payment stops confirmation', () => {
+  const ai = { intent: 'sale', items: [{ item_no: '695887B-5', color: '黑', size: 43,
+    quantity: 1, actual_amount: 240 }],
+  payments: [{ method: '微信', amount: 100 }, { method: '微信', amount: 140 }], agreed_total: 240 };
+  const future = normalizeSalesResult(ai, '695887B-5黑43，微信付定金100元，下次尾款付140元');
+  assert.deepEqual(future.payments, [{ method: '微信', amount: 100 }]);
+  assert.equal(future.agreed_total, 240);
+  assert.deepEqual(future.missing_fields, []);
+  const ambiguous = normalizeSalesResult(ai, '695887B-5黑43，微信付定金100元，尾款付140元');
+  assert.ok(ambiguous.missing_fields.some((item) => item.includes('尾款是否已支付')));
+  const later = normalizeSalesResult(ai, '695887B-5黑43，总价240元，微信付定金100元，尾款以后付140元');
+  assert.deepEqual(later.payments, [{ method: '微信', amount: 100 }]);
+  assert.deepEqual(later.missing_fields, []);
+  const conflict = normalizeSalesResult(ai, '695887B-5黑43，成交价260元，微信付定金100元，尾款以后付140元');
+  assert.ok(conflict.missing_fields.some((item) => item.includes('成交价与定金')));
 });
 
 test('gift-only model item is folded into preceding sold shoe', () => {
@@ -112,7 +136,7 @@ test('one 89.9-for-100 voucher is converted to pending 85.4, not received 89.9 o
     assert.equal(result.total_paid, 169);
     assert.equal(result.total_covered, 254.4);
     assert.deepEqual(result.payments, [
-      { amount: 169, method: '微信', status: '已收清' },
+      { amount: 169, method: '微信', status: '已收款' },
       { method: '抖音团购券', amount: 85.4, status: '待平台结算' },
     ]);
     assert.deepEqual(result.missing_fields, []);
@@ -141,7 +165,7 @@ test('spoken cash facts override an AI payment array that mistakes voucher face 
     payments: [{ method: '现金', amount: 100 }],
   }, '2A831-18黑44，169元微信，一张89.9抵100代金券');
   assert.deepEqual(result.payments, [
-    { method: '微信', amount: 169, status: '已收清' },
+    { method: '微信', amount: 169, status: '已收款' },
     { method: '抖音团购券', amount: 85.4, status: '待平台结算' },
   ]);
   assert.deepEqual(result.missing_fields, []);
@@ -155,6 +179,55 @@ test('AI calling a 19-yuan top-up the shoe price does not block a voucher sale',
   assert.equal(result.items[0].actual_amount, 104.4);
   assert.equal(result.agreed_total, 104.4);
   assert.deepEqual(result.missing_fields, []);
+});
+
+test('voucher accepts payment method before amount and a voucher-only sale', () => {
+  const reversed = normalizeSalesResult({ intent: 'sale', items: [
+    { item_no: '2A831-18', color: '黑', size: 44, quantity: 1 }],
+    payments: [{ method: '微信', amount: 160 }],
+  }, '2A831-18黑44，微信支付160元，加一张89.9元抵100元代金券，赠袜子一双');
+  assert.equal(reversed.agreed_total, 245.4);
+  assert.deepEqual(reversed.payments, [
+    { method: '微信', amount: 160, status: '已收款' },
+    { method: '抖音团购券', amount: 85.4, status: '待平台结算' },
+  ]);
+  assert.deepEqual(reversed.missing_fields, []);
+  const voucherOnly = normalizeSalesResult({ intent: 'sale', items: [
+    { item_no: 'XHB8095', color: '黑', size: 42, quantity: 1 }], payments: [],
+  }, 'XHB8095黑42，是一张89.9元抵100元代金券，送两双袜子');
+  assert.equal(voucherOnly.agreed_total, 85.4);
+  assert.deepEqual(voucherOnly.payments, [
+    { method: '抖音团购券', amount: 85.4, status: '待平台结算' },
+  ]);
+  assert.deepEqual(voucherOnly.missing_fields, []);
+  const omittedCash = normalizeSalesResult({ intent: 'sale', items: [
+    { item_no: 'XHB8095', color: '黑', size: 42, quantity: 1 }], payments: [],
+  }, 'XHB8095黑42，一张89.9元抵100元代金券');
+  assert.ok(omittedCash.missing_fields.some((item) => item.includes('只用团购券')));
+});
+
+test('colloquial gifts preserve explicit pair count without inventing a count for other gifts', async () => {
+  const oldKey = process.env.ARK_API_KEY;
+  const oldModel = process.env.ARK_MODEL_ENDPOINT;
+  const oldGetClient = salesParser.getClient;
+  process.env.ARK_API_KEY = 'test-key';
+  process.env.ARK_MODEL_ENDPOINT = 'test-model';
+  try {
+    salesParser.getClient = () => ({ chat: { completions: { create: async () => ({ choices: [{ message: { content: JSON.stringify({
+      intent: 'sale', items: [{ item_no: '31663', color: '黑', size: 40, quantity: 1 }],
+      payments: [{ method: '微信', amount: 19 }],
+    }) } }] }) } } });
+    const mixed = await salesParser.parseSalesText('31663黑40，19元微信，一张89.9抵100券，赠了双鞋垫和袜子');
+    assert.equal(mixed.items[0].gift_description, '一双鞋垫和袜子');
+    const twoPairs = await salesParser.parseSalesText('31663黑40，19元微信，一张89.9抵100券，送了两双袜子');
+    assert.equal(twoPairs.items[0].gift_description, '两双袜子');
+  } finally {
+    salesParser.getClient = oldGetClient;
+    if (oldKey === undefined) delete process.env.ARK_API_KEY;
+    else process.env.ARK_API_KEY = oldKey;
+    if (oldModel === undefined) delete process.env.ARK_MODEL_ENDPOINT;
+    else process.env.ARK_MODEL_ENDPOINT = oldModel;
+  }
 });
 
 test('explicit contradictory sale price still blocks a voucher sale', () => {

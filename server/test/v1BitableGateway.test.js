@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { V1BitableGateway, linkedRecordIds, textValue } = require('../src/services/v1BitableGateway');
+const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
 const schema = {
   appToken: 'app_v1',
@@ -29,6 +30,21 @@ test('V1 gateway schema validation reports renamed or missing fields', async () 
   };
   const gateway = new V1BitableGateway({ schema, client });
   await assert.rejects(() => gateway.validateTable('sample'), /缺少 V1 字段: 数量/);
+});
+
+test('sales schema matches the live three-table field snapshot', () => {
+  const fields = {
+    salesEntry: ['收款状态', '录单日', '确认状态', '销售单号', '解析状态', '失败原因', '订单状态',
+      '录单人', '解析结果摘要', '原文', '待交付数量', '交付数量'],
+    salesDetail: ['销售单价', '履约状态', '销售明细ID', '销售单号', '销售日', '赠品', '尺码', '成交金额', '编号'],
+    paymentRecord: ['支付方式', '关联销售单', '收款金额', '收款时间', '收款状态'],
+  };
+  for (const [tableKey, actual] of Object.entries(fields)) {
+    for (const name of Object.values(V1_BITABLE_SCHEMA.tables[tableKey].fields)) {
+      assert.ok(actual.includes(name), `${tableKey} still maps deleted field ${name}`);
+    }
+  }
+  assert.equal(V1_BITABLE_SCHEMA.tables.paymentRecord.tableName, '收款明细');
 });
 
 test('relation and display helpers support Feishu record field shapes', () => {

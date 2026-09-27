@@ -47,15 +47,14 @@ const V1_BITABLE_SCHEMA = {
       fields: {
         orderNo: '销售单号',
         originalText: '原文',
-        sender: '发送人',
-        sentAt: '发送时间',
+        sender: '录单人',
+        // Automatic creation time: read-only fallback for workbench date filters.
+        recordedAt: '录单日',
         parseStatus: '解析状态',
         confirmStatus: '确认状态',
         parseSummary: '解析结果摘要',
         failureReason: '失败原因',
         orderStatus: '订单状态',
-        fulfillmentStatus: '履约状态',
-        paymentStatus: '收款状态',
       },
     },
     salesDetail: {
@@ -64,27 +63,25 @@ const V1_BITABLE_SCHEMA = {
       fields: {
         detailId: '销售明细ID',
         product: '编号',
-        quantity: '数量',
         size: '尺码',
         gift: '赠品',
         soldAt: '销售日',
         salesEntry: '销售单号',
-        deliveredQuantity: '交付数量',
+        fulfillmentStatus: '履约状态',
         actualAmount: '成交金额',
-        receivableAmount: '应收金额',
+        // Formula field (unit list price), never written by the backend.
+        listUnitPrice: '销售单价',
       },
     },
     paymentRecord: {
-      tableName: '收款记录',
+      tableName: '收款明细',
       tableId: getEnv('FEISHU_V1_PAYMENT_RECORD_TABLE_ID', 'tblTpLOtTLhWxXvm'),
       fields: {
-        recordNo: '收款记录ID',
         salesEntry: '关联销售单',
         method: '支付方式',
         amount: '收款金额',
         status: '收款状态',
         receivedAt: '收款时间',
-        operator: '操作人',
       },
     },
     // Legacy private-chat purchase intake table. Kept for the frozen path.

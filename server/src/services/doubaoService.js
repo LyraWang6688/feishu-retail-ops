@@ -30,7 +30,21 @@ const salesParseSnapshot = (result = {}) => ({
 
 const explicitSingleShoeGifts = (sourceText) => [...String(sourceText || '')
   .matchAll(/(?:赠送?|送)(?:了)?\s*([^，,。；;、]+?)(?=[，,。；;、]|$)/g)]
-  .map((match) => match[1].trim()).filter(Boolean);
+  .map((match) => match[1].trim().replace(/^双(?=鞋垫|袜子|鞋带)/, '一双')).filter(Boolean);
+
+const depositTerms = (sourceText) => {
+  const source = String(sourceText || '');
+  if (!/定金/.test(source)) return null;
+  const deposit = source.match(/定金\s*[¥￥]?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)?|[¥￥]?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)\s*定金/);
+  const tail = source.match(/尾款\s*(?:以后|之后|下次|到货后|取货时)?\s*(?:还要|再)?\s*(?:付|给|是|为)?\s*[¥￥]?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)?/);
+  if (!deposit) return { issues: ['请明确已经收到的定金金额'] };
+  const depositAmount = Number(deposit[1] || deposit[2]);
+  if (!tail) return { depositAmount, issues: [] };
+  if (!/下次|以后|之后|到货后|取货时|来拿时|还要|待付|未付|再付/.test(source)) {
+    return { issues: ['请说明尾款是否已支付；若尚未支付，请写“尾款以后付”'] };
+  }
+  return { depositAmount, tailAmount: Number(tail[1]), issues: [] };
+};
 
 const positiveOrEmpty = (value) => {
   const number = Number(value);
@@ -77,6 +91,25 @@ const normalizeSalesResult = (result = {}, sourceText = '') => {
   if (!agreedTotal && items.length && items.every((item) => item.actual_amount)) {
     agreedTotal = Math.round(items.reduce((sum, item) => sum + Number(item.actual_amount), 0) * 100) / 100;
   }
+  const deposit = depositTerms(sourceText);
+  if (deposit && !deposit.issues.length) {
+    const matching = payments.filter((payment) => Number(payment.amount) === deposit.depositAmount);
+    if (matching.length === 1) {
+      const spokenMethod = sourceText.match(/(微信|现金|支付宝)\s*(?:支付|付|交|收)?\s*定金/)?.[1] ||
+        sourceText.match(/定金\s*[¥￥]?\s*\d+(?:\.\d{1,2})?\s*(?:元|块)?\s*(微信|现金|支付宝)/)?.[1];
+      payments = [{ ...matching[0], method: spokenMethod || matching[0].method }];
+    }
+    else deposit.issues.push('请明确本次定金的支付方式');
+    if (deposit.tailAmount && items.length === 1) {
+      const expectedTotal = Math.round((deposit.depositAmount + deposit.tailAmount) * 100) / 100;
+      const statedPrice = sourceText.match(/(?:成交价|成交金额|总价)\s*(?:是|为)?\s*[¥￥]?\s*(\d+(?:\.\d{1,2})?)/);
+      if (statedPrice && Number(statedPrice[1]) !== expectedTotal) {
+        deposit.issues.push('成交价与定金加尾款不一致，请核对');
+      }
+      agreedTotal = expectedTotal;
+      items[0].actual_amount = agreedTotal;
+    }
+  }
   const voucherPolicy = applyGroupBuyVoucherPolicy({ sourceText, items, payments });
   if (voucherPolicy?.items) {
     items.splice(0, items.length, ...voucherPolicy.items);
@@ -97,12 +130,14 @@ const normalizeSalesResult = (result = {}, sourceText = '') => {
     payment_method: payments.map((payment) => payment.method).filter(Boolean).join('＋'),
   };
   if (voucherPolicy?.voucher) normalized.voucher = voucherPolicy.voucher;
-  const missing = new Set(voucherPolicy?.issues || []);
+  normalized.voucher_policy_blocked = Boolean(voucherPolicy?.issues?.length);
+  const missing = new Set([...(voucherPolicy?.issues || []), ...(deposit?.issues || [])]);
   if (normalized.intent !== 'sale') missing.add('当前只支持商品销售录单');
   for (const [index, item] of items.entries()) {
-    for (const key of ['item_no', 'size', 'quantity', 'actual_amount']) {
+    for (const key of ['item_no', 'size', 'quantity', ...(normalized.voucher_policy_blocked ? [] : ['actual_amount'])]) {
       if (!item[key]) missing.add(`items[${index}].${key}`);
     }
+    if (item.quantity !== 1) missing.add(`第${index + 1}件请逐双列出成交金额；每条销售明细只能记录一双`);
   }
   if (items.length && items.every((item) => item.actual_amount) && agreedTotal &&
     Math.abs(items.reduce((sum, item) => sum + Number(item.actual_amount), 0) - agreedTotal) > 0.005) {

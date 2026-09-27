@@ -1,5 +1,5 @@
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
-const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
+const { V1ReferenceResolver, relation } = require('./v1ReferenceResolver');
 const { readSaleLinkedRecord } = require('./salesRecordReader');
 const { withSalesReadRetry } = require('./salesReadRetry');
 
@@ -10,6 +10,7 @@ const amount = (value) => {
   }
   return number;
 };
+const normalizedStatus = (value) => ['已收清', '已结清'].includes(value) ? '已收款' : value || '已收款';
 
 class PaymentService {
   constructor({ gateway, references } = {}) {
@@ -25,20 +26,41 @@ class PaymentService {
   }
 
   async record({ salesEntryRecordId, method, amount: rawAmount, operatorOpenId, receivedAt,
-    status = '已收清' }) {
+    status = '已收款' }) {
+    status = normalizedStatus(status);
     if (!salesEntryRecordId) throw new Error('收款缺少销售主表 record_id');
-    if (!['已收清', '待平台结算'].includes(status)) throw new Error('收款状态无效');
-    if (status === '待平台结算' && receivedAt != null) throw new Error('待平台结算不能填写收款时间');
+    if (!['已收款', '未收款', '待平台结算'].includes(status)) throw new Error('收款状态无效');
+    if (status !== '已收款' && receivedAt != null) throw new Error('尚未到账的收款不能填写收款时间');
     const paid = amount(rawAmount);
-    const paymentMethod = await this.references.resolvePaymentMethod(method);
-    if (!paymentMethod) throw new Error('收款缺少支付方式');
+    const paymentMethod = status === '未收款' ? null : await this.references.resolvePaymentMethod(method);
+    if (status !== '未收款' && !paymentMethod) throw new Error('收款缺少支付方式');
     return this.gateway.create('paymentRecord', {
       salesEntry: relation(salesEntryRecordId),
-      method: relation(paymentMethod.recordId),
+      method: paymentMethod ? relation(paymentMethod.recordId) : undefined,
       amount: paid,
       status,
-      receivedAt: status === '已收清' ? Number(receivedAt ?? Date.now()) : undefined,
-      operator: person(operatorOpenId),
+      receivedAt: status === '已收款' ? Number(receivedAt ?? Date.now()) : undefined,
+    });
+  }
+
+  async collectPendingReceipt(recordId, { salesEntryRecordId, amount: rawAmount, method, operatorOpenId,
+    receivedAt = Date.now() }) {
+    const record = await this.gateway.get('paymentRecord', recordId);
+    const fields = this.gateway.table('paymentRecord').fields;
+    if (!record || !linkedRecordIds(record.fields?.[fields.salesEntry]).includes(salesEntryRecordId)) {
+      throw new Error('待收款记录不属于此销售单');
+    }
+    if (textValue(record.fields?.[fields.status]) !== '未收款') throw new Error('此记录已不是待收款');
+    if (amount(rawAmount) !== Number(textValue(record.fields?.[fields.amount]))) {
+      throw new Error('本次金额必须等于这条待收款记录的金额');
+    }
+    const timestamp = Number(receivedAt);
+    if (!Number.isFinite(timestamp) || timestamp <= 0) throw new Error('实际收款时间无效');
+    const paymentMethod = await this.references.resolvePaymentMethod(method);
+    if (!paymentMethod) throw new Error('收款缺少支付方式');
+    return this.gateway.update('paymentRecord', recordId, {
+      status: '已收款', method: relation(paymentMethod.recordId),
+      receivedAt: timestamp,
     });
   }
 
@@ -50,9 +72,9 @@ class PaymentService {
     if (!record) throw new Error('收款记录不存在');
     const fields = this.gateway.table('paymentRecord').fields;
     const status = textValue(record.fields?.[fields.status]);
-    if (status === '已收清') return record;
+    if (status === '已收款' || status === '已收清') return record;
     if (status !== '待平台结算') throw new Error('只有待平台结算的收款可结清');
-    return this.gateway.update('paymentRecord', recordId, { status: '已收清', receivedAt: timestamp });
+    return this.gateway.update('paymentRecord', recordId, { status: '已收款', receivedAt: timestamp });
   }
 
   // First confirmation may contain multiple payment methods. Match existing
@@ -61,7 +83,7 @@ class PaymentService {
     if (!Array.isArray(payments)) throw new Error('收款记录必须是数组');
     const expected = payments.map((payment) => {
       if (!payment || typeof payment !== 'object') throw new Error('收款记录格式无效');
-      return { ...payment, amount: amount(payment.amount) };
+      return { ...payment, amount: amount(payment.amount), status: normalizedStatus(payment.status) };
     });
     if ((options.knownRecordIds || []).slice(expected.length).some(Boolean)) {
       throw new Error('已保存的收款数量超过当前草稿，已停止重试');
@@ -81,15 +103,17 @@ class PaymentService {
     const reserved = new Set((options.knownRecordIds || []).filter(Boolean));
     const rows = [];
     for (const [index, payment] of expected.entries()) {
-      const method = await this.references.resolvePaymentMethod(payment.method);
-      if (!method) throw new Error('收款缺少支付方式');
+      const status = payment.status;
+      const method = status === '未收款' ? null : await this.references.resolvePaymentMethod(payment.method);
+      if (status !== '未收款' && !method) throw new Error('收款缺少支付方式');
       const paid = amount(payment.amount);
       const knownId = options.knownRecordIds?.[index];
       const match = existing.find((record) => !used.has(record.record_id) &&
         (knownId ? record.record_id === knownId : !reserved.has(record.record_id)) &&
-        linkedRecordIds(record.fields?.[fields.method]).includes(method.recordId) &&
+        (method ? linkedRecordIds(record.fields?.[fields.method]).includes(method.recordId) :
+          linkedRecordIds(record.fields?.[fields.method]).length === 0) &&
         Number(textValue(record.fields?.[fields.amount])) === paid &&
-        (textValue(record.fields?.[fields.status]) || '已收清') === (payment.status || '已收清'));
+        normalizedStatus(textValue(record.fields?.[fields.status])) === status);
       if (knownId && !match) throw new Error(`已记录的收款 ${knownId} 与当前销售草稿不一致，已停止重试`);
       if (match) used.add(match.record_id);
       rows.push({ payment, recordId: match?.record_id || '', index });

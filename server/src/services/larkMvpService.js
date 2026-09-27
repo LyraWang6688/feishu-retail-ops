@@ -364,7 +364,6 @@ class LarkMvpService {
     const created = await this.gateway.create('salesEntry', {
       originalText: task.original_text,
       sender: person(task.sender_open_id),
-      sentAt: task.sent_at,
       parseStatus: '解析中',
       confirmStatus: '待确认',
     });
@@ -376,6 +375,9 @@ class LarkMvpService {
     const missingFields = [...(parsed.missing_fields || [])];
     const items = [];
     for (const [index, item] of (parsed.items?.length ? parsed.items : [parsed]).entries()) {
+      const itemQuantity = Number(item.quantity || 1);
+      const quantityIssue = `第${index + 1}件请逐双列出成交金额；每条销售明细只能记录一双`;
+      if (itemQuantity !== 1 && !missingFields.includes(quantityIssue)) missingFields.push(quantityIssue);
       let product;
       if (item.item_no && item.size) {
         try { product = await this.references.resolveProduct({ itemNo: item.item_no, color: item.color, matchMode: 'sales' }); }
@@ -384,14 +386,14 @@ class LarkMvpService {
       const configuredNumber = product
         ? textValue(product.record?.fields?.[productTable?.fields?.number]) || item.item_no
         : '';
-      items.push({ ...item, product_record_id: product?.recordId || '', product_number: configuredNumber });
+      items.push({ ...item, quantity: itemQuantity, product_record_id: product?.recordId || '', product_number: configuredNumber });
     }
     const actualTotal = Math.round(items.reduce((sum, item) => sum + Number(item.actual_amount || 0), 0) * 100) / 100;
-    if (items.some((item) => !Number(item.actual_amount))) missingFields.push('请逐件说明成交金额');
+    if (!parsed.voucher_policy_blocked && items.some((item) => !Number(item.actual_amount))) missingFields.push('请逐件说明成交金额');
     if (parsed.agreed_total && Math.abs(actualTotal - Number(parsed.agreed_total)) > 0.005) {
       missingFields.push('逐件成交金额合计与整单成交金额不一致');
     }
-    if (Number(parsed.total_covered ?? parsed.total_paid ?? 0) > actualTotal) {
+    if (!parsed.voucher_policy_blocked && Number(parsed.total_covered ?? parsed.total_paid ?? 0) > actualTotal) {
       missingFields.push('已收金额和待平台结算金额不能超过本单成交金额');
     }
 
@@ -662,6 +664,23 @@ class LarkMvpService {
             detailRecordIds: result.detailRecordIds, paymentRecordIds: result.paymentRecordIds });
           await this.notifySampleReplacements(deliveryResult, operatorOpenId).catch((error) =>
             logWarn('lark.sales.sample_notice.failed', { task_id: draftId, error: error.message }));
+          if (deliveryResult.failures?.length) {
+            await this.store.update(draftId, { delivery_failures: deliveryResult.failures });
+            const failedLines = deliveryResult.failures.map((failure) => {
+              const item = task.draft.items[failure.lineNumber - 1] || {};
+              const label = `${item.product_number || `${item.item_no || '货品'}${item.color || ''}`}${failure.size}码`;
+              return `第${failure.lineNumber}双 ${label}：${failure.error}`;
+            }).join('；');
+            await this.publishSalesResultCard(task, event, salesStatusCard(task.draft,
+              deliveryResult.deliveredQuantity ? '订单已入账，部分交付' : '订单已入账，交付待处理',
+              `销售单号：${result.sourceNo}。已交付 ${deliveryResult.deliveredQuantity}/${deliveryResult.totalQuantity} 双；未交付：${failedLines}。请到工作台待交付列表核对并处理。`, 'orange'),
+            { stage: 'delivery_partial', interactionId: context.interactionId });
+            logWarn('lark.sales.delivery.partial', { task_id: draftId, source_no: result.sourceNo,
+              delivered_quantity: deliveryResult.deliveredQuantity, total_quantity: deliveryResult.totalQuantity,
+              failed_detail_ids: deliveryResult.failures.map((failure) => failure.detailRecordId) });
+            return { toast: { type: 'warning', content:
+              `订单已入账，已交付 ${deliveryResult.deliveredQuantity}/${deliveryResult.totalQuantity} 双；其余待处理` } };
+          }
         } catch (error) {
           await this.publishSalesResultCard(task, event, salesStatusCard(task.draft,
             '订单已入账，交付待处理', `销售单号：${result.sourceNo}。库存交付未完成：${error.message}。请在工作台待交付列表核对并处理。`, 'orange'),

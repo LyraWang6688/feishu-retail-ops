@@ -19,12 +19,10 @@ const progressFromRecords = (details, receipts, detailFields, paymentFields) => 
     const rawAmount = textValue(detail.fields?.[detailFields.actualAmount]).trim();
     if (!rawAmount) amountKnown = false;
     else amountCents += cents(rawAmount, '销售明细成交金额');
-    const lineQuantity = Number(textValue(detail.fields?.[detailFields.quantity]));
-    const lineDelivered = Number(textValue(detail.fields?.[detailFields.deliveredQuantity]) || 0);
-    if (!Number.isInteger(lineQuantity) || lineQuantity <= 0 || !Number.isInteger(lineDelivered) ||
-      lineDelivered < 0 || lineDelivered > lineQuantity) throw new Error('销售明细数量或交付数量无效');
-    quantity += lineQuantity;
-    delivered += lineDelivered;
+    const status = textValue(detail.fields?.[detailFields.fulfillmentStatus]) || '未交付';
+    if (!['未交付', '已交付'].includes(status)) throw new Error(`未知销售明细履约状态：${status}`);
+    quantity += 1;
+    if (status === '已交付') delivered += 1;
   }
   let paidCents = 0;
   let platformPendingCents = 0;
@@ -32,7 +30,8 @@ const progressFromRecords = (details, receipts, detailFields, paymentFields) => 
     const status = textValue(receipt.fields?.[paymentFields.status]) || '已收清';
     const value = cents(textValue(receipt.fields?.[paymentFields.amount]), '收款金额');
     if (status === '待平台结算') platformPendingCents += value;
-    else if (status === '已收清' || status === '已结清') paidCents += value;
+    else if (status === '未收款') continue;
+    else if (status === '已收款' || status === '已收清' || status === '已结清') paidCents += value;
     else throw new Error(`未知收款状态：${status}`);
   }
   if (amountKnown && paidCents + platformPendingCents > amountCents) {
@@ -40,7 +39,7 @@ const progressFromRecords = (details, receipts, detailFields, paymentFields) => 
   }
   const fulfillmentStatus = delivered === 0 ? '未交付' : delivered === quantity ? '已交付' : '部分交付';
   const customerPendingCents = amountCents - paidCents - platformPendingCents;
-  const paymentStatus = !amountKnown ? '' : paidCents === amountCents ? '已收清' :
+  const paymentStatus = !amountKnown ? '' : paidCents === amountCents ? '已收款' :
     customerPendingCents === 0 && platformPendingCents > 0 ? '待平台结算' :
     paidCents === 0 && platformPendingCents === 0 ? '未收款' : '部分收款';
   return {
@@ -100,9 +99,9 @@ class SalesProgressService {
 
   async sync(salesEntryRecordId, expected = {}) {
     const progress = await this.forOrder(salesEntryRecordId, expected);
-    const fields = { orderStatus: progress.orderStatus, fulfillmentStatus: progress.fulfillmentStatus };
-    if (progress.paymentStatus) fields.paymentStatus = progress.paymentStatus;
-    await this.gateway.update('salesEntry', salesEntryRecordId, fields);
+    // The master fulfillment/payment cells are Bitable formulas. Their owners
+    // are sales details and payment records, never this service.
+    await this.gateway.update('salesEntry', salesEntryRecordId, { orderStatus: progress.orderStatus });
     return progress;
   }
 }

@@ -294,6 +294,7 @@ test('sales intake writes only intake metadata and retains actual amount before 
   const created = calls.find((call) => call.operation === 'create');
   assert.equal(created.tableKey, 'salesEntry');
   assert.equal('messageId' in created.fields, false);
+  assert.equal('sentAt' in created.fields, false);
   const parsedUpdate = calls.find(
     (call) => call.operation === 'update' && call.fields.parseStatus === '解析成功'
   );
@@ -381,7 +382,7 @@ test('voucher sale card and posting retain separate settled and platform-pending
   assert.equal(posted.items[0].actualAmount, 254.4);
   assert.equal(posted.items[0].giftDescription, '一双袜子');
   assert.deepEqual(posted.payments.map(({ amount, method, status }) => ({ amount, method, status })), [
-    { amount: 169, method: '微信', status: '已收清' },
+    { amount: 169, method: '微信', status: '已收款' },
     { amount: 85.4, method: '抖音团购券', status: '待平台结算' },
   ]);
 });
@@ -601,6 +602,33 @@ test('stock failure after sale posting is not presented as sale posting failure'
     action: { value: { action: 'confirm_sale_delivered', draft_id: 'sale_stock_error' } } });
   assert.match(result.toast.content, /库存交付待处理/);
   assert.equal((await store.get('sale_stock_error')).status, 'posted_delivery_pending');
+});
+
+test('partial delivery reports the failed shoe while preserving later successful deliveries', async () => {
+  const store = makeStore();
+  const cards = [];
+  await store.create({ task_id: 'sale_partial_delivery', type: 'sale', status: 'ready_to_confirm',
+    sender_open_id: 'ou_1', sales_entry_record_id: 'entry_1', card_message_id: 'om_card',
+    draft: { items: [
+      { item_no: 'A100', color: '黑', size: 39, quantity: 1, actual_amount: 186 },
+      { item_no: 'B200', color: '黑', size: 38, quantity: 1, actual_amount: 176 },
+      { item_no: 'C300', color: '黑', size: 43, quantity: 1, actual_amount: 99 },
+      { item_no: 'D400', color: '黑', size: 44, quantity: 1, actual_amount: 89 },
+    ], payments: [{ method: '微信', amount: 550 }], agreed_total: 550 } });
+  const service = new LarkMvpService({ client: {}, gateway: {}, references: {}, recognizer: {}, store,
+    posting: { postSale: async () => ({ sourceNo: 'XSD-004',
+      detailRecordIds: ['detail_a', 'detail_b', 'detail_c', 'detail_d'], paymentRecordIds: ['pay_1'] }) },
+    delivery: { deliver: async () => ({ deliveredQuantity: 3, totalQuantity: 4,
+      failures: [{ detailRecordId: 'detail_b', lineNumber: 2, size: 38, quantity: 1,
+        error: '门盒和样品库存不足' }], sampleReplacements: [] }) },
+  });
+  service.updateSalesActionCard = async (_task, _event, card) => { cards.push(card); return true; };
+  const result = await service.handleCardAction({ operator: { operator_id: { open_id: 'ou_1' } },
+    action: { value: { action: 'confirm_sale_delivered', draft_id: 'sale_partial_delivery' } } });
+  assert.equal(result.toast.type, 'warning');
+  assert.match(result.toast.content, /3\/4/);
+  assert.match(JSON.stringify(cards.at(-1)), /第2双.*B200.*库存不足/);
+  assert.equal((await store.get('sale_partial_delivery')).status, 'posted_delivery_pending');
 });
 
 test('failed sale posting restores action buttons for retry', async () => {

@@ -8,6 +8,7 @@ const { SalesOrderService } = require('../src/services/salesOrderService');
 const { SalesDeliveryService } = require('../src/services/salesDeliveryService');
 const { InventoryService } = require('../src/services/inventoryService');
 const { PaymentService } = require('../src/services/paymentService');
+const { SalesFollowupService } = require('../src/services/salesFollowupService');
 const { SalesProgressService } = require('../src/services/salesProgressService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
@@ -21,7 +22,11 @@ const fake = () => {
     create: async (key, values) => {
       const recordId = `rec_${++seq}`;
       const fields = Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined)
-        .map(([name, value]) => [V1_BITABLE_SCHEMA.tables[key].fields[name], value]));
+        .map(([name, value]) => {
+          const field = V1_BITABLE_SCHEMA.tables[key].fields[name];
+          if (!field) throw new Error(`${key}: unknown field ${name}`);
+          return [field, value];
+        }));
       if (!records.has(key)) records.set(key, []);
       records.get(key).push({ record_id: recordId, fields });
       return { recordId };
@@ -29,7 +34,11 @@ const fake = () => {
     update: async (key, id, values) => {
       const record = await gateway.get(key, id);
       Object.assign(record.fields, Object.fromEntries(Object.entries(values)
-        .map(([name, value]) => [V1_BITABLE_SCHEMA.tables[key].fields[name], value])));
+        .map(([name, value]) => {
+          const field = V1_BITABLE_SCHEMA.tables[key].fields[name];
+          if (!field) throw new Error(`${key}: unknown field ${name}`);
+          return [field, value];
+        })));
       return record;
     },
     delete: async (key, id) => records.set(key, (records.get(key) || []).filter((row) => row.record_id !== id)),
@@ -67,18 +76,81 @@ test('mixed payment creates two receipts for the same order and retry is idempot
   assert.equal(gateway.records.get('inventoryLedger'), undefined);
 });
 
+test('each pair has its own detail even when product and size are identical', async () => {
+  const gateway = fake();
+  const service = new SalesOrderService({ gateway, references });
+  const input = { salesEntryRecordId: 'order_1', items: [
+    { itemNo: 'A100', size: 38, quantity: 1, actualAmount: 89 },
+    { itemNo: 'A100', size: 38, quantity: 1, actualAmount: 89 },
+  ], payments: [{ method: '微信', amount: 178 }] };
+  const first = await service.confirm(input);
+  const retry = await service.confirm(input);
+  assert.equal(new Set(first.detailRecordIds).size, 2);
+  assert.deepEqual(retry.detailRecordIds, first.detailRecordIds);
+  assert.equal(gateway.records.get('salesDetail').length, 2);
+  assert.ok(gateway.records.get('salesDetail').every((row) => row.fields['数量'] === undefined &&
+    row.fields['履约状态'] === '未交付'));
+});
+
+test('a multi-pair line without individual prices stops before creating sale details', async () => {
+  const gateway = fake();
+  const service = new SalesOrderService({ gateway, references });
+  await assert.rejects(service.confirm({ salesEntryRecordId: 'order_1', items: [
+    { itemNo: 'A100', size: 38, quantity: 2, actualAmount: 178 },
+  ], payments: [{ method: '微信', amount: 178 }] }), /逐双说明成交金额/);
+  assert.equal(gateway.records.get('salesDetail'), undefined);
+});
+
+test('deposit creates paid and unpaid receipts; follow-up settles the same receipt without touching stock', async () => {
+  const gateway = fake();
+  const sales = new SalesOrderService({ gateway, references });
+  const posted = await sales.confirm({ salesEntryRecordId: 'order_1',
+    items: [{ itemNo: '695887B-5', size: 43, quantity: 1, actualAmount: 240 }],
+    payments: [{ method: '微信', amount: 100 }] });
+  const detail = await gateway.get('salesDetail', posted.detailRecordIds[0]);
+  assert.equal(detail.fields['履约状态'], '未交付');
+  assert.equal(detail.fields['数量'], undefined);
+  const receipts = gateway.records.get('paymentRecord');
+  assert.deepEqual(receipts.map((row) => [row.fields['收款金额'], row.fields['收款状态']]),
+    [[100, '已收款'], [140, '未收款']]);
+  assert.equal(receipts[1].fields['收款时间'], undefined);
+  assert.equal(receipts[1].fields['支付方式'], undefined);
+  assert.equal((await gateway.get('salesEntry', 'order_1')).fields['履约状态'], undefined);
+  assert.equal((await gateway.get('salesEntry', 'order_1')).fields['收款状态'], undefined);
+  const pendingId = receipts[1].record_id;
+  const payments = new PaymentService({ gateway, references });
+  const followup = new SalesFollowupService({ gateway, payments,
+    store: new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'sale-deposit-')),
+      idField: 'task_id' }) });
+  const result = await followup.addPayment({ salesEntryRecordId: 'order_1', method: '微信',
+    amount: 140, operatorOpenId: 'ou_1', requestId: '00000000-0000-4000-8000-000000000001' });
+  assert.equal(result.recordId, pendingId);
+  assert.equal(gateway.records.get('paymentRecord').length, 2);
+  assert.equal((await gateway.get('paymentRecord', pendingId)).fields['收款状态'], '已收款');
+  assert.equal(gateway.records.get('inventoryLedger'), undefined);
+  const inventoryCalls = [];
+  const delivery = new SalesDeliveryService({ gateway, inventory: {
+    applySale: async (input) => { inventoryCalls.push(input); return { sampleConsumedQuantity: 0 }; },
+  } });
+  await delivery.deliver({ salesEntryRecordId: 'order_1', detailRecordIds: posted.detailRecordIds,
+    paymentRecordIds: posted.paymentRecordIds });
+  assert.equal(inventoryCalls.length, 1);
+  assert.equal(inventoryCalls[0].quantity, 1);
+  assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['履约状态'], '已交付');
+});
+
 test('platform voucher has no receipt time until verified settlement', async () => {
   const gateway = fake();
   const payments = new PaymentService({ gateway, references });
   const cash = await payments.record({ salesEntryRecordId: 'order_1', method: '微信', amount: 169 });
   const voucher = await payments.record({ salesEntryRecordId: 'order_1', method: '抖音团购券',
     amount: 85.4, status: '待平台结算' });
-  assert.equal((await gateway.get('paymentRecord', cash.recordId)).fields['收款状态'], '已收清');
+  assert.equal((await gateway.get('paymentRecord', cash.recordId)).fields['收款状态'], '已收款');
   assert.ok((await gateway.get('paymentRecord', cash.recordId)).fields['收款时间'] > 0);
   assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['收款状态'], '待平台结算');
   assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['收款时间'], undefined);
   await payments.settlePlatformReceipt(voucher.recordId, 1234567890000);
-  assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['收款状态'], '已收清');
+  assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['收款状态'], '已收款');
   assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['收款时间'], 1234567890000);
 });
 
@@ -93,12 +165,30 @@ test('sale records cash and pending voucher on one order without treating vouche
   assert.equal(receipts.length, 2);
   assert.equal(receipts[0].fields['收款时间'] > 0, true);
   assert.equal(receipts[1].fields['收款时间'], undefined);
-  assert.equal(gateway.records.get('salesEntry')[0].fields['收款状态'], '待平台结算');
+  assert.equal(gateway.records.get('salesEntry')[0].fields['收款状态'], undefined);
   await sale.confirm({ salesEntryRecordId: 'order_1',
     items: [{ itemNo: '2A831-18', size: 44, quantity: 1, actualAmount: 254.4 }],
     payments: [{ method: '微信', amount: 169 },
       { method: '抖音团购券', amount: 85.4, status: '待平台结算' }] });
   assert.equal(gateway.records.get('paymentRecord').length, 2);
+});
+
+test('voucher-only sale creates one pending receipt and no zero-value cash receipt', async () => {
+  const gateway = fake();
+  const sale = new SalesOrderService({ gateway, references });
+  const posted = await sale.confirm({ salesEntryRecordId: 'order_1', items: [
+    { itemNo: 'XHB8095', size: 42, quantity: 1, actualAmount: 85.4, gift: true,
+      giftDescription: '袜子两双' },
+  ], payments: [{ method: '抖音团购券', amount: 85.4, status: '待平台结算' }] });
+  const payments = gateway.records.get('paymentRecord');
+  assert.equal(payments.length, 1);
+  assert.equal(payments[0].fields['收款状态'], '待平台结算');
+  assert.equal(payments[0].fields['收款时间'], undefined);
+  assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['赠品'], '袜子两双');
+  const progress = await new SalesProgressService({ gateway }).forOrder('order_1');
+  assert.equal(progress.pendingAmount, 0);
+  assert.equal(progress.platformPendingAmount, 85.4);
+  assert.equal(progress.pendingDeliveryQuantity, 1);
 });
 
 test('invalid initial receipt cannot silently become unpaid', async () => {
@@ -115,16 +205,18 @@ test('unpaid sale can be delivered once, then later payment does not touch inven
   const gateway = fake();
   const sales = new SalesOrderService({ gateway, references });
   const posted = await sales.confirm({ salesEntryRecordId: 'order_1', items: [{ itemNo: 'A100', size: 38, quantity: 1, actualAmount: 100 }] });
-  assert.equal(gateway.records.get('paymentRecord'), undefined);
+  assert.equal(gateway.records.get('paymentRecord').length, 1);
+  assert.equal(gateway.records.get('paymentRecord')[0].fields['收款状态'], '未收款');
   const calls = [];
   const delivery = new SalesDeliveryService({ gateway, inventory: { applySale: async (input) => { calls.push(input); return { quantity: 0 }; } } });
   const request = { salesEntryRecordId: 'order_1', detailRecordIds: posted.detailRecordIds };
   await delivery.deliver(request);
   await delivery.deliver(request);
   assert.equal(calls.length, 1);
-  assert.equal(gateway.records.get('salesEntry')[0].fields['履约状态'], '已交付');
+  assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['履约状态'], '已交付');
   const payment = new PaymentService({ gateway, references });
-  await payment.record({ salesEntryRecordId: 'order_1', method: '微信', amount: 100 });
+  await payment.collectPendingReceipt(gateway.records.get('paymentRecord')[0].record_id,
+    { salesEntryRecordId: 'order_1', method: '微信', amount: 100 });
   assert.equal(gateway.records.get('paymentRecord').length, 1);
   assert.equal(calls.length, 1);
 });
@@ -153,7 +245,92 @@ test('confirmed sale delivery writes positive stock movement and removes exactly
     编号: ['product_A100'], 尺码: 38, 变动数量: 1,
     库存行为: ['behavior_sale'], 关联销售: posted.detailRecordIds,
   });
-  assert.equal(gateway.records.get('salesEntry')[0].fields['履约状态'], '已交付');
+  assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['履约状态'], '已交付');
+});
+
+test('a failed fulfillment-state write retries without deducting the same pair twice', async () => {
+  const gateway = fake();
+  gateway.records.set('behavior', [{ record_id: 'behavior_sale', fields: {
+    行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
+  } }]);
+  gateway.records.set('liveInventory', [
+    { record_id: 'door_1', fields: { 编号: ['product_A100'], 尺码: 38, 所属状态: '门盒' } },
+  ]);
+  const sale = new SalesOrderService({ gateway, references });
+  const posted = await sale.confirm({ salesEntryRecordId: 'order_1', items: [
+    { itemNo: 'A100', size: 38, quantity: 1, actualAmount: 89 },
+  ], payments: [{ method: '微信', amount: 89 }] });
+  const originalUpdate = gateway.update;
+  let failOnce = true;
+  gateway.update = async (key, id, fields) => {
+    if (key === 'salesDetail' && fields.fulfillmentStatus === '已交付' && failOnce) {
+      failOnce = false;
+      throw new Error('temporary field write failure');
+    }
+    return originalUpdate(key, id, fields);
+  };
+  const inventory = new InventoryService({ gateway, store: new JsonTaskStore({
+    dir: fs.mkdtempSync(path.join(os.tmpdir(), 'sale-state-retry-')), idField: 'operation_id',
+  }) });
+  const delivery = new SalesDeliveryService({ gateway, inventory });
+  const request = { salesEntryRecordId: 'order_1', detailRecordIds: posted.detailRecordIds,
+    paymentRecordIds: posted.paymentRecordIds };
+  const first = await delivery.deliver(request);
+  assert.equal(first.failures.length, 1);
+  assert.equal(gateway.records.get('inventoryLedger').length, 1);
+  assert.equal(gateway.records.get('liveInventory').length, 0);
+  assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['履约状态'], '未交付');
+  const retried = await delivery.deliver(request);
+  assert.equal(retried.failures.length, 0);
+  assert.equal(retried.deliveredQuantity, 1);
+  assert.equal(gateway.records.get('inventoryLedger').length, 1);
+  assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['履约状态'], '已交付');
+});
+
+test('one out-of-stock shoe does not prevent later shoes from delivering, and retry deducts only the missing shoe', async () => {
+  const gateway = fake();
+  gateway.records.set('behavior', [{ record_id: 'behavior_sale', fields: {
+    行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
+  } }]);
+  gateway.records.set('liveInventory', [
+    { record_id: 'door_a', fields: { 编号: ['product_A100'], 尺码: 39, 所属状态: '门盒' } },
+    { record_id: 'door_c', fields: { 编号: ['product_C300'], 尺码: 43, 所属状态: '门盒' } },
+    { record_id: 'door_d', fields: { 编号: ['product_D400'], 尺码: 44, 所属状态: '门盒' } },
+  ]);
+  const sale = new SalesOrderService({ gateway, references });
+  const posted = await sale.confirm({ salesEntryRecordId: 'order_1',
+    items: [
+      { itemNo: 'A100', size: 39, quantity: 1, actualAmount: 186 },
+      { itemNo: 'B200', size: 38, quantity: 1, actualAmount: 176 },
+      { itemNo: 'C300', size: 43, quantity: 1, actualAmount: 99 },
+      { itemNo: 'D400', size: 44, quantity: 1, actualAmount: 89 },
+    ], payments: [{ method: '微信', amount: 550 }] });
+  const inventory = new InventoryService({ gateway, store: new JsonTaskStore({
+    dir: fs.mkdtempSync(path.join(os.tmpdir(), 'sale-partial-delivery-')), idField: 'operation_id',
+  }) });
+  const delivery = new SalesDeliveryService({ gateway, inventory });
+  const request = { salesEntryRecordId: 'order_1', detailRecordIds: posted.detailRecordIds,
+    paymentRecordIds: posted.paymentRecordIds };
+  const first = await delivery.deliver(request);
+  assert.equal(first.deliveredQuantity, 3);
+  assert.equal(first.totalQuantity, 4);
+  assert.equal(first.fulfillmentStatus, '部分交付');
+  assert.deepEqual(first.failures.map((item) => item.lineNumber), [2]);
+  assert.match(first.failures[0].error, /库存不足/);
+  assert.deepEqual(await Promise.all(posted.detailRecordIds.map(async (id) =>
+    (await gateway.get('salesDetail', id)).fields['履约状态'])), ['已交付', '未交付', '已交付', '已交付']);
+  assert.equal(gateway.records.get('inventoryLedger').length, 3);
+
+  gateway.records.get('liveInventory').push({ record_id: 'door_b', fields: {
+    编号: ['product_B200'], 尺码: 38, 所属状态: '门盒',
+  } });
+  const retried = await delivery.deliver(request);
+  assert.equal(retried.failures.length, 0);
+  assert.equal(retried.deliveredQuantity, 4);
+  assert.equal(retried.fulfillmentStatus, '已交付');
+  assert.equal(gateway.records.get('inventoryLedger').length, 4);
+  assert.ok((await Promise.all(posted.detailRecordIds.map((id) => gateway.get('salesDetail', id))))
+    .every((detail) => detail.fields['履约状态'] === '已交付'));
 });
 
 test('newly created detail and receipt are resolved by record ID when list results lag', async () => {
@@ -165,15 +342,16 @@ test('newly created detail and receipt are resolved by record ID when list resul
     items: [{ itemNo: 'A100', size: 38, quantity: 1, actualAmount: 89 }],
     payments: [{ method: '微信', amount: 89 }] });
   const order = await gateway.get('salesEntry', 'order_1');
-  assert.equal(order.fields['收款状态'], '已收清');
+  assert.equal(order.fields['收款状态'], undefined);
   const delivery = new SalesDeliveryService({ gateway, inventory: {
     applySale: async () => ({ sampleConsumedQuantity: 0 }),
   } });
   await delivery.deliver({ salesEntryRecordId: 'order_1', detailRecordIds: posted.detailRecordIds,
     paymentRecordIds: posted.paymentRecordIds });
-  assert.equal(order.fields['履约状态'], '已交付');
-  assert.equal(order.fields['收款状态'], '已收清');
-  assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['交付数量'], 1);
+  assert.equal(order.fields['履约状态'], undefined);
+  assert.equal(order.fields['收款状态'], undefined);
+  assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['交付数量'], undefined);
+  assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['履约状态'], '已交付');
 });
 
 test('Feishu record_ids link shape reuses an existing order, receipt, and detail before delivery', async () => {
@@ -211,7 +389,8 @@ test('Feishu record_ids link shape reuses an existing order, receipt, and detail
   assert.equal(stockCalls.length, 3);
   assert.deepEqual(stockCalls.map((call) => call.productRecordId),
     ['product_A100', 'product_B200', 'product_C300']);
-  assert.equal((await gateway.get('salesEntry', 'order_1')).fields['履约状态'], '已交付');
+  assert.ok((await Promise.all(first.detailRecordIds.map((id) => gateway.get('salesDetail', id))))
+    .every((detail) => detail.fields['履约状态'] === '已交付'));
 });
 
 test('temporary 1254607 after receipt creation retries reads and delivers once without duplicate records', async () => {
@@ -254,7 +433,7 @@ test('temporary 1254607 after receipt creation retries reads and delivers once w
   assert.equal(gateway.records.get('inventoryLedger').length, 1);
   assert.deepEqual(gateway.records.get('liveInventory').map((row) => row.record_id), ['sample_1']);
   assert.equal(gateway.records.get('salesEntry')[0].fields['确认状态'], '已入账');
-  assert.equal(gateway.records.get('salesEntry')[0].fields['履约状态'], '已交付');
+  assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['履约状态'], '已交付');
 });
 
 test('exhausted progress read preserves posted sale and known IDs recover when list results lag', async () => {
@@ -314,5 +493,5 @@ test('exhausted progress read preserves posted sale and known IDs recover when l
   await delivery.deliver({ salesEntryRecordId: 'order_1', detailRecordIds: posted.detailRecordIds,
     paymentRecordIds: posted.paymentRecordIds });
   assert.equal(stockCalls.length, 1);
-  assert.equal(gateway.records.get('salesEntry')[0].fields['履约状态'], '已交付');
+  assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['履约状态'], '已交付');
 });

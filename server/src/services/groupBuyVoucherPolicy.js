@@ -22,8 +22,8 @@ const voucherMentions = (sourceText) => {
 };
 
 const explicitCashPayments = (sourceText) => [...String(sourceText || '')
-  .matchAll(/(?:[¥￥]\s*)?(\d+(?:\.\d{1,2})?)\s*(?:元|块)?\s*(微信|现金|支付宝)/g)]
-  .map((match) => ({ amount: Number(match[1]), method: match[2] }));
+  .matchAll(/(?:[¥￥]\s*)?(\d+(?:\.\d{1,2})?)\s*(?:元|块)?\s*(微信|现金|支付宝)|(微信|现金|支付宝)\s*(?:支付了?|付了?|收了?)?\s*[:：]?\s*[¥￥]?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)?/g)]
+  .map((match) => ({ amount: Number(match[1] || match[4]), method: match[2] || match[3] }));
 
 const explicitSalePrices = (sourceText) => [...String(sourceText || '')
   .matchAll(/(?:成交价|成交金额|这双鞋(?:的)?(?:卖价|售价|价格)|鞋(?:子)?(?:的)?(?:卖价|售价))\s*(?:是|为|共|合计)?\s*[:：]?\s*[¥￥]?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)?/g)]
@@ -62,8 +62,14 @@ const applyGroupBuyVoucherPolicy = ({ sourceText, items, payments }) => {
   // The spoken cash facts, not the model's guessed payment array, are the
   // authority. This also prevents an AI-labelled 100-yuan voucher from being
   // written as a second cash receipt.
-  if (!spokenCash.length) issues.push('请说明团购券之外实际收到的金额和支付方式');
-  const cashPayments = spokenCash.map((payment) => ({ ...payment, status: '已收清' }));
+  // Pure voucher use must be explicit; a named cash method without an amount
+  // is genuinely incomplete, not a zero-cash sale.
+  if (!spokenCash.length && /(微信|现金|支付宝)/.test(source)) {
+    issues.push('请说明团购券之外实际收到的金额和支付方式');
+  } else if (!spokenCash.length && !/只用|只有|仅用|纯券|没有补差|不补差|(?:是|用)一张/.test(source)) {
+    issues.push('请确认是否只用团购券、没有补现金额');
+  }
+  const cashPayments = spokenCash.map((payment) => ({ ...payment, status: '已收款' }));
   if (cashPayments.some((payment) => !Number.isFinite(cents(payment.amount)) || cents(payment.amount) <= 0)) {
     issues.push('实际支付金额无效');
   }

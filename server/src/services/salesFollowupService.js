@@ -54,15 +54,16 @@ class SalesFollowupService {
               record_id: detail.record_id,
               product: productById.get(linkedRecordIds(detail.fields?.[detailFields.product])[0]) || '',
               size: Number(textValue(detail.fields?.[detailFields.size])),
-              quantity: Number(textValue(detail.fields?.[detailFields.quantity])),
-              delivered_quantity: Number(textValue(detail.fields?.[detailFields.deliveredQuantity]) || 0),
+              quantity: 1,
+              delivered_quantity: textValue(detail.fields?.[detailFields.fulfillmentStatus]) === '已交付' ? 1 : 0,
+              fulfillment_status: textValue(detail.fields?.[detailFields.fulfillmentStatus]) || '未交付',
               actual_amount: textValue(detail.fields?.[detailFields.actualAmount]) === '' ? null : Number(textValue(detail.fields?.[detailFields.actualAmount])),
             })),
           payments: orderPayments
             .map((payment) => ({
               record_id: payment.record_id,
               amount: Number(textValue(payment.fields?.[paymentFields.amount])),
-              status: textValue(payment.fields?.[paymentFields.status]) || '已收清',
+              status: textValue(payment.fields?.[paymentFields.status]) || '已收款',
               received_at: payment.fields?.[paymentFields.receivedAt] || null,
               method: methodById.get(linkedRecordIds(payment.fields?.[paymentFields.method])[0]) || '',
             })),
@@ -98,11 +99,19 @@ class SalesFollowupService {
         throw new Error(`本次收款超过待收金额 ￥${before.pendingAmount}`);
       }
       if (!await this.payments.references.resolvePaymentMethod(input.method)) throw new Error('收款缺少支付方式');
+      const pending = (await this.payments.recordsForSale(input.salesEntryRecordId)).filter((record) =>
+        textValue(record.fields?.[this.gateway.table('paymentRecord').fields.status]) === '未收款');
+      if (pending.length > 1) throw new Error('存在多条待收款记录，请先人工核对');
+      if (pending.length && cents(input.amount, '收款金额') !== cents(
+        textValue(pending[0].fields?.[this.gateway.table('paymentRecord').fields.amount]), '待收记录金额')) {
+        throw new Error('本版请一次收清这条待收款记录；分笔补款暂不支持');
+      }
       await this.store.create({ task_id: taskId, fingerprint, status: 'pending' });
-      const created = await this.payments.record(input);
-      const result = { recordId: created.recordId };
+      const result = pending.length
+        ? { recordId: pending[0].record_id } : { recordId: (await this.payments.record(input)).recordId };
+      if (pending.length) await this.payments.collectPendingReceipt(result.recordId, input);
       await this.store.update(taskId, { status: 'recorded', result });
-      await this.progress.sync(input.salesEntryRecordId, { paymentRecordIds: [created.recordId] });
+      await this.progress.sync(input.salesEntryRecordId, { paymentRecordIds: [result.recordId] });
       await this.store.update(taskId, { status: 'completed', result });
       return result;
     };

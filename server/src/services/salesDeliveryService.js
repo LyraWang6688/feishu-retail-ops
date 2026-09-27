@@ -3,7 +3,7 @@ const { InventoryService } = require('./inventoryService');
 const { SalesProgressService } = require('./salesProgressService');
 const { readSaleLinkedRecord } = require('./salesRecordReader');
 const { withSalesReadRetry } = require('./salesReadRetry');
-const { logInfo } = require('../utils/logger');
+const { logError, logInfo } = require('../utils/logger');
 
 class SalesDeliveryService {
   constructor({ gateway, inventory, progress } = {}) {
@@ -45,50 +45,54 @@ class SalesDeliveryService {
           fields.salesEntry, salesEntryRecordId), 'delivery_detail_by_id',
       );
       byId.set(id, detail);
-      const quantity = Number(textValue(detail.fields?.[fields.quantity]));
-      const delivered = Number(textValue(detail.fields?.[fields.deliveredQuantity]) || 0);
-      if (!Number.isInteger(quantity) || quantity <= 0 || !Number.isInteger(delivered) || delivered < 0 || delivered > quantity) {
-        throw new Error(`销售明细 ${id} 的数量或交付数量无效`);
-      }
-      // MVP: one full delivery per detail. The stock operation is keyed by
-      // detail ID, so retries cannot deduct the same detail a second time.
-      if (delivered > 0 && delivered < quantity) throw new Error(`销售明细 ${id} 已部分交付，请人工核对`);
     }
     const results = [];
-    for (const id of detailRecordIds) {
+    const failures = [];
+    for (const [index, id] of detailRecordIds.entries()) {
       const detail = byId.get(id);
-      const quantity = Number(textValue(detail.fields?.[fields.quantity]));
-      if (Number(textValue(detail.fields?.[fields.deliveredQuantity]) || 0) === quantity) {
-        const inventoryResult = await this.inventory.getSaleResult?.(id);
-        results.push({ detailRecordId: id, duplicate: true, inventoryResult });
-        continue;
-      }
+      const quantity = 1;
+      const size = Number(textValue(detail.fields?.[fields.size]));
       const productIds = linkedRecordIds(detail.fields?.[fields.product]);
-      if (productIds.length !== 1) throw new Error(`销售明细 ${id} 必须关联一个货品`);
-      const inventoryResult = await this.inventory.applySale({
-        salesDetailRecordId: id, productRecordId: productIds[0],
-        size: Number(textValue(detail.fields?.[fields.size])), quantity,
-        occurredAt: Number(occurredAt || Date.now()),
-      });
-      await this.gateway.update('salesDetail', id, { deliveredQuantity: quantity });
-      detail.fields[fields.deliveredQuantity] = quantity;
-      results.push({ detailRecordId: id, inventoryResult });
+      try {
+        const status = textValue(detail.fields?.[fields.fulfillmentStatus]) || '未交付';
+        if (!['未交付', '已交付'].includes(status)) throw new Error(`销售明细 ${id} 履约状态无效：${status}`);
+        if (status === '已交付') {
+          const inventoryResult = await this.inventory.getSaleResult?.(id);
+          results.push({ detailRecordId: id, duplicate: true, inventoryResult });
+          continue;
+        }
+        if (productIds.length !== 1) throw new Error(`销售明细 ${id} 必须关联一个货品`);
+        const inventoryResult = await this.inventory.applySale({
+          salesDetailRecordId: id, productRecordId: productIds[0],
+          size, quantity, occurredAt: Number(occurredAt || Date.now()),
+        });
+        await this.gateway.update('salesDetail', id, { fulfillmentStatus: '已交付' });
+        detail.fields[fields.fulfillmentStatus] = '已交付';
+        results.push({ detailRecordId: id, inventoryResult });
+      } catch (error) {
+        failures.push({ detailRecordId: id, lineNumber: index + 1,
+          productRecordId: productIds[0] || '', size, quantity, error: error.message });
+        logError('sales.delivery.line.failed', { sales_entry_record_id: salesEntryRecordId,
+          detail_record_id: id, line_number: index + 1, product_record_id: productIds[0],
+          size, quantity, error: error.message });
+      }
     }
     const details = [...byId.values()];
-    const deliveredTotal = details.reduce((sum, detail) =>
-      sum + Number(textValue(detail.fields?.[fields.deliveredQuantity]) || 0), 0);
-    const total = details.reduce((sum, detail) => sum + Number(textValue(detail.fields?.[fields.quantity]) || 0), 0);
-    await this.progress.sync(salesEntryRecordId, { detailRecordIds, paymentRecordIds });
+    const deliveredTotal = details.filter((detail) =>
+      textValue(detail.fields?.[fields.fulfillmentStatus]) === '已交付').length;
+    const total = details.length;
+    const progress = await this.progress.sync(salesEntryRecordId, { detailRecordIds, paymentRecordIds });
     logInfo('sales.delivery.completed', { sales_entry_record_id: salesEntryRecordId,
-      detail_count: results.length, delivered_quantity: deliveredTotal });
+      detail_count: results.length, failed_count: failures.length,
+      delivered_quantity: deliveredTotal, fulfillment_status: progress.fulfillmentStatus });
     const sampleReplacements = results.filter((item) => item.inventoryResult?.sampleConsumedQuantity > 0)
       .map((item) => ({ salesDetailRecordId: item.detailRecordId,
         productRecordId: item.inventoryResult.productRecordId,
         sampleConsumedQuantity: item.inventoryResult.sampleConsumedQuantity,
         consumedLiveRecordIds: item.inventoryResult.consumedLiveRecordIds || [],
         remainingSizes: item.inventoryResult.remainingSizes || [] }));
-    return { salesEntryRecordId, results, deliveredQuantity: deliveredTotal, totalQuantity: total,
-      sampleReplacements };
+    return { salesEntryRecordId, results, failures, deliveredQuantity: deliveredTotal,
+      totalQuantity: total, fulfillmentStatus: progress.fulfillmentStatus, sampleReplacements };
   }
 }
 

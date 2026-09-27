@@ -43,10 +43,12 @@ class SalesOrderService {
         const product = await this.references.resolveProduct({ ...item, matchMode: 'sales' });
         const actualAmountCents = cents(item.actualAmount, '销售明细成交金额');
         if (actualAmountCents <= 0) throw new Error('销售明细成交金额必须大于 0');
+        if (positiveInteger(item.quantity, '销售数量') !== 1) {
+          throw new Error('一条销售明细只能记录一双鞋；请逐双说明成交金额');
+        }
         expected.push({
           productRecordId: product.recordId,
           size: positiveInteger(item.size, '尺码'),
-          quantity: positiveInteger(item.quantity, '销售数量'),
           actualAmount: actualAmountCents / 100,
           gift: item.gift ? String(item.giftDescription || '有赠品').trim() : '',
         });
@@ -54,6 +56,9 @@ class SalesOrderService {
       const payments = input.payments || (input.totalPaid && input.paymentMethod
         ? [{ amount: input.totalPaid, method: input.paymentMethod, operatorOpenId: input.operatorOpenId }]
         : []);
+      if (payments.some((payment) => payment.status === '未收款')) {
+        throw new Error('待收款记录由销售入账自动生成，请勿作为实际收款提交');
+      }
       const totalCents = expected.reduce((sum, item) => sum + cents(item.actualAmount, '成交金额'), 0);
       const paidCents = payments.reduce((sum, payment) => sum + cents(payment.amount, '收款金额'), 0);
       if (paidCents > totalCents) throw new Error('本次收款超过本单成交金额');
@@ -78,7 +83,6 @@ class SalesOrderService {
           (knownId ? record.record_id === knownId : !reserved.has(record.record_id)) &&
           linkedRecordIds(record.fields?.[table.product]).includes(item.productRecordId) &&
           Number(textValue(record.fields?.[table.size])) === item.size &&
-          Number(textValue(record.fields?.[table.quantity])) === item.quantity &&
           Number(textValue(record.fields?.[table.actualAmount])) === item.actualAmount &&
           textValue(record.fields?.[table.gift]) === item.gift);
         if (knownId && !match) throw new Error(`已记录的销售明细 ${knownId} 与当前草稿不一致，已停止重试`);
@@ -94,15 +98,18 @@ class SalesOrderService {
         if (!row.recordId) {
           const created = await this.gateway.create('salesDetail', {
             salesEntry: relation(salesEntryRecordId), product: relation(row.item.productRecordId),
-            size: row.item.size, quantity: row.item.quantity, gift: row.item.gift,
-            actualAmount: row.item.actualAmount,
+            size: row.item.size, gift: row.item.gift,
+            actualAmount: row.item.actualAmount, fulfillmentStatus: '未交付',
           });
           row.recordId = created.recordId;
         }
         await input.onRecordPersisted?.('details', row.index, row.recordId);
       }
       const detailRecordIds = rows.map((row) => row.recordId);
-      const paymentRecordIds = await this.payments.recordInitialBatch(salesEntryRecordId, payments, {
+      const outstandingCents = totalCents - paidCents;
+      const expectedPayments = outstandingCents > 0
+        ? [...payments, { amount: outstandingCents / 100, status: '未收款' }] : payments;
+      const paymentRecordIds = await this.payments.recordInitialBatch(salesEntryRecordId, expectedPayments, {
         knownRecordIds: input.knownRecordIds?.payments,
         onRecordPersisted: (index, id) => input.onRecordPersisted?.('payments', index, id),
       });

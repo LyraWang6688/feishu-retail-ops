@@ -104,7 +104,9 @@ const createWorkbenchService = (gateway, options = {}) => {
         const orderId = salesEntryIds[0] || '';
         const order = entriesById.get(orderId);
         const receiptRows = receiptsByOrder.get(orderId) || [];
-        const saleDate = asDate(soldAt) || asDate(fieldValue(schema, 'salesEntry', order, 'sentAt'));
+        const saleDate = asDate(soldAt) || asDate(fieldValue(schema, 'salesEntry', order, 'recordedAt'));
+        const quantity = 1;
+        const listUnitPrice = asOptionalNumber(fieldValue(schema, 'salesDetail', record, 'listUnitPrice'));
         return {
           record_id: record.record_id,
           detail_id: asText(schema, 'salesDetail', record, 'detailId'),
@@ -113,9 +115,9 @@ const createWorkbenchService = (gateway, options = {}) => {
           sold_at: saleDate?.toISOString() || '',
           ...buildProductLabel(schema, productsById, productIds),
           size: asText(schema, 'salesDetail', record, 'size'),
-          quantity: asNumber(fieldValue(schema, 'salesDetail', record, 'quantity')),
+          quantity,
           receivable_amount: asOptionalNumber(fieldValue(schema, 'salesDetail', record, 'actualAmount')),
-          list_amount: asOptionalNumber(fieldValue(schema, 'salesDetail', record, 'receivableAmount')),
+          list_amount: listUnitPrice === null ? null : Math.round(listUnitPrice * quantity * 100) / 100,
           gift: asText(schema, 'salesDetail', record, 'gift'),
           payment_method: [...new Set(receiptRows.map((payment) => relationLabel(schema, 'paymentMethod', paymentsById,
             asLinks(schema, 'paymentRecord', payment, 'method'), 'name')))].filter(Boolean).join('＋') || '未收款',
@@ -138,11 +140,11 @@ const createWorkbenchService = (gateway, options = {}) => {
     for (const orderId of orderIds) {
       for (const receipt of receiptsByOrder.get(orderId) || []) {
         const paid = asNumber(fieldValue(schema, 'paymentRecord', receipt, 'amount'));
-        const status = asText(schema, 'paymentRecord', receipt, 'status') || '已收清';
+        const status = asText(schema, 'paymentRecord', receipt, 'status') || '已收款';
         const method = relationLabel(schema, 'paymentMethod', paymentsById,
           asLinks(schema, 'paymentRecord', receipt, 'method'), 'name') || '未填写';
         if (status === '待平台结算') summary.platform_pending_amount += paid;
-        else {
+        else if (status === '已收款' || status === '已收清' || status === '已结清') {
           summary.paid_amount += paid;
           paymentSummary[method] = (paymentSummary[method] || 0) + paid;
         }
