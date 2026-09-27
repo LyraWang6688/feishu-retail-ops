@@ -1,5 +1,7 @@
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { V1ReferenceResolver, relation } = require('./v1ReferenceResolver');
+const { readSaleLinkedRecord } = require('./salesRecordReader');
+const { withSalesReadRetry } = require('./salesReadRetry');
 const { PaymentService } = require('./paymentService');
 const { SalesProgressService, cents } = require('./salesProgressService');
 const { logInfo, logError } = require('../utils/logger');
@@ -32,10 +34,13 @@ class SalesOrderService {
     if (!Array.isArray(input.items) || !input.items.length) throw new Error('至少需要一条销售明细');
     await this.gateway.validateTables?.(['product', 'paymentMethod', 'salesEntry', 'salesDetail', 'paymentRecord']);
     await this.gateway.update('salesEntry', salesEntryRecordId, { confirmStatus: '入账中', failureReason: '' });
+    // A previous attempt may have completed all detail/receipt writes before a read failed.
+    // The persisted task is the source of that stage on the next card callback.
+    let financialRecorded = input.knownFinancialComplete === true;
     try {
       const expected = [];
       for (const item of input.items) {
-        const product = await this.references.resolveProduct(item);
+        const product = await this.references.resolveProduct({ ...item, matchMode: 'sales' });
         const actualAmountCents = cents(item.actualAmount, '销售明细成交金额');
         if (actualAmountCents <= 0) throw new Error('销售明细成交金额必须大于 0');
         expected.push({
@@ -52,21 +57,35 @@ class SalesOrderService {
       const totalCents = expected.reduce((sum, item) => sum + cents(item.actualAmount, '成交金额'), 0);
       const paidCents = payments.reduce((sum, payment) => sum + cents(payment.amount, '收款金额'), 0);
       if (paidCents > totalCents) throw new Error('本次收款超过本单成交金额');
+      if ((input.knownRecordIds?.details || []).slice(expected.length).some(Boolean)) {
+        throw new Error('已保存的销售明细数量超过当前草稿，已停止重试');
+      }
       const table = this.gateway.table('salesDetail').fields;
-      const existing = (await this.gateway.listAll('salesDetail')).filter((record) =>
+      const existing = (await withSalesReadRetry(() => this.gateway.listAll('salesDetail'), 'sale_detail_list')).filter((record) =>
         linkedRecordIds(record.fields?.[table.salesEntry]).includes(salesEntryRecordId));
+      for (const id of input.knownRecordIds?.details || []) {
+        if (!id || existing.some((record) => record.record_id === id)) continue;
+        existing.push(await withSalesReadRetry(
+          () => readSaleLinkedRecord(this.gateway, 'salesDetail', id, table.salesEntry, salesEntryRecordId),
+          'sale_detail_by_id',
+        ));
+      }
       const used = new Set();
-      const rows = expected.map((item) => {
+      const reserved = new Set((input.knownRecordIds?.details || []).filter(Boolean));
+      const rows = expected.map((item, index) => {
+        const knownId = input.knownRecordIds?.details?.[index];
         const match = existing.find((record) => !used.has(record.record_id) &&
+          (knownId ? record.record_id === knownId : !reserved.has(record.record_id)) &&
           linkedRecordIds(record.fields?.[table.product]).includes(item.productRecordId) &&
           Number(textValue(record.fields?.[table.size])) === item.size &&
           Number(textValue(record.fields?.[table.quantity])) === item.quantity &&
           Number(textValue(record.fields?.[table.actualAmount])) === item.actualAmount &&
           textValue(record.fields?.[table.gift]) === item.gift);
+        if (knownId && !match) throw new Error(`已记录的销售明细 ${knownId} 与当前草稿不一致，已停止重试`);
         if (match) {
           used.add(match.record_id);
         }
-        return { item, recordId: match?.record_id || '' };
+        return { item, recordId: match?.record_id || '', index };
       });
       if (existing.some((record) => !used.has(record.record_id))) {
         throw new Error('销售主表已有与当前草稿不一致的明细，已停止自动重试');
@@ -80,23 +99,34 @@ class SalesOrderService {
           });
           row.recordId = created.recordId;
         }
+        await input.onRecordPersisted?.('details', row.index, row.recordId);
       }
       const detailRecordIds = rows.map((row) => row.recordId);
-      const paymentRecordIds = await this.payments.recordInitialBatch(salesEntryRecordId, payments);
+      const paymentRecordIds = await this.payments.recordInitialBatch(salesEntryRecordId, payments, {
+        knownRecordIds: input.knownRecordIds?.payments,
+        onRecordPersisted: (index, id) => input.onRecordPersisted?.('payments', index, id),
+      });
+      financialRecorded = true;
       await this.gateway.update('salesEntry', salesEntryRecordId, {
         confirmStatus: '已入账',
       });
       await this.progress.sync(salesEntryRecordId, { detailRecordIds, paymentRecordIds });
-      const order = await this.gateway.get('salesEntry', salesEntryRecordId);
+      const order = await withSalesReadRetry(
+        () => this.gateway.get('salesEntry', salesEntryRecordId), 'sale_entry_by_id',
+      );
       const sourceNo = textValue(order?.fields?.[this.gateway.table('salesEntry').fields.orderNo]) || salesEntryRecordId;
       logInfo('v1.sale.posted', { sales_entry_record_id: salesEntryRecordId, detail_count: detailRecordIds.length,
         payment_count: paymentRecordIds.length, inventory_applied: false });
       return { sourceNo, detailRecordIds, paymentRecordIds, inventoryApplied: false };
     } catch (error) {
+      error.saleRecordsWritten = financialRecorded;
       await this.gateway.update('salesEntry', salesEntryRecordId, {
-        confirmStatus: '入账失败', failureReason: error.message,
+        confirmStatus: financialRecorded ? '已入账' : '入账失败',
+        failureReason: financialRecorded ? `销售记录已写入，后续同步待恢复：${error.message}` : error.message,
       }).catch(() => undefined);
-      logError('v1.sale.post_failed', { sales_entry_record_id: salesEntryRecordId, error: error.message });
+      logError(financialRecorded ? 'v1.sale.sync_pending' : 'v1.sale.post_failed', {
+        sales_entry_record_id: salesEntryRecordId, error: error.message,
+      });
       throw error;
     }
   }

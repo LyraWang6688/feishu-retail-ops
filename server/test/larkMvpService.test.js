@@ -146,6 +146,7 @@ test('sales intake writes only intake metadata and retains actual amount before 
   const store = makeStore();
   const calls = [];
   const cards = [];
+  const productLookups = [];
   const service = new LarkMvpService({
     client: {},
     gateway: {
@@ -160,10 +161,13 @@ test('sales intake writes only intake metadata and retains actual amount before 
       },
     },
     references: {
-      resolveProduct: async () => ({
-        recordId: 'rec_product',
-        record: { fields: { 编号: '8088-26|棕|女鞋' } },
-      }),
+      resolveProduct: async (input) => {
+        productLookups.push(input);
+        return {
+          recordId: 'rec_product',
+          record: { fields: { 编号: '8088-26|棕|女鞋' } },
+        };
+      },
     },
     posting: {},
     recognizer: {
@@ -211,6 +215,7 @@ test('sales intake writes only intake metadata and retains actual amount before 
   assert.match(JSON.stringify(cards[0].card), /8088-26\|棕\|女鞋/);
   const task = await store.get('sale_test');
   assert.equal(task.draft.items[0].product_record_id, 'rec_product');
+  assert.deepEqual(productLookups, [{ itemNo: '8088-26', color: '棕', matchMode: 'sales' }]);
 });
 
 test('two products and two payments stay in one sales draft and confirmation card', async () => {
@@ -380,17 +385,18 @@ test('failed card posting returns the draft to a retryable state', async () => {
     store,
   });
 
-  await assert.rejects(
-    service.handleCardAction({
-      operator: { operator_id: { open_id: 'ou_1' } },
-      action: { value: { action: 'confirm_sale', draft_id: 'sale_retry' } },
-    }),
-    /temporary failure/,
-  );
+  const result = await service.handleCardAction({
+    operator: { operator_id: { open_id: 'ou_1' } },
+    action: { value: { action: 'confirm_sale', draft_id: 'sale_retry' } },
+  });
+  assert.match(result.toast.content, /请核对原卡片后重试/);
 
   const task = await store.get('sale_retry');
   assert.equal(task.status, 'ready_to_confirm');
   assert.equal(task.posting_error, 'temporary failure');
+  await service.handleCardAction({ operator: { operator_id: { open_id: 'ou_1' } },
+    action: { value: { action: 'confirm_sale_pending', draft_id: 'sale_retry' } } });
+  assert.equal((await store.get('sale_retry')).posting_requested_action, 'confirm_sale_pending');
 });
 
 test('sale card shows processing immediately and becomes action-free after posting', async () => {
@@ -476,14 +482,69 @@ test('failed sale posting restores action buttons for retry', async () => {
     gateway: {}, references: {}, recognizer: {}, store,
     posting: { postSale: async () => { throw new Error('temporary failure'); } },
   });
-  await assert.rejects(() => service.handleCardAction({
+  const result = await service.handleCardAction({
     operator: { operator_id: { open_id: 'ou_1' } },
     action: { value: { action: 'confirm_sale', draft_id: 'sale_card_retry' } },
-  }), /temporary failure/);
+  });
+  assert.match(result.toast.content, /请核对原卡片后重试/);
   assert.equal(cards.length, 2);
   assert.match(JSON.stringify(cards[1]), /入账失败/);
   assert.ok(cards[1].elements.some((element) => element.tag === 'action'));
   assert.equal((await store.get('sale_card_retry')).status, 'ready_to_confirm');
+});
+
+test('sale card persists written record IDs and distinguishes pending sync from failed creation', async () => {
+  const store = makeStore();
+  const cards = [];
+  let postingCalls = 0;
+  let deliveryCalls = 0;
+  await store.create({ task_id: 'sale_sync_retry', type: 'sale', status: 'ready_to_confirm',
+    sender_open_id: 'ou_1', sales_entry_record_id: 'order_1', card_message_id: 'om_card',
+    draft: { items: [{ product_record_id: 'product_1', item_no: 'A100', size: 39,
+      quantity: 1, actual_amount: 260 }], payments: [{ method: '微信', amount: 260 }], agreed_total: 260 } });
+  const service = new LarkMvpService({ client: {}, gateway: {}, references: {}, recognizer: {}, store,
+    posting: { postSale: async (input) => {
+      postingCalls += 1;
+      if (postingCalls === 1) {
+        await input.onRecordPersisted('details', 0, 'detail_1');
+        await input.onRecordPersisted('payments', 0, 'payment_1');
+        const error = new Error('Request failed with status code 400');
+        error.response = { data: { code: 1254607 } };
+        error.saleRecordsWritten = true;
+        throw error;
+      }
+      assert.deepEqual(input.knownRecordIds, { details: ['detail_1'], payments: ['payment_1'] });
+      assert.equal(input.knownFinancialComplete, true);
+      return { sourceNo: 'XSD-001', detailRecordIds: ['detail_1'], paymentRecordIds: ['payment_1'] };
+    } },
+    delivery: { deliver: async () => { deliveryCalls += 1; return { sampleReplacements: [] }; } },
+  });
+  service.updateSalesActionCard = async (_task, _event, card) => { cards.push(card); return true; };
+  const event = { operator: { operator_id: { open_id: 'ou_1' } },
+    action: { value: { action: 'confirm_sale_delivered', draft_id: 'sale_sync_retry' } } };
+  const pending = await service.handleCardAction(event);
+  assert.match(pending.toast.content, /记录已写入，进度待同步/);
+  assert.match(JSON.stringify(cards.at(-1)), /库存未扣/);
+  assert.doesNotMatch(JSON.stringify(cards.at(-1)), /入账失败/);
+  const retryActions = cards.at(-1).elements.find((element) => element.tag === 'action').actions;
+  assert.deepEqual(retryActions.map((button) => button.value.action), ['confirm_sale_delivered']);
+  assert.equal((await store.get('sale_sync_retry')).status, 'ready_to_confirm');
+  assert.deepEqual((await store.get('sale_sync_retry')).posting_record_ids,
+    { details: ['detail_1'], payments: ['payment_1'] });
+  assert.equal((await store.get('sale_sync_retry')).posting_records_written, true);
+  assert.equal(deliveryCalls, 0);
+  const cancelled = await service.handleCardAction({ ...event,
+    action: { value: { action: 'cancel', draft_id: 'sale_sync_retry' } } });
+  assert.match(cancelled.toast.content, /不能直接取消或修改/);
+  const changed = await service.handleCardAction({ ...event,
+    action: { value: { action: 'confirm_sale_pending', draft_id: 'sale_sync_retry' } } });
+  assert.match(changed.toast.content, /原来的交付选择/);
+  assert.equal(postingCalls, 1);
+
+  const recovered = await service.handleCardAction(event);
+  assert.match(recovered.toast.content, /库存已更新/);
+  assert.equal(deliveryCalls, 1);
+  assert.equal((await store.get('sale_sync_retry')).status, 'posted');
 });
 
 test('today sales menu returns only confirmed detail rows from the Shanghai calendar day', async () => {

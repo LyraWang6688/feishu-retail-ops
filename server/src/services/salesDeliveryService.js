@@ -2,6 +2,7 @@ const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { InventoryService } = require('./inventoryService');
 const { SalesProgressService } = require('./salesProgressService');
 const { readSaleLinkedRecord } = require('./salesRecordReader');
+const { withSalesReadRetry } = require('./salesReadRetry');
 const { logInfo } = require('../utils/logger');
 
 class SalesDeliveryService {
@@ -24,19 +25,25 @@ class SalesDeliveryService {
     if (!Array.isArray(detailRecordIds) || !detailRecordIds.length) throw new Error('请选择交付的销售明细');
     if (new Set(detailRecordIds).size !== detailRecordIds.length) throw new Error('交付明细不能重复');
     await this.gateway.validateTables?.(['salesEntry', 'salesDetail', 'behavior', 'inventoryLedger', 'liveInventory']);
-    const entry = await this.gateway.get('salesEntry', salesEntryRecordId);
+    const entry = await withSalesReadRetry(
+      () => this.gateway.get('salesEntry', salesEntryRecordId), 'delivery_sale_entry',
+    );
     if (!entry) throw new Error('销售主表记录不存在');
     const entryFields = this.gateway.table('salesEntry').fields;
     if (textValue(entry.fields?.[entryFields.confirmStatus]) !== '已入账') throw new Error('销售订单尚未确认入账');
     const fields = this.gateway.table('salesDetail').fields;
-    const listedDetails = (await this.gateway.listAll('salesDetail')).filter((record) =>
+    const listedDetails = (await withSalesReadRetry(
+      () => this.gateway.listAll('salesDetail'), 'delivery_detail_list',
+    )).filter((record) =>
       linkedRecordIds(record.fields?.[fields.salesEntry]).includes(salesEntryRecordId));
     const byId = new Map(listedDetails.map((record) => [record.record_id, record]));
     for (const id of detailRecordIds) {
       // The caller has exact IDs from creation. Do not depend on a freshly
       // created relation already appearing in Bitable's list response.
-      const detail = await readSaleLinkedRecord(this.gateway, 'salesDetail', id,
-        fields.salesEntry, salesEntryRecordId);
+      const detail = await withSalesReadRetry(
+        () => readSaleLinkedRecord(this.gateway, 'salesDetail', id,
+          fields.salesEntry, salesEntryRecordId), 'delivery_detail_by_id',
+      );
       byId.set(id, detail);
       const quantity = Number(textValue(detail.fields?.[fields.quantity]));
       const delivered = Number(textValue(detail.fields?.[fields.deliveredQuantity]) || 0);

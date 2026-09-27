@@ -25,10 +25,14 @@ const explicitCashPayments = (sourceText) => [...String(sourceText || '')
   .matchAll(/(?:[¥￥]\s*)?(\d+(?:\.\d{1,2})?)\s*(?:元|块)?\s*(微信|现金|支付宝)/g)]
   .map((match) => ({ amount: Number(match[1]), method: match[2] }));
 
+const explicitSalePrices = (sourceText) => [...String(sourceText || '')
+  .matchAll(/(?:成交价|成交金额|这双鞋(?:的)?(?:卖价|售价|价格)|鞋(?:子)?(?:的)?(?:卖价|售价))\s*(?:是|为|共|合计)?\s*[:：]?\s*[¥￥]?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)?/g)]
+  .map((match) => Number(match[1]));
+
 // The model extracts facts, but this policy owns voucher economics and status.
 // It intentionally handles one voucher on one shoe only; ambiguous cases must
 // go back to the cashier rather than creating an incorrect receipt.
-const applyGroupBuyVoucherPolicy = ({ sourceText, items, payments, agreedTotal }) => {
+const applyGroupBuyVoucherPolicy = ({ sourceText, items, payments }) => {
   const source = String(sourceText || '');
   const mentions = voucherMentions(source);
   const couponInPayments = payments.some((payment) => isVoucherMethod(payment.method));
@@ -69,9 +73,11 @@ const applyGroupBuyVoucherPolicy = ({ sourceText, items, payments, agreedTotal }
   const settlementCents = cents(voucher.settlementAmount);
   const netCents = cashCents + settlementCents;
   const grossCents = cashCents + cents(voucher.faceValue);
-  const reportedAmounts = [items[0].actual_amount, agreedTotal].filter((value) => Number(value) > 0);
-  if (reportedAmounts.some((value) => ![netCents, grossCents].includes(cents(value)))) {
-    issues.push('口述售价与微信金额及团购券抵扣不一致，请说明成交价');
+  // AI may mistake the cash top-up for the full shoe price. Only a price
+  // explicitly stated as the shoe's sale price in the user's words can
+  // contradict the deterministic cash + voucher calculation.
+  if (explicitSalePrices(source).some((value) => ![netCents, grossCents].includes(cents(value)))) {
+    issues.push('明确说出的成交价与实际支付及团购券抵扣不一致，请核对');
     return { issues };
   }
 

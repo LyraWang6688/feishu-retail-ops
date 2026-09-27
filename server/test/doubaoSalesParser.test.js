@@ -147,6 +147,62 @@ test('spoken cash facts override an AI payment array that mistakes voucher face 
   assert.deepEqual(result.missing_fields, []);
 });
 
+test('AI calling a 19-yuan top-up the shoe price does not block a voucher sale', () => {
+  const result = normalizeSalesResult({ intent: 'sale', items: [
+    { item_no: '31663', color: '黑', size: 40, quantity: 1, actual_amount: 19 }],
+    payments: [{ method: '微信', amount: 19 }], agreed_total: 19,
+  }, '31663黑40的是19元微信，再加上一个89.9块抵100块钱的代金券');
+  assert.equal(result.items[0].actual_amount, 104.4);
+  assert.equal(result.agreed_total, 104.4);
+  assert.deepEqual(result.missing_fields, []);
+});
+
+test('explicit contradictory sale price still blocks a voucher sale', () => {
+  const result = normalizeSalesResult({ intent: 'sale', items: [
+    { item_no: '31663', color: '黑', size: 40, quantity: 1, actual_amount: 19 }],
+    payments: [{ method: '微信', amount: 19 }], agreed_total: 19,
+  }, '31663黑40成交价120元，19元微信，再加一个89.9抵100代金券');
+  assert.ok(result.missing_fields.some((field) => field.includes('成交价')));
+});
+
+test('voucher parsing preserves two gifts and logs AI values separately from normalized values', async () => {
+  const oldKey = process.env.ARK_API_KEY;
+  const oldModel = process.env.ARK_MODEL_ENDPOINT;
+  const oldGetClient = salesParser.getClient;
+  const oldLog = console.log;
+  const logs = [];
+  process.env.ARK_API_KEY = 'test-key';
+  process.env.ARK_MODEL_ENDPOINT = 'test-model';
+  try {
+    console.log = (line) => logs.push(JSON.parse(line));
+    salesParser.getClient = () => ({ chat: { completions: { create: async () => ({ choices: [{ message: { content: JSON.stringify({
+      intent: 'sale', items: [{ item_no: '31663', color: '黑', size: 40, quantity: 1,
+        actual_amount: 19, gift: true, gift_description: '一双鞋垫' }],
+      payments: [{ method: '微信', amount: 19 }], agreed_total: 19,
+    }) } }] }) } } });
+    const result = await salesParser.parseSalesText(
+      '31663黑40的是19元微信，再加上一个89.9块抵100块钱的代金券，赠了一双鞋垫，赠了一双袜子',
+      { taskId: 'sale_log_test' });
+    assert.equal(result.items[0].actual_amount, 104.4);
+    assert.equal(result.items[0].gift_description, '一双鞋垫、一双袜子');
+    assert.deepEqual(result.missing_fields, []);
+    assert.equal(logs[0].event, 'sales.ai.parsed');
+    assert.equal(logs[0].task_id, 'sale_log_test');
+    assert.equal(logs[0].items[0].actual_amount, 19);
+    assert.equal(logs[1].event, 'sales.ai.normalized');
+    assert.equal(logs[1].items[0].actual_amount, 104.4);
+    assert.equal(logs[1].items[0].gift_description, '一双鞋垫、一双袜子');
+    assert.ok(logs.every((entry) => !JSON.stringify(entry).includes('31663黑40的是')));
+  } finally {
+    console.log = oldLog;
+    salesParser.getClient = oldGetClient;
+    if (oldKey === undefined) delete process.env.ARK_API_KEY;
+    else process.env.ARK_API_KEY = oldKey;
+    if (oldModel === undefined) delete process.env.ARK_MODEL_ENDPOINT;
+    else process.env.ARK_MODEL_ENDPOINT = oldModel;
+  }
+});
+
 test('unknown voucher or multiple shoes cannot silently create a settled receipt', () => {
   const unknown = normalizeSalesResult({ intent: 'sale', items: [
     { item_no: 'A100', size: 38, quantity: 1, actual_amount: 269 }],

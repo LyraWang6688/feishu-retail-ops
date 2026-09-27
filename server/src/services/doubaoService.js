@@ -4,6 +4,34 @@ const { getModuleDefinition } = require('../config/modules');
 const { logError, logInfo } = require('../utils/logger');
 const { applyGroupBuyVoucherPolicy } = require('./groupBuyVoucherPolicy');
 
+// Log only the sale fields needed to compare AI extraction with deterministic
+// normalization. Never log the complete user message, prompt or raw model JSON.
+const salesParseSnapshot = (result = {}) => ({
+  intent: result.intent,
+  delivery_status: result.delivery_status,
+  items: (Array.isArray(result.items) && result.items.length ? result.items : [result]).map((item) => ({
+    item_no: String(item.item_no || '').slice(0, 80),
+    color: String(item.color || '').slice(0, 40),
+    size: item.size,
+    quantity: item.quantity,
+    actual_amount: item.actual_amount,
+    gift: item.gift,
+    gift_description: String(item.gift_description || '').slice(0, 100),
+  })),
+  payments: (Array.isArray(result.payments) ? result.payments : []).map((payment) => ({
+    method: String(payment.method || '').slice(0, 40), amount: payment.amount, status: payment.status,
+  })),
+  agreed_total: result.agreed_total,
+  total_paid: result.total_paid,
+  payment_method: result.payment_method,
+  missing_fields: (Array.isArray(result.missing_fields) ? result.missing_fields : [])
+    .map((field) => String(field).slice(0, 100)),
+});
+
+const explicitSingleShoeGifts = (sourceText) => [...String(sourceText || '')
+  .matchAll(/(?:赠送?|送)(?:了)?\s*([^，,。；;、]+?)(?=[，,。；;、]|$)/g)]
+  .map((match) => match[1].trim()).filter(Boolean);
+
 const positiveOrEmpty = (value) => {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : '';
@@ -49,7 +77,7 @@ const normalizeSalesResult = (result = {}, sourceText = '') => {
   if (!agreedTotal && items.length && items.every((item) => item.actual_amount)) {
     agreedTotal = Math.round(items.reduce((sum, item) => sum + Number(item.actual_amount), 0) * 100) / 100;
   }
-  const voucherPolicy = applyGroupBuyVoucherPolicy({ sourceText, items, payments, agreedTotal });
+  const voucherPolicy = applyGroupBuyVoucherPolicy({ sourceText, items, payments });
   if (voucherPolicy?.items) {
     items.splice(0, items.length, ...voucherPolicy.items);
     payments = voucherPolicy.payments;
@@ -108,7 +136,7 @@ class DoubaoService {
     return this.client;
   }
 
-  async parseSalesText(text) {
+  async parseSalesText(text, { taskId } = {}) {
     this.apiKey = process.env.ARK_API_KEY;
     this.endpointId = process.env.ARK_MODEL_ENDPOINT;
     if (!this.apiKey || !this.endpointId) {
@@ -156,18 +184,21 @@ class DoubaoService {
     const content = response.choices?.[0]?.message?.content || '';
     try {
       const result = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
+      logInfo('sales.ai.parsed', { task_id: taskId, ...salesParseSnapshot(result) });
       const normalized = normalizeSalesResult(result, originalText);
-      // For the one-shoe MVP, a gift explicitly present in the source text
-      // must not disappear just because the model omitted gift fields.
-      if (normalized.items.length === 1 && !normalized.items[0].gift) {
-        const explicitGift = originalText.match(/(?:赠送?|送)(?:了)?\s*([^，,。；;、]+?)(?=[，,。；;、]|$)/);
-        if (explicitGift) {
+      // For one shoe, the original words are authoritative for every gift,
+      // even when the model recognizes only the first one.
+      if (normalized.items.length === 1) {
+        const gifts = explicitSingleShoeGifts(originalText);
+        if (gifts.length) {
           normalized.items[0].gift = true;
-          normalized.items[0].gift_description = explicitGift[1].trim();
+          normalized.items[0].gift_description = [...new Set(gifts)].join('、');
           normalized.gift = true;
           normalized.gift_description = normalized.items[0].gift_description;
         }
       }
+      logInfo('sales.ai.normalized', { task_id: taskId, ...salesParseSnapshot(normalized),
+        voucher: normalized.voucher });
       return normalized;
     } catch (error) {
       throw new Error(`销售文字解析失败: ${error.message}`);

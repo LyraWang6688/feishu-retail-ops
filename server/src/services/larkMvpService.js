@@ -13,6 +13,7 @@ const { SampleReplacementService } = require('./sampleReplacementService');
 const { PurchaseDraftBuilder } = require('./purchaseDraftBuilder');
 const { PurchaseWebhookService } = require('./purchaseWebhookService');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
+const { isDataNotReady } = require('./salesReadRetry');
 const { purchaseConfirmationCard, salesConfirmationCard, salesStatusCard, todaySalesCard } = require('../utils/larkCards');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
@@ -340,7 +341,7 @@ class LarkMvpService {
     const startedAt = Date.now();
     logInfo('lark.sales.processing.started', { task_id: taskId });
     const task = await this.store.get(taskId);
-    const parsed = await this.recognizer.parseSalesText(task.original_text);
+    const parsed = await this.recognizer.parseSalesText(task.original_text, { taskId });
     if (parsed.intent !== 'sale') {
       await this.store.update(taskId, { status: 'ignored', draft: parsed });
       logInfo('lark.sales.processing.ignored', {
@@ -371,7 +372,7 @@ class LarkMvpService {
     for (const [index, item] of (parsed.items?.length ? parsed.items : [parsed]).entries()) {
       let product;
       if (item.item_no && item.size) {
-        try { product = await this.references.resolveProduct({ itemNo: item.item_no, color: item.color }); }
+        try { product = await this.references.resolveProduct({ itemNo: item.item_no, color: item.color, matchMode: 'sales' }); }
         catch (error) { missingFields.push(`第${index + 1}件：${error.message}`); }
       }
       const configuredNumber = product
@@ -549,6 +550,15 @@ class LarkMvpService {
     if (task.status === 'awaiting_correction' && action !== 'cancel') {
       return { toast: { type: 'info', content: '该草稿正在等待修正，请重新发送完整销售信息' } };
     }
+    const hasWrittenSaleRecords = task.type === 'sale' && (task.posting_records_written === true ||
+      Object.values(task.posting_record_ids || {}).some((ids) => Array.isArray(ids) && ids.some(Boolean)));
+    if (hasWrittenSaleRecords && ['cancel', 'modify_sale'].includes(action)) {
+      return { toast: { type: 'warning', content: '这张销售单已有明细或收款，不能直接取消或修改；请先核对现有记录' } };
+    }
+    if (hasWrittenSaleRecords && ['confirm_sale', 'confirm_sale_pending', 'confirm_sale_delivered'].includes(action) &&
+      task.posting_requested_action && action !== task.posting_requested_action) {
+      return { toast: { type: 'warning', content: '请沿用原来的交付选择继续处理这张销售单' } };
+    }
 
     if (action === 'cancel') {
       await this.store.update(draftId, { status: 'cancelled' });
@@ -572,7 +582,9 @@ class LarkMvpService {
       return { toast: { type: 'info', content: '请重新发送修正后的完整销售信息' } };
     }
 
-    await this.store.update(draftId, { status: 'posting' });
+    await this.store.update(draftId, { status: 'posting',
+      ...(task.type === 'sale' ? { posting_requested_action: hasWrittenSaleRecords
+        ? task.posting_requested_action || action : action } : {}) });
     try {
     if (['confirm_sale', 'confirm_sale_pending', 'confirm_sale_delivered'].includes(action) && task.type === 'sale') {
       const cardUpdated = await this.updateSalesActionCard(task, event,
@@ -581,6 +593,15 @@ class LarkMvpService {
       const startedAt = Date.now();
       const result = await this.posting.postSale({
         salesEntryRecordId: task.sales_entry_record_id,
+        knownRecordIds: task.posting_record_ids,
+        knownFinancialComplete: task.posting_records_written === true,
+        onRecordPersisted: async (kind, index, recordId) => {
+          const current = await this.store.get(draftId);
+          const ids = { ...(current?.posting_record_ids || {}) };
+          const kindIds = [...(ids[kind] || [])];
+          kindIds[index] = recordId;
+          await this.store.update(draftId, { posting_record_ids: { ...ids, [kind]: kindIds } });
+        },
         operatorOpenId,
         paymentMethod: task.draft.payment_method,
         totalPaid: task.draft.total_paid,
@@ -666,15 +687,34 @@ class LarkMvpService {
     } catch (error) {
       // Posting services are idempotent. Restore the draft so a corrected configuration or
       // transient Feishu failure can be retried from the same card instead of staying stuck.
+      const waitingForSync = error.saleRecordsWritten === true || task.posting_records_written === true;
       await this.store
-        .update(draftId, { status: 'ready_to_confirm', posting_error: error.message })
+        .update(draftId, { status: 'ready_to_confirm', posting_error: error.message,
+          posting_records_written: waitingForSync })
         .catch(() => undefined);
       if (['confirm_sale', 'confirm_sale_pending', 'confirm_sale_delivered'].includes(action) && task.type === 'sale') {
         const retryCard = salesConfirmationCard(draftId, task.draft);
+        const reason = isDataNotReady(error) ? '飞书数据暂未就绪' : error.message;
+        const current = await this.store.get(draftId);
+        const hasWrittenRecords = waitingForSync || Object.values(current?.posting_record_ids || {})
+          .some((ids) => Array.isArray(ids) && ids.some(Boolean));
+        if (hasWrittenRecords) {
+          const originalAction = current?.posting_requested_action || action;
+          retryCard.elements.filter((element) => element.tag === 'action').forEach((element) => {
+            element.actions = element.actions.filter((button) => button.value?.action === originalAction);
+          });
+        }
         retryCard.elements.splice(1, 0, { tag: 'note', elements: [
-          { tag: 'plain_text', content: `入账失败：${error.message}。请核对后重试。` },
+          { tag: 'plain_text', content: waitingForSync
+            ? `销售明细和收款已记录，但进度同步尚未完成，库存未扣。${reason}；请稍后在原卡片重试，不要重新发送销售。`
+            : `入账失败；可能已有部分记录，库存未扣。${reason}；请核对后在原卡片重试，不要重新发送销售。` },
         ] });
         await this.updateSalesActionCard(task, event, retryCard);
+        logError('lark.sales.posting.retryable', { task_id: draftId,
+          records_written: waitingForSync, error: error.message });
+        return { toast: { type: 'warning', content: waitingForSync
+          ? '销售记录已写入，进度待同步；库存未扣，请稍后在原卡片重试'
+          : '销售尚未完成，请核对原卡片后重试；不要重新发送销售' } };
       }
       throw error;
     }

@@ -1,5 +1,7 @@
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
+const { readSaleLinkedRecord } = require('./salesRecordReader');
+const { withSalesReadRetry } = require('./salesReadRetry');
 
 const amount = (value) => {
   const number = Number(value);
@@ -55,33 +57,49 @@ class PaymentService {
 
   // First confirmation may contain multiple payment methods. Match existing
   // receipts before creating missing ones so a response loss can be retried.
-  async recordInitialBatch(salesEntryRecordId, payments = []) {
+  async recordInitialBatch(salesEntryRecordId, payments = [], options = {}) {
     if (!Array.isArray(payments)) throw new Error('收款记录必须是数组');
     const expected = payments.map((payment) => {
       if (!payment || typeof payment !== 'object') throw new Error('收款记录格式无效');
       return { ...payment, amount: amount(payment.amount) };
     });
-    const existing = await this.recordsForSale(salesEntryRecordId);
+    if ((options.knownRecordIds || []).slice(expected.length).some(Boolean)) {
+      throw new Error('已保存的收款数量超过当前草稿，已停止重试');
+    }
+    const existing = await withSalesReadRetry(
+      () => this.recordsForSale(salesEntryRecordId), 'sale_payment_list',
+    );
     const fields = this.gateway.table('paymentRecord').fields;
+    for (const id of options.knownRecordIds || []) {
+      if (!id || existing.some((record) => record.record_id === id)) continue;
+      existing.push(await withSalesReadRetry(
+        () => readSaleLinkedRecord(this.gateway, 'paymentRecord', id, fields.salesEntry, salesEntryRecordId),
+        'sale_payment_by_id',
+      ));
+    }
     const used = new Set();
+    const reserved = new Set((options.knownRecordIds || []).filter(Boolean));
     const rows = [];
-    for (const payment of expected) {
+    for (const [index, payment] of expected.entries()) {
       const method = await this.references.resolvePaymentMethod(payment.method);
       if (!method) throw new Error('收款缺少支付方式');
       const paid = amount(payment.amount);
+      const knownId = options.knownRecordIds?.[index];
       const match = existing.find((record) => !used.has(record.record_id) &&
+        (knownId ? record.record_id === knownId : !reserved.has(record.record_id)) &&
         linkedRecordIds(record.fields?.[fields.method]).includes(method.recordId) &&
         Number(textValue(record.fields?.[fields.amount])) === paid &&
         (textValue(record.fields?.[fields.status]) || '已收清') === (payment.status || '已收清'));
+      if (knownId && !match) throw new Error(`已记录的收款 ${knownId} 与当前销售草稿不一致，已停止重试`);
       if (match) used.add(match.record_id);
-      rows.push({ payment, recordId: match?.record_id || '' });
+      rows.push({ payment, recordId: match?.record_id || '', index });
     }
     if (existing.some((record) => !used.has(record.record_id))) {
       throw new Error('已有收款与当前销售草稿不一致，已停止自动重试');
     }
     for (const row of rows) {
-      if (row.recordId) continue;
-      row.recordId = (await this.record({ salesEntryRecordId, ...row.payment })).recordId;
+      if (!row.recordId) row.recordId = (await this.record({ salesEntryRecordId, ...row.payment })).recordId;
+      await options.onRecordPersisted?.(row.index, row.recordId);
     }
     return rows.map((row) => row.recordId);
   }

@@ -1,5 +1,6 @@
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { readSaleLinkedRecord } = require('./salesRecordReader');
+const { withSalesReadRetry } = require('./salesReadRetry');
 
 const cents = (value, label) => {
   const number = Number(value);
@@ -57,12 +58,18 @@ const progressFromRecords = (details, receipts, detailFields, paymentFields) => 
 };
 
 class SalesProgressService {
-  constructor({ gateway } = {}) {
+  constructor({ gateway, retryDelays } = {}) {
     if (!gateway) throw new Error('SalesProgressService requires gateway');
     this.gateway = gateway;
+    this.retryDelays = retryDelays;
   }
 
   async forOrder(salesEntryRecordId, expected = {}) {
+    return withSalesReadRetry(() => this._forOrder(salesEntryRecordId, expected), 'sales_progress',
+      { delays: this.retryDelays });
+  }
+
+  async _forOrder(salesEntryRecordId, expected = {}) {
     const [allDetails, allReceipts] = await Promise.all([
       this.gateway.listAll('salesDetail'), this.gateway.listAll('paymentRecord'),
     ]);

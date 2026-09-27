@@ -8,6 +8,7 @@ const { SalesOrderService } = require('../src/services/salesOrderService');
 const { SalesDeliveryService } = require('../src/services/salesDeliveryService');
 const { InventoryService } = require('../src/services/inventoryService');
 const { PaymentService } = require('../src/services/paymentService');
+const { SalesProgressService } = require('../src/services/salesProgressService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
 const fake = () => {
@@ -211,4 +212,107 @@ test('Feishu record_ids link shape reuses an existing order, receipt, and detail
   assert.deepEqual(stockCalls.map((call) => call.productRecordId),
     ['product_A100', 'product_B200', 'product_C300']);
   assert.equal((await gateway.get('salesEntry', 'order_1')).fields['履约状态'], '已交付');
+});
+
+test('temporary 1254607 after receipt creation retries reads and delivers once without duplicate records', async () => {
+  const gateway = fake();
+  gateway.records.set('behavior', [{ record_id: 'behavior_sale', fields: {
+    行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
+  } }]);
+  gateway.records.set('liveInventory', [
+    { record_id: 'door_1', fields: { 编号: ['product_A100'], 尺码: 39, 所属状态: '门盒' } },
+    { record_id: 'sample_1', fields: { 编号: ['product_A100'], 尺码: 39, 所属状态: '样品' } },
+  ]);
+  const listAll = gateway.listAll;
+  let pendingReads = 1;
+  gateway.listAll = async (key) => {
+    if (key === 'salesDetail' && pendingReads &&
+      gateway.records.get('salesEntry')[0].fields['确认状态'] === '已入账') {
+      pendingReads -= 1;
+      const error = new Error('Request failed with status code 400');
+      error.response = { data: { code: 1254607, msg: 'Data not ready, please try again later' } };
+      throw error;
+    }
+    return listAll(key);
+  };
+  const progress = new SalesProgressService({ gateway, retryDelays: [0, 0, 0] });
+  const sales = new SalesOrderService({ gateway, references, progress });
+  const posted = await sales.confirm({ salesEntryRecordId: 'order_1',
+    items: [{ itemNo: 'A100', size: 39, quantity: 1, actualAmount: 260 }],
+    payments: [{ method: '微信', amount: 260 }] });
+  const inventory = new InventoryService({ gateway, store: new JsonTaskStore({
+    dir: fs.mkdtempSync(path.join(os.tmpdir(), 'sale-read-retry-')), idField: 'operation_id',
+  }) });
+  const delivery = new SalesDeliveryService({ gateway, progress, inventory });
+  await delivery.deliver({ salesEntryRecordId: 'order_1', detailRecordIds: posted.detailRecordIds,
+    paymentRecordIds: posted.paymentRecordIds });
+  await delivery.deliver({ salesEntryRecordId: 'order_1', detailRecordIds: posted.detailRecordIds,
+    paymentRecordIds: posted.paymentRecordIds });
+  assert.equal(pendingReads, 0);
+  assert.equal(gateway.records.get('salesDetail').length, 1);
+  assert.equal(gateway.records.get('paymentRecord').length, 1);
+  assert.equal(gateway.records.get('inventoryLedger').length, 1);
+  assert.deepEqual(gateway.records.get('liveInventory').map((row) => row.record_id), ['sample_1']);
+  assert.equal(gateway.records.get('salesEntry')[0].fields['确认状态'], '已入账');
+  assert.equal(gateway.records.get('salesEntry')[0].fields['履约状态'], '已交付');
+});
+
+test('exhausted progress read preserves posted sale and known IDs recover when list results lag', async () => {
+  const gateway = fake();
+  const listAll = gateway.listAll;
+  let pendingReads = 3;
+  let retryReadFailures = 0;
+  let laggedLists = false;
+  gateway.listAll = async (key) => {
+    if (key === 'salesDetail' && retryReadFailures) {
+      retryReadFailures -= 1;
+      const error = new Error('Request failed with status code 400');
+      error.response = { data: { code: 1254607 } };
+      throw error;
+    }
+    if (key === 'salesDetail' && pendingReads &&
+      gateway.records.get('salesEntry')[0].fields['确认状态'] === '已入账') {
+      pendingReads -= 1;
+      const error = new Error('Request failed with status code 400');
+      error.response = { data: { code: 1254607 } };
+      throw error;
+    }
+    if (laggedLists && ['salesDetail', 'paymentRecord'].includes(key)) return [];
+    return listAll(key);
+  };
+  const progress = new SalesProgressService({ gateway, retryDelays: [0, 0, 0] });
+  const sales = new SalesOrderService({ gateway, references, progress });
+  const knownRecordIds = { details: [], payments: [] };
+  const input = { salesEntryRecordId: 'order_1',
+    items: [{ itemNo: 'A100', size: 39, quantity: 1, actualAmount: 260 }],
+    payments: [{ method: '微信', amount: 260 }], knownRecordIds,
+    onRecordPersisted: async (kind, index, id) => { knownRecordIds[kind][index] = id; } };
+  await assert.rejects(sales.confirm(input), (error) => error.saleRecordsWritten === true);
+  assert.equal(gateway.records.get('salesEntry')[0].fields['确认状态'], '已入账');
+  assert.match(gateway.records.get('salesEntry')[0].fields['失败原因'], /后续同步待恢复/);
+  assert.equal(gateway.records.get('salesDetail').length, 1);
+  assert.equal(gateway.records.get('paymentRecord').length, 1);
+  assert.equal(knownRecordIds.details.length, 1);
+  assert.equal(knownRecordIds.payments.length, 1);
+
+  laggedLists = true;
+  retryReadFailures = 3;
+  await assert.rejects(sales.confirm({ ...input, knownFinancialComplete: true }),
+    (error) => error.saleRecordsWritten === true);
+  assert.equal(gateway.records.get('salesEntry')[0].fields['确认状态'], '已入账');
+  const posted = await sales.confirm({ ...input, knownFinancialComplete: true });
+  assert.deepEqual(posted.detailRecordIds, knownRecordIds.details);
+  assert.deepEqual(posted.paymentRecordIds, knownRecordIds.payments);
+  assert.equal(gateway.records.get('salesDetail').length, 1);
+  assert.equal(gateway.records.get('paymentRecord').length, 1);
+  const stockCalls = [];
+  const delivery = new SalesDeliveryService({ gateway, progress, inventory: {
+    applySale: async (request) => { stockCalls.push(request); return { sampleConsumedQuantity: 0 }; },
+  } });
+  await delivery.deliver({ salesEntryRecordId: 'order_1', detailRecordIds: posted.detailRecordIds,
+    paymentRecordIds: posted.paymentRecordIds });
+  await delivery.deliver({ salesEntryRecordId: 'order_1', detailRecordIds: posted.detailRecordIds,
+    paymentRecordIds: posted.paymentRecordIds });
+  assert.equal(stockCalls.length, 1);
+  assert.equal(gateway.records.get('salesEntry')[0].fields['履约状态'], '已交付');
 });

@@ -88,6 +88,43 @@ class V1ReferenceResolver {
       };
     });
 
+    // 销售口述的货号不能做 OCR 字符纠错；只允许在已配置的同一货号内解析颜色。
+    // AI 偶尔把中文颜色并进货号（如 8882卡），因此仅在前缀为真实货号、
+    // 剩余部分全是汉字时拆分。采购仍使用下方原有的 OCR 匹配流程。
+    if (input.matchMode === 'sales' && wantedItemNo) {
+      let itemNo = wantedItemNo;
+      let color = wantedColor;
+      if (!candidates.some((candidate) => candidate.itemNo === itemNo)) {
+        const splits = [...new Set(candidates
+          .filter((candidate) => candidate.itemNo && /^[a-z0-9_-]+$/.test(candidate.itemNo)
+            && itemNo.startsWith(candidate.itemNo)
+            && /^\p{Script=Han}+$/u.test(itemNo.slice(candidate.itemNo.length)))
+          .map((candidate) => candidate.itemNo))];
+        if (splits.length === 1) {
+          const suffix = itemNo.slice(splits[0].length);
+          if (color && color !== suffix) {
+            throw new Error(`货号 ${input.itemNo} 中的颜色与另报颜色 ${input.color} 不一致，请核对`);
+          }
+          itemNo = splits[0];
+          color = suffix;
+        }
+      }
+      const sameSku = candidates.filter((candidate) => candidate.itemNo === itemNo);
+      const exact = color ? sameSku.filter((candidate) => candidate.color === color) : sameSku;
+      const matches = exact.length || !color
+        ? exact
+        : sameSku.filter((candidate) => candidate.color.startsWith(color));
+      if (matches.length === 0) {
+        throw new Error(`找不到货品：${input.itemNo || ''}${input.color || ''}`);
+      }
+      if (matches.length > 1) {
+        const colors = [...new Set(matches.map((candidate) => candidate.colorDisplay).filter(Boolean))];
+        const hint = colors.length ? `（${colors.join('、')}）` : '';
+        throw new Error(`货号 ${itemNo} 对应多个货品，请补充完整颜色或类别/编号${hint}`);
+      }
+      return { recordId: matches[0].record.record_id, record: matches[0].record };
+    }
+
     // “编号”可以包含品类等展示信息，而用户日常通常只说“货号+颜色”。
     // 先匹配完整编号；找不到时再使用配置字段“货号+颜色”作为唯一别名。
     let matches = wantedNumber
