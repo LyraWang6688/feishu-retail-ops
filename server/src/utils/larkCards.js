@@ -214,6 +214,12 @@ const sampleReplacementStatusCard = (productNumber, message) => ({
   elements: [{ tag: 'markdown', content: `${text(productNumber || '该货品')}：${text(message)}` }],
 });
 
+const sampleReplacementProcessingCard = (productNumber, message) => ({
+  config: { wide_screen_mode: true },
+  header: { template: 'blue', title: { tag: 'plain_text', content: '样品补选处理中' } },
+  elements: [{ tag: 'markdown', content: `${text(productNumber || '该货品')}：${text(message)}` }],
+});
+
 const todaySalesCard = ({ dateLabel, rows, totalQuantity, totalAmount }) => ({
   config: { wide_screen_mode: true },
   header: { template: 'blue', title: { tag: 'plain_text', content: `${dateLabel} 销售明细` } },
@@ -425,5 +431,6 @@ module.exports = {
   salesStatusCard,
   sampleReplacementCard,
   sampleReplacementStatusCard,
+  sampleReplacementProcessingCard,
   todaySalesCard,
 };

@@ -97,6 +97,29 @@ test('sales uniquely expands a color abbreviation under the exact SKU', async ()
   assert.equal((await resolver.resolveProduct({ itemNo: 'HYX-115', color: '黑', matchMode: 'sales' })).recordId, 'rec_hyx_black');
 });
 
+test('sales matches qualified base colors only within the exact SKU', async () => {
+  const resolver = new V1ReferenceResolver(makeGateway([
+    { record_id: 'rec_all_black', fields: { 编号: 'XHB8095|全黑|A', 货号: 'XHB8095', 颜色: [{ text: '全黑' }] } },
+    { record_id: 'rec_ink_green', fields: { 编号: 'A200|墨绿|A', 货号: 'A200', 颜色: [{ text: '墨绿' }] } },
+    { record_id: 'rec_khaki', fields: { 编号: 'A300|卡其|A', 货号: 'A300', 颜色: [{ text: '卡其' }] } },
+  ]));
+  assert.equal((await resolver.resolveProduct({ itemNo: 'XHB8095', color: '黑', matchMode: 'sales' })).recordId,
+    'rec_all_black');
+  assert.equal((await resolver.resolveProduct({ itemNo: 'A200', color: '绿', matchMode: 'sales' })).recordId,
+    'rec_ink_green');
+  assert.equal((await resolver.resolveProduct({ itemNo: 'A300', color: '卡', matchMode: 'sales' })).recordId,
+    'rec_khaki');
+  await assert.rejects(resolver.resolveProduct({ itemNo: 'XHB8095', color: '绿', matchMode: 'sales' }), /找不到货品/);
+});
+
+test('sales never chooses between multiple qualified variants of the same base color', async () => {
+  const resolver = new V1ReferenceResolver(makeGateway([
+    { record_id: 'rec_all_black', fields: { 编号: 'A100|全黑|A', 货号: 'A100', 颜色: '全黑' } },
+    { record_id: 'rec_dark_black', fields: { 编号: 'A100|深黑|A', 货号: 'A100', 颜色: '深黑' } },
+  ]));
+  await assert.rejects(resolver.resolveProduct({ itemNo: 'A100', color: '黑', matchMode: 'sales' }), /多个货品/);
+});
+
 test('sales prefers an exact color over a longer color beginning with the same character', async () => {
   const resolver = new V1ReferenceResolver(makeGateway([
     ...salesProducts,

@@ -74,26 +74,69 @@ test('ordinary private chat without numbers is not accepted as a sales task', as
   assert.equal(looksLikeSalesText('8088-26棕38，230元微信'), true);
 });
 
-test('purchase images are isolated by private-chat sender and wait for explicit completion', async () => {
+test('robot no longer starts the legacy purchase-image flow', async () => {
   const { service, sent } = makeService();
-  const imageEvent = (messageId, openId) => ({
-    sender: { sender_id: { open_id: openId } },
+  const imageEvent = {
+    sender: { sender_id: { open_id: 'ou_1' } },
     message: {
-      message_id: messageId,
+      message_id: 'om_image',
       chat_type: 'p2p',
       message_type: 'image',
       create_time: '1000',
-      content: JSON.stringify({ image_key: `img_${messageId}` }),
+      content: JSON.stringify({ image_key: 'img_1' }),
     },
-  });
-  await service.acceptMessage(imageEvent('om_1', 'ou_1'));
-  await service.acceptMessage(imageEvent('om_2', 'ou_1'));
-  await service.acceptMessage(imageEvent('om_3', 'ou_2'));
-  assert.match(sent[1].message, /第 2 张/);
-  const user1 = await service.store.get(require('../src/services/larkMvpService').idFor('purchase_open', 'ou_1'));
-  const user2 = await service.store.get(require('../src/services/larkMvpService').idFor('purchase_open', 'ou_2'));
-  assert.equal(user1.images.length, 2);
-  assert.equal(user2.images.length, 1);
+  };
+  const result = await service.acceptMessage(imageEvent);
+  assert.equal(result.reason, 'unsupported_message_type');
+  assert.match(sent[0].message, /采购表单/);
+  assert.equal(await service.store.get(require('../src/services/larkMvpService').idFor('purchase_open', 'ou_1')), null);
+});
+
+test('ordered-list post message is accepted as one sale with all four item lines', async () => {
+  const { service } = makeService();
+  const content = { post: { zh_cn: { title: '550元微信卖了4双鞋：', content: [
+    [{ tag: 'text', text: '1. 第一双：3287黑39的，186元' }],
+    [{ tag: 'text', text: '2. 第二双：11633黑色38的，176元' }],
+    [{ tag: 'text', text: '3. 第三双：86822黑色43的，99元' }],
+    [{ tag: 'text', text: '4. 第四双：XHB8095全黑44的，89元' }],
+  ] } } };
+  const result = await service.acceptMessage({ sender: { sender_id: { open_id: 'ou_1' } },
+    message: { message_id: 'om_post_four', chat_type: 'p2p', message_type: 'post',
+      create_time: '1000', content: JSON.stringify(content) } });
+  assert.equal(result.accepted, true);
+  const task = await service.store.get(result.taskId);
+  assert.equal(task.original_text.split('\n').length, 5);
+  assert.match(task.original_text, /XHB8095全黑44/);
+  assert.match(task.original_text, /550元微信/);
+});
+
+test('one seller can submit separate sale messages while their recognition runs in order', async () => {
+  const { service } = makeService();
+  const stages = [];
+  let finishFirst;
+  const firstPending = new Promise((resolve) => { finishFirst = resolve; });
+  let finishBoth;
+  const bothDone = new Promise((resolve) => { finishBoth = resolve; });
+  service.processSalesTask = async (taskId) => {
+    stages.push(`start:${taskId}`);
+    if (stages.length === 1) await firstPending;
+    stages.push(`end:${taskId}`);
+    if (stages.length === 4) finishBoth();
+  };
+  const event = (id, text) => ({ sender: { sender_id: { open_id: 'ou_1' } },
+    message: { message_id: id, chat_type: 'p2p', message_type: 'text',
+      create_time: '1000', content: JSON.stringify({ text }) } });
+  const first = await service.acceptMessage(event('om_sale_one', 'A100黑38 99元微信'));
+  const second = await service.acceptMessage(event('om_sale_two', 'B200棕39 109元现金'));
+  assert.notEqual(first.taskId, second.taskId);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(stages, [`start:${first.taskId}`]);
+  finishFirst();
+  await bothDone;
+  assert.deepEqual(stages, [
+    `start:${first.taskId}`, `end:${first.taskId}`,
+    `start:${second.taskId}`, `end:${second.taskId}`,
+  ]);
 });
 
 test('recognized purchase items with same SKU and size are aggregated', () => {
@@ -140,6 +183,51 @@ test('selling a sample sends a per-order size choice card and only its recipient
   assert.equal(promoted.length, 1);
   assert.equal((await service.handleCardAction(choose('ou_seller'))).toast.type, 'info');
   assert.equal(promoted.length, 1);
+});
+
+test('concurrent sample choices promote only one size and end with a feedback card', async () => {
+  const store = makeStore();
+  const cards = [];
+  const promoted = [];
+  await store.create({ task_id: 'sample_race', type: 'sample_replacement', status: 'pending',
+    sender_open_id: 'ou_1', product_record_id: 'product_1', product_number: 'A100黑',
+    sales_detail_record_id: 'detail_1', card_message_id: 'om_card' });
+  const service = new LarkMvpService({ client: {}, gateway: {}, references: {}, recognizer: {}, store,
+    purchaseWebhooks: {}, delivery: { inventory: {
+      sampleReplacementCandidates: async () => [{ size: 40, doorBoxCount: 1, sampleCount: 0, warehouseCount: 0 }],
+      promoteToSample: async ({ size }) => {
+        promoted.push(size);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return { size, liveRecordId: 'door_40' };
+      },
+    } } });
+  service.updateSalesActionCard = async (_task, _event, card) => { cards.push(card); return true; };
+  const choose = (size) => ({ operator: { operator_id: { open_id: 'ou_1' } },
+    action: { value: { action: 'choose_sample_replacement', draft_id: 'sample_race', size } } });
+  const results = await Promise.all([service.handleCardAction(choose(40)), service.handleCardAction(choose(41))]);
+  assert.deepEqual(promoted, [40]);
+  assert.equal(results[0].toast.type, 'success');
+  assert.match(results[1].toast.content, /已补选/);
+  assert.match(cards.at(-1).header.title.content, /已补选/);
+});
+
+test('sample refresh failure replaces processing view with a retryable card', async () => {
+  const store = makeStore();
+  const cards = [];
+  await store.create({ task_id: 'sample_refresh_error', type: 'sample_replacement', status: 'pending',
+    sender_open_id: 'ou_1', product_record_id: 'product_1', product_number: 'A100黑',
+    sales_detail_record_id: 'detail_1', card_message_id: 'om_card' });
+  const service = new LarkMvpService({ client: {}, gateway: {}, references: {}, recognizer: {}, store,
+    purchaseWebhooks: {}, delivery: { inventory: {
+      sampleReplacementCandidates: async () => { throw new Error('查询库存失败'); },
+    } } });
+  service.updateSalesActionCard = async (_task, _event, card) => { cards.push(card); return true; };
+  const result = await service.handleCardAction({ operator: { operator_id: { open_id: 'ou_1' } },
+    action: { value: { action: 'refresh_sample_replacement', draft_id: 'sample_refresh_error' } } });
+  assert.equal(result.toast.type, 'warning');
+  assert.match(cards[0].header.title.content, /处理中/);
+  assert.match(JSON.stringify(cards[1]), /刷新尺码失败/);
+  assert.ok(cards[1].elements.some((element) => element.tag === 'action'));
 });
 
 test('sales intake writes only intake metadata and retains actual amount before confirmation', async () => {
@@ -427,6 +515,53 @@ test('sale card shows processing immediately and becomes action-free after posti
   assert.match(cards[1].card.header.title.content, /已入账/);
   assert.ok(cards.every((item) => !item.card.elements.some((element) => element.tag === 'action')));
   assert.equal((await store.get('sale_card_progress')).status, 'posted');
+});
+
+test('two clicks on the same sale draft post once and repair the already processed card', async () => {
+  const store = makeStore();
+  const cards = [];
+  let postCalls = 0;
+  await store.create({ task_id: 'sale_double_click', type: 'sale', status: 'ready_to_confirm',
+    sender_open_id: 'ou_1', sales_entry_record_id: 'entry_1', card_message_id: 'om_card',
+    draft: { items: [{ item_no: 'A100', size: 38, quantity: 1, actual_amount: 99 }], payments: [] } });
+  const service = new LarkMvpService({ client: { im: { v1: { message: { patch: async ({ data }) => {
+    cards.push(JSON.parse(data.content));
+    return { code: 0 };
+  } } } } }, gateway: {}, references: {}, recognizer: {}, store,
+  posting: { postSale: async () => {
+    postCalls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return { sourceNo: 'XSD-002', detailRecordIds: ['detail_1'] };
+  } } });
+  const event = { operator: { operator_id: { open_id: 'ou_1' } },
+    action: { value: { action: 'confirm_sale_pending', draft_id: 'sale_double_click' } } };
+  const results = await Promise.all([service.handleCardAction(event), service.handleCardAction(event)]);
+  assert.equal(postCalls, 1);
+  assert.equal(results[0].toast.type, 'success');
+  assert.match(results[1].toast.content, /已处理/);
+  assert.equal(cards.length, 3);
+  assert.ok(!cards[2].elements.some((element) => element.tag === 'action'));
+});
+
+test('sale final-card patch failure sends a new result card without reversing a posted sale', async () => {
+  const store = makeStore();
+  const fallbackCards = [];
+  let patches = 0;
+  await store.create({ task_id: 'sale_card_fallback', type: 'sale', status: 'ready_to_confirm',
+    sender_open_id: 'ou_1', sales_entry_record_id: 'entry_1', card_message_id: 'om_old',
+    draft: { items: [{ item_no: 'A100', size: 38, quantity: 1, actual_amount: 99 }], payments: [] } });
+  const service = new LarkMvpService({ client: { im: { v1: { message: { patch: async () => {
+    patches += 1;
+    return { code: patches === 1 ? 0 : 1254607, msg: 'Data not ready' };
+  } } } } }, gateway: {}, references: {}, recognizer: {}, store,
+  posting: { postSale: async () => ({ sourceNo: 'XSD-003', detailRecordIds: ['detail_1'] }) } });
+  service.sendCard = async (_openId, card) => { fallbackCards.push(card); return 'om_new'; };
+  const result = await service.handleCardAction({ operator: { operator_id: { open_id: 'ou_1' } },
+    action: { value: { action: 'confirm_sale_pending', draft_id: 'sale_card_fallback' } } });
+  assert.equal(result.toast.type, 'success');
+  assert.equal(fallbackCards.length, 1);
+  assert.match(fallbackCards[0].header.title.content, /已入账/);
+  assert.equal((await store.get('sale_card_fallback')).card_message_id, 'om_new');
 });
 
 test('delivered confirmation writes sale first then delegates stock to delivery owner', async () => {

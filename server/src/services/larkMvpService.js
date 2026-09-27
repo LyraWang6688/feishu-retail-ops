@@ -5,6 +5,8 @@ const path = require('node:path');
 const lark = require('@larksuiteoapi/node-sdk');
 const doubaoService = require('./doubaoService');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
+const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
+const { updateInteractiveCard } = require('../infrastructure/interactiveCardFeedback');
 const { V1BitableGateway, textValue } = require('./v1BitableGateway');
 const { V1PostingService } = require('./v1PostingService');
 const { createWorkbenchService } = require('./v1WorkbenchService');
@@ -15,6 +17,7 @@ const { PurchaseWebhookService } = require('./purchaseWebhookService');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
 const { isDataNotReady } = require('./salesReadRetry');
 const { purchaseConfirmationCard, salesConfirmationCard, salesStatusCard, todaySalesCard } = require('../utils/larkCards');
+const { extractSalesMessageText } = require('../utils/larkMessageText');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
 
@@ -85,10 +88,11 @@ class LarkMvpService {
       gateway: this.gateway, inventory: this.delivery.inventory, store: this.store, client: this.client,
       sendCard: (openId, card) => this.sendCard(openId, card),
       sendText: (openId, message) => this.sendText(openId, message),
-      updateCard: (task, event, card) => this.updateSalesActionCard(task, event, card),
+      updateCard: (task, event, card, metadata) => this.updateSalesActionCard(task, event, card, metadata),
     });
     this.intakeSchemaValidation = new Map();
     this.senderQueues = new Map();
+    this.cardActionQueue = new KeyedSerialQueue();
   }
 
   enqueueForSender(senderOpenId, work) {
@@ -186,23 +190,23 @@ class LarkMvpService {
     return response.data?.message_id || '';
   }
 
-  async updateSalesActionCard(task, event, card) {
-    const messageId = event?.context?.open_message_id || event?.open_message_id || task.card_message_id;
-    if (!messageId) {
-      logWarn('lark.sales.card.update.skipped', { task_id: task.task_id, reason: 'missing_message_id' });
-      return false;
-    }
+  async updateSalesActionCard(task, event, card, metadata = {}) {
+    return updateInteractiveCard({ client: this.client, task, event, card,
+      stage: metadata.stage, interactionId: metadata.interactionId,
+      eventPrefix: task.type === 'sample_replacement' ? 'lark.sales.sample_card.update' : 'lark.sales.card.update' });
+  }
+
+  async publishSalesResultCard(task, event, card, metadata = {}) {
+    if (await this.updateSalesActionCard(task, event, card, metadata)) return true;
     try {
-      const patch = this.client.im?.v1?.message?.patch || this.client.im?.message?.patch;
-      if (!patch) throw new Error('飞书客户端不支持更新消息卡片');
-      const response = await patch.call(this.client.im?.v1?.message || this.client.im.message, {
-        path: { message_id: messageId },
-        data: { content: JSON.stringify(card) },
-      });
-      if (response.code !== 0) throw new Error(`${response.msg} (Code: ${response.code})`);
+      const messageId = await this.sendCard(task.sender_open_id, card);
+      if (messageId) await this.store.update(task.task_id, { card_message_id: messageId });
+      logInfo('lark.sales.card.fallback.sent', { task_id: task.task_id,
+        interaction_id: metadata.interactionId, stage: metadata.stage, card_message_id: messageId });
       return true;
     } catch (error) {
-      logWarn('lark.sales.card.update.failed', { task_id: task.task_id, error: error.message });
+      logWarn('lark.sales.card.fallback.failed', { task_id: task.task_id,
+        interaction_id: metadata.interactionId, stage: metadata.stage, error: error.message });
       return false;
     }
   }
@@ -241,17 +245,19 @@ class LarkMvpService {
       return { accepted: false, reason: 'not_p2p' };
     }
 
-    if (message.message_type === 'image') {
-      return this.acceptPurchaseImage({ message, senderOpenId });
-    }
-    if (message.message_type !== 'text') {
-      await this.sendText(senderOpenId, '当前支持销售文字和采购到货图片。');
+    if (!['text', 'post'].includes(message.message_type)) {
+      await this.sendText(senderOpenId, '机器人当前只接收销售文字；采购请使用采购表单。');
       return { accepted: false, reason: 'unsupported_message_type' };
     }
 
-    const originalText = String(parseContent(message.content).text || '').trim();
-    if (originalText === '采购完成') return this.finishPurchaseImages(senderOpenId);
-    if (await this.tryCompletePurchaseDraft(senderOpenId, originalText)) return { accepted: true, type: 'purchase_supplement' };
+    const originalText = extractSalesMessageText(message);
+    if (!originalText) {
+      await this.sendText(senderOpenId, '没有读到销售文字，请发送普通文字或带文字的富文本消息。');
+      return { accepted: false, reason: 'empty_sales_text' };
+    }
+    logInfo('lark.sales.message.normalized', { message_id: message.message_id,
+      message_type: message.message_type, sender_open_id: senderOpenId,
+      text_length: originalText.length, line_count: originalText.split('\n').length });
     return this.acceptSalesText({ message, senderOpenId, originalText });
   }
 
@@ -531,21 +537,46 @@ class LarkMvpService {
     return true;
   }
 
-  async handleCardAction(event) {
+  async handleCardAction(event, context = {}) {
     const value = event?.action?.value || event?.event?.action?.value || {};
     const draftId = value.draft_id;
     const action = value.action;
     const operatorOpenId =
       event?.operator?.operator_id?.open_id || event?.operator?.open_id || event?.event?.operator?.operator_id?.open_id;
     if (['choose_sample_replacement', 'refresh_sample_replacement'].includes(action)) {
-      return this.sampleReplacements.handleCardAction(value, event, operatorOpenId);
+      return this.sampleReplacements.handleCardAction(value, event, operatorOpenId, context);
     }
     const procurementResult = await this.purchaseWebhooks.handleCardAction(value, operatorOpenId, event);
     if (procurementResult) return procurementResult;
+    if (!draftId) throw new Error('卡片缺少草稿 ID');
+    return this.cardActionQueue.run(draftId, () => this.handleSalesOrLegacyCardAction(event, context));
+  }
+
+  async handleSalesOrLegacyCardAction(event, context = {}) {
+    const value = event?.action?.value || event?.event?.action?.value || {};
+    const draftId = value.draft_id;
+    const action = value.action;
+    const operatorOpenId =
+      event?.operator?.operator_id?.open_id || event?.operator?.open_id || event?.event?.operator?.operator_id?.open_id;
     const task = await this.store.get(draftId);
     if (!task) throw new Error('确认草稿不存在或已过期');
     if (task.sender_open_id !== operatorOpenId) throw new Error('只能由原始发送人确认该草稿');
-    if (['posted', 'posted_delivery_pending', 'cancelled'].includes(task.status)) return { toast: { type: 'info', content: '该草稿已处理' } };
+    if (['posted', 'posted_delivery_pending', 'cancelled'].includes(task.status)) {
+      if (task.type === 'sale') {
+        const completed = task.status === 'posted';
+        const card = salesStatusCard(task.draft,
+          task.status === 'cancelled' ? '销售录单已取消' : completed ? '销售订单已入账' : '订单已入账，交付待核对',
+          task.status === 'cancelled' ? '原草稿不会入账。' :
+            `销售单号：${task.posting_result?.sourceNo || '请在销售主表核对'}；${completed
+              ? task.posting_requested_action === 'confirm_sale_delivered' ? '已交付并扣库存。' : '尚未交付，库存未扣减。'
+              : '交付结果尚未确认，请到工作台核对。'}`,
+          task.status === 'cancelled' ? 'blue' : completed ? 'green' : 'orange');
+        await this.publishSalesResultCard(task, event, card,
+          { stage: 'duplicate_terminal', interactionId: context.interactionId });
+      }
+      return { toast: { type: 'info', content: task.status === 'posted_delivery_pending'
+        ? '订单已入账，交付结果请在工作台核对' : '该草稿已处理' } };
+    }
     if (task.status === 'posting') return { toast: { type: 'info', content: '正在入账，请勿重复点击' } };
     if (task.status === 'awaiting_correction' && action !== 'cancel') {
       return { toast: { type: 'info', content: '该草稿正在等待修正，请重新发送完整销售信息' } };
@@ -564,7 +595,8 @@ class LarkMvpService {
       await this.store.update(draftId, { status: 'cancelled' });
       if (task.type === 'sale' && task.sales_entry_record_id) {
         await this.gateway.update('salesEntry', task.sales_entry_record_id, { confirmStatus: '已取消' });
-        await this.updateSalesActionCard(task, event, salesStatusCard(task.draft, '销售录单已取消', '原草稿不会入账。'));
+        await this.publishSalesResultCard(task, event, salesStatusCard(task.draft, '销售录单已取消', '原草稿不会入账。'),
+          { stage: 'cancelled', interactionId: context.interactionId });
       }
       if (task.type === 'purchase' && task.batch_record_id) {
         await this.gateway.update('purchaseBatch', task.batch_record_id, { confirmStatus: '已取消' });
@@ -577,8 +609,10 @@ class LarkMvpService {
       if (task.sales_entry_record_id) {
         await this.gateway.update('salesEntry', task.sales_entry_record_id, { confirmStatus: '待修改' });
       }
-      await this.updateSalesActionCard(task, event, salesStatusCard(task.draft, '等待重新发送', '原草稿不会入账；请重新发送完整销售信息。', 'orange'));
-      await this.sendText(operatorOpenId, '请重新发送一条完整、正确的销售信息；原草稿不会入账。');
+      await this.publishSalesResultCard(task, event, salesStatusCard(task.draft, '等待重新发送', '原草稿不会入账；请重新发送完整销售信息。', 'orange'),
+        { stage: 'awaiting_correction', interactionId: context.interactionId });
+      await this.sendText(operatorOpenId, '请重新发送一条完整、正确的销售信息；原草稿不会入账。').catch((error) =>
+        logWarn('lark.sales.feedback.failed', { task_id: draftId, interaction_id: context.interactionId, error: error.message }));
       return { toast: { type: 'info', content: '请重新发送修正后的完整销售信息' } };
     }
 
@@ -588,8 +622,10 @@ class LarkMvpService {
     try {
     if (['confirm_sale', 'confirm_sale_pending', 'confirm_sale_delivered'].includes(action) && task.type === 'sale') {
       const cardUpdated = await this.updateSalesActionCard(task, event,
-        salesStatusCard(task.draft, '销售订单处理中', '已收到确认，正在写入销售记录和收款；请勿重复点击。'));
-      if (!cardUpdated) await this.sendText(operatorOpenId, '已收到确认，正在写入销售记录和收款，请稍候。').catch(() => undefined);
+        salesStatusCard(task.draft, '销售订单处理中', '已收到确认，正在写入销售记录和收款；请勿重复点击。'),
+        { stage: 'processing', interactionId: context.interactionId });
+      if (!cardUpdated) await this.sendText(operatorOpenId, '已收到确认，正在写入销售记录和收款，请稍候。').catch((error) =>
+        logWarn('lark.sales.feedback.failed', { task_id: draftId, interaction_id: context.interactionId, error: error.message }));
       const startedAt = Date.now();
       const result = await this.posting.postSale({
         salesEntryRecordId: task.sales_entry_record_id,
@@ -627,15 +663,17 @@ class LarkMvpService {
           await this.notifySampleReplacements(deliveryResult, operatorOpenId).catch((error) =>
             logWarn('lark.sales.sample_notice.failed', { task_id: draftId, error: error.message }));
         } catch (error) {
-          await this.updateSalesActionCard(task, event, salesStatusCard(task.draft,
-            '订单已入账，交付待处理', `销售单号：${result.sourceNo}。库存交付未完成：${error.message}。请在工作台待交付列表核对并处理。`, 'orange'));
+          await this.publishSalesResultCard(task, event, salesStatusCard(task.draft,
+            '订单已入账，交付待处理', `销售单号：${result.sourceNo}。库存交付未完成：${error.message}。请在工作台待交付列表核对并处理。`, 'orange'),
+          { stage: 'delivery_failed', interactionId: context.interactionId });
           logError('lark.sales.delivery.failed', { task_id: draftId, error: error.message });
           return { toast: { type: 'warning', content: '订单已入账，库存交付待处理' } };
         }
       }
       await this.store.update(draftId, { status: 'posted', posting_result: result });
-      await this.updateSalesActionCard(task, event, salesStatusCard(task.draft,
-        '销售订单已入账', `销售单号：${result.sourceNo}；${result.detailRecordIds?.length || 0} 条明细已写入。${action === 'confirm_sale_delivered' ? '已交付并扣库存。' : '尚未交付，库存未扣减。'}`, 'green'));
+      await this.publishSalesResultCard(task, event, salesStatusCard(task.draft,
+        '销售订单已入账', `销售单号：${result.sourceNo}；${result.detailRecordIds?.length || 0} 条明细已写入。${action === 'confirm_sale_delivered' ? '已交付并扣库存。' : '尚未交付，库存未扣减。'}`, 'green'),
+      { stage: 'posted', interactionId: context.interactionId });
       logInfo('lark.sales.posting.completed', {
         task_id: draftId,
         source_no: result.sourceNo,
@@ -709,7 +747,8 @@ class LarkMvpService {
             ? `销售明细和收款已记录，但进度同步尚未完成，库存未扣。${reason}；请稍后在原卡片重试，不要重新发送销售。`
             : `入账失败；可能已有部分记录，库存未扣。${reason}；请核对后在原卡片重试，不要重新发送销售。` },
         ] });
-        await this.updateSalesActionCard(task, event, retryCard);
+        await this.publishSalesResultCard(task, event, retryCard,
+          { stage: 'retryable', interactionId: context.interactionId });
         logError('lark.sales.posting.retryable', { task_id: draftId,
           records_written: waitingForSync, error: error.message });
         return { toast: { type: 'warning', content: waitingForSync

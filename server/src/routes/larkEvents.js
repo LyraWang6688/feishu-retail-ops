@@ -1,7 +1,8 @@
 const express = require('express');
+const crypto = require('node:crypto');
 const lark = require('@larksuiteoapi/node-sdk');
 const { LarkMvpService } = require('../services/larkMvpService');
-const { logError, logInfo } = require('../utils/logger');
+const { logError, logInfo, logWarn } = require('../utils/logger');
 
 const createLarkEventHandlers = (service) => ({
   'im.message.receive_v1': (event) => {
@@ -20,25 +21,40 @@ const createLarkEventHandlers = (service) => ({
     return {};
   },
   'card.action.trigger': (event) => {
+    const interactionId = crypto.randomUUID();
+    const value = event?.action?.value || event?.event?.action?.value || {};
     const openId =
       event?.operator?.operator_id?.open_id || event?.operator?.open_id || event?.event?.operator?.operator_id?.open_id;
     logInfo('lark.card.received', {
-      action: event?.action?.value?.action || event?.event?.action?.value?.action,
-      draft_id: event?.action?.value?.draft_id || event?.event?.action?.value?.draft_id,
+      interaction_id: interactionId,
+      action: value.action,
+      draft_id: value.draft_id,
+      card_message_id: event?.context?.open_message_id || event?.open_message_id,
       operator_open_id: openId,
     });
-    setImmediate(() => {
-      service
-        .handleCardAction(event)
-        .then((result) => {
-          const message = result?.toast?.content;
-          if (message && openId) return service.sendText(openId, message);
-          return undefined;
-        })
-        .catch(async (error) => {
-          logError('lark.mvp.card.failed', { error: error.message });
-          if (openId) await service.sendText(openId, `入账失败：${error.message}`).catch(() => undefined);
-        });
+    setImmediate(async () => {
+      let result;
+      try {
+        result = await service.handleCardAction(event, { interactionId });
+        logInfo('lark.card.handled', { interaction_id: interactionId, action: value.action,
+          draft_id: value.draft_id, outcome: result?.toast?.type || 'unknown',
+          result: result?.toast?.content });
+      } catch (error) {
+        logError('lark.mvp.card.failed', { interaction_id: interactionId, action: value.action,
+          draft_id: value.draft_id, error: error.message });
+        result = { toast: { type: 'error', content: `操作失败：${error.message}` } };
+      }
+      const message = result?.toast?.content;
+      if (message && openId) {
+        try {
+          await service.sendText(openId, message);
+          logInfo('lark.card.feedback.sent', { interaction_id: interactionId, action: value.action,
+            draft_id: value.draft_id, outcome: result?.toast?.type });
+        } catch (error) {
+          logWarn('lark.card.feedback.failed', { interaction_id: interactionId, action: value.action,
+            draft_id: value.draft_id, outcome: result?.toast?.type, error: error.message });
+        }
+      }
     });
     return { toast: { type: 'info', content: '已收到，正在处理' } };
   },

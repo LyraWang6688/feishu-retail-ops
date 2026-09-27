@@ -9,6 +9,14 @@ const normalizeText = (value) =>
 
 const normalizeColor = (value) => normalizeText(value).replace(/色$/, '');
 
+// Only these familiar qualifiers preserve the spoken base color. An arbitrary
+// substring match could turn a different mixed color into a saleable match.
+const BASE_COLOR_QUALIFIERS = /^(?:全|墨|深|浅|藏|暗|亮|正|纯|淡)$/u;
+const isQualifiedBaseColor = (configured, spoken) => {
+  if (!spoken || !configured.endsWith(spoken) || configured === spoken) return false;
+  return BASE_COLOR_QUALIFIERS.test(configured.slice(0, -spoken.length));
+};
+
 const relation = (recordId) => (recordId ? [recordId] : undefined);
 const person = (openId) => (openId ? [{ id: openId }] : undefined);
 
@@ -111,9 +119,10 @@ class V1ReferenceResolver {
       }
       const sameSku = candidates.filter((candidate) => candidate.itemNo === itemNo);
       const exact = color ? sameSku.filter((candidate) => candidate.color === color) : sameSku;
-      const matches = exact.length || !color
-        ? exact
-        : sameSku.filter((candidate) => candidate.color.startsWith(color));
+      const prefix = color && !exact.length
+        ? sameSku.filter((candidate) => candidate.color.startsWith(color)) : [];
+      const matches = exact.length || !color ? exact : prefix.length ? prefix
+        : sameSku.filter((candidate) => isQualifiedBaseColor(candidate.color, color));
       if (matches.length === 0) {
         throw new Error(`找不到货品：${input.itemNo || ''}${input.color || ''}`);
       }
