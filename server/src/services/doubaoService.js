@@ -240,24 +240,29 @@ class DoubaoService {
     }
   }
 
-  async parsePurchaseReportText(text) {
+  async parsePurchaseReportText(text, { selectedSizes = [] } = {}) {
     this.apiKey = process.env.ARK_API_KEY;
     this.endpointId = process.env.ARK_MODEL_ENDPOINT;
     if (!this.apiKey || !this.endpointId) throw new Error('ARK_API_KEY or ARK_MODEL_ENDPOINT is not configured in .env');
     const originalText = String(text || '').trim();
     if (!originalText) throw new Error('采购报单说明不能为空');
+    const allowedSizes = selectedSizes.map(Number);
+    if (!allowedSizes.length || allowedSizes.some((size) => !Number.isSafeInteger(size) || size <= 0)) {
+      throw new Error('采购报单已选尺码必须是正整数');
+    }
     const prompt = `
-你是鞋店采购报单解析助手。请把一段采购报单说明解析为严格 JSON 数组，只识别尺码和数量，不要猜测未出现的内容。
+你是鞋店采购数量说明解析助手。表单已经明确勾选尺码：${allowedSizes.join('、')}。
+请只从数量说明中识别“数量不是默认一双”的例外，不要补充未勾选尺码，也不要输出没有特别说明的尺码。
 输出格式：{"items":[{"size":39,"quantity":1}]}
 规则：
-1. “39-42各一双”表示39、40、41、42，每个数量1。
-2. “39到42各两双”表示39、40、41、42，每个数量2。
-3. “4042各一双”表示40和42各1双。
-4. “39一双、40两双”分别输出两条。
-5. 鞋码通常在35-48之间。如果出现"421双"、"441双"这样的写法，表示"42码1双"、"44码1双"（最后一位数字是数量，前面的数字是尺码）。类似地，"402双"=40码2双，"383双"=38码3双。
-6. 尺码必须是数字且在35-48之间，数量必须是正整数；无法确定时不要猜测，返回空数组。
-7. 只输出 JSON，不输出 Markdown 或说明。
-采购报单说明：${originalText}`.trim();
+1. 数量说明没有提到的已选尺码由后端保持默认一双，不需要输出。
+2. 如果说明是在确认“全部按默认一双”（例如“各一双”“每个码一双”“都是一双”“按默认来”），
+   必须输出全部已选尺码且数量都是 1，不能返回空数组——这种情况数量是明确的，不是语义不明确。
+3. “40两双”只输出40码数量2；“每个码两双”输出全部已选尺码数量2。
+4. 只能输出已选尺码列表中的正整数尺码；禁止输出42.5等小数尺码。
+5. 数量必须是正整数。只有在完全无法判断数量时才返回空数组，不得猜测。
+6. 只输出 JSON，不输出 Markdown 或说明。
+数量说明：${originalText}`.trim();
     const response = await this.getClient().chat.completions.create({
       model: this.endpointId,
       messages: [{ role: 'user', content: prompt }],
@@ -270,21 +275,12 @@ class DoubaoService {
       const items = Array.isArray(parsed) ? parsed : parsed.items;
       if (!Array.isArray(items) || !items.length) throw new Error('未识别出有效尺码数量');
       return items.map((item) => {
-        let size = Number(item.size);
-        let quantity = Number(item.quantity);
-        // 兜底：如果尺码超出35-48范围，尝试拆分为"尺码+数量"（如421=42码1双）
-        if (Number.isFinite(size) && size > 48 && String(size).length >= 2) {
-          const sizeStr = String(size);
-          const possibleSize = Number(sizeStr.slice(0, -1));
-          const possibleQty = Number(sizeStr.slice(-1));
-          if (possibleSize >= 35 && possibleSize <= 48 && possibleQty > 0) {
-            size = possibleSize;
-            quantity = possibleQty;
-          }
+        const size = Number(item.size);
+        const quantity = Number(item.quantity);
+        if (!Number.isSafeInteger(size) || size <= 0 || !allowedSizes.includes(size)) {
+          throw new Error(`数量说明包含未勾选或无效的尺码：${item.size}`);
         }
-        if (!Number.isFinite(size) || !Number.isFinite(quantity) || size < 35 || size > 48 || quantity <= 0) {
-          throw new Error('采购报单中的尺码或数量无效（尺码需在35-48之间）');
-        }
+        if (!Number.isSafeInteger(quantity) || quantity <= 0) throw new Error('采购数量必须是正整数');
         return { size, quantity };
       });
     } catch (error) {
@@ -324,17 +320,17 @@ class DoubaoService {
 对于每一个识别出的标签，请提取以下字段：
 1. item_no: 货号（通常是字母和数字的组合，如 CW2288-111, DD1391-100）
 2. color: 颜色（如 纯白, 黑白, 灰/白 等）
-3. size: 尺码（请输出标准欧码）。
+3. size: 尺码（请输出标准欧码正整数；本业务不使用半码）。
    【判断与转换规则】：
    - 若识别到的尺码数值在 225–285 之间（如 240、250），视为毫米制，需转换：欧码 = (数值 - 50) / 5。示例：240 → 38，250 → 40。
    - 若识别到的尺码数值在 34–48 之间（如 38、40），视为欧码，无需转换。
-   - 只返回最终欧码数值（如 40），不要输出任何解释。若未识别到，返回空字符串 ""。
+   - 只返回最终欧码正整数（如 40），不要输出42.5等半码。若未识别到，返回空字符串 ""。
 ${supplierRule}
 
 请严格以 JSON 数组格式返回结果，不要包含任何解释性文字或 Markdown 代码块标记。
 示例输出：
 [
-  {"item_no": "CW2288-111", "color": "白色", "size": "42.5", "supplier": "Nike"},
+  {"item_no": "CW2288-111", "color": "白色", "size": "42", "supplier": "Nike"},
   {"item_no": "EG4958", "color": "黑色", "size": "38", "supplier": "豪路"}
 ]
       `.trim();

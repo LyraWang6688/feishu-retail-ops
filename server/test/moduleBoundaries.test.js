@@ -17,7 +17,11 @@ test('posting facade routes sales and purchase to separate owners', async () => 
 
 test('purchase posting reaches stock only through applyPurchase after inbound creation', async () => {
   const batch = { record_id: 'batch_1', fields: { 到货批次号: 'DH-001' } };
-  const records = new Map([['purchaseBatch', [batch]]]);
+  // 「尺码」是指向「尺码管理」的关联字段，写入入库明细前要先解析出关联记录。
+  const records = new Map([
+    ['purchaseBatch', [batch]],
+    ['sizeManagement', [{ record_id: 'size_38', fields: { 尺码: 38 } }]],
+  ]);
   const calls = [];
   const gateway = {
     table: (key) => V1_BITABLE_SCHEMA.tables[key],

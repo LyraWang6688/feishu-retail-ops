@@ -127,7 +127,7 @@ const V1_BITABLE_SCHEMA = {
       tableId: getEnv('FEISHU_V1_PURCHASE_REPORT_TABLE_ID', 'tblo0ffzFt7vyQw2'),
       fields: {
         batchNoText: '报货批次号', detailId: '明细ID', behavior: '采购行为',
-        product: '编号', description: '报单说明', reportedAt: '报单时间', operator: '经办人',
+        product: '编号', size: '尺码', quantityDescription: '数量说明', reportedAt: '报单时间', operator: '经办人',
         status: '处理状态', failureReason: '解析失败原因', request: '关联采购申请',
       },
     },
@@ -151,7 +151,7 @@ const V1_BITABLE_SCHEMA = {
       tableName: '报货批次',
       // Current V1 tenant default; forks can override it with the environment variable.
       tableId: getEnv('FEISHU_V1_PURCHASE_ORDER_BATCH_TABLE_ID', 'tblwezby9wRea9qi'),
-      fields: { batchNo: '报货批次号', createdAt: '创建时间', creator: '创建人' },
+      fields: { batchNo: '报货批次号', createdAt: '创建时间' },
     },
     purchaseInbound: {
       tableName: '采购入库',

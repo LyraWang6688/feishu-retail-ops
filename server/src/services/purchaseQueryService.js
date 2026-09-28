@@ -28,32 +28,47 @@ const asDate = (value) => {
 
 const indexByRecordId = (records) => new Map(records.map((r) => [r.record_id, r]));
 
-const createPurchaseQueryService = (gateway) => {
+const createPurchaseQueryService = (gateway, options = {}) => {
   if (!gateway) throw new Error('PurchaseQueryService requires gateway');
+  let sizeReferences = options.sizeReferences || null;
+  const getSizeReferences = () => {
+    if (!sizeReferences) {
+      const { SizeReferenceService } = require('./sizeReferenceService');
+      sizeReferences = new SizeReferenceService({ gateway });
+    }
+    return sizeReferences;
+  };
 
   const listPurchaseRequests = async (filters = {}) => {
-    const [requests, products] = await Promise.all([
+    const [requests, products, batches] = await Promise.all([
       gateway.listAll('purchaseRequest'),
       gateway.listAll('product'),
+      gateway.listAll('purchaseOrderBatch'),
     ]);
     const productMap = indexByRecordId(products);
+    const batchMap = indexByRecordId(batches);
 
-    const rows = requests.map((record) => {
+    const rows = await Promise.all(requests.map(async (record) => {
       const productIds = asLinks('purchaseRequest', record, 'product');
       const product = productIds.length ? productMap.get(productIds[0]) : null;
-      const batchNo = asText('purchaseRequest', record, 'batchNo');
+      const batchIds = asLinks('purchaseRequest', record, 'batchNo');
+      const batch = batchIds.length ? batchMap.get(batchIds[0]) : null;
+      const batchNo = batch ? asText('purchaseOrderBatch', batch, 'batchNo') : '';
       const supplierIds = product ? asLinks('product', product, 'supplier') : [];
+      const size = await getSizeReferences().resolveLinkedCell(
+        record?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseRequest.fields.size]
+      );
       return {
         record_id: record.record_id,
         batch_no: batchNo,
         product_number: product ? asText('product', product, 'number') : '',
         product_record_id: productIds[0] || '',
-        size: asNumber(record?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseRequest.fields.size]),
+        size: size.size,
         quantity: asNumber(record?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseRequest.fields.quantity]),
         arrival_status: asText('purchaseRequest', record, 'arrivalStatus'),
         supplier_record_id: supplierIds[0] || '',
       };
-    });
+    }));
 
     return rows.filter((row) => {
       if (filters.batchNo && row.batch_no !== filters.batchNo) return false;
