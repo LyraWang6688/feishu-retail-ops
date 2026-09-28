@@ -63,3 +63,34 @@ test('inventory CLI scope rejects a non-numeric size-management source', async (
   const gateway = gatewayFor({ sizeManagement: [{ field_name: '尺码', type: 1 }] });
   await assert.rejects(validateV1SchemaScope({ gateway, scope: 'inventory' }), /必须是数字字段/);
 });
+
+// 销售和采购范围同样落在真实录入链路上：跑各自的 schema-check 时，
+// 尺码字段是数字、多选或指错表都必须直接失败，而不是报成功。
+test('sales CLI scope validates the sales-detail size relation', async () => {
+  const invalidFields = [
+    { field_name: '尺码', type: 2 },
+    { field_name: '尺码', type: 18, property: { table_id: 'size_table', multiple: true } },
+    { field_name: '尺码', type: 18, property: { table_id: 'other_table', multiple: false } },
+  ];
+  for (const invalid of invalidFields) {
+    await assert.rejects(validateV1SchemaScope({ gateway: gatewayFor({ salesDetail: [invalid] }), scope: 'sales' }),
+      /单选关联“尺码管理”/);
+  }
+  await assert.rejects(
+    validateV1SchemaScope({ gateway: gatewayFor({ sizeManagement: [{ field_name: '尺码', type: 1 }] }), scope: 'sales' }),
+    /必须是数字字段/,
+  );
+});
+
+test('purchase CLI scope validates both intake size relations', async () => {
+  for (const tableKey of ['purchaseRequest', 'purchaseInbound']) {
+    await assert.rejects(
+      validateV1SchemaScope({ gateway: gatewayFor({ [tableKey]: [{ field_name: '尺码', type: 2 }] }), scope: 'purchase' }),
+      /单选关联“尺码管理”/,
+    );
+  }
+  await assert.rejects(
+    validateV1SchemaScope({ gateway: gatewayFor({ sizeManagement: [{ field_name: '尺码', type: 1 }] }), scope: 'purchase' }),
+    /必须是数字字段/,
+  );
+});

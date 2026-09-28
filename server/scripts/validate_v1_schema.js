@@ -6,13 +6,12 @@ const { V1BitableGateway } = require('../src/services/v1BitableGateway');
 const { InventoryService } = require('../src/services/inventoryService');
 const { SizeReferenceService } = require('../src/services/sizeReferenceService');
 const { getLarkAgentCredentials } = require('../src/config/larkAgent');
-const { getV1SchemaScope } = require('../src/config/v1SchemaScopes');
+const { getV1SchemaScope, getV1SizeLinkTables } = require('../src/config/v1SchemaScopes');
 
 const validateV1SchemaScope = async ({ gateway, scope = 'sales' }) => {
   const { key, tables: tableKeys } = getV1SchemaScope(scope);
-  if (key === 'inventory' || key === 'all') {
-    const sizeLinkTables = ['salesDetail', 'purchaseInbound', 'inventoryLedger', 'liveInventory'];
-    if (key === 'all') sizeLinkTables.push('purchaseRequest');
+  const sizeLinkTables = getV1SizeLinkTables(key);
+  if (sizeLinkTables.length) {
     await new SizeReferenceService({ gateway }).validateSchema(sizeLinkTables);
   }
   const result = await gateway.validateTables(tableKeys);
