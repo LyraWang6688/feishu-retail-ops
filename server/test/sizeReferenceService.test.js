@@ -60,3 +60,27 @@ test('clearing size cache rereads size management', async () => {
   service.clearCache();
   assert.deepEqual(await service.resolveByNumber(41), { recordId: 'size_41', size: 41 });
 });
+
+test('new sizes and rebuilt link IDs refresh on lookup misses without a restart', async () => {
+  const data = [...rows];
+  const service = new SizeReferenceService({ gateway: gatewayFor(data) });
+  assert.deepEqual(await service.resolveByNumber(38), { recordId: 'size_38', size: 38 });
+  data.push({ record_id: 'size_41', fields: { 尺码: 41 } });
+  assert.deepEqual(await service.resolveByNumber(41), { recordId: 'size_41', size: 41 });
+  data[0] = { record_id: 'rebuilt_38', fields: { 尺码: 38 } };
+  assert.deepEqual(await service.resolveLinkedCell(['rebuilt_38']), { recordId: 'rebuilt_38', size: 38 });
+  await assert.rejects(service.resolveLinkedCell(['size_38']), /不在尺码管理/);
+});
+
+test('deleted and recreated mappings are reloaded after bounded cache expiry', async () => {
+  let clock = 0;
+  const data = [...rows];
+  const service = new SizeReferenceService({ gateway: gatewayFor(data),
+    cacheTtlMs: 30_000, now: () => clock });
+  assert.deepEqual(await service.resolveByNumber(38), { recordId: 'size_38', size: 38 });
+  data.splice(0, 1);
+  clock = 30_001;
+  await assert.rejects(service.resolveByNumber(38), /找不到 38 码/);
+  data.push({ record_id: 'rebuilt_38', fields: { 尺码: 38 } });
+  assert.deepEqual(await service.resolveByNumber(38), { recordId: 'rebuilt_38', size: 38 });
+});

@@ -12,13 +12,24 @@ const normalizeSize = (value) => {
 };
 
 class SizeReferenceService {
-  constructor({ gateway } = {}) {
+  constructor({ gateway, cacheTtlMs = 30_000, now = Date.now } = {}) {
     if (!gateway) throw new Error('SizeReferenceService requires gateway');
+    if (!Number.isFinite(cacheTtlMs) || cacheTtlMs < 0) throw new Error('尺码缓存时长无效');
     this.gateway = gateway;
+    this.cacheTtlMs = cacheTtlMs;
+    this.now = now;
     this.cache = null;
+    this.cacheExpiresAt = 0;
+    this.loadPromise = null;
+    this.cacheVersion = 0;
   }
 
-  clearCache() { this.cache = null; }
+  clearCache() {
+    this.cache = null;
+    this.cacheExpiresAt = 0;
+    this.loadPromise = null;
+    this.cacheVersion += 1;
+  }
 
   async validateSchema(tableKeys = []) {
     if (typeof this.gateway.listFields !== 'function') return;
@@ -38,9 +49,11 @@ class SizeReferenceService {
     }
   }
 
-  async load() {
-    if (!this.cache) {
-      this.cache = (async () => {
+  async load({ refresh = false } = {}) {
+    if (!refresh && this.cache && this.now() < this.cacheExpiresAt) return this.cache;
+    if (!this.loadPromise) {
+      const version = this.cacheVersion;
+      const loading = (async () => {
         const field = this.gateway.table('sizeManagement').fields.size;
         const byNumber = new Map();
         const byRecordId = new Map();
@@ -53,17 +66,27 @@ class SizeReferenceService {
           byRecordId.set(record.record_id, entry);
         }
         return { byNumber, byRecordId };
-      })().catch((error) => {
-        this.cache = null;
-        throw error;
+      })().then((snapshot) => {
+        if (version === this.cacheVersion) {
+          this.cache = snapshot;
+          this.cacheExpiresAt = this.now() + this.cacheTtlMs;
+        }
+        return snapshot;
       });
+      this.loadPromise = loading;
+      try {
+        return await loading;
+      } finally {
+        if (this.loadPromise === loading) this.loadPromise = null;
+      }
     }
-    return this.cache;
+    return this.loadPromise;
   }
 
   async resolveByNumber(value) {
     const size = normalizeSize(value);
-    const entry = (await this.load()).byNumber.get(size);
+    let entry = (await this.load()).byNumber.get(size);
+    if (!entry) entry = (await this.load({ refresh: true })).byNumber.get(size);
     if (!entry) throw new Error(`尺码管理中找不到 ${size} 码，请先核对关联记录`);
     return entry;
   }
@@ -71,7 +94,10 @@ class SizeReferenceService {
   async resolveLinkedCells(cellValue) {
     const ids = [...new Set(linkedRecordIds(cellValue))];
     if (!ids.length) throw new Error('尺码关联字段为空或格式无效');
-    const { byRecordId } = await this.load();
+    let { byRecordId } = await this.load();
+    if (ids.some((recordId) => !byRecordId.has(recordId))) {
+      ({ byRecordId } = await this.load({ refresh: true }));
+    }
     return ids.map((recordId) => {
       const entry = byRecordId.get(recordId);
       if (!entry) throw new Error(`尺码关联记录 ${recordId} 不在尺码管理中`);

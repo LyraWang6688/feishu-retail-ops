@@ -287,7 +287,11 @@ class InventoryService {
     if (operation.size_record_id && operation.size_record_id !== sizeReference.recordId) {
       throw new Error(`库存操作 ${operation.operation_id} 的尺码关联已改变，请人工核对`);
     }
-    let ledger = await this.findLedger(operation.kind, operation.source_record_id, operation.behavior_record_id);
+    let ledger = await this.findOperationLedger(operation);
+    await this.auditExistingOperationRecords(operation, ledger, sizeReference.recordId);
+    if (operation.schema_version === 2 && !ledger) {
+      throw new Error(`旧版库存操作 ${operation.operation_id} 未能确认已有流水，请人工核对，不能自动恢复`);
+    }
     if (!ledger) {
       const created = await this.gateway.create('inventoryLedger', {
         product: relation(operation.product_record_id),
@@ -368,6 +372,78 @@ class InventoryService {
       live_record_ids: result.liveRecordIds,
     });
     return result;
+  }
+
+  async findOperationLedger(operation) {
+    const listed = await this.findLedger(operation.kind, operation.source_record_id,
+      operation.behavior_record_id);
+    if (!operation.ledger_record_id) {
+      if (operation.status === 'ledger_created' && !listed) {
+        throw new Error(`库存操作 ${operation.operation_id} 的已创建流水无法确认，请人工核对`);
+      }
+      return listed;
+    }
+    const direct = await this.gateway.get('inventoryLedger', operation.ledger_record_id);
+    if (!direct || (listed && listed.record_id !== direct.record_id)) {
+      throw new Error(`库存操作 ${operation.operation_id} 的已创建流水不存在或不一致，请人工核对`);
+    }
+    return direct;
+  }
+
+  async auditExistingOperationRecords(operation, ledger, sizeRecordId) {
+    const manual = (reason) => {
+      throw new Error(`库存操作 ${operation.operation_id} ${reason}，请人工核对，不能自动恢复`);
+    };
+    const singleLink = (cell, recordId) => {
+      const ids = linkedRecordIds(cell);
+      return ids.length === 1 && ids[0] === recordId;
+    };
+    if (ledger) {
+      const fields = this.gateway.table('inventoryLedger').fields;
+      const source = fields[operation.kind === 'sale' ? 'salesDetail' : 'purchaseInbound'];
+      if (!singleLink(ledger.fields?.[fields.product], operation.product_record_id) ||
+        !singleLink(ledger.fields?.[fields.size], sizeRecordId) ||
+        !singleLink(ledger.fields?.[fields.behavior], operation.behavior_record_id) ||
+        !singleLink(ledger.fields?.[source], operation.source_record_id) ||
+        Number(ledger.fields?.[fields.quantityChange]) !== operation.quantity) {
+        manual(`已有库存流水 ${ledger.record_id} 的货品、尺码关联、行为、来源或数量不一致`);
+      }
+    }
+    const createdIds = operation.created_live_record_ids || [];
+    const removedIds = operation.removed_live_record_ids || [];
+    const selectedIds = operation.live_record_ids || [];
+    if (new Set(createdIds).size !== createdIds.length || createdIds.length > operation.quantity ||
+      new Set(removedIds).size !== removedIds.length ||
+      removedIds.some((recordId) => !selectedIds.includes(recordId))) {
+      manual('已记录的实时库存 ID 不一致');
+    }
+    if (operation.schema_version === 2 && removedIds.length) {
+      manual('旧版销售任务已有库存删除，已删除记录的尺码关联无法再核实');
+    }
+    const liveFields = this.gateway.table('liveInventory').fields;
+    if (operation.direction === '增加') {
+      for (const recordId of createdIds) {
+        const record = await this.gateway.get('liveInventory', recordId);
+        if (!record || !singleLink(record.fields?.[liveFields.product], operation.product_record_id) ||
+          !singleLink(record.fields?.[liveFields.size], sizeRecordId) ||
+          textValue(record.fields?.[liveFields.state]) !== operation.state) {
+          manual(`已有实时库存 ${recordId} 的货品、尺码关联或状态不一致`);
+        }
+      }
+    } else if (operation.direction === '减少') {
+      if (selectedIds.length !== operation.quantity) manual('待扣减实时库存数量不一致');
+      for (const recordId of selectedIds) {
+        if (removedIds.includes(recordId)) continue;
+        const record = await this.gateway.get('liveInventory', recordId);
+        if (!record || !singleLink(record.fields?.[liveFields.product], operation.product_record_id) ||
+          !singleLink(record.fields?.[liveFields.size], sizeRecordId) ||
+          !['门盒', '样品'].includes(textValue(record.fields?.[liveFields.state]))) {
+          manual(`待扣减实时库存 ${recordId} 的货品、尺码关联或状态不一致`);
+        }
+      }
+    } else {
+      manual('库存方向无效');
+    }
   }
 
   async findLedger(kind, sourceRecordId, behaviorRecordId) {

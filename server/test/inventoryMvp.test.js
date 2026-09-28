@@ -4,7 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
-const { InventoryService } = require('../src/services/inventoryService');
+const { InventoryService, operationId } = require('../src/services/inventoryService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
 const behavior = (recordId, name, direction) => ({ record_id: recordId,
@@ -170,4 +170,91 @@ test('sample replacement refuses an unconfigured behavior before writing records
     productRecordId: 'product_1', size: 38 }), /库存方向设置为“不影响”/);
   assert.equal(gateway.records.get('inventoryLedger'), undefined);
   assert.equal(gateway.records.get('liveInventory')[0].fields['所属状态'], '门盒');
+});
+
+const legacyPurchase = async ({ ledgerSize = ['size_38'], liveSize = ['size_38'],
+  includeLedger = true } = {}) => {
+  const live = { record_id: 'legacy_live', fields: {
+    编号: ['product_1'], 尺码: liveSize, 所属状态: '门盒',
+  } };
+  const gateway = gatewayFor([live]);
+  if (includeLedger) gateway.records.set('inventoryLedger', [{ record_id: 'legacy_ledger', fields: {
+    编号: ['product_1'], 尺码: ledgerSize, 变动数量: 2,
+    库存行为: ['behavior_purchase'], 关联采购: ['inbound_legacy'],
+  } }]);
+  const taskStore = store();
+  const id = operationId('purchase', 'inbound_legacy');
+  await taskStore.create({
+    operation_id: id, type: 'inventory_change', schema_version: 2,
+    status: includeLedger ? 'ledger_created' : 'prepared', kind: 'purchase',
+    stock_key: 'product_1|38|门盒', product_record_id: 'product_1', size: 38,
+    state: '门盒', quantity: 2, direction: '增加',
+    behavior_record_id: 'behavior_purchase', source_record_id: 'inbound_legacy',
+    ledger_record_id: includeLedger ? 'legacy_ledger' : undefined,
+    live_record_ids: [], created_live_record_ids: ['legacy_live'],
+    removed_live_record_ids: [], target_quantity: 2,
+  });
+  const inventory = new InventoryService({ gateway, store: taskStore });
+  const request = { purchaseInboundRecordId: 'inbound_legacy', productRecordId: 'product_1',
+    size: 38, quantity: 2, state: '门盒' };
+  return { gateway, taskStore, id, inventory, request };
+};
+
+test('version 2 purchase refuses an old numeric-size ledger before adding stock', async () => {
+  for (const ledgerSize of [38, ['size_40']]) {
+    const { gateway, taskStore, id, inventory, request } = await legacyPurchase({ ledgerSize });
+    await assert.rejects(inventory.applyPurchase(request), /已有库存流水.*尺码关联.*不能自动恢复/);
+    assert.equal(gateway.records.get('liveInventory').length, 1);
+    assert.notEqual((await taskStore.get(id)).status, 'completed');
+  }
+});
+
+test('version 2 purchase refuses an old numeric-size live row before adding stock', async () => {
+  for (const liveSize of [38, ['size_40']]) {
+    const { gateway, taskStore, id, inventory, request } = await legacyPurchase({ liveSize });
+    await assert.rejects(inventory.applyPurchase(request), /已有实时库存.*尺码关联.*不能自动恢复/);
+    assert.equal(gateway.records.get('liveInventory').length, 1);
+    assert.equal(gateway.records.get('inventoryLedger').length, 1);
+    assert.notEqual((await taskStore.get(id)).status, 'completed');
+  }
+});
+
+test('version 2 purchase resumes only after existing ledger and live row links verify', async () => {
+  const { gateway, taskStore, id, inventory, request } = await legacyPurchase();
+  const result = await inventory.applyPurchase(request);
+  assert.equal(result.ledgerRecordId, 'legacy_ledger');
+  assert.equal(gateway.records.get('inventoryLedger').length, 1);
+  assert.equal(gateway.records.get('liveInventory').length, 2);
+  assert.ok(gateway.records.get('liveInventory').every((record) =>
+    JSON.stringify(record.fields['尺码']) === JSON.stringify(['size_38'])));
+  assert.equal((await taskStore.get(id)).status, 'completed');
+});
+
+test('version 2 purchase without a confirmable ledger stops for manual reconciliation', async () => {
+  const { gateway, taskStore, id, inventory, request } = await legacyPurchase({ includeLedger: false });
+  await assert.rejects(inventory.applyPurchase(request), /未能确认已有流水.*人工核对/);
+  assert.equal(gateway.records.get('inventoryLedger'), undefined);
+  assert.notEqual((await taskStore.get(id)).status, 'completed');
+});
+
+test('version 2 sale with already deleted stock cannot silently complete', async () => {
+  const gateway = gatewayFor([]);
+  gateway.records.set('inventoryLedger', [{ record_id: 'sale_ledger', fields: {
+    编号: ['product_1'], 尺码: ['size_38'], 变动数量: 1,
+    库存行为: ['behavior_sale'], 关联销售: ['detail_legacy'],
+  } }]);
+  const taskStore = store();
+  const id = operationId('sale', 'detail_legacy');
+  await taskStore.create({
+    operation_id: id, type: 'inventory_change', schema_version: 2,
+    status: 'ledger_created', kind: 'sale', stock_key: 'product_1|38|门盒',
+    product_record_id: 'product_1', size: 38, state: '门盒', quantity: 1,
+    direction: '减少', behavior_record_id: 'behavior_sale', source_record_id: 'detail_legacy',
+    ledger_record_id: 'sale_ledger', live_record_ids: ['deleted_legacy'],
+    removed_live_record_ids: ['deleted_legacy'], created_live_record_ids: [], target_quantity: 0,
+  });
+  const inventory = new InventoryService({ gateway, store: taskStore });
+  await assert.rejects(inventory.applySale({ salesDetailRecordId: 'detail_legacy',
+    productRecordId: 'product_1', size: 38, quantity: 1 }), /旧版销售任务已有库存删除.*不能自动恢复/);
+  assert.notEqual((await taskStore.get(id)).status, 'completed');
 });
