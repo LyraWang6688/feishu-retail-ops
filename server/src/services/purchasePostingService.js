@@ -1,15 +1,31 @@
 const { V1BitableGateway, linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
 const { InventoryService } = require('./inventoryService');
+const { SizeReferenceService } = require('./sizeReferenceService');
 const { logError, logInfo } = require('../utils/logger');
+
+// 尺码是单选关联：必须是且只能是这一条，多选或错关联都不能当成同一条入库明细。
+const singleLinked = (cell, recordId) => {
+  const ids = linkedRecordIds(cell);
+  return ids.length === 1 && ids[0] === recordId;
+};
 
 class PurchasePostingService {
   constructor(options = {}) {
     this.gateway = options.gateway || new V1BitableGateway();
     this.references = options.references || new V1ReferenceResolver(this.gateway);
     this.inventory = options.inventory || new InventoryService({ gateway: this.gateway });
+    this.sizeReferences = options.sizeReferences || null;
     this.enabled = true;
     this.queue = Promise.resolve();
+  }
+
+  getSizeReferences() {
+    if (!this.sizeReferences) {
+      // 「尺码」已改为关联「尺码管理」，写采购入库前要先解析出关联记录 ID。
+      this.sizeReferences = new SizeReferenceService({ gateway: this.gateway });
+    }
+    return this.sizeReferences;
   }
 
   post(input) {
@@ -35,7 +51,9 @@ class PurchasePostingService {
         if (!Number.isFinite(size) || size <= 0 || !Number.isInteger(quantity) || quantity <= 0) {
           throw new Error('采购尺码或数量无效');
         }
-        resolved.push({ ...raw, productRecordId: product.recordId, size, quantity });
+        const sizeReference = await this.getSizeReferences().resolveByNumber(size);
+        resolved.push({ ...raw, productRecordId: product.recordId, size, quantity,
+          sizeRecordId: sizeReference.recordId });
       }
       const fields = this.gateway.table('purchaseInbound').fields;
       const existing = (await this.gateway.listAll('purchaseInbound')).filter((record) =>
@@ -44,7 +62,7 @@ class PurchasePostingService {
       const rows = resolved.map((item) => {
         const record = existing.find((candidate) => !used.has(candidate.record_id) &&
           linkedRecordIds(candidate.fields?.[fields.product]).includes(item.productRecordId) &&
-          Number(textValue(candidate.fields?.[fields.size])) === item.size &&
+          singleLinked(candidate.fields?.[fields.size], item.sizeRecordId) &&
           Number(textValue(candidate.fields?.[fields.quantity])) === item.quantity);
         if (record) used.add(record.record_id);
         return { item, recordId: record?.record_id || '' };
@@ -56,7 +74,7 @@ class PurchasePostingService {
       for (const row of rows) {
         if (row.recordId) continue;
         const created = await this.gateway.create('purchaseInbound', {
-          size: row.item.size, quantity: row.item.quantity,
+          size: relation(row.item.sizeRecordId), quantity: row.item.quantity,
           batch: relation(batchRecordId),
           supplierOrder: relation(row.item.supplierOrderRecordId),
           product: relation(row.item.productRecordId), inboundAt: occurredAt,
