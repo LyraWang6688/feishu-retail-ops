@@ -43,6 +43,26 @@ test('quantity description overrides only mentioned sizes and preserves defaults
   ]);
 });
 
+// 用户在说明里写“各一双”是在确认默认数量，不是在说含糊的话。
+// 提示词要求这种情况回显全部已选尺码 ×1，规则层必须接受这个结果而不是判为失败。
+test('description confirming the default one pair per size is accepted', async () => {
+  const items = await buildPurchaseQuantities({
+    selectedSizes: [39, 40, 41],
+    quantityDescription: '各一双',
+    parseOverrides: async () => [
+      { size: 39, quantity: 1 },
+      { size: 40, quantity: 1 },
+      { size: 41, quantity: 1 },
+    ],
+  });
+
+  assert.deepEqual(items, [
+    { size: 39, quantity: 1 },
+    { size: 40, quantity: 1 },
+    { size: 41, quantity: 1 },
+  ]);
+});
+
 test('quantity description can override every selected size', async () => {
   const items = await buildPurchaseQuantities({
     selectedSizes: [39, 40, 41],
