@@ -19,13 +19,21 @@ const SIZE = Number(process.env.FEISHU_V1_E2E_SIZE);
 const silentLogger = { error() {}, warn() {}, info() {}, debug() {}, trace() {} };
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function until(check, label) {
-  for (let attempt = 0; attempt < 12; attempt += 1) {
-    const value = await check();
-    if (value) return value;
-    await wait(1000);
+const isDataNotReady = (error) => [error?.code, error?.response?.data?.code,
+  error?.cause?.response?.data?.code].some((code) => Number(code) === 1254607) ||
+  /\b1254607\b/.test(String(error?.message || ''));
+
+async function until(check, label, { attempts = 12, pause = wait } = {}) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const value = await check();
+      if (value) return value;
+    } catch (error) {
+      if (!isDataNotReady(error)) throw error;
+    }
+    if (attempt + 1 < attempts) await pause(1000);
   }
-  throw new Error(`${label} 在 12 秒内未能读回；保留已创建记录以便人工核对`);
+  throw new Error(`${label} 在 ${attempts} 次尝试后未能读回；保留已创建记录以便人工核对`);
 }
 
 async function main() {
@@ -83,7 +91,11 @@ async function main() {
     return linkedRecordIds(record.fields?.['尺码']).includes(size.recordId) ? record : null;
   }, '采购入库后的实时库存');
   assert.ok(linkedRecordIds(purchasedLive.fields?.['编号']).includes(PRODUCT_ID));
-  const purchaseLedger = await gateway.get('inventoryLedger', purchase.ledgerRecordId);
+  const purchaseLedger = await until(async () => {
+    const record = await gateway.get('inventoryLedger', purchase.ledgerRecordId);
+    return linkedRecordIds(record?.fields?.['尺码']).includes(size.recordId) &&
+      linkedRecordIds(record?.fields?.['关联采购']).includes(inbound.recordId) ? record : null;
+  }, '采购库存流水');
   assert.ok(linkedRecordIds(purchaseLedger.fields?.['尺码']).includes(size.recordId));
   assert.ok(linkedRecordIds(purchaseLedger.fields?.['关联采购']).includes(inbound.recordId));
 
@@ -104,7 +116,11 @@ async function main() {
     productRecordId: PRODUCT_ID, size: SIZE, quantity: 1 })).ledgerRecordId,
   sale.ledgerRecordId);
   assert.deepEqual(sale.liveRecordIds, [purchasedLive.record_id]);
-  const saleLedger = await gateway.get('inventoryLedger', sale.ledgerRecordId);
+  const saleLedger = await until(async () => {
+    const record = await gateway.get('inventoryLedger', sale.ledgerRecordId);
+    return linkedRecordIds(record?.fields?.['尺码']).includes(size.recordId) &&
+      linkedRecordIds(record?.fields?.['关联销售']).includes(detail.recordId) ? record : null;
+  }, '销售库存流水');
   assert.ok(linkedRecordIds(saleLedger.fields?.['尺码']).includes(size.recordId));
   assert.ok(linkedRecordIds(saleLedger.fields?.['关联销售']).includes(detail.recordId));
   await until(async () => (await inventory.findLiveInventory(PRODUCT_ID, SIZE, '门盒')).length === 0,
@@ -116,7 +132,11 @@ async function main() {
     consumedLiveRecordId: purchasedLive.record_id }));
 }
 
-main().catch((error) => {
-  console.error('inventory_e2e_failed', error.message);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error('inventory_e2e_failed', error.message);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { until, isDataNotReady };

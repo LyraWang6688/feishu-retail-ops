@@ -4,7 +4,7 @@ const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { relation } = require('./v1ReferenceResolver');
 const { SizeReferenceService, normalizeSize } = require('./sizeReferenceService');
-const { logInfo } = require('../utils/logger');
+const { logInfo, logWarn } = require('../utils/logger');
 
 const STOCK_BEHAVIORS = Object.freeze({
   sale: { name: '销售减少', direction: '减少' },
@@ -354,8 +354,21 @@ class InventoryService {
       consumedLiveRecordIds: operation.kind === 'sale' ? removedIds : [],
     };
     if (operation.kind === 'sale' && result.sampleConsumedQuantity) {
-      result.remainingSizes = await this.sampleReplacementCandidates(operation.product_record_id,
-        { excludeRecordIds: removedIds });
+      try {
+        result.remainingSizes = await this.sampleReplacementCandidates(operation.product_record_id,
+          { excludeRecordIds: removedIds });
+      } catch (error) {
+        // The stock movement is already durable. A malformed or temporarily
+        // unreadable remaining row must not turn a successful delivery into a
+        // failed one; the replacement card can retry this separate lookup.
+        result.remainingSizes = [];
+        result.replacementCandidatesUnavailable = true;
+        logWarn('inventory.sample_candidates.failed', {
+          operation_id: operation.operation_id,
+          source_record_id: operation.source_record_id,
+          error: error.message,
+        });
+      }
     }
     await this.store.update(operation.operation_id, {
       status: 'completed',

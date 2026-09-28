@@ -133,6 +133,59 @@ test('sale consumes a sample only after door-box stock is exhausted and reports 
   assert.deepEqual(gateway.records.get('liveInventory').map((row) => row.record_id), ['door_40', 'warehouse_41']);
 });
 
+test('bad remaining-size link cannot turn an already deducted sample sale into a failed delivery', async () => {
+  const gateway = gatewayFor([
+    unit('sample_38', '样品'),
+    { record_id: 'door_bad', fields: { 编号: ['product_1'], 尺码: ['missing_size'], 所属状态: '门盒' } },
+  ]);
+  const taskStore = store();
+  const inventory = new InventoryService({ gateway, store: taskStore });
+  const request = { salesDetailRecordId: 'detail_bad_candidate', productRecordId: 'product_1',
+    size: 38, quantity: 1 };
+  const result = await inventory.applySale(request);
+  assert.equal(result.sampleConsumedQuantity, 1);
+  assert.equal(result.replacementCandidatesUnavailable, true);
+  assert.deepEqual(result.remainingSizes, []);
+  assert.deepEqual(result.liveRecordIds, ['sample_38']);
+  assert.equal((await taskStore.get(operationId('sale', request.salesDetailRecordId))).status, 'completed');
+  assert.deepEqual(gateway.records.get('liveInventory').map((record) => record.record_id), ['door_bad']);
+  assert.equal(gateway.records.get('inventoryLedger').length, 1);
+  assert.deepEqual(await inventory.applySale(request), result);
+  assert.equal(gateway.records.get('inventoryLedger').length, 1);
+
+  gateway.records.get('liveInventory')[0].fields['尺码'] = ['size_40'];
+  assert.deepEqual(await inventory.sampleReplacementCandidates('product_1'), [
+    { size: 40, doorBoxCount: 1, sampleCount: 0, warehouseCount: 0 },
+  ]);
+});
+
+test('an interrupted sample deduction resumes without deleting stock twice', async () => {
+  const gateway = gatewayFor([
+    unit('sample_38', '样品'),
+    { record_id: 'door_bad', fields: { 编号: ['product_1'], 尺码: ['missing_size'], 所属状态: '门盒' } },
+  ]);
+  const taskStore = store();
+  const originalUpdate = taskStore.update.bind(taskStore);
+  let failCompletionOnce = true;
+  taskStore.update = async (id, changes) => {
+    if (changes.status === 'completed' && failCompletionOnce) {
+      failCompletionOnce = false;
+      throw new Error('模拟任务完成状态持久化中断');
+    }
+    return originalUpdate(id, changes);
+  };
+  const inventory = new InventoryService({ gateway, store: taskStore });
+  const request = { salesDetailRecordId: 'detail_interrupted', productRecordId: 'product_1',
+    size: 38, quantity: 1 };
+  await assert.rejects(inventory.applySale(request), /持久化中断/);
+  assert.deepEqual(gateway.records.get('liveInventory').map((record) => record.record_id), ['door_bad']);
+  const result = await inventory.applySale(request);
+  assert.deepEqual(result.liveRecordIds, ['sample_38']);
+  assert.equal(result.replacementCandidatesUnavailable, true);
+  assert.equal(gateway.records.get('inventoryLedger').length, 1);
+  assert.equal((await taskStore.get(operationId('sale', request.salesDetailRecordId))).status, 'completed');
+});
+
 test('a sale never consumes warehouse stock and does not write a ledger when total floor stock is short', async () => {
   const gateway = gatewayFor([unit('sample_1', '样品'), unit('warehouse_1', '仓库')]);
   const inventory = new InventoryService({ gateway, store: store() });
