@@ -48,7 +48,7 @@ function renderInventory(container, data, filters) {
       <div class="metric"><span>门盒</span><strong>${sumState(rows, '门盒')}</strong></div>
       <div class="metric"><span>仓库</span><strong>${sumState(rows, '仓库')}</strong></div>
     </div>
-    <div class="filters"><input data-filter="keyword" value="${escapeHtml(filters.keyword || '')}" placeholder="输入库存键/编号/货号/颜色"><input data-filter="size" value="${escapeHtml(filters.size || '')}" placeholder="尺码"><button class="btn btn-primary" type="button" data-search="inventory">查询</button></div>
+    <div class="filters"><input data-filter="keyword" value="${escapeHtml(filters.keyword || '')}" placeholder="输入库存键/编号/货号/颜色"><input data-filter="size" type="number" min="1" step="1" inputmode="numeric" value="${escapeHtml(filters.size || '')}" placeholder="尺码（正整数）"><button class="btn btn-primary" type="button" data-search="inventory">查询</button></div>
     ${duplicates.length ? `<div class="warning">发现重复库存键 ${duplicates.length} 个，请在多维表格中检查唯一性。</div>` : ''}
     <div class="table-wrap mobile-card-table"><table><thead><tr><th>库存键</th><th>编号</th><th>货号</th><th>颜色</th><th>尺码</th><th>所属状态</th><th>当前数量</th><th>更新时间</th></tr></thead><tbody>${rows.map((row) => `<tr><td data-label="库存键"><span class="cell-value">${escapeHtml(row.stock_key || '-')}</span></td><td data-label="编号"><span class="cell-value">${escapeHtml(row.product_number || '-')}</span></td><td data-label="货号"><span class="cell-value">${escapeHtml(row.item_no || '-')}</span></td><td data-label="颜色"><span class="cell-value">${escapeHtml(row.color || '-')}</span></td><td data-label="尺码"><span class="cell-value">${escapeHtml(row.size || '-')}</span></td><td data-label="所属状态"><span class="cell-value tag tag-info">${escapeHtml(row.state || '-')}</span></td><td data-label="当前数量" class="quantity"><span class="cell-value">${escapeHtml(row.quantity || 0)}</span></td><td data-label="更新时间"><span class="cell-value">${escapeHtml(dateTime(row.updated_at))}</span></td></tr>`).join('')}</tbody></table></div>
     ${rows.length ? '' : '<p class="empty">没有匹配的库存记录。</p>'}`;
@@ -70,7 +70,14 @@ export function createInventoryModule({ focused = false } = {}) {
 
   function bindSearch() {
     const panel = $(state.container, '#inventory-live-subpanel');
-    const run = () => loadInventory({ keyword: $(panel, '[data-filter="keyword"]').value.trim(), size: $(panel, '[data-filter="size"]').value.trim() });
+    const run = () => {
+      const size = $(panel, '[data-filter="size"]').value.trim();
+      if (size && !/^[1-9]\d*$/.test(size)) {
+        setError('尺码必须是正整数，例如 38、42。');
+        return;
+      }
+      loadInventory({ keyword: $(panel, '[data-filter="keyword"]').value.trim(), size });
+    };
     $(panel, '[data-search="inventory"]').addEventListener('click', run);
     panel.querySelectorAll('input').forEach((input) => input.addEventListener('keydown', (event) => { if (event.key === 'Enter') run(); }));
   }
