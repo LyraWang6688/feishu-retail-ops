@@ -27,6 +27,11 @@ const V1_BITABLE_SCHEMA = {
         enabled: '是否启用',
       },
     },
+    sizeManagement: {
+      tableName: '尺码管理',
+      tableId: getEnv('FEISHU_V1_SIZE_TABLE_ID'),
+      fields: { size: '尺码' },
+    },
     paymentMethod: {
       tableName: '收款方式管理',
       tableId: getEnv('FEISHU_V1_PAYMENT_METHOD_TABLE_ID', 'tblH7YzA1v5vJzEi'),

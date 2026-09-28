@@ -13,7 +13,13 @@ const { SalesProgressService } = require('../src/services/salesProgressService')
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
 const fake = () => {
-  const records = new Map([['salesEntry', [{ record_id: 'order_1', fields: { 销售单号: 'XSD-001', 确认状态: '待确认' } }]]]);
+  const sizes = [38, 39, 40, 41, 42, 43, 44].map((size) => ({
+    record_id: `size_${size}`, fields: { 尺码: size },
+  }));
+  const records = new Map([
+    ['salesEntry', [{ record_id: 'order_1', fields: { 销售单号: 'XSD-001', 确认状态: '待确认' } }]],
+    ['sizeManagement', sizes],
+  ]);
   let seq = 0;
   const gateway = {
     records, table: (key) => V1_BITABLE_SCHEMA.tables[key], validateTables: async () => [],
@@ -227,8 +233,8 @@ test('confirmed sale delivery writes positive stock movement and removes exactly
     行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
   } }]);
   gateway.records.set('liveInventory', [
-    { record_id: 'door_1', fields: { 编号: ['product_A100'], 尺码: 38, 所属状态: '门盒' } },
-    { record_id: 'sample_1', fields: { 编号: ['product_A100'], 尺码: 38, 所属状态: '样品' } },
+    { record_id: 'door_1', fields: { 编号: ['product_A100'], 尺码: ['size_38'], 所属状态: '门盒' } },
+    { record_id: 'sample_1', fields: { 编号: ['product_A100'], 尺码: ['size_38'], 所属状态: '样品' } },
   ]);
   const sale = new SalesOrderService({ gateway, references });
   const posted = await sale.confirm({ salesEntryRecordId: 'order_1',
@@ -242,7 +248,7 @@ test('confirmed sale delivery writes positive stock movement and removes exactly
   await delivery.deliver({ salesEntryRecordId: 'order_1', detailRecordIds: posted.detailRecordIds });
   assert.deepEqual(gateway.records.get('liveInventory').map((row) => row.record_id), ['sample_1']);
   assert.deepEqual(gateway.records.get('inventoryLedger')[0].fields, {
-    编号: ['product_A100'], 尺码: 38, 变动数量: 1,
+    编号: ['product_A100'], 尺码: ['size_38'], 变动数量: 1,
     库存行为: ['behavior_sale'], 关联销售: posted.detailRecordIds,
   });
   assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['履约状态'], '已交付');
@@ -254,7 +260,7 @@ test('a failed fulfillment-state write retries without deducting the same pair t
     行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
   } }]);
   gateway.records.set('liveInventory', [
-    { record_id: 'door_1', fields: { 编号: ['product_A100'], 尺码: 38, 所属状态: '门盒' } },
+    { record_id: 'door_1', fields: { 编号: ['product_A100'], 尺码: ['size_38'], 所属状态: '门盒' } },
   ]);
   const sale = new SalesOrderService({ gateway, references });
   const posted = await sale.confirm({ salesEntryRecordId: 'order_1', items: [
@@ -293,9 +299,9 @@ test('one out-of-stock shoe does not prevent later shoes from delivering, and re
     行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
   } }]);
   gateway.records.set('liveInventory', [
-    { record_id: 'door_a', fields: { 编号: ['product_A100'], 尺码: 39, 所属状态: '门盒' } },
-    { record_id: 'door_c', fields: { 编号: ['product_C300'], 尺码: 43, 所属状态: '门盒' } },
-    { record_id: 'door_d', fields: { 编号: ['product_D400'], 尺码: 44, 所属状态: '门盒' } },
+    { record_id: 'door_a', fields: { 编号: ['product_A100'], 尺码: ['size_39'], 所属状态: '门盒' } },
+    { record_id: 'door_c', fields: { 编号: ['product_C300'], 尺码: ['size_43'], 所属状态: '门盒' } },
+    { record_id: 'door_d', fields: { 编号: ['product_D400'], 尺码: ['size_44'], 所属状态: '门盒' } },
   ]);
   const sale = new SalesOrderService({ gateway, references });
   const posted = await sale.confirm({ salesEntryRecordId: 'order_1',
@@ -322,7 +328,7 @@ test('one out-of-stock shoe does not prevent later shoes from delivering, and re
   assert.equal(gateway.records.get('inventoryLedger').length, 3);
 
   gateway.records.get('liveInventory').push({ record_id: 'door_b', fields: {
-    编号: ['product_B200'], 尺码: 38, 所属状态: '门盒',
+    编号: ['product_B200'], 尺码: ['size_38'], 所属状态: '门盒',
   } });
   const retried = await delivery.deliver(request);
   assert.equal(retried.failures.length, 0);
@@ -399,8 +405,8 @@ test('temporary 1254607 after receipt creation retries reads and delivers once w
     行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
   } }]);
   gateway.records.set('liveInventory', [
-    { record_id: 'door_1', fields: { 编号: ['product_A100'], 尺码: 39, 所属状态: '门盒' } },
-    { record_id: 'sample_1', fields: { 编号: ['product_A100'], 尺码: 39, 所属状态: '样品' } },
+    { record_id: 'door_1', fields: { 编号: ['product_A100'], 尺码: ['size_39'], 所属状态: '门盒' } },
+    { record_id: 'sample_1', fields: { 编号: ['product_A100'], 尺码: ['size_39'], 所属状态: '样品' } },
   ]);
   const listAll = gateway.listAll;
   let pendingReads = 1;

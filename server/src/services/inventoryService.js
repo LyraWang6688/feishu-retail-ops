@@ -3,7 +3,8 @@ const path = require('node:path');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { relation } = require('./v1ReferenceResolver');
-const { logInfo } = require('../utils/logger');
+const { SizeReferenceService, normalizeSize } = require('./sizeReferenceService');
+const { logInfo, logWarn } = require('../utils/logger');
 
 const STOCK_BEHAVIORS = Object.freeze({
   sale: { name: '销售减少', direction: '减少' },
@@ -26,10 +27,16 @@ const operationId = (kind, sourceRecordId) =>
   `inventory_${kind}_${crypto.createHash('sha256').update(String(sourceRecordId)).digest('hex').slice(0, 20)}`;
 const samplePromotionId = (salesDetailRecordId) => operationId('sample', salesDetailRecordId);
 
+const singleLinked = (cell, recordId) => {
+  const ids = linkedRecordIds(cell);
+  return ids.length === 1 && ids[0] === recordId;
+};
+
 class InventoryService {
   constructor(options = {}) {
     if (!options.gateway) throw new Error('InventoryService requires gateway');
     this.gateway = options.gateway;
+    this.sizeReferences = options.sizeReferences || new SizeReferenceService({ gateway: this.gateway });
     this.store =
       options.store ||
       new JsonTaskStore({
@@ -43,7 +50,14 @@ class InventoryService {
   async ensureSchema() {
     if (typeof this.gateway.validateTables !== 'function') return;
     if (!this.schemaValidation) {
-      this.schemaValidation = this.gateway.validateTables(['behavior', 'inventoryLedger', 'liveInventory']);
+      this.schemaValidation = (async () => {
+        const result = await this.gateway.validateTables(['behavior', 'sizeManagement', 'inventoryLedger', 'liveInventory']);
+        await this.sizeReferences.validateSchema(['inventoryLedger', 'liveInventory']);
+        return result;
+      })().catch((error) => {
+        this.schemaValidation = null;
+        throw error;
+      });
     }
     return this.schemaValidation;
   }
@@ -124,18 +138,19 @@ class InventoryService {
   async applyChange(input) {
     if (!input.productRecordId) throw new Error('库存变化缺少商品 record_id');
     if (!input.sourceRecordId) throw new Error('库存变化缺少来源明细 record_id');
-    const size = positiveNumber(input.size, '尺码');
+    const size = normalizeSize(input.size);
     const quantity = positiveInteger(input.quantity, '变动数量');
     const state = String(input.state || '门盒');
     if (!['门盒', '样品', '仓库'].includes(state)) throw new Error('库存所属状态无效');
     const stockKey = `${input.productRecordId}|${size}|${state}`;
     return this.runForStock(stockKey, async () => {
       await this.ensureSchema();
+      const sizeReference = await this.sizeReferences.resolveByNumber(size);
       await this.resumePending(stockKey);
       const id = operationId(input.kind, input.sourceRecordId);
       let operation = await this.store.get(id);
       if (operation) {
-        if (operation.schema_version === 2 && (
+        if ([2, 3].includes(operation.schema_version) && (
           operation.kind !== input.kind || operation.product_record_id !== input.productRecordId ||
           operation.size !== size || operation.state !== state || operation.quantity !== quantity
         )) throw new Error(`来源明细 ${input.sourceRecordId} 的库存操作内容与首次提交不一致`);
@@ -149,7 +164,7 @@ class InventoryService {
         const allLiveRecords = await this.gateway.listAll('liveInventory');
         const states = input.kind === 'sale' ? ['门盒', '样品'] : [state];
         const liveRecords = states.flatMap((candidateState) =>
-          this.findLiveInventoryIn(allLiveRecords, input.productRecordId, size, candidateState)
+          this.findLiveInventoryIn(allLiveRecords, input.productRecordId, sizeReference.recordId, candidateState)
             .sort((left, right) => String(left.record_id).localeCompare(String(right.record_id))));
         const currentQuantity = liveRecords.length;
         if (delta < 0 && currentQuantity < quantity) {
@@ -163,12 +178,13 @@ class InventoryService {
         operation = await this.store.create({
           operation_id: id,
           type: 'inventory_change',
-          schema_version: 2,
+          schema_version: 3,
           status: 'prepared',
           kind: input.kind,
           stock_key: stockKey,
           product_record_id: input.productRecordId,
           size,
+          size_record_id: sizeReference.recordId,
           state,
           quantity,
           direction: behavior.direction,
@@ -200,10 +216,11 @@ class InventoryService {
 
   async promoteToSample({ salesDetailRecordId, productRecordId, size } = {}) {
     if (!salesDetailRecordId || !productRecordId) throw new Error('补样品缺少销售明细或货品');
-    const normalizedSize = positiveNumber(size, '尺码');
+    const normalizedSize = normalizeSize(size);
     const stockKey = `${productRecordId}|${normalizedSize}|门盒`;
     return this.runForStock(stockKey, async () => {
       await this.ensureSchema();
+      const sizeReference = await this.sizeReferences.resolveByNumber(normalizedSize);
       await this.resumePending(stockKey);
       const id = samplePromotionId(salesDetailRecordId);
       let operation = await this.store.get(id);
@@ -222,7 +239,8 @@ class InventoryService {
         operation = await this.store.create({
           operation_id: id, type: 'sample_promotion', status: 'prepared', stock_key: stockKey,
           source_record_id: salesDetailRecordId, product_record_id: productRecordId,
-          size: normalizedSize, live_record_id: liveRecords[0].record_id,
+          size: normalizedSize, size_record_id: sizeReference.recordId,
+          live_record_id: liveRecords[0].record_id,
           behavior_record_id: behavior.recordId,
         });
       }
@@ -236,8 +254,26 @@ class InventoryService {
     const record = await this.gateway.get('liveInventory', operation.live_record_id);
     if (!record) throw new Error('待补样品的门盒库存记录不存在，请人工核对');
     const fields = this.gateway.table('liveInventory').fields;
+    const sizeReference = await this.sizeReferences.resolveByNumber(operation.size);
+    // Tasks written before the size field became a relation carry no
+    // size_record_id, and a later link change cannot be told apart from a
+    // stale one. Both stop here instead of resuming against the wrong 尺码.
+    if (operation.size_record_id !== sizeReference.recordId) {
+      throw new Error('补样品任务缺少可核对的尺码关联或关联已改变，请人工核对，不能自动恢复');
+    }
+    if (ledger && !this.ledgerMatchesOperation(ledger, {
+      productRecordId: operation.product_record_id,
+      sizeRecordId: sizeReference.recordId,
+      behaviorRecordId: operation.behavior_record_id,
+      sourceField: 'salesDetail',
+      sourceRecordId: operation.source_record_id,
+      // 补样品只改状态，不改变数量，流水变动数量必须为 0。
+      quantityChange: 0,
+    })) {
+      throw new Error(`已有库存流水 ${ledger.record_id} 的货品、尺码关联、行为、来源或数量不一致，请人工核对，不能自动恢复`);
+    }
     if (!linkedRecordIds(record.fields?.[fields.product]).includes(operation.product_record_id) ||
-      Number(textValue(record.fields?.[fields.size])) !== operation.size) {
+      !linkedRecordIds(record.fields?.[fields.size]).includes(sizeReference.recordId)) {
       throw new Error('待补样品的库存记录与货品或尺码不一致');
     }
     const state = textValue(record.fields?.[fields.state]);
@@ -246,7 +282,7 @@ class InventoryService {
     }
     if (!ledger) {
       const created = await this.gateway.create('inventoryLedger', {
-        product: relation(operation.product_record_id), size: operation.size,
+        product: relation(operation.product_record_id), size: relation(sizeReference.recordId),
         quantityChange: 0, behavior: relation(operation.behavior_record_id),
         salesDetail: relation(operation.source_record_id),
       });
@@ -266,14 +302,22 @@ class InventoryService {
 
   async executeOperation(operation) {
     if (operation.status === 'completed') return operation.result;
-    if (operation.schema_version !== 2) {
+    if (![2, 3].includes(operation.schema_version)) {
       throw new Error(`库存操作 ${operation.operation_id} 使用旧结构且尚未完成，请先人工核对，不能自动重试`);
     }
-    let ledger = await this.findLedger(operation.kind, operation.source_record_id, operation.behavior_record_id);
+    const sizeReference = await this.sizeReferences.resolveByNumber(operation.size);
+    if (operation.size_record_id && operation.size_record_id !== sizeReference.recordId) {
+      throw new Error(`库存操作 ${operation.operation_id} 的尺码关联已改变，请人工核对`);
+    }
+    let ledger = await this.findOperationLedger(operation);
+    await this.auditExistingOperationRecords(operation, ledger, sizeReference.recordId);
+    if (operation.schema_version === 2 && !ledger) {
+      throw new Error(`旧版库存操作 ${operation.operation_id} 未能确认已有流水，请人工核对，不能自动恢复`);
+    }
     if (!ledger) {
       const created = await this.gateway.create('inventoryLedger', {
         product: relation(operation.product_record_id),
-        size: operation.size,
+        size: relation(sizeReference.recordId),
         quantityChange: operation.quantity,
         behavior: relation(operation.behavior_record_id),
         salesDetail: operation.kind === 'sale' ? relation(operation.source_record_id) : undefined,
@@ -297,6 +341,12 @@ class InventoryService {
         // on its absence from a possibly stale list.
         const record = await this.gateway.get('liveInventory', recordId);
         if (!record) throw new Error(`待扣减实时库存 ${recordId} 不存在，请人工核对`);
+        const liveFields = this.gateway.table('liveInventory').fields;
+        if (!linkedRecordIds(record.fields?.[liveFields.product]).includes(operation.product_record_id) ||
+          !linkedRecordIds(record.fields?.[liveFields.size]).includes(sizeReference.recordId) ||
+          !['门盒', '样品'].includes(textValue(record.fields?.[liveFields.state]))) {
+          throw new Error(`待扣减实时库存 ${recordId} 的货品、尺码或状态已改变，请人工核对`);
+        }
         await this.gateway.delete('liveInventory', recordId);
         removedIds.push(recordId);
         operation = await this.store.update(operation.operation_id, { removed_live_record_ids: removedIds });
@@ -306,7 +356,7 @@ class InventoryService {
       while (createdIds.length < expectedCreates) {
         const created = await this.gateway.create('liveInventory', {
           product: relation(operation.product_record_id),
-          size: operation.size,
+          size: relation(sizeReference.recordId),
           state: operation.state || '门盒',
         });
         createdIds.push(created.recordId);
@@ -326,8 +376,21 @@ class InventoryService {
       consumedLiveRecordIds: operation.kind === 'sale' ? removedIds : [],
     };
     if (operation.kind === 'sale' && result.sampleConsumedQuantity) {
-      result.remainingSizes = await this.sampleReplacementCandidates(operation.product_record_id,
-        { excludeRecordIds: removedIds });
+      try {
+        result.remainingSizes = await this.sampleReplacementCandidates(operation.product_record_id,
+          { excludeRecordIds: removedIds });
+      } catch (error) {
+        // The stock movement is already durable. A malformed or temporarily
+        // unreadable remaining row must not turn a successful delivery into a
+        // failed one; the replacement card can retry this separate lookup.
+        result.remainingSizes = [];
+        result.replacementCandidatesUnavailable = true;
+        logWarn('inventory.sample_candidates.failed', {
+          operation_id: operation.operation_id,
+          source_record_id: operation.source_record_id,
+          error: error.message,
+        });
+      }
     }
     await this.store.update(operation.operation_id, {
       status: 'completed',
@@ -346,6 +409,87 @@ class InventoryService {
     return result;
   }
 
+  async findOperationLedger(operation) {
+    const listed = await this.findLedger(operation.kind, operation.source_record_id,
+      operation.behavior_record_id);
+    if (!operation.ledger_record_id) {
+      if (operation.status === 'ledger_created' && !listed) {
+        throw new Error(`库存操作 ${operation.operation_id} 的已创建流水无法确认，请人工核对`);
+      }
+      return listed;
+    }
+    const direct = await this.gateway.get('inventoryLedger', operation.ledger_record_id);
+    if (!direct || (listed && listed.record_id !== direct.record_id)) {
+      throw new Error(`库存操作 ${operation.operation_id} 的已创建流水不存在或不一致，请人工核对`);
+    }
+    return direct;
+  }
+
+  // A resumed task may only reuse a ledger row we can prove belongs to it.
+  // Rows written before the 尺码 field became a relation still hold a numeric
+  // value (or an empty link after migration), so every existing caller audits
+  // the same five facts before continuing.
+  ledgerMatchesOperation(ledger, { productRecordId, sizeRecordId, behaviorRecordId,
+    sourceField, sourceRecordId, quantityChange }) {
+    const fields = this.gateway.table('inventoryLedger').fields;
+    return singleLinked(ledger.fields?.[fields.product], productRecordId) &&
+      singleLinked(ledger.fields?.[fields.size], sizeRecordId) &&
+      singleLinked(ledger.fields?.[fields.behavior], behaviorRecordId) &&
+      singleLinked(ledger.fields?.[fields[sourceField]], sourceRecordId) &&
+      Number(ledger.fields?.[fields.quantityChange]) === quantityChange;
+  }
+
+  async auditExistingOperationRecords(operation, ledger, sizeRecordId) {
+    const manual = (reason) => {
+      throw new Error(`库存操作 ${operation.operation_id} ${reason}，请人工核对，不能自动恢复`);
+    };
+    if (ledger && !this.ledgerMatchesOperation(ledger, {
+      productRecordId: operation.product_record_id,
+      sizeRecordId,
+      behaviorRecordId: operation.behavior_record_id,
+      sourceField: operation.kind === 'sale' ? 'salesDetail' : 'purchaseInbound',
+      sourceRecordId: operation.source_record_id,
+      quantityChange: operation.quantity,
+    })) {
+      manual(`已有库存流水 ${ledger.record_id} 的货品、尺码关联、行为、来源或数量不一致`);
+    }
+    const createdIds = operation.created_live_record_ids || [];
+    const removedIds = operation.removed_live_record_ids || [];
+    const selectedIds = operation.live_record_ids || [];
+    if (new Set(createdIds).size !== createdIds.length || createdIds.length > operation.quantity ||
+      new Set(removedIds).size !== removedIds.length ||
+      removedIds.some((recordId) => !selectedIds.includes(recordId))) {
+      manual('已记录的实时库存 ID 不一致');
+    }
+    if (operation.schema_version === 2 && removedIds.length) {
+      manual('旧版销售任务已有库存删除，已删除记录的尺码关联无法再核实');
+    }
+    const liveFields = this.gateway.table('liveInventory').fields;
+    if (operation.direction === '增加') {
+      for (const recordId of createdIds) {
+        const record = await this.gateway.get('liveInventory', recordId);
+        if (!record || !singleLinked(record.fields?.[liveFields.product], operation.product_record_id) ||
+          !singleLinked(record.fields?.[liveFields.size], sizeRecordId) ||
+          textValue(record.fields?.[liveFields.state]) !== operation.state) {
+          manual(`已有实时库存 ${recordId} 的货品、尺码关联或状态不一致`);
+        }
+      }
+    } else if (operation.direction === '减少') {
+      if (selectedIds.length !== operation.quantity) manual('待扣减实时库存数量不一致');
+      for (const recordId of selectedIds) {
+        if (removedIds.includes(recordId)) continue;
+        const record = await this.gateway.get('liveInventory', recordId);
+        if (!record || !singleLinked(record.fields?.[liveFields.product], operation.product_record_id) ||
+          !singleLinked(record.fields?.[liveFields.size], sizeRecordId) ||
+          !['门盒', '样品'].includes(textValue(record.fields?.[liveFields.state]))) {
+          manual(`待扣减实时库存 ${recordId} 的货品、尺码关联或状态不一致`);
+        }
+      }
+    } else {
+      manual('库存方向无效');
+    }
+  }
+
   async findLedger(kind, sourceRecordId, behaviorRecordId) {
     const table = this.gateway.table('inventoryLedger');
     const fieldName = table.fields[kind === 'sale' ? 'salesDetail' : 'purchaseInbound'];
@@ -357,18 +501,20 @@ class InventoryService {
     return matches[0] || null;
   }
 
-  findLiveInventoryIn(records, productRecordId, size, state = '门盒') {
+  findLiveInventoryIn(records, productRecordId, sizeRecordId, state = '门盒') {
     const table = this.gateway.table('liveInventory');
     return records.filter(
       (record) =>
         linkedRecordIds(record.fields?.[table.fields.product]).includes(productRecordId) &&
-        Number(textValue(record.fields?.[table.fields.size])) === Number(size) &&
+        linkedRecordIds(record.fields?.[table.fields.size]).includes(sizeRecordId) &&
         textValue(record.fields?.[table.fields.state]) === state
     );
   }
 
   async findLiveInventory(productRecordId, size, state = '门盒') {
-    return this.findLiveInventoryIn(await this.gateway.listAll('liveInventory'), productRecordId, size, state);
+    const sizeReference = await this.sizeReferences.resolveByNumber(size);
+    return this.findLiveInventoryIn(await this.gateway.listAll('liveInventory'), productRecordId,
+      sizeReference.recordId, state);
   }
 
   async sampleReplacementCandidates(productRecordId, { excludeRecordIds = [] } = {}) {
@@ -378,9 +524,9 @@ class InventoryService {
     for (const record of await this.gateway.listAll('liveInventory')) {
       if (excluded.has(record.record_id)) continue;
       if (!linkedRecordIds(record.fields?.[table.fields.product]).includes(productRecordId)) continue;
-      const size = Number(textValue(record.fields?.[table.fields.size]));
+      const size = (await this.sizeReferences.resolveLinkedCell(record.fields?.[table.fields.size])).size;
       const state = textValue(record.fields?.[table.fields.state]);
-      if (!Number.isFinite(size) || !['门盒', '样品', '仓库'].includes(state)) continue;
+      if (!['门盒', '样品', '仓库'].includes(state)) continue;
       if (!bySize.has(size)) bySize.set(size, { size, doorBoxCount: 0, sampleCount: 0, warehouseCount: 0 });
       const counts = bySize.get(size);
       if (state === '门盒') counts.doorBoxCount += 1;
