@@ -27,6 +27,11 @@ const operationId = (kind, sourceRecordId) =>
   `inventory_${kind}_${crypto.createHash('sha256').update(String(sourceRecordId)).digest('hex').slice(0, 20)}`;
 const samplePromotionId = (salesDetailRecordId) => operationId('sample', salesDetailRecordId);
 
+const singleLinked = (cell, recordId) => {
+  const ids = linkedRecordIds(cell);
+  return ids.length === 1 && ids[0] === recordId;
+};
+
 class InventoryService {
   constructor(options = {}) {
     if (!options.gateway) throw new Error('InventoryService requires gateway');
@@ -250,6 +255,23 @@ class InventoryService {
     if (!record) throw new Error('待补样品的门盒库存记录不存在，请人工核对');
     const fields = this.gateway.table('liveInventory').fields;
     const sizeReference = await this.sizeReferences.resolveByNumber(operation.size);
+    // Tasks written before the size field became a relation carry no
+    // size_record_id, and a later link change cannot be told apart from a
+    // stale one. Both stop here instead of resuming against the wrong 尺码.
+    if (operation.size_record_id !== sizeReference.recordId) {
+      throw new Error('补样品任务缺少可核对的尺码关联或关联已改变，请人工核对，不能自动恢复');
+    }
+    if (ledger && !this.ledgerMatchesOperation(ledger, {
+      productRecordId: operation.product_record_id,
+      sizeRecordId: sizeReference.recordId,
+      behaviorRecordId: operation.behavior_record_id,
+      sourceField: 'salesDetail',
+      sourceRecordId: operation.source_record_id,
+      // 补样品只改状态，不改变数量，流水变动数量必须为 0。
+      quantityChange: 0,
+    })) {
+      throw new Error(`已有库存流水 ${ledger.record_id} 的货品、尺码关联、行为、来源或数量不一致，请人工核对，不能自动恢复`);
+    }
     if (!linkedRecordIds(record.fields?.[fields.product]).includes(operation.product_record_id) ||
       !linkedRecordIds(record.fields?.[fields.size]).includes(sizeReference.recordId)) {
       throw new Error('待补样品的库存记录与货品或尺码不一致');
@@ -403,24 +425,33 @@ class InventoryService {
     return direct;
   }
 
+  // A resumed task may only reuse a ledger row we can prove belongs to it.
+  // Rows written before the 尺码 field became a relation still hold a numeric
+  // value (or an empty link after migration), so every existing caller audits
+  // the same five facts before continuing.
+  ledgerMatchesOperation(ledger, { productRecordId, sizeRecordId, behaviorRecordId,
+    sourceField, sourceRecordId, quantityChange }) {
+    const fields = this.gateway.table('inventoryLedger').fields;
+    return singleLinked(ledger.fields?.[fields.product], productRecordId) &&
+      singleLinked(ledger.fields?.[fields.size], sizeRecordId) &&
+      singleLinked(ledger.fields?.[fields.behavior], behaviorRecordId) &&
+      singleLinked(ledger.fields?.[fields[sourceField]], sourceRecordId) &&
+      Number(ledger.fields?.[fields.quantityChange]) === quantityChange;
+  }
+
   async auditExistingOperationRecords(operation, ledger, sizeRecordId) {
     const manual = (reason) => {
       throw new Error(`库存操作 ${operation.operation_id} ${reason}，请人工核对，不能自动恢复`);
     };
-    const singleLink = (cell, recordId) => {
-      const ids = linkedRecordIds(cell);
-      return ids.length === 1 && ids[0] === recordId;
-    };
-    if (ledger) {
-      const fields = this.gateway.table('inventoryLedger').fields;
-      const source = fields[operation.kind === 'sale' ? 'salesDetail' : 'purchaseInbound'];
-      if (!singleLink(ledger.fields?.[fields.product], operation.product_record_id) ||
-        !singleLink(ledger.fields?.[fields.size], sizeRecordId) ||
-        !singleLink(ledger.fields?.[fields.behavior], operation.behavior_record_id) ||
-        !singleLink(ledger.fields?.[source], operation.source_record_id) ||
-        Number(ledger.fields?.[fields.quantityChange]) !== operation.quantity) {
-        manual(`已有库存流水 ${ledger.record_id} 的货品、尺码关联、行为、来源或数量不一致`);
-      }
+    if (ledger && !this.ledgerMatchesOperation(ledger, {
+      productRecordId: operation.product_record_id,
+      sizeRecordId,
+      behaviorRecordId: operation.behavior_record_id,
+      sourceField: operation.kind === 'sale' ? 'salesDetail' : 'purchaseInbound',
+      sourceRecordId: operation.source_record_id,
+      quantityChange: operation.quantity,
+    })) {
+      manual(`已有库存流水 ${ledger.record_id} 的货品、尺码关联、行为、来源或数量不一致`);
     }
     const createdIds = operation.created_live_record_ids || [];
     const removedIds = operation.removed_live_record_ids || [];
@@ -437,8 +468,8 @@ class InventoryService {
     if (operation.direction === '增加') {
       for (const recordId of createdIds) {
         const record = await this.gateway.get('liveInventory', recordId);
-        if (!record || !singleLink(record.fields?.[liveFields.product], operation.product_record_id) ||
-          !singleLink(record.fields?.[liveFields.size], sizeRecordId) ||
+        if (!record || !singleLinked(record.fields?.[liveFields.product], operation.product_record_id) ||
+          !singleLinked(record.fields?.[liveFields.size], sizeRecordId) ||
           textValue(record.fields?.[liveFields.state]) !== operation.state) {
           manual(`已有实时库存 ${recordId} 的货品、尺码关联或状态不一致`);
         }
@@ -448,8 +479,8 @@ class InventoryService {
       for (const recordId of selectedIds) {
         if (removedIds.includes(recordId)) continue;
         const record = await this.gateway.get('liveInventory', recordId);
-        if (!record || !singleLink(record.fields?.[liveFields.product], operation.product_record_id) ||
-          !singleLink(record.fields?.[liveFields.size], sizeRecordId) ||
+        if (!record || !singleLinked(record.fields?.[liveFields.product], operation.product_record_id) ||
+          !singleLinked(record.fields?.[liveFields.size], sizeRecordId) ||
           !['门盒', '样品'].includes(textValue(record.fields?.[liveFields.state]))) {
           manual(`待扣减实时库存 ${recordId} 的货品、尺码关联或状态不一致`);
         }

@@ -311,3 +311,55 @@ test('version 2 sale with already deleted stock cannot silently complete', async
     productRecordId: 'product_1', size: 38, quantity: 1 }), /旧版销售任务已有库存删除.*不能自动恢复/);
   assert.notEqual((await taskStore.get(id)).status, 'completed');
 });
+
+// A resumable sample promotion: the task may already have written its ledger
+// row, so every resume path has to prove that row still belongs to the task.
+const legacySamplePromotion = async ({ ledgerSize = ['size_40'], sizeRecordId = 'size_40',
+  omitSizeRecordId = false } = {}) => {
+  const gateway = gatewayFor([
+    { record_id: 'door_40', fields: { 编号: ['product_1'], 尺码: ['size_40'], 所属状态: '门盒' } },
+  ], [behavior('behavior_sample', '门盒转样品', '不影响')]);
+  gateway.records.set('inventoryLedger', [{ record_id: 'sample_ledger', fields: {
+    编号: ['product_1'], 尺码: ledgerSize, 变动数量: 0,
+    库存行为: ['behavior_sample'], 关联销售: ['detail_sold_sample'],
+  } }]);
+  const taskStore = store();
+  const id = operationId('sample', 'detail_sold_sample');
+  const task = {
+    operation_id: id, type: 'sample_promotion', status: 'ledger_created',
+    stock_key: 'product_1|40|门盒', source_record_id: 'detail_sold_sample',
+    product_record_id: 'product_1', size: 40, live_record_id: 'door_40',
+    behavior_record_id: 'behavior_sample',
+  };
+  if (!omitSizeRecordId) task.size_record_id = sizeRecordId;
+  await taskStore.create(task);
+  const inventory = new InventoryService({ gateway, store: taskStore });
+  const request = { salesDetailRecordId: 'detail_sold_sample', productRecordId: 'product_1', size: 40 };
+  return { gateway, taskStore, id, inventory, request };
+};
+
+test('sample promotion without a recorded size link stops for manual reconciliation', async () => {
+  const { gateway, taskStore, id, inventory, request } = await legacySamplePromotion({ omitSizeRecordId: true });
+  await assert.rejects(inventory.promoteToSample(request), /尺码关联.*不能自动恢复/);
+  assert.equal(gateway.records.get('liveInventory')[0].fields['所属状态'], '门盒');
+  assert.notEqual((await taskStore.get(id)).status, 'completed');
+});
+
+test('sample promotion refuses an existing ledger whose size link is empty or wrong', async () => {
+  for (const ledgerSize of [[], ['size_41'], 40]) {
+    const { gateway, taskStore, id, inventory, request } = await legacySamplePromotion({ ledgerSize });
+    await assert.rejects(inventory.promoteToSample(request), /已有库存流水.*尺码关联.*不能自动恢复/);
+    assert.equal(gateway.records.get('inventoryLedger').length, 1);
+    assert.equal(gateway.records.get('liveInventory')[0].fields['所属状态'], '门盒');
+    assert.notEqual((await taskStore.get(id)).status, 'completed');
+  }
+});
+
+test('sample promotion resumes only after the existing ledger links verify', async () => {
+  const { gateway, taskStore, id, inventory, request } = await legacySamplePromotion();
+  const result = await inventory.promoteToSample(request);
+  assert.equal(result.ledgerRecordId, 'sample_ledger');
+  assert.equal(gateway.records.get('inventoryLedger').length, 1);
+  assert.equal(gateway.records.get('liveInventory')[0].fields['所属状态'], '样品');
+  assert.equal((await taskStore.get(id)).status, 'completed');
+});
