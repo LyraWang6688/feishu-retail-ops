@@ -2,6 +2,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const lark = require('@larksuiteoapi/node-sdk');
 const { LarkMvpService } = require('../services/larkMvpService');
+const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 
 const createLarkEventHandlers = (service) => ({
@@ -84,10 +85,16 @@ const createLarkEventHandlers = (service) => ({
       actions: actionList.map((a) => ({ record_id: a?.record_id, action: a?.action })),
     });
 
-    // 只处理我们的多维表格
-    if (fileToken !== 'QrXlbwXMLaJ2TNsxSfFcIA3rnwh') {
+    // 只处理我们自己的多维表格。目标 Base 来自环境变量，不再写死；
+    // 未配置时无法判断归属，忽略并告警，避免误处理别的 Base。
+    let ownAppToken = '';
+    try {
+      ownAppToken = V1_BITABLE_SCHEMA.appToken;
+    } catch (error) {
+      logWarn('lark.bitable.record_changed.base_unconfigured', { error: error.message });
       return {};
     }
+    if (fileToken !== ownAppToken) return {};
 
     // 遍历 action_list，处理每条新增记录
     for (const actionItem of actionList) {

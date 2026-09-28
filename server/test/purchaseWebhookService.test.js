@@ -105,6 +105,28 @@ const makeService = (options = {}) => {
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// accept() 返回时后台处理并没有结束：它把工作丢进 setImmediate，之后还要解析、
+// 写卡片、等批次窗口，耗时取决于机器。固定 sleep 在慢机器上会读到 processing
+// 这类中间状态（CI 上就这样失败过），所以统一改为轮询到任务进入稳定状态。
+const SETTLED_STATUSES = ['awaiting_confirmation', 'failed', 'cancelled', 'posted', 'completed'];
+const waitForTask = async (store, taskId, statuses = SETTLED_STATUSES, { attempts = 300, pause = 10 } = {}) => {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const task = await store.get(taskId);
+    if (task && statuses.includes(task.status)) return task;
+    await wait(pause);
+  }
+  const last = await store.get(taskId);
+  throw new Error(`等待任务进入 ${statuses.join('/')} 超时，当前状态：${last?.status}`);
+};
+
+const waitFor = async (label, check, { attempts = 300, pause = 10 } = {}) => {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (await check()) return;
+    await wait(pause);
+  }
+  throw new Error(`等待「${label}」超时`);
+};
+
 // ─── 供应商报单链路 ───
 
 test('supplier report webhook accepts and processes to awaiting_confirmation', async () => {
@@ -118,8 +140,7 @@ test('supplier report webhook accepts and processes to awaiting_confirmation', a
   const result = await service.accept('supplier-report', 'rep_1');
   assert.equal(result.accepted, true);
   assert.equal(result.duplicate, false);
-  await wait(50);
-  const task = await store.get(result.taskId);
+  const task = await waitForTask(store, result.taskId);
   assert.equal(task.status, 'awaiting_confirmation');
   assert.ok(task.draft);
   assert.equal(task.draft.items.length, 2);
@@ -136,7 +157,7 @@ test('supplier report duplicate webhook is ignored', async () => {
     }),
   });
   const first = await service.accept('supplier-report', 'rep_dup');
-  await wait(50);
+  await waitForTask(store, first.taskId);
   const second = await service.accept('supplier-report', 'rep_dup');
   assert.equal(second.duplicate, true);
   const task = await store.get(first.taskId);
@@ -153,8 +174,7 @@ test('supplier report confirm generates purchase order batch and requests', asyn
     recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }] }),
   });
   const accepted = await service.accept('supplier-report', 'rep_conf');
-  await wait(50);
-  const task = await store.get(accepted.taskId);
+  await waitForTask(store, accepted.taskId);
   const result = await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1');
   assert.ok(result.toast.content.includes('采购申请已生成'));
   const batches = await gateway.listAll('purchaseOrderBatch');
@@ -174,7 +194,7 @@ test('supplier report cancel updates status', async () => {
     }),
   });
   const accepted = await service.accept('supplier-report', 'rep_cancel');
-  await wait(50);
+  await waitForTask(store, accepted.taskId);
   await service.handleCardAction({ draft_id: accepted.taskId, action: 'cancel_purchase_request' }, 'ou_1');
   const updated = await gateway.get('purchaseReport', 'rep_cancel');
   assert.equal(updated.fields.处理状态, '已取消');
@@ -194,8 +214,7 @@ test('arrival webhook accepts, recognizes images, and sends comparison card', as
   });
   const result = await service.accept('arrival', 'arr_1');
   assert.equal(result.accepted, true);
-  await wait(80);
-  const task = await store.get(result.taskId);
+  const task = await waitForTask(store, result.taskId);
   assert.equal(task.status, 'awaiting_confirmation');
   assert.ok(task.draft);
   assert.equal(task.draft.actual.length, 1);
@@ -208,7 +227,7 @@ test('arrival webhook accepts, recognizes images, and sends comparison card', as
 });
 
 test('arrival duplicate webhook is ignored', async () => {
-  const { service } = makeService({
+  const { service, store } = makeService({
     gateway: makeGateway({
       purchaseArrival: [{ record_id: 'arr_dup', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
       purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
@@ -216,7 +235,7 @@ test('arrival duplicate webhook is ignored', async () => {
     }),
   });
   const first = await service.accept('arrival', 'arr_dup');
-  await wait(50);
+  await waitForTask(store, first.taskId);
   const second = await service.accept('arrival', 'arr_dup');
   assert.equal(second.duplicate, true);
 });
@@ -233,7 +252,7 @@ test('arrival confirm creates inbound records and updates request arrival status
     }),
   });
   const accepted = await service.accept('arrival', 'arr_conf');
-  await wait(80);
+  await waitForTask(store, accepted.taskId);
   const result = await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
   assert.ok(result.toast.content.includes('采购已入库'));
   const inbounds = await gateway.listAll('purchaseInbound');
@@ -262,8 +281,7 @@ test('two identical product sizes in one arrival create one inbound for two pair
     }),
   });
   const accepted = await service.accept('arrival', 'arr_two_same');
-  await wait(80);
-  const draft = (await store.get(accepted.taskId)).draft;
+  const draft = (await waitForTask(store, accepted.taskId)).draft;
   assert.equal(draft.actual.length, 1);
   assert.equal(draft.actual[0].quantity, 2);
   assert.equal(draft.differences[0].label, '一致');
@@ -290,7 +308,7 @@ test('arrival confirm with inventory enabled actually calls inventory.applyPurch
     }),
   });
   const accepted = await service.accept('arrival', 'arr_inv');
-  await wait(80);
+  await waitForTask(store, accepted.taskId);
   await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
   assert.equal(inventory.calls.length, 1);
   assert.equal(inventory.calls[0].productRecordId, 'prod_1');
@@ -312,7 +330,7 @@ test('arrival confirm is idempotent — second confirm does not create duplicate
     }),
   });
   const accepted = await service.accept('arrival', 'arr_idem');
-  await wait(80);
+  await waitForTask(store, accepted.taskId);
   await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
   const firstCount = (await gateway.listAll('purchaseInbound')).length;
   await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
@@ -330,7 +348,7 @@ test('arrival cancel updates confirm status', async () => {
     }),
   });
   const accepted = await service.accept('arrival', 'arr_cancel');
-  await wait(50);
+  await waitForTask(store, accepted.taskId);
   await service.handleCardAction({ draft_id: accepted.taskId, action: 'cancel_purchase_arrival' }, 'ou_1');
   const updated = await gateway.get('purchaseArrival', 'arr_cancel');
   assert.equal(updated.fields.确认状态, '已取消');
@@ -345,8 +363,7 @@ test('arrival with no images throws recognition failure', async () => {
     }),
   });
   const accepted = await service.accept('arrival', 'arr_noimg');
-  await wait(80);
-  const task = await store.get(accepted.taskId);
+  const task = await waitForTask(store, accepted.taskId);
   assert.equal(task.status, 'failed');
   assert.ok(task.error.includes('没有鞋盒图片'));
   const updated = await gateway.get('purchaseArrival', 'arr_noimg');
@@ -367,7 +384,7 @@ test('only original operator can confirm', async () => {
     }),
   });
   const accepted = await service.accept('arrival', 'arr_auth');
-  await wait(50);
+  await waitForTask(store, accepted.taskId);
   await assert.rejects(
     () => service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_other'),
     /只能由原始填写人确认/,
@@ -404,7 +421,7 @@ test('arrival confirm retries after partial failure without duplicating inbound 
     ] }),
   });
   const accepted = await service.accept('arrival', 'arr_partial');
-  await wait(80);
+  await waitForTask(store, accepted.taskId);
 
   // 第一次确认：第1条入库成功，第2条失败
   await assert.rejects(
@@ -471,7 +488,7 @@ test('arrival confirm retry survives feishu list latency — persisted inbound_c
     ] }),
   });
   const accepted = await service.accept('arrival', 'arr_latency');
-  await wait(80);
+  await waitForTask(store, accepted.taskId);
 
   // 第一次确认：第1条（36码）成功并持久化到 inbound_created，第2条（37码）失败
   await assert.rejects(
@@ -527,7 +544,7 @@ test('arrival confirm retries after inventory update failure — continues apply
     ] }),
   });
   const accepted = await service.accept('arrival', 'arr_invfail');
-  await wait(80);
+  await waitForTask(store, accepted.taskId);
 
   // 第一次确认：36码入库创建成功，但库存更新失败
   await assert.rejects(
@@ -571,8 +588,7 @@ test('supplier report with batch number enters batch_waiting state', async () =>
   service.BATCH_WAIT_MS = 10;
   const result = await service.accept('supplier-report', 'rep_batch_1');
   assert.equal(result.accepted, true);
-  await wait(50);
-  const task = await store.get(result.taskId);
+  const task = await waitForTask(store, result.taskId, ['batch_waiting', 'awaiting_confirmation']);
   assert.ok(['batch_waiting', 'awaiting_confirmation'].includes(task.status), `实际状态: ${task.status}`);
 });
 
@@ -591,7 +607,7 @@ test('batch aggregation processes all records in same batch and sends one card',
   service.BATCH_WAIT_MS = 20;
   await service.accept('supplier-report', 'rep_b1');
   await service.accept('supplier-report', 'rep_b2');
-  await wait(100);
+  await waitFor('批量确认卡发出', async () => messages.length === 1);
   assert.equal(messages.length, 1, `应只发1张批量确认卡，实际发了${messages.length}张`);
   const cardContent = JSON.parse(messages[0].data.content);
   const allText = JSON.stringify(cardContent.elements);
@@ -615,8 +631,7 @@ test('batch confirm generates requests and updates all report records', async ()
   service.BATCH_WAIT_MS = 20;
   const first = await service.accept('supplier-report', 'rep_c1');
   await service.accept('supplier-report', 'rep_c2');
-  await wait(100);
-  const task = await store.get(first.taskId);
+  const task = await waitForTask(store, first.taskId);
   assert.equal(task.status, 'awaiting_confirmation');
   assert.ok(task.draft.is_batch === true);
   assert.equal(task.draft.items.length, 2);
@@ -637,8 +652,7 @@ test('supplier report without batch number falls back to single processing', asy
     }),
   });
   const result = await service.accept('supplier-report', 'rep_nobatch');
-  await wait(50);
-  const task = await store.get(result.taskId);
+  const task = await waitForTask(store, result.taskId);
   assert.equal(task.status, 'awaiting_confirmation');
   assert.ok(!task.draft.is_batch);
 });
@@ -653,8 +667,7 @@ test('product without supplier association throws clear error', async () => {
     }),
   });
   const result = await service.accept('supplier-report', 'rep_nosup');
-  await wait(50);
-  const task = await store.get(result.taskId);
+  const task = await waitForTask(store, result.taskId);
   assert.equal(task.status, 'failed');
   assert.ok(task.error.includes('货品信息中未关联供应商'));
 });

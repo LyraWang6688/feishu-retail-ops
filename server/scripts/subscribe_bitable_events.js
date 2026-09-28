@@ -12,7 +12,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
-const BASE_TOKEN = 'QrXlbwXMLaJ2TNsxSfFcIA3rnwh'; // 进销存管理多维表格
+// 目标多维表格由环境变量决定（见下方 loadEnvFile 之后），不再写死 Base 标识。
 
 /**
  * 简易 .env 文件加载器（不依赖 dotenv 库）
@@ -49,6 +49,12 @@ function loadEnvFile() {
 
 // 脚本启动时自动加载 .env 文件
 loadEnvFile();
+
+const BASE_TOKEN = String(process.env.FEISHU_V1_BITABLE_APP_TOKEN || '').trim();
+if (!BASE_TOKEN) {
+  console.error('缺少 FEISHU_V1_BITABLE_APP_TOKEN：请先在服务端/本地的 .env 中显式配置目标多维表格。');
+  process.exit(1);
+}
 
 function httpsPost(url, data, headers = {}) {
   return new Promise((resolve, reject) => {

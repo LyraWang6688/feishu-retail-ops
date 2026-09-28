@@ -66,21 +66,28 @@ class SampleReplacementService {
       const taskId = taskIdFor(replacement.salesDetailRecordId);
       let task = await this.store.get(taskId);
       if (task?.status === 'completed') continue;
+      if (task?.card_message_id || task?.notice_sent) continue;
       const product = await this.gateway.get('product', replacement.productRecordId).catch(() => null);
       const productNumber = textValue(product?.fields?.[this.gateway.table('product').fields.number]) ||
         replacement.productRecordId;
-      const remainingSizes = await this.inventory.sampleReplacementCandidates(replacement.productRecordId,
-        { excludeRecordIds: replacement.consumedLiveRecordIds || [] });
       if (!task) {
         task = await this.store.create({ task_id: taskId, type: 'sample_replacement', status: 'pending',
           sender_open_id: operatorOpenId, sales_detail_record_id: replacement.salesDetailRecordId,
           product_record_id: replacement.productRecordId, product_number: productNumber,
           consumed_live_record_ids: replacement.consumedLiveRecordIds || [] });
       }
-      if (task.card_message_id || task.notice_sent) continue;
+      let remainingSizes = [];
+      let lookupFailed = false;
+      try {
+        remainingSizes = await this.inventory.sampleReplacementCandidates(replacement.productRecordId,
+          { excludeRecordIds: replacement.consumedLiveRecordIds || [] });
+      } catch (error) {
+        lookupFailed = true;
+        logWarn('lark.sales.sample_candidates.failed', { task_id: taskId, error: error.message });
+      }
       try {
         const cardMessageId = await this.sendCard(operatorOpenId,
-          sampleReplacementCard(taskId, { productNumber, remainingSizes }));
+          sampleReplacementCard(taskId, { productNumber, remainingSizes, lookupFailed }));
         await this.store.update(taskId, { card_message_id: cardMessageId, notice_sent: true });
       } catch (error) {
         logWarn('lark.sales.sample_notice.failed', { task_id: taskId, error: error.message });
@@ -132,7 +139,7 @@ class SampleReplacementService {
       } catch (error) {
         logWarn('lark.sales.sample_refresh.failed', { task_id: draftId,
           interaction_id: context.interactionId, error: error.message });
-        const retryCard = sampleReplacementCard(draftId, { productNumber: task.product_number });
+        const retryCard = sampleReplacementCard(draftId, { productNumber: task.product_number, lookupFailed: true });
         retryCard.elements.unshift({ tag: 'note', elements: [{ tag: 'plain_text',
           content: `刷新尺码失败：${error.message}。请点击刷新重试。` }] });
         await this.publishCard(task, event, retryCard,
@@ -152,9 +159,14 @@ class SampleReplacementService {
       return { toast: { type: 'success', content: `${task.product_number} ${size}码已补作样品` } };
     } catch (error) {
       logError('lark.sales.sample_promotion.failed', { task_id: draftId, error: error.message });
+      let lookupFailed = false;
       const remainingSizes = await this.inventory.sampleReplacementCandidates(task.product_record_id,
-        { excludeRecordIds: task.consumed_live_record_ids || [] }).catch(() => []);
-      const retryCard = sampleReplacementCard(draftId, { productNumber: task.product_number, remainingSizes });
+        { excludeRecordIds: task.consumed_live_record_ids || [] }).catch(() => {
+          lookupFailed = true;
+          return [];
+        });
+      const retryCard = sampleReplacementCard(draftId,
+        { productNumber: task.product_number, remainingSizes, lookupFailed });
       retryCard.elements.unshift({ tag: 'note', elements: [{ tag: 'plain_text',
         content: `补选未完成：${error.message}。请核对后重试。` }] });
       await this.publishCard(task, event, retryCard,

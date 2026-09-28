@@ -1,7 +1,24 @@
 const getEnv = (key, fallback = '') => process.env[key] || fallback;
 
+// 目标多维表格不再有硬编码兜底：读不到就明确报错。此前默认值指向生产 Base，
+// 任何漏配环境变量的场合都会静默写到生产，比如本地脚本和自动化测试。
+// 这里用取值函数而不是模块级常量，是为了不在 import 阶段就抛错——只有真正
+// 要访问多维表格的调用路径才需要这个变量。
+const readAppToken = (env = process.env) => {
+  const token = String(env.FEISHU_V1_BITABLE_APP_TOKEN || '').trim();
+  if (!token) {
+    throw new Error(
+      '缺少环境变量 FEISHU_V1_BITABLE_APP_TOKEN：无法确定目标多维表格。' +
+      '请在 .env 中显式配置该 Base，本配置不再回退到任何默认值。',
+    );
+  }
+  return token;
+};
+
 const V1_BITABLE_SCHEMA = {
-  appToken: getEnv('FEISHU_V1_BITABLE_APP_TOKEN', 'QrXlbwXMLaJ2TNsxSfFcIA3rnwh'),
+  get appToken() {
+    return readAppToken();
+  },
   tables: {
     product: {
       tableName: '货品信息',
@@ -26,6 +43,11 @@ const V1_BITABLE_SCHEMA = {
         moneyDirection: '资金方向',
         enabled: '是否启用',
       },
+    },
+    sizeManagement: {
+      tableName: '尺码管理',
+      tableId: getEnv('FEISHU_V1_SIZE_TABLE_ID'),
+      fields: { size: '尺码' },
     },
     paymentMethod: {
       tableName: '收款方式管理',
@@ -185,4 +207,5 @@ const getV1Table = (tableKey) => {
 module.exports = {
   V1_BITABLE_SCHEMA,
   getV1Table,
+  readAppToken,
 };

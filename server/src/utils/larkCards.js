@@ -191,12 +191,12 @@ const salesStatusCard = (draft, title, message, template = 'blue') => ({
   ],
 });
 
-const sampleReplacementCard = (taskId, { productNumber, remainingSizes = [] } = {}) => {
+const sampleReplacementCard = (taskId, { productNumber, remainingSizes = [], lookupFailed = false } = {}) => {
   const lines = remainingSizes.map((item) =>
     `${text(item.size)}码：门盒 ${text(item.doorBoxCount)}、样品 ${text(item.sampleCount)}、仓库 ${text(item.warehouseCount)}`);
   const choices = remainingSizes.filter((item) => item.doorBoxCount > 0);
   const elements = [{ tag: 'markdown', content:
-    `**${text(productNumber || '该货品')} 的样品已售出。**\n请选择同货号现有门盒中的一个尺码补作样品；仓库鞋需另行调拨。\n${lines.join('\n') || '目前没有剩余库存。'}` }];
+    `**${text(productNumber || '该货品')} 的样品已售出。**\n请选择同货号现有门盒中的一个尺码补作样品；仓库鞋需另行调拨。\n${lines.join('\n') || (lookupFailed ? '可选尺码暂时无法读取，库存已扣减；请点击刷新重试。' : '目前没有剩余库存。')}` }];
   for (let index = 0; index < choices.length; index += 4) {
     elements.push({ tag: 'action', actions: choices.slice(index, index + 4).map((item) => ({
       ...actionButton(`选 ${text(item.size)} 码`, 'choose_sample_replacement', taskId),
