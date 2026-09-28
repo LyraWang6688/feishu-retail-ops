@@ -14,7 +14,10 @@ const gatewayFor = (live, behaviors = [
   behavior('behavior_sale', '销售减少', '减少'),
   behavior('behavior_purchase', '采购增加', '增加'),
 ]) => {
-  const records = new Map([['liveInventory', live], ['behavior', behaviors]]);
+  const sizes = [38, 40, 41, 42, 43, 44].map((size) => ({
+    record_id: `size_${size}`, fields: { 尺码: size },
+  }));
+  const records = new Map([['liveInventory', live], ['behavior', behaviors], ['sizeManagement', sizes]]);
   let seq = 0;
   return { records, table: (key) => V1_BITABLE_SCHEMA.tables[key], validateTables: async () => [],
     listAll: async (key) => records.get(key) || [],
@@ -37,7 +40,7 @@ const gatewayFor = (live, behaviors = [
   };
 };
 const store = () => new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'inventory-mvp-')), idField: 'operation_id' });
-const unit = (id, state) => ({ record_id: id, fields: { 编号: ['product_1'], 尺码: 38, 所属状态: state } });
+const unit = (id, state) => ({ record_id: id, fields: { 编号: ['product_1'], 尺码: ['size_38'], 所属状态: state } });
 
 test('sale deducts one matching door-box unit, preserves sample, and is idempotent', async () => {
   const gateway = gatewayFor([unit('door_1', '门盒'), unit('door_2', '门盒'), unit('sample_1', '样品')]);
@@ -48,7 +51,7 @@ test('sale deducts one matching door-box unit, preserves sample, and is idempote
   assert.deepEqual(gateway.records.get('liveInventory').map((row) => row.record_id).sort(), ['door_2', 'sample_1']);
   assert.equal(gateway.records.get('inventoryLedger').length, 1);
   assert.deepEqual(gateway.records.get('inventoryLedger')[0].fields, {
-    编号: ['product_1'], 尺码: 38, 变动数量: 1,
+    编号: ['product_1'], 尺码: ['size_38'], 变动数量: 1,
     库存行为: ['behavior_sale'], 关联销售: ['detail_1'],
   });
 });
@@ -56,8 +59,10 @@ test('sale deducts one matching door-box unit, preserves sample, and is idempote
 test('sale matches live inventory when Feishu returns product links as record_ids', async () => {
   const linked = [{ record_ids: ['product_1'], text: '6681-1|黑灰|A', type: 'text' }];
   const gateway = gatewayFor([
-    { record_id: 'sample_42', fields: { 编号: linked, 尺码: '42', 所属状态: ['样品'] } },
-    { record_id: 'door_44', fields: { 编号: linked, 尺码: '44', 所属状态: ['门盒'] } },
+    { record_id: 'sample_42', fields: { 编号: linked,
+      尺码: [{ record_ids: ['size_42'], text: '42', type: 'text' }], 所属状态: ['样品'] } },
+    { record_id: 'door_44', fields: { 编号: linked,
+      尺码: [{ record_ids: ['size_44'], text: '44', type: 'text' }], 所属状态: ['门盒'] } },
   ]);
   const inventory = new InventoryService({ gateway, store: store() });
   const result = await inventory.applySale({ salesDetailRecordId: 'detail_42',
@@ -76,8 +81,10 @@ test('purchase adds one live record per pair', async () => {
     quantity: 2, state: '仓库' });
   assert.equal(gateway.records.get('liveInventory').length, 2);
   assert.ok(gateway.records.get('liveInventory').every((row) => row.fields['所属状态'] === '仓库'));
+  assert.ok(gateway.records.get('liveInventory').every((row) =>
+    JSON.stringify(row.fields['尺码']) === JSON.stringify(['size_38'])));
   assert.deepEqual(gateway.records.get('inventoryLedger')[0].fields, {
-    编号: ['product_1'], 尺码: 38, 变动数量: 2,
+    编号: ['product_1'], 尺码: ['size_38'], 变动数量: 2,
     库存行为: ['behavior_purchase'], 关联采购: ['inbound_1'],
   });
   assert.ok(gateway.records.get('liveInventory').every((row) => !Object.hasOwn(row.fields, '更新时间')));
@@ -109,8 +116,8 @@ test('inventory preflight checks both sale and purchase behavior settings', asyn
 test('sale consumes a sample only after door-box stock is exhausted and reports remaining sizes', async () => {
   const gateway = gatewayFor([
     unit('sample_1', '样品'),
-    { record_id: 'door_40', fields: { 编号: ['product_1'], 尺码: 40, 所属状态: '门盒' } },
-    { record_id: 'warehouse_41', fields: { 编号: ['product_1'], 尺码: 41, 所属状态: '仓库' } },
+    { record_id: 'door_40', fields: { 编号: ['product_1'], 尺码: ['size_40'], 所属状态: '门盒' } },
+    { record_id: 'warehouse_41', fields: { 编号: ['product_1'], 尺码: ['size_41'], 所属状态: '仓库' } },
   ]);
   const inventory = new InventoryService({ gateway, store: store() });
   const request = { salesDetailRecordId: 'detail_1', productRecordId: 'product_1', size: 38, quantity: 1 };
@@ -137,8 +144,8 @@ test('a sale never consumes warehouse stock and does not write a ledger when tot
 
 test('sample replacement moves one selected door-box pair without changing total quantity and is idempotent', async () => {
   const gateway = gatewayFor([
-    { record_id: 'door_40', fields: { 编号: ['product_1'], 尺码: 40, 所属状态: '门盒' } },
-    { record_id: 'door_41', fields: { 编号: ['product_1'], 尺码: 41, 所属状态: '门盒' } },
+    { record_id: 'door_40', fields: { 编号: ['product_1'], 尺码: ['size_40'], 所属状态: '门盒' } },
+    { record_id: 'door_41', fields: { 编号: ['product_1'], 尺码: ['size_41'], 所属状态: '门盒' } },
   ], [behavior('behavior_sample', '门盒转样品', '不影响')]);
   const inventory = new InventoryService({ gateway, store: store() });
   const request = { salesDetailRecordId: 'detail_sold_sample', productRecordId: 'product_1', size: 40 };
@@ -150,7 +157,7 @@ test('sample replacement moves one selected door-box pair without changing total
   assert.equal(gateway.records.get('liveInventory')[1].fields['所属状态'], '门盒');
   assert.equal(gateway.records.get('inventoryLedger').length, 1);
   assert.deepEqual(gateway.records.get('inventoryLedger')[0].fields, {
-    编号: ['product_1'], 尺码: 40, 变动数量: 0,
+    编号: ['product_1'], 尺码: ['size_40'], 变动数量: 0,
     库存行为: ['behavior_sample'], 关联销售: ['detail_sold_sample'],
   });
   await assert.rejects(inventory.promoteToSample({ ...request, size: 41 }), /已选择其他补样品尺码/);

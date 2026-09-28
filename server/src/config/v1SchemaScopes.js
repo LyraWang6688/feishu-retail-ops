@@ -9,7 +9,7 @@ const V1_SCHEMA_SCOPES = {
     'purchaseArrival',
     'purchaseInbound',
   ],
-  inventory: ['product', 'behavior', 'salesDetail', 'purchaseInbound', 'inventoryLedger', 'liveInventory'],
+  inventory: ['product', 'behavior', 'sizeManagement', 'salesDetail', 'purchaseInbound', 'inventoryLedger', 'liveInventory'],
 };
 
 V1_SCHEMA_SCOPES.all = [...new Set(Object.values(V1_SCHEMA_SCOPES).flat())];
