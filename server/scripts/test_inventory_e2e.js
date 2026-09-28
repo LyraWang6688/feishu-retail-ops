@@ -38,9 +38,9 @@ async function until(check, label, { attempts = 12, pause = wait } = {}) {
 
 async function main() {
   assert.ok(TEST_APP_TOKEN, '必须显式配置测试 Base 标识');
+  assert.equal(String(process.env.FEISHU_TARGET_ENV || '').trim().toLowerCase(), 'test',
+    '端到端测试必须显式声明 FEISHU_TARGET_ENV=test');
   assert.equal(V1_BITABLE_SCHEMA.appToken, TEST_APP_TOKEN, '拒绝连接非指定测试 Base');
-  assert.notEqual(V1_BITABLE_SCHEMA.appToken, 'QrXlbwXMLaJ2TNsxSfFcIA3rnwh',
-    '拒绝连接代码默认生产 Base');
   assert.ok(PRODUCT_ID && process.env.FEISHU_V1_E2E_ITEM_NO, '必须指定测试货品');
   assert.ok(Number.isSafeInteger(SIZE) && SIZE > 0, '测试尺码必须是正整数');
   const requiredTables = {
