@@ -189,8 +189,38 @@ test('supplier report confirm generates purchase order batch and requests', asyn
   const requests = await gateway.listAll('purchaseRequest');
   assert.equal(requests.length, 1);
   assert.deepEqual(requests[0].fields.报货批次号, [batches[0].record_id]);
+  assert.deepEqual(requests[0].fields.尺码, sizeLink(36));
   const updatedReport = await gateway.get('purchaseReport', 'rep_conf');
   assert.equal(updatedReport.fields.处理状态, '已生成申请');
+});
+
+test('multi-size report confirm writes one request per size with linked sizes and quantities', async () => {
+  const { service, store, gateway } = makeService({
+    gateway: makeGateway({
+      purchaseReport: [{ record_id: 'rep_multi', fields: { 处理状态: '待确认', 尺码: sizeLinks(36, 37), 数量说明: '36码2双，37码1双', 编号: ['prod_1'], 采购行为: ['beh_1'], 供应商: '测试供应商', 经办人: [{ id: 'ou_1' }] } }],
+      purchaseOrderBatch: [],
+      purchaseRequest: [],
+    }),
+  });
+  const accepted = await service.accept('supplier-report', 'rep_multi');
+  const task = await waitForTask(store, accepted.taskId);
+  assert.equal(task.draft.items.length, 2);
+
+  const result = await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1');
+  assert.ok(result.toast.content.includes('采购申请已生成'));
+
+  const batches = await gateway.listAll('purchaseOrderBatch');
+  const requests = await gateway.listAll('purchaseRequest');
+  assert.equal(requests.length, 2);
+  // 数量说明只描述例外：36 码两双、37 码默认一双。
+  const quantityBySize = new Map(requests.map((row) => [row.fields.尺码[0], row.fields.数量]));
+  assert.deepEqual([...quantityBySize.entries()].sort(), [['size_36', 2], ['size_37', 1]]);
+  for (const request of requests) {
+    // 尺码与报货批次都必须以关联形式写入，不能再写数字或纯文本。
+    assert.equal(request.fields.尺码.length, 1);
+    assert.ok(String(request.fields.尺码[0]).startsWith('size_'), `尺码应为关联 ID，实际：${request.fields.尺码[0]}`);
+    assert.deepEqual(request.fields.报货批次号, [batches[0].record_id]);
+  }
 });
 
 test('supplier report cancel updates status', async () => {
