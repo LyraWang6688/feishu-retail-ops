@@ -9,6 +9,7 @@ const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver
 const doubaoService = require('./doubaoService');
 const { purchaseRequestConfirmationCard, purchaseArrivalComparisonCard, purchaseArrivalDetailCard, purchaseStatusCard } = require('../utils/larkCards');
 const { InventoryService } = require('./inventoryService');
+const { buildPurchaseQuantities } = require('./purchaseQuantityPolicy');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
 
@@ -44,6 +45,7 @@ class PurchaseWebhookService {
     })();
     this.gateway = options.gateway || new V1BitableGateway({ client: this.client });
     this.references = options.references || new V1ReferenceResolver(this.gateway);
+    this.sizeReferences = options.sizeReferences || null;
     this.recognizer = options.recognizer || doubaoService;
     this.inventory = options.inventory || new InventoryService({ gateway: this.gateway });
     this.enablePurchaseInventory = true;
@@ -60,6 +62,27 @@ class PurchaseWebhookService {
     this.activeBatches = new Set(); // 正在处理的批次号，用于全局并发限制
     this.MAX_ACTIVE_BATCHES = options.maxActiveBatches ?? 3; // 全局最多同时处理3个批次
     this.BATCH_WAIT_MS = options.batchWaitMs ?? 30000; // 批次等待窗口30秒（最后一条到达后重置）
+  }
+
+  getSizeReferences() {
+    if (!this.sizeReferences) {
+      // Shared service is supplied by inventory PR #6. Keep this lazy so the
+      // purchase branch can be tested with an injected implementation before merge.
+      const { SizeReferenceService } = require('./sizeReferenceService');
+      this.sizeReferences = new SizeReferenceService({ gateway: this.gateway });
+    }
+    return this.sizeReferences;
+  }
+
+  async parseReportQuantities(fields, reportTable) {
+    const linkedSizes = await this.getSizeReferences().resolveLinkedCells(fields[reportTable.fields.size]);
+    const recordIdBySize = new Map(linkedSizes.map((item) => [item.size, item.recordId]));
+    const items = await buildPurchaseQuantities({
+      selectedSizes: linkedSizes.map((item) => item.size),
+      quantityDescription: textValue(fields[reportTable.fields.quantityDescription]),
+      parseOverrides: (description, context) => this.recognizer.parsePurchaseReportText(description, context),
+    });
+    return items.map((item) => ({ ...item, size_record_id: recordIdBySize.get(item.size) }));
   }
 
   enqueue(kind, recordId, work) {
@@ -221,7 +244,6 @@ class PurchaseWebhookService {
         const status = textValue(fields[reportTable.fields.status]);
         if (['已生成申请', '已取消'].includes(status)) continue;
         reportRecordIds.push(record.record_id);
-        const description = textValue(fields[reportTable.fields.description]);
         const detailId = textValue(fields[reportTable.fields.detailId]);
         const productIds = linkedRecordIds(fields[reportTable.fields.product]);
         if (productIds.length !== 1) {
@@ -242,7 +264,7 @@ class PurchaseWebhookService {
             }
           }
           const productNumber = textValue(product.record?.fields?.[productTable.fields.number]);
-          const parsed = await this.recognizer.parsePurchaseReportText(description);
+          const parsed = await this.parseReportQuantities(fields, reportTable);
           for (const item of parsed) {
             allItems.push({
               ...item,
@@ -345,7 +367,6 @@ class PurchaseWebhookService {
     const fields = record?.fields || {};
     const status = textValue(fields[table.fields.status]);
     if (['已生成申请', '已取消'].includes(status)) return { ignored: true, status };
-    const description = textValue(fields[table.fields.description]);
     const detailId = textValue(fields[table.fields.detailId]);
     const productIds = linkedRecordIds(fields[table.fields.product]);
     if (productIds.length !== 1) throw new Error('供应商报单必须关联一个货品编号');
@@ -355,7 +376,7 @@ class PurchaseWebhookService {
     const productSupplierIds = linkedRecordIds(product.record?.fields?.[productTable.fields.supplier]);
     if (productSupplierIds.length === 0) throw new Error('货品信息中未关联供应商，请先在货品信息中设置供应商');
     const supplierRecordId = productSupplierIds[0];
-    const parsed = await this.recognizer.parsePurchaseReportText(description);
+    const parsed = await this.parseReportQuantities(fields, table);
     const operatorOpenId = this.recordOperator(record, table.fields.operator);
     const draftId = taskId;
     const draft = {
@@ -402,7 +423,7 @@ class PurchaseWebhookService {
       const batchNo = textValue(batch?.fields?.[batchTable.fields.batchNo]);
       const requestTable = this.gateway.table('purchaseRequest');
       const requests = (await this.gateway.listAll('purchaseRequest')).filter(
-        (item) => textValue(item.fields?.[requestTable.fields.batchNo]) === batchNo
+        (item) => linkedRecordIds(item.fields?.[requestTable.fields.batchNo]).includes(batchIds[0])
       );
       const actual = [];
       const unrecognized = [];
@@ -439,7 +460,7 @@ class PurchaseWebhookService {
         throw new Error(`所有货品都识别失败：${unrecognized.map(u => `${u.item_no || ''}${u.color || ''}`).join('、')}`);
       }
       const groupedActual = aggregateArrivalItems(actual);
-      const differences = this.compareArrival(requests, groupedActual, requestTable);
+      const differences = await this.compareArrival(requests, groupedActual, requestTable);
       const operatorOpenId = this.recordOperator(record, arrivalTable.fields.inspector);
       const draft = { arrival_record_id: recordId, batch_record_id: batchIds[0], batch_no: batchNo, operator_open_id: operatorOpenId, requests, actual: groupedActual, differences, unrecognized };
       await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别成功', confirmStatus: '待确认' });
@@ -456,15 +477,16 @@ class PurchaseWebhookService {
     }
   }
 
-  compareArrival(requests, actual, requestTable) {
+  async compareArrival(requests, actual, requestTable) {
     const map = new Map();
     const key = (productId, size) => `${productId}|${size}`;
     for (const row of requests) {
       const productId = linkedRecordIds(row.fields?.[requestTable.fields.product])[0];
       if (!productId) continue;
-      const item = map.get(key(productId, number(row.fields?.[requestTable.fields.size]))) || {
+      const resolvedSize = await this.getSizeReferences().resolveLinkedCell(row.fields?.[requestTable.fields.size]);
+      const item = map.get(key(productId, resolvedSize.size)) || {
         product_record_id: productId,
-        size: number(row.fields?.[requestTable.fields.size]),
+        size: resolvedSize.size,
         requested: 0,
         actual: 0,
         request_record_id: row.record_id,
@@ -574,7 +596,7 @@ class PurchaseWebhookService {
       const request = await this.gateway.create('purchaseRequest', {
         batchNo: relation(batch.recordId),
         product: relation(item.product_record_id),
-        size: item.size,
+        size: relation((await this.getSizeReferences().resolveByNumber(item.size)).recordId),
         quantity: item.quantity,
         behavior: relation(draft.behavior_record_id),
       });
@@ -627,7 +649,7 @@ class PurchaseWebhookService {
       const batchIds = linkedRecordIds(record.fields?.[inboundTable.fields.batch]);
       if (!batchIds.includes(arrival.arrival_record_id)) continue;
       const productId = linkedRecordIds(record.fields?.[inboundTable.fields.product])[0];
-      const size = number(record.fields?.[inboundTable.fields.size]);
+      const size = (await this.getSizeReferences().resolveLinkedCell(record.fields?.[inboundTable.fields.size])).size;
       const key = `${productId}|${size}`;
       if (productId && !existingByKey.has(key)) {
         existingByKey.set(key, { recordId: record.record_id, inventoryApplied: false });
@@ -669,7 +691,7 @@ class PurchaseWebhookService {
       );
       const inbound = await this.gateway.create('purchaseInbound', {
         product: relation(item.product_record_id),
-        size: item.size,
+        size: relation((await this.getSizeReferences().resolveByNumber(item.size)).recordId),
         quantity: item.quantity,
         behavior: relation(purchaseInboundBehaviorId),
         batch: relation(arrival.arrival_record_id),
@@ -694,7 +716,7 @@ class PurchaseWebhookService {
     }
     for (const request of arrival.requests || []) {
       const productId = linkedRecordIds(request.fields?.[requestTable.fields.product])[0];
-      const size = number(request.fields?.[requestTable.fields.size]);
+      const size = (await this.getSizeReferences().resolveLinkedCell(request.fields?.[requestTable.fields.size])).size;
       const actualQuantity = (arrival.actual || [])
         .filter((item) => item.product_record_id === productId && Number(item.size) === size)
         .reduce((sum, item) => sum + item.quantity, 0);

@@ -1,16 +1,22 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createPurchaseQueryService } = require('../src/services/purchaseQueryService');
+const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+
+// 「尺码」是指向「尺码管理」的关联字段，读取时要能从关联记录解析回整数。
+const SIZE_RECORDS = [36, 37].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } }));
+const sizeLink = (size) => [`size_${size}`];
 
 const makeGateway = (records = {}) => ({
-  listAll: async (key) => records[key] || [],
+  table: (key) => V1_BITABLE_SCHEMA.tables[key],
+  listAll: async (key) => (key === 'sizeManagement' ? SIZE_RECORDS : records[key] || []),
 });
 
 test('listPurchaseRequests maps fields and filters by batchNo', async () => {
   const gateway = makeGateway({
     purchaseRequest: [
-      { record_id: 'req_1', fields: { 报货批次号: 'BH-001', 编号: ['prod_1'], 尺码: 36, 数量: 2, 到货状态: '部分到货', 报单时间: 1758844800000 } },
-      { record_id: 'req_2', fields: { 报货批次号: 'BH-002', 编号: ['prod_2'], 尺码: 37, 数量: 1, 到货状态: '未到货', 报单时间: 1758931200000 } },
+      { record_id: 'req_1', fields: { 报货批次号: ['batch_1'], 编号: ['prod_1'], 尺码: sizeLink(36), 数量: 2, 到货状态: '部分到货', 报单时间: 1758844800000 } },
+      { record_id: 'req_2', fields: { 报货批次号: ['batch_2'], 编号: ['prod_2'], 尺码: sizeLink(37), 数量: 1, 到货状态: '未到货', 报单时间: 1758931200000 } },
     ],
     product: [
       { record_id: 'prod_1', fields: { 编号: '8088灰', 供应商: ['sup_1'] } },
