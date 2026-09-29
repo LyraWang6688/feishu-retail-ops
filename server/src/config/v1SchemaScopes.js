@@ -1,5 +1,6 @@
 const V1_SCHEMA_SCOPES = {
-  sales: ['product', 'paymentMethod', 'salesEntry', 'salesDetail', 'paymentRecord'],
+  // accessory（其他配品）也纳入销售范围：销售明细的「配品」字段指向它，缺配置会在运行时才炸。
+  sales: ['product', 'accessory', 'paymentMethod', 'salesEntry', 'salesDetail', 'paymentRecord'],
   purchase: [
     'product',
     'supplier',

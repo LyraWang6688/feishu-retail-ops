@@ -35,7 +35,7 @@ test('V1 gateway schema validation reports renamed or missing fields', async () 
 test('sales schema matches the live three-table field snapshot', () => {
   const fields = {
     salesEntry: ['收款状态', '录单日', '确认状态', '销售单号', '解析状态', '失败原因', '订单状态',
-      '录单人', '解析结果摘要', '原文', '待交付数量', '交付数量'],
+      '录单人', '解析结果摘要', '原话', '待交付数量', '交付数量'],
     salesDetail: ['销售单价', '履约状态', '销售明细ID', '销售单号', '销售日', '赠品', '尺码', '成交金额', '编号', '配品'],
     paymentRecord: ['支付方式', '关联销售单', '收款金额', '收款时间', '收款状态'],
   };

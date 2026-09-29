@@ -61,6 +61,19 @@ const normalizeSalesResult = (result = {}, sourceText = '') => {
   for (const item of rawItems) {
     const giftDescription = String(item.gift_description || '').trim();
     const gift = item.gift === true || Boolean(giftDescription);
+    // 配品（腰带、鞋油、袜子、包等）：没有货号、颜色、尺码，只有名字和金额。
+    // 必须在「赠品归并」之前判断，否则一件配品会被当成上一件鞋的赠品。
+    if (item.kind === 'accessory' || (!item.item_no && item.accessory_name)) {
+      items.push({
+        kind: 'accessory',
+        accessory_name: String(item.accessory_name || item.name || '').trim(),
+        quantity: positiveOrEmpty(item.quantity) || 1,
+        actual_amount: moneyOrEmpty(item.actual_amount),
+        gift,
+        gift_description: giftDescription,
+      });
+      continue;
+    }
     // Some model responses turn a free gift into a separate shoe item. It is
     // not a sold SKU; attach it to the preceding sold item instead.
     if (gift && !positiveOrEmpty(item.size) && items.length) {
@@ -138,7 +151,11 @@ const normalizeSalesResult = (result = {}, sourceText = '') => {
   const missing = new Set([...(voucherPolicy?.issues || []), ...(deposit?.issues || [])]);
   if (normalized.intent !== 'sale') missing.add('当前只支持商品销售录单');
   for (const [index, item] of items.entries()) {
-    for (const key of ['item_no', 'size', 'quantity', ...(normalized.voucher_policy_blocked ? [] : ['actual_amount'])]) {
+    // 配品没有货号、颜色和尺码，只要求名字、数量和金额。
+    const requiredKeys = item.kind === 'accessory'
+      ? ['accessory_name', 'quantity', ...(normalized.voucher_policy_blocked ? [] : ['actual_amount'])]
+      : ['item_no', 'size', 'quantity', ...(normalized.voucher_policy_blocked ? [] : ['actual_amount'])];
+    for (const key of requiredKeys) {
       if (!item[key]) missing.add(`items[${index}].${key}`);
     }
     if (item.quantity !== 1) missing.add(`第${index + 1}件请逐双列出成交金额；每条销售明细只能记录一双`);
@@ -175,7 +192,7 @@ class DoubaoService {
     return this.client;
   }
 
-  async parseSalesText(text, { taskId } = {}) {
+  async parseSalesText(text, { taskId, accessoryNames = [] } = {}) {
     this.apiKey = process.env.ARK_API_KEY;
     this.endpointId = process.env.ARK_MODEL_ENDPOINT;
     if (!this.apiKey || !this.endpointId) {
@@ -209,7 +226,11 @@ class DoubaoService {
 8. “一双”数量为 1；没写数量但语义明确为单件商品时，quantity=1。“赠”“送”后的物品是赠品，不是销售商品数量。赠品必须写进前一件销售商品的 gift=true、gift_description，不得作为新 item。例如“赠袜子一双”写 gift_description="袜子一双"；“赠鞋垫一双”写 gift_description="鞋垫一双"。
 9. 单件商品明确说了总成交金额，可将其作为该件 actual_amount；仅有“定金”不能作为成交金额。多件逐件金额已知时可求和为 agreed_total。标价与自动公式不参与成交金额判断。
 10. 遇到“89.9/89块9抵100”的团购券，只把实际付给门店的微信/现金等放入 payments；券的购买价 89.9 元和抵扣面额 100 元都不是门店已收现金，不要把它们当成 payments。不要猜测平台结算金额，后端会按已配置券种确定性换算。单鞋券后成交金额无法从原话直接确定时可留空，由后端结合实际支付和券种换算。
-11. 只输出 JSON，不输出 Markdown 或说明。
+11. 配品（不是鞋，没有尺码）：${accessoryNames.length ? accessoryNames.join('、') : '（本租户未配置配品）'}。
+    如果某件是上面列出的配品，输出 {"kind":"accessory","accessory_name":"名称","quantity":1,"actual_amount":金额}，
+    不要填 item_no、color、size。accessory_name 必须与上面列表里的写法**完全一致**，不许改写、简写或自造名称；
+    原话里的说法与列表对不上时，accessory_name 照抄原话，由后端判断。
+12. 只输出 JSON，不输出 Markdown 或说明。
 
 用户原话：${originalText}
     `.trim();

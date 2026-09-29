@@ -33,6 +33,18 @@ const V1_BITABLE_SCHEMA = {
         supplier: '供应商',
       },
     },
+    // 配品（腰带、鞋油、袜子、包等）：没有尺码、不跟踪库存，销售明细里用它自己的关联字段。
+    // 表 ID 没有默认值：不同租户这张表不同，未配置时销售只支持鞋。
+    accessory: {
+      tableName: '其他配品',
+      tableId: getEnv('FEISHU_V1_ACCESSORY_TABLE_ID'),
+      fields: {
+        name: '名称',
+        category: '种类',
+        price: '单价',
+        cost: '成本',
+      },
+    },
     behavior: {
       tableName: '行为管理',
       tableId: getEnv('FEISHU_V1_BEHAVIOR_TABLE_ID', 'tblbTvUT4AFsCK4K'),
@@ -68,7 +80,9 @@ const V1_BITABLE_SCHEMA = {
       tableId: getEnv('FEISHU_V1_SALES_ENTRY_TABLE_ID', 'tblLjFe3NjU61xKB'),
       fields: {
         orderNo: '销售单号',
-        originalText: '原文',
+        // 真实表里的字段名是「原话」（schema-check 抓出来的漂移：代码一直写成「原文」，
+        // 线上写销售主表就会 FieldNameNotFound）。
+        originalText: '原话',
         sender: '录单人',
         // Automatic creation time: read-only fallback for workbench date filters.
         recordedAt: '录单日',

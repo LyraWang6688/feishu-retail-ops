@@ -3,7 +3,9 @@ const text = (value) => String(value ?? '').replace(/\n/g, ' ');
 const itemLines = (items, priceKey) =>
   (items || [])
     .map((item, index) => {
-      const product = item.product_number || item.productNumber || item.item_no || item.itemNo || '未知货品';
+      // 配品没有货号，显示它自己的名称。
+      const product = item.product_number || item.productNumber || item.item_no || item.itemNo
+        || item.accessory_name || '未知货品';
       const price = item[priceKey] ?? item.unitPrice ?? item.unitCost;
       const gift = item.gift ? `\n   赠品：${text(item.gift_description || '有')}` : '';
       return `${index + 1}. ${text(product)} ${text(item.size)}码 × ${text(item.quantity || 1)}${price ? ` ￥${price}` : ''}${gift}`;
