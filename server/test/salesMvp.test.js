@@ -102,6 +102,69 @@ test('each pair has its own detail even when product and size are identical', as
     row.fields['履约状态'] === '未交付'));
 });
 
+// ─── 配品：只记「卖了什么、收了多少」，不写尺码、不碰库存 ───
+
+test('an accessory line rides along with a shoe in one order without a size or stock movement', async () => {
+  const gateway = fake();
+  const service = new SalesOrderService({ gateway, references });
+  const input = { salesEntryRecordId: 'order_1', items: [
+    { itemNo: 'A100', size: 38, quantity: 1, actualAmount: 200 },
+    { kind: 'accessory', accessoryRecordId: 'acc_belt', quantity: 1, actualAmount: 39 },
+  ], payments: [{ method: '微信', amount: 239 }] };
+
+  await service.confirm(input);
+  await service.confirm(input); // 重试不应重复写入
+
+  const details = gateway.records.get('salesDetail');
+  assert.equal(details.length, 2);
+  // 鞋行：关联货品 + 关联尺码 + 未交付（要跟踪交付）
+  assert.deepEqual(details[0].fields['编号'], ['product_A100']);
+  assert.deepEqual(details[0].fields['尺码'], ['size_38']);
+  assert.equal(details[0].fields['履约状态'], '未交付');
+  assert.equal(details[0].fields['配品'], undefined);
+  // 配品行：关联配品、没有尺码、当场结清（已交付）
+  assert.deepEqual(details[1].fields['配品'], ['acc_belt']);
+  assert.equal(details[1].fields['尺码'], undefined);
+  assert.equal(details[1].fields['编号'], undefined);
+  assert.equal(details[1].fields['履约状态'], '已交付');
+  assert.equal(details[1].fields['成交金额'], 39);
+  // 配品不产生任何库存动作
+  assert.equal(gateway.records.get('inventoryLedger'), undefined);
+  assert.equal(gateway.records.get('liveInventory'), undefined);
+});
+
+test('a standalone accessory sale creates one detail and one receipt', async () => {
+  const gateway = fake();
+  const service = new SalesOrderService({ gateway, references });
+  await service.confirm({ salesEntryRecordId: 'order_1',
+    items: [{ kind: 'accessory', accessoryRecordId: 'acc_oil', quantity: 1, actualAmount: 10 }],
+    payments: [{ method: '微信', amount: 10 }] });
+
+  assert.equal(gateway.records.get('salesDetail').length, 1);
+  assert.deepEqual(gateway.records.get('salesDetail')[0].fields['配品'], ['acc_oil']);
+  assert.equal(gateway.records.get('paymentRecord').length, 1);
+  assert.equal(gateway.records.get('liveInventory'), undefined);
+});
+
+test('an accessory line without a resolved accessory record stops before writing', async () => {
+  const gateway = fake();
+  const service = new SalesOrderService({ gateway, references });
+  await assert.rejects(service.confirm({ salesEntryRecordId: 'order_1',
+    items: [{ kind: 'accessory', quantity: 1, actualAmount: 39 }],
+    payments: [{ method: '微信', amount: 39 }] }), /配品明细缺少配品记录/);
+
+  assert.equal(gateway.records.get('salesDetail'), undefined);
+  assert.equal(gateway.records.get('paymentRecord'), undefined);
+});
+
+test('an unlisted sellable kind is refused instead of silently treated as a shoe', async () => {
+  const gateway = fake();
+  const service = new SalesOrderService({ gateway, references });
+  await assert.rejects(service.confirm({ salesEntryRecordId: 'order_1',
+    items: [{ kind: 'gift_card', itemNo: 'A100', size: 38, quantity: 1, actualAmount: 100 }],
+    payments: [{ method: '微信', amount: 100 }] }), /未声明的可售品类型/);
+});
+
 test('a multi-pair line without individual prices stops before creating sale details', async () => {
   const gateway = fake();
   const service = new SalesOrderService({ gateway, references });

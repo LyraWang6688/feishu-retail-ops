@@ -58,7 +58,6 @@ class SalesDeliveryService {
       // 放在 try 外面：失败分支要把它记进 failures，解析失败时它是 null。
       let size = null;
       try {
-        size = (await this.getSizeReferences().resolveLinkedCell(detail.fields?.[fields.size])).size;
         const status = textValue(detail.fields?.[fields.fulfillmentStatus]) || '未交付';
         if (!['未交付', '已交付'].includes(status)) throw new Error(`销售明细 ${id} 履约状态无效：${status}`);
         if (status === '已交付') {
@@ -66,6 +65,9 @@ class SalesDeliveryService {
           results.push({ detailRecordId: id, duplicate: true, inventoryResult });
           continue;
         }
+        // 先判交付状态再解析尺码：配品不参与交付（写单时就是已交付），
+        // 也不会走到这里；万一走到，下面的货品校验会把它拦下来。
+        size = (await this.getSizeReferences().resolveLinkedCell(detail.fields?.[fields.size])).size;
         if (productIds.length !== 1) throw new Error(`销售明细 ${id} 必须关联一个货品`);
         const inventoryResult = await this.inventory.applySale({
           salesDetailRecordId: id, productRecordId: productIds[0],
