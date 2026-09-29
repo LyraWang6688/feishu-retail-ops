@@ -9,6 +9,14 @@ const normalizeText = (value) =>
 
 const normalizeColor = (value) => normalizeText(value).replace(/色$/, '');
 
+// Only these familiar qualifiers preserve the spoken base color. An arbitrary
+// substring match could turn a different mixed color into a saleable match.
+const BASE_COLOR_QUALIFIERS = /^(?:全|墨|深|浅|藏|暗|亮|正|纯|淡)$/u;
+const isQualifiedBaseColor = (configured, spoken) => {
+  if (!spoken || !configured.endsWith(spoken) || configured === spoken) return false;
+  return BASE_COLOR_QUALIFIERS.test(configured.slice(0, -spoken.length));
+};
+
 const relation = (recordId) => (recordId ? [recordId] : undefined);
 const person = (openId) => (openId ? [{ id: openId }] : undefined);
 
@@ -113,16 +121,11 @@ class V1ReferenceResolver {
         }
       }
       const sameSku = candidates.filter((candidate) => candidate.itemNo === itemNo);
-      // 颜色的匹配范围严格限定在「这个货号的颜色集合」内，不跨货号找。
-      // 顺序：精确 → 前缀/后缀（口语只说基色，如「黑」对应「黑牛仔」「全黑」）→ 唯一才认定。
-      // 这里不再维护「全/墨/深/浅…」这类限定词白名单：颜色字在前在后都可能出现，
-      // 靠货号内的唯一性判断比穷举限定词更准，也少一处硬编码。
       const exact = color ? sameSku.filter((candidate) => candidate.color === color) : sameSku;
       const prefix = color && !exact.length
         ? sameSku.filter((candidate) => candidate.color.startsWith(color)) : [];
-      const suffix = color && !exact.length
-        ? sameSku.filter((candidate) => candidate.color.endsWith(color) && !prefix.includes(candidate)) : [];
-      const matches = exact.length ? exact : [...prefix, ...suffix];
+      const matches = exact.length || !color ? exact : prefix.length ? prefix
+        : sameSku.filter((candidate) => isQualifiedBaseColor(candidate.color, color));
       if (matches.length === 0) {
         throw new Error(`找不到货品：${input.itemNo || ''}${input.color || ''}`);
       }
