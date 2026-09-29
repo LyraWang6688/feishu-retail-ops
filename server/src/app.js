@@ -49,9 +49,16 @@ app.use('/workbench', express.static(workbenchPath, { index: 'index.html' }));
 // Feishu web apps commonly open the configured homepage as "/".
 app.get('/', (req, res) => res.sendFile(path.join(workbenchPath, 'index.html')));
 
-// Basic health check route
+// Health check route. Also answers "服务器上跑的是哪一版"——部署时由 deploy_run.sh
+// 写入版本号与 commit，否则回落到 package.json 的版本。
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    version: process.env.APP_VERSION || require('../package.json').version || 'unknown',
+    commit: process.env.APP_COMMIT || '',
+    deployed_at: process.env.APP_DEPLOYED_AT || '',
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // Routes
