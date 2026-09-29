@@ -100,7 +100,11 @@ const normalizeSalesResult = (result = {}, sourceText = '') => {
       payments = [{ ...matching[0], method: spokenMethod || matching[0].method }];
     }
     else deposit.issues.push('请明确本次定金的支付方式');
-    if (deposit.tailAmount && items.length === 1) {
+    if (deposit.tailAmount && items.length !== 1) {
+      // 定金 + 尾款的推导只对「整单一条明细」成立：多行时无法判断尾款属于哪一件。
+      // 以前是整块跳过，应收金额被静默算丢（不报错、金额却不对），所以改成明确拒绝。
+      deposit.issues.push('定金单暂只支持一条明细；多双请分开说明，或逐双给出成交金额');
+    } else if (deposit.tailAmount) {
       const expectedTotal = Math.round((deposit.depositAmount + deposit.tailAmount) * 100) / 100;
       const statedPrice = sourceText.match(/(?:成交价|成交金额|总价)\s*(?:是|为)?\s*[¥￥]?\s*(\d+(?:\.\d{1,2})?)/);
       if (statedPrice && Number(statedPrice[1]) !== expectedTotal) {
