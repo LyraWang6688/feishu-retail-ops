@@ -63,6 +63,10 @@ test('first sale creates one master, multiple details and one receipt; retry cre
   await service.confirm(input);
   assert.equal(gateway.records.get('salesEntry').length, 1);
   assert.equal(gateway.records.get('salesDetail').length, 2);
+  // 真实表里尺码是关联字段：写进去的必须是关联记录 ID，不是数字。
+  // 假 Base 不校验字段类型，所以只有显式断言写入形态才测得出来。
+  assert.deepEqual(gateway.records.get('salesDetail').map((row) => row.fields['尺码']),
+    [['size_38'], ['size_39']]);
   assert.equal(gateway.records.get('paymentRecord').length, 1);
   assert.equal(gateway.records.get('inventoryLedger'), undefined);
 });

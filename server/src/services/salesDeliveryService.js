@@ -3,14 +3,17 @@ const { InventoryService } = require('./inventoryService');
 const { SalesProgressService } = require('./salesProgressService');
 const { readSaleLinkedRecord } = require('./salesRecordReader');
 const { withSalesReadRetry } = require('./salesReadRetry');
+const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { logError, logInfo } = require('../utils/logger');
 
 class SalesDeliveryService {
-  constructor({ gateway, inventory, progress } = {}) {
+  constructor({ gateway, inventory, progress, sizeReferences } = {}) {
     if (!gateway) throw new Error('SalesDeliveryService requires gateway');
     this.gateway = gateway;
     this.inventory = inventory || new InventoryService({ gateway });
     this.progress = progress || new SalesProgressService({ gateway });
+    // 「尺码」是关联字段：走共享服务解析，不靠关联单元格自带的显示文本。
+    this.getSizeReferences = createSizeReferenceAccess({ gateway: this.gateway, sizeReferences });
     this.queue = Promise.resolve();
   }
 
@@ -51,9 +54,11 @@ class SalesDeliveryService {
     for (const [index, id] of detailRecordIds.entries()) {
       const detail = byId.get(id);
       const quantity = 1;
-      const size = Number(textValue(detail.fields?.[fields.size]));
       const productIds = linkedRecordIds(detail.fields?.[fields.product]);
+      // 放在 try 外面：失败分支要把它记进 failures，解析失败时它是 null。
+      let size = null;
       try {
+        size = (await this.getSizeReferences().resolveLinkedCell(detail.fields?.[fields.size])).size;
         const status = textValue(detail.fields?.[fields.fulfillmentStatus]) || '未交付';
         if (!['未交付', '已交付'].includes(status)) throw new Error(`销售明细 ${id} 履约状态无效：${status}`);
         if (status === '已交付') {

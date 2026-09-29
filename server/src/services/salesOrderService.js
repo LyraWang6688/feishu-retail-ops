@@ -1,9 +1,10 @@
-const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const { linkedRecordIds, singleLinked, textValue } = require('./v1BitableGateway');
 const { V1ReferenceResolver, relation } = require('./v1ReferenceResolver');
 const { readSaleLinkedRecord } = require('./salesRecordReader');
 const { withSalesReadRetry } = require('./salesReadRetry');
 const { PaymentService } = require('./paymentService');
 const { SalesProgressService, cents } = require('./salesProgressService');
+const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { logInfo, logError } = require('../utils/logger');
 
 const positiveInteger = (value, label) => {
@@ -13,12 +14,14 @@ const positiveInteger = (value, label) => {
 };
 
 class SalesOrderService {
-  constructor({ gateway, references, payments, progress } = {}) {
+  constructor({ gateway, references, payments, progress, sizeReferences } = {}) {
     if (!gateway) throw new Error('SalesOrderService requires gateway');
     this.gateway = gateway;
     this.references = references || new V1ReferenceResolver(gateway);
     this.payments = payments || new PaymentService({ gateway, references: this.references });
     this.progress = progress || new SalesProgressService({ gateway });
+    // 「尺码」已改为关联「尺码管理」：写入前要解析出关联记录，幂等比对也要按关联记录比。
+    this.getSizeReferences = createSizeReferenceAccess({ gateway: this.gateway, sizeReferences });
     this.queue = Promise.resolve();
   }
 
@@ -46,9 +49,12 @@ class SalesOrderService {
         if (positiveInteger(item.quantity, '销售数量') !== 1) {
           throw new Error('一条销售明细只能记录一双鞋；请逐双说明成交金额');
         }
+        const size = positiveInteger(item.size, '尺码');
+        const sizeReference = await this.getSizeReferences().resolveByNumber(size);
         expected.push({
           productRecordId: product.recordId,
-          size: positiveInteger(item.size, '尺码'),
+          size,
+          sizeRecordId: sizeReference.recordId,
           actualAmount: actualAmountCents / 100,
           gift: item.gift ? String(item.giftDescription || '有赠品').trim() : '',
         });
@@ -82,7 +88,8 @@ class SalesOrderService {
         const match = existing.find((record) => !used.has(record.record_id) &&
           (knownId ? record.record_id === knownId : !reserved.has(record.record_id)) &&
           linkedRecordIds(record.fields?.[table.product]).includes(item.productRecordId) &&
-          Number(textValue(record.fields?.[table.size])) === item.size &&
+          // 尺码是单选关联：必须正好是这一条，不能靠数字文本比对。
+          singleLinked(record.fields?.[table.size], item.sizeRecordId) &&
           Number(textValue(record.fields?.[table.actualAmount])) === item.actualAmount &&
           textValue(record.fields?.[table.gift]) === item.gift);
         if (knownId && !match) throw new Error(`已记录的销售明细 ${knownId} 与当前草稿不一致，已停止重试`);
@@ -98,7 +105,7 @@ class SalesOrderService {
         if (!row.recordId) {
           const created = await this.gateway.create('salesDetail', {
             salesEntry: relation(salesEntryRecordId), product: relation(row.item.productRecordId),
-            size: row.item.size, gift: row.item.gift,
+            size: relation(row.item.sizeRecordId), gift: row.item.gift,
             actualAmount: row.item.actualAmount, fulfillmentStatus: '未交付',
           });
           row.recordId = created.recordId;
