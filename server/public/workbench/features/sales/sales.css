@@ -1,0 +1,15 @@
+.followup-columns { margin-bottom: 24px; }
+.followup-workspace { padding-top: 20px; border-top: 1px solid var(--border-light); }
+.compact-toolbar { align-items: end; }
+.form-field { display: grid; gap: 6px; margin: 12px 0; font-weight: 600; }
+.form-field.grow { flex: 1; max-width: 540px; }
+.action-form { min-width: 0; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-soft); }
+.action-form h3 { margin-bottom: 8px; }
+.action-form .btn { width: 100%; }
+.order-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 16px 0; }
+.order-details > div { display: grid; gap: 4px; padding: 10px; border-radius: var(--radius-sm); background: var(--surface-soft); }
+.order-details span { color: var(--text-muted); font-size: 12px; }
+.delivery-option { display: block; padding: 9px 0; }
+.delivery-option input { margin-right: 8px; }
+.operation-result { min-height: 24px; margin: 16px 0 0; color: var(--primary); }
+@media (max-width: 760px) { .compact-toolbar { align-items: stretch; flex-direction: column; } .form-field.grow { width: 100%; max-width: none; } }
