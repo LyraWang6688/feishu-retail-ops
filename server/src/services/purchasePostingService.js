@@ -1,31 +1,20 @@
-const { V1BitableGateway, linkedRecordIds, textValue } = require('./v1BitableGateway');
+const { V1BitableGateway, linkedRecordIds, singleLinked, textValue } = require('./v1BitableGateway');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
 const { InventoryService } = require('./inventoryService');
-const { SizeReferenceService } = require('./sizeReferenceService');
+const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { logError, logInfo } = require('../utils/logger');
-
-// 尺码是单选关联：必须是且只能是这一条，多选或错关联都不能当成同一条入库明细。
-const singleLinked = (cell, recordId) => {
-  const ids = linkedRecordIds(cell);
-  return ids.length === 1 && ids[0] === recordId;
-};
 
 class PurchasePostingService {
   constructor(options = {}) {
     this.gateway = options.gateway || new V1BitableGateway();
     this.references = options.references || new V1ReferenceResolver(this.gateway);
     this.inventory = options.inventory || new InventoryService({ gateway: this.gateway });
-    this.sizeReferences = options.sizeReferences || null;
+    // 「尺码」已改为关联「尺码管理」，写采购入库前要先解析出关联记录 ID。
+    this.getSizeReferences = createSizeReferenceAccess({
+      gateway: this.gateway, sizeReferences: options.sizeReferences,
+    });
     this.enabled = true;
     this.queue = Promise.resolve();
-  }
-
-  getSizeReferences() {
-    if (!this.sizeReferences) {
-      // 「尺码」已改为关联「尺码管理」，写采购入库前要先解析出关联记录 ID。
-      this.sizeReferences = new SizeReferenceService({ gateway: this.gateway });
-    }
-    return this.sizeReferences;
   }
 
   post(input) {

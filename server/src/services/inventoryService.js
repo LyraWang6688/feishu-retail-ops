@@ -1,7 +1,7 @@
 const crypto = require('node:crypto');
 const path = require('node:path');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
-const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const { linkedRecordIds, singleLinked, textValue } = require('./v1BitableGateway');
 const { relation } = require('./v1ReferenceResolver');
 const { SizeReferenceService, normalizeSize } = require('./sizeReferenceService');
 const { logInfo, logWarn } = require('../utils/logger');
@@ -26,11 +26,6 @@ const positiveInteger = (value, label) => {
 const operationId = (kind, sourceRecordId) =>
   `inventory_${kind}_${crypto.createHash('sha256').update(String(sourceRecordId)).digest('hex').slice(0, 20)}`;
 const samplePromotionId = (salesDetailRecordId) => operationId('sample', salesDetailRecordId);
-
-const singleLinked = (cell, recordId) => {
-  const ids = linkedRecordIds(cell);
-  return ids.length === 1 && ids[0] === recordId;
-};
 
 class InventoryService {
   constructor(options = {}) {

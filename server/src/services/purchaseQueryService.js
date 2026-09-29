@@ -1,5 +1,6 @@
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const { createSizeReferenceAccess } = require('./sizeReferenceService');
 
 const asText = (tableKey, record, semanticKey) => {
   const fieldName = V1_BITABLE_SCHEMA.tables[tableKey]?.fields?.[semanticKey];
@@ -30,14 +31,10 @@ const indexByRecordId = (records) => new Map(records.map((r) => [r.record_id, r]
 
 const createPurchaseQueryService = (gateway, options = {}) => {
   if (!gateway) throw new Error('PurchaseQueryService requires gateway');
-  let sizeReferences = options.sizeReferences || null;
-  const getSizeReferences = () => {
-    if (!sizeReferences) {
-      const { SizeReferenceService } = require('./sizeReferenceService');
-      sizeReferences = new SizeReferenceService({ gateway });
-    }
-    return sizeReferences;
-  };
+  // 查询结果里的尺码要还原成整数，仍走共享的尺码服务。
+  const getSizeReferences = createSizeReferenceAccess({
+    gateway, sizeReferences: options.sizeReferences,
+  });
 
   const listPurchaseRequests = async (filters = {}) => {
     const [requests, products, batches] = await Promise.all([

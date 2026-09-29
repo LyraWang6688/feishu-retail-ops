@@ -112,4 +112,14 @@ class SizeReferenceService {
   }
 }
 
-module.exports = { SizeReferenceService, normalizeSize };
+// 取用尺码服务的统一入口：允许调用方注入实现（测试用桩），否则按需创建。
+// 放在共享层而不是让每个服务各写一遍懒加载，新增模块时不必再复制同样的代码。
+const createSizeReferenceAccess = ({ gateway, sizeReferences } = {}) => {
+  let instance = sizeReferences || null;
+  return () => {
+    if (!instance) instance = new SizeReferenceService({ gateway });
+    return instance;
+  };
+};
+
+module.exports = { SizeReferenceService, createSizeReferenceAccess, normalizeSize };

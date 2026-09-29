@@ -10,6 +10,7 @@ const doubaoService = require('./doubaoService');
 const { purchaseRequestConfirmationCard, purchaseArrivalComparisonCard, purchaseArrivalDetailCard, purchaseStatusCard } = require('../utils/larkCards');
 const { InventoryService } = require('./inventoryService');
 const { buildPurchaseQuantities } = require('./purchaseQuantityPolicy');
+const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
 
@@ -45,7 +46,10 @@ class PurchaseWebhookService {
     })();
     this.gateway = options.gateway || new V1BitableGateway({ client: this.client });
     this.references = options.references || new V1ReferenceResolver(this.gateway);
-    this.sizeReferences = options.sizeReferences || null;
+    // 「尺码」是指向「尺码管理」的关联字段，报单解析与到货比对都通过它换算。
+    this.getSizeReferences = createSizeReferenceAccess({
+      gateway: this.gateway, sizeReferences: options.sizeReferences,
+    });
     this.recognizer = options.recognizer || doubaoService;
     this.inventory = options.inventory || new InventoryService({ gateway: this.gateway });
     this.enablePurchaseInventory = true;
@@ -62,16 +66,6 @@ class PurchaseWebhookService {
     this.activeBatches = new Set(); // 正在处理的批次号，用于全局并发限制
     this.MAX_ACTIVE_BATCHES = options.maxActiveBatches ?? 3; // 全局最多同时处理3个批次
     this.BATCH_WAIT_MS = options.batchWaitMs ?? 30000; // 批次等待窗口30秒（最后一条到达后重置）
-  }
-
-  getSizeReferences() {
-    if (!this.sizeReferences) {
-      // Shared service is supplied by inventory PR #6. Keep this lazy so the
-      // purchase branch can be tested with an injected implementation before merge.
-      const { SizeReferenceService } = require('./sizeReferenceService');
-      this.sizeReferences = new SizeReferenceService({ gateway: this.gateway });
-    }
-    return this.sizeReferences;
   }
 
   async parseReportQuantities(fields, reportTable) {

@@ -35,6 +35,13 @@ const linkedRecordIds = (value) => {
   return id ? [id] : [];
 };
 
+// 单选关联的判定：必须且只能关联到这一条记录。多选或指错记录都不能算匹配，
+// 否则幂等比对会把「另一条尺码」或「一次关联多个」误当成同一条业务明细。
+const singleLinked = (cell, recordId) => {
+  const ids = linkedRecordIds(cell);
+  return ids.length === 1 && ids[0] === recordId;
+};
+
 class V1BitableGateway {
   constructor(options = {}) {
     this.schema = options.schema || V1_BITABLE_SCHEMA;
@@ -227,5 +234,6 @@ module.exports = {
   compact,
   linkedRecordIds,
   recordIdOf,
+  singleLinked,
   textValue,
 };
