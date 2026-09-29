@@ -15,12 +15,12 @@ const gatewayFor = (overrides = {}) => {
     table: (key) => key === 'sizeManagement'
       ? { tableName: '尺码管理', tableId: 'size_table', fields: { size: '尺码' } }
       : { tableName: key, fields: { size: '尺码', name: '行为名称',
-        stockDirection: '库存方向', enabled: '是否启用' } },
+        code: '行为编码', stockDirection: '库存方向', enabled: '是否启用' } },
     validateTables: async (keys) => { seen.push(...keys); return keys.map((tableKey) => ({ tableKey })); },
     listFields: async (key) => fields[key] || [],
     listAll: async (key) => key === 'behavior' ? [
-      { record_id: 'sale', fields: { 行为名称: '销售减少', 库存方向: '减少', 是否启用: true } },
-      { record_id: 'purchase', fields: { 行为名称: '采购增加', 库存方向: '增加', 是否启用: true } },
+      { record_id: 'sale', fields: { 行为编码: 'STOCK_SALE_DECREASE', 行为名称: '销售减少', 库存方向: '减少', 是否启用: true } },
+      { record_id: 'purchase', fields: { 行为编码: 'STOCK_PURCHASE_INCREASE', 行为名称: '采购增加', 库存方向: '增加', 是否启用: true } },
     ] : [],
   };
 };

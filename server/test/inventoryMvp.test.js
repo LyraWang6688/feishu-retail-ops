@@ -7,12 +7,13 @@ const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { InventoryService, operationId } = require('../src/services/inventoryService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
-const behavior = (recordId, name, direction) => ({ record_id: recordId,
-  fields: { 行为名称: name, 库存方向: direction, 是否启用: true } });
+// 库存动作现在按「行为编码」匹配，编码是行为管理表里的稳定标识。
+const behavior = (recordId, code, name, direction) => ({ record_id: recordId,
+  fields: { 行为编码: code, 行为名称: name, 库存方向: direction, 是否启用: true } });
 
 const gatewayFor = (live, behaviors = [
-  behavior('behavior_sale', '销售减少', '减少'),
-  behavior('behavior_purchase', '采购增加', '增加'),
+  behavior('behavior_sale', 'STOCK_SALE_DECREASE', '销售减少', '减少'),
+  behavior('behavior_purchase', 'STOCK_PURCHASE_INCREASE', '采购增加', '增加'),
 ]) => {
   const sizes = [38, 40, 41, 42, 43, 44].map((size) => ({
     record_id: `size_${size}`, fields: { 尺码: size },
@@ -92,7 +93,7 @@ test('purchase adds one live record per pair', async () => {
 
 test('a missing or opposite behavior direction never writes stock records', async () => {
   for (const direction of [null, '增加']) {
-    const gateway = gatewayFor([unit('door_1', '门盒')], [behavior('behavior_sale', '销售减少', direction)]);
+    const gateway = gatewayFor([unit('door_1', '门盒')], [behavior('behavior_sale', 'STOCK_SALE_DECREASE', '销售减少', direction)]);
     const inventory = new InventoryService({ gateway, store: store() });
     await assert.rejects(inventory.applySale({ salesDetailRecordId: 'detail_1', productRecordId: 'product_1',
       size: 38, quantity: 1 }), /库存方向设置为“减少”/);
@@ -103,13 +104,13 @@ test('a missing or opposite behavior direction never writes stock records', asyn
 
 test('inventory preflight checks both sale and purchase behavior settings', async () => {
   const gateway = gatewayFor([], [
-    behavior('behavior_sale', '销售减少', '减少'),
-    { ...behavior('behavior_purchase', '采购增加', '增加'), fields: {
-      行为名称: '采购增加', 库存方向: '增加', 是否启用: false,
+    behavior('behavior_sale', 'STOCK_SALE_DECREASE', '销售减少', '减少'),
+    { ...behavior('behavior_purchase', 'STOCK_PURCHASE_INCREASE', '采购增加', '增加'), fields: {
+      行为编码: 'STOCK_PURCHASE_INCREASE', 行为名称: '采购增加', 库存方向: '增加', 是否启用: false,
     } },
   ]);
   const inventory = new InventoryService({ gateway, store: store() });
-  await assert.rejects(inventory.validateStockBehaviors(), /请启用行为管理中的“采购增加”/);
+  await assert.rejects(inventory.validateStockBehaviors(), /请启用行为管理中的「采购增加」/);
   assert.equal(gateway.records.get('inventoryLedger'), undefined);
 });
 
@@ -147,7 +148,7 @@ test('bad remaining-size link cannot turn an already deducted sample sale into a
   assert.equal(result.replacementCandidatesUnavailable, true);
   assert.deepEqual(result.remainingSizes, []);
   assert.deepEqual(result.liveRecordIds, ['sample_38']);
-  assert.equal((await taskStore.get(operationId('sale', request.salesDetailRecordId))).status, 'completed');
+  assert.equal((await taskStore.get(operationId('STOCK_SALE_DECREASE', request.salesDetailRecordId))).status, 'completed');
   assert.deepEqual(gateway.records.get('liveInventory').map((record) => record.record_id), ['door_bad']);
   assert.equal(gateway.records.get('inventoryLedger').length, 1);
   assert.deepEqual(await inventory.applySale(request), result);
@@ -183,7 +184,7 @@ test('an interrupted sample deduction resumes without deleting stock twice', asy
   assert.deepEqual(result.liveRecordIds, ['sample_38']);
   assert.equal(result.replacementCandidatesUnavailable, true);
   assert.equal(gateway.records.get('inventoryLedger').length, 1);
-  assert.equal((await taskStore.get(operationId('sale', request.salesDetailRecordId))).status, 'completed');
+  assert.equal((await taskStore.get(operationId('STOCK_SALE_DECREASE', request.salesDetailRecordId))).status, 'completed');
 });
 
 test('a sale never consumes warehouse stock and does not write a ledger when total floor stock is short', async () => {
@@ -199,7 +200,7 @@ test('sample replacement moves one selected door-box pair without changing total
   const gateway = gatewayFor([
     { record_id: 'door_40', fields: { 编号: ['product_1'], 尺码: ['size_40'], 所属状态: '门盒' } },
     { record_id: 'door_41', fields: { 编号: ['product_1'], 尺码: ['size_41'], 所属状态: '门盒' } },
-  ], [behavior('behavior_sample', '门盒转样品', '不影响')]);
+  ], [behavior('behavior_sample', 'STOCK_DOORBOX_TO_SAMPLE', '门盒转样品', '不影响')]);
   const inventory = new InventoryService({ gateway, store: store() });
   const request = { salesDetailRecordId: 'detail_sold_sample', productRecordId: 'product_1', size: 40 };
   const first = await inventory.promoteToSample(request);
@@ -217,7 +218,7 @@ test('sample replacement moves one selected door-box pair without changing total
 });
 
 test('sample replacement refuses an unconfigured behavior before writing records', async () => {
-  const gateway = gatewayFor([unit('door_1', '门盒')], [behavior('behavior_sample', '门盒转样品', null)]);
+  const gateway = gatewayFor([unit('door_1', '门盒')], [behavior('behavior_sample', 'STOCK_DOORBOX_TO_SAMPLE', '门盒转样品', null)]);
   const inventory = new InventoryService({ gateway, store: store() });
   await assert.rejects(inventory.promoteToSample({ salesDetailRecordId: 'detail_1',
     productRecordId: 'product_1', size: 38 }), /库存方向设置为“不影响”/);
@@ -236,10 +237,10 @@ const legacyPurchase = async ({ ledgerSize = ['size_38'], liveSize = ['size_38']
     库存行为: ['behavior_purchase'], 关联采购: ['inbound_legacy'],
   } }]);
   const taskStore = store();
-  const id = operationId('purchase', 'inbound_legacy');
+  const id = operationId('STOCK_PURCHASE_INCREASE', 'inbound_legacy');
   await taskStore.create({
     operation_id: id, type: 'inventory_change', schema_version: 2,
-    status: includeLedger ? 'ledger_created' : 'prepared', kind: 'purchase',
+    status: includeLedger ? 'ledger_created' : 'prepared', kind: 'STOCK_PURCHASE_INCREASE',
     stock_key: 'product_1|38|门盒', product_record_id: 'product_1', size: 38,
     state: '门盒', quantity: 2, direction: '增加',
     behavior_record_id: 'behavior_purchase', source_record_id: 'inbound_legacy',
@@ -297,10 +298,10 @@ test('version 2 sale with already deleted stock cannot silently complete', async
     库存行为: ['behavior_sale'], 关联销售: ['detail_legacy'],
   } }]);
   const taskStore = store();
-  const id = operationId('sale', 'detail_legacy');
+  const id = operationId('STOCK_SALE_DECREASE', 'detail_legacy');
   await taskStore.create({
     operation_id: id, type: 'inventory_change', schema_version: 2,
-    status: 'ledger_created', kind: 'sale', stock_key: 'product_1|38|门盒',
+    status: 'ledger_created', kind: 'STOCK_SALE_DECREASE', stock_key: 'product_1|38|门盒',
     product_record_id: 'product_1', size: 38, state: '门盒', quantity: 1,
     direction: '减少', behavior_record_id: 'behavior_sale', source_record_id: 'detail_legacy',
     ledger_record_id: 'sale_ledger', live_record_ids: ['deleted_legacy'],
@@ -318,7 +319,7 @@ const legacySamplePromotion = async ({ ledgerSize = ['size_40'], sizeRecordId = 
   omitSizeRecordId = false } = {}) => {
   const gateway = gatewayFor([
     { record_id: 'door_40', fields: { 编号: ['product_1'], 尺码: ['size_40'], 所属状态: '门盒' } },
-  ], [behavior('behavior_sample', '门盒转样品', '不影响')]);
+  ], [behavior('behavior_sample', 'STOCK_DOORBOX_TO_SAMPLE', '门盒转样品', '不影响')]);
   gateway.records.set('inventoryLedger', [{ record_id: 'sample_ledger', fields: {
     编号: ['product_1'], 尺码: ledgerSize, 变动数量: 0,
     库存行为: ['behavior_sample'], 关联销售: ['detail_sold_sample'],
@@ -362,4 +363,32 @@ test('sample promotion resumes only after the existing ledger links verify', asy
   assert.equal(gateway.records.get('inventoryLedger').length, 1);
   assert.equal(gateway.records.get('liveInventory')[0].fields['所属状态'], '样品');
   assert.equal((await taskStore.get(id)).status, 'completed');
+});
+
+// 动作按「行为编码」匹配，编码是行为管理表里的稳定标识。
+// 这条测试锁住这个性质：运维在飞书里把中文名改掉，代码必须照常工作。
+test('stock behavior lookup survives renaming the display name', async () => {
+  const gateway = gatewayFor([unit('door_1', '门盒')], [
+    behavior('behavior_sale', 'STOCK_SALE_DECREASE', '销售出库（已改名）', '减少'),
+    behavior('behavior_purchase', 'STOCK_PURCHASE_INCREASE', '采购收货（已改名）', '增加'),
+  ]);
+  const inventory = new InventoryService({ gateway, store: store() });
+  await inventory.validateStockBehaviors();
+  const result = await inventory.applySale({ salesDetailRecordId: 'detail_renamed',
+    productRecordId: 'product_1', size: 38, quantity: 1 });
+  assert.equal(result.ledgerRecordId, 'rec_1');
+  assert.equal(gateway.records.get('inventoryLedger').length, 1);
+});
+
+// 没在注册表里声明的动作必须明确报错，而不是像以前那样静默按「采购增加」处理。
+test('an unregistered movement fails loudly instead of falling back to purchase semantics', async () => {
+  const gateway = gatewayFor([unit('door_1', '门盒')]);
+  const inventory = new InventoryService({ gateway, store: store() });
+  await assert.rejects(
+    inventory.applyChange({ kind: 'PURCHASE_RETURN', productRecordId: 'product_1', size: 38,
+      quantity: 1, sourceRecordId: 'ret_1', state: '门盒' }),
+    /未在库存动作注册表中声明动作「PURCHASE_RETURN」/,
+  );
+  assert.equal(gateway.records.get('inventoryLedger'), undefined);
+  assert.equal(gateway.records.get('liveInventory').length, 1);
 });
