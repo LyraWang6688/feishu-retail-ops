@@ -94,6 +94,8 @@ class V1ReferenceResolver {
     if (input.matchMode === 'sales' && wantedItemNo) {
       let itemNo = wantedItemNo;
       let color = wantedColor;
+      // 用户实际写出来的颜色字（可能是从货号里拆出来的后缀），卡片提示时按这个显示。
+      let spokenColor = String(input.color || '').trim();
       if (!candidates.some((candidate) => candidate.itemNo === itemNo)) {
         const splits = [...new Set(candidates
           .filter((candidate) => candidate.itemNo && /^[a-z0-9_-]+$/.test(candidate.itemNo)
@@ -106,6 +108,7 @@ class V1ReferenceResolver {
             throw new Error(`货号 ${input.itemNo} 中的颜色与另报颜色 ${input.color} 不一致，请核对`);
           }
           itemNo = splits[0];
+          spokenColor = suffix;
           // 切出来的颜色要和「直接传颜色」走同一套归一化（去掉尾部的「色」）。
           // 否则「XHB8095黑色」切出的「黑色」命中不了配置里的「全黑」，
           // 而单独写成 color=黑色 却能命中——同一个意思两条路径结果不一致。
@@ -113,6 +116,9 @@ class V1ReferenceResolver {
         }
       }
       const sameSku = candidates.filter((candidate) => candidate.itemNo === itemNo);
+      if (!sameSku.length) {
+        throw new Error(`找不到货品：${input.itemNo || ''}${input.color || ''}`);
+      }
       // 颜色的匹配范围严格限定在「这个货号的颜色集合」内，不跨货号找。
       // 顺序：精确 → 前缀/后缀（口语只说基色，如「黑」对应「黑牛仔」「全黑」）→ 唯一才认定。
       // 这里不再维护「全/墨/深/浅…」这类限定词白名单：颜色字在前在后都可能出现，
@@ -123,15 +129,24 @@ class V1ReferenceResolver {
       const suffix = color && !exact.length
         ? sameSku.filter((candidate) => candidate.color.endsWith(color) && !prefix.includes(candidate)) : [];
       const matches = exact.length ? exact : [...prefix, ...suffix];
-      if (matches.length === 0) {
-        throw new Error(`找不到货品：${input.itemNo || ''}${input.color || ''}`);
+      if (matches.length === 1) {
+        return { recordId: matches[0].record.record_id, record: matches[0].record };
       }
-      if (matches.length > 1) {
-        const colors = [...new Set(matches.map((candidate) => candidate.colorDisplay).filter(Boolean))];
-        const hint = colors.length ? `（${colors.join('、')}）` : '';
-        throw new Error(`货号 ${itemNo} 对应多个货品，请补充完整颜色或类别/编号${hint}`);
-      }
-      return { recordId: matches[0].record.record_id, record: matches[0].record };
+      // 货号确实存在，但颜色没有唯一确定：用户没说颜色、说的颜色匹配不上、或同时命中多个。
+      // 销售不再判失败——把该货号的颜色候选交给确认卡片，让用户点一下。
+      // 用户说过的颜色一并带上，卡片可以提示「你写的是 X，这个货号只有 …」。
+      return {
+        needsColor: true,
+        itemNo,
+        spokenColor,
+        options: sameSku
+          .map((candidate) => ({
+            recordId: candidate.record.record_id,
+            color: candidate.colorDisplay,
+            number: candidate.number,
+          }))
+          .sort((left, right) => String(left.color).localeCompare(String(right.color), 'zh-CN')),
+      };
     }
 
     // “编号”可以包含品类等展示信息，而用户日常通常只说“货号+颜色”。

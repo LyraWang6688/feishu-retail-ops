@@ -109,15 +109,22 @@ test('sales matches qualified base colors only within the exact SKU', async () =
     'rec_ink_green');
   assert.equal((await resolver.resolveProduct({ itemNo: 'A300', color: '卡', matchMode: 'sales' })).recordId,
     'rec_khaki');
-  await assert.rejects(resolver.resolveProduct({ itemNo: 'XHB8095', color: '绿', matchMode: 'sales' }), /找不到货品/);
+  // 该货号没有这个颜色：不跨货号去找别的鞋，也不静默替换，而是把该货号的颜色交给卡片让用户选。
+  const mismatched = await resolver.resolveProduct({ itemNo: 'XHB8095', color: '绿', matchMode: 'sales' });
+  assert.equal(mismatched.needsColor, true);
+  assert.equal(mismatched.spokenColor, '绿');
+  assert.deepEqual(mismatched.options.map((option) => option.color), ['全黑']);
 });
 
-test('sales never chooses between multiple qualified variants of the same base color', async () => {
+test('sales asks the card to choose between multiple qualified variants of the same base color', async () => {
   const resolver = new V1ReferenceResolver(makeGateway([
     { record_id: 'rec_all_black', fields: { 编号: 'A100|全黑|A', 货号: 'A100', 颜色: '全黑' } },
     { record_id: 'rec_dark_black', fields: { 编号: 'A100|深黑|A', 货号: 'A100', 颜色: '深黑' } },
   ]));
-  await assert.rejects(resolver.resolveProduct({ itemNo: 'A100', color: '黑', matchMode: 'sales' }), /多个货品/);
+  const ambiguous = await resolver.resolveProduct({ itemNo: 'A100', color: '黑', matchMode: 'sales' });
+  assert.equal(ambiguous.needsColor, true);
+  // 不替用户在两个黑之间做选择——两个候选都摆出来。
+  assert.deepEqual(ambiguous.options.map((option) => option.color).sort(), ['全黑', '深黑'].sort());
 });
 
 test('sales prefers an exact color over a longer color beginning with the same character', async () => {
@@ -130,23 +137,29 @@ test('sales prefers an exact color over a longer color beginning with the same c
 
 test('sales never guesses a different color or corrects a spoken SKU', async () => {
   const resolver = new V1ReferenceResolver(makeGateway(salesProducts));
-  await assert.rejects(resolver.resolveProduct({ itemNo: '8882咖', matchMode: 'sales' }), /找不到货品/);
+  // 说错颜色：不猜成别的颜色，交给卡片选；但说错货号必须直接拒绝。
+  const wrongColor = await resolver.resolveProduct({ itemNo: '8882咖', matchMode: 'sales' });
+  assert.equal(wrongColor.needsColor, true);
+  assert.equal(wrongColor.spokenColor, '咖');
   await assert.rejects(resolver.resolveProduct({ itemNo: 'HYX-115卡', color: '黑', matchMode: 'sales' }), /颜色.*不一致/);
   await assert.rejects(resolver.resolveProduct({ itemNo: 'HYX-11S', color: '卡其', matchMode: 'sales' }), /找不到货品/);
   assert.equal((await resolver.resolveProduct({ itemNo: 'HYX-11S', color: '卡其' })).recordId, 'rec_hyx_khaki');
 });
 
-test('sales rejects ambiguous color abbreviations and duplicate product categories', async () => {
+test('sales hands ambiguous color abbreviations and duplicate categories to the card', async () => {
   const resolver = new V1ReferenceResolver(makeGateway([
     ...salesProducts,
     { record_id: 'rec_hyx_cardamom', fields: { 编号: 'HYX-115|卡通|B', 货号: 'HYX-115', 颜色: '卡通' } },
   ]));
-  await assert.rejects(resolver.resolveProduct({ itemNo: 'HYX-115', color: '卡', matchMode: 'sales' }), /多个货品/);
+  const ambiguous = await resolver.resolveProduct({ itemNo: 'HYX-115', color: '卡', matchMode: 'sales' });
+  assert.equal(ambiguous.needsColor, true);
+  assert.ok(ambiguous.options.length >= 2, '「卡」同时命中多个颜色时应把候选都列出来');
   const duplicate = new V1ReferenceResolver(makeGateway([
     ...salesProducts,
     { record_id: 'rec_hyx_duplicate', fields: { 编号: 'HYX-115|卡其|B', 货号: 'HYX-115', 颜色: '卡其' } },
   ]));
-  await assert.rejects(duplicate.resolveProduct({ itemNo: 'HYX-115', color: '卡其', matchMode: 'sales' }), /多个货品/);
+  const duplicated = await duplicate.resolveProduct({ itemNo: 'HYX-115', color: '卡其', matchMode: 'sales' });
+  assert.equal(duplicated.needsColor, true);
 });
 
 // ─── 真实销售原文里出现过的匹配场景（来自「销售示例」表的 bad case）───
@@ -167,17 +180,17 @@ test('sales normalizes the color suffix it splits out of a spoken SKU', async ()
   assert.equal(sameColorPassedSeparately.recordId, 'rec_black');
 });
 
-test('sales still rejects a merged string whose color no configured product carries', async () => {
+test('sales still refuses to pick a color no configured product carries', async () => {
   const resolver = new V1ReferenceResolver(makeGateway([
     { record_id: 'rec_grey', fields: { 编号: '23666|灰|A', 货号: '23666', 颜色: '灰' } },
     { record_id: 'rec_black', fields: { 编号: '23666|黑|A', 货号: '23666', 颜色: '黑' } },
   ]));
 
-  // 「灰黑」把两种颜色拼在一起，不是任何一个在售颜色，必须拒绝而不是挑一个。
-  await assert.rejects(
-    resolver.resolveProduct({ itemNo: '23666灰黑', color: '', matchMode: 'sales' }),
-    /找不到货品/,
-  );
+  // 「灰黑」把两种颜色拼在一起，不是任何一个在售颜色：不挑一个，也不猜，交给卡片让用户选。
+  const merged = await resolver.resolveProduct({ itemNo: '23666灰黑', color: '', matchMode: 'sales' });
+  assert.equal(merged.needsColor, true);
+  assert.equal(merged.spokenColor, '灰黑');
+  assert.deepEqual(merged.options.map((option) => option.color).sort(), ['灰', '黑'].sort());
 });
 
 test('sales never resolves a misspelled product number into a different shoe', async () => {
@@ -221,16 +234,16 @@ test('sales resolves 烟灰 and 枪紫 from the base characters inside the same 
   assert.equal(purple.recordId, 'r_gun');
 });
 
-test('sales asks which color when the base characters match several colors in the SKU', async () => {
+test('sales hands the SKU color options to the card when the base characters match several colors', async () => {
   const resolver = new V1ReferenceResolver(makeGateway([
     { record_id: 'r_grey', fields: { 编号: '8035|灰牛仔|A', 货号: '8035', 颜色: '灰牛仔' } },
     { record_id: 'r_black', fields: { 编号: '8035|黑牛仔|A', 货号: '8035', 颜色: '黑牛仔' } },
     { record_id: 'r_mi', fields: { 编号: '8035|米牛仔|A', 货号: '8035', 颜色: '米牛仔' } },
   ]));
 
-  // 三个颜色都沾「牛仔」，不再靠限定词白名单去猜，而是要求补充——这正是要交给卡片让用户选的情况。
-  await assert.rejects(
-    resolver.resolveProduct({ itemNo: '8035', color: '牛仔', matchMode: 'sales' }),
-    /多个货品/,
-  );
+  // 三个颜色都沾「牛仔」，不靠限定词白名单去猜，而是把三个候选交给卡片。
+  const ambiguous = await resolver.resolveProduct({ itemNo: '8035', color: '牛仔', matchMode: 'sales' });
+  assert.equal(ambiguous.needsColor, true);
+  assert.deepEqual(ambiguous.options.map((option) => option.color).sort(),
+    ['灰牛仔', '米牛仔', '黑牛仔'].sort());
 });

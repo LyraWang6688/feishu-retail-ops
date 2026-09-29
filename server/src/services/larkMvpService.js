@@ -379,14 +379,26 @@ class LarkMvpService {
       const quantityIssue = `第${index + 1}件请逐双列出成交金额；每条销售明细只能记录一双`;
       if (itemQuantity !== 1 && !missingFields.includes(quantityIssue)) missingFields.push(quantityIssue);
       let product;
+      let colorOptions = null;
       if (item.item_no && item.size) {
         try { product = await this.references.resolveProduct({ itemNo: item.item_no, color: item.color, matchMode: 'sales' }); }
         catch (error) { missingFields.push(`第${index + 1}件：${error.message}`); }
       }
+      if (product?.needsColor) {
+        // 货号对上了、颜色没唯一确定：不判失败，把候选交给确认卡片让用户选。
+        colorOptions = product.options;
+        product = null;
+      }
       const configuredNumber = product
         ? textValue(product.record?.fields?.[productTable?.fields?.number]) || item.item_no
         : '';
-      items.push({ ...item, quantity: itemQuantity, product_record_id: product?.recordId || '', product_number: configuredNumber });
+      items.push({
+        ...item,
+        quantity: itemQuantity,
+        product_record_id: product?.recordId || '',
+        product_number: configuredNumber,
+        ...(colorOptions ? { needs_color: true, color_options: colorOptions } : {}),
+      });
     }
     const actualTotal = Math.round(items.reduce((sum, item) => sum + Number(item.actual_amount || 0), 0) * 100) / 100;
     if (!parsed.voucher_policy_blocked && items.some((item) => !Number(item.actual_amount))) missingFields.push('请逐件说明成交金额');
@@ -616,6 +628,35 @@ class LarkMvpService {
       await this.sendText(operatorOpenId, '请重新发送一条完整、正确的销售信息；原草稿不会入账。').catch((error) =>
         logWarn('lark.sales.feedback.failed', { task_id: draftId, interaction_id: context.interactionId, error: error.message }));
       return { toast: { type: 'info', content: '请重新发送修正后的完整销售信息' } };
+    }
+
+    if (action === 'choose_sale_color' && task.type === 'sale') {
+      const itemIndex = Number(value.item_index);
+      const items = (task.draft?.items || []).map((item) => ({ ...item }));
+      const item = items[itemIndex];
+      if (!item) throw new Error('找不到要设置颜色的明细');
+      if (!value.record_id) throw new Error('卡片里缺少颜色记录 ID');
+      // 用户在卡片上选定颜色：这一条明细的货品就此确定，不再需要选色。
+      items[itemIndex] = {
+        ...item,
+        product_record_id: value.record_id,
+        product_number: value.product_number || item.product_number || item.item_no || '',
+        needs_color: false,
+        color_options: [],
+      };
+      const draft = { ...task.draft, items };
+      await this.store.update(draftId, { draft, status: 'ready_to_confirm' });
+      await this.publishSalesResultCard({ ...task, draft }, event, salesConfirmationCard(draftId, draft),
+        { stage: 'color_chosen', interactionId: context.interactionId });
+      logInfo('lark.sales.color.chosen', { task_id: draftId, item_index: itemIndex,
+        product_record_id: value.record_id, color: value.color_name });
+      return { toast: { type: 'success', content: `第 ${itemIndex + 1} 双的颜色已设为「${value.color_name || ''}」` } };
+    }
+
+    // 颜色是入账的必要信息：还有明细没选颜色就不许确认。卡片上会给出候选让用户点选。
+    if (['confirm_sale', 'confirm_sale_pending', 'confirm_sale_delivered'].includes(action) &&
+      (task.draft?.items || []).some((item) => item.needs_color)) {
+      return { toast: { type: 'warning', content: '还有明细没选颜色，请先在卡片上选择颜色，再确认订单' } };
     }
 
     await this.store.update(draftId, { status: 'posting',

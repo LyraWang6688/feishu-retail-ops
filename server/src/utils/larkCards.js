@@ -149,12 +149,36 @@ const purchaseItemElements = (items, options = {}) => {
   return elements;
 };
 
-const actionButton = (label, action, draftId, type = 'default') => ({
+const actionButton = (label, action, draftId, type = 'default', extra = {}) => ({
   tag: 'button',
   text: { tag: 'plain_text', content: label },
   type,
-  value: { action, draft_id: draftId },
+  value: { action, draft_id: draftId, ...extra },
 });
+
+// 颜色待选的明细：每双一组按钮。横排——颜色少时一行放得下，颜色多时飞书卡片自动换行。
+// 已经确定颜色的明细（单色货号、或用户说对了）不出按钮，只在上面的明细行里显示。
+const salesColorPickers = (draftId, draft) => {
+  const elements = [];
+  (draft.items || []).forEach((item, index) => {
+    const options = item.color_options || [];
+    if (!item.needs_color || !options.length) return;
+    const spoken = String(item.color || '').trim();
+    const names = options.map((option) => option.color).filter(Boolean).join('、');
+    elements.push({
+      tag: 'markdown',
+      content: `**第 ${index + 1} 双请选择颜色**\n` +
+        (spoken ? `你写的是「${spoken}」，这个货号只有：${names}` : `这个货号有：${names}`),
+    });
+    elements.push({
+      tag: 'action',
+      actions: options.map((option) => actionButton(option.color || '未命名颜色', 'choose_sale_color',
+        draftId, 'primary', { item_index: index, record_id: option.recordId,
+          product_number: option.number, color_name: option.color })),
+    });
+  });
+  return elements;
+};
 
 const salesConfirmationCard = (draftId, draft) => ({
   config: { wide_screen_mode: true },
@@ -170,6 +194,7 @@ const salesConfirmationCard = (draftId, draft) => ({
           `\n**待平台结算：** ${draft.payments.filter((payment) => payment.status === '待平台结算').map((payment) => `${text(payment.method)} ￥${text(payment.amount)}`).join('；')}` : '') +
         `\n**交付：** ${text(draft.delivery_status || '待确认')}（请按实际情况选择）`,
     },
+    ...salesColorPickers(draftId, draft),
     {
       tag: 'action',
       actions: [
