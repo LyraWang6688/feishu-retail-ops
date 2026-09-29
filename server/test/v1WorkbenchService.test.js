@@ -1,16 +1,22 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createWorkbenchService } = require('../src/services/v1WorkbenchService');
+const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
 const day = Date.parse('2026-09-25T10:00:00+08:00');
-const gatewayFor = (records) => ({ listAll: async (key) => records[key] || [] });
+// 「尺码」已改为关联「尺码管理」：夹具必须给关联 ID，并让假网关能查到尺码表。
+const SIZES = [36, 37, 38].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } }));
+const gatewayFor = (records) => ({
+  table: (key) => V1_BITABLE_SCHEMA.tables[key],
+  listAll: async (key) => (key === 'sizeManagement' ? SIZES : records[key] || []),
+});
 
 test('two shoes in one order retain their own receivables and count the receipt once', async () => {
   const gateway = gatewayFor({
     salesDetail: [
-      { record_id: 'd1', fields: { 编号: ['p1'], 尺码: 36, 数量: 1, 销售单号: ['o1'], 销售日: [{ text: String(day) }], 成交金额: [{ text: '100' }], 销售单价: 120 } },
-      { record_id: 'd2', fields: { 编号: ['p2'], 尺码: 37, 数量: 1, 销售单号: ['o1'], 销售日: day, 成交金额: 150, 销售单价: 200 } },
-      { record_id: 'undated', fields: { 编号: ['p1'], 尺码: 38, 数量: 1, 销售单号: ['o2'], 销售单价: 99 } },
+      { record_id: 'd1', fields: { 编号: ['p1'], 尺码: ['size_36'], 数量: 1, 销售单号: ['o1'], 销售日: [{ text: String(day) }], 成交金额: [{ text: '100' }], 销售单价: 120 } },
+      { record_id: 'd2', fields: { 编号: ['p2'], 尺码: ['size_37'], 数量: 1, 销售单号: ['o1'], 销售日: day, 成交金额: 150, 销售单价: 200 } },
+      { record_id: 'undated', fields: { 编号: ['p1'], 尺码: ['size_38'], 数量: 1, 销售单号: ['o2'], 销售单价: 99 } },
     ],
     salesEntry: [
       { record_id: 'o1', fields: { 销售单号: 'XSD-001', 确认状态: '已入账' } },
@@ -26,10 +32,45 @@ test('two shoes in one order retain their own receivables and count the receipt 
   const report = await createWorkbenchService(gateway).getTodaySales({ date: '2026-09-25' });
   assert.deepEqual(report.rows.map((row) => row.receivable_amount), [100, 150]);
   assert.deepEqual(report.rows.map((row) => row.list_amount), [120, 200]);
+  assert.deepEqual(report.rows.map((row) => row.size).sort(), [36, 37]);
   assert.equal(report.summary.order_count, 1);
   assert.equal(report.summary.receivable_amount, 250);
   assert.equal(report.summary.paid_amount, 250);
   assert.equal(report.rows[0].paid_amount, undefined);
+});
+
+test('a row whose size link is broken does not break the whole query', async () => {
+  const gateway = gatewayFor({
+    salesDetail: [
+      { record_id: 'ok', fields: { 编号: ['p1'], 尺码: ['size_36'], 销售单号: ['o1'], 销售日: day, 成交金额: 100 } },
+      // 关联为空：这条明细读不出尺码，但不能让整页查询失败。
+      { record_id: 'broken', fields: { 编号: ['p1'], 尺码: [], 销售单号: ['o1'], 销售日: day, 成交金额: 100 } },
+    ],
+    salesEntry: [{ record_id: 'o1', fields: { 销售单号: 'XSD-001', 确认状态: '已入账' } }],
+    product: [{ record_id: 'p1', fields: { 编号: '93827黑' } }],
+  });
+  const report = await createWorkbenchService(gateway).getTodaySales({ date: '2026-09-25' });
+  const sizeById = new Map(report.rows.map((row) => [row.record_id, row.size]));
+
+  assert.equal(report.rows.length, 2);
+  assert.equal(sizeById.get('ok'), 36);
+  assert.equal(sizeById.get('broken'), null);
+});
+
+test('live inventory resolves sizes from the link and filters by the numeric size', async () => {
+  const gateway = gatewayFor({
+    liveInventory: [
+      { record_id: 'l1', fields: { 编号: ['p1'], 尺码: ['size_36'], 所属状态: '门盒' } },
+      { record_id: 'l2', fields: { 编号: ['p1'], 尺码: ['size_37'], 所属状态: '门盒' } },
+      { record_id: 'l3', fields: { 编号: ['p1'], 尺码: ['size_37'], 所属状态: '门盒' } },
+    ],
+    product: [{ record_id: 'p1', fields: { 编号: '93827黑' } }],
+  });
+  const all = await createWorkbenchService(gateway).getLiveInventory();
+  const filtered = await createWorkbenchService(gateway).getLiveInventory({ size: '37' });
+
+  assert.deepEqual(all.rows.map((row) => [row.size, row.quantity]).sort(), [[36, 1], [37, 2]]);
+  assert.deepEqual(filtered.rows.map((row) => [row.size, row.quantity]), [[37, 2]]);
 });
 
 test('order creation time is the fallback sale date; no date on either record is excluded', async () => {

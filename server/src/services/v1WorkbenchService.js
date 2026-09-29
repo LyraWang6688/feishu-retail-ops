@@ -1,5 +1,6 @@
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { logWarn } = require('../utils/logger');
 
 const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
@@ -77,6 +78,24 @@ const buildProductLabel = (schema, productsById, ids) => {
 
 const createWorkbenchService = (gateway, options = {}) => {
   const schema = options.schema || V1_BITABLE_SCHEMA;
+  const getSizeReferences = createSizeReferenceAccess({ gateway, sizeReferences: options.sizeReferences });
+
+  // 尺码字段已改为关联「尺码管理」：必须走共享的尺码解析，不能靠关联单元格
+  // 自带的显示文本——飞书部分接口只返回 record_ids 而不返回 text，
+  // 那时 asText 会拿到空字符串，页面就静默显示成没有尺码。
+  // 单条记录的尺码关联损坏不应该让整个查询失败，但要留下日志。
+  const resolveSize = async (tableKey, record) => {
+    try {
+      return (await getSizeReferences().resolveLinkedCell(fieldValue(schema, tableKey, record, 'size'))).size;
+    } catch (error) {
+      logWarn('workbench.size.unresolved', {
+        table_key: tableKey,
+        record_id: record?.record_id,
+        error: error.message,
+      });
+      return null;
+    }
+  };
 
   const getTodaySales = async ({ date = todayKey(), requestId } = {}) => {
     const [sales, products, paymentMethods, entries, receipts] = await Promise.all([
@@ -96,8 +115,8 @@ const createWorkbenchService = (gateway, options = {}) => {
       if (!receiptsByOrder.has(orderId)) receiptsByOrder.set(orderId, []);
       receiptsByOrder.get(orderId).push(receipt);
     }
-    const rows = sales
-      .map((record) => {
+    const rows = (await Promise.all(sales
+      .map(async (record) => {
         const soldAt = fieldValue(schema, 'salesDetail', record, 'soldAt');
         const productIds = asLinks(schema, 'salesDetail', record, 'product');
         const salesEntryIds = asLinks(schema, 'salesDetail', record, 'salesEntry');
@@ -114,7 +133,7 @@ const createWorkbenchService = (gateway, options = {}) => {
           sales_order_no: relationLabel(schema, 'salesEntry', entriesById, salesEntryIds, 'orderNo') || asText(schema, 'salesDetail', record, 'salesEntry'),
           sold_at: saleDate?.toISOString() || '',
           ...buildProductLabel(schema, productsById, productIds),
-          size: asText(schema, 'salesDetail', record, 'size'),
+          size: await resolveSize('salesDetail', record),
           quantity,
           receivable_amount: asOptionalNumber(fieldValue(schema, 'salesDetail', record, 'actualAmount')),
           list_amount: listUnitPrice === null ? null : Math.round(listUnitPrice * quantity * 100) / 100,
@@ -123,7 +142,7 @@ const createWorkbenchService = (gateway, options = {}) => {
             asLinks(schema, 'paymentRecord', payment, 'method'), 'name')))].filter(Boolean).join('＋') || '未收款',
           confirmed: asText(schema, 'salesEntry', order, 'confirmStatus') === '已入账',
         };
-      })
+      })))
       .filter((row) => row.confirmed && row.sold_at && shanghaiDayKey(row.sold_at) === date)
       .sort((a, b) => String(b.sold_at).localeCompare(String(a.sold_at)));
 
@@ -160,20 +179,22 @@ const createWorkbenchService = (gateway, options = {}) => {
     ]);
     const productsById = indexByRecordId(products);
     const normalizedKeyword = String(keyword).trim().toLowerCase();
-    const rawRows = inventory.map((record) => {
+    const rawRows = (await Promise.all(inventory.map(async (record) => {
       const productIds = asLinks(schema, 'liveInventory', record, 'product');
       const product = buildProductLabel(schema, productsById, productIds);
       return {
         record_id: record.record_id,
         stock_key: asText(schema, 'liveInventory', record, 'stockKey'),
         ...product,
-        size: asText(schema, 'liveInventory', record, 'size'),
+        size: await resolveSize('liveInventory', record),
         state: asText(schema, 'liveInventory', record, 'state'),
         updated_at: asDate(fieldValue(schema, 'liveInventory', record, 'updatedAt'))?.toISOString() || '',
       };
-    }).filter((row) => {
+    }))).filter((row) => {
       const matchesKeyword = !normalizedKeyword || [row.stock_key, row.product_number, row.item_no, row.color].some((value) => String(value).toLowerCase().includes(normalizedKeyword));
-      const matchesSize = !String(size).trim() || row.size === String(size).trim();
+      // size 现在是整数（解析关联得到），筛选参数是字符串，统一按字符串比较。
+      const matchesSize = !String(size).trim()
+        || (row.size !== null && String(row.size) === String(size).trim());
       return matchesKeyword && matchesSize;
     });
     const grouped = new Map();
