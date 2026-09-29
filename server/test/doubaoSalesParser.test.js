@@ -333,6 +333,23 @@ test('single-line deposit derives the receivable from deposit plus balance', () 
   assert.deepEqual(result.missing_fields, []);
 });
 
+test('a deposit order with several lines is refused instead of dropping the unpaid balance', () => {
+  const result = normalizeSalesResult({
+    intent: 'sale',
+    items: [
+      { item_no: '695887B-5', color: '黑', size: 43, quantity: 1 },
+      { item_no: '39元腰带', quantity: 1, actual_amount: 39 },
+    ],
+    payments: [{ method: '微信', amount: 100 }],
+    agreed_total: null,
+  }, '695887B-5 43码黑，39元腰带一条，微信付定金100元，尾款以后付140元');
+
+  // 尾款 140 无法判断属于哪一件，不能猜（以前是整块跳过，应收金额被静默算丢）。
+  assert.ok(result.missing_fields.some((field) => field.includes('定金单暂只支持一条明细')),
+    `实际待补充：${JSON.stringify(result.missing_fields)}`);
+  assert.equal(result.agreed_total, '', '不再静默跳过尾款');
+});
+
 test('[当前行为·待修复] a deposit phrased the way the cashier says it is rejected as missing', () => {
   const result = normalizeSalesResult({
     intent: 'sale',

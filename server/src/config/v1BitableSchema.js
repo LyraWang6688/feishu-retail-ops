@@ -85,6 +85,8 @@ const V1_BITABLE_SCHEMA = {
       fields: {
         detailId: '销售明细ID',
         product: '编号',
+        // 配品（腰带、鞋油、袜子、包等）：与「编号」二选一，配品行不写尺码。
+        accessory: '配品',
         size: '尺码',
         gift: '赠品',
         soldAt: '销售日',

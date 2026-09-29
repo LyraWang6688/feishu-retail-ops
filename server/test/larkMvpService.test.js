@@ -744,3 +744,89 @@ test('today sales menu returns only confirmed detail rows from the Shanghai cale
   assert.equal(result.totalAmount, 230);
   assert.match(JSON.stringify(cards[0].card), /8088-26棕/);
 });
+
+// ─── 颜色从必填变为可选 ───
+//
+// 用户现在不说颜色：货号能确定唯一颜色就直接用；确定不了就在确认卡片上给候选让用户点。
+
+test('a multi-color SKU without a spoken color still reaches the confirmation card', async () => {
+  const store = makeStore();
+  const cards = [];
+  const service = new LarkMvpService({
+    client: {},
+    gateway: {
+      validateTables: async () => [],
+      table: () => ({ fields: { number: '编号' } }),
+      create: async () => ({ recordId: 'rec_sales_entry' }),
+      update: async () => {},
+    },
+    references: {
+      // 货号对上了，但颜色没有唯一确定：解析器返回候选，而不是判失败。
+      resolveProduct: async () => ({
+        needsColor: true,
+        itemNo: '8035',
+        spokenColor: '',
+        options: [
+          { recordId: 'rec_black', color: '黑牛仔', number: '8035|黑牛仔|A' },
+          { recordId: 'rec_grey', color: '灰牛仔', number: '8035|灰牛仔|A' },
+        ],
+      }),
+    },
+    posting: {},
+    recognizer: {
+      parseSalesText: async () => ({
+        intent: 'sale', item_no: '8035', size: 42, quantity: 1, actual_amount: 200,
+        agreed_total: 200, total_paid: 200, payment_method: '微信', missing_fields: [],
+      }),
+    },
+    store,
+  });
+  service.replyCard = async (messageId, card) => cards.push({ messageId, card });
+  await store.create({ task_id: 'sale_color', type: 'sale', status: 'received',
+    message_id: 'om_color', sender_open_id: 'ou_1', sent_at: 1000, original_text: '8035 42码，200元微信' });
+
+  await service.processSalesTask('sale_color');
+
+  const task = await store.get('sale_color');
+  assert.equal(task.status, 'ready_to_confirm', '颜色待选不该让整单停在「需要补充」');
+  const item = task.draft.items[0];
+  assert.equal(item.needs_color, true);
+  assert.equal(item.product_record_id, '');
+  assert.deepEqual(item.color_options.map((option) => option.color), ['黑牛仔', '灰牛仔']);
+  assert.equal(cards.length, 1, '应当照常发确认卡片，而不是回一句「请补充颜色」');
+  assert.match(JSON.stringify(cards[0].card), /请选择颜色/);
+  assert.match(JSON.stringify(cards[0].card), /choose_sale_color/);
+});
+
+test('confirming is refused until every item has a chosen color, and choosing one settles it', async () => {
+  const store = makeStore();
+  await store.create({ task_id: 'sale_pick_color', type: 'sale', status: 'ready_to_confirm',
+    sender_open_id: 'ou_1', sales_entry_record_id: 'entry_1',
+    draft: { items: [{ item_no: '8035', size: 42, quantity: 1, actual_amount: 200,
+      needs_color: true, color_options: [
+        { recordId: 'rec_black', color: '黑牛仔', number: '8035|黑牛仔|A' },
+        { recordId: 'rec_grey', color: '灰牛仔', number: '8035|灰牛仔|A' },
+      ] }], payments: [] } });
+  const service = new LarkMvpService({ client: {}, gateway: {}, references: {},
+    recognizer: {}, store, posting: {} });
+  service.publishSalesResultCard = async () => true;
+
+  const refused = await service.handleCardAction({
+    operator: { operator_id: { open_id: 'ou_1' } },
+    action: { value: { action: 'confirm_sale_delivered', draft_id: 'sale_pick_color' } },
+  });
+  assert.equal(refused.toast.type, 'warning');
+  assert.match(refused.toast.content, /选择颜色/);
+  assert.equal((await store.get('sale_pick_color')).status, 'ready_to_confirm', '未选颜色不能进入入账');
+
+  const chosen = await service.handleCardAction({
+    operator: { operator_id: { open_id: 'ou_1' } },
+    action: { value: { action: 'choose_sale_color', draft_id: 'sale_pick_color', item_index: 0,
+      record_id: 'rec_black', product_number: '8035|黑牛仔|A', color_name: '黑牛仔' } },
+  });
+  assert.equal(chosen.toast.type, 'success');
+  const task = await store.get('sale_pick_color');
+  assert.equal(task.draft.items[0].needs_color, false);
+  assert.equal(task.draft.items[0].product_record_id, 'rec_black');
+  assert.equal(task.draft.items[0].product_number, '8035|黑牛仔|A');
+});

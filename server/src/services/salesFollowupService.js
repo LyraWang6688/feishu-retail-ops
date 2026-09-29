@@ -5,6 +5,7 @@ const { V1BitableGateway, linkedRecordIds, textValue } = require('./v1BitableGat
 const { PaymentService, amount } = require('./paymentService');
 const { SalesDeliveryService } = require('./salesDeliveryService');
 const { SalesProgressService, progressFromRecords, cents } = require('./salesProgressService');
+const { createSizeReferenceAccess } = require('./sizeReferenceService');
 
 class SalesFollowupService {
   constructor(options = {}) {
@@ -12,6 +13,8 @@ class SalesFollowupService {
     this.payments = options.payments || new PaymentService({ gateway: this.gateway });
     this.delivery = options.delivery || new SalesDeliveryService({ gateway: this.gateway });
     this.progress = options.progress || new SalesProgressService({ gateway: this.gateway });
+    // 「尺码」是关联字段：待交付列表里的尺码要走共享解析，不靠关联单元格的显示文本。
+    this.getSizeReferences = createSizeReferenceAccess({ gateway: this.gateway, sizeReferences: options.sizeReferences });
     this.store = options.store || new JsonTaskStore({
       dir: path.join(__dirname, '../../data/sales_followup_tasks'), idField: 'task_id',
     });
@@ -34,8 +37,8 @@ class SalesFollowupService {
       textValue(item.fields?.[productFields.number]) || item.record_id]));
     return {
       methods: [...new Set(methodById.values())].filter(Boolean),
-      orders: orders.filter((order) => textValue(order.fields?.[orderFields.confirmStatus]) === '已入账')
-        .map((order) => {
+      orders: (await Promise.all(orders.filter((order) => textValue(order.fields?.[orderFields.confirmStatus]) === '已入账')
+        .map(async (order) => {
           const orderDetails = details.filter((detail) => linkedRecordIds(detail.fields?.[detailFields.salesEntry]).includes(order.record_id));
           const orderPayments = payments.filter((payment) => linkedRecordIds(payment.fields?.[paymentFields.salesEntry]).includes(order.record_id));
           const progress = progressFromRecords(orderDetails, orderPayments, detailFields, paymentFields);
@@ -49,16 +52,16 @@ class SalesFollowupService {
           pending_amount: progress.pendingAmount,
           platform_pending_amount: progress.platformPendingAmount,
           pending_delivery_quantity: progress.pendingDeliveryQuantity,
-          details: orderDetails
-            .map((detail) => ({
+          details: await Promise.all(orderDetails
+            .map(async (detail) => ({
               record_id: detail.record_id,
               product: productById.get(linkedRecordIds(detail.fields?.[detailFields.product])[0]) || '',
-              size: Number(textValue(detail.fields?.[detailFields.size])),
+              size: (await this.getSizeReferences().resolveLinkedCell(detail.fields?.[detailFields.size])).size,
               quantity: 1,
               delivered_quantity: textValue(detail.fields?.[detailFields.fulfillmentStatus]) === '已交付' ? 1 : 0,
               fulfillment_status: textValue(detail.fields?.[detailFields.fulfillmentStatus]) || '未交付',
               actual_amount: textValue(detail.fields?.[detailFields.actualAmount]) === '' ? null : Number(textValue(detail.fields?.[detailFields.actualAmount])),
-            })),
+            }))),
           payments: orderPayments
             .map((payment) => ({
               record_id: payment.record_id,
@@ -67,7 +70,7 @@ class SalesFollowupService {
               received_at: payment.fields?.[paymentFields.receivedAt] || null,
               method: methodById.get(linkedRecordIds(payment.fields?.[paymentFields.method])[0]) || '',
             })),
-        }; })
+        }; })))
         .reverse(),
     };
   }
