@@ -6,10 +6,43 @@ const { relation } = require('./v1ReferenceResolver');
 const { SizeReferenceService, normalizeSize } = require('./sizeReferenceService');
 const { logInfo, logWarn } = require('../utils/logger');
 
-const STOCK_BEHAVIORS = Object.freeze({
-  sale: { name: '销售减少', direction: '减少' },
-  purchase: { name: '采购增加', direction: '增加' },
+// 库存动作注册表。键 = 飞书「行为管理」表里的「行为编码」。
+//
+// 分工：行为表负责业务侧（哪条启用、库存方向、资金方向），这里只声明引擎语义。
+// 中文名可以随时改，改了代码不受影响；编码是契约，改名要表和代码同步。
+// 新增动作 = 表里补一条行为 + 这里加一条声明，不需要再改任何分支逻辑。
+const MOVEMENT_SALE_DECREASE = 'STOCK_SALE_DECREASE';
+const MOVEMENT_PURCHASE_INCREASE = 'STOCK_PURCHASE_INCREASE';
+const BEHAVIOR_SAMPLE_PROMOTION = 'STOCK_DOORBOX_TO_SAMPLE';
+
+const STOCK_MOVEMENTS = Object.freeze({
+  [MOVEMENT_SALE_DECREASE]: {
+    direction: '减少',
+    // 库存流水回指来源明细的字段（由 v1BitableSchema 映射成中文列名）。
+    ledgerSource: 'salesDetail',
+    // 按顺序消耗这些状态的实时库存；null 表示不消耗既有记录。
+    consumes: ['门盒', '样品'],
+    // 扣到样品时要不要触发补样品提醒。
+    triggerSampleReplacement: true,
+  },
+  [MOVEMENT_PURCHASE_INCREASE]: {
+    direction: '增加',
+    ledgerSource: 'purchaseInbound',
+    consumes: null,
+    triggerSampleReplacement: false,
+  },
 });
+
+const requireMovement = (code) => {
+  const movement = STOCK_MOVEMENTS[code];
+  if (!movement) {
+    throw new Error(`未在库存动作注册表中声明动作「${code}」：请先在行为管理表补齐该行为，再在注册表中声明其引擎语义`);
+  }
+  return movement;
+};
+
+// 补样品不算数量变动，但它的流水同样挂在销售明细上，用销售动作的来源字段查找。
+const SALE_LEDGER_SOURCE = STOCK_MOVEMENTS[MOVEMENT_SALE_DECREASE].ledgerSource;
 
 const positiveNumber = (value, label) => {
   const number = Number(value);
@@ -58,19 +91,22 @@ class InventoryService {
   }
 
   async resolveStockBehavior(kind) {
-    const expected = STOCK_BEHAVIORS[kind];
-    if (!expected) throw new Error(`不支持的库存来源：${kind}`);
+    const movement = requireMovement(kind);
     const fields = this.gateway.table('behavior').fields;
+    // 按「行为编码」匹配：编码是稳定标识，飞书里改中文名不影响代码。
     const matches = (await this.gateway.listAll('behavior')).filter((record) =>
-      textValue(record.fields?.[fields.name]).trim() === expected.name);
-    if (matches.length !== 1) throw new Error(`行为管理中“${expected.name}”必须且只能有一条记录`);
+      textValue(record.fields?.[fields.code]).trim() === kind);
+    if (matches.length !== 1) {
+      throw new Error(`行为管理中编码为「${kind}」的行为必须且只能有一条记录，请先在行为管理表补齐`);
+    }
     const behavior = matches[0];
+    const name = textValue(behavior.fields?.[fields.name]).trim() || kind;
     const direction = textValue(behavior.fields?.[fields.stockDirection]).trim();
-    if (direction !== expected.direction) {
-      throw new Error(`请将行为管理“${expected.name}”的库存方向设置为“${expected.direction}”`);
+    if (direction !== movement.direction) {
+      throw new Error(`请将行为管理「${name}」(${kind}) 的库存方向设置为“${movement.direction}”`);
     }
     if (behavior.fields?.[fields.enabled] !== true) {
-      throw new Error(`请启用行为管理中的“${expected.name}”`);
+      throw new Error(`请启用行为管理中的「${name}」(${kind})`);
     }
     return { recordId: behavior.record_id, direction };
   }
@@ -78,18 +114,23 @@ class InventoryService {
   async resolveSamplePromotionBehavior() {
     const fields = this.gateway.table('behavior').fields;
     const matches = (await this.gateway.listAll('behavior')).filter((record) =>
-      textValue(record.fields?.[fields.name]).trim() === '门盒转样品');
-    if (matches.length !== 1) throw new Error('行为管理中“门盒转样品”必须且只能有一条记录');
-    const behavior = matches[0];
-    if (textValue(behavior.fields?.[fields.stockDirection]).trim() !== '不影响') {
-      throw new Error('请将行为管理“门盒转样品”的库存方向设置为“不影响”');
+      textValue(record.fields?.[fields.code]).trim() === BEHAVIOR_SAMPLE_PROMOTION);
+    if (matches.length !== 1) {
+      throw new Error(`行为管理中编码为「${BEHAVIOR_SAMPLE_PROMOTION}」的行为必须且只能有一条记录，请先在行为管理表补齐`);
     }
-    if (behavior.fields?.[fields.enabled] !== true) throw new Error('请启用行为管理中的“门盒转样品”');
+    const behavior = matches[0];
+    const name = textValue(behavior.fields?.[fields.name]).trim() || BEHAVIOR_SAMPLE_PROMOTION;
+    if (textValue(behavior.fields?.[fields.stockDirection]).trim() !== '不影响') {
+      throw new Error(`请将行为管理「${name}」(${BEHAVIOR_SAMPLE_PROMOTION}) 的库存方向设置为“不影响”`);
+    }
+    if (behavior.fields?.[fields.enabled] !== true) {
+      throw new Error(`请启用行为管理中的「${name}」(${BEHAVIOR_SAMPLE_PROMOTION})`);
+    }
     return { recordId: behavior.record_id };
   }
 
   async validateStockBehaviors() {
-    for (const kind of Object.keys(STOCK_BEHAVIORS)) await this.resolveStockBehavior(kind);
+    for (const kind of Object.keys(STOCK_MOVEMENTS)) await this.resolveStockBehavior(kind);
   }
 
   runForStock(stockKey, work) {
@@ -106,7 +147,7 @@ class InventoryService {
   applySale(input) {
     return this.applyChange({
       ...input,
-      kind: 'sale',
+      kind: MOVEMENT_SALE_DECREASE,
       // A sale always consumes door-box stock first, then a sample. Callers
       // must not bypass that policy by choosing a source state themselves.
       state: '门盒',
@@ -116,14 +157,14 @@ class InventoryService {
   }
 
   async getSaleResult(salesDetailRecordId) {
-    const operation = await this.store.get(operationId('sale', salesDetailRecordId));
+    const operation = await this.store.get(operationId(MOVEMENT_SALE_DECREASE, salesDetailRecordId));
     return operation?.status === 'completed' ? operation.result : null;
   }
 
   applyPurchase(input) {
     return this.applyChange({
       ...input,
-      kind: 'purchase',
+      kind: MOVEMENT_PURCHASE_INCREASE,
       state: input.state || '门盒',
       sourceRecordId: input.purchaseInboundRecordId,
       quantity: positiveInteger(input.quantity, '采购入库数量'),
@@ -150,14 +191,16 @@ class InventoryService {
           operation.size !== size || operation.state !== state || operation.quantity !== quantity
         )) throw new Error(`来源明细 ${input.sourceRecordId} 的库存操作内容与首次提交不一致`);
       } else {
+        const movement = requireMovement(input.kind);
         const behavior = await this.resolveStockBehavior(input.kind);
-        const existingLedger = await this.findLedger(input.kind, input.sourceRecordId, behavior.recordId);
+        const existingLedger = await this.findLedger(movement.ledgerSource, input.sourceRecordId, behavior.recordId);
         if (existingLedger) {
           throw new Error(`来源明细 ${input.sourceRecordId} 已有库存流水，但缺少可恢复任务，请人工核对实时库存`);
         }
         const delta = behavior.direction === '减少' ? -quantity : quantity;
         const allLiveRecords = await this.gateway.listAll('liveInventory');
-        const states = input.kind === 'sale' ? ['门盒', '样品'] : [state];
+        // 消耗哪些状态由注册表声明；增加方向不消耗既有记录，只看目标状态本身。
+        const states = movement.consumes || [state];
         const liveRecords = states.flatMap((candidateState) =>
           this.findLiveInventoryIn(allLiveRecords, input.productRecordId, sizeReference.recordId, candidateState)
             .sort((left, right) => String(left.record_id).localeCompare(String(right.record_id))));
@@ -225,7 +268,7 @@ class InventoryService {
         }
       } else {
         const behavior = await this.resolveSamplePromotionBehavior();
-        if (await this.findLedger('sale', salesDetailRecordId, behavior.recordId)) {
+        if (await this.findLedger(SALE_LEDGER_SOURCE, salesDetailRecordId, behavior.recordId)) {
           throw new Error('补样品流水已存在但缺少可恢复任务，请人工核对');
         }
         const liveRecords = await this.findLiveInventory(productRecordId, normalizedSize, '门盒');
@@ -245,7 +288,7 @@ class InventoryService {
 
   async executeSamplePromotion(operation) {
     if (operation.status === 'completed') return operation.result;
-    let ledger = await this.findLedger('sale', operation.source_record_id, operation.behavior_record_id);
+    let ledger = await this.findLedger(SALE_LEDGER_SOURCE, operation.source_record_id, operation.behavior_record_id);
     const record = await this.gateway.get('liveInventory', operation.live_record_id);
     if (!record) throw new Error('待补样品的门盒库存记录不存在，请人工核对');
     const fields = this.gateway.table('liveInventory').fields;
@@ -300,6 +343,7 @@ class InventoryService {
     if (![2, 3].includes(operation.schema_version)) {
       throw new Error(`库存操作 ${operation.operation_id} 使用旧结构且尚未完成，请先人工核对，不能自动重试`);
     }
+    const movement = requireMovement(operation.kind);
     const sizeReference = await this.sizeReferences.resolveByNumber(operation.size);
     if (operation.size_record_id && operation.size_record_id !== sizeReference.recordId) {
       throw new Error(`库存操作 ${operation.operation_id} 的尺码关联已改变，请人工核对`);
@@ -315,8 +359,8 @@ class InventoryService {
         size: relation(sizeReference.recordId),
         quantityChange: operation.quantity,
         behavior: relation(operation.behavior_record_id),
-        salesDetail: operation.kind === 'sale' ? relation(operation.source_record_id) : undefined,
-        purchaseInbound: operation.kind === 'purchase' ? relation(operation.source_record_id) : undefined,
+        // 来源字段由注册表声明：新增动作不必再改这里。
+        [movement.ledgerSource]: relation(operation.source_record_id),
       });
       ledger = { record_id: created.recordId };
     }
@@ -368,9 +412,9 @@ class InventoryService {
       quantity: operation.target_quantity,
       sampleConsumedQuantity: operation.sample_consumed_quantity || 0,
       productRecordId: operation.product_record_id,
-      consumedLiveRecordIds: operation.kind === 'sale' ? removedIds : [],
+      consumedLiveRecordIds: movement.direction === '减少' ? removedIds : [],
     };
-    if (operation.kind === 'sale' && result.sampleConsumedQuantity) {
+    if (movement.triggerSampleReplacement && result.sampleConsumedQuantity) {
       try {
         result.remainingSizes = await this.sampleReplacementCandidates(operation.product_record_id,
           { excludeRecordIds: removedIds });
@@ -405,7 +449,7 @@ class InventoryService {
   }
 
   async findOperationLedger(operation) {
-    const listed = await this.findLedger(operation.kind, operation.source_record_id,
+    const listed = await this.findLedger(requireMovement(operation.kind).ledgerSource, operation.source_record_id,
       operation.behavior_record_id);
     if (!operation.ledger_record_id) {
       if (operation.status === 'ledger_created' && !listed) {
@@ -442,7 +486,7 @@ class InventoryService {
       productRecordId: operation.product_record_id,
       sizeRecordId,
       behaviorRecordId: operation.behavior_record_id,
-      sourceField: operation.kind === 'sale' ? 'salesDetail' : 'purchaseInbound',
+      sourceField: requireMovement(operation.kind).ledgerSource,
       sourceRecordId: operation.source_record_id,
       quantityChange: operation.quantity,
     })) {
@@ -485,9 +529,10 @@ class InventoryService {
     }
   }
 
-  async findLedger(kind, sourceRecordId, behaviorRecordId) {
+  // ledgerSource 是库存流水里回指来源明细的语义字段名（见 v1BitableSchema）。
+  async findLedger(ledgerSource, sourceRecordId, behaviorRecordId) {
     const table = this.gateway.table('inventoryLedger');
-    const fieldName = table.fields[kind === 'sale' ? 'salesDetail' : 'purchaseInbound'];
+    const fieldName = table.fields[ledgerSource];
     const records = await this.gateway.listAll('inventoryLedger');
     const matches = records.filter((record) =>
       linkedRecordIds(record.fields?.[fieldName]).includes(sourceRecordId) &&

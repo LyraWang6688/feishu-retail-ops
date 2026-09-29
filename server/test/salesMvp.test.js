@@ -230,7 +230,7 @@ test('unpaid sale can be delivered once, then later payment does not touch inven
 test('confirmed sale delivery writes positive stock movement and removes exactly one door-box unit', async () => {
   const gateway = fake();
   gateway.records.set('behavior', [{ record_id: 'behavior_sale', fields: {
-    行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
+    行为编码: 'STOCK_SALE_DECREASE', 行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
   } }]);
   gateway.records.set('liveInventory', [
     { record_id: 'door_1', fields: { 编号: ['product_A100'], 尺码: ['size_38'], 所属状态: '门盒' } },
@@ -257,7 +257,7 @@ test('confirmed sale delivery writes positive stock movement and removes exactly
 test('a failed fulfillment-state write retries without deducting the same pair twice', async () => {
   const gateway = fake();
   gateway.records.set('behavior', [{ record_id: 'behavior_sale', fields: {
-    行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
+    行为编码: 'STOCK_SALE_DECREASE', 行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
   } }]);
   gateway.records.set('liveInventory', [
     { record_id: 'door_1', fields: { 编号: ['product_A100'], 尺码: ['size_38'], 所属状态: '门盒' } },
@@ -296,7 +296,7 @@ test('a failed fulfillment-state write retries without deducting the same pair t
 test('one out-of-stock shoe does not prevent later shoes from delivering, and retry deducts only the missing shoe', async () => {
   const gateway = fake();
   gateway.records.set('behavior', [{ record_id: 'behavior_sale', fields: {
-    行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
+    行为编码: 'STOCK_SALE_DECREASE', 行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
   } }]);
   gateway.records.set('liveInventory', [
     { record_id: 'door_a', fields: { 编号: ['product_A100'], 尺码: ['size_39'], 所属状态: '门盒' } },
@@ -402,7 +402,7 @@ test('Feishu record_ids link shape reuses an existing order, receipt, and detail
 test('temporary 1254607 after receipt creation retries reads and delivers once without duplicate records', async () => {
   const gateway = fake();
   gateway.records.set('behavior', [{ record_id: 'behavior_sale', fields: {
-    行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
+    行为编码: 'STOCK_SALE_DECREASE', 行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
   } }]);
   gateway.records.set('liveInventory', [
     { record_id: 'door_1', fields: { 编号: ['product_A100'], 尺码: ['size_39'], 所属状态: '门盒' } },
