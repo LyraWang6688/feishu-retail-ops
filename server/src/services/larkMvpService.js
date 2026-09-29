@@ -343,11 +343,36 @@ class LarkMvpService {
     return { accepted: true, type: 'purchase_finish', taskId };
   }
 
+  /**
+   * 「其他配品」清单。没配置这张表时返回空——那种部署下销售只支持鞋，
+   * 配品说法会被当成未知货号处理，而不是报配置错误。
+   */
+  async listAccessories() {
+    const table = this.gateway.table?.('accessory');
+    if (!table?.tableId) return [];
+    try {
+      const records = await this.gateway.listAll('accessory');
+      return records
+        .map((record) => ({
+          record_id: record.record_id,
+          name: textValue(record.fields?.[table.fields.name]).trim(),
+        }))
+        .filter((item) => item.name);
+    } catch (error) {
+      logWarn('lark.sales.accessory.list_failed', { error: error.message });
+      return [];
+    }
+  }
+
   async processSalesTask(taskId) {
     const startedAt = Date.now();
     logInfo('lark.sales.processing.started', { task_id: taskId });
     const task = await this.store.get(taskId);
-    const parsed = await this.recognizer.parseSalesText(task.original_text, { taskId });
+    // 配品清单交给 AI，让它知道「39元腰带」这类说法不是鞋；同一份清单也用于后面的精确匹配。
+    const accessories = await this.listAccessories();
+    const parsed = await this.recognizer.parseSalesText(task.original_text, {
+      taskId, accessoryNames: accessories.map((item) => item.name),
+    });
     if (parsed.intent !== 'sale') {
       await this.store.update(taskId, { status: 'ignored', draft: parsed });
       logInfo('lark.sales.processing.ignored', {
@@ -378,6 +403,17 @@ class LarkMvpService {
       const itemQuantity = Number(item.quantity || 1);
       const quantityIssue = `第${index + 1}件请逐双列出成交金额；每条销售明细只能记录一双`;
       if (itemQuantity !== 1 && !missingFields.includes(quantityIssue)) missingFields.push(quantityIssue);
+      if (item.kind === 'accessory') {
+        // 配品只有名字和金额：按名称在「其他配品」里**精确**查找。
+        // 不模糊匹配——「39元腰带」和「49元腰带」只差一个字，模糊就是串货。
+        const name = String(item.accessory_name || '').trim();
+        const match = accessories.find((candidate) => candidate.name === name);
+        if (!match) {
+          missingFields.push(`第${index + 1}件：其他配品里没有「${name}」这一件，请核对名称`);
+        }
+        items.push({ ...item, quantity: itemQuantity, accessory_record_id: match?.record_id || '' });
+        continue;
+      }
       let product;
       let colorOptions = null;
       if (item.item_no && item.size) {
@@ -688,7 +724,9 @@ class LarkMvpService {
           amount: payment.amount, method: payment.method, status: payment.status, operatorOpenId,
         })),
         items: task.draft.items.map((item) => ({
+          kind: item.kind,
           productRecordId: item.product_record_id,
+          accessoryRecordId: item.accessory_record_id,
           itemNo: item.item_no,
           color: item.color,
           size: item.size,

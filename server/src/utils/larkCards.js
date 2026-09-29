@@ -3,7 +3,9 @@ const text = (value) => String(value ?? '').replace(/\n/g, ' ');
 const itemLines = (items, priceKey) =>
   (items || [])
     .map((item, index) => {
-      const product = item.product_number || item.productNumber || item.item_no || item.itemNo || '未知货品';
+      // 配品没有货号，显示它自己的名称。
+      const product = item.product_number || item.productNumber || item.item_no || item.itemNo
+        || item.accessory_name || '未知货品';
       const price = item[priceKey] ?? item.unitPrice ?? item.unitCost;
       const gift = item.gift ? `\n   赠品：${text(item.gift_description || '有')}` : '';
       return `${index + 1}. ${text(product)} ${text(item.size)}码 × ${text(item.quantity || 1)}${price ? ` ￥${price}` : ''}${gift}`;
@@ -163,12 +165,11 @@ const salesColorPickers = (draftId, draft) => {
   (draft.items || []).forEach((item, index) => {
     const options = item.color_options || [];
     if (!item.needs_color || !options.length) return;
-    const spoken = String(item.color || '').trim();
     const names = options.map((option) => option.color).filter(Boolean).join('、');
     elements.push({
       tag: 'markdown',
-      content: `**第 ${index + 1} 双请选择颜色**\n` +
-        (spoken ? `你写的是「${spoken}」，这个货号只有：${names}` : `这个货号有：${names}`),
+      // 销售不再看用户说的颜色，所以这里只列该货号实际有哪些颜色，不做对照提示。
+      content: `**第 ${index + 1} 双请选择颜色**\n这个货号有：${names}`,
     });
     elements.push({
       tag: 'action',

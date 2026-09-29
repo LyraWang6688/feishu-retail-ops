@@ -92,53 +92,20 @@ class V1ReferenceResolver {
     // AI 偶尔把中文颜色并进货号（如 8882卡），因此仅在前缀为真实货号、
     // 剩余部分全是汉字时拆分。采购仍使用下方原有的 OCR 匹配流程。
     if (input.matchMode === 'sales' && wantedItemNo) {
-      let itemNo = wantedItemNo;
-      let color = wantedColor;
-      // 用户实际写出来的颜色字（可能是从货号里拆出来的后缀），卡片提示时按这个显示。
-      let spokenColor = String(input.color || '').trim();
-      if (!candidates.some((candidate) => candidate.itemNo === itemNo)) {
-        const splits = [...new Set(candidates
-          .filter((candidate) => candidate.itemNo && /^[a-z0-9_-]+$/.test(candidate.itemNo)
-            && itemNo.startsWith(candidate.itemNo)
-            && /^\p{Script=Han}+$/u.test(itemNo.slice(candidate.itemNo.length)))
-          .map((candidate) => candidate.itemNo))];
-        if (splits.length === 1) {
-          const suffix = itemNo.slice(splits[0].length);
-          if (color && color !== suffix) {
-            throw new Error(`货号 ${input.itemNo} 中的颜色与另报颜色 ${input.color} 不一致，请核对`);
-          }
-          itemNo = splits[0];
-          spokenColor = suffix;
-          // 切出来的颜色要和「直接传颜色」走同一套归一化（去掉尾部的「色」）。
-          // 否则「XHB8095黑色」切出的「黑色」命中不了配置里的「全黑」，
-          // 而单独写成 color=黑色 却能命中——同一个意思两条路径结果不一致。
-          color = normalizeColor(suffix);
-        }
-      }
-      const sameSku = candidates.filter((candidate) => candidate.itemNo === itemNo);
+      // 销售只看货号：用户录单时只给货号，颜色一律交给确认卡片让用户选。
+      // 这里不做任何颜色匹配，也不从货号里剥离颜色——货号对不上就明确报错让用户核对，
+      // 出问题时吵闹一点，比静默替用户"修好"更容易发现 AI 的提取问题。
+      const sameSku = candidates.filter((candidate) => candidate.itemNo === wantedItemNo);
       if (!sameSku.length) {
-        throw new Error(`找不到货品：${input.itemNo || ''}${input.color || ''}`);
+        throw new Error(`找不到货品：${input.itemNo || ''}`);
       }
-      // 颜色的匹配范围严格限定在「这个货号的颜色集合」内，不跨货号找。
-      // 顺序：精确 → 前缀/后缀（口语只说基色，如「黑」对应「黑牛仔」「全黑」）→ 唯一才认定。
-      // 这里不再维护「全/墨/深/浅…」这类限定词白名单：颜色字在前在后都可能出现，
-      // 靠货号内的唯一性判断比穷举限定词更准，也少一处硬编码。
-      const exact = color ? sameSku.filter((candidate) => candidate.color === color) : sameSku;
-      const prefix = color && !exact.length
-        ? sameSku.filter((candidate) => candidate.color.startsWith(color)) : [];
-      const suffix = color && !exact.length
-        ? sameSku.filter((candidate) => candidate.color.endsWith(color) && !prefix.includes(candidate)) : [];
-      const matches = exact.length ? exact : [...prefix, ...suffix];
-      if (matches.length === 1) {
-        return { recordId: matches[0].record.record_id, record: matches[0].record };
+      if (sameSku.length === 1) {
+        return { recordId: sameSku[0].record.record_id, record: sameSku[0].record };
       }
-      // 货号确实存在，但颜色没有唯一确定：用户没说颜色、说的颜色匹配不上、或同时命中多个。
-      // 销售不再判失败——把该货号的颜色候选交给确认卡片，让用户点一下。
-      // 用户说过的颜色一并带上，卡片可以提示「你写的是 X，这个货号只有 …」。
+      // 该货号有多个颜色：不猜、也不看用户说了什么，把候选交给确认卡片让用户点。
       return {
         needsColor: true,
-        itemNo,
-        spokenColor,
+        itemNo: wantedItemNo,
         options: sameSku
           .map((candidate) => ({
             recordId: candidate.record.record_id,

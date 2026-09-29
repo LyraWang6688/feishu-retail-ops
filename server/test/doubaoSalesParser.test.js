@@ -403,3 +403,49 @@ test('[当前行为·待修复] a pure-voucher sale must confirm there was no ca
 
   assert.ok(result.missing_fields.includes('请确认是否只用团购券、没有补现金额'));
 });
+
+// ─── 配品：只有名字和金额，没有货号、颜色、尺码 ───
+
+test('an accessory item keeps its name and needs no item number or size', () => {
+  const result = normalizeSalesResult({
+    intent: 'sale',
+    items: [
+      { item_no: 'XHB8095', color: '黑', size: 43, quantity: 1, actual_amount: 200 },
+      { kind: 'accessory', accessory_name: '39元腰带', quantity: 1, actual_amount: 39 },
+    ],
+    payments: [{ method: '微信', amount: 239 }],
+    agreed_total: 239,
+  });
+
+  const accessory = result.items[1];
+  assert.equal(accessory.kind, 'accessory');
+  assert.equal(accessory.accessory_name, '39元腰带');
+  assert.equal(accessory.actual_amount, 39);
+  // 配品不要求 item_no 与 size，所以整单不应因此被判"信息不全"。
+  assert.deepEqual(result.missing_fields, []);
+});
+
+test('a standalone accessory sale needs only a name and an amount', () => {
+  const result = normalizeSalesResult({
+    intent: 'sale',
+    items: [{ kind: 'accessory', accessory_name: '9.9元袜子', quantity: 1, actual_amount: 9.9 }],
+    payments: [{ method: '微信', amount: 9.9 }],
+    agreed_total: 9.9,
+  });
+
+  assert.equal(result.intent, 'sale');
+  assert.equal(result.items[0].accessory_name, '9.9元袜子');
+  assert.deepEqual(result.missing_fields, []);
+});
+
+test('an accessory without a name is asked for by name, not by item number', () => {
+  const result = normalizeSalesResult({
+    intent: 'sale',
+    items: [{ kind: 'accessory', quantity: 1, actual_amount: 9.9 }],
+    payments: [],
+  });
+
+  assert.ok(result.missing_fields.includes('items[0].accessory_name'));
+  assert.ok(!result.missing_fields.includes('items[0].item_no'));
+  assert.ok(!result.missing_fields.includes('items[0].size'));
+});

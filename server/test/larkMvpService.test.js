@@ -830,3 +830,69 @@ test('confirming is refused until every item has a chosen color, and choosing on
   assert.equal(task.draft.items[0].product_record_id, 'rec_black');
   assert.equal(task.draft.items[0].product_number, '8035|黑牛仔|A');
 });
+
+// ─── 配品的解析：AI 说出的名字要精确对应「其他配品」里的一条 ───
+
+const accessoryService = (accessoryNames, parsedItem) => {
+  const store = makeStore();
+  const cards = [];
+  const service = new LarkMvpService({
+    client: {},
+    gateway: {
+      validateTables: async () => [],
+      table: (key) => (key === 'accessory'
+        ? { tableId: 'tbl_acc', fields: { name: '名称' } }
+        : { fields: { number: '编号' } }),
+      listAll: async (key) => (key === 'accessory'
+        ? accessoryNames.map((name, index) => ({ record_id: `acc_${index}`, fields: { 名称: name } }))
+        : []),
+      create: async () => ({ recordId: 'rec_sales_entry' }),
+      update: async () => {},
+    },
+    references: {},
+    posting: {},
+    recognizer: {
+      parseSalesText: async () => ({
+        intent: 'sale', items: [parsedItem], payments: [{ method: '微信', amount: 39 }],
+        agreed_total: 39, missing_fields: [],
+      }),
+    },
+    store,
+  });
+  service.replyCard = async (messageId, card) => cards.push({ messageId, card });
+  service.sendText = async () => {};
+  return { store, cards, service };
+};
+
+test('an accessory name is matched to the accessory table by exact name', async () => {
+  const { store, cards, service } = accessoryService(['39元腰带', '49元腰带'],
+    { kind: 'accessory', accessory_name: '39元腰带', quantity: 1, actual_amount: 39 });
+  await store.create({ task_id: 'sale_acc', type: 'sale', status: 'received',
+    message_id: 'om_acc', sender_open_id: 'ou_1', sent_at: 1000, original_text: '39元腰带一条，微信39' });
+
+  await service.processSalesTask('sale_acc');
+
+  const task = await store.get('sale_acc');
+  assert.equal(task.status, 'ready_to_confirm');
+  assert.equal(task.draft.items[0].accessory_record_id, 'acc_0');
+  assert.equal(task.draft.items[0].accessory_name, '39元腰带');
+  assert.equal(cards.length, 1);
+  // 卡片上显示的是配品名称，不是"未知货品"
+  assert.match(JSON.stringify(cards[0].card), /39元腰带/);
+});
+
+test('an accessory name that is not in the table is asked for instead of guessed', async () => {
+  const { store, service } = accessoryService(['39元腰带'],
+    { kind: 'accessory', accessory_name: '59元腰带', quantity: 1, actual_amount: 39 });
+  await store.create({ task_id: 'sale_acc_missing', type: 'sale', status: 'received',
+    message_id: 'om_acc2', sender_open_id: 'ou_1', sent_at: 1000, original_text: '59元腰带一条，微信39' });
+
+  await service.processSalesTask('sale_acc_missing');
+
+  const task = await store.get('sale_acc_missing');
+  assert.equal(task.status, 'needs_info');
+  assert.equal(task.draft.items[0].accessory_record_id, '');
+  // 「39元腰带」和「59元腰带」只差一个字，绝不能模糊匹配到另一件。
+  assert.ok(task.draft.missing_fields.some((field) => field.includes('其他配品里没有「59元腰带」')),
+    `实际：${JSON.stringify(task.draft.missing_fields)}`);
+});
