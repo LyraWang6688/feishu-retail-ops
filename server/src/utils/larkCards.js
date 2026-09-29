@@ -163,12 +163,11 @@ const salesColorPickers = (draftId, draft) => {
   (draft.items || []).forEach((item, index) => {
     const options = item.color_options || [];
     if (!item.needs_color || !options.length) return;
-    const spoken = String(item.color || '').trim();
     const names = options.map((option) => option.color).filter(Boolean).join('、');
     elements.push({
       tag: 'markdown',
-      content: `**第 ${index + 1} 双请选择颜色**\n` +
-        (spoken ? `你写的是「${spoken}」，这个货号只有：${names}` : `这个货号有：${names}`),
+      // 销售不再看用户说的颜色，所以这里只列该货号实际有哪些颜色，不做对照提示。
+      content: `**第 ${index + 1} 双请选择颜色**\n这个货号有：${names}`,
     });
     elements.push({
       tag: 'action',
