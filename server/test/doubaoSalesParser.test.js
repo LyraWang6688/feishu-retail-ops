@@ -291,3 +291,98 @@ test('unknown voucher or multiple shoes cannot silently create a settled receipt
   }, 'A100黑38和B200黑39，169元微信，一张89.9抵100团购券');
   assert.ok(multiple.missing_fields.some((field) => field.includes('一单一双')));
 });
+
+// ─── 收银员真实说法的回归基线 ───
+//
+// 下面这批用例记录「今天实际会发生什么」，用的是收银员真实的说法，
+// 而不是为了迁就代码整理过的措辞。
+//
+// 标注「当前行为·待修复」的是已知缺口：它们断言的是今天的（不合理）结果。
+// 修复之后这些用例应当失败，届时按新行为更新断言——它们的作用是让缺口
+// 一直可见，而不是假装不存在。
+
+test('voucher plus cash plus gift keeps the store settlement at 85.4 and marks it pending', () => {
+  const result = normalizeSalesResult({
+    intent: 'sale',
+    items: [{ item_no: '2A831-18', color: '黑', size: 44, quantity: 1, gift_description: '袜子一双' }],
+    payments: [{ method: '微信', amount: 169 }],
+    agreed_total: 269,
+  }, '2A831-18 44码黑，169元微信➕89.9代100元代金券 赠袜一双');
+
+  assert.equal(result.agreed_total, 254.4);
+  assert.equal(result.items[0].actual_amount, 254.4);
+  assert.equal(result.items[0].gift, true);
+  assert.deepEqual(result.payments, [
+    { amount: 169, method: '微信', status: '已收款' },
+    { method: '抖音团购券', amount: 85.4, status: '待平台结算' },
+  ]);
+  assert.deepEqual(result.missing_fields, []);
+});
+
+test('single-line deposit derives the receivable from deposit plus balance', () => {
+  const result = normalizeSalesResult({
+    intent: 'sale',
+    items: [{ item_no: '695887B-5', color: '黑', size: 43, quantity: 1 }],
+    payments: [{ method: '微信', amount: 100 }],
+    agreed_total: null,
+  }, '695887B-5 43码黑，微信付定金100元，尾款以后付140元');
+
+  assert.equal(result.agreed_total, 240);
+  assert.equal(result.items[0].actual_amount, 240);
+  assert.equal(result.total_paid, 100);
+  assert.deepEqual(result.missing_fields, []);
+});
+
+test('[当前行为·待修复] a deposit phrased the way the cashier says it is rejected as missing', () => {
+  const result = normalizeSalesResult({
+    intent: 'sale',
+    items: [{ item_no: '695887B-5', color: '黑', size: 43, quantity: 1 }],
+    payments: [{ method: '微信', amount: 100 }],
+    agreed_total: null,
+  }, '695887B-5 43码黑，100元微信定金，还需要再付140元');
+
+  // 用户说清了「100 定金 + 140 尾款」，但规则层的正则只认「定金在前」或
+  // 「数字紧贴定金」，中间夹一个支付方式就失效，于是判为没说定金金额。
+  // 修复后这里应变成 agreed_total = 240、missing_fields 为空。
+  assert.ok(result.missing_fields.includes('请明确已经收到的定金金额'));
+  assert.equal(result.agreed_total, '');
+});
+
+test('[当前行为·待修复] mixing an accessory into a deposit order loses the receivable and demands a size', () => {
+  const result = normalizeSalesResult({
+    intent: 'sale',
+    items: [
+      { item_no: '695887B-5', color: '黑', size: 43, quantity: 1 },
+      { item_no: '39元腰带', quantity: 1, actual_amount: 39 },
+    ],
+    payments: [{ method: '微信', amount: 100 }],
+    agreed_total: null,
+  }, '695887B-5 43码黑，39元腰带一条，微信付定金100元，尾款以后付140元');
+
+  // 与上一条完全相同的语序，只多了一行配品：应收从 240 变成空，
+  // 并且系统要求配品补尺码——配品没有尺码，用户永远补不上，整单走不完。
+  assert.equal(result.agreed_total, '');
+  assert.ok(result.missing_fields.includes('items[1].size'));
+});
+
+test('[当前行为·待修复] two vouchers in one order are rejected', () => {
+  const result = normalizeSalesResult({
+    intent: 'sale',
+    items: [{ item_no: '2A831-18', color: '黑', size: 44, quantity: 1 }],
+    payments: [{ method: '微信', amount: 169 }],
+    agreed_total: null,
+  }, '2A831-18 44码黑，169元微信，两张89.9代100元代金券');
+
+  assert.ok(result.missing_fields.includes('团购券暂只支持一单一张，请明确券种和数量'));
+});
+
+test('[当前行为·待修复] a pure-voucher sale must confirm there was no cash', () => {
+  const result = normalizeSalesResult({
+    intent: 'sale',
+    items: [{ item_no: 'XHB8095', color: '黑', size: 43, quantity: 1, gift_description: '袜子两双' }],
+    payments: [],
+    agreed_total: null,
+  }, 'XHB8095 43码黑，一张89.9代100元代金券 赠袜两双');
+
+  assert.ok(result.missing_fields.includes('请确认是否只用团购券、没有补现金额'));
+});
