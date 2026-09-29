@@ -150,6 +150,9 @@ test('supplier report webhook accepts and processes to awaiting_confirmation', a
   assert.equal(task.status, 'awaiting_confirmation');
   assert.ok(task.draft);
   assert.equal(task.draft.items.length, 2);
+  // 任务是先落库状态、再发确认卡片的，所以不能只等状态：
+  // 状态一到就断言卡片，慢机器上卡片可能还没发出去。
+  await waitFor('确认卡片发出', async () => messages.length === 1);
   assert.equal(messages.length, 1);
   assert.equal(messages[0].data.receive_id, 'ou_user_1');
   const updated = await gateway.get('purchaseReport', 'rep_1');
@@ -256,6 +259,8 @@ test('arrival webhook accepts, recognizes images, and sends comparison card', as
   assert.equal(task.draft.actual.length, 1);
   assert.equal(task.draft.differences.length, 1);
   assert.equal(task.draft.differences[0].label, '少1');
+  // 同上：先落库状态，再发卡片。
+  await waitFor('到货对比卡片发出', async () => messages.length === 1);
   assert.equal(messages.length, 1);
   const updated = await gateway.get('purchaseArrival', 'arr_1');
   assert.equal(updated.fields.识别状态, '识别成功');

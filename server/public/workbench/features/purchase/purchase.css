@@ -1,0 +1,2 @@
+.row-failed { background: #fff5f5; }
+.failure-reason { max-width: 260px; color: var(--danger); white-space: normal; word-break: break-word; }
