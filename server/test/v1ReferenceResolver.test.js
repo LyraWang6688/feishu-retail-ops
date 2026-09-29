@@ -118,13 +118,12 @@ test('sales ignores any color the message happened to carry', async () => {
   assert.equal((await resolver.resolveProduct({ itemNo: '8035', color: '黑牛仔', matchMode: 'sales' })).needsColor, true);
 });
 
-test('sales strips a color the AI appended to the item-number field', async () => {
+test('sales refuses an item number carrying extra characters instead of peeling them off', async () => {
   const resolver = new V1ReferenceResolver(makeGateway(salesProducts));
 
-  // AI 偶尔把颜色并进货号字段；剥离只为让货号能对上，不判断颜色对不对。
-  assert.equal((await resolver.resolveProduct({ itemNo: 'XHB8095黑色', matchMode: 'sales' })).recordId,
-    'rec_xhb_black');
-  assert.equal((await resolver.resolveProduct({ itemNo: '8035米牛仔', matchMode: 'sales' })).needsColor, true);
+  // 货号对不上就明确报错让用户核对，不做"剥掉后面的字再试一次"这种自作聪明的事。
+  await assert.rejects(resolver.resolveProduct({ itemNo: 'XHB8095黑色', matchMode: 'sales' }), /找不到货品/);
+  await assert.rejects(resolver.resolveProduct({ itemNo: '8035米牛仔', matchMode: 'sales' }), /找不到货品/);
 });
 
 test('sales never corrects a misspelled item number into a different shoe', async () => {

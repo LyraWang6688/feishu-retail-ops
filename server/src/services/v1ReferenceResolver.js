@@ -92,19 +92,10 @@ class V1ReferenceResolver {
     // AI 偶尔把中文颜色并进货号（如 8882卡），因此仅在前缀为真实货号、
     // 剩余部分全是汉字时拆分。采购仍使用下方原有的 OCR 匹配流程。
     if (input.matchMode === 'sales' && wantedItemNo) {
-      let itemNo = wantedItemNo;
-      // 销售只看货号，不看颜色——颜色一律交给确认卡片让用户选。
-      if (!candidates.some((candidate) => candidate.itemNo === itemNo)) {
-        // 纯技术容错：AI 有时把颜色并进货号字段（如 XHB8095黑色），
-        // 剥掉尾部的汉字再找一次。它不判断颜色对不对，只是让货号能对上。
-        const splits = [...new Set(candidates
-          .filter((candidate) => candidate.itemNo && /^[a-z0-9_-]+$/.test(candidate.itemNo)
-            && itemNo.startsWith(candidate.itemNo)
-            && /^\p{Script=Han}+$/u.test(itemNo.slice(candidate.itemNo.length)))
-          .map((candidate) => candidate.itemNo))];
-        if (splits.length === 1) itemNo = splits[0];
-      }
-      const sameSku = candidates.filter((candidate) => candidate.itemNo === itemNo);
+      // 销售只看货号：用户录单时只给货号，颜色一律交给确认卡片让用户选。
+      // 这里不做任何颜色匹配，也不从货号里剥离颜色——货号对不上就明确报错让用户核对，
+      // 出问题时吵闹一点，比静默替用户"修好"更容易发现 AI 的提取问题。
+      const sameSku = candidates.filter((candidate) => candidate.itemNo === wantedItemNo);
       if (!sameSku.length) {
         throw new Error(`找不到货品：${input.itemNo || ''}`);
       }
@@ -114,7 +105,7 @@ class V1ReferenceResolver {
       // 该货号有多个颜色：不猜、也不看用户说了什么，把候选交给确认卡片让用户点。
       return {
         needsColor: true,
-        itemNo,
+        itemNo: wantedItemNo,
         options: sameSku
           .map((candidate) => ({
             recordId: candidate.record.record_id,
