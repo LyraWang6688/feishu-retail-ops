@@ -114,10 +114,7 @@ class V1ReferenceResolver {
             throw new Error(`货号 ${input.itemNo} 中的颜色与另报颜色 ${input.color} 不一致，请核对`);
           }
           itemNo = splits[0];
-          // 切出来的颜色要和「直接传颜色」走同一套归一化（去掉尾部的「色」）。
-          // 否则「XHB8095黑色」切出的「黑色」命中不了配置里的「全黑」，
-          // 而单独写成 color=黑色 却能命中——同一个意思两条路径结果不一致。
-          color = normalizeColor(suffix);
+          color = suffix;
         }
       }
       const sameSku = candidates.filter((candidate) => candidate.itemNo === itemNo);
