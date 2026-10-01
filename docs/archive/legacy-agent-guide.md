@@ -1,3 +1,10 @@
+> **Historical reference (legacy agent guide).**
+> 本文档于 2026-10-01 从仓库根目录 `agent.md` 迁移至 `docs/archive/legacy-agent-guide.md`，
+> 正文保持原样。它记录的是微信小程序时期的模块定义与接口契约
+> （`/api/recognition`、`/api/sync`、`/api/query/inventory`、`SKU_Code` 聚合写入），
+> 这些接口已随飞书 V1 退场，本文不再代表当前架构。
+> 当前仓库级 Agent 入口是根目录 `AGENTS.md`。
+
 # feishu-retail-ops Agent Guide
 
 本文档面向“智能代理/自动化工具/二次开发脚本”，用于快速理解本仓库的业务目标、模块差异、接口契约与排错方式。默认读者不关心 UI 细节，只关心数据流、约束与可观测性。

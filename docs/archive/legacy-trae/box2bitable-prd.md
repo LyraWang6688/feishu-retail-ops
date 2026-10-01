@@ -1,3 +1,8 @@
+> **Historical reference (legacy Trae document).**
+> 本文档于 2026-10-01 从 `.trae/documents/` 迁移至 `docs/archive/legacy-trae/`，正文保持原样。
+> 它记录的是 box2bitable 微信小程序时期的产品规划，不代表当前架构。
+> 当前文档索引见 `docs/README.md`。
+
 ## 1. 产品概述
 
 box2bitable 是一个基于豆包大模型的鞋盒标签识别微信小程序。用户拍照/选择鞋盒标签图片后，系统自动识别并返回多条记录，经人工复核后按模块规则写入飞书多维表格；同时提供库存查询能力，输入货号即可查询该货号下各尺码数量分布。
