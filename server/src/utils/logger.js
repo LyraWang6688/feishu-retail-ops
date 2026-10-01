@@ -6,12 +6,17 @@ const redactValue = (value) => {
   return `${str.slice(0, 4)}***${str.slice(-4)}`;
 };
 
+const isSecretField = (key) =>
+  /(^|_)(token|secret|password|authorization|api_key|encrypt_key)$/i.test(String(key));
+
+const isIdentityField = (key) => /(^|_)(open_id|user_id|union_id)$/i.test(String(key));
+
 const sanitizeMeta = (meta = {}) => {
   const out = {};
   Object.keys(meta).forEach((key) => {
     const value = meta[key];
     if (value === undefined) return;
-    if (/token|secret|key/i.test(key)) {
+    if (isSecretField(key) || isIdentityField(key)) {
       out[key] = redactValue(value);
       return;
     }
@@ -48,4 +53,5 @@ module.exports = {
   logWarn,
   logError,
   redactValue,
+  sanitizeMeta,
 };

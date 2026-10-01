@@ -1,0 +1,33 @@
+name: server tests
+
+# 并行开发时，每个 agent 都会声称“测试已通过”。这里用一个由仓库自己定义、
+# 任何人（包括 agent）都改不了结果的命令来给出唯一结论。
+on:
+  pull_request:
+  push:
+    branches: [main, codex/feishu-v1]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: server/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      # 只跑“提交即失败”的确定性检查（单元测试）。
+      # 格式、lint 之类的机械检查留在这里会拖慢 agent 的循环，不纳入本工作流。
+      - run: pnpm test

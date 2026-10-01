@@ -5,6 +5,11 @@ const { SalesOrderFeishuWriter } = require('../src/services/salesOrderFeishuWrit
 
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
+// 必须在 dotenv.config 之后加载：v1BitableSchema 在模块加载时读取环境变量，
+// 读不到就会落回代码里硬编码的生产 Base。
+const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { assertWritableBase } = require('../src/utils/writeTargetGuard');
+
 const shouldWrite = process.argv.includes('--yes');
 
 const sample = {
@@ -28,6 +33,8 @@ const main = async () => {
     console.log('\nDry-run only. Re-run with --yes to create records in Feishu.');
     return;
   }
+
+  assertWritableBase({ appToken: V1_BITABLE_SCHEMA.appToken, scriptName: 'write_sales_sample' });
 
   const writer = new SalesOrderFeishuWriter();
   const result = await writer.createSalesOrder(draft, { task_id: 'manual_sales_sample' });

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>邯美数智经营工作台</title>
+  <link rel="stylesheet" href="/workbench/styles/tokens.css">
+  <link rel="stylesheet" href="/workbench/styles/base.css">
+  <link rel="stylesheet" href="/workbench/features/sales/sales.css">
+  <link rel="stylesheet" href="/workbench/features/purchase/purchase.css">
+  <link rel="stylesheet" href="/workbench/features/inventory/inventory.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="header">
+      <div>
+        <div class="eyebrow">邯美数智经营工作台</div>
+        <h1>经营管理中心</h1>
+      </div>
+      <div class="auth">
+        <span id="auth-status" class="muted">正在检查飞书登录状态…</span>
+        <button id="logout" class="btn btn-ghost hidden" type="button">退出登录</button>
+      </div>
+    </header>
+
+    <nav id="main-tabs" class="main-tabs" aria-label="工作台模块">
+      <button class="main-tab active" type="button" data-module="sales">销售管理</button>
+      <button class="main-tab" type="button" data-module="purchase">采购管理</button>
+      <button class="main-tab" type="button" data-module="inventory">库存管理</button>
+      <button class="main-tab" type="button" data-module="finance">资金管理</button>
+      <button class="main-tab" type="button" data-module="douyin">抖音运营</button>
+      <button class="main-tab" type="button" data-module="platform">平台管理</button>
+    </nav>
+
+    <section id="module-host" aria-live="polite"></section>
+    <p id="page-error" class="error hidden" role="alert"></p>
+  </main>
+  <script type="module" src="/workbench/main.js"></script>
+</body>
+</html>

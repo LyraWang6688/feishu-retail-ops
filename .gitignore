@@ -43,3 +43,6 @@ server/data/
 
 # Local debug scripts
 server/test_feishu.js
+
+# Personal working notes (kept on local disk only, never pushed)
+PROJECT.md
