@@ -2,6 +2,8 @@
 
 本目录是 `feishu-retail-ops` 的知识库入口。根目录 `README.md` 面向人，`AGENTS.md` 面向智能代理；这里说明每一份文档现在是什么状态，避免把历史资料当成当前架构。
 
+> **命名说明**：`box2bitable`（以及 `Box2Bitable`、`box2base`、`box to base` 等写法）是本项目**旧名称**；当前仓库名与项目名为 `feishu-retail-ops`，产品名「零售数智经营助手」，邯美部署名称「邯美数智经营工作台」。历史文档中的旧名按当时事实保留，不做替换；PM2 进程名 `box2bitable-server` 与服务器目录 `/opt/box2bitable` 属于运行兼容名称，一并保留，迁移方式见 `feishu-v1-operations.md`。
+
 ## 1. 现行事实（Current）
 
 描述已经实现并正在运行的行为。

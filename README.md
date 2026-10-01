@@ -65,7 +65,7 @@
    - `pnpm run dev`
 2. 飞书事件订阅接口为 `/api/lark/events`，销售和采购通过飞书机器人私聊录入。
 3. 生产环境默认后端地址为 `https://api.bamamei.online`。
-4. 轻量云服务器部署（服务器目录暂时保留兼容名称）
+4. 轻量云服务器部署（服务器目录与 PM2 进程名暂时保留兼容名称，见 [飞书 V1 运行与排查](docs/feishu-v1-operations.md)）
    - 服务器安装 `Node 20`、`pnpm`、`pm2`、`nginx`
    - `cd /opt/box2bitable/server && pnpm install`
    - `pm2 start ecosystem.config.js`
