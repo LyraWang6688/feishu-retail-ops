@@ -2,12 +2,13 @@
 
 本目录是 `feishu-retail-ops` 的知识库入口。根目录 `README.md` 面向人，`AGENTS.md` 面向智能代理；这里说明每一份文档现在是什么状态，避免把历史资料当成当前架构。
 
-## 1. 现行文档（Current）
+## 1. 现行事实（Current）
+
+描述已经实现并正在运行的行为。
 
 | 文档 | 内容 |
 |---|---|
 | [project-progress.md](project-progress.md) | 项目进展、已确认决策与后续路线 |
-| [lark-agent-technical-design.md](lark-agent-technical-design.md) | 飞书 V1 机器人链路的总体技术方案 |
 | [feishu-v1-operations.md](feishu-v1-operations.md) | 飞书 V1 的运行与运维手册（部署、日志、排查） |
 | [module-boundaries.md](module-boundaries.md) | 模块边界与职责划分 |
 | [idempotency-contract.md](idempotency-contract.md) | 采购与库存的远端幂等契约 |
@@ -15,7 +16,15 @@
 | [workbench-query-contract.md](workbench-query-contract.md) | 工作台查询接口契约 |
 | [sales-line-plan.md](sales-line-plan.md) | 销售线的推进计划与判据 |
 
-## 2. 历史文档（Historical）
+## 2. 现行设计参考（Design Baseline + 状态说明）
+
+方案推演与当前实现混在同一份文档里，正文不能整体当作现状。**引用前先读文档顶部的状态说明**。
+
+| 文档 | 性质 |
+|---|---|
+| [lark-agent-technical-design.md](lark-agent-technical-design.md) | 飞书 V1 原始设计基线；顶部标注了 Current implementation / Original design baseline / Future plan 的分区 |
+
+## 3. 历史文档（Historical）
 
 以下文档记录的是当时的真实情况，正文保持原样，只加了状态说明。它们**不代表当前架构**。
 
@@ -29,7 +38,7 @@
 
 当前仓库级 Agent 入口以根目录 [AGENTS.md](../AGENTS.md) 为准；`agent.md` 已不再是第二套入口。
 
-## 3. 设计资产
+## 4. 设计资产
 
 | 资产 | 说明 |
 |---|---|
