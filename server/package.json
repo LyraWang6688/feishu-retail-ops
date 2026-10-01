@@ -1,7 +1,7 @@
 {
-  "name": "box2bitable-server",
+  "name": "feishu-retail-ops-server",
   "version": "1.0.0",
-  "description": "Backend for box2bitable shoe box recognition tool",
+  "description": "Feishu V1 backend for feishu-retail-ops: sales, purchase, inventory and workbench",
   "main": "src/app.js",
   "scripts": {
     "start": "node src/app.js",
