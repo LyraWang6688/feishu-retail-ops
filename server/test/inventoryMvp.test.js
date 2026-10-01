@@ -392,3 +392,108 @@ test('an unregistered movement fails loudly instead of falling back to purchase 
   assert.equal(gateway.records.get('inventoryLedger'), undefined);
   assert.equal(gateway.records.get('liveInventory').length, 1);
 });
+
+// ─── 采购增加库存的 Unknown Outcome（Main Merge Blocker C）───
+
+// 「远端写入成功、本地落盘失败」：只让第一次匹配的 update 抛错。
+const failingOnceStore = (inner, shouldFail) => {
+  let armed = true;
+  return {
+    create: (...args) => inner.create(...args),
+    get: (...args) => inner.get(...args),
+    list: (...args) => inner.list(...args),
+    update: async (recordId, patch) => {
+      if (armed && shouldFail(patch)) {
+        armed = false;
+        throw new Error('模拟本地落盘失败');
+      }
+      return inner.update(recordId, patch);
+    },
+  };
+};
+
+const liveKeys = (gateway) => gateway.records.get('liveInventory')
+  .map((row) => row.fields['库存操作键']).filter(Boolean).sort();
+
+test('C1 采购 2 双：1 条流水、2 条实时库存，且两条库存操作键不同', async () => {
+  const gateway = gatewayFor([]);
+  const inventory = new InventoryService({ gateway, store: store() });
+  await inventory.applyPurchase({ purchaseInboundRecordId: 'inbound_1', productRecordId: 'product_1',
+    size: 38, quantity: 2, state: '仓库' });
+
+  assert.equal(gateway.records.get('inventoryLedger').length, 1, '一次采购入库只写一条业务流水');
+  const rows = gateway.records.get('liveInventory');
+  assert.equal(rows.length, 2);
+  const keys = liveKeys(gateway);
+  assert.equal(keys.length, 2);
+  assert.ok(keys[0].endsWith(':1') && keys[1].endsWith(':2'), `键应按序号生成：${keys.join(', ')}`);
+  assert.equal(keys[0].slice(0, -2), keys[1].slice(0, -2), '两条必须来自同一次库存操作');
+});
+
+test('C2 第一双已写入远端但本地清单没落盘：重试只补第二双，不会变成 3 双', async () => {
+  const gateway = gatewayFor([]);
+  const inventory = new InventoryService({
+    gateway,
+    store: failingOnceStore(store(), (patch) => Array.isArray(patch.created_live_record_ids)),
+  });
+  const input = { purchaseInboundRecordId: 'inbound_1', productRecordId: 'product_1',
+    size: 38, quantity: 2, state: '仓库' };
+
+  await assert.rejects(inventory.applyPurchase(input), /模拟本地落盘失败/);
+  assert.equal(gateway.records.get('liveInventory').length, 1, '第一双已经写进远端');
+
+  await inventory.applyPurchase(input);
+  assert.equal(gateway.records.get('liveInventory').length, 2, '重试必须复用第一双，只补第二双');
+  assert.equal(gateway.records.get('inventoryLedger').length, 1, '流水不得因为重试再写一条');
+});
+
+test('C3 实时库存已创建但响应丢失：按库存操作键找回，不重复建', async () => {
+  const gateway = gatewayFor([]);
+  const originalCreate = gateway.create;
+  gateway.create = async (key, values) => {
+    const created = await originalCreate(key, values);
+    // 飞书写成功、客户端只拿到超时：不能当成「肯定没写」再建一条。
+    if (key === 'liveInventory') throw new Error('read ECONNRESET');
+    return created;
+  };
+  const inventory = new InventoryService({ gateway, store: store() });
+
+  const result = await inventory.applyPurchase({ purchaseInboundRecordId: 'inbound_1',
+    productRecordId: 'product_1', size: 38, quantity: 2, state: '仓库' });
+
+  assert.equal(gateway.records.get('liveInventory').length, 2, '必须找回已写入的那一双，而不是再建');
+  assert.equal(result.liveRecordIds.length, 2);
+  assert.equal(result.quantity, 2);
+});
+
+test('C4 远端出现两条相同库存操作键：停止入库并转人工核对', async () => {
+  // 键由 operation_id 决定：这里用同一个来源明细算出「这一双本该有的键」。
+  const operationKey = `${operationId('STOCK_PURCHASE_INCREASE', 'inbound_dup')}:1`;
+  const gateway = gatewayFor([
+    { record_id: 'dup_a', fields: { 编号: ['product_1'], 尺码: ['size_38'], 所属状态: '仓库', 库存操作键: operationKey } },
+    { record_id: 'dup_b', fields: { 编号: ['product_1'], 尺码: ['size_38'], 所属状态: '仓库', 库存操作键: operationKey } },
+  ]);
+  const inventory = new InventoryService({ gateway, store: store() });
+
+  await assert.rejects(
+    inventory.applyChange({ kind: 'STOCK_PURCHASE_INCREASE', productRecordId: 'product_1', size: 38,
+      quantity: 1, sourceRecordId: 'inbound_dup', state: '仓库' }),
+    /库存事实重复，请人工核对/,
+  );
+  assert.equal(gateway.records.get('liveInventory').length, 2, '重复事实存在时不得再写入新的实时库存');
+  assert.equal(gateway.records.get('inventoryLedger'), undefined, '发现重复时必须先停下，不再补写流水');
+});
+
+test('C5 同一个 applyPurchase 重复执行：流水只有一条，库存只增加一次', async () => {
+  const gateway = gatewayFor([]);
+  const inventory = new InventoryService({ gateway, store: store() });
+  const input = { purchaseInboundRecordId: 'inbound_1', productRecordId: 'product_1',
+    size: 38, quantity: 3, state: '门盒' };
+
+  await inventory.applyPurchase(input);
+  await inventory.applyPurchase(input);
+
+  assert.equal(gateway.records.get('inventoryLedger').length, 1);
+  assert.equal(gateway.records.get('liveInventory').length, 3, '重复执行不得把库存变成 6');
+  assert.deepEqual(liveKeys(gateway).map((key) => key.slice(-2)), [':1', ':2', ':3']);
+});

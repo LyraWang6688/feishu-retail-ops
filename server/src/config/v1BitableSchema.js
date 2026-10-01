@@ -153,6 +153,9 @@ const V1_BITABLE_SCHEMA = {
       fields: {
         batchNo: '报货批次号', behavior: '采购行为', product: '编号', size: '尺码', quantity: '数量',
         arrivalStatus: '到货状态',
+        // 幂等键必须落成真实文本列：本地任务记录丢失时，只能靠远端这个值
+        // 判断「这条采购申请是不是已经写过」，否则重试会写出第二笔采购事实。
+        idempotencyKey: '幂等键',
       },
     },
     purchaseArrival: {
@@ -167,7 +170,7 @@ const V1_BITABLE_SCHEMA = {
       tableName: '报货批次',
       // Current V1 tenant default; forks can override it with the environment variable.
       tableId: getEnv('FEISHU_V1_PURCHASE_ORDER_BATCH_TABLE_ID', 'tblwezby9wRea9qi'),
-      fields: { batchNo: '报货批次号', createdAt: '创建时间' },
+      fields: { batchNo: '报货批次号', createdAt: '创建时间', idempotencyKey: '幂等键' },
     },
     purchaseInbound: {
       tableName: '采购入库',
@@ -209,6 +212,9 @@ const V1_BITABLE_SCHEMA = {
         size: '尺码',
         updatedAt: '更新时间',
         state: '所属状态',
+        // 「这一双是某次库存操作创建的第 N 双」。实时库存是一双一条，
+        // 没有这个键就无法在 create 结果未知时判断该不该补建。
+        operationItemKey: '库存操作键',
       },
     },
   },

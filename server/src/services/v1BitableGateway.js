@@ -224,7 +224,13 @@ class V1BitableGateway {
 
   assertSuccess(response, operation) {
     if (!response || response.code !== 0) {
-      throw new Error(`${operation}失败: ${response?.msg || 'unknown'} (Code: ${response?.code ?? 'unknown'})`);
+      const error = new Error(`${operation}失败: ${response?.msg || 'unknown'} (Code: ${response?.code ?? 'unknown'})`);
+      // response.code 是飞书对请求的结构化应答：请求被处理并明确拒绝，可以确定没有写入。
+      // 幂等写入靠这个标记区分「明确失败」和「结果未知」——网络超时、连接重置这类
+      // 异常没有该标记，一律按可能已经写入处理。
+      error.bitableRejected = true;
+      error.bitableCode = response?.code;
+      throw error;
     }
   }
 }
