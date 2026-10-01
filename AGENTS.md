@@ -3,13 +3,12 @@
 ## 项目概述
 `feishu-retail-ops` 的通用产品名是“零售数智经营助手”，邯美部署名称是“邯美数智经营工作台”。它以飞书机器人、飞书网页应用和飞书多维表格为基础，为线下零售与小型企业提供销售、采购、库存和资金联动能力。
 
-当前 V1 以飞书私聊机器人为唯一继续开发的录入入口：销售使用自然语言，采购到货使用图片，经确认后由后端统一入账。飞书网页工作台已经实现并存于本仓库（`GET /workbench`、`/api/workbench/*`、`server/public/workbench/`），用于销售订单的后续收款、交付与工作台查询，不承担数据录入。微信小程序属于冻结的遗留链路，暂时保留但不再新增功能，也不能成为飞书 V1 的依赖。
+当前 V1 以飞书私聊机器人为唯一继续开发的录入入口：销售使用自然语言，采购到货使用图片，经确认后由后端统一入账。飞书网页工作台已经实现并存于本仓库（`GET /workbench`、`/api/workbench/*`、`server/public/workbench/`），用于销售订单的后续收款、交付与工作台查询，不承担数据录入。原微信小程序链路已于 2026-10-01 正式退役并从代码库整体移除，不是当前入口，也没有开关可以重新启用它。
 
 ## 技术栈
 - **当前入口**：
   - 飞书机器人私聊：销售自然语言录入、采购到货图片录入
   - 飞书网页工作台（已实现）：销售订单后续收款、交付与工作台查询
-- **遗留前端**：微信小程序原生开发（Frozen Legacy，不再新增功能，不是 Feishu V1 依赖）
 - **后端**：Node.js + Express (>=20)
 - **部署方式**：腾讯云轻量应用服务器 + Nginx + PM2
 - **AI 模型**：豆包 (Doubao) 大模型 API
@@ -29,16 +28,12 @@
 │   │   ├── config/       # 表格、模块与行为配置
 │   │   ├── controllers/  # 控制器（工作台）
 │   │   ├── infrastructure/ # 任务存储、串行队列、幂等
-│   │   ├── routes/       # 路由（飞书事件、工作台、遗留微信）
+│   │   ├── routes/       # 路由（飞书事件、工作台）
 │   │   ├── services/     # 业务逻辑（AI、飞书、销售、采购、库存）
 │   │   └── utils/        # 工具类
 │   ├── public/workbench/ # 网页工作台静态资源
 │   ├── scripts/         # 部署、运维与校验脚本
 │   └── package.json
-├── miniprogram/        # 微信小程序前端代码（Frozen Legacy）
-│   ├── pages/          # 页面
-│   ├── utils/          # 工具函数
-│   └── app.json
 ├── supabase/           # 历史数据库迁移脚本
 ├── server/uploads/     # 服务端临时上传目录（运行时自动创建）
 ├── .env.example        # 环境变量模板
@@ -70,15 +65,8 @@
 - **Legacy / Removed from current V1**：`/api/recognition`、`/api/sync`、`/api/query`。对应 route 文件已在 V1 删除，只剩遗留微信链路中的痕迹，**不是**当前 V1 的主要 API，不要据此排查线上问题。
 - **部署脚本**：`server/scripts/deploy_build.sh` / `server/scripts/deploy_run.sh`
 
-### 微信小程序 (miniprogram/)
-> Frozen Legacy：已冻结，不新增功能，也不是 Feishu V1 的依赖或开发入口。
-
-- **入口配置**：`app.json`
-- **主页面**：
-  - `pages/home/home` - 首页
-  - `pages/entry/entry` - 数据录入
-  - `pages/review/review` - 复核
-  - `pages/query/query` - 查询
+### 微信小程序（已退役）
+> RETIRED：原 `miniprogram/` 及其对应的 `/api/recognition`、`/api/sync`、`/api/query`、`/api/analytics`、`/api/sales/tasks` 已于 2026-10-01 正式退役并整体删除。历史源码见 Git History，退役记录见 `docs/archive/legacy-wechat-retirement.md`。不要重建、不要用开关重新启用。
 
 ## 运行与预览
 
@@ -108,14 +96,10 @@ pnpm run dev
 - `FEISHU_V1_E2E_TEST_APP_TOKEN` / `FEISHU_V1_E2E_PRODUCT_RECORD_ID` / `FEISHU_V1_E2E_ITEM_NO` / `FEISHU_V1_E2E_SIZE`
 
 **遗留 / 可选（当前 V1 链路不读取）**
-- `WX_APP_ID` / `WX_APP_SECRET` - 仅存在于 `.env.example`，当前代码无任何引用，不是 Feishu V1 必需配置
-- `FEISHU_APP_ID` / `FEISHU_APP_SECRET`、`FEISHU_BITABLE_APP_TOKEN`、`FEISHU_BITABLE_*_TABLE_ID`、`FEISHU_DEBUG` / `FEISHU_DEBUG_SHOW_TOKENS` - 只被遗留微信与旧销售写入链路读取
-- `ENABLE_LEGACY_WECHAT` / `ENABLE_CORS` / `NODE_ENV` / `PORT` / `UPLOAD_*` / `APP_*` - 运行与遗留开关
+- `FEISHU_APP_ID` / `FEISHU_APP_SECRET`、`FEISHU_BITABLE_APP_TOKEN`、`FEISHU_BITABLE_*_TABLE_ID` - 旧微信销售写入链路遗留；该链路已退役，V1 链路不使用
+- `ENABLE_CORS` / `NODE_ENV` / `PORT` / `UPLOAD_*` / `APP_*` - 运行开关
 
-### 小程序开发
-> 以下仅适用于冻结的遗留小程序，不是 Feishu V1 的开发入口。
-
-使用微信开发者工具打开 `miniprogram/` 目录，并勾选"不校验合法域名、web-view（业务域名）、TLS版本以及HTTPS证书"。
+> `ENABLE_LEGACY_WECHAT`、`WX_APP_ID`、`WX_APP_SECRET` 已随 Legacy WeChat Retirement 一并删除，代码中不再有任何读取点。
 
 ## 测试与安全边界
 
@@ -161,25 +145,6 @@ Schema Check 只回答「目标 Base 的字段与关联结构是否满足契约�
 - 每个关键流程节点都要有日志和可排查路径。
 - 用户体验上要给出明确反馈，不能让用户觉得系统卡住。
 - 新功能要考虑未来产品化、多用户配置、业务链变长后的排查成本。
-
-## 小程序样式规范
-
-> 适用对象是冻结的 `miniprogram/`（Frozen Legacy）；飞书 V1 与网页工作台不使用这套样式变量。
-
-### 设计系统变量 (`app.wxss`)
-- 主色调：`#3370FF`（蓝）、`#34C759`（绿）、`#FF3B30`（红）
-- 中性色：文字 `#1F2329`、次要 `#646A73`、占位 `#8F959E`
-- 间距系统：`8rpx / 12rpx / 16rpx / 20rpx / 24rpx / 30rpx`
-- 圆角：`8rpx / 12rpx / 16rpx / 20rpx / 24rpx`
-- 阴影：`0 4rpx 16rpx rgba(0,0,0,0.06)`（卡片）、渐变阴影（按钮）
-
-### 页面样式文件
-| 页面 | 文件 |
-|------|------|
-| 首页 | `pages/home/home.wxss` |
-| 录入选择 | `pages/entry/entry.wxss` |
-| 复核 | `pages/review/review.wxss` |
-| 查询 | `pages/query/query.wxss` |
 
 ## 常见问题和预防
 - 后端日志是结构化 JSON（`src/utils/logger.js`）；飞书写入事件为 `bitable.record.*` / `inventory.change.*`，可据此过滤 PM2 日志。

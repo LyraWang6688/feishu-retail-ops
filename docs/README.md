@@ -37,6 +37,7 @@
 | [technical.md](technical.md) | 微信小程序时期的接口与页面规划 |
 | [archive/legacy-agent-guide.md](archive/legacy-agent-guide.md) | 原根目录 `agent.md`，微信小程序时期的 Agent 指南 |
 | [archive/legacy-trae/](archive/legacy-trae/) | 原 `.trae/documents/`，Trae 时期的 PRD / 技术架构草稿 |
+| [archive/legacy-wechat-retirement.md](archive/legacy-wechat-retirement.md) | Legacy WeChat 退役记录（2026-10-01） |
 
 当前仓库级 Agent 入口以根目录 [AGENTS.md](../AGENTS.md) 为准；`agent.md` 已不再是第二套入口。
 

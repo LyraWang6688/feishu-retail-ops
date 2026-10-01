@@ -30,20 +30,19 @@ server/src/services/v1BitableGateway.js
         ↓
 飞书 V1 多维表格
 
-微信入口（冻结、以后整块删除）
-miniprogram/
-server/src/routes/legacyWechat.js
+微信入口（已于 2026-10-01 退役并整体删除）
+miniprogram/  ·  server/src/routes/legacyWechat.js
         ↓
 recognition / sync / query / analytics / salesTasks
 ```
 
-共享的 AI、日志和基础设施不属于微信代码。飞书模块禁止引用
-`legacyWechat.js`、旧 controller 或 `SalesTaskStore`。
+Legacy WeChat 已于 2026-10-01 正式退役：上面第二条链路的目录、路由，以及仅被它
+引用的 service / util / config / script / test 已整体删除，`ENABLE_LEGACY_WECHAT`
+开关本身也已移除（不再有任何开关能重新启用微信入口）。历史源码见 Git History，
+退役记录见 [archive/legacy-wechat-retirement.md](archive/legacy-wechat-retirement.md)。
 
-退役分两步：
-
-1. 服务器设置 `ENABLE_LEGACY_WECHAT=false` 并重载，观察至少 7 天；飞书回归测试必须通过。
-2. 再删除 `miniprogram/`、`legacyWechat.js` 以及仅被旧路由引用的 controller/service。
+共享的 AI、日志和基础设施不属于微信代码，因此保留；飞书模块仍然不得引用被删除的
+`SalesTaskStore` 等旧模块。
 
 ## 3. 日志设计
 

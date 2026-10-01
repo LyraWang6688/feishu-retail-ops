@@ -11,28 +11,6 @@ const stringifyJs = (value) => {
   return JSON.stringify(value, null, 2);
 };
 
-const buildMiniprogramModules = (manifest) => {
-  const out = {};
-  const order = manifest.order || [];
-  const modules = manifest.modules || {};
-  order.forEach((key) => {
-    const def = modules[key];
-    if (!def) return;
-    out[key] = {
-      key: def.key,
-      label: def.label,
-      desc: def.desc,
-      reviewLayout: def.reviewLayout,
-      includeSkuCode: Boolean(def.ui && def.ui.includeSkuCode),
-      showSupplierField: Boolean(def.ui && def.ui.showSupplierField),
-      showSalesFields: Boolean(def.ui && def.ui.showSalesFields),
-      defaults: def.defaults || {},
-      requiredGroupFields: def.requiredGroupFields || [],
-    };
-  });
-  return out;
-};
-
 const buildServerModules = (manifest) => {
   const out = {};
   const order = manifest.order || [];
@@ -63,17 +41,14 @@ const buildModuleFileContent = (modules) => {
 };
 
 const getOutputPaths = () => ({
-  miniprogram: path.resolve(__dirname, '../../miniprogram/config/modules.shared.js'),
   server: path.resolve(__dirname, '../src/config/modules.shared.js'),
 });
 
 const main = () => {
   const manifest = readManifest();
-  const miniprogramModules = buildMiniprogramModules(manifest);
   const serverModules = buildServerModules(manifest);
   const outputPaths = getOutputPaths();
 
-  writeModuleFile(outputPaths.miniprogram, miniprogramModules);
   writeModuleFile(outputPaths.server, serverModules);
 };
 
@@ -82,7 +57,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  buildMiniprogramModules,
   buildModuleFileContent,
   buildServerModules,
   getOutputPaths,
