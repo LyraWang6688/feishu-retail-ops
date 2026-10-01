@@ -14,7 +14,7 @@
 - 资金：当前不使用独立资金流水和供应商往来表，金额和支付方式保存在销售、采购业务表中。
 - 库存联动默认关闭；库存 Schema 验证通过后，分别用 `ENABLE_SALES_INVENTORY=true` 和 `ENABLE_PURCHASE_INVENTORY=true` 启用。
 - 网页工作台：已实现（`GET /workbench`、`/api/workbench/*`、`server/public/workbench/`），复用同一套业务服务和数据访问层，不复制入账逻辑；承载销售订单的后续收款、交付与查询，不承担数据录入。
-- 微信小程序：冻结，不新增功能；当前保留，仅用于平稳退役。
+- 微信小程序：已退役。原 `miniprogram/` 与旧路由已于 2026-10-01 整体删除，当前 Runtime 不存在微信入口，也没有开关可以重新启用；历史源码仅从 Git History 获取。
 
 ## 2. 可删除的代码边界
 

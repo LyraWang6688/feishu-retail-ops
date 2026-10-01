@@ -95,11 +95,12 @@ pnpm run dev
 - `FEISHU_TARGET_ENV` / `FEISHU_ALLOW_PRODUCTION_WRITE` - 写库脚本的环境闸门
 - `FEISHU_V1_E2E_TEST_APP_TOKEN` / `FEISHU_V1_E2E_PRODUCT_RECORD_ID` / `FEISHU_V1_E2E_ITEM_NO` / `FEISHU_V1_E2E_SIZE`
 
-**遗留 / 可选（当前 V1 链路不读取）**
-- `FEISHU_APP_ID` / `FEISHU_APP_SECRET`、`FEISHU_BITABLE_APP_TOKEN`、`FEISHU_BITABLE_*_TABLE_ID` - 旧微信销售写入链路遗留；该链路已退役，V1 链路不使用
-- `ENABLE_CORS` / `NODE_ENV` / `PORT` / `UPLOAD_*` / `APP_*` - 运行开关
+**运行开关**
+- `ENABLE_CORS` / `NODE_ENV` / `PORT` / `UPLOAD_*` / `APP_*`
 
-> `ENABLE_LEGACY_WECHAT`、`WX_APP_ID`、`WX_APP_SECRET` 已随 Legacy WeChat Retirement 一并删除，代码中不再有任何读取点。
+> 以下变量已随 Legacy WeChat Retirement 从代码与 `.env.example` 一并删除，不再有任何读取点，不要再加回来：
+> `ENABLE_LEGACY_WECHAT`、`WX_APP_ID`、`WX_APP_SECRET`、`FEISHU_APP_ID`、`FEISHU_APP_SECRET`、
+> `FEISHU_BITABLE_APP_TOKEN`、`FEISHU_BITABLE_*_TABLE_ID`。
 
 ## 测试与安全边界
 

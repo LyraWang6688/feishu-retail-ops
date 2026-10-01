@@ -5,8 +5,6 @@
 .trae
 docs
 supabase
-miniprogram
-miniprogram_npm
 .env
 .env.*
 server/uploads

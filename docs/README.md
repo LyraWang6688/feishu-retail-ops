@@ -32,7 +32,7 @@
 
 | 文档 | 时期 |
 |---|---|
-| [prd.md](prd.md) | 原 `box2bitable` 微信小程序 PRD（冻结） |
+| [prd.md](prd.md) | 原 `box2bitable` 微信小程序 PRD（已退役） |
 | [tech-arch.md](tech-arch.md) | 微信小程序时期的技术架构（服务端视角） |
 | [technical.md](technical.md) | 微信小程序时期的接口与页面规划 |
 | [archive/legacy-agent-guide.md](archive/legacy-agent-guide.md) | 原根目录 `agent.md`，微信小程序时期的 Agent 指南 |

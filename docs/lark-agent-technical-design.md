@@ -9,7 +9,7 @@
 
 ## 1. 背景与定位
 
-项目当前进入飞书 V1 阶段：飞书私聊机器人是唯一继续开发的**录入**入口，网页工作台已经实现并复用同一套业务服务（销售订单后续收款与交付）。微信小程序链路冻结，当前不删除，但不再维护；稳定观察后将整块退役。飞书代码不得依赖微信 controller、route 或旧销售任务存储。
+项目当前进入飞书 V1 阶段：飞书私聊机器人是唯一继续开发的**录入**入口，网页工作台已经实现并复用同一套业务服务（销售订单后续收款与交付）。微信小程序链路已于 2026-10-01 正式退役并从代码库整体删除（见 `docs/archive/legacy-wechat-retirement.md`）。飞书代码不得依赖微信 controller、route 或旧销售任务存储。
 
 通用产品名：零售数智经营助手
 邯美部署名称：邯美数智经营工作台（GitHub 仓库 `LyraWang6688/feishu-retail-ops`）
@@ -100,6 +100,11 @@ graph TD
 ```
 
 ### 4.3 飞书应用与环境变量边界
+
+> **状态说明（2026-10-01）**：本节是设计时的环境变量边界。下面表格里的
+> `FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `FEISHU_BITABLE_*` 属于当时的旧写入链路，
+> 已随 Legacy WeChat Retirement 从代码与 `.env.example` 删除；当前以 `LARK_AGENT_*`
+> 与 `FEISHU_V1_*` 为准，见根目录 `AGENTS.md`。
 
 现有后端（仓库 `feishu-retail-ops`，旧名 `box2bitable`）已经通过飞书应用写入多维表格。当前 `.env` 中的 `FEISHU_APP_ID` 用于后端访问飞书多维表格，不等同于微信小程序前端自己的应用 ID。
 
