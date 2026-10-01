@@ -1,3 +1,8 @@
+> **Historical reference (legacy, 微信小程序时期).**
+> 本文档描述已冻结的微信小程序链路（`/api/recognition`、`/api/sync`、
+> `/api/query/inventory`、`SKU_Code` 聚合写入）。这些接口已随飞书 V1 退场，
+> 本文不再代表当前架构。当前文档索引见 `docs/README.md`。
+
 ## 1. 总体架构
 
 ```mermaid

@@ -46,3 +46,10 @@ server/test_feishu.js
 
 # Personal working notes (kept on local disk only, never pushed)
 PROJECT.md
+
+# Repository-level local-only state. QR codes, local staging copies and
+# machine-local auth material stay on disk and are never committed.
+# Previously this was excluded only through .git/info/exclude, which is
+# per-clone and invisible to future agents; declaring it here makes the
+# boundary part of the repository contract.
+.local/

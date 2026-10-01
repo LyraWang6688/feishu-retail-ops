@@ -1,3 +1,8 @@
+> **Historical reference (legacy Trae document).**
+> 本文档于 2026-10-01 从 `.trae/documents/` 迁移至 `docs/archive/legacy-trae/`，正文保持原样。
+> 它记录的是 box2bitable 微信小程序时期的技术方案草稿，不代表当前架构。
+> 当前文档索引见 `docs/README.md`。
+
 ## 1.Architecture design
 
 ```mermaid

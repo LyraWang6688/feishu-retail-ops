@@ -16,22 +16,31 @@
 ## 目录结构
 ```
 .
-├── docs/               # 项目文档 (PRD, 技术方案, 接口说明)
+├── AGENTS.md           # 仓库级 Agent 入口（本文件）
+├── README.md           # 人的入口
+├── docs/               # 项目文档
+│   ├── README.md       # 文档索引（现行 / 历史）
+│   ├── archive/        # 历史文档归档（原 agent.md、原 .trae 文档）
+│   └── prototypes/     # 设计原型
 ├── server/             # 后端 Express 代码
 │   ├── src/
-│   │   ├── controllers/ # 控制器
-│   │   ├── routes/      # 路由
-│   │   ├── services/    # 业务逻辑 (AI, 飞书)
-│   │   └── utils/       # 工具类
-│   ├── scripts/         # 部署脚本
+│   │   ├── config/       # 表格、模块与行为配置
+│   │   ├── controllers/  # 控制器（工作台）
+│   │   ├── infrastructure/ # 任务存储、串行队列、幂等
+│   │   ├── routes/       # 路由（飞书事件、工作台、遗留微信）
+│   │   ├── services/     # 业务逻辑（AI、飞书、销售、采购、库存）
+│   │   └── utils/        # 工具类
+│   ├── public/workbench/ # 网页工作台静态资源
+│   ├── scripts/         # 部署、运维与校验脚本
 │   └── package.json
 ├── miniprogram/        # 微信小程序前端代码
 │   ├── pages/          # 页面
 │   ├── utils/          # 工具函数
 │   └── app.json
-├── uploads/            # 服务端临时上传目录（运行时自动创建）
+├── supabase/           # 历史数据库迁移脚本
+├── server/uploads/     # 服务端临时上传目录（运行时自动创建）
 ├── .env.example        # 环境变量模板
-└── README.md
+└── Dockerfile          # 容器构建与部署入口
 ```
 
 ## 关键入口 / 核心模块
