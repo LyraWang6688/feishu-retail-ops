@@ -712,3 +712,220 @@ test('product without supplier association throws clear error', async () => {
   assert.equal(task.status, 'failed');
   assert.ok(task.error.includes('货品信息中未关联供应商'));
 });
+
+// ─── 并发确认与幂等恢复（Main Merge Blocker A / B）───
+
+// 让 create 之间出现真实的时间窗口：没有并发保护的实现会在这个窗口里
+// 两次读到同一个 awaiting_confirmation 状态。
+const slowCreates = (gateway, pause = 5) => {
+  const originalCreate = gateway.create;
+  gateway.create = async (tableKey, values) => {
+    await wait(pause);
+    return originalCreate(tableKey, values);
+  };
+  return gateway;
+};
+
+// 模拟「远端写入成功、本地落盘失败」：只让第一次匹配的 update 抛错。
+const failingOnceStore = (inner, shouldFail) => {
+  let armed = true;
+  return {
+    create: (...args) => inner.create(...args),
+    get: (...args) => inner.get(...args),
+    list: (...args) => inner.list(...args),
+    update: async (recordId, patch) => {
+      if (armed && shouldFail(patch)) {
+        armed = false;
+        throw new Error('模拟本地落盘失败');
+      }
+      return inner.update(recordId, patch);
+    },
+  };
+};
+
+const multiSizeReport = (recordId) => ({
+  record_id: recordId,
+  fields: {
+    处理状态: '待确认', 尺码: sizeLinks(36, 37), 数量说明: '36码2双，37码1双',
+    编号: ['prod_1'], 采购行为: ['beh_1'], 经办人: [{ id: 'ou_1' }],
+  },
+});
+
+test('A1 同时确认同一个采购申请：只生成一个批次和一套采购申请', async () => {
+  const records = { purchaseReport: [multiSizeReport('rep_race')], purchaseOrderBatch: [], purchaseRequest: [] };
+  const { service, store, gateway } = makeService({
+    gateway: slowCreates(makeGateway(records)),
+    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }, { size: 37, quantity: 1 }] }),
+  });
+  const accepted = await service.accept('supplier-report', 'rep_race');
+  await waitForTask(store, accepted.taskId);
+
+  await Promise.all([
+    service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1'),
+    service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1'),
+  ]);
+
+  assert.equal(records.purchaseOrderBatch.length, 1, '并发确认不得创建第二个报货批次');
+  assert.equal(records.purchaseRequest.length, 2, '并发确认不得把采购申请翻倍');
+  const task = await store.get(accepted.taskId);
+  assert.equal(task.status, 'posted');
+  assert.equal(task.request_ids.length, 2);
+});
+
+test('A2 同时确认同一个采购到货：每个逻辑入库只有一条，库存只加一次', async () => {
+  const inventory = makeInventory();
+  const { service, store, gateway } = makeService({
+    inventory,
+    gateway: slowCreates(makeGateway({
+      purchaseArrival: [{ record_id: 'arr_race', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
+      purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
+      purchaseRequest: [{ record_id: 'req_1', fields: { 报货批次号: ['batch_1'], 编号: ['prod_1'], 尺码: sizeLink(36), 数量: 1 } }],
+      purchaseInbound: [],
+    })),
+  });
+  const accepted = await service.accept('arrival', 'arr_race');
+  await waitForTask(store, accepted.taskId);
+
+  await Promise.all([
+    service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1'),
+    service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1'),
+  ]);
+
+  const inbounds = await gateway.listAll('purchaseInbound');
+  assert.equal(inbounds.length, 1, '并发确认不得创建第二条采购入库');
+  assert.equal(inventory.calls.length, 1, '库存只应增加一次');
+  assert.equal((await store.get(accepted.taskId)).status, 'posted');
+});
+
+test('A3 已 posted 的任务再次确认：不再产生任何写入', async () => {
+  const records = { purchaseReport: [multiSizeReport('rep_done')], purchaseOrderBatch: [], purchaseRequest: [] };
+  const { service, store } = makeService({
+    gateway: makeGateway(records),
+    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }, { size: 37, quantity: 1 }] }),
+  });
+  const accepted = await service.accept('supplier-report', 'rep_done');
+  await waitForTask(store, accepted.taskId);
+  await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1');
+
+  const snapshot = () => [records.purchaseOrderBatch.length, records.purchaseRequest.length].join('/');
+  const before = snapshot();
+  await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1');
+  await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1');
+  assert.equal(snapshot(), before, '重复确认不得新增批次或采购申请');
+});
+
+test('B1 批次已写入远端但本地阶段未落盘：重试只复用，不新建第二个批次', async () => {
+  const records = { purchaseReport: [multiSizeReport('rep_crash_batch')], purchaseOrderBatch: [], purchaseRequest: [] };
+  const dir = tempDir();
+  const realStore = new JsonTaskStore({ dir });
+  const { service, store } = makeService({
+    dir,
+    store: failingOnceStore(realStore, (patch) => patch.posting_stage === 'batch_created'),
+    gateway: makeGateway(records),
+    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }, { size: 37, quantity: 1 }] }),
+  });
+  const accepted = await service.accept('supplier-report', 'rep_crash_batch');
+  await waitForTask(store, accepted.taskId);
+
+  await assert.rejects(
+    service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1'),
+    /模拟本地落盘失败/,
+  );
+  assert.equal(records.purchaseOrderBatch.length, 1, '第一次已经写出批次');
+  assert.equal((await store.get(accepted.taskId)).status, 'posting', '崩溃后停在可恢复的 posting，而不是 posted');
+
+  await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1');
+  assert.equal(records.purchaseOrderBatch.length, 1, '重试必须复用已有批次');
+  assert.equal(records.purchaseRequest.length, 2);
+});
+
+test('B2 第一条采购申请写完后崩溃：重试补齐其余，且不会重复第一条', async () => {
+  const records = { purchaseReport: [multiSizeReport('rep_crash_req')], purchaseOrderBatch: [], purchaseRequest: [] };
+  const dir = tempDir();
+  const realStore = new JsonTaskStore({ dir });
+  const { service, store } = makeService({
+    dir,
+    store: failingOnceStore(realStore, (patch) => String(patch.posting_stage || '').startsWith('request_created:')),
+    gateway: makeGateway(records),
+    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }, { size: 37, quantity: 1 }] }),
+  });
+  const accepted = await service.accept('supplier-report', 'rep_crash_req');
+  await waitForTask(store, accepted.taskId);
+
+  await assert.rejects(
+    service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1'),
+    /模拟本地落盘失败/,
+  );
+  assert.equal(records.purchaseRequest.length, 1, '第一次只写出了第一条采购申请');
+
+  await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1');
+  assert.equal(records.purchaseRequest.length, 2, '最终每条明细正好一条采购申请');
+  const keys = records.purchaseRequest.map((row) => row.fields.幂等键).sort();
+  assert.deepEqual(keys, [
+    `purchase_request:${accepted.taskId}:0`,
+    `purchase_request:${accepted.taskId}:1`,
+  ]);
+  assert.equal((await store.get(accepted.taskId)).status, 'posted');
+});
+
+test('B3 远端写入成功但响应丢失：按幂等键找回，不创建第二条', async () => {
+  const records = {
+    purchaseReport: [{
+      record_id: 'rep_lost',
+      fields: {
+        处理状态: '待确认', 尺码: sizeLink(36), 数量说明: '36码2双',
+        编号: ['prod_1'], 采购行为: ['beh_1'], 经办人: [{ id: 'ou_1' }],
+      },
+    }],
+    purchaseOrderBatch: [],
+    purchaseRequest: [],
+  };
+  const gateway = makeGateway(records);
+  const originalCreate = gateway.create;
+  gateway.create = async (tableKey, values) => {
+    const created = await originalCreate(tableKey, values);
+    // 飞书已经写入，但客户端收到的是超时：必须按幂等键回查，不能盲目重发。
+    if (tableKey === 'purchaseRequest') throw new Error('socket hang up');
+    return created;
+  };
+  const { service, store } = makeService({
+    gateway,
+    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }] }),
+  });
+  const accepted = await service.accept('supplier-report', 'rep_lost');
+  await waitForTask(store, accepted.taskId);
+
+  const [first, second] = await Promise.all([
+    service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1'),
+    service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1'),
+  ]);
+  assert.ok(first.toast.content.includes('采购申请已生成'));
+  assert.ok(second.toast.content.includes('采购申请已生成'));
+  assert.equal(records.purchaseRequest.length, 1, '响应丢失不得产生第二条采购申请');
+  assert.equal(records.purchaseOrderBatch.length, 1);
+  assert.equal((await store.get(accepted.taskId)).status, 'posted');
+});
+
+test('B4 远端出现两条相同幂等键：停止自动处理并转人工核对', async () => {
+  const records = { purchaseReport: [multiSizeReport('rep_dup_key')], purchaseOrderBatch: [], purchaseRequest: [] };
+  const { service, store } = makeService({
+    gateway: makeGateway(records),
+    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }, { size: 37, quantity: 1 }] }),
+  });
+  const accepted = await service.accept('supplier-report', 'rep_dup_key');
+  await waitForTask(store, accepted.taskId);
+
+  // 人工（或历史重试）已经写出两条同键记录：不能再挑一条继续。
+  const duplicateKey = `purchase_request:${accepted.taskId}:0`;
+  records.purchaseRequest.push(
+    { record_id: 'dup_1', fields: { 幂等键: duplicateKey, 编号: ['prod_1'] } },
+    { record_id: 'dup_2', fields: { 幂等键: duplicateKey, 编号: ['prod_1'] } },
+  );
+
+  await assert.rejects(
+    service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1'),
+    /命中 2 条记录.*人工核对/,
+  );
+  assert.equal(records.purchaseRequest.length, 2, '停止后不得再写出新的采购申请');
+  assert.equal((await store.get(accepted.taskId)).status, 'posting');
+});

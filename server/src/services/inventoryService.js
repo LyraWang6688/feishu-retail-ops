@@ -4,6 +4,7 @@ const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { linkedRecordIds, singleLinked, textValue } = require('./v1BitableGateway');
 const { relation } = require('./v1ReferenceResolver');
 const { SizeReferenceService, normalizeSize } = require('./sizeReferenceService');
+const { OPERATION_ITEM_KEY_FIELD, createOnceByKey, validateIdempotencyKeyFields } = require('../infrastructure/idempotencyKey');
 const { logInfo, logWarn } = require('../utils/logger');
 
 // 库存动作注册表。键 = 飞书「行为管理」表里的「行为编码」。
@@ -60,6 +61,10 @@ const operationId = (kind, sourceRecordId) =>
   `inventory_${kind}_${crypto.createHash('sha256').update(String(sourceRecordId)).digest('hex').slice(0, 20)}`;
 const samplePromotionId = (salesDetailRecordId) => operationId('sample', salesDetailRecordId);
 
+// 一次库存操作里「第 N 双」的远端标识。实时库存是一双一条记录，
+// 本地日志丢失时只能靠这个键回答「这一双是不是已经建过了」。
+const operationItemKey = (inventoryOperationId, sequence) => `${inventoryOperationId}:${sequence}`;
+
 class InventoryService {
   constructor(options = {}) {
     if (!options.gateway) throw new Error('InventoryService requires gateway');
@@ -81,6 +86,8 @@ class InventoryService {
       this.schemaValidation = (async () => {
         const result = await this.gateway.validateTables(['behavior', 'sizeManagement', 'inventoryLedger', 'liveInventory']);
         await this.sizeReferences.validateSchema(['inventoryLedger', 'liveInventory']);
+        // 增加库存必须能按「库存操作键」回查，否则 create 结果未知时只能盲重建。
+        await validateIdempotencyKeyFields({ gateway: this.gateway, tableKeys: ['liveInventory'] });
         return result;
       })().catch((error) => {
         this.schemaValidation = null;
@@ -353,6 +360,12 @@ class InventoryService {
     if (operation.schema_version === 2 && !ledger) {
       throw new Error(`旧版库存操作 ${operation.operation_id} 未能确认已有流水，请人工核对，不能自动恢复`);
     }
+    if (operation.direction === '增加') {
+      // 先确认远端没有「同一个键出现两条」这种已经重复的事实，再写流水：
+      // 已经重复时应该停下来让人核对，而不是再补一条流水把差异藏起来。
+      await this.assertNoDuplicateOperationItems(operation, (operation.created_live_record_ids || []).length + 1,
+        operation.quantity);
+    }
     if (!ledger) {
       const created = await this.gateway.create('inventoryLedger', {
         product: relation(operation.product_record_id),
@@ -393,10 +406,22 @@ class InventoryService {
     } else {
       const expectedCreates = operation.quantity;
       while (createdIds.length < expectedCreates) {
-        const created = await this.gateway.create('liveInventory', {
-          product: relation(operation.product_record_id),
-          size: relation(sizeReference.recordId),
-          state: operation.state || '门盒',
+        // 第 N 双先按「库存操作键」回查远端，再决定是否创建：
+        // 飞书创建成功但本地 journal 没写下去（崩溃 / 磁盘失败 / 响应丢失）时，
+        // 直接重发 create 会把库存 +1 变成 +2，而 +2 在业务上是看不出来的。
+        const itemKey = operationItemKey(operation.operation_id, createdIds.length + 1);
+        const created = await createOnceByKey({
+          gateway: this.gateway,
+          tableKey: 'liveInventory',
+          keyField: OPERATION_ITEM_KEY_FIELD,
+          keyValue: itemKey,
+          label: `实时库存 ${itemKey}`,
+          values: {
+            product: relation(operation.product_record_id),
+            size: relation(sizeReference.recordId),
+            state: operation.state || '门盒',
+            operationItemKey: itemKey,
+          },
         });
         createdIds.push(created.recordId);
         operation = await this.store.update(operation.operation_id, { created_live_record_ids: createdIds });
@@ -446,6 +471,28 @@ class InventoryService {
       live_record_ids: result.liveRecordIds,
     });
     return result;
+  }
+
+  // 同一个键出现两条实时库存，说明这一双已经被写过两次：真实库存已经错了。
+  // 这时不能继续补写，也不能挑一条继续，只能停下让人核对。
+  async assertNoDuplicateOperationItems(operation, fromSequence, toSequence) {
+    if (fromSequence > toSequence) return;
+    const fieldName = this.gateway.table('liveInventory').fields?.[OPERATION_ITEM_KEY_FIELD];
+    if (!fieldName) return;
+    const expected = new Set();
+    for (let sequence = fromSequence; sequence <= toSequence; sequence += 1) {
+      expected.add(operationItemKey(operation.operation_id, sequence));
+    }
+    const counts = new Map();
+    for (const record of await this.gateway.listAll('liveInventory')) {
+      const key = textValue(record.fields?.[fieldName]).trim();
+      if (expected.has(key)) counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    for (const [key, count] of counts) {
+      if (count > 1) {
+        throw new Error(`实时库存中已存在 ${count} 条库存操作键为 ${key} 的记录，库存事实重复，请人工核对后再入库`);
+      }
+    }
   }
 
   async findOperationLedger(operation) {
@@ -505,12 +552,19 @@ class InventoryService {
     }
     const liveFields = this.gateway.table('liveInventory').fields;
     if (operation.direction === '增加') {
-      for (const recordId of createdIds) {
+      for (const [index, recordId] of createdIds.entries()) {
         const record = await this.gateway.get('liveInventory', recordId);
         if (!record || !singleLinked(record.fields?.[liveFields.product], operation.product_record_id) ||
           !singleLinked(record.fields?.[liveFields.size], sizeRecordId) ||
           textValue(record.fields?.[liveFields.state]) !== operation.state) {
           manual(`已有实时库存 ${recordId} 的货品、尺码关联或状态不一致`);
+        }
+        // 库存操作键是「这一双属于本次操作第几条」的证明。老记录可能没有这个值
+        // （字段是后加的），但一旦写了就必须和本地清单对得上，否则无法区分
+        // 「这就是我要的那一双」和「别的操作写进来的同一货品尺码」。
+        const recordedKey = textValue(record.fields?.[liveFields[OPERATION_ITEM_KEY_FIELD]]).trim();
+        if (recordedKey && recordedKey !== operationItemKey(operation.operation_id, index + 1)) {
+          manual(`已有实时库存 ${recordId} 的库存操作键与本地记录不一致`);
         }
       }
     } else if (operation.direction === '减少') {

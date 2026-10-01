@@ -11,8 +11,18 @@ const { purchaseRequestConfirmationCard, purchaseArrivalComparisonCard, purchase
 const { InventoryService } = require('./inventoryService');
 const { buildPurchaseQuantities } = require('./purchaseQuantityPolicy');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
+const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
+const { IDEMPOTENCY_KEY_FIELD, createOnceByKey } = require('../infrastructure/idempotencyKey');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
+
+// 采购卡片上可以触发副作用（写采购事实）的动作。
+const PURCHASE_CARD_ACTIONS = [
+  'confirm_purchase_request',
+  'cancel_purchase_request',
+  'confirm_purchase_arrival',
+  'cancel_purchase_arrival',
+];
 
 const idFor = (prefix, value) => `${prefix}_${crypto.createHash('sha256').update(String(value)).digest('hex').slice(0, 24)}`;
 
@@ -58,6 +68,10 @@ class PurchaseWebhookService {
       idField: 'task_id',
     });
     this.queues = new Map();
+    // 卡片确认按 taskId 串行。重复的卡片事件（双击、飞书重投）会同时读到
+    // awaiting_confirmation 并各自走一遍副作用，把同一批采购事实写两遍；
+    // 卡片上的「处理中」只是 UX，后端必须自己保证同一任务不并行。
+    this.confirmationQueue = new KeyedSerialQueue();
     this.batchReadMaxRetries = options.batchReadMaxRetries ?? 3;
     this.batchReadRetryDelay = options.batchReadRetryDelay ?? 1000;
     this.inflightInbound = new Map();
@@ -99,7 +113,9 @@ class PurchaseWebhookService {
       logInfo('purchase.webhook.duplicate_ignored', { kind, record_id: id, task_id: taskId });
       return { accepted: true, duplicate: true, taskId };
     }
-    if (existing && ['queued', 'processing', 'awaiting_confirmation', 'posted', 'cancelled', 'batch_waiting'].includes(existing.status)) {
+    // posting 也算「已经在处理」：确认动作正在写远端时，重复的 webhook 不能
+    // 把任务降级回 processing 再解析一遍，那会重发确认卡片并丢掉恢复进度。
+    if (existing && ['queued', 'processing', 'awaiting_confirmation', 'posting', 'posted', 'cancelled', 'batch_waiting'].includes(existing.status)) {
       logInfo('purchase.webhook.duplicate_ignored', { kind, record_id: id, task_id: taskId, status: existing.status });
       return { accepted: true, duplicate: true, taskId };
     }
@@ -536,11 +552,22 @@ class PurchaseWebhookService {
   async handleCardAction(value, operatorOpenId, event = {}) {
     const taskId = value?.draft_id;
     const action = value?.action;
-    if (!taskId || !['confirm_purchase_request', 'cancel_purchase_request', 'confirm_purchase_arrival', 'cancel_purchase_arrival'].includes(action)) return null;
+    if (!taskId || !PURCHASE_CARD_ACTIONS.includes(action)) return null;
+    // 同一个 taskId 的确认/取消串行执行：第二个请求要等第一个结束后重新读任务，
+    // 才能看到 posted 而不是又走一遍创建。
+    return this.confirmationQueue.run(taskId, () =>
+      this.handleCardActionLocked(taskId, action, operatorOpenId, event));
+  }
+
+  async handleCardActionLocked(taskId, action, operatorOpenId, event) {
+    // 排队结束后重新读取：锁外读到的 task 可能已经被前一个动作改过状态，
+    // 拿旧对象判断状态正是并发重复写入的来源。
     const task = await this.store.get(taskId);
     if (!task?.draft) throw new Error('采购申请草稿不存在或已过期');
     if (task.draft.operator_open_id !== operatorOpenId) throw new Error('只能由原始填写人确认采购流程');
+    if (task.status === 'cancelled') return { toast: { type: 'info', content: '本次采购流程已取消' } };
     if (action === 'cancel_purchase_arrival') {
+      if (task.status === 'posted') return { toast: { type: 'info', content: '采购到货已入库，不能取消' } };
       await this.gateway.update('purchaseArrival', task.draft.arrival_record_id, { confirmStatus: '已取消' });
       await this.store.update(taskId, { status: 'cancelled' });
       this.inflightInbound.delete(taskId);
@@ -549,14 +576,23 @@ class PurchaseWebhookService {
     }
     if (action === 'confirm_purchase_arrival') {
       if (task.status === 'posted') return { toast: { type: 'info', content: '采购到货已入库' } };
-      // 立即更新卡片为"处理中"状态，防止重复点击
+      // 正式写库前先落 posting：崩溃后重进这个流程会按已持久化的进度恢复，
+      // 而不是因为「看到 posting 就一直提示处理中」卡死。
+      await this.store.update(taskId, { status: 'posting' });
       await this.updatePurchaseActionCard(task, event, purchaseStatusCard(task.draft, '采购到货处理中', '已收到确认，正在入库；请勿重复点击。', 'blue'));
-      const result = await this.confirmArrival(taskId, task, operatorOpenId);
+      let result;
+      try {
+        result = await this.confirmArrival(taskId, task, operatorOpenId);
+      } catch (error) {
+        await this.updatePurchaseActionCard(task, event, purchaseStatusCard(task.draft, '采购到货未完成', `已停止自动处理：${error.message}`, 'red'));
+        throw error;
+      }
       // 处理完成后更新卡片为"已入库"状态
       await this.updatePurchaseActionCard(task, event, purchaseStatusCard(task.draft, '采购到货已入库', '入库完成，库存已更新。', 'green'));
       return result;
     }
     if (action === 'cancel_purchase_request') {
+      if (task.status === 'posted') return { toast: { type: 'info', content: '采购申请已生成，不能取消' } };
       // 支持批量和单条两种取消
       const reportIds = task.draft.report_record_ids || [task.draft.report_record_id];
       for (const rid of reportIds) {
@@ -567,51 +603,139 @@ class PurchaseWebhookService {
       return { toast: { type: 'info', content: '采购申请已取消' } };
     }
     if (task.status === 'posted') return { toast: { type: 'info', content: '采购申请已生成' } };
-    // 立即更新卡片为"处理中"状态，防止重复点击
+    await this.store.update(taskId, { status: 'posting' });
     await this.updatePurchaseActionCard(task, event, purchaseStatusCard(task.draft, '采购申请处理中', '已收到确认，正在生成采购申请；请勿重复点击。', 'blue'));
-    return this.confirmPurchaseRequest(taskId, task, event);
+    try {
+      return await this.confirmPurchaseRequest(taskId, task, event);
+    } catch (error) {
+      await this.updatePurchaseActionCard(task, event, purchaseStatusCard(task.draft, '采购申请未完成', `已停止自动处理：${error.message}`, 'red'));
+      throw error;
+    }
   }
 
   /**
-   * 确认生成采购申请（支持批量和单条）
+   * 生成并持久化 Posting Plan。
+   *
+   * 这个计划有两个作用，缺一不可：
+   * 1. 幂等键的唯一来源——重试时必须复用同一批键，每次重新生成等于没有幂等；
+   * 2. 崩溃后的恢复清单——知道「应该写几条、写到哪一条」。
+   *
+   * 所以它必须在任何远端写入之前落盘；落盘失败就不能开始写。
+   */
+  async ensurePostingPlan(taskId, task) {
+    if (task.posting_plan?.version === 1) return task.posting_plan;
+    const draft = task.draft || {};
+    const items = draft.items || [];
+    if (!items.length) throw new Error('采购申请草稿没有任何明细，无法生成采购计划');
+    const plan = {
+      version: 1,
+      batch_key: `purchase_batch:${taskId}`,
+      // 批次号也只生成一次：重试时重新取号会变成一个已存在批次的新号。
+      batch_no: draft.batch_no || (await this.nextBatchNo()),
+      items: items.map((item, index) => ({
+        // item_key 是「计划里第几条」的稳定标识，随计划一起持久化，
+        // 因此重试时不会因为数组顺序变化而换键。
+        item_key: `${taskId}:${index}`,
+        request_key: `purchase_request:${taskId}:${index}`,
+        report_record_id: item.report_record_id || draft.report_record_id || '',
+        product_record_id: item.product_record_id,
+        size: Number(item.size),
+        quantity: Number(item.quantity),
+        behavior_record_id: draft.behavior_record_id || '',
+      })),
+    };
+    const updated = await this.store.update(taskId, { posting_plan: plan, posting_stage: 'posting_plan_created' });
+    return updated.posting_plan;
+  }
+
+  /**
+   * 确认生成采购申请（支持批量和单条）。
+   *
+   * 每一步都遵循「先按幂等键回查远端，再决定是否创建」，并在创建后立刻把
+   * record_id 写回 posting_progress。这样无论是「远端已建、本地没记」还是
+   * 「本地记了、进程重启」，重试都只会补齐缺的那部分。
    */
   async confirmPurchaseRequest(taskId, task, event = {}) {
     const draft = task.draft;
     const isBatch = draft.is_batch === true;
-    const reportIds = isBatch ? draft.report_record_ids : [draft.report_record_id];
-    const batchNo = draft.batch_no || (await this.nextBatchNo());
-    // 创建报货批次记录
-    const batch = await this.gateway.create('purchaseOrderBatch', {
-      batchNo,
-    });
+    const plan = await this.ensurePostingPlan(taskId, task);
+    const progress = { ...(task.posting_progress || {}) };
+    const requestIdByItemKey = { ...(progress.requests || {}) };
+
+    // 报货批次：批次号与幂等键都来自已落盘的计划。
+    let batchRecordId = progress.batch_record_id;
+    if (!batchRecordId) {
+      const batch = await createOnceByKey({
+        gateway: this.gateway,
+        tableKey: 'purchaseOrderBatch',
+        keyField: IDEMPOTENCY_KEY_FIELD,
+        keyValue: plan.batch_key,
+        label: '报货批次',
+        values: { batchNo: plan.batch_no, idempotencyKey: plan.batch_key },
+      });
+      batchRecordId = batch.recordId;
+      progress.batch_record_id = batchRecordId;
+      await this.store.update(taskId, { posting_progress: progress, posting_stage: 'batch_created' });
+    }
+
     // 逐条创建采购申请
     const requestIds = [];
-    for (const item of draft.items) {
-      const request = await this.gateway.create('purchaseRequest', {
-        batchNo: relation(batch.recordId),
-        product: relation(item.product_record_id),
-        size: relation((await this.getSizeReferences().resolveByNumber(item.size)).recordId),
-        quantity: item.quantity,
-        behavior: relation(draft.behavior_record_id),
-      });
-      requestIds.push(request.recordId);
+    for (const item of plan.items) {
+      let recordId = requestIdByItemKey[item.item_key];
+      if (!recordId) {
+        const sizeReference = await this.getSizeReferences().resolveByNumber(item.size);
+        const created = await createOnceByKey({
+          gateway: this.gateway,
+          tableKey: 'purchaseRequest',
+          keyField: IDEMPOTENCY_KEY_FIELD,
+          keyValue: item.request_key,
+          label: `采购申请 ${item.item_key}`,
+          values: {
+            batchNo: relation(batchRecordId),
+            product: relation(item.product_record_id),
+            size: relation(sizeReference.recordId),
+            quantity: item.quantity,
+            behavior: relation(item.behavior_record_id),
+            idempotencyKey: item.request_key,
+          },
+        });
+        recordId = created.recordId;
+        requestIdByItemKey[item.item_key] = recordId;
+        progress.requests = requestIdByItemKey;
+        await this.store.update(taskId, {
+          posting_progress: progress,
+          posting_stage: `request_created:${item.item_key}`,
+        });
+      }
+      requestIds.push(recordId);
     }
+
     // 批量更新所有报单记录状态为"已生成申请"，并关联采购申请
+    const reportIds = isBatch ? (draft.report_record_ids || []) : [draft.report_record_id];
     for (const rid of reportIds) {
-      // 找出这条报单记录对应的采购申请（通过 report_record_id 匹配）
-      const itemRequestIds = isBatch
-        ? requestIds.filter((_, idx) => draft.items[idx]?.report_record_id === rid)
-        : requestIds;
+      // 找出这条报单记录对应的采购申请：对应关系来自计划，不再依赖临时数组下标。
+      const itemRequestIds = plan.items
+        .filter((item) => item.report_record_id === rid)
+        .map((item) => requestIdByItemKey[item.item_key])
+        .filter(Boolean);
       await this.gateway.update('purchaseReport', rid, {
         status: '已生成申请',
         request: itemRequestIds.length > 0 ? itemRequestIds : requestIds,
       }).catch(() => undefined);
     }
-    await this.store.update(taskId, { status: 'posted', batch_record_id: batch.recordId, batch_no: batchNo, request_ids: requestIds });
-    logInfo('purchase.request.created', { task_id: taskId, batch_record_id: batch.recordId, batch_no: batchNo, request_count: requestIds.length, is_batch: isBatch });
+    progress.reports_linked = true;
+    await this.store.update(taskId, {
+      status: 'posted',
+      posting_progress: progress,
+      posting_stage: 'posted',
+      batch_record_id: batchRecordId,
+      batch_no: plan.batch_no,
+      request_ids: requestIds,
+    });
+    logInfo('purchase.request.created', { task_id: taskId, batch_record_id: batchRecordId, batch_no: plan.batch_no, request_count: requestIds.length, is_batch: isBatch });
     // 更新卡片为"已完成"状态
-    await this.updatePurchaseActionCard(task, event, purchaseStatusCard({ ...draft, batch_no: batchNo }, '采购申请已生成', `报货批次号：${batchNo}；共 ${requestIds.length} 条明细已写入。`, 'green'));
-    return { toast: { type: 'success', content: `采购申请已生成：${batchNo}（共${requestIds.length}条明细）` } };
+    await this.updatePurchaseActionCard(task, event, purchaseStatusCard({ ...draft, batch_no: plan.batch_no }, '采购申请已生成', `报货批次号：${plan.batch_no}；共 ${requestIds.length} 条明细已写入。`, 'green'));
+    return { toast: { type: 'success', content: `采购申请已生成：${plan.batch_no}（共${requestIds.length}条明细）` } };
   }
 
   async confirmArrival(taskId, task, operatorOpenId) {

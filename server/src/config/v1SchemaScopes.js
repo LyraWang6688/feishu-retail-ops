@@ -34,4 +34,23 @@ V1_SIZE_LINK_TABLES.all = [...new Set(Object.values(V1_SIZE_LINK_TABLES).flat())
 
 const getV1SizeLinkTables = (scope = 'sales') => V1_SIZE_LINK_TABLES[getV1SchemaScope(scope).key] || [];
 
-module.exports = { V1_SCHEMA_SCOPES, V1_SIZE_LINK_TABLES, getV1SchemaScope, getV1SizeLinkTables };
+// 幂等键字段同样必须真实存在，且是文本字段（见 infrastructure/idempotencyKey.js）。
+// 采购批次 / 采购申请 / 实时库存的写入都靠它做「先回查再创建」，字段缺失时
+// 宁可部署门槛拦下来，也不能等到用户确认采购时才报错。
+const V1_IDEMPOTENCY_KEY_TABLES = {
+  purchase: ['purchaseOrderBatch', 'purchaseRequest'],
+  inventory: ['liveInventory'],
+};
+V1_IDEMPOTENCY_KEY_TABLES.all = [...new Set(Object.values(V1_IDEMPOTENCY_KEY_TABLES).flat())];
+
+const getV1IdempotencyKeyTables = (scope = 'sales') =>
+  V1_IDEMPOTENCY_KEY_TABLES[getV1SchemaScope(scope).key] || [];
+
+module.exports = {
+  V1_SCHEMA_SCOPES,
+  V1_SIZE_LINK_TABLES,
+  V1_IDEMPOTENCY_KEY_TABLES,
+  getV1SchemaScope,
+  getV1SizeLinkTables,
+  getV1IdempotencyKeyTables,
+};
