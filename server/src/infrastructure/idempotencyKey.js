@@ -96,13 +96,16 @@ const createOnceByKey = async ({
 
 // 幂等依赖的字段必须真实存在且是文本（type 1）。只校验列名不够：
 // 数字或关联字段存不下 "purchase_request:..." 这种键，写进去会静默变成空值。
-const validateIdempotencyKeyFields = async ({ gateway, tableKeys = [] }) => {
+//
+// tables 要给出每张表**各自**的键字段语义名：采购用 idempotencyKey，
+// 实时库存用 operationItemKey，不能假定所有表都叫同一个名字。
+const validateIdempotencyKeyFields = async ({ gateway, tables = [] }) => {
   if (typeof gateway.listFields !== 'function') return [];
   const checked = [];
-  for (const tableKey of tableKeys) {
+  for (const { tableKey, keyField } of tables) {
     const table = gateway.table(tableKey);
-    const fieldName = table.fields?.[IDEMPOTENCY_KEY_FIELD];
-    if (!fieldName) throw new Error(`“${table.tableName}”未声明幂等键字段`);
+    const fieldName = table.fields?.[keyField];
+    if (!fieldName) throw new Error(`“${table.tableName}”未在 v1BitableSchema 声明 ${keyField} 字段`);
     const fields = await gateway.listFields(tableKey);
     const field = fields.find((item) => item.field_name === fieldName);
     if (!field) {

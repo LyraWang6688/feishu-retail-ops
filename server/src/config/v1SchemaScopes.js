@@ -38,10 +38,14 @@ const getV1SizeLinkTables = (scope = 'sales') => V1_SIZE_LINK_TABLES[getV1Schema
 // 采购批次 / 采购申请 / 实时库存的写入都靠它做「先回查再创建」，字段缺失时
 // 宁可部署门槛拦下来，也不能等到用户确认采购时才报错。
 const V1_IDEMPOTENCY_KEY_TABLES = {
-  purchase: ['purchaseOrderBatch', 'purchaseRequest'],
-  inventory: ['liveInventory'],
+  purchase: [
+    { tableKey: 'purchaseOrderBatch', keyField: 'idempotencyKey' },
+    { tableKey: 'purchaseRequest', keyField: 'idempotencyKey' },
+  ],
+  inventory: [{ tableKey: 'liveInventory', keyField: 'operationItemKey' }],
 };
-V1_IDEMPOTENCY_KEY_TABLES.all = [...new Set(Object.values(V1_IDEMPOTENCY_KEY_TABLES).flat())];
+V1_IDEMPOTENCY_KEY_TABLES.all = [...new Map(Object.values(V1_IDEMPOTENCY_KEY_TABLES).flat()
+  .map((entry) => [`${entry.tableKey}.${entry.keyField}`, entry])).values()];
 
 const getV1IdempotencyKeyTables = (scope = 'sales') =>
   V1_IDEMPOTENCY_KEY_TABLES[getV1SchemaScope(scope).key] || [];

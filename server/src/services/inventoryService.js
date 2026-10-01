@@ -87,7 +87,10 @@ class InventoryService {
         const result = await this.gateway.validateTables(['behavior', 'sizeManagement', 'inventoryLedger', 'liveInventory']);
         await this.sizeReferences.validateSchema(['inventoryLedger', 'liveInventory']);
         // 增加库存必须能按「库存操作键」回查，否则 create 结果未知时只能盲重建。
-        await validateIdempotencyKeyFields({ gateway: this.gateway, tableKeys: ['liveInventory'] });
+        await validateIdempotencyKeyFields({
+          gateway: this.gateway,
+          tables: [{ tableKey: 'liveInventory', keyField: OPERATION_ITEM_KEY_FIELD }],
+        });
         return result;
       })().catch((error) => {
         this.schemaValidation = null;

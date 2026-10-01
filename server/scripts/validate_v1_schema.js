@@ -17,7 +17,7 @@ const validateV1SchemaScope = async ({ gateway, scope = 'sales' }) => {
   }
   // 尺码关联先校验：它决定读到的业务含义，幂等键只决定重试是否安全。
   // 两者都失败时，先报出的应该是更根本的那个。
-  await validateIdempotencyKeyFields({ gateway, tableKeys: getV1IdempotencyKeyTables(key) });
+  await validateIdempotencyKeyFields({ gateway, tables: getV1IdempotencyKeyTables(key) });
   const result = await gateway.validateTables(tableKeys);
   if (key === 'inventory' || key === 'all') {
     await new InventoryService({ gateway, store: {} }).validateStockBehaviors();

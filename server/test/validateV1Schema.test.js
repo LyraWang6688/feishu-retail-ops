@@ -5,6 +5,8 @@ const { validateV1SchemaScope } = require('../scripts/validate_v1_schema');
 const sizeLinkedTables = ['salesDetail', 'purchaseRequest', 'purchaseInbound', 'inventoryLedger', 'liveInventory'];
 // 幂等键是文本字段：写的是 "purchase_request:<taskId>:<n>" 这类稳定键。
 const idempotencyKeyFields = { purchaseOrderBatch: '幂等键', purchaseRequest: '幂等键', liveInventory: '库存操作键' };
+// 每张表的键字段语义名不同：采购用 idempotencyKey，实时库存用 operationItemKey。
+const keyFieldOf = (tableKey) => (tableKey === 'liveInventory' ? 'operationItemKey' : 'idempotencyKey');
 const gatewayFor = (overrides = {}) => {
   const seen = [];
   const fields = Object.fromEntries(sizeLinkedTables.map((key) => [key, [
@@ -21,7 +23,7 @@ const gatewayFor = (overrides = {}) => {
       ? { tableName: '尺码管理', tableId: 'size_table', fields: { size: '尺码' } }
       : { tableName: key, fields: { size: '尺码', name: '行为名称',
         code: '行为编码', stockDirection: '库存方向', enabled: '是否启用',
-        idempotencyKey: idempotencyKeyFields[key] || '幂等键' } },
+        [keyFieldOf(key)]: idempotencyKeyFields[key] || '幂等键' } },
     validateTables: async (keys) => { seen.push(...keys); return keys.map((tableKey) => ({ tableKey })); },
     listFields: async (key) => fields[key] || [],
     listAll: async (key) => key === 'behavior' ? [
