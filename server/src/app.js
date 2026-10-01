@@ -62,13 +62,9 @@ app.get('/health', (req, res) => {
 });
 
 // Routes
+// Legacy WeChat was retired on 2026-10-01: the frozen router and the
+// miniprogram that drove it are gone, so no switch re-enables them.
 app.use('/api', require('./middleware/auth'));
-if (process.env.ENABLE_LEGACY_WECHAT !== 'false') {
-  app.use('/api', require('./routes/legacyWechat').createLegacyWechatRouter());
-  logInfo('legacy.wechat.enabled', { removal_state: 'frozen' });
-} else {
-  logInfo('legacy.wechat.disabled');
-}
 
 // Error handling middleware
 app.use((err, req, res, next) => {

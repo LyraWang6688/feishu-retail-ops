@@ -24,24 +24,6 @@ const storage = multer.diskStorage({
   }
 });
 
-const isSafeUploadName = (name) => {
-  const s = String(name || '').trim();
-  if (!s) return false;
-  if (s.length > 200) return false;
-  if (s !== path.basename(s)) return false;
-  if (s.includes('/') || s.includes('\\')) return false;
-  return /^[A-Za-z0-9._-]+$/.test(s);
-};
-
-const resolveUploadPath = (name) => {
-  if (!isSafeUploadName(name)) return null;
-  const root = path.resolve(uploadDir);
-  const p = path.resolve(uploadDir, name);
-  if (p === root) return null;
-  if (!p.startsWith(root + path.sep)) return null;
-  return p;
-};
-
 const upload = multer({ 
   storage: storage,
   fileFilter: (req, file, cb) => {
@@ -58,6 +40,4 @@ const upload = multer({
 module.exports = {
   upload,
   uploadDir,
-  isSafeUploadName,
-  resolveUploadPath,
 };

@@ -1,21 +1,8 @@
-const getRequiredEnv = (key) => {
-  const v = process.env[key];
-  if (!v) throw new Error(`Missing required env: ${key}`);
-  return v;
-};
-
-const getOptionalEnv = (key, fallback = '') => process.env[key] || fallback;
-
 const { MODULES: SHARED_MODULES } = require('./modules.shared');
 
 const MODULES = {
   purchase: {
     ...SHARED_MODULES.purchase,
-    bitable: {
-      appToken: getOptionalEnv('FEISHU_BITABLE_APP_TOKEN'),
-      tableId: getOptionalEnv('FEISHU_BITABLE_PURCHASE_TABLE_ID', getOptionalEnv('FEISHU_BITABLE_TABLE_ID')),
-      tableIdEnv: 'FEISHU_BITABLE_PURCHASE_TABLE_ID',
-    },
     sync: {
       ...SHARED_MODULES.purchase.sync,
       createFields: [
@@ -39,11 +26,6 @@ const MODULES = {
   },
   inventory: {
     ...SHARED_MODULES.inventory,
-    bitable: {
-      appToken: getOptionalEnv('FEISHU_BITABLE_APP_TOKEN'),
-      tableId: getOptionalEnv('FEISHU_BITABLE_INVENTORY_TABLE_ID', getOptionalEnv('FEISHU_BITABLE_TABLE_ID')),
-      tableIdEnv: 'FEISHU_BITABLE_INVENTORY_TABLE_ID',
-    },
     sync: {
       ...SHARED_MODULES.inventory.sync,
       createFields: [
@@ -63,11 +45,6 @@ const MODULES = {
   },
   sales: {
     ...SHARED_MODULES.sales,
-    bitable: {
-      appToken: getOptionalEnv('FEISHU_BITABLE_APP_TOKEN'),
-      tableId: getOptionalEnv('FEISHU_BITABLE_SALES_TABLE_ID'),
-      tableIdEnv: 'FEISHU_BITABLE_SALES_TABLE_ID',
-    },
     sync: {
       ...SHARED_MODULES.sales.sync,
       createFields: [
@@ -96,21 +73,10 @@ const normalizeModule = (moduleKey) => {
   return key;
 };
 
-const getModuleConfig = (moduleKey) => {
-  const key = normalizeModule(moduleKey);
-  const cfg = MODULES[key];
-  const appToken = cfg.bitable.appToken;
-  const tableId = cfg.bitable.tableId;
-  if (!appToken) getRequiredEnv('FEISHU_BITABLE_APP_TOKEN');
-  if (!tableId) getRequiredEnv(cfg.bitable.tableIdEnv);
-  return cfg;
-};
-
 const getModuleDefinition = (moduleKey) => MODULES[normalizeModule(moduleKey)];
 
 module.exports = {
   MODULES,
   normalizeModule,
   getModuleDefinition,
-  getModuleConfig,
 };

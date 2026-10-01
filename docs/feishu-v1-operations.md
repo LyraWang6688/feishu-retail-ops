@@ -14,7 +14,7 @@
 - 资金：当前不使用独立资金流水和供应商往来表，金额和支付方式保存在销售、采购业务表中。
 - 库存联动默认关闭；库存 Schema 验证通过后，分别用 `ENABLE_SALES_INVENTORY=true` 和 `ENABLE_PURCHASE_INVENTORY=true` 启用。
 - 网页工作台：已实现（`GET /workbench`、`/api/workbench/*`、`server/public/workbench/`），复用同一套业务服务和数据访问层，不复制入账逻辑；承载销售订单的后续收款、交付与查询，不承担数据录入。
-- 微信小程序：冻结，不新增功能；当前保留，仅用于平稳退役。
+- 微信小程序：已退役。原 `miniprogram/` 与旧路由已于 2026-10-01 整体删除，当前 Runtime 不存在微信入口，也没有开关可以重新启用；历史源码仅从 Git History 获取。
 
 ## 2. 可删除的代码边界
 
@@ -30,20 +30,19 @@ server/src/services/v1BitableGateway.js
         ↓
 飞书 V1 多维表格
 
-微信入口（冻结、以后整块删除）
-miniprogram/
-server/src/routes/legacyWechat.js
+微信入口（已于 2026-10-01 退役并整体删除）
+miniprogram/  ·  server/src/routes/legacyWechat.js
         ↓
 recognition / sync / query / analytics / salesTasks
 ```
 
-共享的 AI、日志和基础设施不属于微信代码。飞书模块禁止引用
-`legacyWechat.js`、旧 controller 或 `SalesTaskStore`。
+Legacy WeChat 已于 2026-10-01 正式退役：上面第二条链路的目录、路由，以及仅被它
+引用的 service / util / config / script / test 已整体删除，`ENABLE_LEGACY_WECHAT`
+开关本身也已移除（不再有任何开关能重新启用微信入口）。历史源码见 Git History，
+退役记录见 [archive/legacy-wechat-retirement.md](archive/legacy-wechat-retirement.md)。
 
-退役分两步：
-
-1. 服务器设置 `ENABLE_LEGACY_WECHAT=false` 并重载，观察至少 7 天；飞书回归测试必须通过。
-2. 再删除 `miniprogram/`、`legacyWechat.js` 以及仅被旧路由引用的 controller/service。
+共享的 AI、日志和基础设施不属于微信代码，因此保留；飞书模块仍然不得引用被删除的
+`SalesTaskStore` 等旧模块。
 
 ## 3. 日志设计
 

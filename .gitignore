@@ -1,6 +1,5 @@
 # Dependency
 node_modules/
-miniprogram_npm/
 .pnpm-store/
 
 # Env
@@ -10,7 +9,6 @@ miniprogram_npm/
 .env.development.local
 .env.test.local
 .env.production.local
-miniprogram/config.local.js
 
 # Logs
 npm-debug.log*
