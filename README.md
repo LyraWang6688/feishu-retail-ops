@@ -34,6 +34,7 @@
 ├── README.md           # 人的入口
 ├── docs/               # 项目文档
 │   ├── README.md       # 文档索引（现行 / 历史）
+│   ├── adr/            # 架构决策记录（为什么这样设计）
 │   ├── archive/        # 历史文档归档（原 agent.md、原 .trae 文档）
 │   └── prototypes/     # 设计原型
 ├── server/             # 后端 Express 代码

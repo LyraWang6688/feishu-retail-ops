@@ -19,7 +19,16 @@
 | [workbench-query-contract.md](workbench-query-contract.md) | 工作台查询接口契约 |
 | [sales-line-plan.md](sales-line-plan.md) | 销售线的推进计划与判据 |
 
-## 2. 现行设计参考（Design Baseline + 状态说明）
+## 2. 架构决策记录（Architecture Decision Records）
+
+现行架构决策记录，回答「为什么系统被设计成这样」，与第 1 节的现状描述互补，**不是历史文档**。治理规则（何时写 ADR、Status、Evidence 标注原则）见 [adr/README.md](adr/README.md)。
+
+| 文档 | 内容 |
+|---|---|
+| [adr/README.md](adr/README.md) | ADR 治理规则与索引 |
+| [adr/ADR-001-separate-ai-interpretation-from-deterministic-business-execution.md](adr/ADR-001-separate-ai-interpretation-from-deterministic-business-execution.md) | AI 负责理解与结构化，确定性后端负责正式业务执行 |
+
+## 3. 现行设计参考（Design Baseline + 状态说明）
 
 方案推演与当前实现混在同一份文档里，正文不能整体当作现状。**引用前先读文档顶部的状态说明**。
 
@@ -27,7 +36,7 @@
 |---|---|
 | [lark-agent-technical-design.md](lark-agent-technical-design.md) | 飞书 V1 原始设计基线；顶部标注了 Current implementation / Original design baseline / Future plan 的分区 |
 
-## 3. 历史文档（Historical）
+## 4. 历史文档（Historical）
 
 以下文档记录的是当时的真实情况，正文保持原样，只加了状态说明。它们**不代表当前架构**。
 
@@ -42,7 +51,7 @@
 
 当前仓库级 Agent 入口以根目录 [AGENTS.md](../AGENTS.md) 为准；`agent.md` 已不再是第二套入口。
 
-## 4. 设计资产
+## 5. 设计资产
 
 | 资产 | 说明 |
 |---|---|
