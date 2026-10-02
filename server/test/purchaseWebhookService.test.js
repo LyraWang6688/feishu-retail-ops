@@ -407,6 +407,13 @@ test('arrival with no images throws recognition failure', async () => {
   const task = await waitForTask(store, accepted.taskId);
   assert.equal(task.status, 'failed');
   assert.ok(task.error.includes('没有鞋盒图片'));
+  // process() 的失败分支是先落任务终态、再补写远端记录的，所以「任务已经 failed」
+  // 不等于「到货记录已经标成识别失败」：中间还有一个很短的窗口，慢机器上直接读
+  // 会读到中间态「识别中」（CI 上撞到过一次）。这里断言的是记录，就等到记录为止。
+  await waitFor('到货记录标记识别失败', async () => {
+    const record = await gateway.get('purchaseArrival', 'arr_noimg');
+    return record?.fields?.识别状态 === '识别失败';
+  });
   const updated = await gateway.get('purchaseArrival', 'arr_noimg');
   assert.equal(updated.fields.识别状态, '识别失败');
 });
