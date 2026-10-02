@@ -1,7 +1,7 @@
 # 交接说明（Agent Handoff）
 
 > 最后更新：2026-10-02
-> 基线：`main @ 53726785e3d52f2660c3fdff33defd98ec5994ed`（PR #16 合并后的 main）
+> 基线：`main @ f036d9123b68d64e2961ff9ea7795da3fe1fcf39`（PR #17、#18 合并后的 main）
 > 文档性质：**面向下一个接手者（人或 AI）的当前状态说明 + 待办 + 边界**。
 > 与本文冲突时，以代码和根目录 `AGENTS.md` 为准；本文不重复 `AGENTS.md` 已经写清的规范。
 
@@ -175,12 +175,33 @@ docs/                         索引见 docs/README.md（现行 / 设计基线 /
 
 ---
 
-## 7. 已知文档漂移（读文档时以代码为准）
+## 7. 已知问题
+
+### 7.1 文档漂移（读文档时以代码为准）
 
 1. `feishu-v1-operations.md` 第 1 节说「库存联动默认关闭，用 `ENABLE_SALES_INVENTORY` / `ENABLE_PURCHASE_INVENTORY` 启用」——**这两个变量在代码里没有任何读取点**：`purchaseWebhookService` 里是 `this.enablePurchaseInventory = true` 硬编码，销售交付也直接调库存。设了没用，文档待修。
 2. `sales-line-plan.md` 变更记录里登记的 `v1ReferenceResolver.findLiveInventory` 死代码**仍然存在**，且仍按数字读尺码。
 3. `sales-line-plan.md` 第 5 节说「服务器上的代码版本比集成分支旧」——main 已合并，**这条需要重新确认部署版本**。
 4. `lark-agent-technical-design.md` 是**原始设计基线**（顶部有状态分区），其中大量内容是设计推演而非现状，不要当成当前实现。
+
+### 7.2 不稳定测试与写入顺序观察
+
+`purchaseWebhookService.test.js` 里 "arrival with no images throws recognition failure" 曾经偶发失败（CI 上出现 `'识别中' !== '识别失败'`），已由 PR #18 修掉：**只改测试**，改成等「到货记录」本身，而不是只等到「任务状态」。
+
+但根因还在，属于**尚未评估的硬化项**：
+
+```js
+// server/src/services/purchaseWebhookService.js → process() 的 catch
+await this.store.update(taskId, { status: 'failed', error });              // ① 先写本地任务终态
+if (kind === 'arrival')
+  await this.gateway.update('purchaseArrival', { 识别状态: '识别失败' });   // ② 再写远端记录
+```
+
+如果在 ①② 之间崩溃或中断，本地任务文件说 `failed`，多维表格里的那条到货记录却永远停在「识别中」——不会有人再去修它。
+
+可选硬化：把顺序反过来，先补完远端记录、最后写本地任务终态，让「任务 = failed」成为一个可信信号。这会动采购服务的簿记顺序，所以没有跟着测试修复一起做，需要单独评估。
+
+方法记一笔：验证这类竞态时，可以在两步之间临时插一个延迟把窗口放大——插 60ms 后旧断言 100% 失败、新断言仍然通过，据此就能区分「是竞态」还是「某一处写漏了」。**延迟验证完必须删掉。**
 
 ---
 
@@ -249,20 +270,23 @@ docs/                         索引见 docs/README.md（现行 / 设计基线 /
 
 ## 10. 建议的下一步（按性价比排序）
 
-1. **先修第 7 节的 4 条文档漂移**：成本极低，避免下一个人被误导。
+1. **先修第 7.1 节的 4 条文档漂移**：成本极低，避免下一个人被误导。
 2. **上线验收**：先对生产 Base 跑 `pnpm run v1:schema-check:all`（部署闸门，先确认第 6.3 节的字段都在），再按「现货销售 → 交付扣库存 → 补款 → 采购报单 / 申请 / 到货 / 入库」的顺序做真实链路验收，**重点压幂等**：重复点击、事件重投、确认中途重启进程。
 3. **采购方案二（直采到货）**：改动小、不动库存语义，当天能验。
 4. **采购方案一（新品待检）**：要动表结构 + 库存状态 + 新行为编码。
 5. 再做销售 **C1 / C2**（预付 / 未付 / 团购的金额模型），最后 **C4 退换货**。
 6. 第 9 节的 5 点可以先出 `idempotency-contract.md` 的文档提案，不动代码。
+7. **（可选）第 7.2 节的写入顺序硬化**：把 `process()` 改成先补远端记录、最后写本地任务终态，消除「本地说失败、远端停在识别中」的窗口。要动采购簿记顺序，单独评估后再做。
 
 ---
 
 ## 11. 待清理（不属于业务，但会绊人）
 
-- **已合并但未删的分支**：`chore/remove-legacy-wechat`、`chore/project-rename-cleanup`、`chore/repository-hygiene-case-002`、多数 `codex/*`、`fix/feishu-v1-integration-idempotency`。
-- **未合并的分支**：`codex/purchase-workbench`、`codex/harden-config-auth-logging`、`security-hardening`（历史安全参考，未并入 main）。
-- **worktree**：项目内 `.worktrees/*` 共 5 个（`integration` / `integration-idempotency-fix` / `inventory-backend` / `purchase-backend` / `sales-backend`，均为 clean）；另有 14 个孤儿 worktree 在 `~/.codex/worktrees/*/box2bitable`，都是 detached `4a51838`，其 `.git` 指向已不存在的 `/Users/wangying/Documents/workplace/box2bitable`。
+- ✅ **分支与 worktree 已于 2026-10-02 清理完毕，不要重复做**：
+  - 远端分支 14 条 → 只剩 `main`；本地分支 20 条 → 只剩 `main`。
+  - PR #1（`security-hardening`）已关闭：落后 162 个提交、已 CONFLICTING，意图已被现有代码覆盖，且大量 diff 针对已退役的 `miniprogram/` 与 `supabase/`；需要时从 `b1f483b8542e2b8eef625f54eb2f159ce0ef5ba2` 取回它的 18 个独有提交。
+  - 19 个 worktree（1 主 + 5 项目内 + 14 孤儿）全部移除，`.git/worktrees` 登记从 19 归零，约释放 280M。
+  - 那 14 个孤儿的 `.git` 指向已不存在的 `/Users/wangying/Documents/workplace/box2bitable`，`git worktree remove` 会报 *is not a .git file*；正确做法是先删目录、再 `git worktree prune`。
 - **PM2 进程名 `box2bitable-server`** 与**部署路径 `/opt/box2bitable`** 仍是旧名，属独立的 Deployment Migration。
 - `.gitignore` 里仍留有 `小程序码.jpg`、`project.private.config.json`、`unpackage/` 与 `# Mini Program` 段标题（退役收尾遗漏）。
 - `/api/sync` 时代遗留、已无读取方的 `FEISHU_SYNC_CONCURRENCY` / `FEISHU_RETRY_*`，以及 `MODULES[*].sync` 段，仍留在仓库里。
