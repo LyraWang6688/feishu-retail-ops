@@ -102,6 +102,8 @@ AI Interpretation  →  Structured Draft  →  Validation  →  Human Confirmati
 5. **所有用户入口复用同一套业务执行规则。** 网页工作台的收款与交付直接复用与机器人相同的 `PaymentService` / `SalesDeliveryService` `[Repo]`（`server/src/services/salesFollowupService.js:13-14`，经 `server/src/routes/workbench.js:42`、`:55` 调用），只额外增加 `confirmStatus === '已入账'` 前置条件，不复制业务规则 `[Repo]`（`salesFollowupService.js:97`）。飞书工作流只允许承担提醒、审批和通知编排 `[Repo]`（`docs/project-progress.md:24-27`）。
 6. **正式入账必须幂等、可恢复、可追踪。** 采购批次 / 采购申请 / 实时库存使用远端幂等键，重试前先按键回查，命中多条即停止转人工 `[Repo]`（`docs/idempotency-contract.md:27-53`；`server/src/infrastructure/idempotencyKey.js:7-8`、`:43`）；库存变动使用来源明细 ID 做幂等键并保留可恢复日志 `[Repo]`（`inventoryService.js:60-61`、`:67`、`:195`、`:254`）。
 
+> 这是正式入账的**架构约束 / Target Requirement**，不代表当前所有正式入账链路都已完全实现远端幂等：当前实现覆盖仍不完整，具体缺口见 Uncertainty 5。
+
 **不得**让大模型直接决定最终库存、资金或正式业务账；**不得**让不同入口各自维护一套库存、资金和订单状态逻辑。
 
 ## Why
@@ -160,7 +162,7 @@ AI Interpretation  →  Structured Draft  →  Validation  →  Human Confirmati
 ## Uncertainty
 
 1. **日期与合入范围。** V1 代码 2026-09-23 起在分支上开发，2026-10-01 才经 PR #13 进入 `main`；不能据此说「该架构 2026-09-23 已上线」。同时 `docs/project-progress.md:45` 记录 V1「尚需完成服务器部署、新应用配置、Schema 校验和真实飞书端到端验收」，因此**仓库无法证明该架构已在生产多维表格上真实运行过**，只能证明它已被实现并被测试约束。
-2. **采购入口存在文档与代码漂移。** `AGENTS.md:6`、`docs/project-progress.md:35`、`docs/feishu-v1-operations.md:13` 仍描述「机器人私聊连续发送到货图片」，但当前代码拒绝非文字消息并回复「机器人当前只接收销售文字；采购请使用采购表单」`[Repo]`（`larkMvpService.js:248-249`），机器人采购图片流程已无任何调用点且有回归测试钉住 `[Repo]`（`server/test/larkMvpService.test.js:77`）；现行到货识别由多维表格记录变更事件触发 `[Repo]`（`larkEvents.js:75-76`、`:122` → `purchaseWebhookService.js:409`、`:425`）。**本 ADR 按代码描述**；文档漂移不在本次允许修改范围内，未修改。
+2. **采购入口曾存在文档与代码漂移（已在本 PR 中最小修正）。** 修正前，`AGENTS.md:6`、`docs/project-progress.md:35`、`docs/feishu-v1-operations.md:13` 描述「机器人私聊连续发送到货图片」，但当前代码拒绝非文字消息并回复「机器人当前只接收销售文字；采购请使用采购表单」`[Repo]`（`larkMvpService.js:248-249`），机器人采购图片流程已无任何调用点且有回归测试钉住 `[Repo]`（`server/test/larkMvpService.test.js:77`）；现行到货识别由多维表格记录变更事件触发 `[Repo]`（`larkEvents.js:75-76`、`:122` → `purchaseWebhookService.js:409`、`:425`）。**本 ADR 按代码描述**；相关 Current-State 文档已按此修正，历史文档未改动。
 3. **更早方案是否真正运行过无法证明。** 旧微信链路的写入实现与配置已随 PR #16 删除，只能从 Git History 获取；无法证明它当时是否独立计算过库存 / 资金规则，也无法证明 Supabase 是否在生产运行过。
 4. **Option A 只能证明「未被采纳」，不能证明「从未尝试」。** 记录为被拒绝的设计选择。
 5. **幂等覆盖不对称。** 采购批次、采购申请、实时库存有远端幂等键，采购入库明细与销售侧正式入账没有；且库存串行队列是进程内的（`keyedSerialQueue.js`），多实例并发不在保护范围内。该差异不应被读成「全链路已完全幂等」。
