@@ -7,8 +7,14 @@ const { logError, logInfo } = require('./utils/logger');
 const { uploadDir } = require('./utils/upload');
 const { startUploadCleanup } = require('./utils/uploadCleanup');
 
-// Load environment variables
-dotenv.config({ path: path.join(__dirname, '../../.env') });
+// Load environment variables.
+//
+// quiet 是为日志契约服务的：dotenv 从 17 起默认会往 stdout 打一行
+// "injected env (N) from .env"。本服务的日志是结构化 JSON（utils/logger.js），
+// 任何非 JSON 行都会污染日志流，让"按行解析 / 按 bitable.record.* 事件过滤"
+// 的排查方式失效。在 dotenv 16 上该选项会被忽略，所以这行可以先落地，
+// 等依赖升到 18 时才真正生效。
+dotenv.config({ path: path.join(__dirname, '../../.env'), quiet: true });
 
 const app = express();
 const port = process.env.PORT || 3000;
