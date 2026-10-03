@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const lark = require('@larksuiteoapi/node-sdk');
+const { larkLogger } = require('../utils/larkLogger');
 const doubaoService = require('./doubaoService');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
@@ -67,7 +68,7 @@ class LarkMvpService {
     if (options.client) this.client = options.client;
     else {
       const { appId, appSecret } = getLarkAgentCredentials();
-      this.client = new lark.Client({ appId, appSecret });
+      this.client = new lark.Client({ appId, appSecret, logger: larkLogger });
     }
     this.gateway = options.gateway || new V1BitableGateway({ client: this.client });
     this.references = options.references || new V1ReferenceResolver(this.gateway);

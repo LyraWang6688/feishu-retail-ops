@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const lark = require('@larksuiteoapi/node-sdk');
+const { larkLogger } = require('../utils/larkLogger');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { V1BitableGateway, linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
@@ -52,7 +53,7 @@ class PurchaseWebhookService {
   constructor(options = {}) {
     this.client = options.client || (() => {
       const { appId, appSecret } = getLarkAgentCredentials();
-      return new lark.Client({ appId, appSecret });
+      return new lark.Client({ appId, appSecret, logger: larkLogger });
     })();
     this.gateway = options.gateway || new V1BitableGateway({ client: this.client });
     this.references = options.references || new V1ReferenceResolver(this.gateway);
