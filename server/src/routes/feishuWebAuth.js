@@ -90,11 +90,20 @@ const createFeishuWebAuthRouter = () => {
     const record = states.get(req.query.state);
     states.delete(req.query.state);
     if (!record || record.expires_at < Date.now()) return res.status(400).send('飞书登录状态已过期，请重新打开工作台');
-    // req.query.error 完全由调用方控制，而 res.send(字符串) 默认的 Content-Type 是
-    // text/html，直接回显会形成反射型 XSS（对应告警 CodeQL js/reflected-xss）。
-    // 这条分支在 state 有效时即可到达，攻击者可以自己先请求 /start 拿到一个合法
-    // state，再构造链接诱导他人点击，因此必须显式降级为 text/plain。
-    if (req.query.error) return res.status(400).type('text/plain').send(`飞书登录未完成：${req.query.error}`);
+    // req.query.error 完全由调用方控制，这条分支在 state 有效时即可到达——攻击者
+    // 可以自己先请求 /start 拿到合法 state，再构造链接诱导他人点击。
+    //
+    // 这里刻意不回显它：res.send(字符串) 默认 Content-Type 是 text/html，而 CodeQL
+    // 也不把 `res.type('text/plain')` 认作净化（js/reflected-xss，实测仍会报）。
+    // 与其和工具互相说服，不如让响应体里根本不出现用户输入——排查所需的原始错误
+    // 写进结构化日志，按 request_id 查即可。
+    if (req.query.error) {
+      logWarn('workbench.auth.provider_error', {
+        request_id: req.requestId,
+        error: String(req.query.error).slice(0, 200),
+      });
+      return res.status(400).type('text/plain').send('飞书登录未完成，请重新打开工作台重试');
+    }
     try {
       const appToken = await jsonFetch('https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app_id: process.env.LARK_AGENT_APP_ID, app_secret: process.env.LARK_AGENT_APP_SECRET }) });
       const token = await jsonFetch('https://open.feishu.cn/open-apis/authen/v1/access_token', { method: 'POST', headers: { Authorization: `Bearer ${appToken.app_access_token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ grant_type: 'authorization_code', code: req.query.code }) });

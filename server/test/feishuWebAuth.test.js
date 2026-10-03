@@ -40,7 +40,7 @@ const withServer = async (run) => {
   }
 };
 
-test('OAuth 回调不会把 req.query.error 当作 HTML 反射', async () => {
+test('OAuth 回调不回显 req.query.error，只写结构化日志', async () => {
   await withServer(async (base) => {
     // 这条分支在 state 有效时即可到达，而攻击者可以自己先请求 /start 拿到一个
     // 合法 state，再构造链接诱导他人点击——所以它不是不可达的死分支。
@@ -51,16 +51,32 @@ test('OAuth 回调不会把 req.query.error 当作 HTML 反射', async () => {
     assert.ok(state, '/start 应当带上 state');
 
     const payload = '<script>alert(1)</script>';
-    const response = await fetch(
-      `${base}/api/auth/feishu/callback?state=${encodeURIComponent(state)}&error=${encodeURIComponent(payload)}`,
-    );
-    const body = await response.text();
+    const captured = [];
+    const originalWarn = console.warn;
+    console.warn = (line) => captured.push(String(line));
+    let response;
+    let body;
+    try {
+      response = await fetch(
+        `${base}/api/auth/feishu/callback?state=${encodeURIComponent(state)}&error=${encodeURIComponent(payload)}`,
+      );
+      body = await response.text();
+    } finally {
+      console.warn = originalWarn;
+    }
 
     assert.equal(response.status, 400);
     assert.doesNotMatch(response.headers.get('content-type') || '', /text\/html/);
-    // 信息本身仍然保留，便于排查；只是不再以 HTML 交付给浏览器执行。
+    // 关键断言：响应体里完全不出现调用方提供的值，CodeQL 的 taint flow 因此不存在。
+    assert.ok(!body.includes(payload), `响应体不应回显用户输入，实际为：${body}`);
     assert.match(body, /飞书登录未完成/);
-    assert.ok(body.includes(payload));
+
+    // 但诊断信息不能丢：原始错误进了结构化日志，按 request_id 可查。
+    const logged = captured
+      .map((line) => JSON.parse(line))
+      .find((entry) => entry.event === 'workbench.auth.provider_error');
+    assert.ok(logged, '应当记录 workbench.auth.provider_error');
+    assert.equal(logged.error, payload);
   });
 });
 
