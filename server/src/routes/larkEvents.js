@@ -4,6 +4,7 @@ const lark = require('@larksuiteoapi/node-sdk');
 const { LarkMvpService } = require('../services/larkMvpService');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { logError, logInfo, logWarn } = require('../utils/logger');
+const { larkLogger } = require('../utils/larkLogger');
 
 const createLarkEventHandlers = (service) => ({
   'im.message.receive_v1': (event) => {
@@ -146,7 +147,7 @@ const createLarkEventsRouter = (options = {}) => {
   // EventDispatcher validates the callback signature/token before invoking these handlers.
   // The parsed card/menu payload does not consistently retain a top-level token, so handlers
   // must not perform a second token check against the parsed business event.
-  const dispatcher = new lark.EventDispatcher({ verificationToken, encryptKey }).register(
+  const dispatcher = new lark.EventDispatcher({ verificationToken, encryptKey, logger: larkLogger }).register(
     createLarkEventHandlers(service),
   );
 

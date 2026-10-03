@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { V1_BITABLE_SCHEMA, getV1Table } = require('../config/v1BitableSchema');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
+const { larkLogger } = require('../utils/larkLogger');
 const { logError, logInfo } = require('../utils/logger');
 
 const compact = (value) => {
@@ -48,7 +49,7 @@ class V1BitableGateway {
     if (options.client) this.client = options.client;
     else {
       const { appId, appSecret } = getLarkAgentCredentials();
-      this.client = new lark.Client({ appId, appSecret });
+      this.client = new lark.Client({ appId, appSecret, logger: larkLogger });
     }
     this.fieldCache = new Map();
   }

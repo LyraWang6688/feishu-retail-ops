@@ -9,6 +9,7 @@ const { textValue } = require('./v1BitableGateway');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
 const { sampleReplacementCard, sampleReplacementStatusCard, sampleReplacementProcessingCard } = require('../utils/larkCards');
 const { logError, logInfo, logWarn } = require('../utils/logger');
+const { larkLogger } = require('../utils/larkLogger');
 
 const taskIdFor = (salesDetailRecordId) =>
   `sample_${crypto.createHash('sha256').update(String(salesDetailRecordId)).digest('hex').slice(0, 20)}`;
@@ -25,7 +26,7 @@ class SampleReplacementService {
     if (!sendCard || !sendText || !updateCard) {
       if (!client) {
         const { appId, appSecret } = getLarkAgentCredentials();
-        client = new lark.Client({ appId, appSecret });
+        client = new lark.Client({ appId, appSecret, logger: larkLogger });
       }
     }
     this.sendCard = sendCard || (async (openId, card) => {
