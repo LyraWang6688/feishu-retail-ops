@@ -1,0 +1,49 @@
+version: 2
+
+updates:
+  # 后端依赖。开源依赖的版本更新是免费能力，与 Copilot / Code Quality 无关。
+  #
+  # 设计取舍：
+  # - 按 minor+patch 分组，避免“每个包各开一个 PR”的洪水；major 一律单独开，
+  #   因为 major 升级需要人工判断（本项目已遇到 openai 4→7、express 4→5 这类破坏性变更）。
+  # - open-pull-requests-limit 限制同时挂着的 PR 数量：门禁要求所有 PR 过 CI，
+  #   一次涌入十几个 PR 会让“谁在等谁”变得无法排查。
+  # - 安全更新（security updates）保持不分组、即时开 PR：它优先级高于常规版本更新，
+  #   不应该排队等下一个 weekly 窗口。
+  - package-ecosystem: npm
+    directory: /server
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: 'chore(deps)'
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        patterns:
+          - '*'
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # 这两次 major 升级都会改变调用契约，必须人工评估后单独执行，
+      # 不能让自动化直接开 PR 诱导合并。
+      - dependency-name: openai
+        update-types:
+          - version-update:semver-major
+      - dependency-name: express
+        update-types:
+          - version-update:semver-major
+
+  # workflow 里用到的 GitHub Actions 也需要跟版本：
+  # 一个过期或被弃用的 action 本身就是供应链风险。
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: 'chore(ci)'
