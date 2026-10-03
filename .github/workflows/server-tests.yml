@@ -5,7 +5,7 @@ name: server tests
 on:
   pull_request:
   push:
-    branches: [main, codex/feishu-v1]
+    branches: [main]
 
 jobs:
   test:
@@ -31,3 +31,11 @@ jobs:
       # 只跑“提交即失败”的确定性检查（单元测试）。
       # 格式、lint 之类的机械检查留在这里会拖慢 agent 的循环，不纳入本工作流。
       - run: pnpm test
+
+      # 已知漏洞同样不允许进入 main。这一条与 Ruleset 的 required check 绑定，
+      # 所以“测试过了但依赖带洞”不再是一个可以合并的状态。
+      #
+      # 只审计生产依赖（--prod）：开发依赖里可能存在上游尚未发布修复版本的告警
+      # （例如 braces，公告要求 >=3.0.4，但该版本至今未发布）。把它算进门禁会让
+      # 任何人——包括 agent——被一个无法修复的问题永久卡死，那不是门禁而是死锁。
+      - run: pnpm audit --prod --audit-level=high
