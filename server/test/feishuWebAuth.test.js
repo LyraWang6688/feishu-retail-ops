@@ -16,16 +16,30 @@ test('safeReturnTo 只接受站内相对路径', () => {
   assert.equal(safeReturnTo('/workbench'), '/workbench');
   assert.equal(safeReturnTo('/workbench?tab=sales#row-3'), '/workbench?tab=sales#row-3');
 
-  // 以下输入都曾能绕过原先的 `startsWith('/') && !startsWith('//')` 检查：
-  // WHATWG URL 把反斜杠按正斜杠处理，于是 `/\evil.com` 会解析成 host=evil.com。
-  assert.equal(safeReturnTo('/\\evil.com'), '/');
-  assert.equal(safeReturnTo('\\\\evil.com'), '/');
-  assert.equal(safeReturnTo('/\\\\evil.com'), '/');
-  assert.equal(safeReturnTo('//evil.com'), '/');
-  assert.equal(safeReturnTo('https://evil.com'), '/');
-  assert.equal(safeReturnTo(undefined), '/');
-  assert.equal(safeReturnTo(''), '/');
-  assert.equal(safeReturnTo(123), '/');
+  // 这些输入曾被怀疑可以绕过校验（`/\evil.com` 确实能绕过最初那版：
+  // WHATWG URL 把反斜杠按正斜杠处理，于是它解析成 host=evil.com）。
+  // 现在必须一律退回站点根路径。
+  const mustFallBack = [
+    '/\\evil.com', '\\\\evil.com', '/\\\\evil.com', '//evil.com', '///evil.com',
+    '/\\/evil.com', '\\/evil.com', 'https://evil.com', 'http:evil.com',
+    'javascript:alert(1)', 'data:text/html,x', '', '//',
+    123, null, undefined,
+  ];
+  mustFallBack.forEach((value) => {
+    assert.equal(safeReturnTo(value), '/', `应当退回 /：${JSON.stringify(value)}`);
+  });
+
+  // 判定标准不是字符串长什么样，而是“浏览器最终解析出的 host 是不是本站”。
+  // 百分号编码的反斜杠/斜杠不会在解析阶段被还原成分隔符，因此原样放行——
+  // 但即使放行，它们也必须留在本站。
+  const ORIGIN = 'https://workbench.bamamei.online';
+  const mustStayOnSite = [
+    '/%5Cevil.com', '/%2f%2fevil.com', '/..//evil.com', '/%2e%2e//evil.com',
+    '/@evil.com', '/%09/evil.com', '/ evil.com',
+  ];
+  mustStayOnSite.forEach((value) => {
+    assert.equal(new URL(safeReturnTo(value), ORIGIN).origin, ORIGIN, `不应跳出本站：${value}`);
+  });
 });
 
 const withServer = async (run) => {
