@@ -5,7 +5,9 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-require('dotenv').config({ path: path.join(__dirname, '../../.env') });
+// quiet：dotenv >=17 默认会往 stdout 打一行 "injected env (N) from .env"，
+// 会混进这个脚本自己的输出。dotenv 16 会忽略该选项。
+require('dotenv').config({ path: path.join(__dirname, '../../.env'), quiet: true });
 const lark = require('@larksuiteoapi/node-sdk');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { V1BitableGateway, linkedRecordIds, textValue } = require('../src/services/v1BitableGateway');
