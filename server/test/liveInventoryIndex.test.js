@@ -112,3 +112,20 @@ test('库存记录缺少货品或尺码关联时跳过，不能凭空造出关�
   assert.equal(index.skippedRecords, 2);
   assert.deepEqual(index.find({ itemNo: 'DN16', size: 40 }).colors, []);
 });
+
+test('补样品候选按货品记录（货号 + 颜色）取，绝不跨颜色', () => {
+  const index = build([
+    record({ id: 'r1', stockKey: 'DN16|黑|A|36', product: 'prod_black' }),
+    record({ id: 'r2', stockKey: 'DN16|黑|A|38', product: 'prod_black' }),
+    record({ id: 'r3', stockKey: 'DN16|米|A|38', product: 'prod_beige' }),
+  ]);
+  assert.deepEqual(index.sampleReplacementCandidatesForProduct('prod_black'), [
+    { size: 36, doorBoxCount: 1, sampleCount: 0, warehouseCount: 0 },
+    { size: 38, doorBoxCount: 1, sampleCount: 0, warehouseCount: 0 },
+  ]);
+  assert.deepEqual(index.sampleReplacementCandidatesForProduct('prod_beige'), [
+    { size: 38, doorBoxCount: 1, sampleCount: 0, warehouseCount: 0 },
+  ]);
+  assert.deepEqual(index.sampleReplacementCandidatesForProduct(''), []);
+  assert.deepEqual(index.sampleReplacementCandidatesForProduct('不存在'), []);
+});

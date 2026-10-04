@@ -1150,3 +1150,116 @@ test('券表读不到时返回空目录，让券的说法落到"未配置"追问
     references: {}, posting: {}, recognizer: {}, store });
   assert.deepEqual(await service.listGroupBuyVouchers(), []);
 });
+
+// ─── 3B：卖样品要补哪个门盒，在确认卡片上一次问完 ───
+
+const sampleSaleService = ({ store, cards, promoted, counter }) => {
+  const { normalizeSalesResult } = require('../src/services/doubaoService');
+  const service = new LarkMvpService({
+    client: {},
+    gateway: {
+      ...liveInventoryGateway([
+        // 卖的这一双只有样品（门盒 0）；同货号 36 / 38 码还有门盒能补。
+        liveRow({ itemNo: '6V637-7', color: '黑', size: 41, state: '样品', productRecordId: 'prod_a', recordId: 'live_sample' }),
+        liveRow({ itemNo: '6V637-7', color: '黑', size: 36, productRecordId: 'prod_a', recordId: 'live_36' }),
+        liveRow({ itemNo: '6V637-7', color: '黑', size: 38, productRecordId: 'prod_a', recordId: 'live_38' }),
+      ]),
+      validateTables: async () => [], create: async () => ({ recordId: 'entry_sample' }), update: async () => undefined,
+    },
+    references: {},
+    posting: { postSale: async () => ({ sourceNo: 'XSD-S', detailRecordIds: ['detail_1'], paymentRecordIds: ['pay_1'] }) },
+    delivery: { deliver: async () => ({ sampleReplacements: [
+      { salesDetailRecordId: 'detail_1', productRecordId: 'prod_a', consumedLiveRecordIds: ['live_sample'] }] }) },
+    recognizer: { parseSalesText: async () => normalizeSalesResult({ intent: 'sale', trade_type: '现货',
+      items: [{ item_no: '6V637-7', color: '黑', size: 41, quantity: 1, actual_amount: 150 }],
+      payments: [{ amount: 150, method: '现金' }], agreed_total: 150 }) },
+    store,
+  });
+  service.sampleReplacements = {
+    applyPreChosen: async (replacements) => {
+      promoted.push(...replacements);
+      return new Set(replacements.map((item) => item.salesDetailRecordId));
+    },
+    notifySampleReplacements: async (_result, _openId, options) => { counter.notices += 1; counter.handled = options?.handledDetailIds; },
+  };
+  service.replyCard = async (_messageId, card) => { cards.push(card); return 'card_sample'; };
+  service.updateSalesActionCard = async (_task, _event, card) => { cards.push(card); return true; };
+  return service;
+};
+
+const openSampleSale = async (store, taskId) => store.create({ task_id: taskId, type: 'sale',
+  status: 'received', message_id: `om_${taskId}`, sender_open_id: 'ou_1', sent_at: Date.now(),
+  original_text: '6V637-7黑41一双150现金' });
+
+const act = (service, value) => service.handleCardAction({
+  operator: { operator_id: { open_id: 'ou_1' } }, action: { value } });
+
+test('卖的是样品时：卡片上就让她选补哪个门盒，选完确认，不再另发一张补选卡', async () => {
+  const store = makeStore();
+  const cards = [];
+  const promoted = [];
+  const counter = { notices: 0, handled: null };
+  const service = sampleSaleService({ store, cards, promoted, counter });
+  await openSampleSale(store, 'sale_sample');
+
+  await service.processSalesTask('sale_sample');
+
+  const draft = (await store.get('sale_sample')).draft;
+  assert.equal(draft.items[0].uses_sample, true, '门盒为 0、还有样品，卖掉就会动样品');
+  assert.equal(draft.items[0].needs_sample_replacement, true);
+  assert.deepEqual(draft.items[0].sample_replacement_options.map((row) => row.size), [36, 38]);
+  const card = JSON.stringify(cards[0]);
+  assert.match(card, /是样品，卖掉后要补一个门盒/);
+  assert.match(card, /choose_sale_sample_replacement/);
+
+  // 没选补样品就不许确认：跟"没选颜色不许确认"是同一条规矩
+  const refused = await act(service, { action: 'confirm_sale', draft_id: 'sale_sample' });
+  assert.equal(refused.toast.type, 'warning');
+  assert.match(refused.toast.content, /补哪个门盒/);
+  assert.equal((await store.get('sale_sample')).status, 'ready_to_confirm');
+
+  const chosen = await act(service, { action: 'choose_sale_sample_replacement',
+    draft_id: 'sale_sample', item_index: 0, size: 38 });
+  assert.equal(chosen.toast.type, 'success');
+  assert.equal((await store.get('sale_sample')).draft.items[0].sample_replacement_size, 38);
+
+  const done = await act(service, { action: 'confirm_sale', draft_id: 'sale_sample' });
+  assert.equal(done.toast.type, 'success');
+  assert.deepEqual(promoted, [{ salesDetailRecordId: 'detail_1', productRecordId: 'prod_a', size: 38 }],
+    '确认后由脚本直接补样品');
+  // 补掉的明细要交给提醒去跳过，否则她还会收到第二张补选卡。
+  assert.deepEqual([...(counter.handled || [])], ['detail_1'],
+    '已经补完的明细必须进入跳过名单，否则还会再发一张补选卡');
+});
+
+test('门盒够的时候卡片不出现补偿区：不需要她为"补样品"多做一件事', async () => {
+  const store = makeStore();
+  const cards = [];
+  const promoted = [];
+  const counter = { notices: 0, handled: null };
+  const { normalizeSalesResult } = require('../src/services/doubaoService');
+  const service = new LarkMvpService({
+    client: {},
+    gateway: {
+      ...liveInventoryGateway([
+        liveRow({ itemNo: '26632', color: '黑', size: 37, productRecordId: 'prod_x', recordId: 'live_37' }),
+      ]),
+      validateTables: async () => [], create: async () => ({ recordId: 'entry_ok' }), update: async () => undefined,
+    },
+    references: {}, posting: {},
+    recognizer: { parseSalesText: async () => normalizeSalesResult({ intent: 'sale', trade_type: '现货',
+      items: [{ item_no: '26632', color: '黑', size: 37, quantity: 1, actual_amount: 210 }],
+      payments: [{ amount: 210, method: '微信' }], agreed_total: 210 }) },
+    store,
+  });
+  service.replyCard = async (_messageId, card) => { cards.push(card); return 'card_ok'; };
+  await store.create({ task_id: 'sale_doorbox_ok', type: 'sale', status: 'received', message_id: 'om_ok',
+    sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '26632黑37一双210微信' });
+
+  await service.processSalesTask('sale_doorbox_ok');
+
+  const item = (await store.get('sale_doorbox_ok')).draft.items[0];
+  assert.equal(item.uses_sample, false);
+  assert.equal(item.needs_sample_replacement, false);
+  assert.doesNotMatch(JSON.stringify(cards[0]), /要补一个门盒/);
+});

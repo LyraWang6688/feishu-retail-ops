@@ -200,6 +200,39 @@ const salesColorPickers = (draftId, draft) => {
   return elements;
 };
 
+// 卖的是样品时：告诉她这一双卖掉要补一个门盒，并**在这张卡片上就选完**。
+// 合并进确认卡片的原因：否则她点完确认，还要再收一张卡、再点一次——
+// 而"卖样品要补哪个门盒"这件事，出卡片时就已经能算出来了（实时库存已经读过）。
+const salesSampleReplacementPicker = (draftId, draft) => {
+  const elements = [];
+  (draft.items || []).forEach((item, index) => {
+    if (!item.uses_sample) return;
+    const label = text(item.product_number || item.item_no || '这一双');
+    const options = item.sample_replacement_options || [];
+    const lines = options.map((row) =>
+      `${row.size}码：门盒 ${row.doorBoxCount}、样品 ${row.sampleCount}`);
+    elements.push({
+      tag: 'markdown',
+      content: `**第 ${index + 1} 双是样品，卖掉后要补一个门盒**（${label}）\n` +
+        (lines.length
+          ? `请选一个门盒来补样品：\n${lines.join('\n')}`
+          : '同货号的门盒已经没有余量，需要另行调拨。'),
+    });
+    if (lines.length) {
+      elements.push({
+        tag: 'action',
+        actions: options.map((row) => actionButton(
+          item.sample_replacement_size === row.size ? `已选 ${row.size}码` : `选 ${row.size}码`,
+          'choose_sale_sample_replacement', draftId,
+          item.sample_replacement_size === row.size ? 'primary' : 'default',
+          { item_index: index, size: row.size },
+        )),
+      });
+    }
+  });
+  return elements;
+};
+
 // 交易类型是脚本按注册表从 AI 识别的性质推出来的，卡片只**展示**，不再让用户选。
 // 确认这个动作的含义因此变得单一：她核对的是"AI 听对了没有"，不是替系统决定交付方式。
 const tradeTypeLine = (draft) => {
@@ -224,6 +257,7 @@ const salesConfirmationCard = (draftId, draft) => ({
         `\n**交易类型：** ${tradeTypeLine(draft)}`,
     },
     ...salesColorPickers(draftId, draft),
+    ...salesSampleReplacementPicker(draftId, draft),
     {
       tag: 'action',
       actions: [

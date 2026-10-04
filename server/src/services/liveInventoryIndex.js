@@ -74,6 +74,35 @@ class LiveInventoryIndex {
   }
 
   /**
+   * 补样品候选：**同一个货品记录**（= 货号 + 颜色）下，门盒还有余量的尺码。
+   *
+   * 这一块存在的理由：卖掉的如果是样品，就得从门盒里转一双回去补样品。
+   * 补偿必须在**同一个货品记录**内完成（换颜色就是换了一款鞋），
+   * 而且只能用门盒——仓库鞋需另行调拨，不参与补样品。
+   */
+  sampleReplacementCandidatesForProduct(productRecordId, { excludeRecordIds = [] } = {}) {
+    const wanted = String(productRecordId || '');
+    if (!wanted) return [];
+    const excluded = new Set(excludeRecordIds);
+    const rows = [];
+    for (const bySize of this.byItemNo.values()) {
+      for (const [size, byColor] of bySize.entries()) {
+        for (const entry of byColor.values()) {
+          if (entry.productRecordId !== wanted) continue;
+          const keep = (ids) => ids.filter((id) => !excluded.has(id)).length;
+          rows.push({
+            size,
+            doorBoxCount: keep(entry.records['门盒']),
+            sampleCount: keep(entry.records['样品']),
+            warehouseCount: keep(entry.records['仓库']),
+          });
+        }
+      }
+    }
+    return rows.sort((left, right) => left.size - right.size);
+  }
+
+  /**
    * 某个货号在店里有哪些尺码，每个尺码有几双（用于"没货"时告诉她有什么）。
    */
   sizesOf(itemNo) {
