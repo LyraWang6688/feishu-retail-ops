@@ -4,6 +4,7 @@
 > 基线：`main @ f036d9123b68d64e2961ff9ea7795da3fe1fcf39`（PR #17、#18 合并后的 main）
 > 文档性质：**面向下一个接手者（人或 AI）的当前状态说明 + 待办 + 边界**。
 > 与本文冲突时，以代码和根目录 `AGENTS.md` 为准；本文不重复 `AGENTS.md` 已经写清的规范。
+> 📌 **新增协作线（2026-10-04）**：抖音内容与经营共创（背景 / 资产索引 / 第一步请求）→ 见 [handoff-douyin-content-co-creation.md](handoff-douyin-content-co-creation.md)
 
 ---
 

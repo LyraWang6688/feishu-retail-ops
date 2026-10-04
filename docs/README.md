@@ -11,6 +11,7 @@
 | 文档 | 内容 |
 |---|---|
 | [handoff.md](handoff.md) | 交接说明：当前状态、硬约束、幂等现状、待办、采购改造方案与下一步建议 |
+| [handoff-douyin-content-co-creation.md](handoff-douyin-content-co-creation.md) | **抖音共创交接**（2026-10-04 新增协作线）：家族生意背景、既有飞书资产索引、能力边界与第一步请求 |
 | [project-progress.md](project-progress.md) | 项目进展、已确认决策与后续路线 |
 | [feishu-v1-operations.md](feishu-v1-operations.md) | 飞书 V1 的运行与运维手册（部署、日志、排查） |
 | [module-boundaries.md](module-boundaries.md) | 模块边界与职责划分 |
