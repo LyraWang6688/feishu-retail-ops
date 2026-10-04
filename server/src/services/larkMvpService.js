@@ -391,22 +391,34 @@ class LarkMvpService {
     if (!table?.tableId || !table.fields?.completeness) return null;
     const records = await this.gateway.listAll('product');
     const byId = new Map();
+    // 同时按「货号」建索引：同一个货号会有多个颜色（每个颜色一条货品记录）。
+    // 卖货时要把**这个货号下所有颜色**里资料不全的都提示出来——同款不同色通常
+    // 一起上架，让她一次补齐，比每次卖一个颜色提醒一次省事。
+    const byItemNo = new Map();
     for (const record of records) {
       const fields = record?.fields || {};
       // 「信息是否齐备」是飞书公式：齐备时返回「齐备」，否则返回缺的字段名。
       // 不自己逐字段判断——单一数据源留在表里，她在飞书改公式这里自动跟着变。
       const completeness = textValue(fields[table.fields.completeness]).trim();
       const sampleImages = fields[table.fields.sampleImage];
-      byId.set(record.record_id, {
+      const itemNo = textValue(fields[table.fields.itemNo]).trim();
+      const color = textValue(fields[table.fields.color]).trim();
+      const info = {
         missing: completeness && completeness !== '齐备'
           ? completeness.split('、').map((name) => name.trim()).filter(Boolean)
           : [],
         // 「样例图」是附件字段，不在齐备公式里，单独看有没有图。
         missingSampleImage: !(Array.isArray(sampleImages) && sampleImages.length > 0),
-      });
+        label: `${itemNo}${color}`,
+      };
+      byId.set(record.record_id, info);
+      if (itemNo) {
+        if (!byItemNo.has(itemNo)) byItemNo.set(itemNo, []);
+        byItemNo.get(itemNo).push({ recordId: record.record_id, ...info });
+      }
     }
-    logInfo('lark.sales.product_index.loaded', { record_count: records.length });
-    return { tableId: table.tableId, byId };
+    logInfo('lark.sales.product_index.loaded', { record_count: records.length, item_count: byItemNo.size });
+    return { tableId: table.tableId, byId, byItemNo };
   }
 
   /**
@@ -418,20 +430,27 @@ class LarkMvpService {
     const appToken = V1_BITABLE_SCHEMA.appToken;
     const gaps = [];
     const seen = new Set();
+    // 按「货号」取——同一个货号可能有多个颜色，每个颜色一条货品记录。
+    // 卖其中一双时，把这个货号下**所有颜色**里资料不全的都提示出来。
     for (const item of items || []) {
-      const recordId = item.product_record_id;
-      if (!recordId || seen.has(recordId)) continue;
-      seen.add(recordId);
-      const info = index.byId.get(recordId);
-      if (!info) continue;
-      if (!info.missing.length && !info.missingSampleImage) continue;
-      gaps.push({
-        record_id: recordId,
-        label: item.product_number || item.item_no || '',
-        missing: info.missing,
-        missing_sample_image: info.missingSampleImage,
-        url: recordUrl({ appToken, tableId: index.tableId, recordId }),
-      });
+      const itemNo = String(item.item_no || '').trim();
+      if (!itemNo) continue;
+      // 优先用货号索引；没有货号索引时退回"只看这一件匹配到的记录"。
+      const candidates = index.byItemNo?.get(itemNo)
+        || (index.byId?.get(item.product_record_id)
+          ? [{ recordId: item.product_record_id, ...index.byId.get(item.product_record_id) }] : []);
+      for (const candidate of candidates) {
+        if (seen.has(candidate.recordId)) continue;
+        seen.add(candidate.recordId);
+        if (!candidate.missing.length && !candidate.missingSampleImage) continue;
+        gaps.push({
+          record_id: candidate.recordId,
+          label: candidate.label || item.item_no || '',
+          missing: candidate.missing,
+          missing_sample_image: candidate.missingSampleImage,
+          url: recordUrl({ appToken, tableId: index.tableId, recordId: candidate.recordId }),
+        });
+      }
     }
     if (gaps.length) logInfo('lark.sales.product_info.gaps', { count: gaps.length });
     return gaps;
