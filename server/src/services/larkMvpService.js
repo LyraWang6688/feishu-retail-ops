@@ -18,6 +18,7 @@ const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver
 const { LiveInventoryIndex, buildLiveInventoryIndex } = require('./liveInventoryIndex');
 const { tradeTypeCodeFromLabel, deliveryForTradeType } = require('../config/salesMovements');
 const { isDataNotReady } = require('./salesReadRetry');
+const { resolveAccessory } = require('./accessoryMatchPolicy');
 const { salesConfirmationCard, salesStatusCard, todaySalesCard, keepOnlyCardButton } = require('../utils/larkCards');
 const { extractSalesMessageText } = require('../utils/larkMessageText');
 const { logError, logInfo, logWarn } = require('../utils/logger');
@@ -341,6 +342,13 @@ class LarkMvpService {
         .map((record) => ({
           record_id: record.record_id,
           name: textValue(record.fields?.[table.fields.name]).trim(),
+          // 「种类」是配品的品类（鞋油、腰带…），用户嘴里说的通常就是它。
+          // 单选字段读回来是数组，textValue 会归一成「鞋油」这样的字符串。
+          // 部署里没配这个字段映射（或某条没填）时留空：那种情况下只按名称匹配，
+          // 与改动前的行为完全一致，不会因为缺分类就匹配失败。
+          category: table.fields.category
+            ? textValue(record.fields?.[table.fields.category]).trim()
+            : '',
         }))
         .filter((item) => item.name);
     } catch (error) {
@@ -535,11 +543,18 @@ class LarkMvpService {
       this.listAccessories(),
       this.listGroupBuyVouchers(),
     ]);
+    // 交给 AI 的配品词表：名称 + 表里实际存在的「种类」。
+    // 为什么要带上「种类」：用户嘴上说的是「鞋油」，而表里这条叫「15元鞋油」；
+    // 只给名称，AI 可能认不出这是配品，后端新加的"按分类匹配"就永远轮不到。
+    // 去重是因为「女士包」这类词既是名称又是分类。
+    const accessoryVocabulary = [...new Set(
+      accessories.flatMap((item) => [item.name, item.category]).filter(Boolean)
+    )];
     // AI 解析是最慢的一段（十几秒），读实时库存不依赖它的结果，所以两件事并行：
     // 读表的时间藏在 AI 后面，不额外增加用户等待。
     const [parsed, liveInventory, productIndex] = await Promise.all([
       this.recognizer.parseSalesText(task.original_text, {
-        taskId, accessoryNames: accessories.map((item) => item.name), vouchers,
+        taskId, accessoryNames: accessoryVocabulary, vouchers,
       }),
       this.loadLiveInventoryIndex(),
       // 货品信息是主数据，整表读一次即可；读挂了也不影响录单，所以单独吞掉异常。
@@ -581,14 +596,17 @@ class LarkMvpService {
       const quantityIssue = `第${index + 1}件请逐双列出成交金额；每条销售明细只能记录一双`;
       if (itemQuantity !== 1 && !missingFields.includes(quantityIssue)) missingFields.push(quantityIssue);
       if (item.kind === 'accessory') {
-        // 配品只有名字和金额：按名称在「其他配品」里**精确**查找。
-        // 不模糊匹配——「39元腰带」和「49元腰带」只差一个字，模糊就是串货。
-        const name = String(item.accessory_name || '').trim();
-        const match = accessories.find((candidate) => candidate.name === name);
-        if (!match) {
-          missingFields.push(`第${index + 1}件：其他配品里没有「${name}」这一件，请核对名称`);
+        // 配品先按「种类」找，找不到再退回按名称精确匹配（见 accessoryMatchPolicy）。
+        // 为什么不能只按名称精确匹配：表里叫「15元鞋油」，用户说的是「鞋油」，
+        // 精确匹配必然失败，于是"配品明明有，系统却说没有"。
+        // 金额一律以用户说的为准（item.actual_amount 原样保留）——配品名称里的价格
+        // 只用来在多档（腰带 9 档）里定位是哪一条记录，绝不写进成交金额。
+        const spoken = String(item.accessory_name || '').trim();
+        const resolved = resolveAccessory({ spoken, amount: item.actual_amount, accessories });
+        if (!resolved.match) {
+          missingFields.push(`第${index + 1}件：${resolved.issue}`);
         }
-        items.push({ ...item, quantity: itemQuantity, accessory_record_id: match?.record_id || '' });
+        items.push({ ...item, quantity: itemQuantity, accessory_record_id: resolved.match?.record_id || '' });
         continue;
       }
       // 鞋按「实时库存」匹配：颜色、有没有货、是门盒还是样品，都从"店里实际有什么"回答，

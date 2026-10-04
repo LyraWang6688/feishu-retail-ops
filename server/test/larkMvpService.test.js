@@ -889,9 +889,11 @@ test('confirming is refused until every item has a chosen color, and choosing on
   assert.equal(task.draft.items[0].product_number, '8035|黑牛仔|A');
 });
 
-// ─── 配品的解析：AI 说出的名字要精确对应「其他配品」里的一条 ───
+// ─── 配品的解析：用户说的「分类」优先，其次才是「名称」精确匹配 ───
 
-const accessoryService = (accessoryNames, parsedItem) => {
+// 每一行可以是名称字符串（只测名称匹配的老写法），也可以是 { name, category }。
+// 「种类」按真实表返回单选数组，与线上读回来的形状一致。
+const accessoryService = (accessoryRows, parsedItem) => {
   const store = makeStore();
   const cards = [];
   const service = new LarkMvpService({
@@ -899,10 +901,19 @@ const accessoryService = (accessoryNames, parsedItem) => {
     gateway: {
       validateTables: async () => [],
       table: (key) => (key === 'accessory'
-        ? { tableId: 'tbl_acc', fields: { name: '名称' } }
+        ? { tableId: 'tbl_acc', fields: { name: '名称', category: '种类' } }
         : { fields: { number: '编号' } }),
       listAll: async (key) => (key === 'accessory'
-        ? accessoryNames.map((name, index) => ({ record_id: `acc_${index}`, fields: { 名称: name } }))
+        ? accessoryRows.map((entry, index) => {
+            const row = typeof entry === 'string' ? { name: entry } : entry;
+            return {
+              record_id: `acc_${index}`,
+              fields: {
+                ...(row.name ? { 名称: row.name } : {}),
+                ...(row.category ? { 种类: [row.category] } : {}),
+              },
+            };
+          })
         : []),
       create: async () => ({ recordId: 'rec_sales_entry' }),
       update: async () => {},
@@ -910,9 +921,11 @@ const accessoryService = (accessoryNames, parsedItem) => {
     references: {},
     posting: {},
     recognizer: {
+      // 整单金额跟着这一件的成交金额走，测试里不必手写两份、也不会互相打架。
       parseSalesText: async () => ({
-        intent: 'sale', items: [parsedItem], payments: [{ method: '微信', amount: 39 }],
-        agreed_total: 39, missing_fields: [],
+        intent: 'sale', items: [parsedItem],
+        payments: [{ method: '微信', amount: Number(parsedItem.actual_amount) || 0 }],
+        agreed_total: Number(parsedItem.actual_amount) || 0, missing_fields: [],
       }),
     },
     store,
@@ -953,6 +966,161 @@ test('an accessory name that is not in the table is asked for instead of guessed
   // 「39元腰带」和「59元腰带」只差一个字，绝不能模糊匹配到另一件。
   assert.ok(task.draft.missing_fields.some((field) => field.includes('其他配品里没有「59元腰带」')),
     `实际：${JSON.stringify(task.draft.missing_fields)}`);
+});
+
+// 腰带在真实表里有 9 档价位，名称只差一个数字——正好用来验证"多档按金额对"。
+const BELT_TIERS = [39, 49, 79, 99, 119, 128, 139, 159, 189];
+const beltRows = () => BELT_TIERS.map((price) => ({ name: `${price}元腰带`, category: '腰带' }));
+
+test('分类下唯一时直接用它，成交金额以用户说的为准（不是名称里的价）', async () => {
+  const { store, cards, service } = accessoryService(
+    [{ name: '15元鞋油', category: '鞋油' }, { name: '9.9元袜子', category: '袜子' }],
+    { kind: 'accessory', accessory_name: '鞋油', quantity: 1, actual_amount: 10 });
+  await store.create({ task_id: 'sale_acc_cat_only', type: 'sale', status: 'received',
+    message_id: 'om_acc_cat_only', sender_open_id: 'ou_1', sent_at: 1000,
+    original_text: '一盒鞋油 10 元，微信' });
+
+  await service.processSalesTask('sale_acc_cat_only');
+
+  const task = await store.get('sale_acc_cat_only');
+  assert.equal(task.status, 'ready_to_confirm');
+  assert.equal(task.draft.items[0].accessory_record_id, 'acc_0');
+  // 关键：名称里是 15 元，用户说 10 元就记 10 元，名称里的价只用来区分档位。
+  assert.equal(task.draft.items[0].actual_amount, 10);
+  assert.equal(cards.length, 1);
+});
+
+test('分类下有多档时，用用户说的金额对到正确那一档', async () => {
+  const { store, service } = accessoryService(beltRows(),
+    { kind: 'accessory', accessory_name: '腰带', quantity: 1, actual_amount: 99 });
+  await store.create({ task_id: 'sale_acc_belt_tier', type: 'sale', status: 'received',
+    message_id: 'om_acc_belt_tier', sender_open_id: 'ou_1', sent_at: 1000,
+    original_text: '腰带一条 99 元，微信' });
+
+  await service.processSalesTask('sale_acc_belt_tier');
+
+  const task = await store.get('sale_acc_belt_tier');
+  assert.equal(task.status, 'ready_to_confirm');
+  // 99 元那一档在 BELT_TIERS 里排第 4（索引 3）。
+  assert.equal(task.draft.items[0].accessory_record_id, 'acc_3');
+  assert.equal(task.draft.items[0].actual_amount, 99);
+});
+
+test('分类下有多档但金额对不上时不猜，提示有哪几档', async () => {
+  const { store, service } = accessoryService(beltRows(),
+    { kind: 'accessory', accessory_name: '腰带', quantity: 1, actual_amount: 88 });
+  await store.create({ task_id: 'sale_acc_belt_miss', type: 'sale', status: 'received',
+    message_id: 'om_acc_belt_miss', sender_open_id: 'ou_1', sent_at: 1000,
+    original_text: '腰带一条 88 元，微信' });
+
+  await service.processSalesTask('sale_acc_belt_miss');
+
+  const task = await store.get('sale_acc_belt_miss');
+  assert.equal(task.status, 'needs_info');
+  assert.equal(task.draft.items[0].accessory_record_id, '');
+  const issue = task.draft.missing_fields.find((field) => field.includes('腰带'));
+  assert.ok(issue, `实际：${JSON.stringify(task.draft.missing_fields)}`);
+  // 说人话：列出真实档位，并且不能再说"没有这一件"（它明明有）。
+  assert.match(issue, /腰带有 .*39 元.*49 元.* 这几档/);
+  assert.match(issue, /你卖的是哪一档/);
+  assert.doesNotMatch(issue, /没有/);
+});
+
+test('分类里没有这个词时，退回按名称精确匹配（向后兼容）', async () => {
+  // 「赠品鞋垫」不是分类值（分类是「鞋垫」），而且表里同名两条：
+  // 走名称精确匹配取第一条，与改动前完全一致。
+  const { store, service } = accessoryService(
+    [{ name: '赠品鞋垫', category: '鞋垫' }, { name: '赠品鞋垫', category: '鞋垫' },
+      { name: '9.9元鞋垫', category: '鞋垫' }],
+    { kind: 'accessory', accessory_name: '赠品鞋垫', quantity: 1, actual_amount: 0 });
+  await store.create({ task_id: 'sale_acc_name_fallback', type: 'sale', status: 'received',
+    message_id: 'om_acc_name_fallback', sender_open_id: 'ou_1', sent_at: 1000,
+    original_text: '赠鞋垫一双' });
+
+  await service.processSalesTask('sale_acc_name_fallback');
+
+  const task = await store.get('sale_acc_name_fallback');
+  assert.equal(task.draft.items[0].accessory_record_id, 'acc_0');
+});
+
+test('分类和名称都匹配不到时，仍然报「没有这一件」', async () => {
+  const { store, service } = accessoryService([{ name: '15元鞋油', category: '鞋油' }],
+    { kind: 'accessory', accessory_name: '袜子', quantity: 1, actual_amount: 9.9 });
+  await store.create({ task_id: 'sale_acc_none', type: 'sale', status: 'received',
+    message_id: 'om_acc_none', sender_open_id: 'ou_1', sent_at: 1000,
+    original_text: '袜子一双 9.9 元，微信' });
+
+  await service.processSalesTask('sale_acc_none');
+
+  const task = await store.get('sale_acc_none');
+  assert.equal(task.status, 'needs_info');
+  assert.equal(task.draft.items[0].accessory_record_id, '');
+  assert.ok(task.draft.missing_fields.some((field) => field.includes('其他配品里没有「袜子」')),
+    `实际：${JSON.stringify(task.draft.missing_fields)}`);
+});
+
+test('分类唯一时即使用户没给金额也能定位到配品（金额另按原有规则追问）', async () => {
+  const { store, service } = accessoryService([{ name: '15元鞋油', category: '鞋油' }],
+    { kind: 'accessory', accessory_name: '鞋油', quantity: 1, actual_amount: '' });
+  await store.create({ task_id: 'sale_acc_no_amount', type: 'sale', status: 'received',
+    message_id: 'om_acc_no_amount', sender_open_id: 'ou_1', sent_at: 1000,
+    original_text: '一盒鞋油，微信' });
+
+  await service.processSalesTask('sale_acc_no_amount');
+
+  const task = await store.get('sale_acc_no_amount');
+  // 配品本身定位到了；缺金额是整单原本就有的追问，与配品匹配无关。
+  assert.equal(task.draft.items[0].accessory_record_id, 'acc_0');
+  assert.ok(task.draft.missing_fields.some((field) => field.includes('请逐件说明成交金额')),
+    `实际：${JSON.stringify(task.draft.missing_fields)}`);
+});
+
+test('配品改按分类匹配后，鞋仍然按「货号+尺码」走实时库存（回归）', async () => {
+  const store = makeStore();
+  const cards = [];
+  // 这张表里既配了配品（含分类），也有实时库存：确认鞋这条分支一行都没被影响。
+  const base = liveInventoryGateway([
+    liveRow({ itemNo: '26632', color: '黑', size: 36, productRecordId: 'p36' }),
+  ]);
+  const service = new LarkMvpService({
+    client: {},
+    gateway: {
+      ...base,
+      table: (key) => (key === 'accessory'
+        ? { tableId: 'tbl_acc', fields: { name: '名称', category: '种类' } }
+        : base.table(key)),
+      listAll: async (key) => (key === 'accessory'
+        ? [{ record_id: 'acc_oil', fields: { 名称: '15元鞋油', 种类: ['鞋油'] } }]
+        : base.listAll(key)),
+      validateTables: async () => [],
+      create: async () => ({ recordId: 'rec_sales_entry' }),
+      update: async () => {},
+    },
+    references: {},
+    posting: {},
+    recognizer: {
+      parseSalesText: async () => ({
+        intent: 'sale', items: [{ item_no: '26632', size: 36, quantity: 1, actual_amount: 100 }],
+        payments: [{ method: '微信', amount: 100 }], agreed_total: 100, missing_fields: [],
+      }),
+    },
+    store,
+  });
+  service.replyCard = async (messageId, card) => cards.push({ messageId, card });
+  await store.create({ task_id: 'sale_shoe_regression', type: 'sale', status: 'received',
+    message_id: 'om_shoe_regression', sender_open_id: 'ou_1', sent_at: 1000,
+    original_text: '26632 36码 100元微信' });
+
+  await service.processSalesTask('sale_shoe_regression');
+
+  const task = await store.get('sale_shoe_regression');
+  const item = task.draft.items[0];
+  assert.equal(task.status, 'ready_to_confirm');
+  assert.equal(item.product_record_id, 'p36');
+  assert.equal(item.color, '黑');
+  // 鞋不会被配品词表或分类匹配"抢走"：鞋这条分支根本不写配品字段。
+  assert.equal(item.accessory_record_id, undefined);
+  assert.equal(cards.length, 1);
 });
 
 // ─── 入口按「实时库存」匹配：卖的是实物，不是配置 ───
