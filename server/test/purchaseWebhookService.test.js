@@ -31,34 +31,43 @@ const mapFields = (tableKey, semanticValues) => {
   return out;
 };
 
-const makeGateway = (records = {}) => ({
-  table,
-  get: async (tableKey, recordId) => {
-    const list = records[tableKey] || [];
-    return list.find((r) => r.record_id === recordId) || null;
-  },
-  listAll: async (tableKey) => {
-    if (tableKey === 'sizeManagement' && !records.sizeManagement) return SIZE_RECORDS;
-    if (tableKey === 'behavior' && !records.behavior) {
-      return [{ record_id: 'behavior_purchase_in', fields: { '行为名称': '采购入库', '行为编码': 'PURCHASE_IN', '库存方向': '增加', '是否启用': true } }];
-    }
-    return records[tableKey] || [];
-  },
-  create: async (tableKey, semanticValues) => {
-    const fields = mapFields(tableKey, semanticValues);
-    const recordId = `new_${tableKey}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const record = { record_id: recordId, fields };
-    (records[tableKey] ||= []).push(record);
-    return { recordId, record };
-  },
-  update: async (tableKey, recordId, semanticValues) => {
-    const patch = mapFields(tableKey, semanticValues);
-    const list = records[tableKey] || [];
-    const record = list.find((r) => r.record_id === recordId);
-    if (record) record.fields = { ...record.fields, ...patch };
-    return record || { record_id: recordId };
-  },
-});
+const makeGateway = (records = {}) => {
+  const uploads = [];
+  return {
+    uploads,
+    table,
+    get: async (tableKey, recordId) => {
+      const list = records[tableKey] || [];
+      return list.find((r) => r.record_id === recordId) || null;
+    },
+    listAll: async (tableKey) => {
+      if (tableKey === 'sizeManagement' && !records.sizeManagement) return SIZE_RECORDS;
+      if (tableKey === 'behavior' && !records.behavior) {
+        return [{ record_id: 'behavior_purchase_in', fields: { '行为名称': '采购入库', '行为编码': 'PURCHASE_IN', '库存方向': '增加', '是否启用': true } }];
+      }
+      return records[tableKey] || [];
+    },
+    create: async (tableKey, semanticValues) => {
+      const fields = mapFields(tableKey, semanticValues);
+      const recordId = `new_${tableKey}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const record = { record_id: recordId, fields };
+      (records[tableKey] ||= []).push(record);
+      return { recordId, record };
+    },
+    update: async (tableKey, recordId, semanticValues) => {
+      const patch = mapFields(tableKey, semanticValues);
+      const list = records[tableKey] || [];
+      const record = list.find((r) => r.record_id === recordId);
+      if (record) record.fields = { ...record.fields, ...patch };
+      return record || { record_id: recordId };
+    },
+    // 采购申请图写回附件字段时用：飞书是先传素材拿 file_token、再把 token 写进附件字段。
+    uploadAttachment: async (filePath) => {
+      uploads.push(filePath);
+      return `file_token_${uploads.length}`;
+    },
+  };
+};
 
 const makeReferences = (overrides = {}) => ({
   resolveProduct: overrides.resolveProduct || (async () => ({ recordId: 'prod_1', record: { record_id: 'prod_1', fields: { 编号: '8088灰', 供应商: ['sup_1'] } } })),
@@ -75,6 +84,10 @@ const makeRecognizer = (overrides = {}) => ({
 
 const makeClient = (overrides = {}) => ({
   im: {
+    // 发图要先用 im.image 上传拿 image_key，再发 image 消息。
+    image: {
+      create: overrides.uploadImage || (async () => ({ image_key: `img_key_${Math.random().toString(36).slice(2, 8)}` })),
+    },
     message: {
       create: overrides.sendMessage || (async () => ({ code: 0, msg: 'success' })),
     },
@@ -85,6 +98,20 @@ const makeClient = (overrides = {}) => ({
     },
   },
 });
+
+// 出图的假实现：记录每个供应商一次的渲染调用，测试就能断言
+// 「多供应商出多张」「同供应商合成一张」，而不必在单测里真的跑 sharp。
+const makeImages = (options = {}) => {
+  const calls = [];
+  return {
+    calls,
+    render: async (input) => {
+      calls.push(input);
+      if (options.render) return options.render(input);
+      return Buffer.from(`fake-png:${input.supplierName || ''}:${(input.items || []).length}`);
+    },
+  };
+};
 
 const makeInventory = (options = {}) => {
   const calls = [];
@@ -107,13 +134,14 @@ const makeService = (options = {}) => {
   const recognizer = options.recognizer || makeRecognizer();
   const inventory = options.inventory || makeInventory();
   const client = options.client || makeClient();
+  const images = options.images || makeImages();
   const service = new PurchaseWebhookService({
     gateway, references, recognizer, inventory: inventory.applyPurchase ? inventory : undefined,
-    client, store, enablePurchaseInventory: options.enablePurchaseInventory ?? true,
+    client, store, images, enablePurchaseInventory: options.enablePurchaseInventory ?? true,
     batchReadMaxRetries: options.batchReadMaxRetries ?? 1,
     batchReadRetryDelay: options.batchReadRetryDelay ?? 0,
   });
-  return { service, store, gateway, references, recognizer, inventory, client, dir };
+  return { service, store, gateway, references, recognizer, inventory, client, images, dir };
 };
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -140,110 +168,345 @@ const waitFor = async (label, check, { attempts = 300, pause = 10 } = {}) => {
   throw new Error(`等待「${label}」超时`);
 };
 
-// ─── 供应商报单链路 ───
+// ─── 供应商报单链路（免确认 → 按供应商出图 → 发图 → 写回附件）───
 
-test('supplier report webhook accepts and processes to awaiting_confirmation', async () => {
+// 出图要用的货品信息：货号 / 颜色（关联字段会带回被关联记录的主字段文本）/ 编号 / 供应商。
+const productFields = (itemNo, color, supplierId) => ({
+  货号: itemNo, 颜色: [{ text: color }], 编号: `${itemNo}${color}`, 供应商: [supplierId],
+});
+const SUPPLIERS = [
+  { record_id: 'sup_A', fields: { 供应商名称: '金猴' } },
+  { record_id: 'sup_B', fields: { 供应商名称: '奥康' } },
+];
+const referencesFor = (products) => makeReferences({
+  resolveProduct: async ({ productRecordId }) => {
+    const fields = products[productRecordId];
+    if (!fields) throw new Error(`找不到货品记录：${productRecordId}`);
+    return { recordId: productRecordId, record: { record_id: productRecordId, fields } };
+  },
+});
+const reportRecord = (recordId, fields) => ({ record_id: recordId, fields: { 处理状态: '待解析', 采购行为: ['beh_1'], 经办人: [{ id: 'ou_user_1' }], ...fields } });
+
+// 「posted」表示采购申请已经写成，附件写回是它之后的收尾动作（顺序：先发图、再写附件）。
+// 所以断言附件不能只等任务状态，要等附件字段真的落到记录上。
+const waitForAttachments = async (gateway, expected) => {
+  await waitFor('附件写回', async () => {
+    const rows = await gateway.listAll('purchaseRequest');
+    return rows.filter((record) => (record.fields['采购申请单'] || []).length === 1).length === expected;
+  });
+};
+
+test('供应商报单免确认：解析完直接生成采购申请、不发确认卡片，并把图发给报单人', async () => {
   const messages = [];
-  const { service, store, gateway } = makeService({
+  const { service, store, gateway, images } = makeService({
     client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
     gateway: makeGateway({
-      purchaseReport: [{ record_id: 'rep_1', fields: { 处理状态: '待解析', 尺码: sizeLinks(36, 37), 数量说明: '36码2双，37码1双', 编号: ['prod_1'], 采购行为: ['beh_1'], 供应商: '测试供应商', 经办人: [{ id: 'ou_user_1' }] } }],
+      purchaseReport: [reportRecord('rep_1', { 尺码: sizeLinks(36, 37), 数量说明: '36码2双，37码1双', 编号: ['prod_1'] })],
+      purchaseOrderBatch: [],
+      purchaseRequest: [],
+      supplier: SUPPLIERS,
     }),
+    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
   });
   const result = await service.accept('supplier-report', 'rep_1');
   assert.equal(result.accepted, true);
   assert.equal(result.duplicate, false);
   const task = await waitForTask(store, result.taskId);
-  assert.equal(task.status, 'awaiting_confirmation');
-  assert.ok(task.draft);
+  // 免确认：没有「待确认」这个中间态，任务直接 posted
+  assert.equal(task.status, 'posted');
   assert.equal(task.draft.items.length, 2);
-  // 任务是先落库状态、再发确认卡片的，所以不能只等状态：
-  // 状态一到就断言卡片，慢机器上卡片可能还没发出去。
-  await waitFor('确认卡片发出', async () => messages.length === 1);
-  assert.equal(messages.length, 1);
-  assert.equal(messages[0].data.receive_id, 'ou_user_1');
-  const updated = await gateway.get('purchaseReport', 'rep_1');
-  assert.equal(updated.fields.处理状态, '待确认');
+
+  // 免确认的红线：整条链路上不能出现任何交互卡片
+  assert.equal(messages.filter((m) => m.data.msg_type === 'interactive').length, 0, '免确认后不能再发确认卡片');
+  await waitFor('图片和说明发出', async () => messages.length === 2);
+  const [image, text] = messages;
+  assert.equal(image.data.msg_type, 'image');
+  assert.equal(image.data.receive_id, 'ou_user_1');
+  assert.equal(text.data.msg_type, 'text');
+  assert.equal(JSON.parse(text.data.content).text, '金猴 这批 2 条（共 3 双），图可以直接转给供应商。');
+
+  // 采购申请直接写出，报单记录进入终态
+  const requests = await gateway.listAll('purchaseRequest');
+  assert.equal(requests.length, 2);
+  assert.equal((await gateway.get('purchaseReport', 'rep_1')).fields.处理状态, '已生成申请');
+
+  // 一个供应商 → 一张图，图上的明细带上了货号/颜色/欧码/数量
+  assert.equal(images.calls.length, 1);
+  assert.equal(images.calls[0].supplierName, '金猴');
+  assert.deepEqual(
+    images.calls[0].items.map((item) => [item.item_no, item.color, item.size, item.quantity]),
+    [['8088', '黑色', 36, 2], ['8088', '黑色', 37, 1]],
+  );
+
+  // 图写回「采购申请单」附件；同一批次+同一供应商只写一条
+  await waitForAttachments(gateway, 1);
+  const withAttachment = (await gateway.listAll('purchaseRequest'))
+    .filter((record) => (record.fields['采购申请单'] || []).length === 1);
+  assert.equal(withAttachment.length, 1, '同一批次+同一供应商只应写一条附件');
+  assert.equal(gateway.uploads.length, 1, '附件上传只应发生一次');
 });
 
-test('supplier report duplicate webhook is ignored', async () => {
-  const { service, store } = makeService({
+test('重收同一条报单 webhook：不重复建单，也不重复发图', async () => {
+  const { service, store, gateway, images } = makeService({
     gateway: makeGateway({
-      purchaseReport: [{ record_id: 'rep_dup', fields: { 处理状态: '待解析', 尺码: sizeLink(36), 编号: ['prod_1'], 经办人: [{ id: 'ou_1' }] } }],
+      purchaseReport: [reportRecord('rep_dup', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'] })],
+      purchaseOrderBatch: [],
+      purchaseRequest: [],
+      supplier: SUPPLIERS,
     }),
+    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
+    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }] }),
   });
   const first = await service.accept('supplier-report', 'rep_dup');
   await waitForTask(store, first.taskId);
+  const requestsAfterFirst = (await gateway.listAll('purchaseRequest')).length;
+  const imagesAfterFirst = images.calls.length;
+
   const second = await service.accept('supplier-report', 'rep_dup');
   assert.equal(second.duplicate, true);
-  const task = await store.get(first.taskId);
-  assert.equal(task.status, 'awaiting_confirmation');
+  assert.equal((await store.get(first.taskId)).status, 'posted');
+  assert.equal((await gateway.listAll('purchaseRequest')).length, requestsAfterFirst, '重收 webhook 不得重复建单');
+  assert.equal(images.calls.length, imagesAfterFirst, '重收 webhook 不得重复发图');
 });
 
-test('supplier report confirm generates purchase order batch and requests', async () => {
+test('多尺码一次报单：每个尺码一条采购申请，尺码与批次都以关联写入', async () => {
   const { service, store, gateway } = makeService({
     gateway: makeGateway({
-      purchaseReport: [{ record_id: 'rep_conf', fields: { 处理状态: '待确认', 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 采购行为: ['beh_1'], 供应商: '测试供应商', 经办人: [{ id: 'ou_1' }] } }],
+      purchaseReport: [reportRecord('rep_multi', { 尺码: sizeLinks(36, 37), 数量说明: '36码2双，37码1双', 编号: ['prod_1'] })],
       purchaseOrderBatch: [],
       purchaseRequest: [],
+      supplier: SUPPLIERS,
     }),
-    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }] }),
-  });
-  const accepted = await service.accept('supplier-report', 'rep_conf');
-  await waitForTask(store, accepted.taskId);
-  const result = await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1');
-  assert.ok(result.toast.content.includes('采购申请已生成'));
-  const batches = await gateway.listAll('purchaseOrderBatch');
-  assert.equal(batches.length, 1);
-  assert.ok(batches[0].fields.报货批次号.startsWith('BH-'));
-  const requests = await gateway.listAll('purchaseRequest');
-  assert.equal(requests.length, 1);
-  assert.deepEqual(requests[0].fields.报货批次号, [batches[0].record_id]);
-  assert.deepEqual(requests[0].fields.尺码, sizeLink(36));
-  const updatedReport = await gateway.get('purchaseReport', 'rep_conf');
-  assert.equal(updatedReport.fields.处理状态, '已生成申请');
-});
-
-test('multi-size report confirm writes one request per size with linked sizes and quantities', async () => {
-  const { service, store, gateway } = makeService({
-    gateway: makeGateway({
-      purchaseReport: [{ record_id: 'rep_multi', fields: { 处理状态: '待确认', 尺码: sizeLinks(36, 37), 数量说明: '36码2双，37码1双', 编号: ['prod_1'], 采购行为: ['beh_1'], 供应商: '测试供应商', 经办人: [{ id: 'ou_1' }] } }],
-      purchaseOrderBatch: [],
-      purchaseRequest: [],
-    }),
+    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
   });
   const accepted = await service.accept('supplier-report', 'rep_multi');
   const task = await waitForTask(store, accepted.taskId);
   assert.equal(task.draft.items.length, 2);
 
-  const result = await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1');
-  assert.ok(result.toast.content.includes('采购申请已生成'));
-
   const batches = await gateway.listAll('purchaseOrderBatch');
+  assert.equal(batches.length, 1);
+  assert.ok(batches[0].fields.报货批次号.startsWith('BH-'));
   const requests = await gateway.listAll('purchaseRequest');
   assert.equal(requests.length, 2);
   // 数量说明只描述例外：36 码两双、37 码默认一双。
   const quantityBySize = new Map(requests.map((row) => [row.fields.尺码[0], row.fields.数量]));
   assert.deepEqual([...quantityBySize.entries()].sort(), [['size_36', 2], ['size_37', 1]]);
   for (const request of requests) {
-    // 尺码与报货批次都必须以关联形式写入，不能再写数字或纯文本。
     assert.equal(request.fields.尺码.length, 1);
     assert.ok(String(request.fields.尺码[0]).startsWith('size_'), `尺码应为关联 ID，实际：${request.fields.尺码[0]}`);
     assert.deepEqual(request.fields.报货批次号, [batches[0].record_id]);
   }
 });
 
-test('supplier report cancel updates status', async () => {
+test('同一个供应商的多条明细合并成一张图', async () => {
+  const messages = [];
+  const { service, store, gateway, images } = makeService({
+    client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
+    gateway: makeGateway({
+      purchaseReport: [
+        reportRecord('rep_merge_1', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-MERGE' }),
+        reportRecord('rep_merge_2', { 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-MERGE' }),
+      ],
+      purchaseOrderBatch: [],
+      purchaseRequest: [],
+      supplier: SUPPLIERS,
+    }),
+    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
+    recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => (text.includes('36') ? [{ size: 36, quantity: 2 }] : [{ size: 37, quantity: 1 }]) }),
+  });
+  service.BATCH_WAIT_MS = 20;
+  const first = await service.accept('supplier-report', 'rep_merge_1');
+  await service.accept('supplier-report', 'rep_merge_2');
+  const task = await waitForTask(store, first.taskId, ['posted', 'failed']);
+  assert.equal(task.status, 'posted');
+  assert.equal(task.draft.items.length, 2);
+  // 同一个供应商：只渲染、只发送一次，两条明细都在同一张图上。
+  // 附件写回是每个供应商的最后一步，等它落定再断言"没有多出第二张图"。
+  await waitForAttachments(gateway, 1);
+  assert.equal(images.calls.length, 1, `同一供应商应只出一张图，实际出了 ${images.calls.length} 张`);
+  assert.equal(images.calls[0].items.length, 2);
+  await waitFor('图片和说明发出', async () => messages.length === 2);
+  assert.equal(JSON.parse(messages[1].data.content).text, '金猴 这批 2 条（共 3 双），图可以直接转给供应商。');
+});
+
+test('多个供应商：每个供应商各出一张图、各发一条说明', async () => {
+  const messages = [];
+  const { service, store, gateway, images } = makeService({
+    client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
+    gateway: makeGateway({
+      purchaseReport: [
+        reportRecord('rep_two_1', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_A'], 报货批次号: 'BATCH-TWO' }),
+        reportRecord('rep_two_2', { 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_B'], 报货批次号: 'BATCH-TWO' }),
+      ],
+      purchaseOrderBatch: [],
+      purchaseRequest: [],
+      supplier: SUPPLIERS,
+    }),
+    references: referencesFor({
+      prod_A: productFields('8088', '黑色', 'sup_A'),
+      prod_B: productFields('1366', '棕色', 'sup_B'),
+    }),
+    recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => (text.includes('36') ? [{ size: 36, quantity: 2 }] : [{ size: 37, quantity: 1 }]) }),
+  });
+  service.BATCH_WAIT_MS = 20;
+  const first = await service.accept('supplier-report', 'rep_two_1');
+  await service.accept('supplier-report', 'rep_two_2');
+  await waitForTask(store, first.taskId, ['posted', 'failed']);
+  // 附件写回是每个供应商的最后一步：两家都写完，才谈得上"一共出了几张图"。
+  await waitForAttachments(gateway, 2);
+
+  const bySupplier = new Map(images.calls.map((call) => [call.supplierName, call.items.length]));
+  assert.deepEqual([...bySupplier.entries()].sort(), [['奥康', 1], ['金猴', 1]], '每个供应商各一张图，不能混成一张');
+  await waitFor('两个供应商的图都发出', async () => messages.length === 4);
+  const texts = messages.filter((m) => m.data.msg_type === 'text').map((m) => JSON.parse(m.data.content).text).sort();
+  assert.deepEqual(texts, [
+    '奥康 这批 1 条（共 1 双），图可以直接转给供应商。',
+    '金猴 这批 1 条（共 2 双），图可以直接转给供应商。',
+  ]);
+  const requests = await gateway.listAll('purchaseRequest');
+  assert.equal(requests.filter((record) => (record.fields['采购申请单'] || []).length === 1).length, 2);
+});
+
+test('先发图再写表：写附件失败时图仍然发出，任务仍然是 posted', async () => {
+  const messages = [];
+  const records = {
+    purchaseReport: [reportRecord('rep_attach_fail', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'] })],
+    purchaseOrderBatch: [],
+    purchaseRequest: [],
+    supplier: SUPPLIERS,
+  };
+  const gateway = makeGateway(records);
+  const originalUpdate = gateway.update;
+  gateway.update = async (tableKey, recordId, values) => {
+    if (tableKey === 'purchaseRequest' && values.attachment !== undefined) throw new Error('模拟附件写入失败');
+    return originalUpdate(tableKey, recordId, values);
+  };
+  const { service, store } = makeService({
+    client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
+    gateway,
+    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
+    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }] }),
+  });
+  const accepted = await service.accept('supplier-report', 'rep_attach_fail');
+  const task = await waitForTask(store, accepted.taskId);
+  assert.equal(task.status, 'posted', '写附件失败不得把任务判成失败');
+  await waitFor('图发出', async () => messages.some((m) => m.data.msg_type === 'image'));
+  assert.ok(messages.some((m) => m.data.msg_type === 'image'), '写附件失败不能影响发图');
+  assert.ok(messages.some((m) => m.data.msg_type === 'text'), '说明也要发出去');
+  const requests = await gateway.listAll('purchaseRequest');
+  assert.equal(requests.length, 1, '采购申请本身已经写出，不受附件失败影响');
+  assert.ok(requests.every((record) => !(record.fields['采购申请单'] || []).length));
+});
+
+test('发图失败（例如机器人缺 im:resource 图片上传权限）不把任务判成失败，采购申请照样写出', async () => {
+  // 线上真实踩到过：应用没开通 im:resource:upload，上传图片直接 400 + 99991672。
+  // 这种情况绝不能把已经写好的采购事实判成失败。
+  const uploadError = new Error('Request failed with status code 400');
+  uploadError.response = { data: { code: 99991672, msg: 'Access denied. One of the following scopes is required: [im:resource:upload, im:resource]' } };
+  const records = {
+    purchaseReport: [reportRecord('rep_upload_fail', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'] })],
+    purchaseOrderBatch: [],
+    purchaseRequest: [],
+    supplier: SUPPLIERS,
+  };
+  const gateway = makeGateway(records);
+  const { service, store } = makeService({
+    client: makeClient({ uploadImage: async () => { throw uploadError; } }),
+    gateway,
+    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
+    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }] }),
+  });
+  const accepted = await service.accept('supplier-report', 'rep_upload_fail');
+  const task = await waitForTask(store, accepted.taskId);
+  assert.equal(task.status, 'posted', '发图失败不得影响采购申请落库');
+  assert.equal((await gateway.listAll('purchaseRequest')).length, 1);
+  // 图没发出去就不写附件：保持「先发图、再写回」的顺序
+  assert.equal(gateway.uploads.length, 0);
+  // 失败要留在任务里，运维才知道哪一批图欠着
+  await waitFor('发图失败被记录', async () => ((await store.get(accepted.taskId))?.image_delivery?.failed || []).length === 1);
+  const recorded = await store.get(accepted.taskId);
+  assert.equal(recorded.image_delivery.failed[0].supplier, '金猴');
+  assert.ok(recorded.image_delivery.failed[0].error.includes('99991672'), '失败原因要带上飞书错误码');
+});
+
+test('图片写回：取「明细ID」最小的那条，重复执行不新增第二条附件', async () => {
+  const records = {
+    purchaseReport: [reportRecord('rep_min', { 尺码: sizeLinks(36, 37), 数量说明: '36码2双，37码1双', 编号: ['prod_1'] })],
+    purchaseOrderBatch: [],
+    purchaseRequest: [],
+    supplier: SUPPLIERS,
+  };
+  const gateway = makeGateway(records);
+  const originalCreate = gateway.create;
+  let autoNumber = 100;
+  gateway.create = async (tableKey, values) => {
+    const created = await originalCreate(tableKey, values);
+    // 「明细ID」是飞书的 auto_number：写入时由表自动发号，按创建顺序递增。
+    if (tableKey === 'purchaseRequest') {
+      autoNumber += 1;
+      created.record.fields['明细ID'] = autoNumber;
+    }
+    return created;
+  };
+  const { service, store } = makeService({
+    gateway,
+    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
+  });
+  const accepted = await service.accept('supplier-report', 'rep_min');
+  await waitForTask(store, accepted.taskId);
+  await waitForAttachments(gateway, 1);
+
+  const requests = await gateway.listAll('purchaseRequest');
+  assert.equal(requests.length, 2);
+  const minDetailId = Math.min(...requests.map((record) => record.fields['明细ID']));
+  const withAttachment = requests.filter((record) => (record.fields['采购申请单'] || []).length === 1);
+  assert.equal(withAttachment.length, 1, '同一批次+同一供应商只写一条附件');
+  assert.equal(withAttachment[0].fields['明细ID'], minDetailId, '必须写在明细ID最小的那条采购申请上');
+  const uploadsBefore = gateway.uploads.length;
+
+  // 重复执行（重跑批次）：不得写出第二条附件，也不该重复上传
+  await service.confirmPurchaseRequest(accepted.taskId, await store.get(accepted.taskId));
+  const afterRerun = await gateway.listAll('purchaseRequest');
+  assert.equal(afterRerun.filter((record) => (record.fields['采购申请单'] || []).length === 1).length, 1,
+    '重跑批次不得新增第二条附件');
+  assert.equal(gateway.uploads.length, uploadsBefore, '已经有附件的记录不该再上传一次');
+});
+
+test('已 posted 的报单任务再次收到确认卡片动作：不再产生任何写入', async () => {
   const { service, store, gateway } = makeService({
     gateway: makeGateway({
-      purchaseReport: [{ record_id: 'rep_cancel', fields: { 处理状态: '待确认', 尺码: sizeLink(36), 编号: ['prod_1'], 经办人: [{ id: 'ou_1' }] } }],
+      purchaseReport: [reportRecord('rep_done_card', { 尺码: sizeLink(36), 编号: ['prod_1'] })],
+      purchaseOrderBatch: [],
+      purchaseRequest: [],
+      supplier: SUPPLIERS,
     }),
+    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
   });
-  const accepted = await service.accept('supplier-report', 'rep_cancel');
+  const accepted = await service.accept('supplier-report', 'rep_done_card');
   await waitForTask(store, accepted.taskId);
-  await service.handleCardAction({ draft_id: accepted.taskId, action: 'cancel_purchase_request' }, 'ou_1');
-  const updated = await gateway.get('purchaseReport', 'rep_cancel');
-  assert.equal(updated.fields.处理状态, '已取消');
+  const snapshot = () => gateway.listAll('purchaseRequest').then((rows) => rows.length);
+  const before = await snapshot();
+  // 线上已经发出去的老确认卡片仍然点得动，但采购申请已经生成，不能再写一遍
+  const result = await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_user_1');
+  assert.ok(result.toast.content.includes('采购申请已生成'));
+  const cancel = await service.handleCardAction({ draft_id: accepted.taskId, action: 'cancel_purchase_request' }, 'ou_user_1');
+  assert.ok(cancel.toast.content.includes('不能取消'));
+  assert.equal(await snapshot(), before);
+  assert.equal((await gateway.get('purchaseReport', 'rep_done_card')).fields.处理状态, '已生成申请');
+});
+
+test('supplier report without batch number falls back to single processing', async () => {
+  const { service, store } = makeService({
+    gateway: makeGateway({
+      purchaseReport: [reportRecord('rep_nobatch', { 尺码: sizeLink(36), 编号: ['prod_1'] })],
+      supplier: SUPPLIERS,
+    }),
+    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
+  });
+  const result = await service.accept('supplier-report', 'rep_nobatch');
+  const task = await waitForTask(store, result.taskId);
+  assert.equal(task.status, 'posted');
+  assert.ok(!task.draft.is_batch);
 });
 
 // ─── 采购到货链路 ───
@@ -1011,88 +1274,60 @@ test('arrival confirm retries after inventory update failure — continues apply
 
 // ─── 供应商报单批次聚合链路 ───
 
-test('supplier report with batch number enters batch_waiting state', async () => {
-  const { service, store } = makeService({
-    gateway: makeGateway({
-      purchaseReport: [{ record_id: 'rep_batch_1', fields: { 处理状态: '待解析', 尺码: sizeLink(36), 编号: ['prod_1'], 采购行为: ['beh_1'], 报货批次号: 'BATCH-001', 经办人: [{ id: 'ou_1' }] } }],
-    }),
-  });
-  service.BATCH_WAIT_MS = 10;
-  const result = await service.accept('supplier-report', 'rep_batch_1');
-  assert.equal(result.accepted, true);
-  const task = await waitForTask(store, result.taskId, ['batch_waiting', 'awaiting_confirmation']);
-  assert.ok(['batch_waiting', 'awaiting_confirmation'].includes(task.status), `实际状态: ${task.status}`);
-});
-
-test('batch aggregation processes all records in same batch and sends one card', async () => {
-  const messages = [];
-  const { service, gateway } = makeService({
-    client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
-    gateway: makeGateway({
-      purchaseReport: [
-        { record_id: 'rep_b1', fields: { 处理状态: '待解析', 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 采购行为: ['beh_1'], 报货批次号: 'BATCH-MULTI', 经办人: [{ id: 'ou_1' }] } },
-        { record_id: 'rep_b2', fields: { 处理状态: '待解析', 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_1'], 采购行为: ['beh_1'], 报货批次号: 'BATCH-MULTI', 经办人: [{ id: 'ou_1' }] } },
-      ],
-    }),
-    recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => text.includes('36') ? [{ size: 36, quantity: 2 }] : [{ size: 37, quantity: 1 }] }),
-  });
-  service.BATCH_WAIT_MS = 20;
-  await service.accept('supplier-report', 'rep_b1');
-  await service.accept('supplier-report', 'rep_b2');
-  await waitFor('批量确认卡发出', async () => messages.length === 1);
-  assert.equal(messages.length, 1, `应只发1张批量确认卡，实际发了${messages.length}张`);
-  const cardContent = JSON.parse(messages[0].data.content);
-  const allText = JSON.stringify(cardContent.elements);
-  assert.ok(allText.includes('BATCH-MULTI'), '确认卡应包含批次号');
-  assert.ok(allText.includes('36码'), '确认卡应包含36码明细');
-  assert.ok(allText.includes('37码'), '确认卡应包含37码明细');
-});
-
-test('batch confirm generates requests and updates all report records', async () => {
+test('供应商报单带批次号：先进入 batch_waiting，等待窗口结束后免确认直接 posted', async () => {
   const { service, store, gateway } = makeService({
     gateway: makeGateway({
+      purchaseReport: [reportRecord('rep_batch_1', { 尺码: sizeLink(36), 编号: ['prod_1'], 报货批次号: 'BATCH-001' })],
+      purchaseOrderBatch: [],
+      purchaseRequest: [],
+      supplier: SUPPLIERS,
+    }),
+    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
+  });
+  service.BATCH_WAIT_MS = 20;
+  const result = await service.accept('supplier-report', 'rep_batch_1');
+  assert.equal(result.accepted, true);
+  const task = await waitForTask(store, result.taskId, ['posted', 'failed']);
+  assert.equal(task.status, 'posted');
+  assert.equal((await gateway.get('purchaseReport', 'rep_batch_1')).fields.处理状态, '已生成申请');
+  assert.equal((await gateway.listAll('purchaseRequest')).length, 1);
+});
+
+test('同一个批次的多条报单合成一个批次任务，全部标记已生成申请、只出一张图', async () => {
+  const { service, store, gateway, images } = makeService({
+    gateway: makeGateway({
       purchaseReport: [
-        { record_id: 'rep_c1', fields: { 处理状态: '待解析', 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 采购行为: ['beh_1'], 报货批次号: 'BATCH-CONF', 经办人: [{ id: 'ou_1' }] } },
-        { record_id: 'rep_c2', fields: { 处理状态: '待解析', 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_1'], 采购行为: ['beh_1'], 报货批次号: 'BATCH-CONF', 经办人: [{ id: 'ou_1' }] } },
+        reportRecord('rep_c1', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-CONF' }),
+        reportRecord('rep_c2', { 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-CONF' }),
       ],
       purchaseOrderBatch: [],
       purchaseRequest: [],
+      supplier: SUPPLIERS,
     }),
-    recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => text.includes('36') ? [{ size: 36, quantity: 2 }] : [{ size: 37, quantity: 1 }] }),
+    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
+    recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => (text.includes('36') ? [{ size: 36, quantity: 2 }] : [{ size: 37, quantity: 1 }]) }),
   });
   service.BATCH_WAIT_MS = 20;
   const first = await service.accept('supplier-report', 'rep_c1');
   await service.accept('supplier-report', 'rep_c2');
-  const task = await waitForTask(store, first.taskId);
-  assert.equal(task.status, 'awaiting_confirmation');
+  const task = await waitForTask(store, first.taskId, ['posted', 'failed']);
+  assert.equal(task.status, 'posted');
   assert.ok(task.draft.is_batch === true);
   assert.equal(task.draft.items.length, 2);
-  const result = await service.handleCardAction({ draft_id: first.taskId, action: 'confirm_purchase_request' }, 'ou_1');
-  assert.ok(result.toast.content.includes('采购申请已生成'));
   const requests = await gateway.listAll('purchaseRequest');
   assert.equal(requests.length, 2);
-  const r1 = await gateway.get('purchaseReport', 'rep_c1');
-  const r2 = await gateway.get('purchaseReport', 'rep_c2');
-  assert.equal(r1.fields.处理状态, '已生成申请');
-  assert.equal(r2.fields.处理状态, '已生成申请');
-});
-
-test('supplier report without batch number falls back to single processing', async () => {
-  const { service, store } = makeService({
-    gateway: makeGateway({
-      purchaseReport: [{ record_id: 'rep_nobatch', fields: { 处理状态: '待解析', 尺码: sizeLink(36), 编号: ['prod_1'], 经办人: [{ id: 'ou_1' }] } }],
-    }),
-  });
-  const result = await service.accept('supplier-report', 'rep_nobatch');
-  const task = await waitForTask(store, result.taskId);
-  assert.equal(task.status, 'awaiting_confirmation');
-  assert.ok(!task.draft.is_batch);
+  assert.equal((await gateway.get('purchaseReport', 'rep_c1')).fields.处理状态, '已生成申请');
+  assert.equal((await gateway.get('purchaseReport', 'rep_c2')).fields.处理状态, '已生成申请');
+  assert.equal((await gateway.listAll('purchaseOrderBatch')).length, 1, '一个批次只建一条报货批次');
+  // 附件写回是出图的最后一步，等它落定再断言"只出了一张图"
+  await waitForAttachments(gateway, 1);
+  assert.equal(images.calls.length, 1, '同一供应商只出一张图');
 });
 
 test('product without supplier association throws clear error', async () => {
   const { service, store } = makeService({
     gateway: makeGateway({
-      purchaseReport: [{ record_id: 'rep_nosup', fields: { 处理状态: '待解析', 尺码: sizeLink(36), 编号: ['prod_nosup'], 经办人: [{ id: 'ou_1' }] } }],
+      purchaseReport: [reportRecord('rep_nosup', { 尺码: sizeLink(36), 编号: ['prod_nosup'] })],
     }),
     references: makeReferences({
       resolveProduct: async () => ({ recordId: 'prod_nosup', record: { record_id: 'prod_nosup', fields: { 编号: '8088灰' } } }),
@@ -1134,33 +1369,37 @@ const failingOnceStore = (inner, shouldFail) => {
   };
 };
 
-const multiSizeReport = (recordId) => ({
-  record_id: recordId,
-  fields: {
-    处理状态: '待确认', 尺码: sizeLinks(36, 37), 数量说明: '36码2双，37码1双',
-    编号: ['prod_1'], 采购行为: ['beh_1'], 经办人: [{ id: 'ou_1' }],
-  },
-});
+const multiSizeReport = (recordId) => reportRecord(recordId, { 尺码: sizeLinks(36, 37), 数量说明: '36码2双，37码1双', 编号: ['prod_1'] });
+const twoSizes = makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }, { size: 37, quantity: 1 }] });
+const purchaseRecords = (recordId) => ({ purchaseReport: [multiSizeReport(recordId)], purchaseOrderBatch: [], purchaseRequest: [], supplier: SUPPLIERS });
 
-test('A1 同时确认同一个采购申请：只生成一个批次和一套采购申请', async () => {
-  const records = { purchaseReport: [multiSizeReport('rep_race')], purchaseOrderBatch: [], purchaseRequest: [] };
-  const { service, store, gateway } = makeService({
+// 处理队列（accept 把工作丢进 setImmediate + 串行队列）清空之前，断言可能会读到"第一条刚写完、
+// 第二条还没被守卫拦下"的中间态。并发用例统一等队列空了再断言。
+const waitForIdle = async (service) => {
+  await waitFor('处理队列清空', async () => service.queues.size === 0, { attempts: 600, pause: 5 });
+};
+
+test('A1 并发重收同一条报单 webhook：只生成一个批次和一套采购申请，也不重复发图', async () => {
+  const records = purchaseRecords('rep_race');
+  const { service, store, images } = makeService({
     gateway: slowCreates(makeGateway(records)),
-    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }, { size: 37, quantity: 1 }] }),
+    recognizer: twoSizes,
   });
-  const accepted = await service.accept('supplier-report', 'rep_race');
-  await waitForTask(store, accepted.taskId);
-
-  await Promise.all([
-    service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1'),
-    service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1'),
+  // 飞书重投：同一个 record_id 几乎同时进来两次
+  const [first, second] = await Promise.all([
+    service.accept('supplier-report', 'rep_race'),
+    service.accept('supplier-report', 'rep_race'),
   ]);
+  assert.equal(first.taskId, second.taskId);
+  await waitForTask(store, first.taskId, ['posted', 'failed']);
+  await waitForIdle(service);
 
-  assert.equal(records.purchaseOrderBatch.length, 1, '并发确认不得创建第二个报货批次');
-  assert.equal(records.purchaseRequest.length, 2, '并发确认不得把采购申请翻倍');
-  const task = await store.get(accepted.taskId);
+  assert.equal(records.purchaseOrderBatch.length, 1, '并发投递不得创建第二个报货批次');
+  assert.equal(records.purchaseRequest.length, 2, '并发投递不得把采购申请翻倍');
+  const task = await store.get(first.taskId);
   assert.equal(task.status, 'posted');
   assert.equal(task.request_ids.length, 2);
+  assert.equal(images.calls.length, 1, '并发投递不得把图重复发一遍');
 });
 
 test('A2 同时确认同一个采购到货：每个逻辑入库只有一条，库存只加一次', async () => {
@@ -1188,88 +1427,82 @@ test('A2 同时确认同一个采购到货：每个逻辑入库只有一条，�
   assert.equal((await store.get(accepted.taskId)).status, 'posted');
 });
 
-test('A3 已 posted 的任务再次确认：不再产生任何写入', async () => {
-  const records = { purchaseReport: [multiSizeReport('rep_done')], purchaseOrderBatch: [], purchaseRequest: [] };
-  const { service, store } = makeService({
+test('A3 已 posted 的报单任务重复投递：不再产生任何写入，也不重复发图', async () => {
+  const records = purchaseRecords('rep_done');
+  const { service, store, images } = makeService({
     gateway: makeGateway(records),
-    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }, { size: 37, quantity: 1 }] }),
+    recognizer: twoSizes,
   });
   const accepted = await service.accept('supplier-report', 'rep_done');
   await waitForTask(store, accepted.taskId);
-  await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1');
+  await waitForIdle(service);
 
   const snapshot = () => [records.purchaseOrderBatch.length, records.purchaseRequest.length].join('/');
   const before = snapshot();
-  await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1');
-  await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1');
-  assert.equal(snapshot(), before, '重复确认不得新增批次或采购申请');
+  const imagesBefore = images.calls.length;
+  const again = await service.accept('supplier-report', 'rep_done');
+  assert.equal(again.duplicate, true);
+  await waitForIdle(service);
+  assert.equal(snapshot(), before, '重复投递不得新增批次或采购申请');
+  assert.equal(images.calls.length, imagesBefore, '重复投递不得重复发图');
 });
 
 test('B1 批次已写入远端但本地阶段未落盘：重试只复用，不新建第二个批次', async () => {
-  const records = { purchaseReport: [multiSizeReport('rep_crash_batch')], purchaseOrderBatch: [], purchaseRequest: [] };
+  const records = purchaseRecords('rep_crash_batch');
   const dir = tempDir();
   const realStore = new JsonTaskStore({ dir });
   const { service, store } = makeService({
     dir,
     store: failingOnceStore(realStore, (patch) => patch.posting_stage === 'batch_created'),
     gateway: makeGateway(records),
-    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }, { size: 37, quantity: 1 }] }),
+    recognizer: twoSizes,
   });
-  const accepted = await service.accept('supplier-report', 'rep_crash_batch');
-  await waitForTask(store, accepted.taskId);
-
-  await assert.rejects(
-    service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1'),
-    /模拟本地落盘失败/,
-  );
+  const first = await service.accept('supplier-report', 'rep_crash_batch');
+  const crashed = await waitForTask(store, first.taskId, ['failed', 'posted']);
+  assert.equal(crashed.status, 'failed', '落盘失败后任务必须能重试，不能卡在中间态');
   assert.equal(records.purchaseOrderBatch.length, 1, '第一次已经写出批次');
-  assert.equal((await store.get(accepted.taskId)).status, 'posting', '崩溃后停在可恢复的 posting，而不是 posted');
 
-  await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1');
+  // 重收 webhook 重跑：必须复用已有批次，不新建
+  const retry = await service.accept('supplier-report', 'rep_crash_batch');
+  assert.equal(retry.duplicate, false, 'failed 的任务要允许重跑');
+  // 不能直接等 ['posted','failed']：刚 accept 时读到的还是上一次留下的 failed，
+  // 会误判成"重试又失败了"。这里明确等它重新走到 posted。
+  await waitFor('重试后任务重新 posted', async () => (await store.get(first.taskId))?.status === 'posted');
   assert.equal(records.purchaseOrderBatch.length, 1, '重试必须复用已有批次');
   assert.equal(records.purchaseRequest.length, 2);
 });
 
 test('B2 第一条采购申请写完后崩溃：重试补齐其余，且不会重复第一条', async () => {
-  const records = { purchaseReport: [multiSizeReport('rep_crash_req')], purchaseOrderBatch: [], purchaseRequest: [] };
+  const records = purchaseRecords('rep_crash_req');
   const dir = tempDir();
   const realStore = new JsonTaskStore({ dir });
   const { service, store } = makeService({
     dir,
     store: failingOnceStore(realStore, (patch) => String(patch.posting_stage || '').startsWith('request_created:')),
     gateway: makeGateway(records),
-    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }, { size: 37, quantity: 1 }] }),
+    recognizer: twoSizes,
   });
-  const accepted = await service.accept('supplier-report', 'rep_crash_req');
-  await waitForTask(store, accepted.taskId);
-
-  await assert.rejects(
-    service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1'),
-    /模拟本地落盘失败/,
-  );
+  const first = await service.accept('supplier-report', 'rep_crash_req');
+  const crashed = await waitForTask(store, first.taskId, ['failed', 'posted']);
+  assert.equal(crashed.status, 'failed');
   assert.equal(records.purchaseRequest.length, 1, '第一次只写出了第一条采购申请');
 
-  await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1');
+  await service.accept('supplier-report', 'rep_crash_req');
+  await waitFor('重试后任务重新 posted', async () => (await store.get(first.taskId))?.status === 'posted');
   assert.equal(records.purchaseRequest.length, 2, '最终每条明细正好一条采购申请');
   const keys = records.purchaseRequest.map((row) => row.fields.幂等键).sort();
   assert.deepEqual(keys, [
-    `purchase_request:${accepted.taskId}:0`,
-    `purchase_request:${accepted.taskId}:1`,
+    `purchase_request:${first.taskId}:0`,
+    `purchase_request:${first.taskId}:1`,
   ]);
-  assert.equal((await store.get(accepted.taskId)).status, 'posted');
 });
 
 test('B3 远端写入成功但响应丢失：按幂等键找回，不创建第二条', async () => {
   const records = {
-    purchaseReport: [{
-      record_id: 'rep_lost',
-      fields: {
-        处理状态: '待确认', 尺码: sizeLink(36), 数量说明: '36码2双',
-        编号: ['prod_1'], 采购行为: ['beh_1'], 经办人: [{ id: 'ou_1' }],
-      },
-    }],
+    purchaseReport: [reportRecord('rep_lost', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'] })],
     purchaseOrderBatch: [],
     purchaseRequest: [],
+    supplier: SUPPLIERS,
   };
   const gateway = makeGateway(records);
   const originalCreate = gateway.create;
@@ -1281,42 +1514,47 @@ test('B3 远端写入成功但响应丢失：按幂等键找回，不创建第�
   };
   const { service, store } = makeService({
     gateway,
+    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
     recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }] }),
   });
   const accepted = await service.accept('supplier-report', 'rep_lost');
-  await waitForTask(store, accepted.taskId);
-
-  const [first, second] = await Promise.all([
-    service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1'),
-    service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1'),
-  ]);
-  assert.ok(first.toast.content.includes('采购申请已生成'));
-  assert.ok(second.toast.content.includes('采购申请已生成'));
+  const task = await waitForTask(store, accepted.taskId, ['posted', 'failed']);
+  assert.equal(task.status, 'posted');
   assert.equal(records.purchaseRequest.length, 1, '响应丢失不得产生第二条采购申请');
   assert.equal(records.purchaseOrderBatch.length, 1);
-  assert.equal((await store.get(accepted.taskId)).status, 'posted');
 });
 
 test('B4 远端出现两条相同幂等键：停止自动处理并转人工核对', async () => {
-  const records = { purchaseReport: [multiSizeReport('rep_dup_key')], purchaseOrderBatch: [], purchaseRequest: [] };
-  const { service, store } = makeService({
+  const records = purchaseRecords('rep_dup_key');
+  const dir = tempDir();
+  const realStore = new JsonTaskStore({ dir });
+  // 计划一落盘就注入"人工已经写出两条同键记录"：此时还没创建任何采购申请。
+  let injected = false;
+  const store = {
+    create: (...args) => realStore.create(...args),
+    get: (...args) => realStore.get(...args),
+    list: (...args) => realStore.list(...args),
+    update: async (recordId, patch) => {
+      if (!injected && patch.posting_stage === 'posting_plan_created') {
+        injected = true;
+        const duplicateKey = `purchase_request:${recordId}:0`;
+        records.purchaseRequest.push(
+          { record_id: 'dup_1', fields: { 幂等键: duplicateKey, 编号: ['prod_1'] } },
+          { record_id: 'dup_2', fields: { 幂等键: duplicateKey, 编号: ['prod_1'] } },
+        );
+      }
+      return realStore.update(recordId, patch);
+    },
+  };
+  const { service } = makeService({
+    dir,
+    store,
     gateway: makeGateway(records),
-    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }, { size: 37, quantity: 1 }] }),
+    recognizer: twoSizes,
   });
   const accepted = await service.accept('supplier-report', 'rep_dup_key');
-  await waitForTask(store, accepted.taskId);
-
-  // 人工（或历史重试）已经写出两条同键记录：不能再挑一条继续。
-  const duplicateKey = `purchase_request:${accepted.taskId}:0`;
-  records.purchaseRequest.push(
-    { record_id: 'dup_1', fields: { 幂等键: duplicateKey, 编号: ['prod_1'] } },
-    { record_id: 'dup_2', fields: { 幂等键: duplicateKey, 编号: ['prod_1'] } },
-  );
-
-  await assert.rejects(
-    service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_1'),
-    /命中 2 条记录.*人工核对/,
-  );
+  const task = await waitForTask(store, accepted.taskId, ['posted', 'failed']);
+  assert.equal(task.status, 'failed', '重复业务事实必须停下来，不能挑一条继续');
+  assert.ok(String(task.error).includes('命中 2 条记录'), `实际错误：${task.error}`);
   assert.equal(records.purchaseRequest.length, 2, '停止后不得再写出新的采购申请');
-  assert.equal((await store.get(accepted.taskId)).status, 'posting');
 });

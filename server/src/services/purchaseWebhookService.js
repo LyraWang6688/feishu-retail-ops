@@ -10,10 +10,14 @@ const { V1ReferenceResolver, person, relation, normalizeColor } = require('./v1R
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { recordUrl } = require('../utils/feishuLinks');
 const doubaoService = require('./doubaoService');
-const { purchaseRequestConfirmationCard, purchaseArrivalComparisonCard, purchaseArrivalDetailCard, purchaseStatusCard } = require('../utils/larkCards');
+// 采购申请确认卡片（purchaseRequestConfirmationCard）**不再从这段链路发出**（免确认），
+// 卡片本身仍留在 utils/larkCards 并且 handleCardAction 仍能处理它——
+// 线上已经发出去的老卡片要能点得动，将来要回滚也只需要把 publishPurchaseRequest 换回发卡片。
+const { purchaseArrivalDetailCard, purchaseStatusCard } = require('../utils/larkCards');
 const { InventoryService } = require('./inventoryService');
 const { buildPurchaseQuantities } = require('./purchaseQuantityPolicy');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
+const { renderPurchaseRequestPng } = require('./purchaseRequestImageService');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { IDEMPOTENCY_KEY_FIELD, createOnceByKey } = require('../infrastructure/idempotencyKey');
 const { logError, logInfo, logWarn } = require('../utils/logger');
@@ -50,6 +54,18 @@ const aggregateArrivalItems = (items) => {
 };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * 飞书 SDK 抛错时 message 往往只有 "Request failed with status code 400"，
+ * 真正有用的错误码和原因在 response.data 里（例如缺权限的 99991672）。
+ * 出图/发图的失败只会写日志，所以日志必须带上这两个字段，否则线上排查只能靠猜。
+ */
+const larkErrorText = (error) => {
+  const data = error?.response?.data;
+  const code = data?.code ?? error?.code;
+  const message = data?.msg || error?.message || 'unknown';
+  return code ? `${message} (Code: ${code})` : message;
+};
 
 // 鞋盒/吊牌上的「品名」：女鞋 → B、男鞋 → A。单选选项就是 A/B 两个字。
 // 识别不出性别就留空：默认成 A 会把女鞋写进男鞋，比空着更难发现。
@@ -105,6 +121,9 @@ class PurchaseWebhookService {
     });
     this.recognizer = options.recognizer || doubaoService;
     this.inventory = options.inventory || new InventoryService({ gateway: this.gateway });
+    // 「明细 → PNG」。默认是 SVG+sharp 的真实实现；测试注入假实现就能断言
+    // "每个供应商一张图"、"先发图后写表"，而不必在单测里真的跑一遍图形库。
+    this.images = options.images || { render: renderPurchaseRequestPng };
     this.enablePurchaseInventory = true;
     this.store = options.store || new JsonTaskStore({
       dir: path.join(__dirname, '../../data/purchase_webhook_tasks'),
@@ -174,6 +193,13 @@ class PurchaseWebhookService {
   async process(kind, recordId, taskId) {
     const task = await this.store.get(taskId);
     if (task?.status === 'completed') return task;
+    // 免确认之后，采购申请一旦写成（posted）就是终态：重复投递的 webhook
+    // （飞书重投、双击、两个请求几乎同时进来）不能再解析一遍、更不能把图再发一遍。
+    // accept() 通常已经拦掉了，但并发到达的两次 accept 会各自入队，这里才是最终防线。
+    if (kind === 'supplier-report' && task?.status === 'posted') {
+      logInfo('purchase.webhook.posted_ignored', { record_id: recordId, task_id: taskId });
+      return task;
+    }
     await this.store.update(taskId, { status: 'processing', started_at: new Date().toISOString() });
     try {
       let result;
@@ -189,7 +215,15 @@ class PurchaseWebhookService {
         result = await this.processArrival(recordId, taskId);
       }
       const current = await this.store.get(taskId);
-      return this.store.update(taskId, { status: current?.status || 'awaiting_confirmation', result });
+      // 采购报单免确认后没有「待确认」这个中间态了：写成功就是 posted。
+      // 保持「已经写出的更靠后的状态不被覆盖回去」这个原则不变。
+      let status = current?.status;
+      if (!status || status === 'processing') {
+        status = kind === 'supplier-report'
+          ? (result?.ignored && result?.status === '已取消' ? 'cancelled' : 'posted')
+          : 'awaiting_confirmation';
+      }
+      return this.store.update(taskId, { status, result });
     } catch (error) {
       await this.store.update(taskId, { status: 'failed', error: error.message }).catch(() => undefined);
       if (kind === 'supplier-report') {
@@ -287,7 +321,6 @@ class PurchaseWebhookService {
       const allItems = [];
       const reportRecordIds = [];
       let supplierRecordId = '';
-      let supplierName = '';
       let behaviorRecordId = '';
       let operatorOpenId = '';
       const parseErrors = [];
@@ -309,20 +342,26 @@ class PurchaseWebhookService {
         try {
           const product = await this.references.resolveProduct({ productRecordId: productIds[0] });
           const productSupplierIds = linkedRecordIds(product.record?.fields?.[productTable.fields.supplier]);
-          if (productSupplierIds.length > 0) {
-            if (!supplierRecordId) {
-              supplierRecordId = productSupplierIds[0];
-            } else if (supplierRecordId !== productSupplierIds[0]) {
-              logInfo("purchase.batch.multi_supplier", { batch_no: batchNo, record_id: record.record_id, supplier: productSupplierIds[0] });
+          // 供应商要记在**每一条明细**上，不能只记批次级的那一个：
+          // 同一个报货批次里可能有好几个供应商，出图必须按供应商拆开，
+          // 只留第一个的话第二家的货会被画进第一家的单子里。
+          const itemSupplierId = productSupplierIds[0] || '';
+          if (itemSupplierId) {
+            if (!supplierRecordId) supplierRecordId = itemSupplierId;
+            else if (supplierRecordId !== itemSupplierId) {
+              logInfo('purchase.batch.multi_supplier', { batch_no: batchNo, record_id: record.record_id, supplier: itemSupplierId });
             }
           }
-          const productNumber = textValue(product.record?.fields?.[productTable.fields.number]);
+          const productInfo = this.productDisplayInfo(product.record, productTable);
           const parsed = await this.parseReportQuantities(fields, reportTable);
           for (const item of parsed) {
             allItems.push({
               ...item,
               product_record_id: product.recordId,
-              product_number: productNumber,
+              product_number: productInfo.number,
+              item_no: productInfo.itemNo,
+              color: productInfo.color,
+              supplier_record_id: itemSupplierId,
               report_record_id: record.record_id,
               detail_id: detailId,
             });
@@ -348,21 +387,26 @@ class PurchaseWebhookService {
         batch_no: batchNo,
         report_record_ids: reportRecordIds,
         supplier_record_id: supplierRecordId,
-        supplier: supplierName,
         behavior_record_id: behaviorRecordId,
         items: allItems,
         operator_open_id: operatorOpenId,
       };
 
-      // 批量更新所有报单记录状态为"待确认"
-      for (const rid of reportRecordIds) {
-        await this.gateway.update('purchaseReport', rid, { status: '待确认', failureReason: '' }).catch(() => undefined);
+      // 免确认：解析完直接写采购申请（不再发确认卡片、也不再写"待确认"）。
+      // 报单记录的终态由 confirmPurchaseRequest 统一改成「已生成申请」。
+      const updated = await this.store.update(batchTaskId, { draft, batch_no: batchNo });
+      const result = await this.publishPurchaseRequest(batchTaskId, updated);
+      logInfo('purchase.batch.posted', { batch_no: batchNo, task_id: batchTaskId, record_count: reportRecordIds.length, item_count: allItems.length });
+      return { status: 'posted', batch_no: batchNo, item_count: allItems.length, request_count: result.request_ids?.length || 0 };
+    } catch (error) {
+      // 免确认之后批次任务自己就是终态的唯一负责人：这里不落状态的话，
+      // 任务会永远停在 batch_waiting，重收 webhook 会被当成重复投递直接跳过，
+      // 整批货就静默卡死了。失败要和单条路径一样能重试。
+      await this.store.update(batchTaskId, { status: 'failed', error: error.message, batch_no: batchNo }).catch(() => undefined);
+      for (const rid of recordIds) {
+        await this.gateway.update('purchaseReport', rid, { status: '解析失败', failureReason: error.message }).catch(() => undefined);
       }
-
-      await this.store.update(batchTaskId, { status: 'awaiting_confirmation', draft, batch_no: batchNo });
-      await this.sendCard(operatorOpenId, purchaseRequestConfirmationCard(batchTaskId, draft));
-      logInfo('purchase.batch.card.sent', { batch_no: batchNo, task_id: batchTaskId, record_count: reportRecordIds.length, item_count: allItems.length });
-      return { status: 'awaiting_confirmation', batch_no: batchNo, item_count: allItems.length };
+      throw error;
     } finally {
       this.activeBatches.delete(batchNo);
     }
@@ -381,6 +425,225 @@ class PurchaseWebhookService {
     const value = record?.fields?.[fieldName];
     const first = Array.isArray(value) ? value[0] : value;
     return first?.id || first?.open_id || first?.openId || '';
+  }
+
+  /**
+   * 货品记录里出图要用的三个展示字段。
+   *
+   * 「颜色」是关联字段，飞书在 link cell 里会带回被关联记录的主字段文本，
+   * 所以 textValue 直接就能拿到颜色名，不需要再多查一次「颜色管理」。
+   */
+  productDisplayInfo(record, productTable) {
+    const fields = record?.fields || {};
+    return {
+      number: textValue(fields[productTable.fields.number]),
+      itemNo: textValue(fields[productTable.fields.itemNo]),
+      color: textValue(fields[productTable.fields.color]),
+    };
+  }
+
+  /**
+   * 免确认生成采购申请。
+   *
+   * 产品负责人明确要求：报单解析完直接写「采购申请」，不再发确认卡片、不再等她点。
+   * 理由是这批货本来就是她自己报的——「供应商报单」记录本身就是她的输入，
+   * 再让她点一次「确认」只是重复劳动，还会因为忘了点让货卡住。
+   *
+   * ⚠️ 销售链路「未确认不写账」的红线**不受影响**：那条链路是她口述、AI 可能听错，
+   * 必须由她核对后确认；采购这条是产品负责人单独定的口径，不要"顺手统一"。
+   *
+   * ⚠️ 幂等与回滚没有削弱：这里仍然走 confirmPurchaseRequest，
+   * 也就是原来那套 posting_plan + createOnceByKey + 幂等键的写法，
+   * 只是把"等卡片点确认"换成"解析完直接调用同一个确认函数"。
+   * 要回滚成确认卡片，把这里换回 sendCard(purchaseRequestConfirmationCard(...)) 即可。
+   */
+  async publishPurchaseRequest(taskId, task) {
+    // 免确认路径没有卡片消息可更新，明确跳过一次卡片 patch（否则会打无意义的告警日志）。
+    return this.confirmPurchaseRequest(taskId, task, {}, { skipCardUpdate: true });
+  }
+
+  /**
+   * 发送图片消息（飞书图片消息要先用 im.image 上传拿 image_key）。
+   *
+   * ⚠️ 上传图片用的是应用身份权限 im:resource:upload（或 im:resource）。
+   * 没开通时这里会以 99991672 失败，日志里带上错误码，便于线上直接定位到权限问题。
+   */
+  async sendImage(openId, imageBuffer) {
+    if (!openId) throw new Error('采购记录缺少经办人 open_id，无法发送图片');
+    let upload;
+    try {
+      upload = await this.client.im.image.create({
+        data: { image_type: 'message', image: imageBuffer },
+      });
+    } catch (error) {
+      throw new Error(`上传采购申请图片失败：${larkErrorText(error)}`);
+    }
+    // SDK 会剥掉外层信封、把 image_key 放在顶层；保留 .data.image_key 兜底，
+    // 免得将来换了 http 实现之后这里静默拿不到 key。
+    const imageKey = upload?.image_key || upload?.data?.image_key;
+    if (!imageKey) throw new Error('采购申请图片上传成功但未返回 image_key');
+    const response = await this.client.im.message.create({
+      params: { receive_id_type: 'open_id' },
+      data: { receive_id: openId, msg_type: 'image', content: JSON.stringify({ image_key: imageKey }) },
+    });
+    if (response.code !== 0) throw new Error(`发送采购申请图片失败: ${response.msg} (Code: ${response.code})`);
+    return imageKey;
+  }
+
+  async sendText(openId, content) {
+    if (!openId) throw new Error('采购记录缺少经办人 open_id，无法发送说明');
+    const response = await this.client.im.message.create({
+      params: { receive_id_type: 'open_id' },
+      data: { receive_id: openId, msg_type: 'text', content: JSON.stringify({ text: content }) },
+    });
+    if (response.code !== 0) throw new Error(`发送采购申请说明失败: ${response.msg} (Code: ${response.code})`);
+  }
+
+  // 同一个供应商的明细合成一张图。没有供应商的明细（历史草稿）归到一组，
+  // 宁可出一张"未标注供应商"的图，也不能拆成一人一张。
+  groupItemsBySupplier(items) {
+    const groups = new Map();
+    (items || []).forEach((item, index) => {
+      const supplierRecordId = item?.supplier_record_id || '';
+      const key = supplierRecordId || '__unknown__';
+      if (!groups.has(key)) groups.set(key, { supplierRecordId, items: [], indexes: [] });
+      const group = groups.get(key);
+      group.items.push(item);
+      group.indexes.push(index);
+    });
+    return [...groups.values()];
+  }
+
+  async resolveSupplierName(supplierRecordId) {
+    if (!supplierRecordId) return '';
+    const table = this.gateway.table('supplier');
+    const record = await this.gateway.get('supplier', supplierRecordId).catch(() => null);
+    return textValue(record?.fields?.[table.fields.name]).trim();
+  }
+
+  /**
+   * 采购申请写完之后：按供应商出图 → 发给报单人 → 写回「采购申请单」附件。
+   *
+   * ⚠️ 顺序是有意为之：**先发图，再写回附件**。
+   * 她已经拿到图才能转发给供应商，附件只是留档；写回失败绝不能让她收不到图。
+   * 因此附件写入的异常只记警告，绝不向上抛。
+   *
+   * 这个方法也绝不向上抛异常：调用它的时候采购事实已经落地，
+   * 抛出去会让 process() 把任务判成 failed、把报单记录标成「解析失败」，
+   * 她会以为这批货没报上，而实际上已经报上了。
+   */
+  async deliverSupplierImages(taskId, task, posting = {}) {
+    try {
+      return await this.deliverSupplierImagesInner(taskId, task, posting);
+    } catch (error) {
+      // 兜底：调用方是"采购事实已经写完"的收尾流程，这里漏出去的异常会把任务判成 failed。
+      logError('purchase.request.image.delivery_failed', { task_id: taskId, error: error.message });
+      return { sent: [], failed: [{ supplier: '', error: error.message }] };
+    }
+  }
+
+  async deliverSupplierImagesInner(taskId, task, posting = {}) {
+    const draft = task?.draft || {};
+    const items = draft.items || [];
+    if (!items.length) return { sent: [], failed: [] };
+    const operatorOpenId = draft.operator_open_id;
+    if (!operatorOpenId) {
+      logWarn('purchase.request.image.no_operator', { task_id: taskId });
+      return { sent: [], failed: [] };
+    }
+    const sent = [];
+    const failed = [];
+    for (const group of this.groupItemsBySupplier(items)) {
+      const supplierName = await this.resolveSupplierName(group.supplierRecordId).catch(() => '');
+      const label = supplierName || '未标注供应商';
+      const rowCount = group.items.length;
+      const totalPairs = group.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+      let png;
+      try {
+        png = await this.images.render({
+          supplierName,
+          batchNo: posting.batch_no || draft.batch_no || '',
+          items: group.items,
+        });
+        await this.sendImage(operatorOpenId, png);
+        await this.sendText(operatorOpenId, `${label} 这批 ${rowCount} 条（共 ${totalPairs} 双），图可以直接转给供应商。`);
+      } catch (error) {
+        failed.push({ supplier: label, error: error.message });
+        logError('purchase.request.image.send_failed', { task_id: taskId, supplier: label, error: error.message });
+        // 图没发出去就不写附件：保持"先发图、再写回"的顺序，留下人工补发的余地。
+        continue;
+      }
+      const requestRecordIds = group.indexes
+        .map((index) => posting.request_id_by_item_key?.[`${taskId}:${index}`])
+        .filter(Boolean);
+      try {
+        const written = await this.writeSupplierImageAttachment({
+          taskId, supplierName: label, png, requestRecordIds,
+        });
+        if (written?.written) logInfo('purchase.request.image.attachment_written', { task_id: taskId, ...written });
+      } catch (error) {
+        // 只告警：她已经有图了。
+        logWarn('purchase.request.image.attachment_write_failed', { task_id: taskId, supplier: label, error: error.message });
+      }
+      sent.push(label);
+    }
+    const summary = { sent, failed };
+    if (failed.length) {
+      // 图没发出去（例如机器人缺 im:resource 图片上传权限）时把失败留在任务里：
+      // 采购事实已经写成、任务已是 posted，重收 webhook 会被当成重复投递跳过，
+      // 所以必须留下这条记录，运维才知道哪一批图欠着、补完权限按 task 补发。
+      await this.store.update(taskId, { image_delivery: { ...summary, at: new Date().toISOString() } })
+        .catch((error) => logWarn('purchase.request.image.delivery_persist_failed', { task_id: taskId, error: error.message }));
+    }
+    return summary;
+  }
+
+  /**
+   * 把某个供应商的采购申请图写进「采购申请」的附件字段。
+   *
+   * 规则（产品负责人明确给的）：
+   * - 同一「报货批次」+ 同一「供应商」只写一条 → 写进「明细ID」最小的那条记录；
+   * - 重复执行（重跑批次）不得写出第二条 → 目标记录已经有附件就跳过，连上传都不做。
+   *
+   * 为什么按「明细ID」而不是数组下标挑：明细ID 是飞书 auto_number，写入即定，
+   * 而 posting_plan 的数组顺序、远端返回顺序在重试之后都可能变。
+   */
+  async writeSupplierImageAttachment({ taskId, supplierName, png, requestRecordIds }) {
+    if (!requestRecordIds?.length) {
+      logWarn('purchase.request.image.no_request_record', { task_id: taskId, supplier: supplierName });
+      return { written: false, reason: 'no_request_record' };
+    }
+    if (typeof this.gateway.uploadAttachment !== 'function') {
+      throw new Error('gateway 不支持附件上传（uploadAttachment）');
+    }
+    const requestTable = this.gateway.table('purchaseRequest');
+    const candidates = [];
+    for (const recordId of requestRecordIds) {
+      const record = await this.gateway.get('purchaseRequest', recordId).catch(() => null);
+      candidates.push({
+        recordId,
+        detailId: Number(textValue(record?.fields?.[requestTable.fields.detailId])) || 0,
+        attachment: record?.fields?.[requestTable.fields.attachment],
+      });
+    }
+    // 明细ID 读不到时（字段缺失/权限）退回按 recordId 排序：至少保证"每次选同一条"的稳定性。
+    candidates.sort((a, b) => (a.detailId - b.detailId) || String(a.recordId).localeCompare(String(b.recordId)));
+    const target = candidates[0];
+    if (attachmentTokens(target.attachment).length) {
+      logInfo('purchase.request.image.attachment_exists', { task_id: taskId, record_id: target.recordId });
+      return { written: false, skipped: true, record_id: target.recordId };
+    }
+    const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'purchase-request-image-'));
+    try {
+      const safeName = String(supplierName || 'supplier').replace(/[^\w\u4e00-\u9fa5-]/g, '') || 'supplier';
+      const filePath = path.join(tempDir, `${safeName}-采购申请.png`);
+      await fs.promises.writeFile(filePath, png);
+      const fileToken = await this.gateway.uploadAttachment(filePath);
+      await this.gateway.update('purchaseRequest', target.recordId, { attachment: [{ file_token: fileToken }] });
+      return { written: true, record_id: target.recordId, file_token: fileToken };
+    } finally {
+      await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
   }
 
   /**
@@ -431,22 +694,34 @@ class PurchaseWebhookService {
     const supplierRecordId = productSupplierIds[0];
     const parsed = await this.parseReportQuantities(fields, table);
     const operatorOpenId = this.recordOperator(record, table.fields.operator);
-    const draftId = taskId;
+    const productInfo = this.productDisplayInfo(product.record, productTable);
+    const items = parsed.map((item) => ({
+      ...item,
+      product_record_id: product.recordId,
+      product_number: productInfo.number,
+      // 货号/颜色单独带上：出图时「货号 | 颜色」是两列，
+      // 「编号」是「货号+颜色」的拼接，不能拿来当货号用。
+      item_no: productInfo.itemNo,
+      color: productInfo.color,
+      supplier_record_id: supplierRecordId,
+      report_record_id: recordId,
+      detail_id: detailId,
+    }));
     const draft = {
       report_record_id: recordId,
       product_record_id: product.recordId,
-      product_number: textValue(product.record?.fields?.[productTable.fields.number]),
+      product_number: productInfo.number,
       supplier_record_id: supplierRecordId,
       behavior_record_id: behaviorIds[0] || '',
-      supplier: '',
-      items: parsed.map((item) => ({ ...item, product_record_id: product.recordId, product_number: textValue(product.record?.fields?.[productTable.fields.number]), detail_id: detailId })),
+      items,
       operator_open_id: operatorOpenId,
     };
-    await this.gateway.update('purchaseReport', recordId, { status: '待确认', failureReason: '' });
-    await this.store.update(taskId, { status: 'awaiting_confirmation', draft });
-    await this.sendCard(operatorOpenId, purchaseRequestConfirmationCard(draftId, draft));
-    logInfo('purchase.report.card.sent', { record_id: recordId, task_id: taskId, item_count: parsed.length });
-    return { status: 'awaiting_confirmation', item_count: parsed.length };
+    // 免确认：不再写「待确认」、不再发确认卡片，解析完直接写采购申请。
+    // 报单记录的处理状态终态由 confirmPurchaseRequest 改成「已生成申请」。
+    const updated = await this.store.update(taskId, { draft });
+    const result = await this.publishPurchaseRequest(taskId, updated);
+    logInfo('purchase.report.posted', { record_id: recordId, task_id: taskId, item_count: parsed.length, request_count: result.request_ids?.length || 0 });
+    return { status: 'posted', item_count: parsed.length };
   }
 
   /**
@@ -945,8 +1220,10 @@ class PurchaseWebhookService {
    * 每一步都遵循「先按幂等键回查远端，再决定是否创建」，并在创建后立刻把
    * record_id 写回 posting_progress。这样无论是「远端已建、本地没记」还是
    * 「本地记了、进程重启」，重试都只会补齐缺的那部分。
+   *
+   * options.skipCardUpdate：免确认路径没有卡片消息可更新，跳过那次 patch。
    */
-  async confirmPurchaseRequest(taskId, task, event = {}) {
+  async confirmPurchaseRequest(taskId, task, event = {}, options = {}) {
     const draft = task.draft;
     const isBatch = draft.is_batch === true;
     const plan = await this.ensurePostingPlan(taskId, task);
@@ -1024,9 +1301,20 @@ class PurchaseWebhookService {
       request_ids: requestIds,
     });
     logInfo('purchase.request.created', { task_id: taskId, batch_record_id: batchRecordId, batch_no: plan.batch_no, request_count: requestIds.length, is_batch: isBatch });
-    // 更新卡片为"已完成"状态
-    await this.updatePurchaseActionCard(task, event, purchaseStatusCard({ ...draft, batch_no: plan.batch_no }, '采购申请已生成', `报货批次号：${plan.batch_no}；共 ${requestIds.length} 条明细已写入。`, 'green'));
-    return { toast: { type: 'success', content: `采购申请已生成：${plan.batch_no}（共${requestIds.length}条明细）` } };
+    const posting = {
+      request_ids: requestIds,
+      request_id_by_item_key: requestIdByItemKey,
+      batch_record_id: batchRecordId,
+      batch_no: plan.batch_no,
+    };
+    // 采购事实已经落地之后的收尾动作：按供应商出图 → 发给她 → 写回附件。
+    // 现场出图失败也只记日志（方法内部已吞异常），绝不把任务判成失败。
+    await this.deliverSupplierImages(taskId, task, posting);
+    // 更新卡片为"已完成"状态（免确认路径没有卡片，跳过）
+    if (!options.skipCardUpdate) {
+      await this.updatePurchaseActionCard(task, event, purchaseStatusCard({ ...draft, batch_no: plan.batch_no }, '采购申请已生成', `报货批次号：${plan.batch_no}；共 ${requestIds.length} 条明细已写入。`, 'green'));
+    }
+    return { toast: { type: 'success', content: `采购申请已生成：${plan.batch_no}（共${requestIds.length}条明细）` }, ...posting };
   }
 
   async confirmArrival(taskId, task, operatorOpenId) {
