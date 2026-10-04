@@ -6,9 +6,10 @@
 
 当前 V1 的销售录入入口是飞书私聊机器人（自然语言文字）；采购有**两条**由飞书多维表格记录变更事件触发的链路（新增记录时进入识别与确认）：**供应商报单**新增 → 解析「数量说明」文字生成采购申请；**采购到货**新增 → 识别记录里的鞋盒图片并与该批次的采购申请比对入库。机器人**不接收**采购图片，收到非文字消息会明确回绝并提示使用采购表单。销售与采购到货都经用户确认后由后端统一入账。飞书网页工作台已经实现并存于本仓库（`GET /workbench`、`/api/workbench/*`、`server/public/workbench/`），用于销售订单的后续收款、交付与工作台查询，不承担数据录入。原微信小程序链路已于 2026-10-01 正式退役并从代码库整体移除，不是当前入口，也没有开关可以重新启用它。
 
-> **已知死代码**：`LarkMvpService.acceptPurchaseImage` / `finishPurchaseImages` / `processPurchaseTask`
-> 是"机器人收采购图片 → 写「采购批次」表 → `PurchasePostingService`"那一整套链路，**当前没有任何调用方**
-> （`api/lark/events` 的私聊入口在收到非文字消息时直接回绝）。排查采购问题时不要沿着它走。
+> **采购链路的历史**：曾存在一条"机器人收采购图片 → 写「采购批次」表 → `PurchasePostingService`"
+> 的旧链路（`acceptPurchaseImage` / `finishPurchaseImages` / `processPurchaseTask` /
+> `purchaseDraftBuilder` / `purchasePostingService` / schema 里的 `purchaseBatch`）。
+> 它在 2026-10-04 已**整体删除**——这些方法此前已无任何调用方。采购只走上面两条表变更链路。
 
 ## 技术栈
 
@@ -182,6 +183,6 @@ Schema Check 只回答「目标 Base 的字段与关联结构是否满足契约�
 
 - 后端日志是结构化 JSON（`src/utils/logger.js`）；飞书写入事件为 `bitable.record.*` / `inventory.change.*`，可据此过滤 PM2 日志。
 - 确保 `.env` 正确配置再启动服务：缺 `LARK_AGENT_APP_ID` / `LARK_AGENT_APP_SECRET` 或 `FEISHU_V1_BITABLE_APP_TOKEN` 会直接报错，不会回退到默认 Base。
-- **采购入口的两张表 ID 是硬编码的**（`src/routes/larkEvents.js` 里「供应商报单」`tblo0ffzFt7vyQw2` /
-  「采购到货」`tblvLOXKESNTbZ7v`），**没有从 schema 读**。生产租户恰好等于这两个值所以现在能跑；
-  换 Base 或多租户时必须同步改这两处，否则新增记录**不会触发任何事、也不会报错**——现象是"采购没反应"。
+- **采购入口的表 ID 从 schema 读**（`src/routes/larkEvents.js` 按 `V1_BITABLE_SCHEMA.tables.purchaseReport`
+  / `.purchaseArrival` 的 `tableId` 分派），换 Base 时跟着环境变量走。**不要再写死表 ID**：
+  写死的后果是"新增记录不触发任何事、也不报错"，现象只是"采购没反应"，属于最难查的静默失效。

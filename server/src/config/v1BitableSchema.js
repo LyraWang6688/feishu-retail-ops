@@ -140,21 +140,6 @@ const V1_BITABLE_SCHEMA = {
       },
     },
     // Legacy private-chat purchase intake table. Kept for the frozen path.
-    purchaseBatch: {
-      tableName: '采购到货批次',
-      tableId: getEnv('FEISHU_V1_PURCHASE_BATCH_TABLE_ID', 'tblvLOXKESNTbZ7v'),
-      fields: {
-        batchNo: '到货批次号',
-        originalImages: '原始图片',
-        sender: '发送人',
-        recognitionStatus: '识别状态',
-        confirmStatus: '确认状态',
-        arrivalDate: '到货日',
-        supplier: '供应商',
-        failureReason: '识别失败原因',
-        messageIds: '飞书消息ID列表',
-      },
-    },
     purchaseReport: {
       tableName: '供应商报单',
       tableId: getEnv('FEISHU_V1_PURCHASE_REPORT_TABLE_ID', 'tblo0ffzFt7vyQw2'),

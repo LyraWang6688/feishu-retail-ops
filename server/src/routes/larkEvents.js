@@ -97,6 +97,14 @@ const createLarkEventHandlers = (service) => ({
     }
     if (fileToken !== ownAppToken) return {};
 
+    // 表 ID → 采购链路入口。**从 schema 读，不写死表 ID**：
+    // 写死的话，换 Base / 多租户时这里不会报错、也不会触发——
+    // 现象只是"采购没反应"，属于最难查的一类静默失效。
+    const purchaseIntake = [
+      { tableId: V1_BITABLE_SCHEMA.tables.purchaseReport.tableId, kind: 'supplier-report', label: '供应商报单' },
+      { tableId: V1_BITABLE_SCHEMA.tables.purchaseArrival.tableId, kind: 'arrival', label: '采购到货' },
+    ];
+
     // 遍历 action_list，处理每条新增记录
     for (const actionItem of actionList) {
       const recordId = actionItem?.record_id;
@@ -109,21 +117,16 @@ const createLarkEventHandlers = (service) => ({
         continue;
       }
 
-      // 判断是哪个表，调用对应的采购处理逻辑
+      const intake = purchaseIntake.find((entry) => entry.tableId && entry.tableId === tableId);
+      if (!intake) continue;
+
       setImmediate(() => {
         try {
-          // 供应商报单表
-          if (tableId === 'tblo0ffzFt7vyQw2') {
-            service.purchaseWebhooks.accept('supplier-report', recordId).catch((error) => {
-              logError('lark.bitable.supplier_report.failed', { record_id: recordId, error: error.message });
+          service.purchaseWebhooks.accept(intake.kind, recordId).catch((error) => {
+            logError(`lark.bitable.${intake.kind}.failed`, {
+              table_id: tableId, record_id: recordId, error: error.message,
             });
-          }
-          // 采购到货表
-          else if (tableId === 'tblvLOXKESNTbZ7v') {
-            service.purchaseWebhooks.accept('arrival', recordId).catch((error) => {
-              logError('lark.bitable.arrival.failed', { record_id: recordId, error: error.message });
-            });
-          }
+          });
         } catch (error) {
           logError('lark.bitable.record_changed.handler_error', { error: error.message });
         }
