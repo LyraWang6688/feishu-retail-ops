@@ -1,4 +1,4 @@
-const { textValue } = require('./v1BitableGateway');
+const { textValue, linkedRecordIds } = require('./v1BitableGateway');
 
 // 「实时库存」是"店里实际有什么"，「货品信息」是"配置过什么"。
 // 销售录单卖的是实物，所以入口按实时库存匹配，而不是先查货品资料。
@@ -33,7 +33,12 @@ const emptyColorEntry = ({ productRecordId, sizeRecordId, color }) => ({
   records: { 门盒: [], 样品: [], 仓库: [] },
 });
 
-const linkedId = (cell) => (Array.isArray(cell) ? cell[0]?.id || cell[0]?.record_id || '' : '');
+// 关联单元格的形状有**两种**，必须都认：
+//   · 飞书原始 API：[{ record_ids: ['rec...'], table_id: '...', text: '...' }]
+//   · 简写/CLI 导出：[{ id: 'rec...' }] 或 'rec...'
+// 复用网关里的 linkedRecordIds（它已经处理了这几种），不要自己写一份——
+// 少认一种形状的后果是"整表记录被静默跳过"，线上表现为每一单都说没货。
+const linkedId = (cell) => linkedRecordIds(cell)[0] || '';
 
 const countsOf = (entry) => ({
   doorBox: entry.records['门盒'].length,
