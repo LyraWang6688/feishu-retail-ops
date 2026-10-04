@@ -7,6 +7,10 @@ const { PurchaseWebhookService } = require('../src/services/purchaseWebhookServi
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
+// 新品的记录链接要用 Base token 拼。本地/CI 没有真配置时给个测试值，
+// 才能断言「链接带上了正确的 record_id」。（每个测试文件是独立进程，不会污染别的用例。）
+process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
+
 const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'purchase-test-'));
 
 const table = (key) => V1_BITABLE_SCHEMA.tables[key];
@@ -380,6 +384,271 @@ test('arrival with a batch number still compares against that batch requests', a
   assert.equal(task.draft.batch_no, 'BH-001');
   assert.equal(task.draft.differences.length, 1);
   assert.equal(task.draft.differences[0].label, '少2');
+});
+
+// ─── 到货新品自动建档 ───
+
+// 货品表里确实没有这条：resolveProduct 抛带 code 的错，到货链路才敢自动建档。
+// 「货号对应多个颜色」这类歧义不带这个 code，必须留给她核对。
+const productNotFound = (itemNo, color) => Object.assign(new Error(`找不到货品：${itemNo}${color}`), { code: 'PRODUCT_NOT_FOUND' });
+
+const arrivalWithNewProduct = ({ records, references, recognizer, inventory = makeInventory() } = {}) => makeService({
+  inventory,
+  gateway: makeGateway(records),
+  references,
+  recognizer,
+});
+
+test('arrival auto-creates the product record for an unknown 货号+颜色 and still inbounds it', async () => {
+  const inventory = makeInventory();
+  const records = {
+    purchaseArrival: [{ record_id: 'arr_new', fields: { 确认状态: '待确认', 识别状态: '待识别', 报货批次号: ['batch_1'], 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
+    purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
+    purchaseRequest: [],
+    purchaseInbound: [],
+    product: [],
+    color: [{ record_id: 'color_black', fields: { 颜色: '黑' } }],
+    supplier: [{ record_id: 'sup_9', fields: { 供应商名称: '一代千金' } }],
+  };
+  const { service, store, gateway } = arrivalWithNewProduct({
+    records,
+    inventory,
+    recognizer: makeRecognizer({
+      recognizeLabels: async () => [{ item_no: '3602', color: '黑色', size: 36, quantity: 1, gender: '女', supplier: '一代千金' }],
+    }),
+    references: makeReferences({
+      resolveProduct: async ({ itemNo, color }) => {
+        if (itemNo === '3602' && color === '黑色') throw productNotFound(itemNo, color);
+        return { recordId: 'prod_1', record: { record_id: 'prod_1', fields: { 编号: '8088灰', 供应商: ['sup_1'] } } };
+      },
+      resolveSupplier: async (name) => ({ recordId: 'sup_9', record: { record_id: 'sup_9', fields: { 供应商名称: name } } }),
+    }),
+  });
+
+  const accepted = await service.accept('arrival', 'arr_new');
+  const task = await waitForTask(store, accepted.taskId);
+  assert.equal(task.status, 'awaiting_confirmation');
+
+  assert.equal(records.product.length, 1, '识别到的新品要自动建一条货品记录');
+  const created = records.product[0];
+  // 只写确定知道的字段：公式字段（编号/货品状态/缺失信息说明）一个都不能写。
+  assert.deepEqual([...Object.keys(created.fields)].sort(), ['供应商', '类别', '颜色', '货号'].sort());
+  assert.equal(created.fields.货号, '3602');
+  assert.deepEqual(created.fields.颜色, ['color_black'], '「黑」要复用颜色表已有记录');
+  assert.deepEqual(created.fields.供应商, ['sup_9']);
+  assert.equal(created.fields.类别, 'B', '品名是女鞋 → B');
+
+  // 建档不影响入库：草稿里标出新品，确认后照常写入采购入库和库存。
+  assert.equal(task.draft.actual.length, 1);
+  assert.equal(task.draft.actual[0].created_product, true);
+  assert.equal(task.draft.created_products.length, 1);
+  assert.equal(task.draft.created_products[0].product_record_id, created.record_id);
+  assert.equal(task.draft.created_products[0].label, '3602黑色');
+  assert.match(task.draft.created_products[0].url, new RegExp(`record=${created.record_id}`));
+
+  const result = await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
+  assert.ok(result.toast.content.includes('采购已入库'));
+  assert.equal((await gateway.listAll('purchaseInbound')).length, 1);
+  assert.equal(inventory.calls.length, 1, '新品也要真的入库');
+});
+
+test('arrival creates a missing color record and tells the user about it', async () => {
+  const messages = [];
+  const records = {
+    purchaseArrival: [{ record_id: 'arr_newcolor', fields: { 确认状态: '待确认', 识别状态: '待识别', 报货批次号: ['batch_1'], 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
+    purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
+    purchaseRequest: [],
+    purchaseInbound: [],
+    product: [],
+    color: [],
+    supplier: [],
+  };
+  const { service, store, client } = arrivalWithNewProduct({
+    records,
+    recognizer: makeRecognizer({
+      recognizeLabels: async () => [{ item_no: '627', color: '香芋紫', size: 37, quantity: 1 }],
+    }),
+    references: makeReferences({
+      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
+    }),
+  });
+  client.im.message.create = async (params) => { messages.push(params); return { code: 0 }; };
+
+  const accepted = await service.accept('arrival', 'arr_newcolor');
+  const task = await waitForTask(store, accepted.taskId);
+  assert.equal(task.status, 'awaiting_confirmation');
+
+  assert.equal(records.color.length, 1, '颜色表没有的颜色要自动补一条');
+  assert.equal(records.color[0].fields.颜色, '香芋紫');
+  assert.deepEqual(records.product[0].fields.颜色, [records.color[0].record_id]);
+  assert.deepEqual(task.draft.created_colors, ['香芋紫']);
+  assert.equal(task.draft.created_products[0].color_created, true);
+
+  await waitFor('到货明细卡片发出', async () => messages.length === 1);
+  const cardText = JSON.stringify(JSON.parse(messages[0].data.content).elements);
+  assert.ok(cardText.includes('香芋紫'), '卡片要说明颜色表补了一条');
+  assert.ok(cardText.includes('我给你加了一条'), `卡片文案应说明补颜色，实际：${cardText}`);
+  assert.ok(cardText.includes('新品'), '卡片要把新品单独讲清楚');
+});
+
+test('arrival leaves 供应商 empty when the recognized name is not in the supplier table', async () => {
+  const records = {
+    purchaseArrival: [{ record_id: 'arr_nosup', fields: { 确认状态: '待确认', 识别状态: '待识别', 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
+    purchaseInbound: [],
+    product: [],
+    color: [{ record_id: 'color_black', fields: { 颜色: '黑' } }],
+    supplier: [],
+  };
+  const { service, store } = arrivalWithNewProduct({
+    records,
+    recognizer: makeRecognizer({
+      recognizeLabels: async () => [{ item_no: '3602', color: '黑色', size: 36, quantity: 1, supplier: '查无此厂' }],
+    }),
+    references: makeReferences({
+      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
+      resolveSupplier: async (name) => { throw new Error(`供应商管理中找不到：${name}`); },
+    }),
+  });
+
+  const accepted = await service.accept('arrival', 'arr_nosup');
+  const task = await waitForTask(store, accepted.taskId);
+  assert.equal(task.status, 'awaiting_confirmation', '供应商找不到不能报错');
+  assert.equal(records.supplier.length, 0, '不新建供应商');
+  assert.equal(records.product[0].fields.供应商, undefined, '找不到就留空，不猜');
+});
+
+test('arrival leaves 类别 empty when the label has no 男/女 information', async () => {
+  const records = {
+    purchaseArrival: [{ record_id: 'arr_nogender', fields: { 确认状态: '待确认', 识别状态: '待识别', 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
+    purchaseInbound: [],
+    product: [],
+    color: [{ record_id: 'color_black', fields: { 颜色: '黑' } }],
+    supplier: [],
+  };
+  const { service, store } = arrivalWithNewProduct({
+    records,
+    recognizer: makeRecognizer({
+      recognizeLabels: async () => [{ item_no: '3602', color: '黑色', size: 36, quantity: 1 }],
+    }),
+    references: makeReferences({
+      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
+    }),
+  });
+
+  const accepted = await service.accept('arrival', 'arr_nogender');
+  await waitForTask(store, accepted.taskId);
+  assert.equal(records.product.length, 1);
+  assert.equal(records.product[0].fields.类别, undefined, '认不出性别就留空，不能默认成 A');
+});
+
+test('arrival for a known product creates nothing and behaves exactly as before', async () => {
+  const records = {
+    purchaseArrival: [{ record_id: 'arr_known', fields: { 确认状态: '待确认', 识别状态: '待识别', 报货批次号: ['batch_1'], 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
+    purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
+    purchaseRequest: [],
+    purchaseInbound: [],
+    product: [{ record_id: 'prod_1', fields: { 货号: '8088', 颜色: ['color_gray'], 编号: '8088灰' } }],
+    color: [{ record_id: 'color_gray', fields: { 颜色: '灰' } }],
+    supplier: [],
+  };
+  const { service, store } = makeService({
+    gateway: makeGateway(records),
+    references: makeReferences({
+      resolveProduct: async () => ({ recordId: 'prod_1', record: records.product[0] }),
+    }),
+  });
+
+  const accepted = await service.accept('arrival', 'arr_known');
+  const task = await waitForTask(store, accepted.taskId);
+  assert.equal(task.status, 'awaiting_confirmation');
+  assert.equal(records.product.length, 1, '老货品不能建新记录');
+  assert.equal(records.color.length, 1, '老货品不能动颜色表');
+  assert.deepEqual(task.draft.created_products, []);
+  assert.deepEqual(task.draft.created_colors, []);
+  assert.equal(task.draft.actual[0].created_product, false);
+  assert.equal(task.draft.actual[0].product_number, '8088灰', '仍然用表里的完整编号');
+});
+
+test('arrival tells the user what a new product still lacks, read from the 缺失信息说明 formula', async () => {
+  const messages = [];
+  const records = {
+    purchaseArrival: [{ record_id: 'arr_gaps', fields: { 确认状态: '待确认', 识别状态: '待识别', 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
+    purchaseInbound: [],
+    product: [],
+    color: [{ record_id: 'color_black', fields: { 颜色: '黑' } }],
+    supplier: [],
+  };
+  const gateway = makeGateway(records);
+  const originalGet = gateway.get;
+  // 「缺失信息说明」是飞书公式，后端只负责读：齐备时是「齐备」，否则是缺的字段名。
+  // 「样例图」是附件字段、不在公式里，要单独看。
+  gateway.get = async (tableKey, recordId) => {
+    if (tableKey === 'product') {
+      return { record_id: recordId, fields: { 货号: '3602', 颜色: ['color_black'], 缺失信息说明: '成本、品类', 样例图: [] } };
+    }
+    return originalGet(tableKey, recordId);
+  };
+  const { service, store, client } = makeService({
+    gateway,
+    references: makeReferences({
+      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
+    }),
+    recognizer: makeRecognizer({
+      recognizeLabels: async () => [{ item_no: '3602', color: '黑色', size: 36, quantity: 1 }],
+    }),
+  });
+  client.im.message.create = async (params) => { messages.push(params); return { code: 0 }; };
+
+  const accepted = await service.accept('arrival', 'arr_gaps');
+  const task = await waitForTask(store, accepted.taskId);
+  assert.deepEqual(task.draft.created_products[0].missing, ['成本', '品类']);
+  assert.equal(task.draft.created_products[0].missing_sample_image, true);
+  assert.equal(task.draft.created_products[0].completeness_readable, true);
+
+  await waitFor('到货明细卡片发出', async () => messages.length === 1);
+  const cardText = JSON.stringify(JSON.parse(messages[0].data.content).elements);
+  assert.ok(cardText.includes('还差 成本 / 品类 / 样例图'), `卡片应列出缺口，实际：${cardText}`);
+});
+
+test('re-processing a failed arrival reuses the persisted new product instead of creating a second', async () => {
+  const records = {
+    purchaseArrival: [{ record_id: 'arr_retry_new', fields: { 确认状态: '待确认', 识别状态: '待识别', 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
+    purchaseInbound: [],
+    product: [],
+    color: [],
+    supplier: [],
+  };
+  // 第一次跑到发卡片才失败：建档已经写进远端并落盘，任务落 failed，重收 webhook 会重跑。
+  let failCard = true;
+  const client = makeClient();
+  client.im.message.create = async () => {
+    if (failCard) throw new Error('模拟卡片发送失败');
+    return { code: 0 };
+  };
+  const { service, store } = makeService({
+    gateway: makeGateway(records),
+    client,
+    references: makeReferences({
+      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
+    }),
+    recognizer: makeRecognizer({
+      recognizeLabels: async () => [{ item_no: '3602', color: '黑色', size: 36, quantity: 1 }],
+    }),
+  });
+
+  const first = await service.accept('arrival', 'arr_retry_new');
+  await waitForTask(store, first.taskId, ['failed']);
+  assert.equal(records.product.length, 1, '第一次已经建了一条货品');
+  assert.equal(records.color.length, 1, '第一次已经建了一条颜色');
+
+  failCard = false;
+  await service.accept('arrival', 'arr_retry_new');
+  const retried = await waitForTask(store, first.taskId, ['awaiting_confirmation']);
+  assert.equal(retried.status, 'awaiting_confirmation');
+  assert.equal(records.product.length, 1, '重试必须复用已落盘的建档记录');
+  assert.equal(records.color.length, 1, '重试不能再建一条颜色');
+  assert.equal(retried.draft.created_products.length, 1, '重试后卡片仍要说明这批有新品');
+  assert.equal(retried.draft.created_products[0].product_record_id, records.product[0].record_id);
 });
 
 test('arrival duplicate webhook is ignored', async () => {

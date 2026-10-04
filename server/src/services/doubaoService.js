@@ -384,12 +384,14 @@ class DoubaoService {
    - 若识别到的尺码数值在 34–48 之间（如 38、40），视为欧码，无需转换。
    - 只返回最终欧码正整数（如 40），不要输出42.5等半码。若未识别到，返回空字符串 ""。
 ${supplierRule}
+5. gender: 标签上的「品名」，只输出「男」或「女」（如「品名：女鞋」→「女」）；识别不到返回空字符串 ""。
+   到货时用它判断这个新品该进男鞋还是女鞋，猜错比空着更麻烦。
 
 请严格以 JSON 数组格式返回结果，不要包含任何解释性文字或 Markdown 代码块标记。
 示例输出：
 [
-  {"item_no": "CW2288-111", "color": "白色", "size": "42", "supplier": "Nike"},
-  {"item_no": "EG4958", "color": "黑色", "size": "38", "supplier": "豪路"}
+  {"item_no": "CW2288-111", "color": "白色", "size": "42", "supplier": "Nike", "gender": "男"},
+  {"item_no": "EG4958", "color": "黑色", "size": "38", "supplier": "豪路", "gender": "女"}
 ]
       `.trim();
 
