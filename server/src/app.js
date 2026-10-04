@@ -94,8 +94,14 @@ if (require.main === module) {
   if (Number.isFinite(ttlMs) && ttlMs > 0 && Number.isFinite(intervalMs) && intervalMs > 0) {
     startUploadCleanup({ dir: uploadDir, ttlMs, intervalMs });
   }
-  app.listen(port, () => {
-    logInfo('server.started', { port });
+  // 只监听回环地址：公网一律走 Nginx。
+  //
+  // 原来写的是 app.listen(port)，那会绑到 0.0.0.0（所有网卡）——等于把 Express
+  // 直接暴露在公网，绕过 Nginx 的 TLS 与过滤。实测从公网 nc 该端口 TCP 握手成功。
+  // Nginx 本来就是转发到 127.0.0.1:port，所以改成回环不影响任何入口。
+  const host = String(process.env.HOST || '127.0.0.1').trim() || '127.0.0.1';
+  app.listen(port, host, () => {
+    logInfo('server.started', { port, host });
   });
 }
 
