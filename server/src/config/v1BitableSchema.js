@@ -44,6 +44,21 @@ const V1_BITABLE_SCHEMA = {
         sampleImage: '样例图',
       },
     },
+    // 「颜色管理」：货品信息的「颜色」是**关联字段**，不是文本。
+    // 给新品自动建档时必须按颜色名找到对应记录；颜色表里没有的颜色要先新建一条
+    // （并告知用户），否则新品建不了档。
+    color: {
+      tableName: '颜色管理',
+      tableId: getEnv('FEISHU_V1_COLOR_TABLE_ID', 'tblZ947YJkRwgo3k'),
+      fields: { name: '颜色' },
+    },
+    // 「品类管理」：货品信息的「品类」也是关联字段。
+    // 「类别」是它的适用类别（A=男鞋 / B=女鞋），建档时可用作参考。
+    category: {
+      tableName: '品类管理',
+      tableId: getEnv('FEISHU_V1_CATEGORY_TABLE_ID', 'tbleM3qxsw8s8jAI'),
+      fields: { name: '品类', category: '类别' },
+    },
     // 配品（腰带、鞋油、袜子、包等）：没有尺码、不跟踪库存，销售明细里用它自己的关联字段。
     // 表 ID 没有默认值：不同租户这张表不同，未配置时销售只支持鞋。
     accessory: {
