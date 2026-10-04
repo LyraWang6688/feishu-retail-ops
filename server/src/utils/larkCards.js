@@ -181,6 +181,24 @@ const tradeTypeLine = (draft) => {
   return delivery ? `${label} · ${delivery}` : label;
 };
 
+// 第三区：货品资料不全时，把"还差哪几项"和记录链接放进**同一张确认卡片**。
+//
+// 为什么放在这张卡片里而不是另发一条消息：录入时她本来就在看这张卡片，
+// 顺手就能点去补；另发一条消息只会多一次打扰，也容易漏看。
+//
+// 「信息是否齐备」是飞书公式，缺哪项它就写哪项（单一数据源在表里）；
+// 「样例图」是附件字段，公式管不到，所以在这里单独补上。
+const salesProductInfoGaps = (draft) => {
+  const gaps = draft.product_info_gaps || [];
+  if (!gaps.length) return [];
+  const lines = gaps.map((gap) => {
+    const label = text(gap.label || gap.record_id);
+    const lacks = [...(gap.missing || []), ...(gap.missing_sample_image ? ['样例图'] : [])];
+    return `**${label}** 还差：${lacks.map(text).join('、')}\n[去补全这条记录](${gap.url})`;
+  });
+  return [{ tag: 'markdown', content: `**补货品信息**\n${lines.join('\n')}` }];
+};
+
 const salesConfirmationCard = (draftId, draft) => ({
   config: { wide_screen_mode: true },
   header: { template: 'blue', title: { tag: 'plain_text', content: '请确认销售订单' } },
@@ -197,6 +215,7 @@ const salesConfirmationCard = (draftId, draft) => ({
     },
     ...salesColorPickers(draftId, draft),
     ...salesSampleReplacementPicker(draftId, draft),
+    ...salesProductInfoGaps(draft),
     {
       tag: 'action',
       actions: [

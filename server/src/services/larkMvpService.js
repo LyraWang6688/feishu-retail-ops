@@ -22,6 +22,8 @@ const { salesConfirmationCard, salesStatusCard, todaySalesCard } = require('../u
 const { extractSalesMessageText } = require('../utils/larkMessageText');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
+const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
+const { recordUrl } = require('../utils/feishuLinks');
 
 // 交付与否以草稿的交易类型为准：现货/未付当场交付，预付（只付定金、货没拿走）不交付。
 // 只有旧数据才没有明确的交付状态（待确认或缺失），那时退回按钮语义——
@@ -375,6 +377,60 @@ class LarkMvpService {
   }
 
   /**
+   * 货品资料缺口：把每件商品对应的「货品信息」读回来，看还缺什么。
+   *
+   * **不自己逐字段判断**——「信息是否齐备」是飞书里的公式，齐备时返回「齐备」，
+   * 否则返回缺的字段名（如「成本」或「单价、成本、品类」）。单一数据源留在表里，
+   * 她在飞书改公式，这里自动跟着变。
+   * 「样例图」是附件字段、不在公式里，所以单独看一眼有没有图。
+   *
+   * 表里没配这两项映射时直接返回空：那种部署下卡片上不出现这一区。
+   */
+  async loadProductInfoGaps(items) {
+    const table = this.gateway.table?.('product');
+    if (!table?.tableId || !table.fields?.completeness) return [];
+    const order = [];
+    const labelById = new Map();
+    for (const item of items || []) {
+      const id = item.product_record_id;
+      if (!id || labelById.has(id)) continue;
+      labelById.set(id, item.product_number || item.item_no || '');
+      order.push(id);
+    }
+    if (!order.length) return [];
+
+    const appToken = V1_BITABLE_SCHEMA.appToken;
+    const gaps = [];
+    for (const recordId of order) {
+      let record;
+      try {
+        record = await this.gateway.get('product', recordId);
+      } catch (error) {
+        // 读不到就不提示：宁可少一次提醒，也不要让她点进一个打不开的链接。
+        logWarn('lark.sales.product_info.read_failed', { record_id: recordId, error: error.message });
+        continue;
+      }
+      const fields = record?.fields || {};
+      const completeness = textValue(fields[table.fields.completeness]).trim();
+      const missing = completeness && completeness !== '齐备'
+        ? completeness.split('、').map((name) => name.trim()).filter(Boolean)
+        : [];
+      const sampleImages = fields[table.fields.sampleImage];
+      const missingSampleImage = !(Array.isArray(sampleImages) && sampleImages.length > 0);
+      if (!missing.length && !missingSampleImage) continue;
+      gaps.push({
+        record_id: recordId,
+        label: labelById.get(recordId),
+        missing,
+        missing_sample_image: missingSampleImage,
+        url: recordUrl({ appToken, tableId: table.tableId, recordId }),
+      });
+    }
+    if (gaps.length) logInfo('lark.sales.product_info.gaps', { count: gaps.length });
+    return gaps;
+  }
+
+  /**
    * 团购券目录：只取「在售」的券，按「售价 + 面值」匹配结算金额。
    *
    * 读不到就当没有券目录——她对券的说法会落到"未配置该券的结算金额，请补充"的追问上，
@@ -545,6 +601,14 @@ class LarkMvpService {
         ...(samplePlan || {}),
       });
     }
+    // 货品资料缺口：和录单无关，只影响卡片上要不要提示她去补资料。
+    // 读不到就当作没有缺口——不能让"催补资料"挡住录单。
+    const productInfoGaps = await this.loadProductInfoGaps(items)
+      .catch((error) => {
+        logWarn('lark.sales.product_info.check_failed', { task_id: taskId, error: error.message });
+        return [];
+      });
+
     const actualTotal = Math.round(items.reduce((sum, item) => sum + Number(item.actual_amount || 0), 0) * 100) / 100;
     if (!parsed.voucher_policy_blocked && items.some((item) => !Number(item.actual_amount))) missingFields.push('请逐件说明成交金额');
     if (parsed.agreed_total && Math.abs(actualTotal - Number(parsed.agreed_total)) > 0.005) {
@@ -559,6 +623,7 @@ class LarkMvpService {
     const tradeTypeCode = tradeTypeCodeFromLabel(parsed.trade_type);
     const draft = {
       ...parsed,
+      product_info_gaps: productInfoGaps,
       trade_type: parsed.trade_type,
       trade_type_code: tradeTypeCode,
       delivery_status: deliveryForTradeType(tradeTypeCode) || '已交付',
