@@ -22,6 +22,8 @@ const { salesConfirmationCard, salesStatusCard, todaySalesCard } = require('../u
 const { extractSalesMessageText } = require('../utils/larkMessageText');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
+const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
+const { recordUrl } = require('../utils/feishuLinks');
 
 // 交付与否以草稿的交易类型为准：现货/未付当场交付，预付（只付定金、货没拿走）不交付。
 // 只有旧数据才没有明确的交付状态（待确认或缺失），那时退回按钮语义——
@@ -375,6 +377,86 @@ class LarkMvpService {
   }
 
   /**
+   * 「货品信息」整表读一次，按记录 ID 建索引。
+   *
+   * 为什么不按需逐条读：录单时逐条读是**串行**的（一件商品一次请求），
+   * 那份等待会直接加到"卡片出现"的时间上；整表读只有一个请求，而且能和
+   * AI 解析、实时库存读取**三路并行**，读表时间藏在 AI 后面。
+   * 这张表是**主数据**（货品资料，不像实时库存那样时时在变）。
+   *
+   * 表里没配 completeness 映射时返回 null —— 那种部署下不做这项检查。
+   */
+  async loadProductIndex() {
+    const table = this.gateway.table?.('product');
+    if (!table?.tableId || !table.fields?.completeness) return null;
+    const records = await this.gateway.listAll('product');
+    const byId = new Map();
+    // 同时按「货号」建索引：同一个货号会有多个颜色（每个颜色一条货品记录）。
+    // 卖货时要把**这个货号下所有颜色**里资料不全的都提示出来——同款不同色通常
+    // 一起上架，让她一次补齐，比每次卖一个颜色提醒一次省事。
+    const byItemNo = new Map();
+    for (const record of records) {
+      const fields = record?.fields || {};
+      // 「信息是否齐备」是飞书公式：齐备时返回「齐备」，否则返回缺的字段名。
+      // 不自己逐字段判断——单一数据源留在表里，她在飞书改公式这里自动跟着变。
+      const completeness = textValue(fields[table.fields.completeness]).trim();
+      const sampleImages = fields[table.fields.sampleImage];
+      const itemNo = textValue(fields[table.fields.itemNo]).trim();
+      const color = textValue(fields[table.fields.color]).trim();
+      const info = {
+        missing: completeness && completeness !== '齐备'
+          ? completeness.split('、').map((name) => name.trim()).filter(Boolean)
+          : [],
+        // 「样例图」是附件字段，不在齐备公式里，单独看有没有图。
+        missingSampleImage: !(Array.isArray(sampleImages) && sampleImages.length > 0),
+        label: `${itemNo}${color}`,
+      };
+      byId.set(record.record_id, info);
+      if (itemNo) {
+        if (!byItemNo.has(itemNo)) byItemNo.set(itemNo, []);
+        byItemNo.get(itemNo).push({ recordId: record.record_id, ...info });
+      }
+    }
+    logInfo('lark.sales.product_index.loaded', { record_count: records.length, item_count: byItemNo.size });
+    return { tableId: table.tableId, byId, byItemNo };
+  }
+
+  /**
+   * 从已读好的索引里算货品资料缺口 —— **纯计算，不再请求远端**。
+   * 索引为 null（没配这项检查 / 读表失败）时返回空：宁可少一次提醒，也不能挡住录单。
+   */
+  productInfoGapsFromIndex(items, index) {
+    if (!index) return [];
+    const appToken = V1_BITABLE_SCHEMA.appToken;
+    const gaps = [];
+    const seen = new Set();
+    // 按「货号」取——同一个货号可能有多个颜色，每个颜色一条货品记录。
+    // 卖其中一双时，把这个货号下**所有颜色**里资料不全的都提示出来。
+    for (const item of items || []) {
+      const itemNo = String(item.item_no || '').trim();
+      if (!itemNo) continue;
+      // 优先用货号索引；没有货号索引时退回"只看这一件匹配到的记录"。
+      const candidates = index.byItemNo?.get(itemNo)
+        || (index.byId?.get(item.product_record_id)
+          ? [{ recordId: item.product_record_id, ...index.byId.get(item.product_record_id) }] : []);
+      for (const candidate of candidates) {
+        if (seen.has(candidate.recordId)) continue;
+        seen.add(candidate.recordId);
+        if (!candidate.missing.length && !candidate.missingSampleImage) continue;
+        gaps.push({
+          record_id: candidate.recordId,
+          label: candidate.label || item.item_no || '',
+          missing: candidate.missing,
+          missing_sample_image: candidate.missingSampleImage,
+          url: recordUrl({ appToken, tableId: index.tableId, recordId: candidate.recordId }),
+        });
+      }
+    }
+    if (gaps.length) logInfo('lark.sales.product_info.gaps', { count: gaps.length });
+    return gaps;
+  }
+
+  /**
    * 团购券目录：只取「在售」的券，按「售价 + 面值」匹配结算金额。
    *
    * 读不到就当没有券目录——她对券的说法会落到"未配置该券的结算金额，请补充"的追问上，
@@ -439,11 +521,16 @@ class LarkMvpService {
     ]);
     // AI 解析是最慢的一段（十几秒），读实时库存不依赖它的结果，所以两件事并行：
     // 读表的时间藏在 AI 后面，不额外增加用户等待。
-    const [parsed, liveInventory] = await Promise.all([
+    const [parsed, liveInventory, productIndex] = await Promise.all([
       this.recognizer.parseSalesText(task.original_text, {
         taskId, accessoryNames: accessories.map((item) => item.name), vouchers,
       }),
       this.loadLiveInventoryIndex(),
+      // 货品信息是主数据，整表读一次即可；读挂了也不影响录单，所以单独吞掉异常。
+      this.loadProductIndex().catch((error) => {
+        logWarn('lark.sales.product_index.load_failed', { task_id: taskId, error: error.message });
+        return null;
+      }),
     ]);
     if (parsed.intent !== 'sale') {
       await this.store.update(taskId, { status: 'ignored', draft: parsed });
@@ -545,6 +632,9 @@ class LarkMvpService {
         ...(samplePlan || {}),
       });
     }
+    // 货品资料缺口：从**已经读好的**索引里算，不再请求远端。
+    const productInfoGaps = this.productInfoGapsFromIndex(items, productIndex);
+
     const actualTotal = Math.round(items.reduce((sum, item) => sum + Number(item.actual_amount || 0), 0) * 100) / 100;
     if (!parsed.voucher_policy_blocked && items.some((item) => !Number(item.actual_amount))) missingFields.push('请逐件说明成交金额');
     if (parsed.agreed_total && Math.abs(actualTotal - Number(parsed.agreed_total)) > 0.005) {
@@ -559,6 +649,7 @@ class LarkMvpService {
     const tradeTypeCode = tradeTypeCodeFromLabel(parsed.trade_type);
     const draft = {
       ...parsed,
+      product_info_gaps: productInfoGaps,
       trade_type: parsed.trade_type,
       trade_type_code: tradeTypeCode,
       delivery_status: deliveryForTradeType(tradeTypeCode) || '已交付',
