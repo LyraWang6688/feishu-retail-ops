@@ -389,6 +389,7 @@ class LarkMvpService {
   async loadProductIndex() {
     const table = this.gateway.table?.('product');
     if (!table?.tableId || !table.fields?.completeness) return null;
+    const readStartedAt = Date.now();
     const records = await this.gateway.listAll('product');
     const byId = new Map();
     // 同时按「货号」建索引：同一个货号会有多个颜色（每个颜色一条货品记录）。
@@ -427,7 +428,12 @@ class LarkMvpService {
         hint: '字段名可能写成了界面显示名；记录 API 用的是内部名',
       });
     }
-    logInfo('lark.sales.product_index.loaded', { record_count: records.length, item_count: byItemNo.size });
+    logInfo('lark.sales.product_index.loaded', {
+      record_count: records.length, item_count: byItemNo.size,
+      // 这一段和 AI 解析、实时库存读取是并行的，所以这份耗时是"自己花了多久"，
+      // 不是"让用户多等了多久"——排查时看它有没有盖过另外两路即可。
+      duration_ms: Date.now() - readStartedAt,
+    });
     return { tableId: table.tableId, byId, byItemNo };
   }
 
@@ -698,12 +704,22 @@ class LarkMvpService {
         : `销售信息还缺：${draft.missing_fields.join('、')}。请补充后重新发送完整销售信息。`);
       return;
     }
+    const cardStartedAt = Date.now();
     const cardMessageId = await this.replyCard(task.message_id, salesConfirmationCard(taskId, draft));
+    logInfo('lark.sales.card.sent', {
+      task_id: taskId, stage: 'confirmation',
+      duration_ms: Date.now() - cardStartedAt,
+      // 她感知到的"从发消息到看见卡片"就是这个数；单看它比看各段之和更准。
+      since_message_ms: Date.now() - startedAt,
+    });
     if (cardMessageId) await this.store.update(taskId, { card_message_id: cardMessageId });
     logInfo('lark.sales.processing.completed', {
       task_id: taskId,
       sales_entry_record_id: salesEntryRecordId,
       item_count: items.length,
+      // 从"收到消息"到"卡片发出去"——用户实际等的时间。各段耗时之和可以比它大，
+      // 因为并行的几段是重叠的；校准优化效果应该看这个数。
+      user_wait_ms: Date.now() - startedAt,
       duration_ms: Date.now() - startedAt,
       result: 'awaiting_confirmation',
     });
