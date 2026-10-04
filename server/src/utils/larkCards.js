@@ -188,14 +188,22 @@ const tradeTypeLine = (draft) => {
 //
 // 「信息是否齐备」是飞书公式，缺哪项它就写哪项（单一数据源在表里）；
 // 「样例图」是附件字段，公式管不到，所以在这里单独补上。
+// 飞书卡片有高度上限，太长会被截断。实测门店的货号最多 3 个颜色，
+// 这里留一道安全阀：超过 6 条就只列 6 条并注明还有多少（正常营业永远碰不到）。
+const MAX_PRODUCT_INFO_GAPS = 6;
+
 const salesProductInfoGaps = (draft) => {
   const gaps = draft.product_info_gaps || [];
   if (!gaps.length) return [];
-  const lines = gaps.map((gap) => {
+  const shown = gaps.slice(0, MAX_PRODUCT_INFO_GAPS);
+  const lines = shown.map((gap) => {
     const label = text(gap.label || gap.record_id);
     const lacks = [...(gap.missing || []), ...(gap.missing_sample_image ? ['样例图'] : [])];
     return `**${label}** 还差：${lacks.map(text).join('、')}\n[去补全这条记录](${gap.url})`;
   });
+  if (gaps.length > shown.length) {
+    lines.push(`还有 ${gaps.length - shown.length} 个颜色也缺资料，可在「货品信息」里筛选「信息是否齐备」查看。`);
+  }
   return [{ tag: 'markdown', content: `**补货品信息**\n${lines.join('\n')}` }];
 };
 
