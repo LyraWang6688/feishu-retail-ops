@@ -538,15 +538,21 @@ class PurchaseWebhookService {
   }
 
   /**
-   * 给用户发一条纯文字消息。
+   * 给用户发一条纯文字提示，**尽力而为**：发不出去只记日志，不抛错。
    *
    * 复用现有那套 IM 能力（`client.im.message.create` + `msg_type: 'text'`），
-   * 和 sendCard / SampleReplacementService.sendText 完全同一条通道，不另起一套。
+   * 和 sendCard / sendText 完全同一条通道，不另起一套。
    *
    * 刻意只记日志、不抛错：这类提示是"顺带告诉她一声"，发不出去不能反过来
    * 把识别流程搞失败（识别结果已经写进记录了，卡片才是关键产物）。
+   *
+   * ⚠️ 名字必须和下面的 `sendText` 区分开（合并 #57 时吃过这个亏）：
+   * 两个方法都在本类里、名字都叫 `sendText` 时，**后定义的那个会静默覆盖前者**
+   * （JS 类体后面的同名方法赢），于是本方法"只记日志"的语义被 `sendText` 的
+   * "失败即抛错"顶掉——「收到即提示」一旦发失败就会把整条到货识别打断，
+   * 货品根本来不及建档。语义不同就必须名字不同，别再并回去。
    */
-  async sendText(openId, content) {
+  async sendNoticeText(openId, content) {
     if (!openId) {
       logWarn('purchase.text.skipped', { reason: 'missing_open_id', content });
       return false;
@@ -569,13 +575,13 @@ class PurchaseWebhookService {
   }
 
   async notifyArrivalReceived(openId, recordId, taskId) {
-    const sent = await this.sendText(openId, ARRIVAL_RECEIVED_NOTICE);
+    const sent = await this.sendNoticeText(openId, ARRIVAL_RECEIVED_NOTICE);
     logInfo('purchase.arrival.received_notice', { record_id: recordId, task_id: taskId, sent });
     return sent;
   }
 
   async notifyArrivalFailed(openId, reason, recordId, taskId) {
-    const sent = await this.sendText(openId, arrivalFailureNotice(reason));
+    const sent = await this.sendNoticeText(openId, arrivalFailureNotice(reason));
     logInfo('purchase.arrival.failure_notice', { record_id: recordId, task_id: taskId, reason, sent });
     return sent;
   }

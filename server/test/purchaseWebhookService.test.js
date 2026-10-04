@@ -897,11 +897,17 @@ test('re-processing a failed arrival reuses the persisted new product instead of
     color: [],
     supplier: [],
   };
-  // 第一次跑到发卡片才失败：建档已经写进远端并落盘，任务落 failed，重收 webhook 会重跑。
+  // 第一次跑到发「确认卡片」才失败：建档已经写进远端并落盘，任务落 failed，重收 webhook 会重跑。
+  //
+  // 这里必须**只**让卡片（interactive）失败，不能见消息就抛：到货链路现在在识别之前
+  // 还会先发一条「收到到货申请，正在识别图片～」的文字提示（msg_type: 'text'），
+  // 那条提示和确认卡片走的是同一个 `im.message.create`。早先这个桩写成"一律抛错"，
+  // 结果失败点被顶到建档**之前**，这条用例就再也验证不到"复用已建货品"了。
+  // 见下面「收到即提示发失败不能中断到货识别」那条用例，它专门钉住提示与卡片的分工。
   let failCard = true;
   const client = makeClient();
-  client.im.message.create = async () => {
-    if (failCard) throw new Error('模拟卡片发送失败');
+  client.im.message.create = async (params) => {
+    if (failCard && params?.data?.msg_type === 'interactive') throw new Error('模拟卡片发送失败');
     return { code: 0 };
   };
   const { service, store } = makeService({
@@ -928,6 +934,45 @@ test('re-processing a failed arrival reuses the persisted new product instead of
   assert.equal(records.color.length, 1, '重试不能再建一条颜色');
   assert.equal(retried.draft.created_products.length, 1, '重试后卡片仍要说明这批有新品');
   assert.equal(retried.draft.created_products[0].product_record_id, records.product[0].record_id);
+});
+
+// 合并 #57（报单免确认 + 出图）时踩到的坑：两条链路各加了一个同名 `sendText`，
+// #57 的那个失败即抛错、#58 的这个只记日志。JS 类体里**后定义的覆盖先定义的**，
+// 于是到货的「收到即提示」被换成了会抛错的实现——只要那条提示发不出去（IM 限流、
+// 缺权限、网络抖动），整条到货识别就在建档之前被打断：货品没建、明细没识别，
+// 用户只看到「识别失败」。这条用例钉住「提示是尽力而为，不能反过来把识别搞失败」。
+test('「收到即提示」发失败不能中断到货识别：货照样识别、照样建档、卡片照样发', async () => {
+  const records = { purchaseArrival: [arrivalRecord('arr_notice_fail')], purchaseInbound: [], product: [], color: [], supplier: [] };
+  const messages = [];
+  const client = makeClient({
+    sendMessage: async (params) => {
+      messages.push(params);
+      // 只让文字提示失败；确认卡片走同一个 im.message.create，必须成功。
+      if (params?.data?.msg_type === 'text') throw new Error('模拟提示发送失败');
+      return { code: 0 };
+    },
+  });
+  const { service, store } = makeService({
+    client,
+    gateway: makeGateway(records),
+    references: makeReferences({
+      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
+    }),
+    recognizer: makeRecognizer({
+      recognizeLabels: async () => [{ item_no: '3602', color: '黑色', size: 36, quantity: 1 }],
+    }),
+  });
+
+  const accepted = await service.accept('arrival', 'arr_notice_fail');
+  const task = await waitForTask(store, accepted.taskId);
+
+  // 提示发不出去，但流程必须照常走完。
+  assert.equal(task.status, 'awaiting_confirmation', '提示失败不能让整条到货识别失败');
+  assert.equal(records.product.length, 1, '提示失败也必须建好货品');
+  assert.equal(records.color.length, 1, '提示失败也必须建好颜色');
+  assert.equal(cardMessages(messages).length, 1, '确认卡片必须照发');
+  // 记录不能被写成「识别失败」——它其实识别成功了。
+  assert.notEqual(records.purchaseArrival[0].fields.识别状态, '识别失败');
 });
 
 test('arrival duplicate webhook is ignored', async () => {
