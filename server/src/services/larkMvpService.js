@@ -498,8 +498,15 @@ class LarkMvpService {
       if (item.item_no && item.size) {
         const found = liveInventory.find({ itemNo: item.item_no, size: item.size });
         if (!found.colors.length) {
-          // 缺货只说这一句：她要知道的是"哪一双没有"，然后自己去核实。
-          const shortage = `库存里没有 ${item.item_no} ${item.size}码`;
+          // 缺货只回这一句：哪一双没有 + 这个货号现在有哪些码 + 请核实。
+          // 不加"销售信息还缺…请补充后重新发送完整销售信息"那层流程说明——
+          // 对她核实这件事没有任何帮助。
+          const available = (found.otherSizes || [])
+            .filter((entry) => Number(entry.total) > 0)
+            .map((entry) => entry.size);
+          const shortage = `库存里没有 ${item.item_no} ${item.size}码（${available.length
+            ? `这个货号现在有 ${available.join('、')}码`
+            : '这个货号现在一双都没有'}）`;
           shortageNotes.push(shortage);
           missingFields.push(shortage);
         } else if (found.colors.length === 1) {
