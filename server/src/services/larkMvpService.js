@@ -377,6 +377,36 @@ class LarkMvpService {
   }
 
   /**
+   * 团购券目录：只取「在售」的券，按「售价 + 面值」匹配结算金额。
+   *
+   * 读不到就当没有券目录——她对券的说法会落到"未配置该券的结算金额，请补充"的追问上，
+   * 而不是拿别的券顶替、写一个错的收款金额。
+   */
+  async listGroupBuyVouchers() {
+    const table = this.gateway.table?.('groupBuyVoucher');
+    if (!table?.tableId) return [];
+    try {
+      const records = await this.gateway.listAll('groupBuyVoucher');
+      return records
+        .map((record) => ({
+          record_id: record.record_id,
+          name: textValue(record.fields?.[table.fields.name]).trim(),
+          status: textValue(record.fields?.[table.fields.status]).trim(),
+          purchasePrice: Number(record.fields?.[table.fields.purchasePrice]),
+          faceValue: Number(record.fields?.[table.fields.faceValue]),
+          settlementAmount: Number(record.fields?.[table.fields.settlementAmount]),
+        }))
+        .filter((voucher) => voucher.status === '在售'
+          && Number.isFinite(voucher.purchasePrice)
+          && Number.isFinite(voucher.faceValue)
+          && Number.isFinite(voucher.settlementAmount));
+    } catch (error) {
+      logWarn('lark.sales.group_buy_vouchers.list_failed', { error: error.message });
+      return [];
+    }
+  }
+
+  /**
    * 读一次「实时库存」，按 `货号 + 尺码` 建索引。
    *
    * 为什么以实时库存为准：它是"店里实际有什么"，「货品信息」只是"配置过什么"。
@@ -402,13 +432,18 @@ class LarkMvpService {
     const startedAt = Date.now();
     logInfo('lark.sales.processing.started', { task_id: taskId });
     const task = await this.store.get(taskId);
-    // 配品清单交给 AI，让它知道「39元腰带」这类说法不是鞋；同一份清单也用于后面的精确匹配。
-    const accessories = await this.listAccessories();
+    // 两张配置表都很小（配品十几条、在售券几条），先并行拿齐：
+    // 配品清单交给 AI 是为了让它知道「39元腰带」这类说法不是鞋；
+    // 券目录交给后端是为了按表里的平台结算款算钱，不再写死券种。
+    const [accessories, vouchers] = await Promise.all([
+      this.listAccessories(),
+      this.listGroupBuyVouchers(),
+    ]);
     // AI 解析是最慢的一段（十几秒），读实时库存不依赖它的结果，所以两件事并行：
     // 读表的时间藏在 AI 后面，不额外增加用户等待。
     const [parsed, liveInventory] = await Promise.all([
       this.recognizer.parseSalesText(task.original_text, {
-        taskId, accessoryNames: accessories.map((item) => item.name),
+        taskId, accessoryNames: accessories.map((item) => item.name), vouchers,
       }),
       this.loadLiveInventoryIndex(),
     ]);

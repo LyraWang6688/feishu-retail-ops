@@ -55,7 +55,7 @@ const moneyOrEmpty = (value) => {
   return number && Math.abs(number * 100 - Math.round(number * 100)) < 1e-6 ? number : '';
 };
 
-const normalizeSalesResult = (result = {}, sourceText = '') => {
+const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = {}) => {
   const rawItems = Array.isArray(result.items) && result.items.length ? result.items : [result];
   const items = [];
   for (const item of rawItems) {
@@ -127,7 +127,7 @@ const normalizeSalesResult = (result = {}, sourceText = '') => {
       items[0].actual_amount = agreedTotal;
     }
   }
-  const voucherPolicy = applyGroupBuyVoucherPolicy({ sourceText, items, payments });
+  const voucherPolicy = applyGroupBuyVoucherPolicy({ sourceText, items, payments, vouchers });
   if (voucherPolicy?.items) {
     items.splice(0, items.length, ...voucherPolicy.items);
     payments = voucherPolicy.payments;
@@ -196,7 +196,7 @@ class DoubaoService {
     return this.client;
   }
 
-  async parseSalesText(text, { taskId, accessoryNames = [] } = {}) {
+  async parseSalesText(text, { taskId, accessoryNames = [], vouchers = [] } = {}) {
     this.apiKey = process.env.ARK_API_KEY;
     this.endpointId = process.env.ARK_MODEL_ENDPOINT;
     if (!this.apiKey || !this.endpointId) {
@@ -254,7 +254,7 @@ class DoubaoService {
     try {
       const result = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
       logInfo('sales.ai.parsed', { task_id: taskId, ...salesParseSnapshot(result) });
-      const normalized = normalizeSalesResult(result, originalText);
+      const normalized = normalizeSalesResult(result, originalText, { vouchers });
       // For one shoe, the original words are authoritative for every gift,
       // even when the model recognizes only the first one.
       if (normalized.items.length === 1) {

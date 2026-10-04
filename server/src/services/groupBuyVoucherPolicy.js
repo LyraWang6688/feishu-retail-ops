@@ -1,4 +1,4 @@
-const { GROUP_BUY_VOUCHERS } = require('../config/groupBuyVouchers');
+const { findVoucher } = require('../config/groupBuyVouchers');
 
 const yuan = (cents) => cents / 100;
 const cents = (value) => Math.round(Number(value) * 100);
@@ -32,7 +32,7 @@ const explicitSalePrices = (sourceText) => [...String(sourceText || '')
 // The model extracts facts, but this policy owns voucher economics and status.
 // It intentionally handles one voucher on one shoe only; ambiguous cases must
 // go back to the cashier rather than creating an incorrect receipt.
-const applyGroupBuyVoucherPolicy = ({ sourceText, items, payments }) => {
+const applyGroupBuyVoucherPolicy = ({ sourceText, items, payments, vouchers = [] }) => {
   const source = String(sourceText || '');
   const mentions = voucherMentions(source);
   const couponInPayments = payments.some((payment) => isVoucherMethod(payment.method));
@@ -44,7 +44,8 @@ const applyGroupBuyVoucherPolicy = ({ sourceText, items, payments }) => {
     return { issues };
   }
   const mention = mentions[0];
-  const voucher = GROUP_BUY_VOUCHERS[`${mention.purchasePrice}|${mention.faceValue}`];
+  // 券目录来自「团购券管理」表（只取在售），不在代码里写死。
+  const voucher = findVoucher(vouchers, mention);
   if (!voucher) {
     issues.push(`未配置 ${mention.purchasePrice} 元抵 ${mention.faceValue} 元的团购券结算金额`);
     return { issues };

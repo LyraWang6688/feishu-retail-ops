@@ -3,8 +3,17 @@ const assert = require('node:assert/strict');
 const salesParser = require('../src/services/doubaoService');
 const { normalizeSalesResult } = salesParser;
 
+// 券目录不再写在代码里，来自「团购券管理」表（只取在售）。
+// 测试里给一份等价的两档券；券种/结算金额的匹配逻辑由 groupBuyVouchers 单测覆盖。
+const VOUCHER_CATALOG = [
+  { purchasePrice: 89.9, faceValue: 100, settlementAmount: 85.4, name: '100元代金券（89.9元·9折）', status: '在售' },
+  { purchasePrice: 49.9, faceValue: 100, settlementAmount: 47.4, name: '100元代金券（49.9元·5折）', status: '在售' },
+];
+const normalizeWithVouchers = (result, sourceText = '') =>
+  normalizeSalesResult(result, sourceText, { vouchers: VOUCHER_CATALOG });
+
 test('normalizes one cash sale using item number and color and leaves formula fields out', () => {
-  const result = normalizeSalesResult({
+  const result = normalizeWithVouchers({
     intent: 'sale',
     item_no: '8088-26',
     color: '棕',
@@ -28,7 +37,7 @@ test('normalizes one cash sale using item number and color and leaves formula fi
 });
 
 test('blocks non-cash-sale behavior in V1', () => {
-  const result = normalizeSalesResult({
+  const result = normalizeWithVouchers({
     intent: 'unsupported',
     sales_behavior: '换货',
     item_no: '8088-26',
@@ -42,7 +51,7 @@ test('blocks non-cash-sale behavior in V1', () => {
 });
 
 test('multi-shoe sale requires each actual price and does not allocate an order total', () => {
-  const result = normalizeSalesResult({ intent: 'sale', agreed_total: 250,
+  const result = normalizeWithVouchers({ intent: 'sale', agreed_total: 250,
     items: [{ item_no: '93827', size: 43, quantity: 1 }, { item_no: '2115', size: 37, quantity: 1 }],
     payments: [{ method: '现金', amount: 250 }],
   });
@@ -53,14 +62,14 @@ test('multi-shoe sale requires each actual price and does not allocate an order 
 });
 
 test('two pairs in one AI line must be restated as two individually priced lines', () => {
-  const result = normalizeSalesResult({ intent: 'sale', items: [
+  const result = normalizeWithVouchers({ intent: 'sale', items: [
     { item_no: 'A100', size: 38, quantity: 2, actual_amount: 178 },
   ], payments: [{ method: '微信', amount: 178 }] });
   assert.ok(result.missing_fields.some((issue) => issue.includes('逐双列出成交金额')));
 });
 
 test('deposit alone cannot be mistaken for a shoe transaction price', () => {
-  const result = normalizeSalesResult({ intent: 'sale', items: [{ item_no: '9A207-0', size: 43, quantity: 1 }],
+  const result = normalizeWithVouchers({ intent: 'sale', items: [{ item_no: '9A207-0', size: 43, quantity: 1 }],
     payments: [{ method: '微信', amount: 50 }], trade_type: '预付' });
   assert.equal(result.agreed_total, '');
   assert.equal(result.trade_type, '预付');
@@ -71,21 +80,21 @@ test('future balance is not recorded as cash received, and ambiguous tail paymen
   const ai = { intent: 'sale', items: [{ item_no: '695887B-5', color: '黑', size: 43,
     quantity: 1, actual_amount: 240 }],
   payments: [{ method: '微信', amount: 100 }, { method: '微信', amount: 140 }], agreed_total: 240 };
-  const future = normalizeSalesResult(ai, '695887B-5黑43，微信付定金100元，下次尾款付140元');
+  const future = normalizeWithVouchers(ai, '695887B-5黑43，微信付定金100元，下次尾款付140元');
   assert.deepEqual(future.payments, [{ method: '微信', amount: 100 }]);
   assert.equal(future.agreed_total, 240);
   assert.deepEqual(future.missing_fields, []);
-  const ambiguous = normalizeSalesResult(ai, '695887B-5黑43，微信付定金100元，尾款付140元');
+  const ambiguous = normalizeWithVouchers(ai, '695887B-5黑43，微信付定金100元，尾款付140元');
   assert.ok(ambiguous.missing_fields.some((item) => item.includes('尾款是否已支付')));
-  const later = normalizeSalesResult(ai, '695887B-5黑43，总价240元，微信付定金100元，尾款以后付140元');
+  const later = normalizeWithVouchers(ai, '695887B-5黑43，总价240元，微信付定金100元，尾款以后付140元');
   assert.deepEqual(later.payments, [{ method: '微信', amount: 100 }]);
   assert.deepEqual(later.missing_fields, []);
-  const conflict = normalizeSalesResult(ai, '695887B-5黑43，成交价260元，微信付定金100元，尾款以后付140元');
+  const conflict = normalizeWithVouchers(ai, '695887B-5黑43，成交价260元，微信付定金100元，尾款以后付140元');
   assert.ok(conflict.missing_fields.some((item) => item.includes('成交价与定金')));
 });
 
 test('gift-only model item is folded into preceding sold shoe', () => {
-  const result = normalizeSalesResult({ intent: 'sale', behavior_code: 'SALE_CASH', items: [
+  const result = normalizeWithVouchers({ intent: 'sale', behavior_code: 'SALE_CASH', items: [
     { item_no: '628-6', color: '米紫', size: 36, quantity: 1 },
     { item_no: '', gift: true, gift_description: '袜子一双' },
   ], payments: [{ method: '微信', amount: 220 }], agreed_total: 220 });
@@ -106,7 +115,8 @@ test('explicit gift in one-shoe source survives model omission', async () => {
       intent: 'sale', behavior_code: 'SALE_CASH', items: [{ item_no: '6V637-7', color: '黑', size: 41, quantity: 1 }],
       payments: [{ method: '微信', amount: 150 }, { method: '现金', amount: 100 }], agreed_total: 250,
     }) } }] }) } } });
-    const result = await salesParser.parseSalesText('6V637-7黑41码一双，赠鞋垫一双，150元微信，100元现金');
+    const result = await salesParser.parseSalesText('6V637-7黑41码一双，赠鞋垫一双，150元微信，100元现金',
+      { vouchers: VOUCHER_CATALOG });
     assert.equal(result.items[0].gift, true);
     assert.equal(result.items[0].gift_description, '鞋垫一双');
   } finally {
@@ -131,7 +141,8 @@ test('one 89.9-for-100 voucher is converted to pending 85.4, not received 89.9 o
       intent: 'sale', items: [{ item_no: '2A831-18', color: '黑', size: 44, quantity: 1, actual_amount: 269 }],
       payments: [{ method: '微信', amount: 169 }, { method: '抖音团购券', amount: 100 }], agreed_total: 269,
     }) } }] }) } } });
-    const result = await salesParser.parseSalesText('2A831-18黑色44的，是169元微信，然后一张89块9抵100的代金券，然后赠了一双袜子');
+    const result = await salesParser.parseSalesText('2A831-18黑色44的，是169元微信，然后一张89块9抵100的代金券，然后赠了一双袜子',
+      { vouchers: VOUCHER_CATALOG });
     assert.equal(result.items[0].actual_amount, 254.4);
     assert.equal(result.items[0].gift_description, '一双袜子');
     assert.equal(result.agreed_total, 254.4);
@@ -152,7 +163,7 @@ test('one 89.9-for-100 voucher is converted to pending 85.4, not received 89.9 o
 });
 
 test('49.9-for-100 voucher uses configured 47.4 settlement', () => {
-  const result = normalizeSalesResult({ intent: 'sale', items: [
+  const result = normalizeWithVouchers({ intent: 'sale', items: [
     { item_no: 'A100', size: 38, quantity: 1 }], payments: [{ method: '微信', amount: 169 }],
   }, 'A100黑38，169元微信，一张49.9抵100代金券');
   assert.equal(result.agreed_total, 216.4);
@@ -162,7 +173,7 @@ test('49.9-for-100 voucher uses configured 47.4 settlement', () => {
 });
 
 test('spoken cash facts override an AI payment array that mistakes voucher face value for cash', () => {
-  const result = normalizeSalesResult({ intent: 'sale', items: [
+  const result = normalizeWithVouchers({ intent: 'sale', items: [
     { item_no: '2A831-18', color: '黑', size: 44, quantity: 1 }],
     payments: [{ method: '现金', amount: 100 }],
   }, '2A831-18黑44，169元微信，一张89.9抵100代金券');
@@ -174,7 +185,7 @@ test('spoken cash facts override an AI payment array that mistakes voucher face 
 });
 
 test('AI calling a 19-yuan top-up the shoe price does not block a voucher sale', () => {
-  const result = normalizeSalesResult({ intent: 'sale', items: [
+  const result = normalizeWithVouchers({ intent: 'sale', items: [
     { item_no: '31663', color: '黑', size: 40, quantity: 1, actual_amount: 19 }],
     payments: [{ method: '微信', amount: 19 }], agreed_total: 19,
   }, '31663黑40的是19元微信，再加上一个89.9块抵100块钱的代金券');
@@ -184,7 +195,7 @@ test('AI calling a 19-yuan top-up the shoe price does not block a voucher sale',
 });
 
 test('voucher accepts payment method before amount and a voucher-only sale', () => {
-  const reversed = normalizeSalesResult({ intent: 'sale', items: [
+  const reversed = normalizeWithVouchers({ intent: 'sale', items: [
     { item_no: '2A831-18', color: '黑', size: 44, quantity: 1 }],
     payments: [{ method: '微信', amount: 160 }],
   }, '2A831-18黑44，微信支付160元，加一张89.9元抵100元代金券，赠袜子一双');
@@ -194,7 +205,7 @@ test('voucher accepts payment method before amount and a voucher-only sale', () 
     { method: '抖音团购券', amount: 85.4, status: '待平台结算' },
   ]);
   assert.deepEqual(reversed.missing_fields, []);
-  const voucherOnly = normalizeSalesResult({ intent: 'sale', items: [
+  const voucherOnly = normalizeWithVouchers({ intent: 'sale', items: [
     { item_no: 'XHB8095', color: '黑', size: 42, quantity: 1 }], payments: [],
   }, 'XHB8095黑42，是一张89.9元抵100元代金券，送两双袜子');
   assert.equal(voucherOnly.agreed_total, 85.4);
@@ -202,7 +213,7 @@ test('voucher accepts payment method before amount and a voucher-only sale', () 
     { method: '抖音团购券', amount: 85.4, status: '待平台结算' },
   ]);
   assert.deepEqual(voucherOnly.missing_fields, []);
-  const omittedCash = normalizeSalesResult({ intent: 'sale', items: [
+  const omittedCash = normalizeWithVouchers({ intent: 'sale', items: [
     { item_no: 'XHB8095', color: '黑', size: 42, quantity: 1 }], payments: [],
   }, 'XHB8095黑42，一张89.9元抵100元代金券');
   assert.ok(omittedCash.missing_fields.some((item) => item.includes('只用团购券')));
@@ -219,9 +230,11 @@ test('colloquial gifts preserve explicit pair count without inventing a count fo
       intent: 'sale', items: [{ item_no: '31663', color: '黑', size: 40, quantity: 1 }],
       payments: [{ method: '微信', amount: 19 }],
     }) } }] }) } } });
-    const mixed = await salesParser.parseSalesText('31663黑40，19元微信，一张89.9抵100券，赠了双鞋垫和袜子');
+    const mixed = await salesParser.parseSalesText('31663黑40，19元微信，一张89.9抵100券，赠了双鞋垫和袜子',
+      { vouchers: VOUCHER_CATALOG });
     assert.equal(mixed.items[0].gift_description, '一双鞋垫和袜子');
-    const twoPairs = await salesParser.parseSalesText('31663黑40，19元微信，一张89.9抵100券，送了两双袜子');
+    const twoPairs = await salesParser.parseSalesText('31663黑40，19元微信，一张89.9抵100券，送了两双袜子',
+      { vouchers: VOUCHER_CATALOG });
     assert.equal(twoPairs.items[0].gift_description, '两双袜子');
   } finally {
     salesParser.getClient = oldGetClient;
@@ -233,7 +246,7 @@ test('colloquial gifts preserve explicit pair count without inventing a count fo
 });
 
 test('explicit contradictory sale price still blocks a voucher sale', () => {
-  const result = normalizeSalesResult({ intent: 'sale', items: [
+  const result = normalizeWithVouchers({ intent: 'sale', items: [
     { item_no: '31663', color: '黑', size: 40, quantity: 1, actual_amount: 19 }],
     payments: [{ method: '微信', amount: 19 }], agreed_total: 19,
   }, '31663黑40成交价120元，19元微信，再加一个89.9抵100代金券');
@@ -257,7 +270,7 @@ test('voucher parsing preserves two gifts and logs AI values separately from nor
     }) } }] }) } } });
     const result = await salesParser.parseSalesText(
       '31663黑40的是19元微信，再加上一个89.9块抵100块钱的代金券，赠了一双鞋垫，赠了一双袜子',
-      { taskId: 'sale_log_test' });
+      { taskId: 'sale_log_test', vouchers: VOUCHER_CATALOG });
     assert.equal(result.items[0].actual_amount, 104.4);
     assert.equal(result.items[0].gift_description, '一双鞋垫、一双袜子');
     assert.deepEqual(result.missing_fields, []);
@@ -279,13 +292,13 @@ test('voucher parsing preserves two gifts and logs AI values separately from nor
 });
 
 test('unknown voucher or multiple shoes cannot silently create a settled receipt', () => {
-  const unknown = normalizeSalesResult({ intent: 'sale', items: [
+  const unknown = normalizeWithVouchers({ intent: 'sale', items: [
     { item_no: 'A100', size: 38, quantity: 1, actual_amount: 269 }],
     payments: [{ method: '微信', amount: 169 }, { method: '团购券', amount: 100 }],
     agreed_total: 269,
   }, 'A100黑38，169元微信，一张79.9抵100团购券');
   assert.ok(unknown.missing_fields.some((field) => field.includes('未配置')));
-  const multiple = normalizeSalesResult({ intent: 'sale', items: [
+  const multiple = normalizeWithVouchers({ intent: 'sale', items: [
     { item_no: 'A100', size: 38, quantity: 1, actual_amount: 100 },
     { item_no: 'B200', size: 39, quantity: 1, actual_amount: 169 }],
     payments: [{ method: '微信', amount: 169 }, { method: '团购券', amount: 100 }],
@@ -304,7 +317,7 @@ test('unknown voucher or multiple shoes cannot silently create a settled receipt
 // 一直可见，而不是假装不存在。
 
 test('voucher plus cash plus gift keeps the store settlement at 85.4 and marks it pending', () => {
-  const result = normalizeSalesResult({
+  const result = normalizeWithVouchers({
     intent: 'sale',
     items: [{ item_no: '2A831-18', color: '黑', size: 44, quantity: 1, gift_description: '袜子一双' }],
     payments: [{ method: '微信', amount: 169 }],
@@ -322,7 +335,7 @@ test('voucher plus cash plus gift keeps the store settlement at 85.4 and marks i
 });
 
 test('single-line deposit derives the receivable from deposit plus balance', () => {
-  const result = normalizeSalesResult({
+  const result = normalizeWithVouchers({
     intent: 'sale',
     items: [{ item_no: '695887B-5', color: '黑', size: 43, quantity: 1 }],
     payments: [{ method: '微信', amount: 100 }],
@@ -336,7 +349,7 @@ test('single-line deposit derives the receivable from deposit plus balance', () 
 });
 
 test('a deposit order with several lines is refused instead of dropping the unpaid balance', () => {
-  const result = normalizeSalesResult({
+  const result = normalizeWithVouchers({
     intent: 'sale',
     items: [
       { item_no: '695887B-5', color: '黑', size: 43, quantity: 1 },
@@ -353,7 +366,7 @@ test('a deposit order with several lines is refused instead of dropping the unpa
 });
 
 test('[当前行为·待修复] a deposit phrased the way the cashier says it is rejected as missing', () => {
-  const result = normalizeSalesResult({
+  const result = normalizeWithVouchers({
     intent: 'sale',
     items: [{ item_no: '695887B-5', color: '黑', size: 43, quantity: 1 }],
     payments: [{ method: '微信', amount: 100 }],
@@ -368,7 +381,7 @@ test('[当前行为·待修复] a deposit phrased the way the cashier says it is
 });
 
 test('[当前行为·待修复] mixing an accessory into a deposit order loses the receivable and demands a size', () => {
-  const result = normalizeSalesResult({
+  const result = normalizeWithVouchers({
     intent: 'sale',
     items: [
       { item_no: '695887B-5', color: '黑', size: 43, quantity: 1 },
@@ -385,7 +398,7 @@ test('[当前行为·待修复] mixing an accessory into a deposit order loses t
 });
 
 test('[当前行为·待修复] two vouchers in one order are rejected', () => {
-  const result = normalizeSalesResult({
+  const result = normalizeWithVouchers({
     intent: 'sale',
     items: [{ item_no: '2A831-18', color: '黑', size: 44, quantity: 1 }],
     payments: [{ method: '微信', amount: 169 }],
@@ -396,7 +409,7 @@ test('[当前行为·待修复] two vouchers in one order are rejected', () => {
 });
 
 test('[当前行为·待修复] a pure-voucher sale must confirm there was no cash', () => {
-  const result = normalizeSalesResult({
+  const result = normalizeWithVouchers({
     intent: 'sale',
     items: [{ item_no: 'XHB8095', color: '黑', size: 43, quantity: 1, gift_description: '袜子两双' }],
     payments: [],
@@ -409,7 +422,7 @@ test('[当前行为·待修复] a pure-voucher sale must confirm there was no ca
 // ─── 配品：只有名字和金额，没有货号、颜色、尺码 ───
 
 test('an accessory item keeps its name and needs no item number or size', () => {
-  const result = normalizeSalesResult({
+  const result = normalizeWithVouchers({
     intent: 'sale',
     items: [
       { item_no: 'XHB8095', color: '黑', size: 43, quantity: 1, actual_amount: 200 },
@@ -428,7 +441,7 @@ test('an accessory item keeps its name and needs no item number or size', () => 
 });
 
 test('a standalone accessory sale needs only a name and an amount', () => {
-  const result = normalizeSalesResult({
+  const result = normalizeWithVouchers({
     intent: 'sale',
     items: [{ kind: 'accessory', accessory_name: '9.9元袜子', quantity: 1, actual_amount: 9.9 }],
     payments: [{ method: '微信', amount: 9.9 }],
@@ -441,7 +454,7 @@ test('a standalone accessory sale needs only a name and an amount', () => {
 });
 
 test('an accessory without a name is asked for by name, not by item number', () => {
-  const result = normalizeSalesResult({
+  const result = normalizeWithVouchers({
     intent: 'sale',
     items: [{ kind: 'accessory', quantity: 1, actual_amount: 9.9 }],
     payments: [],

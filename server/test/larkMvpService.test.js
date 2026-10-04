@@ -243,11 +243,35 @@ const liveRow = ({ itemNo, color = '黑', size, state = '门盒', productRecordI
   },
 });
 
-const liveInventoryGateway = (rows) => ({
-  table: (key) => (key === 'liveInventory'
-    ? { tableId: 'tbl_live', fields: { stockKey: '库存键', product: '编号', size: '尺码', state: '所属状态' } }
-    : { fields: { number: '编号' } }),
-  listAll: async (key) => (key === 'liveInventory' ? rows : []),
+const liveInventoryGateway = (rows, { vouchers = [] } = {}) => ({
+  table: (key) => {
+    if (key === 'liveInventory') {
+      return { tableId: 'tbl_live', fields: { stockKey: '库存键', product: '编号', size: '尺码', state: '所属状态' } };
+    }
+    if (key === 'groupBuyVoucher') {
+      return { tableId: 'tbl_voucher', fields: { name: '券名称', purchasePrice: '售价', faceValue: '面值',
+        settlementAmount: '平台结算款', status: '销售状态' } };
+    }
+    return { fields: { number: '编号' } };
+  },
+  listAll: async (key) => {
+    if (key === 'liveInventory') return rows;
+    if (key === 'groupBuyVoucher') return vouchers;
+    return [];
+  },
+});
+
+// 券目录来自「团购券管理」表（只取在售），测试里给等价的两档。
+const VOUCHER_CATALOG = [
+  { purchasePrice: 89.9, faceValue: 100, settlementAmount: 85.4, name: '100元代金券（89.9元·9折）', status: '在售' },
+  { purchasePrice: 49.9, faceValue: 100, settlementAmount: 47.4, name: '100元代金券（49.9元·5折）', status: '在售' },
+];
+
+// 「团购券管理」表里的一行：售价 89.9 抵 100，平台结算 85.4。
+const voucherRow = ({ purchasePrice, faceValue, settlementAmount, status = '在售' }) => ({
+  record_id: `voucher_${purchasePrice}`,
+  fields: { 券名称: `${faceValue}元代金券`, 售价: purchasePrice, 面值: faceValue,
+    平台结算款: settlementAmount, 销售状态: [status] },
 });
 
 test('sales intake writes only intake metadata and retains actual amount before confirmation', async () => {
@@ -368,10 +392,13 @@ test('voucher sale card and posting retain separate settled and platform-pending
       gift: true, gift_description: '一双袜子' }],
     payments: [{ method: '微信', amount: 169 }, { method: '团购券', amount: 100 }],
     agreed_total: 269,
-  }, source);
+  }, source, { vouchers: VOUCHER_CATALOG });
   const service = new LarkMvpService({ client: {}, store,
     gateway: {
-      ...liveInventoryGateway([liveRow({ itemNo: '2A831-18', color: '黑', size: 44, productRecordId: 'product_voucher' })]),
+      ...liveInventoryGateway(
+        [liveRow({ itemNo: '2A831-18', color: '黑', size: 44, productRecordId: 'product_voucher' })],
+        { vouchers: [voucherRow({ purchasePrice: 89.9, faceValue: 100, settlementAmount: 85.4 })] },
+      ),
       validateTables: async () => [],
       create: async () => ({ recordId: 'entry_voucher' }), update: async () => undefined,
     },
@@ -1097,4 +1124,29 @@ test('旧卡片上的交付按钮仍然可用：动作名映射到同一条路�
     action: { value: { action: 'confirm_sale_delivered', draft_id: 'sale_legacy_card' } } });
   assert.equal(result.toast.type, 'success');
   assert.equal(counters.delivered, 0, '存量旧卡片点"已交付"，也要按草稿的交易类型走');
+});
+
+test('团购券目录只认「在售」的券：下架的券不能拿来算结算金额', async () => {
+  const store = makeStore();
+  const service = new LarkMvpService({ client: {},
+    gateway: liveInventoryGateway([], {
+      vouchers: [
+        voucherRow({ purchasePrice: 89.9, faceValue: 100, settlementAmount: 85.4, status: '已下架' }),
+        voucherRow({ purchasePrice: 49.9, faceValue: 100, settlementAmount: 47.4, status: '在售' }),
+      ],
+    }),
+    references: {}, posting: {}, recognizer: {}, store });
+  const vouchers = await service.listGroupBuyVouchers();
+  assert.deepEqual(vouchers.map((voucher) => voucher.purchasePrice), [49.9]);
+});
+
+test('券表读不到时返回空目录，让券的说法落到"未配置"追问，而不是算一个错的金额', async () => {
+  const store = makeStore();
+  const service = new LarkMvpService({ client: {},
+    gateway: {
+      table: (key) => (key === 'groupBuyVoucher' ? { tableId: 'tbl_voucher', fields: {} } : {}),
+      listAll: async () => { throw new Error('飞书暂时不可用'); },
+    },
+    references: {}, posting: {}, recognizer: {}, store });
+  assert.deepEqual(await service.listGroupBuyVouchers(), []);
 });
