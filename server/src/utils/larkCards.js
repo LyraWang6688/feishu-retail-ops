@@ -170,13 +170,11 @@ const salesColorPickers = (draftId, draft) => {
   (draft.items || []).forEach((item, index) => {
     const options = item.color_options || [];
     if (!item.needs_color || !options.length) return;
-    // 候选来自实时库存（只列"店里有这个颜色"），但卡片上只写颜色名——
-    // 她要选的是颜色，不是库存数字。
-    const names = options.map((option) => option.color || '未命名颜色').join('、');
+    // 只写一句"请选择颜色"，候选颜色由下面的按钮表达——
+    // 再把颜色名列一遍就是跟按钮重复了。
     elements.push({
       tag: 'markdown',
-      // 销售不再看用户说的颜色，所以这里只列店里实际有哪些颜色，不做对照提示。
-      content: `**第 ${index + 1} 双请选择颜色**\n这个货号在店里有：${names}`,
+      content: `**第 ${index + 1} 双请选择颜色**`,
     });
     elements.push({
       tag: 'action',
