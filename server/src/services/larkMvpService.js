@@ -19,7 +19,7 @@ const { LiveInventoryIndex, buildLiveInventoryIndex } = require('./liveInventory
 const { tradeTypeCodeFromLabel, deliveryForTradeType } = require('../config/salesMovements');
 const { isDataNotReady } = require('./salesReadRetry');
 const { resolveAccessory } = require('./accessoryMatchPolicy');
-const { salesConfirmationCard, salesStatusCard, todaySalesCard } = require('../utils/larkCards');
+const { salesConfirmationCard, salesStatusCard, todaySalesCard, keepOnlyCardButton } = require('../utils/larkCards');
 const { extractSalesMessageText } = require('../utils/larkMessageText');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
@@ -1002,10 +1002,9 @@ class LarkMvpService {
           const requestedAction = current?.posting_requested_action || action;
           const retryAction = ['confirm_sale_delivered', 'confirm_sale_pending'].includes(requestedAction)
             ? 'confirm_sale' : requestedAction;
-          retryCard.elements.filter((element) => element.tag === 'action').forEach((element) => {
-            const sameAction = element.actions.filter((button) => button.value?.action === retryAction);
-            if (sameAction.length) element.actions = sameAction;
-          });
+          // 卡片按钮已从 `action` 换成 `column_set`（移动端实测，见 larkCards.buttonColumns 的注释），
+          // 所以不能再按 tag === 'action' 找按钮；收窄规则不变，交给 larkCards 里的结构遍历。
+          keepOnlyCardButton(retryCard, retryAction);
         }
         retryCard.elements.splice(1, 0, { tag: 'note', elements: [
           { tag: 'plain_text', content: waitingForSync

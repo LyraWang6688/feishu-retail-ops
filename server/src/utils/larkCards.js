@@ -5,17 +5,24 @@ const text = (value) => String(value ?? '').replace(/\n/g, ' ');
 // 库存分布**刻意不写在这里**：实时库存是录单时读的，只用来判断"这一双有没有货、
 // 卖的是不是样品"。有货就不需要她看库存数字——那是噪音；只有她说了一个没有的尺码，
 // 才回一句"这个货号现在有哪几个尺码"（见 larkMvpService 的没货追问）。
-const itemLines = (items, priceKey) =>
-  (items || [])
+// `showAmount` 默认 true（结果卡片照旧逐件显示金额）。
+// 销售确认卡片传 false：产品负责人用真实卡片在手机上实测确认的 V3 排版里，
+// **一单只有一件时不显示这一件的金额**——它和下一行的「成交总额」完全重复，写两遍反而看不清重点。
+// ⚠️ 例外（业务决定，不要"顺手统一"）：**一单超过一件时必须逐件显示金额**。
+// 多件时她要在确认前逐件核对金额，不显示就会记错账。这个判断在 salesConfirmationCard 里。
+const itemLines = (items, priceKey, options = {}) => {
+  const showAmount = options.showAmount !== false;
+  return (items || [])
     .map((item, index) => {
       // 配品没有货号，显示它自己的名称。
       const product = item.product_number || item.productNumber || item.item_no || item.itemNo
         || item.accessory_name || '未知货品';
-      const price = item[priceKey] ?? item.unitPrice ?? item.unitCost;
+      const price = showAmount ? (item[priceKey] ?? item.unitPrice ?? item.unitCost) : null;
       const gift = item.gift ? `\n   赠品：${text(item.gift_description || '有')}` : '';
       return `${index + 1}. ${text(product)} ${text(item.size)}码 × ${text(item.quantity || 1)}${price ? ` ￥${price}` : ''}${gift}`;
     })
     .join('\n');
+};
 
 /**
  * 采购确认卡的分组展示：供应商 → 编号 → 尺码从小到大
@@ -120,25 +127,80 @@ const actionButton = (label, action, draftId, type = 'default', extra = {}) => (
   value: { action, draft_id: draftId, ...extra },
 });
 
-// 颜色待选的明细：每双一组按钮。横排——颜色少时一行放得下，颜色多时飞书卡片自动换行。
+// ⚠️ 移动端实测的结果，不要改回 `{ tag: 'action', actions: [...] }`。
+//
+// 现象：`action` 元素在 PC 上是一行三列，在**手机上每个按钮各占一行**（用户真实截图确认，
+// 门店主要用手机）。产品负责人拿 4 种排版在手机上逐一试过，只有下面这种
+// `column_set`（flex_mode: 'none' + 每列 weight: 1）在手机上也是一行多列。
+// 谁把它改回 action，手机端就会重新堆成多行。
+const buttonColumns = (buttons) => ({
+  tag: 'column_set',
+  flex_mode: 'none',
+  horizontal_spacing: '8px',
+  columns: buttons.map((button) => ({
+    tag: 'column',
+    width: 'weighted',
+    weight: 1,
+    elements: [button],
+  })),
+});
+
+// 手机一行的宽度最多放得下 3 个按钮（同样是真机实测）。
+// 颜色、补样品这类候选按钮数量不定（2~6 个），超过 3 个就必须另起一个 column_set：
+// column_set 之间是纵向排列的，所以"每 3 个一个 column_set、连续排布"就是"每行最多 3 个"。
+const MAX_BUTTONS_PER_ROW = 3;
+const buttonRows = (buttons) => {
+  const rows = [];
+  for (let index = 0; index < buttons.length; index += MAX_BUTTONS_PER_ROW) {
+    rows.push(buttonColumns(buttons.slice(index, index + MAX_BUTTONS_PER_ROW)));
+  }
+  return rows;
+};
+
+// 重试卡片要"只留继续处理这一单的那一个按钮"。
+// 卡片按钮从 `action` 换成 `column_set` 之后（原因见 buttonColumns 的注释），
+// 调用方不能再按 `element.tag === 'action'` 去找按钮；这里按新结构遍历，
+// 规则和以前完全一致：**只有"包含目标按钮的那一组"会被收窄**，
+// 颜色/补样品这类不含目标按钮的选择组原样保留。
+const keepOnlyCardButton = (card, action) => {
+  const matches = (child) => child.tag === 'button' && child.value?.action === action;
+  for (const element of card.elements || []) {
+    if (element.tag === 'action') {
+      const sameAction = element.actions.filter(matches);
+      if (sameAction.length) element.actions = sameAction;
+      continue;
+    }
+    if (element.tag === 'column_set') {
+      const buttons = (element.columns || [])
+        .flatMap((column) => column.elements || [])
+        .filter((child) => child.tag === 'button');
+      if (!buttons.some(matches)) continue;
+      element.columns = element.columns
+        .map((column) => ({ ...column,
+          elements: column.elements.filter((child) => child.tag !== 'button' || matches(child)) }))
+        .filter((column) => column.elements.length);
+    }
+  }
+  return card;
+};
+
+// 颜色待选的明细：每双一组按钮。
+// 提示行用 note（最小字）：V3 的层级里它排在明细/成交大字之下；候选颜色由按钮表达——
+// 再把颜色名列一遍就是跟按钮重复了。
 // 已经确定颜色的明细（单色货号、或用户说对了）不出按钮，只在上面的明细行里显示。
 const salesColorPickers = (draftId, draft) => {
   const elements = [];
   (draft.items || []).forEach((item, index) => {
     const options = item.color_options || [];
     if (!item.needs_color || !options.length) return;
-    // 只写一句"请选择颜色"，候选颜色由下面的按钮表达——
-    // 再把颜色名列一遍就是跟按钮重复了。
     elements.push({
-      tag: 'markdown',
-      content: `**第 ${index + 1} 双请选择颜色**`,
+      tag: 'div',
+      text: { tag: 'lark_md', content: `第 ${index + 1} 双请选择颜色`, text_size: 'note' },
     });
-    elements.push({
-      tag: 'action',
-      actions: options.map((option) => actionButton(option.color || '未命名颜色', 'choose_sale_color',
-        draftId, 'primary', { item_index: index, record_id: option.recordId,
-          product_number: option.number, color_name: option.color })),
-    });
+    // 颜色可能有 2~6 个：超过 3 个就折成多个 column_set（手机一行最多放 3 个，真机实测）。
+    elements.push(...buttonRows(options.map((option) => actionButton(option.color || '未命名颜色',
+      'choose_sale_color', draftId, 'primary', { item_index: index, record_id: option.recordId,
+        product_number: option.number, color_name: option.color }))));
   });
   return elements;
 };
@@ -153,20 +215,23 @@ const salesSampleReplacementPicker = (draftId, draft) => {
     const label = text(item.product_number || item.item_no || '这一双');
     const options = item.sample_replacement_options || [];
     elements.push({
-      tag: 'markdown',
-      content: `**第 ${index + 1} 双是样品，卖掉后要补一个门盒**（${label}）\n` +
-        (options.length ? '请选一个门盒来补样品：' : '同货号的门盒已经没有余量，需要另行调拨。'),
+      tag: 'div',
+      text: {
+        tag: 'lark_md',
+        content: `第 ${index + 1} 双是样品，卖掉后要补一个门盒（${label}）\n` +
+          (options.length ? '请选一个门盒来补样品：' : '同货号的门盒已经没有余量，需要另行调拨。'),
+        // V3：这类提示是 note（最小字），层级低于明细/成交大字。
+        text_size: 'note',
+      },
     });
     if (options.length) {
-      elements.push({
-        tag: 'action',
-        actions: options.map((row) => actionButton(
-          item.sample_replacement_size === row.size ? `已选 ${row.size}码` : `选 ${row.size}码`,
-          'choose_sale_sample_replacement', draftId,
-          item.sample_replacement_size === row.size ? 'primary' : 'default',
-          { item_index: index, size: row.size },
-        )),
-      });
+      // 门盒尺码数量不定，超过 3 个就折成多个 column_set（手机一行最多放 3 个，真机实测）。
+      elements.push(...buttonRows(options.map((row) => actionButton(
+        item.sample_replacement_size === row.size ? `已选 ${row.size}码` : `选 ${row.size}码`,
+        'choose_sale_sample_replacement', draftId,
+        item.sample_replacement_size === row.size ? 'primary' : 'default',
+        { item_index: index, size: row.size },
+      ))));
     }
   });
   return elements;
@@ -199,41 +264,69 @@ const salesProductInfoGaps = (draft) => {
   const lines = shown.map((gap) => {
     const label = text(gap.label || gap.record_id);
     const lacks = [...(gap.missing || []), ...(gap.missing_sample_image ? ['样例图'] : [])];
-    return `**${label}** 还差：${lacks.map(text).join('、')}\n[去补全这条记录](${gap.url})`;
+    return `${label} 还差：${lacks.map(text).join('、')}\n[去补全这条记录](${gap.url})`;
   });
   if (gaps.length > shown.length) {
     lines.push(`还有 ${gaps.length - shown.length} 个颜色也缺资料，可在「货品信息」里筛选「信息是否齐备」查看。`);
   }
-  return [{ tag: 'markdown', content: `**补货品信息**\n${lines.join('\n')}` }];
+  // V3（移动端实测确认）：这一块是 note（最小字、层级最低）——
+  // 它是"要不要去补资料"的提醒，不是这一单的金额事实，不该跟明细/成交抢视线。
+  return [{ tag: 'div',
+    text: { tag: 'lark_md', content: `补货品信息\n${lines.join('\n')}`, text_size: 'note' } }];
 };
 
-const salesConfirmationCard = (draftId, draft) => ({
-  config: { wide_screen_mode: true },
-  header: { template: 'blue', title: { tag: 'plain_text', content: '请确认销售订单' } },
-  elements: [
-    {
-      tag: 'markdown',
-      content: `${itemLines(draft.items || [], 'actual_amount')}\n**成交总额：** ￥${text(draft.agreed_total)}` +
-        (draft.voucher ? `\n**团购券：** ￥${text(draft.voucher.purchase_price)} 抵 ￥${text(draft.voucher.face_value)}；平台预计结算 ￥${text(draft.voucher.settlement_amount)}` : '') +
-        `\n**本次已收：** ${(draft.payments || []).filter((payment) => payment.status !== '待平台结算').length ?
-          draft.payments.filter((payment) => payment.status !== '待平台结算').map((payment) => `${text(payment.method)} ￥${text(payment.amount)}`).join('；') : '尚未收款'}` +
-        ((draft.payments || []).some((payment) => payment.status === '待平台结算') ?
-          `\n**待平台结算：** ${draft.payments.filter((payment) => payment.status === '待平台结算').map((payment) => `${text(payment.method)} ￥${text(payment.amount)}`).join('；')}` : '') +
-        `\n**交易类型：** ${tradeTypeLine(draft)}`,
-    },
-    ...salesColorPickers(draftId, draft),
-    ...salesSampleReplacementPicker(draftId, draft),
-    ...salesProductInfoGaps(draft),
-    {
-      tag: 'action',
-      actions: [
+// ⚠️ V3 排版（产品负责人用真实卡片在手机上实测确认），只改"长什么样"，不改任何金额/文案事实。
+//
+// 为什么必须换元素：飞书的 `markdown` 元素**不能自定义字号**，要做出"大字/小字"的层级，
+// 只能用 `{ tag: 'div', text: { tag: 'lark_md', content, text_size } }`，
+// text_size 取 'heading'（大字）/ 'normal' / 'note'（小字）；这一步已在用户真机上验证生效。
+// 层级：明细行、成交/收款行、交易类型行 = heading；补货品信息、颜色/补样品选择 = note。
+// 成交/收款行与交易类型行**不加粗**（内容里不写 `**`）——大字本身已经是重点，
+// 再加粗在手机上会糊成一团。
+const salesConfirmationCard = (draftId, draft) => {
+  const items = draft.items || [];
+  const payments = draft.payments || [];
+  const received = payments.filter((payment) => payment.status !== '待平台结算');
+  const pendingSettlement = payments.filter((payment) => payment.status === '待平台结算');
+
+  const moneyLines = [
+    // V3：成交总额和本次已收并成一行，中间用「·」分隔，都是 heading 大字、都不加粗。
+    `成交总额 ￥${text(draft.agreed_total)}　·　本次已收 ${received.length
+      ? received.map((payment) => `${text(payment.method)} ￥${text(payment.amount)}`).join('；')
+      : '尚未收款'}`,
+  ];
+  if (draft.voucher) {
+    moneyLines.push(`团购券：￥${text(draft.voucher.purchase_price)} 抵 ￥${text(draft.voucher.face_value)}；平台预计结算 ￥${text(draft.voucher.settlement_amount)}`);
+  }
+  if (pendingSettlement.length) {
+    moneyLines.push(`待平台结算：${pendingSettlement.map((payment) => `${text(payment.method)} ￥${text(payment.amount)}`).join('；')}`);
+  }
+
+  return {
+    config: { wide_screen_mode: true },
+    header: { template: 'blue', title: { tag: 'plain_text', content: '请确认销售订单' } },
+    elements: [
+      {
+        tag: 'div',
+        // 单件不显示金额、多件必须逐件显示金额（业务决定，理由见 itemLines 的注释）。
+        text: { tag: 'lark_md', content: itemLines(items, 'actual_amount', { showAmount: items.length > 1 }),
+          text_size: 'heading' },
+      },
+      { tag: 'div', text: { tag: 'lark_md', content: moneyLines.join('\n'), text_size: 'heading' } },
+      { tag: 'div',
+        text: { tag: 'lark_md', content: `交易类型：${tradeTypeLine(draft)}`, text_size: 'heading' } },
+      ...salesColorPickers(draftId, draft),
+      ...salesSampleReplacementPicker(draftId, draft),
+      ...salesProductInfoGaps(draft),
+      // 三个按钮走 column_set：移动端实测一行三列（见 buttonColumns 的注释）。
+      buttonColumns([
         actionButton('确认', 'confirm_sale', draftId, 'primary'),
         actionButton('修改', 'modify_sale', draftId),
         actionButton('取消', 'cancel', draftId, 'danger'),
-      ],
-    },
-  ],
-});
+      ]),
+    ],
+  };
+};
 
 const salesStatusCard = (draft, title, message, template = 'blue') => ({
   config: { wide_screen_mode: true },
@@ -250,12 +343,12 @@ const sampleReplacementCard = (taskId, { productNumber, remainingSizes = [], loo
   const choices = remainingSizes.filter((item) => item.doorBoxCount > 0);
   const elements = [{ tag: 'markdown', content:
     `**${text(productNumber || '该货品')} 的样品已售出。**\n请选择同货号现有门盒中的一个尺码补作样品；仓库鞋需另行调拨。\n${lines.join('\n') || (lookupFailed ? '可选尺码暂时无法读取，库存已扣减；请点击刷新重试。' : '目前没有剩余库存。')}` }];
-  for (let index = 0; index < choices.length; index += 4) {
-    elements.push({ tag: 'action', actions: choices.slice(index, index + 4).map((item) => ({
-      ...actionButton(`选 ${text(item.size)} 码`, 'choose_sample_replacement', taskId),
-      value: { action: 'choose_sample_replacement', draft_id: taskId, size: item.size },
-    })) });
-  }
+  // 一行最多 3 个按钮（手机真机实测），超过就折成多个 column_set——以前是每行 4 个。
+  elements.push(...buttonRows(choices.map((item) => ({
+    ...actionButton(`选 ${text(item.size)} 码`, 'choose_sample_replacement', taskId),
+    value: { action: 'choose_sample_replacement', draft_id: taskId, size: item.size },
+  }))));
+  // 单个按钮不存在换行问题，保持 action 元素原样。
   elements.push({ tag: 'action', actions: [actionButton('刷新可选尺码', 'refresh_sample_replacement', taskId)] });
   return { config: { wide_screen_mode: true },
     header: { template: 'orange', title: { tag: 'plain_text', content: '请补选展示样品' } }, elements };
@@ -308,13 +401,11 @@ const purchaseRequestConfirmationCard = (draftId, draft) => {
     elements.push({ tag: 'markdown', content: `**报货批次号：** ${text(draft.batch_no)}\n**明细数量：** ${text(draft.items?.length || 0)} 条` });
   }
   elements.push(...purchaseItemElements(draft.items || [], { skipSupplierGroup: isBatch }));
-  elements.push({
-    tag: 'action',
-    actions: [
-      actionButton('确认生成采购申请', 'confirm_purchase_request', draftId, 'primary'),
-      actionButton('取消', 'cancel_purchase_request', draftId, 'danger'),
-    ],
-  });
+  // 两个按钮走 column_set：移动端实测一行两列（见 buttonColumns 的注释）。
+  elements.push(buttonColumns([
+    actionButton('确认生成采购申请', 'confirm_purchase_request', draftId, 'primary'),
+    actionButton('取消', 'cancel_purchase_request', draftId, 'danger'),
+  ]));
   return { config: { wide_screen_mode: true }, header: { template: 'orange', title: { tag: 'plain_text', content: headerTitle } }, elements };
 };
 
@@ -327,13 +418,11 @@ const purchaseArrivalComparisonCard = (draftId, draft) => {
     header: { template: 'orange', title: { tag: 'plain_text', content: '请确认采购到货差异' } },
     elements: [
       { tag: 'markdown', content: `**报货批次号：** ${text(draft.batch_no)}\n${lines.join('\n') || '申请与实际到货一致'}` },
-      {
-        tag: 'action',
-        actions: [
-          actionButton('确认入库', 'confirm_purchase_arrival', draftId, 'primary'),
-          actionButton('取消', 'cancel_purchase_arrival', draftId, 'danger'),
-        ],
-      },
+      // 两个按钮走 column_set：移动端实测一行两列（见 buttonColumns 的注释）。
+      buttonColumns([
+        actionButton('确认入库', 'confirm_purchase_arrival', draftId, 'primary'),
+        actionButton('取消', 'cancel_purchase_arrival', draftId, 'danger'),
+      ]),
     ],
   };
 };
@@ -428,14 +517,11 @@ const purchaseArrivalDetailCard = (draftId, draft) => {
     ],
   });
 
-  // 确认/取消按钮
-  elements.push({
-    tag: 'action',
-    actions: [
-      actionButton('确认入库', 'confirm_purchase_arrival', draftId, 'primary'),
-      actionButton('取消', 'cancel_purchase_arrival', draftId, 'danger'),
-    ],
-  });
+  // 确认/取消按钮：走 column_set（移动端实测一行两列，见 buttonColumns 的注释）。
+  elements.push(buttonColumns([
+    actionButton('确认入库', 'confirm_purchase_arrival', draftId, 'primary'),
+    actionButton('取消', 'cancel_purchase_arrival', draftId, 'danger'),
+  ]));
 
   return {
     config: { wide_screen_mode: true },
@@ -456,6 +542,8 @@ const purchaseStatusCard = (draft, title, message, template = 'blue') => {
 };
 
 module.exports = {
+  // 重试卡片收窄按钮用（按 column_set/action 结构遍历，见 keepOnlyCardButton）。
+  keepOnlyCardButton,
   purchaseRequestConfirmationCard,
   purchaseArrivalComparisonCard,
   purchaseArrivalDetailCard,

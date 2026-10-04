@@ -179,7 +179,9 @@ test('selling a sample sends a per-order size choice card and only its recipient
   assert.match(JSON.stringify(cards[0]), /40码：门盒 1/);
   assert.ok(!JSON.stringify(cards[0]).includes('选 41 码'));
   const choose = (openId) => ({ action: { value: { action: 'choose_sample_replacement',
-    draft_id: cards[0].elements[1].actions[0].value.draft_id, size: 40 } },
+    // 候选尺码按钮已从 action 换成 column_set（移动端实测，见 larkCards.buttonColumns），
+    // 所以按钮要从 column 里取。
+    draft_id: cards[0].elements[1].columns[0].elements[0].value.draft_id, size: 40 } },
     operator: { operator_id: { open_id: openId } } });
   await assert.rejects(service.handleCardAction(choose('ou_other')), /只能由收到提醒的用户/);
   const result = await service.handleCardAction(choose('ou_seller'));
@@ -231,6 +233,7 @@ test('sample refresh failure replaces processing view with a retryable card', as
   assert.equal(result.toast.type, 'warning');
   assert.match(cards[0].header.title.content, /处理中/);
   assert.match(JSON.stringify(cards[1]), /刷新尺码失败/);
+  // 「刷新可选尺码」是单个按钮，不会有换行问题，保持 action 元素（只有多按钮才改成 column_set）。
   assert.ok(cards[1].elements.some((element) => element.tag === 'action'));
 });
 
@@ -563,7 +566,9 @@ test('sale card shows processing immediately and becomes action-free after posti
   assert.equal(result.toast.type, 'success');
   assert.deepEqual(cards.map((item) => item.messageId), ['om_card', 'om_card']);
   assert.match(cards[1].card.header.title.content, /已入账/);
-  assert.ok(cards.every((item) => !item.card.elements.some((element) => element.tag === 'action')));
+  // 终态卡片不能再给按钮：多按钮现在是 column_set，单按钮仍是 action，两种都算「有按钮」。
+  assert.ok(cards.every((item) => !item.card.elements
+    .some((element) => ['action', 'column_set'].includes(element.tag))));
   assert.equal((await store.get('sale_card_progress')).status, 'posted');
 });
 
@@ -590,7 +595,8 @@ test('two clicks on the same sale draft post once and repair the already process
   assert.equal(results[0].toast.type, 'success');
   assert.match(results[1].toast.content, /已处理/);
   assert.equal(cards.length, 3);
-  assert.ok(!cards[2].elements.some((element) => element.tag === 'action'));
+  // 同上：终态卡片不允许再出现按钮（column_set 或 action 都算）。
+  assert.ok(!cards[2].elements.some((element) => ['action', 'column_set'].includes(element.tag)));
 });
 
 test('sale final-card patch failure sends a new result card without reversing a posted sale', async () => {
@@ -701,7 +707,8 @@ test('failed sale posting restores action buttons for retry', async () => {
   assert.match(result.toast.content, /请核对原卡片后重试/);
   assert.equal(cards.length, 2);
   assert.match(JSON.stringify(cards[1]), /入账失败/);
-  assert.ok(cards[1].elements.some((element) => element.tag === 'action'));
+  // 重试卡片仍要能继续操作：确认/修改/取消现在是 column_set（移动端实测，见 larkCards.buttonColumns）。
+  assert.ok(cards[1].elements.some((element) => element.tag === 'column_set'));
   assert.equal((await store.get('sale_card_retry')).status, 'ready_to_confirm');
 });
 
@@ -738,9 +745,13 @@ test('sale card persists written record IDs and distinguishes pending sync from 
   assert.match(pending.toast.content, /记录已写入，进度待同步/);
   assert.match(JSON.stringify(cards.at(-1)), /库存未扣/);
   assert.doesNotMatch(JSON.stringify(cards.at(-1)), /入账失败/);
-  const retryActions = cards.at(-1).elements.find((element) => element.tag === 'action').actions;
+  // 按钮改成 column_set 之后（移动端实测，见 larkCards.buttonColumns），按钮要从 column 里取。
+  const retryButtons = cards.at(-1).elements
+    .filter((element) => element.tag === 'column_set')
+    .flatMap((element) => element.columns.flatMap((column) => column.elements))
+    .filter((child) => child.tag === 'button');
   // 卡片只有一个「确认」：交付与否由草稿的交易类型决定，不由按钮决定。
-  assert.deepEqual(retryActions.map((button) => button.value.action), ['confirm_sale']);
+  assert.deepEqual(retryButtons.map((button) => button.value.action), ['confirm_sale']);
   assert.equal((await store.get('sale_sync_retry')).status, 'ready_to_confirm');
   assert.deepEqual((await store.get('sale_sync_retry')).posting_record_ids,
     { details: ['detail_1'], payments: ['payment_1'] });
