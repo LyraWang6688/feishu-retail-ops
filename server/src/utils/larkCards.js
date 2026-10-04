@@ -195,7 +195,7 @@ const salesColorPickers = (draftId, draft) => {
     if (!item.needs_color || !options.length) return;
     elements.push({
       tag: 'div',
-      text: { tag: 'lark_md', content: `**第 ${index + 1} 双请选择颜色**`, text_size: 'note' },
+      text: { tag: 'lark_md', content: `第 ${index + 1} 双请选择颜色`, text_size: 'note' },
     });
     // 颜色可能有 2~6 个：超过 3 个就折成多个 column_set（手机一行最多放 3 个，真机实测）。
     elements.push(...buttonRows(options.map((option) => actionButton(option.color || '未命名颜色',
@@ -218,7 +218,7 @@ const salesSampleReplacementPicker = (draftId, draft) => {
       tag: 'div',
       text: {
         tag: 'lark_md',
-        content: `**第 ${index + 1} 双是样品，卖掉后要补一个门盒**（${label}）\n` +
+        content: `第 ${index + 1} 双是样品，卖掉后要补一个门盒（${label}）\n` +
           (options.length ? '请选一个门盒来补样品：' : '同货号的门盒已经没有余量，需要另行调拨。'),
         // V3：这类提示是 note（最小字），层级低于明细/成交大字。
         text_size: 'note',
@@ -264,7 +264,7 @@ const salesProductInfoGaps = (draft) => {
   const lines = shown.map((gap) => {
     const label = text(gap.label || gap.record_id);
     const lacks = [...(gap.missing || []), ...(gap.missing_sample_image ? ['样例图'] : [])];
-    return `**${label}** 还差：${lacks.map(text).join('、')}\n[去补全这条记录](${gap.url})`;
+    return `${label} 还差：${lacks.map(text).join('、')}\n[去补全这条记录](${gap.url})`;
   });
   if (gaps.length > shown.length) {
     lines.push(`还有 ${gaps.length - shown.length} 个颜色也缺资料，可在「货品信息」里筛选「信息是否齐备」查看。`);
@@ -272,7 +272,7 @@ const salesProductInfoGaps = (draft) => {
   // V3（移动端实测确认）：这一块是 note（最小字、层级最低）——
   // 它是"要不要去补资料"的提醒，不是这一单的金额事实，不该跟明细/成交抢视线。
   return [{ tag: 'div',
-    text: { tag: 'lark_md', content: `**补货品信息**\n${lines.join('\n')}`, text_size: 'note' } }];
+    text: { tag: 'lark_md', content: `补货品信息\n${lines.join('\n')}`, text_size: 'note' } }];
 };
 
 // ⚠️ V3 排版（产品负责人用真实卡片在手机上实测确认），只改"长什么样"，不改任何金额/文案事实。
