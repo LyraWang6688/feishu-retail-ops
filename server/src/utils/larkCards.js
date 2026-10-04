@@ -346,8 +346,13 @@ const purchaseArrivalComparisonCard = (draftId, draft) => {
 const purchaseArrivalDetailCard = (draftId, draft) => {
   const elements = [];
 
-  // 报货批次号
-  elements.push({ tag: 'markdown', content: `**报货批次号：** ${text(draft.batch_no)}` });
+  // 报货批次号；没有批次号说明是供应商直接送货、没走采购申请，
+  // 必须在卡片上写出来，否则她会以为系统漏做了比对。
+  if (draft.direct_arrival) {
+    elements.push({ tag: 'markdown', content: '**无申请直接到货**（未关联报货批次，全部按实际到货入库）' });
+  } else {
+    elements.push({ tag: 'markdown', content: `**报货批次号：** ${text(draft.batch_no)}` });
+  }
 
   // 实际到货明细（按编号分区显示）
   const matchedItems = (draft.actual || []).map(item => ({
@@ -359,6 +364,32 @@ const purchaseArrivalDetailCard = (draftId, draft) => {
     elements.push({ tag: 'hr' });
     elements.push({ tag: 'markdown', content: `**📦 实际到货明细（共 ${matchedItems.length} 条）**` });
     elements.push(...purchaseItemElements(matchedItems, { skipSupplierGroup: true }));
+  }
+
+  // 新品自动建档：货已经到了，建档只是补资料，**不影响入库**，所以先说清楚"已经建好了"，
+  // 再一次性说清还差什么、去哪补，省得她自己去表里翻。
+  const createdProducts = draft.created_products || [];
+  if (createdProducts.length > 0) {
+    elements.push({ tag: 'hr' });
+    elements.push({ tag: 'markdown', content: `**🆕 这批到货里有 ${createdProducts.length} 个新品，我已经建好基础信息（不影响入库）**` });
+    elements.push({
+      tag: 'markdown',
+      content: createdProducts.map((item) => `- ${text(item.label)}${item.supplier ? ` · ${text(item.supplier)}` : ''}`).join('\n'),
+    });
+    const createdColors = (draft.created_colors || []).filter(Boolean);
+    if (createdColors.length) {
+      elements.push({ tag: 'markdown', content: `颜色表原本没有「${createdColors.map(text).join('、')}」，我给你加了一条。` });
+    }
+    const missingFields = [...new Set(createdProducts.flatMap((item) => item.missing || []))];
+    if (createdProducts.some((item) => item.missing_sample_image)) missingFields.push('样例图');
+    const links = createdProducts.filter((item) => item.url).map((item) => `- ${text(item.label)} ${item.url}`);
+    // 「缺失信息说明」公式刚建完记录时可能还没算出来（读不到值）：那时不敢说"齐备"，
+    // 只说"还没齐、点进去补"。
+    const allReadable = createdProducts.every((item) => item.completeness_readable);
+    const gapLine = missingFields.length
+      ? `还差 ${missingFields.join(' / ')}，点记录去补：`
+      : allReadable ? '资料已经齐了。' : '资料还没齐，点记录去补：';
+    elements.push({ tag: 'markdown', content: links.length ? `${gapLine}\n${links.join('\n')}` : gapLine });
   }
 
   // 未匹配货品

@@ -31,6 +31,10 @@ const V1_BITABLE_SCHEMA = {
         cost: '成本',
         status: '货品状态',
         supplier: '供应商',
+        // 「类别」是单选，选项就是 A（男鞋）/ B（女鞋）两个字。
+        // 到货识别出新品时按标签上的「品名」填；识别不出留空——默认成 A 会把女鞋
+        // 写进男鞋，比空着更难发现。
+        category: '类别',
         // 「信息是否齐备」是飞书里的公式：齐备时返回「齐备」，否则返回缺的字段名
         // （例如「成本」或「单价、成本、品类」）。销售确认卡片据此提示她补资料。
         //
@@ -43,6 +47,21 @@ const V1_BITABLE_SCHEMA = {
         // 「样例图」是附件字段，不在齐备公式里，要单独判断"有没有图"。
         sampleImage: '样例图',
       },
+    },
+    // 「颜色管理」：货品信息的「颜色」是**关联字段**，不是文本。
+    // 给新品自动建档时必须按颜色名找到对应记录；颜色表里没有的颜色要先新建一条
+    // （并告知用户），否则新品建不了档。
+    color: {
+      tableName: '颜色管理',
+      tableId: getEnv('FEISHU_V1_COLOR_TABLE_ID', 'tblZ947YJkRwgo3k'),
+      fields: { name: '颜色' },
+    },
+    // 「品类管理」：货品信息的「品类」也是关联字段。
+    // 「类别」是它的适用类别（A=男鞋 / B=女鞋），建档时可用作参考。
+    category: {
+      tableName: '品类管理',
+      tableId: getEnv('FEISHU_V1_CATEGORY_TABLE_ID', 'tbleM3qxsw8s8jAI'),
+      fields: { name: '品类', category: '类别' },
     },
     // 配品（腰带、鞋油、袜子、包等）：没有尺码、不跟踪库存，销售明细里用它自己的关联字段。
     // 表 ID 没有默认值：不同租户这张表不同，未配置时销售只支持鞋。
@@ -175,7 +194,15 @@ const V1_BITABLE_SCHEMA = {
       tableName: '采购到货',
       tableId: getEnv('FEISHU_V1_PURCHASE_ARRIVAL_TABLE_ID', 'tblvLOXKESNTbZ7v'),
       fields: {
-        arrivalAt: '到货日', images: '鞋盒图片', batch: '报货批次号', inspector: '验收人',
+        arrivalAt: '到货日',
+        // 「图片」是**当前字段名**（2026-10-05 用 lark-cli +field-list / fields API 核对过）：
+        // 以前这里写的是「鞋盒图片」，改名后映射没跟上，到货链路会静默读不到附件、
+        // 每条记录都报"没有鞋盒图片附件"。字段改名后必须重跑 v1:schema-check 闸门。
+        images: '图片',
+        // 「类型」决定用哪种识别：鞋盒（一张张拍鞋盒）还是到货单（供应商单据的表格照片）。
+        // 空值按鞋盒处理，兼容这张字段上线前录入的历史记录。
+        type: '类型',
+        batch: '报货批次号', inspector: '验收人',
         recognitionStatus: '识别状态', confirmStatus: '确认状态', failureReason: '识别失败原因',
       },
     },

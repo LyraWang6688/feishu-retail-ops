@@ -178,6 +178,35 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
 };
 
 /**
+ * 到货单（供应商出库单 / 送货单）上的尺码可能是欧码，也可能是毫米制（225~285）。
+ *
+ * 鞋盒标签的换算写在提示词里就够了；单据是**表格照片**，模型很容易把表头那一排
+ * 尺码数字原样抄下来，所以这里再做一次确定性换算作为兜底，规则与鞋盒提示词一致：
+ * 欧码 = (数值 - 50) / 5。换算只此一处，两条识别路径不会算出不同的码。
+ */
+const normalizeDocumentSize = (value) => {
+  const raw = Number(value);
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  const size = raw >= 225 && raw <= 285 ? (raw - 50) / 5 : raw;
+  return Number.isInteger(size) && size > 0 ? size : 0;
+};
+
+/**
+ * 把到货单识别的原始行整理成「一条明细 = 一个尺码」的扁平数组：
+ *   [{ item_no, color, size, quantity }]
+ * 丢掉货号缺失、尺码或数量不是正整数的行——宁可少入库几双让她核对，
+ * 也不能凭一个读不准的数字把货写进库存。
+ */
+const normalizeDocumentRows = (rows) => (Array.isArray(rows) ? rows : [])
+  .map((row) => ({
+    item_no: String(row?.item_no ?? row?.itemNo ?? '').trim(),
+    color: String(row?.color ?? '').trim(),
+    size: normalizeDocumentSize(row?.size),
+    quantity: Number(row?.quantity ?? 1),
+  }))
+  .filter((row) => row.item_no && row.size > 0 && Number.isInteger(row.quantity) && row.quantity > 0);
+
+/**
  * Doubao (Volcengine Ark) Vision Service
  * Uses OpenAI SDK to interact with the Doubao LLM.
  */
@@ -355,12 +384,14 @@ class DoubaoService {
    - 若识别到的尺码数值在 34–48 之间（如 38、40），视为欧码，无需转换。
    - 只返回最终欧码正整数（如 40），不要输出42.5等半码。若未识别到，返回空字符串 ""。
 ${supplierRule}
+5. gender: 标签上的「品名」，只输出「男」或「女」（如「品名：女鞋」→「女」）；识别不到返回空字符串 ""。
+   到货时用它判断这个新品该进男鞋还是女鞋，猜错比空着更麻烦。
 
 请严格以 JSON 数组格式返回结果，不要包含任何解释性文字或 Markdown 代码块标记。
 示例输出：
 [
-  {"item_no": "CW2288-111", "color": "白色", "size": "42", "supplier": "Nike"},
-  {"item_no": "EG4958", "color": "黑色", "size": "38", "supplier": "豪路"}
+  {"item_no": "CW2288-111", "color": "白色", "size": "42", "supplier": "Nike", "gender": "男"},
+  {"item_no": "EG4958", "color": "黑色", "size": "38", "supplier": "豪路", "gender": "女"}
 ]
       `.trim();
 
@@ -418,7 +449,74 @@ ${supplierRule}
       throw new Error('AI识别失败: ' + error.message);
     }
   }
+
+  /**
+   * 识别**供应商到货单**（出库单 / 送货单）的照片。
+   *
+   * 与 recognizeLabels 的区别：鞋盒标签是「一张图 = 几个鞋盒」，到货单是
+   * 「一张表格 = 很多个款号×颜色×尺码」，所以这里要求模型直接摊平成一条条明细。
+   *
+   * 刻意不加 response_format：契约要的是 **JSON 数组**，而 json_object 只保证
+   * 返回对象（recognizeLabels 也是同样的取舍）。
+   *
+   * @param {string} filePath - 本地图片路径
+   * @param {string} moduleKey - purchase / sales / inventory
+   * @returns {Promise<Array>} - [{ item_no, color, size, quantity }]
+   */
+  async recognizePurchaseDocument(filePath, moduleKey = 'purchase') {
+    try {
+      const llm = this.resolveModel('vision');
+      const imageBase64 = fs.readFileSync(filePath, { encoding: 'base64' });
+      const imageData = `data:image/jpeg;base64,${imageBase64}`;
+
+      const moduleConfig = getModuleDefinition(moduleKey);
+      const prompt = moduleConfig.recognition?.document?.prompt;
+      if (!prompt) throw new Error('未配置到货单识别提示词（recognition.document.prompt）');
+
+      const response = await this.getClient('vision').chat.completions.create({
+        model: llm.model,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              { type: 'image_url', image_url: { url: imageData } },
+            ],
+          },
+        ],
+        temperature: 0.1,
+      });
+
+      const content = response.choices?.[0]?.message?.content || '';
+      logInfo('recognition.document.raw_received', {
+        module: moduleConfig.key,
+        raw_length: String(content || '').length,
+      });
+
+      const cleanedContent = content.replace(/```json/g, '').replace(/```/g, '').trim();
+      try {
+        const results = JSON.parse(cleanedContent);
+        if (!Array.isArray(results)) throw new Error('AI 返回结果不是数组格式');
+        return normalizeDocumentRows(results);
+      } catch (parseError) {
+        logError('recognition.document.parse_failed', {
+          module: moduleConfig.key,
+          raw_length: cleanedContent.length,
+          error: parseError.message,
+        });
+        throw new Error('到货单响应格式错误，无法解析 JSON: ' + parseError.message);
+      }
+    } catch (error) {
+      logError('recognition.document.failed', {
+        module: moduleKey,
+        error: error.message,
+        status: error.status,
+      });
+      throw new Error('AI识别到货单失败: ' + error.message);
+    }
+  }
 }
 
 module.exports = new DoubaoService();
 module.exports.normalizeSalesResult = normalizeSalesResult;
+module.exports.normalizeDocumentRows = normalizeDocumentRows;

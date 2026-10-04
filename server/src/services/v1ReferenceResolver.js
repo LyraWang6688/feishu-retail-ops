@@ -150,7 +150,12 @@ class V1ReferenceResolver {
     }
 
     if (matches.length === 0) {
-      throw new Error(`找不到货品：${input.productNumber || input.itemNo || ''}${input.color || ''}`);
+      // 给「确实没有这条货品」一个可判定的标记：到货链路要据此自动建档，
+      // 而「货号对应多个颜色」那种歧义必须留给人核对（不能也去建档）。
+      // 靠 error.message 做前缀匹配太脆，改文案就会静默失效。
+      const notFound = new Error(`找不到货品：${input.productNumber || input.itemNo || ''}${input.color || ''}`);
+      notFound.code = 'PRODUCT_NOT_FOUND';
+      throw notFound;
     }
     if (matches.length > 1) {
       if (wantedItemNo) {

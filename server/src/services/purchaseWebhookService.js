@@ -6,7 +6,9 @@ const lark = require('@larksuiteoapi/node-sdk');
 const { larkLogger } = require('../utils/larkLogger');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { V1BitableGateway, linkedRecordIds, textValue } = require('./v1BitableGateway');
-const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
+const { V1ReferenceResolver, person, relation, normalizeColor } = require('./v1ReferenceResolver');
+const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
+const { recordUrl } = require('../utils/feishuLinks');
 const doubaoService = require('./doubaoService');
 const { purchaseRequestConfirmationCard, purchaseArrivalComparisonCard, purchaseArrivalDetailCard, purchaseStatusCard } = require('../utils/larkCards');
 const { InventoryService } = require('./inventoryService');
@@ -48,6 +50,46 @@ const aggregateArrivalItems = (items) => {
 };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// 鞋盒/吊牌上的「品名」：女鞋 → B、男鞋 → A。单选选项就是 A/B 两个字。
+// 识别不出性别就留空：默认成 A 会把女鞋写进男鞋，比空着更难发现。
+const genderToCategory = (value) => {
+  const label = String(value || '').trim();
+  if (/女/.test(label)) return 'B';
+  if (/男/.test(label)) return 'A';
+  return '';
+};
+
+/**
+ * 从货品记录里读「还缺哪些资料」。
+ *
+ * 「缺失信息说明」是飞书公式：齐备时返回「齐备」，否则返回缺的字段名（如「成本、品类」）。
+ * 和销售侧 loadProductIndex 同一个思路——不自己逐字段判断，单一数据源留在表里。
+ * 「样例图」是附件字段，不在公式里，要单独看有没有图。
+ *
+ * 公式刚建完记录时可能还没算出来，所以 readable 要区分「齐备」和「读不到」，
+ * 读不到时只敢说"还没齐、去补"，不敢说"齐备"。
+ */
+const productInfoGaps = (record, productTable) => {
+  const fields = record?.fields || {};
+  const completeness = textValue(fields[productTable.fields.completeness]).trim();
+  const sampleImages = fields[productTable.fields.sampleImage];
+  return {
+    missing: completeness && completeness !== '齐备'
+      ? completeness.split('、').map((name) => name.trim()).filter(Boolean)
+      : [],
+    missingSampleImage: !(Array.isArray(sampleImages) && sampleImages.length > 0),
+    completeness_readable: Boolean(completeness),
+  };
+};
+
+// 记录链接只是给她点进去补资料用的：读不到 app token（本地/测试）时给不出链接，
+// 但绝不能因此打断建档和入库——货已经在仓库里了。
+const productRecordUrl = (tableId, recordId) => {
+  let appToken = '';
+  try { appToken = V1_BITABLE_SCHEMA.appToken; } catch { appToken = ''; }
+  return recordUrl({ appToken, tableId, recordId });
+};
 
 class PurchaseWebhookService {
   constructor(options = {}) {
@@ -407,6 +449,201 @@ class PurchaseWebhookService {
     return { status: 'awaiting_confirmation', item_count: parsed.length };
   }
 
+  /**
+   * 到货明细 → 货品记录。
+   *
+   * 匹配不到货品时**自动建档**再返回新记录：货已经到了，不能因为资料没录就把它挡在门外
+   * （产品负责人确认过的口径）。只填确定知道的字段，其余留空由她在飞书里补。
+   *
+   * 「货号对应多个颜色」这种歧义不走建档——那是识别抖动，建档只会造出重复货品。
+   */
+  async resolveArrivalProduct(raw, context) {
+    try {
+      const product = await this.references.resolveProduct({ itemNo: raw.item_no, color: raw.color });
+      return { product, created: null };
+    } catch (error) {
+      if (error.code !== 'PRODUCT_NOT_FOUND') throw error;
+      const created = await this.ensureArrivalProduct(raw, context);
+      const productTable = this.gateway.table('product');
+      return {
+        created,
+        product: {
+          recordId: created.recordId,
+          record: created.record || { record_id: created.recordId, fields: { [productTable.fields.itemNo]: raw.item_no } },
+        },
+      };
+    }
+  }
+
+  /**
+   * 建档进度落盘。
+   *
+   * 建档是远端写入，按项目约定必须把已经写出的 record_id 落盘：任务失败后重收 webhook
+   * 会重跑一次到货解析，那时飞书列表可能还没读到刚建的货品，只靠"再查一遍"不足以防重复。
+   */
+  async persistArrivalCreation(context) {
+    if (!context.taskId) return;
+    try {
+      await this.store.update(context.taskId, {
+        arrival_created_products: context.createdLog,
+        arrival_created_colors: context.createdColors,
+      });
+    } catch (error) {
+      logWarn('purchase.arrival.created_product_persist_failed', { task_id: context.taskId, error: error.message });
+    }
+  }
+
+  /**
+   * 从已落盘的任务里恢复上一次的建档结果，重试时直接复用，不再重复建。
+   */
+  buildArrivalCreationContext(task) {
+    const products = Array.isArray(task?.arrival_created_products) ? task.arrival_created_products : [];
+    const colors = Array.isArray(task?.arrival_created_colors) ? task.arrival_created_colors : [];
+    const context = {
+      taskId: task?.task_id || '',
+      productCache: new Map(),
+      colorIndex: new Map(),
+      createdColors: colors.map((item) => ({ ...item })),
+      createdLog: products.map((item) => ({ ...item })),
+      colorTableLoaded: false,
+    };
+    // 上次已经建好的颜色先占位：重试时同一个颜色名不会再建第二条。
+    for (const item of context.createdColors) {
+      if (item?.name) context.colorIndex.set(normalizeColor(item.name), item.color_record_id);
+    }
+    for (const item of context.createdLog) {
+      context.productCache.set(`${item.item_no}|${item.color}`, {
+        is_new: true,
+        recordId: item.product_record_id,
+        record: null,
+        item_no: item.item_no,
+        color: item.color,
+        supplier: item.supplier || '',
+        label: `${item.item_no}${item.color}`,
+        color_created: Boolean(item.color_created),
+        gaps: null,
+      });
+    }
+    return context;
+  }
+
+  /**
+   * 按颜色名找「颜色管理」的记录，找不到就新建一条并记下来。
+   *
+   * 颜色表是**共享主数据**：OCR 抖一下（「棕色」/「棕」）就多建一条，以后同一个颜色
+   * 会散成好几条，所以比对用 normalizeColor（去空白、去末尾「色」），
+   * 并且整张表只读一次、同一次到货里同名颜色只建一条。
+   */
+  async ensureArrivalColor(color, context) {
+    const colorTable = this.gateway.table('color');
+    if (!context.colorTableLoaded) {
+      for (const record of await this.gateway.listAll('color')) {
+        const name = normalizeColor(textValue(record?.fields?.[colorTable.fields.name]));
+        if (name && !context.colorIndex.has(name)) context.colorIndex.set(name, record.record_id);
+      }
+      context.colorTableLoaded = true;
+    }
+    const key = normalizeColor(color);
+    if (context.colorIndex.has(key)) return { recordId: context.colorIndex.get(key), created: false };
+
+    const created = await this.gateway.create('color', { name: color });
+    const recordId = created?.recordId || '';
+    if (!recordId) throw new Error(`颜色「${color}」新建失败`);
+    context.colorIndex.set(key, recordId);
+    context.createdColors.push({ name: color, color_record_id: recordId });
+    await this.persistArrivalCreation(context);
+    logInfo('purchase.arrival.color_created', { color, color_record_id: recordId });
+    return { recordId, created: true };
+  }
+
+  /**
+   * 给识别到的新品建一条「货品信息」，然后原样返回新记录。
+   *
+   * 只写确定知道的字段：货号、颜色（关联）、供应商（关联，找不到就留空）、类别（A/B，认不出就留空）。
+   * 刻意不写「编号」「货品状态」「缺失信息说明」——这三个在飞书里是公式字段，
+   * 写进去会直接 FieldNameNotFound，而且它们的值本来就该由表自己算。
+   */
+  async ensureArrivalProduct(raw, context) {
+    const itemNo = String(raw.item_no || '').trim();
+    const color = String(raw.color || '').trim();
+    const cacheKey = `${itemNo}|${color}`;
+    const cached = context.productCache.get(cacheKey);
+    // 同一个「货号+颜色」在一次到货里会有多个尺码：复用第一条建好的记录（含上次重试建的），
+    // 不要再建第二条。
+    if (cached) {
+      // 从上次重试恢复出来的条目还没有回读数据，补一次即可说明"还差什么"。
+      if (!cached.gaps) {
+        cached.record = (await this.gateway.get('product', cached.recordId).catch(() => null)) || cached.record;
+        cached.gaps = productInfoGaps(cached.record, this.gateway.table('product'));
+      }
+      return { ...cached };
+    }
+
+    const productTable = this.gateway.table('product');
+    const values = { itemNo };
+    if (color) values.color = relation((await this.ensureArrivalColor(color, context)).recordId);
+
+    // 供应商也只在识别到名字、且供应商表里确实有这条时才关联；找不到留空，不新建、不猜。
+    const supplierName = String(raw.supplier || '').trim();
+    if (supplierName) {
+      try {
+        const supplier = await this.references.resolveSupplier(supplierName);
+        if (supplier?.recordId) values.supplier = relation(supplier.recordId);
+      } catch (error) {
+        logWarn('purchase.arrival.supplier_not_found', { item_no: itemNo, supplier: supplierName, error: error.message });
+      }
+    }
+    const category = genderToCategory(raw.gender || raw.category);
+    if (category) values.category = category;
+
+    const created = await this.gateway.create('product', values);
+    const recordId = created?.recordId || created?.record_id || '';
+    if (!recordId) throw new Error(`新品建档失败：${itemNo}${color}`);
+
+    const entry = {
+      is_new: true,
+      recordId,
+      record: created?.record || null,
+      item_no: itemNo,
+      color,
+      supplier: supplierName,
+      label: `${itemNo}${color}`,
+      color_created: context.createdColors.some((item) => normalizeColor(item.name) === normalizeColor(color)),
+      gaps: null,
+    };
+    context.productCache.set(cacheKey, entry);
+    context.createdLog.push({
+      item_no: itemNo, color, product_record_id: recordId, supplier: supplierName, color_created: entry.color_created,
+    });
+    // 先落盘再回读：哪怕回读或后续步骤失败，重试也能凭这条记录跳过重复建档。
+    await this.persistArrivalCreation(context);
+
+    // 建档后回读一次：公式（缺失信息说明）是飞书算的，创建响应里通常还没有值。
+    // 回读失败不影响入库，只是这张卡片少说了"还差什么"。
+    try {
+      entry.record = (await this.gateway.get('product', recordId)) || entry.record;
+    } catch (error) {
+      logWarn('purchase.arrival.created_product_readback_failed', { product_record_id: recordId, error: error.message });
+    }
+    entry.gaps = productInfoGaps(entry.record, productTable);
+    logInfo('purchase.arrival.product_created', {
+      item_no: itemNo, color, product_record_id: recordId, color_created: entry.color_created,
+      missing: entry.gaps.missing, missing_sample_image: entry.gaps.missingSampleImage,
+    });
+    return entry;
+  }
+
+  /**
+   * 解析采购到货记录。
+   *
+   * 「类型」决定用哪种识别：
+   * - 到货单：供应商出库单/送货单的表格照片，一张图里有很多「款号×颜色×尺码」
+   * - 其它（含空值、鞋盒）：一张张鞋盒照片。空值按鞋盒处理——这个单选字段是后来加的，
+   *   历史记录没有值，不能因此把它们判成失败
+   *
+   * 两条识别路径的输出同构（item_no / color / size / quantity 明细），
+   * 所以「匹配货品 → 与申请比对 → 草稿 → 卡片确认」的后续流程完全共用。
+   */
   async processArrival(recordId, taskId) {
     const table = this.gateway.table('purchaseArrival');
     const record = await this.gateway.get('purchaseArrival', recordId);
@@ -414,8 +651,11 @@ class PurchaseWebhookService {
     const currentStatus = textValue(fields[table.fields.confirmStatus]);
     if (['已确认', '已入库', '已取消'].includes(currentStatus)) return { ignored: true, status: currentStatus };
     await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别中', failureReason: '' });
+    const isDocument = textValue(fields[table.fields.type]).trim() === '到货单';
     const tokens = attachmentTokens(fields[table.fields.images]);
-    if (!tokens.length) throw new Error('采购到货记录没有鞋盒图片附件');
+    if (!tokens.length) {
+      throw new Error(isDocument ? '采购到货记录没有到货单图片附件' : '采购到货记录没有鞋盒图片附件');
+    }
     const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'purchase-arrival-'));
     try {
       const recognized = [];
@@ -423,27 +663,43 @@ class PurchaseWebhookService {
         const filePath = path.join(tempDir, `${index + 1}.jpg`);
         const media = await this.client.drive.media.download({ path: { file_token: tokens[index] } });
         await media.writeFile(filePath);
-        recognized.push(...await this.recognizer.recognizeLabels(filePath, 'purchase'));
+        recognized.push(...await (isDocument
+          ? this.recognizer.recognizePurchaseDocument(filePath)
+          : this.recognizer.recognizeLabels(filePath, 'purchase')));
       }
+      if (!recognized.length) throw new Error(isDocument ? '到货单上没有识别到任何明细' : '图片上没有识别到任何鞋盒');
       const arrivalTable = this.gateway.table('purchaseArrival');
       const batchIds = linkedRecordIds(fields[arrivalTable.fields.batch]);
-      if (batchIds.length !== 1) throw new Error('采购到货必须选择一个报货批次号');
-      if (!this.gateway.table('purchaseOrderBatch').tableId) throw new Error('未配置报货批次表ID：FEISHU_V1_PURCHASE_ORDER_BATCH_TABLE_ID');
-      const batch = await this.gateway.get('purchaseOrderBatch', batchIds[0]);
-      const batchTable = this.gateway.table('purchaseOrderBatch');
-      const batchNo = textValue(batch?.fields?.[batchTable.fields.batchNo]);
+      // 业务上存在「供应商直接送货、没有先走采购申请」的到货，这种记录不会选报货批次号。
+      // 没有批次号就不再报错，也不和申请比对——全部按实际到货入库，草稿里标记 direct_arrival，
+      // 卡片上写清楚"无申请直接到货"，免得她以为系统漏比对了。
+      // 选了多个批次号仍然是配置错误：无法判断该拿哪一批的申请来比对。
+      if (batchIds.length > 1) throw new Error('采购到货只能选择一个报货批次号');
+      const directArrival = batchIds.length === 0;
       const requestTable = this.gateway.table('purchaseRequest');
-      const requests = (await this.gateway.listAll('purchaseRequest')).filter(
-        (item) => linkedRecordIds(item.fields?.[requestTable.fields.batchNo]).includes(batchIds[0])
-      );
+      let batchNo = '';
+      let requests = [];
+      if (!directArrival) {
+        if (!this.gateway.table('purchaseOrderBatch').tableId) throw new Error('未配置报货批次表ID：FEISHU_V1_PURCHASE_ORDER_BATCH_TABLE_ID');
+        const batch = await this.gateway.get('purchaseOrderBatch', batchIds[0]);
+        const batchTable = this.gateway.table('purchaseOrderBatch');
+        batchNo = textValue(batch?.fields?.[batchTable.fields.batchNo]);
+        requests = (await this.gateway.listAll('purchaseRequest')).filter(
+          (item) => linkedRecordIds(item.fields?.[requestTable.fields.batchNo]).includes(batchIds[0])
+        );
+      }
       const actual = [];
       const unrecognized = [];
       const supplierNameCache = {};
       const productTable = this.gateway.table('product');
       const supplierTable = this.gateway.table('supplier');
+      // 新品建档的共享状态：同一次到货里同一个「货号+颜色」只建一条货品，同名颜色只建一条颜色。
+      // 上一次重试已经建过的记录从这里恢复，不会再建第二条。
+      const creationContext = this.buildArrivalCreationContext(await this.store.get(taskId));
       for (const raw of recognized) {
         try {
-          const product = await this.references.resolveProduct({ itemNo: raw.item_no, color: raw.color });
+          const resolved = await this.resolveArrivalProduct(raw, creationContext);
+          const { product } = resolved;
           // 从货品信息表关联获取供应商名称
           const productSupplierIds = linkedRecordIds(product.record?.fields?.[productTable.fields.supplier]);
           let supplierName = raw.supplier || '';
@@ -457,10 +713,15 @@ class PurchaseWebhookService {
           }
           actual.push({
             product_record_id: product.recordId,
-            product_number: textValue(product.record?.fields?.[productTable.fields.number]),
+            // 新品刚建档时「编号」公式可能还没算出来，先用「货号+颜色」把明细显示出来。
+            product_number: textValue(product.record?.fields?.[productTable.fields.number]) || (resolved.created?.label || ''),
+            item_no: raw.item_no,
+            color: raw.color,
             size: Number(raw.size),
             quantity: Number(raw.quantity || 1),
             supplier: supplierName,
+            // 草稿里记下哪些是刚建档的新品，卡片据此单独讲清楚。
+            created_product: Boolean(resolved.created),
           });
         } catch (error) {
           unrecognized.push({ ...raw, error: error.message });
@@ -471,14 +732,43 @@ class PurchaseWebhookService {
         throw new Error(`所有货品都识别失败：${unrecognized.map(u => `${u.item_no || ''}${u.color || ''}`).join('、')}`);
       }
       const groupedActual = aggregateArrivalItems(actual);
-      const differences = await this.compareArrival(requests, groupedActual, requestTable);
+      // 新品清单直接从建档缓存里取：同一次到货里同一「货号+颜色」的多个尺码只算一个新品，
+      // 上一次重试已经建好的也算在内（卡片上仍要告诉她这批有新品、还差什么）。
+      const createdProducts = [...creationContext.productCache.values()];
+      // 恢复出来的条目（这次识别里已经不再出现）没有回读数据：缺口按"读不到"处理，
+      // 仍然告诉她有这么个新品，但不敢说资料齐备。
+      for (const entry of createdProducts) {
+        if (!entry.gaps) entry.gaps = productInfoGaps(entry.record, productTable);
+      }
+      // 直接到货没有申请可比：不生成差异行，否则每一行都会被算成「多N」，反而误导她。
+      const differences = directArrival ? [] : await this.compareArrival(requests, groupedActual, requestTable);
       const operatorOpenId = this.recordOperator(record, arrivalTable.fields.inspector);
-      const draft = { arrival_record_id: recordId, batch_record_id: batchIds[0], batch_no: batchNo, operator_open_id: operatorOpenId, requests, actual: groupedActual, differences, unrecognized };
+      const draft = {
+        arrival_record_id: recordId,
+        direct_arrival: directArrival,
+        batch_record_id: batchIds[0] || '',
+        batch_no: batchNo,
+        operator_open_id: operatorOpenId, requests, actual: groupedActual, differences, unrecognized,
+        // 新品自动建档的结果：卡片要告诉她建了哪些、颜色表补了哪条、还差什么、去哪补。
+        created_products: createdProducts.map((entry) => ({
+          product_record_id: entry.recordId,
+          item_no: entry.item_no,
+          color: entry.color,
+          supplier: entry.supplier,
+          label: entry.label,
+          color_created: entry.color_created,
+          missing: entry.gaps.missing,
+          missing_sample_image: entry.gaps.missingSampleImage,
+          completeness_readable: entry.gaps.completeness_readable,
+          url: productRecordUrl(productTable.tableId, entry.recordId),
+        })),
+        created_colors: creationContext.createdColors.map((item) => item.name),
+      };
       await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别成功', confirmStatus: '待确认' });
       await this.store.update(taskId, { recognized, draft, status: 'awaiting_confirmation' });
       await this.sendCard(operatorOpenId, purchaseArrivalDetailCard(taskId, draft));
-      logInfo("purchase.arrival.card.sent", { record_id: recordId, task_id: taskId, item_count: actual.length, unrecognized_count: unrecognized.length, difference_count: differences.length });
-      return { status: 'awaiting_confirmation', item_count: actual.length, difference_count: differences.length };
+      logInfo("purchase.arrival.card.sent", { record_id: recordId, task_id: taskId, direct_arrival: directArrival, arrival_type: isDocument ? '到货单' : '鞋盒', item_count: actual.length, unrecognized_count: unrecognized.length, difference_count: differences.length, created_product_count: createdProducts.length, created_color_count: creationContext.createdColors.length });
+      return { status: 'awaiting_confirmation', item_count: actual.length, difference_count: differences.length, created_product_count: createdProducts.length };
     } catch (error) {
       await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别失败', failureReason: error.message }).catch(() => undefined);
       logWarn('purchase.arrival.recognition.failed', { record_id: recordId, task_id: taskId, error: error.message });
