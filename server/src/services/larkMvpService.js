@@ -395,6 +395,9 @@ class LarkMvpService {
     // 卖货时要把**这个货号下所有颜色**里资料不全的都提示出来——同款不同色通常
     // 一起上架，让她一次补齐，比每次卖一个颜色提醒一次省事。
     const byItemNo = new Map();
+    // 配置写错（例如用了界面显示名而记录里是内部名）时，整表都读不到这个键。
+    // 那种情况下不报错、只是永远不提示她补资料——最难查，所以单独留一条警告。
+    let completenessSeen = 0;
     for (const record of records) {
       const fields = record?.fields || {};
       // 「信息是否齐备」是飞书公式：齐备时返回「齐备」，否则返回缺的字段名。
@@ -411,11 +414,18 @@ class LarkMvpService {
         missingSampleImage: !(Array.isArray(sampleImages) && sampleImages.length > 0),
         label: `${itemNo}${color}`,
       };
+      if (fields[table.fields.completeness] !== undefined) completenessSeen += 1;
       byId.set(record.record_id, info);
       if (itemNo) {
         if (!byItemNo.has(itemNo)) byItemNo.set(itemNo, []);
         byItemNo.get(itemNo).push({ recordId: record.record_id, ...info });
       }
+    }
+    if (records.length && completenessSeen === 0) {
+      logWarn('lark.sales.product_index.completeness_field_unreadable', {
+        field: table.fields.completeness,
+        hint: '字段名可能写成了界面显示名；记录 API 用的是内部名',
+      });
     }
     logInfo('lark.sales.product_index.loaded', { record_count: records.length, item_count: byItemNo.size });
     return { tableId: table.tableId, byId, byItemNo };
