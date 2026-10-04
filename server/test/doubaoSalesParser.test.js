@@ -105,11 +105,13 @@ test('gift-only model item is folded into preceding sold shoe', () => {
 });
 
 test('explicit gift in one-shoe source survives model omission', async () => {
-  const oldKey = process.env.ARK_API_KEY;
-  const oldModel = process.env.ARK_MODEL_ENDPOINT;
+  const oldKey = process.env.TEXT_LLM_API_KEY;
+  const oldBase = process.env.TEXT_LLM_BASE_URL;
+  const oldModel = process.env.TEXT_LLM_MODEL;
   const oldGetClient = salesParser.getClient;
-  process.env.ARK_API_KEY = 'test-key';
-  process.env.ARK_MODEL_ENDPOINT = 'test-model';
+  process.env.TEXT_LLM_API_KEY = 'test-key';
+  process.env.TEXT_LLM_BASE_URL = 'https://api.deepseek.com';
+  process.env.TEXT_LLM_MODEL = 'test-model';
   try {
     salesParser.getClient = () => ({ chat: { completions: { create: async () => ({ choices: [{ message: { content: JSON.stringify({
       intent: 'sale', behavior_code: 'SALE_CASH', items: [{ item_no: '6V637-7', color: '黑', size: 41, quantity: 1 }],
@@ -121,19 +123,23 @@ test('explicit gift in one-shoe source survives model omission', async () => {
     assert.equal(result.items[0].gift_description, '鞋垫一双');
   } finally {
     salesParser.getClient = oldGetClient;
-    if (oldKey === undefined) delete process.env.ARK_API_KEY;
-    else process.env.ARK_API_KEY = oldKey;
-    if (oldModel === undefined) delete process.env.ARK_MODEL_ENDPOINT;
-    else process.env.ARK_MODEL_ENDPOINT = oldModel;
+    if (oldKey === undefined) delete process.env.TEXT_LLM_API_KEY;
+    else process.env.TEXT_LLM_API_KEY = oldKey;
+    if (oldBase === undefined) delete process.env.TEXT_LLM_BASE_URL;
+    else process.env.TEXT_LLM_BASE_URL = oldBase;
+    if (oldModel === undefined) delete process.env.TEXT_LLM_MODEL;
+    else process.env.TEXT_LLM_MODEL = oldModel;
   }
 });
 
 test('one 89.9-for-100 voucher is converted to pending 85.4, not received 89.9 or 100', async () => {
-  const oldKey = process.env.ARK_API_KEY;
-  const oldModel = process.env.ARK_MODEL_ENDPOINT;
+  const oldKey = process.env.TEXT_LLM_API_KEY;
+  const oldBase = process.env.TEXT_LLM_BASE_URL;
+  const oldModel = process.env.TEXT_LLM_MODEL;
   const oldGetClient = salesParser.getClient;
-  process.env.ARK_API_KEY = 'test-key';
-  process.env.ARK_MODEL_ENDPOINT = 'test-model';
+  process.env.TEXT_LLM_API_KEY = 'test-key';
+  process.env.TEXT_LLM_BASE_URL = 'https://api.deepseek.com';
+  process.env.TEXT_LLM_MODEL = 'test-model';
   try {
     // Even when the AI wrongly calls the voucher a 100-yuan payment and omits
     // the gift, the deterministic policy must correct the cash/settlement split.
@@ -155,10 +161,12 @@ test('one 89.9-for-100 voucher is converted to pending 85.4, not received 89.9 o
     assert.deepEqual(result.missing_fields, []);
   } finally {
     salesParser.getClient = oldGetClient;
-    if (oldKey === undefined) delete process.env.ARK_API_KEY;
-    else process.env.ARK_API_KEY = oldKey;
-    if (oldModel === undefined) delete process.env.ARK_MODEL_ENDPOINT;
-    else process.env.ARK_MODEL_ENDPOINT = oldModel;
+    if (oldKey === undefined) delete process.env.TEXT_LLM_API_KEY;
+    else process.env.TEXT_LLM_API_KEY = oldKey;
+    if (oldBase === undefined) delete process.env.TEXT_LLM_BASE_URL;
+    else process.env.TEXT_LLM_BASE_URL = oldBase;
+    if (oldModel === undefined) delete process.env.TEXT_LLM_MODEL;
+    else process.env.TEXT_LLM_MODEL = oldModel;
   }
 });
 
@@ -220,11 +228,13 @@ test('voucher accepts payment method before amount and a voucher-only sale', () 
 });
 
 test('colloquial gifts preserve explicit pair count without inventing a count for other gifts', async () => {
-  const oldKey = process.env.ARK_API_KEY;
-  const oldModel = process.env.ARK_MODEL_ENDPOINT;
+  const oldKey = process.env.TEXT_LLM_API_KEY;
+  const oldBase = process.env.TEXT_LLM_BASE_URL;
+  const oldModel = process.env.TEXT_LLM_MODEL;
   const oldGetClient = salesParser.getClient;
-  process.env.ARK_API_KEY = 'test-key';
-  process.env.ARK_MODEL_ENDPOINT = 'test-model';
+  process.env.TEXT_LLM_API_KEY = 'test-key';
+  process.env.TEXT_LLM_BASE_URL = 'https://api.deepseek.com';
+  process.env.TEXT_LLM_MODEL = 'test-model';
   try {
     salesParser.getClient = () => ({ chat: { completions: { create: async () => ({ choices: [{ message: { content: JSON.stringify({
       intent: 'sale', items: [{ item_no: '31663', color: '黑', size: 40, quantity: 1 }],
@@ -238,10 +248,12 @@ test('colloquial gifts preserve explicit pair count without inventing a count fo
     assert.equal(twoPairs.items[0].gift_description, '两双袜子');
   } finally {
     salesParser.getClient = oldGetClient;
-    if (oldKey === undefined) delete process.env.ARK_API_KEY;
-    else process.env.ARK_API_KEY = oldKey;
-    if (oldModel === undefined) delete process.env.ARK_MODEL_ENDPOINT;
-    else process.env.ARK_MODEL_ENDPOINT = oldModel;
+    if (oldKey === undefined) delete process.env.TEXT_LLM_API_KEY;
+    else process.env.TEXT_LLM_API_KEY = oldKey;
+    if (oldBase === undefined) delete process.env.TEXT_LLM_BASE_URL;
+    else process.env.TEXT_LLM_BASE_URL = oldBase;
+    if (oldModel === undefined) delete process.env.TEXT_LLM_MODEL;
+    else process.env.TEXT_LLM_MODEL = oldModel;
   }
 });
 
@@ -254,13 +266,15 @@ test('explicit contradictory sale price still blocks a voucher sale', () => {
 });
 
 test('voucher parsing preserves two gifts and logs AI values separately from normalized values', async () => {
-  const oldKey = process.env.ARK_API_KEY;
-  const oldModel = process.env.ARK_MODEL_ENDPOINT;
+  const oldKey = process.env.TEXT_LLM_API_KEY;
+  const oldBase = process.env.TEXT_LLM_BASE_URL;
+  const oldModel = process.env.TEXT_LLM_MODEL;
   const oldGetClient = salesParser.getClient;
   const oldLog = console.log;
   const logs = [];
-  process.env.ARK_API_KEY = 'test-key';
-  process.env.ARK_MODEL_ENDPOINT = 'test-model';
+  process.env.TEXT_LLM_API_KEY = 'test-key';
+  process.env.TEXT_LLM_BASE_URL = 'https://api.deepseek.com';
+  process.env.TEXT_LLM_MODEL = 'test-model';
   try {
     console.log = (line) => logs.push(JSON.parse(line));
     salesParser.getClient = () => ({ chat: { completions: { create: async () => ({ choices: [{ message: { content: JSON.stringify({
@@ -284,10 +298,12 @@ test('voucher parsing preserves two gifts and logs AI values separately from nor
   } finally {
     console.log = oldLog;
     salesParser.getClient = oldGetClient;
-    if (oldKey === undefined) delete process.env.ARK_API_KEY;
-    else process.env.ARK_API_KEY = oldKey;
-    if (oldModel === undefined) delete process.env.ARK_MODEL_ENDPOINT;
-    else process.env.ARK_MODEL_ENDPOINT = oldModel;
+    if (oldKey === undefined) delete process.env.TEXT_LLM_API_KEY;
+    else process.env.TEXT_LLM_API_KEY = oldKey;
+    if (oldBase === undefined) delete process.env.TEXT_LLM_BASE_URL;
+    else process.env.TEXT_LLM_BASE_URL = oldBase;
+    if (oldModel === undefined) delete process.env.TEXT_LLM_MODEL;
+    else process.env.TEXT_LLM_MODEL = oldModel;
   }
 });
 
