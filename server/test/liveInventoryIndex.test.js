@@ -3,9 +3,20 @@ const assert = require('node:assert');
 const { LiveInventoryIndex, parseStockKey } = require('../src/services/liveInventoryIndex');
 
 // 「库存键」是飞书侧公式：货号|颜色|类别|尺码。生产库 1086/1086 条都是这个格式。
+//
+// ⚠️ 夹具必须用**飞书原始 API 的字段形状**：
+//   · 富文本/公式 → [{ text: '...', type: 'text' }]
+//   · 关联字段   → [{ record_ids: ['rec...'], table_id: '...', text: '...' }]
+// 用简写形状（{ id: 'rec...' } 或纯字符串）会让"整表被静默跳过"测不出来——
+// 线上曾经因此把 1086 条全部跳过，每一单都回"库存里没有"。
 const record = ({ id, stockKey, state = '门盒', product = 'prod_1', size = 'size_1' }) => ({
   record_id: id,
-  fields: { 库存键: stockKey, 所属状态: state, 编号: [{ id: product }], 尺码: [{ id: size }] },
+  fields: {
+    库存键: [{ text: stockKey, type: 'text' }],
+    所属状态: state,
+    编号: [{ record_ids: [product], table_id: 'tbl_product', text: product, text_arr: [product], type: 'text' }],
+    尺码: [{ record_ids: [size], table_id: 'tbl_size', text: size, text_arr: [size], type: 'text' }],
+  },
 });
 
 const build = (records) => new LiveInventoryIndex({ records });
@@ -128,4 +139,29 @@ test('补样品候选按货品记录（货号 + 颜色）取，绝不跨颜色',
   ]);
   assert.deepEqual(index.sampleReplacementCandidatesForProduct(''), []);
   assert.deepEqual(index.sampleReplacementCandidatesForProduct('不存在'), []);
+});
+
+test('关联字段按飞书原始 API 形状解析：record_ids 里的 record_id 必须认出来', () => {
+  // 回归：曾经只认 { id } / { record_id }，导致整表 1086 条被静默跳过。
+  const index = build([record({ id: 'r1', stockKey: 'DN16|黑|A|40', product: 'rec_product', size: 'rec_size' })]);
+  assert.equal(index.skippedRecords, 0, '原始 API 形状的记录不该被跳过');
+  const found = index.find({ itemNo: 'DN16', size: 40 });
+  assert.equal(found.colors[0].productRecordId, 'rec_product');
+  assert.equal(found.colors[0].sizeRecordId, 'rec_size');
+});
+
+test('简写形状也认（CLI 导出 / 手写夹具）', () => {
+  const simple = (id, stockKey, product, size) => ({
+    record_id: id, fields: { 库存键: stockKey, 所属状态: '门盒', 编号: [{ id: product }], 尺码: [{ id: size }] },
+  });
+  const index = build([simple('r1', 'DN16|黑|A|40', 'p1', 's1')]);
+  assert.equal(index.skippedRecords, 0, '简写形状同样要认，避免又反过来只认一种');
+  assert.equal(index.find({ itemNo: 'DN16', size: 40 }).colors[0].productRecordId, 'p1');
+});
+
+test('关联字段为空时跳过并计数，不猜', () => {
+  const index = build([
+    { record_id: 'r1', fields: { 库存键: [{ text: 'DN16|黑|A|40' }], 所属状态: '门盒', 编号: [], 尺码: [] } },
+  ]);
+  assert.equal(index.skippedRecords, 1);
 });
