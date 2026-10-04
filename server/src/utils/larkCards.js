@@ -1,5 +1,10 @@
 const text = (value) => String(value ?? '').replace(/\n/g, ' ');
 
+// 明细行只写她需要核对的事实：货号、尺码、数量、金额、赠品。
+//
+// 库存分布**刻意不写在这里**：实时库存是录单时读的，只用来判断"这一双有没有货、
+// 卖的是不是样品"。有货就不需要她看库存数字——那是噪音；只有她说了一个没有的尺码，
+// 才回一句"这个货号现在有哪几个尺码"（见 larkMvpService 的没货追问）。
 const itemLines = (items, priceKey) =>
   (items || [])
     .map((item, index) => {
@@ -165,11 +170,11 @@ const salesColorPickers = (draftId, draft) => {
   (draft.items || []).forEach((item, index) => {
     const options = item.color_options || [];
     if (!item.needs_color || !options.length) return;
-    const names = options.map((option) => option.color).filter(Boolean).join('、');
+    // 只写一句"请选择颜色"，候选颜色由下面的按钮表达——
+    // 再把颜色名列一遍就是跟按钮重复了。
     elements.push({
       tag: 'markdown',
-      // 销售不再看用户说的颜色，所以这里只列该货号实际有哪些颜色，不做对照提示。
-      content: `**第 ${index + 1} 双请选择颜色**\n这个货号有：${names}`,
+      content: `**第 ${index + 1} 双请选择颜色**`,
     });
     elements.push({
       tag: 'action',
@@ -179,6 +184,44 @@ const salesColorPickers = (draftId, draft) => {
     });
   });
   return elements;
+};
+
+// 卖的是样品时：告诉她这一双卖掉要补一个门盒，并**在这张卡片上就选完**。
+// 合并进确认卡片的原因：否则她点完确认，还要再收一张卡、再点一次——
+// 而"卖样品要补哪个门盒"这件事，出卡片时就已经能算出来了（实时库存已经读过）。
+const salesSampleReplacementPicker = (draftId, draft) => {
+  const elements = [];
+  (draft.items || []).forEach((item, index) => {
+    if (!item.uses_sample) return;
+    const label = text(item.product_number || item.item_no || '这一双');
+    const options = item.sample_replacement_options || [];
+    elements.push({
+      tag: 'markdown',
+      content: `**第 ${index + 1} 双是样品，卖掉后要补一个门盒**（${label}）\n` +
+        (options.length ? '请选一个门盒来补样品：' : '同货号的门盒已经没有余量，需要另行调拨。'),
+    });
+    if (options.length) {
+      elements.push({
+        tag: 'action',
+        actions: options.map((row) => actionButton(
+          item.sample_replacement_size === row.size ? `已选 ${row.size}码` : `选 ${row.size}码`,
+          'choose_sale_sample_replacement', draftId,
+          item.sample_replacement_size === row.size ? 'primary' : 'default',
+          { item_index: index, size: row.size },
+        )),
+      });
+    }
+  });
+  return elements;
+};
+
+// 交易类型是脚本按注册表从 AI 识别的性质推出来的，卡片只**展示**，不再让用户选。
+// 确认这个动作的含义因此变得单一：她核对的是"AI 听对了没有"，不是替系统决定交付方式。
+const tradeTypeLine = (draft) => {
+  const label = text(draft?.trade_type || '').trim();
+  const delivery = text(draft?.delivery_status || '').trim();
+  if (!label) return delivery || '—';
+  return delivery ? `${label} · ${delivery}` : label;
 };
 
 const salesConfirmationCard = (draftId, draft) => ({
@@ -193,14 +236,14 @@ const salesConfirmationCard = (draftId, draft) => ({
           draft.payments.filter((payment) => payment.status !== '待平台结算').map((payment) => `${text(payment.method)} ￥${text(payment.amount)}`).join('；') : '尚未收款'}` +
         ((draft.payments || []).some((payment) => payment.status === '待平台结算') ?
           `\n**待平台结算：** ${draft.payments.filter((payment) => payment.status === '待平台结算').map((payment) => `${text(payment.method)} ￥${text(payment.amount)}`).join('；')}` : '') +
-        `\n**交付：** ${text(draft.delivery_status || '待确认')}（请按实际情况选择）`,
+        `\n**交易类型：** ${tradeTypeLine(draft)}`,
     },
     ...salesColorPickers(draftId, draft),
+    ...salesSampleReplacementPicker(draftId, draft),
     {
       tag: 'action',
       actions: [
-        actionButton('确认已交付（扣库存）', 'confirm_sale_delivered', draftId, draft.delivery_status === '已交付' ? 'primary' : 'default'),
-        actionButton('确认未交付', 'confirm_sale_pending', draftId, draft.delivery_status === '已交付' ? 'default' : 'primary'),
+        actionButton('确认', 'confirm_sale', draftId, 'primary'),
         actionButton('修改', 'modify_sale', draftId),
         actionButton('取消', 'cancel', draftId, 'danger'),
       ],

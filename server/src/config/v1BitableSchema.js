@@ -61,6 +61,20 @@ const V1_BITABLE_SCHEMA = {
       tableId: getEnv('FEISHU_V1_SIZE_TABLE_ID'),
       fields: { size: '尺码' },
     },
+    // 团购券的售价 / 面值 / 平台结算款由运营在飞书里维护，代码不写死券种。
+    // 刻意不放进 V1_SCHEMA_SCOPES：它是**可选**配置，未配置或读不到时券的说法会落到
+    // "未配置结算金额，请补充"的追问上（不会写一个错的金额），不该把部署闸门拦下来。
+    groupBuyVoucher: {
+      tableName: '团购券管理',
+      tableId: getEnv('FEISHU_V1_GROUP_BUY_VOUCHER_TABLE_ID', 'tblz2kM1CIGkcWsM'),
+      fields: {
+        name: '券名称',
+        purchasePrice: '售价',
+        faceValue: '面值',
+        settlementAmount: '平台结算款',
+        status: '销售状态',
+      },
+    },
     paymentMethod: {
       tableName: '收款方式管理',
       tableId: getEnv('FEISHU_V1_PAYMENT_METHOD_TABLE_ID', 'tblH7YzA1v5vJzEi'),
@@ -91,6 +105,9 @@ const V1_BITABLE_SCHEMA = {
         parseSummary: '解析结果摘要',
         failureReason: '失败原因',
         orderStatus: '订单状态',
+        // 关联「行为管理」里的现货销售 / 未付销售 / 预付销售。交易类型决定交付状态；
+        // 落成关联是为了可筛可查、可对账，也让销售与库存行为共用同一张配置表。
+        tradeType: '交易类型',
       },
     },
     salesDetail: {

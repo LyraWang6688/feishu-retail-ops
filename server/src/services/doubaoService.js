@@ -3,12 +3,13 @@ const fs = require('fs');
 const { getModuleDefinition } = require('../config/modules');
 const { logError, logInfo } = require('../utils/logger');
 const { applyGroupBuyVoucherPolicy } = require('./groupBuyVoucherPolicy');
+const { resolveLlm, assertLlmConfigured } = require('../config/llmModels');
 
 // Log only the sale fields needed to compare AI extraction with deterministic
 // normalization. Never log the complete user message, prompt or raw model JSON.
 const salesParseSnapshot = (result = {}) => ({
   intent: result.intent,
-  delivery_status: result.delivery_status,
+  trade_type: result.trade_type,
   items: (Array.isArray(result.items) && result.items.length ? result.items : [result]).map((item) => ({
     item_no: String(item.item_no || '').slice(0, 80),
     color: String(item.color || '').slice(0, 40),
@@ -55,7 +56,7 @@ const moneyOrEmpty = (value) => {
   return number && Math.abs(number * 100 - Math.round(number * 100)) < 1e-6 ? number : '';
 };
 
-const normalizeSalesResult = (result = {}, sourceText = '') => {
+const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = {}) => {
   const rawItems = Array.isArray(result.items) && result.items.length ? result.items : [result];
   const items = [];
   for (const item of rawItems) {
@@ -127,16 +128,20 @@ const normalizeSalesResult = (result = {}, sourceText = '') => {
       items[0].actual_amount = agreedTotal;
     }
   }
-  const voucherPolicy = applyGroupBuyVoucherPolicy({ sourceText, items, payments });
+  const voucherPolicy = applyGroupBuyVoucherPolicy({ sourceText, items, payments, vouchers });
   if (voucherPolicy?.items) {
     items.splice(0, items.length, ...voucherPolicy.items);
     payments = voucherPolicy.payments;
     agreedTotal = voucherPolicy.agreedTotal;
   }
   const first = items[0] || {};
+  // 交易类型由 AI 从原话判断，但只认三种；说不清时按现货处理——
+  // 门店绝大多数是"当场收钱当场交货"，不说不给钱就是现货（不是猜，是业务前提）。
+  // 交付状态不在这里定：它由 SALES_MOVEMENTS 从交易类型推出来。
+  const tradeType = ['现货', '未付', '预付'].includes(result.trade_type) ? result.trade_type : '现货';
   const normalized = {
     intent: result.intent === 'sale' ? 'sale' : 'unsupported',
-    delivery_status: ['已交付', '未交付'].includes(result.delivery_status) ? result.delivery_status : '待确认',
+    trade_type: tradeType,
     ...first,
     items,
     payments,
@@ -178,38 +183,38 @@ const normalizeSalesResult = (result = {}, sourceText = '') => {
  */
 class DoubaoService {
   constructor() {
-    this.apiKey = process.env.ARK_API_KEY;
-    this.endpointId = process.env.ARK_MODEL_ENDPOINT; // The model custom endpoint ID
-    this.baseURL = process.env.ARK_API_BASE_URL || 'https://ark.cn-beijing.volces.com/api/v3';
-    this.client = null;
+    this.clients = Object.create(null);
   }
 
-  getClient() {
-    if (this.client) return this.client;
-    const apiKey = process.env.ARK_API_KEY;
-    const baseURL = process.env.ARK_API_BASE_URL || this.baseURL;
-    this.client = new OpenAI({ apiKey, baseURL });
-    return this.client;
+  /**
+   * 取某一组模型的配置（文字 / 图片）。
+   * 具体用哪家、哪个模型由 config/llmModels 决定，这里只负责取。
+   */
+  resolveModel(kind = 'text') {
+    return assertLlmConfigured(resolveLlm(kind, process.env));
   }
 
-  async parseSalesText(text, { taskId, accessoryNames = [] } = {}) {
-    this.apiKey = process.env.ARK_API_KEY;
-    this.endpointId = process.env.ARK_MODEL_ENDPOINT;
-    if (!this.apiKey || !this.endpointId) {
-      throw new Error('ARK_API_KEY or ARK_MODEL_ENDPOINT is not configured in .env');
-    }
+  getClient(kind = 'text') {
+    if (this.clients[kind]) return this.clients[kind];
+    const { apiKey, baseURL } = this.resolveModel(kind);
+    this.clients[kind] = new OpenAI({ apiKey, baseURL });
+    return this.clients[kind];
+  }
+
+  async parseSalesText(text, { taskId, accessoryNames = [], vouchers = [] } = {}) {
+    const llm = this.resolveModel('text');
     const originalText = String(text || '').trim();
     if (!originalText) throw new Error('销售原文不能为空');
 
     const prompt = `
 你是鞋店销售首单录入助手。请把用户的一条销售原话解析为严格 JSON，不得猜测缺失信息。
 
-一条消息表示一笔销售，可以包含多双鞋和多种付款方式。只解析事实，不计算售价或猜测交付。
+一条消息表示一笔销售，可以包含多双鞋和多种付款方式。只解析事实，不计算售价。
 
 输出结构：
 {
   "intent": "sale",
-  "delivery_status": "待确认",
+  "trade_type": "现货",
   "items": [{"item_no":"8088-26","color":"棕","size":38,"quantity":1,"actual_amount":230,"gift":false,"gift_description":""}],
   "payments": [{"amount":230,"method":"微信"}],
   "agreed_total": 230
@@ -217,7 +222,12 @@ class DoubaoService {
 
 规则：
 1. 商品销售（含当场收款、预付、先交货后付款）intent=\"sale\"；退货、换货、赔货 intent=\"unsupported\"。不输出销售行为字段。
-2. 明确说已拿走/已交给顾客时 delivery_status=\"已交付\"；明确说还没货、之后来拿时为\"未交付\"；否则为\"待确认\"。最终由用户在确认卡选择，不凭付款情况推断交付。
+2. trade_type 是这笔交易的**性质**，只能填「现货」「未付」「预付」三者之一：
+   · 提到定金 / 先付 / 预定 → \"预付\"（货没拿走，之后来取）
+   · 明确说未付 / 欠着 / 下次再给 → \"未付\"（鞋拿走，钱还没给）
+   · 其余一律 \"现货\"（当场收款当场交货——门店绝大多数是这一种，不说不给钱就是现货）
+   团购券只是一种**支付方式**（钱延期结算），不影响 trade_type；用券买走一双鞋仍然是现货。
+   不要输出交付状态，后端会按 trade_type 决定是否交付。
 3. item_no 只填写用户原话中的货号，不要把颜色、尺码或品类拼进货号。用户可能用任意顺序和标点表达，但货号中的数字和字母必须原样保留。
 4. color 单独填写颜色；“棕色”规范为“棕”、“黑色”规范为“黑”。没有提到颜色时留空，不得猜测。
 5. “628-6米紫361一双”是货号 628-6、颜色米紫、36码、数量1；末尾的 1 是数量，不是 361 码。
@@ -235,8 +245,8 @@ class DoubaoService {
 用户原话：${originalText}
     `.trim();
 
-    const response = await this.getClient().chat.completions.create({
-      model: this.endpointId,
+    const response = await this.getClient('text').chat.completions.create({
+      model: llm.model,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0,
       response_format: { type: 'json_object' },
@@ -245,7 +255,7 @@ class DoubaoService {
     try {
       const result = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
       logInfo('sales.ai.parsed', { task_id: taskId, ...salesParseSnapshot(result) });
-      const normalized = normalizeSalesResult(result, originalText);
+      const normalized = normalizeSalesResult(result, originalText, { vouchers });
       // For one shoe, the original words are authoritative for every gift,
       // even when the model recognizes only the first one.
       if (normalized.items.length === 1) {
@@ -266,9 +276,7 @@ class DoubaoService {
   }
 
   async parsePurchaseReportText(text, { selectedSizes = [] } = {}) {
-    this.apiKey = process.env.ARK_API_KEY;
-    this.endpointId = process.env.ARK_MODEL_ENDPOINT;
-    if (!this.apiKey || !this.endpointId) throw new Error('ARK_API_KEY or ARK_MODEL_ENDPOINT is not configured in .env');
+    const llm = this.resolveModel('text');
     const originalText = String(text || '').trim();
     if (!originalText) throw new Error('采购报单说明不能为空');
     const allowedSizes = selectedSizes.map(Number);
@@ -288,8 +296,8 @@ class DoubaoService {
 5. 数量必须是正整数。只有在完全无法判断数量时才返回空数组，不得猜测。
 6. 只输出 JSON，不输出 Markdown 或说明。
 数量说明：${originalText}`.trim();
-    const response = await this.getClient().chat.completions.create({
-      model: this.endpointId,
+    const response = await this.getClient('text').chat.completions.create({
+      model: llm.model,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0,
       response_format: { type: 'json_object' },
@@ -321,12 +329,8 @@ class DoubaoService {
    */
   async recognizeLabels(filePath, moduleKey = 'purchase') {
     try {
-      this.apiKey = process.env.ARK_API_KEY;
-      this.endpointId = process.env.ARK_MODEL_ENDPOINT;
-      this.baseURL = process.env.ARK_API_BASE_URL || this.baseURL;
-      if (!this.apiKey || !this.endpointId) {
-        throw new Error('ARK_API_KEY or ARK_MODEL_ENDPOINT is not configured in .env');
-      }
+      // 图片识别单独一组模型：它必须是支持视觉的，跟文字解析的选型理由不同。
+      const llm = this.resolveModel('vision');
 
       // 1. Convert image to base64
       const imageBase64 = fs.readFileSync(filePath, { encoding: 'base64' });
@@ -361,8 +365,8 @@ ${supplierRule}
       `.trim();
 
       // 3. Call Doubao API using OpenAI SDK
-      const response = await this.getClient().chat.completions.create({
-        model: this.endpointId,
+      const response = await this.getClient('vision').chat.completions.create({
+        model: llm.model,
         messages: [
           {
             role: 'user',

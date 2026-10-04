@@ -61,9 +61,11 @@ class SampleReplacementService {
     }
   }
 
-  async notifySampleReplacements(deliveryResult, operatorOpenId) {
+  async notifySampleReplacements(deliveryResult, operatorOpenId, { handledDetailIds = new Set() } = {}) {
     if (!operatorOpenId) throw new Error('补选样品提醒缺少用户 open_id');
     for (const replacement of deliveryResult.sampleReplacements || []) {
+      // 已经在确认卡片上选好并补掉的，不再发第二张卡片。
+      if (handledDetailIds.has(replacement.salesDetailRecordId)) continue;
       const taskId = taskIdFor(replacement.salesDetailRecordId);
       let task = await this.store.get(taskId);
       if (task?.status === 'completed') continue;
@@ -96,6 +98,25 @@ class SampleReplacementService {
           `${productNumber} 的样品已售出，但补选卡片发送失败；销售库存已扣减，请联系管理员核对补选任务。`).catch(() => undefined);
       }
     }
+  }
+
+  /**
+   * 用户在确认卡片上已经选好"用哪个门盒补样品"时，直接在这里执行，
+   * 不再另发一张补选卡片——她点一次确认就够了。
+   *
+   * 返回已处理的销售明细 ID，调用方据此跳过对应的补选提醒。
+   */
+  async applyPreChosen(replacements = []) {
+    const handled = new Set();
+    for (const { salesDetailRecordId, productRecordId, size } of replacements) {
+      if (!salesDetailRecordId || !productRecordId || !size) continue;
+      await this.inventory.promoteToSample({ salesDetailRecordId, productRecordId, size });
+      handled.add(salesDetailRecordId);
+      logInfo('lark.sales.sample_replacement.applied', {
+        sales_detail_record_id: salesDetailRecordId, product_record_id: productRecordId, size,
+      });
+    }
+    return handled;
   }
 
   async handleCardAction(value, event, operatorOpenId, context = {}) {

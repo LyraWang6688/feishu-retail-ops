@@ -16,11 +16,22 @@ const { SampleReplacementService } = require('./sampleReplacementService');
 const { PurchaseDraftBuilder } = require('./purchaseDraftBuilder');
 const { PurchaseWebhookService } = require('./purchaseWebhookService');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
+const { LiveInventoryIndex, buildLiveInventoryIndex } = require('./liveInventoryIndex');
+const { tradeTypeCodeFromLabel, deliveryForTradeType } = require('../config/salesMovements');
 const { isDataNotReady } = require('./salesReadRetry');
 const { purchaseConfirmationCard, salesConfirmationCard, salesStatusCard, todaySalesCard } = require('../utils/larkCards');
 const { extractSalesMessageText } = require('../utils/larkMessageText');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
+
+// 交付与否以草稿的交易类型为准：现货/未付当场交付，预付（只付定金、货没拿走）不交付。
+// 只有旧数据才没有明确的交付状态（待确认或缺失），那时退回按钮语义——
+// 旧卡片上的「确认已交付 / 确认未交付」是用户显式做出的选择。
+const shouldDeliverFor = (task, action) => {
+  const declared = task?.draft?.delivery_status;
+  if (declared === '已交付' || declared === '未交付') return declared === '已交付';
+  return action === 'confirm_sale_delivered';
+};
 
 const idFor = (prefix, value) =>
   `${prefix}_${crypto.createHash('sha256').update(String(value || '')).digest('hex').slice(0, 20)}`;
@@ -140,8 +151,26 @@ class LarkMvpService {
     return response.data?.message_id || '';
   }
 
-  async notifySampleReplacements(deliveryResult, operatorOpenId) {
-    return this.sampleReplacements.notifySampleReplacements(deliveryResult, operatorOpenId);
+  /**
+   * 执行确认卡片上已经选好的补样品。
+   *
+   * 模块边界：补样品这件事由 SampleReplacementService 负责，这里只把
+   * "哪条明细、哪个货品、补哪个尺码"整理好交给它。
+   */
+  async applyChosenSampleReplacements(task, postingResult) {
+    const replacements = (task.draft?.items || [])
+      .map((item, index) => ({
+        salesDetailRecordId: postingResult?.detailRecordIds?.[index] || '',
+        productRecordId: item.product_record_id || '',
+        size: item.sample_replacement_size || '',
+      }))
+      .filter((item) => item.salesDetailRecordId && item.productRecordId && item.size);
+    if (!replacements.length) return new Set();
+    return this.sampleReplacements.applyPreChosen(replacements);
+  }
+
+  async notifySampleReplacements(deliveryResult, operatorOpenId, options = {}) {
+    return this.sampleReplacements.notifySampleReplacements(deliveryResult, operatorOpenId, options);
   }
 
   async sendTodaySales(openId, now = new Date()) {
@@ -365,15 +394,104 @@ class LarkMvpService {
     }
   }
 
+  /**
+   * 卖这一双会不会动到样品？会的话，把"可以用哪些门盒补"一并算出来。
+   *
+   * 能提前算，是因为出卡片前已经读过实时库存：门盒几双、样品几双都是已知的。
+   * 于是"卖样品要补哪个门盒"能在这张卡片上一次问完，不必事后另弹一张卡。
+   *
+   * 三种情况要分清：
+   *   · 门盒够        → 不会动样品，什么都不用问
+   *   · 门盒不够、样品够 → 会动样品，需要她选一个门盒来补（有候选项时）
+   *   · 门盒样品都不够  → 这是"库存不足"，走没货那条路，不在这里处理
+   */
+  samplePlanFor({ productRecordId, stock, quantity = 1 }, liveInventory) {
+    const none = { uses_sample: false, needs_sample_replacement: false, sample_replacement_options: [] };
+    const needs = Number(quantity || 1);
+    const doorBox = Number(stock?.doorBox || 0);
+    const sample = Number(stock?.sample || 0);
+    if (!productRecordId || doorBox >= needs || sample < needs) return none;
+    const options = (liveInventory?.sampleReplacementCandidatesForProduct?.(productRecordId) || [])
+      .filter((row) => row.doorBoxCount > 0);
+    return {
+      uses_sample: true,
+      // 有候选项才需要她选；一个都没有时只在卡片上提示（另行调拨），不拦住确认。
+      needs_sample_replacement: options.length > 0,
+      sample_replacement_options: options,
+    };
+  }
+
+  /**
+   * 团购券目录：只取「在售」的券，按「售价 + 面值」匹配结算金额。
+   *
+   * 读不到就当没有券目录——她对券的说法会落到"未配置该券的结算金额，请补充"的追问上，
+   * 而不是拿别的券顶替、写一个错的收款金额。
+   */
+  async listGroupBuyVouchers() {
+    const table = this.gateway.table?.('groupBuyVoucher');
+    if (!table?.tableId) return [];
+    try {
+      const records = await this.gateway.listAll('groupBuyVoucher');
+      return records
+        .map((record) => ({
+          record_id: record.record_id,
+          name: textValue(record.fields?.[table.fields.name]).trim(),
+          status: textValue(record.fields?.[table.fields.status]).trim(),
+          purchasePrice: Number(record.fields?.[table.fields.purchasePrice]),
+          faceValue: Number(record.fields?.[table.fields.faceValue]),
+          settlementAmount: Number(record.fields?.[table.fields.settlementAmount]),
+        }))
+        .filter((voucher) => voucher.status === '在售'
+          && Number.isFinite(voucher.purchasePrice)
+          && Number.isFinite(voucher.faceValue)
+          && Number.isFinite(voucher.settlementAmount));
+    } catch (error) {
+      logWarn('lark.sales.group_buy_vouchers.list_failed', { error: error.message });
+      return [];
+    }
+  }
+
+  /**
+   * 读一次「实时库存」，按 `货号 + 尺码` 建索引。
+   *
+   * 为什么以实时库存为准：它是"店里实际有什么"，「货品信息」只是"配置过什么"。
+   * 销售卖的是实物，所以颜色、有没有货、是门盒还是样品，都该从这里回答；
+   * 而且一张表读一次就够，不必每双鞋各查一遍货品资料。
+   */
+  async loadLiveInventoryIndex() {
+    const table = this.gateway.table?.('liveInventory');
+    if (!table?.tableId) return new LiveInventoryIndex({ records: [] });
+    const startedAt = Date.now();
+    const records = await this.gateway.listAll('liveInventory');
+    const index = buildLiveInventoryIndex({ records, table });
+    logInfo('lark.sales.live_inventory.loaded', {
+      task_id: null,
+      record_count: records.length,
+      skipped_records: index.skippedRecords,
+      duration_ms: Date.now() - startedAt,
+    });
+    return index;
+  }
+
   async processSalesTask(taskId) {
     const startedAt = Date.now();
     logInfo('lark.sales.processing.started', { task_id: taskId });
     const task = await this.store.get(taskId);
-    // 配品清单交给 AI，让它知道「39元腰带」这类说法不是鞋；同一份清单也用于后面的精确匹配。
-    const accessories = await this.listAccessories();
-    const parsed = await this.recognizer.parseSalesText(task.original_text, {
-      taskId, accessoryNames: accessories.map((item) => item.name),
-    });
+    // 两张配置表都很小（配品十几条、在售券几条），先并行拿齐：
+    // 配品清单交给 AI 是为了让它知道「39元腰带」这类说法不是鞋；
+    // 券目录交给后端是为了按表里的平台结算款算钱，不再写死券种。
+    const [accessories, vouchers] = await Promise.all([
+      this.listAccessories(),
+      this.listGroupBuyVouchers(),
+    ]);
+    // AI 解析是最慢的一段（十几秒），读实时库存不依赖它的结果，所以两件事并行：
+    // 读表的时间藏在 AI 后面，不额外增加用户等待。
+    const [parsed, liveInventory] = await Promise.all([
+      this.recognizer.parseSalesText(task.original_text, {
+        taskId, accessoryNames: accessories.map((item) => item.name), vouchers,
+      }),
+      this.loadLiveInventoryIndex(),
+    ]);
     if (parsed.intent !== 'sale') {
       await this.store.update(taskId, { status: 'ignored', draft: parsed });
       logInfo('lark.sales.processing.ignored', {
@@ -397,7 +515,6 @@ class LarkMvpService {
     if (!salesEntryRecordId) throw new Error('销售主表未返回 record_id');
     await this.store.update(taskId, { sales_entry_record_id: salesEntryRecordId, status: 'parsing' });
 
-    const productTable = this.gateway.table?.('product');
     const missingFields = [...(parsed.missing_fields || [])];
     const items = [];
     for (const [index, item] of (parsed.items?.length ? parsed.items : [parsed]).entries()) {
@@ -415,26 +532,55 @@ class LarkMvpService {
         items.push({ ...item, quantity: itemQuantity, accessory_record_id: match?.record_id || '' });
         continue;
       }
-      let product;
+      // 鞋按「实时库存」匹配：颜色、有没有货、是门盒还是样品，都从"店里实际有什么"回答，
+      // 而不是先看货品资料——货品资料只是"配置过什么"，卖的是实物。
+      let productRecordId = '';
+      let color = '';
       let colorOptions = null;
+      let stock = null;
+      let samplePlan = null;
       if (item.item_no && item.size) {
-        try { product = await this.references.resolveProduct({ itemNo: item.item_no, color: item.color, matchMode: 'sales' }); }
-        catch (error) { missingFields.push(`第${index + 1}件：${error.message}`); }
+        const found = liveInventory.find({ itemNo: item.item_no, size: item.size });
+        if (!found.colors.length) {
+          // 库存里没有这一双。告诉她这个货号实际有什么尺码，比只说"没找到"有用。
+          const inStock = found.otherSizes.length
+            ? `这个货号现在有 ${found.otherSizes.map((entry) => `${entry.size}码`).join('、')}`
+            : '这个货号在实时库存里一双都没有';
+          missingFields.push(`第${index + 1}件：库存里没有 ${item.item_no} ${item.size}码（${inStock}）`);
+        } else if (found.colors.length === 1) {
+          const [only] = found.colors;
+          productRecordId = only.productRecordId;
+          color = only.color;
+          stock = { doorBox: only.doorBox, sample: only.sample, warehouse: only.warehouse };
+          samplePlan = this.samplePlanFor({ productRecordId, stock, quantity: itemQuantity }, liveInventory);
+        } else {
+          // 这个货号在这个尺码上有多个颜色：不猜，把候选交给确认卡片让用户点。
+          // 补样品方案按颜色预先算好——颜色定了才谈得上"用哪个门盒补"，
+          // 预先算可以把这一次库存读取省下来。
+          colorOptions = found.colors.map((entry) => {
+            const optionStock = { doorBox: entry.doorBox, sample: entry.sample, warehouse: entry.warehouse };
+            return {
+              recordId: entry.productRecordId,
+              color: entry.color,
+              number: `${item.item_no}${entry.color}`,
+              stock: optionStock,
+              sample_plan: this.samplePlanFor(
+                { productRecordId: entry.productRecordId, stock: optionStock, quantity: itemQuantity }, liveInventory,
+              ),
+            };
+          });
+        }
       }
-      if (product?.needsColor) {
-        // 货号对上了、颜色没唯一确定：不判失败，把候选交给确认卡片让用户选。
-        colorOptions = product.options;
-        product = null;
-      }
-      const configuredNumber = product
-        ? textValue(product.record?.fields?.[productTable?.fields?.number]) || item.item_no
-        : '';
       items.push({
         ...item,
         quantity: itemQuantity,
-        product_record_id: product?.recordId || '',
-        product_number: configuredNumber,
+        product_record_id: productRecordId,
+        color,
+        // 展示用编号：货号 + 颜色——实时库存里就是用这两个要素定位一双鞋。
+        product_number: productRecordId ? `${item.item_no}${color}` : '',
         ...(colorOptions ? { needs_color: true, color_options: colorOptions } : {}),
+        ...(stock ? { stock } : {}),
+        ...(samplePlan || {}),
       });
     }
     const actualTotal = Math.round(items.reduce((sum, item) => sum + Number(item.actual_amount || 0), 0) * 100) / 100;
@@ -446,16 +592,36 @@ class LarkMvpService {
       missingFields.push('已收金额和待平台结算金额不能超过本单成交金额');
     }
 
+    // 交易类型由 AI 从原话判断；**交付状态由注册表从交易类型推出来**，
+    // 不再让用户在卡片上选。现货/未付当场交付，只有预付（只付定金、货没拿走）是未交付。
+    const tradeTypeCode = tradeTypeCodeFromLabel(parsed.trade_type);
     const draft = {
       ...parsed,
+      trade_type: parsed.trade_type,
+      trade_type_code: tradeTypeCode,
+      delivery_status: deliveryForTradeType(tradeTypeCode) || '已交付',
       product_number: items[0]?.product_number || '',
       items,
       missing_fields: missingFields,
     };
+    // 交易类型落成关联「行为管理」的记录，便于以后筛选和对账。
+    // 解析不到时记警告但**不阻塞入账**：它只是审计字段，业务事实（交付与收款）
+    // 已经由 trade_type 决定，不该因为一个关联查不到就让门店录不进单。
+    let tradeTypeRecordId = '';
+    if (tradeTypeCode && typeof this.references.resolveSalesTradeType === 'function') {
+      try {
+        tradeTypeRecordId = (await this.references.resolveSalesTradeType(tradeTypeCode)).recordId;
+      } catch (error) {
+        logWarn('lark.sales.trade_type.resolve_failed', {
+          task_id: taskId, code: tradeTypeCode, error: error.message,
+        });
+      }
+    }
     await this.gateway.update('salesEntry', salesEntryRecordId, {
       parseStatus: draft.missing_fields?.length ? '需补充' : '解析成功',
       parseSummary: JSON.stringify(draft),
       failureReason: draft.missing_fields?.length ? draft.missing_fields.join('、') : '',
+      ...(tradeTypeRecordId ? { tradeType: relation(tradeTypeRecordId) } : {}),
     });
     await this.store.update(taskId, {
       status: draft.missing_fields?.length ? 'needs_info' : 'ready_to_confirm',
@@ -619,7 +785,7 @@ class LarkMvpService {
           task.status === 'cancelled' ? '销售录单已取消' : completed ? '销售订单已入账' : '订单已入账，交付待核对',
           task.status === 'cancelled' ? '原草稿不会入账。' :
             `销售单号：${task.posting_result?.sourceNo || '请在销售主表核对'}；${completed
-              ? task.posting_requested_action === 'confirm_sale_delivered' ? '已交付并扣库存。' : '尚未交付，库存未扣减。'
+              ? shouldDeliverFor(task, task.posting_requested_action) ? '已交付并扣库存。' : '尚未交付，库存未扣减。'
               : '交付结果尚未确认，请到工作台核对。'}`,
           task.status === 'cancelled' ? 'blue' : completed ? 'green' : 'orange');
         await this.publishSalesResultCard(task, event, card,
@@ -667,6 +833,26 @@ class LarkMvpService {
       return { toast: { type: 'info', content: '请重新发送修正后的完整销售信息' } };
     }
 
+    if (action === 'choose_sale_sample_replacement' && task.type === 'sale') {
+      const itemIndex = Number(value.item_index);
+      const items = (task.draft?.items || []).map((item) => ({ ...item }));
+      const item = items[itemIndex];
+      if (!item) throw new Error('找不到要补样品的明细');
+      if (!item.needs_sample_replacement) throw new Error('这一双不需要补样品');
+      const size = Number(value.size);
+      const option = (item.sample_replacement_options || []).find((row) => Number(row.size) === size);
+      if (!option) throw new Error('补样品的尺码不在候选里，请刷新卡片后重试');
+      items[itemIndex] = { ...item, sample_replacement_size: size };
+      const draft = { ...task.draft, items };
+      await this.store.update(draftId, { draft, status: 'ready_to_confirm' });
+      await this.publishSalesResultCard({ ...task, draft }, event, salesConfirmationCard(draftId, draft),
+        { stage: 'sample_replacement_chosen', interactionId: context.interactionId });
+      logInfo('lark.sales.sample_replacement.chosen', {
+        task_id: draftId, item_index: itemIndex, size,
+      });
+      return { toast: { type: 'success', content: `第 ${itemIndex + 1} 双将用 ${size}码的门盒补样品` } };
+    }
+
     if (action === 'choose_sale_color' && task.type === 'sale') {
       const itemIndex = Number(value.item_index);
       const items = (task.draft?.items || []).map((item) => ({ ...item }));
@@ -674,10 +860,15 @@ class LarkMvpService {
       if (!item) throw new Error('找不到要设置颜色的明细');
       if (!value.record_id) throw new Error('卡片里缺少颜色记录 ID');
       // 用户在卡片上选定颜色：这一条明细的货品就此确定，不再需要选色。
+      // 库存分布也跟着候选一起带过来——颜色定了，才知道这个颜色在店里有几双。
+      const chosen = (item.color_options || []).find((option) => option.recordId === value.record_id);
       items[itemIndex] = {
         ...item,
         product_record_id: value.record_id,
         product_number: value.product_number || item.product_number || item.item_no || '',
+        ...(chosen?.stock ? { stock: chosen.stock } : {}),
+        // 颜色定了才知道"卖的是不是样品"：补样品方案随候选一起带过来。
+        ...(chosen?.sample_plan || {}),
         needs_color: false,
         color_options: [],
       };
@@ -695,12 +886,21 @@ class LarkMvpService {
       (task.draft?.items || []).some((item) => item.needs_color)) {
       return { toast: { type: 'warning', content: '还有明细没选颜色，请先在卡片上选择颜色，再确认订单' } };
     }
+    // 卖的是样品时同样要先选完"用哪个门盒补"，否则确认后还得再来一次。
+    // 跟颜色用同一条规矩：卡片上的必选项没定，不入账。
+    if (['confirm_sale', 'confirm_sale_pending', 'confirm_sale_delivered'].includes(action) &&
+      (task.draft?.items || []).some((item) => item.needs_sample_replacement && !item.sample_replacement_size)) {
+      return { toast: { type: 'warning', content: '这一单里有样品要补，请先在卡片上选补哪个门盒，再确认' } };
+    }
 
     await this.store.update(draftId, { status: 'posting',
       ...(task.type === 'sale' ? { posting_requested_action: hasWrittenSaleRecords
         ? task.posting_requested_action || action : action } : {}) });
     try {
     if (['confirm_sale', 'confirm_sale_pending', 'confirm_sale_delivered'].includes(action) && task.type === 'sale') {
+      // 交付与否由**交易类型**决定，不由用户点哪个按钮决定。
+      // 卡片上只留一个「确认」；旧卡片上的 confirm_sale_delivered / _pending 仍然兼容。
+      const shouldDeliver = shouldDeliverFor(task, action);
       const cardUpdated = await this.updateSalesActionCard(task, event,
         salesStatusCard(task.draft, '销售订单处理中', '已收到确认，正在写入销售记录和收款；请勿重复点击。'),
         { stage: 'processing', interactionId: context.interactionId });
@@ -738,11 +938,18 @@ class LarkMvpService {
         })),
       });
       await this.store.update(draftId, { status: 'posted_delivery_pending', posting_result: result });
-      if (action === 'confirm_sale_delivered') {
+      if (shouldDeliver) {
         try {
           const deliveryResult = await this.delivery.deliver({ salesEntryRecordId: task.sales_entry_record_id,
             detailRecordIds: result.detailRecordIds, paymentRecordIds: result.paymentRecordIds });
-          await this.notifySampleReplacements(deliveryResult, operatorOpenId).catch((error) =>
+          // 卡片上已经选好"用哪个门盒补样品"的，在这里直接补掉，不再为它另发一张卡片。
+          // 补失败不阻断入账：库存已经扣了，补样品失败只影响展示样品，交给工作台处理。
+          const handledSampleDetails = await this.applyChosenSampleReplacements(task, result).catch((error) => {
+            logWarn('lark.sales.sample_replacement.apply_failed', { task_id: draftId, error: error.message });
+            return new Set();
+          });
+          await this.notifySampleReplacements(deliveryResult, operatorOpenId,
+            { handledDetailIds: handledSampleDetails }).catch((error) =>
             logWarn('lark.sales.sample_notice.failed', { task_id: draftId, error: error.message }));
           if (deliveryResult.failures?.length) {
             await this.store.update(draftId, { delivery_failures: deliveryResult.failures });
@@ -771,7 +978,7 @@ class LarkMvpService {
       }
       await this.store.update(draftId, { status: 'posted', posting_result: result });
       await this.publishSalesResultCard(task, event, salesStatusCard(task.draft,
-        '销售订单已入账', `销售单号：${result.sourceNo}；${result.detailRecordIds?.length || 0} 条明细已写入。${action === 'confirm_sale_delivered' ? '已交付并扣库存。' : '尚未交付，库存未扣减。'}`, 'green'),
+        '销售订单已入账', `销售单号：${result.sourceNo}；${result.detailRecordIds?.length || 0} 条明细已写入。${shouldDeliver ? '已交付并扣库存。' : '尚未交付，库存未扣减。'}`, 'green'),
       { stage: 'posted', interactionId: context.interactionId });
       logInfo('lark.sales.posting.completed', {
         task_id: draftId,
@@ -783,7 +990,7 @@ class LarkMvpService {
       return {
         toast: {
           type: 'success',
-          content: action === 'confirm_sale_delivered' ? '销售已确认并交付，库存已更新' : '销售已确认，交付时再扣库存',
+          content: shouldDeliver ? '销售已确认并交付，库存已更新' : '销售已确认；预付单尚未交付，库存未扣减',
         },
       };
     }
@@ -836,9 +1043,14 @@ class LarkMvpService {
         const hasWrittenRecords = waitingForSync || Object.values(current?.posting_record_ids || {})
           .some((ids) => Array.isArray(ids) && ids.some(Boolean));
         if (hasWrittenRecords) {
-          const originalAction = current?.posting_requested_action || action;
+          // 重试卡片只留"继续处理这一单"那一个按钮。旧卡片上的交付动作名
+          // （confirm_sale_delivered / _pending）现在统一对应新的「确认」。
+          const requestedAction = current?.posting_requested_action || action;
+          const retryAction = ['confirm_sale_delivered', 'confirm_sale_pending'].includes(requestedAction)
+            ? 'confirm_sale' : requestedAction;
           retryCard.elements.filter((element) => element.tag === 'action').forEach((element) => {
-            element.actions = element.actions.filter((button) => button.value?.action === originalAction);
+            const sameAction = element.actions.filter((button) => button.value?.action === retryAction);
+            if (sameAction.length) element.actions = sameAction;
           });
         }
         retryCard.elements.splice(1, 0, { tag: 'note', elements: [

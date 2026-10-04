@@ -3,8 +3,12 @@ node_modules/
 .pnpm-store/
 
 # Env
+# .env 里是凭证，且不在版本库内 —— 改它之前先备份。
+# 备份必须用这个命名（.env.backup.<时间戳>），否则会露在 git status 里、
+# 有被误提交进仓库的风险：服务器上一直用的是这个前缀。
 .env
 .env.backup.*
+.env.bak.*
 .env.local
 .env.development.local
 .env.test.local
