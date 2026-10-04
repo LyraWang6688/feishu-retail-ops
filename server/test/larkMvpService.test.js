@@ -941,7 +941,7 @@ test('an accessory name that is not in the table is asked for instead of guessed
 
 // ─── 入口按「实时库存」匹配：卖的是实物，不是配置 ───
 
-test('库存里没有这个尺码时不发确认卡片，并告诉她这个货号实际有什么尺码', async () => {
+test('库存里没有这个尺码时不发确认卡片，只回一句「库存里没有 X Y码，请核实～」', async () => {
   const { normalizeSalesResult } = require('../src/services/doubaoService');
   const store = makeStore();
   const cards = [];
@@ -976,10 +976,45 @@ test('库存里没有这个尺码时不发确认卡片，并告诉她这个货�
   const task = await store.get('sale_no_stock');
   assert.equal(task.status, 'needs_info');
   assert.equal(cards.length, 0, '库存里没有这一双，就不该出确认卡片让她点');
+  // 缺货只回这一句：没有"销售信息还缺…请补充后重新发送"那层包装，
+  // 也没有"第N件："的编号——她要知道的只是"哪一双没有"，然后自己核实。
+  assert.equal(messages[0], '库存里没有 26632 37码，请核实～');
+});
+
+test('缺货之外还有别的问题时，才用完整的补充说明', async () => {
+  const { normalizeSalesResult } = require('../src/services/doubaoService');
+  const store = makeStore();
+  const messages = [];
+  const service = new LarkMvpService({
+    client: {},
+    gateway: {
+      ...liveInventoryGateway([liveRow({ itemNo: '26632', color: '黑', size: 36, productRecordId: 'p36' })]),
+      validateTables: async () => [],
+      create: async () => ({ recordId: 'entry_mixed' }),
+      update: async () => undefined,
+    },
+    references: {}, posting: {},
+    recognizer: {
+      parseSalesText: async () => normalizeSalesResult({ intent: 'sale', behavior_code: 'SALE_CASH',
+        // 两件：37码缺货 + 两件都没写各自成交金额（整单给了金额，但不许分摊猜测）
+        items: [
+          { item_no: '26632', color: '黑', size: 37, quantity: 1 },
+          { item_no: '26632', color: '黑', size: 36, quantity: 1 },
+        ],
+        payments: [], agreed_total: 210 }),
+    },
+    store,
+  });
+  service.replyCard = async () => undefined;
+  service.sendText = async (_openId, message) => messages.push(message);
+  await store.create({ task_id: 'sale_mixed', type: 'sale', status: 'received', message_id: 'om_mx',
+    sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '26632黑37一双210微信' });
+
+  await service.processSalesTask('sale_mixed');
+
   assert.match(messages[0], /库存里没有 26632 37码/);
-  // 只说"没找到"没有用，要告诉她这个货号现在有什么尺码。
-  assert.match(messages[0], /36码/);
-  assert.match(messages[0], /38码/);
+  assert.match(messages[0], /请逐件说明成交金额/);
+  assert.match(messages[0], /销售信息还缺/, '夹杂别的问题时仍用完整说明');
 });
 
 test('一单多双只读一次实时库存，不按双数重复全表读', async () => {

@@ -13,13 +13,12 @@ const { V1PostingService } = require('./v1PostingService');
 const { createWorkbenchService } = require('./v1WorkbenchService');
 const { SalesDeliveryService } = require('./salesDeliveryService');
 const { SampleReplacementService } = require('./sampleReplacementService');
-const { PurchaseDraftBuilder } = require('./purchaseDraftBuilder');
 const { PurchaseWebhookService } = require('./purchaseWebhookService');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
 const { LiveInventoryIndex, buildLiveInventoryIndex } = require('./liveInventoryIndex');
 const { tradeTypeCodeFromLabel, deliveryForTradeType } = require('../config/salesMovements');
 const { isDataNotReady } = require('./salesReadRetry');
-const { purchaseConfirmationCard, salesConfirmationCard, salesStatusCard, todaySalesCard } = require('../utils/larkCards');
+const { salesConfirmationCard, salesStatusCard, todaySalesCard } = require('../utils/larkCards');
 const { extractSalesMessageText } = require('../utils/larkMessageText');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
@@ -86,7 +85,6 @@ class LarkMvpService {
     this.recognizer = options.recognizer || doubaoService;
     this.posting = options.posting || new V1PostingService({ gateway: this.gateway, references: this.references });
     this.delivery = options.delivery || new SalesDeliveryService({ gateway: this.gateway });
-    this.draftBuilder = options.draftBuilder || new PurchaseDraftBuilder({ references: this.references });
     this.purchaseWebhooks = options.purchaseWebhooks || new PurchaseWebhookService({
       client: this.client,
       gateway: this.gateway,
@@ -327,51 +325,6 @@ class LarkMvpService {
     return { accepted: true, type: 'sale', taskId: task.task_id };
   }
 
-  async acceptPurchaseImage({ message, senderOpenId }) {
-    const imageKey = parseContent(message.content).image_key;
-    if (!imageKey) throw new Error('采购图片消息缺少 image_key');
-    const taskId = idFor('purchase_open', senderOpenId);
-    const current = await this.store.get(taskId);
-    if (current && ['recognizing', 'needs_info', 'ready_to_confirm', 'posting'].includes(current.status)) {
-      await this.sendText(senderOpenId, '当前采购批次尚未完成，请先补充或确认当前批次。');
-      return { accepted: false, reason: 'purchase_in_progress', taskId };
-    }
-    const reusable = current?.status === 'collecting_images';
-    const images = reusable ? current.images || [] : [];
-    if (images.some((item) => item.message_id === message.message_id)) {
-      return { accepted: false, reason: 'duplicate', taskId };
-    }
-    const next = {
-      task_id: taskId,
-      type: 'purchase',
-      status: 'collecting_images',
-      sender_open_id: senderOpenId,
-      images: [...images, { message_id: message.message_id, image_key: imageKey, sent_at: timestamp(message.create_time) }],
-    };
-    if (current) await this.store.update(taskId, next);
-    else await this.store.create(next);
-    logInfo('lark.purchase.image.accepted', {
-      task_id: taskId,
-      message_id: message.message_id,
-      sender_open_id: senderOpenId,
-      image_count: next.images.length,
-    });
-    await this.sendText(senderOpenId, `已收到第 ${next.images.length} 张采购图片。继续发图，发完后请回复“采购完成”。`);
-    return { accepted: true, type: 'purchase_image', taskId };
-  }
-
-  async finishPurchaseImages(senderOpenId) {
-    const taskId = idFor('purchase_open', senderOpenId);
-    const task = await this.store.get(taskId);
-    if (!task || task.status !== 'collecting_images' || !task.images?.length) {
-      await this.sendText(senderOpenId, '还没有收到待识别的采购图片。');
-      return { accepted: false, reason: 'no_open_purchase' };
-    }
-    await this.store.update(taskId, { status: 'recognizing' });
-    setImmediate(() => this.processPurchaseTask(taskId).catch((error) => this.handleTaskFailure(taskId, error)));
-    await this.sendText(senderOpenId, `已收到，正在识别 ${task.images.length} 张采购图片。`);
-    return { accepted: true, type: 'purchase_finish', taskId };
-  }
 
   /**
    * 「其他配品」清单。没配置这张表时返回空——那种部署下销售只支持鞋，
@@ -516,6 +469,9 @@ class LarkMvpService {
     await this.store.update(taskId, { sales_entry_record_id: salesEntryRecordId, status: 'parsing' });
 
     const missingFields = [...(parsed.missing_fields || [])];
+    // 缺货单独收集：这类问题只需要一句"请核实"，不需要"销售信息还缺…请补充后重新发送"
+    // 那层流程说明——那层话对"这个尺码店里没有"这件事没有任何帮助。
+    const shortageNotes = [];
     const items = [];
     for (const [index, item] of (parsed.items?.length ? parsed.items : [parsed]).entries()) {
       const itemQuantity = Number(item.quantity || 1);
@@ -542,11 +498,10 @@ class LarkMvpService {
       if (item.item_no && item.size) {
         const found = liveInventory.find({ itemNo: item.item_no, size: item.size });
         if (!found.colors.length) {
-          // 库存里没有这一双。告诉她这个货号实际有什么尺码，比只说"没找到"有用。
-          const inStock = found.otherSizes.length
-            ? `这个货号现在有 ${found.otherSizes.map((entry) => `${entry.size}码`).join('、')}`
-            : '这个货号在实时库存里一双都没有';
-          missingFields.push(`第${index + 1}件：库存里没有 ${item.item_no} ${item.size}码（${inStock}）`);
+          // 缺货只说这一句：她要知道的是"哪一双没有"，然后自己去核实。
+          const shortage = `库存里没有 ${item.item_no} ${item.size}码`;
+          shortageNotes.push(shortage);
+          missingFields.push(shortage);
         } else if (found.colors.length === 1) {
           const [only] = found.colors;
           productRecordId = only.productRecordId;
@@ -628,7 +583,11 @@ class LarkMvpService {
       draft,
     });
     if (draft.missing_fields?.length) {
-      await this.sendText(task.sender_open_id, `销售信息还缺：${draft.missing_fields.join('、')}。请补充后重新发送完整销售信息。`);
+      // 这一单的问题**只有缺货**时，直接回一句短的；还夹杂别的问题（金额缺失等）时才用完整说明。
+      const onlyShortage = shortageNotes.length > 0 && shortageNotes.length === draft.missing_fields.length;
+      await this.sendText(task.sender_open_id, onlyShortage
+        ? `${shortageNotes.join('、')}，请核实～`
+        : `销售信息还缺：${draft.missing_fields.join('、')}。请补充后重新发送完整销售信息。`);
       return;
     }
     const cardMessageId = await this.replyCard(task.message_id, salesConfirmationCard(taskId, draft));
@@ -640,118 +599,6 @@ class LarkMvpService {
       duration_ms: Date.now() - startedAt,
       result: 'awaiting_confirmation',
     });
-  }
-
-  async processPurchaseTask(taskId) {
-    const startedAt = Date.now();
-    logInfo('lark.purchase.processing.started', { task_id: taskId });
-    await this.ensureIntakeSchema('purchase_intake', ['purchaseBatch']);
-    const task = await this.store.get(taskId);
-    const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'lark-purchase-'));
-    const attachments = [];
-    const localFiles = [];
-    const recognized = [];
-    let batchRecordId = '';
-    try {
-      for (let index = 0; index < task.images.length; index += 1) {
-        const image = task.images[index];
-        const filePath = path.join(tempDir, `${index + 1}.jpg`);
-        const resource = await this.client.im.messageResource.get({
-          path: { message_id: image.message_id, file_key: image.image_key },
-          params: { type: 'image' },
-        });
-        await resource.writeFile(filePath);
-        localFiles.push(filePath);
-        const fileToken = await this.gateway.uploadAttachment(filePath);
-        attachments.push({ file_token: fileToken });
-      }
-
-      const batch = await this.gateway.create('purchaseBatch', {
-        originalImages: attachments,
-        sender: person(task.sender_open_id),
-        recognitionStatus: '识别中',
-        confirmStatus: '待确认',
-        arrivalDate: Date.now(),
-        messageIds: task.images.map((item) => item.message_id).join('\n'),
-      });
-      batchRecordId = batch.recordId;
-      await this.store.update(taskId, { batch_record_id: batchRecordId });
-
-      for (const filePath of localFiles) {
-        const items = await this.recognizer.recognizeLabels(filePath, 'purchase');
-        recognized.push(...items);
-      }
-      await this.gateway.update('purchaseBatch', batchRecordId, {
-        recognitionStatus: '识别成功',
-        failureReason: '',
-      });
-    } catch (error) {
-      if (batchRecordId) {
-        await this.gateway
-          .update('purchaseBatch', batchRecordId, {
-            recognitionStatus: '识别失败',
-            failureReason: error.message,
-          })
-          .catch(() => undefined);
-      }
-      throw error;
-    } finally {
-      await fs.promises.rm(tempDir, { recursive: true, force: true });
-    }
-
-    // PurchaseDraftBuilder 完成：聚合相同SKU → 货品匹配（货号+颜色→完整编号）→ 供应商匹配 → 缺失字段校验
-    // 货品匹配提前到这里完成，用户在确认卡上就能看到匹配结果，匹配失败提前知道要去上架
-    const draft = await this.draftBuilder.buildDraft(recognized);
-    await this.store.update(taskId, {
-      status: draft.missing_fields.length ? 'needs_info' : 'ready_to_confirm',
-      batch_record_id: batchRecordId,
-      draft,
-    });
-    await this.sendCard(task.sender_open_id, purchaseConfirmationCard(taskId, draft));
-    if (draft.missing_fields.length) {
-      await this.sendText(task.sender_open_id, '请回复”供应商 XXX，入库单价 100”。如果已付款，可加上”已付款 500，微信”。货品未匹配的请先到货品信息表上架。');
-    }
-    logInfo('lark.purchase.processing.completed', {
-      task_id: taskId,
-      purchase_batch_record_id: batchRecordId,
-      item_count: draft.items.length,
-      missing_field_count: draft.missing_fields.length,
-      duration_ms: Date.now() - startedAt,
-      result: draft.missing_fields.length ? 'needs_info' : 'awaiting_confirmation',
-    });
-  }
-
-  async tryCompletePurchaseDraft(senderOpenId, originalText) {
-    const taskId = idFor('purchase_open', senderOpenId);
-    const task = await this.store.get(taskId);
-    if (!task || task.status !== 'needs_info' || !task.draft) return false;
-    const supplierMatch = originalText.match(/供应商\s*[:：]?\s*([^,，\s]+)/);
-    const priceMatch = originalText.match(/(?:入库单价|单价)\s*[:：]?\s*(\d+(?:\.\d+)?)/);
-    const paidMatch = originalText.match(/(?:已付款|付款)\s*[:：]?\s*(\d+(?:\.\d+)?)/);
-    const methodMatch = originalText.match(/(微信|支付宝|现金|工商银行)/);
-    if (!supplierMatch && !priceMatch && !paidMatch) return false;
-
-    // 从已有 draft 提取原始识别字段，应用用户补充后重新走 DraftBuilder（聚合→货品匹配→供应商匹配→校验）
-    // 这样补充供应商后会重新匹配供应商 record_id，补充单价后会重新校验缺失字段
-    const recognizedItems = task.draft.items.map((item) => ({
-      item_no: item.item_no,
-      color: item.color,
-      size: item.size,
-      quantity: item.quantity,
-      unit_cost: priceMatch ? Number(priceMatch[1]) : item.unit_cost,
-      supplier: supplierMatch ? supplierMatch[1] : item.supplier,
-    }));
-    const payment = paidMatch
-      ? { amount: Number(paidMatch[1]), method: methodMatch?.[1] || '' }
-      : task.draft.payment;
-
-    const draft = await this.draftBuilder.buildDraft(recognizedItems, { payment });
-    await this.store.update(taskId, {
-      status: draft.missing_fields.length ? 'needs_info' : 'ready_to_confirm',
-      draft,
-    });
-    await this.sendCard(senderOpenId, purchaseConfirmationCard(taskId, draft));
-    return true;
   }
 
   async handleCardAction(event, context = {}) {
@@ -814,9 +661,6 @@ class LarkMvpService {
         await this.gateway.update('salesEntry', task.sales_entry_record_id, { confirmStatus: '已取消' });
         await this.publishSalesResultCard(task, event, salesStatusCard(task.draft, '销售录单已取消', '原草稿不会入账。'),
           { stage: 'cancelled', interactionId: context.interactionId });
-      }
-      if (task.type === 'purchase' && task.batch_record_id) {
-        await this.gateway.update('purchaseBatch', task.batch_record_id, { confirmStatus: '已取消' });
       }
       return { toast: { type: 'info', content: '已取消' } };
     }
@@ -995,38 +839,6 @@ class LarkMvpService {
       };
     }
 
-    if (action === 'confirm_purchase' && task.type === 'purchase') {
-      const startedAt = Date.now();
-      // draft 在构建阶段已经完成货品匹配和供应商匹配，直接使用 record_id，不重复 resolve
-      const result = await this.posting.postPurchase({
-        batchRecordId: task.batch_record_id,
-        operatorOpenId,
-        supplierRecordId: task.draft.supplier_record_id,
-        items: task.draft.items.map((item) => ({
-          productRecordId: item.product_record_id,
-          itemNo: item.item_no,
-          color: item.color,
-          size: item.size,
-          quantity: item.quantity,
-          unitCost: item.unit_cost,
-        })),
-        payment: task.draft.payment,
-      });
-      await this.store.update(draftId, { status: 'posted', posting_result: result });
-      logInfo('lark.purchase.posting.completed', {
-        task_id: draftId,
-        source_no: result.sourceNo,
-        detail_count: result.inboundRecordIds?.length || 0,
-        duration_ms: Date.now() - startedAt,
-        result: 'posted',
-      });
-      return {
-        toast: {
-          type: 'success',
-          content: result.inventoryApplied ? '采购已入库，库存已更新' : '采购入库明细已确认',
-        },
-      };
-    }
     throw new Error(`不支持的卡片动作: ${action}`);
     } catch (error) {
       // Posting services are idempotent. Restore the draft so a corrected configuration or

@@ -21,49 +21,6 @@ const itemLines = (items, priceKey) =>
  * 采购确认卡的分组展示：供应商 → 编号 → 尺码从小到大
  * 匹配成功的货品显示完整编号，匹配失败的标注"未匹配"
  */
-const purchaseItemLinesGrouped = (items, options = {}) => {
-  if (!items?.length) return '未识别到商品';
-  const skipSupplierGroup = options.skipSupplierGroup === true;
-
-  // 第一层：按供应商分组（批量模式跳过，直接归到一组）
-  const bySupplier = new Map();
-  for (const item of items) {
-    const supplier = skipSupplierGroup ? '__batch__' : (item.supplier || '待补充供应商');
-    if (!bySupplier.has(supplier)) bySupplier.set(supplier, []);
-    bySupplier.get(supplier).push(item);
-  }
-
-  const lines = [];
-  for (const [supplier, supplierItems] of bySupplier) {
-    if (!skipSupplierGroup) lines.push(`**━━━ 供应商：${text(supplier)} ━━━**`);
-
-    // 第二层：按编号分组（匹配成功用 product_record_id 做 key，匹配失败用货号+颜色）
-    const byProduct = new Map();
-    for (const item of supplierItems) {
-      const productLabel = item.product_number || `${item.item_no}${item.color ? ' ' + item.color : ''}`;
-      const key = item.product_record_id || `unmatched:${item.item_no}|${item.color}`;
-      if (!byProduct.has(key)) byProduct.set(key, { label: productLabel, items: [] });
-      byProduct.get(key).items.push(item);
-    }
-
-    for (const [, product] of byProduct) {
-      const hasMatch = product.items.some((item) => item.product_record_id);
-      const prefix = hasMatch ? '🏷' : '⚠️';
-      lines.push(`${prefix} ${text(product.label)}`);
-
-      // 第三层：按尺码从小到大排序
-      const sorted = [...product.items].sort((a, b) => Number(a.size) - Number(b.size));
-      for (const item of sorted) {
-        const price = item.unit_cost ? ` ￥${item.unit_cost}/双` : '';
-        const matchNote = item.match_error ? `（未匹配：${text(item.match_error)}）` : '';
-        lines.push(`  ${text(item.size)}码 × ${text(item.quantity || 1)}${price}${matchNote}`);
-      }
-    }
-    if (!skipSupplierGroup) lines.push(''); // 供应商之间空行分隔
-  }
-
-  return lines.join('\n');
-};
 
 
 /**
@@ -316,56 +273,6 @@ const todaySalesCard = ({ dateLabel, rows, totalQuantity, totalAmount }) => ({
   ],
 });
 
-const purchaseConfirmationCard = (draftId, draft) => {
-  const missing = draft.missing_fields || [];
-  const items = draft.items || [];
-
-  // 合计：总件数、总金额（只算有单价的）
-  const totalQuantity = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-  const totalAmount = items.reduce(
-    (sum, item) => sum + Number(item.quantity || 0) * Number(item.unit_cost || 0),
-    0
-  );
-
-  const elements = [
-    ...purchaseItemElements(items),
-    {
-      tag: 'note',
-      elements: [
-        {
-          tag: 'plain_text',
-          content: `合计：${totalQuantity} 件${totalAmount ? `，￥${totalAmount}` : ''}${draft.supplier_count > 1 ? `，共 ${draft.supplier_count} 个供应商` : ''}`,
-        },
-      ],
-    },
-  ];
-
-  if (draft.payment?.amount) {
-    elements.push({
-      tag: 'markdown',
-      content: `**本次已付：** ￥${text(draft.payment.amount)}\n**付款方式：** ${text(draft.payment.method)}`,
-    });
-  }
-
-  if (missing.length) {
-    elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: `需补充：${missing.join('、')}` }] });
-  } else {
-    elements.push({
-      tag: 'action',
-      actions: [
-        actionButton('确认入库', 'confirm_purchase', draftId, 'primary'),
-        actionButton('取消', 'cancel', draftId, 'danger'),
-      ],
-    });
-  }
-
-  return {
-    config: { wide_screen_mode: true },
-    header: { template: 'orange', title: { tag: 'plain_text', content: '请确认采购入库' } },
-    elements,
-  };
-};
-
 const purchaseRequestConfirmationCard = (draftId, draft) => {
   const isBatch = draft.is_batch === true;
   const headerTitle = isBatch ? '请确认采购申请（批次）' : '请确认采购申请';
@@ -491,7 +398,6 @@ const purchaseStatusCard = (draft, title, message, template = 'blue') => {
 };
 
 module.exports = {
-  purchaseConfirmationCard,
   purchaseRequestConfirmationCard,
   purchaseArrivalComparisonCard,
   purchaseArrivalDetailCard,
