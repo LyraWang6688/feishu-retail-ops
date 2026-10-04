@@ -407,6 +407,17 @@ class PurchaseWebhookService {
     return { status: 'awaiting_confirmation', item_count: parsed.length };
   }
 
+  /**
+   * 解析采购到货记录。
+   *
+   * 「类型」决定用哪种识别：
+   * - 到货单：供应商出库单/送货单的表格照片，一张图里有很多「款号×颜色×尺码」
+   * - 其它（含空值、鞋盒）：一张张鞋盒照片。空值按鞋盒处理——这个单选字段是后来加的，
+   *   历史记录没有值，不能因此把它们判成失败
+   *
+   * 两条识别路径的输出同构（item_no / color / size / quantity 明细），
+   * 所以「匹配货品 → 与申请比对 → 草稿 → 卡片确认」的后续流程完全共用。
+   */
   async processArrival(recordId, taskId) {
     const table = this.gateway.table('purchaseArrival');
     const record = await this.gateway.get('purchaseArrival', recordId);
@@ -414,8 +425,11 @@ class PurchaseWebhookService {
     const currentStatus = textValue(fields[table.fields.confirmStatus]);
     if (['已确认', '已入库', '已取消'].includes(currentStatus)) return { ignored: true, status: currentStatus };
     await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别中', failureReason: '' });
+    const isDocument = textValue(fields[table.fields.type]).trim() === '到货单';
     const tokens = attachmentTokens(fields[table.fields.images]);
-    if (!tokens.length) throw new Error('采购到货记录没有鞋盒图片附件');
+    if (!tokens.length) {
+      throw new Error(isDocument ? '采购到货记录没有到货单图片附件' : '采购到货记录没有鞋盒图片附件');
+    }
     const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'purchase-arrival-'));
     try {
       const recognized = [];
@@ -423,19 +437,31 @@ class PurchaseWebhookService {
         const filePath = path.join(tempDir, `${index + 1}.jpg`);
         const media = await this.client.drive.media.download({ path: { file_token: tokens[index] } });
         await media.writeFile(filePath);
-        recognized.push(...await this.recognizer.recognizeLabels(filePath, 'purchase'));
+        recognized.push(...await (isDocument
+          ? this.recognizer.recognizePurchaseDocument(filePath)
+          : this.recognizer.recognizeLabels(filePath, 'purchase')));
       }
+      if (!recognized.length) throw new Error(isDocument ? '到货单上没有识别到任何明细' : '图片上没有识别到任何鞋盒');
       const arrivalTable = this.gateway.table('purchaseArrival');
       const batchIds = linkedRecordIds(fields[arrivalTable.fields.batch]);
-      if (batchIds.length !== 1) throw new Error('采购到货必须选择一个报货批次号');
-      if (!this.gateway.table('purchaseOrderBatch').tableId) throw new Error('未配置报货批次表ID：FEISHU_V1_PURCHASE_ORDER_BATCH_TABLE_ID');
-      const batch = await this.gateway.get('purchaseOrderBatch', batchIds[0]);
-      const batchTable = this.gateway.table('purchaseOrderBatch');
-      const batchNo = textValue(batch?.fields?.[batchTable.fields.batchNo]);
+      // 业务上存在「供应商直接送货、没有先走采购申请」的到货，这种记录不会选报货批次号。
+      // 没有批次号就不再报错，也不和申请比对——全部按实际到货入库，草稿里标记 direct_arrival，
+      // 卡片上写清楚"无申请直接到货"，免得她以为系统漏比对了。
+      // 选了多个批次号仍然是配置错误：无法判断该拿哪一批的申请来比对。
+      if (batchIds.length > 1) throw new Error('采购到货只能选择一个报货批次号');
+      const directArrival = batchIds.length === 0;
       const requestTable = this.gateway.table('purchaseRequest');
-      const requests = (await this.gateway.listAll('purchaseRequest')).filter(
-        (item) => linkedRecordIds(item.fields?.[requestTable.fields.batchNo]).includes(batchIds[0])
-      );
+      let batchNo = '';
+      let requests = [];
+      if (!directArrival) {
+        if (!this.gateway.table('purchaseOrderBatch').tableId) throw new Error('未配置报货批次表ID：FEISHU_V1_PURCHASE_ORDER_BATCH_TABLE_ID');
+        const batch = await this.gateway.get('purchaseOrderBatch', batchIds[0]);
+        const batchTable = this.gateway.table('purchaseOrderBatch');
+        batchNo = textValue(batch?.fields?.[batchTable.fields.batchNo]);
+        requests = (await this.gateway.listAll('purchaseRequest')).filter(
+          (item) => linkedRecordIds(item.fields?.[requestTable.fields.batchNo]).includes(batchIds[0])
+        );
+      }
       const actual = [];
       const unrecognized = [];
       const supplierNameCache = {};
@@ -471,13 +497,20 @@ class PurchaseWebhookService {
         throw new Error(`所有货品都识别失败：${unrecognized.map(u => `${u.item_no || ''}${u.color || ''}`).join('、')}`);
       }
       const groupedActual = aggregateArrivalItems(actual);
-      const differences = await this.compareArrival(requests, groupedActual, requestTable);
+      // 直接到货没有申请可比：不生成差异行，否则每一行都会被算成「多N」，反而误导她。
+      const differences = directArrival ? [] : await this.compareArrival(requests, groupedActual, requestTable);
       const operatorOpenId = this.recordOperator(record, arrivalTable.fields.inspector);
-      const draft = { arrival_record_id: recordId, batch_record_id: batchIds[0], batch_no: batchNo, operator_open_id: operatorOpenId, requests, actual: groupedActual, differences, unrecognized };
+      const draft = {
+        arrival_record_id: recordId,
+        direct_arrival: directArrival,
+        batch_record_id: batchIds[0] || '',
+        batch_no: batchNo,
+        operator_open_id: operatorOpenId, requests, actual: groupedActual, differences, unrecognized,
+      };
       await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别成功', confirmStatus: '待确认' });
       await this.store.update(taskId, { recognized, draft, status: 'awaiting_confirmation' });
       await this.sendCard(operatorOpenId, purchaseArrivalDetailCard(taskId, draft));
-      logInfo("purchase.arrival.card.sent", { record_id: recordId, task_id: taskId, item_count: actual.length, unrecognized_count: unrecognized.length, difference_count: differences.length });
+      logInfo("purchase.arrival.card.sent", { record_id: recordId, task_id: taskId, direct_arrival: directArrival, arrival_type: isDocument ? '到货单' : '鞋盒', item_count: actual.length, unrecognized_count: unrecognized.length, difference_count: differences.length });
       return { status: 'awaiting_confirmation', item_count: actual.length, difference_count: differences.length };
     } catch (error) {
       await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别失败', failureReason: error.message }).catch(() => undefined);

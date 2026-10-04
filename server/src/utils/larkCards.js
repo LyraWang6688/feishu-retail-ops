@@ -346,8 +346,13 @@ const purchaseArrivalComparisonCard = (draftId, draft) => {
 const purchaseArrivalDetailCard = (draftId, draft) => {
   const elements = [];
 
-  // 报货批次号
-  elements.push({ tag: 'markdown', content: `**报货批次号：** ${text(draft.batch_no)}` });
+  // 报货批次号；没有批次号说明是供应商直接送货、没走采购申请，
+  // 必须在卡片上写出来，否则她会以为系统漏做了比对。
+  if (draft.direct_arrival) {
+    elements.push({ tag: 'markdown', content: '**无申请直接到货**（未关联报货批次，全部按实际到货入库）' });
+  } else {
+    elements.push({ tag: 'markdown', content: `**报货批次号：** ${text(draft.batch_no)}` });
+  }
 
   // 实际到货明细（按编号分区显示）
   const matchedItems = (draft.actual || []).map(item => ({

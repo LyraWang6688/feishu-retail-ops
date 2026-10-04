@@ -190,7 +190,15 @@ const V1_BITABLE_SCHEMA = {
       tableName: '采购到货',
       tableId: getEnv('FEISHU_V1_PURCHASE_ARRIVAL_TABLE_ID', 'tblvLOXKESNTbZ7v'),
       fields: {
-        arrivalAt: '到货日', images: '鞋盒图片', batch: '报货批次号', inspector: '验收人',
+        arrivalAt: '到货日',
+        // 「图片」是**当前字段名**（2026-10-05 用 lark-cli +field-list / fields API 核对过）：
+        // 以前这里写的是「鞋盒图片」，改名后映射没跟上，到货链路会静默读不到附件、
+        // 每条记录都报"没有鞋盒图片附件"。字段改名后必须重跑 v1:schema-check 闸门。
+        images: '图片',
+        // 「类型」决定用哪种识别：鞋盒（一张张拍鞋盒）还是到货单（供应商单据的表格照片）。
+        // 空值按鞋盒处理，兼容这张字段上线前录入的历史记录。
+        type: '类型',
+        batch: '报货批次号', inspector: '验收人',
         recognitionStatus: '识别状态', confirmStatus: '确认状态', failureReason: '识别失败原因',
       },
     },

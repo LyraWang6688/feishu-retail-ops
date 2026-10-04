@@ -50,8 +50,8 @@ test('listPurchaseRequests maps fields and filters by batchNo', async () => {
 test('listPurchaseArrivals maps fields and resolves batch link', async () => {
   const gateway = makeGateway({
     purchaseArrival: [
-      { record_id: 'arr_1', fields: { 到货日: 1758844800000, 报货批次号: ['batch_1'], 鞋盒图片: [{ file_token: 't1' }, { file_token: 't2' }], 识别状态: '识别成功', 确认状态: '待确认', 识别失败原因: '' } },
-      { record_id: 'arr_2', fields: { 到货日: 1758931200000, 报货批次号: ['batch_2'], 鞋盒图片: [], 识别状态: '识别失败', 确认状态: '待确认', 识别失败原因: '没有鞋盒图片' } },
+      { record_id: 'arr_1', fields: { 到货日: 1758844800000, 报货批次号: ['batch_1'], 图片: [{ file_token: 't1' }, { file_token: 't2' }], 识别状态: '识别成功', 确认状态: '待确认', 识别失败原因: '' } },
+      { record_id: 'arr_2', fields: { 到货日: 1758931200000, 报货批次号: ['batch_2'], 图片: [], 识别状态: '识别失败', 确认状态: '待确认', 识别失败原因: '没有鞋盒图片' } },
     ],
     purchaseOrderBatch: [
       { record_id: 'batch_1', fields: { 报货批次号: 'BH-001', 供应商: ['sup_1'] } },
@@ -84,7 +84,7 @@ test('listPurchaseArrivals maps fields and resolves batch link', async () => {
 test('listPurchaseArrivals handles missing batch link gracefully', async () => {
   const gateway = makeGateway({
     purchaseArrival: [
-      { record_id: 'arr_nobatch', fields: { 到货日: 1758844800000, 报货批次号: [], 鞋盒图片: [], 识别状态: '待识别', 确认状态: '待确认', 识别失败原因: '' } },
+      { record_id: 'arr_nobatch', fields: { 到货日: 1758844800000, 报货批次号: [], 图片: [], 识别状态: '待识别', 确认状态: '待确认', 识别失败原因: '' } },
     ],
     purchaseOrderBatch: [],
   });
