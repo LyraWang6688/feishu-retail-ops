@@ -247,7 +247,7 @@ const liveRow = ({ itemNo, color = '黑', size, state = '门盒', productRecordI
   },
 });
 
-const liveInventoryGateway = (rows, { vouchers = [] } = {}) => ({
+const liveInventoryGateway = (rows, { vouchers = [], products = [] } = {}) => ({
   table: (key) => {
     if (key === 'liveInventory') {
       return { tableId: 'tbl_live', fields: { stockKey: '库存键', product: '编号', size: '尺码', state: '所属状态' } };
@@ -261,6 +261,7 @@ const liveInventoryGateway = (rows, { vouchers = [] } = {}) => ({
   listAll: async (key) => {
     if (key === 'liveInventory') return rows;
     if (key === 'groupBuyVoucher') return vouchers;
+    if (key === 'product') return products;
     return [];
   },
 });
@@ -1313,15 +1314,22 @@ test('门盒够的时候卡片不出现补偿区：不需要她为"补样品"多
 const PRODUCT_FIELDS = { number: '编号', itemNo: '货号', color: '颜色',
   completeness: '信息是否齐备', sampleImage: '样例图' };
 
-const gapService = ({ store, cards, productRecord }) => {
+// 货品信息现在是**整表读一次**（listAll），不再是逐条 get。
+const gapService = ({ store, cards, productRecord, productListFails = false }) => {
   const { normalizeSalesResult } = require('../src/services/doubaoService');
-  const base = liveInventoryGateway([liveRow({ itemNo: '66356', color: '黑', size: 42, productRecordId: 'prod_gap' })]);
+  const base = liveInventoryGateway(
+    [liveRow({ itemNo: '66356', color: '黑', size: 42, productRecordId: 'prod_gap' })],
+    { products: productRecord ? [productRecord] : [] },
+  );
   const service = new LarkMvpService({
     client: {},
     gateway: {
       ...base,
       table: (key) => (key === 'product' ? { tableId: 'tbl_product', fields: PRODUCT_FIELDS } : base.table(key)),
-      get: async (key, id) => (key === 'product' ? productRecord(id) : base.get?.(key, id)),
+      listAll: async (key) => {
+        if (key === 'product' && productListFails) throw new Error('飞书暂时不可用');
+        return base.listAll(key);
+      },
       validateTables: async () => [], create: async () => ({ recordId: 'entry_gap' }), update: async () => undefined,
     },
     references: {}, posting: {},
@@ -1340,8 +1348,8 @@ const openSale = (store, taskId) => store.create({ task_id: taskId, type: 'sale'
 test('货品资料不齐时，确认卡片上直接给出「还差什么」和记录链接', async () => {
   const store = makeStore();
   const cards = [];
-  const service = gapService({ store, cards, productRecord: (id) => ({ record_id: id, fields: {
-    货号: '66356', 颜色: [{ text: '黑' }], 信息是否齐备: '成本、品类', 样例图: [] } }) });
+  const service = gapService({ store, cards,
+    productRecord: { record_id: 'prod_gap', fields: { 货号: '66356', 信息是否齐备: '成本、品类', 样例图: [] } } });
   await openSale(store, 'sale_gap');
 
   await service.processSalesTask('sale_gap');
@@ -1361,8 +1369,8 @@ test('货品资料不齐时，确认卡片上直接给出「还差什么」和�
 test('货品齐备而且有样例图时，卡片上不出现这一区', async () => {
   const store = makeStore();
   const cards = [];
-  const service = gapService({ store, cards, productRecord: (id) => ({ record_id: id, fields: {
-    货号: '66356', 信息是否齐备: '齐备', 样例图: [{ file_token: 'tok_1' }] } }) });
+  const service = gapService({ store, cards,
+    productRecord: { record_id: 'prod_gap', fields: { 货号: '66356', 信息是否齐备: '齐备', 样例图: [{ file_token: 'tok_1' }] } } });
   await openSale(store, 'sale_complete');
 
   await service.processSalesTask('sale_complete');
@@ -1374,8 +1382,8 @@ test('货品齐备而且有样例图时，卡片上不出现这一区', async ()
 test('齐备但缺样例图 → 依然提醒（两个条件任意不满足都提醒）', async () => {
   const store = makeStore();
   const cards = [];
-  const service = gapService({ store, cards, productRecord: (id) => ({ record_id: id, fields: {
-    货号: '66356', 信息是否齐备: '齐备', 样例图: [] } }) });
+  const service = gapService({ store, cards,
+    productRecord: { record_id: 'prod_gap', fields: { 货号: '66356', 信息是否齐备: '齐备', 样例图: [] } } });
   await openSale(store, 'sale_no_photo');
 
   await service.processSalesTask('sale_no_photo');
@@ -1386,14 +1394,53 @@ test('齐备但缺样例图 → 依然提醒（两个条件任意不满足都提
   assert.match(JSON.stringify(cards[0]), /还差：样例图/);
 });
 
-test('读不到货品记录时当作没有缺口，不让"催补资料"挡住录单', async () => {
+test('读货品信息表失败时当作没有缺口，照常出确认卡片', async () => {
   const store = makeStore();
   const cards = [];
-  const service = gapService({ store, cards, productRecord: () => { throw new Error('飞书暂时不可用'); } });
+  const service = gapService({ store, cards, productRecord: null, productListFails: true });
   await openSale(store, 'sale_read_fail');
 
   await service.processSalesTask('sale_read_fail');
 
   assert.deepEqual((await store.get('sale_read_fail')).draft.product_info_gaps, []);
   assert.equal(cards.length, 1, '照常出确认卡片');
+});
+
+test('一单两件商品时，货品信息只读一次全表（不按件数重复读）', async () => {
+  const { normalizeSalesResult } = require('../src/services/doubaoService');
+  const store = makeStore();
+  const cards = [];
+  let productListReads = 0;
+  const base = liveInventoryGateway([
+    liveRow({ itemNo: '66356', color: '黑', size: 42, productRecordId: 'prod_a' }),
+    liveRow({ itemNo: '8035', color: '灰牛仔', size: 40, productRecordId: 'prod_b' }),
+  ], { products: [
+    { record_id: 'prod_a', fields: { 信息是否齐备: '成本', 样例图: [] } },
+    { record_id: 'prod_b', fields: { 信息是否齐备: '单价', 样例图: [] } },
+  ] });
+  const service = new LarkMvpService({
+    client: {},
+    gateway: {
+      ...base,
+      table: (key) => (key === 'product' ? { tableId: 'tbl_product', fields: PRODUCT_FIELDS } : base.table(key)),
+      listAll: async (key) => { if (key === 'product') productListReads += 1; return base.listAll(key); },
+      validateTables: async () => [], create: async () => ({ recordId: 'entry_two' }), update: async () => undefined,
+    },
+    references: {}, posting: {},
+    recognizer: { parseSalesText: async () => normalizeSalesResult({ intent: 'sale', trade_type: '现货',
+      items: [
+        { item_no: '66356', color: '黑', size: 42, quantity: 1, actual_amount: 99 },
+        { item_no: '8035', color: '灰牛仔', size: 40, quantity: 1, actual_amount: 301 },
+      ], payments: [{ amount: 400, method: '微信' }], agreed_total: 400 }) },
+    store,
+  });
+  service.replyCard = async (_m, card) => { cards.push(card); return 'card_two'; };
+  await store.create({ task_id: 'sale_two_products', type: 'sale', status: 'received', message_id: 'om_two',
+    sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '66356黑42、8035灰牛仔40，共400微信' });
+
+  await service.processSalesTask('sale_two_products');
+
+  assert.equal(productListReads, 1, '货品信息整表只读一次，不随件数增长');
+  const gaps = (await store.get('sale_two_products')).draft.product_info_gaps;
+  assert.deepEqual(gaps.map((gap) => gap.label), ['66356黑', '8035灰牛仔']);
 });
