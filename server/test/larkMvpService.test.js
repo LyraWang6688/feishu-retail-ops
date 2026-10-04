@@ -230,16 +230,35 @@ test('sample refresh failure replaces processing view with a retryable card', as
   assert.ok(cards[1].elements.some((element) => element.tag === 'action'));
 });
 
+// 销售入口按「实时库存」匹配：一条实时库存记录 = 一双鞋。
+// 「库存键」是飞书侧公式（货号|颜色|类别|尺码），「所属状态」是门盒/样品/仓库；
+// 「编号」「尺码」是关联，写销售明细时直接用它们，不必再读货品资料。
+const liveRow = ({ itemNo, color = '黑', size, state = '门盒', productRecordId, sizeRecordId, recordId }) => ({
+  record_id: recordId || `live_${itemNo}_${color}_${size}_${state}`,
+  fields: {
+    库存键: `${itemNo}|${color}|女鞋|${size}`,
+    所属状态: state,
+    编号: [{ id: productRecordId }],
+    尺码: [{ id: sizeRecordId || `size_${size}` }],
+  },
+});
+
+const liveInventoryGateway = (rows) => ({
+  table: (key) => (key === 'liveInventory'
+    ? { tableId: 'tbl_live', fields: { stockKey: '库存键', product: '编号', size: '尺码', state: '所属状态' } }
+    : { fields: { number: '编号' } }),
+  listAll: async (key) => (key === 'liveInventory' ? rows : []),
+});
+
 test('sales intake writes only intake metadata and retains actual amount before confirmation', async () => {
   const store = makeStore();
   const calls = [];
   const cards = [];
-  const productLookups = [];
   const service = new LarkMvpService({
     client: {},
     gateway: {
+      ...liveInventoryGateway([liveRow({ itemNo: '8088-26', color: '棕', size: 38, productRecordId: 'rec_product' })]),
       validateTables: async () => [],
-      table: () => ({ fields: { number: '编号' } }),
       create: async (tableKey, fields) => {
         calls.push({ operation: 'create', tableKey, fields });
         return { recordId: 'rec_sales_entry' };
@@ -248,15 +267,7 @@ test('sales intake writes only intake metadata and retains actual amount before 
         calls.push({ operation: 'update', tableKey, recordId, fields });
       },
     },
-    references: {
-      resolveProduct: async (input) => {
-        productLookups.push(input);
-        return {
-          recordId: 'rec_product',
-          record: { fields: { 编号: '8088-26|棕|女鞋' } },
-        };
-      },
-    },
+    references: {},
     posting: {},
     recognizer: {
       parseSalesText: async () => ({
@@ -301,29 +312,29 @@ test('sales intake writes only intake metadata and retains actual amount before 
   assert.equal('behavior' in parsedUpdate.fields, false);
   assert.equal(cards.length, 1);
   assert.doesNotMatch(JSON.stringify(cards[0].card), /现货销售/);
-  assert.match(JSON.stringify(cards[0].card), /8088-26\|棕\|女鞋/);
+  // 卡片上的展示编号来自实时库存（货号 + 颜色），库存分布也一并写出来。
+  assert.match(JSON.stringify(cards[0].card), /8088-26棕/);
+  assert.match(JSON.stringify(cards[0].card), /门盒 1/);
   const task = await store.get('sale_test');
   assert.equal(task.draft.items[0].product_record_id, 'rec_product');
-  assert.deepEqual(productLookups, [{ itemNo: '8088-26', color: '棕', matchMode: 'sales' }]);
 });
 
 test('two products and two payments stay in one sales draft and confirmation card', async () => {
   const store = makeStore();
   const cards = [];
   const { normalizeSalesResult } = require('../src/services/doubaoService');
-  const prices = { '93827': 100, '2115': 150 };
   const service = new LarkMvpService({
     client: {},
     gateway: {
+      ...liveInventoryGateway([
+        liveRow({ itemNo: '93827', color: '黑', size: 43, productRecordId: 'product_93827' }),
+        liveRow({ itemNo: '2115', color: '米', size: 37, productRecordId: 'product_2115' }),
+      ]),
       validateTables: async () => [],
-      table: () => ({ fields: { number: '编号', price: '单价' } }),
       create: async () => ({ recordId: 'order_2' }),
       update: async () => undefined,
     },
-    references: {
-      resolveProduct: async ({ itemNo }) => ({ recordId: `product_${itemNo}`,
-        record: { fields: { 编号: itemNo, 单价: prices[itemNo] } } }),
-    },
+    references: {},
     posting: {},
     recognizer: { parseSalesText: async () => normalizeSalesResult({ intent: 'sale', behavior_code: 'SALE_CASH',
       sales_behavior: '现货销售', agreed_total: 250,
@@ -359,10 +370,12 @@ test('voucher sale card and posting retain separate settled and platform-pending
     agreed_total: 269,
   }, source);
   const service = new LarkMvpService({ client: {}, store,
-    gateway: { validateTables: async () => [], table: () => ({ fields: { number: '编号' } }),
-      create: async () => ({ recordId: 'entry_voucher' }), update: async () => undefined },
-    references: { resolveProduct: async () => ({ recordId: 'product_voucher',
-      record: { fields: { 编号: '2A831-18黑' } } }) },
+    gateway: {
+      ...liveInventoryGateway([liveRow({ itemNo: '2A831-18', color: '黑', size: 44, productRecordId: 'product_voucher' })]),
+      validateTables: async () => [],
+      create: async () => ({ recordId: 'entry_voucher' }), update: async () => undefined,
+    },
+    references: {},
     recognizer: { parseSalesText: async () => parsed },
     posting: { postSale: async (input) => { posted = input;
       return { sourceNo: 'XSD-VOUCHER', detailRecordIds: ['detail_voucher'],
@@ -392,9 +405,12 @@ test('quoted actual sale amount may differ from Bitable list price', async () =>
   const messages = [];
   const { normalizeSalesResult } = require('../src/services/doubaoService');
   const service = new LarkMvpService({ client: {},
-    gateway: { validateTables: async () => [], table: () => ({ fields: { number: '编号', price: '单价' } }),
-      create: async () => ({ recordId: 'order_3' }), update: async () => undefined },
-    references: { resolveProduct: async () => ({ recordId: 'product_1', record: { fields: { 编号: '815195B-6黑', 单价: 300 } } }) },
+    gateway: {
+      ...liveInventoryGateway([liveRow({ itemNo: '815195B-6', color: '黑', size: 39, productRecordId: 'product_1' })]),
+      validateTables: async () => [],
+      create: async () => ({ recordId: 'order_3' }), update: async () => undefined,
+    },
+    references: {},
     posting: {},
     recognizer: { parseSalesText: async () => normalizeSalesResult({ intent: 'sale', behavior_code: 'SALE_CASH',
       items: [{ item_no: '815195B-6', color: '黑', size: 39, quantity: 1 }], payments: [], agreed_total: 260 }) },
@@ -755,23 +771,16 @@ test('a multi-color SKU without a spoken color still reaches the confirmation ca
   const service = new LarkMvpService({
     client: {},
     gateway: {
+      // 同一个货号同一个尺码，店里有两种颜色的实物：解析器不猜，把候选交给卡片。
+      ...liveInventoryGateway([
+        liveRow({ itemNo: '8035', color: '黑牛仔', size: 42, productRecordId: 'rec_black' }),
+        liveRow({ itemNo: '8035', color: '灰牛仔', size: 42, productRecordId: 'rec_grey' }),
+      ]),
       validateTables: async () => [],
-      table: () => ({ fields: { number: '编号' } }),
       create: async () => ({ recordId: 'rec_sales_entry' }),
       update: async () => {},
     },
-    references: {
-      // 货号对上了，但颜色没有唯一确定：解析器返回候选，而不是判失败。
-      resolveProduct: async () => ({
-        needsColor: true,
-        itemNo: '8035',
-        spokenColor: '',
-        options: [
-          { recordId: 'rec_black', color: '黑牛仔', number: '8035|黑牛仔|A' },
-          { recordId: 'rec_grey', color: '灰牛仔', number: '8035|灰牛仔|A' },
-        ],
-      }),
-    },
+    references: {},
     posting: {},
     recognizer: {
       parseSalesText: async () => ({
@@ -895,4 +904,93 @@ test('an accessory name that is not in the table is asked for instead of guessed
   // 「39元腰带」和「59元腰带」只差一个字，绝不能模糊匹配到另一件。
   assert.ok(task.draft.missing_fields.some((field) => field.includes('其他配品里没有「59元腰带」')),
     `实际：${JSON.stringify(task.draft.missing_fields)}`);
+});
+
+// ─── 入口按「实时库存」匹配：卖的是实物，不是配置 ───
+
+test('库存里没有这个尺码时不发确认卡片，并告诉她这个货号实际有什么尺码', async () => {
+  const { normalizeSalesResult } = require('../src/services/doubaoService');
+  const store = makeStore();
+  const cards = [];
+  const messages = [];
+  const service = new LarkMvpService({
+    client: {},
+    gateway: {
+      ...liveInventoryGateway([
+        liveRow({ itemNo: '26632', color: '黑', size: 36, productRecordId: 'p36' }),
+        liveRow({ itemNo: '26632', color: '黑', size: 38, productRecordId: 'p38' }),
+      ]),
+      validateTables: async () => [],
+      create: async () => ({ recordId: 'entry_no_stock' }),
+      update: async () => undefined,
+    },
+    references: {},
+    posting: {},
+    recognizer: {
+      parseSalesText: async () => normalizeSalesResult({ intent: 'sale', behavior_code: 'SALE_CASH',
+        items: [{ item_no: '26632', color: '黑', size: 37, quantity: 1, actual_amount: 210 }],
+        payments: [{ amount: 210, method: '微信' }], agreed_total: 210 }),
+    },
+    store,
+  });
+  service.replyCard = async (_messageId, card) => cards.push(card);
+  service.sendText = async (_openId, message) => messages.push(message);
+  await store.create({ task_id: 'sale_no_stock', type: 'sale', status: 'received', message_id: 'om_ns',
+    sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '26632黑37一双210微信' });
+
+  await service.processSalesTask('sale_no_stock');
+
+  const task = await store.get('sale_no_stock');
+  assert.equal(task.status, 'needs_info');
+  assert.equal(cards.length, 0, '库存里没有这一双，就不该出确认卡片让她点');
+  assert.match(messages[0], /库存里没有 26632 37码/);
+  // 只说"没找到"没有用，要告诉她这个货号现在有什么尺码。
+  assert.match(messages[0], /36码/);
+  assert.match(messages[0], /38码/);
+});
+
+test('一单多双只读一次实时库存，不按双数重复全表读', async () => {
+  const { normalizeSalesResult } = require('../src/services/doubaoService');
+  const store = makeStore();
+  let liveReads = 0;
+  const rows = [
+    liveRow({ itemNo: '93827', color: '黑', size: 43, productRecordId: 'p1' }),
+    liveRow({ itemNo: '2115', color: '米', size: 37, productRecordId: 'p2' }),
+    liveRow({ itemNo: '6681-1', color: '黑灰', size: 42, productRecordId: 'p3' }),
+  ];
+  const service = new LarkMvpService({
+    client: {},
+    gateway: {
+      ...liveInventoryGateway(rows),
+      listAll: async (key) => {
+        if (key === 'liveInventory') liveReads += 1;
+        return key === 'liveInventory' ? rows : [];
+      },
+      validateTables: async () => [],
+      create: async () => ({ recordId: 'entry_multi_read' }),
+      update: async () => undefined,
+    },
+    references: {},
+    posting: {},
+    recognizer: {
+      parseSalesText: async () => normalizeSalesResult({ intent: 'sale', behavior_code: 'SALE_CASH',
+        items: [
+          { item_no: '93827', color: '黑', size: 43, quantity: 1, actual_amount: 100 },
+          { item_no: '2115', color: '米', size: 37, quantity: 1, actual_amount: 150 },
+          { item_no: '6681-1', color: '黑灰', size: 42, quantity: 1, actual_amount: 119 },
+        ],
+        payments: [{ amount: 369, method: '微信' }], agreed_total: 369 }),
+    },
+    store,
+  });
+  service.replyCard = async () => 'card_multi_read';
+  await store.create({ task_id: 'sale_multi_read', type: 'sale', status: 'received', message_id: 'om_mr',
+    sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '三双鞋，369元微信' });
+
+  await service.processSalesTask('sale_multi_read');
+
+  assert.equal(liveReads, 1, '整单只读一次实时库存；按双数重复读会让多双订单成倍变慢');
+  const task = await store.get('sale_multi_read');
+  assert.equal(task.draft.items.length, 3);
+  assert.equal(task.status, 'ready_to_confirm');
 });

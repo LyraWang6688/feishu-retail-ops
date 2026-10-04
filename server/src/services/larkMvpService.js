@@ -16,6 +16,7 @@ const { SampleReplacementService } = require('./sampleReplacementService');
 const { PurchaseDraftBuilder } = require('./purchaseDraftBuilder');
 const { PurchaseWebhookService } = require('./purchaseWebhookService');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
+const { LiveInventoryIndex, buildLiveInventoryIndex } = require('./liveInventoryIndex');
 const { isDataNotReady } = require('./salesReadRetry');
 const { purchaseConfirmationCard, salesConfirmationCard, salesStatusCard, todaySalesCard } = require('../utils/larkCards');
 const { extractSalesMessageText } = require('../utils/larkMessageText');
@@ -365,15 +366,42 @@ class LarkMvpService {
     }
   }
 
+  /**
+   * 读一次「实时库存」，按 `货号 + 尺码` 建索引。
+   *
+   * 为什么以实时库存为准：它是"店里实际有什么"，「货品信息」只是"配置过什么"。
+   * 销售卖的是实物，所以颜色、有没有货、是门盒还是样品，都该从这里回答；
+   * 而且一张表读一次就够，不必每双鞋各查一遍货品资料。
+   */
+  async loadLiveInventoryIndex() {
+    const table = this.gateway.table?.('liveInventory');
+    if (!table?.tableId) return new LiveInventoryIndex({ records: [] });
+    const startedAt = Date.now();
+    const records = await this.gateway.listAll('liveInventory');
+    const index = buildLiveInventoryIndex({ records, table });
+    logInfo('lark.sales.live_inventory.loaded', {
+      task_id: null,
+      record_count: records.length,
+      skipped_records: index.skippedRecords,
+      duration_ms: Date.now() - startedAt,
+    });
+    return index;
+  }
+
   async processSalesTask(taskId) {
     const startedAt = Date.now();
     logInfo('lark.sales.processing.started', { task_id: taskId });
     const task = await this.store.get(taskId);
     // 配品清单交给 AI，让它知道「39元腰带」这类说法不是鞋；同一份清单也用于后面的精确匹配。
     const accessories = await this.listAccessories();
-    const parsed = await this.recognizer.parseSalesText(task.original_text, {
-      taskId, accessoryNames: accessories.map((item) => item.name),
-    });
+    // AI 解析是最慢的一段（十几秒），读实时库存不依赖它的结果，所以两件事并行：
+    // 读表的时间藏在 AI 后面，不额外增加用户等待。
+    const [parsed, liveInventory] = await Promise.all([
+      this.recognizer.parseSalesText(task.original_text, {
+        taskId, accessoryNames: accessories.map((item) => item.name),
+      }),
+      this.loadLiveInventoryIndex(),
+    ]);
     if (parsed.intent !== 'sale') {
       await this.store.update(taskId, { status: 'ignored', draft: parsed });
       logInfo('lark.sales.processing.ignored', {
@@ -397,7 +425,6 @@ class LarkMvpService {
     if (!salesEntryRecordId) throw new Error('销售主表未返回 record_id');
     await this.store.update(taskId, { sales_entry_record_id: salesEntryRecordId, status: 'parsing' });
 
-    const productTable = this.gateway.table?.('product');
     const missingFields = [...(parsed.missing_fields || [])];
     const items = [];
     for (const [index, item] of (parsed.items?.length ? parsed.items : [parsed]).entries()) {
@@ -415,26 +442,44 @@ class LarkMvpService {
         items.push({ ...item, quantity: itemQuantity, accessory_record_id: match?.record_id || '' });
         continue;
       }
-      let product;
+      // 鞋按「实时库存」匹配：颜色、有没有货、是门盒还是样品，都从"店里实际有什么"回答，
+      // 而不是先看货品资料——货品资料只是"配置过什么"，卖的是实物。
+      let productRecordId = '';
+      let color = '';
       let colorOptions = null;
+      let stock = null;
       if (item.item_no && item.size) {
-        try { product = await this.references.resolveProduct({ itemNo: item.item_no, color: item.color, matchMode: 'sales' }); }
-        catch (error) { missingFields.push(`第${index + 1}件：${error.message}`); }
+        const found = liveInventory.find({ itemNo: item.item_no, size: item.size });
+        if (!found.colors.length) {
+          // 库存里没有这一双。告诉她这个货号实际有什么尺码，比只说"没找到"有用。
+          const inStock = found.otherSizes.length
+            ? `这个货号现在有 ${found.otherSizes.map((entry) => `${entry.size}码`).join('、')}`
+            : '这个货号在实时库存里一双都没有';
+          missingFields.push(`第${index + 1}件：库存里没有 ${item.item_no} ${item.size}码（${inStock}）`);
+        } else if (found.colors.length === 1) {
+          const [only] = found.colors;
+          productRecordId = only.productRecordId;
+          color = only.color;
+          stock = { doorBox: only.doorBox, sample: only.sample, warehouse: only.warehouse };
+        } else {
+          // 这个货号在这个尺码上有多个颜色：不猜，把候选交给确认卡片让用户点。
+          colorOptions = found.colors.map((entry) => ({
+            recordId: entry.productRecordId,
+            color: entry.color,
+            number: `${item.item_no}${entry.color}`,
+            stock: { doorBox: entry.doorBox, sample: entry.sample, warehouse: entry.warehouse },
+          }));
+        }
       }
-      if (product?.needsColor) {
-        // 货号对上了、颜色没唯一确定：不判失败，把候选交给确认卡片让用户选。
-        colorOptions = product.options;
-        product = null;
-      }
-      const configuredNumber = product
-        ? textValue(product.record?.fields?.[productTable?.fields?.number]) || item.item_no
-        : '';
       items.push({
         ...item,
         quantity: itemQuantity,
-        product_record_id: product?.recordId || '',
-        product_number: configuredNumber,
+        product_record_id: productRecordId,
+        color,
+        // 展示用编号：货号 + 颜色——实时库存里就是用这两个要素定位一双鞋。
+        product_number: productRecordId ? `${item.item_no}${color}` : '',
         ...(colorOptions ? { needs_color: true, color_options: colorOptions } : {}),
+        ...(stock ? { stock } : {}),
       });
     }
     const actualTotal = Math.round(items.reduce((sum, item) => sum + Number(item.actual_amount || 0), 0) * 100) / 100;
@@ -674,10 +719,13 @@ class LarkMvpService {
       if (!item) throw new Error('找不到要设置颜色的明细');
       if (!value.record_id) throw new Error('卡片里缺少颜色记录 ID');
       // 用户在卡片上选定颜色：这一条明细的货品就此确定，不再需要选色。
+      // 库存分布也跟着候选一起带过来——颜色定了，才知道这个颜色在店里有几双。
+      const chosen = (item.color_options || []).find((option) => option.recordId === value.record_id);
       items[itemIndex] = {
         ...item,
         product_record_id: value.record_id,
         product_number: value.product_number || item.product_number || item.item_no || '',
+        ...(chosen?.stock ? { stock: chosen.stock } : {}),
         needs_color: false,
         color_options: [],
       };

@@ -1,5 +1,16 @@
 const text = (value) => String(value ?? '').replace(/\n/g, ' ');
 
+// 出卡片时就已经查过实时库存，所以直接把"店里实际有几双"写在明细行上。
+// 这样不会等到扣库存那一刻才发现没货，也不用她点完确认再去工作台核对。
+const stockSummary = (item) => {
+  if (!item?.stock) return '';
+  const parts = [];
+  if (Number(item.stock.doorBox)) parts.push(`门盒 ${Number(item.stock.doorBox)}`);
+  if (Number(item.stock.sample)) parts.push(`样品 ${Number(item.stock.sample)}`);
+  if (Number(item.stock.warehouse)) parts.push(`仓库 ${Number(item.stock.warehouse)}`);
+  return `（${parts.length ? parts.join('、') : '门盒 0、样品 0'}）`;
+};
+
 const itemLines = (items, priceKey) =>
   (items || [])
     .map((item, index) => {
@@ -8,7 +19,7 @@ const itemLines = (items, priceKey) =>
         || item.accessory_name || '未知货品';
       const price = item[priceKey] ?? item.unitPrice ?? item.unitCost;
       const gift = item.gift ? `\n   赠品：${text(item.gift_description || '有')}` : '';
-      return `${index + 1}. ${text(product)} ${text(item.size)}码 × ${text(item.quantity || 1)}${price ? ` ￥${price}` : ''}${gift}`;
+      return `${index + 1}. ${text(product)} ${text(item.size)}码 × ${text(item.quantity || 1)}${stockSummary(item)}${price ? ` ￥${price}` : ''}${gift}`;
     })
     .join('\n');
 
@@ -165,11 +176,19 @@ const salesColorPickers = (draftId, draft) => {
   (draft.items || []).forEach((item, index) => {
     const options = item.color_options || [];
     if (!item.needs_color || !options.length) return;
-    const names = options.map((option) => option.color).filter(Boolean).join('、');
+    const names = options
+      .map((option) => {
+        // 候选来自实时库存，所以每个颜色现在店里有几双是能一起说清的。
+        const stock = option.stock
+          ? `（门盒 ${Number(option.stock.doorBox)}、样品 ${Number(option.stock.sample)}）`
+          : '';
+        return `${option.color || '未命名颜色'}${stock}`;
+      })
+      .join('、');
     elements.push({
       tag: 'markdown',
-      // 销售不再看用户说的颜色，所以这里只列该货号实际有哪些颜色，不做对照提示。
-      content: `**第 ${index + 1} 双请选择颜色**\n这个货号有：${names}`,
+      // 销售不再看用户说的颜色，所以这里只列店里实际有哪些颜色，不做对照提示。
+      content: `**第 ${index + 1} 双请选择颜色**\n这个货号在店里有：${names}`,
     });
     elements.push({
       tag: 'action',
