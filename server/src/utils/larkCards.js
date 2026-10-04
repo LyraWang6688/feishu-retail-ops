@@ -1,16 +1,10 @@
 const text = (value) => String(value ?? '').replace(/\n/g, ' ');
 
-// 出卡片时就已经查过实时库存，所以直接把"店里实际有几双"写在明细行上。
-// 这样不会等到扣库存那一刻才发现没货，也不用她点完确认再去工作台核对。
-const stockSummary = (item) => {
-  if (!item?.stock) return '';
-  const parts = [];
-  if (Number(item.stock.doorBox)) parts.push(`门盒 ${Number(item.stock.doorBox)}`);
-  if (Number(item.stock.sample)) parts.push(`样品 ${Number(item.stock.sample)}`);
-  if (Number(item.stock.warehouse)) parts.push(`仓库 ${Number(item.stock.warehouse)}`);
-  return `（${parts.length ? parts.join('、') : '门盒 0、样品 0'}）`;
-};
-
+// 明细行只写她需要核对的事实：货号、尺码、数量、金额、赠品。
+//
+// 库存分布**刻意不写在这里**：实时库存是录单时读的，只用来判断"这一双有没有货、
+// 卖的是不是样品"。有货就不需要她看库存数字——那是噪音；只有她说了一个没有的尺码，
+// 才回一句"这个货号现在有哪几个尺码"（见 larkMvpService 的没货追问）。
 const itemLines = (items, priceKey) =>
   (items || [])
     .map((item, index) => {
@@ -19,7 +13,7 @@ const itemLines = (items, priceKey) =>
         || item.accessory_name || '未知货品';
       const price = item[priceKey] ?? item.unitPrice ?? item.unitCost;
       const gift = item.gift ? `\n   赠品：${text(item.gift_description || '有')}` : '';
-      return `${index + 1}. ${text(product)} ${text(item.size)}码 × ${text(item.quantity || 1)}${stockSummary(item)}${price ? ` ￥${price}` : ''}${gift}`;
+      return `${index + 1}. ${text(product)} ${text(item.size)}码 × ${text(item.quantity || 1)}${price ? ` ￥${price}` : ''}${gift}`;
     })
     .join('\n');
 
@@ -176,15 +170,9 @@ const salesColorPickers = (draftId, draft) => {
   (draft.items || []).forEach((item, index) => {
     const options = item.color_options || [];
     if (!item.needs_color || !options.length) return;
-    const names = options
-      .map((option) => {
-        // 候选来自实时库存，所以每个颜色现在店里有几双是能一起说清的。
-        const stock = option.stock
-          ? `（门盒 ${Number(option.stock.doorBox)}、样品 ${Number(option.stock.sample)}）`
-          : '';
-        return `${option.color || '未命名颜色'}${stock}`;
-      })
-      .join('、');
+    // 候选来自实时库存（只列"店里有这个颜色"），但卡片上只写颜色名——
+    // 她要选的是颜色，不是库存数字。
+    const names = options.map((option) => option.color || '未命名颜色').join('、');
     elements.push({
       tag: 'markdown',
       // 销售不再看用户说的颜色，所以这里只列店里实际有哪些颜色，不做对照提示。
@@ -209,16 +197,12 @@ const salesSampleReplacementPicker = (draftId, draft) => {
     if (!item.uses_sample) return;
     const label = text(item.product_number || item.item_no || '这一双');
     const options = item.sample_replacement_options || [];
-    const lines = options.map((row) =>
-      `${row.size}码：门盒 ${row.doorBoxCount}、样品 ${row.sampleCount}`);
     elements.push({
       tag: 'markdown',
       content: `**第 ${index + 1} 双是样品，卖掉后要补一个门盒**（${label}）\n` +
-        (lines.length
-          ? `请选一个门盒来补样品：\n${lines.join('\n')}`
-          : '同货号的门盒已经没有余量，需要另行调拨。'),
+        (options.length ? '请选一个门盒来补样品：' : '同货号的门盒已经没有余量，需要另行调拨。'),
     });
-    if (lines.length) {
+    if (options.length) {
       elements.push({
         tag: 'action',
         actions: options.map((row) => actionButton(

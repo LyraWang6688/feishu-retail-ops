@@ -338,7 +338,8 @@ test('sales intake writes only intake metadata and retains actual amount before 
   assert.doesNotMatch(JSON.stringify(cards[0].card), /现货销售/);
   // 卡片上的展示编号来自实时库存（货号 + 颜色），库存分布也一并写出来。
   assert.match(JSON.stringify(cards[0].card), /8088-26棕/);
-  assert.match(JSON.stringify(cards[0].card), /门盒 1/);
+  // 卡片上不写库存数字：有货就不需要她看；库存只用来判断"有没有货、是不是样品"。
+  assert.doesNotMatch(JSON.stringify(cards[0].card), /门盒|样品/);
   const task = await store.get('sale_test');
   assert.equal(task.draft.items[0].product_record_id, 'rec_product');
 });
@@ -831,8 +832,12 @@ test('a multi-color SKU without a spoken color still reaches the confirmation ca
   assert.equal(item.product_record_id, '');
   assert.deepEqual(item.color_options.map((option) => option.color), ['黑牛仔', '灰牛仔']);
   assert.equal(cards.length, 1, '应当照常发确认卡片，而不是回一句「请补充颜色」');
-  assert.match(JSON.stringify(cards[0].card), /请选择颜色/);
-  assert.match(JSON.stringify(cards[0].card), /choose_sale_color/);
+  const cardText = JSON.stringify(cards[0].card);
+  assert.match(cardText, /请选择颜色/);
+  assert.match(cardText, /choose_sale_color/);
+  // 颜色候选来自实时库存，但卡片上只写颜色名：她要选的是颜色，不是库存数字。
+  assert.match(cardText, /黑牛仔/);
+  assert.doesNotMatch(cardText, /门盒|样品|仓库/);
 });
 
 test('confirming is refused until every item has a chosen color, and choosing one settles it', async () => {
