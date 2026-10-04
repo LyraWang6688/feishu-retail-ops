@@ -17,11 +17,21 @@ const { PurchaseDraftBuilder } = require('./purchaseDraftBuilder');
 const { PurchaseWebhookService } = require('./purchaseWebhookService');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
 const { LiveInventoryIndex, buildLiveInventoryIndex } = require('./liveInventoryIndex');
+const { tradeTypeCodeFromLabel, deliveryForTradeType } = require('../config/salesMovements');
 const { isDataNotReady } = require('./salesReadRetry');
 const { purchaseConfirmationCard, salesConfirmationCard, salesStatusCard, todaySalesCard } = require('../utils/larkCards');
 const { extractSalesMessageText } = require('../utils/larkMessageText');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
+
+// 交付与否以草稿的交易类型为准：现货/未付当场交付，预付（只付定金、货没拿走）不交付。
+// 只有旧数据才没有明确的交付状态（待确认或缺失），那时退回按钮语义——
+// 旧卡片上的「确认已交付 / 确认未交付」是用户显式做出的选择。
+const shouldDeliverFor = (task, action) => {
+  const declared = task?.draft?.delivery_status;
+  if (declared === '已交付' || declared === '未交付') return declared === '已交付';
+  return action === 'confirm_sale_delivered';
+};
 
 const idFor = (prefix, value) =>
   `${prefix}_${crypto.createHash('sha256').update(String(value || '')).digest('hex').slice(0, 20)}`;
@@ -491,16 +501,36 @@ class LarkMvpService {
       missingFields.push('已收金额和待平台结算金额不能超过本单成交金额');
     }
 
+    // 交易类型由 AI 从原话判断；**交付状态由注册表从交易类型推出来**，
+    // 不再让用户在卡片上选。现货/未付当场交付，只有预付（只付定金、货没拿走）是未交付。
+    const tradeTypeCode = tradeTypeCodeFromLabel(parsed.trade_type);
     const draft = {
       ...parsed,
+      trade_type: parsed.trade_type,
+      trade_type_code: tradeTypeCode,
+      delivery_status: deliveryForTradeType(tradeTypeCode) || '已交付',
       product_number: items[0]?.product_number || '',
       items,
       missing_fields: missingFields,
     };
+    // 交易类型落成关联「行为管理」的记录，便于以后筛选和对账。
+    // 解析不到时记警告但**不阻塞入账**：它只是审计字段，业务事实（交付与收款）
+    // 已经由 trade_type 决定，不该因为一个关联查不到就让门店录不进单。
+    let tradeTypeRecordId = '';
+    if (tradeTypeCode && typeof this.references.resolveSalesTradeType === 'function') {
+      try {
+        tradeTypeRecordId = (await this.references.resolveSalesTradeType(tradeTypeCode)).recordId;
+      } catch (error) {
+        logWarn('lark.sales.trade_type.resolve_failed', {
+          task_id: taskId, code: tradeTypeCode, error: error.message,
+        });
+      }
+    }
     await this.gateway.update('salesEntry', salesEntryRecordId, {
       parseStatus: draft.missing_fields?.length ? '需补充' : '解析成功',
       parseSummary: JSON.stringify(draft),
       failureReason: draft.missing_fields?.length ? draft.missing_fields.join('、') : '',
+      ...(tradeTypeRecordId ? { tradeType: relation(tradeTypeRecordId) } : {}),
     });
     await this.store.update(taskId, {
       status: draft.missing_fields?.length ? 'needs_info' : 'ready_to_confirm',
@@ -664,7 +694,7 @@ class LarkMvpService {
           task.status === 'cancelled' ? '销售录单已取消' : completed ? '销售订单已入账' : '订单已入账，交付待核对',
           task.status === 'cancelled' ? '原草稿不会入账。' :
             `销售单号：${task.posting_result?.sourceNo || '请在销售主表核对'}；${completed
-              ? task.posting_requested_action === 'confirm_sale_delivered' ? '已交付并扣库存。' : '尚未交付，库存未扣减。'
+              ? shouldDeliverFor(task, task.posting_requested_action) ? '已交付并扣库存。' : '尚未交付，库存未扣减。'
               : '交付结果尚未确认，请到工作台核对。'}`,
           task.status === 'cancelled' ? 'blue' : completed ? 'green' : 'orange');
         await this.publishSalesResultCard(task, event, card,
@@ -749,6 +779,9 @@ class LarkMvpService {
         ? task.posting_requested_action || action : action } : {}) });
     try {
     if (['confirm_sale', 'confirm_sale_pending', 'confirm_sale_delivered'].includes(action) && task.type === 'sale') {
+      // 交付与否由**交易类型**决定，不由用户点哪个按钮决定。
+      // 卡片上只留一个「确认」；旧卡片上的 confirm_sale_delivered / _pending 仍然兼容。
+      const shouldDeliver = shouldDeliverFor(task, action);
       const cardUpdated = await this.updateSalesActionCard(task, event,
         salesStatusCard(task.draft, '销售订单处理中', '已收到确认，正在写入销售记录和收款；请勿重复点击。'),
         { stage: 'processing', interactionId: context.interactionId });
@@ -786,7 +819,7 @@ class LarkMvpService {
         })),
       });
       await this.store.update(draftId, { status: 'posted_delivery_pending', posting_result: result });
-      if (action === 'confirm_sale_delivered') {
+      if (shouldDeliver) {
         try {
           const deliveryResult = await this.delivery.deliver({ salesEntryRecordId: task.sales_entry_record_id,
             detailRecordIds: result.detailRecordIds, paymentRecordIds: result.paymentRecordIds });
@@ -819,7 +852,7 @@ class LarkMvpService {
       }
       await this.store.update(draftId, { status: 'posted', posting_result: result });
       await this.publishSalesResultCard(task, event, salesStatusCard(task.draft,
-        '销售订单已入账', `销售单号：${result.sourceNo}；${result.detailRecordIds?.length || 0} 条明细已写入。${action === 'confirm_sale_delivered' ? '已交付并扣库存。' : '尚未交付，库存未扣减。'}`, 'green'),
+        '销售订单已入账', `销售单号：${result.sourceNo}；${result.detailRecordIds?.length || 0} 条明细已写入。${shouldDeliver ? '已交付并扣库存。' : '尚未交付，库存未扣减。'}`, 'green'),
       { stage: 'posted', interactionId: context.interactionId });
       logInfo('lark.sales.posting.completed', {
         task_id: draftId,
@@ -831,7 +864,7 @@ class LarkMvpService {
       return {
         toast: {
           type: 'success',
-          content: action === 'confirm_sale_delivered' ? '销售已确认并交付，库存已更新' : '销售已确认，交付时再扣库存',
+          content: shouldDeliver ? '销售已确认并交付，库存已更新' : '销售已确认；预付单尚未交付，库存未扣减',
         },
       };
     }
@@ -884,9 +917,14 @@ class LarkMvpService {
         const hasWrittenRecords = waitingForSync || Object.values(current?.posting_record_ids || {})
           .some((ids) => Array.isArray(ids) && ids.some(Boolean));
         if (hasWrittenRecords) {
-          const originalAction = current?.posting_requested_action || action;
+          // 重试卡片只留"继续处理这一单"那一个按钮。旧卡片上的交付动作名
+          // （confirm_sale_delivered / _pending）现在统一对应新的「确认」。
+          const requestedAction = current?.posting_requested_action || action;
+          const retryAction = ['confirm_sale_delivered', 'confirm_sale_pending'].includes(requestedAction)
+            ? 'confirm_sale' : requestedAction;
           retryCard.elements.filter((element) => element.tag === 'action').forEach((element) => {
-            element.actions = element.actions.filter((button) => button.value?.action === originalAction);
+            const sameAction = element.actions.filter((button) => button.value?.action === retryAction);
+            if (sameAction.length) element.actions = sameAction;
           });
         }
         retryCard.elements.splice(1, 0, { tag: 'note', elements: [

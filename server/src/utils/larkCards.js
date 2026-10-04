@@ -200,6 +200,15 @@ const salesColorPickers = (draftId, draft) => {
   return elements;
 };
 
+// 交易类型是脚本按注册表从 AI 识别的性质推出来的，卡片只**展示**，不再让用户选。
+// 确认这个动作的含义因此变得单一：她核对的是"AI 听对了没有"，不是替系统决定交付方式。
+const tradeTypeLine = (draft) => {
+  const label = text(draft?.trade_type || '').trim();
+  const delivery = text(draft?.delivery_status || '').trim();
+  if (!label) return delivery || '—';
+  return delivery ? `${label} · ${delivery}` : label;
+};
+
 const salesConfirmationCard = (draftId, draft) => ({
   config: { wide_screen_mode: true },
   header: { template: 'blue', title: { tag: 'plain_text', content: '请确认销售订单' } },
@@ -212,14 +221,13 @@ const salesConfirmationCard = (draftId, draft) => ({
           draft.payments.filter((payment) => payment.status !== '待平台结算').map((payment) => `${text(payment.method)} ￥${text(payment.amount)}`).join('；') : '尚未收款'}` +
         ((draft.payments || []).some((payment) => payment.status === '待平台结算') ?
           `\n**待平台结算：** ${draft.payments.filter((payment) => payment.status === '待平台结算').map((payment) => `${text(payment.method)} ￥${text(payment.amount)}`).join('；')}` : '') +
-        `\n**交付：** ${text(draft.delivery_status || '待确认')}（请按实际情况选择）`,
+        `\n**交易类型：** ${tradeTypeLine(draft)}`,
     },
     ...salesColorPickers(draftId, draft),
     {
       tag: 'action',
       actions: [
-        actionButton('确认已交付（扣库存）', 'confirm_sale_delivered', draftId, draft.delivery_status === '已交付' ? 'primary' : 'default'),
-        actionButton('确认未交付', 'confirm_sale_pending', draftId, draft.delivery_status === '已交付' ? 'default' : 'primary'),
+        actionButton('确认', 'confirm_sale', draftId, 'primary'),
         actionButton('修改', 'modify_sale', draftId),
         actionButton('取消', 'cancel', draftId, 'danger'),
       ],

@@ -1,4 +1,5 @@
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const { isSalesTradeType } = require('../config/salesMovements');
 
 const normalizeText = (value) =>
   String(value || '')
@@ -166,6 +167,24 @@ class V1ReferenceResolver {
     const record = await this.gateway.findOneByText('behavior', 'code', code);
     if (!record) throw new Error(`行为管理中找不到已配置行为：${code}`);
     return { recordId: record.record_id, record };
+  }
+
+  /**
+   * 交易类型（现货 / 未付 / 预付）落在「销售主表.交易类型」上，它关联「行为管理」。
+   *
+   * 只认注册表里的三个编码：行为管理里还有「销售退货 / 换货 / 赔货」这些**售后**条目，
+   * 它们不是交易类型——指到它们必须报错，不能静默按现货入账。
+   */
+  async resolveSalesTradeType(code) {
+    if (!isSalesTradeType(code)) {
+      throw new Error(`未声明的销售交易类型：${code || '(空)'}`);
+    }
+    const table = this.gateway.table('behavior');
+    const records = await this.gateway.listAll('behavior');
+    const matches = records.filter((record) => textValue(record.fields?.[table.fields.code]) === code);
+    if (!matches.length) throw new Error(`行为管理里找不到交易类型：${code}`);
+    if (matches.length > 1) throw new Error(`行为管理里交易类型重复：${code}`);
+    return { recordId: matches[0].record_id, record: matches[0] };
   }
 
   async resolvePaymentMethod(name) {

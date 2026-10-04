@@ -19,7 +19,9 @@ test('normalizes one cash sale using item number and color and leaves formula fi
   });
 
   assert.equal(result.items[0].actual_amount, 230);
-  assert.equal(result.delivery_status, '待确认');
+  // 解析层只判断交易性质；交付状态由 SALES_MOVEMENTS 从交易类型推出来。
+  assert.equal(result.trade_type, '现货');
+  assert.equal('delivery_status' in result, false);
   assert.equal(result.agreed_total, 230);
   assert.deepEqual(result.missing_fields, []);
   assert.equal('unit_price' in result, false);
@@ -59,9 +61,9 @@ test('two pairs in one AI line must be restated as two individually priced lines
 
 test('deposit alone cannot be mistaken for a shoe transaction price', () => {
   const result = normalizeSalesResult({ intent: 'sale', items: [{ item_no: '9A207-0', size: 43, quantity: 1 }],
-    payments: [{ method: '微信', amount: 50 }], delivery_status: '未交付' });
+    payments: [{ method: '微信', amount: 50 }], trade_type: '预付' });
   assert.equal(result.agreed_total, '');
-  assert.equal(result.delivery_status, '未交付');
+  assert.equal(result.trade_type, '预付');
   assert.ok(result.missing_fields.includes('items[0].actual_amount'));
 });
 

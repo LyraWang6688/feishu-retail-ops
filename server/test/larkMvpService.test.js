@@ -706,7 +706,8 @@ test('sale card persists written record IDs and distinguishes pending sync from 
   assert.match(JSON.stringify(cards.at(-1)), /库存未扣/);
   assert.doesNotMatch(JSON.stringify(cards.at(-1)), /入账失败/);
   const retryActions = cards.at(-1).elements.find((element) => element.tag === 'action').actions;
-  assert.deepEqual(retryActions.map((button) => button.value.action), ['confirm_sale_delivered']);
+  // 卡片只有一个「确认」：交付与否由草稿的交易类型决定，不由按钮决定。
+  assert.deepEqual(retryActions.map((button) => button.value.action), ['confirm_sale']);
   assert.equal((await store.get('sale_sync_retry')).status, 'ready_to_confirm');
   assert.deepEqual((await store.get('sale_sync_retry')).posting_record_ids,
     { details: ['detail_1'], payments: ['payment_1'] });
@@ -993,4 +994,107 @@ test('一单多双只读一次实时库存，不按双数重复全表读', async
   const task = await store.get('sale_multi_read');
   assert.equal(task.draft.items.length, 3);
   assert.equal(task.status, 'ready_to_confirm');
+});
+
+// ─── 交易类型：AI 判断性质，脚本决定交付，用户只核对 ───
+
+const tradeTypeService = ({ store, cards, updates, counters, parsed }) => {
+  const service = new LarkMvpService({
+    client: {},
+    gateway: {
+      ...liveInventoryGateway([liveRow({ itemNo: '26632', color: '黑', size: 37, productRecordId: 'p37' })]),
+      validateTables: async () => [],
+      create: async () => ({ recordId: 'entry_trade' }),
+      update: async (tableKey, recordId, fields) => { updates.push({ tableKey, recordId, fields }); },
+    },
+    references: { resolveSalesTradeType: async (code) => ({ recordId: `behavior_${code}` }) },
+    posting: { postSale: async () => ({ sourceNo: 'XSD-TRADE', detailRecordIds: ['d1'], paymentRecordIds: ['p1'] }) },
+    delivery: { deliver: async () => { counters.delivered += 1; return { sampleReplacements: [] }; } },
+    recognizer: { parseSalesText: async () => parsed() },
+    store,
+  });
+  service.replyCard = async (_messageId, card) => { cards.push(card); return 'card_trade'; };
+  service.updateSalesActionCard = async (_task, _event, card) => { cards.push(card); return true; };
+  return service;
+};
+
+test('现货单：卡片显示「现货 · 已交付」，只留一个确认按钮，确认后扣库存', async () => {
+  const { normalizeSalesResult } = require('../src/services/doubaoService');
+  const store = makeStore();
+  const cards = [];
+  const updates = [];
+  const counters = { delivered: 0 };
+  const service = tradeTypeService({ store, cards, updates, counters, parsed: () => normalizeSalesResult({
+    intent: 'sale', trade_type: '现货',
+    items: [{ item_no: '26632', color: '黑', size: 37, quantity: 1, actual_amount: 210 }],
+    payments: [{ amount: 210, method: '微信' }], agreed_total: 210 }) });
+  await store.create({ task_id: 'sale_type_cash', type: 'sale', status: 'received', message_id: 'om_c',
+    sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '26632黑37一双210微信' });
+
+  await service.processSalesTask('sale_type_cash');
+
+  const draft = (await store.get('sale_type_cash')).draft;
+  assert.equal(draft.trade_type, '现货');
+  assert.equal(draft.delivery_status, '已交付', '现货当场交付，不该问用户');
+  const card = JSON.stringify(cards[0]);
+  assert.match(card, /现货 · 已交付/);
+  // 卡片上不再有"你来选交付"的痕迹
+  assert.doesNotMatch(card, /确认已交付|确认未交付|请按实际情况选择/);
+  // 交易类型落成关联「行为管理」的记录，便于以后筛选对账
+  const tradeUpdate = updates.find((item) => item.fields.tradeType);
+  assert.deepEqual(tradeUpdate.fields.tradeType, ['behavior_SALE_CASH']);
+
+  const result = await service.handleCardAction({ operator: { operator_id: { open_id: 'ou_1' } },
+    action: { value: { action: 'confirm_sale', draft_id: 'sale_type_cash' } } });
+  assert.equal(result.toast.type, 'success');
+  assert.equal(counters.delivered, 1, '现货确认即交付并扣库存');
+});
+
+test('预付单：卡片显示「预付 · 未交付」，确认后不扣库存', async () => {
+  const { normalizeSalesResult } = require('../src/services/doubaoService');
+  const store = makeStore();
+  const cards = [];
+  const updates = [];
+  const counters = { delivered: 0 };
+  const service = tradeTypeService({ store, cards, updates, counters, parsed: () => normalizeSalesResult({
+    intent: 'sale', trade_type: '预付',
+    items: [{ item_no: '26632', color: '黑', size: 37, quantity: 1, actual_amount: 240 }],
+    payments: [{ amount: 100, method: '微信' }], agreed_total: 240 }) });
+  await store.create({ task_id: 'sale_type_prepaid', type: 'sale', status: 'received', message_id: 'om_p',
+    sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '26632黑37一双，定金100微信，尾款以后付' });
+
+  await service.processSalesTask('sale_type_prepaid');
+
+  const draft = (await store.get('sale_type_prepaid')).draft;
+  assert.equal(draft.trade_type, '预付');
+  assert.equal(draft.delivery_status, '未交付', '只有预付是未交付：货没拿走');
+  assert.match(JSON.stringify(cards[0]), /预付 · 未交付/);
+
+  const result = await service.handleCardAction({ operator: { operator_id: { open_id: 'ou_1' } },
+    action: { value: { action: 'confirm_sale', draft_id: 'sale_type_prepaid' } } });
+  assert.equal(result.toast.type, 'success');
+  assert.equal(counters.delivered, 0, '预付单货没拿走，不能扣库存');
+  assert.match(result.toast.content, /尚未交付/);
+});
+
+test('旧卡片上的交付按钮仍然可用：动作名映射到同一条路，不再让交付取决于按钮', async () => {
+  const store = makeStore();
+  const cards = [];
+  const counters = { delivered: 0 };
+  await store.create({ task_id: 'sale_legacy_card', type: 'sale', status: 'ready_to_confirm',
+    sender_open_id: 'ou_1', sales_entry_record_id: 'entry_legacy', card_message_id: 'om_card',
+    draft: { trade_type: '预付', delivery_status: '未交付',
+      items: [{ item_no: '26632', color: '黑', size: 37, quantity: 1, actual_amount: 240,
+        product_record_id: 'p37' }],
+      payments: [{ amount: 100, method: '微信' }], agreed_total: 240 } });
+  const service = new LarkMvpService({ client: {}, gateway: {}, references: {}, recognizer: {}, store,
+    posting: { postSale: async () => ({ sourceNo: 'XSD-LEGACY', detailRecordIds: ['d1'], paymentRecordIds: ['p1'] }) },
+    delivery: { deliver: async () => { counters.delivered += 1; return { sampleReplacements: [] }; } } });
+  service.updateSalesActionCard = async (_task, _event, card) => { cards.push(card); return true; };
+
+  // 用户点的是旧卡片上的「确认已交付（扣库存）」，但草稿说这是预付单。
+  const result = await service.handleCardAction({ operator: { operator_id: { open_id: 'ou_1' } },
+    action: { value: { action: 'confirm_sale_delivered', draft_id: 'sale_legacy_card' } } });
+  assert.equal(result.toast.type, 'success');
+  assert.equal(counters.delivered, 0, '存量旧卡片点"已交付"，也要按草稿的交易类型走');
 });

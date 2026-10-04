@@ -91,6 +91,9 @@ const V1_BITABLE_SCHEMA = {
         parseSummary: '解析结果摘要',
         failureReason: '失败原因',
         orderStatus: '订单状态',
+        // 关联「行为管理」里的现货销售 / 未付销售 / 预付销售。交易类型决定交付状态；
+        // 落成关联是为了可筛可查、可对账，也让销售与库存行为共用同一张配置表。
+        tradeType: '交易类型',
       },
     },
     salesDetail: {

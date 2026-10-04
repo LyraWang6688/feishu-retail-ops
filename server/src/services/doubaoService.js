@@ -8,7 +8,7 @@ const { applyGroupBuyVoucherPolicy } = require('./groupBuyVoucherPolicy');
 // normalization. Never log the complete user message, prompt or raw model JSON.
 const salesParseSnapshot = (result = {}) => ({
   intent: result.intent,
-  delivery_status: result.delivery_status,
+  trade_type: result.trade_type,
   items: (Array.isArray(result.items) && result.items.length ? result.items : [result]).map((item) => ({
     item_no: String(item.item_no || '').slice(0, 80),
     color: String(item.color || '').slice(0, 40),
@@ -134,9 +134,13 @@ const normalizeSalesResult = (result = {}, sourceText = '') => {
     agreedTotal = voucherPolicy.agreedTotal;
   }
   const first = items[0] || {};
+  // 交易类型由 AI 从原话判断，但只认三种；说不清时按现货处理——
+  // 门店绝大多数是"当场收钱当场交货"，不说不给钱就是现货（不是猜，是业务前提）。
+  // 交付状态不在这里定：它由 SALES_MOVEMENTS 从交易类型推出来。
+  const tradeType = ['现货', '未付', '预付'].includes(result.trade_type) ? result.trade_type : '现货';
   const normalized = {
     intent: result.intent === 'sale' ? 'sale' : 'unsupported',
-    delivery_status: ['已交付', '未交付'].includes(result.delivery_status) ? result.delivery_status : '待确认',
+    trade_type: tradeType,
     ...first,
     items,
     payments,
@@ -204,12 +208,12 @@ class DoubaoService {
     const prompt = `
 你是鞋店销售首单录入助手。请把用户的一条销售原话解析为严格 JSON，不得猜测缺失信息。
 
-一条消息表示一笔销售，可以包含多双鞋和多种付款方式。只解析事实，不计算售价或猜测交付。
+一条消息表示一笔销售，可以包含多双鞋和多种付款方式。只解析事实，不计算售价。
 
 输出结构：
 {
   "intent": "sale",
-  "delivery_status": "待确认",
+  "trade_type": "现货",
   "items": [{"item_no":"8088-26","color":"棕","size":38,"quantity":1,"actual_amount":230,"gift":false,"gift_description":""}],
   "payments": [{"amount":230,"method":"微信"}],
   "agreed_total": 230
@@ -217,7 +221,12 @@ class DoubaoService {
 
 规则：
 1. 商品销售（含当场收款、预付、先交货后付款）intent=\"sale\"；退货、换货、赔货 intent=\"unsupported\"。不输出销售行为字段。
-2. 明确说已拿走/已交给顾客时 delivery_status=\"已交付\"；明确说还没货、之后来拿时为\"未交付\"；否则为\"待确认\"。最终由用户在确认卡选择，不凭付款情况推断交付。
+2. trade_type 是这笔交易的**性质**，只能填「现货」「未付」「预付」三者之一：
+   · 提到定金 / 先付 / 预定 → \"预付\"（货没拿走，之后来取）
+   · 明确说未付 / 欠着 / 下次再给 → \"未付\"（鞋拿走，钱还没给）
+   · 其余一律 \"现货\"（当场收款当场交货——门店绝大多数是这一种，不说不给钱就是现货）
+   团购券只是一种**支付方式**（钱延期结算），不影响 trade_type；用券买走一双鞋仍然是现货。
+   不要输出交付状态，后端会按 trade_type 决定是否交付。
 3. item_no 只填写用户原话中的货号，不要把颜色、尺码或品类拼进货号。用户可能用任意顺序和标点表达，但货号中的数字和字母必须原样保留。
 4. color 单独填写颜色；“棕色”规范为“棕”、“黑色”规范为“黑”。没有提到颜色时留空，不得猜测。
 5. “628-6米紫361一双”是货号 628-6、颜色米紫、36码、数量1；末尾的 1 是数量，不是 361 码。
