@@ -305,7 +305,8 @@ const V1_BITABLE_SCHEMA = {
         behavior: '库存行为',
         salesDetail: '关联销售',
         purchaseInbound: '关联采购',
-        occurredAt: '发生时间',
+          // ⚠️ 「发生时间」已由业务负责人 2026-10-05 从生产表删除（表里现在只有「创建时间」）；
+          // 映射留着会让部署闸门 v1:schema-check 直接红，因此同步删掉。
         stockKey: '库存键',
       },
     },
