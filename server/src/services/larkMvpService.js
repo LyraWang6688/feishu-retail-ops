@@ -12,6 +12,7 @@ const { V1BitableGateway, textValue } = require('./v1BitableGateway');
 const { V1PostingService } = require('./v1PostingService');
 const { createWorkbenchService } = require('./v1WorkbenchService');
 const { SalesDeliveryService } = require('./salesDeliveryService');
+const { SecondDeliveryService } = require('./secondDeliveryService');
 const { SampleReplacementService } = require('./sampleReplacementService');
 const { PurchaseWebhookService } = require('./purchaseWebhookService');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
@@ -26,7 +27,7 @@ const { AfterSalesFlowService } = require('./afterSalesFlowService');
 const { isLookupIntent, isAfterSalesIntent, normalizeMessageIntent } = require('../config/saleIntents');
 const { isAfterSalesCardAction } = require('../config/afterSalesFlow');
 const { isSalesCandidate, UNSUPPORTED_INTENT_REPLY } = require('../config/messageGate');
-const { salesConfirmationCard, salesStatusCard, todaySalesCard, keepOnlyCardButton } = require('../utils/larkCards');
+const { salesConfirmationCard, salesStatusCard, todaySalesCard, keepOnlyCardButton, SECOND_DELIVERY_ACTION } = require('../utils/larkCards');
 const { extractSalesMessageText, isMentioned, stripMentionPlaceholders } = require('../utils/larkMessageText');
 const { resolveAckReaction, resolveBotOpenId } = require('../config/groupPurchase');
 const { PurchaseBatchLocator } = require('./purchaseBatchLocator');
@@ -104,6 +105,12 @@ class LarkMvpService {
     this.recognizer = options.recognizer || doubaoService;
     this.posting = options.posting || new V1PostingService({ gateway: this.gateway, references: this.references });
     this.delivery = options.delivery || new SalesDeliveryService({ gateway: this.gateway });
+    // 「第二次交付」：已入账的未付 / 预付单点「成交」→ 补收款 + 交付。
+    // 刻意把上面那个 delivery 实例传进去：卡片这条路的交付与首次录单的交付
+    // 共用同一个串行队列，两个入口不会各扣一次库存。
+    this.secondDelivery = options.secondDelivery || new SecondDeliveryService({
+      gateway: this.gateway, delivery: this.delivery,
+    });
     this.purchaseWebhooks = options.purchaseWebhooks || new PurchaseWebhookService({
       client: this.client,
       gateway: this.gateway,
@@ -1035,6 +1042,14 @@ class LarkMvpService {
     }
     const procurementResult = await this.purchaseWebhooks.handleCardAction(value, operatorOpenId, event);
     if (procurementResult) return procurementResult;
+    // 「第二次交付」的「成交」按钮：收尾的是**已入账**的未付 / 预付单。
+    // ⚠️ 位置有意放在这里——采购分派之后（它只认自己的动作名，我们的动作会返回 null）、
+    // 下面那句 `if (!draftId) throw` 之前：这条链路绑的是销售主表 record_id，
+    // 根本没有草稿，也没有草稿状态机，落在下面那套逻辑里一定抛「卡片缺少草稿 ID」。
+    // 动作名用 larkCards 里那一个常量，卡片和分派不会各写一份而慢慢写歪。
+    if (action === SECOND_DELIVERY_ACTION) {
+      return this.handleSecondDeliveryAction(value, operatorOpenId, event);
+    }
     if (!draftId) throw new Error('卡片缺少草稿 ID');
     // 售后卡片：确认 / 取消 / 选回库状态。和销售草稿共用同一个串行队列
     // （同一张卡片连点两次会被排成一前一后），执行器那一层再兜一次幂等。
@@ -1043,6 +1058,40 @@ class LarkMvpService {
         this.afterSalesFlow.handleCardAction(value, event, operatorOpenId, context));
     }
     return this.cardActionQueue.run(draftId, () => this.handleSalesOrLegacyCardAction(event, context));
+  }
+
+  /**
+   * 「成交」：已入账的未付 / 预付单收尾（补收款 + 交付）。
+   *
+   * 这里只做三件事：把按钮带上来的「销售单号 + 收款方式」转给编排服务，
+   * 把"点的是哪条群消息、哪天的卡"一起带下去（成交成功后要把那张卡的这一单变灰，
+   * 见 SecondDeliveryService.markCardSettled），以及把结果说成她能看懂的一句话。
+   * 写账、扣库存全在 SecondDeliveryService 里，本类不碰——那两件事都必须只有一处实现。
+   */
+  async handleSecondDeliveryAction(value, operatorOpenId, event = {}) {
+    const result = await this.secondDelivery.confirm({
+      salesEntryRecordId: value?.sales_entry_record_id,
+      // 收款方式由按钮带上来的，缺了会让补收款明确报错，不在这里兜一个默认值。
+      method: value?.method,
+      operatorOpenId,
+      // 卡片回调事件里的消息 id = 被点的那张卡；reminder_day 是发卡时写进按钮取值的。
+      cardMessageId: event?.context?.open_message_id || event?.open_message_id || '',
+      reminderDay: value?.reminder_day || '',
+    });
+    if (result.alreadyCompleted) {
+      return { toast: { type: 'info', content: '这一单已经成交，无需重复处理' } };
+    }
+    const parts = [];
+    if (result.collectedAmount > 0) parts.push(`补收款 ￥${result.collectedAmount}`);
+    const deliveredCount = Number(result.delivery?.deliveredQuantity || 0);
+    if (result.delivery && deliveredCount > 0) parts.push(`交付 ${deliveredCount} 双`);
+    const failedCount = result.delivery?.failures?.length || 0;
+    if (failedCount) {
+      // 钱已经收下、货只交了一部分：如实说清，并指到工作台去处理，不能报成功。
+      return { toast: { type: 'warning', content:
+        `已成交：${parts.join('，')}；还有 ${failedCount} 双交付未完成，请到工作台待交付列表核对` } };
+    }
+    return { toast: { type: 'success', content: `已成交：${parts.join('，') || '无待处理项'}` } };
   }
 
   async handleSalesOrLegacyCardAction(event, context = {}) {

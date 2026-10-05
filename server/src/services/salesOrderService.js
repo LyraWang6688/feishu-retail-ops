@@ -42,6 +42,18 @@ class SalesOrderService {
     // The persisted task is the source of that stage on the next card callback.
     let financialRecorded = input.knownFinancialComplete === true;
     try {
+      // 销售明细的「交易类型」必须和「销售主表」保持一致（业务负责人口径）：
+      // 明细行的数量记的都是正数，退货 / 换货只能靠「交易类型」表明这一行的方向，
+      // 所以它得跟主表说同一件事。
+      //
+      // 为什么是**读主表已经写好的那条关联**、不在这里重新解析一次：
+      // 重新解析就有两处结论，两处就可能不一致；读同一处写下去，天然一致。
+      // 主表没解析出交易类型时（AI 没认出来）这里留空——空着比写错方向好。
+      const entryFields = this.gateway.table('salesEntry').fields;
+      const entry = await withSalesReadRetry(
+        () => this.gateway.get('salesEntry', salesEntryRecordId), 'sale_entry_trade_type',
+      );
+      const tradeTypeRecordId = linkedRecordIds(entry?.fields?.[entryFields.tradeType])[0] || '';
       const expected = [];
       for (const item of input.items) {
         // 可售品按属性走：鞋才需要解析尺码和跟踪库存，配品只记「卖了什么、收了多少」。
@@ -125,6 +137,8 @@ class SalesOrderService {
             ...(row.item.sizeRecordId ? { size: relation(row.item.sizeRecordId) } : {}),
             gift: row.item.gift,
             actualAmount: row.item.actualAmount, fulfillmentStatus: row.item.fulfillmentStatus,
+            // 主表写的是哪条「行为管理」记录，明细就写同一条（见上面读主表那段注释）。
+            ...(tradeTypeRecordId ? { tradeType: relation(tradeTypeRecordId) } : {}),
           });
           row.recordId = created.recordId;
         }

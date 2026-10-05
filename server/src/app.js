@@ -6,6 +6,8 @@ const crypto = require('node:crypto');
 const { logError, logInfo } = require('./utils/logger');
 const { uploadDir } = require('./utils/upload');
 const { startUploadCleanup } = require('./utils/uploadCleanup');
+const { SecondDeliveryService } = require('./services/secondDeliveryService');
+const { startSecondDeliveryReminder } = require('./utils/secondDeliveryReminder');
 
 // Load environment variables.
 //
@@ -101,6 +103,11 @@ if (require.main === module) {
   if (Number.isFinite(ttlMs) && ttlMs > 0 && Number.isFinite(intervalMs) && intervalMs > 0) {
     startUploadCleanup({ dir: uploadDir, ttlMs, intervalMs });
   }
+  // 「第二次交付」的每日 9 点（北京时间）成交提醒：把没成交的未付 / 预付单推成群卡片。
+  // 没有 cron 依赖——setInterval 轮询 + 按天认领（见 utils/secondDeliveryReminder 与服务里
+  // sendDailyReminder 的注释）。只在真正启动服务时拉起，被 require 进测试不会起定时器。
+  const secondDelivery = new SecondDeliveryService();
+  startSecondDeliveryReminder({ run: ({ now }) => secondDelivery.sendDailyReminder({ now }) });
   // 只监听回环地址：公网一律走 Nginx。
   //
   // 原来写的是 app.listen(port)，那会绑到 0.0.0.0（所有网卡）——等于把 Express

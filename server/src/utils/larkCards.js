@@ -737,6 +737,125 @@ const afterSalesStatusCard = ({ title, message, template = 'blue' } = {}) => ({
   elements: [{ tag: 'div', text: { tag: 'lark_md', content: text(message), text_size: 'heading' } }],
 });
 
+// ---------------------------------------------------------------------------
+// 第二次交付：每日「成交」提醒卡片
+// ---------------------------------------------------------------------------
+
+// 这条链路的动作名。机器人侧按**销售单号 + 这个动作**分派
+// （见 LarkMvpService.handleCardAction），不走"草稿"那条路。
+const SECOND_DELIVERY_ACTION = 'confirm_second_delivery';
+
+// 卡片上写给门店看的时间必须是上海时间（线上服务器是 UTC，直接取 ISO 会差 8 小时）。
+const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
+const shanghaiClock = (value) => {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Date(date.getTime() + SHANGHAI_OFFSET_MS).toISOString().slice(11, 16);
+};
+
+const secondDeliveryOrderLines = (order = {}) => {
+  const lines = [`${text(order.orderNo) || '（无单号）'}　·　${text(order.tradeTypeLabel) || '未付 / 预付'}`];
+  const facts = [];
+  if (Number(order.pendingAmount) > 0) facts.push(`未收 ${yuanText(order.pendingAmount)}`);
+  if (Number(order.pendingDeliveryQuantity) > 0) {
+    facts.push(`未交付 ${Number(order.pendingDeliveryQuantity)}/${Number(order.quantity) || 0} 双`);
+  }
+  // 钱货看着都齐了却还在候选里（进度没到「已完成」）：如实写"待核对"，不写一个像成功的说法。
+  if (!facts.length) facts.push('待核对');
+  lines.push(facts.join('　·　'));
+  return lines.join('\n');
+};
+
+/**
+ * 每日成交提醒卡片：列未付 / 预付且尚未完成履约的单，每单下面一行「成交」按钮。
+ *
+ * 为什么按钮上要带收款方式（业务规则只说"带「成交」按钮"）：
+ * 补收款必须写明这笔钱是怎么收的——「交易方式」是关联字段，
+ * collectPendingReceipt 拿不到方式会直接报错；工作台那条路也是让人在表单里选。
+ * 群里只有一次点击，所以把收款方式放进按钮取值：点「成交·微信」就是"这笔记微信收到"。
+ * 换成不带方式的单个「成交」按钮，后端只能替她猜一个收款方式写进账里，
+ * 那是**写错业务事实**，比多点一个带方式的按钮严重得多。
+ * 只配了一种收款方式时按钮就只写「成交」（没有第二种可选，不必重复写方式）。
+ *
+ * `actionButton` 的第三个参数是 draft_id：这里传空串，是为了让这条链路在机器人侧
+ * 落到"按销售单号分派"那一支，而不是被当成某个销售草稿的卡片。
+ *
+ * `dayKey` 会写进按钮取值（`reminder_day`）：点完之后要拿"当初发出去的那张卡"来改成
+ * 「已成交」，而卡片是跟着当天的认领记录落盘的，得靠这个日期键把它取回来（见
+ * SecondDeliveryService.markCardSettled）。
+ */
+const secondDeliveryCard = ({ orders = [], methods = [], dayKey = '' } = {}) => {
+  const elements = [];
+  orders.forEach((order) => {
+    elements.push({
+      tag: 'div',
+      text: { tag: 'lark_md', content: secondDeliveryOrderLines(order), text_size: 'heading' },
+    });
+    elements.push(...buttonRows(methods.map((method) => actionButton(
+      methods.length === 1 ? '成交' : `成交·${method}`, SECOND_DELIVERY_ACTION, '',
+      'primary', { sales_entry_record_id: order.salesEntryRecordId, method, reminder_day: dayKey },
+    ))));
+  });
+  return {
+    config: { wide_screen_mode: true },
+    header: { template: 'blue', title: { tag: 'plain_text', content: '待成交：未付 / 预付' } },
+    elements: elements.length
+      ? elements
+      : [{ tag: 'div', text: { tag: 'lark_md', content: '今天没有待成交的单', text_size: 'heading' } }],
+  };
+};
+
+// 「已成交」那一行灰字。为什么是"换掉按钮"而不是"禁用按钮"：
+// 飞书卡片按钮**没有 disabled 参数**，唯一能表达"这里点不了了"的办法，
+// 就是让那个位置不再有按钮、只剩一句说明。
+const secondDeliverySettledElement = ({ settledAt } = {}) => {
+  const clock = shanghaiClock(settledAt || Date.now());
+  return {
+    tag: 'div',
+    text: { tag: 'lark_md', content: `✅ 已成交${clock ? `（${clock} 点击）` : ''}`, text_size: 'note' },
+  };
+};
+
+/**
+ * 把「已成交」那一单的按钮整段换成上面那行灰字，**卡片其余内容一个字都不动**
+ * （别的单的明细行和按钮原样保留——一张卡里可能有好几单，点掉一单不能连累其他单）。
+ *
+ * patch 是整张卡替换，所以调用方必须拿"当初发出去的那张卡"进来改（见
+ * SecondDeliveryService.markCardSettled），不能在这里重新渲染一张——重渲染会把
+ * 期间已经变化的单也一起改掉。
+ *
+ * 返回 null 表示这张卡里没有这一单的按钮（卡片不是这张 / 已经换过了），
+ * 调用方据此跳过 patch：不要拿一张没变的卡去打一次无意义的 patch。
+ */
+const settleSecondDeliveryOrder = (card, { salesEntryRecordId, settledAt } = {}) => {
+  const target = String(salesEntryRecordId || '');
+  if (!card || !target) return null;
+  const next = JSON.parse(JSON.stringify(card));
+  const elements = [];
+  let replaced = false;
+  for (const element of next.elements || []) {
+    // 按 column_set/action 结构找按钮，规则与 keepOnlyCardButton 一致。
+    const buttons = element.tag === 'column_set'
+      ? (element.columns || []).flatMap((column) => column.elements || [])
+        .filter((child) => child.tag === 'button')
+      : [];
+    const belongsToOrder = buttons.some((button) => button.value?.action === SECOND_DELIVERY_ACTION &&
+      String(button.value?.sales_entry_record_id || '') === target);
+    if (!belongsToOrder) {
+      elements.push(element);
+      continue;
+    }
+    // 收款方式超过 3 个时这一单有多行按钮：只在第一行的位置放一行灰字，其余整行丢掉。
+    if (!replaced) {
+      elements.push(secondDeliverySettledElement({ settledAt }));
+      replaced = true;
+    }
+  }
+  if (!replaced) return null;
+  next.elements = elements;
+  return next;
+};
+
 module.exports = {
   // 重试卡片收窄按钮用（按 column_set/action 结构遍历，见 keepOnlyCardButton）。
   keepOnlyCardButton,
@@ -755,4 +874,8 @@ module.exports = {
   afterSalesStatusCard,
   // 「退现金 / 存为预存额度」这两个说法只有一处定义（接线层回的那句追问也用它）。
   afterSalesSettlementLabel,
+  secondDeliveryCard,
+  // 「成交」点完之后把那一单的按钮换成灰字说明（只在成交成功后调，见 secondDeliveryService）。
+  settleSecondDeliveryOrder,
+  SECOND_DELIVERY_ACTION,
 };
