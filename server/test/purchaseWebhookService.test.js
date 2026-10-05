@@ -151,7 +151,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // 写卡片、等批次窗口，耗时取决于机器。固定 sleep 在慢机器上会读到 processing
 // 这类中间状态（CI 上就这样失败过），所以统一改为轮询到任务进入稳定状态。
 const SETTLED_STATUSES = ['awaiting_confirmation', 'failed', 'cancelled', 'posted', 'completed'];
-const waitForTask = async (store, taskId, statuses = SETTLED_STATUSES, { attempts = 300, pause = 10 } = {}) => {
+const waitForTask = async (store, taskId, statuses = SETTLED_STATUSES, { attempts = 1500, pause = 10 } = {}) => {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const task = await store.get(taskId);
     if (task && statuses.includes(task.status)) return task;
@@ -161,7 +161,7 @@ const waitForTask = async (store, taskId, statuses = SETTLED_STATUSES, { attempt
   throw new Error(`等待任务进入 ${statuses.join('/')} 超时，当前状态：${last?.status}`);
 };
 
-const waitFor = async (label, check, { attempts = 300, pause = 10 } = {}) => {
+const waitFor = async (label, check, { attempts = 1500, pause = 10 } = {}) => {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (await check()) return;
     await wait(pause);
