@@ -737,6 +737,62 @@ const afterSalesStatusCard = ({ title, message, template = 'blue' } = {}) => ({
   elements: [{ tag: 'div', text: { tag: 'lark_md', content: text(message), text_size: 'heading' } }],
 });
 
+// ---------------------------------------------------------------------------
+// 第二次交付：每日「成交」提醒卡片
+// ---------------------------------------------------------------------------
+
+// 这条链路的动作名。机器人侧按**销售单号 + 这个动作**分派
+// （见 LarkMvpService.handleCardAction），不走"草稿"那条路。
+const SECOND_DELIVERY_ACTION = 'confirm_second_delivery';
+
+const secondDeliveryOrderLines = (order = {}) => {
+  const lines = [`${text(order.orderNo) || '（无单号）'}　·　${text(order.tradeTypeLabel) || '未付 / 预付'}`];
+  const facts = [];
+  if (Number(order.pendingAmount) > 0) facts.push(`未收 ${yuanText(order.pendingAmount)}`);
+  if (Number(order.pendingDeliveryQuantity) > 0) {
+    facts.push(`未交付 ${Number(order.pendingDeliveryQuantity)}/${Number(order.quantity) || 0} 双`);
+  }
+  // 钱货看着都齐了却还在候选里（进度没到「已完成」）：如实写"待核对"，不写一个像成功的说法。
+  if (!facts.length) facts.push('待核对');
+  lines.push(facts.join('　·　'));
+  return lines.join('\n');
+};
+
+/**
+ * 每日成交提醒卡片：列未付 / 预付且尚未完成履约的单，每单下面一行「成交」按钮。
+ *
+ * 为什么按钮上要带收款方式（业务规则只说"带「成交」按钮"）：
+ * 补收款必须写明这笔钱是怎么收的——「交易方式」是关联字段，
+ * collectPendingReceipt 拿不到方式会直接报错；工作台那条路也是让人在表单里选。
+ * 群里只有一次点击，所以把收款方式放进按钮取值：点「成交·微信」就是"这笔记微信收到"。
+ * 换成不带方式的单个「成交」按钮，后端只能替她猜一个收款方式写进账里，
+ * 那是**写错业务事实**，比多点一个带方式的按钮严重得多。
+ * 只配了一种收款方式时按钮就只写「成交」（没有第二种可选，不必重复写方式）。
+ *
+ * `actionButton` 的第三个参数是 draft_id：这里传空串，是为了让这条链路在机器人侧
+ * 落到"按销售单号分派"那一支，而不是被当成某个销售草稿的卡片。
+ */
+const secondDeliveryCard = ({ orders = [], methods = [] } = {}) => {
+  const elements = [];
+  orders.forEach((order) => {
+    elements.push({
+      tag: 'div',
+      text: { tag: 'lark_md', content: secondDeliveryOrderLines(order), text_size: 'heading' },
+    });
+    elements.push(...buttonRows(methods.map((method) => actionButton(
+      methods.length === 1 ? '成交' : `成交·${method}`, SECOND_DELIVERY_ACTION, '',
+      'primary', { sales_entry_record_id: order.salesEntryRecordId, method },
+    ))));
+  });
+  return {
+    config: { wide_screen_mode: true },
+    header: { template: 'blue', title: { tag: 'plain_text', content: '待成交：未付 / 预付' } },
+    elements: elements.length
+      ? elements
+      : [{ tag: 'div', text: { tag: 'lark_md', content: '今天没有待成交的单', text_size: 'heading' } }],
+  };
+};
+
 module.exports = {
   // 重试卡片收窄按钮用（按 column_set/action 结构遍历，见 keepOnlyCardButton）。
   keepOnlyCardButton,
@@ -755,4 +811,6 @@ module.exports = {
   afterSalesStatusCard,
   // 「退现金 / 存为预存额度」这两个说法只有一处定义（接线层回的那句追问也用它）。
   afterSalesSettlementLabel,
+  secondDeliveryCard,
+  SECOND_DELIVERY_ACTION,
 };

@@ -12,6 +12,13 @@ const amount = (value) => {
 };
 const normalizedStatus = (value) => ['已收清', '已结清'].includes(value) ? '已收款' : value || '已收款';
 
+// 「收款明细.交易方向」是单选（收入 / 退回），和售后链路写「退回」用的是同一套选项。
+//
+// 为什么只写「收入」这一种：本次只做正常收款。钱真到账才算一次收款事实，
+// 所以只在状态落成「已收款」的那一刻写；「未收款」「待平台结算」**刻意留空**——
+// 钱还没到，方向还没发生，提前写一个「收入」等于把没收到的钱记成已收。
+const MONEY_DIRECTION_INCOME = '收入';
+
 class PaymentService {
   constructor({ gateway, references } = {}) {
     if (!gateway) throw new Error('PaymentService requires gateway');
@@ -40,6 +47,8 @@ class PaymentService {
       amount: paid,
       status,
       receivedAt: status === '已收款' ? Number(receivedAt ?? Date.now()) : undefined,
+      // 只有真收到钱的那一条才有方向；未收款不写（见 MONEY_DIRECTION_INCOME 的注释）。
+      ...(status === '已收款' ? { tradeDirection: MONEY_DIRECTION_INCOME } : {}),
     });
   }
 
@@ -61,6 +70,8 @@ class PaymentService {
     return this.gateway.update('paymentRecord', recordId, {
       status: '已收款', method: relation(paymentMethod.recordId),
       receivedAt: timestamp,
+      // 「未收款 → 已收款」这一下就是钱到账的那一下：补齐方向（原来留空）。
+      tradeDirection: MONEY_DIRECTION_INCOME,
     });
   }
 
@@ -74,7 +85,10 @@ class PaymentService {
     const status = textValue(record.fields?.[fields.status]);
     if (status === '已收款' || status === '已收清') return record;
     if (status !== '待平台结算') throw new Error('只有待平台结算的收款可结清');
-    return this.gateway.update('paymentRecord', recordId, { status: '已收款', receivedAt: timestamp });
+    // 平台结算到账同样是"钱收到了"，方向这时才补上（待平台结算期间一直留空）。
+    return this.gateway.update('paymentRecord', recordId, {
+      status: '已收款', receivedAt: timestamp, tradeDirection: MONEY_DIRECTION_INCOME,
+    });
   }
 
   // First confirmation may contain multiple payment methods. Match existing
