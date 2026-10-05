@@ -169,6 +169,19 @@ const waitFor = async (label, check, { attempts = 1500, pause = 10 } = {}) => {
   throw new Error(`等待「${label}」超时`);
 };
 
+// 批次聚合窗口：同一个「报货批次号」的报单按「最后一条到达后重置窗口」合并成一次处理。
+//
+// ⚠️ 这个窗口不能设得太小。窗口一到点，`enqueueBatch` 就把该批次的队列删掉；此后才入队
+// 的记录会另起一个窗口，于是同一个批次会**并发跑两次** `processSupplierBatch`。两次都在
+// 对方写「已生成申请」之前读表，采购申请就会写重（实测 4 条而不是 2 条，出图也变成 4 张）。
+//
+// CI 上实测「第 2 条报单走到 enqueueBatch」比第 1 条晚约 175ms（慢 runner 上每个任务状态
+// 落盘要 150~330ms），原来的 20ms 挡不住，所以 CI 会红、本地全绿。这里留一个数量级以上的
+// 余量，保证两条记录一定落在同一个窗口里。
+//
+// （单条报单的用例不受这个竞态影响，继续用 20ms 保持快速。）
+const BATCH_WINDOW_MS = 2000;
+
 // ─── 供应商报单链路（免确认 → 按供应商出图 → 发图 → 写回附件）───
 
 // 出图要用的货品信息：货号 / 颜色（关联字段会带回被关联记录的主字段文本）/ 编号 / 供应商。
@@ -315,7 +328,7 @@ test('同一个供应商的多条明细合并成一张图', async () => {
     references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
     recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => (text.includes('36') ? [{ size: 36, quantity: 2 }] : [{ size: 37, quantity: 1 }]) }),
   });
-  service.BATCH_WAIT_MS = 20;
+  service.BATCH_WAIT_MS = BATCH_WINDOW_MS;
   const first = await service.accept('supplier-report', 'rep_merge_1');
   await service.accept('supplier-report', 'rep_merge_2');
   const task = await waitForTask(store, first.taskId, ['posted', 'failed']);
@@ -349,7 +362,7 @@ test('多个供应商：每个供应商各出一张图、各发一条说明', as
     }),
     recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => (text.includes('36') ? [{ size: 36, quantity: 2 }] : [{ size: 37, quantity: 1 }]) }),
   });
-  service.BATCH_WAIT_MS = 20;
+  service.BATCH_WAIT_MS = BATCH_WINDOW_MS;
   const first = await service.accept('supplier-report', 'rep_two_1');
   await service.accept('supplier-report', 'rep_two_2');
   await waitForTask(store, first.taskId, ['posted', 'failed']);
@@ -1420,7 +1433,7 @@ test('同一个批次的多条报单合成一个批次任务，全部标记已�
     references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
     recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => (text.includes('36') ? [{ size: 36, quantity: 2 }] : [{ size: 37, quantity: 1 }]) }),
   });
-  service.BATCH_WAIT_MS = 20;
+  service.BATCH_WAIT_MS = BATCH_WINDOW_MS;
   const first = await service.accept('supplier-report', 'rep_c1');
   await service.accept('supplier-report', 'rep_c2');
   const task = await waitForTask(store, first.taskId, ['posted', 'failed']);
