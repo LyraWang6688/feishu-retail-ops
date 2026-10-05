@@ -16,6 +16,7 @@ const doubaoService = require('./doubaoService');
 const { purchaseArrivalDetailCard, purchaseStatusCard } = require('../utils/larkCards');
 const { InventoryService } = require('./inventoryService');
 const { buildPurchaseQuantities } = require('./purchaseQuantityPolicy');
+const { buildArrivalCostPlan, isBlankCost, costValueOf } = require('./arrivalCostPolicy');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { renderPurchaseRequestPng } = require('./purchaseRequestImageService');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
@@ -895,20 +896,30 @@ class PurchaseWebhookService {
    * 匹配不到货品时**自动建档**再返回新记录：货已经到了，不能因为资料没录就把它挡在门外
    * （产品负责人确认过的口径）。只填确定知道的字段，其余留空由她在飞书里补。
    *
-   * 「货号对应多个颜色」这种歧义不走建档——那是识别抖动，建档只会造出重复货品。
+   * 「货号+颜色命中多条」（男/女鞋常共用货号）不再当错误：匹配器取第一条，这里把
+   * 条数带回草稿，卡片上标注"匹配到 N 条、已取哪条"，她看得见就行。
    */
   async resolveArrivalProduct(raw, context) {
     try {
       // 用包过超时的 references：这一步每行都会全表扫一遍货品，是到货链路里
       // 最容易挂住的地方（见构造函数的 arrivalReferences 注释）。
       const product = await this.arrivalReferences.resolveProduct({ itemNo: raw.item_no, color: raw.color });
-      return { product, created: null };
+      const ambiguousCount = Number(product.ambiguousCount) || 0;
+      const ambiguous = ambiguousCount > 1
+        ? {
+          count: ambiguousCount,
+          color: product.selectedColor || raw.color || '',
+          number: product.selectedNumber || '',
+        }
+        : null;
+      return { product, created: null, ambiguous };
     } catch (error) {
       if (error.code !== 'PRODUCT_NOT_FOUND') throw error;
       const created = await this.ensureArrivalProduct(raw, context);
       const productTable = this.gateway.table('product');
       return {
         created,
+        ambiguous: null,
         product: {
           recordId: created.recordId,
           record: created.record || { record_id: created.recordId, fields: { [productTable.fields.itemNo]: raw.item_no } },
@@ -922,6 +933,10 @@ class PurchaseWebhookService {
    *
    * 建档是远端写入，按项目约定必须把已经写出的 record_id 落盘：任务失败后重收 webhook
    * 会重跑一次到货解析，那时飞书列表可能还没读到刚建的货品，只靠"再查一遍"不足以防重复。
+   *
+   * 成本也一并落盘（arrival_cost_written）：写成本本身是**幂等赋值**，重复写同一个值不会
+   * 写坏数据，但"结果未知"（写完还没来得及记录就失败）不能当成"没写过"再走一遍决策——
+   * 尤其不能在第二次重试时把它当成"已有成本"而发一条误导的 warn。
    */
   async persistArrivalCreation(context) {
     if (!context.taskId) return;
@@ -929,6 +944,7 @@ class PurchaseWebhookService {
       await this.store.update(context.taskId, {
         arrival_created_products: context.createdLog,
         arrival_created_colors: context.createdColors,
+        arrival_cost_written: context.costWritten,
       });
     } catch (error) {
       logWarn('purchase.arrival.created_product_persist_failed', { task_id: context.taskId, error: error.message });
@@ -941,6 +957,7 @@ class PurchaseWebhookService {
   buildArrivalCreationContext(task) {
     const products = Array.isArray(task?.arrival_created_products) ? task.arrival_created_products : [];
     const colors = Array.isArray(task?.arrival_created_colors) ? task.arrival_created_colors : [];
+    const costWritten = Array.isArray(task?.arrival_cost_written) ? task.arrival_cost_written : [];
     const context = {
       taskId: task?.task_id || '',
       productCache: new Map(),
@@ -948,6 +965,11 @@ class PurchaseWebhookService {
       createdColors: colors.map((item) => ({ ...item })),
       createdLog: products.map((item) => ({ ...item })),
       colorTableLoaded: false,
+      // 本次到货的价格计划（item_no → 可信单价 / 冲突标记），processArrival 里填充。
+      arrivalCostPlan: null,
+      // 已经处理过成本的货品（写成功，或已判定"不覆盖"）：重试时直接跳过，不重复写。
+      costApplied: new Map(costWritten.map((item) => [item.product_record_id, item.cost])),
+      costWritten: costWritten.map((item) => ({ ...item })),
     };
     // 上次已经建好的颜色先占位：重试时同一个颜色名不会再建第二条。
     for (const item of context.createdColors) {
@@ -1001,9 +1023,12 @@ class PurchaseWebhookService {
   /**
    * 给识别到的新品建一条「货品信息」，然后原样返回新记录。
    *
-   * 只写确定知道的字段：货号、颜色（关联）、供应商（关联，找不到就留空）、类别（A/B，认不出就留空）。
+   * 只写确定知道的字段（产品负责人 2026-10-05 定稿的建档内容）：
+   * 货号、颜色（关联）、供应商（关联，找不到就留空）、类别（识别出男/女才填，
+   * 认不出留空——默认成 A 会把女鞋写进男鞋）、成本（识别到价格才填，识别不出留空）。
    * 刻意不写「编号」「货品状态」「缺失信息说明」——这三个在飞书里是公式字段，
    * 写进去会直接 FieldNameNotFound，而且它们的值本来就该由表自己算。
+   * 也刻意不写「单价」：建档时看到的价格是采购成本，不是销售单价。
    */
   async ensureArrivalProduct(raw, context) {
     const itemNo = String(raw.item_no || '').trim();
@@ -1038,6 +1063,15 @@ class PurchaseWebhookService {
     const category = genderToCategory(raw.gender || raw.category);
     if (category) values.category = category;
 
+    // 成本：新品建档顺带把成本写上（产品负责人要求：货号/颜色/供应商/类别/成本一起落）。
+    // 合并口径（#63「识别到价格就写成本」× #64「可信价格才写」）：
+    //   价格来源统一走 buildArrivalCostPlan（它已按货号汇总、并把 unit_cost/unitCost/cost/price
+    //   几种模型写法都算进来）；同货号多行价格不一致（conflict）→ plan 里没有可用 cost，不写。
+    // 建档只会新建记录，不存在覆盖已有成本的问题——命中的老货品一律原样使用、不改动。
+    const costPlanEntry = context.arrivalCostPlan?.get(itemNo);
+    const createdAtCost = costPlanEntry && !costPlanEntry.conflict ? costPlanEntry.cost : null;
+    if (createdAtCost !== null) values.cost = createdAtCost;
+
     const created = await this.gateway.create('product', values);
     const recordId = created?.recordId || created?.record_id || '';
     if (!recordId) throw new Error(`新品建档失败：${itemNo}${color}`);
@@ -1057,6 +1091,15 @@ class PurchaseWebhookService {
     context.createdLog.push({
       item_no: itemNo, color, product_record_id: recordId, supplier: supplierName, color_created: entry.color_created,
     });
+    // 建档时已经把成本写进去了：登记成"已处理"，processArrival 里的 applyArrivalCost
+    // 就不会再对它走一次"成本为空 → 写"的判断（重试也不会）。
+    if (createdAtCost !== null) {
+      context.costApplied.set(recordId, createdAtCost);
+      context.costWritten.push({ item_no: itemNo, color, product_record_id: recordId, cost: createdAtCost, source: 'create' });
+      logInfo('purchase.arrival.cost_written', {
+        item_no: itemNo, color, product_record_id: recordId, cost: createdAtCost, source: 'create',
+      });
+    }
     // 先落盘再回读：哪怕回读或后续步骤失败，重试也能凭这条记录跳过重复建档。
     await this.persistArrivalCreation(context);
 
@@ -1073,6 +1116,72 @@ class PurchaseWebhookService {
       missing: entry.gaps.missing, missing_sample_image: entry.gaps.missingSampleImage,
     });
     return entry;
+  }
+
+  /**
+   * 把到货单识别到的价格写进货品「成本」。
+   *
+   * 产品负责人的口径：「如果有的到货单上有价格的，那就是成本。」
+   * 单据上的「销售价 / 单价」列 → 「货品信息」的「成本」字段（number 字段，直接写数字）。
+   *
+   * 写入规则刻意保守（谁改这里都要先读一遍）：
+   *   1. 只在成本**为空**时写（含数字 0 都算已有值，见 arrivalCostPolicy.isBlankCost）；
+   *   2. 已有成本 → 不覆盖，记一条 warn（带 货号 / 已有值 / 识别到的值）；
+   *   3. 同一货号多行价格不一致 → 整条不写（conflict 在 processArrival 里统一记 warn）；
+   *   4. 价格转不成正数 → 不写（plan 里根本没有这个货号）；
+   *   5. 重试不重复写：写成功的货品记进 context.costApplied 并落盘，重试直接跳过。
+   *
+   * 写失败**不抛错**：成本写不进去不该把整批到货卡住（货已经到了，入库优先）；
+   * 记 warn 后由下一次重试再试（赋值幂等，重复写同一个值无害）。
+   *
+   * @returns {Promise<{applied: boolean, reason: string}|null>} 只用于日志/测试断言
+   */
+  async applyArrivalCost(raw, product, productTable, context) {
+    const itemNo = String(raw?.item_no || '').trim();
+    const entry = context.arrivalCostPlan?.get(itemNo);
+    if (!entry || entry.conflict || entry.cost === null) return null;
+    const recordId = product.recordId;
+    if (!recordId) return null;
+
+    // 本次（或上次重试）已经处理过这条货品：直接跳过，不重复写、也不再打日志。
+    if (context.costApplied.has(recordId)) return { applied: false, reason: 'already_applied' };
+
+    const existing = product.record?.fields?.[productTable.fields.cost];
+    if (!isBlankCost(existing)) {
+      // 已有成本一律不覆盖；只有「值真的不一样」才 warn。
+      // 值相同说明是上一次重试已经写成功了（这就是为什么必须先记账再往下走）。
+      if (costValueOf(existing) === entry.cost) {
+        context.costApplied.set(recordId, entry.cost);
+        logInfo('purchase.arrival.cost_already_set', {
+          item_no: itemNo, product_record_id: recordId, cost: entry.cost,
+        });
+      } else {
+        context.costApplied.set(recordId, entry.cost);
+        logWarn('purchase.arrival.cost_kept', {
+          item_no: itemNo,
+          product_record_id: recordId,
+          existing_cost: textValue(existing),
+          recognized_cost: entry.cost,
+          reason: '货品已有成本，识别到的到货单价不覆盖',
+        });
+      }
+      return { applied: false, reason: 'existing_cost' };
+    }
+
+    try {
+      await this.gateway.update('product', recordId, { cost: entry.cost });
+    } catch (error) {
+      logWarn('purchase.arrival.cost_write_failed', {
+        item_no: itemNo, product_record_id: recordId, cost: entry.cost, error: error.message,
+      });
+      return { applied: false, reason: 'write_failed' };
+    }
+
+    context.costApplied.set(recordId, entry.cost);
+    context.costWritten.push({ item_no: itemNo, color: String(raw?.color || '').trim(), product_record_id: recordId, cost: entry.cost, source: 'update' });
+    await this.persistArrivalCreation(context);
+    logInfo('purchase.arrival.cost_written', { item_no: itemNo, product_record_id: recordId, cost: entry.cost, source: 'update' });
+    return { applied: true, reason: 'written' };
   }
 
   /**
@@ -1131,9 +1240,10 @@ class PurchaseWebhookService {
       const arrivalTable = this.gateway.table('purchaseArrival');
       const batchIds = linkedRecordIds(fields[arrivalTable.fields.batch]);
       // 业务上存在「供应商直接送货、没有先走采购申请」的到货，这种记录不会选报货批次号。
-      // 没有批次号就不再报错，也不和申请比对——全部按实际到货入库，草稿里标记 direct_arrival，
-      // 卡片上写清楚"无申请直接到货"，免得她以为系统漏比对了。
-      // 选了多个批次号仍然是配置错误：无法判断该拿哪一批的申请来比对。
+      // 没有批次号就不再报错——全部按实际到货入库，草稿里标记 direct_arrival，
+      // 卡片上写清楚"无申请直接到货"，免得她以为系统漏了什么。
+      // 选了多个批次号仍然是配置错误：无法判断该把入库记录挂到哪一批的申请上。
+      // 采购差异比对已经移除（见下方草稿处的说明），这里读申请只为了挂关联和回写到货状态。
       if (batchIds.length > 1) throw new Error('采购到货只能选择一个报货批次号');
       const directArrival = batchIds.length === 0;
       const requestTable = this.gateway.table('purchaseRequest');
@@ -1156,6 +1266,20 @@ class PurchaseWebhookService {
       // 新品建档的共享状态：同一次到货里同一个「货号+颜色」只建一条货品，同名颜色只建一条颜色。
       // 上一次重试已经建过的记录从这里恢复，不会再建第二条。
       const creationContext = this.buildArrivalCreationContext(await this.store.get(taskId));
+
+      // 价格计划：从识别结果里按货号汇总可信单价（同货号价格不一致的整条不写）。
+      // 冲突在这里**只打一条 warn**，不然同一货号的每个尺码都会重复报一次。
+      creationContext.arrivalCostPlan = buildArrivalCostPlan(recognized);
+      for (const entry of creationContext.arrivalCostPlan.values()) {
+        if (!entry.conflict) continue;
+        logWarn('purchase.arrival.cost_conflict', {
+          record_id: recordId,
+          item_no: entry.item_no,
+          prices: entry.prices,
+          reason: '同一货号在到货单上读出多个不同单价，不写成本，请人工核对',
+        });
+      }
+
       for (const raw of recognized) {
         try {
           const resolved = await this.resolveArrivalProduct(raw, creationContext);
@@ -1171,6 +1295,8 @@ class PurchaseWebhookService {
             }
             supplierName = supplierNameCache[supplierId] || supplierName;
           }
+          // 成本：只在拿到可信价格、且货品原来没有成本时写。写失败不挡住入库（见方法注释）。
+          await this.applyArrivalCost(raw, product, productTable, creationContext);
           actual.push({
             product_record_id: product.recordId,
             // 新品刚建档时「编号」公式可能还没算出来，先用「货号+颜色」把明细显示出来。
@@ -1179,9 +1305,14 @@ class PurchaseWebhookService {
             color: raw.color,
             size: Number(raw.size),
             quantity: Number(raw.quantity || 1),
+            // 单据上识别到的单件价：只用于卡片上显示、让她核对写进成本的数对不对，
+            // 入库链路（采购入库/库存）不读这个字段。没有价格时是 undefined，格子少一行。
+            unit_cost: raw.unit_cost,
             supplier: supplierName,
             // 草稿里记下哪些是刚建档的新品，卡片据此单独讲清楚。
             created_product: Boolean(resolved.created),
+            // 该货号+颜色在货品表里命中多条时，记下「匹配到 N 条、取了哪条」，卡片要标注。
+            ambiguous_match: resolved.ambiguous,
           });
         } catch (error) {
           unrecognized.push({ ...raw, error: error.message });
@@ -1200,14 +1331,16 @@ class PurchaseWebhookService {
       for (const entry of createdProducts) {
         if (!entry.gaps) entry.gaps = productInfoGaps(entry.record, productTable);
       }
-      // 直接到货没有申请可比：不生成差异行，否则每一行都会被算成「多N」，反而误导她。
-      const differences = directArrival ? [] : await this.compareArrival(requests, groupedActual, requestTable);
+      // 采购差异比对已按产品负责人要求整体移除（未来架构：到货在采购申请基础上修改，
+      // 差异比对不再需要；产品负责人 2026-10-05 确认）。草稿里仍然保留 requests，
+      // 因为入库时要把每条采购入库记录挂回对应的采购申请，并回写申请的到货状态。
+      const operatorOpenId = this.recordOperator(record, arrivalTable.fields.inspector);
       const draft = {
         arrival_record_id: recordId,
         direct_arrival: directArrival,
         batch_record_id: batchIds[0] || '',
         batch_no: batchNo,
-        operator_open_id: operatorOpenId, requests, actual: groupedActual, differences, unrecognized,
+        operator_open_id: operatorOpenId, requests, actual: groupedActual, unrecognized,
         // 新品自动建档的结果：卡片要告诉她建了哪些、颜色表补了哪条、还差什么、去哪补。
         created_products: createdProducts.map((entry) => ({
           product_record_id: entry.recordId,
@@ -1226,8 +1359,10 @@ class PurchaseWebhookService {
       await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别成功', confirmStatus: '待确认' });
       await this.store.update(taskId, { recognized, draft, status: 'awaiting_confirmation' });
       await this.sendCard(operatorOpenId, purchaseArrivalDetailCard(taskId, draft));
-      logInfo("purchase.arrival.card.sent", { record_id: recordId, task_id: taskId, direct_arrival: directArrival, arrival_type: isDocument ? '到货单' : '鞋盒', item_count: actual.length, unrecognized_count: unrecognized.length, difference_count: differences.length, created_product_count: createdProducts.length, created_color_count: creationContext.createdColors.length });
-      return { status: 'awaiting_confirmation', item_count: actual.length, difference_count: differences.length, created_product_count: createdProducts.length };
+      // 采购差异比对已随 #63 移除：这里不再有 difference_count；
+      // #64 的成本写入计数保留，便于线上看这一批到底写了几条成本。
+      logInfo("purchase.arrival.card.sent", { record_id: recordId, task_id: taskId, direct_arrival: directArrival, arrival_type: isDocument ? '到货单' : '鞋盒', item_count: actual.length, unrecognized_count: unrecognized.length, created_product_count: createdProducts.length, created_color_count: creationContext.createdColors.length, cost_written_count: creationContext.costWritten.length });
+      return { status: 'awaiting_confirmation', item_count: actual.length, created_product_count: createdProducts.length };
     } catch (error) {
       // 只记日志再抛出：把记录推出「识别中」和通知验收人统一交给 process() 的
       // failArrival 一处完成（见那里的注释），避免同一次失败写两遍状态、发两遍消息。
@@ -1238,41 +1373,22 @@ class PurchaseWebhookService {
     }
   }
 
-  async compareArrival(requests, actual, requestTable) {
-    const map = new Map();
-    const key = (productId, size) => `${productId}|${size}`;
+  /**
+   * 在草稿保存的采购申请明细里，找「同一货品 + 同一尺码」的那一条。
+   *
+   * 只用来把采购入库记录的「采购申请」关联字段挂回去（以及回写到货状态用的匹配）。
+   * 原来的 compareArrival 差异比对已按产品负责人要求整体移除（未来架构：到货在采购申请
+   * 基础上修改，差异比对不再需要；产品负责人 2026-10-05 确认），这里只保留它当时顺手
+   * 提供的 request_record_id 语义：同一 货品+尺码 取第一条申请行。
+   */
+  async findRequestRowForInbound(requests, productRecordId, size, requestTable) {
     for (const row of requests) {
       const productId = linkedRecordIds(row.fields?.[requestTable.fields.product])[0];
-      if (!productId) continue;
+      if (productId !== productRecordId) continue;
       const resolvedSize = await this.getSizeReferences().resolveLinkedCell(row.fields?.[requestTable.fields.size]);
-      const item = map.get(key(productId, resolvedSize.size)) || {
-        product_record_id: productId,
-        size: resolvedSize.size,
-        requested: 0,
-        actual: 0,
-        request_record_id: row.record_id,
-        product_number: '',
-      };
-      item.requested += number(row.fields?.[requestTable.fields.quantity]);
-      map.set(key(productId, item.size), item);
+      if (Number(resolvedSize.size) === Number(size)) return row;
     }
-    for (const row of actual) {
-      const item = map.get(key(row.product_record_id, row.size)) || {
-        product_record_id: row.product_record_id,
-        size: row.size,
-        requested: 0,
-        actual: 0,
-        request_record_id: '',
-        product_number: row.product_number,
-      };
-      item.actual += row.quantity;
-      item.product_number = item.product_number || row.product_number;
-      map.set(key(row.product_record_id, item.size), item);
-    }
-    return [...map.values()].map((item) => {
-      const difference = item.actual - item.requested;
-      return { ...item, label: difference === 0 ? '一致' : difference > 0 ? `多${difference}` : `少${Math.abs(difference)}` };
-    });
+    return null;
   }
 
 
@@ -1568,8 +1684,9 @@ class PurchaseWebhookService {
         }
         continue;
       }
-      const match = (arrival.differences || []).find(
-        (row) => row.product_record_id === item.product_record_id && Number(row.size) === Number(item.size)
+      // 差异比对已移除；这里只找同货品+尺码的申请行，把入库记录挂回对应的采购申请。
+      const requestRow = await this.findRequestRowForInbound(
+        arrival.requests || [], item.product_record_id, item.size, requestTable,
       );
       const inbound = await this.gateway.create('purchaseInbound', {
         product: relation(item.product_record_id),
@@ -1577,7 +1694,7 @@ class PurchaseWebhookService {
         quantity: item.quantity,
         behavior: relation(purchaseInboundBehaviorId),
         batch: relation(arrival.arrival_record_id),
-        supplierOrder: match?.request_record_id ? relation(match.request_record_id) : undefined,
+        supplierOrder: requestRow?.record_id ? relation(requestRow.record_id) : undefined,
         inboundAt: Date.now(),
       });
       created.push(inbound.recordId);
