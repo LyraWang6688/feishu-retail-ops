@@ -174,6 +174,26 @@ const waitForSettled = async (store, taskIds, expected = ['posted', 'failed', 'c
   return tasks;
 };
 
+// ⚠️ 批次链路上「status=posted」**不等于**「跑完了」。
+//
+// confirmPurchaseRequest 写完采购申请后就把任务置成 posted（这是有意的：让重复投递
+// 立刻被幂等守卫挡掉，不再发第二遍图），之后还要出图、发图、把附件写回记录，最后才由
+// process() 把 result 落盘。所以「处理完了」的唯一可靠判据是**result 已落盘**：
+// 只等 status=posted 会在慢机器上读到半成品状态（status 已落盘、result 还没有），
+// CI 上就是这样挂的——TypeError: Cannot read properties of undefined (reading 'status')。
+// failed 是唯一的例外：它是 process() 的收尾写入，本来就没有 result。
+const isProcessed = (task) => Boolean(task) && (task.result !== undefined || task.status === 'failed');
+
+const waitForProcessed = async (store, taskIds) => {
+  const ids = Array.isArray(taskIds) ? taskIds : [taskIds];
+  let tasks = [];
+  await waitFor('任务跑完（终态且 result 已落盘）', async () => {
+    tasks = await Promise.all(ids.map((id) => store.get(id)));
+    return tasks.every(isProcessed);
+  });
+  return Array.isArray(taskIds) ? tasks : tasks[0];
+};
+
 const waitForTask = async (store, taskId, statuses = SETTLED_STATUSES, { attempts = 1500, pause = 10 } = {}) => {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const task = await store.get(taskId);
@@ -1807,7 +1827,7 @@ test('到齐（单条就够）：一条明细 1 双 + 合计数量 1 → 生成�
     recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 1 }] }),
   });
   const accepted = await service.accept('supplier-report', 'rep_ready_1');
-  const task = await waitForTask(store, accepted.taskId, ['posted', 'failed']);
+  const task = await waitForProcessed(store, accepted.taskId);
   assert.equal(task.status, 'posted');
   assert.equal(task.result.status, 'posted');
   assert.equal(task.result.batch_no, 'BATCH-READY-1');
@@ -1834,12 +1854,12 @@ test('到齐（多条累加）：两条明细 2+3 双、合计数量 5 → 两�
     service.accept('supplier-report', 'rep_ready_2b'),
   ]);
   // 两条明细各有一个任务，谁先到不影响判据：先到的那条读到"没到齐"会停下，
-  // 后到的那条看到整批齐了才处理。所以这里等的是**整批记录都到终态**这个不变量，
-  // 而不是某个任务的状态（另一个任务完全可能合法地停在「未到齐」）。
-  await waitForBatchPosted(gateway, 'BATCH-READY-2');
+  // 后到的那条看到整批齐了才处理。这里等的是**两个任务都真的跑完**（result 已落盘）——
+  // 「处理状态=已生成申请」在写采购申请那一步就落盘了，之后还要出图、写回附件、落 result，
+  // 所以只等它会在慢机器上读到半成品。
+  const tasks = await waitForProcessed(store, accepted.map((item) => item.taskId));
   // 真正跑完这一批的是**装配了草稿**的那个任务（它可能是两条里任意一条——
   // 先到的那条只拿到 2 双，判未到齐就停下了；后到的才凑够 5 双）。
-  const tasks = await Promise.all(accepted.map((item) => store.get(item.taskId)));
   const task = tasks.find((item) => Array.isArray(item.draft?.items) && item.draft.items.length > 0);
   assert.ok(task, `应有任务装配出批次草稿，实际：${JSON.stringify(tasks.map((t) => [t.status, t.result?.status]))}`);
   assert.equal(task.status, 'posted');
@@ -1870,7 +1890,7 @@ test('一条明细里含多双：3+2=5、只有 2 条明细，也判到齐（判
     service.accept('supplier-report', 'rep_pairs_a'),
     service.accept('supplier-report', 'rep_pairs_b'),
   ]);
-  const tasks = await waitForSettled(store, accepted.map((item) => item.taskId));
+  const tasks = await waitForProcessed(store, accepted.map((item) => item.taskId));
   const task = tasks.find((item) => item.result?.status === 'posted');
   assert.ok(task, `应有一个任务产出批次结果，实际：${JSON.stringify(tasks.map((t) => t.status))}`);
   assert.equal(task.status, 'posted', '3+2=5 在只有 2 条明细时也算到齐');
@@ -1898,7 +1918,7 @@ test('多报（收到的比申报的多）仍判到齐，不把批次卡死', as
     service.accept('supplier-report', 'rep_over_a'),
     service.accept('supplier-report', 'rep_over_b'),
   ]);
-  const tasks = await waitForSettled(store, accepted.map((item) => item.taskId));
+  const tasks = await waitForProcessed(store, accepted.map((item) => item.taskId));
   assert.ok(tasks.some((item) => item.status === 'posted'), `应有一个任务产出批次结果，实际：${JSON.stringify(tasks.map((t) => t.status))}`);
   assert.equal((await gateway.get('purchaseReport', 'rep_over_a')).fields.处理状态, '已生成申请');
 });
