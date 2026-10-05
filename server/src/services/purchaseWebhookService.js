@@ -32,6 +32,10 @@ const {
   arrivalRescuedNotice,
 } = require('./arrivalWaitPolicy');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
+// 采购单改成发到**群**（业务负责人：「不用再看经办人了」）。
+// 群 id 从配置读，**没有默认值**（见 config/groupPurchase 里的说明）。
+const { resolvePurchaseChatId } = require('../config/groupPurchase');
+const { PurchaseBatchLocator } = require('./purchaseBatchLocator');
 
 // 采购卡片上可以触发副作用（写采购事实）的动作。
 const PURCHASE_CARD_ACTIONS = [
@@ -208,6 +212,10 @@ class PurchaseWebhookService {
       dir: path.join(__dirname, '../../data/purchase_webhook_tasks'),
       idField: 'task_id',
     });
+    // 「发到群的那条消息 ↔ 是哪一批」的映射（C 用 parent_id 反查靠它）。
+    // ⚠️ 映射写**本地任务记录**，不写业务表：这是机器人的路由信息，
+    // 不是经营事实，不该出现在她的多维表格里。
+    this.batchLocator = options.batchLocator || new PurchaseBatchLocator({ store: options.batchLocatorStore });
     this.queues = new Map();
     // 卡片确认按 taskId 串行。重复的卡片事件（双击、飞书重投）会同时读到
     // awaiting_confirmation 并各自走一遍副作用，把同一批采购事实写两遍；
@@ -889,6 +897,40 @@ class PurchaseWebhookService {
     };
   }
 
+  /**
+   * 采购单要发到哪儿。**配置先行，没有默认值**。
+   *
+   * 返回 `{ chatId, sandbox, reason }`：
+   *   · 配了 `PURCHASE_CHAT_ID` → 发那个群；
+   *   · 没配 → sandbox=true，调用方**大声跳过并记日志**，绝不回落到私聊
+   *     （业务负责人明确说「不用再看经办人了」，偷偷发私聊会让人以为已经升级到群）。
+   *
+   * 沙箱是测试用的显式通道（构造时注入 chatId，不读环境变量）：
+   * 用 `process.env` 直接判的话，一个进程里并发跑的用例会互相污染。
+   */
+  resolvePurchaseGroupTarget(options = {}) {
+    if (options.sandboxChatId) return { chatId: options.sandboxChatId, sandbox: true, reason: 'sandbox' };
+    const chatId = resolvePurchaseChatId();
+    if (!chatId) return { chatId: '', sandbox: false, reason: 'chat_id_unconfigured' };
+    return { chatId, sandbox: false, reason: 'configured' };
+  }
+
+  /**
+   * 采购单发到群里时，@那个记录的**经办人** —— 业务负责人明确改的。
+   *
+   * 为什么不再 @所有人：她要的是"经办人知道这批单子发了"，@所有人是群骚扰；
+   * 经办人目前都在这个采购群里，所以直接在群里 @他（不再单独发私聊）。
+   *
+   * ⚠️ 拿不到经办人 open_id 时**不加 @**（只发正文）：宁可少一个提醒，也不能 @错人，
+   *    更不能退回 @所有人。调用方会同时记一条 warn 日志，便于排查"为什么没 @到"。
+   */
+  mentionOperatorText(operatorOpenId, content) {
+    const openId = String(operatorOpenId || '').trim();
+    if (!openId) return String(content || '');
+    // 飞书文本消息里的 @ 语法：`<at user_id="ou_xxx"></at>`，名字留空由客户端渲染。
+    return `<at user_id="${openId}"></at> ${content}`;
+  }
+
   async sendCard(openId, card) {
     if (!openId) throw new Error('采购记录缺少经办人 open_id，无法发送确认卡片');
     const response = await withTimeout(
@@ -1109,8 +1151,16 @@ class PurchaseWebhookService {
    *
    * ⚠️ 上传图片用的是应用身份权限 im:resource:upload（或 im:resource）。
    * 没开通时这里会以 99991672 失败，日志里带上错误码，便于线上直接定位到权限问题。
+   *
+   * `receiveIdType` 默认为 open_id（私聊那条路今天仍在用：到货异常告知）；采购单发到群时
+   * 由调用方传 `chat_id`（参数名必须跟着 receive_id 的实际类型走，不能写死 open_id）。
+   *
+   * 返回 `{ imageKey, messageId, threadId }`：采购单发到群之后要把 message_id / thread_id
+   * 记进映射，供「话题里的消息 / 引用那条消息 → 是哪一批」反查（见 PurchaseBatchLocator）。
+   * `threadId` 只有话题群（或飞书已经给这条消息开了话题）才有值，普通群是空串——
+   * 那种情况由定位器在她第一次回复时补记，不影响定位。
    */
-  async sendImage(openId, imageBuffer) {
+  async sendImage(openId, imageBuffer, receiveIdType = 'open_id') {
     if (!openId) throw new Error('采购记录缺少经办人 open_id，无法发送图片');
     let upload;
     try {
@@ -1125,20 +1175,35 @@ class PurchaseWebhookService {
     const imageKey = upload?.image_key || upload?.data?.image_key;
     if (!imageKey) throw new Error('采购申请图片上传成功但未返回 image_key');
     const response = await this.client.im.message.create({
-      params: { receive_id_type: 'open_id' },
+      params: { receive_id_type: receiveIdType },
       data: { receive_id: openId, msg_type: 'image', content: JSON.stringify({ image_key: imageKey }) },
     });
     if (response.code !== 0) throw new Error(`发送采购申请图片失败: ${response.msg} (Code: ${response.code})`);
-    return imageKey;
+    return {
+      imageKey,
+      messageId: response.data?.message_id || '',
+      threadId: response.data?.thread_id || '',
+    };
   }
 
-  async sendText(openId, content) {
+  /**
+   * 发一条纯文字。返回 `{ messageId, threadId }`。
+   *
+   * ⚠️ 返回值从"messageId 字符串"改成对象，是为了把 `thread_id` 一起带出来记映射
+   * （话题里后续消息只带 thread_id，不带 parent_id）。本类里只有采购单发到群那一个
+   * 调用点，已同步改成解构 `{ messageId, threadId }`。
+   */
+  async sendText(openId, content, receiveIdType = 'open_id') {
     if (!openId) throw new Error('采购记录缺少经办人 open_id，无法发送说明');
     const response = await this.client.im.message.create({
-      params: { receive_id_type: 'open_id' },
+      params: { receive_id_type: receiveIdType },
       data: { receive_id: openId, msg_type: 'text', content: JSON.stringify({ text: content }) },
     });
     if (response.code !== 0) throw new Error(`发送采购申请说明失败: ${response.msg} (Code: ${response.code})`);
+    return {
+      messageId: response.data?.message_id || '',
+      threadId: response.data?.thread_id || '',
+    };
   }
 
   // 同一个供应商的明细合成一张图。没有供应商的明细（历史草稿）归到一组，
@@ -1174,9 +1239,9 @@ class PurchaseWebhookService {
    * 抛出去会让 process() 把任务判成 failed、把报单记录标成「解析失败」，
    * 她会以为这批货没报上，而实际上已经报上了。
    */
-  async deliverSupplierImages(taskId, task, posting = {}) {
+  async deliverSupplierImages(taskId, task, posting = {}, options = {}) {
     try {
-      return await this.deliverSupplierImagesInner(taskId, task, posting);
+      return await this.deliverSupplierImagesInner(taskId, task, posting, options);
     } catch (error) {
       // 兜底：调用方是"采购事实已经写完"的收尾流程，这里漏出去的异常会把任务判成 failed。
       logError('purchase.request.image.delivery_failed', { task_id: taskId, error: error.message });
@@ -1184,17 +1249,39 @@ class PurchaseWebhookService {
     }
   }
 
-  async deliverSupplierImagesInner(taskId, task, posting = {}) {
+  async deliverSupplierImagesInner(taskId, task, posting = {}, options = {}) {
     const draft = task?.draft || {};
     const items = draft.items || [];
     if (!items.length) return { sent: [], failed: [] };
+    // ⚠️ 采购单**只发群**（业务负责人：「不用再看经办人了」）。
+    // operator_open_id 仍然留着——它是「这条记录是谁报的」，用于到货异常告知、
+    // 以及权限判断，不再决定采购单发到哪儿。
     const operatorOpenId = draft.operator_open_id;
-    if (!operatorOpenId) {
-      logWarn('purchase.request.image.no_operator', { task_id: taskId });
-      return { sent: [], failed: [] };
+    const target = this.resolvePurchaseGroupTarget(options);
+    if (!target.chatId) {
+      // **大声跳过**：不静默、不回落到私聊。这条日志就是排查入口——
+      // 线上看到它 = 环境变量 PURCHASE_CHAT_ID 没配，采购单已经写成但图没发出去。
+      logWarn('purchase.request.image.skipped', {
+        task_id: taskId,
+        reason: 'purchase_chat_id_unconfigured',
+        env: 'PURCHASE_CHAT_ID',
+        operator_open_id: operatorOpenId,
+        hint: '未配置采购群，采购申请已生成但图与说明未发送；配好后可按 task 补发',
+      });
+      return { sent: [], failed: [], skipped: 'chat_id_unconfigured' };
     }
     const sent = [];
     const failed = [];
+    // 发到群里的每条消息的 message_id / thread_id：记进本地映射，
+    // 供「话题里的消息 / 引用那条消息 → 是哪一批」反查。
+    const groupMessages = [];
+    if (!operatorOpenId) {
+      // 经办人没解析出来（报单记录没填/字段映射缺失）：照发正文，只是不 @ 人。
+      // 记 warn 是为了排查"为什么这批单子没 @到经办人"，绝不退回 @所有人。
+      logWarn('purchase.request.image.operator_missing', {
+        task_id: taskId, chat_id: target.chatId, hint: '未解析出经办人 open_id，这条群消息不会 @任何人',
+      });
+    }
     for (const group of this.groupItemsBySupplier(items)) {
       const supplierName = await this.resolveSupplierName(group.supplierRecordId).catch(() => '');
       const label = supplierName || '未标注供应商';
@@ -1207,11 +1294,31 @@ class PurchaseWebhookService {
           batchNo: posting.batch_no || draft.batch_no || '',
           items: group.items,
         });
-        await this.sendImage(operatorOpenId, png);
-        await this.sendText(operatorOpenId, `${label} 这批 ${rowCount} 条（共 ${totalPairs} 双），图可以直接转给供应商。`);
+        const imageResult = await this.sendImage(target.chatId, png, 'chat_id');
+        // 图单独一条、文字带 @经办人 单独一条：飞书图片消息没有正文，
+        // @ 只能挂在文字那条上（业务负责人明确要 @经办人，不再是 @所有人）。
+        const textResult = await this.sendText(
+          target.chatId,
+          this.mentionOperatorText(operatorOpenId, `${label} 这批 ${rowCount} 条（共 ${totalPairs} 双），图可以直接转给供应商。`),
+          'chat_id',
+        );
+        groupMessages.push(
+          { messageId: imageResult.messageId, threadId: imageResult.threadId },
+          { messageId: textResult.messageId, threadId: textResult.threadId },
+        );
+        // 业务负责人要据此测试：发出去那一刻就把「哪个群 / 哪一批 / 哪条消息 / 哪个话题」记全。
+        logInfo('purchase.request.image.group_sent', {
+          task_id: taskId, chat_id: target.chatId,
+          batch_no: posting.batch_no || draft.batch_no || '', supplier: label,
+          operator_open_id: operatorOpenId || '',
+          image_message_id: imageResult.messageId, image_thread_id: imageResult.threadId,
+          text_message_id: textResult.messageId, text_thread_id: textResult.threadId,
+        });
       } catch (error) {
         failed.push({ supplier: label, error: error.message });
-        logError('purchase.request.image.send_failed', { task_id: taskId, supplier: label, error: error.message });
+        logError('purchase.request.image.send_failed', {
+          task_id: taskId, supplier: label, chat_id: target.chatId, error: error.message,
+        });
         // 图没发出去就不写附件：保持"先发图、再写回"的顺序，留下人工补发的余地。
         continue;
       }
@@ -1229,7 +1336,31 @@ class PurchaseWebhookService {
       }
       sent.push(label);
     }
-    const summary = { sent, failed };
+
+    // 「这条消息 / 这条话题 ↔ 是哪一批」的映射：**发完就记**，失败只告警。
+    // 记不上只影响 C 的定位（她会被告知"认不出"），绝不能让采购单已经发出去之后
+    // 再把任务判成失败。
+    const batchNo = posting.batch_no || draft.batch_no || '';
+    for (const { messageId, threadId } of groupMessages.filter((item) => item.messageId)) {
+      try {
+        await this.batchLocator.rememberGroupMessage({
+          batchNo,
+          messageId,
+          threadId,
+          chatId: target.chatId,
+          suppliers: sent,
+          requestIds: posting.request_ids || [],
+          detailCount: items.length,
+        });
+      } catch (error) {
+        logWarn('purchase.request.image.batch_mapping_failed', {
+          task_id: taskId, message_id: messageId, chat_id: target.chatId,
+          batch_no: batchNo, error: error.message,
+        });
+      }
+    }
+
+    const summary = { sent, failed, chat_id: target.chatId };
     if (failed.length) {
       // 图没发出去（例如机器人缺 im:resource 图片上传权限）时把失败留在任务里：
       // 采购事实已经写成、任务已是 posted，重收 webhook 会被当成重复投递跳过，

@@ -17,6 +17,10 @@ const { normalizeSalesResult } = require('../src/services/doubaoService');
 
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
 
+// 群聊链路要读 LARK_BOT_OPEN_ID 判 @（config/groupPurchase）。这些用例都不碰群聊，
+// 但服务构造时会解析一次配置；给个测试值，免得每个用例都打一条
+// lark.group.bot_open_id_missing 警告把真正的失败淹掉。
+process.env.LARK_BOT_OPEN_ID = process.env.LARK_BOT_OPEN_ID || 'ou_test_bot_open_id';
 // 实时库存里的一双（与 larkMvpService.test.js 的 liveRow 同形）：
 // 单号生成需要走完"解析 → 有货 → 出确认卡片 → 确认入账"整条链路，缺一行库存就到不了入账。
 const liveRow = ({ itemNo, color = '黑', size, productRecordId }) => ({

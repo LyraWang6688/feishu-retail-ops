@@ -211,7 +211,9 @@ const createLarkEventsRouter = (options = {}) => {
   router.post('/', lark.adaptExpress(dispatcher));
   router.get('/health', (_req, res) => {
     logInfo('lark.mvp.health.checked');
-    res.json({ success: true, mode: 'p2p', schema: 'v1' });
+    // mode 现在是**事实描述**（私聊 + 群里 @ 机器人），不再是"只收私聊"的声明：
+    // 值写错会让排查的人以为群聊这条链路没上线。
+    res.json({ success: true, mode: 'p2p+group', schema: 'v1' });
   });
   return router;
 };
