@@ -24,7 +24,14 @@ const workbenchPath = path.join(__dirname, '../public/workbench');
 if (process.env.ENABLE_CORS === 'true') {
   app.use(cors());
 }
-app.use(express.json());
+// 请求体上限：**必须显式设**。
+// express.json() 默认只有 100kb，超了会**直接 413 把整个请求拒掉**——
+// 对飞书事件回调来说，这意味着「事件根本没进来」，而飞书侧以为推送成功了，
+// 于是业务**静默消失**（违反"不静默失败"这条红线）。
+// 线上确实出现过 `request entity too large` on POST /api/lark/events。
+// 飞书事件本身不大，但**加密后的密文**、以及批量 record_changed（一次可带几十条 action）
+// 都会明显变大，所以给到 2mb（足够宽松，同时仍是一个明确的上限）。
+app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use((req, res, next) => {
   const requestId = String(req.get('x-request-id') || crypto.randomUUID());
