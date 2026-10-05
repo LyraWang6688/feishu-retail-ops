@@ -24,7 +24,12 @@ const { renderPurchaseRequestPng } = require('./purchaseRequestImageService');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { IDEMPOTENCY_KEY_FIELD, createOnceByKey } = require('../infrastructure/idempotencyKey');
 const { logError, logInfo, logWarn } = require('../utils/logger');
-const { withTimeout, withTimeoutProxy } = require('../utils/withTimeout');
+const { withTimeout, withTimeoutProxy, TimeoutError } = require('../utils/withTimeout');
+const {
+  ARRIVAL_WAITING_NOTICE,
+  resolveArrivalWaitConfig,
+  arrivalRescuedNotice,
+} = require('./arrivalWaitPolicy');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
 
 // 采购卡片上可以触发副作用（写采购事实）的动作。
@@ -167,11 +172,27 @@ class PurchaseWebhookService {
     // 到货链路 2026-10-05 就是写完「识别中」之后永远等不到任何一个 await 返回。
     // 0 表示不设超时，只有极少数测试会这么用。
     this.mediaTimeoutMs = options.mediaTimeoutMs ?? 30_000; // 下载附件：101KB 的图正常 0.3 秒
-    this.recognitionTimeoutMs = options.recognitionTimeoutMs ?? 60_000; // 模型识别
+    // 模型识别这一层的超时。**必须和 doubaoService 的视觉超时用同一个来源**：
+    // 2026-10-05 线上出过事——.env 里写了 180 秒，但这一层硬编码 60 秒先开火，
+    // 一条实际 82 秒才返回的到货单被判成「识别失败」（数据其实是好的）。
+    // 默认 180 秒：出库单整张识别实测 82~118 秒。
+    this.recognitionTimeoutMs = options.recognitionTimeoutMs
+      ?? (Number(process.env.VISION_LLM_TIMEOUT_MS) > 0 ? Number(process.env.VISION_LLM_TIMEOUT_MS) : 180_000);
     this.imTimeoutMs = options.imTimeoutMs ?? 15_000; // 飞书消息
     // 失败态写入本身也可能失败，写不出去就等于记录永远停在「识别中」，所以重试几次。
     this.failureWriteAttempts = options.failureWriteAttempts ?? 3;
     this.failureWriteRetryDelayMs = options.failureWriteRetryDelayMs ?? 200;
+    // 到货「等待与提示」的四个阈值：显式入参 > 环境变量 > 默认值（见 arrivalWaitPolicy）。
+    // 为什么全部可配：她看完一次 82 秒的真实识别后定的规则，但该设多少要继续用真实数据校准。
+    // 语义差别是这次改造的核心：**放弃等待（2 分钟）≠ 失败（3 分钟）**。
+    const arrivalWait = resolveArrivalWaitConfig(options);
+    this.arrivalNoticeIntervalMs = arrivalWait.noticeIntervalMs; // 每 N 毫秒补一条「还在识别中」
+    this.arrivalAbandonWaitMs = arrivalWait.abandonWaitMs; // 超过就放弃等待（只记日志，不判失败）
+    this.arrivalFailAfterMs = arrivalWait.failAfterMs; // 超过才判失败
+    this.arrivalNoticeMaxCount = arrivalWait.noticeMaxCount; // 补发次数上限（兜底）
+    // 正在等待的到货（含已停止的观察点由 stop() 移除）：测试据此断言
+    // 「处理完成后不残留任何定时器」，生产上也能一眼看出还有几条在等。
+    this.arrivalWaits = new Set();
     this.gatewayTimeoutMs = options.gatewayTimeoutMs ?? 60_000;
     // 本服务里所有 gateway 调用都套上超时。这里包的是本服务持有的引用，
     // 不影响别的服务（生产上 LarkMvpService 跟销售链路共用的是另一个引用）。
@@ -295,6 +316,14 @@ class PurchaseWebhookService {
       logInfo('purchase.webhook.posted_ignored', { record_id: recordId, task_id: taskId });
       return task;
     }
+    // 到货已经出过卡（awaiting_confirmation）或已入库（posted）时，重复投递的 webhook
+    // 不能再解析一遍。accept() 通常会拦掉，但 3 分钟判失败 → 迟到结果救回的窗口里它拦不住：
+    // 那一刻任务还是 failed，重投会被排进同一条串行队列，等它真正跑起来时状态已经变回成功，
+    // 再跑一遍就会重复建货品、重复发卡。入库本身的幂等在 confirmArrival，这里挡的是识别。
+    if (kind === 'arrival' && ['awaiting_confirmation', 'posted'].includes(task?.status)) {
+      logInfo('purchase.webhook.arrival_already_processed', { record_id: recordId, task_id: taskId, status: task.status });
+      return task;
+    }
     await this.store.update(taskId, { status: 'processing', started_at: new Date().toISOString() });
     try {
       let result;
@@ -354,7 +383,17 @@ class PurchaseWebhookService {
         // 不管是超时、模型报错还是没预料到的异常，都必须把记录推出「识别中」并告诉她，
         // 否则她看到的就只是永远「识别中」——只写日志等于没发生，她看不到日志。
         // 单一出口还有一个好处：状态和通知不会重复发、也不会漏。
-        await this.failArrival(taskId, recordId, error);
+        //
+        // 例外：等待超时（3 分钟）那一路已经在 processArrival 里写过失败态、也通知过她了
+        // （见 startArrivalWaitWatch），这里再走一遍只会重复发一条消息——重复的消息比
+        // 没有消息更糟，她会以为又失败了一次。只记日志。
+        if (error.arrivalFailureAlreadyNotified) {
+          logWarn('purchase.arrival.failure_notice.skipped', {
+            record_id: recordId, task_id: taskId, reason: '等待超时时已判过失败并通知，不再重复发',
+          });
+        } else {
+          await this.failArrival(taskId, recordId, error);
+        }
       }
       throw error;
     }
@@ -964,6 +1003,118 @@ class PurchaseWebhookService {
     return sent;
   }
 
+  /** ② 每过一个间隔补一条「还在识别中」。发不出去只记日志，绝不能影响识别。 */
+  async notifyArrivalWaiting(openId, recordId, taskId, attempt) {
+    const sent = await this.sendNoticeText(openId, ARRIVAL_WAITING_NOTICE);
+    logInfo('purchase.arrival.waiting_notice', { record_id: recordId, task_id: taskId, attempt, sent });
+    return sent;
+  }
+
+  /** ⑤ 判失败之后结果才到：记录已改回成功、卡片已发，再补一条说明，别让她以为系统错乱。 */
+  async notifyArrivalRescued(openId, elapsedMs, recordId, taskId) {
+    const sent = await this.sendNoticeText(openId, arrivalRescuedNotice(elapsedMs));
+    logInfo('purchase.arrival.timeout.rescued', {
+      record_id: recordId, task_id: taskId, elapsed_ms: elapsedMs, sent,
+    });
+    return sent;
+  }
+
+  /**
+   * 启动到货「等待与提示」的定时器。调用方**必须**在流程结束时 stop()
+   * （正常完成 / 异常 / 迟到结果救回，三条路径都要）。
+   *
+   * 三个时间点各自的语义——这是本次改造最容易做错的地方，别混：
+   *  - 每 `arrivalNoticeIntervalMs`：补一条「还在识别中，请稍等～」，直到
+   *    **处理完成 / 判失败 / 到达补发次数上限**为止。注意「2 分钟放弃等待」不在停止条件里，
+   *    她的原话是"直到处理完为止"，放弃等待只是我们不再盯着它；
+   *  - `arrivalAbandonWaitMs`：**放弃等待 ≠ 失败**。到点只记一条
+   *    `purchase.arrival.wait.abandoned` 日志：**不取消识别请求、不写任何失败态**。
+   *    请求还在跑，结果回来照常走完匹配/建档/出卡；
+   *  - `arrivalFailAfterMs`：这时才判失败（写「识别失败」+ 告诉她原因）。要是结果在
+   *    判失败之后才回来，processArrival 会走「迟到结果救回」分支把状态改回成功。
+   *
+   * 所有定时器都 unref()：补发提示不能拖住进程退出（否则测试跑完还挂在定时器上）。
+   *
+   * 返回值 `stop()` 会**同步**停掉全部定时器，并返回「停之前是不是已经判过失败」——
+   * 调用方必须在写「识别成功」之前调用它，否则失败定时器可能在成功写入之后才开火，
+   * 把记录又写回「识别失败」。`failureSettled` 是判失败那一路的落定 Promise，
+   * 救回时要先 await 它，保证两边写入的顺序是"先失败、后成功"。
+   * `pendingNotice` 是「最后一次补发提示」的 Promise，出卡片之前要等它落地，
+   * 免得她先看到卡片、后面才冒出一条「还在识别中」。
+   *
+   * `startedAt` 由调用方传入"收到"那一刻（定时器本身是写「识别中」之后才启动的，
+   * 见 processArrival 里的说明）：时间阈值按她感知到的等待算，文案里的耗时才准。
+   */
+  startArrivalWaitWatch({ recordId, taskId, operatorOpenId, startedAt = Date.now() }) {
+    const watch = {
+      startedAt,
+      noticeCount: 0,
+      abandoned: false,
+      failed: false,
+      stopped: false,
+      failureSettled: null,
+      pendingNotice: null,
+      stop: () => false,
+    };
+
+    const noticeTimer = setInterval(() => {
+      if (watch.stopped) return;
+      if (watch.noticeCount >= this.arrivalNoticeMaxCount) {
+        // 兜底：到上限只记一条日志、不再发消息（避免某条记录永远卡住时无限刷屏），
+        // 顺手把定时器停掉，免得每分钟重复记一条同样的日志。
+        clearInterval(noticeTimer);
+        logWarn('purchase.arrival.wait.notice_capped', {
+          record_id: recordId, task_id: taskId, sent_count: watch.noticeCount, max_count: this.arrivalNoticeMaxCount,
+        });
+        return;
+      }
+      watch.noticeCount += 1;
+      // 不 await：定时器回调里等 IM 会把下一次触发一起推迟。sendNoticeText 自己吞异常，
+      // 这里再兜一层，保证定时器永远不会因为一条提示发不出去而中断。
+      watch.pendingNotice = this.notifyArrivalWaiting(operatorOpenId, recordId, taskId, watch.noticeCount).catch(() => undefined);
+    }, this.arrivalNoticeIntervalMs);
+
+    const abandonTimer = setTimeout(() => {
+      if (watch.stopped) return;
+      watch.abandoned = true;
+      // ⚠️ 核心约束：这里**只有一条日志**。放弃等待不是失败——不取消识别请求、
+      // 不写失败态；请求继续在跑，结果回来照常处理。把这句写进日志，
+      // 排查的人一眼就能看懂当时到底发生了什么，而不是靠猜。
+      logInfo('purchase.arrival.wait.abandoned', {
+        record_id: recordId, task_id: taskId, waited_ms: Date.now() - watch.startedAt,
+        note: '不再等待识别结果，但识别请求继续跑，结果回来仍会照常处理，不判失败',
+      });
+    }, this.arrivalAbandonWaitMs);
+
+    const failTimer = setTimeout(() => {
+      if (watch.stopped || watch.failed) return;
+      // 先**同步**置位 failed，再开始异步写状态/发消息：processArrival 结束时只要看到
+      // failed 就走「救回」分支，不会出现"判了失败却没人把状态改回来"。
+      watch.failed = true;
+      watch.failureSettled = this.failArrival(
+        taskId, recordId, new TimeoutError('到货图片识别', this.arrivalFailAfterMs),
+      ).catch((error) => {
+        logWarn('purchase.arrival.wait.fail_failed', { record_id: recordId, task_id: taskId, error: error.message });
+      });
+    }, this.arrivalFailAfterMs);
+
+    for (const timer of [noticeTimer, abandonTimer, failTimer]) {
+      if (typeof timer.unref === 'function') timer.unref();
+    }
+
+    watch.stop = () => {
+      if (watch.stopped) return watch.failed;
+      watch.stopped = true;
+      clearInterval(noticeTimer);
+      clearTimeout(abandonTimer);
+      clearTimeout(failTimer);
+      this.arrivalWaits.delete(watch);
+      return watch.failed;
+    };
+    this.arrivalWaits.add(watch);
+    return watch;
+  }
+
   recordOperator(record, fieldName) {
     const value = record?.fields?.[fieldName];
     const first = Array.isArray(value) ? value[0] : value;
@@ -1571,27 +1722,70 @@ class PurchaseWebhookService {
    *
    * 两条识别路径的输出同构（item_no / color / size / quantity 明细），
    * 所以「匹配货品 → 与申请比对 → 草稿 → 卡片确认」的后续流程完全共用。
+   *
+   * 等待与提示这一段（她 2026-10-05 定的规则，阈值全部可配，见 startArrivalWaitWatch）：
+   *   ① 收到 → 立刻「收到到货申请，正在识别图片～」（和写「识别中」并行）
+   *   ② 每 1 分钟 → 补发「还在识别中，请稍等～」，直到处理完成 / 判失败 / 到达次数上限
+   *   ③ 2 分钟 → 放弃等待（**只记日志，不判失败、不取消请求**），结果回来照常处理
+   *   ④ 请求报错 → 判失败（process() 的统一出口）+ 告诉她原因
+   *   ⑤ 3 分钟 → 判失败；若结果之后才到 → 状态改回成功 + 卡片 + 说明
+   *   ⑥ 处理完成 → 出卡片，且不再补发提示
+   * 这套逻辑只包住"等待与提示"，匹配/建档/成本/出卡/入库仍全是原逻辑。
    */
   async processArrival(recordId, taskId) {
     const table = this.gateway.table('purchaseArrival');
+    // 读这一条记录实测要几秒——单独记一笔，别和后面的耗时混在一起。
+    const readStartedAt = Date.now();
     const record = await this.gateway.get('purchaseArrival', recordId);
+    logInfo('purchase.arrival.record.read', {
+      record_id: recordId, task_id: taskId, duration_ms: Date.now() - readStartedAt,
+    });
     const fields = record?.fields || {};
     const currentStatus = textValue(fields[table.fields.confirmStatus]);
     if (['已确认', '已入库', '已取消'].includes(currentStatus)) return { ignored: true, status: currentStatus };
     // 经办人先算出来并落盘：后面无论在哪一步失败，失败提示都还找得到人。
     const operatorOpenId = this.recordOperator(record, table.fields.inspector);
     await this.store.update(taskId, { arrival_operator_open_id: operatorOpenId }).catch(() => undefined);
-    await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别中', failureReason: '' });
     const isDocument = textValue(fields[table.fields.type]).trim() === '到货单';
     const tokens = attachmentTokens(fields[table.fields.images]);
     if (!tokens.length) {
       throw new Error(isDocument ? '采购到货记录没有到货单图片附件' : '采购到货记录没有鞋盒图片附件');
     }
     // 确认有图片、马上要开始处理了，先回一句「收到了」。
-    // 必须在识别之前发：识别（模型那一步）可能几十秒到几分钟，这段时间的沉默
-    // 就是「系统卡死了」的来源。发不出去也不影响识别（sendText 只记日志）。
-    await this.notifyArrivalReceived(operatorOpenId, recordId, taskId);
-    const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'purchase-arrival-'));
+    //
+    // 顺序很要紧：**发提示要排在「下载图片」「模型识别」之前**。
+    // 写状态本身要 2 秒、下载和识别要几十秒到几分钟——2026-10-05 用户实测
+    // 从记录进来到收到提示用了 10 秒，其中大头是读记录 8 秒 + 写状态 2 秒；
+    // 提示早一秒，她就少一秒"系统是不是没反应"。
+    // 发不出去也不影响识别（sendNoticeText 只记日志）。
+    //
+    // ② 的「写识别中」和「发提示」**并行**：两者都只依赖上面读到的这条记录，互不依赖。
+    // 串行的话要多等一次 IM 往返；Promise.all 把这段压到"较慢的那个"。
+    // 两个 prompt 各自吞自己的异常（发提示失败不影响写状态，反之由 process() 的
+    // 失败出口统一收尾），所以 Promise.all 只会在"写状态"失败时 reject——和改之前一致。
+    const noticeStartedAt = Date.now();
+    let tempDir = '';
+    let wait = null;
+    try {
+      await Promise.all([
+        this.notifyArrivalReceived(operatorOpenId, recordId, taskId),
+        this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别中', failureReason: '' }),
+      ]);
+      logInfo('purchase.arrival.notice.latency', {
+        record_id: recordId, task_id: taskId, duration_ms: Date.now() - noticeStartedAt,
+      });
+      tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'purchase-arrival-'));
+      // ⚠️ 等待定时器放在「识别中」**写完**之后才启动，不是图省事：失败定时器一旦开火就会写
+      // 「识别失败」，如果它比「识别中」那次写入还早，后写的「识别中」会把失败态盖掉，
+      // 记录就永远停在「识别中」（识别再报错时 process() 已经按"判过失败"跳过通知）。
+      // startedAt 仍按她感知到的"收到"那一刻算，所以耗时文案和产品语义都不变。
+      wait = this.startArrivalWaitWatch({ recordId, taskId, operatorOpenId, startedAt: noticeStartedAt });
+    } catch (error) {
+      // 这段还在下面那个大 try 之外：写「识别中」或建临时目录失败时必须自己收掉等待定时器，
+      // 否则它会一直补发「还在识别中」，3 分钟时还会再判一次失败（重复消息）。
+      if (wait) wait.stop();
+      throw error;
+    }
     try {
       const recognized = [];
       for (let index = 0; index < tokens.length; index += 1) {
@@ -1733,20 +1927,46 @@ class PurchaseWebhookService {
         })),
         created_colors: creationContext.createdColors.map((item) => item.name),
       };
-      await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别成功', confirmStatus: '待确认' });
+      // ⑥ 处理完成：先在**同步段**里停掉所有等待定时器，并记下"是不是已经判过失败"。
+      //    必须在写「识别成功」之前停：失败定时器一旦开火就会去写失败态，
+      //    两边顺序反过来，记录最终会停在「识别失败」。
+      const rescuedFromTimeout = wait ? wait.stop() : false;
+      // 已经发出去的那条「还在识别中」先落地，别让她先看到卡片、后面才冒出一条提示。
+      if (wait?.pendingNotice) await wait.pendingNotice;
+      // 判失败那一路可能还在写记录、发消息，等它落定再写成功，保证顺序是"先失败、后改回成功"。
+      if (wait?.failureSettled) await wait.failureSettled;
+      await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别成功', confirmStatus: '待确认', failureReason: '' });
       await this.store.update(taskId, { recognized, draft, status: 'awaiting_confirmation' });
       await this.sendCard(operatorOpenId, purchaseArrivalDetailCard(taskId, draft));
       // 采购差异比对已随 #63 移除：这里不再有 difference_count；
       // #64 的成本写入计数保留，便于线上看这一批到底写了几条成本。
-      logInfo("purchase.arrival.card.sent", { record_id: recordId, task_id: taskId, direct_arrival: directArrival, arrival_type: isDocument ? '到货单' : '鞋盒', item_count: actual.length, unrecognized_count: unrecognized.length, created_product_count: createdProducts.length, created_color_count: creationContext.createdColors.length, cost_written_count: creationContext.costWritten.length });
-      return { status: 'awaiting_confirmation', item_count: actual.length, created_product_count: createdProducts.length };
+      logInfo("purchase.arrival.card.sent", { record_id: recordId, task_id: taskId, direct_arrival: directArrival, arrival_type: isDocument ? '到货单' : '鞋盒', item_count: actual.length, unrecognized_count: unrecognized.length, created_product_count: createdProducts.length, created_color_count: creationContext.createdColors.length, cost_written_count: creationContext.costWritten.length, rescued_from_timeout: rescuedFromTimeout });
+      if (rescuedFromTimeout) {
+        // ⑤ 迟到结果救回：判失败之后结果才回来。记录状态已经改回「识别成功」，卡片也已经发了，
+        // 再补一条说明，告诉她刚才那条其实识别出来了、可以直接确认入库。
+        // ⚠️ 这里**不写任何入库记录**：入库永远要她点卡片确认，走 confirmArrival 那套既有幂等
+        // （inbound_created 落盘 + 按到货记录回查远端 + inflightInbound），
+        // 所以"先判失败、后到结果"不会重复写入库、也不会重复扣库存。
+        await this.notifyArrivalRescued(operatorOpenId, Date.now() - wait.startedAt, recordId, taskId);
+      }
+      return { status: 'awaiting_confirmation', item_count: actual.length, created_product_count: createdProducts.length, rescued_from_timeout: rescuedFromTimeout };
     } catch (error) {
       // 只记日志再抛出：把记录推出「识别中」和通知验收人统一交给 process() 的
       // failArrival 一处完成（见那里的注释），避免同一次失败写两遍状态、发两遍消息。
-      logWarn('purchase.arrival.recognition.failed', { record_id: recordId, task_id: taskId, error: error.message });
+      // 例外：等待超时那一路已经判过失败了，就把标记挂到 error 上让 process() 跳过通知。
+      const alreadyFailed = wait ? wait.stop() : false;
+      if (wait?.failureSettled) await wait.failureSettled;
+      if (alreadyFailed) {
+        error.arrivalFailureAlreadyNotified = true;
+        logWarn('purchase.arrival.recognition.failed_after_timeout', { record_id: recordId, task_id: taskId, error: error.message });
+      } else {
+        logWarn('purchase.arrival.recognition.failed', { record_id: recordId, task_id: taskId, error: error.message });
+      }
       throw error;
     } finally {
-      await fs.promises.rm(tempDir, { recursive: true, force: true });
+      if (wait) wait.stop();
+      // tempDir 为空说明上面那段守卫已经收过尾（还没建出目录），不用删。
+      if (tempDir) await fs.promises.rm(tempDir, { recursive: true, force: true });
     }
   }
 

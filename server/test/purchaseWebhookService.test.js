@@ -148,7 +148,13 @@ const makeService = (options = {}) => {
     gatewayTimeoutMs: options.gatewayTimeoutMs,
     failureWriteAttempts: options.failureWriteAttempts,
     failureWriteRetryDelayMs: options.failureWriteRetryDelayMs,
-    // 「未到齐」告警窗口：测试可以压到几十毫秒，验证的是逻辑而不是等 5 分钟。
+    // 到货「等待与提示」的四个阈值：生产上读环境变量，测试里走构造入参用毫秒级复现
+    // 「每 1 分钟 / 2 分钟 / 3 分钟」。
+    arrivalNoticeIntervalMs: options.arrivalNoticeIntervalMs,
+    arrivalAbandonWaitMs: options.arrivalAbandonWaitMs,
+    arrivalFailAfterMs: options.arrivalFailAfterMs,
+    arrivalNoticeMaxCount: options.arrivalNoticeMaxCount,
+    // 报货「未到齐」告警窗口：测试可以压到几十毫秒，验证的是逻辑而不是等 5 分钟。
     reportAlertDelayMs: options.reportAlertDelayMs,
     // 重启重建告警会在构造时读一次报单表。生产上必须开（重启不丢告警），
     // 但单测里这是纯粹的后台噪声，所以默认关掉，只让专门测它的用例打开。
@@ -1496,6 +1502,349 @@ test('确认有图片后立刻发「已收到，正在识别图片～」，在�
   // 一条提示 + 一张卡片；提示只发一次。
   assert.deepEqual(textMessages(messages), ['收到到货申请，正在识别图片～']);
   assert.equal(cardMessages(messages).length, 1);
+});
+
+// ─── 到货「等待与提示」：每 1 分钟补发 / 2 分钟放弃等待 / 3 分钟判失败＋迟到结果救回 ───
+//
+// 产品负责人看完一次真实的到货识别（82 秒，比她设的 60 秒超时长）后定的六条规则。
+// 这组用例一律**轮询到不变量成立**（waitFor / waitForTask），不用固定 sleep 卡机器速度：
+// 这个仓库已经因为时序敏感挂过好几次 CI。
+//
+// 阈值全部走构造入参（等价于环境变量），毫秒级，让"1 分钟/2 分钟/3 分钟"能在测试里秒级复现。
+
+const ARRIVAL_RECEIVED = '收到到货申请，正在识别图片～';
+const ARRIVAL_WAITING = '还在识别中，请稍等～';
+const waitingNotices = (messages) => textMessages(messages).filter((text) => text === ARRIVAL_WAITING);
+
+// 可由测试手动放行的 Promise：用来制造"识别还在跑"的中间态，
+// 断言的是"到某个点之前/之后发生了什么"，而不是"睡了多久"。
+const deferred = () => {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+};
+
+// 结构化日志的出口就是 console.log/warn/error（src/utils/logger.js）。
+// 捕获它们就能断言"放弃等待只记了日志、没有别的动作"这类约定。
+const captureLogs = () => {
+  const lines = [];
+  const originals = { log: console.log, warn: console.warn, error: console.error };
+  const capture = (...args) => { lines.push(args.map((value) => String(value)).join(' ')); };
+  console.log = capture;
+  console.warn = capture;
+  console.error = capture;
+  return {
+    lines,
+    events: (event) => lines.filter((line) => line.includes(`"event":"${event}"`)),
+    restore: () => { console.log = originals.log; console.warn = originals.warn; console.error = originals.error; },
+  };
+};
+
+test('配套项：「写识别中」和「发提示」并行——串行实现下第二个根本不会开始，这条会超时', async () => {
+  const noticeGate = deferred();
+  const statusGate = deferred();
+  let noticeStarted = false;
+  let statusWriteStarted = false;
+  const messages = [];
+  const base = makeGateway({ purchaseArrival: [arrivalRecord('arr_parallel')] });
+  const gateway = {
+    ...base,
+    update: async (tableKey, recordId, values) => {
+      if (tableKey === 'purchaseArrival' && values.recognitionStatus === '识别中') {
+        statusWriteStarted = true;
+        // 卡住不写：只有"并行"才会轮到后面那个也开始。
+        await statusGate.promise;
+      }
+      return base.update(tableKey, recordId, values);
+    },
+  };
+  const { service, store } = makeService({
+    gateway,
+    client: makeClient({
+      sendMessage: async (params) => {
+        messages.push(params);
+        if (params?.data?.msg_type === 'text') {
+          noticeStarted = true;
+          await noticeGate.promise;
+        }
+        return { code: 0 };
+      },
+    }),
+  });
+
+  const accepted = await service.accept('arrival', 'arr_parallel');
+  // 两边都"发起"了才算并行：提示发到一半时，写识别中也必须已经在路上。
+  await waitFor('提示与写状态同时发起', () => noticeStarted && statusWriteStarted, { attempts: 300, pause: 5 });
+  noticeGate.resolve();
+  statusGate.resolve();
+  const task = await waitForTask(store, accepted.taskId);
+  assert.equal(task.status, 'awaiting_confirmation');
+  assert.deepEqual(textMessages(messages), [ARRIVAL_RECEIVED]);
+});
+
+test('② 每 1 分钟补发「还在识别中」；处理完成后立刻停止，不再补发', async () => {
+  const release = deferred();
+  const messages = [];
+  const { service, store } = makeService({
+    arrivalNoticeIntervalMs: 20,
+    client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
+    recognizer: makeRecognizer({
+      recognizeLabels: async () => {
+        await release.promise;
+        return [{ item_no: '8088', color: '灰色', size: 36, quantity: 1 }];
+      },
+    }),
+    gateway: makeGateway({ purchaseArrival: [arrivalRecord('arr_repeat_notice')] }),
+  });
+
+  const accepted = await service.accept('arrival', 'arr_repeat_notice');
+  await waitFor('收到提示', () => textMessages(messages).includes(ARRIVAL_RECEIVED));
+  // 轮询到"补发确实发生过"（而不是死等一个固定时长）。
+  await waitFor('补发到 3 条', () => waitingNotices(messages).length >= 3, { attempts: 600, pause: 5 });
+
+  release.resolve();
+  const task = await waitForTask(store, accepted.taskId);
+  assert.equal(task.status, 'awaiting_confirmation');
+  // ⑥ 处理完成 → 定时器立刻清掉：服务里不残留任何等待点（这是最强的"停止了"证据）。
+  assert.equal(service.arrivalWaits.size, 0, '处理完成后不能残留等待定时器');
+
+  const afterDone = waitingNotices(messages).length;
+  // 静默期检查：留够 3 个间隔。定时器没清掉的话这里一定会多出好几条。
+  await wait(60);
+  assert.equal(waitingNotices(messages).length, afterDone, '处理完成后不能再补发');
+  assert.equal(cardMessages(messages).length, 1);
+});
+
+test('③ 2 分钟放弃等待 ≠ 失败：只记日志，不取消请求、不写失败态，结果回来照常处理', async () => {
+  const release = deferred();
+  const logs = captureLogs();
+  try {
+    let recognizeCalls = 0;
+    const messages = [];
+    const { service, store, gateway } = makeService({
+      arrivalAbandonWaitMs: 20,
+      arrivalFailAfterMs: 60_000, // 这条用例里到不了判失败
+      client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
+      recognizer: makeRecognizer({
+        recognizeLabels: async () => {
+          recognizeCalls += 1;
+          await release.promise;
+          return [{ item_no: '8088', color: '灰色', size: 36, quantity: 1 }];
+        },
+      }),
+      gateway: makeGateway({ purchaseArrival: [arrivalRecord('arr_abandon')], purchaseInbound: [] }),
+    });
+
+    const accepted = await service.accept('arrival', 'arr_abandon');
+    await waitFor('放弃等待日志', () => logs.events('purchase.arrival.wait.abandoned').length === 1);
+    const abandoned = JSON.parse(logs.events('purchase.arrival.wait.abandoned')[0]);
+    assert.equal(abandoned.record_id, 'arr_abandon');
+    assert.match(abandoned.note, /不判失败/);
+
+    // 放弃等待那一刻：没有失败写入、没有失败消息、没有卡片、更没有入库。
+    assert.notEqual((await gateway.get('purchaseArrival', 'arr_abandon')).fields.识别状态, '识别失败');
+    assert.equal(textMessages(messages).some((text) => text.includes('识别没成功')), false);
+    assert.equal(cardMessages(messages).length, 0);
+    assert.equal((await gateway.listAll('purchaseInbound')).length, 0);
+
+    // 请求没有被取消也没有重跑：放行之后，结果照常走完匹配/建档/出卡。
+    release.resolve();
+    const task = await waitForTask(store, accepted.taskId);
+    assert.equal(task.status, 'awaiting_confirmation');
+    const record = await gateway.get('purchaseArrival', 'arr_abandon');
+    assert.equal(record.fields.识别状态, '识别成功');
+    assert.equal(cardMessages(messages).length, 1);
+    assert.equal(recognizeCalls, 1, '放弃等待不能取消/重启请求');
+    assert.equal(service.arrivalWaits.size, 0);
+  } finally {
+    logs.restore();
+  }
+});
+
+test('④ 请求报错 → 判失败 + 告诉她原因；等待定时器同时停掉，不会再补发也不会再判一次', async () => {
+  const logs = captureLogs();
+  try {
+    const messages = [];
+    const { service, store, gateway } = makeService({
+      arrivalNoticeIntervalMs: 10,
+      arrivalAbandonWaitMs: 30,
+      arrivalFailAfterMs: 40,
+      client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
+      recognizer: makeRecognizer({ recognizeLabels: async () => { throw new Error('模型服务 502'); } }),
+      gateway: makeGateway({ purchaseArrival: [arrivalRecord('arr_request_error')] }),
+    });
+
+    const accepted = await service.accept('arrival', 'arr_request_error');
+    const task = await waitForTask(store, accepted.taskId, ['failed']);
+    assert.match(task.error, /模型服务 502/);
+    await waitFor('到货记录标记识别失败', async () =>
+      (await gateway.get('purchaseArrival', 'arr_request_error')).fields.识别状态 === '识别失败');
+    const record = await gateway.get('purchaseArrival', 'arr_request_error');
+    assert.equal(record.fields.识别失败原因, '模型服务 502', '失败原因要说人话且带上是哪一出错');
+    await waitFor('失败提示发出', () => textMessages(messages).some((text) => text.includes('识别没成功')));
+    assert.ok(
+      textMessages(messages).find((text) => text.includes('识别没成功')).includes('模型服务 502'),
+      '失败提示必须带上原因，不能只说"失败了"',
+    );
+
+    // 判失败 → 停止：不残留定时器；等过所有阈值也不再多发消息、多判一次。
+    assert.equal(service.arrivalWaits.size, 0);
+    const messageCount = messages.length;
+    await wait(80); // > interval + abandon + failAfter
+    assert.equal(messages.length, messageCount, '判失败后不能再补发提示');
+    assert.equal(logs.events('purchase.arrival.wait.abandoned').length, 0, '已经判失败了就不该再走放弃等待');
+    assert.equal(logs.events('purchase.arrival.failure_notice').length, 1, '失败提示只能发一次');
+  } finally {
+    logs.restore();
+  }
+});
+
+test('⑤ 3 分钟判失败后结果才到：状态改回成功 + 出卡 + 发说明 + 不重复写入库', async () => {
+  const release = deferred();
+  const logs = captureLogs();
+  try {
+    const inventory = makeInventory();
+    const messages = [];
+    const { service, store, gateway } = makeService({
+      inventory,
+      arrivalNoticeIntervalMs: 10,
+      arrivalAbandonWaitMs: 20,
+      arrivalFailAfterMs: 50,
+      client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
+      recognizer: makeRecognizer({
+        recognizeLabels: async () => {
+          await release.promise;
+          return [{ item_no: '8088', color: '灰色', size: 36, quantity: 2 }];
+        },
+      }),
+      gateway: makeGateway({ purchaseArrival: [arrivalRecord('arr_rescue')], purchaseInbound: [] }),
+    });
+
+    const accepted = await service.accept('arrival', 'arr_rescue');
+    // 先确认"确实判了失败"（记录写成失败 + 失败提示已经发出），再把迟到的结果放出来。
+    await waitFor('判失败落盘', async () =>
+      (await gateway.get('purchaseArrival', 'arr_rescue')).fields.识别状态 === '识别失败');
+    await waitFor('失败提示发出', () => textMessages(messages).some((text) => text.includes('识别没成功')));
+
+    release.resolve();
+    const task = await waitForTask(store, accepted.taskId);
+    assert.equal(task.status, 'awaiting_confirmation', '迟到结果必须把任务从 failed 救回来');
+
+    const record = await gateway.get('purchaseArrival', 'arr_rescue');
+    assert.equal(record.fields.识别状态, '识别成功', '状态必须改回成功');
+    assert.equal(record.fields.确认状态, '待确认');
+    assert.equal(record.fields.识别失败原因, '', '失败原因要清掉，别留着误导她');
+    assert.equal(cardMessages(messages).length, 1, '照常出卡片');
+
+    const rescued = textMessages(messages).find((text) => text.includes('后来识别出来了'));
+    assert.ok(rescued, '必须补一条「后来识别出来了」的说明');
+    assert.match(rescued, /已经按识别结果处理好，你可以直接确认入库～/);
+
+    // 救回只出卡片：**入库永远要她点确认**，所以这一刻一条入库记录都不该有。
+    assert.equal((await gateway.listAll('purchaseInbound')).length, 0, '救回不能自动写入库');
+    assert.equal(inventory.calls.length, 0);
+
+    // 她点确认：走既有幂等路径（inbound_created 落盘 + 按到货记录回查远端）；连点两次也只入一次。
+    await service.handleCardAction({ draft_id: task.task_id, action: 'confirm_purchase_arrival' }, 'ou_1');
+    await service.handleCardAction({ draft_id: task.task_id, action: 'confirm_purchase_arrival' }, 'ou_1');
+    const inbounds = await gateway.listAll('purchaseInbound');
+    assert.equal(inbounds.length, 1, '每个「货品+尺码」只能有一条采购入库');
+    assert.equal(inbounds[0].fields.数量, 2);
+    assert.equal(inventory.calls.length, 1, '库存只能加一次——迟到结果不能重复扣库存');
+
+    assert.equal(logs.events('purchase.arrival.failure_notice').length, 1, '失败提示只能发一次');
+    assert.equal(logs.events('purchase.arrival.timeout.rescued').length, 1);
+    assert.equal(service.arrivalWaits.size, 0);
+  } finally {
+    logs.restore();
+  }
+});
+
+test('「识别中」写得很慢时，判失败不会被它盖掉：写入顺序仍是有序的，迟到结果照样救回', async () => {
+  const release = deferred();
+  const statusGate = deferred();
+  const statuses = [];
+  let statusWriteStarted = false;
+  const messages = [];
+  const base = makeGateway({ purchaseArrival: [arrivalRecord('arr_slow_status')], purchaseInbound: [] });
+  const gateway = {
+    ...base,
+    update: async (tableKey, recordId, values) => {
+      if (tableKey === 'purchaseArrival' && values.recognitionStatus === '识别中') {
+        statusWriteStarted = true;
+        // 卡住不写：等待定时器必须等它写完才启动，否则失败态会先写、再被「识别中」盖掉。
+        await statusGate.promise;
+      }
+      if (tableKey === 'purchaseArrival' && values.recognitionStatus) statuses.push(values.recognitionStatus);
+      return base.update(tableKey, recordId, values);
+    },
+  };
+  const { service, store } = makeService({
+    gateway,
+    arrivalAbandonWaitMs: 20,
+    arrivalFailAfterMs: 20,
+    client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
+    recognizer: makeRecognizer({
+      recognizeLabels: async () => {
+        await release.promise;
+        return [{ item_no: '8088', color: '灰色', size: 36, quantity: 1 }];
+      },
+    }),
+  });
+
+  const accepted = await service.accept('arrival', 'arr_slow_status');
+  await waitFor('「识别中」写入发起', () => statusWriteStarted);
+  // 写入还挂着：这时候一个失败态都不该写出去。
+  assert.deepEqual(statuses, [], '「识别中」还没写成之前不能判失败');
+
+  statusGate.resolve();
+  await waitFor('判失败落盘', async () =>
+    (await gateway.get('purchaseArrival', 'arr_slow_status')).fields.识别状态 === '识别失败');
+  assert.deepEqual(statuses, ['识别中', '识别失败'], '失败态必须晚于「识别中」，否则会被它盖掉，记录永远停在识别中');
+
+  // 迟到的结果把状态救回来。
+  release.resolve();
+  const task = await waitForTask(store, accepted.taskId);
+  assert.equal(task.status, 'awaiting_confirmation');
+  assert.deepEqual(statuses, ['识别中', '识别失败', '识别成功']);
+});
+
+test('③ 补发次数上限兜底：到上限只记一条日志，不再刷屏', async () => {
+  const release = deferred();
+  const logs = captureLogs();
+  try {
+    const messages = [];
+    const { service, store } = makeService({
+      arrivalNoticeIntervalMs: 10,
+      arrivalNoticeMaxCount: 2,
+      arrivalAbandonWaitMs: 60_000,
+      arrivalFailAfterMs: 60_000,
+      client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
+      recognizer: makeRecognizer({
+        recognizeLabels: async () => {
+          await release.promise;
+          return [{ item_no: '8088', color: '灰色', size: 36, quantity: 1 }];
+        },
+      }),
+      gateway: makeGateway({ purchaseArrival: [arrivalRecord('arr_capped')] }),
+    });
+
+    const accepted = await service.accept('arrival', 'arr_capped');
+    await waitFor('到达补发上限', () => logs.events('purchase.arrival.wait.notice_capped').length === 1, { attempts: 600, pause: 5 });
+    assert.equal(waitingNotices(messages).length, 2);
+
+    // 上限之后每过一个间隔都不该再发（这里等 6 个间隔）。
+    await wait(60);
+    assert.equal(waitingNotices(messages).length, 2, '到上限只记日志，不刷屏');
+
+    release.resolve();
+    const task = await waitForTask(store, accepted.taskId);
+    assert.equal(task.status, 'awaiting_confirmation');
+    assert.equal(service.arrivalWaits.size, 0);
+  } finally {
+    logs.restore();
+  }
 });
 
 test('识别超时后重试：不重复写采购入库，也不重复加库存', async () => {
