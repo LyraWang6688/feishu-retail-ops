@@ -146,7 +146,12 @@ class PurchaseWebhookService {
     // 到货链路 2026-10-05 就是写完「识别中」之后永远等不到任何一个 await 返回。
     // 0 表示不设超时，只有极少数测试会这么用。
     this.mediaTimeoutMs = options.mediaTimeoutMs ?? 30_000; // 下载附件：101KB 的图正常 0.3 秒
-    this.recognitionTimeoutMs = options.recognitionTimeoutMs ?? 60_000; // 模型识别
+    // 模型识别这一层的超时。**必须和 doubaoService 的视觉超时用同一个来源**：
+    // 2026-10-05 线上出过事——.env 里写了 180 秒，但这一层硬编码 60 秒先开火，
+    // 一条实际 82 秒才返回的到货单被判成「识别失败」（数据其实是好的）。
+    // 默认 180 秒：出库单整张识别实测 82~118 秒。
+    this.recognitionTimeoutMs = options.recognitionTimeoutMs
+      ?? (Number(process.env.VISION_LLM_TIMEOUT_MS) > 0 ? Number(process.env.VISION_LLM_TIMEOUT_MS) : 180_000);
     this.imTimeoutMs = options.imTimeoutMs ?? 15_000; // 飞书消息
     // 失败态写入本身也可能失败，写不出去就等于记录永远停在「识别中」，所以重试几次。
     this.failureWriteAttempts = options.failureWriteAttempts ?? 3;
@@ -1197,23 +1202,36 @@ class PurchaseWebhookService {
    */
   async processArrival(recordId, taskId) {
     const table = this.gateway.table('purchaseArrival');
+    // 读这一条记录实测要几秒——单独记一笔，别和后面的耗时混在一起。
+    const readStartedAt = Date.now();
     const record = await this.gateway.get('purchaseArrival', recordId);
+    logInfo('purchase.arrival.record.read', {
+      record_id: recordId, task_id: taskId, duration_ms: Date.now() - readStartedAt,
+    });
     const fields = record?.fields || {};
     const currentStatus = textValue(fields[table.fields.confirmStatus]);
     if (['已确认', '已入库', '已取消'].includes(currentStatus)) return { ignored: true, status: currentStatus };
     // 经办人先算出来并落盘：后面无论在哪一步失败，失败提示都还找得到人。
     const operatorOpenId = this.recordOperator(record, table.fields.inspector);
     await this.store.update(taskId, { arrival_operator_open_id: operatorOpenId }).catch(() => undefined);
-    await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别中', failureReason: '' });
     const isDocument = textValue(fields[table.fields.type]).trim() === '到货单';
     const tokens = attachmentTokens(fields[table.fields.images]);
     if (!tokens.length) {
       throw new Error(isDocument ? '采购到货记录没有到货单图片附件' : '采购到货记录没有鞋盒图片附件');
     }
     // 确认有图片、马上要开始处理了，先回一句「收到了」。
-    // 必须在识别之前发：识别（模型那一步）可能几十秒到几分钟，这段时间的沉默
-    // 就是「系统卡死了」的来源。发不出去也不影响识别（sendText 只记日志）。
+    //
+    // 顺序很要紧：**发提示要排在「写识别中」「下载图片」「模型识别」之前**。
+    // 写状态本身要 2 秒、下载和识别要几十秒到几分钟——2026-10-05 用户实测
+    // 从记录进来到收到提示用了 10 秒，其中大头是读记录 8 秒 + 写状态 2 秒；
+    // 提示早一秒，她就少一秒"系统是不是没反应"。
+    // 发不出去也不影响识别（sendNoticeText 只记日志）。
+    const noticeStartedAt = Date.now();
     await this.notifyArrivalReceived(operatorOpenId, recordId, taskId);
+    logInfo('purchase.arrival.notice.latency', {
+      record_id: recordId, task_id: taskId, duration_ms: Date.now() - noticeStartedAt,
+    });
+    await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别中', failureReason: '' });
     const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'purchase-arrival-'));
     try {
       const recognized = [];
