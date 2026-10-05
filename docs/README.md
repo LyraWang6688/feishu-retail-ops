@@ -28,6 +28,7 @@
 |---|---|
 | [adr/README.md](adr/README.md) | ADR 治理规则与索引 |
 | [adr/ADR-001-separate-ai-interpretation-from-deterministic-business-execution.md](adr/ADR-001-separate-ai-interpretation-from-deterministic-business-execution.md) | AI 负责理解与结构化，确定性后端负责正式业务执行 |
+| [adr/ADR-002-robot-entry-triage-and-decoupling.md](adr/ADR-002-robot-entry-triage-and-decoupling.md) | 机器人入口三分与解耦；状态以表为准；不做自主智能体 |
 
 ## 3. 现行设计参考（Design Baseline + 状态说明）
 
