@@ -3,6 +3,7 @@ const crypto = require('node:crypto');
 const lark = require('@larksuiteoapi/node-sdk');
 const { LarkMvpService } = require('../services/larkMvpService');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
+const { isPurchaseArrivalIntakeEnabled } = require('../config/purchaseArrivalIntake');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { larkLogger } = require('../utils/larkLogger');
 
@@ -97,13 +98,24 @@ const createLarkEventHandlers = (service) => ({
     }
     if (fileToken !== ownAppToken) return {};
 
+    // 「采购到货 → 拍照识别 → 入库」是临时链路（业务负责人确认随时可能停掉），
+    // 所以单独给它一个显式开关：关掉时**不把「采购到货」挂进分派表**。
+    // 关掉的语义 = "这条链路不存在"：新记录没有任何反应，也不报错、不打扰——
+    // 这与"表 ID 配错导致的静默失效"现象一致，所以下面补了一条日志便于区分。
+    // ⚠️ 报货（supplier-report）**不受开关影响**，永远留在分派表里：它是当前唯一的
+    // 采购申请入口，绝不能跟着一条临时链路一起被关掉。
+    const arrivalIntakeEnabled = isPurchaseArrivalIntakeEnabled();
+    const arrivalTableId = V1_BITABLE_SCHEMA.tables.purchaseArrival.tableId;
+
     // 表 ID → 采购链路入口。**从 schema 读，不写死表 ID**：
     // 写死的话，换 Base / 多租户时这里不会报错、也不会触发——
     // 现象只是"采购没反应"，属于最难查的一类静默失效。
     const purchaseIntake = [
       { tableId: V1_BITABLE_SCHEMA.tables.purchaseReport.tableId, kind: 'supplier-report', label: '供应商报单' },
-      { tableId: V1_BITABLE_SCHEMA.tables.purchaseArrival.tableId, kind: 'arrival', label: '采购到货' },
     ];
+    if (arrivalIntakeEnabled) {
+      purchaseIntake.push({ tableId: arrivalTableId, kind: 'arrival', label: '采购到货' });
+    }
 
     // 遍历 action_list，处理每条新增记录
     for (const actionItem of actionList) {
@@ -114,6 +126,14 @@ const createLarkEventHandlers = (service) => ({
       if (action !== 'record_added') continue;
       if (!recordId) {
         logError('lark.bitable.record_changed.no_record_id', { table_id: tableId });
+        continue;
+      }
+
+      // 开关关闭时的排查线索：确实有人往「采购到货」表新增了记录，只是链路已停用。
+      // 只在**到货表真的新增**时记这一条，不在每条 Base 变更事件上刷日志——
+      // 销售录入走的是同一个事件，否则日志会被无关变更淹没。
+      if (!arrivalIntakeEnabled && arrivalTableId && tableId === arrivalTableId) {
+        logInfo('lark.intake.arrival_disabled', { table_id: tableId, record_id: recordId });
         continue;
       }
 
