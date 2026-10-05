@@ -5,6 +5,7 @@ const { logError, logInfo } = require('../utils/logger');
 const { applyGroupBuyVoucherPolicy } = require('./groupBuyVoucherPolicy');
 const { parseUnitCost } = require('./arrivalCostPolicy');
 const { resolveLlm, assertLlmConfigured } = require('../config/llmModels');
+const { normalizeMessageIntent } = require('../config/saleIntents');
 
 // Log only the sale fields needed to compare AI extraction with deterministic
 // normalization. Never log the complete user message, prompt or raw model JSON.
@@ -141,7 +142,11 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
   // 交付状态不在这里定：它由 SALES_MOVEMENTS 从交易类型推出来。
   const tradeType = ['现货', '未付', '预付'].includes(result.trade_type) ? result.trade_type : '现货';
   const normalized = {
-    intent: result.intent === 'sale' ? 'sale' : 'unsupported',
+    // 意图值统一走注册表收敛（见 config/saleIntents）：模型输出「退货」还是 "return"
+    // 都落到同一个规范值；认不出来一律 unsupported，绝不猜成 sale 去写单。
+    // 本期真正会执行的非 sale 意图只有 sale_query（只读查询）；
+    // return / exchange 只识别、不执行。
+    intent: normalizeMessageIntent(result.intent),
     trade_type: tradeType,
     ...first,
     items,
@@ -275,9 +280,9 @@ class DoubaoService {
     if (!originalText) throw new Error('销售原文不能为空');
 
     const prompt = `
-你是鞋店销售首单录入助手。请把用户的一条销售原话解析为严格 JSON，不得猜测缺失信息。
+你是鞋店机器人助手。请把用户的一条原话解析为严格 JSON，不得猜测缺失信息。
 
-一条消息表示一笔销售，可以包含多双鞋和多种付款方式。只解析事实，不计算售价。
+先按规则 1 判断意图（录销售 / 查销售记录 / 退货 / 换货）；一条销售消息可以包含多双鞋和多种付款方式。只解析事实，不计算售价。
 
 输出结构：
 {
@@ -289,7 +294,16 @@ class DoubaoService {
 }
 
 规则：
-1. 商品销售（含当场收款、预付、先交货后付款）intent=\"sale\"；退货、换货、赔货 intent=\"unsupported\"。不输出销售行为字段。
+1. 先判断这条消息的意图，intent 只能填四个值之一：
+   · "sale"       —— 录入一笔商品销售（含当场收款、预付、先交货后付款）
+   · "sale_query" —— 只想**查**历史销售记录，例如「帮我查 6035 黑」「我最近买了一双 6035 黑的鞋，帮我调销售记录」「查一下 6035 黑的销售记录」
+   · "return"     —— 要退货（把已卖出的货退回来、退钱）
+   · "exchange"   —— 要换货、赔货
+   都不是、或判断不了时填 "unsupported"。
+   intent="sale_query" 时**只填 item_no（货号）和 color（颜色）**，不要填 size、金额、payments，
+   也不要输出销售行为字段；sale_query 的输出结构示例：{"intent":"sale_query","item_no":"6035","color":"黑"}。
+   intent="return" 或 "exchange" 时只判意图，不输出任何业务字段。
+   intent="sale" 时按下面的规则输出完整销售字段，不输出销售行为字段。
 2. trade_type 是这笔交易的**性质**，只能填「现货」「未付」「预付」三者之一：
    · 提到定金 / 先付 / 预定 → \"预付\"（货没拿走，之后来取）
    · 明确说未付 / 欠着 / 下次再给 → \"未付\"（鞋拿走，钱还没给）

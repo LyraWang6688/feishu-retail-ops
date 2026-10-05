@@ -20,6 +20,9 @@ const { tradeTypeCodeFromLabel, deliveryForTradeType } = require('../config/sale
 const { isDataNotReady, withSalesReadRetry } = require('./salesReadRetry');
 const { allocateSalesOrderNo } = require('./salesOrderNo');
 const { resolveAccessory } = require('./accessoryMatchPolicy');
+const { SaleLookupService } = require('./saleLookupService');
+const { isLookupIntent, isAfterSalesIntent, normalizeMessageIntent } = require('../config/saleIntents');
+const { isSalesCandidate, UNSUPPORTED_INTENT_REPLY } = require('../config/messageGate');
 const { salesConfirmationCard, salesStatusCard, todaySalesCard, keepOnlyCardButton } = require('../utils/larkCards');
 const { extractSalesMessageText } = require('../utils/larkMessageText');
 const { logError, logInfo, logWarn } = require('../utils/logger');
@@ -62,7 +65,13 @@ const aggregateRecognizedItems = (items) => {
   return [...map.values()];
 };
 
-const looksLikeSalesText = (text) => /\d/.test(String(text || ''));
+// 入口闸门：**含数字** 或 **含业务关键词** 的消息才送进 AI。
+//
+// 原来是"必须含数字"，会误伤"我要退货""查一下我买的鞋"这类明确诉求 —— 它们
+// 被静默忽略，用户以为机器人坏了。关键词表在 config/messageGate（配置先行），
+// 这里只做一行委托，加词不去改函数。
+// 名字沿用 looksLikeSalesText：它是既有导出，改语义不改名字，避免动无关调用点。
+const looksLikeSalesText = (text) => isSalesCandidate(text);
 
 const shanghaiDay = (now = new Date()) => {
   const parts = new Intl.DateTimeFormat('zh-CN', {
@@ -98,6 +107,16 @@ class LarkMvpService {
     this.store =
       options.store ||
       new JsonTaskStore({ dir: path.join(__dirname, '../../data/lark_mvp_tasks'), idField: 'task_id' });
+    // 退换货第一期：查销售记录是**独立 service**，不把候选查询/卡片/上下文塞进本类。
+    // 这里只注入"读网关 + 任务状态 + 发消息"三样依赖；网关会被 SaleLookupService
+    // 再收窄成只读视图，从结构上保证这条链路写不了业务表。
+    this.saleLookup = options.saleLookup || new SaleLookupService({
+      gateway: this.gateway,
+      store: this.store,
+      replyCard: (messageId, card) => this.replyCard(messageId, card),
+      sendCard: (openId, card) => this.sendCard(openId, card),
+      sendText: (openId, message) => this.sendText(openId, message),
+    });
     this.sampleReplacements = options.sampleReplacements || new SampleReplacementService({
       gateway: this.gateway, inventory: this.delivery.inventory, store: this.store, client: this.client,
       sendCard: (openId, card) => this.sendCard(openId, card),
@@ -612,28 +631,55 @@ class LarkMvpService {
     const accessoryVocabulary = [...new Set(
       accessories.flatMap((item) => [item.name, item.category]).filter(Boolean)
     )];
-    // AI 解析是最慢的一段（十几秒），读实时库存不依赖它的结果，所以两件事并行：
-    // 读表的时间藏在 AI 后面，不额外增加用户等待。
-    const [parsed, liveInventory, productIndex] = await Promise.all([
-      this.recognizer.parseSalesText(task.original_text, {
-        taskId, accessoryNames: accessoryVocabulary, vouchers,
-      }),
-      this.loadLiveInventoryIndex(),
-      // 货品信息是主数据，整表读一次即可；读挂了也不影响录单，所以单独吞掉异常。
-      this.loadProductIndex().catch((error) => {
-        logWarn('lark.sales.product_index.load_failed', { task_id: taskId, error: error.message });
-        return null;
-      }),
-    ]);
-    if (parsed.intent !== 'sale') {
+    // AI 解析是最慢的一段（十几秒），读实时库存和货品资料不依赖它的结果，所以三件事
+    // **同时启动**：读表的时间藏在 AI 后面，不额外增加用户等待。
+    //
+    // 与改动前的区别只在"先 await 谁"：这里先只等 AI。查销售记录（退换货第一期）
+    // 只需要 AI 判出的货号颜色 + 销售记录本身，不需要那两张表，所以一拿到意图就出卡片，
+    // 不必陪着读完库存。销售链路仍然是三者并行，总耗时不变（都是 max(AI, 读表)）。
+    const parsePromise = this.recognizer.parseSalesText(task.original_text, {
+      taskId, accessoryNames: accessoryVocabulary, vouchers,
+    });
+    const liveInventoryPromise = this.loadLiveInventoryIndex();
+    // 货品信息是主数据，整表读一次即可；读挂了也不影响录单，所以单独吞掉异常。
+    const productIndexPromise = this.loadProductIndex().catch((error) => {
+      logWarn('lark.sales.product_index.load_failed', { task_id: taskId, error: error.message });
+      return null;
+    });
+    const parsed = await parsePromise;
+    // 意图是「AI 输出」到「后端分支」的唯一契约，统一先收敛成注册表里的规范值：
+    // 认不出来一律 unsupported，不会被误判成 sale 去写单（见 config/saleIntents）。
+    const intent = normalizeMessageIntent(parsed.intent);
+
+    // 查销售记录：只读 + 只展示，绝不写业务表（实现全在 SaleLookupService）。
+    if (isLookupIntent(intent)) {
+      // 这一次用不上的在途读取挂一个吞异常的 catch：不 await 它，但也不让它变成
+      // unhandledRejection 把进程日志搞脏。
+      liveInventoryPromise.catch(() => undefined);
+      productIndexPromise.catch(() => undefined);
+      // 把收敛后的 intent 一并传下去：SaleLookupService 只认规范值，不猜模型的措辞。
+      return this.saleLookup.handleQuery(task, { ...parsed, intent });
+    }
+    // 退货 / 换货：本期只识别意图、不执行（回一句话，记在任务状态里）。
+    if (isAfterSalesIntent(intent)) {
+      liveInventoryPromise.catch(() => undefined);
+      productIndexPromise.catch(() => undefined);
+      return this.saleLookup.handleAfterSalesNotReady(task, { ...parsed, intent });
+    }
+    const [liveInventory, productIndex] = await Promise.all([liveInventoryPromise, productIndexPromise]);
+    // 走到这里已经过了入口闸门（不含数字也不含业务关键词的消息更早被静默挡掉），
+    // 只是 AI 认不出意图 —— 所以这里**可以**回一句引导语，把"能说什么"教给她。
+    // ⚠️ 引导语只在这一档发；闸门没过的消息一律不回，不允许在这条链路上"兜底回复"。
+    if (intent !== 'sale') {
       await this.store.update(taskId, { status: 'ignored', draft: parsed });
       logInfo('lark.sales.processing.ignored', {
         task_id: taskId,
         sender_open_id: task.sender_open_id,
         duration_ms: Date.now() - startedAt,
         reason: 'unsupported_intent',
+        intent,
       });
-      await this.sendText(task.sender_open_id, '未识别为当前支持的现货销售，未写入销售主表。');
+      await this.sendText(task.sender_open_id, UNSUPPORTED_INTENT_REPLY);
       return;
     }
 

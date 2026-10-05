@@ -499,7 +499,10 @@ test('unsupported text is parsed but does not create a sales entry record', asyn
 
   assert.equal(createCount, 0);
   assert.equal((await store.get('sale_unsupported')).status, 'ignored');
-  assert.match(sent[0].message, /未写入销售主表/);
+  // 认不出意图时回的是业务负责人定的引导语（原文在 config/messageGate），
+  // 不再是原来那句"未写入销售主表"——那句话对"我不知道你在说什么"没有任何帮助。
+  assert.equal(sent[0].message, require('../src/config/messageGate').UNSUPPORTED_INTENT_REPLY);
+  assert.match(sent[0].message, /这个我还没学会/);
 });
 
 test('failed card posting returns the draft to a retryable state', async () => {
