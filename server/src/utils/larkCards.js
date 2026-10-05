@@ -451,6 +451,55 @@ const todaySalesCard = ({ dateLabel, rows, totalQuantity, totalAmount }) => ({
   ],
 });
 
+/**
+ * 「最近 N 天的销售记录」候选卡片（退换货第一期：只查 + 只展示）。
+ *
+ * ⚠️ 这张卡片**刻意没有任何按钮**：产品负责人明确要求本期卡片只展示、不做交互，
+ * 她要用自然语言回「第 2 笔」。所以这里不引入 buttonColumns / actionButton；
+ * 谁"顺手加个按钮"都违背需求（也违背本期"只读"的边界）。
+ *
+ * 字号：飞书的 `markdown` 元素不能自定义字号（详见 salesConfirmationCard 的注释），
+ * 所以候选行用 `div` + `lark_md` + `text_size: 'heading'`——手机上这是正文大字。
+ * 每行带序号（1/2/3），她说「第 2 笔」才对得上 task.pending_candidates 的下标。
+ *
+ * 0 条时不给"再试一次"的按钮，只把话说明白：没查到 + 给一条出路（问她大概哪天买的）。
+ */
+const saleLookupCard = ({ days, itemNo = '', color = '', candidates = [] } = {}) => {
+  const label = `${text(itemNo)}${text(color)}`;
+  const title = `最近 ${text(days)} 天的销售记录`;
+  if (!candidates.length) {
+    return {
+      config: { wide_screen_mode: true },
+      header: { template: 'orange', title: { tag: 'plain_text', content: title } },
+      elements: [{
+        tag: 'div',
+        text: {
+          tag: 'lark_md',
+          content: `${text(days)} 天内没查到 ${label} 的销售记录。\n你记得大概是哪天买的吗？`,
+          text_size: 'heading',
+        },
+      }],
+    };
+  }
+  const lines = candidates.map((candidate, index) => {
+    const amount = candidate.actual_amount == null || candidate.actual_amount === ''
+      ? '金额待录入'
+      : `￥${text(candidate.actual_amount)}`;
+    return `${index + 1}. ${text(candidate.date)} · ${text(candidate.item_no)}${text(candidate.color)}`
+      + ` · ${text(candidate.size)}码 · ${amount}`;
+  });
+  return {
+    config: { wide_screen_mode: true },
+    header: { template: 'blue', title: { tag: 'plain_text', content: title } },
+    elements: [
+      { tag: 'div', text: { tag: 'lark_md', content: lines.join('\n'), text_size: 'heading' } },
+      { tag: 'note', elements: [{ tag: 'plain_text', content: candidates.length > 1
+        ? `共 ${candidates.length} 笔。回我「第 2 笔」就能指到具体某一笔。`
+        : '只有这 1 笔。' }] },
+    ],
+  };
+};
+
 const purchaseRequestConfirmationCard = (draftId, draft) => {
   const isBatch = draft.is_batch === true;
   const headerTitle = isBatch ? '请确认采购申请（批次）' : '请确认采购申请';
@@ -613,4 +662,5 @@ module.exports = {
   sampleReplacementStatusCard,
   sampleReplacementProcessingCard,
   todaySalesCard,
+  saleLookupCard,
 };

@@ -1,0 +1,338 @@
+const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
+const {
+  DAY_MS,
+  readSaleLookupConfig,
+  isReturnedOrderStatus,
+  isReturnTradeType,
+} = require('../config/saleLookup');
+const { MESSAGE_INTENTS } = require('../config/saleIntents');
+const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const { normalizeColor, normalizeText } = require('./v1ReferenceResolver');
+const { createSizeReferenceAccess } = require('./sizeReferenceService');
+const { saleLookupCard } = require('../utils/larkCards');
+const { logInfo, logWarn } = require('../utils/logger');
+
+const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+/**
+ * 只读网关视图。
+ *
+ * 退换货第一期是「只查 + 只展示」，**绝不写任何业务表**。与其靠评审去盯，
+ * 不如在这条链路的入口把写接口直接摘掉：SaleLookupService 拿到的网关没有
+ * create / update / delete，以后谁顺手加一行写操作都会当场报错，而不是悄悄改到业务表。
+ */
+const readOnlyGateway = (gateway) => ({
+  table: (tableKey) => gateway.table(tableKey),
+  listAll: (tableKey) => gateway.listAll(tableKey),
+});
+
+const asDate = (value) => {
+  if (value == null || value === '') return null;
+  const raw = typeof value === 'number' ? value : textValue(value).trim();
+  if (raw === '') return null;
+  const timestamp = typeof raw === 'number' || /^\d{10,13}$/.test(raw) ? Number(raw) : null;
+  const date = timestamp === null ? new Date(raw) : new Date(timestamp < 1e12 ? timestamp * 1000 : timestamp);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+// 东八区日键：门店按上海时间营业，"最近几天"必须按上海的自然日算，
+// 不能按服务器时区（线上是 UTC，会把凌晨的单算到前一天）。
+const shanghaiDayKey = (date) =>
+  new Date(date.getTime() + SHANGHAI_OFFSET_MS).toISOString().slice(0, 10);
+
+const shanghaiDayStart = (date) => Date.parse(`${shanghaiDayKey(date)}T00:00:00+08:00`);
+
+/**
+ * 查询窗口 = 今天 + 往前 (days - 1) 个上海自然日。
+ *
+ * 为什么用自然日而不是「now - days×24h」：产品负责人说的是「最近 5 天内」，
+ * 门店理解的是"今天和前几天"。写成滚动 24 小时的话，同一个上午查两次的窗口不一样，
+ * 她没法预期"几天前那笔还在不在"。
+ */
+const lookupWindowStart = ({ now, days }) => shanghaiDayStart(now) - (days - 1) * DAY_MS;
+
+const isWithinLookupWindow = (date, { now, days }) =>
+  Boolean(date) && date.getTime() >= lookupWindowStart({ now, days });
+
+const fieldValue = (schema, tableKey, record, semanticKey) => {
+  const fieldName = schema.tables[tableKey]?.fields?.[semanticKey];
+  return fieldName ? record?.fields?.[fieldName] : undefined;
+};
+
+const asText = (schema, tableKey, record, semanticKey) =>
+  textValue(fieldValue(schema, tableKey, record, semanticKey)).trim();
+
+const asOptionalNumber = (value) => {
+  const raw = textValue(value).replace(/,/g, '').replace(/¥/g, '').trim();
+  if (raw === '') return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+/**
+ * 销售记录查询服务（退换货第一期）。
+ *
+ * 边界：这一层只做四件事，彼此可分可测——
+ *   1. 候选查询（findCandidates）：读销售明细 + 销售主表 + 货品信息，按窗口和货号颜色筛，排除已退
+ *   2. 卡片渲染：交给 utils/larkCards.saleLookupCard（纯函数）
+ *   3. 上下文（pending candidates）：按卡片顺序存进任务状态，10 分钟过期
+ *   4. 编排（handleQuery）：查 → 存上下文 → 回卡片
+ * 不碰：写入、收款、库存、单号生成。
+ */
+class SaleLookupService {
+  constructor(options = {}) {
+    if (!options.gateway) throw new Error('SaleLookupService requires gateway');
+    if (!options.store) throw new Error('SaleLookupService requires store');
+    this.schema = options.schema || V1_BITABLE_SCHEMA;
+    // 双保险：构造时再包一层只读视图，即使调用方直接传了完整网关也写不了。
+    this.gateway = readOnlyGateway(options.gateway);
+    this.store = options.store;
+    this.config = options.config || readSaleLookupConfig();
+    this.now = options.now || (() => new Date());
+    this.replyCard = options.replyCard || (async () => '');
+    this.sendCard = options.sendCard || (async () => '');
+    this.sendText = options.sendText || (async () => undefined);
+    this.getSizeReferences = createSizeReferenceAccess({
+      gateway: this.gateway,
+      sizeReferences: options.sizeReferences,
+    });
+  }
+
+  get days() {
+    return this.config.days;
+  }
+
+  get ttlMs() {
+    return this.config.ttlMs;
+  }
+
+  /**
+   * 尺码在「销售明细」里是关联「尺码管理」，不能只靠关联单元格的显示文本
+   * （部分接口只回 record_ids 不回 text）。走共享的尺码解析；老数据或未配置
+   * 「尺码管理」时退回单元格自带文本，读不到就留空——查记录不该因为一个字段
+   * 关联不完整就整条消失。
+   */
+  async resolveDetailSize(record, fields) {
+    try {
+      const entry = await this.getSizeReferences().resolveLinkedCell(fields[this.schema.tables.salesDetail.fields.size]);
+      return entry.size;
+    } catch (error) {
+      const fallback = textValue(fields[this.schema.tables.salesDetail.fields.size]).trim();
+      if (fallback) return fallback;
+      logWarn('sale_lookup.size.unresolved', { record_id: record?.record_id, error: error.message });
+      return '';
+    }
+  }
+
+  /**
+   * 候选查询。
+   *
+   * 输入：货号 / 颜色（都可选，但不能都不给）+ 时间窗口
+   * 输出：[{ record_id, date, sold_at, item_no, color, size, actual_amount, sales_order_no, sales_entry_record_id }]
+   *
+   * 「日期」用销售明细的「销售日」，缺失时退回销售主表的「录单日」——和
+   * 网页工作台的取值口径一致（v1WorkbenchService.getTodaySales），两处不能各算一套。
+   */
+  async findCandidates({ itemNo = '', color = '', now = this.now(), days = this.days } = {}) {
+    const wantedItemNo = normalizeText(itemNo);
+    const wantedColor = normalizeColor(color);
+    // 货号和颜色都没给 = 想查"全部销售记录"，那不是这个功能要回答的问题
+    // （最近 5 天全店可能有几十条），直接回空，让上层提示她补货号。
+    if (!wantedItemNo && !wantedColor) return [];
+
+    const [details, entries, products] = await Promise.all([
+      this.gateway.listAll('salesDetail'),
+      this.gateway.listAll('salesEntry'),
+      this.gateway.listAll('product'),
+    ]);
+
+    const productsById = new Map(products.map((record) => [record.record_id, record]));
+    const entriesById = new Map(entries.map((record) => [record.record_id, record]));
+
+    // 判据一：销售主表.订单状态 = 已退货 / 部分退货
+    const returnedOrderIds = new Set();
+    for (const entry of entries) {
+      if (isReturnedOrderStatus(asText(this.schema, 'salesEntry', entry, 'orderStatus'))) {
+        returnedOrderIds.add(entry.record_id);
+      }
+    }
+    // 判据二：销售明细里已有「交易类型」= 销售退货的行 → 它所属的整单都排除。
+    // 「单」的粒度是销售主表记录：已经退过一笔的单，不能再让她从那一条里挑第二笔去退。
+    for (const detail of details) {
+      if (!isReturnTradeType(asText(this.schema, 'salesDetail', detail, 'tradeType'))) continue;
+      for (const orderId of linkedRecordIds(fieldValue(this.schema, 'salesDetail', detail, 'salesEntry'))) {
+        returnedOrderIds.add(orderId);
+      }
+    }
+
+    const candidates = [];
+    for (const detail of details) {
+      const fields = detail.fields || {};
+      const orderIds = linkedRecordIds(fieldValue(this.schema, 'salesDetail', detail, 'salesEntry'));
+      const orderId = orderIds[0] || '';
+      if (orderId && returnedOrderIds.has(orderId)) continue;
+      // 明细自己就是一条退货行：即使订单状态还没改，也不能拿它当"可退的销售"。
+      if (isReturnTradeType(asText(this.schema, 'salesDetail', detail, 'tradeType'))) continue;
+
+      const productIds = linkedRecordIds(fieldValue(this.schema, 'salesDetail', detail, 'product'));
+      const product = productsById.get(productIds[0]);
+      // 配品（腰带、鞋油…）没有货号颜色，不在这次"按货号查鞋"的范围里。
+      if (!product) continue;
+
+      const saleItemNo = asText(this.schema, 'product', product, 'itemNo');
+      const saleColor = asText(this.schema, 'product', product, 'color');
+      if (wantedItemNo && normalizeText(saleItemNo) !== wantedItemNo) continue;
+      // 颜色复用 normalizeColor：「棕」=「棕色」。她嘴里说的和表里存的不必逐字相同。
+      if (wantedColor && normalizeColor(saleColor) !== wantedColor) continue;
+
+      const entry = entriesById.get(orderId);
+      const soldAt = asDate(fieldValue(this.schema, 'salesDetail', detail, 'soldAt'))
+        || asDate(fieldValue(this.schema, 'salesEntry', entry, 'recordedAt'));
+      if (!isWithinLookupWindow(soldAt, { now, days })) continue;
+
+      candidates.push({
+        record_id: detail.record_id,
+        sold_at: soldAt.toISOString(),
+        date: shanghaiDayKey(soldAt),
+        item_no: saleItemNo,
+        color: saleColor,
+        size: await this.resolveDetailSize(detail, fields),
+        actual_amount: asOptionalNumber(fieldValue(this.schema, 'salesDetail', detail, 'actualAmount')),
+        sales_order_no: entry ? asText(this.schema, 'salesEntry', entry, 'orderNo') : '',
+        sales_entry_record_id: orderId,
+      });
+    }
+
+    // 最近的排前面。同一天的按销售单号再按记录 ID 兜底，保证**同一份数据每次顺序一致**
+    // ——卡片顺序和 task.pending_candidates 的顺序必须对得上，她说「第 2 笔」才不会串。
+    candidates.sort((left, right) => {
+      if (left.date !== right.date) return right.date.localeCompare(left.date);
+      const leftNo = left.sales_order_no || '';
+      const rightNo = right.sales_order_no || '';
+      if (leftNo !== rightNo) return rightNo.localeCompare(leftNo);
+      return String(left.record_id).localeCompare(String(right.record_id));
+    });
+
+    logInfo('sale_lookup.candidates', {
+      item_no: wantedItemNo,
+      color: wantedColor,
+      days,
+      candidate_count: candidates.length,
+      excluded_returned_orders: returnedOrderIds.size,
+    });
+    return candidates;
+  }
+
+  /**
+   * 把候选按卡片顺序存进任务状态（复用现有 data/lark_mvp_tasks 存储，不新起一套）。
+   * 有效期由 pending_candidates_expires_at 表达；过了就要求重新查。
+   */
+  async storePendingCandidates(taskId, candidates, { now = this.now() } = {}) {
+    const expiresAt = new Date(now.getTime() + this.ttlMs).toISOString();
+    await this.store.update(taskId, {
+      status: 'query_answered',
+      pending_candidates: candidates,
+      pending_candidates_at: now.toISOString(),
+      pending_candidates_expires_at: expiresAt,
+    });
+    return { expiresAt };
+  }
+
+  /**
+   * 读上下文。返回 status:
+   *   · ok      —— 候选有效，按卡片顺序返回
+   *   · empty   —— 没有候选（她从没查过，或查出来就是 0 条）
+   *   · expired —— 超过有效期，必须重新查（明确告诉她，不要拿旧列表猜）
+   * message 是给用户看的一句话（过期就提示重新查）；第二期执行退换货时直接发它。
+   */
+  resolvePendingCandidates(task, { now = this.now() } = {}) {
+    const candidates = Array.isArray(task?.pending_candidates) ? task.pending_candidates : [];
+    if (!candidates.length) {
+      return { status: 'empty', candidates: [], message: '我这儿还没有可选的销售记录，先发我货号，我帮你查一下。' };
+    }
+    const expiresAt = Date.parse(task?.pending_candidates_expires_at || '');
+    if (!Number.isFinite(expiresAt) || now.getTime() > expiresAt) {
+      return { status: 'expired', candidates: [],
+        message: '这次查询已经超过 10 分钟了，请重新发我货号，我再查一次。' };
+    }
+    return { status: 'ok', candidates, message: '' };
+  }
+
+  /**
+   * 按序号取候选（她说「第 2 笔」）。序号就是卡片上的 1/2/3。
+   * 本期只提供这个定位能力（供第二期执行退换货），本期不触发任何业务动作。
+   */
+  resolvePendingCandidate(task, ordinal, { now = this.now() } = {}) {
+    const resolved = this.resolvePendingCandidates(task, { now });
+    if (resolved.status !== 'ok') return { ...resolved, candidate: null };
+    const index = Number(ordinal) - 1;
+    const candidate = Number.isInteger(index) && index >= 0 && index < resolved.candidates.length
+      ? resolved.candidates[index]
+      : null;
+    return { status: candidate ? 'ok' : 'out_of_range', candidates: resolved.candidates, candidate };
+  }
+
+  /**
+   * 处理「查销售记录」：查候选 → 存上下文 → 回一张**没有按钮**的卡片。
+   *
+   * 卡片只展示；她说「第 2 笔」是第二期的事。这里把候选按卡片顺序存好，
+   * 就是为了第二期能直接对上号，而不是去翻聊天记录猜。
+   */
+  async handleQuery(task, parsed = {}) {
+    const itemNo = String(parsed.item_no || parsed.items?.[0]?.item_no || '').trim();
+    const color = String(parsed.color || parsed.items?.[0]?.color || '').trim();
+    const now = this.now();
+    const candidates = await this.findCandidates({ itemNo, color, now });
+    await this.storePendingCandidates(task.task_id, candidates, { now });
+    const card = saleLookupCard({ days: this.days, itemNo, color, candidates });
+    await this.replyCardByTask(task, card);
+    logInfo('sale_lookup.card.sent', {
+      task_id: task.task_id,
+      item_no: itemNo,
+      color,
+      candidate_count: candidates.length,
+      ttl_ms: this.ttlMs,
+    });
+    return { handled: true, intent: MESSAGE_INTENTS.SALE_QUERY, itemNo, color,
+      candidateCount: candidates.length, candidates };
+  }
+
+  /**
+   * 退货 / 换货：本期只识别意图、**不执行**。回一句人话，并把意图记在任务状态里。
+   * 这里的"记下"只写本地任务记录，不写任何业务表。
+   */
+  async handleAfterSalesNotReady(task, parsed = {}) {
+    const intent = parsed.intent === MESSAGE_INTENTS.EXCHANGE ? MESSAGE_INTENTS.EXCHANGE : MESSAGE_INTENTS.RETURN;
+    const label = intent === MESSAGE_INTENTS.EXCHANGE ? '换货' : '退货';
+    await this.store.update(task.task_id, { status: 'after_sales_not_supported', intent });
+    await this.sendText(task.sender_open_id, `${label}我还没上线，先给你记下了。`);
+    logInfo('sale_lookup.after_sales.not_supported', { task_id: task.task_id, intent });
+    return { handled: true, intent, label };
+  }
+
+  // 优先在原消息下回复（她能立刻看到对应的那张卡）；回复失败退回主动发卡，
+  // 免得"查了却没反应"。
+  async replyCardByTask(task, card) {
+    try {
+      const messageId = await this.replyCard(task.message_id, card);
+      if (messageId) {
+        await this.store.update(task.task_id, { card_message_id: messageId });
+      }
+      return messageId || '';
+    } catch (error) {
+      logWarn('sale_lookup.card.reply_failed', { task_id: task.task_id, error: error.message });
+      const messageId = await this.sendCard(task.sender_open_id, card);
+      if (messageId) await this.store.update(task.task_id, { card_message_id: messageId });
+      return messageId || '';
+    }
+  }
+}
+
+module.exports = {
+  SaleLookupService,
+  readOnlyGateway,
+  asDate,
+  shanghaiDayKey,
+  lookupWindowStart,
+  isWithinLookupWindow,
+};
