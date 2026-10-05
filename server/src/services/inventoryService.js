@@ -14,6 +14,12 @@ const { logInfo, logWarn } = require('../utils/logger');
 // 新增动作 = 表里补一条行为 + 这里加一条声明，不需要再改任何分支逻辑。
 const MOVEMENT_SALE_DECREASE = 'STOCK_SALE_DECREASE';
 const MOVEMENT_PURCHASE_INCREASE = 'STOCK_PURCHASE_INCREASE';
+// 采购退货：把货退给供应商，库存**减少**。
+// 业务负责人 2026-10-05 明确：退货时「不看形态、不看所属状态」——样品 + 门盒 + 仓库
+// （"仓库"是非当季在售那个状态）全部都要退，所以 consumes 把三个状态都列进去。
+// 行为本身（名称「采购减少」、方向=减少、已启用）由她在「行为管理」里维护并已核实；
+// 这里只声明引擎语义。
+const MOVEMENT_PURCHASE_DECREASE = 'STOCK_PURCHASE_DECREASE';
 const BEHAVIOR_SAMPLE_PROMOTION = 'STOCK_DOORBOX_TO_SAMPLE';
 
 // 售后（退货 / 赔货 / 换货出货）用到的三个行为编码。
@@ -38,6 +44,24 @@ const STOCK_MOVEMENTS = Object.freeze({
     direction: '增加',
     ledgerSource: 'purchaseInbound',
     consumes: null,
+    triggerSampleReplacement: false,
+  },
+  // 采购退货：方向=减少，且**状态无关**——样品、门盒、仓库都要退（见上面的注释）。
+  //
+  // ⚠️ ledgerSource 为 null：「库存流水」的两个来源字段是「关联销售」→销售明细、
+  // 「关联采购」→采购入库，而采购退货既不产生销售明细、也不产生采购入库
+  //（业务负责人明确退货不走采购到货/入库），表里没有能关联「单据信息」的字段。
+  // 所以这条流水**不带来源关联**，而不是往错表的字段里写一个 id（那会被飞书拒绝或
+  // 写出一条指错来源的流水）。
+  // 👉 **此处等「关联单据」列**：父代理已去确认她要不要在「库存流水」加一个指向
+  //    「单据信息」的「关联单据」列；加好之后只改这一行（ledgerSource: 'supplierReturnOrder'
+  //    + v1BitableSchema 里补一条字段映射）就能让退货流水和销售/入库一样带远端幂等键。
+  //    在那之前，重试保护是：任务终态 + 「单据信息」行幂等键 + 落盘的核对计划
+  //    + 本地库存任务日志（见交付说明的待确认项）。
+  [MOVEMENT_PURCHASE_DECREASE]: {
+    direction: '减少',
+    ledgerSource: null,
+    consumes: ['门盒', '样品', '仓库'],
     triggerSampleReplacement: false,
   },
   // 退货：退回的鞋回库。consumes=null 表示「不消耗既有实时库存」，
@@ -235,7 +259,11 @@ class InventoryService {
       } else {
         const movement = requireMovement(input.kind);
         const behavior = await this.resolveStockBehavior(input.kind);
-        const existingLedger = await this.findLedger(movement.ledgerSource, input.sourceRecordId, behavior.recordId);
+        // 没有来源字段的动作（例如采购退货）拿不到"远端已经写过这条流水"的证明，
+        // 只能靠本地任务日志恢复；见 STOCK_MOVEMENTS 里那条注释。
+        const existingLedger = movement.ledgerSource
+          ? await this.findLedger(movement.ledgerSource, input.sourceRecordId, behavior.recordId)
+          : null;
         if (existingLedger) {
           throw new Error(`来源明细 ${input.sourceRecordId} 已有库存流水，但缺少可恢复任务，请人工核对实时库存`);
         }
@@ -248,7 +276,9 @@ class InventoryService {
             .sort((left, right) => String(left.record_id).localeCompare(String(right.record_id))));
         const currentQuantity = liveRecords.length;
         if (delta < 0 && currentQuantity < quantity) {
-          throw new Error(`门盒和样品库存不足：${input.productRecordId} ${size}码，需 ${quantity} 双，现有 ${currentQuantity} 双`);
+          // 文案里的状态来自注册表（销售是"门盒和样品"，采购退货是"门盒、样品和仓库"），
+          // 不再写死——写死的文案会在退货时告诉她"门盒和样品不足"，而仓库里其实有货。
+          throw new Error(`${states.join('和')}库存不足：${input.productRecordId} ${size}码，需 ${quantity} 双，现有 ${currentQuantity} 双`);
         }
         const selected = delta < 0 ? liveRecords.slice(0, quantity) : [];
         const stateField = this.gateway.table('liveInventory').fields.state;
@@ -408,7 +438,10 @@ class InventoryService {
         quantityChange: operation.quantity,
         behavior: relation(operation.behavior_record_id),
         // 来源字段由注册表声明：新增动作不必再改这里。
-        [movement.ledgerSource]: relation(operation.source_record_id),
+        // ledgerSource 为 null 的动作（采购退货）没有可关联的来源表，整列不写。
+        ...(movement.ledgerSource
+          ? { [movement.ledgerSource]: relation(operation.source_record_id) }
+          : {}),
       });
       ledger = { record_id: created.recordId };
     }
@@ -420,6 +453,9 @@ class InventoryService {
     const liveRecordIds = operation.live_record_ids || [];
     const removedIds = operation.removed_live_record_ids || [];
     const createdIds = operation.created_live_record_ids || [];
+    // 可扣减的状态 = 注册表声明的消耗清单（销售是 门盒+样品，采购退货还要加 仓库）。
+    // 以前这里写死成 ['门盒','样品']：写死会让"仓库里的退货"永远报"状态已改变"。
+    const consumableStates = movement.consumes || [operation.state];
     if (operation.direction === '减少') {
       for (const recordId of liveRecordIds) {
         if (removedIds.includes(recordId)) continue;
@@ -431,7 +467,7 @@ class InventoryService {
         const liveFields = this.gateway.table('liveInventory').fields;
         if (!linkedRecordIds(record.fields?.[liveFields.product]).includes(operation.product_record_id) ||
           !linkedRecordIds(record.fields?.[liveFields.size]).includes(sizeReference.recordId) ||
-          !['门盒', '样品'].includes(textValue(record.fields?.[liveFields.state]))) {
+          !consumableStates.includes(textValue(record.fields?.[liveFields.state]))) {
           throw new Error(`待扣减实时库存 ${recordId} 的货品、尺码或状态已改变，请人工核对`);
         }
         await this.gateway.delete('liveInventory', recordId);
@@ -531,8 +567,12 @@ class InventoryService {
   }
 
   async findOperationLedger(operation) {
-    const listed = await this.findLedger(requireMovement(operation.kind).ledgerSource, operation.source_record_id,
-      operation.behavior_record_id);
+    const movement = requireMovement(operation.kind);
+    // 没有来源字段的动作（采购退货）无法按来源回查流水，只能靠 operation.ledger_record_id
+    // 这条本地记录；这也是为什么它的重试保护弱于销售（见 STOCK_MOVEMENTS 的注释）。
+    const listed = movement.ledgerSource
+      ? await this.findLedger(movement.ledgerSource, operation.source_record_id, operation.behavior_record_id)
+      : null;
     if (!operation.ledger_record_id) {
       if (operation.status === 'ledger_created' && !listed) {
         throw new Error(`库存操作 ${operation.operation_id} 的已创建流水无法确认，请人工核对`);
@@ -550,13 +590,15 @@ class InventoryService {
   // Rows written before the 尺码 field became a relation still hold a numeric
   // value (or an empty link after migration), so every existing caller audits
   // the same five facts before continuing.
+  // 没有来源字段的动作（采购退货）只核对四项：那张表里根本没有能放下这张来源的列，
+  // 硬核对会把"字段名 undefined"当成不匹配，把可恢复的任务判成人工介入。
   ledgerMatchesOperation(ledger, { productRecordId, sizeRecordId, behaviorRecordId,
     sourceField, sourceRecordId, quantityChange }) {
     const fields = this.gateway.table('inventoryLedger').fields;
     return singleLinked(ledger.fields?.[fields.product], productRecordId) &&
       singleLinked(ledger.fields?.[fields.size], sizeRecordId) &&
       singleLinked(ledger.fields?.[fields.behavior], behaviorRecordId) &&
-      singleLinked(ledger.fields?.[fields[sourceField]], sourceRecordId) &&
+      (!sourceField || singleLinked(ledger.fields?.[fields[sourceField]], sourceRecordId)) &&
       Number(ledger.fields?.[fields.quantityChange]) === quantityChange;
   }
 
@@ -604,12 +646,14 @@ class InventoryService {
       }
     } else if (operation.direction === '减少') {
       if (selectedIds.length !== operation.quantity) manual('待扣减实时库存数量不一致');
+      // 同 executeOperation：可扣状态来自注册表的 consumes（销售 门盒+样品、采购退货还要加 仓库）。
+      const consumableStates = requireMovement(operation.kind).consumes || [operation.state];
       for (const recordId of selectedIds) {
         if (removedIds.includes(recordId)) continue;
         const record = await this.gateway.get('liveInventory', recordId);
         if (!record || !singleLinked(record.fields?.[liveFields.product], operation.product_record_id) ||
           !singleLinked(record.fields?.[liveFields.size], sizeRecordId) ||
-          !['门盒', '样品'].includes(textValue(record.fields?.[liveFields.state]))) {
+          !consumableStates.includes(textValue(record.fields?.[liveFields.state]))) {
           manual(`待扣减实时库存 ${recordId} 的货品、尺码关联或状态不一致`);
         }
       }
@@ -670,6 +714,7 @@ module.exports = {
   InventoryService,
   operationId,
   STOCK_MOVEMENTS,
+  MOVEMENT_PURCHASE_DECREASE,
   MOVEMENT_SALE_RETURN,
   MOVEMENT_SALE_COMPENSATION,
   MOVEMENT_SALE_CASH,

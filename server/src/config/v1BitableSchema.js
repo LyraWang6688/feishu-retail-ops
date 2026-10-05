@@ -205,23 +205,40 @@ const V1_BITABLE_SCHEMA = {
         creditFlowId: '客户往来流水ID',
       },
     },
-    // Legacy private-chat purchase intake table. Kept for the frozen path.
+    // 供应商填表入口。⚠️ 表名 2026-10-05 由业务负责人从「供应商报货」改成「供应商对接」，
+    // 这里只跟着改 tableName（用户可见文案用得到）；分流与读写一律按 tableId 走，
+    // 所以改名不影响任何触发链路。
     purchaseReport: {
-      tableName: '供应商报单',
+      tableName: '供应商对接',
       tableId: getEnv('FEISHU_V1_PURCHASE_REPORT_TABLE_ID', 'tblo0ffzFt7vyQw2'),
       fields: {
         batchNoText: '报货批次号', detailId: '明细ID', behavior: '采购行为',
         product: '编号', size: '尺码', quantityDescription: '数量说明', reportedAt: '报单时间', operator: '经办人',
-        // 「合计数量」是产品负责人在表单里自己填的一批报货总双数（number 字段，
-        // 2026-10-05 用 lark-cli +field-list 只读核对过字段名与类型）。
+        // 「数量」（number）是「采购退货」格式的数量来源：退货明细只有 编号 + 数量，没有尺码。
+        // 「采购申请」格式（尺码 + 数量说明）这一列是空的，所以两种格式互不干扰。
+        // 业务负责人 2026-10-05 改字段结构后她在表里核对过这一列存在；缺列时 schema 闸门会直接拦下部署。
+        quantity: '数量',
+        // 「合计数量」是产品负责人在表单里自己填的一批报货总双数（number 字段）。
         // 它是报货「到齐」判据的输入：Σ(每条明细解析出的双数) >= 合计数量 才处理
         // （见 reportCompletenessPolicy + purchaseWebhookService.handleReportBatch）。
+        //
+        // ⚠️ 待父代理裁决（本分支**故意留着**这一行）：父代理用生产凭证确认她 2026-10-05
+        // 已经把这一列从表里去掉了，所以留着它会让 `v1:schema-check:purchase`（部署闸门）
+        // 失败。但**单独删掉它会让这条链路静默坏掉**：判据读不到申报值 → 永远判不出「到齐」
+        // → 每条带批次号的报货都停在未处理，还会给她发「你说这一批 null 双」的告警；
+        // 而本分支不能顺手重做归批（那是 #81 的范围，合并由父代理裁决）。
+        // 两种处理都写进交付说明：删它 = 15 条既有用例红（判据失效）、闸门过；
+        // 留它 = 用例全绿、闸门红（大声失败）。这里选后者：宁可部署被拦下，
+        // 也不留一条会静默卡住报货的链路。**#81 合并时会连判据一起换成归批并删掉这一行。**
         totalQuantity: '合计数量',
         status: '处理状态', failureReason: '解析失败原因', request: '关联采购申请',
       },
     },
+    // ⚠️ 表名 2026-10-05 由业务负责人从「采购申请」改成「单据信息」——新定位是
+    // **给供应商开图片的依据**（采购申请单 / 采购退货单都写在这张表里）。
+    // 同样只改 tableName：闸门和链路都按 tableId 走，改名不影响它们。
     purchaseRequest: {
-      tableName: '采购申请',
+      tableName: '单据信息',
       tableId: getEnv('FEISHU_V1_PURCHASE_REQUEST_TABLE_ID', 'tbli1ygPtss5CWCH'),
       fields: {
         batchNo: '报货批次号', behavior: '采购行为', product: '编号', size: '尺码', quantity: '数量',
@@ -235,6 +252,8 @@ const V1_BITABLE_SCHEMA = {
         // 供应商要的采购申请 PNG 写回这里，产品负责人再自己转发。
         // ⚠️ 字段真实名是「采购申请单」（2026-10-05 用 lark-cli +field-list 只读核对过），
         // 不是口头说的「采购申请附件」；写错字段名飞书会直接 FieldNameNotFound。
+        // 「采购退货单」的 PNG 也写回这同一个附件字段：表已改名为「单据信息」，
+        // 它的定位就是"给供应商开图片的依据"，退货单同理，不再新建字段。
         attachment: '采购申请单',
       },
     },

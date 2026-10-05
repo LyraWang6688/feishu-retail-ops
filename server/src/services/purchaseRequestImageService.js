@@ -20,6 +20,10 @@ const sharp = require('sharp');
 const FONT_FAMILY = 'Noto Sans CJK SC, Noto Serif CJK SC, Noto Sans SC, WenQuanYi Zen Hei, sans-serif';
 
 const TITLE = '邯美皮鞋采购申请单';
+// 「采购退货单」复用同一套排版（列、字号、合计口径全都一样），只换标题——
+// 业务负责人的口径就是"格式和采购申请单一样"。标题做成参数而不是复制一份渲染器：
+// 复制一份的话，以后改列宽/截断规则就得改两处，两边迟早会长歪。
+const RETURN_TITLE = '邯美皮鞋采购退货单';
 
 // 布局常量（单位 px）。宽度取 900：手机微信里放大看货号够清楚，
 // 又不至于大到飞书图片消息再次压缩后糊掉。
@@ -152,7 +156,8 @@ const formatDate = (value) => {
  * 明细 → SVG 字符串。纯函数：同样的输入永远得到同样的字节，
  * 因此排版规则（标题、尺码写法、合计）都能在没有网络、没有 sharp 的情况下单测。
  */
-const buildPurchaseRequestSvg = ({ supplierName, batchNo = '', items = [], generatedAt = new Date() } = {}) => {
+const buildPurchaseRequestSvg = ({ supplierName, batchNo = '', items = [], generatedAt = new Date(),
+  title = TITLE } = {}) => {
   const rows = normalizeItems(items);
   const { rowCount, totalPairs } = summarize(rows);
   const tableHeight = HEADER_ROW_HEIGHT + Math.max(rows.length, 1) * ROW_HEIGHT;
@@ -163,9 +168,10 @@ const buildPurchaseRequestSvg = ({ supplierName, batchNo = '', items = [], gener
   parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${height}" viewBox="0 0 ${WIDTH} ${height}">`);
   parts.push(`<rect x="0" y="0" width="${WIDTH}" height="${height}" fill="#ffffff"/>`);
 
-  // 标题区：标题固定是产品口径里的「邯美皮鞋采购申请单」，下面一行写清这批是给谁、哪一批。
+  // 标题区：默认「邯美皮鞋采购申请单」，采购退货传「邯美皮鞋采购退货单」；
+  // 下面一行写清这批是给谁、哪一批。
   parts.push(`<text x="${WIDTH / 2}" y="${TITLE_BASELINE}" font-family="${FONT_FAMILY}" font-size="34" ` +
-    `font-weight="bold" fill="${COLORS.ink}" text-anchor="middle">${escapeXml(TITLE)}</text>`);
+    `font-weight="bold" fill="${COLORS.ink}" text-anchor="middle">${escapeXml(title)}</text>`);
   const subtitle = [
     supplierName ? `供应商：${truncateToWidth(supplierName, 300, 18)}` : '供应商：未填写',
     batchNo ? `报货批次：${truncateToWidth(batchNo, 300, 18)}` : '',
@@ -235,6 +241,7 @@ const renderPurchaseRequestPng = async (input) => {
 
 module.exports = {
   TITLE,
+  RETURN_TITLE,
   FONT_FAMILY,
   buildPurchaseRequestSvg,
   renderPurchaseRequestPng,
