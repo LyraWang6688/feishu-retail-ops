@@ -180,6 +180,30 @@ const V1_BITABLE_SCHEMA = {
         receivedAt: '收款时间',
       },
     },
+    // 「客户往来货款」：客户存在店里的钱（预存 / 退款转预存）。
+    //
+    // 退换货第二期的 settlement=prepaid 走这张表：钱不进收款明细，而是记一笔往来货款。
+    // 它自带一个幂等键字段「业务事件ID」——售后执行器用它做"先回查再创建"，
+    // 即使本地任务记录丢了，也能按 `after_sales:<原主表id>:<action>` 认出这一笔。
+    //
+    // 字段名 2026-10-05 由产品负责人核对过（含「退货退款」选项已在「变动类型」里）。
+    customerCredit: {
+      tableName: '客户往来货款',
+      tableId: getEnv('FEISHU_V1_CUSTOMER_CREDIT_TABLE_ID', 'tblm86T60yAHD6pR'),
+      fields: {
+        changeType: '变动类型',
+        receivableChange: '应收变化',
+        customer: '客户',
+        occurredAt: '发生时间',
+        detailSequence: '明细序号',
+        entryStatus: '入账状态',
+        // 幂等键（文本）：售后写入靠它回查，缺列时执行器大声失败。
+        businessEventId: '业务事件ID',
+        sourceOrderNo: '来源单号',
+        operator: '经办人',
+        creditFlowId: '客户往来流水ID',
+      },
+    },
     // Legacy private-chat purchase intake table. Kept for the frozen path.
     purchaseReport: {
       tableName: '供应商报单',
