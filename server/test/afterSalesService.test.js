@@ -4,12 +4,12 @@
 //       差价正/负/0 · 资金 cash/prepaid · 退回状态 门盒/样品 · 库存流水 1 行 / 2 行方向相反 ·
 //       失败后重试成功 · 入参校验 · 总闸门（指纹不同就停 · 缺列大声失败）。
 //
-// 说明：库存那一侧注入的是「与 InventoryService.applyChange 同签名的端口」。
-// 原因是这一期不许改 inventoryService.js，而它的 STOCK_MOVEMENTS 是模块内 Object.freeze
-// 且未导出，SALE_RETURN / SALE_COMPENSATION / SALE_CASH 还没在里面声明，
-// 直接传真服务会抛「未在库存动作注册表中声明动作」（接线那一步由父代理补声明 + 补 fixture）。
-// 端口按真实服务的同一套幂等思路实现：以 kind + sourceRecordId 作为操作身份
-// （真实服务用 operationId(kind, sourceRecordId) + 远端「库存操作键」），重复调用不再写第二遍。
+// 说明：库存那一侧默认已经接入真的 InventoryService（接线完成），
+// 但本文件仍然**注入端口**跑业务断言——端口按真实服务的同一套幂等思路实现：
+// 以 kind + sourceRecordId 作为操作身份（真实服务用 operationId(kind, sourceRecordId)
+// + 远端「库存操作键」），重复调用不再写第二遍。
+// 这样这些用例只验证执行器的业务行为，不受库存引擎内部实现变动影响；
+// 真 InventoryService 的接线由 inventoryMvp.test.js 里的售后三条声明用例覆盖。
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -17,6 +17,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { AfterSalesService } = require('../src/services/afterSalesService');
+const { InventoryService } = require('../src/services/inventoryService');
+const { afterSalesEventId, afterSalesOperationId } = require('../src/config/afterSales');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 
@@ -57,6 +59,10 @@ const seed = () => ({
     {
       record_id: 'detail_old_2',
       fields: { 销售单号: ['order_old'], 配品: ['accessory_belt'], 成交金额: 30, 履约状态: '已交付' },
+    },
+    {
+      record_id: 'detail_old_3',
+      fields: { 销售单号: ['order_old'], 编号: ['product_B'], 尺码: ['size_42'], 成交金额: 300, 履约状态: '已交付' },
     },
   ],
   paymentRecord: [{
@@ -189,13 +195,16 @@ const fakeInventory = (gateway) => {
   };
 };
 
+/** 本地任务记录一律落在临时目录：测试不碰仓库里的 data/。 */
+const tempStore = () => new JsonTaskStore({
+  dir: fs.mkdtempSync(path.join(os.tmpdir(), 'after-sales-')),
+  idField: 'operation_id',
+});
+
 const build = (options = {}) => {
   const gateway = fakeBase(options);
   const inventory = fakeInventory(gateway);
-  const store = options.store || new JsonTaskStore({
-    dir: fs.mkdtempSync(path.join(os.tmpdir(), 'after-sales-')),
-    idField: 'operation_id',
-  });
+  const store = options.store || tempStore();
   const service = new AfterSalesService({ gateway, inventory, store, now: () => FIXED_NOW });
   return { gateway, inventory, store, service };
 };
@@ -224,6 +233,34 @@ const request = (overrides = {}) => ({
   settlement: 'cash',
   restockState: '门盒',
   ...overrides,
+});
+
+// 接线（父代理裁决①）：执行器不再要求调用方注入库存服务——不传就接真的 InventoryService；
+// 同时保留端口注入（上面所有业务用例仍用端口）。这两点都在这里锁住。
+test('接线：不注入端口时默认就是真的 InventoryService；注入真服务时引擎能落退货流水与实时库存', async () => {
+  const gateway = fakeBase();
+  // 真 InventoryService 会先校验尺码关联字段的结构；假 Base 没提供 listFields
+  // 时它会按既有约定跳过结构校验（inventoryMvp 的假网关也是这样）。
+  delete gateway.listFields;
+
+  const defaultService = new AfterSalesService({ gateway, store: tempStore(), now: () => FIXED_NOW });
+  assert.ok(defaultService.inventory instanceof InventoryService, '不注入时应默认接既有库存服务');
+
+  const service = new AfterSalesService({
+    gateway,
+    inventory: new InventoryService({ gateway, store: tempStore() }),
+    store: tempStore(),
+    now: () => FIXED_NOW,
+  });
+  const result = await service.execute(request());
+
+  assert.deepEqual(result.stock.map((item) => [item.behaviorCode, item.state, item.quantity]),
+    [['SALE_RETURN', '门盒', 1]]);
+  assert.deepEqual(rowsOf(gateway, 'inventoryLedger')[0].fields, {
+    编号: ['product_A'], 尺码: ['size_41'], 变动数量: 1,
+    库存行为: ['behavior_return'], 关联销售: [result.detailRecordIds[0]],
+  });
+  assert.equal(rowsOf(gateway, 'liveInventory').length, 3); // 原有 2 双 + 退回 1 双
 });
 
 test('退货（cash 退款）：六处写入各一次，原主表一字未动，原明细只改履约状态', async () => {
@@ -346,6 +383,90 @@ test('给了 taskId 时，同一原单同一动作可以做第二次（每次用
   assert.equal(rowsOf(gateway, 'inventoryLedger').length, 2);
 });
 
+// 幂等键 = after_sales:<原主表id>:<action>:<原明细批次哈希>。
+// 这里的三个性质就是"部分退货"能支持、而"重复退同一双"仍被挡住的原因。
+test('幂等键构成：原单 + 动作 + 明细批次哈希（顺序无关、批次不同则键不同）', () => {
+  const keyOf = (ids) => afterSalesEventId({
+    originalSalesEntryRecordId: 'order_old', action: 'return', originalSalesDetailRecordIds: ids,
+  });
+  // 同一批明细，调用方换顺序 → 同一个键（同一批还是同一批）
+  assert.equal(keyOf(['detail_old_1', 'detail_old_3']), keyOf(['detail_old_3', 'detail_old_1']));
+  // 换一批明细 → 不同键（部分退货可以再做一次）
+  assert.notEqual(keyOf(['detail_old_1']), keyOf(['detail_old_1', 'detail_old_3']));
+  assert.match(keyOf(['detail_old_1']), /^after_sales:order_old:return:[0-9a-f]{12}$/);
+  // 本地分片键同样带批次哈希，否则"先退 A 再退 B"会撞进同一分片被闸门拒绝
+  assert.equal(
+    afterSalesOperationId({
+      originalSalesEntryRecordId: 'order_old', action: 'return', originalSalesDetailRecordIds: ['detail_old_1'],
+    }),
+    'after_sales_order_old_return_d5268040a9a4',
+  );
+  assert.equal(
+    afterSalesOperationId({
+      taskId: 'om_x!', originalSalesEntryRecordId: 'order_old', action: 'return',
+      originalSalesDetailRecordIds: ['detail_old_1'],
+    }),
+    'after_sales_task_om_x_d5268040a9a4',
+  );
+  assert.throws(() => keyOf([]), /缺少被退\/被换的原明细/);
+});
+
+// 父代理拍板要支持的正常场景：同一笔销售分两次退不同的鞋。
+// 批次哈希不同 → 两个分片 → 互不干扰；同一批重复调用 → 一个分片 → 只写一次。
+test('部分退货：同一原单先退明细 A、再退明细 B，两笔都成功且互不干扰', async () => {
+  const { gateway, inventory, service } = build();
+  const first = await service.execute(request());
+  const second = await service.execute(request({
+    originalSalesDetailRecordIds: ['detail_old_3'],
+    originalText: '另一双 B200 也退了',
+    diffAmount: -300,
+  }));
+
+  assert.notEqual(first.operationId, second.operationId);
+  assert.equal(masterRows(gateway).length, 2);
+  assert.equal(detailRows(gateway).length, 2);
+  assert.equal(paymentRows(gateway).length, 2);
+  assert.equal(rowsOf(gateway, 'inventoryLedger').length, 2);
+  assert.equal(liveRows(gateway).length, 2);
+  // 两条原明细各自被改成「已退货」，谁也没覆盖谁
+  assert.equal(rowsOf(gateway, 'salesDetail')[0].fields['履约状态'], '已退货');
+  assert.equal(rowsOf(gateway, 'salesDetail')[2].fields['履约状态'], '已退货');
+  assert.deepEqual(first.originalDetailIdsMarked, ['detail_old_1']);
+  assert.deepEqual(second.originalDetailIdsMarked, ['detail_old_3']);
+  assert.equal(inventory.calls.length, 2);
+});
+
+test('同一批明细重复调用只写一次；同一条明细再退一次仍被拦住', async () => {
+  const { gateway, service } = build();
+  const first = await service.execute(request());
+  const before = countsOf(gateway);
+
+  const again = await service.execute(request());
+
+  assert.equal(countsOf(gateway), before, '同一批明细第二次不应再写任何东西');
+  assert.deepEqual(again, first, '第二次直接返回上次的结果');
+  assert.equal(masterRows(gateway).length, 1);
+  assert.equal(rowsOf(gateway, 'inventoryLedger').length, 1);
+  assert.equal(rowsOf(gateway, 'salesDetail')[0].fields['履约状态'], '已退货');
+});
+
+test('部分退货（prepaid）：两批明细各写一笔往来货款，业务事件ID 不同', async () => {
+  const { gateway, service } = build();
+  await service.execute(request({ settlement: 'prepaid' }));
+  await service.execute(request({
+    originalSalesDetailRecordIds: ['detail_old_3'], settlement: 'prepaid',
+    originalText: '另一双也退，钱存着', diffAmount: -300,
+  }));
+
+  const rows = rowsOf(gateway, CREDIT_TABLE);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((row) => row.fields['业务事件ID']), [
+    'after_sales:order_old:return:d5268040a9a4',
+    'after_sales:order_old:return:8955ba8cdcf9',
+  ]);
+  assert.deepEqual(rows.map((row) => row.fields['应收变化']), [-250, -300]);
+});
+
 test('换货：旧鞋回库 + 新鞋出门盒，两条流水方向相反且数量都是正数', async () => {
   const { gateway, service } = build();
   const result = await service.execute(request({
@@ -451,7 +572,8 @@ test('资金 prepaid：走「客户往来货款」，用「业务事件ID」做�
   assert.equal(rows[0].fields['变动类型'], '退货退款');
   assert.equal(rows[0].fields['应收变化'], -250); // 负=我们欠客户（转成预存）
   assert.equal(rows[0].fields['来源单号'], ORDER_NO);
-  assert.equal(rows[0].fields['业务事件ID'], 'after_sales:order_old:return');
+  // 幂等键 = 原单 + 动作 + 本次明细批次哈希（12 位十六进制）
+  assert.equal(rows[0].fields['业务事件ID'], 'after_sales:order_old:return:d5268040a9a4');
   assert.equal(rows[0].fields['发生时间'], FIXED_NOW);
   // 销售主表里没有"客人是谁"这个信息 → 不编值、不从原单取不存在的字段
   assert.equal(rows[0].fields['客户'], undefined);
@@ -479,7 +601,9 @@ test('资金 prepaid：走「客户往来货款」，用「业务事件ID」做�
   assert.equal(rowsOf(refund.gateway, CREDIT_TABLE).length, 1);
 });
 
-test('prepaid 的幂等键不含内容：同原单同动作第二次（金额不同）→ 大声失败，不写第二笔', async () => {
+// 同一批明细 = 同一个业务事件ID：第二笔换了 taskId 也躲不过远端回查。
+// 命中的记录内容不同（金额不同）时必须大声失败，而不是复用后静默改掉。
+test('同一批明细的第二笔（金额不同）→ 远端幂等键命中同一笔 → 大声失败，不写第二笔', async () => {
   const { gateway, service } = build();
   await service.execute(request({ taskId: 'om_a', settlement: 'prepaid', diffAmount: -250 }));
   await assert.rejects(

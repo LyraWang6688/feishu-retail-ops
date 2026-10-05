@@ -1,6 +1,8 @@
 const V1_SCHEMA_SCOPES = {
   // accessory（其他配品）也纳入销售范围：销售明细的「配品」字段指向它，缺配置会在运行时才炸。
-  sales: ['product', 'accessory', 'paymentMethod', 'salesEntry', 'salesDetail', 'paymentRecord'],
+  // customerCredit（客户往来货款）同样落在销售范围：退换货 prepaid 走这张表，
+  // 不纳入范围的话它改名/缺列只能在用户确认售后时才炸（今天已经因字段不同步踩过两次）。
+  sales: ['product', 'accessory', 'paymentMethod', 'salesEntry', 'salesDetail', 'paymentRecord', 'customerCredit'],
   purchase: [
     'product',
     'supplier',
@@ -37,7 +39,10 @@ const getV1SizeLinkTables = (scope = 'sales') => V1_SIZE_LINK_TABLES[getV1Schema
 // 幂等键字段同样必须真实存在，且是文本字段（见 infrastructure/idempotencyKey.js）。
 // 采购批次 / 采购申请 / 实时库存的写入都靠它做「先回查再创建」，字段缺失时
 // 宁可部署门槛拦下来，也不能等到用户确认采购时才报错。
+// 「客户往来货款」的「业务事件ID」是售后 prepaid 的幂等键：同一批明细重复调用时靠它认出
+// 「这一笔已经写过了」，所以它也在闸门里校验（缺列 = 售后写入会重复，必须拦在部署前）。
 const V1_IDEMPOTENCY_KEY_TABLES = {
+  sales: [{ tableKey: 'customerCredit', keyField: 'businessEventId' }],
   purchase: [
     { tableKey: 'purchaseOrderBatch', keyField: 'idempotencyKey' },
     { tableKey: 'purchaseRequest', keyField: 'idempotencyKey' },

@@ -23,19 +23,22 @@
 //        · 已完成 → **整次跳过**：不读业务表、不调用库存、一个字节都不写，直接返回上次的结果；
 //        · 已完成但请求指纹不同 → **大声失败**（不能当成同一次，更不能重写一遍）；
 //        · 做到一半 → 带着已写好的 record_id 继续（每个阶段写完就落盘），重试不重复写。
-//      闸门分片键：调用方给 taskId 就用它，否则 after_sales_<原主表id>_<action>。
+//      闸门分片键：调用方给 taskId 就用它，否则 after_sales_<原主表id>_<action>_<批次哈希>。
+//      「批次哈希」= 本次涉及的原明细 record_id 排序后的短哈希（见 config/afterSales.js）：
+//      同一批明细重复调用 → 同一个分片 → 幂等；不同批明细（部分退货）→ 不同分片 → 各做各的。
 //
-//   ② 「客户往来货款」用它自己的幂等键字段「业务事件ID」= after_sales:<原主表id>:<action>，
+//   ② 「客户往来货款」用它自己的幂等键字段「业务事件ID」
+//      = after_sales:<原主表id>:<action>:<批次哈希>，
 //      走既有的 createOnceByKey（先按键回查远端，命中就复用）——本地记录丢了也能认出这一笔。
 //
 // 已知窗口：飞书 create 成功但本地落盘失败时，本地闸门看不出来，理论上会重复写。
 // 要堵住这个窗口必须有远端键列（这一期明确不加）；库存那一侧不受影响——
 // InventoryService 用「库存操作键」在远端兜住了。
 //
-// ⚠️ 接线前必须先做（本步骤只新建文件，没做）：
-//   inventoryService 的 STOCK_MOVEMENTS 里加 SALE_RETURN / SALE_COMPENSATION / SALE_CASH
-//   三条声明（内容见 config/afterSales.js 顶部注释），否则 applyChange 会抛
-//   「未在库存动作注册表中声明动作」。
+// ⚠️ 库存接线（已完成）：inventoryService 的 STOCK_MOVEMENTS 已声明
+//   SALE_RETURN（增加）/ SALE_COMPENSATION（减少·门盒）/ SALE_CASH（减少·门盒），
+//   AfterSalesService 默认就用真的 InventoryService（见构造函数），
+//   同时保留端口注入：测试与需要共享实例的调用方可以传自己的库存服务。
 
 const path = require('node:path');
 const {
@@ -51,6 +54,7 @@ const { createOnceByKey, validateIdempotencyKeyFields } = require('../infrastruc
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const { InventoryService } = require('./inventoryService');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { withSalesReadRetry } = require('./salesReadRetry');
@@ -110,7 +114,7 @@ const fingerprintOf = (request) => JSON.stringify({
  *
  * options:
  *   gateway    必填，V1BitableGateway（或同形态的实现）
- *   inventory  必填，库存服务端口（接线时传 InventoryService）。
+ *   inventory  可选，库存服务端口；不传就用真的 InventoryService（接线后的默认路径）。
  *              只用到既有方法 applyChange({ kind, productRecordId, size, state, quantity, sourceRecordId })。
  *   store      可选，本地任务记录（默认 data/after_sales_operations）
  *   references / sizeReferences / queues / config / now 可选（测试注入用）
@@ -118,12 +122,12 @@ const fingerprintOf = (request) => JSON.stringify({
 class AfterSalesService {
   constructor(options = {}) {
     if (!options.gateway) throw new Error('AfterSalesService requires gateway');
-    if (!options.inventory) {
-      throw new Error('AfterSalesService requires inventory：库存流水与实时库存必须复用 InventoryService，不能另写一套');
-    }
     this.config = options.config || readAfterSalesConfig();
     this.gateway = options.gateway;
-    this.inventory = options.inventory;
+    // 接线：库存流水与实时库存一律复用既有的 InventoryService（它自己负责
+    // 「库存操作键」回查、断点续做与实时库存增减），这里不另写一套库存逻辑。
+    // 仍然允许注入端口：单元测试用它替换飞书写入，生产也可以传共享实例。
+    this.inventory = options.inventory || new InventoryService({ gateway: this.gateway });
     this.store = options.store || new JsonTaskStore({ dir: DEFAULT_STORE_DIR, idField: 'operation_id' });
     this.references = options.references || new V1ReferenceResolver(this.gateway);
     this.getSizeReferences = createSizeReferenceAccess({
@@ -699,7 +703,7 @@ class AfterSalesService {
     if (mismatch) {
       throw new Error(
         `已记录的客户往来货款 ${recordId} 与当前请求不一致（${mismatch}）：` +
-        '同一个原单同一个动作只允许一笔，请人工核对，不能自动重试',
+        '同一批原明细只允许一笔，请人工核对，不能自动重试',
       );
     }
   }

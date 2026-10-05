@@ -16,6 +16,14 @@ const MOVEMENT_SALE_DECREASE = 'STOCK_SALE_DECREASE';
 const MOVEMENT_PURCHASE_INCREASE = 'STOCK_PURCHASE_INCREASE';
 const BEHAVIOR_SAMPLE_PROMOTION = 'STOCK_DOORBOX_TO_SAMPLE';
 
+// 售后（退货 / 赔货 / 换货出货）用到的三个行为编码。
+// 它们和销售、采购一样是「引擎语义」声明：方向、消耗哪些状态的实时库存、
+// 要不要触发补样品提醒，全部写死在这里；「行为管理」表只负责启用与中文名，
+// 两边靠「行为编码」对齐（编码改名必须同步这张注册表，中文名改了不受影响）。
+const MOVEMENT_SALE_RETURN = 'SALE_RETURN';
+const MOVEMENT_SALE_COMPENSATION = 'SALE_COMPENSATION';
+const MOVEMENT_SALE_CASH = 'SALE_CASH';
+
 const STOCK_MOVEMENTS = Object.freeze({
   [MOVEMENT_SALE_DECREASE]: {
     direction: '减少',
@@ -30,6 +38,30 @@ const STOCK_MOVEMENTS = Object.freeze({
     direction: '增加',
     ledgerSource: 'purchaseInbound',
     consumes: null,
+    triggerSampleReplacement: false,
+  },
+  // 退货：退回的鞋回库。consumes=null 表示「不消耗既有实时库存」，
+  // 只在调用方指定的状态（门盒 / 样品）新增一行——退回的鞋在货上确实多了一双。
+  [MOVEMENT_SALE_RETURN]: {
+    direction: '增加',
+    ledgerSource: 'salesDetail',
+    consumes: null,
+    triggerSampleReplacement: false,
+  },
+  // 赔货 / 换货出货：新鞋从门盒减一行。
+  // consumes 固定 ['门盒']（不是销售出库的 ['门盒','样品']）：赔出去、换出去的必须是
+  // 门盒里可卖的新鞋，不能拿陈列样品顶。触发补样品提醒的是销售交付链路，售后不触发。
+  [MOVEMENT_SALE_COMPENSATION]: {
+    direction: '减少',
+    ledgerSource: 'salesDetail',
+    consumes: ['门盒'],
+    triggerSampleReplacement: false,
+  },
+  // 现货销售：换货时新鞋出库走它，方向=减少。它同时是「交易类型」和「库存行为」。
+  [MOVEMENT_SALE_CASH]: {
+    direction: '减少',
+    ledgerSource: 'salesDetail',
+    consumes: ['门盒'],
     triggerSampleReplacement: false,
   },
 });
@@ -634,4 +666,11 @@ class InventoryService {
   }
 }
 
-module.exports = { InventoryService, operationId };
+module.exports = {
+  InventoryService,
+  operationId,
+  STOCK_MOVEMENTS,
+  MOVEMENT_SALE_RETURN,
+  MOVEMENT_SALE_COMPENSATION,
+  MOVEMENT_SALE_CASH,
+};

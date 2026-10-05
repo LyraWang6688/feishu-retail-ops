@@ -6,7 +6,10 @@
 //   表里改库存方向、或以后新增一种售后动作时，只应该改这里一处，
 //   而不是在执行器里加一串 if-else（AGENTS.md：少写散落的 if-else，优先配置驱动）。
 //
-// 这一期只做「执行器 + 幂等」：文件里出现的表/列都是**写入契约**，不做任何接线。
+// 文件里只放**业务配置与写入契约**（动作语义、幂等标识、字段口径）；
+// 真正的接线（默认注入 InventoryService）在 services/afterSalesService.js。
+
+const crypto = require('node:crypto');
 
 // 动作枚举。键就是调用方传进来的 action，值是飞书里的中文口径（只用于日志和人看的文案）。
 const AFTER_SALES_ACTIONS = Object.freeze({
@@ -52,12 +55,12 @@ const AFTER_SALES_MONEY_DIRECTIONS = Object.freeze({
 //     state:  'restockState' 用调用方指定的门盒/样品；其余是固定值
 //
 // ⚠️ 这三个行为编码必须先在 inventoryService 的 STOCK_MOVEMENTS 里声明，applyChange 才会认；
-//    缺失时它抛「未在库存动作注册表中声明动作」。接线那一步加这三条声明：
+//    缺失时它抛「未在库存动作注册表中声明动作」。三条声明已加（2026-10-05 接线）：
 //      SALE_RETURN:       { direction: '增加', ledgerSource: 'salesDetail', consumes: null,     triggerSampleReplacement: false }
 //      SALE_COMPENSATION: { direction: '减少', ledgerSource: 'salesDetail', consumes: ['门盒'], triggerSampleReplacement: false }
 //      SALE_CASH:         { direction: '减少', ledgerSource: 'salesDetail', consumes: ['门盒'], triggerSampleReplacement: false }
-//    （新增 kind 后 validateStockBehaviors() 会要求假 Base 里也有这三条行为，
-//      所以接线时要同时补测试 fixture —— 这一条由派活的父代理负责。）
+//    （新增 kind 后 validateStockBehaviors() 要求假 Base 里也有这三条行为，
+//      所以同步补了 inventoryMvp / validateV1Schema 两处测试 fixture —— 不补会红 2 条。）
 const AFTER_SALES_ACTION_SPECS = Object.freeze({
   [AFTER_SALES_ACTIONS.RETURN]: Object.freeze({
     label: '退货',
@@ -112,10 +115,18 @@ const actionSpecOf = (action) => {
 //        已完成 → 整次跳过，一个字节都不写；
 //        做到一半 → 带着已写好的 record_id 继续，不重复写。
 //      闸门的分片键：调用方给了 taskId 就用它（每次用户消息一个任务，最准），
-//      否则退回 after_sales_<原主表id>_<action>。
+//      否则退回 after_sales_<原主表id>_<action>_<批次哈希>。
 //
 //   ② 「客户往来货款」自己有现成的幂等键字段「业务事件ID」，值用规范里的
-//      after_sales:<原主表id>:<action>：即使本地记录丢了，也能回查远端认出这一笔。
+//      after_sales:<原主表id>:<action>:<批次哈希>：即使本地记录丢了，也能回查远端认出这一笔。
+//
+// 批次哈希（本次改动的关键）：
+//   键里必须带「这一次退的是哪几条原明细」的短哈希，否则**同一笔销售分两次退不同的鞋**
+//   （正常场景）会因为撞上同一个键被大声拒绝。哈希取排序后的原明细 record_id 拼接，
+//   于是：
+//     · 同一批明细重复调用  → 键相同 → 幂等，只写一次 ✓
+//     · 不同批明细（部分退货）→ 键不同 → 允许再做一次 ✓
+//     · 同一条明细被退两次  → 键相同 → 仍被拦住（不会重复退）✓
 //
 // 本地闸门挡不住「飞书 create 成功、本地落盘失败」这一种窗口（要挡住就得有远端键列）。
 // 已知并接受；如果哪天要补，就是给三张表加文本列 + 在这里声明 keyField。
@@ -124,25 +135,41 @@ const AFTER_SALES_KEY_PREFIX = 'after_sales';
 /** 「客户往来货款」的幂等键字段（语义名，中文列名见 v1BitableSchema.tables.customerCredit）。 */
 const AFTER_SALES_CREDIT_KEY_FIELD = 'businessEventId';
 
-/** 远端幂等标识：after_sales:<原销售主表 record_id>:<action>。 */
-const afterSalesEventId = ({ originalSalesEntryRecordId, action } = {}) => {
+/**
+ * 这一次售后涉及的原明细批次指纹：把 record_id 去重、排序后拼接再取短哈希。
+ * 排序是为了「调用方把两条明细的顺序换一下」不产生第二个键（同一批还是同一批）；
+ * 用哈希而不是直接拼 id 是为了键长稳定、可安全写进文本列。
+ */
+const afterSalesBatchHash = (originalSalesDetailRecordIds = []) => {
+  const ids = [...new Set((originalSalesDetailRecordIds || [])
+    .map((id) => String(id ?? '').trim())
+    .filter(Boolean))].sort();
+  if (!ids.length) throw new Error('售后幂等标识缺少被退/被换的原明细，拒绝生成');
+  return crypto.createHash('sha256').update(ids.join('|')).digest('hex').slice(0, 12);
+};
+
+/** 远端幂等标识：after_sales:<原销售主表 record_id>:<action>:<原明细批次哈希>。 */
+const afterSalesEventId = ({ originalSalesEntryRecordId, action, originalSalesDetailRecordIds } = {}) => {
   const entryId = String(originalSalesEntryRecordId || '').trim();
   const actionValue = String(action || '').trim();
   if (!entryId || !actionValue) throw new Error('售后幂等标识缺少原单或动作，拒绝生成');
-  return `${AFTER_SALES_KEY_PREFIX}:${entryId}:${actionValue}`;
+  return `${AFTER_SALES_KEY_PREFIX}:${entryId}:${actionValue}:${afterSalesBatchHash(originalSalesDetailRecordIds)}`;
 };
 
 /**
  * 本地任务记录的 id。JsonTaskStore 只接受 [a-zA-Z0-9_-]，
  * 所以这里用下划线而不是冒号（远端文本字段才用冒号格式）。
+ * 批次哈希同样进本地 id：否则"先退明细 A、再退明细 B"会撞进同一个分片，
+ * 被总闸门当成"同一分片里塞了另一笔售后"而大声拒绝。
  */
-const afterSalesOperationId = ({ taskId, originalSalesEntryRecordId, action } = {}) => {
+const afterSalesOperationId = ({ taskId, originalSalesEntryRecordId, action, originalSalesDetailRecordIds } = {}) => {
+  const batch = afterSalesBatchHash(originalSalesDetailRecordIds);
   const safeTaskId = String(taskId || '').replace(/[^a-zA-Z0-9_-]/g, '');
-  if (safeTaskId) return `after_sales_task_${safeTaskId}`;
+  if (safeTaskId) return `after_sales_task_${safeTaskId}_${batch}`;
   const entryId = String(originalSalesEntryRecordId || '').trim();
   const actionValue = String(action || '').trim();
   if (!entryId || !actionValue) throw new Error('售后任务 id 缺少原单或动作，拒绝生成');
-  return `after_sales_${entryId}_${actionValue}`;
+  return `after_sales_${entryId}_${actionValue}_${batch}`;
 };
 
 const readAfterSalesConfig = () => ({

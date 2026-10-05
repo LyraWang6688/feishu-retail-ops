@@ -4,7 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
-const { InventoryService, operationId } = require('../src/services/inventoryService');
+const { InventoryService, operationId, STOCK_MOVEMENTS } = require('../src/services/inventoryService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
 // 库存动作现在按「行为编码」匹配，编码是行为管理表里的稳定标识。
@@ -371,6 +371,10 @@ test('stock behavior lookup survives renaming the display name', async () => {
   const gateway = gatewayFor([unit('door_1', '门盒')], [
     behavior('behavior_sale', 'STOCK_SALE_DECREASE', '销售出库（已改名）', '减少'),
     behavior('behavior_purchase', 'STOCK_PURCHASE_INCREASE', '采购收货（已改名）', '增加'),
+    // 售后三条行为同样要启用：validateStockBehaviors 会遍历整张注册表。
+    behavior('behavior_return', 'SALE_RETURN', '销售退货（已改名）', '增加'),
+    behavior('behavior_compensation', 'SALE_COMPENSATION', '销售赔货（已改名）', '减少'),
+    behavior('behavior_cash', 'SALE_CASH', '现货销售（已改名）', '减少'),
   ]);
   const inventory = new InventoryService({ gateway, store: store() });
   await inventory.validateStockBehaviors();
@@ -378,6 +382,50 @@ test('stock behavior lookup survives renaming the display name', async () => {
     productRecordId: 'product_1', size: 38, quantity: 1 });
   assert.equal(result.ledgerRecordId, 'rec_1');
   assert.equal(gateway.records.get('inventoryLedger').length, 1);
+});
+
+// 售后三条声明是**契约**：方向错了、或赔货/换货出货去吃了样品，实时库存就会和账面对不上。
+// 用一条断言锁住，防止以后有人"顺手"改动方向或 consumes。
+test('售后动作的库存语义：退货增加、赔货与现货减少且只吃门盒', () => {
+  assert.deepEqual(STOCK_MOVEMENTS.SALE_RETURN, {
+    direction: '增加', ledgerSource: 'salesDetail', consumes: null, triggerSampleReplacement: false,
+  });
+  assert.deepEqual(STOCK_MOVEMENTS.SALE_COMPENSATION, {
+    direction: '减少', ledgerSource: 'salesDetail', consumes: ['门盒'], triggerSampleReplacement: false,
+  });
+  assert.deepEqual(STOCK_MOVEMENTS.SALE_CASH, {
+    direction: '减少', ledgerSource: 'salesDetail', consumes: ['门盒'], triggerSampleReplacement: false,
+  });
+});
+
+// 光有声明不够：这三条行为编码必须真的能被既有库存引擎执行（真 InventoryService，不是注入端口）。
+test('售后动作在真 InventoryService 里生效：退货加一行、现货出库从门盒减一行', async () => {
+  const gateway = gatewayFor([unit('door_1', '门盒')], [
+    behavior('behavior_return', 'SALE_RETURN', '销售退货', '增加'),
+    behavior('behavior_cash', 'SALE_CASH', '现货销售', '减少'),
+  ]);
+  const inventory = new InventoryService({ gateway, store: store() });
+
+  const returned = await inventory.applyChange({
+    kind: 'SALE_RETURN', productRecordId: 'product_1', size: 38, state: '样品',
+    quantity: 1, sourceRecordId: 'detail_ret_1',
+  });
+  assert.equal(returned.direction, '增加');
+  assert.deepEqual(gateway.records.get('inventoryLedger')[0].fields, {
+    编号: ['product_1'], 尺码: ['size_38'], 变动数量: 1,
+    库存行为: ['behavior_return'], 关联销售: ['detail_ret_1'],
+  });
+  const added = gateway.records.get('liveInventory').filter((row) => row.fields['所属状态'] === '样品');
+  assert.equal(added.length, 1);
+  assert.deepEqual(added[0].fields['编号'], ['product_1']);
+
+  const outgoing = await inventory.applyChange({
+    kind: 'SALE_CASH', productRecordId: 'product_1', size: 38, state: '门盒',
+    quantity: 1, sourceRecordId: 'detail_new_1',
+  });
+  assert.equal(outgoing.direction, '减少');
+  assert.deepEqual(outgoing.liveRecordIds, ['door_1']);
+  assert.equal(gateway.records.get('liveInventory').some((row) => row.record_id === 'door_1'), false);
 });
 
 // 没在注册表里声明的动作必须明确报错，而不是像以前那样静默按「采购增加」处理。
