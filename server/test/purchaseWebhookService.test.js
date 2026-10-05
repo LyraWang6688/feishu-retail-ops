@@ -1558,3 +1558,232 @@ test('B4 远端出现两条相同幂等键：停止自动处理并转人工核�
   assert.ok(String(task.error).includes('命中 2 条记录'), `实际错误：${task.error}`);
   assert.equal(records.purchaseRequest.length, 2, '停止后不得再写出新的采购申请');
 });
+
+// ─── 到货单价格 → 货品「成本」───
+//
+// 产品负责人的口径：「如果有的到货单上有价格的，那就是成本。」
+// 写入规则一律保守：只在成本为空时写、已有成本不覆盖只 warn、
+// 同货号价格不一致不写只 warn、重试不重复写、新品建档顺带带成本。
+
+// 捕获 warn 日志（logger 的 warn 走 console.warn，一行一个 JSON）。
+// 这些测试在同一个文件里顺序执行，await 期间不会有别的用例并发写 console。
+const captureWarn = async (run) => {
+  const lines = [];
+  const original = console.warn;
+  console.warn = (line) => {
+    try { lines.push(JSON.parse(line)); } catch { lines.push({ event: 'unparsed_warn', raw: String(line) }); }
+  };
+  try {
+    const result = await run();
+    return { result, lines };
+  } finally {
+    console.warn = original;
+  }
+};
+
+const arrivalDocumentRecord = (recordId) => ({
+  record_id: recordId,
+  fields: { 类型: '到货单', 确认状态: '待确认', 识别状态: '待识别', 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] },
+});
+
+const documentRecognizer = (rows) => makeRecognizer({ recognizePurchaseDocument: async () => rows });
+
+test('到货单价格即成本：货品「成本」为空时写进去，并在卡片尺码格上显示价格供她核对', async () => {
+  const messages = [];
+  const records = {
+    purchaseArrival: [arrivalDocumentRecord('arr_cost_empty')],
+    product: [{ record_id: 'prod_cost', fields: { 编号: '1366-31棕色', 供应商: ['sup_A'] } }],
+    supplier: SUPPLIERS,
+  };
+  const { service, store } = makeService({
+    gateway: makeGateway(records),
+    client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
+    references: makeReferences({
+      resolveProduct: async () => ({ recordId: 'prod_cost', record: records.product[0] }),
+    }),
+    recognizer: documentRecognizer([
+      { item_no: '1366-31', color: '棕色', size: 36, quantity: 1, unit_cost: 199 },
+      { item_no: '1366-31', color: '棕色', size: 37, quantity: 2, unit_cost: 199 },
+    ]),
+  });
+  const accepted = await service.accept('arrival', 'arr_cost_empty');
+  const task = await waitForTask(store, accepted.taskId);
+  assert.equal(task.status, 'awaiting_confirmation');
+  assert.equal(records.product[0].fields.成本, 199, '识别到的单据单价要写进货品成本');
+  await waitFor('到货明细卡片发出', async () => messages.length === 1);
+  const cardElements = JSON.parse(messages[0].data.content).elements;
+  assert.ok(JSON.stringify(cardElements).includes('￥199'), '尺码格上要显示识别到的单价，方便她核对成本');
+});
+
+test('到货单价格即成本：货品已有成本时不覆盖，只记一条带三要素的 warn', async () => {
+  const records = {
+    purchaseArrival: [arrivalDocumentRecord('arr_cost_kept')],
+    product: [{ record_id: 'prod_keep', fields: { 编号: '1366-31棕色', 供应商: ['sup_A'], 成本: 100 } }],
+    supplier: SUPPLIERS,
+  };
+  const { service, store } = makeService({
+    gateway: makeGateway(records),
+    references: makeReferences({
+      resolveProduct: async () => ({ recordId: 'prod_keep', record: records.product[0] }),
+    }),
+    recognizer: documentRecognizer([{ item_no: '1366-31', color: '棕色', size: 36, quantity: 1, unit_cost: 199 }]),
+  });
+  const { result: task, lines } = await captureWarn(async () => {
+    const accepted = await service.accept('arrival', 'arr_cost_kept');
+    return waitForTask(store, accepted.taskId);
+  });
+  assert.equal(records.product[0].fields.成本, 100, '已有成本一律不覆盖');
+  const warn = lines.find((line) => line.event === 'purchase.arrival.cost_kept');
+  assert.ok(warn, `必须有 cost_kept warn，实际日志：${JSON.stringify(lines)}`);
+  assert.equal(warn.item_no, '1366-31');
+  assert.equal(String(warn.existing_cost), '100');
+  assert.equal(warn.recognized_cost, 199);
+});
+
+test('到货单价格即成本：同一货号多行价格不一致时整条不写，记一条 warn', async () => {
+  const records = {
+    purchaseArrival: [arrivalDocumentRecord('arr_cost_conflict')],
+    product: [{ record_id: 'prod_conflict', fields: { 编号: '1366-31棕色', 供应商: ['sup_A'] } }],
+    supplier: SUPPLIERS,
+  };
+  const { service, store } = makeService({
+    gateway: makeGateway(records),
+    references: makeReferences({
+      resolveProduct: async () => ({ recordId: 'prod_conflict', record: records.product[0] }),
+    }),
+    recognizer: documentRecognizer([
+      { item_no: '1366-31', color: '棕色', size: 36, quantity: 1, unit_cost: 199 },
+      { item_no: '1366-31', color: '棕色', size: 37, quantity: 1, unit_cost: 209 },
+    ]),
+  });
+  const { lines } = await captureWarn(async () => {
+    const accepted = await service.accept('arrival', 'arr_cost_conflict');
+    return waitForTask(store, accepted.taskId);
+  });
+  assert.equal('成本' in records.product[0].fields, false, '价格不一致时一个值都不能写');
+  const warn = lines.find((line) => line.event === 'purchase.arrival.cost_conflict');
+  assert.ok(warn, `必须有 cost_conflict warn，实际日志：${JSON.stringify(lines.map((line) => line.event))}`);
+  assert.equal(warn.item_no, '1366-31');
+  assert.deepEqual(warn.prices, [199, 209]);
+  // 只 warn 一次：不能每个尺码都报一遍。
+  assert.equal(lines.filter((line) => line.event === 'purchase.arrival.cost_conflict').length, 1);
+});
+
+test('到货单价格即成本：重试不重复写（第一次已写成功，只是发卡片失败）', async () => {
+  const records = {
+    purchaseArrival: [arrivalDocumentRecord('arr_cost_retry')],
+    product: [{ record_id: 'prod_retry', fields: { 编号: '1366-31棕色', 供应商: ['sup_A'] } }],
+    supplier: SUPPLIERS,
+  };
+  let failCard = true;
+  const client = makeClient();
+  client.im.message.create = async () => {
+    if (failCard) throw new Error('模拟卡片发送失败');
+    return { code: 0 };
+  };
+  const gateway = makeGateway(records);
+  const costUpdates = [];
+  const realUpdate = gateway.update;
+  gateway.update = async (tableKey, recordId, semanticValues) => {
+    if (tableKey === 'product' && semanticValues && semanticValues.cost !== undefined) {
+      costUpdates.push({ recordId, cost: semanticValues.cost });
+    }
+    return realUpdate(tableKey, recordId, semanticValues);
+  };
+  const { service, store } = makeService({
+    gateway,
+    client,
+    references: makeReferences({
+      resolveProduct: async () => ({ recordId: 'prod_retry', record: records.product[0] }),
+    }),
+    recognizer: documentRecognizer([{ item_no: '1366-31', color: '棕色', size: 36, quantity: 1, unit_cost: 199 }]),
+  });
+
+  const first = await service.accept('arrival', 'arr_cost_retry');
+  await waitForTask(store, first.taskId, ['failed']);
+  assert.equal(costUpdates.length, 1, '第一次要写成本');
+  assert.equal(records.product[0].fields.成本, 199);
+
+  failCard = false;
+  await service.accept('arrival', 'arr_cost_retry');
+  const retried = await waitForTask(store, first.taskId, ['awaiting_confirmation']);
+  assert.equal(retried.status, 'awaiting_confirmation');
+  assert.equal(costUpdates.length, 1, '重试不能再写一次成本（写没写靠任务里落盘的 arrival_cost_written 判断）');
+  assert.equal(records.product[0].fields.成本, 199);
+});
+
+test('到货单价格即成本：写成本失败只记 warn，不挡住到货入库', async () => {
+  const records = {
+    purchaseArrival: [arrivalDocumentRecord('arr_cost_write_fail')],
+    product: [{ record_id: 'prod_fail', fields: { 编号: '1366-31棕色', 供应商: ['sup_A'] } }],
+    supplier: SUPPLIERS,
+  };
+  const gateway = makeGateway(records);
+  gateway.update = async (tableKey, recordId, semanticValues) => {
+    if (tableKey === 'product' && semanticValues && semanticValues.cost !== undefined) {
+      throw new Error('模拟成本字段写不进去');
+    }
+    return { record_id: recordId };
+  };
+  const { service, store } = makeService({
+    gateway,
+    references: makeReferences({
+      resolveProduct: async () => ({ recordId: 'prod_fail', record: records.product[0] }),
+    }),
+    recognizer: documentRecognizer([{ item_no: '1366-31', color: '棕色', size: 36, quantity: 1, unit_cost: 199 }]),
+  });
+  const { result: task, lines } = await captureWarn(async () => {
+    const accepted = await service.accept('arrival', 'arr_cost_write_fail');
+    return waitForTask(store, accepted.taskId);
+  });
+  assert.equal(task.status, 'awaiting_confirmation', '货已经到了：成本写不进去不能把整批到货卡住');
+  assert.ok(lines.some((line) => line.event === 'purchase.arrival.cost_write_failed'));
+});
+
+test('到货新品建档：顺带把成本一起写进去', async () => {
+  const records = {
+    purchaseArrival: [arrivalDocumentRecord('arr_new_with_cost')],
+    purchaseInbound: [],
+    product: [],
+    color: [{ record_id: 'color_brown', fields: { 颜色: '棕色' } }],
+    supplier: [],
+  };
+  const { service, store } = makeService({
+    gateway: makeGateway(records),
+    references: makeReferences({
+      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
+    }),
+    recognizer: documentRecognizer([
+      { item_no: '1366-31', color: '棕色', size: 36, quantity: 1, unit_cost: '￥199.00' },
+      { item_no: '1366-31', color: '棕色', size: 37, quantity: 1, unit_cost: 199 },
+    ]),
+  });
+  const accepted = await service.accept('arrival', 'arr_new_with_cost');
+  const task = await waitForTask(store, accepted.taskId);
+  assert.equal(task.status, 'awaiting_confirmation');
+  assert.equal(records.product.length, 1, '新品只建一条');
+  // 建档一次带齐：货号 / 颜色 / 供应商（识别不到就留空）/ 类别（认不出留空）/ 成本。
+  assert.equal(records.product[0].fields.货号, '1366-31');
+  assert.equal(records.product[0].fields.成本, 199, '新品建档要顺带写成本');
+});
+
+test('到货新品建档：单据上没有价格时，建档不带成本字段', async () => {
+  const records = {
+    purchaseArrival: [arrivalDocumentRecord('arr_new_no_cost')],
+    purchaseInbound: [],
+    product: [],
+    color: [{ record_id: 'color_brown', fields: { 颜色: '棕色' } }],
+    supplier: [],
+  };
+  const { service, store } = makeService({
+    gateway: makeGateway(records),
+    references: makeReferences({
+      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
+    }),
+    recognizer: documentRecognizer([{ item_no: '1366-31', color: '棕色', size: 36, quantity: 1 }]),
+  });
+  const accepted = await service.accept('arrival', 'arr_new_no_cost');
+  await waitForTask(store, accepted.taskId);
+  assert.equal(records.product.length, 1);
+  assert.equal('成本' in records.product[0].fields, false, '没有可信价格就不许写成本');
+});

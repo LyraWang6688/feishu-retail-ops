@@ -238,3 +238,146 @@ test('重试卡片：只留确认按钮，颜色/补样品选择组原样保留'
   assert.deepEqual(columnSetButtons(card).map((button) => button.text.content),
     ['黑', '白', '确认']);
 });
+
+// —— 到货确认卡：尺码网格每行 6 个 + 货号 → 颜色 → 尺码 三层分组 ——
+//
+// 锁的是产品负责人 2026-10-05 提的两条：
+//   1. 尺码网格每行至少 6 个（现在是 6，超过换行，且每行都恰好 6 列）；
+//   2. 明细先按货号、再按颜色、颜色下面是尺码，顺序稳定。
+// 6 列 / 短文本 / column_set 都有移动端实测依据，见 src/utils/larkCards.js 的注释。
+
+// 尺码网格行：6 列的 column_set（其它 column_set 是"鞋盒总数"3 列和按钮行 2 列）。
+const sizeGridRows = (card) => card.elements
+  .filter((element) => element.tag === 'column_set')
+  .filter((element) => element.columns.length === 6)
+  .map((element) => element.columns.map((column) => column.elements[0].content));
+
+const markdownLines = (card) => card.elements
+  .filter((element) => element.tag === 'markdown')
+  .map((element) => element.content);
+
+// 把卡片读成「分组骨架」：[货号:X, 颜色:Y, 尺码:36,37, ...]。
+// 只关心排版结构，不关心每个格子里的数量/价格。
+// ⚠️ 用 alternation 而不是字符类：🏷 是增补平面字符，塞进 [...] 只会匹配到半个代理对。
+const ITEM_NO_HEADING = /^\*\*(?:🏷️?|⚠️?)/u;
+const groupingSkeleton = (card) => {
+  const layout = [];
+  for (const element of card.elements) {
+    if (element.tag === 'markdown' && ITEM_NO_HEADING.test(element.content)) {
+      layout.push(`货号:${element.content.replace(/^\*\*(?:🏷️?|⚠️?)\s*/u, '').replace(/\*\*$/, '')}`);
+      continue;
+    }
+    if (element.tag === 'markdown' && element.content.startsWith('▸ ')) {
+      layout.push(`颜色:${element.content.slice(2)}`);
+      continue;
+    }
+    if (element.tag === 'column_set' && element.columns.length === 6) {
+      const sizes = element.columns
+        .map((column) => column.elements[0].content)
+        .filter((content) => content.trim() !== '')
+        .map((content) => content.match(/\*\*(\d+)\*\*/)[1]);
+      layout.push(`尺码:${sizes.join(',')}`);
+    }
+  }
+  return layout;
+};
+
+const arrivalItem = (itemNo, color, size, quantity = 1, extra = {}) => ({
+  product_record_id: `prod_${itemNo}_${color}`,
+  item_no: itemNo,
+  color,
+  size,
+  quantity,
+  ...extra,
+});
+
+test('到货明细尺码网格：每行恰好 6 列，超过 6 个换行（产品负责人要求每行至少 6 个）', () => {
+  const sizes = [36, 37, 38, 39, 40, 41, 42, 43];
+  const card = purchaseArrivalDetailCard('draft_grid', {
+    batch_no: 'BATCH-1',
+    actual: sizes.map((size) => arrivalItem('1366-31', '棕色', size)),
+  });
+  const rows = sizeGridRows(card);
+  assert.equal(rows.length, 2, '8 个尺码要折成 2 行');
+  for (const row of rows) {
+    assert.equal(row.length, 6, '每一行都必须是 6 列：不足要补空列，否则最后一行在手机上宽度对不齐');
+  }
+  assert.deepEqual(rows[0], ['**36**\n×1', '**37**\n×1', '**38**\n×1', '**39**\n×1', '**40**\n×1', '**41**\n×1']);
+  assert.deepEqual(rows[1].slice(0, 2), ['**42**\n×1', '**43**\n×1']);
+  assert.deepEqual(rows[1].slice(2), [' ', ' ', ' ', ' '], '第二行只剩 2 个尺码，补 4 个空列');
+  // 尺码网格是纯文字 column_set，绝不能退化成 action（action 在手机上会竖向堆叠）。
+  assert.deepEqual(actionButtons(card), []);
+});
+
+test('到货明细尺码格：用「尺码 + ×数量」短文本，不写会撑破 6 列格子的「码」字', () => {
+  const card = purchaseArrivalDetailCard('draft_cell', {
+    batch_no: 'BATCH-1',
+    actual: [arrivalItem('1366-31', '棕色', 37, 2, { unit_cost: 199 })],
+  });
+  const row = sizeGridRows(card)[0];
+  assert.equal(row[0], '**37**\n×2\n￥199');
+  assert.doesNotMatch(row[0], /码/, '6 列下「37码 × 2」会换行撑破格子（移动端实测），别改回长写法');
+  // 只有 1 个尺码也要 6 列
+  assert.equal(row.length, 6);
+});
+
+test('到货明细分组：货号 → 颜色 → 尺码，各组按字典序稳定排序、内容正确归位', () => {
+  const draft = {
+    batch_no: 'BATCH-1',
+    actual: [
+      arrivalItem('B200', '白', 39),
+      arrivalItem('A100', '黑', 40),
+      arrivalItem('B200', '白', 38),
+      arrivalItem('A100', '黑', 38),
+      arrivalItem('A100', '红', 41),
+      arrivalItem('A100', '红', 40),
+    ],
+  };
+  const card = purchaseArrivalDetailCard('draft_group', draft);
+  assert.deepEqual(groupingSkeleton(card), [
+    '货号:A100',
+    '颜色:红',
+    '尺码:40,41',
+    '颜色:黑',
+    '尺码:38,40',
+    '货号:B200',
+    '颜色:白',
+    '尺码:38,39',
+  ]);
+  // 同一份输入渲染两次，顺序必须完全一样（不能跟着模型返回的顺序跳）。
+  const again = purchaseArrivalDetailCard('draft_group', {
+    batch_no: 'BATCH-1',
+    actual: [...draft.actual].reverse(),
+  });
+  assert.deepEqual(groupingSkeleton(again), groupingSkeleton(card), '分组顺序必须与输入顺序无关');
+});
+
+test('到货明细分组：没匹配到货品表的货号标 ⚠️；单据上没颜色就不编一个颜色标题', () => {
+  const card = purchaseArrivalDetailCard('draft_colorless', {
+    batch_no: 'BATCH-1',
+    actual: [
+      { product_record_id: '', item_no: 'A100', color: '', size: 38, quantity: 1 },
+    ],
+  });
+  const lines = markdownLines(card);
+  assert.ok(lines.some((line) => line.includes('⚠️') && line.includes('A100')), '未匹配的货号要用 ⚠️ 标出来');
+  assert.equal(lines.filter((line) => line.startsWith('▸ ')).length, 0, '没有颜色就不要写颜色小标题');
+  assert.deepEqual(sizeGridRows(card), [['**38**\n×1', ' ', ' ', ' ', ' ', ' ']]);
+});
+
+test('采购申请确认卡片：供应商分组保留，供应商内也是 货号 → 颜色 → 尺码', () => {
+  const card = purchaseRequestConfirmationCard('draft_supplier', {
+    items: [
+      { item_no: 'A1', color: '黑', size: 40, quantity: 1, supplier: '金猴' },
+      { item_no: 'A1', color: '黑', size: 41, quantity: 1, supplier: '金猴' },
+      { item_no: 'B1', color: '白', size: 38, quantity: 1, supplier: '奥康' },
+    ],
+  });
+  const lines = markdownLines(card);
+  assert.ok(lines.some((line) => line.includes('供应商：金猴')), '非批量卡片仍要按供应商分区');
+  assert.ok(lines.some((line) => line.includes('供应商：奥康')));
+  assert.deepEqual(groupingSkeleton(card), [
+    '货号:A1', '颜色:黑', '尺码:40,41',
+    '货号:B1', '颜色:白', '尺码:38',
+  ]);
+});

@@ -3,6 +3,7 @@ const fs = require('fs');
 const { getModuleDefinition } = require('../config/modules');
 const { logError, logInfo } = require('../utils/logger');
 const { applyGroupBuyVoucherPolicy } = require('./groupBuyVoucherPolicy');
+const { parseUnitCost } = require('./arrivalCostPolicy');
 const { resolveLlm, assertLlmConfigured } = require('../config/llmModels');
 
 // Log only the sale fields needed to compare AI extraction with deterministic
@@ -193,17 +194,32 @@ const normalizeDocumentSize = (value) => {
 
 /**
  * 把到货单识别的原始行整理成「一条明细 = 一个尺码」的扁平数组：
- *   [{ item_no, color, size, quantity }]
+ *   [{ item_no, color, size, quantity, unit_cost? }]
  * 丢掉货号缺失、尺码或数量不是正整数的行——宁可少入库几双让她核对，
  * 也不能凭一个读不准的数字把货写进库存。
+ *
+ * unit_cost 是供应商单据上的单件价格（对我们就是成本）。它是**可选**的：
+ * 单据上没有价格列时模型不回这个字段，行上就不会有 unit_cost，
+ * 下游据此判断「这次没有可信价格，不写成本」（见 arrivalCostPolicy）。
+ * 解析不出来的价格同样不挂到行上——宁可没有，也不能带个错值往下走。
+ *
+ * 只在真的解析出正数时才加这个 key：normalizeDocumentRows 的返回值被
+ * deepEqual 断言逐字段比对，无脑加 `unit_cost: null` 会平白改变已有契约。
  */
 const normalizeDocumentRows = (rows) => (Array.isArray(rows) ? rows : [])
-  .map((row) => ({
-    item_no: String(row?.item_no ?? row?.itemNo ?? '').trim(),
-    color: String(row?.color ?? '').trim(),
-    size: normalizeDocumentSize(row?.size),
-    quantity: Number(row?.quantity ?? 1),
-  }))
+  .map((row) => {
+    const normalized = {
+      item_no: String(row?.item_no ?? row?.itemNo ?? '').trim(),
+      color: String(row?.color ?? '').trim(),
+      size: normalizeDocumentSize(row?.size),
+      quantity: Number(row?.quantity ?? 1),
+    };
+    // 模型可能把它叫 unit_cost / unitCost / cost / price（「销售价」列对我们是成本）。
+    // 刻意不收 amount / 金额：那是整行合计，不是单件价。
+    const unitCost = parseUnitCost(row?.unit_cost ?? row?.unitCost ?? row?.cost ?? row?.price);
+    if (unitCost !== null) normalized.unit_cost = unitCost;
+    return normalized;
+  })
   .filter((row) => row.item_no && row.size > 0 && Number.isInteger(row.quantity) && row.quantity > 0);
 
 /**
@@ -461,7 +477,7 @@ ${supplierRule}
    *
    * @param {string} filePath - 本地图片路径
    * @param {string} moduleKey - purchase / sales / inventory
-   * @returns {Promise<Array>} - [{ item_no, color, size, quantity }]
+   * @returns {Promise<Array>} - [{ item_no, color, size, quantity, unit_cost? }]
    */
   async recognizePurchaseDocument(filePath, moduleKey = 'purchase') {
     try {
@@ -497,7 +513,14 @@ ${supplierRule}
       try {
         const results = JSON.parse(cleanedContent);
         if (!Array.isArray(results)) throw new Error('AI 返回结果不是数组格式');
-        return normalizeDocumentRows(results);
+        const normalized = normalizeDocumentRows(results);
+        // 单据上到底有没有价格列，只能靠线上日志回答：两列都不配置也没有可观测性。
+        logInfo('recognition.document.normalized', {
+          module: moduleConfig.key,
+          row_count: normalized.length,
+          rows_with_unit_cost: normalized.filter((row) => row.unit_cost !== undefined).length,
+        });
+        return normalized;
       } catch (parseError) {
         logError('recognition.document.parse_failed', {
           module: moduleConfig.key,
