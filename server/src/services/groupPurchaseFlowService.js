@@ -1,12 +1,13 @@
 const { logInfo } = require('../utils/logger');
 
 // 「认不出是哪一批」和「说不清是哪一批」的回复文案（配置先行：改文案不碰逻辑）。
-// ⚠️ 两条都是**明确的否定**，不是"我猜了一下"：参见 PurchaseBatchLocator 里的三条路。
+// ⚠️ 两条都是**明确的否定**，不是"我猜了一下"：参见 PurchaseBatchLocator 里的四条路。
 const NO_BATCH_REPLY = '这条消息我没认出来是哪一批采购单～你引用一下我发的采购单，或者把批次号（BH-开头的那个）说给我。';
 const AMBIGUOUS_BATCH_REPLY = '我分不清你说的是哪一批～引用一下我发的采购单，或者把批次号（BH-开头的那个）说给我。';
 
 /**
- * 群里 @ 机器人之后的采购分派（C 链路的使用方）。
+ * 群里进来的采购消息的分派（C 链路的使用方）。
+ * 准入由调用方判定（话题免 @ / 主群 @，见 LarkMvpService.acceptMessage）。
  *
  * 今天它只做一件事：**把"是哪一批"定位出来，然后把结果原样交回调用方**。
  * D（到货验收的新语义）还没定，所以这里**不发明任何业务规则**：
@@ -30,11 +31,12 @@ class GroupPurchaseFlowService {
   }
 
   /**
-   * @param {{ messageId: string, text: string, parentId?: string, senderOpenId?: string }} input
+   * @param {{ messageId: string, text: string, parentId?: string, threadId?: string,
+   *   senderOpenId?: string }} input
    * @returns {Promise<{resolved: boolean, reason: string, batch?: object, batchNo?: string, replied: boolean}>}
    */
-  async handleGroupPurchaseMessage({ messageId, text = '', parentId = '', senderOpenId = '' } = {}) {
-    const located = await this.locator.resolve({ text, parentId });
+  async handleGroupPurchaseMessage({ messageId, text = '', parentId = '', threadId = '', senderOpenId = '' } = {}) {
+    const located = await this.locator.resolve({ text, parentId, threadId });
     if (located.status === 'matched') {
       // 定位成功**只记日志、不回消息**：她引用着采购单说话时，卡片/结果才是回执，
       // 先垫一句"我找到了"只会刷屏。

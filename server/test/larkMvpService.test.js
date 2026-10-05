@@ -1755,19 +1755,20 @@ test('同一个货号有多个颜色时，把该货号下所有资料不全的�
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 群聊链路（B / C）：@ 机器人 + 引用定位 + 剥 @ 占位符 + 收到表情
+// 群聊链路（B / C）：话题免 @ / 主群 @ + 引用定位 + 剥 @ 占位符 + 收到表情
 // ─────────────────────────────────────────────────────────────────────────────
 
-// 群聊定位器指向临时目录，并可选地预置一条「消息 ↔ 批次」映射
+// 群聊定位器指向临时目录，并可选地预置「消息 ↔ 批次」「话题 ↔ 批次」映射
 // （生产上由 PurchaseWebhookService 发完采购单后写入，见 purchaseWebhookService.test.js）。
 const makeGroupContext = async (options = {}) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'group-purchase-locator-'));
   const store = new JsonTaskStore({ dir, idField: 'task_id' });
   const locator = new PurchaseBatchLocator({ store });
-  if (options.mappingMessageId) {
+  if (options.mappingMessageId || options.mappingThreadId) {
     await locator.rememberGroupMessage({
       batchNo: options.batchNo || 'BH-20261005-0001',
-      messageId: options.mappingMessageId,
+      messageId: options.mappingMessageId || options.mappingThreadId,
+      threadId: options.mappingThreadId || '',
       chatId: TEST_PURCHASE_CHAT_ID,
       suppliers: ['金猴'],
       requestIds: ['req_1'],
@@ -1786,9 +1787,121 @@ const groupEvent = (overrides = {}) => ({
     message_type: 'text',
     create_time: '1000',
     content: JSON.stringify({ text: overrides.text || '' }),
+    // 默认 @ 了机器人（主群那条路）；传 mention=false 模拟"话题里没 @"。
     mentions: overrides.mentions || [{ key: '@_user_1', id: TEST_BOT_OPEN_ID, name: '测试机器人' }],
     parent_id: overrides.parentId,
+    // thread_id 有值 = 话题里的消息（免 @）；不传 = 主群消息（必须 @）。
+    thread_id: overrides.threadId,
   },
+});
+
+test('群聊①：话题里的消息（thread_id 有值）**不 @ 机器人**也进流程', async () => {
+  // 真机实测：她在话题里发「你好 小来财」，mentions=[]，事件照样推给我们。
+  const { locator } = await makeGroupContext({ mappingThreadId: 'omt_thread_1', batchNo: 'BH-20261005-0011' });
+  const { service } = makeService({ purchaseBatchLocator: locator });
+  const replied = [];
+  service.replyText = async (_messageId, content) => { replied.push(content); return 'om_reply'; };
+
+  const result = await service.acceptMessage(groupEvent({
+    messageId: 'om_topic_no_mention',
+    threadId: 'omt_thread_1',
+    text: '你好 小来财',
+    mentions: [],
+  }));
+
+  assert.equal(result.accepted, true, '话题里的消息不该因为没 @ 被丢掉');
+  assert.equal(result.resolved, true);
+  assert.equal(result.reason, 'thread_id');
+  assert.equal(result.batchNo, 'BH-20261005-0011');
+  assert.deepEqual(replied, [], '定位成功不该再发问句');
+});
+
+test('群聊②：主群消息（thread_id 为空）@ 机器人 → 进流程', async () => {
+  const { locator } = await makeGroupContext({ mappingMessageId: 'om_purchase_main', batchNo: 'BH-20261005-0012' });
+  const { service } = makeService({ purchaseBatchLocator: locator });
+  service.replyText = async () => { throw new Error('定位成功不该回消息'); };
+
+  const result = await service.acceptMessage(groupEvent({
+    messageId: 'om_main_mention',
+    text: '@_user_1 这批到了',
+    parentId: 'om_purchase_main',
+  }));
+
+  assert.equal(result.accepted, true);
+  assert.equal(result.resolved, true);
+  assert.equal(result.batchNo, 'BH-20261005-0012');
+});
+
+test('C：thread_id 命中 → 定位到正确批次（优先级高于 parent_id）', async () => {
+  // 话题映射指向 0011，parent_id 映射指向 0099：必须是 thread_id 赢
+  //（话题里后续消息不一定还引用着机器人那条，thread_id 才是稳的那个）。
+  const { locator } = await makeGroupContext({ mappingThreadId: 'omt_thread_prio', batchNo: 'BH-20261005-0011' });
+  await locator.rememberGroupMessage({ batchNo: 'BH-20261005-0099', messageId: 'om_other_batch' });
+  const { service } = makeService({ purchaseBatchLocator: locator });
+  service.replyText = async () => { throw new Error('定位成功不该回消息'); };
+
+  const result = await service.acceptMessage(groupEvent({
+    messageId: 'om_topic_prio',
+    threadId: 'omt_thread_prio',
+    parentId: 'om_other_batch',
+    text: '这批货到了',
+  }));
+
+  assert.equal(result.resolved, true);
+  assert.equal(result.reason, 'thread_id');
+  assert.equal(result.batchNo, 'BH-20261005-0011');
+});
+
+test('C：thread_id 查不到映射 → 明确回「认不出」，零写入，不拿正文号去猜', async () => {
+  const writes = [];
+  const { locator } = await makeGroupContext({ mappingThreadId: 'omt_known', batchNo: 'BH-20261005-0001' });
+  const { service } = makeService({
+    purchaseBatchLocator: locator,
+    gateway: {
+      table: () => ({}),
+      listAll: async () => [],
+      get: async () => null,
+      create: async (...args) => { writes.push(['create', ...args]); throw new Error('定位链路不允许写业务表'); },
+      update: async (...args) => { writes.push(['update', ...args]); throw new Error('定位链路不允许写业务表'); },
+    },
+  });
+  const replied = [];
+  service.replyText = async (_messageId, content) => { replied.push(content); return 'om_reply'; };
+
+  // 这条话题我们没记过；正文里**故意**带上一个真实批次号——也不能因此去猜。
+  const result = await service.acceptMessage(groupEvent({
+    messageId: 'om_topic_unknown',
+    threadId: 'omt_unknown_thread',
+    text: 'BH-20261005-0001 这批你看下',
+  }));
+
+  assert.equal(result.resolved, false);
+  assert.equal(result.reason, 'not_found');
+  assert.equal(replied.length, 1);
+  assert.match(replied[0], /没认出来|认不出|批次号/);
+  assert.deepEqual(writes, [], '认不出时一次业务写都不允许有');
+});
+
+test('C：普通群里第一条回复（话题没记过、但引用得到）→ 用 parent_id 命中并把 thread_id 补记', async () => {
+  const { locator, store } = await makeGroupContext({ mappingMessageId: 'om_purchase_first', batchNo: 'BH-20261005-0021' });
+  const { service } = makeService({ purchaseBatchLocator: locator });
+  service.replyText = async () => { throw new Error('定位成功不该回消息'); };
+
+  const result = await service.acceptMessage(groupEvent({
+    messageId: 'om_first_reply',
+    threadId: 'omt_new_thread',
+    parentId: 'om_purchase_first',
+    text: '这批到了',
+  }));
+
+  assert.equal(result.resolved, true);
+  assert.equal(result.reason, 'parent_id');
+  assert.equal(result.batchNo, 'BH-20261005-0021');
+  // 补记之后，这条话题下的**后续**消息（不再引用机器人那条）也能只靠 thread_id 命中。
+  const after = await new PurchaseBatchLocator({ store }).resolve({ threadId: 'omt_new_thread' });
+  assert.equal(after.status, 'matched');
+  assert.equal(after.source, 'thread_id');
+  assert.equal(after.batchNo, 'BH-20261005-0021');
 });
 
 test('C①：@ + 引用机器人发的采购单 → 用 parent_id 命中映射，定位到正确批次', async () => {

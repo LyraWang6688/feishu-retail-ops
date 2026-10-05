@@ -915,9 +915,20 @@ class PurchaseWebhookService {
     return { chatId, sandbox: false, reason: 'configured' };
   }
 
-  /** 采购单发到群里时，@所有人 —— 业务负责人明确要求的。 */
-  mentionAllText(content) {
-    return `<at user_id="all">所有人</at> ${content}`;
+  /**
+   * 采购单发到群里时，@那个记录的**经办人** —— 业务负责人明确改的。
+   *
+   * 为什么不再 @所有人：她要的是"经办人知道这批单子发了"，@所有人是群骚扰；
+   * 经办人目前都在这个采购群里，所以直接在群里 @他（不再单独发私聊）。
+   *
+   * ⚠️ 拿不到经办人 open_id 时**不加 @**（只发正文）：宁可少一个提醒，也不能 @错人，
+   *    更不能退回 @所有人。调用方会同时记一条 warn 日志，便于排查"为什么没 @到"。
+   */
+  mentionOperatorText(operatorOpenId, content) {
+    const openId = String(operatorOpenId || '').trim();
+    if (!openId) return String(content || '');
+    // 飞书文本消息里的 @ 语法：`<at user_id="ou_xxx"></at>`，名字留空由客户端渲染。
+    return `<at user_id="${openId}"></at> ${content}`;
   }
 
   async sendCard(openId, card) {
@@ -1144,8 +1155,10 @@ class PurchaseWebhookService {
    * `receiveIdType` 默认为 open_id（私聊那条路今天仍在用：到货异常告知）；采购单发到群时
    * 由调用方传 `chat_id`（参数名必须跟着 receive_id 的实际类型走，不能写死 open_id）。
    *
-   * 返回 `{ imageKey, messageId }`：采购单发到群之后要把 message_id 记进映射，
-   * 供「引用那条消息 → 是哪一批」反查（见 PurchaseBatchLocator）。
+   * 返回 `{ imageKey, messageId, threadId }`：采购单发到群之后要把 message_id / thread_id
+   * 记进映射，供「话题里的消息 / 引用那条消息 → 是哪一批」反查（见 PurchaseBatchLocator）。
+   * `threadId` 只有话题群（或飞书已经给这条消息开了话题）才有值，普通群是空串——
+   * 那种情况由定位器在她第一次回复时补记，不影响定位。
    */
   async sendImage(openId, imageBuffer, receiveIdType = 'open_id') {
     if (!openId) throw new Error('采购记录缺少经办人 open_id，无法发送图片');
@@ -1166,9 +1179,20 @@ class PurchaseWebhookService {
       data: { receive_id: openId, msg_type: 'image', content: JSON.stringify({ image_key: imageKey }) },
     });
     if (response.code !== 0) throw new Error(`发送采购申请图片失败: ${response.msg} (Code: ${response.code})`);
-    return { imageKey, messageId: response.data?.message_id || '' };
+    return {
+      imageKey,
+      messageId: response.data?.message_id || '',
+      threadId: response.data?.thread_id || '',
+    };
   }
 
+  /**
+   * 发一条纯文字。返回 `{ messageId, threadId }`。
+   *
+   * ⚠️ 返回值从"messageId 字符串"改成对象，是为了把 `thread_id` 一起带出来记映射
+   * （话题里后续消息只带 thread_id，不带 parent_id）。本类里只有采购单发到群那一个
+   * 调用点，已同步改成解构 `{ messageId, threadId }`。
+   */
   async sendText(openId, content, receiveIdType = 'open_id') {
     if (!openId) throw new Error('采购记录缺少经办人 open_id，无法发送说明');
     const response = await this.client.im.message.create({
@@ -1176,7 +1200,10 @@ class PurchaseWebhookService {
       data: { receive_id: openId, msg_type: 'text', content: JSON.stringify({ text: content }) },
     });
     if (response.code !== 0) throw new Error(`发送采购申请说明失败: ${response.msg} (Code: ${response.code})`);
-    return response.data?.message_id || '';
+    return {
+      messageId: response.data?.message_id || '',
+      threadId: response.data?.thread_id || '',
+    };
   }
 
   // 同一个供应商的明细合成一张图。没有供应商的明细（历史草稿）归到一组，
@@ -1245,8 +1272,16 @@ class PurchaseWebhookService {
     }
     const sent = [];
     const failed = [];
-    // 发到群里的每条消息的 message_id：记进本地映射，供「她引用那条消息 → 是哪一批」反查。
-    const groupMessageIds = [];
+    // 发到群里的每条消息的 message_id / thread_id：记进本地映射，
+    // 供「话题里的消息 / 引用那条消息 → 是哪一批」反查。
+    const groupMessages = [];
+    if (!operatorOpenId) {
+      // 经办人没解析出来（报单记录没填/字段映射缺失）：照发正文，只是不 @ 人。
+      // 记 warn 是为了排查"为什么这批单子没 @到经办人"，绝不退回 @所有人。
+      logWarn('purchase.request.image.operator_missing', {
+        task_id: taskId, chat_id: target.chatId, hint: '未解析出经办人 open_id，这条群消息不会 @任何人',
+      });
+    }
     for (const group of this.groupItemsBySupplier(items)) {
       const supplierName = await this.resolveSupplierName(group.supplierRecordId).catch(() => '');
       const label = supplierName || '未标注供应商';
@@ -1260,14 +1295,25 @@ class PurchaseWebhookService {
           items: group.items,
         });
         const imageResult = await this.sendImage(target.chatId, png, 'chat_id');
-        // 图单独一条、文字带 @所有人 单独一条：飞书图片消息没有正文，
-        // @所有人 只能挂在文字那条上（业务负责人明确要 @所有人）。
-        const textMessageId = await this.sendText(
+        // 图单独一条、文字带 @经办人 单独一条：飞书图片消息没有正文，
+        // @ 只能挂在文字那条上（业务负责人明确要 @经办人，不再是 @所有人）。
+        const textResult = await this.sendText(
           target.chatId,
-          this.mentionAllText(`${label} 这批 ${rowCount} 条（共 ${totalPairs} 双），图可以直接转给供应商。`),
+          this.mentionOperatorText(operatorOpenId, `${label} 这批 ${rowCount} 条（共 ${totalPairs} 双），图可以直接转给供应商。`),
           'chat_id',
         );
-        groupMessageIds.push(imageResult.messageId, textMessageId);
+        groupMessages.push(
+          { messageId: imageResult.messageId, threadId: imageResult.threadId },
+          { messageId: textResult.messageId, threadId: textResult.threadId },
+        );
+        // 业务负责人要据此测试：发出去那一刻就把「哪个群 / 哪一批 / 哪条消息 / 哪个话题」记全。
+        logInfo('purchase.request.image.group_sent', {
+          task_id: taskId, chat_id: target.chatId,
+          batch_no: posting.batch_no || draft.batch_no || '', supplier: label,
+          operator_open_id: operatorOpenId || '',
+          image_message_id: imageResult.messageId, image_thread_id: imageResult.threadId,
+          text_message_id: textResult.messageId, text_thread_id: textResult.threadId,
+        });
       } catch (error) {
         failed.push({ supplier: label, error: error.message });
         logError('purchase.request.image.send_failed', {
@@ -1291,15 +1337,16 @@ class PurchaseWebhookService {
       sent.push(label);
     }
 
-    // 「这条消息 ↔ 是哪一批」的映射：**发完就记**，失败只告警。
-    // 记不上只影响 C 的引用定位（她会被告知"认不出"），绝不能让采购单已经发出去之后
+    // 「这条消息 / 这条话题 ↔ 是哪一批」的映射：**发完就记**，失败只告警。
+    // 记不上只影响 C 的定位（她会被告知"认不出"），绝不能让采购单已经发出去之后
     // 再把任务判成失败。
     const batchNo = posting.batch_no || draft.batch_no || '';
-    for (const messageId of groupMessageIds.filter(Boolean)) {
+    for (const { messageId, threadId } of groupMessages.filter((item) => item.messageId)) {
       try {
         await this.batchLocator.rememberGroupMessage({
           batchNo,
           messageId,
+          threadId,
           chatId: target.chatId,
           suppliers: sent,
           requestIds: posting.request_ids || [],
@@ -1307,7 +1354,8 @@ class PurchaseWebhookService {
         });
       } catch (error) {
         logWarn('purchase.request.image.batch_mapping_failed', {
-          task_id: taskId, message_id: messageId, batch_no: batchNo, error: error.message,
+          task_id: taskId, message_id: messageId, chat_id: target.chatId,
+          batch_no: batchNo, error: error.message,
         });
       }
     }

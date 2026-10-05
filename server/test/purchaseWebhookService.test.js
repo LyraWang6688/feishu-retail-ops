@@ -313,11 +313,13 @@ test('供应商报单免确认：解析完直接生成采购申请、不发确�
   assert.equal(text.data.msg_type, 'text');
   assert.equal(text.params.receive_id_type, 'chat_id');
   assert.equal(text.data.receive_id, 'oc_test_purchase_group');
-  // @所有人：挂在那条文字说明上（图片消息没有正文，@ 只能跟着文字走）。
+  // @经办人：挂在那条文字说明上（图片消息没有正文，@ 只能跟着文字走）。
+  // 业务负责人明确改过：不再 @所有人，只 @这条记录的经办人。
   assert.equal(
     JSON.parse(text.data.content).text,
-    '<at user_id="all">所有人</at> 金猴 这批 2 条（共 3 双），图可以直接转给供应商。',
+    '<at user_id="ou_user_1"></at> 金猴 这批 2 条（共 3 双），图可以直接转给供应商。',
   );
+  assert.ok(!JSON.parse(text.data.content).text.includes('user_id="all"'), '不允许再 @所有人');
 
   // 采购申请直接写出，报单记录进入终态
   const requests = await gateway.listAll('purchaseRequest');
@@ -421,7 +423,7 @@ test('同一个供应商的多条明细合并成一张图', async () => {
   await waitFor('图片和说明发出', async () => messages.length === 2);
   assert.equal(
     JSON.parse(messages[1].data.content).text,
-    '<at user_id="all">所有人</at> 金猴 这批 2 条（共 3 双），图可以直接转给供应商。',
+    '<at user_id="ou_user_1"></at> 金猴 这批 2 条（共 3 双），图可以直接转给供应商。',
   );
 });
 
@@ -455,8 +457,8 @@ test('多个供应商：每个供应商各出一张图、各发一条说明', as
   await waitFor('两个供应商的图都发出', async () => messages.length === 4);
   const texts = messages.filter((m) => m.data.msg_type === 'text').map((m) => JSON.parse(m.data.content).text).sort();
   assert.deepEqual(texts, [
-    '<at user_id="all">所有人</at> 奥康 这批 1 条（共 1 双），图可以直接转给供应商。',
-    '<at user_id="all">所有人</at> 金猴 这批 1 条（共 2 双），图可以直接转给供应商。',
+    '<at user_id="ou_user_1"></at> 奥康 这批 1 条（共 1 双），图可以直接转给供应商。',
+    '<at user_id="ou_user_1"></at> 金猴 这批 1 条（共 2 双），图可以直接转给供应商。',
   ]);
   // 每条都发到群，没有一个漏到私聊。
   assert.ok(
@@ -3298,7 +3300,7 @@ test('卡片发送失败：什么都不建档；重收 webhook 之后只建一�
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// A：采购单发到群 + @所有人 + 把「那条消息 ↔ 哪一批」落成本地记录
+// A：采购单发到群 + @经办人（不再 @所有人）+ 把「那条消息 / 那条话题 ↔ 哪一批」落成本地记录
 // ─────────────────────────────────────────────────────────────────────────────
 
 // 定位器指向临时目录，才能在本文件里断言"映射真的落盘了"，
@@ -3316,6 +3318,8 @@ const makeGroupPurchaseService = (options = {}) => {
     gateway: makeGateway({
       purchaseReport: [reportRecord(options.recordId || 'rep_group', {
         尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'],
+        // operator: '' → 报单记录没填经办人（专门验证"不 @任何人"那条路）。
+        ...(options.operator === undefined ? {} : { 经办人: options.operator ? [{ id: options.operator }] : [] }),
       })],
       purchaseOrderBatch: [],
       purchaseRequest: [],
@@ -3326,7 +3330,15 @@ const makeGroupPurchaseService = (options = {}) => {
     client: makeClient({
       sendMessage: async (params) => {
         sent.push(params);
-        return { code: 0, data: { message_id: `om_sent_${sent.length}` } };
+        return {
+          code: 0,
+          data: {
+            message_id: `om_sent_${sent.length}`,
+            // 话题群：飞书发消息的响应里直接带这条消息所属的话题 id（真机实测有这个字段）。
+            // 只给文字那条带上：图片那条为空，正好覆盖"有的消息有话题、有的没有"。
+            thread_id: params.data.msg_type === 'text' ? 'omt_sent_thread' : '',
+          },
+        };
       },
     }),
     batchLocatorStore,
@@ -3334,7 +3346,7 @@ const makeGroupPurchaseService = (options = {}) => {
   return { ...built, sent, batchLocatorStore };
 };
 
-test('A：采购单发到群 PURCHASE_CHAT_ID 并 @所有人；群消息 id ↔ 批次落进本地记录', async () => {
+test('A：采购单发到群 PURCHASE_CHAT_ID 并 @经办人；消息/话题 ↔ 批次落进本地记录', async () => {
   const { service, store, batchLocatorStore, sent, gateway } = makeGroupPurchaseService();
   const accepted = await service.accept('supplier-report', 'rep_group');
   const task = await waitForTask(store, accepted.taskId);
@@ -3348,14 +3360,21 @@ test('A：采购单发到群 PURCHASE_CHAT_ID 并 @所有人；群消息 id ↔ 
   assert.equal(image.data.msg_type, 'image');
   assert.equal(text.params.receive_id_type, 'chat_id');
   assert.equal(text.data.receive_id, 'oc_test_purchase_group');
-  // @所有人：业务负责人明确要求。
-  assert.match(JSON.parse(text.data.content).text, /^<at user_id="all">所有人<\/at> /);
-  // 群里发的两条消息，一条不漏地落成「消息 ↔ 批次」记录（C 靠 parent_id 反查）。
+  // @经办人（不是 @所有人）：业务负责人改的口径。
+  const textContent = JSON.parse(text.data.content).text;
+  assert.match(textContent, /^<at user_id="ou_user_1"><\/at> /);
+  assert.ok(!textContent.includes('user_id="all"'), '不允许再 @所有人');
+  // 群里发的两条消息，一条不漏地落成「消息 ↔ 批次」记录（C 靠它反查）。
   const mappings = await batchLocatorStore.list();
   assert.equal(mappings.length, 2);
   assert.deepEqual(mappings.map((m) => m.message_id).sort(), ['om_sent_1', 'om_sent_2']);
   assert.ok(mappings.every((m) => m.batch_no), '每条映射都要带批次号');
   assert.ok(mappings.every((m) => m.chat_id === 'oc_test_purchase_group'));
+  // 飞书回了 thread_id 的那条要把它记下来（话题定位的落点）。
+  assert.deepEqual(
+    mappings.map((m) => m.thread_id).sort(),
+    ['', 'omt_sent_thread'],
+  );
   // 采购事实本身不受影响：采购申请照写、报单进终态。
   assert.equal((await gateway.listAll('purchaseRequest')).length, 1);
 });
@@ -3397,4 +3416,38 @@ test('C：发到群的两条消息都能用 message_id 反查回批次（引用�
   // 引用一条**不是我们发的**消息：明确认不出，绝不猜最近一笔。
   const unknown = await locator.resolve({ parentId: 'om_someone_else' });
   assert.equal(unknown.status, 'not_found');
+});
+
+test('C：话题 id 能直接反查回批次（不引用机器人那条也能定位）', async () => {
+  const { service, store, batchLocatorStore, sent } = makeGroupPurchaseService();
+  const accepted = await service.accept('supplier-report', 'rep_group');
+  await waitForTask(store, accepted.taskId);
+  await waitFor('采购单发到群', async () => sent.length === 2);
+
+  const locator = new PurchaseBatchLocator({ store: batchLocatorStore });
+  // 话题里后续消息只带 thread_id（parent_id 可能是她自己的消息）——必须只靠它命中。
+  const inThread = await locator.resolve({ threadId: 'omt_sent_thread', text: '这批货到了' });
+  assert.equal(inThread.status, 'matched');
+  assert.equal(inThread.source, 'thread_id');
+  assert.ok(inThread.batchNo, '话题反查回来的批次号不能为空');
+  // 没记过的话题 id：明确认不出，绝不猜。
+  const unknown = await locator.resolve({ threadId: 'omt_never_seen' });
+  assert.equal(unknown.status, 'not_found');
+  assert.equal(unknown.source, 'thread_id');
+});
+
+test('A：拿不到经办人 open_id → 不 @任何人（也不退回 @所有人）', async () => {
+  const logs = captureLogs();
+  try {
+    const { service, store, sent } = makeGroupPurchaseService({ operator: '' });
+    const accepted = await service.accept('supplier-report', 'rep_group');
+    await waitForTask(store, accepted.taskId);
+    await waitFor('采购单发到群', async () => sent.length >= 2);
+    const text = sent.find((m) => m.data.msg_type === 'text');
+    assert.ok(text, '正文仍要发出去');
+    assert.ok(!JSON.parse(text.data.content).text.includes('<at '), '拿不到经办人时一个 @ 都不加');
+    assert.equal(logs.events('purchase.request.image.operator_missing').length, 1);
+  } finally {
+    logs.restore();
+  }
 });
