@@ -4,9 +4,17 @@ const { validateV1SchemaScope } = require('../scripts/validate_v1_schema');
 
 const sizeLinkedTables = ['salesDetail', 'purchaseRequest', 'purchaseInbound', 'inventoryLedger', 'liveInventory'];
 // 幂等键是文本字段：写的是 "purchase_request:<taskId>:<n>" 这类稳定键。
-const idempotencyKeyFields = { purchaseOrderBatch: '幂等键', purchaseRequest: '幂等键', liveInventory: '库存操作键' };
-// 每张表的键字段语义名不同：采购用 idempotencyKey，实时库存用 operationItemKey。
-const keyFieldOf = (tableKey) => (tableKey === 'liveInventory' ? 'operationItemKey' : 'idempotencyKey');
+// customerCredit 的键字段语义名不同（businessEventId，中文列「业务事件ID」），
+// 它是售后 prepaid 的幂等键，同样必须在 sales 范围里被校验到。
+const idempotencyKeyFields = {
+  purchaseOrderBatch: '幂等键', purchaseRequest: '幂等键', liveInventory: '库存操作键', customerCredit: '业务事件ID',
+};
+// 每张表的键字段语义名不同：采购用 idempotencyKey，实时库存用 operationItemKey，往来货款用 businessEventId。
+const keyFieldOf = (tableKey) => {
+  if (tableKey === 'liveInventory') return 'operationItemKey';
+  if (tableKey === 'customerCredit') return 'businessEventId';
+  return 'idempotencyKey';
+};
 const gatewayFor = (overrides = {}) => {
   const seen = [];
   const fields = Object.fromEntries(sizeLinkedTables.map((key) => [key, [
@@ -29,6 +37,10 @@ const gatewayFor = (overrides = {}) => {
     listAll: async (key) => key === 'behavior' ? [
       { record_id: 'sale', fields: { 行为编码: 'STOCK_SALE_DECREASE', 行为名称: '销售减少', 库存方向: '减少', 是否启用: true } },
       { record_id: 'purchase', fields: { 行为编码: 'STOCK_PURCHASE_INCREASE', 行为名称: '采购增加', 库存方向: '增加', 是否启用: true } },
+      // 售后三条（与 inventoryService.STOCK_MOVEMENTS 的方向一致）：validateStockBehaviors 会全表核对。
+      { record_id: 'return', fields: { 行为编码: 'SALE_RETURN', 行为名称: '销售退货', 库存方向: '增加', 是否启用: true } },
+      { record_id: 'compensation', fields: { 行为编码: 'SALE_COMPENSATION', 行为名称: '销售赔货', 库存方向: '减少', 是否启用: true } },
+      { record_id: 'cash', fields: { 行为编码: 'SALE_CASH', 行为名称: '现货销售', 库存方向: '减少', 是否启用: true } },
     ] : [],
   };
 };
@@ -88,6 +100,24 @@ test('sales CLI scope validates the sales-detail size relation', async () => {
     validateV1SchemaScope({ gateway: gatewayFor({ sizeManagement: [{ field_name: '尺码', type: 1 }] }), scope: 'sales' }),
     /必须是数字字段/,
   );
+});
+
+// 售后 prepaid 写「客户往来货款」时用「业务事件ID」当幂等键：它必须真的存在于 sales 范围，
+// 且是文本字段。否则这张表改名/缺列部署门槛查不出来，只会在用户确认售后时才炸。
+test('sales CLI scope 校验「客户往来货款」的幂等键列', async () => {
+  await assert.rejects(
+    validateV1SchemaScope({ gateway: gatewayFor({ customerCredit: [] }), scope: 'sales' }),
+    /缺少「业务事件ID」字段/,
+  );
+  await assert.rejects(
+    validateV1SchemaScope({
+      gateway: gatewayFor({ customerCredit: [{ field_name: '业务事件ID', type: 2 }] }), scope: 'sales',
+    }),
+    /「业务事件ID」必须是文本字段/,
+  );
+  const gateway = gatewayFor();
+  await validateV1SchemaScope({ gateway, scope: 'sales' });
+  assert.ok(gateway.seen.includes('customerCredit'));
 });
 
 test('purchase CLI scope validates both intake size relations', async () => {

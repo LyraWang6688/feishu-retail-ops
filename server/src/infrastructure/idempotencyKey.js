@@ -110,7 +110,8 @@ const validateIdempotencyKeyFields = async ({ gateway, tables = [] }) => {
     const field = fields.find((item) => item.field_name === fieldName);
     if (!field) {
       throw new Error(
-        `“${table.tableName}”缺少「${fieldName}」字段：采购与库存的幂等写入依赖它，请先在多维表格新增该文本字段`,
+        `“${table.tableName}”缺少「${fieldName}」字段：幂等写入依赖它（采购 / 库存 / 售后都会用到），` +
+        '请先在多维表格新增该文本字段',
       );
     }
     if (field.type !== 1) throw new Error(`“${table.tableName}”的「${fieldName}」必须是文本字段`);
