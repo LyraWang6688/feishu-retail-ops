@@ -3,7 +3,6 @@ const assert = require('node:assert/strict');
 const {
   salesConfirmationCard,
   purchaseRequestConfirmationCard,
-  purchaseArrivalDetailCard,
   purchaseStatusCard,
   sampleReplacementCard,
   keepOnlyCardButton,
@@ -106,39 +105,6 @@ test('采购申请确认卡片：确认/取消用 column_set，不再用 action'
   assertButtonRowsAreEqualWeight(card);
 });
 
-test('采购到货明细卡片：确认/取消用 column_set，不再用 action', () => {
-  const card = purchaseArrivalDetailCard('draft_1', { batch_no: 'BATCH-1', actual: [] });
-  assert.deepEqual(actionButtons(card), []);
-  assert.deepEqual(columnSetButtons(card).map((button) => button.text.content), ['确认入库', '取消']);
-  // 鞋盒总数那块 column_set 只有文字，不算按钮行。
-  assert.deepEqual(buttonRowWidths(card), [2]);
-  assertButtonRowsAreEqualWeight(card);
-});
-
-// 差异卡片已按产品负责人要求删除（未来架构：到货在采购申请基础上修改，不再比对差异），
-// 这里只钉住"明细卡片上不会出现差异文案"。
-test('采购到货明细卡片不再展示任何差异信息', () => {
-  const card = purchaseArrivalDetailCard('draft_1', {
-    batch_no: 'BATCH-1',
-    actual: [{ item_no: '8088', color: '灰', size: 36, quantity: 1, product_number: '8088灰' }],
-  });
-  const cardText = JSON.stringify(card);
-  assert.ok(!cardText.includes('差异'), `卡片不应再出现差异文案：${cardText}`);
-  assert.ok(!cardText.includes('实到'), `卡片不应再出现「申请/实到」对比：${cardText}`);
-});
-
-test('采购到货明细卡片：货号+颜色命中多条时标注「匹配到 N 条，已取 XXX」', () => {
-  const card = purchaseArrivalDetailCard('draft_1', {
-    batch_no: 'BATCH-1',
-    actual: [{
-      item_no: '8088-26', color: '棕', size: 36, quantity: 1, product_number: '8088-26棕女鞋',
-      ambiguous_match: { count: 2, color: '棕', number: '8088-26棕女鞋' },
-    }],
-  });
-  const cardText = JSON.stringify(card);
-  assert.ok(cardText.includes('匹配到 2 条'), `要写清匹配到几条：${cardText}`);
-  assert.ok(cardText.includes('已取 8088-26棕女鞋'), `要写清取了哪条：${cardText}`);
-});
 
 test('样品补选卡片：候选尺码用 column_set；单个「刷新」保持 action', () => {
   const card = sampleReplacementCard('task_1', {
@@ -254,14 +220,18 @@ test('重试卡片：只留确认按钮，颜色/补样品选择组原样保留'
     ['黑', '白', '确认']);
 });
 
-// —— 到货确认卡：尺码网格每行 6 个 + 货号 → 颜色 → 尺码 三层分组 ——
+// —— 采购明细的渲染规则：尺码网格每行 6 个 + 货号 → 颜色 → 尺码 三层分组 + 🆕 ——
 //
+// ⚠️ 这一段原先是用「采购到货明细卡片」（purchaseArrivalDetailCard）验证的。
+// 2026-10-05 拍照识别链路退场、到货卡片删除，于是改用**仍在使用同一套渲染器**
+// （purchaseItemElements）的「采购申请确认卡片」来钉同样的排版规则——
+// 渲染器没被削弱，只是换了个入口去测它。
 // 锁的是产品负责人 2026-10-05 提的两条：
 //   1. 尺码网格每行至少 6 个（现在是 6，超过换行，且每行都恰好 6 列）；
 //   2. 明细先按货号、再按颜色、颜色下面是尺码，顺序稳定。
 // 6 列 / 短文本 / column_set 都有移动端实测依据，见 src/utils/larkCards.js 的注释。
 
-// 尺码网格行：6 列的 column_set（其它 column_set 是"鞋盒总数"3 列和按钮行 2 列）。
+// 尺码网格行：6 列的 column_set（其它 column_set 是按钮行等）。
 const sizeGridRows = (card) => card.elements
   .filter((element) => element.tag === 'column_set')
   .filter((element) => element.columns.length === 6)
@@ -297,7 +267,9 @@ const groupingSkeleton = (card) => {
   return layout;
 };
 
-const arrivalItem = (itemNo, color, size, quantity = 1, extra = {}) => ({
+// 明细行：渲染器只认 item_no / color / size / quantity / created_product 这些字段，
+// 到货卡片退场后由采购申请卡片（draft.items）承载同样的输入形状。
+const detailItem = (itemNo, color, size, quantity = 1, extra = {}) => ({
   product_record_id: `prod_${itemNo}_${color}`,
   item_no: itemNo,
   color,
@@ -306,12 +278,11 @@ const arrivalItem = (itemNo, color, size, quantity = 1, extra = {}) => ({
   ...extra,
 });
 
-test('到货明细尺码网格：每行恰好 6 列，超过 6 个换行（产品负责人要求每行至少 6 个）', () => {
+const detailCard = (draftId, items) => purchaseRequestConfirmationCard(draftId, { items });
+
+test('明细尺码网格：每行恰好 6 列，超过 6 个换行（产品负责人要求每行至少 6 个）', () => {
   const sizes = [36, 37, 38, 39, 40, 41, 42, 43];
-  const card = purchaseArrivalDetailCard('draft_grid', {
-    batch_no: 'BATCH-1',
-    actual: sizes.map((size) => arrivalItem('1366-31', '棕色', size)),
-  });
+  const card = detailCard('draft_grid', sizes.map((size) => detailItem('1366-31', '棕色', size)));
   const rows = sizeGridRows(card);
   assert.equal(rows.length, 2, '8 个尺码要折成 2 行');
   for (const row of rows) {
@@ -319,16 +290,13 @@ test('到货明细尺码网格：每行恰好 6 列，超过 6 个换行（产�
   }
   assert.deepEqual(rows[0], ['**36**\n×1', '**37**\n×1', '**38**\n×1', '**39**\n×1', '**40**\n×1', '**41**\n×1']);
   assert.deepEqual(rows[1].slice(0, 2), ['**42**\n×1', '**43**\n×1']);
-  assert.deepEqual(rows[1].slice(2), [' ', ' ', ' ', ' '], '第二行只剩 2 个尺码，补 4 个空列');
+  assert.deepEqual(rows[1].slice(2), [' ', ' ', ' ', ' ', ' ', ' '].slice(0, 4), '第二行只剩 2 个尺码，补 4 个空列');
   // 尺码网格是纯文字 column_set，绝不能退化成 action（action 在手机上会竖向堆叠）。
   assert.deepEqual(actionButtons(card), []);
 });
 
-test('到货明细尺码格：用「尺码 + ×数量」短文本，不写会撑破 6 列格子的「码」字', () => {
-  const card = purchaseArrivalDetailCard('draft_cell', {
-    batch_no: 'BATCH-1',
-    actual: [arrivalItem('1366-31', '棕色', 37, 2, { unit_cost: 199 })],
-  });
+test('明细尺码格：用「尺码 + ×数量」短文本，不写会撑破 6 列格子的「码」字', () => {
+  const card = detailCard('draft_cell', [detailItem('1366-31', '棕色', 37, 2, { unit_cost: 199 })]);
   const row = sizeGridRows(card)[0];
   assert.equal(row[0], '**37**\n×2\n￥199');
   assert.doesNotMatch(row[0], /码/, '6 列下「37码 × 2」会换行撑破格子（移动端实测），别改回长写法');
@@ -336,19 +304,16 @@ test('到货明细尺码格：用「尺码 + ×数量」短文本，不写会撑
   assert.equal(row.length, 6);
 });
 
-test('到货明细分组：货号 → 颜色 → 尺码，各组按字典序稳定排序、内容正确归位', () => {
-  const draft = {
-    batch_no: 'BATCH-1',
-    actual: [
-      arrivalItem('B200', '白', 39),
-      arrivalItem('A100', '黑', 40),
-      arrivalItem('B200', '白', 38),
-      arrivalItem('A100', '黑', 38),
-      arrivalItem('A100', '红', 41),
-      arrivalItem('A100', '红', 40),
-    ],
-  };
-  const card = purchaseArrivalDetailCard('draft_group', draft);
+test('明细分組：货号 → 颜色 → 尺码，各组按字典序稳定排序、内容正确归位', () => {
+  const items = [
+    detailItem('B200', '白', 39),
+    detailItem('A100', '黑', 40),
+    detailItem('B200', '白', 38),
+    detailItem('A100', '黑', 38),
+    detailItem('A100', '红', 41),
+    detailItem('A100', '红', 40),
+  ];
+  const card = detailCard('draft_group', items);
   assert.deepEqual(groupingSkeleton(card), [
     '货号:A100',
     '颜色:红',
@@ -360,20 +325,14 @@ test('到货明细分组：货号 → 颜色 → 尺码，各组按字典序稳�
     '尺码:38,39',
   ]);
   // 同一份输入渲染两次，顺序必须完全一样（不能跟着模型返回的顺序跳）。
-  const again = purchaseArrivalDetailCard('draft_group', {
-    batch_no: 'BATCH-1',
-    actual: [...draft.actual].reverse(),
-  });
+  const again = detailCard('draft_group', [...items].reverse());
   assert.deepEqual(groupingSkeleton(again), groupingSkeleton(card), '分组顺序必须与输入顺序无关');
 });
 
-test('到货明细分组：没匹配到货品表的货号标 ⚠️；单据上没颜色就不编一个颜色标题', () => {
-  const card = purchaseArrivalDetailCard('draft_colorless', {
-    batch_no: 'BATCH-1',
-    actual: [
-      { product_record_id: '', item_no: 'A100', color: '', size: 38, quantity: 1 },
-    ],
-  });
+test('明细分組：没匹配到货品表的货号标 ⚠️；单据上没颜色就不编一个颜色标题', () => {
+  const card = detailCard('draft_colorless', [
+    { product_record_id: '', item_no: 'A100', color: '', size: 38, quantity: 1 },
+  ]);
   const lines = markdownLines(card);
   assert.ok(lines.some((line) => line.includes('⚠️') && line.includes('A100')), '未匹配的货号要用 ⚠️ 标出来');
   assert.equal(lines.filter((line) => line.startsWith('▸ ')).length, 0, '没有颜色就不要写颜色小标题');
@@ -397,61 +356,29 @@ test('采购申请确认卡片：供应商分组保留，供应商内也是 货�
   ]);
 });
 
-// —— 采购到货：新品（货号级）与「发完卡片之后才建档」的卡片约定 ——
-//
-// 产品负责人 2026-10-05 的四条决定：删掉独立的新品段 / 新品按**货号级**标在明细里 /
-// 卡片上不写"还差什么字段" / 建档挪到发完卡片之后（链接只给确认之后的结果卡片）。
+// 原「到货明细卡片：不再有独立的「🆕 有 N 个新品」那段」与「到货结果卡片：确认之后给创建好的
+// 链接」两条用例整条删除：它们断言的都是 purchaseArrivalDetailCard / newProductResultElements
+// 这两张**已删除**的卡片（"已建好基础资料"那句、"正在入库，如有新品，稍后把链接给你"那段、
+// 以及 open 开关才给链接的行为）。到货确认这一步整体退场，没有卡片可断言；
+// 建档能力本身的断言在 purchaseWebhookService.test.js 里保留（ensureArrivalProducts）。
 
-test('到货明细卡片：不再有独立的「🆕 有 N 个新品」那段（清单/颜色/缺口/链接一律不出现）', () => {
-  const card = purchaseArrivalDetailCard('draft_new_section', {
-    batch_no: 'BATCH-1',
-    actual: [{ item_no: '6035', color: '黑', size: 36, quantity: 1, created_product: true }],
-    // 把旧那段要用的字段全部塞进来：卡片必须一个都不显示（这是删段的回归护栏）。
-    created_products: [{
-      product_record_id: 'rec_1',
-      item_no: '6035',
-      color: '黑',
-      label: '6035黑',
-      supplier: '一代千金',
-      color_created: true,
-      missing: ['成本'],
-      missing_sample_image: true,
-      completeness_readable: true,
-      url: 'https://example.feishu.cn/base/app_token?table=tbl_1&record=rec_1',
-    }],
-    created_colors: ['香芋紫'],
-  });
-  const cardText = JSON.stringify(card.elements);
-  for (const gone of [
-    '还差', '点记录去补', '资料已经齐了', '颜色表原本没有', '我给你加了一条',
-    '香芋紫', '一代千金', 'record=rec_1',
-  ]) {
-    assert.ok(!cardText.includes(gone), `独立新品段已整体删除，不该再出现「${gone}」：${cardText}`);
-  }
-  assert.ok(cardText.includes('已建好基础资料'), `只留一句「已建好」的结论：${cardText}`);
-});
-
-test('到货明细卡片：新品按货号级标一次（多行/多颜色不重复），颜色级不标', () => {
-  const card = purchaseArrivalDetailCard('draft_new_item', {
-    batch_no: 'BATCH-1',
-    actual: [
-      // 同一货号：两个颜色、三个尺码，全部是新品 → 只在货号标题上标一次。
-      { item_no: '6035', color: '黑', size: 36, quantity: 1, created_product: true },
-      { item_no: '6035', color: '黑', size: 37, quantity: 1, created_product: true },
-      { item_no: '6035', color: '白', size: 36, quantity: 1, created_product: true },
-      // 该货号只有一行是新品（另一行已匹配上老货品）→ 货号照标一次。
-      { item_no: '6036', color: '灰', size: 36, quantity: 1, product_record_id: 'prod_6036' },
-      { item_no: '6036', color: '黑', size: 36, quantity: 1, created_product: true },
-      // 老货品不带 🆕。
-      { item_no: '8088', color: '灰', size: 36, quantity: 1, product_record_id: 'prod_8088' },
-    ],
-  });
+test('明细卡片：新品按货号级标一次（多行/多颜色不重复），颜色级不标', () => {
+  const card = detailCard('draft_new_item', [
+    // 同一货号：两个颜色、三个尺码，全部是新品 → 只在货号标题上标一次。
+    { item_no: '6035', color: '黑', size: 36, quantity: 1, created_product: true },
+    { item_no: '6035', color: '黑', size: 37, quantity: 1, created_product: true },
+    { item_no: '6035', color: '白', size: 36, quantity: 1, created_product: true },
+    // 该货号只有一行是新品（另一行已匹配上老货品）→ 货号照标一次。
+    { item_no: '6036', color: '灰', size: 36, quantity: 1, product_record_id: 'prod_6036' },
+    { item_no: '6036', color: '黑', size: 36, quantity: 1, created_product: true },
+    // 老货品不带 🆕。
+    { item_no: '8088', color: '灰', size: 36, quantity: 1, product_record_id: 'prod_8088' },
+  ]);
   const lines = markdownLines(card);
-  // 只取货号标题上的标记：那句「🆕 本批有 N 个新品…」是 ③ 的结论句，不属于"标题重复标"。
   const marked = lines.filter((line) => line.includes('🆕 新品'));
   assert.deepEqual(marked, ['**🏷 6035 · 🆕 新品**', '**🏷 6036 · 🆕 新品**'],
     `🆕 是货号级判断，一个货号只标一次：${JSON.stringify(marked)}`);
-  // 新品在发卡片时还没建档（没有 product_record_id），但它不是"没匹配上"，仍然用 🏷 而不是 ⚠️。
+  // 待建档的新品没有 product_record_id，但它不是"没匹配上"，仍然用 🏷 而不是 ⚠️。
   assert.ok(!marked.some((line) => line.includes('⚠️')), '待建档的新品不是"未匹配"，不能标 ⚠️');
   assert.ok(lines.includes('**🏷 8088**'), '老货品不带 🆕');
   // 颜色行只有颜色本身，不夹带新品标记。
@@ -460,45 +387,3 @@ test('到货明细卡片：新品按货号级标一次（多行/多颜色不重�
   assert.ok(colors.every((line) => !line.includes('🆕')), '新品不细到颜色：颜色级不能标 🆕');
 });
 
-test('到货结果卡片：确认之后给创建好的链接；正在建档/建档失败都要说话', () => {
-  const created = [{
-    product_record_id: 'rec_1',
-    item_no: '6035',
-    color: '黑',
-    label: '6035黑',
-    url: 'https://example.feishu.cn/base/app_token?table=tbl_1&record=rec_1',
-  }];
-  const done = purchaseStatusCard(
-    { actual: [], created_products: created, creation_state: 'done' },
-    '采购到货已入库', '入库完成，库存已更新。', 'green', { showNewProducts: true },
-  );
-  const doneText = JSON.stringify(done.elements);
-  assert.ok(doneText.includes('record=rec_1'), `结果卡片要给到创建好的链接：${doneText}`);
-  assert.ok(doneText.includes('已建好'), `结果卡片要说清已建好：${doneText}`);
-
-  const pending = purchaseStatusCard(
-    { actual: [], created_products: [], pending_creation: [{ item_no: '6035', color: '黑' }], creation_state: 'pending' },
-    '采购到货已入库', '入库完成，库存已更新。', 'green', { showNewProducts: true },
-  );
-  // 产品负责人定死的原话（照抄，别改措辞）。
-  assert.ok(JSON.stringify(pending.elements).includes('正在入库，如有新品，稍后把链接给你'),
-    '还没跑完要按她定的那句话明说，不能静默');
-
-  const failed = purchaseStatusCard(
-    {
-      actual: [], created_products: [], pending_creation: [{ item_no: '6035', color: '黑' }],
-      creation_state: 'failed', creation_error: '模拟建档失败',
-    },
-    '采购到货未完成', '已停止自动处理：模拟建档失败', 'red', { showNewProducts: true },
-  );
-  const failedText = JSON.stringify(failed.elements);
-  assert.ok(failedText.includes('模拟建档失败'), `建档失败要告诉她原因：${failedText}`);
-  assert.ok(failedText.includes('再点一次'), '要告诉她可以重试，不能卡死');
-
-  // 其他状态卡片（处理中/已取消/采购申请）没到给链接的时候，不能夹带新品块。
-  const plain = purchaseStatusCard(
-    { actual: [], created_products: created, creation_state: 'done' },
-    '采购到货已取消', '用户已取消本次采购到货。', 'grey',
-  );
-  assert.ok(!JSON.stringify(plain.elements).includes('record=rec_1'), '没开开关的状态卡不给链接');
-});

@@ -93,9 +93,11 @@ const createPurchaseQueryService = (gateway, options = {}) => {
         batch_record_id: batchIds[0] || '',
         supplier_record_id: '',
         arrival_at: asDate(record?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseArrival.fields.arrivalAt]),
-        recognition_status: asText('purchaseArrival', record, 'recognitionStatus'),
+        // ⚠️ 2026-10-05：原先这里还有 recognition_status / failure_reason 两项，
+        // 它们的源字段（识别状态 / 识别失败原因）已被业务负责人从生产表删除，
+        // 拍照识别链路也整体退场，所以一并去掉——留着只会永远返回空串，
+        // 让查的人以为「识别还没跑」。
         confirm_status: asText('purchaseArrival', record, 'confirmStatus'),
-        failure_reason: asText('purchaseArrival', record, 'failureReason'),
         image_count: imageCount,
       };
     });
@@ -103,7 +105,6 @@ const createPurchaseQueryService = (gateway, options = {}) => {
     return rows.filter((row) => {
       if (filters.batchNo && row.batch_no !== filters.batchNo) return false;
       if (filters.confirmStatus && row.confirm_status !== filters.confirmStatus) return false;
-      if (filters.recognitionStatus && row.recognition_status !== filters.recognitionStatus) return false;
       return true;
     }).sort((a, b) => {
       const aTime = a.arrival_at ? new Date(a.arrival_at).getTime() : 0;

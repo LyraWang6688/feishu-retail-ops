@@ -173,9 +173,10 @@ const purchaseItemElements = (items, options = {}) => {
       //
       // 🆕 新品标在**货号**上（产品负责人 2026-10-05：新品按货号级别判断，不细到颜色），
       // 同一货号多行只标一次（hasNew 已经按货号聚合过）。
-      // 新品在发卡片时**还没建档**（建档挪到卡片发出之后，见 purchaseWebhookService.processArrival），
-      // 所以它没有 product_record_id——但它是"待建档"、不是"没匹配上"，仍然给 🏷 而不是 ⚠️：
-      // ⚠️ 只留给"货品表里找不到、也不会入库"的行（那一段在卡片下方单独列）。
+      // ⚠️ 2026-10-05：原先这里写的是"新品发卡片时还没建档（见 purchaseWebhookService.processArrival）"。
+      // 那条链路与它的卡片已整体退场；这段渲染规则保留下来（采购申请卡片仍在用同一套渲染器），
+      // 只是现在没有任何卡片会带 created_product 的明细（数据字段与规则原样留着，将来要用时不必重写）。
+      // 没有 product_record_id 的行仍然给 🏷 而不是 ⚠️：⚠️ 只留给"货品表里找不到、也不会入库"的行。
       const marked = product.matched || product.hasNew;
       elements.push({
         tag: 'markdown',
@@ -534,171 +535,19 @@ const purchaseRequestConfirmationCard = (draftId, draft) => {
 // 原「采购到货差异确认卡片」（purchaseArrivalComparisonCard）已删除：产品负责人 2026-10-05
 // 确认采购差异这块不用了（未来架构改成"到货在采购申请基础上修改"，不再比对差异），
 // 对应的差异计算也一并移除，留着就是没人调用的死代码。
+// 原「采购到货明细确认卡片」（purchaseArrivalDetailCard）与原「确认后的新品建档结果」
+// （newProductResultElements）已删除：产品负责人 2026-10-05 删掉了「采购到货」表的
+// 「类型」「识别状态」「识别失败原因」三个识别字段，并决定「拍照 → 识别 → 卡片确认」
+// 这条链路整体退场（改成纯对话驱动）。没有识别结果要确认，也就没有这张卡片；
+// 卡片上的两个动作 confirm_purchase_arrival / cancel_purchase_arrival 也一并从
+// purchaseWebhookService 的 PURCHASE_CARD_ACTIONS 里摘掉了。
+//
+// ⚠️ 保留 purchaseStatusCard：报货链路（采购申请处理中/已生成/未完成）还在用它。
 
-/**
- * 第一步：采购到货明细确认卡片
- * 显示实际到货明细（按编号分区）+ 未匹配货品 + 鞋盒总数统计
- */
-const purchaseArrivalDetailCard = (draftId, draft) => {
-  const elements = [];
 
-  // 报货批次号；没有批次号说明是供应商直接送货、没走采购申请，
-  // 必须在卡片上写出来，免得她以为系统漏了什么。
-  if (draft.direct_arrival) {
-    elements.push({ tag: 'markdown', content: '**无申请直接到货**（未关联报货批次，全部按实际到货入库）' });
-  } else {
-    elements.push({ tag: 'markdown', content: `**报货批次号：** ${text(draft.batch_no)}` });
-  }
-
-  // 实际到货明细（按编号分区显示）
-  const matchedItems = (draft.actual || []).map(item => ({
-    ...item,
-    product_number: item.product_number,
-    product_record_id: item.product_record_id,
-  }));
-  if (matchedItems.length > 0) {
-    elements.push({ tag: 'hr' });
-    elements.push({ tag: 'markdown', content: `**📦 实际到货明细（共 ${matchedItems.length} 条）**` });
-    elements.push(...purchaseItemElements(matchedItems, { skipSupplierGroup: true }));
-  }
-
-  // 「货号+颜色」在货品表里命中多条（男/女鞋常共用同一货号）：系统已经取第一条继续，
-  // 但产品负责人要求这种情况"要看得见"，所以在这儿写清楚匹配到几条、取了哪一条。
-  const ambiguousItems = matchedItems.filter((item) => item.ambiguous_match);
-  if (ambiguousItems.length > 0) {
-    elements.push({ tag: 'hr' });
-    elements.push({ tag: 'markdown', content: '**⚠️ 以下货号+颜色在货品表里有多条，已取第一条**' });
-    elements.push({
-      tag: 'markdown',
-      content: ambiguousItems.map((item) => {
-        const info = item.ambiguous_match;
-        // 「已取 XXX」优先用被选中那条的完整编号；编号公式还没算出来时退回它的颜色。
-        const picked = info.number || info.color;
-        return `- ${text(item.item_no || '')} ${text(info.color || '')}：匹配到 ${text(info.count)} 条，已取 ${text(picked) || '第一条'}`;
-      }).join('\n'),
-    });
-  }
-
-  // 新品：这里原来有一整段独立的「🆕 这批到货里有 N 个新品」小节——列出每个新品的
-  // 货号+颜色、说颜色表补了哪条、按「缺失信息说明」列还差哪些字段、再附上记录链接。
-  // 产品负责人 2026-10-05 明确把这段收掉了，只留**一句**结论：
-  //   ① 新品已经在明细里按**货号**标了 🆕（见 purchaseItemElements），不用换个说法再说一遍；
-  //   ② 卡片上不写"还差什么字段"——清单是给表看的，写在这里她只会当成待办；
-  //   ③ 记录链接挪到**确认入库之后的结果卡片**（建档在那时才确定完成，链接才是真的能点）。
-  // ⚠️ 别再往这里加回清单/链接/缺口文案：要加东西请先想清楚它属于哪张卡片。
-  //
-  // N 按**货号**数（与明细上的 🆕 同一口径、同一来源 = actual 上的 created_product），
-  // 所以"卡片上标了哪几个货号是新品"和这句话里的数字永远一致。
-  //
-  // 文案是产品负责人的原话口径（「只是说创建好了字段」）：建档在她看到这张卡片后立刻
-  // 在后台执行（见 processArrival 里 sendCard 之后的那一步），所以这里只给结论、不给过程。
-  const newItemNos = [...new Set((draft.actual || [])
-    .filter((item) => item.created_product === true)
-    .map((item) => text(item.item_no || item.product_number || '未知货号')))]
-    .filter(Boolean);
-  if (newItemNos.length > 0) {
-    elements.push({ tag: 'hr' });
-    elements.push({
-      tag: 'markdown',
-      content: `🆕 本批有 ${newItemNos.length} 个新品，已建好基础资料（不影响入库）`,
-    });
-  }
-
-  // 未匹配货品
-  const unrecognized = draft.unrecognized || [];
-  if (unrecognized.length > 0) {
-    elements.push({ tag: 'hr' });
-    elements.push({ tag: 'markdown', content: `**⚠️ 未匹配货品（共 ${unrecognized.length} 个，无法在货品表中找到）**` });
-    const unrecognizedLines = unrecognized.map(u =>
-      `- ${text(u.item_no || '未知')} ${text(u.color || '')} ${text(u.size || '')}码 ×${text(u.quantity || 1)}`
-    );
-    elements.push({ tag: 'markdown', content: unrecognizedLines.join('\n') });
-    elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: '提示：未匹配的货品不会入库，可能是 OCR 识别错误，请核对鞋盒标签' }] });
-  }
-
-  // 鞋盒总数统计
-  const totalBoxes = matchedItems.length + unrecognized.length;
-  elements.push({ tag: 'hr' });
-  elements.push({
-    tag: 'column_set',
-    flex_mode: 'none',
-    background_style: 'grey',
-    horizontal_spacing: 'default',
-    columns: [
-      {
-        tag: 'column', width: 'weighted', weight: 1, vertical_align: 'center',
-        elements: [{ tag: 'markdown', content: `**识别鞋盒总数**\n${totalBoxes} 个`, text_align: 'center' }],
-      },
-      {
-        tag: 'column', width: 'weighted', weight: 1, vertical_align: 'center',
-        elements: [{ tag: 'markdown', content: `**匹配成功**\n${matchedItems.length} 个`, text_align: 'center' }],
-      },
-      {
-        tag: 'column', width: 'weighted', weight: 1, vertical_align: 'center',
-        elements: [{ tag: 'markdown', content: `**未匹配**\n${unrecognized.length} 个`, text_align: 'center' }],
-      },
-    ],
-  });
-
-  // 确认/取消按钮：走 column_set（移动端实测一行两列，见 buttonColumns 的注释）。
-  elements.push(buttonColumns([
-    actionButton('确认入库', 'confirm_purchase_arrival', draftId, 'primary'),
-    actionButton('取消', 'cancel_purchase_arrival', draftId, 'danger'),
-  ]));
-
-  return {
-    config: { wide_screen_mode: true },
-    header: { template: 'orange', title: { tag: 'plain_text', content: '请确认采购到货明细' } },
-    elements,
-  };
-};
-
-/**
- * 确认入库**之后**的新品建档结果。产品负责人的口径（2026-10-05）：
- * 「用户点确认之后，再给到创建好的链接」——所以链接只出现在这张结果卡片上，
- * 确认卡片上不给（那时还没建档，见 purchaseArrivalDetailCard 的注释）。
- *
- * 三种状态都要说话，绝不能静默（她的红线）：
- *   - 建好了   → 列链接，她点进去补资料
- *   - 还没跑完 → 说产品负责人定好的那句话（下面按原话照抄，别自己另编措辞）
- *   - 失败了   → 明说原因，并告诉她可以再点一次确认重试
- */
-const newProductResultElements = (draft) => {
-  const created = (draft?.created_products || []).filter((item) => item.product_record_id);
-  const pending = Array.isArray(draft?.pending_creation) ? draft.pending_creation : [];
-  if (!created.length && !pending.length) return [];
-  const elements = [{ tag: 'hr' }];
-  // 状态优先级：建档那一步会写 creation_state；老草稿（改动前建的）没有这个字段，
-  // 按"已经建出记录就算完成"兜底，别把有链接的卡片说成"正在建档"。
-  const state = draft?.creation_state || (created.length ? 'done' : 'pending');
-  if (state === 'pending') {
-    // 产品负责人 2026-10-05 定的原话（她说「照抄这句」，别改措辞、别加自己的说法）：
-    elements.push({ tag: 'markdown', content: '正在入库，如有新品，稍后把链接给你' });
-    return elements;
-  }
-  if (state === 'failed') {
-    elements.push({
-      tag: 'markdown',
-      content: `**⚠️ 新品建档没成功：**${text(draft.creation_error || '原因未知')}\n再点一次「确认入库」我就重试。`,
-    });
-  }
-  const itemNoCount = new Set([...created, ...pending].map((item) => text(item.item_no))).size;
-  const links = created.filter((item) => item.url);
-  if (!links.length) {
-    elements.push({ tag: 'markdown', content: `🆕 本批 ${itemNoCount} 个新品已建好基础资料` });
-    return elements;
-  }
-  elements.push({
-    tag: 'markdown',
-    content: `🆕 本批 ${itemNoCount} 个新品已建好，点进去补资料：\n${links
-      .map((item) => `- ${text(item.label || `${item.item_no}${item.color || ''}`)} ${item.url}`)
-      .join('\n')}`,
-  });
-  return elements;
-};
-
-// options.showNewProducts：只有「采购到货确认」之后的结果卡片才带新品建档结果——
-// 别的状态卡（处理中/已取消/采购申请）还没到给链接的时候，别顺手都加上。
+// options.showNewProducts：原「采购到货确认」结果卡片用它挂新品建档链接。
+// ⚠️ 到货卡片退场后已经没有任何调用方传它了（newProductResultElements 也已删除），
+// 所以那个分支一并摘掉，不留一个永远为假的开关。
 const purchaseStatusCard = (draft, title, message, template = 'blue', options = {}) => {
   const isBatch = draft?.is_batch === true;
   const elements = [];
@@ -706,7 +555,6 @@ const purchaseStatusCard = (draft, title, message, template = 'blue', options = 
     elements.push({ tag: 'markdown', content: `**报货批次号：** ${text(draft.batch_no)}` });
   }
   elements.push(...purchaseItemElements(draft?.items || draft?.actual || [], { skipSupplierGroup: isBatch }));
-  if (options.showNewProducts) elements.push(...newProductResultElements(draft));
   elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: message }] });
   return { config: { wide_screen_mode: true }, header: { template, title: { tag: 'plain_text', content: title } }, elements };
 };
@@ -893,7 +741,6 @@ module.exports = {
   // 重试卡片收窄按钮用（按 column_set/action 结构遍历，见 keepOnlyCardButton）。
   keepOnlyCardButton,
   purchaseRequestConfirmationCard,
-  purchaseArrivalDetailCard,
   purchaseStatusCard,
   salesConfirmationCard,
   salesStatusCard,

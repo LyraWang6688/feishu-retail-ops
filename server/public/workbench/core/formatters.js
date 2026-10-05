@@ -10,7 +10,8 @@ export const dateTime = (value) => value
 
 export const statusClass = (value = '') => {
   if (/失败|取消|退款/.test(value)) return 'tag-danger';
-  if (/已完成|已入库|已交付|已收清|识别成功|全部到货/.test(value)) return 'tag-success';
+  // 「识别成功」已随拍照识别链路退场删除（那个状态不会再出现）。
+  if (/已完成|已入库|已交付|已收清|全部到货/.test(value)) return 'tag-success';
   if (/部分|平台结算/.test(value)) return 'tag-info';
   return 'tag-warning';
 };

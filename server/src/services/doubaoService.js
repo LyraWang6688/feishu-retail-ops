@@ -1,9 +1,6 @@
 const OpenAI = require('openai');
-const fs = require('fs');
-const { getModuleDefinition } = require('../config/modules');
 const { logError, logInfo } = require('../utils/logger');
 const { applyGroupBuyVoucherPolicy } = require('./groupBuyVoucherPolicy');
-const { parseUnitCost } = require('./arrivalCostPolicy');
 const { resolveLlm, assertLlmConfigured } = require('../config/llmModels');
 const {
   normalizeMessageIntent,
@@ -266,70 +263,18 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
   return normalized;
 };
 
-/**
- * 到货单（供应商出库单 / 送货单）上的尺码可能是欧码，也可能是毫米制（225~285）。
- *
- * 鞋盒标签的换算写在提示词里就够了；单据是**表格照片**，模型很容易把表头那一排
- * 尺码数字原样抄下来，所以这里再做一次确定性换算作为兜底，规则与鞋盒提示词一致：
- * 欧码 = (数值 - 50) / 5。换算只此一处，两条识别路径不会算出不同的码。
- */
-const normalizeDocumentSize = (value) => {
-  const raw = Number(value);
-  if (!Number.isFinite(raw) || raw <= 0) return 0;
-  const size = raw >= 225 && raw <= 285 ? (raw - 50) / 5 : raw;
-  return Number.isInteger(size) && size > 0 ? size : 0;
-};
+// ── 已删除：到货单 / 鞋盒的图片识别辅助与两个识别方法 ──────────────────────
+// normalizeDocumentSize / normalizeDocumentRows / DEFAULT_VISION_TIMEOUT_MS /
+// visionTimeoutMs / recognizeLabels / recognizePurchaseDocument 全部随
+// 「采购到货 → 拍照识别」链路退场删除（2026-10-05）。
+//
+// 为什么删：这条链路整段不存在了（入口、卡片、字段都撤了），留在 service 里
+// 只会让人以为"还有一条图片识别的路可走"。文字解析（parseSalesText /
+// parsePurchaseReportText）完全没动，下面这个 class 只剩文字一组。
 
 /**
- * 把到货单识别的原始行整理成「一条明细 = 一个尺码」的扁平数组：
- *   [{ item_no, color, size, quantity, unit_cost? }]
- * 丢掉货号缺失、尺码或数量不是正整数的行——宁可少入库几双让她核对，
- * 也不能凭一个读不准的数字把货写进库存。
- *
- * unit_cost 是供应商单据上的单件价格（对我们就是成本）。它是**可选**的：
- * 单据上没有价格列时模型不回这个字段，行上就不会有 unit_cost，
- * 下游据此判断「这次没有可信价格，不写成本」（见 arrivalCostPolicy）。
- * 解析不出来的价格同样不挂到行上——宁可没有，也不能带个错值往下走。
- *
- * 只在真的解析出正数时才加这个 key：normalizeDocumentRows 的返回值被
- * deepEqual 断言逐字段比对，无脑加 `unit_cost: null` 会平白改变已有契约。
- */
-const normalizeDocumentRows = (rows) => (Array.isArray(rows) ? rows : [])
-  .map((row) => {
-    const normalized = {
-      item_no: String(row?.item_no ?? row?.itemNo ?? '').trim(),
-      color: String(row?.color ?? '').trim(),
-      size: normalizeDocumentSize(row?.size),
-      quantity: Number(row?.quantity ?? 1),
-    };
-    // 模型可能把它叫 unit_cost / unitCost / cost / price（「销售价」列对我们是成本）。
-    // 刻意不收 amount / 金额：那是整行合计，不是单件价。
-    const unitCost = parseUnitCost(row?.unit_cost ?? row?.unitCost ?? row?.cost ?? row?.price);
-    if (unitCost !== null) normalized.unit_cost = unitCost;
-    return normalized;
-  })
-  .filter((row) => row.item_no && row.size > 0 && Number.isInteger(row.quantity) && row.quantity > 0);
-
-/**
- * 图片识别的硬超时。
- *
- * OpenAI SDK 默认 `timeout = 600000`（10 分钟）且失败重试 2 次，也就是一次视觉调用
- * 最坏能挂半小时——而这段时间用户只会看到「识别中」。2026-10-05 的线上故障里，
- * 一次成功的到货单识别就用了 118 秒，期间记录、卡片、日志一片空白。
- *
- * 默认 60 秒：宁可超时失败并明确告诉她「重传一次」，也不要让她对着「识别中」干等。
- * 需要更宽就调 VISION_LLM_TIMEOUT_MS（毫秒）；调不动代码就往环境变量走。
- * 文字模型（销售录单）保持 SDK 默认值不变——那条链路不在这次修复范围内。
- */
-const DEFAULT_VISION_TIMEOUT_MS = 60_000;
-const visionTimeoutMs = (env = process.env) => {
-  const raw = Number(env.VISION_LLM_TIMEOUT_MS);
-  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_VISION_TIMEOUT_MS;
-};
-
-/**
- * Doubao (Volcengine Ark) Vision Service
- * Uses OpenAI SDK to interact with the Doubao LLM.
+ * Doubao 文字解析服务：销售录单（parseSalesText）与采购报单数量说明
+ * （parsePurchaseReportText）。视觉识别已随到货识别链路退场，不再有 vision 这一组。
  */
 class DoubaoService {
   constructor() {
@@ -337,8 +282,8 @@ class DoubaoService {
   }
 
   /**
-   * 取某一组模型的配置（文字 / 图片）。
-   * 具体用哪家、哪个模型由 config/llmModels 决定，这里只负责取。
+   * 取模型配置。2026-10-05 起只剩文字一组（视觉那组随到货识别退场删掉了）；
+   * kind 参数保留是为了不改动调用方签名（调用方一律传 'text'）。
    */
   resolveModel(kind = 'text') {
     return assertLlmConfigured(resolveLlm(kind, process.env));
@@ -347,13 +292,9 @@ class DoubaoService {
   getClient(kind = 'text') {
     if (this.clients[kind]) return this.clients[kind];
     const { apiKey, baseURL } = this.resolveModel(kind);
-    this.clients[kind] = new OpenAI({
-      apiKey,
-      baseURL,
-      // 视觉这一组必须有上限，而且不重试：重试会把最坏耗时再乘一遍，
-      // 而到货链路"卡住"的代价（用户以为系统死了）比一次失败大得多。
-      ...(kind === 'vision' ? { timeout: visionTimeoutMs(), maxRetries: 0 } : {}),
-    });
+    // 只走 SDK 默认值：文字解析一直是这个口径，视觉那组的「硬超时 + 不重试」
+    // 是识别链路专用的，随识别退场一起删了。
+    this.clients[kind] = new OpenAI({ apiKey, baseURL });
     return this.clients[kind];
   }
 
@@ -501,181 +442,13 @@ class DoubaoService {
     }
   }
 
-  /**
-   * Recognize shoe box labels from a local image file.
-   * @param {string} filePath - Path to the image file.
-   * @param {string} moduleKey - purchase / sales / inventory
-   * @returns {Promise<Array>} - List of recognized shoe box objects.
-   */
-  async recognizeLabels(filePath, moduleKey = 'purchase') {
-    try {
-      // 图片识别单独一组模型：它必须是支持视觉的，跟文字解析的选型理由不同。
-      const llm = this.resolveModel('vision');
-
-      // 1. Convert image to base64
-      const imageBase64 = fs.readFileSync(filePath, { encoding: 'base64' });
-      const imageData = `data:image/jpeg;base64,${imageBase64}`;
-
-      const moduleConfig = getModuleDefinition(moduleKey);
-      const supplierRule = moduleConfig.recognition.requireSupplier
-        ? '4. supplier: 供应商（即标签上的品牌或厂家名称，如 豪路, Nike, 耐克旗舰店 等）'
-        : '4. supplier: 供应商（可选字段，若未识别到返回空字符串 ""）';
-
-      // 2. Prepare the prompt for shoe box recognition
-      const prompt = `
-你是一个专业的仓库盘点助手。请识别图片中所有的鞋盒标签。
-一张图片中可能包含多个鞋盒标签，请务必提取出每一个标签的信息。
-
-对于每一个识别出的标签，请提取以下字段：
-1. item_no: 货号（通常是字母和数字的组合，如 CW2288-111, DD1391-100）
-2. color: 颜色（如 纯白, 黑白, 灰/白 等）
-3. size: 尺码（请输出标准欧码正整数；本业务不使用半码）。
-   【判断与转换规则】：
-   - 若识别到的尺码数值在 225–285 之间（如 240、250），视为毫米制，需转换：欧码 = (数值 - 50) / 5。示例：240 → 38，250 → 40。
-   - 若识别到的尺码数值在 34–48 之间（如 38、40），视为欧码，无需转换。
-   - 只返回最终欧码正整数（如 40），不要输出42.5等半码。若未识别到，返回空字符串 ""。
-${supplierRule}
-5. gender: 标签上的「品名」，只输出「男」或「女」（如「品名：女鞋」→「女」）；识别不到返回空字符串 ""。
-   到货时用它判断这个新品该进男鞋还是女鞋，猜错比空着更麻烦。
-
-请严格以 JSON 数组格式返回结果，不要包含任何解释性文字或 Markdown 代码块标记。
-示例输出：
-[
-  {"item_no": "CW2288-111", "color": "白色", "size": "42", "supplier": "Nike", "gender": "男"},
-  {"item_no": "EG4958", "color": "黑色", "size": "38", "supplier": "豪路", "gender": "女"}
-]
-      `.trim();
-
-      // 3. Call Doubao API using OpenAI SDK
-      const response = await this.getClient('vision').chat.completions.create({
-        model: llm.model,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: prompt },
-              {
-                type: 'image_url',
-                image_url: { url: imageData }
-              }
-            ]
-          }
-        ],
-        temperature: 0.1, // Lower temperature for more stable JSON output
-      });
-
-      // 4. Parse the JSON response
-      const content = response.choices[0].message.content;
-      logInfo('recognition.doubao.raw_received', {
-        module: moduleConfig.key,
-        raw_length: String(content || '').length,
-      });
-
-      // Clean the response (sometimes AI wraps it in ```json ... ```)
-      const cleanedContent = content.replace(/```json/g, '').replace(/```/g, '').trim();
-      
-      try {
-        const results = JSON.parse(cleanedContent);
-        if (!Array.isArray(results)) {
-          throw new Error('AI 返回结果不是数组格式');
-        }
-        return results;
-      } catch (parseError) {
-        logError('recognition.doubao.parse_failed', {
-          module: moduleConfig.key,
-          raw_length: cleanedContent.length,
-          error: parseError.message,
-        });
-        throw new Error('AI 响应格式错误，无法解析 JSON: ' + parseError.message);
-      }
-    } catch (error) {
-      logError('recognition.doubao.failed', {
-        module: moduleKey,
-        error: error.message,
-        status: error.status,
-      });
-      if (error.status) {
-        logError('recognition.doubao.api_status', { module: moduleKey, status: error.status });
-      }
-      throw new Error('AI识别失败: ' + error.message);
-    }
-  }
-
-  /**
-   * 识别**供应商到货单**（出库单 / 送货单）的照片。
-   *
-   * 与 recognizeLabels 的区别：鞋盒标签是「一张图 = 几个鞋盒」，到货单是
-   * 「一张表格 = 很多个款号×颜色×尺码」，所以这里要求模型直接摊平成一条条明细。
-   *
-   * 刻意不加 response_format：契约要的是 **JSON 数组**，而 json_object 只保证
-   * 返回对象（recognizeLabels 也是同样的取舍）。
-   *
-   * @param {string} filePath - 本地图片路径
-   * @param {string} moduleKey - purchase / sales / inventory
-   * @returns {Promise<Array>} - [{ item_no, color, size, quantity, unit_cost? }]
-   */
-  async recognizePurchaseDocument(filePath, moduleKey = 'purchase') {
-    try {
-      const llm = this.resolveModel('vision');
-      const imageBase64 = fs.readFileSync(filePath, { encoding: 'base64' });
-      const imageData = `data:image/jpeg;base64,${imageBase64}`;
-
-      const moduleConfig = getModuleDefinition(moduleKey);
-      const prompt = moduleConfig.recognition?.document?.prompt;
-      if (!prompt) throw new Error('未配置到货单识别提示词（recognition.document.prompt）');
-
-      const response = await this.getClient('vision').chat.completions.create({
-        model: llm.model,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: prompt },
-              { type: 'image_url', image_url: { url: imageData } },
-            ],
-          },
-        ],
-        temperature: 0.1,
-      });
-
-      const content = response.choices?.[0]?.message?.content || '';
-      logInfo('recognition.document.raw_received', {
-        module: moduleConfig.key,
-        raw_length: String(content || '').length,
-      });
-
-      const cleanedContent = content.replace(/```json/g, '').replace(/```/g, '').trim();
-      try {
-        const results = JSON.parse(cleanedContent);
-        if (!Array.isArray(results)) throw new Error('AI 返回结果不是数组格式');
-        const normalized = normalizeDocumentRows(results);
-        // 单据上到底有没有价格列，只能靠线上日志回答：两列都不配置也没有可观测性。
-        logInfo('recognition.document.normalized', {
-          module: moduleConfig.key,
-          row_count: normalized.length,
-          rows_with_unit_cost: normalized.filter((row) => row.unit_cost !== undefined).length,
-        });
-        return normalized;
-      } catch (parseError) {
-        logError('recognition.document.parse_failed', {
-          module: moduleConfig.key,
-          raw_length: cleanedContent.length,
-          error: parseError.message,
-        });
-        throw new Error('到货单响应格式错误，无法解析 JSON: ' + parseError.message);
-      }
-    } catch (error) {
-      logError('recognition.document.failed', {
-        module: moduleKey,
-        error: error.message,
-        status: error.status,
-      });
-      throw new Error('AI识别到货单失败: ' + error.message);
-    }
-  }
+  // ── 已删除：recognizeLabels / recognizePurchaseDocument ──────────────────
+  // 这两个方法（鞋盒标签识别、供应商到货单识别）只被 purchaseWebhookService
+  // 的 processArrival 调用；那条链路 2026-10-05 整体退场，方法随之删除。
+  // 它们的提示词（modules.js 的 recognition.document）与视觉模型配置
+  // （llmModels.js 的 vision 组）也一并删掉了——现在没有任何地方会调视觉模型。
 }
 
 module.exports = new DoubaoService();
 module.exports.normalizeSalesResult = normalizeSalesResult;
 module.exports.normalizeAfterSalesResult = normalizeAfterSalesResult;
-module.exports.normalizeDocumentRows = normalizeDocumentRows;

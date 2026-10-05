@@ -31,10 +31,12 @@
 ## 采购管理（只读）
 
 采购页面有三个独立的飞书表单入口：货品上新、供应商报货、到货验收。表单仍在飞书录入；页面只负责打开入口和查询进度。
+⚠️ 2026-10-05：「采购到货 → 拍照识别」链路已整体退场（业务负责人删掉了那张表的「类型」「识别状态」「识别失败原因」三个字段，改为纯对话驱动）。到货验收表单与到货查询仍在，但**不再有任何识别状态/失败原因**。历史契约里「到货验收：上传到货鞋盒图片并触发识别」的说明已作废。
 
 `GET /api/workbench/purchase/requests` 返回 `{success, rows, total}`，支持 `batchNo`、`arrivalStatus` 精确筛选。每行包含 `record_id`、`batch_no`、`product_number`、`product_record_id`、`size`、`quantity`、`arrival_status`、`reported_at`、`supplier_record_id`。
 
-`GET /api/workbench/purchase/arrivals` 返回 `{success, rows, total}`，支持 `batchNo`、`confirmStatus`、`recognitionStatus` 精确筛选。每行包含 `record_id`、`batch_no`、`batch_record_id`、`supplier_record_id`、`arrival_at`、`recognition_status`、`confirm_status`、`failure_reason`、`image_count`。
+`GET /api/workbench/purchase/arrivals` 返回 `{success, rows, total}`，支持 `batchNo`、`confirmStatus` 精确筛选。每行包含 `record_id`、`batch_no`、`batch_record_id`、`supplier_record_id`、`arrival_at`、`confirm_status`、`image_count`。
+（2026-10-05 变更：`recognitionStatus` 过滤与 `recognition_status` / `failure_reason` 两个字段已随识别状态字段的删除一起摘掉——留着只会永远返回空串。）
 
 两个接口都与销售查询共用飞书网页登录鉴权、禁止浏览器直连飞书 OpenAPI。查询失败返回 HTTP 502 和 `{success:false,error}`；页面必须显示错误，不能把失败显示成“暂无记录”。
 

@@ -3,7 +3,6 @@ const crypto = require('node:crypto');
 const lark = require('@larksuiteoapi/node-sdk');
 const { LarkMvpService } = require('../services/larkMvpService');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
-const { isPurchaseArrivalIntakeEnabled } = require('../config/purchaseArrivalIntake');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { larkLogger } = require('../utils/larkLogger');
 
@@ -108,24 +107,29 @@ const createLarkEventHandlers = (service) => ({
     }
     if (fileToken !== ownAppToken) return {};
 
-    // 「采购到货 → 拍照识别 → 入库」是临时链路（业务负责人确认随时可能停掉），
-    // 所以单独给它一个显式开关：关掉时**不把「采购到货」挂进分派表**。
-    // 关掉的语义 = "这条链路不存在"：新记录没有任何反应，也不报错、不打扰——
-    // 这与"表 ID 配错导致的静默失效"现象一致，所以下面补了一条日志便于区分。
-    // ⚠️ 报货（supplier-report）**不受开关影响**，永远留在分派表里：它是当前唯一的
-    // 采购申请入口，绝不能跟着一条临时链路一起被关掉。
-    const arrivalIntakeEnabled = isPurchaseArrivalIntakeEnabled();
-    const arrivalTableId = V1_BITABLE_SCHEMA.tables.purchaseArrival.tableId;
-
+    // ⚠️ 2026-10-05：业务负责人把「采购到货」表的识别字段（类型/识别状态/识别失败原因）删了，
+    // 并决定「拍照 → 识别 → 入库」这条链路整体退场（改成纯对话驱动）。
+    // 「类型」「识别状态」「识别失败原因」三个字段已不在生产表里，识别流程也没有出口了，
+    // 所以这里**把 arrival 从分派表里摘掉**：往「采购到货」表新增记录不再触发任何事。
+    //
+    // 为什么"摘掉"而不是"留着让它什么都不做"：留着 kind:'arrival' 的话，
+    // accept('arrival') 会走进一条已经被删掉的链路——那是死路，还会在日志里
+    // 伪装成"处理过了"。摘掉之后语义唯一：这条链路不存在。
+    //
+    // 开关模块（config/purchaseArrivalIntake.js）**刻意保留**：将来要恢复「对话到货」时，
+    // 它是一个现成的、语义明确的显式开关（且已钉住"空字符串不等于关闭"那个坑）。
+    // 现在它没有任何读取点，属于孤儿配置——这是有意的。
+    //
+    // ⚠️ 报货（supplier-report）是当前唯一的采购入口，不受影响，永远留在分派表里。
+    //
     // 表 ID → 采购链路入口。**从 schema 读，不写死表 ID**：
     // 写死的话，换 Base / 多租户时这里不会报错、也不会触发——
     // 现象只是"采购没反应"，属于最难查的一类静默失效。
     const purchaseIntake = [
       { tableId: V1_BITABLE_SCHEMA.tables.purchaseReport.tableId, kind: 'supplier-report', label: '供应商报单' },
     ];
-    if (arrivalIntakeEnabled) {
-      purchaseIntake.push({ tableId: arrivalTableId, kind: 'arrival', label: '采购到货' });
-    }
+    // 到货表 ID 只用于下面那条"链路已退场"的排查日志，不再进分派表。
+    const arrivalTableId = V1_BITABLE_SCHEMA.tables.purchaseArrival.tableId;
 
     // 遍历 action_list：同一张表的多个 record_added 收成**一包**再分派。
     //
@@ -146,11 +150,11 @@ const createLarkEventHandlers = (service) => ({
         continue;
       }
 
-      // 开关关闭时的排查线索：确实有人往「采购到货」表新增了记录，只是链路已停用。
-      // 只在**到货表真的新增**时记这一条，不在每条 Base 变更事件上刷日志——
-      // 销售录入走的是同一个事件，否则日志会被无关变更淹没。
-      if (!arrivalIntakeEnabled && arrivalTableId && tableId === arrivalTableId) {
-        logInfo('lark.intake.arrival_disabled', { table_id: tableId, record_id: recordId });
+      // 开关关闭时的排查线索（保留给将来恢复「对话到货」用）：确实有人往「采购到货」
+      // 表新增了记录，但这条链路当前不存在。只在**到货表真的新增**时记这一条，
+      // 不在每条 Base 变更事件上刷日志——销售录入走的是同一个事件，否则日志会被淹没。
+      if (arrivalTableId && tableId === arrivalTableId) {
+        logInfo('lark.intake.arrival_retired', { table_id: tableId, record_id: recordId });
         continue;
       }
 

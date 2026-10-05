@@ -21,10 +21,11 @@ const createPurchaseQueryRouter = (options = {}) => {
 
   router.get('/arrivals', async (req, res) => {
     try {
+      // ⚠️ 原先还接受 recognitionStatus 过滤。识别状态字段已从生产表删除、
+      // 识别链路整体退场，这个过滤条件永远命中不了任何东西，所以摘掉。
       const rows = await service.listPurchaseArrivals({
         batchNo: req.query.batchNo ? String(req.query.batchNo) : undefined,
         confirmStatus: req.query.confirmStatus ? String(req.query.confirmStatus) : undefined,
-        recognitionStatus: req.query.recognitionStatus ? String(req.query.recognitionStatus) : undefined,
       });
       return res.json({ success: true, rows, total: rows.length });
     } catch (error) {
