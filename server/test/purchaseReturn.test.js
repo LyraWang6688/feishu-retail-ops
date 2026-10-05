@@ -16,6 +16,10 @@ const { RETURN_TITLE, TITLE } = require('../src/services/purchaseRequestImageSer
 // 流水写不写来源，都只有在真实现上才测得出来。
 
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
+// ⚠️ 合并 #85 之后采购单**只发群**：没配 PURCHASE_CHAT_ID 时服务会「大声跳过」
+//（这是有意的：绝不回落到经办人私聊）。这组用例要验的正是"出退货单 → 发出去 → 写回附件"
+// 这条收尾链路，所以这里显式给一个测试群（和 purchaseWebhookService.test.js 同款做法）。
+process.env.PURCHASE_CHAT_ID = process.env.PURCHASE_CHAT_ID || 'oc_test_purchase_group';
 
 const table = (key) => V1_BITABLE_SCHEMA.tables[key];
 const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'purchase-return-'));

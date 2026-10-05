@@ -10,6 +10,10 @@ const { afterSalesContextId } = require('../src/config/afterSalesFlow');
 
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
 
+// 群聊链路要读 LARK_BOT_OPEN_ID 判 @（config/groupPurchase）。这些用例都不碰群聊，
+// 但服务构造时会解析一次配置；给个测试值，免得每个用例都打一条
+// lark.group.bot_open_id_missing 警告把真正的失败淹掉。
+process.env.LARK_BOT_OPEN_ID = process.env.LARK_BOT_OPEN_ID || 'ou_test_bot_open_id';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TODAY_9AM = Date.parse('2026-10-05T09:00:00+08:00');
 const daysAgo = (n) => TODAY_9AM - n * DAY_MS;
