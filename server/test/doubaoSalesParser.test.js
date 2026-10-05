@@ -559,3 +559,156 @@ test('an accessory without a name is asked for by name, not by item number', () 
   assert.ok(!result.missing_fields.includes('items[0].item_no'));
   assert.ok(!result.missing_fields.includes('items[0].size'));
 });
+
+// ─── 成交金额 vs 欠款：她说了"收了多少"、还是明说"欠"（业务负责人口径） ───
+// 提示词规则 9 / 9.1 写死了这条口径；下面钉住解析层的确定性结果。
+
+test('她说了"收了 100"、没说欠 → 成交金额=100，owed 留空（119 只是对档位的价位）', () => {
+  const result = normalizeWithVouchers({
+    intent: 'sale',
+    items: [{ kind: 'accessory', accessory_name: '腰带', quantity: 1, actual_amount: 119 }],
+    payments: [{ method: '微信', amount: 100 }],
+    agreed_total: 119,
+  }, '119 的腰带，是收到了 100 元微信');
+
+  assert.equal(result.items[0].actual_amount, 100, '她说了收到 100，成交就是 100');
+  assert.equal(result.agreed_total, 100);
+  assert.equal(result.owed, '', '她没说欠，owed 必须为空——后端只认它');
+  // 119 保留为"用来匹配档位的价位"：只对记录用，不落库、也不当成交金额。
+  assert.equal(result.items[0].tier_price, 119);
+  assert.deepEqual(result.missing_fields, []);
+});
+
+test('模型按新口径把档位价放进 tier_price 时，成交金额仍然是她说的收款额', () => {
+  const result = normalizeWithVouchers({
+    intent: 'sale',
+    items: [{ kind: 'accessory', accessory_name: '腰带', quantity: 1,
+      actual_amount: 100, tier_price: 119 }],
+    payments: [{ method: '微信', amount: 100 }],
+    agreed_total: 100,
+  }, '119 的腰带，是收到了 100 元微信');
+
+  assert.equal(result.items[0].actual_amount, 100);
+  assert.equal(result.items[0].tier_price, 119);
+  assert.equal(result.owed, '');
+});
+
+test('她明说"还欠 19" → 成交金额=119、owed=19（后端据此补未收款）', () => {
+  const result = normalizeWithVouchers({
+    intent: 'sale',
+    items: [{ kind: 'accessory', accessory_name: '腰带', quantity: 1, actual_amount: 119 }],
+    payments: [{ method: '微信', amount: 100 }],
+    agreed_total: 119,
+    owed: 19,
+  }, '卖了 119 的腰带，先给 100，还欠 19');
+
+  assert.equal(result.items[0].actual_amount, 119);
+  assert.equal(result.owed, 19);
+  assert.deepEqual(result.missing_fields, []);
+});
+
+test('模型只说收到 100、又明说欠 19 时，成交金额由两个她说的数相加得到', () => {
+  const result = normalizeWithVouchers({
+    intent: 'sale',
+    items: [{ kind: 'accessory', accessory_name: '腰带', quantity: 1, actual_amount: 100 }],
+    payments: [{ method: '微信', amount: 100 }],
+    agreed_total: 100,
+    owed: 19,
+  }, '卖了 119 的腰带，先给 100，还欠 19');
+
+  assert.equal(result.items[0].actual_amount, 119);
+  assert.equal(result.agreed_total, 119);
+  assert.equal(result.owed, 19);
+});
+
+test('她只说了价格、没说收多少 → 成交金额=她说的价格（原逻辑不变），也没有欠款', () => {
+  const result = normalizeWithVouchers({
+    intent: 'sale',
+    items: [{ kind: 'accessory', accessory_name: '腰带', quantity: 1, actual_amount: 119 }],
+    payments: [],
+  }, '119 的腰带');
+
+  assert.equal(result.items[0].actual_amount, 119);
+  assert.equal(result.owed, '');
+});
+
+test('鞋也按同一口径：说了收到 200 就是 200；只给价格就是那个价格（回归）', () => {
+  const paidLessThanQuoted = normalizeWithVouchers({
+    intent: 'sale',
+    items: [{ item_no: 'A100', color: '黑', size: 38, quantity: 1, actual_amount: 230 }],
+    payments: [{ method: '微信', amount: 200 }],
+    agreed_total: 230,
+  }, 'A100黑38，230的鞋，收到了200微信');
+
+  assert.equal(paidLessThanQuoted.items[0].actual_amount, 200);
+  assert.equal(paidLessThanQuoted.agreed_total, 200);
+  assert.equal(paidLessThanQuoted.owed, '');
+
+  const quoted = normalizeWithVouchers({
+    intent: 'sale',
+    items: [{ item_no: 'A100', color: '黑', size: 38, quantity: 1, actual_amount: 230 }],
+    payments: [],
+    agreed_total: 230,
+  }, 'A100黑38，230的鞋');
+  assert.equal(quoted.items[0].actual_amount, 230);
+});
+
+test('原话说的是定金/欠款那类钱没给清的话时，绝不把已收的那笔当成交金额', () => {
+  // 语序刁钻、定金正则没认出来（见上面那条「待修复」）：这时也不能退化成"成交=100"，
+  // 宁可判成信息不全让她补一句。
+  const result = normalizeWithVouchers({
+    intent: 'sale',
+    items: [{ item_no: '695887B-5', color: '黑', size: 43, quantity: 1 }],
+    payments: [{ method: '微信', amount: 100 }],
+    agreed_total: null,
+  }, '695887B-5 43码黑，100元微信定金，还需要再付140元');
+
+  assert.equal(result.agreed_total, '');
+  assert.equal(result.owed, '');
+});
+
+test('未付单：整单没给钱时说"未付" → owed 填整单金额，payments 为空', () => {
+  const result = normalizeWithVouchers({
+    intent: 'sale', trade_type: '未付',
+    items: [{ item_no: '815195B-6', color: '黑', size: 39, quantity: 1 }],
+    payments: [], agreed_total: 260, owed: 260,
+  }, '815195B-6黑39码260元未付');
+
+  assert.equal(result.items[0].actual_amount, 260);
+  assert.equal(result.owed, 260);
+  assert.deepEqual(result.payments, []);
+  assert.deepEqual(result.missing_fields, []);
+});
+
+test('提示词里写死了"欠"的识别口径（owed / tier_price），删掉就会红', async () => {
+  const oldKey = process.env.TEXT_LLM_API_KEY;
+  const oldBase = process.env.TEXT_LLM_BASE_URL;
+  const oldModel = process.env.TEXT_LLM_MODEL;
+  const oldGetClient = salesParser.getClient;
+  const prompts = [];
+  process.env.TEXT_LLM_API_KEY = 'test-key';
+  process.env.TEXT_LLM_BASE_URL = 'https://api.deepseek.com';
+  process.env.TEXT_LLM_MODEL = 'test-model';
+  try {
+    salesParser.getClient = () => ({ chat: { completions: { create: async ({ messages }) => {
+      prompts.push(messages[0].content);
+      return { choices: [{ message: { content: JSON.stringify({ intent: 'sale', items: [] }) } }] };
+    } } } });
+    await salesParser.parseSalesText('119 的腰带，是收到了 100 元微信',
+      { accessoryNames: ['腰带'], vouchers: VOUCHER_CATALOG });
+    const [prompt] = prompts;
+    // 「她明说欠才算欠」这条口径必须写在提示词里：模型不认它，owed 就永远是空的。
+    assert.match(prompt, /9\.1 owed/);
+    assert.match(prompt, /绝不要.*差额.*owed/);
+    assert.match(prompt, /tier_price/);
+    assert.match(prompt, /"owed": ""/);
+  } finally {
+    salesParser.getClient = oldGetClient;
+    if (oldKey === undefined) delete process.env.TEXT_LLM_API_KEY;
+    else process.env.TEXT_LLM_API_KEY = oldKey;
+    if (oldBase === undefined) delete process.env.TEXT_LLM_BASE_URL;
+    else process.env.TEXT_LLM_BASE_URL = oldBase;
+    if (oldModel === undefined) delete process.env.TEXT_LLM_MODEL;
+    else process.env.TEXT_LLM_MODEL = oldModel;
+  }
+});
