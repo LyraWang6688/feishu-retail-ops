@@ -22,6 +22,7 @@ const { allocateSalesOrderNo } = require('./salesOrderNo');
 const { resolveAccessory } = require('./accessoryMatchPolicy');
 const { SaleLookupService } = require('./saleLookupService');
 const { isLookupIntent, isAfterSalesIntent, normalizeMessageIntent } = require('../config/saleIntents');
+const { isSalesCandidate, UNSUPPORTED_INTENT_REPLY } = require('../config/messageGate');
 const { salesConfirmationCard, salesStatusCard, todaySalesCard, keepOnlyCardButton } = require('../utils/larkCards');
 const { extractSalesMessageText } = require('../utils/larkMessageText');
 const { logError, logInfo, logWarn } = require('../utils/logger');
@@ -64,7 +65,13 @@ const aggregateRecognizedItems = (items) => {
   return [...map.values()];
 };
 
-const looksLikeSalesText = (text) => /\d/.test(String(text || ''));
+// 入口闸门：**含数字** 或 **含业务关键词** 的消息才送进 AI。
+//
+// 原来是"必须含数字"，会误伤"我要退货""查一下我买的鞋"这类明确诉求 —— 它们
+// 被静默忽略，用户以为机器人坏了。关键词表在 config/messageGate（配置先行），
+// 这里只做一行委托，加词不去改函数。
+// 名字沿用 looksLikeSalesText：它是既有导出，改语义不改名字，避免动无关调用点。
+const looksLikeSalesText = (text) => isSalesCandidate(text);
 
 const shanghaiDay = (now = new Date()) => {
   const parts = new Intl.DateTimeFormat('zh-CN', {
@@ -660,6 +667,9 @@ class LarkMvpService {
       return this.saleLookup.handleAfterSalesNotReady(task, { ...parsed, intent });
     }
     const [liveInventory, productIndex] = await Promise.all([liveInventoryPromise, productIndexPromise]);
+    // 走到这里已经过了入口闸门（不含数字也不含业务关键词的消息更早被静默挡掉），
+    // 只是 AI 认不出意图 —— 所以这里**可以**回一句引导语，把"能说什么"教给她。
+    // ⚠️ 引导语只在这一档发；闸门没过的消息一律不回，不允许在这条链路上"兜底回复"。
     if (intent !== 'sale') {
       await this.store.update(taskId, { status: 'ignored', draft: parsed });
       logInfo('lark.sales.processing.ignored', {
@@ -667,8 +677,9 @@ class LarkMvpService {
         sender_open_id: task.sender_open_id,
         duration_ms: Date.now() - startedAt,
         reason: 'unsupported_intent',
+        intent,
       });
-      await this.sendText(task.sender_open_id, '未识别为当前支持的现货销售，未写入销售主表。');
+      await this.sendText(task.sender_open_id, UNSUPPORTED_INTENT_REPLY);
       return;
     }
 
