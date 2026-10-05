@@ -208,7 +208,14 @@ class InventoryService {
       ...input,
       kind: MOVEMENT_PURCHASE_INCREASE,
       state: input.state || '门盒',
-      sourceRecordId: input.purchaseInboundRecordId,
+      // 幂等来源**参数化**：进货涨库存只认「一条来源记录 id」，不认它必须是哪种记录。
+      // 幂等键是 operationId(kind, sourceRecordId)，只要来源 id 稳定就成立。
+      // 为什么必须这样：到货将来会在「采购申请」上修正，那时**没有采购入库记录**，
+      // 若这里硬认 purchaseInboundRecordId，库存就写不进去（也没有幂等键可算）。
+      // 两个都传时以 sourceRecordId 为准；只传 purchaseInboundRecordId 的老调用方
+      // （采购到货确认，见 purchaseWebhookService）行为一字不变。
+      // 两个都没传时仍由 applyChange 报「库存变化缺少来源明细 record_id」，报错口径不变。
+      sourceRecordId: input.sourceRecordId || input.purchaseInboundRecordId,
       quantity: positiveInteger(input.quantity, '采购入库数量'),
     });
   }

@@ -545,3 +545,54 @@ test('C5 同一个 applyPurchase 重复执行：流水只有一条，库存只�
   assert.equal(gateway.records.get('liveInventory').length, 3, '重复执行不得把库存变成 6');
   assert.deepEqual(liveKeys(gateway).map((key) => key.slice(-2)), [':1', ':2', ':3']);
 });
+
+// ── 幂等来源参数化 ────────────────────────────────────────────────────────────
+// 进货涨库存不再绑定「采购入库记录」这一种来源：来源记录 id 传什么，幂等键就按什么算
+//（operationId(kind, sourceRecordId)）。为将来「到货在采购申请上修正」准备——那时没有
+// 采购入库记录，也要能写库存并且幂等。老的只传 purchaseInboundRecordId 的调用方行为不变。
+test('applyPurchase 接受非采购入库的来源记录 id：能写入、按该来源幂等', async () => {
+  const gateway = gatewayFor([]);
+  const store1 = store();
+  const inventory = new InventoryService({ gateway, store: store1 });
+  // 采购申请记录 id（不是采购入库记录）：这条链路将来会用到，现在先用它证明来源是参数。
+  const input = { sourceRecordId: 'request_77', productRecordId: 'product_1',
+    size: 38, quantity: 2, state: '仓库' };
+
+  await inventory.applyPurchase(input);
+  await inventory.applyPurchase(input);
+
+  assert.equal(gateway.records.get('inventoryLedger').length, 1, '同一来源重复调用只写一条流水');
+  assert.equal(gateway.records.get('liveInventory').length, 2, '重复调用不得把库存变成 4');
+  // 流水挂到传入的那条来源记录上（关联字段由注册表声明，与来源是不是采购入库记录无关）。
+  assert.deepEqual(gateway.records.get('inventoryLedger')[0].fields, {
+    编号: ['product_1'], 尺码: ['size_38'], 变动数量: 2,
+    库存行为: ['behavior_purchase'], 关联采购: ['request_77'],
+  });
+  // 幂等键确实按传入的来源算，而不是回落到 purchaseInboundRecordId。
+  const operation = await store1.get(operationId('STOCK_PURCHASE_INCREASE', 'request_77'));
+  assert.equal(operation.source_record_id, 'request_77');
+  assert.equal(operation.status, 'completed');
+});
+
+test('applyPurchase 不同来源记录各自幂等：两条来源 = 两条流水、两份库存', async () => {
+  const gateway = gatewayFor([]);
+  const inventory = new InventoryService({ gateway, store: store() });
+  const base = { productRecordId: 'product_1', size: 38, quantity: 1, state: '仓库' };
+
+  await inventory.applyPurchase({ ...base, sourceRecordId: 'request_77' });
+  await inventory.applyPurchase({ ...base, sourceRecordId: 'request_78' });
+
+  assert.equal(gateway.records.get('inventoryLedger').length, 2, '不同来源必须各写各的，不能互相顶掉');
+  assert.equal(gateway.records.get('liveInventory').length, 2);
+});
+
+test('applyPurchase 两个来源参数都传时以 sourceRecordId 为准', async () => {
+  const gateway = gatewayFor([]);
+  const inventory = new InventoryService({ gateway, store: store() });
+
+  await inventory.applyPurchase({ sourceRecordId: 'request_77', purchaseInboundRecordId: 'inbound_1',
+    productRecordId: 'product_1', size: 38, quantity: 1, state: '仓库' });
+
+  // 老字段被显式忽略：幂等键与流水都挂在 sourceRecordId 上（老调用方只传老字段时行为不变）。
+  assert.deepEqual(gateway.records.get('inventoryLedger')[0].fields['关联采购'], ['request_77']);
+});

@@ -6,9 +6,7 @@ const lark = require('@larksuiteoapi/node-sdk');
 const { larkLogger } = require('../utils/larkLogger');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { V1BitableGateway, linkedRecordIds, textValue } = require('./v1BitableGateway');
-const { V1ReferenceResolver, person, relation, normalizeColor } = require('./v1ReferenceResolver');
-const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
-const { recordUrl } = require('../utils/feishuLinks');
+const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
 const doubaoService = require('./doubaoService');
 // 采购申请确认卡片（purchaseRequestConfirmationCard）**不再从这段链路发出**（免确认），
 // 卡片本身仍留在 utils/larkCards 并且 handleCardAction 仍能处理它——
@@ -18,7 +16,8 @@ const { InventoryService } = require('./inventoryService');
 const { buildPurchaseQuantities } = require('./purchaseQuantityPolicy');
 // 「到齐」判据（Σ双数 >= 合计数量）：批次到齐才写采购申请，未到齐什么都不做。
 const { evaluateReportCompleteness } = require('./reportCompletenessPolicy');
-const { buildArrivalCostPlan, isBlankCost, costValueOf } = require('./arrivalCostPolicy');
+const { buildArrivalCostPlan } = require('./arrivalCostPolicy');
+const { ProductCreationService } = require('./productCreationService');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { renderPurchaseRequestPng } = require('./purchaseRequestImageService');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
@@ -127,45 +126,35 @@ const parseReportedAt = (value) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-// 鞋盒/吊牌上的「品名」：女鞋 → B、男鞋 → A。单选选项就是 A/B 两个字。
-// 识别不出性别就留空：默认成 A 会把女鞋写进男鞋，比空着更难发现。
-const genderToCategory = (value) => {
-  const label = String(value || '').trim();
-  if (/女/.test(label)) return 'B';
-  if (/男/.test(label)) return 'A';
-  return '';
-};
+// genderToCategory / productInfoGaps / productRecordUrl 已随「建档 + 成本」搬进
+// services/productCreationService.js（那边不依赖 OCR / 图片，别的入口也能复用）。
 
 /**
- * 从货品记录里读「还缺哪些资料」。
+ * 把任务里已落盘的建档进度读成**结构化进度**（驼峰字段，对齐 productCreationService 的契约）。
  *
- * 「缺失信息说明」是飞书公式：齐备时返回「齐备」，否则返回缺的字段名（如「成本、品类」）。
- * 和销售侧 loadProductIndex 同一个思路——不自己逐字段判断，单一数据源留在表里。
- * 「样例图」是附件字段，不在公式里，要单独看有没有图。
- *
- * 公式刚建完记录时可能还没算出来，所以 readable 要区分「齐备」和「读不到」，
- * 读不到时只敢说"还没齐、去补"，不敢说"齐备"。
+ * 落盘字段名保持 arrival_* 不变：解耦前就在飞书里跑着的任务不用迁移，
+ * 磁盘上的格式一个字节都没变（写入侧见 arrivalCreationJournal().save）。
  */
-const productInfoGaps = (record, productTable) => {
-  const fields = record?.fields || {};
-  const completeness = textValue(fields[productTable.fields.completeness]).trim();
-  const sampleImages = fields[productTable.fields.sampleImage];
-  return {
-    missing: completeness && completeness !== '齐备'
-      ? completeness.split('、').map((name) => name.trim()).filter(Boolean)
-      : [],
-    missingSampleImage: !(Array.isArray(sampleImages) && sampleImages.length > 0),
-    completeness_readable: Boolean(completeness),
-  };
-};
-
-// 记录链接只是给她点进去补资料用的：读不到 app token（本地/测试）时给不出链接，
-// 但绝不能因此打断建档和入库——货已经在仓库里了。
-const productRecordUrl = (tableId, recordId) => {
-  let appToken = '';
-  try { appToken = V1_BITABLE_SCHEMA.appToken; } catch { appToken = ''; }
-  return recordUrl({ appToken, tableId, recordId });
-};
+const arrivalCreationProgress = (task) => ({
+  products: (Array.isArray(task?.arrival_created_products) ? task.arrival_created_products : []).map((entry) => ({
+    itemNo: entry.item_no,
+    color: entry.color,
+    productRecordId: entry.product_record_id,
+    supplier: entry.supplier,
+    colorCreated: entry.color_created,
+  })),
+  colors: (Array.isArray(task?.arrival_created_colors) ? task.arrival_created_colors : []).map((entry) => ({
+    name: entry.name,
+    colorRecordId: entry.color_record_id,
+  })),
+  costWritten: (Array.isArray(task?.arrival_cost_written) ? task.arrival_cost_written : []).map((entry) => ({
+    itemNo: entry.item_no,
+    color: entry.color,
+    productRecordId: entry.product_record_id,
+    cost: entry.cost,
+    source: entry.source,
+  })),
+});
 
 class PurchaseWebhookService {
   constructor(options = {}) {
@@ -236,6 +225,12 @@ class PurchaseWebhookService {
     // 就会各建一条同名货品（幂等靠"先落盘再重试"的读回，挡不住真正的并发）。
     // 两个队列不会互相等待死锁：确认走 confirmationQueue，建档走 creationQueue，方向是单向的。
     this.creationQueue = new KeyedSerialQueue();
+    // 「建档 + 成本」由独立 service 承担（它不依赖 OCR / 图片；见 productCreationService 的注释）。
+    // ⚠️ 必须把**同一个** creationQueue 注入进去：否则"发完卡片后台建"和"她点确认兜底建"
+    // 会各自串行、彼此并行，同一批新品各建一条。
+    this.productCreation = options.productCreation || new ProductCreationService({
+      gateway: this.gateway, references: this.references, creationQueue: this.creationQueue,
+    });
     this.batchReadMaxRetries = options.batchReadMaxRetries ?? 3;
     this.batchReadRetryDelay = options.batchReadRetryDelay ?? 1000;
     this.inflightInbound = new Map();
@@ -1462,377 +1457,129 @@ class PurchaseWebhookService {
   }
 
   /**
-   * 建档进度落盘。
-   *
-   * 建档是远端写入，按项目约定必须把已经写出的 record_id 落盘：任务失败后重收 webhook
-   * 会重跑一次到货解析，那时飞书列表可能还没读到刚建的货品，只靠"再查一遍"不足以防重复。
-   *
-   * 成本也一并落盘（arrival_cost_written）：写成本本身是**幂等赋值**，重复写同一个值不会
-   * 写坏数据，但"结果未知"（写完还没来得及记录就失败）不能当成"没写过"再走一遍决策——
-   * 尤其不能在第二次重试时把它当成"已有成本"而发一条误导的 warn。
-   */
-  async persistArrivalCreation(context) {
-    if (!context.taskId) return;
-    try {
-      await this.store.update(context.taskId, {
-        arrival_created_products: context.createdLog,
-        arrival_created_colors: context.createdColors,
-        arrival_cost_written: context.costWritten,
-      });
-    } catch (error) {
-      logWarn('purchase.arrival.created_product_persist_failed', { task_id: context.taskId, error: error.message });
-    }
-  }
-
-  /**
-   * 从已落盘的任务里恢复上一次的建档结果，重试时直接复用，不再重复建。
-   */
-  buildArrivalCreationContext(task) {
-    const products = Array.isArray(task?.arrival_created_products) ? task.arrival_created_products : [];
-    const colors = Array.isArray(task?.arrival_created_colors) ? task.arrival_created_colors : [];
-    const costWritten = Array.isArray(task?.arrival_cost_written) ? task.arrival_cost_written : [];
-    const context = {
-      taskId: task?.task_id || '',
-      productCache: new Map(),
-      colorIndex: new Map(),
-      createdColors: colors.map((item) => ({ ...item })),
-      createdLog: products.map((item) => ({ ...item })),
-      colorTableLoaded: false,
-      // 本次到货的价格计划（item_no → 可信单价 / 冲突标记），processArrival 里填充。
-      arrivalCostPlan: null,
-      // 已经处理过成本的货品（写成功，或已判定"不覆盖"）：重试时直接跳过，不重复写。
-      costApplied: new Map(costWritten.map((item) => [item.product_record_id, item.cost])),
-      costWritten: costWritten.map((item) => ({ ...item })),
-    };
-    // 上次已经建好的颜色先占位：重试时同一个颜色名不会再建第二条。
-    for (const item of context.createdColors) {
-      if (item?.name) context.colorIndex.set(normalizeColor(item.name), item.color_record_id);
-    }
-    for (const item of context.createdLog) {
-      context.productCache.set(`${item.item_no}|${item.color}`, {
-        is_new: true,
-        recordId: item.product_record_id,
-        record: null,
-        item_no: item.item_no,
-        color: item.color,
-        supplier: item.supplier || '',
-        label: `${item.item_no}${item.color}`,
-        color_created: Boolean(item.color_created),
-        gaps: null,
-      });
-    }
-    return context;
-  }
-
-  /**
-   * 按颜色名找「颜色管理」的记录，找不到就新建一条并记下来。
-   *
-   * 颜色表是**共享主数据**：OCR 抖一下（「棕色」/「棕」）就多建一条，以后同一个颜色
-   * 会散成好几条，所以比对用 normalizeColor（去空白、去末尾「色」），
-   * 并且整张表只读一次、同一次到货里同名颜色只建一条。
-   */
-  async ensureArrivalColor(color, context) {
-    const colorTable = this.gateway.table('color');
-    if (!context.colorTableLoaded) {
-      for (const record of await this.gateway.listAll('color')) {
-        const name = normalizeColor(textValue(record?.fields?.[colorTable.fields.name]));
-        if (name && !context.colorIndex.has(name)) context.colorIndex.set(name, record.record_id);
-      }
-      context.colorTableLoaded = true;
-    }
-    const key = normalizeColor(color);
-    if (context.colorIndex.has(key)) return { recordId: context.colorIndex.get(key), created: false };
-
-    const created = await this.gateway.create('color', { name: color });
-    const recordId = created?.recordId || '';
-    if (!recordId) throw new Error(`颜色「${color}」新建失败`);
-    context.colorIndex.set(key, recordId);
-    context.createdColors.push({ name: color, color_record_id: recordId });
-    await this.persistArrivalCreation(context);
-    logInfo('purchase.arrival.color_created', { color, color_record_id: recordId });
-    return { recordId, created: true };
-  }
-
-  /**
-   * 给识别到的新品建一条「货品信息」，然后原样返回新记录。
-   *
-   * ⚠️ 只由 ensureArrivalProducts 调用，也就是**发完确认卡片之后**（含她点确认时的兜底重试）。
-   * 别把它挪回匹配那一步：产品负责人 2026-10-05 定的顺序是"发卡片之前不做创建"。
-   *
-   * 只写确定知道的字段（产品负责人 2026-10-05 定稿的建档内容）：
-   * 货号、颜色（关联）、供应商（关联，找不到就留空）、类别（识别出男/女才填，
-   * 认不出留空——默认成 A 会把女鞋写进男鞋）、成本（识别到价格才填，识别不出留空）。
-   * 刻意不写「编号」「货品状态」「缺失信息说明」——这三个在飞书里是公式字段，
-   * 写进去会直接 FieldNameNotFound，而且它们的值本来就该由表自己算。
-   * 也刻意不写「单价」：建档时看到的价格是采购成本，不是销售单价。
-   */
-  async ensureArrivalProduct(raw, context) {
-    const itemNo = String(raw.item_no || '').trim();
-    const color = String(raw.color || '').trim();
-    const cacheKey = `${itemNo}|${color}`;
-    const cached = context.productCache.get(cacheKey);
-    // 同一个「货号+颜色」在一次到货里会有多个尺码：复用第一条建好的记录（含上次重试建的），
-    // 不要再建第二条——这就是"重复建档只建一条"的落点。
-    if (cached) {
-      // 从上次重试恢复出来的条目还没有回读数据：补一次回读（只有日志/草稿用得上）。
-      if (!cached.gaps) {
-        cached.record = (await this.gateway.get('product', cached.recordId).catch(() => null)) || cached.record;
-        cached.gaps = productInfoGaps(cached.record, this.gateway.table('product'));
-      }
-      return { ...cached };
-    }
-
-    const productTable = this.gateway.table('product');
-    const values = { itemNo };
-    if (color) values.color = relation((await this.ensureArrivalColor(color, context)).recordId);
-
-    // 供应商也只在识别到名字、且供应商表里确实有这条时才关联；找不到留空，不新建、不猜。
-    const supplierName = String(raw.supplier || '').trim();
-    if (supplierName) {
-      try {
-        const supplier = await this.references.resolveSupplier(supplierName);
-        if (supplier?.recordId) values.supplier = relation(supplier.recordId);
-      } catch (error) {
-        logWarn('purchase.arrival.supplier_not_found', { item_no: itemNo, supplier: supplierName, error: error.message });
-      }
-    }
-    const category = genderToCategory(raw.gender || raw.category);
-    if (category) values.category = category;
-
-    // 成本：新品建档顺带把成本写上（产品负责人要求：货号/颜色/供应商/类别/成本一起落）。
-    // 合并口径（#63「识别到价格就写成本」× #64「可信价格才写」）：
-    //   价格来源统一走 buildArrivalCostPlan（它已按货号汇总、并把 unit_cost/unitCost/cost/price
-    //   几种模型写法都算进来）；同货号多行价格不一致（conflict）→ plan 里没有可用 cost，不写。
-    // 建档只会新建记录，不存在覆盖已有成本的问题——命中的老货品一律原样使用、不改动。
-    const costPlanEntry = context.arrivalCostPlan?.get(itemNo);
-    const createdAtCost = costPlanEntry && !costPlanEntry.conflict ? costPlanEntry.cost : null;
-    if (createdAtCost !== null) values.cost = createdAtCost;
-
-    const created = await this.gateway.create('product', values);
-    const recordId = created?.recordId || created?.record_id || '';
-    if (!recordId) throw new Error(`新品建档失败：${itemNo}${color}`);
-
-    const entry = {
-      is_new: true,
-      recordId,
-      record: created?.record || null,
-      item_no: itemNo,
-      color,
-      supplier: supplierName,
-      label: `${itemNo}${color}`,
-      color_created: context.createdColors.some((item) => normalizeColor(item.name) === normalizeColor(color)),
-      gaps: null,
-    };
-    context.productCache.set(cacheKey, entry);
-    context.createdLog.push({
-      item_no: itemNo, color, product_record_id: recordId, supplier: supplierName, color_created: entry.color_created,
-    });
-    // 建档时已经把成本写进去了：登记成"已处理"，processArrival 里的 applyArrivalCost
-    // 就不会再对它走一次"成本为空 → 写"的判断（重试也不会）。
-    if (createdAtCost !== null) {
-      context.costApplied.set(recordId, createdAtCost);
-      context.costWritten.push({ item_no: itemNo, color, product_record_id: recordId, cost: createdAtCost, source: 'create' });
-      logInfo('purchase.arrival.cost_written', {
-        item_no: itemNo, color, product_record_id: recordId, cost: createdAtCost, source: 'create',
-      });
-    }
-    // 先落盘再回读：哪怕回读或后续步骤失败，重试也能凭这条记录跳过重复建档。
-    await this.persistArrivalCreation(context);
-
-    // 建档后回读一次：公式（缺失信息说明）是飞书算的，创建响应里通常还没有值。
-    // 回读失败不影响入库；这些缺口现在只进日志和草稿，不再上卡片
-    //（产品负责人：卡片上不写"还差什么字段"）。
-    try {
-      entry.record = (await this.gateway.get('product', recordId)) || entry.record;
-    } catch (error) {
-      logWarn('purchase.arrival.created_product_readback_failed', { product_record_id: recordId, error: error.message });
-    }
-    entry.gaps = productInfoGaps(entry.record, productTable);
-    logInfo('purchase.arrival.product_created', {
-      item_no: itemNo, color, product_record_id: recordId, color_created: entry.color_created,
-      missing: entry.gaps.missing, missing_sample_image: entry.gaps.missingSampleImage,
-    });
-    return entry;
-  }
-
-  /**
    * 到货新品建档 + 到货单价格写成本。**发完确认卡片之后**才跑；她点确认时再兜底跑一次。
+   *
+   * 实现已搬进 services/productCreationService.js：这两件事和"拍照识别"无关
+   *（输入就是结构化的 货号/颜色/性别/供应商/成本），搬出去之后
+   * 将来拿掉识别链路不会顺手把它们一起拿掉，别的入口也能直接复用。
+   * 这里只剩「到货的进度存在哪个任务字段里」这一件到货专属的事，通过 journal 端口交给它。
    *
    * 为什么挪到卡片之后：产品负责人 2026-10-05 的口径是「发确认卡片之前不做创建的举动，
    * 而是在发完之后同步做，然后用户点确认之后再给到创建好的链接」。卡片本身只需要
    * "知道哪些货号是新品"（匹配时就知道），不需要货品记录真的存在，所以顺序可以这么排。
    *
-   * 幂等（三道，缺一不可）：
-   *   ① 同一个 taskId 的两次调用走 creationQueue **串行**——后台那次和她点确认那次
-   *      不会同时从任务里读到"还没建"然后各建一条；
-   *   ② buildArrivalCreationContext 从任务里恢复上次已建的 record_id
-   *      （arrival_created_products 每建一条就落盘），重试时 ensureArrivalProduct
-   *      命中缓存直接返回，**不建第二条货品**；
-   *   ③ 颜色的去重靠颜色表整表读一次 + normalizeColor（同名颜色只建一条）。
-   *
-   * 失败处理：建档失败**不抛**（只有 store 坏了才抛），改成把 creation_state='failed'
-   * 和原因写进草稿——确认那一步据此明确告诉她，并且再点一次就能重试。
-   * 成本写失败**不算建档失败**（既有的规则：成本写不进去不挡入库，只记 warn）。
+   * 幂等 / 失败处理的完整说明见 ProductCreationService.ensureProducts 的注释
+   *（串行、锁内恢复进度、颜色去重这三道；建档失败不污染识别链路、可重试；成本失败只 warn）。
    *
    * @returns {Promise<{state: 'done'|'failed', created: number, cost_written_count: number, failures: Array}>}
    */
   async ensureArrivalProducts(taskId, options = {}) {
-    return this.creationQueue.run(taskId, async () => {
-      const task = await this.store.get(taskId);
-      const draft = task?.draft;
-      if (!draft) throw new Error('采购到货草稿不存在或已过期');
-      const pending = Array.isArray(draft.pending_creation) ? draft.pending_creation : [];
-      const productTable = this.gateway.table('product');
-      const context = this.buildArrivalCreationContext(task);
-      // 价格计划按**识别结果**重建（它随任务一起落盘了）：建档顺带写成本、老货品补成本，
-      // 两条路用的是同一份计划，规则仍然是"同货号价格冲突就整条不写"。
-      context.arrivalCostPlan = buildArrivalCostPlan(task.recognized || []);
-
-      const failures = [];
-      for (const entry of pending) {
-        try {
-          await this.ensureArrivalProduct(entry, context);
-        } catch (error) {
-          failures.push({ item_no: entry.item_no, color: entry.color, error: error.message });
-          logWarn('purchase.arrival.product_create_failed', {
-            task_id: taskId, item_no: entry.item_no, color: entry.color, error: error.message,
-          });
-        }
-      }
-
-      // 已经匹配到老货品的行：成本同样只在卡片发出之后写（"发卡片之前不写成本"）。
-      // 按 货号+颜色+货品 去重，免得同一货品的每个尺码各读一次表。
-      const costSeen = new Set();
-      for (const item of draft.actual || []) {
-        if (item.created_product || !item.product_record_id) continue; // 新品的成本在建档时一起写了
-        const key = `${item.item_no}|${item.color}|${item.product_record_id}`;
-        if (costSeen.has(key)) continue;
-        costSeen.add(key);
-        try {
-          const record = await this.gateway.get('product', item.product_record_id).catch(() => null);
-          await this.applyArrivalCost(item, { recordId: item.product_record_id, record }, productTable, context);
-        } catch (error) {
-          // 成本这条线故意不算进 failures：写不进去不该把她挡在入库外面（见 applyArrivalCost 注释）。
-          logWarn('purchase.arrival.cost_write_failed', {
-            task_id: taskId, item_no: item.item_no, product_record_id: item.product_record_id, error: error.message,
-          });
-        }
-      }
-
-      // 建档结果直接从缓存取（含上一次重试已经建好、本次识别里不再出现的条目）。
-      // 恢复出来的条目没有回读数据：缺口按"读不到"处理（这些字段现在只进日志/草稿，
-      // 不再上卡片——卡片上不写"还差什么"，见 larkCards.purchaseArrivalDetailCard）。
-      const createdEntries = [...context.productCache.values()];
-      for (const entry of createdEntries) {
-        if (!entry.gaps) entry.gaps = productInfoGaps(entry.record, productTable);
-      }
-      const createdProducts = createdEntries.map((entry) => ({
-        product_record_id: entry.recordId,
-        item_no: entry.item_no,
-        color: entry.color,
-        supplier: entry.supplier,
-        label: entry.label,
-        color_created: entry.color_created,
-        missing: entry.gaps.missing,
-        missing_sample_image: entry.gaps.missingSampleImage,
-        completeness_readable: entry.gaps.completeness_readable,
-        // 链接回填到草稿：她点确认之后的结果卡片就用它（她点进去补资料）。
-        url: productRecordUrl(productTable.tableId, entry.recordId),
-      }));
-
-      // 合并进**最新**草稿，不整份覆盖：她可能正好在这期间点了确认，
-      // 那一侧会往草稿里写 inbound_created，覆盖掉就等于把入库进度和链接一起冲没了。
-      const latest = (await this.store.get(taskId)) || task;
-      const creationError = failures.length
-        ? failures.map((item) => `${item.item_no || ''}${item.color || ''}：${item.error}`).join('；')
-        : '';
-      const nextDraft = {
-        ...latest.draft,
-        created_products: createdProducts,
-        created_colors: context.createdColors.map((item) => item.name),
-        creation_state: failures.length ? 'failed' : 'done',
-        creation_error: creationError,
-      };
-      await this.store.update(taskId, { draft: nextDraft });
-      logInfo('purchase.arrival.creation.finished', {
-        task_id: taskId, reason: options.reason || 'unknown', state: nextDraft.creation_state,
-        pending_count: pending.length, created_product_count: createdProducts.length,
-        created_color_count: nextDraft.created_colors.length,
-        cost_written_count: context.costWritten.length, failure_count: failures.length,
-      });
-      return {
-        state: nextDraft.creation_state,
-        created: createdProducts.length,
-        cost_written_count: context.costWritten.length,
-        failures,
-      };
+    return this.productCreation.ensureProducts({
+      journal: this.arrivalCreationJournal(taskId),
+      reason: options.reason,
     });
   }
 
   /**
-   * 把到货单识别到的价格写进货品「成本」。
+   * 到货链路的「建档进度落盘」端口。
    *
-   * 产品负责人的口径：「如果有的到货单上有价格的，那就是成本。」
-   * 单据上的「销售价 / 单价」列 → 「货品信息」的「成本」字段（number 字段，直接写数字）。
+   * 把两件到货专属的事留在这一侧，productCreationService 只认结构化明细：
+   *   ① 进度存在哪儿：任务里的 arrival_created_products / arrival_created_colors /
+   *      arrival_cost_written（**落盘字段名与解耦前完全一致**，已经跑着的任务不用迁移）；
+   *   ② 建档结果怎么并回草稿：created_products / created_colors / creation_state / creation_error。
    *
-   * 写入规则刻意保守（谁改这里都要先读一遍）：
-   *   1. 只在成本**为空**时写（含数字 0 都算已有值，见 arrivalCostPolicy.isBlankCost）；
-   *   2. 已有成本 → 不覆盖，记一条 warn（带 货号 / 已有值 / 识别到的值）；
-   *   3. 同一货号多行价格不一致 → 整条不写（conflict 在 processArrival 里统一记 warn）；
-   *   4. 价格转不成正数 → 不写（plan 里根本没有这个货号）；
-   *   5. 重试不重复写：写成功的货品记进 context.costApplied 并落盘，重试直接跳过。
-   *
-   * 写失败**不抛错**：成本写不进去不该把整批到货卡住（货已经到了，入库优先）；
-   * 记 warn 后由下一次重试再试（赋值幂等，重复写同一个值无害）。
-   *
-   * @returns {Promise<{applied: boolean, reason: string}|null>} 只用于日志/测试断言
+   * read / save / writeBack 都在 creationQueue 的锁内被调用，顺序与解耦前一致
+   *（先读、边建边落盘、最后并草稿再记 creation.finished）。
    */
-  async applyArrivalCost(raw, product, productTable, context) {
-    const itemNo = String(raw?.item_no || '').trim();
-    const entry = context.arrivalCostPlan?.get(itemNo);
-    if (!entry || entry.conflict || entry.cost === null) return null;
-    const recordId = product.recordId;
-    if (!recordId) return null;
-
-    // 本次（或上次重试）已经处理过这条货品：直接跳过，不重复写、也不再打日志。
-    if (context.costApplied.has(recordId)) return { applied: false, reason: 'already_applied' };
-
-    const existing = product.record?.fields?.[productTable.fields.cost];
-    if (!isBlankCost(existing)) {
-      // 已有成本一律不覆盖；只有「值真的不一样」才 warn。
-      // 值相同说明是上一次重试已经写成功了（这就是为什么必须先记账再往下走）。
-      if (costValueOf(existing) === entry.cost) {
-        context.costApplied.set(recordId, entry.cost);
-        logInfo('purchase.arrival.cost_already_set', {
-          item_no: itemNo, product_record_id: recordId, cost: entry.cost,
-        });
-      } else {
-        context.costApplied.set(recordId, entry.cost);
-        logWarn('purchase.arrival.cost_kept', {
-          item_no: itemNo,
-          product_record_id: recordId,
-          existing_cost: textValue(existing),
-          recognized_cost: entry.cost,
-          reason: '货品已有成本，识别到的到货单价不覆盖',
-        });
-      }
-      return { applied: false, reason: 'existing_cost' };
-    }
-
-    try {
-      await this.gateway.update('product', recordId, { cost: entry.cost });
-    } catch (error) {
-      logWarn('purchase.arrival.cost_write_failed', {
-        item_no: itemNo, product_record_id: recordId, cost: entry.cost, error: error.message,
-      });
-      return { applied: false, reason: 'write_failed' };
-    }
-
-    context.costApplied.set(recordId, entry.cost);
-    context.costWritten.push({ item_no: itemNo, color: String(raw?.color || '').trim(), product_record_id: recordId, cost: entry.cost, source: 'update' });
-    await this.persistArrivalCreation(context);
-    logInfo('purchase.arrival.cost_written', { item_no: itemNo, product_record_id: recordId, cost: entry.cost, source: 'update' });
-    return { applied: true, reason: 'written' };
+  arrivalCreationJournal(taskId) {
+    // 锁内 read 到的任务：writeBack 兜底复用（与解耦前一致：store.get 返回空时用本次读到的 task）。
+    let lastTask = null;
+    return {
+      scope: taskId,
+      read: async () => {
+        const task = await this.store.get(taskId);
+        lastTask = task;
+        const draft = task?.draft;
+        if (!draft) throw new Error('采购到货草稿不存在或已过期');
+        // 价格计划按**识别结果**重建（它随任务一起落盘了）：建档顺带写成本、老货品补成本，
+        // 两条路用的是同一份计划，规则仍然是"同货号价格冲突就整条不写"。
+        const costPlan = buildArrivalCostPlan(task.recognized || []);
+        // ⚠️ 查计划前必须先 trim：解耦前 ensureArrivalProduct / applyArrivalCost 都是
+        // 用 trim 过的货号去查计划的，这里保持同一口径（否则识别结果带空白时成本会查不到）。
+        const costOf = (rawItemNo) => {
+          const entry = costPlan.get(String(rawItemNo || '').trim());
+          return entry && !entry.conflict ? entry.cost : null;
+        };
+        const items = (Array.isArray(draft.pending_creation) ? draft.pending_creation : []).map((entry) => ({
+          itemNo: entry.item_no,
+          color: entry.color,
+          // 品名（男/女）原样带过去：建档时按它定类别，认不出就留空，不猜。
+          gender: entry.gender,
+          category: entry.category,
+          supplier: entry.supplier,
+          cost: costOf(entry.item_no),
+        }));
+        // 已经匹配到老货品的行：成本同样只在卡片发出之后写（"发卡片之前不写成本"）。
+        // 按 货号+颜色+货品 去重，免得同一货品的每个尺码各读一次表。
+        const seen = new Set();
+        const costItems = [];
+        for (const item of draft.actual || []) {
+          if (item.created_product || !item.product_record_id) continue; // 新品的成本在建档时一起写了
+          const key = `${item.item_no}|${item.color}|${item.product_record_id}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          costItems.push({
+            itemNo: item.item_no,
+            color: item.color,
+            productRecordId: item.product_record_id,
+            cost: costOf(item.item_no),
+          });
+        }
+        return { items, costItems, progress: arrivalCreationProgress(task) };
+      },
+      // 建档是远端写入，按项目约定必须把已经写出的 record_id 落盘：任务失败后重收 webhook
+      // 会重跑一次到货解析，那时飞书列表可能还没读到刚建的货品，只靠"再查一遍"不足以防重复。
+      // 成本也一并落盘：写成本本身是幂等赋值，但"结果未知"（写完还没来得及记录就失败）
+      // 不能当成"没写过"再走一遍决策。
+      // ⚠️ 落盘失败只 warn、不让建档失败——所以这里吞异常；口径与解耦前的
+      // persistArrivalCreation 完全一致（同一个日志事件、同一个 task_id）。
+      save: async (progress) => {
+        if (!taskId) return;
+        try {
+          await this.store.update(taskId, {
+            arrival_created_products: progress.products.map((entry) => ({
+              item_no: entry.itemNo, color: entry.color, product_record_id: entry.productRecordId,
+              supplier: entry.supplier, color_created: entry.colorCreated,
+            })),
+            arrival_created_colors: progress.colors.map((entry) => ({
+              name: entry.name, color_record_id: entry.colorRecordId,
+            })),
+            arrival_cost_written: progress.costWritten.map((entry) => ({
+              item_no: entry.itemNo, color: entry.color, product_record_id: entry.productRecordId,
+              cost: entry.cost, source: entry.source,
+            })),
+          });
+        } catch (error) {
+          logWarn('purchase.arrival.created_product_persist_failed', { task_id: taskId, error: error.message });
+        }
+      },
+      writeBack: async (creation) => {
+        // 合并进**最新**草稿，不整份覆盖：她可能正好在这期间点了确认，
+        // 那一侧会往草稿里写 inbound_created，覆盖掉就等于把入库进度和链接一起冲没了。
+        const latest = (await this.store.get(taskId)) || lastTask;
+        const creationError = creation.failures.length
+          ? creation.failures.map((item) => `${item.item_no || ''}${item.color || ''}：${item.error}`).join('；')
+          : '';
+        const nextDraft = {
+          ...latest.draft,
+          created_products: creation.createdProducts,
+          created_colors: creation.createdColors.map((item) => item.name),
+          creation_state: creation.state,
+          creation_error: creationError,
+        };
+        await this.store.update(taskId, { draft: nextDraft });
+      },
+    };
   }
 
   /**

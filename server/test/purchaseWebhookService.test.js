@@ -2950,6 +2950,28 @@ test('到货单价格即成本：货品「成本」为空时写进去，并在�
   assert.ok(JSON.stringify(cardElements).includes('￥199'), '尺码格上要显示识别到的单价，方便她核对成本');
 });
 
+test('到货单价格即成本：识别出的货号带空白时，仍按 trim 后的货号查计划并写成本', async () => {
+  const records = {
+    purchaseArrival: [arrivalDocumentRecord('arr_cost_trim')],
+    product: [{ record_id: 'prod_trim', fields: { 编号: '1366-31棕色', 供应商: ['sup_A'] } }],
+    supplier: SUPPLIERS,
+  };
+  const { service, store } = makeService({
+    gateway: makeGateway(records),
+    references: makeReferences({
+      resolveProduct: async () => ({ recordId: 'prod_trim', record: records.product[0] }),
+    }),
+    // 识别结果里货号多了个尾空格：解耦前 applyArrivalCost 是 trim 之后再查价格计划的，
+    // 这条用例把"成本查找口径"钉住，免得搬进 productCreationService 后悄悄变了。
+    recognizer: documentRecognizer([
+      { item_no: '1366-31 ', color: '棕色', size: 36, quantity: 1, unit_cost: 199 },
+    ]),
+  });
+  const accepted = await service.accept('arrival', 'arr_cost_trim');
+  await waitForProcessed(store, accepted.taskId);
+  assert.equal(records.product[0].fields.成本, 199, '货号带空白时成本也要写进去');
+});
+
 test('到货单价格即成本：货品已有成本时不覆盖，只记一条带三要素的 warn', async () => {
   const records = {
     purchaseArrival: [arrivalDocumentRecord('arr_cost_kept')],
