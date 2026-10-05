@@ -4,6 +4,8 @@
 //   · 入口 A：先查 → 说「第 2 笔，退货，钱先存着」→ 出确认卡片（跨消息上下文）
 //   · 入口 B：直接说「退那双 6035 黑」——不经查询也能定位；1 条出卡 / 多条出候选卡片（无按钮）/ 0 条明确提示
 //   · 回库状态：她没说 → 卡片上有按钮（默认原状态）；她说了 → 按她说的
+//   · 钱怎么走：**没有默认值**、也**没有兜底交互**——她说了按她说的（唯一路径）；
+//     差价 = 0 → 不动钱；万一模型真没解析出钱怎么走 → 抛明确的错拦住（业务表零写入）
 //   · 确认 → 真的调执行器（断言调用次数与参数）；取消 → 不调执行器、不写任何业务表
 //   · 重复确认两次 → 执行器只生效一次（执行器总闸门）
 //   · 失败 → 明确告诉她原因，状态可重试
@@ -22,7 +24,8 @@ const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { SaleLookupService } = require('../src/services/saleLookupService');
 const { AfterSalesService } = require('../src/services/afterSalesService');
 const { AfterSalesFlowService } = require('../src/services/afterSalesFlowService');
-const { AFTER_SALES_TASK_STATUS, afterSalesContextId } = require('../src/config/afterSalesFlow');
+const { AFTER_SALES_TASK_STATUS, AFTER_SALES_CARD_ACTIONS, afterSalesContextId,
+  resolveAfterSalesSettlement } = require('../src/config/afterSalesFlow');
 
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
 
@@ -337,10 +340,10 @@ test('入口 A：先查 → 说「第 2 笔，退货，钱先存着」→ 出确
 
 test('入口 B：直接说「退那双 1366-33 黑」→ 没查过也能定位，命中 1 条直接出确认卡片', async () => {
   const { flow, store, cards, texts } = build();
-  const task = await newTask(store, { original_text: '退那双 1366-33 黑' });
+  const task = await newTask(store, { original_text: '退那双 1366-33 黑，退现金' });
 
   const result = await flow.handle(task, {
-    intent: 'return', action: 'return', item_no: '1366-33', color: '黑',
+    intent: 'return', action: 'return', item_no: '1366-33', color: '黑', settlement: 'cash',
   });
 
   assert.equal(result.located, true);
@@ -375,13 +378,13 @@ test('入口 B：命中多条 → 出候选卡片（无按钮、带序号），�
   assert.deepEqual(texts, []);
 
   const next = await newTask(store, { task_id: 't_pick', original_text: '第 1 笔，退货' });
-  const picked = await flow.handle(next, { intent: 'return', action: 'return', ordinal: 1 });
-  assert.equal(picked.source, 'ordinal');
-  const plan = (await store.get('t_pick')).after_sales_plan;
-  assert.deepEqual(plan.original_sales_detail_record_ids, ['d_new']);
-  // 钱没说 → 默认退现金；差价 = 原价退回
-  assert.equal(plan.settlement, 'cash');
-  assert.equal(plan.diff_amount, -230);
+  // 钱没说 → **没有默认走向、也没有兜底交互**：这一笔直接大声拦住（详见下面「钱怎么走」一组）
+  await assert.rejects(
+    () => flow.handle(next, { intent: 'return', action: 'return', ordinal: 1 }),
+    /没解析出这次的钱怎么走/,
+  );
+  assert.equal((await store.get('t_pick')).after_sales_plan, undefined);
+  assert.deepEqual(texts, []);
 });
 
 test('入口 B：命中 0 条 → 明确告诉她没找到，并问她大概是哪天买的', async () => {
@@ -417,9 +420,12 @@ test('入口 B：连货号都没说（「我要退货」）→ 问她要货号�
 // ---------------------------------------------------------------------------
 
 test('退回的鞋放哪：她没说 → 卡片上有选择且默认门盒；她说了 → 按她说的填并传给执行器', async () => {
+  // 钱这块她说了（退现金），所以这两条只盯"退回的鞋放哪"；钱的规则在下面单独一组。
   const silent = build();
-  const silentTask = await newTask(silent.store, { original_text: '退那双 1366-33 黑' });
-  await silent.flow.handle(silentTask, { intent: 'return', action: 'return', item_no: '1366-33', color: '黑' });
+  const silentTask = await newTask(silent.store, { original_text: '退那双 1366-33 黑，退现金' });
+  await silent.flow.handle(silentTask, {
+    intent: 'return', action: 'return', item_no: '1366-33', color: '黑', settlement: 'cash',
+  });
   const silentPlan = (await silent.store.get('t_after_sales')).after_sales_plan;
   assert.equal(silentPlan.restock_state, '门盒');
   assert.equal(silentPlan.restock_state_explicit, false);
@@ -434,6 +440,7 @@ test('退回的鞋放哪：她没说 → 卡片上有选择且默认门盒；她
   const spokenTask = await newTask(spoken.store, { original_text: '退那双 1366-33 黑，放样品' });
   await spoken.flow.handle(spokenTask, {
     intent: 'return', action: 'return', item_no: '1366-33', color: '黑', restock_state: '样品',
+    settlement: 'cash',
   });
   const spokenPlan = (await spoken.store.get('t_after_sales')).after_sales_plan;
   assert.equal(spokenPlan.restock_state, '样品');
@@ -443,8 +450,10 @@ test('退回的鞋放哪：她没说 → 卡片上有选择且默认门盒；她
 
 test('她在卡片上改回库状态 → 卡片重渲染、状态记为显式选择', async () => {
   const { flow, store, cards, cardAction } = build();
-  const task = await newTask(store, { original_text: '退那双 1366-33 黑' });
-  await flow.handle(task, { intent: 'return', action: 'return', item_no: '1366-33', color: '黑' });
+  const task = await newTask(store, { original_text: '退那双 1366-33 黑，退现金' });
+  await flow.handle(task, {
+    intent: 'return', action: 'return', item_no: '1366-33', color: '黑', settlement: 'cash',
+  });
 
   const toast = await cardAction({ action: 'choose_after_sales_restock', draft_id: 't_after_sales', state: '样品' });
 
@@ -454,6 +463,221 @@ test('她在卡片上改回库状态 → 卡片重渲染、状态记为显式选
   assert.equal(plan.restock_state_explicit, true);
   assert.equal(cards.updated.length, 1);
   assert.equal(cards.updated[0].header.title.content, '请确认售后');
+});
+
+// ---------------------------------------------------------------------------
+// 钱怎么走：**没有默认值**，也**没有兜底交互**（业务负责人的红线）
+//
+// 「不是啊，退货不是默认现金啊，都有啊！只不过是分为是不是当前退钱还是先预存着而已」
+// 「不用啊，你为什么要做兜底呢？……都会说清楚的呀。所以，为什么你还要再去做兜底呢？」
+//
+//   · 她说了 → 按她说的（**唯一路径**）；
+//   · 差价 = 0 → 不动钱，不用定；
+//   · 万一模型真没解析出钱怎么走 → **抛明确的错拦住这一笔**、业务表零写入
+//     （不默认、不追问、不记待回答的计划、不出卡片）。
+//   · 卡片上没有资金选择按钮（她纠正过：「会说的，所以不用再有要卡片按钮的链路了」）。
+// ---------------------------------------------------------------------------
+
+// 配置层：删掉的那个默认值不许加回来（这是本次改动的根因，用测试锁住）
+test('配置层：**不存在**默认资金走向；只有她明说了才解析得出走向', () => {
+  const flowConfig = require('../src/config/afterSalesFlow');
+  assert.equal('DEFAULT_AFTER_SALES_SETTLEMENT' in flowConfig, false, '钱不能有默认值');
+  assert.equal(resolveAfterSalesSettlement(''), '');
+  assert.equal(resolveAfterSalesSettlement(undefined), '');
+  assert.equal(resolveAfterSalesSettlement('退我现金'), 'cash');
+  // 自然语言里带关键词也算说了；但两族都出现（说法自相矛盾）时返回空 → 大声拦住，不猜
+  assert.equal(resolveAfterSalesSettlement('退我微信'), 'cash');
+  assert.equal(resolveAfterSalesSettlement('钱先给我存着'), 'prepaid');
+  assert.equal(resolveAfterSalesSettlement('现金还是先存着'), '');
+  assert.equal(resolveAfterSalesSettlement('钱先存着'), 'prepaid');
+  // 也没有"为没解析出来而准备的卡片动作"
+  assert.equal(Object.values(AFTER_SALES_CARD_ACTIONS).includes('choose_after_sales_settlement'), false);
+});
+
+test('她说了「钱先存着」→ 结算 = 预存，直接出确认卡片', async () => {
+  const { flow, store, cards, texts } = build();
+  const task = await newTask(store, { original_text: '退那双 1366-33 黑，钱先存着' });
+
+  await flow.handle(task, {
+    intent: 'return', action: 'return', item_no: '1366-33', color: '黑', settlement: 'prepaid',
+  });
+
+  const plan = (await store.get('t_after_sales')).after_sales_plan;
+  assert.equal(plan.settlement, 'prepaid');
+  assert.equal(plan.settlement_explicit, true);
+  assert.equal(plan.requires_settlement, false);
+  assert.equal((await store.get('t_after_sales')).status, AFTER_SALES_TASK_STATUS.CONFIRMING);
+  assert.equal(cards.all.length, 1);
+  assert.match(cardText(cards.all[0]), /钱：存为预存额度/);
+  // 钱这块**没有任何按钮**
+  assert.equal(cardText(cards.all[0]).includes('choose_after_sales_settlement'), false);
+  assert.deepEqual(texts, []);
+});
+
+test('她说了「退我现金」/「退给她 230，微信退」→ 结算 = 收款明细', async () => {
+  for (const [text, spoken] of [
+    ['退那双 1366-33 黑，退我现金', '退我现金'],
+    ['退那双 1366-33 黑，退给她 230，微信退', '微信'],
+    ['退那双 1366-33 黑，退现金', 'cash'],
+  ]) {
+    const { flow, store, cards, texts } = build();
+    const task = await newTask(store, { original_text: text });
+
+    await flow.handle(task, {
+      intent: 'return', action: 'return', item_no: '1366-33', color: '黑',
+      settlement: resolveAfterSalesSettlement(spoken) || spoken,
+    });
+
+    assert.equal((await store.get('t_after_sales')).after_sales_plan.settlement, 'cash', text);
+    assert.match(cardText(cards.all[0]), /钱：退现金/, text);
+    assert.equal(cardText(cards.all[0]).includes('choose_after_sales_settlement'), false);
+    assert.deepEqual(texts, [], text);
+  }
+});
+
+// 这是本组最关键的一条：模型没解析出钱怎么走时，**大声拦住**，绝不猜、绝不写。
+test('⚠️ 没解析出钱怎么走 → 抛明确的错拦住、业务表零写入、不出卡片（不默认现金）', async () => {
+  const { flow, store, cards, texts, base } = build();
+  const task = await newTask(store, { task_id: 't_unparsed', original_text: '退那双 1366-33 黑' });
+
+  await assert.rejects(
+    () => flow.handle(task, { intent: 'return', action: 'return', item_no: '1366-33', color: '黑' }),
+    (error) => {
+      // 报错要说得清"缺什么、她该干什么"，不能是内部字段名
+      assert.match(error.message, /没解析出这次的钱怎么走/);
+      assert.match(error.message, /退现金 \/ 存为预存额度/);
+      assert.match(error.message, /重发一次/);
+      return true;
+    },
+  );
+
+  // 拦住 = 什么都不做：没有卡片、没有业务写入、任务没被改成"待确认"
+  assert.deepEqual(cards.all, [], '不许出确认卡片');
+  assert.deepEqual(base.writes, { create: {}, update: {}, delete: {} }, '业务表必须零写入');
+  assert.deepEqual(texts, [], '不追问、不设计交互，只报错');
+  assert.equal((await store.get('t_unparsed')).after_sales_plan, undefined);
+  assert.equal((await store.get('t_unparsed')).status, 'received');
+});
+
+test('她说了一句和钱自相矛盾的话（"现金还是先存着"）→ 同样拦住，不猜', async () => {
+  const { flow, store, base } = build();
+  const task = await newTask(store, { task_id: 't_contradict', original_text: '退那双 1366-33 黑，现金还是先存着' });
+
+  await assert.rejects(
+    () => flow.handle(task, {
+      intent: 'return', action: 'return', item_no: '1366-33', color: '黑',
+      settlement: resolveAfterSalesSettlement('现金还是先存着'),
+    }),
+    /没解析出这次的钱怎么走/,
+  );
+  assert.deepEqual(base.writes, { create: {}, update: {}, delete: {} });
+});
+
+test('差价 = 0（不动钱）→ 卡片直接写「不动钱」，不用定也不报错', async () => {
+  const calls = [];
+  const { flow, store, cards, texts, cardAction } = build({
+    executor: { execute: async (request) => { calls.push(request); return {}; } },
+  });
+  const task = await newTask(store, { task_id: 't_free', original_text: '退那双 1366-33 黑，不退钱' });
+
+  await flow.handle(task, {
+    intent: 'return', action: 'return', item_no: '1366-33', color: '黑', diff_amount: 0,
+  });
+
+  const plan = (await store.get('t_free')).after_sales_plan;
+  assert.equal(plan.diff_amount, 0);
+  assert.equal(plan.settlement, null);
+  assert.equal(plan.requires_settlement, false);
+  assert.equal(cards.all.length, 1);
+  assert.deepEqual(texts, []);
+  assert.match(cardText(cards.all[0]), /钱：不动钱/);
+  assert.match(cardText(cards.all[0]), /差价：￥0/);
+
+  const toast = await cardAction({ action: 'confirm_after_sales', draft_id: 't_free' });
+  assert.equal(toast.toast.type, 'success');
+  assert.equal(calls.length, 1);
+  // 传给执行器的就是"不动钱"：settlement 空 + 差价 0（执行器按这个口径写"没动钱"）
+  assert.equal(calls[0].settlement, null);
+  assert.equal(calls[0].diffAmount, 0);
+});
+
+test('换货/赔货同理：要补差价而钱没解析出来 → 一样拦住、一样业务表零写入', async () => {
+  for (const [taskId, originalText, parsed, expectedAction] of [
+    ['t_ex_unparsed', '把 6035 黑 38 换成 1366-33 黑 40', {
+      intent: 'exchange', action: 'exchange', item_no: '6035', color: '黑', size: 38,
+      new_item_no: '1366-33', new_color: '黑', new_size: 40,
+    }, 'exchange'],
+    ['t_comp_unparsed', '赔一双 1366-33 黑 40', {
+      intent: 'exchange', action: 'compensation', item_no: '6035', color: '黑', size: 38,
+      new_item_no: '1366-33', new_color: '黑', new_size: 40,
+    }, 'compensation'],
+  ]) {
+    const { flow, store, cards, base, texts } = build();
+    const task = await newTask(store, { task_id: taskId, original_text: originalText });
+
+    await assert.rejects(() => flow.handle(task, parsed), /没解析出这次的钱怎么走/, expectedAction);
+
+    assert.deepEqual(cards.all, [], `${expectedAction} 不许出卡片`);
+    assert.deepEqual(texts, [], `${expectedAction} 不追问`);
+    assert.deepEqual(base.writes, { create: {}, update: {}, delete: {} });
+  }
+});
+
+test('换货她说了钱怎么走 → 照她说的走，换成的那双和差价都在计划里', async () => {
+  const calls = [];
+  const { flow, store, cards, cardAction } = build({
+    executor: { execute: async (request) => { calls.push(request); return {}; } },
+  });
+  const task = await newTask(store, { task_id: 't_ex_cash', original_text: '把 6035 黑 38 换成 1366-33 黑 40，退我现金' });
+  await flow.handle(task, {
+    intent: 'exchange', action: 'exchange', item_no: '6035', color: '黑', size: 38,
+    new_item_no: '1366-33', new_color: '黑', new_size: 40, settlement: 'cash',
+  });
+
+  const plan = (await store.get('t_ex_cash')).after_sales_plan;
+  assert.equal(plan.action, 'exchange');
+  assert.equal(plan.settlement, 'cash');
+  assert.deepEqual(plan.new_lines.map((line) => [line.productId, line.sizeId, line.amount]),
+    [['p2', 'size_40', 300]]);
+  assert.equal(plan.diff_amount, 70);
+  assert.match(cardText(cards.all[0]), /换货（换成 1366-33黑 40码）/);
+  // 她补差价 70：走收款明细那条腿，卡片上说"收现金"
+  assert.match(cardText(cards.all[0]), /钱：收现金/);
+
+  await cardAction({ action: 'confirm_after_sales', draft_id: 't_ex_cash' });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].settlement, 'cash');
+  assert.equal(calls[0].diffAmount, 70);
+});
+
+test('兜底（不该发生）：一份"钱还没定"的方案被点到确认 → 抛错拦住、业务表零写入', async () => {
+  const calls = [];
+  const { flow, store, base, cardAction } = build({
+    executor: { execute: async (request) => { calls.push(request); return {}; } },
+  });
+  const task = await newTask(store, { task_id: 't_inflight', original_text: '退那双 1366-33 黑' });
+  // 正常流程不会这样落库（没解析出钱就在 handle 里抛错了）；这里**故意**造一份在途方案
+  // （历史卡片 / 别处拼出来的），验证确认那一关也拦得住钱。
+  await store.update('t_inflight', {
+    status: AFTER_SALES_TASK_STATUS.CONFIRMING,
+    after_sales_plan: {
+      action: 'return', action_label: '退货',
+      candidate: { record_id: 'd_single', item_no: '1366-33', color: '黑', size: 40, actual_amount: 230 },
+      original_sales_entry_record_id: 'e_single', original_sales_order_no: 'XSD-20261003-0001',
+      original_sales_detail_record_ids: ['d_single'], new_lines: [],
+      settlement: null, requires_settlement: true, diff_amount: -230,
+      restock_state: '门盒', requires_restock_state: true,
+    },
+  });
+
+  await assert.rejects(
+    () => cardAction({ action: 'confirm_after_sales', draft_id: 't_inflight' }),
+    /还没确定钱怎么走/,
+  );
+
+  assert.deepEqual(calls, [], '钱没定不许调执行器');
+  assert.deepEqual(base.writes, { create: {}, update: {}, delete: {} }, '业务表必须零写入');
+  assert.equal((await store.get('t_inflight')).status, AFTER_SALES_TASK_STATUS.CONFIRMING);
 });
 
 // ---------------------------------------------------------------------------
@@ -505,8 +729,10 @@ test('她点取消 → 不调执行器、业务表零写入，只把本地状态
   const { flow, store, cards, cardAction, base } = build({
     executor: { execute: async (request) => { calls.push(request); return {}; } },
   });
-  const task = await newTask(store, { task_id: 't_cancel', original_text: '退那双 1366-33 黑' });
-  await flow.handle(task, { intent: 'return', action: 'return', item_no: '1366-33', color: '黑' });
+  const task = await newTask(store, { task_id: 't_cancel', original_text: '退那双 1366-33 黑，退现金' });
+  await flow.handle(task, {
+    intent: 'return', action: 'return', item_no: '1366-33', color: '黑', settlement: 'cash',
+  });
 
   const toast = await cardAction({ action: 'cancel_after_sales', draft_id: 't_cancel' });
 
@@ -519,8 +745,8 @@ test('她点取消 → 不调执行器、业务表零写入，只把本地状态
 
 test('重复点确认两次 → 执行器只生效一次（第二次走 done 短路，不用再写）', async () => {
   const { flow, store, base, inventory, cardAction } = build();
-  const task = await newTask(store, { task_id: 't_twice', original_text: '退那双 1366-33 黑' });
-  await flow.handle(task, { intent: 'return', action: 'return', item_no: '1366-33', color: '黑' });
+  const task = await newTask(store, { task_id: 't_twice', original_text: '退那双 1366-33 黑，退现金' });
+  await flow.handle(task, { intent: 'return', action: 'return', item_no: '1366-33', color: '黑', settlement: 'cash' });
 
   const first = await cardAction({ action: 'confirm_after_sales', draft_id: 't_twice' });
   const writesAfterFirst = JSON.stringify(base.writes);
@@ -537,8 +763,8 @@ test('重复点确认两次 → 执行器只生效一次（第二次走 done 短
 
 test('本地状态丢了也安全：状态被重置后再点确认 → 执行器总闸门整次跳过，业务表仍只写一次', async () => {
   const { flow, store, base, cardAction } = build();
-  const task = await newTask(store, { task_id: 't_gate', original_text: '退那双 1366-33 黑' });
-  await flow.handle(task, { intent: 'return', action: 'return', item_no: '1366-33', color: '黑' });
+  const task = await newTask(store, { task_id: 't_gate', original_text: '退那双 1366-33 黑，退现金' });
+  await flow.handle(task, { intent: 'return', action: 'return', item_no: '1366-33', color: '黑', settlement: 'cash' });
   await cardAction({ action: 'confirm_after_sales', draft_id: 't_gate' });
   const writesAfterFirst = JSON.stringify(base.writes);
 
@@ -558,8 +784,8 @@ test('执行器失败 → 明确告诉她原因，状态回到待确认可重试
   const { flow, store, cards, cardAction } = build({
     executor: { execute: async () => { throw new Error('原单号对不上：主表记录上是「XSD-OTHER」'); } },
   });
-  const task = await newTask(store, { task_id: 't_fail', original_text: '退那双 1366-33 黑' });
-  await flow.handle(task, { intent: 'return', action: 'return', item_no: '1366-33', color: '黑' });
+  const task = await newTask(store, { task_id: 't_fail', original_text: '退那双 1366-33 黑，退现金' });
+  await flow.handle(task, { intent: 'return', action: 'return', item_no: '1366-33', color: '黑', settlement: 'cash' });
 
   const toast = await cardAction({ action: 'confirm_after_sales', draft_id: 't_fail' });
 
@@ -622,8 +848,10 @@ test('换货缺"新的一双"信息 → 明确问她，不出确认卡片', asyn
 
 test('确认卡片结构：字号走 div+lark_md，按钮走 column_set（一行多列，手机不竖排）', async () => {
   const { flow, store, cards } = build();
-  const task = await newTask(store, { original_text: '退那双 1366-33 黑' });
-  await flow.handle(task, { intent: 'return', action: 'return', item_no: '1366-33', color: '黑' });
+  const task = await newTask(store, { original_text: '退那双 1366-33 黑，退现金' });
+  await flow.handle(task, {
+    intent: 'return', action: 'return', item_no: '1366-33', color: '黑', settlement: 'cash',
+  });
   const card = cards.all[0];
 
   // ① markdown 元素不能设字号：所有 text_size 都必须在 div.text 里
@@ -695,8 +923,10 @@ test('序号越界：说「第 5 笔」但上下文里只有 2 笔 → 如实告
 
 test('不是本人的卡片点不动：别人点确认会被拒绝', async () => {
   const { flow, store, cardAction, base } = build();
-  const task = await newTask(store, { original_text: '退那双 1366-33 黑' });
-  await flow.handle(task, { intent: 'return', action: 'return', item_no: '1366-33', color: '黑' });
+  const task = await newTask(store, { original_text: '退那双 1366-33 黑，退现金' });
+  await flow.handle(task, {
+    intent: 'return', action: 'return', item_no: '1366-33', color: '黑', settlement: 'cash',
+  });
 
   await assert.rejects(() => cardAction({ action: 'confirm_after_sales', draft_id: 't_after_sales' }, 'ou_other'),
     /只能由原始发送人/);

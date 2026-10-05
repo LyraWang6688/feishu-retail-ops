@@ -4,6 +4,8 @@
 //   · markdown 元素不能设字号 → 字号必须走 div + lark_md + text_size
 //   · 一行多个按钮必须走 column_set（flex_mode:none / horizontal_spacing:8px / 每列 weight 1）
 //   · 钱要说人话：退现金 / 存为预存额度 / 补差价 / 不动钱
+//   · 钱怎么走**没有默认值**，而且**不用卡片按钮**（业务负责人纠正：「会说的，所以不用再有
+//     要卡片按钮的链路了」）—— 没解析出钱怎么走时接线层直接抛错拦住，卡片上不许出现资金按钮
 //   · 赔货不回库 → 不给回库按钮
 
 const test = require('node:test');
@@ -109,6 +111,49 @@ test('确认卡片：钱怎么说人话（退现金 / 存预存 / 补差价 / �
   const free = textOf(afterSalesConfirmationCard('t', plan({ settlement: null, diff_amount: 0 })));
   assert.match(free, /钱：不动钱/);
   assert.match(free, /差价：￥0/);
+
+  // 要动钱但钱还没说定：**不能**写成"不动钱"（那会让人以为这笔不动账）
+  const pending = textOf(afterSalesConfirmationCard('t', plan({ settlement: null, requires_settlement: true })));
+  assert.match(pending, /钱：还没定/);
+  assert.equal(pending.includes('钱：不动钱'), false);
+});
+
+// 业务负责人 2026-10-05 的纠正：「会说的，所以不用再有要卡片按钮的链路了」。
+// 这组按钮**整条链路**都不许回来——她说了什么就写什么，她没说就由接线层回一句文字问她。
+test('确认卡片：**没有**资金选择按钮（纠正后不许加回来）', () => {
+  const cases = [
+    ['她没说、要动钱', { settlement: null, requires_settlement: true }],
+    ['她说了退现金', { settlement: 'cash', requires_settlement: false }],
+    ['她说了存预存', { settlement: 'prepaid', requires_settlement: false }],
+    ['差价 0 不动钱', { settlement: null, diff_amount: 0, requires_settlement: false }],
+  ];
+  for (const [label, overrides] of cases) {
+    const card = afterSalesConfirmationCard('t', plan(overrides));
+    assert.deepEqual(
+      buttonsOf(card).filter((button) => button.action === 'choose_after_sales_settlement'), [],
+      `${label}：卡片上不应有资金选择按钮`,
+    );
+    assert.deepEqual(
+      buttonsOf(card).filter((button) => button.extra?.settlement !== undefined), [],
+      `${label}：卡片上不应有任何带 settlement 的按钮`,
+    );
+    // 整张卡片里连这个动作名都不该出现（防止换个写法又溜回来）
+    assert.equal(JSON.stringify(card).includes('choose_after_sales_settlement'), false);
+    assert.equal(JSON.stringify(card).includes('settlement'), false);
+  }
+  // 差价 0 仍然如实写「不动钱」，她说了什么就写什么
+  assert.match(textOf(afterSalesConfirmationCard('t', plan({ settlement: null, diff_amount: 0 }))), /钱：不动钱/);
+  assert.match(textOf(afterSalesConfirmationCard('t', plan({ settlement: 'prepaid' }))), /钱：存为预存额度/);
+});
+
+test('确认卡片：确认 / 取消 / 回库按钮照旧（钱那块不参与）', () => {
+  const card = afterSalesConfirmationCard('t', plan({ settlement: 'cash' }));
+  assert.deepEqual(buttonsOf(card).map((button) => [button.action, button.label]), [
+    ['choose_after_sales_restock', '门盒（已选）'],
+    ['choose_after_sales_restock', '样品'],
+    ['confirm_after_sales', '确认'],
+    ['cancel_after_sales', '取消'],
+  ]);
 });
 
 test('确认卡片：她说了回库状态就按她说的写，不给"默认"字样', () => {

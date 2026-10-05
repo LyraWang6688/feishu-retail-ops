@@ -734,13 +734,27 @@ const afterSalesOriginalLine = (candidate = {}) => [
     : `￥${text(candidate.actual_amount)}`,
 ].join(' · ');
 
+// 「钱怎么走」的两种走法在卡片上的说法（金额行 / 接线层追问的提示语都引用它，
+// 同一件事不要在两处写成两种字）。执行器的编码契约在 config/afterSales.js。
+const afterSalesSettlementLabels = Object.freeze({ cash: '退现金', prepaid: '存为预存额度' });
+const afterSalesSettlementLabel = (settlement) =>
+  afterSalesSettlementLabels[String(settlement ?? '').trim()] || '';
+
 // 「钱怎么走」与「差价多少」分两行写：她说的是"钱先存着"（走哪条腿），
 // 差价是金额事实；合成一行时金额容易被看漏，而这张卡片是要她核对金额的。
+//
+// ⚠️ 差价 ≠ 0 而没有 settlement 时**不能**写「不动钱」：钱确实要动，只是走向没解析出来。
+// 写成"不动钱"会让她以为这一笔不动账，点确认后账上真的少一笔（静默的账目错）。
+// 正常流程下这种卡片根本发不出去（接线层会直接抛错拦住这一笔，见 afterSalesFlowService），
+// 这里只是"万一还有一张在途卡片"时的如实兜底。
 const afterSalesMoneyLine = ({ settlement, diff_amount: diffAmount } = {}) => {
   const diff = Number(diffAmount);
-  if (!settlement || !Number.isFinite(diff) || diff === 0) return '不动钱';
-  if (settlement === 'prepaid') return diff < 0 ? '存为预存额度' : '记入预存（她还欠）';
-  return diff < 0 ? '退现金' : '收现金';
+  if (!Number.isFinite(diff) || diff === 0) return '不动钱';
+  if (!settlement) return '还没定（回我一句：退现金 / 或先存着）';
+  if (settlement === 'prepaid') {
+    return diff < 0 ? afterSalesSettlementLabels.prepaid : '记入预存（她还欠）';
+  }
+  return diff < 0 ? afterSalesSettlementLabels.cash : '收现金';
 };
 
 const afterSalesDiffLine = ({ diff_amount: diffAmount } = {}) => {
@@ -763,12 +777,20 @@ const afterSalesActionLine = (plan = {}) => {
 };
 
 /**
- * 售后确认卡片。内容分四行大字（处理哪一笔 / 动作 / 钱 / 退回的鞋）+ 可选的
- * 回库状态按钮 + 确认/取消按钮。
+ * 售后确认卡片。内容分四行大字（处理哪一笔 / 动作 / 钱 / 退回的鞋）+ 可选的回库状态按钮
+ * + 确认/取消按钮。
  *
  * 回库状态只在动作需要时出现（退货、换货需要；赔货不回库，不给按钮）；
  * 她话里没说时默认值已经填好（默认原状态=门盒），所以**不点也能直接确认**，
  * 按钮只是给她一个"改一下"的出口。
+ *
+ * ⚠️ 钱怎么走与回库状态**规则相反**：钱没有默认值（业务红线），而且**不用卡片按钮**
+ * （业务负责人 2026-10-05 纠正：「会说的，所以不用再有要卡片按钮的链路了」）。
+ *   · 她说了 → 卡片上直接写她说的走向；
+ *   · 差价 = 0（不动钱）→ 写「不动钱」；
+ *   · **没有**"她没说钱"这条交互：她每句话都会说清钱怎么走，真没解析出来时接线层直接
+ *     抛错拦住（不发这张卡片）。
+ *   ⇒ 这张卡片上**没有资金选择按钮**，也不要再为它加任何"追问/选择"的入口。
  */
 const afterSalesConfirmationCard = (taskId, plan = {}) => {
   const elements = [
@@ -884,4 +906,6 @@ module.exports = {
   afterSalesResultCard,
   afterSalesRetryCard,
   afterSalesStatusCard,
+  // 「退现金 / 存为预存额度」这两个说法只有一处定义（接线层回的那句追问也用它）。
+  afterSalesSettlementLabel,
 };

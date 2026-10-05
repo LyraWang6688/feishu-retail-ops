@@ -4,8 +4,9 @@
 //   ① 「她这句话是退 / 换 / 赔哪一种」是**模型输出**与**后端分支**之间的契约。
 //      模型可能回英文、中文、简写（return / 退货 / 退），收敛规则只放一处，
 //      加一种说法不去动 service 里的 if-else（和 config/saleIntents 的做法一致）。
-//   ② 「钱怎么走」「退回来的鞋放哪」同样是契约：默认值（默认原状态=门盒）属于业务口径，
-//      运营改口径只改这里。
+//   ② 「退回来的鞋放哪」是契约，而且**有**业务默认值（默认原状态=门盒），运营改口径只改这里；
+//      「钱怎么走」同样是契约，但**故意没有默认值**——业务红线是"钱不能猜"，
+//      她没说就回一句问她，不替她决定（见下面「钱怎么走」一节的说明）。
 //   ③ 卡片动作名（确认 / 取消 / 选回库状态）是卡片与后端之间的契约，测试要直接引用常量。
 //
 // ⚠️ 执行器自己的契约（动作枚举 AFTER_SALES_ACTIONS、库存行为编码、幂等键）在
@@ -21,6 +22,8 @@ const AFTER_SALES_CARD_ACTIONS = Object.freeze({
   // 退回的鞋放哪儿：她话里没说时，卡片上给按钮让她点（默认原状态）。
   RESTOCK: 'choose_after_sales_restock',
 });
+// ⚠️ 这里**没有**"选资金走向"这个卡片动作：钱怎么走不用卡片按钮（业务负责人 2026-10-05 纠正：
+//   「会说的，所以不用再有要卡片按钮的链路了」）。她没说就**回一句文字问**，她回一句我们照做。
 
 const isAfterSalesCardAction = (action) =>
   Object.values(AFTER_SALES_CARD_ACTIONS).includes(String(action ?? '').trim());
@@ -125,13 +128,53 @@ const AFTER_SALES_SETTLEMENT_ALIASES = Object.freeze({
   存起来: 'prepaid',
 });
 
-const resolveAfterSalesSettlement = (value) =>
-  AFTER_SALES_SETTLEMENT_ALIASES[String(value ?? '').trim().toLowerCase()] || '';
+// 她说的是自然语言，整串未必正好等于表里的词（业务负责人的原话就是「退我现金」）。
+// 所以先查整串别名表，查不到再按关键词收一道——**关键词只用来认出她说了哪种走法，
+// 绝不用来"补"出一个走法**：两族关键词都出现（说法自相矛盾）时返回空，
+// 按"没解析出钱怎么走"大声拦住（见下面），不猜。
+const AFTER_SALES_SETTLEMENT_HINTS = Object.freeze([
+  Object.freeze({ settlement: 'prepaid', words: Object.freeze(['预存', '存着', '存起来', '先存', '存上']) }),
+  Object.freeze({ settlement: 'cash', words: Object.freeze(['现金', '微信', '支付宝']) }),
+]);
 
-// 她**没说**钱怎么走、而这次又要动钱时，默认走「收款明细」（现金/微信那条腿）。
-// 理由：门店绝大多数售后是当场退现金/退微信；预存是少数（她会明说"钱先存着"）。
-// 这只是**建议值**——卡片上会明写，她核对后才会点确认。
-const DEFAULT_AFTER_SALES_SETTLEMENT = 'cash';
+const resolveAfterSalesSettlement = (value) => {
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (!raw) return '';
+  if (AFTER_SALES_SETTLEMENT_ALIASES[raw]) return AFTER_SALES_SETTLEMENT_ALIASES[raw];
+  const matched = AFTER_SALES_SETTLEMENT_HINTS
+    .filter((hint) => hint.words.some((word) => raw.includes(word)))
+    .map((hint) => hint.settlement);
+  return matched.length === 1 ? matched[0] : '';
+};
+
+// ⚠️ 这里**故意没有**「默认资金走向」这个常量。
+//
+// 2026-10-05 删掉了原来的 `DEFAULT_AFTER_SALES_SETTLEMENT = 'cash'`，起因是业务负责人的原话：
+//   「不是啊，退货不是默认现金啊，都有啊！只不过是分为是不是当前退钱还是先预存着而已」
+//
+// 为什么钱不能有默认值：
+//   ① 「退现金」和「存为预存额度」在她店里**都是常规做法**，不存在"绝大多数是现金"这回事。
+//      原来那个默认值等于**系统替她决定钱怎么走**：猜错了就是账目错，而且她在卡片上看到的是
+//      一个"已经定好"的走向，根本看不出这是我们猜的。
+//   ② 钱是这一整条链路里**唯一不可静默**的部分：货、库存写错了还能看出来，钱少了一笔没人会发现。
+//   ③ 所以规则只有两句：
+//        · 她说了（"钱先存着" / "退我现金" / "退了多少、微信还是现金"）→ 按她说的走
+//          （resolveAfterSalesSettlement）；
+//        · 差价 = 0（不动钱）→ 不存在资金走向，卡片上直接写「不动钱」。
+//   ④ 只有"不动钱"才允许留空。执行器（afterSalesService.normalizeRequest）的口径是
+//      「settlement 为空 = 不动钱」——所以接线层**绝不能**把"没解析出钱怎么走"直接透传给
+//      执行器，否则会静默地一分钱都不动。**大声拦住，绝不猜**（见下面⑤）。
+//   ⑤ 万一模型真的没解析出钱怎么走 → 不默认、也不设计任何"兜底/追问"链路，
+//      直接**抛一个明确的错**拦住这一笔（业务表零写入），让她重发一次。
+//
+// 为什么不给卡片按钮、也不做"追问一句"的兜底（2026-10-05 业务负责人的两次纠正）：
+//   · 「会说的，所以不用再有要卡片按钮的链路了」——不要 `[退现金] [存为预存额度]` 那组按钮；
+//   · 「不用啊，你为什么要做兜底呢？……他会说退回了多少钱、退给多少钱、是以微信的形式
+//     还是什么样的一个形式，都会说清楚的。以及说那个钱先留着，这些都会说清楚的呀。
+//     所以，为什么你还要再去做兜底呢？」——**"她没说钱"这个场景不存在**，
+//     所以不为它设计交互（不做追问、不记待回答的计划、不在入口层续接）。
+//   留一个"没解析出来就大声报错"的缺口提示是允许的（否则就是静默漏钱），
+//   但不能因此长出一条新的交互链路——她说的话本来就是唯一输入。
 
 // ---------------------------------------------------------------------------
 // 退回的鞋放哪
@@ -173,7 +216,6 @@ module.exports = {
   resolveAfterSalesAction,
   AFTER_SALES_SETTLEMENT_ALIASES,
   resolveAfterSalesSettlement,
-  DEFAULT_AFTER_SALES_SETTLEMENT,
   DEFAULT_AFTER_SALES_RESTOCK_STATE,
   resolveAfterSalesRestockState,
   afterSalesContextId,
