@@ -132,7 +132,17 @@ class SalesOrderService {
       }
       const detailRecordIds = rows.map((row) => row.recordId);
       const outstandingCents = totalCents - paidCents;
-      const expectedPayments = outstandingCents > 0
+      // 未收款只在**她明说欠**时才补（业务负责人口径：「如果用户说欠多少钱，你再做欠款，
+      // 用户又没说呀」）。owed 是她原话里说出的欠款金额（AI 解析出来的）：
+      //   · 「119 的腰带，是收到了 100 元微信」→ owed 为空 → 这一单成交就是 100，不挂未收款；
+      //   · 「卖了 119，先给 100，还欠 19」    → owed=19 → 补一条未收款 19。
+      // 后端不拿「成交 − 已收」的差额去猜是还价还是欠款：她说欠才算欠。
+      const owedCents = input.owed ? cents(input.owed, '欠款金额') : 0;
+      if (owedCents > 0 && owedCents !== outstandingCents) {
+        // 说出的欠款和「成交 − 已收」对不上：宁可拦下来人工核对，也不静默写一条错账。
+        throw new Error('她说的欠款与「成交金额−已收金额」不一致，请核对后再确认');
+      }
+      const expectedPayments = owedCents > 0
         ? [...payments, { amount: outstandingCents / 100, status: '未收款' }] : payments;
       const paymentRecordIds = await this.payments.recordInitialBatch(salesEntryRecordId, expectedPayments, {
         knownRecordIds: input.knownRecordIds?.payments,

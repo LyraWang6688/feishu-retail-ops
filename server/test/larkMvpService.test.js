@@ -1092,6 +1092,28 @@ test('分类下有多档时，用用户说的金额对到正确那一档', async
   assert.equal(task.draft.items[0].actual_amount, 99);
 });
 
+test('腰带：她说的 119 只用来对档位，成交金额记实收 100（她的真实一单）', async () => {
+  // 解析层已经把「119 的腰带，是收到了 100 元微信」定成
+  // actual_amount=100（她说收到的钱）+ tier_price=119（对档位用的价位）。
+  const { store, cards, service } = accessoryService(beltRows(),
+    { kind: 'accessory', accessory_name: '腰带', quantity: 1, actual_amount: 100, tier_price: 119 });
+  await store.create({ task_id: 'sale_acc_belt_119_paid_100', type: 'sale', status: 'received',
+    message_id: 'om_acc_belt_119_paid_100', sender_open_id: 'ou_1', sent_at: 1000,
+    original_text: '119 的腰带，是收到了 100 元微信' });
+
+  await service.processSalesTask('sale_acc_belt_119_paid_100');
+
+  const task = await store.get('sale_acc_belt_119_paid_100');
+  assert.equal(task.status, 'ready_to_confirm');
+  // 119 那一档在 BELT_TIERS 里排第 5（索引 4）：档位靠 tier_price 对上（100 不是任何一档）。
+  assert.equal(task.draft.items[0].accessory_record_id, 'acc_4');
+  // 成交金额是实收 100，不是 119。
+  assert.equal(task.draft.items[0].actual_amount, 100);
+  assert.deepEqual(task.draft.missing_fields, []);
+  assert.equal(cards.length, 1);
+  assert.match(JSON.stringify(cards[0].card), /腰带/);
+});
+
 test('分类下有多档但金额对不上时不猜，提示有哪几档', async () => {
   const { store, service } = accessoryService(beltRows(),
     { kind: 'accessory', accessory_name: '腰带', quantity: 1, actual_amount: 88 });

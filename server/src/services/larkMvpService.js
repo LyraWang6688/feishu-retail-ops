@@ -876,10 +876,14 @@ class LarkMvpService {
         // 配品先按「种类」找，找不到再退回按名称精确匹配（见 accessoryMatchPolicy）。
         // 为什么不能只按名称精确匹配：表里叫「15元鞋油」，用户说的是「鞋油」，
         // 精确匹配必然失败，于是"配品明明有，系统却说没有"。
-        // 金额一律以用户说的为准（item.actual_amount 原样保留）——配品名称里的价格
-        // 只用来在多档（腰带 9 档）里定位是哪一条记录，绝不写进成交金额。
+        // 用**她说的价位**（tier_price）去对多档（腰带 9 档）里是哪一条记录：
+        // 这个价位只用于定位记录，**不是成交金额**（119 的腰带收了 100，成交就是 100）。
+        // 她说价位时模型放在 tier_price 里；只说了一个数（老形状）时退回 actual_amount，
+        // 后者在解析层已被换成实收，所以优先 tier_price。
         const spoken = String(item.accessory_name || '').trim();
-        const resolved = resolveAccessory({ spoken, amount: item.actual_amount, accessories });
+        const resolved = resolveAccessory({
+          spoken, amount: item.tier_price || item.actual_amount, accessories,
+        });
         if (!resolved.match) {
           missingFields.push(`第${index + 1}件：${resolved.issue}`);
         }
@@ -1190,6 +1194,9 @@ class LarkMvpService {
         operatorOpenId,
         paymentMethod: task.draft.payment_method,
         totalPaid: task.draft.total_paid,
+        // 她明说的欠款金额（没提欠就是空）：入账服务只有拿到它才会补未收款，
+        // 所以这里必须原样透传，不能自己用"成交 − 已收"算一个出来。
+        owed: task.draft.owed,
         payments: (task.draft.payments || []).map((payment) => ({
           amount: payment.amount, method: payment.method, status: payment.status, operatorOpenId,
         })),

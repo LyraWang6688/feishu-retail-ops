@@ -177,9 +177,10 @@ test('a multi-pair line without individual prices stops before creating sale det
 test('deposit creates paid and unpaid receipts; follow-up settles the same receipt without touching stock', async () => {
   const gateway = fake();
   const sales = new SalesOrderService({ gateway, references });
+  // 「尾款以后付 140」＝她明说欠 140，所以 owed 由解析层给到入账层，后端才补那条未收款。
   const posted = await sales.confirm({ salesEntryRecordId: 'order_1',
     items: [{ itemNo: '695887B-5', size: 43, quantity: 1, actualAmount: 240 }],
-    payments: [{ method: '微信', amount: 100 }] });
+    payments: [{ method: '微信', amount: 100 }], owed: 140 });
   const detail = await gateway.get('salesDetail', posted.detailRecordIds[0]);
   assert.equal(detail.fields['履约状态'], '未交付');
   assert.equal(detail.fields['数量'], undefined);
@@ -277,7 +278,9 @@ test('invalid initial receipt cannot silently become unpaid', async () => {
 test('unpaid sale can be delivered once, then later payment does not touch inventory', async () => {
   const gateway = fake();
   const sales = new SalesOrderService({ gateway, references });
-  const posted = await sales.confirm({ salesEntryRecordId: 'order_1', items: [{ itemNo: 'A100', size: 38, quantity: 1, actualAmount: 100 }] });
+  // 「260 元未付」＝她明说欠：owed=100 才补一条未收款（她没说欠就不补，见下面还价那两条）。
+  const posted = await sales.confirm({ salesEntryRecordId: 'order_1',
+    items: [{ itemNo: 'A100', size: 38, quantity: 1, actualAmount: 100 }], owed: 100 });
   assert.equal(gateway.records.get('paymentRecord').length, 1);
   assert.equal(gateway.records.get('paymentRecord')[0].fields['收款状态'], '未收款');
   const calls = [];
@@ -292,6 +295,58 @@ test('unpaid sale can be delivered once, then later payment does not touch inven
     { salesEntryRecordId: 'order_1', method: '微信', amount: 100 });
   assert.equal(gateway.records.get('paymentRecord').length, 1);
   assert.equal(calls.length, 1);
+});
+
+// ─── 未收款只在「她明说欠」时才补，成交金额 = 她说的收款额（业务负责人口径） ───
+
+test('她说了"收了 100"、没说欠：成交即实收，不补未收款，订单直接到已完成', async () => {
+  const gateway = fake();
+  const sales = new SalesOrderService({ gateway, references });
+  // 她的真实一单：119 的腰带，收到了 100 元微信。解析层已经定好成交=100、owed 为空
+  // （119 只是用来对档位的价位，不落库），入账层就该一条未收款都不写。
+  const posted = await sales.confirm({ salesEntryRecordId: 'order_1',
+    items: [{ kind: 'accessory', accessoryRecordId: 'acc_belt', quantity: 1, actualAmount: 100 }],
+    payments: [{ method: '微信', amount: 100 }] });
+
+  const receipts = gateway.records.get('paymentRecord');
+  assert.equal(receipts.length, 1, '说了收了 100 且没说欠，绝不能挂未收款');
+  assert.equal(receipts[0].fields['收款金额'], 100);
+  assert.equal(receipts[0].fields['收款状态'], '已收款');
+  const progress = await new SalesProgressService({ gateway }).forOrder('order_1',
+    { detailRecordIds: posted.detailRecordIds, paymentRecordIds: posted.paymentRecordIds });
+  assert.equal(progress.paymentStatus, '已收款');
+  assert.equal(progress.pendingAmount, 0);
+  // 成交 = 实收 且 交付完成（配品当场已交付）→ 已完成
+  assert.equal(progress.orderStatus, '已完成');
+  assert.equal((await gateway.get('salesEntry', 'order_1')).fields['订单状态'], '已完成');
+});
+
+test('她明说"还欠 19"：补一条未收款 19，订单停在已确认', async () => {
+  const gateway = fake();
+  const sales = new SalesOrderService({ gateway, references });
+  const posted = await sales.confirm({ salesEntryRecordId: 'order_1',
+    items: [{ kind: 'accessory', accessoryRecordId: 'acc_belt', quantity: 1, actualAmount: 119 }],
+    payments: [{ method: '微信', amount: 100 }], owed: 19 });
+
+  const receipts = gateway.records.get('paymentRecord');
+  assert.deepEqual(receipts.map((row) => [row.fields['收款金额'], row.fields['收款状态']]),
+    [[100, '已收款'], [19, '未收款']]);
+  assert.equal(receipts[1].fields['收款时间'], undefined);
+  const progress = await new SalesProgressService({ gateway }).forOrder('order_1',
+    { detailRecordIds: posted.detailRecordIds, paymentRecordIds: posted.paymentRecordIds });
+  assert.equal(progress.pendingAmount, 19);
+  assert.equal(progress.paymentStatus, '部分收款');
+  assert.equal(progress.orderStatus, '已确认');
+});
+
+test('她说的欠款和「成交 − 已收」对不上时拦下来，不静默写一条错账', async () => {
+  const gateway = fake();
+  const sales = new SalesOrderService({ gateway, references });
+  await assert.rejects(sales.confirm({ salesEntryRecordId: 'order_1',
+    items: [{ kind: 'accessory', accessoryRecordId: 'acc_belt', quantity: 1, actualAmount: 100 }],
+    payments: [{ method: '微信', amount: 100 }], owed: 19 }), /欠款与「成交金额−已收金额」不一致/);
+  // 拦下来了就不该写任何收款记录
+  assert.equal(gateway.records.get('paymentRecord'), undefined);
 });
 
 test('confirmed sale delivery writes positive stock movement and removes exactly one door-box unit', async () => {

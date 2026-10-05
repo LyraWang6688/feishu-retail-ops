@@ -23,6 +23,8 @@ const salesParseSnapshot = (result = {}) => ({
     size: item.size,
     quantity: item.quantity,
     actual_amount: item.actual_amount,
+    // 配品的档位价位（只用于对记录，不落库）：出问题时能看出"她说的 119 是档位还是成交金额"。
+    tier_price: item.tier_price,
     gift: item.gift,
     gift_description: String(item.gift_description || '').slice(0, 100),
   })),
@@ -30,6 +32,8 @@ const salesParseSnapshot = (result = {}) => ({
     method: String(payment.method || '').slice(0, 40), amount: payment.amount, status: payment.status,
   })),
   agreed_total: result.agreed_total,
+  // 她明说的欠款：这是"要不要挂未收款"的唯一依据，必须看得见。
+  owed: result.owed,
   total_paid: result.total_paid,
   payment_method: result.payment_method,
   // 售后的几个字段同样记进快照：出问题时能回答"模型到底听成了退货还是换货、
@@ -147,11 +151,16 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
     // 配品（腰带、鞋油、袜子、包等）：没有货号、颜色、尺码，只有名字和金额。
     // 必须在「赠品归并」之前判断，否则一件配品会被当成上一件鞋的赠品。
     if (item.kind === 'accessory' || (!item.item_no && item.accessory_name)) {
+      const spokenAmount = moneyOrEmpty(item.actual_amount);
       items.push({
         kind: 'accessory',
         accessory_name: String(item.accessory_name || item.name || '').trim(),
         quantity: positiveOrEmpty(item.quantity) || 1,
-        actual_amount: moneyOrEmpty(item.actual_amount),
+        // 配品分很多价位（腰带 9 档），她用价位说明是哪一档：这个价位**只用来对记录**。
+        // 模型把它放在 tier_price 或 actual_amount 里都认；成交金额下面会按第 9 条重算，
+        // 所以 tier_price 不落库、也不当成交金额（业务负责人口径）。
+        tier_price: moneyOrEmpty(item.tier_price ?? item.tierPrice) || spokenAmount,
+        actual_amount: spokenAmount,
         gift,
         gift_description: giftDescription,
       });
@@ -183,6 +192,16 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
     amount: moneyOrEmpty(payment.amount), method: String(payment.method || '').trim(),
   }));
   let agreedTotal = moneyOrEmpty(result.agreed_total);
+  // 交易类型由 AI 从原话判断，但只认三种；说不清时按现货处理——
+  // 门店绝大多数是"当场收钱当场交货"，不说不给钱就是现货（不是猜，是业务前提）。
+  // 交付状态不在这里定：它由 SALES_MOVEMENTS 从交易类型推出来。
+  // 这个值在下面「成交金额」的口径里要用，所以提前到这里算。
+  const tradeType = ['现货', '未付', '预付'].includes(result.trade_type) ? result.trade_type : '现货';
+  // 她**明说**的欠款金额（owed）。它是"要不要挂未收款"的唯一依据：
+  // ⚠️ 本系统**没有「打折」这个概念**（业务负责人明确说过）：真实现象只有一种——
+  // 她说收到多少钱，那就是这一单的成交金额；没收到的那部分，只在她说了"欠"时才是未收款。
+  // 所以这里绝不能用「成交 − 已收」的差额去推欠款。
+  let owed = moneyOrEmpty(result.owed ?? result.unpaid);
   if (items.length === 1 && !items[0].actual_amount && agreedTotal) items[0].actual_amount = agreedTotal;
   if (!agreedTotal && items.length && items.every((item) => item.actual_amount)) {
     agreedTotal = Math.round(items.reduce((sum, item) => sum + Number(item.actual_amount), 0) * 100) / 100;
@@ -208,6 +227,33 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
       }
       agreedTotal = expectedTotal;
       items[0].actual_amount = agreedTotal;
+      // 「尾款以后付」= 她明说欠这笔尾款 → 后端据此补一条未收款（见 salesOrderService）。
+      owed = deposit.tailAmount;
+    }
+  }
+  // ── 「成交金额」的确定性口径（业务负责人口径，对应提示词规则 9）────────────────────
+  //   她说了「收到多少钱」、又没说欠款 → 成交金额 = 实收（客户还价：119 的腰带收 100，这单就是 100）；
+  //   她明说「还欠 X」              → 成交金额 = 实收 + 欠款（两个数都是她说的，不做减法猜测）；
+  //   她只说了价格、没说收多少      → 成交金额 = 她说的那个价格（原逻辑，不掺和）。
+  // 只对「整单一条明细」生效：多行时整单收款额没法确定属于哪一行，拆开就变成猜测。
+  // 原话里出现"钱还没给清"的说法时一律不套用上面的还价口径——这时"收到的那笔钱"只是
+  // 定金/首付，把它当成交金额会把应收金额算丢（这条是保守的护栏，不是判断欠款）。
+  const moneyNotSettled = /定金|预付|尾款|余款|剩下的|未付|欠款|还欠|欠着|赊账|下次给|下次再给|先给|先付|先交/
+    .test(String(sourceText || ''));
+  if (items.length === 1) {
+    const coveredCents = Math.round(payments
+      .reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0) * 100);
+    const covered = coveredCents / 100;
+    if (owed) {
+      // 定金单在上面已经按「定金 + 尾款」定过成交金额，这里不覆盖它。
+      const named = Math.round((coveredCents + Math.round(owed * 100))) / 100;
+      if (!items[0].actual_amount || items[0].actual_amount === covered) {
+        items[0].actual_amount = named;
+        agreedTotal = named;
+      }
+    } else if (tradeType === '现货' && !moneyNotSettled && coveredCents > 0) {
+      items[0].actual_amount = covered;
+      agreedTotal = covered;
     }
   }
   const voucherPolicy = applyGroupBuyVoucherPolicy({ sourceText, items, payments, vouchers });
@@ -215,12 +261,11 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
     items.splice(0, items.length, ...voucherPolicy.items);
     payments = voucherPolicy.payments;
     agreedTotal = voucherPolicy.agreedTotal;
+    // 券后成交金额由后端按券种确定性算好（实收 + 平台结算额），没有"她说的欠款"这回事；
+    // 清掉 owed，避免在券单上再挂一条未收款（券 + 未付的组合上面已被明确拒绝）。
+    owed = '';
   }
   const first = items[0] || {};
-  // 交易类型由 AI 从原话判断，但只认三种；说不清时按现货处理——
-  // 门店绝大多数是"当场收钱当场交货"，不说不给钱就是现货（不是猜，是业务前提）。
-  // 交付状态不在这里定：它由 SALES_MOVEMENTS 从交易类型推出来。
-  const tradeType = ['现货', '未付', '预付'].includes(result.trade_type) ? result.trade_type : '现货';
   const normalized = {
     // 意图值统一走注册表收敛（见 config/saleIntents）：模型输出「退货」还是 "return"
     // 都落到同一个规范值；认不出来一律 unsupported，绝不猜成 sale 去写单。
@@ -232,6 +277,8 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
     items,
     payments,
     agreed_total: agreedTotal,
+    // 她明说的欠款（没有就是空）。接线层把它传给入账服务，只有它存在才补未收款。
+    owed,
     total_paid: payments.filter((payment) => payment.status !== '待平台结算')
       .reduce((sum, payment) => sum + Number(payment.amount || 0), 0) || '',
     total_covered: payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0) || '',
@@ -314,7 +361,8 @@ class DoubaoService {
   "trade_type": "现货",
   "items": [{"item_no":"8088-26","color":"棕","size":38,"quantity":1,"actual_amount":230,"gift":false,"gift_description":""}],
   "payments": [{"amount":230,"method":"微信"}],
-  "agreed_total": 230
+  "agreed_total": 230,
+  "owed": ""
 }
 
 规则：
@@ -341,12 +389,26 @@ class DoubaoService {
 6. 多双鞋必须从原话分别提取每件成交金额，actual_amount 是该明细数量对应的成交总额。只给整单金额而未给各件金额时，各件 actual_amount 留空，要求补充；严禁按标价分摊或猜测。
 7. “150元微信，100元现金”必须输出两笔 payments；“260元未付”是 agreed_total=260、payments=[]，不得输出已收款；“定金50元”但未说支付方式时，payments 包含 amount=50、method=""，供用户补充。
 8. “一双”数量为 1；没写数量但语义明确为单件商品时，quantity=1。“赠”“送”后的物品是赠品，不是销售商品数量。赠品必须写进前一件销售商品的 gift=true、gift_description，不得作为新 item。例如“赠袜子一双”写 gift_description="袜子一双"；“赠鞋垫一双”写 gift_description="鞋垫一双"。
-9. 单件商品明确说了总成交金额，可将其作为该件 actual_amount；仅有“定金”不能作为成交金额。多件逐件金额已知时可求和为 agreed_total。标价与自动公式不参与成交金额判断。
+9. 钱只按她说的数记，**绝不自己算差额**：
+   · 成交金额（actual_amount / agreed_total）：
+     - 她说了「收到 / 收了 / 给了」多少钱（微信、现金、支付宝等都算）且**没说欠** → 成交金额 = 她说收到的那笔钱。
+       例：「119 的腰带，是收到了 100 元微信」→ 成交金额 100（客户还价，差额不是欠款，不要输出欠款）。
+     - 她明确说「还欠 / 欠 / 未付 / 尾款以后付」 → 成交金额 = 她说的那个价。
+       例：「卖了 119，先给 100，还欠 19」→ 成交金额 119、payments 只有 100、owed 19。
+     - 她只说了价格、没说收到多少钱 → 成交金额 = 她说的那个价格（原逻辑不变）。
+     - 仅有“定金”不能作为成交金额。多件逐件金额已知时可求和为 agreed_total。标价与自动公式不参与成交金额判断。
+9.1 owed（欠款金额）只在**她明说欠**时才填：
+   她说「还欠 19 / 欠 19 / 未付 260 / 尾款以后付 140」→ owed 填她说的那个欠款金额；
+   整单一分钱没给、只说「未付」时 → owed 填整单金额。
+   她只说「收了 100」而**没有**说欠 → owed 留空，**绝不要**拿「成交金额 − 已收」的差额去填 owed。
 10. 遇到“89.9/89块9抵100”的团购券，只把实际付给门店的微信/现金等放入 payments；券的购买价 89.9 元和抵扣面额 100 元都不是门店已收现金，不要把它们当成 payments。不要猜测平台结算金额，后端会按已配置券种确定性换算。单鞋券后成交金额无法从原话直接确定时可留空，由后端结合实际支付和券种换算。
 11. 配品（不是鞋，没有尺码）：${accessoryNames.length ? accessoryNames.join('、') : '（本租户未配置配品）'}。
-    如果某件是上面列出的配品，输出 {"kind":"accessory","accessory_name":"名称","quantity":1,"actual_amount":金额}，
+    如果某件是上面列出的配品，输出 {"kind":"accessory","accessory_name":"名称","quantity":1,"actual_amount":成交金额}，
     不要填 item_no、color、size。accessory_name 必须与上面列表里的写法**完全一致**，不许改写、简写或自造名称；
     原话里的说法与列表对不上时，accessory_name 照抄原话，由后端判断。
+    配品是**分很多价位**的（如「腰带」有 39/49/79/99/119/128/139/159/189 档），她用价位来说明是哪一档：
+    她说出的那个价位填进 tier_price（如「119 的腰带」→ tier_price=119），它**只用来对档位，不是成交金额**；
+    成交金额仍按第 9 条（她说收了 100 就是 100）。她没说价位时 tier_price 留空。
 13. intent="return" 或 "exchange" 时，除 intent 外只填这些字段（没有的留空，**不要猜、不要自己算**）：
     {"intent":"return","action":"return","ordinal":2,"item_no":"6035","color":"黑","size":39,
      "new_item_no":"","new_color":"","new_size":"","new_amount":"",
