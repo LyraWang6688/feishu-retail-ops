@@ -17,7 +17,8 @@ const { PurchaseWebhookService } = require('./purchaseWebhookService');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
 const { LiveInventoryIndex, buildLiveInventoryIndex } = require('./liveInventoryIndex');
 const { tradeTypeCodeFromLabel, deliveryForTradeType } = require('../config/salesMovements');
-const { isDataNotReady } = require('./salesReadRetry');
+const { isDataNotReady, withSalesReadRetry } = require('./salesReadRetry');
+const { allocateSalesOrderNo } = require('./salesOrderNo');
 const { resolveAccessory } = require('./accessoryMatchPolicy');
 const { salesConfirmationCard, salesStatusCard, todaySalesCard, keepOnlyCardButton } = require('../utils/larkCards');
 const { extractSalesMessageText } = require('../utils/larkMessageText');
@@ -532,6 +533,67 @@ class LarkMvpService {
     return index;
   }
 
+  /**
+   * 读回销售主表里已有的销售单号，交给纯函数算下一个号。
+   *
+   * 只负责「读」：怎么算在 salesOrderNo.js（纯函数，可单测），怎么写在本类里
+   * createSalesEntryWithOrderNo（唯一写入口）。三段分开，是为了让"序号怎么来的"
+   * 能在单测里被穷举，而不是埋在 IO 里。
+   */
+  async listSalesOrderNos() {
+    const field = this.gateway.table?.('salesEntry')?.fields?.orderNo;
+    // 字段映射缺失时读不到号；此时返回空列表，后续写单号会因
+    //「未配置语义字段: orderNo」直接报错，而不是静默写一个空号。
+    if (!field) return [];
+    const records = await withSalesReadRetry(
+      () => this.gateway.listAll('salesEntry'), 'sales_order_no_list',
+    );
+    return records.map((record) => textValue(record.fields?.[field])).filter(Boolean);
+  }
+
+  /**
+   * 创建销售主表记录，并在**同一处**生成 + 写入「销售单号」。
+   *
+   * 为什么集中在这一处：这是全仓库唯一创建销售主表记录的地方（退货/换货不建新单，
+   * 它们沿用原销售单号）。单号只在这里生成一次，规则就不会散成两套；
+   * 以后新增入口也必须走这里，否则又会回到"飞书不生成、代码也不生成"的空号状态。
+   *
+   * 为什么拿了号才建记录、撞号时改自己这条：createSalesEntryWithOrderNo 内部
+   * 由 allocateSalesOrderNo 负责"读→算→写→写后复查"；真撞上并发时它会把号 +1 后
+   * update 回**同一条**记录，不留下第二条记录，也不给退货/换货留下两个同号的"原单"。
+   */
+  async createSalesEntryWithOrderNo(task) {
+    let created = null;
+    const allocation = await allocateSalesOrderNo({
+      readExistingNos: () => this.listSalesOrderNos(),
+      writeOrderNo: async (orderNo) => {
+        if (created) {
+          await this.gateway.update('salesEntry', created.recordId, { orderNo });
+          return;
+        }
+        created = await this.gateway.create('salesEntry', {
+          originalText: task.original_text,
+          sender: person(task.sender_open_id),
+          parseStatus: '解析中',
+          confirmStatus: '待确认',
+          orderNo,
+        });
+      },
+      onCollision: ({ attempt, order_no: orderNo }) =>
+        logWarn('sales.order_no.collision', { task_id: task.task_id, attempt, order_no: orderNo }),
+    });
+    logInfo('sales.order_no.generated', {
+      task_id: task.task_id,
+      sales_entry_record_id: created?.recordId,
+      order_no: allocation.orderNo,
+      sequence: allocation.sequence,
+      // 当天已有单号的条数（只数「日期段 == 今天」的）：排查"这个号从哪来"时看它。
+      today_count: allocation.todayCount,
+      attempts: allocation.attempts,
+    });
+    return created;
+  }
+
   async processSalesTask(taskId) {
     const startedAt = Date.now();
     logInfo('lark.sales.processing.started', { task_id: taskId });
@@ -576,12 +638,7 @@ class LarkMvpService {
     }
 
     await this.ensureIntakeSchema('sales_intake', ['salesEntry']);
-    const created = await this.gateway.create('salesEntry', {
-      originalText: task.original_text,
-      sender: person(task.sender_open_id),
-      parseStatus: '解析中',
-      confirmStatus: '待确认',
-    });
+    const created = await this.createSalesEntryWithOrderNo(task);
     const salesEntryRecordId = created?.recordId;
     if (!salesEntryRecordId) throw new Error('销售主表未返回 record_id');
     await this.store.update(taskId, { sales_entry_record_id: salesEntryRecordId, status: 'parsing' });
