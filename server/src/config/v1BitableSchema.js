@@ -212,11 +212,14 @@ const V1_BITABLE_SCHEMA = {
       fields: {
         batchNoText: '报货批次号', detailId: '明细ID', behavior: '采购行为',
         product: '编号', size: '尺码', quantityDescription: '数量说明', reportedAt: '报单时间', operator: '经办人',
-        // 「合计数量」是产品负责人在表单里自己填的一批报货总双数（number 字段，
-        // 2026-10-05 用 lark-cli +field-list 只读核对过字段名与类型）。
-        // 它是报货「到齐」判据的输入：Σ(每条明细解析出的双数) >= 合计数量 才处理
-        // （见 reportCompletenessPolicy + purchaseWebhookService.handleReportBatch）。
-        totalQuantity: '合计数量',
+        // 「数量」（number）是「采购退货」那种报货的数量来源；「采购申请」格式走
+        // 「尺码 + 数量说明」，这一列是空的。2026-10-05 业务负责人改了字段结构后
+        // 只读核对过：表里有「数量」没有尺码行。
+        quantity: '数量',
+        // ⚠️ 「合计数量」已删除：业务负责人 2026-10-05 把这一列从表里去掉了，
+        // 并明确说「目前核心的字段就不要了，我们现在也不加判断的逻辑」——不再判「到齐」。
+        // 这个映射留着的话，schema 闸门（validateTable 校验字段存在性）会直接判部署失败，
+        // 而且读到的永远是 undefined，会让整批记录永远停在"未处理"。
         status: '处理状态', failureReason: '解析失败原因', request: '关联采购申请',
       },
     },

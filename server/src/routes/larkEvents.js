@@ -117,7 +117,14 @@ const createLarkEventHandlers = (service) => ({
       purchaseIntake.push({ tableId: arrivalTableId, kind: 'arrival', label: '采购到货' });
     }
 
-    // 遍历 action_list，处理每条新增记录
+    // 遍历 action_list：同一张表的多个 record_added 收成**一包**再分派。
+    //
+    // 为什么：一次表单提交会写成同一张表的多条记录，飞书把它们放在同一个
+    // action_list 里推过来。逐条 accept 会让这一批记录各自走一遍处理，
+    // 报货链路就会出 N 张采购申请图。收成一包交给 acceptMany，语义上就是
+    // 「这几条是一起来的」；即便飞书把包拆开，报货链路的批次窗口仍会把
+    // 同批次号的记录归成一批（见 PurchaseWebhookService.handleReportBatch）。
+    const recordsByIntake = new Map();
     for (const actionItem of actionList) {
       const recordId = actionItem?.record_id;
       const action = actionItem?.action;
@@ -140,11 +147,19 @@ const createLarkEventHandlers = (service) => ({
       const intake = purchaseIntake.find((entry) => entry.tableId && entry.tableId === tableId);
       if (!intake) continue;
 
+      if (!recordsByIntake.has(intake.kind)) {
+        recordsByIntake.set(intake.kind, { intake, recordIds: [] });
+      }
+      recordsByIntake.get(intake.kind).recordIds.push(recordId);
+    }
+
+    for (const { intake, recordIds } of recordsByIntake.values()) {
       setImmediate(() => {
         try {
-          service.purchaseWebhooks.accept(intake.kind, recordId).catch((error) => {
+          // acceptMany 对单条与多条都能用：多条 = 同一包一起交给处理逻辑。
+          service.purchaseWebhooks.acceptMany(intake.kind, recordIds).catch((error) => {
             logError(`lark.bitable.${intake.kind}.failed`, {
-              table_id: tableId, record_id: recordId, error: error.message,
+              table_id: tableId, record_ids: recordIds, error: error.message,
             });
           });
         } catch (error) {

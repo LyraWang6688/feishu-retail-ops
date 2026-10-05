@@ -154,13 +154,10 @@ const makeService = (options = {}) => {
     arrivalAbandonWaitMs: options.arrivalAbandonWaitMs,
     arrivalFailAfterMs: options.arrivalFailAfterMs,
     arrivalNoticeMaxCount: options.arrivalNoticeMaxCount,
-    // 报货「未到齐」告警窗口：测试可以压到几十毫秒，验证的是逻辑而不是等 5 分钟。
-    reportAlertDelayMs: options.reportAlertDelayMs,
-    // 重启重建告警会在构造时读一次报单表。生产上必须开（重启不丢告警），
-    // 但单测里这是纯粹的后台噪声，所以默认关掉，只让专门测它的用例打开。
-    enableReportAlertBootstrap: options.enableReportAlertBootstrap ?? false,
-    // 只挂号不装定时器：让用例明确地自己决定"什么时候到点"，避免和异步处理抢时间。
-    disableBatchAlertTimers: options.disableBatchAlertTimers ?? false,
+    // 报货「归批窗口」：生产默认 4000ms（读 REPORT_BATCH_WINDOW_MS），
+    // 单测里压到 20ms —— 验证的是"同一批次号的记录归成一批、窗口到点才处理"，
+    // 而不是真的等 4 秒。需要验证窗口本身的用例会显式传更大的值。
+    reportBatchWindowMs: options.reportBatchWindowMs ?? 20,
   });
   return { service, store, gateway, references, recognizer, inventory, client, images, dir };
 };
@@ -218,14 +215,11 @@ const waitFor = async (label, check, { attempts = 1500, pause = 10 } = {}) => {
   throw new Error(`等待「${label}」超时`);
 };
 
-// ─── 批次「到齐」判据（不再是 30 秒窗口）────────────────────────────────────
+// ─── 报货批次链路的时间等待 ─────────────────────────────────────────────────
 //
-// 30 秒合并窗口已经整体删除：现在的判据是「Σ(每条明细解析出的双数) >= 合计数量」，
-// 到齐就立刻处理、未到齐就什么都不做。所以这些用例**不需要**再靠等待时间对齐——
-// 触发处理的唯一条件是"双数凑够了"，只要在最后一条明细上把「合计数量」写足，
-// 处理就是确定性的。
-//
-// 等待方式也统一改成轮询不变量（waitFor / waitForTask），不用固定 sleep 卡时间。
+// 批次什么时候处理，由「报货批次号 + 短窗口」的归批决定（见下面「归批」一节）；
+// 这些用例一律用轮询不变量（waitFor / waitForTask / waitForBatchPosted）等待，
+// 不用固定 sleep 卡时间。
 
 // ─── 供应商报单链路（免确认 → 按供应商出图 → 发图 → 写回附件）───
 
@@ -255,16 +249,10 @@ const referencesFor = (products) => makeReferences({
 });
 const reportRecord = (recordId, fields) => ({ record_id: recordId, fields: { 处理状态: '待解析', 采购行为: ['beh_1'], 经办人: [{ id: 'ou_user_1' }], ...fields } });
 
-// 带「合计数量」的批次报单：判据的申报值就写在这里。
-const batchReportRecord = (recordId, fields) => {
-  const total = fields['合计数量'];
-  return reportRecord(recordId, { 合计数量: total, ...fields });
-};
-
 // 批次真正完成的不变量：这一批的**所有**报单记录都被推到了终态
 //（处理状态「已生成申请」是 confirmPurchaseRequest 在最后一步写的）。
-// 比"等某个任务的 status"可靠：批次里每条明细各有一个任务，先到的那条合法地停在
-// 「未到齐」，后到的那条才是真正跑完的那条。
+// 比"等某个任务的 status"可靠：批次里每条明细各有一个任务，它们都停在等窗口的
+// 非终态上，只有窗口到点后统一跑完；靠单个任务的 status 会读到中间态。
 const waitForBatchPosted = async (gateway, batchNo) => {
   await waitFor(`批次 ${batchNo} 的记录全部进入「已生成申请」`, async () => {
     const rows = await gateway.listAll('purchaseReport');
@@ -390,8 +378,8 @@ test('同一个供应商的多条明细合并成一张图', async () => {
     client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
     gateway: makeGateway({
       purchaseReport: [
-        batchReportRecord('rep_merge_1', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-MERGE', 合计数量: 3 }),
-        batchReportRecord('rep_merge_2', { 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-MERGE', 合计数量: 3 }),
+        reportRecord('rep_merge_1', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-MERGE'}),
+        reportRecord('rep_merge_2', { 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-MERGE'}),
       ],
       purchaseOrderBatch: [],
       purchaseRequest: [],
@@ -420,8 +408,8 @@ test('多个供应商：每个供应商各出一张图、各发一条说明', as
     client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
     gateway: makeGateway({
       purchaseReport: [
-        batchReportRecord('rep_two_1', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_A'], 报货批次号: 'BATCH-TWO', 合计数量: 3 }),
-        batchReportRecord('rep_two_2', { 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_B'], 报货批次号: 'BATCH-TWO', 合计数量: 3 }),
+        reportRecord('rep_two_1', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_A'], 报货批次号: 'BATCH-TWO'}),
+        reportRecord('rep_two_2', { 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_B'], 报货批次号: 'BATCH-TWO'}),
       ],
       purchaseOrderBatch: [],
       purchaseRequest: [],
@@ -2147,10 +2135,10 @@ test('arrival confirm retries after inventory update failure — continues apply
 
 // ─── 供应商报单批次聚合链路 ───
 
-test('供应商报单带批次号：合计数量到齐就免确认直接生成采购申请（不需要等窗口）', async () => {
+test('供应商报单带批次号：解析完免确认直接生成采购申请（不判「到齐」，也不等 30 秒窗口）', async () => {
   const { service, store, gateway } = makeService({
     gateway: makeGateway({
-      purchaseReport: [batchReportRecord('rep_batch_1', { 尺码: sizeLink(36), 编号: ['prod_1'], 报货批次号: 'BATCH-001', 合计数量: 1 })],
+      purchaseReport: [reportRecord('rep_batch_1', { 尺码: sizeLink(36), 编号: ['prod_1'], 报货批次号: 'BATCH-001'})],
       purchaseOrderBatch: [],
       purchaseRequest: [],
       supplier: SUPPLIERS,
@@ -2159,7 +2147,7 @@ test('供应商报单带批次号：合计数量到齐就免确认直接生成�
   });
   const result = await service.accept('supplier-report', 'rep_batch_1');
   assert.equal(result.accepted, true);
-  const task = await waitForTask(store, result.taskId, ['posted', 'failed']);
+  const task = await waitForProcessed(store, result.taskId);
   assert.equal(task.status, 'posted');
   assert.equal((await gateway.get('purchaseReport', 'rep_batch_1')).fields.处理状态, '已生成申请');
   assert.equal((await gateway.listAll('purchaseRequest')).length, 1);
@@ -2169,8 +2157,8 @@ test('同一个批次的多条报单合成一个批次任务，全部标记已�
   const { service, store, gateway, images } = makeService({
     gateway: makeGateway({
       purchaseReport: [
-        batchReportRecord('rep_c1', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-CONF', 合计数量: 3 }),
-        batchReportRecord('rep_c2', { 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-CONF', 合计数量: 3 }),
+        reportRecord('rep_c1', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-CONF'}),
+        reportRecord('rep_c2', { 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-CONF'}),
       ],
       purchaseOrderBatch: [],
       purchaseRequest: [],
@@ -2180,10 +2168,18 @@ test('同一个批次的多条报单合成一个批次任务，全部标记已�
     recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => (text.includes('36') ? [{ size: 36, quantity: 2 }] : [{ size: 37, quantity: 1 }]) }),
   });
   const first = await service.accept('supplier-report', 'rep_c1');
-  await service.accept('supplier-report', 'rep_c2');
-  const task = await waitForTask(store, first.taskId, ['posted', 'failed']);
+  const second = await service.accept('supplier-report', 'rep_c2');
+  await waitForBatchPosted(gateway, 'BATCH-CONF');
+  // 批次处理者是先开窗口的那条记录的任务（这里谁先跑由调度决定，不假设顺序）：
+  // 用"哪个任务的草稿装配了整批明细"来定位它。
+  let task;
+  await waitFor('批次任务装配好草稿', async () => {
+    const tasks = await Promise.all([store.get(first.taskId), store.get(second.taskId)]);
+    task = tasks.find((item) => Array.isArray(item?.draft?.items) && item.draft.items.length > 0);
+    return Boolean(task);
+  });
   assert.equal(task.status, 'posted');
-  assert.ok(task.draft.is_batch === true);
+  assert.equal(task.draft.is_batch, true);
   assert.equal(task.draft.items.length, 2);
   const requests = await gateway.listAll('purchaseRequest');
   assert.equal(requests.length, 2);
@@ -2195,13 +2191,16 @@ test('同一个批次的多条报单合成一个批次任务，全部标记已�
   assert.equal(images.calls.length, 1, '同一供应商只出一张图');
 });
 
-// ─── 「到齐」判据直接生效：未到齐不处理、到齐才处理、幂等、5 分钟告警 ───
+// ─── 归批：一次表单提交 = 一批（只处理一次、只出一份申请）──────────────────
 //
-// 判据：Σ(每条明细解析出的双数) >= 「合计数量」。
-// 下面每个用例都刻意只用一个批次号 + 明确的合计数量，让"什么时候该处理"完全确定，
-// 不再依赖任何等待窗口。
+// 业务负责人 2026-10-05 删掉了「合计数量」并明确「不加判断的逻辑」——不再判「到齐」。
+// 现在决定"什么时候处理"的是**归批**：
+//   · 首选：webhook 的同一包（同一 action_list 里的多个 record_added 一起交进来）；
+//   · 兜底：飞书拆包时，按「报货批次号」在短窗口内归集，窗口到点处理一次。
+// 所以下面所有用例都不写「合计数量」，窗口压到 20ms（见 makeService）；
+// 需要验证窗口本身的用例显式传更大的值。
 
-// 有些用例要断言"一次写入都没有发生"：给 gateway 加上写调用计数。
+// 有些用例要断言"窗口没到之前一次写入都没有发生"：给 gateway 加上写调用计数。
 // 判定写行为的依据是**有没有调用**（而不是数据长什么样）——后者会被
 // "写入和原值相同"骗过去，前者不会。
 const countGatewayWrites = (gateway) => {
@@ -2213,17 +2212,10 @@ const countGatewayWrites = (gateway) => {
   return writes;
 };
 
-// 未到齐的用例统一用这个：处理是否"什么都没做"的判据是任务停在
-// awaiting_completeness（而不是 posted/failed），并且没有任何写调用。
-const waitForUnprocessed = async (store, taskId) => {
-  await waitFor('任务停在「未到齐」', async () => (await store.get(taskId))?.status === 'awaiting_completeness');
-  return store.get(taskId);
-};
-
-test('到齐（单条就够）：一条明细 1 双 + 合计数量 1 → 生成采购申请并把记录标成已生成申请', async () => {
+test('不再依赖「合计数量」：表里没有这个字段也能正常处理（记录不再是"永远不处理"）', async () => {
   const { service, store, gateway } = makeService({
     gateway: makeGateway({
-      purchaseReport: [batchReportRecord('rep_ready_1', { 尺码: sizeLink(36), 数量说明: '36码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-READY-1', 合计数量: 1 })],
+      purchaseReport: [reportRecord('rep_no_total', { 尺码: sizeLink(36), 数量说明: '36码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-NO-TOTAL' })],
       purchaseOrderBatch: [],
       purchaseRequest: [],
       supplier: SUPPLIERS,
@@ -2231,106 +2223,142 @@ test('到齐（单条就够）：一条明细 1 双 + 合计数量 1 → 生成�
     references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
     recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 1 }] }),
   });
-  const accepted = await service.accept('supplier-report', 'rep_ready_1');
+  // 先钉住前提：字段确实没有（表结构里连映射都不该有）。
+  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseReport.fields.totalQuantity, undefined,
+    '「合计数量」已从表里删除，schema 不应再留映射（否则部署闸门会因字段不存在直接失败）');
+  const accepted = await service.accept('supplier-report', 'rep_no_total');
   const task = await waitForProcessed(store, accepted.taskId);
   assert.equal(task.status, 'posted');
   assert.equal(task.result.status, 'posted');
-  assert.equal(task.result.batch_no, 'BATCH-READY-1');
-  assert.equal((await gateway.listAll('purchaseRequest')).length, 1);
-  assert.equal((await gateway.get('purchaseReport', 'rep_ready_1')).fields.处理状态, '已生成申请');
+  assert.equal((await gateway.listAll('purchaseRequest')).length, 1, '没有「合计数量」也要生成采购申请');
+  assert.equal((await gateway.get('purchaseReport', 'rep_no_total')).fields.处理状态, '已生成申请');
 });
 
-test('到齐（多条累加）：两条明细 2+3 双、合计数量 5 → 两条合成一个批次一次处理', async () => {
-  const { service, store, gateway, images } = makeService({
+test('采购申请一条：编号 + 尺码 + 数量说明 → 正确解析成尺码/数量', async () => {
+  const { service, store, gateway } = makeService({
     gateway: makeGateway({
-      purchaseReport: [
-        batchReportRecord('rep_ready_2a', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-READY-2', 合计数量: 5 }),
-        batchReportRecord('rep_ready_2b', { 尺码: sizeLink(37), 数量说明: '37码3双', 编号: ['prod_1'], 报货批次号: 'BATCH-READY-2', 合计数量: 5 }),
-      ],
+      purchaseReport: [reportRecord('rep_req_1', {
+        尺码: sizeLinks(36, 37), 数量说明: '36码2双，37码3双', 编号: ['prod_1'], 报货批次号: 'BATCH-REQ',
+      })],
       purchaseOrderBatch: [],
       purchaseRequest: [],
       supplier: SUPPLIERS,
     }),
     references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
-    recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => [{ size: text.includes('36') ? 36 : 37, quantity: text.includes('36') ? 2 : 3 }] }),
+    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }, { size: 37, quantity: 3 }] }),
   });
-  const accepted = await Promise.all([
-    service.accept('supplier-report', 'rep_ready_2a'),
-    service.accept('supplier-report', 'rep_ready_2b'),
-  ]);
-  // 两条明细各有一个任务，谁先到不影响判据：先到的那条读到"没到齐"会停下，
-  // 后到的那条看到整批齐了才处理。这里等的是**两个任务都真的跑完**（result 已落盘）——
-  // 「处理状态=已生成申请」在写采购申请那一步就落盘了，之后还要出图、写回附件、落 result，
-  // 所以只等它会在慢机器上读到半成品。
-  const tasks = await waitForProcessed(store, accepted.map((item) => item.taskId));
-  // 真正跑完这一批的是**装配了草稿**的那个任务（它可能是两条里任意一条——
-  // 先到的那条只拿到 2 双，判未到齐就停下了；后到的才凑够 5 双）。
-  const task = tasks.find((item) => Array.isArray(item.draft?.items) && item.draft.items.length > 0);
-  assert.ok(task, `应有任务装配出批次草稿，实际：${JSON.stringify(tasks.map((t) => [t.status, t.result?.status]))}`);
+  const accepted = await service.accept('supplier-report', 'rep_req_1');
+  const task = await waitForProcessed(store, accepted.taskId);
   assert.equal(task.status, 'posted');
-  assert.equal(task.draft.items.length, 2);
-  assert.equal(task.draft.items.reduce((sum, item) => sum + item.quantity, 0), 5);
-  assert.equal((await gateway.listAll('purchaseRequest')).length, 2, '每个尺码一条采购申请');
-  assert.equal((await gateway.get('purchaseReport', 'rep_ready_2a')).fields.处理状态, '已生成申请');
-  assert.equal((await gateway.get('purchaseReport', 'rep_ready_2b')).fields.处理状态, '已生成申请');
+  const requests = await gateway.listAll('purchaseRequest');
+  assert.equal(requests.length, 2, '每个尺码一条采购申请');
+  // 尺码以**关联**写入（不是数字）；数量来自数量说明的解析结果。
+  const bySize = new Map(requests.map((row) => [String(row.fields['尺码']), row.fields['数量']]));
+  assert.deepEqual([...bySize.keys()].sort(), ['size_36', 'size_37']);
+  assert.deepEqual([bySize.get('size_36'), bySize.get('size_37')], [2, 3]);
+});
+
+test('采购退货一条：编号 + 数量（number）→ 正确解析，且不写尺码', async () => {
+  const { service, store, gateway } = makeService({
+    gateway: makeGateway({
+      purchaseReport: [reportRecord('rep_return_1', {
+        编号: ['prod_1'], 数量: 4, 报货批次号: 'BATCH-RETURN', 采购行为: ['beh_return'],
+      })],
+      behavior: [{ record_id: 'beh_return', fields: { 行为名称: '采购退货', 行为编码: 'PURCHASE_RETURN' } }],
+      purchaseOrderBatch: [],
+      purchaseRequest: [],
+      supplier: SUPPLIERS,
+    }),
+    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
+  });
+  const accepted = await service.accept('supplier-report', 'rep_return_1');
+  const task = await waitForProcessed(store, accepted.taskId);
+  assert.equal(task.status, 'posted');
+  const requests = await gateway.listAll('purchaseRequest');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].fields['数量'], 4, '数量取自「数量」字段，不解析「数量说明」');
+  assert.equal(requests[0].fields['尺码'], undefined, '采购退货没有尺码，绝不能凭空补一个');
+  assert.deepEqual(requests[0].fields['采购行为'], ['beh_return'], '行为原样写到采购申请上，供后续区分');
+});
+
+test('一次提交多条（同一包）→ 只处理一次、只出一份申请、只出一张图', async () => {
+  const records = {
+    purchaseReport: [
+      reportRecord('rep_pkg_1', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-PKG' }),
+      reportRecord('rep_pkg_2', { 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-PKG' }),
+      reportRecord('rep_pkg_3', { 尺码: sizeLink(36), 数量说明: '36码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-PKG' }),
+    ],
+    purchaseOrderBatch: [],
+    purchaseRequest: [],
+    supplier: SUPPLIERS,
+  };
+  const { service, gateway, images } = makeService({
+    gateway: makeGateway(records),
+    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
+    recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => [{ size: text.includes('36') ? 36 : 37, quantity: text.includes('36码2') ? 2 : 1 }] }),
+  });
+  // 首选信号：明确把这一包的三条一起交出去（真实入口见 larkEvents 的 acceptMany）。
+  await service.acceptMany('supplier-report', ['rep_pkg_1', 'rep_pkg_2', 'rep_pkg_3']);
+  await waitForBatchPosted(gateway, 'BATCH-PKG');
   await waitForAttachments(gateway, 1);
-  assert.equal(images.calls.length, 1, '同一供应商只出一张图');
+  await waitForIdle(service);
+
+  assert.equal(records.purchaseOrderBatch.length, 1, '一包只建一个报货批次');
+  assert.equal(records.purchaseRequest.length, 3, '三条明细都要写进去（不是 3 份申请）');
+  assert.equal(images.calls.length, 1, '同一供应商只出一张图，绝不是 N 张');
 });
 
-test('一条明细里含多双：3+2=5、只有 2 条明细，也判到齐（判的是双数不是条数）', async () => {
-  const { service, store, gateway } = makeService({
+test('一包里有一条 record_id 不合法：不连累同包其它记录（逐条隔离）', async () => {
+  const { service, gateway } = makeService({
     gateway: makeGateway({
-      purchaseReport: [
-        batchReportRecord('rep_pairs_a', { 尺码: sizeLink(36), 数量说明: '36码3双', 编号: ['prod_1'], 报货批次号: 'BATCH-PAIRS', 合计数量: 5 }),
-        batchReportRecord('rep_pairs_b', { 尺码: sizeLink(37), 数量说明: '37码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-PAIRS', 合计数量: 5 }),
-      ],
+      purchaseReport: [reportRecord('rep_pkg_ok', { 尺码: sizeLink(36), 数量说明: '36码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-PKG-PARTIAL' })],
       purchaseOrderBatch: [],
       purchaseRequest: [],
       supplier: SUPPLIERS,
     }),
     references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
-    recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => [{ size: text.includes('36') ? 36 : 37, quantity: text.includes('36') ? 3 : 2 }] }),
+    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 1 }] }),
   });
-  const accepted = await Promise.all([
-    service.accept('supplier-report', 'rep_pairs_a'),
-    service.accept('supplier-report', 'rep_pairs_b'),
-  ]);
-  const tasks = await waitForProcessed(store, accepted.map((item) => item.taskId));
-  const task = tasks.find((item) => item.result?.status === 'posted');
-  assert.ok(task, `应有一个任务产出批次结果，实际：${JSON.stringify(tasks.map((t) => t.status))}`);
-  assert.equal(task.status, 'posted', '3+2=5 在只有 2 条明细时也算到齐');
-  const quantities = task.draft.items.map((item) => item.quantity).sort();
-  assert.deepEqual(quantities, [2, 3]);
-  // 注意：报单表里其实是一条记录里塞了两个尺码（3 双 + 2 双），判据用的是双数之和。
-  assert.equal(task.result.item_count, 2);
+  const result = await service.acceptMany('supplier-report', ['bad id!', 'rep_pkg_ok']);
+  assert.equal(result.accepted, false);
+  assert.deepEqual(result.failed.map((item) => item.record_id), ['bad id!']);
+  assert.equal(result.records.length, 1, '合法的那条要正常受理');
+  await waitForBatchPosted(gateway, 'BATCH-PKG-PARTIAL');
+  assert.equal((await gateway.listAll('purchaseRequest')).length, 1, '合法的那条照样处理');
 });
 
-test('多报（收到的比申报的多）仍判到齐，不把批次卡死', async () => {
-  const { service, store, gateway } = makeService({
-    gateway: makeGateway({
-      purchaseReport: [
-        batchReportRecord('rep_over_a', { 尺码: sizeLink(36), 数量说明: '36码3双', 编号: ['prod_1'], 报货批次号: 'BATCH-OVER', 合计数量: 5 }),
-        batchReportRecord('rep_over_b', { 尺码: sizeLink(37), 数量说明: '37码4双', 编号: ['prod_1'], 报货批次号: 'BATCH-OVER', 合计数量: 5 }),
-      ],
-      purchaseOrderBatch: [],
-      purchaseRequest: [],
-      supplier: SUPPLIERS,
-    }),
+test('拆包兜底：同一批的记录分两次到达 → 仍算一批，只处理一次', async () => {
+  const records = {
+    purchaseReport: [
+      reportRecord('rep_split_a', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-SPLIT' }),
+      reportRecord('rep_split_b', { 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-SPLIT' }),
+    ],
+    purchaseOrderBatch: [],
+    purchaseRequest: [],
+    supplier: SUPPLIERS,
+  };
+  const { service, gateway, images } = makeService({
+    gateway: makeGateway(records),
     references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
-    recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => [{ size: text.includes('36') ? 36 : 37, quantity: text.includes('36') ? 3 : 4 }] }),
+    recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => [{ size: text.includes('36') ? 36 : 37, quantity: text.includes('36') ? 2 : 1 }] }),
+    // 窗口 300ms：第二条在窗口内到达，两条仍归成一批。
+    reportBatchWindowMs: 300,
   });
-  const accepted = await Promise.all([
-    service.accept('supplier-report', 'rep_over_a'),
-    service.accept('supplier-report', 'rep_over_b'),
-  ]);
-  const tasks = await waitForProcessed(store, accepted.map((item) => item.taskId));
-  assert.ok(tasks.some((item) => item.status === 'posted'), `应有一个任务产出批次结果，实际：${JSON.stringify(tasks.map((t) => t.status))}`);
-  assert.equal((await gateway.get('purchaseReport', 'rep_over_a')).fields.处理状态, '已生成申请');
+  await service.accept('supplier-report', 'rep_split_a');
+  await wait(60); // 模拟飞书把一包拆成两次推送
+  await service.accept('supplier-report', 'rep_split_b');
+  await waitForBatchPosted(gateway, 'BATCH-SPLIT');
+  await waitForAttachments(gateway, 1);
+  await waitForIdle(service);
+
+  assert.equal(records.purchaseOrderBatch.length, 1);
+  assert.equal(records.purchaseRequest.length, 2, '拆包也必须写全两条');
+  assert.equal(images.calls.length, 1, '拆包也只出一张图');
 });
 
-test('未到齐 → 什么都不做：不处理、不写任何表、不改处理状态', async () => {
+test('窗口到点才处理：窗口没到之前一次远端写入都不发生', async () => {
   const gateway = makeGateway({
-    purchaseReport: [batchReportRecord('rep_wait_1', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-WAIT', 合计数量: 5 })],
+    purchaseReport: [reportRecord('rep_window', { 尺码: sizeLink(36), 数量说明: '36码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-WINDOW' })],
     purchaseOrderBatch: [],
     purchaseRequest: [],
     supplier: SUPPLIERS,
@@ -2339,84 +2367,60 @@ test('未到齐 → 什么都不做：不处理、不写任何表、不改处理
   const { service, store } = makeService({
     gateway,
     references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
-    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }] }),
+    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 1 }] }),
+    reportBatchWindowMs: 250,
   });
-  const accepted = await service.accept('supplier-report', 'rep_wait_1');
-  const task = await waitForUnprocessed(store, accepted.taskId);
-  assert.equal(task.status, 'awaiting_completeness');
-  assert.equal(task.result.receivedQuantity, 2);
-  assert.equal(task.result.declaredTotal, 5);
-  assert.equal(task.result.missingQuantity, 3);
-  assert.deepEqual(writes, [], '未到齐不得有任何写入');
-  assert.equal((await gateway.listAll('purchaseRequest')).length, 0, '未到齐不得生成采购申请');
-  assert.equal((await gateway.get('purchaseReport', 'rep_wait_1')).fields.处理状态, '待解析', '未到齐不是失败，处理状态保持不动');
+  const accepted = await service.accept('supplier-report', 'rep_window');
+  // 任务登记进窗口后立刻返回，落在"等窗口"这个非终态上。
+  await waitFor('任务停在等窗口', async () => (await store.get(accepted.taskId))?.status === 'batch_waiting');
+  await wait(80);
+  assert.deepEqual(writes, [], '窗口没到点不得有任何远端写入');
+  assert.equal((await gateway.listAll('purchaseRequest')).length, 0);
+  assert.equal((await gateway.get('purchaseReport', 'rep_window')).fields.处理状态, '待解析', '没处理完之前处理状态不能被改');
+
+  // 窗口到点 → 处理一次，记录进入终态。
+  await waitForBatchPosted(gateway, 'BATCH-WINDOW');
+  assert.equal((await gateway.listAll('purchaseRequest')).length, 1);
 });
 
-test('「合计数量」缺失/非法 → 不崩、不处理（按未到齐等待）', async () => {
-  for (const [label, declared] of [['缺失', undefined], ['零', 0], ['负数', -3], ['非数字文本', 'abc']]) {
-    const gateway = makeGateway({
-      purchaseReport: [reportRecord('rep_bad_total', {
-        尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-BAD',
-        ...(declared === undefined ? {} : { 合计数量: declared }),
-      })],
+test('同一次提交里混着采购申请和采购退货 → 两类明细各自按自己的格式解析', async () => {
+  const { service, store, gateway } = makeService({
+    gateway: makeGateway({
+      purchaseReport: [
+        reportRecord('rep_mix_req', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-MIX', 采购行为: ['beh_req'] }),
+        reportRecord('rep_mix_ret', { 编号: ['prod_1'], 数量: 5, 报货批次号: 'BATCH-MIX', 采购行为: ['beh_return'] }),
+      ],
+      behavior: [
+        { record_id: 'beh_req', fields: { 行为名称: '采购申请', 行为编码: 'PURCHASE_REQUEST' } },
+        { record_id: 'beh_return', fields: { 行为名称: '采购退货', 行为编码: 'PURCHASE_RETURN' } },
+      ],
       purchaseOrderBatch: [],
       purchaseRequest: [],
       supplier: SUPPLIERS,
-    });
-    const writes = countGatewayWrites(gateway);
-    const { service, store } = makeService({
-      gateway,
-      references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
-      recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }] }),
-    });
-    const accepted = await service.accept('supplier-report', 'rep_bad_total');
-    const task = await waitForUnprocessed(store, accepted.taskId);
-    assert.equal(task.status, 'awaiting_completeness', `合计数量${label}时要停下等，不能崩`);
-    assert.equal(task.result.reason, 'no_declared_total', `合计数量${label}要给 no_declared_total`);
-    assert.equal(task.result.complete, false);
-    assert.deepEqual(writes, [], `合计数量${label}时不得有任何写入`);
-    assert.equal((await gateway.get('purchaseReport', 'rep_bad_total')).fields.处理状态, '待解析');
-  }
-});
+    }),
+    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
+    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }] }),
+  });
+  const accepted = await service.acceptMany('supplier-report', ['rep_mix_req', 'rep_mix_ret']);
+  const tasks = await waitForProcessed(store, accepted.records.map((item) => item.taskId));
+  assert.ok(tasks.some((task) => task.status === 'posted'));
 
-test('同批「合计数量」不一致 → 标出来但不卡死，按第一条合法值继续判', async () => {
-  const logs = [];
-  const originalWarn = console.warn;
-  console.warn = (line) => { try { logs.push(JSON.parse(line)); } catch { /* 非 JSON 行不关心 */ } };
-  try {
-    const { service, store, gateway } = makeService({
-      gateway: makeGateway({
-        purchaseReport: [
-          batchReportRecord('rep_inc_a', { 尺码: sizeLink(36), 数量说明: '36码5双', 编号: ['prod_1'], 报货批次号: 'BATCH-INC', 合计数量: 5 }),
-          batchReportRecord('rep_inc_b', { 尺码: sizeLink(37), 数量说明: '37码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-INC', 合计数量: 4 }),
-        ],
-        purchaseOrderBatch: [],
-        purchaseRequest: [],
-        supplier: SUPPLIERS,
-      }),
-      references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
-      recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => [{ size: text.includes('36') ? 36 : 37, quantity: text.includes('36') ? 5 : 2 }] }),
-    });
-    const accepted = await Promise.all([
-      service.accept('supplier-report', 'rep_inc_a'),
-      service.accept('supplier-report', 'rep_inc_b'),
-    ]);
-    const tasks = await waitForSettled(store, accepted.map((item) => item.taskId));
-    // 取第一条合法值 5；收到的 7 双 >= 5，照常处理（不因为数据异常把货卡住）。
-    assert.ok(tasks.some((item) => item.status === 'posted'), '数据异常不该把货卡住');
-    const inconsistent = logs.find((line) => line.event === 'purchase.batch.declared_total_inconsistent');
-    assert.ok(inconsistent, `必须标出同批合计数量不一致，实际日志：${logs.map((line) => line.event).join(',')}`);
-    assert.deepEqual(inconsistent.declared_totals.sort(), [4, 5]);
-  } finally {
-    console.warn = originalWarn;
-  }
+  const requests = await gateway.listAll('purchaseRequest');
+  assert.equal(requests.length, 2, '两条记录各写一条采购申请');
+  const reqRow = requests.find((row) => row.fields['采购行为']?.[0] === 'beh_req');
+  const retRow = requests.find((row) => row.fields['采购行为']?.[0] === 'beh_return');
+  assert.ok(reqRow && retRow, `两条的行为必须各自正确，实际：${JSON.stringify(requests.map((r) => r.fields['采购行为']))}`);
+  assert.equal(reqRow.fields['数量'], 2);
+  assert.deepEqual(reqRow.fields['尺码'], ['size_36']);
+  assert.equal(retRow.fields['数量'], 5);
+  assert.equal(retRow.fields['尺码'], undefined, '退货行不能带尺码');
 });
 
 test('重复投递（同一批的明细 webhook 重投）→ 不重复建单、不重复发图', async () => {
   const records = {
     purchaseReport: [
-      batchReportRecord('rep_dup_batch_a', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-DUP', 合计数量: 3 }),
-      batchReportRecord('rep_dup_batch_b', { 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-DUP', 合计数量: 3 }),
+      reportRecord('rep_dup_batch_a', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-DUP'}),
+      reportRecord('rep_dup_batch_b', { 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-DUP'}),
     ],
     purchaseOrderBatch: [],
     purchaseRequest: [],
@@ -2450,8 +2454,8 @@ test('重复投递（同一批的明细 webhook 重投）→ 不重复建单、�
 test('并发到达（两条明细几乎同时）→ 只处理一次，不重复建单、不重复发图（P0 回归）', async () => {
   const records = {
     purchaseReport: [
-      batchReportRecord('rep_race_batch_a', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-RACE', 合计数量: 3 }),
-      batchReportRecord('rep_race_batch_b', { 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-RACE', 合计数量: 3 }),
+      reportRecord('rep_race_batch_a', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-RACE'}),
+      reportRecord('rep_race_batch_b', { 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-RACE'}),
     ],
     purchaseOrderBatch: [],
     purchaseRequest: [],
@@ -2479,113 +2483,41 @@ test('并发到达（两条明细几乎同时）→ 只处理一次，不重复�
   );
 });
 
-test('5 分钟未到齐 → 只发一条人话告警，处理状态不变', async () => {
+test('「未到齐」告警彻底退场：不判到齐之后不再发任何告警，记录照常处理', async () => {
   const messages = [];
-  const { service, store, gateway } = makeService({
-    client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
-    gateway: makeGateway({
-      purchaseReport: [batchReportRecord('rep_slow', {
-        尺码: sizeLink(36), 数量说明: '36码3双', 编号: ['prod_1'], 报货批次号: 'BATCH-SLOW', 合计数量: 5, 报单时间: Date.now(),
-      })],
-      purchaseOrderBatch: [],
-      purchaseRequest: [],
-      supplier: SUPPLIERS,
-    }),
-    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
-    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 3 }] }),
-    // 5 分钟太久：把告警窗口压到 20ms，验证的是"到点仍未到齐 → 发一条消息"这条逻辑。
-    reportAlertDelayMs: 20,
-  });
-  const accepted = await service.accept('supplier-report', 'rep_slow');
-  await waitForUnprocessed(store, accepted.taskId);
-  await waitFor('未到齐告警发出', async () => messages.length === 1);
-
-  assert.equal(messages[0].data.msg_type, 'text', '告警走纯文字，不发卡片');
-  assert.equal(messages[0].data.receive_id, 'ou_user_1');
-  const text = JSON.parse(messages[0].data.content).text;
-  assert.ok(text.includes('5 双') && text.includes('3 双'), `告警要说清楚申报和实收，实际：${text}`);
-  assert.ok(/是不是还有明细没提交/.test(text), `告警要给下一步动作，实际：${text}`);
-
-  // 只告警、不改状态：处理状态必须原样停在「待解析」。
-  assert.equal((await gateway.get('purchaseReport', 'rep_slow')).fields.处理状态, '待解析');
-  assert.equal((await store.get(accepted.taskId)).status, 'awaiting_completeness');
-  assert.equal((await gateway.listAll('purchaseRequest')).length, 0);
-  // 告警只发一次，不重复轰炸。
-  await wait(50);
-  assert.equal(messages.length, 1, '同一次未到齐只提醒一次');
-});
-
-test('告警到点时刚好补齐 → 不再打扰她（重新读表重算判据）', async () => {
-  const messages = [];
-  const records = {
-    purchaseReport: [batchReportRecord('rep_just_intime', {
-      尺码: sizeLink(36), 数量说明: '36码3双', 编号: ['prod_1'], 报货批次号: 'BATCH-JIT', 合计数量: 5, 报单时间: Date.now(),
-    })],
-    purchaseOrderBatch: [],
-    purchaseRequest: [],
-    supplier: SUPPLIERS,
-  };
-  const { service, store } = makeService({
-    client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
-    gateway: makeGateway(records),
-    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
-    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 3 }] }),
-    reportAlertDelayMs: 20,
-    // 不装定时器：否则 20ms 的闹钟可能抢在下面那行改写之前触发，
-    // 用例就变成"看谁跑得快"，而不是在验证"到点复查"这件事。
-    disableBatchAlertTimers: true,
-  });
-  const accepted = await service.accept('supplier-report', 'rep_just_intime');
-  await waitForUnprocessed(store, accepted.taskId);
-  // 到点前把「合计数量」改成已经满足（模拟"其实早就补齐了"），到点复查应发现已到齐。
-  records.purchaseReport[0].fields.合计数量 = 3;
-  const swept = await service.sweepBatchAlerts(Date.now() + 1000);
-  assert.equal(swept.checked, 1, '到点应该复查这一批');
-  assert.equal(swept.alerted, 0, '到点复查发现已到齐，不该告警');
-  await wait(20);
-  assert.deepEqual(messages, [], '到点复查发现已到齐就不该再发告警');
-  assert.equal((await store.get(accepted.taskId)).status, 'awaiting_completeness', '告警撤掉不改任何状态');
-});
-
-test('重启后告警不丢：从表里的「报单时间」重建未到齐的告警', async () => {
-  const records = {
-    purchaseReport: [batchReportRecord('rep_restart', {
-      尺码: sizeLink(36), 数量说明: '36码3双', 编号: ['prod_1'], 报货批次号: 'BATCH-RESTART', 合计数量: 5,
-      // 报单时间是 10 分钟前：早就过了 5 分钟，重启后必须马上提醒（而不是重新计时）。
-      报单时间: Date.now() - 10 * 60 * 1000,
-    })],
-    purchaseOrderBatch: [],
-    purchaseRequest: [],
-    supplier: SUPPLIERS,
-  };
   const logs = [];
   const originals = { log: console.log, warn: console.warn };
   const push = (line) => { try { logs.push(JSON.parse(line)); } catch { /* 非 JSON 行不关心 */ } };
   console.log = push;
   console.warn = push;
-  let service;
   try {
-    ({ service } = makeService({
-      gateway: makeGateway(records),
+    const { service, store, gateway } = makeService({
+      client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
+      gateway: makeGateway({
+        purchaseReport: [reportRecord('rep_no_alert', {
+          尺码: sizeLink(36), 数量说明: '36码3双', 编号: ['prod_1'], 报货批次号: 'BATCH-NO-ALERT', 报单时间: Date.now(),
+        })],
+        purchaseOrderBatch: [],
+        purchaseRequest: [],
+        supplier: SUPPLIERS,
+      }),
       references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
       recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 3 }] }),
-      reportAlertDelayMs: 5 * 60 * 1000,
-      // 生产上构造函数自己会做这件事（enableReportAlertBootstrap 默认 true）：
-      // 这里打开它，验证的正是「重启后自动重建」，而不是手工调用。
-      enableReportAlertBootstrap: true,
-    }));
-    // 重启后自动挂号：起算点是表里的「报单时间」（10 分钟前），
-    // 所以到点时间应该正好是「报单时间 + 5 分钟」，而不是"重启时刻 + 5 分钟"。
-    await waitFor('重启后自动重建告警', async () => logs.some((line) => line.event === 'purchase.report.alert.bootstrap'));
-    const scheduled = logs.find((line) => line.event === 'purchase.report.alert.scheduled');
-    assert.ok(scheduled, `重建时要重新挂号，实际日志：${logs.map((line) => line.event).join(',')}`);
-    const expectedDueAt = records.purchaseReport[0].fields.报单时间 + 5 * 60 * 1000;
-    assert.equal(Date.parse(scheduled.due_at), expectedDueAt, '到点时间必须由表里的报单时间推出来');
-    // 已经过期：重建后的定时器会立即触发，发出告警（而不是重新等 5 分钟）。
-    await waitFor('重建后的告警发出', async () => logs.some((line) => line.event === 'purchase.report.alert.incomplete'));
-    const alerted = logs.find((line) => line.event === 'purchase.report.alert.incomplete');
-    assert.equal(alerted.batch_no, 'BATCH-RESTART');
-    assert.equal(alerted.sent, true);
+      // 以前这里会压到 20ms 复现"5 分钟未到齐 → 告警"；现在整条告警链路已删除，
+      // 传了也不会有人读它。
+      reportBatchWindowMs: 20,
+    });
+    const accepted = await service.accept('supplier-report', 'rep_no_alert');
+    await waitForProcessed(store, accepted.taskId);
+    // 给她的一定只有出图/说明，不会再有「你说 0 双，我只收到 N 双」那种奇怪告警。
+    const texts = textMessages(messages);
+    assert.ok(!texts.some((text) => /我只收到|是不是还有明细没提交/.test(text)), `不得再发未到齐告警，实际：${JSON.stringify(texts)}`);
+    assert.ok(!logs.some((line) => String(line.event || '').startsWith('purchase.report.alert.')), '告警链路的日志事件也不该再出现');
+    // 告警那套内存结构连同它的方法一起删掉了：留着就意味着"还会有人再挂上去"。
+    assert.equal(service.pendingReportAlerts, undefined);
+    assert.equal(service.sweepBatchAlerts, undefined);
+    assert.equal(service.scheduleBatchAlert, undefined);
+    assert.equal((await gateway.listAll('purchaseRequest')).length, 1, '不告警 ≠ 不处理：该生成的采购申请照常生成');
   } finally {
     console.log = originals.log;
     console.warn = originals.warn;
@@ -2596,7 +2528,7 @@ test('异常 → 不静默丢单：任务落成可重试的 failed，记录处�
   // 让「解析货品」这一步先失败（模型/读表故障的典型长相），再在下一次投递时恢复。
   let failResolve = true;
   const records = {
-    purchaseReport: [batchReportRecord('rep_retry', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-RETRY', 合计数量: 2 })],
+    purchaseReport: [reportRecord('rep_retry', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-RETRY'})],
     purchaseOrderBatch: [],
     purchaseRequest: [],
     supplier: SUPPLIERS,
@@ -2636,9 +2568,9 @@ test('批次早已生成：再到达的新明细不会重复建单，也不会�
   const records = {
     purchaseReport: [
       // 这一批之前已经处理过（记录已是终态）。
-      batchReportRecord('rep_done_a', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-DONE', 合计数量: 3, 处理状态: '已生成申请' }),
+      reportRecord('rep_done_a', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-DONE', 处理状态: '已生成申请' }),
       // 事后才补录进来的一条：它自己不该触发第二次采购申请。
-      batchReportRecord('rep_done_b', { 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-DONE', 合计数量: 3 }),
+      reportRecord('rep_done_b', { 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-DONE'}),
     ],
     purchaseOrderBatch: [],
     purchaseRequest: [],
