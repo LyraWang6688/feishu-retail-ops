@@ -782,7 +782,7 @@ test('today sales menu returns only confirmed detail rows from the Shanghai cale
     product: [{ record_id: 'product_1', fields: { 编号: '8088-26棕' } }],
     salesEntry: [{ record_id: 'order_1', fields: { 销售单号: 'XSD-001', 确认状态: '已入账' } }],
     paymentMethod: [{ record_id: 'method_1', fields: { 收款方式: '微信' } }],
-    paymentRecord: [{ record_id: 'payment_1', fields: { 关联销售单: ['order_1'], 支付方式: ['method_1'], 收款金额: 230 } }],
+    paymentRecord: [{ record_id: 'payment_1', fields: { 关联销售单: ['order_1'], 交易方式: ['method_1'], 收款金额: 230 } }],
   };
   const service = new LarkMvpService({
     client: {},

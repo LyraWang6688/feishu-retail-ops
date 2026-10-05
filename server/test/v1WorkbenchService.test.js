@@ -22,7 +22,7 @@ test('two shoes in one order retain their own receivables and count the receipt 
       { record_id: 'o1', fields: { 销售单号: 'XSD-001', 确认状态: '已入账' } },
       { record_id: 'o2', fields: { 销售单号: 'XSD-002', 确认状态: '已入账' } },
     ],
-    paymentRecord: [{ record_id: 'r1', fields: { 关联销售单: ['o1'], 支付方式: ['m1'], 收款金额: 250 } }],
+    paymentRecord: [{ record_id: 'r1', fields: { 关联销售单: ['o1'], 交易方式: ['m1'], 收款金额: 250 } }],
     paymentMethod: [{ record_id: 'm1', fields: { 收款方式: '现金' } }],
     product: [
       { record_id: 'p1', fields: { 编号: '93827黑' } },
@@ -94,8 +94,8 @@ test('today sales separates platform pending vouchers from received cash', async
     salesDetail: [{ record_id: 'd1', fields: { 销售单号: ['o1'], 数量: 1, 销售日: day, 成交金额: 254.4 } }],
     salesEntry: [{ record_id: 'o1', fields: { 确认状态: '已入账' } }],
     paymentRecord: [
-      { record_id: 'r1', fields: { 关联销售单: ['o1'], 收款金额: 169, 收款状态: '已收款', 支付方式: ['m1'] } },
-      { record_id: 'r2', fields: { 关联销售单: ['o1'], 收款金额: 85.4, 收款状态: '待平台结算', 支付方式: ['m2'] } },
+      { record_id: 'r1', fields: { 关联销售单: ['o1'], 收款金额: 169, 收款状态: '已收款', 交易方式: ['m1'] } },
+      { record_id: 'r2', fields: { 关联销售单: ['o1'], 收款金额: 85.4, 收款状态: '待平台结算', 交易方式: ['m2'] } },
     ],
     paymentMethod: [
       { record_id: 'm1', fields: { 收款方式: '微信' } },
