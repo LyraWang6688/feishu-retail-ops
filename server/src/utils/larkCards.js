@@ -113,14 +113,22 @@ const groupByItemNoAndColor = (items) => {
   }
   return [...byItemNo.entries()]
     .sort((a, b) => compareGroupLabel(a[0], b[0]))
-    .map(([itemNo, byColor]) => ({
-      itemNo,
-      // 只要有一条匹配上货品表，这个货号就算匹配上（未被匹配的标 ⚠️，与旧卡片一致）。
-      matched: [...byColor.values()].flat().some((item) => item.product_record_id),
-      colors: [...byColor.entries()]
-        .sort((a, b) => compareGroupLabel(a[0], b[0]))
-        .map(([color, colorItems]) => ({ color, items: colorItems })),
-    }));
+    .map(([itemNo, byColor]) => {
+      const rows = [...byColor.values()].flat();
+      return {
+        itemNo,
+        // 只要有一条匹配上货品表，这个货号就算匹配上（未被匹配的标 ⚠️，与旧卡片一致）。
+        matched: rows.some((item) => item.product_record_id),
+        // 新品是**货号级**判断（产品负责人 2026-10-05：新品按货号看，不细到颜色）：
+        // 同一货号下只要有一行是新品，这个货号就标一次 🆕，多行不重复标。
+        // 数据直接用明细里早就有的 created_product——匹配阶段就知道货品表里没有这个
+        // 货号+颜色（见 purchaseWebhookService 的 pending_creation），渲染时不额外查库。
+        hasNew: rows.some((item) => item.created_product === true),
+        colors: [...byColor.entries()]
+          .sort((a, b) => compareGroupLabel(a[0], b[0]))
+          .map(([color, colorItems]) => ({ color, items: colorItems })),
+      };
+    });
 };
 
 /**
@@ -162,9 +170,16 @@ const purchaseItemElements = (items, options = {}) => {
       isFirstProduct = false;
 
       // 货号：一级标题（粗体）。
+      //
+      // 🆕 新品标在**货号**上（产品负责人 2026-10-05：新品按货号级别判断，不细到颜色），
+      // 同一货号多行只标一次（hasNew 已经按货号聚合过）。
+      // 新品在发卡片时**还没建档**（建档挪到卡片发出之后，见 purchaseWebhookService.processArrival），
+      // 所以它没有 product_record_id——但它是"待建档"、不是"没匹配上"，仍然给 🏷 而不是 ⚠️：
+      // ⚠️ 只留给"货品表里找不到、也不会入库"的行（那一段在卡片下方单独列）。
+      const marked = product.matched || product.hasNew;
       elements.push({
         tag: 'markdown',
-        content: `**${product.matched ? '🏷' : '⚠️'} ${text(product.itemNo)}**`,
+        content: `**${marked ? '🏷' : '⚠️'} ${text(product.itemNo)}${product.hasNew ? ' · 🆕 新品' : ''}**`,
       });
 
       for (const group of product.colors) {
@@ -564,30 +579,29 @@ const purchaseArrivalDetailCard = (draftId, draft) => {
     });
   }
 
-  // 新品自动建档：货已经到了，建档只是补资料，**不影响入库**，所以先说清楚"已经建好了"，
-  // 再一次性说清还差什么、去哪补，省得她自己去表里翻。
-  const createdProducts = draft.created_products || [];
-  if (createdProducts.length > 0) {
+  // 新品：这里原来有一整段独立的「🆕 这批到货里有 N 个新品」小节——列出每个新品的
+  // 货号+颜色、说颜色表补了哪条、按「缺失信息说明」列还差哪些字段、再附上记录链接。
+  // 产品负责人 2026-10-05 明确把这段收掉了，只留**一句**结论：
+  //   ① 新品已经在明细里按**货号**标了 🆕（见 purchaseItemElements），不用换个说法再说一遍；
+  //   ② 卡片上不写"还差什么字段"——清单是给表看的，写在这里她只会当成待办；
+  //   ③ 记录链接挪到**确认入库之后的结果卡片**（建档在那时才确定完成，链接才是真的能点）。
+  // ⚠️ 别再往这里加回清单/链接/缺口文案：要加东西请先想清楚它属于哪张卡片。
+  //
+  // N 按**货号**数（与明细上的 🆕 同一口径、同一来源 = actual 上的 created_product），
+  // 所以"卡片上标了哪几个货号是新品"和这句话里的数字永远一致。
+  //
+  // 文案是产品负责人的原话口径（「只是说创建好了字段」）：建档在她看到这张卡片后立刻
+  // 在后台执行（见 processArrival 里 sendCard 之后的那一步），所以这里只给结论、不给过程。
+  const newItemNos = [...new Set((draft.actual || [])
+    .filter((item) => item.created_product === true)
+    .map((item) => text(item.item_no || item.product_number || '未知货号')))]
+    .filter(Boolean);
+  if (newItemNos.length > 0) {
     elements.push({ tag: 'hr' });
-    elements.push({ tag: 'markdown', content: `**🆕 这批到货里有 ${createdProducts.length} 个新品，我已经建好基础信息（不影响入库）**` });
     elements.push({
       tag: 'markdown',
-      content: createdProducts.map((item) => `- ${text(item.label)}${item.supplier ? ` · ${text(item.supplier)}` : ''}`).join('\n'),
+      content: `🆕 本批有 ${newItemNos.length} 个新品，已建好基础资料（不影响入库）`,
     });
-    const createdColors = (draft.created_colors || []).filter(Boolean);
-    if (createdColors.length) {
-      elements.push({ tag: 'markdown', content: `颜色表原本没有「${createdColors.map(text).join('、')}」，我给你加了一条。` });
-    }
-    const missingFields = [...new Set(createdProducts.flatMap((item) => item.missing || []))];
-    if (createdProducts.some((item) => item.missing_sample_image)) missingFields.push('样例图');
-    const links = createdProducts.filter((item) => item.url).map((item) => `- ${text(item.label)} ${item.url}`);
-    // 「缺失信息说明」公式刚建完记录时可能还没算出来（读不到值）：那时不敢说"齐备"，
-    // 只说"还没齐、点进去补"。
-    const allReadable = createdProducts.every((item) => item.completeness_readable);
-    const gapLine = missingFields.length
-      ? `还差 ${missingFields.join(' / ')}，点记录去补：`
-      : allReadable ? '资料已经齐了。' : '资料还没齐，点记录去补：';
-    elements.push({ tag: 'markdown', content: links.length ? `${gapLine}\n${links.join('\n')}` : gapLine });
   }
 
   // 未匹配货品
@@ -639,13 +653,60 @@ const purchaseArrivalDetailCard = (draftId, draft) => {
   };
 };
 
-const purchaseStatusCard = (draft, title, message, template = 'blue') => {
+/**
+ * 确认入库**之后**的新品建档结果。产品负责人的口径（2026-10-05）：
+ * 「用户点确认之后，再给到创建好的链接」——所以链接只出现在这张结果卡片上，
+ * 确认卡片上不给（那时还没建档，见 purchaseArrivalDetailCard 的注释）。
+ *
+ * 三种状态都要说话，绝不能静默（她的红线）：
+ *   - 建好了   → 列链接，她点进去补资料
+ *   - 还没跑完 → 说产品负责人定好的那句话（下面按原话照抄，别自己另编措辞）
+ *   - 失败了   → 明说原因，并告诉她可以再点一次确认重试
+ */
+const newProductResultElements = (draft) => {
+  const created = (draft?.created_products || []).filter((item) => item.product_record_id);
+  const pending = Array.isArray(draft?.pending_creation) ? draft.pending_creation : [];
+  if (!created.length && !pending.length) return [];
+  const elements = [{ tag: 'hr' }];
+  // 状态优先级：建档那一步会写 creation_state；老草稿（改动前建的）没有这个字段，
+  // 按"已经建出记录就算完成"兜底，别把有链接的卡片说成"正在建档"。
+  const state = draft?.creation_state || (created.length ? 'done' : 'pending');
+  if (state === 'pending') {
+    // 产品负责人 2026-10-05 定的原话（她说「照抄这句」，别改措辞、别加自己的说法）：
+    elements.push({ tag: 'markdown', content: '正在入库，如有新品，稍后把链接给你' });
+    return elements;
+  }
+  if (state === 'failed') {
+    elements.push({
+      tag: 'markdown',
+      content: `**⚠️ 新品建档没成功：**${text(draft.creation_error || '原因未知')}\n再点一次「确认入库」我就重试。`,
+    });
+  }
+  const itemNoCount = new Set([...created, ...pending].map((item) => text(item.item_no))).size;
+  const links = created.filter((item) => item.url);
+  if (!links.length) {
+    elements.push({ tag: 'markdown', content: `🆕 本批 ${itemNoCount} 个新品已建好基础资料` });
+    return elements;
+  }
+  elements.push({
+    tag: 'markdown',
+    content: `🆕 本批 ${itemNoCount} 个新品已建好，点进去补资料：\n${links
+      .map((item) => `- ${text(item.label || `${item.item_no}${item.color || ''}`)} ${item.url}`)
+      .join('\n')}`,
+  });
+  return elements;
+};
+
+// options.showNewProducts：只有「采购到货确认」之后的结果卡片才带新品建档结果——
+// 别的状态卡（处理中/已取消/采购申请）还没到给链接的时候，别顺手都加上。
+const purchaseStatusCard = (draft, title, message, template = 'blue', options = {}) => {
   const isBatch = draft?.is_batch === true;
   const elements = [];
   if (isBatch && draft?.batch_no) {
     elements.push({ tag: 'markdown', content: `**报货批次号：** ${text(draft.batch_no)}` });
   }
   elements.push(...purchaseItemElements(draft?.items || draft?.actual || [], { skipSupplierGroup: isBatch }));
+  if (options.showNewProducts) elements.push(...newProductResultElements(draft));
   elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: message }] });
   return { config: { wide_screen_mode: true }, header: { template, title: { tag: 'plain_text', content: title } }, elements };
 };

@@ -779,7 +779,8 @@ test('arrival auto-creates the product record for an unknown 货号+颜色 and s
   });
 
   const accepted = await service.accept('arrival', 'arr_new');
-  const task = await waitForTask(store, accepted.taskId);
+  // 建档在发完卡片之后才做：等 result 落盘才是这一批真的跑完了。
+  const task = await waitForProcessed(store, accepted.taskId);
   assert.equal(task.status, 'awaiting_confirmation');
 
   assert.equal(records.product.length, 1, '识别到的新品要自动建一条货品记录');
@@ -807,7 +808,7 @@ test('arrival auto-creates the product record for an unknown 货号+颜色 and s
   assert.equal(inventory.calls.length, 1, '新品也要真的入库');
 });
 
-test('arrival creates a missing color record and tells the user about it', async () => {
+test('到货新品：颜色表缺色时后台补一条；卡片只说「已建好」，不再提颜色和缺口', async () => {
   const messages = [];
   const records = {
     purchaseArrival: [{ record_id: 'arr_newcolor', fields: { 确认状态: '待确认', 识别状态: '待识别', 报货批次号: ['batch_1'], 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
@@ -830,7 +831,8 @@ test('arrival creates a missing color record and tells the user about it', async
   client.im.message.create = async (params) => { messages.push(params); return { code: 0 }; };
 
   const accepted = await service.accept('arrival', 'arr_newcolor');
-  const task = await waitForTask(store, accepted.taskId);
+  // 建档挪到「发完卡片之后」了：等 result 落盘才是"这一批真的跑完了"。
+  const task = await waitForProcessed(store, accepted.taskId);
   assert.equal(task.status, 'awaiting_confirmation');
 
   assert.equal(records.color.length, 1, '颜色表没有的颜色要自动补一条');
@@ -841,9 +843,13 @@ test('arrival creates a missing color record and tells the user about it', async
 
   await waitFor('到货明细卡片发出', async () => cardMessages(messages).length === 1);
   const cardText = JSON.stringify(JSON.parse(cardMessages(messages)[0].data.content).elements);
-  assert.ok(cardText.includes('香芋紫'), '卡片要说明颜色表补了一条');
-  assert.ok(cardText.includes('我给你加了一条'), `卡片文案应说明补颜色，实际：${cardText}`);
-  assert.ok(cardText.includes('新品'), '卡片要把新品单独讲清楚');
+  // 那段独立的「颜色表原本没有…我给你加了一条」按产品负责人要求整段删掉了：
+  // 颜色照建，只是不在这张卡片上提。
+  assert.ok(!cardText.includes('我给你加了一条'), `卡片不该再提补颜色：${cardText}`);
+  assert.ok(!cardText.includes('颜色表原本没有'), `卡片不该再提补颜色：${cardText}`);
+  assert.ok(cardText.includes('新品'), '卡片要把新品标出来');
+  assert.ok(cardText.includes('已建好基础资料'), '卡片只给结论：基础资料已建好');
+  assert.ok(!cardText.includes('还差'), `卡片上不写还差什么：${cardText}`);
 });
 
 test('arrival leaves 供应商 empty when the recognized name is not in the supplier table', async () => {
@@ -866,7 +872,7 @@ test('arrival leaves 供应商 empty when the recognized name is not in the supp
   });
 
   const accepted = await service.accept('arrival', 'arr_nosup');
-  const task = await waitForTask(store, accepted.taskId);
+  const task = await waitForProcessed(store, accepted.taskId);
   assert.equal(task.status, 'awaiting_confirmation', '供应商找不到不能报错');
   assert.equal(records.supplier.length, 0, '不新建供应商');
   assert.equal(records.product[0].fields.供应商, undefined, '找不到就留空，不猜');
@@ -891,7 +897,7 @@ test('arrival leaves 类别 empty when the label has no 男/女 information', as
   });
 
   const accepted = await service.accept('arrival', 'arr_nogender');
-  await waitForTask(store, accepted.taskId);
+  await waitForProcessed(store, accepted.taskId);
   assert.equal(records.product.length, 1);
   assert.equal(records.product[0].fields.类别, undefined, '认不出性别就留空，不能默认成 A');
   assert.equal(records.product[0].fields.成本, undefined, '认不出价格就留空，不能瞎填成本');
@@ -958,7 +964,7 @@ test('真实匹配器：货号在但颜色对不上 → 仍然建档，不做「
   });
 
   const accepted = await service.accept('arrival', 'arr_real_newcolor');
-  const task = await waitForTask(store, accepted.taskId);
+  const task = await waitForProcessed(store, accepted.taskId);
   assert.equal(task.status, 'awaiting_confirmation', '颜色对不上不能报错');
   assert.equal(records.product.length, 2, '货号在、颜色对不上也要新建一条');
   assert.equal(records.product[1].fields.货号, '8088-26');
@@ -1022,7 +1028,7 @@ test('arrival for a known product creates nothing and behaves exactly as before'
   });
 
   const accepted = await service.accept('arrival', 'arr_known');
-  const task = await waitForTask(store, accepted.taskId);
+  const task = await waitForProcessed(store, accepted.taskId);
   assert.equal(task.status, 'awaiting_confirmation');
   assert.equal(records.product.length, 1, '老货品不能建新记录');
   assert.equal(records.color.length, 1, '老货品不能动颜色表');
@@ -1032,7 +1038,7 @@ test('arrival for a known product creates nothing and behaves exactly as before'
   assert.equal(task.draft.actual[0].product_number, '8088灰', '仍然用表里的完整编号');
 });
 
-test('arrival tells the user what a new product still lacks, read from the 缺失信息说明 formula', async () => {
+test('到货新品：缺失字段只落在草稿/日志里，卡片上不写"还差什么"', async () => {
   const messages = [];
   const records = {
     purchaseArrival: [{ record_id: 'arr_gaps', fields: { 确认状态: '待确认', 识别状态: '待识别', 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
@@ -1063,40 +1069,83 @@ test('arrival tells the user what a new product still lacks, read from the 缺�
   client.im.message.create = async (params) => { messages.push(params); return { code: 0 }; };
 
   const accepted = await service.accept('arrival', 'arr_gaps');
-  const task = await waitForTask(store, accepted.taskId);
+  const task = await waitForProcessed(store, accepted.taskId);
+  // 缺口照旧算出来（日志和草稿排查要用），但产品负责人的要求是**不上卡片**。
   assert.deepEqual(task.draft.created_products[0].missing, ['成本', '品类']);
   assert.equal(task.draft.created_products[0].missing_sample_image, true);
   assert.equal(task.draft.created_products[0].completeness_readable, true);
 
   await waitFor('到货明细卡片发出', async () => cardMessages(messages).length === 1);
   const cardText = JSON.stringify(JSON.parse(cardMessages(messages)[0].data.content).elements);
-  assert.ok(cardText.includes('还差 成本 / 品类 / 样例图'), `卡片应列出缺口，实际：${cardText}`);
+  assert.ok(!cardText.includes('还差'), `卡片不能写"还差什么"：${cardText}`);
+  assert.ok(!cardText.includes('点记录去补'), `卡片不能引导她去补字段：${cardText}`);
+  assert.ok(!cardText.includes('成本'), `缺口字段名不该出现在卡片上：${cardText}`);
+  assert.ok(cardText.includes('已建好基础资料'), `卡片只给结论，实际：${cardText}`);
 });
 
-test('re-processing a failed arrival reuses the persisted new product instead of creating a second', async () => {
+test('建档失败可重试：已经建好的那条不重复建，她点确认时补齐剩下的再入库', async () => {
   const records = {
     purchaseArrival: [{ record_id: 'arr_retry_new', fields: { 确认状态: '待确认', 识别状态: '待识别', 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
     purchaseInbound: [],
     product: [],
-    color: [],
+    color: [{ record_id: 'color_black', fields: { 颜色: '黑色' } }],
     supplier: [],
   };
-  // 第一次跑到发「确认卡片」才失败：建档已经写进远端并落盘，任务落 failed，重收 webhook 会重跑。
-  //
-  // 这里必须**只**让卡片（interactive）失败，不能见消息就抛：到货链路现在在识别之前
-  // 还会先发一条「收到到货申请，正在识别图片～」的文字提示（msg_type: 'text'），
-  // 那条提示和确认卡片走的是同一个 `im.message.create`。早先这个桩写成"一律抛错"，
-  // 结果失败点被顶到建档**之前**，这条用例就再也验证不到"复用已建货品"了。
-  // 见下面「收到即提示发失败不能中断到货识别」那条用例，它专门钉住提示与卡片的分工。
-  let failCard = true;
-  const client = makeClient();
-  client.im.message.create = async (params) => {
-    if (failCard && params?.data?.msg_type === 'interactive') throw new Error('模拟卡片发送失败');
-    return { code: 0 };
+  // 第一次建档：第一条成功、第二条失败——模拟"建了一半"。
+  // 成功那条的 record_id 会随任务落盘（arrival_created_products），重试必须复用它。
+  let createCalls = 0;
+  const gateway = makeGateway(records);
+  const innerCreate = gateway.create;
+  gateway.create = async (tableKey, semanticValues) => {
+    if (tableKey === 'product') {
+      createCalls += 1;
+      if (createCalls === 2) throw new Error('模拟第二条建档失败');
+    }
+    return innerCreate(tableKey, semanticValues);
   };
   const { service, store } = makeService({
-    gateway: makeGateway(records),
-    client,
+    gateway,
+    references: makeReferences({
+      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
+    }),
+    recognizer: makeRecognizer({
+      recognizeLabels: async () => [
+        { item_no: '3602', color: '黑色', size: 36, quantity: 1 },
+        { item_no: '3603', color: '黑色', size: 36, quantity: 1 },
+      ],
+    }),
+  });
+
+  const accepted = await service.accept('arrival', 'arr_retry_new');
+  const first = await waitForProcessed(store, accepted.taskId);
+  assert.equal(first.draft.creation_state, 'failed', '有一条没建成功，状态要标失败（不能静默）');
+  assert.match(first.draft.creation_error, /模拟第二条建档失败/, '失败原因要写进草稿给她看');
+  assert.equal(records.product.length, 1, '第一条已经建好了');
+  assert.equal(records.product[0].fields.货号, '3602');
+
+  // 她点确认：先补齐没建好的那条，再入库；已经建好的那条不能变成第二条货品。
+  const result = await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
+  assert.ok(result.toast.content.includes('采购已入库'));
+  assert.equal(records.product.length, 2, '重试只补建缺的那条，不重复建第一条');
+  assert.equal(createCalls, 3, '第一次 2 次（1 次成功 1 次失败）+ 重试 1 次');
+  assert.equal((await gateway.listAll('purchaseInbound')).length, 2, '两条明细都要入库');
+});
+
+test('建档一直失败：明确告诉她原因，且不会假装入库', async () => {
+  const records = {
+    purchaseArrival: [{ record_id: 'arr_create_fail', fields: { 确认状态: '待确认', 识别状态: '待识别', 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
+    purchaseInbound: [],
+    product: [],
+    color: [{ record_id: 'color_black', fields: { 颜色: '黑色' } }],
+    supplier: [],
+  };
+  const gateway = makeGateway(records);
+  gateway.create = async (tableKey, semanticValues) => {
+    if (tableKey === 'product') throw new Error('模拟建档总失败');
+    return makeGateway(records).create(tableKey, semanticValues);
+  };
+  const { service, store } = makeService({
+    gateway,
     references: makeReferences({
       resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
     }),
@@ -1105,19 +1154,26 @@ test('re-processing a failed arrival reuses the persisted new product instead of
     }),
   });
 
-  const first = await service.accept('arrival', 'arr_retry_new');
-  await waitForTask(store, first.taskId, ['failed']);
-  assert.equal(records.product.length, 1, '第一次已经建了一条货品');
-  assert.equal(records.color.length, 1, '第一次已经建了一条颜色');
+  const accepted = await service.accept('arrival', 'arr_create_fail');
+  const task = await waitForProcessed(store, accepted.taskId);
+  assert.equal(task.draft.creation_state, 'failed');
+  assert.match(task.draft.creation_error, /模拟建档总失败/);
 
-  failCard = false;
-  await service.accept('arrival', 'arr_retry_new');
-  const retried = await waitForTask(store, first.taskId, ['awaiting_confirmation']);
-  assert.equal(retried.status, 'awaiting_confirmation');
-  assert.equal(records.product.length, 1, '重试必须复用已落盘的建档记录');
-  assert.equal(records.color.length, 1, '重试不能再建一条颜色');
-  assert.equal(retried.draft.created_products.length, 1, '重试后卡片仍要说明这批有新品');
-  assert.equal(retried.draft.created_products[0].product_record_id, records.product[0].record_id);
+  // 卡片发失败不成立——识别本身是成功的：记录不能停在「识别失败」。
+  assert.notEqual(records.purchaseArrival[0].fields.识别状态, '识别失败');
+
+  await assert.rejects(
+    () => service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1'),
+    /新品建档没成功|模拟建档总失败/,
+    '建档失败必须明确告诉她原因，不能静默',
+  );
+  assert.equal((await gateway.listAll('purchaseInbound')).length, 0, '建不出货品就不能入库，更不能假装入了');
+
+  // 失败可重试：确认失败之后再点一次，仍然是走同一条幂等路径。
+  gateway.create = makeGateway(records).create;
+  const result = await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
+  assert.ok(result.toast.content.includes('采购已入库'), '修好之后点确认要能成功入库');
+  assert.equal(records.product.length, 1);
 });
 
 // 合并 #57（报单免确认 + 出图）时踩到的坑：两条链路各加了一个同名 `sendText`，
@@ -1148,7 +1204,7 @@ test('「收到即提示」发失败不能中断到货识别：货照样识别�
   });
 
   const accepted = await service.accept('arrival', 'arr_notice_fail');
-  const task = await waitForTask(store, accepted.taskId);
+  const task = await waitForProcessed(store, accepted.taskId);
 
   // 提示发不出去，但流程必须照常走完。
   assert.equal(task.status, 'awaiting_confirmation', '提示失败不能让整条到货识别失败');
@@ -2885,7 +2941,7 @@ test('到货单价格即成本：货品「成本」为空时写进去，并在�
     ]),
   });
   const accepted = await service.accept('arrival', 'arr_cost_empty');
-  const task = await waitForTask(store, accepted.taskId);
+  const task = await waitForProcessed(store, accepted.taskId);
   assert.equal(task.status, 'awaiting_confirmation');
   assert.equal(records.product[0].fields.成本, 199, '识别到的单据单价要写进货品成本');
   // 只数卡片：到货链路现在还会先发一条「收到，识别中」的文字提示。
@@ -2909,7 +2965,7 @@ test('到货单价格即成本：货品已有成本时不覆盖，只记一条�
   });
   const { result: task, lines } = await captureWarn(async () => {
     const accepted = await service.accept('arrival', 'arr_cost_kept');
-    return waitForTask(store, accepted.taskId);
+    return waitForProcessed(store, accepted.taskId);
   });
   assert.equal(records.product[0].fields.成本, 100, '已有成本一律不覆盖');
   const warn = lines.find((line) => line.event === 'purchase.arrival.cost_kept');
@@ -2937,7 +2993,7 @@ test('到货单价格即成本：同一货号多行价格不一致时整条不�
   });
   const { lines } = await captureWarn(async () => {
     const accepted = await service.accept('arrival', 'arr_cost_conflict');
-    return waitForTask(store, accepted.taskId);
+    return waitForProcessed(store, accepted.taskId);
   });
   assert.equal('成本' in records.product[0].fields, false, '价格不一致时一个值都不能写');
   const warn = lines.find((line) => line.event === 'purchase.arrival.cost_conflict');
@@ -2948,17 +3004,11 @@ test('到货单价格即成本：同一货号多行价格不一致时整条不�
   assert.equal(lines.filter((line) => line.event === 'purchase.arrival.cost_conflict').length, 1);
 });
 
-test('到货单价格即成本：重试不重复写（第一次已写成功，只是发卡片失败）', async () => {
+test('到货单价格即成本：她点确认时兜底那次不再重复写成本', async () => {
   const records = {
     purchaseArrival: [arrivalDocumentRecord('arr_cost_retry')],
     product: [{ record_id: 'prod_retry', fields: { 编号: '1366-31棕色', 供应商: ['sup_A'] } }],
     supplier: SUPPLIERS,
-  };
-  let failCard = true;
-  const client = makeClient();
-  client.im.message.create = async () => {
-    if (failCard) throw new Error('模拟卡片发送失败');
-    return { code: 0 };
   };
   const gateway = makeGateway(records);
   const costUpdates = [];
@@ -2971,23 +3021,21 @@ test('到货单价格即成本：重试不重复写（第一次已写成功，�
   };
   const { service, store } = makeService({
     gateway,
-    client,
     references: makeReferences({
       resolveProduct: async () => ({ recordId: 'prod_retry', record: records.product[0] }),
     }),
     recognizer: documentRecognizer([{ item_no: '1366-31', color: '棕色', size: 36, quantity: 1, unit_cost: 199 }]),
   });
 
-  const first = await service.accept('arrival', 'arr_cost_retry');
-  await waitForTask(store, first.taskId, ['failed']);
+  const accepted = await service.accept('arrival', 'arr_cost_retry');
+  // 成本现在是在「发完卡片之后」写的，所以要等这一批真正跑完（result 落盘）。
+  await waitForProcessed(store, accepted.taskId);
   assert.equal(costUpdates.length, 1, '第一次要写成本');
   assert.equal(records.product[0].fields.成本, 199);
 
-  failCard = false;
-  await service.accept('arrival', 'arr_cost_retry');
-  const retried = await waitForTask(store, first.taskId, ['awaiting_confirmation']);
-  assert.equal(retried.status, 'awaiting_confirmation');
-  assert.equal(costUpdates.length, 1, '重试不能再写一次成本（写没写靠任务里落盘的 arrival_cost_written 判断）');
+  // 她点确认：建档/成本会兜底再跑一次（幂等），成本不能再写第二遍。
+  await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
+  assert.equal(costUpdates.length, 1, '确认兜底那次不能再写一次成本（写没写靠任务里落盘的 arrival_cost_written 判断）');
   assert.equal(records.product[0].fields.成本, 199);
 });
 
@@ -3013,7 +3061,7 @@ test('到货单价格即成本：写成本失败只记 warn，不挡住到货入
   });
   const { result: task, lines } = await captureWarn(async () => {
     const accepted = await service.accept('arrival', 'arr_cost_write_fail');
-    return waitForTask(store, accepted.taskId);
+    return waitForProcessed(store, accepted.taskId);
   });
   assert.equal(task.status, 'awaiting_confirmation', '货已经到了：成本写不进去不能把整批到货卡住');
   assert.ok(lines.some((line) => line.event === 'purchase.arrival.cost_write_failed'));
@@ -3038,7 +3086,7 @@ test('到货新品建档：顺带把成本一起写进去', async () => {
     ]),
   });
   const accepted = await service.accept('arrival', 'arr_new_with_cost');
-  const task = await waitForTask(store, accepted.taskId);
+  const task = await waitForProcessed(store, accepted.taskId);
   assert.equal(task.status, 'awaiting_confirmation');
   assert.equal(records.product.length, 1, '新品只建一条');
   // 建档一次带齐：货号 / 颜色 / 供应商（识别不到就留空）/ 类别（认不出留空）/ 成本。
@@ -3062,7 +3110,219 @@ test('到货新品建档：单据上没有价格时，建档不带成本字段',
     recognizer: documentRecognizer([{ item_no: '1366-31', color: '棕色', size: 36, quantity: 1 }]),
   });
   const accepted = await service.accept('arrival', 'arr_new_no_cost');
-  await waitForTask(store, accepted.taskId);
+  await waitForProcessed(store, accepted.taskId);
   assert.equal(records.product.length, 1);
   assert.equal('成本' in records.product[0].fields, false, '没有可信价格就不许写成本');
+});
+
+// ─── 顺序：发确认卡片之前不建档、不写成本；发完之后才建档 ───
+//
+// 产品负责人 2026-10-05 的四条决定：「删掉独立的新品段」「新品按货号级标在明细里」
+// 「卡片不写还差什么」「发确认卡片之前不做创建，发完之后同步做，点确认之后再给链接」。
+
+// 卡片上标了 🆕 新品的货号（用来和"实际建了哪几个"对账）。
+const newProductItemNosOnCard = (card) => card.elements
+  .filter((element) => element.tag === 'markdown' && element.content.includes('🆕 新品'))
+  .map((element) => element.content.replace(/^\*\*(?:🏷️?|⚠️?)\s*/u, '').split(' · ')[0]);
+
+test('到货顺序：发确认卡片之前一次货品写入都没有，卡片发出之后才建档、才写成本', async () => {
+  const writes = [];
+  const messages = [];
+  // cardSent 是判据本身：卡片（interactive 消息）发出去之前 afterCard=false，之后 true。
+  let cardSent = false;
+  const records = {
+    purchaseArrival: [arrivalDocumentRecord('arr_order')],
+    purchaseInbound: [],
+    product: [],
+    color: [{ record_id: 'color_black', fields: { 颜色: '黑色' } }],
+    supplier: [],
+  };
+  const gateway = makeGateway(records);
+  const innerCreate = gateway.create;
+  const innerUpdate = gateway.update;
+  gateway.create = async (tableKey, semanticValues) => {
+    writes.push({ op: 'create', table: tableKey, afterCard: cardSent });
+    return innerCreate(tableKey, semanticValues);
+  };
+  gateway.update = async (tableKey, recordId, semanticValues) => {
+    writes.push({ op: 'update', table: tableKey, afterCard: cardSent });
+    return innerUpdate(tableKey, recordId, semanticValues);
+  };
+  const { service, store } = makeService({
+    gateway,
+    client: makeClient({
+      sendMessage: async (params) => {
+        messages.push(params);
+        if (params?.data?.msg_type === 'interactive') cardSent = true;
+        return { code: 0 };
+      },
+    }),
+    references: makeReferences({
+      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
+    }),
+    recognizer: documentRecognizer([
+      { item_no: '1366-31', color: '黑色', size: 36, quantity: 1, unit_cost: 199 },
+    ]),
+  });
+
+  const accepted = await service.accept('arrival', 'arr_order');
+  const task = await waitForProcessed(store, accepted.taskId);
+  assert.equal(task.status, 'awaiting_confirmation');
+
+  const productWrites = writes.filter((item) => item.table === 'product');
+  assert.ok(productWrites.length > 0, '发完卡片之后必须真的建档/写成本（否则这条用例什么都没验到）');
+  assert.deepEqual(productWrites.filter((item) => !item.afterCard), [],
+    '发确认卡片之前一次货品写入都不能有（"发卡片之前不做创建"）');
+  assert.ok(productWrites.every((item) => item.afterCard), '所有货品写入都必须发生在卡片发出之后');
+
+  // 确认卡片上不出现记录链接：链接只给"确认之后"的结果卡片。
+  const card = JSON.parse(cardMessages(messages)[0].data.content);
+  assert.deepEqual(newProductItemNosOnCard(card), ['1366-31'], '新品在明细里按货号标出来');
+  assert.ok(!JSON.stringify(card.elements).includes('record='), '确认卡片上不给记录链接');
+});
+
+test('到货新品：卡片标的新品货号 = 实际建档的货号；建档幂等，链接回填草稿', async () => {
+  const patches = [];
+  const messages = [];
+  const records = {
+    purchaseArrival: [arrivalDocumentRecord('arr_idem_new')],
+    purchaseInbound: [],
+    product: [],
+    color: [{ record_id: 'color_black', fields: { 颜色: '黑色' } }],
+    supplier: [],
+  };
+  const client = makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } });
+  // 结果卡片是 patch 出来的：记下 patch 内容才能断言「确认之后给了链接」。
+  client.im.v1 = { message: { patch: async (params) => { patches.push(params); return { code: 0, msg: 'success' }; } } };
+  const { service, store, gateway } = makeService({
+    client,
+    gateway: makeGateway(records),
+    references: makeReferences({
+      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
+    }),
+    recognizer: documentRecognizer([
+      // 同一货号+颜色两个尺码 + 另一个新货号：建档按 货号+颜色 去重。
+      { item_no: '1366-31', color: '黑色', size: 36, quantity: 1, unit_cost: 199 },
+      { item_no: '1366-31', color: '黑色', size: 37, quantity: 1, unit_cost: 199 },
+      { item_no: '1366-32', color: '黑色', size: 36, quantity: 1 },
+    ]),
+  });
+
+  const accepted = await service.accept('arrival', 'arr_idem_new');
+  const task = await waitForProcessed(store, accepted.taskId);
+
+  const card = JSON.parse(cardMessages(messages)[0].data.content);
+  const markedItemNos = newProductItemNosOnCard(card).sort();
+  const pendingItemNos = [...new Set(task.draft.pending_creation.map((item) => item.item_no))].sort();
+  const createdItemNos = [...new Set(task.draft.created_products.map((item) => item.item_no))].sort();
+  assert.deepEqual(markedItemNos, ['1366-31', '1366-32'], '卡片按货号标新品');
+  assert.deepEqual(pendingItemNos, markedItemNos, '待建档清单必须是卡片上标的那几个货号');
+  assert.deepEqual(createdItemNos, markedItemNos, '实际建档的必须就是卡片上标的那几个货号');
+  assert.equal(records.product.length, 2, '同一货号+颜色的两个尺码只建一条货品，另一个新货号各一条');
+  assert.equal(task.draft.created_products.length, 2);
+  assert.match(task.draft.created_products[0].url, /record=/, '链接要回填到草稿');
+  assert.match(task.draft.created_products[0].url, new RegExp(`record=${records.product[0].record_id}`));
+
+  // 幂等：她点确认时会再跑一次建档（同一条路），不能建出第二条。
+  const again = await service.ensureArrivalProducts(accepted.taskId, { reason: 'test' });
+  assert.equal(again.state, 'done');
+  assert.equal(records.product.length, 2, '重复跑建档不能多建一条');
+
+  await service.handleCardAction(
+    { draft_id: accepted.taskId, action: 'confirm_purchase_arrival' },
+    'ou_1',
+    { context: { open_message_id: 'om_idem_new' } },
+  );
+  const resultCardText = patches.map((params) => params.data.content).join('\n');
+  assert.ok(resultCardText.includes('已入库'), '结果卡片要更新成已入库');
+  for (const record of records.product) {
+    assert.ok(resultCardText.includes(`record=${record.record_id}`),
+      `确认之后的结果卡片要给到创建好的链接：${resultCardText}`);
+  }
+  assert.ok((await gateway.listAll('purchaseInbound')).length === 3, '三个尺码格各自入库');
+});
+
+test('到货取消：不撤销已经建好的新品（保持改动前的口径），取消卡片也不给链接', async () => {
+  const patches = [];
+  const messages = [];
+  const records = {
+    purchaseArrival: [arrivalDocumentRecord('arr_cancel_new')],
+    purchaseInbound: [],
+    product: [],
+    color: [{ record_id: 'color_black', fields: { 颜色: '黑色' } }],
+    supplier: [],
+  };
+  const client = makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } });
+  client.im.v1 = { message: { patch: async (params) => { patches.push(params); return { code: 0, msg: 'success' }; } } };
+  const { service, store } = makeService({
+    client,
+    gateway: makeGateway(records),
+    references: makeReferences({
+      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
+    }),
+    recognizer: documentRecognizer([{ item_no: '1366-31', color: '黑色', size: 36, quantity: 1 }]),
+  });
+
+  const accepted = await service.accept('arrival', 'arr_cancel_new');
+  await waitForProcessed(store, accepted.taskId);
+  assert.equal(records.product.length, 1, '建档在卡片之后已经跑完了');
+
+  await service.handleCardAction(
+    { draft_id: accepted.taskId, action: 'cancel_purchase_arrival' },
+    'ou_1',
+    { context: { open_message_id: 'om_cancel_new' } },
+  );
+  assert.equal(records.product.length, 1, '取消的是"这一批要不要入库"，不是"这个货品存不存在"：不撤销建档');
+  const cancelCard = patches.map((params) => params.data.content).join('\n');
+  assert.ok(cancelCard.includes('已取消'));
+  assert.ok(!cancelCard.includes('record='), '取消卡片不塞新品链接');
+});
+
+test('卡片发送失败：什么都不建档；重收 webhook 之后只建一条（建档不能因为重试变两条）', async () => {
+  const records = {
+    purchaseArrival: [arrivalDocumentRecord('arr_card_fail')],
+    purchaseInbound: [],
+    product: [],
+    color: [{ record_id: 'color_black', fields: { 颜色: '黑色' } }],
+    supplier: [],
+  };
+  // 只让确认卡片（interactive）失败：到货链路在识别之前还会发一条文字提示，
+  // 那条和卡片走同一个 im.message.create——"一律抛错"会把失败点顶到识别之前，验不到这条。
+  let failCard = true;
+  const messages = [];
+  const client = makeClient();
+  client.im.message.create = async (params) => {
+    // 先抛再记：失败的这一次不算"发出去的卡片"，最后断言的是真正送达的条数。
+    if (failCard && params?.data?.msg_type === 'interactive') throw new Error('模拟卡片发送失败');
+    messages.push(params);
+    return { code: 0 };
+  };
+  const { service, store } = makeService({
+    client,
+    gateway: makeGateway(records),
+    references: makeReferences({
+      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
+    }),
+    recognizer: documentRecognizer([{ item_no: '1366-31', color: '黑色', size: 36, quantity: 1 }]),
+  });
+
+  const first = await service.accept('arrival', 'arr_card_fail');
+  await waitForTask(store, first.taskId, ['failed']);
+  assert.equal(records.product.length, 0, '卡片都没发出去，就不该有建档动作（"发完之后才建"）');
+
+  failCard = false;
+  await service.accept('arrival', 'arr_card_fail');
+  // ⚠️ 不能用 waitForProcessed：第一次失败留下的 status='failed' 会让它立刻返回（那是旧的终态）。
+  // 这里等的是"这次重试真的跑完"——状态回到待确认 + 建档状态落成 done。
+  await waitForTask(store, first.taskId, ['awaiting_confirmation']);
+  await waitFor('重试后建档跑完', async () => {
+    const task = await store.get(first.taskId);
+    return task?.draft?.creation_state === 'done' && task.draft.created_products?.length === 1;
+  });
+  const retried = await store.get(first.taskId);
+  assert.equal(retried.status, 'awaiting_confirmation');
+  assert.equal(records.product.length, 1, '重试之后只建一条货品');
+  assert.equal(retried.draft.created_products.length, 1);
+  assert.equal(retried.draft.creation_state, 'done');
+  assert.equal(cardMessages(messages).length, 1, '重试把确认卡片补发了（第一次那条失败了）');
 });

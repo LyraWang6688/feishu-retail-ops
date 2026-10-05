@@ -4,6 +4,7 @@ const {
   salesConfirmationCard,
   purchaseRequestConfirmationCard,
   purchaseArrivalDetailCard,
+  purchaseStatusCard,
   sampleReplacementCard,
   keepOnlyCardButton,
 } = require('../src/utils/larkCards');
@@ -394,4 +395,110 @@ test('采购申请确认卡片：供应商分组保留，供应商内也是 货�
     '货号:A1', '颜色:黑', '尺码:40,41',
     '货号:B1', '颜色:白', '尺码:38',
   ]);
+});
+
+// —— 采购到货：新品（货号级）与「发完卡片之后才建档」的卡片约定 ——
+//
+// 产品负责人 2026-10-05 的四条决定：删掉独立的新品段 / 新品按**货号级**标在明细里 /
+// 卡片上不写"还差什么字段" / 建档挪到发完卡片之后（链接只给确认之后的结果卡片）。
+
+test('到货明细卡片：不再有独立的「🆕 有 N 个新品」那段（清单/颜色/缺口/链接一律不出现）', () => {
+  const card = purchaseArrivalDetailCard('draft_new_section', {
+    batch_no: 'BATCH-1',
+    actual: [{ item_no: '6035', color: '黑', size: 36, quantity: 1, created_product: true }],
+    // 把旧那段要用的字段全部塞进来：卡片必须一个都不显示（这是删段的回归护栏）。
+    created_products: [{
+      product_record_id: 'rec_1',
+      item_no: '6035',
+      color: '黑',
+      label: '6035黑',
+      supplier: '一代千金',
+      color_created: true,
+      missing: ['成本'],
+      missing_sample_image: true,
+      completeness_readable: true,
+      url: 'https://example.feishu.cn/base/app_token?table=tbl_1&record=rec_1',
+    }],
+    created_colors: ['香芋紫'],
+  });
+  const cardText = JSON.stringify(card.elements);
+  for (const gone of [
+    '还差', '点记录去补', '资料已经齐了', '颜色表原本没有', '我给你加了一条',
+    '香芋紫', '一代千金', 'record=rec_1',
+  ]) {
+    assert.ok(!cardText.includes(gone), `独立新品段已整体删除，不该再出现「${gone}」：${cardText}`);
+  }
+  assert.ok(cardText.includes('已建好基础资料'), `只留一句「已建好」的结论：${cardText}`);
+});
+
+test('到货明细卡片：新品按货号级标一次（多行/多颜色不重复），颜色级不标', () => {
+  const card = purchaseArrivalDetailCard('draft_new_item', {
+    batch_no: 'BATCH-1',
+    actual: [
+      // 同一货号：两个颜色、三个尺码，全部是新品 → 只在货号标题上标一次。
+      { item_no: '6035', color: '黑', size: 36, quantity: 1, created_product: true },
+      { item_no: '6035', color: '黑', size: 37, quantity: 1, created_product: true },
+      { item_no: '6035', color: '白', size: 36, quantity: 1, created_product: true },
+      // 该货号只有一行是新品（另一行已匹配上老货品）→ 货号照标一次。
+      { item_no: '6036', color: '灰', size: 36, quantity: 1, product_record_id: 'prod_6036' },
+      { item_no: '6036', color: '黑', size: 36, quantity: 1, created_product: true },
+      // 老货品不带 🆕。
+      { item_no: '8088', color: '灰', size: 36, quantity: 1, product_record_id: 'prod_8088' },
+    ],
+  });
+  const lines = markdownLines(card);
+  // 只取货号标题上的标记：那句「🆕 本批有 N 个新品…」是 ③ 的结论句，不属于"标题重复标"。
+  const marked = lines.filter((line) => line.includes('🆕 新品'));
+  assert.deepEqual(marked, ['**🏷 6035 · 🆕 新品**', '**🏷 6036 · 🆕 新品**'],
+    `🆕 是货号级判断，一个货号只标一次：${JSON.stringify(marked)}`);
+  // 新品在发卡片时还没建档（没有 product_record_id），但它不是"没匹配上"，仍然用 🏷 而不是 ⚠️。
+  assert.ok(!marked.some((line) => line.includes('⚠️')), '待建档的新品不是"未匹配"，不能标 ⚠️');
+  assert.ok(lines.includes('**🏷 8088**'), '老货品不带 🆕');
+  // 颜色行只有颜色本身，不夹带新品标记。
+  const colors = lines.filter((line) => line.startsWith('▸ '));
+  assert.ok(colors.length > 0);
+  assert.ok(colors.every((line) => !line.includes('🆕')), '新品不细到颜色：颜色级不能标 🆕');
+});
+
+test('到货结果卡片：确认之后给创建好的链接；正在建档/建档失败都要说话', () => {
+  const created = [{
+    product_record_id: 'rec_1',
+    item_no: '6035',
+    color: '黑',
+    label: '6035黑',
+    url: 'https://example.feishu.cn/base/app_token?table=tbl_1&record=rec_1',
+  }];
+  const done = purchaseStatusCard(
+    { actual: [], created_products: created, creation_state: 'done' },
+    '采购到货已入库', '入库完成，库存已更新。', 'green', { showNewProducts: true },
+  );
+  const doneText = JSON.stringify(done.elements);
+  assert.ok(doneText.includes('record=rec_1'), `结果卡片要给到创建好的链接：${doneText}`);
+  assert.ok(doneText.includes('已建好'), `结果卡片要说清已建好：${doneText}`);
+
+  const pending = purchaseStatusCard(
+    { actual: [], created_products: [], pending_creation: [{ item_no: '6035', color: '黑' }], creation_state: 'pending' },
+    '采购到货已入库', '入库完成，库存已更新。', 'green', { showNewProducts: true },
+  );
+  // 产品负责人定死的原话（照抄，别改措辞）。
+  assert.ok(JSON.stringify(pending.elements).includes('正在入库，如有新品，稍后把链接给你'),
+    '还没跑完要按她定的那句话明说，不能静默');
+
+  const failed = purchaseStatusCard(
+    {
+      actual: [], created_products: [], pending_creation: [{ item_no: '6035', color: '黑' }],
+      creation_state: 'failed', creation_error: '模拟建档失败',
+    },
+    '采购到货未完成', '已停止自动处理：模拟建档失败', 'red', { showNewProducts: true },
+  );
+  const failedText = JSON.stringify(failed.elements);
+  assert.ok(failedText.includes('模拟建档失败'), `建档失败要告诉她原因：${failedText}`);
+  assert.ok(failedText.includes('再点一次'), '要告诉她可以重试，不能卡死');
+
+  // 其他状态卡片（处理中/已取消/采购申请）没到给链接的时候，不能夹带新品块。
+  const plain = purchaseStatusCard(
+    { actual: [], created_products: created, creation_state: 'done' },
+    '采购到货已取消', '用户已取消本次采购到货。', 'grey',
+  );
+  assert.ok(!JSON.stringify(plain.elements).includes('record=rec_1'), '没开开关的状态卡不给链接');
 });
