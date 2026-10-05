@@ -1048,7 +1048,7 @@ class LarkMvpService {
     // 根本没有草稿，也没有草稿状态机，落在下面那套逻辑里一定抛「卡片缺少草稿 ID」。
     // 动作名用 larkCards 里那一个常量，卡片和分派不会各写一份而慢慢写歪。
     if (action === SECOND_DELIVERY_ACTION) {
-      return this.handleSecondDeliveryAction(value, operatorOpenId);
+      return this.handleSecondDeliveryAction(value, operatorOpenId, event);
     }
     if (!draftId) throw new Error('卡片缺少草稿 ID');
     // 售后卡片：确认 / 取消 / 选回库状态。和销售草稿共用同一个串行队列
@@ -1063,16 +1063,20 @@ class LarkMvpService {
   /**
    * 「成交」：已入账的未付 / 预付单收尾（补收款 + 交付）。
    *
-   * 这里只做两件事：把按钮带上来的「销售单号 + 收款方式」转给编排服务，
-   * 以及把结果说成她能看懂的一句话。写账、扣库存全在 SecondDeliveryService 里，
-   * 本类不碰——那两件事都必须只有一处实现。
+   * 这里只做三件事：把按钮带上来的「销售单号 + 收款方式」转给编排服务，
+   * 把"点的是哪条群消息、哪天的卡"一起带下去（成交成功后要把那张卡的这一单变灰，
+   * 见 SecondDeliveryService.markCardSettled），以及把结果说成她能看懂的一句话。
+   * 写账、扣库存全在 SecondDeliveryService 里，本类不碰——那两件事都必须只有一处实现。
    */
-  async handleSecondDeliveryAction(value, operatorOpenId) {
+  async handleSecondDeliveryAction(value, operatorOpenId, event = {}) {
     const result = await this.secondDelivery.confirm({
       salesEntryRecordId: value?.sales_entry_record_id,
       // 收款方式由按钮带上来的，缺了会让补收款明确报错，不在这里兜一个默认值。
       method: value?.method,
       operatorOpenId,
+      // 卡片回调事件里的消息 id = 被点的那张卡；reminder_day 是发卡时写进按钮取值的。
+      cardMessageId: event?.context?.open_message_id || event?.open_message_id || '',
+      reminderDay: value?.reminder_day || '',
     });
     if (result.alreadyCompleted) {
       return { toast: { type: 'info', content: '这一单已经成交，无需重复处理' } };
