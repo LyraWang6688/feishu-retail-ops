@@ -14,14 +14,18 @@ const doubaoService = require('./doubaoService');
 // 卡片本身仍留在 utils/larkCards 并且 handleCardAction 仍能处理它——
 // 线上已经发出去的老卡片要能点得动，将来要回滚也只需要把 publishPurchaseRequest 换回发卡片。
 const { purchaseArrivalDetailCard, purchaseStatusCard } = require('../utils/larkCards');
-const { InventoryService } = require('./inventoryService');
+const { InventoryService, MOVEMENT_PURCHASE_DECREASE } = require('./inventoryService');
 const { buildPurchaseQuantities } = require('./purchaseQuantityPolicy');
-// 「采购行为」分流：采购申请（尺码 + 数量说明）/ 采购退货（数量，无尺码）。
+// 「采购行为」分流：采购申请（尺码 + 数量说明）还是采购退货（数量，无尺码）。
+// 退货要走完全不同的一条链路（直接扣库存 + 出退货单，不经到货/入库），
+// 所以必须在解析之前认出来。
 const { REPORT_BEHAVIOR, classifyReportBehavior } = require('./purchaseReportBehaviorPolicy');
+// 归批窗口：#81 用「按报货批次号开的短窗口」取代了旧的「到齐」判据，
+// reportCompletenessPolicy（Σ双数 >= 合计数量）已随 #81 整体删除。
 const { resolveReportBatchWindowMs } = require('../config/reportBatchWindow');
 const { buildArrivalCostPlan, isBlankCost, costValueOf } = require('./arrivalCostPolicy');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
-const { renderPurchaseRequestPng } = require('./purchaseRequestImageService');
+const { renderPurchaseRequestPng, RETURN_TITLE } = require('./purchaseRequestImageService');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { IDEMPOTENCY_KEY_FIELD, createOnceByKey } = require('../infrastructure/idempotencyKey');
 const { logError, logInfo, logWarn } = require('../utils/logger');
@@ -119,6 +123,45 @@ const genderToCategory = (value) => {
   const label = String(value || '').trim();
   if (/女/.test(label)) return 'B';
   if (/男/.test(label)) return 'A';
+  return '';
+};
+
+/**
+ * 「采购退货」格式的数量：「数量」是 number 字段（业务负责人 2026-10-05 改的字段结构）。
+ *
+ * 非法/为空就抛错，由 process() 落成**可重试的失败**——绝不静默算成 0：
+ * 一条退货记录数量读成 0，等于什么都没退，而她还以为系统处理过了。
+ */
+const parseReturnQuantity = (value) => {
+  const quantity = Number(textValue(value));
+  if (!Number.isSafeInteger(quantity) || quantity <= 0) throw new Error('采购退货的「数量」必须是正整数');
+  return quantity;
+};
+
+/**
+ * 退货核对结果 → 一句人话（业务负责人的口径：「把差额明确告诉她」）。
+ *
+ * 只在**对不上**的时候发（差额、或库存里一双都没有）：对得上时图本身就是回执，
+ * 再发一条等于刷屏。文案里不出现"实时库存/校验/差额"以外的内部术语，
+ * 最后一律给出下一步动作（补数量 / 重新提交一条）。
+ */
+const buildPurchaseReturnNotice = ({ itemNo, color, size, plan }) => {
+  const label = `${itemNo || ''}${color || ''}`.trim() || '这个货品';
+  const sizeText = size ? `（${size} 码）` : '';
+  if (plan.available === 0) {
+    return `采购退货没处理：${label}${sizeText} 在实时库存里一双都没有，我没有扣库存，也没有把这条记录标成已处理。` +
+      '库存补上之后再提交一条退货记录就好～';
+  }
+  if (plan.shortfall > 0) {
+    return `采购退货：${label}${sizeText} 你说要退 ${plan.declared} 双，实时库存里只有 ${plan.available} 双 —— ` +
+      `我先按能对上的 ${plan.taken} 双处理了，差的 ${plan.shortfall} 双对不上。` +
+      '要我一起退的话，把数量改成能对上的数再提交一条～';
+  }
+  if (plan.surplus > 0) {
+    return `采购退货：${label}${sizeText} 你填的 ${plan.declared} 双对上了，已经退回。` +
+      `⚠️ ${label}${sizeText} 在实时库存里还剩 ${plan.surplus} 双没退（总数是 ${plan.available} 双）——` +
+      '要一起退就把数量改成总数再提交一条～';
+  }
   return '';
 };
 
@@ -401,13 +444,23 @@ class PurchaseWebhookService {
     try {
       let result;
       if (kind === 'supplier-report') {
-        // 有报货批次号就按「报货批次号」归批（一次提交 = 一批）；没有则走单条处理，
-        // 兼容批次号字段上线前录入的旧数据。
-        const batchNo = await this.readReportBatchNo(recordId);
-        if (batchNo) {
-          result = await this.handleReportBatch(batchNo, recordId, taskId);
+        // 先按「采购行为」分流，再看批次号：采购退货走自己那条链路
+        // （直接扣库存 + 出退货单），**不进归批窗口、也不写采购到货/入库**。
+        // 分流放在批次号之前是有意的：一条退货记录即使带了报货批次号，也不该
+        // 被报货那套归批/解析拦住（她没有给退货定过归批口径）。
+        const behaviorKind = await this.readReportBehaviorKind(recordId);
+        if (behaviorKind === REPORT_BEHAVIOR.PURCHASE_RETURN) {
+          // 传 task：退货的核对计划要落盘成"只算一次"（见 ensureReturnPlan）。
+          result = await this.processSupplierReturn(recordId, taskId, task);
         } else {
-          result = await this.processSupplierReport(recordId, taskId);
+          // 有报货批次号就按「报货批次号」归批（一次提交 = 一批）；没有则走单条处理，
+          // 兼容批次号字段上线前录入的旧数据。
+          const batchNo = await this.readReportBatchNo(recordId);
+          if (batchNo) {
+            result = await this.handleReportBatch(batchNo, recordId, taskId);
+          } else {
+            result = await this.processSupplierReport(recordId, taskId);
+          }
         }
       } else {
         result = await this.processArrival(recordId, taskId);
@@ -710,27 +763,47 @@ class PurchaseWebhookService {
       logWarn('purchase.batch.no_records', { batch_no: batchNo });
       throw new Error(`报货批次号 ${batchNo} 下没有找到任何报单记录`);
     }
+    // 「行为管理」一次读表建索引，整批复用：分流要按行为名称/编码判断这条记录是
+    // 采购申请还是采购退货。索引里找不到（fake gateway/旧数据）就退回采购申请。
+    const behaviorIndex = await this.loadBehaviorIndex();
+    const behaviorKindOf = (record) => {
+      const fields = record?.fields || {};
+      const behaviorRecordId = linkedRecordIds(fields[reportTable.fields.behavior])[0] || '';
+      return classifyReportBehavior(behaviorIndex.get(behaviorRecordId));
+    };
+    // ⚠️ 采购退货**不在归批窗口里处理**（合并 #83 与 #81 时定的归属）：
+    // 退货记录由它自己那条链路负责——processSupplierReturn，按实时库存逐尺码扣减
+    // 并出「邯美皮鞋采购退货单」。这里必须先把退货记录摘掉，否则同一批次号下只要
+    // 有一条采购申请，窗口一开就会按「整批记录」重读，把退货也当成报货明细写一条
+    // 「单据信息」（#81 的旧口径），与退货链路重复出单；更糟的是会给它补上
+    // 「已生成申请」终态，把本该扣库存的退货链路整个挡在门外。
+    const reportRecords = batchRecords.filter(
+      (record) => behaviorKindOf(record) !== REPORT_BEHAVIOR.PURCHASE_RETURN,
+    );
+    if (reportRecords.length === 0) {
+      // 整批都是退货：没有任何采购申请要生成。退货记录各自等自己的 webhook 走
+      // 退货链路，**绝不能**在这里给它们补终态（补了就等于把退货吞掉）。
+      logInfo('purchase.batch.only_returns', { batch_no: batchNo, record_count: batchRecords.length });
+      return { status: 'already_posted', batch_no: batchNo, ignored_record_count: 0 };
+    }
     // 某条记录一旦已经是终态（或已经关联了采购申请），说明**这一批的申请已经写过了**，
     // 后来的明细不该再触发第二次申请——先摘出去，再给它补上终态。
-    const pendingRecords = batchRecords.filter(
+    const pendingRecords = reportRecords.filter(
       (record) => !this.isReportRecordPosted(record, reportTable),
     );
-    if (pendingRecords.length < batchRecords.length) {
+    if (pendingRecords.length < reportRecords.length) {
       const finalized = await this.markRecordsAsPosted(
         pendingRecords.map((record) => record.record_id),
         reportTable,
       );
       logInfo('purchase.batch.already_posted', {
         batch_no: batchNo,
-        posted_record_count: batchRecords.length - pendingRecords.length,
+        posted_record_count: reportRecords.length - pendingRecords.length,
         ignored_record_count: finalized,
       });
       return { status: 'already_posted', batch_no: batchNo, ignored_record_count: finalized };
     }
 
-    // 「行为管理」一次读表建索引，整批复用：分流要按行为名称/编码判断这条记录是
-    // 采购申请还是采购退货。索引里找不到（fake gateway/旧数据）就退回采购申请。
-    const behaviorIndex = await this.loadBehaviorIndex();
     const entries = [];
     for (const record of pendingRecords) {
       const fields = record?.fields || {};
@@ -1249,6 +1322,8 @@ class PurchaseWebhookService {
     }
   }
 
+  // options.title / options.fileNameSuffix：采购退货单与采购申请单共用这一整条
+  // 「按供应商出图 → 发到群 → 写回附件」的流程，只有标题和文件名不同（口径就是"格式一样"）。
   async deliverSupplierImagesInner(taskId, task, posting = {}, options = {}) {
     const draft = task?.draft || {};
     const items = draft.items || [];
@@ -1293,6 +1368,8 @@ class PurchaseWebhookService {
           supplierName,
           batchNo: posting.batch_no || draft.batch_no || '',
           items: group.items,
+          // 不传就是采购申请单（渲染器里的默认标题），退货传「邯美皮鞋采购退货单」。
+          title: options.title,
         });
         const imageResult = await this.sendImage(target.chatId, png, 'chat_id');
         // 图单独一条、文字带 @经办人 单独一条：飞书图片消息没有正文，
@@ -1328,6 +1405,7 @@ class PurchaseWebhookService {
       try {
         const written = await this.writeSupplierImageAttachment({
           taskId, supplierName: label, png, requestRecordIds,
+          fileNameSuffix: options.fileNameSuffix,
         });
         if (written?.written) logInfo('purchase.request.image.attachment_written', { task_id: taskId, ...written });
       } catch (error) {
@@ -1372,7 +1450,7 @@ class PurchaseWebhookService {
   }
 
   /**
-   * 把某个供应商的采购申请图写进「采购申请」的附件字段。
+   * 把某个供应商的采购申请图（或采购退货单图）写进「单据信息」的附件字段。
    *
    * 规则（产品负责人明确给的）：
    * - 同一「报货批次」+ 同一「供应商」只写一条 → 写进「明细ID」最小的那条记录；
@@ -1380,8 +1458,11 @@ class PurchaseWebhookService {
    *
    * 为什么按「明细ID」而不是数组下标挑：明细ID 是飞书 auto_number，写入即定，
    * 而 posting_plan 的数组顺序、远端返回顺序在重试之后都可能变。
+   *
+   * 「采购退货单」走同一个方法：它的单据信息行也是按同样的规则挑最早那条，
+   * 附件字段也是同一个（表已改名为「单据信息」，定位就是给供应商开图片的依据）。
    */
-  async writeSupplierImageAttachment({ taskId, supplierName, png, requestRecordIds }) {
+  async writeSupplierImageAttachment({ taskId, supplierName, png, requestRecordIds, fileNameSuffix = '采购申请' }) {
     if (!requestRecordIds?.length) {
       logWarn('purchase.request.image.no_request_record', { task_id: taskId, supplier: supplierName });
       return { written: false, reason: 'no_request_record' };
@@ -1409,7 +1490,7 @@ class PurchaseWebhookService {
     const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'purchase-request-image-'));
     try {
       const safeName = String(supplierName || 'supplier').replace(/[^\w\u4e00-\u9fa5-]/g, '') || 'supplier';
-      const filePath = path.join(tempDir, `${safeName}-采购申请.png`);
+      const filePath = path.join(tempDir, `${safeName}-${fileNameSuffix}.png`);
       await fs.promises.writeFile(filePath, png);
       const fileToken = await this.gateway.uploadAttachment(filePath);
       await this.gateway.update('purchaseRequest', target.recordId, { attachment: [{ file_token: fileToken }] });
@@ -1501,6 +1582,278 @@ class PurchaseWebhookService {
     const result = await this.publishPurchaseRequest(taskId, updated);
     logInfo('purchase.report.posted', { record_id: recordId, task_id: taskId, item_count: parsed.length, request_count: result.request_ids?.length || 0 });
     return { status: 'posted', item_count: parsed.length };
+  }
+
+  /**
+   * 这条「供应商对接」记录是采购申请还是采购退货（见 purchaseReportBehaviorPolicy）。
+   *
+   * 读行为记录失败/行为没填/名称不认识 → 一律按**采购申请**处理：那是这条链路今天的行为，
+   * 也是"读不到信息时唯一不发明业务规则"的选择。宁可退回现状，也不把普通报货当成退货。
+   */
+  async readReportBehaviorKind(recordId) {
+    const table = this.gateway.table('purchaseReport');
+    const behaviorTable = this.gateway.table('behavior');
+    const record = await this.gateway.get('purchaseReport', recordId);
+    const ids = linkedRecordIds(record?.fields?.[table.fields.behavior]);
+    if (!ids.length) return REPORT_BEHAVIOR.PURCHASE_REQUEST;
+    let readFailed = false;
+    for (const behaviorId of ids) {
+      const behavior = await this.gateway.get('behavior', behaviorId).catch(() => {
+        readFailed = true;
+        return null;
+      });
+      const kind = classifyReportBehavior({
+        name: textValue(behavior?.fields?.[behaviorTable.fields.name]),
+        code: textValue(behavior?.fields?.[behaviorTable.fields.code]),
+      });
+      if (kind === REPORT_BEHAVIOR.PURCHASE_RETURN) return kind;
+    }
+    if (readFailed) logWarn('purchase.report.behavior_unreadable', { record_id: recordId });
+    return REPORT_BEHAVIOR.PURCHASE_REQUEST;
+  }
+
+  /**
+   * 退货核对：**只读 + 只算，不写任何东西**（业务负责人 2026-10-05 的口径）。
+   *
+   *   A. 只填数量（没有尺码）→ 该 货号+颜色 全退
+   *      · 核对所填数量 vs 该 货号+颜色 在「实时库存」里的**总数**
+   *      · ⚠️ **不看形态、不看所属状态**：样品 + 门盒 + 仓库（"仓库"=非当季在售）全部加总
+   *   B. 填了尺码 + 数量 → 按 货号+颜色+尺码 去「实时库存」里找
+   *
+   *   数量对得上 → 这些行**全部**退掉（顺序无关）
+   *   数量对不上 → 「能对上的就处理，不能对上的就说这部分对不上」
+   *                = 退 min(她填的数量, 库存里有的)，差额交给调用方告诉她
+   *
+   * 取哪几行的顺序：对得上时是"全部"，顺序只影响日志；对不上时按 record_id 排，
+   * 让同一份输入永远得到同一份计划（重试/人工核对时可比对）。
+   * 状态**一律不过滤**——这是这条链路和销售出库最关键的区别（销售只吃门盒+样品）。
+   */
+  async planPurchaseReturn({ productRecordId, declared, size = null }) {
+    const liveTable = this.gateway.table('liveInventory');
+    const sizeField = liveTable.fields.size;
+    // 尺码用关联 record_id 比较（B 情况），不逐个解析成整数：这样别的坏行
+    // （尺码关联为空的那种）不会把整条退货链路拖挂，只在真正要退它时才暴露。
+    const sizeRecordId = size === null
+      ? ''
+      : (await this.getSizeReferences().resolveByNumber(size)).recordId;
+    const matching = [];
+    for (const record of await this.gateway.listAll('liveInventory')) {
+      if (!linkedRecordIds(record.fields?.[liveTable.fields.product]).includes(productRecordId)) continue;
+      if (sizeRecordId && !linkedRecordIds(record.fields?.[sizeField]).includes(sizeRecordId)) continue;
+      matching.push(record.record_id);
+    }
+    matching.sort((left, right) => String(left).localeCompare(String(right)));
+    const take = matching.slice(0, Math.min(declared, matching.length));
+    const bySize = new Map();
+    for (const recordId of take) {
+      const liveRecord = await this.gateway.get('liveInventory', recordId);
+      // 这里读不出尺码就抛错（可重试的失败）：要退的这一双说不清是什么尺码，
+      // 就写不出对应的「单据信息」行，也不能拍一个尺码了事。
+      const linked = await this.getSizeReferences().resolveLinkedCell(liveRecord?.fields?.[sizeField]);
+      bySize.set(linked.size, (bySize.get(linked.size) || 0) + 1);
+    }
+    const sizes = [...bySize.entries()]
+      .map(([entrySize, quantity]) => ({ size: entrySize, quantity }))
+      .sort((left, right) => left.size - right.size);
+    return {
+      declared,
+      size,
+      available: matching.length,
+      taken: take.length,
+      sizes,
+      // 正数 = 库存比她说得少（退不全）；负数（surplus） = 库存比她说得多（还有没退的）。
+      shortfall: Math.max(0, declared - take.length),
+      surplus: Math.max(0, matching.length - take.length),
+    };
+  }
+
+  /**
+   * 退货核对计划**只算一次**，以后重试都复用落盘的那一份。
+   *
+   * 为什么必须冻结（和采购申请的 ensurePostingPlan 同一个理由，这里后果更严重）：
+   * 核对是拿"她填的数量"去比"当前实时库存里的行"。第一次跑已经把行删掉了，
+   * 重试时再算一遍会看到**剩下的**行，然后删掉另一批——库存被多扣，而且多扣的那几双
+   * 在业务上完全看不出来（每一条流水都"有来源、有数量"）。冻结之后复跑用的是同一批
+   * 尺码和同样的数量，配上"库存操作的 operationId 由单据信息行决定"，复跑是真正的空操作。
+   */
+  async ensureReturnPlan(taskId, task, input) {
+    if (task?.return_plan?.version === 1) return task.return_plan;
+    const plan = await this.planPurchaseReturn(input);
+    const updated = await this.store.update(taskId, { return_plan: { version: 1, ...plan } });
+    return updated.return_plan;
+  }
+
+  /**
+   * 采购退货链路（业务负责人的完整口径）：
+   *
+   *   ① 「供应商对接」填表单（编号 + 数量，退货不填尺码）→ 数据是确定性的 → **免确认**
+   *   ② 「采购行为」= 采购退货 → 走这条分支
+   *   ③ **不再走「采购到货」和「采购入库」**
+   *   ④ 直接扣「实时库存」并写「库存流水」（库存行为 = 采购减少 STOCK_PURCHASE_DECREASE）
+   *   ⑤ 出图：标题「邯美皮鞋采购退货单」，格式与采购申请单一样
+   *   ⑥ 受影响的表只有 4 张：供应商对接 · 单据信息 · 库存流水 · 实时库存（不碰资金）
+   *
+   * 落库顺序：**先写「单据信息」（拿到记录 id）→ 再用它当库存操作的来源 → 最后出图**。
+   * 库存操作的幂等键就是「单据信息」行的 record_id（`operationId(kind, sourceRecordId)`），
+   * 而那一行本身由 createOnceByKey 按「幂等键」列保证只写一条，所以重跑拿到的是同一个 id、
+   * 同一个库存操作——不会第二次扣库存（已完成的操作用例直接返回上次的结果）。
+   *
+   * 数量对不上时**尽力处理 + 把差额告诉她**（见 buildPurchaseReturnNotice），
+   * 绝不"一处不对就整单不动"。
+   */
+  async processSupplierReturn(recordId, taskId, task = {}) {
+    const table = this.gateway.table('purchaseReport');
+    const productTable = this.gateway.table('product');
+    const record = await this.gateway.get('purchaseReport', recordId);
+    const fields = record?.fields || {};
+    const status = textValue(fields[table.fields.status]);
+    // 终态挡重复：飞书重投、双击、并发到达时不能把同一批退货扣两遍。
+    // （真正扣库存的幂等还有一层：库存操作的 operationId 由「单据信息」行 id 决定。）
+    if (['已生成申请', '已取消'].includes(status)) return { ignored: true, status };
+    const productIds = linkedRecordIds(fields[table.fields.product]);
+    if (productIds.length !== 1) throw new Error('供应商对接必须关联一个货品编号');
+    // 供应商沿用采购申请那条的取法：从货品信息的供应商关联字段读，
+    // 不新增表字段，也不让她在退货表单里再填一遍（见待确认项）。
+    const product = await this.references.resolveProduct({ productRecordId: productIds[0] });
+    const productSupplierIds = linkedRecordIds(product.record?.fields?.[productTable.fields.supplier]);
+    if (productSupplierIds.length === 0) throw new Error('货品信息中未关联供应商，请先在货品信息中设置供应商');
+    const supplierRecordId = productSupplierIds[0];
+    const productInfo = this.productDisplayInfo(product.record, productTable);
+    const operatorOpenId = this.recordOperator(record, table.fields.operator);
+    const behaviorRecordId = linkedRecordIds(fields[table.fields.behavior])[0] || '';
+    const declared = parseReturnQuantity(fields[table.fields.quantity]);
+    // 「尺码」在表里是单选关联。**空值不是错误**：A 情况（只填数量）本来就不填尺码——
+    // 用 resolveLinkedCells 会在空关联上抛「尺码关联字段为空」，把 A 情况整条挡住。
+    const linkedSizeIds = linkedRecordIds(fields[table.fields.size]);
+    if (linkedSizeIds.length > 1) {
+      // 正常最多一个。真出现多个说明字段被改成了多选：一个数量摊不到多个尺码上，
+      // 停下来告诉她，绝不替她分配。
+      const names = (await this.getSizeReferences().resolveLinkedCells(fields[table.fields.size]))
+        .map((item) => item.size).join('、');
+      throw new Error(`采购退货的「尺码」只能选一个（现在是 ${names}），请拆成多条记录`);
+    }
+    const size = linkedSizeIds.length === 1
+      ? (await this.getSizeReferences().resolveLinkedCell(fields[table.fields.size])).size
+      : null;
+    const plan = await this.ensureReturnPlan(taskId, task, { productRecordId: product.recordId, declared, size });
+    const items = plan.sizes.map((entry) => ({
+      item_no: productInfo.itemNo,
+      color: productInfo.color,
+      size: entry.size,
+      quantity: entry.quantity,
+      product_record_id: product.recordId,
+      supplier_record_id: supplierRecordId,
+      report_record_id: recordId,
+    }));
+    const draft = {
+      is_return: true,
+      report_record_id: recordId,
+      product_record_id: product.recordId,
+      product_number: productInfo.number,
+      supplier_record_id: supplierRecordId,
+      behavior_record_id: behaviorRecordId,
+      operator_open_id: operatorOpenId,
+      // 图上那一行「报货批次」用她表单里填的批次号文本（单据信息行的批次关联是
+      // 指向「报货批次」表的，退货不建那张表——见交付说明的待确认项）。
+      batch_no: textValue(fields[table.fields.batchNoText]),
+      items,
+      return_plan: plan,
+    };
+    let updated = await this.store.update(taskId, { draft, return_plan: plan });
+    const progress = { returns: {} };
+    const docIds = [];
+    // 逐尺码处理：一个尺码一行「单据信息」、一次库存操作。
+    // 一行一个来源是必须的——库存操作的幂等键就是来源行的 record_id，多个尺码共用一个
+    // 来源就不会各自拿到自己的 operationId。
+    for (const entry of plan.sizes) {
+      const sizeReference = await this.getSizeReferences().resolveByNumber(entry.size);
+      const docKey = `purchase_return:${recordId}:${entry.size}`;
+      const doc = await createOnceByKey({
+        gateway: this.gateway,
+        tableKey: 'purchaseRequest',
+        keyField: IDEMPOTENCY_KEY_FIELD,
+        keyValue: docKey,
+        label: `采购退货单 ${recordId} ${entry.size}码`,
+        values: {
+          behavior: relation(behaviorRecordId),
+          product: relation(product.recordId),
+          size: relation(sizeReference.recordId),
+          quantity: entry.quantity,
+          idempotencyKey: docKey,
+        },
+      });
+      docIds.push(doc.recordId);
+      progress.returns[String(entry.size)] = doc.recordId;
+      updated = await this.store.update(taskId, { posting_progress: progress, posting_stage: `return_doc:${entry.size}` });
+      // 扣库存：走 InventoryService.applyChange（不另写一套库存逻辑）。
+      // state 只用于本地任务键（同货品+尺码串行/恢复）；真正扣哪些状态由注册表
+      // STOCK_PURCHASE_DECREASE 的 consumes 决定 = 门盒 + 样品 + 仓库。
+      const change = await this.inventory.applyChange({
+        kind: MOVEMENT_PURCHASE_DECREASE,
+        productRecordId: product.recordId,
+        size: entry.size,
+        state: '门盒',
+        quantity: entry.quantity,
+        sourceRecordId: doc.recordId,
+        occurredAt: Date.now(),
+      });
+      logInfo('purchase.return.stock_applied', {
+        record_id: recordId, task_id: taskId, size: entry.size, quantity: entry.quantity,
+        doc_id: doc.recordId, ledger_record_id: change?.ledgerRecordId || '', live_record_ids: change?.liveRecordIds || [],
+      });
+    }
+
+    if (docIds.length) {
+      // 报单记录的处理状态：沿用采购申请那条的终态「已生成申请」——行为管理里
+      // 只有这一套终态可复用（另加一个「已退货」选项要动她的表，超出本次口径）。
+      // 顺带把「关联采购申请」指向刚写的单据信息行，两个方向都可追溯。
+      await this.gateway.update('purchaseReport', recordId, {
+        status: '已生成申请',
+        request: docIds,
+      }).catch((error) => logWarn('purchase.return.report_status.failed', {
+        record_id: recordId, task_id: taskId, error: error.message,
+      }));
+      // 出图 → 发给她 → 写回附件（复用采购申请那条完全相同的流程，只换标题）。
+      const posting = {
+        request_ids: docIds,
+        request_id_by_item_key: Object.fromEntries(
+          items.map((item, index) => [`${taskId}:${index}`, progress.returns[String(item.size)]]),
+        ),
+        batch_no: draft.batch_no,
+      };
+      updated = await this.store.update(taskId, { request_ids: docIds });
+      await this.deliverSupplierImages(taskId, updated, posting, {
+        title: RETURN_TITLE,
+        fileNameSuffix: '采购退货单',
+      });
+    }
+
+    // 差额/没对上的情况必须说出来——「对不上的就说这部分对不上」。
+    // 对得上时不发（图本身就是回执），免得刷屏。
+    const notice = buildPurchaseReturnNotice({
+      itemNo: productInfo.itemNo, color: productInfo.color, size: plan.size, plan,
+    });
+    if (notice) {
+      const sent = await this.sendNoticeText(operatorOpenId, notice);
+      logInfo('purchase.return.notice', {
+        record_id: recordId, task_id: taskId, declared: plan.declared, available: plan.available,
+        taken: plan.taken, shortfall: plan.shortfall, surplus: plan.surplus, sent,
+      });
+    }
+    logInfo('purchase.return.posted', {
+      record_id: recordId, task_id: taskId, declared: plan.declared, available: plan.available,
+      taken: plan.taken, size_count: plan.sizes.length, doc_count: docIds.length,
+    });
+    return {
+      status: 'posted',
+      is_return: true,
+      declared: plan.declared,
+      available: plan.available,
+      taken: plan.taken,
+      shortfall: plan.shortfall,
+      surplus: plan.surplus,
+      doc_ids: docIds,
+    };
   }
 
   /**
