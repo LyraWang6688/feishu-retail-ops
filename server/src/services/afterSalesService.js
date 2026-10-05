@@ -226,12 +226,21 @@ class AfterSalesService {
   /**
    * 总闸门。
    *   · 已完成 + 指纹一致 → 整次跳过（不写任何东西，返回上次的结果）
-   *   · 指纹不同（无论完成与否）→ 停下来：同一次的分片里不能塞进另一笔售后
-   *   · 没记录 / 做到一半 + 指纹一致 → 继续
+   *   · 已经写过东西 + 指纹不同 → 停下来：同一次的分片里不能塞进另一笔售后
+   *   · 没记录 / 上一次没写成 + 指纹一致 → 继续（没写过东西时分片可以被这次接管）
    */
   async runWithGate(request) {
     const existing = await this.store.get(request.operationId);
-    if (existing && existing.request_fingerprint && existing.request_fingerprint !== request.fingerprint) {
+    // 「已经写进去过东西」才需要认指纹：主表/明细/状态/收款/往来货款任一落过盘，
+    // 就说明这一个分片上已经产生业务事实，换一笔请求不能直接接管。
+    const wroteSomething = Boolean(existing && (
+      existing.master_record_id
+      || (existing.detail_record_ids || []).length
+      || (existing.original_details_marked || []).length
+      || existing.payment_record_id
+      || existing.credit_record_id
+    ));
+    if (wroteSomething && existing.request_fingerprint !== request.fingerprint) {
       throw new Error(
         `这次售后（${request.operationId}）在本地已有记录，但请求内容与上次不同：` +
         '不能当成同一次，也不能再写一遍，请人工核对',
@@ -244,6 +253,15 @@ class AfterSalesService {
         master_record_id: existing.master_record_id,
       });
       return existing.result;
+    }
+    // 上一次没写成功（例如入参错、原单号打错）：没留下任何业务事实，允许这次接管这个分片。
+    if (existing && !wroteSomething) {
+      await this.store.update(request.operationId, {
+        request_fingerprint: request.fingerprint,
+        action: request.action,
+        original_sales_entry_record_id: request.originalSalesEntryRecordId,
+        original_sales_order_no: request.originalSalesOrderNo,
+      });
     }
     const progress = existing || await this.store.create({
       operation_id: request.operationId,
@@ -268,13 +286,16 @@ class AfterSalesService {
 
   async run(request, progress) {
     const { spec } = request;
+    // 这一次售后的业务时刻：收款时间 / 往来货款发生时间 / 库存流水发生时间用同一个值，
+    // 免得同一笔售后在几张表上时间不一致（调用方给了时间就用它，否则用当前时间）。
+    request.occurredAt = request.receivedAt ?? this.now();
     // 要用「客户往来货款」的幂等键时先校验它真实存在：缺列要大声失败，而且要在任何写入之前。
     if (request.settlement === 'prepaid') await this.validateCreditKey();
 
     const original = await this.readOriginal(request);
     const master = await this.ensureMaster(request, spec, progress);
     const plan = this.buildPlan(request, original);
-    const rows = await this.ensureDetailRows(request, spec, plan, master, progress);
+    const rows = await this.ensureDetailRows(request, plan, master, progress);
     const originalDetailIdsMarked = await this.markOriginalDetails(spec, original, progress);
     const money = await this.settleMoney(request, original, master, progress);
     const stock = await this.applyStock(request, spec, plan);
@@ -483,7 +504,7 @@ class AfterSalesService {
    * 换货里被换回的旧鞋不建行，它是靠**被改状态的原明细行** + 库存流水表达的。
    * 每一行写完就把 record_id 追加进本地记录，重试时按位置复用。
    */
-  async ensureDetailRows(request, spec, plan, master, progress) {
+  async ensureDetailRows(request, plan, master, progress) {
     const detailFields = this.tableOf('salesDetail').fields;
     const known = [...(progress.detail_record_ids || [])];
     const rows = [];
@@ -549,7 +570,6 @@ class AfterSalesService {
   async markOriginalDetails(spec, original, progress) {
     const detailFields = this.tableOf('salesDetail').fields;
     const known = new Set(progress.original_details_marked || []);
-    const marked = [];
     for (const record of original.details) {
       if (known.has(record.record_id)) continue;
       const current = cellText(record.fields?.[detailFields.fulfillmentStatus]);
@@ -558,10 +578,11 @@ class AfterSalesService {
         fulfillmentStatus: spec.originalFulfillmentStatus,
       });
       known.add(record.record_id);
-      marked.push(record.record_id);
       await this.store.update(progress.operation_id, { original_details_marked: [...known] });
     }
-    return marked;
+    // 返回"这一次售后一共改过哪些原明细行"（含前几次重试改的）：
+    // 重试后的结果也要完整，不能只报本次新改的那几条。
+    return [...known];
   }
 
   // --- 4) 钱 -------------------------------------------------------------------------
@@ -595,7 +616,7 @@ class AfterSalesService {
       tradeDirection: direction,
       amount,
       status: this.config.cashPaymentStatus,
-      receivedAt: request.receivedAt ?? this.now(),
+      receivedAt: request.occurredAt,
     });
     await this.saveProgress(request, { payment_record_id: created.recordId });
     return { route: 'cash', recordId: created.recordId, direction, amount, changeType: '' };
@@ -644,7 +665,7 @@ class AfterSalesService {
       values: {
         changeType: this.config.prepaidChangeType,
         receivableChange: request.diffAmount,
-        occurredAt: request.receivedAt ?? this.now(),
+        occurredAt: request.occurredAt,
         sourceOrderNo: request.originalSalesOrderNo,
         // 这个字段就是这张表的幂等键：本地记录丢了也能按它回查认出这一笔。
         [AFTER_SALES_CREDIT_KEY_FIELD]: request.eventId,
@@ -727,6 +748,7 @@ class AfterSalesService {
           state,
           quantity: 1,
           sourceRecordId,
+          occurredAt: request.occurredAt,
         });
         results.push({
           behaviorCode: movement.behaviorCode,

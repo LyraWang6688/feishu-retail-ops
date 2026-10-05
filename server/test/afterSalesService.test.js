@@ -2,23 +2,23 @@
 //
 // 覆盖：三种动作各一条 · 重复调用只写一次（本步最重要的用例）· 原主表/原明细逐字段未变 ·
 //       差价正/负/0 · 资金 cash/prepaid · 退回状态 门盒/样品 · 库存流水 1 行 / 2 行方向相反 ·
-//       失败后重试成功 · 入参校验。
+//       失败后重试成功 · 入参校验 · 总闸门（指纹不同就停 · 缺列大声失败）。
 //
 // 说明：库存那一侧注入的是「与 InventoryService.applyChange 同签名的端口」。
 // 原因是这一期不许改 inventoryService.js，而它的 STOCK_MOVEMENTS 是模块内 Object.freeze
 // 且未导出，SALE_RETURN / SALE_COMPENSATION / SALE_CASH 还没在里面声明，
-// 直接传真服务会抛「未在库存动作注册表中声明动作」（接线前必须补那三条声明）。
+// 直接传真服务会抛「未在库存动作注册表中声明动作」（接线那一步由父代理补声明 + 补 fixture）。
 // 端口按真实服务的同一套幂等思路实现：以 kind + sourceRecordId 作为操作身份
-// （真实服务用 operationId(kind, sourceRecordId)），重复调用不再写第二遍。
+// （真实服务用 operationId(kind, sourceRecordId) + 远端「库存操作键」），重复调用不再写第二遍。
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { AfterSalesService } = require('../src/services/afterSalesService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
-const { readAfterSalesConfig } = require('../src/config/afterSales');
-
-// 「客户往来货款」表 ID 走环境变量（不同租户这张表不同）；config 在构造服务时读。
-process.env.FEISHU_V1_CUSTOMER_CREDIT_TABLE_ID = 'tbl_customer_credit';
+const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 
 const FIXED_NOW = Date.parse('2026-10-05T10:00:00+08:00');
 const ORDER_NO = 'XSD-20261005-001';
@@ -47,7 +47,7 @@ const seed = () => ({
   ],
   salesEntry: [{
     record_id: 'order_old',
-    fields: { 销售单号: ORDER_NO, 原话: '卖一双 A100 41 码', 客户: '王女士', 订单状态: '已完成', 确认状态: '已入账' },
+    fields: { 销售单号: ORDER_NO, 原话: '卖一双 A100 41 码', 订单状态: '已完成', 确认状态: '已入账' },
   }],
   salesDetail: [
     {
@@ -70,10 +70,10 @@ const seed = () => ({
 });
 
 /**
- * 假 Base。字段按语义名（schema）→ 中文列名映射后落库，和真网关一致；
- * schema 走 `this.schema`，所以执行器注入的 schema 视图（幂等键列 / 客户往来货款表）在这里同样生效。
+ * 假 Base。字段按语义名（schema）→ 中文列名映射后落库，和真网关一致。
+ * options.missingCreditKey：listFields 里不含「业务事件ID」，用来验证"缺列大声失败"。
  */
-const fakeBase = () => {
+const fakeBase = (options = {}) => {
   const records = new Map(Object.entries(seed()).map(([key, rows]) => [
     key, rows.map((row) => ({ record_id: row.record_id, fields: { ...row.fields } })),
   ]));
@@ -94,13 +94,18 @@ const fakeBase = () => {
       return name;
     },
     validateTables: async () => [],
+    async listFields(key) {
+      return Object.entries(this.table(key).fields)
+        .filter(([semantic]) => !(options.missingCreditKey && key === CREDIT_TABLE && semantic === 'businessEventId'))
+        .map(([, fieldName]) => ({ field_name: fieldName, type: 1 }));
+    },
     listAll: async (key) => records.get(key) || [],
+    get: async (key, id) => (records.get(key) || []).find((row) => row.record_id === id) || null,
     async findOneByText(key, semantic, expected) {
       const name = this.fieldName(key, semantic);
       const target = String(expected ?? '').trim();
       return (records.get(key) || []).find((row) => String(row.fields[name] ?? '').trim() === target) || null;
     },
-    get: async (key, id) => (records.get(key) || []).find((row) => row.record_id === id) || null,
     async create(key, values) {
       writes.create[key] = (writes.create[key] || 0) + 1;
       const fields = {};
@@ -164,7 +169,7 @@ const fakeInventory = (gateway) => {
         }
       } else if (direction === '减少') {
         // 规格要求"新鞋从门盒减一行"：真实服务按注册表 consumes 决定扣哪些状态，
-        // 三条售后声明都声明为 ['门盒']，所以这里也只从门盒扣。
+        // 三条售后声明都是 ['门盒']，所以这里也只从门盒扣。
         const pool = (gateway.records.get('liveInventory') || []).filter((row) =>
           (row.fields['编号'] || []).includes(input.productRecordId) &&
           (row.fields['尺码'] || []).includes(sizeRecordId) &&
@@ -184,22 +189,29 @@ const fakeInventory = (gateway) => {
   };
 };
 
-const build = () => {
-  const gateway = fakeBase();
+const build = (options = {}) => {
+  const gateway = fakeBase(options);
   const inventory = fakeInventory(gateway);
-  const service = new AfterSalesService({ gateway, inventory, now: () => FIXED_NOW });
-  return { gateway, inventory, service };
+  const store = options.store || new JsonTaskStore({
+    dir: fs.mkdtempSync(path.join(os.tmpdir(), 'after-sales-')),
+    idField: 'operation_id',
+  });
+  const service = new AfterSalesService({ gateway, inventory, store, now: () => FIXED_NOW });
+  return { gateway, inventory, store, service };
 };
 
 const countsOf = (gateway) => JSON.stringify(gateway.writes);
 const snapshot = (gateway) => Object.fromEntries(
-  [...gateway.records.entries()].map(([key, rows]) => [key, rows.map((row) => `${row.record_id}:${JSON.stringify(row.fields)}`)]),
+  [...gateway.records.entries()].map(([key, rows]) => [
+    key, rows.map((row) => `${row.record_id}:${JSON.stringify(row.fields)}`),
+  ]),
 );
 const rowsOf = (gateway, key) => gateway.records.get(key) || [];
 const masterRows = (gateway) => rowsOf(gateway, 'salesEntry').filter((row) => row.record_id !== 'order_old');
 const detailRows = (gateway) => rowsOf(gateway, 'salesDetail').filter((row) => !row.record_id.startsWith('detail_old'));
 const paymentRows = (gateway) => rowsOf(gateway, 'paymentRecord').filter((row) => row.record_id !== 'pay_old_1');
-const liveRows = (gateway) => rowsOf(gateway, 'liveInventory').filter((row) => !['live_A_41', 'live_B_42'].includes(row.record_id));
+const liveRows = (gateway) => rowsOf(gateway, 'liveInventory')
+  .filter((row) => !['live_A_41', 'live_B_42'].includes(row.record_id));
 
 const request = (overrides = {}) => ({
   action: 'return',
@@ -215,7 +227,7 @@ const request = (overrides = {}) => ({
 });
 
 test('退货（cash 退款）：六处写入各一次，原主表一字未动，原明细只改履约状态', async () => {
-  const { gateway, service } = build();
+  const { gateway, inventory, service } = build();
   const beforeEntry = structuredClone(rowsOf(gateway, 'salesEntry')[0].fields);
   const beforeDetail = structuredClone(rowsOf(gateway, 'salesDetail')[0].fields);
 
@@ -229,7 +241,6 @@ test('退货（cash 退款）：六处写入各一次，原主表一字未动，
   assert.equal(masters[0].fields['解析状态'], '解析成功');
   assert.equal(masters[0].fields['确认状态'], '已入账');
   assert.deepEqual(masters[0].fields['交易类型'], ['behavior_return']);
-  assert.equal(masters[0].fields['幂等键'], 'after_sales:order_old:return:master');
 
   // 2) 新「销售明细」：交易类型=行为 · 销售单号=原主表 · 成交金额=正数
   const details = detailRows(gateway);
@@ -239,7 +250,6 @@ test('退货（cash 退款）：六处写入各一次，原主表一字未动，
   assert.deepEqual(details[0].fields['尺码'], ['size_41']);
   assert.equal(details[0].fields['成交金额'], 250);
   assert.deepEqual(details[0].fields['交易类型'], ['behavior_return']);
-  assert.equal(details[0].fields['幂等键'], 'after_sales:order_old:return:detail:1');
 
   // 3) 原明细只改「履约状态」；原主表（含订单状态）逐字段未变
   assert.equal(rowsOf(gateway, 'salesDetail')[0].fields['履约状态'], '已退货');
@@ -255,7 +265,6 @@ test('退货（cash 退款）：六处写入各一次，原主表一字未动，
   assert.equal(payments[0].fields['收款状态'], '已收款');
   assert.deepEqual(payments[0].fields['关联销售单'], [masters[0].record_id]);
   assert.deepEqual(payments[0].fields['交易方式'], ['method_wechat']);
-  assert.equal(payments[0].fields['幂等键'], 'after_sales:order_old:return:payment:1');
 
   // 5) 库存流水：1 行，行为=销售退货，数量正数，关联销售指向售后明细行
   const ledgers = rowsOf(gateway, 'inventoryLedger');
@@ -270,16 +279,35 @@ test('退货（cash 退款）：六处写入各一次，原主表一字未动，
   assert.equal(live[0].fields['所属状态'], '门盒');
   assert.deepEqual(live[0].fields['编号'], ['product_A']);
   assert.deepEqual(live[0].fields['尺码'], ['size_41']);
+  // 库存那一侧是"注入既有库存服务"的调用：行为编码 + 目标状态 + 数量 + 来源明细
+  assert.deepEqual(inventory.calls, [{
+    kind: 'SALE_RETURN',
+    productRecordId: 'product_A',
+    size: 41,
+    state: '门盒',
+    quantity: 1,
+    sourceRecordId: details[0].record_id,
+    occurredAt: FIXED_NOW,
+  }]);
 
   // 每张表恰好写一次
-  assert.deepEqual(gateway.writes.create, { salesEntry: 1, salesDetail: 1, paymentRecord: 1, inventoryLedger: 1, liveInventory: 1 });
+  assert.deepEqual(gateway.writes.create, {
+    salesEntry: 1, salesDetail: 1, paymentRecord: 1, inventoryLedger: 1, liveInventory: 1,
+  });
   assert.deepEqual(gateway.writes.update, { salesDetail: 1 });
   assert.deepEqual(gateway.writes.delete, {});
+  // 本地闸门：记下"这一次做过"，并记住每个阶段的 record_id
+  const progress = await service.store.get(result.operationId);
+  assert.equal(progress.status, 'completed');
+  assert.equal(progress.master_record_id, masters[0].record_id);
+  assert.deepEqual(progress.detail_record_ids, [details[0].record_id]);
+  assert.deepEqual(progress.original_details_marked, ['detail_old_1']);
+  assert.equal(progress.payment_record_id, payments[0].record_id);
 });
 
-test('重复执行两次：六处写入都只发生一次（第二次只回查复用）', async () => {
+test('重复执行两次：六处写入都只发生一次（第二次被总闸门整次跳过）', async () => {
   const { gateway, inventory, service } = build();
-  await service.execute(request());
+  const first = await service.execute(request());
   const writesAfterFirst = countsOf(gateway);
   const recordsAfterFirst = snapshot(gateway);
   const callsAfterFirst = inventory.calls.length;
@@ -288,10 +316,34 @@ test('重复执行两次：六处写入都只发生一次（第二次只回查�
 
   assert.equal(countsOf(gateway), writesAfterFirst, '第二次执行不应再产生任何 create/update/delete');
   assert.deepEqual(snapshot(gateway), recordsAfterFirst, '第二次执行后所有表的内容都不应变');
-  assert.equal(inventory.calls.length, callsAfterFirst + 1, '库存端口会被再次调用（幂等由端口/InventoryService 负责）');
+  assert.equal(inventory.calls.length, callsAfterFirst, '整次跳过时连库存服务都不调用');
+  assert.deepEqual(second, first, '第二次直接返回上次的结果');
   assert.equal(rowsOf(gateway, 'inventoryLedger').length, 1);
   assert.equal(rowsOf(gateway, 'liveInventory').length, 3); // 原有 2 双 + 退回 1 双
-  assert.equal(second.masterRecordId, masterRows(gateway)[0].record_id);
+});
+
+test('总闸门按请求指纹认人：同一次分片里塞另一笔售后 → 大声失败，不写任何东西', async () => {
+  const { gateway, service } = build();
+  await service.execute(request());
+  const writesAfterFirst = countsOf(gateway);
+  const recordsAfterFirst = snapshot(gateway);
+
+  await assert.rejects(
+    () => service.execute(request({ diffAmount: -200 })),
+    /请求内容与上次不同/,
+  );
+  assert.equal(countsOf(gateway), writesAfterFirst);
+  assert.deepEqual(snapshot(gateway), recordsAfterFirst);
+});
+
+test('给了 taskId 时，同一原单同一动作可以做第二次（每次用户消息一个分片）', async () => {
+  const { gateway, service } = build();
+  await service.execute(request({ taskId: 'om_task_a', originalText: '退第一双', diffAmount: -250 }));
+  await service.execute(request({ taskId: 'om_task_b', originalText: '再退第二双', diffAmount: -200 }));
+  assert.equal(masterRows(gateway).length, 2);
+  assert.equal(detailRows(gateway).length, 2);
+  assert.equal(paymentRows(gateway).length, 2);
+  assert.equal(rowsOf(gateway, 'inventoryLedger').length, 2);
 });
 
 test('换货：旧鞋回库 + 新鞋出门盒，两条流水方向相反且数量都是正数', async () => {
@@ -391,16 +443,18 @@ test('差价 0 / null：不动钱（不写收款明细，也不写客户往来�
   }
 });
 
-test('资金 prepaid：钱走「客户往来货款」（退货退款 + 带符号应收变化 + 原单客户/原单号）', async () => {
+test('资金 prepaid：走「客户往来货款」，用「业务事件ID」做远端幂等键，客户留空', async () => {
   const refund = build();
   const refundResult = await refund.service.execute(request({ settlement: 'prepaid', diffAmount: -250 }));
   const rows = rowsOf(refund.gateway, CREDIT_TABLE);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].fields['变动类型'], '退货退款');
   assert.equal(rows[0].fields['应收变化'], -250); // 负=我们欠客户（转成预存）
-  assert.equal(rows[0].fields['客户'], '王女士'); // 从原单取
   assert.equal(rows[0].fields['来源单号'], ORDER_NO);
-  assert.equal(rows[0].fields['幂等键'], 'after_sales:order_old:return:prepaid:1');
+  assert.equal(rows[0].fields['业务事件ID'], 'after_sales:order_old:return');
+  assert.equal(rows[0].fields['发生时间'], FIXED_NOW);
+  // 销售主表里没有"客人是谁"这个信息 → 不编值、不从原单取不存在的字段
+  assert.equal(rows[0].fields['客户'], undefined);
   assert.equal(refundResult.money.route, 'prepaid');
   // prepaid 不写「收款明细」
   assert.equal(paymentRows(refund.gateway).length, 0);
@@ -423,6 +477,16 @@ test('资金 prepaid：钱走「客户往来货款」（退货退款 + 带符号
   await refund.service.execute(request({ settlement: 'prepaid', diffAmount: -250 }));
   assert.equal(countsOf(refund.gateway), before);
   assert.equal(rowsOf(refund.gateway, CREDIT_TABLE).length, 1);
+});
+
+test('prepaid 的幂等键不含内容：同原单同动作第二次（金额不同）→ 大声失败，不写第二笔', async () => {
+  const { gateway, service } = build();
+  await service.execute(request({ taskId: 'om_a', settlement: 'prepaid', diffAmount: -250 }));
+  await assert.rejects(
+    () => service.execute(request({ taskId: 'om_b', settlement: 'prepaid', diffAmount: -200 })),
+    /客户往来货款 .* 与当前请求不一致（应收变化不一致）/,
+  );
+  assert.equal(rowsOf(gateway, CREDIT_TABLE).length, 1);
 });
 
 test('退回的鞋：门盒 / 样品两种状态都按她说的落库', async () => {
@@ -453,7 +517,7 @@ test('原明细是配品：只记明细行，不写库存流水 / 实时库存�
   assert.equal(rowsOf(gateway, 'salesDetail')[1].fields['履约状态'], '已退货');
 });
 
-test('中途失败后重试：只补没写成的部分，已写的部分不重复写', async () => {
+test('中途失败后重试：带着本地进度继续，已写的部分不重复写', async () => {
   const { gateway, inventory, service } = build();
   const originalCreate = gateway.create;
   let failed = false;
@@ -469,10 +533,11 @@ test('中途失败后重试：只补没写成的部分，已写的部分不重�
   };
 
   await assert.rejects(() => service.execute(request()), /FieldNameNotFound/);
-  // 失败时已经写下的部分：主表 1 条 + 明细 1 条
+  // 失败时已经写下的部分：主表 1 条 + 明细 1 条 + 原明细已改状态
   assert.equal(masterRows(gateway).length, 1);
   assert.equal(detailRows(gateway).length, 1);
   assert.equal(paymentRows(gateway).length, 0);
+  assert.equal(rowsOf(gateway, 'salesDetail')[0].fields['履约状态'], '已退货');
 
   const result = await service.execute(request());
   assert.equal(gateway.writes.create.salesEntry, 1);
@@ -488,7 +553,39 @@ test('中途失败后重试：只补没写成的部分，已写的部分不重�
   assert.equal(result.money.route, 'cash');
 });
 
-test('入参校验：动作 / newLines / restockState / 原单号 / 原明细归属 / 幂等键格式', async () => {
+test('重试时发现已写入的远端记录被改动/删除 → 停下来让人核对（不静默重写）', async () => {
+  const { gateway, service } = build();
+  const originalCreate = gateway.create;
+  let failed = false;
+  gateway.create = async function create(key, values) {
+    if (key === 'paymentRecord' && !failed) {
+      failed = true;
+      const error = new Error('新增“收款明细”记录失败: FieldNameNotFound (Code: 1254045)');
+      error.bitableRejected = true;
+      throw error;
+    }
+    return originalCreate.call(this, key, values);
+  };
+  await assert.rejects(() => service.execute(request()), /FieldNameNotFound/);
+
+  // 把上次写入的售后主表记录删掉（模拟人工动了数据）
+  const masterId = masterRows(gateway)[0].record_id;
+  gateway.records.set('salesEntry', rowsOf(gateway, 'salesEntry').filter((row) => row.record_id !== masterId));
+  await assert.rejects(() => service.execute(request()), /已记录的售后主表 .*记录已不存在/);
+});
+
+test('缺「业务事件ID」列：prepaid 在任何写入之前就大声失败', async () => {
+  const { gateway, service } = build({ missingCreditKey: true });
+  await assert.rejects(
+    () => service.execute(request({ settlement: 'prepaid' })),
+    /依赖「业务事件ID」文本列/,
+  );
+  // 一个字节都没写（失败发生在写主表之前）
+  assert.equal(masterRows(gateway).length, 0);
+  assert.deepEqual(gateway.writes.create, {});
+});
+
+test('入参校验：动作 / newLines / restockState / 原单号 / 原明细归属', async () => {
   const { gateway, service } = build();
   await assert.rejects(() => service.execute(request({ action: 'repair' })), /未声明的售后动作/);
   await assert.rejects(
@@ -499,11 +596,14 @@ test('入参校验：动作 / newLines / restockState / 原单号 / 原明细归
   await assert.rejects(() => service.execute(request({ restockState: '仓库' })), /只能回/);
   await assert.rejects(() => service.execute(request({ originalSalesOrderNo: 'XSD-OTHER' })), /原单号对不上/);
   await assert.rejects(
-    () => service.execute(request({ newLines: [], action: 'exchange', originalSalesDetailRecordIds: ['detail_old_1'] })),
+    () => service.execute(request({ action: 'exchange' })),
     /换货缺少新的出货商品/,
   );
   await assert.rejects(
-    () => service.execute(request({ newLines: [{ productId: 'product_B', sizeId: 'size_42', amount: -1 }], action: 'compensation' })),
+    () => service.execute(request({
+      action: 'compensation',
+      newLines: [{ productId: 'product_B', sizeId: 'size_42', amount: -1 }],
+    })),
     /必须大于 0/,
   );
   await assert.rejects(
@@ -513,22 +613,5 @@ test('入参校验：动作 / newLines / restockState / 原单号 / 原明细归
   // 没有被写入任何业务表
   assert.equal(masterRows(gateway).length, 0);
   assert.equal(rowsOf(gateway, 'inventoryLedger').length, 0);
-});
-
-test('缺「客户往来货款」表配置时，只有 prepaid 这条路径失败，退货本身照做', async () => {
-  const gateway = fakeBase();
-  const inventory = fakeInventory(gateway);
-  const service = new AfterSalesService({
-    gateway,
-    inventory,
-    config: readAfterSalesConfig({ FEISHU_V1_CUSTOMER_CREDIT_TABLE_ID: '' }),
-    now: () => FIXED_NOW,
-  });
-  await assert.rejects(
-    () => service.execute(request({ settlement: 'prepaid' })),
-    /FEISHU_V1_CUSTOMER_CREDIT_TABLE_ID/,
-  );
-  // 失败是"大声"的：没有半条客户往来货款记录，也没有偷偷改用收款明细
-  assert.equal(paymentRows(gateway).length, 0);
-  assert.equal(rowsOf(gateway, CREDIT_TABLE).length, 0);
+  assert.deepEqual(gateway.writes.create, {});
 });
