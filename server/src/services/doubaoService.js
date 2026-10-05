@@ -5,7 +5,15 @@ const { logError, logInfo } = require('../utils/logger');
 const { applyGroupBuyVoucherPolicy } = require('./groupBuyVoucherPolicy');
 const { parseUnitCost } = require('./arrivalCostPolicy');
 const { resolveLlm, assertLlmConfigured } = require('../config/llmModels');
-const { normalizeMessageIntent } = require('../config/saleIntents');
+const {
+  normalizeMessageIntent,
+  isAfterSalesIntent,
+} = require('../config/saleIntents');
+const {
+  resolveAfterSalesAction,
+  resolveAfterSalesSettlement,
+  resolveAfterSalesRestockState,
+} = require('../config/afterSalesFlow');
 
 // Log only the sale fields needed to compare AI extraction with deterministic
 // normalization. Never log the complete user message, prompt or raw model JSON.
@@ -27,6 +35,14 @@ const salesParseSnapshot = (result = {}) => ({
   agreed_total: result.agreed_total,
   total_paid: result.total_paid,
   payment_method: result.payment_method,
+  // 售后的几个字段同样记进快照：出问题时能回答"模型到底听成了退货还是换货、
+  // 钱是怎么走的"，而不是只知道 intent=return。
+  action: result.action,
+  ordinal: result.ordinal,
+  settlement: result.settlement,
+  diff_amount: result.diff_amount,
+  restock_state: result.restock_state,
+  new_item_no: String(result.new_item_no || '').slice(0, 80),
   missing_fields: (Array.isArray(result.missing_fields) ? result.missing_fields : [])
     .map((field) => String(field).slice(0, 100)),
 });
@@ -58,7 +74,74 @@ const moneyOrEmpty = (value) => {
   return number && Math.abs(number * 100 - Math.round(number * 100)) < 1e-6 ? number : '';
 };
 
+// 「第 2 笔」里的序号。模型应该给 ordinal，但它偶尔漏字段；序号错了会指到另一笔，
+// 所以再用一次确定性文本兜底（这一段是纯文本，不会认错语义）。
+const ordinalFromText = (sourceText) => {
+  const match = String(sourceText || '').match(/第\s*(\d+)\s*笔/);
+  if (!match) return '';
+  const ordinal = Number(match[1]);
+  return Number.isSafeInteger(ordinal) && ordinal > 0 ? ordinal : '';
+};
+
+const optionalSignedMoney = (value) => {
+  if (value == null || value === '') return '';
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number * 100) / 100 : '';
+};
+
+/**
+ * 退换货的规范化（第二期·第二步）。
+ *
+ * 为什么单独一个函数、并且在 normalizeSalesResult 的**最前面分流**：
+ *   销售字段（items / payments / agreed_total）和售后字段（要退哪一双 / 钱怎么走 /
+ *   回库状态）是两套契约。混在一个对象里迟早出现"sale 的 items 被当成要退的鞋"，
+ *   所以按意图分流，各自只装自己的字段。
+ *
+ * 这里只做**收敛**，不做业务判断：
+ *   · action / settlement / restock_state 都走 config/afterSalesFlow 的别名表，
+ *     模型写中文、英文、简写都落到同一个值；
+ *   · 她说"第 2 笔"时模型给 ordinal，漏了就按原话文本兜底（见 ordinalFromText）；
+ *   · 差价只认她说的数（模型不许自己算），没说到就留空由接线层给建议值。
+ */
+const normalizeAfterSalesResult = (result = {}, sourceText = '') => {
+  const intent = normalizeMessageIntent(result.intent);
+  const first = (Array.isArray(result.items) && result.items[0]) || {};
+  const size = Number(result.size || first.size);
+  const newSize = Number(result.new_size || result.newSize);
+  return {
+    intent,
+    action: resolveAfterSalesAction({
+      action: result.action || result.after_sales_action,
+      intent,
+      // 兜底关键词用原话：模型漏了 action 时，"赔/换/退"仍然能分清动作。
+      text: sourceText,
+    }),
+    ordinal: Number.isSafeInteger(Number(result.ordinal)) && Number(result.ordinal) > 0
+      ? Number(result.ordinal)
+      : ordinalFromText(sourceText),
+    item_no: String(result.item_no || first.item_no || '').trim(),
+    color: String(result.color || first.color || '').trim(),
+    size: Number.isSafeInteger(size) && size > 0 ? size : '',
+    new_item_no: String(result.new_item_no || result.newItemNo || '').trim(),
+    new_color: String(result.new_color || result.newColor || '').trim(),
+    new_size: Number.isSafeInteger(newSize) && newSize > 0 ? newSize : '',
+    new_amount: moneyOrEmpty(result.new_amount ?? result.newAmount),
+    settlement: resolveAfterSalesSettlement(result.settlement),
+    diff_amount: optionalSignedMoney(result.diff_amount ?? result.diffAmount),
+    restock_state: resolveAfterSalesRestockState(result.restock_state ?? result.restockState),
+    // 售后这条链路不需要"缺哪些字段"清单：信息不够时由接线层直接问她
+    // （缺哪一双 / 缺尺码 / 缺金额），问法比字段名清单更像人话。
+    missing_fields: [],
+  };
+};
+
 const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = {}) => {
+  // 退换货走自己的字段契约（第二期）：销售字段与售后字段不混装。
+  // 这一分流必须在最前面——否则下面的 items/payments 规范化会把"要退的那一双"
+  // 当成"卖出去的一双"，而这一期的售后**还没有**任何销售字段。
+  if (isAfterSalesIntent(normalizeMessageIntent(result.intent))) {
+    return normalizeAfterSalesResult(result, sourceText);
+  }
   const rawItems = Array.isArray(result.items) && result.items.length ? result.items : [result];
   const items = [];
   for (const item of rawItems) {
@@ -302,8 +385,9 @@ class DoubaoService {
    都不是、或判断不了时填 "unsupported"。
    intent="sale_query" 时**只填 item_no（货号）和 color（颜色）**，不要填 size、金额、payments，
    也不要输出销售行为字段；sale_query 的输出结构示例：{"intent":"sale_query","item_no":"6035","color":"黑"}。
-   intent="return" 或 "exchange" 时只判意图，不输出任何业务字段。
-   intent="sale" 时按下面的规则输出完整销售字段，不输出销售行为字段。
+   intent="return" 或 "exchange" 时**不输出任何销售字段**（不要 items / payments / agreed_total），
+   只按下面第 13 条的售后结构输出：她退哪一双、要退要换还是赔、钱怎么走、退回的鞋放哪。
+   intent="sale" 时按下面的规则输出完整销售字段，不输出售后字段。
 2. trade_type 是这笔交易的**性质**，只能填「现货」「未付」「预付」三者之一：
    · 提到定金 / 先付 / 预定 → \"预付\"（货没拿走，之后来取）
    · 明确说未付 / 欠着 / 下次再给 → \"未付\"（鞋拿走，钱还没给）
@@ -322,6 +406,20 @@ class DoubaoService {
     如果某件是上面列出的配品，输出 {"kind":"accessory","accessory_name":"名称","quantity":1,"actual_amount":金额}，
     不要填 item_no、color、size。accessory_name 必须与上面列表里的写法**完全一致**，不许改写、简写或自造名称；
     原话里的说法与列表对不上时，accessory_name 照抄原话，由后端判断。
+13. intent="return" 或 "exchange" 时，除 intent 外只填这些字段（没有的留空，**不要猜、不要自己算**）：
+    {"intent":"return","action":"return","ordinal":2,"item_no":"6035","color":"黑","size":39,
+     "new_item_no":"","new_color":"","new_size":"","new_amount":"",
+     "settlement":"prepaid","diff_amount":-230,"restock_state":"门盒"}
+    · action 只能填三个值之一："return"（退货）/ "exchange"（换货）/ "compensation"（赔货）。
+    · ordinal 是她说的「第 2 笔」「第 1 笔」里的序号（数字）；没说到就留空。
+    · item_no / color / size 是**要退/要换的那一双**（她原话里说的），不知道就留空。
+    · new_item_no / new_color / new_size / new_amount 是**换给/赔给她的那一双**的货号、颜色、尺码、成交金额
+      （只有换货、赔货才有）；不知道就留空。
+    · settlement 只能填 "cash"（退现金/收现金/退微信）/ "prepaid"（钱先存着/存预存）；没说到就留空。
+    · diff_amount 是**她说的**差价：要退给她的钱填负数（如 -230），她要补的钱填正数（如 50）；
+      她没说就留空，**禁止**用原价或标价推算。
+    · restock_state 只能填 "门盒" / "样品"（退回来的鞋放哪儿）；没说到就留空。
+
 12. 只输出 JSON，不输出 Markdown 或说明。
 
 用户原话：${originalText}
@@ -579,4 +677,5 @@ ${supplierRule}
 
 module.exports = new DoubaoService();
 module.exports.normalizeSalesResult = normalizeSalesResult;
+module.exports.normalizeAfterSalesResult = normalizeAfterSalesResult;
 module.exports.normalizeDocumentRows = normalizeDocumentRows;
