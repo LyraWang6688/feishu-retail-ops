@@ -137,8 +137,10 @@ test('sale_query 0 条：卡片告诉她在窗口里没查到，并问大概是�
 test('return：接线后走售后编排（出确认卡片），确认之前不调执行器、不写任何业务表', async () => {
   const taskId = 'after_sales_return';
   const executed = [];
+  // 钱怎么走她说清楚了（"退现金"）：钱没说定时接线层会先回一句文字问她、不出卡片，
+  // 那条路在 afterSalesFlow.test.js 里单独覆盖。
   const { service, store, writes, cards, sent } = makeService(
-    { intent: '退货', action: 'return', item_no: '6035', color: '黑' },
+    { intent: '退货', action: 'return', item_no: '6035', color: '黑', settlement: 'cash' },
     { afterSales: { execute: async (request) => { executed.push(request); return {}; } } },
   );
   await store.create({ task_id: taskId, type: 'sale', status: 'received', message_id: 'om_r',

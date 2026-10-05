@@ -22,6 +22,12 @@
 // 幂等：由执行器负责（总闸门 + 远端业务事件ID）。本层只保证
 //   · 同一张卡片重复点确认 → 第二次不会绕过闸门再写一遍；
 //   · taskId 传给执行器（每次用户消息一个分片），所以"同一笔销售先退 A 再退 B"仍然可行。
+//
+// ⚠️ 钱怎么走**没有默认值**（业务红线：「退货不是默认现金啊，都有啊」）：
+//   她说了就按她说的走（她每句话都会说清：退多少、微信还是现金、还是钱先留着）；
+//   万一模型真没解析出钱怎么走，就**抛一个明确的错拦住这一笔**（业务表零写入），
+//   既不默认也不追问——她纠正过：「为什么要做兜底呢？……都会说清楚的」。
+//   规则与理由见 config/afterSalesFlow。
 
 const { AFTER_SALES_ACTIONS, actionSpecOf } = require('../config/afterSales');
 const {
@@ -32,7 +38,6 @@ const {
   resolveAfterSalesAction,
   resolveAfterSalesSettlement,
   resolveAfterSalesRestockState,
-  DEFAULT_AFTER_SALES_SETTLEMENT,
   DEFAULT_AFTER_SALES_RESTOCK_STATE,
   afterSalesContextId,
 } = require('../config/afterSalesFlow');
@@ -45,6 +50,7 @@ const {
   afterSalesResultCard,
   afterSalesRetryCard,
   afterSalesStatusCard,
+  afterSalesSettlementLabel,
 } = require('../utils/larkCards');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 
@@ -125,6 +131,22 @@ class AfterSalesFlowService {
       return { handled: true, action, located: true, reason: planned.reason };
     }
     const plan = planned.plan;
+
+    // 钱怎么走没解析出来 → **大声拦住**（业务表零写入），不默认、不追问、不出卡片。
+    // 她的口径是"每句话都会说清钱怎么走"，所以这不该发生；真发生了就如实报错让她重发一次。
+    // 为什么不能放过去交给执行器：执行器的口径是「settlement 空 = 不动钱」，
+    // 放过去这一笔就会**静默地一分钱都不动**——明细/库存都写好了，账上少一笔，谁也看不出来。
+    if (plan.requires_settlement) {
+      logError('after_sales.settlement.unparsed', {
+        task_id: task.task_id,
+        action,
+        diff_amount: plan.diff_amount,
+        original_text: plan.original_text,
+      });
+      throw new Error(`没解析出这次的钱怎么走（${afterSalesSettlementLabel('cash')} / `
+        + `${afterSalesSettlementLabel('prepaid')}），这一笔没有执行；请把"钱怎么走"一起说一遍，重发一次`);
+    }
+
     await this.store.update(task.task_id, {
       status: AFTER_SALES_TASK_STATUS.CONFIRMING,
       after_sales_action: action,
@@ -139,6 +161,7 @@ class AfterSalesFlowService {
       original_sales_entry_record_id: plan.original_sales_entry_record_id,
       original_sales_detail_record_ids: plan.original_sales_detail_record_ids,
       settlement: plan.settlement,
+      requires_settlement: plan.requires_settlement,
       diff_amount: plan.diff_amount,
       restock_state: plan.restock_state,
       restock_state_explicit: plan.restock_state_explicit,
@@ -232,6 +255,8 @@ class AfterSalesFlowService {
 
     // 退回的鞋回哪儿：她说就按她说的（explicit），没说就用默认（原状态=门盒）。
     // 默认值先填好，所以她不点按钮也能直接确认；按钮只是给她改。
+    //
+    // ⚠️ 钱怎么走**不适用**这套"先填默认值"的做法（见下面）。
     const spokenRestock = resolveAfterSalesRestockState(parsed.restock_state);
     const restockState = spec.requiresRestockState
       ? (spokenRestock || DEFAULT_AFTER_SALES_RESTOCK_STATE)
@@ -262,10 +287,14 @@ class AfterSalesFlowService {
       return { ok: false, reason: 'need_diff_amount' };
     }
 
-    // 钱怎么走：她说就按她说的；没说而这次要动钱时默认走「收款明细」（见配置注释）。
-    // 差价为 0 时 settlement 留空 = 不动钱（执行器也按这个口径处理）。
+    // 钱怎么走：**没有默认值**（业务红线，见 config/afterSalesFlow 的说明）。
+    //   · 她说了（"钱先存着"/"退我现金"）→ 按她说的走；
+    //   · 她没说、而这次要动钱（差价 ≠ 0）→ settlement 留空、requires_settlement = true：
+    //     handle 会**抛明确的错**拦住这一笔（不默认、不追问、不出卡片）；
+    //   · 差价 = 0 → settlement 留空且 requires_settlement = false（不动钱，没什么可定的）。
     const spokenSettlement = resolveAfterSalesSettlement(parsed.settlement);
-    const settlement = diffAmount ? (spokenSettlement || DEFAULT_AFTER_SALES_SETTLEMENT) : null;
+    const movesMoney = Number.isFinite(diffAmount) && diffAmount !== 0;
+    const settlement = movesMoney ? (spokenSettlement || null) : null;
 
     return {
       ok: true,
@@ -280,6 +309,10 @@ class AfterSalesFlowService {
         original_sales_detail_record_ids: [candidate.record_id],
         new_lines: newLines,
         settlement,
+        // 她话里说清楚了才为 true（没解析出来就是 false——那正是要大声拦住的情形）。
+        settlement_explicit: Boolean(movesMoney && spokenSettlement),
+        // 这一次"钱怎么走"没解析出来：要动钱却不知道往哪条腿走时要**拦住**，不许静默放过。
+        requires_settlement: movesMoney && !spokenSettlement,
         diff_amount: diffAmount,
         restock_state: restockState,
         restock_state_explicit: Boolean(spec.requiresRestockState && spokenRestock),
@@ -343,6 +376,9 @@ class AfterSalesFlowService {
   /**
    * 返回 null = "这不是售后的卡片动作"，交给入口层继续走销售/采购分支。
    * 只有确认/取消/选回库状态三种动作会被这里接住。
+   *
+   * ⚠️ 没有"选资金走向"这个卡片动作：钱怎么走**不用卡片按钮**（业务负责人纠正：
+   *   「会说的，所以不用再有要卡片按钮的链路了」），而是回一句文字问她。
    */
   async handleCardAction(value = {}, event, operatorOpenId, context = {}) {
     const action = String(value.action || '').trim();
@@ -390,6 +426,17 @@ class AfterSalesFlowService {
   /**
    * 确认 → 调执行器。
    *
+   * ⚠️ 第一道关是**钱**：万一有一份方案还没定钱怎么走就点到了确认，
+   * 这里**直接抛明确的错**拦住——不调执行器、不改本地状态、不写任何业务表。
+   * 正常流程下这种方案发不出卡片（handle 在出卡片之前就抛错了），
+   * 这一关只是兜住"历史卡片 / 别处拼出来的方案"。
+   *
+   * 为什么必须拦住，不能"让执行器看着办"：
+   *   执行器（afterSalesService.normalizeRequest）的口径是「settlement 为空 = 不动钱」，
+   *   把"没解析出钱怎么走"直接透传过去，这一笔就会**静默地一分钱都不动**——账上少一笔，
+   *   明细和库存却都写好了，谁也看不出错在哪。这正是业务负责人说的"钱不能猜"的反面：
+   *   不是猜错，而是猜都算不上、直接把钱漏掉。
+   *
    * 重复点确认是安全的，有两层：
    *   ① 这里：任务已经是 done 就直接回结果卡，不再调执行器；
    *   ② 执行器：总闸门按"这一次售后做过没"整次跳过（连飞书读都不做）。
@@ -410,6 +457,14 @@ class AfterSalesFlowService {
     }
     const plan = task.after_sales_plan;
     if (!plan) throw new Error('这次售后没有可执行的方案，请重新描述一次');
+
+    if (plan.requires_settlement && !plan.settlement) {
+      logError('after_sales.settlement.missing', {
+        task_id: task.task_id, action: plan.action, diff_amount: plan.diff_amount,
+      });
+      throw new Error(`这一笔还没确定钱怎么走（${afterSalesSettlementLabel('cash')} / `
+        + `${afterSalesSettlementLabel('prepaid')}），不能执行；请把"钱怎么走"一起说一遍，重新说一次`);
+    }
 
     await this.store.update(task.task_id, { status: AFTER_SALES_TASK_STATUS.RUNNING });
     try {
