@@ -13,7 +13,7 @@ test('workbench groups pending payment and delivery by one sales order', async (
       { record_id: 'detail_3', fields: { 销售单号: ['order_1'], 编号: ['product_3'], 尺码: ['size_40'], 履约状态: '未交付', 成交金额: 39 } },
     ],
     sizeManagement: [38, 39, 40].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } })),
-    paymentRecord: [{ record_id: 'receipt_1', fields: { 关联销售单: ['order_1'], 收款金额: 50, 支付方式: ['method_1'] } }],
+    paymentRecord: [{ record_id: 'receipt_1', fields: { 关联销售单: ['order_1'], 收款金额: 50, 交易方式: ['method_1'] } }],
     paymentMethod: [{ record_id: 'method_1', fields: { 收款方式: '微信' } }],
     product: [1, 2, 3].map((index) => ({ record_id: `product_${index}`, fields: { 编号: `P${index}` } })),
   };

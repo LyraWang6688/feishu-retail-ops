@@ -187,7 +187,7 @@ test('deposit creates paid and unpaid receipts; follow-up settles the same recei
   assert.deepEqual(receipts.map((row) => [row.fields['收款金额'], row.fields['收款状态']]),
     [[100, '已收款'], [140, '未收款']]);
   assert.equal(receipts[1].fields['收款时间'], undefined);
-  assert.equal(receipts[1].fields['支付方式'], undefined);
+  assert.equal(receipts[1].fields['交易方式'], undefined);
   assert.equal((await gateway.get('salesEntry', 'order_1')).fields['履约状态'], undefined);
   assert.equal((await gateway.get('salesEntry', 'order_1')).fields['收款状态'], undefined);
   const pendingId = receipts[1].record_id;
@@ -445,7 +445,7 @@ test('Feishu record_ids link shape reuses an existing order, receipt, and detail
     detail.fields['编号'] = linked(`product_${input.items[index].itemNo}`);
   }
   receipt.fields['关联销售单'] = linked('order_1');
-  receipt.fields['支付方式'] = linked('method_微信');
+  receipt.fields['交易方式'] = linked('method_微信');
   (await gateway.get('salesEntry', 'order_1')).fields['确认状态'] = '入账失败';
 
   const retried = await sale.confirm(input);

@@ -156,6 +156,11 @@ const V1_BITABLE_SCHEMA = {
         actualAmount: '成交金额',
         // Formula field (unit list price), never written by the backend.
         listUnitPrice: '销售单价',
+        // 「交易类型」（单选关联「行为管理」，2026-10-05 新增）是给退换货链路预留的：
+        // 明细行要能自己说明"这一行是卖出去的还是退回来的"。本次只建立映射、不实现逻辑，
+        // 提前落映射是为了让 schema 闸门从今天起就盯住这个名字——名字漂移要当场失败，
+        // 而不是等退换货上线时才在写入时静默 FieldNameNotFound。
+        tradeType: '交易类型',
       },
     },
     paymentRecord: {
@@ -163,7 +168,13 @@ const V1_BITABLE_SCHEMA = {
       tableId: getEnv('FEISHU_V1_PAYMENT_RECORD_TABLE_ID', 'tblTpLOtTLhWxXvm'),
       fields: {
         salesEntry: '关联销售单',
-        method: '支付方式',
+        // 产品负责人 2026-10-05 把这张表的「支付方式」改名为「交易方式」（字段本身不变，
+        // 仍是单选关联「收款方式管理」）。schema 没跟上就会用飞书里已不存在的字段名写入，
+        // 收款记录静默失败——正是 deploy_build.sh 的 schema 闸门拦住的那次。
+        method: '交易方式',
+        // 「交易方向」（单选：收入 / 退回，2026-10-05 新增）同样为退换货链路预留：
+        // 本次只建立映射、不实现逻辑，理由同上。
+        tradeDirection: '交易方向',
         amount: '收款金额',
         status: '收款状态',
         receivedAt: '收款时间',
