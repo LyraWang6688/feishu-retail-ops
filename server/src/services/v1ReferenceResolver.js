@@ -117,19 +117,27 @@ class V1ReferenceResolver {
       };
     }
 
-    // “编号”可以包含品类等展示信息，而用户日常通常只说“货号+颜色”。
-    // 先匹配完整编号；找不到时再使用配置字段“货号+颜色”作为唯一别名。
+    // 采购到货链路（产品负责人 2026-10-05 定稿的临时规则，从简，不要加额外保护分支）：
+    //   拿识别出的「货号 + 颜色」去「货品信息」匹配
+    //     命中   → 用它（命中多条时取第一条继续，并把条数带回去让卡片标注）
+    //     没命中 → 交给调用方建新品（到货链路走 ensureArrivalProduct）
+    // 刻意没有「货号在、颜色对不上就先提示核对」这一步：没有就创建，就是这么简单。
+
+    // 「编号」是「货号|颜色|类别」的拼接，单据上经常没有类别（编号残缺）。
+    // 它只作为**可选加速**：识别出完整编号时一步命中；对不上也不影响下面的主路径，
+    // 所以编号绝不是必经之路。
     let matches = wantedNumber
       ? candidates.filter((candidate) => candidate.number === wantedNumber)
       : [];
-    if (matches.length === 0 && wantedNumber) {
-      matches = candidates.filter(
-        (candidate) => candidate.itemNo && candidate.color && `${candidate.itemNo}${candidate.color}` === wantedNumber,
-      );
-    }
+    // 这里原本还有一层「归一化后的 货号+颜色 拼接 === 编号」的别名匹配，已删除：
+    // 它拿拼接结果去比完整编号，而表里编号是「货号|颜色|类别」，永远命中不了；
+    // 而它所表达的「货号+颜色」本来就是下面主路径要做的事，留着只会误导排查。
+    //
+    // 主路径：货号精确匹配，且颜色也用 normalizeColor 归一后匹配（「棕」=「棕色」）。
     if (matches.length === 0 && wantedItemNo) {
       matches = candidates.filter(
-        (candidate) => candidate.itemNo === wantedItemNo && (!wantedColor || candidate.color === wantedColor),
+        (candidate) => candidate.itemNo === wantedItemNo
+          && (!wantedColor || candidate.color === wantedColor),
       );
     }
 
@@ -150,22 +158,23 @@ class V1ReferenceResolver {
     }
 
     if (matches.length === 0) {
-      // 给「确实没有这条货品」一个可判定的标记：到货链路要据此自动建档，
-      // 而「货号对应多个颜色」那种歧义必须留给人核对（不能也去建档）。
+      // 给「确实没有这条货品」一个可判定的标记：到货链路要据此自动建档。
       // 靠 error.message 做前缀匹配太脆，改文案就会静默失效。
       const notFound = new Error(`找不到货品：${input.productNumber || input.itemNo || ''}${input.color || ''}`);
       notFound.code = 'PRODUCT_NOT_FOUND';
       throw notFound;
     }
-    if (matches.length > 1) {
-      if (wantedItemNo) {
-        const colors = [...new Set(matches.map((candidate) => candidate.colorDisplay).filter(Boolean))];
-        const colorHint = colors.length ? `（${colors.join('、')}）` : '';
-        throw new Error(`货号 ${input.itemNo} 对应多个货品，请补充颜色${colorHint}`);
-      }
-      throw new Error(`货品匹配不唯一：${input.productNumber || input.itemNo || ''}${input.color || ''}`);
-    }
-    return { recordId: matches[0].record.record_id, record: matches[0].record };
+    const chosen = matches[0];
+    // 命中多条（男/女鞋常共用同一货号+颜色）：不报错、不停下，取第一条继续。
+    // ambiguousCount / selectedColor / selectedNumber 带回去，让到货卡片能标注
+    // 「该货号+颜色匹配到 N 条，已取 XXX」——产品负责人要求这种情况"要看得见"。
+    return {
+      recordId: chosen.record.record_id,
+      record: chosen.record,
+      ambiguousCount: matches.length,
+      selectedColor: chosen.colorDisplay,
+      selectedNumber: chosen.number,
+    };
   }
 
   async resolveBehavior(code) {

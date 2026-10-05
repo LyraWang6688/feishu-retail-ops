@@ -409,24 +409,9 @@ const purchaseRequestConfirmationCard = (draftId, draft) => {
   return { config: { wide_screen_mode: true }, header: { template: 'orange', title: { tag: 'plain_text', content: headerTitle } }, elements };
 };
 
-const purchaseArrivalComparisonCard = (draftId, draft) => {
-  const lines = (draft.differences || []).map((item) =>
-    `${item.product_number || item.item_no}｜${item.size}码：申请${item.requested}，实到${item.actual}，${item.label}`
-  );
-  return {
-    config: { wide_screen_mode: true },
-    header: { template: 'orange', title: { tag: 'plain_text', content: '请确认采购到货差异' } },
-    elements: [
-      { tag: 'markdown', content: `**报货批次号：** ${text(draft.batch_no)}\n${lines.join('\n') || '申请与实际到货一致'}` },
-      // 两个按钮走 column_set：移动端实测一行两列（见 buttonColumns 的注释）。
-      buttonColumns([
-        actionButton('确认入库', 'confirm_purchase_arrival', draftId, 'primary'),
-        actionButton('取消', 'cancel_purchase_arrival', draftId, 'danger'),
-      ]),
-    ],
-  };
-};
-
+// 原「采购到货差异确认卡片」（purchaseArrivalComparisonCard）已删除：产品负责人 2026-10-05
+// 确认采购差异这块不用了（未来架构改成"到货在采购申请基础上修改"，不再比对差异），
+// 对应的差异计算也一并移除，留着就是没人调用的死代码。
 
 /**
  * 第一步：采购到货明细确认卡片
@@ -436,7 +421,7 @@ const purchaseArrivalDetailCard = (draftId, draft) => {
   const elements = [];
 
   // 报货批次号；没有批次号说明是供应商直接送货、没走采购申请，
-  // 必须在卡片上写出来，否则她会以为系统漏做了比对。
+  // 必须在卡片上写出来，免得她以为系统漏了什么。
   if (draft.direct_arrival) {
     elements.push({ tag: 'markdown', content: '**无申请直接到货**（未关联报货批次，全部按实际到货入库）' });
   } else {
@@ -453,6 +438,23 @@ const purchaseArrivalDetailCard = (draftId, draft) => {
     elements.push({ tag: 'hr' });
     elements.push({ tag: 'markdown', content: `**📦 实际到货明细（共 ${matchedItems.length} 条）**` });
     elements.push(...purchaseItemElements(matchedItems, { skipSupplierGroup: true }));
+  }
+
+  // 「货号+颜色」在货品表里命中多条（男/女鞋常共用同一货号）：系统已经取第一条继续，
+  // 但产品负责人要求这种情况"要看得见"，所以在这儿写清楚匹配到几条、取了哪一条。
+  const ambiguousItems = matchedItems.filter((item) => item.ambiguous_match);
+  if (ambiguousItems.length > 0) {
+    elements.push({ tag: 'hr' });
+    elements.push({ tag: 'markdown', content: '**⚠️ 以下货号+颜色在货品表里有多条，已取第一条**' });
+    elements.push({
+      tag: 'markdown',
+      content: ambiguousItems.map((item) => {
+        const info = item.ambiguous_match;
+        // 「已取 XXX」优先用被选中那条的完整编号；编号公式还没算出来时退回它的颜色。
+        const picked = info.number || info.color;
+        return `- ${text(item.item_no || '')} ${text(info.color || '')}：匹配到 ${text(info.count)} 条，已取 ${text(picked) || '第一条'}`;
+      }).join('\n'),
+    });
   }
 
   // 新品自动建档：货已经到了，建档只是补资料，**不影响入库**，所以先说清楚"已经建好了"，
@@ -545,7 +547,6 @@ module.exports = {
   // 重试卡片收窄按钮用（按 column_set/action 结构遍历，见 keepOnlyCardButton）。
   keepOnlyCardButton,
   purchaseRequestConfirmationCard,
-  purchaseArrivalComparisonCard,
   purchaseArrivalDetailCard,
   purchaseStatusCard,
   salesConfirmationCard,
