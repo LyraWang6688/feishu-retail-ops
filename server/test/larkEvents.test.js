@@ -72,12 +72,18 @@ const flushDispatch = () => new Promise((resolve) => setTimeout(resolve, 10));
 
 const createRecordingService = () => {
   const accepted = [];
+  // 「同一包」的记录会以一次 acceptMany 调用进来：packages 记下每包的 id 列表，
+  // accepted 仍按"每条记录一对"展开，便于既有用例继续按记录断言。
+  const packages = [];
   return {
     accepted,
+    packages,
     service: {
       purchaseWebhooks: {
-        accept: async (kind, recordId) => {
-          accepted.push([kind, recordId]);
+        acceptMany: async (kind, recordIds) => {
+          const ids = Array.isArray(recordIds) ? recordIds : [recordIds];
+          packages.push([kind, ids]);
+          for (const id of ids) accepted.push([kind, id]);
         },
       },
     },
@@ -202,5 +208,76 @@ test('开关开启时报货照常分派（现状不变）', async () => {
     ['supplier-report', 'rec_report_on'],
     ['arrival', 'rec_arrival_on_both'],
   ]);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 归批的首选信号：「同一包」
+//
+// 一次表单提交 = 同一张表的多条记录，飞书把它们放在**同一个 action_list** 里推过来。
+// 逐条分派会让报货链路各自走一遍处理（N 条 → N 张采购申请图），所以这里要能看出
+// 「这一包里的 record_added 是一起交出去的」。
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('同一包里的多条 record_added 合成一次分派（一次提交 = 一包）', async () => {
+  const { service, accepted, packages } = createRecordingService();
+  const handlers = createLarkEventHandlers(service);
+
+  await withArrivalSwitch(undefined, async () => {
+    handlers['drive.file.bitable_record_changed_v1']({
+      file_token: APP_TOKEN,
+      table_id: REPORT_TABLE_ID,
+      action_list: [
+        { record_id: 'rec_p1', action: 'record_added' },
+        { record_id: 'rec_p2', action: 'record_added' },
+        { record_id: 'rec_p3', action: 'record_added' },
+      ],
+    });
+    await flushDispatch();
+  });
+
+  assert.deepEqual(packages, [['supplier-report', ['rec_p1', 'rec_p2', 'rec_p3']]], '三条要作为一包一起分派');
+  assert.deepEqual(accepted, [
+    ['supplier-report', 'rec_p1'],
+    ['supplier-report', 'rec_p2'],
+    ['supplier-report', 'rec_p3'],
+  ]);
+});
+
+test('一包里非 record_added 的动作不进包：编辑/删除不触发报货', async () => {
+  const { service, packages } = createRecordingService();
+  const handlers = createLarkEventHandlers(service);
+
+  await withArrivalSwitch(undefined, async () => {
+    handlers['drive.file.bitable_record_changed_v1']({
+      file_token: APP_TOKEN,
+      table_id: REPORT_TABLE_ID,
+      action_list: [
+        { record_id: 'rec_edited', action: 'record_edited' },
+        { record_id: 'rec_added', action: 'record_added' },
+      ],
+    });
+    await flushDispatch();
+  });
+
+  assert.deepEqual(packages, [['supplier-report', ['rec_added']]]);
+});
+
+test('一包里的多条到货记录也合成一次分派（到货链路行为不变）', async () => {
+  const { service, packages } = createRecordingService();
+  const handlers = createLarkEventHandlers(service);
+
+  await withArrivalSwitch(undefined, async () => {
+    handlers['drive.file.bitable_record_changed_v1']({
+      file_token: APP_TOKEN,
+      table_id: ARRIVAL_TABLE_ID,
+      action_list: [
+        { record_id: 'arr_a', action: 'record_added' },
+        { record_id: 'arr_b', action: 'record_added' },
+      ],
+    });
+    await flushDispatch();
+  });
+
+  assert.deepEqual(packages, [['arrival', ['arr_a', 'arr_b']]]);
 });
 
