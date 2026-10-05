@@ -15,6 +15,16 @@ const createLarkEventHandlers = (service) => ({
       message_type: event?.message?.message_type,
       chat_type: event?.message?.chat_type,
       sender_open_id: event?.sender?.sender_id?.open_id,
+        // 只为确认「群聊 + 引用」能不能做（不改任何行为）：
+        // chat_id=该消息属于哪个会话（群聊靠它把采购单发进那个群）
+        // parent_id=这条"引用/回复"的是哪一条（用户引用机器人消息时=被引用那条的 id）
+        // mentions=@了谁（引用回复机器人通常会带 @机器人）；text_preview=核对 @ 占位符形态
+        chat_id: event?.message?.chat_id,
+        parent_id: event?.message?.parent_id,
+        root_id: event?.message?.root_id,
+        thread_id: event?.message?.thread_id,
+        mentions: (event?.message?.mentions || []).map((mm) => ({ key: mm?.key, id: mm?.id?.open_id, name: mm?.name })),
+        text_preview: String(event?.message?.content || '').slice(0, 200),
     });
     setImmediate(() => {
       service.acceptMessage(event).catch((error) => {
