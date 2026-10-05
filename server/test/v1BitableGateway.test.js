@@ -60,3 +60,36 @@ test('relation and display helpers support Feishu record field shapes', () => {
   assert.deepEqual(linkedRecordIds({ record_ids: ['rec_6', 'rec_7'] }), ['rec_6', 'rec_7']);
   assert.equal(textValue([{ text: 'A' }, { name: 'B' }]), 'A,B');
 });
+
+// 2026-10-06 线上事故：没有硬编码兜底的表（「尺码管理」「其他配品」）在 .env 之前
+// 被 require，tableId 被冻结成空串，于是请求打到 `.../tables//records`，
+// 飞书回 404 `404 page not found`——报错里看不出是哪张表没配。
+// 现在每个真正要访问多维表格的方法都必须当场抛错，并且**一个请求都不发出去**。
+// （加固前只有 listFields 有这层守卫，create / update / get / delete / listAll 会带着空 ID 发请求。）
+test('空 table_id 必须在发请求之前就被拦下，并指名是哪张表', async () => {
+  const unconfigured = {
+    appToken: 'app_v1',
+    tables: {
+      // 模拟「其他配品 / 尺码管理」这类没有硬编码兜底的表：未配置就是空串。
+      accessory: { tableName: '其他配品', tableId: '', fields: { name: '名称' } },
+    },
+  };
+  let calls = 0;
+  const spy = async () => { calls += 1; return { code: 0, data: {} }; };
+  const client = {
+    bitable: {
+      appTableRecord: { create: spy, update: spy, get: spy, delete: spy, list: spy },
+      appTableField: { list: spy },
+    },
+  };
+  const gateway = new V1BitableGateway({ schema: unconfigured, client });
+
+  await assert.rejects(() => gateway.create('accessory', { name: '腰带' }), /“其他配品”未配置 table_id/);
+  await assert.rejects(() => gateway.update('accessory', 'rec_1', { name: '腰带' }), /“其他配品”未配置 table_id/);
+  await assert.rejects(() => gateway.get('accessory', 'rec_1'), /“其他配品”未配置 table_id/);
+  await assert.rejects(() => gateway.delete('accessory', 'rec_1'), /“其他配品”未配置 table_id/);
+  await assert.rejects(() => gateway.listAll('accessory'), /“其他配品”未配置 table_id/);
+  await assert.rejects(() => gateway.listFields('accessory'), /“其他配品”未配置 table_id/);
+
+  assert.equal(calls, 0, '空 table_id 时不得向多维表格发出任何请求');
+});

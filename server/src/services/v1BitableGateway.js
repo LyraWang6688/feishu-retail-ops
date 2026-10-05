@@ -58,9 +58,30 @@ class V1BitableGateway {
     return this.schema.tables?.[tableKey] || getV1Table(tableKey);
   }
 
-  async listFields(tableKey, options = {}) {
+  /**
+   * 取表配置，并**先确认 table_id 非空**再返回。
+   *
+   * 为什么要有这一层（2026-10-06 线上事故的加固）：
+   * 表 ID 来自 schema 里的 `getEnv('FEISHU_V1_*_TABLE_ID')`，而 schema 是
+   * **模块级对象字面量**——require 那一刻求值一次。只要 .env 还没加载
+   * （例如 dotenv.config 被排到了业务 require 之后，见 src/app.js 的注释），
+   * 没有硬编码兜底的表就会拿到空串并永久冻结。
+   *
+   * 空 tableId 不被拦下时的后果：请求打到 `.../tables//records`，
+   * 飞书回 404 `404 page not found`——**报错里看不出是哪张表没配**，
+   * 现象只是"某个功能没反应"，这正是这次事故难查的原因。
+   * 所以在这一层当场抛错，把"静默 404"换成"一眼能读懂的配置错误"。
+   * （原先只有 listFields 有这个守卫，create / update / get / delete / listAll
+   * 都会带着空 ID 直接发请求。）
+   */
+  tableWithId(tableKey) {
     const table = this.table(tableKey);
     if (!table.tableId) throw new Error(`“${table.tableName}”未配置 table_id，请设置对应的 FEISHU_V1_*_TABLE_ID`);
+    return table;
+  }
+
+  async listFields(tableKey, options = {}) {
+    const table = this.tableWithId(tableKey);
     if (!options.refresh && this.fieldCache.has(tableKey)) return this.fieldCache.get(tableKey);
 
     const fields = [];
@@ -108,7 +129,7 @@ class V1BitableGateway {
   }
 
   async create(tableKey, semanticValues) {
-    const table = this.table(tableKey);
+    const table = this.tableWithId(tableKey);
     const startedAt = Date.now();
     try {
       const response = await this.client.bitable.appTableRecord.create({
@@ -137,7 +158,7 @@ class V1BitableGateway {
   }
 
   async update(tableKey, recordId, semanticValues) {
-    const table = this.table(tableKey);
+    const table = this.tableWithId(tableKey);
     const startedAt = Date.now();
     try {
       const response = await this.client.bitable.appTableRecord.update({
@@ -165,7 +186,7 @@ class V1BitableGateway {
   }
 
   async get(tableKey, recordId) {
-    const table = this.table(tableKey);
+    const table = this.tableWithId(tableKey);
     const response = await this.client.bitable.appTableRecord.get({
       path: { app_token: this.schema.appToken, table_id: table.tableId, record_id: recordId },
     });
@@ -174,7 +195,7 @@ class V1BitableGateway {
   }
 
   async delete(tableKey, recordId) {
-    const table = this.table(tableKey);
+    const table = this.tableWithId(tableKey);
     const response = await this.client.bitable.appTableRecord.delete({
       path: { app_token: this.schema.appToken, table_id: table.tableId, record_id: recordId },
     });
@@ -183,7 +204,7 @@ class V1BitableGateway {
   }
 
   async listAll(tableKey) {
-    const table = this.table(tableKey);
+    const table = this.tableWithId(tableKey);
     const records = [];
     let pageToken;
     do {

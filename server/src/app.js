@@ -1,15 +1,19 @@
-const express = require('express');
-const cors = require('cors');
-const dotenv = require('dotenv');
 const path = require('path');
-const crypto = require('node:crypto');
-const { logError, logInfo } = require('./utils/logger');
-const { uploadDir } = require('./utils/upload');
-const { startUploadCleanup } = require('./utils/uploadCleanup');
-const { SecondDeliveryService } = require('./services/secondDeliveryService');
-const { startSecondDeliveryReminder } = require('./utils/secondDeliveryReminder');
+const dotenv = require('dotenv');
 
-// Load environment variables.
+// ⚠️ .env 必须在**任何业务模块之前**加载。这是顺序约束，不是代码风格。
+//
+// 踩过的坑（2026-10-06 线上事故）：schema 里
+// `tableId: getEnv('FEISHU_V1_SIZE_TABLE_ID')` 是**模块级对象字面量**里的求值——
+// require 那一刻取一次，之后就永不重算（同一份 schema 里只有 appToken 写成了 getter，
+// 所以只有它不受影响）。一旦某个 service 在 dotenv 之前被 require，
+// 那条 require 链上的 schema 就在**空环境**里定了稿：没有硬编码兜底的表
+// （「尺码管理」「其他配品」）永久拿到空串，请求打到 `.../tables//records`，
+// 飞书回 404 `404 page not found`；其余表有默认值、照常工作，
+// 于是现象看起来只是"某一个功能坏了"，极难定位。
+//
+// 因此：require('dotenv') 本身放最前面没问题，但 **dotenv.config(...) 必须排在
+// 所有业务 require 之前**。以后往下面加 require 时，不要再挪到这一行上面去。
 //
 // quiet 是为日志契约服务的：dotenv 从 17 起默认会往 stdout 打一行
 // "injected env (N) from .env"。本服务的日志是结构化 JSON（utils/logger.js），
@@ -17,6 +21,15 @@ const { startSecondDeliveryReminder } = require('./utils/secondDeliveryReminder'
 // 的排查方式失效。在 dotenv 16 上该选项会被忽略，所以这行可以先落地，
 // 等依赖升到 18 时才真正生效。
 dotenv.config({ path: path.join(__dirname, '../../.env'), quiet: true });
+
+const express = require('express');
+const cors = require('cors');
+const crypto = require('node:crypto');
+const { logError, logInfo } = require('./utils/logger');
+const { uploadDir } = require('./utils/upload');
+const { startUploadCleanup } = require('./utils/uploadCleanup');
+const { SecondDeliveryService } = require('./services/secondDeliveryService');
+const { startSecondDeliveryReminder } = require('./utils/secondDeliveryReminder');
 
 const app = express();
 const port = process.env.PORT || 3000;
