@@ -25,14 +25,112 @@ const itemLines = (items, priceKey, options = {}) => {
 };
 
 /**
- * 采购确认卡的分组展示：供应商 → 编号 → 尺码从小到大
- * 匹配成功的货品显示完整编号，匹配失败的标注"未匹配"
+ * 采购明细的层级：供应商（可选）→ **货号** → **颜色** → 尺码网格。
+ *
+ * 产品负责人（2026-10-05）要求的三层结构：先按货号分组，同一货号下再按颜色分组，
+ * 颜色下面是各尺码。货号做粗体一级标题，颜色做次级标题，尺码网格跟在颜色下面。
+ *
+ * 每一层的顺序都按**字典序**排（compareGroupLabel），保证同一份明细每次渲染的位置一致——
+ * 不能依赖模型的返回顺序，否则重试一次卡片上的分组就跳一次位。
  */
 
+// ⚠️ 每行 6 个尺码，而且**每一行都恰好 6 列**（最后一行不足时补空列）。
+// 6 是产品负责人给的下限（"每行至少放 6 个"）。补空列不是装饰：
+// column_set 把当行宽度按实际列数均分，不补齐的话最后一行的格子会比上面宽一截，
+// 手机上看起来就是两套网格、对不齐。这是移动端排版，别"优化"掉。
+const SIZE_GRID_COLUMNS = 6;
+
+// 单元格最多 6 个字符。尺码格是 6 列并排，手机上单格宽度很有限：
+// ⚠️ 移动端实测结论（产品负责人在手机上逐一核对过），写回 `37码 × 1` 这种一行长文本
+// 会把格子撑到换行、网格变形；改成 `37` + `×1` 两行短文本在 6 列下不挤。别改回长写法。
+const SIZE_CELL_MAX_CHARS = 6;
+
+const truncateCellText = (value, max = SIZE_CELL_MAX_CHARS) => {
+  const raw = text(value);
+  return raw.length > max ? `${raw.slice(0, max - 1)}…` : raw;
+};
 
 /**
- * 采购商品明细 - 网格布局（按编号分区，尺码每行4个）
- * 返回飞书卡片元素数组
+ * 尺码格内容：只放"核对这一格"必须看的两件事——尺码、数量。
+ * 价格只在识别到的时候补一行小字（到货单不一定有价格列）。
+ * 未匹配只留一个 ⚠：`（未匹配）` 在 6 列下必然换行；
+ * 具体哪些货品没匹配上，卡片下方「未匹配货品」那一段才是权威说明。
+ */
+const sizeCellContent = (item) => {
+  const lines = [`**${truncateCellText(item.size, 3)}**`, `×${truncateCellText(item.quantity || 1, 3)}`];
+  if (item.unit_cost) lines.push(`￥${truncateCellText(item.unit_cost, 5)}`);
+  if (item.match_error) lines.push('⚠');
+  return lines.join('\n');
+};
+
+const sizeColumn = (content) => ({
+  tag: 'column',
+  width: 'weighted',
+  weight: 1,
+  vertical_align: 'center',
+  elements: [{ tag: 'markdown', content, text_align: 'center' }],
+});
+
+// 尺码从小到大，每 6 个一行。行内不足 6 个时补空列（理由见 SIZE_GRID_COLUMNS 注释）。
+const sizeGridElements = (items) => {
+  const sorted = [...items].sort((a, b) => Number(a.size) - Number(b.size));
+  const elements = [];
+  for (let i = 0; i < sorted.length; i += SIZE_GRID_COLUMNS) {
+    const rowItems = sorted.slice(i, i + SIZE_GRID_COLUMNS);
+    const columns = rowItems.map((item) => sizeColumn(sizeCellContent(item)));
+    while (columns.length < SIZE_GRID_COLUMNS) columns.push(sizeColumn(' '));
+    elements.push({
+      tag: 'column_set',
+      flex_mode: 'none',
+      background_style: 'grey',
+      horizontal_spacing: 'default',
+      columns,
+    });
+  }
+  return elements;
+};
+
+// 分组排序用字典序（UTF-16 码点序），刻意**不用** localeCompare：
+// 后者的结果依赖运行环境的 ICU 版本，本地和服务器可能给出不同顺序，
+// 那正是"每次渲染顺序乱跳"的来源。码点序在所有环境里都一致。
+const compareGroupLabel = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+/**
+ * 供应商内部的二层分组：货号 → 颜色，各自按字典序稳定排序。
+ *
+ * 货号取 item_no（产品负责人说的"货号"）；历史/识别数据缺货号时退回 product_number，
+ * 两者都没有才写「未知货号」——不编一个看起来像货号的值出来。
+ */
+const groupByItemNoAndColor = (items) => {
+  const byItemNo = new Map();
+  for (const item of items) {
+    const itemNo = text(item.item_no || item.product_number || '未知货号');
+    if (!byItemNo.has(itemNo)) byItemNo.set(itemNo, new Map());
+    const byColor = byItemNo.get(itemNo);
+    const color = text(item.color);
+    if (!byColor.has(color)) byColor.set(color, []);
+    byColor.get(color).push(item);
+  }
+  return [...byItemNo.entries()]
+    .sort((a, b) => compareGroupLabel(a[0], b[0]))
+    .map(([itemNo, byColor]) => ({
+      itemNo,
+      // 只要有一条匹配上货品表，这个货号就算匹配上（未被匹配的标 ⚠️，与旧卡片一致）。
+      matched: [...byColor.values()].flat().some((item) => item.product_record_id),
+      colors: [...byColor.entries()]
+        .sort((a, b) => compareGroupLabel(a[0], b[0]))
+        .map(([color, colorItems]) => ({ color, items: colorItems })),
+    }));
+};
+
+/**
+ * 采购商品明细 - 网格布局。
+ * 层级：供应商（skipSupplierGroup 时跳过）→ 货号 → 颜色 → 尺码网格（每行 6 个）。
+ * 返回飞书卡片元素数组。
+ *
+ * ⚠️ 尺码网格必须是 `column_set`（每列 width: 'weighted' / weight: 1），不能用 `action`：
+ * 苹果/安卓飞书客户端上 `action` 里的元素会**竖向堆叠**，只有 column_set 才是真正的一行多列
+ * （同 buttonColumns 的注释，是移动端实测结论）。尺码是纯文字，但排版约束和按钮一样。
  */
 const purchaseItemElements = (items, options = {}) => {
   if (!items?.length) return [{ tag: 'markdown', content: '未识别到商品' }];
@@ -48,73 +146,33 @@ const purchaseItemElements = (items, options = {}) => {
 
   const elements = [];
   let isFirstSupplier = true;
+  let isFirstProduct = true;
 
   for (const [supplier, supplierItems] of bySupplier) {
     if (!skipSupplierGroup) {
+      // 供应商之间用一条 hr 分隔：这个 hr 由**下一个**供应商标题负责，
+      // 不在段落末尾再补一条（旧代码那样会连出两条 hr）。
       if (!isFirstSupplier) elements.push({ tag: 'hr' });
       elements.push({ tag: 'markdown', content: `**━━━ 供应商：${text(supplier)} ━━━**` });
       isFirstSupplier = false;
     }
 
-    // 第二层：按编号分组
-    const byProduct = new Map();
-    for (const item of supplierItems) {
-      const productLabel = item.product_number || `${item.item_no}${item.color ? ' ' + item.color : ''}`;
-      const key = item.product_record_id || `unmatched:${item.item_no}|${item.color}`;
-      if (!byProduct.has(key)) byProduct.set(key, { label: productLabel, items: [] });
-      byProduct.get(key).items.push(item);
-    }
-
-    let isFirstProduct = true;
-    for (const [, product] of byProduct) {
-      // 编号分区之间的分隔
-      if (!isFirstProduct || (!skipSupplierGroup && !isFirstSupplier)) {
-        elements.push({ tag: 'hr' });
-      }
+    for (const product of groupByItemNoAndColor(supplierItems)) {
+      if (!isFirstProduct) elements.push({ tag: 'hr' });
       isFirstProduct = false;
 
-      const hasMatch = product.items.some((item) => item.product_record_id);
-      const prefix = hasMatch ? '🏷' : '⚠️';
-
-      // 编号标题
+      // 货号：一级标题（粗体）。
       elements.push({
         tag: 'markdown',
-        content: `**${prefix} ${text(product.label)}**`,
+        content: `**${product.matched ? '🏷' : '⚠️'} ${text(product.itemNo)}**`,
       });
 
-      // 第三层：按尺码从小到大排序
-      const sorted = [...product.items].sort((a, b) => Number(a.size) - Number(b.size));
-
-      // 每4个尺码一行，生成 column_set
-      for (let i = 0; i < sorted.length; i += 4) {
-        const rowItems = sorted.slice(i, i + 4);
-        const columns = rowItems.map((item) => {
-          const price = item.unit_cost ? ` ￥${item.unit_cost}/双` : '';
-          const matchNote = item.match_error ? `（未匹配）` : '';
-          return {
-            tag: 'column',
-            width: 'weighted',
-            weight: 1,
-            vertical_align: 'center',
-            elements: [
-              {
-                tag: 'markdown',
-                content: `**${text(item.size)}码**\n× ${text(item.quantity || 1)}${price}${matchNote}`,
-                text_align: 'center',
-              },
-            ],
-          };
-        });
-        elements.push({
-          tag: 'column_set',
-          flex_mode: 'none',
-          background_style: 'grey',
-          horizontal_spacing: 'default',
-          columns,
-        });
+      for (const group of product.colors) {
+        // 颜色：次级标题。只有单据上真的有颜色才写这一行；没颜色就不编一个"未标注"。
+        if (group.color) elements.push({ tag: 'markdown', content: `▸ ${text(group.color)}` });
+        elements.push(...sizeGridElements(group.items));
       }
     }
-    if (!skipSupplierGroup) elements.push({ tag: 'hr' }); // 供应商之间分隔
   }
 
   return elements;
