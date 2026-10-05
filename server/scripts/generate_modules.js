@@ -23,7 +23,9 @@ const buildServerModules = (manifest) => {
       label: def.label,
       writeMode: def.writeMode,
       fields: def.fields || {},
-      recognition: def.recognition || {},
+      // ⚠️ 原先这里还有 recognition（图片识别的提示词配置）。2026-10-05 拍照识别
+      // 链路退场后它没有任何读取点，所以从 manifest 与本文件一起删除——
+      // 留着会生成一个空的 recognition 键，让人以为还有一组识别配置要维护。
       sync: def.sync || {},
     };
   });

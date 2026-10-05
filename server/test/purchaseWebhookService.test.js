@@ -83,11 +83,11 @@ const makeReferences = (overrides = {}) => ({
   resolveSupplier: overrides.resolveSupplier || (async () => ({ recordId: 'sup_1', record: { record_id: 'sup_1', fields: { 供应商名称: '测试供应商' } } })),
 });
 
+// ⚠️ 原先这里还有 recognizeLabels / recognizePurchaseDocument 两个假实现（鞋盒 / 到货单识别）。
+// 拍照识别链路退场后 service 只剩**文字**解析这一个 recognizer 用途（采购数量说明），
+// 所以假实现也只留它。
 const makeRecognizer = (overrides = {}) => ({
   parsePurchaseReportText: overrides.parsePurchaseReportText || (async () => [{ size: 36, quantity: 2 }, { size: 37, quantity: 1 }]),
-  recognizeLabels: overrides.recognizeLabels || (async () => [{ item_no: '8088', color: '灰色', size: 36, quantity: 1 }]),
-  // 到货单识别是可选的：只有「类型 = 到货单」的记录才会调用它，
-  // 鞋盒记录的 fake 不需要提供这个方法（和注入式 fake 的真实形态一致）。
   ...overrides,
 });
 
@@ -99,11 +99,6 @@ const makeClient = (overrides = {}) => ({
     },
     message: {
       create: overrides.sendMessage || (async () => ({ code: 0, msg: 'success' })),
-    },
-  },
-  drive: {
-    media: {
-      download: overrides.downloadMedia || (async () => ({ writeFile: async (filePath) => { await fs.promises.writeFile(filePath, 'fake-image'); } })),
     },
   },
 });
@@ -149,19 +144,11 @@ const makeService = (options = {}) => {
     client, store, images, enablePurchaseInventory: options.enablePurchaseInventory ?? true,
     batchReadMaxRetries: options.batchReadMaxRetries ?? 1,
     batchReadRetryDelay: options.batchReadRetryDelay ?? 0,
-    // 对外调用的超时：undefined 时用服务自己的默认值，只有超时相关的用例会传。
-    mediaTimeoutMs: options.mediaTimeoutMs,
-    recognitionTimeoutMs: options.recognitionTimeoutMs,
+    // 对外调用的超时：undefined 时用服务自己的默认值。
+    // ⚠️ 到货识别那一组（mediaTimeoutMs / recognitionTimeoutMs / failureWrite* /
+    // arrivalNotice* 四个等待阈值）已随识别链路退场删除，构造入参也不再传。
     imTimeoutMs: options.imTimeoutMs,
     gatewayTimeoutMs: options.gatewayTimeoutMs,
-    failureWriteAttempts: options.failureWriteAttempts,
-    failureWriteRetryDelayMs: options.failureWriteRetryDelayMs,
-    // 到货「等待与提示」的四个阈值：生产上读环境变量，测试里走构造入参用毫秒级复现
-    // 「每 1 分钟 / 2 分钟 / 3 分钟」。
-    arrivalNoticeIntervalMs: options.arrivalNoticeIntervalMs,
-    arrivalAbandonWaitMs: options.arrivalAbandonWaitMs,
-    arrivalFailAfterMs: options.arrivalFailAfterMs,
-    arrivalNoticeMaxCount: options.arrivalNoticeMaxCount,
     // 报货「归批窗口」：生产默认 4000ms（读 REPORT_BATCH_WINDOW_MS），
     // 单测里压到 20ms —— 验证的是"同一批次号的记录归成一批、窗口到点才处理"，
     // 而不是真的等 4 秒。需要验证窗口本身的用例会显式传更大的值。
@@ -179,7 +166,10 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // accept() 返回时后台处理并没有结束：它把工作丢进 setImmediate，之后还要解析、
 // 写卡片、等批次窗口，耗时取决于机器。固定 sleep 在慢机器上会读到 processing
 // 这类中间状态（CI 上就这样失败过），所以统一改为轮询到任务进入稳定状态。
-const SETTLED_STATUSES = ['awaiting_confirmation', 'failed', 'cancelled', 'posted', 'completed'];
+// ⚠️ 原先这里还有 'awaiting_confirmation'（到货识别跑完、等卡片的中间态）。
+// 识别链路退场后没有任何一条链路会落到那个状态，所以从"稳定态"里去掉——
+// 留着会让等待逻辑把一个永远不会出现的状态当成终点。
+const SETTLED_STATUSES = ['failed', 'cancelled', 'posted', 'completed'];
 const waitForSettled = async (store, taskIds, expected = ['posted', 'failed', 'completed', 'cancelled']) => {
   let tasks = [];
   await waitFor('任务全部进入终态', async () => {
@@ -235,9 +225,9 @@ const waitFor = async (label, check, { attempts = 1500, pause = 10 } = {}) => {
 
 // ─── 供应商报单链路（免确认 → 按供应商出图 → 发图 → 写回附件）───
 
-// 到货链路现在会先发一条「收到到货申请，正在识别图片～」的文字提示，再发确认卡片。
-// 断言卡片就只看卡片——按消息条数断点会被那条提示带偏。
-const cardMessages = (messages) => messages.filter((message) => message.data?.msg_type === 'interactive');
+// ⚠️ 原先这里还有一个 cardMessages（只数 interactive 卡片消息）：它服务的是到货详情卡片
+// 那几条断言。到货卡片与本文件里的卡片断言一起删掉了，helper 也没人用了。
+// 留下一句提醒：断言消息条数时先想清楚"这条链路上会发几种消息"，别被提示类消息带偏。
 const textMessages = (messages) => messages
   .filter((message) => message.data?.msg_type === 'text')
   .map((message) => JSON.parse(message.data.content).text);
@@ -614,689 +604,141 @@ test('supplier report without batch number falls back to single processing', asy
   assert.equal(task.status, 'posted');
   assert.ok(!task.draft.is_batch);
 });
+// ═══════════════════════════════════════════════════════════════════════════════
+// 「采购到货」表的**保留能力**：入库 / 库存 / 建档 / 成本
+//
+// 2026-10-05 业务负责人删掉了「采购到货」表的「类型」「识别状态」「识别失败原因」，
+// 并决定「拍照 → 视觉识别 → 匹配 → 卡片确认 → 入库」这条链路整体退场（改成纯对话驱动）。
+// 入口分派也摘掉了（routes/larkEvents.js），所以 accept('arrival') 不再有处理分支。
+//
+// ⚠️ 但**入库 / 库存 / 建档 / 成本**这四项能力刻意保留：「采购入库」表、库存调用
+// （inventory.applyPurchase）、以及将来要剥成 ProductCreationService 的「建档 + 成本」
+// 都要留给新的「对话到货」。它们现在是"孤儿能力"：没有任何生产调用方。
+// 下面这组用例直接调 confirmArrival / ensureArrivalProducts 把口径继续钉住——
+// **断言一条都没削弱**，只是不再经过"拍照识别"那个入口。
+//
+// 被整条删除的用例：识别链路自身的（识别成功/失败、等待与超时、卡片动作、识别匹配），
+// 以及依赖 purchaseArrivalDetailCard 的卡片断言。每处都有删除理由。
+// ═══════════════════════════════════════════════════════════════════════════════
 
-// ─── 采购到货链路 ───
-
-test('arrival webhook accepts, recognizes images, and sends the arrival detail card', async () => {
-  const messages = [];
-  const { service, store, gateway } = makeService({
-    client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
-    gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_1', fields: { 确认状态: '待确认', 识别状态: '待识别', 报货批次号: ['batch_1'], 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-      purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-20260925-0001', 供应商: ['sup_1'] } }],
-      purchaseRequest: [{ record_id: 'req_1', fields: { 报货批次号: ['batch_1'], 编号: ['prod_1'], 尺码: sizeLink(36), 数量: 2 } }],
-    }),
-  });
-  const result = await service.accept('arrival', 'arr_1');
-  assert.equal(result.accepted, true);
-  const task = await waitForTask(store, result.taskId);
-  assert.equal(task.status, 'awaiting_confirmation');
-  assert.ok(task.draft);
-  assert.equal(task.draft.actual.length, 1);
-  // 采购差异比对已整体移除：草稿里不再有 differences 这个字段。
-  assert.equal(task.draft.differences, undefined, '采购链路不再产生差异');
-  // 同上：先落库状态，再发卡片。
-  // 只数卡片：到货链路现在还会先发一条「收到，识别中」的文字提示，
-  // 用 messages.length 会把那条也算进来。
-  await waitFor('到货明细卡片发出', async () => cardMessages(messages).length === 1);
-  assert.equal(cardMessages(messages).length, 1);
-  const cardText = JSON.stringify(JSON.parse(cardMessages(messages)[0].data.content).elements);
-  assert.ok(!cardText.includes('差异'), '卡片上不应再出现差异');
-  assert.ok(!cardText.includes('实到'), '卡片上不应再出现申请/实到对比');
-  const updated = await gateway.get('purchaseArrival', 'arr_1');
-  assert.equal(updated.fields.识别状态, '识别成功');
-  assert.equal(updated.fields.确认状态, '待确认');
-});
-
-test('arrival with 类型=到货单 uses document recognition and flattens rows into details', async () => {
-  const messages = [];
-  const calls = { boxes: 0, documents: 0 };
-  const { service, store } = makeService({
-    client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
-    recognizer: makeRecognizer({
-      recognizeLabels: async () => { calls.boxes += 1; return []; },
-      recognizePurchaseDocument: async (filePath) => {
-        calls.documents += 1;
-        assert.ok(filePath, '单据识别必须拿到已下载到本地的图片路径');
-        // 单据上一行一个款号+颜色，尺码矩阵里的数字才是数量；这里模拟模型已经摊平。
-        return [
-          { item_no: '1366-31', color: '棕色', size: 36, quantity: 1 },
-          { item_no: '1366-31', color: '棕色', size: 37, quantity: 2 },
-        ];
-      },
-    }),
-    gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_doc', fields: { 类型: '到货单', 确认状态: '待确认', 识别状态: '待识别', 报货批次号: ['batch_1'], 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-      purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
-      purchaseRequest: [{ record_id: 'req_1', fields: { 报货批次号: ['batch_1'], 编号: ['prod_1'], 尺码: sizeLink(36), 数量: 2 } }],
-    }),
-  });
-  const accepted = await service.accept('arrival', 'arr_doc');
-  const task = await waitForTask(store, accepted.taskId);
-  assert.equal(task.status, 'awaiting_confirmation');
-  assert.equal(calls.documents, 1, '类型=到货单 必须走单据识别');
-  assert.equal(calls.boxes, 0, '类型=到货单 不能再走鞋盒识别');
-  // 摊平后的明细按 货品+尺码 聚合，尺码与数量都要落到 actual 上。
-  const quantityBySize = new Map(task.draft.actual.map((item) => [item.size, item.quantity]));
-  assert.deepEqual([...quantityBySize.entries()].sort((a, b) => a[0] - b[0]), [[36, 1], [37, 2]]);
-  // 到货单与鞋盒走同一条流程；差异比对已移除。
-  assert.equal(task.draft.differences, undefined);
-  assert.equal(task.draft.direct_arrival, false);
-  await waitFor('到货明细卡片发出', async () => cardMessages(messages).length === 1);
-});
-
-test('arrival with 类型=鞋盒 or an empty type keeps the original shoe-box recognition', async () => {
-  const cases = [
-    { label: '鞋盒', recordId: 'arr_type_box', type: '鞋盒' },
-    { label: '空值', recordId: 'arr_type_empty', type: undefined },
-  ];
-  for (const { label, recordId, type } of cases) {
-    const calls = { boxes: 0, documents: 0 };
-    const fields = { 确认状态: '待确认', 识别状态: '待识别', 报货批次号: ['batch_1'], 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] };
-    if (type) fields.类型 = type;
-    const { service, store } = makeService({
-      recognizer: makeRecognizer({
-        recognizeLabels: async () => { calls.boxes += 1; return [{ item_no: '8088', color: '灰色', size: 36, quantity: 1 }]; },
-        recognizePurchaseDocument: async () => { calls.documents += 1; return []; },
-      }),
-      gateway: makeGateway({
-        purchaseArrival: [{ record_id: recordId, fields }],
-        purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
-        purchaseRequest: [],
-      }),
-    });
-    const accepted = await service.accept('arrival', recordId);
-    const task = await waitForTask(store, accepted.taskId);
-    assert.equal(task.status, 'awaiting_confirmation', `类型=${label} 应识别成功`);
-    assert.equal(calls.boxes, 1, `类型=${label} 必须走鞋盒识别`);
-    assert.equal(calls.documents, 0, `类型=${label} 不能走单据识别`);
-    assert.equal(task.draft.actual.length, 1);
-  }
-});
-
-test('arrival without a batch number is a direct arrival: no error, still inbound', async () => {
-  const messages = [];
-  const inventory = makeInventory();
-  const { service, store, gateway } = makeService({
-    inventory,
-    client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
-    gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_direct', fields: { 确认状态: '待确认', 识别状态: '待识别', 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-      purchaseInbound: [],
-    }),
-  });
-  const accepted = await service.accept('arrival', 'arr_direct');
-  const task = await waitForTask(store, accepted.taskId);
-  assert.equal(task.status, 'awaiting_confirmation', '没有报货批次号不再是错误');
-  assert.equal(task.draft.direct_arrival, true);
-  // 差异比对已移除，不再有「多N」这种误导行。
-  assert.equal(task.draft.differences, undefined);
-  assert.equal(task.draft.actual.length, 1);
-  await waitFor('到货明细卡片发出', async () => cardMessages(messages).length === 1);
-  const cardElements = JSON.parse(cardMessages(messages)[0].data.content).elements;
-  assert.ok(JSON.stringify(cardElements).includes('无申请直接到货'), '卡片上必须写清楚这是直接到货');
-
-  const result = await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
-  assert.ok(result.toast.content.includes('采购已入库'));
-  const inbounds = await gateway.listAll('purchaseInbound');
-  assert.equal(inbounds.length, 1);
-  assert.equal(inbounds[0].fields.数量, 1);
-  assert.equal(inventory.calls.length, 1, '直接到货也要真的入库');
-});
-
-test('arrival with a batch number loads that batch requests but no longer compares differences', async () => {
-  const { service, store } = makeService({
-    gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_compare', fields: { 确认状态: '待确认', 识别状态: '待识别', 报货批次号: ['batch_1'], 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-      purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
-      purchaseRequest: [{ record_id: 'req_1', fields: { 报货批次号: ['batch_1'], 编号: ['prod_1'], 尺码: sizeLink(36), 数量: 3 } }],
-    }),
-  });
-  const accepted = await service.accept('arrival', 'arr_compare');
-  const task = await waitForTask(store, accepted.taskId);
-  assert.equal(task.draft.direct_arrival, false);
-  assert.equal(task.draft.batch_no, 'BH-001');
-  // 申请明细仍然读出来（入库要挂回采购申请、回写到货状态），但不再算差异。
-  assert.equal(task.draft.requests.length, 1);
-  assert.equal(task.draft.differences, undefined);
-});
-
-// ─── 到货新品自动建档 ───
-
-// 货品表里确实没有这条：resolveProduct 抛带 code 的错，到货链路才敢自动建档。
-// 「货号对应多个颜色」这类歧义不带这个 code，必须留给她核对。
+// 货品表里确实没有这条：resolveProduct 抛带 code 的错，建档那一步才敢自动建。
+// 「货号对应多个颜色」这类歧义不带这个 code。
 const productNotFound = (itemNo, color) => Object.assign(new Error(`找不到货品：${itemNo}${color}`), { code: 'PRODUCT_NOT_FOUND' });
 
-const arrivalWithNewProduct = ({ records, references, recognizer, inventory = makeInventory() } = {}) => makeService({
-  inventory,
-  gateway: makeGateway(records),
-  references,
-  recognizer,
-});
-
-test('arrival auto-creates the product record for an unknown 货号+颜色 and still inbounds it', async () => {
-  const inventory = makeInventory();
-  const records = {
-    purchaseArrival: [{ record_id: 'arr_new', fields: { 确认状态: '待确认', 识别状态: '待识别', 报货批次号: ['batch_1'], 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-    purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
-    purchaseRequest: [],
-    purchaseInbound: [],
-    product: [],
-    color: [{ record_id: 'color_black', fields: { 颜色: '黑' } }],
-    supplier: [{ record_id: 'sup_9', fields: { 供应商名称: '一代千金' } }],
+// 捕获 warn 日志（logger 的 warn 走 console.warn，一行一个 JSON）。
+// 这些测试在同一个文件里顺序执行，await 期间不会有别的用例并发写 console。
+const captureWarn = async (run) => {
+  const lines = [];
+  const original = console.warn;
+  console.warn = (line) => {
+    try { lines.push(JSON.parse(line)); } catch { lines.push({ event: 'unparsed_warn', raw: String(line) }); }
   };
-  const { service, store, gateway } = arrivalWithNewProduct({
-    records,
-    inventory,
-    recognizer: makeRecognizer({
-      recognizeLabels: async () => [{ item_no: '3602', color: '黑色', size: 36, quantity: 1, gender: '女', supplier: '一代千金', cost: 128 }],
-    }),
-    references: makeReferences({
-      resolveProduct: async ({ itemNo, color }) => {
-        if (itemNo === '3602' && color === '黑色') throw productNotFound(itemNo, color);
-        return { recordId: 'prod_1', record: { record_id: 'prod_1', fields: { 编号: '8088灰', 供应商: ['sup_1'] } } };
-      },
-      resolveSupplier: async (name) => ({ recordId: 'sup_9', record: { record_id: 'sup_9', fields: { 供应商名称: name } } }),
-    }),
-  });
-
-  const accepted = await service.accept('arrival', 'arr_new');
-  // 建档在发完卡片之后才做：等 result 落盘才是这一批真的跑完了。
-  const task = await waitForProcessed(store, accepted.taskId);
-  assert.equal(task.status, 'awaiting_confirmation');
-
-  assert.equal(records.product.length, 1, '识别到的新品要自动建一条货品记录');
-  const created = records.product[0];
-  // 五项建档内容一个都不能少：货号 / 颜色 / 供应商 / 类别 / 成本。
-  // 只写确定知道的字段：公式字段（编号/货品状态/缺失信息说明）一个都不能写。
-  assert.deepEqual([...Object.keys(created.fields)].sort(), ['供应商', '类别', '颜色', '货号', '成本'].sort());
-  assert.equal(created.fields.货号, '3602');
-  assert.deepEqual(created.fields.颜色, ['color_black'], '「黑」要复用颜色表已有记录');
-  assert.deepEqual(created.fields.供应商, ['sup_9']);
-  assert.equal(created.fields.类别, 'B', '品名是女鞋 → B');
-  assert.equal(created.fields.成本, 128, '识别到价格才写成本');
-
-  // 建档不影响入库：草稿里标出新品，确认后照常写入采购入库和库存。
-  assert.equal(task.draft.actual.length, 1);
-  assert.equal(task.draft.actual[0].created_product, true);
-  assert.equal(task.draft.created_products.length, 1);
-  assert.equal(task.draft.created_products[0].product_record_id, created.record_id);
-  assert.equal(task.draft.created_products[0].label, '3602黑色');
-  assert.match(task.draft.created_products[0].url, new RegExp(`record=${created.record_id}`));
-
-  const result = await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
-  assert.ok(result.toast.content.includes('采购已入库'));
-  assert.equal((await gateway.listAll('purchaseInbound')).length, 1);
-  assert.equal(inventory.calls.length, 1, '新品也要真的入库');
-});
-
-test('到货新品：颜色表缺色时后台补一条；卡片只说「已建好」，不再提颜色和缺口', async () => {
-  const messages = [];
-  const records = {
-    purchaseArrival: [{ record_id: 'arr_newcolor', fields: { 确认状态: '待确认', 识别状态: '待识别', 报货批次号: ['batch_1'], 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-    purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
-    purchaseRequest: [],
-    purchaseInbound: [],
-    product: [],
-    color: [],
-    supplier: [],
-  };
-  const { service, store, client } = arrivalWithNewProduct({
-    records,
-    recognizer: makeRecognizer({
-      recognizeLabels: async () => [{ item_no: '627', color: '香芋紫', size: 37, quantity: 1 }],
-    }),
-    references: makeReferences({
-      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
-    }),
-  });
-  client.im.message.create = async (params) => { messages.push(params); return { code: 0 }; };
-
-  const accepted = await service.accept('arrival', 'arr_newcolor');
-  // 建档挪到「发完卡片之后」了：等 result 落盘才是"这一批真的跑完了"。
-  const task = await waitForProcessed(store, accepted.taskId);
-  assert.equal(task.status, 'awaiting_confirmation');
-
-  assert.equal(records.color.length, 1, '颜色表没有的颜色要自动补一条');
-  assert.equal(records.color[0].fields.颜色, '香芋紫');
-  assert.deepEqual(records.product[0].fields.颜色, [records.color[0].record_id]);
-  assert.deepEqual(task.draft.created_colors, ['香芋紫']);
-  assert.equal(task.draft.created_products[0].color_created, true);
-
-  await waitFor('到货明细卡片发出', async () => cardMessages(messages).length === 1);
-  const cardText = JSON.stringify(JSON.parse(cardMessages(messages)[0].data.content).elements);
-  // 那段独立的「颜色表原本没有…我给你加了一条」按产品负责人要求整段删掉了：
-  // 颜色照建，只是不在这张卡片上提。
-  assert.ok(!cardText.includes('我给你加了一条'), `卡片不该再提补颜色：${cardText}`);
-  assert.ok(!cardText.includes('颜色表原本没有'), `卡片不该再提补颜色：${cardText}`);
-  assert.ok(cardText.includes('新品'), '卡片要把新品标出来');
-  assert.ok(cardText.includes('已建好基础资料'), '卡片只给结论：基础资料已建好');
-  assert.ok(!cardText.includes('还差'), `卡片上不写还差什么：${cardText}`);
-});
-
-test('arrival leaves 供应商 empty when the recognized name is not in the supplier table', async () => {
-  const records = {
-    purchaseArrival: [{ record_id: 'arr_nosup', fields: { 确认状态: '待确认', 识别状态: '待识别', 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-    purchaseInbound: [],
-    product: [],
-    color: [{ record_id: 'color_black', fields: { 颜色: '黑' } }],
-    supplier: [],
-  };
-  const { service, store } = arrivalWithNewProduct({
-    records,
-    recognizer: makeRecognizer({
-      recognizeLabels: async () => [{ item_no: '3602', color: '黑色', size: 36, quantity: 1, supplier: '查无此厂' }],
-    }),
-    references: makeReferences({
-      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
-      resolveSupplier: async (name) => { throw new Error(`供应商管理中找不到：${name}`); },
-    }),
-  });
-
-  const accepted = await service.accept('arrival', 'arr_nosup');
-  const task = await waitForProcessed(store, accepted.taskId);
-  assert.equal(task.status, 'awaiting_confirmation', '供应商找不到不能报错');
-  assert.equal(records.supplier.length, 0, '不新建供应商');
-  assert.equal(records.product[0].fields.供应商, undefined, '找不到就留空，不猜');
-});
-
-test('arrival leaves 类别 empty when the label has no 男/女 information', async () => {
-  const records = {
-    purchaseArrival: [{ record_id: 'arr_nogender', fields: { 确认状态: '待确认', 识别状态: '待识别', 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-    purchaseInbound: [],
-    product: [],
-    color: [{ record_id: 'color_black', fields: { 颜色: '黑' } }],
-    supplier: [],
-  };
-  const { service, store } = arrivalWithNewProduct({
-    records,
-    recognizer: makeRecognizer({
-      recognizeLabels: async () => [{ item_no: '3602', color: '黑色', size: 36, quantity: 1 }],
-    }),
-    references: makeReferences({
-      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
-    }),
-  });
-
-  const accepted = await service.accept('arrival', 'arr_nogender');
-  await waitForProcessed(store, accepted.taskId);
-  assert.equal(records.product.length, 1);
-  assert.equal(records.product[0].fields.类别, undefined, '认不出性别就留空，不能默认成 A');
-  assert.equal(records.product[0].fields.成本, undefined, '认不出价格就留空，不能瞎填成本');
-});
-
-// ─── 真实匹配器 + 到货链路（端到端跑 货号+颜色 → 命中/建档）───
-//
-// 上面的测试都注入假 resolveProduct，只验到货链路本身；这一组接上真的 V1ReferenceResolver，
-// 验「货号+颜色」主路径：编号残缺能命中、颜色对不上要建档、命中多条取第一条并标注。
-// 货品表的「颜色」是关联字段，飞书 GET 返回的是 [{ text: '棕', record_ids: [...] }]，这里照实模拟。
-
-const realReferences = (gateway) => {
-  const resolver = new V1ReferenceResolver(gateway);
-  return {
-    resolveProduct: (input) => resolver.resolveProduct(input),
-    resolveSupplier: (name) => resolver.resolveSupplier(name),
-  };
+  try {
+    const result = await run();
+    return { result, lines };
+  } finally {
+    console.warn = original;
+  }
 };
 
-const colorCell = (text, recordId) => [{ text, record_ids: [recordId] }];
-
-test('真实匹配器：单据没有类别（编号残缺）时，货号+颜色照样命中现有货品', async () => {
-  const records = {
-    purchaseArrival: [{ record_id: 'arr_real_hit', fields: { 确认状态: '待确认', 识别状态: '待识别', 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-    purchaseInbound: [],
-    product: [{ record_id: 'prod_1366', fields: { 编号: '1366-31|棕|女鞋', 货号: '1366-31', 颜色: colorCell('棕', 'color_brown') } }],
-    color: [{ record_id: 'color_brown', fields: { 颜色: '棕' } }],
-    supplier: [],
+// 种一条「识别已经跑完」的到货任务。形状与 processArrival 原先落盘的草稿完全一致；
+// 生产上这份草稿将来由「对话到货」流程写入，测试里直接种。
+//
+// 为什么不从入口进：入口（drive.file.bitable_record_changed_v1 → kind='arrival'）
+// 已摘掉，accept('arrival') 不再有处理分支——那是"链路退场"的定义。
+const seedArrivalTask = async (store, {
+  taskId,
+  arrivalRecordId = 'arr_seeded',
+  operatorOpenId = 'ou_1',
+  actual = [],
+  requests = [],
+  pendingCreation = [],
+  recognized = [],
+  inboundCreated = null,
+} = {}) => {
+  const id = taskId || `purchase_arrival_${Math.random().toString(36).slice(2, 10)}`;
+  await store.create({ task_id: id, kind: 'arrival', record_id: arrivalRecordId, status: 'awaiting_confirmation' });
+  const draft = {
+    arrival_record_id: arrivalRecordId,
+    direct_arrival: true,
+    batch_record_id: '',
+    batch_no: '',
+    operator_open_id: operatorOpenId,
+    requests,
+    actual,
+    unrecognized: [],
+    pending_creation: pendingCreation,
+    created_products: [],
+    created_colors: [],
+    creation_state: pendingCreation.length ? 'pending' : 'done',
+    creation_error: '',
   };
-  const gateway = makeGateway(records);
-  const { service, store } = makeService({
-    gateway,
-    references: realReferences(gateway),
-    recognizer: makeRecognizer({
-      // 单据上只有款号+颜色，没有类别 → 不可能靠「编号」命中，只能走货号+颜色主路径。
-      recognizeLabels: async () => [{ item_no: '1366-31', color: '棕色', size: 36, quantity: 1 }],
-    }),
-  });
+  if (inboundCreated) draft.inbound_created = inboundCreated;
+  await store.update(id, { recognized, draft });
+  return store.get(id);
+};
 
-  const accepted = await service.accept('arrival', 'arr_real_hit');
-  const task = await waitForTask(store, accepted.taskId);
-  assert.equal(task.status, 'awaiting_confirmation');
-  assert.equal(task.draft.actual[0].product_record_id, 'prod_1366', '缺类别的单据也要能匹配上');
-  assert.equal(task.draft.actual[0].created_product, false);
-  assert.equal(records.product.length, 1, '命中现有货品就不该再建档');
-  assert.equal(task.draft.actual[0].ambiguous_match, null);
+// 一条「已经匹配到货品」的到货明细：入库用例的最小输入。
+const arrivalActual = (extra = {}) => ({
+  product_record_id: 'prod_1',
+  product_number: '8088灰',
+  item_no: '8088',
+  color: '灰色',
+  size: 36,
+  quantity: 1,
+  created_product: false,
+  ...extra,
 });
 
-test('真实匹配器：货号在但颜色对不上 → 仍然建档，不做「提示核对」的保护', async () => {
-  const records = {
-    purchaseArrival: [{ record_id: 'arr_real_newcolor', fields: { 确认状态: '待确认', 识别状态: '待识别', 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-    purchaseInbound: [],
-    product: [{ record_id: 'prod_brown', fields: { 编号: '8088-26|棕|女鞋', 货号: '8088-26', 颜色: colorCell('棕', 'color_brown') } }],
-    color: [{ record_id: 'color_brown', fields: { 颜色: '棕' } }],
-    supplier: [],
-  };
-  const gateway = makeGateway(records);
-  const { service, store } = makeService({
-    gateway,
-    references: realReferences(gateway),
-    recognizer: makeRecognizer({
-      recognizeLabels: async () => [{ item_no: '8088-26', color: '红', size: 36, quantity: 1 }],
-    }),
-  });
+// ─── 入库：写「采购入库」+ 库存 + 回写状态（confirmArrival）────────────────
 
-  const accepted = await service.accept('arrival', 'arr_real_newcolor');
-  const task = await waitForProcessed(store, accepted.taskId);
-  assert.equal(task.status, 'awaiting_confirmation', '颜色对不上不能报错');
-  assert.equal(records.product.length, 2, '货号在、颜色对不上也要新建一条');
-  assert.equal(records.product[1].fields.货号, '8088-26');
-  assert.equal(records.color.length, 2, '颜色表没有「红」就补一条');
-  assert.equal(records.color[1].fields.颜色, '红');
-  assert.equal(task.draft.actual[0].created_product, true);
-});
-
-test('真实匹配器：货号+颜色命中多条 → 取第一条、不报错，并在卡片上标注条数', async () => {
-  const messages = [];
-  const records = {
-    purchaseArrival: [{ record_id: 'arr_real_amb', fields: { 确认状态: '待确认', 识别状态: '待识别', 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-    purchaseInbound: [],
-    // 男/女鞋共用同一货号+颜色——产品负责人已知的小概率情况。
-    product: [
-      { record_id: 'prod_women', fields: { 编号: '8088-26|棕|女鞋', 货号: '8088-26', 颜色: colorCell('棕', 'color_brown') } },
-      { record_id: 'prod_men', fields: { 编号: '8088-26|棕|男鞋', 货号: '8088-26', 颜色: colorCell('棕', 'color_brown') } },
-    ],
-    color: [{ record_id: 'color_brown', fields: { 颜色: '棕' } }],
-    supplier: [],
-  };
-  const gateway = makeGateway(records);
-  const { service, store } = makeService({
-    gateway,
-    client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
-    references: realReferences(gateway),
-    recognizer: makeRecognizer({
-      recognizeLabels: async () => [{ item_no: '8088-26', color: '棕色', size: 36, quantity: 1 }],
-    }),
-  });
-
-  const accepted = await service.accept('arrival', 'arr_real_amb');
-  const task = await waitForTask(store, accepted.taskId);
-  assert.equal(task.status, 'awaiting_confirmation', '命中多条不能报错、不能停下');
-  assert.equal(records.product.length, 2, '命中多条时不能建档');
-  assert.equal(task.draft.actual[0].product_record_id, 'prod_women', '取第一条');
-  assert.deepEqual(task.draft.actual[0].ambiguous_match, { count: 2, color: '棕', number: '808826棕女鞋' });
-
-  // 只数卡片：到货链路现在还会先发一条「收到，识别中」的文字提示。
-  await waitFor('到货明细卡片发出', async () => cardMessages(messages).length === 1);
-  const cardText = JSON.stringify(JSON.parse(cardMessages(messages)[0].data.content).elements);
-  assert.ok(cardText.includes('匹配到 2 条'), `卡片要标注匹配到几条：${cardText}`);
-  assert.ok(cardText.includes('已取'), `卡片要标注取了哪一条：${cardText}`);
-});
-
-test('arrival for a known product creates nothing and behaves exactly as before', async () => {
-  const records = {
-    purchaseArrival: [{ record_id: 'arr_known', fields: { 确认状态: '待确认', 识别状态: '待识别', 报货批次号: ['batch_1'], 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-    purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
-    purchaseRequest: [],
-    purchaseInbound: [],
-    product: [{ record_id: 'prod_1', fields: { 货号: '8088', 颜色: ['color_gray'], 编号: '8088灰' } }],
-    color: [{ record_id: 'color_gray', fields: { 颜色: '灰' } }],
-    supplier: [],
-  };
-  const { service, store } = makeService({
-    gateway: makeGateway(records),
-    references: makeReferences({
-      resolveProduct: async () => ({ recordId: 'prod_1', record: records.product[0] }),
-    }),
-  });
-
-  const accepted = await service.accept('arrival', 'arr_known');
-  const task = await waitForProcessed(store, accepted.taskId);
-  assert.equal(task.status, 'awaiting_confirmation');
-  assert.equal(records.product.length, 1, '老货品不能建新记录');
-  assert.equal(records.color.length, 1, '老货品不能动颜色表');
-  assert.deepEqual(task.draft.created_products, []);
-  assert.deepEqual(task.draft.created_colors, []);
-  assert.equal(task.draft.actual[0].created_product, false);
-  assert.equal(task.draft.actual[0].product_number, '8088灰', '仍然用表里的完整编号');
-});
-
-test('到货新品：缺失字段只落在草稿/日志里，卡片上不写"还差什么"', async () => {
-  const messages = [];
-  const records = {
-    purchaseArrival: [{ record_id: 'arr_gaps', fields: { 确认状态: '待确认', 识别状态: '待识别', 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-    purchaseInbound: [],
-    product: [],
-    color: [{ record_id: 'color_black', fields: { 颜色: '黑' } }],
-    supplier: [],
-  };
-  const gateway = makeGateway(records);
-  const originalGet = gateway.get;
-  // 「缺失信息说明」是飞书公式，后端只负责读：齐备时是「齐备」，否则是缺的字段名。
-  // 「样例图」是附件字段、不在公式里，要单独看。
-  gateway.get = async (tableKey, recordId) => {
-    if (tableKey === 'product') {
-      return { record_id: recordId, fields: { 货号: '3602', 颜色: ['color_black'], 缺失信息说明: '成本、品类', 样例图: [] } };
-    }
-    return originalGet(tableKey, recordId);
-  };
-  const { service, store, client } = makeService({
-    gateway,
-    references: makeReferences({
-      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
-    }),
-    recognizer: makeRecognizer({
-      recognizeLabels: async () => [{ item_no: '3602', color: '黑色', size: 36, quantity: 1 }],
-    }),
-  });
-  client.im.message.create = async (params) => { messages.push(params); return { code: 0 }; };
-
-  const accepted = await service.accept('arrival', 'arr_gaps');
-  const task = await waitForProcessed(store, accepted.taskId);
-  // 缺口照旧算出来（日志和草稿排查要用），但产品负责人的要求是**不上卡片**。
-  assert.deepEqual(task.draft.created_products[0].missing, ['成本', '品类']);
-  assert.equal(task.draft.created_products[0].missing_sample_image, true);
-  assert.equal(task.draft.created_products[0].completeness_readable, true);
-
-  await waitFor('到货明细卡片发出', async () => cardMessages(messages).length === 1);
-  const cardText = JSON.stringify(JSON.parse(cardMessages(messages)[0].data.content).elements);
-  assert.ok(!cardText.includes('还差'), `卡片不能写"还差什么"：${cardText}`);
-  assert.ok(!cardText.includes('点记录去补'), `卡片不能引导她去补字段：${cardText}`);
-  assert.ok(!cardText.includes('成本'), `缺口字段名不该出现在卡片上：${cardText}`);
-  assert.ok(cardText.includes('已建好基础资料'), `卡片只给结论，实际：${cardText}`);
-});
-
-test('建档失败可重试：已经建好的那条不重复建，她点确认时补齐剩下的再入库', async () => {
-  const records = {
-    purchaseArrival: [{ record_id: 'arr_retry_new', fields: { 确认状态: '待确认', 识别状态: '待识别', 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-    purchaseInbound: [],
-    product: [],
-    color: [{ record_id: 'color_black', fields: { 颜色: '黑色' } }],
-    supplier: [],
-  };
-  // 第一次建档：第一条成功、第二条失败——模拟"建了一半"。
-  // 成功那条的 record_id 会随任务落盘（arrival_created_products），重试必须复用它。
-  let createCalls = 0;
-  const gateway = makeGateway(records);
-  const innerCreate = gateway.create;
-  gateway.create = async (tableKey, semanticValues) => {
-    if (tableKey === 'product') {
-      createCalls += 1;
-      if (createCalls === 2) throw new Error('模拟第二条建档失败');
-    }
-    return innerCreate(tableKey, semanticValues);
-  };
-  const { service, store } = makeService({
-    gateway,
-    references: makeReferences({
-      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
-    }),
-    recognizer: makeRecognizer({
-      recognizeLabels: async () => [
-        { item_no: '3602', color: '黑色', size: 36, quantity: 1 },
-        { item_no: '3603', color: '黑色', size: 36, quantity: 1 },
-      ],
-    }),
-  });
-
-  const accepted = await service.accept('arrival', 'arr_retry_new');
-  const first = await waitForProcessed(store, accepted.taskId);
-  assert.equal(first.draft.creation_state, 'failed', '有一条没建成功，状态要标失败（不能静默）');
-  assert.match(first.draft.creation_error, /模拟第二条建档失败/, '失败原因要写进草稿给她看');
-  assert.equal(records.product.length, 1, '第一条已经建好了');
-  assert.equal(records.product[0].fields.货号, '3602');
-
-  // 她点确认：先补齐没建好的那条，再入库；已经建好的那条不能变成第二条货品。
-  const result = await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
-  assert.ok(result.toast.content.includes('采购已入库'));
-  assert.equal(records.product.length, 2, '重试只补建缺的那条，不重复建第一条');
-  assert.equal(createCalls, 3, '第一次 2 次（1 次成功 1 次失败）+ 重试 1 次');
-  assert.equal((await gateway.listAll('purchaseInbound')).length, 2, '两条明细都要入库');
-});
-
-test('建档一直失败：明确告诉她原因，且不会假装入库', async () => {
-  const records = {
-    purchaseArrival: [{ record_id: 'arr_create_fail', fields: { 确认状态: '待确认', 识别状态: '待识别', 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-    purchaseInbound: [],
-    product: [],
-    color: [{ record_id: 'color_black', fields: { 颜色: '黑色' } }],
-    supplier: [],
-  };
-  const gateway = makeGateway(records);
-  gateway.create = async (tableKey, semanticValues) => {
-    if (tableKey === 'product') throw new Error('模拟建档总失败');
-    return makeGateway(records).create(tableKey, semanticValues);
-  };
-  const { service, store } = makeService({
-    gateway,
-    references: makeReferences({
-      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
-    }),
-    recognizer: makeRecognizer({
-      recognizeLabels: async () => [{ item_no: '3602', color: '黑色', size: 36, quantity: 1 }],
-    }),
-  });
-
-  const accepted = await service.accept('arrival', 'arr_create_fail');
-  const task = await waitForProcessed(store, accepted.taskId);
-  assert.equal(task.draft.creation_state, 'failed');
-  assert.match(task.draft.creation_error, /模拟建档总失败/);
-
-  // 卡片发失败不成立——识别本身是成功的：记录不能停在「识别失败」。
-  assert.notEqual(records.purchaseArrival[0].fields.识别状态, '识别失败');
-
-  await assert.rejects(
-    () => service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1'),
-    /新品建档没成功|模拟建档总失败/,
-    '建档失败必须明确告诉她原因，不能静默',
-  );
-  assert.equal((await gateway.listAll('purchaseInbound')).length, 0, '建不出货品就不能入库，更不能假装入了');
-
-  // 失败可重试：确认失败之后再点一次，仍然是走同一条幂等路径。
-  gateway.create = makeGateway(records).create;
-  const result = await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
-  assert.ok(result.toast.content.includes('采购已入库'), '修好之后点确认要能成功入库');
-  assert.equal(records.product.length, 1);
-});
-
-// 合并 #57（报单免确认 + 出图）时踩到的坑：两条链路各加了一个同名 `sendText`，
-// #57 的那个失败即抛错、#58 的这个只记日志。JS 类体里**后定义的覆盖先定义的**，
-// 于是到货的「收到即提示」被换成了会抛错的实现——只要那条提示发不出去（IM 限流、
-// 缺权限、网络抖动），整条到货识别就在建档之前被打断：货品没建、明细没识别，
-// 用户只看到「识别失败」。这条用例钉住「提示是尽力而为，不能反过来把识别搞失败」。
-test('「收到即提示」发失败不能中断到货识别：货照样识别、照样建档、卡片照样发', async () => {
-  const records = { purchaseArrival: [arrivalRecord('arr_notice_fail')], purchaseInbound: [], product: [], color: [], supplier: [] };
-  const messages = [];
-  const client = makeClient({
-    sendMessage: async (params) => {
-      messages.push(params);
-      // 只让文字提示失败；确认卡片走同一个 im.message.create，必须成功。
-      if (params?.data?.msg_type === 'text') throw new Error('模拟提示发送失败');
-      return { code: 0 };
-    },
-  });
-  const { service, store } = makeService({
-    client,
-    gateway: makeGateway(records),
-    references: makeReferences({
-      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
-    }),
-    recognizer: makeRecognizer({
-      recognizeLabels: async () => [{ item_no: '3602', color: '黑色', size: 36, quantity: 1 }],
-    }),
-  });
-
-  const accepted = await service.accept('arrival', 'arr_notice_fail');
-  const task = await waitForProcessed(store, accepted.taskId);
-
-  // 提示发不出去，但流程必须照常走完。
-  assert.equal(task.status, 'awaiting_confirmation', '提示失败不能让整条到货识别失败');
-  assert.equal(records.product.length, 1, '提示失败也必须建好货品');
-  assert.equal(records.color.length, 1, '提示失败也必须建好颜色');
-  assert.equal(cardMessages(messages).length, 1, '确认卡片必须照发');
-  // 记录不能被写成「识别失败」——它其实识别成功了。
-  assert.notEqual(records.purchaseArrival[0].fields.识别状态, '识别失败');
-});
-
-test('arrival duplicate webhook is ignored', async () => {
-  const { service, store } = makeService({
-    gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_dup', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-      purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
-      purchaseRequest: [],
-    }),
-  });
-  const first = await service.accept('arrival', 'arr_dup');
-  await waitForTask(store, first.taskId);
-  const second = await service.accept('arrival', 'arr_dup');
-  assert.equal(second.duplicate, true);
-});
-
-test('arrival confirm creates inbound records and updates request arrival status', async () => {
+test('入库：写采购入库 + 挂回采购申请 + 回写申请到货状态与到货确认状态', async () => {
   const inventory = makeInventory();
-  const { service, store, gateway } = makeService({
-    inventory,
-    gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_conf', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-      purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
-      purchaseRequest: [{ record_id: 'req_1', fields: { 报货批次号: ['batch_1'], 编号: ['prod_1'], 尺码: sizeLink(36), 数量: 2 } }],
-      purchaseInbound: [],
-    }),
+  const records = {
+    purchaseArrival: [{ record_id: 'arr_conf', fields: { 确认状态: '待确认' } }],
+    purchaseRequest: [{ record_id: 'req_1', fields: { 报货批次号: ['batch_1'], 编号: ['prod_1'], 尺码: sizeLink(36), 数量: 2 } }],
+    purchaseInbound: [],
+  };
+  const { service, store, gateway } = makeService({ inventory, gateway: makeGateway(records) });
+  const task = await seedArrivalTask(store, {
+    taskId: 'purchase_arrival_conf',
+    arrivalRecordId: 'arr_conf',
+    actual: [arrivalActual()],
+    requests: (await gateway.listAll('purchaseRequest')),
   });
-  const accepted = await service.accept('arrival', 'arr_conf');
-  await waitForTask(store, accepted.taskId);
-  const result = await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
+
+  const result = await service.confirmArrival(task.task_id, task, 'ou_1');
   assert.ok(result.toast.content.includes('采购已入库'));
+
   const inbounds = await gateway.listAll('purchaseInbound');
   assert.equal(inbounds.length, 1);
   assert.deepEqual(inbounds[0].fields.尺码, sizeLink(36));
   assert.equal(inbounds[0].fields.数量, 1);
-  const request = await gateway.get('purchaseRequest', 'req_1');
-  assert.equal(request.fields.到货状态, '部分到货');
-  const arrival = await gateway.get('purchaseArrival', 'arr_conf');
-  assert.equal(arrival.fields.确认状态, '已确认');
+  assert.deepEqual(inbounds[0].fields.采购申请, ['req_1'], '入库记录要挂回对应的采购申请行');
+  assert.equal((await gateway.get('purchaseRequest', 'req_1')).fields.到货状态, '部分到货');
+  assert.equal((await gateway.get('purchaseArrival', 'arr_conf')).fields.确认状态, '已确认');
+  assert.equal(inventory.calls.length, 1, '库存要跟着加一次');
 });
 
-test('two identical product sizes in one arrival create one inbound for two pairs, including on retry', async () => {
+test('入库：同一货品+尺码的两条明细合成一条入库（数量 2），重复确认不重复写', async () => {
   const inventory = makeInventory();
-  const { service, store, gateway } = makeService({
-    inventory,
-    recognizer: makeRecognizer({ recognizeLabels: async () => [
-      { item_no: '8088', color: '灰色', size: 36, quantity: 1 },
-      { item_no: '8088', color: '灰色', size: 36, quantity: 1 },
-    ] }),
-    gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_two_same', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-      purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
-      purchaseRequest: [{ record_id: 'req_1', fields: { 报货批次号: ['batch_1'], 编号: ['prod_1'], 尺码: sizeLink(36), 数量: 2 } }],
-      purchaseInbound: [],
-    }),
+  const records = {
+    purchaseArrival: [{ record_id: 'arr_two', fields: { 确认状态: '待确认' } }],
+    purchaseRequest: [{ record_id: 'req_1', fields: { 编号: ['prod_1'], 尺码: sizeLink(36), 数量: 2 } }],
+    purchaseInbound: [],
+  };
+  const { service, store, gateway } = makeService({ inventory, gateway: makeGateway(records) });
+  const task = await seedArrivalTask(store, {
+    taskId: 'purchase_arrival_two',
+    arrivalRecordId: 'arr_two',
+    actual: [arrivalActual(), arrivalActual()],
+    requests: (await gateway.listAll('purchaseRequest')),
   });
-  const accepted = await service.accept('arrival', 'arr_two_same');
-  const draft = (await waitForTask(store, accepted.taskId)).draft;
-  assert.equal(draft.actual.length, 1);
-  assert.equal(draft.actual[0].quantity, 2);
-  await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
-  await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
+
+  await service.confirmArrival(task.task_id, task, 'ou_1');
+  // 再确认一次：读**最新**任务（已经是 posted），直接返回，不重复写。
+  await service.confirmArrival(task.task_id, await store.get(task.task_id), 'ou_1');
+
   const inbounds = await gateway.listAll('purchaseInbound');
   assert.equal(inbounds.length, 1);
   assert.equal(inbounds[0].fields.数量, 2);
@@ -1305,688 +747,44 @@ test('two identical product sizes in one arrival create one inbound for two pair
   assert.equal((await gateway.get('purchaseRequest', 'req_1')).fields.到货状态, '全部到货');
 });
 
-test('arrival confirm with inventory enabled actually calls inventory.applyPurchase', async () => {
+test('入库：真的调 inventory.applyPurchase（带采购入库记录 id 作为幂等来源）', async () => {
   const inventory = makeInventory();
-  const { service, store } = makeService({
-    inventory,
-    enablePurchaseInventory: true,
-    gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_inv', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-      purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
-      purchaseRequest: [],
-      purchaseInbound: [],
-    }),
-  });
-  const accepted = await service.accept('arrival', 'arr_inv');
-  await waitForTask(store, accepted.taskId);
-  await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
+  const records = {
+    purchaseArrival: [{ record_id: 'arr_inv', fields: { 确认状态: '待确认' } }],
+    purchaseInbound: [],
+  };
+  const { service, store } = makeService({ inventory, gateway: makeGateway(records) });
+  const task = await seedArrivalTask(store, { taskId: 'purchase_arrival_inv', arrivalRecordId: 'arr_inv', actual: [arrivalActual()] });
+
+  await service.confirmArrival(task.task_id, task, 'ou_1');
   assert.equal(inventory.calls.length, 1);
   assert.equal(inventory.calls[0].productRecordId, 'prod_1');
   assert.equal(inventory.calls[0].size, 36);
   assert.equal(inventory.calls[0].quantity, 1);
-  assert.ok(inventory.calls[0].purchaseInboundRecordId);
+  assert.ok(inventory.calls[0].purchaseInboundRecordId, '库存的幂等来源是采购入库记录 id');
 });
 
-
-test('arrival confirm is idempotent — second confirm does not create duplicate inbound', async () => {
+test('入库：没有报货批次（供应商直接送货）照样入库，不写任何申请状态', async () => {
   const inventory = makeInventory();
-  const { service, store, gateway } = makeService({
-    inventory,
-    gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_idem', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-      purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
-      purchaseRequest: [],
-      purchaseInbound: [],
-    }),
-  });
-  const accepted = await service.accept('arrival', 'arr_idem');
-  await waitForTask(store, accepted.taskId);
-  await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
-  const firstCount = (await gateway.listAll('purchaseInbound')).length;
-  await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
-  const secondCount = (await gateway.listAll('purchaseInbound')).length;
-  assert.equal(firstCount, 1);
-  assert.equal(secondCount, 1);
-});
-
-test('arrival cancel updates confirm status', async () => {
-  const { service, store, gateway } = makeService({
-    gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_cancel', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-      purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
-      purchaseRequest: [],
-    }),
-  });
-  const accepted = await service.accept('arrival', 'arr_cancel');
-  await waitForTask(store, accepted.taskId);
-  await service.handleCardAction({ draft_id: accepted.taskId, action: 'cancel_purchase_arrival' }, 'ou_1');
-  const updated = await gateway.get('purchaseArrival', 'arr_cancel');
-  assert.equal(updated.fields.确认状态, '已取消');
-});
-
-test('arrival with no images throws recognition failure', async () => {
-  const { service, store, gateway } = makeService({
-    gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_noimg', fields: { 确认状态: '待确认', 识别状态: '待识别', 报货批次号: ['batch_1'], 图片: [], 验收人: [{ id: 'ou_1' }] } }],
-      purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
-      purchaseRequest: [],
-    }),
-  });
-  const accepted = await service.accept('arrival', 'arr_noimg');
-  const task = await waitForTask(store, accepted.taskId);
-  assert.equal(task.status, 'failed');
-  assert.ok(task.error.includes('没有鞋盒图片'));
-  // process() 的失败分支是先落任务终态、再补写远端记录的，所以「任务已经 failed」
-  // 不等于「到货记录已经标成识别失败」：中间还有一个很短的窗口，慢机器上直接读
-  // 会读到中间态「识别中」（CI 上撞到过一次）。这里断言的是记录，就等到记录为止。
-  await waitFor('到货记录标记识别失败', async () => {
-    const record = await gateway.get('purchaseArrival', 'arr_noimg');
-    return record?.fields?.识别状态 === '识别失败';
-  });
-  const updated = await gateway.get('purchaseArrival', 'arr_noimg');
-  assert.equal(updated.fields.识别状态, '识别失败');
-});
-
-// ─── 到货识别不能卡死：超时/异常必须失败得看得见 ───
-//
-// 线上 2026-10-05：一条到货记录被写成「识别中」之后就再也没有任何输出——进程没崩、
-// 健康检查还能秒回，是某个 await 永远不返回（飞书 SDK 的 HTTP 客户端不设 timeout，
-// 模型客户端默认 10 分钟且重试 2 次，最坏能挂半小时）。
-// 下面这几条钉住两件事：**卡死不可能发生**、**失败一定看得见**（记录 + 消息）。
-
-const never = () => new Promise(() => {});
-
-const arrivalRecord = (recordId, extra = {}) => ({
-  record_id: recordId,
-  fields: {
-    确认状态: '待确认', 识别状态: '待识别', 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }], ...extra,
-  },
-});
-
-test('图片下载超时：记录写成识别失败（用字段里真实存在的选项），并告诉用户重传', async () => {
-  const messages = [];
-  const { service, store, gateway } = makeService({
-    mediaTimeoutMs: 20,
-    client: makeClient({
-      sendMessage: async (params) => { messages.push(params); return { code: 0 }; },
-      // 下载挂住：飞书 SDK 的 HTTP 客户端没有 timeout，现实里就是这样卡住的。
-      downloadMedia: async () => never(),
-    }),
-    gateway: makeGateway({ purchaseArrival: [arrivalRecord('arr_download_timeout')] }),
+  const records = { purchaseArrival: [{ record_id: 'arr_direct', fields: { 确认状态: '待确认' } }], purchaseInbound: [] };
+  const { service, store, gateway } = makeService({ inventory, gateway: makeGateway(records) });
+  const task = await seedArrivalTask(store, {
+    taskId: 'purchase_arrival_direct',
+    arrivalRecordId: 'arr_direct',
+    actual: [arrivalActual()],
   });
 
-  const accepted = await service.accept('arrival', 'arr_download_timeout');
-  const task = await waitForTask(store, accepted.taskId, ['failed']);
-  assert.match(task.error, /下载到货图片超时/);
-
-  await waitFor('到货记录标记识别失败', async () => {
-    const record = await gateway.get('purchaseArrival', 'arr_download_timeout');
-    return record?.fields?.识别状态 === '识别失败';
-  });
-  const record = await gateway.get('purchaseArrival', 'arr_download_timeout');
-  assert.equal(record.fields.识别状态, '识别失败');
-  // 「识别失败原因」要是人话，不是 axios/OpenAI 的原始报错。
-  assert.equal(record.fields.识别失败原因, '识别超时');
-
-  await waitFor('失败提示发出', async () => textMessages(messages).some((text) => text.includes('识别没成功')));
-  assert.equal(
-    textMessages(messages).find((text) => text.includes('识别没成功')),
-    '到货图片识别没成功（识别超时），请重传一次图片，或直接在记录里手工填写～',
-  );
+  const result = await service.confirmArrival(task.task_id, task, 'ou_1');
+  assert.ok(result.toast.content.includes('采购已入库'));
+  assert.equal((await gateway.listAll('purchaseInbound')).length, 1);
+  assert.equal(inventory.calls.length, 1, '直接到货也要真的入库');
+  assert.equal((await gateway.listAll('purchaseRequest')).length, 0);
 });
 
-test('模型识别超时（到货单分支）：记录写成识别失败，并告诉用户重传', async () => {
-  const messages = [];
-  const { service, store, gateway } = makeService({
-    recognitionTimeoutMs: 20,
-    client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
-    // 线上卡住的就是这条分支：类型=到货单 → recognizePurchaseDocument。
-    recognizer: makeRecognizer({ recognizePurchaseDocument: async () => never() }),
-    gateway: makeGateway({ purchaseArrival: [arrivalRecord('arr_model_timeout', { 类型: '到货单' })] }),
-  });
-
-  const accepted = await service.accept('arrival', 'arr_model_timeout');
-  const task = await waitForTask(store, accepted.taskId, ['failed']);
-  assert.match(task.error, /识别到货单超时/);
-
-  await waitFor('到货记录标记识别失败', async () => {
-    const record = await gateway.get('purchaseArrival', 'arr_model_timeout');
-    return record?.fields?.识别状态 === '识别失败';
-  });
-  const record = await gateway.get('purchaseArrival', 'arr_model_timeout');
-  assert.equal(record.fields.识别状态, '识别失败');
-  assert.equal(record.fields.识别失败原因, '识别超时');
-  await waitFor('失败提示发出', async () => textMessages(messages).some((text) => text.includes('识别没成功')));
-});
-
-test('模型客户端自己先超时（英文报错）也写成「识别超时」这一句人话', async () => {
-  const messages = [];
-  const { service, store, gateway } = makeService({
-    client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
-    // OpenAI SDK 自己的超时错误长这样：APIConnectionTimeoutError + "Request timed out."
-    // 原文直接写进「识别失败原因」就是一列英文，她看不懂。
-    recognizer: makeRecognizer({
-      recognizeLabels: async () => {
-        throw Object.assign(new Error('Request timed out.'), { name: 'APIConnectionTimeoutError' });
-      },
-    }),
-    gateway: makeGateway({ purchaseArrival: [arrivalRecord('arr_sdk_timeout')] }),
-  });
-
-  const accepted = await service.accept('arrival', 'arr_sdk_timeout');
-  await waitForTask(store, accepted.taskId, ['failed']);
-  await waitFor('到货记录标记识别失败', async () => {
-    const record = await gateway.get('purchaseArrival', 'arr_sdk_timeout');
-    return record?.fields?.识别状态 === '识别失败';
-  });
-  const record = await gateway.get('purchaseArrival', 'arr_sdk_timeout');
-  assert.equal(record.fields.识别失败原因, '识别超时');
-  await waitFor('失败提示发出', async () => textMessages(messages).some((text) => text.includes('识别没成功')));
-});
-
-test('未预期异常：状态从「识别中」被推出去，不会永远停在识别中', async () => {
-  const messages = [];
-  const statuses = [];
-  const base = makeGateway({ purchaseArrival: [arrivalRecord('arr_boom', { 类型: '到货单' })] });
-  const gateway = {
-    ...base,
-    update: async (tableKey, recordId, values) => {
-      // 记下这条记录被写过的每一个识别状态，用来证明「识别中」确实写出去过、之后被推出去了。
-      if (tableKey === 'purchaseArrival' && values.recognitionStatus) statuses.push(values.recognitionStatus);
-      return base.update(tableKey, recordId, values);
-    },
-  };
-  const { service, store } = makeService({
-    client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
-    recognizer: makeRecognizer({
-      recognizePurchaseDocument: async () => { throw new Error('模型返回了预期之外的东西'); },
-    }),
-    gateway,
-  });
-
-  const accepted = await service.accept('arrival', 'arr_boom');
-  const task = await waitForTask(store, accepted.taskId, ['failed']);
-  assert.match(task.error, /预期之外/);
-  await waitFor('到货记录离开识别中', async () => {
-    const record = await base.get('purchaseArrival', 'arr_boom');
-    return record?.fields?.识别状态 && record.fields.识别状态 !== '识别中';
-  });
-  const record = await base.get('purchaseArrival', 'arr_boom');
-  assert.deepEqual(statuses, ['识别中', '识别失败'], '先写识别中，异常后必须写成失败态');
-  assert.equal(record.fields.识别状态, '识别失败');
-  assert.ok(record.fields.识别失败原因, '失败原因不能空着');
-  await waitFor('失败提示发出', async () => textMessages(messages).some((text) => text.includes('识别没成功')));
-});
-
-test('失败态第一次写不出去会重试：记录仍然不会停在「识别中」', async () => {
-  const records = { purchaseArrival: [arrivalRecord('arr_retry_write')] };
-  const base = makeGateway(records);
-  let failureWrites = 0;
-  const gateway = {
-    ...base,
-    update: async (tableKey, recordId, values) => {
-      if (tableKey === 'purchaseArrival' && values.recognitionStatus === '识别失败') {
-        failureWrites += 1;
-        // 第一次模拟飞书写入抖动：不重试的话记录就永远停在「识别中」。
-        if (failureWrites === 1) throw new Error('模拟飞书写入抖动');
-      }
-      return base.update(tableKey, recordId, values);
-    },
-  };
-  const { service, store } = makeService({
-    recognizer: makeRecognizer({ recognizeLabels: async () => { throw new Error('识别炸了'); } }),
-    gateway,
-  });
-
-  const accepted = await service.accept('arrival', 'arr_retry_write');
-  await waitForTask(store, accepted.taskId, ['failed']);
-  await waitFor('到货记录标记识别失败', async () => {
-    const record = await base.get('purchaseArrival', 'arr_retry_write');
-    return record?.fields?.识别状态 === '识别失败';
-  });
-  assert.equal(failureWrites, 2, '第一次写入失败后必须重试');
-});
-
-test('确认有图片后立刻发「已收到，正在识别图片～」，在下载和识别之前', async () => {
-  const messages = [];
-  const order = [];
-  const { service, store } = makeService({
-    client: makeClient({
-      sendMessage: async (params) => {
-        messages.push(params);
-        order.push(`send:${params.data.msg_type}`);
-        return { code: 0 };
-      },
-      downloadMedia: async () => {
-        order.push('download');
-        return { writeFile: async () => { order.push('write'); } };
-      },
-    }),
-    recognizer: makeRecognizer({
-      recognizeLabels: async () => {
-        order.push('recognize');
-        // 识别开始时「已收到」必须已经发出去了——这就是「刚开始处理时」的定义。
-        assert.deepEqual(textMessages(messages), ['收到到货申请，正在识别图片～']);
-        return [{ item_no: '8088', color: '灰色', size: 36, quantity: 1 }];
-      },
-    }),
-    gateway: makeGateway({ purchaseArrival: [arrivalRecord('arr_ack')] }),
-  });
-
-  const accepted = await service.accept('arrival', 'arr_ack');
-  const task = await waitForTask(store, accepted.taskId);
-  assert.equal(task.status, 'awaiting_confirmation');
-  assert.deepEqual(order, ['send:text', 'download', 'write', 'recognize', 'send:interactive']);
-  // 一条提示 + 一张卡片；提示只发一次。
-  assert.deepEqual(textMessages(messages), ['收到到货申请，正在识别图片～']);
-  assert.equal(cardMessages(messages).length, 1);
-});
-
-// ─── 到货「等待与提示」：每 1 分钟补发 / 2 分钟放弃等待 / 3 分钟判失败＋迟到结果救回 ───
-//
-// 产品负责人看完一次真实的到货识别（82 秒，比她设的 60 秒超时长）后定的六条规则。
-// 这组用例一律**轮询到不变量成立**（waitFor / waitForTask），不用固定 sleep 卡机器速度：
-// 这个仓库已经因为时序敏感挂过好几次 CI。
-//
-// 阈值全部走构造入参（等价于环境变量），毫秒级，让"1 分钟/2 分钟/3 分钟"能在测试里秒级复现。
-
-const ARRIVAL_RECEIVED = '收到到货申请，正在识别图片～';
-const ARRIVAL_WAITING = '还在识别中，请稍等～';
-const waitingNotices = (messages) => textMessages(messages).filter((text) => text === ARRIVAL_WAITING);
-
-// 可由测试手动放行的 Promise：用来制造"识别还在跑"的中间态，
-// 断言的是"到某个点之前/之后发生了什么"，而不是"睡了多久"。
-const deferred = () => {
-  let resolve;
-  let reject;
-  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
-  return { promise, resolve, reject };
-};
-
-// 结构化日志的出口就是 console.log/warn/error（src/utils/logger.js）。
-// 捕获它们就能断言"放弃等待只记了日志、没有别的动作"这类约定。
-const captureLogs = () => {
-  const lines = [];
-  const originals = { log: console.log, warn: console.warn, error: console.error };
-  const capture = (...args) => { lines.push(args.map((value) => String(value)).join(' ')); };
-  console.log = capture;
-  console.warn = capture;
-  console.error = capture;
-  return {
-    lines,
-    events: (event) => lines.filter((line) => line.includes(`"event":"${event}"`)),
-    restore: () => { console.log = originals.log; console.warn = originals.warn; console.error = originals.error; },
-  };
-};
-
-test('配套项：「写识别中」和「发提示」并行——串行实现下第二个根本不会开始，这条会超时', async () => {
-  const noticeGate = deferred();
-  const statusGate = deferred();
-  let noticeStarted = false;
-  let statusWriteStarted = false;
-  const messages = [];
-  const base = makeGateway({ purchaseArrival: [arrivalRecord('arr_parallel')] });
-  const gateway = {
-    ...base,
-    update: async (tableKey, recordId, values) => {
-      if (tableKey === 'purchaseArrival' && values.recognitionStatus === '识别中') {
-        statusWriteStarted = true;
-        // 卡住不写：只有"并行"才会轮到后面那个也开始。
-        await statusGate.promise;
-      }
-      return base.update(tableKey, recordId, values);
-    },
-  };
-  const { service, store } = makeService({
-    gateway,
-    client: makeClient({
-      sendMessage: async (params) => {
-        messages.push(params);
-        if (params?.data?.msg_type === 'text') {
-          noticeStarted = true;
-          await noticeGate.promise;
-        }
-        return { code: 0 };
-      },
-    }),
-  });
-
-  const accepted = await service.accept('arrival', 'arr_parallel');
-  // 两边都"发起"了才算并行：提示发到一半时，写识别中也必须已经在路上。
-  await waitFor('提示与写状态同时发起', () => noticeStarted && statusWriteStarted, { attempts: 300, pause: 5 });
-  noticeGate.resolve();
-  statusGate.resolve();
-  const task = await waitForTask(store, accepted.taskId);
-  assert.equal(task.status, 'awaiting_confirmation');
-  assert.deepEqual(textMessages(messages), [ARRIVAL_RECEIVED]);
-});
-
-test('② 每 1 分钟补发「还在识别中」；处理完成后立刻停止，不再补发', async () => {
-  const release = deferred();
-  const messages = [];
-  const { service, store } = makeService({
-    arrivalNoticeIntervalMs: 20,
-    client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
-    recognizer: makeRecognizer({
-      recognizeLabels: async () => {
-        await release.promise;
-        return [{ item_no: '8088', color: '灰色', size: 36, quantity: 1 }];
-      },
-    }),
-    gateway: makeGateway({ purchaseArrival: [arrivalRecord('arr_repeat_notice')] }),
-  });
-
-  const accepted = await service.accept('arrival', 'arr_repeat_notice');
-  await waitFor('收到提示', () => textMessages(messages).includes(ARRIVAL_RECEIVED));
-  // 轮询到"补发确实发生过"（而不是死等一个固定时长）。
-  await waitFor('补发到 3 条', () => waitingNotices(messages).length >= 3, { attempts: 600, pause: 5 });
-
-  release.resolve();
-  const task = await waitForTask(store, accepted.taskId);
-  assert.equal(task.status, 'awaiting_confirmation');
-  // ⑥ 处理完成 → 定时器立刻清掉：服务里不残留任何等待点（这是最强的"停止了"证据）。
-  assert.equal(service.arrivalWaits.size, 0, '处理完成后不能残留等待定时器');
-
-  const afterDone = waitingNotices(messages).length;
-  // 静默期检查：留够 3 个间隔。定时器没清掉的话这里一定会多出好几条。
-  await wait(60);
-  assert.equal(waitingNotices(messages).length, afterDone, '处理完成后不能再补发');
-  assert.equal(cardMessages(messages).length, 1);
-});
-
-test('③ 2 分钟放弃等待 ≠ 失败：只记日志，不取消请求、不写失败态，结果回来照常处理', async () => {
-  const release = deferred();
-  const logs = captureLogs();
-  try {
-    let recognizeCalls = 0;
-    const messages = [];
-    const { service, store, gateway } = makeService({
-      arrivalAbandonWaitMs: 20,
-      arrivalFailAfterMs: 60_000, // 这条用例里到不了判失败
-      client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
-      recognizer: makeRecognizer({
-        recognizeLabels: async () => {
-          recognizeCalls += 1;
-          await release.promise;
-          return [{ item_no: '8088', color: '灰色', size: 36, quantity: 1 }];
-        },
-      }),
-      gateway: makeGateway({ purchaseArrival: [arrivalRecord('arr_abandon')], purchaseInbound: [] }),
-    });
-
-    const accepted = await service.accept('arrival', 'arr_abandon');
-    await waitFor('放弃等待日志', () => logs.events('purchase.arrival.wait.abandoned').length === 1);
-    const abandoned = JSON.parse(logs.events('purchase.arrival.wait.abandoned')[0]);
-    assert.equal(abandoned.record_id, 'arr_abandon');
-    assert.match(abandoned.note, /不判失败/);
-
-    // 放弃等待那一刻：没有失败写入、没有失败消息、没有卡片、更没有入库。
-    assert.notEqual((await gateway.get('purchaseArrival', 'arr_abandon')).fields.识别状态, '识别失败');
-    assert.equal(textMessages(messages).some((text) => text.includes('识别没成功')), false);
-    assert.equal(cardMessages(messages).length, 0);
-    assert.equal((await gateway.listAll('purchaseInbound')).length, 0);
-
-    // 请求没有被取消也没有重跑：放行之后，结果照常走完匹配/建档/出卡。
-    release.resolve();
-    const task = await waitForTask(store, accepted.taskId);
-    assert.equal(task.status, 'awaiting_confirmation');
-    const record = await gateway.get('purchaseArrival', 'arr_abandon');
-    assert.equal(record.fields.识别状态, '识别成功');
-    assert.equal(cardMessages(messages).length, 1);
-    assert.equal(recognizeCalls, 1, '放弃等待不能取消/重启请求');
-    assert.equal(service.arrivalWaits.size, 0);
-  } finally {
-    logs.restore();
-  }
-});
-
-test('④ 请求报错 → 判失败 + 告诉她原因；等待定时器同时停掉，不会再补发也不会再判一次', async () => {
-  const logs = captureLogs();
-  try {
-    const messages = [];
-    const { service, store, gateway } = makeService({
-      arrivalNoticeIntervalMs: 10,
-      arrivalAbandonWaitMs: 30,
-      arrivalFailAfterMs: 40,
-      client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
-      recognizer: makeRecognizer({ recognizeLabels: async () => { throw new Error('模型服务 502'); } }),
-      gateway: makeGateway({ purchaseArrival: [arrivalRecord('arr_request_error')] }),
-    });
-
-    const accepted = await service.accept('arrival', 'arr_request_error');
-    const task = await waitForTask(store, accepted.taskId, ['failed']);
-    assert.match(task.error, /模型服务 502/);
-    await waitFor('到货记录标记识别失败', async () =>
-      (await gateway.get('purchaseArrival', 'arr_request_error')).fields.识别状态 === '识别失败');
-    const record = await gateway.get('purchaseArrival', 'arr_request_error');
-    assert.equal(record.fields.识别失败原因, '模型服务 502', '失败原因要说人话且带上是哪一出错');
-    await waitFor('失败提示发出', () => textMessages(messages).some((text) => text.includes('识别没成功')));
-    assert.ok(
-      textMessages(messages).find((text) => text.includes('识别没成功')).includes('模型服务 502'),
-      '失败提示必须带上原因，不能只说"失败了"',
-    );
-
-    // 判失败 → 停止：不残留定时器；等过所有阈值也不再多发消息、多判一次。
-    assert.equal(service.arrivalWaits.size, 0);
-    const messageCount = messages.length;
-    await wait(80); // > interval + abandon + failAfter
-    assert.equal(messages.length, messageCount, '判失败后不能再补发提示');
-    assert.equal(logs.events('purchase.arrival.wait.abandoned').length, 0, '已经判失败了就不该再走放弃等待');
-    assert.equal(logs.events('purchase.arrival.failure_notice').length, 1, '失败提示只能发一次');
-  } finally {
-    logs.restore();
-  }
-});
-
-test('⑤ 3 分钟判失败后结果才到：状态改回成功 + 出卡 + 发说明 + 不重复写入库', async () => {
-  const release = deferred();
-  const logs = captureLogs();
-  try {
-    const inventory = makeInventory();
-    const messages = [];
-    const { service, store, gateway } = makeService({
-      inventory,
-      arrivalNoticeIntervalMs: 10,
-      arrivalAbandonWaitMs: 20,
-      arrivalFailAfterMs: 50,
-      client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
-      recognizer: makeRecognizer({
-        recognizeLabels: async () => {
-          await release.promise;
-          return [{ item_no: '8088', color: '灰色', size: 36, quantity: 2 }];
-        },
-      }),
-      gateway: makeGateway({ purchaseArrival: [arrivalRecord('arr_rescue')], purchaseInbound: [] }),
-    });
-
-    const accepted = await service.accept('arrival', 'arr_rescue');
-    // 先确认"确实判了失败"（记录写成失败 + 失败提示已经发出），再把迟到的结果放出来。
-    await waitFor('判失败落盘', async () =>
-      (await gateway.get('purchaseArrival', 'arr_rescue')).fields.识别状态 === '识别失败');
-    await waitFor('失败提示发出', () => textMessages(messages).some((text) => text.includes('识别没成功')));
-
-    release.resolve();
-    const task = await waitForTask(store, accepted.taskId);
-    assert.equal(task.status, 'awaiting_confirmation', '迟到结果必须把任务从 failed 救回来');
-
-    const record = await gateway.get('purchaseArrival', 'arr_rescue');
-    assert.equal(record.fields.识别状态, '识别成功', '状态必须改回成功');
-    assert.equal(record.fields.确认状态, '待确认');
-    assert.equal(record.fields.识别失败原因, '', '失败原因要清掉，别留着误导她');
-    assert.equal(cardMessages(messages).length, 1, '照常出卡片');
-
-    const rescued = textMessages(messages).find((text) => text.includes('后来识别出来了'));
-    assert.ok(rescued, '必须补一条「后来识别出来了」的说明');
-    assert.match(rescued, /已经按识别结果处理好，你可以直接确认入库～/);
-
-    // 救回只出卡片：**入库永远要她点确认**，所以这一刻一条入库记录都不该有。
-    assert.equal((await gateway.listAll('purchaseInbound')).length, 0, '救回不能自动写入库');
-    assert.equal(inventory.calls.length, 0);
-
-    // 她点确认：走既有幂等路径（inbound_created 落盘 + 按到货记录回查远端）；连点两次也只入一次。
-    await service.handleCardAction({ draft_id: task.task_id, action: 'confirm_purchase_arrival' }, 'ou_1');
-    await service.handleCardAction({ draft_id: task.task_id, action: 'confirm_purchase_arrival' }, 'ou_1');
-    const inbounds = await gateway.listAll('purchaseInbound');
-    assert.equal(inbounds.length, 1, '每个「货品+尺码」只能有一条采购入库');
-    assert.equal(inbounds[0].fields.数量, 2);
-    assert.equal(inventory.calls.length, 1, '库存只能加一次——迟到结果不能重复扣库存');
-
-    assert.equal(logs.events('purchase.arrival.failure_notice').length, 1, '失败提示只能发一次');
-    assert.equal(logs.events('purchase.arrival.timeout.rescued').length, 1);
-    assert.equal(service.arrivalWaits.size, 0);
-  } finally {
-    logs.restore();
-  }
-});
-
-test('「识别中」写得很慢时，判失败不会被它盖掉：写入顺序仍是有序的，迟到结果照样救回', async () => {
-  const release = deferred();
-  const statusGate = deferred();
-  const statuses = [];
-  let statusWriteStarted = false;
-  const messages = [];
-  const base = makeGateway({ purchaseArrival: [arrivalRecord('arr_slow_status')], purchaseInbound: [] });
-  const gateway = {
-    ...base,
-    update: async (tableKey, recordId, values) => {
-      if (tableKey === 'purchaseArrival' && values.recognitionStatus === '识别中') {
-        statusWriteStarted = true;
-        // 卡住不写：等待定时器必须等它写完才启动，否则失败态会先写、再被「识别中」盖掉。
-        await statusGate.promise;
-      }
-      if (tableKey === 'purchaseArrival' && values.recognitionStatus) statuses.push(values.recognitionStatus);
-      return base.update(tableKey, recordId, values);
-    },
-  };
-  const { service, store } = makeService({
-    gateway,
-    arrivalAbandonWaitMs: 20,
-    arrivalFailAfterMs: 20,
-    client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
-    recognizer: makeRecognizer({
-      recognizeLabels: async () => {
-        await release.promise;
-        return [{ item_no: '8088', color: '灰色', size: 36, quantity: 1 }];
-      },
-    }),
-  });
-
-  const accepted = await service.accept('arrival', 'arr_slow_status');
-  await waitFor('「识别中」写入发起', () => statusWriteStarted);
-  // 写入还挂着：这时候一个失败态都不该写出去。
-  assert.deepEqual(statuses, [], '「识别中」还没写成之前不能判失败');
-
-  statusGate.resolve();
-  await waitFor('判失败落盘', async () =>
-    (await gateway.get('purchaseArrival', 'arr_slow_status')).fields.识别状态 === '识别失败');
-  assert.deepEqual(statuses, ['识别中', '识别失败'], '失败态必须晚于「识别中」，否则会被它盖掉，记录永远停在识别中');
-
-  // 迟到的结果把状态救回来。
-  release.resolve();
-  const task = await waitForTask(store, accepted.taskId);
-  assert.equal(task.status, 'awaiting_confirmation');
-  assert.deepEqual(statuses, ['识别中', '识别失败', '识别成功']);
-});
-
-test('③ 补发次数上限兜底：到上限只记一条日志，不再刷屏', async () => {
-  const release = deferred();
-  const logs = captureLogs();
-  try {
-    const messages = [];
-    const { service, store } = makeService({
-      arrivalNoticeIntervalMs: 10,
-      arrivalNoticeMaxCount: 2,
-      arrivalAbandonWaitMs: 60_000,
-      arrivalFailAfterMs: 60_000,
-      client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
-      recognizer: makeRecognizer({
-        recognizeLabels: async () => {
-          await release.promise;
-          return [{ item_no: '8088', color: '灰色', size: 36, quantity: 1 }];
-        },
-      }),
-      gateway: makeGateway({ purchaseArrival: [arrivalRecord('arr_capped')] }),
-    });
-
-    const accepted = await service.accept('arrival', 'arr_capped');
-    await waitFor('到达补发上限', () => logs.events('purchase.arrival.wait.notice_capped').length === 1, { attempts: 600, pause: 5 });
-    assert.equal(waitingNotices(messages).length, 2);
-
-    // 上限之后每过一个间隔都不该再发（这里等 6 个间隔）。
-    await wait(60);
-    assert.equal(waitingNotices(messages).length, 2, '到上限只记日志，不刷屏');
-
-    release.resolve();
-    const task = await waitForTask(store, accepted.taskId);
-    assert.equal(task.status, 'awaiting_confirmation');
-    assert.equal(service.arrivalWaits.size, 0);
-  } finally {
-    logs.restore();
-  }
-});
-
-test('识别超时后重试：不重复写采购入库，也不重复加库存', async () => {
-  const inventory = makeInventory();
-  let attempts = 0;
-  const { service, store, gateway } = makeService({
-    inventory,
-    recognitionTimeoutMs: 20,
-    recognizer: makeRecognizer({
-      recognizeLabels: async () => {
-        attempts += 1;
-        // 第一次卡住（超时），第二次正常返回同一批货。
-        if (attempts === 1) return never();
-        return [{ item_no: '8088', color: '灰色', size: 36, quantity: 2 }];
-      },
-    }),
-    gateway: makeGateway({ purchaseArrival: [arrivalRecord('arr_timeout_retry')], purchaseInbound: [] }),
-  });
-
-  const first = await service.accept('arrival', 'arr_timeout_retry');
-  await waitForTask(store, first.taskId, ['failed']);
-  assert.equal((await gateway.listAll('purchaseInbound')).length, 0, '识别失败时一条入库都不该写');
-
-  // 重收 webhook（用户重传图片）会重跑这次识别：任务落 failed 是可重跑的。
-  const second = await service.accept('arrival', 'arr_timeout_retry');
-  const retried = await waitForTask(store, second.taskId, ['awaiting_confirmation']);
-  assert.equal(retried.draft.actual.length, 1);
-
-  // 确认两次（超时重试 + 双击确认）：入库和库存都只能发生一次。
-  await service.handleCardAction({ draft_id: retried.task_id, action: 'confirm_purchase_arrival' }, 'ou_1');
-  await service.handleCardAction({ draft_id: retried.task_id, action: 'confirm_purchase_arrival' }, 'ou_1');
-  const inbounds = await gateway.listAll('purchaseInbound');
-  assert.equal(inbounds.length, 1, '每个「货品+尺码」只能有一条采购入库');
-  assert.equal(inbounds[0].fields.数量, 2);
-  assert.equal(inventory.calls.length, 1, '库存只能加一次');
-});
-
-test('invalid record_id is rejected', async () => {
-  const { service } = makeService();
-  await assert.rejects(() => service.accept('arrival', 'invalid id!'), /缺少有效 record_id/);
-});
-
-test('only original operator can confirm', async () => {
-  const { service, store } = makeService({
-    gateway: makeGateway({
-      purchaseArrival: [{ record_id: 'arr_auth', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_owner' }] } }],
-      purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
-      purchaseRequest: [],
-    }),
-  });
-  const accepted = await service.accept('arrival', 'arr_auth');
-  await waitForTask(store, accepted.taskId);
-  await assert.rejects(
-    () => service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_other'),
-    /只能由原始填写人确认/,
-  );
-});
-
-test('arrival confirm retries after partial failure without duplicating inbound or inventory', async () => {
+test('入库：写库中途失败后重试不重复写第一条，也不重复加库存', async () => {
   const inventory = makeInventory();
   const records = {
-    purchaseArrival: [{ record_id: 'arr_partial', fields: { 确认状态: '待确认', 识别状态: '识别成功', 报货批次号: ['batch_1'], 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-    purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
-    purchaseRequest: [],
+    purchaseArrival: [{ record_id: 'arr_partial', fields: { 确认状态: '待确认' } }],
     purchaseInbound: [],
   };
   let inboundCreateCount = 0;
@@ -2002,53 +800,36 @@ test('arrival confirm retries after partial failure without duplicating inbound 
       return baseGateway.create(tableKey, semanticValues);
     },
   };
-  const { service, store } = makeService({
-    inventory,
-    gateway,
-    recognizer: makeRecognizer({ recognizeLabels: async () => [
-      { item_no: '8088', color: '灰色', size: 36, quantity: 1 },
-      { item_no: '8088', color: '灰色', size: 37, quantity: 1 },
-    ] }),
+  const { service, store } = makeService({ inventory, gateway });
+  const task = await seedArrivalTask(store, {
+    taskId: 'purchase_arrival_partial',
+    arrivalRecordId: 'arr_partial',
+    actual: [arrivalActual(), arrivalActual({ size: 37 })],
   });
-  const accepted = await service.accept('arrival', 'arr_partial');
-  await waitForTask(store, accepted.taskId);
 
-  // 第一次确认：第1条入库成功，第2条失败
   await assert.rejects(
-    () => service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1'),
+    () => service.confirmArrival(task.task_id, task, 'ou_1'),
     /模拟入库写入中途失败/,
   );
-  const inboundsAfterFirst = await gateway.listAll('purchaseInbound');
-  assert.equal(inboundsAfterFirst.length, 1, '第一次失败后应只有1条入库记录');
-  assert.equal(inventory.calls.length, 1, '第一次失败后应只有1次库存更新');
-  const taskAfterFirst = await store.get(accepted.taskId);
-  assert.notEqual(taskAfterFirst.status, 'posted', '失败后 task 不应标记为 posted');
+  assert.equal((await gateway.listAll('purchaseInbound')).length, 1, '失败后应只有 1 条入库记录');
+  assert.equal(inventory.calls.length, 1, '失败后应只有 1 次库存更新');
+  assert.notEqual((await store.get(task.task_id)).status, 'posted', '失败后任务不应标记为 posted');
 
-  // 重试：不再失败
   failOnSecondCreate = false;
-  const result = await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
+  const result = await service.confirmArrival(task.task_id, await store.get(task.task_id), 'ou_1');
   assert.ok(result.toast.content.includes('采购已入库'), result.toast.content);
 
-  // 验证不重复创建
-  const inboundsAfterRetry = await gateway.listAll('purchaseInbound');
-  assert.equal(inboundsAfterRetry.length, 2, '重试后应总共2条入库记录，不重复第1条');
-  assert.equal(inventory.calls.length, 2, '重试后应总共2次库存更新，不重复第1条');
-
-  const sizes = inboundsAfterRetry.map((r) => r.fields.尺码[0]).sort();
-  assert.deepEqual(sizes, sizeLinks(36, 37));
-
-  const taskAfterRetry = await store.get(accepted.taskId);
-  assert.equal(taskAfterRetry.status, 'posted');
+  const inbounds = await gateway.listAll('purchaseInbound');
+  assert.equal(inbounds.length, 2, '重试补齐第二条，不重复第一条');
+  assert.equal(inventory.calls.length, 2);
+  assert.deepEqual(inbounds.map((row) => row.fields.尺码[0]).sort(), sizeLinks(36, 37));
+  assert.equal((await store.get(task.task_id)).status, 'posted');
 });
 
-test('arrival confirm retry survives feishu list latency — persisted inbound_created prevents duplicate', async () => {
-  // 模拟飞书写入后立即读取有延迟：重试时 listAll('purchaseInbound') 返回空，
-  // 但 task.draft.inbound_created 已持久化第1条记录，验证不会重复创建。
+test('入库：飞书列表延迟时靠任务里落盘的 inbound_created 防重复', async () => {
   const inventory = makeInventory();
   const records = {
-    purchaseArrival: [{ record_id: 'arr_latency', fields: { 确认状态: '待确认', 识别状态: '识别成功', 报货批次号: ['batch_1'], 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-    purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
-    purchaseRequest: [],
+    purchaseArrival: [{ record_id: 'arr_latency', fields: { 确认状态: '待确认' } }],
     purchaseInbound: [],
   };
   let inboundCreateCount = 0;
@@ -2069,48 +850,35 @@ test('arrival confirm retry survives feishu list latency — persisted inbound_c
       return baseGateway.create(tableKey, semanticValues);
     },
   };
-  const { service, store } = makeService({
-    inventory,
-    gateway,
-    recognizer: makeRecognizer({ recognizeLabels: async () => [
-      { item_no: '8088', color: '灰色', size: 36, quantity: 1 },
-      { item_no: '8088', color: '灰色', size: 37, quantity: 1 },
-    ] }),
+  const { service, store } = makeService({ inventory, gateway });
+  const task = await seedArrivalTask(store, {
+    taskId: 'purchase_arrival_latency',
+    arrivalRecordId: 'arr_latency',
+    actual: [arrivalActual(), arrivalActual({ size: 37 })],
   });
-  const accepted = await service.accept('arrival', 'arr_latency');
-  await waitForTask(store, accepted.taskId);
 
-  // 第一次确认：第1条（36码）成功并持久化到 inbound_created，第2条（37码）失败
   await assert.rejects(
-    () => service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1'),
+    () => service.confirmArrival(task.task_id, task, 'ou_1'),
     /模拟入库写入中途失败/,
   );
-  const taskAfterFirst = await store.get(accepted.taskId);
-  assert.ok(taskAfterFirst.draft?.inbound_created, '失败后应已持久化 inbound_created');
-  const persistedKeys = Object.keys(taskAfterFirst.draft.inbound_created);
-  assert.equal(persistedKeys.length, 1, '应只持久化第1条成功的记录');
-  assert.ok(persistedKeys[0].includes('36'), '持久化的应是36码的记录');
+  const afterFirst = await store.get(task.task_id);
+  assert.ok(afterFirst.draft?.inbound_created, '失败后应已持久化 inbound_created');
+  assert.equal(Object.keys(afterFirst.draft.inbound_created).length, 1, '只持久化第 1 条成功的记录');
+  assert.ok(Object.keys(afterFirst.draft.inbound_created)[0].includes('36'), '持久化的应是 36 码那条');
 
-  // 重试：开启 listAll 延迟模拟（返回空），不再失败
   simulateListLatency = true;
   failOnSecondCreate = false;
-  const result = await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
-  assert.ok(result.toast.content.includes('采购已入库'), result.toast.content);
+  await service.confirmArrival(task.task_id, afterFirst, 'ou_1');
 
-  // 验证：即使 listAll 返回空，因为 inbound_created 持久化了第1条，也不会重复创建
-  const inboundsAfterRetry = await baseGateway.listAll('purchaseInbound');
-  assert.equal(inboundsAfterRetry.length, 2, '重试后应总共2条入库记录，36码不重复');
-  assert.equal(inventory.calls.length, 2, '重试后应总共2次库存更新，36码不重复');
-
-  const sizes = inboundsAfterRetry.map((r) => r.fields.尺码[0]).sort();
-  assert.deepEqual(sizes, sizeLinks(36, 37));
+  const inbounds = await baseGateway.listAll('purchaseInbound');
+  assert.equal(inbounds.length, 2, '即使 listAll 返回空，36 码也不能重复');
+  assert.equal(inventory.calls.length, 2);
 });
 
-test('arrival confirm retries after inventory update failure — continues applying inventory for existing inbound', async () => {
-  // 场景：第1条入库记录创建成功，但库存更新失败；重试时应继续执行第1条的库存更新，不重复创建入库记录
+test('入库：库存更新失败后重试继续补上，不重复建入库记录', async () => {
   let inventoryCallCount = 0;
-  let failInventory = true;
   const inventoryCalls = [];
+  let failInventory = true;
   const inventory = {
     applyPurchase: async (input) => {
       inventoryCallCount += 1;
@@ -2120,51 +888,418 @@ test('arrival confirm retries after inventory update failure — continues apply
     },
   };
   const records = {
-    purchaseArrival: [{ record_id: 'arr_invfail', fields: { 确认状态: '待确认', 识别状态: '识别成功', 报货批次号: ['batch_1'], 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-    purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
-    purchaseRequest: [],
+    purchaseArrival: [{ record_id: 'arr_invfail', fields: { 确认状态: '待确认' } }],
     purchaseInbound: [],
   };
-  const { service, store, gateway } = makeService({
-    inventory,
-    gateway: makeGateway(records),
-    recognizer: makeRecognizer({ recognizeLabels: async () => [
-      { item_no: '8088', color: '灰色', size: 36, quantity: 1 },
-      { item_no: '8088', color: '灰色', size: 37, quantity: 1 },
-    ] }),
+  const { service, store, gateway } = makeService({ inventory, gateway: makeGateway(records) });
+  const task = await seedArrivalTask(store, {
+    taskId: 'purchase_arrival_invfail',
+    arrivalRecordId: 'arr_invfail',
+    actual: [arrivalActual(), arrivalActual({ size: 37 })],
   });
-  const accepted = await service.accept('arrival', 'arr_invfail');
-  await waitForTask(store, accepted.taskId);
 
-  // 第一次确认：36码入库创建成功，但库存更新失败
   await assert.rejects(
-    () => service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1'),
+    () => service.confirmArrival(task.task_id, task, 'ou_1'),
     /模拟库存更新失败/,
   );
   const inboundsAfterFirst = await gateway.listAll('purchaseInbound');
-  assert.equal(inboundsAfterFirst.length, 1, '第一次失败后应只有1条入库记录（36码）');
-  assert.equal(inventoryCallCount, 1, '第一次应只调用1次库存更新（36码，失败）');
-  const taskAfterFirst = await store.get(accepted.taskId);
-  const entry36 = Object.values(taskAfterFirst.draft.inbound_created).find((e) => e.recordId === inboundsAfterFirst[0].record_id);
+  assert.equal(inboundsAfterFirst.length, 1, '第一次失败后应只有 36 码那条入库记录');
+  assert.equal(inventoryCallCount, 1);
+  const entry36 = Object.values((await store.get(task.task_id)).draft.inbound_created)
+    .find((entry) => entry.recordId === inboundsAfterFirst[0].record_id);
   assert.equal(entry36.inventoryApplied, false, '库存更新失败后 inventoryApplied 应为 false');
 
-  // 重试：库存更新不再失败
   failInventory = false;
-  const result = await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
-  assert.ok(result.toast.content.includes('采购已入库'), result.toast.content);
+  await service.confirmArrival(task.task_id, await store.get(task.task_id), 'ou_1');
 
-  // 验证：36码不重复创建，但库存更新被重新执行；37码正常创建和更新
-  const inboundsAfterRetry = await gateway.listAll('purchaseInbound');
-  assert.equal(inboundsAfterRetry.length, 2, '重试后应总共2条入库记录，36码不重复');
-  assert.equal(inventoryCallCount, 3, '重试后应总共3次库存更新：36码第1次失败 + 36码重试 + 37码');
-
-  // 验证36码的库存更新被重试了（用同一个 purchaseInboundRecordId）
+  assert.equal((await gateway.listAll('purchaseInbound')).length, 2, '36 码不重复创建，37 码正常创建');
+  assert.equal(inventoryCallCount, 3, '36 码失败 1 次 + 36 码重试 + 37 码');
   const inbound36Id = inboundsAfterFirst[0].record_id;
-  const retryCallsFor36 = inventoryCalls.filter((c) => c.purchaseInboundRecordId === inbound36Id);
-  assert.equal(retryCallsFor36.length, 2, '36码的库存更新应被调用2次（第1次失败，重试成功）');
+  assert.equal(inventoryCalls.filter((call) => call.purchaseInboundRecordId === inbound36Id).length, 2);
+});
 
-  const sizes = inboundsAfterRetry.map((r) => r.fields.尺码[0]).sort();
-  assert.deepEqual(sizes, sizeLinks(36, 37));
+test('A2 同时确认同一个采购到货：每个逻辑入库只有一条，库存只加一次', async () => {
+  // 这条并发断言原先靠 handleCardAction 的 confirmationQueue 串行提供。到货卡片动作已删，
+  // 串行保证原样挪进了 confirmArrival（见方法头的注释）——所以这里直接并发调它。
+  const inventory = makeInventory();
+  const records = {
+    purchaseArrival: [{ record_id: 'arr_race', fields: { 确认状态: '待确认' } }],
+    purchaseInbound: [],
+  };
+  const { service, store, gateway } = makeService({ inventory, gateway: slowCreates(makeGateway(records)) });
+  const task = await seedArrivalTask(store, { taskId: 'purchase_arrival_race', arrivalRecordId: 'arr_race', actual: [arrivalActual()] });
+
+  await Promise.all([
+    service.confirmArrival(task.task_id, task, 'ou_1'),
+    service.confirmArrival(task.task_id, task, 'ou_1'),
+  ]);
+
+  assert.equal((await gateway.listAll('purchaseInbound')).length, 1, '并发确认不得创建第二条采购入库');
+  assert.equal(inventory.calls.length, 1, '库存只应增加一次');
+  assert.equal((await store.get(task.task_id)).status, 'posted');
+});
+
+// ─── 建档 + 成本（ensureArrivalProducts / ensureArrivalProduct / applyArrivalCost）──
+
+test('建档：未知货号+颜色建一条货品，带上货号 / 颜色关联 / 供应商 / 类别', async () => {
+  const records = {
+    product: [],
+    color: [{ record_id: 'color_black', fields: { 颜色: '黑' } }],
+    supplier: [{ record_id: 'sup_9', fields: { 供应商名称: '一代千金' } }],
+  };
+  const { service, store, gateway } = makeService({
+    gateway: makeGateway(records),
+    references: makeReferences({ resolveSupplier: async () => ({ recordId: 'sup_9', record: records.supplier[0] }) }),
+  });
+  const task = await seedArrivalTask(store, {
+    taskId: 'purchase_arrival_create',
+    pendingCreation: [{ item_no: '3602', color: '黑色', supplier: '一代千金', gender: '女' }],
+  });
+
+  const result = await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
+  assert.equal(result.state, 'done');
+  assert.equal(records.product.length, 1, '同一「货号+颜色」只建一条');
+  assert.equal(records.product[0].fields.货号, '3602');
+  assert.deepEqual(records.product[0].fields.颜色, ['color_black']);
+  assert.deepEqual(records.product[0].fields.供应商, ['sup_9']);
+  assert.equal(records.product[0].fields.类别, 'B', '标签上是女鞋 → 类别 B');
+  assert.equal('编号' in records.product[0].fields, false, '「编号」是飞书公式字段，不能写');
+});
+
+test('建档：货号+颜色命中多条时只建一条，链接回填草稿', async () => {
+  const records = {
+    product: [],
+    color: [{ record_id: 'color_black', fields: { 颜色: '黑' } }],
+    supplier: [],
+  };
+  const { service, store } = makeService({ gateway: makeGateway(records) });
+  const task = await seedArrivalTask(store, {
+    taskId: 'purchase_arrival_idem',
+    pendingCreation: [
+      // 同一 货号+颜色 的两个尺码：建档按 货号+颜色 去重。
+      { item_no: '1366-31', color: '黑色' },
+      { item_no: '1366-31', color: '黑色' },
+      { item_no: '1366-32', color: '黑色' },
+    ],
+  });
+
+  const result = await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
+  assert.equal(result.created, 2, '两个货号各一条');
+  assert.equal(records.product.length, 2);
+  const saved = await store.get(task.task_id);
+  assert.equal(saved.draft.created_products.length, 2);
+  assert.match(saved.draft.created_products[0].url, /record=/, '链接要回填到草稿');
+  assert.match(saved.draft.created_products[0].url, new RegExp(`record=${records.product[0].record_id}`));
+
+  // 幂等：再跑一次不能多建一条。
+  const again = await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
+  assert.equal(again.state, 'done');
+  assert.equal(records.product.length, 2, '重复跑建档不能多建一条');
+});
+
+test('建档：颜色表缺色时补一条；同类颜色只补一次', async () => {
+  const records = { product: [], color: [], supplier: [] };
+  const { service, store } = makeService({ gateway: makeGateway(records) });
+  const task = await seedArrivalTask(store, {
+    taskId: 'purchase_arrival_color',
+    pendingCreation: [
+      { item_no: '3602', color: '香芋紫' },
+      { item_no: '3603', color: '香芋紫色' },
+    ],
+  });
+
+  await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
+  // normalizeColor 会去掉末尾的「色」：两个写法算同一个颜色，只补一条。
+  assert.equal(records.color.length, 1, '同一颜色（去尾「色」后同名）只补一条');
+  assert.equal(records.color[0].fields.颜色, '香芋紫');
+  assert.deepEqual(records.product[0].fields.颜色, [records.color[0].record_id]);
+});
+
+test('建档：供应商表里没有这个名字就留空，不新建、不猜', async () => {
+  const records = { product: [], color: [{ record_id: 'color_black', fields: { 颜色: '黑' } }], supplier: [] };
+  const { service, store } = makeService({
+    gateway: makeGateway(records),
+    references: makeReferences({ resolveSupplier: async () => { throw new Error('找不到供应商'); } }),
+  });
+  const task = await seedArrivalTask(store, {
+    taskId: 'purchase_arrival_sup',
+    pendingCreation: [{ item_no: '3602', color: '黑色', supplier: '不存在的供应商' }],
+  });
+
+  await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
+  assert.equal(records.supplier.length, 0, '不在供应商表里就不新建');
+  assert.equal('供应商' in records.product[0].fields, false, '找不到就留空，绝不猜一个关联');
+});
+
+test('建档：标签没有男/女信息时类别留空', async () => {
+  const records = { product: [], color: [], supplier: [] };
+  const { service, store } = makeService({ gateway: makeGateway(records) });
+  const task = await seedArrivalTask(store, {
+    taskId: 'purchase_arrival_nogender',
+    pendingCreation: [{ item_no: '3602', color: '黑' }],
+  });
+
+  await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
+  assert.equal('类别' in records.product[0].fields, false, '认不出男/女就留空——默认成 A 会把女鞋写进男鞋');
+});
+
+test('建档：缺失字段（公式 + 样例图）只落在草稿和日志里', async () => {
+  const records = { product: [], color: [{ record_id: 'color_black', fields: { 颜色: '黑' } }], supplier: [] };
+  const gateway = makeGateway(records);
+  const originalGet = gateway.get;
+  // 「缺失信息说明」是飞书公式，后端只负责读：齐备时是「齐备」，否则是缺的字段名。
+  // 「样例图」是附件字段、不在公式里，要单独看。
+  gateway.get = async (tableKey, recordId) => {
+    if (tableKey === 'product') {
+      return { record_id: recordId, fields: { 货号: '3602', 颜色: ['color_black'], 缺失信息说明: '成本、品类', 样例图: [] } };
+    }
+    return originalGet(tableKey, recordId);
+  };
+  const { service, store } = makeService({ gateway });
+  const task = await seedArrivalTask(store, {
+    taskId: 'purchase_arrival_gaps',
+    pendingCreation: [{ item_no: '3602', color: '黑色' }],
+  });
+
+  await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
+  const saved = await store.get(task.task_id);
+  assert.deepEqual(saved.draft.created_products[0].missing, ['成本', '品类']);
+  assert.equal(saved.draft.created_products[0].missing_sample_image, true);
+  assert.equal(saved.draft.created_products[0].completeness_readable, true);
+});
+
+test('建档失败可重试：已经建好的那条不重复建，重试只补缺的', async () => {
+  const records = { product: [], color: [{ record_id: 'color_black', fields: { 颜色: '黑色' } }], supplier: [] };
+  // 第一次建档：第一条成功、第二条失败——模拟"建了一半"。
+  // 成功那条的 record_id 会随任务落盘（arrival_created_products），重试必须复用它。
+  let createCalls = 0;
+  const gateway = makeGateway(records);
+  const innerCreate = gateway.create;
+  gateway.create = async (tableKey, semanticValues) => {
+    if (tableKey === 'product') {
+      createCalls += 1;
+      if (createCalls === 2) throw new Error('模拟第二条建档失败');
+    }
+    return innerCreate(tableKey, semanticValues);
+  };
+  const { service, store } = makeService({ gateway });
+  const task = await seedArrivalTask(store, {
+    taskId: 'purchase_arrival_retry',
+    pendingCreation: [
+      { item_no: '3602', color: '黑色' },
+      { item_no: '3603', color: '黑色' },
+    ],
+  });
+
+  const first = await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
+  assert.equal(first.state, 'failed', '有一条没建成功，状态要标失败（不能静默）');
+  const afterFirst = await store.get(task.task_id);
+  assert.match(afterFirst.draft.creation_error, /模拟第二条建档失败/, '失败原因要写进草稿');
+  assert.equal(records.product.length, 1, '第一条已经建好了');
+  assert.equal(records.product[0].fields.货号, '3602');
+
+  const retry = await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
+  assert.equal(retry.state, 'done');
+  assert.equal(records.product.length, 2, '重试只补建缺的那条，不重复建第一条');
+  assert.equal(createCalls, 3, '第一次 2 次（1 成功 1 失败）+ 重试 1 次');
+});
+
+test('建档一直失败：草稿给出原因，且 confirmArrival 拒绝假装入库', async () => {
+  const records = { product: [], color: [{ record_id: 'color_black', fields: { 颜色: '黑色' } }], supplier: [], purchaseArrival: [{ record_id: 'arr_create_fail', fields: { 确认状态: '待确认' } }], purchaseInbound: [] };
+  const gateway = makeGateway(records);
+  gateway.create = async (tableKey, semanticValues) => {
+    if (tableKey === 'product') throw new Error('模拟建档总失败');
+    return makeGateway(records).create(tableKey, semanticValues);
+  };
+  const { service, store } = makeService({ gateway });
+  const task = await seedArrivalTask(store, {
+    taskId: 'purchase_arrival_create_fail',
+    arrivalRecordId: 'arr_create_fail',
+    pendingCreation: [{ item_no: '3602', color: '黑色' }],
+  });
+
+  const failed = await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
+  assert.equal(failed.state, 'failed');
+  assert.match((await store.get(task.task_id)).draft.creation_error, /模拟建档总失败/);
+
+  const failedTask = await store.get(task.task_id);
+  await assert.rejects(
+    () => service.confirmArrival(failedTask.task_id, failedTask, 'ou_1'),
+    /新品建档没成功/,
+    '建档失败必须明确告诉她原因，不能静默',
+  );
+  assert.equal((await gateway.listAll('purchaseInbound')).length, 0, '建不出货品就不能入库，更不能假装入了');
+
+  // 失败可重试：修好之后再确认一次，走同一条幂等路径。
+  gateway.create = makeGateway(records).create;
+  const result = await service.confirmArrival(task.task_id, await store.get(task.task_id), 'ou_1');
+  assert.ok(result.toast.content.includes('采购已入库'), '修好之后要能成功入库');
+  assert.equal(records.product.length, 1);
+});
+
+test('成本：货品「成本」为空时写进去', async () => {
+  const records = { product: [{ record_id: 'prod_cost', fields: { 编号: '1366-31棕色', 供应商: ['sup_A'] } }] };
+  const { service, store } = makeService({ gateway: makeGateway(records) });
+  const task = await seedArrivalTask(store, {
+    taskId: 'purchase_arrival_cost_empty',
+    actual: [{ product_record_id: 'prod_cost', item_no: '1366-31', color: '棕色', size: 36, quantity: 1, created_product: false }],
+    recognized: [{ item_no: '1366-31', color: '棕色', size: 36, quantity: 1, unit_cost: 199 }],
+  });
+
+  const { result } = await captureWarn(async () => service.ensureArrivalProducts(task.task_id, { reason: 'test' }));
+  assert.equal(result.state, 'done');
+  assert.equal(records.product.length, 1, '已经匹配到老货品的行不建新货品，只补成本');
+  assert.equal(records.product[0].fields.成本, 199, '到货单价要写进货品成本');
+  assert.equal(result.cost_written_count, 1);
+});
+
+test('成本：货品已有成本时不覆盖，只记一条带三要素的 warn', async () => {
+  const records = { product: [{ record_id: 'prod_keep', fields: { 编号: '1366-31棕色', 供应商: ['sup_A'], 成本: 100 } }] };
+  const { service, store } = makeService({ gateway: makeGateway(records) });
+  const task = await seedArrivalTask(store, {
+    taskId: 'purchase_arrival_cost_kept',
+    actual: [{ product_record_id: 'prod_keep', item_no: '1366-31', color: '棕色', size: 36, quantity: 1, created_product: false }],
+    recognized: [{ item_no: '1366-31', color: '棕色', size: 36, quantity: 1, unit_cost: 199 }],
+  });
+
+  const { lines } = await captureWarn(async () => service.ensureArrivalProducts(task.task_id, { reason: 'test' }));
+  assert.equal(records.product[0].fields.成本, 100, '已有成本一律不覆盖');
+  const warn = lines.find((line) => line.event === 'purchase.arrival.cost_kept');
+  assert.ok(warn, `必须有 cost_kept warn，实际日志：${JSON.stringify(lines)}`);
+  assert.equal(warn.item_no, '1366-31');
+  assert.equal(String(warn.existing_cost), '100');
+  assert.equal(warn.recognized_cost, 199);
+});
+
+test('成本：同一货号多行价格不一致时整条不写，只 warn 一次', async () => {
+  const records = { product: [{ record_id: 'prod_conflict', fields: { 编号: '1366-31棕色', 供应商: ['sup_A'] } }] };
+  const { service, store } = makeService({ gateway: makeGateway(records) });
+  const task = await seedArrivalTask(store, {
+    taskId: 'purchase_arrival_cost_conflict',
+    actual: [
+      { product_record_id: 'prod_conflict', item_no: '1366-31', color: '棕色', size: 36, quantity: 1, created_product: false },
+      { product_record_id: 'prod_conflict', item_no: '1366-31', color: '棕色', size: 37, quantity: 1, created_product: false },
+    ],
+    recognized: [
+      { item_no: '1366-31', color: '棕色', size: 36, quantity: 1, unit_cost: 199 },
+      { item_no: '1366-31', color: '棕色', size: 37, quantity: 1, unit_cost: 209 },
+    ],
+  });
+
+  const { lines } = await captureWarn(async () => service.ensureArrivalProducts(task.task_id, { reason: 'test' }));
+  assert.equal('成本' in records.product[0].fields, false, '价格不一致时一个值都不能写');
+  assert.equal(lines.filter((line) => line.event === 'purchase.arrival.cost_kept').length, 0, '不能把冲突当成"已有成本"报 warn');
+  const conflict = lines.filter((line) => line.event === 'purchase.arrival.cost_conflict');
+  assert.equal(conflict.length, 1, '冲突只 warn 一次：不能每个尺码都报一遍');
+  assert.equal(conflict[0].item_no, '1366-31');
+  assert.deepEqual(conflict[0].prices, [199, 209]);
+});
+
+test('成本：重复跑建档不重复写成本（costApplied 落盘）', async () => {
+  const records = { product: [{ record_id: 'prod_retry', fields: { 编号: '1366-31棕色', 供应商: ['sup_A'] } }] };
+  const gateway = makeGateway(records);
+  const costUpdates = [];
+  const realUpdate = gateway.update;
+  gateway.update = async (tableKey, recordId, semanticValues) => {
+    if (tableKey === 'product' && semanticValues && semanticValues.cost !== undefined) {
+      costUpdates.push({ recordId, cost: semanticValues.cost });
+    }
+    return realUpdate(tableKey, recordId, semanticValues);
+  };
+  const { service, store } = makeService({ gateway });
+  const task = await seedArrivalTask(store, {
+    taskId: 'purchase_arrival_cost_retry',
+    actual: [{ product_record_id: 'prod_retry', item_no: '1366-31', color: '棕色', size: 36, quantity: 1, created_product: false }],
+    recognized: [{ item_no: '1366-31', color: '棕色', size: 36, quantity: 1, unit_cost: 199 }],
+  });
+
+  await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
+  assert.equal(costUpdates.length, 1, '第一次要写成本');
+  assert.equal(records.product[0].fields.成本, 199);
+
+  // 再跑一次（相当于新流程的兜底/重试）：靠任务里落盘的 arrival_cost_written 幂等。
+  await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
+  assert.equal(costUpdates.length, 1, '不能写第二遍成本');
+  assert.equal(records.product[0].fields.成本, 199);
+});
+
+test('成本：写成本失败只记 warn，不挡住入库', async () => {
+  const records = {
+    product: [{ record_id: 'prod_fail', fields: { 编号: '1366-31棕色', 供应商: ['sup_A'] } }],
+    purchaseArrival: [{ record_id: 'arr_cost_fail', fields: { 确认状态: '待确认' } }],
+    purchaseInbound: [],
+  };
+  const gateway = makeGateway(records);
+  gateway.update = async (tableKey, recordId, semanticValues) => {
+    if (tableKey === 'product' && semanticValues && semanticValues.cost !== undefined) {
+      throw new Error('模拟成本字段写不进去');
+    }
+    return { record_id: recordId };
+  };
+  const { service, store } = makeService({ gateway });
+  const task = await seedArrivalTask(store, {
+    taskId: 'purchase_arrival_cost_fail',
+    arrivalRecordId: 'arr_cost_fail',
+    actual: [{ product_record_id: 'prod_fail', item_no: '1366-31', color: '棕色', size: 36, quantity: 1, created_product: false }],
+    recognized: [{ item_no: '1366-31', color: '棕色', size: 36, quantity: 1, unit_cost: 199 }],
+  });
+
+  const { result: creation, lines } = await captureWarn(async () => service.ensureArrivalProducts(task.task_id, { reason: 'test' }));
+  assert.equal(creation.state, 'done', '成本写不进去不算建档失败');
+  assert.ok(lines.some((line) => line.event === 'purchase.arrival.cost_write_failed'));
+
+  // 货已经到了：成本写不进去不能把整批到货卡住。
+  const result = await service.confirmArrival(task.task_id, await store.get(task.task_id), 'ou_1');
+  assert.ok(result.toast.content.includes('采购已入库'));
+  assert.equal((await gateway.listAll('purchaseInbound')).length, 1);
+});
+
+test('成本：新品建档顺带写成本；单据上没有价格就不写成本字段', async () => {
+  const withCost = { product: [], color: [{ record_id: 'color_brown', fields: { 颜色: '棕色' } }], supplier: [] };
+  const { service, store } = makeService({ gateway: makeGateway(withCost) });
+  const task = await seedArrivalTask(store, {
+    taskId: 'purchase_arrival_new_cost',
+    pendingCreation: [{ item_no: '1366-31', color: '棕色' }],
+    recognized: [{ item_no: '1366-31', color: '棕色', size: 36, quantity: 1, unit_cost: '￥199.00' }],
+  });
+  await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
+  assert.equal(withCost.product.length, 1, '新品只建一条');
+  assert.equal(withCost.product[0].fields.货号, '1366-31');
+  assert.equal(withCost.product[0].fields.成本, 199, '新品建档要顺带写成本');
+
+  const noCost = { product: [], color: [{ record_id: 'color_brown', fields: { 颜色: '棕色' } }], supplier: [] };
+  const second = makeService({ gateway: makeGateway(noCost) });
+  const task2 = await seedArrivalTask(second.store, {
+    taskId: 'purchase_arrival_new_nocost',
+    pendingCreation: [{ item_no: '1366-31', color: '棕色' }],
+    recognized: [{ item_no: '1366-31', color: '棕色', size: 36, quantity: 1 }],
+  });
+  await second.service.ensureArrivalProducts(task2.task_id, { reason: 'test' });
+  assert.equal(noCost.product.length, 1);
+  assert.equal('成本' in noCost.product[0].fields, false, '没有可信价格就不许写成本');
+});
+
+// ─── 通用守卫（与到货链路无关，但原先挂在到货用例上）────────────────────────
+
+test('invalid record_id is rejected', async () => {
+  const { service } = makeService();
+  // 原先传的 kind 是 'arrival'；入口已摘掉，改用仍然在跑的报单链路来验同一个守卫。
+  await assert.rejects(() => service.accept('supplier-report', 'invalid id!'), /缺少有效 record_id/);
+});
+
+test('采购卡片：只有原始填写人能确认（操作人校验仍在）', async () => {
+  // 原先这条用「确认入库」卡片验。到货卡片动作已随识别链路删除，改用仍然在跑的
+  // 采购申请卡片验同一个校验（它在 handleCardActionLocked 的最前面，与动作无关）。
+  const { service, store } = makeService({
+    gateway: makeGateway({ purchaseReport: [reportRecord('rep_auth', { 尺码: sizeLink(36), 编号: ['prod_1'] })] }),
+  });
+  const accepted = await service.accept('supplier-report', 'rep_auth');
+  await waitForProcessed(store, accepted.taskId);
+
+  await assert.rejects(
+    () => service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_other'),
+    /只能由原始填写人确认/,
+  );
 });
 
 // ─── 供应商报单批次聚合链路 ───
@@ -2736,30 +1871,6 @@ test('A1 并发重收同一条报单 webhook：只生成一个批次和一套采
   assert.equal(images.calls.length, 1, '并发投递不得把图重复发一遍');
 });
 
-test('A2 同时确认同一个采购到货：每个逻辑入库只有一条，库存只加一次', async () => {
-  const inventory = makeInventory();
-  const { service, store, gateway } = makeService({
-    inventory,
-    gateway: slowCreates(makeGateway({
-      purchaseArrival: [{ record_id: 'arr_race', fields: { 确认状态: '待确认', 报货批次号: ['batch_1'], 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] } }],
-      purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001' } }],
-      purchaseRequest: [{ record_id: 'req_1', fields: { 报货批次号: ['batch_1'], 编号: ['prod_1'], 尺码: sizeLink(36), 数量: 1 } }],
-      purchaseInbound: [],
-    })),
-  });
-  const accepted = await service.accept('arrival', 'arr_race');
-  await waitForTask(store, accepted.taskId);
-
-  await Promise.all([
-    service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1'),
-    service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1'),
-  ]);
-
-  const inbounds = await gateway.listAll('purchaseInbound');
-  assert.equal(inbounds.length, 1, '并发确认不得创建第二条采购入库');
-  assert.equal(inventory.calls.length, 1, '库存只应增加一次');
-  assert.equal((await store.get(accepted.taskId)).status, 'posted');
-});
 
 test('A3 已 posted 的报单任务重复投递：不再产生任何写入，也不重复发图', async () => {
   const records = purchaseRecords('rep_done');
@@ -2893,439 +2004,25 @@ test('B4 远端出现两条相同幂等键：停止自动处理并转人工核�
   assert.equal(records.purchaseRequest.length, 2, '停止后不得再写出新的采购申请');
 });
 
-// ─── 到货单价格 → 货品「成本」───
+// 结构化日志的出口就是 console.log/warn/error（src/utils/logger.js）。
+// 捕获它们就能断言"只记了日志、没有别的动作"这类约定。
 //
-// 产品负责人的口径：「如果有的到货单上有价格的，那就是成本。」
-// 写入规则一律保守：只在成本为空时写、已有成本不覆盖只 warn、
-// 同货号价格不一致不写只 warn、重试不重复写、新品建档顺带带成本。
-
-// 捕获 warn 日志（logger 的 warn 走 console.warn，一行一个 JSON）。
-// 这些测试在同一个文件里顺序执行，await 期间不会有别的用例并发写 console。
-const captureWarn = async (run) => {
+// ⚠️ 合并 #86 时它一度消失：它原先定义在「到货等待」那一段测试里，#86 把整段删了，
+// 而 #85 后加的群聊用例仍在用它（git 看不到这种"删了别人还在用的帮手"，不报冲突）。
+// 它本身与识别流程无关，所以在群聊用例这里恢复。
+const captureLogs = () => {
   const lines = [];
-  const original = console.warn;
-  console.warn = (line) => {
-    try { lines.push(JSON.parse(line)); } catch { lines.push({ event: 'unparsed_warn', raw: String(line) }); }
+  const originals = { log: console.log, warn: console.warn, error: console.error };
+  const capture = (...args) => { lines.push(args.map((value) => String(value)).join(' ')); };
+  console.log = capture;
+  console.warn = capture;
+  console.error = capture;
+  return {
+    lines,
+    events: (event) => lines.filter((line) => line.includes(`"event":"${event}"`)),
+    restore: () => { console.log = originals.log; console.warn = originals.warn; console.error = originals.error; },
   };
-  try {
-    const result = await run();
-    return { result, lines };
-  } finally {
-    console.warn = original;
-  }
 };
-
-const arrivalDocumentRecord = (recordId) => ({
-  record_id: recordId,
-  fields: { 类型: '到货单', 确认状态: '待确认', 识别状态: '待识别', 图片: [{ file_token: 'tok_1' }], 验收人: [{ id: 'ou_1' }] },
-});
-
-const documentRecognizer = (rows) => makeRecognizer({ recognizePurchaseDocument: async () => rows });
-
-test('到货单价格即成本：货品「成本」为空时写进去，并在卡片尺码格上显示价格供她核对', async () => {
-  const messages = [];
-  const records = {
-    purchaseArrival: [arrivalDocumentRecord('arr_cost_empty')],
-    product: [{ record_id: 'prod_cost', fields: { 编号: '1366-31棕色', 供应商: ['sup_A'] } }],
-    supplier: SUPPLIERS,
-  };
-  const { service, store } = makeService({
-    gateway: makeGateway(records),
-    client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
-    references: makeReferences({
-      resolveProduct: async () => ({ recordId: 'prod_cost', record: records.product[0] }),
-    }),
-    recognizer: documentRecognizer([
-      { item_no: '1366-31', color: '棕色', size: 36, quantity: 1, unit_cost: 199 },
-      { item_no: '1366-31', color: '棕色', size: 37, quantity: 2, unit_cost: 199 },
-    ]),
-  });
-  const accepted = await service.accept('arrival', 'arr_cost_empty');
-  const task = await waitForProcessed(store, accepted.taskId);
-  assert.equal(task.status, 'awaiting_confirmation');
-  assert.equal(records.product[0].fields.成本, 199, '识别到的单据单价要写进货品成本');
-  // 只数卡片：到货链路现在还会先发一条「收到，识别中」的文字提示。
-  await waitFor('到货明细卡片发出', async () => cardMessages(messages).length === 1);
-  const cardElements = JSON.parse(cardMessages(messages)[0].data.content).elements;
-  assert.ok(JSON.stringify(cardElements).includes('￥199'), '尺码格上要显示识别到的单价，方便她核对成本');
-});
-
-test('到货单价格即成本：货品已有成本时不覆盖，只记一条带三要素的 warn', async () => {
-  const records = {
-    purchaseArrival: [arrivalDocumentRecord('arr_cost_kept')],
-    product: [{ record_id: 'prod_keep', fields: { 编号: '1366-31棕色', 供应商: ['sup_A'], 成本: 100 } }],
-    supplier: SUPPLIERS,
-  };
-  const { service, store } = makeService({
-    gateway: makeGateway(records),
-    references: makeReferences({
-      resolveProduct: async () => ({ recordId: 'prod_keep', record: records.product[0] }),
-    }),
-    recognizer: documentRecognizer([{ item_no: '1366-31', color: '棕色', size: 36, quantity: 1, unit_cost: 199 }]),
-  });
-  const { result: task, lines } = await captureWarn(async () => {
-    const accepted = await service.accept('arrival', 'arr_cost_kept');
-    return waitForProcessed(store, accepted.taskId);
-  });
-  assert.equal(records.product[0].fields.成本, 100, '已有成本一律不覆盖');
-  const warn = lines.find((line) => line.event === 'purchase.arrival.cost_kept');
-  assert.ok(warn, `必须有 cost_kept warn，实际日志：${JSON.stringify(lines)}`);
-  assert.equal(warn.item_no, '1366-31');
-  assert.equal(String(warn.existing_cost), '100');
-  assert.equal(warn.recognized_cost, 199);
-});
-
-test('到货单价格即成本：同一货号多行价格不一致时整条不写，记一条 warn', async () => {
-  const records = {
-    purchaseArrival: [arrivalDocumentRecord('arr_cost_conflict')],
-    product: [{ record_id: 'prod_conflict', fields: { 编号: '1366-31棕色', 供应商: ['sup_A'] } }],
-    supplier: SUPPLIERS,
-  };
-  const { service, store } = makeService({
-    gateway: makeGateway(records),
-    references: makeReferences({
-      resolveProduct: async () => ({ recordId: 'prod_conflict', record: records.product[0] }),
-    }),
-    recognizer: documentRecognizer([
-      { item_no: '1366-31', color: '棕色', size: 36, quantity: 1, unit_cost: 199 },
-      { item_no: '1366-31', color: '棕色', size: 37, quantity: 1, unit_cost: 209 },
-    ]),
-  });
-  const { lines } = await captureWarn(async () => {
-    const accepted = await service.accept('arrival', 'arr_cost_conflict');
-    return waitForProcessed(store, accepted.taskId);
-  });
-  assert.equal('成本' in records.product[0].fields, false, '价格不一致时一个值都不能写');
-  const warn = lines.find((line) => line.event === 'purchase.arrival.cost_conflict');
-  assert.ok(warn, `必须有 cost_conflict warn，实际日志：${JSON.stringify(lines.map((line) => line.event))}`);
-  assert.equal(warn.item_no, '1366-31');
-  assert.deepEqual(warn.prices, [199, 209]);
-  // 只 warn 一次：不能每个尺码都报一遍。
-  assert.equal(lines.filter((line) => line.event === 'purchase.arrival.cost_conflict').length, 1);
-});
-
-test('到货单价格即成本：她点确认时兜底那次不再重复写成本', async () => {
-  const records = {
-    purchaseArrival: [arrivalDocumentRecord('arr_cost_retry')],
-    product: [{ record_id: 'prod_retry', fields: { 编号: '1366-31棕色', 供应商: ['sup_A'] } }],
-    supplier: SUPPLIERS,
-  };
-  const gateway = makeGateway(records);
-  const costUpdates = [];
-  const realUpdate = gateway.update;
-  gateway.update = async (tableKey, recordId, semanticValues) => {
-    if (tableKey === 'product' && semanticValues && semanticValues.cost !== undefined) {
-      costUpdates.push({ recordId, cost: semanticValues.cost });
-    }
-    return realUpdate(tableKey, recordId, semanticValues);
-  };
-  const { service, store } = makeService({
-    gateway,
-    references: makeReferences({
-      resolveProduct: async () => ({ recordId: 'prod_retry', record: records.product[0] }),
-    }),
-    recognizer: documentRecognizer([{ item_no: '1366-31', color: '棕色', size: 36, quantity: 1, unit_cost: 199 }]),
-  });
-
-  const accepted = await service.accept('arrival', 'arr_cost_retry');
-  // 成本现在是在「发完卡片之后」写的，所以要等这一批真正跑完（result 落盘）。
-  await waitForProcessed(store, accepted.taskId);
-  assert.equal(costUpdates.length, 1, '第一次要写成本');
-  assert.equal(records.product[0].fields.成本, 199);
-
-  // 她点确认：建档/成本会兜底再跑一次（幂等），成本不能再写第二遍。
-  await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_arrival' }, 'ou_1');
-  assert.equal(costUpdates.length, 1, '确认兜底那次不能再写一次成本（写没写靠任务里落盘的 arrival_cost_written 判断）');
-  assert.equal(records.product[0].fields.成本, 199);
-});
-
-test('到货单价格即成本：写成本失败只记 warn，不挡住到货入库', async () => {
-  const records = {
-    purchaseArrival: [arrivalDocumentRecord('arr_cost_write_fail')],
-    product: [{ record_id: 'prod_fail', fields: { 编号: '1366-31棕色', 供应商: ['sup_A'] } }],
-    supplier: SUPPLIERS,
-  };
-  const gateway = makeGateway(records);
-  gateway.update = async (tableKey, recordId, semanticValues) => {
-    if (tableKey === 'product' && semanticValues && semanticValues.cost !== undefined) {
-      throw new Error('模拟成本字段写不进去');
-    }
-    return { record_id: recordId };
-  };
-  const { service, store } = makeService({
-    gateway,
-    references: makeReferences({
-      resolveProduct: async () => ({ recordId: 'prod_fail', record: records.product[0] }),
-    }),
-    recognizer: documentRecognizer([{ item_no: '1366-31', color: '棕色', size: 36, quantity: 1, unit_cost: 199 }]),
-  });
-  const { result: task, lines } = await captureWarn(async () => {
-    const accepted = await service.accept('arrival', 'arr_cost_write_fail');
-    return waitForProcessed(store, accepted.taskId);
-  });
-  assert.equal(task.status, 'awaiting_confirmation', '货已经到了：成本写不进去不能把整批到货卡住');
-  assert.ok(lines.some((line) => line.event === 'purchase.arrival.cost_write_failed'));
-});
-
-test('到货新品建档：顺带把成本一起写进去', async () => {
-  const records = {
-    purchaseArrival: [arrivalDocumentRecord('arr_new_with_cost')],
-    purchaseInbound: [],
-    product: [],
-    color: [{ record_id: 'color_brown', fields: { 颜色: '棕色' } }],
-    supplier: [],
-  };
-  const { service, store } = makeService({
-    gateway: makeGateway(records),
-    references: makeReferences({
-      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
-    }),
-    recognizer: documentRecognizer([
-      { item_no: '1366-31', color: '棕色', size: 36, quantity: 1, unit_cost: '￥199.00' },
-      { item_no: '1366-31', color: '棕色', size: 37, quantity: 1, unit_cost: 199 },
-    ]),
-  });
-  const accepted = await service.accept('arrival', 'arr_new_with_cost');
-  const task = await waitForProcessed(store, accepted.taskId);
-  assert.equal(task.status, 'awaiting_confirmation');
-  assert.equal(records.product.length, 1, '新品只建一条');
-  // 建档一次带齐：货号 / 颜色 / 供应商（识别不到就留空）/ 类别（认不出留空）/ 成本。
-  assert.equal(records.product[0].fields.货号, '1366-31');
-  assert.equal(records.product[0].fields.成本, 199, '新品建档要顺带写成本');
-});
-
-test('到货新品建档：单据上没有价格时，建档不带成本字段', async () => {
-  const records = {
-    purchaseArrival: [arrivalDocumentRecord('arr_new_no_cost')],
-    purchaseInbound: [],
-    product: [],
-    color: [{ record_id: 'color_brown', fields: { 颜色: '棕色' } }],
-    supplier: [],
-  };
-  const { service, store } = makeService({
-    gateway: makeGateway(records),
-    references: makeReferences({
-      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
-    }),
-    recognizer: documentRecognizer([{ item_no: '1366-31', color: '棕色', size: 36, quantity: 1 }]),
-  });
-  const accepted = await service.accept('arrival', 'arr_new_no_cost');
-  await waitForProcessed(store, accepted.taskId);
-  assert.equal(records.product.length, 1);
-  assert.equal('成本' in records.product[0].fields, false, '没有可信价格就不许写成本');
-});
-
-// ─── 顺序：发确认卡片之前不建档、不写成本；发完之后才建档 ───
-//
-// 产品负责人 2026-10-05 的四条决定：「删掉独立的新品段」「新品按货号级标在明细里」
-// 「卡片不写还差什么」「发确认卡片之前不做创建，发完之后同步做，点确认之后再给链接」。
-
-// 卡片上标了 🆕 新品的货号（用来和"实际建了哪几个"对账）。
-const newProductItemNosOnCard = (card) => card.elements
-  .filter((element) => element.tag === 'markdown' && element.content.includes('🆕 新品'))
-  .map((element) => element.content.replace(/^\*\*(?:🏷️?|⚠️?)\s*/u, '').split(' · ')[0]);
-
-test('到货顺序：发确认卡片之前一次货品写入都没有，卡片发出之后才建档、才写成本', async () => {
-  const writes = [];
-  const messages = [];
-  // cardSent 是判据本身：卡片（interactive 消息）发出去之前 afterCard=false，之后 true。
-  let cardSent = false;
-  const records = {
-    purchaseArrival: [arrivalDocumentRecord('arr_order')],
-    purchaseInbound: [],
-    product: [],
-    color: [{ record_id: 'color_black', fields: { 颜色: '黑色' } }],
-    supplier: [],
-  };
-  const gateway = makeGateway(records);
-  const innerCreate = gateway.create;
-  const innerUpdate = gateway.update;
-  gateway.create = async (tableKey, semanticValues) => {
-    writes.push({ op: 'create', table: tableKey, afterCard: cardSent });
-    return innerCreate(tableKey, semanticValues);
-  };
-  gateway.update = async (tableKey, recordId, semanticValues) => {
-    writes.push({ op: 'update', table: tableKey, afterCard: cardSent });
-    return innerUpdate(tableKey, recordId, semanticValues);
-  };
-  const { service, store } = makeService({
-    gateway,
-    client: makeClient({
-      sendMessage: async (params) => {
-        messages.push(params);
-        if (params?.data?.msg_type === 'interactive') cardSent = true;
-        return { code: 0 };
-      },
-    }),
-    references: makeReferences({
-      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
-    }),
-    recognizer: documentRecognizer([
-      { item_no: '1366-31', color: '黑色', size: 36, quantity: 1, unit_cost: 199 },
-    ]),
-  });
-
-  const accepted = await service.accept('arrival', 'arr_order');
-  const task = await waitForProcessed(store, accepted.taskId);
-  assert.equal(task.status, 'awaiting_confirmation');
-
-  const productWrites = writes.filter((item) => item.table === 'product');
-  assert.ok(productWrites.length > 0, '发完卡片之后必须真的建档/写成本（否则这条用例什么都没验到）');
-  assert.deepEqual(productWrites.filter((item) => !item.afterCard), [],
-    '发确认卡片之前一次货品写入都不能有（"发卡片之前不做创建"）');
-  assert.ok(productWrites.every((item) => item.afterCard), '所有货品写入都必须发生在卡片发出之后');
-
-  // 确认卡片上不出现记录链接：链接只给"确认之后"的结果卡片。
-  const card = JSON.parse(cardMessages(messages)[0].data.content);
-  assert.deepEqual(newProductItemNosOnCard(card), ['1366-31'], '新品在明细里按货号标出来');
-  assert.ok(!JSON.stringify(card.elements).includes('record='), '确认卡片上不给记录链接');
-});
-
-test('到货新品：卡片标的新品货号 = 实际建档的货号；建档幂等，链接回填草稿', async () => {
-  const patches = [];
-  const messages = [];
-  const records = {
-    purchaseArrival: [arrivalDocumentRecord('arr_idem_new')],
-    purchaseInbound: [],
-    product: [],
-    color: [{ record_id: 'color_black', fields: { 颜色: '黑色' } }],
-    supplier: [],
-  };
-  const client = makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } });
-  // 结果卡片是 patch 出来的：记下 patch 内容才能断言「确认之后给了链接」。
-  client.im.v1 = { message: { patch: async (params) => { patches.push(params); return { code: 0, msg: 'success' }; } } };
-  const { service, store, gateway } = makeService({
-    client,
-    gateway: makeGateway(records),
-    references: makeReferences({
-      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
-    }),
-    recognizer: documentRecognizer([
-      // 同一货号+颜色两个尺码 + 另一个新货号：建档按 货号+颜色 去重。
-      { item_no: '1366-31', color: '黑色', size: 36, quantity: 1, unit_cost: 199 },
-      { item_no: '1366-31', color: '黑色', size: 37, quantity: 1, unit_cost: 199 },
-      { item_no: '1366-32', color: '黑色', size: 36, quantity: 1 },
-    ]),
-  });
-
-  const accepted = await service.accept('arrival', 'arr_idem_new');
-  const task = await waitForProcessed(store, accepted.taskId);
-
-  const card = JSON.parse(cardMessages(messages)[0].data.content);
-  const markedItemNos = newProductItemNosOnCard(card).sort();
-  const pendingItemNos = [...new Set(task.draft.pending_creation.map((item) => item.item_no))].sort();
-  const createdItemNos = [...new Set(task.draft.created_products.map((item) => item.item_no))].sort();
-  assert.deepEqual(markedItemNos, ['1366-31', '1366-32'], '卡片按货号标新品');
-  assert.deepEqual(pendingItemNos, markedItemNos, '待建档清单必须是卡片上标的那几个货号');
-  assert.deepEqual(createdItemNos, markedItemNos, '实际建档的必须就是卡片上标的那几个货号');
-  assert.equal(records.product.length, 2, '同一货号+颜色的两个尺码只建一条货品，另一个新货号各一条');
-  assert.equal(task.draft.created_products.length, 2);
-  assert.match(task.draft.created_products[0].url, /record=/, '链接要回填到草稿');
-  assert.match(task.draft.created_products[0].url, new RegExp(`record=${records.product[0].record_id}`));
-
-  // 幂等：她点确认时会再跑一次建档（同一条路），不能建出第二条。
-  const again = await service.ensureArrivalProducts(accepted.taskId, { reason: 'test' });
-  assert.equal(again.state, 'done');
-  assert.equal(records.product.length, 2, '重复跑建档不能多建一条');
-
-  await service.handleCardAction(
-    { draft_id: accepted.taskId, action: 'confirm_purchase_arrival' },
-    'ou_1',
-    { context: { open_message_id: 'om_idem_new' } },
-  );
-  const resultCardText = patches.map((params) => params.data.content).join('\n');
-  assert.ok(resultCardText.includes('已入库'), '结果卡片要更新成已入库');
-  for (const record of records.product) {
-    assert.ok(resultCardText.includes(`record=${record.record_id}`),
-      `确认之后的结果卡片要给到创建好的链接：${resultCardText}`);
-  }
-  assert.ok((await gateway.listAll('purchaseInbound')).length === 3, '三个尺码格各自入库');
-});
-
-test('到货取消：不撤销已经建好的新品（保持改动前的口径），取消卡片也不给链接', async () => {
-  const patches = [];
-  const messages = [];
-  const records = {
-    purchaseArrival: [arrivalDocumentRecord('arr_cancel_new')],
-    purchaseInbound: [],
-    product: [],
-    color: [{ record_id: 'color_black', fields: { 颜色: '黑色' } }],
-    supplier: [],
-  };
-  const client = makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } });
-  client.im.v1 = { message: { patch: async (params) => { patches.push(params); return { code: 0, msg: 'success' }; } } };
-  const { service, store } = makeService({
-    client,
-    gateway: makeGateway(records),
-    references: makeReferences({
-      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
-    }),
-    recognizer: documentRecognizer([{ item_no: '1366-31', color: '黑色', size: 36, quantity: 1 }]),
-  });
-
-  const accepted = await service.accept('arrival', 'arr_cancel_new');
-  await waitForProcessed(store, accepted.taskId);
-  assert.equal(records.product.length, 1, '建档在卡片之后已经跑完了');
-
-  await service.handleCardAction(
-    { draft_id: accepted.taskId, action: 'cancel_purchase_arrival' },
-    'ou_1',
-    { context: { open_message_id: 'om_cancel_new' } },
-  );
-  assert.equal(records.product.length, 1, '取消的是"这一批要不要入库"，不是"这个货品存不存在"：不撤销建档');
-  const cancelCard = patches.map((params) => params.data.content).join('\n');
-  assert.ok(cancelCard.includes('已取消'));
-  assert.ok(!cancelCard.includes('record='), '取消卡片不塞新品链接');
-});
-
-test('卡片发送失败：什么都不建档；重收 webhook 之后只建一条（建档不能因为重试变两条）', async () => {
-  const records = {
-    purchaseArrival: [arrivalDocumentRecord('arr_card_fail')],
-    purchaseInbound: [],
-    product: [],
-    color: [{ record_id: 'color_black', fields: { 颜色: '黑色' } }],
-    supplier: [],
-  };
-  // 只让确认卡片（interactive）失败：到货链路在识别之前还会发一条文字提示，
-  // 那条和卡片走同一个 im.message.create——"一律抛错"会把失败点顶到识别之前，验不到这条。
-  let failCard = true;
-  const messages = [];
-  const client = makeClient();
-  client.im.message.create = async (params) => {
-    // 先抛再记：失败的这一次不算"发出去的卡片"，最后断言的是真正送达的条数。
-    if (failCard && params?.data?.msg_type === 'interactive') throw new Error('模拟卡片发送失败');
-    messages.push(params);
-    return { code: 0 };
-  };
-  const { service, store } = makeService({
-    client,
-    gateway: makeGateway(records),
-    references: makeReferences({
-      resolveProduct: async ({ itemNo, color }) => { throw productNotFound(itemNo, color); },
-    }),
-    recognizer: documentRecognizer([{ item_no: '1366-31', color: '黑色', size: 36, quantity: 1 }]),
-  });
-
-  const first = await service.accept('arrival', 'arr_card_fail');
-  await waitForTask(store, first.taskId, ['failed']);
-  assert.equal(records.product.length, 0, '卡片都没发出去，就不该有建档动作（"发完之后才建"）');
-
-  failCard = false;
-  await service.accept('arrival', 'arr_card_fail');
-  // ⚠️ 不能用 waitForProcessed：第一次失败留下的 status='failed' 会让它立刻返回（那是旧的终态）。
-  // 这里等的是"这次重试真的跑完"——状态回到待确认 + 建档状态落成 done。
-  await waitForTask(store, first.taskId, ['awaiting_confirmation']);
-  await waitFor('重试后建档跑完', async () => {
-    const task = await store.get(first.taskId);
-    return task?.draft?.creation_state === 'done' && task.draft.created_products?.length === 1;
-  });
-  const retried = await store.get(first.taskId);
-  assert.equal(retried.status, 'awaiting_confirmation');
-  assert.equal(records.product.length, 1, '重试之后只建一条货品');
-  assert.equal(retried.draft.created_products.length, 1);
-  assert.equal(retried.draft.creation_state, 'done');
-  assert.equal(cardMessages(messages).length, 1, '重试把确认卡片补发了（第一次那条失败了）');
-});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // A：采购单发到群 + @经办人（不再 @所有人）+ 把「那条消息 / 那条话题 ↔ 哪一批」落成本地记录

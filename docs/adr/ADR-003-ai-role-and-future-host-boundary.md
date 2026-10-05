@@ -23,7 +23,7 @@ AI 承担的是**三种翻译**：
 | 翻译 | 输入（不确定） | 输出（确定） |
 | --- | --- | --- |
 | ① 文字 → 结构化字段 | 店员怎么说都行的一句话 | 货号 / 颜色 / 尺码 / 数量 / 金额 / 支付方式等字段 |
-| ② 图片 → 结构化明细 | 鞋盒照片、供应商到货单照片 | 一行行明细（款号 / 颜色 / 尺码 / 数量 / 单价） |
+| ② 图片 → 结构化明细 | 鞋盒照片、供应商到货单照片 | 一行行明细（款号 / 颜色 / 尺码 / 数量 / 单价）<br>⚠️ 2026-10-05 已退场：采购到货改为纯对话驱动，这一路翻译连同视觉模型配置一起删除 |
 | ③ 对话 → 意图分类 | 同一句自然语言 | 有限枚举（`sale` / `sale_query` / `return` / `exchange` / `account_query` / `qa` / `unsupported`） |
 
 三者的共同点只有一条：**输入是不确定的（人的表达，怎么说都行），输出是确定的（有限枚举 / 字段）**。
@@ -114,7 +114,7 @@ AI 承担的是**三种翻译**：
 
 | # | Evidence | 证明什么 |
 | --- | --- | --- |
-| 1 | 三种翻译的现成实例：`server/src/services/doubaoService.js:272`（销售文字 → 字段，`parseSalesText`，入口调用见 `server/src/services/larkMvpService.js:618`）、`:398`（图片 → 鞋盒明细，`recognizeLabels`）、`:505`（图片 → 到货单明细，`recognizePurchaseDocument`，调用见 `server/src/services/purchaseWebhookService.js:1804-1805`） | 「AI = 收口器」不是提法，是已经跑在三条链路上的同一件事 |
+| 1 | 三种翻译的现成实例：`server/src/services/doubaoService.js:272`（销售文字 → 字段，`parseSalesText`，入口调用见 `server/src/services/larkMvpService.js:618`）、`:398`（图片 → 鞋盒明细，`recognizeLabels`）、`:505`（图片 → 到货单明细，`recognizePurchaseDocument`，调用见 `server/src/services/purchaseWebhookService.js:1804-1805`）<br>⚠️ 2026-10-05：②（图片 → 明细）这两个方法与 `recognizeLabels` / `recognizePurchaseDocument` 已随到货识别链路退场删除，行号不再可考；① 与 ③ 仍在跑 | 「AI = 收口器」不是提法，是已经跑在链路上的同一件事（图片那一路已于 2026-10-05 下线） |
 | 2 | `server/src/services/doubaoService.js:144`（`result.intent === 'sale' ? 'sale' : 'unsupported'`）、`:158`（非 `sale` 一律计入缺失项，回问而不生成草稿） | 「宁可不懂，不可猜」在代码里是可验证的默认行为，不是口号 |
 | 3 | 退换货第一期把「查询」抽成独立只读 service：`server/src/services/saleLookupService.js` 把网关收窄成只读视图（无 `create` / `update` / `delete`），`server/test/saleLookupService.test.js:240`（「本期零写入」断言） | 「无副作用域可以独立交给外部」已有雏形：只读性在入口用接口收窄钉死，而不是靠评审 |
 | 4 | ADR-001（AI 不拥有最终业务事实；只有确定性服务能改变库存与资金）、ADR-002（入口按副作用三分；AI 职责上限是「意图枚举 + 参数」；不做自主智能体） | 本 ADR 是这两条边界的延伸，不是新开一条路线 |

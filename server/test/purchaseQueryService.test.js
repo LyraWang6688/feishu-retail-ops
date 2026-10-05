@@ -48,10 +48,14 @@ test('listPurchaseRequests maps fields and filters by batchNo', async () => {
 });
 
 test('listPurchaseArrivals maps fields and resolves batch link', async () => {
+  // ⚠️ 2026-10-05：原先这里的记录还带「识别状态」「识别失败原因」两个字段，
+  // 断言里也有 recognition_status / failure_reason 两项和一个 recognitionStatus 过滤。
+  // 业务负责人已把这两个字段从生产表删除（拍照识别链路整体退场），schema 映射同步删掉，
+  // 查询接口也不再投影/过滤它们——所以本用例改成只断言留下来的容器字段。
   const gateway = makeGateway({
     purchaseArrival: [
-      { record_id: 'arr_1', fields: { 到货日: 1758844800000, 报货批次号: ['batch_1'], 图片: [{ file_token: 't1' }, { file_token: 't2' }], 识别状态: '识别成功', 确认状态: '待确认', 识别失败原因: '' } },
-      { record_id: 'arr_2', fields: { 到货日: 1758931200000, 报货批次号: ['batch_2'], 图片: [], 识别状态: '识别失败', 确认状态: '待确认', 识别失败原因: '没有鞋盒图片' } },
+      { record_id: 'arr_1', fields: { 到货日: 1758844800000, 报货批次号: ['batch_1'], 图片: [{ file_token: 't1' }, { file_token: 't2' }], 确认状态: '待确认' } },
+      { record_id: 'arr_2', fields: { 到货日: 1758931200000, 报货批次号: ['batch_2'], 图片: [], 确认状态: '待确认' } },
     ],
     purchaseOrderBatch: [
       { record_id: 'batch_1', fields: { 报货批次号: 'BH-001', 供应商: ['sup_1'] } },
@@ -64,11 +68,12 @@ test('listPurchaseArrivals maps fields and resolves batch link', async () => {
   assert.equal(all.length, 2);
   assert.equal(all[0].record_id, 'arr_2');
   assert.equal(all[0].batch_no, 'BH-002');
-  assert.equal(all[0].recognition_status, '识别失败');
   assert.equal(all[0].confirm_status, '待确认');
-  assert.equal(all[0].failure_reason, '没有鞋盒图片');
   assert.equal(all[0].image_count, 0);
   assert.equal(all[0].supplier_record_id, '');
+  // 退场的字段连 key 都不该再出现（否则前端会渲染出一列永远为空的"识别状态"）。
+  assert.equal('recognition_status' in all[0], false);
+  assert.equal('failure_reason' in all[0], false);
 
   assert.equal(all[1].record_id, 'arr_1');
   assert.equal(all[1].image_count, 2);
@@ -76,15 +81,15 @@ test('listPurchaseArrivals maps fields and resolves batch link', async () => {
   const filtered = await service.listPurchaseArrivals({ confirmStatus: '待确认' });
   assert.equal(filtered.length, 2);
 
-  const byRecognition = await service.listPurchaseArrivals({ recognitionStatus: '识别失败' });
-  assert.equal(byRecognition.length, 1);
-  assert.equal(byRecognition[0].record_id, 'arr_2');
+  // recognitionStatus 过滤已摘掉：传了也不该再筛掉任何东西。
+  const byRetiredFilter = await service.listPurchaseArrivals({ recognitionStatus: '识别失败' });
+  assert.equal(byRetiredFilter.length, 2);
 });
 
 test('listPurchaseArrivals handles missing batch link gracefully', async () => {
   const gateway = makeGateway({
     purchaseArrival: [
-      { record_id: 'arr_nobatch', fields: { 到货日: 1758844800000, 报货批次号: [], 图片: [], 识别状态: '待识别', 确认状态: '待确认', 识别失败原因: '' } },
+      { record_id: 'arr_nobatch', fields: { 到货日: 1758844800000, 报货批次号: [], 图片: [], 确认状态: '待确认' } },
     ],
     purchaseOrderBatch: [],
   });

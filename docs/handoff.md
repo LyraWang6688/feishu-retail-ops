@@ -5,6 +5,13 @@
 > 文档性质：**面向下一个接手者（人或 AI）的当前状态说明 + 待办 + 边界**。
 > 与本文冲突时，以代码和根目录 `AGENTS.md` 为准；本文不重复 `AGENTS.md` 已经写清的规范。
 > 📌 **新增协作线（2026-10-04）**：抖音内容与经营共创（背景 / 资产索引 / 第一步请求）→ 见 [handoff-douyin-content-co-creation.md](handoff-douyin-content-co-creation.md)
+>
+> ⚠️ **2026-10-05 变更（本文后续段落未逐句重写）**：「采购到货 → 拍照识别 → 确认入库」链路已整体退场——
+> `processArrival` / `resolveArrivalProduct` / 到货等待与超时策略 / 到货详情卡片 / 卡片动作
+> `confirm_purchase_arrival` / 视觉模型配置 `VISION_LLM_*` / `doubaoService` 的 `recognizeLabels` 与
+> `recognizePurchaseDocument` 全部删除；「采购到货」表只剩数据容器。入库与建档能力
+>（`confirmArrival` / `ensureArrivalProducts`）**保留但没有调用方**。因此下文里凡是描述到货识别
+> 流程与识别字段的段落都已过时，以 `AGENTS.md` 与当前代码为准。
 
 ---
 

@@ -8,9 +8,6 @@ const MODULES = {
       "hasSalesManual": false,
       "includeSkuCode": true
     },
-    "recognition": {
-      "requireSupplier": true
-    },
     "sync": {
       "payloadMode": "aggregate_by_sku"
     }
@@ -24,9 +21,6 @@ const MODULES = {
       "hasSalesManual": true,
       "includeSkuCode": false
     },
-    "recognition": {
-      "requireSupplier": false
-    },
     "sync": {
       "payloadMode": "detail_rows"
     }
@@ -39,9 +33,6 @@ const MODULES = {
       "hasSupplier": false,
       "hasSalesManual": false,
       "includeSkuCode": true
-    },
-    "recognition": {
-      "requireSupplier": false
     },
     "sync": {
       "payloadMode": "aggregate_by_sku"

@@ -1,2 +1,2 @@
-.row-failed { background: #fff5f5; }
-.failure-reason { max-width: 260px; color: var(--danger); white-space: normal; word-break: break-word; }
+/* 原先这里的 .row-failed / .failure-reason 只服务到货表的「失败原因」列；
+   2026-10-05 拍照识别退场、识别状态与失败原因两个字段被删，这两条规则没有使用者了。 */

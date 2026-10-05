@@ -49,12 +49,15 @@ test('failed result-text delivery does not relabel a successful card action as p
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 「采购到货 → 拍照识别 → 入库」开关（PURCHASE_ARRIVAL_INTAKE_ENABLED）
+// 「采购到货 → 拍照识别 → 入库」链路**已退场**（2026-10-05）
 //
-// 这条链路是临时的，随时可能停掉；下面覆盖三件事：
-//   1) 判定函数本身：只有显式 'false' 算关，空串/未配/true 都算开；
-//   2) 开关开 → 「采购到货」新增会被分派（现状不变）；
-//   3) 开关关 → 「采购到货」不分派、不抛错，但**报货照常分派**（关键回归）。
+// 业务负责人删掉了「采购到货」表的「类型」「识别状态」「识别失败原因」三个字段，
+// 并决定这条链路整体退场（改成纯对话驱动）。路由层因此把它从分派表里摘掉：
+//   1) 判定函数本身仍然保留单测（config/purchaseArrivalIntake.js 这个开关模块
+//      **刻意留着**，将来恢复「对话到货」时是现成的显式开关，且它钉住了
+//      "空字符串不等于关闭"那个坑）；
+//   2) 「采购到货」新增 → 不再分派给任何链路，只留一条排查日志；
+//   3) 报货（supplier-report）**照常分派**：它是当前唯一的采购入口（关键回归）。
 // ─────────────────────────────────────────────────────────────────────────────
 
 // 表 ID 从 schema 读，测试里不再写死一份——换 Base 时测试自动跟着走。
@@ -90,21 +93,7 @@ const createRecordingService = () => {
   };
 };
 
-// 临时改开关，测完必然还原——否则会污染同文件里后面的用例。
-const withArrivalSwitch = async (value, run) => {
-  const had = Object.prototype.hasOwnProperty.call(process.env, PURCHASE_ARRIVAL_INTAKE_ENV_KEY);
-  const previous = process.env[PURCHASE_ARRIVAL_INTAKE_ENV_KEY];
-  if (value === undefined) delete process.env[PURCHASE_ARRIVAL_INTAKE_ENV_KEY];
-  else process.env[PURCHASE_ARRIVAL_INTAKE_ENV_KEY] = value;
-  try {
-    await run();
-  } finally {
-    if (had) process.env[PURCHASE_ARRIVAL_INTAKE_ENV_KEY] = previous;
-    else delete process.env[PURCHASE_ARRIVAL_INTAKE_ENV_KEY];
-  }
-};
-
-// 捕获结构化日志行，用来断言"关掉时有排查线索"。
+// 捕获结构化日志行，用来断言"退场后有排查线索"。
 const captureLogs = async (run) => {
   const lines = [];
   const originalLog = console.log;
@@ -144,70 +133,38 @@ test('开关判定：未配置、空字符串、true、1 以及写错的值一�
   assert.equal(isPurchaseArrivalIntakeEnabled(), true, '默认参数 process.env 未配置时应判定为开启');
 });
 
-test('开关默认开启：采购到货表的新增记录会被分派到 arrival 链路', async () => {
-  const { service, accepted } = createRecordingService();
+test('链路已退场：采购到货表的新增记录不再被分派，只留下排查线索', async () => {
+  // 原先这条断言的是"开关默认开启 → 会分派到 arrival 链路"。识别链路退场后行为反转：
+  // 一条都不分派（accept('arrival') 已经没有对应的处理分支了），并且要能区分
+  // "链路已退场"与"表 ID 配错导致的静默失效"。
+  const { service, accepted, packages } = createRecordingService();
   const handlers = createLarkEventHandlers(service);
 
-  await withArrivalSwitch(undefined, async () => {
+  const logs = await captureLogs(async () => {
     assert.doesNotThrow(() =>
-      handlers['drive.file.bitable_record_changed_v1'](bitableEvent(ARRIVAL_TABLE_ID, 'rec_arrival_default')),
+      handlers['drive.file.bitable_record_changed_v1'](bitableEvent(ARRIVAL_TABLE_ID, 'rec_arrival_retired')),
     );
     await flushDispatch();
   });
 
-  assert.deepEqual(accepted, [['arrival', 'rec_arrival_default']]);
-});
-
-test('开关关闭：采购到货表的新增记录不被分派，且不抛错', async () => {
-  const { service, accepted } = createRecordingService();
-  const handlers = createLarkEventHandlers(service);
-
-  let logs = [];
-  await withArrivalSwitch('false', async () => {
-    logs = await captureLogs(async () => {
-      assert.doesNotThrow(() =>
-        handlers['drive.file.bitable_record_changed_v1'](bitableEvent(ARRIVAL_TABLE_ID, 'rec_arrival_off')),
-      );
-      await flushDispatch();
-    });
-  });
-
-  assert.deepEqual(accepted, [], '关闭后不应再触达到货识别链路');
+  assert.deepEqual(accepted, [], '退场后到货表的新增不应触达任何采购链路');
+  assert.deepEqual(packages, [], '连 acceptMany 都不该被调用');
   assert.ok(
-    logs.some((line) => line.includes('lark.intake.arrival_disabled') && line.includes('rec_arrival_off')),
-    `关闭时应留下排查线索 lark.intake.arrival_disabled，实际日志：${logs.join(' | ')}`,
+    logs.some((line) => line.includes('lark.intake.arrival_retired') && line.includes('rec_arrival_retired')),
+    `应留下排查线索 lark.intake.arrival_retired，实际日志：${logs.join(' | ')}`,
   );
 });
 
-test('开关关闭不影响报货：供应商报单新增记录仍然分派到 supplier-report', async () => {
+test('到货退场不影响报货：供应商报单新增记录仍然分派到 supplier-report', async () => {
   const { service, accepted } = createRecordingService();
   const handlers = createLarkEventHandlers(service);
 
-  await withArrivalSwitch('FALSE', async () => {
-    assert.doesNotThrow(() =>
-      handlers['drive.file.bitable_record_changed_v1'](bitableEvent(REPORT_TABLE_ID, 'rec_report_off')),
-    );
-    await flushDispatch();
-  });
+  assert.doesNotThrow(() =>
+    handlers['drive.file.bitable_record_changed_v1'](bitableEvent(REPORT_TABLE_ID, 'rec_report_ok')),
+  );
+  await flushDispatch();
 
-  assert.deepEqual(accepted, [['supplier-report', 'rec_report_off']]);
-});
-
-test('开关开启时报货照常分派（现状不变）', async () => {
-  const { service, accepted } = createRecordingService();
-  const handlers = createLarkEventHandlers(service);
-
-  await withArrivalSwitch(undefined, async () => {
-    const handler = handlers['drive.file.bitable_record_changed_v1'];
-    handler(bitableEvent(REPORT_TABLE_ID, 'rec_report_on'));
-    handler(bitableEvent(ARRIVAL_TABLE_ID, 'rec_arrival_on_both'));
-    await flushDispatch();
-  });
-
-  assert.deepEqual(accepted, [
-    ['supplier-report', 'rec_report_on'],
-    ['arrival', 'rec_arrival_on_both'],
-  ]);
+  assert.deepEqual(accepted, [['supplier-report', 'rec_report_ok']]);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -222,18 +179,16 @@ test('同一包里的多条 record_added 合成一次分派（一次提交 = 一
   const { service, accepted, packages } = createRecordingService();
   const handlers = createLarkEventHandlers(service);
 
-  await withArrivalSwitch(undefined, async () => {
-    handlers['drive.file.bitable_record_changed_v1']({
-      file_token: APP_TOKEN,
-      table_id: REPORT_TABLE_ID,
-      action_list: [
-        { record_id: 'rec_p1', action: 'record_added' },
-        { record_id: 'rec_p2', action: 'record_added' },
-        { record_id: 'rec_p3', action: 'record_added' },
-      ],
-    });
-    await flushDispatch();
+  handlers['drive.file.bitable_record_changed_v1']({
+    file_token: APP_TOKEN,
+    table_id: REPORT_TABLE_ID,
+    action_list: [
+      { record_id: 'rec_p1', action: 'record_added' },
+      { record_id: 'rec_p2', action: 'record_added' },
+      { record_id: 'rec_p3', action: 'record_added' },
+    ],
   });
+  await flushDispatch();
 
   assert.deepEqual(packages, [['supplier-report', ['rec_p1', 'rec_p2', 'rec_p3']]], '三条要作为一包一起分派');
   assert.deepEqual(accepted, [
@@ -247,37 +202,36 @@ test('一包里非 record_added 的动作不进包：编辑/删除不触发报�
   const { service, packages } = createRecordingService();
   const handlers = createLarkEventHandlers(service);
 
-  await withArrivalSwitch(undefined, async () => {
-    handlers['drive.file.bitable_record_changed_v1']({
-      file_token: APP_TOKEN,
-      table_id: REPORT_TABLE_ID,
-      action_list: [
-        { record_id: 'rec_edited', action: 'record_edited' },
-        { record_id: 'rec_added', action: 'record_added' },
-      ],
-    });
-    await flushDispatch();
+  handlers['drive.file.bitable_record_changed_v1']({
+    file_token: APP_TOKEN,
+    table_id: REPORT_TABLE_ID,
+    action_list: [
+      { record_id: 'rec_edited', action: 'record_edited' },
+      { record_id: 'rec_added', action: 'record_added' },
+    ],
   });
+  await flushDispatch();
 
   assert.deepEqual(packages, [['supplier-report', ['rec_added']]]);
 });
 
-test('一包里的多条到货记录也合成一次分派（到货链路行为不变）', async () => {
+// 原先还有一条「一包里的多条到货记录也合成一次分派（到货链路行为不变）」。
+// 到货链路已退场（整包都不再分派），那条用例测的行为不存在了，删除；
+// 上一条「链路已退场：…不再被分派」用的就是单条形态，这里再补一条"一包多条也不分派"。
+test('一包里的多条到货记录同样一条都不分派（链路已退场）', async () => {
   const { service, packages } = createRecordingService();
   const handlers = createLarkEventHandlers(service);
 
-  await withArrivalSwitch(undefined, async () => {
-    handlers['drive.file.bitable_record_changed_v1']({
-      file_token: APP_TOKEN,
-      table_id: ARRIVAL_TABLE_ID,
-      action_list: [
-        { record_id: 'arr_a', action: 'record_added' },
-        { record_id: 'arr_b', action: 'record_added' },
-      ],
-    });
-    await flushDispatch();
+  handlers['drive.file.bitable_record_changed_v1']({
+    file_token: APP_TOKEN,
+    table_id: ARRIVAL_TABLE_ID,
+    action_list: [
+      { record_id: 'arr_a', action: 'record_added' },
+      { record_id: 'arr_b', action: 'record_added' },
+    ],
   });
+  await flushDispatch();
 
-  assert.deepEqual(packages, [['arrival', ['arr_a', 'arr_b']]]);
+  assert.deepEqual(packages, []);
 });
 

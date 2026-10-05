@@ -15,9 +15,6 @@
         "showSupplierField": true,
         "showSalesFields": false
       },
-      "recognition": {
-        "requireSupplier": true
-      },
       "sync": {
         "payloadMode": "aggregate_by_sku"
       },
@@ -45,9 +42,6 @@
         "showSupplierField": false,
         "showSalesFields": true
       },
-      "recognition": {
-        "requireSupplier": false
-      },
       "sync": {
         "payloadMode": "detail_rows"
       },
@@ -71,9 +65,6 @@
         "includeSkuCode": true,
         "showSupplierField": false,
         "showSalesFields": false
-      },
-      "recognition": {
-        "requireSupplier": false
       },
       "sync": {
         "payloadMode": "aggregate_by_sku"

@@ -13,7 +13,10 @@ const doubaoService = require('./doubaoService');
 // 采购申请确认卡片（purchaseRequestConfirmationCard）**不再从这段链路发出**（免确认），
 // 卡片本身仍留在 utils/larkCards 并且 handleCardAction 仍能处理它——
 // 线上已经发出去的老卡片要能点得动，将来要回滚也只需要把 publishPurchaseRequest 换回发卡片。
-const { purchaseArrivalDetailCard, purchaseStatusCard } = require('../utils/larkCards');
+// ⚠️ 2026-10-05：`purchaseArrivalDetailCard`（到货明细确认卡片）已随「拍照识别」退场删除——
+// 到货不再有"识别结果待确认"这一步，也就没有要发的卡片。
+const { purchaseStatusCard } = require('../utils/larkCards');
+// MOVEMENT_PURCHASE_DECREASE 是 #83 采购退货扣库存用的流水类型（退货独占链，见 processSupplierReturn）。
 const { InventoryService, MOVEMENT_PURCHASE_DECREASE } = require('./inventoryService');
 const { buildPurchaseQuantities } = require('./purchaseQuantityPolicy');
 // 「采购行为」分流：采购申请（尺码 + 数量说明）还是采购退货（数量，无尺码）。
@@ -29,12 +32,7 @@ const { renderPurchaseRequestPng, RETURN_TITLE } = require('./purchaseRequestIma
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { IDEMPOTENCY_KEY_FIELD, createOnceByKey } = require('../infrastructure/idempotencyKey');
 const { logError, logInfo, logWarn } = require('../utils/logger');
-const { withTimeout, withTimeoutProxy, TimeoutError } = require('../utils/withTimeout');
-const {
-  ARRIVAL_WAITING_NOTICE,
-  resolveArrivalWaitConfig,
-  arrivalRescuedNotice,
-} = require('./arrivalWaitPolicy');
+const { withTimeout, withTimeoutProxy } = require('../utils/withTimeout');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
 // 采购单改成发到**群**（业务负责人：「不用再看经办人了」）。
 // 群 id 从配置读，**没有默认值**（见 config/groupPurchase 里的说明）。
@@ -42,11 +40,14 @@ const { resolvePurchaseChatId } = require('../config/groupPurchase');
 const { PurchaseBatchLocator } = require('./purchaseBatchLocator');
 
 // 采购卡片上可以触发副作用（写采购事实）的动作。
+//
+// ⚠️ 2026-10-05：「采购到货」的拍照识别链路整体退场，随之删掉了
+// `confirm_purchase_arrival` / `cancel_purchase_arrival` 两个动作。
+// 线上可能还有极少数**历史**到货卡片没点过，但那张卡片对应的记录现在
+// 只会被当成"表里的一条数据"（确认状态字段还在，可人工改），不再有自动入库动作。
 const PURCHASE_CARD_ACTIONS = [
   'confirm_purchase_request',
   'cancel_purchase_request',
-  'confirm_purchase_arrival',
-  'cancel_purchase_arrival',
 ];
 
 const idFor = (prefix, value) => `${prefix}_${crypto.createHash('sha256').update(String(value)).digest('hex').slice(0, 24)}`;
@@ -62,13 +63,13 @@ const aggregateArrivalItems = (items) => {
   for (const item of items) {
     const size = Number(item.size);
     const quantity = Number(item.quantity);
-    // ⚠️ 新品在「发确认卡片之前不建档」（产品负责人 2026-10-05 定的顺序），所以这一步
-    // 它还没有 product_record_id。身份退回「货号+颜色」——**不能**退回空串：
+    // ⚠️ 新品在建档之前还没有 product_record_id（建档排在确认之后/新流程的编排里），
+    // 所以这一步身份要退回「货号+颜色」——**不能**退回空串：
     // 两个不同新品都会落到空 key 上，被错当成同一条明细合并（尺码一样时数量翻倍，
-    // 卡片和入库都会跟着错）。老货品仍然用 product_record_id 聚合，行为不变。
+    // 入库会跟着错）。老货品仍然用 product_record_id 聚合，行为不变。
     const identity = item.product_record_id || `pending:${textValue(item.item_no)}|${textValue(item.color)}`;
     if (identity === 'pending:|' || !Number.isInteger(size) || size <= 0 ||
-      !Number.isInteger(quantity) || quantity <= 0) throw new Error('到货识别结果的货品、尺码或数量无效');
+      !Number.isInteger(quantity) || quantity <= 0) throw new Error('到货明细的货品、尺码或数量无效');
     const key = `${identity}|${size}`;
     if (byKey.has(key)) byKey.get(key).quantity += quantity;
     else byKey.set(key, { ...item, size, quantity });
@@ -76,7 +77,7 @@ const aggregateArrivalItems = (items) => {
   return [...byKey.values()];
 };
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// （原先这里有个 sleep()，只被已删除的「识别失败态重试写入」用到，随那段一起删掉。）
 
 /**
  * 飞书 SDK 抛错时 message 往往只有 "Request failed with status code 400"，
@@ -90,32 +91,21 @@ const larkErrorText = (error) => {
   return code ? `${message} (Code: ${code})` : message;
 };
 
-// 「识别失败原因」这一列是写给验收人看的，不是给日志看的：只能是一句短的人话。
-// 原文太长（贴一段模型返回或 axios 堆栈）她看不懂，也就不看了。
-const humanizeArrivalFailure = (error) => {
-  const message = String(error?.message || '未知错误');
-  // 超时有好几种长相：我们自己包的 TimeoutError（"…超时"）、axios（ETIMEDOUT /
-  // ECONNABORTED）、OpenAI SDK 自己的 APIConnectionTimeoutError（"Request timed out."）。
-  // 都得归到同一句人话上，否则用户会看到一列英文。
-  if (error?.name === 'TimeoutError' || error?.name === 'APIConnectionTimeoutError' ||
-    error?.code === 'ETIMEDOUT' || error?.code === 'ECONNABORTED' ||
-    /超时|timed?\s*out/i.test(message)) {
-    return '识别超时';
-  }
-  if (/没有.*(图片|附件)/.test(message)) return '没读到图片';
-  if (/识别不到|没有识别到/.test(message)) return '图片里没识别到明细';
-  if (/只能选择一个报货批次号/.test(message)) return '报货批次号选多了';
-  const compact = message.replace(/\s+/g, ' ').trim();
-  return compact.length > 40 ? `${compact.slice(0, 40)}…` : compact;
-};
-
-// 失败提示说人话、给出下一步动作：只告诉她「失败了」等于把问题丢回给她。
-const arrivalFailureNotice = (reason) =>
-  `到货图片识别没成功（${reason}），请重传一次图片，或直接在记录里手工填写～`;
-
-// 收到就开始处理时先回一句。识别（尤其是模型那一步）可能要几十秒到几分钟，
-// 这段时间她看不到任何反馈，会以为系统卡死——2026-10-05 的线上反馈就是这样。
-const ARRIVAL_RECEIVED_NOTICE = '收到到货申请，正在识别图片～';
+// ── 已删除：拍照识别那一套 ────────────────────────────────────────────────
+// 2026-10-05 业务负责人删掉了「采购到货」表的「类型」「识别状态」「识别失败原因」三个字段，
+// 并决定这条链路整体退场（改成纯对话驱动）。随之下线的还有：
+//   · processArrival（唯一入口：读记录 → 写「识别中」→ 下载图片 → 视觉识别 → 匹配 → 出卡）
+//   · resolveArrivalProduct（逐行匹配货品）
+//   · failArrival / markArrivalRecognitionFailed / resolveArrivalOperator
+//   · notifyArrival* / startArrivalWaitWatch（等待与提示、判失败、迟到救回）
+//   · humanizeArrivalFailure / arrivalFailureNotice / ARRIVAL_RECEIVED_NOTICE（写给已删字段的文案）
+//   · 卡片动作 confirm_purchase_arrival / cancel_purchase_arrival
+// 删掉而不是留着：它们写的字段在表里已经不存在，留着只会在日志和卡片上
+// 伪装成「识别还在跑」，属于最难查的静默失效。
+// ⚠️ 例外：`sendNoticeText` #86 曾跟着一起删，**合并 #83（采购退货）时恢复**——
+// 退货的差额提示要用它，而它本身只是"发一条纯文本、发不出去也不抛错"的工具，
+// 服务的不是识别流程（见它在类里的注释）。
+// 保留下来的入库 / 建档 / 成本能力见 confirmArrival、ensureArrivalProducts 的注释。
 
 // 鞋盒/吊牌上的「品名」：女鞋 → B、男鞋 → A。单选选项就是 A/B 两个字。
 // 识别不出性别就留空：默认成 A 会把女鞋写进男鞋，比空着更难发现。
@@ -202,31 +192,11 @@ class PurchaseWebhookService {
       const { appId, appSecret } = getLarkAgentCredentials();
       return new lark.Client({ appId, appSecret, logger: larkLogger });
     })();
-    // 对外调用的超时（毫秒）。为什么每个都要有：见 utils/withTimeout.js 的文件头——
-    // 到货链路 2026-10-05 就是写完「识别中」之后永远等不到任何一个 await 返回。
+    // 对外调用的超时（毫秒）。为什么每个都要有：见 utils/withTimeout.js 的文件头。
     // 0 表示不设超时，只有极少数测试会这么用。
-    this.mediaTimeoutMs = options.mediaTimeoutMs ?? 30_000; // 下载附件：101KB 的图正常 0.3 秒
-    // 模型识别这一层的超时。**必须和 doubaoService 的视觉超时用同一个来源**：
-    // 2026-10-05 线上出过事——.env 里写了 180 秒，但这一层硬编码 60 秒先开火，
-    // 一条实际 82 秒才返回的到货单被判成「识别失败」（数据其实是好的）。
-    // 默认 180 秒：出库单整张识别实测 82~118 秒。
-    this.recognitionTimeoutMs = options.recognitionTimeoutMs
-      ?? (Number(process.env.VISION_LLM_TIMEOUT_MS) > 0 ? Number(process.env.VISION_LLM_TIMEOUT_MS) : 180_000);
+    // ⚠️ 到货链路的 mediaTimeoutMs / recognitionTimeoutMs（下载图片、视觉识别）已随
+    // 「拍照识别」退场一起删除；剩下的只有发 IM 消息这一个对外调用。
     this.imTimeoutMs = options.imTimeoutMs ?? 15_000; // 飞书消息
-    // 失败态写入本身也可能失败，写不出去就等于记录永远停在「识别中」，所以重试几次。
-    this.failureWriteAttempts = options.failureWriteAttempts ?? 3;
-    this.failureWriteRetryDelayMs = options.failureWriteRetryDelayMs ?? 200;
-    // 到货「等待与提示」的四个阈值：显式入参 > 环境变量 > 默认值（见 arrivalWaitPolicy）。
-    // 为什么全部可配：她看完一次 82 秒的真实识别后定的规则，但该设多少要继续用真实数据校准。
-    // 语义差别是这次改造的核心：**放弃等待（2 分钟）≠ 失败（3 分钟）**。
-    const arrivalWait = resolveArrivalWaitConfig(options);
-    this.arrivalNoticeIntervalMs = arrivalWait.noticeIntervalMs; // 每 N 毫秒补一条「还在识别中」
-    this.arrivalAbandonWaitMs = arrivalWait.abandonWaitMs; // 超过就放弃等待（只记日志，不判失败）
-    this.arrivalFailAfterMs = arrivalWait.failAfterMs; // 超过才判失败
-    this.arrivalNoticeMaxCount = arrivalWait.noticeMaxCount; // 补发次数上限（兜底）
-    // 正在等待的到货（含已停止的观察点由 stop() 移除）：测试据此断言
-    // 「处理完成后不残留任何定时器」，生产上也能一眼看出还有几条在等。
-    this.arrivalWaits = new Set();
     this.gatewayTimeoutMs = options.gatewayTimeoutMs ?? 60_000;
     // 本服务里所有 gateway 调用都套上超时。这里包的是本服务持有的引用，
     // 不影响别的服务（生产上 LarkMvpService 跟销售链路共用的是另一个引用）。
@@ -235,16 +205,13 @@ class PurchaseWebhookService {
       prefix: 'gateway.',
     });
     this.references = options.references || new V1ReferenceResolver(this.gateway);
-    // 注入进来的 references（生产上它内部拿的是没包超时的 gateway）也要包一层：
-    // 到货逐行匹配货品时它每次都会全表扫一遍，是这一步里最容易挂住的地方。
-    // 没注入时 this.references 已经基于包过超时的 gateway，不必再包。
-    this.arrivalReferences = options.references
-      ? withTimeoutProxy(this.references, { timeoutMs: this.gatewayTimeoutMs, prefix: 'references.' })
-      : this.references;
-    // 「尺码」是指向「尺码管理」的关联字段，报单解析与到货比对都通过它换算。
+    // 「尺码」是指向「尺码管理」的关联字段，报单解析与入库回写都通过它换算。
     this.getSizeReferences = createSizeReferenceAccess({
       gateway: this.gateway, sizeReferences: options.sizeReferences,
     });
+    // ⚠️ 这里只用于**文字**解析（采购「数量说明」→ 尺码/数量）。
+    // 到货的视觉识别（recognizeLabels / recognizePurchaseDocument）已随链路退场，
+    // 但文字这一组模型和它的调用路径（报货、销售）完好无损。
     this.recognizer = options.recognizer || doubaoService;
     this.inventory = options.inventory || new InventoryService({ gateway: this.gateway });
     // 「明细 → PNG」。默认是 SVG+sharp 的真实实现；测试注入假实现就能断言
@@ -264,10 +231,15 @@ class PurchaseWebhookService {
     // awaiting_confirmation 并各自走一遍副作用，把同一批采购事实写两遍；
     // 卡片上的「处理中」只是 UX，后端必须自己保证同一任务不并行。
     this.confirmationQueue = new KeyedSerialQueue();
-    // 新品建档按 taskId 串行。建档现在是**发完卡片之后**才做（见 processArrival），
-    // 她点确认时还会兜底再跑一次；两次如果并行，两边各自从任务里恢复建档进度，
-    // 就会各建一条同名货品（幂等靠"先落盘再重试"的读回，挡不住真正的并发）。
+    // 新品建档按 taskId 串行：她点确认时兜底那次和别的调用方如果并行，两边各自从任务里
+    // 恢复建档进度，就会各建一条同名货品（幂等靠"先落盘再重试"的读回，挡不住真正的并发）。
     // 两个队列不会互相等待死锁：确认走 confirmationQueue，建档走 creationQueue，方向是单向的。
+    //
+    // ⚠️ 2026-10-05：建档（ensureArrivalProducts）现在**没有调用方**了——
+    // 到货识别退场后，只有确认入库那一步会调它，而入库动作本身要等新的「对话到货」流程接。
+    // 这段能力**刻意保留**（它就是将来要用的「建档 + 成本」，也是未合并分支
+    // refactor/decouple-creation-and-stock 要剥成 services/productCreationService.js 的那一段），
+    // 所以队列、幂等落盘、回读全部原样留着。
     this.creationQueue = new KeyedSerialQueue();
     this.batchReadMaxRetries = options.batchReadMaxRetries ?? 3;
     this.batchReadRetryDelay = options.batchReadRetryDelay ?? 1000;
@@ -422,6 +394,14 @@ class PurchaseWebhookService {
     return { accepted: failed.length === 0, records, failed };
   }
 
+  /**
+   * 处理一条采购表变更。
+   *
+   * ⚠️ 2026-10-05：「采购到货 → 拍照识别 → 入库」链路已整体退场，所以这里只剩
+   * supplier-report 一条分支——`kind === 'arrival'` 的入口在 routes/larkEvents.js 里
+   * 也从分派表摘掉了，不会再有人以这个 kind 走进来。
+   * 到货表仍然是一张普通的表（到货日/验收原话/确认状态/验收人），只是新增记录不再触发任何事。
+   */
   async process(kind, recordId, taskId) {
     const task = await this.store.get(taskId);
     if (task?.status === 'completed') return task;
@@ -432,38 +412,26 @@ class PurchaseWebhookService {
       logInfo('purchase.webhook.posted_ignored', { record_id: recordId, task_id: taskId });
       return task;
     }
-    // 到货已经出过卡（awaiting_confirmation）或已入库（posted）时，重复投递的 webhook
-    // 不能再解析一遍。accept() 通常会拦掉，但 3 分钟判失败 → 迟到结果救回的窗口里它拦不住：
-    // 那一刻任务还是 failed，重投会被排进同一条串行队列，等它真正跑起来时状态已经变回成功，
-    // 再跑一遍就会重复建货品、重复发卡。入库本身的幂等在 confirmArrival，这里挡的是识别。
-    if (kind === 'arrival' && ['awaiting_confirmation', 'posted'].includes(task?.status)) {
-      logInfo('purchase.webhook.arrival_already_processed', { record_id: recordId, task_id: taskId, status: task.status });
-      return task;
-    }
     await this.store.update(taskId, { status: 'processing', started_at: new Date().toISOString() });
     try {
       let result;
-      if (kind === 'supplier-report') {
-        // 先按「采购行为」分流，再看批次号：采购退货走自己那条链路
-        // （直接扣库存 + 出退货单），**不进归批窗口、也不写采购到货/入库**。
-        // 分流放在批次号之前是有意的：一条退货记录即使带了报货批次号，也不该
-        // 被报货那套归批/解析拦住（她没有给退货定过归批口径）。
-        const behaviorKind = await this.readReportBehaviorKind(recordId);
-        if (behaviorKind === REPORT_BEHAVIOR.PURCHASE_RETURN) {
-          // 传 task：退货的核对计划要落盘成"只算一次"（见 ensureReturnPlan）。
-          result = await this.processSupplierReturn(recordId, taskId, task);
-        } else {
-          // 有报货批次号就按「报货批次号」归批（一次提交 = 一批）；没有则走单条处理，
-          // 兼容批次号字段上线前录入的旧数据。
-          const batchNo = await this.readReportBatchNo(recordId);
-          if (batchNo) {
-            result = await this.handleReportBatch(batchNo, recordId, taskId);
-          } else {
-            result = await this.processSupplierReport(recordId, taskId);
-          }
-        }
+      // 先按「采购行为」分流，再看批次号：采购退货走自己那条链路
+      // （直接扣库存 + 出退货单），**不进归批窗口、也不写采购到货/入库**。
+      // 分流放在批次号之前是有意的：一条退货记录即使带了报货批次号，也不该
+      // 被报货那套归批/解析拦住（她没有给退货定过归批口径）。
+      const behaviorKind = await this.readReportBehaviorKind(recordId);
+      if (behaviorKind === REPORT_BEHAVIOR.PURCHASE_RETURN) {
+        // 传 task：退货的核对计划要落盘成"只算一次"（见 ensureReturnPlan）。
+        result = await this.processSupplierReturn(recordId, taskId, task);
       } else {
-        result = await this.processArrival(recordId, taskId);
+        // 非退货交给归批分派：有报货批次号就按「报货批次号」归批（一次提交 = 一批）；
+        // 没有则走单条处理，兼容批次号字段上线前录入的旧数据。
+        // ⚠️ 这里**没有**「非退货 → processArrival」这条路：到货识别已退场、方法也已删除，
+        // 而且 kind === 'arrival' 的入口在 routes/larkEvents.js 里同样从分派表摘掉了。
+        const batchNo = await this.readReportBatchNo(recordId);
+        result = batchNo
+          ? await this.handleReportBatch(batchNo, recordId, taskId)
+          : await this.processSupplierReport(recordId, taskId);
       }
       // 已经登记进批次窗口：等窗口到点由**一个**处理者统一处理整批。
       //
@@ -472,7 +440,7 @@ class PurchaseWebhookService {
       // 且带着真正的 result——这里不能把它覆盖成 batch_waiting，更不能把 result
       // 换成这个中间态对象。刻意不落 result，也是为了让"任务跑完了"的判据
       // （result 已落盘）不会提前成立、读到半成品。
-      if (kind === 'supplier-report' && result?.status === 'batch_waiting') {
+      if (result?.status === 'batch_waiting') {
         const latest = await this.store.get(taskId);
         if (!latest || latest.status !== 'processing') return latest;
         return this.store.update(taskId, { status: 'batch_waiting', batch_no: result.batch_no });
@@ -482,112 +450,32 @@ class PurchaseWebhookService {
       // 保持「已经写出的更靠后的状态不被覆盖回去」这个原则不变。
       let status = current?.status;
       if (!status || status === 'processing') {
-        if (kind === 'supplier-report' && result?.status === 'batch_inflight') {
+        if (result?.status === 'batch_inflight') {
           // 同一批的另一条明细正在处理这一批，这次我们什么都没做。
           // 落成 completed 是安全的：处理者是**批次处理者**，它只有在把这一批所有
           // 记录都标成终态之后才会落 posted；真失败了也是批次处理者落 failed，
           // 重收任意一侧的 webhook 都能让它重跑，不会因为这条记录已经 completed 就丢货。
           status = 'completed';
-        } else if (kind === 'supplier-report' && result?.status === 'already_posted') {
+        } else if (result?.status === 'already_posted') {
           // 这一批早就生成过采购申请（重启/重投递后又走到这里）：本次什么都没写，
           // 对这条记录来说就是「已经处理过」，终态是 completed。
           status = 'completed';
         } else {
-          status = kind === 'supplier-report'
-            ? (result?.ignored && result?.status === '已取消' ? 'cancelled' : 'posted')
-            : 'awaiting_confirmation';
+          status = result?.ignored && result?.status === '已取消' ? 'cancelled' : 'posted';
         }
       }
       return this.store.update(taskId, { status, result });
     } catch (error) {
       await this.store.update(taskId, { status: 'failed', error: error.message }).catch(() => undefined);
-      if (kind === 'supplier-report') {
-        // ⚠️ 刻意**不**把报单记录改成「解析失败」。
-        // 这条链路的失败绝大概率是「模型这一步抽了一下」或「读表正好抽了一下」，
-        // 都应该是**可重试**的：把记录标成「解析失败」是终态，重收 webhook 会被
-        // 幂等守卫跳过，那批货就静默丢了。状态保持不变 + 任务可重试，
-        // 两条一起才等于"不丢单"。
-        logWarn('purchase.report.batch.failed_retryable', {
-          record_id: recordId, task_id: taskId, error: error.message,
-        });
-      }
-      if (kind === 'arrival') {
-        // 到货的失败只有这一处出口（processArrival 只负责记录日志再抛出）：
-        // 不管是超时、模型报错还是没预料到的异常，都必须把记录推出「识别中」并告诉她，
-        // 否则她看到的就只是永远「识别中」——只写日志等于没发生，她看不到日志。
-        // 单一出口还有一个好处：状态和通知不会重复发、也不会漏。
-        //
-        // 例外：等待超时（3 分钟）那一路已经在 processArrival 里写过失败态、也通知过她了
-        // （见 startArrivalWaitWatch），这里再走一遍只会重复发一条消息——重复的消息比
-        // 没有消息更糟，她会以为又失败了一次。只记日志。
-        if (error.arrivalFailureAlreadyNotified) {
-          logWarn('purchase.arrival.failure_notice.skipped', {
-            record_id: recordId, task_id: taskId, reason: '等待超时时已判过失败并通知，不再重复发',
-          });
-        } else {
-          await this.failArrival(taskId, recordId, error);
-        }
-      }
+      // ⚠️ 刻意**不**把报单记录改成「解析失败」。
+      // 这条链路的失败绝大概率是「模型这一步抽了一下」或「读表正好抽了一下」，
+      // 都应该是**可重试**的：把记录标成「解析失败」是终态，重收 webhook 会被
+      // 幂等守卫跳过，那批货就静默丢了。状态保持不变 + 任务可重试，
+      // 两条一起才等于"不丢单"。
+      logWarn('purchase.report.batch.failed_retryable', {
+        record_id: recordId, task_id: taskId, error: error.message,
+      });
       throw error;
-    }
-  }
-
-  /**
-   * 到货识别失败的统一收尾：先把记录推出「识别中」，再通知验收人。
-   *
-   * 顺序不能反：她能看到的第一个事实是记录上的「识别失败 + 原因」，
-   * 消息只是催促她处理。写入失败也必须继续发消息（消息里已经带了原因）。
-   */
-  async failArrival(taskId, recordId, error) {
-    const reason = humanizeArrivalFailure(error);
-    const marked = await this.markArrivalRecognitionFailed(recordId, reason);
-    logWarn('purchase.arrival.recognition.failed', {
-      record_id: recordId, task_id: taskId, reason, failure_marked: marked, error: error.message,
-    });
-    const operatorOpenId = await this.resolveArrivalOperator(taskId, recordId);
-    await this.notifyArrivalFailed(operatorOpenId, reason, recordId, taskId);
-    return { reason, marked };
-  }
-
-  /**
-   * 把「识别中」推出去。这是硬要求：记录不能永远停在「识别中」。
-   * 写飞书这一步本身也会失败（它同样是没有超时的外部调用），所以重试几次；
-   * 全部失败就大声记日志——至少人工能查到，不会静默。
-   */
-  async markArrivalRecognitionFailed(recordId, reason) {
-    for (let attempt = 1; attempt <= this.failureWriteAttempts; attempt += 1) {
-      try {
-        await this.gateway.update('purchaseArrival', recordId, {
-          recognitionStatus: '识别失败',
-          failureReason: reason,
-        });
-        return true;
-      } catch (error) {
-        logWarn('purchase.arrival.failure_status.write_failed', {
-          record_id: recordId, attempt, max_attempts: this.failureWriteAttempts, error: error.message,
-        });
-        if (attempt < this.failureWriteAttempts) await sleep(this.failureWriteRetryDelayMs);
-      }
-    }
-    logError('purchase.arrival.failure_status.gave_up', { record_id: recordId, reason });
-    return false;
-  }
-
-  /**
-   * 失败提示发给谁：记录上的「验收人」就是提交这条到货记录的人。
-   * 处理一开始就把 open_id 落进任务，所以即使失败发生在读记录之后、识别之前，
-   * 这里也还找得到人；任务里没有（比如读记录本身就失败了）就回读一次记录。
-   */
-  async resolveArrivalOperator(taskId, recordId) {
-    const task = await this.store.get(taskId).catch(() => null);
-    if (task?.arrival_operator_open_id) return task.arrival_operator_open_id;
-    try {
-      const table = this.gateway.table('purchaseArrival');
-      const record = await this.gateway.get('purchaseArrival', recordId);
-      return this.recordOperator(record, table.fields.inspector);
-    } catch (error) {
-      logWarn('purchase.arrival.operator.read_failed', { record_id: recordId, error: error.message });
-      return '';
     }
   }
 
@@ -1017,20 +905,33 @@ class PurchaseWebhookService {
     if (response.code !== 0) throw new Error(`发送采购确认卡失败: ${response.msg} (Code: ${response.code})`);
   }
 
+  // ── 已删除：到货「等待与提示」与失败提示整段 ──────────────────────────────
+  // 删掉的有：notifyArrivalReceived / notifyArrivalFailed /
+  // notifyArrivalWaiting / notifyArrivalRescued / startArrivalWaitWatch。
+  //
+  // 为什么删：它们服务的对象是「识别中」这个中间态和它对应的三个已删字段
+  //（识别状态 / 识别失败原因 / 类型）——"每 1 分钟补一条还在识别中"、
+  // "2 分钟放弃等待"、"3 分钟判失败"、"迟到结果救回"全部只在识别流程里有意义。
+  // 留着的话没有任何调用方，只会在下次读代码的人脑子里重建一条不存在的流程。
+  //
+  // ⚠️ `sendNoticeText` **不在删除之列**（#86 曾一起删，合并 #83 采购退货时恢复）：
+  // 上面那批是"给识别流程报进度"，它只是"发一条纯文本、发不出去也不抛错"的工具，
+  // 退货的差额/没对上提示要用它（见 processSupplierReturn 里那个调用点）。
+  //
+  // ⚠️ 合并 #57 吃过的那个亏（同类方法静默覆盖）在这里仍然有效，别重新引入：
+  // 本类里同时存在语义不同的「发消息」方法时，**名字必须不同**——
+  // JS 类体里后定义的同名方法会**静默覆盖**先定义的，git 合并也不报冲突。
+  // 现在有四个：sendCard / sendText / sendImage（失败即抛错）
+  // 与 sendNoticeText（失败只记日志、返回 false），语义不同、名字也不同。
+
   /**
-   * 给用户发一条纯文字提示，**尽力而为**：发不出去只记日志，不抛错。
+   * 发一条纯文本通知给经办人。**失败不抛错**：只记一条 warn 并返回 false。
    *
-   * 复用现有那套 IM 能力（`client.im.message.create` + `msg_type: 'text'`），
-   * 和 sendCard / sendText 完全同一条通道，不另起一套。
-   *
-   * 刻意只记日志、不抛错：这类提示是"顺带告诉她一声"，发不出去不能反过来
-   * 把识别流程搞失败（识别结果已经写进记录了，卡片才是关键产物）。
-   *
-   * ⚠️ 名字必须和下面的 `sendText` 区分开（合并 #57 时吃过这个亏）：
-   * 两个方法都在本类里、名字都叫 `sendText` 时，**后定义的那个会静默覆盖前者**
-   * （JS 类体后面的同名方法赢），于是本方法"只记日志"的语义被 `sendText` 的
-   * "失败即抛错"顶掉——「收到即提示」一旦发失败就会把整条到货识别打断，
-   * 货品根本来不及建档。语义不同就必须名字不同，别再并回去。
+   * 与 sendText 的区别是刻意的（别合并这两个）：
+   *   · sendText      —— 主链动作（采购申请说明等），发不出去就算这次处理失败；
+   *   · sendNoticeText —— **事后通知**（"差额对不上""一双都没退成"）。
+   *     调用点在 processSupplierReturn 的扣库存/写单据**之后**，所以绝不能因为
+   *     一条提示发不出去，就把已经扣掉的库存、已经写好的退货单判成失败。
    */
   async sendNoticeText(openId, content) {
     if (!openId) {
@@ -1052,130 +953,6 @@ class PurchaseWebhookService {
       logWarn('purchase.text.failed', { content, error: error.message });
       return false;
     }
-  }
-
-  async notifyArrivalReceived(openId, recordId, taskId) {
-    const sent = await this.sendNoticeText(openId, ARRIVAL_RECEIVED_NOTICE);
-    logInfo('purchase.arrival.received_notice', { record_id: recordId, task_id: taskId, sent });
-    return sent;
-  }
-
-  async notifyArrivalFailed(openId, reason, recordId, taskId) {
-    const sent = await this.sendNoticeText(openId, arrivalFailureNotice(reason));
-    logInfo('purchase.arrival.failure_notice', { record_id: recordId, task_id: taskId, reason, sent });
-    return sent;
-  }
-
-  /** ② 每过一个间隔补一条「还在识别中」。发不出去只记日志，绝不能影响识别。 */
-  async notifyArrivalWaiting(openId, recordId, taskId, attempt) {
-    const sent = await this.sendNoticeText(openId, ARRIVAL_WAITING_NOTICE);
-    logInfo('purchase.arrival.waiting_notice', { record_id: recordId, task_id: taskId, attempt, sent });
-    return sent;
-  }
-
-  /** ⑤ 判失败之后结果才到：记录已改回成功、卡片已发，再补一条说明，别让她以为系统错乱。 */
-  async notifyArrivalRescued(openId, elapsedMs, recordId, taskId) {
-    const sent = await this.sendNoticeText(openId, arrivalRescuedNotice(elapsedMs));
-    logInfo('purchase.arrival.timeout.rescued', {
-      record_id: recordId, task_id: taskId, elapsed_ms: elapsedMs, sent,
-    });
-    return sent;
-  }
-
-  /**
-   * 启动到货「等待与提示」的定时器。调用方**必须**在流程结束时 stop()
-   * （正常完成 / 异常 / 迟到结果救回，三条路径都要）。
-   *
-   * 三个时间点各自的语义——这是本次改造最容易做错的地方，别混：
-   *  - 每 `arrivalNoticeIntervalMs`：补一条「还在识别中，请稍等～」，直到
-   *    **处理完成 / 判失败 / 到达补发次数上限**为止。注意「2 分钟放弃等待」不在停止条件里，
-   *    她的原话是"直到处理完为止"，放弃等待只是我们不再盯着它；
-   *  - `arrivalAbandonWaitMs`：**放弃等待 ≠ 失败**。到点只记一条
-   *    `purchase.arrival.wait.abandoned` 日志：**不取消识别请求、不写任何失败态**。
-   *    请求还在跑，结果回来照常走完匹配/建档/出卡；
-   *  - `arrivalFailAfterMs`：这时才判失败（写「识别失败」+ 告诉她原因）。要是结果在
-   *    判失败之后才回来，processArrival 会走「迟到结果救回」分支把状态改回成功。
-   *
-   * 所有定时器都 unref()：补发提示不能拖住进程退出（否则测试跑完还挂在定时器上）。
-   *
-   * 返回值 `stop()` 会**同步**停掉全部定时器，并返回「停之前是不是已经判过失败」——
-   * 调用方必须在写「识别成功」之前调用它，否则失败定时器可能在成功写入之后才开火，
-   * 把记录又写回「识别失败」。`failureSettled` 是判失败那一路的落定 Promise，
-   * 救回时要先 await 它，保证两边写入的顺序是"先失败、后成功"。
-   * `pendingNotice` 是「最后一次补发提示」的 Promise，出卡片之前要等它落地，
-   * 免得她先看到卡片、后面才冒出一条「还在识别中」。
-   *
-   * `startedAt` 由调用方传入"收到"那一刻（定时器本身是写「识别中」之后才启动的，
-   * 见 processArrival 里的说明）：时间阈值按她感知到的等待算，文案里的耗时才准。
-   */
-  startArrivalWaitWatch({ recordId, taskId, operatorOpenId, startedAt = Date.now() }) {
-    const watch = {
-      startedAt,
-      noticeCount: 0,
-      abandoned: false,
-      failed: false,
-      stopped: false,
-      failureSettled: null,
-      pendingNotice: null,
-      stop: () => false,
-    };
-
-    const noticeTimer = setInterval(() => {
-      if (watch.stopped) return;
-      if (watch.noticeCount >= this.arrivalNoticeMaxCount) {
-        // 兜底：到上限只记一条日志、不再发消息（避免某条记录永远卡住时无限刷屏），
-        // 顺手把定时器停掉，免得每分钟重复记一条同样的日志。
-        clearInterval(noticeTimer);
-        logWarn('purchase.arrival.wait.notice_capped', {
-          record_id: recordId, task_id: taskId, sent_count: watch.noticeCount, max_count: this.arrivalNoticeMaxCount,
-        });
-        return;
-      }
-      watch.noticeCount += 1;
-      // 不 await：定时器回调里等 IM 会把下一次触发一起推迟。sendNoticeText 自己吞异常，
-      // 这里再兜一层，保证定时器永远不会因为一条提示发不出去而中断。
-      watch.pendingNotice = this.notifyArrivalWaiting(operatorOpenId, recordId, taskId, watch.noticeCount).catch(() => undefined);
-    }, this.arrivalNoticeIntervalMs);
-
-    const abandonTimer = setTimeout(() => {
-      if (watch.stopped) return;
-      watch.abandoned = true;
-      // ⚠️ 核心约束：这里**只有一条日志**。放弃等待不是失败——不取消识别请求、
-      // 不写失败态；请求继续在跑，结果回来照常处理。把这句写进日志，
-      // 排查的人一眼就能看懂当时到底发生了什么，而不是靠猜。
-      logInfo('purchase.arrival.wait.abandoned', {
-        record_id: recordId, task_id: taskId, waited_ms: Date.now() - watch.startedAt,
-        note: '不再等待识别结果，但识别请求继续跑，结果回来仍会照常处理，不判失败',
-      });
-    }, this.arrivalAbandonWaitMs);
-
-    const failTimer = setTimeout(() => {
-      if (watch.stopped || watch.failed) return;
-      // 先**同步**置位 failed，再开始异步写状态/发消息：processArrival 结束时只要看到
-      // failed 就走「救回」分支，不会出现"判了失败却没人把状态改回来"。
-      watch.failed = true;
-      watch.failureSettled = this.failArrival(
-        taskId, recordId, new TimeoutError('到货图片识别', this.arrivalFailAfterMs),
-      ).catch((error) => {
-        logWarn('purchase.arrival.wait.fail_failed', { record_id: recordId, task_id: taskId, error: error.message });
-      });
-    }, this.arrivalFailAfterMs);
-
-    for (const timer of [noticeTimer, abandonTimer, failTimer]) {
-      if (typeof timer.unref === 'function') timer.unref();
-    }
-
-    watch.stop = () => {
-      if (watch.stopped) return watch.failed;
-      watch.stopped = true;
-      clearInterval(noticeTimer);
-      clearTimeout(abandonTimer);
-      clearTimeout(failTimer);
-      this.arrivalWaits.delete(watch);
-      return watch.failed;
-    };
-    this.arrivalWaits.add(watch);
-    return watch;
   }
 
   recordOperator(record, fieldName) {
@@ -1857,42 +1634,9 @@ class PurchaseWebhookService {
   }
 
   /**
-   * 到货明细 → 货品记录。**只匹配，不建档。**
-   *
-   * ⚠️ 建档不在这里做。产品负责人 2026-10-05 定的顺序是：「发确认卡片之前不做创建的举动，
-   * 而是在发完之后同步做，然后用户点确认之后再给到创建好的链接」。所以匹配不到货品时
-   * 这里只把这一行标成待建档（pending: true），实际建档交给发完卡片之后的
-   * ensureArrivalProducts（幂等、可重试，见那里的注释）。
-   *
-   * 「货号+颜色命中多条」（男/女鞋常共用货号）仍然不是错误：匹配器取第一条，这里把
-   * 条数带回草稿，卡片上标注"匹配到 N 条、已取哪条"，她看得见就行。
-   */
-  async resolveArrivalProduct(raw) {
-    try {
-      // 用包过超时的 references：这一步每行都会全表扫一遍货品，是到货链路里
-      // 最容易挂住的地方（见构造函数的 arrivalReferences 注释）。
-      const product = await this.arrivalReferences.resolveProduct({ itemNo: raw.item_no, color: raw.color });
-      const ambiguousCount = Number(product.ambiguousCount) || 0;
-      const ambiguous = ambiguousCount > 1
-        ? {
-          count: ambiguousCount,
-          color: product.selectedColor || raw.color || '',
-          number: product.selectedNumber || '',
-        }
-        : null;
-      return { product, pending: false, ambiguous };
-    } catch (error) {
-      if (error.code !== 'PRODUCT_NOT_FOUND') throw error;
-      // 货品表里没有 = 新品。这个判断在建档之前就有（匹配时就知道），
-      // 所以卡片可以先把"哪些货号是新品"标出来，完全不依赖建档结果。
-      return { product: null, pending: true, ambiguous: null };
-    }
-  }
-
-  /**
    * 建档进度落盘。
    *
-   * 建档是远端写入，按项目约定必须把已经写出的 record_id 落盘：任务失败后重收 webhook
+   * 建档是远端写入，按项目约定必须把已经写出的 record_id 落盘：任务失败后重试
    * 会重跑一次到货解析，那时飞书列表可能还没读到刚建的货品，只靠"再查一遍"不足以防重复。
    *
    * 成本也一并落盘（arrival_cost_written）：写成本本身是**幂等赋值**，重复写同一个值不会
@@ -1926,7 +1670,8 @@ class PurchaseWebhookService {
       createdColors: colors.map((item) => ({ ...item })),
       createdLog: products.map((item) => ({ ...item })),
       colorTableLoaded: false,
-      // 本次到货的价格计划（item_no → 可信单价 / 冲突标记），processArrival 里填充。
+      // 本次到货的价格计划（item_no → 可信单价 / 冲突标记）。
+      // 由写草稿的一方从 task.recognized 里重建（见 ensureArrivalProducts）。
       arrivalCostPlan: null,
       // 已经处理过成本的货品（写成功，或已判定"不覆盖"）：重试时直接跳过，不重复写。
       costApplied: new Map(costWritten.map((item) => [item.product_record_id, item.cost])),
@@ -1982,10 +1727,10 @@ class PurchaseWebhookService {
   }
 
   /**
-   * 给识别到的新品建一条「货品信息」，然后原样返回新记录。
+   * 给新品建一条「货品信息」，然后原样返回新记录。
    *
-   * ⚠️ 只由 ensureArrivalProducts 调用，也就是**发完确认卡片之后**（含她点确认时的兜底重试）。
-   * 别把它挪回匹配那一步：产品负责人 2026-10-05 定的顺序是"发卡片之前不做创建"。
+   * ⚠️ 只由 ensureArrivalProducts 调用。它原先的时序约束（"发确认卡片之前不做创建"）已随
+   * 到货卡片退场失效——现在没有卡片了，调用方自己决定什么时候建；幂等规则一字不变。
    *
    * 只写确定知道的字段（产品负责人 2026-10-05 定稿的建档内容）：
    * 货号、颜色（关联）、供应商（关联，找不到就留空）、类别（识别出男/女才填，
@@ -2055,8 +1800,8 @@ class PurchaseWebhookService {
     context.createdLog.push({
       item_no: itemNo, color, product_record_id: recordId, supplier: supplierName, color_created: entry.color_created,
     });
-    // 建档时已经把成本写进去了：登记成"已处理"，processArrival 里的 applyArrivalCost
-    // 就不会再对它走一次"成本为空 → 写"的判断（重试也不会）。
+    // 建档时已经把成本写进去了：登记成"已处理"，applyArrivalCost 就不会再对它
+    // 走一次"成本为空 → 写"的判断（重试也不会）。
     if (createdAtCost !== null) {
       context.costApplied.set(recordId, createdAtCost);
       context.costWritten.push({ item_no: itemNo, color, product_record_id: recordId, cost: createdAtCost, source: 'create' });
@@ -2084,14 +1829,19 @@ class PurchaseWebhookService {
   }
 
   /**
-   * 到货新品建档 + 到货单价格写成本。**发完确认卡片之后**才跑；她点确认时再兜底跑一次。
+   * 到货新品建档 + 到货单价格写成本。
    *
-   * 为什么挪到卡片之后：产品负责人 2026-10-05 的口径是「发确认卡片之前不做创建的举动，
-   * 而是在发完之后同步做，然后用户点确认之后再给到创建好的链接」。卡片本身只需要
-   * "知道哪些货号是新品"（匹配时就知道），不需要货品记录真的存在，所以顺序可以这么排。
+   * ⚠️ 2026-10-05：**这个方法现在没有调用方**——它原本由 processArrival（发完卡片之后）
+   * 和到货卡片确认（confirmArrival 兜底）各调一次，两处都随「拍照识别」退场删掉了。
+   * **刻意保留**：它就是将来「对话到货」和「货品上新提前」要用的建档能力，
+   * 未合并分支 refactor/decouple-creation-and-stock 正把它原样剥成
+   * services/productCreationService.js（输入改成结构化明细、不认 OCR / 图片 / 到货任务）。
+   *
+   * 输入：task.draft.pending_creation（要建什么）+ task.recognized（价格来源）。
+   * 两者原先都由 processArrival 写进任务；形状不变，新流程照这个形状写就行。
    *
    * 幂等（三道，缺一不可）：
-   *   ① 同一个 taskId 的两次调用走 creationQueue **串行**——后台那次和她点确认那次
+   *   ① 同一个 taskId 的多次调用走 creationQueue **串行**——调用方之间
    *      不会同时从任务里读到"还没建"然后各建一条；
    *   ② buildArrivalCreationContext 从任务里恢复上次已建的 record_id
    *      （arrival_created_products 每建一条就落盘），重试时 ensureArrivalProduct
@@ -2112,9 +1862,22 @@ class PurchaseWebhookService {
       const pending = Array.isArray(draft.pending_creation) ? draft.pending_creation : [];
       const productTable = this.gateway.table('product');
       const context = this.buildArrivalCreationContext(task);
-      // 价格计划按**识别结果**重建（它随任务一起落盘了）：建档顺带写成本、老货品补成本，
-      // 两条路用的是同一份计划，规则仍然是"同货号价格冲突就整条不写"。
+      // 价格计划按任务里落盘的**到货明细**（task.recognized）重建：建档顺带写成本、
+      // 老货品补成本，两条路用的是同一份计划，规则仍然是"同货号价格冲突就整条不写"。
       context.arrivalCostPlan = buildArrivalCostPlan(task.recognized || []);
+      // 同一货号读出多个不同单价 → 整条不写，这里**只打一条 warn**（否则同一货号的每个
+      // 尺码都会重复报一次）。这段原先在 processArrival 里，识别退场后挪到"建计划的地方"——
+      // 规则不变：谁建计划，谁负责报冲突。
+      for (const entry of context.arrivalCostPlan.values()) {
+        if (!entry.conflict) continue;
+        logWarn('purchase.arrival.cost_conflict', {
+          task_id: taskId,
+          arrival_record_id: draft.arrival_record_id || '',
+          item_no: entry.item_no,
+          prices: entry.prices,
+          reason: '同一货号读出多个不同单价，不写成本，请人工核对',
+        });
+      }
 
       const failures = [];
       for (const entry of pending) {
@@ -2128,7 +1891,8 @@ class PurchaseWebhookService {
         }
       }
 
-      // 已经匹配到老货品的行：成本同样只在卡片发出之后写（"发卡片之前不写成本"）。
+      // 已经匹配到老货品的行：成本跟建档一起补（原来这个顺序由"发完卡片再写"决定，
+      // 卡片退场后只保留"成本和建档同一步完成"这个事实）。
       // 按 货号+颜色+货品 去重，免得同一货品的每个尺码各读一次表。
       const costSeen = new Set();
       for (const item of draft.actual || []) {
@@ -2148,8 +1912,8 @@ class PurchaseWebhookService {
       }
 
       // 建档结果直接从缓存取（含上一次重试已经建好、本次识别里不再出现的条目）。
-      // 恢复出来的条目没有回读数据：缺口按"读不到"处理（这些字段现在只进日志/草稿，
-      // 不再上卡片——卡片上不写"还差什么"，见 larkCards.purchaseArrivalDetailCard）。
+      // 恢复出来的条目没有回读数据：缺口按"读不到"处理（这些字段只进日志/草稿，
+      // 到货明细卡片已随识别链路退场删除，所以不再有"还差什么"上卡片这件事）。
       const createdEntries = [...context.productCache.values()];
       for (const entry of createdEntries) {
         if (!entry.gaps) entry.gaps = productInfoGaps(entry.record, productTable);
@@ -2206,7 +1970,7 @@ class PurchaseWebhookService {
    * 写入规则刻意保守（谁改这里都要先读一遍）：
    *   1. 只在成本**为空**时写（含数字 0 都算已有值，见 arrivalCostPolicy.isBlankCost）；
    *   2. 已有成本 → 不覆盖，记一条 warn（带 货号 / 已有值 / 识别到的值）；
-   *   3. 同一货号多行价格不一致 → 整条不写（conflict 在 processArrival 里统一记 warn）；
+   *   3. 同一货号多行价格不一致 → 整条不写（conflict 由调用方统一记一条 warn）；
    *   4. 价格转不成正数 → 不写（plan 里根本没有这个货号）；
    *   5. 重试不重复写：写成功的货品记进 context.costApplied 并落盘，重试直接跳过。
    *
@@ -2263,289 +2027,20 @@ class PurchaseWebhookService {
     return { applied: true, reason: 'written' };
   }
 
-  /**
-   * 解析采购到货记录。
-   *
-   * 「类型」决定用哪种识别：
-   * - 到货单：供应商出库单/送货单的表格照片，一张图里有很多「款号×颜色×尺码」
-   * - 其它（含空值、鞋盒）：一张张鞋盒照片。空值按鞋盒处理——这个单选字段是后来加的，
-   *   历史记录没有值，不能因此把它们判成失败
-   *
-   * 两条识别路径的输出同构（item_no / color / size / quantity 明细），
-   * 所以「匹配货品 → 与申请比对 → 草稿 → 卡片确认」的后续流程完全共用。
-   *
-   * 等待与提示这一段（她 2026-10-05 定的规则，阈值全部可配，见 startArrivalWaitWatch）：
-   *   ① 收到 → 立刻「收到到货申请，正在识别图片～」（和写「识别中」并行）
-   *   ② 每 1 分钟 → 补发「还在识别中，请稍等～」，直到处理完成 / 判失败 / 到达次数上限
-   *   ③ 2 分钟 → 放弃等待（**只记日志，不判失败、不取消请求**），结果回来照常处理
-   *   ④ 请求报错 → 判失败（process() 的统一出口）+ 告诉她原因
-   *   ⑤ 3 分钟 → 判失败；若结果之后才到 → 状态改回成功 + 卡片 + 说明
-   *   ⑥ 处理完成 → 出卡片，且不再补发提示
-   * 这套逻辑只包住"等待与提示"，匹配/建档/成本/出卡/入库仍全是原逻辑。
-   */
-  async processArrival(recordId, taskId) {
-    const table = this.gateway.table('purchaseArrival');
-    // 读这一条记录实测要几秒——单独记一笔，别和后面的耗时混在一起。
-    const readStartedAt = Date.now();
-    const record = await this.gateway.get('purchaseArrival', recordId);
-    logInfo('purchase.arrival.record.read', {
-      record_id: recordId, task_id: taskId, duration_ms: Date.now() - readStartedAt,
-    });
-    const fields = record?.fields || {};
-    const currentStatus = textValue(fields[table.fields.confirmStatus]);
-    if (['已确认', '已入库', '已取消'].includes(currentStatus)) return { ignored: true, status: currentStatus };
-    // 经办人先算出来并落盘：后面无论在哪一步失败，失败提示都还找得到人。
-    const operatorOpenId = this.recordOperator(record, table.fields.inspector);
-    await this.store.update(taskId, { arrival_operator_open_id: operatorOpenId }).catch(() => undefined);
-    const isDocument = textValue(fields[table.fields.type]).trim() === '到货单';
-    const tokens = attachmentTokens(fields[table.fields.images]);
-    if (!tokens.length) {
-      throw new Error(isDocument ? '采购到货记录没有到货单图片附件' : '采购到货记录没有鞋盒图片附件');
-    }
-    // 确认有图片、马上要开始处理了，先回一句「收到了」。
-    //
-    // 顺序很要紧：**发提示要排在「下载图片」「模型识别」之前**。
-    // 写状态本身要 2 秒、下载和识别要几十秒到几分钟——2026-10-05 用户实测
-    // 从记录进来到收到提示用了 10 秒，其中大头是读记录 8 秒 + 写状态 2 秒；
-    // 提示早一秒，她就少一秒"系统是不是没反应"。
-    // 发不出去也不影响识别（sendNoticeText 只记日志）。
-    //
-    // ② 的「写识别中」和「发提示」**并行**：两者都只依赖上面读到的这条记录，互不依赖。
-    // 串行的话要多等一次 IM 往返；Promise.all 把这段压到"较慢的那个"。
-    // 两个 prompt 各自吞自己的异常（发提示失败不影响写状态，反之由 process() 的
-    // 失败出口统一收尾），所以 Promise.all 只会在"写状态"失败时 reject——和改之前一致。
-    const noticeStartedAt = Date.now();
-    let tempDir = '';
-    let wait = null;
-    try {
-      await Promise.all([
-        this.notifyArrivalReceived(operatorOpenId, recordId, taskId),
-        this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别中', failureReason: '' }),
-      ]);
-      logInfo('purchase.arrival.notice.latency', {
-        record_id: recordId, task_id: taskId, duration_ms: Date.now() - noticeStartedAt,
-      });
-      tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'purchase-arrival-'));
-      // ⚠️ 等待定时器放在「识别中」**写完**之后才启动，不是图省事：失败定时器一旦开火就会写
-      // 「识别失败」，如果它比「识别中」那次写入还早，后写的「识别中」会把失败态盖掉，
-      // 记录就永远停在「识别中」（识别再报错时 process() 已经按"判过失败"跳过通知）。
-      // startedAt 仍按她感知到的"收到"那一刻算，所以耗时文案和产品语义都不变。
-      wait = this.startArrivalWaitWatch({ recordId, taskId, operatorOpenId, startedAt: noticeStartedAt });
-    } catch (error) {
-      // 这段还在下面那个大 try 之外：写「识别中」或建临时目录失败时必须自己收掉等待定时器，
-      // 否则它会一直补发「还在识别中」，3 分钟时还会再判一次失败（重复消息）。
-      if (wait) wait.stop();
-      throw error;
-    }
-    try {
-      const recognized = [];
-      for (let index = 0; index < tokens.length; index += 1) {
-        const filePath = path.join(tempDir, `${index + 1}.jpg`);
-        // 飞书 SDK 不设超时，附件下载可能一直挂着；到货链路必须能自己结束。
-        const media = await withTimeout(
-          this.client.drive.media.download({ path: { file_token: tokens[index] } }),
-          this.mediaTimeoutMs,
-          '下载到货图片',
-        );
-        await withTimeout(media.writeFile(filePath), this.mediaTimeoutMs, '保存到货图片');
-        // 模型客户端自己也有 timeout（见 doubaoService.getClient），这里再包一层是
-        // 兜住注入进来的识别器与「客户端超时没生效」的情况——超时必须能落到记录上。
-        recognized.push(...await withTimeout(
-          isDocument
-            ? this.recognizer.recognizePurchaseDocument(filePath)
-            : this.recognizer.recognizeLabels(filePath, 'purchase'),
-          this.recognitionTimeoutMs,
-          isDocument ? '识别到货单' : '识别鞋盒图片',
-        ));
-      }
-      if (!recognized.length) throw new Error(isDocument ? '到货单上没有识别到任何明细' : '图片上没有识别到任何鞋盒');
-      const arrivalTable = this.gateway.table('purchaseArrival');
-      const batchIds = linkedRecordIds(fields[arrivalTable.fields.batch]);
-      // 业务上存在「供应商直接送货、没有先走采购申请」的到货，这种记录不会选报货批次号。
-      // 没有批次号就不再报错——全部按实际到货入库，草稿里标记 direct_arrival，
-      // 卡片上写清楚"无申请直接到货"，免得她以为系统漏了什么。
-      // 选了多个批次号仍然是配置错误：无法判断该把入库记录挂到哪一批的申请上。
-      // 采购差异比对已经移除（见下方草稿处的说明），这里读申请只为了挂关联和回写到货状态。
-      if (batchIds.length > 1) throw new Error('采购到货只能选择一个报货批次号');
-      const directArrival = batchIds.length === 0;
-      const requestTable = this.gateway.table('purchaseRequest');
-      let batchNo = '';
-      let requests = [];
-      if (!directArrival) {
-        if (!this.gateway.table('purchaseOrderBatch').tableId) throw new Error('未配置报货批次表ID：FEISHU_V1_PURCHASE_ORDER_BATCH_TABLE_ID');
-        const batch = await this.gateway.get('purchaseOrderBatch', batchIds[0]);
-        const batchTable = this.gateway.table('purchaseOrderBatch');
-        batchNo = textValue(batch?.fields?.[batchTable.fields.batchNo]);
-        requests = (await this.gateway.listAll('purchaseRequest')).filter(
-          (item) => linkedRecordIds(item.fields?.[requestTable.fields.batchNo]).includes(batchIds[0])
-        );
-      }
-      const actual = [];
-      const unrecognized = [];
-      const supplierNameCache = {};
-      const productTable = this.gateway.table('product');
-      const supplierTable = this.gateway.table('supplier');
-      // 「待建档清单」：发卡片之前只识别、只匹配，不建货品、不写成本
-      //（产品负责人 2026-10-05 定的顺序）。这里按 货号+颜色 去重攒好，发完卡片交给
-      // ensureArrivalProducts 落库；卡片上的 🆕 也用这同一个判断，两边不会不一致。
-      const pendingCreation = [];
-      const pendingSeen = new Set();
-
-      // 价格计划：从识别结果里按货号汇总可信单价（同货号价格不一致的整条不写）。
-      // 冲突在这里**只打一条 warn**，不然同一货号的每个尺码都会重复报一次。
-      // 这份计划只是先算出来放进待建档清单/日志；真正的写入在发完卡片之后。
-      const arrivalCostPlan = buildArrivalCostPlan(recognized);
-      for (const entry of arrivalCostPlan.values()) {
-        if (!entry.conflict) continue;
-        logWarn('purchase.arrival.cost_conflict', {
-          record_id: recordId,
-          item_no: entry.item_no,
-          prices: entry.prices,
-          reason: '同一货号在到货单上读出多个不同单价，不写成本，请人工核对',
-        });
-      }
-
-      for (const raw of recognized) {
-        try {
-          const resolved = await this.resolveArrivalProduct(raw);
-          const { product } = resolved;
-          // 从货品信息表关联获取供应商名称（新品还没有货品记录，直接用识别到的供应商名）。
-          let supplierName = raw.supplier || '';
-          const productSupplierIds = linkedRecordIds(product?.record?.fields?.[productTable.fields.supplier]);
-          if (productSupplierIds.length > 0) {
-            const supplierId = productSupplierIds[0];
-            if (!supplierNameCache[supplierId]) {
-              const supplierRecord = await this.gateway.get('supplier', supplierId);
-              supplierNameCache[supplierId] = textValue(supplierRecord?.fields?.[supplierTable.fields.name]);
-            }
-            supplierName = supplierNameCache[supplierId] || supplierName;
-          }
-          const itemNo = String(raw.item_no || '').trim();
-          const color = String(raw.color || '').trim();
-          // ⚠️ 成本**不在这里写**（产品负责人：发卡片之前不建货品、不写成本）。写成本统一挪到
-          // 发完卡片之后的 ensureArrivalProducts，那里已有的规则一字不变（只写空成本、
-          // 同货号价格冲突不写、写失败不挡入库、重试不重复写）。
-          if (resolved.pending) {
-            // 「待建档清单」按 货号+颜色 去重：同一新品的多个尺码只建一条货品。
-            // 这份清单就是"实际要建什么"，卡片上标了哪几个货号是新品也来自同一个判断，
-            // 两边不会不一致（她最关心的确定性）。
-            const pendingKey = `${itemNo}|${color}`;
-            if (!pendingSeen.has(pendingKey)) {
-              pendingSeen.add(pendingKey);
-              const costEntry = arrivalCostPlan.get(itemNo);
-              pendingCreation.push({
-                item_no: itemNo,
-                color,
-                supplier: supplierName,
-                // 品名（男/女）原样带过去：建档时按它定类别，认不出就留空，不猜。
-                gender: raw.gender,
-                category: raw.category,
-                // 识别到的成本也记进清单：草稿里一眼能看到"要建成什么样"，线上也好排查。
-                cost: costEntry && !costEntry.conflict ? costEntry.cost : null,
-              });
-            }
-          }
-          actual.push({
-            product_record_id: product?.recordId || '',
-            // 新品还没建档，「编号」公式当然也没有：先用「货号+颜色」把明细显示出来。
-            product_number: textValue(product?.record?.fields?.[productTable.fields.number])
-              || (resolved.pending ? `${itemNo}${color}` : ''),
-            item_no: raw.item_no,
-            color: raw.color,
-            size: Number(raw.size),
-            quantity: Number(raw.quantity || 1),
-            // 单据上识别到的单件价：只用于卡片上显示、让她核对写进成本的数对不对，
-            // 入库链路（采购入库/库存）不读这个字段。没有价格时是 undefined，格子少一行。
-            unit_cost: raw.unit_cost,
-            supplier: supplierName,
-            // 匹配时货品表里没有 = 新品（待建档）。卡片按它在**货号**上标 🆕，
-            // 后台按它建档——同一个标志，不会一个说新品、另一个没建。
-            created_product: resolved.pending,
-            // 该货号+颜色在货品表里命中多条时，记下「匹配到 N 条、取了哪条」，卡片要标注。
-            ambiguous_match: resolved.ambiguous,
-          });
-        } catch (error) {
-          unrecognized.push({ ...raw, error: error.message });
-          logWarn('purchase.arrival.product_not_found', { record_id: recordId, item_no: raw.item_no, color: raw.color, size: raw.size, error: error.message });
-        }
-      }
-      if (actual.length === 0) {
-        throw new Error(`所有货品都识别失败：${unrecognized.map(u => `${u.item_no || ''}${u.color || ''}`).join('、')}`);
-      }
-      const groupedActual = aggregateArrivalItems(actual);
-      // 采购差异比对已按产品负责人要求整体移除（未来架构：到货在采购申请基础上修改，
-      // 差异比对不再需要；产品负责人 2026-10-05 确认）。草稿里仍然保留 requests，
-      // 因为入库时要把每条采购入库记录挂回对应的采购申请，并回写申请的到货状态。
-      const operatorOpenId = this.recordOperator(record, arrivalTable.fields.inspector);
-      const draft = {
-        arrival_record_id: recordId,
-        direct_arrival: directArrival,
-        batch_record_id: batchIds[0] || '',
-        batch_no: batchNo,
-        operator_open_id: operatorOpenId, requests, actual: groupedActual, unrecognized,
-        // 待建档清单（货号 + 颜色 + 供应商 + 品类 + 成本）：卡片发出去之后按这份清单建档，
-        // 建完再往 created_products 里回填记录链接（确认后的结果卡片要用）。
-        pending_creation: pendingCreation,
-        // 这两项在发卡片时还是空的——建档发生在下面 sendCard 之后（她看卡片的时候后台正在建）。
-        created_products: [],
-        created_colors: [],
-        // 建档进度状态机：pending（卡片已发、还在建）→ done / failed（失败原因写在 creation_error）。
-        // 确认入库时据此决定"给链接 / 正在建 / 告诉她失败原因"。
-        creation_state: pendingCreation.length ? 'pending' : 'done',
-        creation_error: '',
-      };
-      // ⑥ 处理完成：先在**同步段**里停掉所有等待定时器，并记下"是不是已经判过失败"。
-      //    必须在写「识别成功」之前停：失败定时器一旦开火就会去写失败态，
-      //    两边顺序反过来，记录最终会停在「识别失败」。
-      const rescuedFromTimeout = wait ? wait.stop() : false;
-      // 已经发出去的那条「还在识别中」先落地，别让她先看到卡片、后面才冒出一条提示。
-      if (wait?.pendingNotice) await wait.pendingNotice;
-      // 判失败那一路可能还在写记录、发消息，等它落定再写成功，保证顺序是"先失败、后改回成功"。
-      if (wait?.failureSettled) await wait.failureSettled;
-      await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别成功', confirmStatus: '待确认', failureReason: '' });
-      await this.store.update(taskId, { recognized, draft, status: 'awaiting_confirmation' });
-      await this.sendCard(operatorOpenId, purchaseArrivalDetailCard(taskId, draft));
-      // ⭐⭐ 「发卡片」与「建档」的分界线就在这里 ⭐⭐
-      // 上面：只有识别、匹配、组装草稿 + 发卡片（一次 product 表的写入都没有）。
-      // 下面：才建档、才写成本。产品负责人 2026-10-05 的原话：
-      //「在发确认卡片之前不做创建的举动，而是在发完之后同步做，然后用户点确认之后再给到创建好的链接」。
-      //
-      // 建档失败**不能**抛出去：抛出去 process() 会把这条任务判 failed，还会给记录写
-      //「识别失败」——识别明明成功了，那是假失败。失败落进草稿（creation_state='failed'
-      // + 原因），她点确认时兜底重试，重试还失败就明确告诉她原因（见 handleCardActionLocked）。
-      const creation = await this.ensureArrivalProducts(taskId, { reason: 'card_sent' }).catch((error) => {
-        logWarn('purchase.arrival.creation.crashed', { record_id: recordId, task_id: taskId, error: error.message });
-        return { state: 'failed', created: 0, failures: [{ error: error.message }] };
-      });
-      logInfo("purchase.arrival.card.sent", { record_id: recordId, task_id: taskId, direct_arrival: directArrival, arrival_type: isDocument ? '到货单' : '鞋盒', item_count: actual.length, unrecognized_count: unrecognized.length, new_product_count: pendingCreation.length, created_product_count: creation.created || 0, creation_state: creation.state, cost_written_count: creation.cost_written_count || 0, rescued_from_timeout: rescuedFromTimeout });
-      if (rescuedFromTimeout) {
-        // ⑤ 迟到结果救回：判失败之后结果才回来。记录状态已经改回「识别成功」，卡片也已经发了，
-        // 再补一条说明，告诉她刚才那条其实识别出来了、可以直接确认入库。
-        // ⚠️ 这里**不写任何入库记录**：入库永远要她点卡片确认，走 confirmArrival 那套既有幂等
-        // （inbound_created 落盘 + 按到货记录回查远端 + inflightInbound），
-        // 所以"先判失败、后到结果"不会重复写入库、也不会重复扣库存。
-        await this.notifyArrivalRescued(operatorOpenId, Date.now() - wait.startedAt, recordId, taskId);
-      }
-      return { status: 'awaiting_confirmation', item_count: actual.length, created_product_count: creation.created || 0, creation_state: creation.state, rescued_from_timeout: rescuedFromTimeout };
-    } catch (error) {
-      // 只记日志再抛出：把记录推出「识别中」和通知验收人统一交给 process() 的
-      // failArrival 一处完成（见那里的注释），避免同一次失败写两遍状态、发两遍消息。
-      // 例外：等待超时那一路已经判过失败了，就把标记挂到 error 上让 process() 跳过通知。
-      const alreadyFailed = wait ? wait.stop() : false;
-      if (wait?.failureSettled) await wait.failureSettled;
-      if (alreadyFailed) {
-        error.arrivalFailureAlreadyNotified = true;
-        logWarn('purchase.arrival.recognition.failed_after_timeout', { record_id: recordId, task_id: taskId, error: error.message });
-      } else {
-        logWarn('purchase.arrival.recognition.failed', { record_id: recordId, task_id: taskId, error: error.message });
-      }
-      throw error;
-    } finally {
-      if (wait) wait.stop();
-      // tempDir 为空说明上面那段守卫已经收过尾（还没建出目录），不用删。
-      if (tempDir) await fs.promises.rm(tempDir, { recursive: true, force: true });
-    }
-  }
+  // ── 已删除：processArrival（拍照识别的唯一入口）────────────────────────────
+  // 它做过的事：读「采购到货」记录 → 写「识别中」→ 下载图片 → 视觉模型识别（鞋盒 / 到货单）
+  // → 逐行匹配货品 → 组装草稿 → 写「识别成功」→ 发到货明细卡片 → 后台建档。
+  // 2026-10-05 业务负责人删掉「类型」「识别状态」「识别失败原因」三个字段并决定这条链路退场，
+  // 整段随之删除：它写的字段在表里已不存在，留着只会伪装成「识别还在跑」。
+  //
+  // ⚠️ 保留下来的（现在都没有调用方，等新的「对话到货」流程接）：
+  //   · confirmArrival    —— 写「采购入库」+ 调库存 applyPurchase + 回写申请/到货状态
+  //   · ensureArrivalProducts / ensureArrivalProduct / ensureArrivalColor / applyArrivalCost
+  //                       —— 新品建档 + 成本（未合并分支 refactor/decouple-creation-and-stock
+  //                          正把它剥成 services/productCreationService.js）
+  //   · aggregateArrivalItems / findRequestRowForInbound / resolvePurchaseInboundState
+  // 它们的输入（draft.actual / pending_creation / task.recognized）从此由新流程写入，
+  // 形状与 processArrival 原先落的草稿完全一致。
 
   /**
    * 在草稿保存的采购申请明细里，找「同一货品 + 同一尺码」的那一条。
@@ -2607,40 +2102,9 @@ class PurchaseWebhookService {
     if (!task?.draft) throw new Error('采购申请草稿不存在或已过期');
     if (task.draft.operator_open_id !== operatorOpenId) throw new Error('只能由原始填写人确认采购流程');
     if (task.status === 'cancelled') return { toast: { type: 'info', content: '本次采购流程已取消' } };
-    if (action === 'cancel_purchase_arrival') {
-      if (task.status === 'posted') return { toast: { type: 'info', content: '采购到货已入库，不能取消' } };
-      // ⚠️ 刻意**不**撤销已经建好的新品货品（保持改动前的口径）：建档是"补资料"，
-      // 货已经在仓库里了，取消的只是"这一批要不要入库"，不是"这个货品存不存在"。
-      // 删掉刚建的货品反而会把别的到货/销售引用弄断。
-      await this.gateway.update('purchaseArrival', task.draft.arrival_record_id, { confirmStatus: '已取消' });
-      await this.store.update(taskId, { status: 'cancelled' });
-      this.inflightInbound.delete(taskId);
-      // 灰色状态卡不给新品链接：她刚说"取消"，这里再塞链接只会让人以为取消失败了。
-      await this.updatePurchaseActionCard(task, event, purchaseStatusCard(task.draft, '采购到货已取消', '用户已取消本次采购到货。', 'grey'));
-      return { toast: { type: 'info', content: '采购到货已取消' } };
-    }
-    if (action === 'confirm_purchase_arrival') {
-      if (task.status === 'posted') return { toast: { type: 'info', content: '采购到货已入库' } };
-      // 正式写库前先落 posting：崩溃后重进这个流程会按已持久化的进度恢复，
-      // 而不是因为「看到 posting 就一直提示处理中」卡死。
-      await this.store.update(taskId, { status: 'posting' });
-      await this.updatePurchaseActionCard(task, event, purchaseStatusCard(task.draft, '采购到货处理中', '已收到确认，正在入库；请勿重复点击。', 'blue'));
-      let result;
-      try {
-        result = await this.confirmArrival(taskId, task, operatorOpenId);
-      } catch (error) {
-        // 失败也要带最新草稿：建档失败时原因就写在里面（她点确认之后才知道建没建好）。
-        const failed = (await this.store.get(taskId)) || task;
-        await this.updatePurchaseActionCard(task, event, purchaseStatusCard(failed.draft || task.draft, '采购到货未完成', `已停止自动处理：${error.message}`, 'red', { showNewProducts: true }));
-        throw error;
-      }
-      // 处理完成后更新卡片为"已入库"状态。
-      // ⚠️ 必须重新读一次任务：新品的记录链接（created_products[].url）是确认过程中才回填的，
-      // 用动作开始时读到的旧草稿会把链接整段丢掉——产品负责人要的正是这一步的链接。
-      const fresh = (await this.store.get(taskId)) || task;
-      await this.updatePurchaseActionCard(task, event, purchaseStatusCard(fresh.draft || task.draft, '采购到货已入库', '入库完成，库存已更新。', 'green', { showNewProducts: true }));
-      return result;
-    }
+    // ⚠️ 2026-10-05：`confirm_purchase_arrival` / `cancel_purchase_arrival` 两个动作
+    // 已随「拍照识别」退场删除（见 PURCHASE_CARD_ACTIONS 的注释）。到货的确认状态
+    // （待确认/已确认/已取消…）现在是表里的普通字段，需要时人工改。
     if (action === 'cancel_purchase_request') {
       if (task.status === 'posted') return { toast: { type: 'info', content: '采购申请已生成，不能取消' } };
       // 支持批量和单条两种取消
@@ -2807,10 +2271,34 @@ class PurchaseWebhookService {
     return { toast: { type: 'success', content: `采购申请已生成：${plan.batch_no}（共${requestIds.length}条明细）` }, ...posting };
   }
 
+  /**
+   * 到货确认入库：写「采购入库」→ 调库存 applyPurchase → 回写采购申请的到货状态
+   * → 把到货记录的「确认状态」改成已确认。
+   *
+   * ⚠️ 2026-10-05：**这个方法现在没有调用方**。它原先由到货明细卡片的
+   * `confirm_purchase_arrival` 动作调用（见 handleCardActionLocked），卡片已随
+   * 「拍照识别」退场删除。
+   *
+   * **刻意保留**：产品负责人的口径是"未来的对话到货还要入库"——「采购入库」表、
+   * 库存调用（inventory.applyPurchase）和这一段幂等写入就是那个能力本体。
+   * 现在的状态是"孤儿能力，等新流程接"，不是死代码清理对象。
+   *
+   * 幂等（缺一不可）：inbound_created 落盘 + 按到货记录回查远端 + inflightInbound，
+   * 重复调用不会写出第二条采购入库、也不会重复加库存。
+   *
+   * 并发：同一个 taskId 的确认走 confirmationQueue **串行**。这条保证原先由
+   * handleCardActionLocked（到货卡片那个入口）提供，卡片删除后原样挪进来——
+   * 否则两个调用方同时确认时，两边都会在对方落盘之前读到"还没写过"，各写一条入库。
+   */
   async confirmArrival(taskId, task, operatorOpenId) {
+    return this.confirmationQueue.run(taskId, () => this.confirmArrivalLocked(taskId, task, operatorOpenId));
+  }
+
+  /** 真正的入库实现：只由 confirmArrival 串行调用，不要直接调（会丢掉串行保证）。 */
+  async confirmArrivalLocked(taskId, task, operatorOpenId) {
     if (task.status === 'posted') return { toast: { type: 'info', content: '采购到货已入库' } };
-    // 「等一小会儿」：她点确认时如果后台建档还没跑完（或上一次失败了），在这里同步补一次。
-    // 建档是幂等的、并且和后台那次走同一个 creationQueue，所以不会建出第二条。
+    // 她点确认时如果建档还没跑完（或上一次失败了），在这里同步补一次。
+    // 建档是幂等的、并且和别的调用方走同一个 creationQueue，所以不会建出第二条。
     // 入库必须有货品记录，这一步不能省；失败就明确告诉她原因，别静默也不要"假装入库了"。
     const creation = await this.ensureArrivalProducts(taskId, { reason: 'confirm' });
     if (creation.state === 'failed') {
