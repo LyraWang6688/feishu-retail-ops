@@ -69,4 +69,5 @@ ADR 里的每条事实主张都要能追溯到证据，并显式区分三类：
 | ADR | 标题 | Status | Date |
 | --- | --- | --- | --- |
 | [ADR-001](ADR-001-separate-ai-interpretation-from-deterministic-business-execution.md) | Separate AI Interpretation from Deterministic Business Execution | Accepted | 2026-09-24 |
-| [ADR-002](ADR-002-robot-entry-triage-and-decoupling.md) | 机器人入口三分（录入/查询/回答）与解耦；状态以表为准；明确不做自主智能体 |
+| [ADR-002](ADR-002-robot-entry-triage-and-decoupling.md) | 机器人入口三分（录入/查询/回答）与解耦；状态以表为准；明确不做自主智能体 | Accepted | 2026-10-05 |
+| [ADR-003](ADR-003-ai-role-and-future-host-boundary.md) | AI 的定位是「不确定性收口器」；未来宿主只能接管无副作用的域 | Accepted | 2026-10-05 |

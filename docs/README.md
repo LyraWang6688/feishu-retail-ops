@@ -29,6 +29,7 @@
 | [adr/README.md](adr/README.md) | ADR 治理规则与索引 |
 | [adr/ADR-001-separate-ai-interpretation-from-deterministic-business-execution.md](adr/ADR-001-separate-ai-interpretation-from-deterministic-business-execution.md) | AI 负责理解与结构化，确定性后端负责正式业务执行 |
 | [adr/ADR-002-robot-entry-triage-and-decoupling.md](adr/ADR-002-robot-entry-triage-and-decoupling.md) | 机器人入口三分与解耦；状态以表为准；不做自主智能体 |
+| [adr/ADR-003-ai-role-and-future-host-boundary.md](adr/ADR-003-ai-role-and-future-host-boundary.md) | AI 的定位是「不确定性收口器」；未来宿主只能接管无副作用的域（决策三为未来方向 · 当前不实施） |
 
 ## 3. 现行设计参考（Design Baseline + 状态说明）
 
