@@ -22,6 +22,7 @@ const { renderPurchaseRequestPng } = require('./purchaseRequestImageService');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { IDEMPOTENCY_KEY_FIELD, createOnceByKey } = require('../infrastructure/idempotencyKey');
 const { logError, logInfo, logWarn } = require('../utils/logger');
+const { withTimeout, withTimeoutProxy } = require('../utils/withTimeout');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
 
 // 采购卡片上可以触发副作用（写采购事实）的动作。
@@ -67,6 +68,33 @@ const larkErrorText = (error) => {
   const message = data?.msg || error?.message || 'unknown';
   return code ? `${message} (Code: ${code})` : message;
 };
+
+// 「识别失败原因」这一列是写给验收人看的，不是给日志看的：只能是一句短的人话。
+// 原文太长（贴一段模型返回或 axios 堆栈）她看不懂，也就不看了。
+const humanizeArrivalFailure = (error) => {
+  const message = String(error?.message || '未知错误');
+  // 超时有好几种长相：我们自己包的 TimeoutError（"…超时"）、axios（ETIMEDOUT /
+  // ECONNABORTED）、OpenAI SDK 自己的 APIConnectionTimeoutError（"Request timed out."）。
+  // 都得归到同一句人话上，否则用户会看到一列英文。
+  if (error?.name === 'TimeoutError' || error?.name === 'APIConnectionTimeoutError' ||
+    error?.code === 'ETIMEDOUT' || error?.code === 'ECONNABORTED' ||
+    /超时|timed?\s*out/i.test(message)) {
+    return '识别超时';
+  }
+  if (/没有.*(图片|附件)/.test(message)) return '没读到图片';
+  if (/识别不到|没有识别到/.test(message)) return '图片里没识别到明细';
+  if (/只能选择一个报货批次号/.test(message)) return '报货批次号选多了';
+  const compact = message.replace(/\s+/g, ' ').trim();
+  return compact.length > 40 ? `${compact.slice(0, 40)}…` : compact;
+};
+
+// 失败提示说人话、给出下一步动作：只告诉她「失败了」等于把问题丢回给她。
+const arrivalFailureNotice = (reason) =>
+  `到货图片识别没成功（${reason}），请重传一次图片，或直接在记录里手工填写～`;
+
+// 收到就开始处理时先回一句。识别（尤其是模型那一步）可能要几十秒到几分钟，
+// 这段时间她看不到任何反馈，会以为系统卡死——2026-10-05 的线上反馈就是这样。
+const ARRIVAL_RECEIVED_NOTICE = '收到到货申请，正在识别图片～';
 
 // 鞋盒/吊牌上的「品名」：女鞋 → B、男鞋 → A。单选选项就是 A/B 两个字。
 // 识别不出性别就留空：默认成 A 会把女鞋写进男鞋，比空着更难发现。
@@ -114,8 +142,29 @@ class PurchaseWebhookService {
       const { appId, appSecret } = getLarkAgentCredentials();
       return new lark.Client({ appId, appSecret, logger: larkLogger });
     })();
-    this.gateway = options.gateway || new V1BitableGateway({ client: this.client });
+    // 对外调用的超时（毫秒）。为什么每个都要有：见 utils/withTimeout.js 的文件头——
+    // 到货链路 2026-10-05 就是写完「识别中」之后永远等不到任何一个 await 返回。
+    // 0 表示不设超时，只有极少数测试会这么用。
+    this.mediaTimeoutMs = options.mediaTimeoutMs ?? 30_000; // 下载附件：101KB 的图正常 0.3 秒
+    this.recognitionTimeoutMs = options.recognitionTimeoutMs ?? 60_000; // 模型识别
+    this.imTimeoutMs = options.imTimeoutMs ?? 15_000; // 飞书消息
+    // 失败态写入本身也可能失败，写不出去就等于记录永远停在「识别中」，所以重试几次。
+    this.failureWriteAttempts = options.failureWriteAttempts ?? 3;
+    this.failureWriteRetryDelayMs = options.failureWriteRetryDelayMs ?? 200;
+    this.gatewayTimeoutMs = options.gatewayTimeoutMs ?? 60_000;
+    // 本服务里所有 gateway 调用都套上超时。这里包的是本服务持有的引用，
+    // 不影响别的服务（生产上 LarkMvpService 跟销售链路共用的是另一个引用）。
+    this.gateway = withTimeoutProxy(options.gateway || new V1BitableGateway({ client: this.client }), {
+      timeoutMs: this.gatewayTimeoutMs,
+      prefix: 'gateway.',
+    });
     this.references = options.references || new V1ReferenceResolver(this.gateway);
+    // 注入进来的 references（生产上它内部拿的是没包超时的 gateway）也要包一层：
+    // 到货逐行匹配货品时它每次都会全表扫一遍，是这一步里最容易挂住的地方。
+    // 没注入时 this.references 已经基于包过超时的 gateway，不必再包。
+    this.arrivalReferences = options.references
+      ? withTimeoutProxy(this.references, { timeoutMs: this.gatewayTimeoutMs, prefix: 'references.' })
+      : this.references;
     // 「尺码」是指向「尺码管理」的关联字段，报单解析与到货比对都通过它换算。
     this.getSizeReferences = createSizeReferenceAccess({
       gateway: this.gateway, sizeReferences: options.sizeReferences,
@@ -231,9 +280,72 @@ class PurchaseWebhookService {
         await this.gateway.update('purchaseReport', recordId, { status: '解析失败', failureReason: error.message }).catch(() => undefined);
       }
       if (kind === 'arrival') {
-        await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别失败', failureReason: error.message }).catch(() => undefined);
+        // 到货的失败只有这一处出口（processArrival 只负责记录日志再抛出）：
+        // 不管是超时、模型报错还是没预料到的异常，都必须把记录推出「识别中」并告诉她，
+        // 否则她看到的就只是永远「识别中」——只写日志等于没发生，她看不到日志。
+        // 单一出口还有一个好处：状态和通知不会重复发、也不会漏。
+        await this.failArrival(taskId, recordId, error);
       }
       throw error;
+    }
+  }
+
+  /**
+   * 到货识别失败的统一收尾：先把记录推出「识别中」，再通知验收人。
+   *
+   * 顺序不能反：她能看到的第一个事实是记录上的「识别失败 + 原因」，
+   * 消息只是催促她处理。写入失败也必须继续发消息（消息里已经带了原因）。
+   */
+  async failArrival(taskId, recordId, error) {
+    const reason = humanizeArrivalFailure(error);
+    const marked = await this.markArrivalRecognitionFailed(recordId, reason);
+    logWarn('purchase.arrival.recognition.failed', {
+      record_id: recordId, task_id: taskId, reason, failure_marked: marked, error: error.message,
+    });
+    const operatorOpenId = await this.resolveArrivalOperator(taskId, recordId);
+    await this.notifyArrivalFailed(operatorOpenId, reason, recordId, taskId);
+    return { reason, marked };
+  }
+
+  /**
+   * 把「识别中」推出去。这是硬要求：记录不能永远停在「识别中」。
+   * 写飞书这一步本身也会失败（它同样是没有超时的外部调用），所以重试几次；
+   * 全部失败就大声记日志——至少人工能查到，不会静默。
+   */
+  async markArrivalRecognitionFailed(recordId, reason) {
+    for (let attempt = 1; attempt <= this.failureWriteAttempts; attempt += 1) {
+      try {
+        await this.gateway.update('purchaseArrival', recordId, {
+          recognitionStatus: '识别失败',
+          failureReason: reason,
+        });
+        return true;
+      } catch (error) {
+        logWarn('purchase.arrival.failure_status.write_failed', {
+          record_id: recordId, attempt, max_attempts: this.failureWriteAttempts, error: error.message,
+        });
+        if (attempt < this.failureWriteAttempts) await sleep(this.failureWriteRetryDelayMs);
+      }
+    }
+    logError('purchase.arrival.failure_status.gave_up', { record_id: recordId, reason });
+    return false;
+  }
+
+  /**
+   * 失败提示发给谁：记录上的「验收人」就是提交这条到货记录的人。
+   * 处理一开始就把 open_id 落进任务，所以即使失败发生在读记录之后、识别之前，
+   * 这里也还找得到人；任务里没有（比如读记录本身就失败了）就回读一次记录。
+   */
+  async resolveArrivalOperator(taskId, recordId) {
+    const task = await this.store.get(taskId).catch(() => null);
+    if (task?.arrival_operator_open_id) return task.arrival_operator_open_id;
+    try {
+      const table = this.gateway.table('purchaseArrival');
+      const record = await this.gateway.get('purchaseArrival', recordId);
+      return this.recordOperator(record, table.fields.inspector);
+    } catch (error) {
+      logWarn('purchase.arrival.operator.read_failed', { record_id: recordId, error: error.message });
+      return '';
     }
   }
 
@@ -415,11 +527,64 @@ class PurchaseWebhookService {
 
   async sendCard(openId, card) {
     if (!openId) throw new Error('采购记录缺少经办人 open_id，无法发送确认卡片');
-    const response = await this.client.im.message.create({
-      params: { receive_id_type: 'open_id' },
-      data: { receive_id: openId, msg_type: 'interactive', content: JSON.stringify(card) },
-    });
+    const response = await withTimeout(
+      this.client.im.message.create({
+        params: { receive_id_type: 'open_id' },
+        data: { receive_id: openId, msg_type: 'interactive', content: JSON.stringify(card) },
+      }),
+      this.imTimeoutMs,
+      '发送采购确认卡',
+    );
     if (response.code !== 0) throw new Error(`发送采购确认卡失败: ${response.msg} (Code: ${response.code})`);
+  }
+
+  /**
+   * 给用户发一条纯文字提示，**尽力而为**：发不出去只记日志，不抛错。
+   *
+   * 复用现有那套 IM 能力（`client.im.message.create` + `msg_type: 'text'`），
+   * 和 sendCard / sendText 完全同一条通道，不另起一套。
+   *
+   * 刻意只记日志、不抛错：这类提示是"顺带告诉她一声"，发不出去不能反过来
+   * 把识别流程搞失败（识别结果已经写进记录了，卡片才是关键产物）。
+   *
+   * ⚠️ 名字必须和下面的 `sendText` 区分开（合并 #57 时吃过这个亏）：
+   * 两个方法都在本类里、名字都叫 `sendText` 时，**后定义的那个会静默覆盖前者**
+   * （JS 类体后面的同名方法赢），于是本方法"只记日志"的语义被 `sendText` 的
+   * "失败即抛错"顶掉——「收到即提示」一旦发失败就会把整条到货识别打断，
+   * 货品根本来不及建档。语义不同就必须名字不同，别再并回去。
+   */
+  async sendNoticeText(openId, content) {
+    if (!openId) {
+      logWarn('purchase.text.skipped', { reason: 'missing_open_id', content });
+      return false;
+    }
+    try {
+      const response = await withTimeout(
+        this.client.im.message.create({
+          params: { receive_id_type: 'open_id' },
+          data: { receive_id: openId, msg_type: 'text', content: JSON.stringify({ text: content }) },
+        }),
+        this.imTimeoutMs,
+        '发送飞书消息',
+      );
+      if (response.code !== 0) throw new Error(`${response.msg} (Code: ${response.code})`);
+      return true;
+    } catch (error) {
+      logWarn('purchase.text.failed', { content, error: error.message });
+      return false;
+    }
+  }
+
+  async notifyArrivalReceived(openId, recordId, taskId) {
+    const sent = await this.sendNoticeText(openId, ARRIVAL_RECEIVED_NOTICE);
+    logInfo('purchase.arrival.received_notice', { record_id: recordId, task_id: taskId, sent });
+    return sent;
+  }
+
+  async notifyArrivalFailed(openId, reason, recordId, taskId) {
+    const sent = await this.sendNoticeText(openId, arrivalFailureNotice(reason));
+    logInfo('purchase.arrival.failure_notice', { record_id: recordId, task_id: taskId, reason, sent });
+    return sent;
   }
 
   recordOperator(record, fieldName) {
@@ -736,7 +901,9 @@ class PurchaseWebhookService {
    */
   async resolveArrivalProduct(raw, context) {
     try {
-      const product = await this.references.resolveProduct({ itemNo: raw.item_no, color: raw.color });
+      // 用包过超时的 references：这一步每行都会全表扫一遍货品，是到货链路里
+      // 最容易挂住的地方（见构造函数的 arrivalReferences 注释）。
+      const product = await this.arrivalReferences.resolveProduct({ itemNo: raw.item_no, color: raw.color });
       const ambiguousCount = Number(product.ambiguousCount) || 0;
       const ambiguous = ambiguousCount > 1
         ? {
@@ -1034,22 +1201,40 @@ class PurchaseWebhookService {
     const fields = record?.fields || {};
     const currentStatus = textValue(fields[table.fields.confirmStatus]);
     if (['已确认', '已入库', '已取消'].includes(currentStatus)) return { ignored: true, status: currentStatus };
+    // 经办人先算出来并落盘：后面无论在哪一步失败，失败提示都还找得到人。
+    const operatorOpenId = this.recordOperator(record, table.fields.inspector);
+    await this.store.update(taskId, { arrival_operator_open_id: operatorOpenId }).catch(() => undefined);
     await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别中', failureReason: '' });
     const isDocument = textValue(fields[table.fields.type]).trim() === '到货单';
     const tokens = attachmentTokens(fields[table.fields.images]);
     if (!tokens.length) {
       throw new Error(isDocument ? '采购到货记录没有到货单图片附件' : '采购到货记录没有鞋盒图片附件');
     }
+    // 确认有图片、马上要开始处理了，先回一句「收到了」。
+    // 必须在识别之前发：识别（模型那一步）可能几十秒到几分钟，这段时间的沉默
+    // 就是「系统卡死了」的来源。发不出去也不影响识别（sendText 只记日志）。
+    await this.notifyArrivalReceived(operatorOpenId, recordId, taskId);
     const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'purchase-arrival-'));
     try {
       const recognized = [];
       for (let index = 0; index < tokens.length; index += 1) {
         const filePath = path.join(tempDir, `${index + 1}.jpg`);
-        const media = await this.client.drive.media.download({ path: { file_token: tokens[index] } });
-        await media.writeFile(filePath);
-        recognized.push(...await (isDocument
-          ? this.recognizer.recognizePurchaseDocument(filePath)
-          : this.recognizer.recognizeLabels(filePath, 'purchase')));
+        // 飞书 SDK 不设超时，附件下载可能一直挂着；到货链路必须能自己结束。
+        const media = await withTimeout(
+          this.client.drive.media.download({ path: { file_token: tokens[index] } }),
+          this.mediaTimeoutMs,
+          '下载到货图片',
+        );
+        await withTimeout(media.writeFile(filePath), this.mediaTimeoutMs, '保存到货图片');
+        // 模型客户端自己也有 timeout（见 doubaoService.getClient），这里再包一层是
+        // 兜住注入进来的识别器与「客户端超时没生效」的情况——超时必须能落到记录上。
+        recognized.push(...await withTimeout(
+          isDocument
+            ? this.recognizer.recognizePurchaseDocument(filePath)
+            : this.recognizer.recognizeLabels(filePath, 'purchase'),
+          this.recognitionTimeoutMs,
+          isDocument ? '识别到货单' : '识别鞋盒图片',
+        ));
       }
       if (!recognized.length) throw new Error(isDocument ? '到货单上没有识别到任何明细' : '图片上没有识别到任何鞋盒');
       const arrivalTable = this.gateway.table('purchaseArrival');
@@ -1179,7 +1364,8 @@ class PurchaseWebhookService {
       logInfo("purchase.arrival.card.sent", { record_id: recordId, task_id: taskId, direct_arrival: directArrival, arrival_type: isDocument ? '到货单' : '鞋盒', item_count: actual.length, unrecognized_count: unrecognized.length, created_product_count: createdProducts.length, created_color_count: creationContext.createdColors.length, cost_written_count: creationContext.costWritten.length });
       return { status: 'awaiting_confirmation', item_count: actual.length, created_product_count: createdProducts.length };
     } catch (error) {
-      await this.gateway.update('purchaseArrival', recordId, { recognitionStatus: '识别失败', failureReason: error.message }).catch(() => undefined);
+      // 只记日志再抛出：把记录推出「识别中」和通知验收人统一交给 process() 的
+      // failArrival 一处完成（见那里的注释），避免同一次失败写两遍状态、发两遍消息。
       logWarn('purchase.arrival.recognition.failed', { record_id: recordId, task_id: taskId, error: error.message });
       throw error;
     } finally {

@@ -223,6 +223,23 @@ const normalizeDocumentRows = (rows) => (Array.isArray(rows) ? rows : [])
   .filter((row) => row.item_no && row.size > 0 && Number.isInteger(row.quantity) && row.quantity > 0);
 
 /**
+ * 图片识别的硬超时。
+ *
+ * OpenAI SDK 默认 `timeout = 600000`（10 分钟）且失败重试 2 次，也就是一次视觉调用
+ * 最坏能挂半小时——而这段时间用户只会看到「识别中」。2026-10-05 的线上故障里，
+ * 一次成功的到货单识别就用了 118 秒，期间记录、卡片、日志一片空白。
+ *
+ * 默认 60 秒：宁可超时失败并明确告诉她「重传一次」，也不要让她对着「识别中」干等。
+ * 需要更宽就调 VISION_LLM_TIMEOUT_MS（毫秒）；调不动代码就往环境变量走。
+ * 文字模型（销售录单）保持 SDK 默认值不变——那条链路不在这次修复范围内。
+ */
+const DEFAULT_VISION_TIMEOUT_MS = 60_000;
+const visionTimeoutMs = (env = process.env) => {
+  const raw = Number(env.VISION_LLM_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_VISION_TIMEOUT_MS;
+};
+
+/**
  * Doubao (Volcengine Ark) Vision Service
  * Uses OpenAI SDK to interact with the Doubao LLM.
  */
@@ -242,7 +259,13 @@ class DoubaoService {
   getClient(kind = 'text') {
     if (this.clients[kind]) return this.clients[kind];
     const { apiKey, baseURL } = this.resolveModel(kind);
-    this.clients[kind] = new OpenAI({ apiKey, baseURL });
+    this.clients[kind] = new OpenAI({
+      apiKey,
+      baseURL,
+      // 视觉这一组必须有上限，而且不重试：重试会把最坏耗时再乘一遍，
+      // 而到货链路"卡住"的代价（用户以为系统死了）比一次失败大得多。
+      ...(kind === 'vision' ? { timeout: visionTimeoutMs(), maxRetries: 0 } : {}),
+    });
     return this.clients[kind];
   }
 
