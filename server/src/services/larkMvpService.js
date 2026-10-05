@@ -27,7 +27,10 @@ const { isLookupIntent, isAfterSalesIntent, normalizeMessageIntent } = require('
 const { isAfterSalesCardAction } = require('../config/afterSalesFlow');
 const { isSalesCandidate, UNSUPPORTED_INTENT_REPLY } = require('../config/messageGate');
 const { salesConfirmationCard, salesStatusCard, todaySalesCard, keepOnlyCardButton } = require('../utils/larkCards');
-const { extractSalesMessageText } = require('../utils/larkMessageText');
+const { extractSalesMessageText, isMentioned, stripMentionPlaceholders } = require('../utils/larkMessageText');
+const { resolveAckReaction, resolveBotOpenId } = require('../config/groupPurchase');
+const { PurchaseBatchLocator } = require('./purchaseBatchLocator');
+const { GroupPurchaseFlowService } = require('./groupPurchaseFlowService');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
@@ -147,6 +150,30 @@ class LarkMvpService {
     this.intakeSchemaValidation = new Map();
     this.senderQueues = new Map();
     this.cardActionQueue = new KeyedSerialQueue();
+    // ── 群聊（采购链路搬进群）────────────────────────────────────────────────
+    // 「群消息 → 是哪一批采购单」的定位器。它自带本地任务存储
+    // （data/purchase_group_messages），**不共用销售任务存储**：两件事的记录混在
+    // 一个目录里，将来按任务翻盘时会互相干扰。
+    this.purchaseBatchLocator = options.purchaseBatchLocator || new PurchaseBatchLocator({
+      store: options.purchaseBatchLocatorStore,
+    });
+    // @ 判据用的机器人 open_id：**只从配置读，不写死**（见 config/groupPurchase）。
+    // 启动时解析一次：解析结果只影响"这条群消息理不理"，不会影响私聊的既有行为。
+    this.botOpenId = options.botOpenId ?? resolveBotOpenId();
+    if (!this.botOpenId) {
+      // 没配 = 群聊里判不出 @ 机器人。这时候**一条群消息都不处理**（宁可不响应，
+      // 也不能把群里日常聊天当成指令），但必须留下能排查的线索。
+      logWarn('lark.group.bot_open_id_missing', {
+        env: 'LARK_BOT_OPEN_ID',
+        hint: '未配置机器人 open_id，群聊消息不会进入采购流程（私聊不受影响）',
+      });
+    }
+    this.groupPurchaseFlow = options.groupPurchaseFlow || new GroupPurchaseFlowService({
+      locator: this.purchaseBatchLocator,
+      // 群里的反馈一律**引用回复**那条消息：群聊没有"上一次对话"的概念，
+      // 不复用私聊的 sendText（那会发出一条没有上下文的光秃秃消息）。
+      replyText: (messageId, content) => this.replyText(messageId, content),
+    });
   }
 
   enqueueForSender(senderOpenId, work) {
@@ -290,35 +317,112 @@ class LarkMvpService {
     }
   }
 
-  async acknowledgeMessage(messageId) {
-    const results = await Promise.allSettled([
+  /**
+   * 「收到了」的反馈。私聊和群聊**都要加表情**（表情是唯一不变的"已收到"信号）。
+   *
+   * 私聊额外回一句文字（现状不变）；群聊**不回文字**——群里一句"已收到，正在识别…"
+   * 会刷屏，业务负责人明确说表情就够了。
+   *
+   * 表情类型从配置读（默认 OneSecond，真机验证过有效）：改表情不碰代码。
+   * 表情加不上（缺权限、消息被撤回）只 warn：它只是信号，绝不能影响主流程。
+   */
+  async acknowledgeMessage(messageId, options = {}) {
+    const includeTextReply = options.includeTextReply !== false;
+    const emojiType = options.emojiType || resolveAckReaction();
+    const pending = [
       this.client.im.messageReaction
         .create({
           path: { message_id: messageId },
-          data: { reaction_type: { emoji_type: 'OK' } },
+          data: { reaction_type: { emoji_type: emojiType } },
         })
         .then((response) => {
           if (response.code !== 0) {
             throw new Error(`添加飞书表情回复失败: ${response.msg} (Code: ${response.code})`);
           }
         }),
-      this.replyText(messageId, '👀 已收到，正在识别销售信息，请稍候…'),
-    ]);
+    ];
+    if (includeTextReply) pending.push(this.replyText(messageId, '👀 已收到，正在识别销售信息，请稍候…'));
+    const results = await Promise.allSettled(pending);
     results.forEach((result, index) => {
       if (result.status === 'rejected') {
         logWarn('lark.sales.acknowledgement.failed', {
           message_id: messageId,
+          // 索引 0 永远是表情；文字回复只有私聊才有，所以按是否请求了文字回复来标注。
           channel: index === 0 ? 'reaction' : 'reply',
+          emoji_type: index === 0 ? emojiType : undefined,
           error: result.reason?.message || String(result.reason),
         });
       }
     });
+    return { emojiType, textReplied: includeTextReply };
   }
 
   async acceptMessage(event) {
     const message = event?.message;
     const senderOpenId = event?.sender?.sender_id?.open_id;
     if (!message?.message_id || !senderOpenId) return { accepted: false, reason: 'missing_identity' };
+
+    // ── 群聊：准入两条，**先看 thread_id**（业务负责人真机实测后改的规则）──────
+    //   ① 话题里的消息（`thread_id` 有值）→ **都理，不要求 @机器人**。
+    //      实测：她在话题里发「你好 小来财」没有 @（mentions=[]），事件照样推给我们；
+    //      话题本身就是"这条是冲着机器人来的"的判据，再要求 @ 会把她说的话丢掉。
+    //   ② 主群消息（`thread_id` 为空）→ 只在 `mentions` 含机器人 open_id 时才理。
+    //      不 @ → **完全静默**：连日志之外的动作都没有，更没有任何远端调用
+    //      （不发消息、不加表情、不读表）。群里所有人发的消息都会推给我们，
+    //      这道闸门是拦它们的唯一一道。
+    //
+    // ⚠️ 必须**先判 `thread_id`**：话题里没 @ 的消息要在读 mentions 之前就放行，
+    //    顺序反了会把它当成"主群没 @"丢掉——这正是她真机测出来的那个 bug。
+    // ⚠️ 这里刻意**不复用**私聊的闸门（含数字/业务关键词）：群里"36 码还有吗"
+    // 这种闲聊带着数字，用私聊闸门会被当成录单送进 AI。
+    if (message.chat_type === 'group') {
+      const threadId = String(message.thread_id || '').trim();
+      if (!threadId) {
+        // 主群消息：判据只有 @机器人。没配 LARK_BOT_OPEN_ID 就判不出 @，
+        // 这时**一条主群消息都不处理**（宁可不响应，也不能把日常聊天当指令）。
+        if (!this.botOpenId) {
+          logWarn('lark.group.message.ignored', {
+            message_id: message.message_id, reason: 'bot_open_id_unconfigured',
+          });
+          return { accepted: false, reason: 'group_bot_open_id_unconfigured' };
+        }
+        if (!isMentioned(message.mentions, this.botOpenId)) {
+          logInfo('lark.group.message.ignored', {
+            message_id: message.message_id, reason: 'not_mentioned', chat_id: message.chat_id,
+          });
+          return { accepted: false, reason: 'group_not_mentioned' };
+        }
+      }
+      if (!['text', 'post'].includes(message.message_type)) {
+        // 群聊准入通过（话题里、或主群里 @ 了）但发的是图片/文件：**静默忽略**，
+        // 不解释、不回复。群里回一句"我只接收文字"同样会刷屏，而且这条链路今天
+        // 只有采购定位，没有需要她立刻知道的失败。
+        logInfo('lark.group.message.ignored', {
+          message_id: message.message_id, reason: 'unsupported_message_type',
+          message_type: message.message_type,
+        });
+        return { accepted: false, reason: 'group_unsupported_message_type' };
+      }
+      const groupText = extractSalesMessageText(message);
+      if (!groupText) {
+        logInfo('lark.group.message.ignored', { message_id: message.message_id, reason: 'empty_text' });
+        return { accepted: false, reason: 'group_empty_text' };
+      }
+      logInfo('lark.group.message.accepted', {
+        message_id: message.message_id, chat_id: message.chat_id,
+        sender_open_id: senderOpenId, parent_id: message.parent_id,
+        thread_id: threadId, // 空 = 主群（靠 @ 进来的）；有值 = 话题（免 @）
+        via: threadId ? 'thread' : 'mention',
+        text_length: groupText.length,
+      });
+      // 返回值统一带上 `accepted: true`（和私聊那条路同一个契约），
+      // 另外附上定位结果（resolved/batchNo/…）供调用方与将来的 D 使用。
+      const flowResult = await this.acceptGroupMessage({
+        message, senderOpenId, originalText: groupText, threadId,
+      });
+      return { accepted: true, ...flowResult };
+    }
+
     if (message.chat_type !== 'p2p') {
       logWarn('lark.mvp.message.ignored', { message_id: message.message_id, reason: 'not_p2p' });
       return { accepted: false, reason: 'not_p2p' };
@@ -338,6 +442,38 @@ class LarkMvpService {
       message_type: message.message_type, sender_open_id: senderOpenId,
       text_length: originalText.length, line_count: originalText.split('\n').length });
     return this.acceptSalesText({ message, senderOpenId, originalText });
+  }
+
+  /**
+   * 群聊入口。**准入由调用方判定**（话题免 @ / 主群 @），进来之后：
+   *   · 剥掉 @ 占位符（`@_user_1`）再当正文；
+   *   · 加「收到」表情（**不回文字**，群聊回文字会刷屏）；
+   *   · 交给采购定位链路（C）——今天它只回答"是哪一批"，不写任何业务表。
+   *
+   * ⚠️ 群聊**绝不用私聊那套闸门**（含数字/业务关键词就收）：群里一句
+   *   "这批鞋到了""36 码还有吗"都会被误触发。这里的准入判据只有上面那两条。
+   */
+  async acceptGroupMessage({ message, senderOpenId, originalText, threadId = '' }) {
+    const text = stripMentionPlaceholders(originalText, message.mentions);
+    if (!text) {
+      // 只 @ 了机器人（或话题里空着一条）、一个字没说。回一句问清楚，不猜。
+      logInfo('lark.group.message.empty_after_mention', { message_id: message.message_id });
+      return this.groupPurchaseFlow.handleGroupPurchaseMessage({
+        messageId: message.message_id,
+        text: '',
+        parentId: message.parent_id,
+        threadId,
+        senderOpenId,
+      });
+    }
+    await this.acknowledgeMessage(message.message_id, { includeTextReply: false });
+    return this.groupPurchaseFlow.handleGroupPurchaseMessage({
+      messageId: message.message_id,
+      text,
+      parentId: message.parent_id,
+      threadId,
+      senderOpenId,
+    });
   }
 
   async acceptSalesText({ message, senderOpenId, originalText }) {

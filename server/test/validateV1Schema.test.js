@@ -41,6 +41,8 @@ const gatewayFor = (overrides = {}) => {
       { record_id: 'return', fields: { 行为编码: 'SALE_RETURN', 行为名称: '销售退货', 库存方向: '增加', 是否启用: true } },
       { record_id: 'compensation', fields: { 行为编码: 'SALE_COMPENSATION', 行为名称: '销售赔货', 库存方向: '减少', 是否启用: true } },
       { record_id: 'cash', fields: { 行为编码: 'SALE_CASH', 行为名称: '现货销售', 库存方向: '减少', 是否启用: true } },
+      // 采购退货（采购减少）：同上，注册表里每多一条声明，这个假 Base 就要有对应行为。
+      { record_id: 'purchase_decrease', fields: { 行为编码: 'STOCK_PURCHASE_DECREASE', 行为名称: '采购减少', 库存方向: '减少', 是否启用: true } },
     ] : [],
   };
 };

@@ -5,28 +5,64 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { LarkMvpService, aggregateRecognizedItems, looksLikeSalesText } = require('../src/services/larkMvpService');
+const { PurchaseBatchLocator } = require('../src/services/purchaseBatchLocator');
+const { PurchaseWebhookService } = require('../src/services/purchaseWebhookService');
 
 // 拼接「货品信息」的记录链接要读 Base token。测试里给一个占位值；
 // 已配置时不覆盖（CI 或本地 .env 里可能已经有真值）。
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
 
+// 群聊链路要的两个配置：机器人 open_id（判 @ 用）与采购群 id（发单用）。
+// ⚠️ 真值是生产数据，**不写进测试**：这里用明显的测试值，证明代码是"从配置读"
+// 而不是"写死了生产那个 open_id"。用赋值而不是 `|| 默认值`：显式赋值才能保证
+// "配置为空时会怎样"这类用例被测到——`||` 会把空串当没配而回落成默认值。
+const TEST_BOT_OPEN_ID = 'ou_test_bot_open_id';
+const TEST_PURCHASE_CHAT_ID = 'oc_test_purchase_chat_id';
+process.env.LARK_BOT_OPEN_ID = TEST_BOT_OPEN_ID;
+
 const makeStore = () =>
   new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'lark-mvp-test-')), idField: 'task_id' });
 
-const makeService = () => {
+const makeService = (options = {}) => {
   const sent = [];
   const service = new LarkMvpService({
-    client: {},
-    gateway: {},
-    references: {},
-    posting: {},
-    recognizer: {},
-    store: makeStore(),
+    client: options.client || {},
+    gateway: options.gateway || {},
+    references: options.references || {},
+    posting: options.posting || {},
+    recognizer: options.recognizer || {},
+    store: options.store || makeStore(),
+    // 群聊定位器指向临时目录：**不受**构造时默认的 data/purchase_group_messages 影响。
+    purchaseBatchLocator: options.purchaseBatchLocator,
+    purchaseBatchLocatorStore: options.purchaseBatchLocatorStore,
+    botOpenId: options.botOpenId === undefined ? TEST_BOT_OPEN_ID : options.botOpenId,
+    groupPurchaseFlow: options.groupPurchaseFlow,
   });
   service.sendText = async (openId, message) => sent.push({ openId, message });
+  // 表情/「已收到」这条反馈默认打桩：绝大多数用例只关心"进没进流程"。
+  // 专门验证表情的用例会在拿到 service 之后把它解掉（见 `reactionSpyService`）。
   service.acknowledgeMessage = async () => undefined;
   service.processSalesTask = async () => undefined;
   return { service, sent };
+};
+
+// 用真实的 acknowledgeMessage + 假的飞书 client：断言的是**真实发生的远端调用**
+// （emoji_type 到底传了什么），而不是"我们有没有调用 acknowledgeMessage"。
+const makeReactionService = () => {
+  const reactions = [];
+  const client = {
+    im: {
+      messageReaction: {
+        create: async ({ path, data }) => {
+          reactions.push({ messageId: path.message_id, emoji: data.reaction_type.emoji_type });
+          return { code: 0 };
+        },
+      },
+    },
+  };
+  const { service } = makeService({ client });
+  service.acknowledgeMessage = LarkMvpService.prototype.acknowledgeMessage;
+  return { service, reactions };
 };
 
 test('private text is accepted as sales input and repeated message id is deduplicated', async () => {
@@ -48,18 +84,65 @@ test('private text is accepted as sales input and repeated message id is dedupli
   assert.equal(second.reason, 'duplicate');
 });
 
-test('group messages are ignored even when message content is valid', async () => {
-  const { service } = makeService();
+test('群聊里没 @ 机器人：完全无反应（不发消息、不加表情、不读表、不进识别）', async () => {
+  // 远端调用一律记账并让用例失败：群里的日常聊天必须**零远端调用**。
+  const calls = [];
+  const client = {
+    im: {
+      message: { create: async () => { calls.push('message.create'); return { code: 0 }; } },
+      messageReaction: { create: async () => { calls.push('reaction.create'); return { code: 0 }; } },
+    },
+  };
+  const gateway = {
+    table: () => { calls.push('gateway.table'); return {}; },
+    listAll: async () => { calls.push('gateway.listAll'); return []; },
+    get: async () => { calls.push('gateway.get'); return null; },
+    create: async () => { calls.push('gateway.create'); throw new Error('群聊不该写业务表'); },
+    update: async () => { calls.push('gateway.update'); throw new Error('群聊不该写业务表'); },
+  };
+  let recognized = 0;
+  const { service } = makeService({
+    client,
+    gateway,
+    recognizer: { parseSalesText: async () => { recognized += 1; return {}; } },
+  });
   const result = await service.acceptMessage({
     sender: { sender_id: { open_id: 'ou_1' } },
     message: {
       message_id: 'om_group',
+      chat_id: 'oc_group',
       chat_type: 'group',
       message_type: 'text',
-      content: JSON.stringify({ text: 'A100 38码一双' }),
+      // 带数字、带业务关键词 —— 私聊闸门会放行，群聊**绝不能**因此进流程。
+      content: JSON.stringify({ text: 'A100 38码一双，库存还有多少' }),
+      mentions: [],
     },
   });
-  assert.deepEqual(result, { accepted: false, reason: 'not_p2p' });
+  assert.equal(result.accepted, false);
+  assert.equal(result.reason, 'group_not_mentioned');
+  assert.deepEqual(calls, [], '不 @ 机器人时不能有任何远端调用');
+  assert.equal(recognized, 0, '不 @ 机器人时不能进 AI 识别');
+});
+
+test('群聊没配 LARK_BOT_OPEN_ID：不猜 @，一律忽略', async () => {
+  const calls = [];
+  const { service } = makeService({
+    botOpenId: '',
+    client: { im: { messageReaction: { create: async () => { calls.push('reaction.create'); return { code: 0 }; } } } },
+  });
+  const result = await service.acceptMessage({
+    sender: { sender_id: { open_id: 'ou_1' } },
+    message: {
+      message_id: 'om_group_nobot',
+      chat_type: 'group',
+      message_type: 'text',
+      content: JSON.stringify({ text: '@_user_1 这批到了' }),
+      mentions: [{ key: '@_user_1', id: TEST_BOT_OPEN_ID, name: '测试机器人' }],
+    },
+  });
+  // 判不出"@的是不是机器人"时**不处理**：宁可不响应，也不能把群里日常聊天当指令。
+  assert.deepEqual(result, { accepted: false, reason: 'group_bot_open_id_unconfigured' });
+  assert.deepEqual(calls, []);
 });
 
 test('ordinary private chat without numbers is not accepted as a sales task', async () => {
@@ -1669,4 +1752,344 @@ test('同一个货号有多个颜色时，把该货号下所有资料不全的�
   assert.match(card, /66356米/);
   assert.match(card, /66356白/);
   assert.doesNotMatch(card, /66356黑\*\*/, '资料全的颜色不该出现在缺口里');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 群聊链路（B / C）：话题免 @ / 主群 @ + 引用定位 + 剥 @ 占位符 + 收到表情
+// ─────────────────────────────────────────────────────────────────────────────
+
+// 群聊定位器指向临时目录，并可选地预置「消息 ↔ 批次」「话题 ↔ 批次」映射
+// （生产上由 PurchaseWebhookService 发完采购单后写入，见 purchaseWebhookService.test.js）。
+const makeGroupContext = async (options = {}) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'group-purchase-locator-'));
+  const store = new JsonTaskStore({ dir, idField: 'task_id' });
+  const locator = new PurchaseBatchLocator({ store });
+  if (options.mappingMessageId || options.mappingThreadId) {
+    await locator.rememberGroupMessage({
+      batchNo: options.batchNo || 'BH-20261005-0001',
+      messageId: options.mappingMessageId || options.mappingThreadId,
+      threadId: options.mappingThreadId || '',
+      chatId: TEST_PURCHASE_CHAT_ID,
+      suppliers: ['金猴'],
+      requestIds: ['req_1'],
+      detailCount: 2,
+    });
+  }
+  return { store, locator };
+};
+
+const groupEvent = (overrides = {}) => ({
+  sender: { sender_id: { open_id: 'ou_sender' } },
+  message: {
+    message_id: overrides.messageId || 'om_group_1',
+    chat_id: TEST_PURCHASE_CHAT_ID,
+    chat_type: 'group',
+    message_type: 'text',
+    create_time: '1000',
+    content: JSON.stringify({ text: overrides.text || '' }),
+    // 默认 @ 了机器人（主群那条路）；传 mention=false 模拟"话题里没 @"。
+    mentions: overrides.mentions || [{ key: '@_user_1', id: TEST_BOT_OPEN_ID, name: '测试机器人' }],
+    parent_id: overrides.parentId,
+    // thread_id 有值 = 话题里的消息（免 @）；不传 = 主群消息（必须 @）。
+    thread_id: overrides.threadId,
+  },
+});
+
+test('群聊①：话题里的消息（thread_id 有值）**不 @ 机器人**也进流程', async () => {
+  // 真机实测：她在话题里发「你好 小来财」，mentions=[]，事件照样推给我们。
+  const { locator } = await makeGroupContext({ mappingThreadId: 'omt_thread_1', batchNo: 'BH-20261005-0011' });
+  const { service } = makeService({ purchaseBatchLocator: locator });
+  const replied = [];
+  service.replyText = async (_messageId, content) => { replied.push(content); return 'om_reply'; };
+
+  const result = await service.acceptMessage(groupEvent({
+    messageId: 'om_topic_no_mention',
+    threadId: 'omt_thread_1',
+    text: '你好 小来财',
+    mentions: [],
+  }));
+
+  assert.equal(result.accepted, true, '话题里的消息不该因为没 @ 被丢掉');
+  assert.equal(result.resolved, true);
+  assert.equal(result.reason, 'thread_id');
+  assert.equal(result.batchNo, 'BH-20261005-0011');
+  assert.deepEqual(replied, [], '定位成功不该再发问句');
+});
+
+test('群聊②：主群消息（thread_id 为空）@ 机器人 → 进流程', async () => {
+  const { locator } = await makeGroupContext({ mappingMessageId: 'om_purchase_main', batchNo: 'BH-20261005-0012' });
+  const { service } = makeService({ purchaseBatchLocator: locator });
+  service.replyText = async () => { throw new Error('定位成功不该回消息'); };
+
+  const result = await service.acceptMessage(groupEvent({
+    messageId: 'om_main_mention',
+    text: '@_user_1 这批到了',
+    parentId: 'om_purchase_main',
+  }));
+
+  assert.equal(result.accepted, true);
+  assert.equal(result.resolved, true);
+  assert.equal(result.batchNo, 'BH-20261005-0012');
+});
+
+test('C：thread_id 命中 → 定位到正确批次（优先级高于 parent_id）', async () => {
+  // 话题映射指向 0011，parent_id 映射指向 0099：必须是 thread_id 赢
+  //（话题里后续消息不一定还引用着机器人那条，thread_id 才是稳的那个）。
+  const { locator } = await makeGroupContext({ mappingThreadId: 'omt_thread_prio', batchNo: 'BH-20261005-0011' });
+  await locator.rememberGroupMessage({ batchNo: 'BH-20261005-0099', messageId: 'om_other_batch' });
+  const { service } = makeService({ purchaseBatchLocator: locator });
+  service.replyText = async () => { throw new Error('定位成功不该回消息'); };
+
+  const result = await service.acceptMessage(groupEvent({
+    messageId: 'om_topic_prio',
+    threadId: 'omt_thread_prio',
+    parentId: 'om_other_batch',
+    text: '这批货到了',
+  }));
+
+  assert.equal(result.resolved, true);
+  assert.equal(result.reason, 'thread_id');
+  assert.equal(result.batchNo, 'BH-20261005-0011');
+});
+
+test('C：thread_id 查不到映射 → 明确回「认不出」，零写入，不拿正文号去猜', async () => {
+  const writes = [];
+  const { locator } = await makeGroupContext({ mappingThreadId: 'omt_known', batchNo: 'BH-20261005-0001' });
+  const { service } = makeService({
+    purchaseBatchLocator: locator,
+    gateway: {
+      table: () => ({}),
+      listAll: async () => [],
+      get: async () => null,
+      create: async (...args) => { writes.push(['create', ...args]); throw new Error('定位链路不允许写业务表'); },
+      update: async (...args) => { writes.push(['update', ...args]); throw new Error('定位链路不允许写业务表'); },
+    },
+  });
+  const replied = [];
+  service.replyText = async (_messageId, content) => { replied.push(content); return 'om_reply'; };
+
+  // 这条话题我们没记过；正文里**故意**带上一个真实批次号——也不能因此去猜。
+  const result = await service.acceptMessage(groupEvent({
+    messageId: 'om_topic_unknown',
+    threadId: 'omt_unknown_thread',
+    text: 'BH-20261005-0001 这批你看下',
+  }));
+
+  assert.equal(result.resolved, false);
+  assert.equal(result.reason, 'not_found');
+  assert.equal(replied.length, 1);
+  assert.match(replied[0], /没认出来|认不出|批次号/);
+  assert.deepEqual(writes, [], '认不出时一次业务写都不允许有');
+});
+
+test('C：普通群里第一条回复（话题没记过、但引用得到）→ 用 parent_id 命中并把 thread_id 补记', async () => {
+  const { locator, store } = await makeGroupContext({ mappingMessageId: 'om_purchase_first', batchNo: 'BH-20261005-0021' });
+  const { service } = makeService({ purchaseBatchLocator: locator });
+  service.replyText = async () => { throw new Error('定位成功不该回消息'); };
+
+  const result = await service.acceptMessage(groupEvent({
+    messageId: 'om_first_reply',
+    threadId: 'omt_new_thread',
+    parentId: 'om_purchase_first',
+    text: '这批到了',
+  }));
+
+  assert.equal(result.resolved, true);
+  assert.equal(result.reason, 'parent_id');
+  assert.equal(result.batchNo, 'BH-20261005-0021');
+  // 补记之后，这条话题下的**后续**消息（不再引用机器人那条）也能只靠 thread_id 命中。
+  const after = await new PurchaseBatchLocator({ store }).resolve({ threadId: 'omt_new_thread' });
+  assert.equal(after.status, 'matched');
+  assert.equal(after.source, 'thread_id');
+  assert.equal(after.batchNo, 'BH-20261005-0021');
+});
+
+test('C①：@ + 引用机器人发的采购单 → 用 parent_id 命中映射，定位到正确批次', async () => {
+  const { locator } = await makeGroupContext({ mappingMessageId: 'om_purchase_1', batchNo: 'BH-20261005-0007' });
+  const replied = [];
+  const { service } = makeService({ purchaseBatchLocator: locator });
+  // 定位成功时**只回一句问清楚**的那条路不该被走到：把引用回复全记下来断言它没被调用。
+  service.replyText = async (messageId, content) => { replied.push({ messageId, content }); return 'om_reply'; };
+
+  const result = await service.acceptMessage(groupEvent({
+    text: '@_user_1 这批鞋到了，帮我核对一下',
+    parentId: 'om_purchase_1',
+  }));
+
+  assert.equal(result.resolved, true);
+  assert.equal(result.reason, 'parent_id');
+  assert.equal(result.batchNo, 'BH-20261005-0007');
+  assert.equal(result.batch.message_id, 'om_purchase_1');
+  assert.deepEqual(replied, [], '定位成功不该再发问句');
+});
+
+test('C②：@ 但没引用 → 按正文里的批次号定位', async () => {
+  const { locator } = await makeGroupContext({ mappingMessageId: 'om_purchase_9', batchNo: 'BH-20261005-0009' });
+  const { service } = makeService({ purchaseBatchLocator: locator });
+  service.replyText = async () => { throw new Error('不该回消息'); };
+
+  const result = await service.acceptMessage(groupEvent({
+    text: '@_user_1 BH-20261005-0009 这批的到货单你看下',
+  }));
+
+  assert.equal(result.resolved, true);
+  assert.equal(result.reason, 'batch_no');
+  assert.equal(result.batchNo, 'BH-20261005-0009');
+});
+
+test('C③：@ 但既没引用也没说批次号 → 回一句问清楚，零写入', async () => {
+  const writes = [];
+  const { locator } = await makeGroupContext();
+  const { service } = makeService({
+    purchaseBatchLocator: locator,
+    gateway: {
+      table: () => ({}),
+      listAll: async () => [],
+      get: async () => null,
+      create: async (...args) => { writes.push(['create', ...args]); throw new Error('定位链路不允许写业务表'); },
+      update: async (...args) => { writes.push(['update', ...args]); throw new Error('定位链路不允许写业务表'); },
+    },
+  });
+  const replied = [];
+  service.replyText = async (messageId, content) => { replied.push({ messageId, content }); return 'om_reply'; };
+
+  const result = await service.acceptMessage(groupEvent({ text: '@_user_1 这批鞋到了' }));
+
+  assert.equal(result.resolved, false);
+  assert.equal(result.reason, 'ambiguous');
+  assert.equal(replied.length, 1);
+  assert.equal(replied[0].messageId, 'om_group_1');
+  assert.match(replied[0].content, /分不清|批次号/);
+  assert.deepEqual(writes, [], '定位不到时一次业务写都不允许有');
+});
+
+test('C④：parent_id 查不到映射 → 明确回「认不出哪一批」，不回退去猜，零写入', async () => {
+  const writes = [];
+  const { locator } = await makeGroupContext({ mappingMessageId: 'om_purchase_known' });
+  const { service } = makeService({
+    purchaseBatchLocator: locator,
+    gateway: {
+      table: () => ({}),
+      listAll: async () => [],
+      get: async () => null,
+      create: async (...args) => { writes.push(['create', ...args]); throw new Error('定位链路不允许写业务表'); },
+      update: async (...args) => { writes.push(['update', ...args]); throw new Error('定位链路不允许写业务表'); },
+    },
+  });
+  const replied = [];
+  service.replyText = async (_messageId, content) => { replied.push(content); return 'om_reply'; };
+
+  // 引用的是**别人的**消息（不是机器人发的采购单）。
+  const result = await service.acceptMessage(groupEvent({
+    text: '@_user_1 这条你看下',
+    parentId: 'om_someone_else',
+  }));
+
+  assert.equal(result.resolved, false);
+  assert.equal(result.reason, 'not_found');
+  assert.equal(replied.length, 1);
+  assert.match(replied[0], /没认出来|认不出|批次号/);
+  assert.deepEqual(writes, []);
+});
+
+test('C：说了两个批次号 → 判为说不清，反问，绝不挑一个', async () => {
+  const { locator } = await makeGroupContext();
+  await locator.rememberGroupMessage({ batchNo: 'BH-20261005-0001', messageId: 'om_a' });
+  await locator.rememberGroupMessage({ batchNo: 'BH-20261005-0002', messageId: 'om_b' });
+  const { service } = makeService({ purchaseBatchLocator: locator });
+  const replied = [];
+  service.replyText = async (_messageId, content) => { replied.push(content); return 'om_reply'; };
+
+  const result = await service.acceptMessage(groupEvent({
+    text: '@_user_1 BH-20261005-0001 和 BH-20261005-0002 这两批都要',
+  }));
+
+  assert.equal(result.resolved, false);
+  assert.equal(result.reason, 'ambiguous');
+  assert.equal(replied.length, 1);
+});
+
+test('B：@ 占位符被剥掉——送到定位链路的是「她真正说的那句话」', async () => {
+  const seen = [];
+  const { service } = makeService({
+    groupPurchaseFlow: {
+      handleGroupPurchaseMessage: async ({ text, messageId, parentId }) => {
+        seen.push({ text, messageId, parentId });
+        return { resolved: true, reason: 'test' };
+      },
+    },
+  });
+  // 群里 @ 了两个人：两个占位符都要剥掉，并且不能把正文吃掉。
+  await service.acceptMessage(groupEvent({
+    text: '@_user_1 @_user_2 8088 黑 38 两双',
+    mentions: [
+      { key: '@_user_1', id: TEST_BOT_OPEN_ID, name: '测试机器人' },
+      { key: '@_user_2', id: 'ou_someone', name: '别人' },
+    ],
+  }));
+
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].text, '8088 黑 38 两双');
+  assert.ok(!seen[0].text.includes('@_user_1'));
+  assert.ok(!seen[0].text.includes('@_user_2'));
+  assert.equal(seen[0].messageId, 'om_group_1');
+});
+
+test('B：私聊与群聊各自加 OneSecond 表情；只有私聊回「已收到」文字', async () => {
+  const { locator } = await makeGroupContext({ mappingMessageId: 'om_purchase_2' });
+  // 用真实的 acknowledgeMessage + 假 client：断言"实际发出去的表情是什么"。
+  const { service, reactions } = makeReactionService();
+  service.purchaseBatchLocator = locator;
+  service.groupPurchaseFlow.locator = locator;
+  const replies = [];
+  service.replyText = async (_messageId, content) => { replies.push(content); return 'om_reply'; };
+  service.processSalesTask = async () => undefined;
+
+  // 私聊：表情 + 「已收到」文字（现状不变）
+  await service.acceptMessage({
+    sender: { sender_id: { open_id: 'ou_1' } },
+    message: {
+      message_id: 'om_private_ack',
+      chat_type: 'p2p',
+      message_type: 'text',
+      content: JSON.stringify({ text: '8088 黑 38 一双 230 微信' }),
+    },
+  });
+  assert.deepEqual(reactions, [{ messageId: 'om_private_ack', emoji: 'OneSecond' }]);
+  assert.deepEqual(replies, ['👀 已收到，正在识别销售信息，请稍候…']);
+
+  // 群聊：只有表情，**不回文字**（群里回文字会刷屏）
+  await service.acceptMessage(groupEvent({
+    messageId: 'om_group_ack',
+    text: '@_user_1 这批到了',
+    parentId: 'om_purchase_2',
+  }));
+  assert.deepEqual(reactions[1], { messageId: 'om_group_ack', emoji: 'OneSecond' });
+  assert.equal(replies.length, 1, '群聊不该再回「已收到」文字');
+});
+
+test('B：表情加不上（缺权限）只记日志，不影响主流程', async () => {
+  const { locator } = await makeGroupContext({ mappingMessageId: 'om_purchase_3' });
+  const { service } = makeService({
+    client: {
+      im: {
+        messageReaction: {
+          create: async () => { throw new Error('99991672 缺少 im:message.reactions:write 权限'); },
+        },
+      },
+    },
+    purchaseBatchLocator: locator,
+  });
+  // 解掉 acknowledgeMessage 的打桩：这里要验证的正是"表情失败会不会影响主流程"。
+  service.acknowledgeMessage = LarkMvpService.prototype.acknowledgeMessage;
+  service.replyText = async () => { throw new Error('不该回消息'); };
+
+  const result = await service.acceptMessage(groupEvent({
+    messageId: 'om_group_reaction_fail',
+    text: '@_user_1 这批到了',
+    parentId: 'om_purchase_3',
+  }));
+
+  assert.equal(result.resolved, true);
+  assert.equal(result.batchNo, 'BH-20261005-0001');
 });

@@ -375,6 +375,8 @@ test('stock behavior lookup survives renaming the display name', async () => {
     behavior('behavior_return', 'SALE_RETURN', '销售退货（已改名）', '增加'),
     behavior('behavior_compensation', 'SALE_COMPENSATION', '销售赔货（已改名）', '减少'),
     behavior('behavior_cash', 'SALE_CASH', '现货销售（已改名）', '减少'),
+    // 采购退货（采购减少）同样是注册表里的一条：validateStockBehaviors 会遍历整张注册表。
+    behavior('behavior_purchase_decrease', 'STOCK_PURCHASE_DECREASE', '采购减少（已改名）', '减少'),
   ]);
   const inventory = new InventoryService({ gateway, store: store() });
   await inventory.validateStockBehaviors();
@@ -395,6 +397,15 @@ test('售后动作的库存语义：退货增加、赔货与现货减少且只�
   });
   assert.deepEqual(STOCK_MOVEMENTS.SALE_CASH, {
     direction: '减少', ledgerSource: 'salesDetail', consumes: ['门盒'], triggerSampleReplacement: false,
+  });
+});
+
+// 采购退货的库存语义同样是契约：方向错了会把退货变成入库；consumes 少了「仓库」
+// 就会让"仓库里的货退不掉"（业务负责人的口径是**不看所属状态**，三种状态全退）。
+// ledgerSource 为 null 也是有意为之——「库存流水」里没有能关联「单据信息」的字段。
+test('采购退货动作的库存语义：方向减少、状态无关（门盒+样品+仓库）、无来源关联字段', () => {
+  assert.deepEqual(STOCK_MOVEMENTS.STOCK_PURCHASE_DECREASE, {
+    direction: '减少', ledgerSource: null, consumes: ['门盒', '样品', '仓库'], triggerSampleReplacement: false,
   });
 });
 

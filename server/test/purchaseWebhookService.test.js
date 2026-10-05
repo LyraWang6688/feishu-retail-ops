@@ -7,10 +7,18 @@ const { PurchaseWebhookService } = require('../src/services/purchaseWebhookServi
 const { V1ReferenceResolver } = require('../src/services/v1ReferenceResolver');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { PurchaseBatchLocator } = require('../src/services/purchaseBatchLocator');
 
 // 新品的记录链接要用 Base token 拼。本地/CI 没有真配置时给个测试值，
 // 才能断言「链接带上了正确的 record_id」。（每个测试文件是独立进程，不会污染别的用例。）
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
+
+// 采购单现在**发到群**（业务负责人：「不用再看经办人了」），群 id 从配置读、**没有默认值**。
+// 这个文件里绝大多数用例真正关心的是"采购事实写没写、附件写没写回"，出图/发图是它们的
+// 必经步骤，所以在这里给一个测试群 id。
+// ⚠️ 「没配群 id 时会怎样」是单独一条用例，它走构造入参 `sandboxChatId` 显式覆盖，
+// 不靠改这个全局值（同进程里并发跑用例时改全局会互相污染）。
+process.env.PURCHASE_CHAT_ID = process.env.PURCHASE_CHAT_ID || 'oc_test_purchase_group';
 
 const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'purchase-test-'));
 
@@ -145,6 +153,10 @@ const makeService = (options = {}) => {
     // 单测里压到 20ms —— 验证的是"同一批次号的记录归成一批、窗口到点才处理"，
     // 而不是真的等 4 秒。需要验证窗口本身的用例会显式传更大的值。
     reportBatchWindowMs: options.reportBatchWindowMs ?? 20,
+    // 群聊定位器（发到群后写 message_id ↔ 批次映射）指向临时目录：
+    // 不传的话服务会自建 data/purchase_group_messages，用例之间会互相看见对方的映射。
+    batchLocatorStore: options.batchLocatorStore,
+    batchLocator: options.batchLocator,
   });
   return { service, store, gateway, references, recognizer, inventory, client, images, dir };
 };
@@ -285,9 +297,19 @@ test('供应商报单免确认：解析完直接生成采购申请、不发确�
   await waitFor('图片和说明发出', async () => messages.length === 2);
   const [image, text] = messages;
   assert.equal(image.data.msg_type, 'image');
-  assert.equal(image.data.receive_id, 'ou_user_1');
+  // 采购单发到群、不再是经办人私聊（业务负责人：「不用再看经办人了」）。
+  assert.equal(image.params.receive_id_type, 'chat_id');
+  assert.equal(image.data.receive_id, 'oc_test_purchase_group');
   assert.equal(text.data.msg_type, 'text');
-  assert.equal(JSON.parse(text.data.content).text, '金猴 这批 2 条（共 3 双），图可以直接转给供应商。');
+  assert.equal(text.params.receive_id_type, 'chat_id');
+  assert.equal(text.data.receive_id, 'oc_test_purchase_group');
+  // @经办人：挂在那条文字说明上（图片消息没有正文，@ 只能跟着文字走）。
+  // 业务负责人明确改过：不再 @所有人，只 @这条记录的经办人。
+  assert.equal(
+    JSON.parse(text.data.content).text,
+    '<at user_id="ou_user_1"></at> 金猴 这批 2 条（共 3 双），图可以直接转给供应商。',
+  );
+  assert.ok(!JSON.parse(text.data.content).text.includes('user_id="all"'), '不允许再 @所有人');
 
   // 采购申请直接写出，报单记录进入终态
   const requests = await gateway.listAll('purchaseRequest');
@@ -322,7 +344,11 @@ test('重收同一条报单 webhook：不重复建单，也不重复发图', asy
     recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }] }),
   });
   const first = await service.accept('supplier-report', 'rep_dup');
-  await waitForTask(store, first.taskId);
+  // ⚠️ 必须等 result 落盘，不能只等 status=posted：posted 是在
+  // confirmPurchaseRequest 里落的，之后才出图/发图。只等 status 会把 imagesAfterFirst
+  // 记成 0，而第一次那条的图紧接着发出去，第二次重投的断言就会看到多出来的 1 张
+  //（CI 上偶发挂在这里：重收 webhook 不得重复发图 1 !== 0）。
+  await waitForProcessed(store, first.taskId);
   const requestsAfterFirst = (await gateway.listAll('purchaseRequest')).length;
   const imagesAfterFirst = images.calls.length;
 
@@ -389,7 +415,10 @@ test('同一个供应商的多条明细合并成一张图', async () => {
   assert.equal(images.calls.length, 1, `同一供应商应只出一张图，实际出了 ${images.calls.length} 张`);
   assert.equal(images.calls[0].items.length, 2);
   await waitFor('图片和说明发出', async () => messages.length === 2);
-  assert.equal(JSON.parse(messages[1].data.content).text, '金猴 这批 2 条（共 3 双），图可以直接转给供应商。');
+  assert.equal(
+    JSON.parse(messages[1].data.content).text,
+    '<at user_id="ou_user_1"></at> 金猴 这批 2 条（共 3 双），图可以直接转给供应商。',
+  );
 });
 
 test('多个供应商：每个供应商各出一张图、各发一条说明', async () => {
@@ -422,9 +451,14 @@ test('多个供应商：每个供应商各出一张图、各发一条说明', as
   await waitFor('两个供应商的图都发出', async () => messages.length === 4);
   const texts = messages.filter((m) => m.data.msg_type === 'text').map((m) => JSON.parse(m.data.content).text).sort();
   assert.deepEqual(texts, [
-    '奥康 这批 1 条（共 1 双），图可以直接转给供应商。',
-    '金猴 这批 1 条（共 2 双），图可以直接转给供应商。',
+    '<at user_id="ou_user_1"></at> 奥康 这批 1 条（共 1 双），图可以直接转给供应商。',
+    '<at user_id="ou_user_1"></at> 金猴 这批 1 条（共 2 双），图可以直接转给供应商。',
   ]);
+  // 每条都发到群，没有一个漏到私聊。
+  assert.ok(
+    messages.every((m) => m.data.receive_id === 'oc_test_purchase_group'),
+    '采购单不能有任何一条发到私聊',
+  );
   const requests = await gateway.listAll('purchaseRequest');
   assert.equal(requests.filter((record) => (record.fields['采购申请单'] || []).length === 1).length, 2);
 });
@@ -1393,11 +1427,16 @@ test('采购申请一条：编号 + 尺码 + 数量说明 → 正确解析成尺
   assert.deepEqual([bySize.get('size_36'), bySize.get('size_37')], [2, 3]);
 });
 
-test('采购退货一条：编号 + 数量（number）→ 正确解析，且不写尺码', async () => {
+test('采购退货一条（编号 + 数量）→ 交给退货链路、不走报货归批；数量取自「数量」字段', async () => {
+  // ⚠️ 合并 #81 与 #83 时定的归属：**采购退货不在归批窗口里处理**，由它自己那条
+  // 链路负责（processSupplierReturn：按实时库存逐尺码扣减 + 出「采购退货单」）。
+  // 所以这条用例钉的是"分流正确 + 数量口径正确 + 不建批次/不走进货"；
+  // 库存那一侧（能对上就退、对不上把差额说清）由 purchaseReturn.test.js
+  // 用真的 InventoryService 钉住，这里不重复。
   const { service, store, gateway } = makeService({
     gateway: makeGateway({
       purchaseReport: [reportRecord('rep_return_1', {
-        编号: ['prod_1'], 数量: 4, 报货批次号: 'BATCH-RETURN', 采购行为: ['beh_return'],
+        编号: ['prod_1'], 数量: 4, 数量说明: '36码9双', 报货批次号: 'BATCH-RETURN', 采购行为: ['beh_return'],
       })],
       behavior: [{ record_id: 'beh_return', fields: { 行为名称: '采购退货', 行为编码: 'PURCHASE_RETURN' } }],
       purchaseOrderBatch: [],
@@ -1409,11 +1448,18 @@ test('采购退货一条：编号 + 数量（number）→ 正确解析，且不�
   const accepted = await service.accept('supplier-report', 'rep_return_1');
   const task = await waitForProcessed(store, accepted.taskId);
   assert.equal(task.status, 'posted');
-  const requests = await gateway.listAll('purchaseRequest');
-  assert.equal(requests.length, 1);
-  assert.equal(requests[0].fields['数量'], 4, '数量取自「数量」字段，不解析「数量说明」');
-  assert.equal(requests[0].fields['尺码'], undefined, '采购退货没有尺码，绝不能凭空补一个');
-  assert.deepEqual(requests[0].fields['采购行为'], ['beh_return'], '行为原样写到采购申请上，供后续区分');
+  assert.equal(task.result.is_return, true, '必须走退货链路，不能被归批当成报货明细');
+  assert.equal(task.result.declared, 4, '数量取自「数量」字段，不解析「数量说明」里的 9 双');
+  // 这个假表里没有实时库存：能对上的 0 双 → 如实报差额、一张单据都不写
+  assert.equal(task.result.available, 0);
+  assert.equal(task.result.taken, 0);
+  assert.equal(task.result.shortfall, 4);
+  assert.deepEqual(task.result.doc_ids, []);
+  assert.equal((await gateway.listAll('purchaseRequest')).length, 0);
+  // 退货不建「报货批次」、不写采购到货/入库（那是采购申请 → 到货那条链路的事）
+  assert.equal((await gateway.listAll('purchaseOrderBatch')).length, 0);
+  assert.equal((await gateway.listAll('purchaseArrival')).length, 0);
+  assert.equal((await gateway.listAll('purchaseInbound')).length, 0);
 });
 
 test('一次提交多条（同一包）→ 只处理一次、只出一份申请、只出一张图', async () => {
@@ -1518,7 +1564,7 @@ test('窗口到点才处理：窗口没到之前一次远端写入都不发生',
   assert.equal((await gateway.listAll('purchaseRequest')).length, 1);
 });
 
-test('同一次提交里混着采购申请和采购退货 → 两类明细各自按自己的格式解析', async () => {
+test('同一次提交里混着采购申请和采购退货 → 各走各的链路，退货不被归批顺手写成单据', async () => {
   const { service, store, gateway } = makeService({
     gateway: makeGateway({
       purchaseReport: [
@@ -1538,17 +1584,23 @@ test('同一次提交里混着采购申请和采购退货 → 两类明细各自
   });
   const accepted = await service.acceptMany('supplier-report', ['rep_mix_req', 'rep_mix_ret']);
   const tasks = await waitForProcessed(store, accepted.records.map((item) => item.taskId));
-  assert.ok(tasks.some((task) => task.status === 'posted'));
 
+  // 采购申请那条：归批 → 一条单据信息、带上它自己的尺码与数量
   const requests = await gateway.listAll('purchaseRequest');
-  assert.equal(requests.length, 2, '两条记录各写一条采购申请');
-  const reqRow = requests.find((row) => row.fields['采购行为']?.[0] === 'beh_req');
-  const retRow = requests.find((row) => row.fields['采购行为']?.[0] === 'beh_return');
-  assert.ok(reqRow && retRow, `两条的行为必须各自正确，实际：${JSON.stringify(requests.map((r) => r.fields['采购行为']))}`);
-  assert.equal(reqRow.fields['数量'], 2);
-  assert.deepEqual(reqRow.fields['尺码'], ['size_36']);
-  assert.equal(retRow.fields['数量'], 5);
-  assert.equal(retRow.fields['尺码'], undefined, '退货行不能带尺码');
+  assert.equal(requests.length, 1, '只有采购申请那条会被归批写单据');
+  assert.deepEqual(requests[0].fields['尺码'], ['size_36']);
+  assert.equal(requests[0].fields['数量'], 2);
+
+  // 采购退货那条：走退货链路（这个假表里没有实时库存 → 如实报差额、一张单据都不写）。
+  // ⚠️ 关键回归：归批**不能**给退货记录补「已生成申请」终态——补了就等于把退货吞掉，
+  // 退货链路再也不会跑（库存永远扣不掉）。
+  const returnTask = tasks.find((task) => task.record_id === 'rep_mix_ret');
+  assert.equal(returnTask.result.is_return, true, '退货必须走退货链路');
+  assert.equal(returnTask.result.declared, 5);
+  assert.deepEqual(returnTask.result.doc_ids, []);
+  const returnReport = await gateway.get('purchaseReport', 'rep_mix_ret');
+  assert.notEqual(returnReport.fields['处理状态'], '已生成申请', '退货没写成，不能被归批补上终态');
+  assert.equal((await gateway.listAll('purchaseOrderBatch')).length, 1, '只有采购申请那条会开批次');
 });
 
 test('重复投递（同一批的明细 webhook 重投）→ 不重复建单、不重复发图', async () => {
@@ -1566,7 +1618,7 @@ test('重复投递（同一批的明细 webhook 重投）→ 不重复建单、�
     references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
     recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => [{ size: text.includes('36') ? 36 : 37, quantity: text.includes('36') ? 2 : 1 }] }),
   });
-  await Promise.all([
+  const [firstA, firstB] = await Promise.all([
     service.accept('supplier-report', 'rep_dup_batch_a'),
     service.accept('supplier-report', 'rep_dup_batch_b'),
   ]);
@@ -1574,6 +1626,15 @@ test('重复投递（同一批的明细 webhook 重投）→ 不重复建单、�
   // 「另一条明细正在处理，所以这条停在中间态」的正常现象。
   await waitForBatchPosted(gateway, 'BATCH-DUP');
   await waitForIdle(service);
+  // 先等出图收尾落定，再取快照：否则快照可能记下"图还没发完"的中间值，
+  // 后面重投时那条还在跑的收尾会把计数推上去，看起来像"重投多发了一张"。
+  await waitForImageDelivery(images, 1);
+  // ⚠️ 还要等**批次任务的终态写盘**：flushReportBatch 是在 enqueue 的那次处理跑完之后
+  // 才逐个写 status（posted / completed）。出图落定 ≠ status 已写。少这一等，
+  // 重投会读到还在 queued/processing 的任务 → 走一遍 already_posted → duplicate=false
+  //（CI 与本地都偶发挂过：已 posted 的任务要按重复投递拦掉 false !== true）。
+  await waitForTask(store, firstA.taskId, ['posted', 'completed']);
+  await waitForTask(store, firstB.taskId, ['posted', 'completed']);
   const snapshot = () => [records.purchaseOrderBatch.length, records.purchaseRequest.length, images.calls.length].join('/');
   const before = snapshot();
 
@@ -1780,6 +1841,13 @@ const waitForIdle = async (service) => {
   await waitFor('处理队列清空', async () => service.queues.size === 0, { attempts: 600, pause: 5 });
 };
 
+// ⚠️ 队列清空 ≠ 出图发完。图与说明是 process() 里「采购申请已经写成」之后的收尾动作
+// （先发图再写附件），队列这时候可能已经空了。用例如果要断言"一共出了几张图"，
+// 必须再等这一步落定，否则会读到"发了一半"的中间值（改群发之后这条用例就这样偶发挂过）。
+const waitForImageDelivery = async (images, expected) => {
+  await waitFor(`出图 ${expected} 次`, async () => images.calls.length === expected, { attempts: 600, pause: 5 });
+};
+
 test('A1 并发重收同一条报单 webhook：只生成一个批次和一套采购申请，也不重复发图', async () => {
   const records = purchaseRecords('rep_race');
   const { service, store, images } = makeService({
@@ -1936,3 +2004,185 @@ test('B4 远端出现两条相同幂等键：停止自动处理并转人工核�
   assert.equal(records.purchaseRequest.length, 2, '停止后不得再写出新的采购申请');
 });
 
+// 结构化日志的出口就是 console.log/warn/error（src/utils/logger.js）。
+// 捕获它们就能断言"只记了日志、没有别的动作"这类约定。
+//
+// ⚠️ 合并 #86 时它一度消失：它原先定义在「到货等待」那一段测试里，#86 把整段删了，
+// 而 #85 后加的群聊用例仍在用它（git 看不到这种"删了别人还在用的帮手"，不报冲突）。
+// 它本身与识别流程无关，所以在群聊用例这里恢复。
+const captureLogs = () => {
+  const lines = [];
+  const originals = { log: console.log, warn: console.warn, error: console.error };
+  const capture = (...args) => { lines.push(args.map((value) => String(value)).join(' ')); };
+  console.log = capture;
+  console.warn = capture;
+  console.error = capture;
+  return {
+    lines,
+    events: (event) => lines.filter((line) => line.includes(`"event":"${event}"`)),
+    restore: () => { console.log = originals.log; console.warn = originals.warn; console.error = originals.error; },
+  };
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A：采购单发到群 + @经办人（不再 @所有人）+ 把「那条消息 / 那条话题 ↔ 哪一批」落成本地记录
+// ─────────────────────────────────────────────────────────────────────────────
+
+// 定位器指向临时目录，才能在本文件里断言"映射真的落盘了"，
+// 且不会让别的用例看见这一条映射。
+const locatorStoreFor = (dir) => new JsonTaskStore({
+  dir: path.join(dir, 'group_messages'), idField: 'task_id',
+});
+
+const makeGroupPurchaseService = (options = {}) => {
+  const dir = options.dir || tempDir();
+  const batchLocatorStore = options.batchLocatorStore || locatorStoreFor(dir);
+  const sent = [];
+  const built = makeService({
+    dir,
+    gateway: makeGateway({
+      purchaseReport: [reportRecord(options.recordId || 'rep_group', {
+        尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'],
+        // operator: '' → 报单记录没填经办人（专门验证"不 @任何人"那条路）。
+        ...(options.operator === undefined ? {} : { 经办人: options.operator ? [{ id: options.operator }] : [] }),
+      })],
+      purchaseOrderBatch: [],
+      purchaseRequest: [],
+      supplier: SUPPLIERS,
+    }),
+    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
+    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }] }),
+    client: makeClient({
+      sendMessage: async (params) => {
+        sent.push(params);
+        return {
+          code: 0,
+          data: {
+            message_id: `om_sent_${sent.length}`,
+            // 话题群：飞书发消息的响应里直接带这条消息所属的话题 id（真机实测有这个字段）。
+            // 只给文字那条带上：图片那条为空，正好覆盖"有的消息有话题、有的没有"。
+            thread_id: params.data.msg_type === 'text' ? 'omt_sent_thread' : '',
+          },
+        };
+      },
+    }),
+    batchLocatorStore,
+  });
+  return { ...built, sent, batchLocatorStore };
+};
+
+// ⚠️ 「两条消息发到群了」≠「消息 ↔ 批次映射写完了」：rememberGroupMessage 是发消息
+// 那一段**之后**的收尾动作（见 deliverSupplierImagesInner）。只等 sent.length 就断言
+// 反查结果，会在机器慢时读到"映射还没落盘"的中间态（not_found；CI 与本机均偶发挂过）。
+const waitForGroupMappings = async (batchLocatorStore, expected = 2) => {
+  await waitFor(`消息 ↔ 批次映射写满 ${expected} 条`, async () => (await batchLocatorStore.list()).length === expected);
+};
+
+test('A：采购单发到群 PURCHASE_CHAT_ID 并 @经办人；消息/话题 ↔ 批次落进本地记录', async () => {
+  const { service, store, batchLocatorStore, sent, gateway } = makeGroupPurchaseService();
+  const accepted = await service.accept('supplier-report', 'rep_group');
+  const task = await waitForTask(store, accepted.taskId);
+  assert.equal(task.status, 'posted');
+
+  await waitFor('采购单发到群', async () => sent.length === 2);
+  await waitForGroupMappings(batchLocatorStore);
+  const [image, text] = sent;
+  // 发到群（chat_id），不是经办人私聊。
+  assert.equal(image.params.receive_id_type, 'chat_id');
+  assert.equal(image.data.receive_id, 'oc_test_purchase_group');
+  assert.equal(image.data.msg_type, 'image');
+  assert.equal(text.params.receive_id_type, 'chat_id');
+  assert.equal(text.data.receive_id, 'oc_test_purchase_group');
+  // @经办人（不是 @所有人）：业务负责人改的口径。
+  const textContent = JSON.parse(text.data.content).text;
+  assert.match(textContent, /^<at user_id="ou_user_1"><\/at> /);
+  assert.ok(!textContent.includes('user_id="all"'), '不允许再 @所有人');
+  // 群里发的两条消息，一条不漏地落成「消息 ↔ 批次」记录（C 靠它反查）。
+  const mappings = await batchLocatorStore.list();
+  assert.equal(mappings.length, 2);
+  assert.deepEqual(mappings.map((m) => m.message_id).sort(), ['om_sent_1', 'om_sent_2']);
+  assert.ok(mappings.every((m) => m.batch_no), '每条映射都要带批次号');
+  assert.ok(mappings.every((m) => m.chat_id === 'oc_test_purchase_group'));
+  // 飞书回了 thread_id 的那条要把它记下来（话题定位的落点）。
+  assert.deepEqual(
+    mappings.map((m) => m.thread_id).sort(),
+    ['', 'omt_sent_thread'],
+  );
+  // 采购事实本身不受影响：采购申请照写、报单进终态。
+  assert.equal((await gateway.listAll('purchaseRequest')).length, 1);
+});
+
+test('A：未配置 PURCHASE_CHAT_ID → 大声跳过（记 skipped 日志），绝不悄悄发私聊', async () => {
+  const logs = captureLogs();
+  try {
+    const { service, store, sent, gateway } = makeGroupPurchaseService();
+    service.resolvePurchaseGroupTarget = () => ({ chatId: '', sandbox: false, reason: 'chat_id_unconfigured' });
+    const accepted = await service.accept('supplier-report', 'rep_group');
+    const task = await waitForTask(store, accepted.taskId);
+    // 采购事实照常写成——群没配只影响"发没发出去"，不能反过来把采购判失败。
+    assert.equal(task.status, 'posted');
+    assert.equal((await gateway.listAll('purchaseRequest')).length, 1);
+    // 一条 IM 消息都不许发（尤其不许回落到经办人私聊）。
+    assert.deepEqual(sent, [], '未配置群时必须一条都不发');
+    const skipped = logs.events('purchase.request.image.skipped');
+    assert.equal(skipped.length, 1, '必须留下可排查的跳过日志');
+    assert.ok(skipped[0].includes('purchase_chat_id_unconfigured'));
+  } finally {
+    logs.restore();
+  }
+});
+
+test('C：发到群的两条消息都能用 message_id 反查回批次（引用定位的落点）', async () => {
+  const { service, store, batchLocatorStore, sent } = makeGroupPurchaseService();
+  const accepted = await service.accept('supplier-report', 'rep_group');
+  await waitForTask(store, accepted.taskId);
+  await waitFor('采购单发到群', async () => sent.length === 2);
+
+  await waitForGroupMappings(batchLocatorStore);
+  const locator = new PurchaseBatchLocator({ store: batchLocatorStore });
+  const first = await locator.resolve({ parentId: 'om_sent_1' });
+  const second = await locator.resolve({ parentId: 'om_sent_2' });
+  assert.equal(first.status, 'matched');
+  assert.equal(second.status, 'matched');
+  assert.equal(first.batchNo, second.batchNo);
+  assert.ok(first.batchNo, '反查回来的批次号不能为空');
+  assert.equal(first.batch.request_ids.length, 1);
+  // 引用一条**不是我们发的**消息：明确认不出，绝不猜最近一笔。
+  const unknown = await locator.resolve({ parentId: 'om_someone_else' });
+  assert.equal(unknown.status, 'not_found');
+});
+
+test('C：话题 id 能直接反查回批次（不引用机器人那条也能定位）', async () => {
+  const { service, store, batchLocatorStore, sent } = makeGroupPurchaseService();
+  const accepted = await service.accept('supplier-report', 'rep_group');
+  await waitForTask(store, accepted.taskId);
+  await waitFor('采购单发到群', async () => sent.length === 2);
+
+  await waitForGroupMappings(batchLocatorStore);
+  const locator = new PurchaseBatchLocator({ store: batchLocatorStore });
+  // 话题里后续消息只带 thread_id（parent_id 可能是她自己的消息）——必须只靠它命中。
+  const inThread = await locator.resolve({ threadId: 'omt_sent_thread', text: '这批货到了' });
+  assert.equal(inThread.status, 'matched');
+  assert.equal(inThread.source, 'thread_id');
+  assert.ok(inThread.batchNo, '话题反查回来的批次号不能为空');
+  // 没记过的话题 id：明确认不出，绝不猜。
+  const unknown = await locator.resolve({ threadId: 'omt_never_seen' });
+  assert.equal(unknown.status, 'not_found');
+  assert.equal(unknown.source, 'thread_id');
+});
+
+test('A：拿不到经办人 open_id → 不 @任何人（也不退回 @所有人）', async () => {
+  const logs = captureLogs();
+  try {
+    const { service, store, sent } = makeGroupPurchaseService({ operator: '' });
+    const accepted = await service.accept('supplier-report', 'rep_group');
+    await waitForTask(store, accepted.taskId);
+    await waitFor('采购单发到群', async () => sent.length >= 2);
+    const text = sent.find((m) => m.data.msg_type === 'text');
+    assert.ok(text, '正文仍要发出去');
+    assert.ok(!JSON.parse(text.data.content).text.includes('<at '), '拿不到经办人时一个 @ 都不加');
+    assert.equal(logs.events('purchase.request.image.operator_missing').length, 1);
+  } finally {
+    logs.restore();
+  }
+});

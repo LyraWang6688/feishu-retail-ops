@@ -207,9 +207,11 @@ const V1_BITABLE_SCHEMA = {
         creditFlowId: '客户往来流水ID',
       },
     },
-    // Legacy private-chat purchase intake table. Kept for the frozen path.
+    // 供应商填表入口。⚠️ 表名 2026-10-05 由业务负责人从「供应商报货」改成「供应商对接」，
+    // 这里只跟着改 tableName（用户可见文案用得到）；分流与读写一律按 tableId 走，
+    // 所以改名不影响任何触发链路。
     purchaseReport: {
-      tableName: '供应商报单',
+      tableName: '供应商对接',
       tableId: getEnv('FEISHU_V1_PURCHASE_REPORT_TABLE_ID', 'tblo0ffzFt7vyQw2'),
       fields: {
         batchNoText: '报货批次号', detailId: '明细ID', behavior: '采购行为',
@@ -225,8 +227,11 @@ const V1_BITABLE_SCHEMA = {
         status: '处理状态', failureReason: '解析失败原因', request: '关联采购申请',
       },
     },
+    // ⚠️ 表名 2026-10-05 由业务负责人从「采购申请」改成「单据信息」——新定位是
+    // **给供应商开图片的依据**（采购申请单 / 采购退货单都写在这张表里）。
+    // 同样只改 tableName：闸门和链路都按 tableId 走，改名不影响它们。
     purchaseRequest: {
-      tableName: '采购申请',
+      tableName: '单据信息',
       tableId: getEnv('FEISHU_V1_PURCHASE_REQUEST_TABLE_ID', 'tbli1ygPtss5CWCH'),
       fields: {
         batchNo: '报货批次号', behavior: '采购行为', product: '编号', size: '尺码', quantity: '数量',
@@ -240,6 +245,8 @@ const V1_BITABLE_SCHEMA = {
         // 供应商要的采购申请 PNG 写回这里，产品负责人再自己转发。
         // ⚠️ 字段真实名是「采购申请单」（2026-10-05 用 lark-cli +field-list 只读核对过），
         // 不是口头说的「采购申请附件」；写错字段名飞书会直接 FieldNameNotFound。
+        // 「采购退货单」的 PNG 也写回这同一个附件字段：表已改名为「单据信息」，
+        // 它的定位就是"给供应商开图片的依据"，退货单同理，不再新建字段。
         attachment: '采购申请单',
       },
     },
