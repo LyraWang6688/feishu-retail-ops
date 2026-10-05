@@ -25,6 +25,10 @@ const {
 
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
 
+// 群聊链路要读 LARK_BOT_OPEN_ID 判 @（config/groupPurchase）。这些用例都不碰群聊，
+// 但服务构造时会解析一次配置；给个测试值，免得每个用例都打一条
+// lark.group.bot_open_id_missing 警告把真正的失败淹掉。
+process.env.LARK_BOT_OPEN_ID = process.env.LARK_BOT_OPEN_ID || 'ou_test_bot_open_id';
 // 业务负责人拍板的词表，逐字钉住：改动这份清单必须是一次有意识的决定。
 const EXPECTED_KEYWORDS = ['查', '查询', '退', '退货', '换', '换货', '卖', '买', '记', '库存', '欠'];
 // 只含关键词、不含任何数字的"她明明想办事"的消息。

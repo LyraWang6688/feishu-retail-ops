@@ -4,7 +4,9 @@
 
 `feishu-retail-ops` 的通用产品名是“零售数智经营助手”，邯美部署名称是“邯美数智经营工作台”。它以飞书机器人、飞书网页应用和飞书多维表格为基础，为线下零售与小型企业提供销售、采购、库存和资金联动能力。
 
-当前 V1 的销售录入入口是飞书私聊机器人（自然语言文字）；采购有**两条**由飞书多维表格记录变更事件触发的链路：**供应商报单**新增 → 解析「数量说明」文字**直接生成采购申请（免确认）**，再按供应商渲染 PNG 发给报单人、并把图写回「采购申请单」附件；**采购到货**新增 → 识别记录里的鞋盒图片并与该批次的采购申请比对，**经用户确认后**入库。机器人**不接收**采购图片，收到非文字消息会明确回绝并提示使用采购表单。销售与采购到货都经用户确认后由后端统一入账；**采购申请是唯一的例外**——报单记录本身就是产品负责人的输入，产品负责人明确要求免确认（理由与红线边界见 `PurchaseWebhookService.publishPurchaseRequest` 的注释）。飞书网页工作台已经实现并存于本仓库（`GET /workbench`、`/api/workbench/*`、`server/public/workbench/`），用于销售订单的后续收款、交付与工作台查询，不承担数据录入。原微信小程序链路已于 2026-10-01 正式退役并从代码库整体移除，不是当前入口，也没有开关可以重新启用它。
+当前 V1 的销售录入入口是飞书私聊机器人（自然语言文字）；采购有**两条**由飞书多维表格记录变更事件触发的链路：**供应商报单**新增 → 解析「数量说明」文字**直接生成采购申请（免确认）**，再按供应商渲染 PNG **发到采购群**（`PURCHASE_CHAT_ID`，带 @所有人）并把图写回「采购申请单」附件；**采购到货**新增 → 识别记录里的鞋盒图片并与该批次的采购申请比对，**经用户确认后**入库。机器人**不接收**采购图片，收到非文字消息会明确回绝并提示使用采购表单。销售与采购到货都经用户确认后由后端统一入账；**采购申请是唯一的例外**——报单记录本身就是产品负责人的输入，产品负责人明确要求免确认（理由与红线边界见 `PurchaseWebhookService.publishPurchaseRequest` 的注释）。飞书网页工作台已经实现并存于本仓库（`GET /workbench`、`/api/workbench/*`、`server/public/workbench/`），用于销售订单的后续收款、交付与工作台查询，不承担数据录入。原微信小程序链路已于 2026-10-01 正式退役并从代码库整体移除，不是当前入口，也没有开关可以重新启用它。
+
+**群聊入口（2026-10-05 起）**：机器人也接收**群聊**消息，但准入判据只有一条——`message.mentions` 里必须有机器人自己的 open_id（`LARK_BOT_OPEN_ID`）。没有 @ 机器人 → 完全静默、零远端调用（群里日常聊天绝不能被触发）；@ 了机器人 → 加 `OneSecond` 表情确认（群里**不回**文字，避免刷屏），再走采购定位链路（`PurchaseBatchLocator`：引用采购单用 `message.parent_id` 反查本地映射 → 否则按正文里的批次号 `BH-YYYYMMDD-NNNN` → 都没有就回一句问清楚，**绝不猜"最近一笔"**）。采购单与群里那条消息的 `message_id ↔ 批次` 映射写在本地任务记录 `server/data/purchase_group_messages/`，**不写业务表**。私聊的既有闸门与行为完全不变。
 
 > **采购链路的历史**：曾存在一条"机器人收采购图片 → 写「采购批次」表 → `PurchasePostingService`"
 > 的旧链路（`acceptPurchaseImage` / `finishPurchaseImages` / `processPurchaseTask` /
@@ -61,7 +63,7 @@
 
 | 入口                                                                                                                    | 说明                              |
 | --------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
-| `POST /api/lark/events`                                                                                               | 飞书事件回调（私聊消息、卡片动作）               |
+| `POST /api/lark/events`                                                                                               | 飞书事件回调（私聊消息、**群聊 @ 机器人**、卡片动作）   |
 | `GET /api/lark/events/health`                                                                                         | 事件回调健康检查                        |
 | `GET /api/auth/feishu/me`、`GET /api/auth/feishu/start`、`GET /api/auth/feishu/callback`、`POST /api/auth/feishu/logout` | 工作台飞书身份认证                       |
 | `GET /api/workbench/sales/today`                                                                                      | 今日销售                            |
@@ -104,6 +106,12 @@ pnpm run dev
 - `TEXT_LLM_API_KEY` / `TEXT_LLM_BASE_URL` / `TEXT_LLM_MODEL` - **文字**模型（销售录单、采购数量说明）
 - `VISION_LLM_API_KEY` / `VISION_LLM_BASE_URL` / `VISION_LLM_MODEL` - **图片**模型（鞋盒识别），必须支持视觉
 - `API_KEY` - 非飞书 `/api` 接口的 `x-api-key` 鉴权
+
+**群聊采购链路（缺了不会报错，但会"安静地不工作"，所以必须显式配）** — 取值都在 `src/config/groupPurchase.js`
+
+- `PURCHASE_CHAT_ID` - 采购单发到哪个群（chat_id，形如 `oc_xxx`）。**没有默认值**：留空时采购申请照常写成，但图与说明不发，并打 `purchase.request.image.skipped` 警告（**不会**回落到经办人私聊）
+- `LARK_BOT_OPEN_ID` - 机器人自己的 open_id（形如 `ou_xxx`），判「群里有没有 @ 机器人」的唯一依据。**没有默认值**：留空时群聊消息一律不处理（并打 `lark.group.bot_open_id_missing` 警告），私聊不受影响
+- `LARK_ACK_REACTION` - 「收到」表情的 emoji_type，默认 `OneSecond`（真机验证有效）
 
 > 两组模型**都没有默认值、也不跨供应商兜底**（原先缺省会回退到 `ARK_*` 豆包，已取消）：
 > 哪一组缺配置，就那一组在调用时报错，不静默改用另一家——否则会造成「以为在用 A、实际在用 B」。
