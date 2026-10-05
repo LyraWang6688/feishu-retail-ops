@@ -84,7 +84,10 @@ const costValueOf = (value) => {
  * （明显是 OCR 抖动或看错了列），整个货号都不写，只记一条 warn 让人去核对——
  * 按产品负责人的原话，宁可少写也不能写错。
  *
- * @param {Array<{item_no?: string, unit_cost?: unknown}>} rows
+ * 字段名与 doubaoService 归一化时认的别名保持一致（unit_cost / unitCost / cost / price）：
+ * 「销售价 / 单价」列对我们是成本，模型怎么叫都行；识别字面统一在这里，冲突判定才不会漏掉。
+ *
+ * @param {Array<{item_no?: string, unit_cost?: unknown, unitCost?: unknown, cost?: unknown, price?: unknown}>} rows
  * @returns {Map<string, {item_no: string, cost: number|null, conflict: boolean, prices: number[]}>}
  */
 const buildArrivalCostPlan = (rows) => {
@@ -92,7 +95,7 @@ const buildArrivalCostPlan = (rows) => {
   for (const row of Array.isArray(rows) ? rows : []) {
     const itemNo = String(row?.item_no ?? row?.itemNo ?? '').trim();
     if (!itemNo) continue;
-    const cost = parseUnitCost(row?.unit_cost ?? row?.unitCost ?? row?.price);
+    const cost = parseUnitCost(row?.unit_cost ?? row?.unitCost ?? row?.cost ?? row?.price);
     if (cost === null) continue;
     const entry = plan.get(itemNo) || { item_no: itemNo, cost: null, conflict: false, prices: [] };
     if (!entry.prices.includes(cost)) entry.prices.push(cost);

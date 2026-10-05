@@ -3,7 +3,6 @@ const assert = require('node:assert/strict');
 const {
   salesConfirmationCard,
   purchaseRequestConfirmationCard,
-  purchaseArrivalComparisonCard,
   purchaseArrivalDetailCard,
   sampleReplacementCard,
   keepOnlyCardButton,
@@ -106,16 +105,6 @@ test('采购申请确认卡片：确认/取消用 column_set，不再用 action'
   assertButtonRowsAreEqualWeight(card);
 });
 
-test('采购到货差异卡片：确认/取消用 column_set，不再用 action', () => {
-  const card = purchaseArrivalComparisonCard('draft_1', {
-    batch_no: 'BATCH-1', differences: [],
-  });
-  assert.deepEqual(actionButtons(card), []);
-  assert.deepEqual(columnSetButtons(card).map((button) => button.text.content), ['确认入库', '取消']);
-  assert.deepEqual(buttonRowWidths(card), [2]);
-  assertButtonRowsAreEqualWeight(card);
-});
-
 test('采购到货明细卡片：确认/取消用 column_set，不再用 action', () => {
   const card = purchaseArrivalDetailCard('draft_1', { batch_no: 'BATCH-1', actual: [] });
   assert.deepEqual(actionButtons(card), []);
@@ -123,6 +112,31 @@ test('采购到货明细卡片：确认/取消用 column_set，不再用 action'
   // 鞋盒总数那块 column_set 只有文字，不算按钮行。
   assert.deepEqual(buttonRowWidths(card), [2]);
   assertButtonRowsAreEqualWeight(card);
+});
+
+// 差异卡片已按产品负责人要求删除（未来架构：到货在采购申请基础上修改，不再比对差异），
+// 这里只钉住"明细卡片上不会出现差异文案"。
+test('采购到货明细卡片不再展示任何差异信息', () => {
+  const card = purchaseArrivalDetailCard('draft_1', {
+    batch_no: 'BATCH-1',
+    actual: [{ item_no: '8088', color: '灰', size: 36, quantity: 1, product_number: '8088灰' }],
+  });
+  const cardText = JSON.stringify(card);
+  assert.ok(!cardText.includes('差异'), `卡片不应再出现差异文案：${cardText}`);
+  assert.ok(!cardText.includes('实到'), `卡片不应再出现「申请/实到」对比：${cardText}`);
+});
+
+test('采购到货明细卡片：货号+颜色命中多条时标注「匹配到 N 条，已取 XXX」', () => {
+  const card = purchaseArrivalDetailCard('draft_1', {
+    batch_no: 'BATCH-1',
+    actual: [{
+      item_no: '8088-26', color: '棕', size: 36, quantity: 1, product_number: '8088-26棕女鞋',
+      ambiguous_match: { count: 2, color: '棕', number: '8088-26棕女鞋' },
+    }],
+  });
+  const cardText = JSON.stringify(card);
+  assert.ok(cardText.includes('匹配到 2 条'), `要写清匹配到几条：${cardText}`);
+  assert.ok(cardText.includes('已取 8088-26棕女鞋'), `要写清取了哪条：${cardText}`);
 });
 
 test('样品补选卡片：候选尺码用 column_set；单个「刷新」保持 action', () => {
