@@ -300,9 +300,12 @@ Schema Check 只回答「目标 Base 的字段与关联结构是否满足契约�
 
 ### 1. ⭐ 测试 Base 与生产 Base 的边界（**最重要的一条，她反复强调过**）
 
-- **测试 Base `GqMMbhnxGaaEdDsNz2Tcug1nnlb`：可以随便写，不用问她。**
+- **测试 Base —— `FEISHU_V1_E2E_TEST_APP_TOKEN` 指向的那个（见 `.env.example`）：可以随便写，不用问她。**
   它就是为测试准备的——**测试数据不用删**；已按生产对齐（**表名一致，`table_id` 不同**）。
-- **生产 Base `QrXlbwXMLaJ2TNsxSfFcIA3rnwh`：🔴 只读，一个字都不许写。**
+- **生产 Base —— `FEISHU_V1_BITABLE_APP_TOKEN` 指向的那个（见 `.env.example`）：🔴 只读，一个字都不许写。**
+- ⚠️ **两个 Base 的 token 一律只从 `.env` 读，不在本文件写明文**；⚠️ **本地 `.env` 可能把
+  `FEISHU_V1_BITABLE_APP_TOKEN` 也指向测试 Base 以避免误写生产**——
+  **判断"哪张是生产"要认线上取值，不要只凭本地这个变量的当前值反推。**
 - ⇒ **凡需要写表来验证的，一律走测试 Base**——**不要问她「测试表能不能写」**
   （这条问过两次，她纠正过）。
 - **为什么**：她对**生产数据的正确性零容忍**；而测试表本来就是拿来造的。
