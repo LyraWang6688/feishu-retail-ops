@@ -354,7 +354,11 @@ test('重收同一条报单 webhook：不重复建单，也不重复发图', asy
     recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }] }),
   });
   const first = await service.accept('supplier-report', 'rep_dup');
-  await waitForTask(store, first.taskId);
+  // ⚠️ 必须等 result 落盘，不能只等 status=posted：posted 是在
+  // confirmPurchaseRequest 里落的，之后才出图/发图。只等 status 会把 imagesAfterFirst
+  // 记成 0，而第一次那条的图紧接着发出去，第二次重投的断言就会看到多出来的 1 张
+  //（CI 上偶发挂在这里：重收 webhook 不得重复发图 1 !== 0）。
+  await waitForProcessed(store, first.taskId);
   const requestsAfterFirst = (await gateway.listAll('purchaseRequest')).length;
   const imagesAfterFirst = images.calls.length;
 
@@ -2479,7 +2483,7 @@ test('重复投递（同一批的明细 webhook 重投）→ 不重复建单、�
     references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
     recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => [{ size: text.includes('36') ? 36 : 37, quantity: text.includes('36') ? 2 : 1 }] }),
   });
-  await Promise.all([
+  const [firstA, firstB] = await Promise.all([
     service.accept('supplier-report', 'rep_dup_batch_a'),
     service.accept('supplier-report', 'rep_dup_batch_b'),
   ]);
@@ -2490,6 +2494,12 @@ test('重复投递（同一批的明细 webhook 重投）→ 不重复建单、�
   // 先等出图收尾落定，再取快照：否则快照可能记下"图还没发完"的中间值，
   // 后面重投时那条还在跑的收尾会把计数推上去，看起来像"重投多发了一张"。
   await waitForImageDelivery(images, 1);
+  // ⚠️ 还要等**批次任务的终态写盘**：flushReportBatch 是在 enqueue 的那次处理跑完之后
+  // 才逐个写 status（posted / completed）。出图落定 ≠ status 已写。少这一等，
+  // 重投会读到还在 queued/processing 的任务 → 走一遍 already_posted → duplicate=false
+  //（CI 与本地都偶发挂过：已 posted 的任务要按重复投递拦掉 false !== true）。
+  await waitForTask(store, firstA.taskId, ['posted', 'completed']);
+  await waitForTask(store, firstB.taskId, ['posted', 'completed']);
   const snapshot = () => [records.purchaseOrderBatch.length, records.purchaseRequest.length, images.calls.length].join('/');
   const before = snapshot();
 
@@ -3364,6 +3374,13 @@ const makeGroupPurchaseService = (options = {}) => {
   return { ...built, sent, batchLocatorStore };
 };
 
+// ⚠️ 「两条消息发到群了」≠「消息 ↔ 批次映射写完了」：rememberGroupMessage 是发消息
+// 那一段**之后**的收尾动作（见 deliverSupplierImagesInner）。只等 sent.length 就断言
+// 反查结果，会在机器慢时读到"映射还没落盘"的中间态（not_found；CI 与本机均偶发挂过）。
+const waitForGroupMappings = async (batchLocatorStore, expected = 2) => {
+  await waitFor(`消息 ↔ 批次映射写满 ${expected} 条`, async () => (await batchLocatorStore.list()).length === expected);
+};
+
 test('A：采购单发到群 PURCHASE_CHAT_ID 并 @经办人；消息/话题 ↔ 批次落进本地记录', async () => {
   const { service, store, batchLocatorStore, sent, gateway } = makeGroupPurchaseService();
   const accepted = await service.accept('supplier-report', 'rep_group');
@@ -3371,6 +3388,7 @@ test('A：采购单发到群 PURCHASE_CHAT_ID 并 @经办人；消息/话题 ↔
   assert.equal(task.status, 'posted');
 
   await waitFor('采购单发到群', async () => sent.length === 2);
+  await waitForGroupMappings(batchLocatorStore);
   const [image, text] = sent;
   // 发到群（chat_id），不是经办人私聊。
   assert.equal(image.params.receive_id_type, 'chat_id');
@@ -3423,6 +3441,7 @@ test('C：发到群的两条消息都能用 message_id 反查回批次（引用�
   await waitForTask(store, accepted.taskId);
   await waitFor('采购单发到群', async () => sent.length === 2);
 
+  await waitForGroupMappings(batchLocatorStore);
   const locator = new PurchaseBatchLocator({ store: batchLocatorStore });
   const first = await locator.resolve({ parentId: 'om_sent_1' });
   const second = await locator.resolve({ parentId: 'om_sent_2' });
@@ -3442,6 +3461,7 @@ test('C：话题 id 能直接反查回批次（不引用机器人那条也能定
   await waitForTask(store, accepted.taskId);
   await waitFor('采购单发到群', async () => sent.length === 2);
 
+  await waitForGroupMappings(batchLocatorStore);
   const locator = new PurchaseBatchLocator({ store: batchLocatorStore });
   // 话题里后续消息只带 thread_id（parent_id 可能是她自己的消息）——必须只靠它命中。
   const inThread = await locator.resolve({ threadId: 'omt_sent_thread', text: '这批货到了' });
