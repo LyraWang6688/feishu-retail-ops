@@ -16,6 +16,8 @@ const doubaoService = require('./doubaoService');
 const { purchaseArrivalDetailCard, purchaseStatusCard } = require('../utils/larkCards');
 const { InventoryService } = require('./inventoryService');
 const { buildPurchaseQuantities } = require('./purchaseQuantityPolicy');
+// 「到齐」判据（Σ双数 >= 合计数量）。这一步只被下面的影子模式观察调用，不参与任何判断。
+const { evaluateReportCompleteness } = require('./reportCompletenessPolicy');
 const { buildArrivalCostPlan, isBlankCost, costValueOf } = require('./arrivalCostPolicy');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { renderPurchaseRequestPng } = require('./purchaseRequestImageService');
@@ -386,7 +388,10 @@ class PurchaseWebhookService {
       existing.recordIds.add(recordId);
       clearTimeout(existing.timer);
     } else {
-      this.batchQueues.set(batchNo, { recordIds: new Set([recordId]), taskId });
+      // firstSeenAt 只为影子模式的 elapsed_since_first_ms 记账：它是「这一批第一条
+      // 是什么时候到的」，用来在真实数据上验证 30 秒窗口到底够不够。
+      // 后续到达只复用同一个队列对象，所以这个时间戳不会被刷新。
+      this.batchQueues.set(batchNo, { recordIds: new Set([recordId]), taskId, firstSeenAt: Date.now() });
     }
     const queue = this.batchQueues.get(batchNo);
     // 用第一条记录的 taskId 作为批次任务的 taskId
@@ -400,7 +405,78 @@ class PurchaseWebhookService {
       });
     }, this.BATCH_WAIT_MS);
     logInfo('purchase.batch.queued', { batch_no: batchNo, record_id: recordId, task_id: taskId, pending_count: queue.recordIds.size });
+
+    // ── 影子模式观察（第 1 步：只观察，绝不改变行为）────────────────────────────
+    // 产品负责人把「到齐」判据从「30 秒窗口内到齐」改成了「Σ每条明细的双数 >= 合计数量」。
+    // 窗口这一步不能动（去掉它是第 3 步），所以先在这里只读地跑一遍新判据、打一条日志，
+    // 上线后用真实数据验证这个判据成不成立（例如她一次报 5 双，日志里应看到
+    // received_quantity: 5, complete: true）。
+    //
+    // 三个「不许」都体现在这段的写法上：
+    //   · 窗口照旧按 BATCH_WAIT_MS 计时（上面的 setTimeout 已经装好，先于这段）；
+    //   · 不 await、结果不进任何分支判断，只写日志，所以再慢也推迟不了批次处理；
+    //   · 不写任何表，只读记录 + 解析数量。
+    // 观察自身抛错也不会冒泡（probe 内部 try/catch 只记 warn）。
+    const firstSeenAt = queue.firstSeenAt || null;
+    this.probeReportCompleteness(batchNo, { recordId, firstSeenAt }).catch(() => undefined);
+
     return { status: 'batch_waiting', batch_no: batchNo };
+  }
+
+  /**
+   * 影子模式：「报货到齐」判据的只读观察。
+   *
+   * 只做三件事：读一遍同批次的所有报单记录 → 用 `evaluateReportCompleteness` 算一次
+   * → 打一条 `purchase.report.completeness.probe` 日志。不写任何表、不参与任何判断、
+   * 不改变处理时机；最终（第 3 步）才会用这条判据替掉 30 秒窗口。
+   *
+   * 容错：任何异常都只记 warn 后返回 null，绝不能冒泡到报货主流程。
+   */
+  async probeReportCompleteness(batchNo, { recordId = '', firstSeenAt = null } = {}) {
+    const startedAt = Date.now();
+    try {
+      const reportTable = this.gateway.table('purchaseReport');
+      const allRecords = await this.gateway.listAll('purchaseReport');
+      const batchRecords = allRecords.filter(
+        (record) => textValue(record?.fields?.[reportTable.fields.batchNoText]) === batchNo,
+      );
+      // 每条记录的「合计数量」都收进来：正常应全相同，不一致时纯函数会标 inconsistent。
+      const declaredTotals = batchRecords.map((record) => record?.fields?.[reportTable.fields.totalQuantity]);
+      const details = [];
+      let parseErrorCount = 0;
+      for (const record of batchRecords) {
+        try {
+          const parsed = await this.parseReportQuantities(record?.fields || {}, reportTable);
+          for (const item of parsed) details.push({ quantity: item?.quantity });
+        } catch (error) {
+          // 单条解析失败只影响这一条的计数，不能让整次观察没有输出（真实链路的解析
+          // 失败另有处理，这里不重复也不改变它）。
+          parseErrorCount += 1;
+        }
+      }
+      const outcome = evaluateReportCompleteness({ declaredTotal: declaredTotals, details });
+      logInfo('purchase.report.completeness.probe', {
+        batch_no: batchNo,
+        declared_total: outcome.declaredTotal,
+        received_quantity: outcome.receivedQuantity,
+        complete: outcome.complete,
+        missing_quantity: outcome.missingQuantity,
+        record_count: outcome.recordCount,
+        inconsistent: outcome.inconsistent,
+        // 「这一批第一条报单是多久之前到的」：用来判断 30 秒窗口是不是真的够。
+        elapsed_since_first_ms: firstSeenAt ? startedAt - firstSeenAt : null,
+        // 额外的诊断字段（不影响上面这些字段的语义）：读到了几条记录、几条解析失败。
+        report_record_count: batchRecords.length,
+        parse_error_count: parseErrorCount,
+      });
+      return outcome;
+    } catch (error) {
+      // 影子模式自己出错不能影响主流程：只记 warn，返回 null。
+      logWarn('purchase.report.completeness.probe_failed', {
+        batch_no: batchNo, record_id: recordId, error: error.message,
+      });
+      return null;
+    }
   }
 
   /**

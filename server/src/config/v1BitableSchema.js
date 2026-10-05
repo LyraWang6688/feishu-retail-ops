@@ -176,6 +176,11 @@ const V1_BITABLE_SCHEMA = {
       fields: {
         batchNoText: '报货批次号', detailId: '明细ID', behavior: '采购行为',
         product: '编号', size: '尺码', quantityDescription: '数量说明', reportedAt: '报单时间', operator: '经办人',
+        // 「合计数量」是产品负责人在表单里自己填的一批报货总双数（number 字段，
+        // 2026-10-05 用 lark-cli +field-list 只读核对过字段名与类型）。
+        // 它只被影子模式的「到齐」观察读取（reportCompletenessPolicy），
+        // 这一步**不参与任何写入或处理判断**；最终（第 3 步）才会用它替掉 30 秒窗口。
+        totalQuantity: '合计数量',
         status: '处理状态', failureReason: '解析失败原因', request: '关联采购申请',
       },
     },
