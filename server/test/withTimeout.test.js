@@ -13,7 +13,7 @@ test('正常返回时原样透传结果，不做多余包装', async () => {
 });
 
 test('超时会抛 TimeoutError，并且带上"是哪一步超时"', async () => {
-  await assert.rejects(withTimeout(never(), 20, '下载到货图片'), (error) => {
+  await assert.rejects(withTimeout(never(), 400, '下载到货图片'), (error) => {
     assert.ok(error instanceof TimeoutError);
     assert.equal(error.name, 'TimeoutError');
     // 复用 ETIMEDOUT，日志和上层判断都认这个码。
@@ -31,9 +31,9 @@ test('底层请求在超时之后才失败，也不会变成 unhandledRejection'
   try {
     let failLate;
     const slow = new Promise((_, reject) => { failLate = reject; });
-    await assert.rejects(withTimeout(slow, 10, '慢调用'), /超时/);
+    await assert.rejects(withTimeout(slow, 400, '慢调用'), /超时/);
     failLate(new Error('对面终于失败了'));
-    await wait(30);
+    await wait(800);
   } finally {
     process.off('unhandledRejection', onUnhandled);
   }
@@ -49,7 +49,7 @@ test('withTimeoutProxy 只包异步方法：同步方法（gateway.table 这类�
     fields: () => ({ a: 1 }),
     get: async () => 'record',
     listAll: async () => ['a'],
-  }, { timeoutMs: 20, prefix: 'gateway.' });
+  }, { timeoutMs: 400, prefix: 'gateway.' });
 
   assert.equal(slow.table('purchaseArrival'), table);
   assert.deepEqual(slow.fields(), { a: 1 });
@@ -60,7 +60,7 @@ test('withTimeoutProxy 只包异步方法：同步方法（gateway.table 这类�
   const throwing = withTimeoutProxy({
     boom: () => { throw new Error('同步错误'); },
     hang: async () => never(),
-  }, { timeoutMs: 20, prefix: 'gateway.' });
+  }, { timeoutMs: 400, prefix: 'gateway.' });
   assert.throws(() => throwing.boom(), /同步错误/);
   await assert.rejects(throwing.hang(), /gateway\.hang超时/);
 });
