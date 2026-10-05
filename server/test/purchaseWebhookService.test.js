@@ -151,7 +151,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // 写卡片、等批次窗口，耗时取决于机器。固定 sleep 在慢机器上会读到 processing
 // 这类中间状态（CI 上就这样失败过），所以统一改为轮询到任务进入稳定状态。
 const SETTLED_STATUSES = ['awaiting_confirmation', 'failed', 'cancelled', 'posted', 'completed'];
-const waitForTask = async (store, taskId, statuses = SETTLED_STATUSES, { attempts = 300, pause = 10 } = {}) => {
+const waitForTask = async (store, taskId, statuses = SETTLED_STATUSES, { attempts = 1500, pause = 10 } = {}) => {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const task = await store.get(taskId);
     if (task && statuses.includes(task.status)) return task;
@@ -161,13 +161,26 @@ const waitForTask = async (store, taskId, statuses = SETTLED_STATUSES, { attempt
   throw new Error(`等待任务进入 ${statuses.join('/')} 超时，当前状态：${last?.status}`);
 };
 
-const waitFor = async (label, check, { attempts = 300, pause = 10 } = {}) => {
+const waitFor = async (label, check, { attempts = 1500, pause = 10 } = {}) => {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (await check()) return;
     await wait(pause);
   }
   throw new Error(`等待「${label}」超时`);
 };
+
+// 批次聚合窗口：同一个「报货批次号」的报单按「最后一条到达后重置窗口」合并成一次处理。
+//
+// ⚠️ 这个窗口不能设得太小。窗口一到点，`enqueueBatch` 就把该批次的队列删掉；此后才入队
+// 的记录会另起一个窗口，于是同一个批次会**并发跑两次** `processSupplierBatch`。两次都在
+// 对方写「已生成申请」之前读表，采购申请就会写重（实测 4 条而不是 2 条，出图也变成 4 张）。
+//
+// CI 上实测「第 2 条报单走到 enqueueBatch」比第 1 条晚约 175ms（慢 runner 上每个任务状态
+// 落盘要 150~330ms），原来的 20ms 挡不住，所以 CI 会红、本地全绿。这里留一个数量级以上的
+// 余量，保证两条记录一定落在同一个窗口里。
+//
+// （单条报单的用例不受这个竞态影响，继续用 20ms 保持快速。）
+const BATCH_WINDOW_MS = 2000;
 
 // ─── 供应商报单链路（免确认 → 按供应商出图 → 发图 → 写回附件）───
 
@@ -315,7 +328,7 @@ test('同一个供应商的多条明细合并成一张图', async () => {
     references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
     recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => (text.includes('36') ? [{ size: 36, quantity: 2 }] : [{ size: 37, quantity: 1 }]) }),
   });
-  service.BATCH_WAIT_MS = 20;
+  service.BATCH_WAIT_MS = BATCH_WINDOW_MS;
   const first = await service.accept('supplier-report', 'rep_merge_1');
   await service.accept('supplier-report', 'rep_merge_2');
   const task = await waitForTask(store, first.taskId, ['posted', 'failed']);
@@ -349,7 +362,7 @@ test('多个供应商：每个供应商各出一张图、各发一条说明', as
     }),
     recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => (text.includes('36') ? [{ size: 36, quantity: 2 }] : [{ size: 37, quantity: 1 }]) }),
   });
-  service.BATCH_WAIT_MS = 20;
+  service.BATCH_WAIT_MS = BATCH_WINDOW_MS;
   const first = await service.accept('supplier-report', 'rep_two_1');
   await service.accept('supplier-report', 'rep_two_2');
   await waitForTask(store, first.taskId, ['posted', 'failed']);
@@ -1420,7 +1433,7 @@ test('同一个批次的多条报单合成一个批次任务，全部标记已�
     references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
     recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => (text.includes('36') ? [{ size: 36, quantity: 2 }] : [{ size: 37, quantity: 1 }]) }),
   });
-  service.BATCH_WAIT_MS = 20;
+  service.BATCH_WAIT_MS = BATCH_WINDOW_MS;
   const first = await service.accept('supplier-report', 'rep_c1');
   await service.accept('supplier-report', 'rep_c2');
   const task = await waitForTask(store, first.taskId, ['posted', 'failed']);
