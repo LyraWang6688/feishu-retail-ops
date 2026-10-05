@@ -50,6 +50,85 @@ test('blocks non-cash-sale behavior in V1', () => {
   assert.ok(result.missing_fields.includes('当前只支持商品销售录单'));
 });
 
+// 退换货第二期：售后诉求的字段契约与销售字段**分开**——退/换/赔不再回
+// "只支持销售录单"，而是把"退哪一双 / 钱怎么走 / 退回的鞋放哪"解析出来。
+test('return：解析动作 / 哪一双 / 差价 / 钱怎么走 / 回库状态，且不混进销售字段', () => {
+  const result = normalizeWithVouchers({
+    intent: 'return',
+    action: 'return',
+    ordinal: 2,
+    item_no: '6035',
+    color: '黑',
+    size: 39,
+    settlement: 'prepaid',
+    diff_amount: -230,
+    restock_state: '门盒',
+  }, '第 2 笔，退货，钱先存着');
+
+  assert.equal(result.intent, 'return');
+  assert.equal(result.action, 'return');
+  assert.equal(result.ordinal, 2);
+  assert.equal(result.item_no, '6035');
+  assert.equal(result.color, '黑');
+  assert.equal(result.size, 39);
+  assert.equal(result.settlement, 'prepaid');
+  assert.equal(result.diff_amount, -230);
+  assert.equal(result.restock_state, '门盒');
+  // 销售字段一个都不该出现（否则"sale 的 items"会被当成"要退的鞋"）
+  assert.equal('items' in result, false);
+  assert.equal('payments' in result, false);
+  assert.equal('agreed_total' in result, false);
+  assert.deepEqual(result.missing_fields, []);
+});
+
+test('exchange：动作 / 中文别名收敛、换成的那一双、模型漏字段时的文本兜底', () => {
+  const result = normalizeWithVouchers({
+    intent: '换货',
+    item_no: '1366-33',
+    color: '黑',
+    new_item_no: '6035',
+    new_color: '黑',
+    new_size: 39,
+    new_amount: 300,
+    settlement: '微信',
+  }, '把 1366-33 黑的换一双 6035 黑 39');
+
+  assert.equal(result.intent, 'exchange');
+  // 模型没给 action：按原话里的「换」兜底
+  assert.equal(result.action, 'exchange');
+  assert.equal(result.settlement, 'cash');
+  assert.equal(result.new_item_no, '6035');
+  assert.equal(result.new_size, 39);
+  assert.equal(result.new_amount, 300);
+  // 没说差价就留空（接线层再给建议值），解析层不许自己算
+  assert.equal(result.diff_amount, '');
+  // 没说回库状态就留空（默认值由接线层的卡片给）
+  assert.equal(result.restock_state, '');
+});
+
+test('compensation：赔货是独立动作（意图注册表里归在换货，但不能被当成换货执行）', () => {
+  const result = normalizeWithVouchers({
+    intent: 'exchange',
+    item_no: 'A100',
+    color: '黑',
+    new_item_no: 'B200',
+    new_color: '棕',
+    new_size: 42,
+    new_amount: 300,
+  }, '那双 A100 开胶了，赔一双 B200 棕 42 码');
+
+  assert.equal(result.action, 'compensation');
+  assert.equal(result.new_item_no, 'B200');
+  assert.equal(result.new_size, 42);
+});
+
+test('「第 2 笔」的序号：模型漏 ordinal 时按原话文本兜底', () => {
+  const result = normalizeWithVouchers({ intent: 'return', item_no: '6035', color: '黑' }, '第 2 笔，退货');
+  assert.equal(result.ordinal, 2);
+  const none = normalizeWithVouchers({ intent: 'return', item_no: '6035', color: '黑' }, '退那双 6035 黑');
+  assert.equal(none.ordinal, '');
+});
+
 test('multi-shoe sale requires each actual price and does not allocate an order total', () => {
   const result = normalizeWithVouchers({ intent: 'sale', agreed_total: 250,
     items: [{ item_no: '93827', size: 43, quantity: 1 }, { item_no: '2115', size: 37, quantity: 1 }],

@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { LarkMvpService } = require('../src/services/larkMvpService');
+const { afterSalesContextId } = require('../src/config/afterSalesFlow');
 
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
 
@@ -43,7 +44,7 @@ const sizes = [
   { record_id: 'size_39', fields: { 尺码: 39 } },
 ];
 
-const makeService = (recognizerResult) => {
+const makeService = (recognizerResult, options = {}) => {
   const writes = [];
   const cards = [];
   const sent = [];
@@ -67,6 +68,9 @@ const makeService = (recognizerResult) => {
     posting: {},
     recognizer: { parseSalesText: async () => recognizerResult },
     store,
+    // 执行器用端口注入：这些用例只验证"接线与出卡"，真实写入由 afterSalesService 自己的测试覆盖；
+    // 注入也顺便保证用例不会碰到仓库里的 data/after_sales_operations。
+    ...(options.afterSales ? { afterSales: options.afterSales } : {}),
   });
   service.replyCard = async (_messageId, card) => { cards.push(card); return 'om_card'; };
   service.sendCard = async (_openId, card) => { cards.push(card); return 'om_card_fallback'; };
@@ -108,6 +112,12 @@ test('sale_query：查销售记录走只读链路，出无按钮卡片并写入�
   assert.deepEqual(task.pending_candidates.map((row) => row.record_id), ['d_new']);
   assert.equal(task.pending_candidates[0].size, 39);
   assert.deepEqual(sent, []);
+  // 退换货第二期接线：查询之后把候选按**人**记了一份（跨消息、10 分钟有效），
+  // 她下一句「第 2 笔，退货」才定位得到（每条消息都是一个新任务）。
+  const context = await store.get(afterSalesContextId('ou_1'));
+  assert.ok(context, '查询后应留下按人的候选上下文');
+  assert.deepEqual(context.pending_candidates.map((row) => row.record_id), ['d_new']);
+  assert.ok(Date.parse(context.pending_candidates_expires_at) > Date.now());
 });
 
 test('sale_query 0 条：卡片告诉她在窗口里没查到，并问大概是哪天买的', async () => {
@@ -124,21 +134,32 @@ test('sale_query 0 条：卡片告诉她在窗口里没查到，并问大概是�
   assert.deepEqual((await store.get('query_empty')).pending_candidates, []);
 });
 
-test('return / exchange：本期只识别意图、不执行，回一句话且不写任何业务表', async () => {
-  const cases = [['退货', '退货'], ['换货', '换货']];
-  for (const [index, [raw, label]] of cases.entries()) {
-    const taskId = `after_sales_${index}`;
-    const { service, store, writes, cards, sent } = makeService({ intent: raw, item_no: '6035', color: '黑' });
-    await store.create({ task_id: taskId, type: 'sale', status: 'received', message_id: 'om_r',
-      sender_open_id: 'ou_1', original_text: '第 2 笔，退货' });
+test('return：接线后走售后编排（出确认卡片），确认之前不调执行器、不写任何业务表', async () => {
+  const taskId = 'after_sales_return';
+  const executed = [];
+  const { service, store, writes, cards, sent } = makeService(
+    { intent: '退货', action: 'return', item_no: '6035', color: '黑' },
+    { afterSales: { execute: async (request) => { executed.push(request); return {}; } } },
+  );
+  await store.create({ task_id: taskId, type: 'sale', status: 'received', message_id: 'om_r',
+    sender_open_id: 'ou_1', original_text: '退那双 6035 黑' });
 
-    await service.processSalesTask(taskId);
+  await service.processSalesTask(taskId);
 
-    assert.deepEqual(writes, [], '退货/换货本期不允许写任何业务表');
-    assert.deepEqual(cards, [], '退货/换货不该出现任何交互卡片');
-    assert.match(sent[0].message, new RegExp(`${label}.*还没上线`));
-    assert.equal((await store.get(taskId)).status, 'after_sales_not_supported');
-  }
+  // 入口 B：她自己按货号定位（这一笔没先查过），命中 1 条 → 直接出确认卡片。
+  assert.equal(cards.length, 1);
+  assert.match(JSON.stringify(cards[0]), /请确认售后/);
+  assert.match(JSON.stringify(cards[0]), /6035黑/);
+  // 卡片必须有按钮（这一期要动账），而且动作名是售后那三个之一。
+  assert.equal(JSON.stringify(cards[0]).includes('confirm_after_sales'), true);
+  const task = await store.get(taskId);
+  assert.equal(task.status, 'after_sales_confirming');
+  assert.equal(task.after_sales_plan.action, 'return');
+  assert.deepEqual(task.after_sales_plan.original_sales_detail_record_ids, ['d_new']);
+  // 出卡片 ≠ 执行：还没点确认，一个字节都没写。
+  assert.deepEqual(executed, []);
+  assert.deepEqual(writes, [], '售后在确认之前不允许写任何业务表');
+  assert.deepEqual(sent, []);
 });
 
 test('原有销售链路不受影响：sale 意图照旧建销售主表并出确认卡片', async () => {

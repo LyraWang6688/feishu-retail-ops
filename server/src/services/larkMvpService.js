@@ -21,7 +21,10 @@ const { isDataNotReady, withSalesReadRetry } = require('./salesReadRetry');
 const { allocateSalesOrderNo } = require('./salesOrderNo');
 const { resolveAccessory } = require('./accessoryMatchPolicy');
 const { SaleLookupService } = require('./saleLookupService');
+const { AfterSalesService } = require('./afterSalesService');
+const { AfterSalesFlowService } = require('./afterSalesFlowService');
 const { isLookupIntent, isAfterSalesIntent, normalizeMessageIntent } = require('../config/saleIntents');
+const { isAfterSalesCardAction } = require('../config/afterSalesFlow');
 const { isSalesCandidate, UNSUPPORTED_INTENT_REPLY } = require('../config/messageGate');
 const { salesConfirmationCard, salesStatusCard, todaySalesCard, keepOnlyCardButton } = require('../utils/larkCards');
 const { extractSalesMessageText } = require('../utils/larkMessageText');
@@ -115,7 +118,25 @@ class LarkMvpService {
       store: this.store,
       replyCard: (messageId, card) => this.replyCard(messageId, card),
       sendCard: (openId, card) => this.sendCard(openId, card),
+    });
+    // 退换货第二期：售后**编排**（定位 → 组装方案 → 确认卡片 → 调执行器）也是独立 service。
+    // 本类只留"意图 → 分派"的接线：
+    //   · 定位复用第一期的只读 SaleLookupService（同上一个实例，共享任务状态）；
+    //   · 写入复用第二期第一步的 AfterSalesService 执行器（幂等由它自己负责）；
+    //   · 卡片渲染在 utils/larkCards，本类不拼卡片内容。
+    // 执行器用自己的任务存储（data/after_sales_operations），所以这里不能把销售的任务存储传给它。
+    this.afterSales = options.afterSales || new AfterSalesService({ gateway: this.gateway });
+    this.afterSalesFlow = options.afterSalesFlow || new AfterSalesFlowService({
+      gateway: this.gateway,
+      store: this.store,
+      lookup: this.saleLookup,
+      executor: this.afterSales,
+      references: this.references,
+      sizeReferences: options.sizeReferences,
+      replyCard: (messageId, card) => this.replyCard(messageId, card),
+      sendCard: (openId, card) => this.sendCard(openId, card),
       sendText: (openId, message) => this.sendText(openId, message),
+      updateCard: (task, event, card, metadata) => this.updateAfterSalesCard(task, event, card, metadata),
     });
     this.sampleReplacements = options.sampleReplacements || new SampleReplacementService({
       gateway: this.gateway, inventory: this.delivery.inventory, store: this.store, client: this.client,
@@ -245,6 +266,13 @@ class LarkMvpService {
     return updateInteractiveCard({ client: this.client, task, event, card,
       stage: metadata.stage, interactionId: metadata.interactionId,
       eventPrefix: task.type === 'sample_replacement' ? 'lark.sales.sample_card.update' : 'lark.sales.card.update' });
+  }
+
+  // 售后卡片的更新单独一个日志前缀：排查时能一眼分出"这是售后那张卡"。
+  async updateAfterSalesCard(task, event, card, metadata = {}) {
+    return updateInteractiveCard({ client: this.client, task, event, card,
+      stage: metadata.stage, interactionId: metadata.interactionId,
+      eventPrefix: 'lark.after_sales.card.update' });
   }
 
   async publishSalesResultCard(task, event, card, metadata = {}) {
@@ -658,13 +686,23 @@ class LarkMvpService {
       liveInventoryPromise.catch(() => undefined);
       productIndexPromise.catch(() => undefined);
       // 把收敛后的 intent 一并传下去：SaleLookupService 只认规范值，不猜模型的措辞。
-      return this.saleLookup.handleQuery(task, { ...parsed, intent });
+      const result = await this.saleLookup.handleQuery(task, { ...parsed, intent });
+      // 第二期：把这次查到的候选按**人**记一份（跨消息、10 分钟有效），
+      // 下一句「第 2 笔，退货」才定位得到（每条消息都是一个新任务）。
+      // 这一步只是本地缓存，失败不影响查询结果，所以吞掉异常只记警告。
+      await this.afterSalesFlow
+        .rememberCandidates(task.sender_open_id, result?.candidates || [])
+        .catch((error) => logWarn('after_sales.context.remember_failed', {
+          task_id: taskId, error: error.message,
+        }));
+      return result;
     }
-    // 退货 / 换货：本期只识别意图、不执行（回一句话，记在任务状态里）。
+    // 退货 / 换货 / 赔货：真执行——先出确认卡片，她点确认后才调执行器
+    // （编排全在 AfterSalesFlowService，本类只做这一行分派）。
     if (isAfterSalesIntent(intent)) {
       liveInventoryPromise.catch(() => undefined);
       productIndexPromise.catch(() => undefined);
-      return this.saleLookup.handleAfterSalesNotReady(task, { ...parsed, intent });
+      return this.afterSalesFlow.handle(task, { ...parsed, intent });
     }
     const [liveInventory, productIndex] = await Promise.all([liveInventoryPromise, productIndexPromise]);
     // 走到这里已经过了入口闸门（不含数字也不含业务关键词的消息更早被静默挡掉），
@@ -858,6 +896,12 @@ class LarkMvpService {
     const procurementResult = await this.purchaseWebhooks.handleCardAction(value, operatorOpenId, event);
     if (procurementResult) return procurementResult;
     if (!draftId) throw new Error('卡片缺少草稿 ID');
+    // 售后卡片：确认 / 取消 / 选回库状态。和销售草稿共用同一个串行队列
+    // （同一张卡片连点两次会被排成一前一后），执行器那一层再兜一次幂等。
+    if (isAfterSalesCardAction(action)) {
+      return this.cardActionQueue.run(draftId, () =>
+        this.afterSalesFlow.handleCardAction(value, event, operatorOpenId, context));
+    }
     return this.cardActionQueue.run(draftId, () => this.handleSalesOrLegacyCardAction(event, context));
   }
 

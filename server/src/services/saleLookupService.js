@@ -91,7 +91,6 @@ class SaleLookupService {
     this.now = options.now || (() => new Date());
     this.replyCard = options.replyCard || (async () => '');
     this.sendCard = options.sendCard || (async () => '');
-    this.sendText = options.sendText || (async () => undefined);
     this.getSizeReferences = createSizeReferenceAccess({
       gateway: this.gateway,
       sizeReferences: options.sizeReferences,
@@ -297,18 +296,10 @@ class SaleLookupService {
       candidateCount: candidates.length, candidates };
   }
 
-  /**
-   * 退货 / 换货：本期只识别意图、**不执行**。回一句人话，并把意图记在任务状态里。
-   * 这里的"记下"只写本地任务记录，不写任何业务表。
-   */
-  async handleAfterSalesNotReady(task, parsed = {}) {
-    const intent = parsed.intent === MESSAGE_INTENTS.EXCHANGE ? MESSAGE_INTENTS.EXCHANGE : MESSAGE_INTENTS.RETURN;
-    const label = intent === MESSAGE_INTENTS.EXCHANGE ? '换货' : '退货';
-    await this.store.update(task.task_id, { status: 'after_sales_not_supported', intent });
-    await this.sendText(task.sender_open_id, `${label}我还没上线，先给你记下了。`);
-    logInfo('sale_lookup.after_sales.not_supported', { task_id: task.task_id, intent });
-    return { handled: true, intent, label };
-  }
+  // 退货 / 换货 / 赔货从第二期第二步起**真执行**（先出确认卡片，她点确认才写账），
+  // 编排在 AfterSalesFlowService；本类只保留只读的查询/定位能力。
+  // 这里刻意**不再**提供"我还没上线"的占位方法：留一个没人调用的旧入口，
+  // 以后很容易被误接回去，静默吞掉她的退货诉求（测试里锁住了它不存在）。
 
   // 优先在原消息下回复（她能立刻看到对应的那张卡）；回复失败退回主动发卡，
   // 免得"查了却没反应"。

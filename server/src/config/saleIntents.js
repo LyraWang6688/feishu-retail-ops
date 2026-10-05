@@ -4,8 +4,10 @@
 // 契约只在这里定义一处，模型换了措辞（"查销售记录" / "sale_query"）也只需要在这里
 // 加一条别名，而不是在 doubaoService 和 larkMvpService 里各写一串 if-else。
 //
-// ⚠️ 本期只有 sale_query 会被真正执行（只读查询）；return / exchange 只判意图、
-// 不执行任何业务动作（回一句话），一期不实现退货换货。
+// ⚠️ 当前：sale_query 走只读查询（SaleLookupService）；return / exchange 从第二期第二步起
+// **真执行**（AfterSalesFlowService 出确认卡片 → 她点确认 → afterSalesService 写账）。
+// 意图层只判"是哪一类诉求"，具体动作（退货/换货/赔货）由模型输出的 action 字段表达，
+// 收敛规则在 config/afterSalesFlow.js。
 const MESSAGE_INTENTS = Object.freeze({
   SALE: 'sale',
   SALE_QUERY: 'sale_query',

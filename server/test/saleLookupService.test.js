@@ -66,7 +66,6 @@ const makeService = async (options = {}) => {
   });
   const gateway = makeGateway({ details, entries, products, writes, reads });
   const cards = [];
-  const texts = [];
   let replyFails = options.replyFails === true;
   const service = new SaleLookupService({
     gateway,
@@ -80,9 +79,8 @@ const makeService = async (options = {}) => {
       return 'om_card';
     },
     sendCard: async (_openId, card) => { cards.push(card); return 'om_card_fallback'; },
-    sendText: async (openId, message) => texts.push({ openId, message }),
   });
-  return { service, store, gateway, cards, texts, disableReply: () => { replyFails = true; } };
+  return { service, store, gateway, cards, disableReply: () => { replyFails = true; } };
 };
 
 const newTask = (store, overrides = {}) => store.create({
@@ -367,19 +365,13 @@ test('查询卡片：0 条也在原消息下回一张卡，且优先 reply、失
   assert.equal(await fallback.store.get('sale_query_1').then((row) => row.card_message_id), 'om_card_fallback');
 });
 
-test('退货/换货：本期只识别意图、不执行，回一句人话并记在任务状态里', async () => {
-  const writes = [];
-  const { service, store, texts, cards } = await makeService({ writes });
-  const task = await newTask(store, { original_text: '第 2 笔，退货，钱先存着' });
-  const result = await service.handleAfterSalesNotReady(task, { intent: 'return' });
-  assert.equal(result.intent, 'return');
-  assert.deepEqual(texts.map((row) => row.message), ['退货我还没上线，先给你记下了。']);
-  assert.equal((await store.get('sale_query_1')).status, 'after_sales_not_supported');
-  assert.equal((await store.get('sale_query_1')).intent, 'return');
-  assert.deepEqual(writes, []);
-  assert.deepEqual(cards, []);
-
-  const exchangeTask = await newTask(store, { task_id: 'sale_query_2', original_text: '换一双' });
-  await service.handleAfterSalesNotReady(exchangeTask, { intent: 'exchange' });
-  assert.deepEqual(texts.map((row) => row.message), ['退货我还没上线，先给你记下了。', '换货我还没上线，先给你记下了。']);
+test('退货/换货的占位入口已删除：真执行在 AfterSalesFlowService，这里不再回"还没上线"', async () => {
+  // 第一期这里有一个只回"我还没上线，先给你记下了"的方法；第二期接上执行器后它必须消失。
+  // 留一个没人调用的旧入口，以后很容易被误接回去、静默吞掉她的退货诉求，所以在这里锁住。
+  const { service } = await makeService({});
+  assert.equal(service.handleAfterSalesNotReady, undefined);
+  // 只读边界不变：这条链路依然拿不到任何写接口。
+  assert.equal(service.gateway.create, undefined);
+  assert.equal(service.gateway.update, undefined);
+  assert.equal(service.gateway.delete, undefined);
 });

@@ -650,6 +650,162 @@ const purchaseStatusCard = (draft, title, message, template = 'blue') => {
   return { config: { wide_screen_mode: true }, header: { template, title: { tag: 'plain_text', content: title } }, elements };
 };
 
+// ---------------------------------------------------------------------------
+// 退换货第二期：确认卡片 / 结果卡片 / 状态卡片
+// ---------------------------------------------------------------------------
+//
+// ⚠️ 两张已踩过的坑（与 salesConfirmationCard 同一套结论，别"顺手统一"掉）：
+//   ① 飞书的 `markdown` 元素**不能设字号**：要字号只能用
+//      `{tag:'div', text:{tag:'lark_md', content, text_size:'heading'|'normal'|'note'}}`；
+//   ② 一行多个按钮必须用 `column_set`（见 buttonColumns 的注释），
+//      用 `action` 在手机上会竖排。
+// 售后卡片**必须有按钮**：它要动账（写明细/收款/库存），"有副作用要人确认"是红线。
+
+const yuanText = (value) => (value == null || value === '' ? '待录入' : `￥${text(value)}`);
+
+// 她这一眼要核对的"处理的是哪一笔"：日期 · 货号颜色 · 尺码 · 金额。
+const afterSalesOriginalLine = (candidate = {}) => [
+  text(candidate.date) || '日期未知',
+  `${text(candidate.item_no)}${text(candidate.color)}`.trim() || '货号未识别',
+  candidate.size ? `${text(candidate.size)}码` : '尺码未识别',
+  candidate.actual_amount == null || candidate.actual_amount === ''
+    ? '金额待录入'
+    : `￥${text(candidate.actual_amount)}`,
+].join(' · ');
+
+// 「钱怎么走」与「差价多少」分两行写：她说的是"钱先存着"（走哪条腿），
+// 差价是金额事实；合成一行时金额容易被看漏，而这张卡片是要她核对金额的。
+const afterSalesMoneyLine = ({ settlement, diff_amount: diffAmount } = {}) => {
+  const diff = Number(diffAmount);
+  if (!settlement || !Number.isFinite(diff) || diff === 0) return '不动钱';
+  if (settlement === 'prepaid') return diff < 0 ? '存为预存额度' : '记入预存（她还欠）';
+  return diff < 0 ? '退现金' : '收现金';
+};
+
+const afterSalesDiffLine = ({ diff_amount: diffAmount } = {}) => {
+  const diff = Number(diffAmount);
+  if (!Number.isFinite(diff) || diff === 0) return '￥0';
+  return `${yuanText(Math.abs(diff))}（${diff < 0 ? '退给她' : '她补'}）`;
+};
+
+// 退回的鞋放哪儿：她说了就按她说的写；没说就写默认值并注明可在下面改。
+const afterSalesRestockLine = (plan = {}) => {
+  if (!plan.requires_restock_state) return '不回库';
+  const state = text(plan.restock_state) || '门盒';
+  return plan.restock_state_explicit ? state : `${state}（默认，可在下面改）`;
+};
+
+const afterSalesActionLine = (plan = {}) => {
+  const label = text(plan.action_label) || '售后';
+  const lines = (plan.new_lines || []).map((line) => text(line.label)).filter(Boolean);
+  return lines.length ? `${label}（换成 ${lines.join('、')}）` : label;
+};
+
+/**
+ * 售后确认卡片。内容分四行大字（处理哪一笔 / 动作 / 钱 / 退回的鞋）+ 可选的
+ * 回库状态按钮 + 确认/取消按钮。
+ *
+ * 回库状态只在动作需要时出现（退货、换货需要；赔货不回库，不给按钮）；
+ * 她话里没说时默认值已经填好（默认原状态=门盒），所以**不点也能直接确认**，
+ * 按钮只是给她一个"改一下"的出口。
+ */
+const afterSalesConfirmationCard = (taskId, plan = {}) => {
+  const elements = [
+    { tag: 'div', text: { tag: 'lark_md',
+      content: `处理这一笔\n${afterSalesOriginalLine(plan.candidate)}`, text_size: 'heading' } },
+    { tag: 'div', text: { tag: 'lark_md',
+      content: `动作：${afterSalesActionLine(plan)}\n`
+        + `钱：${afterSalesMoneyLine(plan)}\n`
+        + `差价：${afterSalesDiffLine(plan)}\n`
+        + `退回的鞋放：${afterSalesRestockLine(plan)}`, text_size: 'heading' } },
+  ];
+  if (plan.requires_restock_state) {
+    elements.push({ tag: 'div', text: { tag: 'lark_md', content: '退回的鞋放哪儿？', text_size: 'note' } });
+    elements.push(buttonColumns(['门盒', '样品'].map((state) => actionButton(
+      plan.restock_state === state ? `${state}（已选）` : state,
+      'choose_after_sales_restock', taskId,
+      plan.restock_state === state ? 'primary' : 'default', { state },
+    ))));
+  }
+  // 出货货品在货品表里命中多条（男/女鞋常共用同一货号+颜色）：执行器取第一条继续，
+  // 但这件事要**看得见**——不能悄悄替她决定换的是哪一条。
+  if ((plan.new_lines || []).some((line) => Number(line.ambiguous_count || 0) > 1)) {
+    elements.push({ tag: 'div', text: { tag: 'lark_md',
+      content: '⚠️ 换的那双在货品表里匹配到多条，已取第一条，请核对', text_size: 'note' } });
+  }
+  elements.push(buttonColumns([
+    actionButton('确认', 'confirm_after_sales', taskId, 'primary'),
+    actionButton('取消', 'cancel_after_sales', taskId, 'danger'),
+  ]));
+  return { config: { wide_screen_mode: true },
+    header: { template: 'orange', title: { tag: 'plain_text', content: '请确认售后' } }, elements };
+};
+
+// 库存流水的行为编码 → 人话（编码契约在 config/afterSales.js；这里只是展示文案）。
+const AFTER_SALES_STOCK_LABELS = Object.freeze({
+  SALE_RETURN: '退回入库',
+  SALE_CASH: '新鞋出库',
+  SALE_COMPENSATION: '赔货出库',
+});
+
+const afterSalesStockLines = (stock = []) => stock.map((row) => {
+  const label = AFTER_SALES_STOCK_LABELS[row.behaviorCode] || text(row.behaviorCode);
+  return `${label} ${text(row.state)} ×${text(row.quantity || 1)}`;
+});
+
+// 「已经写进去了什么」——她做完之后要能一眼核对：明细 / 钱 / 库存。
+// 只写真写进去的：不动钱时不写"收款 0 笔"。
+const afterSalesWrittenLines = (result = {}) => {
+  const lines = [];
+  const detailCount = (result.detailRecordIds || []).length;
+  lines.push(`明细 ${detailCount} 条`);
+  const money = result.money || {};
+  if (money.route === 'cash') lines.push(`收款明细 1 笔（${text(money.direction)} ${yuanText(money.amount)}）`);
+  else if (money.route === 'prepaid') lines.push(`客户往来货款 1 笔（${text(money.changeType)} ${yuanText(money.amount)}）`);
+  else lines.push('没动钱');
+  const stockLines = afterSalesStockLines(result.stock);
+  lines.push(stockLines.length ? `库存：${stockLines.join('、')}` : '库存未变（配品不跟踪库存）');
+  return lines;
+};
+
+const afterSalesResultCard = (plan = {}, result = {}) => ({
+  config: { wide_screen_mode: true },
+  header: { template: 'green', title: { tag: 'plain_text',
+    content: `${text(plan.action_label) || '售后'}已完成` } },
+  elements: [
+    { tag: 'div', text: { tag: 'lark_md',
+      content: `处理这一笔\n${afterSalesOriginalLine(plan.candidate)}`, text_size: 'heading' } },
+    { tag: 'div', text: { tag: 'lark_md',
+      content: `动作：${afterSalesActionLine(plan)}\n`
+        + `钱：${afterSalesMoneyLine(plan)}\n`
+        + `差价：${afterSalesDiffLine(plan)}\n`
+        + `退回的鞋放：${afterSalesRestockLine(plan)}`, text_size: 'heading' } },
+    { tag: 'div', text: { tag: 'lark_md',
+      content: `已写入\n${afterSalesWrittenLines(result).join('\n')}`, text_size: 'normal' } },
+  ],
+});
+
+// 失败卡片必须**明确说原因**（别静默），而且必须**保留可重试的按钮**：
+// 如果失败后把卡片换成一张没有按钮的说明卡，我们让她"在原卡片重试"就成了空话——
+// 按钮已经被自己换掉了。所以这里是"确认卡片 + 原因"：原因在最上面，确认/取消还在。
+// 只承诺"同一笔不会重复写"，不承诺"什么都没写"（执行器可能已经写了部分记录）。
+const afterSalesRetryCard = (taskId, plan = {}, reason) => {
+  const card = afterSalesConfirmationCard(taskId, plan);
+  card.header = { template: 'red', title: { tag: 'plain_text',
+    content: `${text(plan.action_label) || '售后'}没做成` } };
+  card.elements.splice(0, 0, { tag: 'div', text: { tag: 'lark_md',
+    content: `原因：${text(reason) || '未知错误'}`, text_size: 'heading' } });
+  card.elements.push({ tag: 'note', elements: [{ tag: 'plain_text',
+    content: '核对后点「确认」重试；同一笔不会重复写。' }] });
+  return card;
+};
+
+const afterSalesStatusCard = ({ title, message, template = 'blue' } = {}) => ({
+  config: { wide_screen_mode: true },
+  header: { template, title: { tag: 'plain_text', content: text(title) || '售后' } },
+  elements: [{ tag: 'div', text: { tag: 'lark_md', content: text(message), text_size: 'heading' } }],
+});
+
 module.exports = {
   // 重试卡片收窄按钮用（按 column_set/action 结构遍历，见 keepOnlyCardButton）。
   keepOnlyCardButton,
@@ -663,4 +819,8 @@ module.exports = {
   sampleReplacementProcessingCard,
   todaySalesCard,
   saleLookupCard,
+  afterSalesConfirmationCard,
+  afterSalesResultCard,
+  afterSalesRetryCard,
+  afterSalesStatusCard,
 };
