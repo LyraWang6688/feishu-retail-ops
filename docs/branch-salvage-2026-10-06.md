@@ -93,7 +93,27 @@
 `AGENTS.md` 里那句「已剥离成 ProductCreationService」才名副其实。
 **本任务只做留档，没有改动任何业务代码**（清理任务不进生产，也不碰业务逻辑）。
 
-## 5. 复现本文判据的命令
+## 5.5 本地分支：删了什么、留了什么、为什么（清理时 33 条 → 15 条）
+
+⚠️ 本地分支**只用 `git branch -d`**（只删已合并的）——**没有用 `-D`**。因此「内容明明已在 main、
+但因为当年是 squash/重做式合并、不是 main 的祖先」的分支，`-d` 会**拒绝**；这些一律**保留**，
+不做 `-D` 强行删除。它们的 tip SHA 已在 §3 表里登记，随时可核。
+
+| 处置 | 条数 | 明细 |
+|---|---|---|
+| `-d` **已删除** | **20** | 已合并的 13 条（`chore/ws-test-app-credentials`、`docs/confirmed-2026-10-06-night`、`feat/arrive-then-send`、`feat/pending-deal-daily-push`、`feat/purchase-request-image`、`fix/arrival-image-interaction`、`fix/e2e-run-im-reply-and-batch-records`、`fix/fulfilled-status-only-delivered`、`fix/pr67-race`、`merge/arrival-notice`、`merge/purchase-batch`、`repro/return-404`、`refactor/decouple-creation-and-stock`）＋ 清掉 worktree 后补删的 7 条（`feat/after-sales-executor`、`feat/arrival-card-and-async-create`、`feat/group-purchase`、`feat/purchase-return`、`fix/after-sales-settlement-choice`、`fix/arrival-schema-align`、`fix/discount-vs-debt`） |
+| **保留**（`-d` 拒绝：不是 main 的祖先） | **11** | `docs/procurement-e2e-status-sync`、`feat/after-sales-thread`、`feat/arrival-conversation-flow`、`feat/return-batch-window-and-topic`、`feat/sales-status-dimensions-write`、`feat/sales-status-write-backfill`、`fix/purchase-schema-after-table-change`、`fix/sales-confirm-field-alias`、`fix/supplier-report-schema-align`（以上 9 条＝§3 表里那些「已被 main 取代」的远端分支的同名本地分支，**内容已在 main**）＋ 两条**本地独有**的见下 |
+| **跳过**（worktree 有未提交改动） | **1** | `fix/return-batch-test-race`（`/private/tmp/ci-flaky`，`server/test/purchaseReturnBatch.test.js` 有 **2 行未提交改动** → 按「有未提交改动不清」的底线**整个跳过**） |
+| 不属于本次清理 | 3 | `main` · `docs/cleanup-salvage-2026-10-06`（本次 PR 的分支，合并后由 GitHub 自动删）· `fix/complete-asking-honest-and-refund-method`（**另一个代理正在跑**） |
+
+**两条"本地独有、`-d` 拒绝"的分支**（核过：内容都已在 main，只是不是祖先）：
+
+| 本地分支（tip SHA） | 为什么可以留而不清 | 在 main 里的对应物 |
+|---|---|---|
+| `docs/confirmed-night2`（`31066f2`） | 它是她 2026-10-06 晚确认的**更早草稿**（+20 行） | 由 PR **#173** 合并的**更完整版本**（+39 行，含"已交付/已履约两个都认"那段） |
+| `feat/arrival-reconcile-rebased`（`5b60609`） | 到货核对那次 rebase 的中间工作分支 | 由 PR **#109** 合并：main 有 `purchaseArrivalConversationService.js`（626 行）＋ `test/arrivalConversation.test.js`（772 行） |
+
+## 6. 复现本文判据的命令
 
 ```bash
 # ① 每条非 main 分支：独立提交有几条、相对 main 落后多少
