@@ -17,4 +17,10 @@ export APP_DEPLOYED_AT="$(date -Iseconds)"
 
 echo "Starting server on port $PORT..."
 echo "Deploying version $APP_VERSION (commit $APP_COMMIT) at $APP_DEPLOYED_AT"
-pm2 start ecosystem.config.js
+# ⚠️ 必须用 startOrReload + --update-env：
+#   应用【已在运行】时，`pm2 start` 不会更新进程的 env —— 上面 export 的
+#   APP_VERSION / APP_COMMIT / APP_DEPLOYED_AT 就不会生效，/health 会一直回报
+#   上一次启动时的旧版本号（2026-10-07 实测：部署到 f0a2f3f 后 /health 仍显示
+#   v0.2.0 / 7563537，对账会误导成"线上跑的是旧代码"）。
+#   --update-env 让 pm2 重新读取当前 shell 的环境变量。
+pm2 startOrReload ecosystem.config.js --update-env
