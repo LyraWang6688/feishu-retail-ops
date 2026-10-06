@@ -30,6 +30,8 @@ const { isSalesCandidate, UNSUPPORTED_INTENT_REPLY } = require('../config/messag
 const { salesConfirmationCard, salesStatusCard, todaySalesCard, keepOnlyCardButton, SECOND_DELIVERY_ACTION } = require('../utils/larkCards');
 const { extractSalesMessageText, isMentioned, stripMentionPlaceholders } = require('../utils/larkMessageText');
 const { resolveAckReaction, resolveBotOpenId } = require('../config/groupPurchase');
+// 主群的准入口径（是否仍然要求 @）：**显式布尔、默认放宽**，见 config/groupAdmission。
+const { resolveMainChatRequireMention } = require('../config/groupAdmission');
 const { PurchaseBatchLocator } = require('./purchaseBatchLocator');
 const { extractBatchNos } = require('./purchaseBatchNo');
 // 「群话题 ↔ 销售记录」的本地路由映射（只写本地，不写业务表，见服务的注释）。
@@ -201,12 +203,21 @@ class LarkMvpService {
     // @ 判据用的机器人 open_id：**只从配置读，不写死**（见 config/groupPurchase）。
     // 启动时解析一次：解析结果只影响"这条群消息理不理"，不会影响私聊的既有行为。
     this.botOpenId = options.botOpenId ?? resolveBotOpenId();
+    // 主群准入的第二代口径（业务负责人 2026-10-06 拍板：「主群里可不可以不 @ 机器人啊？
+    // 机器人它自动就能识别销售信息」）：**默认不再要求 @**，靠正文判"像不像销售"。
+    // 开关是**显式布尔**，取值在 config/groupAdmission（默认 false = 放宽 = 新行为）。
+    // ⚠️ 只影响 `thread_id` 为空的主群消息；话题里的消息与**私聊**一个字节都不变。
+    this.mainChatRequireMention = options.mainChatRequireMention ?? resolveMainChatRequireMention();
     if (!this.botOpenId) {
-      // 没配 = 群聊里判不出 @ 机器人。这时候**一条群消息都不处理**（宁可不响应，
-      // 也不能把群里日常聊天当成指令），但必须留下能排查的线索。
+      // 没配 = 群聊里判不出 @ 机器人（`isMentioned` 对空 open_id 恒为 false）。
+      // ⚠️ 放宽口径下**主群仍然能靠正文处理"像销售 / 带批次号"的消息**——
+      //    所以这里的告警必须把当前口径说清楚，不能让排查的人以为"群聊整条废了"。
       logWarn('lark.group.bot_open_id_missing', {
         env: 'LARK_BOT_OPEN_ID',
-        hint: '未配置机器人 open_id，群聊消息不会进入采购流程（私聊不受影响）',
+        require_mention_in_main_chat: this.mainChatRequireMention,
+        hint: this.mainChatRequireMention
+          ? '未配置机器人 open_id 且主群要求 @：主群消息一律不处理（私聊不受影响）'
+          : '未配置机器人 open_id：主群判不出 @，但正文像销售 / 带采购批次号的消息仍会处理（私聊不受影响）',
       });
     }
     // ── 到货核对（D）：「群话题对话式核对」──────────────────────────────────
@@ -609,48 +620,47 @@ class LarkMvpService {
     const senderOpenId = event?.sender?.sender_id?.open_id;
     if (!message?.message_id || !senderOpenId) return { accepted: false, reason: 'missing_identity' };
 
-    // ── 群聊：准入两条，**先看 thread_id**（业务负责人真机实测后改的规则）──────
+    // ── 群聊：准入**先看 thread_id**，主群再看三条判据（任一条）──────────────
     //   ① 话题里的消息（`thread_id` 有值）→ **都理，不要求 @机器人**。
     //      实测：她在话题里发「你好 小来财」没有 @（mentions=[]），事件照样推给我们；
     //      话题本身就是"这条是冲着机器人来的"的判据，再要求 @ 会把她说的话丢掉。
-    //   ② 主群消息（`thread_id` 为空）→ 只在 `mentions` 含机器人 open_id 时才理。
-    //      不 @ → **完全静默**：连日志之外的动作都没有，更没有任何远端调用
-    //      （不发消息、不加表情、不读表）。群里所有人发的消息都会推给我们，
+    //   ② 主群消息（`thread_id` 为空）→ 满足**任一条**才理（见 resolveMainChatAdmission）：
+    //      · `mentions` 里有机器人（@ 了）—— 改动前的老判据，照旧；
+    //      · 正文过**销售闸门**（`config/messageGate`，与私聊同一把尺子）；
+    //      · 正文里有采购批次号 `BH-YYYYMMDD-NNNN` → 归采购那条路。
+    //      三条都不满足 → **完全静默**：连日志之外的动作都没有，更没有任何远端调用
+    //      （不发消息、不加表情、不读表、不进 AI）。群里所有人发的消息都会推给我们，
     //      这道闸门是拦它们的唯一一道。
     //
     // ⚠️ 必须**先判 `thread_id`**：话题里没 @ 的消息要在读 mentions 之前就放行，
     //    顺序反了会把它当成"主群没 @"丢掉——这正是她真机测出来的那个 bug。
-    // ⚠️ 这里刻意**不复用**私聊的闸门（含数字/业务关键词）：群里"36 码还有吗"
-    // 这种闲聊带着数字，用私聊闸门会被当成录单送进 AI。
     if (message.chat_type === 'group') {
       const threadId = String(message.thread_id || '').trim();
+      // 正文先取出来：主群准入的第二代判据要看正文（销售闸门 / 采购批次号）。
+      const isTextMessage = ['text', 'post'].includes(message.message_type);
+      const groupText = isTextMessage ? extractSalesMessageText(message) : '';
+      let mainChatVia = '';
       if (!threadId) {
-        // 主群消息：判据只有 @机器人。没配 LARK_BOT_OPEN_ID 就判不出 @，
-        // 这时**一条主群消息都不处理**（宁可不响应，也不能把日常聊天当指令）。
-        if (!this.botOpenId) {
-          logWarn('lark.group.message.ignored', {
-            message_id: message.message_id, reason: 'bot_open_id_unconfigured',
-          });
-          return { accepted: false, reason: 'group_bot_open_id_unconfigured' };
-        }
-        if (!isMentioned(message.mentions, this.botOpenId)) {
+        const admission = this.resolveMainChatAdmission(message, groupText);
+        if (!admission.accepted) {
+          // 不理的主群消息：**一个远端调用都不许有**（判据全是本地纯函数）。
           logInfo('lark.group.message.ignored', {
-            message_id: message.message_id, reason: 'not_mentioned', chat_id: message.chat_id,
+            message_id: message.message_id, reason: admission.reason, chat_id: message.chat_id,
+            require_mention_in_main_chat: this.mainChatRequireMention,
           });
-          return { accepted: false, reason: 'group_not_mentioned' };
+          return { accepted: false, reason: admission.reason };
         }
+        mainChatVia = admission.via;
       }
-      if (!['text', 'post'].includes(message.message_type)) {
-        // 群聊准入通过（话题里、或主群里 @ 了）但发的是图片/文件：**静默忽略**，
-        // 不解释、不回复。群里回一句"我只接收文字"同样会刷屏，而且这条链路今天
-        // 只有采购定位，没有需要她立刻知道的失败。
+      if (!isTextMessage) {
+        // 群聊准入通过（话题里、或主群里 @ 了 / 正文像销售）但发的是图片/文件：
+        // **静默忽略**，不解释、不回复。群里回一句"我只接收文字"同样会刷屏。
         logInfo('lark.group.message.ignored', {
           message_id: message.message_id, reason: 'unsupported_message_type',
           message_type: message.message_type,
         });
         return { accepted: false, reason: 'group_unsupported_message_type' };
       }
-      const groupText = extractSalesMessageText(message);
       if (!groupText) {
         logInfo('lark.group.message.ignored', { message_id: message.message_id, reason: 'empty_text' });
         return { accepted: false, reason: 'group_empty_text' };
@@ -658,8 +668,8 @@ class LarkMvpService {
       logInfo('lark.group.message.accepted', {
         message_id: message.message_id, chat_id: message.chat_id,
         sender_open_id: senderOpenId, parent_id: message.parent_id,
-        thread_id: threadId, // 空 = 主群（靠 @ 进来的）；有值 = 话题（免 @）
-        via: threadId ? 'thread' : 'mention',
+        thread_id: threadId, // 空 = 主群；有值 = 话题（免 @）
+        via: threadId ? 'thread' : mainChatVia,
         text_length: groupText.length,
       });
       // 返回值统一带上 `accepted: true`（和私聊那条路同一个契约），
@@ -692,13 +702,49 @@ class LarkMvpService {
   }
 
   /**
-   * 群聊入口。**准入由调用方判定**（话题免 @ / 主群 @），进来之后：
+   * 主群消息（`thread_id` 为空）的准入判据。话题里的消息**不走这里**（一律理）。
+   *
+   * 业务负责人 2026-10-06 拍板（逐字）：「主群里面可不可以不 @ 机器人啊？
+   *   机器人它自动就能识别销售信息并进行回复呀。」→ 主群**不再要求 @**。
+   * 满足**任一条**就理：
+   *   ① `mentions` 里有机器人（@ 了）—— 改动前的老判据，照旧；
+   *   ② 正文里有采购批次号 `BH-YYYYMMDD-NNNN` → 归采购那条路（`extractBatchNos`）。
+   *      先判它，顺序与分派器（`SalesGroupFlowService`）一致：带批次号的就是采购的，
+   *      即便同时含数字（"BH-20261005-0009 这批到哪了"不能被当成销售）；
+   *   ③ 正文过**销售闸门**（`config/messageGate`，与私聊**同一把尺子**）。
+   * 三条都不满足 → `accepted:false`，调用方**静默返回**：不回复、不加表情、不读表、
+   * 不进 AI —— 群里日常聊天（「今天天气不错」）绝不能有任何远端调用。
+   *
+   * ⚠️ 判据全部是**本地纯函数**（正则 / 字符串包含），所以"不理"这条路天然零远端调用。
+   * ⚠️ `mainChatRequireMention`（`config/groupAdmission`，**默认 false**）为 true 时回到
+   *    改动前：主群**只认 @**（没配 `LARK_BOT_OPEN_ID` 时一条都不理）。
+   * ⚠️ 认错人的兜底不是这里：③ 放行的消息会走销售确认卡片，卡片上有「取消」，
+   *    她点一下就结束——**不会直接写业务数据**（那一段复用私聊同一条链路）。
+   */
+  resolveMainChatAdmission(message, text = '') {
+    if (isMentioned(message?.mentions, this.botOpenId)) return { accepted: true, via: 'mention' };
+    if (this.mainChatRequireMention) {
+      // 老行为（开关显式打开时才走）：判不出 @ 就一条主群消息都不处理。
+      if (!this.botOpenId) return { accepted: false, reason: 'group_bot_open_id_unconfigured' };
+      return { accepted: false, reason: 'group_not_mentioned' };
+    }
+    // ② 正文里有采购批次号 → 理（定位到那一批，采购那条路一个字不变）。
+    if (extractBatchNos(text).length) return { accepted: true, via: 'purchase_batch_no' };
+    // ③ 正文像销售 → 理（主群新开一笔：在她那条消息下开话题 + 回确认卡片，
+    //    认错了也有卡片上的「取消」，不会直接写数据）。
+    if (isSalesCandidate(text)) return { accepted: true, via: 'sales_gate' };
+    return { accepted: false, reason: 'group_not_sales_text' };
+  }
+
+  /**
+   * 群聊入口。**准入由调用方判定**（话题免 @；主群：@ / 像销售 / 带批次号），进来之后：
    *   · 剥掉 @ 占位符（`@_user_1`）再当正文；
    *   · 加「收到」表情（**不回文字**，群聊回文字会刷屏）；
-   *   · 交给采购定位链路（C）——今天它只回答"是哪一批"，不写任何业务表。
+   *   · 交给销售分派（C）与采购定位链路——采购那条路只回答"是哪一批"。
    *
-   * ⚠️ 群聊**绝不用私聊那套闸门**（含数字/业务关键词就收）：群里一句
-   *   "这批鞋到了""36 码还有吗"都会被误触发。这里的准入判据只有上面那两条。
+   * ⚠️ 「进不进来」的闸门在主群**用的是私聊同一把尺子**（`config/messageGate`，
+   *   2026-10-06 业务负责人拍板），但"进来之后归谁"仍由销售分派先判；采购的既有行为
+   *   （含"认不出"那两句文案）一个字都不变。
    */
   async acceptGroupMessage({ message, senderOpenId, originalText, threadId = '' }) {
     const text = stripMentionPlaceholders(originalText, message.mentions);
