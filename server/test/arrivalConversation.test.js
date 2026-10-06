@@ -422,7 +422,15 @@ test('点「是」②：「采购入库」按**实际**数量写入（不是申�
   for (const inbound of inbounds) {
     assert.deepEqual(inbound.values['采购行为'], ['bhv_in']);
     assert.ok(inbound.values['采购到货批次'], '入库行要挂回这次到货记录');
-    assert.equal(inbound.values['入库时间'] > 0, true);
+    // 🔴 「入库时间」代码一个字都不许写（与 #102 `fix/no-time-field-writes` 对齐）：
+    //   业务负责人 2026-10-06 已把这一列从生产表删掉（生产真表「采购入库」11 列里没有它，
+    //   见 docs/reports/time-field-writes-cleanup-2026-10-06.md §1），schema 里的
+    //   `inboundAt` 映射也已同步删除。此时若有代码再传 `inboundAt`，
+    //   `gateway.fields()` 会当场抛「"采购入库"未配置语义字段: inboundAt」——
+    //   **整条入库写入失败**（不是少写一列而已）。
+    //   时间语义交给飞书自动的「创建时间」(type=1001)：同一时刻，不丢信息。
+    assert.equal('入库时间' in inbound.values, false, '代码一个字都不许写「入库时间」');
+    assert.equal(JSON.stringify(inbound.values).includes('入库时间'), false);
   }
 });
 
