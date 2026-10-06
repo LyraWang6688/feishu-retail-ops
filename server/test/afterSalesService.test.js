@@ -49,7 +49,7 @@ const seed = () => ({
   ],
   salesEntry: [{
     record_id: 'order_old',
-    fields: { 销售单号: ORDER_NO, 原话: '卖一双 A100 41 码', 订单状态: '已完成', 确认状态: '已入账' },
+    fields: { 销售单号: ORDER_NO, 原话: '卖一双 A100 41 码', 订单状态: '已完成', '确认状态（旧）': '已入账' },
   }],
   salesDetail: [
     {
@@ -276,7 +276,7 @@ test('退货（cash 退款）：六处写入各一次，原主表一字未动，
   assert.equal(masters[0].fields['原话'], '把那双 A100 退了，鞋没穿过');
   assert.equal(masters[0].fields['销售单号'], ORDER_NO);
   assert.equal(masters[0].fields['解析状态'], '解析成功');
-  assert.equal(masters[0].fields['确认状态'], '已入账');
+  assert.equal(masters[0].fields['确认状态（旧）'], '已入账');
   assert.deepEqual(masters[0].fields['交易类型'], ['behavior_return']);
 
   // 2) 新「销售明细」：交易类型=行为 · 销售单号=原主表 · 成交金额=正数

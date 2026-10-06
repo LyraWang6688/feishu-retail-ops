@@ -7,6 +7,7 @@ const { SalesDeliveryService } = require('./salesDeliveryService');
 const { SalesProgressService, progressFromRecords } = require('./salesProgressService');
 const { asDate, isWithinLookupWindow, shanghaiDayKey } = require('./saleLookupService');
 const { resolvePurchaseChatId } = require('../config/groupPurchase');
+const { postedOf } = require('../config/salesStatusDimensions');
 const { secondDeliveryCard, settleSecondDeliveryOrder } = require('../utils/larkCards');
 const { updateInteractiveCard } = require('../infrastructure/interactiveCardFeedback');
 const { logInfo, logWarn } = require('../utils/logger');
@@ -78,7 +79,7 @@ class SecondDeliveryService {
     const entryFields = this.gateway.table('salesEntry').fields;
     const entry = await this.gateway.get('salesEntry', salesEntryRecordId);
     if (!entry) throw new Error('销售主表记录不存在');
-    if (textValue(entry.fields?.[entryFields.confirmStatus]) !== '已入账') throw new Error('销售订单尚未确认入账');
+    if (postedOf(entry, entryFields) !== '已入账') throw new Error('销售订单尚未确认入账');
 
     const detailFields = this.gateway.table('salesDetail').fields;
     const paymentFields = this.gateway.table('paymentRecord').fields;
@@ -245,7 +246,7 @@ class SecondDeliveryService {
 
     const orders = [];
     for (const entry of entries) {
-      if (textValue(entry.fields?.[entryFields.confirmStatus]) !== '已入账') continue;
+      if (postedOf(entry, entryFields) !== '已入账') continue;
       const tradeTypeIds = linkedRecordIds(entry.fields?.[entryFields.tradeType]);
       const tradeTypeRecordId = tradeTypeIds.find((id) => behaviorLabels.has(id));
       if (!tradeTypeRecordId) continue;
