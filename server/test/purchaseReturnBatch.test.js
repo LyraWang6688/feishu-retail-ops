@@ -316,6 +316,7 @@ test('① 一次提交 2 条（同批次、分两次到达）→ 只出 1 张退
   await waitForTasksTerminal(service, store, ['rep_2070', 'rep_66851']);
 
   // ① 只出一张图（＝一张退货单），两个货号都在这张单上。
+  await waitFor('出图完成', async () => images.calls.length === 1);
   assert.equal(images.calls.length, 1, '整批只渲染 1 张退货单');
   assert.equal(images.calls[0].title, RETURN_TITLE);
   const itemNos = new Set(images.calls[0].items.map((item) => item.item_no));
