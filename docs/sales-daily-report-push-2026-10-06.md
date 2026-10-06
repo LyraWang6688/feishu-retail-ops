@@ -42,3 +42,55 @@
 - **22 点那条**和 21 点的区别：她说「22 点那次则是当日完整的一个总结」——
   卡片上要不要加「今日收官」之类字样？（倾向加）
 - 将来要不要加别的运营群、群 id 是什么
+
+---
+
+## 六、落地实现（代码侧 · 2026-10-06 晚）
+
+> 这一节只写「怎么落地的」；**上面的口径才是权威**，口径变了先改上面、再改代码。
+
+| 事项 | 落在哪 |
+| --- | --- |
+| 服务（取数 + 发卡片 + 按时段认领） | `server/src/services/salesDailyReportService.js` |
+| 卡片渲染（纯函数） | `server/src/utils/salesDailyReportCard.js` |
+| 配置（时间点 / 群列表 / 开关 / 两个筛选值） | `server/src/config/salesDailyReportPush.js` |
+| 定时器（一天多整点） | `server/src/utils/shanghaiDailyScheduler.js`（`hours: [...]`） |
+| 接线 | `server/src/app.js`（只在真启动时拉起） |
+| 验收用例 | `server/test/salesDailyReportPush.test.js` |
+
+**已经回答上面的两个待定**：
+- 22 点那条**加了「当日收官」**：标题 `销售战报 · MM-DD 22:00 当日收官`、页眉紫（常规蓝）、
+  页脚 `✅ 今日收官 · 以上为当天累计`——一眼能分出哪条是总结；
+- 群**做成了列表**：`SALES_DAILY_REPORT_PUSH_CHAT_IDS`（逗号分隔，将来加运营群只改这一行）。
+  ⚠️ 取值语义：**这一行没设** → 回落到 `PURCHASE_CHAT_ID`（就是她说的"收采购图 / 退货单那个群"）；
+  **设成空** → 显式的"一个群都不发"。
+
+**配置项一览**（都在 `.env.example` 里，写明语义）：
+`SALES_DAILY_REPORT_PUSH_ENABLED`（显式布尔，默认关）·
+`SALES_DAILY_REPORT_PUSH_CHAT_IDS`（列表）·
+`SALES_DAILY_REPORT_PUSH_HOURS`（默认 `9,12,15,18,21`）·
+`SALES_DAILY_REPORT_PUSH_SUMMARY_HOUR`（默认 `22`，留空 = 不要收官那条；
+⚠️ 它**不能**同时出现在 `HOURS` 里，启动时抛错）·
+`SALES_DAILY_REPORT_PUSH_INTERVAL_MS`（默认 10 分钟一 tick）·
+`SALES_DAILY_REPORT_FULFILLED_STATUSES`（默认 `已履约,已交付`）·
+`SALES_DAILY_REPORT_PAYMENT_STATUS`（默认 `已收款`）。
+
+**三条实现上的取舍（都写进了代码注释）**：
+
+1. 🔴 **过掉的时段不补推**：12 点的战报 13 点才发出去，等于把 12 点的数字当成 13 点的快照，
+   比"少发一条"更糟。过掉的时段只留一条 `sales.daily_report.slot_missed` 日志 + 一条
+   `status: 'missed'` 的本地记录，**不补发**。
+   （⚠️ 这与「未付/预付」那条每日提醒**故意不同**：那条晚一点也要发。）
+2. **两个数字都按【上海自然日】算今天**：线上是 UTC，用本地时区会把凌晨的单/钱算到前一天
+   （与查单、第二次交付同一套口径）。
+3. ⚠️ **「履约状态」的取值对不上**：她的逐字口径是「履约状态 = 已履约」，
+   但**真表里这一列的选项叫「已交付」**
+   （2026-10-06 晚在**测试 Base 上实读**核对：当天 `已交付 46` / `未交付 6` / `已退货 1` / 空 1；
+   仓库里写这一列的代码也一直写「已交付」——`salesDeliveryService` / `afterSalesService`）。
+   ⇒ 这个取值做成**配置** `SALES_DAILY_REPORT_FULFILLED_STATUSES`，**默认 `已履约,已交付`**
+   （任一行只会命中一个，不会重复计数；两种并存 / 将来改名都不出错），
+   并在"当天有明细、但一条都没匹配上"时打一条 `sales.daily_report.fulfilled_status_unmatched`
+   （把那一天真实出现的「履约状态」计数一起打出来）——**不许静默显示 0 单**。
+   ⚠️ **这一条要她拍板**：如果生产表的选项真的只有「已履约」、没有「已交付」，那默认值也照常工作；
+   如果她想只算其中一个，改那一行配置即可（不用改代码）。
+

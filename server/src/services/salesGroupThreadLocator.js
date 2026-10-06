@@ -44,14 +44,23 @@ class SalesGroupThreadLocator {
    * `threadId` 是飞书回给我们的**话题 id**：`im.message.reply` 带
    * `reply_in_thread: true` 时响应里就有（主群第一条回复时飞书才创建这个话题）。
    *
-   * 幂等：同一条消息重复记（重试、飞书重投）用同一个 key，覆盖成同一条记录。
+   * `appLink` 是飞书在**发送响应**里回带的深链（`im.message.reply` 的
+   * `data.message_app_link`）。一旦回带，就只有"发出去的那一刻"拿得到、历史消息取不回来
+   * （见 docs/reports/group-message-deep-link-2026-10-06.md 的实测四：**当前这个应用不回带**），
+   * 所以必须当时落盘 —— 拿不到就留空。
+   *
+   * 幂等：同一条消息重复记（重试、飞书重投 / 同一任务后续又发了几条）用同一个 key，
+   * 覆盖成同一条记录。⚠️ 但 `app_link` 与 `thread_id` **只补不清**：后面那次调用
+   * 拿不到深链（或没有话题 id）时不能把先存下来的覆盖成空——那等于把唯一可靠的
+   * 深链来源弄丢。
    */
   async rememberSaleThread({
     salesEntryRecordId = '', taskId = '', orderNo = '', messageId = '', threadId = '',
-    chatId = '', senderOpenId = '', replyMessageId = '',
+    chatId = '', senderOpenId = '', replyMessageId = '', appLink = '',
   } = {}) {
     const id = String(messageId || '').trim();
     if (!id) throw new Error('记销售群话题映射缺少 message_id');
+    const existing = await this.store.get(messageKey(id));
     const record = await this.store.create({
       [ID_FIELD]: messageKey(id),
       kind: 'sales_group_thread',
@@ -62,11 +71,13 @@ class SalesGroupThreadLocator {
       sale_task_id: String(taskId || '').trim(),
       order_no: String(orderNo || '').trim(),
       message_id: id,
-      thread_id: String(threadId || '').trim(),
+      thread_id: String(threadId || '').trim() || String(existing?.thread_id || '').trim(),
       chat_id: String(chatId || '').trim(),
       sender_open_id: String(senderOpenId || '').trim(),
       // 机器人那张卡片自己的 message_id：排查时能一眼对上"哪条消息进了哪个话题"。
       reply_message_id: String(replyMessageId || '').trim(),
+      // ⭐ 深链：发送响应里那一条（回带时才有）。留着旧的、只在空的时候补。
+      app_link: String(appLink || '').trim() || String(existing?.app_link || '').trim(),
       status: 'bound',
     });
     logInfo('sales.group.thread.remembered', {
@@ -74,6 +85,8 @@ class SalesGroupThreadLocator {
       message_id: id,
       thread_id: record.thread_id,
       chat_id: record.chat_id,
+      // 只记"有没有拿到深链"，不记链接本身（日志别被 URL 刷满）。
+      has_app_link: Boolean(record.app_link),
     });
     return record;
   }

@@ -32,6 +32,9 @@ const { SecondDeliveryService } = require('./services/secondDeliveryService');
 const { startSecondDeliveryReminder } = require('./utils/secondDeliveryReminder');
 const { PendingDealPushService } = require('./services/pendingDealPushService');
 const { resolvePendingDealPushConfig } = require('./config/pendingDealPush');
+// 「销售战报」定时推送（9/12/15/18/21 + 22 点收官）：service + 自己的配置。
+const { SalesDailyReportService } = require('./services/salesDailyReportService');
+const { resolveSalesDailyReportPushConfig } = require('./config/salesDailyReportPush');
 const { startShanghaiDailyScheduler } = require('./utils/shanghaiDailyScheduler');
 
 const app = express();
@@ -138,6 +141,28 @@ if (require.main === module) {
     });
   } else {
     logInfo('sales.pending_deal_push.disabled', { env: 'PENDING_DEAL_PUSH_ENABLED' });
+  }
+  // 「销售战报」：北京时间 9 / 12 / 15 / 18 / 21 点 ＋ 22 点（当日收官），
+  // 把**消息卡片**（销售单数 / 销售金额）发到收采购图那个群的主聊天。
+  // 时间点 / 群列表 / 开关都从 config/salesDailyReportPush 读（改口径不改代码）；
+  // ⚠️ 过掉的时段**不补推**（12 点的战报 13 点发就是错的快照，见服务的注释）。
+  const salesDailyReport = resolveSalesDailyReportPushConfig();
+  if (salesDailyReport.enabled) {
+    const salesDailyReportService = new SalesDailyReportService({ settings: salesDailyReport });
+    startShanghaiDailyScheduler({
+      run: ({ now }) => salesDailyReportService.sendReport({ now }),
+      eventPrefix: 'sales.daily_report',
+      hours: salesDailyReport.slots,
+      intervalMs: salesDailyReport.intervalMs,
+    });
+    logInfo('sales.daily_report.enabled', {
+      hours: salesDailyReport.hours,
+      summary_hour: salesDailyReport.summaryHour,
+      chat_count: salesDailyReport.chatIds.length,
+      chat_from_purchase_chat_id: salesDailyReport.chatFallback,
+    });
+  } else {
+    logInfo('sales.daily_report.disabled', { env: 'SALES_DAILY_REPORT_PUSH_ENABLED' });
   }
   // 只监听回环地址：公网一律走 Nginx。
   //

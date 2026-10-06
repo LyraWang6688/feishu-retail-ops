@@ -16,27 +16,31 @@ const { logWarn } = require('../utils/logger');
 //     `applink.feishu.cn/client/chat/open` 只认 `openId` / `openChatId`，没有 message/thread 参数）。
 //   ⇒ 今天能从**官方渠道**拿到 `message_app_link` 的只有**发送响应**
 //     （`im.message.create` / `im.message.reply` 的 `data.message_app_link`，SDK 类型里有这个字段）：
-//     那是"发出去的那一刻"才知道的，必须**当时就存进本地映射**
+//     那是"发出去的那一刻"才知道的（⚠️ 实测四：**当前这个应用一次都没回带过**），
+//     所以只能当时存、拿不到就空着
 //     （`sales_group_threads` 记录上的 `app_link` 字段，由销售群链路开话题时写）。
 //
 // ── 本解析器的规矩 ──
-// 三级去找，**找不到就返回空 URL**，绝不自己拼一条"看起来能定位、点开却不在话题里"的链接
+// **两级**去找，**找不到就返回空 URL**，绝不自己拼一条"看起来能定位、点开却不在话题里"的链接
 // （业务负责人明确说过：深链要用飞书给的，不要自己拼）：
-//   ① `storedAppLink`：本地映射里存着的那条（发消息时落下来的）——最可靠；
+//   ① `storedAppLink`：本地映射里存着的那条（**发消息时**落下来的）——唯一可靠的来源；
 //   ② 现查：`im.message.get` 读 `message_app_link`（开关 `…_LINK_LOOKUP_ENABLED`，默认开；
-//      今天是空手而归，但飞书哪天开始返回就自动生效，不用改代码）；
-//   ③ `linkTemplate`：**运营自己填**的模板（默认空）。代码不预设任何 URL。
+//      今天是空手而归，但飞书哪天开始返回就自动生效，不用改代码）。
+//
+// 🔴 曾经还有第三级「运营自己填的 URL 模板」（`PENDING_DEAL_PUSH_LINK_TEMPLATE`），
+// 业务负责人 2026-10-06 明确**不要补历史、也不要拼链接**之后**已整个删掉**：
+//   「要么真链接、要么不显示，绝不自己拼」。所以这里**没有任何模板 / 拼接代码**，
+//   不要以任何形式加回来（加回来 = 把一条点开不在话题里的链接塞给她）。
 class LarkMessageLinkResolver {
   constructor(options = {}) {
     this.client = options.client || null;
     this.lookupEnabled = options.lookupEnabled !== false;
-    this.template = String(options.template || '').trim();
   }
 
   /**
-   * @returns {Promise<{url: string, source: 'stored'|'message_get'|'template'|'unavailable'}>}
+   * @returns {Promise<{url: string, source: 'stored'|'message_get'|'unavailable'}>}
    */
-  async resolve({ storedAppLink = '', messageId = '', threadId = '', chatId = '' } = {}) {
+  async resolve({ storedAppLink = '', messageId = '' } = {}) {
     const stored = String(storedAppLink || '').trim();
     if (stored) return { url: stored, source: 'stored' };
 
@@ -54,20 +58,8 @@ class LarkMessageLinkResolver {
       }
     }
 
-    const fromTemplate = this.applyTemplate({ messageId: id, threadId, chatId });
-    if (fromTemplate) return { url: fromTemplate, source: 'template' };
-
+    // 两级都没有 → 空 URL。**不拼**（见文件头）。
     return { url: '', source: 'unavailable' };
-  }
-
-  /** 模板里只替换三个占位符；替换完还是空（或模板本身为空）就返回空串。 */
-  applyTemplate({ messageId = '', threadId = '', chatId = '' } = {}) {
-    if (!this.template) return '';
-    return this.template
-      .replace(/\{message_id\}/g, String(messageId || ''))
-      .replace(/\{thread_id\}/g, String(threadId || ''))
-      .replace(/\{chat_id\}/g, String(chatId || ''))
-      .trim();
   }
 }
 
