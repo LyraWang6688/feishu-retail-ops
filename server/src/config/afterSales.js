@@ -214,6 +214,11 @@ const afterSalesOperationId = ({ taskId, originalSalesEntryRecordId, action, ori
 
 const readAfterSalesConfig = (env = process.env) => ({
   moneyDirections: AFTER_SALES_MONEY_DIRECTIONS,
+  // 🔴🔴🔴 **这个开关写的地方是【错的】，建议删掉（见 docs 的待办）**：
+  //      「销售主表·销售状态」的选项是 未写入/部分写入/已写入/写入失败，
+  //      **没有「已退货」** —— 一旦把它打开，飞书会【自动新建选项，把那一列搞乱】。
+  //      "退过没退过"本来就记在【销售明细·履约状态】和【新建的退货单】上。
+  //      现在默认关（行为等同"原主表不动"），但**不该长期留着**。
   // 🔴 默认 false = **售后不影响原单**（业务负责人 2026-10-06 晚更正的口径）。
   //    打开后才在退货执行完回写原单「销售状态 = 已退货 / 部分退货」。
   writeOriginalSalesStatus: parseExplicitBoolean(
