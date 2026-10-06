@@ -55,6 +55,8 @@
 | [archive/legacy-agent-guide.md](archive/legacy-agent-guide.md) | 原根目录 `agent.md`，微信小程序时期的 Agent 指南 |
 | [archive/legacy-trae/](archive/legacy-trae/) | 原 `.trae/documents/`，Trae 时期的 PRD / 技术架构草稿 |
 | [archive/legacy-wechat-retirement.md](archive/legacy-wechat-retirement.md) | Legacy WeChat 退役记录（2026-10-01） |
+| [handoff-notes-2026-10-06/README.md](handoff-notes-2026-10-06/README.md) | 交接笔记归档（2026-10-06 清理）：原 7 个 worktree 根目录下的 18 份未跟踪 `.HANDOFF-*.md`，全是 **2026-10-05** 多代理并行期间父代理写给子代理的裁决/纠正/叫停便条；**历史记录，不是当前口径** |
+| [branch-salvage-2026-10-06.md](branch-salvage-2026-10-06.md) | 分支清仓留档（2026-10-06 清理）：除 `main` 外 14 条远端分支**逐条的删除判据与取代证据**（含 tip SHA）；⭐ 以及唯一一条"真有价值但没进 main"的 `refactor/decouple-creation-and-stock` 的**原件留档**（`branch-salvage-2026-10-06/`：剥出来的 `productCreationService.js` 原文 + 全量 patch） |
 
 当前仓库级 Agent 入口以根目录 [AGENTS.md](../AGENTS.md) 为准；`agent.md` 已不再是第二套入口。
 
