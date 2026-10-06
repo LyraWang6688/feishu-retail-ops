@@ -306,6 +306,7 @@ test('① 一次提交 2 条（同批次、分两次到达）→ 只出 1 张退
   await waitForRecordsPosted(gateway, ['rep_2070', 'rep_66851']);
 
   // ① 只出一张图（＝一张退货单），两个货号都在这张单上。
+  await waitFor('出图完成', async () => images.calls.length === 1);
   assert.equal(images.calls.length, 1, '整批只渲染 1 张退货单');
   assert.equal(images.calls[0].title, RETURN_TITLE);
   const itemNos = new Set(images.calls[0].items.map((item) => item.item_no));
@@ -472,6 +473,7 @@ test('⑦ 单独一条（窗口内没有同伴）：窗口到点前一次远端�
   await wait(80);
   assert.equal(requestsOf(gateway).length, 0, '窗口没到点不得写单据');
   assert.equal(ledgerOf(gateway).length, 0, '窗口没到点不得扣库存');
+  await waitFor('出图完成', async () => images.calls.length === 0);
   assert.equal(images.calls.length, 0, '窗口没到点不得出图');
   assert.equal((await gateway.get('purchaseReport', 'rep_alone')).fields.处理状态, '待解析');
 
