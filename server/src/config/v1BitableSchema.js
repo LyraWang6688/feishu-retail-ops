@@ -215,7 +215,13 @@ const V1_BITABLE_SCHEMA = {
       tableId: getEnv('FEISHU_V1_PURCHASE_REPORT_TABLE_ID', 'tblo0ffzFt7vyQw2'),
       fields: {
         batchNoText: '报货批次号', detailId: '明细ID', behavior: '采购行为',
-        product: '编号', size: '尺码', quantityDescription: '数量说明', reportedAt: '报单时间', operator: '经办人',
+        product: '编号', size: '尺码', quantityDescription: '数量说明', operator: '经办人',
+        // ⚠️ 「报单时间」已删除：2026-10-06 业务负责人从生产表删掉了这一列，
+        // 理由是「飞书自己会记创建时间」——报单时刻交给飞书自动生成的「创建时间」，
+        // 我们不再单独记一列，同一时刻的信息没有丢。
+        // 映射留着的话部署闸门 v1:schema-check:all 会直接判红（该表缺少 V1 字段: 报单时间）。
+        // 语义键 reportedAt 在 server/src 里没有任何读取方，删除不会留下悬空引用。
+        // （注：「单据信息」表的 reportedAt 早在 2026-09-26 就已因同样理由删除，不属本次改动。）
         // 「数量」（number）是「采购退货」那种报货的数量来源；「采购申请」格式走
         // 「尺码 + 数量说明」，这一列是空的。2026-10-05 业务负责人改了字段结构后
         // 只读核对过：表里有「数量」没有尺码行。
@@ -289,7 +295,12 @@ const V1_BITABLE_SCHEMA = {
         batch: '采购到货批次',
         supplierOrder: '采购申请',
         product: '编号',
-        inboundAt: '入库时间',
+        // ⚠️ 「入库时间」已删除：2026-10-06 业务负责人从生产表删掉了这一列，
+        // 理由是「飞书自己会记创建时间」——入库时刻交给飞书自动生成的「创建时间」，
+        // 我们不再写入（confirmArrival 里对应的 inboundAt 写入已同步删掉）。
+        // 映射留着的话部署闸门 v1:schema-check:all 会直接判红（该表缺少 V1 字段: 入库时间）。
+        // ⚠️ 本次只删这一列：本表其余字段（入库明细ID / 采购行为 / 尺码 / 数量 /
+        // 采购到货批次 / 采购申请 / 编号 / 入库单价 / 入库金额）业务负责人这次没动，全部保留。
         unitCost: '入库单价',
         amount: '入库金额',
       },

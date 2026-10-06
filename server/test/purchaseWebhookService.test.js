@@ -1741,7 +1741,9 @@ test('「未到齐」告警彻底退场：不判到齐之后不再发任何告�
       client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
       gateway: makeGateway({
         purchaseReport: [reportRecord('rep_no_alert', {
-          尺码: sizeLink(36), 数量说明: '36码3双', 编号: ['prod_1'], 报货批次号: 'BATCH-NO-ALERT', 报单时间: Date.now(),
+          尺码: sizeLink(36), 数量说明: '36码3双', 编号: ['prod_1'], 报货批次号: 'BATCH-NO-ALERT',
+          // 「报单时间」2026-10-06 已被业务负责人从生产表删除（飞书自动记创建时间），
+          // 这条夹具不再带这一列，避免继续假装表里还有它。
         })],
         purchaseOrderBatch: [],
         purchaseRequest: [],

@@ -2916,7 +2916,9 @@ class PurchaseWebhookService {
         behavior: relation(purchaseInboundBehaviorId),
         batch: relation(arrival.arrival_record_id),
         supplierOrder: requestRow?.record_id ? relation(requestRow.record_id) : undefined,
-        inboundAt: Date.now(),
+        // ⚠️ 2026-10-06：不再写「入库时间」——业务负责人已把这一列从生产表删除，
+        // 理由是「飞书自己会记创建时间」，入库时刻由飞书自动的「创建时间」承担
+        //（同一时刻，不丢信息）；schema 里的 inboundAt 映射也同步删掉了。
       });
       created.push(inbound.recordId);
       const entry = { recordId: inbound.recordId, inventoryApplied: false };
