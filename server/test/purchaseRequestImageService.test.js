@@ -30,19 +30,25 @@ const {
   TABLE_TOP,
   ROW_HEIGHT,
   HEADER_ROW_HEIGHT,
+  LINE_HEIGHT,
+  textWidth,
+  wrapTextToWidth,
+  wrapBlocksToWidth,
+  layoutColorRows,
 } = require('../src/services/purchaseRequestImageService');
 // 排版配置单独一个文件（配置先行）：单测直接对着**配置**断言符号与开关，
 // 免得"逻辑里换了字面量、配置里没改"这种两边不一致的情况溜过去。
 const LAYOUT = require('../src/config/purchaseRequestImageLayout');
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 验收标准（业务负责人 2026-10-06 第二次拍板的「合并版」）——本文件逐条钉住：
+// 验收标准（业务负责人 2026-10-06 第三次拍板）——本文件逐条钉住：
 //   ① 同一货号的明细聚在一个分组行下；组内**同颜色并成一行**、不同颜色各自一行
 //   ② 货号分组行跨满整张表、有底色、字比正文重
 //   ③ 尺码×数量拼在**同一格**（`37码×1、41码×3`），颜色（首次出现）＋ 尺码（数字升序、均码最后）
-//   ④ 图上**不做合计**（数量已经写在尺码格里，`summarize` 口径原样保留给群文字用）
+//   ④ 底部**有「合计」行**，且数字 = summarize 口径（N 条 = 明细行数，M 双 = 总双数）；空明细不画
 //   ⑤ 两个标题、供应商段（有/无）行为不变；采购单与退货单排版逐字节只差标题
-//   ⑥ 空明细不崩；超长内容按**像素宽度**截断、不溢出
+//   ⑥ 空明细不崩；**「尺码×数量」装不下就换行**（整块换行、行首不是顿号、不丢字、不截断），
+//      换行后**这一行变高、整张表跟着变高**；不换行的格子（颜色 / 货号）仍按像素宽度截断
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ITEMS = [
@@ -132,14 +138,35 @@ const readGroups = (svg) => {
   return groups;
 };
 
-/** 一组里的明细单元格 → [[颜色, 尺码×数量], ...]（按绘制顺序，一色一行）。 */
-const rowsOf = (group) => {
+/**
+ * 一组里的明细单元格 → **每行的格文本数组**，按**行几何**分组（不是按索引切片）。
+ * ⚠️ 2026-10-06 第三轮起「尺码×数量」那一格可能折成**多行**——
+ * 一个颜色行里的 text 数量不再等于 `COLUMNS.length`，"每 N 条算一行"的老写法
+ * 会把折出来的第 2 行当成另一个颜色行。
+ * 新的判据：**遇到第一列（颜色列）的 x 就另起一行**。绘制顺序本来就是
+ * "一行里按列画完，再画下一行"，所以这个判据与画法一一对应。
+ */
+const cellRowsOf = (group) => {
+  const colorX = MARGIN + CELL_PADDING;
   const rows = [];
-  for (let index = 0; index < group.cells.length; index += COLUMNS.length) {
-    rows.push(group.cells.slice(index, index + COLUMNS.length).map((cell) => cell.content));
+  for (const cell of group.cells) {
+    if (!rows.length || cell.x === colorX) rows.push([]);
+    rows[rows.length - 1].push(cell.content);
   }
   return rows;
 };
+
+/**
+ * 一组里的明细单元格 → [[颜色, 整格「尺码×数量」], ...]（按绘制顺序，一色一行）。
+ * 折行的多条 text 用顿号拼回去 —— 拼回去必须**恰好等于**原来的整格文本（换行不丢字、不加字）。
+ */
+const rowsOf = (group) => cellRowsOf(group).map((cells) => [
+  cells[0],
+  cells.slice(1).join(SIZE_QUANTITY_SEPARATOR),
+]);
+
+/** 每组里「尺码×数量」**实际画出来的每一行**（用来钉住换行发生在哪两块之间）。 */
+const sizeLinesOf = (group) => cellRowsOf(group).map((cells) => cells.slice(1));
 
 /** 一张图里所有「×N」的数量之和——用来钉住"合并没吞数量"。 */
 const quantityTotalOf = (svg) => [...svg.matchAll(/×(\d+)/g)]
@@ -333,21 +360,55 @@ test('① 货号缺失的明细兜底成「未标注货号」分组行，不会�
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ④ 图上不做合计（数量在尺码格里）；summarize 口径原样保留
+// ④ 底部「合计」回来了（2026-10-06 第三轮：「底部『合计』留」）；数字 = summarize 口径
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('④ 图上不再画「合计」行（数量已经写在尺码格里），summarize 口径一个数都不动', () => {
-  const svg = buildPurchaseRequestSvg({ supplierName: '金猴', items: ITEMS });
-  assert.equal(SHOW_TOTAL, false, '业务负责人 2026-10-06 的口径是「不做合计」');
-  assert.equal(LAYOUT.SHOW_TOTAL, false, '开关在配置里，逻辑不写死');
-  assert.ok(!svg.includes('合计'), '合并版图上不出现「合计」');
-  assert.ok(!svg.includes('条 / '), '也不出现「N 条 / M 双」这种口径');
+/** 图上那条合计文本（不存在时返回 null）——按内容找，不靠"最后一条 text"。 */
+const totalTextOf = (svg) => parseSvg(svg)
+  .filter((element) => element.kind === 'text' && element.content.startsWith('合计'))
+  .map((element) => element.content)[0] || null;
 
-  // 「只改怎么画」：summarize / normalizeItems 的口径一个数都不动（群文字那条还要用它）
+test('④ 图上画「合计：N 条 / M 双」：N = 明细行数、M = 总双数，两个数都与 summarize 一致', () => {
+  const svg = buildPurchaseRequestSvg({ supplierName: '金猴', items: ITEMS });
+
+  assert.equal(SHOW_TOTAL, true, '业务负责人 2026-10-06 第三轮：「底部『合计』留」');
+  assert.equal(LAYOUT.SHOW_TOTAL, true, '开关在配置里，逻辑不写死');
+  assert.equal(LAYOUT.TOTAL_LABEL({ rowCount: 3, totalPairs: 6 }), '合计：3 条 / 6 双',
+    '文案的唯一出处是配置里的 TOTAL_LABEL');
+
+  // ITEMS = 3 条明细（3 个「尺码×数量」块）/ 2+1+3 = 6 双
   assert.deepEqual(summarize(normalizeItems(ITEMS)), { rowCount: 3, totalPairs: 6 });
-  // 合并不吞数量、不丢行：图上各格 ×N 之和 == 原始双数
+  assert.equal(totalTextOf(svg), '合计：3 条 / 6 双', '图上的数字必须与 summarize 一致');
+
+  // 「条」= 图上「尺码×数量」块的总数：一格里有几块就数几块 —— 与合计里的 N 对得上，
+  // 这正是"合并成一行之后『条』仍然说得通"的判据（不是图上数得出来的行数）。
+  const blocks = [...svg.matchAll(/[0-9]+(?:\.[0-9]+)?码?×\d+/g)].length;
+  assert.equal(blocks, 3, `图上应正好 3 个「尺码×数量」块：${blocks}`);
+
+  // 合并不吞数量、不丢行：图上各格 ×N 之和 == 原始双数 == 合计里的 M
   assert.equal(quantityTotalOf(svg), 6);
   assert.equal(readGroups(svg).flatMap((group) => rowsOf(group)).length, 2, '3 条明细 → 2 个颜色行');
+});
+
+test('④ 合计行在**表格下面**、居中等宽、加粗；表高不含它（它挂在 FOOTER 上）', () => {
+  const svg = buildPurchaseRequestSvg({ supplierName: '金猴', items: ITEMS });
+  const elements = parseSvg(svg);
+  const frame = elements.find((element) => element.kind === 'rect' && element.fill === 'none' && element.y === TABLE_TOP);
+  const total = elements.find((element) => element.kind === 'text' && element.content === '合计：3 条 / 6 双');
+  assert.ok(total, '必须有合计那一条 text');
+  assert.equal(total.anchor, 'middle', '合计居中');
+  assert.equal(total.x, 450, '合计在画布中线');
+  assert.ok(total.bold, '合计加粗');
+  assert.ok(total.y > frame.y + frame.height, '合计必须落在表格**下面**，不能压在明细上');
+  assert.equal(total.size, LAYOUT.BODY_FONT_SIZE, '合计沿用正文字号（这一轮不动字号）');
+});
+
+test('④ 合计口径不是"图上数得出来的行数"：颜色并成一行后，条数照旧按明细算', () => {
+  // MERGED_ITEMS：4 条明细（黑 3 + 棕 1）→ 图上只有 2 个颜色行，但合计仍是 4 条 / 7 双。
+  const svg = buildPurchaseRequestSvg({ supplierName: '金猴', items: MERGED_ITEMS });
+  assert.deepEqual(summarize(normalizeItems(MERGED_ITEMS)), { rowCount: 4, totalPairs: 7 });
+  assert.equal(readGroups(svg).flatMap((group) => rowsOf(group)).length, 2, '图上 2 行');
+  assert.equal(totalTextOf(svg), '合计：4 条 / 7 双', '合计按**明细**算，不按图上的行数算');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -482,12 +543,12 @@ test('字体显式指定 CJK 字体，中文不会渲染成方框（分组行也
 // ⑥ 空明细 / 截断 / 转义 / PNG
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('⑥ 空明细不崩：照旧给「本批次没有明细」，不画任何分组行、也没有合计', () => {
+test('⑥ 空明细不崩：照旧给「本批次没有明细」，不画任何分组行、也不画合计（0 条 / 0 双 不许出现）', () => {
   for (const items of [[], undefined, null]) {
     const svg = buildPurchaseRequestSvg({ supplierName: '金猴', items });
     assert.ok(svg.startsWith('<svg '));
     assert.ok(svg.includes('本批次没有明细'));
-    assert.ok(!svg.includes('合计'));
+    assert.equal(totalTextOf(svg), null, '空明细不画合计——「合计：0 条 / 0 双」正是被禁止的"合计和为 0"');
     assert.deepEqual(readGroups(svg), [], '空明细不该产出一条空的分组行');
     assert.deepEqual(stripesOf(svg), []);
   }
@@ -519,25 +580,97 @@ test('超长颜色按列宽截断；超长货号（分组行）按跨列宽度�
   assert.ok([...colorCell].length <= 10, `颜色截断过长：${colorCell}`);
 });
 
-test('尺码×数量的容量：6 个尺码放得下；再多会按像素宽度截断（有省略号，不是静默溢出）', () => {
+test('⑥ 尺码×数量：6 个尺码一行放得下；第 7 个起**【换行】不截断**（业务负责人 2026-10-06 第三轮）', () => {
   const sizes = [35, 36, 37, 38, 39, 40, 41, 42, 43];
   const build = (count) => buildPurchaseRequestSvg({
+    supplierName: '金猴',
     items: sizes.slice(0, count).map((size) => ({ item_no: '6C98012-15L', color: '黑色', size, quantity: 1 })),
   });
   const cellOf = (count) => rowsOf(readGroups(build(count))[0])[0][1];
+  const sizeLines = (count) => sizeLinesOf(readGroups(build(count))[0])[0];
+  const heightOf = (count) => Number(/height="(\d+)"/.exec(build(count))[1]);
 
+  // 6 个尺码：仍然是**一行**放得下（压力图验证过的边界，口径不变）
   const six = cellOf(6);
   assert.equal(six, '35码×1、36码×1、37码×1、38码×1、39码×1、40码×1');
   assert.ok(!six.includes('…'), '6 个尺码必须全部放得下');
+  assert.equal(sizeLines(6).length, 1, '6 个尺码仍然只有一行');
   assert.ok(widthOf(six, BODY_FONT_SIZE) <= COLUMNS[1].maxWidth);
 
-  // ⚠️ 如实钉住边界：第 7 个尺码起放不下 → 截断＋省略号。
-  // 这是"一眼能看出被截了"的行为，不是静默丢数据；要装下更多尺码得改列宽或换行，
-  // 属于**格式**变更（配置在 config/purchaseRequestImageLayout.js）。
+  // ⚠️ 第 7 个起：**换行**（不再截断、不再有「…」）—— 这一条就是本次改动的钉子
   const seven = cellOf(7);
-  assert.ok(seven.endsWith('…'), `7 个尺码应当截断并带省略号：${seven}`);
-  assert.ok(widthOf(seven, BODY_FONT_SIZE) <= COLUMNS[1].maxWidth, '截断后不得溢出列宽');
-  assert.ok(seven.startsWith('35码×1、36码×1'), '截断只砍尾巴，前面的尺码照旧');
+  assert.ok(!seven.includes('…'), `7 个尺码不能再出现省略号：${seven}`);
+  assert.equal(seven, '35码×1、36码×1、37码×1、38码×1、39码×1、40码×1、41码×1', '一个字都不能少');
+  const lines = sizeLines(7);
+  assert.equal(lines.length, 2, '7 个尺码 → 2 行');
+  // 换行按**整块**「尺码×数量」切：不会出现「41码×」这种被劈开的半块
+  assert.deepEqual(lines, ['35码×1、36码×1、37码×1、38码×1、39码×1、40码×1', '41码×1']);
+  for (const line of lines) {
+    assert.ok(widthOf(line, BODY_FONT_SIZE) <= COLUMNS[1].maxWidth, `换行后仍不得溢出列宽：${line}`);
+    assert.ok(!line.startsWith(SIZE_QUANTITY_SEPARATOR), `行首不能是顿号：${line}`);
+    assert.ok(!line.endsWith(SIZE_QUANTITY_SEPARATOR), `行尾不留顿号：${line}`);
+    assert.ok(/^\d/.test(line), '每一行都从尺码的数字开始（顿号只出现在两块之间）');
+  }
+
+  // 换行后**这一行的行高变高**，整张表跟着变高：正好多一个 LINE_HEIGHT
+  assert.equal(heightOf(7) - heightOf(6), LINE_HEIGHT, '表高必须跟着换行变高');
+  // 再多尺码只是把第 2 行填满，还是 2 行 → 高度一样（不会每多一个尺码就再长高一行）
+  assert.equal(heightOf(9), heightOf(7), '9 个尺码仍然只占 2 行');
+
+  // 行高本身：单行 42（与改前一致），两行 42 + LINE_HEIGHT
+  assert.equal(LAYOUT.detailRowHeight(1), ROW_HEIGHT);
+  assert.equal(LAYOUT.detailRowHeight(2), ROW_HEIGHT + LINE_HEIGHT);
+});
+
+test('⑥ 换行纯函数：整块换行、行首不是顿号、单块超宽时按字符拆也**不丢字**', () => {
+  const maxWidth = COLUMNS[1].maxWidth;
+  const blocks = ['35码×1', '36码×1', '37码×1'];
+
+  // 够宽 → 拼成一行，分隔符照旧
+  assert.deepEqual(wrapBlocksToWidth(blocks, 1000, BODY_FONT_SIZE), ['35码×1、36码×1、37码×1']);
+  // 只够两块 → 第 3 块另起一行（行首是尺码，不是顿号）
+  const twoPerLine = wrapBlocksToWidth(blocks, widthOf('35码×1、36码×1', BODY_FONT_SIZE), BODY_FONT_SIZE);
+  assert.deepEqual(twoPerLine, ['35码×1、36码×1', '37码×1']);
+  // 换行**不丢字**：拼回去必须等于原文本
+  const wrapped = wrapBlocksToWidth(blocks, 100, BODY_FONT_SIZE);
+  assert.equal(wrapped.join(SIZE_QUANTITY_SEPARATOR), blocks.join(SIZE_QUANTITY_SEPARATOR));
+  assert.ok(wrapped.length > 1);
+  assert.ok(wrapped.every((line) => !line.startsWith(SIZE_QUANTITY_SEPARATOR)));
+
+  // 单块自己就超宽（脏数据）→ 按字符拆，**一个字都不丢**（不截断、不加省略号）
+  const huge = ['深'.repeat(40)];
+  const pieces = wrapBlocksToWidth(huge, maxWidth, BODY_FONT_SIZE);
+  assert.ok(pieces.length > 1);
+  assert.equal(pieces.join(''), huge[0], '按字符拆也不许丢字');
+  assert.ok(!pieces.join('').includes('…'), '不截断 —— 不该出现省略号');
+  assert.equal(wrapTextToWidth('深'.repeat(40), maxWidth, BODY_FONT_SIZE).join(''), '深'.repeat(40));
+
+  // 脏输入不炸
+  assert.deepEqual(wrapBlocksToWidth([], maxWidth, BODY_FONT_SIZE), ['']);
+  assert.deepEqual(wrapBlocksToWidth(null, maxWidth, BODY_FONT_SIZE), ['']);
+  assert.deepEqual(wrapTextToWidth('', maxWidth, BODY_FONT_SIZE), ['']);
+});
+
+test('⑥ 行布局纯函数 layoutColorRows：只有标了 wrap 的格子折行，颜色格仍然截断', () => {
+  const rows = mergeSizesByColor(normalizeItems(
+    [35, 36, 37, 38, 39, 40, 41].map((size) => ({ item_no: '6C98012-15L', color: '黑色', size, quantity: 1 })),
+  ));
+  const laid = layoutColorRows(rows);
+  assert.equal(laid.length, 1);
+  assert.equal(laid[0].lineCount, 2, '7 个尺码 → 2 行');
+  assert.equal(laid[0].height, ROW_HEIGHT + LINE_HEIGHT);
+  assert.deepEqual(laid[0].cellLines[0], ['黑色'], '颜色格永远只有一行');
+  assert.equal(laid[0].cellLines[1].length, 2, '尺码×数量格折成 2 行');
+  // 原样字段一个都没丢（sizeQuantity 仍是"不换行时的样子"）
+  assert.equal(laid[0].sizeQuantity, '35码×1、36码×1、37码×1、38码×1、39码×1、40码×1、41码×1');
+  assert.equal(COLUMNS[1].wrap, true, '「哪一格换行」是配置：尺码×数量格标了 wrap');
+  assert.ok(!COLUMNS[0].wrap, '颜色格不换行（仍然是截断）');
+
+  // 颜色超长仍然截断（这一轮只改尺码×数量那一格）
+  const longColor = layoutColorRows(mergeSizesByColor(normalizeItems(
+    [{ item_no: 'A', color: '深'.repeat(60), size: 36, quantity: 1 }],
+  )));
+  assert.ok(longColor[0].cellLines[0][0].endsWith('…'), '颜色超长照旧截断');
 });
 
 test('XML 特殊字符被转义，不会被当成标签（分组行与正文行都要转义）', () => {
@@ -607,9 +740,26 @@ test('归并纯函数：mergeSizesByColor 同颜色并一行、尺码数字序�
   ]);
   const merged = mergeSizesByColor(rows);
   assert.deepEqual(merged, [
-    { color: '黑', sizeQuantity: `9码${SIZE_QUANTITY_MULTIPLIER}3、41码${SIZE_QUANTITY_MULTIPLIER}2、均码${SIZE_QUANTITY_MULTIPLIER}1` },
-    { color: '棕', sizeQuantity: `40码${SIZE_QUANTITY_MULTIPLIER}4` },
+    {
+      color: '黑',
+      sizeQuantity: `9码${SIZE_QUANTITY_MULTIPLIER}3、41码${SIZE_QUANTITY_MULTIPLIER}2、均码${SIZE_QUANTITY_MULTIPLIER}1`,
+      // ⚠️ 整块列表（第三轮加的）：换行必须按整块换，渲染端要拿到"块"而不是只能拿到拼好的串
+      sizeQuantities: [
+        `9码${SIZE_QUANTITY_MULTIPLIER}3`,
+        `41码${SIZE_QUANTITY_MULTIPLIER}2`,
+        `均码${SIZE_QUANTITY_MULTIPLIER}1`,
+      ],
+    },
+    {
+      color: '棕',
+      sizeQuantity: `40码${SIZE_QUANTITY_MULTIPLIER}4`,
+      sizeQuantities: [`40码${SIZE_QUANTITY_MULTIPLIER}4`],
+    },
   ]);
+  // 块列表与整格文本必须永远一致（一个来源，否则"合的"和"画的"会分家）
+  for (const row of merged) {
+    assert.equal(row.sizeQuantities.join(SIZE_QUANTITY_SEPARATOR), row.sizeQuantity);
+  }
   // 颜色按**首次出现**（输入里 黑 在前 → 黑 那行在前）
   assert.deepEqual(merged.map((row) => row.color), ['黑', '棕']);
   // 打乱输入：同一个颜色的格文本必须一模一样（函数自己排尺码，不依赖上游顺序）
@@ -647,15 +797,44 @@ test('采购申请 PNG：sharp 真的渲染出 900px 宽的 PNG（高度按分�
   assert.equal(extraColorMeta.height - metadata.height, ROW_HEIGHT, '新颜色只加一行颜色行');
 });
 
-test('合并版表高：列头 + Σ（分组行 + 颜色行），没有隐形空行', () => {
+test('采购申请 PNG：一个颜色 7 个尺码 → 换行后 **PNG 真的更高**（不只是 SVG 字符串自证）', async () => {
+  const sizes = [35, 36, 37, 38, 39, 40, 41];
+  const metaOf = async (count) => sharp(await renderPurchaseRequestPng({
+    supplierName: '金猴',
+    items: sizes.slice(0, count).map((size) => ({ item_no: '6C98012-15L', color: '黑色', size, quantity: 1 })),
+  })).metadata();
+
+  const six = await metaOf(6);
+  const seven = await metaOf(7);
+  assert.equal(six.width, 900);
+  assert.equal(seven.width, 900, '换行只在纵向长高，宽度不变');
+  assert.equal(seven.height - six.height, LINE_HEIGHT, '7 个尺码换到第 2 行 → 图高多一行');
+  // 再多尺码只是把第 2 行填满，不会继续长高（9 个尺码仍然 2 行）
+  assert.equal((await metaOf(9)).height, seven.height);
+});
+
+test('合并版表高：列头 + Σ（分组行 + **折行后的**明细段高），没有隐形空行', () => {
   const svg = buildPurchaseRequestSvg({ supplierName: '金猴', items: ITEMS });
   const height = Number(/height="(\d+)"/.exec(svg)[1]);
-  // ITEMS：2 个货号各 1 个颜色行 → 2 条分组行 + 2 行正文
+  // ITEMS：2 个货号各 1 个颜色行（都是单行）→ 2 条分组行 + 2 行正文
   const tableHeight = HEADER_ROW_HEIGHT + GROUP_ROW_HEIGHT * 2 + ROW_HEIGHT * 2;
   // 表格外框那条 rect 的高度必须正好等于上面算出来的表高
   const frame = parseSvg(svg).find((element) => element.kind === 'rect'
     && element.fill === 'none' && element.y === TABLE_TOP);
   assert.equal(frame.height, tableHeight);
-  // 合计关掉后图就矮了一整条（不留空带）：表格下面只剩底部留白
-  assert.equal(height, TABLE_TOP + tableHeight + LAYOUT.BOTTOM_PADDING);
+  // 合计**开着**：表格下面留 FOOTER_GAP + FOOTER_HEIGHT，再是底部留白（这条跟着 SHOW_TOTAL 反过来）
+  assert.equal(LAYOUT.SHOW_TOTAL, true);
+  assert.equal(height, TABLE_TOP + tableHeight + LAYOUT.FOOTER_GAP + LAYOUT.FOOTER_HEIGHT + LAYOUT.BOTTOM_PADDING);
+
+  // ⚠️ 换行的那一行要**真的**占两行高：表高按折行后的行高累加，不是一律 ROW_HEIGHT
+  const wrapItems = [35, 36, 37, 38, 39, 40, 41].map((size) => ({
+    item_no: '6C98012-15L', color: '黑色', size, quantity: 1,
+  }));
+  const wrapSvg = buildPurchaseRequestSvg({ supplierName: '金猴', items: wrapItems });
+  const wrapHeight = Number(/height="(\d+)"/.exec(wrapSvg)[1]);
+  const wrapTableHeight = HEADER_ROW_HEIGHT + GROUP_ROW_HEIGHT + (ROW_HEIGHT + LINE_HEIGHT);
+  const wrapFrame = parseSvg(wrapSvg).find((element) => element.kind === 'rect'
+    && element.fill === 'none' && element.y === TABLE_TOP);
+  assert.equal(wrapFrame.height, wrapTableHeight, '折行的那一行必须按两行高占位');
+  assert.equal(wrapHeight, TABLE_TOP + wrapTableHeight + LAYOUT.FOOTER_GAP + LAYOUT.FOOTER_HEIGHT + LAYOUT.BOTTOM_PADDING);
 });

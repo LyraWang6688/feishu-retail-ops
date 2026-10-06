@@ -13,6 +13,11 @@
  *   「一个颜色一行，然后尺码和数量放一块。比方说：41码×1、41码×2、41码×3 这种」
  * ⇒ 分组行（货号）＋ 两列「颜色 | 尺码×数量」；
  *   同货号＋同颜色并成一行，该颜色的所有尺码用「、」拼在同一格里。
+ *
+ * ⚠️ 2026-10-06 第三轮（业务负责人原话）：「底部『合计』留，同色 7+ 尺码截断换行！」
+ * ⇒ ① `SHOW_TOTAL` 翻回 `true`：底部「合计」那一行回来（文案见 `TOTAL_LABEL`）；
+ *    ② 一格装不下的「尺码×数量」**换行**画到下一行——行高变高、整张表跟着变高，
+ *       **不再截断、不再出现「…」**。⚠️ 字号一个都没动（见 `BODY_FONT_SIZE`）。
  */
 
 // ─── 「尺码×数量」这一格里的两个符号 ────────────────────────────────────────────
@@ -40,6 +45,29 @@ const FOOTER_GAP = 18;
 const FOOTER_HEIGHT = 52;
 const BOTTOM_PADDING = 36;
 
+// ─── 字号与「一格多行」（2026-10-06 第三轮）────────────────────────────────────
+// ⚠️ 字号**一个都没动**（业务负责人的原话：「字号不要动 —— 先只做换行，变更小、好回滚」）：
+// 正文 22 / 分组行 24 / 表头 20，与改前逐字节一样，只是从"散在渲染逻辑里"挪到这里。
+// 挪出来是为了**换行的行距**有一个自己的来源：行距跟着正文字号走，改字号时不会对不上。
+const BODY_FONT_SIZE = 22;
+const GROUP_FONT_SIZE = 24;
+const HEADER_FONT_SIZE = 20;
+// 一格里第 2 行起的行距：30px；上下各留 6px 内边距。
+// ⚠️ 这两个数的组合是**刻意**选的：30 + 6*2 = 42 = ROW_HEIGHT
+// ⇒ **单行的行高与改前完全一致**（这一轮只让"装不下的那些行"变高，普通行一行都不动）。
+const LINE_HEIGHT = 30;
+const CELL_PADDING_Y = 6;
+
+/**
+ * 一行明细的最终高度：单行 = ROW_HEIGHT(42)，每多一行 +LINE_HEIGHT(30)。
+ * ⚠️ 这是「换行」的**唯一**几何口径：渲染端按它累加表高，
+ * 所以"这一行变高 ⇒ 整张表变高"是同一个数推出来的，不会两处各算一遍、慢慢长歪。
+ */
+const detailRowHeight = (lineCount) => {
+  const lines = Math.max(1, Math.floor(Number(lineCount)) || 1);
+  return Math.max(ROW_HEIGHT, lines * LINE_HEIGHT + CELL_PADDING_Y * 2);
+};
+
 // ─── 列（**数组顺序 = 图上从左到右的顺序**）────────────────────────────────────
 // ⚠️ 列宽之和必须等于 TABLE_WIDTH（820）——单测钉住了这条不变量。
 //
@@ -56,7 +84,11 @@ const BOTTOM_PADDING = 36;
 const CELL_PADDING = 16;
 const COLUMNS = [
   { key: 'color', label: '颜色', width: 240, align: 'start' },
-  { key: 'sizeQuantity', label: SIZE_QUANTITY_LABEL, width: 580, align: 'start' },
+  // ⚠️ `wrap: true`（2026-10-06 第三轮）：这一格的「尺码×数量」**装不下就换行**，
+  // 不截断。颜色那一格仍然是截断（颜色是货品库里的短词，240 宽能放 9 个汉字，
+  // 真超长说明数据有问题，截断+「…」正好让人一眼看出来）。
+  // ⇒ "哪一格换行、哪一格截断"是**配置**，渲染端只读这个标志（见 service 的 layoutColorRows）。
+  { key: 'sizeQuantity', label: SIZE_QUANTITY_LABEL, width: 580, align: 'start', wrap: true },
 ].map((column) => ({ ...column, maxWidth: column.width - CELL_PADDING * 2 }));
 
 const COLORS = {
@@ -72,13 +104,22 @@ const COLORS = {
 };
 
 // ─── 合计行 ──────────────────────────────────────────────────────────────────
-// ⚠️ 业务负责人 2026-10-06 的口径是**不做合计**：数量已经写在「尺码×数量」格里，
-// 「合计：N 条 / M 双」在合并版里还会失去意义——**「条」原来 = 明细行数，
-// 现在同颜色并成一行，"几条"与图上能数出来的行数对不上**。
-// 总双数没有丢：它由群文字那条消息带出去
-//（`purchaseWebhookService` 的「这批 N 条（共 M 双），图可以直接转给供应商」）。
-// 留成开关是为了"改回来只要一个 true"，而不是把这段渲染代码删掉重写。
-const SHOW_TOTAL = false;
+// ⚠️ 2026-10-06 **第三轮**：业务负责人明确「**底部『合计』留**」→ 翻回 `true`。
+// 为什么「条」在合并版里仍然说得通：这一版一格里可以放**多个**「尺码×数量」块
+//（例：`37码×1、41码×3`），**块数 = 明细行数**，所以她能一颗一颗数出来；
+// 而同一个数也正好是群文字那条消息里的「这批 N 条」——两处口径**同一个来源**
+//（`summarize(rowCount)`），不会一个说 4 条、另一个说 2 条。
+// ⚠️ 空明细（0 条 / 0 双）时**不画**合计——那正是被禁止的"合计和为 0"，见 service 的 showTotal。
+const SHOW_TOTAL = true;
+
+/**
+ * 合计行的文案（**唯一出处**）：改口径只改这一行，渲染逻辑不写死字符串。
+ *   N「条」= 明细行数（= 图上每个「尺码×数量」块的总数，`summarize().rowCount`）
+ *   M「双」= 总双数（所有明细数量之和，`summarize().totalPairs`）
+ * ⚠️ 两个数**直接来自 summarize**、不做任何二次加工：算错/算成 0 是明令禁止的，
+ * 单测按这两个口径逐条钉住（含"图上写的数字 = summarize 的数字"）。
+ */
+const TOTAL_LABEL = ({ rowCount = 0, totalPairs = 0 } = {}) => `合计：${rowCount} 条 / ${totalPairs} 双`;
 
 module.exports = {
   // 格式符号
@@ -99,9 +140,17 @@ module.exports = {
   FOOTER_HEIGHT,
   BOTTOM_PADDING,
   CELL_PADDING,
+  // 字号 / 行距 / 换行后的行高
+  BODY_FONT_SIZE,
+  GROUP_FONT_SIZE,
+  HEADER_FONT_SIZE,
+  LINE_HEIGHT,
+  CELL_PADDING_Y,
+  detailRowHeight,
   // 列与配色
   COLUMNS,
   COLORS,
-  // 开关
+  // 开关与合计文案
   SHOW_TOTAL,
+  TOTAL_LABEL,
 };
