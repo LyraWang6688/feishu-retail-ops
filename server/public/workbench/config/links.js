@@ -10,11 +10,12 @@
  *    工作台只负责把用户送过去，不在本地重算任何业务事实。
  */
 
-// 采购申请表单（她的原话：「采购（采购申请表单）」）。
+// ⭐ 表单名 2026-10-06 由业务负责人改名：「采购申请」→「采购报货」。
+// 原话：「我说的是采购申请改为了采购报货，然后采购退单改成了采购退货」
 export const PURCHASE_REQUEST_FORM_URL =
   'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnn4f9ZJzpm7JbT2rCH247xc';
 
-// 采购退货表单（她的原话：「退货（采购退货表单）」）。
+// 采购退货表单（表单名 2026-10-06 为「采购退货」）。
 export const PURCHASE_RETURN_FORM_URL =
   'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnjsqt4D5URseSSXgecYlqGd';
 
@@ -26,8 +27,8 @@ export const PURCHASE_FORMS = [
   {
     id: 'purchase-request',
     icon: '🛒',
-    title: '采购申请',
-    desc: '提交采购申请（供应商报货）',
+    title: '采购报货',
+    desc: '提交采购报货（供应商报货）',
     url: PURCHASE_REQUEST_FORM_URL,
   },
   {
