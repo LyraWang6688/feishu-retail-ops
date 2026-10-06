@@ -4,7 +4,7 @@ import { createCommonModule } from './features/common/index.js';
 import { createSalesModule } from './features/sales/index.js';
 import { createInventoryModule } from './features/inventory/index.js';
 import { createInventoryAdjustmentModule } from './features/inventory/adjustment.js';
-import { createPurchaseReturnModule } from './features/purchase/return.js';
+import { createPurchaseLinksModule } from './features/purchase/links.js';
 
 // 独立页面注册表：key = 页面的 <body data-view="...">，value = 该页面的模块工厂。
 // 三个一级 tab 各一个页面，另加两个子页：
@@ -12,13 +12,13 @@ import { createPurchaseReturnModule } from './features/purchase/return.js';
 //   sales-query.html          → 销售查询（原「今日销售」，支持按某日 / 按区间）
 //   inventory.html            → 实时库存
 //   inventory-adjustment.html → 常用功能 → 库存手工调整（盘点调整 / 换季调整）
-//   purchase-return.html      → 常用功能 → 采购退货（采购 / 退货）
+//   purchase-return.html      → 常用功能 → 采购和退货（两个飞书表单外链，不做查询）
 const factories = {
   common: () => createCommonModule({ focused: true }),
   'sales-query': () => createSalesModule({ focused: true }),
   inventory: () => createInventoryModule({ focused: true }),
   'inventory-adjustment': () => createInventoryAdjustmentModule(),
-  'purchase-return': () => createPurchaseReturnModule(),
+  'purchase-return': () => createPurchaseLinksModule(),
 };
 
 async function start() {

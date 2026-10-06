@@ -10,8 +10,8 @@ const ENTRIES = [
   },
   {
     icon: '📦',
-    title: '采购退货',
-    desc: '采购申请与采购退货的单据情况、到货情况查询',
+    title: '采购和退货',
+    desc: '采购申请、采购退货两个飞书表单，点一下直接去填写',
     href: '/workbench/purchase-return.html',
   },
 ];
