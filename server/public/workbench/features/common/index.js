@@ -1,18 +1,20 @@
 import { escapeHtml } from '../../core/formatters.js';
 
 // 「常用功能」的入口卡片。加/减功能只改这张表。
+// ⭐ 只保留两个入口（业务负责人 2026-10-06：「常用里只保留库存和采购，其他不需要」），
+//    且【采购和退货在上、库存手工调整在下】（她：「采购放在库存上面」）。
 const ENTRIES = [
+  {
+    icon: '📦',
+    title: '采购和退货',
+    desc: '报货、退货两个飞书表单，点一下直接去填写',
+    href: '/workbench/purchase-return.html',
+  },
   {
     icon: '🧮',
     title: '库存手工调整',
     desc: '盘点调整（改数量，盘多了加、盘少了减）· 换季调整（门盒/样品 ↔ 仓库，数量不变）',
     href: '/workbench/inventory-adjustment.html',
-  },
-  {
-    icon: '📦',
-    title: '采购和退货',
-    desc: '采购申请、采购退货两个飞书表单，点一下直接去填写',
-    href: '/workbench/purchase-return.html',
   },
 ];
 
@@ -36,12 +38,6 @@ export function createCommonModule({ focused = false } = {}) {
                 <div class="arrow">进入 →</div>
               </a>`).join('')}
           </div>
-          ${focused ? '' : `
-            <h3 class="section-title">其余常用页面</h3>
-            <div class="inline-links">
-              <a class="btn" href="/workbench/sales-query.html">销售查询</a>
-              <a class="btn" href="/workbench/inventory.html">实时库存</a>
-            </div>`}
         </section>`;
     },
   };
