@@ -142,13 +142,51 @@ const runDir = (recordId) => path.join(serverRoot, 'data', 'selftest', 'runs', r
  * ⇒ 两个替身都要有 `reply`，并且都记下 `path.message_id` —— 那是判断
  *   「第 2 条是不是回复同一条（= 同一个话题）」的唯一硬证据。
  */
+/**
+ * 把 client 的某个命名空间包一层，**只做一件事**：任何调用抛错时把「哪个接口 + 飞书
+ * code/msg + 完整 URL」记下来。
+ *
+ * 为什么需要：自测里最贵的失败是"只看到 400，不知道打的是哪个接口"——
+ * 2026-10-06 同批号 2 条退货就是这样失败的（`1254607 Data not ready`，
+ * SDK 打印的 error 只有 2 层深，URL 被折叠成 [Object]），根本定不了位。
+ */
+const wrapApiForDiagnostics = (target, prefix, sink) => {
+  if (!target || typeof target !== 'object') return target;
+  return new Proxy(target, {
+    get(obj, prop) {
+      const value = Reflect.get(obj, prop);
+      if (typeof value === 'function') {
+        return async (...args) => {
+          try {
+            return await value.apply(obj, args);
+          } catch (error) {
+            const payload = error?.response?.data || {};
+            sink.push({
+              api: `${prefix}.${String(prop)}`,
+              status: error?.response?.status ?? null,
+              code: payload?.code ?? error?.code ?? null,
+              msg: String(payload?.msg || error?.message || '').slice(0, 300),
+              url: String(error?.response?.config?.url || ''),
+            });
+            throw error;
+          }
+        };
+      }
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        return wrapApiForDiagnostics(value, `${prefix}.${String(prop)}`, sink);
+      }
+      return value;
+    },
+  });
+};
+
 const createClient = ({ realIm }) => {
   const { appId, appSecret } = getLarkAgentCredentials();
   const real = new lark.Client({ appId, appSecret });
   // ⚠️ drive 一直都是**真**客户端（附件真的上传到测试 Base）——这里加的不是替身，
   // 是**留证**：记下每次 `uploadAttachment` 的调用与飞书的应答。上次报告里只看到
   // 「每条单据信息行的附件数=[0,0]」，分不清是"没走到上传"还是"上传被飞书拒了"。
-  const outbox = { images: [], messages: [], driveUploads: [] };
+  const outbox = { images: [], messages: [], driveUploads: [], apiErrors: [] };
   const recordingDrive = {
     media: {
       uploadAll: async (params = {}) => {
@@ -233,7 +271,16 @@ const createClient = ({ realIm }) => {
     };
     // probeClient：只读核对用的**原始** client（recordingIm 上只挂了发消息用的方法，
     // 没有 im.message.get；拿详情验话题要走原始 client，且只调只读接口）。
-    return { client: { bitable: real.bitable, drive: recordingDrive, im: recordingIm }, outbox, imIsFake: false, probeClient: real };
+    return {
+      client: {
+        bitable: wrapApiForDiagnostics(real.bitable, 'bitable', outbox.apiErrors),
+        drive: recordingDrive,
+        im: wrapApiForDiagnostics(recordingIm, 'im', outbox.apiErrors),
+      },
+      outbox,
+      imIsFake: false,
+      probeClient: real,
+    };
   }
   // 假飞书：thread_id 由"话题根消息 id"派生 → 「回复同一条 = 同一个话题」这件事
   // 在**默认模式（拦发）下也验得了**。真机上 thread_id 由飞书给；这里是模拟，
@@ -267,7 +314,16 @@ const createClient = ({ realIm }) => {
   // 只替换 im：bitable 是真的、drive 是真客户端外面套了一层录音（见 recordingDrive）
   // → 表是真的在读写，附件也是真的上传真回写（上传失败会记下飞书的 code/msg）。
   // 假客户端模式：probeClient 指向**真** client，但只用于只读的 im.message.get。
-  return { client: { bitable: real.bitable, drive: recordingDrive, im: fakeIm }, outbox, imIsFake: true, probeClient: real };
+  return {
+    client: {
+      bitable: wrapApiForDiagnostics(real.bitable, 'bitable', outbox.apiErrors),
+      drive: recordingDrive,
+      im: wrapApiForDiagnostics(fakeIm, 'im', outbox.apiErrors),
+    },
+    outbox,
+    imIsFake: true,
+    probeClient: real,
+  };
 };
 
 const buildService = ({ client }) => {
@@ -403,6 +459,23 @@ const getMessageDetail = async (client, messageId) => {
       error: `${payload?.code ?? ''} ${payload?.msg || error?.message || String(error)}`.trim(),
     };
   }
+};
+
+/**
+ * 等**一批**任务全部落终态。
+ * ⚠️ 不能只等第一个：`flushReturnBatch` 是「先写 batchTaskId=posted，再逐条把同批
+ * 其余任务写成 completed」——只等第一个的话，会在第二个还是 batch_waiting 时就去
+ * 收集证据，报告里就出现"同批其余任务状态=[batch_waiting]"这种假失败。
+ */
+const waitForTasks = async (store, taskIds, timeoutMs = 180_000) => {
+  const deadline = Date.now() + timeoutMs;
+  let tasks = [];
+  while (Date.now() < deadline) {
+    tasks = await Promise.all(taskIds.map((taskId) => store.get(taskId)));
+    if (tasks.every((task) => task && ['posted', 'completed', 'failed', 'cancelled'].includes(task.status))) return tasks;
+    await sleep(300);
+  }
+  return tasks;
 };
 
 const guardEnvironment = (gateway) => {
@@ -678,11 +751,9 @@ const cmdReturn = async () => {
   // 两条同批号记录是"到点整批一起处理"：等窗口到点，等第一条任务落终态。
   let task = await waitForTask(store, batchTaskId, Math.max(180_000, gapMs + 60_000));
   say(`  整批任务状态（轮询到的）：status=${task?.status}${task?.error ? ` error=${task.error}` : ''}`);
-  // 同批其余记录的任务也读一次，确认"跟着这一批处理过了"而不是各自跑了一遍。
-  const otherTasks = [];
-  for (const accepted of acceptedList.slice(1)) {
-    otherTasks.push(await store.get(accepted.taskId));
-  }
+  // 同批其余记录的任务：等它们也落终态，确认"跟着这一批处理过了"而不是各自跑了一遍。
+  const batchTasks = await waitForTasks(store, acceptedList.map((item) => item.taskId));
+  const otherTasks = batchTasks.slice(1);
   for (const item of otherTasks) {
     say(`  同批其余任务：task_id=${item?.task_id} status=${item?.status}${item?.error ? ` error=${item.error}` : ''}`);
   }
@@ -720,24 +791,12 @@ const cmdReturn = async () => {
     name: textValue(row.fields?.[behaviorTable.fields.name]),
     code: textValue(row.fields?.[behaviorTable.fields.code]),
   }]));
-  const ledgerTable = gateway.table('inventoryLedger');
-  const ledgerRows = newLedger.map((row) => ({
-    record_id: row.record_id,
-    size: textValue(row.fields?.[ledgerTable.fields.size]),
-    quantityChange: row.fields?.[ledgerTable.fields.quantityChange],
-    behavior: linkedRecordIds(row.fields?.[ledgerTable.fields.behavior])
-      .map((id) => behaviorByRecord.get(id) || { name: '', code: id }),
-    hasSource: Boolean(
-      linkedRecordIds(row.fields?.[ledgerTable.fields.salesDetail]).length
-      || linkedRecordIds(row.fields?.[ledgerTable.fields.purchaseInbound]).length,
-    ),
-  }));
-
   const requestTable = gateway.table('purchaseRequest');
   const requestRows = myRequests.map((row) => ({
     record_id: row.record_id,
     source_record_id: sourceRecordOf(row),
     size: textValue(row.fields?.[requestTable.fields.size]),
+    detailId: Number(textValue(row.fields?.[requestTable.fields.detailId])) || 0,
     quantity: row.fields?.[requestTable.fields.quantity],
     behavior: linkedRecordIds(row.fields?.[requestTable.fields.behavior])
       .map((id) => behaviorByRecord.get(id) || { name: '', code: id }),
@@ -745,6 +804,31 @@ const cmdReturn = async () => {
     attachmentCount: Array.isArray(row.fields?.[requestTable.fields.attachment])
       ? row.fields[requestTable.fields.attachment].length
       : (row.fields?.[requestTable.fields.attachment] ? 1 : 0),
+  }));
+
+  // 「库存流水」是**整表快照**做差，所以会被**别的并发写手**污染（测试 Base 是共用的）。
+  // 归属判据：本次退货涉及的那些尺码 ＋ 库存键属于本次这个货品。
+  // 排除掉的条数照实记进报告（`foreignLedger`），不假装没看见。
+  const ledgerTable = gateway.table('inventoryLedger');
+  const ledgerSizeOf = (row) => String(textValue(row.fields?.[ledgerTable.fields.size]));
+  const ledgerStockKeyOf = (row) => textValue(row.fields?.[ledgerTable.fields.stockKey]);
+  const requestSizes = new Set(requestRows.map((row) => String(row.size)));
+  const isMine = (row) => requestSizes.has(ledgerSizeOf(row))
+    && ledgerStockKeyOf(row).startsWith(`${productRecordId}|`);
+  const myLedger = newLedger.filter(isMine);
+  const foreignLedger = newLedger.filter((row) => !isMine(row)).map((row) => ({
+    record_id: row.record_id, size: ledgerSizeOf(row), stockKey: ledgerStockKeyOf(row),
+  }));
+  const ledgerRows = myLedger.map((row) => ({
+    record_id: row.record_id,
+    size: ledgerSizeOf(row),
+    quantityChange: row.fields?.[ledgerTable.fields.quantityChange],
+    behavior: linkedRecordIds(row.fields?.[ledgerTable.fields.behavior])
+      .map((id) => behaviorByRecord.get(id) || { name: '', code: id }),
+    hasSource: Boolean(
+      linkedRecordIds(row.fields?.[ledgerTable.fields.salesDetail]).length
+      || linkedRecordIds(row.fields?.[ledgerTable.fields.purchaseInbound]).length,
+    ),
   }));
 
   const removedLive = liveBefore.filter((row) => !liveAfter.some((item) => item.record_id === row.record_id));
@@ -847,6 +931,8 @@ const cmdReturn = async () => {
   }
 
   const totalReturned = requestRows.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+  const attachmentTargets = requestRows.filter((row) => row.attachmentCount > 0).map((row) => row.record_id);
+  const minDetailRow = [...requestRows].sort((a, b) => (a.detailId - b.detailId) || String(a.record_id).localeCompare(String(b.record_id)))[0];
   const expectedTotal = qty * records;
   const hasReturnBehavior = ledgerRows.some((row) => row.behavior.some((item) => item.code === 'STOCK_PURCHASE_DECREASE'));
   // ④ 逐条记录判：每条记录都必须是「已生成申请」，且它回填的「关联采购申请」
@@ -904,11 +990,18 @@ const cmdReturn = async () => {
     },
     {
       id: '⑤',
-      text: '往群里发 1 张退货单图 + 1 条 @经办人 的文字，并把图写回「单据信息」附件',
+      // ⚠️ 口径以 `writeSupplierImageAttachment` 的契约为准（产品负责人给的）：
+      // **同一报货批次 + 同一供应商只写一条**（写进「明细ID」最小的那条），
+      // 重复执行不写第二条。所以"每条单据信息行都有附件"是**错的判据**——
+      // 一条退货记录拆成 2 行（2 个尺码）时，本来就只该有 1 行带附件。
+      text: '往群里发 1 张退货单图 + 1 条 @经办人 的文字，并把图写回「单据信息」附件（同批次+同供应商只写明细ID最小的那 1 行）',
       pass: imageMessages.length === 1 && textMessages.length >= 1
         && textMessages.some((item) => item.mentions.length > 0)
-        && requestRows.length > 0 && requestRows.every((row) => row.attachmentCount > 0),
-      evidence: `群图片消息=${imageMessages.length} 条；群文字消息=${JSON.stringify(textMessages.map((item) => ({ kind: item.kind, reply_to: item.reply_to_message_id, thread_id: item.thread_id, mentions: item.mentions, text: item.text.slice(0, 50) })))}；附件回写（每条单据信息行的附件数）=${JSON.stringify(requestRows.map((r) => r.attachmentCount))}；附件上传尝试=${JSON.stringify(outbox.driveUploads)}`,
+        && requestRows.length > 0
+        && attachmentTargets.length === 1
+        && requestRows.every((row) => row.attachmentCount <= 1)
+        && Boolean(minDetailRow) && minDetailRow.attachmentCount > 0,
+      evidence: `群图片消息=${imageMessages.length} 条；群文字消息=${JSON.stringify(textMessages.map((item) => ({ kind: item.kind, reply_to: item.reply_to_message_id, thread_id: item.thread_id, mentions: item.mentions, text: item.text.slice(0, 50) })))}；附件回写（明细ID/附件数）=${JSON.stringify(requestRows.map((r) => ({ detailId: r.detailId, attachments: r.attachmentCount })))}（应只有明细ID最小的一条带附件）；附件上传尝试=${JSON.stringify(outbox.driveUploads)}`,
     },
   ];
   if (records > 1) {
@@ -931,6 +1024,10 @@ const cmdReturn = async () => {
   }
 
   // ── 附件回写（第 5 条的一部分）：到底"没写"还是"写了没记住" ──
+  if (foreignLedger.length) {
+    say(`  ⚠️ 库存流水表里另有 ${foreignLedger.length} 条**不是本次**的新流水（测试 Base 是共用的，`
+      + `多半有并发写手）→ 已从本次核对里排除：${JSON.stringify(foreignLedger)}`);
+  }
   head('【附件回写：图有没有真写进「单据信息」】');
   say(`  drive 是**真**客户端（真上传到测试 Base）：uploadAttachment 被调用 ${outbox.driveUploads.length} 次`);
   for (const item of outbox.driveUploads) {
@@ -1019,7 +1116,14 @@ const cmdReturn = async () => {
   }
   if (!topic.pass && !topic.one_thread) say('  第 7 条未达标：群里有不是 reply 的顶层消息 → 一次提交会占多个话题。');
   if (!topic.pass && topic.one_thread) say(`  第 7 条未达标：回复到了同一条，但话题归属没被证实 —— ${topic.thread_evidence}。`);
-  if (task?.status === 'failed') say(`  任务失败原因：${task.error}`);
+  if (task?.status === 'failed') {
+    say(`  任务失败原因：${task.error}`);
+    // 只看到 "Request failed with status code 400" 是没法排查的 —— 把接口名捞出来。
+    for (const item of outbox.apiErrors) {
+      say(`    ↳ 失败接口 ${item.api}${item.url ? ` (${item.url})` : ''} → code=${item.code} msg=${item.msg}`);
+    }
+    if (!outbox.apiErrors.length) say('    ↳ 没记到失败接口（不是 client 调用抛的错）');
+  }
 
   const report = {
     ran_at: new Date().toISOString(),
@@ -1038,12 +1142,16 @@ const cmdReturn = async () => {
     before: { liveRows: liveBefore, ledgerCount: ledgerBefore.size, requestCount: requestsBefore.size },
     after: {
       liveRows: liveAfter, removedLive, ledgerRows, requestRows,
+      // 被排除的"不是本次的"流水（并发写手）：照实记，不假装没看见。
+      foreignLedgerRows: foreignLedger,
+      attachmentTargets,
       report: { status: reportStatus, request: reportRequests, per_record: reportStates },
     },
     outbox: { images: outbox.images, messages: outbox.messages },
     // 附件回写的**原始证据**：drive 是真客户端，这里是每次 uploadAttachment 的真实应答。
     // 一条都没有 = 根本没走到上传（例如发图失败后 continue）；ok:false = 飞书明确拒绝。
     attachmentUploads: outbox.driveUploads,
+    apiErrors: outbox.apiErrors,
     topic: { ...topic, probe: topicProbe, probe_confirms_root: probeConfirmsRoot },
     checks: checks.map((check) => ({
       id: check.id, pass: check.pass, text: check.text, evidence: check.evidence,
