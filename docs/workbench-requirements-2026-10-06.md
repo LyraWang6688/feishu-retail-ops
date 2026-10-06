@@ -16,6 +16,14 @@
 - ⭐ **采购和退货** —— ⭐⭐ **只放【两个飞书表单链接】✗ 不自建表单**
   - 采购申请表单链接 · 采购退货表单链接
   - ⚠️ **点一下就跳到飞书表单**（她说："它就是多维表格，给到多维表格的两个表单链接就可以"）
+  - ⭐ **两个链接（业务负责人 2026-10-06 给出的原文，逐字）**：
+    - 采购（**采购申请表单**）：`https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnn4f9ZJzpm7JbT2rCH247xc`
+    - 退货（**采购退货表单**）：`https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnjsqt4D5URseSSXgecYlqGd`
+  - ⚠️ **这两个链接的【前端唯一来源】是** `server/public/workbench/config/links.js`
+    —— **以后换链接只改那一个文件**；本文件是口径留档，改了链接要同步这里。
+  - ⚠️ **这个子页【不做查询】**：上一版的「采购 / 退货」查询 UI 已整体去掉；
+    它的页面仍是 `/workbench/purchase-return.html`（路径不变），标题/文案叫「**采购和退货**」。
+  - ⭐ **移动端**：两个按钮**同窗口跳转**（不加 `target="_blank"`），配 `rel="noopener"`。
 
 ### ② 销售详情（原「今日销售」改名）—— **查询 · 只读**
 - ⭐ **能按【时间维度聚合】**：不只今日，**支持按某日 / 按区间**

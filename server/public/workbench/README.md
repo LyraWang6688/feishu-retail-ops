@@ -15,7 +15,7 @@
 「常用功能」下面还有两个子页：
 
 - `/workbench/inventory-adjustment.html`：库存手工调整（盘点调整 / 换季调整）
-- `/workbench/purchase-return.html`：采购退货（采购 / 退货）
+- `/workbench/purchase-return.html`：采购和退货（**两个飞书表单外链**，不做查询）
 
 其它入口：
 
@@ -33,6 +33,8 @@
 ## 目录边界
 
 - `core/`：登录、HTTP 请求、格式化和通用交互。
+- `config/`：前端配置（当前是 `links.js`：飞书表单等外链）。**配置先行** ——
+  换链接只改这里，页面模块不写死 URL。
 - `features/<domain>/`：销售、采购、库存等业务模块；模块不得查询其他模块的 DOM。
 - `features/shared/`：无业务状态的共享视图。
 - `styles/`：设计变量和全局布局；业务模块样式与模块放在一起。
