@@ -197,6 +197,15 @@ const V1_BITABLE_SCHEMA = {
         changeType: '变动类型',
         receivableChange: '应收变化',
         customer: '客户',
+        // ⚠️ 这个映射**刻意保留**（2026-10-06）：生产真表「客户往来货款」里
+        // 「发生时间」**还在**，而且它是一次性的 DateTime 普通列（type=5），
+        // **不是**飞书自动的「创建时间」（type=1001）——也就是说这一列不会自己长出来。
+        // 按业务负责人的口径「真表里还有它 → 映射可以保留，但代码不写它」：
+        // 写入点（afterSalesService.settlePrepaid 的 `occurredAt: request.occurredAt`）已删除，
+        // 映射保留只是为了**保留真表结构的事实**、并让闸门继续盯住这个名字。
+        // ⇒ 删映射会把闸门判绿但骗过自己（真表明明还有这一列）；真正该做的是"不写"。
+        // ⚠️ 待她确认：售后 prepaid 记录的这一列从此会是空的（没有代码再填），
+        // 若她也把这一列删掉/改成自动字段，下一次要把这行映射一起删。
         occurredAt: '发生时间',
         detailSequence: '明细序号',
         entryStatus: '入账状态',
@@ -215,7 +224,16 @@ const V1_BITABLE_SCHEMA = {
       tableId: getEnv('FEISHU_V1_PURCHASE_REPORT_TABLE_ID', 'tblo0ffzFt7vyQw2'),
       fields: {
         batchNoText: '报货批次号', detailId: '明细ID', behavior: '采购行为',
-        product: '编号', size: '尺码', quantityDescription: '数量说明', reportedAt: '报单时间', operator: '经办人',
+        product: '编号', size: '尺码', quantityDescription: '数量说明', operator: '经办人',
+        // ⚠️ 「报单时间」(reportedAt) 映射已删除（2026-10-06）。
+        // 业务负责人的口径：时间字段除了「收款时间」以外，**飞书里都设成了自动字段**
+        //（表里的「创建时间」type=1001 / CreatedTime），代码不要再写、也不必再映射。
+        // 生产真表核对（2026-10-06，服务器上只读、用项目自己的 gateway.listFields）：
+        // 「供应商对接」真表 14 列里**没有**「报单时间」，映射留着 = 部署闸门
+        // v1:schema-check:all 直接判红（该表缺少 V1 字段: 报单时间）。
+        // grep 全仓：reportedAt 这个语义键在 server/src 里**没有任何读方与写方**
+        //（工作台「单据信息」页那一列读的是 row.reported_at，接口自 2026-09-26 起就不返回，
+        //  属于已知历史遗留，不在本次改动内），删除不会留下悬空引用。
         // 「数量」（number）是「采购退货」那种报货的数量来源；「采购申请」格式走
         // 「尺码 + 数量说明」，这一列是空的。2026-10-05 业务负责人改了字段结构后
         // 只读核对过：表里有「数量」没有尺码行。
@@ -289,7 +307,13 @@ const V1_BITABLE_SCHEMA = {
         batch: '采购到货批次',
         supplierOrder: '采购申请',
         product: '编号',
-        inboundAt: '入库时间',
+        // ⚠️ 「入库时间」(inboundAt) 映射已删除（2026-10-06）。
+        // 同一口径：入库时刻交给飞书自动的「创建时间」(type=1001)，代码不再单独记一列。
+        // 生产真表核对（2026-10-06，服务器上只读）：「采购入库」真表 11 列里**没有**
+        // 「入库时间」；写入点 confirmArrival 里那行 `inboundAt: Date.now()` 已同步删掉。
+        // 映射留着 = 部署闸门 v1:schema-check:all 判红（该表缺少 V1 字段: 入库时间）。
+        // ⚠️ 本表其余 9 个字段（入库明细ID / 采购行为 / 尺码 / 数量 / 采购到货批次 /
+        // 采购申请 / 编号 / 入库单价 / 入库金额）业务负责人这次没动，全部保留。
         unitCost: '入库单价',
         amount: '入库金额',
       },

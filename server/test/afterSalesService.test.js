@@ -574,7 +574,9 @@ test('资金 prepaid：走「客户往来货款」，用「业务事件ID」做�
   assert.equal(rows[0].fields['来源单号'], ORDER_NO);
   // 幂等键 = 原单 + 动作 + 本次明细批次哈希（12 位十六进制）
   assert.equal(rows[0].fields['业务事件ID'], 'after_sales:order_old:return:d5268040a9a4');
-  assert.equal(rows[0].fields['发生时间'], FIXED_NOW);
+  // ⚠️ 2026-10-06 起代码**不写**任何时间列：「发生时间」不再由我们填
+  //（生产真表里这一列还在，但是一次性的 DateTime，不是自动字段 —— 已单独提给业务负责人确认）。
+  assert.equal(rows[0].fields['发生时间'], undefined);
   // 销售主表里没有"客人是谁"这个信息 → 不编值、不从原单取不存在的字段
   assert.equal(rows[0].fields['客户'], undefined);
   assert.equal(refundResult.money.route, 'prepaid');

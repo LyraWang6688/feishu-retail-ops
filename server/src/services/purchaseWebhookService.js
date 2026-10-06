@@ -2010,7 +2010,11 @@ class PurchaseWebhookService {
         state: '门盒',
         quantity: entry.quantity,
         sourceRecordId: doc.recordId,
-        occurredAt: Date.now(),
+        // ⚠️ 2026-10-06：不再传 occurredAt。
+        // 它只落在**本地任务记录**的 occurred_at 上（inventoryService 的 operation store），
+        // 全仓 grep 没有任何读方；它也**不写**「库存流水」的时间列——那一列（「发生时间」）
+        // 2026-10-05 就被业务负责人从生产表删掉了，映射也早删了。
+        // 时间语义一律交给飞书自动的「创建时间」，代码不再自带时间戳。
       });
       logInfo('purchase.return.stock_applied', {
         record_id: recordId, task_id: taskId, size: entry.size, quantity: entry.quantity,
@@ -2897,7 +2901,8 @@ class PurchaseWebhookService {
             productRecordId: item.product_record_id,
             size: item.size,
             quantity: item.quantity,
-            occurredAt: Date.now(),
+            // ⚠️ 2026-10-06：不再传 occurredAt（同下：只进本地任务记录、无人读）；
+            // 时间交给飞书自动的「创建时间」。
             state: inboundState,
           });
           existing.inventoryApplied = true;
@@ -2916,7 +2921,9 @@ class PurchaseWebhookService {
         behavior: relation(purchaseInboundBehaviorId),
         batch: relation(arrival.arrival_record_id),
         supplierOrder: requestRow?.record_id ? relation(requestRow.record_id) : undefined,
-        inboundAt: Date.now(),
+        // ⚠️ 2026-10-06：不再写「入库时间」——业务负责人已把这一列从生产表删除
+        // （生产真表「采购入库」11 列里没有它），入库时刻由飞书自动的「创建时间」承担
+        //（同一时刻，不丢信息）；schema 里的 inboundAt 映射也同步删掉了。
       });
       created.push(inbound.recordId);
       const entry = { recordId: inbound.recordId, inventoryApplied: false };
@@ -2927,7 +2934,8 @@ class PurchaseWebhookService {
           productRecordId: item.product_record_id,
           size: item.size,
           quantity: item.quantity,
-          occurredAt: Date.now(),
+          // ⚠️ 2026-10-06：不再传 occurredAt（只进本地任务记录、无人读）；
+          // 时间交给飞书自动的「创建时间」。
           state: inboundState,
         });
         entry.inventoryApplied = true;
