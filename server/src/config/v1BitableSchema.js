@@ -215,7 +215,16 @@ const V1_BITABLE_SCHEMA = {
       tableId: getEnv('FEISHU_V1_PURCHASE_REPORT_TABLE_ID', 'tblo0ffzFt7vyQw2'),
       fields: {
         batchNoText: '报货批次号', detailId: '明细ID', behavior: '采购行为',
-        product: '编号', size: '尺码', quantityDescription: '数量说明', reportedAt: '报单时间', operator: '经办人',
+        product: '编号', size: '尺码', quantityDescription: '数量说明', operator: '经办人',
+        // ⚠️ 「报单时间」已删除（2026-10-06 业务负责人从生产表删掉这一列）。
+        // 事实来源：2026-10-06 在**服务器上**用项目自己的 V1BitableGateway.listFields
+        // 只读核对「供应商对接」真表（tableId=tblo0ffzFt7vyQw2）——
+        // 真表 14 个字段里没有「报单时间」，也没有任何可与之对应的人工日期字段
+        // （仅剩飞书自动生成的「创建时间」CreatedTime /「更新时间」ModifiedTime），
+        // 因此判定为**删除**而非改名。
+        // 映射留着的话，部署闸门 v1:schema-check:all 会直接判红：
+        // “供应商对接”缺少 V1 字段: 报单时间。原 `reportedAt` 语义键在 server/src 里
+        // 没有任何读取方（只有这一行映射），所以删掉不会留悬空引用。
         // 「数量」（number）是「采购退货」那种报货的数量来源；「采购申请」格式走
         // 「尺码 + 数量说明」，这一列是空的。2026-10-05 业务负责人改了字段结构后
         // 只读核对过：表里有「数量」没有尺码行。
