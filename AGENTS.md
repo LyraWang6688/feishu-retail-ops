@@ -658,3 +658,31 @@ Schema Check 只回答「目标 Base 的字段与关联结构是否满足契约�
 1. `git ls-remote --heads origin | grep <我的分支>` → **应为空**（远端分支删了）
 2. `git worktree list` → **我建的那个目录不应再出现**
 3. `git rev-list --count HEAD..origin/main` → **应为 0**（主工作区同步了）
+
+### 15. 🔴 必须走 CI，不许 `--admin` 绕过（业务负责人 2026-10-06 明确）
+
+> 她的原话：「**你今天犯了一个严重的错误：你没有进 CI，以后要进 CI**」
+
+- ⭐ **本仓库有必须的 CI**：GitHub Actions 工作流 **「server tests」**（job 名 `test`）＋ **CodeQL**。
+  **CI 不绿 → PR 合不了**（报错：`Required status check "test" is failing`）。
+- 🔴 **合并前必须看 CI**：`gh pr checks <PR号>` / `gh pr view <PR号> --json mergeStateStatus`
+  → **只有 `CLEAN` 才能合**。
+- 🔴 **禁止 `gh pr merge --admin`**（除非业务负责人当次明确同意）——
+  它等于**绕过 CI 闸门**。
+- ⚠️ **「BLOCKED」多半不是 GitHub 抽风，是 CI 在拦** —— 先看 `gh pr checks`，别猜。
+- ⭐ **本地测试通过 ≠ CI 通过**（2026-10-06 实测）：代理在**主工作区（旧代码）**跑全绿，
+  而在**它自己的分支**上跑是红的。⇒ 跑测试前先确认**代码版本**（`git rev-parse --short HEAD`）。
+- ⚠️ 本机 `gh` 看 CI 日志需要可写缓存：
+  `export XDG_CACHE_HOME=/tmp/ghcache GH_CACHE_DIR=/tmp/ghcache`（否则报 operation not permitted）。
+
+### 16. ⭐ 两条业务口径已拍板（业务负责人 2026-10-06）
+
+**(1) 话题里说「已完毕」/「成交」→ 【不要回问收款方式】，直接按默认方式收口。**
+> 她的原话：「**也不存在用户会跟你说，比方说是"未付"，然后会跟你说清楚那样的一个交易方式的**」
+
+⇒ 配了多种收款方式时**不许**只回一句「这笔钱是怎么收的？」然后什么都不写。
+应按**默认/沿用**的方式把钱收掉（优先沿用该单已有的收款方式；没有就用配置的默认方式），
+并**留日志**（写清用了哪个方式、以及是默认还是沿用）。
+
+**(2) 「钱退现金」→ 退款记录里的「交易方式」要写【她实际说的方式】。**
+现在 `afterSalesService.settleCash` 有意"方式取原单"（会写成微信），**要改成写她说的（现金）**。
