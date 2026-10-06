@@ -30,6 +30,47 @@ const MOVEMENT_SALE_RETURN = 'SALE_RETURN';
 const MOVEMENT_SALE_COMPENSATION = 'SALE_COMPENSATION';
 const MOVEMENT_SALE_CASH = 'SALE_CASH';
 
+// ── 人工库存行为（业务负责人 2026-10-06 已在「行为管理」表建好 6 条）──────────
+// ⚠️ 这一步只做**注册**：把 6 个编码登记进 STOCK_MOVEMENTS，让
+//    `validateStockBehaviors()`（＝部署闸门 `v1:schema-check:all` 的一部分）
+//    开始核对它们。**不含任何入口**——没有 service、没有卡片、没有工作台按钮。
+//    落地计划见 docs/inventory-adjustment-plan-2026-10-06.md。
+//
+// 两类语义截然不同，别混：
+//   · 数量类（手工调增 / 手工调减）：改**数量**，一双一条地新建或消耗「实时库存」
+//     ＋ 写一条带「变动数量」的流水。只有这两条能走 `applyChange`。
+//   · 状态类（转冻结 / 转释放 / 样品转门盒 / 门盒转样品）：**方向=不影响**，
+//     只改「实时库存」的「所属状态」，数量不变。它们**不许**走 `applyChange`
+//     （走进去会被当成"增加"凭空建鞋），必须走状态变更通路——
+//     下面 `requireQuantityMovement` 就是拦这个的闸门。
+const ADJUSTMENT_BEHAVIORS = Object.freeze({
+  MANUAL_INCREASE: 'STOCK_MANUAL_INCREASE',
+  MANUAL_DECREASE: 'STOCK_MANUAL_DECREASE',
+  FREEZE: 'STOCK_FREEZE',
+  UNFREEZE: 'STOCK_UNFREEZE',
+  SAMPLE_TO_DOORBOX: 'STOCK_SAMPLE_TO_DOORBOX',
+  // 门盒转样品＝补样品链路已经在用的同一个编码（见 BEHAVIOR_SAMPLE_PROMOTION），
+  // 这里登记的是**同一个行为**，不是新行为：一边是"卖出去一双样品后补回来"，
+  // 一边是"人工把一双门盒挪成样品"，都改「所属状态」门盒→样品。
+  DOORBOX_TO_SAMPLE: BEHAVIOR_SAMPLE_PROMOTION,
+});
+
+// ⚠️ TODO(inventory-adjustment) 待业务负责人定 ①：手工调减要消耗哪些「所属状态」的实时库存？
+//    · null                     = 只消耗调用方明确指定的那一种状态（最保守；不会顺手吃掉样品）
+//    · ['门盒', '样品']          = 按销售出库口径（先门盒、后样品）
+//    · ['门盒', '样品', '仓库']  = 按采购退货口径（状态无关）
+//    她定下来之前先按最保守的 null 走。**只改这个常量，逻辑一行都不用动。**
+const MANUAL_DECREASE_CONSUMES = null;
+
+// ⚠️ TODO(inventory-adjustment) 待业务负责人定 ②：转冻结 / 转释放落到哪个字段？
+//    「所属状态」的选项只有 门盒 | 样品 | 仓库，**没有"冻结"**，所以 from/to 现在填不了。
+//    · 方案 A（推荐）：新增独立的「冻结状态：可用 / 冻结」字段，「所属状态」不动
+//      → 冻结/释放只翻这一个字段，样品↔门盒 与 可用↔冻结 互不干扰；
+//    · 方案 B：把"冻结"塞进「所属状态」→ 释放时回门盒还是回样品就分不清了（信息丢失）。
+//    定下来后在这里填 { from, to }（方案 A 的 to 可能是 { freeze: '冻结' } 这种形状）。
+const FREEZE_STATE_TRANSITION = null;
+const UNFREEZE_STATE_TRANSITION = null;
+
 const STOCK_MOVEMENTS = Object.freeze({
   [MOVEMENT_SALE_DECREASE]: {
     direction: '减少',
@@ -88,12 +129,79 @@ const STOCK_MOVEMENTS = Object.freeze({
     consumes: ['门盒'],
     triggerSampleReplacement: false,
   },
+
+  // ── 以下 6 条＝人工库存行为的引擎语义声明（2026-10-06 注册，入口未做）──────
+  // ledgerSource 一律 null：「库存流水」现在只有「关联销售」「关联采购」两个来源列，
+  // 手工调整既没有销售明细也没有采购入库可挂；硬往别的列写一个 id 会写出指错来源的流水。
+  // ⚠️ 等「关联单据」列落地后再补（与采购退货 MOVEMENT_PURCHASE_DECREASE 同一处待办）。
+  // 手工调增：数量类，增加 N 双 → 新建 N 条「实时库存」＋ 一条 变动数量=N 的流水
+  //（「变动数量」存的是**绝对值**，正负由「库存行为」的库存方向表达，见 executeOperation）。
+  [ADJUSTMENT_BEHAVIORS.MANUAL_INCREASE]: {
+    direction: '增加',
+    ledgerSource: null,
+    consumes: null,
+    triggerSampleReplacement: false,
+  },
+  // 手工调减：数量类，减少 N 双 → 消耗既有「实时库存」＋ 一条 变动数量=N 的流水。
+  // ⚠️ 消耗哪些状态**待她定**，值在 MANUAL_DECREASE_CONSUMES（见上面的 TODO）。
+  [ADJUSTMENT_BEHAVIORS.MANUAL_DECREASE]: {
+    direction: '减少',
+    ledgerSource: null,
+    consumes: MANUAL_DECREASE_CONSUMES,
+    triggerSampleReplacement: false,
+  },
+  // 四个「转」：方向=不影响，只改「实时库存」的「所属状态」，数量一条不变。
+  // 目标状态用 stateTransition 表达，**不写死在逻辑里**；填 null 的两条是待她定的。
+  [ADJUSTMENT_BEHAVIORS.FREEZE]: {
+    direction: '不影响',
+    ledgerSource: null,
+    consumes: null,
+    triggerSampleReplacement: false,
+    stateTransition: FREEZE_STATE_TRANSITION, // ⚠️ TODO 待她定 ②
+  },
+  [ADJUSTMENT_BEHAVIORS.UNFREEZE]: {
+    direction: '不影响',
+    ledgerSource: null,
+    consumes: null,
+    triggerSampleReplacement: false,
+    stateTransition: UNFREEZE_STATE_TRANSITION, // ⚠️ TODO 待她定 ②
+  },
+  [ADJUSTMENT_BEHAVIORS.SAMPLE_TO_DOORBOX]: {
+    direction: '不影响',
+    ledgerSource: null,
+    consumes: null,
+    triggerSampleReplacement: false,
+    // 规则明确：样品 → 门盒。
+    stateTransition: Object.freeze({ from: '样品', to: '门盒' }),
+  },
+  [ADJUSTMENT_BEHAVIORS.DOORBOX_TO_SAMPLE]: {
+    direction: '不影响',
+    ledgerSource: null,
+    consumes: null,
+    triggerSampleReplacement: false,
+    // 规则明确：门盒 → 样品（补样品链路已在用同一编码，见 ADJUSTMENT_BEHAVIORS 注释）。
+    stateTransition: Object.freeze({ from: '门盒', to: '样品' }),
+  },
 });
+
+// 数量类 / 状态类的分野：只有「增加 / 减少」才是数量变动。
+// `applyChange` 只服务数量类——状态类进去会把 direction '不影响' 当成非"减少"，
+// 按"增加 N 双"凭空建出实时库存（数量错、账面上还看不出来）。所以入口处直接拦死。
+const QUANTITY_DIRECTIONS = Object.freeze(['增加', '减少']);
 
 const requireMovement = (code) => {
   const movement = STOCK_MOVEMENTS[code];
   if (!movement) {
     throw new Error(`未在库存动作注册表中声明动作「${code}」：请先在行为管理表补齐该行为，再在注册表中声明其引擎语义`);
+  }
+  return movement;
+};
+
+const requireQuantityMovement = (code) => {
+  const movement = requireMovement(code);
+  if (!QUANTITY_DIRECTIONS.includes(movement.direction)) {
+    throw new Error(`库存动作「${code}」的库存方向是“${movement.direction}”，属于状态类变更，`
+      + '不能走 applyChange（数量通路）；请走状态变更通路');
   }
   return movement;
 };
@@ -245,6 +353,9 @@ class InventoryService {
     const state = String(input.state || '门盒');
     if (!['门盒', '样品', '仓库'].includes(state)) throw new Error('库存所属状态无效');
     const stockKey = `${input.productRecordId}|${size}|${state}`;
+    // 配置驱动的闸门：状态类行为（方向=不影响，含转冻结/转释放/两个"转"）不许走数量通路。
+    // 放在任何远端读写之前，且不改变上面几条入参校验的报错顺序。
+    requireQuantityMovement(input.kind);
     return this.runForStock(stockKey, async () => {
       await this.ensureSchema();
       const sizeReference = await this.sizeReferences.resolveByNumber(size);
@@ -714,6 +825,7 @@ module.exports = {
   InventoryService,
   operationId,
   STOCK_MOVEMENTS,
+  ADJUSTMENT_BEHAVIORS,
   MOVEMENT_PURCHASE_DECREASE,
   MOVEMENT_SALE_RETURN,
   MOVEMENT_SALE_COMPENSATION,
