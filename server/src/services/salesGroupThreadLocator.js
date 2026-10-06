@@ -101,6 +101,27 @@ class SalesGroupThreadLocator {
   }
 
   /**
+   * 按**销售主表 record_id** 反查「这笔销售当初是哪条群消息 / 哪个话题开的」。
+   *
+   * 用途与上面两条相反：上面是"群里来了消息 → 是哪笔销售"，这条是
+   * "手里有一笔销售 → 它当初那条群消息在哪"（每日推送要把深链指回那条消息）。
+   *
+   * ⚠️ 同一笔销售可能因为补记 / 重试落了多条记录（key 是 message_id，不是销售 id）。
+   * 取**最早**的那条 = 她开这笔销售时说的那句话，与 `rememberSaleThread` 的语义一致。
+   * 显式排序、不依赖 store.list() 的倒序实现（它哪天改了，这里不该跟着变）。
+   */
+  async findBySalesEntryRecordId(salesEntryRecordId) {
+    const wanted = String(salesEntryRecordId || '').trim();
+    if (!wanted) return null;
+    const matched = (await this.store.list())
+      .filter((record) => String(record?.sales_entry_record_id || '') === wanted);
+    if (!matched.length) return null;
+    return matched
+      .slice()
+      .sort((left, right) => String(left.created_at || '').localeCompare(String(right.created_at || '')))[0];
+  }
+
+  /**
    * 把话题 id 补记到一个已经存在的映射记录上。
    *
    * 为什么需要它：普通群（不是话题群）里，`reply_in_thread` 之前没有可用的 thread_id；
