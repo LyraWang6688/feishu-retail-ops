@@ -42,8 +42,10 @@ const daysAgo = (n) => TODAY_9AM - n * DAY_MS;
 const productRow = (recordId, itemNo, color) => ({
   record_id: recordId, fields: { 货号: itemNo, 颜色: color, 编号: `${itemNo}|${color}`, 单价: 300 },
 });
-const entryRow = ({ id, orderNo, recordedAt, orderStatus = '已完成' }) => ({
-  record_id: id, fields: { 销售单号: orderNo, 录单日: recordedAt, 订单状态: orderStatus },
+// ⚠️ 主表判据读「销售状态」（原「订单状态」那列已被业务负责人整列删除）；
+// 默认「已写入」= 一笔正常入过账的新单。
+const entryRow = ({ id, orderNo, recordedAt, salesStatus = '已写入' }) => ({
+  record_id: id, fields: { 销售单号: orderNo, 录单日: recordedAt, 销售状态: salesStatus },
 });
 const detailRow = ({ id, orderId, productId, soldAt, sizeRecordId, amount = 230 }) => ({
   record_id: id,
@@ -121,9 +123,9 @@ const executorBase = () => {
       { record_id: 'p2', fields: { 货号: '1366-33', 颜色: '黑', 单价: 300 } },
     ],
     salesEntry: [
-      { record_id: 'e2', fields: { 销售单号: 'XSD-20261004-0001', 原话: '卖一双 6035 黑 39', 订单状态: '已完成', 确认状态: '已入账' } },
-      { record_id: 'e_old', fields: { 销售单号: 'XSD-20261002-0001', 原话: '卖一双 6035 黑 38', 订单状态: '已完成', 确认状态: '已入账' } },
-      { record_id: 'e_single', fields: { 销售单号: 'XSD-20261003-0001', 原话: '卖一双 1366-33 黑 40', 订单状态: '已完成', 确认状态: '已入账' } },
+      { record_id: 'e2', fields: { 销售单号: 'XSD-20261004-0001', 原话: '卖一双 6035 黑 39', 销售状态: '已写入', 资金状态: '已写入' } },
+      { record_id: 'e_old', fields: { 销售单号: 'XSD-20261002-0001', 原话: '卖一双 6035 黑 38', 销售状态: '已写入', 资金状态: '已写入' } },
+      { record_id: 'e_single', fields: { 销售单号: 'XSD-20261003-0001', 原话: '卖一双 1366-33 黑 40', 销售状态: '已写入', 资金状态: '已写入' } },
     ],
     salesDetail: [
       { record_id: 'd_new', fields: { 销售单号: ['e2'], 编号: ['p1'], 尺码: ['size_39'], 成交金额: 230, 履约状态: '已交付' } },

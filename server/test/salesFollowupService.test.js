@@ -5,7 +5,7 @@ const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
 test('workbench groups pending payment and delivery by one sales order', async () => {
   const records = {
-    salesEntry: [{ record_id: 'order_1', fields: { '确认状态（旧）': '已入账', 销售单号: 'XSD-001' } }],
+    salesEntry: [{ record_id: 'order_1', fields: { '资金状态': '已写入', 销售单号: 'XSD-001' } }],
     // 尺码已改为关联「尺码管理」：夹具用关联 ID，并让假网关能查到尺码表。
     salesDetail: [
       { record_id: 'detail_1', fields: { 销售单号: ['order_1'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 成交金额: 89 } },

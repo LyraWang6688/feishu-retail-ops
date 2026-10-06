@@ -866,7 +866,7 @@ test('today sales menu returns only confirmed detail rows from the Shanghai cale
       { record_id: 'yesterday', fields: { 编号: ['product_1'], 尺码: 38, 数量: 1, 销售单号: ['order_1'], 销售日: Date.parse('2026-09-23T10:00:00+08:00') } },
     ],
     product: [{ record_id: 'product_1', fields: { 编号: '8088-26棕' } }],
-    salesEntry: [{ record_id: 'order_1', fields: { 销售单号: 'XSD-001', '确认状态（旧）': '已入账' } }],
+    salesEntry: [{ record_id: 'order_1', fields: { 销售单号: 'XSD-001', '资金状态': '已写入' } }],
     paymentMethod: [{ record_id: 'method_1', fields: { 收款方式: '微信' } }],
     paymentRecord: [{ record_id: 'payment_1', fields: { 关联销售单: ['order_1'], 交易方式: ['method_1'], 收款金额: 230 } }],
   };

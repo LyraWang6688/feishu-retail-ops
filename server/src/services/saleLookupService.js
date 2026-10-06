@@ -2,10 +2,11 @@ const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const {
   DAY_MS,
   readSaleLookupConfig,
-  isReturnedOrderStatus,
+  isReturnedSalesStatus,
   isReturnTradeType,
 } = require('../config/saleLookup');
 const { MESSAGE_INTENTS } = require('../config/saleIntents');
+const { salesStatusOf } = require('../config/salesStatusDimensions');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { normalizeColor, normalizeText } = require('./v1ReferenceResolver');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
@@ -148,12 +149,41 @@ class SaleLookupService {
     const productsById = new Map(products.map((record) => [record.record_id, record]));
     const entriesById = new Map(entries.map((record) => [record.record_id, record]));
 
-    // 判据一：销售主表.订单状态 = 已退货 / 部分退货
+    // 判据一：销售主表.销售状态 = 已退货 / 部分退货
+    //
+    // ⚠️ 2026-10-06 晚，业务负责人**把「订单状态」整列删掉**（值一起没，不可恢复），
+    //    判据一因此从「订单状态」**迁到「销售状态」**——销售那一维的新家
+    //    （字段名与取值见 config/salesStatusDimensions）。
+    //    `salesProgressService.sync` 从 2026-10-06 起就只算不写「订单状态」了。
+    //
+    // ⚠️ 但**今天还没有任何代码在退货时写「销售状态 = 已退货」**：
+    //    afterSalesService 只改原明细的「履约状态」，并给**售后自己的新主表**写四个维度，
+    //    不回写原单的「销售状态」。⇒ **补写这一步还没做（等她定）**。
+    //    在补上之前，判据一多半读不到退货标记，真正兜底的是下面的**判据二**
+    //    （销售明细.交易类型 = 销售退货）。
+    //    所以这里保留一层**保守**：
+    //      · 值 = 已退货 / 部分退货                    → 排除（判据本体）
+    //      · 值取不到（字段没配 / 单元格空）           → **当成"退过"，排除 ＋ logWarn**
+    //        —— 「销售状态」既不是退货、也不代表任何写入进度时，我们其实**不认识**这条记录
+    //           （老单就是这样：旧字段被删、历史值丢失，这些维度全空）。
+    //           两个维度都告诉不了我们这单退没退过时，宁可少给她一条候选，
+    //           也不能把"可能已经退过"的单再拿出来退一次（多退一次就是钱）。
+    //      · 值是别的合法进度（未写入/部分写入/已写入/写入失败）→ 不排除（新单）。
+    const entryFieldsOfLookup = this.schema.tables.salesEntry?.fields;
     const returnedOrderIds = new Set();
     for (const entry of entries) {
-      if (isReturnedOrderStatus(asText(this.schema, 'salesEntry', entry, 'orderStatus'))) {
+      const salesStatus = salesStatusOf(entry, entryFieldsOfLookup);
+      if (isReturnedSalesStatus(salesStatus)) {
         returnedOrderIds.add(entry.record_id);
+        continue;
       }
+      if (salesStatus) continue;
+      logWarn('sale_lookup.sales_status.unreadable', {
+        record_id: entry.record_id,
+        sales_status_field: entryFieldsOfLookup?.sales || '',
+        reason: entryFieldsOfLookup?.sales ? 'sales_status_blank' : 'sales_status_field_not_configured',
+      });
+      returnedOrderIds.add(entry.record_id);
     }
     // 判据二：销售明细里已有「交易类型」= 销售退货的行 → 它所属的整单都排除。
     // 「单」的粒度是销售主表记录：已经退过一笔的单，不能再让她从那一条里挑第二笔去退。
@@ -170,7 +200,7 @@ class SaleLookupService {
       const orderIds = linkedRecordIds(fieldValue(this.schema, 'salesDetail', detail, 'salesEntry'));
       const orderId = orderIds[0] || '';
       if (orderId && returnedOrderIds.has(orderId)) continue;
-      // 明细自己就是一条退货行：即使订单状态还没改，也不能拿它当"可退的销售"。
+      // 明细自己就是一条退货行：即使主表「销售状态」还没写成「已退货」，也不能拿它当"可退的销售"。
       if (isReturnTradeType(asText(this.schema, 'salesDetail', detail, 'tradeType'))) continue;
 
       const productIds = linkedRecordIds(fieldValue(this.schema, 'salesDetail', detail, 'product'));

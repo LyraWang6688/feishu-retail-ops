@@ -39,6 +39,8 @@ const { GroupPurchaseFlowService } = require('./groupPurchaseFlowService');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
+const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
+const { SalesStatusWriter } = require('./salesStatusWriter');
 const { recordUrl } = require('../utils/feishuLinks');
 
 // 交付与否以草稿的交易类型为准：现货/未付当场交付，预付（只付定金、货没拿走）不交付。
@@ -158,6 +160,9 @@ class LarkMvpService {
       sendText: (openId, message) => this.sendText(openId, message),
       updateCard: (task, event, card, metadata) => this.updateSalesActionCard(task, event, card, metadata),
     });
+    // 「确认状态」（用户那一维）的唯一写入口：名字与取值都在 config/salesStatusDimensions。
+    // ⚠️ 它**只记她在卡片上点了什么**，不参与任何闸门判据（判据读的是「资金状态」）。
+    this.salesStatus = options.salesStatus || new SalesStatusWriter({ gateway: this.gateway });
     this.intakeSchemaValidation = new Map();
     this.senderQueues = new Map();
     this.cardActionQueue = new KeyedSerialQueue();
@@ -817,7 +822,9 @@ class LarkMvpService {
           originalText: task.original_text,
           sender: person(task.sender_open_id),
           parseStatus: '解析中',
-          confirmStatus: '待确认',
+          // 建单 = 还没轮到她做任何动作 → 「确认状态」= 未确认。
+          // ⚠️ 旧「确认状态（旧）」那一列已被她 2026-10-06 整列删除，四个维度是唯一入口。
+          userAction: WRITE.userAction.pending,
           orderNo,
         });
       },
@@ -1196,7 +1203,7 @@ class LarkMvpService {
     if (action === 'cancel') {
       await this.store.update(draftId, { status: 'cancelled' });
       if (task.type === 'sale' && task.sales_entry_record_id) {
-        await this.gateway.update('salesEntry', task.sales_entry_record_id, { confirmStatus: '已取消' });
+        await this.salesStatus.write(task.sales_entry_record_id, { userAction: WRITE.userAction.cancelled });
         await this.publishSalesResultCard(task, event, salesStatusCard(task.draft, '销售录单已取消', '原草稿不会入账。'),
           { stage: 'cancelled', interactionId: context.interactionId });
       }
@@ -1206,7 +1213,7 @@ class LarkMvpService {
     if (action === 'modify_sale' && task.type === 'sale') {
       await this.store.update(draftId, { status: 'awaiting_correction' });
       if (task.sales_entry_record_id) {
-        await this.gateway.update('salesEntry', task.sales_entry_record_id, { confirmStatus: '待修改' });
+        await this.salesStatus.write(task.sales_entry_record_id, { userAction: WRITE.userAction.toModify });
       }
       await this.publishSalesResultCard(task, event, salesStatusCard(task.draft, '等待重新发送', '原草稿不会入账；请重新发送完整销售信息。', 'orange'),
         { stage: 'awaiting_correction', interactionId: context.interactionId });
@@ -1288,6 +1295,11 @@ class LarkMvpService {
         { stage: 'processing', interactionId: context.interactionId });
       if (!cardUpdated) await this.sendText(operatorOpenId, '已收到确认，正在写入销售记录和收款，请稍候。').catch((error) =>
         logWarn('lark.sales.feedback.failed', { task_id: draftId, interaction_id: context.interactionId, error: error.message }));
+      // ⭐ 她**点了「确认」**这件事本身要落表（今天完全没有这一笔）：
+      //   「确认状态」= 已确认。放在入账**之前**写，是因为她点过是既成事实——
+      //   后面入账成功与否由「资金状态」表达，不该把她的动作也一起抹掉。
+      //   写失败只记警告（SalesStatusWriter 不抛），不能因为记进度挡住入账。
+      await this.salesStatus.write(task.sales_entry_record_id, { userAction: WRITE.userAction.confirmed });
       const startedAt = Date.now();
       const result = await this.posting.postSale({
         salesEntryRecordId: task.sales_entry_record_id,

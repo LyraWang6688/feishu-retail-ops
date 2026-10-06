@@ -4,15 +4,18 @@ const { SalesProgressService } = require('./salesProgressService');
 const { readSaleLinkedRecord } = require('./salesRecordReader');
 const { withSalesReadRetry } = require('./salesReadRetry');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
-const { postedOf } = require('../config/salesStatusDimensions');
+const { postedOf, isPosted, SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
+const { SalesStatusWriter } = require('./salesStatusWriter');
 const { logError, logInfo } = require('../utils/logger');
 
 class SalesDeliveryService {
-  constructor({ gateway, inventory, progress, sizeReferences } = {}) {
+  constructor({ gateway, inventory, progress, sizeReferences, status } = {}) {
     if (!gateway) throw new Error('SalesDeliveryService requires gateway');
     this.gateway = gateway;
     this.inventory = inventory || new InventoryService({ gateway });
     this.progress = progress || new SalesProgressService({ gateway });
+    // 「库存状态」的写入口（名字与取值都在 config/salesStatusDimensions）。
+    this.status = status || new SalesStatusWriter({ gateway });
     // 「尺码」是关联字段：走共享服务解析，不靠关联单元格自带的显示文本。
     this.getSizeReferences = createSizeReferenceAccess({ gateway: this.gateway, sizeReferences });
     this.queue = Promise.resolve();
@@ -34,9 +37,11 @@ class SalesDeliveryService {
     );
     if (!entry) throw new Error('销售主表记录不存在');
     const entryFields = this.gateway.table('salesEntry').fields;
-    // 「已入账」的取值来源改走配置（「资金状态」优先，空则退回「确认状态（旧）」）；
-    // 判据与文案一字未改。
-    if (postedOf(entry, entryFields) !== '已入账') throw new Error('销售订单尚未确认入账');
+    // 「已入账」的取值来源走配置：**只读「资金状态」**
+    // （旧「确认状态（旧）」已被业务负责人整列删除，没有回退可言）。
+    // ⭐ 判据 = 「账做完了没有」：**两代字面量都算**（她手工填的「已入账」/ 代码写的「已写入」），
+    // 配置在 config/salesStatusDimensions（POSTED_VALUES），不在这里散落字符串。
+    if (!isPosted(postedOf(entry, entryFields))) throw new Error('销售订单尚未确认入账');
     const fields = this.gateway.table('salesDetail').fields;
     const listedDetails = (await withSalesReadRetry(
       () => this.gateway.listAll('salesDetail'), 'delivery_detail_list',
@@ -87,6 +92,13 @@ class SalesDeliveryService {
           size, quantity, error: error.message });
       }
     }
+    // 「库存状态」：扣减这一步的结果（**逐条**看，不是看"整单成功/失败"）。
+    //   · 全成 → 已扣减   · 有的成有的败 → 部分扣减   · 一条都没成 → 扣减失败
+    // ⚠️ `results` 里包含"这条明细本来就是已交付"的重复项：那一步的库存**已经扣过了**，
+    //    算成功；否则重试一次正常的交付会把状态写成"部分扣减"。
+    const stockStatus = failures.length === 0 ? WRITE.stock.done
+      : results.length > 0 ? WRITE.stock.partial : WRITE.stock.failed;
+    await this.status.write(salesEntryRecordId, { stock: stockStatus });
     const details = [...byId.values()];
     const deliveredTotal = details.filter((detail) =>
       textValue(detail.fields?.[fields.fulfillmentStatus]) === '已交付').length;

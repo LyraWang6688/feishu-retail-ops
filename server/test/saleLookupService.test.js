@@ -21,9 +21,11 @@ const productRow = (recordId, itemNo, color) => ({
   fields: { 货号: itemNo, 颜色: color, 编号: `${itemNo}|${color}` },
 });
 
-const entryRow = ({ id, orderNo, recordedAt = daysAgo(0), orderStatus = '已完成' }) => ({
+// ⚠️ 主表判据一读的是「销售状态」（原「订单状态」那列已被业务负责人 2026-10-06 整列删除）。
+// 默认给「已写入」= 一笔正常入过账的新单；想造"退过"或"不认识"的单就分别传值 / 不传。
+const entryRow = ({ id, orderNo, recordedAt = daysAgo(0), salesStatus = '已写入' }) => ({
   record_id: id,
-  fields: { 销售单号: orderNo, 录单日: recordedAt, 订单状态: orderStatus },
+  fields: { 销售单号: orderNo, 录单日: recordedAt, 销售状态: salesStatus },
 });
 
 const detailRow = ({ id, orderId, productId, soldAt = daysAgo(0), sizeRecordId = 'size_38', amount = 230, tradeType = '' }) => ({
@@ -160,13 +162,13 @@ test('候选查询窗口：4 天前的命中，6 天前的不命中（默认 5 �
   assert.deepEqual(wider.map((row) => row.record_id).sort(), ['d_4days', 'd_6days']);
 });
 
-test('排除已退：订单状态=已退货 / 部分退货 的单不出现', async () => {
+test('排除已退：销售状态=已退货 / 部分退货 的单不出现', async () => {
   const { service } = await makeService({
     products: [productRow('p1', '6035', '黑')],
     entries: [
       entryRow({ id: 'e_ok', orderNo: 'XSD-OK' }),
-      entryRow({ id: 'e_back', orderNo: 'XSD-BACK', orderStatus: '已退货' }),
-      entryRow({ id: 'e_part', orderNo: 'XSD-PART', orderStatus: '部分退货' }),
+      entryRow({ id: 'e_back', orderNo: 'XSD-BACK', salesStatus: '已退货' }),
+      entryRow({ id: 'e_part', orderNo: 'XSD-PART', salesStatus: '部分退货' }),
     ],
     details: [
       detailRow({ id: 'd_ok', orderId: 'e_ok', productId: 'p1' }),
@@ -183,8 +185,9 @@ test('排除已退：明细里有「交易类型=销售退货」的行时，整�
     products: [productRow('p1', '6035', '黑')],
     entries: [
       entryRow({ id: 'e_ok', orderNo: 'XSD-OK' }),
-      // 订单状态还没改（判据一失效），只能靠明细的退货行识别——这就是双保险的意义。
-      entryRow({ id: 'e_back', orderNo: 'XSD-BACK', orderStatus: '已完成' }),
+      // 主表「销售状态」还没被写成「已退货」（那一步还没做，等她定），只能靠明细的退货行识别
+      // ——这就是双保险的意义。
+      entryRow({ id: 'e_back', orderNo: 'XSD-BACK', salesStatus: '已写入' }),
     ],
     details: [
       detailRow({ id: 'd_ok', orderId: 'e_ok', productId: 'p1' }),
@@ -374,4 +377,56 @@ test('退货/换货的占位入口已删除：真执行在 AfterSalesFlowService
   assert.equal(service.gateway.create, undefined);
   assert.equal(service.gateway.update, undefined);
   assert.equal(service.gateway.delete, undefined);
+});
+
+// ── C：保守处理（2026-10-06）──────────────────────────────────────────────────
+// 背景：「订单状态」那一列已被业务负责人**整列删除**（值一起没了），判据一迁到「销售状态」。
+// ⚠️ 但**今天还没有任何代码在退货时写「销售状态 = 已退货」**（补写这一步还没做，等她定），
+// 所以取不到值（这一列给不出任何信息）时**保守当成"退过"**：宁可少给她一条候选，
+// 也不能把"可能已经退过"的单再拿出来退一次。但**新单不能因此消失**——
+// 新单的「销售状态」有值（= 这笔单我们认识）。
+// ⚠️ 老的（删列之前录的）单子这两列都是空的 ⇒ 会被保守规则挡在候选之外，这是**故意的**。
+
+test('⭐ 保守：销售状态空（老单 / 取不到）→ 当成"退过"，整单排除（+ logWarn）', async () => {
+  const { service } = await makeService({
+    products: [productRow('p1', '6035', '黑')],
+    entries: [
+      { record_id: 'e_known', fields: { 销售单号: 'XSD-KNOWN', 录单日: daysAgo(0), 销售状态: '已写入' } },
+      // 这一列空着：这单退没退过，表里没有任何依据。
+      { record_id: 'e_unknown', fields: { 销售单号: 'XSD-UNKNOWN', 录单日: daysAgo(0) } },
+    ],
+    details: [
+      detailRow({ id: 'd_known', orderId: 'e_known', productId: 'p1' }),
+      detailRow({ id: 'd_unknown', orderId: 'e_unknown', productId: 'p1' }),
+    ],
+  });
+  const candidates = await service.findCandidates({ itemNo: '6035', color: '黑' });
+  assert.deepEqual(candidates.map((row) => row.record_id), ['d_known']);
+});
+
+test('⭐ 新单（销售状态=已写入）**不**被保守规则排除', async () => {
+  const { service } = await makeService({
+    products: [productRow('p1', '6035', '黑')],
+    entries: [
+      // 这就是本次改动之后每一条新单的样子（「销售状态」由 salesOrderService 写）。
+      { record_id: 'e_new', fields: { 销售单号: 'XSD-NEW', 录单日: daysAgo(0), 销售状态: '已写入' } },
+    ],
+    details: [detailRow({ id: 'd_new', orderId: 'e_new', productId: 'p1' })],
+  });
+  const candidates = await service.findCandidates({ itemNo: '6035', color: '黑' });
+  assert.deepEqual(candidates.map((row) => row.record_id), ['d_new']);
+});
+
+test('保守规则不吃掉判据本体：销售状态=已退货 仍然排除', async () => {
+  const { service } = await makeService({
+    products: [productRow('p1', '6035', '黑')],
+    entries: [
+      { record_id: 'e_back', fields: {
+        销售单号: 'XSD-BACK', 录单日: daysAgo(0), 销售状态: '已退货',
+      } },
+    ],
+    details: [detailRow({ id: 'd_back', orderId: 'e_back', productId: 'p1' })],
+  });
+  const candidates = await service.findCandidates({ itemNo: '6035', color: '黑' });
+  assert.deepEqual(candidates, []);
 });

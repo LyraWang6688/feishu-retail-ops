@@ -101,7 +101,15 @@ class SalesProgressService {
     const progress = await this.forOrder(salesEntryRecordId, expected);
     // The master fulfillment/payment cells are Bitable formulas. Their owners
     // are sales details and payment records, never this service.
-    await this.gateway.update('salesEntry', salesEntryRecordId, { orderStatus: progress.orderStatus });
+    //
+    // 🔴 2026-10-06：本方法**不写任何状态列**（只算、只返回 —— 见下面的 return）。
+    //    ⚠️ 曾经的「订单状态」映射已被删除（业务负责人 2026-10-06 晚把那一列整列删掉），
+    //       所以这里**没有、也不能有**写它的代码。
+    //    业务负责人把四个状态维度落到实处，销售那一维的新家是「销售状态」
+    //    （由 salesOrderService / afterSalesService 经 SalesStatusWriter 写，
+    //     见 config/salesStatusDimensions）。
+    //    ⚠️ `progress.orderStatus` 这个**返回值里的 JS 字段**保留：secondDeliveryService
+    //       用它判"已完成"（`:287`）、网页工作台也读它 —— 它只是算出来的进度，不是表字段。
     return progress;
   }
 }

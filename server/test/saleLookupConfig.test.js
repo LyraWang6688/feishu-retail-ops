@@ -10,7 +10,7 @@ const {
   SALE_LOOKUP_DEFAULTS,
   readSaleLookupConfig,
   readPositiveInt,
-  isReturnedOrderStatus,
+  isReturnedSalesStatus,
   isReturnTradeType,
 } = require('../src/config/saleLookup');
 
@@ -45,11 +45,11 @@ test('查询窗口与上下文有效期有默认值，坏配置回落默认值�
   }
 });
 
-test('排除已退的两个判据：订单状态已退货/部分退货，明细交易类型销售退货', () => {
-  assert.equal(isReturnedOrderStatus('已退货'), true);
-  assert.equal(isReturnedOrderStatus(' 部分退货 '), true);
-  assert.equal(isReturnedOrderStatus('已完成'), false);
-  assert.equal(isReturnedOrderStatus(''), false);
+test('排除已退的两个判据：销售状态已退货/部分退货，明细交易类型销售退货', () => {
+  assert.equal(isReturnedSalesStatus('已退货'), true);
+  assert.equal(isReturnedSalesStatus(' 部分退货 '), true);
+  assert.equal(isReturnedSalesStatus('已写入'), false);
+  assert.equal(isReturnedSalesStatus(''), false);
   assert.equal(isReturnTradeType('销售退货'), true);
   assert.equal(isReturnTradeType('现货'), false);
 });

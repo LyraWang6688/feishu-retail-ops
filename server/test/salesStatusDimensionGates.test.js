@@ -1,10 +1,17 @@
-// 6 处闸门的「双读」验收：新字段（「资金状态」）为空时，行为必须与改名之前**逐字一致**
-// ——也就是逐字退回旧「确认状态（旧）」；新字段有值时以新字段为准。
+// 6 处闸门的验收：
 //
-// 每一处闸门一条测试，每条都跑三种输入：
-//   ① 只有旧字段（= 今天的生产状态）→ 与今天等价
-//   ② 只有新字段（将来她开始用新字段）→ 用新字段
-//   ③ 两个都空 → 与今天一样关闸
+// ⭐ 判据 = `isPosted(postedOf(entry))`，而 `postedOf` **只读「资金状态」**
+//    （旧「确认状态（旧）」已被业务负责人 2026-10-06 整列删除——值一起没了，
+//     所以没有、也不该有 legacy 回退；见 config/salesStatusDimensions）。
+//    「账做完了」= **`已入账`（她嘴里的老说法，可能是手工填进「资金状态」的）
+//                    或 `已写入`（代码现在写的）**。
+//    ⚠️ 只认其中一代就会重演 2026-10-06 那次「闸门静默全关」。
+//
+// 每一处闸门一条测试，每条都跑这些输入：
+//   ① 资金状态 = 已入账（老字面量）→ 放行
+//   ② 资金状态 = 已写入（**代码现在写的就是它**）→ 放行
+//   ③ 资金状态 = 未写入 / 写入失败 → 关闸
+//   ④ 资金状态 空着 / 只有空白 → 关闸（没有旧字段可以兜底了）
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
@@ -61,7 +68,7 @@ const blockedByGate = async (promise) => {
 const storeStub = () => ({ get: async () => null, create: async () => {}, update: async () => {} });
 
 // ── 闸门 1：salesDeliveryService —— 交付 / 扣库存 ──────────────────────────────
-test('闸门 1 交付/扣库存（salesDeliveryService）：新字段空则退回旧字段', async () => {
+test('闸门 1 交付/扣库存（salesDeliveryService）：只读「资金状态」', async () => {
   const delivery = (entryFields) => new SalesDeliveryService({
     gateway: gatewayFor({
       salesEntry: [{ record_id: 'o1', fields: entryFields }],
@@ -76,14 +83,16 @@ test('闸门 1 交付/扣库存（salesDeliveryService）：新字段空则退�
     progress: { sync: async () => ({ fulfillmentStatus: '未交付' }) },
   }).deliver({ salesEntryRecordId: 'o1', detailRecordIds: ['d1'] });
 
-  assert.equal(await blockedByGate(delivery({ '确认状态（旧）': '已入账' })), false);
   assert.equal(await blockedByGate(delivery({ 资金状态: '已入账' })), false);
-  assert.equal(await blockedByGate(delivery({ 资金状态: '  ', '确认状态（旧）': '已入账' })), false);
+  assert.equal(await blockedByGate(delivery({ 资金状态: '已写入' })), false);
+  assert.equal(await blockedByGate(delivery({ 资金状态: '未写入' })), true);
+  assert.equal(await blockedByGate(delivery({ 资金状态: '写入失败' })), true);
+  assert.equal(await blockedByGate(delivery({ 资金状态: '  ' })), true);
   assert.equal(await blockedByGate(delivery({})), true);
 });
 
 // ── 闸门 2：salesFollowupService.listOrders —— 工作台订单列表 ──────────────────
-test('闸门 2 订单列表（salesFollowupService.listOrders）：新字段空则退回旧字段', async () => {
+test('闸门 2 订单列表（salesFollowupService.listOrders）：只读「资金状态」', async () => {
   const listOrders = async (entryFields) => {
     const gateway = gatewayFor({
       salesEntry: [{ record_id: 'o1', fields: { 销售单号: 'XSD-1', ...entryFields } }],
@@ -96,13 +105,15 @@ test('闸门 2 订单列表（salesFollowupService.listOrders）：新字段空�
     return new SalesFollowupService({ gateway, store: storeStub() }).listOrders();
   };
 
-  assert.equal((await listOrders({ '确认状态（旧）': '已入账' })).orders.length, 1);
   assert.equal((await listOrders({ 资金状态: '已入账' })).orders.length, 1);
+  assert.equal((await listOrders({ 资金状态: '已写入' })).orders.length, 1);
+  assert.equal((await listOrders({ 资金状态: '未写入' })).orders.length, 0);
+  assert.equal((await listOrders({ 资金状态: '写入失败' })).orders.length, 0);
   assert.equal((await listOrders({})).orders.length, 0);
 });
 
 // ── 闸门 3：salesFollowupService.addPayment —— 补记收款 ───────────────────────
-test('闸门 3 补记收款（salesFollowupService.addPayment）：新字段空则退回旧字段', async () => {
+test('闸门 3 补记收款（salesFollowupService.addPayment）：只读「资金状态」', async () => {
   const addPayment = (entryFields) => new SalesFollowupService({
     gateway: gatewayFor({ salesEntry: [{ record_id: 'o1', fields: entryFields }] }),
     store: storeStub(),
@@ -113,13 +124,15 @@ test('闸门 3 补记收款（salesFollowupService.addPayment）：新字段空�
     amount: 'x', method: '微信', operatorOpenId: 'ou_1',
   });
 
-  assert.equal(await blockedByGate(addPayment({ '确认状态（旧）': '已入账' })), false);
   assert.equal(await blockedByGate(addPayment({ 资金状态: '已入账' })), false);
+  assert.equal(await blockedByGate(addPayment({ 资金状态: '已写入' })), false);
+  assert.equal(await blockedByGate(addPayment({ 资金状态: '未写入' })), true);
+  assert.equal(await blockedByGate(addPayment({ 资金状态: '写入失败' })), true);
   assert.equal(await blockedByGate(addPayment({})), true);
 });
 
 // ── 闸门 4：secondDeliveryService.confirm —— 二次交付 / 成交 ──────────────────
-test('闸门 4 成交（secondDeliveryService.confirm）：新字段空则退回旧字段', async () => {
+test('闸门 4 成交（secondDeliveryService.confirm）：只读「资金状态」', async () => {
   const confirm = (entryFields) => new SecondDeliveryService({
     gateway: gatewayFor({ salesEntry: [{ record_id: 'o1', fields: entryFields }] }),
     store: storeStub(),
@@ -127,15 +140,17 @@ test('闸门 4 成交（secondDeliveryService.confirm）：新字段空则退回
   }).confirm({ salesEntryRecordId: 'o1', method: '微信' });
 
   // 放行后：没有待收款也没有未交付明细 → 直接回 alreadyCompleted，不再写任何东西。
-  const legacy = await confirm({ '确认状态（旧）': '已入账' });
+  const legacy = await confirm({ 资金状态: '已入账' });
   assert.equal(legacy.alreadyCompleted, true);
-  const funds = await confirm({ 资金状态: '已入账' });
-  assert.equal(funds.alreadyCompleted, true);
+  const fundsWritten = await confirm({ 资金状态: '已写入' });
+  assert.equal(fundsWritten.alreadyCompleted, true);
+  assert.equal(await blockedByGate(confirm({ 资金状态: '未写入' })), true);
+  assert.equal(await blockedByGate(confirm({ 资金状态: '写入失败' })), true);
   assert.equal(await blockedByGate(confirm({})), true);
 });
 
 // ── 闸门 5：secondDeliveryService.listPendingDeliveries —— 待成交提醒候选 ─────
-test('闸门 5 提醒候选（secondDeliveryService.listPendingDeliveries）：新字段空则退回旧字段', async () => {
+test('闸门 5 提醒候选（secondDeliveryService.listPendingDeliveries）：只读「资金状态」', async () => {
   const candidates = async (entryFields) => {
     const gateway = gatewayFor({
       behavior: [{ record_id: 'b1', fields: { 行为编码: 'SALE_UNPAID', 行为名称: '未付' } }],
@@ -149,13 +164,15 @@ test('闸门 5 提醒候选（secondDeliveryService.listPendingDeliveries）：�
       .listPendingDeliveries({ now: new Date() });
   };
 
-  assert.equal((await candidates({ '确认状态（旧）': '已入账' })).length, 1);
   assert.equal((await candidates({ 资金状态: '已入账' })).length, 1);
+  assert.equal((await candidates({ 资金状态: '已写入' })).length, 1);
+  assert.equal((await candidates({ 资金状态: '未写入' })).length, 0);
+  assert.equal((await candidates({ 资金状态: '写入失败' })).length, 0);
   assert.equal((await candidates({})).length, 0);
 });
 
 // ── 闸门 6：v1WorkbenchService.getTodaySales —— 今日销售 ──────────────────────
-test('闸门 6 今日销售（v1WorkbenchService.getTodaySales）：新字段空则退回旧字段', async () => {
+test('闸门 6 今日销售（v1WorkbenchService.getTodaySales）：只读「资金状态」', async () => {
   const day = Date.parse('2026-09-25T10:00:00+08:00');
   const todayRows = async (entryFields) => {
     const gateway = gatewayFor({
@@ -168,7 +185,9 @@ test('闸门 6 今日销售（v1WorkbenchService.getTodaySales）：新字段空
     return (await createWorkbenchService(gateway).getTodaySales({ date: '2026-09-25' })).rows;
   };
 
-  assert.equal((await todayRows({ '确认状态（旧）': '已入账' })).length, 1);
   assert.equal((await todayRows({ 资金状态: '已入账' })).length, 1);
+  assert.equal((await todayRows({ 资金状态: '已写入' })).length, 1);
+  assert.equal((await todayRows({ 资金状态: '未写入' })).length, 0);
+  assert.equal((await todayRows({ 资金状态: '写入失败' })).length, 0);
   assert.equal((await todayRows({})).length, 0);
 });
