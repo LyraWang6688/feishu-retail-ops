@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 /**
- * ws-subscribe.cjs —— 让「当前凭证对应的应用」订阅**当前 .env 指向的那张多维表格**的变更事件。
+ * ws-subscribe.cjs —— 让「**测试应用**」订阅**当前 .env 指向的那张多维表格**的变更事件。
+ *
+ * ⚠️ 凭证只认测试应用 `LARK_TEST_APP_ID` / `LARK_TEST_APP_SECRET`（与 ws-listen.mjs 同一口径：
+ *    生产应用走 webhook，本地测试脚本一律用测试应用）：
+ *   · 缺任何一个直接报错退出，**不设 `LARK_AGENT_*` 回退**；
+ *   · app_id 等于生产应用 `LARK_AGENT_APP_ID` 时拒绝执行（只与环境变量比较，不硬编码生产 app_id）；
+ *   · 只打印 app_id（不是密钥），**绝不打印 secret**。
  *
  * 为什么单独一步：飞书的「表记录变更事件」（drive.file.bitable_record_changed_v1）不是
  * 配了事件订阅就会推的，还要应用**订阅到具体这张表**：
@@ -37,17 +43,32 @@ for (const item of [
 }
 
 const lark = require('@larksuiteoapi/node-sdk');
-const { getLarkAgentCredentials } = require('../src/config/larkAgent');
 
 const PROD_APP_TOKEN = 'QrXlbwXMLaJ2TNsxSfFcIA3rnwh';
 const fileToken = String(process.env.FEISHU_V1_BITABLE_APP_TOKEN || '').trim();
 if (!fileToken) { console.error('缺少 FEISHU_V1_BITABLE_APP_TOKEN'); process.exit(1); }
 if (fileToken === PROD_APP_TOKEN) { console.error('拒绝执行：目标 Base 是生产 Base'); process.exit(1); }
 
+// ── 凭证：只认「测试应用」，绝不碰生产应用 ────────────────────────────────────
+// （上面的生产 Base 闸门原样保留；这里管的是"用哪个应用去订阅"，两件事互不影响。）
+const testAppId = String(process.env.LARK_TEST_APP_ID || '').trim();
+const testAppSecret = String(process.env.LARK_TEST_APP_SECRET || '').trim();
+if (!testAppId || !testAppSecret) {
+  const missing = [!testAppId && 'LARK_TEST_APP_ID', !testAppSecret && 'LARK_TEST_APP_SECRET'].filter(Boolean);
+  console.error(`❌ 缺少测试应用凭证：${missing.join('、')}`);
+  console.error('   本地测试脚本只允许用测试应用，不会回退到 LARK_AGENT_*（生产应用，生产走 webhook）。');
+  process.exit(1);
+}
+const productionAppId = String(process.env.LARK_AGENT_APP_ID || '').trim();
+if (productionAppId && testAppId === productionAppId) {
+  console.error('❌ 拒绝执行：LARK_TEST_APP_ID 与生产应用 LARK_AGENT_APP_ID 相同——禁止用生产应用连长连接。');
+  process.exit(1);
+}
+
 (async () => {
-  const { appId, appSecret } = getLarkAgentCredentials();
-  console.log(`app_id=${appId}  file_token=${fileToken}`);
-  const client = new lark.Client({ appId, appSecret });
+  // app_id 不是密钥，可以打印；**secret 绝不打印**。
+  console.log(`应用：测试应用（LARK_TEST_APP_ID）app_id=${testAppId}  file_token=${fileToken}（app_secret 不打印）`);
+  const client = new lark.Client({ appId: testAppId, appSecret: testAppSecret });
   const res = await client.drive.v1.file.subscribe({ path: { file_token: fileToken }, params: { file_type: 'bitable' } });
   console.log('订阅结果：', JSON.stringify(res));
   if (res?.code === 0) console.log('✅ 已订阅这张表的变更事件');
