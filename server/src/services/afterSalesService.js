@@ -10,7 +10,9 @@
 // 六处写入：
 //   1) 新「销售主表」：原话 + 原销售单号 + 交易类型=行为(SALE_RETURN/EXCHANGE/COMPENSATION)
 //   2) 新「销售明细」行：交易类型=行为 · 销售单号=**原主表**（关联）· 成交金额=正数
-//   3) 原「销售明细」的「履约状态」→ 已退货 / 已换货 / 已赔货（原主表一字不动）
+//   3) 原「销售明细」的「履约状态」→ 已退货 / 已换货 / 已赔货
+//   3b) **原「销售主表」的「销售状态」→ 已退货 / 部分退货**（只退货动作写；
+//       查单链路"排除已经退过的单"的判据一读的就是它；见 markOriginalEntryStatus）
 //   4) 钱：cash → 「收款明细」一条（交易方向=收入/退回，金额正数，关联=新主表，方式=原单的）；
 //          prepaid → 「客户往来货款」一条（变动类型=退货退款，应收变化=带符号差价）
 //   5) 「库存流水」：退货 1 行 / 赔货 1 行 / 换货 2 行（方向相反），数量都是正数
@@ -60,6 +62,9 @@ const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { withSalesReadRetry } = require('./salesReadRetry');
 const { cents } = require('./salesProgressService');
 const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
+// 售后做完之后，往**原销售主表**的「销售状态」写什么（配置先行；只有退货才写）。
+const { originalSalesStatusFor } = require('../config/afterSalesOriginalSalesStatus');
+const { isReturnTradeType } = require('../config/saleLookup');
 const { SalesStatusWriter } = require('./salesStatusWriter');
 const { logInfo, logWarn } = require('../utils/logger');
 
@@ -321,6 +326,16 @@ class AfterSalesService {
     await this.status.write(master.recordId, {
       sales: WRITE.sales.done, funds: WRITE.funds.done, stock: WRITE.stock.done,
     });
+    // 3b) **被退的那张原单**的「销售状态」＝ 已退货 / 部分退货（配置见
+    //     config/afterSalesOriginalSalesStatus）。查单链路"排除已经退过的单"读的就是这一列，
+    //     在补上这一步之前那一列**全仓没有任何写入点**，判据一形同虚设。
+    //     ⚠️ 放在最后一步：钱、库存都落好了才把原单标成退过；写在前面的话，
+    //        中途失败会留下一张"已退货、但退货没做成"的原单。
+    //     ⚠️ 写失败只记提示（SalesStatusWriter 的硬边界：状态列不许带崩业务写入）。
+    const originalStatus = await this.markOriginalEntryStatus(request, progress, {
+      // 本次退货的行为记录 id：用来把"售后自己写的那条退货明细"从"没退完的明细"里摘出去。
+      tradeTypeRecordId: master.tradeTypeRecordId,
+    });
 
     const result = {
       action: request.action,
@@ -332,6 +347,8 @@ class AfterSalesService {
       originalDetailIdsMarked,
       money,
       stock,
+      // 原单「销售状态」：'' = 这一次动作不回写（换货/赔货）。
+      originalSalesStatus: originalStatus.status,
     };
     await this.saveProgress(request, {
       status: 'completed',
@@ -348,6 +365,7 @@ class AfterSalesService {
       original_details_marked: originalDetailIdsMarked.length,
       money_route: money.route,
       stock_rows: stock.map((item) => `${item.behaviorCode}:${item.state}:${item.quantity}`),
+      original_sales_status: originalStatus.status,
     });
     return result;
   }
@@ -593,9 +611,10 @@ class AfterSalesService {
   // --- 3) 原「销售明细」的「履约状态」 ----------------------------------------------
 
   /**
-   * 只改「履约状态」。原主表**不动**（业务负责人明确要求）。
-   * ⚠️ 原主表的「订单状态」那一列已被她 2026-10-06 整列删除；原单的「销售状态」今天也**不写**
-   *    ——「售后退货时补写销售状态 = 已退货」这一步**还没做（等她定）**。
+   * 只改「履约状态」。
+   * ⚠️ 原主表的「订单状态」那一列已被她 2026-10-06 整列删除；
+   *    原主表的「销售状态」由下面的 markOriginalEntryStatus 收口（2026-10-06 补上），
+   *    本方法仍然只碰原明细这一列。
    * 已经等于目标值就跳过；改过一条就把进度落盘，重试不会重复写同一条记录。
    */
   async markOriginalDetails(spec, original, progress) {
@@ -614,6 +633,86 @@ class AfterSalesService {
     // 返回"这一次售后一共改过哪些原明细行"（含前几次重试改的）：
     // 重试后的结果也要完整，不能只报本次新改的那几条。
     return [...known];
+  }
+
+  // --- 3b) 原「销售主表」的「销售状态」（全仓唯一写入点） ----------------------------
+
+  /**
+   * 售后做完之后，把**被退的那张原销售主表**的「销售状态」收口成退货态。
+   *
+   * 为什么要有这一步（补一个一直空着的缺口）：
+   *   `saleLookupService.findCandidates` 的**判据一**读的就是「销售状态 = 已退货 / 部分退货」
+   *   （`config/saleLookup.RETURNED_SALES_STATUSES`），但在 2026-10-06 之前
+   *   **全仓没有任何地方写这两个值** —— 判据一永远读不到退货标记，
+   *   真正兜底的只剩判据二（原明细的「交易类型 = 销售退货」）。
+   *   于是"已经退过的单"在查单里仍然可能出现，有重复退货的风险。
+   *
+   * 只做退货（`config/afterSalesOriginalSalesStatus` 里只映射了 return）：
+   *   换货 / 赔货写「已退货」是把业务事实说错，而且要不要禁止再退那一双还没定 —— 不猜。
+   *
+   * 已退货 / 部分退货怎么定：把**原单下的全部明细**读一遍，还有没退完的就写「部分退货」，
+   *   都退完了才写「已退货」。两个值在查单判据里一视同仁（整单排除），所以
+   *   "部分"这个精度只影响人看的字面，不影响闸门。
+   *   ⚠️ 售后自己写的那条明细行（交易类型=本次行为，销售单号关联的是**原主表**）
+   *      不算"没退完"——它记的就是这次退货本身。判断依据是它的「交易类型」关联到的
+   *      行为记录 id（`master.tradeTypeRecordId`），而不是单元格里的显示文本
+   *      （记录接口可能只回 record_ids、不回文本）。
+   *   ⚠️ 读全部明细是一次整表读（明细表没有反向关联列），读挂了就按**已退货**收口：
+   *      宁可少给她一条已经退过的候选，也不能把可能退过的单再拿出来退一次。
+   *
+   * 幂等：结果写进本地任务记录 `original_sales_status`，重试不重复读、不重复写。
+   * 落库走 `SalesStatusWriter`（状态列的唯一写入口）：**写失败绝不带崩业务写入**。
+   */
+  async markOriginalEntryStatus(request, progress, { tradeTypeRecordId = '' } = {}) {
+    const target = originalSalesStatusFor(request.action);
+    if (!target) return { status: '', written: false, reused: false };
+    if (progress.original_sales_status) {
+      return { status: progress.original_sales_status, written: false, reused: true };
+    }
+    const status = await this.resolveOriginalSalesStatus(request, target, { tradeTypeRecordId });
+    const written = await this.status.write(request.originalSalesEntryRecordId, { sales: status });
+    await this.saveProgress(request, { original_sales_status: status });
+    logInfo('after_sales.original_status.written', {
+      operation_id: request.operationId,
+      action: request.action,
+      original_sales_entry_record_id: request.originalSalesEntryRecordId,
+      sales_status: status,
+      written,
+    });
+    return { status, written, reused: false };
+  }
+
+  /** 「已退货」还是「部分退货」：看原单下还有没有没退完的明细。 */
+  async resolveOriginalSalesStatus(request, target, { tradeTypeRecordId = '' } = {}) {
+    const detailFields = this.tableOf('salesDetail').fields;
+    const returnBehaviorId = String(tradeTypeRecordId || '').trim();
+    let records;
+    try {
+      records = await withSalesReadRetry(
+        () => this.gateway.listAll('salesDetail'), 'after_sales_original_status_details',
+      );
+    } catch (error) {
+      logWarn('after_sales.original_status.read_failed', {
+        operation_id: request.operationId,
+        original_sales_entry_record_id: request.originalSalesEntryRecordId,
+        error: error.message,
+      });
+      return target.returned;
+    }
+    const mine = (records || []).filter((row) => linkedRecordIds(
+      row.fields?.[detailFields.salesEntry],
+    ).includes(request.originalSalesEntryRecordId));
+    const open = mine.filter((row) => {
+      const fulfillment = cellText(row.fields?.[detailFields.fulfillmentStatus]);
+      // 这一行（或上一次重试）已经退过了 → 不再算"没退完"。
+      if (fulfillment && fulfillment === request.spec.originalFulfillmentStatus) return false;
+      const tradeTypeCell = row.fields?.[detailFields.tradeType];
+      // 这一行就是**售后自己写的退货明细**（关联到本次退货的行为记录）→ 也不算没退完。
+      if (returnBehaviorId && linkedRecordIds(tradeTypeCell).includes(returnBehaviorId)) return false;
+      // 明细上的「交易类型 = 销售退货」是判据二的依据，同样说明这一行退过了。
+      return !isReturnTradeType(cellText(tradeTypeCell));
+    });
+    return open.length ? target.partial : target.returned;
   }
 
   // --- 4) 钱 -------------------------------------------------------------------------

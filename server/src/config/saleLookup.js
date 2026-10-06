@@ -14,7 +14,10 @@ const SALE_LOOKUP_DEFAULTS = Object.freeze({
 //   · 销售主表.销售状态 = 已退货 / 部分退货
 //     ⚠️ 原判据读的是「订单状态」，那一列已被业务负责人 2026-10-06 整列删除；
 //        判据随之迁到「销售状态」（见 services/saleLookupService.findCandidates）。
-//        ⚠️ 今天**还没有**代码在退货时写「销售状态 = 已退货」，真正兜底的是下一条。
+//     ⭐ 写入点（2026-10-06 补上）：退货做完后由
+//        afterSalesService.markOriginalEntryStatus 写这两个值中的一个
+//        （取值定义在 config/afterSalesOriginalSalesStatus，与本文件的字面量必须一致，
+//          由 afterSalesOriginalSalesStatus.test.js 钉住）。
 //   · 销售明细.交易类型 = 销售退货
 // 两个都查（双保险），任一命中即整单排除，防止重复退货。
 const RETURNED_SALES_STATUSES = Object.freeze(['已退货', '部分退货']);

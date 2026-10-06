@@ -1,6 +1,7 @@
 // 退换货第二期·第一步：售后执行器 + 幂等 的测试。
 //
-// 覆盖：三种动作各一条 · 重复调用只写一次（本步最重要的用例）· 原主表/原明细逐字段未变 ·
+// 覆盖：三种动作各一条 · 重复调用只写一次（本步最重要的用例）· 原明细逐字段未变 ·
+//       原单「销售状态」按退货收口（已退货 / 部分退货）·
 //       差价正/负/0 · 资金 cash/prepaid · 退回状态 门盒/样品 · 库存流水 1 行 / 2 行方向相反 ·
 //       失败后重试成功 · 入参校验 · 总闸门（指纹不同就停 · 缺列大声失败）。
 //
@@ -263,7 +264,7 @@ test('接线：不注入端口时默认就是真的 InventoryService；注入真
   assert.equal(rowsOf(gateway, 'liveInventory').length, 3); // 原有 2 双 + 退回 1 双
 });
 
-test('退货（cash 退款）：六处写入各一次，原主表一字未动，原明细只改履约状态', async () => {
+test('退货（cash 退款）：六处写入各一次，原明细只改履约状态、原单销售状态=部分退货', async () => {
   const { gateway, inventory, service } = build();
   const beforeEntry = structuredClone(rowsOf(gateway, 'salesEntry')[0].fields);
   const beforeDetail = structuredClone(rowsOf(gateway, 'salesDetail')[0].fields);
@@ -295,13 +296,15 @@ test('退货（cash 退款）：六处写入各一次，原主表一字未动，
   assert.equal(details[0].fields['成交金额'], 250);
   assert.deepEqual(details[0].fields['交易类型'], ['behavior_return']);
 
-  // 3) 原明细只改「履约状态」；原主表逐字段未变
-  //    （「订单状态」那一列已被业务负责人删除；原单的「销售状态」今天也**不写**——
-  //      退货补写「销售状态 = 已退货」还没做，等她定。）
+  // 3) 原明细只改「履约状态」；原单的「销售状态」收口为退货态（其他字段一概不动）
+  //    （「订单状态」那一列已被业务负责人删除；2026-10-06 起退货会回写原单
+  //      「销售状态」——这一单还有两条没退的明细，所以是「部分退货」。）
   assert.equal(rowsOf(gateway, 'salesDetail')[0].fields['履约状态'], '已退货');
   assert.deepEqual({ ...rowsOf(gateway, 'salesDetail')[0].fields, 履约状态: '已交付' }, beforeDetail);
-  assert.deepEqual(rowsOf(gateway, 'salesEntry')[0].fields, beforeEntry);
+  assert.equal(rowsOf(gateway, 'salesEntry')[0].fields['销售状态'], '部分退货');
+  assert.deepEqual({ ...rowsOf(gateway, 'salesEntry')[0].fields, 销售状态: beforeEntry.销售状态 }, beforeEntry);
   assert.deepEqual(result.originalDetailIdsMarked, ['detail_old_1']);
+  assert.equal(result.originalSalesStatus, '部分退货');
 
   // 4) 钱：退回 250，金额正数，方向=退回，关联新主表，交易方式=原单
   const payments = paymentRows(gateway);
@@ -336,15 +339,14 @@ test('退货（cash 退款）：六处写入各一次，原主表一字未动，
     occurredAt: FIXED_NOW,
   }]);
 
-  // 每张表恰好写一次
+  // 每张表恰好写一次（salesEntry 两次 update：一次收口**售后新主表**的四个维度，
+  // 一次把**被退的那张原单**的「销售状态」写成退货态）
   assert.deepEqual(gateway.writes.create, {
     salesEntry: 1, salesDetail: 1, paymentRecord: 1, inventoryLedger: 1, liveInventory: 1,
   });
-  assert.deepEqual(gateway.writes.update, { salesDetail: 1, salesEntry: 1 });
-  // ⚠️ salesEntry 那一次 update 是 2026-10-06 新加的：把四个状态维度收口
-  //    （确认状态=已确认 / 销售状态=已写入 / 资金状态=已写入 / 库存状态=已扣减）。
-  //    它**不碰**原单的任何字段，所以"原主表一字未动"那条断言仍然成立——
-  //    那里说的"原主表"是**被她退的那一张**（order_old），不是新建的这张。
+  assert.deepEqual(gateway.writes.update, { salesDetail: 1, salesEntry: 2 });
+  // ⚠️ salesEntry 那两次 update：① 2026-10-06 加的四个状态维度收口（写给**售后新主表**）；
+  //    ② 2026-10-06 晚加的「原单销售状态 = 已退货 / 部分退货」（写给**被退的那张原单**）。
   assert.deepEqual(gateway.writes.delete, {});
   // 本地闸门：记下"这一次做过"，并记住每个阶段的 record_id
   const progress = await service.store.get(result.operationId);
@@ -447,6 +449,78 @@ test('部分退货：同一原单先退明细 A、再退明细 B，两笔都成�
   assert.deepEqual(first.originalDetailIdsMarked, ['detail_old_1']);
   assert.deepEqual(second.originalDetailIdsMarked, ['detail_old_3']);
   assert.equal(inventory.calls.length, 2);
+});
+
+// ── 原单「销售状态」＝ 已退货 / 部分退货（查单"排除退过的单"判据一的写入点）──────────
+//   在此之前全仓没有这一列的写入点，判据一永远读不到退货标记（见 saleLookupService）。
+
+test('原单明细全部退完 → 原单「销售状态」= 已退货（查单判据一才真正生效）', async () => {
+  const { gateway, service } = build();
+  // 这一单只剩一条明细（配品那条与另一双删掉）→ 退完它就是"整单退完"。
+  gateway.records.set('salesDetail',
+    rowsOf(gateway, 'salesDetail').filter((row) => row.record_id === 'detail_old_1'));
+
+  const result = await service.execute(request());
+
+  assert.equal(result.originalSalesStatus, '已退货');
+  assert.equal(rowsOf(gateway, 'salesEntry')[0].fields['销售状态'], '已退货');
+  // 收口写进本地进度：重试不会重复读、重复写
+  const progress = await service.store.get(result.operationId);
+  assert.equal(progress.original_sales_status, '已退货');
+});
+
+test('分两次退完同一张原单：第一次「部分退货」，退完那次收口成「已退货」', async () => {
+  const { gateway, service } = build();
+  // 只留两条鞋（配品那条不参与退货，留着会把"整单退完"永远卡在部分）
+  gateway.records.set('salesDetail',
+    rowsOf(gateway, 'salesDetail').filter((row) => row.record_id !== 'detail_old_2'));
+
+  const first = await service.execute(request());
+  assert.equal(first.originalSalesStatus, '部分退货');
+  assert.equal(rowsOf(gateway, 'salesEntry')[0].fields['销售状态'], '部分退货');
+
+  const second = await service.execute(request({
+    originalSalesDetailRecordIds: ['detail_old_3'],
+    originalText: '另一双 B200 也退了',
+    diffAmount: -300,
+  }));
+  assert.equal(second.originalSalesStatus, '已退货');
+  assert.equal(rowsOf(gateway, 'salesEntry')[0].fields['销售状态'], '已退货');
+});
+
+test('读原单明细失败 → 保守写「已退货」（宁可少给她一条候选，也不能让她再退一次）', async () => {
+  const { gateway, service } = build();
+  const originalListAll = gateway.listAll;
+  let failed = false;
+  gateway.listAll = async (key) => {
+    if (key === 'salesDetail' && !failed) {
+      failed = true;
+      throw new Error('飞书读超时');
+    }
+    return originalListAll(key);
+  };
+
+  const result = await service.execute(request());
+
+  assert.equal(result.originalSalesStatus, '已退货');
+  assert.equal(rowsOf(gateway, 'salesEntry')[0].fields['销售状态'], '已退货');
+});
+
+test('换货不动原单「销售状态」：值域里只有退货态，写它是把业务事实说错', async () => {
+  const { gateway, service } = build();
+  const before = rowsOf(gateway, 'salesEntry')[0].fields['销售状态'];
+
+  const result = await service.execute(request({
+    action: 'exchange',
+    originalText: '那双 A100 换一双 B200 42 码，补 50',
+    newLines: [{ productId: 'product_B', sizeId: 'size_42', amount: 300 }],
+    diffAmount: 50,
+    settlement: 'cash',
+    restockState: '样品',
+  }));
+
+  assert.equal(result.originalSalesStatus, '');
+  assert.equal(rowsOf(gateway, 'salesEntry')[0].fields['销售状态'], before);
 });
 
 test('同一批明细重复调用只写一次；同一条明细再退一次仍被拦住', async () => {

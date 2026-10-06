@@ -80,6 +80,10 @@ const hasItemInfo = (parsed = {}) =>
  *   gateway    只读用途（货品/尺码解析）；不传时必须注入 references / sizeReferences
  *   references / sizeReferences 可选，解析货品与尺码（测试注入用）
  *   replyCard / sendCard / sendText / updateCard  可选，飞书消息端口
+ *     —— **私聊口**：payload 与改动前逐字相同。
+ *   sendTaskCard / sendTaskText  可选，**群话题口**（接线层实现，见 larkMvpService）：
+ *     群里把卡片/文字回到 `task.message_id` 所在的那条话题（`reply_in_thread`）。
+ *     不注入时群里会退回私聊口；生产接线必须注入。
  *   now        可选，测试注入固定时间
  */
 class AfterSalesFlowService {
@@ -100,6 +104,21 @@ class AfterSalesFlowService {
     this.sendCard = options.sendCard || (async () => '');
     this.sendText = options.sendText || (async () => undefined);
     this.updateCard = options.updateCard || (async () => false);
+    // ── 渠道（群话题）────────────────────────────────────────────────────────
+    // 「回复回到哪个话题」由注入的端口决定，本类只按任务上的渠道标记分流：
+    //   · 私聊任务（`chat_type` 不是 group）→ 走上面的 replyCard / sendCard / sendText，
+    //     payload 与改动前**逐字相同**（这三个端口一个字都不加）；
+    //   · 群里的话题任务（`chat_type === 'group'`）→ 走下面这两个端口，
+    //     它们的实现在接线层（larkMvpService），用的是既有的群聊发送封装
+    //     （`im.message.reply` + `reply_in_thread: true`），本类不认识飞书 SDK。
+    // 不注入这两个端口时，群里也会退回私聊口——所以生产接线必须注入（见 larkMvpService）。
+    this.sendTaskCard = options.sendTaskCard || null;
+    this.sendTaskText = options.sendTaskText || null;
+  }
+
+  /** 这条售后任务是不是从**群话题**进来的（私聊任务没有 chat_type）。 */
+  isGroupTask(task) {
+    return String(task?.chat_type || '') === 'group';
   }
 
   // -------------------------------------------------------------------------
@@ -116,7 +135,7 @@ class AfterSalesFlowService {
     });
     if (!action) {
       await this.store.update(task.task_id, { status: AFTER_SALES_TASK_STATUS.ASKING });
-      await this.sendText(task.sender_open_id, '我没分清是退货、换货还是赔货，再说一次好吗？');
+      await this.deliverText(task, '我没分清是退货、换货还是赔货，再说一次好吗？');
       logWarn('after_sales.action.unresolved', {
         task_id: task.task_id, intent: parsed.intent, action: parsed.action,
       });
@@ -177,9 +196,13 @@ class AfterSalesFlowService {
    * （入口 A 的跨消息场景）。序号用不了、而这句话里又带了货号颜色时，
    * 不放弃——继续按货号走入口 B，能救回来就别让她重发。
    *
-   * 没序号就走入口 B（findCandidates），单条直接返回；多条/0 条出候选卡片。
+   * ⭐ **群话题里进来的**（`task.sales_entry_record_id` 有值，由群聊分派用
+   *    `salesGroupThreadLocator` 定位）：定位先**圈定那一笔**——她说的是「同一笔的售后」。
+   *    圈定之后她连货号都可以不说（整笔明细就是候选，多条时照旧出候选卡片）。
+   *    ⚠️ 私聊任务没有这个字段，走的还是原来那条纯货号/序号的路（一字未变）。
    */
   async locateOriginal(task, parsed = {}) {
+    const boundEntryId = this.boundSaleEntryRecordId(task);
     const ordinal = positiveInteger(parsed.ordinal) || this.ordinalFromText(task.original_text);
     if (ordinal) {
       const sameMessage = this.lookup.resolvePendingCandidate(task, ordinal, { now: this.now() });
@@ -197,7 +220,7 @@ class AfterSalesFlowService {
         const message = previous.message
           || `我这儿只有 ${candidates.length} 笔，没有你说的第 ${ordinal} 笔。`;
         await this.store.update(task.task_id, { status: AFTER_SALES_TASK_STATUS.ASKING });
-        await this.sendText(task.sender_open_id, message);
+        await this.deliverText(task, message);
         logInfo('after_sales.locate.ordinal_unusable', {
           task_id: task.task_id, ordinal, status: previous.status, candidate_count: candidates.length,
         });
@@ -206,15 +229,26 @@ class AfterSalesFlowService {
     }
 
     // 入口 B：直接说（"退那双 6035 黑"）。不依赖她先查过。
+    // ⚠️ 话题绑定到某一笔时，她**不用**说货号——那一笔的明细就是候选。
     const itemNo = String(parsed.item_no || '').trim();
     const color = String(parsed.color || '').trim();
-    if (!itemNo && !color) {
+    if (!itemNo && !color && !boundEntryId) {
       await this.store.update(task.task_id, { status: AFTER_SALES_TASK_STATUS.ASKING });
-      await this.sendText(task.sender_open_id, '退哪一双？发我货号，比如"6035 黑"。');
+      await this.deliverText(task, '退哪一双？发我货号，比如"6035 黑"。');
       return { ok: false, reason: 'no_item_info' };
     }
 
-    let candidates = await this.lookup.findCandidates({ itemNo, color, now: this.now() });
+    let candidates = await this.lookup.findCandidates({
+      itemNo, color, entryRecordId: boundEntryId, now: this.now(),
+    });
+    // 话题绑定的那一笔里没有她说的货号 → 不把她堵死：退回"不限定哪一笔"的查法，
+    // 并留一条日志（这种情况说明她可能是在**另一笔**的话题里说的，值得排查）。
+    if (!candidates.length && boundEntryId && (itemNo || color)) {
+      logInfo('after_sales.locate.bound_miss', {
+        task_id: task.task_id, sales_entry_record_id: boundEntryId, item_no: itemNo, color,
+      });
+      candidates = await this.lookup.findCandidates({ itemNo, color, now: this.now() });
+    }
     // 她说了尺码就再收一道：同一货号同色常有多个尺码，不收就会出多张候选，
     // 甚至把 39 码当成她要的 40 码。尺码读不出来的候选保留（卡片上如实显示为空），
     // 不因为一个字段读不到就让这条记录消失。
@@ -241,7 +275,17 @@ class AfterSalesFlowService {
       });
       return { ok: false, reason: 'ambiguous' };
     }
-    return { ok: true, candidate: candidates[0], source: 'direct' };
+    return { ok: true, candidate: candidates[0], source: boundEntryId ? 'thread' : 'direct' };
+  }
+
+  /**
+   * 这条售后绑到哪一笔销售：**群话题**任务上由群聊分派（销售额的定位器
+   * `salesGroupThreadLocator`）写好的 `sales_entry_record_id`。
+   * ⚠️ 只认群聊任务：私聊任务上没有这个字段（也不会被写入），所以私聊定位行为一个字不变。
+   */
+  boundSaleEntryRecordId(task) {
+    if (!this.isGroupTask(task)) return '';
+    return String(task.sales_entry_record_id || '').trim();
   }
 
   // -------------------------------------------------------------------------
@@ -554,15 +598,43 @@ class AfterSalesFlowService {
 
   async ask(task, message) {
     await this.store.update(task.task_id, { status: AFTER_SALES_TASK_STATUS.ASKING });
-    await this.sendText(task.sender_open_id, message);
+    await this.deliverText(task, message);
     logInfo('after_sales.plan.needs_info', {
       task_id: task.task_id, message_length: String(message || '').length,
     });
   }
 
-  // 优先在原消息下回复（她能立刻看到对应的那张卡）；回复失败退回主动发卡，
-  // 免得"说了却没反应"。
+  /**
+   * 发一句文字给**她**：群里回到那条话题，私聊照旧发她私聊。
+   * 私聊分支与改动前逐字相同（`sendText(task.sender_open_id, …)`）。
+   */
+  async deliverText(task, message) {
+    if (this.isGroupTask(task) && this.sendTaskText) return this.sendTaskText(task, message);
+    return this.sendText(task.sender_open_id, message);
+  }
+
+  /**
+   * 卡片：优先在原消息下回复（她能立刻看到对应的那张卡）；回复失败退回主动发卡，
+   * 免得"说了却没反应"。
+   *
+   * ⚠️ 群里那条路**必须回到话题**（`reply_in_thread`），而且**兜底也不许落到她私聊**：
+   *    她在销售话题里说「退那双 1366-33」，售后卡片跑到私聊就等于"不在那个话题里"
+   *    （这正是这次要修的现象）。所以群里走 sendTaskCard（回复进话题），
+   *    它失败了只会记警告——宁可这一次没发出去，也不能把卡片发到另一个会话里。
+   */
   async replyCardByTask(task, card) {
+    if (this.isGroupTask(task) && this.sendTaskCard) {
+      try {
+        const sent = await this.sendTaskCard(task, card);
+        const messageId = sent?.messageId || '';
+        if (messageId) await this.store.update(task.task_id, { card_message_id: messageId });
+        return messageId;
+      } catch (error) {
+        logWarn('after_sales.card.thread_failed', { task_id: task.task_id, error: error.message });
+        return '';
+      }
+    }
+    // 私聊：与改动前逐字相同（先回复她那一条，失败才主动发卡）。
     try {
       const messageId = await this.replyCard(task.message_id, card);
       if (messageId) await this.store.update(task.task_id, { card_message_id: messageId });
@@ -577,6 +649,7 @@ class AfterSalesFlowService {
 
   // 卡片动作的反馈：优先更新原卡片；更新不了（缺 message_id）就另发一张，
   // 保证她总能看到结果，而不是"点了没反应"。
+  // ⚠️ 群里同样**只回话题**：兜底那张卡也走 sendTaskCard（绝不落到她私聊）。
   async publishCard(task, event, card, metadata = {}) {
     try {
       if (await this.updateCard(task, event, card, metadata)) return true;
@@ -586,7 +659,10 @@ class AfterSalesFlowService {
       });
     }
     try {
-      const messageId = await this.sendCard(task.sender_open_id, card);
+      const sent = this.isGroupTask(task) && this.sendTaskCard
+        ? await this.sendTaskCard(task, card)
+        : { messageId: await this.sendCard(task.sender_open_id, card) };
+      const messageId = sent?.messageId || '';
       if (messageId) await this.store.update(task.task_id, { card_message_id: messageId });
       logInfo('after_sales.card.fallback.sent', {
         task_id: task.task_id, stage: metadata.stage, card_message_id: messageId,

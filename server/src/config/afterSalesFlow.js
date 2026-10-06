@@ -77,6 +77,25 @@ const AFTER_SALES_ACTION_HINTS = Object.freeze([
   Object.freeze({ action: AFTER_SALES_ACTIONS.RETURN, words: Object.freeze(['退']) }),
 ]);
 
+// 完整的售后说法（用于**路由**：群话题里这句话该不该归售后管）。
+// ⚠️ 与上面的 HINTS 分工不同：HINTS 回答"是退/换/赔哪一种动作"，
+//    这里只回答"这是不是一条售后诉求"——所以「售后」也算，且顺序无意义。
+// ⚠️ 它是**判据**，不是动作：真正做什么仍由 resolveAfterSalesAction 收敛；
+//    认成售后但动作认不出时，AfterSalesFlowService 会回一句"没分清"（不会乱动账）。
+const AFTER_SALES_TEXT_KEYWORDS = Object.freeze(['售后', '退货', '换货', '赔货']);
+
+/**
+ * 群话题这一层的**路由判据**：这句话像不像售后（退 / 换 / 赔）。
+ * 单字（退/换/赔）直接复用 AFTER_SALES_ACTION_HINTS 的词表，不另写一份。
+ * 只用于"这条群消息归不归售后"，**不**用于决定动作。
+ */
+const looksLikeAfterSalesText = (text) => {
+  const value = String(text ?? '');
+  if (!value) return false;
+  if (AFTER_SALES_TEXT_KEYWORDS.some((word) => value.includes(word))) return true;
+  return AFTER_SALES_ACTION_HINTS.some((hint) => hint.words.some((word) => value.includes(word)));
+};
+
 /**
  * 收敛「她这句话要做什么」。
  * 优先信模型给的 action 字段（它读了整句话）；没给就按原话关键词兜底；
@@ -214,6 +233,9 @@ module.exports = {
   AFTER_SALES_ACTION_LABELS,
   actionLabelOf,
   resolveAfterSalesAction,
+  AFTER_SALES_ACTION_HINTS,
+  AFTER_SALES_TEXT_KEYWORDS,
+  looksLikeAfterSalesText,
   AFTER_SALES_SETTLEMENT_ALIASES,
   resolveAfterSalesSettlement,
   DEFAULT_AFTER_SALES_RESTOCK_STATE,

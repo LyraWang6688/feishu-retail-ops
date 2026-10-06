@@ -127,18 +127,22 @@ class SaleLookupService {
   /**
    * 候选查询。
    *
-   * 输入：货号 / 颜色（都可选，但不能都不给）+ 时间窗口
+   * 输入：货号 / 颜色（都可选）+ 可选「只在某一笔销售里找」（entryRecordId）+ 时间窗口
+   *   ⚠️ 货号、颜色、entryRecordId **三者不能全空**：全空 = 想查"全部销售记录"，
+   *      那不是这个功能要回答的问题（最近 5 天全店可能有几十条）。
+   *   ⭐ entryRecordId 是**群话题**那条路用的：话题本身已经定位到某一笔销售，
+   *      售后就绑着那一笔找（她说「同一笔的售后」），于是连货号都可以不说。
    * 输出：[{ record_id, date, sold_at, item_no, color, size, actual_amount, sales_order_no, sales_entry_record_id }]
    *
    * 「日期」用销售明细的「销售日」，缺失时退回销售主表的「录单日」——和
    * 网页工作台的取值口径一致（v1WorkbenchService.getTodaySales），两处不能各算一套。
    */
-  async findCandidates({ itemNo = '', color = '', now = this.now(), days = this.days } = {}) {
+  async findCandidates({ itemNo = '', color = '', entryRecordId = '', now = this.now(), days = this.days } = {}) {
     const wantedItemNo = normalizeText(itemNo);
     const wantedColor = normalizeColor(color);
-    // 货号和颜色都没给 = 想查"全部销售记录"，那不是这个功能要回答的问题
-    // （最近 5 天全店可能有几十条），直接回空，让上层提示她补货号。
-    if (!wantedItemNo && !wantedColor) return [];
+    const wantedEntry = String(entryRecordId || '').trim();
+    // 三个限定条件一个都没有 = 想查"全部销售记录"，直接回空，让上层提示她补货号。
+    if (!wantedItemNo && !wantedColor && !wantedEntry) return [];
 
     const [details, entries, products] = await Promise.all([
       this.gateway.listAll('salesDetail'),
@@ -156,11 +160,12 @@ class SaleLookupService {
     //    （字段名与取值见 config/salesStatusDimensions）。
     //    `salesProgressService.sync` 从 2026-10-06 起就只算不写「订单状态」了。
     //
-    // ⚠️ 但**今天还没有任何代码在退货时写「销售状态 = 已退货」**：
-    //    afterSalesService 只改原明细的「履约状态」，并给**售后自己的新主表**写四个维度，
-    //    不回写原单的「销售状态」。⇒ **补写这一步还没做（等她定）**。
-    //    在补上之前，判据一多半读不到退货标记，真正兜底的是下面的**判据二**
-    //    （销售明细.交易类型 = 销售退货）。
+    // ⭐ 2026-10-06 晚补上了写入点：退货做完后
+    //    afterSalesService.markOriginalEntryStatus 会把原单的「销售状态」
+    //    写成 已退货 / 部分退货（取值见 config/afterSalesOriginalSalesStatus）。
+    //    在此之前全仓没有这一列的写入点，判据一永远读不到退货标记，
+    //    真正兜底的是下面的**判据二**（销售明细.交易类型 = 销售退货）。
+    //    写入点补上之后判据一才真正生效；判据二继续保留（双保险，任一命中即整单排除）。
     //    所以这里保留一层**保守**：
     //      · 值 = 已退货 / 部分退货                    → 排除（判据本体）
     //      · 值取不到（字段没配 / 单元格空）           → **当成"退过"，排除 ＋ logWarn**
@@ -199,6 +204,8 @@ class SaleLookupService {
       const fields = detail.fields || {};
       const orderIds = linkedRecordIds(fieldValue(this.schema, 'salesDetail', detail, 'salesEntry'));
       const orderId = orderIds[0] || '';
+      // 群话题那条路：只在话题对应的那一笔销售里找（她说"同一笔的售后"）。
+      if (wantedEntry && orderId !== wantedEntry) continue;
       if (orderId && returnedOrderIds.has(orderId)) continue;
       // 明细自己就是一条退货行：即使主表「销售状态」还没写成「已退货」，也不能拿它当"可退的销售"。
       if (isReturnTradeType(asText(this.schema, 'salesDetail', detail, 'tradeType'))) continue;

@@ -25,7 +25,7 @@ const { SaleLookupService } = require('./saleLookupService');
 const { AfterSalesService } = require('./afterSalesService');
 const { AfterSalesFlowService } = require('./afterSalesFlowService');
 const { isLookupIntent, isAfterSalesIntent, normalizeMessageIntent } = require('../config/saleIntents');
-const { isAfterSalesCardAction } = require('../config/afterSalesFlow');
+const { isAfterSalesCardAction, looksLikeAfterSalesText } = require('../config/afterSalesFlow');
 const { isSalesCandidate, UNSUPPORTED_INTENT_REPLY } = require('../config/messageGate');
 const { salesConfirmationCard, salesStatusCard, todaySalesCard, keepOnlyCardButton, SECOND_DELIVERY_ACTION } = require('../utils/larkCards');
 const { extractSalesMessageText, isMentioned, stripMentionPlaceholders } = require('../utils/larkMessageText');
@@ -157,6 +157,13 @@ class LarkMvpService {
       replyCard: (messageId, card) => this.replyCard(messageId, card),
       sendCard: (openId, card) => this.sendCard(openId, card),
       sendText: (openId, message) => this.sendText(openId, message),
+      // ── 群话题渠道（售后回话题）────────────────────────────────────────────
+      // 群里进来的售后（任务上带 chat_type='group'）必须**回到那条话题**：
+      // 复用本类既有的群聊发送封装（`reply_in_thread: true` + 本地映射）。
+      // ⚠️ 私聊任务**不走这两个口**（AfterSalesFlowService 按 chat_type 分流），
+      //    所以私聊的 reply/send payload 与改动前逐字相同。
+      sendTaskCard: (task, card) => this.sendAfterSalesTaskCard(task, card),
+      sendTaskText: (task, message) => this.sendAfterSalesTaskText(task, message),
       updateCard: (task, event, card, metadata) => this.updateAfterSalesCard(task, event, card, metadata),
     });
     this.sampleReplacements = options.sampleReplacements || new SampleReplacementService({
@@ -241,12 +248,17 @@ class LarkMvpService {
       locator: this.salesGroupThreads,
       // 闸门用**和私聊同一把尺子**（config/messageGate）：群聊不再自己写一套判据。
       isSalesText: looksLikeSalesText,
+      // 售后（退 / 换 / 赔）的判据在**配置**里（config/afterSalesFlow），与
+      // 动作收敛共用同一份词表；这里只把"这句话像不像售后"交给分派服务做路由。
+      isAfterSalesText: looksLikeAfterSalesText,
       // 正文里的采购批次号 → 这条归采购，即便它同时含数字。
       extractPurchaseBatchNos: extractBatchNos,
       // 销售的入口（本类的方法）：分派服务只管"转交"，销售业务全在本类里。
       salesIntake: {
         startFromGroup: (payload) => this.handleGroupSaleMessage({ ...payload, sale: null }),
         continueInThread: (payload) => this.handleGroupSaleMessage(payload),
+        // 话题里说退/换/赔 → 走售后那条路（同一条处理链，只是不过"像不像销售"那把尺子）。
+        afterSalesInThread: (payload) => this.handleGroupAfterSalesMessage(payload),
       },
     });
   }
@@ -498,6 +510,44 @@ class LarkMvpService {
     }
   }
 
+  // ── 售后（退换货）的群话题出口 ──────────────────────────────────────────────
+  //
+  // 为什么不用上面那两个 sendTask*：那两个是**销售链路**的口（它们会顺手把
+  // `task.sales_entry_record_id` 记进销售话题映射）。售后这里要记的是"这个话题属于
+  // **被退的那笔原销售**"——主群里新起一笔售后时 task 上还没有那笔销售，
+  // 得从方案里（`after_sales_plan.original_sales_entry_record_id`）拿。
+  // 发送方式本身完全复用：`replyTextInThread` / `replyCardInThread`
+  // （= `im.message.reply` + `reply_in_thread: true`），不另写一套飞书调用。
+
+  /** 群里的售后文字回到那条话题（返回飞书回带的 message_id）。 */
+  async sendAfterSalesTaskText(task, message) {
+    const sent = await this.replyTextInThread(task.message_id, message);
+    await this.bindAfterSalesThread(task, sent);
+    return sent.messageId;
+  }
+
+  /** 群里的售后卡片回到那条话题（返回 `{ messageId, threadId }`，与 Flow 的端口契约一致）。 */
+  async sendAfterSalesTaskCard(task, card) {
+    const sent = await this.replyCardInThread(task.message_id, card);
+    await this.bindAfterSalesThread(task, sent);
+    return sent;
+  }
+
+  /**
+   * 把「这条话题 ↔ 这笔销售」记进本地映射，供售后话题后续的消息复用
+   * （同一个 `salesGroupThreadLocator`，不另写一套）。
+   *
+   * ⚠️ 销售 id 拿不到时**不记**：记一条空 id 的映射会让后续消息"认得出话题、
+   * 却认不出是哪一笔销售"，比不记更糟（不记时它会回到采购那条路的"认不出"）。
+   */
+  async bindAfterSalesThread(task, sent = {}) {
+    const salesEntryRecordId = String(
+      task.sales_entry_record_id || task.after_sales_plan?.original_sales_entry_record_id || '',
+    ).trim();
+    if (!salesEntryRecordId) return null;
+    return this.bindGroupSaleThread({ ...task, sales_entry_record_id: salesEntryRecordId }, sent);
+  }
+
   /**
    * 「收到了」的反馈。私聊和群聊**都要加表情**（表情是唯一不变的"已收到"信号）。
    *
@@ -699,8 +749,36 @@ class LarkMvpService {
     );
   }
 
+  /**
+   * 群里的**售后入口**（退货 / 换货 / 赔货）。她在一个**销售话题**里说「退那双 1366-33」，
+   * 走的就是这里 —— 由 SalesGroupFlowService 判出"这是售后"后转交。
+   *
+   * 它和 `handleGroupSaleMessage` 走**同一条**处理链（`acceptSalesText` →
+   * `processSalesTask` → AI 判意图 → `afterSalesFlow`），差别只有一个：
+   * **不过"像不像销售"那把尺子**（`skipSalesGate`）。
+   *   为什么：话题已经告诉我们这是哪一笔销售（`salesGroupThreadLocator` 定位的），
+   *   而"这笔退了""售后处理一下"这类话可能一个数字、一个销售关键词都没有——
+   *   用私聊那把尺子会把它**静默丢掉**（她说的是"在一个话题里解决一切"）。
+   *   采购那条路不受影响：只有**已经定位到某笔销售的话题**才会走到这里。
+   */
+  async handleGroupAfterSalesMessage({ message, text, threadId = '', senderOpenId, chatId, sale = null }) {
+    return this.acceptSalesText(
+      { message, senderOpenId, originalText: text },
+      {
+        chatType: 'group',
+        chatId,
+        threadId,
+        sale,
+        acknowledge: false,
+        skipSalesGate: true,
+      },
+    );
+  }
+
   async acceptSalesText({ message, senderOpenId, originalText }, context = {}) {
-    if (!looksLikeSalesText(originalText)) {
+    // 群话题里的售后请求不过私聊闸门（见 handleGroupAfterSalesMessage 的说明）；
+    // ⚠️ 私聊与"群里的销售"都不带这个标记，闸门行为与改动前逐字相同。
+    if (context.skipSalesGate !== true && !looksLikeSalesText(originalText)) {
       logInfo('lark.message.ignored', {
         message_id: message.message_id,
         sender_open_id: senderOpenId,

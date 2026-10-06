@@ -72,6 +72,17 @@
 - ⭐ **定位只认映射，绝不退化成"最近一笔销售"**；查不到 → 交回采购，不抢答。
 - 全量测试 **721 pass / 0 fail**（连跑 2 次）。
 
+### ✅ 2026-10-06 晚补：③ 售后（退/换）回到销售话题（本分支，未合并）
+| 项 | 落点 |
+| --- | --- |
+| ① 话题里说退/换货 → 走售后 | `salesGroupFlowService` 在**已定位到某笔销售的话题**里加一支售后分流（判据在 `config/afterSalesFlow.looksLikeAfterSalesText`）→ `larkMvpService.handleGroupAfterSalesMessage`（同一条处理链，只是**不过"像不像销售"那把尺子**） |
+| ② 卡片 / 文字回到**那条话题** | `AfterSalesFlowService` 按任务渠道分流：群任务走 `sendTaskCard` / `sendTaskText` 端口（`larkMvpService` 里用既有的 `im.message.reply` + `reply_in_thread: true`）；**私聊走原来的 replyCard / sendCard / sendText，payload 逐字未变** |
+| ③ 绑定"话题对应的那一笔" | 复用 `salesGroupThreadLocator` 定位结果（`task.sales_entry_record_id`）→ `SaleLookupService.findCandidates({ entryRecordId })`，她说「同一笔的售后」时连货号都可以不说 |
+| ④ 售后结束后更新**原单**「销售状态」 | `afterSalesService.markOriginalEntryStatus`：退货写 **已退货 / 部分退货**（`config/afterSalesOriginalSalesStatus`），补上了查单判据一一直空着的写入点 |
+
+- ⚠️ **换货 / 赔货不动原单「销售状态」**（值域里只有退货态，写它是把业务事实说错）——要不要禁止再退那一双，**待业务负责人定**。
+- ⚠️ 「部分退货」的判定要整表读一次「销售明细」（明细表没有反向关联列）；读挂了按**已退货**保守收口。
+
 ### 🔴 待业务负责人确认的口径（**三条**）
 1. ⚠️ **"未付/预付进展"的识别**：目前实现为"绑定到已定位那笔 + 走同一套销售处理"，
    **没有**新写"只识别收款/交付进展"的入口。

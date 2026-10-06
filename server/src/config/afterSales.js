@@ -31,9 +31,10 @@ const AFTER_SALES_BEHAVIORS = Object.freeze({
   SALE_CASH: 'SALE_CASH',
 });
 
-// 原「销售明细」的「履约状态」目标值。原主表**不动**（业务负责人明确要求）：
-// ⚠️ 原主表的「订单状态」那一列已被她 2026-10-06 整列删除；原单的「销售状态」今天也**不写**
-//    ——「售后退货时补写销售状态 = 已退货」这一步**还没做（等她定）**，别以为它已经写了。
+// 原「销售明细」的「履约状态」目标值。
+// ⚠️ 原主表的「订单状态」那一列已被她 2026-10-06 整列删除；
+//    原主表的「销售状态」**退货动作会回写**（已退货 / 部分退货），
+//    取值与写入点见 config/afterSalesOriginalSalesStatus + afterSalesService.markOriginalEntryStatus。
 const AFTER_SALES_FULFILLMENT = Object.freeze({
   RETURNED: '已退货',
   EXCHANGED: '已换货',
