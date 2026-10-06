@@ -43,12 +43,15 @@ function renderShell(container, focused = false) {
       </section>`;
     return;
   }
+  // ⚠️ 一级 tab「销售查询」的壳：**查询界面本身就是页面主体**，不再有
+  //    「卡片 + 独立打开…」那一层入口（业务负责人 2026-10-06：
+  //    「点开 tab 之后，不需要我再单独打开一个独立的 URL」）。
+  //    所以这里只有一行说明小字，下面紧接着就是子 tab + 查询条 + 结果区。
+  //    ⚠️ 独立页面 /workbench/sales-query.html 照旧存在、照旧能用（上面 focused 分支），
+  //       只是**不再是进查询的必经之路**。
   container.innerHTML = `
     <section class="panel">
-      <div class="panel-header">
-        <div><h2>销售查询</h2><p class="subtitle">按某日或按区间查询销售、后续收款与实际交付</p></div>
-        <div class="header-actions"><a class="btn" href="/workbench/sales-query.html">独立打开销售查询</a></div>
-      </div>
+      <p class="page-hint">按某日或按区间查询销售、后续收款与实际交付</p>
       <div class="sub-tabs">
         <button class="sub-tab active" type="button" data-subtab="sales-query">销售查询</button>
         <button class="sub-tab" type="button" data-subtab="sales-followup">交付 / 收款管理</button>

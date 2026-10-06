@@ -13,16 +13,19 @@ function renderShell(container, focused = false) {
       </section>`;
     return;
   }
+  // ⚠️ 一级 tab「实时库存」的壳（业务负责人 2026-10-06 的原话：
+  //    「'库存查询'也是同样的要求……点开 tab 之后不需要我再单独打开一个独立的 URL」）：
+  //    ① 去掉「独立打开实时库存」——点 tab 直接就是查询界面；
+  //    ② 去掉原来顶部那个「库存手工调整」按钮 —— 它和下面那张卡片**去的是同一个页面**
+  //       （重复入口，一次点击要面对两个一样的门），留卡片：卡片带用途说明 + 「进入 →」，
+  //       信息更全，也和「常用功能」里的那张卡片长得一致；
+  //    ③ 那张卡片**保留**，但挪到查询结果**下面** —— 这样点开 tab 第一眼就是查询界面
+  //       （子 tab + 过滤条 + 结果表），卡片仍在这一页里、不用回「常用功能」找。
   container.innerHTML = `
     <section class="panel">
-      <div class="panel-header"><div><h2>实时库存</h2><p class="subtitle">实时库存查询；手工调整在「常用功能 → 库存手工调整」</p></div><div class="header-actions"><a class="btn" href="/workbench/inventory.html">独立打开实时库存</a><a class="btn" href="/workbench/inventory-adjustment.html">库存手工调整</a><button class="btn" type="button" data-action="refresh">刷新数据</button></div></div>
-      <h3 class="section-title">库存操作入口</h3>
-      <div class="quick-entries inventory-entries">
-        <a class="entry-card" href="/workbench/inventory-adjustment.html">
-          <div class="icon">🧮</div><h3>库存手工调整</h3>
-          <p>盘点调整（改数量，可增可减）· 换季调整（门盒/样品 ↔ 仓库，数量不变）</p>
-          <div class="arrow">进入 →</div>
-        </a>
+      <div class="panel-lead">
+        <p class="page-hint">实时库存查询；手工调整见页面底部「库存手工调整」</p>
+        <button class="btn" type="button" data-action="refresh">刷新数据</button>
       </div>
       <div class="sub-tabs">
         <button class="sub-tab active" type="button" data-subtab="inventory-live">实时库存查询</button>
@@ -32,6 +35,14 @@ function renderShell(container, focused = false) {
       <div id="inventory-live-subpanel" class="sub-panel"><div class="section-loading">正在加载实时库存…</div></div>
       <div id="inventory-check-subpanel" class="sub-panel hidden"><div class="inline-placeholder"><h3>盘点记录</h3><p>盘点结果现在直接落成「库存流水」（变动数量为绝对值，增减看库存方向）。</p><span class="tag tag-info">流水即记录</span></div></div>
       <div id="inventory-adjust-subpanel" class="sub-panel hidden"><div class="inline-placeholder"><h3>库存调整记录</h3><p>每次手工调整都会写一条「库存流水」（数量变更记实际双数，状态变更记 0）；这一页还没接查询接口。</p><span class="tag tag-info">规划中</span></div></div>
+      <h3 class="section-title">库存操作入口</h3>
+      <div class="quick-entries inventory-entries">
+        <a class="entry-card" href="/workbench/inventory-adjustment.html">
+          <div class="icon">🧮</div><h3>库存手工调整</h3>
+          <p>盘点调整（改数量，可增可减）· 换季调整（门盒/样品 ↔ 仓库，数量不变）</p>
+          <div class="arrow">进入 →</div>
+        </a>
+      </div>
     </section>`;
 }
 
