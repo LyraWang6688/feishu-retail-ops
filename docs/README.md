@@ -20,7 +20,7 @@
 | [workbench-query-contract.md](workbench-query-contract.md) | 工作台查询接口契约 |
 | [sales-line-plan.md](sales-line-plan.md) | 销售线的推进计划与判据 |
 | [arrival-conversation-reconcile-2026-10-06.md](arrival-conversation-reconcile-2026-10-06.md) | 采购到货「群话题对话式核对」：业务负责人 2026-10-06 当天口述的**权威口径**与验收标准（**已实现**） |
-| [purchase-intake-batch-spec.md](purchase-intake-batch-spec.md) | ⭐ **采购提交的归批口径（业务口径 · 权威 · 已定）**：一次提交 = 一个行为（采购申请 或 采购退货）+ N 个编号 → **只出一张图**。⚠️ **口径已定，但代码尚未按此实现**（仍在用时间窗归批）；改造方案见第 3 节 |
+| [purchase-intake-batch-spec.md](purchase-intake-batch-spec.md) | ⭐ **采购提交的归批口径（业务口径 · 权威 · 已定）**：一次提交 = 一个行为（采购申请 或 采购退货）+ N 个编号（**= N 个不同货品**）→ **只出一张图**；⭐ **一个货品的多个尺码勾在同一条记录上，记录之间不合并数量**。⚠️ **口径已定，但代码尚未按此实现**（仍在用时间窗归批）；改造方案见第 3 节 |
 | [arrival-conversation-flow.md](arrival-conversation-flow.md) | ⚠️ **已作废**（同日被上一份取代）：早一版规格；正文按当时事实保留，**不要再按它实施** |
 
 ## 2. 架构决策记录（Architecture Decision Records）
@@ -41,7 +41,7 @@
 | 文档 | 性质 |
 |---|---|
 | [lark-agent-technical-design.md](lark-agent-technical-design.md) | 飞书 V1 原始设计基线；顶部标注了 Current implementation / Original design baseline / Future plan 的分区 |
-| [purchase-intake-batch-plan-2026-10-06.md](purchase-intake-batch-plan-2026-10-06.md) | ⚠️ **方案（未实施）**：把归批判据从「猜时间窗」改成「按飞书包裹里的新增条数到齐」＋超时兜底＋重试＋配置先行；**给业务负责人看的那一版**。配套口径见第 1 节 `purchase-intake-batch-spec.md` |
+| [purchase-intake-batch-plan-2026-10-06.md](purchase-intake-batch-plan-2026-10-06.md) | ⚠️ **方案（未实施）**：把归批判据从「猜时间窗」改成「**这一包进了链路的条目，处理动作都跑完就发图**」（**到齐就发 · 两层划分**）＋**读不到就重试 3 次（1 秒 → 2 秒）**＋配置先行；❌ **不设超时兜底、不考虑拆包**（她 2026-10-06 明确）。**给业务负责人看的那一版**。配套口径见第 1 节 `purchase-intake-batch-spec.md` |
 
 ## 4. 历史文档（Historical）
 
