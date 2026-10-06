@@ -27,15 +27,15 @@ export const PURCHASE_FORMS = [
   {
     id: 'purchase-request',
     icon: '🛒',
-    title: '采购报货',
-    desc: '提交采购报货（供应商报货）',
+    title: '报货',
+    desc: '供应商报货——填完直接生成报货单',
     url: PURCHASE_REQUEST_FORM_URL,
   },
   {
     id: 'purchase-return',
     icon: '↩️',
-    title: '采购退货',
-    desc: '把货退给供应商',
+    title: '退货',
+    desc: '把货退给供应商，填完直接生成退货单',
     url: PURCHASE_RETURN_FORM_URL,
   },
 ];
