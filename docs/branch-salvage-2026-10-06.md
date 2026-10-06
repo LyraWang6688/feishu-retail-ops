@@ -127,3 +127,27 @@ grep -rn "productCreationService\|purchaseReturnBatchWindow" server/src --includ
 # ④ PR 的最终状态（CLOSED？被谁取代？）
 gh pr list --state all --head <branch> --json number,state,title
 ```
+
+
+### 5.6 本地独有分支的最后提交（2026-10-06 清理时记录）
+
+这些分支**只在本机**、远端从来没有过（是 squash/重做式合并的产物，`git branch -d` 拒绝删）。
+业务负责人 2026-10-06 批准用 `-D` 清掉；**下面记下每条的最后提交，万一要找回有据可查**：
+
+| 分支 | tip | 最后提交 |
+| --- | --- | --- |
+| `· docs/confirmed-night2` | `31066f2` |  |
+| `· docs/procurement-e2e-status-sync` | `e94046c` |  |
+| `· feat/after-sales-thread` | `d533194` |  |
+| `· feat/arrival-conversation-flow` | `c68bfc4` |  |
+| `· feat/arrival-reconcile-rebased` | `5b60609` |  |
+| `· feat/return-batch-window-and-topic` | `6cf3be0` |  |
+| `· feat/sales-status-dimensions-write` | `602d8d6` |  |
+| `· feat/sales-status-write-backfill` | `3c1def3` |  |
+| `· + fix/complete-asking-honest-and-refund-method` | `` |  |
+| `· fix/purchase-schema-after-table-change` | `3b649e3` |  |
+| `· + fix/return-batch-test-race` | `` |  |
+| `· fix/sales-confirm-field-alias` | `7f8a9e3` |  |
+| `· fix/supplier-report-schema-align` | `1496e01` |  |
+
+> ⚠️ 它们的**内容已逐条确认在 main 里**（当年 squash/重做式合并）。
