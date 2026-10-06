@@ -296,6 +296,9 @@ class LarkMvpService {
       // 交付复用**本类那一个** SalesDeliveryService：全仓唯一的销售扣库存入口，
       // 与"第二次交付（点成交）"共用同一个串行队列，两个入口不会各扣一次库存。
       delivery: this.delivery,
+      // ⭐ 整单完成（她说「已完毕 / 成交」）复用**本类那一个** SecondDeliveryService：
+      //    点卡片「成交」按钮与她说这句话是同一件事，成交只有这一处实现。
+      secondDelivery: this.secondDelivery,
       config: options.threadProgressConfig,
       now: options.now,
       store: this.store,

@@ -441,7 +441,14 @@ class DoubaoService {
       const normalized = normalizeSalesResult(result, originalText, { vouchers });
       // For one shoe, the original words are authoritative for every gift,
       // even when the model recognizes only the first one.
-      if (normalized.items.length === 1) {
+      //
+      // ⚠️ 赠品归并**只对销售成立**：售后意图（return / exchange）的规范化结果里
+      //    **根本没有 items**（两套字段契约刻意不混装，见 normalizeAfterSalesResult）。
+      //    改动前这里直接读 normalized.items.length → TypeError → 被包成
+      //    「销售文字解析失败」→ 退货/换货任务永远 failed、出不了确认卡片。
+      //    所以判据是「意图 + 结构」两者都要：意图是语义（归并只属于销售），
+      //    Array.isArray 是结构兜底（any 规范化结果变了也不会再抛）。
+      if (normalized.intent === 'sale' && Array.isArray(normalized.items) && normalized.items.length === 1) {
         const gifts = explicitSingleShoeGifts(originalText);
         if (gifts.length) {
           normalized.items[0].gift = true;
