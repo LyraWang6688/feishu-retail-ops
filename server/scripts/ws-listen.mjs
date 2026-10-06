@@ -67,9 +67,20 @@ if (!testAppId || !testAppSecret) {
 // ⭐ 显式护栏：测试应用的 app_id 不得等于生产应用的 app_id。
 //    只与环境变量比较（生产取值以线上 .env 为准），**不硬编码生产 app_id**。
 const productionAppId = String(process.env.LARK_AGENT_APP_ID || '').trim();
-if (productionAppId && testAppId === productionAppId) {
+// ⚠️ 本机可能【只有一个测试应用】：项目代码只读 LARK_AGENT_*，本机跑自测必须把它填成测试应用，
+//    于是 LARK_TEST_APP_ID 与 LARK_AGENT_APP_ID 指向同一个（测试）应用 —— 那不是"连生产"。
+//    但**默认仍然拒绝**：只有【显式】声明"我知道它们是同一个、而它是测试应用"时才放行。
+const allowSameApp = /^(1|true|yes|on)$/i.test(String(process.env.WS_LISTEN_ALLOW_SAME_APP || '').trim());
+if (productionAppId && testAppId === productionAppId && !allowSameApp) {
   console.error('❌ 拒绝运行：LARK_TEST_APP_ID 与生产应用 LARK_AGENT_APP_ID 相同——这不是测试应用，禁止用长连接连生产。');
+  console.error('   若本机只有一个测试应用（已确认它不是生产应用），可设 WS_LISTEN_ALLOW_SAME_APP=true 放行。');
   process.exit(1);
+}
+if (productionAppId && testAppId === productionAppId && allowSameApp) {
+  console.log('⚠️ 已按 WS_LISTEN_ALLOW_SAME_APP=true 放行：两个变量指向同一个应用。');
+  console.log('   ⚠️ 请自行确认它确实是【测试应用】，且 .env 指向的是【测试 Base】。');
+  console.log(`   Base 归属自检：FEISHU_TARGET_ENV=${process.env.FEISHU_TARGET_ENV || '(未配)'} ` +
+    `V1_BASE==E2E_TEST_BASE=${String(process.env.FEISHU_V1_BITABLE_APP_TOKEN || '') === String(process.env.FEISHU_V1_E2E_TEST_APP_TOKEN || '')}`);
 }
 
 const appId = testAppId;
