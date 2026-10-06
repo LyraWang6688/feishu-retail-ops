@@ -148,11 +148,40 @@ class SaleLookupService {
     const productsById = new Map(products.map((record) => [record.record_id, record]));
     const entriesById = new Map(entries.map((record) => [record.record_id, record]));
 
-    // 判据一：销售主表.订单状态 = 已退货 / 部分退货
+    // 判据一：销售主表「订单状态」= 已退货 / 部分退货 → 整单排除。
+    //
+    // ⚠️ **取不到值时保守当成"退过"**（2026-10-06 定的口径）：
+    //    查单只用来"再退一次"，判错了的代价不对称 ——
+    //      · 少列一笔：她少看到一个候选，还能用别的办法查；
+    //      · 多列一笔已经退过的：**重复退货**，是要担责的事故。
+    //    所以判不出来时一律往安全那边倒：排除 + 留一条 logWarn 供排查。
+    //
+    // ⚠️ 为什么空值还要看「销售状态」这一个例外：
+    //    「销售状态」（未写入 / 部分写入 / 已写入 / 写入失败）是**每次入账都会写的新字段**，
+    //    它有值就说明"这一单确实被记过、不是一张来历不明的空单"。
+    //    新链路正在逐步**停写旧的「订单状态」**，若只认旧字段，将来每一张新单子
+    //    都会因为"旧字段空"被判成退过 —— 那不是保守，是把整个查单关掉。
+    //    两个都取不到 = 对这张单**没有任何可用信号** → 才走保守排除。
+    //
+    // TODO(2026-10-06)：这一列以后要迁到「销售状态」，并在**售后退货时补一个写入方**
+    //   （把「销售状态」写成 已退货 / 部分退货）。到那时判据一直接读「销售状态」，
+    //   这里的两段式取值与"空值保守"都可以删掉。
     const returnedOrderIds = new Set();
     for (const entry of entries) {
-      if (isReturnedOrderStatus(asText(this.schema, 'salesEntry', entry, 'orderStatus'))) {
+      const orderStatus = asText(this.schema, 'salesEntry', entry, 'orderStatus');
+      const salesStatus = asText(this.schema, 'salesEntry', entry, 'sales');
+      if (isReturnedOrderStatus(orderStatus)) {
         returnedOrderIds.add(entry.record_id);
+        continue;
+      }
+      if (!orderStatus && !salesStatus) {
+        returnedOrderIds.add(entry.record_id);
+        logWarn('sale_lookup.returned_status.missing', {
+          sales_entry_record_id: entry.record_id,
+          sales_order_no: asText(this.schema, 'salesEntry', entry, 'orderNo'),
+          treated_as: 'returned',
+          reason: '既没有「订单状态」也没有「销售状态」，无法判断是否退过，保守排除',
+        });
       }
     }
     // 判据二：销售明细里已有「交易类型」= 销售退货的行 → 它所属的整单都排除。
