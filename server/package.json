@@ -1,6 +1,6 @@
 {
   "name": "feishu-retail-ops-server",
-  "version": "1.0.0",
+  "version": "0.3.0",
   "description": "Feishu V1 backend for feishu-retail-ops: sales, purchase, inventory and workbench",
   "main": "src/app.js",
   "scripts": {
