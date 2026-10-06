@@ -133,7 +133,7 @@ const V1_BITABLE_SCHEMA = {
         // Automatic creation time: read-only fallback for workbench date filters.
         recordedAt: '录单日',
         parseStatus: '解析状态',
-        confirmStatus: '确认状态',
+        confirmStatus: '确认状态（旧）',
         parseSummary: '解析结果摘要',
         failureReason: '失败原因',
         orderStatus: '订单状态',
