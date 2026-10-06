@@ -59,28 +59,29 @@ const createLarkEventHandlers = (service, { heartbeat } = {}) => ({
       card_message_id: event?.context?.open_message_id || event?.open_message_id,
       operator_open_id: openId,
     });
+    // ⭐ 卡片动作**不再额外发一条私聊文字**（业务负责人 2026-10-06：「我们的消息卡片会变化啊！」）。
+    //
+    // 「点按钮后必须回一个响应」这条飞书要求由**两个东西**一起满足，两个都在，所以那条
+    // 私聊文字是多余的（而且正是"私聊专属"的最后一处卡片动作出口）：
+    //   ① 同步响应 —— 本 handler 的返回值（下面那句 `return { toast: … }`），飞书要求必须回；
+    //   ② 业务结果 —— `handleCardAction` 内部对**那张卡片本身**的更新（updateInteractiveCard），
+    //      也就是她说的"卡片会变化"。她要看到的结果在卡片上，不在私聊里。
+    //
+    // ⚠️ 删除的**只是那条 `sendText(operator_open_id, toast)`**，不是整个响应：
+    //    卡片更新与同步 toast 都原样保留（回归用例把调用次数钉死：卡片更新 1 次 / 私聊发送 0 次）。
+    // ⚠️ 顺带的好处：这条路由路径**不再认识 `operator_open_id` 作为收件人**——
+    //    私聊入口整条删掉时，这里不需要跟着改。
     setImmediate(async () => {
-      let result;
       try {
-        result = await service.handleCardAction(event, { interactionId });
+        const result = await service.handleCardAction(event, { interactionId });
         logInfo('lark.card.handled', { interaction_id: interactionId, action: value.action,
           draft_id: value.draft_id, outcome: result?.toast?.type || 'unknown',
           result: result?.toast?.content });
       } catch (error) {
+        // 失败只记日志：不给她发私聊失败提示（同上——结果反馈在卡片上），
+        // 但**同步响应照旧**（handler 早就 return 了），所以点击方不会觉得"点不动"。
         logError('lark.mvp.card.failed', { interaction_id: interactionId, action: value.action,
           draft_id: value.draft_id, error: error.message });
-        result = { toast: { type: 'error', content: `操作失败：${error.message}` } };
-      }
-      const message = result?.toast?.content;
-      if (message && openId) {
-        try {
-          await service.sendText(openId, message);
-          logInfo('lark.card.feedback.sent', { interaction_id: interactionId, action: value.action,
-            draft_id: value.draft_id, outcome: result?.toast?.type });
-        } catch (error) {
-          logWarn('lark.card.feedback.failed', { interaction_id: interactionId, action: value.action,
-            draft_id: value.draft_id, outcome: result?.toast?.type, error: error.message });
-        }
       }
     });
     return { toast: { type: 'info', content: '已收到，正在处理' } };
