@@ -9,6 +9,9 @@ const {
   SALES_STATUS_FIELDS,
   LEGACY_SALES_STATUS_FIELDS,
   SALES_STATUS_VALUE_DOMAINS,
+  SALES_STATUS_WRITE_VALUES,
+  POSTED_VALUES,
+  isPosted,
   postedOf,
   userActionOf,
   salesStatusOf,
@@ -77,7 +80,7 @@ test('userActionOf / salesStatusOf：同样双读（新字段优先，空则退�
 
 test('stockStatusOf：新「库存状态」（这一维今天没有旧字段可退回）', () => {
   const fields = V1_BITABLE_SCHEMA.tables.salesEntry.fields;
-  assert.equal(stockStatusOf(entry({ 库存状态: '已扣减' }), fields), '已扣减');
+  assert.equal(stockStatusOf(entry({ 库存状态: '已写入' }), fields), '已写入');
   assert.equal(stockStatusOf(entry({ '确认状态（旧）': '已入账' }), fields), '');
   assert.equal(stockStatusOf(entry({ 库存状态: '  ' }), fields), '');
 });
@@ -87,10 +90,41 @@ test('textOf 与 gateway.textValue 同义（配置层零依赖，不能悄悄换
   for (const sample of samples) assert.equal(textOf(sample), textValue(sample), String(sample));
 });
 
-test('建议值域：四个维度都非空，且资金状态里必须有「已入账」（判据的口径）', () => {
-  for (const [key, values] of Object.entries(SALES_STATUS_VALUE_DOMAINS)) {
-    assert.ok(Array.isArray(values) && values.length, `${key} 值域不能为空`);
+test('值域：就是业务负责人 2026-10-06 拍板的那四组（逐字钉死）', () => {
+  assert.deepEqual(SALES_STATUS_VALUE_DOMAINS, {
+    userAction: ['未确认', '已确认', '已取消', '待修改'],
+    sales: ['未写入', '部分写入', '已写入', '写入失败'],
+    funds: ['未写入', '已写入', '写入失败'],
+    stock: ['未写入', '部分写入', '已写入', '写入失败'],
+  });
+});
+
+test('代码要写的每一个值都落在同一维度的值域里（改一处忘另一处，这里当场红）', () => {
+  for (const [dimension, values] of Object.entries(SALES_STATUS_WRITE_VALUES)) {
+    const domain = SALES_STATUS_VALUE_DOMAINS[dimension];
+    assert.ok(Array.isArray(domain) && domain.length, `${dimension} 没有值域`);
+    for (const [name, value] of Object.entries(values)) {
+      assert.ok(domain.includes(value), `${dimension}.${name}='${value}' 不在值域里`);
+    }
   }
-  assert.ok(SALES_STATUS_VALUE_DOMAINS.funds.includes('已入账'));
-  assert.ok(SALES_STATUS_VALUE_DOMAINS.userAction.includes('待确认'));
+});
+
+test('⭐ 两代字面量：已入账（旧）与已写入（新）都算「账做完了」，别的都不算', () => {
+  const fields = V1_BITABLE_SCHEMA.tables.salesEntry.fields;
+  assert.deepEqual(POSTED_VALUES, ['已入账', '已写入']);
+  assert.equal(isPosted('已入账'), true);
+  assert.equal(isPosted('已写入'), true);
+  // 单元格里多一个空格是同一个事实：不能因此把闸门关掉（本次事故的失败形状）。
+  assert.equal(isPosted(' 已写入 '), true);
+  assert.equal(isPosted('未写入'), false);
+  assert.equal(isPosted('部分写入'), false);
+  assert.equal(isPosted('写入失败'), false);
+  assert.equal(isPosted(''), false);
+  assert.equal(isPosted(undefined), false);
+  // 6 处闸门的真实写法：isPosted(postedOf(...))
+  assert.equal(isPosted(postedOf(entry({ '确认状态（旧）': '已入账' }), fields)), true);
+  assert.equal(isPosted(postedOf(entry({ 资金状态: '已写入' }), fields)), true);
+  assert.equal(isPosted(postedOf(entry({ 资金状态: '未写入' }), fields)), false);
+  // 资金状态有值（未写入）时**不许**退回旧字段的「已入账」
+  assert.equal(isPosted(postedOf(entry({ 资金状态: '未写入', '确认状态（旧）': '已入账' }), fields)), false);
 });

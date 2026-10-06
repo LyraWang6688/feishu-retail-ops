@@ -375,3 +375,53 @@ test('退货/换货的占位入口已删除：真执行在 AfterSalesFlowService
   assert.equal(service.gateway.update, undefined);
   assert.equal(service.gateway.delete, undefined);
 });
+
+// ── C：保守处理（2026-10-06）──────────────────────────────────────────────────
+// 背景：「订单状态」正在退场（销售链路不再写它，她之后会删这一列）。
+// 取不到值（这一列给不出任何信息）时**保守当成"退过"**：宁可少给她一条候选，
+// 也不能把"可能已经退过"的单再拿出来退一次。但**新单不能因此消失**——
+// 新单的「订单状态」本来就没人写，它的「销售状态」有值（= 这笔单我们认识）。
+
+test('⭐ 保守：订单状态空、销售状态也空 → 当成"退过"，整单排除（+ logWarn）', async () => {
+  const { service } = await makeService({
+    products: [productRow('p1', '6035', '黑')],
+    entries: [
+      { record_id: 'e_known', fields: { 销售单号: 'XSD-KNOWN', 录单日: daysAgo(0), 订单状态: '已完成' } },
+      // 两个维度都空：这单退没退过，表里没有任何依据。
+      { record_id: 'e_unknown', fields: { 销售单号: 'XSD-UNKNOWN', 录单日: daysAgo(0) } },
+    ],
+    details: [
+      detailRow({ id: 'd_known', orderId: 'e_known', productId: 'p1' }),
+      detailRow({ id: 'd_unknown', orderId: 'e_unknown', productId: 'p1' }),
+    ],
+  });
+  const candidates = await service.findCandidates({ itemNo: '6035', color: '黑' });
+  assert.deepEqual(candidates.map((row) => row.record_id), ['d_known']);
+});
+
+test('⭐ 新单（订单状态空、销售状态=已写入）**不**被保守规则排除', async () => {
+  const { service } = await makeService({
+    products: [productRow('p1', '6035', '黑')],
+    entries: [
+      // 这就是本次改动之后每一条新单的样子：旧列没人写了，新列有值。
+      { record_id: 'e_new', fields: { 销售单号: 'XSD-NEW', 录单日: daysAgo(0), 销售状态: '已写入' } },
+    ],
+    details: [detailRow({ id: 'd_new', orderId: 'e_new', productId: 'p1' })],
+  });
+  const candidates = await service.findCandidates({ itemNo: '6035', color: '黑' });
+  assert.deepEqual(candidates.map((row) => row.record_id), ['d_new']);
+});
+
+test('保守规则不吃掉判据本体：订单状态=已退货 仍然排除', async () => {
+  const { service } = await makeService({
+    products: [productRow('p1', '6035', '黑')],
+    entries: [
+      { record_id: 'e_back', fields: {
+        销售单号: 'XSD-BACK', 录单日: daysAgo(0), 订单状态: '已退货', 销售状态: '已写入',
+      } },
+    ],
+    details: [detailRow({ id: 'd_back', orderId: 'e_back', productId: 'p1' })],
+  });
+  const candidates = await service.findCandidates({ itemNo: '6035', color: '黑' });
+  assert.deepEqual(candidates, []);
+});

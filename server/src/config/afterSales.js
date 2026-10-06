@@ -174,10 +174,12 @@ const afterSalesOperationId = ({ taskId, originalSalesEntryRecordId, action, ori
 
 const readAfterSalesConfig = () => ({
   moneyDirections: AFTER_SALES_MONEY_DIRECTIONS,
-  // 新主表的解析 / 确认状态：走与销售链路**同一套取值**（larkMvpService 里用的那几个），
-  // 不自创新词。售后是用户确认后直接执行的，所以直接落在终态上。
+  // 新主表的解析状态：走与销售链路**同一套取值**（larkMvpService 里用的那个），不自创新词。
   masterParseStatus: '解析成功',
-  masterConfirmStatus: '已入账',
+  // ⚠️ 这里**曾经**有一个 masterConfirmStatus: '已入账' —— 2026-10-06 起售后主表**停写**
+  //    旧的「确认状态（旧）」，四个状态维度的名字与取值统一由
+  //    `config/salesStatusDimensions.js`（SALES_STATUS_FIELDS / SALES_STATUS_WRITE_VALUES）
+  //    提供，售后主表写 userAction=已确认 + sales/funds=未写入（见 afterSalesService.ensureMaster）。
   // 收款明细：钱真收/真退之后就是已收款；退款在业务上也用同一个"已结清"口径。
   cashPaymentStatus: '已收款',
   // 客户往来货款：这一次变动的类型（表的选项里已有「退货退款」）。

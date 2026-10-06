@@ -59,6 +59,8 @@ const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { withSalesReadRetry } = require('./salesReadRetry');
 const { cents } = require('./salesProgressService');
+const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
+const { SalesStatusWriter } = require('./salesStatusWriter');
 const { logInfo, logWarn } = require('../utils/logger');
 
 const DEFAULT_STORE_DIR = path.join(__dirname, '../../data/after_sales_operations');
@@ -135,6 +137,8 @@ class AfterSalesService {
       sizeReferences: options.sizeReferences,
     });
     this.queues = options.queues || new KeyedSerialQueue();
+    // 四个状态维度的唯一写入口（名字与取值都在 config/salesStatusDimensions）。
+    this.status = options.status || new SalesStatusWriter({ gateway: this.gateway });
     this.now = options.now || (() => Date.now());
     this.creditSchemaValidated = null;
   }
@@ -303,7 +307,20 @@ class AfterSalesService {
     const rows = await this.ensureDetailRows(request, plan, master, progress);
     const originalDetailIdsMarked = await this.markOriginalDetails(spec, original, progress);
     const money = await this.settleMoney(request, original, master, progress);
-    const stock = await this.applyStock(request, spec, plan);
+    // 「库存状态」：售后的回补 / 出库也走同一个维度。
+    // ⚠️ applyStock 是**要么全成、要么抛**（它不逐条收集失败），所以这里只会出现
+    //    「已扣减 / 扣减失败」两档；「部分扣减」在这一条链路上不会出现（不假装有）。
+    let stock;
+    try {
+      stock = await this.applyStock(request, spec, plan);
+    } catch (error) {
+      await this.status.write(master.recordId, { stock: WRITE.stock.failed });
+      throw error;
+    }
+    // 走到这里 = 主表 / 明细 / 钱 / 库存四件事都落完了 → 三个维度一起收口。
+    await this.status.write(master.recordId, {
+      sales: WRITE.sales.done, funds: WRITE.funds.done, stock: WRITE.stock.done,
+    });
 
     const result = {
       action: request.action,
@@ -406,7 +423,14 @@ class AfterSalesService {
       // 售后沿用原单号，不生成新号（退货/换货不建新单）。
       orderNo: request.originalSalesOrderNo,
       parseStatus: this.config.masterParseStatus,
-      confirmStatus: this.config.masterConfirmStatus,
+      // 「确认状态」（用户那一维）：售后主表**只在她点过卡片「确认」之后**才会被创建
+      // （execute 只从 AfterSalesFlowService 的确认动作进来），所以那一刻记为「已确认」。
+      // ⚠️ 不写「未确认」：这张卡已经点过了，写「未确认」会让它永远停在"等她确认"上。
+      // 「销售状态 / 资金状态」此刻一个字都还没写（明细 / 退款在后面几步）→ 未写入。
+      // ⚠️ 旧「确认状态（旧）」从这次起**停写**。
+      userAction: WRITE.userAction.confirmed,
+      sales: WRITE.sales.none,
+      funds: WRITE.funds.none,
       tradeType: relation(behavior.recordId),
       ...(request.operatorOpenId ? { sender: person(request.operatorOpenId) } : {}),
     });

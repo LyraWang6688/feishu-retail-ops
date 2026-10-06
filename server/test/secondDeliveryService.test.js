@@ -140,8 +140,11 @@ test('未付单点「成交」：只补收款，库存与明细履约状态一�
   // ③ 明细履约状态没被重写（本来就是已交付，不重复交付）。
   assert.equal(gateway.writes.filter((write) => write.table === 'salesDetail').length, 0);
   assert.equal(gateway.records.get('salesDetail')[0].fields['履约状态'], '已交付');
-  // ④ 钱货都齐了，主表订单状态同步成已完成。
-  assert.equal(gateway.records.get('salesEntry')[0].fields['订单状态'], '已完成');
+  // ④ 钱货都齐了 —— 但「订单状态」**已经不写了**（2026-10-06 起 salesProgressService 只算不写，
+  //    这一列留给查单链路的判据一，她之后会删）。所以它保持录单时的「已确认」，不是「已完成」。
+  assert.equal(gateway.records.get('salesEntry')[0].fields['订单状态'], '已确认');
+  // 取而代之：进度写在新的状态维度上（这一步只补收款，没有交付 → 库存状态不该被写）。
+  assert.equal(gateway.records.get('salesEntry')[0].fields['库存状态'], undefined);
   assert.equal(result.delivery, null, '未付单不该走交付');
 });
 

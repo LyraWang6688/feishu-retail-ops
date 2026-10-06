@@ -13,11 +13,11 @@
 //    调用点只换「取值来源」，判据与文案一个字都不改。
 //
 // ⭐ 这一层**只做取值，不做任何业务判断**：
-//    「是不是已入账」这类判据仍写在调用点（`postedOf(...) !== '已入账'`），
-//    所以「新字段还空着」时行为与改名之前**逐字一致**。
+//    「是不是账做完了」这个判据由调用点用 `isPosted(postedOf(...))` 表达
+//    （判据本体也在本文件里：POSTED_VALUES —— 两代字面量）。
 //
-// ⚠️ 值域（SALES_STATUS_VALUE_DOMAINS）是**建议值**：业务负责人还没有最终拍板，
-//    先按建议写在这里、标「待她确认」。她定了之后只改这一个文件。
+// ⭐ 值域（SALES_STATUS_VALUE_DOMAINS）已由业务负责人 2026-10-06 **最终拍板**（逐字）。
+//    代码要**写**的值在 SALES_STATUS_WRITE_VALUES（同一文件，配置驱动）。
 //
 // ⚠️ 本模块必须保持**纯函数、零依赖**（config 层不引 service，避免把飞书 SDK
 //    拖进任何读配置的地方）。所以下面 textOf 是 v1BitableGateway.textValue 的同义实现，
@@ -49,12 +49,45 @@ const LEGACY_SALES_STATUS_FIELDS = Object.freeze({
   legacyOrder: '订单状态',
 });
 
-// 建议值域（待业务负责人确认）。
+// 值域 —— **业务负责人 2026-10-06 最终拍板，逐字**（「按上面每列各自的说法」）。
+// ⚠️ 这四组是**口径**，不是建议：改它们等于改产品定义，必须她点头。
+//   · 确认状态 ← **用户**（卡片操作）
+//   · 销售状态 / 资金状态 ← 代码写入的进度
+//   · 库存状态 ← 库存流水 ＋ 实时库存
+// （表里的**选项**由她自己加：测试表随便写，生产表等她加完再写。）
 const SALES_STATUS_VALUE_DOMAINS = Object.freeze({
-  userAction: Object.freeze(['待确认', '已确认', '已取消', '待修改']),
-  funds: Object.freeze(['待入账', '入账中', '已入账', '入账失败']),
-  sales: Object.freeze(['未交付', '部分交付', '已交付', '已完成', '已退货', '部分退货']),
-  stock: Object.freeze(['未扣减', '部分扣减', '已扣减']),
+  userAction: Object.freeze(['未确认', '已确认', '已取消', '待修改']),
+  sales: Object.freeze(['未写入', '部分写入', '已写入', '写入失败']),
+  funds: Object.freeze(['未写入', '已写入', '写入失败']),
+  stock: Object.freeze(['未写入', '部分写入', '已写入', '写入失败']),
+});
+
+// ⭐⭐「账做完了没有」= **两代字面量都算做完**（裁决 2026-10-06 明确）。
+//   · 旧代：76 条历史单子把「已入账」写在**「确认状态（旧）」**里；
+//   · 新代：从这次起，代码把**「已写入」**写在**「资金状态」**里。
+// 🔴 只认其中一代，就会重演 2026-10-06 那次「闸门静默全关」：
+//    新单资金状态写「已写入」，而判据若是 `=== '已入账'` → `'已写入' !== '已入账'` → 闸门立刻关。
+// ⚠️ 6 处闸门**一律**写 `isPosted(postedOf(...))`，**不许再各自散落字面量**。
+// ⚠️ 这里 trim：单元格里多一个空格是同一个事实，不能因此把闸门关掉
+//    （这正是本次事故的失败形状：判据读不到"它认识的那个字符串"就静默关闸）。
+const POSTED_VALUES = Object.freeze(['已入账', '已写入']);
+const isPosted = (value) => POSTED_VALUES.includes(textOf(value).trim());
+
+// 代码**写**的值（配置驱动 —— 不许把这些字符串散落到各个 service 里）。
+// 每一组都必须落在上面同一维度的值域内（salesStatusDimensions.test.js 钉住这条）。
+const SALES_STATUS_WRITE_VALUES = Object.freeze({
+  userAction: Object.freeze({
+    pending: '未确认', confirmed: '已确认', cancelled: '已取消', toModify: '待修改',
+  }),
+  sales: Object.freeze({
+    none: '未写入', partial: '部分写入', done: '已写入', failed: '写入失败',
+  }),
+  funds: Object.freeze({
+    none: '未写入', done: '已写入', failed: '写入失败',
+  }),
+  stock: Object.freeze({
+    none: '未写入', partial: '部分写入', done: '已写入', failed: '写入失败',
+  }),
 });
 
 // 「空」= 取不到、空串、或只有空白。⚠️ 用 trim 判断是为了**多读一层兜底**：
@@ -137,6 +170,9 @@ module.exports = {
   SALES_STATUS_FIELDS,
   LEGACY_SALES_STATUS_FIELDS,
   SALES_STATUS_VALUE_DOMAINS,
+  SALES_STATUS_WRITE_VALUES,
+  POSTED_VALUES,
+  isPosted,
   postedOf,
   userActionOf,
   salesStatusOf,

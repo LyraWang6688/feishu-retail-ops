@@ -6,6 +6,8 @@ const { PaymentService } = require('./paymentService');
 const { SalesProgressService, cents } = require('./salesProgressService');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { sellableKindOf } = require('../config/sellableKinds');
+const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
+const { SalesStatusWriter } = require('./salesStatusWriter');
 const { logInfo, logError } = require('../utils/logger');
 
 const positiveInteger = (value, label) => {
@@ -15,12 +17,14 @@ const positiveInteger = (value, label) => {
 };
 
 class SalesOrderService {
-  constructor({ gateway, references, payments, progress, sizeReferences } = {}) {
+  constructor({ gateway, references, payments, progress, sizeReferences, status } = {}) {
     if (!gateway) throw new Error('SalesOrderService requires gateway');
     this.gateway = gateway;
     this.references = references || new V1ReferenceResolver(gateway);
     this.payments = payments || new PaymentService({ gateway, references: this.references });
     this.progress = progress || new SalesProgressService({ gateway });
+    // 四个状态维度的唯一写入口（名字与取值都在 config/salesStatusDimensions）。
+    this.status = status || new SalesStatusWriter({ gateway });
     // 「尺码」已改为关联「尺码管理」：写入前要解析出关联记录，幂等比对也要按关联记录比。
     this.getSizeReferences = createSizeReferenceAccess({ gateway: this.gateway, sizeReferences });
     this.queue = Promise.resolve();
@@ -37,10 +41,21 @@ class SalesOrderService {
     if (!salesEntryRecordId) throw new Error('缺少销售主表 record_id');
     if (!Array.isArray(input.items) || !input.items.length) throw new Error('至少需要一条销售明细');
     await this.gateway.validateTables?.(['product', 'paymentMethod', 'salesEntry', 'salesDetail', 'paymentRecord']);
-    await this.gateway.update('salesEntry', salesEntryRecordId, { confirmStatus: '入账中', failureReason: '' });
+    // 「入账中」搬到新的四个维度字段上（旧「确认状态（旧）」停写）：
+    //   · 销售状态 = 未写入（销售明细还没开始写）
+    //   · 资金状态 = 未写入（收款明细还没开始写）
+    // 这两列**非空**，所以读那一侧的「新字段优先」会以它们为准，不会误退回旧字段。
+    await this.gateway.update('salesEntry', salesEntryRecordId, { failureReason: '' });
+    await this.status.write(salesEntryRecordId, {
+      sales: WRITE.sales.none, funds: WRITE.funds.none,
+    });
     // A previous attempt may have completed all detail/receipt writes before a read failed.
     // The persisted task is the source of that stage on the next card callback.
     let financialRecorded = input.knownFinancialComplete === true;
+    // 进度计数的口径：明细/收款**各写成功几条**（失败时用来区分"部分写入"和"全败"）。
+    // 放在 try 外面，catch 里才能读到。
+    let detailPlan = 0;
+    let detailsPersisted = 0;
     try {
       // 销售明细的「交易类型」必须和「销售主表」保持一致（业务负责人口径）：
       // 明细行的数量记的都是正数，退货 / 换货只能靠「交易类型」表明这一行的方向，
@@ -128,6 +143,7 @@ class SalesOrderService {
       if (existing.some((record) => !used.has(record.record_id))) {
         throw new Error('销售主表已有与当前草稿不一致的明细，已停止自动重试');
       }
+      detailPlan = rows.length;
       for (const row of rows) {
         if (!row.recordId) {
           const created = await this.gateway.create('salesDetail', {
@@ -142,8 +158,12 @@ class SalesOrderService {
           });
           row.recordId = created.recordId;
         }
+        detailsPersisted += 1;
         await input.onRecordPersisted?.('details', row.index, row.recordId);
       }
+      // 「货」这一维写完了（收款还没开始）：先落「已写入」，这样后面收款失败时
+      // 她也能从表里一眼看出"明细是好的、坏在钱那一列"。
+      await this.status.write(salesEntryRecordId, { sales: WRITE.sales.done });
       const detailRecordIds = rows.map((row) => row.recordId);
       const outstandingCents = totalCents - paidCents;
       // 未收款只在**她明说欠**时才补（业务负责人口径：「如果用户说欠多少钱，你再做欠款，
@@ -163,9 +183,9 @@ class SalesOrderService {
         onRecordPersisted: (index, id) => input.onRecordPersisted?.('payments', index, id),
       });
       financialRecorded = true;
-      await this.gateway.update('salesEntry', salesEntryRecordId, {
-        confirmStatus: '已入账',
-      });
+      // 「钱」这一维写完了。⚠️ 这正是 6 处闸门判据读的那一列：
+      // 闸门认的是**两代字面量**（旧「已入账」/ 新「已写入」），见 config/salesStatusDimensions。
+      await this.status.write(salesEntryRecordId, { funds: WRITE.funds.done });
       await this.progress.sync(salesEntryRecordId, { detailRecordIds, paymentRecordIds });
       const order = await withSalesReadRetry(
         () => this.gateway.get('salesEntry', salesEntryRecordId), 'sale_entry_by_id',
@@ -176,8 +196,17 @@ class SalesOrderService {
       return { sourceNo, detailRecordIds, paymentRecordIds, inventoryApplied: false };
     } catch (error) {
       error.saleRecordsWritten = financialRecorded;
+      // 失败时把两个维度写到**它能被看懂的那一档**：
+      //   · 销售状态：没开始写 = 未写入；写了但没写全 = 部分写入；全写上了 = 已写入；一条都没成 = 写入失败
+      //   · 资金状态：收款明细全部记上了 = 已写入；否则 = 写入失败（这一维的值域里没有"部分"）
+      const salesStatus = detailPlan === 0 ? WRITE.sales.none
+        : detailsPersisted === 0 ? WRITE.sales.failed
+          : detailsPersisted >= detailPlan ? WRITE.sales.done : WRITE.sales.partial;
+      await this.status.write(salesEntryRecordId, {
+        sales: salesStatus,
+        funds: financialRecorded ? WRITE.funds.done : WRITE.funds.failed,
+      });
       await this.gateway.update('salesEntry', salesEntryRecordId, {
-        confirmStatus: financialRecorded ? '已入账' : '入账失败',
         failureReason: financialRecorded ? `销售记录已写入，后续同步待恢复：${error.message}` : error.message,
       }).catch(() => undefined);
       logError(financialRecorded ? 'v1.sale.sync_pending' : 'v1.sale.post_failed', {

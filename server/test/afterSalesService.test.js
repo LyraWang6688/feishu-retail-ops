@@ -276,7 +276,14 @@ test('退货（cash 退款）：六处写入各一次，原主表一字未动，
   assert.equal(masters[0].fields['原话'], '把那双 A100 退了，鞋没穿过');
   assert.equal(masters[0].fields['销售单号'], ORDER_NO);
   assert.equal(masters[0].fields['解析状态'], '解析成功');
-  assert.equal(masters[0].fields['确认状态（旧）'], '已入账');
+  // 2026-10-06 起：旧「确认状态（旧）」**停写**；四个状态维度接管。
+  // 售后主表只在她点过卡片「确认」之后才会被创建 → 「确认状态」= 已确认；
+  // 明细 / 钱 / 库存随后都成功了 → 另外三维都是终态。
+  assert.equal(masters[0].fields['确认状态（旧）'], undefined);
+  assert.equal(masters[0].fields['确认状态'], '已确认');
+  assert.equal(masters[0].fields['销售状态'], '已写入');
+  assert.equal(masters[0].fields['资金状态'], '已写入');
+  assert.equal(masters[0].fields['库存状态'], '已扣减');
   assert.deepEqual(masters[0].fields['交易类型'], ['behavior_return']);
 
   // 2) 新「销售明细」：交易类型=行为 · 销售单号=原主表 · 成交金额=正数
@@ -331,7 +338,11 @@ test('退货（cash 退款）：六处写入各一次，原主表一字未动，
   assert.deepEqual(gateway.writes.create, {
     salesEntry: 1, salesDetail: 1, paymentRecord: 1, inventoryLedger: 1, liveInventory: 1,
   });
-  assert.deepEqual(gateway.writes.update, { salesDetail: 1 });
+  assert.deepEqual(gateway.writes.update, { salesDetail: 1, salesEntry: 1 });
+  // ⚠️ salesEntry 那一次 update 是 2026-10-06 新加的：把四个状态维度收口
+  //    （确认状态=已确认 / 销售状态=已写入 / 资金状态=已写入 / 库存状态=已扣减）。
+  //    它**不写**旧「确认状态（旧）」，所以"原主表一字未动"那条断言仍然成立——
+  //    那里说的"原主表"是**被她退的那一张**（order_old），不是新建的这张。
   assert.deepEqual(gateway.writes.delete, {});
   // 本地闸门：记下"这一次做过"，并记住每个阶段的 record_id
   const progress = await service.store.get(result.operationId);

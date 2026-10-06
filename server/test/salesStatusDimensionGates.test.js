@@ -1,10 +1,17 @@
-// 6 处闸门的「双读」验收：新字段（「资金状态」）为空时，行为必须与改名之前**逐字一致**
-// ——也就是逐字退回旧「确认状态（旧）」；新字段有值时以新字段为准。
+// 6 处闸门的验收（两条都要）：
 //
-// 每一处闸门一条测试，每条都跑三种输入：
-//   ① 只有旧字段（= 今天的生产状态）→ 与今天等价
-//   ② 只有新字段（将来她开始用新字段）→ 用新字段
-//   ③ 两个都空 → 与今天一样关闸
+// ① **双读**：新字段（「资金状态」）为空时，行为必须与改名之前**逐字一致**
+//    ——逐字退回旧「确认状态（旧）」；新字段有值时以新字段为准。
+// ② ⭐ **两代字面量兼容**：判据是 `isPosted(postedOf(...))`，而
+//    「账做完了」= **`已入账`（旧代，历史 76 条）或 `已写入`（新代，代码现在写的）**。
+//    ⚠️ 只认其中一代就会重演 2026-10-06 那次「闸门静默全关」。
+//
+// 每一处闸门一条测试，每条都跑这些输入：
+//   ① 只有旧字段（= 今天历史单子的状态）→ 与今天等价
+//   ② 新字段 = 已入账（旧字面量写在新列里）→ 放行
+//   ③ 新字段 = 已写入（**新字面量**，代码现在写的就是它）→ 放行
+//   ④ 新字段 = 未写入 / 写入失败 → 关闸
+//   ⑤ 两个都空 → 与今天一样关闸
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
@@ -78,6 +85,9 @@ test('闸门 1 交付/扣库存（salesDeliveryService）：新字段空则退�
 
   assert.equal(await blockedByGate(delivery({ '确认状态（旧）': '已入账' })), false);
   assert.equal(await blockedByGate(delivery({ 资金状态: '已入账' })), false);
+  assert.equal(await blockedByGate(delivery({ 资金状态: '已写入' })), false);
+  assert.equal(await blockedByGate(delivery({ 资金状态: '未写入' })), true);
+  assert.equal(await blockedByGate(delivery({ 资金状态: '写入失败' })), true);
   assert.equal(await blockedByGate(delivery({ 资金状态: '  ', '确认状态（旧）': '已入账' })), false);
   assert.equal(await blockedByGate(delivery({})), true);
 });
@@ -98,6 +108,9 @@ test('闸门 2 订单列表（salesFollowupService.listOrders）：新字段空�
 
   assert.equal((await listOrders({ '确认状态（旧）': '已入账' })).orders.length, 1);
   assert.equal((await listOrders({ 资金状态: '已入账' })).orders.length, 1);
+  assert.equal((await listOrders({ 资金状态: '已写入' })).orders.length, 1);
+  assert.equal((await listOrders({ 资金状态: '未写入' })).orders.length, 0);
+  assert.equal((await listOrders({ 资金状态: '写入失败' })).orders.length, 0);
   assert.equal((await listOrders({})).orders.length, 0);
 });
 
@@ -115,6 +128,9 @@ test('闸门 3 补记收款（salesFollowupService.addPayment）：新字段空�
 
   assert.equal(await blockedByGate(addPayment({ '确认状态（旧）': '已入账' })), false);
   assert.equal(await blockedByGate(addPayment({ 资金状态: '已入账' })), false);
+  assert.equal(await blockedByGate(addPayment({ 资金状态: '已写入' })), false);
+  assert.equal(await blockedByGate(addPayment({ 资金状态: '未写入' })), true);
+  assert.equal(await blockedByGate(addPayment({ 资金状态: '写入失败' })), true);
   assert.equal(await blockedByGate(addPayment({})), true);
 });
 
@@ -131,6 +147,10 @@ test('闸门 4 成交（secondDeliveryService.confirm）：新字段空则退回
   assert.equal(legacy.alreadyCompleted, true);
   const funds = await confirm({ 资金状态: '已入账' });
   assert.equal(funds.alreadyCompleted, true);
+  const fundsWritten = await confirm({ 资金状态: '已写入' });
+  assert.equal(fundsWritten.alreadyCompleted, true);
+  assert.equal(await blockedByGate(confirm({ 资金状态: '未写入' })), true);
+  assert.equal(await blockedByGate(confirm({ 资金状态: '写入失败' })), true);
   assert.equal(await blockedByGate(confirm({})), true);
 });
 
@@ -151,6 +171,9 @@ test('闸门 5 提醒候选（secondDeliveryService.listPendingDeliveries）：�
 
   assert.equal((await candidates({ '确认状态（旧）': '已入账' })).length, 1);
   assert.equal((await candidates({ 资金状态: '已入账' })).length, 1);
+  assert.equal((await candidates({ 资金状态: '已写入' })).length, 1);
+  assert.equal((await candidates({ 资金状态: '未写入' })).length, 0);
+  assert.equal((await candidates({ 资金状态: '写入失败' })).length, 0);
   assert.equal((await candidates({})).length, 0);
 });
 
@@ -170,5 +193,8 @@ test('闸门 6 今日销售（v1WorkbenchService.getTodaySales）：新字段空
 
   assert.equal((await todayRows({ '确认状态（旧）': '已入账' })).length, 1);
   assert.equal((await todayRows({ 资金状态: '已入账' })).length, 1);
+  assert.equal((await todayRows({ 资金状态: '已写入' })).length, 1);
+  assert.equal((await todayRows({ 资金状态: '未写入' })).length, 0);
+  assert.equal((await todayRows({ 资金状态: '写入失败' })).length, 0);
   assert.equal((await todayRows({})).length, 0);
 });
