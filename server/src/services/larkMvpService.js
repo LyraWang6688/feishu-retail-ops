@@ -30,11 +30,29 @@ const { isSalesCandidate, UNSUPPORTED_INTENT_REPLY } = require('../config/messag
 const { salesConfirmationCard, salesStatusCard, todaySalesCard, keepOnlyCardButton, SECOND_DELIVERY_ACTION } = require('../utils/larkCards');
 const { extractSalesMessageText, isMentioned, stripMentionPlaceholders } = require('../utils/larkMessageText');
 const { resolveAckReaction, resolveBotOpenId } = require('../config/groupPurchase');
+// 主群的准入口径（是否仍然要求 @）：**显式布尔、默认放宽**，见 config/groupAdmission。
+const { resolveMainChatRequireMention } = require('../config/groupAdmission');
 const { PurchaseBatchLocator } = require('./purchaseBatchLocator');
+const { extractBatchNos } = require('./purchaseBatchNo');
+// 「群话题 ↔ 销售记录」的本地路由映射（只写本地，不写业务表，见服务的注释）。
+const { SalesGroupThreadLocator } = require('./salesGroupThreadLocator');
+// 「消息深链存哪儿」的唯一落点（本地映射 + 销售主表「消息链接」列，见服务的注释）。
+const { SalesMessageLinkService } = require('./salesMessageLinkService');
+// 「这条群消息归销售还是采购」的分派（独立 service；本类只做接线）。
+const { SalesGroupFlowService } = require('./salesGroupFlowService');
+// 「话题里的二次处理识别」（②：未付 / 预付的进展同步；独立 service，本类只做接线）。
+const { SalesThreadProgressService } = require('./salesThreadProgressService');
+const { PROGRESS_KINDS } = require('../config/salesProgressIntake');
+// 「采购到货：群话题对话式核对」的编排（独立 service；本类只做接线）。
+const { PurchaseArrivalConversationService } = require('./purchaseArrivalConversationService');
+// 到货核对卡片上的两个动作名（与卡片渲染共用同一份常量，见 utils/larkCards）。
+const { ARRIVAL_CONVERSATION_ACTIONS } = require('../config/arrivalConversation');
 const { GroupPurchaseFlowService } = require('./groupPurchaseFlowService');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
+const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
+const { SalesStatusWriter } = require('./salesStatusWriter');
 const { recordUrl } = require('../utils/feishuLinks');
 
 // 交付与否以草稿的交易类型为准：现货/未付当场交付，预付（只付定金、货没拿走）不交付。
@@ -128,6 +146,9 @@ class LarkMvpService {
       store: this.store,
       replyCard: (messageId, card) => this.replyCard(messageId, card),
       sendCard: (openId, card) => this.sendCard(openId, card),
+      // ⭐ 渠道感知的兜底出口：群任务回复失败时回到**那个话题**，不回落私聊
+      //（私聊任务不走它 —— SaleLookupService.replyCardByTask 里按 chat_type 分流）。
+      sendCardToTask: (task, card) => this.sendTaskCard(task, card),
     });
     // 退换货第二期：售后**编排**（定位 → 组装方案 → 确认卡片 → 调执行器）也是独立 service。
     // 本类只留"意图 → 分派"的接线：
@@ -146,6 +167,14 @@ class LarkMvpService {
       replyCard: (messageId, card) => this.replyCard(messageId, card),
       sendCard: (openId, card) => this.sendCard(openId, card),
       sendText: (openId, message) => this.sendText(openId, message),
+      // ⭐ ③ 渠道感知的三个出口（售后回话题）：
+      //   群话题里的售后任务 → 回复/卡片都回到**那个话题**；
+      //   私聊任务走它们时最终仍是上面那三个，payload 逐字不变
+      //   （特别是文字：私聊仍然是 `sendText(open_id)` 那条主动消息，
+      //     **不是** reply 她的消息 —— 那是改动前的行为，一个字都不能变）。
+      replyCardToTask: (task, card) => this.replyTaskCard(task, card),
+      sendCardToTask: (task, card) => this.sendTaskCard(task, card),
+      sendTextToTask: (task, message) => this.sendTaskText(task, message),
       updateCard: (task, event, card, metadata) => this.updateAfterSalesCard(task, event, card, metadata),
     });
     this.sampleReplacements = options.sampleReplacements || new SampleReplacementService({
@@ -153,7 +182,17 @@ class LarkMvpService {
       sendCard: (openId, card) => this.sendCard(openId, card),
       sendText: (openId, message) => this.sendText(openId, message),
       updateCard: (task, event, card, metadata) => this.updateSalesActionCard(task, event, card, metadata),
+      // ⭐ 渠道感知的两个出口（接线方式与上面 afterSalesFlowService 那一组**完全一致**，见 PR #148）：
+      //   群话题里的补样品任务 → 卡片/文字回到**那个话题**（`reply_in_thread`）；
+      //   私聊任务走它们时最终仍是上面那两条 `sendCard`/`sendText`，
+      //   payload 逐字不变（`sendTaskCard`/`sendTaskText` 里 `chat_type !== 'group'` 就原样转发）。
+      // 飞书语义（reply_in_thread）只留在本类，service 不认识 chat_type / thread_id。
+      sendCardToTask: (task, card) => this.sendTaskCard(task, card),
+      sendTextToTask: (task, message) => this.sendTaskText(task, message),
     });
+    // 「确认状态」（用户那一维）的唯一写入口：名字与取值都在 config/salesStatusDimensions。
+    // ⚠️ 它**只记她在卡片上点了什么**，不参与任何闸门判据（判据读的是「资金状态」）。
+    this.salesStatus = options.salesStatus || new SalesStatusWriter({ gateway: this.gateway });
     this.intakeSchemaValidation = new Map();
     this.senderQueues = new Map();
     this.cardActionQueue = new KeyedSerialQueue();
@@ -164,22 +203,115 @@ class LarkMvpService {
     this.purchaseBatchLocator = options.purchaseBatchLocator || new PurchaseBatchLocator({
       store: options.purchaseBatchLocatorStore,
     });
+    // ── 群聊（销售链路搬进群）────────────────────────────────────────────────
+    // 「这条群消息 / 这个话题 → 是哪一笔销售」的本地定位器。与采购那套**分目录、分实例**
+    // （data/sales_group_threads）：销售和采购是两件事，混在一个目录里将来按任务翻盘
+    // 时会互相干扰。
+    // ⚠️ 业务负责人说过「这个话题不用存」——那说的是**不建业务表、不给业务表加列**；
+    //    机器人要能从话题反查回那笔销售，仍然需要这份**本地**路由映射（见服务注释）。
+    this.salesGroupThreads = options.salesGroupThreads || new SalesGroupThreadLocator({
+      store: options.salesGroupThreadStore,
+    });
+    // 「把消息深链存到该存的两处」的唯一落点。业务负责人 2026-10-06 要的：
+    // 本地映射（机器人回查用）＋ 销售主表「消息链接」列（她在表里点）。
+    // ⚠️ 链接只可能在**发送响应**里出现（实测当前不回带），所以它挂在"我们发卡片/文字的那一刻"上。
+    this.salesMessageLinks = options.salesMessageLinks || new SalesMessageLinkService({
+      locator: this.salesGroupThreads,
+      gateway: this.gateway,
+    });
     // @ 判据用的机器人 open_id：**只从配置读，不写死**（见 config/groupPurchase）。
     // 启动时解析一次：解析结果只影响"这条群消息理不理"，不会影响私聊的既有行为。
     this.botOpenId = options.botOpenId ?? resolveBotOpenId();
+    // 主群准入的第二代口径（业务负责人 2026-10-06 拍板：「主群里可不可以不 @ 机器人啊？
+    // 机器人它自动就能识别销售信息」）：**默认不再要求 @**，靠正文判"像不像销售"。
+    // 开关是**显式布尔**，取值在 config/groupAdmission（默认 false = 放宽 = 新行为）。
+    // ⚠️ 只影响 `thread_id` 为空的主群消息；话题里的消息与**私聊**一个字节都不变。
+    this.mainChatRequireMention = options.mainChatRequireMention ?? resolveMainChatRequireMention();
     if (!this.botOpenId) {
-      // 没配 = 群聊里判不出 @ 机器人。这时候**一条群消息都不处理**（宁可不响应，
-      // 也不能把群里日常聊天当成指令），但必须留下能排查的线索。
+      // 没配 = 群聊里判不出 @ 机器人（`isMentioned` 对空 open_id 恒为 false）。
+      // ⚠️ 放宽口径下**主群仍然能靠正文处理"像销售 / 带批次号"的消息**——
+      //    所以这里的告警必须把当前口径说清楚，不能让排查的人以为"群聊整条废了"。
       logWarn('lark.group.bot_open_id_missing', {
         env: 'LARK_BOT_OPEN_ID',
-        hint: '未配置机器人 open_id，群聊消息不会进入采购流程（私聊不受影响）',
+        require_mention_in_main_chat: this.mainChatRequireMention,
+        hint: this.mainChatRequireMention
+          ? '未配置机器人 open_id 且主群要求 @：主群消息一律不处理（私聊不受影响）'
+          : '未配置机器人 open_id：主群判不出 @，但正文像销售 / 带采购批次号的消息仍会处理（私聊不受影响）',
       });
     }
+    // ── 到货核对（D）：「群话题对话式核对」──────────────────────────────────
+    // 它只干一件事：把话题里的自然对话变成一次核对会话 + 一个触发点。
+    // ⚠️ 会话任务与入库能力**共用采购那套存储与队列**（PurchaseWebhookService 的
+    //   `store` / `confirmArrival`）——入库那一步就是从那个 store 读草稿的，
+    //   共用一个才不会出现"会话在这边、草稿在那边"的两份状态。
+    // ⚠️ 它**不复用**已退场的「拍照识别到货」任何东西（没有视觉模型、没有旧卡片动作）：
+    //   那条链路删掉的字段/能力一个都不碰，这里只调保留下来的 confirmArrival。
+    this.arrivalConversation = options.arrivalConversation || new PurchaseArrivalConversationService({
+      gateway: this.gateway,
+      // ⚠️ 会话任务必须和**入库那一步读草稿的存储**是同一个：生产路径上就是
+      // PurchaseWebhookService 的 store。`|| this.store` 只是给"注入了采购服务桩"
+      // 的单元测试兜底（那种桩不跑本链路），生产上永远走前面那一个。
+      store: this.purchaseWebhooks.store || this.store,
+      recognizer: this.recognizer,
+      sizeReferences: this.purchaseWebhooks.getSizeReferences,
+      confirmArrival: (taskId, task, operatorOpenId) =>
+        this.purchaseWebhooks.confirmArrival(taskId, task, operatorOpenId),
+      // ⭐ ④ 群里的反馈一律**回复那条消息**；她是在**话题**里说的（`{ threadId }`）
+      //    就带 `reply_in_thread` 回到**同一个话题** —— 采购单/图是发群的，
+      //    后续对话也必须留在话题里。适配器见下面的 replyPurchaseText / replyPurchaseCard。
+      replyText: (messageId, content, options) => this.replyPurchaseText(messageId, content, options),
+      replyCard: (messageId, card, options) => this.replyPurchaseCard(messageId, card, options),
+      updateCard: (messageId, card) => this.patchCardMessage(messageId, card),
+    });
     this.groupPurchaseFlow = options.groupPurchaseFlow || new GroupPurchaseFlowService({
       locator: this.purchaseBatchLocator,
       // 群里的反馈一律**引用回复**那条消息：群聊没有"上一次对话"的概念，
       // 不复用私聊的 sendText（那会发出一条没有上下文的光秃秃消息）。
-      replyText: (messageId, content) => this.replyText(messageId, content),
+      // ⭐ ④ 同上：话题里的回复也回那个话题。
+      replyText: (messageId, content, options) => this.replyPurchaseText(messageId, content, options),
+      // ── 到货核对（D）────────────────────────────────────────────────────
+      // 定位到某一批之后，由它接管"记下来 → 判她说完了没有 → 发「是/否」卡片 →
+      // 点「是」才入库"。它是**独立 service**：本类只做接线，不拼卡片、不写业务规则。
+      // ⚠️ 会话任务和入库能力**共用采购那套存储与队列**（PurchaseWebhookService 的
+      //   store / confirmArrival）——那边读草稿就是从那个 store 读的，共用一个才不会
+      //   出现"会话在这边、草稿在那边"的两份状态。
+      arrivalConversation: this.arrivalConversation,
+    });
+    // ── 群聊（销售链路）：「这条群消息归销售还是采购、是哪一笔销售」────────────
+    // 它是**独立 service**：本类只做接线，定位规则一个字都不在这里。
+    // 只有它说"这条归销售"时才走销售；否则**原样**交给上面那条采购链路
+    // （所以采购的既有行为、既有的"认不出"文案都不受影响）。
+    this.groupSalesFlow = options.groupSalesFlow || new SalesGroupFlowService({
+      locator: this.salesGroupThreads,
+      // 闸门用**和私聊同一把尺子**（config/messageGate）：群聊不再自己写一套判据。
+      isSalesText: looksLikeSalesText,
+      // 正文里的采购批次号 → 这条归采购，即便它同时含数字。
+      extractPurchaseBatchNos: extractBatchNos,
+      // 销售的入口（本类的方法）：分派服务只管"转交"，销售业务全在本类里。
+      salesIntake: {
+        startFromGroup: (payload) => this.handleGroupSaleMessage({ ...payload, sale: null }),
+        continueInThread: (payload) => this.handleGroupSaleMessage(payload),
+      },
+    });
+    // ── 群话题里的「二次处理识别」（②）──────────────────────────────────────
+    // 已定位到某笔销售之后，先问它"这句话是那笔的进展同步，还是新的销售原话"。
+    // 它是**独立 service**：判据（词表/正则/文案）在 config/salesProgressIntake，
+    // 收钱/交货复用 PaymentService / SalesDeliveryService，本类只做接线。
+    // ⚠️ 回复走 `sendTaskText`（群里回那条话题、私聊原样发私聊），
+    //    与销售卡片走同一条渠道感知的出口，不另开一条发送路径。
+    this.threadProgress = options.threadProgress || new SalesThreadProgressService({
+      gateway: this.gateway,
+      references: this.references,
+      // 交付复用**本类那一个** SalesDeliveryService：全仓唯一的销售扣库存入口，
+      // 与"第二次交付（点成交）"共用同一个串行队列，两个入口不会各扣一次库存。
+      delivery: this.delivery,
+      // ⭐ 整单完成（她说「已完毕 / 成交」）复用**本类那一个** SecondDeliveryService：
+      //    点卡片「成交」按钮与她说这句话是同一件事，成交只有这一处实现。
+      secondDelivery: this.secondDelivery,
+      config: options.threadProgressConfig,
+      now: options.now,
+      store: this.store,
+      sendTextToTask: (task, message) => this.sendTaskText(task, message),
     });
   }
 
@@ -278,22 +410,99 @@ class LarkMvpService {
     return this.sendTodaySales(openId);
   }
 
+  /**
+   * 「回复某条消息」的唯一出口（私聊与群聊共用）。
+   *
+   * `inThread=true` → 带 `reply_in_thread: true`：飞书会把这条回复**放进话题**里
+   * （主群第一条带它的回复会**创建**那个话题），响应里回带 `thread_id`。
+   * ⚠️ 这是 SDK 自带的字段（`@larksuiteoapi/node-sdk` 的类型里就有
+   * `im.message.reply` 的 `data.reply_in_thread`），**不新引 SDK、也不换调用方式**：
+   * 私聊那条路一个字段都不加，payload 与改动前完全一样。
+   *
+   * 返回值统一是 `{ messageId, threadId, appLink }`：`replyText` / `replyCard` 只取 messageId，
+   * 群里那两条路还要 thread_id 去记「话题 ↔ 销售」的本地映射，`appLink` 是**消息深链**——
+   * ⭐ `message_app_link` 只可能在**发送响应**里出现（历史消息一定取不回来）；实测 2026-10-06
+   * **这个应用当前连发送响应都不回带**（见 docs/reports/group-message-deep-link-2026-10-06.md 实测四），
+   * 但哪天回带了，"发出去的那一刻"就是唯一能拿到它的时刻，所以现在就把它交回给调用方。
+   */
+  async replyMessage(messageId, { msgType, content, failureLabel, inThread = false }) {
+    const data = { msg_type: msgType, content };
+    if (inThread) data.reply_in_thread = true;
+    const response = await this.client.im.message.reply({ path: { message_id: messageId }, data });
+    if (response.code !== 0) throw new Error(`${failureLabel}: ${response.msg} (Code: ${response.code})`);
+    return {
+      messageId: response.data?.message_id || '',
+      threadId: response.data?.thread_id || '',
+      appLink: response.data?.message_app_link || '',
+    };
+  }
+
   async replyText(messageId, message) {
-    const response = await this.client.im.message.reply({
-      path: { message_id: messageId },
-      data: { msg_type: 'text', content: JSON.stringify({ text: message }) },
+    const sent = await this.replyMessage(messageId, {
+      msgType: 'text', content: JSON.stringify({ text: message }), failureLabel: '回复飞书消息失败',
     });
-    if (response.code !== 0) throw new Error(`回复飞书消息失败: ${response.msg} (Code: ${response.code})`);
-    return response.data?.message_id || '';
+    return sent.messageId;
   }
 
   async replyCard(messageId, card) {
-    const response = await this.client.im.message.reply({
-      path: { message_id: messageId },
-      data: { msg_type: 'interactive', content: JSON.stringify(card) },
+    const sent = await this.replyMessage(messageId, {
+      msgType: 'interactive', content: JSON.stringify(card), failureLabel: '回复飞书卡片失败',
     });
-    if (response.code !== 0) throw new Error(`回复飞书卡片失败: ${response.msg} (Code: ${response.code})`);
-    return response.data?.message_id || '';
+    return sent.messageId;
+  }
+
+  /**
+   * ⭐ ④ 「这条消息在**话题**里吗」的唯一判据在**调用方**（它才拿得到 `thread_id`），
+   * 飞书语义（`reply_in_thread`）只留在本类里。两个适配器都**只做这一件事**：
+   *   · `options.threadId` 非空 → 用 `reply_in_thread: true`，回复落回**同一个话题**；
+   *   · 为空（主群 @ 进来）→ 与改动前逐字相同（`replyText` / `replyCard`，不带那个字段）。
+   *
+   * 为什么不让 service 直接认识 `reply_in_thread`：采购/销售的定位与业务规则不该
+   * 绑在飞书的消息模型上（解耦）。service 只交上下文，怎么发由这里决定。
+   */
+  async replyPurchaseText(messageId, message, options = {}) {
+    if (!options?.threadId) return this.replyText(messageId, message);
+    return (await this.replyTextInThread(messageId, message)).messageId;
+  }
+
+  async replyPurchaseCard(messageId, card, options = {}) {
+    if (!options?.threadId) return this.replyCard(messageId, card);
+    return (await this.replyCardInThread(messageId, card)).messageId;
+  }
+
+  /** 群里专用：回复进话题（`reply_in_thread`），并把飞书回带的话题 id 一起交回去。 */
+  async replyTextInThread(messageId, message) {
+    return this.replyMessage(messageId, {
+      msgType: 'text', content: JSON.stringify({ text: message }),
+      failureLabel: '回复飞书消息失败', inThread: true,
+    });
+  }
+
+  /** 群里专用：卡片回复进话题。 */
+  async replyCardInThread(messageId, card) {
+    return this.replyMessage(messageId, {
+      msgType: 'interactive', content: JSON.stringify(card),
+      failureLabel: '回复飞书卡片失败', inThread: true,
+    });
+  }
+
+  /**
+   * 把**已经发出去的那张卡片**改成新内容（例如「已入库」）。
+   *
+   * 与私聊那几张卡的 update 走的是同一套 SDK patch；区别只是这里拿的是
+   * **明确的 message_id**（群话题里的卡片不是"某个销售草稿的卡"，没有 task 可以查）。
+   * 卡片改不动（权限、消息被撤回）只记日志——业务事实早就落地了，不能因此判失败。
+   */
+  async patchCardMessage(messageId, card) {
+    if (!messageId) return false;
+    const patch = this.client.im?.v1?.message?.patch || this.client.im?.message?.patch;
+    if (!patch) return false;
+    const response = await patch.call(this.client.im?.v1?.message || this.client.im.message, {
+      path: { message_id: String(messageId) },
+      data: { content: JSON.stringify(card) },
+    });
+    if (response.code !== 0) throw new Error(`更新飞书卡片失败: ${response.msg} (Code: ${response.code})`);
+    return true;
   }
 
   async updateSalesActionCard(task, event, card, metadata = {}) {
@@ -312,7 +521,7 @@ class LarkMvpService {
   async publishSalesResultCard(task, event, card, metadata = {}) {
     if (await this.updateSalesActionCard(task, event, card, metadata)) return true;
     try {
-      const messageId = await this.sendCard(task.sender_open_id, card);
+      const messageId = await this.sendTaskCard(task, card);
       if (messageId) await this.store.update(task.task_id, { card_message_id: messageId });
       logInfo('lark.sales.card.fallback.sent', { task_id: task.task_id,
         interaction_id: metadata.interactionId, stage: metadata.stage, card_message_id: messageId });
@@ -321,6 +530,91 @@ class LarkMvpService {
       logWarn('lark.sales.card.fallback.failed', { task_id: task.task_id,
         interaction_id: metadata.interactionId, stage: metadata.stage, error: error.message });
       return false;
+    }
+  }
+
+  // ── 渠道感知的输出（B）：「回复 / 卡片回到话题」────────────────────────────
+  //
+  // ⚠️ 私聊那条路**一个字节都不变**：任务上没有 `chat_type`（或不是 group）时，
+  //    仍然走原来的 `sendText(open_id)` / `sendCard(open_id)`，payload 完全相同。
+  //    只有群里的销售任务（`chat_type === 'group'`）才改成"回复到那条消息的话题"。
+  //
+  // 为什么必须按任务分流、而不是在 sendText 里判：
+  //   私聊的任务只有 open_id（发给谁），群里的任务才有 message_id（回哪条、进哪个话题）。
+  //   两者是不同的寻址方式，混在一起判会把私聊也带偏。
+
+  /** 群里：把文字回到那条销售话题；私聊：原样发她私聊（现状不变）。 */
+  async sendTaskText(task, message) {
+    if (task?.chat_type !== 'group') return this.sendText(task.sender_open_id, message);
+    const sent = await this.replyTextInThread(task.message_id, message);
+    // ⚠️ 文字这条出口**只补本地路由映射，不写销售主表**（`storeLink: false`）——两条理由：
+    //   ① 深链是**话题级**的（URL 里只有 chat_id + thread_id，没有 message_id）：同一话题里
+    //      不管哪条回复拼出来都是同一条，**卖卡片那条出口（sendTaskCard）已经写过了**，再写是空转；
+    //   ② 这条出口里混着"**不猜、不写业务表**"的路径（例：多笔未收款占位 / 金额对不上时
+    //      回一句「有多条待收款，请先人工核对」）——业务表的写入**绝不能搭在它上面**，
+    //      否则"一个字都不写"这条保证会被一个不相干的副作用破掉。
+    await this.bindGroupSaleThread(task, sent, { storeLink: false });
+    return sent.messageId;
+  }
+
+  /** 群里：把卡片回到那条销售话题（没有原卡片可改时的兜底）；私聊：原样发她私聊。 */
+  async sendTaskCard(task, card) {
+    if (task?.chat_type !== 'group') return this.sendCard(task.sender_open_id, card);
+    const sent = await this.replyCardInThread(task.message_id, card);
+    await this.bindGroupSaleThread(task, sent);
+    return sent.messageId;
+  }
+
+  /**
+   * ⭐ ③ 售后（以及任何"带任务上下文"的回复）的**渠道感知回复**：
+   *   · 群里 → 回复到 `task.message_id` 的**那个话题**（`reply_in_thread: true`）；
+   *   · 私聊 → 与改动前逐字相同：`replyCard(message_id)`，payload 一个字段都不多。
+   *
+   * 与 `sendTaskCard` 的区别：这个是"回她那条消息"，不是"另发一张"。
+   * 售后的确认卡片、候选卡片、结果卡片都优先走它 —— 她在话题里说话，
+   * 卡片就落在同一个话题里（"在一个话题里解决一切"）。
+   */
+  async replyTaskCard(task, card) {
+    if (task?.chat_type !== 'group') return this.replyCard(task.message_id, card);
+    const sent = await this.replyCardInThread(task.message_id, card);
+    await this.bindGroupSaleThread(task, sent);
+    return sent.messageId;
+  }
+
+  /**
+   * 记下「这条话题 ↔ 这笔销售」的路由映射，并把**消息深链**存到该存的两处
+   * （本地映射 + 销售主表「消息链接」列，见 SalesMessageLinkService）。
+   *
+   * 时机就是"我们第一条回复发出去之后"：`reply_in_thread` 的响应里才带 thread_id
+   * （普通群里这个话题是**我们这条回复**创建的）。`message_app_link` 一旦飞书回带，就只有
+   * "发出去的那一刻"能拿到（实测 2026-10-06：这个应用当前**根本不回带**，见
+   * docs/reports/group-message-deep-link-2026-10-06.md 的实测四）——所以这里是唯一的落点。
+   * 失败只告警——它只影响"她后面在这个话题里说话能不能被认出来 / 表里那列有没有链接"，
+   * 绝不能因此把已经发出去的卡片判失败。
+   *
+   * ⚠️ `storeLink`（默认 true）：**只有卡片那条出口**才写销售主表的「消息链接」列。
+   *    文字出口（`sendTaskText`）传 false —— 理由见那个方法的注释（话题级深链已经写过了，
+   *    且文字出口里有"不猜、不写业务表"的路径）。本地路由映射**任何情况都记**。
+   */
+  async bindGroupSaleThread(task, sent = {}, { storeLink = true } = {}) {
+    if (task?.chat_type !== 'group') return null;
+    try {
+      const result = await this.salesMessageLinks.rememberFromSend({
+        salesEntryRecordId: task.sales_entry_record_id || '',
+        taskId: task.task_id,
+        orderNo: task.posting_result?.sourceNo || '',
+        messageId: task.message_id,
+        threadId: String(sent?.threadId || task.group_thread_id || '').trim(),
+        chatId: task.chat_id || '',
+        senderOpenId: task.sender_open_id || '',
+        replyMessageId: sent?.messageId || '',
+        appLink: sent?.appLink || '',
+        storeInBitable: storeLink,
+      });
+      return result.record;
+    } catch (error) {
+      logWarn('sales.group.thread.remember_failed', { task_id: task.task_id, error: error.message });
+      return null;
     }
   }
 
@@ -369,48 +663,47 @@ class LarkMvpService {
     const senderOpenId = event?.sender?.sender_id?.open_id;
     if (!message?.message_id || !senderOpenId) return { accepted: false, reason: 'missing_identity' };
 
-    // ── 群聊：准入两条，**先看 thread_id**（业务负责人真机实测后改的规则）──────
+    // ── 群聊：准入**先看 thread_id**，主群再看三条判据（任一条）──────────────
     //   ① 话题里的消息（`thread_id` 有值）→ **都理，不要求 @机器人**。
     //      实测：她在话题里发「你好 小来财」没有 @（mentions=[]），事件照样推给我们；
     //      话题本身就是"这条是冲着机器人来的"的判据，再要求 @ 会把她说的话丢掉。
-    //   ② 主群消息（`thread_id` 为空）→ 只在 `mentions` 含机器人 open_id 时才理。
-    //      不 @ → **完全静默**：连日志之外的动作都没有，更没有任何远端调用
-    //      （不发消息、不加表情、不读表）。群里所有人发的消息都会推给我们，
+    //   ② 主群消息（`thread_id` 为空）→ 满足**任一条**才理（见 resolveMainChatAdmission）：
+    //      · `mentions` 里有机器人（@ 了）—— 改动前的老判据，照旧；
+    //      · 正文过**销售闸门**（`config/messageGate`，与私聊同一把尺子）；
+    //      · 正文里有采购批次号 `BH-YYYYMMDD-NNNN` → 归采购那条路。
+    //      三条都不满足 → **完全静默**：连日志之外的动作都没有，更没有任何远端调用
+    //      （不发消息、不加表情、不读表、不进 AI）。群里所有人发的消息都会推给我们，
     //      这道闸门是拦它们的唯一一道。
     //
     // ⚠️ 必须**先判 `thread_id`**：话题里没 @ 的消息要在读 mentions 之前就放行，
     //    顺序反了会把它当成"主群没 @"丢掉——这正是她真机测出来的那个 bug。
-    // ⚠️ 这里刻意**不复用**私聊的闸门（含数字/业务关键词）：群里"36 码还有吗"
-    // 这种闲聊带着数字，用私聊闸门会被当成录单送进 AI。
     if (message.chat_type === 'group') {
       const threadId = String(message.thread_id || '').trim();
+      // 正文先取出来：主群准入的第二代判据要看正文（销售闸门 / 采购批次号）。
+      const isTextMessage = ['text', 'post'].includes(message.message_type);
+      const groupText = isTextMessage ? extractSalesMessageText(message) : '';
+      let mainChatVia = '';
       if (!threadId) {
-        // 主群消息：判据只有 @机器人。没配 LARK_BOT_OPEN_ID 就判不出 @，
-        // 这时**一条主群消息都不处理**（宁可不响应，也不能把日常聊天当指令）。
-        if (!this.botOpenId) {
-          logWarn('lark.group.message.ignored', {
-            message_id: message.message_id, reason: 'bot_open_id_unconfigured',
-          });
-          return { accepted: false, reason: 'group_bot_open_id_unconfigured' };
-        }
-        if (!isMentioned(message.mentions, this.botOpenId)) {
+        const admission = this.resolveMainChatAdmission(message, groupText);
+        if (!admission.accepted) {
+          // 不理的主群消息：**一个远端调用都不许有**（判据全是本地纯函数）。
           logInfo('lark.group.message.ignored', {
-            message_id: message.message_id, reason: 'not_mentioned', chat_id: message.chat_id,
+            message_id: message.message_id, reason: admission.reason, chat_id: message.chat_id,
+            require_mention_in_main_chat: this.mainChatRequireMention,
           });
-          return { accepted: false, reason: 'group_not_mentioned' };
+          return { accepted: false, reason: admission.reason };
         }
+        mainChatVia = admission.via;
       }
-      if (!['text', 'post'].includes(message.message_type)) {
-        // 群聊准入通过（话题里、或主群里 @ 了）但发的是图片/文件：**静默忽略**，
-        // 不解释、不回复。群里回一句"我只接收文字"同样会刷屏，而且这条链路今天
-        // 只有采购定位，没有需要她立刻知道的失败。
+      if (!isTextMessage) {
+        // 群聊准入通过（话题里、或主群里 @ 了 / 正文像销售）但发的是图片/文件：
+        // **静默忽略**，不解释、不回复。群里回一句"我只接收文字"同样会刷屏。
         logInfo('lark.group.message.ignored', {
           message_id: message.message_id, reason: 'unsupported_message_type',
           message_type: message.message_type,
         });
         return { accepted: false, reason: 'group_unsupported_message_type' };
       }
-      const groupText = extractSalesMessageText(message);
       if (!groupText) {
         logInfo('lark.group.message.ignored', { message_id: message.message_id, reason: 'empty_text' });
         return { accepted: false, reason: 'group_empty_text' };
@@ -418,8 +711,8 @@ class LarkMvpService {
       logInfo('lark.group.message.accepted', {
         message_id: message.message_id, chat_id: message.chat_id,
         sender_open_id: senderOpenId, parent_id: message.parent_id,
-        thread_id: threadId, // 空 = 主群（靠 @ 进来的）；有值 = 话题（免 @）
-        via: threadId ? 'thread' : 'mention',
+        thread_id: threadId, // 空 = 主群；有值 = 话题（免 @）
+        via: threadId ? 'thread' : mainChatVia,
         text_length: groupText.length,
       });
       // 返回值统一带上 `accepted: true`（和私聊那条路同一个契约），
@@ -452,13 +745,49 @@ class LarkMvpService {
   }
 
   /**
-   * 群聊入口。**准入由调用方判定**（话题免 @ / 主群 @），进来之后：
+   * 主群消息（`thread_id` 为空）的准入判据。话题里的消息**不走这里**（一律理）。
+   *
+   * 业务负责人 2026-10-06 拍板（逐字）：「主群里面可不可以不 @ 机器人啊？
+   *   机器人它自动就能识别销售信息并进行回复呀。」→ 主群**不再要求 @**。
+   * 满足**任一条**就理：
+   *   ① `mentions` 里有机器人（@ 了）—— 改动前的老判据，照旧；
+   *   ② 正文里有采购批次号 `BH-YYYYMMDD-NNNN` → 归采购那条路（`extractBatchNos`）。
+   *      先判它，顺序与分派器（`SalesGroupFlowService`）一致：带批次号的就是采购的，
+   *      即便同时含数字（"BH-20261005-0009 这批到哪了"不能被当成销售）；
+   *   ③ 正文过**销售闸门**（`config/messageGate`，与私聊**同一把尺子**）。
+   * 三条都不满足 → `accepted:false`，调用方**静默返回**：不回复、不加表情、不读表、
+   * 不进 AI —— 群里日常聊天（「今天天气不错」）绝不能有任何远端调用。
+   *
+   * ⚠️ 判据全部是**本地纯函数**（正则 / 字符串包含），所以"不理"这条路天然零远端调用。
+   * ⚠️ `mainChatRequireMention`（`config/groupAdmission`，**默认 false**）为 true 时回到
+   *    改动前：主群**只认 @**（没配 `LARK_BOT_OPEN_ID` 时一条都不理）。
+   * ⚠️ 认错人的兜底不是这里：③ 放行的消息会走销售确认卡片，卡片上有「取消」，
+   *    她点一下就结束——**不会直接写业务数据**（那一段复用私聊同一条链路）。
+   */
+  resolveMainChatAdmission(message, text = '') {
+    if (isMentioned(message?.mentions, this.botOpenId)) return { accepted: true, via: 'mention' };
+    if (this.mainChatRequireMention) {
+      // 老行为（开关显式打开时才走）：判不出 @ 就一条主群消息都不处理。
+      if (!this.botOpenId) return { accepted: false, reason: 'group_bot_open_id_unconfigured' };
+      return { accepted: false, reason: 'group_not_mentioned' };
+    }
+    // ② 正文里有采购批次号 → 理（定位到那一批，采购那条路一个字不变）。
+    if (extractBatchNos(text).length) return { accepted: true, via: 'purchase_batch_no' };
+    // ③ 正文像销售 → 理（主群新开一笔：在她那条消息下开话题 + 回确认卡片，
+    //    认错了也有卡片上的「取消」，不会直接写数据）。
+    if (isSalesCandidate(text)) return { accepted: true, via: 'sales_gate' };
+    return { accepted: false, reason: 'group_not_sales_text' };
+  }
+
+  /**
+   * 群聊入口。**准入由调用方判定**（话题免 @；主群：@ / 像销售 / 带批次号），进来之后：
    *   · 剥掉 @ 占位符（`@_user_1`）再当正文；
    *   · 加「收到」表情（**不回文字**，群聊回文字会刷屏）；
-   *   · 交给采购定位链路（C）——今天它只回答"是哪一批"，不写任何业务表。
+   *   · 交给销售分派（C）与采购定位链路——采购那条路只回答"是哪一批"。
    *
-   * ⚠️ 群聊**绝不用私聊那套闸门**（含数字/业务关键词就收）：群里一句
-   *   "这批鞋到了""36 码还有吗"都会被误触发。这里的准入判据只有上面那两条。
+   * ⚠️ 「进不进来」的闸门在主群**用的是私聊同一把尺子**（`config/messageGate`，
+   *   2026-10-06 业务负责人拍板），但"进来之后归谁"仍由销售分派先判；采购的既有行为
+   *   （含"认不出"那两句文案）一个字都不变。
    */
   async acceptGroupMessage({ message, senderOpenId, originalText, threadId = '' }) {
     const text = stripMentionPlaceholders(originalText, message.mentions);
@@ -474,6 +803,24 @@ class LarkMvpService {
       });
     }
     await this.acknowledgeMessage(message.message_id, { includeTextReply: false });
+    // ── 销售 or 采购？先问销售那条分派（C）────────────────────────────────
+    // 只有它说"这条归销售"时才走销售；说"不是"时**原样**交给采购链路，
+    // 所以采购的既有行为（含"认不出"那两句文案）一个字都不变。
+    const sales = await this.groupSalesFlow.handleGroupSalesMessage({
+      message,
+      text,
+      parentId: message.parent_id,
+      threadId,
+      senderOpenId,
+      chatId: message.chat_id,
+    });
+    if (sales?.handled) {
+      logInfo('sales.group.message.handled', {
+        message_id: message.message_id, mode: sales.mode, source: sales.source,
+        thread_id: threadId, sales_entry_record_id: sales.sale?.sales_entry_record_id || '',
+      });
+      return sales;
+    }
     return this.groupPurchaseFlow.handleGroupPurchaseMessage({
       messageId: message.message_id,
       text,
@@ -483,8 +830,40 @@ class LarkMvpService {
     });
   }
 
-  async acceptSalesText({ message, senderOpenId, originalText }) {
-    if (!looksLikeSalesText(originalText)) {
+  /**
+   * 群里的销售入口（A / C）。**识别原话 → 发销售卡片 → 她确认 / 取消 / 修改 → 入账 →
+   * 交付** 这条链路一个字都不变，只是**承载场所**从私聊变成了群话题：
+   *   · 主群里她新说一笔（`sale` 为空）→ 建销售记录 ＋ 在她那条消息下开话题 ＋ 回卡片；
+   *   · 话题里收到消息（`sale` = 本地映射定位到的那笔）→ 绑定到**同一笔**销售，
+   *     不再新建销售主表记录 —— 话题本身就是上下文，**不去查"最近的销售"**。
+   *
+   * 处理本身**复用私聊那一个入口**（acceptSalesText → processSalesTask），
+   * 这里只做"带上渠道上下文"这一件事，不另写一套识别 / 出卡 / 入账。
+   */
+  async handleGroupSaleMessage({ message, text, threadId = '', senderOpenId, chatId, sale = null }) {
+    return this.acceptSalesText(
+      { message, senderOpenId, originalText: text },
+      {
+        chatType: 'group',
+        chatId,
+        threadId,
+        sale,
+        // 群聊的"已收到"在准入那一步已经加过表情了（群里不回文字），这里不重复加。
+        acknowledge: false,
+      },
+    );
+  }
+
+  async acceptSalesText({ message, senderOpenId, originalText }, context = {}) {
+    // ⭐ ② 话题里、且**已经定位到某笔销售**时，闸门放宽成"像销售 **或** 像那笔的进展"。
+    //    为什么必须放宽：进展同步的话未必带数字 / 业务关键词 ——
+    //    「那双拿走了」既没有数字，也没有"退/换/卖/查/库存"这类词，
+    //    用私聊那把尺子会把它**静默挡掉**，二次处理根本没机会跑。
+    //    ⚠️ 只放宽"群 + 话题 + 已定位到销售"这三条同时成立的那一种消息：
+    //       私聊（chatType 不是 group）与主群新开一笔（sale 为空）走的判据与改动前逐字相同。
+    const threadSaleProgress = context.chatType === 'group' && Boolean(context.sale)
+      && this.threadProgress.classify(originalText).kind !== PROGRESS_KINDS.NONE;
+    if (!threadSaleProgress && !looksLikeSalesText(originalText)) {
       logInfo('lark.message.ignored', {
         message_id: message.message_id,
         sender_open_id: senderOpenId,
@@ -495,6 +874,18 @@ class LarkMvpService {
     }
     const taskId = idFor('sale', message.message_id);
     if (await this.store.get(taskId)) return { accepted: false, reason: 'duplicate', taskId };
+    // 群聊的销售任务多带三样东西（私聊一个都不带，payload 与改动前逐字相同）：
+    //   · chat_type / chat_id / group_thread_id → 输出回到那条话题（B）；
+    //   · sales_entry_record_id → 话题里后续消息**绑定到已定位的那一笔**（C），
+    //     processSalesTask 看到它就不再新建销售主表记录。
+    const groupContext = context.chatType === 'group'
+      ? {
+        chat_type: 'group',
+        chat_id: context.chatId || message.chat_id || '',
+        group_thread_id: String(context.threadId || message.thread_id || '').trim(),
+        sales_entry_record_id: context.sale?.sales_entry_record_id || '',
+      }
+      : {};
     const task = await this.store.create({
       task_id: taskId,
       type: 'sale',
@@ -503,14 +894,17 @@ class LarkMvpService {
       sender_open_id: senderOpenId,
       sent_at: timestamp(message.create_time),
       original_text: originalText,
+      ...groupContext,
     });
     logInfo('lark.sales.accepted', {
       task_id: taskId,
       message_id: message.message_id,
       sender_open_id: senderOpenId,
       text_length: originalText.length,
+      channel: context.chatType === 'group' ? 'group' : 'p2p',
+      sales_entry_record_id: groupContext.sales_entry_record_id || '',
     });
-    await this.acknowledgeMessage(message.message_id);
+    if (context.acknowledge !== false) await this.acknowledgeMessage(message.message_id);
     setImmediate(() =>
       this.enqueueForSender(senderOpenId, () => this.processSalesTask(taskId)).catch((error) =>
         this.handleTaskFailure(taskId, error)
@@ -765,7 +1159,9 @@ class LarkMvpService {
           originalText: task.original_text,
           sender: person(task.sender_open_id),
           parseStatus: '解析中',
-          confirmStatus: '待确认',
+          // 建单 = 还没轮到她做任何动作 → 「确认状态」= 未确认。
+          // ⚠️ 旧「确认状态（旧）」那一列已被她 2026-10-06 整列删除，四个维度是唯一入口。
+          userAction: WRITE.userAction.pending,
           orderNo,
         });
       },
@@ -788,6 +1184,17 @@ class LarkMvpService {
     const startedAt = Date.now();
     logInfo('lark.sales.processing.started', { task_id: taskId });
     const task = await this.store.get(taskId);
+    // ⭐ ② 二次处理识别（未付 / 预付的进展）：**只有群话题里、且已经定位到某笔销售**时
+    //    才问它（两个判据都由 service 自己收口，私聊的任务两个字段都没有 → 直接返回）。
+    //    它说"这条归二次处理"就**不再**往下走销售原话解析 —— 这正是这次要修的 bug：
+    //    她在话题里说「收到微信 500」不该被当成新原话、更不该回"销售信息还缺…"。
+    const threadProgress = await this.threadProgress.handle({ task });
+    if (threadProgress.handled) {
+      logInfo('lark.sales.processing.thread_progress', {
+        task_id: taskId, kind: threadProgress.kind, duration_ms: Date.now() - startedAt,
+      });
+      return threadProgress;
+    }
     // 两张配置表都很小（配品十几条、在售券几条），先并行拿齐：
     // 配品清单交给 AI 是为了让它知道「39元腰带」这类说法不是鞋；
     // 券目录交给后端是为了按表里的平台结算款算钱，不再写死券种。
@@ -860,15 +1267,27 @@ class LarkMvpService {
         reason: 'unsupported_intent',
         intent,
       });
-      await this.sendText(task.sender_open_id, UNSUPPORTED_INTENT_REPLY);
+      await this.sendTaskText(task, UNSUPPORTED_INTENT_REPLY);
       return;
     }
 
     await this.ensureIntakeSchema('sales_intake', ['salesEntry']);
-    const created = await this.createSalesEntryWithOrderNo(task);
+    // ⭐ 话题里后续的消息（C）：任务上已经带着**本地映射定位到的那笔销售**，
+    //    直接沿用同一条销售主表记录 —— 不再新建第二条（一条销售记录 = 一个话题）。
+    //    ⚠️ 私聊的任务上没有这个字段（`undefined`），走的仍然是原来那一个建单入口，
+    //       行为与改动前逐字相同。
+    const locatedSaleRecordId = task.sales_entry_record_id || '';
+    const created = locatedSaleRecordId
+      ? { recordId: locatedSaleRecordId, reused: true }
+      : await this.createSalesEntryWithOrderNo(task);
     const salesEntryRecordId = created?.recordId;
     if (!salesEntryRecordId) throw new Error('销售主表未返回 record_id');
+    if (created.reused) logInfo('lark.sales.entry.reused', { task_id: taskId, sales_entry_record_id: salesEntryRecordId });
     await this.store.update(taskId, { sales_entry_record_id: salesEntryRecordId, status: 'parsing' });
+    // 群聊回复时要带上"这是哪一条销售主表记录"（本地映射记的就是它）。
+    // ⚠️ `task` 是本方法开头读进来的**快照**，销售主表 record_id 是刚刚才写进 store 的，
+    //    所以下面群聊那两条路用 `replyTask`，不用 `task`。
+    const replyTask = { ...task, sales_entry_record_id: salesEntryRecordId };
 
     const missingFields = [...(parsed.missing_fields || [])];
     // 缺货单独收集：这类问题只需要一句"请核实"，不需要"销售信息还缺…请补充后重新发送"
@@ -992,12 +1411,17 @@ class LarkMvpService {
         });
       }
     }
-    await this.gateway.update('salesEntry', salesEntryRecordId, {
-      parseStatus: draft.missing_fields?.length ? '需补充' : '解析成功',
-      parseSummary: JSON.stringify(draft),
-      failureReason: draft.missing_fields?.length ? draft.missing_fields.join('、') : '',
-      ...(tradeTypeRecordId ? { tradeType: relation(tradeTypeRecordId) } : {}),
-    });
+    // ⚠️ 复用已定位的那笔销售时（群话题里的后续消息），**不写**这几个"解析中间态"
+    //    字段：`解析摘要` 里放的是**这一条消息**的草稿，写上去会把她原单的解析摘要盖掉。
+    //    她的原单已经在表里了，这次的处理过程留在本地任务里就够（不放业务表）。
+    if (!created.reused) {
+      await this.gateway.update('salesEntry', salesEntryRecordId, {
+        parseStatus: draft.missing_fields?.length ? '需补充' : '解析成功',
+        parseSummary: JSON.stringify(draft),
+        failureReason: draft.missing_fields?.length ? draft.missing_fields.join('、') : '',
+        ...(tradeTypeRecordId ? { tradeType: relation(tradeTypeRecordId) } : {}),
+      });
+    }
     await this.store.update(taskId, {
       status: draft.missing_fields?.length ? 'needs_info' : 'ready_to_confirm',
       draft,
@@ -1005,13 +1429,17 @@ class LarkMvpService {
     if (draft.missing_fields?.length) {
       // 这一单的问题**只有缺货**时，直接回一句短的；还夹杂别的问题（金额缺失等）时才用完整说明。
       const onlyShortage = shortageNotes.length > 0 && shortageNotes.length === draft.missing_fields.length;
-      await this.sendText(task.sender_open_id, onlyShortage
+      await this.sendTaskText(replyTask, onlyShortage
         ? `${shortageNotes.join('、')}，请核实～`
         : `销售信息还缺：${draft.missing_fields.join('、')}。请补充后重新发送完整销售信息。`);
       return;
     }
     const cardStartedAt = Date.now();
-    const cardMessageId = await this.replyCard(task.message_id, salesConfirmationCard(taskId, draft));
+    // 私聊：还是"回复她那条私聊消息"（payload 不变）；群聊：回复进她的销售话题
+    // （`reply_in_thread`），并把飞书回带的话题 id 记进本地映射（B / A）。
+    const cardMessageId = task.chat_type === 'group'
+      ? await this.sendTaskCard(replyTask, salesConfirmationCard(taskId, draft))
+      : await this.replyCard(task.message_id, salesConfirmationCard(taskId, draft));
     logInfo('lark.sales.card.sent', {
       task_id: taskId, stage: 'confirmation',
       duration_ms: Date.now() - cardStartedAt,
@@ -1039,6 +1467,14 @@ class LarkMvpService {
       event?.operator?.operator_id?.open_id || event?.operator?.open_id || event?.event?.operator?.operator_id?.open_id;
     if (['choose_sample_replacement', 'refresh_sample_replacement'].includes(action)) {
       return this.sampleReplacements.handleCardAction(value, event, operatorOpenId, context);
+    }
+    // 「采购到货核对」卡片的「是 / 否」。
+    // ⚠️ 位置有意放在这里（采购申请卡片分派**之前**、下面那句 `if (!draftId) throw` 之前）：
+    //   这张卡片也带 draft_id（= 到货核对任务 id，不是销售草稿），落到下面那套销售逻辑里
+    //   一定会报「卡片缺少草稿 ID」或更糟——把别人的草稿当成自己的。
+    //   动作名与卡片渲染共用 config 里的同一份常量。
+    if ([ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, ARRIVAL_CONVERSATION_ACTIONS.REJECT].includes(action)) {
+      return this.arrivalConversation.handleCardAction(value, event, operatorOpenId);
     }
     const procurementResult = await this.purchaseWebhooks.handleCardAction(value, operatorOpenId, event);
     if (procurementResult) return procurementResult;
@@ -1136,7 +1572,7 @@ class LarkMvpService {
     if (action === 'cancel') {
       await this.store.update(draftId, { status: 'cancelled' });
       if (task.type === 'sale' && task.sales_entry_record_id) {
-        await this.gateway.update('salesEntry', task.sales_entry_record_id, { confirmStatus: '已取消' });
+        await this.salesStatus.write(task.sales_entry_record_id, { userAction: WRITE.userAction.cancelled });
         await this.publishSalesResultCard(task, event, salesStatusCard(task.draft, '销售录单已取消', '原草稿不会入账。'),
           { stage: 'cancelled', interactionId: context.interactionId });
       }
@@ -1146,11 +1582,11 @@ class LarkMvpService {
     if (action === 'modify_sale' && task.type === 'sale') {
       await this.store.update(draftId, { status: 'awaiting_correction' });
       if (task.sales_entry_record_id) {
-        await this.gateway.update('salesEntry', task.sales_entry_record_id, { confirmStatus: '待修改' });
+        await this.salesStatus.write(task.sales_entry_record_id, { userAction: WRITE.userAction.toModify });
       }
       await this.publishSalesResultCard(task, event, salesStatusCard(task.draft, '等待重新发送', '原草稿不会入账；请重新发送完整销售信息。', 'orange'),
         { stage: 'awaiting_correction', interactionId: context.interactionId });
-      await this.sendText(operatorOpenId, '请重新发送一条完整、正确的销售信息；原草稿不会入账。').catch((error) =>
+      await this.sendTaskText(task, '请重新发送一条完整、正确的销售信息；原草稿不会入账。').catch((error) =>
         logWarn('lark.sales.feedback.failed', { task_id: draftId, interaction_id: context.interactionId, error: error.message }));
       return { toast: { type: 'info', content: '请重新发送修正后的完整销售信息' } };
     }
@@ -1226,8 +1662,13 @@ class LarkMvpService {
       const cardUpdated = await this.updateSalesActionCard(task, event,
         salesStatusCard(task.draft, '销售订单处理中', '已收到确认，正在写入销售记录和收款；请勿重复点击。'),
         { stage: 'processing', interactionId: context.interactionId });
-      if (!cardUpdated) await this.sendText(operatorOpenId, '已收到确认，正在写入销售记录和收款，请稍候。').catch((error) =>
+      if (!cardUpdated) await this.sendTaskText(task, '已收到确认，正在写入销售记录和收款，请稍候。').catch((error) =>
         logWarn('lark.sales.feedback.failed', { task_id: draftId, interaction_id: context.interactionId, error: error.message }));
+      // ⭐ 她**点了「确认」**这件事本身要落表（今天完全没有这一笔）：
+      //   「确认状态」= 已确认。放在入账**之前**写，是因为她点过是既成事实——
+      //   后面入账成功与否由「资金状态」表达，不该把她的动作也一起抹掉。
+      //   写失败只记警告（SalesStatusWriter 不抛），不能因为记进度挡住入账。
+      await this.salesStatus.write(task.sales_entry_record_id, { userAction: WRITE.userAction.confirmed });
       const startedAt = Date.now();
       const result = await this.posting.postSale({
         salesEntryRecordId: task.sales_entry_record_id,
@@ -1366,7 +1807,7 @@ class LarkMvpService {
     const task = await this.store.get(taskId);
     if (task) {
       await this.store.update(taskId, { status: 'failed', error: error.message }).catch(() => undefined);
-      await this.sendText(task.sender_open_id, `处理失败：${error.message}`).catch(() => undefined);
+      await this.sendTaskText(task, `处理失败：${error.message}`).catch(() => undefined);
     }
     logError('lark.mvp.task.failed', { task_id: taskId, error: error.message });
   }

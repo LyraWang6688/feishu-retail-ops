@@ -18,7 +18,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { AfterSalesService } = require('../src/services/afterSalesService');
 const { InventoryService } = require('../src/services/inventoryService');
-const { afterSalesEventId, afterSalesOperationId } = require('../src/config/afterSales');
+const { afterSalesEventId, afterSalesOperationId, readAfterSalesConfig } = require('../src/config/afterSales');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 
@@ -42,14 +42,18 @@ const seed = () => ({
     behaviorRow('behavior_compensation', 'SALE_COMPENSATION', '销售赔货', '减少'),
     behaviorRow('behavior_cash', 'SALE_CASH', '现货销售', '减少'),
   ],
-  paymentMethod: [{ record_id: 'method_wechat', fields: { 收款方式: '微信' } }],
+  paymentMethod: [
+    { record_id: 'method_wechat', fields: { 收款方式: '微信' } },
+    // 原单是微信，但她说"退我现金"时要能写成现金（业务负责人 2026-10-06 拍板）。
+    { record_id: 'method_cash', fields: { 收款方式: '现金' } },
+  ],
   product: [
     { record_id: 'product_A', fields: { 货号: 'A100', 颜色: '黑' } },
     { record_id: 'product_B', fields: { 货号: 'B200', 颜色: '棕' } },
   ],
   salesEntry: [{
     record_id: 'order_old',
-    fields: { 销售单号: ORDER_NO, 原话: '卖一双 A100 41 码', 订单状态: '已完成', 确认状态: '已入账' },
+    fields: { 销售单号: ORDER_NO, 原话: '卖一双 A100 41 码', 销售状态: '已写入', 资金状态: '已写入' },
   }],
   salesDetail: [
     {
@@ -205,7 +209,8 @@ const build = (options = {}) => {
   const gateway = fakeBase(options);
   const inventory = fakeInventory(gateway);
   const store = options.store || tempStore();
-  const service = new AfterSalesService({ gateway, inventory, store, now: () => FIXED_NOW });
+  const service = new AfterSalesService({ gateway, inventory, store, now: () => FIXED_NOW,
+    ...(options.config ? { config: { ...readAfterSalesConfig(), ...options.config } } : {}) });
   return { gateway, inventory, store, service };
 };
 
@@ -276,7 +281,14 @@ test('退货（cash 退款）：六处写入各一次，原主表一字未动，
   assert.equal(masters[0].fields['原话'], '把那双 A100 退了，鞋没穿过');
   assert.equal(masters[0].fields['销售单号'], ORDER_NO);
   assert.equal(masters[0].fields['解析状态'], '解析成功');
-  assert.equal(masters[0].fields['确认状态'], '已入账');
+  // 2026-10-06 起：只写四个状态维度（旧列已随 schema 删除，写它们会当场抛
+  // 「未配置语义字段」——所以这里不需要、也无法再断言那两个旧列名）。
+  // 售后主表只在她点过卡片「确认」之后才会被创建 → 「确认状态」= 已确认；
+  // 明细 / 钱 / 库存随后都成功了 → 另外三维都是终态。
+  assert.equal(masters[0].fields['确认状态'], '已确认');
+  assert.equal(masters[0].fields['销售状态'], '已写入');
+  assert.equal(masters[0].fields['资金状态'], '已写入');
+  assert.equal(masters[0].fields['库存状态'], '已写入');
   assert.deepEqual(masters[0].fields['交易类型'], ['behavior_return']);
 
   // 2) 新「销售明细」：交易类型=行为 · 销售单号=原主表 · 成交金额=正数
@@ -288,7 +300,9 @@ test('退货（cash 退款）：六处写入各一次，原主表一字未动，
   assert.equal(details[0].fields['成交金额'], 250);
   assert.deepEqual(details[0].fields['交易类型'], ['behavior_return']);
 
-  // 3) 原明细只改「履约状态」；原主表（含订单状态）逐字段未变
+  // 3) 原明细只改「履约状态」；原主表逐字段未变
+  //    🔴 口径是**售后不影响原单**（业务负责人 2026-10-06 定过：「原主表一字不动」）：
+  //    原单的「销售状态」一个字节都不写（下面有两条用例专门钉住这件事）。
   assert.equal(rowsOf(gateway, 'salesDetail')[0].fields['履约状态'], '已退货');
   assert.deepEqual({ ...rowsOf(gateway, 'salesDetail')[0].fields, 履约状态: '已交付' }, beforeDetail);
   assert.deepEqual(rowsOf(gateway, 'salesEntry')[0].fields, beforeEntry);
@@ -331,7 +345,11 @@ test('退货（cash 退款）：六处写入各一次，原主表一字未动，
   assert.deepEqual(gateway.writes.create, {
     salesEntry: 1, salesDetail: 1, paymentRecord: 1, inventoryLedger: 1, liveInventory: 1,
   });
-  assert.deepEqual(gateway.writes.update, { salesDetail: 1 });
+  assert.deepEqual(gateway.writes.update, { salesDetail: 1, salesEntry: 1 });
+  // ⚠️ salesEntry 那一次 update 是 2026-10-06 新加的：把四个状态维度收口
+  //    （确认状态=已确认 / 销售状态=已写入 / 资金状态=已写入 / 库存状态=已扣减）。
+  //    ⚠️ 它**不碰被她退的那张原单**（order_old）—— 售后**不写**原主表，一字不动；
+  //    见下面「售后不写原单」那两条用例。
   assert.deepEqual(gateway.writes.delete, {});
   // 本地闸门：记下"这一次做过"，并记住每个阶段的 record_id
   const progress = await service.store.get(result.operationId);
@@ -340,6 +358,56 @@ test('退货（cash 退款）：六处写入各一次，原主表一字未动，
   assert.deepEqual(progress.detail_record_ids, [details[0].record_id]);
   assert.deepEqual(progress.original_details_marked, ['detail_old_1']);
   assert.equal(progress.payment_record_id, payments[0].record_id);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 售后**不写原单**（业务负责人 2026-10-06 定过：「**原主表一字不动**」）
+//
+// 🔴 原「销售主表」的「销售状态」那一列语义是"明细写进去了没有"
+//    （未写入 / 部分写入 / 已写入 / 写入失败），**没有「已退货」这个选项** ——
+//    真写下去飞书会自动新建选项，把那一列搞乱。
+// 「退过没退过」记在【销售明细·履约状态】＋【新建的退货单（交易类型=销售退货）】上。
+// ⚠️ 曾经有一条"回写原单销售状态"的显式开关（默认关），已于 2026-10-06 整体删除：
+//    删掉是**行为零变化**，而它的**默认行为**（原主表一字不动）由下面两条用例钉住。
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('售后**不写**原单：退货执行完，原主表逐字段一字未动', async () => {
+  const { gateway, service } = build();
+  const before = structuredClone(
+    rowsOf(gateway, 'salesEntry').find((row) => row.record_id === 'order_old').fields,
+  );
+
+  await service.execute(request());
+
+  const entry = rowsOf(gateway, 'salesEntry').find((row) => row.record_id === 'order_old');
+  assert.deepEqual(entry.fields, before, '原主表逐字段未变');
+  assert.equal(entry.fields['销售状态'], '已写入',
+    '原单「销售状态」保持原值 —— 那一列没有「已退货」这个选项，写了飞书会自动新建选项');
+  // 退货事实记在别处（这正是现在唯一的行为）：原明细履约状态 + 新建的退货单
+  assert.equal(rowsOf(gateway, 'salesDetail')[0].fields['履约状态'], '已退货');
+  assert.equal(masterRows(gateway).length, 1, '新建了一条退货单（交易类型 = 销售退货）');
+  assert.deepEqual(masterRows(gateway)[0].fields['交易类型'], ['behavior_return']);
+});
+
+test('售后**不写**原单：换货也不动原主表（逐字段未变）', async () => {
+  const { gateway, service } = build();
+  const before = structuredClone(
+    rowsOf(gateway, 'salesEntry').find((row) => row.record_id === 'order_old').fields,
+  );
+
+  await service.execute(request({
+    action: 'exchange',
+    originalText: '换一双 B200 42 码',
+    originalSalesDetailRecordIds: ['detail_old_1'],
+    newLines: [{ productId: 'product_B', sizeId: 'size_42', amount: 300 }],
+    diffAmount: 50,
+    settlement: 'cash',
+    restockState: '门盒',
+  }));
+
+  const entry = rowsOf(gateway, 'salesEntry').find((row) => row.record_id === 'order_old');
+  assert.deepEqual(entry.fields, before, '换货同样不动原主表');
+  assert.equal(entry.fields['销售状态'], '已写入', '换货也不写原单「销售状态」');
 });
 
 test('重复执行两次：六处写入都只发生一次（第二次被总闸门整次跳过）', async () => {
@@ -371,6 +439,54 @@ test('总闸门按请求指纹认人：同一次分片里塞另一笔售后 → 
   );
   assert.equal(countsOf(gateway), writesAfterFirst);
   assert.deepEqual(snapshot(gateway), recordsAfterFirst);
+});
+
+// ⭐ 业务负责人 2026-10-06 拍板（AGENTS.md 第 16 条(2)）：
+//   「钱退现金」→ 退款记录的「交易方式」写**她实际说的方式**，不沿用原单。
+test('⭐ 她说了「退我现金」→ 收款明细的交易方式写**现金**（原单是微信也照写现金）', async () => {
+  const { gateway, service } = build();
+  // 原单的收款方式是微信（seed 里 pay_old_1 = method_wechat），她说的是现金。
+  const result = await service.execute(request({ paymentMethod: '现金', originalText: '把那双 A100 退了，退我现金' }));
+
+  const payments = paymentRows(gateway);
+  assert.equal(payments.length, 1);
+  assert.deepEqual(payments[0].fields['交易方式'], ['method_cash'],
+    '写她说的现金，不是原单的微信');
+  assert.equal(result.money.methodSource, 'spoken', '来源要说清是"她说的"');
+  assert.equal(result.money.methodId, 'method_cash');
+});
+
+test('⭐ 她没说收款方式 → 沿用原单的方式（现有逻辑不变，来源标 original）', async () => {
+  const { gateway, service } = build();
+  // 原话里一个方式词都没有；请求里 paymentMethod 也是空。
+  const result = await service.execute(request({ paymentMethod: '', originalText: '把那双 A100 退了' }));
+
+  const payments = paymentRows(gateway);
+  assert.deepEqual(payments[0].fields['交易方式'], ['method_wechat'], '她没说 → 沿用原单的微信');
+  assert.equal(result.money.methodSource, 'original');
+  assert.equal(result.money.methodId, 'method_wechat');
+});
+
+test('⭐ 指纹含收款方式：同一分片里"现金"改成"微信"是另一笔，不能被当成重试整次跳过', async () => {
+  const { gateway, service } = build();
+  await service.execute(request({ paymentMethod: '现金' }));
+  const writesAfterFirst = countsOf(gateway);
+
+  await assert.rejects(
+    () => service.execute(request({ paymentMethod: '微信' })),
+    /请求内容与上次不同/,
+    '方式变了就不是同一次售后，不许静默复用上一次的结果',
+  );
+  assert.equal(countsOf(gateway), writesAfterFirst, '拒绝时不许再写一笔');
+});
+
+test('⭐ 她说的方式在「收款方式管理」里不存在 → 当场抛（不偷偷写回原单的方式）', async () => {
+  const { gateway, service } = build();
+  await assert.rejects(
+    () => service.execute(request({ paymentMethod: '刷卡' })),
+    /收款方式管理中找不到：刷卡/,
+  );
+  assert.deepEqual(paymentRows(gateway), [], '一个字节都不许写进收款明细');
 });
 
 test('给了 taskId 时，同一原单同一动作可以做第二次（每次用户消息一个分片）', async () => {
@@ -574,7 +690,9 @@ test('资金 prepaid：走「客户往来货款」，用「业务事件ID」做�
   assert.equal(rows[0].fields['来源单号'], ORDER_NO);
   // 幂等键 = 原单 + 动作 + 本次明细批次哈希（12 位十六进制）
   assert.equal(rows[0].fields['业务事件ID'], 'after_sales:order_old:return:d5268040a9a4');
-  assert.equal(rows[0].fields['发生时间'], FIXED_NOW);
+  // ⚠️ 2026-10-06 起代码**不写**任何时间列：「发生时间」不再由我们填
+  //（生产真表里这一列还在，但是一次性的 DateTime，不是自动字段 —— 已单独提给业务负责人确认）。
+  assert.equal(rows[0].fields['发生时间'], undefined);
   // 销售主表里没有"客人是谁"这个信息 → 不编值、不从原单取不存在的字段
   assert.equal(rows[0].fields['客户'], undefined);
   assert.equal(refundResult.money.route, 'prepaid');

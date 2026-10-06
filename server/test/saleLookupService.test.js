@@ -21,9 +21,11 @@ const productRow = (recordId, itemNo, color) => ({
   fields: { 货号: itemNo, 颜色: color, 编号: `${itemNo}|${color}` },
 });
 
-const entryRow = ({ id, orderNo, recordedAt = daysAgo(0), orderStatus = '已完成' }) => ({
+// ⚠️ 主表判据一读的是「销售状态」（原「订单状态」那列已被业务负责人 2026-10-06 整列删除）。
+// 默认给「已写入」= 一笔正常入过账的新单；想造"退过"或"不认识"的单就分别传值 / 不传。
+const entryRow = ({ id, orderNo, recordedAt = daysAgo(0), salesStatus = '已写入' }) => ({
   record_id: id,
-  fields: { 销售单号: orderNo, 录单日: recordedAt, 订单状态: orderStatus },
+  fields: { 销售单号: orderNo, 录单日: recordedAt, 销售状态: salesStatus },
 });
 
 const detailRow = ({ id, orderId, productId, soldAt = daysAgo(0), sizeRecordId = 'size_38', amount = 230, tradeType = '' }) => ({
@@ -66,6 +68,8 @@ const makeService = async (options = {}) => {
   });
   const gateway = makeGateway({ details, entries, products, writes, reads });
   const cards = [];
+  const privateSends = [];
+  const taskSends = [];
   let replyFails = options.replyFails === true;
   const service = new SaleLookupService({
     gateway,
@@ -78,9 +82,26 @@ const makeService = async (options = {}) => {
       cards.push(card);
       return 'om_card';
     },
-    sendCard: async (_openId, card) => { cards.push(card); return 'om_card_fallback'; },
+    sendCard: async (openId, card) => {
+      privateSends.push({ openId, card });
+      cards.push(card);
+      return 'om_card_fallback';
+    },
+    // 渠道感知出口：**只有显式传了才注入** —— 生产在 `larkMvpService` 里注入 `sendTaskCard`。
+    // 不传时 service 用缺省端口（= 改动前的私聊行为），这样两条路都能被单独钉住。
+    ...(options.sendCardToTask
+      ? {
+        sendCardToTask: async (task, card) => {
+          taskSends.push({ task, card });
+          return options.sendCardToTask(task, card);
+        },
+      }
+      : {}),
   });
-  return { service, store, gateway, cards, disableReply: () => { replyFails = true; } };
+  return {
+    service, store, gateway, cards, privateSends, taskSends,
+    disableReply: () => { replyFails = true; },
+  };
 };
 
 const newTask = (store, overrides = {}) => store.create({
@@ -160,13 +181,13 @@ test('候选查询窗口：4 天前的命中，6 天前的不命中（默认 5 �
   assert.deepEqual(wider.map((row) => row.record_id).sort(), ['d_4days', 'd_6days']);
 });
 
-test('排除已退：订单状态=已退货 / 部分退货 的单不出现', async () => {
+test('排除已退：销售状态=已退货 / 部分退货 的单不出现', async () => {
   const { service } = await makeService({
     products: [productRow('p1', '6035', '黑')],
     entries: [
       entryRow({ id: 'e_ok', orderNo: 'XSD-OK' }),
-      entryRow({ id: 'e_back', orderNo: 'XSD-BACK', orderStatus: '已退货' }),
-      entryRow({ id: 'e_part', orderNo: 'XSD-PART', orderStatus: '部分退货' }),
+      entryRow({ id: 'e_back', orderNo: 'XSD-BACK', salesStatus: '已退货' }),
+      entryRow({ id: 'e_part', orderNo: 'XSD-PART', salesStatus: '部分退货' }),
     ],
     details: [
       detailRow({ id: 'd_ok', orderId: 'e_ok', productId: 'p1' }),
@@ -183,8 +204,9 @@ test('排除已退：明细里有「交易类型=销售退货」的行时，整�
     products: [productRow('p1', '6035', '黑')],
     entries: [
       entryRow({ id: 'e_ok', orderNo: 'XSD-OK' }),
-      // 订单状态还没改（判据一失效），只能靠明细的退货行识别——这就是双保险的意义。
-      entryRow({ id: 'e_back', orderNo: 'XSD-BACK', orderStatus: '已完成' }),
+      // 主表「销售状态」还没被写成「已退货」（那一步还没做，等她定），只能靠明细的退货行识别
+      // ——这就是双保险的意义。
+      entryRow({ id: 'e_back', orderNo: 'XSD-BACK', salesStatus: '已写入' }),
     ],
     details: [
       detailRow({ id: 'd_ok', orderId: 'e_ok', productId: 'p1' }),
@@ -363,6 +385,56 @@ test('查询卡片：0 条也在原消息下回一张卡，且优先 reply、失
   await fallback.service.handleQuery(fallbackTask, { intent: 'sale_query', item_no: '6035', color: '黑' });
   assert.equal(fallback.cards.length, 1);
   assert.equal(await fallback.store.get('sale_query_1').then((row) => row.card_message_id), 'om_card_fallback');
+  // ⭐ 上面这条就是**私聊的既有行为**：回复失败 → 主动发卡给本人 `sendCard(sender_open_id)`。
+  // 2026-10-06「私聊切除」②之后它必须逐字不变（见下面三条新用例）。
+  assert.equal(fallback.privateSends.length, 1);
+  assert.equal(fallback.privateSends[0].openId, 'ou_1');
+  assert.equal(fallback.taskSends.length, 0, '没有 chat_type = 私聊，不走群出口');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 2026-10-06「私聊切除」②：`saleLookupService.replyCardByTask` 的兜底。
+//   以前：群话题里回复失败会**掉进私聊**（`sendCard(task.sender_open_id)`）。
+//   现在：`chat_type === 'group'` → 走**渠道感知出口**（回到那个话题），
+//        出口再失败也**只记日志、如实失败**，绝不静默发她私聊。
+//   私聊那条路（上面那条用例）一个字节都不动。
+// ─────────────────────────────────────────────────────────────────────────────
+
+const lookupFixture = () => ({
+  products: [productRow('p1', '6035', '黑')],
+  entries: [entryRow({ id: 'e1', orderNo: 'XSD-0001' })],
+  details: [detailRow({ id: 'd1', orderId: 'e1', productId: 'p1' })],
+});
+
+test('② 群任务回复失败：走渠道感知出口回到那个话题，**一条私聊都不发**', async () => {
+  const { service, store, privateSends, taskSends } = await makeService({
+    ...lookupFixture(),
+    replyFails: true,
+    sendCardToTask: async () => 'om_topic_card',
+  });
+  const task = await newTask(store, { chat_type: 'group', chat_id: 'oc_sales_group', group_thread_id: 'omt_1' });
+  await service.handleQuery(task, { intent: 'sale_query', item_no: '6035', color: '黑' });
+
+  assert.equal(taskSends.length, 1, '群任务必须走渠道感知出口（回话题）');
+  assert.equal(taskSends[0].task.chat_id, 'oc_sales_group');
+  assert.deepEqual(privateSends, [], '群上下文里回复失败也绝不回落私聊');
+  assert.equal(await store.get('sale_query_1').then((row) => row.card_message_id), 'om_topic_card');
+});
+
+test('② 群任务两条路都失败：如实失败（不留 card_message_id）+ 记日志，不静默掉进私聊', async () => {
+  const { service, store, privateSends, taskSends } = await makeService({
+    ...lookupFixture(),
+    replyFails: true,
+    sendCardToTask: async () => { throw new Error('topic reply failed'); },
+  });
+  const task = await newTask(store, { chat_type: 'group', chat_id: 'oc_sales_group' });
+  // 兜底再失败**不抛出去**（否则会把这条查询判成处理失败，她会以为"查了没反应"）；
+  // 返回值是空串 = "这次没发出去"，调用方按失败处理。
+  await service.handleQuery(task, { intent: 'sale_query', item_no: '6035', color: '黑' });
+
+  assert.equal(taskSends.length, 1, '仍然试过一次群出口');
+  assert.deepEqual(privateSends, [], '绝不静默掉进私聊');
+  assert.equal(await store.get('sale_query_1').then((row) => row.card_message_id), undefined);
 });
 
 test('退货/换货的占位入口已删除：真执行在 AfterSalesFlowService，这里不再回"还没上线"', async () => {
@@ -374,4 +446,109 @@ test('退货/换货的占位入口已删除：真执行在 AfterSalesFlowService
   assert.equal(service.gateway.create, undefined);
   assert.equal(service.gateway.update, undefined);
   assert.equal(service.gateway.delete, undefined);
+});
+
+// ── C：保守处理（2026-10-06）──────────────────────────────────────────────────
+// 背景：「订单状态」那一列已被业务负责人**整列删除**（值一起没了），判据一迁到「销售状态」。
+// ⚠️ 但**今天还没有任何代码在退货时写「销售状态 = 已退货」**（补写这一步还没做，等她定），
+// 所以取不到值（这一列给不出任何信息）时**保守当成"退过"**：宁可少给她一条候选，
+// 也不能把"可能已经退过"的单再拿出来退一次。但**新单不能因此消失**——
+// 新单的「销售状态」有值（= 这笔单我们认识）。
+// ⚠️ 老的（删列之前录的）单子这两列都是空的 ⇒ 会被保守规则挡在候选之外，这是**故意的**。
+
+test('⭐ 保守：销售状态空（老单 / 取不到）→ 当成"退过"，整单排除（+ logWarn）', async () => {
+  const { service } = await makeService({
+    products: [productRow('p1', '6035', '黑')],
+    entries: [
+      { record_id: 'e_known', fields: { 销售单号: 'XSD-KNOWN', 录单日: daysAgo(0), 销售状态: '已写入' } },
+      // 这一列空着：这单退没退过，表里没有任何依据。
+      { record_id: 'e_unknown', fields: { 销售单号: 'XSD-UNKNOWN', 录单日: daysAgo(0) } },
+    ],
+    details: [
+      detailRow({ id: 'd_known', orderId: 'e_known', productId: 'p1' }),
+      detailRow({ id: 'd_unknown', orderId: 'e_unknown', productId: 'p1' }),
+    ],
+  });
+  const candidates = await service.findCandidates({ itemNo: '6035', color: '黑' });
+  assert.deepEqual(candidates.map((row) => row.record_id), ['d_known']);
+});
+
+test('⭐ 新单（销售状态=已写入）**不**被保守规则排除', async () => {
+  const { service } = await makeService({
+    products: [productRow('p1', '6035', '黑')],
+    entries: [
+      // 这就是本次改动之后每一条新单的样子（「销售状态」由 salesOrderService 写）。
+      { record_id: 'e_new', fields: { 销售单号: 'XSD-NEW', 录单日: daysAgo(0), 销售状态: '已写入' } },
+    ],
+    details: [detailRow({ id: 'd_new', orderId: 'e_new', productId: 'p1' })],
+  });
+  const candidates = await service.findCandidates({ itemNo: '6035', color: '黑' });
+  assert.deepEqual(candidates.map((row) => row.record_id), ['d_new']);
+});
+
+test('保守规则不吃掉判据本体：销售状态=已退货 仍然排除', async () => {
+  const { service } = await makeService({
+    products: [productRow('p1', '6035', '黑')],
+    entries: [
+      { record_id: 'e_back', fields: {
+        销售单号: 'XSD-BACK', 录单日: daysAgo(0), 销售状态: '已退货',
+      } },
+    ],
+    details: [detailRow({ id: 'd_back', orderId: 'e_back', productId: 'p1' })],
+  });
+  const candidates = await service.findCandidates({ itemNo: '6035', color: '黑' });
+  assert.deepEqual(candidates, []);
+});
+
+// ─── ⭐ 群话题里的售后：只能在那**一笔**销售里找（绝不跨单去捞）─────────────────
+//
+// BUG：afterSalesFlowService 传了 `salesEntryRecordId`，但 findCandidates 的签名里
+// 没有这个参数 → 静默忽略 → 仍按「货号 + 颜色」在全表捞，可能抓到**别的单**同一双鞋。
+// 业务负责人的口径：「同一笔的售后，绝不跨单去捞」。
+test('⭐ 传了 salesEntryRecordId → 只返回那一笔的明细；不传时仍是全表（回归）', async () => {
+  const { service } = await makeService({
+    products: [productRow('p1', '6035', '黑')],
+    entries: [
+      { record_id: 'e_this', fields: { 销售单号: 'XSD-THIS', 录单日: daysAgo(0), 销售状态: '已写入' } },
+      { record_id: 'e_other', fields: { 销售单号: 'XSD-OTHER', 录单日: daysAgo(0), 销售状态: '已写入' } },
+    ],
+    details: [
+      detailRow({ id: 'd_this', orderId: 'e_this', productId: 'p1' }),
+      detailRow({ id: 'd_other', orderId: 'e_other', productId: 'p1' }),
+    ],
+  });
+
+  const all = await service.findCandidates({ itemNo: '6035', color: '黑' });
+  assert.deepEqual(all.map((row) => row.record_id).sort(), ['d_other', 'd_this'],
+    '不传限定时，行为与改动前一致：全表按货号颜色捞');
+
+  const scoped = await service.findCandidates({
+    itemNo: '6035', color: '黑', salesEntryRecordId: 'e_this',
+  });
+  assert.deepEqual(scoped.map((row) => row.record_id), ['d_this'],
+    '话题里已定位到 e_this：绝不能把 e_other 的那双也捞进来');
+
+  // 这一笔里没有那双 → 回空（让她知道"这一笔里没有"，而不是拿别单的顶上）
+  const scopedMiss = await service.findCandidates({
+    itemNo: '9999', color: '黑', salesEntryRecordId: 'e_this',
+  });
+  assert.deepEqual(scopedMiss, []);
+});
+
+test('⭐ 只给 salesEntryRecordId（不带货号颜色）也能定位那一笔的明细', async () => {
+  const { service } = await makeService({
+    products: [productRow('p1', '6035', '黑')],
+    entries: [
+      { record_id: 'e_this', fields: { 销售单号: 'XSD-THIS', 录单日: daysAgo(0), 销售状态: '已写入' } },
+      { record_id: 'e_other', fields: { 销售单号: 'XSD-OTHER', 录单日: daysAgo(0), 销售状态: '已写入' } },
+    ],
+    details: [
+      detailRow({ id: 'd_this', orderId: 'e_this', productId: 'p1' }),
+      detailRow({ id: 'd_other', orderId: 'e_other', productId: 'p1' }),
+    ],
+  });
+  const scoped = await service.findCandidates({ salesEntryRecordId: 'e_this' });
+  assert.deepEqual(scoped.map((row) => row.record_id), ['d_this']);
+  // 三个限定条件全空才回空（"查全部"不是这个功能要回答的问题）
+  assert.deepEqual(await service.findCandidates({}), []);
 });

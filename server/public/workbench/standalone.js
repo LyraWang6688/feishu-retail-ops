@@ -1,11 +1,24 @@
-import { requireFeishuAuth } from './core/auth.js';
+import { requireFeishuAuth, showLoginButton } from './core/auth.js';
 import { describeError, showPageError } from './core/ui.js';
+import { createCommonModule } from './features/common/index.js';
 import { createSalesModule } from './features/sales/index.js';
 import { createInventoryModule } from './features/inventory/index.js';
+import { createInventoryAdjustmentModule } from './features/inventory/adjustment.js';
+import { createPurchaseLinksModule } from './features/purchase/links.js';
 
+// 独立页面注册表：key = 页面的 <body data-view="...">，value = 该页面的模块工厂。
+// 三个一级 tab 各一个页面，另加两个子页：
+//   common.html               → 常用功能
+//   sales-query.html          → 销售查询（原「今日销售」，支持按某日 / 按区间）
+//   inventory.html            → 实时库存
+//   inventory-adjustment.html → 常用功能 → 库存手工调整（盘点调整 / 换季调整）
+//   purchase-return.html      → 常用功能 → 采购和退货（两个飞书表单外链，不做查询）
 const factories = {
-  'sales-today': () => createSalesModule({ focused: true }),
+  common: () => createCommonModule({ focused: true }),
+  'sales-query': () => createSalesModule({ focused: true }),
   inventory: () => createInventoryModule({ focused: true }),
+  'inventory-adjustment': () => createInventoryAdjustmentModule(),
+  'purchase-return': () => createPurchaseLinksModule(),
 };
 
 async function start() {
@@ -21,6 +34,9 @@ async function start() {
     factory().mount(document.getElementById('standalone-host'));
   } catch (error) {
     showPageError(`页面启动失败：${describeError(error)}`);
+    // 与 index.html 同一条兜底：401 会自动跳登录，其余失败（403 / 网络）至少给一个
+    // 能点的「去登录」，别只留一句"启动失败"。
+    showLoginButton();
   }
 }
 

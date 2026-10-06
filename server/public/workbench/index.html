@@ -6,6 +6,7 @@
   <title>邯美数智经营工作台</title>
   <link rel="stylesheet" href="/workbench/styles/tokens.css">
   <link rel="stylesheet" href="/workbench/styles/base.css">
+  <link rel="stylesheet" href="/workbench/features/common/common.css">
   <link rel="stylesheet" href="/workbench/features/sales/sales.css">
   <link rel="stylesheet" href="/workbench/features/purchase/purchase.css">
   <link rel="stylesheet" href="/workbench/features/inventory/inventory.css">
@@ -23,13 +24,18 @@
       </div>
     </header>
 
+    <!--
+      一级 tab 只有 3 个（业务负责人 2026-10-06 定的）：
+        常用功能 · 销售查询 · 实时库存
+      ⚠️ 「采购管理 / 资金管理 / 抖音运营 / 平台管理」**只是把入口隐去**——
+        对应模块的代码仍然在 main.js 的 modules 里（见那里的 HIDDEN 注释），
+        要恢复只加回一个 <button class="main-tab" data-module="..."> 即可，不用改逻辑。
+      三个 tab 各自都有独立页面：common.html / sales-query.html / inventory.html。
+    -->
     <nav id="main-tabs" class="main-tabs" aria-label="工作台模块">
-      <button class="main-tab active" type="button" data-module="sales">销售管理</button>
-      <button class="main-tab" type="button" data-module="purchase">采购管理</button>
-      <button class="main-tab" type="button" data-module="inventory">库存管理</button>
-      <button class="main-tab" type="button" data-module="finance">资金管理</button>
-      <button class="main-tab" type="button" data-module="douyin">抖音运营</button>
-      <button class="main-tab" type="button" data-module="platform">平台管理</button>
+      <button class="main-tab active" type="button" data-module="sales">销售查询</button>
+      <button class="main-tab" type="button" data-module="inventory">实时库存</button>
+      <button class="main-tab" type="button" data-module="common">常用功能</button>
     </nav>
 
     <section id="module-host" aria-live="polite"></section>

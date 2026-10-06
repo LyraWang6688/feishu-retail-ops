@@ -31,7 +31,14 @@ const AFTER_SALES_BEHAVIORS = Object.freeze({
   SALE_CASH: 'SALE_CASH',
 });
 
-// 原「销售明细」的「履约状态」目标值。原主表的「订单状态」**不动**（业务负责人明确要求）。
+// 原「销售明细」的「履约状态」目标值。**原主表不动**（业务负责人明确要求）。
+// ⚠️ 原主表的「订单状态」那一列已被她 2026-10-06 整列删除，不再有任何写入点。
+//
+// ⭐ 防后人再走错：「退过没退过」记在【销售明细·履约状态】和【新建的退货单】上，
+//    不写原单的「销售状态」—— 那一列的语义是"明细写进去了没有"
+//    （未写入 / 部分写入 / 已写入 / 写入失败），**没有「已退货」这个选项**，
+//    写了飞书会自动新建选项，把那一列搞乱。
+//    （原「销售状态」回写开关已于 2026-10-06 整体删除——业务负责人定过"原主表一字不动"。）
 const AFTER_SALES_FULFILLMENT = Object.freeze({
   RETURNED: '已退货',
   EXCHANGED: '已换货',
@@ -172,12 +179,18 @@ const afterSalesOperationId = ({ taskId, originalSalesEntryRecordId, action, ori
   return `after_sales_${entryId}_${actionValue}_${batch}`;
 };
 
-const readAfterSalesConfig = () => ({
+const readAfterSalesConfig = (env = process.env) => ({
   moneyDirections: AFTER_SALES_MONEY_DIRECTIONS,
-  // 新主表的解析 / 确认状态：走与销售链路**同一套取值**（larkMvpService 里用的那几个），
-  // 不自创新词。售后是用户确认后直接执行的，所以直接落在终态上。
+  // 🔴 售后**不写**原单「销售状态」——那一列的语义是"明细写进去了没有"，
+  //    没有「已退货」这个选项（业务负责人 2026-10-06：原主表一字不动）。
+  //    这里曾经有一个 writeOriginalSalesStatus 开关，已整体删除。
+  // 新主表的解析状态：走与销售链路**同一套取值**（larkMvpService 里用的那个），不自创新词。
   masterParseStatus: '解析成功',
-  masterConfirmStatus: '已入账',
+  // ⚠️ 这里**曾经**有一个 masterConfirmStatus: '已入账' —— 2026-10-06 起售后主表只写四个状态维度，
+  //    名字与取值统一由 `config/salesStatusDimensions.js`
+  //    （SALES_STATUS_FIELDS / SALES_STATUS_WRITE_VALUES）提供：
+  //    售后主表写 userAction=已确认 + sales/funds=未写入（见 afterSalesService.ensureMaster）。
+  //    「确认状态（旧）」那一列已被她整列删除，也没有任何代码再指向它。
   // 收款明细：钱真收/真退之后就是已收款；退款在业务上也用同一个"已结清"口径。
   cashPaymentStatus: '已收款',
   // 客户往来货款：这一次变动的类型（表的选项里已有「退货退款」）。

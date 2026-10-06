@@ -133,13 +133,30 @@ const V1_BITABLE_SCHEMA = {
         // Automatic creation time: read-only fallback for workbench date filters.
         recordedAt: '录单日',
         parseStatus: '解析状态',
-        confirmStatus: '确认状态',
+        // 四个状态维度：业务负责人 2026-10-06 在生产表新建，2026-10-06 晚又**把两个旧字段
+        // 整个删掉**（「确认状态（旧）」「订单状态」——飞书删字段 = 删值，不可恢复）。
+        // 所以这里只保留这四个映射，读写都走它们（取值规则见 config/salesStatusDimensions.js）。
+        // 🔴 不要再把旧字段名加回来：生产表里已经没有这两列，闸门会当场报「缺少 V1 字段」。
+        userAction: '确认状态',
+        sales: '销售状态',
+        // ⚠️「资金状态」在真表里是**文本字段**（type=1），不是单选。
+        funds: '资金状态',
+        stock: '库存状态',
         parseSummary: '解析结果摘要',
         failureReason: '失败原因',
-        orderStatus: '订单状态',
         // 关联「行为管理」里的现货销售 / 未付销售 / 预付销售。交易类型决定交付状态；
         // 落成关联是为了可筛可查、可对账，也让销售与库存行为共用同一张配置表。
         tradeType: '交易类型',
+        // ⭐「消息链接」（业务负责人 2026-10-06 在生产表**新建**，逐字：「我在多维表格的
+        // 销售主表里加了一列叫做**消息链接**，可以写入这里～」）。
+        // 存的是什么：这条销售当初在群里那条**机器人回复消息的深链**（`message_app_link`）。
+        // ⚠️ 链接只可能出现在**发送响应**里，历史消息取不回来（见
+        // docs/reports/group-message-deep-link-2026-10-06.md；⚠️ 该文档"实测四"记着：
+        // 本应用**当前连发送响应都不回带** ⇒ 这一列现在仍是空的，代码待命不伪造）。
+        // ⇒ 老单这一列**留空**；新建的单在"发卡片那一刻"拿到就写（SalesMessageLinkService）。
+        // ⚠️ 字段类型由**生产表那一列**决定（她建的）：代码运行时读一次字段元数据，
+        // 文本写字符串 / 超链接（type=15）写 `{ text, link }`——不假设类型。
+        messageLink: '消息链接',
       },
     },
     salesDetail: {
@@ -197,7 +214,16 @@ const V1_BITABLE_SCHEMA = {
         changeType: '变动类型',
         receivableChange: '应收变化',
         customer: '客户',
-        occurredAt: '发生时间',
+        // ⚠️ 这个映射**刻意保留**（2026-10-06）：生产真表「客户往来货款」里
+        // 「发生时间」**还在**，而且它是一次性的 DateTime 普通列（type=5），
+        // **不是**飞书自动的「创建时间」（type=1001）——也就是说这一列不会自己长出来。
+        // 按业务负责人的口径「真表里还有它 → 映射可以保留，但代码不写它」：
+        // 写入点（afterSalesService.settlePrepaid 的 `occurredAt: request.occurredAt`）已删除，
+        // 映射保留只是为了**保留真表结构的事实**、并让闸门继续盯住这个名字。
+        // ⇒ 删映射会把闸门判绿但骗过自己（真表明明还有这一列）；真正该做的是"不写"。
+        // ⚠️ 待她确认：售后 prepaid 记录的这一列从此会是空的（没有代码再填），
+        // 若她也把这一列删掉/改成自动字段，下一次要把这行映射一起删。
+        // ⚠️ occurredAt（发生时间）已删除：业务负责人 2026-10-06 在生产表删掉了这一列（改成飞书自动字段的口径）
         detailSequence: '明细序号',
         entryStatus: '入账状态',
         // 幂等键（文本）：售后写入靠它回查，缺列时执行器大声失败。
@@ -215,7 +241,16 @@ const V1_BITABLE_SCHEMA = {
       tableId: getEnv('FEISHU_V1_PURCHASE_REPORT_TABLE_ID', 'tblo0ffzFt7vyQw2'),
       fields: {
         batchNoText: '报货批次号', detailId: '明细ID', behavior: '采购行为',
-        product: '编号', size: '尺码', quantityDescription: '数量说明', reportedAt: '报单时间', operator: '经办人',
+        product: '编号', size: '尺码', quantityDescription: '数量说明', operator: '经办人',
+        // ⚠️ 「报单时间」(reportedAt) 映射已删除（2026-10-06）。
+        // 业务负责人的口径：时间字段除了「收款时间」以外，**飞书里都设成了自动字段**
+        //（表里的「创建时间」type=1001 / CreatedTime），代码不要再写、也不必再映射。
+        // 生产真表核对（2026-10-06，服务器上只读、用项目自己的 gateway.listFields）：
+        // 「供应商对接」真表 14 列里**没有**「报单时间」，映射留着 = 部署闸门
+        // v1:schema-check:all 直接判红（该表缺少 V1 字段: 报单时间）。
+        // grep 全仓：reportedAt 这个语义键在 server/src 里**没有任何读方与写方**
+        //（工作台「单据信息」页那一列读的是 row.reported_at，接口自 2026-09-26 起就不返回，
+        //  属于已知历史遗留，不在本次改动内），删除不会留下悬空引用。
         // 「数量」（number）是「采购退货」那种报货的数量来源；「采购申请」格式走
         // 「尺码 + 数量说明」，这一列是空的。2026-10-05 业务负责人改了字段结构后
         // 只读核对过：表里有「数量」没有尺码行。
@@ -289,7 +324,13 @@ const V1_BITABLE_SCHEMA = {
         batch: '采购到货批次',
         supplierOrder: '采购申请',
         product: '编号',
-        inboundAt: '入库时间',
+        // ⚠️ 「入库时间」(inboundAt) 映射已删除（2026-10-06）。
+        // 同一口径：入库时刻交给飞书自动的「创建时间」(type=1001)，代码不再单独记一列。
+        // 生产真表核对（2026-10-06，服务器上只读）：「采购入库」真表 11 列里**没有**
+        // 「入库时间」；写入点 confirmArrival 里那行 `inboundAt: Date.now()` 已同步删掉。
+        // 映射留着 = 部署闸门 v1:schema-check:all 判红（该表缺少 V1 字段: 入库时间）。
+        // ⚠️ 本表其余 9 个字段（入库明细ID / 采购行为 / 尺码 / 数量 / 采购到货批次 /
+        // 采购申请 / 编号 / 入库单价 / 入库金额）业务负责人这次没动，全部保留。
         unitCost: '入库单价',
         amount: '入库金额',
       },
@@ -305,6 +346,10 @@ const V1_BITABLE_SCHEMA = {
         behavior: '库存行为',
         salesDetail: '关联销售',
         purchaseInbound: '关联采购',
+        // 「操作人」= 飞书【人员】字段（type=11）。业务负责人 2026-10-06 在生产表新增。
+        // ⚠️ 只有【人工调整】会写它（谁点的）；自动链路（销售扣减 / 采购入库）留空——
+        //    这样"有值 = 人干的，空 = 系统干的"，人员字段也写不了"系统"这种字符串。
+        operator: '操作人',
           // ⚠️ 「发生时间」已由业务负责人 2026-10-05 从生产表删除（表里现在只有「创建时间」）；
           // 映射留着会让部署闸门 v1:schema-check 直接红，因此同步删掉。
         stockKey: '库存键',
@@ -319,6 +364,12 @@ const V1_BITABLE_SCHEMA = {
         size: '尺码',
         updatedAt: '更新时间',
         state: '所属状态',
+        // 「品类」是飞书**公式**列（2026-10-06 只读核过测试 Base：liveInventory.品类
+        // type=20，取值就是品类名，如「休闲鞋」「单鞋」；生产真表同一份形状见
+        // docs/inventory-adjustment-plan-2026-10-06.md 的只读实测）。
+        // 工作台「换季调整（按品类批量）」用它分组；代码只读、不写。
+        // ⚠️ 若哪天它被删掉或改名，`v1:schema-check:inventory` 会当场判红。
+        category: '品类',
         // 「这一双是某次库存操作创建的第 N 双」。实时库存是一双一条，
         // 没有这个键就无法在 create 结果未知时判断该不该补建。
         operationItemKey: '库存操作键',

@@ -248,10 +248,18 @@ const waitForRecordsPosted = async (gateway, recordIds) => {
   });
 };
 
-// 这一批的**任务**都落终态（posted / completed）。
-// ⚠️ 记录状态是 runReturnBatch 中途写的，而任务终态是 flushReturnBatch 收尾才写的。
-// 只等记录状态会有两个坑：① 重复投递读到还在 queued/processing 的任务 → duplicate=false；
-// ② 测试刚把状态改回未处理，又被收尾的那次写盘覆盖回终态。
+// 这一批的**任务**都落终态（posted / completed）—— "整批真的收尾了"的**唯一**可观测信号。
+//
+// runReturnBatch 的写盘顺序是：① 逐条写单据/扣库存 → ② 写报单记录的「处理状态」→
+// ③ deliverReturnImages 出图 → ④ sendReturnNotice 发群 → ⑤ 返回后 flushReturnBatch
+// 才写任务终态。所以 `waitForRecordsPosted` 只证明到了 ②，**出图、发群、任务终态都还没发生**。
+// 只等到 ② 就往下走会有三个坑（前两个已实测挂过 CI）：
+//   ① 断言 images.calls / 群消息 → 抢跑读到 0（CI 与本地都复现过 ⑦ :481 / ① :309）；
+//   ② 紧接着把任务改回 failed 想让它复跑 → 被 ⑤ 的那次写盘覆盖回 posted/completed
+//      → accept() 按重复投递拦掉 → 这条记录永远停在「待解析」→ 15 秒超时
+//      （**这就是 CI run 37419222418 挂在 :562/:578 的原话**）；
+//   ③ 重复投递读到还在 queued/processing 的任务 → duplicate=false。
+// ⇒ 凡「要改任务状态再复跑」或「要断言出图/发群」的用例，都必须先等这个 helper。
 //（报货那条链路的重复投递用例踩过同一个坑，那里也留了这段等待。）
 const waitForTasksTerminal = async (service, store, recordIds) => {
   await waitFor('整批任务落终态', async () => {
@@ -297,16 +305,17 @@ test('① 一次提交 2 条（同批次、分两次到达）→ 只出 1 张退
   const gateway = twoRecordFixture();
   const messages = [];
   const images = makeImages();
-  const { service } = makeService({ gateway, messages, images, purchaseReturnBatchWindowMs: 300 });
+  const { service, store } = makeService({ gateway, messages, images, purchaseReturnBatchWindowMs: 300 });
 
   // 飞书**分两次推**（实测形状）：第 1 条到达后隔一小会儿第 2 条才到。
   await service.accept('supplier-report', 'rep_2070');
   await wait(60);
   await service.accept('supplier-report', 'rep_66851');
   await waitForRecordsPosted(gateway, ['rep_2070', 'rep_66851']);
+  // 出图在「记录状态写盘」之后：等整批任务落终态，别抢跑读 images.calls。
+  await waitForTasksTerminal(service, store, ['rep_2070', 'rep_66851']);
 
   // ① 只出一张图（＝一张退货单），两个货号都在这张单上。
-  await waitFor('出图完成', async () => images.calls.length === 1);
   assert.equal(images.calls.length, 1, '整批只渲染 1 张退货单');
   assert.equal(images.calls[0].title, RETURN_TITLE);
   const itemNos = new Set(images.calls[0].items.map((item) => item.item_no));
@@ -347,13 +356,16 @@ test('① 一次提交 2 条（同批次、分两次到达）→ 只出 1 张退
 test('② 群里只有 1 张图 + 1 条文字 @，且文字是回复第 1 条（同一个话题）', async () => {
   const gateway = twoRecordFixture();
   const messages = [];
-  const { service } = makeService({ gateway, messages, purchaseReturnBatchWindowMs: 300 });
+  const { service, store } = makeService({ gateway, messages, purchaseReturnBatchWindowMs: 300 });
 
   await service.accept('supplier-report', 'rep_2070');
   await wait(60);
   await service.accept('supplier-report', 'rep_66851');
   await waitForRecordsPosted(gateway, ['rep_2070', 'rep_66851']);
-  await waitFor('群消息发完', async () => groupMessages(messages).length === 2);
+  // 等整批收尾（任务落终态）再数群消息：发群在记录状态之后。这样下面的
+  // `group.length === 2` 仍是**真断言**——真多发了第 3 条也会被抓到，
+  // 而不是"等到它变成 2 再断言它是 2"。
+  await waitForTasksTerminal(service, store, ['rep_2070', 'rep_66851']);
 
   const group = groupMessages(messages);
   assert.equal(group.length, 2, '一条提交只发 2 条群消息（以前是 4 条：2 图 + 2 文字）');
@@ -425,14 +437,16 @@ test('⑥ 不同「报货批次号」的两条：窗口内先后到达也不能�
     purchaseRequest: [],
   });
   const images = makeImages();
-  const { service } = makeService({ gateway, images, purchaseReturnBatchWindowMs: 300 });
+  const { service, store } = makeService({ gateway, images, purchaseReturnBatchWindowMs: 300 });
 
   await service.accept('supplier-report', 'rep_batch_a');
   await wait(60);
   await service.accept('supplier-report', 'rep_batch_b');
   await waitForRecordsPosted(gateway, ['rep_batch_a', 'rep_batch_b']);
-  // 记录进终态 ≠ 图已经出完（出图在 applySupplierReturn 之后的收尾里）。等两批都出图再断言。
-  await waitFor('两批都出图', async () => images.calls.length === 2);
+  // 记录进终态 ≠ 图已经出完（出图在 applySupplierReturn 之后的收尾里）。
+  // 等两批各自的任务都落终态＝两批真的都收尾了；这样下面 images.calls === 2 仍然是断言，
+  // 而不是"等它变成 2 再断言它是 2"。
+  await waitForTasksTerminal(service, store, ['rep_batch_a', 'rep_batch_b']);
 
   // 两批 → 两张单、两张图；各自只扣自己的库存。
   assert.equal(images.calls.length, 2, '两个批次号必须各出一张单');
@@ -453,10 +467,10 @@ test('⑥ 不同「报货批次号」的两条：窗口内先后到达也不能�
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ⑦ 超时不漏
+// ⑦ 单条（没有同伴）也要照常出单出图：到齐 = 它自己
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('⑦ 单独一条（窗口内没有同伴）：窗口到点前一次远端写入都没有，到点后照常出单出图', async () => {
+test('⑦ 单独一条（这一包只有它自己）：到齐就发，不等时间窗，照常出单出图', async () => {
   const gateway = makeGateway({
     purchaseReport: [returnRecord('rep_alone', 'prod_9', { 数量: 2, 报货批次号: 'BATCH-ALONE' })],
     liveInventory: [liveRow('live_alone_36', '门盒', 36, 'prod_9'), liveRow('live_alone_37', '门盒', 37, 'prod_9')],
@@ -465,23 +479,21 @@ test('⑦ 单独一条（窗口内没有同伴）：窗口到点前一次远端�
     purchaseRequest: [],
   });
   const images = makeImages();
-  const { service, store } = makeService({ gateway, images, purchaseReturnBatchWindowMs: 250 });
+  // 窗口配成 60 秒：新口径下它不再决定"什么时候发图"（只是同批重试间隔），
+  // 所以这一条**不该**等它——单条自己就是一包，到齐就发。
+  const { service, store } = makeService({ gateway, images, purchaseReturnBatchWindowMs: 60_000 });
 
   const accepted = await service.accept('supplier-report', 'rep_alone');
-  // 窗口没到点：任务停在等窗口，业务表一个字都没写。
-  await waitFor('任务停在等窗口', async () => (await store.get(accepted.taskId))?.status === 'batch_waiting');
-  await wait(80);
-  assert.equal(requestsOf(gateway).length, 0, '窗口没到点不得写单据');
-  assert.equal(ledgerOf(gateway).length, 0, '窗口没到点不得扣库存');
-  await waitFor('出图完成', async () => images.calls.length === 0);
-  assert.equal(images.calls.length, 0, '窗口没到点不得出图');
-  assert.equal((await gateway.get('purchaseReport', 'rep_alone')).fields.处理状态, '待解析');
-
-  // 窗口到点：照常出单、出图、扣库存（"没有同伴"不是丢单的理由）。
+  // 远早于 60 秒就该出单、出图、扣库存（"没有同伴"不是丢单的理由，也不靠超时兜底）。
   await waitForRecordsPosted(gateway, ['rep_alone']);
+  // ⚠️ 出图在「记录状态写盘」之后（runReturnBatch 收尾才 deliverReturnImages）：
+  // 只等记录状态就断言 images.calls 会读到 0 —— 这条用例实测挂过（0 !== 1）。
+  await waitForTasksTerminal(service, store, ['rep_alone']);
   assert.equal(requestsOf(gateway).length, 2);
   assert.equal(images.calls.length, 1);
   assert.deepEqual(liveOf(gateway), []);
+  const task = await store.get(accepted.taskId);
+  assert.equal(task.status, 'posted');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -498,18 +510,12 @@ test('⑧ 同一批的记录重复投递（含顺序颠倒）：不重复出单�
   await wait(60);
   await service.accept('supplier-report', 'rep_66851');
   await waitForRecordsPosted(gateway, ['rep_2070', 'rep_66851']);
-  await waitFor('群消息发完', async () => groupMessages(messages).length === 2);
-  // ⚠️ 必须再等**任务终态写盘**：flushReturnBatch 是在 runReturnBatch 跑完之后才逐个写
+  // ⚠️ 必须等**任务终态写盘**：flushReturnBatch 是在 runReturnBatch 跑完之后才逐个写
   // status（posted / completed），而记录状态是 runReturnBatch 中途写的。少这一等，
-  // 重投会读到还在 queued/processing 的任务 → 走一遍窗口 → duplicate=false
-  //（报货那条链路的重复投递用例踩过同一个坑，那里也留了这段等待）。
-  await waitFor('整批任务落终态', async () => {
-    for (const recordId of ['rep_2070', 'rep_66851']) {
-      const task = await store.get(service.purchaseTaskId('supplier-report', recordId));
-      if (!['posted', 'completed'].includes(task?.status)) return false;
-    }
-    return true;
-  });
+  // 重投会读到还在 queued/processing 的任务 → 走一遍窗口 → duplicate=false；
+  // 同时出图/发群也都在记录状态之后，快照会拍到不完整的中间态。
+  //（报货那条链路的重复投递用例踩过同一个坑，那里也留了这段等待。）
+  await waitForTasksTerminal(service, store, ['rep_2070', 'rep_66851']);
 
   const snapshot = () => JSON.stringify({
     requests: requestsOf(gateway).length,
@@ -537,6 +543,10 @@ test('⑧ 状态没写上（任务与记录都被改回未处理）时复跑：�
   await wait(60);
   await service.accept('supplier-report', 'rep_66851');
   await waitForRecordsPosted(gateway, ['rep_2070', 'rep_66851']);
+  // ⚠️ 必须等**任务终态落盘**再改状态：记录状态是中途写的，收尾那次写盘会把
+  // 下面刚改成的 failed 覆盖回 posted/completed，accept() 于是按重复投递拦掉，
+  // 复跑根本没发生 → 最后那次 waitForRecordsPosted 超时。
+  await waitForTasksTerminal(service, store, ['rep_2070', 'rep_66851']);
   const ledgerBefore = ledgerOf(gateway).length;
   const requestsBefore = requestsOf(gateway).length;
 
@@ -564,12 +574,16 @@ test('⑧ 状态没写上（任务与记录都被改回未处理）时复跑：�
 test('⑧ 已到终态的记录混在批次里：跳过它，只处理没处理过的那条', async () => {
   const gateway = twoRecordFixture();
   const images = makeImages();
-  const { service } = makeService({ gateway, images, purchaseReturnBatchWindowMs: 200 });
+  const { service, store } = makeService({ gateway, images, purchaseReturnBatchWindowMs: 200 });
 
   await service.accept('supplier-report', 'rep_2070');
   await wait(60);
   await service.accept('supplier-report', 'rep_66851');
   await waitForRecordsPosted(gateway, ['rep_2070', 'rep_66851']);
+  // ⚠️ **CI run 37419222418 就是挂在这条用例的这一段**（:578 超时）。原因同上面那条：
+  // 记录状态先写、任务终态后写，只等前者就改任务状态，会被收尾写盘覆盖回 posted
+  // → 重投被当成重复投递 → rep_2070 永远停在「待解析」。必须先等任务终态。
+  await waitForTasksTerminal(service, store, ['rep_2070', 'rep_66851']);
   const requestsBefore = requestsOf(gateway).length;
 
   // 把 rep_2070 改回未处理（模拟它单独重投、而同伴已经是终态），再只重投它。
@@ -606,14 +620,16 @@ test('混着采购申请与采购退货（同一批次号）：退货批不会�
     purchaseRequest: [],
   });
   const images = makeImages();
-  const { service } = makeService({
+  const { service, store } = makeService({
     gateway, images, purchaseReturnBatchWindowMs: 200,
     recognizer: { parsePurchaseReportText: async () => [{ size: 36, quantity: 1 }] },
   });
 
   await service.acceptMany('supplier-report', ['rep_mix_ret', 'rep_mix_req']);
   await waitForRecordsPosted(gateway, ['rep_mix_ret', 'rep_mix_req']);
-  await wait(200);
+  // 两条链（退货批 / 报货批）各自收尾写终态，**出图都在记录状态之后**：
+  // 等两个任务都落终态，而不是靠 wait(200) 硬等。
+  await waitForTasksTerminal(service, store, ['rep_mix_ret', 'rep_mix_req']);
 
   // 退货那条：按退货口径扣 2 双（数量 2 摊到两个尺码：36/37 各 1 双 → 一尺码一行单据），
   // 出退货单。
@@ -632,35 +648,36 @@ test('混着采购申请与采购退货（同一批次号）：退货批不会�
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 持久化：PM2 重启后，还在等窗口的退货会自动重开窗口继续处理
+// 持久化：PM2 重启后，还停在"等这一包到齐"的退货会被回收并立刻处理完
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('重启不丢：等窗口的退货任务落在 JsonTaskStore，新进程起来后自动重开窗口并处理完', async () => {
+test('重启不丢：等这一包到齐的退货任务落在 JsonTaskStore，新进程起来后立刻处理完', async () => {
   const dir = tempDir();
   const gateway = twoRecordFixture();
   const messages = [];
   const images = makeImages();
   const inventoryStore = new JsonTaskStore({ dir: tempDir(), idField: 'operation_id' });
-  // 第一个"进程"：窗口给得很长，受理后任务停在 batch_waiting（还没到点）。
-  const first = makeService({
-    dir, gateway, messages, images, inventoryStore, purchaseReturnBatchWindowMs: 60_000,
-  });
-  const accepted = await first.service.accept('supplier-report', 'rep_2070');
-  await waitFor('任务落在等窗口状态', async () => (await first.store.get(accepted.taskId))?.status === 'batch_waiting');
+  // 第一个"进程"：这一包应有 2 条，但只收到 1 条 → 不到齐、停在 batch_waiting。
+  //（新口径下判据是"这一包到齐"，没有"窗口到点"这个兜底，所以只有"没到齐"才会停在盘上。）
+  const first = makeService({ dir, gateway, messages, images, inventoryStore });
+  const context = { packageId: 'pkg_restart_test', expected: 2 };
+  first.service.beginPackage({ packageId: context.packageId, kind: 'supplier-report', expected: 2 });
+  const accepted = await first.service.accept('supplier-report', 'rep_2070', context);
+  await waitFor('任务落在等这一包到齐', async () => (await first.store.get(accepted.taskId))?.status === 'batch_waiting');
   const stored = await first.store.get(accepted.taskId);
   assert.equal(stored.batch_kind, 'purchase-return', '落盘的任务必须带批次类型标记（恢复时靠它认出来）');
   assert.equal(stored.batch_no, '202610061');
   assert.equal(requestsOf(gateway).length, 0, '第一个进程什么都没写就"挂了"');
-  // 模拟进程退出：窗口定时器丢失（任务还在磁盘上）。
-  clearTimeout(first.service.pendingReturnBatches.get('202610061').timer);
+  // 模拟进程退出：待处理批次与包台账都是内存态（磁盘上只剩 batch_waiting 任务）。
   first.service.pendingReturnBatches.clear();
+  first.service.packageProgress.clear();
 
-  // 第二个"进程"：同一个 store 目录、新的服务实例 → 构造后自动恢复。
+  // 第二个"进程"：同一个 store 目录、新的服务实例 → 构造后自动回收这一批。
+  // ⚠️ 恢复时**立刻**处理（不再重开一个时间窗）：一包不拆是她的口径，落盘的这些
+  // batch_waiting 就是那一包；处理时 runReturnBatch 还会按批次号重读整张表。
   const second = makeService({
     dir, store: new JsonTaskStore({ dir }), gateway, messages, images, inventoryStore,
-    purchaseReturnBatchWindowMs: 100,
   });
-  await waitFor('重启后自动重开窗口', async () => second.service.pendingReturnBatches.has('202610061'));
   // ⚠️ 恢复后的处理者**重新读表**：这一批在表里的**全部**退货记录都会被处理，
   // 不只是"第一个进程受理过的那一条"（这正是 runReturnBatch「处理前重新读表」的口径——
   // webhook 没投到的同伴也以表里的记录为准，不会漏）。所以这里两条都进终态。
@@ -668,4 +685,60 @@ test('重启不丢：等窗口的退货任务落在 JsonTaskStore，新进程起
   await wait(150);
   assert.equal(requestsOf(gateway).length, 4, '重启后按表里的整批记录出单：3+3 与 4+3 → 4 个尺码行');
   assert.deepEqual(liveOf(gateway), [], '两条退货的库存都按实际数扣到 0');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ④ 逐条隔离：一条写失败不能拖死整批（业务负责人 2026-10-06 的口径）
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('④ 逐条隔离：批里第 2 条写失败 → 第 1 条照常出单出图，失败那条任务保持可重试的 failed', async () => {
+  // 一次提交 2 条同批次退货，其中一条的货品在「货品信息」里找不到（references 抛错，
+  // 是"读不到 / 数据没同步"这一类失败的长相）。旧行为：循环里一抛，整批失败，
+  // 已经落库的那条白写了、图一张没发。新行为：失败那条算「处理完了」但不进图，
+  // 同批其它记录照常出单/出图；失败那条的任务保持 **failed**（重投递能重跑，幂等不破）。
+  const gateway = makeGateway({
+    purchaseReport: [
+      returnRecord('rep_ok_iso', 'prod_9', { 数量: 2, 报货批次号: 'BATCH-ISO' }),
+      returnRecord('rep_bad_iso', 'prod_missing', { 数量: 1, 报货批次号: 'BATCH-ISO' }),
+    ],
+    liveInventory: [
+      liveRow('live_iso_36', '门盒', 36, 'prod_9'),
+      liveRow('live_iso_37', '门盒', 37, 'prod_9'),
+    ],
+    behavior: BEHAVIORS,
+    supplier: SUPPLIERS,
+    purchaseRequest: [],
+  });
+  const images = makeImages();
+  const { service, store } = makeService({ gateway, images });
+
+  const accepted = await service.acceptMany('supplier-report', ['rep_ok_iso', 'rep_bad_iso'], { expectedCount: 2 });
+  await waitForRecordsPosted(gateway, ['rep_ok_iso']);
+  await waitForTasksTerminal(service, store, ['rep_ok_iso']);
+
+  // 能画的那条照常：单据 + 图（数量 2 摊到两个尺码 → 一尺码一行）。
+  assert.equal(images.calls.length, 1, '第 1 条照常出一张退货单');
+  const isoRows = requestsOf(gateway);
+  assert.equal(isoRows.length, 2, '只写第 1 条的单据：36/37 各一行');
+  assert.ok(
+    isoRows.every((row) => JSON.stringify(row.fields.编号) === JSON.stringify(['prod_9'])),
+    '单据里只有能画的那条',
+  );
+  assert.ok(isoRows.every((row) => String(row.fields.幂等键).startsWith('purchase_return:rep_ok_iso:')));
+  const goodTask = await store.get(service.purchaseTaskId('supplier-report', 'rep_ok_iso'));
+  assert.equal(goodTask.status, 'posted');
+
+  // 失败的那条：任务**保持 failed**（可重试），记录状态原样不动（待解析）。
+  const badTask = await store.get(service.purchaseTaskId('supplier-report', 'rep_bad_iso'));
+  assert.equal(badTask.status, 'failed', '失败那条必须可重试，不能被整批终态覆盖成 completed');
+  assert.match(String(badTask.error || ''), /找不到货品记录/);
+  assert.equal(
+    (await gateway.get('purchaseReport', 'rep_bad_iso')).fields.处理状态,
+    '待解析',
+    '失败那条的记录状态保持原样（绝不写终态「解析失败」）',
+  );
+  // 整批的结果里记着"哪条没成、为什么"（供第二层提示 / 排查）。
+  const batchTask = await store.get(accepted.records[0].taskId);
+  assert.deepEqual(batchTask.result.failed_record_ids, ['rep_bad_iso']);
+  assert.equal(batchTask.result.record_count, 1);
 });

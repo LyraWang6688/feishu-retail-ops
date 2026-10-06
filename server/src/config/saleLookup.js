@@ -11,10 +11,17 @@ const SALE_LOOKUP_DEFAULTS = Object.freeze({
 
 // 「排除已经退过货的单」的两个判据。值来自飞书表的**当前字段值**，
 // 集中在这里是为了字段取值文案变化时只有一个地方要改：
-//   · 销售主表.订单状态 = 已退货 / 部分退货
+//   · 销售主表.销售状态 = 已退货 / 部分退货
+//     ⚠️ 原判据读的是「订单状态」，那一列已被业务负责人 2026-10-06 整列删除；
+//        判据随之迁到「销售状态」（见 services/saleLookupService.findCandidates）。
+//     ⚠️ 写入端**默认是关的**：业务负责人 2026-10-06 晚更正的口径是「售后不影响原单」，
+//        所以 afterSalesService 回写原单「销售状态」做成显式开关
+//        （config/afterSales 的 writeOriginalSalesStatus，默认 false）。
+//     ⭐ 因此**真正兜底的仍然是下一条判据**（销售明细.交易类型 = 销售退货），
+//        它不依赖任何开关。开关打开后这一条才成为"真相"。
 //   · 销售明细.交易类型 = 销售退货
 // 两个都查（双保险），任一命中即整单排除，防止重复退货。
-const RETURNED_ORDER_STATUSES = Object.freeze(['已退货', '部分退货']);
+const RETURNED_SALES_STATUSES = Object.freeze(['已退货', '部分退货']);
 const RETURN_DETAIL_TRADE_TYPES = Object.freeze(['销售退货']);
 
 // 环境变量可能是空串、非数字、0 或负数：这些一律回落到默认值，
@@ -36,16 +43,16 @@ const matchesAnyLabel = (value, labels) => {
   return Boolean(normalized) && labels.some((label) => normalizeLabel(label) === normalized);
 };
 
-const isReturnedOrderStatus = (value) => matchesAnyLabel(value, RETURNED_ORDER_STATUSES);
+const isReturnedSalesStatus = (value) => matchesAnyLabel(value, RETURNED_SALES_STATUSES);
 const isReturnTradeType = (value) => matchesAnyLabel(value, RETURN_DETAIL_TRADE_TYPES);
 
 module.exports = {
   DAY_MS,
   SALE_LOOKUP_DEFAULTS,
-  RETURNED_ORDER_STATUSES,
+  RETURNED_SALES_STATUSES,
   RETURN_DETAIL_TRADE_TYPES,
   readSaleLookupConfig,
   readPositiveInt,
-  isReturnedOrderStatus,
+  isReturnedSalesStatus,
   isReturnTradeType,
 };

@@ -55,6 +55,15 @@ th { color: var(--text-secondary); background: #fafbfc; font-weight: 600; }
 .empty, .section-loading { padding: 30px; color: var(--text-muted); text-align: center; }
 .empty.compact { padding: 16px; }
 .hidden { display: none !important; }
+/* 一级 tab 里，查询界面**本身就是页面主体**（业务负责人 2026-10-06：
+   「点开 tab 之后，不需要我再单独打开一个独立的 URL」）。
+   所以说明只留一行小字，不再有「卡片标题 + 独立打开…按钮」那一层入口感。
+   `.panel-lead` = 那行小字 +（至多）一个页面级动作按钮，例如「刷新数据」。 */
+.page-hint { margin: 0; color: var(--text-muted); font-size: 13px; overflow-wrap: anywhere; }
+.panel-lead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.panel-lead .btn { flex: none; }
+/* 说明小字后面紧接子 tab：收紧子 tab 默认的 24px 上边距，别在移动端白占一屏。 */
+.page-hint + .sub-tabs, .panel-lead + .sub-tabs { margin-top: 12px; }
 .section-title { margin: 22px 0 12px; font-size: 16px; }
 .quick-entries { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
 .entry-card { position: relative; display: flex; min-width: 0; flex-direction: column; gap: 6px; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-md); color: inherit; background: var(--surface-soft); text-decoration: none; }
@@ -81,9 +90,32 @@ th { color: var(--text-secondary); background: #fafbfc; font-weight: 600; }
 .standalone-nav { display: flex; gap: 8px; margin-bottom: 18px; overflow-x: auto; }
 .standalone-nav a { flex: none; padding: 9px 12px; border-radius: 999px; color: var(--text-secondary); background: var(--surface); text-decoration: none; }
 .standalone-nav a.active { color: var(--primary); background: var(--primary-soft); font-weight: 600; }
+/* 「按某日 / 按区间」「按品类 / 按编号」这类二选一 —— 多个页面共用，放基础样式里。 */
+.mode-choice { display: flex; flex-wrap: wrap; gap: 16px; margin: 14px 0; }
+.mode-choice label { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.error-text { color: var(--danger); }
+
+/* 表单 / 操作区的通用件。原先只写在 sales.css 里，但库存手工调整等页面也在用
+   （那些页面不加载 sales.css，样式会悄悄丢），所以挪到基础样式。 */
+.compact-toolbar { align-items: end; }
+.form-field { display: grid; gap: 6px; margin: 12px 0; font-weight: 600; }
+.form-field.grow { flex: 1; max-width: 540px; }
+.action-form { min-width: 0; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-soft); }
+.action-form h3 { margin-bottom: 8px; }
+.action-form .btn { width: 100%; }
+.order-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 16px 0; }
+.order-details > div { display: grid; gap: 4px; padding: 10px; border-radius: var(--radius-sm); background: var(--surface-soft); }
+.order-details span { color: var(--text-muted); font-size: 12px; }
+.order-details p { margin: 0; }
+.operation-result { min-height: 24px; margin: 16px 0 0; color: var(--primary); }
+@media (max-width: 760px) { .compact-toolbar { align-items: stretch; flex-direction: column; } .form-field.grow { width: 100%; max-width: none; } }
 
 @media (max-width: 760px) {
-  .shell { padding: 16px; }
+  /* 底部留出安全区：她只用移动端，页面**最后一块内容**（例如「实时库存」页最下面那张
+     「库存手工调整」卡片）不能被浏览器的底栏 / 飞书 web-view 底部横条压住点不到。
+     `env(safe-area-inset-bottom)` 在不支持的浏览器里按 0 处理，不会多留白。
+     ⚠️ 独立页面用下面的 `.standalone-shell` 覆盖成更大的 20px，两者不要互相踩。 */
+  .shell { padding: 16px; padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
   .header { align-items: stretch; flex-direction: column; }
   .compact-header { margin-bottom: 14px; }
   .compact-header h1 { font-size: 24px; }
@@ -94,6 +126,9 @@ th { color: var(--text-secondary); background: #fafbfc; font-weight: 600; }
   .panel { padding: 16px; }
   .panel-header { align-items: stretch; flex-direction: column; }
   .panel-header .btn { align-self: flex-start; }
+  /* 说明小字 + 「刷新数据」在窄屏竖排，按钮整行可点（≥44px 命中区，见上面的 min-height）。 */
+  .panel-lead { align-items: stretch; flex-direction: column; }
+  .panel-lead .btn { width: 100%; text-align: center; }
   .header-actions { width: 100%; align-items: stretch; flex-direction: column; }
   .header-actions .btn { width: 100%; text-align: center; }
   .quick-entries, .two-col { grid-template-columns: 1fr; }

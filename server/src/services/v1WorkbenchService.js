@@ -1,6 +1,13 @@
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
+const { postedOf, isPosted } = require('../config/salesStatusDimensions');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
+const { LIVE_STATES } = require('./inventoryService');
+const {
+  SALES_QUERY_MAX_RANGE_DAYS,
+  WORKBENCH_PRODUCT_SEARCH_LIMIT,
+  WORKBENCH_CATEGORY_LIMIT,
+} = require('../config/workbenchQuery');
 const { logWarn } = require('../utils/logger');
 
 const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
@@ -21,6 +28,11 @@ const asOptionalNumber = (value) => textValue(value).trim() === '' ? null : asNu
 
 const asDate = (value) => {
   if (value == null || value === '') return null;
+  // ⚠️ Date 实例必须单独认：`textValue(new Date())` 取的是 `.text/.name/.value`，
+  // 全是 undefined → 空串。`todayKey()` 传的正是 `new Date()`，少了这一行
+  // `/sales/today` 不传日期时算出来的"今天"是空串，筛出来一条都没有
+  //（2026-10-06 修：老接口不带 ?date= 时页面永远显示空）。
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
   const raw = typeof value === 'number' ? value : textValue(value).trim();
   if (raw === '') return null;
   const timestamp = typeof raw === 'number' || /^\d{10,13}$/.test(raw) ? Number(raw) : null;
@@ -35,6 +47,44 @@ const shanghaiDayKey = (date) => {
 };
 
 const todayKey = (now = new Date()) => shanghaiDayKey(now);
+
+// 入参错误（她日期填错 / 范围太大）与系统错误分开：前者回 400 并原样告诉她，
+// 后者回 502/500 且不回显内部细节。与 InventoryAdjustmentService 用同一个约定。
+const userError = (message) => Object.assign(new Error(message), { statusCode: 400 });
+
+const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const parseDay = (value, label) => {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  if (!DAY_PATTERN.test(text)) throw userError(`${label}的格式必须是 YYYY-MM-DD`);
+  return text;
+};
+
+/**
+ * 「销售查询」的日期入参归一化。三种调用方式都收敛成同一个 [from, to]：
+ *   · `date=2026-10-06`        → 按某日（from = to = date）
+ *   · `from=…&to=…`            → 按区间（含首尾）
+ *   · 都不传                    → 今天（保持 /sales/today 的既有行为）
+ * 返回的 `date`：单日查询时是那一天，区间查询时是空串 —— 页面据此决定文案。
+ */
+const resolveSalesRange = ({ date, from, to } = {}) => {
+  const day = parseDay(date, '业务日期');
+  if (day) return { from: day, to: day, date: day };
+  let start = parseDay(from, '开始日期');
+  let end = parseDay(to, '结束日期');
+  if (!start && !end) {
+    const today = todayKey();
+    return { from: today, to: today, date: today };
+  }
+  if (!start) start = end;
+  if (!end) end = start;
+  if (start > end) throw userError('开始日期不能晚于结束日期');
+  const days = Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000) + 1;
+  if (days > SALES_QUERY_MAX_RANGE_DAYS) {
+    throw userError(`一次最多查询 ${SALES_QUERY_MAX_RANGE_DAYS} 天，请缩小日期范围`);
+  }
+  return { from: start, to: end, date: start === end ? start : '' };
+};
 
 const indexByRecordId = (records) => new Map(records.map((record) => [record.record_id, record]));
 
@@ -97,7 +147,10 @@ const createWorkbenchService = (gateway, options = {}) => {
     }
   };
 
-  const getTodaySales = async ({ date = todayKey(), requestId } = {}) => {
+  // 「销售查询」：**按某日**和**按区间**都走这一个实现，`/sales/today` 只是它的一种入参。
+  // 这样"今日"与"区间"不会长出两套口径（两套口径迟早在汇总数字上分家）。
+  const getSalesReport = async ({ date, from, to, requestId } = {}) => {
+    const range = resolveSalesRange({ date, from, to });
     const [sales, products, paymentMethods, entries, receipts] = await Promise.all([
       listAllWithRetry(gateway, 'salesDetail', requestId),
       listAllWithRetry(gateway, 'product', requestId),
@@ -140,10 +193,17 @@ const createWorkbenchService = (gateway, options = {}) => {
           gift: asText(schema, 'salesDetail', record, 'gift'),
           payment_method: [...new Set(receiptRows.map((payment) => relationLabel(schema, 'paymentMethod', paymentsById,
             asLinks(schema, 'paymentRecord', payment, 'method'), 'name')))].filter(Boolean).join('＋') || '未收款',
-          confirmed: asText(schema, 'salesEntry', order, 'confirmStatus') === '已入账',
+          // 取值来源走配置：**只读「资金状态」**（旧「确认状态（旧）」已被业务负责人整列删除，
+          // 没有回退可言）；判据入口不变（postedOf + isPosted，内部保持 trim）。
+          confirmed: isPosted(postedOf(order, schema.tables.salesEntry?.fields)),
         };
       })))
-      .filter((row) => row.confirmed && row.sold_at && shanghaiDayKey(row.sold_at) === date)
+      // 区间是**含首尾**的闭区间（她说"按某日和按区间查询"）。
+      .filter((row) => {
+        if (!row.confirmed || !row.sold_at) return false;
+        const day = shanghaiDayKey(row.sold_at);
+        return day >= range.from && day <= range.to;
+      })
       .sort((a, b) => String(b.sold_at).localeCompare(String(a.sold_at)));
 
     const paymentSummary = {};
@@ -169,7 +229,79 @@ const createWorkbenchService = (gateway, options = {}) => {
         }
       }
     }
-    return { date, summary: { ...summary, payment_summary: paymentSummary }, rows };
+    return {
+      // `date` 保持旧字段（单日查询时就是那一天），`from`/`to` 是网页选择器要的区间；
+      // 页面按 from === to 判断该说"今日/某日"还是"某区间"。
+      date: range.date,
+      from: range.from,
+      to: range.to,
+      is_range: range.from !== range.to,
+      summary: { ...summary, payment_summary: paymentSummary },
+      rows,
+    };
+  };
+
+  // 「今日销售」的旧入口：等价于 getSalesReport({ date })，响应形状一字不改，
+  // 保证 `/api/workbench/sales/today` 的既有调用方不受影响。
+  const getTodaySales = (options = {}) => getSalesReport(options);
+
+  // 工作台「盘点调整 / 换季调整」要按 货号 找货品：返回 record_id 供库存接口用。
+  const findProducts = async ({ keyword = '', limit = WORKBENCH_PRODUCT_SEARCH_LIMIT, requestId } = {}) => {
+    const products = await listAllWithRetry(gateway, 'product', requestId);
+    const normalized = String(keyword).trim().toLowerCase();
+    const rows = products.map((record) => ({
+      record_id: record.record_id,
+      product_number: asText(schema, 'product', record, 'number'),
+      item_no: asText(schema, 'product', record, 'itemNo'),
+      color: asText(schema, 'product', record, 'color'),
+    })).filter((row) => !normalized || [row.product_number, row.item_no, row.color]
+      .some((value) => String(value).toLowerCase().includes(normalized)));
+    return { rows: rows.slice(0, limit), total: rows.length };
+  };
+
+  // 某个 货号 + 尺码 在三种「所属状态」下各有多少双 —— 「实时库存」是一双一条，
+  // 所以**数量 = 记录条数**（与 getLiveInventory 的分组口径一致）。
+  const getInventoryStockLevels = async ({ productRecordId, size, requestId } = {}) => {
+    const product = String(productRecordId ?? '').trim();
+    if (!product) throw userError('缺少货号 record_id');
+    const requestedSize = String(size ?? '').trim();
+    if (requestedSize && !/^[1-9]\d*$/.test(requestedSize)) throw userError('尺码必须是正整数');
+    const inventory = await listAllWithRetry(gateway, 'liveInventory', requestId);
+    const counts = new Map(LIVE_STATES.map((state) => [state, 0]));
+    let total = 0;
+    for (const record of inventory) {
+      if (!asLinks(schema, 'liveInventory', record, 'product').includes(product)) continue;
+      if (requestedSize) {
+        const rowSize = await resolveSize('liveInventory', record);
+        if (String(rowSize) !== requestedSize) continue;
+      }
+      const state = asText(schema, 'liveInventory', record, 'state');
+      if (!counts.has(state)) continue;
+      counts.set(state, counts.get(state) + 1);
+      total += 1;
+    }
+    return {
+      product_record_id: product,
+      size: requestedSize ? Number(requestedSize) : null,
+      total,
+      rows: LIVE_STATES.map((state) => ({ state, quantity: counts.get(state) })),
+    };
+  };
+
+  // 「换季调整（按品类批量）」的品类清单。品类取自「实时库存」的「品类」公式列
+  // （读生产/测试真表核过：liveInventory.品类 type=20 公式，返回品类名）。
+  const listInventoryCategories = async ({ requestId, limit = WORKBENCH_CATEGORY_LIMIT } = {}) => {
+    const inventory = await listAllWithRetry(gateway, 'liveInventory', requestId);
+    const counts = new Map();
+    for (const record of inventory) {
+      const category = asText(schema, 'liveInventory', record, 'category');
+      if (!category) continue;
+      counts.set(category, (counts.get(category) || 0) + 1);
+    }
+    const rows = [...counts.entries()]
+      .map(([category, quantity]) => ({ category, quantity }))
+      .sort((a, b) => b.quantity - a.quantity || a.category.localeCompare(b.category, 'zh-CN'));
+    return { rows: rows.slice(0, limit), total: rows.length };
   };
 
   const getLiveInventory = async ({ keyword = '', size = '', requestId } = {}) => {
@@ -188,6 +320,8 @@ const createWorkbenchService = (gateway, options = {}) => {
         ...product,
         size: await resolveSize('liveInventory', record),
         state: asText(schema, 'liveInventory', record, 'state'),
+        // 「品类」是实时库存上的公式列：工作台「换季调整（按品类批量）」靠它分组。
+        category: asText(schema, 'liveInventory', record, 'category'),
         updated_at: asDate(fieldValue(schema, 'liveInventory', record, 'updatedAt'))?.toISOString() || '',
       };
     }))).filter((row) => {
@@ -212,11 +346,19 @@ const createWorkbenchService = (gateway, options = {}) => {
     return { rows, duplicate_stock_keys: [] };
   };
 
-  return { getTodaySales, getLiveInventory };
+  return {
+    getTodaySales,
+    getSalesReport,
+    getLiveInventory,
+    findProducts,
+    getInventoryStockLevels,
+    listInventoryCategories,
+  };
 };
 
 module.exports = {
   createWorkbenchService,
+  resolveSalesRange,
   todayKey,
   shanghaiDayKey,
 };

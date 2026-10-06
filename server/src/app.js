@@ -30,6 +30,12 @@ const { uploadDir } = require('./utils/upload');
 const { startUploadCleanup } = require('./utils/uploadCleanup');
 const { SecondDeliveryService } = require('./services/secondDeliveryService');
 const { startSecondDeliveryReminder } = require('./utils/secondDeliveryReminder');
+const { PendingDealPushService } = require('./services/pendingDealPushService');
+const { resolvePendingDealPushConfig } = require('./config/pendingDealPush');
+// 「销售战报」定时推送（9/12/15/18/21 + 22 点收官）：service + 自己的配置。
+const { SalesDailyReportService } = require('./services/salesDailyReportService');
+const { resolveSalesDailyReportPushConfig } = require('./config/salesDailyReportPush');
+const { startShanghaiDailyScheduler } = require('./utils/shanghaiDailyScheduler');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -121,6 +127,43 @@ if (require.main === module) {
   // sendDailyReminder 的注释）。只在真正启动服务时拉起，被 require 进测试不会起定时器。
   const secondDelivery = new SecondDeliveryService();
   startSecondDeliveryReminder({ run: ({ now }) => secondDelivery.sendDailyReminder({ now }) });
+  // 「维度 1」：每天 9 点（北京时间）把最近 7 天未付 / 预付、尚未成交的销售单推到群里
+  // （每笔一行：单号 + 待收金额 + 深链）。**显式开关**，默认关：
+  // 没配群 id 或开关关着时，连定时器都不起（配置在这里读一次，写错就在启动时吵）。
+  const pendingDealPush = resolvePendingDealPushConfig();
+  if (pendingDealPush.enabled) {
+    const pendingDealPushService = new PendingDealPushService({ settings: pendingDealPush });
+    startShanghaiDailyScheduler({
+      run: ({ now }) => pendingDealPushService.sendDailyPush({ now }),
+      eventPrefix: 'sales.pending_deal_push.reminder',
+      hour: pendingDealPush.hour,
+      intervalMs: pendingDealPush.intervalMs,
+    });
+  } else {
+    logInfo('sales.pending_deal_push.disabled', { env: 'PENDING_DEAL_PUSH_ENABLED' });
+  }
+  // 「销售战报」：北京时间 9 / 12 / 15 / 18 / 21 点 ＋ 22 点（当日收官），
+  // 把**消息卡片**（销售单数 / 销售金额）发到收采购图那个群的主聊天。
+  // 时间点 / 群列表 / 开关都从 config/salesDailyReportPush 读（改口径不改代码）；
+  // ⚠️ 过掉的时段**不补推**（12 点的战报 13 点发就是错的快照，见服务的注释）。
+  const salesDailyReport = resolveSalesDailyReportPushConfig();
+  if (salesDailyReport.enabled) {
+    const salesDailyReportService = new SalesDailyReportService({ settings: salesDailyReport });
+    startShanghaiDailyScheduler({
+      run: ({ now }) => salesDailyReportService.sendReport({ now }),
+      eventPrefix: 'sales.daily_report',
+      hours: salesDailyReport.slots,
+      intervalMs: salesDailyReport.intervalMs,
+    });
+    logInfo('sales.daily_report.enabled', {
+      hours: salesDailyReport.hours,
+      summary_hour: salesDailyReport.summaryHour,
+      chat_count: salesDailyReport.chatIds.length,
+      chat_from_purchase_chat_id: salesDailyReport.chatFallback,
+    });
+  } else {
+    logInfo('sales.daily_report.disabled', { env: 'SALES_DAILY_REPORT_PUSH_ENABLED' });
+  }
   // 只监听回环地址：公网一律走 Nginx。
   //
   // 原来写的是 app.listen(port)，那会绑到 0.0.0.0（所有网卡）——等于把 Express

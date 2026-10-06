@@ -43,6 +43,13 @@ const gatewayFor = (overrides = {}) => {
       { record_id: 'cash', fields: { 行为编码: 'SALE_CASH', 行为名称: '现货销售', 库存方向: '减少', 是否启用: true } },
       // 采购退货（采购减少）：同上，注册表里每多一条声明，这个假 Base 就要有对应行为。
       { record_id: 'purchase_decrease', fields: { 行为编码: 'STOCK_PURCHASE_DECREASE', 行为名称: '采购减少', 库存方向: '减少', 是否启用: true } },
+      // 人工库存行为 6 条（2026-10-06 注册）：同上，注册表里每多一条声明，假 Base 就要有对应行为。
+      { record_id: 'manual_increase', fields: { 行为编码: 'STOCK_MANUAL_INCREASE', 行为名称: '手工调增', 库存方向: '增加', 是否启用: true } },
+      { record_id: 'manual_decrease', fields: { 行为编码: 'STOCK_MANUAL_DECREASE', 行为名称: '手工调减', 库存方向: '减少', 是否启用: true } },
+      { record_id: 'freeze', fields: { 行为编码: 'STOCK_FREEZE', 行为名称: '转冻结', 库存方向: '不影响', 是否启用: true } },
+      { record_id: 'unfreeze', fields: { 行为编码: 'STOCK_UNFREEZE', 行为名称: '转释放', 库存方向: '不影响', 是否启用: true } },
+      { record_id: 'sample_to_doorbox', fields: { 行为编码: 'STOCK_SAMPLE_TO_DOORBOX', 行为名称: '样品转门盒', 库存方向: '不影响', 是否启用: true } },
+      { record_id: 'doorbox_to_sample', fields: { 行为编码: 'STOCK_DOORBOX_TO_SAMPLE', 行为名称: '门盒转样品', 库存方向: '不影响', 是否启用: true } },
     ] : [],
   };
 };

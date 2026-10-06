@@ -38,8 +38,8 @@ const details = [
   } },
 ];
 const entries = [
-  { record_id: 'e2', fields: { 销售单号: 'XSD-20261004-0001', 录单日: daysAgo(1), 订单状态: '已完成' } },
-  { record_id: 'e_back', fields: { 销售单号: 'XSD-20261003-0001', 录单日: daysAgo(2), 订单状态: '已退货' } },
+  { record_id: 'e2', fields: { 销售单号: 'XSD-20261004-0001', 录单日: daysAgo(1), 销售状态: '已写入' } },
+  { record_id: 'e_back', fields: { 销售单号: 'XSD-20261003-0001', 录单日: daysAgo(2), 销售状态: '已退货' } },
 ];
 const products = [{ record_id: 'p1', fields: { 货号: '6035', 颜色: '黑', 编号: '6035|黑|A' } }];
 // 「尺码管理」的两条记录：尺码在销售明细里是关联，真实链路会读这张表。

@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { LarkMvpService, aggregateRecognizedItems, looksLikeSalesText } = require('../src/services/larkMvpService');
 const { PurchaseBatchLocator } = require('../src/services/purchaseBatchLocator');
+const { SalesGroupThreadLocator } = require('../src/services/salesGroupThreadLocator');
 const { PurchaseWebhookService } = require('../src/services/purchaseWebhookService');
 
 // 拼接「货品信息」的记录链接要读 Base token。测试里给一个占位值；
@@ -19,6 +20,9 @@ process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKE
 const TEST_BOT_OPEN_ID = 'ou_test_bot_open_id';
 const TEST_PURCHASE_CHAT_ID = 'oc_test_purchase_chat_id';
 process.env.LARK_BOT_OPEN_ID = TEST_BOT_OPEN_ID;
+// 主群「是否仍然要求 @」的开关：显式赋值成**空串 = 走默认**（默认放宽，= 新行为）。
+// 要测老行为的用例**注入 `mainChatRequireMention: true`**，不靠改这个全局变量。
+process.env.GROUP_MAIN_CHAT_REQUIRE_MENTION = '';
 
 const makeStore = () =>
   new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'lark-mvp-test-')), idField: 'task_id' });
@@ -35,7 +39,16 @@ const makeService = (options = {}) => {
     // 群聊定位器指向临时目录：**不受**构造时默认的 data/purchase_group_messages 影响。
     purchaseBatchLocator: options.purchaseBatchLocator,
     purchaseBatchLocatorStore: options.purchaseBatchLocatorStore,
+    // 销售那侧的「话题 ↔ 销售记录」映射同样指向临时目录：用例之间不共享映射，
+    // 也不会往仓库的 server/data/sales_group_threads/ 里写东西。
+    salesGroupThreads: options.salesGroupThreads || new SalesGroupThreadLocator({
+      store: new JsonTaskStore({
+        dir: fs.mkdtempSync(path.join(os.tmpdir(), 'group-sales-thread-')), idField: 'task_id',
+      }),
+    }),
     botOpenId: options.botOpenId === undefined ? TEST_BOT_OPEN_ID : options.botOpenId,
+    // `undefined` → 走 config/groupAdmission 的默认（放宽）；显式 true/false → 钉死口径。
+    mainChatRequireMention: options.mainChatRequireMention,
     groupPurchaseFlow: options.groupPurchaseFlow,
   });
   service.sendText = async (openId, message) => sent.push({ openId, message });
@@ -84,8 +97,11 @@ test('private text is accepted as sales input and repeated message id is dedupli
   assert.equal(second.reason, 'duplicate');
 });
 
-test('群聊里没 @ 机器人：完全无反应（不发消息、不加表情、不读表、不进识别）', async () => {
-  // 远端调用一律记账并让用例失败：群里的日常聊天必须**零远端调用**。
+// 主群准入（2026-10-06 业务负责人拍板：**不再要求 @**）。三条判据任一条就理：
+// @ / 正文像销售 / 正文带采购批次号；都不满足 → 静默 + 零远端调用。
+// 下面这组用例把「日常聊天绝不触发」这条红线钉死（含"像销售但其实是闲聊"的边界）。
+const makeAdmissionSpyService = (options = {}) => {
+  // 远端调用一律记账：主群闲聊必须**一个都不发生**。
   const calls = [];
   const client = {
     im: {
@@ -102,10 +118,14 @@ test('群聊里没 @ 机器人：完全无反应（不发消息、不加表情�
   };
   let recognized = 0;
   const { service } = makeService({
-    client,
-    gateway,
+    ...options, client, gateway,
     recognizer: { parseSalesText: async () => { recognized += 1; return {}; } },
   });
+  return { service, calls, recognized: () => recognized };
+};
+
+test('主群不 @ + 日常聊天：完全无反应（不发消息、不加表情、不读表、不进识别）', async () => {
+  const { service, calls, recognized } = makeAdmissionSpyService();
   const result = await service.acceptMessage({
     sender: { sender_id: { open_id: 'ou_1' } },
     message: {
@@ -113,21 +133,86 @@ test('群聊里没 @ 机器人：完全无反应（不发消息、不加表情�
       chat_id: 'oc_group',
       chat_type: 'group',
       message_type: 'text',
-      // 带数字、带业务关键词 —— 私聊闸门会放行，群聊**绝不能**因此进流程。
+      content: JSON.stringify({ text: '今天天气不错' }),
+      mentions: [],
+    },
+  });
+  assert.equal(result.accepted, false);
+  assert.equal(result.reason, 'group_not_sales_text');
+  assert.deepEqual(calls, [], '主群日常聊天不能有任何远端调用');
+  assert.equal(recognized(), 0, '主群日常聊天不能进 AI 识别');
+});
+
+test('主群不 @ + 正文像销售 → 处理（放宽后的新行为）', async () => {
+  const { service } = makeAdmissionSpyService();
+  const result = await service.acceptMessage({
+    sender: { sender_id: { open_id: 'ou_1' } },
+    message: {
+      message_id: 'om_group_autosale',
+      chat_id: 'oc_group',
+      chat_type: 'group',
+      message_type: 'text',
+      content: JSON.stringify({ text: 'A100 38码一双，100元微信' }),
+      mentions: [],
+    },
+  });
+  assert.equal(result.accepted, true, '不 @ 也要能识别销售');
+  assert.equal(result.mode, 'new', '主群新开一笔销售');
+});
+
+test('主群不 @ + 正文带采购批次号 → 处理（归采购那条路）', async () => {
+  // 采购那条路换成一个记录型的桩：用它证明"这条归采购"，不去碰真实定位/发送。
+  const purchaseCalls = [];
+  const { service } = makeAdmissionSpyService({
+    groupPurchaseFlow: {
+      handleGroupPurchaseMessage: async (input) => {
+        purchaseCalls.push(input);
+        return { resolved: true, reason: 'stub', replied: false };
+      },
+    },
+  });
+  const result = await service.acceptMessage({
+    sender: { sender_id: { open_id: 'ou_1' } },
+    message: {
+      message_id: 'om_group_batch',
+      chat_id: 'oc_group',
+      chat_type: 'group',
+      message_type: 'text',
+      content: JSON.stringify({ text: 'BH-20261005-0009 这批到哪了' }),
+      mentions: [],
+    },
+  });
+  assert.equal(result.accepted, true);
+  assert.equal(purchaseCalls.length, 1, '带批次号的主群消息要交给采购定位');
+  assert.equal(purchaseCalls[0].text, 'BH-20261005-0009 这批到哪了');
+  assert.equal(result.handled, undefined, '这条不归销售');
+});
+
+test('开关打开（mainChatRequireMention=true）→ 回到改动前：主群只认 @', async () => {
+  const { service, calls, recognized } = makeAdmissionSpyService({ mainChatRequireMention: true });
+  const result = await service.acceptMessage({
+    sender: { sender_id: { open_id: 'ou_1' } },
+    message: {
+      message_id: 'om_group_strict',
+      chat_id: 'oc_group',
+      chat_type: 'group',
+      message_type: 'text',
+      // 带数字、带业务关键词 —— 真实销售；但开关要求 @，所以必须被挡掉。
       content: JSON.stringify({ text: 'A100 38码一双，库存还有多少' }),
       mentions: [],
     },
   });
   assert.equal(result.accepted, false);
   assert.equal(result.reason, 'group_not_mentioned');
-  assert.deepEqual(calls, [], '不 @ 机器人时不能有任何远端调用');
-  assert.equal(recognized, 0, '不 @ 机器人时不能进 AI 识别');
+  assert.deepEqual(calls, [], '严格模式下不 @ 不能有任何远端调用');
+  assert.equal(recognized(), 0);
 });
 
-test('群聊没配 LARK_BOT_OPEN_ID：不猜 @，一律忽略', async () => {
+test('群聊没配 LARK_BOT_OPEN_ID 且要求 @：不猜 @，一律忽略', async () => {
   const calls = [];
   const { service } = makeService({
     botOpenId: '',
+    mainChatRequireMention: true,
     client: { im: { messageReaction: { create: async () => { calls.push('reaction.create'); return { code: 0 }; } } } },
   });
   const result = await service.acceptMessage({
@@ -866,7 +951,7 @@ test('today sales menu returns only confirmed detail rows from the Shanghai cale
       { record_id: 'yesterday', fields: { 编号: ['product_1'], 尺码: 38, 数量: 1, 销售单号: ['order_1'], 销售日: Date.parse('2026-09-23T10:00:00+08:00') } },
     ],
     product: [{ record_id: 'product_1', fields: { 编号: '8088-26棕' } }],
-    salesEntry: [{ record_id: 'order_1', fields: { 销售单号: 'XSD-001', 确认状态: '已入账' } }],
+    salesEntry: [{ record_id: 'order_1', fields: { 销售单号: 'XSD-001', '资金状态': '已写入' } }],
     paymentMethod: [{ record_id: 'method_1', fields: { 收款方式: '微信' } }],
     paymentRecord: [{ record_id: 'payment_1', fields: { 关联销售单: ['order_1'], 交易方式: ['method_1'], 收款金额: 230 } }],
   };
@@ -1889,6 +1974,12 @@ test('C：thread_id 查不到映射 → 明确回「认不出」，零写入，�
   });
   const replied = [];
   service.replyText = async (_messageId, content) => { replied.push(content); return 'om_reply'; };
+  // ⭐ ④ 这条消息在**话题**里 → 「认不出」那句话走的是**回复到话题**那条出口
+  // （带 `reply_in_thread`），所以这里也要把那条出口抓下来。
+  service.replyTextInThread = async (_messageId, content) => {
+    replied.push(content);
+    return { messageId: 'om_reply', threadId: 'omt_unknown_thread' };
+  };
 
   // 这条话题我们没记过；正文里**故意**带上一个真实批次号——也不能因此去猜。
   const result = await service.acceptMessage(groupEvent({
@@ -2042,8 +2133,11 @@ test('B：@ 占位符被剥掉——送到定位链路的是「她真正说的�
     },
   });
   // 群里 @ 了两个人：两个占位符都要剥掉，并且不能把正文吃掉。
+  // ⚠️ 正文刻意用**不像销售**的一句（不含数字、不含业务关键词）：主群里 @ 机器人
+  //    说一笔销售现在归销售链路（见 salesGroupThread.test.js），这条用例验证的是
+  //    "剥占位符"这一件事，所以走采购那条路来断言。
   await service.acceptMessage(groupEvent({
-    text: '@_user_1 @_user_2 8088 黑 38 两双',
+    text: '@_user_1 @_user_2 这批到了 你看下',
     mentions: [
       { key: '@_user_1', id: TEST_BOT_OPEN_ID, name: '测试机器人' },
       { key: '@_user_2', id: 'ou_someone', name: '别人' },
@@ -2051,7 +2145,7 @@ test('B：@ 占位符被剥掉——送到定位链路的是「她真正说的�
   }));
 
   assert.equal(seen.length, 1);
-  assert.equal(seen[0].text, '8088 黑 38 两双');
+  assert.equal(seen[0].text, '这批到了 你看下');
   assert.ok(!seen[0].text.includes('@_user_1'));
   assert.ok(!seen[0].text.includes('@_user_2'));
   assert.equal(seen[0].messageId, 'om_group_1');

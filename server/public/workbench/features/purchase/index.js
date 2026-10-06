@@ -1,10 +1,12 @@
 import { api } from '../../core/api-client.js';
 import { dateTime, escapeHtml, statusClass } from '../../core/formatters.js';
 import { bindSubTabs, describeError, showPageError } from '../../core/ui.js';
+import { PURCHASE_REQUEST_FORM_URL } from '../../config/links.js';
 
 const FORMS = [
   { label: '货品上新', desc: '新增货品基础信息', url: 'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnX0GlNcSOujePgWOLTTWr4m', icon: '🏷️' },
-  { label: '供应商对接', desc: '提交采购申请或采购退货', url: 'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnn4f9ZJzpm7JbT2rCH247xc', icon: '📦' },
+  // 采购申请表单的链接统一从 config/links.js 取（配置先行：换链接只改那一个文件）。
+  { label: '供应商对接', desc: '提交采购申请或采购退货', url: PURCHASE_REQUEST_FORM_URL, icon: '📦' },
   // ⚠️ 2026-10-05：「到货验收」表单原先的说明是"上传到货鞋盒图片并触发识别"——拍照识别链路已退场，
   // 那个表单现在只是**登记到货**（到货日 / 验收原话 / 确认状态）。链接不变，改的是说明。
   { label: '到货验收', desc: '登记到货与验收情况', url: 'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnVzhSlH9tLIxMUSfVjwF1se', icon: '✅' },

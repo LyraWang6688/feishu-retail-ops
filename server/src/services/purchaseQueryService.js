@@ -1,6 +1,7 @@
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
+const { classifyReportBehavior, REPORT_BEHAVIOR } = require('./purchaseReportBehaviorPolicy');
 
 const asText = (tableKey, record, semanticKey) => {
   const fieldName = V1_BITABLE_SCHEMA.tables[tableKey]?.fields?.[semanticKey];
@@ -37,13 +38,18 @@ const createPurchaseQueryService = (gateway, options = {}) => {
   });
 
   const listPurchaseRequests = async (filters = {}) => {
-    const [requests, products, batches] = await Promise.all([
+    const [requests, products, batches, behaviors] = await Promise.all([
       gateway.listAll('purchaseRequest'),
       gateway.listAll('product'),
       gateway.listAll('purchaseOrderBatch'),
+      // 「单据信息」的「采购行为」是关联「行为管理」：采购申请与采购退货写在同一张表里，
+      // 靠这一列分流。分流口径复用采购链路的同一份策略（purchaseReportBehaviorPolicy），
+      // 不在查询里另写一套判断——两套判断迟早在"什么算退货"上分家。
+      gateway.listAll('behavior'),
     ]);
     const productMap = indexByRecordId(products);
     const batchMap = indexByRecordId(batches);
+    const behaviorMap = indexByRecordId(behaviors);
 
     const rows = await Promise.all(requests.map(async (record) => {
       const productIds = asLinks('purchaseRequest', record, 'product');
@@ -52,6 +58,8 @@ const createPurchaseQueryService = (gateway, options = {}) => {
       const batch = batchIds.length ? batchMap.get(batchIds[0]) : null;
       const batchNo = batch ? asText('purchaseOrderBatch', batch, 'batchNo') : '';
       const supplierIds = product ? asLinks('product', product, 'supplier') : [];
+      const behaviorIds = asLinks('purchaseRequest', record, 'behavior');
+      const behavior = behaviorIds.length ? behaviorMap.get(behaviorIds[0]) : null;
       const size = await getSizeReferences().resolveLinkedCell(
         record?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseRequest.fields.size]
       );
@@ -64,12 +72,19 @@ const createPurchaseQueryService = (gateway, options = {}) => {
         quantity: asNumber(record?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseRequest.fields.quantity]),
         arrival_status: asText('purchaseRequest', record, 'arrivalStatus'),
         supplier_record_id: supplierIds[0] || '',
+        // 'purchase_request' | 'purchase_return'（读不到行为记录时按现状=采购申请）
+        report_behavior: classifyReportBehavior({
+          name: behavior ? asText('behavior', behavior, 'name') : '',
+          code: behavior ? asText('behavior', behavior, 'code') : '',
+        }),
+        report_behavior_name: behavior ? asText('behavior', behavior, 'name') : '',
       };
     }));
 
     return rows.filter((row) => {
       if (filters.batchNo && row.batch_no !== filters.batchNo) return false;
       if (filters.arrivalStatus && row.arrival_status !== filters.arrivalStatus) return false;
+      if (filters.reportBehavior && row.report_behavior !== filters.reportBehavior) return false;
       return true;
     }).sort((a, b) => String(b.batch_no).localeCompare(String(a.batch_no)) || a.size - b.size);
   };
@@ -116,4 +131,4 @@ const createPurchaseQueryService = (gateway, options = {}) => {
   return { listPurchaseRequests, listPurchaseArrivals };
 };
 
-module.exports = { createPurchaseQueryService };
+module.exports = { createPurchaseQueryService, REPORT_BEHAVIOR };

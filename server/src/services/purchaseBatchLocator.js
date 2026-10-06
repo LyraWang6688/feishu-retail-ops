@@ -54,7 +54,7 @@ class PurchaseBatchLocator {
    *
    * 幂等：同一条消息重复记（重试、飞书重投）用同一个 key，覆盖成同一条记录。
    */
-  async rememberGroupMessage({ batchNo, messageId, threadId = '', chatId = '', suppliers = [], requestIds = [], detailCount = 0 }) {
+  async rememberGroupMessage({ batchNo, messageId, threadId = '', chatId = '', suppliers = [], requestIds = [], detailCount = 0, kind = '' }) {
     const id = String(messageId || '').trim();
     if (!id) throw new Error('记采购群消息映射缺少 message_id');
     const record = await this.store.create({
@@ -64,6 +64,11 @@ class PurchaseBatchLocator {
       // 批次号是"人嘴里会说的号"，message_id 是"引用时事件给的 id"，
       // thread_id 是"话题里所有消息共用的那个 id"，三条路都要能从这一条记录上走通。
       batch_no: String(batchNo || '').trim(),
+      // ⚠️ batch_kind：这批发到群里的是**采购申请单**还是**采购退货单**。
+      // 两者共用同一个群、同一个话题机制（都走 deliverSupplierImages），
+      // 下游（到货核对）必须能分清，否则会把退货话题当成到货核对。
+      // 留空时由使用方按"采购申请"处理（旧记录没有这个字段）。
+      batch_kind: String(kind || '').trim(),
       message_id: id,
       thread_id: String(threadId || '').trim(),
       chat_id: String(chatId || '').trim(),
@@ -74,7 +79,7 @@ class PurchaseBatchLocator {
     });
     logInfo('purchase.group.message.remembered', {
       batch_no: record.batch_no, message_id: id, thread_id: record.thread_id,
-      chat_id: record.chat_id,
+      chat_id: record.chat_id, batch_kind: record.batch_kind,
       supplier_count: record.suppliers.length, request_count: record.request_ids.length,
     });
     return record;

@@ -1,6 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { createLarkEventHandlers } = require('../src/routes/larkEvents');
+const { LarkMvpService } = require('../src/services/larkMvpService');
+const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const {
   isPurchaseArrivalIntakeEnabled,
@@ -13,12 +18,13 @@ const APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN;
 
 test('authenticated card payload without a top-level token reaches the card service', async () => {
   let received;
+  // ⚠️ 这个桩**刻意不提供 `sendText`**：卡片动作路径已经不认识"私聊收件人"这个出口了
+  //（见下面 ① 的两条调用计数用例）。哪天有人把那条私聊文字加回来，这里会直接炸。
   const service = {
     handleCardAction: async (event) => {
       received = event;
       return {};
     },
-    sendText: async () => undefined,
   };
   const handlers = createLarkEventHandlers(service);
   const event = {
@@ -33,19 +39,133 @@ test('authenticated card payload without a top-level token reaches the card serv
   assert.equal(received, event);
 });
 
-test('failed result-text delivery does not relabel a successful card action as posting failure', async () => {
-  const messages = [];
+// ─────────────────────────────────────────────────────────────────────────────
+// ① 🔴 卡片动作**不再额外发一条私聊文字**（业务负责人 2026-10-06）
+//
+// 她的原话：「**卡片点按钮后那条多余的私聊文字，需要删。**」
+//          「**我们的消息卡片会变化啊！**」
+// ⇒ 「点按钮后必须回一个响应」由两件事承担，两个都必须还在：
+//      · 同步响应 —— handler 的返回值（`{ toast: { type: 'info', … } }`）；
+//      · 业务结果 —— `handleCardAction` 内部对**那张卡片本身**的更新。
+//    所以要删的**只是那条 `sendText(operator_open_id, toast)`**，不是整个响应。
+//
+// ⭐ 这两件事必须用**真实调用计数**证明，不能只断言"没调某个方法" ——
+//    "整条链路根本没跑"同样会让那种断言通过。所以下面用**真的 LarkMvpService**
+//    跑一条**真的卡片动作**，数两个出口：
+//      · `im.message.patch`  = 卡片更新（`updateInteractiveCard`）→ 必须 **1 次**
+//      · `im.message.create` = 主动发消息（落到私聊）              → 必须 **0 次**
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 会数两个出口的假飞书客户端：patch=改卡片，create=主动发消息（私聊）。 */
+const createCountingClient = () => {
+  const patched = [];
+  const created = [];
+  const client = {
+    im: {
+      v1: {
+        message: {
+          patch: async (request) => {
+            patched.push(request);
+            return { code: 0, data: {} };
+          },
+        },
+      },
+      message: {
+        create: async (request) => {
+          created.push(request);
+          return { code: 0, data: { message_id: `om_create_${created.length}` } };
+        },
+        reply: async (request) => {
+          created.push({ ...request, replied: true });
+          return { code: 0, data: { message_id: `om_reply_${created.length}`, thread_id: 'omt_t' } };
+        },
+      },
+      messageReaction: { create: async () => ({ code: 0 }) },
+    },
+  };
+  return { client, patched, created };
+};
+
+/** 用**真的 LarkMvpService**（不是桩）：只有真链路才能给出真实的调用计数。 */
+const createRealService = (client) => new LarkMvpService({
+  client,
+  gateway: { table: () => ({ fields: {} }), listAll: async () => [], validateTables: async () => [] },
+  posting: {},
+  recognizer: {},
+  store: new JsonTaskStore({
+    dir: fs.mkdtempSync(path.join(os.tmpdir(), 'lark-card-toast-')), idField: 'task_id',
+  }),
+  botOpenId: 'ou_test_bot',
+});
+
+test('① 点按钮 → 卡片更新 1 次 ＋ 主动私聊发送 0 次（真实调用计数）', async () => {
+  const { client, patched, created } = createCountingClient();
+  const service = createRealService(client);
+  const taskId = 'sample_card_task_1';
+  // 一条**已完成**的补样品任务：点它的按钮会走「卡片更新」那条真实分支
+  // （`publishCard` → `updateInteractiveCard` → `im.message.patch`）。
+  await service.store.create({
+    task_id: taskId,
+    type: 'sample_replacement',
+    status: 'completed',
+    sender_open_id: 'ou_operator',
+    product_number: 'TEST-1',
+    result: { size: 40 },
+  });
+
+  const handlers = createLarkEventHandlers(service);
+  const response = handlers['card.action.trigger']({
+    operator: { operator_id: { open_id: 'ou_operator' } },
+    action: { value: { action: 'choose_sample_replacement', draft_id: taskId, size: 40 } },
+    context: { open_message_id: 'om_card_1' },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.equal(patched.length, 1, '卡片必须仍然被更新（updateInteractiveCard → im.message.patch 恰好 1 次）');
+  assert.equal(patched[0]?.path?.message_id, 'om_card_1');
+  assert.equal(created.length, 0, '不应再有任何主动发送（im.message.create / reply）到私聊');
+  // 「点按钮后必须回一个响应」这条飞书要求不能被误伤：同步响应原样保留。
+  assert.deepEqual(response, { toast: { type: 'info', content: '已收到，正在处理' } });
+});
+
+test('① 卡片动作失败 → 同样不发私聊（也不再抛出去）', async () => {
+  const created = [];
   const handlers = createLarkEventHandlers({
-    handleCardAction: async () => ({ toast: { type: 'success', content: '销售已确认' } }),
-    sendText: async (_openId, message) => {
-      messages.push(message);
-      throw new Error('message delivery failed');
+    handleCardAction: async () => { throw new Error('卡片更新失败'); },
+    sendText: async (...args) => { created.push(args); },
+  });
+  const response = handlers['card.action.trigger']({
+    operator: { operator_id: { open_id: 'ou_1' } },
+    action: { value: { action: 'confirm_sale_pending', draft_id: 'sale_1' } },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.deepEqual(created, [], '失败分支也不许再用私聊文字兜底');
+  assert.deepEqual(response, { toast: { type: 'info', content: '已收到，正在处理' } },
+    '同步响应照旧 —— 她点按钮不会觉得"点不动"');
+});
+
+test('① 私聊既有行为逐字不变：非文字消息仍然回同样那一条私聊文字', async () => {
+  const { client, patched, created } = createCountingClient();
+  const service = createRealService(client);
+
+  const result = await service.acceptMessage({
+    sender: { sender_id: { open_id: 'ou_seller' } },
+    message: {
+      chat_type: 'p2p', message_type: 'image', message_id: 'om_p2p_1',
+      content: JSON.stringify({ image_key: 'img_x' }), create_time: '1759700000000',
     },
   });
-  handlers['card.action.trigger']({ operator: { operator_id: { open_id: 'ou_1' } },
-    action: { value: { action: 'confirm_sale_pending', draft_id: 'sale_1' } } });
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.deepEqual(messages, ['销售已确认']);
+
+  assert.equal(result.reason, 'unsupported_message_type');
+  // 私聊那条路一个字节都没动：仍然是一条 `open_id` 收件人的纯文字，文案逐字相同。
+  assert.equal(patched.length, 0, '私聊这条路不碰卡片更新');
+  assert.equal(created.length, 1);
+  assert.deepEqual(created[0].params, { receive_id_type: 'open_id' });
+  assert.equal(created[0].data.receive_id, 'ou_seller');
+  assert.equal(created[0].data.msg_type, 'text');
+  assert.deepEqual(JSON.parse(created[0].data.content),
+    { text: '机器人当前只接收销售文字；采购请使用采购表单。' });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -83,9 +203,10 @@ const createRecordingService = () => {
     packages,
     service: {
       purchaseWebhooks: {
-        acceptMany: async (kind, recordIds) => {
+        acceptMany: async (kind, recordIds, options) => {
           const ids = Array.isArray(recordIds) ? recordIds : [recordIds];
-          packages.push([kind, ids]);
+          // 第三个参数是「这一包应有几条」（到齐的判据），一并记下来供断言。
+          packages.push([kind, ids, options?.expectedCount]);
           for (const id of ids) accepted.push([kind, id]);
         },
       },
@@ -190,7 +311,11 @@ test('同一包里的多条 record_added 合成一次分派（一次提交 = 一
   });
   await flushDispatch();
 
-  assert.deepEqual(packages, [['supplier-report', ['rec_p1', 'rec_p2', 'rec_p3']]], '三条要作为一包一起分派');
+  assert.deepEqual(
+    packages,
+    [['supplier-report', ['rec_p1', 'rec_p2', 'rec_p3'], 3]],
+    '三条要作为一包一起分派，并把「这一包应有 3 条」传下去（到齐的判据）',
+  );
   assert.deepEqual(accepted, [
     ['supplier-report', 'rec_p1'],
     ['supplier-report', 'rec_p2'],
@@ -212,7 +337,7 @@ test('一包里非 record_added 的动作不进包：编辑/删除不触发报�
   });
   await flushDispatch();
 
-  assert.deepEqual(packages, [['supplier-report', ['rec_added']]]);
+  assert.deepEqual(packages, [['supplier-report', ['rec_added'], 1]]);
 });
 
 // 原先还有一条「一包里的多条到货记录也合成一次分派（到货链路行为不变）」。

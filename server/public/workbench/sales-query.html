@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>销售查询｜邯美数智经营工作台</title>
+  <link rel="stylesheet" href="/workbench/styles/tokens.css">
+  <link rel="stylesheet" href="/workbench/styles/base.css">
+  <link rel="stylesheet" href="/workbench/features/sales/sales.css">
+</head>
+<body data-view="sales-query">
+  <main class="shell standalone-shell">
+    <header class="header compact-header">
+      <div><div class="eyebrow">邯美数智经营工作台</div><h1>销售查询</h1></div>
+      <div class="auth"><span id="auth-status" class="muted">正在检查飞书登录状态…</span><button id="logout" class="btn btn-ghost hidden" type="button">退出登录</button></div>
+    </header>
+    <!-- 原「今日销售」页面改名而来：她明确说「不仅仅可以查询今日的，
+         可以按照区间或者某日的查询」，所以这一页支持 按某日 / 按区间。 -->
+    <nav class="standalone-nav">
+      <a href="/workbench/">返回完整工作台</a>
+      <a href="/workbench/common.html">常用功能</a>
+      <a class="active" href="/workbench/sales-query.html">销售查询</a>
+      <a href="/workbench/inventory.html">实时库存</a>
+    </nav>
+    <section id="standalone-host"></section>
+    <p id="page-error" class="error hidden" role="alert"></p>
+  </main>
+  <script type="module" src="/workbench/standalone.js"></script>
+</body>
+</html>

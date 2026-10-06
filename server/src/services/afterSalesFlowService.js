@@ -37,6 +37,7 @@ const {
   actionLabelOf,
   resolveAfterSalesAction,
   resolveAfterSalesSettlement,
+  resolveAfterSalesPaymentMethod,
   resolveAfterSalesRestockState,
   DEFAULT_AFTER_SALES_RESTOCK_STATE,
   afterSalesContextId,
@@ -80,6 +81,10 @@ const hasItemInfo = (parsed = {}) =>
  *   gateway    只读用途（货品/尺码解析）；不传时必须注入 references / sizeReferences
  *   references / sizeReferences 可选，解析货品与尺码（测试注入用）
  *   replyCard / sendCard / sendText / updateCard  可选，飞书消息端口
+ *   ⭐ replyCardToTask / sendCardToTask / sendTextToTask  可选，**带任务上下文**的消息端口：
+ *      群话题里的售后任务走它们（回复回到**同一个话题**），私聊任务走它们时
+ *      最终仍是原来的 `sendText(open_id)` / `sendCard(open_id)`，payload 逐字不变。
+ *      不注入时**退回上面那三个旧的端口**（旧调用方与旧测试的行为一个字不变）。
  *   now        可选，测试注入固定时间
  */
 class AfterSalesFlowService {
@@ -100,6 +105,15 @@ class AfterSalesFlowService {
     this.sendCard = options.sendCard || (async () => '');
     this.sendText = options.sendText || (async () => undefined);
     this.updateCard = options.updateCard || (async () => false);
+    // 渠道感知的三个出口。默认实现 = "没有渠道信息时的旧行为"：
+    // 回复到任务自己那条消息（`replyCard`），主动发卡/发文字发给发送人私聊。
+    // ⚠️ 只有调用方注入时才会"回到话题"——本类不认识 chat_type，也不认识 reply_in_thread。
+    this.replyCardToTask = options.replyCardToTask
+      || (async (task, card) => this.replyCard(task.message_id, card));
+    this.sendCardToTask = options.sendCardToTask
+      || (async (task, card) => this.sendCard(task.sender_open_id, card));
+    this.sendTextToTask = options.sendTextToTask
+      || (async (task, message) => this.sendText(task.sender_open_id, message));
   }
 
   // -------------------------------------------------------------------------
@@ -116,7 +130,7 @@ class AfterSalesFlowService {
     });
     if (!action) {
       await this.store.update(task.task_id, { status: AFTER_SALES_TASK_STATUS.ASKING });
-      await this.sendText(task.sender_open_id, '我没分清是退货、换货还是赔货，再说一次好吗？');
+      await this.sendTextToTask(task, '我没分清是退货、换货还是赔货，再说一次好吗？');
       logWarn('after_sales.action.unresolved', {
         task_id: task.task_id, intent: parsed.intent, action: parsed.action,
       });
@@ -162,6 +176,8 @@ class AfterSalesFlowService {
       original_sales_detail_record_ids: plan.original_sales_detail_record_ids,
       settlement: plan.settlement,
       requires_settlement: plan.requires_settlement,
+      // 她说的收款方式（空 = 她没说 → 执行器沿用原单）——排查"账上为什么写这个方式"看它。
+      payment_method: plan.payment_method || '',
       diff_amount: plan.diff_amount,
       restock_state: plan.restock_state,
       restock_state_explicit: plan.restock_state_explicit,
@@ -180,15 +196,24 @@ class AfterSalesFlowService {
    * 没序号就走入口 B（findCandidates），单条直接返回；多条/0 条出候选卡片。
    */
   async locateOriginal(task, parsed = {}) {
+    // ⭐ ③ 售后跟销售**同话题**（业务负责人："因为是同一笔的售后"）。
+    //    群话题里进来的售后任务带着**本地映射定位到的那笔销售**（`task.sales_entry_record_id`）：
+    //    有它时，"要退/要换的那一笔"只能落在这笔销售上 —— 不去别的单子里捞。
+    //    ⚠️ 私聊的任务上没有这个字段（`undefined`）→ `boundSaleRecordId` 为空 →
+    //       下面每一步的判据与改动之前逐字相同。
+    const boundSaleRecordId = String(task.sales_entry_record_id || '').trim();
+    const inBoundSale = (candidate) => !boundSaleRecordId
+      || String(candidate?.sales_entry_record_id || '') === boundSaleRecordId;
+
     const ordinal = positiveInteger(parsed.ordinal) || this.ordinalFromText(task.original_text);
     if (ordinal) {
       const sameMessage = this.lookup.resolvePendingCandidate(task, ordinal, { now: this.now() });
-      if (sameMessage.status === 'ok') {
+      if (sameMessage.status === 'ok' && inBoundSale(sameMessage.candidate)) {
         return { ok: true, candidate: sameMessage.candidate, source: 'ordinal' };
       }
       const remembered = await this.store.get(afterSalesContextId(task.sender_open_id));
       const previous = this.lookup.resolvePendingCandidate(remembered || {}, ordinal, { now: this.now() });
-      if (previous.status === 'ok') {
+      if (previous.status === 'ok' && inBoundSale(previous.candidate)) {
         return { ok: true, candidate: previous.candidate, source: 'ordinal' };
       }
       if (!hasItemInfo(parsed)) {
@@ -197,9 +222,10 @@ class AfterSalesFlowService {
         const message = previous.message
           || `我这儿只有 ${candidates.length} 笔，没有你说的第 ${ordinal} 笔。`;
         await this.store.update(task.task_id, { status: AFTER_SALES_TASK_STATUS.ASKING });
-        await this.sendText(task.sender_open_id, message);
+        await this.sendTextToTask(task, message);
         logInfo('after_sales.locate.ordinal_unusable', {
           task_id: task.task_id, ordinal, status: previous.status, candidate_count: candidates.length,
+          bound_sales_entry_record_id: boundSaleRecordId || undefined,
         });
         return { ok: false, reason: `ordinal_${previous.status}` };
       }
@@ -210,11 +236,15 @@ class AfterSalesFlowService {
     const color = String(parsed.color || '').trim();
     if (!itemNo && !color) {
       await this.store.update(task.task_id, { status: AFTER_SALES_TASK_STATUS.ASKING });
-      await this.sendText(task.sender_open_id, '退哪一双？发我货号，比如"6035 黑"。');
+      await this.sendTextToTask(task, '退哪一双？发我货号，比如"6035 黑"。');
       return { ok: false, reason: 'no_item_info' };
     }
 
-    let candidates = await this.lookup.findCandidates({ itemNo, color, now: this.now() });
+    // ⚠️ 话题里（boundSaleRecordId 非空）时，候选查询**限定在这一笔销售**上：
+    //    查不到就是"这一笔里没有那双"，绝不跨单去捞别的销售（那是猜）。
+    let candidates = await this.lookup.findCandidates({
+      itemNo, color, now: this.now(), salesEntryRecordId: boundSaleRecordId,
+    });
     // 她说了尺码就再收一道：同一货号同色常有多个尺码，不收就会出多张候选，
     // 甚至把 39 码当成她要的 40 码。尺码读不出来的候选保留（卡片上如实显示为空），
     // 不因为一个字段读不到就让这条记录消失。
@@ -226,7 +256,10 @@ class AfterSalesFlowService {
       // 不另写一套文案。**不清空**按人记的旧上下文：这一次没找到不代表上一次那几笔不算。
       await this.replyCardByTask(task, saleLookupCard({ days: this.lookup.days, itemNo, color, candidates: [] }));
       await this.store.update(task.task_id, { status: AFTER_SALES_TASK_STATUS.ASKING });
-      logInfo('after_sales.locate.not_found', { task_id: task.task_id, item_no: itemNo, color });
+      logInfo('after_sales.locate.not_found', {
+        task_id: task.task_id, item_no: itemNo, color,
+        bound_sales_entry_record_id: boundSaleRecordId || undefined,
+      });
       return { ok: false, reason: 'no_match' };
     }
     if (candidates.length > 1) {
@@ -241,7 +274,9 @@ class AfterSalesFlowService {
       });
       return { ok: false, reason: 'ambiguous' };
     }
-    return { ok: true, candidate: candidates[0], source: 'direct' };
+    // 话题里定位到的（source = 'thread_sale'）与私聊里按货号找到的（source = 'direct'）
+    // 在卡片与执行器看来是同一件事：都是一个 candidate。区分只为了排查。
+    return { ok: true, candidate: candidates[0], source: boundSaleRecordId ? 'thread_sale' : 'direct' };
   }
 
   // -------------------------------------------------------------------------
@@ -296,6 +331,30 @@ class AfterSalesFlowService {
     const movesMoney = Number.isFinite(diffAmount) && diffAmount !== 0;
     const settlement = movesMoney ? (spokenSettlement || null) : null;
 
+    // ⭐ 收款方式（**她实际说的那个渠道**）：业务负责人 2026-10-06 定 ——
+    //    「钱退现金」记录里的「交易方式」就要写**现金**，不沿用原单（见 AGENTS.md 第 16 条(2)）。
+    //    承认不出来（她没说）→ 留空，执行器**沿用原单的方式**（那就是"现有逻辑"）。
+    //    ⚠️ 只在 cash 这条腿上才有意义：prepaid 走「客户往来货款」，根本没有"交易方式"列。
+    //    ⚠️ 从 `task.original_text` 上认，不从 `parsed.settlement` 认：settlement 已经被
+    //       `resolveAfterSalesSettlement` 收敛成 cash/prepaid，具体渠道在那一步就丢了。
+    const paymentMethod = settlement === 'cash' ? resolveAfterSalesPaymentMethod(task.original_text) : '';
+    if (paymentMethod) {
+      // 她说了方式，但「收款方式管理」里没有这一个 → **大声拦住**（业务表零写入、不出卡片）。
+      // 为什么不能"没查到就沿用原单"：那正是这次要修的 bug —— 她说现金、账上写微信。
+      try {
+        await this.references.resolvePaymentMethod(paymentMethod);
+      } catch (error) {
+        logError('after_sales.payment_method.unknown', {
+          task_id: task.task_id,
+          payment_method: paymentMethod,
+          original_text: String(task.original_text || ''),
+        });
+        await this.ask(task,
+          `「收款方式管理」里没有「${paymentMethod}」这个收款方式，先把它加上（或换个说法）再说一次。`);
+        return { ok: false, reason: 'payment_method_unknown' };
+      }
+    }
+
     return {
       ok: true,
       plan: {
@@ -313,6 +372,9 @@ class AfterSalesFlowService {
         settlement_explicit: Boolean(movesMoney && spokenSettlement),
         // 这一次"钱怎么走"没解析出来：要动钱却不知道往哪条腿走时要**拦住**，不许静默放过。
         requires_settlement: movesMoney && !spokenSettlement,
+        // 她说的收款方式（"退我现金" → 现金）；空 = 她没说 → 执行器沿用原单的方式。
+        payment_method: paymentMethod || null,
+        payment_method_explicit: Boolean(paymentMethod),
         diff_amount: diffAmount,
         restock_state: restockState,
         restock_state_explicit: Boolean(spec.requiresRestockState && spokenRestock),
@@ -513,6 +575,8 @@ class AfterSalesFlowService {
       })),
       diffAmount: plan.diff_amount,
       settlement: plan.settlement,
+      // 她说的收款方式（"退我现金" → 现金）；空 = 她没说 → 执行器沿用原单的方式。
+      paymentMethod: plan.payment_method || '',
       restockState: plan.restock_state,
       // taskId = 每次用户消息一个分片：同一笔销售分两次退不同的鞋互不干扰，
       // 而同一条消息重复确认会撞进同一个分片被总闸门整次跳过。
@@ -554,7 +618,7 @@ class AfterSalesFlowService {
 
   async ask(task, message) {
     await this.store.update(task.task_id, { status: AFTER_SALES_TASK_STATUS.ASKING });
-    await this.sendText(task.sender_open_id, message);
+    await this.sendTextToTask(task, message);
     logInfo('after_sales.plan.needs_info', {
       task_id: task.task_id, message_length: String(message || '').length,
     });
@@ -562,14 +626,18 @@ class AfterSalesFlowService {
 
   // 优先在原消息下回复（她能立刻看到对应的那张卡）；回复失败退回主动发卡，
   // 免得"说了却没反应"。
+  //
+  // ⚠️ 两个出口都是**渠道感知**的（`replyCardToTask` / `sendCardToTask`）：
+  //    群话题里的售后任务回复回到**同一个话题**，私聊任务仍是原来的
+  //    `replyCard(message_id)` / `sendCard(open_id)`，payload 逐字不变。
   async replyCardByTask(task, card) {
     try {
-      const messageId = await this.replyCard(task.message_id, card);
+      const messageId = await this.replyCardToTask(task, card);
       if (messageId) await this.store.update(task.task_id, { card_message_id: messageId });
       return messageId || '';
     } catch (error) {
       logWarn('after_sales.card.reply_failed', { task_id: task.task_id, error: error.message });
-      const messageId = await this.sendCard(task.sender_open_id, card);
+      const messageId = await this.sendCardToTask(task, card);
       if (messageId) await this.store.update(task.task_id, { card_message_id: messageId });
       return messageId || '';
     }
@@ -586,7 +654,7 @@ class AfterSalesFlowService {
       });
     }
     try {
-      const messageId = await this.sendCard(task.sender_open_id, card);
+      const messageId = await this.sendCardToTask(task, card);
       if (messageId) await this.store.update(task.task_id, { card_message_id: messageId });
       logInfo('after_sales.card.fallback.sent', {
         task_id: task.task_id, stage: metadata.stage, card_message_id: messageId,

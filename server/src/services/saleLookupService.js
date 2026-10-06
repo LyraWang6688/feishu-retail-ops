@@ -2,10 +2,11 @@ const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const {
   DAY_MS,
   readSaleLookupConfig,
-  isReturnedOrderStatus,
+  isReturnedSalesStatus,
   isReturnTradeType,
 } = require('../config/saleLookup');
 const { MESSAGE_INTENTS } = require('../config/saleIntents');
+const { salesStatusOf } = require('../config/salesStatusDimensions');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { normalizeColor, normalizeText } = require('./v1ReferenceResolver');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
@@ -91,6 +92,11 @@ class SaleLookupService {
     this.now = options.now || (() => new Date());
     this.replyCard = options.replyCard || (async () => '');
     this.sendCard = options.sendCard || (async () => '');
+    // ⭐ 渠道感知的兜底出口（可选）。默认实现 = 改动前的私聊行为，**逐字相同**；
+    // 生产在 `larkMvpService` 里注入 `sendTaskCard`（群 → 回到那个话题 / 私聊 → 原样私聊）。
+    // ⚠️ 只有 `task.chat_type === 'group'` 时才会用到它 —— 见 replyCardByTask。
+    this.sendCardToTask = options.sendCardToTask
+      || (async (task, card) => this.sendCard(task?.sender_open_id, card));
     this.getSizeReferences = createSizeReferenceAccess({
       gateway: this.gateway,
       sizeReferences: options.sizeReferences,
@@ -126,18 +132,27 @@ class SaleLookupService {
   /**
    * 候选查询。
    *
-   * 输入：货号 / 颜色（都可选，但不能都不给）+ 时间窗口
+   * 输入：货号 / 颜色（都可选）+ 可选「只在某一笔销售里找」（salesEntryRecordId）+ 时间窗口
+   *   ⚠️ 货号、颜色、salesEntryRecordId **三者不能全空**：全空 = 想查"全部销售记录"，
+   *      那不是这个功能要回答的问题（最近 5 天全店可能有几十条）。
+   *   ⭐ salesEntryRecordId 是**群话题**那条路用的：话题本身已经定位到某一笔销售，
+   *      售后就绑着那一笔找 —— 业务负责人的口径是「**同一笔的售后，绝不跨单去捞**」。
    * 输出：[{ record_id, date, sold_at, item_no, color, size, actual_amount, sales_order_no, sales_entry_record_id }]
    *
    * 「日期」用销售明细的「销售日」，缺失时退回销售主表的「录单日」——和
    * 网页工作台的取值口径一致（v1WorkbenchService.getTodaySales），两处不能各算一套。
+   *
+   * ⚠️ 参数名统一为 `salesEntryRecordId`：调用方 afterSalesFlowService 与测试桩都用它。
+   *    改动前签名里没有这个参数 → 传进来被**静默忽略** → 售后仍按货号颜色在全表捞
+   *    （跨单抓到别的销售）。这里收住它，只在那一笔里找。
    */
-  async findCandidates({ itemNo = '', color = '', now = this.now(), days = this.days } = {}) {
+  async findCandidates({ itemNo = '', color = '', salesEntryRecordId = '',
+    now = this.now(), days = this.days } = {}) {
     const wantedItemNo = normalizeText(itemNo);
     const wantedColor = normalizeColor(color);
-    // 货号和颜色都没给 = 想查"全部销售记录"，那不是这个功能要回答的问题
-    // （最近 5 天全店可能有几十条），直接回空，让上层提示她补货号。
-    if (!wantedItemNo && !wantedColor) return [];
+    const wantedEntryRecordId = String(salesEntryRecordId || '').trim();
+    // 三个限定条件一个都没给 = 想查"全部销售记录"，直接回空，让上层提示她补货号。
+    if (!wantedItemNo && !wantedColor && !wantedEntryRecordId) return [];
 
     const [details, entries, products] = await Promise.all([
       this.gateway.listAll('salesDetail'),
@@ -148,12 +163,42 @@ class SaleLookupService {
     const productsById = new Map(products.map((record) => [record.record_id, record]));
     const entriesById = new Map(entries.map((record) => [record.record_id, record]));
 
-    // 判据一：销售主表.订单状态 = 已退货 / 部分退货
+    // 判据一：销售主表.销售状态 = 已退货 / 部分退货
+    //
+    // ⚠️ 2026-10-06 晚，业务负责人**把「订单状态」整列删掉**（值一起没，不可恢复），
+    //    判据一因此从「订单状态」**迁到「销售状态」**——销售那一维的新家
+    //    （字段名与取值见 config/salesStatusDimensions）。
+    //    `salesProgressService.sync` 从 2026-10-06 起就只算不写「订单状态」了。
+    //
+    // ⚠️ 写入端**默认是关的**：业务负责人 2026-10-06 晚更正的口径是「售后不影响原单」，
+    //    所以 afterSalesService 回写原单「销售状态 = 已退货 / 部分退货」做成显式开关
+    //    （config/afterSales 的 writeOriginalSalesStatus，默认 false；取值见
+    //     AFTER_SALES_ORIGINAL_SALES_STATUS）。
+    //    ⇒ 判据一今天多半仍读不到退货标记，**真正兜底的是下面的判据二**
+    //      （销售明细.交易类型 = 销售退货），它不依赖任何开关。
+    //    这里保留一层**保守**：
+    //      · 值 = 已退货 / 部分退货                    → 排除（判据本体）
+    //      · 值取不到（字段没配 / 单元格空）           → **当成"退过"，排除 ＋ logWarn**
+    //        —— 「销售状态」既不是退货、也不代表任何写入进度时，我们其实**不认识**这条记录
+    //           （老单就是这样：旧字段被删、历史值丢失，这些维度全空）。
+    //           两个维度都告诉不了我们这单退没退过时，宁可少给她一条候选，
+    //           也不能把"可能已经退过"的单再拿出来退一次（多退一次就是钱）。
+    //      · 值是别的合法进度（未写入/部分写入/已写入/写入失败）→ 不排除（新单）。
+    const entryFieldsOfLookup = this.schema.tables.salesEntry?.fields;
     const returnedOrderIds = new Set();
     for (const entry of entries) {
-      if (isReturnedOrderStatus(asText(this.schema, 'salesEntry', entry, 'orderStatus'))) {
+      const salesStatus = salesStatusOf(entry, entryFieldsOfLookup);
+      if (isReturnedSalesStatus(salesStatus)) {
         returnedOrderIds.add(entry.record_id);
+        continue;
       }
+      if (salesStatus) continue;
+      logWarn('sale_lookup.sales_status.unreadable', {
+        record_id: entry.record_id,
+        sales_status_field: entryFieldsOfLookup?.sales || '',
+        reason: entryFieldsOfLookup?.sales ? 'sales_status_blank' : 'sales_status_field_not_configured',
+      });
+      returnedOrderIds.add(entry.record_id);
     }
     // 判据二：销售明细里已有「交易类型」= 销售退货的行 → 它所属的整单都排除。
     // 「单」的粒度是销售主表记录：已经退过一笔的单，不能再让她从那一条里挑第二笔去退。
@@ -169,8 +214,11 @@ class SaleLookupService {
       const fields = detail.fields || {};
       const orderIds = linkedRecordIds(fieldValue(this.schema, 'salesDetail', detail, 'salesEntry'));
       const orderId = orderIds[0] || '';
+      // ⭐ 群话题那条路：只在话题对应的那一笔销售里找（「同一笔的售后，绝不跨单去捞」）。
+      //    改动前这个限定被静默忽略，售后会按货号颜色抓到**别的单**。
+      if (wantedEntryRecordId && orderId !== wantedEntryRecordId) continue;
       if (orderId && returnedOrderIds.has(orderId)) continue;
-      // 明细自己就是一条退货行：即使订单状态还没改，也不能拿它当"可退的销售"。
+      // 明细自己就是一条退货行：即使主表「销售状态」还没写成「已退货」，也不能拿它当"可退的销售"。
       if (isReturnTradeType(asText(this.schema, 'salesDetail', detail, 'tradeType'))) continue;
 
       const productIds = linkedRecordIds(fieldValue(this.schema, 'salesDetail', detail, 'product'));
@@ -301,8 +349,14 @@ class SaleLookupService {
   // 这里刻意**不再**提供"我还没上线"的占位方法：留一个没人调用的旧入口，
   // 以后很容易被误接回去，静默吞掉她的退货诉求（测试里锁住了它不存在）。
 
-  // 优先在原消息下回复（她能立刻看到对应的那张卡）；回复失败退回主动发卡，
-  // 免得"查了却没反应"。
+  // 优先在原消息下回复（她能立刻看到对应的那张卡）；回复失败再兜底发一张。
+  //
+  // ⭐ 兜底**按渠道分流**（业务负责人 2026-10-06：「一律在话题群里，以后私聊路线就没有了」）：
+  //   · 群任务（`chat_type === 'group'`）→ 走**渠道感知出口**，回到**那个话题**；
+  //     ⚠️ **绝不回落私聊** —— 群里回复失败就如实失败（只记日志、返回空串），
+  //     偷偷发一条私聊会让她以为"群里没人管"，也掩盖了群通道的故障。
+  //   · 私聊任务 → 与改动前**逐字相同**：`sendCard(task.sender_open_id, card)`，
+  //     失败照旧向上抛（这条分支一个字节都没动）。
   async replyCardByTask(task, card) {
     try {
       const messageId = await this.replyCard(task.message_id, card);
@@ -312,10 +366,23 @@ class SaleLookupService {
       return messageId || '';
     } catch (error) {
       logWarn('sale_lookup.card.reply_failed', { task_id: task.task_id, error: error.message });
-      const messageId = await this.sendCard(task.sender_open_id, card);
-      if (messageId) await this.store.update(task.task_id, { card_message_id: messageId });
-      return messageId || '';
     }
+    if (task?.chat_type === 'group') {
+      try {
+        const messageId = await this.sendCardToTask(task, card);
+        if (messageId) await this.store.update(task.task_id, { card_message_id: messageId });
+        return messageId || '';
+      } catch (fallbackError) {
+        // 不静默、也不掉进私聊：留一条能排查的日志，调用方按"这次没发出去"处理。
+        logWarn('sale_lookup.card.topic_fallback_failed', {
+          task_id: task.task_id, chat_id: task.chat_id, error: fallbackError.message,
+        });
+        return '';
+      }
+    }
+    const messageId = await this.sendCard(task.sender_open_id, card);
+    if (messageId) await this.store.update(task.task_id, { card_message_id: messageId });
+    return messageId || '';
   }
 }
 

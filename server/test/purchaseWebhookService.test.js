@@ -153,18 +153,18 @@ const makeService = (options = {}) => {
     // arrivalNotice* 四个等待阈值）已随识别链路退场删除，构造入参也不再传。
     imTimeoutMs: options.imTimeoutMs,
     gatewayTimeoutMs: options.gatewayTimeoutMs,
-    // 报货「归批窗口」：生产默认 4000ms（读 REPORT_BATCH_WINDOW_MS），
-    // 单测里压到 20ms —— 验证的是"同一批次号的记录归成一批、窗口到点才处理"，
-    // 而不是真的等 4 秒。需要验证窗口本身的用例会显式传更大的值。
+    // 报货「归批窗口」：2026-10-06 起**不再是"到点就发图"的触发条件**（判据是"这一包到齐"），
+    // 只当"同批重试间隔"用。单测里保留一个很小的值，避免同批重试时白等。
     reportBatchWindowMs: options.reportBatchWindowMs ?? 20,
-    // 退货「归批窗口」：生产默认 30000ms（业务负责人 2026-10-06 拍板），
-    // 单测里同样压到 20ms —— 验证的是"同一批次号的退货归成一批、窗口到点才处理"，
-    // 而不是真的等 30 秒。需要验证窗口本身的用例会显式传更大的值。
+    // 退货「归批窗口」：同上，只当"同批重试间隔"用（生产默认仍是 30000）。
     purchaseReturnBatchWindowMs: options.purchaseReturnBatchWindowMs ?? 20,
     // 群聊定位器（发到群后写 message_id ↔ 批次映射）指向临时目录：
     // 不传的话服务会自建 data/purchase_group_messages，用例之间会互相看见对方的映射。
     batchLocatorStore: options.batchLocatorStore,
     batchLocator: options.batchLocator,
+    // 测试用的显式群通道（见 sendPurchaseGroupNotice）：传了就不读 PURCHASE_CHAT_ID，
+    // 并发用例之间不会因为环境变量互相污染。
+    sandboxChatId: options.sandboxChatId,
   });
   return { service, store, gateway, references, recognizer, inventory, client, images, dir };
 };
@@ -698,9 +698,12 @@ const arrivalActual = (extra = {}) => ({
   ...extra,
 });
 
-// ─── 入库：写「采购入库」+ 库存 + 回写状态（confirmArrival）────────────────
+// ─── 入库：写「采购入库」+ 库存（confirmArrival）──────────────────────────
+// ⚠️ 2026-10-06 业务负责人口径：「既然它就是采购申请，那个表就不要动」。
+// 所以这两个用例**不再**断言「采购申请表的到货状态被回写」——那正是被删掉的行为；
+// 现在断言的是**它一个字都没变**（更硬的"零写入"断言在 arrivalConversation.test.js）。
 
-test('入库：写采购入库 + 挂回采购申请 + 回写申请到货状态与到货确认状态', async () => {
+test('入库：写采购入库 + 挂回采购申请 + 到货确认状态（不回写采购申请表）', async () => {
   const inventory = makeInventory();
   const records = {
     purchaseArrival: [{ record_id: 'arr_conf', fields: { 确认状态: '待确认' } }],
@@ -723,7 +726,9 @@ test('入库：写采购入库 + 挂回采购申请 + 回写申请到货状态�
   assert.deepEqual(inbounds[0].fields.尺码, sizeLink(36));
   assert.equal(inbounds[0].fields.数量, 1);
   assert.deepEqual(inbounds[0].fields.采购申请, ['req_1'], '入库记录要挂回对应的采购申请行');
-  assert.equal((await gateway.get('purchaseRequest', 'req_1')).fields.到货状态, '部分到货');
+  // 「单据信息」（采购申请表）**一个字都不动**：到货状态这一列**没有**被写过。
+  assert.equal((await gateway.get('purchaseRequest', 'req_1')).fields.到货状态, undefined,
+    '采购申请表的「到货状态」不许被入库链路回写');
   assert.equal((await gateway.get('purchaseArrival', 'arr_conf')).fields.确认状态, '已确认');
   assert.equal(inventory.calls.length, 1, '库存要跟着加一次');
 });
@@ -752,7 +757,8 @@ test('入库：同一货品+尺码的两条明细合成一条入库（数量 2�
   assert.equal(inbounds[0].fields.数量, 2);
   assert.equal(inventory.calls.length, 1);
   assert.equal(inventory.calls[0].quantity, 2);
-  assert.equal((await gateway.get('purchaseRequest', 'req_1')).fields.到货状态, '全部到货');
+  assert.equal((await gateway.get('purchaseRequest', 'req_1')).fields.到货状态, undefined,
+    '采购申请表的「到货状态」不许被入库链路回写');
 });
 
 test('入库：真的调 inventory.applyPurchase（带采购入库记录 id 作为幂等来源）', async () => {
@@ -1558,7 +1564,11 @@ test('一包里有一条 record_id 不合法：不连累同包其它记录（逐
   assert.equal((await gateway.listAll('purchaseRequest')).length, 1, '合法的那条照样处理');
 });
 
-test('拆包兜底：同一批的记录分两次到达 → 仍算一批，只处理一次', async () => {
+test('同一批的记录分两次到达：处理时按批次号重读整张表，能读到的都在一张单上', async () => {
+  // ⚠️ 口径变了（业务负责人 2026-10-06）：**不考虑飞书拆包**，所以不再有"按时间窗把
+  // 拆出来的记录再收进同一批"的兜底。这里钉住的是**处理侧**仍然稳健：整批处理前会按
+  // 「报货批次号」重读整张表——只要那条记录已经落表，就会被并进同一张单、同一个批次。
+  // （拆包本身不再等待，两个包各自触发一次处理；第 2 次会被记录级终态/幂等键挡成空操作。）
   const records = {
     purchaseReport: [
       reportRecord('rep_split_a', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-SPLIT' }),
@@ -1572,8 +1582,6 @@ test('拆包兜底：同一批的记录分两次到达 → 仍算一批，只处
     gateway: makeGateway(records),
     references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
     recognizer: makeRecognizer({ parsePurchaseReportText: async (text) => [{ size: text.includes('36') ? 36 : 37, quantity: text.includes('36') ? 2 : 1 }] }),
-    // 窗口 300ms：第二条在窗口内到达，两条仍归成一批。
-    reportBatchWindowMs: 300,
   });
   await service.accept('supplier-report', 'rep_split_a');
   await wait(60); // 模拟飞书把一包拆成两次推送
@@ -1583,35 +1591,69 @@ test('拆包兜底：同一批的记录分两次到达 → 仍算一批，只处
   await waitForIdle(service);
 
   assert.equal(records.purchaseOrderBatch.length, 1);
-  assert.equal(records.purchaseRequest.length, 2, '拆包也必须写全两条');
-  assert.equal(images.calls.length, 1, '拆包也只出一张图');
+  assert.equal(records.purchaseRequest.length, 2, '两条记录都要写进同一张单');
+  assert.equal(images.calls.length, 1, '仍只出一张图');
 });
 
-test('窗口到点才处理：窗口没到之前一次远端写入都不发生', async () => {
+test('「到齐就发」：不再等时间窗——窗口配成 60 秒也立刻处理', async () => {
+  // 业务负责人 2026-10-06 的最终口径：决定"什么时候出图"的是**这一包到齐**
+  //（成功 / 跳过 / 重试 3 次读不到都算处理完），**不再有时间窗到点就发**。
+  // 所以这里把窗口配成 60 秒——它现在只当"同批重试间隔"，配多大都不该拖住首次处理。
   const gateway = makeGateway({
     purchaseReport: [reportRecord('rep_window', { 尺码: sizeLink(36), 数量说明: '36码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-WINDOW' })],
     purchaseOrderBatch: [],
     purchaseRequest: [],
     supplier: SUPPLIERS,
   });
-  const writes = countGatewayWrites(gateway);
   const { service, store } = makeService({
     gateway,
     references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
     recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 1 }] }),
-    reportBatchWindowMs: 250,
+    reportBatchWindowMs: 60_000,
   });
   const accepted = await service.accept('supplier-report', 'rep_window');
-  // 任务登记进窗口后立刻返回，落在"等窗口"这个非终态上。
-  await waitFor('任务停在等窗口', async () => (await store.get(accepted.taskId))?.status === 'batch_waiting');
-  await wait(80);
-  assert.deepEqual(writes, [], '窗口没到点不得有任何远端写入');
-  assert.equal((await gateway.listAll('purchaseRequest')).length, 0);
-  assert.equal((await gateway.get('purchaseReport', 'rep_window')).fields.处理状态, '待解析', '没处理完之前处理状态不能被改');
-
-  // 窗口到点 → 处理一次，记录进入终态。
+  // 远早于 60 秒就该处理完：记录进入终态、采购申请写成。
   await waitForBatchPosted(gateway, 'BATCH-WINDOW');
+  const task = await waitForProcessed(store, accepted.taskId);
+  assert.equal(task.status, 'posted');
   assert.equal((await gateway.listAll('purchaseRequest')).length, 1);
+});
+
+test('「到齐」的判据落地：这一包只到一半时不处理，到齐才立刻处理一次', async () => {
+  // 「到齐」= 这一包里**进了链路的每一条**都处理完（成功 ✓ 跳过 ✓ 重试 3 次读不到 ✓）。
+  // 台账按包 id 记（见 purchaseWebhookService.beginPackage / recordPackageDone）：
+  //   · 一包里只登记了一半 → 停在 batch_waiting，一次远端写入都不发生（**没有超时兜底**）；
+  //   · 另一半登记进来 → 立刻整批处理一次。
+  // 真实入口是 larkEvents 的 acceptMany（一次 action_list = 一包，整包一起交进来），
+  // 这里直接驱动台账，把"半边到齐"的状态稳定地摆出来。
+  const gateway = makeGateway({
+    purchaseReport: [
+      reportRecord('rep_half_a', { 尺码: sizeLink(36), 数量说明: '36码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-HALF' }),
+      reportRecord('rep_half_b', { 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-HALF' }),
+    ],
+    purchaseOrderBatch: [],
+    purchaseRequest: [],
+    supplier: SUPPLIERS,
+  });
+  const { service, store } = makeService({
+    gateway,
+    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
+    recognizer: makeRecognizer({
+      parsePurchaseReportText: async (text) => [{ size: String(text).includes('37') ? 37 : 36, quantity: 1 }],
+    }),
+  });
+  const context = { packageId: 'pkg_half_test', expected: 2 };
+  service.beginPackage({ packageId: context.packageId, kind: 'supplier-report', expected: 2 });
+  const accepted = await service.accept('supplier-report', 'rep_half_a', context);
+  await waitFor('任务停在等这一包到齐', async () => (await store.get(accepted.taskId))?.status === 'batch_waiting');
+  await wait(120);
+  assert.equal((await gateway.listAll('purchaseRequest')).length, 0, '没到齐就不得写任何采购申请（也不靠超时兜底）');
+  assert.equal((await gateway.get('purchaseReport', 'rep_half_a')).fields.处理状态, '待解析', '没处理完之前处理状态不能被改');
+
+  // 这一包的另一条到达：到齐 → 立刻处理。
+  await service.accept('supplier-report', 'rep_half_b', context);
+  await waitForBatchPosted(gateway, 'BATCH-HALF');
+  assert.equal((await gateway.listAll('purchaseRequest')).length, 2, '到齐后两条一起处理（36 码 + 37 码）');
 });
 
 test('同一次提交里混着采购申请和采购退货 → 各走各的链路，退货不被归批顺手写成单据', async () => {
@@ -1741,7 +1783,9 @@ test('「未到齐」告警彻底退场：不判到齐之后不再发任何告�
       client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
       gateway: makeGateway({
         purchaseReport: [reportRecord('rep_no_alert', {
-          尺码: sizeLink(36), 数量说明: '36码3双', 编号: ['prod_1'], 报货批次号: 'BATCH-NO-ALERT', 报单时间: Date.now(),
+          尺码: sizeLink(36), 数量说明: '36码3双', 编号: ['prod_1'], 报货批次号: 'BATCH-NO-ALERT',
+          // 「报单时间」2026-10-06 已被业务负责人从生产表删除（时间交给飞书自动的「创建时间」），
+          // 生产真表「供应商对接」14 列里已经没有它；夹具不再带这一列，避免继续假装表里还有。
         })],
         purchaseOrderBatch: [],
         purchaseRequest: [],
@@ -2255,4 +2299,149 @@ test('A：拿不到经办人 open_id → 不 @任何人（也不退回 @所有�
   } finally {
     logs.restore();
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-10-06 最终口径：「到齐 ＋ 重试 3 次」「不要兜底」「说明和勾选对不上就给提示」
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('③ 行为读不到：重试到上限后算「处理完了」——不进图，也不拖死同一包里的其它记录', async () => {
+  const gateway = makeGateway({
+    purchaseReport: [
+      reportRecord('rep_bad', { 尺码: sizeLink(36), 数量说明: '36码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-UNREADABLE' }),
+      reportRecord('rep_good', { 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-UNREADABLE' }),
+    ],
+    purchaseOrderBatch: [],
+    purchaseRequest: [],
+    supplier: SUPPLIERS,
+  });
+  const realGet = gateway.get.bind(gateway);
+  const realListAll = gateway.listAll.bind(gateway);
+  let badReads = 0;
+  // 这条记录「读不到」：get 一直失败（Data not ready 的长相），整表读也读不到它
+  // ——这正是"重试 3 次仍读不到"在生产上的样子（记录还没同步进来）。
+  gateway.get = async (tableKey, recordId) => {
+    if (tableKey === 'purchaseReport' && recordId === 'rep_bad') {
+      badReads += 1;
+      throw new Error('Data not ready (1254607)');
+    }
+    return realGet(tableKey, recordId);
+  };
+  gateway.listAll = async (tableKey) => {
+    const rows = await realListAll(tableKey);
+    return tableKey === 'purchaseReport' ? rows.filter((row) => row.record_id !== 'rep_bad') : rows;
+  };
+  const { service, store, images } = makeService({
+    gateway,
+    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
+    recognizer: makeRecognizer({
+      parsePurchaseReportText: async (text) => [{ size: String(text).includes('37') ? 37 : 36, quantity: 1 }],
+    }),
+    batchReadMaxRetries: 3,
+    batchReadRetryDelay: 0,
+  });
+
+  const accepted = await service.acceptMany('supplier-report', ['rep_bad', 'rep_good'], { expectedCount: 2 });
+  // 读不到的那条要**试满 3 次**才放弃。
+  await waitFor('读不到的那条试满重试次数', async () => badReads >= 3);
+  // 这一包照样到齐：能画的那条正常出单、出图；读不到的那条不进图。
+  await waitForBatchPosted(gateway, 'BATCH-UNREADABLE');
+  await waitFor('两个任务都落定', async () => {
+    for (const item of accepted.records) {
+      const task = await store.get(item.taskId);
+      if (!['posted', 'completed'].includes(task?.status)) return false;
+    }
+    return true;
+  });
+  const requests = await gateway.listAll('purchaseRequest');
+  assert.equal(requests.length, 1, '只有能读到的那条写了采购申请');
+  assert.deepEqual(requests[0].fields['尺码'], ['size_37']);
+  assert.equal(images.calls.length, 1, '读不到的不进图，但仍然只出一张（那一包到齐）');
+  const badTask = await store.get(accepted.records[0].taskId);
+  assert.equal(badTask.status, 'completed', '读不到 = 处理完了（不是 failed，也不卡住整包）');
+  assert.equal(badTask.result.status, 'unreadable');
+});
+
+test('⑤ 说明和勾选对不上：在采购群给一条看得懂的提示（一次提交只一条），同批其它记录照常出单', async () => {
+  const gateway = makeGateway({
+    purchaseReport: [
+      // 勾了 36，说明里却写 39 —— 典型的"说明和勾选对不上"。
+      reportRecord('rep_ms', { 尺码: sizeLink(36), 数量说明: '39码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-MS' }),
+      reportRecord('rep_ok', { 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_1'], 报货批次号: 'BATCH-MS' }),
+    ],
+    purchaseOrderBatch: [],
+    purchaseRequest: [],
+    supplier: SUPPLIERS,
+  });
+  const messages = [];
+  const { service, store, images } = makeService({
+    gateway,
+    client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
+    // 显式给一个测试群（不读环境变量）：断言提示发到群里。
+    sandboxChatId: 'oc_test_notice_group',
+    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
+    recognizer: makeRecognizer({
+      parsePurchaseReportText: async (text) => (String(text).includes('39')
+        ? [{ size: 39, quantity: 2 }]
+        : [{ size: 37, quantity: 1 }]),
+    }),
+  });
+
+  const accepted = await service.acceptMany('supplier-report', ['rep_ms', 'rep_ok'], { expectedCount: 2 });
+  await waitFor('两个任务都落定', async () => {
+    for (const item of accepted.records) {
+      const task = await store.get(item.taskId);
+      if (!['posted', 'completed'].includes(task?.status)) return false;
+    }
+    return true;
+  });
+
+  // ① 群里有一条她看得懂的提示，而且**只有一条**（一次提交只提示一次，不刷屏）。
+  const notices = textMessages(messages).filter((text) => text.includes('对不上'));
+  assert.equal(notices.length, 1, `对不上只提示一次，实际：${JSON.stringify(textMessages(messages))}`);
+  assert.match(notices[0], /没勾选的尺码（39 码）/);
+  assert.match(notices[0], /请核对后再提交/);
+  assert.ok(
+    messages.every((m) => m.data.receive_id === 'oc_test_notice_group'),
+    `提示发到采购群，实际：${JSON.stringify(messages.map((m) => m.data))}`,
+  );
+
+  // ② 对不上的那条**不是整批失败**：同批能画的那条照常出单、出图。
+  const requests = await gateway.listAll('purchaseRequest');
+  assert.equal(requests.length, 1, '只有对得上的那条写单据');
+  assert.deepEqual(requests[0].fields['尺码'], ['size_37']);
+  assert.equal(images.calls.length, 1);
+  const msTask = await store.get(accepted.records[0].taskId);
+  assert.ok(['posted', 'completed'].includes(msTask.status), '对不上 = 处理完了，不是 failed');
+  assert.deepEqual(msTask.result.mismatch_record_ids, ['rep_ms'], '哪条对不上要留在结果里（供提示/排查）');
+  assert.equal((await gateway.get('purchaseReport', 'rep_ms')).fields['处理状态'], '待解析', '记录保持待解析，她核对后重提');
+});
+
+test('⑤ 单条（没有批次号）说明和勾选对不上：同样在群里给一条提示，不静默失败', async () => {
+  const gateway = makeGateway({
+    purchaseReport: [
+      reportRecord('rep_ms_single', { 尺码: sizeLink(36), 数量说明: '39码2双', 编号: ['prod_1'] }),
+    ],
+    purchaseOrderBatch: [],
+    purchaseRequest: [],
+    supplier: SUPPLIERS,
+  });
+  const messages = [];
+  const { service, store } = makeService({
+    gateway,
+    client: makeClient({ sendMessage: async (params) => { messages.push(params); return { code: 0 }; } }),
+    sandboxChatId: 'oc_test_notice_group',
+    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
+    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 39, quantity: 2 }] }),
+  });
+
+  const accepted = await service.accept('supplier-report', 'rep_ms_single');
+  await waitForProcessed(store, accepted.taskId);
+  const notices = textMessages(messages).filter((text) => text.includes('没勾选的尺码（39 码）'));
+  assert.equal(notices.length, 1);
+  assert.equal((await gateway.listAll('purchaseRequest')).length, 0, '对不上就不写单据');
+  const task = await store.get(accepted.taskId);
+  assert.equal(task.status, 'completed');
+  // 记录状态保持「待解析」——她核对后重新提交即可（绝不写终态「解析失败」）。
+  assert.equal((await gateway.get('purchaseReport', 'rep_ms_single')).fields['处理状态'], '待解析');
 });

@@ -1,0 +1,13 @@
+/* 「常用功能」页的少量补充样式。
+   其余一律复用 styles/base.css 里的既有类（panel / quick-entries / entry-card / btn），
+   不另起一套样式。 */
+
+/* 只有两个入口时按两列排，不要留一个空位。 */
+.quick-entries.entries-two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+.inline-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.inline-links a { text-decoration: none; }
+
+@media (max-width: 760px) {
+  .quick-entries.entries-two { grid-template-columns: minmax(0, 1fr); }
+}

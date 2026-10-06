@@ -1,0 +1,34 @@
+/* 「采购和退货」页：两个外链大按钮。
+   只复用 styles/tokens.css 的变量和 styles/base.css 的 .panel / .btn 体系，不另起一套。 */
+
+.purchase-links { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; margin-top: 18px; }
+
+.purchase-link-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 104px; /* 手机上整卡可点，远超 44px 的触控下限 */
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: inherit;
+  background: var(--surface-soft);
+  text-decoration: none;
+}
+
+/* hover 只是桌面端的点缀，**不承载任何信息**（手机没有 hover）——
+   手机上的反馈靠 :active。 */
+.purchase-link-card:hover { border-color: var(--primary); background: var(--primary-soft); box-shadow: var(--shadow-card); }
+.purchase-link-card:active { border-color: var(--primary); background: var(--primary-soft); }
+
+.purchase-link-card .icon { flex: none; font-size: 34px; line-height: 1; }
+.purchase-link-card .text { min-width: 0; }
+.purchase-link-card h3 { margin: 0; font-size: 21px; }
+.purchase-link-card p { margin: 6px 0 0; color: var(--text-muted); font-size: 14px; overflow-wrap: anywhere; }
+.purchase-link-card .arrow { flex: none; margin-left: auto; color: var(--primary); font-size: 15px; font-weight: 600; }
+
+@media (max-width: 760px) {
+  .purchase-link-card { min-height: 112px; padding: 18px 16px; gap: 12px; }
+  .purchase-link-card h3 { font-size: 20px; }
+  .purchase-link-card .arrow { font-size: 14px; }
+}

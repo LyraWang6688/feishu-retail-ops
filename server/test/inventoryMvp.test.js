@@ -4,7 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
-const { InventoryService, operationId, STOCK_MOVEMENTS } = require('../src/services/inventoryService');
+const { InventoryService, operationId, STOCK_MOVEMENTS, ADJUSTMENT_BEHAVIORS } = require('../src/services/inventoryService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
 // 库存动作现在按「行为编码」匹配，编码是行为管理表里的稳定标识。
@@ -377,6 +377,13 @@ test('stock behavior lookup survives renaming the display name', async () => {
     behavior('behavior_cash', 'SALE_CASH', '现货销售（已改名）', '减少'),
     // 采购退货（采购减少）同样是注册表里的一条：validateStockBehaviors 会遍历整张注册表。
     behavior('behavior_purchase_decrease', 'STOCK_PURCHASE_DECREASE', '采购减少（已改名）', '减少'),
+    // 人工库存行为 6 条（2026-10-06 注册）：同样由 validateStockBehaviors 遍历。
+    behavior('behavior_manual_increase', 'STOCK_MANUAL_INCREASE', '手工调增', '增加'),
+    behavior('behavior_manual_decrease', 'STOCK_MANUAL_DECREASE', '手工调减', '减少'),
+    behavior('behavior_freeze', 'STOCK_FREEZE', '转冻结', '不影响'),
+    behavior('behavior_unfreeze', 'STOCK_UNFREEZE', '转释放', '不影响'),
+    behavior('behavior_sample_to_doorbox', 'STOCK_SAMPLE_TO_DOORBOX', '样品转门盒', '不影响'),
+    behavior('behavior_doorbox_to_sample', 'STOCK_DOORBOX_TO_SAMPLE', '门盒转样品', '不影响'),
   ]);
   const inventory = new InventoryService({ gateway, store: store() });
   await inventory.validateStockBehaviors();
@@ -407,6 +414,54 @@ test('采购退货动作的库存语义：方向减少、状态无关（门盒+�
   assert.deepEqual(STOCK_MOVEMENTS.STOCK_PURCHASE_DECREASE, {
     direction: '减少', ledgerSource: null, consumes: ['门盒', '样品', '仓库'], triggerSampleReplacement: false,
   });
+});
+
+// 人工库存行为 6 条（2026-10-06 注册）：这里锁住的是**注册表契约**，
+// 不是实现——入口还没做，所以任何一个字段被"顺手"改动，都该在这里红。
+test('人工库存 6 条行为的注册表契约：两个数量类、四个状态类', () => {
+  // 数量类：方向和「手工调增=增加 / 手工调减=减少」一致；没有来源列（关联销售/关联采购都挂不上）。
+  assert.deepEqual(STOCK_MOVEMENTS[ADJUSTMENT_BEHAVIORS.MANUAL_INCREASE], {
+    direction: '增加', ledgerSource: null, consumes: null, triggerSampleReplacement: false,
+  });
+  assert.deepEqual(STOCK_MOVEMENTS[ADJUSTMENT_BEHAVIORS.MANUAL_DECREASE], {
+    // ⚠️ consumes 待业务负责人定（见 inventoryService 里的 MANUAL_DECREASE_CONSUMES）：
+    //    现在是最保守的 null＝只消耗调用方明确指定的那一种状态。
+    direction: '减少', ledgerSource: null, consumes: null, triggerSampleReplacement: false,
+  });
+  // 状态类：方向=不影响，且**必须**带 stateTransition 目标。
+  for (const code of [ADJUSTMENT_BEHAVIORS.FREEZE, ADJUSTMENT_BEHAVIORS.UNFREEZE,
+    ADJUSTMENT_BEHAVIORS.SAMPLE_TO_DOORBOX, ADJUSTMENT_BEHAVIORS.DOORBOX_TO_SAMPLE]) {
+    assert.equal(STOCK_MOVEMENTS[code].direction, '不影响', `${code} 必须是状态类`);
+    assert.equal(STOCK_MOVEMENTS[code].consumes, null, `${code} 不消耗实时库存`);
+    assert.ok(Object.hasOwn(STOCK_MOVEMENTS[code], 'stateTransition'), `${code} 必须声明目标状态字段`);
+  }
+  // 两个"转"的 from/to 是明确的。
+  assert.deepEqual(STOCK_MOVEMENTS[ADJUSTMENT_BEHAVIORS.SAMPLE_TO_DOORBOX].stateTransition,
+    { from: '样品', to: '门盒' });
+  assert.deepEqual(STOCK_MOVEMENTS[ADJUSTMENT_BEHAVIORS.DOORBOX_TO_SAMPLE].stateTransition,
+    { from: '门盒', to: '样品' });
+  // 换季调整的两条（业务负责人 2026-10-06 在工作台需求里定死）：
+  //   转冻结 = 门盒/样品 → 仓库；转释放 = 仓库 → 门盒/样品（回哪个由界面选，所以 to 为 null）。
+  assert.deepEqual(STOCK_MOVEMENTS[ADJUSTMENT_BEHAVIORS.FREEZE].stateTransition,
+    { from: ['门盒', '样品'], to: '仓库' });
+  assert.deepEqual(STOCK_MOVEMENTS[ADJUSTMENT_BEHAVIORS.UNFREEZE].stateTransition,
+    { from: ['仓库'], to: null, targets: ['门盒', '样品'] });
+  // 两个编码指向同一行"门盒转样品"行为（补样品链路已在用），不是两条行为。
+  assert.equal(ADJUSTMENT_BEHAVIORS.DOORBOX_TO_SAMPLE, 'STOCK_DOORBOX_TO_SAMPLE');
+});
+
+// 状态类行为走数量通路＝凭空多出一双鞋，而且账面看不出来。入口必须直接拦死，
+// 且要在任何远端读写之前拦住（断言流水/实时库存一条都没动）。
+test('状态类（方向=不影响）行为不许走 applyChange 数量通路', async () => {
+  for (const code of [ADJUSTMENT_BEHAVIORS.FREEZE, ADJUSTMENT_BEHAVIORS.UNFREEZE,
+    ADJUSTMENT_BEHAVIORS.SAMPLE_TO_DOORBOX, ADJUSTMENT_BEHAVIORS.DOORBOX_TO_SAMPLE]) {
+    const gateway = gatewayFor([unit('door_1', '门盒')], [behavior('behavior_x', code, '状态类', '不影响')]);
+    const inventory = new InventoryService({ gateway, store: store() });
+    await assert.rejects(inventory.applyChange({ kind: code, productRecordId: 'product_1', size: 38,
+      quantity: 1, sourceRecordId: 'src_1', state: '门盒' }), /属于状态类变更/);
+    assert.equal(gateway.records.get('inventoryLedger'), undefined, '拦下时不得写流水');
+    assert.equal(gateway.records.get('liveInventory').length, 1, '拦下时不得新建实时库存');
+  }
 });
 
 // 光有声明不够：这三条行为编码必须真的能被既有库存引擎执行（真 InventoryService，不是注入端口）。
