@@ -1,6 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildPurchaseQuantities } = require('../src/services/purchaseQuantityPolicy');
+const {
+  buildPurchaseQuantities,
+  isPurchaseQuantityMismatch,
+  buildPurchaseQuantityMismatchNotice,
+  PURCHASE_QUANTITY_MISMATCH,
+  PurchaseQuantityMismatchError,
+} = require('../src/services/purchaseQuantityPolicy');
 
 test('empty quantity description defaults every selected size to one without AI', async () => {
   let parserCalled = false;
@@ -161,4 +167,50 @@ test('说明明确说“一双”时，解析出的数量 1 必须被接受（�
   });
 
   assert.deepEqual(items, [{ size: 38, quantity: 1 }]);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 「说明和勾选对不上」要能在采购群给她一句看得懂的话（业务负责人 2026-10-06）
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('「对不上」是带分类的错（不是普通 Error），文案直接用她的例子', async () => {
+  const error = await buildPurchaseQuantities({
+    selectedSizes: [36, 37],
+    quantityDescription: '39码2双',
+    parseOverrides: async () => [{ size: 39, quantity: 2 }],
+  }).catch((caught) => caught);
+
+  assert.ok(error instanceof PurchaseQuantityMismatchError, '必须是可识别的分类错误，调用方才能单独接住');
+  assert.equal(isPurchaseQuantityMismatch(error), true);
+  assert.equal(error.code, PURCHASE_QUANTITY_MISMATCH.UNSELECTED_SIZE);
+  assert.equal(error.size, 39);
+  // 原文案（业务负责人给的例子）：说明里写了没勾选的尺码 → 请核对后再提交。
+  const notice = buildPurchaseQuantityMismatchNotice(error, { detailId: '7', itemNo: '2070-9' });
+  assert.match(notice, /说明里写了没勾选的尺码（39 码）/);
+  assert.match(notice, /请核对后再提交/);
+  assert.match(notice, /明细ID 7/);
+  assert.match(notice, /货号 2070-9/);
+});
+
+test('「对不上」的另外两种：没识别出数量 / 同一尺码给了两个数量', async () => {
+  const empty = await buildPurchaseQuantities({
+    selectedSizes: [36],
+    quantityDescription: '多来一点',
+    parseOverrides: async () => [],
+  }).catch((caught) => caught);
+  assert.equal(empty.code, PURCHASE_QUANTITY_MISMATCH.NO_QUANTITY_PARSED);
+  assert.match(buildPurchaseQuantityMismatchNotice(empty), /没能识别出明确的尺码数量/);
+
+  const conflict = await buildPurchaseQuantities({
+    selectedSizes: [36],
+    quantityDescription: '36码两双，36码三双',
+    parseOverrides: async () => [{ size: 36, quantity: 2 }, { size: 36, quantity: 3 }],
+  }).catch((caught) => caught);
+  assert.equal(conflict.code, PURCHASE_QUANTITY_MISMATCH.CONFLICTING_QUANTITY);
+  assert.match(buildPurchaseQuantityMismatchNotice(conflict), /给了两个不同的数量/);
+});
+
+test('普通异常不会被误认成「对不上」（调用方照旧按可重试失败处理）', () => {
+  assert.equal(isPurchaseQuantityMismatch(new Error('读表抽了一下')), false);
+  assert.equal(isPurchaseQuantityMismatch(undefined), false);
 });
