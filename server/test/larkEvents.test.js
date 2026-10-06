@@ -83,9 +83,10 @@ const createRecordingService = () => {
     packages,
     service: {
       purchaseWebhooks: {
-        acceptMany: async (kind, recordIds) => {
+        acceptMany: async (kind, recordIds, options) => {
           const ids = Array.isArray(recordIds) ? recordIds : [recordIds];
-          packages.push([kind, ids]);
+          // 第三个参数是「这一包应有几条」（到齐的判据），一并记下来供断言。
+          packages.push([kind, ids, options?.expectedCount]);
           for (const id of ids) accepted.push([kind, id]);
         },
       },
@@ -190,7 +191,11 @@ test('同一包里的多条 record_added 合成一次分派（一次提交 = 一
   });
   await flushDispatch();
 
-  assert.deepEqual(packages, [['supplier-report', ['rec_p1', 'rec_p2', 'rec_p3']]], '三条要作为一包一起分派');
+  assert.deepEqual(
+    packages,
+    [['supplier-report', ['rec_p1', 'rec_p2', 'rec_p3'], 3]],
+    '三条要作为一包一起分派，并把「这一包应有 3 条」传下去（到齐的判据）',
+  );
   assert.deepEqual(accepted, [
     ['supplier-report', 'rec_p1'],
     ['supplier-report', 'rec_p2'],
@@ -212,7 +217,7 @@ test('一包里非 record_added 的动作不进包：编辑/删除不触发报�
   });
   await flushDispatch();
 
-  assert.deepEqual(packages, [['supplier-report', ['rec_added']]]);
+  assert.deepEqual(packages, [['supplier-report', ['rec_added'], 1]]);
 });
 
 // 原先还有一条「一包里的多条到货记录也合成一次分派（到货链路行为不变）」。
