@@ -663,7 +663,7 @@ test('配置：卡片文案与回复文案都来自配置（改文案不碰逻�
 // □ 接线：群准入（话题免 @）与卡片动作分派
 // ═══════════════════════════════════════════════════════════════════════════
 
-const makeLarkService = async ({ arrivalConversation, mapping = {} } = {}) => {
+const makeLarkService = async ({ arrivalConversation, mapping = {}, mainChatRequireMention } = {}) => {
   const locator = new PurchaseBatchLocator({
     store: new JsonTaskStore({ dir: tempDir('arrival-conv-locator-'), idField: 'task_id' }),
   });
@@ -691,6 +691,8 @@ const makeLarkService = async ({ arrivalConversation, mapping = {} } = {}) => {
       store: new JsonTaskStore({ dir: tempDir('arrival-conv-sales-thread-'), idField: 'task_id' }),
     }),
     botOpenId: 'ou_bot',
+    // `undefined` → 走 config/groupAdmission 的默认（放宽：主群不 @ 也能识别销售）。
+    mainChatRequireMention,
     arrivalConversation,
   });
   service.acknowledgeMessage = async () => undefined;
@@ -730,15 +732,33 @@ test('接线①：话题里的消息（thread_id 有值）**不 @ 机器人**也
   assert.equal(seen[0].threadId, 'omt_thread_1');
 });
 
-test('接线②：主群里没 @ 机器人的消息**一条都不处理**（到货核对也不该被触发）', async () => {
+test('接线②：主群里没 @ 机器人 + 不像销售的消息 → 一条都不处理（到货核对也不该被触发）', async () => {
   const seen = [];
   const service = await makeLarkService({
     arrivalConversation: { handleTopicMessage: async (input) => { seen.push(input); return { handled: true }; } },
   });
 
+  // 日常闲聊：不 @、没有数字、没有业务关键词、没有批次号 → 静默。
+  const result = await service.acceptMessage(groupTopicEvent({ threadId: '', text: '今天天气不错' }));
+
+  assert.equal(result.accepted, false);
+  assert.equal(result.reason, 'group_not_sales_text');
+  assert.equal(seen.length, 0);
+});
+
+test('接线②-b：开关要求 @（mainChatRequireMention=true）→ 主群没 @ 一条都不处理', async () => {
+  const seen = [];
+  const service = await makeLarkService({
+    mainChatRequireMention: true,
+    arrivalConversation: { handleTopicMessage: async (input) => { seen.push(input); return { handled: true }; } },
+  });
+
+  // "38 码少一双"带数字、会被销售闸门放行；但开关要求 @，所以必须被挡掉
+  // （= 2026-10-06 之前的口径，钉住它随时能切回去）。
   const result = await service.acceptMessage(groupTopicEvent({ threadId: '', text: '38 码少一双' }));
 
   assert.equal(result.accepted, false);
+  assert.equal(result.reason, 'group_not_mentioned');
   assert.equal(seen.length, 0);
 });
 
