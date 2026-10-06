@@ -1,8 +1,8 @@
 # 采购退货链路 —— 验收标准（**跑之前先写死**）
 
 - 写入时间：2026-10-06（在跑 e2e 之前）
-- 测试 Base：`GqMMbhnxGaaEdDsNz2Tcug1nnlb`（业务负责人已授权可写）
-- 生产 Base：`QrXlbwXMLaJ2TNsxSfFcIA3rnwh`（只读，一个字不写）
+- 测试 Base：「`FEISHU_V1_E2E_TEST_APP_TOKEN` 指向的那个，见 `.env.example`」（业务负责人已授权可写）
+- 生产 Base：「`FEISHU_V1_BITABLE_APP_TOKEN` 指向的那个，见 `.env.example`」（只读，一个字不写）
 - 执行方式：本地 worktree `/private/tmp/selftest`（分支 `test/self-e2e`，基于 `origin/main` 5c0f2cd）
 - 链路：直接调 `PurchaseWebhookService.accept('supplier-report', recordId)`
   （= 表变更事件走的那条入口），不依赖飞书事件推送
