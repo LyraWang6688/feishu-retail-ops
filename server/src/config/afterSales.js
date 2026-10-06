@@ -31,52 +31,19 @@ const AFTER_SALES_BEHAVIORS = Object.freeze({
   SALE_CASH: 'SALE_CASH',
 });
 
-// 原「销售明细」的「履约状态」目标值。原主表只写「销售状态」一列（见下面 AFTER_SALES_ORIGINAL_SALES_STATUS）：
+// 原「销售明细」的「履约状态」目标值。**原主表不动**（业务负责人明确要求）。
 // ⚠️ 原主表的「订单状态」那一列已被她 2026-10-06 整列删除，不再有任何写入点。
+//
+// ⭐ 防后人再走错：「退过没退过」记在【销售明细·履约状态】和【新建的退货单】上，
+//    不写原单的「销售状态」—— 那一列的语义是"明细写进去了没有"
+//    （未写入 / 部分写入 / 已写入 / 写入失败），**没有「已退货」这个选项**，
+//    写了飞书会自动新建选项，把那一列搞乱。
+//    （原「销售状态」回写开关已于 2026-10-06 整体删除——业务负责人定过"原主表一字不动"。）
 const AFTER_SALES_FULFILLMENT = Object.freeze({
   RETURNED: '已退货',
   EXCHANGED: '已换货',
   COMPENSATED: '已赔货',
 });
-
-// ⭐ 售后**执行完之后**回写**原销售主表**「销售状态」的值。
-//
-// 🔴🔴 **开关默认是关的**（`AFTER_SALES_WRITE_ORIGINAL_SALES_STATUS`，默认 false）——
-//    业务负责人的口径是「**售后不影响原单**」（2026-10-06 晚的更正，
-//    AGENTS.md 第 12 条 ② 记的正是这件事：派活时"顺手补上写原销售状态"那句话
-//    **是转述错的那一条**，代理照做就会改掉真实的业务行为）。
-//    ⇒ 代码把它做成**显式开关**：能力在、测试在，但**生产默认一个字节都不写原单**。
-//    要打开只改这一个开关（或 `AFTER_SALES_WRITE_ORIGINAL_SALES_STATUS=true`），
-//    不动任何逻辑。
-//
-// 它本来要解决的缺口（打开后才会解决）：查单链路（saleLookupService）判"这单退过没有"
-// 读的正是「销售状态」，而此前**没有任何代码在退货时写它**——判据一半靠
-// 「销售明细.交易类型=销售退货」兜底（那一条判据今天仍然在，所以不开这个开关也拦得住）。
-//
-// ⚠️ **打开后也只有退货写**：生产表「销售状态」上与售后有关的两个选项就是「已退货 / 部分退货」。
-//    换货 / 赔货**刻意不写** —— 写一个表里没有的字，飞书会**自动新建选项**
-//    （AGENTS.md 第 11 条 ① 记过这个坑：值域口径必须先落文件、再引用）。
-// ⚠️ 字段名与写入入口**不在本文件**：走 config/salesStatusDimensions 的
-//    SALES_STATUS_FIELDS.sales ＋ services/salesStatusWriter（全仓唯一的写入口）。
-const AFTER_SALES_ORIGINAL_SALES_STATUS = Object.freeze({
-  [AFTER_SALES_ACTIONS.RETURN]: Object.freeze({
-    // 原单的明细**全部**退回来了。
-    all: '已退货',
-    // 只退了一部分（同一单里还有别的鞋没退）。
-    partial: '部分退货',
-  }),
-});
-
-// 回写原单「销售状态」的开关。**显式布尔**：空串 = 没配 = 用默认（false）。
-// ⚠️ 刻意不用 `process.env.X || 默认值`：`||` 会让"清空变量"回退到默认值（AGENTS.md 的坑）。
-const parseExplicitBoolean = (raw, fallback, label) => {
-  if (raw === undefined || raw === null) return fallback;
-  const value = String(raw).trim().toLowerCase();
-  if (value === '') return fallback;
-  if (['true', '1', 'yes', 'on'].includes(value)) return true;
-  if (['false', '0', 'no', 'off'].includes(value)) return false;
-  throw new Error(`${label} 必须是 true/false，收到：${raw}`);
-};
 
 // 钱的方向。写「收款明细.交易方向」：差价为正要收（收入），为负要退（退回）。
 const AFTER_SALES_MONEY_DIRECTIONS = Object.freeze({
@@ -214,16 +181,9 @@ const afterSalesOperationId = ({ taskId, originalSalesEntryRecordId, action, ori
 
 const readAfterSalesConfig = (env = process.env) => ({
   moneyDirections: AFTER_SALES_MONEY_DIRECTIONS,
-  // 🔴🔴🔴 **这个开关写的地方是【错的】，建议删掉（见 docs 的待办）**：
-  //      「销售主表·销售状态」的选项是 未写入/部分写入/已写入/写入失败，
-  //      **没有「已退货」** —— 一旦把它打开，飞书会【自动新建选项，把那一列搞乱】。
-  //      "退过没退过"本来就记在【销售明细·履约状态】和【新建的退货单】上。
-  //      现在默认关（行为等同"原主表不动"），但**不该长期留着**。
-  // 🔴 默认 false = **售后不影响原单**（业务负责人 2026-10-06 晚更正的口径）。
-  //    打开后才在退货执行完回写原单「销售状态 = 已退货 / 部分退货」。
-  writeOriginalSalesStatus: parseExplicitBoolean(
-    env.AFTER_SALES_WRITE_ORIGINAL_SALES_STATUS, false, 'AFTER_SALES_WRITE_ORIGINAL_SALES_STATUS',
-  ),
+  // 🔴 售后**不写**原单「销售状态」——那一列的语义是"明细写进去了没有"，
+  //    没有「已退货」这个选项（业务负责人 2026-10-06：原主表一字不动）。
+  //    这里曾经有一个 writeOriginalSalesStatus 开关，已整体删除。
   // 新主表的解析状态：走与销售链路**同一套取值**（larkMvpService 里用的那个），不自创新词。
   masterParseStatus: '解析成功',
   // ⚠️ 这里**曾经**有一个 masterConfirmStatus: '已入账' —— 2026-10-06 起售后主表只写四个状态维度，
@@ -246,7 +206,6 @@ module.exports = {
   AFTER_SALES_ACTIONS,
   AFTER_SALES_BEHAVIORS,
   AFTER_SALES_FULFILLMENT,
-  AFTER_SALES_ORIGINAL_SALES_STATUS,
   AFTER_SALES_MONEY_DIRECTIONS,
   AFTER_SALES_ACTION_SPECS,
   AFTER_SALES_KEY_PREFIX,

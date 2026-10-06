@@ -297,13 +297,12 @@ test('退货（cash 退款）：六处写入各一次，原主表一字未动，
   assert.deepEqual(details[0].fields['交易类型'], ['behavior_return']);
 
   // 3) 原明细只改「履约状态」；原主表逐字段未变
-  //    🔴 默认口径是**售后不影响原单**（业务负责人 2026-10-06 晚更正）：
-  //    回写原单「销售状态」的那一步是一条**显式开关**（默认关），见下面那两条用例。
+  //    🔴 口径是**售后不影响原单**（业务负责人 2026-10-06 定过：「原主表一字不动」）：
+  //    原单的「销售状态」一个字节都不写（下面有两条用例专门钉住这件事）。
   assert.equal(rowsOf(gateway, 'salesDetail')[0].fields['履约状态'], '已退货');
   assert.deepEqual({ ...rowsOf(gateway, 'salesDetail')[0].fields, 履约状态: '已交付' }, beforeDetail);
   assert.deepEqual(rowsOf(gateway, 'salesEntry')[0].fields, beforeEntry);
   assert.deepEqual(result.originalDetailIdsMarked, ['detail_old_1']);
-  assert.equal(result.originalSaleStatus, null, '开关默认关：不回写原单「销售状态」');
 
   // 4) 钱：退回 250，金额正数，方向=退回，关联新主表，交易方式=原单
   const payments = paymentRows(gateway);
@@ -345,8 +344,8 @@ test('退货（cash 退款）：六处写入各一次，原主表一字未动，
   assert.deepEqual(gateway.writes.update, { salesDetail: 1, salesEntry: 1 });
   // ⚠️ salesEntry 那一次 update 是 2026-10-06 新加的：把四个状态维度收口
   //    （确认状态=已确认 / 销售状态=已写入 / 资金状态=已写入 / 库存状态=已扣减）。
-  //    ⚠️ 它**不碰被她退的那张原单**（order_old）—— 回写原单「销售状态」默认关，
-  //    见下面「开关」那两条用例。
+  //    ⚠️ 它**不碰被她退的那张原单**（order_old）—— 售后**不写**原主表，一字不动；
+  //    见下面「售后不写原单」那两条用例。
   assert.deepEqual(gateway.writes.delete, {});
   // 本地闸门：记下"这一次做过"，并记住每个阶段的 record_id
   const progress = await service.store.get(result.operationId);
@@ -358,62 +357,41 @@ test('退货（cash 退款）：六处写入各一次，原主表一字未动，
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 回写**原单**「销售状态」的开关（默认关：售后不影响原单）
+// 售后**不写原单**（业务负责人 2026-10-06 定过：「**原主表一字不动**」）
 //
-// 🔴 默认口径来自业务负责人 2026-10-06 晚的更正：「**售后不影响原单**」。
-//    能力与判据留在代码里、由一条**显式开关**控制（config/afterSales）。
-//    ⚠️ 开关是显式布尔：空串 = 没配 = 默认（关），不是 `|| 默认值` 那种关不掉的写法。
+// 🔴 原「销售主表」的「销售状态」那一列语义是"明细写进去了没有"
+//    （未写入 / 部分写入 / 已写入 / 写入失败），**没有「已退货」这个选项** ——
+//    真写下去飞书会自动新建选项，把那一列搞乱。
+// 「退过没退过」记在【销售明细·履约状态】＋【新建的退货单（交易类型=销售退货）】上。
+// ⚠️ 曾经有一条"回写原单销售状态"的显式开关（默认关），已于 2026-10-06 整体删除：
+//    删掉是**行为零变化**，而它的**默认行为**（原主表一字不动）由下面两条用例钉住。
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('开关：默认**关** —— 退货也不回写原单「销售状态」', async () => {
+test('售后**不写**原单：退货执行完，原主表逐字段一字未动', async () => {
   const { gateway, service } = build();
-  assert.equal(readAfterSalesConfig({}).writeOriginalSalesStatus, false);
+  const before = structuredClone(
+    rowsOf(gateway, 'salesEntry').find((row) => row.record_id === 'order_old').fields,
+  );
 
-  const result = await service.execute(request());
-  assert.equal(result.originalSaleStatus, null);
-  assert.equal(rowsOf(gateway, 'salesEntry').find((row) => row.record_id === 'order_old').fields['销售状态'],
-    '已写入', '原单一个字节都没动');
+  await service.execute(request());
+
+  const entry = rowsOf(gateway, 'salesEntry').find((row) => row.record_id === 'order_old');
+  assert.deepEqual(entry.fields, before, '原主表逐字段未变');
+  assert.equal(entry.fields['销售状态'], '已写入',
+    '原单「销售状态」保持原值 —— 那一列没有「已退货」这个选项，写了飞书会自动新建选项');
+  // 退货事实记在别处（这正是现在唯一的行为）：原明细履约状态 + 新建的退货单
+  assert.equal(rowsOf(gateway, 'salesDetail')[0].fields['履约状态'], '已退货');
+  assert.equal(masterRows(gateway).length, 1, '新建了一条退货单（交易类型 = 销售退货）');
+  assert.deepEqual(masterRows(gateway)[0].fields['交易类型'], ['behavior_return']);
 });
 
-test('开关：显式布尔（空串=默认关；true/1/on 开；false/0/off 关）', async () => {
-  assert.equal(readAfterSalesConfig({ AFTER_SALES_WRITE_ORIGINAL_SALES_STATUS: '' }).writeOriginalSalesStatus, false);
-  assert.equal(readAfterSalesConfig({ AFTER_SALES_WRITE_ORIGINAL_SALES_STATUS: 'on' }).writeOriginalSalesStatus, true);
-  assert.equal(readAfterSalesConfig({ AFTER_SALES_WRITE_ORIGINAL_SALES_STATUS: '0' }).writeOriginalSalesStatus, false);
-  assert.throws(() => readAfterSalesConfig({ AFTER_SALES_WRITE_ORIGINAL_SALES_STATUS: 'maybe' }), /必须是 true\/false/);
-});
+test('售后**不写**原单：换货也不动原主表（逐字段未变）', async () => {
+  const { gateway, service } = build();
+  const before = structuredClone(
+    rowsOf(gateway, 'salesEntry').find((row) => row.record_id === 'order_old').fields,
+  );
 
-test('开关打开：退货（整单全退）→ 原单「销售状态」写成「已退货」', async () => {
-  const { gateway, service } = build({ config: { writeOriginalSalesStatus: true } });
-
-  // 这一单原有的三条明细全部退回来（另外那两条是配品 / 另一双）。
-  const result = await service.execute(request({
-    originalSalesDetailRecordIds: ['detail_old_1', 'detail_old_2', 'detail_old_3'],
-    diffAmount: -280,
-  }));
-
-  assert.deepEqual(result.originalSaleStatus,
-    { value: '已退货', returned: 3, total: 3, written: true });
-  assert.equal(rowsOf(gateway, 'salesEntry').find((row) => row.record_id === 'order_old').fields['销售状态'],
-    '已退货');
-  // 三行原明细都改成已退货
-  assert.deepEqual(rowsOf(gateway, 'salesDetail')
-    .filter((row) => row.record_id.startsWith('detail_old'))
-    .map((row) => row.fields['履约状态']), ['已退货', '已退货', '已退货']);
-});
-
-test('开关打开：只退一条（整单 3 条）→ 原单「销售状态」写成「部分退货」', async () => {
-  const { gateway, service } = build({ config: { writeOriginalSalesStatus: true } });
-  const result = await service.execute(request()); // 只退 detail_old_1
-
-  assert.deepEqual(result.originalSaleStatus,
-    { value: '部分退货', returned: 1, total: 3, written: true });
-  assert.equal(rowsOf(gateway, 'salesEntry').find((row) => row.record_id === 'order_old').fields['销售状态'],
-    '部分退货');
-});
-
-test('开关打开：换货**仍然不回写**原单「销售状态」（表里只有"已退货 / 部分退货"两个售后口径）', async () => {
-  const { gateway, service } = build({ config: { writeOriginalSalesStatus: true } });
-  const result = await service.execute(request({
+  await service.execute(request({
     action: 'exchange',
     originalText: '换一双 B200 42 码',
     originalSalesDetailRecordIds: ['detail_old_1'],
@@ -423,9 +401,9 @@ test('开关打开：换货**仍然不回写**原单「销售状态」（表里�
     restockState: '门盒',
   }));
 
-  assert.equal(result.originalSaleStatus, null);
-  const originalEntry = rowsOf(gateway, 'salesEntry').find((row) => row.record_id === 'order_old');
-  assert.equal(originalEntry.fields['销售状态'], '已写入', '换货不动原单的「销售状态」');
+  const entry = rowsOf(gateway, 'salesEntry').find((row) => row.record_id === 'order_old');
+  assert.deepEqual(entry.fields, before, '换货同样不动原主表');
+  assert.equal(entry.fields['销售状态'], '已写入', '换货也不写原单「销售状态」');
 });
 
 test('重复执行两次：六处写入都只发生一次（第二次被总闸门整次跳过）', async () => {
