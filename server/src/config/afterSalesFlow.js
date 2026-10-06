@@ -108,10 +108,11 @@ const actionLabelOf = (action) => AFTER_SALES_ACTION_LABELS[action] || '售后';
 // ---------------------------------------------------------------------------
 
 // 执行器只认 cash / prepaid（config/afterSales.settlements）：
-//   cash    —— 钱真收/真退：写「收款明细」，收款方式沿用原单
+//   cash    —— 钱真收/真退：写「收款明细」，交易方式 = **她说的那个**（她没说才沿用原单）
 //   prepaid —— 钱存着：写「客户往来货款」，变动类型=退货退款
-// 「微信 / 支付宝」也归 cash：它们共用"收款明细"这条腿，方式取原单（执行器负责），
-// 这一层只回答"走收款明细还是走预存"。
+// 「微信 / 支付宝」也归 cash：它们共用"收款明细"这条腿，这一层只回答
+// "走收款明细还是走预存"；**具体写哪个交易方式**由下面的
+// `resolveAfterSalesPaymentMethod` + 执行器负责（见那一节）。
 const AFTER_SALES_SETTLEMENT_ALIASES = Object.freeze({
   cash: 'cash',
   现金: 'cash',
@@ -145,6 +146,48 @@ const resolveAfterSalesSettlement = (value) => {
     .filter((hint) => hint.words.some((word) => raw.includes(word)))
     .map((hint) => hint.settlement);
   return matched.length === 1 ? matched[0] : '';
+};
+
+// ---------------------------------------------------------------------------
+// 收款方式（她说的**渠道**：现金 / 微信 / …）
+// ---------------------------------------------------------------------------
+//
+// ⚠️ 与上面「钱怎么走」是**两件事**，别混：
+//   · 「钱怎么走」（settlement）回答"走收款明细还是走预存"（cash / prepaid）；
+//   · 「收款方式」（这里）回答"走收款明细时，「收款明细.交易方式」那一列写哪个"。
+// 上面那张别名表把「现金 / 微信 / 支付宝」**都**收敛成 cash —— 具体渠道在那一层被抹掉了，
+// 所以"记录里要写她实际说的方式"就必须在**原话**上再认一次（见 `resolveAfterSalesPaymentMethod`）。
+//
+// ⭐ 取**最后**一个命中的：她描述退款方式时方式一般在钱的后面
+//   （"退我现金" / "退给她 230，微信退"）。首命中会在
+//   "那双原来微信买的，现在退现金" 上写错成微信 —— 末命中不会。
+//
+// ⚠️ 这份词表与销售话题链路的 `config/salesProgressIntake.paymentMethodAliases` 是同一批业务说法。
+//    **两处各自持有一份是刻意的**（解耦：任一条链路被拿掉，另一条还活着）——
+//    改收款方式的说法时**两处都要改**（`server/test/afterSalesFlow.test.js` 有一条用例钉住这份表）。
+//
+// ⚠️ 这里**只认她说出来的方式**；认不出就返回空 → 执行器沿用原单的方式
+//   （业务负责人 2026-10-06：「钱退现金」写现金；没说方式再按现有逻辑处理）。
+const AFTER_SALES_PAYMENT_METHOD_HINTS = Object.freeze([
+  Object.freeze({ method: '微信', words: Object.freeze(['微信']) }),
+  Object.freeze({ method: '支付宝', words: Object.freeze(['支付宝']) }),
+  Object.freeze({ method: '现金', words: Object.freeze(['现金']) }),
+  Object.freeze({ method: '刷卡', words: Object.freeze(['刷卡', '刷信用卡']) }),
+  Object.freeze({ method: '银行卡', words: Object.freeze(['银行卡']) }),
+  Object.freeze({ method: '转账', words: Object.freeze(['转账']) }),
+]);
+
+const resolveAfterSalesPaymentMethod = (text) => {
+  const source = String(text ?? '');
+  if (!source) return '';
+  let found = { method: '', index: -1 };
+  for (const hint of AFTER_SALES_PAYMENT_METHOD_HINTS) {
+    for (const word of hint.words) {
+      const index = source.lastIndexOf(word);
+      if (index >= 0 && index > found.index) found = { method: hint.method, index };
+    }
+  }
+  return found.method;
 };
 
 // ⚠️ 这里**故意没有**「默认资金走向」这个常量。
@@ -215,7 +258,9 @@ module.exports = {
   actionLabelOf,
   resolveAfterSalesAction,
   AFTER_SALES_SETTLEMENT_ALIASES,
+  AFTER_SALES_PAYMENT_METHOD_HINTS,
   resolveAfterSalesSettlement,
+  resolveAfterSalesPaymentMethod,
   DEFAULT_AFTER_SALES_RESTOCK_STATE,
   resolveAfterSalesRestockState,
   afterSalesContextId,

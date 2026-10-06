@@ -110,6 +110,7 @@ const {
   userActionOf, salesStatusOf, postedOf, stockStatusOf,
 } = require('../src/config/salesStatusDimensions');
 const { AFTER_SALES_CARD_ACTIONS, AFTER_SALES_TASK_STATUS } = require('../src/config/afterSalesFlow');
+const { PROGRESS_TASK_STATUS } = require('../src/config/salesProgressIntake');
 
 // ── 硬闸门 ───────────────────────────────────────────────────────────────────
 const targetAppToken = String(V1_BITABLE_SCHEMA.appToken || '').trim();
@@ -535,7 +536,10 @@ const waitFor = async (label, predicate, timeoutMs = 240_000) => {
 };
 const SALE_TERMINAL = (task) =>
   ['needs_info', 'failed', 'ignored', 'posted', 'posted_delivery_pending', 'query_answered',
-    'progress_applied', 'progress_failed'].includes(task.status)
+    'progress_applied', 'progress_failed',
+    // ⭐ 「已完毕」但问不出收款方式时，进展就停在"回问了一句"——
+    //    不认它的话这里会干等 4 分钟，把"她得说一句方式"报成"超时"。
+    PROGRESS_TASK_STATUS.ASKING].includes(task.status)
   || String(task.status || '').startsWith('after_sales_')
   || (task.status === 'ready_to_confirm' && Boolean(task.card_message_id));
 

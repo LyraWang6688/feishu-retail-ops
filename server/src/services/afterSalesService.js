@@ -11,7 +11,8 @@
 //   1) 新「销售主表」：原话 + 原销售单号 + 交易类型=行为(SALE_RETURN/EXCHANGE/COMPENSATION)
 //   2) 新「销售明细」行：交易类型=行为 · 销售单号=**原主表**（关联）· 成交金额=正数
 //   3) 原「销售明细」的「履约状态」→ 已退货 / 已换货 / 已赔货
-//   4) 钱：cash → 「收款明细」一条（交易方向=收入/退回，金额正数，关联=新主表，方式=原单的）；
+//   4) 钱：cash → 「收款明细」一条（交易方向=收入/退回，金额正数，关联=新主表，
+//          交易方式 = **她说的那个**；她没说才沿用原单的 —— 见 settleCash）；
 //          prepaid → 「客户往来货款」一条（变动类型=退货退款，应收变化=带符号差价）
 //   5) 「库存流水」：退货 1 行 / 赔货 1 行 / 换货 2 行（方向相反），数量都是正数
 //   6) 「实时库存」：退货/换货把旧鞋加回 restockState；换货/赔货按声明从门盒减一行
@@ -116,6 +117,9 @@ const fingerprintOf = (request) => JSON.stringify({
   newLines: request.newLines.map((line) => [line.productId, line.sizeId, line.amount]),
   restockState: request.restockState,
   settlement: request.settlement,
+  // ⭐ 她说的收款方式也要进指纹：同一个分片上"退现金"改成"退微信"是**另一笔**，
+  //    不能被当成同一次重试而整次跳过（那会把钱记成上一次那个方式）。
+  paymentMethod: request.paymentMethod,
   diffAmount: request.diffAmount,
 });
 
@@ -210,6 +214,12 @@ class AfterSalesService {
     // 差价为 null / 0 → 不动钱（规格明确要求）。
     const movesMoney = settlementRaw !== null && diffAmount !== null && diffAmount !== 0;
 
+    // 她说的收款方式（"退我现金" → 现金）：业务负责人 2026-10-06 定 —— 记录里要写**她说的**那个。
+    // 空 = 她没说 → settleCash 沿用原单的方式（现有逻辑，见那里）。
+    // ⚠️ 这里**不**校验它在不在「收款方式管理」里：接线层（afterSalesFlowService）已经在校验，
+    //    而执行器要保持"只落库"的边界 —— 真到了写库那一刻找不到，resolvePaymentMethod 会当场抛。
+    const paymentMethod = String(input.paymentMethod || '').trim();
+
     const operatorOpenId = String(input.operatorOpenId || '').trim();
     let receivedAt = null;
     if (movesMoney && input.receivedAt != null) {
@@ -228,6 +238,7 @@ class AfterSalesService {
       newLines,
       restockState: restockState || null,
       settlement: movesMoney ? settlementRaw : null,
+      paymentMethod: movesMoney && settlementRaw === 'cash' ? paymentMethod : '',
       diffAmount: movesMoney ? diffAmount : 0,
       operatorOpenId,
       taskId: String(input.taskId || '').trim(),
@@ -359,6 +370,10 @@ class AfterSalesService {
       detail_count: rows.length,
       original_details_marked: originalDetailIdsMarked.length,
       money_route: money.route,
+      // 钱的交易方式是哪来的（spoken = 她说的 / original = 她没说、沿用原单）——
+      // 这是"她说现金、账上写微信"这类问题的排查入口。
+      money_method_source: money.methodSource || '',
+      money_method_id: money.methodId || '',
       stock_rows: stock.map((item) => `${item.behaviorCode}:${item.state}:${item.quantity}`),
     });
     return result;
@@ -637,25 +652,46 @@ class AfterSalesService {
     return this.settlePrepaid(request, progress);
   }
 
+  /**
+   * 这次售后的钱写「收款明细」：**交易方式 = 她实际说的那个**（业务负责人 2026-10-06 定，见 AGENTS.md 第 16 条(2)）。
+   *
+   * ⭐ 为什么不再无条件沿用原单：她说「钱退现金」，账上却写成微信 —— 这是记错账。
+   *    「说了现金就写现金」。
+   *
+   * ⚠️ **区别**（这一版之前是**无条件**取原单，所以要写清）：
+   *   · `request.paymentMethod` 有值（她在原话里说了"现金/微信/…"）→ 用**她说的那个**，
+   *     并在「收款方式管理」里查它的 record_id（查不到就当场抛，**绝不**偷偷换回原单的方式）；
+   *   · `request.paymentMethod` 为空（她**没说**方式）→ **沿用原单的方式**（现有逻辑，保持不变）。
+   *
+   * ⭐ `methodId` 算好后**两个分支共用**（新建 / 断点续做的核验），所以续做时核验的也是同一个方式。
+   */
   async settleCash(request, original, master, progress) {
     const fields = this.tableOf('paymentRecord').fields;
     const amount = Math.abs(request.diffAmount);
     const direction = request.diffAmount > 0
       ? this.config.moneyDirections.RECEIVE
       : this.config.moneyDirections.REFUND;
+    // 她说了 → 用她说的；没说 → 沿用原单的。
+    // 溯源写进日志（`after_sales.executed` / 结果对象），排查"账上为什么是这个方式"一眼能看到。
+    const spokenMethodId = request.paymentMethod
+      ? (await this.references.resolvePaymentMethod(request.paymentMethod))?.recordId || ''
+      : '';
+    const methodId = spokenMethodId || original.paymentMethodRecordId || '';
+    const methodSource = spokenMethodId ? 'spoken' : (methodId ? 'original' : '');
     if (progress.payment_record_id) {
-      await this.verifyPayment(progress.payment_record_id, {
-        amount, direction, methodId: original.paymentMethodRecordId,
-      }, fields);
-      return { route: 'cash', recordId: progress.payment_record_id, direction, amount, changeType: '' };
+      await this.verifyPayment(progress.payment_record_id, { amount, direction, methodId }, fields);
+      return {
+        route: 'cash', recordId: progress.payment_record_id, direction, amount, changeType: '',
+        methodId, methodSource,
+      };
     }
-    if (!original.paymentMethodRecordId) {
+    if (!methodId) {
       throw new Error('原单没有可用的收款方式，无法登记这次售后收/退款，请先补原单的收款方式');
     }
     const created = await this.gateway.create('paymentRecord', {
       // 关联销售单=新主表：这次收/退款属于售后这条记录，不属于原单。
       salesEntry: relation(master.recordId),
-      method: relation(original.paymentMethodRecordId),
+      method: relation(methodId),
       // 收款金额一律正数，方向由「交易方向」表达。
       tradeDirection: direction,
       amount,
@@ -663,7 +699,17 @@ class AfterSalesService {
       receivedAt: request.occurredAt,
     });
     await this.saveProgress(request, { payment_record_id: created.recordId });
-    return { route: 'cash', recordId: created.recordId, direction, amount, changeType: '' };
+    logInfo('after_sales.cash.method', {
+      operation_id: request.operationId,
+      // spoken = 写的是她说的方式；original = 她没说、沿用原单。
+      method_source: methodSource,
+      spoken_payment_method: request.paymentMethod || '',
+      payment_record_id: created.recordId,
+    });
+    return {
+      route: 'cash', recordId: created.recordId, direction, amount, changeType: '',
+      methodId, methodSource,
+    };
   }
 
   async verifyPayment(recordId, expected, fields) {

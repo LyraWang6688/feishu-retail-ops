@@ -93,7 +93,32 @@ const DEFAULTS = Object.freeze({
     completeAlready: '这一单已经是成交状态了，我没有重复写。',
     nothingPending: '这一笔的收款和交付都已经齐了，我没有重复写。',
     failed: '这次进展我没记上：{reason}',
+    // ⭐ 「已完毕 / 成交」但**问不出收款方式**时的回话（业务负责人 2026-10-06 拍板，见 AGENTS.md 第 16 条）：
+    //    货那一半**已经做掉**了，所以这句话必须如实写"记成已交付了" —— 不能让她以为啥也没干；
+    //    钱那一半按她的口径（"用户会主动说方式"）回问一句，**不替她挑、也不设默认方式**。
+    //    ⚠️ 与上面 needMethod 的分工：needMethod 是"什么都没做、只回问一句"的通用问法；
+    //       这一条是"货已经做了、只差钱"的问法。
+    completeAskMethod: '好，还没交的 {count} 双记成已交付了。'
+      + '这笔钱是怎么收的？说一句（例：收到微信 500）我再记账。',
   }),
+});
+
+/**
+ * 本地任务记录上的状态（⚠️ 只写 `data/lark_mvp_tasks`，**一个字都不写业务表**）。
+ *
+ * 为什么单独抽出来：业务负责人 2026-10-06 明确要求 **状态如实** ——
+ * 「什么都没写就不要记 `progress_applied`」（那会"看起来成功了，其实什么都没做"）。
+ * 状态名是排查口径，放配置里：改名字不用动 service 逻辑。
+ */
+const PROGRESS_TASK_STATUS = Object.freeze({
+  // 进展**真的落库了**（收了一笔钱 / 记了交付 / 成交了）。
+  APPLIED: 'progress_applied',
+  // 只**回问了一句**、业务表一个字没写 —— 用它，别用 APPLIED 假装成功。
+  ASKING: 'progress_asking',
+  // 判不清（像进展又像新原话），同样只回问一句。
+  ASKED_UNKNOWN: 'ignored',
+  // 尝试写入但失败了（原因写在 progress_reason）。
+  FAILED: 'progress_failed',
 });
 
 // 「显式布尔」解析：空串 = 没配 = 用默认。见 AGENTS.md 里"开关必须是显式布尔"那条。
@@ -141,6 +166,7 @@ const PROGRESS_KINDS = Object.freeze({
 module.exports = {
   SALES_PROGRESS_INTAKE_DEFAULTS: DEFAULTS,
   PROGRESS_KINDS,
+  PROGRESS_TASK_STATUS,
   resolveSalesProgressIntakeConfig,
   parseExplicitBoolean,
 };

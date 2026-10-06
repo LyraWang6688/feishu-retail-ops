@@ -25,7 +25,8 @@ const { SaleLookupService } = require('../src/services/saleLookupService');
 const { AfterSalesService } = require('../src/services/afterSalesService');
 const { AfterSalesFlowService } = require('../src/services/afterSalesFlowService');
 const { AFTER_SALES_TASK_STATUS, AFTER_SALES_CARD_ACTIONS, afterSalesContextId,
-  resolveAfterSalesSettlement } = require('../src/config/afterSalesFlow');
+  resolveAfterSalesSettlement, resolveAfterSalesPaymentMethod,
+  AFTER_SALES_PAYMENT_METHOD_HINTS } = require('../src/config/afterSalesFlow');
 
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
 
@@ -117,7 +118,11 @@ const executorBase = () => {
       { record_id: 'size_39', fields: { 尺码: 39 } },
       { record_id: 'size_40', fields: { 尺码: 40 } },
     ],
-    paymentMethod: [{ record_id: 'method_wechat', fields: { 收款方式: '微信' } }],
+    // 「收款方式管理」里同时有微信和现金：原单是微信，"退我现金"要能写成现金。
+    paymentMethod: [
+      { record_id: 'method_wechat', fields: { 收款方式: '微信' } },
+      { record_id: 'method_cash', fields: { 收款方式: '现金' } },
+    ],
     product: [
       { record_id: 'p1', fields: { 货号: '6035', 颜色: '黑', 单价: 230 } },
       { record_id: 'p2', fields: { 货号: '1366-33', 颜色: '黑', 单价: 300 } },
@@ -202,8 +207,16 @@ const fakeInventory = () => ({
 });
 
 // 换货/赔货要解析"换成的那一双"：货品与尺码都注入桩，不读远端。
+// ⭐ 售后还要在**方案阶段**核实"她说的收款方式表里有没有"（"退我现金" → 现金必须真存在），
+//    所以桩也要提供 `resolvePaymentMethod`（与 V1ReferenceResolver 同口径：查不到就抛）。
+const PAYMENT_METHODS = { 微信: 'method_wechat', 现金: 'method_cash' };
 const referencesStub = () => ({
   gateway: { table: () => ({ fields: { price: '单价' } }) },
+  resolvePaymentMethod: async (name) => {
+    const recordId = PAYMENT_METHODS[String(name || '').trim()];
+    if (!recordId) throw new Error(`收款方式管理中找不到：${name}`);
+    return { recordId, record: { record_id: recordId } };
+  },
   resolveProduct: async ({ itemNo, color }) => {
     const record = itemNo === '1366-33'
       ? { record_id: 'p2', fields: { 货号: '1366-33', 颜色: color || '黑', 单价: 300 } }
@@ -496,6 +509,26 @@ test('配置层：**不存在**默认资金走向；只有她明说了才解析�
   assert.equal(Object.values(AFTER_SALES_CARD_ACTIONS).includes('choose_after_sales_settlement'), false);
 });
 
+// 配置层：她说的是**哪个渠道**（现金 / 微信 / …）—— 与"钱怎么走"是两件事。
+// 业务负责人 2026-10-06：「钱退现金」→ 记录里的「交易方式」就写现金。
+test('配置层：从原话里认得出她说的收款方式（认不出就返回空 = 沿用原单）', () => {
+  assert.equal(resolveAfterSalesPaymentMethod('退那双 1366-33 黑，退我现金'), '现金');
+  assert.equal(resolveAfterSalesPaymentMethod('退给她 230，微信退'), '微信');
+  assert.equal(resolveAfterSalesPaymentMethod('退我支付宝'), '支付宝');
+  assert.equal(resolveAfterSalesPaymentMethod('刷卡退'), '刷卡');
+  assert.equal(resolveAfterSalesPaymentMethod('退我银行卡'), '银行卡');
+  assert.equal(resolveAfterSalesPaymentMethod('转账退给我'), '转账');
+  // 没说方式 → 空（执行器沿用原单，不是"默认"）
+  assert.equal(resolveAfterSalesPaymentMethod('退那双 1366-33 黑'), '');
+  assert.equal(resolveAfterSalesPaymentMethod(''), '');
+  assert.equal(resolveAfterSalesPaymentMethod(undefined), '');
+  // ⭐ 取**最后**一个命中的：她把方式说在钱后面，前面提原单怎么收的不算数
+  assert.equal(resolveAfterSalesPaymentMethod('那双原来微信买的，现在退现金'), '现金');
+  // 词表就是这份（改说法要两处一起改，见 config/afterSalesFlow 的说明）
+  assert.deepEqual(AFTER_SALES_PAYMENT_METHOD_HINTS.map((hint) => hint.method),
+    ['微信', '支付宝', '现金', '刷卡', '银行卡', '转账']);
+});
+
 test('她说了「钱先存着」→ 结算 = 预存，直接出确认卡片', async () => {
   const { flow, store, cards, texts } = build();
   const task = await newTask(store, { original_text: '退那双 1366-33 黑，钱先存着' });
@@ -535,6 +568,53 @@ test('她说了「退我现金」/「退给她 230，微信退」→ 结算 = �
     assert.equal(cardText(cards.all[0]).includes('choose_after_sales_settlement'), false);
     assert.deepEqual(texts, [], text);
   }
+});
+
+// ⭐ 业务负责人 2026-10-06 拍板（AGENTS.md 第 16 条(2)）：
+//   「钱退现金」→ 记录里的「交易方式」要写**她实际说的方式**（不沿用原单）。
+//   方案层要先把"她说的那个方式"认出来并带上，执行器才有得写。
+test('⭐ 方案带上她说的收款方式：现金 / 微信 / 没说（空）各是什么', async () => {
+  for (const [text, expected] of [
+    ['退那双 1366-33 黑，退我现金', '现金'],
+    ['退那双 1366-33 黑，退给她 230，微信退', '微信'],
+    // 她说的是原单的方式：认出来是"她说的"，不是"沿用"——两者在账上写法一样，来源不同。
+    ['退那双 1366-33 黑，退我微信', '微信'],
+    // 她一个字没提方式（"退钱"不在结算词表里，这一条用明确的"退现金"同义句之外的写法）：
+    // 方式认不出来 → 留空 = 执行器沿用原单的方式（现有逻辑）。
+    ['退那双 1366-33 黑，退给她 230', ''],
+  ]) {
+    const { flow, store, cards } = build();
+    const task = await newTask(store, { original_text: text });
+
+    await flow.handle(task, {
+      intent: 'return', action: 'return', item_no: '1366-33', color: '黑',
+      // 「退给她 230」没说钱怎么走 → 结算词表也认不出，给它一个明确走向让方案能建起来。
+      settlement: resolveAfterSalesSettlement(text) || 'cash',
+    });
+
+    const plan = (await store.get('t_after_sales')).after_sales_plan;
+    assert.equal(plan.payment_method || '', expected, `「${text}」里的收款方式`);
+    assert.equal(plan.payment_method_explicit, Boolean(expected), text);
+    assert.equal(cards.all.length, 1, text);
+  }
+});
+
+test('⭐ 她说的收款方式表里没有 → 明确回一句、业务表零写入、不出卡片（不偷偷沿用原单）', async () => {
+  const { flow, store, cards, texts, base } = build();
+  // 「收款方式管理」里只有微信（没有刷卡）→ 她说"刷卡"就拦住。
+  const task = await newTask(store, { task_id: 't_unknown_method', original_text: '退那双 1366-33 黑，刷卡退' });
+
+  await flow.handle(task, {
+    intent: 'return', action: 'return', item_no: '1366-33', color: '黑', settlement: 'cash',
+  });
+
+  assert.deepEqual(cards.all, [], '方式没问题之前不许出确认卡片');
+  assert.deepEqual(base.writes, { create: {}, update: {}, delete: {} }, '业务表必须零写入');
+  assert.equal(texts.length, 1);
+  assert.match(texts[0], /收款方式管理/);
+  assert.match(texts[0], /刷卡/);
+  assert.equal((await store.get('t_unknown_method')).status, AFTER_SALES_TASK_STATUS.ASKING);
+  assert.equal((await store.get('t_unknown_method')).after_sales_plan, undefined);
 });
 
 // 这是本组最关键的一条：模型没解析出钱怎么走时，**大声拦住**，绝不猜、绝不写。
@@ -715,6 +795,8 @@ test('她点确认 → 真的调执行器，参数就是她确认过的那一笔
     newLines: [],
     diffAmount: -230,
     settlement: 'prepaid',
+    // 她没说收款方式（"钱先存着"走的是预存那条腿）→ 空：执行器不会动"交易方式"。
+    paymentMethod: '',
     restockState: '门盒',
     taskId: 't_confirm',
     operatorOpenId: 'ou_1',

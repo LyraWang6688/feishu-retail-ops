@@ -37,6 +37,7 @@ const {
   actionLabelOf,
   resolveAfterSalesAction,
   resolveAfterSalesSettlement,
+  resolveAfterSalesPaymentMethod,
   resolveAfterSalesRestockState,
   DEFAULT_AFTER_SALES_RESTOCK_STATE,
   afterSalesContextId,
@@ -175,6 +176,8 @@ class AfterSalesFlowService {
       original_sales_detail_record_ids: plan.original_sales_detail_record_ids,
       settlement: plan.settlement,
       requires_settlement: plan.requires_settlement,
+      // 她说的收款方式（空 = 她没说 → 执行器沿用原单）——排查"账上为什么写这个方式"看它。
+      payment_method: plan.payment_method || '',
       diff_amount: plan.diff_amount,
       restock_state: plan.restock_state,
       restock_state_explicit: plan.restock_state_explicit,
@@ -328,6 +331,30 @@ class AfterSalesFlowService {
     const movesMoney = Number.isFinite(diffAmount) && diffAmount !== 0;
     const settlement = movesMoney ? (spokenSettlement || null) : null;
 
+    // ⭐ 收款方式（**她实际说的那个渠道**）：业务负责人 2026-10-06 定 ——
+    //    「钱退现金」记录里的「交易方式」就要写**现金**，不沿用原单（见 AGENTS.md 第 16 条(2)）。
+    //    承认不出来（她没说）→ 留空，执行器**沿用原单的方式**（那就是"现有逻辑"）。
+    //    ⚠️ 只在 cash 这条腿上才有意义：prepaid 走「客户往来货款」，根本没有"交易方式"列。
+    //    ⚠️ 从 `task.original_text` 上认，不从 `parsed.settlement` 认：settlement 已经被
+    //       `resolveAfterSalesSettlement` 收敛成 cash/prepaid，具体渠道在那一步就丢了。
+    const paymentMethod = settlement === 'cash' ? resolveAfterSalesPaymentMethod(task.original_text) : '';
+    if (paymentMethod) {
+      // 她说了方式，但「收款方式管理」里没有这一个 → **大声拦住**（业务表零写入、不出卡片）。
+      // 为什么不能"没查到就沿用原单"：那正是这次要修的 bug —— 她说现金、账上写微信。
+      try {
+        await this.references.resolvePaymentMethod(paymentMethod);
+      } catch (error) {
+        logError('after_sales.payment_method.unknown', {
+          task_id: task.task_id,
+          payment_method: paymentMethod,
+          original_text: String(task.original_text || ''),
+        });
+        await this.ask(task,
+          `「收款方式管理」里没有「${paymentMethod}」这个收款方式，先把它加上（或换个说法）再说一次。`);
+        return { ok: false, reason: 'payment_method_unknown' };
+      }
+    }
+
     return {
       ok: true,
       plan: {
@@ -345,6 +372,9 @@ class AfterSalesFlowService {
         settlement_explicit: Boolean(movesMoney && spokenSettlement),
         // 这一次"钱怎么走"没解析出来：要动钱却不知道往哪条腿走时要**拦住**，不许静默放过。
         requires_settlement: movesMoney && !spokenSettlement,
+        // 她说的收款方式（"退我现金" → 现金）；空 = 她没说 → 执行器沿用原单的方式。
+        payment_method: paymentMethod || null,
+        payment_method_explicit: Boolean(paymentMethod),
         diff_amount: diffAmount,
         restock_state: restockState,
         restock_state_explicit: Boolean(spec.requiresRestockState && spokenRestock),
@@ -545,6 +575,8 @@ class AfterSalesFlowService {
       })),
       diffAmount: plan.diff_amount,
       settlement: plan.settlement,
+      // 她说的收款方式（"退我现金" → 现金）；空 = 她没说 → 执行器沿用原单的方式。
+      paymentMethod: plan.payment_method || '',
       restockState: plan.restock_state,
       // taskId = 每次用户消息一个分片：同一笔销售分两次退不同的鞋互不干扰，
       // 而同一条消息重复确认会撞进同一个分片被总闸门整次跳过。
