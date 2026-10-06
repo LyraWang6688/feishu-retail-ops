@@ -18,6 +18,7 @@ const path = require('node:path');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { LarkMvpService } = require('../src/services/larkMvpService');
 const { GroupPurchaseFlowService } = require('../src/services/groupPurchaseFlowService');
+const { SalesGroupThreadLocator } = require('../src/services/salesGroupThreadLocator');
 
 const makeService = () => {
   const sent = [];
@@ -45,6 +46,13 @@ const makeService = () => {
       dir: fs.mkdtempSync(path.join(os.tmpdir(), 'thread-reply-routing-')), idField: 'task_id',
     }),
     botOpenId: 'ou_test_bot_open_id',
+    // 「话题 ↔ 那笔销售」的映射指向临时目录：别让用例往仓库的
+    // server/data/sales_group_threads/ 里写东西（群任务回话题时会记一条映射）。
+    salesGroupThreads: new SalesGroupThreadLocator({
+      store: new JsonTaskStore({
+        dir: fs.mkdtempSync(path.join(os.tmpdir(), 'thread-reply-sales-thread-')), idField: 'task_id',
+      }),
+    }),
   });
   return { service, sent };
 };
@@ -100,4 +108,55 @@ test('④ 采购分派：主群 @ 进来（没有 threadId）不伪造话题上�
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].options.threadId, '');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 2026-10-06「私聊切除」③：把 SampleReplacementService 的两个**新端口接上**
+//    （`sendCardToTask` / `sendTextToTask`，PR #148 的同一套接法）。
+//    ⚠️ 接线之前这两个端口**没有生产注入方** → 服务只有"缺省 = 改动前私聊"这一条路。
+//    这里钉的就是：接上之后 **群任务回话题**、**私聊逐字不变**。
+//    `saleLookupService` 的渠道感知兜底（②）也在同一处接线，一并锁住。
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('③ 补样品 / 销售查询的渠道感知出口已接上（不是默认值）', () => {
+  const { service } = makeService();
+  assert.equal(typeof service.sampleReplacements.sendCardToTask, 'function');
+  assert.equal(typeof service.sampleReplacements.sendTextToTask, 'function');
+  assert.equal(typeof service.saleLookup.sendCardToTask, 'function');
+  // 默认端口会 `sendCard(task.sender_open_id)`；接上之后群任务必须走 `sendTaskCard`
+  //（同一个函数引用 = 真的接线了，而不是又一个"缺省回落私聊"的壳）。
+  assert.equal(service.sampleReplacements.sendCardToTask.toString().includes('sendTaskCard'), true);
+  assert.equal(service.saleLookup.sendCardToTask.toString().includes('sendTaskCard'), true);
+});
+
+test('③ 补样品出口：群任务回话题（reply_in_thread），私聊与改动前逐字相同', async () => {
+  const { service, sent } = makeService();
+  const groupTask = {
+    task_id: 't_group', type: 'sample_replacement', chat_type: 'group',
+    chat_id: 'oc_sales', message_id: 'om_in_group', sender_open_id: 'ou_1',
+  };
+
+  // 群：卡片回到**那个话题**（回复她那条消息 + `reply_in_thread: true`）。
+  await service.sampleReplacements.sendCardToTask(groupTask, { header: {} });
+  assert.equal(sent[0].path.message_id, 'om_in_group');
+  assert.equal(sent[0].data.reply_in_thread, true);
+
+  await service.sampleReplacements.sendTextToTask(groupTask, '已收到补样品操作，正在处理，请稍候。');
+  assert.equal(sent[1].path.message_id, 'om_in_group');
+  assert.equal(sent[1].data.reply_in_thread, true);
+
+  // 私聊（任务上没有 chat_type）→ 与改动前**逐字相同**：主动发一条新消息给本人，
+  // 不是 reply、也不带 reply_in_thread。
+  const privateTask = { task_id: 't_p2p', type: 'sample_replacement', sender_open_id: 'ou_2' };
+  await service.sampleReplacements.sendCardToTask(privateTask, { header: {} });
+  assert.equal(sent[2].direct, true, '私聊走 create（主动发），不是 reply');
+  assert.equal(sent[2].data.receive_id, 'ou_2');
+  assert.equal(sent[2].data.msg_type, 'interactive');
+  assert.equal(sent[2].data.reply_in_thread, undefined);
+
+  await service.sampleReplacements.sendTextToTask(privateTask, '已收到补样品操作，正在处理，请稍候。');
+  assert.equal(sent[3].direct, true);
+  assert.equal(sent[3].data.receive_id, 'ou_2');
+  assert.equal(sent[3].data.msg_type, 'text');
+  assert.equal(JSON.parse(sent[3].data.content).text, '已收到补样品操作，正在处理，请稍候。');
 });

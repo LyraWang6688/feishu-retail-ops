@@ -85,17 +85,23 @@ const makeClient = (messages) => ({
     message: {
       create: async (params) => {
         messages.push(params);
-        return { code: 0, msg: 'success', data: { message_id: `om_${messages.length}` } };
+        const messageId = `om_${messages.length}`;
+        // 测试专用：把服务实际拿到的 message_id 记回入参对象上，
+        // 便于断言"这条回复是不是回的那条根消息"（服务侧拿到的就是它）。
+        params.__messageId = messageId;
+        return { code: 0, msg: 'success', data: { message_id: messageId } };
       },
       // 2026-10-06 起：采购单发到群时，第 1 条（图）之后的每条消息都用 `reply`
       // 回复第 1 条（业务负责人拍板：一条开话题 + 后面的回复它）。
       // 这个假实现照飞书的语义回 message_id / thread_id：回复谁，就落在谁的话题里。
       reply: async (params) => {
         messages.push(params);
+        const messageId = `om_${messages.length}`;
+        params.__messageId = messageId;
         return {
           code: 0,
           msg: 'success',
-          data: { message_id: `om_${messages.length}`, thread_id: 'omt_purchase_thread' },
+          data: { message_id: messageId, thread_id: 'omt_purchase_thread' },
         };
       },
     },
@@ -196,6 +202,8 @@ const runReturn = async (options) => {
   const recordId = options.recordId || 'rep_1';
   const taskId = `task_${recordId}`;
   await ctx.store.create({ task_id: taskId, kind: 'supplier-report', record_id: recordId, status: 'queued' });
+  // 有的用例要在跑链路之前替掉服务的一个决定（例：把"发到哪个群"判成未配置）。
+  options.beforeRun?.(ctx.service);
   let result = null;
   let error = null;
   try {
@@ -355,6 +363,88 @@ test('A 情况数量比库存多：能对上的先退，差额明确告诉她', 
   assert.ok(notice, '必须把差额说出来');
   assert.match(notice, /你说要退 5 双，实时库存里只有 2 双/);
   assert.match(notice, /先按能对上的 2 双处理了，差的 3 双对不上/);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 2026-10-06「私聊切除」①：退货的**差额提示**改发**采购群**（回复退货单图 = 那个话题），
+//    **不再发经办人私聊**。业务负责人的口径：「一律在话题群里，以后私聊路线就没有了」。
+// ─────────────────────────────────────────────────────────────────────────────
+
+// 日志捕获（与 purchaseWebhookService.test.js 同款）：用来断言"未配群时大声跳过"。
+const captureLogs = () => {
+  const lines = [];
+  const originals = { log: console.log, warn: console.warn, error: console.error };
+  const capture = (...args) => { lines.push(args.map((value) => String(value)).join(' ')); };
+  console.log = capture;
+  console.warn = capture;
+  console.error = capture;
+  return {
+    lines,
+    events: (event) => lines.filter((line) => line.includes(`"event":"${event}"`)),
+    restore: () => { console.log = originals.log; console.warn = originals.warn; console.error = originals.error; },
+  };
+};
+
+const shortfallFixture = () => makeGateway({
+  purchaseReport: [returnRecord('rep_short', { 数量: 5 })],
+  liveInventory: [liveRow('live_36', '门盒', 36), liveRow('live_37', '仓库', 37)],
+  behavior: BEHAVIORS,
+  supplier: SUPPLIERS,
+  purchaseRequest: [],
+});
+
+const noticeOf = (messages) => messages.find((message) => message.data?.msg_type === 'text'
+  && JSON.parse(message.data.content).text.includes('对不上'));
+
+test('① 差额提示发采购群、并回复退货单图那条根消息（同一个话题）——链路上一条私聊都没有', async () => {
+  const messages = [];
+  const { task } = await runReturn({
+    gateway: shortfallFixture(), recordId: 'rep_short', messages,
+    products: { prod_1: productFields('8088', '黑色') },
+  });
+
+  assert.equal(task.result.shortfall, 3, '前提：这是一条真差额（否则不会发提示）');
+  // ① 一条主动私聊都不许有：`receive_id_type: 'open_id'` 就是"发给某个人私聊"。
+  const privateSends = messages.filter((message) => message.params?.receive_id_type === 'open_id');
+  assert.deepEqual(privateSends, [], '退货链路上不得出现任何主动私聊（差额提示已改发采购群）');
+  // ② 差额提示必须**回复退货单图**（= 这一批的话题根），于是它和单据在同一个话题里。
+  const image = messages.find((message) => message.data?.msg_type === 'image');
+  assert.ok(image, '前提：退货单图已经发出（话题根）');
+  assert.equal(image.params?.receive_id_type, 'chat_id', '退货单图发采购群');
+  const noticeMessage = noticeOf(messages);
+  assert.ok(noticeMessage, '差额提示必须发出来');
+  assert.equal(noticeMessage.data.msg_type, 'text');
+  assert.equal(noticeMessage.path?.message_id, image.__messageId,
+    '差额提示必须回复退货单图（同一个话题），而不是发顶层另开一个话题');
+});
+
+test('① 未配置采购群：大声跳过、一条消息都不发（绝不回落经办人私聊）', async () => {
+  const messages = [];
+  const logs = captureLogs();
+  let task;
+  try {
+    const ctx = await runReturn({
+      gateway: shortfallFixture(), recordId: 'rep_short', messages,
+      products: { prod_1: productFields('8088', '黑色') },
+      // 显式把"发到哪个群"判成未配置——与 purchaseWebhookService.test.js 同款做法
+      //（那里也用它来验"未配群 → 大声跳过"）。
+      beforeRun: (service) => {
+        service.resolvePurchaseGroupTarget = () => ({ chatId: '', sandbox: false, reason: 'chat_id_unconfigured' });
+      },
+    });
+    task = ctx.task;
+  } finally {
+    logs.restore();
+  }
+
+  // 业务事实照常落地：群没配只影响"发没发出去"，不能反过来把退货判失败。
+  assert.ok(task, '退货任务必须照常收尾');
+  assert.equal(task.result.shortfall, 3);
+  // 一条 IM 消息都不许发（尤其不许回落到经办人私聊）——这正是"切除私聊"的核心断言。
+  assert.deepEqual(messages, [], '未配置采购群时必须一条都不发，绝不回落私聊');
+  const skipped = logs.events('purchase.group_notice.skipped');
+  assert.equal(skipped.length, 1, '必须留下可排查的跳过日志（大声跳过）');
+  assert.ok(skipped[0].includes('purchase_chat_id_unconfigured'));
 });
 
 test('A 情况数量比库存少：按她填的数量退，并告诉她还有多少没退', async () => {

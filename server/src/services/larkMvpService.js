@@ -144,6 +144,9 @@ class LarkMvpService {
       store: this.store,
       replyCard: (messageId, card) => this.replyCard(messageId, card),
       sendCard: (openId, card) => this.sendCard(openId, card),
+      // ⭐ 渠道感知的兜底出口：群任务回复失败时回到**那个话题**，不回落私聊
+      //（私聊任务不走它 —— SaleLookupService.replyCardByTask 里按 chat_type 分流）。
+      sendCardToTask: (task, card) => this.sendTaskCard(task, card),
     });
     // 退换货第二期：售后**编排**（定位 → 组装方案 → 确认卡片 → 调执行器）也是独立 service。
     // 本类只留"意图 → 分派"的接线：
@@ -177,6 +180,13 @@ class LarkMvpService {
       sendCard: (openId, card) => this.sendCard(openId, card),
       sendText: (openId, message) => this.sendText(openId, message),
       updateCard: (task, event, card, metadata) => this.updateSalesActionCard(task, event, card, metadata),
+      // ⭐ 渠道感知的两个出口（接线方式与上面 afterSalesFlowService 那一组**完全一致**，见 PR #148）：
+      //   群话题里的补样品任务 → 卡片/文字回到**那个话题**（`reply_in_thread`）；
+      //   私聊任务走它们时最终仍是上面那两条 `sendCard`/`sendText`，
+      //   payload 逐字不变（`sendTaskCard`/`sendTaskText` 里 `chat_type !== 'group'` 就原样转发）。
+      // 飞书语义（reply_in_thread）只留在本类，service 不认识 chat_type / thread_id。
+      sendCardToTask: (task, card) => this.sendTaskCard(task, card),
+      sendTextToTask: (task, message) => this.sendTaskText(task, message),
     });
     // 「确认状态」（用户那一维）的唯一写入口：名字与取值都在 config/salesStatusDimensions。
     // ⚠️ 它**只记她在卡片上点了什么**，不参与任何闸门判据（判据读的是「资金状态」）。

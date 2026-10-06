@@ -58,11 +58,11 @@
 | # | 位置 | 形态 | 谁的链路 | 判断 | 处置 |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `routes/larkEvents.js` 卡片动作分支 | `sendText(operator_open_id, toast)` —— 点按钮后**额外**一条私聊文字 | 所有卡片动作 | 🔴 **私聊专属且多余**（她要删的那条） | ✅ **本次已删**（①） |
-| 2 | `sampleReplacementService.publishCard` 兜底 | `sendCard(task.sender_open_id, card)` | 补样品卡片 | 🔴 硬编码"发给谁" | ✅ **本次已切成任务感知端口**（②） |
-| 3 | `sampleReplacementService.handleCardActionUnlocked` (`:170`) | `sendText(operator_open_id, "正在处理…")` | 补样品卡片 | 🔴 同上（鉴权已保证与 `task.sender_open_id` 相同） | ✅ **本次已切成任务感知端口**（②） |
+| 2 | `sampleReplacementService.publishCard` 兜底 | `sendCard(task.sender_open_id, card)` | 补样品卡片 | 🔴 硬编码"发给谁" | ✅ **已切成任务感知端口**（②）＋ **生产已接线**（③ 在 `larkMvpService` 注入 `sendCardToTask`） |
+| 3 | `sampleReplacementService.handleCardActionUnlocked` (`:170`) | `sendText(operator_open_id, "正在处理…")` | 补样品卡片 | 🔴 同上（鉴权已保证与 `task.sender_open_id` 相同） | ✅ **已切成任务感知端口**（②）＋ **生产已接线**（③ 注入 `sendTextToTask`） |
 | 4 | `sampleReplacementService.notifySampleReplacements` (`:110`/`:115`) | `sendCard(operator_open_id, …)` / 失败再 `sendText(operator_open_id, …)` | 补样品**提醒**（触发源：网页工作台 `routes/workbench.js:73`，或销售确认卡片） | ⚠️ **私聊通道能力**：触发方**没有群上下文**，本来就只能回落私聊 | ⏳ 留着；等任务带上渠道上下文再接（**故意不硬改**：这个 `operatorOpenId` 是"本次操作的人"，与 `task.sender_open_id` 在极端情况下可能不是同一个人，改了会变行为） |
-| 5 | `purchaseWebhookService.sendNoticeText`（唯一调用点 `sendReturnNotice`，`:2438`） | `sendNoticeText(prepared.operatorOpenId, notice)` —— 采购退货**差额/没对上**提示 | 采购退货（**群链路**） | 🔴 **真正的耦合**：退货单发群，结果却发私聊 | ⏳ **没切**（`purchaseWebhookService.js` 被其他在跑任务占用，见 5.5） |
-| 6 | `saleLookupService.replyCardByTask` 兜底 (`:346`) | 「回复原消息」失败 → `sendCard(task.sender_open_id, card)` | 销售查询 / 售后候选卡片 | 🔴 **真正的耦合**：群话题里回复失败会掉进私聊 | ⏳ **没切**（`saleLookupService.js` 被其他在跑任务占用，见 5.5） |
+| 5 | `purchaseWebhookService.sendReturnNotice`（差额提示） | ~~`sendNoticeText(prepared.operatorOpenId, notice)`~~ → **`sendPurchaseGroupNotice(notice, { replyToMessageId })`** | 采购退货（**群链路**） | 🔴 **真正的耦合**：退货单发群，结果却发私聊 | ✅ **本次已切**：发**采购群**、并**回复退货单图（话题根）** → 落在**同一个话题**；未配群**大声跳过、不回落私聊**。`sendNoticeText`（唯一调用点就是它）已**整体删除** |
+| 6 | `saleLookupService.replyCardByTask` 兜底 (`:346`) | 群任务 → **渠道感知出口** `sendCardToTask`（回那个话题）；私聊任务 → 仍是 `sendCard(task.sender_open_id, card)` | 销售查询 / 售后候选卡片 | 🔴 **真正的耦合**：群话题里回复失败会掉进私聊 | ✅ **本次已切**：`chat_type === 'group'` 走渠道出口；出口再失败**只记日志、返回空串**（`sale_lookup.card.topic_fallback_failed`），**绝不回落私聊**。私聊分支**逐字不变** |
 | 7 | `afterSalesFlowService` 端口缺省值 (`:113`–`:115`) | `sendCard/sendText(task.sender_open_id, …)` | 售后 | ✅ 生产**已注入**渠道感知端口，缺省值只是给单测的兜底 | 已切 |
 | 8 | `salesThreadProgressService` 端口缺省值 (`:65`) | `options.sendText?.(task?.sender_open_id, …)` | 进展同步 | ✅ 同上（生产已注入 `sendTextToTask`） | 已切 |
 
@@ -93,11 +93,13 @@
 - **卡片动作的失败分支**：原先会 `sendText(operator_open_id, "操作失败：…")`。
   ⇒ **本次已删**（与 ① 同一处）：失败只记 `lark.mvp.card.failed` 日志；
   **同步响应照旧**（handler 早就 return 了），所以她点按钮**不会**觉得"点不动"。
-- **采购退货差额提示**（5.1 #5）：**是**兜底式的事后通知，但走的是私聊。**未切**。
-- **补样品提醒发送失败**（5.1 #4）：失败再发一条私聊文字，**两层都是私聊**。**未切**。
-- **销售查询卡片回复失败**（5.1 #6）：回落到主动私聊发卡。**未切**。
+- **采购退货差额提示**（5.1 #5）：**是**兜底式的事后通知。⇒ ✅ **本次已切**：
+  改走 `sendPurchaseGroupNotice`（发采购群 + 回复退货单图的话题根）；未配群**大声跳过、不回落私聊**。
+- **补样品提醒发送失败**（5.1 #4）：失败再发一条私聊文字，**两层都是私聊**。**仍未切**（触发方没有群上下文）。
+- **销售查询卡片回复失败**（5.1 #6）：⇒ ✅ **本次已切**：群任务走渠道出口回话题；
+  出口再失败**只记日志、返回空串**，不静默掉进私聊。私聊任务仍走原来的 `sendCard(sender_open_id)`。
 - ✅ 已经是对形态的两个范例：`sendPurchaseGroupNotice` / `sendCardToChat` ——
-  **未配置群 = 大声跳过，不回落私聊**。将来切上面三条时照它们抄。
+  **未配置群 = 大声跳过，不回落私聊**。本次两条都是照它们抄的。
 
 ### 5.3 卡片动作 `updateInteractiveCard` 的兜底 —— 结论
 
@@ -124,12 +126,12 @@
 
 ⚠️ **只作"发给谁"（渠道相关）的地方** —— 这些才是将来要换成"渠道上下文"的：
 `larkMvpService.sendText/sendCard` 的 `openId` 参数、`sampleReplacementService` 的发送点、
-`purchaseWebhookService.sendNoticeText(operatorOpenId)`、`saleLookupService` 的兜底。
+`saleLookupService` 的兜底、`purchaseWebhookService.sendReturnNotice`（**已切**，见 5.5）。
 **两类别混着用同一个字段名，切的时候必须逐个看语义，不能按字段名一刀切。**
 
-### 5.5 本次切了哪几类 ✗ 还有哪几类没切
+### 5.5 切了哪几类 ✗ 还有哪几类没切
 
-**✅ 本次切了（2 类）**
+**✅ 第 1 批（2026-10-06 上半天，PR #157）**
 1. **卡片动作响应类**（`routes/larkEvents.js`）：删掉点按钮后那条多余私聊文字 +
    失败分支的私聊兜底；**卡片更新与同步响应原样保留**。回归证据：
    `test/larkEvents.test.js` 用**真实 `LarkMvpService` ＋ 计数假 client** 断言
@@ -140,18 +142,41 @@
    飞书语义仍只留在 `larkMvpService` 适配器里）。证据：`test/sampleReplacementRecovery.test.js`
    两条新用例——注入端口时走端口、不注入时回落 `task.sender_open_id`。
 
-**⏳ 没切（按纪律，不碰正在被其他任务改的文件）**
-- ⚠️ `saleLookupService.js` 的兜底回落私聊（5.1 #6）—— 该文件当前被
-  **3 个在跑/未合并的 worktree 分支**占用（`feat/after-sales-thread`、`feat/sales-status-dimensions-write`、
-  `feat/sales-status-write-backfill`）；
-- ⚠️ `larkMvpService.js` 的端口接线（把 `sendCardToTask`/`sendTextToTask` 接到
-  `sendTaskCard`/`sendTaskText`）—— 该文件被 `feat/after-sales-thread`、`feat/arrival-conversation-flow`、
-  `feat/sales-status-dimensions-write` 占用；
-- ⚠️ `purchaseWebhookService.js` 的退货差额提示改群/改渠道（5.1 #5）—— 被
-  `refactor/decouple-creation-and-stock`、`feat/arrival-conversation-flow`、
-  `feat/return-batch-window-and-topic`、`fix/purchase-schema-after-table-change` 占用。
+**✅ 第 2 批（2026-10-06 晚，本次：把上面 5.5 遗留的三处做完）**
+3. **① 采购退货差额提示改发话题/群**（`purchaseWebhookService`）：
+   `sendReturnNotice(prepared, { replyToMessageId })` → `sendPurchaseGroupNotice`；
+   `deliverReturnImages` / `deliverSupplierImagesInner` 把 `thread_root_message_id`
+   （这一批群里第 1 条图 = 话题根）交回调用方，提示**回复它** → 与退货单同一个话题。
+   `sendNoticeText`（唯一调用方就是它）**整体删除**。
+   证据：`test/purchaseReturn.test.js` 两条新用例（差额提示是 `reply` 到那张图的根消息、
+   全链路无 `receive_id_type: 'open_id'`；未配群时**一条消息都不发** + `purchase.group_notice.skipped`）。
+4. **② `saleLookupService.replyCardByTask` 兜底按渠道分流**：
+   群任务走渠道端口 `sendCardToTask`（回那个话题），出口再失败只记
+   `sale_lookup.card.topic_fallback_failed` 并返回空串；私聊分支逐字不变。
+   证据：`test/saleLookupService.test.js` 两条新用例 + 原有那条私聊回落用例加强断言。
+5. **③ `larkMvpService` 端口接线**：给 `SampleReplacementService` 注入
+   `sendCardToTask` / `sendTextToTask`，给 `SaleLookupService` 注入 `sendCardToTask`
+   （接法与 `afterSalesFlowService` 完全一致，PR #148）。
+   证据：`test/groupThreadReplyRouting.test.js` 两条新用例（端口不是缺省回落；群任务
+   `reply_in_thread: true`、私聊仍是 `im.message.create` 给本人）。
 
-⇒ 这三处**已盘清、留作下一步**（每处都是独立的"一次切一类"）；开工前要先确认那些
-worktree 是不是还在跑（`git worktree list` ＋ `git status`），**有重叠就串行**。
-**本次没有为了让端口"看起来生效"去改别人的文件**；`SampleReplacementService` 的新端口
-今天**没有生产注入方**，所以行为零变化 —— 这是有意的（接线是下一步的独立小步）。
+**⏳ 还没切（剩下的都是"私聊入口专属"或没有群上下文）**
+- `sampleReplacementService.notifySampleReplacements`（5.1 #4）：补样品**提醒**，
+  触发方（网页工作台 / 销售确认卡片）**没有群上下文**，本来就只能发私聊。
+- **私聊入口专属**（跟私聊一起删，不单独改）：`larkMvpService.sendTodaySales`（菜单「今日销售」）、
+  `acceptMessage` 的 `p2p` 分支两条非文字/空文字提示、`routes/larkEvents.js` 的
+  `application.bot.menu_v6` 分支（含失败兜底 `sendText(openId, …)`）。
+- **死代码**：`purchaseWebhookService.sendCard(openId, card)` 全仓无调用点
+  （注释写着"要回滚成确认卡片就换回它"），删私聊时可以顺手清。
+
+⇒ **开工记录（本次）**：`git worktree list` 显示这 3 个文件仍被 7 条**未合并分支**碰过
+（`feat/after-sales-thread`、`feat/arrival-conversation-flow`、`feat/sales-status-dimensions-write`、
+`feat/sales-status-write-backfill`、`refactor/decouple-creation-and-stock`、
+`feat/return-batch-window-and-topic`、`fix/purchase-schema-after-table-change`），
+但它们**全部已停**（worktree working tree 干净、**没有任何 open PR**、最后提交 1.5–7.5 小时前）
+⇒ 按 todo 原文的判据（"确认那些 worktree 是不是还在跑"）**判定为非活跃**，
+单写入者顺序做，不会覆盖任何人的未提交改动。⚠️ 这 7 条分支日后合并时**会与本次撞车**，
+需"要么弃掉、要么重放"。
+
+**第 1 批的遗留说明已被本次取代**：`SampleReplacementService` 的新端口当时**没有生产注入方**
+（行为零变化），本次 ③ 已把它接上 —— 缺省仍是改动前逐字相同的私聊回落。
