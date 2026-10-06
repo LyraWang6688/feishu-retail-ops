@@ -1,0 +1,332 @@
+/**
+ * ②「话题里的二次处理识别」的验收测试（业务负责人 2026-10-06 的口径）。
+ *
+ * 现象（要修的 bug）：
+ *   她在**销售话题**里说「收到微信 500」——那是**那笔的收款进展**。
+ *   改动前它会被当成【新的销售原话】送进 AI，可能回"销售信息还缺…"。
+ *
+ * 验收标准（逐条对应）：
+ *   □ 话题里说「收到微信 500」→ **更新那笔**（记一条收款明细），**不新建销售主表记录**
+ *   □ 判据全部在 config/salesProgressIntake（本文件也钉住"改词表不动代码"）
+ *   □ 判断不了时**回一句问她**，不回退去当新原话解析
+ *   □ ⭐ 私聊行为**一个字都不变**：同样的句子在私聊仍然走销售解析（不是进展）
+ *   □ 回复回到**同一个话题**（reply_in_thread）
+ */
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
+const { LarkMvpService } = require('../src/services/larkMvpService');
+const { SalesGroupThreadLocator } = require('../src/services/salesGroupThreadLocator');
+const { SalesThreadProgressService } = require('../src/services/salesThreadProgressService');
+const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { PROGRESS_KINDS, resolveSalesProgressIntakeConfig } = require('../src/config/salesProgressIntake');
+
+const TEST_BOT_OPEN_ID = 'ou_test_bot_open_id';
+const CHAT_ID = 'oc_test_group';
+const SALE_ID = 'entry_thread';
+
+const tempStore = (prefix = 'sales-progress-') =>
+  new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), prefix)), idField: 'task_id' });
+
+// ── 飞书 client 的假实现：记录**真的发出去了什么**（回复到哪条、带不带 reply_in_thread）
+const makeClient = () => {
+  const replies = [];
+  const client = {
+    im: {
+      message: {
+        reply: async ({ path: replyPath, data }) => {
+          replies.push({ path: replyPath, data });
+          return { code: 0, data: { message_id: `om_reply_${replies.length}`, thread_id: 'omt_thread' } };
+        },
+        create: async ({ data }) => {
+          replies.push({ path: { message_id: '' }, data, direct: true });
+          return { code: 0, data: { message_id: `om_direct_${replies.length}` } };
+        },
+      },
+      messageReaction: { create: async () => ({ code: 0 }) },
+    },
+  };
+  return { client, replies };
+};
+
+/**
+ * 语义键 → 中文字段名的假 Base（和真 gateway 的落库口径一致）。
+ * 只要跑通"读那一笔 → 记一条收款明细"这一段，所以只放这几张表。
+ */
+const makeGateway = ({ entry, details = [], payments = [], methods = [{ record_id: 'method_wechat', fields: { 收款方式: '微信' } }] } = {}) => {
+  const records = {
+    salesEntry: entry ? [entry] : [],
+    salesDetail: details,
+    paymentRecord: payments,
+    paymentMethod: methods,
+  };
+  const created = [];
+  const updated = [];
+  const gateway = {
+    records,
+    created,
+    updated,
+    table: (key) => V1_BITABLE_SCHEMA.tables[key],
+    validateTables: async () => [],
+    get: async (key, id) => (records[key] || []).find((row) => row.record_id === id) || null,
+    listAll: async (key) => records[key] || [],
+    create: async (key, values) => {
+      const fields = {};
+      for (const [semantic, value] of Object.entries(values)) {
+        if (value === undefined) continue;
+        const name = V1_BITABLE_SCHEMA.tables[key].fields[semantic];
+        if (!name) throw new Error(`未配置语义字段: ${key}.${semantic}`);
+        fields[name] = value;
+      }
+      const record = { record_id: `new_${key}_${(records[key] || []).length + 1}`, fields };
+      records[key] = [...(records[key] || []), record];
+      created.push({ key, recordId: record.record_id, fields });
+      return { recordId: record.record_id };
+    },
+    update: async (key, id, values) => {
+      updated.push({ key, id, values });
+      const record = (records[key] || []).find((row) => row.record_id === id);
+      if (record) {
+        for (const [semantic, value] of Object.entries(values)) {
+          record.fields[V1_BITABLE_SCHEMA.tables[key].fields[semantic]] = value;
+        }
+      }
+      return record;
+    },
+  };
+  return gateway;
+};
+
+const threadSale = () => ({
+  record_id: SALE_ID,
+  fields: { 销售单号: 'XSD-20261006-0001', 资金状态: '已写入', 确认状态: '已确认' },
+});
+
+const threadDetail = () => ({
+  record_id: 'detail_1',
+  fields: { 销售单号: [SALE_ID], 成交金额: 800, 履约状态: '已交付' },
+});
+
+const makeHarness = ({ gateway, recognizer } = {}) => {
+  const { client, replies } = makeClient();
+  const threads = new SalesGroupThreadLocator({ store: tempStore('sales-progress-threads-') });
+  const service = new LarkMvpService({
+    client,
+    gateway: gateway || makeGateway({ entry: threadSale(), details: [threadDetail()] }),
+    posting: {},
+    recognizer: recognizer || { parseSalesText: async () => { throw new Error('进展消息不该送进 AI'); } },
+    store: tempStore('sales-progress-lark-'),
+    botOpenId: TEST_BOT_OPEN_ID,
+    salesGroupThreads: threads,
+    groupPurchaseFlow: { handleGroupPurchaseMessage: async () => ({ resolved: false, reason: 'stub' }) },
+  });
+  service.acknowledgeMessage = async () => undefined;
+  return { service, replies, threads };
+};
+
+const groupEvent = (overrides = {}) => ({
+  sender: { sender_id: { open_id: overrides.senderOpenId || 'ou_sender' } },
+  message: {
+    message_id: overrides.messageId || 'om_progress_1',
+    chat_id: CHAT_ID,
+    chat_type: 'group',
+    message_type: 'text',
+    create_time: '1000',
+    content: JSON.stringify({ text: overrides.text || '' }),
+    mentions: [],
+    thread_id: overrides.threadId,
+  },
+});
+
+const privateEvent = (overrides = {}) => ({
+  sender: { sender_id: { open_id: overrides.senderOpenId || 'ou_sender' } },
+  message: {
+    message_id: overrides.messageId || 'om_private_progress',
+    chat_id: 'oc_private',
+    chat_type: 'p2p',
+    message_type: 'text',
+    create_time: '1000',
+    content: JSON.stringify({ text: overrides.text || '' }),
+  },
+});
+
+const flushSalesTasks = async (service, openId = 'ou_sender') => {
+  await new Promise((resolve) => setImmediate(resolve));
+  await service.enqueueForSender(openId, async () => undefined);
+};
+
+const bindThread = async (threads, threadId = 'omt_sale_7') => {
+  await threads.rememberSaleThread({
+    salesEntryRecordId: SALE_ID, taskId: 'sale_orig', messageId: 'om_orig',
+    threadId, chatId: CHAT_ID, senderOpenId: 'ou_sender',
+  });
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 判据本身（纯函数）：配置驱动，改词表不用动代码
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('判据：进展线索 / 新原话线索 / 金额，各自认得出来', () => {
+  const service = new SalesThreadProgressService({ gateway: makeGateway({ entry: threadSale() }) });
+
+  assert.deepEqual(service.classify('收到微信 500'),
+    { kind: PROGRESS_KINDS.PAYMENT, reason: 'payment_cue:收到', amount: 500, method: '微信' });
+
+  // 货号 / 尺码的数字**不是**金额（先遮掉再取数，取不到"一个数"就不猜）
+  assert.deepEqual(service.classify('收到现金 1366-33 那双的钱 500'),
+    { kind: PROGRESS_KINDS.PAYMENT, reason: 'payment_cue:收到', amount: 500, method: '现金' });
+
+  assert.equal(service.classify('66356 黑 42 一双 230 微信').kind, PROGRESS_KINDS.NONE,
+    '一笔新销售的原话：没有进展线索 → 不归二次处理');
+
+  assert.equal(service.classify('收到微信 500，再记一双 66356 黑 42').kind, PROGRESS_KINDS.AMBIGUOUS,
+    '进展 + 新原话线索同时出现 → 不猜，问她');
+
+  assert.deepEqual(service.classify('那双 1366-33 拿走了'),
+    { kind: PROGRESS_KINDS.DELIVERY, reason: 'delivery_cue:拿走' });
+
+  assert.equal(service.classify('收到微信').kind, PROGRESS_KINDS.AMBIGUOUS,
+    '只说"收到微信"没说多少钱 → 不猜，问她');
+});
+
+test('判据：词表可配 —— 换一份词表立刻改变判据（配置先行）', () => {
+  const service = new SalesThreadProgressService({
+    gateway: makeGateway({ entry: threadSale() }),
+    config: resolveSalesProgressIntakeConfig({
+      progressCues: { payment: ['到账'], delivery: [] }, newSaleCues: [],
+    }),
+  });
+  assert.equal(service.classify('收到微信 500').kind, PROGRESS_KINDS.NONE, '旧词表下"收到"不再算线索');
+  assert.equal(service.classify('到账 500').kind, PROGRESS_KINDS.PAYMENT);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐ 话题里说「收到微信 500」→ 更新那笔（不是新建）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('话题里说「收到微信 500」→ 记到那一笔上（收款明细），不新建销售主表记录', async () => {
+  const gateway = makeGateway({ entry: threadSale(), details: [threadDetail()] });
+  const { service, replies, threads } = makeHarness({ gateway });
+  await bindThread(threads);
+
+  const accepted = await service.acceptMessage(groupEvent({
+    messageId: 'om_progress_500', threadId: 'omt_sale_7', text: '收到微信 500',
+  }));
+  assert.equal(accepted.handled, true);
+  assert.equal(accepted.mode, 'thread');
+  await flushSalesTasks(service);
+
+  // ① **不新建**销售主表记录
+  assert.deepEqual(gateway.created.filter((item) => item.key === 'salesEntry'), [],
+    '这是那笔的进展，不能新建销售主表记录');
+
+  // ② **记到那一笔上**：一条收款明细，金额 500、方式微信、关联那笔
+  const payments = gateway.created.filter((item) => item.key === 'paymentRecord');
+  assert.equal(payments.length, 1);
+  assert.equal(payments[0].fields['收款金额'], 500);
+  assert.equal(payments[0].fields['收款状态'], '已收款');
+  assert.deepEqual(payments[0].fields['关联销售单'], [SALE_ID], '必须挂在她说的那一笔销售上');
+  assert.deepEqual(payments[0].fields['交易方式'], ['method_wechat']);
+  assert.equal(payments[0].fields['交易方向'], '收入');
+
+  // ③ 回复回到**同一个话题**（不是私聊、不是主群光秃秃一条）
+  const textReply = replies.find((item) => item.data.msg_type === 'text');
+  assert.ok(textReply, '要有一条回执');
+  assert.equal(textReply.path.message_id, 'om_progress_500');
+  assert.equal(textReply.data.reply_in_thread, true);
+  assert.match(JSON.parse(textReply.data.content).text, /500/);
+
+  // ④ 这一笔的进展记在任务上（可排查）
+  const task = await service.store.get(accepted.sales.taskId);
+  assert.equal(task.status, 'progress_applied');
+  assert.equal(task.progress_kind, 'payment');
+});
+
+test('话题里说「那双拿走了」→ 把还没交的明细记成已交付（交付进展）', async () => {
+  const gateway = makeGateway({
+    entry: threadSale(),
+    details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 成交金额: 800, 履约状态: '未交付' } }],
+  });
+  const delivered = [];
+  const { service, threads } = makeHarness({ gateway });
+  service.delivery.deliver = async (input) => { delivered.push(input); return { ok: true }; };
+  await bindThread(threads, 'omt_sale_8');
+
+  const accepted = await service.acceptMessage(groupEvent({
+    messageId: 'om_pickup', threadId: 'omt_sale_8', text: '那双拿走了',
+  }));
+  await flushSalesTasks(service);
+
+  assert.deepEqual(gateway.created.filter((item) => item.key === 'salesEntry'), []);
+  assert.equal(delivered.length, 1);
+  assert.equal(delivered[0].salesEntryRecordId, SALE_ID);
+  assert.deepEqual(delivered[0].detailRecordIds, ['detail_1']);
+  const task = await service.store.get(accepted.sales.taskId);
+  assert.equal(task.progress_kind, 'delivery');
+});
+
+test('判断不了（像进展又像新原话）→ 回一句问她，**不**回退去当新原话解析', async () => {
+  const gateway = makeGateway({ entry: threadSale(), details: [threadDetail()] });
+  let parsed = 0;
+  const { service, replies, threads } = makeHarness({
+    gateway, recognizer: { parseSalesText: async () => { parsed += 1; throw new Error('不应该走到 AI'); } },
+  });
+  await bindThread(threads, 'omt_sale_9');
+
+  const accepted = await service.acceptMessage(groupEvent({
+    messageId: 'om_ambiguous', threadId: 'omt_sale_9', text: '收到微信 500，再记一双 66356 黑 42',
+  }));
+  await flushSalesTasks(service);
+
+  assert.equal(parsed, 0, '判不清也不许把它当新原话送进 AI');
+  assert.deepEqual(gateway.created, [], '判不清时一个字都不写');
+  const textReply = replies.find((item) => item.data.msg_type === 'text');
+  assert.equal(textReply.data.reply_in_thread, true);
+  assert.match(JSON.parse(textReply.data.content).text, /收款进展/);
+  const task = await service.store.get(accepted.sales.taskId);
+  assert.equal(task.progress_kind, 'ambiguous');
+});
+
+test('超出待收金额 → 大声拒绝，不写收款（宁可多问一句，不能记错一笔钱）', async () => {
+  const gateway = makeGateway({ entry: threadSale(), details: [threadDetail()] }); // 待收 800
+  const { service, replies, threads } = makeHarness({ gateway });
+  await bindThread(threads, 'omt_sale_10');
+
+  await service.acceptMessage(groupEvent({
+    messageId: 'om_overpay', threadId: 'omt_sale_10', text: '收到微信 900',
+  }));
+  await flushSalesTasks(service);
+
+  assert.deepEqual(gateway.created.filter((item) => item.key === 'paymentRecord'), []);
+  const textReply = replies.find((item) => item.data.msg_type === 'text');
+  assert.match(JSON.parse(textReply.data.content).text, /超过待收金额/);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐ 私聊回归：一个字都不变
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('回归：私聊说「收到微信 500」**不走**二次处理 —— 私聊仍然是原来的销售解析', async () => {
+  const gateway = makeGateway({ entry: threadSale(), details: [threadDetail()] });
+  let parsed = 0;
+  const parsedResult = { intent: 'unsupported', items: [] };
+  const { service } = makeHarness({
+    gateway,
+    recognizer: { parseSalesText: async () => { parsed += 1; return parsedResult; } },
+  });
+
+  const accepted = await service.acceptMessage(privateEvent({ messageId: 'om_p2p_progress', text: '收到微信 500' }));
+  assert.equal(accepted.accepted, true);
+  await flushSalesTasks(service);
+
+  assert.equal(parsed, 1, '私聊必须仍然进 AI（不受群聊的二次处理判据影响）');
+  assert.deepEqual(gateway.created, [], '私聊这条链路不会因为这句话写收款明细');
+  const task = await service.store.get(accepted.taskId);
+  assert.equal(task.chat_type, undefined);
+  assert.equal(task.progress_kind, undefined);
+});
