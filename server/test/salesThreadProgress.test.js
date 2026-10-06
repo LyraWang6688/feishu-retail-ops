@@ -480,3 +480,22 @@ test('话题里说「已完毕」→ 同样走成交链路（已成交时不重�
   assert.equal(task.progress_kind, 'complete');
   assert.match(JSON.parse(replies.find((i) => i.data.msg_type === 'text').data.content).text, /成交/);
 });
+
+test('话题里说「成交」但交付只成了一半 → 如实说，不报成功', async () => {
+  const gateway = makeGateway({ entry: threadSale(), details: [threadDetail()] });
+  const secondDelivery = {
+    paymentMethodNames: async () => ['微信'],
+    confirm: async () => ({
+      alreadyCompleted: false, collectedAmount: 0,
+      delivery: { deliveredQuantity: 1, failures: [{ detailRecordId: 'd_fail', error: '库存不足' }] },
+    }),
+  };
+  const { service, replies, threads } = makeHarness({ gateway, secondDelivery });
+  await bindThread(threads, 'omt_sale_partial');
+  await service.acceptMessage(groupEvent({
+    messageId: 'om_partial', threadId: 'omt_sale_partial', text: '成交',
+  }));
+  await flushSalesTasks(service);
+  assert.match(JSON.parse(replies.find((i) => i.data.msg_type === 'text').data.content).text, /未完成/,
+    '钱收下了、货没交齐不能报成"全好了"');
+});

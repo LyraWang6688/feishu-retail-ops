@@ -344,6 +344,9 @@ class SalesThreadProgressService {
     if (Number(result.collectedAmount) > 0) parts.push(`补收款 ￥${result.collectedAmount}`);
     const deliveredCount = Number(result.delivery?.deliveredQuantity || 0);
     if (deliveredCount > 0) parts.push(`交付 ${deliveredCount} 双`);
+    // 交付只成了一半时**如实说**（与点卡片那条路一致：钱收下了、货没交齐不能报成功）。
+    const failedCount = result.delivery?.failures?.length || 0;
+    if (failedCount) parts.push(`还有 ${failedCount} 双交付未完成，请到工作台核对`);
     await this.reply(task, formatCopy(this.config.replies.completeDone, {
       summary: parts.join('，') || '无待处理项',
     }));
