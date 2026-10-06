@@ -92,6 +92,11 @@ class SaleLookupService {
     this.now = options.now || (() => new Date());
     this.replyCard = options.replyCard || (async () => '');
     this.sendCard = options.sendCard || (async () => '');
+    // ⭐ 渠道感知的兜底出口（可选）。默认实现 = 改动前的私聊行为，**逐字相同**；
+    // 生产在 `larkMvpService` 里注入 `sendTaskCard`（群 → 回到那个话题 / 私聊 → 原样私聊）。
+    // ⚠️ 只有 `task.chat_type === 'group'` 时才会用到它 —— 见 replyCardByTask。
+    this.sendCardToTask = options.sendCardToTask
+      || (async (task, card) => this.sendCard(task?.sender_open_id, card));
     this.getSizeReferences = createSizeReferenceAccess({
       gateway: this.gateway,
       sizeReferences: options.sizeReferences,
@@ -332,8 +337,14 @@ class SaleLookupService {
   // 这里刻意**不再**提供"我还没上线"的占位方法：留一个没人调用的旧入口，
   // 以后很容易被误接回去，静默吞掉她的退货诉求（测试里锁住了它不存在）。
 
-  // 优先在原消息下回复（她能立刻看到对应的那张卡）；回复失败退回主动发卡，
-  // 免得"查了却没反应"。
+  // 优先在原消息下回复（她能立刻看到对应的那张卡）；回复失败再兜底发一张。
+  //
+  // ⭐ 兜底**按渠道分流**（业务负责人 2026-10-06：「一律在话题群里，以后私聊路线就没有了」）：
+  //   · 群任务（`chat_type === 'group'`）→ 走**渠道感知出口**，回到**那个话题**；
+  //     ⚠️ **绝不回落私聊** —— 群里回复失败就如实失败（只记日志、返回空串），
+  //     偷偷发一条私聊会让她以为"群里没人管"，也掩盖了群通道的故障。
+  //   · 私聊任务 → 与改动前**逐字相同**：`sendCard(task.sender_open_id, card)`，
+  //     失败照旧向上抛（这条分支一个字节都没动）。
   async replyCardByTask(task, card) {
     try {
       const messageId = await this.replyCard(task.message_id, card);
@@ -343,10 +354,23 @@ class SaleLookupService {
       return messageId || '';
     } catch (error) {
       logWarn('sale_lookup.card.reply_failed', { task_id: task.task_id, error: error.message });
-      const messageId = await this.sendCard(task.sender_open_id, card);
-      if (messageId) await this.store.update(task.task_id, { card_message_id: messageId });
-      return messageId || '';
     }
+    if (task?.chat_type === 'group') {
+      try {
+        const messageId = await this.sendCardToTask(task, card);
+        if (messageId) await this.store.update(task.task_id, { card_message_id: messageId });
+        return messageId || '';
+      } catch (fallbackError) {
+        // 不静默、也不掉进私聊：留一条能排查的日志，调用方按"这次没发出去"处理。
+        logWarn('sale_lookup.card.topic_fallback_failed', {
+          task_id: task.task_id, chat_id: task.chat_id, error: fallbackError.message,
+        });
+        return '';
+      }
+    }
+    const messageId = await this.sendCard(task.sender_open_id, card);
+    if (messageId) await this.store.update(task.task_id, { card_message_id: messageId });
+    return messageId || '';
   }
 }
 

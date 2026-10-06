@@ -68,6 +68,8 @@ const makeService = async (options = {}) => {
   });
   const gateway = makeGateway({ details, entries, products, writes, reads });
   const cards = [];
+  const privateSends = [];
+  const taskSends = [];
   let replyFails = options.replyFails === true;
   const service = new SaleLookupService({
     gateway,
@@ -80,9 +82,26 @@ const makeService = async (options = {}) => {
       cards.push(card);
       return 'om_card';
     },
-    sendCard: async (_openId, card) => { cards.push(card); return 'om_card_fallback'; },
+    sendCard: async (openId, card) => {
+      privateSends.push({ openId, card });
+      cards.push(card);
+      return 'om_card_fallback';
+    },
+    // 渠道感知出口：**只有显式传了才注入** —— 生产在 `larkMvpService` 里注入 `sendTaskCard`。
+    // 不传时 service 用缺省端口（= 改动前的私聊行为），这样两条路都能被单独钉住。
+    ...(options.sendCardToTask
+      ? {
+        sendCardToTask: async (task, card) => {
+          taskSends.push({ task, card });
+          return options.sendCardToTask(task, card);
+        },
+      }
+      : {}),
   });
-  return { service, store, gateway, cards, disableReply: () => { replyFails = true; } };
+  return {
+    service, store, gateway, cards, privateSends, taskSends,
+    disableReply: () => { replyFails = true; },
+  };
 };
 
 const newTask = (store, overrides = {}) => store.create({
@@ -366,6 +385,56 @@ test('查询卡片：0 条也在原消息下回一张卡，且优先 reply、失
   await fallback.service.handleQuery(fallbackTask, { intent: 'sale_query', item_no: '6035', color: '黑' });
   assert.equal(fallback.cards.length, 1);
   assert.equal(await fallback.store.get('sale_query_1').then((row) => row.card_message_id), 'om_card_fallback');
+  // ⭐ 上面这条就是**私聊的既有行为**：回复失败 → 主动发卡给本人 `sendCard(sender_open_id)`。
+  // 2026-10-06「私聊切除」②之后它必须逐字不变（见下面三条新用例）。
+  assert.equal(fallback.privateSends.length, 1);
+  assert.equal(fallback.privateSends[0].openId, 'ou_1');
+  assert.equal(fallback.taskSends.length, 0, '没有 chat_type = 私聊，不走群出口');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 2026-10-06「私聊切除」②：`saleLookupService.replyCardByTask` 的兜底。
+//   以前：群话题里回复失败会**掉进私聊**（`sendCard(task.sender_open_id)`）。
+//   现在：`chat_type === 'group'` → 走**渠道感知出口**（回到那个话题），
+//        出口再失败也**只记日志、如实失败**，绝不静默发她私聊。
+//   私聊那条路（上面那条用例）一个字节都不动。
+// ─────────────────────────────────────────────────────────────────────────────
+
+const lookupFixture = () => ({
+  products: [productRow('p1', '6035', '黑')],
+  entries: [entryRow({ id: 'e1', orderNo: 'XSD-0001' })],
+  details: [detailRow({ id: 'd1', orderId: 'e1', productId: 'p1' })],
+});
+
+test('② 群任务回复失败：走渠道感知出口回到那个话题，**一条私聊都不发**', async () => {
+  const { service, store, privateSends, taskSends } = await makeService({
+    ...lookupFixture(),
+    replyFails: true,
+    sendCardToTask: async () => 'om_topic_card',
+  });
+  const task = await newTask(store, { chat_type: 'group', chat_id: 'oc_sales_group', group_thread_id: 'omt_1' });
+  await service.handleQuery(task, { intent: 'sale_query', item_no: '6035', color: '黑' });
+
+  assert.equal(taskSends.length, 1, '群任务必须走渠道感知出口（回话题）');
+  assert.equal(taskSends[0].task.chat_id, 'oc_sales_group');
+  assert.deepEqual(privateSends, [], '群上下文里回复失败也绝不回落私聊');
+  assert.equal(await store.get('sale_query_1').then((row) => row.card_message_id), 'om_topic_card');
+});
+
+test('② 群任务两条路都失败：如实失败（不留 card_message_id）+ 记日志，不静默掉进私聊', async () => {
+  const { service, store, privateSends, taskSends } = await makeService({
+    ...lookupFixture(),
+    replyFails: true,
+    sendCardToTask: async () => { throw new Error('topic reply failed'); },
+  });
+  const task = await newTask(store, { chat_type: 'group', chat_id: 'oc_sales_group' });
+  // 兜底再失败**不抛出去**（否则会把这条查询判成处理失败，她会以为"查了没反应"）；
+  // 返回值是空串 = "这次没发出去"，调用方按失败处理。
+  await service.handleQuery(task, { intent: 'sale_query', item_no: '6035', color: '黑' });
+
+  assert.equal(taskSends.length, 1, '仍然试过一次群出口');
+  assert.deepEqual(privateSends, [], '绝不静默掉进私聊');
+  assert.equal(await store.get('sale_query_1').then((row) => row.card_message_id), undefined);
 });
 
 test('退货/换货的占位入口已删除：真执行在 AfterSalesFlowService，这里不再回"还没上线"', async () => {

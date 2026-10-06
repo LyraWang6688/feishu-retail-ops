@@ -123,9 +123,9 @@ const larkErrorText = (error) => {
 //   · 卡片动作 confirm_purchase_arrival / cancel_purchase_arrival
 // 删掉而不是留着：它们写的字段在表里已经不存在，留着只会在日志和卡片上
 // 伪装成「识别还在跑」，属于最难查的静默失效。
-// ⚠️ 例外：`sendNoticeText` #86 曾跟着一起删，**合并 #83（采购退货）时恢复**——
-// 退货的差额提示要用它，而它本身只是"发一条纯文本、发不出去也不抛错"的工具，
-// 服务的不是识别流程（见它在类里的注释）。
+// ⚠️ `sendNoticeText`（#86 曾跟着一起删，合并 #83 采购退货时为差额提示恢复）
+// 已于 2026-10-06「私聊切除」时**删除**：那条提示改走 `sendPurchaseGroupNotice` 发采购群
+//（业务负责人：「一律在话题群里，以后私聊路线就没有了」）。私聊出口不再需要它。
 // 保留下来的入库 / 建档 / 成本能力见 confirmArrival、ensureArrivalProducts 的注释。
 
 // 鞋盒/吊牌上的「品名」：女鞋 → B、男鞋 → A。单选选项就是 A/B 两个字。
@@ -1175,46 +1175,16 @@ class PurchaseWebhookService {
   // "2 分钟放弃等待"、"3 分钟判失败"、"迟到结果救回"全部只在识别流程里有意义。
   // 留着的话没有任何调用方，只会在下次读代码的人脑子里重建一条不存在的流程。
   //
-  // ⚠️ `sendNoticeText` **不在删除之列**（#86 曾一起删，合并 #83 采购退货时恢复）：
-  // 上面那批是"给识别流程报进度"，它只是"发一条纯文本、发不出去也不抛错"的工具，
-  // 退货的差额/没对上提示要用它（见 processSupplierReturn 里那个调用点）。
-  //
   // ⚠️ 合并 #57 吃过的那个亏（同类方法静默覆盖）在这里仍然有效，别重新引入：
   // 本类里同时存在语义不同的「发消息」方法时，**名字必须不同**——
   // JS 类体里后定义的同名方法会**静默覆盖**先定义的，git 合并也不报冲突。
   // 现在有四个：sendCard / sendText / sendImage（失败即抛错）
-  // 与 sendNoticeText（失败只记日志、返回 false），语义不同、名字也不同。
-
-  /**
-   * 发一条纯文本通知给经办人。**失败不抛错**：只记一条 warn 并返回 false。
-   *
-   * 与 sendText 的区别是刻意的（别合并这两个）：
-   *   · sendText      —— 主链动作（采购申请说明等），发不出去就算这次处理失败；
-   *   · sendNoticeText —— **事后通知**（"差额对不上""一双都没退成"）。
-   *     调用点在 processSupplierReturn 的扣库存/写单据**之后**，所以绝不能因为
-   *     一条提示发不出去，就把已经扣掉的库存、已经写好的退货单判成失败。
-   */
-  async sendNoticeText(openId, content) {
-    if (!openId) {
-      logWarn('purchase.text.skipped', { reason: 'missing_open_id', content });
-      return false;
-    }
-    try {
-      const response = await withTimeout(
-        this.client.im.message.create({
-          params: { receive_id_type: 'open_id' },
-          data: { receive_id: openId, msg_type: 'text', content: JSON.stringify({ text: content }) },
-        }),
-        this.imTimeoutMs,
-        '发送飞书消息',
-      );
-      if (response.code !== 0) throw new Error(`${response.msg} (Code: ${response.code})`);
-      return true;
-    } catch (error) {
-      logWarn('purchase.text.failed', { content, error: error.message });
-      return false;
-    }
-  }
+  // 与 sendPurchaseGroupNotice（发群、失败只记日志、返回 false）。
+  //
+  // 🔴 2026-10-06「私聊切除」：`sendNoticeText`（发给经办人私聊的事后通知）**已整体删除**——
+  // 它唯一的调用点就是采购退货的差额提示，那条现在改走 `sendPurchaseGroupNotice`
+  // （业务负责人：「一律在话题群里，以后私聊路线就没有了」）。
+  // 留着它就是留一条没人用的主动私聊出口，下次读代码的人很容易再挂上去。
 
   /**
    * 在**采购群**（PURCHASE_CHAT_ID，和出图同一个群）说一句纯文本。
@@ -1222,16 +1192,20 @@ class PurchaseWebhookService {
    * 业务负责人 2026-10-06 的口径：「"说明和勾选对不上"时要不要在群里给个提示」→
    * 「可以给提示」。所以这是**运营可见的反馈**，不再让她"提交了没反应、只能查日志"。
    *
-   * 与 sendText/sendNoticeText 同样是刻意分开的语义：
+   * 与 sendText 是刻意分开的语义：
    *   · sendText —— 主链动作，发不出去就算这次处理失败；
-   *   · sendNoticeText —— 发给经办人私聊的事后通知；
    *   · sendPurchaseGroupNotice —— 发给采购群的事后通知，**失败不抛错**（只记日志、返回 false）：
-   *     它出现在"这条报货没进图"之后，绝不能因为一句提示发不出去就把整批判成失败。
+   *     它出现在"这条报货没进图" / "退货数量对不上"之后，绝不能因为一句提示发不出去
+   *     就把整批判成失败。
    *
    * 群 id 走 config/groupPurchase（未配置就大声跳过、不回落私聊，与出图同一条口径）。
    * `options.sandboxChatId`（构造入参）是测试用的显式通道：不读环境变量，避免并发用例互相污染。
+   *
+   * ⭐ `options.replyToMessageId`：传了就**回复那条消息**而不发顶层消息 ——
+   *    采购退货的差额提示用它挂到**这一批退货单（图）的那个话题**下，
+   *    而不是在群里另开一个话题（业务负责人：「一律在话题群里」）。不传 = 照旧发顶层。
    */
-  async sendPurchaseGroupNotice(content) {
+  async sendPurchaseGroupNotice(content, options = {}) {
     const target = this.resolvePurchaseGroupTarget({ sandboxChatId: this.sandboxChatId });
     if (!target.chatId) {
       logWarn('purchase.group_notice.skipped', {
@@ -1239,9 +1213,14 @@ class PurchaseWebhookService {
       });
       return false;
     }
+    const replyToMessageId = String(options?.replyToMessageId || '').trim();
     try {
-      await this.sendText(target.chatId, content, 'chat_id');
-      logInfo('purchase.group_notice.sent', { chat_id: target.chatId });
+      await this.sendText(target.chatId, content, 'chat_id', {
+        replyToMessageId: replyToMessageId || undefined,
+      });
+      logInfo('purchase.group_notice.sent', {
+        chat_id: target.chatId, reply_to_message_id: replyToMessageId,
+      });
       return true;
     } catch (error) {
       logWarn('purchase.group_notice.failed', { chat_id: target.chatId, error: error.message });
@@ -1427,7 +1406,7 @@ class PurchaseWebhookService {
     } catch (error) {
       // 兜底：调用方是"采购事实已经写完"的收尾流程，这里漏出去的异常会把任务判成 failed。
       logError('purchase.request.image.delivery_failed', { task_id: taskId, error: error.message });
-      return { sent: [], failed: [{ supplier: '', error: error.message }] };
+      return { sent: [], failed: [{ supplier: '', error: error.message }], thread_root_message_id: '' };
     }
   }
 
@@ -1436,7 +1415,7 @@ class PurchaseWebhookService {
   async deliverSupplierImagesInner(taskId, task, posting = {}, options = {}) {
     const draft = task?.draft || {};
     const items = draft.items || [];
-    if (!items.length) return { sent: [], failed: [] };
+    if (!items.length) return { sent: [], failed: [], thread_root_message_id: '' };
     // ⚠️ 采购单**只发群**（业务负责人：「不用再看经办人了」）。
     // operator_open_id 仍然留着——它是「这条记录是谁报的」，用于到货异常告知、
     // 以及权限判断，不再决定采购单发到哪儿。
@@ -1457,7 +1436,7 @@ class PurchaseWebhookService {
         operator_open_id: operatorOpenId,
         hint: '未配置采购群，采购申请已生成但图与说明未发送；配好后可按 task 补发',
       });
-      return { sent: [], failed: [], skipped: 'chat_id_unconfigured' };
+      return { sent: [], failed: [], skipped: 'chat_id_unconfigured', thread_root_message_id: '' };
     }
     const sent = [];
     const failed = [];
@@ -1581,7 +1560,12 @@ class PurchaseWebhookService {
       }
     }
 
-    const summary = { sent, failed, chat_id: target.chatId };
+    // `thread_root_message_id`：这一批在群里发的**第 1 条消息**（图）= 话题根。
+    // 把它交回给调用方，退货的差额提示才能**回复它**、落在同一个话题里
+    //（业务负责人：「一律在话题群里，以后私聊路线就没有了」）。
+    const summary = {
+      sent, failed, chat_id: target.chatId, thread_root_message_id: threadRootMessageId,
+    };
     if (failed.length) {
       // 图没发出去（例如机器人缺 im:resource 图片上传权限）时把失败留在任务里：
       // 采购事实已经写成、任务已是 posted，重收 webhook 会被当成重复投递跳过，
@@ -2168,8 +2152,14 @@ class PurchaseWebhookService {
       }
 
       const requestIds = preparedList.flatMap((prepared) => prepared.docIds);
-      await this.deliverReturnImages(batchTaskId, batchNo, preparedList);
-      for (const prepared of preparedList) await this.sendReturnNotice(prepared);
+      // ⭐ 差额提示跟着**这一批退货单的话题**走：出图/发群的返回值里带话题根 message_id，
+      //    传给它 → 提示回复那条根消息，和退货单落在同一个话题里（不新开话题、不发私聊）。
+      const delivery = await this.deliverReturnImages(batchTaskId, batchNo, preparedList);
+      for (const prepared of preparedList) {
+        await this.sendReturnNotice(prepared, {
+          replyToMessageId: delivery?.thread_root_message_id,
+        });
+      }
       const totals = preparedList.reduce((sum, prepared) => ({
         declared: sum.declared + prepared.plan.declared,
         available: sum.available + prepared.plan.available,
@@ -2423,11 +2413,14 @@ class PurchaseWebhookService {
    * 差额/没对上的情况必须说出来——「对不上的就说这部分对不上」。
    * 对得上时不发（图本身就是回执），免得刷屏。
    *
-   * 发到**经办人私聊**（不是群）：这是给她的核对结果，不是给供应商的单据。
-   * 失败只记日志（见 sendNoticeText）——库存已经扣了、单据已经写了，
+   * ⭐ 发到**采购群**（不再发经办人私聊）：业务负责人 2026-10-06 的口径是
+   * 「一律在话题群里，以后私聊路线就没有了」。传了 `options.replyToMessageId`
+   * （= 这一批退货单图的话题根）就**回复它** → 提示与退货单落在**同一个话题**里；
+   * 没配采购群就大声跳过、**绝不回落私聊**。
+   * 失败只记日志（见 sendPurchaseGroupNotice）——库存已经扣了、单据已经写了，
    * 不能因为一条提示发不出去就把业务事实判成失败。
    */
-  async sendReturnNotice(prepared) {
+  async sendReturnNotice(prepared, options = {}) {
     const notice = buildPurchaseReturnNotice({
       itemNo: prepared.productInfo.itemNo,
       color: prepared.productInfo.color,
@@ -2435,12 +2428,13 @@ class PurchaseWebhookService {
       plan: prepared.plan,
     });
     if (!notice) return false;
-    const sent = await this.sendNoticeText(prepared.operatorOpenId, notice);
+    const replyToMessageId = String(options?.replyToMessageId || '').trim();
+    const sent = await this.sendPurchaseGroupNotice(notice, { replyToMessageId });
     logInfo('purchase.return.notice', {
       record_id: prepared.recordId, task_id: prepared.taskId,
       declared: prepared.plan.declared, available: prepared.plan.available,
       taken: prepared.plan.taken, shortfall: prepared.plan.shortfall,
-      surplus: prepared.plan.surplus, sent,
+      surplus: prepared.plan.surplus, sent, reply_to_message_id: replyToMessageId,
     });
     return sent;
   }
@@ -2467,12 +2461,14 @@ class PurchaseWebhookService {
     const prepared = await this.prepareSupplierReturn(recordId, taskId, task);
     if (prepared.skipped) return { ignored: true, status: prepared.status };
     await this.applySupplierReturn(prepared);
+    let delivery = null;
     if (prepared.docIds.length) {
       // 出图 → 发群 → 写回附件（复用采购申请那条完全相同的流程，只换标题）。
       // ⚠️ 整批出图走 deliverReturnImages（一次发群）；这里单条时 preparedList 只有它自己。
-      await this.deliverReturnImages(taskId, prepared.draft.batch_no, [prepared]);
+      delivery = await this.deliverReturnImages(taskId, prepared.draft.batch_no, [prepared]);
     }
-    await this.sendReturnNotice(prepared);
+    // ⭐ 差额提示回复「这一批退货单图」那条根消息 → 落在同一个话题（不再发经办人私聊）。
+    await this.sendReturnNotice(prepared, { replyToMessageId: delivery?.thread_root_message_id });
     logInfo('purchase.return.posted', {
       record_id: recordId, task_id: taskId, declared: prepared.plan.declared,
       available: prepared.plan.available, taken: prepared.plan.taken,
