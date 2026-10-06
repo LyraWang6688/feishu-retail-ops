@@ -112,7 +112,7 @@ const threadDetail = () => ({
   fields: { 销售单号: [SALE_ID], 成交金额: 800, 履约状态: '已交付' },
 });
 
-const makeHarness = ({ gateway, recognizer } = {}) => {
+const makeHarness = ({ gateway, recognizer, secondDelivery } = {}) => {
   const { client, replies } = makeClient();
   const threads = new SalesGroupThreadLocator({ store: tempStore('sales-progress-threads-') });
   const service = new LarkMvpService({
@@ -123,6 +123,8 @@ const makeHarness = ({ gateway, recognizer } = {}) => {
     store: tempStore('sales-progress-lark-'),
     botOpenId: TEST_BOT_OPEN_ID,
     salesGroupThreads: threads,
+    // 整单完成（「已完毕 / 成交」）走 SecondDeliveryService：测试里可以换成一个记录型桩。
+    secondDelivery,
     groupPurchaseFlow: { handleGroupPurchaseMessage: async () => ({ resolved: false, reason: 'stub' }) },
   });
   service.acknowledgeMessage = async () => undefined;
@@ -329,4 +331,152 @@ test('回归：私聊说「收到微信 500」**不走**二次处理 —— 私�
   const task = await service.store.get(accepted.taskId);
   assert.equal(task.chat_type, undefined);
   assert.equal(task.progress_kind, undefined);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐ BUG 修复：有「未收款」占位 → **翻它**（不新建）+ 写收款时间
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('话题里说「收到微信 75」→ 把那条「未收款」翻成「已收款」（不新建、有收款时间、无残留）', async () => {
+  const gateway = makeGateway({
+    entry: threadSale(),
+    details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 成交金额: 230, 履约状态: '已交付' } }],
+    payments: [{ record_id: 'pay_pending', fields: { 关联销售单: [SALE_ID], 收款金额: 75, 收款状态: '未收款' } }],
+  });
+  const { service, replies, threads } = makeHarness({ gateway });
+  await bindThread(threads, 'omt_sale_flip');
+
+  await service.acceptMessage(groupEvent({
+    messageId: 'om_flip', threadId: 'omt_sale_flip', text: '收到微信 75',
+  }));
+  await flushSalesTasks(service);
+
+  // ① 不新建收款明细：她说的不是"又一笔钱"，而是那笔待收的钱到账了
+  assert.deepEqual(gateway.created.filter((item) => item.key === 'paymentRecord'), [],
+    '有待收款占位时必须翻它，不能另存一条已收款');
+
+  // ② 原记录被翻成已收款，并写上收款时间 + 方式 + 方向
+  const record = gateway.records.paymentRecord.find((row) => row.record_id === 'pay_pending');
+  assert.equal(record.fields['收款状态'], '已收款');
+  assert.equal(record.fields['收款金额'], 75);
+  assert.deepEqual(record.fields['交易方式'], ['method_wechat']);
+  assert.ok(record.fields['收款时间'], '必须写收款时间（她的口径：未收款变为已收款，并且有收款时间）');
+  assert.equal(record.fields['交易方向'], '收入');
+
+  // ③ 收款明细里不再有残留的「未收款」
+  assert.equal(gateway.records.paymentRecord.filter((row) => row.fields['收款状态'] === '未收款').length, 0);
+
+  // ④ 回复回到话题
+  const textReply = replies.find((item) => item.data.msg_type === 'text');
+  assert.equal(textReply.data.reply_in_thread, true);
+});
+
+test('多笔未收款占位 / 金额对不上 → 不猜、不写（与工作台补记收款同口径）', async () => {
+  const twoPending = makeGateway({
+    entry: threadSale(),
+    details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 成交金额: 300, 履约状态: '已交付' } }],
+    payments: [
+      { record_id: 'pay_a', fields: { 关联销售单: [SALE_ID], 收款金额: 75, 收款状态: '未收款' } },
+      { record_id: 'pay_b', fields: { 关联销售单: [SALE_ID], 收款金额: 75, 收款状态: '未收款' } },
+    ],
+  });
+  const first = makeHarness({ gateway: twoPending });
+  await bindThread(first.threads, 'omt_sale_multi');
+  await first.service.acceptMessage(groupEvent({
+    messageId: 'om_multi', threadId: 'omt_sale_multi', text: '收到微信 75',
+  }));
+  await flushSalesTasks(first.service);
+  assert.deepEqual(twoPending.updated, [], '多条占位时一个字都不写，让她先人工核对');
+  assert.match(JSON.parse(first.replies.find((i) => i.data.msg_type === 'text').data.content).text,
+    /多条待收款/);
+
+  const mismatch = makeGateway({
+    entry: threadSale(),
+    details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 成交金额: 300, 履约状态: '已交付' } }],
+    payments: [{ record_id: 'pay_p', fields: { 关联销售单: [SALE_ID], 收款金额: 155, 收款状态: '未收款' } }],
+  });
+  const second = makeHarness({ gateway: mismatch });
+  await bindThread(second.threads, 'omt_sale_mismatch');
+  await second.service.acceptMessage(groupEvent({
+    messageId: 'om_mismatch', threadId: 'omt_sale_mismatch', text: '收到微信 75',
+  }));
+  await flushSalesTasks(second.service);
+  assert.deepEqual(mismatch.updated, [], '金额对不上占位记录时不写（一次收清口径）');
+  assert.match(JSON.parse(second.replies.find((i) => i.data.msg_type === 'text').data.content).text,
+    /一次收清/);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐ BUG 修复：「已完毕 / 成交」→ 不再静默，走成交（交付 + 收款）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('判据：「成交 / 已完毕 / 搞定 / 好了」是整单完成；带更具体线索时不降级', () => {
+  const service = new SalesThreadProgressService({ gateway: makeGateway({ entry: threadSale() }) });
+  assert.deepEqual(service.classify('成交'),
+    { kind: PROGRESS_KINDS.COMPLETE, reason: 'complete_cue:成交' });
+  assert.equal(service.classify('已完毕').kind, PROGRESS_KINDS.COMPLETE);
+  assert.equal(service.classify('完毕').kind, PROGRESS_KINDS.COMPLETE);
+  assert.equal(service.classify('搞定').kind, PROGRESS_KINDS.COMPLETE);
+  assert.equal(service.classify('好了').kind, PROGRESS_KINDS.COMPLETE);
+  // "好了"只是口头语：和收款 / 交付线索同现时仍按更具体的那件事处理
+  assert.equal(service.classify('好了，收到微信 500').kind, PROGRESS_KINDS.PAYMENT);
+  assert.equal(service.classify('好了，那双拿走了').kind, PROGRESS_KINDS.DELIVERY);
+});
+
+test('话题里说「成交」→ 放行 + 交给成交链路（同时交付+收款），不再静默', async () => {
+  const gateway = makeGateway({
+    entry: threadSale(),
+    details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 成交金额: 230, 履约状态: '未交付' } }],
+    payments: [{ record_id: 'pay_pending', fields: { 关联销售单: [SALE_ID], 收款金额: 75, 收款状态: '未收款' } }],
+  });
+  const calls = [];
+  const secondDelivery = {
+    paymentMethodNames: async () => ['微信'],
+    confirm: async (input) => {
+      calls.push(input);
+      return { alreadyCompleted: false, collectedAmount: 75, delivery: { deliveredQuantity: 1, failures: [] } };
+    },
+  };
+  const { service, replies, threads } = makeHarness({ gateway, secondDelivery });
+  await bindThread(threads, 'omt_sale_complete');
+
+  const accepted = await service.acceptMessage(groupEvent({
+    messageId: 'om_complete', threadId: 'omt_sale_complete', text: '成交',
+  }));
+  assert.equal(accepted.handled, true, '「成交」必须被放行，不能再静默丢掉');
+  await flushSalesTasks(service);
+
+  // 成交只有一处实现：交给 SecondDeliveryService，本类不自己收钱 / 交货
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].salesEntryRecordId, SALE_ID);
+  assert.equal(calls[0].method, '微信', '单一收款方式时用那一个（卡片单方式也只有这一个按钮）');
+  assert.deepEqual(gateway.created.filter((item) => item.key === 'salesEntry'), [],
+    '这是那笔的进展，不能新建销售主表记录');
+  // 回复回到话题，并说清成交了什么
+  const textReply = replies.find((item) => item.data.msg_type === 'text');
+  assert.equal(textReply.data.reply_in_thread, true);
+  assert.match(JSON.parse(textReply.data.content).text, /成交/);
+  // 进展记在任务上（可排查）
+  const task = await service.store.get(accepted.sales.taskId);
+  assert.equal(task.progress_kind, 'complete');
+});
+
+test('话题里说「已完毕」→ 同样走成交链路（已成交时不重复写）', async () => {
+  const gateway = makeGateway({ entry: threadSale(), details: [threadDetail()] });
+  const calls = [];
+  const secondDelivery = {
+    paymentMethodNames: async () => ['微信'],
+    confirm: async (input) => { calls.push(input); return { alreadyCompleted: true }; },
+  };
+  const { service, replies, threads } = makeHarness({ gateway, secondDelivery });
+  await bindThread(threads, 'omt_sale_done');
+  const accepted = await service.acceptMessage(groupEvent({
+    messageId: 'om_done', threadId: 'omt_sale_done', text: '已完毕',
+  }));
+  assert.equal(accepted.handled, true);
+  await flushSalesTasks(service);
+  assert.equal(calls.length, 1);
+  const task = await service.store.get(accepted.sales.taskId);
+  assert.equal(task.progress_kind, 'complete');
+  assert.match(JSON.parse(replies.find((i) => i.data.msg_type === 'text').data.content).text, /成交/);
 });

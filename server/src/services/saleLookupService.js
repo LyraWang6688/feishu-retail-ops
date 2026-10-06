@@ -132,18 +132,27 @@ class SaleLookupService {
   /**
    * 候选查询。
    *
-   * 输入：货号 / 颜色（都可选，但不能都不给）+ 时间窗口
+   * 输入：货号 / 颜色（都可选）+ 可选「只在某一笔销售里找」（salesEntryRecordId）+ 时间窗口
+   *   ⚠️ 货号、颜色、salesEntryRecordId **三者不能全空**：全空 = 想查"全部销售记录"，
+   *      那不是这个功能要回答的问题（最近 5 天全店可能有几十条）。
+   *   ⭐ salesEntryRecordId 是**群话题**那条路用的：话题本身已经定位到某一笔销售，
+   *      售后就绑着那一笔找 —— 业务负责人的口径是「**同一笔的售后，绝不跨单去捞**」。
    * 输出：[{ record_id, date, sold_at, item_no, color, size, actual_amount, sales_order_no, sales_entry_record_id }]
    *
    * 「日期」用销售明细的「销售日」，缺失时退回销售主表的「录单日」——和
    * 网页工作台的取值口径一致（v1WorkbenchService.getTodaySales），两处不能各算一套。
+   *
+   * ⚠️ 参数名统一为 `salesEntryRecordId`：调用方 afterSalesFlowService 与测试桩都用它。
+   *    改动前签名里没有这个参数 → 传进来被**静默忽略** → 售后仍按货号颜色在全表捞
+   *    （跨单抓到别的销售）。这里收住它，只在那一笔里找。
    */
-  async findCandidates({ itemNo = '', color = '', now = this.now(), days = this.days } = {}) {
+  async findCandidates({ itemNo = '', color = '', salesEntryRecordId = '',
+    now = this.now(), days = this.days } = {}) {
     const wantedItemNo = normalizeText(itemNo);
     const wantedColor = normalizeColor(color);
-    // 货号和颜色都没给 = 想查"全部销售记录"，那不是这个功能要回答的问题
-    // （最近 5 天全店可能有几十条），直接回空，让上层提示她补货号。
-    if (!wantedItemNo && !wantedColor) return [];
+    const wantedEntryRecordId = String(salesEntryRecordId || '').trim();
+    // 三个限定条件一个都没给 = 想查"全部销售记录"，直接回空，让上层提示她补货号。
+    if (!wantedItemNo && !wantedColor && !wantedEntryRecordId) return [];
 
     const [details, entries, products] = await Promise.all([
       this.gateway.listAll('salesDetail'),
@@ -205,6 +214,9 @@ class SaleLookupService {
       const fields = detail.fields || {};
       const orderIds = linkedRecordIds(fieldValue(this.schema, 'salesDetail', detail, 'salesEntry'));
       const orderId = orderIds[0] || '';
+      // ⭐ 群话题那条路：只在话题对应的那一笔销售里找（「同一笔的售后，绝不跨单去捞」）。
+      //    改动前这个限定被静默忽略，售后会按货号颜色抓到**别的单**。
+      if (wantedEntryRecordId && orderId !== wantedEntryRecordId) continue;
       if (orderId && returnedOrderIds.has(orderId)) continue;
       // 明细自己就是一条退货行：即使主表「销售状态」还没写成「已退货」，也不能拿它当"可退的销售"。
       if (isReturnTradeType(asText(this.schema, 'salesDetail', detail, 'tradeType'))) continue;

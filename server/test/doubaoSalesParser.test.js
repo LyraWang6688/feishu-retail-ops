@@ -712,3 +712,48 @@ test('提示词里写死了"欠"的识别口径（owed / tier_price），删掉�
     else process.env.TEXT_LLM_MODEL = oldModel;
   }
 });
+
+// ─── ⭐ BUG 修复回归：售后（退货/换货）走消息入口不再 TypeError ──────────────────
+//
+// 现象：退货/换货的规范化结果里**没有 items**（售后字段契约刻意不装销售字段），
+//       parseSalesText 里"赠品归并"那段却直接读 normalized.items.length
+//       → TypeError: Cannot read properties of undefined (reading 'length')
+//       → 被包成「销售文字解析失败」→ 任务永远 failed、出不了确认卡片。
+// 口径：她说「退一双 1682 香槟 38码，钱退现金」→ 出售后确认卡片，绝不能说"解析失败"。
+test('售后意图走 parseSalesText 不再抛 TypeError（赠品归并只对 sale 生效）', async () => {
+  const oldKey = process.env.TEXT_LLM_API_KEY;
+  const oldBase = process.env.TEXT_LLM_BASE_URL;
+  const oldModel = process.env.TEXT_LLM_MODEL;
+  const oldGetClient = salesParser.getClient;
+  const oldLog = console.log;
+  process.env.TEXT_LLM_API_KEY = 'test-key';
+  process.env.TEXT_LLM_BASE_URL = 'https://api.deepseek.com';
+  process.env.TEXT_LLM_MODEL = 'test-model';
+  try {
+    // 静音日志，保持测试输出干净（parseSalesText 会打 sales.ai.parsed / normalized）
+    console.log = () => {};
+    salesParser.getClient = () => ({ chat: { completions: { create: async () => ({ choices: [{ message: { content: JSON.stringify({
+      intent: 'return', action: 'return', item_no: '1682', color: '香槟', size: 38,
+      settlement: '现金', diff_amount: -230, restock_state: '门盒',
+    }) } }] }) } } });
+    // ① 不抛（改动前这里会：Cannot read properties of undefined (reading 'length')）
+    const result = await salesParser.parseSalesText('退一双 1682 香槟 38码，钱退现金', { taskId: 'p' });
+    // ② 售后契约照旧：没有销售字段 items，售后字段都在
+    assert.equal(result.intent, 'return');
+    assert.equal('items' in result, false);
+    assert.equal(result.item_no, '1682');
+    assert.equal(result.color, '香槟');
+    assert.equal(result.size, 38);
+    assert.equal(result.settlement, 'cash');
+    assert.equal(result.diff_amount, -230);
+  } finally {
+    console.log = oldLog;
+    salesParser.getClient = oldGetClient;
+    if (oldKey === undefined) delete process.env.TEXT_LLM_API_KEY;
+    else process.env.TEXT_LLM_API_KEY = oldKey;
+    if (oldBase === undefined) delete process.env.TEXT_LLM_BASE_URL;
+    else process.env.TEXT_LLM_BASE_URL = oldBase;
+    if (oldModel === undefined) delete process.env.TEXT_LLM_MODEL;
+    else process.env.TEXT_LLM_MODEL = oldModel;
+  }
+});

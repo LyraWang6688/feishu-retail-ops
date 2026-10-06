@@ -57,6 +57,10 @@ class SalesThreadProgressService {
     this.payments = options.payments || new PaymentService({ gateway: this.gateway });
     this.delivery = options.delivery || new SalesDeliveryService({ gateway: this.gateway });
     this.progress = options.progress || new SalesProgressService({ gateway: this.gateway });
+    // 「整单完成」（她说「已完毕 / 成交」）交给 SecondDeliveryService：**成交只有这一处实现**
+    // （点卡片「成交」按钮与她直接说这句话走同一条编排：先补收款、再交付）。
+    // 不传时只有在"整单完成"这条分支上才报错，其它路径不受影响。
+    this.secondDelivery = options.secondDelivery || null;
     this.references = options.references || new V1ReferenceResolver(this.gateway);
     this.config = options.config || resolveSalesProgressIntakeConfig();
     this.now = options.now || (() => new Date());
@@ -77,7 +81,10 @@ class SalesThreadProgressService {
     if (!this.config.enabled) return { kind: PROGRESS_KINDS.NONE, reason: 'disabled' };
     const paymentCue = firstCue(raw, this.config.progressCues.payment);
     const deliveryCue = firstCue(raw, this.config.progressCues.delivery);
-    if (!paymentCue && !deliveryCue) return { kind: PROGRESS_KINDS.NONE, reason: 'no_progress_cue' };
+    const completeCue = firstCue(raw, this.config.progressCues.complete);
+    if (!paymentCue && !deliveryCue && !completeCue) {
+      return { kind: PROGRESS_KINDS.NONE, reason: 'no_progress_cue' };
+    }
 
     // 进展线索和新原话线索同时出现 = 分不清 → 交给她确认，绝不猜。
     const newSaleCue = firstCue(raw, this.config.newSaleCues);
@@ -87,6 +94,12 @@ class SalesThreadProgressService {
     // 钱和货两条线索都在 = 不知道她要说哪一件事 → 同样问清楚。
     if (paymentCue && deliveryCue) {
       return { kind: PROGRESS_KINDS.AMBIGUOUS, reason: 'payment_and_delivery_cue' };
+    }
+
+    // ⭐ 整单完成（「已完毕 / 成交」）只在**没有**更具体的收款 / 交付线索时才成立：
+    //    「好了，收到微信 500」仍按收款处理（"好了"只是口头语），不降级成整单完成。
+    if (completeCue && !paymentCue && !deliveryCue) {
+      return { kind: PROGRESS_KINDS.COMPLETE, reason: `complete_cue:${completeCue}` };
     }
 
     if (deliveryCue) return { kind: PROGRESS_KINDS.DELIVERY, reason: `delivery_cue:${deliveryCue}` };
@@ -148,7 +161,9 @@ class SalesThreadProgressService {
     try {
       const applied = decision.kind === PROGRESS_KINDS.PAYMENT
         ? await this.applyPayment(task, decision)
-        : await this.applyDelivery(task);
+        : decision.kind === PROGRESS_KINDS.COMPLETE
+          ? await this.applyComplete(task, decision)
+          : await this.applyDelivery(task);
       await this.mark(task, {
         status: 'progress_applied',
         progress_kind: decision.kind,
@@ -200,27 +215,51 @@ class SalesThreadProgressService {
       throw new Error(`本次收款 ￥${decision.amount} 超过待收金额 ￥${before.pendingAmount}`);
     }
 
-    const created = await this.payments.record({
+    // ⭐ 有「未收款」占位就**翻它**（未收款 → 已收款 + 写收款时间 + 补交易方向），
+    //    没有占位才新建 —— 与网页工作台「补记收款」（`SalesFollowupService.addPayment`）
+    //    逐条同口径（docs/workbench-query-contract.md：新订单有「未收款」记录时更新原记录；
+    //    旧订单无占位记录时仍新增收款）。
+    //    ⚠️ 改动前无条件 `payments.record(...)` **新建**一条已收款 → 那条「未收款」
+    //       永远留着，同一笔单同时挂"已收 + 待收"，账目对不上。
+    //    业务负责人的口径（逐字）：「**未收款变为已收款，并且有收款时间**」。
+    const paymentFields = this.gateway.table('paymentRecord').fields;
+    const pending = (await this.payments.recordsForSale(salesEntryRecordId)).filter((record) =>
+      textValue(record.fields?.[paymentFields.status]) === '未收款');
+    if (pending.length > 1) throw new Error('存在多条待收款记录，请先人工核对');
+    if (pending.length && Math.round(decision.amount * 100) !== Math.round(
+      Number(textValue(pending[0].fields?.[paymentFields.amount])) * 100)) {
+      throw new Error(`本版请一次收清这条待收款记录（￥${textValue(pending[0].fields?.[paymentFields.amount])}）；分笔补款暂不支持`);
+    }
+    const payment = {
       salesEntryRecordId,
       method: decision.method,
       amount: decision.amount,
       operatorOpenId: task.sender_open_id || '',
       receivedAt: this.now().getTime(),
-    });
+    };
+    let recordId;
+    if (pending.length) {
+      await this.payments.collectPendingReceipt(pending[0].record_id, payment);
+      recordId = pending[0].record_id;
+    } else {
+      recordId = (await this.payments.record(payment)).recordId;
+    }
     // 进度只算不写（和网页工作台「补记收款」同一条口径，见 salesProgressService.sync）。
-    await this.progress.sync(salesEntryRecordId, { paymentRecordIds: [created.recordId] });
+    await this.progress.sync(salesEntryRecordId, { paymentRecordIds: [recordId] });
     await this.reply(task, formatCopy(this.config.replies.paymentDone, {
       method: decision.method, amount: decision.amount,
     }));
     logInfo('sales.thread_progress.payment_recorded', {
       task_id: task.task_id,
       sales_entry_record_id: salesEntryRecordId,
-      payment_record_id: created.recordId,
+      payment_record_id: recordId,
+      // 是"翻了那条未收款"还是"新建了一条" —— 排查账目时一眼能看出走了哪条路。
+      collected_pending: Boolean(pending.length),
       amount: decision.amount,
       method: decision.method,
     });
     return { replied: true, amount: decision.amount, method: decision.method,
-      result: { paymentRecordId: created.recordId } };
+      result: { paymentRecordId: recordId } };
   }
 
   /** 交付进展：把**还没交**的明细交给既有的交付服务（它写「已交付」+ 扣库存）。 */
@@ -250,6 +289,73 @@ class SalesThreadProgressService {
       detail_ids: undelivered,
     });
     return { replied: true, count: undelivered.length, result: { detailRecordIds: undelivered, delivered } };
+  }
+
+  /**
+   * 她说「成交」时用哪个收款方式：
+   *   ① 这句话里说了（"成交 微信"）→ 用它；
+   *   ② 没说、且「收款方式管理」里**只有一个** → 用那一个。这不是猜：
+   *      单方式时卡片上本来也只有一个「成交」按钮，按钮带的正是它；
+   *   ③ 没说、又有多个（或一个都没有）→ 返回空，由调用方回一句问她，**绝不替她挑一个**。
+   */
+  async resolveCompletePaymentMethod(task) {
+    const spoken = this.detectPaymentMethod(String(task?.original_text || task?.text || ''));
+    if (spoken) return spoken;
+    if (!this.secondDelivery?.paymentMethodNames) return '';
+    const methods = await this.secondDelivery.paymentMethodNames();
+    return methods.length === 1 ? methods[0] : '';
+  }
+
+  /**
+   * 整单完成（「已完毕 / 成交 / 搞定 / 好了」）——**等于点那张「成交」按钮**：
+   * ① 补收款（那条「未收款」→「已收款」+ 收款时间）② 交付（写「已交付」+ 扣库存）。
+   *   业务负责人的口径见 docs/e2e-sales-status-method.md：
+   *   「话题里说『已完毕/成交』→ 未履约→履约 · 待收→已收 · 有收款时间」。
+   *
+   * ⚠️ 这两件事**都不在本类实现**：全部交给 SecondDeliveryService（成交只有一处实现）。
+   *    本类只做"这句话 = 成交"的判定与转交，绝不自己收钱或扣库存。
+   */
+  async applyComplete(task) {
+    const salesEntryRecordId = String(task.sales_entry_record_id || '').trim();
+    if (!this.secondDelivery) throw new Error('整单完成链路没有接上成交服务');
+    const entry = await this.gateway.get('salesEntry', salesEntryRecordId);
+    if (!entry || !isPosted(postedOf(entry, this.gateway.table('salesEntry').fields))) {
+      await this.reply(task, this.config.replies.notPosted);
+      return { replied: true, reason: 'not_posted' };
+    }
+    // 收款方式只在**确实有待收款**时才必须要：钱货两清的单说「成交」只是补交付，
+    // 不该因为没提收款方式就把这条正确的话挡回去。
+    const paymentFields = this.gateway.table('paymentRecord').fields;
+    const hasPending = (await this.payments.recordsForSale(salesEntryRecordId)).some((record) =>
+      textValue(record.fields?.[paymentFields.status]) === '未收款');
+    const method = hasPending ? await this.resolveCompletePaymentMethod(task) : '';
+    if (hasPending && !method) {
+      await this.reply(task, this.config.replies.needMethod);
+      return { replied: true, reason: 'payment_method_missing' };
+    }
+    const result = await this.secondDelivery.confirm({
+      salesEntryRecordId, method, operatorOpenId: task.sender_open_id || '',
+    });
+    if (result.alreadyCompleted) {
+      await this.reply(task, this.config.replies.completeAlready);
+      return { replied: true, reason: 'already_completed' };
+    }
+    const parts = [];
+    if (Number(result.collectedAmount) > 0) parts.push(`补收款 ￥${result.collectedAmount}`);
+    const deliveredCount = Number(result.delivery?.deliveredQuantity || 0);
+    if (deliveredCount > 0) parts.push(`交付 ${deliveredCount} 双`);
+    await this.reply(task, formatCopy(this.config.replies.completeDone, {
+      summary: parts.join('，') || '无待处理项',
+    }));
+    logInfo('sales.thread_progress.completed', {
+      task_id: task.task_id,
+      sales_entry_record_id: salesEntryRecordId,
+      method,
+      collected_amount: Number(result.collectedAmount) || 0,
+      delivered_quantity: deliveredCount,
+      delivery_failed_count: result.delivery?.failures?.length || 0,
+    });
+    return { replied: true, result };
   }
 
   async reply(task, message) {
