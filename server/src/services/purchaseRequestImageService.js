@@ -16,6 +16,13 @@ const sharp = require('sharp');
  * 没有 fontconfig 的显式配置。SVG 里必须**显式写死** CJK 字体名，
  * 否则中文会渲染成一个个方框，而且不会报错——只有人眼能看出来。
  * 所以 font-family 是一整条候选链，最后兜底到 sans-serif。
+ *
+ * 排版（2026-10-06 业务负责人拍板的「🅱️ 分组版」）：
+ * 明细**先按货号分组**，每个货号一行跨列的「分组行」（有底色、字比正文重），
+ * 组内每行只写 颜色 | 尺码 | 数量（**3 列**，不再每行重复货号）；
+ * 组内**按颜色分组排序、颜色内按尺码数字升序**。
+ * 一张图里放全部货号——不是每个货号出一张图（多图只在**多供应商**时出现，
+ * 那是 purchaseWebhookService.groupItemsBySupplier 的事，跟这里无关）。
  */
 const FONT_FAMILY = 'Noto Sans CJK SC, Noto Serif CJK SC, Noto Sans SC, WenQuanYi Zen Hei, sans-serif';
 
@@ -35,6 +42,9 @@ const MARGIN = 40;
 const TABLE_WIDTH = WIDTH - MARGIN * 2; // 820
 const ROW_HEIGHT = 42;
 const HEADER_ROW_HEIGHT = 48;
+// 「货号分组行」的高度：夹在表头（48）和正文行（42）之间，
+// 让它在视觉上明显是一条**分组标题**，而不是一条普通明细。
+const GROUP_ROW_HEIGHT = 44;
 const TABLE_TOP = 168;
 const TITLE_BASELINE = 78;
 const SUBTITLE_BASELINE = 118;
@@ -42,16 +52,20 @@ const FOOTER_GAP = 18;
 const FOOTER_HEIGHT = 52;
 const BOTTOM_PADDING = 36;
 
-// 列宽之和必须等于 TABLE_WIDTH（820）。货号内容最长、给最多空间。
+// ⚠️ 列宽之和必须等于 TABLE_WIDTH（820）。
+// 分组版是**3 列**（货号变成了跨列的分组行，所以不再是列）：
+// 颜色 400 | 尺码 210 | 数量 210 = 820。
+// 分配思路沿用原来的「颜色最长、给最多空间」：颜色是唯一的自由文本
+//（「深棕色/咖啡」这种能写到 10 个字），
+// 而尺码最多就是「43码」、数量最多两三位数——它们各 210 已经绰绰有余。
 // maxWidth 是单元格能画字的像素宽度（列宽减去左右各 16 的内边距）。
 // ⚠️ 截断必须按**像素宽度**而不是字符数：一个汉字在 22px 字号下就占 22px，
 // 按字符数限制会让 12 个汉字的颜色轻松捅进「尺码」列（真机渲染验证时踩到过）。
 const CELL_PADDING = 16;
 const COLUMNS = [
-  { key: 'item_no', label: '货号', width: 320, align: 'start' },
-  { key: 'color', label: '颜色', width: 220, align: 'start' },
-  { key: 'size', label: '尺码', width: 140, align: 'center' },
-  { key: 'quantity', label: '数量', width: 140, align: 'center' },
+  { key: 'color', label: '颜色', width: 400, align: 'start' },
+  { key: 'size', label: '尺码', width: 210, align: 'center' },
+  { key: 'quantity', label: '数量', width: 210, align: 'center' },
 ].map((column) => ({ ...column, maxWidth: column.width - CELL_PADDING * 2 }));
 
 const COLORS = {
@@ -59,6 +73,9 @@ const COLORS = {
   muted: '#646a73',
   line: '#c9cdd4',
   headerBg: '#eef1f5',
+  // 「货号分组行」的底色：比表头（headerBg）略深一档，
+  // 这样一眼能分出「列头」和「分组标题」两层，而不是糊成一片。
+  groupBg: '#e2e8f0',
   stripeBg: '#f7f8fa',
   border: '#8f959e',
 };
@@ -127,6 +144,78 @@ const summarize = (items) => ({
   totalPairs: items.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
 });
 
+// ─── 分组与组内排序（「🅱️ 分组版」的排版规则）────────────────────────────────
+// 全部是纯函数：同样的输入永远得到同样的分组与顺序，可以脱离 sharp 单测。
+
+// 货号缺失的明细（历史草稿可能只有尺码）也得有个分组行，
+// 否则它会被并进上一组、看着像那一组的货。⚠️ 跟「供应商」一样：
+// 这里给的是**显式的兜底标题**，不是悄悄不画。
+const UNKNOWN_ITEM_NO = '未标注货号';
+
+/**
+ * 从「37码」这样的展示值里取数字，用来按**数字大小**排尺码。
+ * ⚠️ 不能直接按字符串排：字符串序下 "40" < "9"（逐字符比 '4' < '9'），
+ * 尺码就会变成 39/40/41 看着对、一遇到 40/9/41 就乱。
+ * 取不到数字的（「均码」「XL」这类）返回 null → 由 compareSize 兜到**最后**。
+ */
+const sizeSortValue = (value) => {
+  const match = /^(\d+(?:\.\d+)?)/.exec(String(value ?? '').trim());
+  return match ? Number(match[1]) : null;
+};
+
+/**
+ * 尺码比较：数字升序；非数字尺码一律排在有数字的**后面**
+ * （「均码」不该插在 39 和 40 中间）；同为非数字时按字符串兜底，
+ * 保证顺序**确定**——排序不确定的代价是同一批数据两次出图长得不一样。
+ */
+const compareSize = (left, right) => {
+  const a = sizeSortValue(left);
+  const b = sizeSortValue(right);
+  if (a === null && b === null) return left < right ? -1 : left > right ? 1 : 0;
+  if (a === null) return 1;
+  if (b === null) return -1;
+  if (a !== b) return a - b;
+  // 数字相同但写法不同（理论上不会，formatSize 只会产出「37码」）：按字符串定序
+  return left < right ? -1 : left > right ? 1 : 0;
+};
+
+/**
+ * 明细行 → 分组。每条明细**只属于一个分组**，且分组内每行仍然写着自己的颜色
+ *（业务负责人的要求是"分组标题版"，**不做合并单元格**）。
+ *
+ * 排序规则（业务负责人 2026-10-06 拍板）：
+ * - **货号**：按**首次出现顺序**排。选它而不是字典序，是因为明细的输入顺序
+ *   本身就是"她报货的顺序"，字典序会把 A-1366 和 8088 混着重排，
+ *   而且混合格式（货号 + 字母款号）的字典序对人没有意义。稳定、可预期优先。
+ * - **颜色**：组内同样按**首次出现顺序**分组（同一颜色必须连续），
+ *   理由同上——不去猜"哪种颜色该排前面"。
+ * - **尺码**：颜色内按**数字**升序（见 compareSize），非数字尺码兜到最后。
+ *
+ * 注意这里只重排**显示顺序**：`summarize` 仍然按传入的行数/数量求和，
+ * 合计口径一个数都不变。
+ */
+const groupRowsByItemNo = (rows) => {
+  const groups = new Map();
+  rows.forEach((row) => {
+    const key = row?.item_no || '';
+    if (!groups.has(key)) groups.set(key, { itemNo: key, label: key || UNKNOWN_ITEM_NO, rows: [] });
+    groups.get(key).rows.push(row);
+  });
+
+  return [...groups.values()].map((group) => {
+    // 颜色先按首次出现登记序号，再把组内行排成「颜色连续、颜色内尺码升序」。
+    const colorOrder = new Map();
+    group.rows.forEach((row) => {
+      if (!colorOrder.has(row.color)) colorOrder.set(row.color, colorOrder.size);
+    });
+    const sorted = [...group.rows].sort((left, right) => {
+      const byColor = colorOrder.get(left.color) - colorOrder.get(right.color);
+      return byColor !== 0 ? byColor : compareSize(left.size, right.size);
+    });
+    return { itemNo: group.itemNo, label: group.label, rows: sorted };
+  });
+};
+
 const textAnchorOf = (align) => (align === 'center' ? 'middle' : align === 'end' ? 'end' : 'start');
 
 const cellX = (index, align) => {
@@ -142,6 +231,21 @@ const cellText = (column, index, value, y, options = {}) => {
     `font-family="${FONT_FAMILY}" font-size="${fontSize}" fill="${options.fill || COLORS.ink}" ` +
     `${options.bold ? 'font-weight="bold" ' : ''}text-anchor="${textAnchorOf(column.align)}">` +
     `${escapeXml(truncateToWidth(value, column.maxWidth, fontSize))}</text>`;
+};
+
+/**
+ * 画 [top, bottom] 这一段的列间竖线。
+ * ⚠️ 分组版的竖线**不能**从表头一路画到表底：分组行是跨列的，
+ * 一条竖线穿过去会把它切成两半，看着像「货号只属于第一列」。
+ * 所以按段调用：列头一段，每个货号的分组明细各一段。
+ */
+const pushColumnLines = (parts, top, bottom) => {
+  let x = MARGIN;
+  for (let index = 0; index < COLUMNS.length - 1; index += 1) {
+    x += COLUMNS[index].width;
+    parts.push(`<line x1="${x}" y1="${top}" x2="${x}" y2="${bottom}" ` +
+      `stroke="${COLORS.line}" stroke-width="1"/>`);
+  }
 };
 
 const formatDate = (value) => {
@@ -162,8 +266,14 @@ const formatDate = (value) => {
 const buildPurchaseRequestSvg = ({ supplierName, batchNo = '', items = [], generatedAt = new Date(),
   title = TITLE } = {}) => {
   const rows = normalizeItems(items);
+  const groups = groupRowsByItemNo(rows);
   const { rowCount, totalPairs } = summarize(rows);
-  const tableHeight = HEADER_ROW_HEIGHT + Math.max(rows.length, 1) * ROW_HEIGHT;
+  // 表高 = 列头 + Σ（分组行 + 该组的明细行）。空明细时仍然留一行正文的高度，
+  // 给「本批次没有明细」那句话站脚。
+  const bodyHeight = rows.length === 0
+    ? ROW_HEIGHT
+    : groups.reduce((sum, group) => sum + GROUP_ROW_HEIGHT + group.rows.length * ROW_HEIGHT, 0);
+  const tableHeight = HEADER_ROW_HEIGHT + bodyHeight;
   const footerTop = TABLE_TOP + tableHeight + FOOTER_GAP;
   const height = footerTop + FOOTER_HEIGHT + BOTTOM_PADDING;
 
@@ -194,34 +304,57 @@ const buildPurchaseRequestSvg = ({ supplierName, batchNo = '', items = [], gener
     parts.push(cellText(column, index, column.label, headerTextY, { fontSize: 20, bold: true }));
   });
 
-  // 明细行：空明细也要画一行「本批次没有明细」，否则整张图只剩标题，看着像渲染失败。
+  // 明细：**按货号分组**——每个货号一条跨 3 列的「分组行」（底色 + 加粗 + 字号 24），
+  // 组内每行只写 颜色 | 尺码 | 数量。空明细也要画一行「本批次没有明细」，
+  // 否则整张图只剩标题，看着像渲染失败。
   if (rows.length === 0) {
     const y = TABLE_TOP + HEADER_ROW_HEIGHT + ROW_HEIGHT / 2 + 7;
     parts.push(`<text x="${WIDTH / 2}" y="${y}" font-family="${FONT_FAMILY}" font-size="22" ` +
       `fill="${COLORS.muted}" text-anchor="middle">本批次没有明细</text>`);
   } else {
-    rows.forEach((row, rowIndex) => {
-      const rowTop = TABLE_TOP + HEADER_ROW_HEIGHT + rowIndex * ROW_HEIGHT;
-      if (rowIndex % 2 === 1) {
-        parts.push(`<rect x="${MARGIN}" y="${rowTop}" width="${TABLE_WIDTH}" height="${ROW_HEIGHT}" fill="${COLORS.stripeBg}"/>`);
+    let cursorY = TABLE_TOP + HEADER_ROW_HEIGHT;
+    groups.forEach((group, groupIndex) => {
+      const groupTop = cursorY;
+      const detailTop = groupTop + GROUP_ROW_HEIGHT;
+      parts.push(`<rect x="${MARGIN}" y="${groupTop}" width="${TABLE_WIDTH}" height="${GROUP_ROW_HEIGHT}" fill="${COLORS.groupBg}"/>`);
+      // ⚠️ 第 1 条分组行的上边线就是表头下边线（下面统一画），这里只补组与组之间的那条；
+      // 画在底色**之后**，否则会被分组行的底色盖掉一半、看着像条细灰缝。
+      if (groupIndex > 0) {
+        parts.push(`<line x1="${MARGIN}" y1="${groupTop}" x2="${MARGIN + TABLE_WIDTH}" y2="${groupTop}" ` +
+          `stroke="${COLORS.line}" stroke-width="1"/>`);
       }
-      const y = rowTop + ROW_HEIGHT / 2 + 7;
-      COLUMNS.forEach((column, index) => {
-        parts.push(cellText(column, index, row[column.key], y));
+      // 分组行跨满整张表：x 从左边距 + 单元格内边距起，可画宽度就是 TABLE_WIDTH 去掉左右内边距。
+      parts.push(`<text x="${MARGIN + CELL_PADDING}" y="${groupTop + GROUP_ROW_HEIGHT / 2 + 8}" ` +
+        `font-family="${FONT_FAMILY}" font-size="24" font-weight="bold" fill="${COLORS.ink}" text-anchor="start">` +
+        `${escapeXml(truncateToWidth(group.label, TABLE_WIDTH - CELL_PADDING * 2, 24))}</text>`);
+      // 分组行下的横线：把「标题」和「它的明细」切开。
+      parts.push(`<line x1="${MARGIN}" y1="${detailTop}" x2="${MARGIN + TABLE_WIDTH}" y2="${detailTop}" ` +
+        `stroke="${COLORS.line}" stroke-width="1"/>`);
+
+      group.rows.forEach((row, rowIndex) => {
+        const rowTop = detailTop + rowIndex * ROW_HEIGHT;
+        // 斑马纹改成**分组内**重新起算：分组行本身已经有底色，
+        // 再叠一层全局斑马纹只会让相邻两组的同一位置长得不一样，反而更难数行。
+        if (rowIndex % 2 === 1) {
+          parts.push(`<rect x="${MARGIN}" y="${rowTop}" width="${TABLE_WIDTH}" height="${ROW_HEIGHT}" fill="${COLORS.stripeBg}"/>`);
+        }
+        const y = rowTop + ROW_HEIGHT / 2 + 7;
+        COLUMNS.forEach((column, index) => {
+          parts.push(cellText(column, index, row[column.key], y));
+        });
       });
+
+      // 竖线只画在**明细行那一段**：分组行是跨列的，横穿一条竖线会把它切开。
+      pushColumnLines(parts, detailTop, detailTop + group.rows.length * ROW_HEIGHT);
+      cursorY = detailTop + group.rows.length * ROW_HEIGHT;
     });
   }
 
   // 表格边框 + 竖线：手写线条而不是 <table>，librsvg 对表格支持不稳定。
-  const tableBottom = TABLE_TOP + tableHeight;
   parts.push(`<rect x="${MARGIN}" y="${TABLE_TOP}" width="${TABLE_WIDTH}" height="${tableHeight}" ` +
     `fill="none" stroke="${COLORS.border}" stroke-width="1.5"/>`);
-  let lineX = MARGIN;
-  for (let index = 0; index < COLUMNS.length - 1; index += 1) {
-    lineX += COLUMNS[index].width;
-    parts.push(`<line x1="${lineX}" y1="${TABLE_TOP}" x2="${lineX}" y2="${tableBottom}" ` +
-      `stroke="${COLORS.line}" stroke-width="1"/>`);
-  }
+  // 列头那一段的竖线照旧画满——列头仍然是一行 3 列的格子。
+  pushColumnLines(parts, TABLE_TOP, TABLE_TOP + HEADER_ROW_HEIGHT);
   parts.push(`<line x1="${MARGIN}" y1="${TABLE_TOP + HEADER_ROW_HEIGHT}" x2="${MARGIN + TABLE_WIDTH}" ` +
     `y2="${TABLE_TOP + HEADER_ROW_HEIGHT}" stroke="${COLORS.line}" stroke-width="1"/>`);
 
@@ -259,4 +392,20 @@ module.exports = {
   normalizeItems,
   truncateToWidth,
   charWidth,
+  // 分组版的排版契约：列宽（和必须等于 TABLE_WIDTH）、分组顺序、尺码数字序。
+  COLUMNS,
+  TABLE_WIDTH,
+  GROUP_ROW_HEIGHT,
+  UNKNOWN_ITEM_NO,
+  groupRowsByItemNo,
+  sizeSortValue,
+  compareSize,
+  // 布局常量也导出：单测要按**坐标**断言「分组行跨满 3 列、字比正文重」，
+  // 而不是靠 includes 某段字符串蒙过去。
+  COLORS,
+  MARGIN,
+  CELL_PADDING,
+  TABLE_TOP,
+  ROW_HEIGHT,
+  HEADER_ROW_HEIGHT,
 };
