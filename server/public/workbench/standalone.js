@@ -1,4 +1,4 @@
-import { requireFeishuAuth } from './core/auth.js';
+import { requireFeishuAuth, showLoginButton } from './core/auth.js';
 import { describeError, showPageError } from './core/ui.js';
 import { createCommonModule } from './features/common/index.js';
 import { createSalesModule } from './features/sales/index.js';
@@ -34,6 +34,9 @@ async function start() {
     factory().mount(document.getElementById('standalone-host'));
   } catch (error) {
     showPageError(`页面启动失败：${describeError(error)}`);
+    // 与 index.html 同一条兜底：401 会自动跳登录，其余失败（403 / 网络）至少给一个
+    // 能点的「去登录」，别只留一句"启动失败"。
+    showLoginButton();
   }
 }
 
