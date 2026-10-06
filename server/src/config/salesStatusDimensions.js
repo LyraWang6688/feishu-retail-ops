@@ -59,7 +59,7 @@ const SALES_STATUS_VALUE_DOMAINS = Object.freeze({
   userAction: Object.freeze(['未确认', '已确认', '已取消', '待修改']),
   sales: Object.freeze(['未写入', '部分写入', '已写入', '写入失败']),
   funds: Object.freeze(['未写入', '已写入', '写入失败']),
-  stock: Object.freeze(['未写入', '部分写入', '已写入', '写入失败']),
+  stock: Object.freeze(['未扣减', '部分扣减', '已扣减', '扣减失败']),
 });
 
 // ⭐⭐「账做完了没有」= **两代字面量都算做完**（裁决 2026-10-06 明确）。
@@ -86,7 +86,7 @@ const SALES_STATUS_WRITE_VALUES = Object.freeze({
     none: '未写入', done: '已写入', failed: '写入失败',
   }),
   stock: Object.freeze({
-    none: '未写入', partial: '部分写入', done: '已写入', failed: '写入失败',
+    none: '未扣减', partial: '部分扣减', done: '已扣减', failed: '扣减失败',
   }),
 });
 

@@ -24,13 +24,13 @@ test('写语义键：四个维度一次写下去，走 gateway.update（字段�
   const { gateway, updates } = makeGateway();
   const writer = new SalesStatusWriter({ gateway });
   const ok = await writer.write('rec_1', {
-    userAction: '已确认', sales: '已写入', funds: '已写入', stock: '已写入',
+    userAction: '已确认', sales: '已写入', funds: '已写入', stock: '已扣减',
   });
   assert.equal(ok, true);
   assert.deepEqual(updates, [{
     tableKey: 'salesEntry',
     recordId: 'rec_1',
-    values: { userAction: '已确认', sales: '已写入', funds: '已写入', stock: '已写入' },
+    values: { userAction: '已确认', sales: '已写入', funds: '已写入', stock: '已扣减' },
   }]);
 });
 
