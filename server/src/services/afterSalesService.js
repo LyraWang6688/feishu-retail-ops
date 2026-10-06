@@ -290,8 +290,9 @@ class AfterSalesService {
 
   async run(request, progress) {
     const { spec } = request;
-    // 这一次售后的业务时刻：收款时间 / 往来货款发生时间 / 库存流水发生时间用同一个值，
-    // 免得同一笔售后在几张表上时间不一致（调用方给了时间就用它，否则用当前时间）。
+    // 这一次售后的业务时刻：只喂给「收款时间」(receivedAt) 与库存服务的本地任务记录，
+    // **不写**任何飞书时间列（2026-10-06 起：「发生时间」不再写，「入库时间」「报单时间」
+    // 已从生产表删除）。调用方给了时间就用它，否则用当前时间。
     request.occurredAt = request.receivedAt ?? this.now();
     // 要用「客户往来货款」的幂等键时先校验它真实存在：缺列要大声失败，而且要在任何写入之前。
     if (request.settlement === 'prepaid') await this.validateCreditKey();
@@ -669,7 +670,12 @@ class AfterSalesService {
       values: {
         changeType: this.config.prepaidChangeType,
         receivableChange: request.diffAmount,
-        occurredAt: request.occurredAt,
+        // ⚠️ 2026-10-06：不再写「发生时间」。
+        // 业务负责人的口径：时间字段除了「收款时间」以外，飞书里都由自动字段负责
+        //（表里的「创建时间」/「更新时间」），代码一律不写时间列。
+        // ⚠️ 但这一列在生产真表「客户往来货款」里**还在**，而且是一次性的 DateTime
+        // （type=5），不是自动的「创建时间」——所以从此这一列会是空的，等业务负责人
+        // 确认是删掉它还是改成自动字段；在那之前 schema 里的映射刻意保留（见 v1BitableSchema）。
         sourceOrderNo: request.originalSalesOrderNo,
         // 这个字段就是这张表的幂等键：本地记录丢了也能按它回查认出这一笔。
         [AFTER_SALES_CREDIT_KEY_FIELD]: request.eventId,
