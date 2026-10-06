@@ -171,7 +171,15 @@ const createLarkEventHandlers = (service) => ({
       setImmediate(() => {
         try {
           // acceptMany 对单条与多条都能用：多条 = 同一包一起交给处理逻辑。
-          service.purchaseWebhooks.acceptMany(intake.kind, recordIds).catch((error) => {
+          //
+          // ⚠️ 第三个参数刻意把「这一包应有几条」传下去（业务负责人 2026-10-06 的最终口径：
+          // 「到齐就发」）。链路不再靠时间窗决定"什么时候出图"，而是等这一包里**真正进了
+          // 链路的每一条**都处理完（成功 / 跳过 / 重试 3 次读不到，都算处理完）再出图。
+          // 传下去的 recordIds.length 就是"到齐"的分母——它已经筛过了（修改/删除、
+          // 无 record_id、到货表都在上面 continue 掉了），所以数的是"进了链路的条数"。
+          service.purchaseWebhooks.acceptMany(intake.kind, recordIds, {
+            expectedCount: recordIds.length,
+          }).catch((error) => {
             logError(`lark.bitable.${intake.kind}.failed`, {
               table_id: tableId, record_ids: recordIds, error: error.message,
             });

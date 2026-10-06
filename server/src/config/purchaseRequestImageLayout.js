@@ -83,7 +83,7 @@ const detailRowHeight = (lineCount) => {
 // 按字符数限制会让 12 个汉字的颜色轻松捅进第二列（真机渲染验证时踩到过）。
 const CELL_PADDING = 16;
 const COLUMNS = [
-  { key: 'color', label: '颜色', width: 240, align: 'start' },
+  { key: 'color', label: '说明', width: 240, align: 'start' },
   // ⚠️ `wrap: true`（2026-10-06 第三轮）：这一格的「尺码×数量」**装不下就换行**，
   // 不截断。颜色那一格仍然是截断（颜色是货品库里的短词，240 宽能放 9 个汉字，
   // 真超长说明数据有问题，截断+「…」正好让人一眼看出来）。

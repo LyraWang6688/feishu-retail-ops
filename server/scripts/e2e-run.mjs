@@ -19,7 +19,7 @@
  * `return` 常用参数：
  *   --qty <n>        退货数量（默认 2）——**每条**记录的数量
  *   --records <n>    写几条**同批次号**的退货记录（默认 1）
- *                    · 2 条 = 验证「同一个批次号只出一张图、只发一次群」（归批窗口的意义）
+ *                    · 2 条 = 验证「同一个批次号只出一张图、只发一次群」（到齐后整批处理一次的意义）
  *                    · 配合 --gap-ms 复现生产实测：「同一次提交拆成 2 次推送、相隔 16 秒」
  *   --gap-ms <ms>    同批号相邻两条之间的间隔（默认：records>1 时 16000，否则 0）
  *                    · >0 = 分条推送（逐条 accept）；0 = 同一包推送（走 acceptMany）
@@ -700,7 +700,7 @@ const cmdReturn = async () => {
   // ── ② 写「供应商对接」记录（真的写测试 Base）──
   head(`③ 写入「供应商对接」记录（真写测试 Base；本次 ${records} 条）`);
   const quantityType = await fieldTypeOf(gateway, 'purchaseReport', 'quantity');
-  // ⚠️ 多条记录必须**共用同一个报货批次号** —— 归批窗口就是按它归集的
+  // ⚠️ 多条记录必须**共用同一个报货批次号** —— 整批处理（到齐后一次出图）就是按它归集的
   //（生产上这是飞书表单里填的那个号；这里由脚本生成一个同值的）。
   const batchNo = String(flag('batch-no', '') || `SELFTEST-${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}`);
   const values = {
@@ -721,16 +721,20 @@ const cmdReturn = async () => {
   if (operatorOpenId) values.operator = person(operatorOpenId);
 
   // ── ④ 跑链路（accept = 事件入口走的那条路）──
-  head('④ 跑链路：accept("supplier-report") → 退货归批窗口 → runReturnBatch → 出图/发群/回填');
+  head('④ 跑链路：accept/acceptMany("supplier-report") → 到齐后整批处理 → runReturnBatch → 出图/发群/回填');
   say(`  报货批次号 = ${batchNo}`);
   say(`  推送方式 = ${records > 1 && gapMs === 0
     ? '同一包（acceptMany：一次推送里的多条 action）'
     : `分条推送（相邻两条相隔 ${gapMs}ms${gapMs >= 16_000 ? '，复现生产那次 16 秒拆包' : ''}）`}`);
-  say(`  归批窗口 = ${process.env.PURCHASE_RETURN_BATCH_WINDOW_MS || '(未设置 → 默认 30000ms)'}`);
+  say(`  归批窗口（2026-10-06 起只当"同批重试间隔"，不再是"到点就发图"）= ${process.env.PURCHASE_RETURN_BATCH_WINDOW_MS || '(未设置 → 默认 30000ms)'}`);
 
   const createdIds = [];
   const acceptedList = [];
   const pushLog = [];
+  // 同一包（gap-ms 0）：先把这一包**全部**记录写出来，再用一次 acceptMany 交出去
+  // ——这正是 larkEvents 真实分派的方式（一次 action_list = 一包），也是"到齐"判据
+  // 拿到的那个分母（expectedCount）。分条推送（gap-ms > 0）仍是逐条 accept。
+  const samePackage = records > 1 && gapMs === 0;
   for (let index = 0; index < records; index += 1) {
     if (index > 0 && gapMs > 0) {
       say(`  … 等 ${gapMs}ms（模拟飞书把同一次提交分条推送）`);
@@ -738,17 +742,30 @@ const cmdReturn = async () => {
     }
     const created = await gateway.create('purchaseReport', values);
     createdIds.push(created.recordId);
-    const accepted = await service.accept('supplier-report', created.recordId);
-    acceptedList.push(accepted);
-    pushLog.push({ record_id: created.recordId, task_id: accepted.taskId, at: new Date().toISOString() });
+    if (!samePackage) {
+      const accepted = await service.accept('supplier-report', created.recordId);
+      acceptedList.push(accepted);
+      pushLog.push({ record_id: created.recordId, task_id: accepted.taskId, at: new Date().toISOString() });
+      say(`      accept → ${JSON.stringify(accepted)}`);
+    }
     say(`  ✓ [${index + 1}/${records}] record_id = ${created.recordId}｜数量=${qty}（字段类型 type=${quantityType}）尺码=${requestedSize === null ? '(空)' : requestedSize}｜货品=${productLabel}`);
-    say(`      accept → ${JSON.stringify(accepted)}`);
+  }
+  if (samePackage) {
+    const acceptedPackage = await service.acceptMany(
+      'supplier-report', createdIds, { expectedCount: createdIds.length },
+    );
+    createdIds.forEach((recordId, index) => {
+      const item = acceptedPackage.records[index] || {};
+      acceptedList.push(item);
+      pushLog.push({ record_id: recordId, task_id: item.taskId || '', at: new Date().toISOString() });
+    });
+    say(`      acceptMany → 一包 ${createdIds.length} 条：${JSON.stringify(acceptedPackage.records.map((item) => item.taskId))}`);
   }
   const recordId = createdIds[0];
   // 整批的 owner 是**第一条**记录的任务（见 handleReturnBatch 的 batchTaskId）。
   const batchTaskId = acceptedList[0].taskId;
 
-  // 两条同批号记录是"到点整批一起处理"：等窗口到点，等第一条任务落终态。
+  // 到齐（这一包进了链路的每一条都处理完）后整批一起处理：等第一条任务落终态。
   let task = await waitForTask(store, batchTaskId, Math.max(180_000, gapMs + 60_000));
   say(`  整批任务状态（轮询到的）：status=${task?.status}${task?.error ? ` error=${task.error}` : ''}`);
   // 同批其余记录的任务：等它们也落终态，确认"跟着这一批处理过了"而不是各自跑了一遍。
@@ -1022,7 +1039,7 @@ const cmdReturn = async () => {
   if (records > 1) {
     checks.push({
       id: '①b',
-      text: `同批次号 ${records} 条记录 → 归批窗口把它们认成**一批**：只出 1 张 PNG、只发 1 次群`,
+      text: `同批次号 ${records} 条记录 → 到齐后整批处理一次：只出 1 张 PNG、只发 1 次群`,
       // 判据只看「一批」的信号：1 张 PNG、1 条群图、1 条群文字、以及整批的双数对得上。
       // ⚠️ 不拿流水**行数**判：实现是「一个尺码一行、变动数量=该尺码双数」，
       // 行数天然可能少于双数（那是 ② 的 substance 要讲的）。

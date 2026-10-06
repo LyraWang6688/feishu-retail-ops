@@ -178,6 +178,19 @@ const makeService = (options = {}) => {
   return { service, store, gateway, messages, images, inventoryStore };
 };
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// 任务是否已经"落定"（不再是排队/处理中/等这一包到齐）。
+const waitForTaskSettled = async (store, taskId, timeoutMs = 5_000) => {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const task = await store.get(taskId);
+    if (task && !['queued', 'processing', 'batch_waiting'].includes(task.status)) return task;
+    if (Date.now() > deadline) return task;
+    await sleep(10);
+  }
+};
+
 const runReturn = async (options) => {
   const ctx = makeService(options);
   const recordId = options.recordId || 'rep_1';
@@ -187,12 +200,13 @@ const runReturn = async (options) => {
   let error = null;
   try {
     result = await ctx.service.process('supplier-report', recordId, taskId);
-    // 带「报货批次号」的退货现在先进归批窗口（等整批一起处理）——用例里不等 30 秒，
-    // 直接手动 flush 到点，语义与"窗口到点"完全一样（走的是同一个 flushReturnBatch）。
+    // 带「报货批次号」的退货会先进"等这一包到齐"的批次。新口径（业务负责人 2026-10-06
+    // 「到齐就发」）下，这一条登记完就**到齐**了，整批处理由服务自己触发（见 flushBatchSoon）。
+    // ⚠️ 不再手动 flushReturnBatch：那会和自动触发的那次抢（先到的那次把批次删掉，
+    // 手动这次空转返回），断言就会抢在处理完成之前跑。
     if (result?.status === 'batch_waiting') {
-      await ctx.service.flushReturnBatch(result.batch_no);
-      const task = await ctx.store.get(taskId);
-      result = task?.result ?? result;
+      const settled = await waitForTaskSettled(ctx.store, taskId);
+      result = settled?.result ?? result;
     }
   } catch (thrown) {
     // process() 会把失败落成可重试的 failed 之后再把异常抛出去；这里照样拿任务状态断言。
