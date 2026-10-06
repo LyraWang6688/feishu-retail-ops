@@ -62,14 +62,19 @@ const ADJUSTMENT_BEHAVIORS = Object.freeze({
 //    她定下来之前先按最保守的 null 走。**只改这个常量，逻辑一行都不用动。**
 const MANUAL_DECREASE_CONSUMES = null;
 
-// ⚠️ TODO(inventory-adjustment) 待业务负责人定 ②：转冻结 / 转释放落到哪个字段？
-//    「所属状态」的选项只有 门盒 | 样品 | 仓库，**没有"冻结"**，所以 from/to 现在填不了。
-//    · 方案 A（推荐）：新增独立的「冻结状态：可用 / 冻结」字段，「所属状态」不动
-//      → 冻结/释放只翻这一个字段，样品↔门盒 与 可用↔冻结 互不干扰；
-//    · 方案 B：把"冻结"塞进「所属状态」→ 释放时回门盒还是回样品就分不清了（信息丢失）。
-//    定下来后在这里填 { from, to }（方案 A 的 to 可能是 { freeze: '冻结' } 这种形状）。
-const FREEZE_STATE_TRANSITION = null;
-const UNFREEZE_STATE_TRANSITION = null;
+// ✅ 待定 ② 已定（业务负责人 2026-10-06，工作台改造需求）：
+//    **转冻结 = 门盒/样品 → 仓库；转释放 = 仓库 → 门盒/样品**（换季收鞋 / 拿鞋）。
+//    即采用方案 B 的形状——只改「所属状态」这一列，**不新增「冻结状态」列**。
+//    ⚠️ 方案 B 的已知代价：记录进了「仓库」以后**原来在门盒还是样品就查不到了**
+//      （「库存流水」没有操作人列、也没有指向单据的来源列，翻不回来）。
+//      所以**转释放必须由她在界面上选"回门盒还是回样品"**——
+//      `to: null` + `targets` 就是把这个选择权留在入口，代码不替她猜。
+const FREEZE_STATE_TRANSITION = Object.freeze({ from: ['门盒', '样品'], to: '仓库' });
+const UNFREEZE_STATE_TRANSITION = Object.freeze({ from: ['仓库'], to: null, targets: ['门盒', '样品'] });
+
+// 「实时库存」的「所属状态」选项。原先写死在 applyChange 的入参校验里；
+// 抽成常量是因为状态类变更（人工调整）也要用同一份值域，两份会漂移。
+const LIVE_STATES = Object.freeze(['门盒', '样品', '仓库']);
 
 const STOCK_MOVEMENTS = Object.freeze({
   [MOVEMENT_SALE_DECREASE]: {
@@ -151,20 +156,21 @@ const STOCK_MOVEMENTS = Object.freeze({
     triggerSampleReplacement: false,
   },
   // 四个「转」：方向=不影响，只改「实时库存」的「所属状态」，数量一条不变。
-  // 目标状态用 stateTransition 表达，**不写死在逻辑里**；填 null 的两条是待她定的。
+  // 目标状态用 stateTransition 表达，**不写死在逻辑里**（改口径只改上面的常量）。
   [ADJUSTMENT_BEHAVIORS.FREEZE]: {
     direction: '不影响',
     ledgerSource: null,
     consumes: null,
     triggerSampleReplacement: false,
-    stateTransition: FREEZE_STATE_TRANSITION, // ⚠️ TODO 待她定 ②
+    stateTransition: FREEZE_STATE_TRANSITION, // 门盒/样品 → 仓库（换季收起）
   },
   [ADJUSTMENT_BEHAVIORS.UNFREEZE]: {
     direction: '不影响',
     ledgerSource: null,
     consumes: null,
     triggerSampleReplacement: false,
-    stateTransition: UNFREEZE_STATE_TRANSITION, // ⚠️ TODO 待她定 ②
+    // 仓库 → 门盒/样品；**回哪一个由入口选**（to: null + targets）。
+    stateTransition: UNFREEZE_STATE_TRANSITION,
   },
   [ADJUSTMENT_BEHAVIORS.SAMPLE_TO_DOORBOX]: {
     direction: '不影响',
@@ -204,6 +210,41 @@ const requireQuantityMovement = (code) => {
       + '不能走 applyChange（数量通路）；请走状态变更通路');
   }
   return movement;
+};
+
+// 反向闸门：数量类行为不许走状态变更通路（只改「所属状态」不改数量的那条路）。
+// 与 requireQuantityMovement 互为镜像，两侧都拦，避免"走错通路"变成静默的账实不符。
+const requireStateMovement = (code) => {
+  const movement = requireMovement(code);
+  if (QUANTITY_DIRECTIONS.includes(movement.direction)) {
+    throw new Error(`库存动作「${code}」的库存方向是“${movement.direction}”，属于数量类变更，`
+      + '不能走状态变更通路（transitionState）；请走 applyChange');
+  }
+  if (!movement.stateTransition) {
+    throw new Error(`库存动作「${code}」没有配置状态流转目标（stateTransition 为空），`
+      + '无法执行状态变更：请先在注册表里补齐 from/to');
+  }
+  return movement;
+};
+
+// 状态流转的目标状态：固定目标直接用配置里的 to；「由入口选」的（to: null）
+// 必须落进 targets 白名单，否则会写进一个「所属状态」里不存在的选项
+//（飞书会自动新建选项，于是账面留下一批谁也读不懂的状态）。
+const resolveTargetState = (code, transition, requested) => {
+  if (transition.to) {
+    if (requested && String(requested) !== transition.to) {
+      throw new Error(`库存动作「${code}」的目标状态固定为「${transition.to}」，不接受「${requested}」`);
+    }
+    return transition.to;
+  }
+  const target = String(requested || '').trim();
+  if (!LIVE_STATES.includes(target)) {
+    throw new Error(`库存动作「${code}」必须选择目标状态：${(transition.targets || LIVE_STATES).join(' / ')}`);
+  }
+  if (transition.targets && !transition.targets.includes(target)) {
+    throw new Error(`库存动作「${code}」的目标状态只能是：${transition.targets.join(' / ')}`);
+  }
+  return target;
 };
 
 // 补样品不算数量变动，但它的流水同样挂在销售明细上，用销售动作的来源字段查找。
@@ -351,7 +392,7 @@ class InventoryService {
     const size = normalizeSize(input.size);
     const quantity = positiveInteger(input.quantity, '变动数量');
     const state = String(input.state || '门盒');
-    if (!['门盒', '样品', '仓库'].includes(state)) throw new Error('库存所属状态无效');
+    if (!LIVE_STATES.includes(state)) throw new Error('库存所属状态无效');
     const stockKey = `${input.productRecordId}|${size}|${state}`;
     // 配置驱动的闸门：状态类行为（方向=不影响，含转冻结/转释放/两个"转"）不许走数量通路。
     // 放在任何远端读写之前，且不改变上面几条入参校验的报错顺序。
@@ -412,6 +453,12 @@ class InventoryService {
           behavior_record_id: behavior.recordId,
           source_record_id: input.sourceRecordId,
           occurred_at: Number(input.occurredAt || Date.now()),
+          // 谁做的这次调整（人工调整时由工作台传入飞书 open_id）。
+          // ⚠️ 「库存流水」目前**没有「操作人」列**（2026-10-06 只读核过测试 Base：
+          // 库存键/库存流水号/库存行为/编号/尺码/变动数量/关联销售/关联采购/创建时间/更新时间），
+          // 所以只落**本地任务日志 + 结构化日志**，不往远端写；那两处已经能回答"谁调的"。
+          // 等「库存流水」加了「操作人」列，在这里补一个 ledgerSource 同级的映射即可。
+          operator_open_id: input.operatorOpenId || '',
           live_record_ids: selected.map((record) => record.record_id),
           sample_consumed_quantity: sampleConsumed,
           removed_live_record_ids: [],
@@ -424,13 +471,193 @@ class InventoryService {
     });
   }
 
+  // ── 状态变更通路（人工「换季调整」：转冻结 / 转释放，以及样品 ↔ 门盒）────────
+  // 与 applyChange 的分工：
+  //   · applyChange   = 数量类（增加 / 减少）——新建或删除「实时库存」记录；
+  //   · transitionState = 状态类（方向=不影响）——**只改「所属状态」，一条记录都不增删**。
+  // 两条通路共用 runForStock 串行队列，避免和销售/采购同时改同一双鞋。
+  //
+  // 幂等：`sourceRecordId` 由入口提供（工作台侧 = requestId + 目标身份，
+  // 同一次提交重试复用同一个 requestId，见 InventoryAdjustmentService）。
+  //
+  // ⚠️ 为什么人工调整还需要 `findOperationBySource`：`operationId(kind, source)` 里带 kind，
+  // 而「按实际盘点数」的 kind（调增还是调减）**要先算出差额才知道**——重试时账面已经变了，
+  // 差额会算成 0，于是拿不到原来那条任务、反而报"不需要调整"。所以入口先用来源回查一次，
+  // 命中已完成任务就直接返回它（同一次提交重试的唯一正确语义）。
+  async findOperationBySource(sourceRecordId) {
+    const matches = (await this.store.list()).filter((record) => record.source_record_id === sourceRecordId);
+    if (matches.length > 1) {
+      throw new Error(`来源 ${sourceRecordId} 存在多条库存任务，请人工核对`);
+    }
+    return matches[0] || null;
+  }
+
+  async transitionState(input = {}) {
+    if (!input.productRecordId) throw new Error('库存状态变更缺少商品 record_id');
+    if (!input.sourceRecordId) throw new Error('库存状态变更缺少来源标识（requestId）');
+    const movement = requireStateMovement(input.kind);
+    const transition = movement.stateTransition;
+    const fromStates = [].concat(transition.from);
+    const size = normalizeSize(input.size);
+    const quantity = positiveInteger(input.quantity, '变更数量');
+    const toState = resolveTargetState(input.kind, transition, input.toState);
+    // 单一起点（转释放：仓库）可以由配置决定；多起点（转冻结：门盒/样品）必须由入口指明，
+    // 否则"这一双原来在哪"就靠猜了。
+    const fromState = fromStates.length === 1 ? fromStates[0] : String(input.fromState || '').trim();
+    if (!fromStates.includes(fromState)) {
+      throw new Error(`库存动作「${input.kind}」只能从「${fromStates.join('、')}」转出，`
+        + `不能从「${fromState || '空'}」转出`);
+    }
+    if (fromState === toState) throw new Error(`库存动作「${input.kind}」的起点和终点都是「${toState}」，无需调整`);
+    const stockKey = `${input.productRecordId}|${size}|${fromState}`;
+    return this.runForStock(stockKey, async () => {
+      await this.ensureSchema();
+      const sizeReference = await this.sizeReferences.resolveByNumber(size);
+      await this.resumePending(stockKey);
+      const id = operationId(input.kind, input.sourceRecordId);
+      let operation = await this.store.get(id);
+      if (operation) {
+        if (operation.kind !== input.kind || operation.product_record_id !== input.productRecordId ||
+          operation.size !== size || operation.from_state !== fromState ||
+          operation.to_state !== toState || operation.quantity !== quantity) {
+          throw new Error(`来源 ${input.sourceRecordId} 的库存状态变更内容与首次提交不一致`);
+        }
+      } else {
+        // 行为表的「库存方向=不影响」+ 是否启用在这里校验（resolveStockBehavior）。
+        const behavior = await this.resolveStockBehavior(input.kind);
+        const allLiveRecords = await this.gateway.listAll('liveInventory');
+        const candidates = this
+          .findLiveInventoryIn(allLiveRecords, input.productRecordId, sizeReference.recordId, fromState)
+          .sort((left, right) => String(left.record_id).localeCompare(String(right.record_id)));
+        if (candidates.length < quantity) {
+          throw new Error(`${fromState}库存不足：${input.productRecordId} ${size}码，`
+            + `需 ${quantity} 双，现有 ${candidates.length} 双`);
+        }
+        operation = await this.store.create({
+          operation_id: id,
+          type: 'state_transition',
+          schema_version: 3,
+          status: 'prepared',
+          kind: input.kind,
+          stock_key: stockKey,
+          product_record_id: input.productRecordId,
+          size,
+          size_record_id: sizeReference.recordId,
+          from_state: fromState,
+          to_state: toState,
+          quantity,
+          direction: behavior.direction,
+          behavior_record_id: behavior.recordId,
+          source_record_id: input.sourceRecordId,
+          occurred_at: Number(input.occurredAt || Date.now()),
+          // 同上：人工调整的操作人只落本地任务 + 日志（「库存流水」还没有「操作人」列）。
+          operator_open_id: input.operatorOpenId || '',
+          live_record_ids: candidates.slice(0, quantity).map((record) => record.record_id),
+          moved_live_record_ids: [],
+          current_quantity: candidates.length,
+        });
+      }
+      return this.executeStateTransition(operation);
+    });
+  }
+
+  // 状态变更的执行体。顺序与 executeOperation 一致：先确认流水，再动实时库存；
+  // 每一步都把已完成的进度写回本地任务，中途失败（或响应丢失）后按同一任务续跑。
+  async executeStateTransition(operation) {
+    if (operation.status === 'completed') return operation.result;
+    if (![2, 3].includes(operation.schema_version)) {
+      throw new Error(`库存状态变更 ${operation.operation_id} 使用旧结构且尚未完成，请先人工核对，不能自动重试`);
+    }
+    const movement = requireStateMovement(operation.kind);
+    const sizeReference = await this.sizeReferences.resolveByNumber(operation.size);
+    if (operation.size_record_id && operation.size_record_id !== sizeReference.recordId) {
+      throw new Error(`库存状态变更 ${operation.operation_id} 的尺码关联已改变，请人工核对`);
+    }
+    // 流水先写：数量类动作的第三层幂等靠「按来源回查流水」，人工调整没有来源列
+    //（ledgerSource = null），只能靠本地任务上的 ledger_record_id，所以先把 id 落盘。
+    let ledger = await this.findOperationLedger(operation);
+    if (ledger && !this.ledgerMatchesOperation(ledger, {
+      productRecordId: operation.product_record_id,
+      sizeRecordId: sizeReference.recordId,
+      behaviorRecordId: operation.behavior_record_id,
+      sourceField: null,
+      sourceRecordId: null,
+      // 状态变更不改变数量：流水「变动数量」必须是 0
+      //（与补样品 promoteToSample 同一个形状；「变动数量」存绝对值，增减靠方向表达）。
+      quantityChange: 0,
+    })) {
+      throw new Error(`已有库存流水 ${ledger.record_id} 的货品、尺码关联、行为或数量不一致，请人工核对，不能自动恢复`);
+    }
+    if (!ledger) {
+      const created = await this.gateway.create('inventoryLedger', {
+        product: relation(operation.product_record_id),
+        size: relation(sizeReference.recordId),
+        quantityChange: 0,
+        behavior: relation(operation.behavior_record_id),
+      });
+      ledger = { record_id: created.recordId };
+      operation = await this.store.update(operation.operation_id, {
+        status: 'ledger_created', ledger_record_id: ledger.record_id,
+      });
+    }
+    const liveFields = this.gateway.table('liveInventory').fields;
+    const moved = [...(operation.moved_live_record_ids || [])];
+    for (const recordId of operation.live_record_ids || []) {
+      if (moved.includes(recordId)) continue;
+      const record = await this.gateway.get('liveInventory', recordId);
+      if (!record) throw new Error(`待变更状态的实时库存 ${recordId} 不存在，请人工核对`);
+      if (!linkedRecordIds(record.fields?.[liveFields.product]).includes(operation.product_record_id) ||
+        !linkedRecordIds(record.fields?.[liveFields.size]).includes(sizeReference.recordId)) {
+        throw new Error(`待变更状态的实时库存 ${recordId} 的货品或尺码已改变，请人工核对`);
+      }
+      const current = textValue(record.fields?.[liveFields.state]);
+      // 已经是目标状态 = 上一步写成功但本地没落盘，视为已完成（幂等）；
+      // 既不是起点也不是终点 = 别人动过这一双，停下转人工，绝不硬改。
+      if (current !== operation.to_state && current !== operation.from_state) {
+        throw new Error(`待变更状态的实时库存 ${recordId} 的所属状态是「${current}」，`
+          + `既不是「${operation.from_state}」也不是「${operation.to_state}」，请人工核对`);
+      }
+      if (current !== operation.to_state) {
+        await this.gateway.update('liveInventory', recordId, { state: operation.to_state });
+      }
+      moved.push(recordId);
+      operation = await this.store.update(operation.operation_id, { moved_live_record_ids: moved });
+    }
+    const result = {
+      stockKey: operation.stock_key,
+      ledgerRecordId: ledger.record_id,
+      liveRecordIds: moved,
+      movementQuantity: 0,
+      direction: movement.direction,
+      productRecordId: operation.product_record_id,
+      size: operation.size,
+      fromState: operation.from_state,
+      toState: operation.to_state,
+      quantity: operation.quantity,
+    };
+    await this.store.update(operation.operation_id, { status: 'completed', result });
+    logInfo('inventory.state.transitioned', {
+      operation_id: operation.operation_id,
+      kind: operation.kind,
+      stock_key: operation.stock_key,
+      from_state: operation.from_state,
+      to_state: operation.to_state,
+      quantity: operation.quantity,
+      live_record_ids: moved,
+      ledger_record_id: ledger.record_id,
+      operator_open_id: operation.operator_open_id || undefined,
+    });
+    return result;
+  }
+
   async resumePending(stockKey) {
     const pending = (await this.store.list()).filter(
-      (record) => ['inventory_change', 'sample_promotion'].includes(record.type) &&
+      (record) => ['inventory_change', 'sample_promotion', 'state_transition'].includes(record.type) &&
         record.stock_key === stockKey && record.status !== 'completed'
     );
     for (const operation of pending.reverse()) {
       if (operation.type === 'sample_promotion') await this.executeSamplePromotion(operation);
+      else if (operation.type === 'state_transition') await this.executeStateTransition(operation);
       else await this.executeOperation(operation);
     }
   }
@@ -651,6 +878,7 @@ class InventoryService {
       target_quantity: operation.target_quantity,
       ledger_record_id: ledger.record_id,
       live_record_ids: result.liveRecordIds,
+      operator_open_id: operation.operator_open_id || undefined,
     });
     return result;
   }
@@ -826,6 +1054,8 @@ module.exports = {
   operationId,
   STOCK_MOVEMENTS,
   ADJUSTMENT_BEHAVIORS,
+  // 状态值域从这里导出，避免「实时库存」的状态清单在别处再抄一份（抄了就会漂移）。
+  LIVE_STATES,
   MOVEMENT_PURCHASE_DECREASE,
   MOVEMENT_SALE_RETURN,
   MOVEMENT_SALE_COMPENSATION,

@@ -1,1 +1,28 @@
 .inventory-entries { margin-bottom: 4px; }
+
+/* ── 实时库存（页面）──────────────────────────────────────────────────── */
+
+/* 「换季调整（按品类批量）」要一列品类，好让她确认批量挑的是哪一类。 */
+.inventory-filters { align-items: center; }
+
+/* ── 库存手工调整（盘点调整 / 换季调整）──────────────────────────────── */
+
+/* 货品选择器：按货号搜出来的候选，点一个选中。 */
+.product-picker { max-height: 260px; margin: 12px 0; overflow-y: auto; }
+.picker-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.picker-item {
+  display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; text-align: left;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: white; cursor: pointer;
+}
+.picker-item:hover { border-color: var(--primary); background: var(--primary-soft); }
+.picker-item.active { border-color: var(--primary); background: var(--primary-soft); box-shadow: var(--shadow-card); }
+.picker-item span { font-size: 12px; }
+
+/* 「按实际盘点数」/「按增减数量」二选一 —— 通用样式在 styles/base.css 的 .mode-choice。 */
+
+/* 当前状态高亮：避免她看错"这次调整的是哪一种状态"。 */
+.level-current { outline: 2px solid var(--primary); border-radius: var(--radius-sm); }
+
+/* 换季调整的批量列表。 */
+.season-list { margin: 12px 0; }
+.row-actions { display: flex; gap: 8px; margin-bottom: 8px; }

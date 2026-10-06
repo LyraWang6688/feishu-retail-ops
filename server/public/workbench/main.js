@@ -1,14 +1,27 @@
 import { requireFeishuAuth } from './core/auth.js';
 import { describeError, showPageError } from './core/ui.js';
+import { createCommonModule } from './features/common/index.js';
 import { createSalesModule } from './features/sales/index.js';
 import { createPurchaseModule } from './features/purchase/index.js';
 import { createInventoryModule } from './features/inventory/index.js';
 import { createPlaceholderModule } from './features/shared/placeholder.js';
 
+// 一级 tab 只有 3 个（业务负责人 2026-10-06）：常用功能 / 销售查询 / 实时库存。
+// 每个 tab 在 index.html 里对应一个 data-module，也各自有一个独立页面：
+//   common → /workbench/common.html · sales → /workbench/sales-query.html
+//   inventory → /workbench/inventory.html
+//
+// ⚠️ HIDDEN（入口隐去、**代码保留**）：purchase / finance / douyin / platform。
+//    它们仍然在这个 modules 表里，只是 index.html 里没有对应的 data-module 按钮，
+//    所以点不到。要恢复某个入口：在 index.html 的 #main-tabs 里加回一行
+//    <button class="main-tab" data-module="purchase">采购管理</button> 即可，逻辑不用改。
+//    她明确说过「其余的入口可以先隐去，先不做」——是**隐去**，不是删。
 const modules = new Map([
+  ['common', createCommonModule()],
   ['sales', createSalesModule()],
-  ['purchase', createPurchaseModule()],
   ['inventory', createInventoryModule()],
+  // ── 以下四个是隐去的入口（保留代码）────────────────────────────────────
+  ['purchase', createPurchaseModule()],
   ['finance', createPlaceholderModule({
     title: '资金管理',
     description: '统一展示实际到账、顾客待收款、平台待结算和供应商应付款。',
@@ -28,6 +41,9 @@ const modules = new Map([
 
 const mounted = new Map();
 const host = document.getElementById('module-host');
+// 页面加载时打开的 tab = 第一个可见 tab（现在是「常用功能」）。写死成 'sales'
+// 会在 tab 顺序调整后又对不上，所以从 DOM 里取。
+const initialModule = document.querySelector('.main-tab')?.dataset.module || 'common';
 
 function activateModule(moduleId) {
   showPageError('');
@@ -53,7 +69,7 @@ async function start() {
     document.querySelectorAll('.main-tab').forEach((tab) => {
       tab.addEventListener('click', () => activateModule(tab.dataset.module));
     });
-    activateModule('sales');
+    activateModule(initialModule);
   } catch (error) {
     showPageError(`工作台启动失败：${describeError(error)}`);
   }

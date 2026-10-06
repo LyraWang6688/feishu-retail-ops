@@ -15,12 +15,14 @@ function renderShell(container, focused = false) {
   }
   container.innerHTML = `
     <section class="panel">
-      <div class="panel-header"><div><h2>库存管理</h2><p class="subtitle">实时库存查询、盘点和库存调整</p></div><div class="header-actions"><a class="btn" href="/workbench/inventory.html">独立打开实时库存</a><button class="btn" type="button" data-action="refresh">刷新数据</button></div></div>
+      <div class="panel-header"><div><h2>实时库存</h2><p class="subtitle">实时库存查询；手工调整在「常用功能 → 库存手工调整」</p></div><div class="header-actions"><a class="btn" href="/workbench/inventory.html">独立打开实时库存</a><a class="btn" href="/workbench/inventory-adjustment.html">库存手工调整</a><button class="btn" type="button" data-action="refresh">刷新数据</button></div></div>
       <h3 class="section-title">库存操作入口</h3>
       <div class="quick-entries inventory-entries">
-        <div class="entry-card disabled-card"><div class="icon">📊</div><h3>库存手工盘点</h3><p>核对系统库存与实际库存差异</p><div class="arrow">规划中</div></div>
-        <div class="entry-card disabled-card"><div class="icon">✏️</div><h3>盘点结果录入</h3><p>记录盘点结果并生成差异</p><div class="arrow">规划中</div></div>
-        <div class="entry-card disabled-card"><div class="icon">🔧</div><h3>库存状态调整</h3><p>按规则调整样品、门盒和仓库状态</p><div class="arrow">规划中</div></div>
+        <a class="entry-card" href="/workbench/inventory-adjustment.html">
+          <div class="icon">🧮</div><h3>库存手工调整</h3>
+          <p>盘点调整（改数量，可增可减）· 换季调整（门盒/样品 ↔ 仓库，数量不变）</p>
+          <div class="arrow">进入 →</div>
+        </a>
       </div>
       <div class="sub-tabs">
         <button class="sub-tab active" type="button" data-subtab="inventory-live">实时库存查询</button>
@@ -28,8 +30,8 @@ function renderShell(container, focused = false) {
         <button class="sub-tab" type="button" data-subtab="inventory-adjust">库存调整记录</button>
       </div>
       <div id="inventory-live-subpanel" class="sub-panel"><div class="section-loading">正在加载实时库存…</div></div>
-      <div id="inventory-check-subpanel" class="sub-panel hidden"><div class="inline-placeholder"><h3>盘点记录</h3><p>盘点业务规则和查询接口尚未建立。</p><span class="tag tag-info">规划中</span></div></div>
-      <div id="inventory-adjust-subpanel" class="sub-panel hidden"><div class="inline-placeholder"><h3>库存调整记录</h3><p>批量状态流转和调整流水将在后端接口完成后接入。</p><span class="tag tag-info">规划中</span></div></div>
+      <div id="inventory-check-subpanel" class="sub-panel hidden"><div class="inline-placeholder"><h3>盘点记录</h3><p>盘点结果现在直接落成「库存流水」（变动数量为绝对值，增减看库存方向）。</p><span class="tag tag-info">流水即记录</span></div></div>
+      <div id="inventory-adjust-subpanel" class="sub-panel hidden"><div class="inline-placeholder"><h3>库存调整记录</h3><p>每次手工调整都会写一条「库存流水」（数量变更记实际双数，状态变更记 0）；这一页还没接查询接口。</p><span class="tag tag-info">规划中</span></div></div>
     </section>`;
 }
 
@@ -50,7 +52,7 @@ function renderInventory(container, data, filters) {
     </div>
     <div class="filters"><input data-filter="keyword" value="${escapeHtml(filters.keyword || '')}" placeholder="输入库存键/编号/货号/颜色"><input data-filter="size" type="number" min="1" step="1" inputmode="numeric" value="${escapeHtml(filters.size || '')}" placeholder="尺码（正整数）"><button class="btn btn-primary" type="button" data-search="inventory">查询</button></div>
     ${duplicates.length ? `<div class="warning">发现重复库存键 ${duplicates.length} 个，请在多维表格中检查唯一性。</div>` : ''}
-    <div class="table-wrap mobile-card-table"><table><thead><tr><th>库存键</th><th>编号</th><th>货号</th><th>颜色</th><th>尺码</th><th>所属状态</th><th>当前数量</th><th>更新时间</th></tr></thead><tbody>${rows.map((row) => `<tr><td data-label="库存键"><span class="cell-value">${escapeHtml(row.stock_key || '-')}</span></td><td data-label="编号"><span class="cell-value">${escapeHtml(row.product_number || '-')}</span></td><td data-label="货号"><span class="cell-value">${escapeHtml(row.item_no || '-')}</span></td><td data-label="颜色"><span class="cell-value">${escapeHtml(row.color || '-')}</span></td><td data-label="尺码"><span class="cell-value">${escapeHtml(row.size || '-')}</span></td><td data-label="所属状态"><span class="cell-value tag tag-info">${escapeHtml(row.state || '-')}</span></td><td data-label="当前数量" class="quantity"><span class="cell-value">${escapeHtml(row.quantity || 0)}</span></td><td data-label="更新时间"><span class="cell-value">${escapeHtml(dateTime(row.updated_at))}</span></td></tr>`).join('')}</tbody></table></div>
+    <div class="table-wrap mobile-card-table"><table><thead><tr><th>库存键</th><th>编号</th><th>货号</th><th>颜色</th><th>品类</th><th>尺码</th><th>所属状态</th><th>当前数量</th><th>更新时间</th></tr></thead><tbody>${rows.map((row) => `<tr><td data-label="库存键"><span class="cell-value">${escapeHtml(row.stock_key || '-')}</span></td><td data-label="编号"><span class="cell-value">${escapeHtml(row.product_number || '-')}</span></td><td data-label="货号"><span class="cell-value">${escapeHtml(row.item_no || '-')}</span></td><td data-label="颜色"><span class="cell-value">${escapeHtml(row.color || '-')}</span></td><td data-label="品类"><span class="cell-value">${escapeHtml(row.category || '-')}</span></td><td data-label="尺码"><span class="cell-value">${escapeHtml(row.size || '-')}</span></td><td data-label="所属状态"><span class="cell-value tag tag-info">${escapeHtml(row.state || '-')}</span></td><td data-label="当前数量" class="quantity"><span class="cell-value">${escapeHtml(row.quantity || 0)}</span></td><td data-label="更新时间"><span class="cell-value">${escapeHtml(dateTime(row.updated_at))}</span></td></tr>`).join('')}</tbody></table></div>
     ${rows.length ? '' : '<p class="empty">没有匹配的库存记录。</p>'}`;
 }
 
