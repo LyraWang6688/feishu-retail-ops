@@ -4,6 +4,7 @@ const { enabled: feishuAuthEnabled, getSessionUser, allowedOpenIds } = require('
 const { SalesFollowupService } = require('../services/salesFollowupService');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { createPurchaseQueryRouter } = require('./purchaseQuery');
+const { createInventoryAdjustmentRouter } = require('./workbenchInventoryAdjustment');
 const { SampleReplacementService } = require('../services/sampleReplacementService');
 const { logError, logWarn } = require('../utils/logger');
 
@@ -28,7 +29,16 @@ const createWorkbenchRouter = (options = {}) => {
   });
   router.use(requireWorkbenchAccess);
   router.use('/purchase', createPurchaseQueryRouter({ gateway: options.gateway || new V1BitableGateway() }));
+  // 人工库存调整（盘点调整 / 换季调整）：真写「实时库存」+「库存流水」，
+  // 所以放在身份闸门之后挂载（见 workbenchInventoryAdjustment.js 的说明）。
+  router.use('/inventory/adjustments', createInventoryAdjustmentRouter(options.inventoryAdjustment || {}));
   router.get('/sales/today', controller.queryTodaySales);
+  // 「销售查询」：支持 date（按某日）与 from/to（按区间）；/sales/today 保持不变。
+  router.get('/sales/query', controller.querySales);
+  // 货品选择器 / 库存数量 / 品类清单 —— 都只读，供「库存手工调整」两个子页用。
+  router.get('/inventory/products', controller.queryInventoryProducts);
+  router.get('/inventory/stock', controller.queryInventoryStock);
+  router.get('/inventory/categories', controller.queryInventoryCategories);
   router.get('/inventory', controller.queryInventory);
   router.get('/sales/orders', async (req, res) => {
     try { return res.json({ success: true, ...await followup.listOrders() }); }

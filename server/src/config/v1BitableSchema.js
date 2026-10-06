@@ -354,6 +354,12 @@ const V1_BITABLE_SCHEMA = {
         size: '尺码',
         updatedAt: '更新时间',
         state: '所属状态',
+        // 「品类」是飞书**公式**列（2026-10-06 只读核过测试 Base：liveInventory.品类
+        // type=20，取值就是品类名，如「休闲鞋」「单鞋」；生产真表同一份形状见
+        // docs/inventory-adjustment-plan-2026-10-06.md 的只读实测）。
+        // 工作台「换季调整（按品类批量）」用它分组；代码只读、不写。
+        // ⚠️ 若哪天它被删掉或改名，`v1:schema-check:inventory` 会当场判红。
+        category: '品类',
         // 「这一双是某次库存操作创建的第 N 双」。实时库存是一双一条，
         // 没有这个键就无法在 create 结果未知时判断该不该补建。
         operationItemKey: '库存操作键',

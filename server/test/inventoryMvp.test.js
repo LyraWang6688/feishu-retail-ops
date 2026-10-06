@@ -428,20 +428,24 @@ test('人工库存 6 条行为的注册表契约：两个数量类、四个状�
     //    现在是最保守的 null＝只消耗调用方明确指定的那一种状态。
     direction: '减少', ledgerSource: null, consumes: null, triggerSampleReplacement: false,
   });
-  // 状态类：方向=不影响，且**必须**带 stateTransition 目标（冻结/释放还没定，值为 null）。
+  // 状态类：方向=不影响，且**必须**带 stateTransition 目标。
   for (const code of [ADJUSTMENT_BEHAVIORS.FREEZE, ADJUSTMENT_BEHAVIORS.UNFREEZE,
     ADJUSTMENT_BEHAVIORS.SAMPLE_TO_DOORBOX, ADJUSTMENT_BEHAVIORS.DOORBOX_TO_SAMPLE]) {
     assert.equal(STOCK_MOVEMENTS[code].direction, '不影响', `${code} 必须是状态类`);
     assert.equal(STOCK_MOVEMENTS[code].consumes, null, `${code} 不消耗实时库存`);
     assert.ok(Object.hasOwn(STOCK_MOVEMENTS[code], 'stateTransition'), `${code} 必须声明目标状态字段`);
   }
-  // 两个"转"的 from/to 是明确的；冻结/释放等她定字段后再填。
+  // 两个"转"的 from/to 是明确的。
   assert.deepEqual(STOCK_MOVEMENTS[ADJUSTMENT_BEHAVIORS.SAMPLE_TO_DOORBOX].stateTransition,
     { from: '样品', to: '门盒' });
   assert.deepEqual(STOCK_MOVEMENTS[ADJUSTMENT_BEHAVIORS.DOORBOX_TO_SAMPLE].stateTransition,
     { from: '门盒', to: '样品' });
-  assert.equal(STOCK_MOVEMENTS[ADJUSTMENT_BEHAVIORS.FREEZE].stateTransition, null);
-  assert.equal(STOCK_MOVEMENTS[ADJUSTMENT_BEHAVIORS.UNFREEZE].stateTransition, null);
+  // 换季调整的两条（业务负责人 2026-10-06 在工作台需求里定死）：
+  //   转冻结 = 门盒/样品 → 仓库；转释放 = 仓库 → 门盒/样品（回哪个由界面选，所以 to 为 null）。
+  assert.deepEqual(STOCK_MOVEMENTS[ADJUSTMENT_BEHAVIORS.FREEZE].stateTransition,
+    { from: ['门盒', '样品'], to: '仓库' });
+  assert.deepEqual(STOCK_MOVEMENTS[ADJUSTMENT_BEHAVIORS.UNFREEZE].stateTransition,
+    { from: ['仓库'], to: null, targets: ['门盒', '样品'] });
   // 两个编码指向同一行"门盒转样品"行为（补样品链路已在用），不是两条行为。
   assert.equal(ADJUSTMENT_BEHAVIORS.DOORBOX_TO_SAMPLE, 'STOCK_DOORBOX_TO_SAMPLE');
 });

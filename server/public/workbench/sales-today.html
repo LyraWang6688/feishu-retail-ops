@@ -3,21 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>今日销售｜邯美数智经营工作台</title>
-  <link rel="stylesheet" href="/workbench/styles/tokens.css">
-  <link rel="stylesheet" href="/workbench/styles/base.css">
-  <link rel="stylesheet" href="/workbench/features/sales/sales.css">
+  <title>销售查询｜邯美数智经营工作台</title>
+  <!-- 「今日销售」已改名为「销售查询」（业务负责人 2026-10-06：不仅仅查今日，
+       要能按某日和按区间查）。这个文件保留成一个跳转页，避免旧链接/收藏 404。 -->
+  <link rel="canonical" href="/workbench/sales-query.html">
+  <meta http-equiv="refresh" content="0; url=/workbench/sales-query.html">
 </head>
-<body data-view="sales-today">
-  <main class="shell standalone-shell">
-    <header class="header compact-header">
-      <div><div class="eyebrow">邯美数智经营工作台</div><h1>今日销售</h1></div>
-      <div class="auth"><span id="auth-status" class="muted">正在检查飞书登录状态…</span><button id="logout" class="btn btn-ghost hidden" type="button">退出登录</button></div>
-    </header>
-    <nav class="standalone-nav"><a href="/workbench/">返回完整工作台</a><a class="active" href="/workbench/sales-today.html">今日销售</a><a href="/workbench/inventory.html">实时库存</a></nav>
-    <section id="standalone-host"></section>
-    <p id="page-error" class="error hidden" role="alert"></p>
-  </main>
-  <script type="module" src="/workbench/standalone.js"></script>
+<body>
+  <p>「今日销售」已改名为「销售查询」，正在跳转……如果没有自动跳转，<a href="/workbench/sales-query.html">点这里</a>。</p>
+  <script>
+    window.location.replace(`/workbench/sales-query.html${window.location.search || ''}`);
+  </script>
 </body>
 </html>
