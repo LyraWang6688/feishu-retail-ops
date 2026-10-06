@@ -1,18 +1,26 @@
 #!/usr/bin/env node
 /**
- * ws-listen.mjs —— 只做一件事：用**现有凭证**在本地开一条飞书「长连接」，把收到的事件打印出来。
+ * ws-listen.mjs —— 只做一件事：用**测试应用**的凭证在本地开一条飞书「长连接」，把收到的事件打印出来。
+ *
+ * ⚠️ 只认「测试应用」的凭证（业务负责人 2026-10-06 定的口径：
+ *    生产环境推到开发者服务器 = webhook；**本地做测试才用长连接**）：
+ *   · 凭证只从 `LARK_TEST_APP_ID` / `LARK_TEST_APP_SECRET` 读；
+ *   · 缺任何一个**直接报错退出**，**绝不回退到 `LARK_AGENT_*`**——回退就等于偷偷连生产应用；
+ *   · app_id 等于生产应用 `LARK_AGENT_APP_ID` 时**拒绝运行**（只与环境变量比较，不硬编码生产 app_id）；
+ *   · 启动时只打印 app_id（**不是密钥，可以打印**），**绝不打印 secret**（连前 4 位都不打）。
  *
  * ⚠️ 这个脚本**只连、只看**：
  *   · 不写任何多维表格；
  *   · 不调用任何飞书写接口（不发消息、不改记录）；
  *   · 到点自动断开（默认 60 秒）。
- * 目的就是回答一个问题：「本机这台电脑，能不能收到飞书推给我们应用的事件？」
+ * 目的就是回答一个问题：「本机这台电脑，能不能用测试应用收到飞书推给我们的长连接事件？」
  *
  * 用法：
  *   node scripts/ws-listen.mjs --seconds 60 --env-file <主工作区 .env>
  *   node scripts/ws-listen.mjs --events im.message.receive_v1,drive.file.bitable_record_changed_v1
  *
- * 退出码：0 = 连上了（不管有没有事件）；2 = 连不上（长连接没开 / 凭证不对 / 网络不通）。
+ * 退出码：0 = 连上了（不管有没有事件）；1 = 凭证配置不对（缺测试凭证 / 测试凭证就是生产应用）；
+ *         2 = 连不上（长连接没开 / 凭证不对 / 网络不通）。
  */
 
 import fs from 'node:fs';
@@ -44,22 +52,47 @@ for (const item of [
   if (item.path && fs.existsSync(item.path)) dotenv.config({ path: item.path, override: item.override, quiet: true });
 }
 
+// ── 凭证：只认「测试应用」，绝不碰生产应用 ────────────────────────────────────
+// ⚠️ 不 require ../src/config/larkAgent（那读的是生产应用 LARK_AGENT_*，生产走 webhook）。
+// ⚠️ 也**不设** LARK_AGENT_* 回退：回退 = 悄悄连上生产应用，等于把测试打到生产上。
+const testAppId = String(process.env.LARK_TEST_APP_ID || '').trim();
+const testAppSecret = String(process.env.LARK_TEST_APP_SECRET || '').trim();
+if (!testAppId || !testAppSecret) {
+  const missing = [!testAppId && 'LARK_TEST_APP_ID', !testAppSecret && 'LARK_TEST_APP_SECRET'].filter(Boolean);
+  console.error(`❌ 缺少测试应用凭证：${missing.join('、')}`);
+  console.error('   长连接只允许用测试应用（LARK_TEST_APP_ID / LARK_TEST_APP_SECRET），不会回退到 LARK_AGENT_*（生产应用）。');
+  process.exit(1);
+}
+
+// ⭐ 显式护栏：测试应用的 app_id 不得等于生产应用的 app_id。
+//    只与环境变量比较（生产取值以线上 .env 为准），**不硬编码生产 app_id**。
+const productionAppId = String(process.env.LARK_AGENT_APP_ID || '').trim();
+if (productionAppId && testAppId === productionAppId) {
+  console.error('❌ 拒绝运行：LARK_TEST_APP_ID 与生产应用 LARK_AGENT_APP_ID 相同——这不是测试应用，禁止用长连接连生产。');
+  process.exit(1);
+}
+
+const appId = testAppId;
+const appSecret = testAppSecret;
+
 const require = createRequire(import.meta.url);
 const lark = require('@larksuiteoapi/node-sdk');
-const { getLarkAgentCredentials } = require('../src/config/larkAgent');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
-const { appId, appSecret } = getLarkAgentCredentials();
 let appToken = '';
 try { appToken = V1_BITABLE_SCHEMA.appToken; } catch { appToken = ''; }
 
 console.log('════════════════════════════════════════════════════════════════════════');
 console.log('  本地长连接试连（只连、不处理、不写任何表）');
+console.log('  ⚠️ 本次连接使用【测试应用】，不碰生产应用');
 console.log('════════════════════════════════════════════════════════════════════════');
-console.log(`  app_id            ：${appId}`);
+console.log(`  应用类型           ：测试应用（凭证来自 LARK_TEST_APP_ID / LARK_TEST_APP_SECRET）`);
+console.log(`  app_id            ：${appId}    ← app_id 不是密钥，可以打印`);
+console.log(`  app_secret         ：（不打印，只在 .env 里）`);
 console.log(`  本地 .env 指向 Base：${appToken || '(未配置)'}`);
 console.log(`  订阅的事件         ：${eventKeys.join(', ')}`);
 console.log(`  连接时长           ：${seconds}s`);
+console.log(`  生产应用护栏       ：${productionAppId ? '已开启（比对 LARK_AGENT_APP_ID）' : '⚠️ 未启用——本次 .env 未配置 LARK_AGENT_APP_ID，无法比对生产 app_id'}`);
 console.log('');
 
 const received = [];
