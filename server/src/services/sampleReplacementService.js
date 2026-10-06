@@ -15,7 +15,8 @@ const taskIdFor = (salesDetailRecordId) =>
   `sample_${crypto.createHash('sha256').update(String(salesDetailRecordId)).digest('hex').slice(0, 20)}`;
 
 class SampleReplacementService {
-  constructor({ gateway, inventory, store, client, sendCard, sendText, updateCard } = {}) {
+  constructor({ gateway, inventory, store, client, sendCard, sendText, updateCard,
+    sendCardToTask, sendTextToTask } = {}) {
     if (!gateway) throw new Error('SampleReplacementService requires gateway');
     this.gateway = gateway;
     this.inventory = inventory || new InventoryService({ gateway });
@@ -44,12 +45,29 @@ class SampleReplacementService {
       client, task, event, card, stage: metadata.stage, interactionId: metadata.interactionId,
       eventPrefix: 'lark.sales.sample_card.update',
     }));
+    // ── ⭐ 渠道感知的出口（"把私聊专属的切出来"这一步）────────────────────────
+    // 目标形态（业务负责人 2026-10-06：「后续就不走私聊了，你私聊的要切除出来」）：
+    //   任务带渠道上下文时，由**注入方**（`larkMvpService` 的适配器）决定回到哪个群话题；
+    //   没有群上下文 → 回落私聊，且与改动前**逐字相同**的
+    //   `sendCard(task.sender_open_id)`（#148 在售后那条路上就是这么做的）。
+    //
+    // ⚠️ 边界：本 service **不认识** `reply_in_thread` / `chat_id` 这些飞书语义——
+    //    飞书语义只留在 `larkMvpService` 的适配器里；这里只交"这是哪个任务"。
+    // ⚠️ 今天**没有任何调用方注入**这两个端口（补样品提醒的触发源是工作台 / 私聊卡片，
+    //    任务上还没有渠道上下文），所以默认回落分支就是当前生产行为，一个字都没变。
+    //    接线（`larkMvpService` 里传 `sendTaskCard` / `sendTaskText`）是下一步的独立小步。
+    this.sendCardToTask = sendCardToTask
+      || (async (task, card) => this.sendCard(task?.sender_open_id, card));
+    this.sendTextToTask = sendTextToTask
+      || (async (task, message) => this.sendText(task?.sender_open_id, message));
   }
 
   async publishCard(task, event, card, metadata = {}) {
     if (await this.updateCard(task, event, card, metadata)) return true;
     try {
-      const messageId = await this.sendCard(task.sender_open_id, card);
+      // ⭐ 兜底也走**任务感知**的出口：卡片改不动时补发的那张卡，跟着任务去它该去的地方
+      //   （私聊任务 → 与改动前逐字相同的私聊；将来群任务 → 那个话题）。
+      const messageId = await this.sendCardToTask(task, card);
       if (messageId) await this.store.update(task.task_id, { card_message_id: messageId });
       logInfo('lark.sales.sample_card.fallback.sent', { task_id: task.task_id,
         interaction_id: metadata.interactionId, stage: metadata.stage, card_message_id: messageId });
@@ -146,7 +164,11 @@ class SampleReplacementService {
     const processing = await this.updateCard(task, event, sampleReplacementProcessingCard(task.product_number,
       action === 'refresh_sample_replacement' ? '正在刷新可选尺码，请稍候。' : '已收到选择，正在调整库存状态，请勿重复点击。'),
     { stage: 'processing', interactionId: context.interactionId });
-    if (!processing) await this.sendText(operatorOpenId, '已收到补样品操作，正在处理，请稍候。').catch((error) =>
+    // 走到这里 `task.sender_open_id === operatorOpenId`（上面「只能由收到提醒的用户补选样品」
+    // 那道鉴权保证了），
+    // 所以换成**任务感知**的出口是逐字等价的 —— 但方向从"发给这个 open_id"变成
+    // "发到这个任务该去的地方"（将来群任务就回它的话题）。
+    if (!processing) await this.sendTextToTask(task, '已收到补样品操作，正在处理，请稍候。').catch((error) =>
       logWarn('lark.sales.sample_feedback.failed', { task_id: draftId,
         interaction_id: context.interactionId, error: error.message }));
     if (action === 'refresh_sample_replacement') {
