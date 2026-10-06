@@ -698,9 +698,16 @@ const arrivalActual = (extra = {}) => ({
   ...extra,
 });
 
-// ─── 入库：写「采购入库」+ 库存 + 回写状态（confirmArrival）────────────────
+// ─── 入库：写「采购入库」+ 库存（confirmArrival）────────────────────────────
+//
+// ⚠️ 2026-10-06：原先这两条用例还断言「回写采购申请行的到货状态」。
+// 业务负责人定稿的「对话到货」口径（docs/arrival-conversation-flow.md §3，原话）：
+//「采购申请表已经是一个历史数据了……按实际数量入库即可，不需要改表本身」——
+// 所以那条回写**已从代码里删除**，断言也跟着改成"一个字都不能变"。
+// 这不是"顺手放宽断言"：下面用的是**同一条采购申请记录的前后快照对比**，
+// 比原来只盯「到货状态」一个字段更严格（任何一个字段被改都会失败）。
 
-test('入库：写采购入库 + 挂回采购申请 + 回写申请到货状态与到货确认状态', async () => {
+test('入库：写采购入库 + 挂回采购申请 + 到货确认状态（采购申请表一个字不改）', async () => {
   const inventory = makeInventory();
   const records = {
     purchaseArrival: [{ record_id: 'arr_conf', fields: { 确认状态: '待确认' } }],
@@ -714,6 +721,7 @@ test('入库：写采购入库 + 挂回采购申请 + 回写申请到货状态�
     actual: [arrivalActual()],
     requests: (await gateway.listAll('purchaseRequest')),
   });
+  const requestBefore = JSON.parse(JSON.stringify(await gateway.get('purchaseRequest', 'req_1')));
 
   const result = await service.confirmArrival(task.task_id, task, 'ou_1');
   assert.ok(result.toast.content.includes('采购已入库'));
@@ -723,7 +731,9 @@ test('入库：写采购入库 + 挂回采购申请 + 回写申请到货状态�
   assert.deepEqual(inbounds[0].fields.尺码, sizeLink(36));
   assert.equal(inbounds[0].fields.数量, 1);
   assert.deepEqual(inbounds[0].fields.采购申请, ['req_1'], '入库记录要挂回对应的采购申请行');
-  assert.equal((await gateway.get('purchaseRequest', 'req_1')).fields.到货状态, '部分到货');
+  // 🔴 采购申请表：一字未变（含「到货状态」——它现在没有任何写入点）。
+  assert.deepEqual(await gateway.get('purchaseRequest', 'req_1'), requestBefore);
+  assert.equal((await gateway.get('purchaseRequest', 'req_1')).fields.到货状态, undefined);
   assert.equal((await gateway.get('purchaseArrival', 'arr_conf')).fields.确认状态, '已确认');
   assert.equal(inventory.calls.length, 1, '库存要跟着加一次');
 });
@@ -742,6 +752,7 @@ test('入库：同一货品+尺码的两条明细合成一条入库（数量 2�
     actual: [arrivalActual(), arrivalActual()],
     requests: (await gateway.listAll('purchaseRequest')),
   });
+  const requestBefore = JSON.parse(JSON.stringify(await gateway.get('purchaseRequest', 'req_1')));
 
   await service.confirmArrival(task.task_id, task, 'ou_1');
   // 再确认一次：读**最新**任务（已经是 posted），直接返回，不重复写。
@@ -752,7 +763,7 @@ test('入库：同一货品+尺码的两条明细合成一条入库（数量 2�
   assert.equal(inbounds[0].fields.数量, 2);
   assert.equal(inventory.calls.length, 1);
   assert.equal(inventory.calls[0].quantity, 2);
-  assert.equal((await gateway.get('purchaseRequest', 'req_1')).fields.到货状态, '全部到货');
+  assert.deepEqual(await gateway.get('purchaseRequest', 'req_1'), requestBefore);
 });
 
 test('入库：真的调 inventory.applyPurchase（带采购入库记录 id 作为幂等来源）', async () => {

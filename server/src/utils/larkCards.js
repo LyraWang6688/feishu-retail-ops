@@ -1,5 +1,14 @@
 const text = (value) => String(value ?? '').replace(/\n/g, ' ');
 
+// 「对话到货」卡片的文案 / 动作名一律从 config 读（配置先行）：
+// 卡片与分派共用同一个动作常量，不会各写一份而慢慢写歪。
+const {
+  ARRIVAL_CONFIRM_ACTION,
+  CONFIRM_BUTTON_LABEL: ARRIVAL_CONFIRM_BUTTON_LABEL,
+  CONFIRM_CARD_TITLE: ARRIVAL_CONFIRM_CARD_TITLE,
+  POSTED_CARD_TITLE: ARRIVAL_POSTED_CARD_TITLE,
+} = require('../config/arrivalConversation');
+
 // 明细行只写她需要核对的事实：货号、尺码、数量、金额、赠品。
 //
 // 库存分布**刻意不写在这里**：实时库存是录单时读的，只用来判断"这一双有没有货、
@@ -548,6 +557,52 @@ const purchaseRequestConfirmationCard = (draftId, draft) => {
 // options.showNewProducts：原「采购到货确认」结果卡片用它挂新品建档链接。
 // ⚠️ 到货卡片退场后已经没有任何调用方传它了（newProductResultElements 也已删除），
 // 所以那个分支一并摘掉，不留一个永远为假的开关。
+// 「对话到货」的两张卡片（`docs/arrival-conversation-flow.md` §2 第 ④ 步 / §5.2 ⑥）。
+//
+// 与已退场的「到货明细确认卡片」的区别：那张卡确认的是**拍照识别的结果**，
+// 数据来自视觉模型；这张卡确认的是**她在话题里说的话**，数据来自采购申请基准 + 对话。
+// 共同点是都不含「差异比对」——产品负责人 2026-10-05 明确不再比对差异。
+//
+// ⚠️ 行内说明与按钮排版沿用既有结论：字号只能用 div/markdown，一行多个按钮只能用
+// column_set（见 buttonColumns 的注释，手机端实测）。
+const arrivalConfirmationCard = ({ conversationId, batchNo = '', actual = [], overage = 0 } = {}) => {
+  const quantity = (actual || []).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+  const elements = [];
+  if (batchNo) elements.push({ tag: 'markdown', content: `**报货批次号：** ${text(batchNo)}` });
+  elements.push(...purchaseItemElements(actual, { skipSupplierGroup: true }));
+  elements.push({ tag: 'markdown', content: `**实际到货合计：** ${quantity} 双` });
+  if (Number(overage) > 0) {
+    // ① 实际 > 申请：先让她在**点确认之前**看见（让她有机会发现数说错了）。
+    elements.push({ tag: 'markdown', content: `⚠️ 这次比申请多了 ${Number(overage)} 双，入库会按**实际到达的数量**。` });
+  }
+  elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: '点「是」才会入库；采购申请表不会被改动。' }] });
+  elements.push(buttonColumns([
+    actionButton(ARRIVAL_CONFIRM_BUTTON_LABEL, ARRIVAL_CONFIRM_ACTION, conversationId, 'primary'),
+  ]));
+  return {
+    config: { wide_screen_mode: true },
+    header: { template: 'orange', title: { tag: 'plain_text', content: ARRIVAL_CONFIRM_CARD_TITLE } },
+    elements,
+  };
+};
+
+// 入库之后的同一张卡：**去掉按钮**、头部改成「已入库」。不重新发一条消息，
+// 而是把原来那张 patch 掉——群里只留一条结果，不刷屏（规格 ⑥）。
+const arrivalPostedCard = ({ batchNo = '', actual = [], overage = 0, quantity = 0, arrivalDate = '' } = {}) => {
+  const total = Number(quantity) || (actual || []).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+  const elements = [];
+  if (batchNo) elements.push({ tag: 'markdown', content: `**报货批次号：** ${text(batchNo)}` });
+  elements.push(...purchaseItemElements(actual, { skipSupplierGroup: true }));
+  elements.push({ tag: 'markdown', content: `**实际入库合计：** ${total} 双${arrivalDate ? `（到货日 ${text(arrivalDate)}）` : ''}` });
+  if (Number(overage) > 0) elements.push({ tag: 'markdown', content: `⚠️ 这次比申请多了 ${Number(overage)} 双，已按实际数量入库。` });
+  elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: '已入库。采购申请表一个字都没有改。' }] });
+  return {
+    config: { wide_screen_mode: true },
+    header: { template: 'green', title: { tag: 'plain_text', content: ARRIVAL_POSTED_CARD_TITLE } },
+    elements,
+  };
+};
+
 const purchaseStatusCard = (draft, title, message, template = 'blue', options = {}) => {
   const isBatch = draft?.is_batch === true;
   const elements = [];
@@ -861,6 +916,9 @@ module.exports = {
   keepOnlyCardButton,
   purchaseRequestConfirmationCard,
   purchaseStatusCard,
+  // 「对话到货」：确认入库卡片 + 入库后的同卡更新（见 config/arrivalConversation.js）。
+  arrivalConfirmationCard,
+  arrivalPostedCard,
   salesConfirmationCard,
   salesStatusCard,
   sampleReplacementCard,

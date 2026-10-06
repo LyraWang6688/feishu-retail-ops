@@ -43,6 +43,8 @@ const { getLarkAgentCredentials } = require('../config/larkAgent');
 // 群 id 从配置读，**没有默认值**（见 config/groupPurchase 里的说明）。
 const { resolvePurchaseChatId } = require('../config/groupPurchase');
 const { PurchaseBatchLocator } = require('./purchaseBatchLocator');
+// ④「到货日」的时区与格式化：只在日志/测试断言里用（写进表的是那一刻的时间戳本身）。
+const { arrivalDateOf } = require('../config/arrivalConversation');
 
 // 采购卡片上可以触发副作用（写采购事实）的动作。
 //
@@ -57,13 +59,20 @@ const PURCHASE_CARD_ACTIONS = [
 
 const idFor = (prefix, value) => `${prefix}_${crypto.createHash('sha256').update(String(value)).digest('hex').slice(0, 24)}`;
 
+// 「对话到货」的入库任务 id：由**批次号确定性推导**（不是随机 id）。
+// 为什么必须确定性：同一批的"她点了两次是 / 飞书重投了卡片回调"要落在同一条任务上，
+// `confirmArrivalLocked` 才能靠 `status === 'posted'` 认出"已经入过库了"。
+// 前缀刻意与采购任务（`purchase_*`）分开：两套草稿的形状与状态含义不同，不能互相看见。
+const conversationArrivalTaskId = (batchNo) => idFor('arrival_conversation', batchNo);
+
 // 采购退货归批的**批次类型标记**。只写在本地任务记录（JsonTaskStore）里，
 // 用来在 PM2 重启后把"还在等窗口的退货"从所有 batch_waiting 任务里认出来、
 // 重开窗口继续处理（见 recoverPendingReturnBatches）。**不写业务表**。
 // 报货那条链路的 batch_waiting 不带这个标记，两条链路互不误认。
 const PURCHASE_RETURN_BATCH_KIND = 'purchase-return';
 
-const number = (value) => Number(textValue(value));
+// （原先这里有个 `number()` 小工具，只被已删除的「采购申请 到货状态 回写」用到，
+//   随那段一起删掉——留着就是一个再也没有调用点的声明。）
 
 const attachmentTokens = (value) => (Array.isArray(value) ? value : [])
   .map((item) => item?.file_token || item?.fileToken || item?.token || '')
@@ -2803,6 +2812,151 @@ class PurchaseWebhookService {
     return this.confirmationQueue.run(taskId, () => this.confirmArrivalLocked(taskId, task, operatorOpenId));
   }
 
+  /**
+   * 「对话到货」的入库入口：**在串行段内重新读取任务**再入库。
+   *
+   * 为什么不能直接调 `confirmArrival(taskId, task, …)`：那个签名要求调用方**先把 task
+   * 读出来**，而任务状态是"重复点「是」"的唯一守卫（`confirmArrivalLocked` 见到
+   * `status === 'posted'` 就直接返回）。调用方在排队**之前**读到的那份是旧快照——
+   * 两次点击几乎同时到达时，两边都会拿到 `awaiting_confirmation`，于是两边都往下走。
+   * 入库行那三道幂等能挡住重复写入，但"该不该写"这一步已经判断错了。
+   * ⇒ 串行段内重新读：第二次点击看到的一定是第一次写完的 `posted`。
+   *
+   * ⚠️ 必须在**同一个** confirmationQueue 里跑，且不能嵌套调用 `confirmArrival`
+   *   （同一个 key 再入队会自己等自己，直接死锁）——所以这里直调 `confirmArrivalLocked`，
+   *   这正是它注释里说的"只由串行入口调用"。
+   */
+  async confirmArrivalForConversation(taskId, operatorOpenId) {
+    return this.confirmationQueue.run(taskId, async () => {
+      const task = await this.store.get(taskId);
+      if (!task?.draft) throw new Error('采购到货任务不存在或已过期');
+      if (task.status === 'posted') {
+        return {
+          alreadyPosted: true,
+          result: { toast: { type: 'info', content: '采购到货已入库' } },
+          task,
+          inboundRecordIds: task.inbound_record_ids || [],
+        };
+      }
+      const result = await this.confirmArrivalLocked(taskId, task, operatorOpenId);
+      const updated = (await this.store.get(taskId)) || task;
+      return {
+        alreadyPosted: false,
+        result,
+        task: updated,
+        inboundRecordIds: updated.inbound_record_ids || [],
+      };
+    });
+  }
+
+  /**
+   * 「对话到货」入库前的准备：**建（或找回）「采购到货」那一行** + 把入库草稿摆好。
+   *
+   * 为什么必须有这一步（规格 §4.2 待改 2）：建「采购到货」行的代码随 `processArrival`
+   * 一起被删光了（全仓已无 `create('purchaseArrival', …)`），而 `confirmArrivalLocked`
+   * 需要 `draft.arrival_record_id`；所以新流程自己建那一行。
+   *
+   * ⚠️ 时序：只在**她点「是」之后**调用（`ArrivalConversationService.handleCardAction`）。
+   *    核对期间「采购到货」表必须一行都不多（验收标准 §5.1）——那一刻之前没有任何写入。
+   *
+   * ⚠️ 幂等（缺一不可）：
+   *   ① 任务 id 由批次号**确定性**推导（`arrival_conversation_<hash>`），重试拿到同一条任务；
+   *   ② 任务草稿里落了 `arrival_record_id` → 直接复用，不再建第二行；
+   *   ③ 远端回查：按「报货批次号」关联找已有的到货行（本地记录丢了也能找回那一条）。
+   *    所以重复调用**不会**在「采购到货」写出第二条。
+   *
+   * 草稿的形状与已退场的 `processArrival` 落的完全一致（`actual` / `requests` /
+   * `pending_creation` / `arrival_record_id` / `batch_record_id` / `batch_no`），
+   * 这样 `confirmArrivalLocked` 与 `ensureArrivalProducts` 一行都不用改。
+   * `pending_creation` 空数组是**对的**：对话里她只说数量，没有"新品"这种信息
+   * （建档是拍照识别那条链路的产物，不退化成猜）。
+   *
+   * @returns {Promise<{taskId: string, arrivalRecordId: string, task: object, created: boolean}>}
+   */
+  async ensureConversationArrival({
+    batchNo = '', requestIds = [], actual = [], acceptanceText = '',
+    occurredAt = Date.now(), operatorOpenId = '',
+  } = {}) {
+    const normalizedBatchNo = String(batchNo || '').trim();
+    if (!normalizedBatchNo) throw new Error('这批到货没有报货批次号，无法建立到货记录');
+    const taskId = conversationArrivalTaskId(normalizedBatchNo);
+    const arrivalTable = this.gateway.table('purchaseArrival');
+    const requestTable = this.gateway.table('purchaseRequest');
+
+    // 采购申请行：入库时要据此把「采购入库」挂回对应的采购申请（supplierOrder 关联），
+    // 也用来推导这条到货属于哪个报货批次。
+    const requests = [];
+    for (const recordId of (Array.isArray(requestIds) ? requestIds : []).filter(Boolean)) {
+      const record = await this.gateway.get('purchaseRequest', recordId).catch(() => null);
+      if (record) requests.push(record);
+    }
+    const batchRecordId = requests
+      .map((row) => linkedRecordIds(row.fields?.[requestTable.fields.batchNo])[0])
+      .find(Boolean) || '';
+    if (!batchRecordId) {
+      throw new Error('这批采购申请没有关联「报货批次」，不敢建立无来源的到货记录');
+    }
+
+    const existing = await this.store.get(taskId);
+    let arrivalRecordId = existing?.draft?.arrival_record_id || '';
+    if (!arrivalRecordId) {
+      // 远端回查：同一条报货批次已经有到货行就复用它（本地记录丢失 / 上一次崩在落盘之前）。
+      const match = (await this.gateway.listAll('purchaseArrival'))
+        .find((record) => linkedRecordIds(record.fields?.[arrivalTable.fields.batch]).includes(batchRecordId));
+      if (match) {
+        arrivalRecordId = match.record_id;
+        logInfo('purchase.arrival.conversation.arrival_reused', {
+          task_id: taskId, batch_no: normalizedBatchNo, arrival_record_id: arrivalRecordId,
+        });
+      } else {
+        const created = await this.gateway.create('purchaseArrival', {
+          batch: relation(batchRecordId),
+          // ④ 到货日 = 她点「是」那一刻（时间戳原样存进日期字段）。
+          arrivalAt: occurredAt,
+          // ⑦ 验收原话 = 最后那句"核对完了"的原话（默认：最省，也够追溯）。
+          acceptanceText,
+          inspector: person(operatorOpenId),
+          confirmStatus: '待确认',
+        });
+        arrivalRecordId = created.recordId;
+        logInfo('purchase.arrival.conversation.arrival_created', {
+          task_id: taskId, batch_no: normalizedBatchNo, arrival_record_id: arrivalRecordId,
+          arrival_date: arrivalDateOf(occurredAt),
+        });
+      }
+    }
+
+    const aggregated = aggregateArrivalItems(actual);
+    const draft = {
+      ...(existing?.draft || {}),
+      arrival_record_id: arrivalRecordId,
+      batch_record_id: batchRecordId,
+      batch_no: normalizedBatchNo,
+      operator_open_id: operatorOpenId,
+      requests,
+      actual: aggregated,
+      // 对话里没有"新品要建档"这个信息：留空数组，建档那一步就是空跑（不多建、也不猜）。
+      pending_creation: [],
+      created_products: [],
+      created_colors: [],
+      creation_state: 'done',
+      creation_error: '',
+      // 标记草稿的来源：日志里一眼看出这是「对话到货」的草稿，不是历史识别草稿。
+      source: 'arrival_conversation',
+    };
+    const task = existing
+      ? await this.store.update(taskId, { draft, type: 'purchase_arrival_conversation' })
+      : await this.store.create({
+        task_id: taskId,
+        type: 'purchase_arrival_conversation',
+        // ⚠️ 刻意**不是** 'posted'：confirmArrivalLocked 见到 posted 就直接返回
+        //（那是入库完成的标记，也是"重复点「是」"的守卫）。
+        status: 'awaiting_confirmation',
+        draft,
+      });
+    return { taskId, arrivalRecordId, task, created: !existing };
+  }
+
   /** 真正的入库实现：只由 confirmArrival 串行调用，不要直接调（会丢掉串行保证）。 */
   async confirmArrivalLocked(taskId, task, operatorOpenId) {
     if (task.status === 'posted') return { toast: { type: 'info', content: '采购到货已入库' } };
@@ -2934,16 +3088,19 @@ class PurchaseWebhookService {
         await persistEntry(key, entry);
       }
     }
-    for (const request of arrival.requests || []) {
-      const productId = linkedRecordIds(request.fields?.[requestTable.fields.product])[0];
-      const size = (await this.getSizeReferences().resolveLinkedCell(request.fields?.[requestTable.fields.size])).size;
-      const actualQuantity = (arrival.actual || [])
-        .filter((item) => item.product_record_id === productId && Number(item.size) === size)
-        .reduce((sum, item) => sum + item.quantity, 0);
-      const requestedQuantity = number(request.fields?.[requestTable.fields.quantity]);
-      const status = actualQuantity === 0 ? '未到货' : actualQuantity < requestedQuantity ? '部分到货' : actualQuantity > requestedQuantity ? '超额到货' : '全部到货';
-      await this.gateway.update('purchaseRequest', request.record_id, { arrivalStatus: status });
-    }
+    // ⚠️ 2026-10-06：「采购申请表的到货状态回写」**已删除**。
+    //
+    // 原来这里会逐条算 `未到货/部分到货/全部到货/超额到货` 并 update 采购申请行。
+    // 业务负责人的口径（`docs/arrival-conversation-flow.md` §3，原话）：
+    //   「采购申请表已经是一个历史数据了……按实际数量入库即可，不需要改表本身」
+    // 而「单据信息」（= 采购申请表）**一个字都不许变**是她的红线，
+    // 因此到货状态没有任何地方可写——写了就是改表本身。
+    // 相关代码删掉而不是留着开关：留着就是一个"永远不该打开"的分支，
+    // 而它一旦被打开就是静默改她的历史单据。
+    //
+    // ⚠️ 「超额到货」这个状态值现在**没有任何写入点**（表里的选项仍然保留，人工可用）——
+    // 这是刻意与她的口径对齐，不是漏改。超额这件事改由群里那句话告诉她
+    // （见 config/arrivalConversation.js 的 overageNotice）。
     await this.gateway.update('purchaseArrival', arrival.arrival_record_id, { confirmStatus: '已确认' });
     await this.store.update(taskId, { status: 'posted', inbound_record_ids: created });
     this.inflightInbound.delete(taskId);

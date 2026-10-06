@@ -9,18 +9,17 @@ const AMBIGUOUS_BATCH_REPLY = '我分不清你说的是哪一批～引用一下�
  * 群里进来的采购消息的分派（C 链路的使用方）。
  * 准入由调用方判定（话题免 @ / 主群 @，见 LarkMvpService.acceptMessage）。
  *
- * 今天它只做一件事：**把"是哪一批"定位出来，然后把结果原样交回调用方**。
- * D（到货验收的新语义）还没定，所以这里**不发明任何业务规则**：
- *   · 不发卡片、不写业务表、不改任何状态；
- *   · 认出来 → 返回批次信息，调用方（将来的 D）自己决定下一步；
+ * 它自己做两件事：**把"是哪一批"定位出来**，然后在定位成功时把这句话交给
+ * 「对话到货」（D，`ArrivalConversationService`）——**记录**，必要的话发确认卡片。
+ *   · 认出来 → 返回批次信息 + D 的处理结果，调用方（LarkMvpService）不再做别的；
  *   · 认不出来 → 回一句问清楚，结束。
  *
- * 为什么单独一个类：D 要直接用定位结果，但 D 的业务规则还没定。
- * 把「定位 → 一句话交回」和「拿定位结果去改单据」分开，D 落地时只加一个使用方，
- * 不需要动这里，也不会让今天这版偷偷带上没被确认的验收口径。
+ * ⚠️ 本类**不写任何业务表**：定位只读，记录只写 D 自己的本地会话记录。
+ * ⚠️ D 是可以**不注入**的（`arrivalConversation: null`）：那种情况下本类回到
+ *    "只记日志就返回"的旧行为，不会偷偷开始写东西。
  */
 class GroupPurchaseFlowService {
-  constructor({ locator, replyText, sendText = null } = {}) {
+  constructor({ locator, replyText, sendText = null, arrivalConversation = null } = {}) {
     if (!locator) throw new Error('GroupPurchaseFlowService 需要 purchaseBatchLocator');
     this.locator = locator;
     // replyText：在**群里原地回复**那条消息（引用回复）。群聊里所有反馈都走它，
@@ -28,6 +27,10 @@ class GroupPurchaseFlowService {
     this.replyText = replyText || (async () => '');
     // 保留 sendText 注入位（将来 D 要在群里直接发消息时用），今天没有调用点。
     this.sendText = sendText;
+    // 「对话到货」（D）那一半：定位成功之后，把这句话交给它**记下来**并判意图。
+    // ⚠️ 默认 null = 今天的行为（只记日志就返回）：没接上时这条链路一点副作用都没有，
+    //    单测/演练环境不会因为多了一个依赖而偷偷开始写东西。
+    this.arrivalConversation = arrivalConversation;
   }
 
   /**
@@ -43,8 +46,30 @@ class GroupPurchaseFlowService {
       logInfo('purchase.group.message.located', {
         message_id: messageId, source: located.source, batch_no: located.batchNo,
       });
+      // 「对话到货」：把这一句记进本地会话（此时**一张业务表都不写**），
+      // 由它自己决定要不要判"核对完了"、要不要发确认卡片。
+      // ⚠️ 失败只记日志：这句话不能被一个记录级的问题弄丢成"群消息处理失败"。
+      let arrival = null;
+      if (this.arrivalConversation) {
+        try {
+          arrival = await this.arrivalConversation.noteTopicMessage({
+            batchNo: located.batchNo,
+            threadId,
+            chatId: located.batch?.chat_id || '',
+            requestIds: located.batch?.request_ids || [],
+            messageId,
+            text,
+            senderOpenId,
+          });
+        } catch (error) {
+          logWarn('purchase.arrival.conversation.note_failed', {
+            message_id: messageId, batch_no: located.batchNo, error: error.message,
+          });
+        }
+      }
       return {
-        resolved: true, reason: located.source, batch: located.batch, batchNo: located.batchNo, replied: false,
+        resolved: true, reason: located.source, batch: located.batch, batchNo: located.batchNo,
+        replied: false, arrival,
       };
     }
     const content = located.status === 'not_found' ? NO_BATCH_REPLY : AMBIGUOUS_BATCH_REPLY;

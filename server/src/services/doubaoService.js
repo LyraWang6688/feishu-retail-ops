@@ -11,6 +11,8 @@ const {
   resolveAfterSalesSettlement,
   resolveAfterSalesRestockState,
 } = require('../config/afterSalesFlow');
+// 「对话到货」的判据提示词：配置先行，改判据不碰这个类（见 config/arrivalConversation.js）。
+const { buildArrivalConversationPrompt } = require('../config/arrivalConversation');
 
 // Log only the sale fields needed to compare AI extraction with deterministic
 // normalization. Never log the complete user message, prompt or raw model JSON.
@@ -501,6 +503,42 @@ class DoubaoService {
       });
     } catch (error) {
       throw new Error(`采购报单解析失败: ${error.message}`);
+    }
+  }
+
+  /**
+   * 「对话到货」的意图判定（`docs/arrival-conversation-flow.md` §2 第 ③ 步）。
+   *
+   * 她说什么算"核对完了"**字眼不固定**，所以这里**不是关键词匹配**，而是把
+   * 「采购申请基准 + 话题原话」交给文字模型，让它回一件事：
+   * 「她是不是表达了这次核对完了」+「实际到了多少」。
+   *
+   * ⚠️ 提示词放 config/arrivalConversation.js（配置先行）：改判据不碰这个类。
+   * ⚠️ 解析失败一律抛错，由调用方（ArrivalConversationService）决定"继续收集、不猜"——
+   *    这里**绝不**返回一个"看起来合理"的默认值（那等于替她把到货数量定了）。
+   *
+   * @returns {Promise<{finalized: boolean, items: Array<{index: number, quantity: number}>, reason: string}>}
+   */
+  async understandArrivalConversation({ baseline = [], transcript = [], batchNo = '' } = {}) {
+    const llm = this.resolveModel('text');
+    if (!Array.isArray(baseline) || !baseline.length) throw new Error('到货核对缺少采购申请基准');
+    const prompt = buildArrivalConversationPrompt({ baseline, transcript, batchNo });
+    const response = await this.getClient('text').chat.completions.create({
+      model: llm.model,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0,
+      response_format: { type: 'json_object' },
+    });
+    const content = response.choices?.[0]?.message?.content || '';
+    try {
+      const parsed = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
+      return {
+        finalized: parsed?.finalized === true,
+        items: Array.isArray(parsed?.items) ? parsed.items : [],
+        reason: String(parsed?.reason || ''),
+      };
+    } catch (error) {
+      throw new Error(`到货核对意图解析失败: ${error.message}`);
     }
   }
 

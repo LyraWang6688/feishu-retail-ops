@@ -32,6 +32,7 @@ const { extractSalesMessageText, isMentioned, stripMentionPlaceholders } = requi
 const { resolveAckReaction, resolveBotOpenId } = require('../config/groupPurchase');
 const { PurchaseBatchLocator } = require('./purchaseBatchLocator');
 const { GroupPurchaseFlowService } = require('./groupPurchaseFlowService');
+const { ArrivalConversationService } = require('./arrivalConversationService');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
@@ -175,11 +176,32 @@ class LarkMvpService {
         hint: '未配置机器人 open_id，群聊消息不会进入采购流程（私聊不受影响）',
       });
     }
+    // ── 「对话到货」（D）─────────────────────────────────────────────────────
+    // 话题里的话 → 记录（不写业务表）→ 判「核对完了」→ 话题里发确认卡片 → 点「是」→ 入库。
+    // 独立 service：它管"话怎么理解"，表怎么写仍然只在 PurchaseWebhookService 一处。
+    this.arrivalConversations = options.arrivalConversations || new ArrivalConversationService({
+      gateway: this.gateway,
+      // 入库那一步（建「采购到货」行 + 写「采购入库」+ 库存）**只有这一个出口**。
+      purchaseWebhooks: this.purchaseWebhooks,
+      // 文字模型入口（与销售录单、采购数量说明同一组 TEXT_LLM_* 配置）。
+      understand: options.arrivalUnderstand
+        || ((input) => this.recognizer.understandArrivalConversation(input)),
+      // 往**话题里**发卡片 / 回一句话：一律 reply，保证落在同一个话题下。
+      replyCard: (messageId, card) => this.replyCard(messageId, card),
+      replyText: (messageId, content) => this.replyText(messageId, content),
+      updateCard: (event, card, metadata) => this.updateArrivalCard(event, card, metadata),
+      store: options.arrivalConversationStore,
+      isEnabled: options.isArrivalConversationEnabled,
+    });
     this.groupPurchaseFlow = options.groupPurchaseFlow || new GroupPurchaseFlowService({
       locator: this.purchaseBatchLocator,
       // 群里的反馈一律**引用回复**那条消息：群聊没有"上一次对话"的概念，
       // 不复用私聊的 sendText（那会发出一条没有上下文的光秃秃消息）。
       replyText: (messageId, content) => this.replyText(messageId, content),
+      // 「对话到货」（D）：话题里的话 → 记录 → 判意图 → 发确认卡片。
+      // ⚠️ 传进去的是上面刚建好的那个实例（不是另建一个）：入库那一步（purchaseWebhooks）
+      //    与回复能力都在它手里，两处各自 new 一个会变成两套会话状态。
+      arrivalConversation: this.arrivalConversations,
     });
   }
 
@@ -307,6 +329,14 @@ class LarkMvpService {
     return updateInteractiveCard({ client: this.client, task, event, card,
       stage: metadata.stage, interactionId: metadata.interactionId,
       eventPrefix: 'lark.after_sales.card.update' });
+  }
+
+  // 「对话到货」那张卡片（确认入库 → 已入库）的更新单独一个日志前缀：
+  // 排查时能一眼分出"这是到货那张卡"和"这是采购申请那张卡"。
+  async updateArrivalCard(event, card, metadata = {}) {
+    return updateInteractiveCard({ client: this.client, task: {}, event, card,
+      stage: metadata.stage, interactionId: metadata.interactionId,
+      eventPrefix: 'purchase.arrival.card.update' });
   }
 
   async publishSalesResultCard(task, event, card, metadata = {}) {
@@ -1039,6 +1069,12 @@ class LarkMvpService {
       event?.operator?.operator_id?.open_id || event?.operator?.open_id || event?.event?.operator?.operator_id?.open_id;
     if (['choose_sample_replacement', 'refresh_sample_replacement'].includes(action)) {
       return this.sampleReplacements.handleCardAction(value, event, operatorOpenId, context);
+    }
+    // 「对话到货」的「是」= **最终入库的点**（`docs/arrival-conversation-flow.md` ⑤）。
+    // 放在采购卡片分派**之前**：它用的动作名与采购申请那两个不同，但先判更清楚——
+    // 这条动作的语义是"入到货"，不是"改采购申请"，不该走进采购申请的处理逻辑。
+    if (this.arrivalConversations.matches(action)) {
+      return this.arrivalConversations.handleCardAction(value, operatorOpenId, event);
     }
     const procurementResult = await this.purchaseWebhooks.handleCardAction(value, operatorOpenId, event);
     if (procurementResult) return procurementResult;
