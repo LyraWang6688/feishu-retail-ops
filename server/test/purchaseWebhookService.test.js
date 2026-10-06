@@ -99,6 +99,10 @@ const makeClient = (overrides = {}) => ({
     },
     message: {
       create: overrides.sendMessage || (async () => ({ code: 0, msg: 'success' })),
+      // 2026-10-06 起：采购单发到群时，第 1 条（图）之后的每条消息都用 `reply`
+      // 回复第 1 条（业务负责人拍板：一条开话题 + 后面的回复它）。
+      // 默认实现只回一句成功、不带 message_id——绝大多数用例不关心群消息的落点。
+      reply: overrides.replyMessage || (async () => ({ code: 0, msg: 'success' })),
     },
   },
 });
@@ -153,6 +157,10 @@ const makeService = (options = {}) => {
     // 单测里压到 20ms —— 验证的是"同一批次号的记录归成一批、窗口到点才处理"，
     // 而不是真的等 4 秒。需要验证窗口本身的用例会显式传更大的值。
     reportBatchWindowMs: options.reportBatchWindowMs ?? 20,
+    // 退货「归批窗口」：生产默认 30000ms（业务负责人 2026-10-06 拍板），
+    // 单测里同样压到 20ms —— 验证的是"同一批次号的退货归成一批、窗口到点才处理"，
+    // 而不是真的等 30 秒。需要验证窗口本身的用例会显式传更大的值。
+    purchaseReturnBatchWindowMs: options.purchaseReturnBatchWindowMs ?? 20,
     // 群聊定位器（发到群后写 message_id ↔ 批次映射）指向临时目录：
     // 不传的话服务会自建 data/purchase_group_messages，用例之间会互相看见对方的映射。
     batchLocatorStore: options.batchLocatorStore,
@@ -1427,12 +1435,54 @@ test('采购申请一条：编号 + 尺码 + 数量说明 → 正确解析成尺
   assert.deepEqual([bySize.get('size_36'), bySize.get('size_37')], [2, 3]);
 });
 
-test('采购退货一条（编号 + 数量）→ 交给退货链路、不走报货归批；数量取自「数量」字段', async () => {
-  // ⚠️ 合并 #81 与 #83 时定的归属：**采购退货不在归批窗口里处理**，由它自己那条
-  // 链路负责（processSupplierReturn：按实时库存逐尺码扣减 + 出「采购退货单」）。
-  // 所以这条用例钉的是"分流正确 + 数量口径正确 + 不建批次/不走进货"；
+// ─── 回归：货品没维护供应商 → 报货照常出单（业务负责人 2026-10-06 拍板）───
+
+test('货品没维护供应商：报货照常出单（单条 + 归批两条链路都不再整条失败），图归到「未标注供应商」', async () => {
+  // 她的原话：「没维护供应商的货品，也应该能正常出单」。
+  // 这条链路原来有**两处**硬校验——processSupplierReport 与 processSupplierBatch 各一处，
+  // 报错原文都是「货品信息中未关联供应商，请先在货品信息中设置供应商」。任一处留着，
+  // 没填供应商的货品就整条失败，所以这里一次把**两条路径**都钉住。
+  const gateway = makeGateway({
+    purchaseReport: [
+      // 带批次号 → 走归批 → processSupplierBatch（一处校验在这儿）
+      reportRecord('rep_nosup_batch', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-NOSUP' }),
+      // 不带批次号 → 走单条 → processSupplierReport（另一处校验在这儿）
+      reportRecord('rep_nosup_single', { 尺码: sizeLink(36), 数量说明: '36码1双', 编号: ['prod_1'] }),
+    ],
+    purchaseOrderBatch: [],
+    purchaseRequest: [],
+    supplier: [], // 供应商表里一条供应商都没有
+  });
+  const { service, store, gateway: gw, images } = makeService({
+    gateway,
+    // 货品信息里**没有**「供应商」这一格（她说的"没维护供应商的货品"）。
+    references: referencesFor({ prod_1: { 货号: '8088', 颜色: [{ text: '黑色' }], 编号: '8088黑色' } }),
+    recognizer: makeRecognizer({
+      parsePurchaseReportText: async (text) => [{ size: 36, quantity: String(text).includes('2') ? 2 : 1 }],
+    }),
+  });
+
+  const accepted = await service.acceptMany('supplier-report', ['rep_nosup_batch', 'rep_nosup_single']);
+  await waitForBatchPosted(gw, 'BATCH-NOSUP');
+  // 单条那条不带批次号，不参与归批，自己走完。
+  await waitForProcessed(store, accepted.records[1].taskId);
+  await waitFor('单条那条进入终态', async () => (await gw.get('purchaseReport', 'rep_nosup_single'))?.fields?.处理状态 === '已生成申请');
+
+  const requests = await gw.listAll('purchaseRequest');
+  assert.equal(requests.length, 2, '两条路径各写一行单据（归批 2 双 + 单条 1 双，都是 36 码）');
+  // 没有供应商**不是失败**：图照出，只是图上不带供应商（渲染器据此不画「供应商：」那一段）。
+  assert.ok(images.calls.length >= 1, '没有供应商也要出图');
+  assert.ok(images.calls.every((call) => call.supplierName === ''), '图上不带供应商');
+});
+
+test('采购退货一条（编号 + 数量）→ 交给退货链路、不进报货归批；数量取自「数量」字段', async () => {
+  // ⚠️ 归属：**采购退货不进报货的归批窗口**，由它自己那条链路负责
+  // （按实时库存逐尺码扣减 + 出「采购退货单」）。
+  // 2026-10-06 起退货**有自己的一套归批窗口**（业务负责人拍板 30 秒），所以这条
+  // 带批次号的记录会先等窗口（单测里 20ms）再由退货链路整批处理——本用例钉的是
+  // "分流正确 + 数量口径正确 + 不建报货批次/不走进货 + 不被报货那套写成单据"；
   // 库存那一侧（能对上就退、对不上把差额说清）由 purchaseReturn.test.js
-  // 用真的 InventoryService 钉住，这里不重复。
+  // 用真的 InventoryService 钉住，退货归批本身由 purchaseReturnBatch.test.js 钉住。
   const { service, store, gateway } = makeService({
     gateway: makeGateway({
       purchaseReport: [reportRecord('rep_return_1', {
@@ -1786,19 +1836,27 @@ test('批次早已生成：再到达的新明细不会重复建单，也不会�
   assert.equal(records.purchaseReport[1].fields.处理状态, '已生成申请', '新到的明细要补上终态，不能停在待解析');
 });
 
-test('product without supplier association throws clear error', async () => {
+// ⚠️ 这条用例原来叫 'product without supplier association throws clear error'，
+// 断言的是**旧**行为：没关联供应商 → 整条失败，task.error 里带
+// 「货品信息中未关联供应商，请先在货品信息中设置供应商」。
+// 业务负责人 2026-10-06 拍板把口径反转为「没维护供应商的货品，也应该能正常出单」，
+// 所以这里改成钉住**新**行为：不再抛错、照常 posted（报货单条那条路径）。
+test('product without supplier association no longer fails（2026-10-06 业务口径反转）', async () => {
   const { service, store } = makeService({
     gateway: makeGateway({
       purchaseReport: [reportRecord('rep_nosup', { 尺码: sizeLink(36), 编号: ['prod_nosup'] })],
+      purchaseOrderBatch: [],
+      purchaseRequest: [],
     }),
     references: makeReferences({
       resolveProduct: async () => ({ recordId: 'prod_nosup', record: { record_id: 'prod_nosup', fields: { 编号: '8088灰' } } }),
     }),
   });
   const result = await service.accept('supplier-report', 'rep_nosup');
-  const task = await waitForTask(store, result.taskId);
-  assert.equal(task.status, 'failed');
-  assert.ok(task.error.includes('货品信息中未关联供应商'));
+  const task = await waitForProcessed(store, result.taskId);
+  assert.notEqual(task.status, 'failed', '没有供应商不再整条失败');
+  assert.ok(!String(task.error || '').includes('未关联供应商'), '不能再出现旧的硬校验报错');
+  assert.equal(task.status, 'posted', '照常生成采购单');
 });
 
 // ─── 并发确认与幂等恢复（Main Merge Blocker A / B）───
@@ -2065,6 +2123,15 @@ const makeGroupPurchaseService = (options = {}) => {
           },
         };
       },
+      // 2026-10-06 起文字改用 `reply` 回到第 1 条（图）：回复也照样带 message_id / thread_id。
+      // 这里保留"被回复的那条没有话题 id"的形状——飞书在回复时会把（新建的）话题 id 带回来。
+      replyMessage: async (params) => {
+        sent.push(params);
+        return {
+          code: 0,
+          data: { message_id: `om_sent_${sent.length}`, thread_id: 'omt_sent_thread' },
+        };
+      },
     }),
     batchLocatorStore,
   });
@@ -2091,8 +2158,11 @@ test('A：采购单发到群 PURCHASE_CHAT_ID 并 @经办人；消息/话题 ↔
   assert.equal(image.params.receive_id_type, 'chat_id');
   assert.equal(image.data.receive_id, 'oc_test_purchase_group');
   assert.equal(image.data.msg_type, 'image');
-  assert.equal(text.params.receive_id_type, 'chat_id');
-  assert.equal(text.data.receive_id, 'oc_test_purchase_group');
+  // ⚠️ 2026-10-06 起文字**不再顶层发**，而是 `reply` 回第 1 条（图）——
+  // 这样图与文字挂在同一个话题下（以前是两条顶层消息、两个话题）。
+  assert.equal(text.params, undefined, '回复消息没有 receive_id_type 参数（走 path.message_id）');
+  assert.equal(text.path.message_id, 'om_sent_1', '必须回复第 1 条（图），不是发一条新的顶层消息');
+  assert.equal(text.data.msg_type, 'text');
   // @经办人（不是 @所有人）：业务负责人改的口径。
   const textContent = JSON.parse(text.data.content).text;
   assert.match(textContent, /^<at user_id="ou_user_1"><\/at> /);

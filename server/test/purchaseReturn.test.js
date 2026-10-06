@@ -85,7 +85,18 @@ const makeClient = (messages) => ({
     message: {
       create: async (params) => {
         messages.push(params);
-        return { code: 0, msg: 'success' };
+        return { code: 0, msg: 'success', data: { message_id: `om_${messages.length}` } };
+      },
+      // 2026-10-06 起：采购单发到群时，第 1 条（图）之后的每条消息都用 `reply`
+      // 回复第 1 条（业务负责人拍板：一条开话题 + 后面的回复它）。
+      // 这个假实现照飞书的语义回 message_id / thread_id：回复谁，就落在谁的话题里。
+      reply: async (params) => {
+        messages.push(params);
+        return {
+          code: 0,
+          msg: 'success',
+          data: { message_id: `om_${messages.length}`, thread_id: 'omt_purchase_thread' },
+        };
       },
     },
   },
@@ -159,6 +170,10 @@ const makeService = (options = {}) => {
     disableBatchAlertTimers: true,
     batchReadMaxRetries: 1,
     batchReadRetryDelay: 0,
+    // 退货归批窗口（业务负责人 2026-10-06 拍板的生产默认值是 30 秒）。
+    // 这里故意给一个**远大于用例时长**的值：这些用例要验的是"这一条退货处理得对不对"，
+    // 窗口由 runReturn 显式 flush（见下），不让定时器在断言中途插进来。
+    purchaseReturnBatchWindowMs: options.purchaseReturnBatchWindowMs ?? 10_000,
   });
   return { service, store, gateway, messages, images, inventoryStore };
 };
@@ -172,6 +187,13 @@ const runReturn = async (options) => {
   let error = null;
   try {
     result = await ctx.service.process('supplier-report', recordId, taskId);
+    // 带「报货批次号」的退货现在先进归批窗口（等整批一起处理）——用例里不等 30 秒，
+    // 直接手动 flush 到点，语义与"窗口到点"完全一样（走的是同一个 flushReturnBatch）。
+    if (result?.status === 'batch_waiting') {
+      await ctx.service.flushReturnBatch(result.batch_no);
+      const task = await ctx.store.get(taskId);
+      result = task?.result ?? result;
+    }
   } catch (thrown) {
     // process() 会把失败落成可重试的 failed 之后再把异常抛出去；这里照样拿任务状态断言。
     error = thrown;
@@ -239,21 +261,59 @@ test('A 情况对得上：样品+门盒+仓库全部退掉，一行一个尺码�
   assert.equal(report.fields.处理状态, '已生成申请');
   assert.deepEqual(report.fields.关联采购申请, requests.map((row) => row.record_id).sort());
 
-  // ⑤ 出图：标题是「邯美皮鞋采购退货单」，其余排版复用采购申请那一套
+  // ⑤ 出图：标题是「邯美皮鞋退货单」（2026-10-06 业务负责人改的），其余排版复用采购单那一套
   assert.equal(images.calls.length, 1);
   assert.equal(images.calls[0].title, RETURN_TITLE);
+  assert.equal(images.calls[0].title, '邯美皮鞋退货单');
   assert.deepEqual(images.calls[0].items.map((item) => [item.item_no, item.color, item.size, item.quantity]),
     [['8088', '黑色', 36, 1], ['8088', '黑色', 37, 1], ['8088', '黑色', 38, 1]]);
-  // 先发图、再写回附件（和采购申请同序）
+  // 先发图、再写回附件（和采购单同序）
   assert.deepEqual(messages.map((message) => message.data.msg_type), ['image', 'text']);
   assert.match(textMessages(messages)[0], /金猴 这批 3 条（共 3 双）/);
   // 对得上时不发差额提醒（图本身就是回执）
   assert.equal(textMessages(messages).length, 1);
   assert.equal(requests.filter((row) => (row.fields.采购申请单 || []).length === 1).length, 1);
-  assert.match(gw.uploads[0], /采购退货单\.png$/);
+  // ⚠️ 附件文件名跟着单据标题走：旧名是「金猴-采购退货单.png」，现在必须是「金猴-退货单.png」。
+  //（「采购申请单」是**附件字段名**，那是生产表字段，不动。）
+  assert.match(gw.uploads[0], /退货单\.png$/);
+  assert.ok(!/采购退货单/.test(gw.uploads[0]), '附件文件名里不能再出现旧标题「采购退货单」');
 
   assert.equal(task.status, 'posted');
   assert.equal(task.result.is_return, true);
+});
+
+// ─── 回归：货品没维护供应商 → 退货照常出单（业务负责人 2026-10-06 拍板）───
+
+test('货品没维护供应商：退货照常出单（不再整条失败），图上不写供应商、群里归到「未标注供应商」', async () => {
+  // 她的原话（2026-10-06）：「没维护供应商的货品，也应该能正常出单，是的，是这个意思」。
+  // 她踩到的就是退货这条链路——原来 prepareSupplierReturn 一读不到供应商就抛
+  // 「货品信息中未关联供应商，请先在货品信息中设置供应商」，整条退货直接失败。
+  const gateway = makeGateway({
+    purchaseReport: [returnRecord('rep_nosup', { 数量: 1 })],
+    liveInventory: [liveRow('live_nosup_36', '门盒', 36)],
+    behavior: BEHAVIORS,
+    supplier: [], // 供应商表里一条都没有
+    purchaseRequest: [],
+  });
+  const { task, gateway: gw, images, messages } = await runReturn({
+    gateway,
+    recordId: 'rep_nosup',
+    // 货品信息里**没有**「供应商」这一格。
+    products: { prod_1: { 货号: '8088', 颜色: [{ text: '黑色' }], 编号: '8088黑色' } },
+  });
+
+  // 没有供应商不是错误：整条链路照常走完（扣库存 / 写单据 / 出图 / 发群）。
+  assert.equal(task.status, 'posted', '没有供应商也要 posted，不能是 failed');
+  assert.equal(task.result.taken, 1);
+  assert.deepEqual(liveOf(gw), [], '库存照常扣');
+  assert.equal(requestsOf(gw).length, 1, '单据信息照常写');
+  assert.equal(images.calls.length, 1, '照常出一张退货单');
+  assert.equal(images.calls[0].title, RETURN_TITLE);
+  // 图上**不写供应商**（渲染器据此不画「供应商：」那一段，也不再写「未填写」那种像警告的字样）。
+  assert.equal(images.calls[0].supplierName, '', '图上不带供应商');
+  // 群消息照发：没有供应商的归到「未标注供应商」这一组，不是失败。
+  assert.match(textMessages(messages)[0], /未标注供应商 这批 1 条（共 1 双）/);
+  assert.match(gw.uploads[0], /退货单\.png$/);
 });
 
 test('A 情况数量比库存多：能对上的先退，差额明确告诉她', async () => {

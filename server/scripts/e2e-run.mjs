@@ -587,7 +587,7 @@ const cmdReturn = async () => {
   const checks = [
     {
       id: '①',
-      text: `出「采购退货单」：单据信息新增 ${requestRows.length} 行（本次退货涉及 ${new Set(requestRows.map((r) => r.size)).size} 个尺码），合计 ${totalReturned} 双 = 填的 ${qty}`,
+      text: `出「退货单」：单据信息新增 ${requestRows.length} 行（本次退货涉及 ${new Set(requestRows.map((r) => r.size)).size} 个尺码），合计 ${totalReturned} 双 = 填的 ${qty}`,
       pass: requestRows.length > 0 && totalReturned === qty && totalReturned <= scoped.length,
       evidence: `单据信息行=${JSON.stringify(requestRows.map((r) => ({ id: r.record_id, size: r.size, qty: r.quantity })))}；PNG=${outbox.images.length} 张`,
     },
