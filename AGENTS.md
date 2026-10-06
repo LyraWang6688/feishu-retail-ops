@@ -580,3 +580,35 @@ Schema Check 只回答「目标 Base 的字段与关联结构是否满足契约�
 - ⭐ **做法**：`git worktree list` **是唯一可信的来源**（它列全部 worktree）；
   查进度用它，**别靠 `ls` 某个目录**。
 - ⭐ **自检**：**「我用 `git worktree list` 看的吗？」**
+
+### 13. ⭐ 查飞书文档：用 `curl`，**不要 `web_search`**（业务负责人 2026-10-06 明确）
+
+> 她的原话：「**做飞书的时候你就别搜了，你就用那个 curl 就行了**」
+
+- ⭐ **飞书相关的事，一律 `curl` 拉官方文档** —— **不用 `web_search`**（二手、可能过期）。
+- ⭐ **拿纯文本的办法：URL 末尾加 `.md?lang=zh-CN`**
+  ```bash
+  curl -sS -L "https://open.feishu.cn/document/<路径>.md?lang=zh-CN"
+  ```
+  - 返回 `Content-Type: text/markdown`，**正文完整**（实测 200 / 4KB 左右）。
+  - ⚠️ **不带 `.md` 的页面是 JS 渲染的** —— curl 只能拿到 ~7KB 框架与标题，**拿不到正文**。
+  - ⚠️ 所以「curl 拿不到内容」**不是网络问题，是路径/后缀不对**；路径猜不中会 404（**26 字节空回复**）。
+  - `curl` 在本机**能访问 open.feishu.cn**（`web_fetch` 曾报"非公网 IP"，**curl 没这个问题**）。
+
+- ⭐ **已实查过、以后要用的两条**（2026-10-06）：
+
+  **① 网页应用配置**（`/document/home/integrating-web-apps-in-5-minutes/step-4-configure-the-home-page-address.md`）
+  1. 开发者后台 → **添加应用能力** → 选 **网页应用** → 添加能力；
+  2. **网页配置**里填 **桌面端主页 / 移动端主页**（示例是内网地址，⚠️ **正式上线要公网地址**）；
+  3. **安全设置 → H5 可信域名** 里加 `域名:端口号`（**这一步极易漏，漏了打不开**）。
+
+  **② AppLink：打开端内 web-view**（`/document/common-capabilities/applink-protocol/supported-protocol/open-the-web-view-in-feishu-to-access-the-specified-url.md`）
+  ```
+  https://applink.feishu.cn/client/web_url/open?mode=<mode>&url=<encodeURIComponent 后的网址>
+  ```
+  - `mode`（必填）：`sidebar-semi` 侧边栏 · `window` 独立窗口 · `appCenter` 标签页（需飞书 7.5+）；
+  - `url`（必填）：**必须 encodeURIComponent**（含特殊字符则先百分号编码再 Encode）；
+  - ⭐ **飞书官方「AppLink 生成和诊断工具」**：`https://webview.feishu.cn/applinktool?enter_from=weburl`
+    —— **别再手写 AppLink，用这个工具生成 + 诊断**。
+  - ⚠️ 「聊天框 + 菜单」的**桌面端跳转链接要 AppLink 格式**；填普通网址会报
+    「**请确认所填写的链接格式与指向的应用是否正确**」。
