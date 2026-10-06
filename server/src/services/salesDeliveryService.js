@@ -4,15 +4,18 @@ const { SalesProgressService } = require('./salesProgressService');
 const { readSaleLinkedRecord } = require('./salesRecordReader');
 const { withSalesReadRetry } = require('./salesReadRetry');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
-const { postedOf } = require('../config/salesStatusDimensions');
+const { SALES_STATUS_VALUES, fundsStatusOf } = require('../config/salesStatusDimensions');
+const { SalesStatusService } = require('./salesStatusService');
 const { logError, logInfo } = require('../utils/logger');
 
 class SalesDeliveryService {
-  constructor({ gateway, inventory, progress, sizeReferences } = {}) {
+  constructor({ gateway, inventory, progress, sizeReferences, salesStatus } = {}) {
     if (!gateway) throw new Error('SalesDeliveryService requires gateway');
     this.gateway = gateway;
     this.inventory = inventory || new InventoryService({ gateway });
     this.progress = progress || new SalesProgressService({ gateway });
+    // 四个状态维度的「达成情况」写入只有一处实现（见 services/salesStatusService）。
+    this.salesStatus = salesStatus || new SalesStatusService({ gateway });
     // 「尺码」是关联字段：走共享服务解析，不靠关联单元格自带的显示文本。
     this.getSizeReferences = createSizeReferenceAccess({ gateway: this.gateway, sizeReferences });
     this.queue = Promise.resolve();
@@ -34,9 +37,10 @@ class SalesDeliveryService {
     );
     if (!entry) throw new Error('销售主表记录不存在');
     const entryFields = this.gateway.table('salesEntry').fields;
-    // 「已入账」的取值来源改走配置（「资金状态」优先，空则退回「确认状态（旧）」）；
-    // 判据与文案一字未改。
-    if (postedOf(entry, entryFields) !== '已入账') throw new Error('销售订单尚未确认入账');
+    // 闸门：钱写进「收款明细」了没有。取值走配置（**单读**「资金状态」），判据是配置里的常量。
+    if (fundsStatusOf(entry, entryFields) !== SALES_STATUS_VALUES.funds.WRITTEN) {
+      throw new Error('销售订单尚未确认入账');
+    }
     const fields = this.gateway.table('salesDetail').fields;
     const listedDetails = (await withSalesReadRetry(
       () => this.gateway.listAll('salesDetail'), 'delivery_detail_list',
@@ -91,6 +95,16 @@ class SalesDeliveryService {
     const deliveredTotal = details.filter((detail) =>
       textValue(detail.fields?.[fields.fulfillmentStatus]) === '已交付').length;
     const total = details.length;
+    // ④ 库存状态：扣完库存（+ 实时库存）之后。
+    //    全成功 → 已扣减 · 部分是 → 部分扣减 · 全失败 → 扣减失败。
+    //    ⚠️ 「已交付」的重复行（duplicate）算成功：那一行的库存早就扣过了。
+    //    ⚠️ 用 markQuietly：货已经扣了，写不进这一列不该把交付判失败（失败会留 warn 日志）。
+    const stockValue = failures.length === 0
+      ? SALES_STATUS_VALUES.stock.DONE
+      : (failures.length < detailRecordIds.length ? SALES_STATUS_VALUES.stock.PARTIAL : SALES_STATUS_VALUES.stock.FAILED);
+    await this.salesStatus.markQuietly(salesEntryRecordId, 'stock', stockValue, {
+      delivered_quantity: deliveredTotal, total_quantity: total, failed_count: failures.length,
+    });
     const progress = await this.progress.sync(salesEntryRecordId, { detailRecordIds, paymentRecordIds });
     logInfo('sales.delivery.completed', { sales_entry_record_id: salesEntryRecordId,
       detail_count: results.length, failed_count: failures.length,

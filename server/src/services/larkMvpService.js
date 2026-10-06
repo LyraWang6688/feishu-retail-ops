@@ -10,6 +10,8 @@ const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { updateInteractiveCard } = require('../infrastructure/interactiveCardFeedback');
 const { V1BitableGateway, textValue } = require('./v1BitableGateway');
 const { V1PostingService } = require('./v1PostingService');
+const { SalesStatusService } = require('./salesStatusService');
+const { SALES_STATUS_VALUES } = require('../config/salesStatusDimensions');
 const { createWorkbenchService } = require('./v1WorkbenchService');
 const { SalesDeliveryService } = require('./salesDeliveryService');
 const { SecondDeliveryService } = require('./secondDeliveryService');
@@ -105,6 +107,10 @@ class LarkMvpService {
       this.client = new lark.Client({ appId, appSecret, logger: larkLogger });
     }
     this.gateway = options.gateway || new V1BitableGateway({ client: this.client });
+    // 四个状态维度里，「确认状态」**只有这里知道**（她点没点卡片上的按钮），
+    // 所以写它的职责落在本类；其余三维由各自写业务事实的 service 写。
+    // 取值与字段映射都在 config/salesStatusDimensions（配置先行，不在调用点拼字符串）。
+    this.salesStatus = options.salesStatus || new SalesStatusService({ gateway: this.gateway });
     this.references = options.references || new V1ReferenceResolver(this.gateway);
     this.recognizer = options.recognizer || doubaoService;
     this.posting = options.posting || new V1PostingService({ gateway: this.gateway, references: this.references });
@@ -817,7 +823,9 @@ class LarkMvpService {
           originalText: task.original_text,
           sender: person(task.sender_open_id),
           parseStatus: '解析中',
-          confirmStatus: '待确认',
+          // ① 确认状态：单子刚建出来，**她还没点**确认按钮。
+          //    值取自配置（未确认），不在这里拼字面量。
+          userAction: SALES_STATUS_VALUES.userAction.PENDING,
           orderNo,
         });
       },
@@ -1196,7 +1204,9 @@ class LarkMvpService {
     if (action === 'cancel') {
       await this.store.update(draftId, { status: 'cancelled' });
       if (task.type === 'sale' && task.sales_entry_record_id) {
-        await this.gateway.update('salesEntry', task.sales_entry_record_id, { confirmStatus: '已取消' });
+        // ① 确认状态：她在卡片上点了「取消」。
+        await this.salesStatus.markQuietly(task.sales_entry_record_id, 'userAction',
+          SALES_STATUS_VALUES.userAction.CANCELLED, { task_id: draftId });
         await this.publishSalesResultCard(task, event, salesStatusCard(task.draft, '销售录单已取消', '原草稿不会入账。'),
           { stage: 'cancelled', interactionId: context.interactionId });
       }
@@ -1206,7 +1216,9 @@ class LarkMvpService {
     if (action === 'modify_sale' && task.type === 'sale') {
       await this.store.update(draftId, { status: 'awaiting_correction' });
       if (task.sales_entry_record_id) {
-        await this.gateway.update('salesEntry', task.sales_entry_record_id, { confirmStatus: '待修改' });
+        // ① 确认状态：她在卡片上点了「修改」。
+        await this.salesStatus.markQuietly(task.sales_entry_record_id, 'userAction',
+          SALES_STATUS_VALUES.userAction.TO_MODIFY, { task_id: draftId });
       }
       await this.publishSalesResultCard(task, event, salesStatusCard(task.draft, '等待重新发送', '原草稿不会入账；请重新发送完整销售信息。', 'orange'),
         { stage: 'awaiting_correction', interactionId: context.interactionId });
@@ -1278,6 +1290,18 @@ class LarkMvpService {
     await this.store.update(draftId, { status: 'posting',
       ...(task.type === 'sale' ? { posting_requested_action: hasWrittenSaleRecords
         ? task.posting_requested_action || action : action } : {}) });
+    // ① 确认状态：**她点了「确认」按钮** —— 就在这一刻落「已确认」。
+    //
+    // 为什么写在这里、不写入账服务：这是全流程**唯一**知道"用户点过确认"的地方；
+    // SalesOrderService 只认 record_id，分不出"她点了"还是"系统重试"。
+    // 旧代码在她点确认后直接写「入账中」，"她点过确认"这件事从来没落过表（今天补上）。
+    //
+    // ⚠️ 用 markQuietly：状态列写不进去也不该拦住这一单入账（她已经点了，钱和货更要紧）；
+    //    失败会留一条 `sales.status.write_failed` 的 warn，不是静默。
+    if (task.type === 'sale' && task.sales_entry_record_id) {
+      await this.salesStatus.markQuietly(task.sales_entry_record_id, 'userAction',
+        SALES_STATUS_VALUES.userAction.CONFIRMED, { task_id: draftId, action });
+    }
     try {
     if (['confirm_sale', 'confirm_sale_pending', 'confirm_sale_delivered'].includes(action) && task.type === 'sale') {
       // 交付与否由**交易类型**决定，不由用户点哪个按钮决定。

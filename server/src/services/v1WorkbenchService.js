@@ -1,5 +1,5 @@
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
-const { postedOf } = require('../config/salesStatusDimensions');
+const { SALES_STATUS_VALUES, fundsStatusOf } = require('../config/salesStatusDimensions');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { logWarn } = require('../utils/logger');
@@ -141,9 +141,8 @@ const createWorkbenchService = (gateway, options = {}) => {
           gift: asText(schema, 'salesDetail', record, 'gift'),
           payment_method: [...new Set(receiptRows.map((payment) => relationLabel(schema, 'paymentMethod', paymentsById,
             asLinks(schema, 'paymentRecord', payment, 'method'), 'name')))].filter(Boolean).join('＋') || '未收款',
-          // 取值来源改走配置（「资金状态」优先，空则退回「确认状态（旧）」）；
-          // 判据与原来一致（原来这一步会 trim，这里保持 trim，行为逐字不变）。
-          confirmed: postedOf(order, schema.tables.salesEntry?.fields).trim() === '已入账',
+          // 闸门：钱写进「收款明细」了没有（单读「资金状态」，判据是配置里的常量）。
+          confirmed: fundsStatusOf(order, schema.tables.salesEntry?.fields) === SALES_STATUS_VALUES.funds.WRITTEN,
         };
       })))
       .filter((row) => row.confirmed && row.sold_at && shanghaiDayKey(row.sold_at) === date)

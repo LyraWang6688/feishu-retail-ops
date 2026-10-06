@@ -1,17 +1,22 @@
-// 「销售主表」四个状态维度：字段映射 + 「新字段空则退回旧字段」的双读取值。
+// 「销售主表」四个状态维度：字段映射 + 值域 + **单读**取值。
 //
-// 背景：2026-10-06 业务负责人在生产「销售主表」新建了四个状态字段，并把旧的
-// 「确认状态」改名成「确认状态（旧）」。代码按**字段名**找字段，改名后 6 处闸门
-// 读到新建的空字段 → 全关闸。这一层把取值规则收到配置里，**判据仍留在调用点**。
+// 业务负责人 2026-10-06 定的口径（原话）：
+//   「你需要负责的是新的 4 个字段……我需要知道的是：用户有没有点击确认按钮，
+//     有没有写进销售明细、收款明细、库存流水以及实时库存」
+//   「旧的两个字段不用管，代码里也不需要了，schema 可以留着」
+// ⇒ 四个字段记的是四个"做没做到"的检查点；**不双读、不 legacy 兜底、不回填**。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   SALES_STATUS_FIELDS,
-  LEGACY_SALES_STATUS_FIELDS,
+  SALES_STATUS_DIMENSIONS,
+  SALES_STATUS_VALUES,
   SALES_STATUS_VALUE_DOMAINS,
-  postedOf,
+  assertStatusValue,
+  statusPatch,
   userActionOf,
   salesStatusOf,
+  fundsStatusOf,
   stockStatusOf,
   textOf,
 } = require('../src/config/salesStatusDimensions');
@@ -20,77 +25,84 @@ const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
 const entry = (fields) => ({ record_id: 'rec_1', fields });
 
-test('字段名：四个新维度 + 两个旧字段名（字面量钉死，真表改名必须在这里改）', () => {
+test('字段名 + 语义键：字面量钉死（真表改名必须在这里改）', () => {
   assert.deepEqual(SALES_STATUS_FIELDS, {
     userAction: '确认状态', sales: '销售状态', funds: '资金状态', stock: '库存状态',
   });
-  assert.deepEqual(LEGACY_SALES_STATUS_FIELDS, {
-    legacyConfirm: '确认状态（旧）', legacyOrder: '订单状态',
+  assert.deepEqual(SALES_STATUS_DIMENSIONS, {
+    userAction: 'userAction', sales: 'sales', funds: 'funds', stock: 'stock',
   });
 });
 
-test('四个新字段名都指向 salesEntry 里真实存在的映射（只读 schema，不读真表）', () => {
+test('四个维度的字段名都指向 salesEntry 里真实存在的映射（只读 schema，不读真表）', () => {
   const fields = V1_BITABLE_SCHEMA.tables.salesEntry.fields;
-  // 新字段：逐个对上 schema 的语义键。
-  assert.equal(fields.userAction, SALES_STATUS_FIELDS.userAction);
-  assert.equal(fields.sales, SALES_STATUS_FIELDS.sales);
-  assert.equal(fields.funds, SALES_STATUS_FIELDS.funds);
-  assert.equal(fields.stock, SALES_STATUS_FIELDS.stock);
-  // 旧字段：schema 的 confirmStatus 必须指回「确认状态（旧）」——写那一路靠它不卡。
-  assert.equal(fields.confirmStatus, LEGACY_SALES_STATUS_FIELDS.legacyConfirm);
-  assert.equal(fields.orderStatus, LEGACY_SALES_STATUS_FIELDS.legacyOrder);
-  // 映射值不能是空串（空串会让取值静默读到 undefined）。
-  for (const name of Object.values({
-    ...SALES_STATUS_FIELDS, ...LEGACY_SALES_STATUS_FIELDS,
-  })) assert.ok(name.length > 0);
+  for (const dimension of Object.keys(SALES_STATUS_DIMENSIONS)) {
+    assert.equal(fields[dimension], SALES_STATUS_FIELDS[dimension], dimension);
+    assert.ok(SALES_STATUS_FIELDS[dimension].length > 0);
+  }
 });
 
-test('postedOf：新「资金状态」空 → 退回「确认状态（旧）」；有值 → 用新字段', () => {
-  const fields = V1_BITABLE_SCHEMA.tables.salesEntry.fields;
-  // ① 新字段空（这就是今天的生产状态）→ 逐字退回旧字段今天的值。
-  assert.equal(postedOf(entry({ '确认状态（旧）': '已入账' }), fields), '已入账');
-  // ② 新字段有值 → 新字段优先，哪怕旧字段是别的值。
-  assert.equal(postedOf(entry({ 资金状态: '已入账', '确认状态（旧）': '待确认' }), fields), '已入账');
-  assert.equal(postedOf(entry({ 资金状态: '入账失败', '确认状态（旧）': '已入账' }), fields), '入账失败');
-  // ③ 两个都空 → 空串（调用点 `!== '已入账'` 照旧关闸）。
-  assert.equal(postedOf(entry({}), fields), '');
-  assert.equal(postedOf(undefined, fields), '');
-  // ④ 新字段只有空白 → 仍算"空"，必须退回旧字段（不能把空白当成有值）。
-  assert.equal(postedOf(entry({ 资金状态: '   ', '确认状态（旧）': '已入账' }), fields), '已入账');
+test('值域就是"达成情况"：四个维度各自的取值，字面量钉死', () => {
+  assert.deepEqual(SALES_STATUS_VALUES.userAction,
+    { PENDING: '未确认', CONFIRMED: '已确认', CANCELLED: '已取消', TO_MODIFY: '待修改' });
+  assert.deepEqual(SALES_STATUS_VALUES.sales,
+    { NONE: '未写入', PARTIAL: '部分写入', WRITTEN: '已写入', FAILED: '写入失败' });
+  assert.deepEqual(SALES_STATUS_VALUES.funds,
+    { NONE: '未写入', WRITTEN: '已写入', FAILED: '写入失败' });
+  assert.deepEqual(SALES_STATUS_VALUES.stock,
+    { NONE: '未扣减', PARTIAL: '部分扣减', DONE: '已扣减', FAILED: '扣减失败' });
+  // 数组形态（= 建议的写入顺序 = 飞书选项的显示顺序）由值域派生，不会两处不一致。
+  for (const [dimension, values] of Object.entries(SALES_STATUS_VALUE_DOMAINS)) {
+    assert.deepEqual(values, Object.values(SALES_STATUS_VALUES[dimension]), dimension);
+    assert.ok(values.length > 0);
+  }
 });
 
-test('postedOf 不传 table 时用配置里的字段名（配置先行，不依赖调用方）', () => {
-  assert.equal(postedOf(entry({ 资金状态: '已入账' })), '已入账');
-  assert.equal(postedOf(entry({ '确认状态（旧）': '已入账' })), '已入账');
+test('assertStatusValue：值域外的值一律拒绝（写错的值会永久留在飞书选项里）', () => {
+  assert.equal(assertStatusValue('funds', '已写入'), '已写入');
+  assert.equal(assertStatusValue('funds', ''), '');
+  assert.equal(assertStatusValue('funds', null), '');
+  // 旧口径的值不再被接受 —— 它已经不属于这四个字段的值域。
+  assert.throws(() => assertStatusValue('funds', '已入账'), /只能是：未写入 \/ 已写入 \/ 写入失败/);
+  assert.throws(() => assertStatusValue('userAction', '入账中'), /确认状态/);
+  assert.throws(() => assertStatusValue('stock', '已写入'), /必须是|只能是/);
+  assert.throws(() => assertStatusValue('nope', 'x'), /未知的销售状态维度/);
 });
 
-test('userActionOf / salesStatusOf：同样双读（新字段优先，空则退回旧字段）', () => {
-  const fields = V1_BITABLE_SCHEMA.tables.salesEntry.fields;
-  assert.equal(userActionOf(entry({ '确认状态（旧）': '待确认' }), fields), '待确认');
-  assert.equal(userActionOf(entry({ 确认状态: '已取消', '确认状态（旧）': '待确认' }), fields), '已取消');
-  assert.equal(userActionOf(entry({}), fields), '');
-
-  assert.equal(salesStatusOf(entry({ 订单状态: '已完成' }), fields), '已完成');
-  assert.equal(salesStatusOf(entry({ 销售状态: '部分交付', 订单状态: '已确认' }), fields), '部分交付');
-  assert.equal(salesStatusOf(entry({}), fields), '');
+test('statusPatch：给出"语义键 → 值"的写入载荷，且必须是 schema 里配过的语义键', () => {
+  assert.deepEqual(statusPatch('funds', '已写入'), { funds: '已写入' });
+  assert.deepEqual(statusPatch('stock', '已扣减'), { stock: '已扣减' });
+  // 空值 = 不写（"留空"本身是合法状态，不该被翻译成一个空字符串写进去）。
+  assert.deepEqual(statusPatch('sales', ''), { sales: '' });
+  assert.throws(() => statusPatch('sales', 'done'), /销售状态/);
 });
 
-test('stockStatusOf：新「库存状态」（这一维今天没有旧字段可退回）', () => {
+test('单读：只认自己那一列，**不退回旧字段**（旧字段有值也不算数）', () => {
   const fields = V1_BITABLE_SCHEMA.tables.salesEntry.fields;
-  assert.equal(stockStatusOf(entry({ 库存状态: '已扣减' }), fields), '已扣减');
-  assert.equal(stockStatusOf(entry({ '确认状态（旧）': '已入账' }), fields), '');
-  assert.equal(stockStatusOf(entry({ 库存状态: '  ' }), fields), '');
+  // 新字段有值 → 读它。
+  assert.equal(fundsStatusOf(entry({ 资金状态: '已写入', '确认状态（旧）': '已入账' }), fields), '已写入');
+  assert.equal(userActionOf(entry({ 确认状态: '已确认', '确认状态（旧）': '待确认' }), fields), '已确认');
+  assert.equal(salesStatusOf(entry({ 销售状态: '部分写入', 订单状态: '已完成' }), fields), '部分写入');
+  assert.equal(stockStatusOf(entry({ 库存状态: '部分扣减' }), fields), '部分扣减');
+  // 🔴 只有旧字段 → 一律空串：这就是"旧字段不用管"落到代码上的样子。
+  assert.equal(fundsStatusOf(entry({ '确认状态（旧）': '已入账' }), fields), '');
+  assert.equal(userActionOf(entry({ '确认状态（旧）': '已入账' }), fields), '');
+  assert.equal(salesStatusOf(entry({ 订单状态: '已完成' }), fields), '');
+  // 空 / 空白 / 缺记录 → 空串。
+  assert.equal(fundsStatusOf(entry({ 资金状态: '   ' }), fields), '');
+  assert.equal(fundsStatusOf(entry({}), fields), '');
+  assert.equal(fundsStatusOf(undefined, fields), '');
+});
+
+test('不传 table 时用配置里的字段名（配置先行，不依赖调用方）', () => {
+  assert.equal(fundsStatusOf(entry({ 资金状态: '已写入' })), '已写入');
+  assert.equal(fundsStatusOf(entry({ '确认状态（旧）': '已入账' })), '');
+  assert.equal(userActionOf(entry({ 确认状态: '已取消' })), '已取消');
+  assert.equal(salesStatusOf(entry({ 销售状态: '写入失败' })), '写入失败');
+  assert.equal(stockStatusOf(entry({ 库存状态: '扣减失败' })), '扣减失败');
 });
 
 test('textOf 与 gateway.textValue 同义（配置层零依赖，不能悄悄换语义）', () => {
-  const samples = ['已入账', '', null, undefined, 42, { text: 'A' }, { name: 'B' }, { value: 'C' }, {}, ['A', 'B'], []];
+  const samples = ['已写入', '', null, undefined, 42, { text: 'A' }, { name: 'B' }, { value: 'C' }, {}, ['A', 'B'], []];
   for (const sample of samples) assert.equal(textOf(sample), textValue(sample), String(sample));
-});
-
-test('建议值域：四个维度都非空，且资金状态里必须有「已入账」（判据的口径）', () => {
-  for (const [key, values] of Object.entries(SALES_STATUS_VALUE_DOMAINS)) {
-    assert.ok(Array.isArray(values) && values.length, `${key} 值域不能为空`);
-  }
-  assert.ok(SALES_STATUS_VALUE_DOMAINS.funds.includes('已入账'));
-  assert.ok(SALES_STATUS_VALUE_DOMAINS.userAction.includes('待确认'));
 });

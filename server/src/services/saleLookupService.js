@@ -149,6 +149,16 @@ class SaleLookupService {
     const entriesById = new Map(entries.map((record) => [record.record_id, record]));
 
     // 判据一：销售主表.订单状态 = 已退货 / 部分退货
+    //
+    // ⚠️ 它读的是**旧的「订单状态」**，不是新加的「销售状态」——两者不是一回事：
+    //    · 「订单状态」是老口径的"整单状态"（草稿/已确认/已完成/已取消/已退货/部分退货），
+    //      判"这单退过没有"只能靠它；
+    //    · 「销售状态」记的是"销售明细写进去了没有"（未写入/部分写入/已写入/写入失败），
+    //      跟退货与否无关。
+    //    业务负责人 2026-10-06 的口径是「旧的两个字段不用管」⇒ 这里**保持原样**，
+    //    不动判据、也不改成读新字段（改了会直接把"排除退过的单"判失效）。
+    //    ⚠️ 将来若「订单状态」要退场，得先把"这单退过没有"迁到别的事实来源上
+    //    （判据二：明细里有「交易类型」= 销售退货的行——那条今天还在跑）。
     const returnedOrderIds = new Set();
     for (const entry of entries) {
       if (isReturnedOrderStatus(asText(this.schema, 'salesEntry', entry, 'orderStatus'))) {

@@ -19,6 +19,7 @@ const path = require('node:path');
 const { AfterSalesService } = require('../src/services/afterSalesService');
 const { InventoryService } = require('../src/services/inventoryService');
 const { afterSalesEventId, afterSalesOperationId } = require('../src/config/afterSales');
+const { SALES_STATUS_VALUES } = require('../src/config/salesStatusDimensions');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 
@@ -49,7 +50,7 @@ const seed = () => ({
   ],
   salesEntry: [{
     record_id: 'order_old',
-    fields: { 销售单号: ORDER_NO, 原话: '卖一双 A100 41 码', 订单状态: '已完成', '确认状态（旧）': '已入账' },
+    fields: { 销售单号: ORDER_NO, 原话: '卖一双 A100 41 码', 订单状态: '已完成', 资金状态: '已写入' },
   }],
   salesDetail: [
     {
@@ -276,8 +277,14 @@ test('退货（cash 退款）：六处写入各一次，原主表一字未动，
   assert.equal(masters[0].fields['原话'], '把那双 A100 退了，鞋没穿过');
   assert.equal(masters[0].fields['销售单号'], ORDER_NO);
   assert.equal(masters[0].fields['解析状态'], '解析成功');
-  assert.equal(masters[0].fields['确认状态（旧）'], '已入账');
+  // 售后执行器只在她点过售后卡片「确认」之后才会被调到 → 新主表落「已确认」。
+  assert.equal(masters[0].fields['确认状态'], '已确认');
   assert.deepEqual(masters[0].fields['交易类型'], ['behavior_return']);
+  // 四个状态维度（她就问这四件事）：确认=她点过售后卡片的「确认」；
+  // 明细写完 → 销售状态；cash 退款写进「收款明细」→ 资金状态；库存回补完 → 库存状态。
+  assert.equal(masters[0].fields['销售状态'], SALES_STATUS_VALUES.sales.WRITTEN);
+  assert.equal(masters[0].fields['资金状态'], SALES_STATUS_VALUES.funds.WRITTEN);
+  assert.equal(masters[0].fields['库存状态'], SALES_STATUS_VALUES.stock.DONE);
 
   // 2) 新「销售明细」：交易类型=行为 · 销售单号=原主表 · 成交金额=正数
   const details = detailRows(gateway);
@@ -331,7 +338,12 @@ test('退货（cash 退款）：六处写入各一次，原主表一字未动，
   assert.deepEqual(gateway.writes.create, {
     salesEntry: 1, salesDetail: 1, paymentRecord: 1, inventoryLedger: 1, liveInventory: 1,
   });
-  assert.deepEqual(gateway.writes.update, { salesDetail: 1 });
+  assert.deepEqual(gateway.writes.update, {
+    // 原明细 → 已退货
+    salesDetail: 1,
+    // 新主表上的三个状态维度各写一次：销售状态 / 资金状态（cash 路线）/ 库存状态
+    salesEntry: 3,
+  });
   assert.deepEqual(gateway.writes.delete, {});
   // 本地闸门：记下"这一次做过"，并记住每个阶段的 record_id
   const progress = await service.store.get(result.operationId);

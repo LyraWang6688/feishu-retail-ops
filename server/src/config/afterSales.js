@@ -10,6 +10,8 @@
 // 真正的接线（默认注入 InventoryService）在 services/afterSalesService.js。
 
 const crypto = require('node:crypto');
+// 状态维度的值域只有一处定义（config/salesStatusDimensions，零依赖纯配置）。
+const { SALES_STATUS_VALUES } = require('./salesStatusDimensions');
 
 // 动作枚举。键就是调用方传进来的 action，值是飞书里的中文口径（只用于日志和人看的文案）。
 const AFTER_SALES_ACTIONS = Object.freeze({
@@ -174,10 +176,15 @@ const afterSalesOperationId = ({ taskId, originalSalesEntryRecordId, action, ori
 
 const readAfterSalesConfig = () => ({
   moneyDirections: AFTER_SALES_MONEY_DIRECTIONS,
-  // 新主表的解析 / 确认状态：走与销售链路**同一套取值**（larkMvpService 里用的那几个），
-  // 不自创新词。售后是用户确认后直接执行的，所以直接落在终态上。
+  // 新主表的「解析状态」。
   masterParseStatus: '解析成功',
-  masterConfirmStatus: '已入账',
+  // 新主表的「确认状态」：**用户点没点确认按钮**。
+  // 售后执行器只有一条触发路径——她在售后卡片上点「确认」（confirm_after_sales）之后
+  // 才调 executor.execute（见 afterSalesFlowService.confirmAfterSales）。也就是说，
+  // 走得到 this.ensureMaster() 的时候，用户**确实点过确认**，落「已确认」是准确的。
+  // 值取自 config/salesStatusDimensions 的同一份值域，不在这里另造词
+  // （写错的值会永久留在飞书选项里）。
+  masterUserAction: SALES_STATUS_VALUES.userAction.CONFIRMED,
   // 收款明细：钱真收/真退之后就是已收款；退款在业务上也用同一个"已结清"口径。
   cashPaymentStatus: '已收款',
   // 客户往来货款：这一次变动的类型（表的选项里已有「退货退款」）。

@@ -39,7 +39,7 @@ const fakeGateway = () => {
   let seq = 0;
   const records = new Map([
     // 改字段类型之前的历史单：旧日期 + 旧全局号，本用例断言它一个字都不动。
-    ['salesEntry', [{ record_id: 'legacy_1', fields: { 销售单号: 'XSD-20261004-0168', 确认状态: '已入账' } }]],
+    ['salesEntry', [{ record_id: 'legacy_1', fields: { 销售单号: 'XSD-20261004-0168', 资金状态: '已写入' } }]],
     ['sizeManagement', [{ record_id: 'size_38', fields: { 尺码: 38 } }]],
     ['liveInventory', [liveRow({ itemNo: '8088-26', color: '棕', size: 38, productRecordId: 'prod_1' })]],
   ]);
@@ -162,7 +162,7 @@ test('第二单接在当天已有单号之后（最大值 + 1），不会重发 
   service.sendText = async () => undefined;
   // 今天已经有一单（0001）——第二单必须是 0002
   gateway.records.get('salesEntry').push({ record_id: 'today_1',
-    fields: { 销售单号: `XSD-${shanghaiDateStamp(new Date())}-0001`, 确认状态: '已入账' } });
+    fields: { 销售单号: `XSD-${shanghaiDateStamp(new Date())}-0001`, 资金状态: '已写入' } });
 
   await store.create({ task_id: 'sale_second', type: 'sale', status: 'received', message_id: 'om_2',
     sender_open_id: openId, sent_at: Date.now(), original_text: '8088-26棕38，230元微信' });

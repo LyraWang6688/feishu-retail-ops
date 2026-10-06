@@ -50,6 +50,8 @@ const {
   readAfterSalesConfig,
 } = require('../config/afterSales');
 const { SELLABLE_KINDS, sellableKindOf } = require('../config/sellableKinds');
+const { SALES_STATUS_VALUES } = require('../config/salesStatusDimensions');
+const { SalesStatusService } = require('./salesStatusService');
 const { createOnceByKey, validateIdempotencyKeyFields } = require('../infrastructure/idempotencyKey');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
@@ -128,6 +130,8 @@ class AfterSalesService {
     // 「库存操作键」回查、断点续做与实时库存增减），这里不另写一套库存逻辑。
     // 仍然允许注入端口：单元测试用它替换飞书写入，生产也可以传共享实例。
     this.inventory = options.inventory || new InventoryService({ gateway: this.gateway });
+    // 四个状态维度的「达成情况」写入只有一处实现（见 services/salesStatusService）。
+    this.salesStatus = options.salesStatus || new SalesStatusService({ gateway: this.gateway });
     this.store = options.store || new JsonTaskStore({ dir: DEFAULT_STORE_DIR, idField: 'operation_id' });
     this.references = options.references || new V1ReferenceResolver(this.gateway);
     this.getSizeReferences = createSizeReferenceAccess({
@@ -301,9 +305,33 @@ class AfterSalesService {
     const master = await this.ensureMaster(request, spec, progress);
     const plan = this.buildPlan(request, original);
     const rows = await this.ensureDetailRows(request, plan, master, progress);
+    // ② 销售状态：售后自己的明细行也写完了 → 已写入。
+    //    ⚠️ 走 markQuietly：明细已经落表，状态列写不进去不该把这一笔售后判失败（会留 warn）。
+    await this.salesStatus.markQuietly(master.recordId, 'sales', SALES_STATUS_VALUES.sales.WRITTEN,
+      { operation_id: request.operationId, action: request.action });
     const originalDetailIdsMarked = await this.markOriginalDetails(spec, original, progress);
     const money = await this.settleMoney(request, original, master, progress);
-    const stock = await this.applyStock(request, spec, plan);
+    // ③ 资金状态：钱**写进「收款明细」**了没有。
+    //    · cash 路线 → 收/退款就是一条「收款明细」→ 已写入；
+    //    · prepaid 路线 → 钱记在「客户往来货款」上，**没有收款明细** → 刻意不写这一维
+    //      （留空 = 这笔钱不在收款明细里，这比硬写"已写入"诚实；将来若她要求
+    //       「钱动过就算」，改这里的判据即可）。
+    if (money.route === 'cash') {
+      await this.salesStatus.markQuietly(master.recordId, 'funds', SALES_STATUS_VALUES.funds.WRITTEN,
+        { operation_id: request.operationId, money_route: money.route });
+    }
+    let stock;
+    try {
+      stock = await this.applyStock(request, spec, plan);
+    } catch (error) {
+      // ④ 库存状态：库存写挂了 → 扣减失败（保守：分不清"部分"就不谎报"部分扣减"）。
+      await this.salesStatus.markQuietly(master.recordId, 'stock', SALES_STATUS_VALUES.stock.FAILED,
+        { operation_id: request.operationId, action: request.action });
+      throw error;
+    }
+    // ④ 库存状态：库存流水 ＋ 实时库存（回补/扣减）都写完了 → 已扣减。
+    await this.salesStatus.markQuietly(master.recordId, 'stock', SALES_STATUS_VALUES.stock.DONE,
+      { operation_id: request.operationId, action: request.action, stock_rows: stock.length });
 
     const result = {
       action: request.action,
@@ -406,7 +434,10 @@ class AfterSalesService {
       // 售后沿用原单号，不生成新号（退货/换货不建新单）。
       orderNo: request.originalSalesOrderNo,
       parseStatus: this.config.masterParseStatus,
-      confirmStatus: this.config.masterConfirmStatus,
+      // ① 确认状态：售后执行器只有一条触发路径——她在售后卡片上点「确认」之后才调到
+      //    这里（afterSalesFlowService.confirmAfterSales → executor.execute），
+      //    所以"用户点过确认"是事实，落「已确认」。值取自配置（值域只有一处定义）。
+      userAction: this.config.masterUserAction,
       tradeType: relation(behavior.recordId),
       ...(request.operatorOpenId ? { sender: person(request.operatorOpenId) } : {}),
     });
