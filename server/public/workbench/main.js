@@ -6,7 +6,7 @@ import { createPurchaseModule } from './features/purchase/index.js';
 import { createInventoryModule } from './features/inventory/index.js';
 import { createPlaceholderModule } from './features/shared/placeholder.js';
 
-// 一级 tab 只有 3 个（业务负责人 2026-10-06）：常用功能 / 销售查询 / 实时库存。
+// 一级 tab 只有 3 个，顺序（业务负责人 2026-10-06 晚定）：销售查询 / 实时库存 / 常用功能。
 // 每个 tab 在 index.html 里对应一个 data-module，也各自有一个独立页面：
 //   common → /workbench/common.html · sales → /workbench/sales-query.html
 //   inventory → /workbench/inventory.html
@@ -41,7 +41,7 @@ const modules = new Map([
 
 const mounted = new Map();
 const host = document.getElementById('module-host');
-// 页面加载时打开的 tab = 第一个可见 tab（现在是「常用功能」）。写死成 'sales'
+// 页面加载时打开的 tab = 第一个可见 tab（现在是「销售查询」）。写死成 'sales'
 // 会在 tab 顺序调整后又对不上，所以从 DOM 里取。
 const initialModule = document.querySelector('.main-tab')?.dataset.module || 'common';
 
