@@ -4,6 +4,7 @@ const { SalesProgressService } = require('./salesProgressService');
 const { readSaleLinkedRecord } = require('./salesRecordReader');
 const { withSalesReadRetry } = require('./salesReadRetry');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
+const { postedOf } = require('../config/salesStatusDimensions');
 const { logError, logInfo } = require('../utils/logger');
 
 class SalesDeliveryService {
@@ -33,7 +34,9 @@ class SalesDeliveryService {
     );
     if (!entry) throw new Error('销售主表记录不存在');
     const entryFields = this.gateway.table('salesEntry').fields;
-    if (textValue(entry.fields?.[entryFields.confirmStatus]) !== '已入账') throw new Error('销售订单尚未确认入账');
+    // 「已入账」的取值来源改走配置（「资金状态」优先，空则退回「确认状态（旧）」）；
+    // 判据与文案一字未改。
+    if (postedOf(entry, entryFields) !== '已入账') throw new Error('销售订单尚未确认入账');
     const fields = this.gateway.table('salesDetail').fields;
     const listedDetails = (await withSalesReadRetry(
       () => this.gateway.listAll('salesDetail'), 'delivery_detail_list',

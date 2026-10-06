@@ -133,9 +133,22 @@ const V1_BITABLE_SCHEMA = {
         // Automatic creation time: read-only fallback for workbench date filters.
         recordedAt: '录单日',
         parseStatus: '解析状态',
-        confirmStatus: '确认状态',
+        // 四个状态维度（业务负责人 2026-10-06 在生产表新建，取值的双读规则见
+        // config/salesStatusDimensions.js）。这里只建立映射；「读」走配置里的新名字，
+        // 「写」仍然沿用下面的 confirmStatus。
+        userAction: '确认状态',
+        sales: '销售状态',
+        // ⚠️「资金状态」在真表里是**文本字段**（type=1），不是单选。
+        funds: '资金状态',
+        stock: '库存状态',
+        // ⚠️ 旧的「确认状态」2026-10-06 被她**改名为「确认状态（旧）」**（选项与历史值都在）。
+        // 这里指回旧名字，是为了让**写**那一路（larkMvpService / salesOrderService /
+        // afterSalesService）不改代码就继续写到旧字段——否则会写到新建的空字段上、门店卡住。
+        // 「读」那一路用 config/salesStatusDimensions 提供的新名字（新字段空则退回这个旧字段）。
+        confirmStatus: '确认状态（旧）',
         parseSummary: '解析结果摘要',
         failureReason: '失败原因',
+        // 「订单状态」她没动，保持原样。
         orderStatus: '订单状态',
         // 关联「行为管理」里的现货销售 / 未付销售 / 预付销售。交易类型决定交付状态；
         // 落成关联是为了可筛可查、可对账，也让销售与库存行为共用同一张配置表。

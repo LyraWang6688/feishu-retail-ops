@@ -106,7 +106,7 @@ test('未付单点「成交」：只补收款，库存与明细履约状态一�
     product: [{ record_id: 'product_1', fields: { 编号: 'P1' } }],
     // 未付：第一次录单时明细就已经是「已交付」（库存那时候扣过了），收款是一条全额未收款。
     salesEntry: [{ record_id: 'order_unpaid', fields: {
-      确认状态: '已入账', 销售单号: 'XSD-U-1', 交易类型: ['behavior_unpaid'], 订单状态: '已确认',
+      '确认状态（旧）': '已入账', 销售单号: 'XSD-U-1', 交易类型: ['behavior_unpaid'], 订单状态: '已确认',
     } }],
     salesDetail: [{ record_id: 'detail_u1', fields: {
       销售单号: ['order_unpaid'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 成交金额: 260,
@@ -156,7 +156,7 @@ test('预付单点「成交」：补收款 + 明细未交付转已交付 + 扣�
     sizeManagement: [{ record_id: 'size_38', fields: { 尺码: 38 } }],
     product: [{ record_id: 'product_1', fields: { 编号: 'P1' } }],
     salesEntry: [{ record_id: 'order_prepaid', fields: {
-      确认状态: '已入账', 销售单号: 'XSD-P-1', 交易类型: ['behavior_prepaid'], 订单状态: '已确认',
+      '确认状态（旧）': '已入账', 销售单号: 'XSD-P-1', 交易类型: ['behavior_prepaid'], 订单状态: '已确认',
     } }],
     // 预付：货还没拿走（未交付），钱是定金 + 余款两条，余款那条是未收款。
     salesDetail: [{ record_id: 'detail_p1', fields: {
@@ -213,7 +213,7 @@ test('同一张单连点两次「成交」：第二次只回"已成交"，不再
     sizeManagement: [{ record_id: 'size_38', fields: { 尺码: 38 } }],
     product: [{ record_id: 'product_1', fields: { 编号: 'P1' } }],
     salesEntry: [{ record_id: 'order_unpaid', fields: {
-      确认状态: '已入账', 销售单号: 'XSD-U-1', 交易类型: ['behavior_unpaid'],
+      '确认状态（旧）': '已入账', 销售单号: 'XSD-U-1', 交易类型: ['behavior_unpaid'],
     } }],
     salesDetail: [{ record_id: 'detail_u1', fields: {
       销售单号: ['order_unpaid'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 成交金额: 260,
@@ -244,7 +244,7 @@ test('同一张单连点两次「成交」：第二次只回"已成交"，不再
 test('未收款那条不写交易方向；变成已收款的那一刻才写「收入」', async () => {
   const gateway = fakeGateway({
     paymentMethod: METHOD_ROWS,
-    salesEntry: [{ record_id: 'order_1', fields: { 确认状态: '已入账' } }],
+    salesEntry: [{ record_id: 'order_1', fields: { '确认状态（旧）': '已入账' } }],
   });
   const payments = new PaymentService({ gateway });
 
@@ -267,7 +267,7 @@ test('未收款那条不写交易方向；变成已收款的那一刻才写「�
 
 test('待平台结算结清时补写「收入」（到账那一刻才算收款事实）', async () => {
   const gateway = fakeGateway({
-    salesEntry: [{ record_id: 'order_1', fields: { 确认状态: '已入账' } }],
+    salesEntry: [{ record_id: 'order_1', fields: { '确认状态（旧）': '已入账' } }],
     paymentRecord: [{ record_id: 'receipt_1', fields: {
       关联销售单: ['order_1'], 收款金额: 100, 收款状态: '待平台结算',
     } }],
@@ -289,7 +289,7 @@ test('入账时销售明细的「交易类型」抄的是销售主表同一条�
     paymentMethod: METHOD_ROWS,
     sizeManagement: [{ record_id: 'size_38', fields: { 尺码: 38 } }],
     salesEntry: [{ record_id: 'order_1', fields: {
-      确认状态: '待确认', 销售单号: 'XSD-1', 交易类型: ['behavior_cash'],
+      '确认状态（旧）': '待确认', 销售单号: 'XSD-1', 交易类型: ['behavior_cash'],
     } }],
   });
   const service = new SalesOrderService({
@@ -318,7 +318,7 @@ test('主表没有交易类型时明细也不写这一列（不猜一个方向�
     behavior: BEHAVIOR_ROWS,
     paymentMethod: METHOD_ROWS,
     sizeManagement: [{ record_id: 'size_38', fields: { 尺码: 38 } }],
-    salesEntry: [{ record_id: 'order_1', fields: { 确认状态: '待确认', 销售单号: 'XSD-1' } }],
+    salesEntry: [{ record_id: 'order_1', fields: { '确认状态（旧）': '待确认', 销售单号: 'XSD-1' } }],
   });
   const service = new SalesOrderService({
     gateway,
@@ -356,27 +356,27 @@ const reminderSeed = () => ({
   salesEntry: [
     // 要推的：未付、已入账、7 天内、钱没收清。
     { record_id: 'order_unpaid_pending', fields: {
-      确认状态: '已入账', 销售单号: 'XSD-U-2', 交易类型: ['behavior_unpaid'],
+      '确认状态（旧）': '已入账', 销售单号: 'XSD-U-2', 交易类型: ['behavior_unpaid'],
       录单日: inWindow('2026-10-02T10:00:00+08:00'),
     } },
     // 要推的：预付、已入账、7 天内、货没交 + 钱没收清（录单更早，应排在前面）。
     { record_id: 'order_prepaid_pending', fields: {
-      确认状态: '已入账', 销售单号: 'XSD-P-2', 交易类型: ['behavior_prepaid'],
+      '确认状态（旧）': '已入账', 销售单号: 'XSD-P-2', 交易类型: ['behavior_prepaid'],
       录单日: inWindow('2026-10-01T10:00:00+08:00'),
     } },
     // 不推：现货（交易类型就不在范围内）。
     { record_id: 'order_cash', fields: {
-      确认状态: '已入账', 销售单号: 'XSD-C-2', 交易类型: ['behavior_cash'],
+      '确认状态（旧）': '已入账', 销售单号: 'XSD-C-2', 交易类型: ['behavior_cash'],
       录单日: inWindow('2026-10-03T10:00:00+08:00'),
     } },
     // 不推：未付但钱货都齐了（已完成履约）。
     { record_id: 'order_unpaid_done', fields: {
-      确认状态: '已入账', 销售单号: 'XSD-U-3', 交易类型: ['behavior_unpaid'],
+      '确认状态（旧）': '已入账', 销售单号: 'XSD-U-3', 交易类型: ['behavior_unpaid'],
       录单日: inWindow('2026-10-03T10:00:00+08:00'),
     } },
     // 不推：7 天以外的未付单。
     { record_id: 'order_unpaid_old', fields: {
-      确认状态: '已入账', 销售单号: 'XSD-U-9', 交易类型: ['behavior_unpaid'], 录单日: OUT_OF_WINDOW,
+      '确认状态（旧）': '已入账', 销售单号: 'XSD-U-9', 交易类型: ['behavior_unpaid'], 录单日: OUT_OF_WINDOW,
     } },
   ],
   salesDetail: [

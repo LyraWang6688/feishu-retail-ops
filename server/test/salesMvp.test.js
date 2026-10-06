@@ -17,7 +17,7 @@ const fake = () => {
     record_id: `size_${size}`, fields: { 尺码: size },
   }));
   const records = new Map([
-    ['salesEntry', [{ record_id: 'order_1', fields: { 销售单号: 'XSD-001', 确认状态: '待确认' } }]],
+    ['salesEntry', [{ record_id: 'order_1', fields: { 销售单号: 'XSD-001', '确认状态（旧）': '待确认' } }]],
     ['sizeManagement', sizes],
   ]);
   let seq = 0;
@@ -272,7 +272,7 @@ test('invalid initial receipt cannot silently become unpaid', async () => {
     items: [{ itemNo: 'A100', size: 41, quantity: 1, actualAmount: 100 }],
     payments: [{ method: '微信', amount: '' }] }), /收款金额/);
   assert.equal(gateway.records.get('paymentRecord'), undefined);
-  assert.equal(gateway.records.get('salesEntry')[0].fields['确认状态'], '入账失败');
+  assert.equal(gateway.records.get('salesEntry')[0].fields['确认状态（旧）'], '入账失败');
 });
 
 test('unpaid sale can be delivered once, then later payment does not touch inventory', async () => {
@@ -501,7 +501,7 @@ test('Feishu record_ids link shape reuses an existing order, receipt, and detail
   }
   receipt.fields['关联销售单'] = linked('order_1');
   receipt.fields['交易方式'] = linked('method_微信');
-  (await gateway.get('salesEntry', 'order_1')).fields['确认状态'] = '入账失败';
+  (await gateway.get('salesEntry', 'order_1')).fields['确认状态（旧）'] = '入账失败';
 
   const retried = await sale.confirm(input);
   assert.deepEqual(retried.detailRecordIds, first.detailRecordIds);
@@ -534,7 +534,7 @@ test('temporary 1254607 after receipt creation retries reads and delivers once w
   let pendingReads = 1;
   gateway.listAll = async (key) => {
     if (key === 'salesDetail' && pendingReads &&
-      gateway.records.get('salesEntry')[0].fields['确认状态'] === '已入账') {
+      gateway.records.get('salesEntry')[0].fields['确认状态（旧）'] === '已入账') {
       pendingReads -= 1;
       const error = new Error('Request failed with status code 400');
       error.response = { data: { code: 1254607, msg: 'Data not ready, please try again later' } };
@@ -560,7 +560,7 @@ test('temporary 1254607 after receipt creation retries reads and delivers once w
   assert.equal(gateway.records.get('paymentRecord').length, 1);
   assert.equal(gateway.records.get('inventoryLedger').length, 1);
   assert.deepEqual(gateway.records.get('liveInventory').map((row) => row.record_id), ['sample_1']);
-  assert.equal(gateway.records.get('salesEntry')[0].fields['确认状态'], '已入账');
+  assert.equal(gateway.records.get('salesEntry')[0].fields['确认状态（旧）'], '已入账');
   assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['履约状态'], '已交付');
 });
 
@@ -578,7 +578,7 @@ test('exhausted progress read preserves posted sale and known IDs recover when l
       throw error;
     }
     if (key === 'salesDetail' && pendingReads &&
-      gateway.records.get('salesEntry')[0].fields['确认状态'] === '已入账') {
+      gateway.records.get('salesEntry')[0].fields['确认状态（旧）'] === '已入账') {
       pendingReads -= 1;
       const error = new Error('Request failed with status code 400');
       error.response = { data: { code: 1254607 } };
@@ -595,7 +595,7 @@ test('exhausted progress read preserves posted sale and known IDs recover when l
     payments: [{ method: '微信', amount: 260 }], knownRecordIds,
     onRecordPersisted: async (kind, index, id) => { knownRecordIds[kind][index] = id; } };
   await assert.rejects(sales.confirm(input), (error) => error.saleRecordsWritten === true);
-  assert.equal(gateway.records.get('salesEntry')[0].fields['确认状态'], '已入账');
+  assert.equal(gateway.records.get('salesEntry')[0].fields['确认状态（旧）'], '已入账');
   assert.match(gateway.records.get('salesEntry')[0].fields['失败原因'], /后续同步待恢复/);
   assert.equal(gateway.records.get('salesDetail').length, 1);
   assert.equal(gateway.records.get('paymentRecord').length, 1);
@@ -606,7 +606,7 @@ test('exhausted progress read preserves posted sale and known IDs recover when l
   retryReadFailures = 3;
   await assert.rejects(sales.confirm({ ...input, knownFinancialComplete: true }),
     (error) => error.saleRecordsWritten === true);
-  assert.equal(gateway.records.get('salesEntry')[0].fields['确认状态'], '已入账');
+  assert.equal(gateway.records.get('salesEntry')[0].fields['确认状态（旧）'], '已入账');
   const posted = await sales.confirm({ ...input, knownFinancialComplete: true });
   assert.deepEqual(posted.detailRecordIds, knownRecordIds.details);
   assert.deepEqual(posted.paymentRecordIds, knownRecordIds.payments);

@@ -19,8 +19,8 @@ test('two shoes in one order retain their own receivables and count the receipt 
       { record_id: 'undated', fields: { 编号: ['p1'], 尺码: ['size_38'], 数量: 1, 销售单号: ['o2'], 销售单价: 99 } },
     ],
     salesEntry: [
-      { record_id: 'o1', fields: { 销售单号: 'XSD-001', 确认状态: '已入账' } },
-      { record_id: 'o2', fields: { 销售单号: 'XSD-002', 确认状态: '已入账' } },
+      { record_id: 'o1', fields: { 销售单号: 'XSD-001', '确认状态（旧）': '已入账' } },
+      { record_id: 'o2', fields: { 销售单号: 'XSD-002', '确认状态（旧）': '已入账' } },
     ],
     paymentRecord: [{ record_id: 'r1', fields: { 关联销售单: ['o1'], 交易方式: ['m1'], 收款金额: 250 } }],
     paymentMethod: [{ record_id: 'm1', fields: { 收款方式: '现金' } }],
@@ -46,7 +46,7 @@ test('a row whose size link is broken does not break the whole query', async () 
       // 关联为空：这条明细读不出尺码，但不能让整页查询失败。
       { record_id: 'broken', fields: { 编号: ['p1'], 尺码: [], 销售单号: ['o1'], 销售日: day, 成交金额: 100 } },
     ],
-    salesEntry: [{ record_id: 'o1', fields: { 销售单号: 'XSD-001', 确认状态: '已入账' } }],
+    salesEntry: [{ record_id: 'o1', fields: { 销售单号: 'XSD-001', '确认状态（旧）': '已入账' } }],
     product: [{ record_id: 'p1', fields: { 编号: '93827黑' } }],
   });
   const report = await createWorkbenchService(gateway).getTodaySales({ date: '2026-09-25' });
@@ -80,8 +80,8 @@ test('order creation time is the fallback sale date; no date on either record is
       { record_id: 'unknown', fields: { 销售单号: ['o2'], 数量: 1 } },
     ],
     salesEntry: [
-      { record_id: 'o1', fields: { 确认状态: '已入账', 录单日: day } },
-      { record_id: 'o2', fields: { 确认状态: '已入账' } },
+      { record_id: 'o1', fields: { '确认状态（旧）': '已入账', 录单日: day } },
+      { record_id: 'o2', fields: { '确认状态（旧）': '已入账' } },
     ],
   });
   const report = await createWorkbenchService(gateway).getTodaySales({ date: '2026-09-25' });
@@ -92,7 +92,7 @@ test('order creation time is the fallback sale date; no date on either record is
 test('today sales separates platform pending vouchers from received cash', async () => {
   const gateway = gatewayFor({
     salesDetail: [{ record_id: 'd1', fields: { 销售单号: ['o1'], 数量: 1, 销售日: day, 成交金额: 254.4 } }],
-    salesEntry: [{ record_id: 'o1', fields: { 确认状态: '已入账' } }],
+    salesEntry: [{ record_id: 'o1', fields: { '确认状态（旧）': '已入账' } }],
     paymentRecord: [
       { record_id: 'r1', fields: { 关联销售单: ['o1'], 收款金额: 169, 收款状态: '已收款', 交易方式: ['m1'] } },
       { record_id: 'r2', fields: { 关联销售单: ['o1'], 收款金额: 85.4, 收款状态: '待平台结算', 交易方式: ['m2'] } },

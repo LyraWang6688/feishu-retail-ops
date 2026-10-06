@@ -6,6 +6,7 @@ const { PaymentService, amount } = require('./paymentService');
 const { SalesDeliveryService } = require('./salesDeliveryService');
 const { SalesProgressService, progressFromRecords, cents } = require('./salesProgressService');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
+const { postedOf } = require('../config/salesStatusDimensions');
 
 class SalesFollowupService {
   constructor(options = {}) {
@@ -37,7 +38,7 @@ class SalesFollowupService {
       textValue(item.fields?.[productFields.number]) || item.record_id]));
     return {
       methods: [...new Set(methodById.values())].filter(Boolean),
-      orders: (await Promise.all(orders.filter((order) => textValue(order.fields?.[orderFields.confirmStatus]) === '已入账')
+      orders: (await Promise.all(orders.filter((order) => postedOf(order, orderFields) === '已入账')
         .map(async (order) => {
           const orderDetails = details.filter((detail) => linkedRecordIds(detail.fields?.[detailFields.salesEntry]).includes(order.record_id));
           const orderPayments = payments.filter((payment) => linkedRecordIds(payment.fields?.[paymentFields.salesEntry]).includes(order.record_id));
@@ -94,7 +95,7 @@ class SalesFollowupService {
       }
       const order = await this.gateway.get('salesEntry', input.salesEntryRecordId);
       const fields = this.gateway.table('salesEntry').fields;
-      if (textValue(order?.fields?.[fields.confirmStatus]) !== '已入账') throw new Error('销售订单尚未确认入账');
+      if (postedOf(order, fields) !== '已入账') throw new Error('销售订单尚未确认入账');
       amount(input.amount);
       const before = await this.progress.forOrder(input.salesEntryRecordId);
       if (before.pendingAmount === null) throw new Error('销售明细尚未填写成交金额，不能计算待收款');
