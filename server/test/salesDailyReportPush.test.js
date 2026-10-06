@@ -229,9 +229,9 @@ test('退款（交易方向=退回）在收款明细里也是「已收款」：�
   assert.equal(stats.refundAmount, 200);
   assert.equal(stats.refundCount, 1);
 
-  const card = service.buildCard({ dayKey: DAY, hour: 15, stats, now: AT_1530 });
-  const text = salesDailyReportCardText(card);
-  assert.match(text, /含「退回」¥200\.00/, '有退回时必须说明，免得她以为金额算错');
+  // ⚠️ 卡片上**不写**这条说明（她明确要求卡片上不出现计算逻辑）——只保证统计如实、日志有记录。
+  const card = service.buildCard({ dayKey: DAY, hour: 15, stats });
+  assert.doesNotMatch(JSON.stringify(card), /退回|冲抵/, '卡片上不出现口径说明');
 });
 
 test('金额读不出来时按 0（绝不让 NaN 混进合计）', async () => {
@@ -261,28 +261,43 @@ test('真表用的是「已交付」：默认口径也能数出来（不因为�
 // 三、卡片：两个数字 + 22 点收官要和常规一眼分开
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('常规时段卡片：标题带北京时间、两个数字、页眉蓝、页脚写清口径', () => {
-  const card = salesDailyReportCard({
-    dayKey: DAY, hour: 12, salesCount: 12, salesAmount: 3280, generatedAt: '12:00',
-  });
-  const text = salesDailyReportCardText(card);
-  assert.match(text, /销售战报 · 10-06 12:00/);
-  assert.match(text, /\*\*销售单数\*\*：12 单/);
-  assert.match(text, /\*\*销售金额\*\*：¥3280\.00/);
-  assert.match(text, /履约状态 = 已履约/);
-  assert.match(text, /收款时间是今天、截至推送那一刻（12:00）/);
+test('常规时段卡片：标题「截止 HH:00」+ 左右两个大数字块（销售单数 / 销售金额）', () => {
+  const card = salesDailyReportCard({ dayKey: DAY, hour: 12, salesCount: 12, salesAmount: 3280 });
+  assert.equal(card.header.title.content, '销售战报 · 截止 12:00');
   assert.equal(card.header.template, 'blue');
-  assert.doesNotMatch(text, /当日收官/);
+
+  // 她要求"两个比较大的、类似按钮形式的板块"，左右并排 —— 结构就是一个两列的 column_set。
+  const columns = card.elements[0];
+  assert.equal(columns.tag, 'column_set');
+  assert.equal(columns.columns.length, 2, '只要两个大块，不要第三个数字块');
+
+  const text = salesDailyReportCardText(card);
+  assert.match(text, /销售单数 12 单\s*\|\s*销售金额 ¥3280\.00/);
+  const left = JSON.stringify(columns.columns[0]);
+  const right = JSON.stringify(columns.columns[1]);
+  assert.match(left, /销售单数/);
+  assert.match(left, /12 单/);
+  assert.match(right, /销售金额/);
+  assert.match(right, /¥3280\.00/);
+  // 数字要"一眼看到"：用特大字号（xxxx-large = 30px），且数字本身加粗。
+  assert.equal(columns.columns[1].elements[1].text.text_size, 'xxxx-large');
+  assert.match(columns.columns[1].elements[1].text.content, /\*\*¥3280\.00\*\*/);
 });
 
-test('22 点那条是「当日收官」：标题、页眉色、页脚都要和常规分开', () => {
-  const card = salesDailyReportCard({
-    dayKey: DAY, hour: 22, isSummary: true, salesCount: 30, salesAmount: 9999, generatedAt: '22:00',
-  });
-  const text = salesDailyReportCardText(card);
-  assert.match(text, /销售战报 · 10-06 22:00 当日收官/);
-  assert.match(text, /✅ 今日收官/);
-  assert.match(text, /截至 22:00/);
+test('🔴 卡片上不写任何"计算逻辑"（她看完初版明确要求的）', () => {
+  const card = salesDailyReportCard({ dayKey: DAY, hour: 15, salesCount: 3, salesAmount: 100 });
+  const json = JSON.stringify(card);
+  for (const forbidden of ['履约状态', '已履约', '已交付', '收款状态', '已收款', '收款时间', '收款明细', '销售明细', '口径', '一条明细', '推送那一刻']) {
+    assert.doesNotMatch(json, new RegExp(forbidden), `卡片上不该出现「${forbidden}」这类解释文字`);
+  }
+  // 也不做表格 / 长文本 / 备注。
+  assert.equal(card.elements.length, 1);
+  assert.ok(!card.elements.some((element) => element.tag === 'note' || element.tag === 'table'));
+});
+
+test('22 点那条是「当日收官」：标题与页眉色都要和常规分开', () => {
+  const card = salesDailyReportCard({ dayKey: DAY, hour: 22, isSummary: true, salesCount: 30, salesAmount: 9999 });
+  assert.equal(card.header.title.content, '销售战报 · 截止 22:00 · 今日收官');
   assert.equal(card.header.template, 'violet');
 });
 
@@ -290,9 +305,14 @@ test('卡片是飞书交互卡片结构（她要看的是"消息卡片"，不是
   const card = salesDailyReportCard({ dayKey: DAY, hour: 9, salesCount: 0, salesAmount: 0 });
   assert.equal(card.config.wide_screen_mode, true);
   assert.equal(card.header.title.tag, 'plain_text');
-  assert.ok(card.elements.some((element) => element.tag === 'div'));
-  assert.ok(card.elements.some((element) => element.tag === 'hr'));
-  assert.ok(card.elements.some((element) => element.tag === 'note'));
+  assert.equal(card.elements[0].tag, 'column_set');
+  // 两个块都是"标签 + 大数字"两行。
+  card.elements[0].columns.forEach((column) => {
+    assert.equal(column.elements.length, 2);
+    assert.equal(column.elements[0].text.text_size, 'notation');
+    assert.equal(column.elements[1].text.text_size, 'xxxx-large');
+  });
+  assert.equal(salesDailyReportCardText(card), '销售战报 · 截止 09:00\n销售单数 0 单  |  销售金额 ¥0.00');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -310,7 +330,7 @@ test('发到群里【主聊天】：receive_id_type=chat_id、interactive 卡片
   assert.equal(creates[0].data.msg_type, 'interactive', '战报必须是消息卡片');
   assert.equal(creates[0].data.reply_in_thread, undefined, '定时触发没有话题可依附，不许 reply 进话题');
   const card = JSON.parse(creates[0].data.content);
-  assert.match(card.header.title.content, /销售战报 · 10-06 12:00/);
+  assert.equal(card.header.title.content, '销售战报 · 截止 12:00');
 });
 
 test('多个群（将来加运营群）：每群一条卡片', async () => {
@@ -340,7 +360,7 @@ test('22 点：卡片带「当日收官」，走的是同一个时段认领', as
   const result = await service.sendReport({ now: AT_22 });
   assert.equal(result.isSummary, true);
   const card = JSON.parse(creates[0].data.content);
-  assert.match(card.header.title.content, /当日收官/);
+  assert.equal(card.header.title.content, '销售战报 · 截止 22:00 · 今日收官');
   assert.equal(card.header.template, 'violet');
 });
 

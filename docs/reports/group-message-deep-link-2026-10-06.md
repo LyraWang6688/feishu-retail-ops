@@ -102,11 +102,28 @@ AppLink 协议（把 `…/sitemap/sitemap.xml` 拉下来，过滤出全部 34 �
 | `im.message.reply`（进话题，interactive 卡片）⭐ 销售卡片走的就是这条 | …+ parent_id, root_id | **没有这个键** |
 | `im.message.get`（刚发出去的那两条，带 / 不带 `with_app_link`） | items[0] 有 message_position / thread_id / thread_message_position | **没有这个键** |
 
-⇒ ⚠️ 所以"**发消息那一刻就存**"这条路**今天是空转的**：代码就位、能存就存，
-但这个应用/租户**暂时不会回带**这个字段。要拿到"点开就在话题里"的真链接，
-目前只能靠**飞书侧**（应用配置 / 权限 / 官方确认有没有这个字段、什么时候回带）；
-**不要**退回到"自己拼一条 URL"（AppLink 协议里确实没有能定位消息/话题的那一条，
-拼出来的链接点开只会到群里，不在话题里 —— 那就是她明确不要的假链接）。
+⇒ ⚠️ 光靠"发消息那一刻存 `message_app_link`"这条路**今天是空转的**：代码就位、能存就存，
+但这个应用/租户**暂时不会回带**这个字段。
+
+⭐ **但她在 2026-10-06 给了一条真实可用的话题深链格式**（记在
+`docs/module-split-and-main-flow-2026-10-06.md` 第八节，本仓库已代码化到
+`server/src/config/salesThreadLink.js`）：
+
+```
+https://applink.feishu.cn/client/thread/open
+  ?open_chat_id=<群 chat_id>&open_thread_id=<话题 thread_id>
+  &openchatid=<群 chat_id>&openthreadid=<话题 thread_id>&thread_position=-1
+```
+
+> 「**点开之后就直接可以看到那条消息的所有沟通内容**」
+
+⭐ **两个 id 我们手上都有**（群消息事件里有 `chat_id`；`im.message.reply` 带
+`reply_in_thread:true` 的响应里、以及事件里都有 `thread_id`）⇒ **不用等飞书回带**，
+`chat_id + thread_id` 一拼就是那条话题本身，**新单立刻可用**。
+
+⚠️ 与她明确否掉的"自己拼假链接"的区别：这里拼的是**她给的真实格式**、参数是**我们自己
+发消息时真拿到的两个 id**；而且**缺任意一个 id 就返回空、留空**，绝不用空值拼出一条
+点开是别处的链接。
 
 
 ## 所以「维度 1」的深链怎么落地
@@ -120,19 +137,20 @@ AppLink 协议（把 `…/sitemap/sitemap.xml` 拉下来，过滤出全部 34 �
 > 我们这条回复就在**同一个话题**里（主群第一条带 `reply_in_thread` 的回复就是创建那个话题的那条），
 > 所以点开同样落在那个话题。**老单不补**：拿不到就留空。
 >
-> 🔴 **但当下的现实（实测四）**：这个应用**暂时收不到** `message_app_link`（发送响应里连这个键都没有），
-> 所以「消息链接」列**现在仍然是空的**（新单也一样）——**这不是代码没做，是飞书侧还没回带**。
-> 代码是**待命**状态：哪天开始回带，一行都不用改就自动填上；
-> 在那之前**宁可空着，也不拼假链接**（这正是她的原话：要么真链接、要么不显示）。
+> ✅ **所以那一列现在就有值了**（不再依赖飞书回带）：发销售卡片时，
+> 飞书给了 `message_app_link` 就用飞书的；没给（实测四：当前都不给）就按**她给的话题格式**
+> 用 `chat_id + thread_id` 拼一条 —— 两条都是**真链接**，存进本地映射（`app_link` / `thread_link`
+> 分开存，便于排查哪条来源）与销售主表「消息链接」列。两个 id 都没有时**留空**。
 
-代码里按"**两级**去找、找不到就给空"实现（`server/src/services/larkMessageLinkResolver.js`）：
+代码里按"**三级**去找、找不到就给空"实现（`server/src/services/larkMessageLinkResolver.js`）：
 
-1. **本地映射里存的** `app_link` —— 唯一可靠来源，**发消息时**存下来的
-   （`SalesGroupThreadLocator.rememberSaleThread` 的 `app_link` 字段）。
-2. **现查** `im.message.get` 读 `message_app_link`（开关 `PENDING_DEAL_PUSH_LINK_LOOKUP_ENABLED`，
+1. **本地映射里存的飞书深链** `app_link`（发送响应给的，飞书回带时才有）；
+2. ⭐ **本地映射里存的话题深链** `thread_link`（按她给的格式拼的）—— **今天真正管用的那条**，
+   零远端调用；
+3. **现查** `im.message.get` 读 `message_app_link`（开关 `PENDING_DEAL_PUSH_LINK_LOOKUP_ENABLED`，
    默认开）—— 今天是空跑，但飞书哪天开始返回就**自动生效，不用改代码**。
 
-🔴 两级都拿不到就**返回空 URL**，绝不自己拼一条"看起来能定位、点开却不在话题里"的链接。
+🔴 三级都拿不到就**返回空 URL**，绝不自己拼一条"看起来能定位、点开却不在话题里"的链接。
 🔴 曾经还有第三级「运营自己填的 URL 模板」`PENDING_DEAL_PUSH_LINK_TEMPLATE` ——
    业务负责人 2026-10-06 明确「不要补历史、也不要拼链接」之后**已整个删除**
    （配置 / 代码 / 用例 / 文档一起删）。**不要再加回来**：要么真链接、要么不显示。

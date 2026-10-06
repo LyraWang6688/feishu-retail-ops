@@ -138,19 +138,17 @@ class SalesDailyReportService {
     };
   }
 
-  /** 卡片（纯渲染在 utils/salesDailyReportCard；这里只把两个数字与口径说明交过去）。 */
-  buildCard({ dayKey, hour, stats, now = new Date() }) {
-    const generatedAt = new Date(now.getTime() + 8 * 60 * 60 * 1000).toISOString().slice(11, 16);
+  /**
+   * 卡片：**只有两个大数字块 + 标题**（她的样式要求：不写口径/公式，见 utils/salesDailyReportCard）。
+   * 口径本身没变，只是不写在卡片上——口径在 docs/sales-daily-report-push-2026-10-06.md。
+   */
+  buildCard({ dayKey, hour, stats }) {
     return salesDailyReportCard({
       dayKey,
       hour,
       isSummary: this.isSummaryHour(hour),
       salesCount: stats.salesCount,
       salesAmount: stats.salesAmount,
-      refundAmount: stats.refundAmount,
-      generatedAt,
-      fulfilledLabel: (this.settings.fulfilledStatuses || []).join(' / '),
-      paymentStatus: this.settings.paymentStatus,
     });
   }
 
@@ -237,7 +235,16 @@ class SalesDailyReportService {
         });
       }
 
-      const card = this.buildCard({ dayKey, hour, stats, now });
+      // 退款在「收款明细」里也是「已收款」，按她的字面口径会算进"今天收到的钱"。
+      // ⚠️ 卡片上**不写**任何口径说明（她明确要求），所以这条只进日志，供排查/她问起时对账。
+      if (stats.refundAmount > 0) {
+        logWarn('sales.daily_report.refund_included', {
+          day: dayKey, hour, refund_amount: stats.refundAmount, refund_count: stats.refundCount,
+          hint: '今天「已收款」里有交易方向=退回的记录，按她的字面口径（只看收款状态+收款时间）**未冲抵**',
+        });
+      }
+
+      const card = this.buildCard({ dayKey, hour, stats });
       const text = salesDailyReportCardText(card);
       const chatIds = this.resolvedChatIds();
       if (!chatIds.length) {

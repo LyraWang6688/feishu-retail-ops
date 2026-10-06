@@ -48,6 +48,8 @@ class SalesGroupThreadLocator {
    * `data.message_app_link`）。一旦回带，就只有"发出去的那一刻"拿得到、历史消息取不回来
    * （见 docs/reports/group-message-deep-link-2026-10-06.md 的实测四：**当前这个应用不回带**），
    * 所以必须当时落盘 —— 拿不到就留空。
+   * `threadLink` 是**按她给的真实格式**（`client/thread/open` + chat_id/thread_id）拼出来的
+   * 话题深链（见 config/salesThreadLink）：飞书不回带时，这是"点开就在话题里"的那条路。
    *
    * 幂等：同一条消息重复记（重试、飞书重投 / 同一任务后续又发了几条）用同一个 key，
    * 覆盖成同一条记录。⚠️ 但 `app_link` 与 `thread_id` **只补不清**：后面那次调用
@@ -56,7 +58,7 @@ class SalesGroupThreadLocator {
    */
   async rememberSaleThread({
     salesEntryRecordId = '', taskId = '', orderNo = '', messageId = '', threadId = '',
-    chatId = '', senderOpenId = '', replyMessageId = '', appLink = '',
+    chatId = '', senderOpenId = '', replyMessageId = '', appLink = '', threadLink = '',
   } = {}) {
     const id = String(messageId || '').trim();
     if (!id) throw new Error('记销售群话题映射缺少 message_id');
@@ -76,8 +78,10 @@ class SalesGroupThreadLocator {
       sender_open_id: String(senderOpenId || '').trim(),
       // 机器人那张卡片自己的 message_id：排查时能一眼对上"哪条消息进了哪个话题"。
       reply_message_id: String(replyMessageId || '').trim(),
-      // ⭐ 深链：发送响应里那一条（回带时才有）。留着旧的、只在空的时候补。
+      // ⭐ 深链①：发送响应里那一条（飞书回带时才有）。留着旧的、只在空的时候补。
       app_link: String(appLink || '').trim() || String(existing?.app_link || '').trim(),
+      // ⭐ 深链②：按她给的话题深链格式拼出来的那条（chat_id + thread_id）。同样只补不清。
+      thread_link: String(threadLink || '').trim() || String(existing?.thread_link || '').trim(),
       status: 'bound',
     });
     logInfo('sales.group.thread.remembered', {
@@ -87,6 +91,7 @@ class SalesGroupThreadLocator {
       chat_id: record.chat_id,
       // 只记"有没有拿到深链"，不记链接本身（日志别被 URL 刷满）。
       has_app_link: Boolean(record.app_link),
+      has_thread_link: Boolean(record.thread_link),
     });
     return record;
   }

@@ -81,7 +81,9 @@ class PendingDealPushService {
           return null;
         });
       const { url, source } = await this.resolver.resolve({
+        // 飞书深链优先；没有就用**按她给的话题格式拼的那条**（今天真正管用的一条）。
         storedAppLink: record?.app_link,
+        storedThreadLink: record?.thread_link,
         messageId: record?.message_id,
         threadId: record?.thread_id,
         chatId: record?.chat_id,

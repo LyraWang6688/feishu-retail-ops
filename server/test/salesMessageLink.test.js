@@ -25,6 +25,9 @@ const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { LarkMvpService } = require('../src/services/larkMvpService');
 const { SalesGroupThreadLocator, messageKey } = require('../src/services/salesGroupThreadLocator');
 const {
+  buildSalesThreadLink, resolveSalesThreadLinkTemplate, DEFAULT_SALES_THREAD_LINK_TEMPLATE,
+} = require('../src/config/salesThreadLink');
+const {
   SalesMessageLinkService, MESSAGE_LINK_FIELD_KEY, BITABLE_URL_FIELD_TYPE,
 } = require('../src/services/salesMessageLinkService');
 
@@ -222,6 +225,65 @@ test('写表失败：不抛（卡片已经发出去了，绝不能因为写链�
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 三点五、她给的话题深链格式（2026-10-06 真实样例）—— 今天真正管用的那条
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('按她给的格式拼话题深链：两个 id 都在才拼，格式逐字对齐她的样例', () => {
+  const url = buildSalesThreadLink({ chatId: 'oc_9f2cb1ff23ee442a5facbb1fc24ae1f9', threadId: 'omt_19a1212a17cf5cb7' });
+  assert.equal(url,
+    'https://applink.feishu.cn/client/thread/open'
+    + '?open_chat_id=oc_9f2cb1ff23ee442a5facbb1fc24ae1f9&open_thread_id=omt_19a1212a17cf5cb7'
+    + '&openchatid=oc_9f2cb1ff23ee442a5facbb1fc24ae1f9&openthreadid=omt_19a1212a17cf5cb7'
+    + '&thread_position=-1');
+  assert.match(url, /^https:\/\/applink\.feishu\.cn\/client\/thread\/open\?/);
+});
+
+test('缺任意一个 id → 空串（不猜、不用空值拼一条点开是别处的链接）', () => {
+  assert.equal(buildSalesThreadLink({ chatId: '', threadId: 'omt_1' }), '');
+  assert.equal(buildSalesThreadLink({ chatId: 'oc_1', threadId: '' }), '');
+  assert.equal(buildSalesThreadLink({}), '');
+});
+
+test('格式可配：模板从环境变量读，没配就用她给的那条；空串 = 不要拼', () => {
+  assert.equal(resolveSalesThreadLinkTemplate({}), DEFAULT_SALES_THREAD_LINK_TEMPLATE);
+  assert.equal(resolveSalesThreadLinkTemplate({ SALES_THREAD_LINK_TEMPLATE: '' }), '');
+  assert.equal(
+    buildSalesThreadLink({ chatId: 'oc_1', threadId: 'omt_1', template: 'feishu://thread/{thread_id}?chat={chat_id}' }),
+    'feishu://thread/omt_1?chat=oc_1',
+  );
+  // 不传 template = 用她给的默认格式（含 thread_position=-1）；显式空串 = 不要拼。
+  const fallback = buildSalesThreadLink({ chatId: 'oc_1', threadId: 'omt_1' });
+  assert.match(fallback, /\?open_chat_id=oc_1&open_thread_id=omt_1/);
+  assert.match(fallback, /&thread_position=-1$/);
+  assert.equal(buildSalesThreadLink({ chatId: 'oc_1', threadId: 'omt_1', template: '' }), '');
+});
+
+test('飞书给了发送响应链接就用飞书的（她给的格式当第二来源）', async () => {
+  const gateway = fakeGateway();
+  const locator = new SalesGroupThreadLocator({ store: tempStore('sales-link-priority-') });
+  const service = newLinkService(gateway, locator);
+  const { record, linkSource } = await service.rememberFromSend({
+    salesEntryRecordId: 'sale_rec_1', messageId: 'om_her', chatId: 'oc_1', threadId: 'omt_1',
+    replyMessageId: 'om_reply', appLink: APP_LINK,
+  });
+  assert.equal(linkSource, 'send_response');
+  assert.equal(record.app_link, APP_LINK);
+  assert.ok(record.thread_link, '话题格式那条也留着（排查时能看到两条来源）');
+  assert.equal(gateway.updates[0].semanticValues[MESSAGE_LINK_FIELD_KEY], APP_LINK);
+});
+
+test('解析器：本地存着话题深链就直接用它（不需要任何远端调用）', async () => {
+  const { LarkMessageLinkResolver } = require('../src/services/larkMessageLinkResolver');
+  const url = buildSalesThreadLink({ chatId: 'oc_1', threadId: 'omt_1' });
+  const resolver = new LarkMessageLinkResolver({
+    client: { im: { message: { get: async () => { throw new Error('不该被调用'); } } } },
+    lookupEnabled: true,
+  });
+  assert.deepEqual(await resolver.resolve({ storedThreadLink: url, messageId: 'om_1' }), { url, source: 'thread_link' });
+  assert.deepEqual(await resolver.resolve({ messageId: 'om_1' }), { url: '', source: 'unavailable' });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 四、接线：群里发卡片 → 两处都存；私聊一个字节都不变
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -280,11 +342,21 @@ test('群里发卡片：本地映射有 app_link，销售主表「消息链接�
   assert.equal(updates[0].semanticValues[MESSAGE_LINK_FIELD_KEY], APP_LINK);
 });
 
-test('群里发卡片但飞书没回带链接：映射记下路由，销售主表不写', async () => {
+test('飞书没回带链接时：按【她给的话题格式】拼一条，写进「消息链接」', async () => {
   const { service, updates, locator, task } = wiredService({ appLink: '' });
   await service.sendTaskCard(task, { header: {} });
   const record = await locator.findByMessageId('om_her_message');
-  assert.equal(record.app_link, '');
+  assert.equal(record.app_link, '', '飞书没给就是空，不伪造');
+  assert.equal(record.thread_link, buildSalesThreadLink({ chatId: 'oc_1', threadId: 'omt_1' }));
+  assert.equal(updates.length, 1, '话题深链是真的，照样写进表');
+  assert.equal(updates[0].semanticValues[MESSAGE_LINK_FIELD_KEY], record.thread_link);
+});
+
+test('两个 id 缺一个就不拼：既没回带链接、又没有 chat_id/thread_id → 留空、不写表', async () => {
+  const { service, updates, locator, task } = wiredService({ appLink: '' });
+  await service.sendTaskCard({ ...task, chat_id: '' }, { header: {} });
+  const record = await locator.findByMessageId('om_her_message');
+  assert.equal(record.thread_link, '');
   assert.equal(updates.length, 0);
 });
 

@@ -23,8 +23,10 @@ const { logWarn } = require('../utils/logger');
 // ── 本解析器的规矩 ──
 // **两级**去找，**找不到就返回空 URL**，绝不自己拼一条"看起来能定位、点开却不在话题里"的链接
 // （业务负责人明确说过：深链要用飞书给的，不要自己拼）：
-//   ① `storedAppLink`：本地映射里存着的那条（**发消息时**落下来的）——唯一可靠的来源；
-//   ② 现查：`im.message.get` 读 `message_app_link`（开关 `…_LINK_LOOKUP_ENABLED`，默认开；
+//   ① `storedAppLink`：**发消息时**落下来的飞书深链（`data.message_app_link`）——飞书给才有；
+//   ② `storedThreadLink`：发消息时按**她给的真实格式**拼的话题深链
+//      （`client/thread/open` + chat_id/thread_id，见 config/salesThreadLink）——**今天真正管用的那条**；
+//   ③ 现查：`im.message.get` 读 `message_app_link`（开关 `…_LINK_LOOKUP_ENABLED`，默认开；
 //      今天是空手而归，但飞书哪天开始返回就自动生效，不用改代码）。
 //
 // 🔴 曾经还有第三级「运营自己填的 URL 模板」（`PENDING_DEAL_PUSH_LINK_TEMPLATE`），
@@ -38,11 +40,15 @@ class LarkMessageLinkResolver {
   }
 
   /**
-   * @returns {Promise<{url: string, source: 'stored'|'message_get'|'unavailable'}>}
+   * @returns {Promise<{url: string, source: 'stored'|'thread_link'|'message_get'|'unavailable'}>}
    */
-  async resolve({ storedAppLink = '', messageId = '' } = {}) {
+  async resolve({ storedAppLink = '', storedThreadLink = '', messageId = '' } = {}) {
     const stored = String(storedAppLink || '').trim();
     if (stored) return { url: stored, source: 'stored' };
+
+    // 她给的话题深链格式（本地映射里存着的那条）：不需要任何远端调用，**优先于现查**。
+    const threadLink = String(storedThreadLink || '').trim();
+    if (threadLink) return { url: threadLink, source: 'thread_link' };
 
     const id = String(messageId || '').trim();
     if (this.lookupEnabled && id && this.client?.im?.message?.get) {

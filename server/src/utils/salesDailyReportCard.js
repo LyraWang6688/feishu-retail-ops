@@ -1,12 +1,16 @@
 // 「销售战报」那张卡片的**纯渲染**（不含任何取值逻辑，取数在 services/salesDailyReportService）。
 //
-// 为什么单独一个文件、不塞进 utils/larkCards.js：
-//   · 那个文件是"全仓所有卡片"的大杂烩，别的链路正在改它（多代理并行时是纯冲突面）；
-//   · 战报的样式会跟着她的口径改（"当日收官"怎么说、要不要加行），放自己文件里改起来不牵连别人。
+// 样式以她看完初版之后的逐字要求为准（docs/sales-report-card-design-2026-10-06.md）：
+//   「**我觉得这个不太好看**。**你不用把我们的那个计算逻辑写到里面**……
+//     然后用**两个比较大的、类似按钮形式的板块**：左边显示**销售单数**、右边显示**销售金额**，
+//     这样就可以了，**非常醒目地起到提醒作用就行**」
+// ⇒ 卡片上：**只有两个大数字块**（左右并排）＋ 标题。
+//   ❌ 不写口径 / 公式 / 字段名；❌ 不做表格或长文本；❌ 不超过两个数字块。
+//   （口径本身没变，只是**不写在卡片上**——口径在 docs/sales-daily-report-push-2026-10-06.md。）
 //
-// 口径以 `docs/sales-daily-report-push-2026-10-06.md` 为准：
-//   · 形式是**消息卡片**；两个数字：销售的单数 / 销售的金额；
-//   · ⚠️ 22 点那一条是**当日收官**，要和常规时段**一眼能分开**（标题 + 页眉色 + 一行说明）。
+// 为什么单独一个文件、不塞进 utils/larkCards.js：
+//   · 那个文件是全仓所有卡片的大杂烩，别的链路正在改它（多代理并行时是纯冲突面）；
+//   · 战报样式会跟着她的反馈改，放自己文件里改起来不牵连别人。
 
 const money = (value) => {
   const number = Number(value);
@@ -16,82 +20,112 @@ const money = (value) => {
 
 const pad = (value) => String(value).padStart(2, '0');
 
-/** 北京时间 `MM-DD HH:00`（卡片标题上给她的时间，一律按上海时间说）。 */
-const slotLabel = ({ dayKey = '', hour = 0 } = {}) => {
-  const monthDay = String(dayKey).slice(5) || '';
-  return `${monthDay} ${pad(hour)}:00`;
-};
+/** 标题里的时间：`截止 15:00`（她给的例子就是这个写法）。 */
+const slotLabel = (hour) => `截止 ${pad(hour)}:00`;
+
+/**
+ * 一个大数字块（列容器里的一列）：上面一行小字标签，下面一个**特大字号**的数字。
+ *
+ * `text_size` 用飞书卡片支持的字号枚举，`xxxx-large` = 30px（她要求"数字大、一眼看到数字"）。
+ * ⚠️ 老实说一句验证边界：`xxxx-large` 这类特大字号是**飞书卡片 2.0 组件文档**里列的
+ *   （本仓库现有卡片全是 1.0 结构，1.0 里只有 `heading` 被真机验证过）。
+ *   万一她的客户端把它当成未知值 → 会退回正文字号（那就只剩"加粗"这一层强调）。
+ *   数字外面还包了一层 `**...**`，认不出字号时仍然是粗体、仍然比标签醒目。
+ *   ⇒ 她看一眼若觉得还不够大，改用卡片 2.0 就是**改这一个文件**的事（不动业务逻辑）。
+ */
+const bigNumberBlock = ({ label = '', value = '', labelColor = 'grey' } = {}) => ({
+  tag: 'column',
+  width: 'weighted',
+  weight: 1,
+  vertical_align: 'center',
+  elements: [
+    {
+      tag: 'div',
+      text: {
+        tag: 'lark_md',
+        content: `<font color='${labelColor}'>${label}</font>`,
+        text_size: 'notation',
+        text_align: 'center',
+      },
+    },
+    {
+      tag: 'div',
+      text: {
+        tag: 'lark_md',
+        content: `**${value}**`,
+        text_size: 'xxxx-large',
+        text_align: 'center',
+      },
+    },
+  ],
+});
 
 /**
  * 销售战报卡片。
  *
  * @param {object} input
- * @param {string} input.dayKey 上海自然日 `YYYY-MM-DD`
+ * @param {string} input.dayKey 上海自然日 `YYYY-MM-DD`（只进日志 / 记录，不进卡片正文）
  * @param {number} input.hour 这一条是哪个整点（北京时间）
  * @param {boolean} input.isSummary 是不是 22 点那条**当日收官**
- * @param {number} input.salesCount 销售的单数（销售明细「履约状态=已履约」条数）
- * @param {number} input.salesAmount 销售的金额（收款明细「已收款」且今天、截至此刻）
- * @param {number} [input.refundAmount] 今天「已收款」里**交易方向=退回**的金额（有才提示，见下）
- * @param {string} [input.generatedAt] 生成时刻（上海时间 `HH:mm`），放页脚便于排查
- * @param {string} [input.countNote] 单数那一条的口径说明（默认按已履约口径写）
+ * @param {number} input.salesCount 销售的单数
+ * @param {number} input.salesAmount 销售的金额
  */
 const salesDailyReportCard = ({
-  dayKey = '', hour = 0, isSummary = false, salesCount = 0, salesAmount = 0,
-  refundAmount = 0, generatedAt = '', fulfilledLabel = '已履约', paymentStatus = '已收款',
-  countNote = '',
-} = {}) => {
-  const label = slotLabel({ dayKey, hour });
-  const title = isSummary
-    ? `📊 销售战报 · ${label} 当日收官`
-    : `📊 销售战报 · ${label}`;
-
-  const lines = [
-    `**销售单数**：${salesCount} 单`,
-    `**销售金额**：${money(salesAmount)}`,
-  ];
-  // ⚠️ 退回（交易方向=退回）在「收款明细」里也是「已收款」，所以按她的字面口径它**会被算进**
-  //    "今天收到的钱"。这个提示只在**真有退回**时出现（平常卡片一个字都不多），
-  //    免得她以为金额算错了却查不出原因。
-  if (Number(refundAmount) > 0) {
-    lines.push(`（其中含「退回」${money(refundAmount)}，按她的口径**未冲抵**）`);
-  }
-
-  const footNotes = [
-    countNote || `单数 = 销售明细「履约状态 = ${fulfilledLabel}」的条数（一条明细 = 一双鞋 = 一个单子）`,
-    // ⚠️ 口径是"截止到**推送那一刻**"（她的原话），所以这里写**生成时刻**，
-    //    不写整点：服务 21:39 才起来时，钱是算到 21:39 的，写"截至 21:00"就是假话。
-    `金额 = 收款明细「${paymentStatus}」且收款时间是今天、截至推送那一刻${generatedAt ? `（${generatedAt}）` : ''}`,
-  ];
-  if (isSummary) footNotes.push(`✅ 今日收官 · 以上为当天累计（截至${generatedAt ? ` ${generatedAt}` : '此刻'}）`);
-  if (generatedAt) footNotes.push(`生成于 ${dayKey} ${generatedAt}（北京时间）`);
-
-  return {
-    config: { wide_screen_mode: true },
-    header: {
-      // 常规 = 蓝、收官 = 紫：她一眼能分出"这是最后那条总结"。
-      template: isSummary ? 'violet' : 'blue',
-      title: { tag: 'plain_text', content: title },
+  hour = 0, isSummary = false, salesCount = 0, salesAmount = 0,
+} = {}) => ({
+  config: { wide_screen_mode: true },
+  header: {
+    // 常规 = 蓝、收官 = 紫：她一眼能分出"这是最后那条总结"。
+    template: isSummary ? 'violet' : 'blue',
+    title: {
+      tag: 'plain_text',
+      content: `销售战报 · ${slotLabel(hour)}${isSummary ? ' · 今日收官' : ''}`,
     },
-    elements: [
-      { tag: 'div', text: { tag: 'lark_md', content: lines.join('\n') } },
-      { tag: 'hr' },
-      { tag: 'note', elements: [{ tag: 'plain_text', content: footNotes.join('\n') }] },
-    ],
-  };
-};
+  },
+  elements: [
+    {
+      tag: 'column_set',
+      flex_mode: 'bisect',
+      horizontal_spacing: 'default',
+      // 灰底让两个数字像两块"面板"（她说的"类似按钮形式的板块"）。
+      background_style: 'grey',
+      columns: [
+        bigNumberBlock({ label: '销售单数', value: `${Number(salesCount) || 0} 单` }),
+        bigNumberBlock({ label: '销售金额', value: money(salesAmount) }),
+      ],
+    },
+  ],
+});
 
-/** 卡片里**她要看的那两行**的纯文本版（日志 / 自测 / 排查时贴给人看用，别再手抄一遍）。 */
+/**
+ * 卡片的**纯文本预览**（日志 / 自测 / 排查时贴给人看；从同一张卡渲染，不手抄一份免得走样）。
+ */
 const salesDailyReportCardText = (card) => {
   const title = card?.header?.title?.content || '';
-  const body = (card?.elements || [])
-    .map((element) => {
-      if (element.tag === 'div') return element.text?.content || '';
-      if (element.tag === 'note') return (element.elements || []).map((item) => item.content).join('\n');
-      return '';
-    })
-    .filter(Boolean)
-    .join('\n');
-  return `${title}\n${body}`;
+  const blocks = [];
+  const walk = (elements) => {
+    (elements || []).forEach((element) => {
+      if (element.tag === 'div') {
+        const content = element.text?.content || '';
+        if (content) blocks.push(content.replace(/\*\*/g, '').replace(/<[^>]+>/g, ''));
+      } else if (element.tag === 'note') {
+        blocks.push((element.elements || []).map((item) => item.content).join(' '));
+      } else if (element.tag === 'column_set') {
+        const columns = (element.columns || []).map((column) => {
+          const parts = [];
+          (column.elements || []).forEach((child) => {
+            if (child.tag === 'div' && child.text?.content) {
+              parts.push(child.text.content.replace(/\*\*/g, '').replace(/<[^>]+>/g, ''));
+            }
+          });
+          return parts.join(' ');
+        });
+        blocks.push(columns.filter(Boolean).join('  |  '));
+      }
+    });
+  };
+  walk(card?.elements);
+  return [title, ...blocks].filter(Boolean).join('\n');
 };
 
 module.exports = { salesDailyReportCard, salesDailyReportCardText, slotLabel };

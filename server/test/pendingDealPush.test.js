@@ -227,6 +227,23 @@ test('正常推：每笔一行（单号 + 待收金额 + 深链），发到群�
   assert.equal(result.missingLinkCount, 1);
 });
 
+test('本地只有【话题深链】（她给的格式拼的那条）时，也照样带上链接', async () => {
+  const { buildSalesThreadLink } = require('../src/config/salesThreadLink');
+  const locator = new SalesGroupThreadLocator({ store: tmpStore('pending-push-threadlink-') });
+  await seedMapping(locator, { salesEntryRecordId: 'sale_a', messageId: 'om_a', threadId: 'omt_a', orderNo: 'XSD-A-1' });
+  // 飞书不回带 app_link（实测现状）→ 只有按她给的格式拼出来的 thread_link。
+  await locator.store.update(messageKey('om_a'), {
+    thread_link: buildSalesThreadLink({ chatId: CHAT_ID, threadId: 'omt_a' }),
+  });
+
+  const { service, creates } = newService({ orders: [ORDER_A], locator });
+  const result = await service.sendDailyPush({ now: DAY_1_MORNING });
+  assert.equal(result.missingLinkCount, 0, '话题深链也算链接，不该报"缺链接"');
+  const text = JSON.parse(creates[0].data.content).text;
+  assert.match(text, /https:\/\/applink\.feishu\.cn\/client\/thread\/open\?open_chat_id=/);
+  assert.match(text, /open_thread_id=omt_a/);
+});
+
 test('按天认领：同一天推第二遍什么都不做，第二天照推', async () => {
   const locator = new SalesGroupThreadLocator({ store: tmpStore('pending-push-day-claim-') });
   await seedMapping(locator, { salesEntryRecordId: 'sale_a', messageId: 'om_a' });
