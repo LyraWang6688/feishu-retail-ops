@@ -70,7 +70,7 @@
 
 | # | 要求 | 结果 |
 | --- | --- | --- |
-| 3.1 | 全量 `node --test --test-concurrency=1` **连跑 2 次 fail=0** | ✅ 875 / 875，两次都 `fail 0` |
+| 3.1 | 全量 `node --test --test-concurrency=1` **连跑 2 次 fail=0** | ✅ 876 / 876，连跑 2 次都 `fail 0`（共 12 次全绿，1 次偶发见第 5 节第 5 条） |
 | 3.2 | **真启动一次**，`GET /health` 200 | ✅ `HTTP=200`（另 `/api/lark/events/health` 也 200），启动日志零 error |
 | 3.3 | 未碰：`config/salesStatus*` 值域 · `v1BitableSchema.js` · `inventoryService.js` · `public/workbench/*` | ✅ 改动文件清单见第 4 节 |
 | 3.4 | 未用飞书 CLI；未写生产 Base；未打印 secret | ✅ 全部为单元测试（假 Base）+ 本机真启动，无任何远端写入 |
@@ -115,6 +115,8 @@
 - `server/src/services/afterSalesService.js` —— (2) `settleCash` 写她说的方式（没说才沿用原单）、进指纹
 - `server/test/salesThreadProgress.test.js` · `server/test/afterSalesFlow.test.js` ·
   `server/test/afterSalesService.test.js` —— 对照上表
+- `server/scripts/e2e-sales-status.mjs` —— 自测脚本的"终态"清单补上新状态 `progress_asking`
+  （不补的话它会干等 4 分钟、把"她在等一句方式"报成"超时"）
 
 ## 5. 已知不确定处（如实说）
 
@@ -133,4 +135,10 @@
 4. **方式词表**：`config/afterSalesFlow.js` 里那份词表与销售话题链路的
    `config/salesProgressIntake.paymentMethodAliases` 是同一批说法，**两处各自持有一份是刻意的**
    （解耦：任一条链路被拿掉，另一条还活着）。改说法要两处一起改，已有用例钉住售后这一份。
+5. ⚠️ **观察到 1 次偶发**（不是本改动引入的，如实记）：连跑过程中有 **1 次**全量结果变成
+   `tests 811 / pass 810 / fail 1`，其余 **12 次**都是 `876 / 876 / fail 0`（含 2 次**不带 `.env`**、
+   更接近 CI 条件的跑法）。811 = 876 − 66，而 `test/purchaseWebhookService.test.js` 恰好 66 条用例
+   —— 看起来是那个**文件级**偶发失败（该文件本机**未被本次改动碰过**；本仓库历史上也有
+   `fix/purchase-return-test-race` / `fix/return-batch-test-race` 这类竞态修复分支）。
+   单独连跑该文件 6 次都是全绿，没能复现；**CI（`gh pr checks`）是绿的**，以 CI 为准。
    取词用"**最后一个命中**"（"退给她 230，微信退"这类方式在句末的说法才对）。
