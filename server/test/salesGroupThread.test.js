@@ -205,6 +205,8 @@ test('A：群里发的一条销售消息 → 销售主表只建一条记录（�
 // 【C】话题里收到消息 → 按话题定位到那笔销售 → 走销售（不是采购）
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ⚠️ 这里刻意用**不像进展**的一句（有货号/尺码/"一双"，没有收款/交付线索）：
+//    "收到微信 300" 这种二次处理的话归 ②（见 salesThreadProgress.test.js）。
 test('C：话题里的消息（thread_id 命中本地映射）→ 走销售，不走采购', async () => {
   const threads = new SalesGroupThreadLocator({ store: tempStore() });
   await threads.rememberSaleThread({
@@ -214,7 +216,8 @@ test('C：话题里的消息（thread_id 命中本地映射）→ 走销售，�
   const { service, purchaseCalls, replies } = makeHarness({ salesGroupThreads: threads });
 
   const result = await service.acceptMessage(groupEvent({
-    messageId: 'om_follow_up', threadId: 'omt_sale_9', mentions: [], text: '又收到微信 300',
+    messageId: 'om_follow_up', threadId: 'omt_sale_9', mentions: [],
+    text: '再记一双 66356 黑 42 230 微信',
   }));
 
   assert.equal(result.accepted, true, '话题里的消息免 @，必须被处理');

@@ -24,6 +24,8 @@ class GroupPurchaseFlowService {
     this.locator = locator;
     // replyText：在**群里原地回复**那条消息（引用回复）。群聊里所有反馈都走它，
     // 免得私聊那套 sendText 把消息发到群里时没有上下文。
+    // ⭐ ④ 第三个参数 `{ threadId }`：非空时由**飞书发送适配器**带 `reply_in_thread`
+    //    把回复回到**那个话题**（本类不认识 reply_in_thread，只把上下文交上去）。
     this.replyText = replyText || (async () => '');
     // 保留 sendText 注入位（将来要在群里直接发消息时用），今天没有调用点。
     this.sendText = sendText;
@@ -56,7 +58,8 @@ class GroupPurchaseFlowService {
     const content = located.status === 'not_found' ? NO_BATCH_REPLY : AMBIGUOUS_BATCH_REPLY;
     let replied = false;
     try {
-      await this.replyText(messageId, content);
+      // 在话题里问的，回答也回那个话题（④：采购的后续对话也必须留在话题里）。
+      await this.replyText(messageId, content, { threadId });
       replied = true;
     } catch (error) {
       // 回不出去（例如缺 im:message 权限）不能把整条链路判失败：日志留痕即可，

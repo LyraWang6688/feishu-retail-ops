@@ -79,6 +79,8 @@ class PurchaseArrivalConversationService {
     });
     this.confirmArrival = confirmArrival;
     // 群里的反馈一律**引用回复/回复卡片**（群聊没有"上一次对话"的概念）。
+    // ⭐ ④ 两个端口都收第三个参数 `{ threadId }`：非空时由**飞书发送适配器**
+    //    带 `reply_in_thread` 把这条反馈回到**那个话题**（本类不认识 reply_in_thread）。
     this.replyText = replyText || (async () => '');
     this.replyCard = replyCard || (async () => '');
     this.updateCard = updateCard || (async () => false);
@@ -138,7 +140,7 @@ class PurchaseArrivalConversationService {
     if (task?.status === 'posted') {
       // 已经入过库还继续说：**一个字都不写**，明确告诉她这批处理过了（不静默）。
       logInfo('purchase.arrival.reconcile.after_posted', { task_id: taskId, message_id: messageId });
-      await this.safeReplyText(messageId, replies.afterPosted);
+      await this.safeReplyText(messageId, replies.afterPosted, { threadId });
       return { handled: true, reason: 'already_posted' };
     }
     if (!task) {
@@ -221,7 +223,7 @@ class PurchaseArrivalConversationService {
       logWarn('purchase.arrival.reconcile.plan_unmatched', {
         task_id: taskId, batch_no: batchNo, reason: plan.reason,
       });
-      await this.safeReplyText(messageId, replies.unmatched);
+      await this.safeReplyText(messageId, replies.unmatched, { threadId });
       return { handled: true, complete: true, plan_ok: false, reason: plan.reason };
     }
 
@@ -235,7 +237,9 @@ class PurchaseArrivalConversationService {
     });
     let cardMessageId = '';
     try {
-      cardMessageId = await this.replyCard(messageId, card);
+      // ⭐ ④ 卡片回到**她说话的那个话题**（`{ threadId }` 一路传到飞书发送适配器，
+      //    由它决定用不用 `reply_in_thread`）。主群 @ 进来（threadId 为空）时行为不变。
+      cardMessageId = await this.replyCard(messageId, card, { threadId });
     } catch (error) {
       // 卡片发不出去：状态留在 collecting，她再说一句"完了"就会重发（nothing was written）。
       logWarn('purchase.arrival.reconcile.card_send_failed', { task_id: taskId, error: error.message });
@@ -590,10 +594,16 @@ class PurchaseArrivalConversationService {
     return event?.context?.open_message_id || event?.open_message_id || task?.card_message_id || '';
   }
 
-  async safeReplyText(messageId, content) {
+  /**
+   * 回一句话到那条消息。
+   * ⭐ ④ `options.threadId` 非空 = 这条消息在**话题**里 → 让飞书发送适配器带
+   * `reply_in_thread` 把它回到**同一个话题**（采购单/图是发群的，后续对话也必须回话题）。
+   * 不传 / 为空（主群 @ 进来）时与改动前逐字相同。
+   */
+  async safeReplyText(messageId, content, options = {}) {
     if (!messageId || !content) return false;
     try {
-      await this.replyText(messageId, content);
+      await this.replyText(messageId, content, options);
       return true;
     } catch (error) {
       // 回不出去（缺权限、消息被撤回）绝不能把业务判失败：日志留痕，业务事实已经落地。

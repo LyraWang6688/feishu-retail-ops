@@ -175,8 +175,10 @@ const makeHarness = ({ records = defaultRecords(), responses = [], config } = {}
     recognizer,
     sizeReferences: webhook.getSizeReferences,
     confirmArrival: (taskId, task, operatorOpenId) => webhook.confirmArrival(taskId, task, operatorOpenId),
-    replyText: async (messageId, content) => { replied.push({ messageId, content }); return 'om_reply'; },
-    replyCard: async (messageId, card) => { cards.push({ messageId, card }); return `om_card_${cards.length}`; },
+    // ⭐ ④ 两个端口都记下第三个参数 `options`：里面带着 threadId，
+    //    由**飞书发送适配器**决定要不要 `reply_in_thread`（见 larkMvpService.replyPurchaseText）。
+    replyText: async (messageId, content, options) => { replied.push({ messageId, content, options }); return 'om_reply'; },
+    replyCard: async (messageId, card, options) => { cards.push({ messageId, card, options }); return `om_card_${cards.length}`; },
     updateCard: async (messageId, card) => { updated.push({ messageId, card }); return true; },
     config,
   });
@@ -294,6 +296,8 @@ test('三类差异④：她说的话对不上明细 → 不入库、不发卡片
   assert.equal(harness.gateway.writes.length, 0, '对不上就一个字都不写');
   assert.equal(harness.replied.length, 1);
   assert.match(harness.replied[0].content, /先不入库/);
+  // ⭐ ④ 文字回复同样把 threadId 交给适配器 → 回到她说话的那个话题。
+  assert.equal(harness.replied[0].options.threadId, 'omt_1');
 });
 
 test('三类差异⑤：**不为「实际为 0」写规则** —— 算出来不是正数就拒绝入库（不猜、不写负数）', async () => {
@@ -327,6 +331,9 @@ test('说「完毕」→ 在话题里发卡片，卡片上有「是」和「否�
   assert.equal(harness.cards.length, 1);
   // ⚠️ 卡片是**回复她那条消息**（回复 = 落在同一个话题里），不是另开一条私聊消息。
   assert.equal(harness.cards[0].messageId, 'om_1');
+  // ⭐ ④ 同时把 `threadId` 交给发送适配器 —— 由它带 `reply_in_thread` 真正回到**那个话题**
+  //    （采购单/图是发群的，后续对话不带上它就会落回主群）。
+  assert.equal(harness.cards[0].options.threadId, 'omt_1');
   const buttons = cardButtons(harness.cards[0].card);
   assert.deepEqual(buttons.map((item) => item.label), ['是', '否'], '卡片上必须有「是」和「否」两个按钮');
   assert.deepEqual(buttons.map((item) => item.action), [

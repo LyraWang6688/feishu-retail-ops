@@ -1897,6 +1897,12 @@ test('C：thread_id 查不到映射 → 明确回「认不出」，零写入，�
   });
   const replied = [];
   service.replyText = async (_messageId, content) => { replied.push(content); return 'om_reply'; };
+  // ⭐ ④ 这条消息在**话题**里 → 「认不出」那句话走的是**回复到话题**那条出口
+  // （带 `reply_in_thread`），所以这里也要把那条出口抓下来。
+  service.replyTextInThread = async (_messageId, content) => {
+    replied.push(content);
+    return { messageId: 'om_reply', threadId: 'omt_unknown_thread' };
+  };
 
   // 这条话题我们没记过；正文里**故意**带上一个真实批次号——也不能因此去猜。
   const result = await service.acceptMessage(groupEvent({
