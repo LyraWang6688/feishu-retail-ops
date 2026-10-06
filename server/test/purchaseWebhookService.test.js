@@ -99,6 +99,10 @@ const makeClient = (overrides = {}) => ({
     },
     message: {
       create: overrides.sendMessage || (async () => ({ code: 0, msg: 'success' })),
+      // 2026-10-06 起：采购单发到群时，第 1 条（图）之后的每条消息都用 `reply`
+      // 回复第 1 条（业务负责人拍板：一条开话题 + 后面的回复它）。
+      // 默认实现只回一句成功、不带 message_id——绝大多数用例不关心群消息的落点。
+      reply: overrides.replyMessage || (async () => ({ code: 0, msg: 'success' })),
     },
   },
 });
@@ -153,6 +157,10 @@ const makeService = (options = {}) => {
     // 单测里压到 20ms —— 验证的是"同一批次号的记录归成一批、窗口到点才处理"，
     // 而不是真的等 4 秒。需要验证窗口本身的用例会显式传更大的值。
     reportBatchWindowMs: options.reportBatchWindowMs ?? 20,
+    // 退货「归批窗口」：生产默认 30000ms（业务负责人 2026-10-06 拍板），
+    // 单测里同样压到 20ms —— 验证的是"同一批次号的退货归成一批、窗口到点才处理"，
+    // 而不是真的等 30 秒。需要验证窗口本身的用例会显式传更大的值。
+    purchaseReturnBatchWindowMs: options.purchaseReturnBatchWindowMs ?? 20,
     // 群聊定位器（发到群后写 message_id ↔ 批次映射）指向临时目录：
     // 不传的话服务会自建 data/purchase_group_messages，用例之间会互相看见对方的映射。
     batchLocatorStore: options.batchLocatorStore,
@@ -1427,12 +1435,14 @@ test('采购申请一条：编号 + 尺码 + 数量说明 → 正确解析成尺
   assert.deepEqual([bySize.get('size_36'), bySize.get('size_37')], [2, 3]);
 });
 
-test('采购退货一条（编号 + 数量）→ 交给退货链路、不走报货归批；数量取自「数量」字段', async () => {
-  // ⚠️ 合并 #81 与 #83 时定的归属：**采购退货不在归批窗口里处理**，由它自己那条
-  // 链路负责（processSupplierReturn：按实时库存逐尺码扣减 + 出「采购退货单」）。
-  // 所以这条用例钉的是"分流正确 + 数量口径正确 + 不建批次/不走进货"；
+test('采购退货一条（编号 + 数量）→ 交给退货链路、不进报货归批；数量取自「数量」字段', async () => {
+  // ⚠️ 归属：**采购退货不进报货的归批窗口**，由它自己那条链路负责
+  // （按实时库存逐尺码扣减 + 出「采购退货单」）。
+  // 2026-10-06 起退货**有自己的一套归批窗口**（业务负责人拍板 30 秒），所以这条
+  // 带批次号的记录会先等窗口（单测里 20ms）再由退货链路整批处理——本用例钉的是
+  // "分流正确 + 数量口径正确 + 不建报货批次/不走进货 + 不被报货那套写成单据"；
   // 库存那一侧（能对上就退、对不上把差额说清）由 purchaseReturn.test.js
-  // 用真的 InventoryService 钉住，这里不重复。
+  // 用真的 InventoryService 钉住，退货归批本身由 purchaseReturnBatch.test.js 钉住。
   const { service, store, gateway } = makeService({
     gateway: makeGateway({
       purchaseReport: [reportRecord('rep_return_1', {
@@ -2065,6 +2075,15 @@ const makeGroupPurchaseService = (options = {}) => {
           },
         };
       },
+      // 2026-10-06 起文字改用 `reply` 回到第 1 条（图）：回复也照样带 message_id / thread_id。
+      // 这里保留"被回复的那条没有话题 id"的形状——飞书在回复时会把（新建的）话题 id 带回来。
+      replyMessage: async (params) => {
+        sent.push(params);
+        return {
+          code: 0,
+          data: { message_id: `om_sent_${sent.length}`, thread_id: 'omt_sent_thread' },
+        };
+      },
     }),
     batchLocatorStore,
   });
@@ -2091,8 +2110,11 @@ test('A：采购单发到群 PURCHASE_CHAT_ID 并 @经办人；消息/话题 ↔
   assert.equal(image.params.receive_id_type, 'chat_id');
   assert.equal(image.data.receive_id, 'oc_test_purchase_group');
   assert.equal(image.data.msg_type, 'image');
-  assert.equal(text.params.receive_id_type, 'chat_id');
-  assert.equal(text.data.receive_id, 'oc_test_purchase_group');
+  // ⚠️ 2026-10-06 起文字**不再顶层发**，而是 `reply` 回第 1 条（图）——
+  // 这样图与文字挂在同一个话题下（以前是两条顶层消息、两个话题）。
+  assert.equal(text.params, undefined, '回复消息没有 receive_id_type 参数（走 path.message_id）');
+  assert.equal(text.path.message_id, 'om_sent_1', '必须回复第 1 条（图），不是发一条新的顶层消息');
+  assert.equal(text.data.msg_type, 'text');
   // @经办人（不是 @所有人）：业务负责人改的口径。
   const textContent = JSON.parse(text.data.content).text;
   assert.match(textContent, /^<at user_id="ou_user_1"><\/at> /);

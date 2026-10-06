@@ -85,7 +85,18 @@ const makeClient = (messages) => ({
     message: {
       create: async (params) => {
         messages.push(params);
-        return { code: 0, msg: 'success' };
+        return { code: 0, msg: 'success', data: { message_id: `om_${messages.length}` } };
+      },
+      // 2026-10-06 起：采购单发到群时，第 1 条（图）之后的每条消息都用 `reply`
+      // 回复第 1 条（业务负责人拍板：一条开话题 + 后面的回复它）。
+      // 这个假实现照飞书的语义回 message_id / thread_id：回复谁，就落在谁的话题里。
+      reply: async (params) => {
+        messages.push(params);
+        return {
+          code: 0,
+          msg: 'success',
+          data: { message_id: `om_${messages.length}`, thread_id: 'omt_purchase_thread' },
+        };
       },
     },
   },
@@ -159,6 +170,10 @@ const makeService = (options = {}) => {
     disableBatchAlertTimers: true,
     batchReadMaxRetries: 1,
     batchReadRetryDelay: 0,
+    // 退货归批窗口（业务负责人 2026-10-06 拍板的生产默认值是 30 秒）。
+    // 这里故意给一个**远大于用例时长**的值：这些用例要验的是"这一条退货处理得对不对"，
+    // 窗口由 runReturn 显式 flush（见下），不让定时器在断言中途插进来。
+    purchaseReturnBatchWindowMs: options.purchaseReturnBatchWindowMs ?? 10_000,
   });
   return { service, store, gateway, messages, images, inventoryStore };
 };
@@ -172,6 +187,13 @@ const runReturn = async (options) => {
   let error = null;
   try {
     result = await ctx.service.process('supplier-report', recordId, taskId);
+    // 带「报货批次号」的退货现在先进归批窗口（等整批一起处理）——用例里不等 30 秒，
+    // 直接手动 flush 到点，语义与"窗口到点"完全一样（走的是同一个 flushReturnBatch）。
+    if (result?.status === 'batch_waiting') {
+      await ctx.service.flushReturnBatch(result.batch_no);
+      const task = await ctx.store.get(taskId);
+      result = task?.result ?? result;
+    }
   } catch (thrown) {
     // process() 会把失败落成可重试的 failed 之后再把异常抛出去；这里照样拿任务状态断言。
     error = thrown;

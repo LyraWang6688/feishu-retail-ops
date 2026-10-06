@@ -26,6 +26,11 @@ const { REPORT_BEHAVIOR, classifyReportBehavior } = require('./purchaseReportBeh
 // 归批窗口：#81 用「按报货批次号开的短窗口」取代了旧的「到齐」判据，
 // reportCompletenessPolicy（Σ双数 >= 合计数量）已随 #81 整体删除。
 const { resolveReportBatchWindowMs } = require('../config/reportBatchWindow');
+// 「采购退货」自己的归批窗口（业务负责人 2026-10-06 拍板：30 秒）。
+// ⚠️ 与报货那条链路的 reportBatchWindow **刻意分成两份配置、两套状态**：
+// 退货实测被飞书拆到 16 秒才到，4 秒的报货窗口兜不住；而报货的 4 秒是她要的体感，
+// 不能被退货的需求带跑（AGENTS.md《底层工程原则》的「解耦」）。
+const { resolvePurchaseReturnBatchWindowMs } = require('../config/purchaseReturnBatchWindow');
 const { buildArrivalCostPlan, isBlankCost, costValueOf } = require('./arrivalCostPolicy');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { renderPurchaseRequestPng, RETURN_TITLE } = require('./purchaseRequestImageService');
@@ -51,6 +56,12 @@ const PURCHASE_CARD_ACTIONS = [
 ];
 
 const idFor = (prefix, value) => `${prefix}_${crypto.createHash('sha256').update(String(value)).digest('hex').slice(0, 24)}`;
+
+// 采购退货归批的**批次类型标记**。只写在本地任务记录（JsonTaskStore）里，
+// 用来在 PM2 重启后把"还在等窗口的退货"从所有 batch_waiting 任务里认出来、
+// 重开窗口继续处理（见 recoverPendingReturnBatches）。**不写业务表**。
+// 报货那条链路的 batch_waiting 不带这个标记，两条链路互不误认。
+const PURCHASE_RETURN_BATCH_KIND = 'purchase-return';
 
 const number = (value) => Number(textValue(value));
 
@@ -259,6 +270,30 @@ class PurchaseWebhookService {
     // value: { batchNo, batchTaskId, taskIds: Set, timer }
     this.pendingReportBatches = new Map();
     this.reportBatchWindowMs = resolveReportBatchWindowMs(options);
+    // ── 采购退货的归批（业务负责人 2026-10-06 拍板）──────────────────────────
+    // 与报货那一套（pendingReportBatches / inflightBatches）**刻意分成两套**：
+    // 窗口值不同（退货 30 秒 / 报货 4 秒）、处理内容不同（退货扣库存、报货写单据）、
+    // 失败语义也不同。混成一套之后，改一边就会动到另一边（AGENTS.md 的「解耦」）。
+    //
+    // inflightReturnBatches：同一批次号的**串行锁**——同一批正在处理时，后来的记录
+    // 绝不另起一次处理（否则同一批退货会扣两遍库存）。它是幂等的第一道防线，
+    // 后面还有记录级终态判断、单据幂等键、库存 operationId。
+    this.inflightReturnBatches = new Set();
+    // pendingReturnBatches：按「报货批次号」归集的窗口。
+    // value: { batchNo, batchTaskId, records: Map<recordId, taskId>, timer }
+    // ⚠️ records 存 recordId → taskId：整批处理时要**复用每条记录自己的任务**，
+    // 因为核对计划（return_plan）按任务冻结，重试时才不会重新算一遍把库存多扣。
+    this.pendingReturnBatches = new Map();
+    this.purchaseReturnBatchWindowMs = resolvePurchaseReturnBatchWindowMs(options);
+    // 重启恢复只跑一次（惰性触发：第一个退货 webhook 到达时，或构造后立刻跑一次）。
+    this.returnBatchRecoveryStarted = false;
+    // PM2 重启不丢：进程起来时把上次还在等窗口的退货任务重新开窗。
+    // 用 setImmediate 而不是构造里同步做：构造函数不该做 IO，而且这里要 await store.list()。
+    setImmediate(() => {
+      this.recoverPendingReturnBatches().catch((error) => {
+        logWarn('purchase.return.batch.recovery_failed', { error: error.message });
+      });
+    });
   }
 
   /**
@@ -335,10 +370,19 @@ class PurchaseWebhookService {
     return next;
   }
 
+  /**
+   * 一条采购表记录对应的本地任务 id（确定性推导，两端必须用同一个公式）。
+   * 整批处理退货时靠它把「表里的记录」对回「等窗口的那个任务」——任务里冻结着
+   * 这条记录的核对计划（return_plan），换了 id 就等于重新算一遍计划、可能多扣库存。
+   */
+  purchaseTaskId(kind, recordId) {
+    return idFor(`purchase_${kind}`, recordId);
+  }
+
   async accept(kind, recordId) {
     const id = String(recordId || '').trim();
     if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error('Webhook缺少有效 record_id');
-    const taskId = idFor(`purchase_${kind}`, id);
+    const taskId = this.purchaseTaskId(kind, id);
     const existing = await this.store.get(taskId);
     if (existing?.status === 'completed') {
       logInfo('purchase.webhook.duplicate_ignored', { kind, record_id: id, task_id: taskId });
@@ -416,13 +460,21 @@ class PurchaseWebhookService {
     try {
       let result;
       // 先按「采购行为」分流，再看批次号：采购退货走自己那条链路
-      // （直接扣库存 + 出退货单），**不进归批窗口、也不写采购到货/入库**。
-      // 分流放在批次号之前是有意的：一条退货记录即使带了报货批次号，也不该
-      // 被报货那套归批/解析拦住（她没有给退货定过归批口径）。
+      // （直接扣库存 + 出退货单），**不进报货的归批窗口、也不写采购到货/入库**。
+      // 分流放在批次号之前是有意的：退货即使带了报货批次号，也绝不能被报货那套
+      // 归批/解析拦住（那会按报货口径重写一遍单据、还会给退货补上终态把库存扣减吞掉）。
+      // ⚠️ 2026-10-06 起退货**有自己的一套归批窗口**（handleReturnBatch），见下面。
       const behaviorKind = await this.readReportBehaviorKind(recordId);
       if (behaviorKind === REPORT_BEHAVIOR.PURCHASE_RETURN) {
-        // 传 task：退货的核对计划要落盘成"只算一次"（见 ensureReturnPlan）。
-        result = await this.processSupplierReturn(recordId, taskId, task);
+        // 退货也归批（业务负责人 2026-10-06 拍板）：按「报货批次号」开自己的 30 秒窗口，
+        // 窗口到点**整批一起处理**（一次出单、一次发群）。
+        // ⚠️ 用的是退货自己的窗口/锁，不是报货那条（报货仍是 4 秒，行为不变）。
+        // 没有批次号的旧数据走单条处理，与报货那条链路的兼容口径一致。
+        const batchNo = await this.readReportBatchNo(recordId);
+        result = batchNo
+          ? await this.handleReturnBatch(batchNo, recordId, taskId)
+          // 传 task：退货的核对计划要落盘成"只算一次"（见 ensureReturnPlan）。
+          : await this.processSupplierReturn(recordId, taskId, task);
       } else {
         // 非退货交给归批分派：有报货批次号就按「报货批次号」归批（一次提交 = 一批）；
         // 没有则走单条处理，兼容批次号字段上线前录入的旧数据。
@@ -443,7 +495,10 @@ class PurchaseWebhookService {
       if (result?.status === 'batch_waiting') {
         const latest = await this.store.get(taskId);
         if (!latest || latest.status !== 'processing') return latest;
-        return this.store.update(taskId, { status: 'batch_waiting', batch_no: result.batch_no });
+        const patch = { status: 'batch_waiting', batch_no: result.batch_no };
+        // 退货的批次要带类型标记，PM2 重启后才认得出"哪些是等窗口的退货"（见恢复逻辑）。
+        if (result.batch_kind) patch.batch_kind = result.batch_kind;
+        return this.store.update(taskId, patch);
       }
       const current = await this.store.get(taskId);
       // 采购报单免确认后没有「待确认」这个中间态了：写成功就是 posted。
@@ -659,7 +714,8 @@ class PurchaseWebhookService {
       const behaviorRecordId = linkedRecordIds(fields[reportTable.fields.behavior])[0] || '';
       return classifyReportBehavior(behaviorIndex.get(behaviorRecordId));
     };
-    // ⚠️ 采购退货**不在归批窗口里处理**（合并 #83 与 #81 时定的归属）：
+    // ⚠️ 采购退货**不在报货的归批窗口里处理**（合并 #83 与 #81 时定的归属；
+    // 2026-10-06 起退货有**自己**的归批窗口，见 handleReturnBatch / runReturnBatch）：
     // 退货记录由它自己那条链路负责——processSupplierReturn，按实时库存逐尺码扣减
     // 并出「邯美皮鞋采购退货单」。这里必须先把退货记录摘掉，否则同一批次号下只要
     // 有一条采购申请，窗口一开就会按「整批记录」重读，把退货也当成报货明细写一条
@@ -1009,8 +1065,12 @@ class PurchaseWebhookService {
    * 记进映射，供「话题里的消息 / 引用那条消息 → 是哪一批」反查（见 PurchaseBatchLocator）。
    * `threadId` 只有话题群（或飞书已经给这条消息开了话题）才有值，普通群是空串——
    * 那种情况由定位器在她第一次回复时补记，不影响定位。
+   *
+   * `options.replyToMessageId`：传了就**回复那条消息**（`im.message.reply`）而不是
+   * 发一条顶层消息——采购单发到群时用它把第 2 条起的消息都挂到第 1 条的话题下
+   * （业务负责人 2026-10-06 拍板，见 deliverSupplierImagesInner）。
    */
-  async sendImage(openId, imageBuffer, receiveIdType = 'open_id') {
+  async sendImage(openId, imageBuffer, receiveIdType = 'open_id', options = {}) {
     if (!openId) throw new Error('采购记录缺少经办人 open_id，无法发送图片');
     let upload;
     try {
@@ -1024,10 +1084,16 @@ class PurchaseWebhookService {
     // 免得将来换了 http 实现之后这里静默拿不到 key。
     const imageKey = upload?.image_key || upload?.data?.image_key;
     if (!imageKey) throw new Error('采购申请图片上传成功但未返回 image_key');
-    const response = await this.client.im.message.create({
-      params: { receive_id_type: receiveIdType },
-      data: { receive_id: openId, msg_type: 'image', content: JSON.stringify({ image_key: imageKey }) },
-    });
+    const content = JSON.stringify({ image_key: imageKey });
+    const response = options.replyToMessageId
+      ? await this.client.im.message.reply({
+        path: { message_id: String(options.replyToMessageId) },
+        data: { msg_type: 'image', content },
+      })
+      : await this.client.im.message.create({
+        params: { receive_id_type: receiveIdType },
+        data: { receive_id: openId, msg_type: 'image', content },
+      });
     if (response.code !== 0) throw new Error(`发送采购申请图片失败: ${response.msg} (Code: ${response.code})`);
     return {
       imageKey,
@@ -1042,13 +1108,24 @@ class PurchaseWebhookService {
    * ⚠️ 返回值从"messageId 字符串"改成对象，是为了把 `thread_id` 一起带出来记映射
    * （话题里后续消息只带 thread_id，不带 parent_id）。本类里只有采购单发到群那一个
    * 调用点，已同步改成解构 `{ messageId, threadId }`。
+   *
+   * `options.replyToMessageId`：传了就**回复那条消息**而不是发顶层消息——采购单发到群时
+   * 用它把「文字 @」挂到第 1 条图的话题下（业务负责人 2026-10-06 拍板）。
+   * ⚠️ 一律回复**第 1 条**（不是回复上一条）：飞书的话题 = 一条消息 + 回复它的消息，
+   * 回复话题里任何一条都算同一个话题；固定回复第 1 条，归属最稳、也最好解释。
    */
-  async sendText(openId, content, receiveIdType = 'open_id') {
+  async sendText(openId, content, receiveIdType = 'open_id', options = {}) {
     if (!openId) throw new Error('采购记录缺少经办人 open_id，无法发送说明');
-    const response = await this.client.im.message.create({
-      params: { receive_id_type: receiveIdType },
-      data: { receive_id: openId, msg_type: 'text', content: JSON.stringify({ text: content }) },
-    });
+    const text = JSON.stringify({ text: content });
+    const response = options.replyToMessageId
+      ? await this.client.im.message.reply({
+        path: { message_id: String(options.replyToMessageId) },
+        data: { msg_type: 'text', content: text },
+      })
+      : await this.client.im.message.create({
+        params: { receive_id_type: receiveIdType },
+        data: { receive_id: openId, msg_type: 'text', content: text },
+      });
     if (response.code !== 0) throw new Error(`发送采购申请说明失败: ${response.msg} (Code: ${response.code})`);
     return {
       messageId: response.data?.message_id || '',
@@ -1127,6 +1204,9 @@ class PurchaseWebhookService {
     // 发到群里的每条消息的 message_id / thread_id：记进本地映射，
     // 供「话题里的消息 / 引用那条消息 → 是哪一批」反查。
     const groupMessages = [];
+    // 这一批在群里发的**第 1 条消息**（图）的 message_id = 话题根。
+    // 它之后的每条消息都回复它（见下），于是整批只占一个话题。
+    let threadRootMessageId = '';
     if (!operatorOpenId) {
       // 经办人没解析出来（报单记录没填/字段映射缺失）：照发正文，只是不 @ 人。
       // 记 warn 是为了排查"为什么这批单子没 @到经办人"，绝不退回 @所有人。
@@ -1148,13 +1228,34 @@ class PurchaseWebhookService {
           // 不传就是采购申请单（渲染器里的默认标题），退货传「邯美皮鞋采购退货单」。
           title: options.title,
         });
-        const imageResult = await this.sendImage(target.chatId, png, 'chat_id');
+        // ⚠️ 一条开话题、后面的回复它（业务负责人 2026-10-06 拍板）：
+        // 以前图一条、文字一条都是**顶层消息**，飞书里顶层消息各成一个话题，
+        // 一次提交就变成 4 条消息 / 4 个话题（生产实测）。
+        // 现在：**第 1 条（图）照常顶层发** → 后面每条（文字 @、多供应商时的第 2 张图…）
+        // 都 `im.message.reply` 回复**第 1 条**，于是它们都挂在那一个话题下。
+        // ⚠️ 固定回复第 1 条，不是回复上一条：飞书的话题 = 一条消息 + 回复它的消息，
+        // 回复话题内任何一条都算同一个话题；固定成根消息归属最稳，也最好排查。
+        const imageResult = await this.sendImage(target.chatId, png, 'chat_id', {
+          replyToMessageId: threadRootMessageId,
+        });
+        // 第 1 条消息就是这一批的话题根：它之后的每一条都回到它身上。
+        if (!threadRootMessageId && imageResult.messageId) threadRootMessageId = imageResult.messageId;
+        if (!threadRootMessageId) {
+          // 拿不到第 1 条的 message_id 就没法回复它 → 后面的消息只能退回顶层发
+          //（话题归属保证不了）。真出现这条日志说明飞书响应里没有 message_id，
+          // 属于异常；但**不能因此不发**她那条 @，所以只记一条 warn。
+          logWarn('purchase.request.image.thread_root_missing', {
+            task_id: taskId, chat_id: target.chatId, supplier: label,
+            hint: '发送图片的响应里没有 message_id，后续消息将退回顶层发送（话题归属无法保证）',
+          });
+        }
         // 图单独一条、文字带 @经办人 单独一条：飞书图片消息没有正文，
         // @ 只能挂在文字那条上（业务负责人明确要 @经办人，不再是 @所有人）。
         const textResult = await this.sendText(
           target.chatId,
           this.mentionOperatorText(operatorOpenId, `${label} 这批 ${rowCount} 条（共 ${totalPairs} 双），图可以直接转给供应商。`),
           'chat_id',
+          { replyToMessageId: threadRootMessageId },
         );
         groupMessages.push(
           { messageId: imageResult.messageId, threadId: imageResult.threadId },
@@ -1165,8 +1266,10 @@ class PurchaseWebhookService {
           task_id: taskId, chat_id: target.chatId,
           batch_no: posting.batch_no || draft.batch_no || '', supplier: label,
           operator_open_id: operatorOpenId || '',
+          thread_root_message_id: threadRootMessageId,
           image_message_id: imageResult.messageId, image_thread_id: imageResult.threadId,
           text_message_id: textResult.messageId, text_thread_id: textResult.threadId,
+          text_is_reply: Boolean(threadRootMessageId && textResult.messageId),
         });
       } catch (error) {
         failed.push({ supplier: label, error: error.message });
@@ -1460,33 +1563,326 @@ class PurchaseWebhookService {
     return updated.return_plan;
   }
 
+  // ── 采购退货的归批（业务负责人 2026-10-06 拍板：窗口 30 秒）─────────────────
+  //
+  // 为什么必须归批：一次表单提交 = N 条记录，而飞书**有时打包推、有时分条推**。
+  // 2026-10-06 生产实测：同一次提交的 2 条退货分两次到达、**相隔 16 秒**
+  //（`action_count: 1` + `action_count: 1`）→ 逐条处理出了 2 张退货单、发了 2 次群。
+  // 原有的归批窗口只服务报货、且只有 4 秒，兜不住 16 秒。
+  //
+  // 现在：按「报货批次号」把退货记录收进**自己的**窗口，窗口到点由**一个**处理者
+  // 整批处理（一次出单、一次发群，见 runReturnBatch）。
+  //
+  // ⚠️ 思路复用报货那套，状态**刻意不共用**（两套 Map、两把锁、两份配置）：
+  // 报货窗口是 4 秒（业务负责人要的体感），退货窗口是 30 秒（她 2026-10-06 定的），
+  // 混成一套之后改一边就会动到另一边，也违反 AGENTS.md 的「解耦」。
+
   /**
-   * 采购退货链路（业务负责人的完整口径）：
+   * 重启恢复：把上次还停在 batch_waiting 的**退货**任务按批次号重新开窗。
    *
-   *   ① 「供应商对接」填表单（编号 + 数量，退货不填尺码）→ 数据是确定性的 → **免确认**
-   *   ② 「采购行为」= 采购退货 → 走这条分支
-   *   ③ **不再走「采购到货」和「采购入库」**
-   *   ④ 直接扣「实时库存」并写「库存流水」（库存行为 = 采购减少 STOCK_PURCHASE_DECREASE）
-   *   ⑤ 出图：标题「邯美皮鞋采购退货单」，格式与采购申请单一样
-   *   ⑥ 受影响的表只有 4 张：供应商对接 · 单据信息 · 库存流水 · 实时库存（不碰资金）
+   * 为什么必须有它：窗口是进程内的定时器，PM2 一重启就没了；没有这一步，
+   * 已受理但还没到点的退货会永远卡在 batch_waiting（记录既没出单也没扣库存，
+   * 而且因为磁盘上留着任务、重收 webhook 也只会再登记一次）。
+   * 恢复只认带 `batch_kind === purchase-return` 的任务——报货的 batch_waiting
+   * 不带这个标记，不会被误当成退货。
    *
-   * 落库顺序：**先写「单据信息」（拿到记录 id）→ 再用它当库存操作的来源 → 最后出图**。
-   * 库存操作的幂等键就是「单据信息」行的 record_id（`operationId(kind, sourceRecordId)`），
-   * 而那一行本身由 createOnceByKey 按「幂等键」列保证只写一条，所以重跑拿到的是同一个 id、
-   * 同一个库存操作——不会第二次扣库存（已完成的操作用例直接返回上次的结果）。
-   *
-   * 数量对不上时**尽力处理 + 把差额告诉她**（见 buildPurchaseReturnNotice），
-   * 绝不"一处不对就整单不动"。
+   * 重开后**重新计一个完整窗口**（不复原"已经等了多久"）：窗口到点会重读表里的
+   * 整批记录，多等一次只是让她多等几秒，不会丢单；而按已流逝时间算反而可能
+   * 在恢复瞬间到点、把正要到达的同伴挤到下一批。
    */
-  async processSupplierReturn(recordId, taskId, task = {}) {
+  async recoverPendingReturnBatches() {
+    if (this.returnBatchRecoveryStarted) return;
+    this.returnBatchRecoveryStarted = true;
+    // 测试里注入的 store 可能没有 list()（自定义桩）——那种情况没有可恢复的落盘任务。
+    if (typeof this.store?.list !== 'function') return;
+    let pending = [];
+    try {
+      pending = (await this.store.list({ status: 'batch_waiting' }))
+        .filter((task) => task?.batch_kind === PURCHASE_RETURN_BATCH_KIND && task?.batch_no);
+    } catch (error) {
+      logWarn('purchase.return.batch.recovery_failed', { error: error.message });
+      return;
+    }
+    if (pending.length === 0) return;
+    for (const task of pending) {
+      const entry = this.pendingReturnBatches.get(task.batch_no) || {
+        batchNo: task.batch_no,
+        batchTaskId: task.task_id,
+        records: new Map(),
+        timer: null,
+      };
+      entry.records.set(task.record_id, task.task_id);
+      this.pendingReturnBatches.set(task.batch_no, entry);
+    }
+    for (const entry of this.pendingReturnBatches.values()) {
+      this.armReturnBatchTimer(entry);
+      logInfo('purchase.return.batch.recovered', {
+        batch_no: entry.batchNo,
+        record_count: entry.records.size,
+        window_ms: this.purchaseReturnBatchWindowMs,
+      });
+    }
+  }
+
+  /**
+   * 退货入口：按「报货批次号」登记进归批窗口。
+   *
+   * 只做登记，不读表、不扣库存、不写任何业务表——真正的处理在 runReturnBatch。
+   * 登记后任务停在 batch_waiting（可由后续 webhook 继续加入），不会假装"处理完了"。
+   */
+  async handleReturnBatch(batchNo, recordId, taskId) {
+    // 惰性补一次重启恢复：即使构造时的 setImmediate 已经跑过，这里也只是空转。
+    await this.recoverPendingReturnBatches();
+    const waiting = { status: 'batch_waiting', batch_no: batchNo, batch_kind: PURCHASE_RETURN_BATCH_KIND };
+    const existing = this.pendingReturnBatches.get(batchNo);
+    if (existing) {
+      existing.records.set(recordId, taskId);
+      logInfo('purchase.return.batch.joined', {
+        batch_no: batchNo, record_id: recordId, pending_count: existing.records.size,
+      });
+      return waiting;
+    }
+    const entry = {
+      batchNo,
+      // 批次处理者的 taskId：整批的出图/发群/写附件都以它为 owner
+      //（具体是哪一条记录的 task 不重要——处理时读的是表里的整批记录）。
+      batchTaskId: taskId,
+      records: new Map([[recordId, taskId]]),
+      timer: null,
+    };
+    this.pendingReturnBatches.set(batchNo, entry);
+    this.armReturnBatchTimer(entry);
+    logInfo('purchase.return.batch.opened', {
+      batch_no: batchNo, record_id: recordId, window_ms: this.purchaseReturnBatchWindowMs,
+    });
+    return waiting;
+  }
+
+  /**
+   * 给一个退货批次窗口装定时器（恢复时也会用它重开窗）。
+   *
+   * 窗口是**从这一批第一条记录起算的固定窗口**：后来的记录并进同一批、但**不重置**
+   * 计时——飞书可能持续分条推送，滑动窗口会让她永远等不到图；她最多等 30 秒就该看到。
+   */
+  armReturnBatchTimer(entry) {
+    if (entry.timer) clearTimeout(entry.timer);
+    // ⚠️ 故意不 unref：窗口到点必须真的触发整批处理，unref 会让它随进程退出被丢掉，
+    // 测试里更会变成"等不到处理"（与报货那套同一个理由）。
+    entry.timer = setTimeout(() => {
+      this.flushReturnBatch(entry.batchNo).catch((error) => {
+        logError('purchase.return.batch.flush_failed', { batch_no: entry.batchNo, error: error.message });
+      });
+    }, this.purchaseReturnBatchWindowMs);
+  }
+
+  /**
+   * 窗口到点：把这一批交给**一个**处理者（走队列，便于测试与运维判断"还有没有在处理"）。
+   *
+   * 同一批次正在处理时不另起一次处理——把窗口留着，过一小会儿再试，绝不把任务落成
+   * 终态（落了就等于丢单：库存没扣、单据没写，而任务看起来已经完成）。
+   */
+  async flushReturnBatch(batchNo) {
+    const entry = this.pendingReturnBatches.get(batchNo);
+    if (!entry) return;
+    if (entry.timer) clearTimeout(entry.timer);
+    if (this.inflightReturnBatches.has(batchNo)) {
+      logInfo('purchase.return.batch.inflight_deferred', {
+        batch_no: batchNo, pending_count: entry.records.size,
+      });
+      this.deferReturnBatch(batchNo, entry);
+      return;
+    }
+    this.pendingReturnBatches.delete(batchNo);
+    const recordTasks = new Map(entry.records);
+    const batchTaskId = entry.batchTaskId;
+    try {
+      const result = await this.enqueue(
+        'purchase-return-batch',
+        batchNo,
+        () => this.runReturnBatch(batchNo, batchTaskId, recordTasks),
+      );
+      if (result?.status === 'batch_inflight') {
+        // 处理者还在跑：这一批**没有被处理**，绝不能落 completed（那等于丢单）。
+        logInfo('purchase.return.batch.inflight_deferred', {
+          batch_no: batchNo, pending_count: recordTasks.size,
+        });
+        this.deferReturnBatch(batchNo, entry);
+        return;
+      }
+      // 整批的终态写盘：batchTaskId 拿真正结果，其余条目只是"跟着这一批处理过了"。
+      const taskIds = new Set([...recordTasks.values(), ...(result?.task_ids || [])]);
+      for (const id of taskIds) {
+        const status = id === batchTaskId && result?.status === 'posted' ? 'posted' : 'completed';
+        await this.store.update(id, { status, result }).catch(() => undefined);
+      }
+    } catch (error) {
+      // 整批失败：每个已登记的任务落成**可重试**的 failed，报单记录的处理状态保持不变。
+      for (const id of new Set([...recordTasks.values()])) {
+        await this.store.update(id, { status: 'failed', error: error.message }).catch(() => undefined);
+      }
+      logWarn('purchase.return.batch.failed_retryable', { batch_no: batchNo, error: error.message });
+    }
+  }
+
+  /**
+   * 把一批放回窗口、稍后重试（"同一批已经有处理者在跑"时用）。
+   * 若期间已经有新的窗口（新记录到达时开的），把记录并进去，只留一个定时器。
+   */
+  deferReturnBatch(batchNo, entry) {
+    const existing = this.pendingReturnBatches.get(batchNo);
+    if (existing) {
+      for (const [recordId, taskId] of entry.records) existing.records.set(recordId, taskId);
+      if (existing.timer) clearTimeout(existing.timer);
+    } else {
+      if (entry.timer) clearTimeout(entry.timer);
+      this.pendingReturnBatches.set(batchNo, entry);
+    }
+    const target = this.pendingReturnBatches.get(batchNo);
+    // 重试间隔至少 1 秒：窗口可以配成 0（不等待），但"同一批正在处理"期间的重试
+    // 不能跟着变成 0——那会在一次长处理里空转刷日志。
+    const delay = Math.max(this.purchaseReturnBatchWindowMs, 1000);
+    target.timer = setTimeout(() => {
+      this.flushReturnBatch(batchNo).catch((error) => {
+        logError('purchase.return.batch.flush_failed', { batch_no: batchNo, error: error.message });
+      });
+    }, delay);
+  }
+
+  /**
+   * 真正处理一批退货：读该批次号下的**全部退货记录** → 逐条冻结核对计划 → 扣库存、
+   * 写单据信息 → 整批**只出一次图、只发一次群**。
+   *
+   * 幂等与不丢单（这一段的全部意义）：
+   *   · 处理前重新读表：窗口期间到的记录全部在内，不依赖任务里记了哪几条；
+   *   · 退货记录**只在行为=采购退货时**才处理（同一批次号下的采购申请归报货那条链路管，
+   *     这里绝不能顺手把它写成退货，更不能给任何记录补终态）；
+   *   · 同一批次号用 inflightReturnBatches 上锁，第二个处理者返回 batch_inflight，
+   *     由调用方把窗口放回去稍后重试；
+   *   · 已经是终态的记录直接跳过（飞书重投/双击）；
+   *   · 每条记录的核对计划冻结在它自己的任务里（ensureReturnPlan），配合单据幂等键
+   *     与库存 operationId，复跑是真正的空操作；
+   *   · 抛出去的都是真异常，由 flushReturnBatch 落成可重试的 failed——
+   *     报单记录的处理状态**保持不变**，标成终态失败就是静默丢单。
+   */
+  async runReturnBatch(batchNo, batchTaskId, recordTasks = new Map()) {
+    const table = this.gateway.table('purchaseReport');
+    const allRecords = await this.gateway.listAll('purchaseReport');
+    const batchRecords = allRecords.filter(
+      (record) => textValue(record?.fields?.[table.fields.batchNoText]) === batchNo,
+    );
+    if (batchRecords.length === 0) {
+      // 理论上不该发生（刚读过这条记录就有批次号）。抛错而不是静默返回：
+      // 抛出去会让任务落成可重试的 failed，重收 webhook 还能救；静默返回等于丢单。
+      logWarn('purchase.return.batch.no_records', { batch_no: batchNo });
+      throw new Error(`报货批次号 ${batchNo} 下没有找到任何报单记录`);
+    }
+    const behaviorIndex = await this.loadBehaviorIndex();
+    const kindOf = (record) => classifyReportBehavior(
+      behaviorIndex.get(linkedRecordIds(record?.fields?.[table.fields.behavior])[0] || ''),
+    );
+    const returnRecords = batchRecords.filter((record) => kindOf(record) === REPORT_BEHAVIOR.PURCHASE_RETURN);
+    if (returnRecords.length === 0) {
+      // 这一批里没有退货（例如她把行为改成了采购申请）：这里什么都不写、也不给任何记录
+      // 补终态——采购申请归报货那条链路管，补了终态就会把它整条吞掉。
+      logInfo('purchase.return.batch.no_returns', {
+        batch_no: batchNo, record_count: batchRecords.length,
+      });
+      return { status: 'already_posted', batch_no: batchNo, task_ids: [] };
+    }
+    // 处理顺序：明细ID（决定出图顺序，与报货那条口径一致），同值时按 record_id 稳定排序。
+    const ordered = [...returnRecords].sort((left, right) => {
+      const byDetail = (Number(textValue(left?.fields?.[table.fields.detailId])) || 0)
+        - (Number(textValue(right?.fields?.[table.fields.detailId])) || 0);
+      return byDetail || String(left.record_id).localeCompare(String(right.record_id));
+    });
+
+    if (this.inflightReturnBatches.has(batchNo)) {
+      logInfo('purchase.return.batch.inflight_ignored', { batch_no: batchNo });
+      return { status: 'batch_inflight', batch_no: batchNo };
+    }
+    this.inflightReturnBatches.add(batchNo);
+    try {
+      const preparedList = [];
+      const taskIds = [];
+      const skipped = [];
+      for (const record of ordered) {
+        const recordId = record.record_id;
+        // 复用这条记录自己的任务（里面可能已经冻结了核对计划）；没有就按确定性 id 建一个
+        // ——表里的记录不一定都有对应 webhook（重投/补录），不能因为没有任务就丢下它。
+        const taskId = recordTasks.get(recordId) || this.purchaseTaskId('supplier-report', recordId);
+        let task = await this.store.get(taskId);
+        if (!task) {
+          task = await this.store.create({
+            task_id: taskId, kind: 'supplier-report', record_id: recordId, status: 'processing',
+          });
+        }
+        const prepared = await this.prepareSupplierReturn(recordId, taskId, task);
+        taskIds.push(taskId);
+        if (prepared.skipped) {
+          skipped.push(recordId);
+          continue;
+        }
+        await this.applySupplierReturn(prepared);
+        preparedList.push(prepared);
+      }
+
+      if (preparedList.length === 0) {
+        logInfo('purchase.return.batch.already_posted', {
+          batch_no: batchNo, ignored_record_count: skipped.length,
+        });
+        return { status: 'already_posted', batch_no: batchNo, ignored_record_ids: skipped, task_ids: taskIds };
+      }
+
+      const requestIds = preparedList.flatMap((prepared) => prepared.docIds);
+      await this.deliverReturnImages(batchTaskId, batchNo, preparedList);
+      for (const prepared of preparedList) await this.sendReturnNotice(prepared);
+      const totals = preparedList.reduce((sum, prepared) => ({
+        declared: sum.declared + prepared.plan.declared,
+        available: sum.available + prepared.plan.available,
+        taken: sum.taken + prepared.plan.taken,
+        // 差额也汇总成整批的数（单条时与那条的差额相同，保持结果字段与单条链路一致）。
+        shortfall: sum.shortfall + prepared.plan.shortfall,
+        surplus: sum.surplus + prepared.plan.surplus,
+      }), { declared: 0, available: 0, taken: 0, shortfall: 0, surplus: 0 });
+      const result = {
+        status: 'posted',
+        is_return: true,
+        batch_no: batchNo,
+        record_count: preparedList.length,
+        skipped_record_ids: skipped,
+        ...totals,
+        doc_ids: requestIds,
+        records: preparedList.map((prepared) => prepared.result),
+      };
+      logInfo('purchase.return.batch.posted', {
+        batch_no: batchNo, task_id: batchTaskId,
+        record_count: preparedList.length, skipped_record_count: skipped.length,
+        item_count: preparedList.reduce((sum, prepared) => sum + prepared.items.length, 0),
+        doc_count: requestIds.length,
+      });
+      return { ...result, task_ids: taskIds };
+    } finally {
+      // 无论成败都释放锁：失败时任务已落成可重试的 failed，重收 webhook 要能立刻重跑；
+      // 锁留下不删反而会把重试挡住。
+      this.inflightReturnBatches.delete(batchNo);
+    }
+  }
+
+  /**
+   * 准备一条退货记录的核对计划（**只读 + 冻结**，不写任何业务表）。
+   *
+   * 返回 `{ skipped: true, status }` 表示这条记录已经是终态（飞书重投/双击/已被处理），
+   * 调用方应当跳过它；否则返回本次处理要用的全部上下文（计划、草稿、货品信息、通知对象）。
+   */
+  async prepareSupplierReturn(recordId, taskId, task = {}) {
     const table = this.gateway.table('purchaseReport');
     const productTable = this.gateway.table('product');
     const record = await this.gateway.get('purchaseReport', recordId);
     const fields = record?.fields || {};
     const status = textValue(fields[table.fields.status]);
     // 终态挡重复：飞书重投、双击、并发到达时不能把同一批退货扣两遍。
-    // （真正扣库存的幂等还有一层：库存操作的 operationId 由「单据信息」行 id 决定。）
-    if (['已生成申请', '已取消'].includes(status)) return { ignored: true, status };
+    // （真正扣库存的幂等还有两层：库存操作的 operationId 由「单据信息」行 id 决定。）
+    if (['已生成申请', '已取消'].includes(status)) return { skipped: true, status };
     const productIds = linkedRecordIds(fields[table.fields.product]);
     if (productIds.length !== 1) throw new Error('供应商对接必须关联一个货品编号');
     // 供应商沿用采购申请那条的取法：从货品信息的供应商关联字段读，
@@ -1536,13 +1932,45 @@ class PurchaseWebhookService {
       items,
       return_plan: plan,
     };
-    let updated = await this.store.update(taskId, { draft, return_plan: plan });
+    const updated = await this.store.update(taskId, { draft, return_plan: plan });
+    return {
+      skipped: false,
+      status,
+      recordId,
+      taskId,
+      task: updated,
+      plan,
+      items,
+      draft,
+      productInfo,
+      supplierRecordId,
+      operatorOpenId,
+      // 逐尺码对应的「单据信息」行 id（与 items 一一对应），applySupplierReturn 填。
+      itemDocIds: [],
+      docIds: [],
+      result: null,
+    };
+  }
+
+  /**
+   * 应用一条退货记录：逐尺码写「单据信息」→ 扣库存 → 回写报单记录终态。
+   *
+   * 落库顺序是刻意的（与单条链路一字不差）：**先写「单据信息」（拿到记录 id）→
+   * 再用它当库存操作的来源 → 最后出图**。库存操作的幂等键就是「单据信息」行的
+   * record_id，而那一行本身由 createOnceByKey 按「幂等键」列保证只写一条，
+   * 所以重跑拿到的是同一个 id、同一个库存操作——不会第二次扣库存。
+   *
+   * ⚠️ 只写业务事实、**不发任何消息**：出图/发群/差额通知由调用方在整批写完
+   * 之后统一做（整批只发一次群）。
+   */
+  async applySupplierReturn(prepared) {
+    const { recordId, taskId, plan } = prepared;
     const progress = { returns: {} };
     const docIds = [];
     // 逐尺码处理：一个尺码一行「单据信息」、一次库存操作。
     // 一行一个来源是必须的——库存操作的幂等键就是来源行的 record_id，多个尺码共用一个
     // 来源就不会各自拿到自己的 operationId。
-    for (const entry of plan.sizes) {
+    for (const [index, entry] of plan.sizes.entries()) {
       const sizeReference = await this.getSizeReferences().resolveByNumber(entry.size);
       const docKey = `purchase_return:${recordId}:${entry.size}`;
       const doc = await createOnceByKey({
@@ -1552,22 +1980,23 @@ class PurchaseWebhookService {
         keyValue: docKey,
         label: `采购退货单 ${recordId} ${entry.size}码`,
         values: {
-          behavior: relation(behaviorRecordId),
-          product: relation(product.recordId),
+          behavior: relation(prepared.draft.behavior_record_id),
+          product: relation(prepared.draft.product_record_id),
           size: relation(sizeReference.recordId),
           quantity: entry.quantity,
           idempotencyKey: docKey,
         },
       });
       docIds.push(doc.recordId);
+      prepared.itemDocIds[index] = doc.recordId;
       progress.returns[String(entry.size)] = doc.recordId;
-      updated = await this.store.update(taskId, { posting_progress: progress, posting_stage: `return_doc:${entry.size}` });
+      await this.store.update(taskId, { posting_progress: progress, posting_stage: `return_doc:${entry.size}` });
       // 扣库存：走 InventoryService.applyChange（不另写一套库存逻辑）。
       // state 只用于本地任务键（同货品+尺码串行/恢复）；真正扣哪些状态由注册表
       // STOCK_PURCHASE_DECREASE 的 consumes 决定 = 门盒 + 样品 + 仓库。
       const change = await this.inventory.applyChange({
         kind: MOVEMENT_PURCHASE_DECREASE,
-        productRecordId: product.recordId,
+        productRecordId: prepared.draft.product_record_id,
         size: entry.size,
         state: '门盒',
         quantity: entry.quantity,
@@ -1590,40 +2019,13 @@ class PurchaseWebhookService {
       }).catch((error) => logWarn('purchase.return.report_status.failed', {
         record_id: recordId, task_id: taskId, error: error.message,
       }));
-      // 出图 → 发给她 → 写回附件（复用采购申请那条完全相同的流程，只换标题）。
-      const posting = {
-        request_ids: docIds,
-        request_id_by_item_key: Object.fromEntries(
-          items.map((item, index) => [`${taskId}:${index}`, progress.returns[String(item.size)]]),
-        ),
-        batch_no: draft.batch_no,
-      };
-      updated = await this.store.update(taskId, { request_ids: docIds });
-      await this.deliverSupplierImages(taskId, updated, posting, {
-        title: RETURN_TITLE,
-        fileNameSuffix: '采购退货单',
-      });
     }
-
-    // 差额/没对上的情况必须说出来——「对不上的就说这部分对不上」。
-    // 对得上时不发（图本身就是回执），免得刷屏。
-    const notice = buildPurchaseReturnNotice({
-      itemNo: productInfo.itemNo, color: productInfo.color, size: plan.size, plan,
-    });
-    if (notice) {
-      const sent = await this.sendNoticeText(operatorOpenId, notice);
-      logInfo('purchase.return.notice', {
-        record_id: recordId, task_id: taskId, declared: plan.declared, available: plan.available,
-        taken: plan.taken, shortfall: plan.shortfall, surplus: plan.surplus, sent,
-      });
-    }
-    logInfo('purchase.return.posted', {
-      record_id: recordId, task_id: taskId, declared: plan.declared, available: plan.available,
-      taken: plan.taken, size_count: plan.sizes.length, doc_count: docIds.length,
-    });
-    return {
+    prepared.docIds = docIds;
+    prepared.task = await this.store.update(taskId, { request_ids: docIds });
+    prepared.result = {
       status: 'posted',
       is_return: true,
+      record_id: recordId,
       declared: plan.declared,
       available: plan.available,
       taken: plan.taken,
@@ -1631,6 +2033,104 @@ class PurchaseWebhookService {
       surplus: plan.surplus,
       doc_ids: docIds,
     };
+    return prepared;
+  }
+
+  /**
+   * 整批退货**只出一次图、只发一次群**（复用采购申请那条「按供应商出图 → 发到群 →
+   * 写回附件」的完整流程，只换标题）。
+   *
+   * 整批的明细合成一份草稿挂在批次任务上：同一供应商的明细合成一张图，
+   * 多个供应商时也是"每供应商一张图"，且后续的图/文字都会回复第 1 条（见
+   * deliverSupplierImagesInner 的话题处理），不会各成一个话题。
+   */
+  async deliverReturnImages(batchTaskId, batchNo, preparedList) {
+    const items = preparedList.flatMap((prepared) => prepared.items);
+    const requestIds = preparedList.flatMap((prepared) => prepared.docIds);
+    const requestIdByItemKey = {};
+    let index = 0;
+    for (const prepared of preparedList) {
+      for (const docId of prepared.itemDocIds) {
+        requestIdByItemKey[`${batchTaskId}:${index}`] = docId;
+        index += 1;
+      }
+    }
+    const operatorOpenId = preparedList.map((prepared) => prepared.operatorOpenId).find(Boolean) || '';
+    const updated = await this.store.update(batchTaskId, {
+      draft: { is_return: true, batch_no: batchNo, operator_open_id: operatorOpenId, items },
+      request_ids: requestIds,
+      return_record_ids: preparedList.map((prepared) => prepared.recordId),
+    });
+    return this.deliverSupplierImages(batchTaskId, updated, {
+      request_ids: requestIds,
+      request_id_by_item_key: requestIdByItemKey,
+      batch_no: batchNo,
+    }, {
+      title: RETURN_TITLE,
+      fileNameSuffix: '采购退货单',
+    });
+  }
+
+  /**
+   * 差额/没对上的情况必须说出来——「对不上的就说这部分对不上」。
+   * 对得上时不发（图本身就是回执），免得刷屏。
+   *
+   * 发到**经办人私聊**（不是群）：这是给她的核对结果，不是给供应商的单据。
+   * 失败只记日志（见 sendNoticeText）——库存已经扣了、单据已经写了，
+   * 不能因为一条提示发不出去就把业务事实判成失败。
+   */
+  async sendReturnNotice(prepared) {
+    const notice = buildPurchaseReturnNotice({
+      itemNo: prepared.productInfo.itemNo,
+      color: prepared.productInfo.color,
+      size: prepared.plan.size,
+      plan: prepared.plan,
+    });
+    if (!notice) return false;
+    const sent = await this.sendNoticeText(prepared.operatorOpenId, notice);
+    logInfo('purchase.return.notice', {
+      record_id: prepared.recordId, task_id: prepared.taskId,
+      declared: prepared.plan.declared, available: prepared.plan.available,
+      taken: prepared.plan.taken, shortfall: prepared.plan.shortfall,
+      surplus: prepared.plan.surplus, sent,
+    });
+    return sent;
+  }
+
+  /**
+   * 采购退货链路（业务负责人的完整口径）：
+   *
+   *   ① 「供应商对接」填表单（编号 + 数量，退货不填尺码）→ 数据是确定性的 → **免确认**
+   *   ② 「采购行为」= 采购退货 → 走这条分支
+   *   ③ **不再走「采购到货」和「采购入库」**
+   *   ④ 直接扣「实时库存」并写「库存流水」（库存行为 = 采购减少 STOCK_PURCHASE_DECREASE）
+   *   ⑤ 出图：标题「邯美皮鞋采购退货单」，格式与采购申请单一样
+   *   ⑥ 受影响的表只有 4 张：供应商对接 · 单据信息 · 库存流水 · 实时库存（不碰资金）
+   *
+   * 落库顺序：**先写「单据信息」（拿到记录 id）→ 再用它当库存操作的来源 → 最后出图**。
+   * 库存操作的幂等键就是「单据信息」行的 record_id（`operationId(kind, sourceRecordId)`），
+   * 而那一行本身由 createOnceByKey 按「幂等键」列保证只写一条，所以重跑拿到的是同一个 id、
+   * 同一个库存操作——不会第二次扣库存（已完成的操作用例直接返回上次的结果）。
+   *
+   * 数量对不上时**尽力处理 + 把差额告诉她**（见 buildPurchaseReturnNotice），
+   * 绝不"一处不对就整单不动"。
+   */
+  async processSupplierReturn(recordId, taskId, task = {}) {
+    const prepared = await this.prepareSupplierReturn(recordId, taskId, task);
+    if (prepared.skipped) return { ignored: true, status: prepared.status };
+    await this.applySupplierReturn(prepared);
+    if (prepared.docIds.length) {
+      // 出图 → 发群 → 写回附件（复用采购申请那条完全相同的流程，只换标题）。
+      // ⚠️ 整批出图走 deliverReturnImages（一次发群）；这里单条时 preparedList 只有它自己。
+      await this.deliverReturnImages(taskId, prepared.draft.batch_no, [prepared]);
+    }
+    await this.sendReturnNotice(prepared);
+    logInfo('purchase.return.posted', {
+      record_id: recordId, task_id: taskId, declared: prepared.plan.declared,
+      available: prepared.plan.available, taken: prepared.plan.taken,
+      size_count: prepared.plan.sizes.length, doc_count: prepared.docIds.length,
+    });
+    return prepared.result;
   }
 
   /**
