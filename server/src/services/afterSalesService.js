@@ -16,10 +16,13 @@
 //   5) 「库存流水」：退货 1 行 / 赔货 1 行 / 换货 2 行（方向相反），数量都是正数
 //   6) 「实时库存」：退货/换货把旧鞋加回 restockState；换货/赔货按声明从门盒减一行
 //
-//   ⚠️ 第 7 处（原「销售主表」的「销售状态」= 已退货 / 部分退货）**默认不写**：
-//      业务负责人 2026-10-06 晚更正的口径是「**售后不影响原单**」，
-//      所以它做成显式开关（config/afterSales 的 writeOriginalSalesStatus，默认 false），
-//      打开时才由 markOriginalSaleStatus 回写。
+//   ⭐ 原「销售主表」**一字不动**（业务负责人 2026-10-06 定过）：
+//      「退过没退过」记在原「销售明细」的「履约状态 = 已退货/已换货/已赔货」＋
+//      新建的那条退货单（交易类型 = 销售退货）上，**不写原单的「销售状态」** ——
+//      那一列的语义是"明细写进去了没有"（未写入/部分写入/已写入/写入失败），
+//      根本没有「已退货」这个选项，真写下去飞书会自动新建选项、把那一列搞乱。
+//      （曾经有过一个"回写原单销售状态"的开关及其实现，已于 2026-10-06 整体删除，
+//        查不到任何残留 —— 连名字都不再出现。）
 //
 // 幂等分两层（父代理 2026-10-05 的裁决：不给这三张表加幂等键列）：
 //
@@ -49,7 +52,6 @@ const path = require('node:path');
 const {
   AFTER_SALES_ACTIONS,
   AFTER_SALES_CREDIT_KEY_FIELD,
-  AFTER_SALES_ORIGINAL_SALES_STATUS,
   actionSpecOf,
   afterSalesEventId,
   afterSalesOperationId,
@@ -65,9 +67,6 @@ const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { withSalesReadRetry } = require('./salesReadRetry');
 const { cents } = require('./salesProgressService');
-// 「销售明细.交易类型 = 销售退货」的判据与查单链路**同源**（config/saleLookup）：
-// 售后回写原单状态时要靠它把"售后自己新建的复制行"从原销售明细里剔出去。
-const { isReturnTradeType } = require('../config/saleLookup');
 const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
 const { SalesStatusWriter } = require('./salesStatusWriter');
 const { logInfo, logWarn } = require('../utils/logger');
@@ -330,15 +329,10 @@ class AfterSalesService {
     await this.status.write(master.recordId, {
       sales: WRITE.sales.done, funds: WRITE.funds.done, stock: WRITE.stock.done,
     });
-    // ⭐ 售后**执行完之后**回写**原销售主表**的「销售状态」（退货 → 已退货 / 部分退货）。
-    //    🔴 **默认关**：业务负责人的口径是「**售后不影响原单**」（2026-10-06 晚更正，
-    //    见 config/afterSales 的 AFTER_SALES_WRITE_ORIGINAL_SALES_STATUS 说明）；
-    //    开关关着时这个方法是**空操作**，原单一个字节都不动。
-    //    它写在**所有业务写入都落完之后**（正是"售后结束后"）；写失败只记 warning
-    //    （SalesStatusWriter 的硬边界），绝不让"记进度"把已经做完的售后判失败。
-    const originalSaleStatus = await this.markOriginalSaleStatus(
-      request, spec, originalDetailIdsMarked, rows.map((row) => row.recordId),
-    );
+    // ⭐ 到这里就结束了：**原「销售主表」一字不动**（业务负责人 2026-10-06 定过）。
+    //    "退过没退过"记在原「销售明细」的「履约状态」和新建的退货单上；
+    //    原单的「销售状态」那一列语义是"明细写进去了没有"，没有「已退货」这个选项，
+    //    写了飞书会自动新建选项。（回写原单「销售状态」的开关与实现已于 2026-10-06 整体删除。）
 
     const result = {
       action: request.action,
@@ -348,7 +342,6 @@ class AfterSalesService {
       masterRecordId: master.recordId,
       detailRecordIds: rows.map((row) => row.recordId),
       originalDetailIdsMarked,
-      originalSaleStatus,
       money,
       stock,
     };
@@ -612,7 +605,9 @@ class AfterSalesService {
   // --- 3) 原「销售明细」的「履约状态」 ----------------------------------------------
 
   /**
-   * 只改「履约状态」。原主表只写「销售状态」（见 markOriginalSaleStatus）。
+   * 只改原「销售明细」的「履约状态」——**原「销售主表」一字不动**（业务负责人 2026-10-06 定过）。
+   * 「退过没退过」就记在这里 ＋ 新建的那条退货单上；原单的「销售状态」语义是
+   * "明细写进去了没有"（没有「已退货」这个选项，写了飞书会自动新建选项），不许写。
    * ⚠️ 原主表的「订单状态」那一列已被她 2026-10-06 整列删除，没有写入点。
    * 已经等于目标值就跳过；改过一条就把进度落盘，重试不会重复写同一条记录。
    */
@@ -632,69 +627,6 @@ class AfterSalesService {
     // 返回"这一次售后一共改过哪些原明细行"（含前几次重试改的）：
     // 重试后的结果也要完整，不能只报本次新改的那几条。
     return [...known];
-  }
-
-  /**
-   * 回写**原销售主表**的「销售状态」= 退货事实（已退货 / 部分退货）。
-   *
-   * 🔴 **默认不执行**（`config.writeOriginalSalesStatus === false`）：
-   *    业务负责人的口径是「**售后不影响原单**」（2026-10-06 晚更正）。
-   *    开关打开后才走下面这套判据。
-   *
-   * 为什么放在这里、而不是 markOriginalDetails 里：
-   *   ① 口径是"售后**结束后**"，所以它在 run() 的最后、所有业务写入都落完之后；
-   *   ② 退货全部完成 vs 只退了一部分，要看**整单**的明细状态，不是这一次动的那几条。
-   *
-   * 判据：整单**原销售**明细里，履约状态 = 「已退货」的条数 == 总条数 → 已退货，否则 → 部分退货。
-   *
-   * ⚠️ 两类行**不算原销售明细**，必须排除，否则永远到不了「已退货」：
-   *   · 本次售后新建的复制行（`createdDetailIds`）—— 退货会在**原主表**下再建一条
-   *     「交易类型 = 销售退货」的明细（见 ensureDetailRows），它的履约状态是空的；
-   *   · 别的售后操作留下的同类行 —— 按 `销售明细.交易类型 = 销售退货` 认出来
-   *     （判据与查单链路 config/saleLookup 的 RETURN_DETAIL_TRADE_TYPES 同源）。
-   *
-   * ⚠️ 刚更新的那几条可能还没出现在 listAll 的结果里（飞书列表有延迟），所以
-   *    这一次改过的 id（`markedIds`）**直接算作已退货**，不依赖列表回读。
-   * ⚠️ 写失败只记 warning（SalesStatusWriter 自己的硬边界）：售后事实已经落地，
-   *    "记进度"绝不能把它反过来判失败。
-   */
-  async markOriginalSaleStatus(request, spec, markedIds = [], createdDetailIds = []) {
-    // 🔴 默认关：业务负责人的口径是「**售后不影响原单**」
-    //    （2026-10-06 晚更正，见 config/afterSales 的开关说明与 AGENTS.md 第 12 条 ②）。
-    //    开关打开时才回写「已退货 / 部分退货」。
-    if (!this.config.writeOriginalSalesStatus) return null;
-    const statuses = AFTER_SALES_ORIGINAL_SALES_STATUS[request.action];
-    // 换货 / 赔货刻意不写（见 config/afterSales 的注释：写表里没有的字会自动新建选项）。
-    if (!statuses) return null;
-    const salesEntryRecordId = String(request.originalSalesEntryRecordId || '').trim();
-    if (!salesEntryRecordId) return null;
-    const detailFields = this.tableOf('salesDetail').fields;
-    const all = await withSalesReadRetry(
-      () => this.gateway.listAll('salesDetail'), 'after_sales_original_sale_details',
-    );
-    const created = new Set(createdDetailIds.map((id) => String(id || '')).filter(Boolean));
-    const orderDetails = all
-      .filter((record) =>
-        linkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(salesEntryRecordId))
-      .filter((record) => !created.has(record.record_id))
-      .filter((record) =>
-        !isReturnTradeType(cellText(record.fields?.[detailFields.tradeType])));
-    const marked = new Set(markedIds.map((id) => String(id || '')).filter(Boolean));
-    const returned = orderDetails.filter((record) =>
-      marked.has(record.record_id)
-      || cellText(record.fields?.[detailFields.fulfillmentStatus]) === spec.originalFulfillmentStatus).length;
-    const total = orderDetails.length;
-    const value = total > 0 && returned >= total ? statuses.all : statuses.partial;
-    const written = await this.status.write(salesEntryRecordId, { sales: value });
-    logInfo('after_sales.original_sale_status.written', {
-      operation_id: request.operationId,
-      original_sales_entry_record_id: salesEntryRecordId,
-      sales_status: value,
-      returned_detail_count: returned,
-      total_detail_count: total,
-      written,
-    });
-    return { value, returned, total, written };
   }
 
   // --- 4) 钱 -------------------------------------------------------------------------
