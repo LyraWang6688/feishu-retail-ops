@@ -31,6 +31,10 @@ const { salesConfirmationCard, salesStatusCard, todaySalesCard, keepOnlyCardButt
 const { extractSalesMessageText, isMentioned, stripMentionPlaceholders } = require('../utils/larkMessageText');
 const { resolveAckReaction, resolveBotOpenId } = require('../config/groupPurchase');
 const { PurchaseBatchLocator } = require('./purchaseBatchLocator');
+// 「采购到货：群话题对话式核对」的编排（独立 service；本类只做接线）。
+const { PurchaseArrivalConversationService } = require('./purchaseArrivalConversationService');
+// 到货核对卡片上的两个动作名（与卡片渲染共用同一份常量，见 utils/larkCards）。
+const { ARRIVAL_CONVERSATION_ACTIONS } = require('../config/arrivalConversation');
 const { GroupPurchaseFlowService } = require('./groupPurchaseFlowService');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
@@ -175,11 +179,40 @@ class LarkMvpService {
         hint: '未配置机器人 open_id，群聊消息不会进入采购流程（私聊不受影响）',
       });
     }
+    // ── 到货核对（D）：「群话题对话式核对」──────────────────────────────────
+    // 它只干一件事：把话题里的自然对话变成一次核对会话 + 一个触发点。
+    // ⚠️ 会话任务与入库能力**共用采购那套存储与队列**（PurchaseWebhookService 的
+    //   `store` / `confirmArrival`）——入库那一步就是从那个 store 读草稿的，
+    //   共用一个才不会出现"会话在这边、草稿在那边"的两份状态。
+    // ⚠️ 它**不复用**已退场的「拍照识别到货」任何东西（没有视觉模型、没有旧卡片动作）：
+    //   那条链路删掉的字段/能力一个都不碰，这里只调保留下来的 confirmArrival。
+    this.arrivalConversation = options.arrivalConversation || new PurchaseArrivalConversationService({
+      gateway: this.gateway,
+      // ⚠️ 会话任务必须和**入库那一步读草稿的存储**是同一个：生产路径上就是
+      // PurchaseWebhookService 的 store。`|| this.store` 只是给"注入了采购服务桩"
+      // 的单元测试兜底（那种桩不跑本链路），生产上永远走前面那一个。
+      store: this.purchaseWebhooks.store || this.store,
+      recognizer: this.recognizer,
+      sizeReferences: this.purchaseWebhooks.getSizeReferences,
+      confirmArrival: (taskId, task, operatorOpenId) =>
+        this.purchaseWebhooks.confirmArrival(taskId, task, operatorOpenId),
+      // 群里的反馈一律**回复那条消息**（卡片也回复进同一个话题）。
+      replyText: (messageId, content) => this.replyText(messageId, content),
+      replyCard: (messageId, card) => this.replyCard(messageId, card),
+      updateCard: (messageId, card) => this.patchCardMessage(messageId, card),
+    });
     this.groupPurchaseFlow = options.groupPurchaseFlow || new GroupPurchaseFlowService({
       locator: this.purchaseBatchLocator,
       // 群里的反馈一律**引用回复**那条消息：群聊没有"上一次对话"的概念，
       // 不复用私聊的 sendText（那会发出一条没有上下文的光秃秃消息）。
       replyText: (messageId, content) => this.replyText(messageId, content),
+      // ── 到货核对（D）────────────────────────────────────────────────────
+      // 定位到某一批之后，由它接管"记下来 → 判她说完了没有 → 发「是/否」卡片 →
+      // 点「是」才入库"。它是**独立 service**：本类只做接线，不拼卡片、不写业务规则。
+      // ⚠️ 会话任务和入库能力**共用采购那套存储与队列**（PurchaseWebhookService 的
+      //   store / confirmArrival）——那边读草稿就是从那个 store 读的，共用一个才不会
+      //   出现"会话在这边、草稿在那边"的两份状态。
+      arrivalConversation: this.arrivalConversation,
     });
   }
 
@@ -294,6 +327,25 @@ class LarkMvpService {
     });
     if (response.code !== 0) throw new Error(`回复飞书卡片失败: ${response.msg} (Code: ${response.code})`);
     return response.data?.message_id || '';
+  }
+
+  /**
+   * 把**已经发出去的那张卡片**改成新内容（例如「已入库」）。
+   *
+   * 与私聊那几张卡的 update 走的是同一套 SDK patch；区别只是这里拿的是
+   * **明确的 message_id**（群话题里的卡片不是"某个销售草稿的卡"，没有 task 可以查）。
+   * 卡片改不动（权限、消息被撤回）只记日志——业务事实早就落地了，不能因此判失败。
+   */
+  async patchCardMessage(messageId, card) {
+    if (!messageId) return false;
+    const patch = this.client.im?.v1?.message?.patch || this.client.im?.message?.patch;
+    if (!patch) return false;
+    const response = await patch.call(this.client.im?.v1?.message || this.client.im.message, {
+      path: { message_id: String(messageId) },
+      data: { content: JSON.stringify(card) },
+    });
+    if (response.code !== 0) throw new Error(`更新飞书卡片失败: ${response.msg} (Code: ${response.code})`);
+    return true;
   }
 
   async updateSalesActionCard(task, event, card, metadata = {}) {
@@ -1039,6 +1091,14 @@ class LarkMvpService {
       event?.operator?.operator_id?.open_id || event?.operator?.open_id || event?.event?.operator?.operator_id?.open_id;
     if (['choose_sample_replacement', 'refresh_sample_replacement'].includes(action)) {
       return this.sampleReplacements.handleCardAction(value, event, operatorOpenId, context);
+    }
+    // 「采购到货核对」卡片的「是 / 否」。
+    // ⚠️ 位置有意放在这里（采购申请卡片分派**之前**、下面那句 `if (!draftId) throw` 之前）：
+    //   这张卡片也带 draft_id（= 到货核对任务 id，不是销售草稿），落到下面那套销售逻辑里
+    //   一定会报「卡片缺少草稿 ID」或更糟——把别人的草稿当成自己的。
+    //   动作名与卡片渲染共用 config 里的同一份常量。
+    if ([ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, ARRIVAL_CONVERSATION_ACTIONS.REJECT].includes(action)) {
+      return this.arrivalConversation.handleCardAction(value, event, operatorOpenId);
     }
     const procurementResult = await this.purchaseWebhooks.handleCardAction(value, operatorOpenId, event);
     if (procurementResult) return procurementResult;

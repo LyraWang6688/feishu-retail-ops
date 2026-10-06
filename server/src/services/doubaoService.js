@@ -504,6 +504,109 @@ class DoubaoService {
     }
   }
 
+  /**
+   * 「采购到货核对」解析：把她在群话题里说的自然语言，解析成
+   * ① 这次核对是不是**说完了**（她说了「完毕」之类的话）② 差异是哪一类、具体多少。
+   *
+   * 口径（业务负责人 2026-10-06 逐字定的）：
+   *   · 差异**只有三类**：完全一样 / 实际比申请多 / 实际比申请少；
+   *     ⚠️ 刻意**没有**「实际为 0」这一类——她说"实际到货不会为 0，因为肯定会到货"。
+   *   · 她的**字眼不固定**（「多两双 39」「39 到了 4 双」「少一双 38」…），
+   *     所以这里靠模型理解，**不做关键词匹配**。
+   *   · 她说「完毕」之类的话才发卡片；**这一条也是模型判的**，不是匹配"完毕"两个字。
+   *
+   * 输入是**累积的原话**（可以一次说完，也可以分多次说完），不是单条消息——
+   * 分多次说的时候，只看最后一条会把前面说的话丢掉。
+   *
+   * @param {{ rows?: Array<{item_no:string,color:string,size:number,quantity:number}>,
+   *   messages?: string[], taskId?: string }} input
+   * @returns {Promise<{complete:boolean, same:boolean,
+   *   differences:Array<{item_no:string,color:string,size:number,type:string,quantity:number}>}>}
+   */
+  async parseArrivalReconciliation({ rows = [], messages = [], taskId = '' } = {}) {
+    const llm = this.resolveModel('text');
+    const transcript = (messages || []).map((line) => String(line ?? '').trim()).filter(Boolean).join('\n');
+    if (!transcript) throw new Error('到货核对原话不能为空');
+    if (!Array.isArray(rows) || !rows.length) throw new Error('到货核对缺少采购申请明细');
+    const requestLines = rows
+      .map((row) => `${text(row.item_no) || '（未知货号）'} / ${text(row.color) || '（无颜色）'} / ${Number(row.size)} 码 / 申请 ${Number(row.quantity)} 双`)
+      .join('\n');
+    const prompt = `
+你是鞋店「采购到货核对」助手。这批采购申请单的明细（货号 / 颜色 / 尺码 / 申请数量）是：
+${requestLines}
+
+业务负责人会在会话群里用自然语言说明「这次实际到货和采购申请的差异」，她的字眼完全不固定，你要自己理解意思。
+差异只有三类：
+1. 完全一样（例如「都到了」「一件不差」「跟单子一样」）
+2. 实际比申请多（例如「多了两双 39」「39 码到了 4 双」）
+3. 实际比申请少（例如「少了两双 38」「38 码只到了一双」）
+她会分多次说完，也可能一次说完；说完之后会说一句表示「这次核对完了」的话
+（例如「完毕」「核对完了」「就这些」「就这样吧」），**字眼同样不固定**。
+
+只输出 JSON，格式：
+{"complete":true,"same":false,"differences":[{"item_no":"XHB8095","color":"黑","size":39,"type":"more","quantity":2}]}
+
+规则：
+1. complete：她**明确**表示这次核对说完了，才填 true。
+   只报了一条差异、没有说"完了"→ complete 填 false。**不要**因为内容看起来齐了就填 true。
+2. same：她说「完全一样 / 都到了 / 没有差异」时填 true，此时 differences 留空数组。
+3. differences 每一项是一条**具体差异**：
+   · item_no / color / size 必须对应上面明细里的某一行，**照抄上面的写法**，不要改写、不要编造；
+   · type 只能是 "more"（比申请多）/ "less"（比申请少）/ "same"（她说这一行就是一样的）；
+   · quantity 是**差异的双数**（type="same" 时填 0）。
+     她说的是"实际数量"时要换算成差异：实际 4 双 − 申请 2 双 = 多 2 双 → type="more", quantity=2。
+     判断不出她说的是差异还是实际数量时，**不要输出这一行**（宁可让她再说一遍，也不要写错账）。
+4. 她说的话对不上上面任何一行（货号、尺码都不在单子上）→ **不要输出那一行，也不要猜**。
+5. 只输出 JSON，不要 Markdown、不要解释。
+
+她在话题里说过的话（按时间顺序）：
+${transcript}
+    `.trim();
+    const response = await this.getClient('text').chat.completions.create({
+      model: llm.model,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0,
+      response_format: { type: 'json_object' },
+    });
+    const content = response.choices?.[0]?.message?.content || '';
+    let parsed;
+    try {
+      parsed = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
+    } catch (error) {
+      throw new Error(`到货核对解析失败: ${error.message}`);
+    }
+    const allowedTypes = new Set(['more', 'less', 'same']);
+    const differences = (Array.isArray(parsed?.differences) ? parsed.differences : [])
+      .map((item) => ({
+        item_no: text(item?.item_no),
+        color: text(item?.color),
+        size: Number(item?.size),
+        type: text(item?.type).toLowerCase(),
+        quantity: Number(item?.quantity),
+      }))
+      .filter((item) => {
+        if (!allowedTypes.has(item.type)) return false;
+        if (!Number.isSafeInteger(item.size) || item.size <= 0) return false;
+        if (item.type === 'same') return item.quantity === 0 || Number.isNaN(item.quantity);
+        return Number.isSafeInteger(item.quantity) && item.quantity > 0;
+      })
+      .map((item) => ({ ...item, quantity: item.type === 'same' ? 0 : item.quantity }));
+    const result = {
+      complete: parsed?.complete === true,
+      same: parsed?.same === true,
+      differences,
+    };
+    logInfo('purchase.arrival.reconcile.parsed', {
+      task_id: taskId,
+      complete: result.complete,
+      same: result.same,
+      difference_count: differences.length,
+      diff_types: [...new Set(differences.map((item) => item.type))],
+      request_row_count: rows.length,
+    });
+    return result;
+  }
+
   // ── 已删除：recognizeLabels / recognizePurchaseDocument ──────────────────
   // 这两个方法（鞋盒标签识别、供应商到货单识别）只被 purchaseWebhookService
   // 的 processArrival 调用；那条链路 2026-10-05 整体退场，方法随之删除。

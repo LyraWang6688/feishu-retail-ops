@@ -698,9 +698,12 @@ const arrivalActual = (extra = {}) => ({
   ...extra,
 });
 
-// ─── 入库：写「采购入库」+ 库存 + 回写状态（confirmArrival）────────────────
+// ─── 入库：写「采购入库」+ 库存（confirmArrival）──────────────────────────
+// ⚠️ 2026-10-06 业务负责人口径：「既然它就是采购申请，那个表就不要动」。
+// 所以这两个用例**不再**断言「采购申请表的到货状态被回写」——那正是被删掉的行为；
+// 现在断言的是**它一个字都没变**（更硬的"零写入"断言在 arrivalConversation.test.js）。
 
-test('入库：写采购入库 + 挂回采购申请 + 回写申请到货状态与到货确认状态', async () => {
+test('入库：写采购入库 + 挂回采购申请 + 到货确认状态（不回写采购申请表）', async () => {
   const inventory = makeInventory();
   const records = {
     purchaseArrival: [{ record_id: 'arr_conf', fields: { 确认状态: '待确认' } }],
@@ -723,7 +726,9 @@ test('入库：写采购入库 + 挂回采购申请 + 回写申请到货状态�
   assert.deepEqual(inbounds[0].fields.尺码, sizeLink(36));
   assert.equal(inbounds[0].fields.数量, 1);
   assert.deepEqual(inbounds[0].fields.采购申请, ['req_1'], '入库记录要挂回对应的采购申请行');
-  assert.equal((await gateway.get('purchaseRequest', 'req_1')).fields.到货状态, '部分到货');
+  // 「单据信息」（采购申请表）**一个字都不动**：到货状态这一列**没有**被写过。
+  assert.equal((await gateway.get('purchaseRequest', 'req_1')).fields.到货状态, undefined,
+    '采购申请表的「到货状态」不许被入库链路回写');
   assert.equal((await gateway.get('purchaseArrival', 'arr_conf')).fields.确认状态, '已确认');
   assert.equal(inventory.calls.length, 1, '库存要跟着加一次');
 });
@@ -752,7 +757,8 @@ test('入库：同一货品+尺码的两条明细合成一条入库（数量 2�
   assert.equal(inbounds[0].fields.数量, 2);
   assert.equal(inventory.calls.length, 1);
   assert.equal(inventory.calls[0].quantity, 2);
-  assert.equal((await gateway.get('purchaseRequest', 'req_1')).fields.到货状态, '全部到货');
+  assert.equal((await gateway.get('purchaseRequest', 'req_1')).fields.到货状态, undefined,
+    '采购申请表的「到货状态」不许被入库链路回写');
 });
 
 test('入库：真的调 inventory.applyPurchase（带采购入库记录 id 作为幂等来源）', async () => {
