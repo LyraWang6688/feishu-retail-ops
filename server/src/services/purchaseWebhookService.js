@@ -43,6 +43,8 @@ const { getLarkAgentCredentials } = require('../config/larkAgent');
 // 群 id 从配置读，**没有默认值**（见 config/groupPurchase 里的说明）。
 const { resolvePurchaseChatId } = require('../config/groupPurchase');
 const { PurchaseBatchLocator } = require('./purchaseBatchLocator');
+// 「这批发到群里的是采购申请单还是采购退货单」的批次类型标记（到货核对靠它区分话题）。
+const { ARRIVAL_BATCH_KINDS } = require('../config/arrivalConversation');
 
 // 采购卡片上可以触发副作用（写采购事实）的动作。
 //
@@ -63,7 +65,8 @@ const idFor = (prefix, value) => `${prefix}_${crypto.createHash('sha256').update
 // 报货那条链路的 batch_waiting 不带这个标记，两条链路互不误认。
 const PURCHASE_RETURN_BATCH_KIND = 'purchase-return';
 
-const number = (value) => Number(textValue(value));
+// （原先这里有个 number() 小工具，只被 confirmArrivalLocked 里那段"算到货状态"的
+//  回写用；那段按业务负责人口径删掉后它就没有调用方了，随之删除，不留死代码。）
 
 const attachmentTokens = (value) => (Array.isArray(value) ? value : [])
   .map((item) => item?.file_token || item?.fileToken || item?.token || '')
@@ -1314,6 +1317,9 @@ class PurchaseWebhookService {
           suppliers: sent,
           requestIds: posting.request_ids || [],
           detailCount: items.length,
+          // 采购申请单 / 采购退货单共用这一条"出图 → 发群 → 记映射"的路，
+          // 所以映射里必须带上类型：话题里的到货核对只认采购申请单那一类。
+          kind: options.kind || ARRIVAL_BATCH_KINDS.PURCHASE_REQUEST,
         });
       } catch (error) {
         logWarn('purchase.request.image.batch_mapping_failed', {
@@ -2081,6 +2087,9 @@ class PurchaseWebhookService {
     }, {
       title: RETURN_TITLE,
       fileNameSuffix: '退货单',
+      // ⚠️ 映射里标清这是**退货单**：到货核对看到这个标记就不再处理这条话题
+      //（退货单没有尺码，本来也对不上到货明细）。
+      kind: ARRIVAL_BATCH_KINDS.PURCHASE_RETURN,
     });
   }
 
@@ -2546,14 +2555,15 @@ class PurchaseWebhookService {
   // 2026-10-05 业务负责人删掉「类型」「识别状态」「识别失败原因」三个字段并决定这条链路退场，
   // 整段随之删除：它写的字段在表里已不存在，留着只会伪装成「识别还在跑」。
   //
-  // ⚠️ 保留下来的（现在都没有调用方，等新的「对话到货」流程接）：
-  //   · confirmArrival    —— 写「采购入库」+ 调库存 applyPurchase + 回写申请/到货状态
+  // ⚠️ 保留下来的（**2026-10-06 起有调用方了**：群话题对话式核对，她点「是」之后进来）：
+  //   · confirmArrival    —— 写「采购入库」+ 调库存 applyPurchase + 把到货记录标已确认
+  //                          （**不再回写采购申请表**，见该方法的注释）
   //   · ensureArrivalProducts / ensureArrivalProduct / ensureArrivalColor / applyArrivalCost
   //                       —— 新品建档 + 成本（未合并分支 refactor/decouple-creation-and-stock
   //                          正把它剥成 services/productCreationService.js）
   //   · aggregateArrivalItems / findRequestRowForInbound / resolvePurchaseInboundState
-  // 它们的输入（draft.actual / pending_creation / task.recognized）从此由新流程写入，
-  // 形状与 processArrival 原先落的草稿完全一致。
+  // 它们的输入（draft.actual / pending_creation / task.recognized）由
+  // services/purchaseArrivalConversationService.js 写入，形状与 processArrival 原先落的草稿一致。
 
   /**
    * 在草稿保存的采购申请明细里，找「同一货品 + 同一尺码」的那一条。
@@ -2785,16 +2795,12 @@ class PurchaseWebhookService {
   }
 
   /**
-   * 到货确认入库：写「采购入库」→ 调库存 applyPurchase → 回写采购申请的到货状态
-   * → 把到货记录的「确认状态」改成已确认。
+   * 到货确认入库：写「采购入库」→ 调库存 applyPurchase → 把到货记录的「确认状态」改成已确认。
    *
-   * ⚠️ 2026-10-05：**这个方法现在没有调用方**。它原先由到货明细卡片的
-   * `confirm_purchase_arrival` 动作调用（见 handleCardActionLocked），卡片已随
-   * 「拍照识别」退场删除。
-   *
-   * **刻意保留**：产品负责人的口径是"未来的对话到货还要入库"——「采购入库」表、
-   * 库存调用（inventory.applyPurchase）和这一段幂等写入就是那个能力本体。
-   * 现在的状态是"孤儿能力，等新流程接"，不是死代码清理对象。
+   * ⚠️ **不回写采购申请表**（业务负责人 2026-10-06 口径：「那个表就不要动」）。
+   * 2026-10-05 之前它还由到货明细卡片的 `confirm_purchase_arrival` 动作调用；
+   * 卡片随「拍照识别」退场后它一度是孤儿能力，**现在由「群话题对话式核对」在
+   * 她点「是」之后调用**（见 services/purchaseArrivalConversationService.js）。
    *
    * 幂等（缺一不可）：inbound_created 落盘 + 按到货记录回查远端 + inflightInbound，
    * 重复调用不会写出第二条采购入库、也不会重复加库存。
@@ -2942,16 +2948,21 @@ class PurchaseWebhookService {
         await persistEntry(key, entry);
       }
     }
-    for (const request of arrival.requests || []) {
-      const productId = linkedRecordIds(request.fields?.[requestTable.fields.product])[0];
-      const size = (await this.getSizeReferences().resolveLinkedCell(request.fields?.[requestTable.fields.size])).size;
-      const actualQuantity = (arrival.actual || [])
-        .filter((item) => item.product_record_id === productId && Number(item.size) === size)
-        .reduce((sum, item) => sum + item.quantity, 0);
-      const requestedQuantity = number(request.fields?.[requestTable.fields.quantity]);
-      const status = actualQuantity === 0 ? '未到货' : actualQuantity < requestedQuantity ? '部分到货' : actualQuantity > requestedQuantity ? '超额到货' : '全部到货';
-      await this.gateway.update('purchaseRequest', request.record_id, { arrivalStatus: status });
-    }
+    // ⚠️ 2026-10-06：这里原先有一段**回写「单据信息」（采购申请表）**的代码——
+    //   for (const request of arrival.requests) { … gateway.update('purchaseRequest', request.record_id,
+    //     { arrivalStatus: status }) }   // 未到货 / 部分到货 / 全部到货 / 超额到货
+    // 业务负责人当天的口径是：「**既然它就是采购申请，那个表就不要动**」
+    //「我们要做的就是**基于采购申请表，再加上用户说的差异来进行实际入库**」。
+    // 所以她删掉了这段回写：**采购申请表一个字都不改**（到货差异只体现在
+    //「采购入库」/「库存流水」/「实时库存」上）。
+    // 这条口径由 `server/test/arrivalConversation.test.js` 的断言钉住：入库全过程
+    // 对 `purchaseRequest` 表**零写入**（不是"看起来没写"，而是拿记录型 gateway 断言）。
+    //
+    // ⚠️ 也刻意**不再**把差异算成「超额到货 / 部分到货」这种状态：新口径下
+    // 那个状态无处可写，算出来只会变成一个没人用的中间变量。
+    //
+    // 到这为止，除「采购到货」这一行自己的「确认状态」之外，入库只写
+    //「采购入库」+「库存流水」+「实时库存」三张表。
     await this.gateway.update('purchaseArrival', arrival.arrival_record_id, { confirmStatus: '已确认' });
     await this.store.update(taskId, { status: 'posted', inbound_record_ids: created });
     this.inflightInbound.delete(taskId);

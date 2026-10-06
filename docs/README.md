@@ -6,7 +6,7 @@
 
 ## 1. 现行事实（Current）
 
-描述已经实现并正在运行的行为（表内最后一条 `arrival-conversation-flow.md` 是例外：它是**已定稿、尚未实现**的业务规格，故在内容列中标明「目标行为，尚未实现」）。
+描述已经实现并正在运行的行为（表内 `arrival-conversation-reconcile-2026-10-06.md` 是 2026-10-06 当天实现并已落测试的业务规格；它的前一版 `arrival-conversation-flow.md` 同日作废）。
 
 | 文档 | 内容 |
 |---|---|
@@ -19,7 +19,8 @@
 | [inventory-size-reference-contract.md](inventory-size-reference-contract.md) | 库存与尺码关联字段契约 |
 | [workbench-query-contract.md](workbench-query-contract.md) | 工作台查询接口契约 |
 | [sales-line-plan.md](sales-line-plan.md) | 销售线的推进计划与判据 |
-| [arrival-conversation-flow.md](arrival-conversation-flow.md) | 采购到货「群话题对话式核对」：业务负责人 2026-10-06 定稿的规格与验收标准（**目标行为，尚未实现**） |
+| [arrival-conversation-reconcile-2026-10-06.md](arrival-conversation-reconcile-2026-10-06.md) | 采购到货「群话题对话式核对」：业务负责人 2026-10-06 当天口述的**权威口径**与验收标准（**已实现**） |
+| [arrival-conversation-flow.md](arrival-conversation-flow.md) | ⚠️ **已作废**（同日被上一份取代）：早一版规格；正文按当时事实保留，**不要再按它实施** |
 
 ## 2. 架构决策记录（Architecture Decision Records）
 
