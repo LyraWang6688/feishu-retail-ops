@@ -32,6 +32,7 @@ const {
 const { PurchaseWebhookService } = require('../src/services/purchaseWebhookService');
 const { LarkMvpService } = require('../src/services/larkMvpService');
 const { PurchaseBatchLocator } = require('../src/services/purchaseBatchLocator');
+const { SalesGroupThreadLocator } = require('../src/services/salesGroupThreadLocator');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const {
@@ -677,6 +678,11 @@ const makeLarkService = async ({ arrivalConversation, mapping = {} } = {}) => {
     recognizer: {},
     store: new JsonTaskStore({ dir: tempDir('arrival-conv-lark-'), idField: 'task_id' }),
     purchaseBatchLocator: locator,
+    // 销售那侧的「话题 ↔ 销售记录」映射也指向临时目录：这里的话题是**采购**话题，
+    // 销售定位必须一条都命中不到，才能原样落到采购链路上。
+    salesGroupThreads: new SalesGroupThreadLocator({
+      store: new JsonTaskStore({ dir: tempDir('arrival-conv-sales-thread-'), idField: 'task_id' }),
+    }),
     botOpenId: 'ou_bot',
     arrivalConversation,
   });

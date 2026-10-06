@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { LarkMvpService, aggregateRecognizedItems, looksLikeSalesText } = require('../src/services/larkMvpService');
 const { PurchaseBatchLocator } = require('../src/services/purchaseBatchLocator');
+const { SalesGroupThreadLocator } = require('../src/services/salesGroupThreadLocator');
 const { PurchaseWebhookService } = require('../src/services/purchaseWebhookService');
 
 // 拼接「货品信息」的记录链接要读 Base token。测试里给一个占位值；
@@ -35,6 +36,13 @@ const makeService = (options = {}) => {
     // 群聊定位器指向临时目录：**不受**构造时默认的 data/purchase_group_messages 影响。
     purchaseBatchLocator: options.purchaseBatchLocator,
     purchaseBatchLocatorStore: options.purchaseBatchLocatorStore,
+    // 销售那侧的「话题 ↔ 销售记录」映射同样指向临时目录：用例之间不共享映射，
+    // 也不会往仓库的 server/data/sales_group_threads/ 里写东西。
+    salesGroupThreads: options.salesGroupThreads || new SalesGroupThreadLocator({
+      store: new JsonTaskStore({
+        dir: fs.mkdtempSync(path.join(os.tmpdir(), 'group-sales-thread-')), idField: 'task_id',
+      }),
+    }),
     botOpenId: options.botOpenId === undefined ? TEST_BOT_OPEN_ID : options.botOpenId,
     groupPurchaseFlow: options.groupPurchaseFlow,
   });
@@ -2042,8 +2050,11 @@ test('B：@ 占位符被剥掉——送到定位链路的是「她真正说的�
     },
   });
   // 群里 @ 了两个人：两个占位符都要剥掉，并且不能把正文吃掉。
+  // ⚠️ 正文刻意用**不像销售**的一句（不含数字、不含业务关键词）：主群里 @ 机器人
+  //    说一笔销售现在归销售链路（见 salesGroupThread.test.js），这条用例验证的是
+  //    "剥占位符"这一件事，所以走采购那条路来断言。
   await service.acceptMessage(groupEvent({
-    text: '@_user_1 @_user_2 8088 黑 38 两双',
+    text: '@_user_1 @_user_2 这批到了 你看下',
     mentions: [
       { key: '@_user_1', id: TEST_BOT_OPEN_ID, name: '测试机器人' },
       { key: '@_user_2', id: 'ou_someone', name: '别人' },
@@ -2051,7 +2062,7 @@ test('B：@ 占位符被剥掉——送到定位链路的是「她真正说的�
   }));
 
   assert.equal(seen.length, 1);
-  assert.equal(seen[0].text, '8088 黑 38 两双');
+  assert.equal(seen[0].text, '这批到了 你看下');
   assert.ok(!seen[0].text.includes('@_user_1'));
   assert.ok(!seen[0].text.includes('@_user_2'));
   assert.equal(seen[0].messageId, 'om_group_1');

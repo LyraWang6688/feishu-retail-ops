@@ -1,4 +1,4 @@
-import { requireFeishuAuth } from './core/auth.js';
+import { requireFeishuAuth, showLoginButton } from './core/auth.js';
 import { describeError, showPageError } from './core/ui.js';
 import { createCommonModule } from './features/common/index.js';
 import { createSalesModule } from './features/sales/index.js';
@@ -60,18 +60,25 @@ function activateModule(moduleId) {
 }
 
 async function start() {
+  // ⚠️ tab 的监听**先绑上**（放在鉴权之前）。原来它绑在 `requireFeishuAuth` 之后，
+  //    而 `/me` 一返回 401 就在那里面抛了错，这一句永远走不到 —— 现象正是她遇到的
+  //    「工作台启动失败：请求失败（401）」＋ 三个 tab 点了没反应。
+  //    绑在这里之后，鉴权失败时页面仍然是可交互的（各模块自己会提示取不到数据）。
+  document.querySelectorAll('.main-tab').forEach((tab) => {
+    tab.addEventListener('click', () => activateModule(tab.dataset.module));
+  });
   try {
     const ready = await requireFeishuAuth({
       statusElement: document.getElementById('auth-status'),
       logoutButton: document.getElementById('logout'),
     });
     if (!ready) return;
-    document.querySelectorAll('.main-tab').forEach((tab) => {
-      tab.addEventListener('click', () => activateModule(tab.dataset.module));
-    });
     activateModule(initialModule);
   } catch (error) {
     showPageError(`工作台启动失败：${describeError(error)}`);
+    // 401 已经在 requireFeishuAuth 里自动跳登录了；这里是兜底（跳不过去 / 403 账号
+    // 未被授权 / 网络错误）——至少给她一个能点的「去登录」，而不是死在这一屏。
+    showLoginButton();
   }
 }
 
