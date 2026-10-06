@@ -499,3 +499,155 @@ test('话题里说「成交」但交付只成了一半 → 如实说，不报成
   assert.match(JSON.parse(replies.find((i) => i.data.msg_type === 'text').data.content).text, /未完成/,
     '钱收下了、货没交齐不能报成"全好了"');
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐ 业务负责人 2026-10-06 拍板（AGENTS.md 第 16 条）：问不出收款方式时
+//    **不猜、也不设默认方式** —— 但「货那一半」要做掉，状态要如实。
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// 改动前的 bug：她说「已完毕」而系统问不出收款方式时，applyComplete 只回一句
+// 「这笔钱是怎么收的？微信还是现金？」就 return —— **钱货都没动**，
+// 而 handle 把它记成 `progress_applied`（看起来成功了，其实什么都没做）。
+
+const multipleMethods = () => ({
+  // 库里**有多个**收款方式 → "只有一个"那条不成立，也没有配任何默认方式。
+  paymentMethodNames: async () => ['微信', '现金'],
+  confirm: async () => { throw new Error('问不出方式时不该走进成交链路'); },
+});
+
+test('⭐ 「已完毕」问不出收款方式 → 先把货做掉、再回问一句钱，状态是 progress_asking（不是 applied）', async () => {
+  const gateway = makeGateway({
+    entry: threadSale(),
+    // 货还没交（预付单的样子）+ 有一笔待收款：钱货两件都有活。
+    details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 成交金额: 800, 履约状态: '未交付' } }],
+    payments: [{ record_id: 'pay_pending', fields: {
+      关联销售单: [SALE_ID], 收款金额: 800, 收款状态: '未收款',
+    } }],
+  });
+  const { service, replies, threads } = makeHarness({ gateway, secondDelivery: multipleMethods() });
+  const delivered = [];
+  service.delivery.deliver = async (input) => { delivered.push(input); return { ok: true }; };
+  await bindThread(threads, 'omt_sale_ask');
+
+  const accepted = await service.acceptMessage(groupEvent({
+    messageId: 'om_ask', threadId: 'omt_sale_ask', text: '已完毕',
+  }));
+  await flushSalesTasks(service);
+
+  // ① 货那一半**做了**：未交付明细交给交付服务（它写「已交付」+ 扣库存）。
+  assert.equal(delivered.length, 1, '不能"什么都不做"——货要先做掉');
+  assert.equal(delivered[0].salesEntryRecordId, SALE_ID);
+  assert.deepEqual(delivered[0].detailRecordIds, ['detail_1']);
+
+  // ② 钱那一半**只回问一句**：不替她挑方式、不设默认方式、一个字节都不写。
+  const text = JSON.parse(replies.find((i) => i.data.msg_type === 'text').data.content).text;
+  assert.match(text, /这笔钱是怎么收的/, '要问她钱怎么收');
+  assert.match(text, /已交付/, '要如实说货已经做掉了，不能让她以为啥也没干');
+  assert.deepEqual(
+    gateway.updated.filter((item) => item.key === 'paymentRecord'), [],
+    '没说方式就不许动收款明细（不猜、也不设默认方式）',
+  );
+  assert.deepEqual(gateway.created.filter((item) => item.key === 'paymentRecord'), []);
+
+  // ③ 🔴 **状态如实**：什么都没写钱 → 绝不能记成 progress_applied。
+  const task = await service.store.get(accepted.sales.taskId);
+  assert.equal(task.status, 'progress_asking', '只回问一句 → progress_asking，不是 progress_applied');
+  assert.equal(task.progress_kind, 'complete');
+  assert.equal(task.progress_reason, 'payment_method_missing');
+});
+
+test('⭐ 「已完毕」问不出方式且货早就交完了 → 只回问一句钱（不重复交付），状态仍是 progress_asking', async () => {
+  const gateway = makeGateway({
+    entry: threadSale(),
+    details: [threadDetail()], // 已交付
+    payments: [{ record_id: 'pay_pending', fields: {
+      关联销售单: [SALE_ID], 收款金额: 800, 收款状态: '未收款',
+    } }],
+  });
+  const { service, replies, threads } = makeHarness({ gateway, secondDelivery: multipleMethods() });
+  const delivered = [];
+  service.delivery.deliver = async (input) => { delivered.push(input); return { ok: true }; };
+  await bindThread(threads, 'omt_sale_ask2');
+
+  await service.acceptMessage(groupEvent({
+    messageId: 'om_ask2', threadId: 'omt_sale_ask2', text: '成交',
+  }));
+  await flushSalesTasks(service);
+
+  assert.deepEqual(delivered, [], '没有未交付明细就不调交付（不能空跑一次扣库存）');
+  assert.match(JSON.parse(replies.find((i) => i.data.msg_type === 'text').data.content).text,
+    /这笔钱是怎么收的/);
+});
+
+test('⭐ 她说「成交 微信」→ 照她说的走成交链路（用户会主动说方式，这一条不变）', async () => {
+  const gateway = makeGateway({
+    entry: threadSale(),
+    details: [threadDetail()],
+    payments: [{ record_id: 'pay_pending', fields: {
+      关联销售单: [SALE_ID], 收款金额: 800, 收款状态: '未收款',
+    } }],
+  });
+  const calls = [];
+  const secondDelivery = {
+    paymentMethodNames: async () => ['微信', '现金'],
+    confirm: async (input) => { calls.push(input); return { alreadyCompleted: false }; },
+  };
+  const { service, threads } = makeHarness({ gateway, secondDelivery });
+  await bindThread(threads, 'omt_sale_spoken');
+
+  await service.acceptMessage(groupEvent({
+    messageId: 'om_spoken', threadId: 'omt_sale_spoken', text: '成交 微信',
+  }));
+  await flushSalesTasks(service);
+
+  assert.equal(calls.length, 1, '她说了方式 → 走与点卡片「成交」同一个实现');
+  assert.equal(calls[0].method, '微信', '用她说的那一个，不用库里排第一的那个');
+});
+
+test('⭐ 「收到 500」没说方式 → 只回问一句，状态同样是 progress_asking（同一类假成功）', async () => {
+  const gateway = makeGateway({
+    entry: threadSale(),
+    details: [threadDetail()],
+    payments: [{ record_id: 'pay_pending', fields: {
+      关联销售单: [SALE_ID], 收款金额: 500, 收款状态: '未收款',
+    } }],
+  });
+  const { service, replies, threads } = makeHarness({ gateway });
+  await bindThread(threads, 'omt_sale_pay_ask');
+
+  const accepted = await service.acceptMessage(groupEvent({
+    messageId: 'om_pay_ask', threadId: 'omt_sale_pay_ask', text: '收到 500',
+  }));
+  await flushSalesTasks(service);
+
+  assert.match(JSON.parse(replies.find((i) => i.data.msg_type === 'text').data.content).text,
+    /这笔钱是怎么收的/);
+  assert.deepEqual(gateway.updated.filter((item) => item.key === 'paymentRecord'), []);
+  const task = await service.store.get(accepted.sales.taskId);
+  assert.equal(task.status, 'progress_asking');
+  assert.equal(task.progress_reason, 'payment_method_missing');
+});
+
+test('⭐ 她说的方式表里没有 → 只回问一句，状态 progress_asking（不记一笔没有方式的收款）', async () => {
+  const gateway = makeGateway({
+    entry: threadSale(),
+    details: [threadDetail()],
+    // 「收款方式管理」里只有现金：她说的是微信 → 核实不过。
+    methods: [{ record_id: 'method_cash', fields: { 收款方式: '现金' } }],
+    payments: [{ record_id: 'pay_pending', fields: {
+      关联销售单: [SALE_ID], 收款金额: 500, 收款状态: '未收款',
+    } }],
+  });
+  const { service, threads } = makeHarness({ gateway });
+  await bindThread(threads, 'omt_sale_pay_unknown');
+
+  const accepted = await service.acceptMessage(groupEvent({
+    messageId: 'om_pay_unknown', threadId: 'omt_sale_pay_unknown', text: '收到微信 500',
+  }));
+  await flushSalesTasks(service);
+
+  assert.deepEqual(gateway.created.filter((item) => item.key === 'paymentRecord'), []);
+  const task = await service.store.get(accepted.sales.taskId);
+  assert.equal(task.status, 'progress_asking');
+  assert.equal(task.progress_reason, 'payment_method_unknown');
+});

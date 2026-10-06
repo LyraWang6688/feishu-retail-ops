@@ -42,7 +42,11 @@ const seed = () => ({
     behaviorRow('behavior_compensation', 'SALE_COMPENSATION', '销售赔货', '减少'),
     behaviorRow('behavior_cash', 'SALE_CASH', '现货销售', '减少'),
   ],
-  paymentMethod: [{ record_id: 'method_wechat', fields: { 收款方式: '微信' } }],
+  paymentMethod: [
+    { record_id: 'method_wechat', fields: { 收款方式: '微信' } },
+    // 原单是微信，但她说"退我现金"时要能写成现金（业务负责人 2026-10-06 拍板）。
+    { record_id: 'method_cash', fields: { 收款方式: '现金' } },
+  ],
   product: [
     { record_id: 'product_A', fields: { 货号: 'A100', 颜色: '黑' } },
     { record_id: 'product_B', fields: { 货号: 'B200', 颜色: '棕' } },
@@ -435,6 +439,54 @@ test('总闸门按请求指纹认人：同一次分片里塞另一笔售后 → 
   );
   assert.equal(countsOf(gateway), writesAfterFirst);
   assert.deepEqual(snapshot(gateway), recordsAfterFirst);
+});
+
+// ⭐ 业务负责人 2026-10-06 拍板（AGENTS.md 第 16 条(2)）：
+//   「钱退现金」→ 退款记录的「交易方式」写**她实际说的方式**，不沿用原单。
+test('⭐ 她说了「退我现金」→ 收款明细的交易方式写**现金**（原单是微信也照写现金）', async () => {
+  const { gateway, service } = build();
+  // 原单的收款方式是微信（seed 里 pay_old_1 = method_wechat），她说的是现金。
+  const result = await service.execute(request({ paymentMethod: '现金', originalText: '把那双 A100 退了，退我现金' }));
+
+  const payments = paymentRows(gateway);
+  assert.equal(payments.length, 1);
+  assert.deepEqual(payments[0].fields['交易方式'], ['method_cash'],
+    '写她说的现金，不是原单的微信');
+  assert.equal(result.money.methodSource, 'spoken', '来源要说清是"她说的"');
+  assert.equal(result.money.methodId, 'method_cash');
+});
+
+test('⭐ 她没说收款方式 → 沿用原单的方式（现有逻辑不变，来源标 original）', async () => {
+  const { gateway, service } = build();
+  // 原话里一个方式词都没有；请求里 paymentMethod 也是空。
+  const result = await service.execute(request({ paymentMethod: '', originalText: '把那双 A100 退了' }));
+
+  const payments = paymentRows(gateway);
+  assert.deepEqual(payments[0].fields['交易方式'], ['method_wechat'], '她没说 → 沿用原单的微信');
+  assert.equal(result.money.methodSource, 'original');
+  assert.equal(result.money.methodId, 'method_wechat');
+});
+
+test('⭐ 指纹含收款方式：同一分片里"现金"改成"微信"是另一笔，不能被当成重试整次跳过', async () => {
+  const { gateway, service } = build();
+  await service.execute(request({ paymentMethod: '现金' }));
+  const writesAfterFirst = countsOf(gateway);
+
+  await assert.rejects(
+    () => service.execute(request({ paymentMethod: '微信' })),
+    /请求内容与上次不同/,
+    '方式变了就不是同一次售后，不许静默复用上一次的结果',
+  );
+  assert.equal(countsOf(gateway), writesAfterFirst, '拒绝时不许再写一笔');
+});
+
+test('⭐ 她说的方式在「收款方式管理」里不存在 → 当场抛（不偷偷写回原单的方式）', async () => {
+  const { gateway, service } = build();
+  await assert.rejects(
+    () => service.execute(request({ paymentMethod: '刷卡' })),
+    /收款方式管理中找不到：刷卡/,
+  );
+  assert.deepEqual(paymentRows(gateway), [], '一个字节都不许写进收款明细');
 });
 
 test('给了 taskId 时，同一原单同一动作可以做第二次（每次用户消息一个分片）', async () => {

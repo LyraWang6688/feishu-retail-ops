@@ -6,6 +6,7 @@ const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { postedOf, isPosted } = require('../config/salesStatusDimensions');
 const {
   PROGRESS_KINDS,
+  PROGRESS_TASK_STATUS,
   resolveSalesProgressIntakeConfig,
 } = require('../config/salesProgressIntake');
 const { logInfo, logWarn } = require('../utils/logger');
@@ -154,7 +155,11 @@ class SalesThreadProgressService {
     // 判不清 → 回一句问她，**不回退**去当新原话解析（那正是这次要修的 bug）。
     if (decision.kind === PROGRESS_KINDS.AMBIGUOUS) {
       await this.reply(task, this.config.replies.ambiguous);
-      await this.mark(task, { status: 'ignored', progress_kind: 'ambiguous', progress_reason: decision.reason });
+      await this.mark(task, {
+        status: PROGRESS_TASK_STATUS.ASKED_UNKNOWN,
+        progress_kind: 'ambiguous',
+        progress_reason: decision.reason,
+      });
       return { handled: true, kind: 'ambiguous', reason: decision.reason };
     }
 
@@ -164,17 +169,22 @@ class SalesThreadProgressService {
         : decision.kind === PROGRESS_KINDS.COMPLETE
           ? await this.applyComplete(task, decision)
           : await this.applyDelivery(task);
+      // ⭐ **状态如实**（业务负责人 2026-10-06 拍板，`AGENTS.md` 第 16 条①）：
+      //    "只回问了一句、业务表一个字没写"绝**不能**记成 `progress_applied` ——
+      //    那正是这次要修的假成功：看起来成功了，其实钱货都没动。
+      //    各 apply* 用 `asked: true` 声明"我什么都没写，只是问了一句"。
+      const asked = Boolean(applied.asked);
       await this.mark(task, {
-        status: 'progress_applied',
+        status: asked ? PROGRESS_TASK_STATUS.ASKING : PROGRESS_TASK_STATUS.APPLIED,
         progress_kind: decision.kind,
-        progress_reason: decision.reason,
+        progress_reason: asked ? (applied.reason || decision.reason) : decision.reason,
         progress_result: applied.result || null,
       });
       return { handled: true, kind: decision.kind, ...applied };
     } catch (error) {
       // 记不上就**如实告诉她**（不静默、也不改口成"这是在录新单"）。
       await this.reply(task, formatCopy(this.config.replies.failed, { reason: error.message }));
-      await this.mark(task, { status: 'progress_failed', progress_reason: error.message });
+      await this.mark(task, { status: PROGRESS_TASK_STATUS.FAILED, progress_reason: error.message });
       logWarn('sales.thread_progress.failed', {
         task_id: task.task_id, kind: decision.kind, error: error.message,
       });
@@ -182,7 +192,13 @@ class SalesThreadProgressService {
     }
   }
 
-  /** 收款进展：先读那一笔，再按"这一笔还差多少钱"设闸门，然后才记收款。 */
+  /**
+   * 收款进展：先读那一笔，再按"这一笔还差多少钱"设闸门，然后才记收款。
+   *
+   * ⚠️ 下面几条"只回问一句 / 只让她先去入账"的分支一律带 `asked: true`：
+   *    它们**业务表一个字都没写**，handle 会据此把任务状态记成 `progress_asking`
+   *    而不是 `progress_applied`（业务负责人 2026-10-06 要求状态如实）。
+   */
   async applyPayment(task, decision) {
     const salesEntryRecordId = String(task.sales_entry_record_id || '').trim();
     if (decision.method) {
@@ -192,17 +208,17 @@ class SalesThreadProgressService {
         await this.references.resolvePaymentMethod(decision.method);
       } catch (error) {
         await this.reply(task, this.config.replies.needMethod);
-        return { replied: true, reason: 'payment_method_unknown' };
+        return { replied: true, asked: true, reason: 'payment_method_unknown' };
       }
     } else {
       await this.reply(task, this.config.replies.needMethod);
-      return { replied: true, reason: 'payment_method_missing' };
+      return { replied: true, asked: true, reason: 'payment_method_missing' };
     }
 
     const entry = await this.gateway.get('salesEntry', salesEntryRecordId);
     if (!entry || !isPosted(postedOf(entry, this.gateway.table('salesEntry').fields))) {
       await this.reply(task, this.config.replies.notPosted);
-      return { replied: true, reason: 'not_posted' };
+      return { replied: true, asked: true, reason: 'not_posted' };
     }
 
     const before = await this.progress.forOrder(salesEntryRecordId);
@@ -262,41 +278,60 @@ class SalesThreadProgressService {
       result: { paymentRecordId: recordId } };
   }
 
+  /**
+   * ⭐ **货那一半**：把这一单里**还没交**的明细交给既有的交付服务
+   * （它写「已交付」+ 扣库存流水 + 扣实时库存）。**不回复、不记状态、不碰钱** ——
+   * 回复与状态由调用方决定，所以「交付进展」和「整单完成」能共用同一段取数与交付。
+   *
+   * 为什么抽成方法：`AGENTS.md` 第 16 条①要求「先把货那一半做掉、再就钱回问一句」，
+   * 而"交付进展"那条路本来就有这段逻辑 —— 复制一份就是两处实现，改一处忘一处。
+   */
+  async deliverUndelivered(salesEntryRecordId) {
+    const detailFields = this.gateway.table('salesDetail').fields;
+    const undelivered = (await this.gateway.listAll('salesDetail'))
+      .filter((record) => linkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(salesEntryRecordId))
+      .filter((record) => textValue(record.fields?.[detailFields.fulfillmentStatus]) !== '已交付')
+      .map((record) => record.record_id);
+    if (!undelivered.length) return { count: 0, detailRecordIds: [], delivered: null };
+    const delivered = await this.delivery.deliver({
+      salesEntryRecordId, detailRecordIds: undelivered,
+    });
+    return { count: undelivered.length, detailRecordIds: undelivered, delivered };
+  }
+
   /** 交付进展：把**还没交**的明细交给既有的交付服务（它写「已交付」+ 扣库存）。 */
   async applyDelivery(task) {
     const salesEntryRecordId = String(task.sales_entry_record_id || '').trim();
     const entry = await this.gateway.get('salesEntry', salesEntryRecordId);
     if (!entry || !isPosted(postedOf(entry, this.gateway.table('salesEntry').fields))) {
       await this.reply(task, this.config.replies.notPosted);
-      return { replied: true, reason: 'not_posted' };
+      return { replied: true, asked: true, reason: 'not_posted' };
     }
-    const detailFields = this.gateway.table('salesDetail').fields;
-    const undelivered = (await this.gateway.listAll('salesDetail'))
-      .filter((record) => linkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(salesEntryRecordId))
-      .filter((record) => textValue(record.fields?.[detailFields.fulfillmentStatus]) !== '已交付')
-      .map((record) => record.record_id);
-    if (!undelivered.length) {
+    const delivery = await this.deliverUndelivered(salesEntryRecordId);
+    if (!delivery.count) {
       await this.reply(task, this.config.replies.nothingPending);
       return { replied: true, reason: 'nothing_pending' };
     }
-    const delivered = await this.delivery.deliver({
-      salesEntryRecordId, detailRecordIds: undelivered,
-    });
-    await this.reply(task, formatCopy(this.config.replies.deliveryDone, { count: undelivered.length }));
+    await this.reply(task, formatCopy(this.config.replies.deliveryDone, { count: delivery.count }));
     logInfo('sales.thread_progress.delivery_applied', {
       task_id: task.task_id,
       sales_entry_record_id: salesEntryRecordId,
-      detail_ids: undelivered,
+      detail_ids: delivery.detailRecordIds,
     });
-    return { replied: true, count: undelivered.length, result: { detailRecordIds: undelivered, delivered } };
+    return { replied: true, count: delivery.count,
+      result: { detailRecordIds: delivery.detailRecordIds, delivered: delivery.delivered } };
   }
 
   /**
    * 她说「成交」时用哪个收款方式：
    *   ① 这句话里说了（"成交 微信"）→ 用它；
-   *   ② 没说、且「收款方式管理」里**只有一个** → 用那一个。这不是猜：
-   *      单方式时卡片上本来也只有一个「成交」按钮，按钮带的正是它；
-   *   ③ 没说、又有多个（或一个都没有）→ 返回空，由调用方回一句问她，**绝不替她挑一个**。
+   *   ② 没说、且「收款方式管理」里**只有一个** → 用那一个。这不是猜、也不是"默认方式"：
+   *      库里只有一种收钱渠道时不存在第二种可能；
+   *   ③ 没说、又有多个（或一个都没有）→ 返回空，由调用方先做货、再回一句问她，
+   *      **绝不替她挑一个**。
+   *
+   * ⚠️ **刻意没有**"配置里的默认收款方式"这种兜底（业务负责人 2026-10-06 纠正过：
+   *    「用户会直接告诉收款方式的」）—— 见 `AGENTS.md` 第 16 条(1)。
    */
   async resolveCompletePaymentMethod(task) {
     const spoken = this.detectPaymentMethod(String(task?.original_text || task?.text || ''));
@@ -312,8 +347,17 @@ class SalesThreadProgressService {
    *   业务负责人的口径见 docs/e2e-sales-status-method.md：
    *   「话题里说『已完毕/成交』→ 未履约→履约 · 待收→已收 · 有收款时间」。
    *
-   * ⚠️ 这两件事**都不在本类实现**：全部交给 SecondDeliveryService（成交只有一处实现）。
+   * ⚠️ 这两件事**都不在本类实现**：钱货都交给 `SecondDeliveryService`（成交只有一处实现）。
    *    本类只做"这句话 = 成交"的判定与转交，绝不自己收钱或扣库存。
+   *
+   * ⭐ **收款方式按她说的**（业务负责人 2026-10-06 拍板，`AGENTS.md` 第 16 条(1)）：
+   *   · 她说了 → 用她说的（同一单里每一笔可以不同：定金微信、尾款现金）；
+   *   · 她没说、而「收款方式管理」里**只有一个** → 用那一个（这不是默认值，是"没有第二种可能"）；
+   *   · 否则**不猜、也不设默认方式** —— 但⚠️**必须先把"货那一半"做掉**
+   *     （未交付 → 已交付 + 扣库存），再就"钱"回问一句；`handle` 会把任务状态记成
+   *     `progress_asking`（**不是** `progress_applied`）。
+   *   · ⚠️ 改动前这里在问不出方式时**直接 return**：钱货都没动、状态却记成
+   *     `progress_applied`（看起来成功了）——那正是这次要修的 bug。
    */
   async applyComplete(task) {
     const salesEntryRecordId = String(task.sales_entry_record_id || '').trim();
@@ -321,7 +365,7 @@ class SalesThreadProgressService {
     const entry = await this.gateway.get('salesEntry', salesEntryRecordId);
     if (!entry || !isPosted(postedOf(entry, this.gateway.table('salesEntry').fields))) {
       await this.reply(task, this.config.replies.notPosted);
-      return { replied: true, reason: 'not_posted' };
+      return { replied: true, asked: true, reason: 'not_posted' };
     }
     // 收款方式只在**确实有待收款**时才必须要：钱货两清的单说「成交」只是补交付，
     // 不该因为没提收款方式就把这条正确的话挡回去。
@@ -330,8 +374,26 @@ class SalesThreadProgressService {
       textValue(record.fields?.[paymentFields.status]) === '未收款');
     const method = hasPending ? await this.resolveCompletePaymentMethod(task) : '';
     if (hasPending && !method) {
-      await this.reply(task, this.config.replies.needMethod);
-      return { replied: true, reason: 'payment_method_missing' };
+      // ⭐ 钱没法定（她没说方式、可选方式也不是唯一）→ **不替她挑、也不设默认方式**，
+      //    但"货那一半"先做掉（`AGENTS.md` 第 16 条①）：
+      //    走的是与点卡片「成交」**同一段交付能力**（SalesDeliveryService.deliver，
+      //    SecondDeliveryService 内部用的也是它），所以不存第二套交付实现。
+      const delivery = await this.deliverUndelivered(salesEntryRecordId);
+      await this.reply(task, delivery.count
+        ? formatCopy(this.config.replies.completeAskMethod, { count: delivery.count })
+        : this.config.replies.needMethod);
+      logInfo('sales.thread_progress.complete_asking_method', {
+        task_id: task.task_id,
+        sales_entry_record_id: salesEntryRecordId,
+        // 货做到了什么程度：说清"我只是没动钱，不是什么都没做"。
+        delivered_quantity: delivery.count,
+        delivered_detail_ids: delivery.detailRecordIds,
+        hint: '她没说收款方式、「收款方式管理」里也不是唯一一个 → 先做货、钱回问一句，不猜方式',
+      });
+      return {
+        replied: true, asked: true, reason: 'payment_method_missing',
+        result: { detailRecordIds: delivery.detailRecordIds },
+      };
     }
     const result = await this.secondDelivery.confirm({
       salesEntryRecordId, method, operatorOpenId: task.sender_open_id || '',
