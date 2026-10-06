@@ -304,10 +304,22 @@ const DIAGNOSTIC_CASES = [
   { id: 'D4', label: '9 双（个位数对照）', sizes: [38], text: '9 双', expect: { type: 'post', bySize: { 38: 9 } } },
   { id: 'E1', label: '11 双（另一个两位数）', sizes: [38], text: '11 双', expect: { type: 'post', bySize: { 38: 11 } } },
   { id: 'E2', label: '12 双（再一个两位数）', sizes: [38], text: '12 双', expect: { type: 'post', bySize: { 38: 12 } } },
+  // D5：问题①的修法是"她明确说了数量就必须输出"，最大的风险是**改歪**成
+  // "每条都把全部勾选尺码输出一遍"。这里给「没提到的尺码仍然默认 1」留一条
+  // **端到端**（真模型 + 真链路）证据——它的失败就等于"规则被改歪了"。
+  {
+    id: 'D5', label: '38 码 3 双（38/39 都勾选，39 应保持默认 1）', sizes: [38, 39],
+    text: '38 码 3 双', expect: { type: 'post', bySize: { 38: 3, 39: 1 } },
+  },
 ];
 
-// 加分用例：一次提交 = 多条记录（每条一个尺码）+ 同一个报货批次号 → 走真正的归批窗口。
-// 这是生产表单提交多尺码时的形态，用来回答"单据信息会不会同步增加"。
+// 加分用例：一次提交 = N 条记录（**每条一个编号/货品**）+ 同一个报货批次号 → 走真正的归批窗口。
+//
+// ⚠️ 口径以 `docs/purchase-intake-batch-spec.md` 为准（业务负责人 2026-10-06 逐字）：
+//   「一次提交 = 一个行为 + **N 个编号**」——多条记录是**多个货品**，不是同一个货品的多个尺码。
+//   所以本用例里"两条记录各自只勾一个尺码、却把同一条完整说明复制到两条上"**不是生产形态**，
+//   它记录的是一种**不被支持**的用法（解析按记录逐条进行，说明提到本条没勾的尺码即拒绝）。
+//   同一个货品的多尺码应该**勾在一条记录上**（见 C4：尺码 38+39 → 2 行）。
 const BATCH_CASE = {
   id: 'B1',
   label: '分尺码 + 归批（两条记录同一报货批次号，各自只说一个尺码）',
@@ -574,8 +586,11 @@ const cmdRun = async () => {
       try {
         result = await runOne(testCase);
       } catch (error) {
+        // ⚠️ 连栈一起留：只报 message 时（例如 "Cannot read properties of undefined (reading '0')"）
+        // 根本看不出是脚本还是项目代码崩的——2026-10-06 的 B1 就吃过这个亏（报告里只剩一句 message）。
         say(`    ✗ 用例执行出错：${error.message}`);
-        results.push({ case: { ...testCase, id: tag }, error: error.message });
+        if (error.stack) say(String(error.stack).split('\n').slice(0, 6).map((l) => `       ${l}`).join('\n'));
+        results.push({ case: { ...testCase, id: tag }, error: error.message, stack: error.stack || '' });
         continue;
       }
       const verdict = judge(testCase, result);
@@ -646,7 +661,8 @@ const cmdRun = async () => {
       void requestsBefore;
     } catch (error) {
       say(`    ✗ 用例执行出错：${error.message}`);
-      results.push({ case: BATCH_CASE, error: error.message });
+      if (error.stack) say(String(error.stack).split('\n').slice(0, 6).map((l) => `       ${l}`).join('\n'));
+      results.push({ case: BATCH_CASE, error: error.message, stack: error.stack || '' });
     }
   }
 
@@ -694,6 +710,7 @@ const cmdRun = async () => {
     results: results.map((entry) => ({
       case: entry.case,
       error: entry.error || '',
+      stack: entry.stack || '',
       verdict: entry.verdict || null,
       result: entry.result || null,
     })),

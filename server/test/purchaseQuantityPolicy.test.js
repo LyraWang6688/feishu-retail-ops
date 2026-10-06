@@ -125,3 +125,40 @@ test('quantity must be a positive integer', async () => {
 test('at least one selected size is required', async () => {
   await assert.rejects(buildPurchaseQuantities({ selectedSizes: [] }), /至少选择一个尺码/);
 });
+
+// ── 回归：提示词 2026-10-06 加了「明确说了数量（哪怕就是 1）也必须输出」之后， ──
+// 「没提到的尺码默认一双」这条本意不能被改坏。
+//
+// 风险长什么样：模型可能开始把**没提到的尺码也回显成 1**（那正是被禁止的"输出全部尺码"）。
+// 回显 1 与"默认 1"同值，所以规则层必须照样得出正确结果——这条把它钉住。
+
+test('模型把没提到的尺码也回显成 1 时，默认一双的结果不变', async () => {
+  const items = await buildPurchaseQuantities({
+    selectedSizes: [38, 39, 40],
+    quantityDescription: '38 码 3 双',
+    // 模型"多嘴"回显了 39/40（各自 1），这正是提示词里不许发生、但必须容忍的形状。
+    parseOverrides: async () => [
+      { size: 38, quantity: 3 },
+      { size: 39, quantity: 1 },
+      { size: 40, quantity: 1 },
+    ],
+  });
+
+  assert.deepEqual(items, [
+    { size: 38, quantity: 3 },
+    { size: 39, quantity: 1 },
+    { size: 40, quantity: 1 },
+  ]);
+});
+
+// 「说明没有提到」不等于「说了数量是 1」：她明说"一双/1 双"时，
+// 模型会（也必须）输出 quantity=1 的那一条，规则层只能接受，不能判为失败。
+test('说明明确说“一双”时，解析出的数量 1 必须被接受（不是"没提到"）', async () => {
+  const items = await buildPurchaseQuantities({
+    selectedSizes: [38],
+    quantityDescription: '一双',
+    parseOverrides: async () => [{ size: 38, quantity: 1 }],
+  });
+
+  assert.deepEqual(items, [{ size: 38, quantity: 1 }]);
+});
