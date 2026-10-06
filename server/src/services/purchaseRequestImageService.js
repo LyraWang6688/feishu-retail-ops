@@ -17,13 +17,39 @@ const sharp = require('sharp');
  * 否则中文会渲染成一个个方框，而且不会报错——只有人眼能看出来。
  * 所以 font-family 是一整条候选链，最后兜底到 sans-serif。
  *
- * 排版（2026-10-06 业务负责人拍板的「🅱️ 分组版」）：
- * 明细**先按货号分组**，每个货号一行跨列的「分组行」（有底色、字比正文重），
- * 组内每行只写 颜色 | 尺码 | 数量（**3 列**，不再每行重复货号）；
- * 组内**按颜色分组排序、颜色内按尺码数字升序**。
+ * 排版（2026-10-06 业务负责人第二次拍板的「合并版」）：
+ * 明细**先按货号分组**：每个货号一行跨列的「分组行」（有底色、字比正文重）；
+ * 组内**再按颜色归并**：同货号 ＋ 同颜色 → **一行**（不同颜色各自一行），
+ * 该颜色的所有尺码＋数量用「、」拼进**同一格**：`37码×1、41码×3`。
+ * ⇒ 表结构 = 分组行（货号）＋ 两列「颜色 | 尺码×数量」（**不再有单独的数量列**）。
  * 一张图里放全部货号——不是每个货号出一张图（多图只在**多供应商**时出现，
  * 那是 purchaseWebhookService.groupItemsBySupplier 的事，跟这里无关）。
+ *
+ * ⚠️ 格式（列顺序 / 列宽 / 分隔符「、」/ 乘法号「×」/ 要不要合计）**不在本文件里写死**：
+ * 全在 `config/purchaseRequestImageLayout.js`——这里是逻辑，那里是格式。
+ * 采购单与退货单**共用这一个渲染器**（只换标题），所以改一处两张图一起变。
  */
+const {
+  WIDTH,
+  MARGIN,
+  TABLE_WIDTH,
+  ROW_HEIGHT,
+  HEADER_ROW_HEIGHT,
+  GROUP_ROW_HEIGHT,
+  TABLE_TOP,
+  TITLE_BASELINE,
+  SUBTITLE_BASELINE,
+  FOOTER_GAP,
+  FOOTER_HEIGHT,
+  BOTTOM_PADDING,
+  CELL_PADDING,
+  COLUMNS,
+  COLORS,
+  SHOW_TOTAL,
+  SIZE_QUANTITY_SEPARATOR,
+  SIZE_QUANTITY_MULTIPLIER,
+} = require('../config/purchaseRequestImageLayout');
+
 const FONT_FAMILY = 'Noto Sans CJK SC, Noto Serif CJK SC, Noto Sans SC, WenQuanYi Zen Hei, sans-serif';
 
 // ⚠️ 2026-10-06 业务负责人拍板改的两个标题：出图是给她转给供应商的**单据**，
@@ -34,51 +60,6 @@ const TITLE = '邯美皮鞋采购单';
 // 业务负责人的口径就是"格式和采购单一样"。标题做成参数而不是复制一份渲染器：
 // 复制一份的话，以后改列宽/截断规则就得改两处，两边迟早会长歪。
 const RETURN_TITLE = '邯美皮鞋退货单';
-
-// 布局常量（单位 px）。宽度取 900：手机微信里放大看货号够清楚，
-// 又不至于大到飞书图片消息再次压缩后糊掉。
-const WIDTH = 900;
-const MARGIN = 40;
-const TABLE_WIDTH = WIDTH - MARGIN * 2; // 820
-const ROW_HEIGHT = 42;
-const HEADER_ROW_HEIGHT = 48;
-// 「货号分组行」的高度：夹在表头（48）和正文行（42）之间，
-// 让它在视觉上明显是一条**分组标题**，而不是一条普通明细。
-const GROUP_ROW_HEIGHT = 44;
-const TABLE_TOP = 168;
-const TITLE_BASELINE = 78;
-const SUBTITLE_BASELINE = 118;
-const FOOTER_GAP = 18;
-const FOOTER_HEIGHT = 52;
-const BOTTOM_PADDING = 36;
-
-// ⚠️ 列宽之和必须等于 TABLE_WIDTH（820）。
-// 分组版是**3 列**（货号变成了跨列的分组行，所以不再是列）：
-// 颜色 400 | 尺码 210 | 数量 210 = 820。
-// 分配思路沿用原来的「颜色最长、给最多空间」：颜色是唯一的自由文本
-//（「深棕色/咖啡」这种能写到 10 个字），
-// 而尺码最多就是「43码」、数量最多两三位数——它们各 210 已经绰绰有余。
-// maxWidth 是单元格能画字的像素宽度（列宽减去左右各 16 的内边距）。
-// ⚠️ 截断必须按**像素宽度**而不是字符数：一个汉字在 22px 字号下就占 22px，
-// 按字符数限制会让 12 个汉字的颜色轻松捅进「尺码」列（真机渲染验证时踩到过）。
-const CELL_PADDING = 16;
-const COLUMNS = [
-  { key: 'color', label: '颜色', width: 400, align: 'start' },
-  { key: 'size', label: '尺码', width: 210, align: 'center' },
-  { key: 'quantity', label: '数量', width: 210, align: 'center' },
-].map((column) => ({ ...column, maxWidth: column.width - CELL_PADDING * 2 }));
-
-const COLORS = {
-  ink: '#1f2329',
-  muted: '#646a73',
-  line: '#c9cdd4',
-  headerBg: '#eef1f5',
-  // 「货号分组行」的底色：比表头（headerBg）略深一档，
-  // 这样一眼能分出「列头」和「分组标题」两层，而不是糊成一片。
-  groupBg: '#e2e8f0',
-  stripeBg: '#f7f8fa',
-  border: '#8f959e',
-};
 
 const escapeXml = (value) => String(value ?? '').replace(/[<>&'"]/g, (char) => ({
   '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;',
@@ -180,8 +161,7 @@ const compareSize = (left, right) => {
 };
 
 /**
- * 明细行 → 分组。每条明细**只属于一个分组**，且分组内每行仍然写着自己的颜色
- *（业务负责人的要求是"分组标题版"，**不做合并单元格**）。
+ * 明细行 → 分组（**第一层：按货号**）。每条明细**只属于一个分组**。
  *
  * 排序规则（业务负责人 2026-10-06 拍板）：
  * - **货号**：按**首次出现顺序**排。选它而不是字典序，是因为明细的输入顺序
@@ -191,8 +171,9 @@ const compareSize = (left, right) => {
  *   理由同上——不去猜"哪种颜色该排前面"。
  * - **尺码**：颜色内按**数字**升序（见 compareSize），非数字尺码兜到最后。
  *
- * 注意这里只重排**显示顺序**：`summarize` 仍然按传入的行数/数量求和，
- * 合计口径一个数都不变。
+ * ⚠️ 这里**只排顺序、不合并行**：输出仍是"一个尺码一行"。把同颜色的行并成图上的一行
+ * 是**下一层** `mergeSizesByColor` 的事——两层分开，各自的顺序规则才能单独单测。
+ * 注意这里只重排**显示顺序**：`summarize` 仍然按传入的行数/数量求和，口径一个数都不变。
  */
 const groupRowsByItemNo = (rows) => {
   const groups = new Map();
@@ -213,6 +194,49 @@ const groupRowsByItemNo = (rows) => {
       return byColor !== 0 ? byColor : compareSize(left.size, right.size);
     });
     return { itemNo: group.itemNo, label: group.label, rows: sorted };
+  });
+};
+
+// ─── 第二层：组内「按颜色归并」（业务负责人 2026-10-06 的「合并版」）──────────────
+// 她的原话：「一个颜色一行，然后尺码和数量放一块。比方说：41码×1、41码×2、41码×3 这种」
+// ⇒ 同货号 ＋ 同颜色 → **一行**；不同颜色各自一行；该颜色的全部尺码拼在**同一格**里。
+
+/**
+ * 「尺码×数量」——格里的最小单位。符号（乘法号）来自排版配置，不写死在这里。
+ * 数量为 0（认不出数量时的兜底，见 formatQuantity）也照写 `37码×0`：
+ * 图是给供应商看的，宁可把 0 明示出来，也不要悄悄少写一双。
+ */
+const formatSizeQuantity = (size, quantity) => `${size}${SIZE_QUANTITY_MULTIPLIER}${quantity}`;
+
+/**
+ * 分组内的明细行 → **图上的一行一行**：同颜色并成一行，尺码用「、」拼进同一格。
+ *
+ * 返回的每一项同时给出两个字段，正好对上配置里的两列
+ *（`COLUMNS[i].key`：`color` / `sizeQuantity`），渲染端按 `row[column.key]` 取数：
+ *   { color: '黑', sizeQuantity: '9码×1、40码×1、41码×1、均码×1' }
+ *
+ * 尺码顺序**照第一层的口径**：数字升序、非数字（均码/XL）兜到最后（compareSize）。
+ * 这里再排一次不是"另立一套"——而是让这个函数**独立成立**：
+ * 传进来乱序的行也得到同样的结果，单测不必先跑 groupRowsByItemNo。
+ *
+ * 颜色缺失（历史草稿可能只有尺码）时 `color` 是空串：跟改前一样留空、不编一个假颜色。
+ * 不增删行：所有明细都会出现在某个颜色格里（数量也不做任何加总）。
+ */
+const mergeSizesByColor = (rows) => {
+  const byColor = new Map();
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const key = row?.color || '';
+    if (!byColor.has(key)) byColor.set(key, []);
+    byColor.get(key).push(row);
+  });
+
+  return [...byColor.entries()].map(([color, colorRows]) => {
+    const ordered = [...colorRows].sort((left, right) => compareSize(left.size, right.size));
+    return {
+      color,
+      sizeQuantity: ordered.map((row) => formatSizeQuantity(row.size, row.quantity))
+        .join(SIZE_QUANTITY_SEPARATOR),
+    };
   });
 };
 
@@ -261,21 +285,26 @@ const formatDate = (value) => {
 
 /**
  * 明细 → SVG 字符串。纯函数：同样的输入永远得到同样的字节，
- * 因此排版规则（标题、尺码写法、合计）都能在没有网络、没有 sharp 的情况下单测。
+ * 因此排版规则（标题、尺码×数量的写法、列宽/截断）都能在没有网络、没有 sharp 的情况下单测。
  */
 const buildPurchaseRequestSvg = ({ supplierName, batchNo = '', items = [], generatedAt = new Date(),
   title = TITLE } = {}) => {
   const rows = normalizeItems(items);
-  const groups = groupRowsByItemNo(rows);
+  // 两层排版：① 按货号分组 → ② 组内把**同颜色**并成图上的一行。
+  // 并好之后每个分组自带 `colorRows`（图上真正的一行一行），表高/斑马纹/竖线都按它算。
+  const groups = groupRowsByItemNo(rows)
+    .map((group) => ({ ...group, colorRows: mergeSizesByColor(group.rows) }));
   const { rowCount, totalPairs } = summarize(rows);
-  // 表高 = 列头 + Σ（分组行 + 该组的明细行）。空明细时仍然留一行正文的高度，
+  // 表高 = 列头 + Σ（分组行 + 该组的**颜色行**）。空明细时仍然留一行正文的高度，
   // 给「本批次没有明细」那句话站脚。
   const bodyHeight = rows.length === 0
     ? ROW_HEIGHT
-    : groups.reduce((sum, group) => sum + GROUP_ROW_HEIGHT + group.rows.length * ROW_HEIGHT, 0);
+    : groups.reduce((sum, group) => sum + GROUP_ROW_HEIGHT + group.colorRows.length * ROW_HEIGHT, 0);
   const tableHeight = HEADER_ROW_HEIGHT + bodyHeight;
   const footerTop = TABLE_TOP + tableHeight + FOOTER_GAP;
-  const height = footerTop + FOOTER_HEIGHT + BOTTOM_PADDING;
+  // 合计行由配置开关控制（见 config/purchaseRequestImageLayout.js 的 SHOW_TOTAL）：
+  // 关掉时整张图**不留那条空带**，底部只留 BOTTOM_PADDING。
+  const height = TABLE_TOP + tableHeight + (SHOW_TOTAL ? FOOTER_GAP + FOOTER_HEIGHT : 0) + BOTTOM_PADDING;
 
   const parts = [];
   parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${height}" viewBox="0 0 ${WIDTH} ${height}">`);
@@ -304,9 +333,9 @@ const buildPurchaseRequestSvg = ({ supplierName, batchNo = '', items = [], gener
     parts.push(cellText(column, index, column.label, headerTextY, { fontSize: 20, bold: true }));
   });
 
-  // 明细：**按货号分组**——每个货号一条跨 3 列的「分组行」（底色 + 加粗 + 字号 24），
-  // 组内每行只写 颜色 | 尺码 | 数量。空明细也要画一行「本批次没有明细」，
-  // 否则整张图只剩标题，看着像渲染失败。
+  // 明细：**按货号分组**——每个货号一条跨满整张表的「分组行」（底色 + 加粗 + 字号 24），
+  // 组内**每个颜色一行**，两列写 颜色 | 尺码×数量（`37码×1、41码×3`）。
+  // 空明细也要画一行「本批次没有明细」，否则整张图只剩标题，看着像渲染失败。
   if (rows.length === 0) {
     const y = TABLE_TOP + HEADER_ROW_HEIGHT + ROW_HEIGHT / 2 + 7;
     parts.push(`<text x="${WIDTH / 2}" y="${y}" font-family="${FONT_FAMILY}" font-size="22" ` +
@@ -331,7 +360,7 @@ const buildPurchaseRequestSvg = ({ supplierName, batchNo = '', items = [], gener
       parts.push(`<line x1="${MARGIN}" y1="${detailTop}" x2="${MARGIN + TABLE_WIDTH}" y2="${detailTop}" ` +
         `stroke="${COLORS.line}" stroke-width="1"/>`);
 
-      group.rows.forEach((row, rowIndex) => {
+      group.colorRows.forEach((row, rowIndex) => {
         const rowTop = detailTop + rowIndex * ROW_HEIGHT;
         // 斑马纹改成**分组内**重新起算：分组行本身已经有底色，
         // 再叠一层全局斑马纹只会让相邻两组的同一位置长得不一样，反而更难数行。
@@ -345,23 +374,27 @@ const buildPurchaseRequestSvg = ({ supplierName, batchNo = '', items = [], gener
       });
 
       // 竖线只画在**明细行那一段**：分组行是跨列的，横穿一条竖线会把它切开。
-      pushColumnLines(parts, detailTop, detailTop + group.rows.length * ROW_HEIGHT);
-      cursorY = detailTop + group.rows.length * ROW_HEIGHT;
+      pushColumnLines(parts, detailTop, detailTop + group.colorRows.length * ROW_HEIGHT);
+      cursorY = detailTop + group.colorRows.length * ROW_HEIGHT;
     });
   }
 
   // 表格边框 + 竖线：手写线条而不是 <table>，librsvg 对表格支持不稳定。
   parts.push(`<rect x="${MARGIN}" y="${TABLE_TOP}" width="${TABLE_WIDTH}" height="${tableHeight}" ` +
     `fill="none" stroke="${COLORS.border}" stroke-width="1.5"/>`);
-  // 列头那一段的竖线照旧画满——列头仍然是一行 3 列的格子。
+  // 列头那一段的竖线照旧画满——列头仍然是一行格子的表头。
   pushColumnLines(parts, TABLE_TOP, TABLE_TOP + HEADER_ROW_HEIGHT);
   parts.push(`<line x1="${MARGIN}" y1="${TABLE_TOP + HEADER_ROW_HEIGHT}" x2="${MARGIN + TABLE_WIDTH}" ` +
     `y2="${TABLE_TOP + HEADER_ROW_HEIGHT}" stroke="${COLORS.line}" stroke-width="1"/>`);
 
-  // 合计：产品负责人要的是「条数 / 总双数」两个数，都写出来。
-  const footerY = footerTop + FOOTER_HEIGHT / 2 + 8;
-  parts.push(`<text x="${WIDTH / 2}" y="${footerY}" font-family="${FONT_FAMILY}" font-size="22" ` +
-    `font-weight="bold" fill="${COLORS.ink}" text-anchor="middle">合计：${rowCount} 条 / ${totalPairs} 双</text>`);
+  // 合计（默认**不画**，见配置里的 SHOW_TOTAL）：数量已经写在「尺码×数量」格里，
+  // 而「条」在合并版里对不上图上能数出来的行数。
+  // 留着这段渲染是让"改回来只要把开关翻成 true"，不是删掉重写。
+  if (SHOW_TOTAL) {
+    const footerY = footerTop + FOOTER_HEIGHT / 2 + 8;
+    parts.push(`<text x="${WIDTH / 2}" y="${footerY}" font-family="${FONT_FAMILY}" font-size="22" ` +
+      `font-weight="bold" fill="${COLORS.ink}" text-anchor="middle">合计：${rowCount} 条 / ${totalPairs} 双</text>`);
+  }
 
   parts.push('</svg>');
   return parts.join('\n');
@@ -392,15 +425,21 @@ module.exports = {
   normalizeItems,
   truncateToWidth,
   charWidth,
-  // 分组版的排版契约：列宽（和必须等于 TABLE_WIDTH）、分组顺序、尺码数字序。
+  // 合并版的排版契约：列宽（和必须等于 TABLE_WIDTH）、分组顺序、尺码数字序、
+  // 以及「同颜色并成一行」的归并规则。
   COLUMNS,
   TABLE_WIDTH,
   GROUP_ROW_HEIGHT,
   UNKNOWN_ITEM_NO,
   groupRowsByItemNo,
+  mergeSizesByColor,
+  formatSizeQuantity,
+  SIZE_QUANTITY_SEPARATOR,
+  SIZE_QUANTITY_MULTIPLIER,
+  SHOW_TOTAL,
   sizeSortValue,
   compareSize,
-  // 布局常量也导出：单测要按**坐标**断言「分组行跨满 3 列、字比正文重」，
+  // 布局常量也导出：单测要按**坐标**断言「分组行跨满整张表、字比正文重」，
   // 而不是靠 includes 某段字符串蒙过去。
   COLORS,
   MARGIN,

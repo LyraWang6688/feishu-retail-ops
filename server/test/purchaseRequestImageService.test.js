@@ -17,6 +17,11 @@ const {
   GROUP_ROW_HEIGHT,
   UNKNOWN_ITEM_NO,
   groupRowsByItemNo,
+  mergeSizesByColor,
+  formatSizeQuantity,
+  SIZE_QUANTITY_SEPARATOR,
+  SIZE_QUANTITY_MULTIPLIER,
+  SHOW_TOTAL,
   sizeSortValue,
   compareSize,
   COLORS,
@@ -26,21 +31,33 @@ const {
   ROW_HEIGHT,
   HEADER_ROW_HEIGHT,
 } = require('../src/services/purchaseRequestImageService');
+// 排版配置单独一个文件（配置先行）：单测直接对着**配置**断言符号与开关，
+// 免得"逻辑里换了字面量、配置里没改"这种两边不一致的情况溜过去。
+const LAYOUT = require('../src/config/purchaseRequestImageLayout');
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 验收标准（业务负责人 2026-10-06 拍板的「🅱️ 分组版」）——本文件逐条钉住：
-//   ① 同一货号的明细聚在一个分组行下
-//   ② 货号分组行跨 3 列、有底色、字比正文重
-//   ③ 组内按颜色分组排序、颜色内按尺码数字升序
-//   ④ 合计行：条数 = 明细行数、双数 = 数量之和（与改前一致）
-//   ⑤ 两个标题、供应商段（有/无）、多供应商多图 行为不变
-//   ⑥ 空明细不崩
+// 验收标准（业务负责人 2026-10-06 第二次拍板的「合并版」）——本文件逐条钉住：
+//   ① 同一货号的明细聚在一个分组行下；组内**同颜色并成一行**、不同颜色各自一行
+//   ② 货号分组行跨满整张表、有底色、字比正文重
+//   ③ 尺码×数量拼在**同一格**（`37码×1、41码×3`），颜色（首次出现）＋ 尺码（数字升序、均码最后）
+//   ④ 图上**不做合计**（数量已经写在尺码格里，`summarize` 口径原样保留给群文字用）
+//   ⑤ 两个标题、供应商段（有/无）行为不变；采购单与退货单排版逐字节只差标题
+//   ⑥ 空明细不崩；超长内容按**像素宽度**截断、不溢出
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ITEMS = [
   { item_no: '8088', color: '黑色', size: 36, quantity: 2 },
   { item_no: '8088', color: '黑色', size: 37, quantity: 1 },
   { item_no: 'A-1366-31', color: '棕色', size: 38, quantity: 3 },
+];
+
+// 业务负责人举的那个例子（她真实货号 6C98012-15L）：
+// 一个货号 ＋ 一个颜色 ＋ 多个尺码，外加第二个颜色和一条非数字尺码。
+const MERGED_ITEMS = [
+  { item_no: '6C98012-15L', color: '黑色', size: 37, quantity: 1 },
+  { item_no: '6C98012-15L', color: '黑色', size: 41, quantity: 3 },
+  { item_no: '6C98012-15L', color: '棕色', size: 39, quantity: 2 },
+  { item_no: '6C98012-15L', color: '黑色', size: '均码', quantity: 1 },
 ];
 
 // 正文单元格的字号 / 分组行标题的字号：验收标准 ② 说的「字比正文重」就是这两个数。
@@ -92,7 +109,7 @@ const parseSvg = (svg) => {
 const readGroups = (svg) => {
   const elements = parseSvg(svg);
   // 表格外框（fill="none" 的那条）：用它把"表格区"框出来，
-  // 免得把表下面的「合计：…」也当成最后一条分组的明细单元格。
+  // 免得把表外面的文字也当成最后一条分组的明细单元格。
   const frame = elements.find((element) => element.kind === 'rect'
     && element.fill === 'none' && element.y === TABLE_TOP);
   const tableBottom = frame ? frame.y + frame.height : Number.POSITIVE_INFINITY;
@@ -115,7 +132,7 @@ const readGroups = (svg) => {
   return groups;
 };
 
-/** 一组里的明细单元格 → [[颜色, 尺码, 数量], ...]（按绘制顺序）。 */
+/** 一组里的明细单元格 → [[颜色, 尺码×数量], ...]（按绘制顺序，一色一行）。 */
 const rowsOf = (group) => {
   const rows = [];
   for (let index = 0; index < group.cells.length; index += COLUMNS.length) {
@@ -123,6 +140,12 @@ const rowsOf = (group) => {
   }
   return rows;
 };
+
+/** 一张图里所有「×N」的数量之和——用来钉住"合并没吞数量"。 */
+const quantityTotalOf = (svg) => [...svg.matchAll(/×(\d+)/g)]
+  .reduce((sum, match) => sum + Number(match[1]), 0);
+
+const widthOf = (text, fontSize) => [...text].reduce((sum, char) => sum + charWidth(char, fontSize), 0);
 
 const labelsOf = (groups) => groups.map((group) => group.label.content);
 const stripesOf = (svg) => parseSvg(svg)
@@ -135,33 +158,50 @@ const verticalsOf = (svg) => [...svg.matchAll(/<line x1="([\d.]+)" y1="([\d.]+)"
   .filter((line) => line.x1 === line.x2 && line.y1 !== line.y2);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ② 分组行：跨 3 列、有底色、字比正文重
+// ① 同货号 ＋ 同颜色 → 一行（「合并版」的核心）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('② 分组行：每个货号一条，跨满 3 列（整张表宽）、有底色、字比正文重', () => {
-  const svg = buildPurchaseRequestSvg({ supplierName: '金猴', batchNo: 'BH-1', items: ITEMS });
+test('① 同颜色并成一行：尺码×数量用「、」拼在同一格，不再一个尺码一行', () => {
+  const svg = buildPurchaseRequestSvg({ supplierName: '金猴', batchNo: 'BH-1', items: MERGED_ITEMS });
   const groups = readGroups(svg);
-  assert.equal(groups.length, 2, '两个货号 → 两条分组行');
-  assert.equal((svg.match(/<svg /g) || []).length, 1, '同一张图里分组，不是每个货号一张图');
-
-  for (const group of groups) {
-    assert.equal(group.band.x, MARGIN, '分组行底色从头开始');
-    assert.equal(group.band.width, TABLE_WIDTH, '分组行必须跨满 3 列（= 整张表宽）');
-    assert.equal(group.band.height, GROUP_ROW_HEIGHT);
-    assert.equal(group.band.fill, COLORS.groupBg, '分组行必须有底色');
-    assert.equal(group.label.x, MARGIN + CELL_PADDING, '分组行文字从跨列区域的左边距起');
-    assert.equal(group.label.anchor, 'start');
-    assert.equal(group.label.size, GROUP_FONT_SIZE);
-    assert.ok(group.label.bold, '分组行的字要比正文重');
-    assert.ok(group.label.size > BODY_FONT_SIZE, '分组行字号要大于正文');
-    assert.ok(group.label.y > group.band.y && group.label.y < group.band.y + GROUP_ROW_HEIGHT,
-      '分组行文字必须落在自己那条底色带里');
-  }
+  assert.equal(groups.length, 1, '只有一个货号 → 一条分组行');
+  assert.deepEqual(rowsOf(groups[0]), [
+    // 黑：37 / 41 / 均码 并成一格；非数字尺码按口径兜到最后
+    ['黑色', '37码×1、41码×3、均码×1'],
+    // 不同颜色各自一行
+    ['棕色', '39码×2'],
+  ]);
+  assert.equal(rowsOf(groups[0]).length, 2, '3 条黑色明细 + 1 条棕色 → 图上只有 2 行');
+  assert.ok(svg.includes('>37码×1、41码×3、均码×1</text>'), '整格文本要能原样在 SVG 里找到');
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ① 同一货号的明细聚在一个分组行下 + ③ 组内顺序
-// ─────────────────────────────────────────────────────────────────────────────
+test('① 她举的例子「37码×1、41码×3」必须放得下、不被截断（按像素宽度算）', () => {
+  const sample = `${formatSizeQuantity('37码', '1')}${SIZE_QUANTITY_SEPARATOR}${formatSizeQuantity('41码', '3')}`;
+  assert.equal(sample, '37码×1、41码×3');
+  assert.ok(widthOf(sample, BODY_FONT_SIZE) <= COLUMNS[1].maxWidth,
+    `「${sample}」宽 ${widthOf(sample, BODY_FONT_SIZE)}px，超过第二列可画宽度 ${COLUMNS[1].maxWidth}px`);
+
+  const svg = buildPurchaseRequestSvg({
+    items: [
+      { item_no: '6C98012-15L', color: '黑色', size: 37, quantity: 1 },
+      { item_no: '6C98012-15L', color: '黑色', size: 41, quantity: 3 },
+    ],
+  });
+  const cell = rowsOf(readGroups(svg)[0])[0][1];
+  assert.equal(cell, '37码×1、41码×3');
+  assert.ok(!cell.includes('…'), '这个例子绝不能被截断');
+});
+
+test('① 不合并数量：同色同尺码出现两次就写两次（×1、×2），不做加总', () => {
+  const svg = buildPurchaseRequestSvg({
+    items: [
+      { item_no: '8088', color: '黑色', size: 41, quantity: 1 },
+      { item_no: '8088', color: '黑色', size: 41, quantity: 2 },
+    ],
+  });
+  assert.deepEqual(rowsOf(readGroups(svg)[0]), [['黑色', '41码×1、41码×2']]);
+  assert.equal(quantityTotalOf(svg), 3, '两个数量都还在（1 + 2），没有被并成一条 41码×3');
+});
 
 test('① 同一货号的明细全聚在它那条分组行下面，货号按**首次出现**排', () => {
   const svg = buildPurchaseRequestSvg({
@@ -177,13 +217,13 @@ test('① 同一货号的明细全聚在它那条分组行下面，货号按**�
   });
   const groups = readGroups(svg);
   assert.deepEqual(labelsOf(groups), ['8088', 'A-1366-31'], '货号按首次出现顺序');
-  assert.deepEqual(groups.map((group) => rowsOf(group).length), [3, 1], '8088 的三条必须聚在同一分组行下');
+  assert.deepEqual(groups.map((group) => rowsOf(group).length), [2, 1],
+    '8088 的三条必须聚在同一分组行下（黑色 2 条并成 1 行 + 棕色 1 行）');
   assert.deepEqual(rowsOf(groups[0]), [
-    ['黑色', '36码', '2'],
-    ['黑色', '37码', '1'],
-    ['棕色', '37码', '1'],
+    ['黑色', '36码×2、37码×1'],
+    ['棕色', '37码×1'],
   ]);
-  assert.deepEqual(rowsOf(groups[1]), [['棕色', '38码', '3']]);
+  assert.deepEqual(rowsOf(groups[1]), [['棕色', '38码×3']]);
 
   // 分组行的 y 必须严格递增，且组内明细行的 y 也严格递增（顺序 = 视觉上的从上到下）
   for (let index = 1; index < groups.length; index += 1) {
@@ -194,6 +234,35 @@ test('① 同一货号的明细全聚在它那条分组行下面，货号按**�
     assert.deepEqual(tops, [...tops].sort((a, b) => a - b), '组内明细行必须自上而下');
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ② 分组行：跨满整张表、有底色、字比正文重
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('② 分组行：每个货号一条，跨满整张表、有底色、字比正文重', () => {
+  const svg = buildPurchaseRequestSvg({ supplierName: '金猴', batchNo: 'BH-1', items: ITEMS });
+  const groups = readGroups(svg);
+  assert.equal(groups.length, 2, '两个货号 → 两条分组行');
+  assert.equal((svg.match(/<svg /g) || []).length, 1, '同一张图里分组，不是每个货号一张图');
+
+  for (const group of groups) {
+    assert.equal(group.band.x, MARGIN, '分组行底色从头开始');
+    assert.equal(group.band.width, TABLE_WIDTH, '分组行必须跨满整张表宽');
+    assert.equal(group.band.height, GROUP_ROW_HEIGHT);
+    assert.equal(group.band.fill, COLORS.groupBg, '分组行必须有底色');
+    assert.equal(group.label.x, MARGIN + CELL_PADDING, '分组行文字从跨列区域的左边距起');
+    assert.equal(group.label.anchor, 'start');
+    assert.equal(group.label.size, GROUP_FONT_SIZE);
+    assert.ok(group.label.bold, '分组行的字要比正文重');
+    assert.ok(group.label.size > BODY_FONT_SIZE, '分组行字号要大于正文');
+    assert.ok(group.label.y > group.band.y && group.label.y < group.band.y + GROUP_ROW_HEIGHT,
+      '分组行文字必须落在自己那条底色带里');
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ③ 组内顺序：颜色按首次出现、颜色内尺码数字升序（非数字兜最后）
+// ─────────────────────────────────────────────────────────────────────────────
 
 test('③ 组内排序：颜色按首次出现分组，颜色内尺码按【数字】升序，非数字尺码兜到最后', () => {
   const svg = buildPurchaseRequestSvg({
@@ -209,16 +278,12 @@ test('③ 组内排序：颜色按首次出现分组，颜色内尺码按【数�
   });
   const groups = readGroups(svg);
   assert.deepEqual(rowsOf(groups[0]), [
-    ['黑', '9码', '1'],
-    ['黑', '40码', '1'],
-    ['黑', '41码', '1'],
-    ['黑', '均码', '1'],
-    ['棕', '9码', '1'],
-    ['棕', '40码', '1'],
+    ['黑', '9码×1、40码×1、41码×1、均码×1'],
+    ['棕', '9码×1、40码×1'],
   ]);
   // ⚠️ 字符串序恰好是反的（'40码' < '9码'），所以这条断言就是"按数字排"的钉子。
   assert.ok('40码' < '9码', '对照：字符串序下 40 排在 9 前面');
-  assert.ok(svg.indexOf('>9码</text>') < svg.indexOf('>40码</text>'), '图上 9 码必须排在 40 码前面');
+  assert.ok(svg.indexOf('>9码') < svg.indexOf('40码'), '图上 9 码必须排在 40 码前面');
 });
 
 test('③ 尺码数字序：取「XX码」的数字部分；非数字尺码（均码/XL）一律排到有数字的后面', () => {
@@ -239,16 +304,19 @@ test('③ 尺码数字序：取「XX码」的数字部分；非数字尺码（�
   assert.equal(compareSize('均码', '均码'), 0);
 });
 
-test('① 组内明细行不再重复写货号：每行只有 颜色 | 尺码 | 数量 三格，货号只在分组行出现一次', () => {
+test('① 组内明细行不再重复写货号：每行只有 颜色 | 尺码×数量 两格，货号只在分组行出现一次', () => {
   const svg = buildPurchaseRequestSvg({ supplierName: '金猴', items: ITEMS });
   const groups = readGroups(svg);
   for (const group of groups) {
-    assert.equal(group.cells.length % COLUMNS.length, 0, '每行必须正好 3 格');
-    for (const row of rowsOf(group)) assert.equal(row.length, 3);
+    assert.equal(group.cells.length % COLUMNS.length, 0, `每行必须正好 ${COLUMNS.length} 格`);
+    for (const row of rowsOf(group)) assert.equal(row.length, 2);
   }
   assert.equal((svg.match(/>8088</g) || []).length, 1, '货号只在分组行写一次');
   assert.equal((svg.match(/>A-1366-31</g) || []).length, 1, '货号只在分组行写一次');
   assert.ok(!svg.includes('>货号</text>'), '货号已经变成分组行，表头里不该再有「货号」这一列');
+  // 合并版里「数量」不再是单独一列
+  assert.ok(!svg.includes('>数量</text>'), '「数量」列已经并进「尺码×数量」那一格');
+  assert.equal(COLUMNS.length, 2);
 });
 
 test('① 货号缺失的明细兜底成「未标注货号」分组行，不会被并进上一组', () => {
@@ -261,39 +329,58 @@ test('① 货号缺失的明细兜底成「未标注货号」分组行，不会�
   });
   const groups = readGroups(svg);
   assert.deepEqual(labelsOf(groups), ['8088', UNKNOWN_ITEM_NO]);
-  assert.deepEqual(rowsOf(groups[1]), [['棕色', '37码', '1']]);
+  assert.deepEqual(rowsOf(groups[1]), [['棕色', '37码×1']]);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ④ 合计口径不变
+// ④ 图上不做合计（数量在尺码格里）；summarize 口径原样保留
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('④ 合计口径与改前一致：条数 = 明细行数（一尺码一行），双数 = 数量之和', () => {
+test('④ 图上不再画「合计」行（数量已经写在尺码格里），summarize 口径一个数都不动', () => {
   const svg = buildPurchaseRequestSvg({ supplierName: '金猴', items: ITEMS });
-  assert.ok(svg.includes('合计：3 条 / 6 双'), '合计要同时给条数和总双数');
-  // 「只改怎么画」：summarize / normalizeItems 的口径一个数都不动
+  assert.equal(SHOW_TOTAL, false, '业务负责人 2026-10-06 的口径是「不做合计」');
+  assert.equal(LAYOUT.SHOW_TOTAL, false, '开关在配置里，逻辑不写死');
+  assert.ok(!svg.includes('合计'), '合并版图上不出现「合计」');
+  assert.ok(!svg.includes('条 / '), '也不出现「N 条 / M 双」这种口径');
+
+  // 「只改怎么画」：summarize / normalizeItems 的口径一个数都不动（群文字那条还要用它）
   assert.deepEqual(summarize(normalizeItems(ITEMS)), { rowCount: 3, totalPairs: 6 });
-  // 分组不复制、不丢行：各组明细行加起来 == 原始行数，数量之和 == 原始双数
-  const groups = readGroups(svg);
-  const grouped = groups.flatMap((group) => rowsOf(group));
-  assert.equal(grouped.length, 3);
-  assert.equal(grouped.reduce((sum, row) => sum + Number(row[2]), 0), 6);
+  // 合并不吞数量、不丢行：图上各格 ×N 之和 == 原始双数
+  assert.equal(quantityTotalOf(svg), 6);
+  assert.equal(readGroups(svg).flatMap((group) => rowsOf(group)).length, 2, '3 条明细 → 2 个颜色行');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 布局：列宽、竖线、斑马纹
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('列宽之和必须等于 TABLE_WIDTH（820），且「颜色最长、给最多空间」的思路保留', () => {
+test('列宽之和必须等于 TABLE_WIDTH（820），两列顺序 = 颜色 → 尺码×数量', () => {
   assert.equal(TABLE_WIDTH, 820);
   assert.equal(COLUMNS.reduce((sum, column) => sum + column.width, 0), TABLE_WIDTH, '列宽之和必须 === 820');
-  assert.equal(COLUMNS.length, 3, '分组版是 3 列：颜色 | 尺码 | 数量');
-  assert.deepEqual(COLUMNS.map((column) => column.key), ['color', 'size', 'quantity']);
+  assert.equal(COLUMNS.length, 2, '合并版是 2 列：颜色 | 尺码×数量');
+  assert.deepEqual(COLUMNS.map((column) => column.key), ['color', 'sizeQuantity']);
+  assert.equal(COLUMNS[1].label, `尺码${SIZE_QUANTITY_MULTIPLIER}数量`, '列头由乘法号常量拼出来');
+  // ⚠️ 口径变了：以前"颜色最长、给最多空间"，现在**尺码×数量是正文信息**
+  //（一个颜色的全部尺码都挤在这一格），必须拿到最多宽度；颜色是货品库里的短词。
   const widest = COLUMNS.reduce((best, column) => (column.width > best.width ? column : best));
-  assert.equal(widest.key, 'color', '颜色是唯一的自由文本，必须拿到最多的宽度');
+  assert.equal(widest.key, 'sizeQuantity', '「尺码×数量」要拿最多的宽度');
   for (const column of COLUMNS) {
     assert.equal(column.maxWidth, column.width - CELL_PADDING * 2);
   }
+});
+
+test('格式符号只有一个来源：分隔符「、」与乘法号「×」来自排版配置', () => {
+  assert.equal(SIZE_QUANTITY_SEPARATOR, '、', '业务负责人要的是顿号');
+  assert.equal(SIZE_QUANTITY_MULTIPLIER, '×', '乘法号是 U+00D7，不是字母 x');
+  assert.equal(LAYOUT.SIZE_QUANTITY_SEPARATOR, SIZE_QUANTITY_SEPARATOR);
+  assert.equal(LAYOUT.SIZE_QUANTITY_MULTIPLIER, SIZE_QUANTITY_MULTIPLIER);
+  assert.equal(LAYOUT.SIZE_QUANTITY_LABEL, COLUMNS[1].label);
+  assert.equal(formatSizeQuantity('37码', '1'), `37码${SIZE_QUANTITY_MULTIPLIER}1`);
+
+  const svg = buildPurchaseRequestSvg({ items: MERGED_ITEMS });
+  assert.ok(svg.includes(`>尺码${SIZE_QUANTITY_MULTIPLIER}数量</text>`), '图上的列头也用同一个常量');
+  assert.ok(svg.includes(SIZE_QUANTITY_SEPARATOR), '格里的分隔符就是它');
+  assert.ok(!svg.includes('码x') && !svg.includes('码 x'), '不能退化成字母 x');
 });
 
 test('竖线只画在列头与各组明细那一段，绝不横穿跨列的分组行', () => {
@@ -312,7 +399,7 @@ test('竖线只画在列头与各组明细那一段，绝不横穿跨列的分�
         `竖线 x=${line.x1} 横穿了「${group.label.content}」的分组行（y ${line.y1}~${line.y2}）`);
     }
   }
-  // 每组明细那一段确实有竖线兜住
+  // 每组明细那一段确实有竖线兜住（长度按**颜色行数**算，不是明细条数）
   for (const group of groups) {
     const detailTop = group.band.y + GROUP_ROW_HEIGHT;
     const detailBottom = detailTop + rowsOf(group).length * ROW_HEIGHT;
@@ -321,15 +408,16 @@ test('竖线只画在列头与各组明细那一段，绝不横穿跨列的分�
   }
 });
 
-test('斑马纹保留，改成「分组内」重新起算（每组第 1 行永远是白底）', () => {
+test('斑马纹保留，按**颜色行**在分组内重新起算（每组第 1 行永远是白底）', () => {
   const svg = buildPurchaseRequestSvg({
     supplierName: '金猴',
     items: [
+      // 一个货号三个颜色 → 3 个颜色行（第 2 行起有斑马纹）
       { item_no: '8088', color: '黑', size: 36, quantity: 1 },
-      { item_no: '8088', color: '黑', size: 37, quantity: 1 },
-      { item_no: '8088', color: '黑', size: 38, quantity: 1 },
+      { item_no: '8088', color: '棕', size: 36, quantity: 1 },
+      { item_no: '8088', color: '米', size: 36, quantity: 1 },
       { item_no: 'A-1', color: '棕', size: 39, quantity: 1 },
-      { item_no: 'A-1', color: '棕', size: 40, quantity: 1 },
+      { item_no: 'A-1', color: '黑', size: 40, quantity: 1 },
     ],
   });
   const groups = readGroups(svg);
@@ -353,16 +441,16 @@ test('⑤ 标题文案：采购单 = 「邯美皮鞋采购单」，退货单 = �
   assert.equal(TITLE, '邯美皮鞋采购单');
   assert.equal(RETURN_TITLE, '邯美皮鞋退货单');
 
-  const requestSvg = buildPurchaseRequestSvg({ supplierName: '金猴', batchNo: 'B-1', items: ITEMS });
+  const requestSvg = buildPurchaseRequestSvg({ supplierName: '金猴', batchNo: 'B-1', items: MERGED_ITEMS });
   assert.ok(requestSvg.includes('>邯美皮鞋采购单</text>'), '默认标题必须是「邯美皮鞋采购单」');
   assert.ok(!requestSvg.includes('邯美皮鞋采购申请单'), '旧标题「邯美皮鞋采购申请单」不能再出现');
 
   const returnSvg = buildPurchaseRequestSvg({
-    supplierName: '金猴', batchNo: 'B-1', items: ITEMS, title: RETURN_TITLE,
+    supplierName: '金猴', batchNo: 'B-1', items: MERGED_ITEMS, title: RETURN_TITLE,
   });
   assert.ok(returnSvg.includes('>邯美皮鞋退货单</text>'), '退货标题必须是「邯美皮鞋退货单」');
   assert.ok(!returnSvg.includes('邯美皮鞋采购退货单'), '旧标题「邯美皮鞋采购退货单」不能再出现');
-  // 只换标题：两种单据的分组排版必须一模一样
+  // 只换标题：两种单据的合并排版必须一模一样
   assert.deepEqual(labelsOf(readGroups(returnSvg)), labelsOf(readGroups(requestSvg)));
   assert.deepEqual(rowsOf(readGroups(returnSvg)[0]), rowsOf(readGroups(requestSvg)[0]));
 });
@@ -383,7 +471,7 @@ test('字体显式指定 CJK 字体，中文不会渲染成方框（分组行也
   const svg = buildPurchaseRequestSvg({ supplierName: '金猴', items: ITEMS });
   assert.equal(FONT_FAMILY, 'Noto Sans CJK SC, Noto Serif CJK SC, Noto Sans SC, WenQuanYi Zen Hei, sans-serif');
   const fontAttributes = svg.match(/font-family="[^"]*"/g) || [];
-  assert.ok(fontAttributes.length >= 6, '每个文本节点都要带 font-family');
+  assert.ok(fontAttributes.length >= 5, '每个文本节点都要带 font-family');
   assert.ok(fontAttributes.every((attribute) => attribute.includes('Noto Sans CJK SC')));
   for (const group of readGroups(svg)) {
     assert.equal(group.label.fontFamily, FONT_FAMILY, '分组行也必须带 CJK 字体链');
@@ -394,18 +482,18 @@ test('字体显式指定 CJK 字体，中文不会渲染成方框（分组行也
 // ⑥ 空明细 / 截断 / 转义 / PNG
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('⑥ 空明细不崩：照旧给「本批次没有明细」和 0 条 / 0 双，且不画任何分组行', () => {
+test('⑥ 空明细不崩：照旧给「本批次没有明细」，不画任何分组行、也没有合计', () => {
   for (const items of [[], undefined, null]) {
     const svg = buildPurchaseRequestSvg({ supplierName: '金猴', items });
     assert.ok(svg.startsWith('<svg '));
     assert.ok(svg.includes('本批次没有明细'));
-    assert.ok(svg.includes('合计：0 条 / 0 双'));
+    assert.ok(!svg.includes('合计'));
     assert.deepEqual(readGroups(svg), [], '空明细不该产出一条空的分组行');
     assert.deepEqual(stripesOf(svg), []);
   }
 });
 
-test('超长颜色按列宽截断、超长货号（分组行）也按跨列宽度截断，都不溢出', () => {
+test('超长颜色按列宽截断；超长货号（分组行）按跨列宽度截断；都不溢出', () => {
   const longItemNo = 'A'.repeat(120);
   const longColor = '深'.repeat(60);
   const svg = buildPurchaseRequestSvg({
@@ -418,17 +506,38 @@ test('超长颜色按列宽截断、超长货号（分组行）也按跨列宽�
   assert.ok(groups[0].label.content.endsWith('…') && groups[0].label.content.length < longItemNo.length);
   assert.ok(svg.includes('…'), '截断要有省略号，让人看得出被截了');
 
-  const widthOf = (text, fontSize) => [...text].reduce((sum, char) => sum + charWidth(char, fontSize), 0);
   // 分组行：可画宽度 = TABLE_WIDTH 去掉左右内边距
   assert.ok(
     widthOf(groups[0].label.content, GROUP_FONT_SIZE) <= TABLE_WIDTH - CELL_PADDING * 2,
     `分组行文字宽度超出跨列区域：${groups[0].label.content}`,
   );
-  // 正文颜色单元格：可画宽度 = 列宽 - 32
+  // 正文颜色单元格：可画宽度 = 列宽 - 32（合并版颜色列窄了：240 → 可画 208px = 9 个汉字）
   const colorCell = rowsOf(groups[0])[0][0];
   assert.ok(widthOf(colorCell, BODY_FONT_SIZE) <= COLUMNS[0].width - CELL_PADDING * 2,
     `颜色单元格宽度超出列宽：${colorCell}`);
-  assert.ok(colorCell.endsWith('…') && [...colorCell].length <= 17, `颜色截断过长：${colorCell}`);
+  assert.ok(colorCell.endsWith('…'), `颜色截断要有省略号：${colorCell}`);
+  assert.ok([...colorCell].length <= 10, `颜色截断过长：${colorCell}`);
+});
+
+test('尺码×数量的容量：6 个尺码放得下；再多会按像素宽度截断（有省略号，不是静默溢出）', () => {
+  const sizes = [35, 36, 37, 38, 39, 40, 41, 42, 43];
+  const build = (count) => buildPurchaseRequestSvg({
+    items: sizes.slice(0, count).map((size) => ({ item_no: '6C98012-15L', color: '黑色', size, quantity: 1 })),
+  });
+  const cellOf = (count) => rowsOf(readGroups(build(count))[0])[0][1];
+
+  const six = cellOf(6);
+  assert.equal(six, '35码×1、36码×1、37码×1、38码×1、39码×1、40码×1');
+  assert.ok(!six.includes('…'), '6 个尺码必须全部放得下');
+  assert.ok(widthOf(six, BODY_FONT_SIZE) <= COLUMNS[1].maxWidth);
+
+  // ⚠️ 如实钉住边界：第 7 个尺码起放不下 → 截断＋省略号。
+  // 这是"一眼能看出被截了"的行为，不是静默丢数据；要装下更多尺码得改列宽或换行，
+  // 属于**格式**变更（配置在 config/purchaseRequestImageLayout.js）。
+  const seven = cellOf(7);
+  assert.ok(seven.endsWith('…'), `7 个尺码应当截断并带省略号：${seven}`);
+  assert.ok(widthOf(seven, BODY_FONT_SIZE) <= COLUMNS[1].maxWidth, '截断后不得溢出列宽');
+  assert.ok(seven.startsWith('35码×1、36码×1'), '截断只砍尾巴，前面的尺码照旧');
 });
 
 test('XML 特殊字符被转义，不会被当成标签（分组行与正文行都要转义）', () => {
@@ -442,7 +551,7 @@ test('XML 特殊字符被转义，不会被当成标签（分组行与正文行�
   assert.ok(svg.includes('&lt;黑&gt;'), '正文的颜色也要转义');
 });
 
-test('尺码与合计的口径', () => {
+test('尺码写法与 summarize 的口径', () => {
   assert.equal(formatSize(37), '37码');
   assert.equal(formatSize('37'), '37码');
   // 已经带「码」或不是纯数字的值原样保留，不重复补字
@@ -455,6 +564,8 @@ test('尺码与合计的口径', () => {
   assert.deepEqual(summarize(rows), { rowCount: 2, totalPairs: 3 });
   // 数量和货号都认不出来时按 0 处理，不能算出 NaN 污染合计
   assert.deepEqual(summarize(normalizeItems([{ item_no: '8088', size: 36, quantity: '' }])), { rowCount: 1, totalPairs: 0 });
+  // 数量为 0 也照写出来（图是给供应商看的，不悄悄少写一双）
+  assert.equal(formatSizeQuantity('36码', '0'), `36码${SIZE_QUANTITY_MULTIPLIER}0`);
 });
 
 test('按像素宽度截断：汉字按 1 个字宽算，放不下才加省略号', () => {
@@ -470,7 +581,7 @@ test('按像素宽度截断：汉字按 1 个字宽算，放不下才加省略�
   assert.equal(truncateToWidth(null, 100, 22), '');
 });
 
-test('分组纯函数：groupRowsByItemNo 只重排显示顺序，不增删行', () => {
+test('分组纯函数：groupRowsByItemNo 只重排显示顺序，不增删行（仍是一个尺码一行）', () => {
   const rows = normalizeItems([
     { item_no: 'B', color: '黑', size: 40, quantity: 1 },
     { item_no: 'A', color: '黑', size: 41, quantity: 2 },
@@ -487,7 +598,29 @@ test('分组纯函数：groupRowsByItemNo 只重排显示顺序，不增删行',
   assert.deepEqual(groupRowsByItemNo([]), []);
 });
 
-test('采购申请 PNG：sharp 真的渲染出 900px 宽的 PNG（分组版高度按分组行数变）', async () => {
+test('归并纯函数：mergeSizesByColor 同颜色并一行、尺码数字序、数量一个都不加总', () => {
+  const rows = normalizeItems([
+    { item_no: 'A', color: '黑', size: 41, quantity: 2 },
+    { item_no: 'A', color: '黑', size: 9, quantity: 3 },
+    { item_no: 'A', color: '黑', size: '均码', quantity: 1 },
+    { item_no: 'A', color: '棕', size: 40, quantity: 4 },
+  ]);
+  const merged = mergeSizesByColor(rows);
+  assert.deepEqual(merged, [
+    { color: '黑', sizeQuantity: `9码${SIZE_QUANTITY_MULTIPLIER}3、41码${SIZE_QUANTITY_MULTIPLIER}2、均码${SIZE_QUANTITY_MULTIPLIER}1` },
+    { color: '棕', sizeQuantity: `40码${SIZE_QUANTITY_MULTIPLIER}4` },
+  ]);
+  // 颜色按**首次出现**（输入里 黑 在前 → 黑 那行在前）
+  assert.deepEqual(merged.map((row) => row.color), ['黑', '棕']);
+  // 打乱输入：同一个颜色的格文本必须一模一样（函数自己排尺码，不依赖上游顺序）
+  const shuffled = mergeSizesByColor([rows[2], rows[0], rows[3], rows[1]]);
+  assert.equal(shuffled[0].sizeQuantity, merged[0].sizeQuantity);
+  // 空输入 / 脏输入不炸
+  assert.deepEqual(mergeSizesByColor([]), []);
+  assert.deepEqual(mergeSizesByColor(undefined), []);
+});
+
+test('采购申请 PNG：sharp 真的渲染出 900px 宽的 PNG（高度按分组行 + 颜色行变）', async () => {
   const png = await renderPurchaseRequestPng({ supplierName: '金猴', batchNo: 'BH-20261005-0001', items: ITEMS });
   assert.ok(Buffer.isBuffer(png));
   // PNG 魔数：确认拿到的是图片而不是 SVG 字符串
@@ -497,22 +630,32 @@ test('采购申请 PNG：sharp 真的渲染出 900px 宽的 PNG（分组版高�
   assert.equal(metadata.width, 900);
   assert.ok(metadata.height > 100 && metadata.height < 2000);
 
-  // 加一个货号 = 多一条分组行 + 它的明细行 → 图必须变高（分组行真的占位了）
+  // 加一个货号 = 多一条分组行 + 它的颜色行 → 图必须变高（分组行真的占位了）
   const taller = await renderPurchaseRequestPng({
     supplierName: '金猴',
     items: [...ITEMS, { item_no: '9999', color: '米色', size: 39, quantity: 1 }],
   });
   const tallerMeta = await sharp(taller).metadata();
   assert.equal(tallerMeta.height - metadata.height, GROUP_ROW_HEIGHT + ROW_HEIGHT);
+
+  // 同一个货号加一个**新颜色** = 多一个颜色行（不是多一条分组行）→ 只高一行
+  const extraColor = await renderPurchaseRequestPng({
+    supplierName: '金猴',
+    items: [...ITEMS, { item_no: '8088', color: '米色', size: 39, quantity: 1 }],
+  });
+  const extraColorMeta = await sharp(extraColor).metadata();
+  assert.equal(extraColorMeta.height - metadata.height, ROW_HEIGHT, '新颜色只加一行颜色行');
 });
 
-test('分组版表高：列头 + Σ（分组行 + 明细行），没有隐形空行', () => {
+test('合并版表高：列头 + Σ（分组行 + 颜色行），没有隐形空行', () => {
   const svg = buildPurchaseRequestSvg({ supplierName: '金猴', items: ITEMS });
   const height = Number(/height="(\d+)"/.exec(svg)[1]);
-  const tableHeight = HEADER_ROW_HEIGHT + GROUP_ROW_HEIGHT * 2 + ROW_HEIGHT * 3;
+  // ITEMS：2 个货号各 1 个颜色行 → 2 条分组行 + 2 行正文
+  const tableHeight = HEADER_ROW_HEIGHT + GROUP_ROW_HEIGHT * 2 + ROW_HEIGHT * 2;
   // 表格外框那条 rect 的高度必须正好等于上面算出来的表高
   const frame = parseSvg(svg).find((element) => element.kind === 'rect'
     && element.fill === 'none' && element.y === TABLE_TOP);
   assert.equal(frame.height, tableHeight);
-  assert.ok(height > TABLE_TOP + tableHeight, '合计行在表格下面，整图必须比表格高');
+  // 合计关掉后图就矮了一整条（不留空带）：表格下面只剩底部留白
+  assert.equal(height, TABLE_TOP + tableHeight + LAYOUT.BOTTOM_PADDING);
 });
