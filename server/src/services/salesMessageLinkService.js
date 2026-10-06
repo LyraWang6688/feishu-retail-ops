@@ -70,11 +70,17 @@ class SalesMessageLinkService {
    * @param {string} input.salesEntryRecordId 这个群话题对应的销售主表 record_id
    * @param {string} input.appLink 发送响应里的 `data.message_app_link`（飞书不回带时为空）
    * @param {string} input.replyMessageId 我们刚发出去的那条消息 id（= 链接指向的消息）
+   * @param {boolean} input.storeInBitable 要不要顺手写销售主表「消息链接」列。
+   *   ⚠️ **只有"卖卡片"那条出口才写**（`sendTaskCard` / `replyTaskCard`）；**文字回复一律不写**
+   *   —— 见 `larkMvpService.sendTaskText` 的注释：深链是**话题级**的（同一个话题不管哪条回复
+   *   拼出来都是同一条），卡片那条出口已经写过了；而文字出口里混着"**不猜、不写业务表**"的路径
+   *   （例：多笔未收款占位 / 金额对不上时回一句「有多条待收款」），业务表的写入**不能搭在它上面**。
+   *   本地路由映射（①）不受这个开关影响：**无论写不写表都要记**。
    * @returns {Promise<{record: object|null, storedInBitable: boolean, link: string, linkSource: string}>}
    */
   async rememberFromSend({
     salesEntryRecordId = '', taskId = '', orderNo = '', messageId = '', threadId = '',
-    chatId = '', senderOpenId = '', replyMessageId = '', appLink = '',
+    chatId = '', senderOpenId = '', replyMessageId = '', appLink = '', storeInBitable = true,
   } = {}) {
     const fromSend = String(appLink || '').trim();
     // ② 她给的话题深链格式（chat_id + thread_id 我们都有）；缺 id 时返回空串。
@@ -101,9 +107,18 @@ class SalesMessageLinkService {
       return { record, storedInBitable: false, link: '', linkSource: '' };
     }
 
-    const storedInBitable = await this.writeToSalesEntry({
+    const storedInBitable = storeInBitable ? await this.writeToSalesEntry({
       salesEntryRecordId, url, messageId: replyMessageId || messageId,
-    });
+    }) : false;
+    if (!storeInBitable) {
+      // 如实留一条：这条回复**故意**不碰业务表（本地映射照记），排查时看得出来不是失败。
+      logInfo('sales.message_link.bitable_skipped', {
+        sales_entry_record_id: String(salesEntryRecordId || '').trim(),
+        message_id: String(messageId || '').trim(),
+        link_source: linkSource,
+        reason: 'this_reply_path_does_not_write_the_business_table',
+      });
+    }
     return { record, storedInBitable, link: url, linkSource };
   }
 

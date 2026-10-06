@@ -329,6 +329,28 @@ const wiredService = ({ chatType = 'group', appLink = APP_LINK } = {}) => {
   };
 };
 
+test('🔴 群里发【文字】：本地映射照记，但销售主表一个字段都不写（话题级深链卡片那条已写过）', async () => {
+  // 回归：2026-10-06 CI 红。`sendTaskText` 也走 `bindGroupSaleThread`，于是"回她一句话"
+  // 顺手写了销售主表 —— 而文字这条出口里混着【不猜、不写业务表】的路径（多笔未收款占位 /
+  // 金额对不上时回「有多条待收款」），`salesThreadProgress.test.js` 那条用例的
+  // `updated == []` 保证就被这个不相干的副作用破掉了。深链是**话题级**的（URL 里只有
+  // chat_id + thread_id），卡片那条出口已经写过同一条，文字这条不必再写。
+  const { service, updates, locator, task } = wiredService();
+  await service.sendTaskText(task, '有多条待收款，请先人工核对');
+
+  const record = await locator.findByMessageId('om_her_message');
+  assert.ok(record, '本地路由映射仍然要记（她后面在话题里说话还得认得出来）');
+  assert.equal(record.thread_link, buildSalesThreadLink({ chatId: 'oc_1', threadId: 'omt_1' }));
+  assert.deepEqual(updates, [], '文字这条出口不碰业务表');
+});
+
+test('群里发【卡片】：仍然写「消息链接」（文字那条收紧，不影响卡片那条）', async () => {
+  const { service, updates, task } = wiredService();
+  await service.replyTaskCard(task, { header: {} });
+  assert.equal(updates.length, 1, '售后/结果卡片也是卡片那条出口，照旧写');
+  assert.equal(updates[0].semanticValues[MESSAGE_LINK_FIELD_KEY], APP_LINK);
+});
+
 test('群里发卡片：本地映射有 app_link，销售主表「消息链接」同步写上', async () => {
   const { service, updates, locator, task } = wiredService();
   await service.sendTaskCard(task, { header: {} });

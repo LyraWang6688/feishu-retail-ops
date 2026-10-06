@@ -547,7 +547,13 @@ class LarkMvpService {
   async sendTaskText(task, message) {
     if (task?.chat_type !== 'group') return this.sendText(task.sender_open_id, message);
     const sent = await this.replyTextInThread(task.message_id, message);
-    await this.bindGroupSaleThread(task, sent);
+    // ⚠️ 文字这条出口**只补本地路由映射，不写销售主表**（`storeLink: false`）——两条理由：
+    //   ① 深链是**话题级**的（URL 里只有 chat_id + thread_id，没有 message_id）：同一话题里
+    //      不管哪条回复拼出来都是同一条，**卖卡片那条出口（sendTaskCard）已经写过了**，再写是空转；
+    //   ② 这条出口里混着"**不猜、不写业务表**"的路径（例：多笔未收款占位 / 金额对不上时
+    //      回一句「有多条待收款，请先人工核对」）——业务表的写入**绝不能搭在它上面**，
+    //      否则"一个字都不写"这条保证会被一个不相干的副作用破掉。
+    await this.bindGroupSaleThread(task, sent, { storeLink: false });
     return sent.messageId;
   }
 
@@ -585,8 +591,12 @@ class LarkMvpService {
    * docs/reports/group-message-deep-link-2026-10-06.md 的实测四）——所以这里是唯一的落点。
    * 失败只告警——它只影响"她后面在这个话题里说话能不能被认出来 / 表里那列有没有链接"，
    * 绝不能因此把已经发出去的卡片判失败。
+   *
+   * ⚠️ `storeLink`（默认 true）：**只有卡片那条出口**才写销售主表的「消息链接」列。
+   *    文字出口（`sendTaskText`）传 false —— 理由见那个方法的注释（话题级深链已经写过了，
+   *    且文字出口里有"不猜、不写业务表"的路径）。本地路由映射**任何情况都记**。
    */
-  async bindGroupSaleThread(task, sent = {}) {
+  async bindGroupSaleThread(task, sent = {}, { storeLink = true } = {}) {
     if (task?.chat_type !== 'group') return null;
     try {
       const result = await this.salesMessageLinks.rememberFromSend({
@@ -599,6 +609,7 @@ class LarkMvpService {
         senderOpenId: task.sender_open_id || '',
         replyMessageId: sent?.messageId || '',
         appLink: sent?.appLink || '',
+        storeInBitable: storeLink,
       });
       return result.record;
     } catch (error) {

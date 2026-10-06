@@ -98,6 +98,32 @@ const salesDailyReportCard = ({
 });
 
 /**
+ * 卡片正文（`lark_md`）→ **纯文本**（只给日志 / 自测 / 排查看，不参与任何发送）。
+ *
+ * ⚠️ 这不是"HTML 消毒"，所以**不要**用正则去剥标签：
+ *   · 我们卡片的 markdown 只有两种标记 —— `**加粗**` 与 `<font color='…'>…</font>`；
+ *   · 用一次 `replace(/<[^>]+>/g, '')` 去剥，**剥一次可能又拼出一个标签**（CodeQL 的
+ *     `js/incomplete-multi-character-sanitization` 报的就是这个），而且它管不到全角/嵌套；
+ *   ⇒ 改成**一趟字符扫描**：`<` 到 `>` 之间的丢掉、`*` 丢掉，其余原样。
+ *     扫描是单向的、不会回头再看，所以不存在"剥完又拼出来"的可能。
+ */
+const cardTextPlain = (content) => {
+  const source = String(content == null ? '' : content);
+  let out = '';
+  let inTag = false;
+  for (const char of source) {
+    if (inTag) {
+      if (char === '>') inTag = false;
+      continue;
+    }
+    if (char === '<') { inTag = true; continue; }
+    if (char === '*') continue;
+    out += char;
+  }
+  return out;
+};
+
+/**
  * 卡片的**纯文本预览**（日志 / 自测 / 排查时贴给人看；从同一张卡渲染，不手抄一份免得走样）。
  */
 const salesDailyReportCardText = (card) => {
@@ -106,8 +132,8 @@ const salesDailyReportCardText = (card) => {
   const walk = (elements) => {
     (elements || []).forEach((element) => {
       if (element.tag === 'div') {
-        const content = element.text?.content || '';
-        if (content) blocks.push(content.replace(/\*\*/g, '').replace(/<[^>]+>/g, ''));
+        const content = cardTextPlain(element.text?.content || '');
+        if (content) blocks.push(content);
       } else if (element.tag === 'note') {
         blocks.push((element.elements || []).map((item) => item.content).join(' '));
       } else if (element.tag === 'column_set') {
@@ -115,7 +141,7 @@ const salesDailyReportCardText = (card) => {
           const parts = [];
           (column.elements || []).forEach((child) => {
             if (child.tag === 'div' && child.text?.content) {
-              parts.push(child.text.content.replace(/\*\*/g, '').replace(/<[^>]+>/g, ''));
+              parts.push(cardTextPlain(child.text.content));
             }
           });
           return parts.join(' ');
@@ -128,4 +154,4 @@ const salesDailyReportCardText = (card) => {
   return [title, ...blocks].filter(Boolean).join('\n');
 };
 
-module.exports = { salesDailyReportCard, salesDailyReportCardText, slotLabel };
+module.exports = { salesDailyReportCard, salesDailyReportCardText, cardTextPlain, slotLabel };

@@ -22,7 +22,7 @@ const path = require('node:path');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { SalesDailyReportService, slotMarkerId } = require('../src/services/salesDailyReportService');
 const { resolveSalesDailyReportPushConfig } = require('../src/config/salesDailyReportPush');
-const { salesDailyReportCard, salesDailyReportCardText } = require('../src/utils/salesDailyReportCard');
+const { salesDailyReportCard, salesDailyReportCardText, cardTextPlain } = require('../src/utils/salesDailyReportCard');
 const { readFlag } = require('../src/config/envValue');
 const { startShanghaiDailyScheduler, shanghaiHour } = require('../src/utils/shanghaiDailyScheduler');
 
@@ -299,6 +299,17 @@ test('22 点那条是「当日收官」：标题与页眉色都要和常规分�
   const card = salesDailyReportCard({ dayKey: DAY, hour: 22, isSummary: true, salesCount: 30, salesAmount: 9999 });
   assert.equal(card.header.title.content, '销售战报 · 截止 22:00 · 今日收官');
   assert.equal(card.header.template, 'violet');
+});
+
+test('卡片 markdown → 纯文本预览：加粗与 <font> 都去掉，且剥完不会再"拼"出一个标记', () => {
+  // 这段只给日志/自测看，不是 HTML 消毒。回归：原先用一次 `replace(/<[^>]+>/g,'')` 去剥，
+  // CodeQL 报 js/incomplete-multi-character-sanitization（剥一次可能又拼出一个标签，
+  // 例：「<font<font>>」剥完还剩「<font>」）—— 改成一趟字符扫描后不会再有这种"拼回来"。
+  assert.equal(cardTextPlain("<font color='grey'>销售单数</font>"), '销售单数');
+  assert.equal(cardTextPlain('**¥3280.00**'), '¥3280.00');
+  assert.ok(!cardTextPlain('<font<font>>').includes('<font'), '剥完不该再剩一个完整标签');
+  assert.equal(cardTextPlain('销售 12 单'), '销售 12 单', '不含标记的正文原样保留');
+  assert.equal(cardTextPlain(undefined), '');
 });
 
 test('卡片是飞书交互卡片结构（她要看的是"消息卡片"，不是纯文本）', () => {
