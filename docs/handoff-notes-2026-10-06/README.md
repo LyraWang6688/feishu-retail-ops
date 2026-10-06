@@ -44,7 +44,18 @@
 | [discount__父代理补充-打折判据.md](discount__父代理补充-打折判据.md) | `/private/tmp/discount` | 10-05 22:08 | 「打折」判据（她说透之后补充，当时标注"按这份为准"） |
 | [discount__撤销打折.md](discount__撤销打折.md) | `/private/tmp/discount` | 10-05 22:11 | 🔴 **最新指令**：「**打折**」是父代理编的概念 —— 代码里没有、也不该有；把上一份的「打折」整段删掉；正确规则**只有两条** + 术语纪律 |
 
+### 另有两份「排查报告」（同为笔记类，一并收录）
+
+| 归档文件 | 原 worktree | 时间（+8） | 内容概要 |
+|---|---|---|---|
+| [repro__tmp404-FINDING.md](repro__tmp404-FINDING.md) | `/private/tmp/repro`（`server/tmp404/`） | 10-06 00:07 | **采购退货 404 根因复现与定位**：`table_id` 为空 → URL 打成 `tables//records` → 飞书回 404 纯文本；含抓到的真实 URL、涉及的表（「尺码管理」）与排查脚本清单 |
+| [wsfix__.dsh-probe-FINDINGS.md](wsfix__.dsh-probe-FINDINGS.md) | `/private/tmp/wsfix`（`.dsh-probe/`） | 10-06 12:23 | **本地长连接 0 事件定位**（测试应用机器人在哪些群、消息权限范围、写权限实测）；全程只用项目代码 / 官方 SDK、只写测试 Base |
+
+> ⚠️ 这两份**各有一处遮蔽**：Base 的 `app_token` 值只留前 8 位 + `…`（原文含完整 token，
+> 而 `AGENTS.md` 第 7 条正在治理"不许硬编码 token"）。其余正文一字未改。
+
 ## 没有收录的东西（按规则直接丢弃）
 
 各 worktree 里的 **探测脚本**（`probe*.mjs`、`verify-arrive-3.mjs`）、`node_modules/`、
-`server/.dsh-probe/`、运行期 `data/`、`server/tmp404/` 等**未跟踪杂物**一律**不收集**。
+`server/.dsh-probe/` 的脚本、运行期 `data/`、`server/tmp404/` 的脚本等**未跟踪杂物**一律**不收集**
+（其中的**报告类 `.md` 已如上单独收录**）。
