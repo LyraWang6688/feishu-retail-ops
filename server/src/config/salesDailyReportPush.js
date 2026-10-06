@@ -36,7 +36,11 @@ const DEFAULT_INTERVAL_MS = 10 * 60 * 1000;
 //   仓库里写这一列的代码也一直写「已交付」，见 salesDeliveryService / afterSalesService）。
 // ⇒ 默认**两个都算**：任一行只会命中其中一个，不会重复计数；将来她把选项改名 / 两种并存都不出错。
 // ⚠️ 改了名只改这一个配置，不用改代码。
-const DEFAULT_FULFILLED_STATUSES = Object.freeze(['已履约', '已交付']);
+// ⭐ 业务负责人 2026-10-06 晚【两次强调】：**「只有已交付的选项」** ——
+//    她发来生产表截图确认「履约状态」的选项是 未交付/已交付/已退货/已换货/已赔货，
+//    并说「销售单数 = 销售明细里 履约状态 = 已交付 的条数」。
+//    ⚠️ 不要再把「已履约」加回来（表里没有这个选项）。
+const DEFAULT_FULFILLED_STATUSES = Object.freeze(['已交付']);
 // 「已收款」（「待平台结算」不算收到钱）。
 const DEFAULT_PAYMENT_STATUS = '已收款';
 
