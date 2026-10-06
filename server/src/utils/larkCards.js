@@ -1,3 +1,7 @@
+// 卡片上的按钮动作名从配置读：卡片和分派共用同一份常量，不会各写一份而慢慢写歪。
+// （config 里只有纯常量，不 require 任何 service，所以不会形成循环依赖。）
+const { ARRIVAL_CONVERSATION_ACTIONS } = require('../config/arrivalConversation');
+
 const text = (value) => String(value ?? '').replace(/\n/g, ' ');
 
 // 明细行只写她需要核对的事实：货号、尺码、数量、金额、赠品。
@@ -544,6 +548,68 @@ const purchaseRequestConfirmationCard = (draftId, draft) => {
 //
 // ⚠️ 保留 purchaseStatusCard：报货链路（采购申请处理中/已生成/未完成）还在用它。
 
+// ---------------------------------------------------------------------------
+// 采购到货：群话题对话式核对的确认卡片
+// ---------------------------------------------------------------------------
+//
+// 业务负责人 2026-10-06 的原话：「你就要发一个消息卡片，卡片里面要有「是」和「否」」。
+// 所以这张卡片**两个按钮都要有**（不是只有「是」）。
+// 卡片只是"她说了「完毕」之后的回执 + 触发点"：真正的入库要等她点「是」。
+//
+// `rounds` 是她说的原话（按时间顺序），`rows` 是按她的话算出来的**实际到货**明细
+// （货号 / 颜色 / 尺码 / 实际双数）。卡片上把差异写清楚，她点「是」之前还能核对一遍。
+// 文案从配置读（见 config/arrivalConversation.js），改文案不碰逻辑。
+const arrivalReconcileLines = (rows = [], differences = []) => {
+  // 差异说明按「货号+颜色+尺码」索引：同一行可能既有多又有少，逐条写出来。
+  const diffByKey = new Map();
+  for (const item of differences) {
+    const key = `${text(item.item_no)}|${text(item.color)}|${Number(item.size)}`;
+    if (!diffByKey.has(key)) diffByKey.set(key, []);
+    diffByKey.get(key).push(item);
+  }
+  return rows.map((row) => {
+    const key = `${text(row.item_no)}|${text(row.color)}|${Number(row.size)}`;
+    const diffs = diffByKey.get(key) || [];
+    const parts = diffs.map((item) => {
+      if (item.type === 'more') return `实际比申请多 ${item.quantity} 双`;
+      if (item.type === 'less') return `实际比申请少 ${item.quantity} 双`;
+      return '实际与申请一致';
+    });
+    const detail = parts.length ? parts.join('；') : '（未特别说明，按申请数）';
+    return `**${text(row.item_no) || '（未知货号）'}** ${text(row.color)} ${Number(row.size)} 码：申请 ${Number(row.quantity)} 双 → 实际 ${Number(row.actual)} 双（${detail}）`;
+  });
+};
+
+const purchaseArrivalReconcileCard = ({ taskId, batchNo = '', rows = [], differences = [], copy = {} } = {}) => {
+  const elements = [];
+  if (batchNo) elements.push({ tag: 'markdown', content: `**报货批次号：** ${text(batchNo)}` });
+  elements.push({ tag: 'markdown', content: `**${text(copy.summaryHeading) || '按你说的实际到货'}**` });
+  const lines = arrivalReconcileLines(rows, differences);
+  elements.push({ tag: 'markdown', content: lines.length ? lines.join('\n') : '（这批没有可核对的申请明细）' });
+  // 「是」「否」两个按钮走 column_set：手机上一行两列（见 buttonColumns 的注释）。
+  elements.push(buttonColumns([
+    actionButton(text(copy.confirmLabel) || '是', ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, taskId, 'primary'),
+    actionButton(text(copy.rejectLabel) || '否', ARRIVAL_CONVERSATION_ACTIONS.REJECT, taskId, 'default'),
+  ]));
+  if (copy.hint) elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: text(copy.hint) }] });
+  return {
+    config: { wide_screen_mode: true },
+    header: { template: 'orange', title: { tag: 'plain_text', content: text(copy.title) || '本次到货核对完毕，确认入库吗？' } },
+    elements,
+  };
+};
+
+// 点完「是」/「否」之后把卡片改成终态：按钮收掉，只留一行说明
+//（不给她在同一张卡上再点一次的机会；重复点击在后端仍然幂等）。
+const purchaseArrivalReconcileStatusCard = ({ batchNo = '', message = '', template = 'green' } = {}) => ({
+  config: { wide_screen_mode: true },
+  header: { template, title: { tag: 'plain_text', content: '采购到货核对' } },
+  elements: [
+    ...(batchNo ? [{ tag: 'markdown', content: `**报货批次号：** ${text(batchNo)}` }] : []),
+    { tag: 'note', elements: [{ tag: 'plain_text', content: text(message) }] },
+  ],
+});
+
 
 // options.showNewProducts：原「采购到货确认」结果卡片用它挂新品建档链接。
 // ⚠️ 到货卡片退场后已经没有任何调用方传它了（newProductResultElements 也已删除），
@@ -861,6 +927,9 @@ module.exports = {
   keepOnlyCardButton,
   purchaseRequestConfirmationCard,
   purchaseStatusCard,
+  // 「采购到货：群话题对话式核对」的确认卡片（是 / 否）与终态卡片。
+  purchaseArrivalReconcileCard,
+  purchaseArrivalReconcileStatusCard,
   salesConfirmationCard,
   salesStatusCard,
   sampleReplacementCard,
