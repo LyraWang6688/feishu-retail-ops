@@ -19,6 +19,11 @@
  *   node scripts/backfill-sales-status.mjs --limit 20      # 只看/只改前 20 条命中
  *   node scripts/backfill-sales-status.mjs --env-file <p>  # 额外环境变量文件（默认读 <repo>/.env）
  *
+ * 🔴 2026-10-06 晚：业务负责人把**「确认状态（旧）」整列删除**（飞书删字段 = 连值一起删、
+ *    不可恢复）⇒ 本脚本的**数据源已经不存在**，现在跑必然 0 命中。
+ *    保留它只为留档（口径与硬闸门仍然有效）；不要再把它当成"还能补历史"的手段。
+ *    ⚠️ 因此这里的 `legacyConfirm` 一律读不到值：schema 里已经没有那一列的映射了。
+ *
  * 🔴 硬闸门（写死在脚本里）：
  *   · **目标 Base ≠ 授权的测试 Base（FEISHU_V1_E2E_TEST_APP_TOKEN）或 FEISHU_TARGET_ENV ≠ test 时，
  *     只允许干跑；带 --apply 直接拒绝运行（退出码 2）。**
@@ -79,7 +84,7 @@ const lark = require('@larksuiteoapi/node-sdk');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { V1BitableGateway, textValue } = require('../src/services/v1BitableGateway');
 const {
-  SALES_STATUS_FIELDS, LEGACY_SALES_STATUS_FIELDS,
+  SALES_STATUS_FIELDS,
 } = require('../src/config/salesStatusDimensions');
 const { planSalesStatusBackfill } = require('../src/config/salesStatusBackfill');
 const { getLarkAgentCredentials } = require('../src/config/larkAgent');
@@ -97,6 +102,9 @@ for (const source of envSources) say(`    · ${source}`);
 say(`  目标 Base 是否 = 授权测试 Base（FEISHU_V1_E2E_TEST_APP_TOKEN）：${isAuthorizedTestBase ? '是' : '**不是**'}`);
 say(`  FEISHU_TARGET_ENV：${targetEnv || '（未设置）'}`);
 say(`  模式：${applyRequested ? '真写（--apply）' : '干跑（--dry-run，默认）'}`);
+// 🔴 数据源已经不存在了（2026-10-06 晚，业务负责人把「确认状态（旧）」整列删除，值不可恢复）。
+//    这条横幅是为了让"0 命中"不会被误读成"表里已经没有要回填的记录"。
+say('  ⚠️ 数据源「确认状态（旧）」已被业务负责人整列删除（值不可恢复）⇒ 本脚本必然 0 命中，已无实际作用。');
 
 if (applyRequested && !isAuthorizedTestBase) {
   say('');
@@ -115,7 +123,9 @@ const gateway = new V1BitableGateway({ client });
 const entryFields = gateway.table('salesEntry').fields;
 const fieldOf = {
   orderNo: entryFields.orderNo,
-  legacyConfirm: entryFields.confirmStatus || LEGACY_SALES_STATUS_FIELDS.legacyConfirm,
+  // ⚠️ schema 里**已经没有**「确认状态（旧）」的映射（那一列被她删了）⇒ 恒为空串，
+  //    回填计划必然是 skip_empty_legacy（见文件头的说明）。
+  legacyConfirm: entryFields.confirmStatus || '',
   userAction: entryFields.userAction || SALES_STATUS_FIELDS.userAction,
   funds: entryFields.funds || SALES_STATUS_FIELDS.funds,
 };

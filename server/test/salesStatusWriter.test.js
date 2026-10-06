@@ -24,13 +24,13 @@ test('写语义键：四个维度一次写下去，走 gateway.update（字段�
   const { gateway, updates } = makeGateway();
   const writer = new SalesStatusWriter({ gateway });
   const ok = await writer.write('rec_1', {
-    userAction: '已确认', sales: '已写入', funds: '已写入', stock: '已扣减',
+    userAction: '已确认', sales: '已写入', funds: '已写入', stock: '已写入',
   });
   assert.equal(ok, true);
   assert.deepEqual(updates, [{
     tableKey: 'salesEntry',
     recordId: 'rec_1',
-    values: { userAction: '已确认', sales: '已写入', funds: '已写入', stock: '已扣减' },
+    values: { userAction: '已确认', sales: '已写入', funds: '已写入', stock: '已写入' },
   }]);
 });
 
@@ -39,10 +39,9 @@ test('不认识的键被丢掉：不会把值写到别的字段上去', async ()
   const writer = new SalesStatusWriter({ gateway });
   await writer.write('rec_1', {
     userAction: '已确认',
-    // 旧字段的语义键不在白名单里：停写旧字段这件事必须**由数据结构保证**，
-    // 而不是靠每个调用点记得别写它。
-    confirmStatus: '已入账',
-    orderStatus: '已完成',
+    // 不在白名单里的键一律丢掉：这件事必须**由数据结构保证**，而不是靠每个调用点记得别写。
+    // （旧字段 confirmStatus / orderStatus 连映射都从 schema 删了，谁也写不出去。）
+    founds: '已写入',
     '乱写的键': 'x',
   });
   assert.deepEqual(updates[0].values, { userAction: '已确认' });

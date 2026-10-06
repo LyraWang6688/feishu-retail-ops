@@ -127,7 +127,7 @@ class SecondDeliveryService {
     }
 
     // ② 交付：有未交付明细才交给 deliver（它写「已交付」+ 扣库存流水 + 扣实时库存，
-    //    并在内部同步「订单状态」）。没有未交付明细时只做进度同步，一样不碰库存。
+    //    并在内部重算销售进度——只算、不写任何状态列）。没有未交付明细时只做进度同步，一样不碰库存。
     let deliveryResult = null;
     let progress = null;
     if (undeliveredIds.length) {
@@ -226,7 +226,8 @@ class SecondDeliveryService {
    * 候选单：最近 7 天里「未付 / 预付」且**尚未完成履约**的已入账销售单。
    *
    * 「尚未完成履约」的判据是"我们交货、用户付钱"这两件事有没有都做到，
-   * 也就是进度里的「订单状态」还没到「已完成」——货没交完算没完成，钱没收清算没完成。
+   * 也就是算出来的 `progress.orderStatus` 还没到「已完成」——货没交完算没完成，钱没收清算没完成。
+   * （`progress.orderStatus` 是**算出来的 JS 字段**，不是表里的列：表里的「订单状态」已被业务负责人删除。）
    * 进度是**现算**的（复用销售进度那套纯函数），不看主表上可能过期的派生值。
    */
   async listPendingDeliveries({ now = new Date() } = {}) {

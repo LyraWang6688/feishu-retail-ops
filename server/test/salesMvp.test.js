@@ -17,7 +17,7 @@ const fake = () => {
     record_id: `size_${size}`, fields: { 尺码: size },
   }));
   const records = new Map([
-    ['salesEntry', [{ record_id: 'order_1', fields: { 销售单号: 'XSD-001', '确认状态（旧）': '待确认' } }]],
+    ['salesEntry', [{ record_id: 'order_1', fields: { 销售单号: 'XSD-001', '确认状态': '未确认' } }]],
     ['sizeManagement', sizes],
   ]);
   let seq = 0;
@@ -272,8 +272,9 @@ test('invalid initial receipt cannot silently become unpaid', async () => {
     items: [{ itemNo: 'A100', size: 41, quantity: 1, actualAmount: 100 }],
     payments: [{ method: '微信', amount: '' }] }), /收款金额/);
   assert.equal(gateway.records.get('paymentRecord'), undefined);
-  // 旧「确认状态（旧）」从 2026-10-06 起**停写**：它保持录单时的「待确认」。
-  assert.equal(gateway.records.get('salesEntry')[0].fields['确认状态（旧）'], '待确认');
+  // 「确认状态」（用户那一维）由 larkMvpService 在她点确认时写；这里直接调 SalesOrderService，
+  // 所以它保持夹具里的「未确认」——入账失败**不该**去动她那一维。
+  assert.equal(gateway.records.get('salesEntry')[0].fields['确认状态'], '未确认');
   // 失败进度写在新的两个维度上：明细写上了（已写入），收款一条没成（写入失败）。
   assert.equal(gateway.records.get('salesEntry')[0].fields['销售状态'], '已写入');
   assert.equal(gateway.records.get('salesEntry')[0].fields['资金状态'], '写入失败');
@@ -322,10 +323,9 @@ test('她说了"收了 100"、没说欠：成交即实收，不补未收款，�
   assert.equal(progress.pendingAmount, 0);
   // 成交 = 实收 且 交付完成（配品当场已交付）→ 已完成
   assert.equal(progress.orderStatus, '已完成');
-  // ⚠️ 主表**不再写**「订单状态」（2026-10-06 起 salesProgressService 只算不写）——
-  //    所以这里断言的是新维度写对了，不是旧列被同步了。
+  // ⚠️ 「订单状态」那一列已被业务负责人整列删除；salesProgressService 从 2026-10-06 起
+  //    只算不写。所以这里断言的是**新维度写对了**（progress.orderStatus 只是算出来的 JS 字段）。
   const entry = await gateway.get('salesEntry', 'order_1');
-  assert.equal(entry.fields['订单状态'], undefined);
   assert.equal(entry.fields['销售状态'], '已写入');
   assert.equal(entry.fields['资金状态'], '已写入');
 });
@@ -510,7 +510,8 @@ test('Feishu record_ids link shape reuses an existing order, receipt, and detail
   }
   receipt.fields['关联销售单'] = linked('order_1');
   receipt.fields['交易方式'] = linked('method_微信');
-  (await gateway.get('salesEntry', 'order_1')).fields['确认状态（旧）'] = '入账失败';
+  // 上一次尝试在「资金状态」上留了失败标记（旧「确认状态（旧）」那一列已不存在）。
+  (await gateway.get('salesEntry', 'order_1')).fields['资金状态'] = '写入失败';
 
   const retried = await sale.confirm(input);
   assert.deepEqual(retried.detailRecordIds, first.detailRecordIds);

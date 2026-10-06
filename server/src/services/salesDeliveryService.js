@@ -37,9 +37,9 @@ class SalesDeliveryService {
     );
     if (!entry) throw new Error('销售主表记录不存在');
     const entryFields = this.gateway.table('salesEntry').fields;
-    // 「已入账」的取值来源改走配置（「资金状态」优先，空则退回「确认状态（旧）」）；
-    // 判据与文案一字未改。
-    // ⭐ 判据 = 「账做完了没有」：**两代字面量都算**（旧「已入账」/ 新「已写入」），
+    // 「已入账」的取值来源走配置：**只读「资金状态」**
+    // （旧「确认状态（旧）」已被业务负责人整列删除，没有回退可言）。
+    // ⭐ 判据 = 「账做完了没有」：**两代字面量都算**（她手工填的「已入账」/ 代码写的「已写入」），
     // 配置在 config/salesStatusDimensions（POSTED_VALUES），不在这里散落字符串。
     if (!isPosted(postedOf(entry, entryFields))) throw new Error('销售订单尚未确认入账');
     const fields = this.gateway.table('salesDetail').fields;

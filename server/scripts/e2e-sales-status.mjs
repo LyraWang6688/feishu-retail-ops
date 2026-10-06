@@ -76,7 +76,7 @@ const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { LarkMvpService } = require('../src/services/larkMvpService');
 const { getLarkAgentCredentials } = require('../src/config/larkAgent');
 const {
-  SALES_STATUS_FIELDS, LEGACY_SALES_STATUS_FIELDS, POSTED_VALUES, isPosted,
+  SALES_STATUS_FIELDS, POSTED_VALUES, isPosted,
 } = require('../src/config/salesStatusDimensions');
 
 // ── 硬闸门 ───────────────────────────────────────────────────────────────────
@@ -187,7 +187,6 @@ const readBack = (record) => ({
   sales: textValue(record.fields?.[SALES_STATUS_FIELDS.sales]).trim(),
   funds: textValue(record.fields?.[SALES_STATUS_FIELDS.funds]).trim(),
   stock: textValue(record.fields?.[SALES_STATUS_FIELDS.stock]).trim(),
-  legacy: textValue(record.fields?.[LEGACY_SALES_STATUS_FIELDS.legacyConfirm]).trim(),
 });
 say(`     建单后：${JSON.stringify(readBack(afterCreate))}`);
 
@@ -233,7 +232,8 @@ say(`  确认状态  : '${values.userAction}'   （期望：已确认）`);
 say(`  销售状态  : '${values.sales}'   （期望：已写入）`);
 say(`  资金状态  : '${values.funds}'   （期望：已写入）`);
 say(`  库存状态  : '${values.stock}'   （期望：已扣减）`);
-say(`  确认状态（旧）: '${values.legacy}'   （期望：空 —— 旧字段已停写）`);
+// ⚠️ 「确认状态（旧）」那一列已被业务负责人 2026-10-06 整列删除（值不可恢复），
+//    这里不再读它——所以也断言不了"旧字段已停写"。
 say(`  闸门判据 isPosted(资金状态) = ${isPosted(values.funds)}   （POSTED_VALUES = ${JSON.stringify(POSTED_VALUES)}）`);
 
 const details = (await gateway.listAll('salesDetail'))
@@ -247,8 +247,7 @@ const expectations = [
   ['确认状态', values.userAction, '已确认'],
   ['销售状态', values.sales, '已写入'],
   ['资金状态', values.funds, '已写入'],
-  ['库存状态', values.stock, '已扣减'],
-  ['确认状态（旧）', values.legacy, ''],
+  ['库存状态', values.stock, '已写入'],
 ];
 const failures = expectations.filter(([, actual, expected]) => actual !== expected);
 say('');

@@ -141,8 +141,8 @@ const createWorkbenchService = (gateway, options = {}) => {
           gift: asText(schema, 'salesDetail', record, 'gift'),
           payment_method: [...new Set(receiptRows.map((payment) => relationLabel(schema, 'paymentMethod', paymentsById,
             asLinks(schema, 'paymentRecord', payment, 'method'), 'name')))].filter(Boolean).join('＋') || '未收款',
-          // 取值来源改走配置（「资金状态」优先，空则退回「确认状态（旧）」）；
-          // 判据与原来一致（原来这一步会 trim，这里保持 trim，行为逐字不变）。
+          // 取值来源走配置：**只读「资金状态」**（旧「确认状态（旧）」已被业务负责人整列删除，
+          // 没有回退可言）；判据入口不变（postedOf + isPosted，内部保持 trim）。
           confirmed: isPosted(postedOf(order, schema.tables.salesEntry?.fields)),
         };
       })))

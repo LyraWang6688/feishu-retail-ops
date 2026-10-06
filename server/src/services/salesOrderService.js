@@ -41,10 +41,10 @@ class SalesOrderService {
     if (!salesEntryRecordId) throw new Error('缺少销售主表 record_id');
     if (!Array.isArray(input.items) || !input.items.length) throw new Error('至少需要一条销售明细');
     await this.gateway.validateTables?.(['product', 'paymentMethod', 'salesEntry', 'salesDetail', 'paymentRecord']);
-    // 「入账中」搬到新的四个维度字段上（旧「确认状态（旧）」停写）：
+    // 「入账中」落在四个维度字段上（旧「确认状态（旧）」那一列已被她整列删除）：
     //   · 销售状态 = 未写入（销售明细还没开始写）
     //   · 资金状态 = 未写入（收款明细还没开始写）
-    // 这两列**非空**，所以读那一侧的「新字段优先」会以它们为准，不会误退回旧字段。
+    // 显式写这两列（而不是留空），是为了让"到哪一步了"在表里看得见。
     await this.gateway.update('salesEntry', salesEntryRecordId, { failureReason: '' });
     await this.status.write(salesEntryRecordId, {
       sales: WRITE.sales.none, funds: WRITE.funds.none,

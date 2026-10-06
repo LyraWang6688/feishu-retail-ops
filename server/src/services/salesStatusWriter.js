@@ -13,8 +13,10 @@
 const { logInfo, logWarn } = require('../utils/logger');
 
 // 允许写的语义键（= v1BitableSchema.tables.salesEntry.fields 里的键名）。
-// 白名单式：写错键名（例如把 funds 写成 legacyConfirm）当场被挡下，
+// 白名单式：写错键名（例如把 funds 写成 founds）当场被挡下，
 // 不会静默写到"另一个同名字段"上去。
+// ⚠️ 旧字段（confirmStatus / orderStatus）不在白名单里，而且它们的映射已从 schema 删除
+//    （业务负责人 2026-10-06 把这两列整列删掉）——旧字段彻底没有写入口。
 const STATUS_KEYS = Object.freeze(['userAction', 'sales', 'funds', 'stock']);
 
 class SalesStatusWriter {
@@ -35,8 +37,9 @@ class SalesStatusWriter {
     const payload = {};
     for (const key of STATUS_KEYS) {
       const value = values[key];
-      // 空值 = "这一维这次不写"，不是"把它清空"：清空会让读那一侧的
-      // 「新字段优先、空则退回旧字段」误判成"还没写过"。
+      // 空值 = "这一维这次不写"，不是"把它清空"。
+      // ⚠️ 现在是**单读新字段**（旧字段那两列已被业务负责人删除，没有回退可言）：
+      //    清空只会让这一维看起来"没有值"，没有任何补偿来源。
       if (value === undefined || value === null || value === '') continue;
       payload[key] = value;
     }

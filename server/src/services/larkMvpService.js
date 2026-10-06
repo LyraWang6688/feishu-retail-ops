@@ -823,7 +823,7 @@ class LarkMvpService {
           sender: person(task.sender_open_id),
           parseStatus: '解析中',
           // 建单 = 还没轮到她做任何动作 → 「确认状态」= 未确认。
-          // ⚠️ 旧「确认状态（旧）」从这次起**停写**（她确认过之后要删那一列）。
+          // ⚠️ 旧「确认状态（旧）」那一列已被她 2026-10-06 整列删除，四个维度是唯一入口。
           userAction: WRITE.userAction.pending,
           orderNo,
         });

@@ -49,7 +49,7 @@ const seed = () => ({
   ],
   salesEntry: [{
     record_id: 'order_old',
-    fields: { 销售单号: ORDER_NO, 原话: '卖一双 A100 41 码', 订单状态: '已完成', '确认状态（旧）': '已入账' },
+    fields: { 销售单号: ORDER_NO, 原话: '卖一双 A100 41 码', 销售状态: '已写入', 资金状态: '已写入' },
   }],
   salesDetail: [
     {
@@ -276,14 +276,14 @@ test('退货（cash 退款）：六处写入各一次，原主表一字未动，
   assert.equal(masters[0].fields['原话'], '把那双 A100 退了，鞋没穿过');
   assert.equal(masters[0].fields['销售单号'], ORDER_NO);
   assert.equal(masters[0].fields['解析状态'], '解析成功');
-  // 2026-10-06 起：旧「确认状态（旧）」**停写**；四个状态维度接管。
+  // 2026-10-06 起：只写四个状态维度（旧列已随 schema 删除，写它们会当场抛
+  // 「未配置语义字段」——所以这里不需要、也无法再断言那两个旧列名）。
   // 售后主表只在她点过卡片「确认」之后才会被创建 → 「确认状态」= 已确认；
   // 明细 / 钱 / 库存随后都成功了 → 另外三维都是终态。
-  assert.equal(masters[0].fields['确认状态（旧）'], undefined);
   assert.equal(masters[0].fields['确认状态'], '已确认');
   assert.equal(masters[0].fields['销售状态'], '已写入');
   assert.equal(masters[0].fields['资金状态'], '已写入');
-  assert.equal(masters[0].fields['库存状态'], '已扣减');
+  assert.equal(masters[0].fields['库存状态'], '已写入');
   assert.deepEqual(masters[0].fields['交易类型'], ['behavior_return']);
 
   // 2) 新「销售明细」：交易类型=行为 · 销售单号=原主表 · 成交金额=正数
@@ -295,7 +295,9 @@ test('退货（cash 退款）：六处写入各一次，原主表一字未动，
   assert.equal(details[0].fields['成交金额'], 250);
   assert.deepEqual(details[0].fields['交易类型'], ['behavior_return']);
 
-  // 3) 原明细只改「履约状态」；原主表（含订单状态）逐字段未变
+  // 3) 原明细只改「履约状态」；原主表逐字段未变
+  //    （「订单状态」那一列已被业务负责人删除；原单的「销售状态」今天也**不写**——
+  //      退货补写「销售状态 = 已退货」还没做，等她定。）
   assert.equal(rowsOf(gateway, 'salesDetail')[0].fields['履约状态'], '已退货');
   assert.deepEqual({ ...rowsOf(gateway, 'salesDetail')[0].fields, 履约状态: '已交付' }, beforeDetail);
   assert.deepEqual(rowsOf(gateway, 'salesEntry')[0].fields, beforeEntry);
@@ -341,7 +343,7 @@ test('退货（cash 退款）：六处写入各一次，原主表一字未动，
   assert.deepEqual(gateway.writes.update, { salesDetail: 1, salesEntry: 1 });
   // ⚠️ salesEntry 那一次 update 是 2026-10-06 新加的：把四个状态维度收口
   //    （确认状态=已确认 / 销售状态=已写入 / 资金状态=已写入 / 库存状态=已扣减）。
-  //    它**不写**旧「确认状态（旧）」，所以"原主表一字未动"那条断言仍然成立——
+  //    它**不碰**原单的任何字段，所以"原主表一字未动"那条断言仍然成立——
   //    那里说的"原主表"是**被她退的那一张**（order_old），不是新建的这张。
   assert.deepEqual(gateway.writes.delete, {});
   // 本地闸门：记下"这一次做过"，并记住每个阶段的 record_id
