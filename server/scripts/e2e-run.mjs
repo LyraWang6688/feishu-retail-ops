@@ -812,9 +812,16 @@ const cmdReturn = async () => {
   const ledgerTable = gateway.table('inventoryLedger');
   const ledgerSizeOf = (row) => String(textValue(row.fields?.[ledgerTable.fields.size]));
   const ledgerStockKeyOf = (row) => textValue(row.fields?.[ledgerTable.fields.stockKey]);
+  const ledgerBehaviorCodes = (row) => linkedRecordIds(row.fields?.[ledgerTable.fields.behavior])
+    .map((id) => behaviorByRecord.get(id)?.code || '');
   const requestSizes = new Set(requestRows.map((row) => String(row.size)));
-  const isMine = (row) => requestSizes.has(ledgerSizeOf(row))
-    && ledgerStockKeyOf(row).startsWith(`${productRecordId}|`);
+  // ⚠️ 归属只能用「编号」关联字段：表里的「库存键」是 `货号|颜色|A|尺码`（给人看的），
+  // **不是** record_id —— 一开始拿 `stockKey.startsWith(productRecordId)` 判，
+  // 结果把本次的流水全排除了（B3 那次 `新增流水=[]`）。日志里的 stock_key 又是另一种
+  // 形状（`recId|size|state`），别混用。
+  const isMine = (row) => linkedRecordIds(row.fields?.[ledgerTable.fields.product]).includes(productRecordId)
+    && requestSizes.has(ledgerSizeOf(row))
+    && ledgerBehaviorCodes(row).includes('STOCK_PURCHASE_DECREASE');
   const myLedger = newLedger.filter(isMine);
   const foreignLedger = newLedger.filter((row) => !isMine(row)).map((row) => ({
     record_id: row.record_id, size: ledgerSizeOf(row), stockKey: ledgerStockKeyOf(row),
@@ -935,6 +942,7 @@ const cmdReturn = async () => {
   const minDetailRow = [...requestRows].sort((a, b) => (a.detailId - b.detailId) || String(a.record_id).localeCompare(String(b.record_id)))[0];
   const expectedTotal = qty * records;
   const hasReturnBehavior = ledgerRows.some((row) => row.behavior.some((item) => item.code === 'STOCK_PURCHASE_DECREASE'));
+  const ledgerUnits = ledgerRows.reduce((sum, row) => sum + Math.abs(Number(row.quantityChange || 0)), 0);
   // ④ 逐条记录判：每条记录都必须是「已生成申请」，且它回填的「关联采购申请」
   // 正好等于它自己写出的那几行单据信息。
   const docCountOf = (recordRecordId) => requestRows.filter((row) => row.source_record_id === recordRecordId).length;
@@ -942,16 +950,23 @@ const cmdReturn = async () => {
     && item.request.length === docCountOf(item.record_id) && docCountOf(item.record_id) > 0);
 
   // ③ 的判定要精确到"哪个尺码少了几行、减到 0 的尺码是不是一行不剩"。
-  const planSizes = Array.isArray(task?.return_plan?.sizes) ? task.return_plan.sizes : [];
+  // ⚠️ 计划要**整批**求和：`task.return_plan` 只是批次 owner（第 1 条记录）那一份，
+  // 只读它会在多条同批号时把"该尺码总共该退几双"算少（B4 那次就是这样误判 ③ 的）。
+  const planBySize = new Map();
+  for (const item of batchTasks) {
+    for (const entry of (Array.isArray(item?.return_plan?.sizes) ? item.return_plan.sizes : [])) {
+      const key = String(entry.size);
+      planBySize.set(key, (planBySize.get(key) || 0) + Number(entry.quantity || 0));
+    }
+  }
   const remainingBySize = liveAfter.reduce((acc, row) => {
     acc[row.size] = (acc[row.size] || 0) + 1;
     return acc;
   }, {});
-  const sizeChecks = planSizes.map((entry) => {
-    const key = String(entry.size);
+  const sizeChecks = [...planBySize.entries()].map(([key, taken]) => {
     const before = liveBefore.filter((row) => row.size === key).length;
     const after = remainingBySize[key] || 0;
-    return { size: entry.size, before, taken: entry.quantity, after, expectedAfter: before - entry.quantity };
+    return { size: Number(key), before, taken, after, expectedAfter: before - taken };
   });
   const sizeCheckOk = sizeChecks.length > 0
     && sizeChecks.every((item) => item.after === item.expectedAfter)
@@ -978,7 +993,7 @@ const cmdReturn = async () => {
     },
     {
       id: '③',
-      text: `「实时库存」对应尺码减少：被退的 ${expectedTotal} 行消失；减到 0 的尺码不再有行`,
+      text: `「实时库存」对应尺码减少：被退的 ${expectedTotal} 行消失；减到 0 的尺码不再有行（按**整批**冻结计划核对）`,
       pass: removedLive.length === expectedTotal && sizeCheckOk,
       evidence: `消失行=${JSON.stringify(removedLive.map((r) => ({ id: r.record_id, size: r.size, state: r.state })))}；按尺码核对=${JSON.stringify(sizeChecks)}；剩余行=${JSON.stringify(liveAfter.map((r) => ({ id: r.record_id, size: r.size, state: r.state })))}`,
     },
@@ -1008,9 +1023,13 @@ const cmdReturn = async () => {
     checks.push({
       id: '①b',
       text: `同批次号 ${records} 条记录 → 归批窗口把它们认成**一批**：只出 1 张 PNG、只发 1 次群`,
-      pass: outbox.images.length === 1 && imageMessages.length === 1 && ledgerRows.length === expectedTotal
-        && otherTasks.every((item) => item?.status !== 'failed'),
-      evidence: `批次号=${batchNo}；同批记录=${JSON.stringify(createdIds)}；PNG=${outbox.images.length} 张；群图片消息=${imageMessages.length} 条；同批其余任务状态=${JSON.stringify(otherTasks.map((item) => item?.status))}`,
+      // 判据只看「一批」的信号：1 张 PNG、1 条群图、1 条群文字、以及整批的双数对得上。
+      // ⚠️ 不拿流水**行数**判：实现是「一个尺码一行、变动数量=该尺码双数」，
+      // 行数天然可能少于双数（那是 ② 的 substance 要讲的）。
+      pass: outbox.images.length === 1 && imageMessages.length === 1
+        && ledgerUnits === expectedTotal
+        && otherTasks.length === records - 1 && otherTasks.every((item) => item?.status === 'completed'),
+      evidence: `批次号=${batchNo}；同批记录=${JSON.stringify(createdIds)}；PNG=${outbox.images.length} 张；群图片消息=${imageMessages.length} 条；群文字消息=${textMessages.length} 条；整批流水变动数量合计=${ledgerUnits} 双（= 每条 ${qty} × ${records} 条）；同批其余任务状态=${JSON.stringify(otherTasks.map((item) => item?.status))}`,
     });
   }
 
