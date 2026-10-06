@@ -124,8 +124,8 @@ test('默认配置：9/12/15/18/21 + 22 点收官、默认关、没有群、口�
   assert.equal(config.summaryHour, 22);
   assert.deepEqual(config.slots, [9, 12, 15, 18, 21, 22]);
   assert.equal(config.intervalMs, 600000);
-  // 她逐字说「已履约」，真表里的选项叫「已交付」——默认两个都算（不会重复计数）。
-  assert.deepEqual(config.fulfilledStatuses, ['已履约', '已交付']);
+  // 她 2026-10-06 晚两次强调「只有已交付的选项」（生产表该列选项 = 未交付/已交付/已退货/已换货/已赔货）。
+  assert.deepEqual(config.fulfilledStatuses, ['已交付']);
   assert.equal(config.paymentStatus, '已收款');
   assert.deepEqual(config.chatIds, [], '没配群就是空（绝不回落到私聊）');
 });
