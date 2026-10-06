@@ -42,13 +42,13 @@
 
 | # | 标准 | 状态 | 证据 / 卡在哪 |
 | --- | --- | --- | --- |
-| ① | 同一个批次号只用一张图片 | 🔄 进行中 | **要"两条同批号的记录"才验得了**：归批窗口逻辑已在 `origin/main`，但自测脚本还只会写 1 条。`--records/--gap-ms/--batch-no` 正在另一个 worktree 里改（未提交） |
+| ① | 同一个批次号只用一张图片 | ✅ 已验证 | **2 条同「报货批次号」的退货记录 → 1 张 PNG**：`images.render` 1 次、`im.image.create` 1 次；「单据信息」新增 2 行（39 码 ×1 / 47 码 ×1，`reczz28K2yuRGrA8` / `reczz28K2zxTP2Cm`）；发群 1 次 = 顶层图片 + @经办人文字**回复第 1 条**（`text_is_reply:true`）；图上两个货号在同一张分组表；`purchase.return.batch.posted {record_count:2,item_count:2,doc_count:2}`。记录 id `reczz28K2xTmWzyB` / `reczz28K2xWg9BWM`。**反向用例**：不同批次号那条没被并进去、另起一张图（两批并发各吃各的批次号）。⚠️ PNG 在 `/tmp/verify-return-batch/`，会随重启消失 |
 | ② | 图片是最新格式 | ✅ 已验证 | `server/data/selftest/runs/reczz28K2VoBMctW/return-order.png`（900×450，29128 bytes）：按货号分组、3 列、合计 2 条/2 双 |
 | ③ | 缺供应商也没问题 | ✅ 已验证 | 同一次 run（`reczz28K2VoBMctW`）：`draft.items[].supplier_record_id = ""`，图上**不画**「供应商：」那行，**照样出单** |
 | ④ | 标题改了 | ✅ 已验证 | 图上是「**邯美皮鞋退货单**」（旧文案是「邯美皮鞋采购退货单」）；代码 `purchaseRequestImageService.js:36` = `RETURN_TITLE` |
 | ⑤ | 退货后「单据信息 / 库存流水 / 实时库存」都减少 | ✅ 已验证 | 4 次 run 的 `report.json checks ①②③` 全 `pass`；本次取 `reczz28K2VoBMctW`：单据信息 +2 行、库存流水 +2 行（`STOCK_PURCHASE_DECREASE`）、实时库存 −2 行 |
-| ⑥ | 采购申请数量非 1 时 AI 能识别、单据信息同步增加 | 🔄 进行中 | 模型 key 已配好（`TEXT_LLM_API_KEY` / `TEXT_LLM_BASE_URL=api.deepseek.com` / `TEXT_LLM_MODEL=deepseek-chat`）；入口脚本当前**没有**"采购申请"模式（只有 `setup` / `inspect` / `return`），正在测 |
-| ⑦ | 在一个话题内，而不是单独的消息 | 🔄 进行中 | 要"真发到测试群"才算；已查出障碍：自测工具 `server/scripts/e2e-run.mjs` 的 IM 替身**缺 `reply` 方法** → `this.client.im.message.reply is not a function`（4/4 次 run 的 `task.json` 都记到了这条）。**正在修** |
+| ⑥ | 数量不是默认 1 时 AI 能否准确识别、单据信息是否同步增加 | ✅ 已验证（用她真实数据） | **R1「不写数量说明」（她 39/40 条的主路径）**：勾 40/42/43 → 每码各 1 双、单据信息 3 行（1/1/1）；**一行 AI 都没调**（留空时 `purchaseQuantityPolicy.buildPurchaseQuantities` 直接返回每码 1）。**R1B 不写 + 货品无供应商**：照常出单出图，图上分组名「未标注供应商」。**R2「42码两双」（她唯一写过的那句，原样照抄）**：模型原文 `{"items":[{"size":42,"quantity":2}]}` → 单据信息 3 行 = 40 码 1 / 42 码 2 / 43 码 1（**其余两码由后端规则补 1**，`purchaseQuantityPolicy.js:63-66`）。⚠️ 另附：父代理编的 11 个用例 7/11（「1 双」「一双」「10 双」失败，根因是 `doubaoService.js` 提示词规则 1/2 让模型把「1 双」当成默认不输出）——**但那几种说法在她的真实数据里 0 条** |
+| ⑦ | 是否在一个话题内而不是单独消息 | ✅ 已验证 | ⭐ **真发到测试群验的**：顶层图片 `thread_id = omt_19a12fedcccf9c9c`，用 `im.message.reply` 回复后 **`thread_id` 完全相同**、`parent_id`/`root_id` 均指向那张图；并用 `im.message.get` **读回**验证（不只看发送响应）；文字版同样（`omt_19a12fdefb4fdcb0`）。假 IM 侧另证 `text_is_reply:true`。⚠️ `reply_in_thread:true` 无差异（该群本身是话题群）。⚠️ **不是单次全链路**——是「代码路径（假 IM 日志）」＋「真 SDK 行为」两段拼合 |
 | ⑧ | 环境隔离：不碰生产表 / 凭证 / 群聊，只用测试侧 | ✅ 已验证 | 4 次 run 的 `report.json.base_app_token` 都等于本机 `FEISHU_V1_E2E_TEST_APP_TOKEN`；本机 `LARK_AGENT_APP_ID` = 测试应用；群里发的是 `PURCHASE_CHAT_ID`（测试群）；脚本里还有"app_token 等于生产 → 拒绝运行"的代码级闸门 |
 
 **一句话结论**：8 条里 **5 条已验证达标**（②③④⑤⑧），**3 条仍在进行中**（①⑥⑦），
@@ -264,3 +264,19 @@
    `server/data/selftest/runs/` 里**没有保存 stdout**，所以这句是**引用**，不是我这次抓到的日志。
 3. **"同批次号只出一张图"在真机上的最终证据**：要用测试群真发一次才算，本轮**未做**。
 4. **落后 17 个提交**这个数字：**引用本轮交接记录**；我只实测了当前差距 = 0。
+
+---
+
+## 真实数据取证（2026-10-06，只读）
+
+- ⭐ **生产「供应商对接」全表 40 条：数量说明空 39 条 / 「42码两双」1 条**（**97.5% 不写**）。唯一那条 = `reczz28K07O8o4SW`（货品 `31678|黑色|A`、尺码 40,42,43、三星），**链路解析正确**（40→1 / 42→2 / 43→1）。
+- ⭐ **生产「单据信息」114 条：1 双 ×113 / 2 双 ×1；最大 2 双**；无两位数、无 0、无小数。真实货品×尺码组合 40 组，尺码覆盖 37~46。
+- ⭐ **"缺供应商"有真实实例**：`reczz28JzxXFZLLQ`（货品 `1366-12|黑色|B` 无供应商）—— 报单照样跑通。⚠️ 「供应商对接」表的「供应商」是 **Lookup**（从货品带出），**货品表 528 条里 175 条（33.1%）无供应商**。
+- ⚠️ **父代理编造的测试说法，在真实数据里 0 条命中**：`2.5 双` / `0 双` / `1 双`（阿拉伯）/ `共 5 双` / `10 双` 全为 0；`3 双`（带空格）半编（仅 1 条销售原文「卖了3双」）；`两双` 真实存在。⭐ **"共/总共"她只用于钱，从不用于鞋数**。⇒ 那些编的字符串**只存在于测试 Base（`SELFTEST-*`），没有一条进生产**。
+- ⚠️ 脱敏：经办人 open_id 只做 SHA-256 指纹比对，未记录值；未打印任何 token / secret。
+- ⇒ **纪律见 `AGENTS.md` 第 10 条（测试的输入数据从哪来）**。
+
+## 两个待办（本轮发现，未修）
+
+1. 🔴 **`readReportBehaviorKind` 没有重试**（`purchaseWebhookService.js:1486`）：第一句 `gateway.get('purchaseReport', recordId)` 无 try/catch、无重试；而同文件的 `readReportBatchNo`（`:544`）有完整重试（空值也重试）。后果：**"事件到了但记录还没就绪"→ 分流第一步就抛 → 整条任务 failed**；而报货是**免确认**链路，**失败没有卡片提示 = 静默**。建议照 `readReportBatchNo` 补一次重试，或失败时群里说一声。
+2. ⚠️ **提示词「1 双」缺口**（`doubaoService.js` 的 `parsePurchaseReportText` 规则 1/2）：真实数据里 0 条，**优先级由业务负责人定**。
