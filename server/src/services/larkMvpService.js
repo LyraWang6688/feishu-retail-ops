@@ -36,6 +36,8 @@ const { PurchaseBatchLocator } = require('./purchaseBatchLocator');
 const { extractBatchNos } = require('./purchaseBatchNo');
 // 「群话题 ↔ 销售记录」的本地路由映射（只写本地，不写业务表，见服务的注释）。
 const { SalesGroupThreadLocator } = require('./salesGroupThreadLocator');
+// 「消息深链存哪儿」的唯一落点（本地映射 + 销售主表「消息链接」列，见服务的注释）。
+const { SalesMessageLinkService } = require('./salesMessageLinkService');
 // 「这条群消息归销售还是采购」的分派（独立 service；本类只做接线）。
 const { SalesGroupFlowService } = require('./salesGroupFlowService');
 // 「话题里的二次处理识别」（②：未付 / 预付的进展同步；独立 service，本类只做接线）。
@@ -209,6 +211,13 @@ class LarkMvpService {
     //    机器人要能从话题反查回那笔销售，仍然需要这份**本地**路由映射（见服务注释）。
     this.salesGroupThreads = options.salesGroupThreads || new SalesGroupThreadLocator({
       store: options.salesGroupThreadStore,
+    });
+    // 「把消息深链存到该存的两处」的唯一落点。业务负责人 2026-10-06 要的：
+    // 本地映射（机器人回查用）＋ 销售主表「消息链接」列（她在表里点）。
+    // ⚠️ 链接只可能在**发送响应**里出现（实测当前不回带），所以它挂在"我们发卡片/文字的那一刻"上。
+    this.salesMessageLinks = options.salesMessageLinks || new SalesMessageLinkService({
+      locator: this.salesGroupThreads,
+      gateway: this.gateway,
     });
     // @ 判据用的机器人 open_id：**只从配置读，不写死**（见 config/groupPurchase）。
     // 启动时解析一次：解析结果只影响"这条群消息理不理"，不会影响私聊的既有行为。
@@ -410,8 +419,11 @@ class LarkMvpService {
    * `im.message.reply` 的 `data.reply_in_thread`），**不新引 SDK、也不换调用方式**：
    * 私聊那条路一个字段都不加，payload 与改动前完全一样。
    *
-   * 返回值统一是 `{ messageId, threadId }`：`replyText` / `replyCard` 只取 messageId，
-   * 群里那两条路还要 thread_id 去记「话题 ↔ 销售」的本地映射。
+   * 返回值统一是 `{ messageId, threadId, appLink }`：`replyText` / `replyCard` 只取 messageId，
+   * 群里那两条路还要 thread_id 去记「话题 ↔ 销售」的本地映射，`appLink` 是**消息深链**——
+   * ⭐ `message_app_link` 只可能在**发送响应**里出现（历史消息一定取不回来）；实测 2026-10-06
+   * **这个应用当前连发送响应都不回带**（见 docs/reports/group-message-deep-link-2026-10-06.md 实测四），
+   * 但哪天回带了，"发出去的那一刻"就是唯一能拿到它的时刻，所以现在就把它交回给调用方。
    */
   async replyMessage(messageId, { msgType, content, failureLabel, inThread = false }) {
     const data = { msg_type: msgType, content };
@@ -421,6 +433,7 @@ class LarkMvpService {
     return {
       messageId: response.data?.message_id || '',
       threadId: response.data?.thread_id || '',
+      appLink: response.data?.message_app_link || '',
     };
   }
 
@@ -534,7 +547,13 @@ class LarkMvpService {
   async sendTaskText(task, message) {
     if (task?.chat_type !== 'group') return this.sendText(task.sender_open_id, message);
     const sent = await this.replyTextInThread(task.message_id, message);
-    await this.bindGroupSaleThread(task, sent);
+    // ⚠️ 文字这条出口**只补本地路由映射，不写销售主表**（`storeLink: false`）——两条理由：
+    //   ① 深链是**话题级**的（URL 里只有 chat_id + thread_id，没有 message_id）：同一话题里
+    //      不管哪条回复拼出来都是同一条，**卖卡片那条出口（sendTaskCard）已经写过了**，再写是空转；
+    //   ② 这条出口里混着"**不猜、不写业务表**"的路径（例：多笔未收款占位 / 金额对不上时
+    //      回一句「有多条待收款，请先人工核对」）——业务表的写入**绝不能搭在它上面**，
+    //      否则"一个字都不写"这条保证会被一个不相干的副作用破掉。
+    await this.bindGroupSaleThread(task, sent, { storeLink: false });
     return sent.messageId;
   }
 
@@ -563,16 +582,24 @@ class LarkMvpService {
   }
 
   /**
-   * 记下「这条话题 ↔ 这笔销售」的**本地**映射（不写业务表）。
+   * 记下「这条话题 ↔ 这笔销售」的路由映射，并把**消息深链**存到该存的两处
+   * （本地映射 + 销售主表「消息链接」列，见 SalesMessageLinkService）。
    *
    * 时机就是"我们第一条回复发出去之后"：`reply_in_thread` 的响应里才带 thread_id
-   * （普通群里这个话题是**我们这条回复**创建的）。失败只告警——它只影响"她后面在
-   * 这个话题里说话能不能被认出来"，绝不能因此把已经发出去的卡片判失败。
+   * （普通群里这个话题是**我们这条回复**创建的）。`message_app_link` 一旦飞书回带，就只有
+   * "发出去的那一刻"能拿到（实测 2026-10-06：这个应用当前**根本不回带**，见
+   * docs/reports/group-message-deep-link-2026-10-06.md 的实测四）——所以这里是唯一的落点。
+   * 失败只告警——它只影响"她后面在这个话题里说话能不能被认出来 / 表里那列有没有链接"，
+   * 绝不能因此把已经发出去的卡片判失败。
+   *
+   * ⚠️ `storeLink`（默认 true）：**只有卡片那条出口**才写销售主表的「消息链接」列。
+   *    文字出口（`sendTaskText`）传 false —— 理由见那个方法的注释（话题级深链已经写过了，
+   *    且文字出口里有"不猜、不写业务表"的路径）。本地路由映射**任何情况都记**。
    */
-  async bindGroupSaleThread(task, sent = {}) {
+  async bindGroupSaleThread(task, sent = {}, { storeLink = true } = {}) {
     if (task?.chat_type !== 'group') return null;
     try {
-      return await this.salesGroupThreads.rememberSaleThread({
+      const result = await this.salesMessageLinks.rememberFromSend({
         salesEntryRecordId: task.sales_entry_record_id || '',
         taskId: task.task_id,
         orderNo: task.posting_result?.sourceNo || '',
@@ -581,7 +608,10 @@ class LarkMvpService {
         chatId: task.chat_id || '',
         senderOpenId: task.sender_open_id || '',
         replyMessageId: sent?.messageId || '',
+        appLink: sent?.appLink || '',
+        storeInBitable: storeLink,
       });
+      return result.record;
     } catch (error) {
       logWarn('sales.group.thread.remember_failed', { task_id: task.task_id, error: error.message });
       return null;

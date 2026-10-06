@@ -15,7 +15,8 @@ const { logInfo, logWarn } = require('../utils/logger');
 //     （最近 7 天里未付 / 预付且尚未完成履约的已入账销售单）。口径只有一处实现，
 //     这里一个字都不重写——将来口径变了（比如窗口从 7 天改成 10 天），改那一处即可。
 //   · 「这笔单当初是哪条群消息」= `SalesGroupThreadLocator`（本地映射，不写业务表）。
-//   · 「深链怎么来」= `LarkMessageLinkResolver`（拿不到就返回空，**绝不自己拼 URL**）。
+//   · 「深链怎么来」= `LarkMessageLinkResolver`（**只认真链接**：本地存的 → 现查；
+//     拿不到就返回空，**绝不自己拼 URL**——运营兜底模板那个口子 2026-10-06 已删）。
 //     ⚠️ 深链今天**基本拿不到**，原因与后续方案见
 //     `docs/reports/group-message-deep-link-2026-10-06.md`。
 //
@@ -46,7 +47,6 @@ class PendingDealPushService {
     this.resolver = options.resolver || new LarkMessageLinkResolver({
       client: this.client,
       lookupEnabled: this.settings.linkLookupEnabled,
-      template: this.settings.linkTemplate,
     });
     // 群 id：显式传了就用它（测试注入）；传 `undefined` = 按配置每次现读。
     this.chatId = options.chatId;
@@ -81,7 +81,9 @@ class PendingDealPushService {
           return null;
         });
       const { url, source } = await this.resolver.resolve({
+        // 飞书深链优先；没有就用**按她给的话题格式拼的那条**（今天真正管用的一条）。
         storedAppLink: record?.app_link,
+        storedThreadLink: record?.thread_link,
         messageId: record?.message_id,
         threadId: record?.thread_id,
         chatId: record?.chat_id,

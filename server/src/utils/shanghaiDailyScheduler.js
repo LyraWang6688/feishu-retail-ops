@@ -1,6 +1,12 @@
 const { logError, logInfo } = require('./logger');
 
-// 「过了当天某个**北京时间**整点就调一次 run」的通用轮询器。
+// 「过了当天某个（或某几个）**北京时间**整点就调一次 run」的通用轮询器。
+//
+// 两种用法：
+//   · `hour: 9` —— 一天一趟（未付/预付那一条推送用的是它）；
+//   · `hours: [9,12,15,18,21,22]` —— 一天多趟（销售战报）。多趟时**只判断"到没到最早那个整点"**，
+//     "这一趟是哪个时段、推过没有、过期的时段要不要补"**全由调用方按时段认领**
+//     —— 定时器不认识"战报"这种业务语义（解耦）。
 //
 // 为什么用 setInterval 而不是 cron / node-cron：
 //   · 仓库刻意不引新依赖，这类需求只要"每天跑一次"这么点；
@@ -24,31 +30,38 @@ const shanghaiHour = (now) => new Date(now.getTime() + SHANGHAI_OFFSET_MS).getUT
  * @param {object} options
  * @param {(input: {now: Date}) => any} options.run 到点后要跑的事（自己负责"今天跑过没有"）
  * @param {string} options.eventPrefix 日志事件前缀（例 `sales.pending_deal_push.reminder`）
- * @param {number} options.hour 北京时间整点（0–23）
+ * @param {number} [options.hour] 北京时间整点（0–23）——单整点的用法，与 `hours` 二选一
+ * @param {number[]} [options.hours] 多个整点（例销售战报的 9/12/15/18/21/22）——
+ *   到其中**任何一个**整点之后每个 tick 都会调一次 `run`，
+ *   ⚠️ "这个时段推过没有 / 过期的时段要不要补"**由调用方自己按时段认领**
+ *   （本文件只负责"到点了就叫他"，不做任何时段语义）
  * @param {number} [options.intervalMs] 轮询间隔，默认 10 分钟
  * @param {() => number} [options.now] 取当前毫秒时间戳（测试注入）
  */
 const startShanghaiDailyScheduler = ({
-  run, eventPrefix, hour, intervalMs = 10 * 60 * 1000, now = () => Date.now(),
+  run, eventPrefix, hour, hours, intervalMs = 10 * 60 * 1000, now = () => Date.now(),
 } = {}) => {
   if (typeof run !== 'function') throw new Error(`${eventPrefix || '每日推送'}缺少 run 回调`);
   const resolvedIntervalMs = Number(intervalMs);
   if (!Number.isFinite(resolvedIntervalMs) || resolvedIntervalMs <= 0) {
     throw new Error(`${eventPrefix || '每日推送'}的 intervalMs 无效`);
   }
-  const resolvedHour = Number(hour);
-  if (!Number.isInteger(resolvedHour) || resolvedHour < 0 || resolvedHour > 23) {
-    throw new Error(`${eventPrefix || '每日推送'}的 hour 必须是 0~23 的整数`);
+  const rawHours = Array.isArray(hours) && hours.length ? hours : [hour];
+  const resolvedHours = [...new Set(rawHours.map((value) => Number(value)))].sort((left, right) => left - right);
+  if (!resolvedHours.length || resolvedHours.some((value) => !Number.isInteger(value) || value < 0 || value > 23)) {
+    throw new Error(`${eventPrefix || '每日推送'}的 hour / hours 必须是 0~23 的整数`);
   }
+  // 最早的那个整点：没到它之前每个 tick 直接返回，省掉无意义的调用。
+  const earliestHour = resolvedHours[0];
 
   logInfo(`${eventPrefix}.started`, {
-    hour: resolvedHour, interval_ms: resolvedIntervalMs, timezone: 'Asia/Shanghai',
+    hours: resolvedHours, interval_ms: resolvedIntervalMs, timezone: 'Asia/Shanghai',
   });
 
   const tick = async () => {
     try {
       const startedAt = now();
-      if (shanghaiHour(new Date(startedAt)) < resolvedHour) return;
+      if (shanghaiHour(new Date(startedAt)) < earliestHour) return;
       await run({ now: new Date(startedAt) });
     } catch (error) {
       logError(`${eventPrefix}.tick_failed`, { error: error.message });

@@ -70,7 +70,8 @@ curl（末尾加 `.md?lang=zh-CN` 拿纯文本）：
 ⚠️ 有意思的是：**SDK 的类型声明里有** `message_app_link`
 （`node_modules/@larksuiteoapi/node-sdk/types/index.d.ts` 里 `create` / `reply` / `get` / `list`
 的返回类型都有），但**文档与实测**都对不上 `get`/`list`。
-最自洽的解释：消息对象 schema 是共用的，**只有发送接口真的会填它**。
+一开始的推测是"消息对象 schema 是共用的，**只有发送接口真的会填它**" ——
+⚠️ **这个推测在实测四里被证伪了**（发送接口也没填）。
 
 AppLink 协议（把 `…/sitemap/sitemap.xml` 拉下来，过滤出全部 34 条 applink 文档）：
 `open-a-native-app` · `open-an-approval-page` · `open-a-bot` · `open-a-chat-page` ·
@@ -83,33 +84,91 @@ AppLink 协议（把 `…/sitemap/sitemap.xml` 拉下来，过滤出全部 34 �
 协议：https://applink.feishu.cn/client/chat/open
 参数：openId（否）· openChatId（否，oc_ 开头）——「openID 与 openChatId 仅能填写其中一个参数」
 ```
-⇒ 只能**打开群**，**定位不到某条消息，也进不了某个话题**。
+⇒ 只能**打开群**，**定位不到某条消息，也进不了某个话题**（2026-10-06 晚又 curl 复核过一遍，没变）。
+
+## 🔴 实测四（2026-10-06 晚 · 验证"发送响应里到底有没有"）
+
+**结论：这个应用当前一次都没拿到过 `message_app_link` —— 发送接口也没有。**
+
+做法：用**项目代码 / 项目 SDK**（测试应用凭证，**不是飞书 CLI**）在**测试群**
+`oc_9f2cb1…` 里真发了 6 条，把响应的 `data` 键**逐个打出来**：
+
+| 调用 | `data` 里有什么 | `message_app_link` |
+| --- | --- | --- |
+| `im.message.create`（主聊天，文本） | body, chat_id, create_time, deleted, message_id, msg_type, sender, thread_id, update_time, updated | **没有这个键** |
+| `im.message.create`（主聊天，interactive 卡片） | 同上 | **没有这个键** |
+| `im.message.reply`（不进话题，文本） | …+ parent_id, root_id | **没有这个键** |
+| `im.message.reply`（进话题 `reply_in_thread:true`，文本） | …+ parent_id, root_id | **没有这个键** |
+| `im.message.reply`（进话题，interactive 卡片）⭐ 销售卡片走的就是这条 | …+ parent_id, root_id | **没有这个键** |
+| `im.message.get`（刚发出去的那两条，带 / 不带 `with_app_link`） | items[0] 有 message_position / thread_id / thread_message_position | **没有这个键** |
+
+⇒ ⚠️ 光靠"发消息那一刻存 `message_app_link`"这条路**今天是空转的**：代码就位、能存就存，
+但这个应用/租户**暂时不会回带**这个字段。
+
+⭐ **但她在 2026-10-06 给了一条真实可用的话题深链格式**（记在
+`docs/module-split-and-main-flow-2026-10-06.md` 第八节，本仓库已代码化到
+`server/src/config/salesThreadLink.js`）：
+
+```
+https://applink.feishu.cn/client/thread/open
+  ?open_chat_id=<群 chat_id>&open_thread_id=<话题 thread_id>
+  &openchatid=<群 chat_id>&openthreadid=<话题 thread_id>&thread_position=-1
+```
+
+> 「**点开之后就直接可以看到那条消息的所有沟通内容**」
+
+⭐ **两个 id 我们手上都有**（群消息事件里有 `chat_id`；`im.message.reply` 带
+`reply_in_thread:true` 的响应里、以及事件里都有 `thread_id`）⇒ **不用等飞书回带**，
+`chat_id + thread_id` 一拼就是那条话题本身，**新单立刻可用**。
+
+⚠️ 与她明确否掉的"自己拼假链接"的区别：这里拼的是**她给的真实格式**、参数是**我们自己
+发消息时真拿到的两个 id**；而且**缺任意一个 id 就返回空、留空**，绝不用空值拼出一条
+点开是别处的链接。
+
 
 ## 所以「维度 1」的深链怎么落地
 
-代码里已经按"三级去找、找不到就给空"实现（`server/src/services/larkMessageLinkResolver.js`）：
+> ⭐ **2026-10-06 晚已按业务负责人的话落地**（她：「我们现在不需要历史消息的补拉了。我们只要
+> 后续的消息能够取回来就行」「我在多维表格的销售主表里加了一列叫做**消息链接**，可以写入这里～」）：
+> **从今往后**新建的单，在**发销售卡片那一刻**把 `data.message_app_link` 同时写进
+> ① 本地映射 `data/sales_group_threads/` 的 `app_link`、② 销售主表的「消息链接」列
+> （实现：`server/src/services/salesMessageLinkService.js`，由 `larkMvpService.bindGroupSaleThread` 调）。
+> ⚠️ 存的是**我们回复的那条（卡片）消息**的链接 —— 话题根是**她**发的，飞书不会把它的链接给我们；
+> 我们这条回复就在**同一个话题**里（主群第一条带 `reply_in_thread` 的回复就是创建那个话题的那条），
+> 所以点开同样落在那个话题。**老单不补**：拿不到就留空。
+>
+> ✅ **所以那一列现在就有值了**（不再依赖飞书回带）：发销售卡片时，
+> 飞书给了 `message_app_link` 就用飞书的；没给（实测四：当前都不给）就按**她给的话题格式**
+> 用 `chat_id + thread_id` 拼一条 —— 两条都是**真链接**，存进本地映射（`app_link` / `thread_link`
+> 分开存，便于排查哪条来源）与销售主表「消息链接」列。两个 id 都没有时**留空**。
 
-1. **本地映射里存的** `app_link` —— 唯一可靠来源。需要销售群链路在**发消息时**
-   把 `create`/`reply` 响应里的 `data.message_app_link` 一起写进
-   `sales_group_threads` 记录（`SalesGroupThreadLocator.rememberSaleThread` 的字段位已留好）。
-2. **现查** `im.message.get` 读 `message_app_link`（开关 `PENDING_DEAL_PUSH_LINK_LOOKUP_ENABLED`，
+代码里按"**三级**去找、找不到就给空"实现（`server/src/services/larkMessageLinkResolver.js`）：
+
+1. **本地映射里存的飞书深链** `app_link`（发送响应给的，飞书回带时才有）；
+2. ⭐ **本地映射里存的话题深链** `thread_link`（按她给的格式拼的）—— **今天真正管用的那条**，
+   零远端调用；
+3. **现查** `im.message.get` 读 `message_app_link`（开关 `PENDING_DEAL_PUSH_LINK_LOOKUP_ENABLED`，
    默认开）—— 今天是空跑，但飞书哪天开始返回就**自动生效，不用改代码**。
-3. **运营自己填的模板** `PENDING_DEAL_PUSH_LINK_TEMPLATE`（默认**空**）。
 
-🔴 三级都拿不到就**返回空 URL**，绝不自已拼一条"看起来能定位、点开却不在话题里"的链接。
+🔴 三级都拿不到就**返回空 URL**，绝不自己拼一条"看起来能定位、点开却不在话题里"的链接。
+🔴 曾经还有第三级「运营自己填的 URL 模板」`PENDING_DEAL_PUSH_LINK_TEMPLATE` ——
+   业务负责人 2026-10-06 明确「不要补历史、也不要拼链接」之后**已整个删除**
+   （配置 / 代码 / 用例 / 文档一起删）。**不要再加回来**：要么真链接、要么不显示。
 
 ## 待真机验 / 需要她做的
 
-1. **"点进去在不在话题里"无法在不发真消息的前提下确证** —— 需要她点一次真链接。
-   而真链接要等第 1 步（发消息时存 `message_app_link`）落地后才有。
+1. 🔴 **这件事现在卡在飞书侧，不在代码**：实测四里 6 种发送/读取方式**全都没有** `message_app_link`。
+   要让她"点一下回到那个话题"，需要**飞书侧**给出回带这个字段的条件，或者一个能定位
+   消息/话题的 AppLink 协议。建议用**飞书官方「AppLink 生成和诊断工具」**
+   （`https://webview.feishu.cn/applinktool`）问一次；代码这边已经待命。
 2. **要不要申请 `im:message.group_msg` 权限**：申请了 `im.message.list` 才能用，
-   但按上面的结论它**也不返回** `message_app_link`，所以**不建议为这个功能去申请**。
-3. ⭐ 如果她希望历史单也能点，有两条路，都要她拍板：
-   - **a.** 销售群链路改成"发消息时存 app_link"（一条记录的字段，改动很小），
-     之后**新开**的话题单就能点；历史单仍然点不了。
-   - **b.** 用**飞书官方的 AppLink 生成和诊断工具**（`https://webview.feishu.cn/applinktool`）
-     看看有没有未公开的"消息"协议 —— 有的话填进 `PENDING_DEAL_PUSH_LINK_TEMPLATE` 即可，
-     不用改代码。
+   但按上面的结论它**也不返回** `message_app_link`（且实测四里 `get` 同样不返回），
+   所以**不建议为这个功能去申请**。
+3. 历史单（2026-10-06 之前开的）**点不了** —— 她已明确不补，故「消息链接」列对它们是空的。
+   新单同样先空着（原因见上），**拿不到就留空，绝不伪造**。
+   若哪天她想要历史单也能点，唯一现实的路是用**飞书官方的 AppLink 生成和诊断工具**
+   （`https://webview.feishu.cn/applinktool`）找未公开的"消息"协议；
+   ⚠️ 但**代码里已经没有"填个模板就生效"的口子了**，要走这条路得先跟她确认再加回配置。
 
 ## 复现命令
 
