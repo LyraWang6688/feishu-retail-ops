@@ -499,3 +499,56 @@ test('保守规则不吃掉判据本体：销售状态=已退货 仍然排除', 
   const candidates = await service.findCandidates({ itemNo: '6035', color: '黑' });
   assert.deepEqual(candidates, []);
 });
+
+// ─── ⭐ 群话题里的售后：只能在那**一笔**销售里找（绝不跨单去捞）─────────────────
+//
+// BUG：afterSalesFlowService 传了 `salesEntryRecordId`，但 findCandidates 的签名里
+// 没有这个参数 → 静默忽略 → 仍按「货号 + 颜色」在全表捞，可能抓到**别的单**同一双鞋。
+// 业务负责人的口径：「同一笔的售后，绝不跨单去捞」。
+test('⭐ 传了 salesEntryRecordId → 只返回那一笔的明细；不传时仍是全表（回归）', async () => {
+  const { service } = await makeService({
+    products: [productRow('p1', '6035', '黑')],
+    entries: [
+      { record_id: 'e_this', fields: { 销售单号: 'XSD-THIS', 录单日: daysAgo(0), 销售状态: '已写入' } },
+      { record_id: 'e_other', fields: { 销售单号: 'XSD-OTHER', 录单日: daysAgo(0), 销售状态: '已写入' } },
+    ],
+    details: [
+      detailRow({ id: 'd_this', orderId: 'e_this', productId: 'p1' }),
+      detailRow({ id: 'd_other', orderId: 'e_other', productId: 'p1' }),
+    ],
+  });
+
+  const all = await service.findCandidates({ itemNo: '6035', color: '黑' });
+  assert.deepEqual(all.map((row) => row.record_id).sort(), ['d_other', 'd_this'],
+    '不传限定时，行为与改动前一致：全表按货号颜色捞');
+
+  const scoped = await service.findCandidates({
+    itemNo: '6035', color: '黑', salesEntryRecordId: 'e_this',
+  });
+  assert.deepEqual(scoped.map((row) => row.record_id), ['d_this'],
+    '话题里已定位到 e_this：绝不能把 e_other 的那双也捞进来');
+
+  // 这一笔里没有那双 → 回空（让她知道"这一笔里没有"，而不是拿别单的顶上）
+  const scopedMiss = await service.findCandidates({
+    itemNo: '9999', color: '黑', salesEntryRecordId: 'e_this',
+  });
+  assert.deepEqual(scopedMiss, []);
+});
+
+test('⭐ 只给 salesEntryRecordId（不带货号颜色）也能定位那一笔的明细', async () => {
+  const { service } = await makeService({
+    products: [productRow('p1', '6035', '黑')],
+    entries: [
+      { record_id: 'e_this', fields: { 销售单号: 'XSD-THIS', 录单日: daysAgo(0), 销售状态: '已写入' } },
+      { record_id: 'e_other', fields: { 销售单号: 'XSD-OTHER', 录单日: daysAgo(0), 销售状态: '已写入' } },
+    ],
+    details: [
+      detailRow({ id: 'd_this', orderId: 'e_this', productId: 'p1' }),
+      detailRow({ id: 'd_other', orderId: 'e_other', productId: 'p1' }),
+    ],
+  });
+  const scoped = await service.findCandidates({ salesEntryRecordId: 'e_this' });
+  assert.deepEqual(scoped.map((row) => row.record_id), ['d_this']);
+  // 三个限定条件全空才回空（"查全部"不是这个功能要回答的问题）
+  assert.deepEqual(await service.findCandidates({}), []);
+});

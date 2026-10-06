@@ -32,6 +32,16 @@ const DEFAULTS = Object.freeze({
     delivery: Object.freeze([
       '拿走', '提走', '取走', '拿货', '交付', '发货', '来拿了', '已经给了',
     ]),
+    // ⭐ 整单完成：她直接回「已完毕 / 成交」——**等于点那张「成交」按钮**，
+    //    同时把「未履约→履约」与「待收→已收（+ 收款时间）」做完。
+    //    （业务负责人的原话：「然后在话题里回复，已完毕或者成交之类的话」；
+    //      期望见 docs/e2e-sales-status-method.md。）
+    //    ⚠️ 只在**没有**更具体的收款 / 交付线索时才成立：「好了，收到微信 500」
+    //       仍按收款处理（"好了"只是口头语），不降级成整单完成。
+    //    ⚠️ 「已完毕」必须排在「完毕」前面：firstCue 取数组顺序里**第一个**命中的。
+    complete: Object.freeze([
+      '已完毕', '完毕', '成交', '搞定', '好了', '完成',
+    ]),
   }),
 
   // ── 新原话信号 ───────────────────────────────────────────────────────────
@@ -79,6 +89,8 @@ const DEFAULTS = Object.freeze({
     notPosted: '这一笔还没入账，先把上面那张确认卡片点一下，我再记这笔进展。',
     paymentDone: '好，记上了：{method} 收 {amount}。',
     deliveryDone: '好，还没交的 {count} 双记成已交付了。',
+    completeDone: '好，这一单成交了：{summary}。',
+    completeAlready: '这一单已经是成交状态了，我没有重复写。',
     nothingPending: '这一笔的收款和交付都已经齐了，我没有重复写。',
     failed: '这次进展我没记上：{reason}',
   }),
@@ -107,6 +119,7 @@ const resolveSalesProgressIntakeConfig = (options = {}) => {
     progressCues: {
       payment: options.progressCues?.payment || DEFAULTS.progressCues.payment,
       delivery: options.progressCues?.delivery || DEFAULTS.progressCues.delivery,
+      complete: options.progressCues?.complete || DEFAULTS.progressCues.complete,
     },
     newSaleCues: options.newSaleCues || DEFAULTS.newSaleCues,
     ignoreNumberPatterns: options.ignoreNumberPatterns || DEFAULTS.ignoreNumberPatterns,
@@ -120,6 +133,7 @@ const resolveSalesProgressIntakeConfig = (options = {}) => {
 const PROGRESS_KINDS = Object.freeze({
   PAYMENT: 'payment',
   DELIVERY: 'delivery',
+  COMPLETE: 'complete',
   AMBIGUOUS: 'ambiguous',
   NONE: 'none',
 });
