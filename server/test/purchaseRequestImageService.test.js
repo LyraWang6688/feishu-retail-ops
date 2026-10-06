@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const sharp = require('sharp');
 const {
   TITLE,
+  RETURN_TITLE,
   FONT_FAMILY,
   buildPurchaseRequestSvg,
   renderPurchaseRequestPng,
@@ -19,9 +20,9 @@ const ITEMS = [
   { item_no: 'A-1366-31', color: '棕色', size: 38, quantity: 3 },
 ];
 
-test('采购申请 SVG：有标题、四列、欧码尺码和合计', () => {
+test('采购单 SVG：有标题、四列、欧码尺码和合计', () => {
   const svg = buildPurchaseRequestSvg({ supplierName: '金猴', batchNo: 'BH-20261005-0001', items: ITEMS });
-  assert.ok(svg.includes(`>${TITLE}</text>`), '必须有「邯美皮鞋采购申请单」标题');
+  assert.ok(svg.includes(`>${TITLE}</text>`), '必须有「邯美皮鞋采购单」标题');
   assert.ok(svg.includes('供应商：金猴'));
   assert.ok(svg.includes('报货批次：BH-20261005-0001'));
   for (const label of ['货号', '颜色', '尺码', '数量']) {
@@ -31,6 +32,39 @@ test('采购申请 SVG：有标题、四列、欧码尺码和合计', () => {
   assert.ok(svg.includes('>37码</text>'));
   assert.ok(!/\d{3}\s*\/\s*37/.test(svg), '不能出现毫米/欧码双写');
   assert.ok(svg.includes('合计：3 条 / 6 双'), '合计要同时给条数和总双数');
+});
+
+// ─── 标题文案（业务负责人 2026-10-06 追加改的）────────────────────────────────
+
+test('标题文案：采购单 = 「邯美皮鞋采购单」，退货单 = 「邯美皮鞋退货单」；旧标题一个都不留', () => {
+  // 她 2026-10-06 追加的要求：出图上的两个标题去掉「申请」「采购」这类冗余词。
+  assert.equal(TITLE, '邯美皮鞋采购单');
+  assert.equal(RETURN_TITLE, '邯美皮鞋退货单');
+
+  const requestSvg = buildPurchaseRequestSvg({ supplierName: '金猴', batchNo: 'B-1', items: ITEMS });
+  assert.ok(requestSvg.includes('>邯美皮鞋采购单</text>'), '默认标题必须是「邯美皮鞋采购单」');
+  assert.ok(!requestSvg.includes('邯美皮鞋采购申请单'), '旧标题「邯美皮鞋采购申请单」不能再出现');
+
+  const returnSvg = buildPurchaseRequestSvg({
+    supplierName: '金猴', batchNo: 'B-1', items: ITEMS, title: RETURN_TITLE,
+  });
+  assert.ok(returnSvg.includes('>邯美皮鞋退货单</text>'), '退货标题必须是「邯美皮鞋退货单」');
+  assert.ok(!returnSvg.includes('邯美皮鞋采购退货单'), '旧标题「邯美皮鞋采购退货单」不能再出现');
+});
+
+test('没维护供应商：不画「供应商：」这一段（不是「未填写」那种像警告的文案）；有供应商时照旧画', () => {
+  // 业务负责人 2026-10-06：「没维护供应商的货品，也应该能正常出单」。
+  // 图上那一格的选择是**整段不渲染**——写「供应商：未填写」看起来像这张单有问题。
+  const svg = buildPurchaseRequestSvg({ supplierName: '', batchNo: 'B-1', items: ITEMS });
+  assert.ok(!svg.includes('供应商'), '没有供应商时不该出现「供应商」三个字');
+  assert.ok(!svg.includes('未填写'), '也不该写成「供应商：未填写」');
+  assert.ok(svg.includes('报货批次：B-1'), '其余副标题照常渲染');
+
+  // 供应商信息本身一个都没删：有值的时候照旧显示。
+  assert.ok(
+    buildPurchaseRequestSvg({ supplierName: '金猴', items: ITEMS }).includes('供应商：金猴'),
+    '有供应商时照旧渲染「供应商：xxx」',
+  );
 });
 
 test('采购申请 SVG：字体显式指定 CJK 字体，中文不会渲染成方框', () => {

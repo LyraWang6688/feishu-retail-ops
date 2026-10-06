@@ -19,11 +19,14 @@ const sharp = require('sharp');
  */
 const FONT_FAMILY = 'Noto Sans CJK SC, Noto Serif CJK SC, Noto Sans SC, WenQuanYi Zen Hei, sans-serif';
 
-const TITLE = '邯美皮鞋采购申请单';
-// 「采购退货单」复用同一套排版（列、字号、合计口径全都一样），只换标题——
-// 业务负责人的口径就是"格式和采购申请单一样"。标题做成参数而不是复制一份渲染器：
+// ⚠️ 2026-10-06 业务负责人拍板改的两个标题：出图是给她转给供应商的**单据**，
+// 名字跟着单据走——报货出「采购单」、退货出「退货单」。
+// （「单据信息」表里那个附件**字段名**仍叫「采购申请单」，那是生产表字段，不改。）
+const TITLE = '邯美皮鞋采购单';
+// 「退货单」复用同一套排版（列、字号、合计口径全都一样），只换标题——
+// 业务负责人的口径就是"格式和采购单一样"。标题做成参数而不是复制一份渲染器：
 // 复制一份的话，以后改列宽/截断规则就得改两处，两边迟早会长歪。
-const RETURN_TITLE = '邯美皮鞋采购退货单';
+const RETURN_TITLE = '邯美皮鞋退货单';
 
 // 布局常量（单位 px）。宽度取 900：手机微信里放大看货号够清楚，
 // 又不至于大到飞书图片消息再次压缩后糊掉。
@@ -168,12 +171,16 @@ const buildPurchaseRequestSvg = ({ supplierName, batchNo = '', items = [], gener
   parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${height}" viewBox="0 0 ${WIDTH} ${height}">`);
   parts.push(`<rect x="0" y="0" width="${WIDTH}" height="${height}" fill="#ffffff"/>`);
 
-  // 标题区：默认「邯美皮鞋采购申请单」，采购退货传「邯美皮鞋采购退货单」；
+  // 标题区：默认「邯美皮鞋采购单」，采购退货传「邯美皮鞋退货单」；
   // 下面一行写清这批是给谁、哪一批。
   parts.push(`<text x="${WIDTH / 2}" y="${TITLE_BASELINE}" font-family="${FONT_FAMILY}" font-size="34" ` +
     `font-weight="bold" fill="${COLORS.ink}" text-anchor="middle">${escapeXml(title)}</text>`);
+  // ⚠️ 没有供应商时**不渲染「供应商：」这一段**（业务负责人 2026-10-06：
+  // 「没维护供应商的货品，也应该能正常出单」）。以前这里写「供应商：未填写」，
+  // 看着像一条警告、像这张单有问题；留空才是"正常出单"的样子。
+  // 有供应商的那一段照旧渲染——供应商信息一个都没删。
   const subtitle = [
-    supplierName ? `供应商：${truncateToWidth(supplierName, 300, 18)}` : '供应商：未填写',
+    supplierName ? `供应商：${truncateToWidth(supplierName, 300, 18)}` : '',
     batchNo ? `报货批次：${truncateToWidth(batchNo, 300, 18)}` : '',
     formatDate(generatedAt),
   ].filter(Boolean).join('　　');
