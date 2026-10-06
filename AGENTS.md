@@ -32,8 +32,11 @@
 > 并明确「不再用拍照识别，改成纯对话驱动」。
 > ⚠️ **保留**的是入库与建档这两项能力（`confirmArrival` 写「采购入库」+ 调库存
 > `inventory.applyPurchase`；`ensureArrivalProducts` 建档 + 成本）——它们现在**没有生产调用方**
-> （孤儿能力，等「对话到货」接）。未合并分支 `refactor/decouple-creation-and-stock`
-> 正在把后者剥成 `services/productCreationService.js`。
+> （孤儿能力，等「对话到货」接）。⭐ **「把后者剥成 `services/productCreationService.js`」这件事
+> 还没进 main**——原分支 `refactor/decouple-creation-and-stock`（PR #80 CLOSED）已于 2026-10-06
+> 清理时删除，但**剥出来的 service 原文与全量 patch 已留档在**
+> `docs/branch-salvage-2026-10-06/`（索引见 `docs/branch-salvage-2026-10-06.md` 第 4 节）。
+> 真要做这件事时以那份留档为起点，别重新发明。
 
 ## 技术栈
 
@@ -232,8 +235,9 @@ Schema Check 只回答「目标 Base 的字段与关联结构是否满足契约�
 ### 三条可检查的标准（改代码 / 重构时逐条自问）
 
 1. **解耦**：这个功能**绑在"随时会换的东西"上了吗**？
-   - 反例（已修）：**新品建档 + 写成本**曾绑在**拍照识别**链路上 →
-     已剥离成 `ProductCreationService`（输入是**结构化明细**，不依赖 OCR）。
+   - 反例（**已剥离、但还没进 main**）：**新品建档 + 写成本**曾绑在**拍照识别**链路上 →
+     剥离件 `ProductCreationService`（输入是**结构化明细**，不依赖 OCR）只存在于已删除的
+     `refactor/decouple-creation-and-stock` 上，**留档在 `docs/branch-salvage-2026-10-06/`**。
    - 检查法：**"如果这条链路明天被拿掉，这个功能还活着吗？"**
 2. **模块化**：**一个 service 只干一件事**。
    - 反例（已收敛）：`PurchaseWebhookService` 曾同时管报货 + 到货 + 建档 + 成本 + 库存 →
