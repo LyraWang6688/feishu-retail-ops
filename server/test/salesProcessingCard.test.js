@@ -121,8 +121,18 @@ test('「已入账」终态卡（salesStatusCard）逐字未变 —— 这是她
   const card = salesStatusCard({ items: TWO_ITEMS }, '销售订单已入账',
     '销售单号：XSD-001；2 条明细已写入。尚未交付，库存未扣减。', 'green');
   // 逐字钉住：元素类型仍是 markdown（没有 <font> 包裹）、note 仍是她熟悉的那句。
+  //
+  // ⚠️ 2026-10-07：这张卡片的 `config` **有意多了一个 `update_multi: true`**。
+  //    断言仍然是**整卡精确 deepEqual**（没有放宽成分字段断言），只是把多出来的那个
+  //    字段写进期望值 —— header / elements 一个字节都没动。
+  //    为什么必须加（详见 utils/larkCards.js 的 `patchableCardConfig` 注释）：
+  //      飞书 `im.v1.message.patch` 要求「更新**前后**卡片的 config 中均显式声明
+  //      `update_multi: true`」，否则更新**只有操作用户自己可见** ——
+  //      这正是线上"点了确认、接口成功、卡片纹丝不动"的根因。
+  //    ⇒ **对她可见的内容（header / elements）逐字不变**（= 她满意的部分）；
+  //      `config` 加字段只是"更新能不能被她看见"的必要条件，与显示内容无关。
   assert.deepEqual(card, {
-    config: { wide_screen_mode: true },
+    config: { wide_screen_mode: true, update_multi: true },
     header: { template: 'green', title: { tag: 'plain_text', content: '销售订单已入账' } },
     elements: [
       { tag: 'markdown', content: '1. A100 38码 × 1 ￥99\n2. A100 39码 × 1 ￥99' },
