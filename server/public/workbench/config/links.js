@@ -20,8 +20,12 @@ export const PURCHASE_RETURN_FORM_URL =
   'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnjsqt4D5URseSSXgecYlqGd';
 
 /**
- * 「采购和退货」页的两个按钮，按这个顺序渲染。
- * 加/减按钮只改这张表（`features/purchase/links.js` 只负责画）。
+ * 两个飞书表单，按这个顺序渲染。**两个消费方**（都只负责画，不改这张表）：
+ *   1. `features/purchase/links.js` —— 「采购和退货」独立页（`purchase-return.html`）的两张卡；
+ *   2. `config/home.js` —— 首页【常用功能】的「采购」「退货」两张独立卡
+ *      （2026-10-07：她把首页拆成两个入口，各点一次直达表单，见
+ *       `docs/workbench-purchase-return-split-2026-10-07.md`）。
+ * 加 / 减表单只改这张表。
  */
 export const PURCHASE_FORMS = [
   {

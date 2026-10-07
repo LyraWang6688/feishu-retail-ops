@@ -2,12 +2,14 @@
    其余一律复用 styles/base.css 里的既有类（panel / quick-entries / entry-card / btn），
    不另起一套样式。 */
 
-/* 只有两个入口时按两列排，不要留一个空位。 */
-.quick-entries.entries-two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* 首页现在有三个入口：采购 / 退货（两张飞书表单外链卡）+ 库存手工调整。
+   手机上【采购、退货并排一行，库存手工调整整行在下】——
+   三个入口在一屏之内全部可见（她只在手机上用这个工作台）。
+   桌面端不用管：`.quick-entries` 默认就是三列，正好一行三个。 */
+@media (max-width: 760px) {
+  .quick-entries.entries-pair { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .quick-entries.entries-pair > .entry-card.entry-wide { grid-column: 1 / -1; }
+}
 
 .inline-links { display: flex; flex-wrap: wrap; gap: 8px; }
 .inline-links a { text-decoration: none; }
-
-@media (max-width: 760px) {
-  .quick-entries.entries-two { grid-template-columns: minmax(0, 1fr); }
-}
