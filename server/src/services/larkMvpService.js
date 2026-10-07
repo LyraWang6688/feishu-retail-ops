@@ -26,7 +26,10 @@ const { AfterSalesFlowService } = require('./afterSalesFlowService');
 const { isLookupIntent, isAfterSalesIntent, normalizeMessageIntent } = require('../config/saleIntents');
 const { isAfterSalesCardAction } = require('../config/afterSalesFlow');
 const { isSalesCandidate, UNSUPPORTED_INTENT_REPLY } = require('../config/messageGate');
-const { salesConfirmationCard, salesStatusCard, keepOnlyCardButton, SECOND_DELIVERY_ACTION } = require('../utils/larkCards');
+const { salesConfirmationCard, salesStatusCard, salesProcessingCard, keepOnlyCardButton, SECOND_DELIVERY_ACTION } = require('../utils/larkCards');
+// 「点确认后那一次立即更新」那张卡片的可见文案 / 颜色（业务负责人 2026-10-07 拍板的 ⓐ）；
+// 调用时才解析（不在模块加载时求值，避免 dotenv 加载顺序事故）。
+const { resolveSalesProcessingCardConfig } = require('../config/salesProcessingCard');
 const { extractSalesMessageText, isMentioned, stripMentionPlaceholders } = require('../utils/larkMessageText');
 const { resolveAckReaction, resolveBotOpenId } = require('../config/groupPurchase');
 // 主群的准入口径（是否仍然要求 @）：**显式布尔、默认放宽**，见 config/groupAdmission。
@@ -1670,8 +1673,14 @@ class LarkMvpService {
       // 交付与否由**交易类型**决定，不由用户点哪个按钮决定。
       // 卡片上只留一个「确认」；旧卡片上的 confirm_sale_delivered / _pending 仍然兼容。
       const shouldDeliver = shouldDeliverFor(task, action);
+      // ⭐ 她**点了「确认」**这件事要**立刻在卡片上看得出来**（业务负责人 2026-10-07 拍板的 ⓐ）：
+      //   标题换成醒目的「处理中/正在写入」＋ 明细区变灰 ＋ 一行"正在写入"提示
+      //   （文案与颜色全在 `config/salesProcessingCard`）。
+      //   ⚠️ 只换"显示"：`stage` 仍是 `processing`（日志与既有测试依赖它），
+      //      状态写入 / postSale / 明细 / 收款 / 库存在这条链路上**一个字节都没动**。
+      //   ⚠️ 终态卡（`posted`）与取消 / 待修正 / 部分交付卡片仍走 `salesStatusCard`，**逐字不变**。
       const cardUpdated = await this.updateSalesActionCard(task, event,
-        salesStatusCard(task.draft, '销售订单处理中', '已收到确认，正在写入销售记录和收款；请勿重复点击。'),
+        salesProcessingCard(task.draft, resolveSalesProcessingCardConfig()),
         { stage: 'processing', interactionId: context.interactionId });
       if (!cardUpdated) await this.sendTaskText(task, '已收到确认，正在写入销售记录和收款，请稍候。').catch((error) =>
         logWarn('lark.sales.feedback.failed', { task_id: draftId, interaction_id: context.interactionId, error: error.message }));

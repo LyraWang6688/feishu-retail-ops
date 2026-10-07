@@ -415,6 +415,39 @@ const salesStatusCard = (draft, title, message, template = 'blue') => ({
   ],
 });
 
+// ⭐ 2026-10-07「点了确认必须一眼看得出来」的**专用**渲染（业务负责人拍板的 ⓐ 方案）。
+//
+// 为什么另起一个函数、**不去改 `salesStatusCard`**：
+//   `salesStatusCard` 是通用结果卡渲染器 —— 取消 / 待修正 / 部分交付 / 已入账 / 重复终态
+//   全走它。在它里加"处理中样式"会让那些卡片的字节级输出**一起变**，
+//   而她**明确满意**「已入账」那张终态卡（一个字都不许动）。
+//   另起一个、只给确认链路那一次立即更新用 ⇒ 其余卡片的输出**可证不变**。
+//
+// 视觉上做两件事（她的目标：「不仔细看标题也能看出变了」）：
+//   ① 明细区整段套 `<font color='…'>` **变灰** —— 颜色写法用仓库既有的那种
+//      （`utils/salesDailyReportCard.js` 的 `<font color='grey'>`，`lark_md` 元素支持），
+//      **不自己发明 HTML**；
+//   ② 明细**上方**多一行醒目的「⏳ 正在写入…」提示（第一眼就能看到）。
+//
+// 文案 / 颜色**全部来自 `config/salesProcessingCard`**（配置先行）——本函数只排布，不写死字面量。
+// 传空串 = 那一项不要（例：`progressLine: ''` 不出提示行、`itemColor: ''` 不套颜色）。
+const salesProcessingCard = (draft, { title, template = 'blue', itemColor, progressLine, note } = {}) => {
+  const items = itemLines(draft?.items || [], 'actual_amount') || '销售订单';
+  const elements = [];
+  if (progressLine) elements.push({ tag: 'div', text: { tag: 'lark_md', content: progressLine } });
+  elements.push({
+    tag: 'div',
+    text: { tag: 'lark_md', content: itemColor ? `<font color='${itemColor}'>${items}</font>` : items },
+  });
+  // 既有那句 note：**逐字保留**，结构与 `salesStatusCard` 一致（只是内容来自配置）。
+  elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: note }] });
+  return {
+    config: { wide_screen_mode: true },
+    header: { template, title: { tag: 'plain_text', content: title } },
+    elements,
+  };
+};
+
 const sampleReplacementCard = (taskId, { productNumber, remainingSizes = [], lookupFailed = false } = {}) => {
   const lines = remainingSizes.map((item) =>
     `${text(item.size)}码：门盒 ${text(item.doorBoxCount)}、样品 ${text(item.sampleCount)}、仓库 ${text(item.warehouseCount)}`);
@@ -925,6 +958,8 @@ module.exports = {
   purchaseArrivalReconcileStatusCard,
   salesConfirmationCard,
   salesStatusCard,
+  // 「点确认后立刻看得出变了」那张（只给确认链路那一次立即更新用，见函数注释）。
+  salesProcessingCard,
   sampleReplacementCard,
   sampleReplacementStatusCard,
   sampleReplacementProcessingCard,
