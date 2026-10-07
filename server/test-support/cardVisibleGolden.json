@@ -1,0 +1,1055 @@
+{
+  "salesConfirmationCard": {
+    "header": {
+      "template": "blue",
+      "title": {
+        "tag": "plain_text",
+        "content": "请确认销售订单"
+      }
+    },
+    "elements": [
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "1. A100 38码 × 1 ￥99\n2. A100 39码 × 1 ￥99",
+          "text_size": "heading"
+        }
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "成交总额 ￥198　·　本次已收 微信 ￥198",
+          "text_size": "heading"
+        }
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "交易类型：—",
+          "text_size": "heading"
+        }
+      },
+      {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "horizontal_spacing": "8px",
+        "columns": [
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "确认"
+                },
+                "type": "primary",
+                "value": {
+                  "action": "confirm_sale",
+                  "draft_id": "draft_1"
+                }
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "修改"
+                },
+                "type": "default",
+                "value": {
+                  "action": "modify_sale",
+                  "draft_id": "draft_1"
+                }
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "取消"
+                },
+                "type": "danger",
+                "value": {
+                  "action": "cancel",
+                  "draft_id": "draft_1"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "salesStatusCard": {
+    "header": {
+      "template": "green",
+      "title": {
+        "tag": "plain_text",
+        "content": "销售订单已入账"
+      }
+    },
+    "elements": [
+      {
+        "tag": "markdown",
+        "content": "1. A100 38码 × 1 ￥99\n2. A100 39码 × 1 ￥99"
+      },
+      {
+        "tag": "note",
+        "elements": [
+          {
+            "tag": "plain_text",
+            "content": "销售单号：XSD-001。"
+          }
+        ]
+      }
+    ]
+  },
+  "salesProcessingCard": {
+    "header": {
+      "template": "blue",
+      "title": {
+        "tag": "plain_text",
+        "content": "⏳ 处理中，正在写入"
+      }
+    },
+    "elements": [
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "⏳ 正在写入销售记录与收款…"
+        }
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "<font color='grey'>1. A100 38码 × 1 ￥99\n2. A100 39码 × 1 ￥99</font>"
+        }
+      },
+      {
+        "tag": "note",
+        "elements": [
+          {
+            "tag": "plain_text",
+            "content": "已收到确认，请勿重复点击。"
+          }
+        ]
+      }
+    ]
+  },
+  "sampleReplacementCard": {
+    "header": {
+      "template": "orange",
+      "title": {
+        "tag": "plain_text",
+        "content": "请补选展示样品"
+      }
+    },
+    "elements": [
+      {
+        "tag": "markdown",
+        "content": "**A100 的样品已售出。**\n请选择同货号现有门盒中的一个尺码补作样品；仓库鞋需另行调拨。\n38码：门盒 1、样品 0、仓库 2"
+      },
+      {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "horizontal_spacing": "8px",
+        "columns": [
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "选 38 码"
+                },
+                "type": "default",
+                "value": {
+                  "action": "choose_sample_replacement",
+                  "draft_id": "task_sample",
+                  "size": 38
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "action",
+        "actions": [
+          {
+            "tag": "button",
+            "text": {
+              "tag": "plain_text",
+              "content": "刷新可选尺码"
+            },
+            "type": "default",
+            "value": {
+              "action": "refresh_sample_replacement",
+              "draft_id": "task_sample"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "sampleReplacementStatusCard": {
+    "header": {
+      "template": "green",
+      "title": {
+        "tag": "plain_text",
+        "content": "样品已补选"
+      }
+    },
+    "elements": [
+      {
+        "tag": "markdown",
+        "content": "A100：38码已从门盒转为样品。"
+      }
+    ]
+  },
+  "sampleReplacementProcessingCard": {
+    "header": {
+      "template": "blue",
+      "title": {
+        "tag": "plain_text",
+        "content": "样品补选处理中"
+      }
+    },
+    "elements": [
+      {
+        "tag": "markdown",
+        "content": "A100：正在处理。"
+      }
+    ]
+  },
+  "purchaseArrivalReconcileCard": {
+    "header": {
+      "template": "orange",
+      "title": {
+        "tag": "plain_text",
+        "content": "本次到货核对完毕，确认入库吗？"
+      }
+    },
+    "elements": [
+      {
+        "tag": "markdown",
+        "content": "**报货批次号：** BH-20261007-0001"
+      },
+      {
+        "tag": "markdown",
+        "content": "**按你说的实际到货**"
+      },
+      {
+        "tag": "markdown",
+        "content": "**A100** 黑 38 码：申请 2 双 → 实际 2 双（（未特别说明，按申请数））"
+      },
+      {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "horizontal_spacing": "8px",
+        "columns": [
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "是"
+                },
+                "type": "primary",
+                "value": {
+                  "action": "confirm_arrival_reconcile",
+                  "draft_id": "task_arrival"
+                }
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "否"
+                },
+                "type": "default",
+                "value": {
+                  "action": "reject_arrival_reconcile",
+                  "draft_id": "task_arrival"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "note",
+        "elements": [
+          {
+            "tag": "plain_text",
+            "content": "核对后再点。"
+          }
+        ]
+      }
+    ]
+  },
+  "purchaseArrivalReconcileStatusCard": {
+    "header": {
+      "template": "green",
+      "title": {
+        "tag": "plain_text",
+        "content": "采购到货核对"
+      }
+    },
+    "elements": [
+      {
+        "tag": "markdown",
+        "content": "**报货批次号：** BH-20261007-0001"
+      },
+      {
+        "tag": "note",
+        "elements": [
+          {
+            "tag": "plain_text",
+            "content": "已入库 2 双。"
+          }
+        ]
+      }
+    ]
+  },
+  "purchaseStatusCard": {
+    "header": {
+      "template": "blue",
+      "title": {
+        "tag": "plain_text",
+        "content": "采购申请处理中"
+      }
+    },
+    "elements": [
+      {
+        "tag": "markdown",
+        "content": "**━━━ 供应商：待补充供应商 ━━━**"
+      },
+      {
+        "tag": "markdown",
+        "content": "**⚠️ A100**"
+      },
+      {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "background_style": "grey",
+        "horizontal_spacing": "default",
+        "columns": [
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "vertical_align": "center",
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": "**38**\n×1",
+                "text_align": "center"
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "vertical_align": "center",
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": "**39**\n×1",
+                "text_align": "center"
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "vertical_align": "center",
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": " ",
+                "text_align": "center"
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "vertical_align": "center",
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": " ",
+                "text_align": "center"
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "vertical_align": "center",
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": " ",
+                "text_align": "center"
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "vertical_align": "center",
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": " ",
+                "text_align": "center"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "note",
+        "elements": [
+          {
+            "tag": "plain_text",
+            "content": "已收到确认，正在生成采购申请；请勿重复点击。"
+          }
+        ]
+      }
+    ]
+  },
+  "afterSalesConfirmationCard": {
+    "header": {
+      "template": "orange",
+      "title": {
+        "tag": "plain_text",
+        "content": "请确认售后"
+      }
+    },
+    "elements": [
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "处理这一笔\n2026-10-01 · A100黑 · 38码 · ￥198",
+          "text_size": "heading"
+        }
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "动作：退货\n钱：退现金\n差价：￥198（退给她）\n退回的鞋放：门盒",
+          "text_size": "heading"
+        }
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "退回的鞋放哪儿？",
+          "text_size": "note"
+        }
+      },
+      {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "horizontal_spacing": "8px",
+        "columns": [
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "门盒（已选）"
+                },
+                "type": "primary",
+                "value": {
+                  "action": "choose_after_sales_restock",
+                  "draft_id": "task_as",
+                  "state": "门盒"
+                }
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "样品"
+                },
+                "type": "default",
+                "value": {
+                  "action": "choose_after_sales_restock",
+                  "draft_id": "task_as",
+                  "state": "样品"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "horizontal_spacing": "8px",
+        "columns": [
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "确认"
+                },
+                "type": "primary",
+                "value": {
+                  "action": "confirm_after_sales",
+                  "draft_id": "task_as"
+                }
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "取消"
+                },
+                "type": "danger",
+                "value": {
+                  "action": "cancel_after_sales",
+                  "draft_id": "task_as"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "afterSalesResultCard": {
+    "header": {
+      "template": "green",
+      "title": {
+        "tag": "plain_text",
+        "content": "退货已完成"
+      }
+    },
+    "elements": [
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "处理这一笔\n2026-10-01 · A100黑 · 38码 · ￥198",
+          "text_size": "heading"
+        }
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "动作：退货\n钱：退现金\n差价：￥198（退给她）\n退回的鞋放：门盒",
+          "text_size": "heading"
+        }
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "已写入\n明细 1 条\n收款明细 1 笔（退给她 ￥198）\n库存：退回入库 门盒 ×1",
+          "text_size": "normal"
+        }
+      }
+    ]
+  },
+  "afterSalesRetryCard": {
+    "header": {
+      "template": "red",
+      "title": {
+        "tag": "plain_text",
+        "content": "退货没做成"
+      }
+    },
+    "elements": [
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "原因：库存流水写入失败",
+          "text_size": "heading"
+        }
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "处理这一笔\n2026-10-01 · A100黑 · 38码 · ￥198",
+          "text_size": "heading"
+        }
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "动作：退货\n钱：退现金\n差价：￥198（退给她）\n退回的鞋放：门盒",
+          "text_size": "heading"
+        }
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "退回的鞋放哪儿？",
+          "text_size": "note"
+        }
+      },
+      {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "horizontal_spacing": "8px",
+        "columns": [
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "门盒（已选）"
+                },
+                "type": "primary",
+                "value": {
+                  "action": "choose_after_sales_restock",
+                  "draft_id": "task_as",
+                  "state": "门盒"
+                }
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "样品"
+                },
+                "type": "default",
+                "value": {
+                  "action": "choose_after_sales_restock",
+                  "draft_id": "task_as",
+                  "state": "样品"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "horizontal_spacing": "8px",
+        "columns": [
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "确认"
+                },
+                "type": "primary",
+                "value": {
+                  "action": "confirm_after_sales",
+                  "draft_id": "task_as"
+                }
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "取消"
+                },
+                "type": "danger",
+                "value": {
+                  "action": "cancel_after_sales",
+                  "draft_id": "task_as"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "note",
+        "elements": [
+          {
+            "tag": "plain_text",
+            "content": "核对后点「确认」重试；同一笔不会重复写。"
+          }
+        ]
+      }
+    ]
+  },
+  "afterSalesStatusCard": {
+    "header": {
+      "template": "blue",
+      "title": {
+        "tag": "plain_text",
+        "content": "售后"
+      }
+    },
+    "elements": [
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "已受理。",
+          "text_size": "heading"
+        }
+      }
+    ]
+  },
+  "secondDeliveryCard": {
+    "header": {
+      "template": "blue",
+      "title": {
+        "tag": "plain_text",
+        "content": "待成交：未付 / 预付"
+      }
+    },
+    "elements": [
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "XSD-001　·　已付\n未收 ￥99　·　未交付 1/2 双",
+          "text_size": "heading"
+        }
+      },
+      {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "horizontal_spacing": "8px",
+        "columns": [
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "成交·微信"
+                },
+                "type": "primary",
+                "value": {
+                  "action": "confirm_second_delivery",
+                  "draft_id": "",
+                  "sales_entry_record_id": "rec_1",
+                  "method": "微信",
+                  "reminder_day": "2026-10-07"
+                }
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "成交·现金"
+                },
+                "type": "primary",
+                "value": {
+                  "action": "confirm_second_delivery",
+                  "draft_id": "",
+                  "sales_entry_record_id": "rec_1",
+                  "method": "现金",
+                  "reminder_day": "2026-10-07"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "saleLookupCard(0 条)": {
+    "header": {
+      "template": "orange",
+      "title": {
+        "tag": "plain_text",
+        "content": "最近 3 天的销售记录"
+      }
+    },
+    "elements": [
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "3 天内没查到 A100黑 的销售记录。\n你记得大概是哪天买的吗？",
+          "text_size": "heading"
+        }
+      }
+    ]
+  },
+  "saleLookupCard(N 条)": {
+    "header": {
+      "template": "blue",
+      "title": {
+        "tag": "plain_text",
+        "content": "最近 3 天的销售记录"
+      }
+    },
+    "elements": [
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "1. 2026-10-01 · A100黑 · 38码 · ￥99",
+          "text_size": "heading"
+        }
+      },
+      {
+        "tag": "note",
+        "elements": [
+          {
+            "tag": "plain_text",
+            "content": "只有这 1 笔。"
+          }
+        ]
+      }
+    ]
+  },
+  "purchaseRequestConfirmationCard": {
+    "header": {
+      "template": "orange",
+      "title": {
+        "tag": "plain_text",
+        "content": "请确认采购申请"
+      }
+    },
+    "elements": [
+      {
+        "tag": "markdown",
+        "content": "**━━━ 供应商：待补充供应商 ━━━**"
+      },
+      {
+        "tag": "markdown",
+        "content": "**⚠️ A100**"
+      },
+      {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "background_style": "grey",
+        "horizontal_spacing": "default",
+        "columns": [
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "vertical_align": "center",
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": "**38**\n×1",
+                "text_align": "center"
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "vertical_align": "center",
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": "**39**\n×1",
+                "text_align": "center"
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "vertical_align": "center",
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": " ",
+                "text_align": "center"
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "vertical_align": "center",
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": " ",
+                "text_align": "center"
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "vertical_align": "center",
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": " ",
+                "text_align": "center"
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "vertical_align": "center",
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": " ",
+                "text_align": "center"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "horizontal_spacing": "8px",
+        "columns": [
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "确认生成采购申请"
+                },
+                "type": "primary",
+                "value": {
+                  "action": "confirm_purchase_request",
+                  "draft_id": "draft_2"
+                }
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "取消"
+                },
+                "type": "danger",
+                "value": {
+                  "action": "cancel_purchase_request",
+                  "draft_id": "draft_2"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

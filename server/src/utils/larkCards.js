@@ -4,6 +4,31 @@ const { ARRIVAL_CONVERSATION_ACTIONS } = require('../config/arrivalConversation'
 
 const text = (value) => String(value ?? '').replace(/\n/g, ' ');
 
+// ⭐ 会被 `im.v1.message.patch` 更新的卡片，config 一律从这里出（**唯一组装点**）。
+//
+// 为什么必须带 `update_multi: true`（这不是"顺手加的字段"，是 patch 能不能被看见的硬前提）：
+//   飞书官方文档 `im-v1/message/patch`：
+//     · 「你需在更新**前后**卡片的 `config` 属性中，均显式声明 `"update_multi":true`
+//        （表示卡片为共享卡片，卡片的更新对所有接收的用户可见）」；
+//     · 「不支持更新仅特定人可见的卡片」。
+//   `card-configuration`：「`update_multi`：true=共享卡片…；false=独享卡片，
+//    **仅操作用户可见卡片的更新内容**；**默认 false**」。
+//   ⇒ 生产现象正是它：后端 patch **成功**（`lark.sales.card.update.succeeded`），
+//     卡片发在群里、她不是"操作用户"，于是**界面上纹丝不动**（她原话：「我点了，
+//     只是有个toast，卡片还是没有反应！」）。**"更新前"（首次发出的那份 builder 输出）
+//     也必须带**，所以是渲染卡片的每个 builder 都要带，而不是只在 patch 时补。
+//
+// 为什么是**工厂函数**而不是共享的冻结常量 `Object.freeze({...})`：
+//   共享常量会让 14 张卡**共用同一个对象引用** —— 将来某张卡要单独调 `card.config` 时，
+//   改动会**串到所有卡片上**；而在非严格模式下对冻结属性赋值**既改不动、也不报错**，
+//   是最难查的那种静默失效。工厂函数让每张卡拿到**自己的一份**，
+//   "每张卡各自独立"成为语义；字段清单（`wide_screen_mode` + `update_multi`）
+//   仍然只有这一处定义，DRY 不丢。
+//
+// ⚠️ 不走 patch 的卡片（`saleLookupCard` / `purchaseRequestConfirmationCard` /
+//    `utils/salesDailyReportCard.js`）**刻意不带**这个字段 —— 它们只发不改。
+const patchableCardConfig = () => ({ wide_screen_mode: true, update_multi: true });
+
 // 明细行只写她需要核对的事实：货号、尺码、数量、金额、赠品。
 //
 // 库存分布**刻意不写在这里**：实时库存是录单时读的，只用来判断"这一双有没有货、
@@ -381,7 +406,7 @@ const salesConfirmationCard = (draftId, draft) => {
   }
 
   return {
-    config: { wide_screen_mode: true },
+    config: patchableCardConfig(),
     header: { template: 'blue', title: { tag: 'plain_text', content: '请确认销售订单' } },
     elements: [
       {
@@ -407,7 +432,7 @@ const salesConfirmationCard = (draftId, draft) => {
 };
 
 const salesStatusCard = (draft, title, message, template = 'blue') => ({
-  config: { wide_screen_mode: true },
+  config: patchableCardConfig(),
   header: { template, title: { tag: 'plain_text', content: title } },
   elements: [
     { tag: 'markdown', content: itemLines(draft?.items || [], 'actual_amount') || '销售订单' },
@@ -442,7 +467,7 @@ const salesProcessingCard = (draft, { title, template = 'blue', itemColor, progr
   // 既有那句 note：**逐字保留**，结构与 `salesStatusCard` 一致（只是内容来自配置）。
   elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: note }] });
   return {
-    config: { wide_screen_mode: true },
+    config: patchableCardConfig(),
     header: { template, title: { tag: 'plain_text', content: title } },
     elements,
   };
@@ -461,18 +486,18 @@ const sampleReplacementCard = (taskId, { productNumber, remainingSizes = [], loo
   }))));
   // 单个按钮不存在换行问题，保持 action 元素原样。
   elements.push({ tag: 'action', actions: [actionButton('刷新可选尺码', 'refresh_sample_replacement', taskId)] });
-  return { config: { wide_screen_mode: true },
+  return { config: patchableCardConfig(),
     header: { template: 'orange', title: { tag: 'plain_text', content: '请补选展示样品' } }, elements };
 };
 
 const sampleReplacementStatusCard = (productNumber, message) => ({
-  config: { wide_screen_mode: true },
+  config: patchableCardConfig(),
   header: { template: 'green', title: { tag: 'plain_text', content: '样品已补选' } },
   elements: [{ tag: 'markdown', content: `${text(productNumber || '该货品')}：${text(message)}` }],
 });
 
 const sampleReplacementProcessingCard = (productNumber, message) => ({
-  config: { wide_screen_mode: true },
+  config: patchableCardConfig(),
   header: { template: 'blue', title: { tag: 'plain_text', content: '样品补选处理中' } },
   elements: [{ tag: 'markdown', content: `${text(productNumber || '该货品')}：${text(message)}` }],
 });
@@ -619,7 +644,7 @@ const purchaseArrivalReconcileCard = ({ taskId, batchNo = '', rows = [], differe
   ]));
   if (copy.hint) elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: text(copy.hint) }] });
   return {
-    config: { wide_screen_mode: true },
+    config: patchableCardConfig(),
     header: { template: 'orange', title: { tag: 'plain_text', content: text(copy.title) || '本次到货核对完毕，确认入库吗？' } },
     elements,
   };
@@ -632,7 +657,7 @@ const purchaseArrivalReconcileCard = ({ taskId, batchNo = '', rows = [], differe
 //    —— 业务负责人连着两次反馈「卡片点击后也是没有任何反应」，根因就是失败时卡片不动。
 //    所以这里多一个可配的 `title`（不传时与改动前逐字相同）。
 const purchaseArrivalReconcileStatusCard = ({ batchNo = '', message = '', template = 'green', title = '' } = {}) => ({
-  config: { wide_screen_mode: true },
+  config: patchableCardConfig(),
   header: { template, title: { tag: 'plain_text', content: text(title) || '采购到货核对' } },
   elements: [
     ...(batchNo ? [{ tag: 'markdown', content: `**报货批次号：** ${text(batchNo)}` }] : []),
@@ -652,7 +677,7 @@ const purchaseStatusCard = (draft, title, message, template = 'blue', options = 
   }
   elements.push(...purchaseItemElements(draft?.items || draft?.actual || [], { skipSupplierGroup: isBatch }));
   elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: message }] });
-  return { config: { wide_screen_mode: true }, header: { template, title: { tag: 'plain_text', content: title } }, elements };
+  return { config: patchableCardConfig(), header: { template, title: { tag: 'plain_text', content: title } }, elements };
 };
 
 // ---------------------------------------------------------------------------
@@ -764,7 +789,7 @@ const afterSalesConfirmationCard = (taskId, plan = {}) => {
     actionButton('确认', 'confirm_after_sales', taskId, 'primary'),
     actionButton('取消', 'cancel_after_sales', taskId, 'danger'),
   ]));
-  return { config: { wide_screen_mode: true },
+  return { config: patchableCardConfig(),
     header: { template: 'orange', title: { tag: 'plain_text', content: '请确认售后' } }, elements };
 };
 
@@ -796,7 +821,7 @@ const afterSalesWrittenLines = (result = {}) => {
 };
 
 const afterSalesResultCard = (plan = {}, result = {}) => ({
-  config: { wide_screen_mode: true },
+  config: patchableCardConfig(),
   header: { template: 'green', title: { tag: 'plain_text',
     content: `${text(plan.action_label) || '售后'}已完成` } },
   elements: [
@@ -828,7 +853,7 @@ const afterSalesRetryCard = (taskId, plan = {}, reason) => {
 };
 
 const afterSalesStatusCard = ({ title, message, template = 'blue' } = {}) => ({
-  config: { wide_screen_mode: true },
+  config: patchableCardConfig(),
   header: { template, title: { tag: 'plain_text', content: text(title) || '售后' } },
   elements: [{ tag: 'div', text: { tag: 'lark_md', content: text(message), text_size: 'heading' } }],
 });
@@ -893,7 +918,7 @@ const secondDeliveryCard = ({ orders = [], methods = [], dayKey = '' } = {}) => 
     ))));
   });
   return {
-    config: { wide_screen_mode: true },
+    config: patchableCardConfig(),
     header: { template: 'blue', title: { tag: 'plain_text', content: '待成交：未付 / 预付' } },
     elements: elements.length
       ? elements
