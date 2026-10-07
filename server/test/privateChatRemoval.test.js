@@ -240,6 +240,42 @@ test('② 没有群上下文的任务：sendTaskCard / sendTaskText **不发、�
   assert.match(logs, /"reason":"no_group_context"/);
 });
 
+test('② `replyTaskCard`（"回她那条消息"那条出口）没有群上下文 → 不发、返 null、记 skip', async () => {
+  // 🔴 2026-10-07 二次收尾：这条出口原来会 `replyCard(task.message_id, card)` ——
+  //    非群任务照样会发出一条私聊（最后两条口子之一）。
+  const { service, sent, replies } = makeHarness();
+  const noChannelTask = { task_id: 't_no_channel_reply', type: 'sale', sender_open_id: TEST_SELLER };
+
+  const logs = await captureLogs(async () => {
+    assert.equal(await service.replyTaskCard(noChannelTask, { header: {} }), null);
+  });
+
+  assert.deepEqual(replies, [], '没有去处 → 连"回复她那条消息"都不做（那就是私聊）');
+  assert.deepEqual(sent, [], '更没有主动私聊');
+  assert.match(logs, /lark\.private_chat\.send_skipped/);
+  assert.match(logs, /"kind":"card"/);
+  assert.match(logs, /"reason":"no_group_context"/);
+  assert.match(logs, /"task_id":"t_no_channel_reply"/);
+});
+
+test('② ⭐ 群任务走 `replyTaskCard` → 回复回到那条消息的话题（`reply_in_thread`），零私聊', async () => {
+  // 与上一条配对：非群那条改掉了，**群那条必须逐字不变**。
+  const { service, sent, replies } = makeHarness();
+  const groupTask = {
+    task_id: 't_group_reply', type: 'sale', chat_type: 'group', chat_id: GROUP_CHAT_ID,
+    group_thread_id: 'omt_sale_1', message_id: 'om_her_message', sender_open_id: TEST_SELLER,
+    sales_entry_record_id: 'entry_1',
+  };
+
+  const messageId = await service.replyTaskCard(groupTask, { header: {} });
+
+  assert.equal(messageId, 'om_reply_1');
+  assert.equal(replies.length, 1, '群任务照旧回一条（进话题）');
+  assert.equal(replies[0].path.message_id, 'om_her_message');
+  assert.equal(replies[0].data.reply_in_thread, true);
+  assert.deepEqual(sent, [], '群这条路一条主动私聊都没有');
+});
+
 test('② 私聊触发的补样品提醒（没有群上下文）→ 不发，只记 skip；也不记 notice_sent', async () => {
   const { service, sent, replies } = makeHarness();
 

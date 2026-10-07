@@ -2236,10 +2236,20 @@ test('A：未配置 PURCHASE_CHAT_ID → 大声跳过（记 skipped 日志），
     // 采购事实照常写成——群没配只影响"发没发出去"，不能反过来把采购判失败。
     assert.equal(task.status, 'posted');
     assert.equal((await gateway.listAll('purchaseRequest')).length, 1);
-    // 一条 IM 消息都不许发（尤其不许回落到经办人私聊）。
+    // ⚠️ 这里**必须等**：`posted` 是**发图之前**写的（`process()` 里先
+    //    `store.update(status:'posted')`，之后才是 `deliverSupplierImages` → 那句 skip 日志），
+    //    所以"任务已 posted"**不等于**"跳过日志已经打了"。
+    //    以前直接断言 `length === 1`，日志晚于断言窗口时就偶发得到 0
+    //    （同一次运行的诊断里明明能看到那条日志，`gh run rerun` 就绿 —— CI 偶发的根因）。
+    //    现在改成"**等到它出现或超时**再断言"：超时才算失败，**不放宽成"0 或 1 都行"**
+    //    （那等于没断言）。
+    await waitFor('未配置采购群的跳过日志落盘',
+      () => logs.events('purchase.request.image.skipped').length >= 1);
+    // 一条 IM 消息都不许发（尤其不许回落到经办人私聊）——放在**等到日志之后**再断言，
+    // 免得"链路还没跑到发消息那一步"就把空数组当成通过。
     assert.deepEqual(sent, [], '未配置群时必须一条都不发');
     const skipped = logs.events('purchase.request.image.skipped');
-    assert.equal(skipped.length, 1, '必须留下可排查的跳过日志');
+    assert.equal(skipped.length, 1, '必须留下可排查的跳过日志（而且只记一条）');
     assert.ok(skipped[0].includes('purchase_chat_id_unconfigured'));
   } finally {
     logs.restore();

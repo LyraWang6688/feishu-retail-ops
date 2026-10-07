@@ -77,6 +77,12 @@ const makeService = (recognizerResult, options = {}) => {
     ...(options.afterSales ? { afterSales: options.afterSales } : {}),
   });
   service.replyCard = async (_messageId, card) => { cards.push(card); return 'om_card'; };
+  // 🔴 2026-10-07 二次收尾：`replyTaskCard`（售后那张确认卡片走的出口）的**非群分支**
+  //    已改成"记 skip + 返 null"（没有群上下文 = 没有去处）。本文件的 task 是历史
+  //    "没有渠道上下文"的形状，所以这里**显式**把售后编排的回复出口接到记账打桩上 ——
+  //    与 `afterSalesFlow.test.js` 的 `build()` 显式注入出口同一理由（那边测的是编排，
+  //    这边测的是接线与卡片内容/按钮/零写入）。⚠️ 不许改成"干脆不出卡片"：那是删覆盖。
+  service.afterSalesFlow.replyCardToTask = async (_task, card) => { cards.push(card); return 'om_card'; };
   // 🔴 2026-10-07 收尾：这里原来还有一行 `service.sendCard = ...` ——
   //    `LarkMvpService.sendCard`（open_id 口径的卡片发送器）已随"缺省回落私聊"的清掉
   //    而整体删除。`sendText` **保留**：它还在（私聊 notice 那一句），这里的打桩继续钉住
