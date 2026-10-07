@@ -11,6 +11,14 @@ const {
   resolveAfterSalesSettlement,
   resolveAfterSalesRestockState,
 } = require('../config/afterSalesFlow');
+// 飞书单元格 → 文字的唯一实现（文本/单选/多选/`{text}`/`[{text}]` 都认）。
+// ⚠️ 刻意 require 既有的那一份，**不新造 helper**。2026-10-07 线上真事：
+//    本文件里调了一个**没有定义**的名字 `text` → `ReferenceError: text is not defined`
+//    → 业务负责人在话题里回复到货情况后「解析失败、没有卡片、没有下文」
+//    （`purchase.arrival.reconcile.parse_failed`）。回归用例见
+//    test/doubaoArrivalReconcileParse.test.js（源码级断言也钉住"不许再用那个名字"）。
+//    依赖方向核过：`v1BitableGateway` 不会（直接或间接）require 回本文件，不构成循环依赖。
+const { textValue } = require('./v1BitableGateway');
 
 // Log only the sale fields needed to compare AI extraction with deterministic
 // normalization. Never log the complete user message, prompt or raw model JSON.
@@ -545,7 +553,7 @@ class DoubaoService {
     if (!transcript) throw new Error('到货核对原话不能为空');
     if (!Array.isArray(rows) || !rows.length) throw new Error('到货核对缺少采购申请明细');
     const requestLines = rows
-      .map((row) => `${text(row.item_no) || '（未知货号）'} / ${text(row.color) || '（无颜色）'} / ${Number(row.size)} 码 / 申请 ${Number(row.quantity)} 双`)
+      .map((row) => `${textValue(row.item_no) || '（未知货号）'} / ${textValue(row.color) || '（无颜色）'} / ${Number(row.size)} 码 / 申请 ${Number(row.quantity)} 双`)
       .join('\n');
     const prompt = `
 你是鞋店「采购到货核对」助手。这批采购申请单的明细（货号 / 颜色 / 尺码 / 申请数量）是：
@@ -594,10 +602,10 @@ ${transcript}
     const allowedTypes = new Set(['more', 'less', 'same']);
     const differences = (Array.isArray(parsed?.differences) ? parsed.differences : [])
       .map((item) => ({
-        item_no: text(item?.item_no),
-        color: text(item?.color),
+        item_no: textValue(item?.item_no),
+        color: textValue(item?.color),
         size: Number(item?.size),
-        type: text(item?.type).toLowerCase(),
+        type: textValue(item?.type).toLowerCase(),
         quantity: Number(item?.quantity),
       }))
       .filter((item) => {
