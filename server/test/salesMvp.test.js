@@ -633,3 +633,210 @@ test('exhausted progress read preserves posted sale and known IDs recover when l
   assert.equal(stockCalls.length, 1);
   assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['履约状态'], '已交付');
 });
+
+// ─── 「这一单到底扣没扣库存」：三条日志的字段名、值与顺序（业务负责人 2026-10-07 拍板） ───
+//
+// 起因（真实误判）：`v1.sale.posted` 里的 `inventory_applied: false` 被读成了"整单没扣库存"，
+// 但它只是说"**落表这一步**不动库存"（库存在交付那一步才扣，而且已经扣了）。
+// 改法是她逐字批准的三条：a 字段名带范围 · b 库存真动完记一条**正向证据** · c 写明下一步。
+// 下面四个用例把这三条钉住：**日志是排查判据，格式回退必须红**。
+//
+// 日志捕获（与 purchaseReturn.test.js / purchaseWebhookService.test.js 同款）：
+// 结构化日志的出口就是 console.log/warn/error（src/utils/logger.js），抓它们即可断言。
+const captureLogs = () => {
+  const lines = [];
+  const originals = { log: console.log, warn: console.warn, error: console.error };
+  const capture = (...args) => { lines.push(args.map((value) => String(value)).join(' ')); };
+  console.log = capture;
+  console.warn = capture;
+  console.error = capture;
+  return {
+    lines,
+    // 只取某个事件的结构化日志对象（日志行就是 logger 打的一行 JSON）。
+    logs: (event) => lines.filter((line) => line.includes(`"event":"${event}"`)).map((line) => JSON.parse(line)),
+    firstIndex: (event) => lines.findIndex((line) => line.includes(`"event":"${event}"`)),
+    restore: () => { console.log = originals.log; console.warn = originals.warn; console.error = originals.error; },
+  };
+};
+
+test('① 落表日志只说「这一步不动库存」：字段名带范围 ＋ 写明下一步，旧字段名整条消失', async () => {
+  const gateway = fake();
+  const logs = captureLogs();
+  let posted;
+  try {
+    posted = await new SalesOrderService({ gateway, references }).confirm({
+      salesEntryRecordId: 'order_1',
+      items: [{ itemNo: 'A100', size: 40, quantity: 1, actualAmount: 220 }],
+      payments: [{ method: '微信', amount: 220 }],
+    });
+  } finally {
+    logs.restore();
+  }
+
+  const listed = logs.logs('v1.sale.posted');
+  assert.equal(listed.length, 1, '入账这一步只该记一条 v1.sale.posted');
+  const entry = listed[0];
+  assert.equal(entry.sales_entry_record_id, 'order_1');
+  assert.equal(entry.detail_count, 1);
+  assert.equal(entry.payment_count, 1);
+  // a. 字段名写清**范围**：这条日志只回答"落表这一步"。
+  assert.equal(entry.step, 'posting');
+  assert.equal(entry.inventory_applied_by_this_step, false);
+  // c. 补一句"下一步会做什么"。
+  assert.equal(entry.inventory_planned, true);
+  assert.equal(entry.inventory_step, 'after_posting');
+  // 🔴 旧字段名不许留半句话：它正是被读成"整单没扣库存"的那个词。
+  assert.equal(Object.prototype.hasOwnProperty.call(entry, 'inventory_applied'), false);
+  assert.ok(!logs.lines.some((line) => line.includes('"inventory_applied":')),
+    '日志原文里也不许再出现旧键名 inventory_applied');
+  // 前提：落表这一步确实不碰库存（流水要等交付那一步）。
+  assert.equal(gateway.records.get('inventoryLedger'), undefined);
+  // 返回值语义不变（本次只改"日志怎么说"）：本步不动库存。
+  assert.equal(posted.inventoryApplied, false);
+});
+
+test('② 库存真的扣完：sales.inventory.applied 带这次写入的流水 id 与行为编码，三条日志顺序可对', async () => {
+  const gateway = fake();
+  gateway.records.set('behavior', [{ record_id: 'behavior_sale', fields: {
+    行为编码: 'STOCK_SALE_DECREASE', 行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
+  } }]);
+  gateway.records.set('liveInventory', [
+    { record_id: 'door_1', fields: { 编号: ['product_A100'], 尺码: ['size_40'], 所属状态: '门盒' } },
+  ]);
+  const logs = captureLogs();
+  let ledgerId;
+  try {
+    const sale = new SalesOrderService({ gateway, references });
+    const posted = await sale.confirm({ salesEntryRecordId: 'order_1',
+      items: [{ itemNo: 'A100', size: 40, quantity: 1, actualAmount: 220 }],
+      payments: [{ method: '微信', amount: 220 }] });
+    const inventory = new InventoryService({ gateway, store: new JsonTaskStore({
+      dir: fs.mkdtempSync(path.join(os.tmpdir(), 'sale-stock-log-')), idField: 'operation_id',
+    }) });
+    const delivery = new SalesDeliveryService({ gateway, inventory });
+    await delivery.deliver({ salesEntryRecordId: 'order_1', detailRecordIds: posted.detailRecordIds,
+      paymentRecordIds: posted.paymentRecordIds });
+    ledgerId = gateway.records.get('inventoryLedger')[0].record_id;
+  } finally {
+    logs.restore();
+  }
+
+  // a + c：落表那条（同 ①，这里再钉一次"它和库存证据不是同一条"）。
+  const posted = logs.logs('v1.sale.posted');
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0].step, 'posting');
+  assert.equal(posted[0].inventory_applied_by_this_step, false);
+  assert.equal(posted[0].inventory_step, 'after_posting');
+
+  // 库存引擎逐条写流水的证据（既有日志，原样仍在）。
+  const changes = logs.logs('inventory.change.applied');
+  assert.equal(changes.length, 1);
+  assert.equal(changes[0].kind, 'STOCK_SALE_DECREASE');
+  assert.equal(changes[0].ledger_record_id, ledgerId);
+
+  // 「库存状态」写下去的那条 —— 排查时对顺序用的锚点。
+  const stockWriteIndex = logs.lines.findIndex((line) =>
+    line.includes('"event":"sales.status.written"') && line.includes('"dimensions":["stock"]'));
+  assert.ok(stockWriteIndex >= 0, '「库存状态」必须写下去并记日志');
+
+  // b. ⭐ 正向证据：**库存真的动完了**。
+  const applied = logs.logs('sales.inventory.applied');
+  assert.equal(applied.length, 1, '库存真动完时必须且只记一条 sales.inventory.applied');
+  assert.equal(applied[0].sales_entry_record_id, 'order_1');
+  assert.deepEqual(applied[0].ledger_ids, [ledgerId],
+    'ledger_ids 必须是这次真的写下去的库存流水 record_id');
+  assert.deepEqual(applied[0].behaviors, ['STOCK_SALE_DECREASE']);
+  assert.equal(applied[0].applied_detail_count, 1);
+  assert.equal(applied[0].already_delivered_detail_count, 0);
+  assert.equal(applied[0].failed_detail_count, 0);
+  assert.deepEqual(applied[0].live_record_ids, ['door_1']);
+  assert.equal(applied[0].stock_status, '已写入');
+  assert.deepEqual(applied[0].sample_consumed_detail_ids, [], '这一单没卖样品，没有要补的');
+
+  // 顺序：逐条流水 → 写「库存状态」→ 正向证据（照这个顺序读，不会再断章取义）。
+  assert.ok(logs.firstIndex('inventory.change.applied') < stockWriteIndex, '先有流水，才有「库存状态」');
+  assert.ok(stockWriteIndex < logs.firstIndex('sales.inventory.applied'),
+    '正向证据紧跟在「库存状态」之后');
+});
+
+test('③ 部分扣：正向证据只列真的扣成的流水，并把失败条数一并说清（不假装全扣了）', async () => {
+  const gateway = fake();
+  gateway.records.set('behavior', [{ record_id: 'behavior_sale', fields: {
+    行为编码: 'STOCK_SALE_DECREASE', 行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
+  } }]);
+  // A100/39 有货；B200/38 一双都没有 → 那一条交付必然失败。
+  gateway.records.set('liveInventory', [
+    { record_id: 'door_a', fields: { 编号: ['product_A100'], 尺码: ['size_39'], 所属状态: '门盒' } },
+  ]);
+  const logs = captureLogs();
+  try {
+    const sale = new SalesOrderService({ gateway, references });
+    const posted = await sale.confirm({ salesEntryRecordId: 'order_1', items: [
+      { itemNo: 'A100', size: 39, quantity: 1, actualAmount: 186 },
+      { itemNo: 'B200', size: 38, quantity: 1, actualAmount: 176 },
+    ], payments: [{ method: '微信', amount: 362 }] });
+    const inventory = new InventoryService({ gateway, store: new JsonTaskStore({
+      dir: fs.mkdtempSync(path.join(os.tmpdir(), 'sale-stock-log-partial-')), idField: 'operation_id',
+    }) });
+    const result = await new SalesDeliveryService({ gateway, inventory })
+      .deliver({ salesEntryRecordId: 'order_1', detailRecordIds: posted.detailRecordIds });
+    assert.equal(result.failures.length, 1, '前提：这是一次真失败（否则这条用例测不到"部分扣"）');
+    assert.match(result.failures[0].error, /库存不足/);
+  } finally {
+    logs.restore();
+  }
+
+  const applied = logs.logs('sales.inventory.applied');
+  assert.equal(applied.length, 1);
+  assert.equal(applied[0].applied_detail_count, 1, '只有 1 条真的扣成了');
+  assert.equal(applied[0].already_delivered_detail_count, 0);
+  assert.equal(applied[0].failed_detail_count, 1, '失败那条要如实说出来，不能假装全扣了');
+  assert.equal(applied[0].stock_status, '部分写入');
+  assert.deepEqual(applied[0].ledger_ids, [gateway.records.get('inventoryLedger')[0].record_id]);
+  assert.deepEqual(applied[0].live_record_ids, ['door_a']);
+});
+
+test('④ ledger_ids 为空 ≠ 没扣库存：重复交付已交付的明细时，用 already_delivered 说清', async () => {
+  const gateway = fake();
+  gateway.records.set('behavior', [{ record_id: 'behavior_sale', fields: {
+    行为编码: 'STOCK_SALE_DECREASE', 行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
+  } }]);
+  gateway.records.set('liveInventory', [
+    { record_id: 'door_1', fields: { 编号: ['product_A100'], 尺码: ['size_40'], 所属状态: '门盒' } },
+  ]);
+  const logs = captureLogs();
+  try {
+    const sale = new SalesOrderService({ gateway, references });
+    const posted = await sale.confirm({ salesEntryRecordId: 'order_1',
+      items: [{ itemNo: 'A100', size: 40, quantity: 1, actualAmount: 220 }],
+      payments: [{ method: '微信', amount: 220 }] });
+    const request = { salesEntryRecordId: 'order_1', detailRecordIds: posted.detailRecordIds };
+    const firstStore = new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'sale-stock-log-redeliver-')),
+      idField: 'operation_id' });
+    await new SalesDeliveryService({ gateway, inventory: new InventoryService({ gateway, store: firstStore }) })
+      .deliver(request);
+    // 第二次换一个**空**的本地任务日志目录：模拟"这条明细确实已交付，但本地那份任务日志不在"
+    //（换了机器 / 目录被清）—— 正是「拿不到 ledger_id」的那种真实情形。
+    const secondStore = new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'sale-stock-log-empty-')),
+      idField: 'operation_id' });
+    const retried = await new SalesDeliveryService({ gateway,
+      inventory: new InventoryService({ gateway, store: secondStore }) }).deliver(request);
+    assert.equal(retried.failures.length, 0, '前提：重试不该失败（否则测的是别的路径）');
+  } finally {
+    logs.restore();
+  }
+
+  const applied = logs.logs('sales.inventory.applied');
+  assert.equal(applied.length, 2, '两次交付各记一条正向证据');
+  assert.equal(applied[0].applied_detail_count, 1, '第一次真的扣了并拿得到流水 id');
+  assert.equal(applied[0].already_delivered_detail_count, 0);
+  // ⭐ 第二次：拿不到流水 id（本地任务日志不在），但**绝不能被读成"没扣库存"**。
+  assert.deepEqual(applied[1].ledger_ids, []);
+  assert.equal(applied[1].already_delivered_detail_count, 1,
+    '这一条本来就已交付 —— 库存早扣过了，必须由这个字段说清');
+  assert.equal(applied[1].failed_detail_count, 0);
+  assert.equal(applied[1].stock_status, '已写入');
+  // 事实表侧：库存流水只有一条，第二次没有重复扣。
+  assert.equal(gateway.records.get('inventoryLedger').length, 1);
+  assert.equal(logs.logs('inventory.change.applied').length, 1);
+});

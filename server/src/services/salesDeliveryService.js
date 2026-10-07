@@ -1,5 +1,5 @@
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
-const { InventoryService } = require('./inventoryService');
+const { InventoryService, MOVEMENT_SALE_DECREASE } = require('./inventoryService');
 const { SalesProgressService } = require('./salesProgressService');
 const { readSaleLinkedRecord } = require('./salesRecordReader');
 const { withSalesReadRetry } = require('./salesReadRetry');
@@ -98,7 +98,43 @@ class SalesDeliveryService {
     //    算成功；否则重试一次正常的交付会把状态写成"部分扣减"。
     const stockStatus = failures.length === 0 ? WRITE.stock.done
       : results.length > 0 ? WRITE.stock.partial : WRITE.stock.failed;
+    // 补样品候选：与下面那条「正向证据」用**同一个筛选口径**，所以只在这里算一次。
+    // ⚠️ 只是把纯计算往前挪了一格，**没有改任何写入顺序**。
+    const sampleReplacements = results.filter((item) => item.inventoryResult?.sampleConsumedQuantity > 0)
+      .map((item) => ({ salesDetailRecordId: item.detailRecordId,
+        productRecordId: item.inventoryResult.productRecordId,
+        sampleConsumedQuantity: item.inventoryResult.sampleConsumedQuantity,
+        consumedLiveRecordIds: item.inventoryResult.consumedLiveRecordIds || [],
+        remainingSizes: item.inventoryResult.remainingSizes || [] }));
     await this.status.write(salesEntryRecordId, { stock: stockStatus });
+    // ⭐ 正向证据：**这一单的库存真的动完了** —— 回答"到底扣没扣库存"该看的就是这一条。
+    // 与逐条的 `inventory.change.applied`（库存引擎在说"这一条流水写了"）互补：
+    // 这条是**销售交付这一步**在说"该扣的都扣完了 ＋ 扣的是哪几条流水"。
+    // ⚠️ 覆盖范围：**只覆盖销售出库（销售减少）这一条库存路径** —— 也就是本函数
+    //    "逐条写库存流水 + 写「库存状态」"这一段。卖了样品而触发的**补样品（门盒转样品）**
+    //    由 `SampleReplacementService` → `InventoryService.promoteToSample` 在**之后**执行
+    //    （同一次确认里紧接着补掉，或之后由补选卡片补），它的证据是
+    //    `inventory.sample.promoted`（带 ledger_record_id），**不在本事件里**；
+    //    本事件用 `sample_consumed_detail_ids` 指出"这一单还有哪几条要补样品"。
+    // ⚠️⚠️ 读法（正是这条日志要防的那种误读）：`ledger_ids` 为空**不等于**"没扣库存"——
+    //    再看 `already_delivered_detail_count`（这几条**之前就交付过、库存早扣了**，
+    //    这次没产生新流水）；真的没扣成的看 `failed_detail_count`。
+    const ledgerIds = results.map((item) => item.inventoryResult?.ledgerRecordId).filter(Boolean);
+    logInfo('sales.inventory.applied', {
+      sales_entry_record_id: salesEntryRecordId,
+      ledger_ids: ledgerIds,
+      // 行为写**编码**（不是中文名）：中文名在「行为管理」表里维护，代码里再抄一份会漂移；
+      // 编码是契约（见 InventoryService 的 STOCK_MOVEMENTS）。
+      behaviors: ledgerIds.length ? [MOVEMENT_SALE_DECREASE] : [],
+      // 本次真的写了库存流水的明细条数（= ledger_ids 的条数）。
+      applied_detail_count: ledgerIds.length,
+      // 这次跳过、但「履约状态」本来就是已交付的明细 —— 那些库存**早就扣过了**。
+      already_delivered_detail_count: results.filter((item) => item.duplicate).length,
+      failed_detail_count: failures.length,
+      live_record_ids: results.flatMap((item) => item.inventoryResult?.liveRecordIds || []),
+      sample_consumed_detail_ids: sampleReplacements.map((item) => item.salesDetailRecordId),
+      stock_status: stockStatus,
+    });
     const details = [...byId.values()];
     const deliveredTotal = details.filter((detail) =>
       textValue(detail.fields?.[fields.fulfillmentStatus]) === '已交付').length;
@@ -107,12 +143,6 @@ class SalesDeliveryService {
     logInfo('sales.delivery.completed', { sales_entry_record_id: salesEntryRecordId,
       detail_count: results.length, failed_count: failures.length,
       delivered_quantity: deliveredTotal, fulfillment_status: progress.fulfillmentStatus });
-    const sampleReplacements = results.filter((item) => item.inventoryResult?.sampleConsumedQuantity > 0)
-      .map((item) => ({ salesDetailRecordId: item.detailRecordId,
-        productRecordId: item.inventoryResult.productRecordId,
-        sampleConsumedQuantity: item.inventoryResult.sampleConsumedQuantity,
-        consumedLiveRecordIds: item.inventoryResult.consumedLiveRecordIds || [],
-        remainingSizes: item.inventoryResult.remainingSizes || [] }));
     return { salesEntryRecordId, results, failures, deliveredQuantity: deliveredTotal,
       totalQuantity: total, fulfillmentStatus: progress.fulfillmentStatus, sampleReplacements };
   }

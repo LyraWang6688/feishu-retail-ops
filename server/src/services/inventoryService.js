@@ -1057,6 +1057,9 @@ module.exports = {
   // 状态值域从这里导出，避免「实时库存」的状态清单在别处再抄一份（抄了就会漂移）。
   LIVE_STATES,
   MOVEMENT_PURCHASE_DECREASE,
+  // 销售出库的行为编码。导出它只为让「库存真的动了」那条正向日志
+  //（`sales.inventory.applied`）写**编码**，而不是在别的文件里再抄一份字面量。
+  MOVEMENT_SALE_DECREASE,
   MOVEMENT_SALE_RETURN,
   MOVEMENT_SALE_COMPENSATION,
   MOVEMENT_SALE_CASH,
