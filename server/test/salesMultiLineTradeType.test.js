@@ -273,13 +273,28 @@ test('AC-14 一张混合单里：现货件查库存、预付件一次都不查�
 // ══════════════════════════════════════════════════════════════════════════════
 // ④ 「定金单只支持一条明细」这条判据确实被放开
 // ══════════════════════════════════════════════════════════════════════════════
-test('AC-11 原报错串在源码里已经不存在（判据被放开，不是被绕过）', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../src/services/doubaoService.js'), 'utf8');
-  assert.ok(!source.includes('定金单暂只支持一条明细'),
-    '那条整单护栏必须已经删除（多明细 + 定金 不再是缺项）');
-  // 但「说不清哪一件是预付」这条**新的、可补的**判据必须还在（绝不猜）。
+test('AC-11 那条整单判据在解析层已删除（放开，不是绕过）', () => {
+  const parser = fs.readFileSync(path.join(__dirname, '../src/services/doubaoService.js'), 'utf8');
+  assert.ok(!parser.includes('定金单暂只支持一条明细'),
+    '那条整单护栏必须已经从**判据所在文件**删除（多明细 + 定金 不再是缺项）');
+  // 全仓只剩一处提及，且**只是历史注释**（说明新判据不是它的翻版）—— 用逐文件断言钉住，
+  // 免得以后有人把这条护栏"顺手加回来"却没人发现。
+  const offenders = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.js') && fs.readFileSync(full, 'utf8').includes('定金单暂只支持一条明细')) {
+        offenders.push(path.relative(path.join(__dirname, '..'), full));
+      }
+    }
+  };
+  walk(path.join(__dirname, '../src'));
+  assert.deepEqual(offenders, ['src/config/salesTradeTypePolicy.js'],
+    '除了那条"这不是它的翻版"的历史注释，源码里不许再出现这条判据');
+  // 「说不清哪一件是预付」这条**新的、可补的**判据必须还在（绝不猜）。
   const { SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS } = require('../src/config/salesTradeTypePolicy');
-  assert.ok(source.includes('SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS'));
+  assert.ok(parser.includes('SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS'));
   assert.ok(SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS.length > 0);
 });
 
