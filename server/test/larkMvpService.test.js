@@ -1589,7 +1589,10 @@ test('她没说定金收了多少（预付 + 也没库存）→ 仍然要求补�
   assert.equal(stockLookups, 0, '预付不查实时库存 —— 但定金金额那条仍然要问');
   assert.equal(task.status, 'needs_info');
   assert.equal(cards.length, 0, '缺定金金额就不许出确认卡片');
-  assert.match(messages[0], /请明确已经收到的定金金额/);
+  // 2026-10-07 文案改版（她真机撞到「这个提醒是什么意思？」）：**判据没动**（上面两条照旧钉着
+  // 机器清单里的原话），回她的那一句换成人话 —— 这里改成**逐字**钉住新文案（比原来更严：
+  // 原来只匹配一个片段，现在整句 + 整段结构都钉住）。
+  assert.equal(messages[0], '销售信息还缺 1 处，请照着补一下～\n1. 请说一句这次收了多少定金～');
 });
 
 test('预付单：解析 B（实时库存）**整个不跑**，颜色改由解析 A（货品信息）按货号解析出来', async () => {
@@ -2031,8 +2034,14 @@ test('缺货之外还有别的问题时，才用完整的补充说明', async ()
   await service.processSalesTask('sale_mixed');
 
   assert.match(messages[0], /库存里没有 26632 37码/);
-  assert.match(messages[0], /请逐件说明成交金额/);
+  // 2026-10-07 文案改版：原来这里匹配的是**机器清单那句**「请逐件说明成交金额」；
+  // 现在那件事与 `items[i].actual_amount` 合并成**一句人话**（还把两双都点出来）。
+  // ⚠️ 这是**收严**不是放宽：原来只匹配 6 个字，现在逐字钉住整句（含两个货号），
+  //    并额外钉住"不许漏代码标识符 / 不许用「；」串句"。
+  assert.match(messages[0], /请给每双鞋都说一个成交金额：26632 37码、26632 36码/);
   assert.match(messages[0], /销售信息还缺/, '夹杂别的问题时仍用完整说明');
+  assert.doesNotMatch(messages[0], /items\[\d+\]|payments\[\d+\]|_[a-z]+/, '不许漏代码标识符');
+  assert.doesNotMatch(messages[0], /；/, '不许用「；」把几件事串成一段');
 });
 
 // 抓结构化日志（info → console.log → stdout；warn/error → stderr），只旁听、照样转发。

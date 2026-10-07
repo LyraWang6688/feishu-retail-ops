@@ -47,6 +47,10 @@ const {
   formatMissingProductText,
 } = require('../config/salesProductRegistration');
 const { isDataNotReady, withSalesReadRetry } = require('./salesReadRetry');
+// 「销售信息还缺…」那句追问的**文案**：把 `missing_fields` 这份**机器清单**
+//（里面有 `items[0].actual_amount` 这类代码标识符）翻成**一件事一行的人话**。
+// ⚠️ 它**只翻译、不判断** —— 什么情况下报缺项、报几条，一字未动（见该文件头注释）。
+const { renderSalesMissingInfo } = require('../config/salesMissingInfoText');
 const { allocateSalesOrderNo } = require('./salesOrderNo');
 const { resolveAccessory } = require('./accessoryMatchPolicy');
 const { SaleLookupService } = require('./saleLookupService');
@@ -1919,11 +1923,28 @@ class LarkMvpService {
     // ⚠️ 复用已定位的那笔销售时（群话题里的后续消息），**不写**这几个"解析中间态"
     //    字段：`解析摘要` 里放的是**这一条消息**的草稿，写上去会把她原单的解析摘要盖掉。
     //    她的原单已经在表里了，这次的处理过程留在本地任务里就够（不放业务表）。
+    // ⭐ 「销售信息还缺…」那段话**只在这里渲染一次**（两处出口共用同一份，见下）：
+    //    · 「解析失败原因」列（表里给她看的解释）—— 只取分行的**条目**、不带开头那句汇总；
+    //    · 群里回她那一条 —— 带开头汇总 + 行首编号。
+    // ⚠️ 渲染器只把 `missing_fields`（机器清单）翻成人话，**不改条数、不改判据**；
+    //    `missing_fields` 本身与 `解析结果摘要`（JSON）**逐字不变** —— 排查时仍看得到原值。
+    const missingInfo = renderSalesMissingInfo({
+      missingFields: draft.missing_fields || [],
+      items,
+      payments: draft.payments || [],
+    });
+    // 摸底：万一将来冒出一种"渲染不出来的形状"，**绝不静默** ——
+    // 退回改动前的原样拼接（宁可不好看，也不能让她以为"没事了"）。
+    const missingInfoText = missingInfo.text || draft.missing_fields.join('\n');
+    const missingInfoLines = missingInfo.lines.length ? missingInfo.lines : draft.missing_fields;
     if (!created.reused) {
       await this.gateway.update('salesEntry', salesEntryRecordId, {
         parseStatus: draft.missing_fields?.length ? '需补充' : '解析成功',
         parseSummary: JSON.stringify(draft),
-        failureReason: draft.missing_fields?.length ? draft.missing_fields.join('、') : '',
+        // ⭐ 这一行是 #233 的（缺项文案人话化）：渲染成分行的人话。
+        failureReason: draft.missing_fields?.length ? missingInfoLines.join('\n') : '',
+        // ⭐ 这一行是 #234 的（一单多明细）：交易类型**按明细行**收集、主表**多选**。
+        // 两行来自不同的改动，各自都是对的、互不相干 —— 所以**两行并存**，一行都不删。
         // 「交易类型」是**多选**关联字段：一个 id 就是单选（长度 1），多个就是多选。
         ...(tradeTypeRecordIds.length ? { tradeType: relation(tradeTypeRecordIds) } : {}),
       });
@@ -1946,11 +1967,15 @@ class LarkMvpService {
       // 优先级：「货号没建档」>「颜色全不在售 / 缺货」> 完整说明。
       // 前三者那句话本身就是完整的（她照着做就行），再套一层
       // "销售信息还缺…"只会把要她做的事埋起来；一单多双只缺一双时，这里也只报那一双。
+      // ⭐ 最后那一支（完整说明）2026-10-07 改过：原来是
+      //    `销售信息还缺：${missing_fields.join('、')}。请补充后重新发送完整销售信息。`
+      //    —— 把代码标识符（`items[0].actual_amount`）漏给她，还把 4~5 句串成一段。
+      //    现在走渲染器：**一件事一行 + 每条都有具体动作 + 一个字都不含代码标识符**。
       await this.sendTaskText(replyTask, registrationNotes.length
         ? registrationNotes.join('\n')
         : onlyStandalone
           ? standaloneNotes.join('\n')
-          : `销售信息还缺：${draft.missing_fields.join('、')}。请补充后重新发送完整销售信息。`);
+          : missingInfoText);
       return;
     }
     const cardStartedAt = Date.now();
