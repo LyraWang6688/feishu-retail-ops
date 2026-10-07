@@ -627,9 +627,13 @@ const purchaseArrivalReconcileCard = ({ taskId, batchNo = '', rows = [], differe
 
 // 点完「是」/「否」之后把卡片改成终态：按钮收掉，只留一行说明
 //（不给她在同一张卡上再点一次的机会；重复点击在后端仍然幂等）。
-const purchaseArrivalReconcileStatusCard = ({ batchNo = '', message = '', template = 'green' } = {}) => ({
+//
+// ⚠️ 2026-10-07：终态**不只表示成功**。入库失败也必须把这张卡改成终态（`template: 'red'`）
+//    —— 业务负责人连着两次反馈「卡片点击后也是没有任何反应」，根因就是失败时卡片不动。
+//    所以这里多一个可配的 `title`（不传时与改动前逐字相同）。
+const purchaseArrivalReconcileStatusCard = ({ batchNo = '', message = '', template = 'green', title = '' } = {}) => ({
   config: { wide_screen_mode: true },
-  header: { template, title: { tag: 'plain_text', content: '采购到货核对' } },
+  header: { template, title: { tag: 'plain_text', content: text(title) || '采购到货核对' } },
   elements: [
     ...(batchNo ? [{ tag: 'markdown', content: `**报货批次号：** ${text(batchNo)}` }] : []),
     { tag: 'note', elements: [{ tag: 'plain_text', content: text(message) }] },

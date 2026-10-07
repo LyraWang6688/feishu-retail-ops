@@ -8,6 +8,9 @@ const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { V1BitableGateway, linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { V1ReferenceResolver, person, relation, normalizeColor } = require('./v1ReferenceResolver');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
+// 采购环节的行为编码（单一来源）。入库行要挂的「采购行为」= PURCHASE_BEHAVIORS.INBOUND。
+// ⚠️ 别拿 inventoryService 的 STOCK_PURCHASE_INCREASE 顶替：那是**库存环节**的另一条行为记录。
+const { PURCHASE_BEHAVIORS } = require('../config/purchaseBehaviors');
 const { recordUrl } = require('../utils/feishuLinks');
 const doubaoService = require('./doubaoService');
 // 采购申请确认卡片（purchaseRequestConfirmationCard）**不再从这段链路发出**（免确认），
@@ -3219,12 +3222,24 @@ class PurchaseWebhookService {
     }
     const requestTable = this.gateway.table('purchaseRequest');
     const inboundTable = this.gateway.table('purchaseInbound');
-    // 查询"采购入库"行为的 record_id（采购行为是关联字段，不能直接传字符串）
+    // 查「采购行为」这条记录的 record_id（关联字段不能直接传字符串）。
+    //
+    // ⭐ 按「行为编码」匹配，**不按中文名**：编码是稳定标识，她在飞书里改中文名不影响代码。
+    //    （2026-10-07 真机：她把生产表里那条从「采购入库」改成了「入库」，按中文名找就直接抛
+    //     "必须且只能有一条记录"，她点「是」永远入不了库。）
+    //    范式与本仓 `inventoryService.resolveStockBehavior` 一致（那里也是按编码匹配）。
+    // ⚠️ 编码取 `config/purchaseBehaviors` 里的**那一个**常量，别在这里再写一份字面量。
     const behaviorTable = this.gateway.table('behavior');
+    const behaviorCode = PURCHASE_BEHAVIORS.INBOUND;
     const behaviorMatches = (await this.gateway.listAll('behavior')).filter(
-      (record) => textValue(record.fields?.[behaviorTable.fields.name]).trim() === '采购入库'
+      (record) => textValue(record.fields?.[behaviorTable.fields.code]).trim() === behaviorCode
     );
-    if (behaviorMatches.length !== 1) throw new Error('行为管理中"采购入库"必须且只能有一条记录');
+    if (behaviorMatches.length === 0) {
+      throw new Error(`行为管理里找不到编码为「${behaviorCode}」的行为，请先在「行为管理」表补上这一条（名称随便叫，编码必须是 ${behaviorCode}）`);
+    }
+    if (behaviorMatches.length > 1) {
+      throw new Error(`行为管理里编码为「${behaviorCode}」的行为有 ${behaviorMatches.length} 条，只能留一条`);
+    }
     const purchaseInboundBehaviorId = behaviorMatches[0].record_id;
     if (!this.inflightInbound.has(taskId)) this.inflightInbound.set(taskId, new Map());
     const inflightMap = this.inflightInbound.get(taskId);
