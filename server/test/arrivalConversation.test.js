@@ -40,6 +40,7 @@ const {
   ARRIVAL_CONVERSATION_ACTIONS,
   ARRIVAL_BATCH_KINDS,
   parseExplicitBoolean,
+  resolveArrivalConversationConfig,
 } = require('../src/config/arrivalConversation');
 
 // 记录链接要用 Base token 拼（本地/CI 给个测试值）。
@@ -216,37 +217,94 @@ const captureLogs = () => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// □ 核对期间（还没点「是」）
+// □ ⭐ 收到到货反馈就直接处理（2026-10-07 起，不再要求她说「核对完毕」）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('核对期间①：话题里说的话只记录 —— 一张业务表都不写，也不发卡片', async () => {
-  const harness = makeHarness({ responses: [{ complete: false, same: false, differences: [] }] });
+test('直接处理①：一句话说清到货（**没说**「核对完毕」）→ 照样出卡片', async () => {
+  // 模型判断她"还没说完"（complete=false）—— 这正是改动前的拦路虎：
+  // 以前就是在这里 return，只记一条 collecting、卡片一张都不发。
+  const harness = makeHarness({
+    responses: [{ complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] }],
+  });
 
   const result = await harness.service.handleTopicMessage({
-    batch: defaultBatch(), text: '38 码少了两双', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1',
+    batch: defaultBatch(), text: '38 码少了一双', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1',
   });
 
   assert.equal(result.handled, true);
-  assert.equal(result.complete, false);
-  assert.equal(harness.gateway.writes.length, 0, '核对期间不允许有任何一次业务表写入');
-  assert.equal(harness.cards.length, 0, '她还没说「完毕」就不该发卡片');
-  assert.deepEqual(harness.replied, [], '核对期间只记录，不回话（群里回话会刷屏）');
+  assert.equal(result.card, true, '她说清了到货情况 → 直接出卡片，不等「核对完毕」');
+  assert.equal(harness.cards.length, 1);
+  // 卡片按她说的算：申请 2 双 − 少 1 双 = 实际 1 双。
+  assert.match(JSON.stringify(harness.cards[0].card), /实际 1 双/);
   const task = await harness.store.get(taskIdForBatch(BATCH_NO));
-  assert.equal(task.status, 'collecting');
-  assert.deepEqual(task.transcript.map((item) => item.text), ['38 码少了两双']);
+  assert.equal(task.status, 'awaiting_confirmation');
+  assert.deepEqual(task.plan.map((row) => [row.size, row.quantity, row.actual]), [[38, 2, 1], [39, 2, 2]]);
+  // 出卡片本身不是业务表写入（入库仍要等她点「是」）。
+  assert.equal(harness.gateway.writes.length, 0);
 });
 
-test('核对期间②：分多次说 —— 每次只说一部分，模型看到的是**累积的原话**', async () => {
+test('直接处理②：说「都到了」（same=true）也是一句到货反馈 → 直接出卡片', async () => {
+  const harness = makeHarness({ responses: [{ complete: false, same: true, differences: [] }] });
+
+  const result = await harness.service.handleTopicMessage({
+    batch: defaultBatch(), text: '都到了', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1',
+  });
+
+  assert.equal(result.card, true);
+  assert.equal(harness.cards.length, 1);
+  const task = await harness.store.get(taskIdForBatch(BATCH_NO));
+  assert.deepEqual(task.plan.map((row) => [row.size, row.actual]), [[38, 2], [39, 2]]);
+  assert.equal(harness.gateway.writes.length, 0);
+});
+
+test('直接处理③ ⚠️：这句话里**没有**到货信息 → 一张卡片都不发（绝不能当成"全部到货"）', async () => {
+  // 这是去掉闸门之后最危险的那个坑：没有内容时若当成"都到了"，
+  // 她一点「是」就会按**申请数整单入库** —— 那正是"写错账"。
+  for (const response of [
+    { complete: false, same: false, differences: [] }, // 半句话 / 话题里的闲聊
+    { complete: true, same: false, differences: [] },  // 她说完了，但什么差异都没给
+  ]) {
+    const harness = makeHarness({ responses: [response] });
+    const result = await harness.service.handleTopicMessage({
+      batch: defaultBatch(), text: '你好', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1',
+    });
+
+    assert.equal(result.reason, 'no_arrival_content', `complete=${response.complete} 时也不许发卡片`);
+    assert.equal(harness.cards.length, 0, '没有到货内容就不许发卡片');
+    assert.equal(harness.updated.length, 0, '也不许去更新一张不存在的卡片');
+    assert.equal(harness.gateway.writes.length, 0, '也不许写任何业务表');
+    const task = await harness.store.get(taskIdForBatch(BATCH_NO));
+    assert.ok(!task.plan, '不许替她算出一份"全部到货"的计划');
+    assert.equal(task.status, 'collecting');
+  }
+});
+
+test('直接处理④：没有到货内容时 —— 她说完了就回一句教她怎么说，还在说就静默', async () => {
+  const done = makeHarness({ responses: [{ complete: true, same: false, differences: [] }] });
+  await done.service.handleTopicMessage({
+    batch: defaultBatch(), text: '你好', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1',
+  });
+  assert.equal(done.replied.length, 1, '她说完了却什么都没给出 → 回一句（否则她以为机器人没反应）');
+  assert.match(done.replied[0].content, /没听出到货的变化/);
+  assert.equal(done.replied[0].options.threadId, 'omt_1');
+
+  const mid = makeHarness({ responses: [{ complete: false, same: false, differences: [] }] });
+  await mid.service.handleTopicMessage({
+    batch: defaultBatch(), text: '你好', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1',
+  });
+  assert.deepEqual(mid.replied, [], '她还在说 / 就是闲聊 → 静默，避免刷屏');
+});
+
+test('直接处理⑤：分多次说 —— 每次只说一部分，模型看到的是**累积的原话**', async () => {
   const harness = makeHarness({
     responses: [
       { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 2 }] },
-      { complete: false, same: false, differences: [] },
+      { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 39, type: 'more', quantity: 1 }] },
     ],
   });
   await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '38 码少了两双', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1' });
   await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '39 码多一双', messageId: 'om_2', threadId: 'omt_1', senderOpenId: 'ou_1' });
 
-  assert.equal(harness.gateway.writes.length, 0);
   // 第二次调用时模型必须同时看到两句话（"可以一次说完，也可以分多次说完"）。
   assert.deepEqual(harness.recognizer.calls[1].messages, ['38 码少了两双', '39 码多一双']);
   // 模型也要看到这批采购申请的明细（货号/颜色/尺码/申请数），否则对不上具体行。
@@ -254,16 +312,216 @@ test('核对期间②：分多次说 —— 每次只说一部分，模型看到
     { item_no: 'XHB8095', color: '黑', size: 38, quantity: 2 },
     { item_no: 'XHB8095', color: '黑', size: 39, quantity: 2 },
   ]);
+  assert.equal(harness.gateway.writes.length, 0);
 });
 
-test('核对期间③：同一条消息被飞书重投 —— 只记一次，不重复喂给模型', async () => {
-  const harness = makeHarness({ responses: [{ complete: false, same: false, differences: [] }] });
-  await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '38 码少了两双', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1' });
-  const twice = await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '38 码少了两双', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1' });
+test('直接处理⑥：同一条消息被飞书重投 —— 只记一次，不重复喂模型，也不重复出卡片', async () => {
+  const harness = makeHarness({
+    responses: [
+      { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] },
+      { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] },
+    ],
+  });
+  await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '38 码少了一双', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1' });
+  const twice = await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '38 码少了一双', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1' });
 
   assert.equal(twice.reason, 'duplicate_message');
   assert.equal(harness.recognizer.calls.length, 1, '重复投递不该再调一次模型');
+  assert.equal(harness.cards.length, 1);
+  assert.equal(harness.updated.length, 0);
   assert.equal(harness.gateway.writes.length, 0);
+  const task = await harness.store.get(taskIdForBatch(BATCH_NO));
+  assert.equal(task.transcript.length, 1, '同一句话只记一次');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// □ ⭐ 追加 / 修正反馈：**重算并更新那一张卡**，不发第二张、不重复建记录
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('追加①：已经有待确认的卡片，她又补一句（没说「核对完毕」）→ 重算并更新**那一张**', async () => {
+  const harness = makeHarness({
+    responses: [
+      // 第一句：38 码少一双 → 出一张卡（实际 1 双）。
+      { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] },
+      // 第二句：再补 39 码也多一双 → 重算（38 实际 1、39 实际 3），更新同一张卡。
+      { complete: false, same: false, differences: [
+        { item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 },
+        { item_no: 'XHB8095', color: '黑', size: 39, type: 'more', quantity: 1 },
+      ] },
+    ],
+  });
+  const taskId = taskIdForBatch(BATCH_NO);
+
+  await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '38 码少一双', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1' });
+  const firstCardId = (await harness.store.get(taskId)).card_message_id;
+  assert.equal(harness.cards.length, 1);
+
+  const second = await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '还有 39 码多一双', messageId: 'om_2', threadId: 'omt_1', senderOpenId: 'ou_1' });
+
+  // ① 发新卡 = 0 次；更新 = 1 次，而且更新的就是**第一张**那张。
+  assert.equal(harness.cards.length, 1, '🔴 不许再发第二张卡片');
+  assert.equal(harness.updated.length, 1, '要更新那张已经存在的卡片');
+  assert.equal(harness.updated[0].messageId, firstCardId);
+  assert.equal(second.card, true);
+  assert.equal(second.card_updated, true);
+  // ② 卡片上是**重算后的**数字（38 实际 1 双、39 实际 3 双）。
+  assert.match(JSON.stringify(harness.updated[0].card), /实际 1 双/);
+  assert.match(JSON.stringify(harness.updated[0].card), /实际 3 双/);
+  // ③ 不重复建记录：还是同一条任务，卡片 id 不变，plan 覆盖成最新。
+  const task = await harness.store.get(taskId);
+  assert.equal(task.card_message_id, firstCardId, '卡片 id 不变（就是更新那一张）');
+  assert.deepEqual(task.plan.map((row) => [row.size, row.actual]), [[38, 1], [39, 3]]);
+  assert.deepEqual(task.transcript.map((item) => item.text), ['38 码少一双', '还有 39 码多一双']);
+  assert.equal(task.acceptance_text, '38 码少一双\n还有 39 码多一双', '「验收原话」是累积的全部原话');
+  // ④ 回一句让她知道卡片已经变了（文案可配）。
+  assert.match(harness.replied.at(-1).content, /上面那张卡片已经更新/);
+  // ⑤ 全程零业务表写入（入库仍要等她点「是」）。
+  assert.equal(harness.gateway.writes.length, 0);
+});
+
+test('追加② ⚠️：她点**旧卡**也按最新计划入库（plan 存在任务里，两张卡指向同一个 taskId）', async () => {
+  const harness = makeHarness({
+    responses: [
+      { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] },
+      { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 2 }] },
+    ],
+  });
+  const taskId = taskIdForBatch(BATCH_NO);
+  await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '38 码少一双', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1' });
+  await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '不对，是少两双', messageId: 'om_2', threadId: 'omt_1', senderOpenId: 'ou_1' });
+
+  // 她点的是**第一张卡**那条消息（`om_card_1`），但入库必须按最新的计划（38 实际 0 双）。
+  await harness.service.handleCardAction(
+    { action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: taskId },
+    { context: { open_message_id: 'om_card_1' } }, 'ou_1',
+  );
+
+  const inbounds = writesTo(harness.gateway, 'purchaseInbound').filter((item) => item.op === 'create');
+  // 最新计划：38 码申请 2 − 少 2 = 0 双（0 双不入库）；39 码没提差异 = 申请 2 双。
+  assert.equal(inbounds.length, 1, '只有 39 码那一行入库（38 码最新算出来是 0 双）');
+  assert.deepEqual(inbounds[0].values.尺码, sizeLink(39));
+  assert.equal(inbounds[0].values['数量'], 2);
+});
+
+test('追加③：更新卡片失败 → 记 warn 并**补发一张新卡**（她不能卡在过期数字上）', async () => {
+  const harness = makeHarness({
+    responses: [
+      { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] },
+      { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 2 }] },
+    ],
+  });
+  const logs = captureLogs();
+  try {
+    await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '38 码少一双', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1' });
+    const firstCardId = (await harness.store.get(taskIdForBatch(BATCH_NO))).card_message_id;
+    // 卡片改不动（权限 / 撤回 / 网络）。
+    harness.service.updateCard = async () => false;
+
+    const second = await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '不对，是少两双', messageId: 'om_2', threadId: 'omt_1', senderOpenId: 'ou_1' });
+
+    assert.equal(second.card, true);
+    assert.equal(second.card_updated, false);
+    assert.equal(harness.cards.length, 2, '更新失败 → 补发一张新卡（这是唯一的出口）');
+    assert.equal(logs.events('purchase.arrival.reconcile.card_update_failed').length, 1);
+    assert.equal(logs.events('purchase.arrival.reconcile.card_update_fallback_sent').length, 1);
+    const task = await harness.store.get(taskIdForBatch(BATCH_NO));
+    assert.notEqual(task.card_message_id, firstCardId, '任务上记的是**最新那张**卡');
+    assert.equal(task.card_message_id, 'om_card_2', 'replyCard 返回的新 id（第 2 张）');
+    // 旧卡仍然指向同一个 taskId —— 点它也是按最新计划入库（不会写错账）。
+    assert.match(logs.events('purchase.arrival.reconcile.card_update_fallback_sent')[0], /按最新计划入库/);
+  } finally {
+    logs.restore();
+  }
+});
+
+test('追加④：点「否」之后又补一句 → 还是更新**那张卡**，不再发第二张', async () => {
+  const harness = makeHarness({
+    responses: [
+      { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] },
+      { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 2 }] },
+    ],
+  });
+  const taskId = taskIdForBatch(BATCH_NO);
+  await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '38 码少一双', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1' });
+  await harness.service.handleCardAction(
+    { action: ARRIVAL_CONVERSATION_ACTIONS.REJECT, draft_id: taskId },
+    { context: { open_message_id: 'om_card_1' } }, 'ou_1',
+  );
+  assert.equal((await harness.store.get(taskId)).status, 'rejected');
+
+  await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '算了，是少两双', messageId: 'om_2', threadId: 'omt_1', senderOpenId: 'ou_1' });
+
+  assert.equal(harness.cards.length, 1, '「否」之后补一句也不许发第二张卡');
+  assert.equal(harness.updated.length, 1);
+  assert.equal((await harness.store.get(taskId)).status, 'awaiting_confirmation');
+});
+
+test('追加⑤：源码级断言 —— `complete` 那道提前 return 与 collecting 日志**都不许再回来**', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/services/purchaseArrivalConversationService.js'), 'utf8');
+  const codeOnly = source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+    .replace(/([^:])\/\/.*$/gm, '$1');
+  // ⚠️ 只查代码、不查注释：上面那段注释里**故意**写着"原来那条 collecting 已经删掉"，
+  //    那是给人看的历史说明，不是还在发的事件。
+  assert.equal(/reconcile\.collecting/.test(codeOnly), false, 'collecting 那条日志已经删掉，不许加回来');
+  assert.equal(/if \(!parsed\.complete\)/.test(codeOnly), false,
+    '`complete === false` 不许再作为提前 return 的闸门');
+  // 判据必须是**内容**（差异条数 / same），不是 `complete`。
+  assert.match(codeOnly, /hasArrivalContent/, '判据要落在"这句话里有没有到货内容"上');
+  assert.equal(/differences\.length > 0 \|\| parsed\.same === true/.test(codeOnly), true,
+    '判据逐字：有差异 或 她说了"都一样"');
+  // 关键词闸门也不许有。
+  for (const word of ['完毕', '核对完了', '说完了吗']) {
+    assert.equal(new RegExp(word).test(codeOnly), false, `代码里不许出现关键词闸门「${word}」`);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// □ ⭐ 文案（配置先行）：不再有"等她说完了 / 在收集"的话术
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('文案①：配置里不再有「先说我核对完了」这类话术，且新文案可覆盖', () => {
+  const config = resolveArrivalConversationConfig({ env: {} });
+  // 那句让"先说完"的口令已经废掉：`notConfirmedYet` 只说明"我还没算出来"。
+  assert.doesNotMatch(config.replies.notConfirmedYet, /核对完了|完毕/);
+  assert.match(config.replies.notConfirmedYet, /还没算出/);
+  // 新增的两句都在配置里（改文案不碰逻辑）。
+  assert.match(config.replies.noArrivalContent, /没听出到货的变化/);
+  assert.match(config.replies.updatedCard, /上面那张卡片已经更新/);
+  // 覆盖生效。
+  const overridden = resolveArrivalConversationConfig({
+    env: {},
+    replies: { noArrivalContent: '自定义-没内容', updatedCard: '' },
+  });
+  assert.equal(overridden.replies.noArrivalContent, '自定义-没内容');
+  assert.equal(overridden.replies.updatedCard, '', '置空 = 不回那句（卡片本身会原地刷新）');
+});
+
+test('文案②：卡片更新后那句回话也走配置（置空就不回，但卡片照样更新）', async () => {
+  const harness = makeHarness({
+    responses: [
+      { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] },
+      { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 2 }] },
+    ],
+    config: { replies: { updatedCard: '' } },
+  });
+  await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '38 码少一双', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1' });
+  harness.replied.length = 0;
+  await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '不对，是少两双', messageId: 'om_2', threadId: 'omt_1', senderOpenId: 'ou_1' });
+
+  assert.equal(harness.replied.length, 0, '配置置空 = 不回这句');
+  assert.equal(harness.updated.length, 1, '但卡片照样更新');
+});
+
+test('文案③：没有到货内容时那句回话也走配置', async () => {
+  const harness = makeHarness({
+    responses: [{ complete: true, same: false, differences: [] }],
+    config: { replies: { noArrivalContent: '自定义-教她怎么说' } },
+  });
+  await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '你好', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1' });
+  assert.equal(harness.replied.length, 1);
+  assert.equal(harness.replied[0].content, '自定义-教她怎么说');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -382,12 +640,19 @@ test('说「完毕」→ 在话题里发卡片，卡片上有「是」和「否�
   assert.equal((await harness.store.get(taskIdForBatch(BATCH_NO))).status, 'awaiting_confirmation');
 });
 
-test('模型说「她还没说完」时 -> 不发卡片（判据来自模型，不是关键词匹配）', async () => {
+test('模型说「她还没说完」（complete=false）**也要出卡片** —— 判据是内容，不是那句口令', async () => {
   const harness = makeHarness({ responses: [{ complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] }] });
-  // 这句话里**没有**"完毕"两个字，但语义上是说完了；反过来这里让模型答 false，
-  // 断言的是"一切以模型的判断为准"，代码里没有任何关键词闸门。
-  await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '38 码少一双', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1' });
-  assert.equal(harness.cards.length, 0);
+  // 这句原话里**没有**"完毕"两个字，模型也答了 complete=false。
+  // ⭐ 2026-10-07 起：只要这句话里有可核对的到货内容（这里有一条差异），就**直接处理**。
+  //    代码里既没有"完毕"这类关键词闸门，也没有 `complete` 闸门。
+  const result = await harness.service.handleTopicMessage({
+    batch: defaultBatch(), text: '38 码少一双', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1',
+  });
+  assert.equal(harness.cards.length, 1, 'complete=false 不再是"不发卡片"的理由');
+  assert.equal(result.card, true);
+  // 写进任务里的 `last_parse.complete` 如实记下模型的判断（诊断用），不被改写。
+  const task = await harness.store.get(taskIdForBatch(BATCH_NO));
+  assert.equal(task.last_parse.complete, false);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

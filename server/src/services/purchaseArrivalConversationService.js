@@ -44,10 +44,15 @@ const rowLabel = (row) => `${textValue(row?.item_no) || '（未知货号）'}${t
  * 保留下来的 `confirmArrival`（写「采购入库」→ InventoryService.applyPurchase）。
  *
  * 流程（每一步都对得上她的原话）：
- *   ① 话题里她说话 → **只记录**（本地任务记录），**一张业务表都不写**；
+ *   ① 话题里她说话 → 记进本地任务记录（**一张业务表都不写**）；
  *   ② 每条消息都让模型判一次：她说的差异是哪一类（完全一样 / 比申请多 / 比申请少）
  *      ＋她说完了没有（「完毕」之类，字眼不固定 → 靠模型理解，不做关键词匹配）；
- *   ③ 说完了 → 在**话题里**发卡片（是 / 否两个按钮）；
+ *   ③ ⭐ **收到到货反馈就直接处理**（2026-10-07 业务负责人口径：「用户一般一句话就能够
+ *      说清楚这个事情，所以收到用户关于到货情况的反馈时，直接处理就可以」）：
+ *      这句话里有可核对的内容（有差异，或她说了「都一样」）→ **直接**算计划 + 在**话题里**
+ *      发卡片（是 / 否两个按钮）。**不再要求她先说一句「核对完毕」** ——
+ *      `complete` 只剩诊断用途（见下面 `handleTopicMessageLocked` 的注释）。
+ *      已经有一张卡片时她再补充/修正 → **重算并更新那一张**，不发第二张；
  *   ④ 点「是」→ 这是**唯一的入库点**：
  *        建「采购到货」一行（用户原话 + 验收人；**到货日交给飞书自动填，代码不写**）
  *        → 「采购入库」按**实际数**（= 申请数 ± 她说的差异）
@@ -126,8 +131,12 @@ class PurchaseArrivalConversationService {
   /**
    * 群话题里定位到某一批之后进来（调用方已判定"是哪一批"）。
    *
+   * ⭐ 2026-10-07 起：**收到她的到货反馈就直接处理**（算计划 + 出卡片），
+   *    不再要求她先说一句"核对完毕"（见 `handleTopicMessageLocked` 里的注释）。
+   *
    * @param {{batch?: object, text: string, messageId: string, threadId?: string, senderOpenId?: string}} input
-   * @returns {Promise<{handled: boolean, reason?: string, complete?: boolean, card?: boolean}>}
+   * @returns {Promise<{handled: boolean, reason?: string, complete?: boolean, card?: boolean, card_updated?: boolean}>}
+   *   `complete` 是**模型判断她有没有说完**（诊断用），**不是**"有没有处理"。
    */
   async handleTopicMessage({ batch, text, messageId, threadId = '', senderOpenId = '' } = {}) {
     if (!this.config.enabled) {
@@ -181,6 +190,9 @@ class PurchaseArrivalConversationService {
         task_id: taskId, batch_no: batchNo, message_id: messageId, thread_id: threadId || '',
       });
     }
+    // 这张任务上**已经发出去的卡片**（她之前说过一句，卡片正在话题里等她确认）。
+    // 有它 → 这一轮算完要**更新那一张**，而不是再发第二张（见下面发卡片那段）。
+    const existingCardMessageId = String(task?.card_message_id || '').trim();
     const existing = Array.isArray(task.transcript) ? task.transcript : [];
     // 飞书会重投事件：同一条 message_id 只记一次，否则同一句话会被模型看两遍。
     if (existing.some((item) => String(item?.message_id || '') === String(messageId))) {
@@ -231,13 +243,37 @@ class PurchaseArrivalConversationService {
       batch_record_id: snapshot.batchRecordId || task.batch_record_id || '',
       last_parse: { complete: parsed.complete, same: parsed.same, difference_count: parsed.differences.length },
     });
-    if (!parsed.complete) {
-      // 她还在说 —— **只记录**，不回话、不发卡片、不写任何业务表。
-      logInfo('purchase.arrival.reconcile.collecting', {
+    // ⭐ 2026-10-07 业务负责人口径（逐字）：「**用户一般一句话就能够说清楚这个事情，
+    //    所以收到用户关于到货情况的反馈时，直接处理就可以。**」
+    //    ⇒ ⚠️ 这里**不再**因为 `complete === false` 就"只记录、不回话" ——
+    //       原来那条 `purchase.arrival.reconcile.collecting` + 提前 return 已经删掉。
+    //       `complete` 只说明"模型认为她有没有说完"，**不是"要不要处理"的闸门**。
+    //    但"能核对"这件事仍然要有内容 —— 见下面的 `hasArrivalContent`：
+    //      · `differences` 非空  → 她在说实际到货（多/少/某行一样）→ 直接算；
+    //      · `same === true`     → 她说「都到了 / 跟单子一样」→ 也是到货反馈 → 直接算；
+    //      · 两者都没有          → 这句话里**没有可核对的到货信息**（半句话，或话题里的闲聊）。
+    logInfo('purchase.arrival.reconcile.processing', {
+      task_id: taskId, batch_no: batchNo, message_count: transcript.length,
+      // 诊断字段：模型当时判断她说完了没有 / 说没说"都一样"。**只作排查用**，不参与业务判断。
+      parse_complete: Boolean(parsed.complete), parse_same: Boolean(parsed.same),
+      difference_count: parsed.differences.length,
+    });
+    const hasArrivalContent = parsed.differences.length > 0 || parsed.same === true;
+    if (!hasArrivalContent) {
+      // ⚠️ 这句话里没有任何可核对的到货信息 → **不发卡片、不写任何业务表**。
+      //    绝不能当成"全部到货"：那会让她一点「是」就按**申请数整单入库**。
+      logInfo('purchase.arrival.reconcile.no_arrival_content', {
         task_id: taskId, batch_no: batchNo, message_count: transcript.length,
-        difference_count: parsed.differences.length,
+        parse_complete: Boolean(parsed.complete),
+        note: '这句话里没有可核对的到货信息：不发卡片、不写业务表',
       });
-      return { handled: true, complete: false };
+      // `complete` 在这里**只**决定"要不要回一句"（纯体验，不是闸门）：
+      //   · 她说完了却什么都没给出 → 回一句教她怎么说（否则她会以为机器人没反应）；
+      //   · 她还在说（半句话）     → 静默（也可能就是闲聊，回话会刷屏）。
+      if (parsed.complete === true && replies.noArrivalContent) {
+        await this.safeReplyText(messageId, replies.noArrivalContent, { threadId });
+      }
+      return { handled: true, complete: Boolean(parsed.complete), reason: 'no_arrival_content' };
     }
 
     // ── 算实际到货 = 申请数 ± 她说的差异 ────────────────────────────────────
@@ -268,7 +304,7 @@ class PurchaseArrivalConversationService {
       });
     }
 
-    // ── 发卡片（是 / 否）────────────────────────────────────────────────────
+    // ── 发 / 更新卡片（是 / 否）──────────────────────────────────────────────
     const card = purchaseArrivalReconcileCard({
       taskId,
       batchNo,
@@ -276,16 +312,36 @@ class PurchaseArrivalConversationService {
       differences: plan.differences,
       copy: this.config.card,
     });
+    // ⭐ 2026-10-07：这张任务**已经有一张卡片**（她之前说过一句，卡片正在话题里等她确认）
+    //    → **重算并更新那一张**，不再发第二张。
+    //    为什么不能发第二张：话题里会出现两张**都能点**的卡片，她不知道该点哪张。
+    //    更新之后她眼前那张始终是最新算出来的数量。
     let cardMessageId = '';
-    try {
-      // ⭐ ④ 卡片回到**她说话的那个话题**（`{ threadId }` 一路传到飞书发送适配器，
-      //    由它决定用不用 `reply_in_thread`）。主群 @ 进来（threadId 为空）时行为不变。
-      cardMessageId = await this.replyCard(messageId, card, { threadId });
-    } catch (error) {
-      // 卡片发不出去：状态留在 collecting，她再说一句"完了"就会重发（nothing was written）。
-      logWarn('purchase.arrival.reconcile.card_send_failed', { task_id: taskId, error: error.message });
-      return { handled: true, complete: true, card: false, reason: 'card_send_failed' };
+    let cardUpdated = false;
+    if (existingCardMessageId) {
+      cardUpdated = await this.safeUpdateCard(existingCardMessageId, card);
+      if (cardUpdated) cardMessageId = existingCardMessageId;
     }
+    if (!cardUpdated) {
+      // 没有历史卡片（第一次算出来）**或**更新失败 → 发一张新的。
+      // ⚠️ 更新失败也必须发新的：旧卡上是**过期数字**，让她点它就是让她确认错的数量。
+      try {
+        // ⭐ ④ 卡片回到**她说话的那个话题**（`{ threadId }` 一路传到飞书发送适配器，
+        //    由它决定用不用 `reply_in_thread`）。主群 @ 进来（threadId 为空）时行为不变。
+        cardMessageId = await this.replyCard(messageId, card, { threadId });
+      } catch (error) {
+        // 卡片发不出去：她再说一句就会重算重发（nothing was written）。
+        logWarn('purchase.arrival.reconcile.card_send_failed', { task_id: taskId, error: error.message });
+        return { handled: true, complete: Boolean(parsed.complete), card: false, reason: 'card_send_failed' };
+      }
+      if (existingCardMessageId) {
+        logWarn('purchase.arrival.reconcile.card_update_fallback_sent', {
+          task_id: taskId, stale_card_message_id: existingCardMessageId, new_card_message_id: cardMessageId,
+          note: '旧卡更新失败，补发了一张新卡；两张卡指向同一个 taskId，点哪张都按最新计划入库',
+        });
+      }
+    }
+    const nowIso = new Date(this.now()).toISOString();
     await this.store.update(taskId, {
       status: 'awaiting_confirmation',
       plan: plan.rows,
@@ -296,16 +352,26 @@ class PurchaseArrivalConversationService {
       batch_record_id: snapshot.batchRecordId || task.batch_record_id || '',
       card_message_id: cardMessageId,
       operator_open_id: String(senderOpenId || task.operator_open_id || ''),
-      card_sent_at: new Date(this.now()).toISOString(),
+      ...(cardUpdated ? { card_updated_at: nowIso } : { card_sent_at: nowIso }),
     });
-    logInfo('purchase.arrival.reconcile.card_sent', {
+    const cardLog = {
       task_id: taskId, batch_no: batchNo, card_message_id: cardMessageId,
       row_count: plan.rows.length, difference_count: plan.differences.length,
       // 0 双的行数（她 2026-10-07 起的正常情况）：卡片上写了「这双没到」。
       zero_actual_count: zeroRows.length,
       adjustment_total: plan.rows.reduce((sum, row) => sum + (row.actual - row.quantity), 0),
-    });
-    return { handled: true, complete: true, card: true, taskId };
+      // ⭐ `complete` 只作**诊断**（模型判断她说完了没有），不再是闸门。
+      parse_complete: Boolean(parsed.complete),
+      card_action: cardUpdated ? 'updated' : 'sent',
+    };
+    if (cardUpdated) {
+      logInfo('purchase.arrival.reconcile.card_updated', cardLog);
+      // 卡片是原地刷新的，不一定会让她注意到 —— 回一句让她知道"已经按新说的重算过了"。
+      if (replies.updatedCard) await this.safeReplyText(messageId, replies.updatedCard, { threadId });
+    } else {
+      logInfo('purchase.arrival.reconcile.card_sent', cardLog);
+    }
+    return { handled: true, complete: Boolean(parsed.complete), card: true, card_updated: cardUpdated, taskId };
   }
 
   /**
@@ -709,7 +775,15 @@ class PurchaseArrivalConversationService {
   async safeUpdateCard(messageId, card) {
     if (!messageId) return false;
     try {
-      return await this.updateCard(messageId, card);
+      const updated = await this.updateCard(messageId, card);
+      // ⚠️ 适配器**不抛错但返回假值**也是"没改成"（例如 `client.im.v1.message.patch` 不存在），
+      //    一样要留痕 —— 否则排查时只看到"卡片没变"，不知道为什么。
+      if (!updated) {
+        logWarn('purchase.arrival.reconcile.card_update_failed', {
+          message_id: messageId, error: 'updateCard 返回了假值（卡片没改成功）',
+        });
+      }
+      return updated;
     } catch (error) {
       logWarn('purchase.arrival.reconcile.card_update_failed', { message_id: messageId, error: error.message });
       return false;
