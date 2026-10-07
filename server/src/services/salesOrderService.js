@@ -9,6 +9,7 @@ const { sellableKindOf } = require('../config/sellableKinds');
 const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
 const { SalesStatusWriter } = require('./salesStatusWriter');
 const { logInfo, logError } = require('../utils/logger');
+const { mergeCorrelation } = require('../utils/correlationFields');
 
 const positiveInteger = (value, label) => {
   const number = Number(value);
@@ -30,25 +31,36 @@ class SalesOrderService {
     this.queue = Promise.resolve();
   }
 
-  confirm(input) {
-    const next = this.queue.then(() => this._confirm(input), () => this._confirm(input));
+  // ⚠️ 关联键走**尾部可选参数**（`options.correlation`），**不塞进 `input`**。
+  //    统一约定：既有业务入参对象的形状一个字段都不变（哪天真被谁改坏了，
+  //    既有测试里的逐字 deepEqual 会当场挂掉）。
+  confirm(input, options = {}) {
+    const next = this.queue.then(() => this._confirm(input, options), () => this._confirm(input, options));
     this.queue = next.catch(() => undefined);
     return next;
   }
 
-  async _confirm(input) {
+  async _confirm(input, options = {}) {
     const salesEntryRecordId = input.salesEntryRecordId;
     if (!salesEntryRecordId) throw new Error('缺少销售主表 record_id');
     if (!Array.isArray(input.items) || !input.items.length) throw new Error('至少需要一条销售明细');
     await this.gateway.validateTables?.(['product', 'paymentMethod', 'salesEntry', 'salesDetail', 'paymentRecord']);
+    // ⭐ 关联键（2026-10-07 业务负责人拍板「日志改下吧！」）：
+    //   这一整段（写主表状态 → 写销售明细 → 写收款明细 → 落表日志）以前**一个键都没有**，
+    //   按 task_id grep 只能看到卡片那半，看不到明细 / 收款。
+    //   ⚠️ 它只是**每次调用显式传下去的普通对象**，不落在 service 实例上
+    //      （这些 service 是启动时构造的单例，放实例上会跨请求串台）。
+    //   `sales_entry_record_id` 这一层自己就知道；`task_id` 由调用方（本地任务层）给；
+    //   `order_no` 下面读过主表就补上（**不额外请求**：那条记录本来就要读）。
+    let correlation = mergeCorrelation(options.correlation, { sales_entry_record_id: salesEntryRecordId });
     // 「入账中」落在四个维度字段上（旧「确认状态（旧）」那一列已被她整列删除）：
     //   · 销售状态 = 未写入（销售明细还没开始写）
     //   · 资金状态 = 未写入（收款明细还没开始写）
     // 显式写这两列（而不是留空），是为了让"到哪一步了"在表里看得见。
-    await this.gateway.update('salesEntry', salesEntryRecordId, { failureReason: '' });
+    await this.gateway.update('salesEntry', salesEntryRecordId, { failureReason: '' }, { correlation });
     await this.status.write(salesEntryRecordId, {
       sales: WRITE.sales.none, funds: WRITE.funds.none,
-    });
+    }, correlation);
     // A previous attempt may have completed all detail/receipt writes before a read failed.
     // The persisted task is the source of that stage on the next card callback.
     let financialRecorded = input.knownFinancialComplete === true;
@@ -69,6 +81,9 @@ class SalesOrderService {
         () => this.gateway.get('salesEntry', salesEntryRecordId), 'sale_entry_trade_type',
       );
       const tradeTypeRecordId = linkedRecordIds(entry?.fields?.[entryFields.tradeType])[0] || '';
+      // 单号就在这条**已经读到的**主表记录上 ⇒ 零额外请求地补进关联键。
+      // 读不到（AI 还没生成 / 老单）就不写这个键，不是写一个空串。
+      correlation = mergeCorrelation(correlation, { order_no: textValue(entry?.fields?.[entryFields.orderNo]) });
       const expected = [];
       for (const item of input.items) {
         // 可售品按属性走：鞋才需要解析尺码和跟踪库存，配品只记「卖了什么、收了多少」。
@@ -155,7 +170,7 @@ class SalesOrderService {
             actualAmount: row.item.actualAmount, fulfillmentStatus: row.item.fulfillmentStatus,
             // 主表写的是哪条「行为管理」记录，明细就写同一条（见上面读主表那段注释）。
             ...(tradeTypeRecordId ? { tradeType: relation(tradeTypeRecordId) } : {}),
-          });
+          }, { correlation });
           row.recordId = created.recordId;
         }
         detailsPersisted += 1;
@@ -163,7 +178,7 @@ class SalesOrderService {
       }
       // 「货」这一维写完了（收款还没开始）：先落「已写入」，这样后面收款失败时
       // 她也能从表里一眼看出"明细是好的、坏在钱那一列"。
-      await this.status.write(salesEntryRecordId, { sales: WRITE.sales.done });
+      await this.status.write(salesEntryRecordId, { sales: WRITE.sales.done }, correlation);
       const detailRecordIds = rows.map((row) => row.recordId);
       const outstandingCents = totalCents - paidCents;
       // 未收款只在**她明说欠**时才补（业务负责人口径：「如果用户说欠多少钱，你再做欠款，
@@ -181,11 +196,12 @@ class SalesOrderService {
       const paymentRecordIds = await this.payments.recordInitialBatch(salesEntryRecordId, expectedPayments, {
         knownRecordIds: input.knownRecordIds?.payments,
         onRecordPersisted: (index, id) => input.onRecordPersisted?.('payments', index, id),
+        correlation,
       });
       financialRecorded = true;
       // 「钱」这一维写完了。⚠️ 这正是 6 处闸门判据读的那一列：
       // 闸门认的是**两代字面量**（旧「已入账」/ 新「已写入」），见 config/salesStatusDimensions。
-      await this.status.write(salesEntryRecordId, { funds: WRITE.funds.done });
+      await this.status.write(salesEntryRecordId, { funds: WRITE.funds.done }, correlation);
       await this.progress.sync(salesEntryRecordId, { detailRecordIds, paymentRecordIds });
       const order = await withSalesReadRetry(
         () => this.gateway.get('salesEntry', salesEntryRecordId), 'sale_entry_by_id',
@@ -199,7 +215,7 @@ class SalesOrderService {
       //      `sales.inventory.applied`（见 salesDeliveryService），不要拿这条当日志判据。
       logInfo('v1.sale.posted', { sales_entry_record_id: salesEntryRecordId, detail_count: detailRecordIds.length,
         payment_count: paymentRecordIds.length, step: 'posting', inventory_applied_by_this_step: false,
-        inventory_planned: true, inventory_step: 'after_delivery' });
+        inventory_planned: true, inventory_step: 'after_delivery', ...correlation });
       // 返回值里的 inventoryApplied 与上面那条日志**逐字同义**：本步不动库存。
       return { sourceNo, detailRecordIds, paymentRecordIds, inventoryApplied: false };
     } catch (error) {
@@ -213,12 +229,12 @@ class SalesOrderService {
       await this.status.write(salesEntryRecordId, {
         sales: salesStatus,
         funds: financialRecorded ? WRITE.funds.done : WRITE.funds.failed,
-      });
+      }, correlation);
       await this.gateway.update('salesEntry', salesEntryRecordId, {
         failureReason: financialRecorded ? `销售记录已写入，后续同步待恢复：${error.message}` : error.message,
-      }).catch(() => undefined);
+      }, { correlation }).catch(() => undefined);
       logError(financialRecorded ? 'v1.sale.sync_pending' : 'v1.sale.post_failed', {
-        sales_entry_record_id: salesEntryRecordId, error: error.message,
+        sales_entry_record_id: salesEntryRecordId, error: error.message, ...correlation,
       });
       throw error;
     }

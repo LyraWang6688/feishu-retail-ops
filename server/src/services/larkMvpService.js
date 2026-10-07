@@ -358,7 +358,7 @@ class LarkMvpService {
    * 模块边界：补样品这件事由 SampleReplacementService 负责，这里只把
    * "哪条明细、哪个货品、补哪个尺码"整理好交给它。
    */
-  async applyChosenSampleReplacements(task, postingResult) {
+  async applyChosenSampleReplacements(task, postingResult, { correlation } = {}) {
     const replacements = (task.draft?.items || [])
       .map((item, index) => ({
         salesDetailRecordId: postingResult?.detailRecordIds?.[index] || '',
@@ -367,7 +367,8 @@ class LarkMvpService {
       }))
       .filter((item) => item.salesDetailRecordId && item.productRecordId && item.size);
     if (!replacements.length) return new Set();
-    return this.sampleReplacements.applyPreChosen(replacements);
+    // 关联键继续往下传（补样品写的库存流水也属于这条销售链）。
+    return this.sampleReplacements.applyPreChosen(replacements, { correlation });
   }
 
   /**
@@ -1527,6 +1528,9 @@ class LarkMvpService {
       // 卡片回调事件里的消息 id = 被点的那张卡；reminder_day 是发卡时写进按钮取值的。
       cardMessageId: event?.context?.open_message_id || event?.open_message_id || '',
       reminderDay: value?.reminder_day || '',
+    }, {
+      // 关联键：这条链路上没有本地任务（点的是每日提醒卡），能给的业务键就是这张销售单。
+      correlation: { sales_entry_record_id: value?.sales_entry_record_id },
     });
     if (result.alreadyCompleted) {
       return { toast: { type: 'info', content: '这一单已经成交，无需重复处理' } };
@@ -1688,7 +1692,15 @@ class LarkMvpService {
       //   「确认状态」= 已确认。放在入账**之前**写，是因为她点过是既成事实——
       //   后面入账成功与否由「资金状态」表达，不该把她的动作也一起抹掉。
       //   写失败只记警告（SalesStatusWriter 不抛），不能因为记进度挡住入账。
-      await this.salesStatus.write(task.sales_entry_record_id, { userAction: WRITE.userAction.confirmed });
+      // ⭐ 关联键（2026-10-07 业务负责人拍板「日志改下吧！」）：
+      //   从这里开始，整条写入链（主表状态 → 销售明细 → 收款明细 → 库存流水 → 实时库存）
+      //   的日志都带同一个 `task_id` ＋ `sales_entry_record_id`（单号由下游读过主表后补上）。
+      //   ⚠️ 它只是**这次调用显式传下去的普通对象**，不落在任何 service 实例上
+      //      （那些 service 都是启动时构造的单例，放实例上会跨请求串台）。
+      //   ⚠️ 只是为了"能串起来"，不改任何写入内容与顺序。
+      const correlation = { task_id: draftId, sales_entry_record_id: task.sales_entry_record_id };
+      await this.salesStatus.write(task.sales_entry_record_id, { userAction: WRITE.userAction.confirmed },
+        correlation);
       const startedAt = Date.now();
       const result = await this.posting.postSale({
         salesEntryRecordId: task.sales_entry_record_id,
@@ -1722,18 +1734,20 @@ class LarkMvpService {
           gift: item.gift,
           giftDescription: item.gift_description,
         })),
-      });
+      }, { correlation });
       await this.store.update(draftId, { status: 'posted_delivery_pending', posting_result: result });
       if (shouldDeliver) {
         try {
           const deliveryResult = await this.delivery.deliver({ salesEntryRecordId: task.sales_entry_record_id,
-            detailRecordIds: result.detailRecordIds, paymentRecordIds: result.paymentRecordIds });
+            detailRecordIds: result.detailRecordIds, paymentRecordIds: result.paymentRecordIds },
+          { correlation });
           // 卡片上已经选好"用哪个门盒补样品"的，在这里直接补掉，不再为它另发一张卡片。
           // 补失败不阻断入账：库存已经扣了，补样品失败只影响展示样品，交给工作台处理。
-          const handledSampleDetails = await this.applyChosenSampleReplacements(task, result).catch((error) => {
-            logWarn('lark.sales.sample_replacement.apply_failed', { task_id: draftId, error: error.message });
-            return new Set();
-          });
+          const handledSampleDetails = await this.applyChosenSampleReplacements(task, result, { correlation })
+            .catch((error) => {
+              logWarn('lark.sales.sample_replacement.apply_failed', { task_id: draftId, error: error.message });
+              return new Set();
+            });
           await this.notifySampleReplacements(deliveryResult, operatorOpenId, {
             handledDetailIds: handledSampleDetails,
             // ⭐ 渠道感知：**群销售**的补样品提醒回到**那条销售话题**（不是另开一条私聊）。

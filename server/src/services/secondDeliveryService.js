@@ -11,6 +11,7 @@ const { postedOf, isPosted } = require('../config/salesStatusDimensions');
 const { secondDeliveryCard, settleSecondDeliveryOrder } = require('../utils/larkCards');
 const { updateInteractiveCard } = require('../infrastructure/interactiveCardFeedback');
 const { logInfo, logWarn } = require('../utils/logger');
+const { mergeCorrelation } = require('../utils/correlationFields');
 
 // 「第二次交付」= 已入账之后的那次收尾：把还没收到的钱收掉、把还没交的货交掉。
 //
@@ -68,18 +69,29 @@ class SecondDeliveryService {
    * `cardMessageId` / `reminderDay` 是卡片回调带上来的（点的是哪条群消息、哪天的卡），
    * 成交成功后用它们把那张卡的这一单变灰，见 markCardSettled。
    */
-  confirm(input = {}) {
+  // ⚠️ 关联键走**尾部可选参数**（`options.correlation`），不塞进 `input`：
+  //    `input` 的形状被既有测试逐字 deepEqual，那就是这条边界的证明。关联键只进日志。
+  confirm(input = {}, options = {}) {
     const salesEntryRecordId = String(input.salesEntryRecordId || '').trim();
     if (!salesEntryRecordId) throw new Error('成交缺少销售主表 record_id');
-    return this.queue.run(salesEntryRecordId, () => this._confirm({ ...input, salesEntryRecordId }));
+    return this.queue.run(salesEntryRecordId, () => this._confirm({ ...input, salesEntryRecordId }, options));
   }
 
-  async _confirm({ salesEntryRecordId, method, operatorOpenId, cardMessageId, reminderDay, settledAt }) {
+  async _confirm({ salesEntryRecordId, method, operatorOpenId, cardMessageId, reminderDay, settledAt },
+    options = {}) {
     await this.gateway.validateTables?.(['salesEntry', 'salesDetail', 'paymentRecord']);
     const entryFields = this.gateway.table('salesEntry').fields;
     const entry = await this.gateway.get('salesEntry', salesEntryRecordId);
     if (!entry) throw new Error('销售主表记录不存在');
     if (!isPosted(postedOf(entry, entryFields))) throw new Error('销售订单尚未确认入账');
+    // ⭐ 关联键（2026-10-07 业务负责人拍板「日志改下吧！」）：这条链路写的
+    //   「收款明细（未收款→已收款）/ 库存流水 / 实时库存 / 库存状态」正是以前
+    //   **一个键都没有**的那半。`order_no` 从这条**已经读到的**主表记录上取，零额外请求。
+    //   只进日志，不改任何写入内容与顺序。
+    const correlation = mergeCorrelation(options.correlation, {
+      sales_entry_record_id: salesEntryRecordId,
+      order_no: textValue(entry.fields?.[entryFields.orderNo]),
+    });
 
     const detailFields = this.gateway.table('salesDetail').fields;
     const paymentFields = this.gateway.table('paymentRecord').fields;
@@ -121,7 +133,7 @@ class SecondDeliveryService {
       const raw = textValue(record.fields?.[paymentFields.amount]);
       await this.payments.collectPendingReceipt(record.record_id, {
         salesEntryRecordId, amount: raw, method, receivedAt: Date.now(),
-      });
+      }, { correlation });
       collectedIds.push(record.record_id);
       collectedCents += Math.round(amount(raw) * 100);
     }
@@ -133,7 +145,7 @@ class SecondDeliveryService {
     if (undeliveredIds.length) {
       deliveryResult = await this.delivery.deliver({
         salesEntryRecordId, detailRecordIds: undeliveredIds, paymentRecordIds: collectedIds,
-      });
+      }, { correlation });
     } else {
       progress = await this.progress.sync(salesEntryRecordId, { paymentRecordIds: collectedIds });
     }
@@ -163,6 +175,7 @@ class SecondDeliveryService {
       delivery_failed_count: deliveryResult?.failures?.length || 0,
       fulfillment_status: deliveryResult?.fulfillmentStatus || progress?.fulfillmentStatus || '',
       order_status: progress?.orderStatus || '',
+      ...correlation,
     });
     return result;
   }

@@ -405,6 +405,37 @@ Schema Check 只回答「目标 Base 的字段与关联结构是否满足契约�
   / `.purchaseArrival` 的 `tableId` 分派），换 Base 时跟着环境变量走。**不要再写死表 ID**：
   写死的后果是"新增记录不触发任何事、也不报错"，现象只是"采购没反应"，属于最难查的静默失效。
 
+### ⭐ 写入类日志必须带「关联键」（2026-10-07 业务负责人拍板「日志改下吧！」）
+
+**起因**：一条销售在日志里被**劈成两半** —— `lark.sales.*` / `lark.card.*` 那半带 `task_id`，
+而**真正写库**的那半（`sales.status.written` / `bitable.record.created` / `bitable.record.updated` /
+`v1.sale.posted` / `inventory.change.applied`）**一个键都没有**。按 `task_id` grep 只看得见卡片，
+看不到明细 / 收款 / 库存 —— 差点据此误判。
+
+- ⭐ **做法**：写入类日志带 **`task_id` / `order_no`（`XSD-…`）/ `sales_entry_record_id`**
+  里拿得到的那些。取用口只有一个：`src/utils/correlationFields.js`（**白名单**，
+  非白名单键与空值一律不进日志）。详见
+  `docs/log-correlation-and-stock-key-label-2026-10-07.md`。
+- ⭐ **传递方式**：**尾部可选参数** `options.correlation`，从入口（`larkMvpService` /
+  `salesThreadProgressService` / `secondDeliveryService`）逐层传到
+  `V1BitableGateway.create/update`。网关层只**不透明地**把它合进日志，
+  **不做任何业务查表/推导** —— 它连"销售"这个词都不认识。
+- 🔴 **不塞进业务 `input`**：既有 `input` 形状一个字段都不许变（既有测试里那些逐字
+  `deepEqual` 就是这条边界的哨兵）。
+- 🔴 **不用 `AsyncLocalStorage`**（评估过，否决）：库存引擎有**跨请求重放**
+  （`runForStock` / `resumePending`）与共享串行队列，从上下文读到的键会把**上一笔单**
+  挂到**当前请求**的任务上 —— 那是"指向错的那一笔"，比"没有键"更坏。
+  显式传参没有这个问题，而且测试直接可注入。
+- ⚠️ **采购链路本次未接**（当时 `purchaseWebhookService.js` 被另一个并行任务占着）：
+  它的 `bitable.record.created` 仍然没有关联键。扩展点只有两处，见上面那份 docs 第五节。
+
+### ⭐ 「库存键」两种写法并列（同一天）
+
+- `stock_key` = `商品record_id|尺码|所属状态`（**内部键，原值不许动**：串行队列、本地任务、
+  幂等判据都用它）；`stock_key_label` = `货号|颜色|类别|尺码`（飞书「库存键」公式算好的那串）。
+- `stock_key_label` **抄**自**这次已经读到的**「实时库存」记录上的「库存键」列 ⇒
+  **零额外请求、零漂移**；抄不到时只给 `stock_key_label_source: 'unavailable'`，**不猜**。
+
 ## 与业务负责人的协作纪律（2026-10-06 起）
 
 > 本节的十条是 2026-10-06 与业务负责人当面定下的**协作与工程纪律**——

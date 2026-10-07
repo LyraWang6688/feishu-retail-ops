@@ -5,6 +5,7 @@ const { V1_BITABLE_SCHEMA, getV1Table } = require('../config/v1BitableSchema');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
 const { larkLogger } = require('../utils/larkLogger');
 const { logError, logInfo } = require('../utils/logger');
+const { correlationFields } = require('../utils/correlationFields');
 
 const compact = (value) => {
   const result = {};
@@ -128,9 +129,25 @@ class V1BitableGateway {
     return out;
   }
 
-  async create(tableKey, semanticValues) {
+  /**
+   * 新增一条记录。
+   *
+   * `options.correlation` 是**不透明的**业务键包（本层不认识里面的名字，只负责原样放进日志）：
+   *   · 为什么放在这里：`bitable.record.created` 正是"一条销售被劈成两半"里**看不见的那半**
+   *     —— 明细 / 收款 / 库存流水都是从这里写进去的，排查时只能靠时间窗口去接
+   *     （2026-10-07 业务负责人拍板「日志改下吧！」）。
+   *   · 为什么不是"在业务层补一条重复日志"：那样同一个事实有两条日志、两处会漂移；
+   *     而**不透明**地透传不会让网关耦合业务 —— 这一层连"销售"这个词都不认识。
+   *   · 为什么不是 AsyncLocalStorage：库存引擎有**跨请求重放**（runForStock /
+   *     resumePending），上下文里读到的键会指向**当前**请求，把上一笔单挂到错的任务上。
+   *     显式传参没有这个问题。理由详见 utils/correlationFields 与本次的设计文档。
+   *
+   * 不传 `correlation` 时行为**逐字不变**（只有一个空对象被 spread）。
+   */
+  async create(tableKey, semanticValues, options = {}) {
     const table = this.tableWithId(tableKey);
     const startedAt = Date.now();
+    const correlation = correlationFields(options.correlation);
     try {
       const response = await this.client.bitable.appTableRecord.create({
         path: { app_token: this.schema.appToken, table_id: table.tableId },
@@ -144,6 +161,7 @@ class V1BitableGateway {
         table_id: table.tableId,
         record_id: recordId,
         duration_ms: Date.now() - startedAt,
+        ...correlation,
       });
       return { recordId, record: response.data?.record };
     } catch (error) {
@@ -152,14 +170,17 @@ class V1BitableGateway {
         table_id: table.tableId,
         duration_ms: Date.now() - startedAt,
         error: error.message,
+        ...correlation,
       });
       throw error;
     }
   }
 
-  async update(tableKey, recordId, semanticValues) {
+  /** 更新一条记录；`options.correlation` 同 create（只进日志，不改任何请求内容）。 */
+  async update(tableKey, recordId, semanticValues, options = {}) {
     const table = this.tableWithId(tableKey);
     const startedAt = Date.now();
+    const correlation = correlationFields(options.correlation);
     try {
       const response = await this.client.bitable.appTableRecord.update({
         path: { app_token: this.schema.appToken, table_id: table.tableId, record_id: recordId },
@@ -171,6 +192,7 @@ class V1BitableGateway {
         table_id: table.tableId,
         record_id: recordId,
         duration_ms: Date.now() - startedAt,
+        ...correlation,
       });
       return response.data?.record || { record_id: recordId };
     } catch (error) {
@@ -180,6 +202,7 @@ class V1BitableGateway {
         record_id: recordId,
         duration_ms: Date.now() - startedAt,
         error: error.message,
+        ...correlation,
       });
       throw error;
     }

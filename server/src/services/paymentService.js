@@ -32,8 +32,11 @@ class PaymentService {
       linkedRecordIds(record.fields?.[field]).includes(salesEntryRecordId));
   }
 
-  async record({ salesEntryRecordId, method, amount: rawAmount, operatorOpenId, receivedAt,
-    status = '已收款' }) {
+  // ⚠️ 关联键走**尾部可选参数**（`options.correlation`），不塞进 `input`
+  //    —— 收款这两条路的入参形状一个字段都不变（既有测试逐字 deepEqual 就是证明）。
+  async record(input = {}, options = {}) {
+    let { salesEntryRecordId, method, amount: rawAmount, operatorOpenId, receivedAt,
+      status = '已收款' } = input;
     status = normalizedStatus(status);
     if (!salesEntryRecordId) throw new Error('收款缺少销售主表 record_id');
     if (!['已收款', '未收款', '待平台结算'].includes(status)) throw new Error('收款状态无效');
@@ -41,6 +44,7 @@ class PaymentService {
     const paid = amount(rawAmount);
     const paymentMethod = status === '未收款' ? null : await this.references.resolvePaymentMethod(method);
     if (status !== '未收款' && !paymentMethod) throw new Error('收款缺少支付方式');
+    // `options.correlation` 只进日志（收款明细是"看不见的那半"之一）：不改这条记录的任何字段。
     return this.gateway.create('paymentRecord', {
       salesEntry: relation(salesEntryRecordId),
       method: paymentMethod ? relation(paymentMethod.recordId) : undefined,
@@ -49,11 +53,11 @@ class PaymentService {
       receivedAt: status === '已收款' ? Number(receivedAt ?? Date.now()) : undefined,
       // 只有真收到钱的那一条才有方向；未收款不写（见 MONEY_DIRECTION_INCOME 的注释）。
       ...(status === '已收款' ? { tradeDirection: MONEY_DIRECTION_INCOME } : {}),
-    });
+    }, { correlation: options.correlation });
   }
 
-  async collectPendingReceipt(recordId, { salesEntryRecordId, amount: rawAmount, method, operatorOpenId,
-    receivedAt = Date.now() }) {
+  async collectPendingReceipt(recordId, input = {}, options = {}) {
+    const { salesEntryRecordId, amount: rawAmount, method, receivedAt = Date.now() } = input;
     const record = await this.gateway.get('paymentRecord', recordId);
     const fields = this.gateway.table('paymentRecord').fields;
     if (!record || !linkedRecordIds(record.fields?.[fields.salesEntry]).includes(salesEntryRecordId)) {
@@ -72,7 +76,7 @@ class PaymentService {
       receivedAt: timestamp,
       // 「未收款 → 已收款」这一下就是钱到账的那一下：补齐方向（原来留空）。
       tradeDirection: MONEY_DIRECTION_INCOME,
-    });
+    }, { correlation: options.correlation });
   }
 
   async settlePlatformReceipt(recordId, receivedAt = Date.now()) {
@@ -136,7 +140,10 @@ class PaymentService {
       throw new Error('已有收款与当前销售草稿不一致，已停止自动重试');
     }
     for (const row of rows) {
-      if (!row.recordId) row.recordId = (await this.record({ salesEntryRecordId, ...row.payment })).recordId;
+      if (!row.recordId) {
+        row.recordId = (await this.record({ salesEntryRecordId, ...row.payment },
+          { correlation: options.correlation })).recordId;
+      }
       await options.onRecordPersisted?.(row.index, row.recordId);
     }
     return rows.map((row) => row.recordId);
