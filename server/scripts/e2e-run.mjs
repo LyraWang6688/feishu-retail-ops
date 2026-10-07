@@ -869,9 +869,10 @@ const cmdReturn = async () => {
     quantityChange: row.fields?.[ledgerTable.fields.quantityChange],
     behavior: linkedRecordIds(row.fields?.[ledgerTable.fields.behavior])
       .map((id) => behaviorByRecord.get(id) || { name: '', code: id }),
-    // ⚠️ 2026-10-07 深夜：「采购入库」表被业务负责人整表删除 ⇒ 「库存流水.关联采购」
-    //    这一列也随表一起没了（schema 映射已删）。采购加库存的流水**不带来源关联**
-    //    （与采购退货同一条通路），所以这里只看「关联销售」。
+    // ⚠️ 这段只看**采购退货**（`STOCK_PURCHASE_DECREASE`）的流水：它**不带来源关联**
+    //    —— 退货既不产生销售明细、也没有能关联的单据列（见 STOCK_MOVEMENTS 的注释）。
+    //    ⚠️ 2026-10-08：「关联采购」这一列**还在**，业务负责人把它改成了指向「报货批次」，
+    //    采购**加**库存的流水会写它（写批次那一行的 record id）—— 与这里判的退货是两回事。
     hasSource: Boolean(linkedRecordIds(row.fields?.[ledgerTable.fields.salesDetail]).length),
   }));
 

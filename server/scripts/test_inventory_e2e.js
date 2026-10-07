@@ -93,7 +93,11 @@ async function main() {
     return linkedRecordIds(record?.fields?.['尺码']).includes(size.recordId) ? record : null;
   }, '采购库存流水');
   assert.ok(linkedRecordIds(purchaseLedger.fields?.['尺码']).includes(size.recordId));
-  // ⚠️ 采购加库存的流水**不带来源关联**（「关联采购」随那张表一起没了）——这里只核数量。
+  // ⚠️ 这个脚本只给了**批次号**（`purchaseBatchNo`），**没有**批次那一行的 record id
+  //    ⇒「关联采购」**一个字都不写**（拿不到就不传，绝不编 —— 2026-10-08 口径）。
+  //    这里只核数量；要核"带上了批次 record id"的用例见 test/purchaseLedgerBatchLink.test.js。
+  assert.equal(purchaseLedger.fields?.['关联采购'], undefined,
+    '拿不到批次 record id ⇒ 不许写「关联采购」');
   assert.equal(purchaseLedger.fields?.['变动数量'], 1);
 
   await until(async () => (await inventory.findLiveInventory(PRODUCT_ID, SIZE, '门盒'))

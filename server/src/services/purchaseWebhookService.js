@@ -3639,7 +3639,10 @@ class PurchaseWebhookService {
     const inventoryAppliedKeys = [];
     // 来源标识（= 库存那一层的本地幂等键）= **真实三元组**：批次身份 | 货品 | 尺码。
     // ⚠️ 三样都是真值（批次记录 id / 批次号 / 到货核对任务 id ＋ 货品 record_id ＋ 尺码），
-    //    **一个都不是编的**；它只进本地任务与日志，远端没有任何关联列可写（见 ledgerSource: null）。
+    //    **一个都不是编的**。
+    // ⭐ 2026-10-08：`purchaseBatchRecordId` 现在有**两个去处** —— ① 参与上面这个本地三元组；
+    //    ② 作为**远端关联值**写进「库存流水.关联采购」（该列已被她改成指向「报货批次」）。
+    //    两者互不替代：拿不到批次 record id 时①会退回批次号/任务 id，而②**整列不写**。
     const batchIdentity = {
       purchaseBatchRecordId: batchRecordId,
       purchaseBatchNo: batchNo,
