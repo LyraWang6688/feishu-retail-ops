@@ -9,15 +9,12 @@
  *   □ 话题里说「收到微信 500」→ **更新那笔**（记一条收款明细），**不新建销售主表记录**
  *   □ 判据全部在 config/salesProgressIntake（本文件也钉住"改词表不动代码"）
  *   □ 判断不了时**回一句问她**，不回退去当新原话解析
- *   □ ⭐ 私聊行为**一个字都不变**：同样的句子在私聊仍然走销售解析（不是进展）
+ *   □ 主群新说一笔（**没有**话题绑定）→ 仍然走原来的销售解析（不是进展）
  *   □ 回复回到**同一个话题**（reply_in_thread）
  */
 
-// ⭐ 本文件有「私聊回归：一个字都不变」那条用例 —— 它**拿私聊当入口**，
-//    所以显式把私聊开关打开，回归「开关打开时行为与改动前逐字不变」。
-//    （配置是**每次调用时读 env**，所以不依赖 require 顺序，见 config/privateChat。）
-require('./helpers/enablePrivateChatForTests');
-
+// ⭐ 2026-10-07 ⓐ「私聊链路移除」：原来这里有一条**拿私聊当入口**的回归用例，
+//    已迁到**群聊真入口**（主群 @ 机器人 = 没有话题绑定那一档），见文件末尾那条。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -145,20 +142,11 @@ const groupEvent = (overrides = {}) => ({
     message_type: 'text',
     create_time: '1000',
     content: JSON.stringify({ text: overrides.text || '' }),
-    mentions: [],
+    // 主群那条路要求 @；话题里免 @（传 `mentions: []` + `threadId`）。
+    mentions: overrides.mentions === undefined
+      ? [{ key: '@_user_1', id: TEST_BOT_OPEN_ID, name: '测试机器人' }]
+      : overrides.mentions,
     thread_id: overrides.threadId,
-  },
-});
-
-const privateEvent = (overrides = {}) => ({
-  sender: { sender_id: { open_id: overrides.senderOpenId || 'ou_sender' } },
-  message: {
-    message_id: overrides.messageId || 'om_private_progress',
-    chat_id: 'oc_private',
-    chat_type: 'p2p',
-    message_type: 'text',
-    create_time: '1000',
-    content: JSON.stringify({ text: overrides.text || '' }),
   },
 });
 
@@ -315,10 +303,11 @@ test('超出待收金额 → 大声拒绝，不写收款（宁可多问一句，
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ⭐ 私聊回归：一个字都不变
+// ⭐ 主群新说一笔（没有话题绑定）→ 不走二次处理，仍然走原来的销售解析
+//    （2026-10-07 ⓐ：原来这条拿**私聊**当入口，已迁到**群聊真入口**）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('回归：私聊说「收到微信 500」**不走**二次处理 —— 私聊仍然是原来的销售解析', async () => {
+test('主群 @ 机器人说「收到微信 500」**不走**二次处理 —— 主群新一笔仍然是原来的销售解析', async () => {
   const gateway = makeGateway({ entry: threadSale(), details: [threadDetail()] });
   let parsed = 0;
   const parsedResult = { intent: 'unsupported', items: [] };
@@ -327,14 +316,15 @@ test('回归：私聊说「收到微信 500」**不走**二次处理 —— 私�
     recognizer: { parseSalesText: async () => { parsed += 1; return parsedResult; } },
   });
 
-  const accepted = await service.acceptMessage(privateEvent({ messageId: 'om_p2p_progress', text: '收到微信 500' }));
+  const accepted = await service.acceptMessage(groupEvent({ messageId: 'om_main_progress', text: '收到微信 500' }));
   assert.equal(accepted.accepted, true);
+  assert.equal(accepted.mode, 'new', '主群新说一笔（没有已定位到的那笔销售）');
   await flushSalesTasks(service);
 
-  assert.equal(parsed, 1, '私聊必须仍然进 AI（不受群聊的二次处理判据影响）');
-  assert.deepEqual(gateway.created, [], '私聊这条链路不会因为这句话写收款明细');
-  const task = await service.store.get(accepted.taskId);
-  assert.equal(task.chat_type, undefined);
+  assert.equal(parsed, 1, '主群这条仍然进 AI（二次处理只认"群 + 话题 + 已定位到某笔销售"）');
+  assert.deepEqual(gateway.created, [], '这条链路不会因为这句话写收款明细');
+  const task = await service.store.get(accepted.sales.taskId);
+  assert.equal(task.chat_type, 'group');
   assert.equal(task.progress_kind, undefined);
 });
 

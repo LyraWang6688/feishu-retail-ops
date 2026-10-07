@@ -14,10 +14,9 @@
  *   □ 私聊那条路一个字节都不变（不写映射、不写表）。
  */
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
-// ⭐ 本文件有一条「私聊任务：既不写本地映射、也不写销售主表」的用例 —— 它**拿私聊当入口**，
-//    所以显式把私聊开关打开，回归「开关打开时行为与改动前逐字不变」。
-//    （配置是**每次调用时读 env**，所以不依赖 require 顺序，见 config/privateChat。）
-require('./helpers/enablePrivateChatForTests');
+// ⭐ 2026-10-07 ⓐ「私聊链路移除」：原来这里有一条**拿私聊当出口**的用例
+//    （"私聊任务：既不写本地映射、也不写销售主表"）。私聊发送出口已整体删除，
+//    它已改成「**没有群上下文的任务：不发、不写映射、不写表**」（见下面 四 那条）。
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -293,6 +292,7 @@ test('解析器：本地存着话题深链就直接用它（不需要任何远�
 
 const wiredService = ({ chatType = 'group', appLink = APP_LINK } = {}) => {
   const updates = [];
+  const creates = [];
   const gateway = {
     table: (key) => (key === 'salesEntry' ? { tableName: '销售主表', fields: { messageLink: '消息链接' } } : {}),
     listAll: async () => [],
@@ -310,7 +310,7 @@ const wiredService = ({ chatType = 'group', appLink = APP_LINK } = {}) => {
           code: 0,
           data: { message_id: 'om_reply_1', thread_id: 'omt_1', ...(appLink ? { message_app_link: appLink } : {}) },
         }),
-        create: async () => ({ code: 0, data: { message_id: 'om_private_1' } }),
+        create: async (request) => { creates.push(request); return { code: 0, data: { message_id: 'om_direct_1' } }; },
       },
       messageReaction: { create: async () => ({ code: 0 }) },
     },
@@ -324,7 +324,7 @@ const wiredService = ({ chatType = 'group', appLink = APP_LINK } = {}) => {
     salesMessageLinks: new SalesMessageLinkService({ locator, gateway }),
   });
   return {
-    service, updates, locator,
+    service, updates, creates, locator,
     task: {
       task_id: 'task_1', chat_type: chatType, chat_id: 'oc_1', message_id: 'om_her_message',
       sender_open_id: 'ou_her', sales_entry_record_id: 'sale_rec_1',
@@ -386,13 +386,17 @@ test('两个 id 缺一个就不拼：既没回带链接、又没有 chat_id/thre
   assert.equal(updates.length, 0);
 });
 
-test('私聊任务：既不写本地映射、也不写销售主表（私聊这条路由不通它）', async () => {
-  const { service, updates, locator, task } = wiredService({ chatType: 'private' });
+test('没有群上下文的任务：**不发消息**、既不写本地映射、也不写销售主表', async () => {
+  // 2026-10-07 ⓐ：原来是"私聊任务照样发私聊"那条回归；私聊**发送出口已删除**，
+  // 所以这里的预期改成"不发" —— 全仓再也没有"发到 sender_open_id"的写法。
+  // ⚠️ 用空串而不是 `undefined`：`wiredService` 的默认参数会把 `undefined` 变成 `'group'`。
+  const { service, updates, creates, locator, task } = wiredService({ chatType: '' });
   const messageId = await service.sendTaskCard(task, { header: {} });
-  assert.equal(messageId, 'om_private_1');
+  assert.equal(messageId, null, '没有群上下文 → 不发、返 null');
+  assert.deepEqual(creates, [], '一条主动消息都不许发（原来的私聊落点）');
   assert.equal(updates.length, 0);
   const all = await locator.store.list();
-  assert.equal(all.length, 0, '私聊不该产生任何「话题 ↔ 销售」记录');
+  assert.equal(all.length, 0, '不产生任何「话题 ↔ 销售」记录');
 });
 
 test('本地映射的 key 是「她那句话」的 message_id（后续引用/话题反查都靠它）', async () => {

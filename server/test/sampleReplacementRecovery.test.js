@@ -1,7 +1,6 @@
-// ⭐ 本文件的用例**拿私聊当出口**（没注入端口时回落 `task.sender_open_id`）——
-//    显式打开私聊开关 → 回归「开关打开时行为与改动前逐字不变」。
-//    （配置是**每次调用时读 env**，所以不依赖 require 顺序，见 config/privateChat。）
-require('./helpers/enablePrivateChatForTests');
+// ⭐ 2026-10-07 ⓐ「私聊链路移除」：原来这里有一条「没注入端口时回落私聊」的用例。
+//    私聊**发送出口已整体删除** —— 缺省出口现在**不发任何消息**，那条用例已改成
+//    「缺省出口不发」+「任务感知端口照旧把卡片发出去」（见下面 ② 的两条）。
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -27,6 +26,10 @@ test('sample reminder remains refreshable when candidate lookup fails after stoc
     inventory, store: taskStore,
     sendCard: async (_openId, card) => { sentCards.push(card); return 'message_1'; },
     sendText: async () => {},
+    // ⚠️ 私聊出口已随 2026-10-07 ⓐ 删除：缺省出口**不发**，所以这里必须注入
+    //    **任务感知的出口**（生产上 `larkMvpService` 就是这么注入的）。
+    //    本用例只关心"候选读取失败后还能刷新重试"，与发到哪个渠道无关。
+    sendCardToTask: async (_task, card) => { sentCards.push(card); return 'message_1'; },
     updateCard: async (_task, _event, card) => { updatedCards.push(card); return true; },
   });
   const replacement = { salesDetailRecordId: 'detail_1', productRecordId: 'product_1',
@@ -91,7 +94,7 @@ test('② 卡片更新失败的兜底走**任务感知**出口：注入 sendCard
   assert.equal((await taskStore.get('sample_port_1')).card_message_id, 'om_task_aware');
 });
 
-test('② 没注入端口时回落私聊：仍然发给 task.sender_open_id（现状逐字不变）', async () => {
+test('② 缺省出口（没注入任务感知端口）**不发任何消息** —— 私聊出口已删除', async () => {
   const taskStore = new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'sample-port-default-')),
     idField: 'task_id' });
   await seedCompletedTask(taskStore, 'sample_port_2', 'ou_seller');
@@ -110,7 +113,8 @@ test('② 没注入端口时回落私聊：仍然发给 task.sender_open_id（�
     'ou_seller',
   );
 
-  assert.equal(direct.length, 1);
-  assert.equal(direct[0].openId, 'ou_seller', '回落私聊 = 与改动前逐字相同的收件人');
-  assert.equal((await taskStore.get('sample_port_2')).card_message_id, 'om_direct');
+  // 2026-10-07 ⓐ：全仓**再也没有**"缺省回落发私聊"这条兜底。
+  assert.deepEqual(direct, [], '缺省出口一条消息都不许发（私聊落点已删除）');
+  assert.equal((await taskStore.get('sample_port_2')).status, 'completed',
+    '补选本身照旧生效（发不发得出去是另一件事）');
 });

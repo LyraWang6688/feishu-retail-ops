@@ -31,13 +31,10 @@ const { extractSalesMessageText, isMentioned, stripMentionPlaceholders } = requi
 const { resolveAckReaction, resolveBotOpenId } = require('../config/groupPurchase');
 // 主群的准入口径（是否仍然要求 @）：**显式布尔、默认放宽**，见 config/groupAdmission。
 const { resolveMainChatRequireMention } = require('../config/groupAdmission');
-// 私聊链路已移除（2026-10-07）：入口默认**关**、主动发私聊默认**关**，见 config/privateChat。
-// ⚠️ 这里读的是**函数**（每次调用时读 env），不是加载时定死的常量 —— 理由见那个文件的注释。
-const {
-  isPrivateChatIntakeEnabled,
-  isPrivateChatSendEnabled,
-  resolvePrivateChatNotice,
-} = require('../config/privateChat');
+// 私聊链路已移除（2026-10-07 ⓐ）。配置里**只剩一句话的开关 + 那句话**：
+// 入口与发送两件事上**再没有任何开关**（`isPrivateChatIntakeEnabled` /
+// `isPrivateChatSendEnabled` 已随 ⓑ 版一起删除，见 config/privateChat）。
+const { resolvePrivateChatNotice } = require('../config/privateChat');
 const { PurchaseBatchLocator } = require('./purchaseBatchLocator');
 const { extractBatchNos } = require('./purchaseBatchNo');
 // 「群话题 ↔ 销售记录」的本地路由映射（只写本地，不写业务表，见服务的注释）。
@@ -380,8 +377,8 @@ class LarkMvpService {
    * `options.channelTask` = **触发这次交付的那条销售任务**（群销售时才有）。
    * 本类**不理解**它，只当"这是哪个任务"转交；`SampleReplacementService` 把它交给
    * 任务感知出口（`sendCardToTask`）→ 回到本类的 `sendTaskCard` → 回复进那条话题。
-   * 工作台触发时没有这条任务 → 不传 → 补样品提醒**没有群上下文**，
-   * 由出口按 `PRIVATE_CHAT_SEND_ENABLED` 决定发不发（默认不发，只记一条 skip）。
+   * 工作台触发时没有这条任务 → 不传 → 补样品提醒**没有群上下文** →
+   * **不发消息**（私聊出口已删，见 `sendTaskCard`），只记一条 `lark.private_chat.removed`。
    */
   async notifySampleReplacements(deliveryResult, operatorOpenId, options = {}) {
     return this.sampleReplacements.notifySampleReplacements(deliveryResult, operatorOpenId, options);
@@ -518,28 +515,35 @@ class LarkMvpService {
 
   // ── 渠道感知的输出（B）：「回复 / 卡片回到话题」────────────────────────────
   //
-  // ⚠️ 私聊那条路**一个字节都不变**：任务上没有 `chat_type`（或不是 group）时，
-  //    仍然走原来的 `sendText(open_id)` / `sendCard(open_id)`，payload 完全相同。
-  //    只有群里的销售任务（`chat_type === 'group'`）才改成"回复到那条消息的话题"。
+  // 🔴 私聊出口**已删除**（2026-10-07 ⓐ）：非群任务**一律不发**，只记一条日志、返 `null`。
+  //    代码里**再也没有** `sendText(task.sender_open_id)` / `sendCard(task.sender_open_id)`
+  //    这种"发到私聊"的写法；要恢复私聊请从 git 历史取回
+  //    （`git log -S 'PRIVATE_CHAT_SEND_ENABLED'`）。
   //
-  // 为什么必须按任务分流、而不是在 sendText 里判：
+  // 为什么按任务分流、而不是在 sendText 里判：
   //   私聊的任务只有 open_id（发给谁），群里的任务才有 message_id（回哪条、进哪个话题）。
-  //   两者是不同的寻址方式，混在一起判会把私聊也带偏。
+  //   两者是不同的寻址方式，混在一起判会把群那条路也带偏。
+
+  /**
+   * 「这条任务没有群上下文」的**唯一**处理：不发消息、记一条日志、返 `null`。
+   *
+   * ⚠️ 它**不是**"默认不发"的开关分支 —— 它就是这个出口的**全部**：
+   *   私聊发送那段代码不存在了，这里只是留一个可排查的落点（`返 null` 让调用方
+   *   明确知道"没发出去"，例如 `SampleReplacementService` 据此不记 `notice_sent`）。
+   */
+  refuseSendWithoutGroupContext(kind, task) {
+    logInfo('lark.private_chat.removed', {
+      stage: 'send', kind, task_id: task?.task_id || '',
+    });
+    return null;
+  }
 
   /**
    * 群里：把文字回到那条销售话题。
-   * 私聊（**没有群上下文**）：私聊链路已移除 → **默认不发**，只记一条
-   * `lark.private_chat.send_skipped` 并返 `null`；`PRIVATE_CHAT_SEND_ENABLED=true` 时
-   * 与改动前**逐字相同**（`sendText(open_id)`）。
+   * 非群任务（**没有群上下文**）→ 不发（私聊出口已删除）。
    */
   async sendTaskText(task, message) {
-    if (task?.chat_type !== 'group') {
-      if (!isPrivateChatSendEnabled()) {
-        logInfo('lark.private_chat.send_skipped', { kind: 'text', task_id: task?.task_id });
-        return null;
-      }
-      return this.sendText(task.sender_open_id, message);
-    }
+    if (task?.chat_type !== 'group') return this.refuseSendWithoutGroupContext('text', task);
     const sent = await this.replyTextInThread(task.message_id, message);
     // ⚠️ 文字这条出口**只补本地路由映射，不写销售主表**（`storeLink: false`）——两条理由：
     //   ① 深链是**话题级**的（URL 里只有 chat_id + thread_id，没有 message_id）：同一话题里
@@ -553,18 +557,10 @@ class LarkMvpService {
 
   /**
    * 群里：把卡片回到那条销售话题（没有原卡片可改时的兜底）。
-   * 私聊（**没有群上下文**）：私聊链路已移除 → **默认不发**，只记一条
-   * `lark.private_chat.send_skipped` 并返 `null`；`PRIVATE_CHAT_SEND_ENABLED=true` 时
-   * 与改动前**逐字相同**（`sendCard(open_id)`）。
+   * 非群任务（**没有群上下文**）→ 不发（私聊出口已删除）。
    */
   async sendTaskCard(task, card) {
-    if (task?.chat_type !== 'group') {
-      if (!isPrivateChatSendEnabled()) {
-        logInfo('lark.private_chat.send_skipped', { kind: 'card', task_id: task?.task_id });
-        return null;
-      }
-      return this.sendCard(task.sender_open_id, card);
-    }
+    if (task?.chat_type !== 'group') return this.refuseSendWithoutGroupContext('card', task);
     const sent = await this.replyCardInThread(task.message_id, card);
     await this.bindGroupSaleThread(task, sent);
     return sent.messageId;
@@ -728,24 +724,20 @@ class LarkMvpService {
       return { accepted: true, ...flowResult };
     }
 
-    // ── 私聊（p2p）入口 ────────────────────────────────────────────────────
-    // ⭐ 私聊链路已移除（业务负责人 2026-10-07：「以后私聊这条链路我们就没有了」）。
-    //    入口统一到【群聊 + 话题】：私聊消息**不再建任务、不再跑任何链路**
-    //    （不进 AI、不读表、不写表）。
-    //    ⚠️ 别再往这里加私聊专属逻辑；要临时恢复用 PRIVATE_CHAT_INTAKE_ENABLED=true。
-    //
-    // ⚠️ 先认 p2p（**改动前就是这条判据**）：`chat_type` 既不是 group 也不是 p2p 的消息
-    //    仍然走改动前的 `not_p2p` 静默拒绝 —— 不会因为"私聊关了"反而被套上那句群提示。
-    if (message.chat_type !== 'p2p') {
-      logWarn('lark.mvp.message.ignored', { message_id: message.message_id, reason: 'not_p2p' });
-      return { accepted: false, reason: 'not_p2p' };
-    }
-
-    if (!isPrivateChatIntakeEnabled()) {
+    // ── 私聊（p2p）────────────────────────────────────────────────────────
+    // 🔴 私聊链路**已整体移除**（业务负责人 2026-10-07：「以后私聊这条链路我们就没有了」，
+    //    并拍板「**以后代码里【一行私聊都没有】**」）：
+    //    · 私聊消息**不建任务、不进 AI、不读表、不写表、不加表情**；
+    //    · 这里**只剩一条日志**（可排查），外加（可选）**那一句固定文案**。
+    //    ⚠️ 原来的两条私聊专属提示（非文字 / 空文字）**已随这段代码删除**。
+    //    ⚠️ 这里**没有**任何开关 —— 要恢复私聊请从 git 历史里取回
+    //       （`git log -S 'PRIVATE_CHAT_INTAKE_ENABLED'`），不要在这里加"默认关"的分支。
+    if (message.chat_type === 'p2p') {
       // 只回一句固定文案（免得对方以为机器人坏了）；文案留空 = 没什么可说的，就不发。
       const notice = resolvePrivateChatNotice();
       const shouldNotice = notice.enabled && Boolean(notice.text);
-      logInfo('lark.private_chat.disabled', {
+      logInfo('lark.private_chat.removed', {
+        stage: 'intake',
         message_id: message.message_id,
         message_type: message.message_type,
         notice_sent: shouldNotice,
@@ -754,20 +746,9 @@ class LarkMvpService {
       return { accepted: false, reason: 'private_chat_removed' };
     }
 
-    if (!['text', 'post'].includes(message.message_type)) {
-      await this.sendText(senderOpenId, '机器人当前只接收销售文字；采购请使用采购表单。');
-      return { accepted: false, reason: 'unsupported_message_type' };
-    }
-
-    const originalText = extractSalesMessageText(message);
-    if (!originalText) {
-      await this.sendText(senderOpenId, '没有读到销售文字，请发送普通文字或带文字的富文本消息。');
-      return { accepted: false, reason: 'empty_sales_text' };
-    }
-    logInfo('lark.sales.message.normalized', { message_id: message.message_id,
-      message_type: message.message_type, sender_open_id: senderOpenId,
-      text_length: originalText.length, line_count: originalText.split('\n').length });
-    return this.acceptSalesText({ message, senderOpenId, originalText });
+    // 既不是群、也不是私聊 —— 不该发生；与改动前一样**静默忽略**（零远端调用）。
+    logWarn('lark.mvp.message.ignored', { message_id: message.message_id, reason: 'not_group_or_p2p' });
+    return { accepted: false, reason: 'not_group_or_p2p' };
   }
 
   /**
@@ -1743,8 +1724,8 @@ class LarkMvpService {
           await this.notifySampleReplacements(deliveryResult, operatorOpenId, {
             handledDetailIds: handledSampleDetails,
             // ⭐ 渠道感知：**群销售**的补样品提醒回到**那条销售话题**（不是另开一条私聊）。
-            //   私聊任务（`chat_type !== 'group'`）→ `null` → 补样品提醒没有群上下文，
-            //   由出口按 `PRIVATE_CHAT_SEND_ENABLED` 决定发不发（默认不发，只记一条 skip）。
+            //   非群任务（`chat_type !== 'group'`）→ `null` → 补样品提醒**没有群上下文** →
+            //   出口不发消息（私聊出口已删），只记一条 `lark.private_chat.removed`。
             channelTask: task.chat_type === 'group' ? task : null,
           }).catch((error) =>
             logWarn('lark.sales.sample_notice.failed', { task_id: draftId, error: error.message }));

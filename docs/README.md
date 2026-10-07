@@ -20,7 +20,8 @@
 | [workbench-query-contract.md](workbench-query-contract.md) | 工作台查询接口契约 |
 | [sales-line-plan.md](sales-line-plan.md) | 销售线的推进计划与判据 |
 | [arrival-conversation-reconcile-2026-10-06.md](arrival-conversation-reconcile-2026-10-06.md) | 采购到货「群话题对话式核对」：业务负责人 2026-10-06 当天口述的**权威口径**与验收标准（**已实现**） |
-| [private-chat-removal-2026-10-07.md](private-chat-removal-2026-10-07.md) | 🔴 **私聊链路已移除**（业务负责人 2026-10-07：「以后私聊这条链路我们就没有了」）：入口统一到【群聊 + 话题】。含**验收标准**（A 入口 / B 群聊回归 / C 发送出口 / D 配置 / E 门禁）、四条开关的取值规则、以及"怎么临时恢复私聊"。承接 2026-10-06 的切除盘清 [private-chat-excision-todo.md](private-chat-excision-todo.md) |
+| [private-chat-removal-hard-2026-10-07.md](private-chat-removal-hard-2026-10-07.md) | 🔴 **私聊链路移除 · ⓐ 彻底版**（业务负责人 2026-10-07：「**干净、彻底** …… **以后代码里【一行私聊都没有】**」）：`PRIVATE_CHAT_INTAKE_ENABLED` / `PRIVATE_CHAT_SEND_ENABLED` 两个"可显式恢复"的开关与测试 helper **整体删除**；私聊消息只记一条日志；非群任务一律不发；约 20 条历史用例**迁到群聊真入口**。含**验收标准**（A 入口 / B 发送出口 / C 群聊回归 / D 测试迁移 / E 门禁）与逐条对照 |
+| [private-chat-removal-2026-10-07.md](private-chat-removal-2026-10-07.md) | ⚠️ **已被上一份取代（ⓑ 版，留开关）**：私聊链路移除的第一版实现——入口统一到【群聊 + 话题】，但保留了 `PRIVATE_CHAT_INTAKE_ENABLED` / `PRIVATE_CHAT_SEND_ENABLED`（默认关、"可显式恢复"）＋测试专用 helper。**决策与"为什么不走 ⓑ"见** [private-chat-removal-decision-2026-10-07.md](private-chat-removal-decision-2026-10-07.md)。承接 2026-10-06 的切除盘清 [private-chat-excision-todo.md](private-chat-excision-todo.md) |
 | [purchase-intake-batch-spec.md](purchase-intake-batch-spec.md) | ⭐ **采购提交的归批口径（业务口径 · 权威 · 已定）**：一次提交 = 一个行为（采购申请 或 采购退货）+ N 个编号（**= N 个不同货品**）→ **只出一张图**；⭐ **一个货品的多个尺码勾在同一条记录上，记录之间不合并数量**。⚠️ **口径已定，但代码尚未按此实现**（仍在用时间窗归批）；改造方案见第 3 节 |
 | [arrival-conversation-flow.md](arrival-conversation-flow.md) | ⚠️ **已作废**（同日被上一份取代）：早一版规格；正文按当时事实保留，**不要再按它实施** |
 

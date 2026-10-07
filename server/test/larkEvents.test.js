@@ -1,8 +1,6 @@
-// ⭐ 本文件有一条「① 私聊既有行为逐字不变：非文字消息仍然回同样那一条私聊文字」——
-//    它**拿私聊当入口**，所以显式把私聊开关打开，回归「开关打开时行为与改动前逐字不变」。
-//    另一半方向（"默认关 = 私聊不处理"）由 test/privateChatRemoval.test.js 钉住。
-//    （配置是**每次调用时读 env**，所以不依赖 require 顺序，见 config/privateChat。）
-require('./helpers/enablePrivateChatForTests');
+// ⭐ 2026-10-07 ⓐ「私聊链路移除」：原来这里有一条「私聊既有行为逐字不变」的用例，
+//    已按业务负责人的口径改成「**私聊链路已移除**」的验收（见下面 ① 那条）：
+//    私聊消息只回**一句**固定文案，不建任务、不进链路，旧的那两条私聊提示也不再出现。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -150,27 +148,36 @@ test('① 卡片动作失败 → 同样不发私聊（也不再抛出去）', as
     '同步响应照旧 —— 她点按钮不会觉得"点不动"');
 });
 
-test('① 私聊既有行为逐字不变：非文字消息仍然回同样那一条私聊文字', async () => {
+test('① 私聊链路已移除：私聊消息（含非文字）只回一句文案，不建任务、旧提示不再出现', async () => {
   const { client, patched, created } = createCountingClient();
   const service = createRealService(client);
 
-  const result = await service.acceptMessage({
+  // ⭐ 走**路由处理器**（生产上那条真入口），不是直接调 service：连"接线"一起验。
+  const handlers = createLarkEventHandlers(service);
+  const response = handlers['im.message.receive_v1']({
     sender: { sender_id: { open_id: 'ou_seller' } },
     message: {
       chat_type: 'p2p', message_type: 'image', message_id: 'om_p2p_1',
       content: JSON.stringify({ image_key: 'img_x' }), create_time: '1759700000000',
     },
   });
+  // 处理器是**同步返回**的（事件先回、链路丢到 setImmediate），等它跑完。
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.deepEqual(response, {}, '事件处理器照旧同步回空对象（飞书要求 200）');
 
-  assert.equal(result.reason, 'unsupported_message_type');
-  // 私聊那条路一个字节都没动：仍然是一条 `open_id` 收件人的纯文字，文案逐字相同。
+  // ① 私聊**不建任务、不跑链路**（store 里一条都没有）
+  assert.deepEqual(await service.store.list(), [], '私聊消息不许建任何任务');
   assert.equal(patched.length, 0, '私聊这条路不碰卡片更新');
+
+  // ② 恰好一次远端调用 = 那一句固定文案；旧的两条私聊专属提示**已从代码里删除**。
   assert.equal(created.length, 1);
   assert.deepEqual(created[0].params, { receive_id_type: 'open_id' });
   assert.equal(created[0].data.receive_id, 'ou_seller');
   assert.equal(created[0].data.msg_type, 'text');
-  assert.deepEqual(JSON.parse(created[0].data.content),
-    { text: '机器人当前只接收销售文字；采购请使用采购表单。' });
+  const notice = JSON.parse(created[0].data.content).text;
+  assert.equal(notice, require('../src/config/privateChat').DEFAULT_NOTICE_TEXT);
+  assert.doesNotMatch(notice, /机器人当前只接收销售文字/);
+  assert.doesNotMatch(notice, /没有读到销售文字/);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

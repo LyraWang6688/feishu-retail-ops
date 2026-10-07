@@ -7,10 +7,10 @@
 //
 // 第 3 条同时是"引导语不能顺手把无意义聊天也回了"的防线：闸门在 AI 之前，
 // 所以这里断言的是「AI 没被调用」+「没有发出任何消息」+「没有建任务」三件事。
-// ⭐ 本文件的用例**拿私聊当入口**测入口闸门（历史回归，不该因为"入口没了"就删）。
-//    显式打开私聊开关 → 回归「开关打开时行为与改动前逐字不变」。
-//    （配置是**每次调用时读 env**，所以不依赖 require 顺序，见 config/privateChat。）
-require('./helpers/enablePrivateChatForTests');
+// ⭐ 2026-10-07 ⓐ「私聊链路移除」：这个文件原来**拿私聊当入口**测闸门，
+//    现在改成走**群聊真入口** —— 主群消息（`thread_id` 为空）**不 @ 机器人**，
+//    靠正文过 `resolveMainChatAdmission` 的第二条判据（= 与原来同一把尺子 `isSalesCandidate`）。
+//    这样测的还是同一件事（"这句话该不该进 AI"），但走的是生产上真在跑的那条路。
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -40,14 +40,18 @@ const KEYWORD_ONLY_TEXTS = ['我要退货', '查一下我买的鞋', '库存还�
 // 无意义聊天：一个字都不该往后走。
 const MEANINGLESS_TEXTS = ['你好', '在吗', '今天天气', '哈哈哈'];
 
+// 群聊主群消息，**不 @ 机器人** —— 准入完全靠正文过闸门（第二条判据）。
+// 这正是"这句话该不该进 AI"在生产上被决定的地方。
 const textEvent = (id, text) => ({
   sender: { sender_id: { open_id: 'ou_gate' } },
   message: {
     message_id: id,
-    chat_type: 'p2p',
+    chat_id: 'oc_test_group',
+    chat_type: 'group',
     message_type: 'text',
     create_time: '1000',
     content: JSON.stringify({ text }),
+    mentions: [],
   },
 });
 
@@ -80,6 +84,11 @@ const makeService = ({ recognizerResult = {}, stubProcess = true } = {}) => {
     },
   });
   service.sendText = async (openId, message) => sent.push({ openId, message });
+  // ⚠️ 本文件测的是**入口闸门**（进不进 AI / 建不建任务 / 回不回话），
+  //    不是"回执发到哪个渠道"。私聊出口已随 2026-10-07 ⓐ 整体删除，
+  //    所以这里把**任务感知的文字出口**打桩记录下来；
+  //    渠道本身（群 → 回到那条话题）由 privateChatRemoval / groupSalesThread 覆盖。
+  service.sendTaskText = async (task, message) => sent.push({ openId: task?.sender_open_id, message });
   service.sendCard = async (_openId, card) => { cards.push(card); return 'om_card'; };
   service.replyCard = async (_messageId, card) => { cards.push(card); return 'om_card'; };
   service.acknowledgeMessage = async () => undefined;
@@ -141,9 +150,14 @@ test('含数字 → 仍然进（原有行为不变）', async () => {
   const { service, store } = makeService();
   const result = await service.acceptMessage(textEvent('om_gate_digit', '6035黑38码230元微信'));
   assert.equal(result.accepted, true);
-  assert.equal(result.type, 'sale');
-  const task = await store.get(result.taskId);
+  assert.equal(result.handled, true);
+  assert.equal(result.sales.type, 'sale');
+  const task = await store.get(result.sales.taskId);
   assert.equal(task.original_text, '6035黑38码230元微信');
+  // 主群准入的第二条判据就是这把尺子（她没 @ 也理）——
+  // 上面那次 `lark.group.message.accepted` 日志里的 `via` 是 `sales_gate`
+  // （判据在 `resolveMainChatAdmission`，分派器只回答"归销售还是采购"）。
+  assert.equal(result.mode, 'new', '主群里新开一笔');
 });
 
 test('不含数字但含业务关键词 → 进（建任务并真的把文本送进识别）', async () => {
@@ -160,8 +174,8 @@ test('不含数字但含业务关键词 → 进（建任务并真的把文本送
     });
     const result = await service.acceptMessage(textEvent(messageId, text));
     assert.equal(result.accepted, true, `${text} 应该被放行`);
-    assert.equal(result.type, 'sale');
-    const task = await store.get(result.taskId);
+    assert.equal(result.sales.type, 'sale');
+    const task = await store.get(result.sales.taskId);
     assert.equal(task.original_text, text);
     // "进了 AI"的硬证据：识别函数真的被这条文本调到了。
     assert.equal(await waitFor(() => parsedTexts.includes(text)), true, `${text} 应被送进 AI`);
@@ -174,7 +188,8 @@ test('不含数字也不含关键词 → 不进、也不回（无意义聊天保
     const { service, store, sent, parsedTexts, cards } = makeService({ stubProcess: false });
     const result = await service.acceptMessage(textEvent(messageId, text));
     await settle();
-    assert.deepEqual(result, { accepted: false, reason: 'not_sales_candidate' }, `${text} 应被挡在闸门外`);
+    // 主群准入的第二条判据（与原来同一把尺子）没过 → 完全静默、零远端调用。
+    assert.deepEqual(result, { accepted: false, reason: 'group_not_sales_text' }, `${text} 应被挡在闸门外`);
     assert.deepEqual(sent, [], `「${text}」不该收到任何回复（核心验收点）`);
     assert.deepEqual(cards, [], `「${text}」不该收到任何卡片`);
     assert.deepEqual(parsedTexts, [], `「${text}」不该进 AI`);
@@ -209,7 +224,7 @@ test('无意义聊天不触发引导语（闸门在 AI 之前，端到端再验�
   });
   const result = await service.acceptMessage(textEvent('om_gate_hahaha', '哈哈哈'));
   await settle();
-  assert.deepEqual(result, { accepted: false, reason: 'not_sales_candidate' });
+  assert.deepEqual(result, { accepted: false, reason: 'group_not_sales_text' });
   assert.deepEqual(sent, [], '「哈哈哈」不能因为加了引导语就被回复');
   assert.deepEqual(parsedTexts, [], '「哈哈哈」不能进 AI');
   assert.deepEqual(writes, []);

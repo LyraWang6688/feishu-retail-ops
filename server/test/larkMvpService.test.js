@@ -1,9 +1,6 @@
-// ⭐ 本文件有一大批历史用例是**拿私聊录单当输入**测销售链路的（回归覆盖，不该删）。
-//    这里显式把私聊开关打开 → 它们转为回归「**开关打开时行为与改动前逐字不变**」。
-//    另一半方向（"默认关 = 私聊不处理"）由 test/privateChatRemoval.test.js 钉住 ——
-//    那个文件**不** require 这个 helper。
-//    （配置是**每次调用时读 env**，所以不依赖 require 顺序，见 config/privateChat。）
-require('./helpers/enablePrivateChatForTests');
+// ⭐ 2026-10-07 ⓐ「私聊链路移除」：这个文件里**原来拿私聊当入口**的那批历史用例，
+//    已**全部迁到群聊入口**（主群 @ 机器人 / 话题里），断言跟着改成"回复回到话题"。
+//    私聊入口的验收在 test/privateChatRemoval.test.js。
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -84,23 +81,41 @@ const makeReactionService = () => {
   return { service, reactions };
 };
 
-test('private text is accepted as sales input and repeated message id is deduplicated', async () => {
+/**
+ * 群聊事件的构造器。**按 §私聊链路移除（ⓐ）**：私聊入口已经没有了，
+ * 这个文件里所有"录单 / 售后 / 进展"的用例都必须从**群聊**进来。
+ *
+ *   · 默认 `mentions` 有机器人 → **主群 @ 机器人**（thread_id 为空，走三条准入判据的第一条）；
+ *   · 传 `mentions: []` + `threadId` → **话题里的消息**（免 @，走本地映射定位那一支）。
+ */
+const groupEvent = (overrides = {}) => ({
+  sender: { sender_id: { open_id: overrides.senderOpenId || 'ou_1' } },
+  message: {
+    message_id: overrides.messageId || 'om_group_1',
+    chat_id: overrides.chatId || 'oc_test_group',
+    chat_type: 'group',
+    message_type: overrides.messageType || 'text',
+    create_time: '1000',
+    content: overrides.content || JSON.stringify({ text: overrides.text || '' }),
+    // 主群那条路要求 @；话题里免 @（传 mentions: [] + threadId）。
+    mentions: overrides.mentions === undefined
+      ? [{ key: '@_user_1', id: TEST_BOT_OPEN_ID, name: '测试机器人' }]
+      : overrides.mentions,
+    parent_id: overrides.parentId,
+    thread_id: overrides.threadId,
+  },
+});
+
+test('群聊主群 @ 机器人说一笔销售 → 进销售入口；同一条 message_id 重发被去重', async () => {
   const { service } = makeService();
-  const event = {
-    sender: { sender_id: { open_id: 'ou_1' } },
-    message: {
-      message_id: 'om_1',
-      chat_type: 'p2p',
-      message_type: 'text',
-      create_time: '1000',
-      content: JSON.stringify({ text: 'A100 38码一双，100元微信' }),
-    },
-  };
+  const event = groupEvent({ messageId: 'om_1', text: '@_user_1 A100 38码一双，100元微信' });
   const first = await service.acceptMessage(event);
   const second = await service.acceptMessage(event);
   assert.equal(first.accepted, true);
-  assert.equal(first.type, 'sale');
-  assert.equal(second.reason, 'duplicate');
+  assert.equal(first.handled, true, '主群 @ 机器人说销售 → 由销售链路接管');
+  assert.equal(first.mode, 'new');
+  assert.equal(first.sales.type, 'sale');
+  assert.equal(second.sales.reason, 'duplicate');
 });
 
 // 主群准入（2026-10-06 业务负责人拍板：**不再要求 @**）。三条判据任一条就理：
@@ -236,41 +251,27 @@ test('群聊没配 LARK_BOT_OPEN_ID 且要求 @：不猜 @，一律忽略', asyn
   assert.deepEqual(calls, []);
 });
 
-test('ordinary private chat without numbers is not accepted as a sales task', async () => {
+test('主群不 @ 且不像销售 → 不进（闸门与原来同一把尺子）', async () => {
   const { service } = makeService();
-  const result = await service.acceptMessage({
-    sender: { sender_id: { open_id: 'ou_1' } },
-    message: {
-      message_id: 'om_chat',
-      chat_type: 'p2p',
-      message_type: 'text',
-      content: JSON.stringify({ text: '好的' }),
-    },
-  });
-  assert.deepEqual(result, { accepted: false, reason: 'not_sales_candidate' });
+  const result = await service.acceptMessage(groupEvent({
+    messageId: 'om_chat', text: '好的', mentions: [],
+  }));
+  assert.deepEqual(result, { accepted: false, reason: 'group_not_sales_text' });
   assert.equal(looksLikeSalesText('好的'), false);
   assert.equal(looksLikeSalesText('8088-26棕38，230元微信'), true);
 });
 
-test('robot no longer starts the legacy purchase-image flow', async () => {
+test('机器人不再启动旧的采购图片流程（群里发图片 → 静默忽略、不建任何任务）', async () => {
   const { service, sent } = makeService();
-  const imageEvent = {
-    sender: { sender_id: { open_id: 'ou_1' } },
-    message: {
-      message_id: 'om_image',
-      chat_type: 'p2p',
-      message_type: 'image',
-      create_time: '1000',
-      content: JSON.stringify({ image_key: 'img_1' }),
-    },
-  };
-  const result = await service.acceptMessage(imageEvent);
-  assert.equal(result.reason, 'unsupported_message_type');
-  assert.match(sent[0].message, /采购表单/);
+  const result = await service.acceptMessage(groupEvent({
+    messageId: 'om_image', messageType: 'image', content: JSON.stringify({ image_key: 'img_1' }),
+  }));
+  assert.equal(result.reason, 'group_unsupported_message_type');
+  assert.deepEqual(sent, [], '群里不回「请用采购表单」那句（群里回文字会刷屏）');
   assert.equal(await service.store.get(require('../src/services/larkMvpService').idFor('purchase_open', 'ou_1')), null);
 });
 
-test('ordered-list post message is accepted as one sale with all four item lines', async () => {
+test('富文本（post）群消息 → 当成一笔销售，四条明细都在', async () => {
   const { service } = makeService();
   const content = { post: { zh_cn: { title: '550元微信卖了4双鞋：', content: [
     [{ tag: 'text', text: '1. 第一双：3287黑39的，186元' }],
@@ -278,17 +279,17 @@ test('ordered-list post message is accepted as one sale with all four item lines
     [{ tag: 'text', text: '3. 第三双：86822黑色43的，99元' }],
     [{ tag: 'text', text: '4. 第四双：XHB8095全黑44的，89元' }],
   ] } } };
-  const result = await service.acceptMessage({ sender: { sender_id: { open_id: 'ou_1' } },
-    message: { message_id: 'om_post_four', chat_type: 'p2p', message_type: 'post',
-      create_time: '1000', content: JSON.stringify(content) } });
+  const result = await service.acceptMessage(groupEvent({
+    messageId: 'om_post_four', messageType: 'post', content: JSON.stringify(content),
+  }));
   assert.equal(result.accepted, true);
-  const task = await service.store.get(result.taskId);
+  const task = await service.store.get(result.sales.taskId);
   assert.equal(task.original_text.split('\n').length, 5);
   assert.match(task.original_text, /XHB8095全黑44/);
   assert.match(task.original_text, /550元微信/);
 });
 
-test('one seller can submit separate sale messages while their recognition runs in order', async () => {
+test('同一个卖家在群里连发两笔销售 → 各自的识别按顺序跑（每人的队列）', async () => {
   const { service } = makeService();
   const stages = [];
   let finishFirst;
@@ -301,19 +302,17 @@ test('one seller can submit separate sale messages while their recognition runs 
     stages.push(`end:${taskId}`);
     if (stages.length === 4) finishBoth();
   };
-  const event = (id, text) => ({ sender: { sender_id: { open_id: 'ou_1' } },
-    message: { message_id: id, chat_type: 'p2p', message_type: 'text',
-      create_time: '1000', content: JSON.stringify({ text }) } });
+  const event = (id, text) => groupEvent({ messageId: id, text: `@_user_1 ${text}` });
   const first = await service.acceptMessage(event('om_sale_one', 'A100黑38 99元微信'));
   const second = await service.acceptMessage(event('om_sale_two', 'B200棕39 109元现金'));
-  assert.notEqual(first.taskId, second.taskId);
+  assert.notEqual(first.sales.taskId, second.sales.taskId);
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(stages, [`start:${first.taskId}`]);
+  assert.deepEqual(stages, [`start:${first.sales.taskId}`]);
   finishFirst();
   await bothDone;
   assert.deepEqual(stages, [
-    `start:${first.taskId}`, `end:${first.taskId}`,
-    `start:${second.taskId}`, `end:${second.taskId}`,
+    `start:${first.sales.taskId}`, `end:${first.sales.taskId}`,
+    `start:${second.sales.taskId}`, `end:${second.sales.taskId}`,
   ]);
 });
 
@@ -342,7 +341,10 @@ test('selling a sample sends a per-order size choice card and only its recipient
     gateway: { table: () => ({ fields: { number: '编号' } }),
       get: async () => ({ fields: { 编号: 'A100黑' } }) },
     references: {}, posting: {}, recognizer: {}, purchaseWebhooks: {}, delivery });
-  service.sendCard = async (_openId, card) => { cards.push(card); return 'om_sample_card'; };
+  // ⚠️ 本用例**直接造任务**（走的是 `notifySampleReplacements` 这条业务链路，不是消息入口），
+  //    所以要自己把**任务感知的出口**打桩：私聊出口已随 ⓐ 删除，非群任务不再有"发到 open_id"
+  //    的兜底。出口本身（群 → 回话题）由 privateChatRemoval / groupThreadReplyRouting 覆盖。
+  service.sendTaskCard = async (_task, card) => { cards.push(card); return 'om_sample_card'; };
   service.updateSalesActionCard = async (_task, _event, card) => { cards.push(card); return true; };
   const delivered = { sampleReplacements: [{ salesDetailRecordId: 'detail_1',
     productRecordId: 'product_1', sampleConsumedQuantity: 1 }] };
@@ -660,7 +662,10 @@ test('unsupported text is parsed but does not create a sales entry record', asyn
     },
     store,
   });
-  service.sendText = async (openId, message) => sent.push({ openId, message });
+  // ⚠️ 本用例**直接造任务**（`processSalesTask` 是下游链路，入口已被别处覆盖），
+  //    并且把**任务感知的文字出口**打桩 —— 私聊出口已随 ⓐ 删除，
+  //    没有群上下文的任务不再有"发到 open_id"的兜底（那条路由在别处验收）。
+  service.sendTaskText = async (_task, message) => sent.push({ openId: _task.sender_open_id, message });
   await store.create({
     task_id: 'sale_unsupported',
     type: 'sale',
@@ -788,7 +793,9 @@ test('sale final-card patch failure sends a new result card without reversing a 
     return { code: patches === 1 ? 0 : 1254607, msg: 'Data not ready' };
   } } } } }, gateway: {}, references: {}, recognizer: {}, store,
   posting: { postSale: async () => ({ sourceNo: 'XSD-003', detailRecordIds: ['detail_1'] }) } });
-  service.sendCard = async (_openId, card) => { fallbackCards.push(card); return 'om_new'; };
+  // ⚠️ 本用例**直接造任务**（在测"补发结果卡片"这条业务分支），
+  //    所以把**任务感知的卡片出口**打桩 —— 私聊出口已随 ⓐ 删除。
+  service.sendTaskCard = async (_task, card) => { fallbackCards.push(card); return 'om_new'; };
   const result = await service.handleCardAction({ operator: { operator_id: { open_id: 'ou_1' } },
     action: { value: { action: 'confirm_sale_pending', draft_id: 'sale_card_fallback' } } });
   assert.equal(result.toast.type, 'success');
@@ -1322,7 +1329,9 @@ test('库存里没有这个尺码时不发确认卡片，只回一句「库存�
     store,
   });
   service.replyCard = async (_messageId, card) => cards.push(card);
-  service.sendText = async (_openId, message) => messages.push(message);
+  // ⚠️ 本用例**直接造任务**（在测"缺货时回哪一句话"），所以把**任务感知的文字出口**打桩：
+  //    私聊出口已随 ⓐ 删除，没有群上下文的任务不再有"发到 open_id"的兜底。
+  service.sendTaskText = async (_task, message) => messages.push(message);
   await store.create({ task_id: 'sale_no_stock', type: 'sale', status: 'received', message_id: 'om_ns',
     sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '26632黑37一双210微信' });
 
@@ -1361,7 +1370,8 @@ test('缺货之外还有别的问题时，才用完整的补充说明', async ()
     store,
   });
   service.replyCard = async () => undefined;
-  service.sendText = async (_openId, message) => messages.push(message);
+  // ⚠️ 同上一例：**直接造任务** + 把任务感知的文字出口打桩（私聊出口已随 ⓐ 删除）。
+  service.sendTaskText = async (_task, message) => messages.push(message);
   await store.create({ task_id: 'sale_mixed', type: 'sale', status: 'received', message_id: 'om_mx',
     sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '26632黑37一双210微信' });
 
@@ -1863,23 +1873,6 @@ const makeGroupContext = async (options = {}) => {
   return { store, locator };
 };
 
-const groupEvent = (overrides = {}) => ({
-  sender: { sender_id: { open_id: 'ou_sender' } },
-  message: {
-    message_id: overrides.messageId || 'om_group_1',
-    chat_id: TEST_PURCHASE_CHAT_ID,
-    chat_type: 'group',
-    message_type: 'text',
-    create_time: '1000',
-    content: JSON.stringify({ text: overrides.text || '' }),
-    // 默认 @ 了机器人（主群那条路）；传 mention=false 模拟"话题里没 @"。
-    mentions: overrides.mentions || [{ key: '@_user_1', id: TEST_BOT_OPEN_ID, name: '测试机器人' }],
-    parent_id: overrides.parentId,
-    // thread_id 有值 = 话题里的消息（免 @）；不传 = 主群消息（必须 @）。
-    thread_id: overrides.threadId,
-  },
-});
-
 test('群聊①：话题里的消息（thread_id 有值）**不 @ 机器人**也进流程', async () => {
   // 真机实测：她在话题里发「你好 小来财」，mentions=[]，事件照样推给我们。
   const { locator } = await makeGroupContext({ mappingThreadId: 'omt_thread_1', batchNo: 'BH-20261005-0011' });
@@ -2129,7 +2122,7 @@ test('B：@ 占位符被剥掉——送到定位链路的是「她真正说的�
   assert.equal(seen[0].messageId, 'om_group_1');
 });
 
-test('B：私聊与群聊各自加 OneSecond 表情；只有私聊回「已收到」文字', async () => {
+test('B：群聊只加 OneSecond 表情，**不回**「已收到」文字（回文字会刷屏）', async () => {
   const { locator } = await makeGroupContext({ mappingMessageId: 'om_purchase_2' });
   // 用真实的 acknowledgeMessage + 假 client：断言"实际发出去的表情是什么"。
   const { service, reactions } = makeReactionService();
@@ -2139,27 +2132,15 @@ test('B：私聊与群聊各自加 OneSecond 表情；只有私聊回「已收�
   service.replyText = async (_messageId, content) => { replies.push(content); return 'om_reply'; };
   service.processSalesTask = async () => undefined;
 
-  // 私聊：表情 + 「已收到」文字（现状不变）
-  await service.acceptMessage({
-    sender: { sender_id: { open_id: 'ou_1' } },
-    message: {
-      message_id: 'om_private_ack',
-      chat_type: 'p2p',
-      message_type: 'text',
-      content: JSON.stringify({ text: '8088 黑 38 一双 230 微信' }),
-    },
-  });
-  assert.deepEqual(reactions, [{ messageId: 'om_private_ack', emoji: 'OneSecond' }]);
-  assert.deepEqual(replies, ['👀 已收到，正在识别销售信息，请稍候…']);
-
-  // 群聊：只有表情，**不回文字**（群里回文字会刷屏）
+  // ⚠️ 私聊那半条已经删掉（私聊入口已移除，私聊消息不再加表情、也不回文字）——
+  //    它现在的验收在 test/privateChatRemoval.test.js。
   await service.acceptMessage(groupEvent({
     messageId: 'om_group_ack',
     text: '@_user_1 这批到了',
     parentId: 'om_purchase_2',
   }));
-  assert.deepEqual(reactions[1], { messageId: 'om_group_ack', emoji: 'OneSecond' });
-  assert.equal(replies.length, 1, '群聊不该再回「已收到」文字');
+  assert.deepEqual(reactions, [{ messageId: 'om_group_ack', emoji: 'OneSecond' }]);
+  assert.deepEqual(replies, [], '群聊不该回「已收到」文字');
 });
 
 test('B：表情加不上（缺权限）只记日志，不影响主流程', async () => {

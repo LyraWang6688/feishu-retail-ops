@@ -2,19 +2,18 @@
  * 「销售链路：私聊 → 群聊话题」的验收测试（业务负责人 2026-10-06 逐字确认的口径，
  * 见 docs/sales-purchase-group-thread-2026-10-06.md）。
  *
- * 这份文件只覆盖**新链路**（A / B / C）与**私聊回归**；采购那侧的既有用例仍在
+ * 这份文件只覆盖**新链路**（A / B / C）；采购那侧的既有用例仍在
  * larkMvpService.test.js / arrivalConversation.test.js 里原样跑着。
  *
  *   □ 主群里 @ 机器人说一笔销售 → 建销售记录 ＋ 在那条消息下开话题 ＋ 回卡片
  *   □ 话题里的消息 → 按话题定位到那笔销售 → 走销售（不是采购）
- *   □ 私聊行为完全不变（卡片回复不带 reply_in_thread、任务上没有群字段）
+ *   □ 主群来的销售消息一律**新开一笔**（不绑定任何"已定位到的销售"）
  *   □ 认不出是哪一笔销售时 → 仍然走采购那条路（不抢答、不猜"最近一笔"）
  *   □ 本地映射不写业务表
+ *   □ 群里「已收到」只有表情，**不回文字**（回文字会刷屏）
  */
-// ⭐ 本文件有「【私聊回归】行为完全不变」那组用例 —— 它们**拿私聊当入口**，
-//    所以显式把私聊开关打开，回归「开关打开时行为与改动前逐字不变」。
-//    （配置是**每次调用时读 env**，所以不依赖 require 顺序，见 config/privateChat。）
-require('./helpers/enablePrivateChatForTests');
+// ⭐ 2026-10-07 ⓐ「私聊链路移除」：原来这一文件里有「【私聊回归】行为完全不变」那组用例，
+//    已按业务负责人的口径**全部迁到群聊真入口**（主群 @ 机器人 / 话题），见文件末尾那三条。
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -130,21 +129,12 @@ const groupEvent = (overrides = {}) => ({
     message_type: 'text',
     create_time: '1000',
     content: JSON.stringify({ text: overrides.text || '' }),
-    mentions: overrides.mentions || [{ key: '@_user_1', id: TEST_BOT_OPEN_ID, name: '测试机器人' }],
+    // 主群那条路要求 @；话题里免 @（传 `mentions: []` + `threadId`）。
+    mentions: overrides.mentions === undefined
+      ? [{ key: '@_user_1', id: TEST_BOT_OPEN_ID, name: '测试机器人' }]
+      : overrides.mentions,
     parent_id: overrides.parentId,
     thread_id: overrides.threadId,
-  },
-});
-
-const privateEvent = (overrides = {}) => ({
-  sender: { sender_id: { open_id: overrides.senderOpenId || 'ou_sender' } },
-  message: {
-    message_id: overrides.messageId || 'om_private_1',
-    chat_id: 'oc_private',
-    chat_type: 'p2p',
-    message_type: 'text',
-    create_time: '1000',
-    content: JSON.stringify({ text: overrides.text || '' }),
   },
 });
 
@@ -329,45 +319,44 @@ test('定位器：thread_id 优先于 parent_id；都查不到就认不出，绝
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 【私聊回归】行为完全不变（最重要的一条）
+// 【主群】群聊真入口的回归（2026-10-07 ⓐ：原来这三条拿**私聊**当入口）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('回归：私聊销售 → 卡片回复**不带** reply_in_thread，任务上没有群聊字段', async () => {
+test('A：主群 @ 机器人新说一笔 → 建的是**新一笔**（不绑定任何已定位销售），回复进话题', async () => {
   const { service, replies, purchaseCalls } = makeHarness();
-  const result = await service.acceptMessage(privateEvent({
-    messageId: 'om_private_sale', text: '66356 黑 42 一双 230 微信',
+  const result = await service.acceptMessage(groupEvent({
+    messageId: 'om_main_new_sale', text: '@_user_1 66356 黑 42 一双 230 微信',
   }));
 
   assert.equal(result.accepted, true);
-  assert.equal(result.type, 'sale');
-  assert.deepEqual(purchaseCalls, [], '私聊永远不走群聊那两条路');
+  assert.equal(result.mode, 'new');
+  assert.equal(result.sales.type, 'sale');
+  assert.deepEqual(purchaseCalls, [], '销售原话不走采购那条路');
 
-  const task = await service.store.get(result.taskId);
-  assert.equal(task.chat_type, undefined, '私聊任务不该被打上群聊标记');
-  assert.equal(task.chat_id, undefined);
-  assert.equal(task.sales_entry_record_id, undefined, '私聊仍然是"新建一笔"，不绑定已定位的销售');
+  const task = await service.store.get(result.sales.taskId);
+  assert.equal(task.chat_type, 'group', '群任务的渠道标记必须写上（私聊任务才有过"没有这些字段"）');
+  assert.equal(task.chat_id, CHAT_ID);
+  assert.equal(task.sales_entry_record_id, '', '主群新说一笔：还没有"已定位到的那笔销售"');
 
   await flushSalesTasks(service);
   const cardReply = replies.find((item) => item.data.msg_type === 'interactive');
   assert.ok(cardReply);
-  assert.equal(cardReply.path.message_id, 'om_private_sale');
-  assert.equal(cardReply.data.reply_in_thread, undefined,
-    '私聊的 payload 与改动前逐字相同：一个字段都不许多');
-  assert.equal(cardReply.data.msg_type, 'interactive');
+  assert.equal(cardReply.path.message_id, 'om_main_new_sale');
+  assert.equal(cardReply.data.reply_in_thread, true, '群聊的回复一律回到那条话题');
 });
 
-test('回归：私聊闸门不变——不像销售的话静默忽略，一个远端调用都没有', async () => {
+test('A：主群不 @ 且不像销售 → 静默忽略，一个远端调用都没有', async () => {
   const { service, replies } = makeHarness();
-  const result = await service.acceptMessage(privateEvent({
-    messageId: 'om_private_chat', text: '你好 小来财',
+  const result = await service.acceptMessage(groupEvent({
+    messageId: 'om_main_chat', text: '你好 小来财', mentions: [],
   }));
 
   assert.equal(result.accepted, false);
-  assert.equal(result.reason, 'not_sales_candidate');
-  assert.deepEqual(replies, []);
+  assert.equal(result.reason, 'group_not_sales_text');
+  assert.deepEqual(replies, [], '群里日常聊天不许有任何回复');
 });
 
-test('回归：私聊的「已收到」仍然是表情 ＋ 一句文字（群聊只有表情）', async () => {
+test('B：群里「已收到」只有 OneSecond 表情，**不回**「已收到」文字（回文字会刷屏）', async () => {
   const reactions = [];
   const { client, replies } = makeClient();
   client.im.messageReaction.create = async ({ path, data }) => {
@@ -383,11 +372,13 @@ test('回归：私聊的「已收到」仍然是表情 ＋ 一句文字（群聊
   });
   service.processSalesTask = async () => undefined;
 
-  await service.acceptMessage(privateEvent({ messageId: 'om_ack_p2p', text: '66356 黑 42 一双 230 微信' }));
+  await service.acceptMessage(groupEvent({
+    messageId: 'om_ack_group', text: '@_user_1 66356 黑 42 一双 230 微信',
+  }));
   assert.deepEqual(reactions.map((item) => item.emoji), ['OneSecond']);
-  // 私聊那条文字回复走 `reply`，内容与改动前逐字相同，且**不带** reply_in_thread
-  const textReply = replies.find((item) => item.data.msg_type === 'text');
-  assert.equal(textReply.path.message_id, 'om_ack_p2p');
-  assert.deepEqual(JSON.parse(textReply.data.content), { text: '👀 已收到，正在识别销售信息，请稍候…' });
-  assert.equal(textReply.data.reply_in_thread, undefined);
+  // ⚠️ 群里**没有**那条「👀 已收到，正在识别销售信息，请稍候…」——
+  //    群聊回文字会刷屏，业务负责人明确说表情就够了。
+  const ackText = replies.find((item) => item.data.msg_type === 'text'
+    && String(item.data.content).includes('已收到'));
+  assert.equal(ackText, undefined, '群聊不该回「已收到」文字');
 });

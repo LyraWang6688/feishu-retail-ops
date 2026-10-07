@@ -167,16 +167,21 @@
 
 | 本节原来的"还没切" | 处置 |
 | --- | --- |
-| `sampleReplacementService.notifySampleReplacements`（5.1 #4，补样品**提醒**，触发方没有群上下文） | ✅ **加了渠道感知入参**：群销售 → 卡片回到**那条销售话题**；没有群上下文（工作台触发）→ 按 `PRIVATE_CHAT_SEND_ENABLED`（**默认 false**）**不发私聊**，改记 `lark.private_chat.send_skipped`（`reason: no_group_context`）。⚠️ **有意的行为变化**：不再静默发私聊 |
+| `sampleReplacementService.notifySampleReplacements`（5.1 #4，补样品**提醒**，触发方没有群上下文） | ✅ **加了渠道感知入参**：群销售 → 卡片回到**那条销售话题**；没有群上下文（工作台触发）→ **不发任何消息**，改记 `lark.private_chat.removed`（`reason: no_group_context`）。⚠️ **有意的行为变化**：不再静默发私聊 |
 | `larkMvpService.sendTodaySales`（菜单「今日销售」） | ✅ **已删**（连 `todaySalesCard` 一起）。要看今日销售去工作台「销售查询」 |
-| `acceptMessage` 的 `p2p` 分支两条非文字/空文字提示 | ✅ **随私聊入口一起删**：默认档下私聊消息统一回**一句**固定文案（`PRIVATE_CHAT_DISABLED_NOTICE_TEXT`），两条旧提示不会再出现 |
+| `acceptMessage` 的 `p2p` 分支两条非文字/空文字提示 | ✅ **随私聊入口一起删**：私聊消息统一回**一句**固定文案（`PRIVATE_CHAT_DISABLED_NOTICE_TEXT`），两条旧提示不会再出现 |
 | `routes/larkEvents.js` 的 `application.bot.menu_v6` 分支 | ✅ **已删**（含失败兜底的 `sendText(openId, …)`） |
 | **死代码**：`purchaseWebhookService.sendCard(openId, card)`（全仓无调用点） | ✅ **已删**（`PurchaseWebhookService.prototype.sendCard === undefined`） |
 
-**私聊入口现在的形态**：`config/privateChat.js` 四个**显式开关**（入口 / 发送 / notice / 文案），
-取值规则复用 `config/envValue`（**空串 = 关掉、认不出的值抛错**），且是**每次调用时读 env** ——
-所以关闭它不依赖任何加载顺序。历史用例（拿私聊当入口测下游的那一批）用
-`server/test/helpers/enablePrivateChatForTests.js` **显式打开**，转为回归"开关打开时逐字不变"。
+**私聊入口现在的形态（⭐ 2026-10-07 二次收口 = ⓐ 彻底版）**：
+`config/privateChat.js` **只剩"那一句话"的两个旋钮**（`PRIVATE_CHAT_DISABLED_NOTICE_ENABLED` / `..._TEXT`），
+取值规则复用 `config/envValue`（**空串 = 关掉、认不出的值抛错**），且是**每次调用时读 env**。
+🔴 `PRIVATE_CHAT_INTAKE_ENABLED` / `PRIVATE_CHAT_SEND_ENABLED` 与测试 helper
+`server/test/helpers/enablePrivateChatForTests.js` **已整体删除** ——
+**代码里再也没有"打开私聊"的口子**；历史用例（拿私聊当入口测下游的那一批）已
+**迁到群聊真入口**（主群 @ 机器人 / 话题），断言改成"回复回到那条话题"。
+验收标准、逐条对照与测试证据见 [private-chat-removal-hard-2026-10-07.md](private-chat-removal-hard-2026-10-07.md)；
+上一版（ⓑ，留开关）的实现记录保留在 [private-chat-removal-2026-10-07.md](private-chat-removal-2026-10-07.md)（**已被取代**）。
 
 
 ⇒ **开工记录（本次）**：`git worktree list` 显示这 3 个文件仍被 7 条**未合并分支**碰过

@@ -9,10 +9,9 @@
  *   · 飞书语义（`reply_in_thread`）只在 `larkMvpService` 的适配器里出现。
  */
 
-// ⭐ 本文件有一条「私聊与改动前逐字相同」的用例（补样品出口的私聊分支）——
-//    它**拿私聊当出口**，所以显式把私聊开关打开。
-//    （配置是**每次调用时读 env**，所以不依赖 require 顺序，见 config/privateChat。）
-require('./helpers/enablePrivateChatForTests');
+// ⭐ 2026-10-07 ⓐ「私聊链路移除」：原来这里有一条「私聊与改动前逐字相同」的用例
+//    （补样品出口的私聊分支）。私聊**发送出口已整体删除**，那条用例已改成
+//    「**没有群上下文的任务 → 不发**」（见下面 ③ 那条）。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -133,7 +132,7 @@ test('③ 补样品 / 销售查询的渠道感知出口已接上（不是默认�
   assert.equal(service.saleLookup.sendCardToTask.toString().includes('sendTaskCard'), true);
 });
 
-test('③ 补样品出口：群任务回话题（reply_in_thread），私聊与改动前逐字相同', async () => {
+test('③ 补样品出口：群任务回话题（reply_in_thread）；没有群上下文的任务**不发**', async () => {
   const { service, sent } = makeService();
   const groupTask = {
     task_id: 't_group', type: 'sample_replacement', chat_type: 'group',
@@ -149,18 +148,11 @@ test('③ 补样品出口：群任务回话题（reply_in_thread），私聊与�
   assert.equal(sent[1].path.message_id, 'om_in_group');
   assert.equal(sent[1].data.reply_in_thread, true);
 
-  // 私聊（任务上没有 chat_type）→ 与改动前**逐字相同**：主动发一条新消息给本人，
-  // 不是 reply、也不带 reply_in_thread。
-  const privateTask = { task_id: 't_p2p', type: 'sample_replacement', sender_open_id: 'ou_2' };
-  await service.sampleReplacements.sendCardToTask(privateTask, { header: {} });
-  assert.equal(sent[2].direct, true, '私聊走 create（主动发），不是 reply');
-  assert.equal(sent[2].data.receive_id, 'ou_2');
-  assert.equal(sent[2].data.msg_type, 'interactive');
-  assert.equal(sent[2].data.reply_in_thread, undefined);
-
-  await service.sampleReplacements.sendTextToTask(privateTask, '已收到补样品操作，正在处理，请稍候。');
-  assert.equal(sent[3].direct, true);
-  assert.equal(sent[3].data.receive_id, 'ou_2');
-  assert.equal(sent[3].data.msg_type, 'text');
-  assert.equal(JSON.parse(sent[3].data.content).text, '已收到补样品操作，正在处理，请稍候。');
+  // ⚠️ 没有群上下文的任务（**原来的私聊任务**）：私聊出口已随 ⓐ 删除 → **不发**，
+  //    只记一条 `lark.private_chat.removed` 并返回 `null`。
+  //    不是"reply"、更不是"create 一条主动消息"—— 一条远端调用都不许多。
+  const orphanTask = { task_id: 't_no_group', type: 'sample_replacement', sender_open_id: 'ou_2' };
+  assert.equal(await service.sampleReplacements.sendCardToTask(orphanTask, { header: {} }), null);
+  assert.equal(await service.sampleReplacements.sendTextToTask(orphanTask, '已收到补样品操作，正在处理，请稍候。'), null);
+  assert.equal(sent.length, 2, '没有群上下文的任务一条消息都不发');
 });

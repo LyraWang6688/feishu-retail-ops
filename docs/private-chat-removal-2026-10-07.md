@@ -1,3 +1,11 @@
+> ⚠️ **这一份是 ⓑ 版（留开关、"可显式恢复"），已被取代 —— 只作历史记录，不要按它实施。**
+> 业务负责人 2026-10-07 随后拍板走 ⓐ：「**干净、彻底** …… **以后代码里【一行私聊都没有】**」。
+> ⇒ `PRIVATE_CHAT_INTAKE_ENABLED` / `PRIVATE_CHAT_SEND_ENABLED`（本文第 6 节那两个"恢复口子"）
+> 与测试 helper `test/helpers/enablePrivateChatForTests.js` **已整体删除**；
+> 历史用例也已从"私聊入口 + 打开开关"**迁到群聊真入口**。
+> **现行口径与验收标准见 [private-chat-removal-hard-2026-10-07.md](private-chat-removal-hard-2026-10-07.md)**，
+> 决策理由见 [private-chat-removal-decision-2026-10-07.md](private-chat-removal-decision-2026-10-07.md)。
+
 # 🔴 私聊链路移除 —— 验收标准与实现记录（2026-10-07）
 
 > 业务负责人口径（逐字）：「**以后私聊这条链路我们就没有了**」。

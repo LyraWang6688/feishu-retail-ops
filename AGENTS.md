@@ -20,20 +20,26 @@
 
 ⚠️ 两个"认不出"：话题里但这条话题没记过映射、又没引用 → 直接说认不出，**不拿正文号去猜**（第 183 行）；引用到的不是我们发的消息（或映射丢了）→ 同样认不出（第 177 行）。采购单与群里那条消息的 `message_id ↔ 批次`（以及 `thread_id`）映射写在本地任务记录 `server/data/purchase_group_messages/`，**不写业务表**。
 
-**🔴 私聊链路已移除（2026-10-07 起）**：业务负责人口径（逐字）「**以后私聊这条链路我们就没有了**」。
-入口统一到【群聊 + 话题】—— 私聊消息**不再建任务、不进 AI、不写表**；默认只回**一句**固定文案
-（免得对方以为机器人坏了）。**四个显式开关**都在 `server/src/config/privateChat.js`：
-`PRIVATE_CHAT_INTAKE_ENABLED`（入口，**默认 false**）、`PRIVATE_CHAT_SEND_ENABLED`
-（**没有群上下文时**允不允许回落私聊，**默认 false**）、`PRIVATE_CHAT_DISABLED_NOTICE_ENABLED`
-（默认 true）、`PRIVATE_CHAT_DISABLED_NOTICE_TEXT`。
+**🔴 私聊链路已移除（2026-10-07 起，ⓐ 彻底版）**：业务负责人口径（逐字）「**以后私聊这条链路我们就没有了**」，
+并拍板「**干净、彻底** …… **以后代码里【一行私聊都没有】**」。
+入口统一到【群聊 + 话题】—— 私聊消息**只记一条日志**（`lark.private_chat.removed`，`stage: intake`），
+**不建任务、不进 AI、不读表、不写表、不加表情**；只回**一句**固定文案（免得对方以为机器人坏了）。
+私聊**发送出口也已从代码里删除**：`sendTaskText` / `sendTaskCard` 对非群任务**一律不发**
+（记 `lark.private_chat.removed`，`stage: send`，返 `null`）。
+⚠️ **`config/privateChat.js` 只剩"那一句话"的两个旋钮**：
+`PRIVATE_CHAT_DISABLED_NOTICE_ENABLED`（默认 true）、`PRIVATE_CHAT_DISABLED_NOTICE_TEXT`。
+🔴 **`PRIVATE_CHAT_INTAKE_ENABLED` / `PRIVATE_CHAT_SEND_ENABLED` 已整体删除**——代码里**没有任何**
+"临时恢复私聊"的开关（要恢复只能从 git 历史取回，`git log -S 'PRIVATE_CHAT_INTAKE_ENABLED'`）。
 ⚠️ 取值是**显式布尔**：**空串 = 关掉**（不回退默认）、**认不出的值当场抛错**；
 且**每次调用时读 env**（不依赖 require 顺序，见该文件注释）。
 ⚠️ 顺带删掉的私聊专属件：`larkMvpService.sendTodaySales` / `handleBotMenu`、
 路由的 `application.bot.menu_v6` 分支、`utils/larkCards.todaySalesCard`、
 `purchaseWebhookService.sendCard`（后两者全仓无调用方）。
 ⚠️ **有意的行为变化**：`SampleReplacementService.notifySampleReplacements` 在**没有群上下文**
-（工作台 `routes/workbench.js` 触发）时**不再静默发私聊**，改记 `lark.private_chat.send_skipped`。
-⭐ 验收标准、实现与测试证据见 `docs/private-chat-removal-2026-10-07.md`。
+（工作台 `routes/workbench.js` 触发）时**不再发任何消息**，改记 `lark.private_chat.removed`
+（`reason: no_group_context`）。
+⭐ 验收标准、实现与测试证据见 `docs/private-chat-removal-hard-2026-10-07.md`
+（ⓑ 版"留开关"的历史记录在 `docs/private-chat-removal-2026-10-07.md`）。
 
 > **采购链路的历史**：曾存在一条"机器人收采购图片 → 写「采购批次」表 → `PurchasePostingService`"
 > 的旧链路（`acceptPurchaseImage` / `finishPurchaseImages` / `processPurchaseTask` /
@@ -154,12 +160,13 @@ pnpm run dev
 - `PURCHASE_CHAT_ID` - 采购单发到哪个群（chat_id，形如 `oc_xxx`）。**没有默认值**：留空时采购申请照常写成，但图与说明不发，并打 `purchase.request.image.skipped` 警告（**不会**回落到经办人私聊）
 - `LARK_BOT_OPEN_ID` - 机器人自己的 open_id（形如 `ou_xxx`），判「群里有没有 @ 机器人」的唯一依据。**没有默认值**：留空时群聊消息一律不处理（并打 `lark.group.bot_open_id_missing` 警告）
 
-**私聊链路（已移除，2026-10-07）** — 取值都在 `src/config/privateChat.js`
+**私聊链路（已移除，2026-10-07，ⓐ 彻底版）** — 取值都在 `src/config/privateChat.js`
 
-- `PRIVATE_CHAT_INTAKE_ENABLED` - 私聊**入口**开关。**默认 false = 私聊消息不处理**（只记一条 `lark.private_chat.disabled`）。临时恢复填 `true`
-- `PRIVATE_CHAT_SEND_ENABLED` - **没有群上下文时**允不允许主动发私聊。**默认 false = 不发**，记 `lark.private_chat.send_skipped`。⚠️ 群话题的回复不看它
+- 🔴 **没有入口开关、也没有发送开关** —— `PRIVATE_CHAT_INTAKE_ENABLED` / `PRIVATE_CHAT_SEND_ENABLED`
+  已**整体删除**（私聊消息 → 只记 `lark.private_chat.removed`，不建任务、不跑链路；
+  非群任务 → 不发消息、记同一条日志、返 `null`）。要恢复只能从 git 历史取回。
 - `PRIVATE_CHAT_DISABLED_NOTICE_ENABLED` / `PRIVATE_CHAT_DISABLED_NOTICE_TEXT` - 私聊被挡下时回的那**一句**文案（默认开、有默认文案；文案留空 = 不发）
-- ⚠️ 四个都是**显式布尔**：**空串 = 关掉**、**认不出的值当场抛错**；**每次调用时读 env**（不依赖 require 顺序）
+- ⚠️ 这两个都是**显式布尔**：**空串 = 关掉**、**认不出的值当场抛错**；**每次调用时读 env**（不依赖 require 顺序）
 - `LARK_ACK_REACTION` - 「收到」表情的 emoji_type，默认 `OneSecond`（真机验证有效）
 
 > 模型配置**没有默认值、也不跨供应商兜底**（原先缺省会回退到 `ARK_*` 豆包，已取消）：
