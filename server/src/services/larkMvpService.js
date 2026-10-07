@@ -32,11 +32,10 @@ const {
 } = require('../config/salesTradeTypePolicy');
 // 「这一单交给了多少」那句结果话（全交付 / 全未交付 / **部分交付**）的文案来源。
 const { salesDeliverySummaryFor } = require('../config/salesDeliverySummary');
-// 颜色候选上的「有货 / 无货」库存状态取值（只用录单时已读进来的实时库存索引算，零新增请求）。
-// ⚠️ 它现在**同时是类型判据的输入**：有货 → 现货，无货 → 预定（见 `salesTradeTypeForStock`）。
-//    「不在售过滤 / 全下架拦截」那套已随 2026-10-07 口径大改整体退场（候选给**全部颜色**）。
+// ⚠️ 2026-10-07：颜色候选上**不再**打「有货 / 无货」预览标注（业务负责人逐字「甲 去掉」：
+//    「候选只显示颜色（黑色 / 绿色），选完 → 再查库存 → 告诉她"这双有货→现货"或"没货→预定"」）
+//    ⇒ 这里只留"她选完之后读不到库存"那句文案；`SALES_COLOR_STOCK_STATUS` 已随预览一并删除。
 const {
-  SALES_COLOR_STOCK_STATUS,
   resolveSalesColorChoiceConfig,
 } = require('../config/salesColorChoice');
 // 「A 之后：这个货号到底有没有在「货品信息」里建档」那道判据的开关 / 文案 / 事件名。
@@ -1106,44 +1105,16 @@ class LarkMvpService {
     }
   }
 
-  /**
-   * ── 给 A 的候选颜色标上「这个尺码有没有货」──────────────────────────────────
-   *
-   * 为什么要有它（业务负责人口径 + Lead 2026-10-07 替她定）：
-   *   「货号有多个颜色、一定要让用户去选择」——但如果不告诉她哪个颜色没货，
-   *   她可能选到一个没货的、再重选一次。候选按钮上直接标 `黑色（有货）/ 白色（无货）`
-   *   可以省掉这一次往返。
-   *
-   * 🔴 **零新增远端请求**：只用**录单时已经读进来的**那张「实时库存」索引
-   *    （`LiveInventoryIndex.find`，本地查表）—— 不读表、不调 B。证据：
-   *    这个方法体内没有任何 `gateway` / `listAll` 调用。
-   *
-   * ⭐ 2026-10-07 新口径下这个标注的**语义更好**：它不只是"能不能买"，而是
-   *    **这双会记成现货还是预定的预告**（有货 → 现货；无货 → 预定）。
-   *    所以两种类型、**每一个候选都要标**（`withStock` 形参保留只为兼容）。
-   * ⚠️ 索引读不到（`liveInventory` 为空索引）时每个候选都算"无货" —— 这是**如实**的
-   *    负向结论（这次确实没读到库存），不是猜。
-   *
-   * @returns 候选数组的副本，`stock_status` 取 `SALES_COLOR_STOCK_STATUS` 两个值之一（或原样）
-   */
-  colorOptionsWithStockStatus({ options = [], itemNo, size, liveInventory, withStock = true } = {}) {
-    if (!withStock) return options.map((option) => ({ ...option }));
-    // 这个货号 + 这个尺码在店里实际有哪些颜色（本地索引，无远端请求）。
-    // ⚠️ 比色同样走 `normalizeColor`（见 `resolveStockAvailabilityForSale` 的注释）：
-    //    A 的「棕」要对得上「库存键」里的「棕色」，否则会把有货的颜色标成「无货」。
-    const found = liveInventory?.find?.({ itemNo, size });
-    const byColor = new Map((found?.colors || []).map((entry) => [normalizeColor(entry.color), entry]));
-    return options.map((option) => {
-      const entry = byColor.get(normalizeColor(option.color));
-      const total = entry ? Number(entry.doorBox || 0) + Number(entry.sample || 0) + Number(entry.warehouse || 0) : 0;
-      return {
-        ...option,
-        stock_status: total > 0
-          ? SALES_COLOR_STOCK_STATUS.available
-          : SALES_COLOR_STOCK_STATUS.unavailable,
-      };
-    });
-  }
+  // ⚠️ 2026-10-07：`colorOptionsWithStockStatus`（给每个候选颜色标 `stock_status`
+  //    「有货 / 无货」，卡片上渲染成 `黑色（有货）`）**已整体删除** ——
+  //    业务负责人逐字：「**甲 去掉**（推荐，贴合你的口径）：候选只显示颜色（黑色 / 绿色），
+  //    **选完 → 再查库存 → 告诉她"这双有货→现货"或"没货→预定"**」。
+  //    ⇒ 候选对象上不再有 `stock_status`；预览那一步没了。
+  //    🔴 **"录单时读实时库存"没有被删**：单颜色货号的现货 / 预定 仍然用**这一次**
+  //       读进来的索引定（见下面的 `liveInventoryPromise` → `resolveStockAvailabilityForSale`），
+  //       多颜色则等她选完颜色、在 `choose_sale_color` 里重新读一次再定。
+  //    ⚠️ 别把这一步加回来：加了就违反她"候选只显示颜色名"的口径，守卫用例会红
+  //       （见 `test/salesColorChoice.test.js` / `test/salesColorCandidatesAllColors.test.js`）。
 
   // ⚠️ 2026-10-07：`colorOptionsInScope`（按「在售 / 下架」过滤候选）与
   //    `SALES_COLOR_SCOPE_EMPTY_TEXT`（"颜色全下架"那句拦截）**已整体删除** ——
@@ -1284,8 +1255,7 @@ class LarkMvpService {
     }
     // 只有"A 没给出颜色"才会走到这里：这个货号在这个尺码上有多个颜色，不猜，把候选交给确认卡片。
     // 补样品方案按颜色预先算好——颜色定了才谈得上"用哪个门盒补"。
-    // ⚠️ 这些候选来自实时库存、必然有货（实时库存里一条记录 = 一双实物）⇒ 标 `available`，
-    //    卡片上显示成 `黑（有货）`，与 A 那条候选的标注口径一致。
+    // ⚠️ 候选上**不打库存状态**（2026-10-07 口径：候选只显示颜色名，等她选完再查库存定类型）。
     return {
       inStock: true,
       needsColor: true,
@@ -1296,7 +1266,6 @@ class LarkMvpService {
           color: entry.color,
           number: `${itemNo}${entry.color}`,
           stock: optionStock,
-          stock_status: SALES_COLOR_STOCK_STATUS.available,
           sample_plan: this.samplePlanFor(
             { productRecordId: entry.productRecordId, stock: optionStock, quantity: itemQuantity }, liveInventory,
           ),
@@ -1700,24 +1669,16 @@ class LarkMvpService {
         // ⭐ 多个颜色：**A 的候选**（不是 B 的）交给确认卡片让用户选。
         //    ⚠️ 候选 = **全部颜色**（2026-10-07 撤掉"只推在售"：预定 = 没货，
         //       过滤掉没货的颜色她就永远选不到，预定这条路走不通）。
-        //    「有货 / 无货」标注保留 —— 它就是"这双会记成现货还是预定"的预告；
-        //    标注只用**录单时已经读进来的**实时库存索引（零新增远端请求）。
+        //    ⚠️ 候选**只带颜色名**（2026-10-07 业务负责人逐字「甲 去掉」）：
+        //       这里**不打**「有货 / 无货」预览标注 —— 她选完颜色之后才查库存、才定现货 / 预定。
         if (productInfo.colorOptions?.length) {
-          colorOptions = this.colorOptionsWithStockStatus({
-            options: productInfo.colorOptions,
-            itemNo: item.item_no,
-            size: item.size,
-            liveInventory,
-          });
+          colorOptions = productInfo.colorOptions.map((option) => ({ ...option }));
+          // 可排查：这一单给了几个候选（**不再**记有货 / 无货数：候选上已经没有那个状态）。
           logInfo('lark.sales.color_options.offered', {
             task_id: taskId,
             item_no: item.item_no,
             size: item.size,
             option_count: colorOptions.length,
-            available_count: colorOptions.filter((option) =>
-              option.stock_status === SALES_COLOR_STOCK_STATUS.available).length,
-            unavailable_count: colorOptions.filter((option) =>
-              option.stock_status === SALES_COLOR_STOCK_STATUS.unavailable).length,
           });
         }
         // ── 判据 A′：这个货号有没有在「货品信息」里建档 ──
