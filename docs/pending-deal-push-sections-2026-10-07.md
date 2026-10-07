@@ -128,7 +128,38 @@
 
 ## 6. 测试与 CI 证据
 
-（待填：全量 2 次、`gh pr checks` 三项）
+**本地全量（在独立 worktree `.local/worktrees/pending-deal-sections` 里跑，不在主工作区跑全量）**
+`node --test --test-concurrency=1`，**连跑 2 次**：
+
+```
+=== run 1 ===
+ℹ tests 1072
+ℹ pass 1072
+ℹ fail 0
+=== run 2 ===
+ℹ tests 1072
+ℹ pass 1072
+ℹ fail 0
+```
+
+**CI**（PR #232，`gh pr checks 232`，`mergeStateStatus = CLEAN`）：
+
+| 检查 | 结果 | 耗时 |
+|---|---|---|
+| `test`（server tests） | ✅ pass | 57s |
+| `Analyze (javascript-typescript)`（CodeQL） | ✅ pass | 58s |
+| `CodeQL` | ✅ pass | 2s |
+
+**「文案变更必须改的既有用例」逐条说明**（都不是放宽）：
+
+| 用例 | 改动 | 为什么不是放宽 |
+|---|---|---|
+| `pendingDealPush.test.js` 正常推 | 断言从 `1. XSD-A-1 · 待收 …` 改成**逐字断言整段分区正文**（表头含分区计数、区块标题、行内标签 + 货号尺码 + 金额 + 深链） | 断言**变严**：从"匹配一段"变成"两块的标题与两行正文都逐字对上"，还多了 `^…\n` 锚点 |
+| 同上（第 2 笔） | `2\. XSD-B-2 …` → `1\. XSD-B-2 【未付】 · 6A637-7 43码 …` | 编号改成**每块各自从 1 开始**（分区带来的新事实）；信息更多、位置更明确，没有放松 |
+| 同上（无深链） | `doesNotMatch(/XSD-B-2 · 待收 ¥300\.50 · http/)` → 同一断言加上标签与货号尺码 | 断言目标不变（"不许编一条 URL"），只是把行内容对齐新格式 |
+| `pendingDealPush.test.js` 配置默认值 | `deepEqual(resolvePendingDealPushConfig({}), {...})` **仍是严格全等**，把新增的 12 个文案/分区键的默认值也钉进去 | 全等断言**更严格**（多一个键就红），只是键变多了 |
+| `pendingDealPush.test.js` 金额未知 | 断言 `1. XSD-X 【未付】 · 待收 ¥—`，并新增 `doesNotMatch(/码/)`、`doesNotMatch(/ ·  · /)` | 新增两条"不许留残句"的硬断言 = 收严 |
+| `pendingDealPush.test.js` / `pendingDealPushPin.test.js` 的 `settings()` 助手 | 先 `...resolvePendingDealPushConfig({})` 再覆盖本文件关心的键 | 只是让"文案默认值"保持**单一真源**（不再在测试里复制一份）；用例本身一条没删 |
 
 ## 7. 我没动、但需要她知道的两处边界
 
