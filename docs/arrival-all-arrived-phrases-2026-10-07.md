@@ -228,8 +228,23 @@ run2 exit=0
 **新用例单独跑**：`node --test --test-concurrency=1 test/arrivalAllArrivedPhrases.test.js`
 → `tests 13 / pass 13 / fail 0`（改动前同一条命令：`tests 13 / pass 5 / fail 8`）。
 
-**CI（三项实际输出）**：见 PR 上的 `gh pr checks` 输出（`test` / CodeQL）。
-⚠️ 合并由业务负责人做，本分支**不合并、不部署**。
+**CI（PR #242，三项实际输出）**：
+
+```
+$ gh pr checks 242
+Analyze (javascript-typescript)	pass	52s	.../runs/37637783931/job/112848445412
+CodeQL	                        pass	5s	.../runs/112848789960
+test	                        pass	56s	.../runs/37637792039/job/112848462493
+
+$ gh pr view 242 --json mergeStateStatus,statusCheckRollup
+{"mergeStateStatus":"CLEAN",
+ "checks":[{"conclusion":"SUCCESS","name":"Analyze (javascript-typescript)","status":"COMPLETED"},
+           {"conclusion":"SUCCESS","name":"test","status":"COMPLETED"},
+           {"conclusion":"SUCCESS","name":"CodeQL","status":"COMPLETED"}]}
+```
+
+⭐ `test` 这一项就是**全量 `node --test --test-concurrency=1`**（CI 上与本机同一套）。
+🔴 **没有用 `--admin`**；🔴 **没有合并、没有部署**（合不合由业务负责人定）。
 
 ## 10. 边界与不确定处
 
