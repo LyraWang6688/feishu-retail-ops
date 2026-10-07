@@ -44,10 +44,17 @@ for (const item of [
 
 const lark = require('@larksuiteoapi/node-sdk');
 
-const PROD_APP_TOKEN = 'QrXlbwXMLaJ2TNsxSfFcIA3rnwh';
+// 🔴 禁止写入清单（生产 Base）**从 .env 读，不硬编码**（AGENTS.md 第 7 条）。
+//    `.env` 里填 `FEISHU_V1_FORBIDDEN_APP_TOKENS`（或单数 `FEISHU_V1_PROD_APP_TOKEN`），
+//    逗号分隔；命中即拒绝执行。
+//    ⚠️ 本机 `.env` 刻意不放生产 token（AGENTS.md 第 8 条），这条闸门在本机是空转的；
+//    真正的保护是「本机 / 本地测试应用根本够不着生产 Base」。
+const forbiddenAppTokens = String(
+  process.env.FEISHU_V1_FORBIDDEN_APP_TOKENS || process.env.FEISHU_V1_PROD_APP_TOKEN || '',
+).split(',').map((item) => item.trim()).filter(Boolean);
 const fileToken = String(process.env.FEISHU_V1_BITABLE_APP_TOKEN || '').trim();
 if (!fileToken) { console.error('缺少 FEISHU_V1_BITABLE_APP_TOKEN'); process.exit(1); }
-if (fileToken === PROD_APP_TOKEN) { console.error('拒绝执行：目标 Base 是生产 Base'); process.exit(1); }
+if (forbiddenAppTokens.includes(fileToken)) { console.error('拒绝执行：目标 Base 在禁止写入清单里（生产 Base）'); process.exit(1); }
 
 // ── 凭证：只认「测试应用」，绝不碰生产应用 ────────────────────────────────────
 // （上面的生产 Base 闸门原样保留；这里管的是"用哪个应用去订阅"，两件事互不影响。）
