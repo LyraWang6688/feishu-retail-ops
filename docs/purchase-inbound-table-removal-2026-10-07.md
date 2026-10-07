@@ -202,20 +202,23 @@ exit=0
 
 ```
 $ gh pr checks 253
-Analyze (javascript-typescript)  pass  1m14s
-CodeQL                           pass  4s
-test                             pass  1m3s
+Analyze (javascript-typescript)  pass
+CodeQL                           pass
+test                             pass
 
 $ gh pr view 253 --json mergeStateStatus,statusCheckRollup
-{"checks":[{"conclusion":"SUCCESS","name":"Analyze (javascript-typescript)","status":"COMPLETED"},
-           {"conclusion":"SUCCESS","name":"test","status":"COMPLETED"},
-           {"conclusion":"SUCCESS","name":"CodeQL","status":"COMPLETED"}],
+{"checks":[{"conclusion":"SUCCESS","name":"Analyze (javascript-typescript)"},
+           {"conclusion":"SUCCESS","name":"test"},
+           {"conclusion":"SUCCESS","name":"CodeQL"}],
  "mergeStateStatus":"CLEAN"}
 ```
 
-⚠️ **`test` 这一项在改动前也是红的**（`main` 上同样）：`purchaseBatchNoGeneration` 把日期写死成
-`20261007`，而生成器按上海时区取"今天" ⇒ 上海 2026-10-08 00:00 之后永远失败。
-本 PR 的**第一个 commit** 就是修它（注入固定时钟）—— 没有它，任何 PR 都拿不到 CLEAN。
+⚠️ **`test` 这一项在本改动之前是红的**（`main` 上同样）：`purchaseBatchNoGeneration` 的 ②⑥ 依赖
+真实时钟的"今天"、断言里却写死 `CGD-20261007-…` ⇒ 上海 2026-10-08 00:00 之后必红，**挡住所有 PR**。
+⭐ **main 上已由 [PR #254](https://github.com/LyraWang6688/feishu-retail-ops/pull/254)
+（`fix/batch-no-test-fixed-clock`，2026-10-08 00:13 合入 `1e2687f`）修掉 —— 修法与本分支当时那版一致**
+（给 ②⑥ 注入固定时钟）。本分支已 **rebase 到它之上**，那个修复**不再属于本 PR**
+（本 PR 只保留「采购入库」表删除这一件事，diff 里没有 `purchaseBatchNoGeneration.test.js`）。
 
 
 ---
@@ -234,12 +237,13 @@ $ gh pr view 253 --json mergeStateStatus,statusCheckRollup
    **纳入部署闸门的单选取值契约**：服务器上跑 `pnpm run v1:schema-check:purchase` 会给结论 ——
    **缺这个选项就闸门判红**（而**不会**让飞书自动建选项把表污染掉）。
    ⚠️ 若闸门报缺选项：**停下报告**，由她决定是加选项还是改配置值（我不动选项名）。
-③ ⚠️ **顺手修的一处"与本口径无关、但会挡住 CI"**：
+③ ⚠️ **与本口径无关、但当时挡住 CI 的一处（已不由本 PR 承担）**：
    `server/test/purchaseBatchNoGeneration.test.js` 的 ②⑥ 把日期写死成 `20261007`，而生成器按
-   **上海时区**取"今天" ⇒ 上海时间 2026-10-08 00:00 之后这两条**永远红**。
-   **已在 pristine main 上实测同样红**（不是本改动引入）——改成给这两条注入固定时钟
-   （与本文件其它用例 `now: () => 2026-10-07T02:00:00Z` 同一种做法）。
-   ⚠️ 没有这一步，**任何** PR 的 CI 都是红的（每天上海 00:00 之后必红），所以它是本次的前置修复。
+   **上海时区**取"今天" ⇒ 上海时间 2026-10-08 00:00 之后这两条**永远红**（**已在 pristine main 上
+   实测同样红**，不是本改动引入）。我先在分支上修了一版，**随后 main 上的
+   [PR #254](https://github.com/LyraWang6688/feishu-retail-ops/pull/254) 用同一种修法（注入固定时钟）
+   独立修掉并合入** ⇒ 本分支 **rebase 到 main、丢掉我那一版重复的修复**：
+   本 PR 的 diff 里**没有** `purchaseBatchNoGeneration.test.js`。
 ④ ⚠️ **删除 `config/purchaseBehaviors.js` 是我的判断**：它的唯一消费者（入库行的「采购行为」）
    随表消失 ⇒ 按"不留孤儿"删掉（知识留在本文与 `inventoryService` 的注释里）。
    若想学 `purchaseArrivalIntake.js` 那样"刻意保留、注明无读取点"，说一声，我改回来。
