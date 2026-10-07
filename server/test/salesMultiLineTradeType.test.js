@@ -6,15 +6,21 @@
 //   「**如果它包括多种交易类型，你多选就行了**。**但是实际到我们的销售明细里面，
 //     就这一单它是什么，那就是什么**」
 //
-// 验收标准（动手前先写、实现后逐条对照）见
-// `docs/sales-multi-line-trade-type-2026-10-07.md`。
+// 🔴 同一天再改一刀：**类型 = 实时库存里有没有这一双**（现货 / 预定），
+//    「未付」不再是类型、**两种类型都要查库存** ⇒ 本文件里那条"预付件一次都不查 B"
+//    的旧口径已随口径变更改掉（见 AC-14 的新断言）。
+//
+// 验收标准见 `docs/sales-multi-line-trade-type-2026-10-07.md`
+// 与 `docs/sales-type-by-stock-2026-10-07.md`（本刀）。
 //
 // 真机场景（她 2026-10-07 18:37 一条消息 = 一张单）：
 //   「119 元，微信。
 //     卖了 31678，40 码。
 //     定制一双 6681-1，42 码，定金 50 元，下次付 39 元」
-//   ⇒ 销售明细 2 条（现货 119 / 预付 89）、收款明细 3 条（119 已收 / 50 已收 / 39 未收）、
-//     主表交易类型 = 现货 + 预付（**去重多选**）、**不拆单**。
+//   ⇒ 销售明细 2 条（现货 119 / 预定 89）、收款明细 3 条（119 已收 / 50 已收 / 39 未收）、
+//     主表交易类型 = 现货 + 预定（**去重多选**）、**不拆单**。
+//   ⚠️ 现货那件的库存里**有**实物（31678 40码），预定那件**没有**（6681-1 要调货）——
+//     这正是新的类型判据：同样两条明细，类型由**各自的实时库存**定。
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -44,7 +50,8 @@ const SCENE_AI = {
   trade_type: '现货',
   items: [
     { item_no: '31678', color: '黑', size: 40, quantity: 1, actual_amount: 119, trade_type: '现货' },
-    { item_no: '6681-1', color: '黑', size: 42, quantity: 1, trade_type: '预付' },
+    // ⚠️ 这里的 `trade_type` 只是**她嘴上的性质**（提示）；类型由实时库存定（见 SCENE_LIVE）。
+    { item_no: '6681-1', color: '黑', size: 42, quantity: 1, trade_type: '预定' },
   ],
   payments: [{ amount: 119, method: '微信' }, { amount: 50, method: '微信' }],
 };
@@ -71,9 +78,9 @@ const fakeBase = ({ products = [], liveInventory = [] } = {}) => {
     ['product', products],
     ['liveInventory', liveInventory],
     ['behavior', [
-      { record_id: 'bhv_cash', fields: { 行为编码: 'SALE_CASH', 行为名称: '现货销售' } },
-      { record_id: 'bhv_unpaid', fields: { 行为编码: 'SALE_UNPAID', 行为名称: '未付销售' } },
-      { record_id: 'bhv_prepaid', fields: { 行为编码: 'SALE_PREPAID', 行为名称: '预付销售' } },
+      { record_id: 'bhv_cash', fields: { 行为编码: 'SALE_CASH', 行为名称: '现货' } },
+      // ⚠️ 「未付」那条行为记录已被业务负责人从「行为管理」里删掉 —— 这里也**不再造**它。
+      { record_id: 'bhv_prepaid', fields: { 行为编码: 'SALE_PREPAID', 行为名称: '预定' } },
       { record_id: 'bhv_stock_sale', fields: {
         行为编码: 'STOCK_SALE_DECREASE', 行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
       } },
@@ -190,7 +197,7 @@ const SCENE_LIVE = [liveRow({ itemNo: '31678', color: '黑', size: 40, productRe
 // ══════════════════════════════════════════════════════════════════════════════
 // ① 她那条原话 → 一张单、2 条明细、3 条收款、主表交易类型去重多选
 // ══════════════════════════════════════════════════════════════════════════════
-test('AC-1~AC-10 她那条原话：一张单 · 2 条明细 · 3 条收款 · 主表交易类型多选（现货+预付）', async () => {
+test('AC-1~AC-10 她那条原话：一张单 · 2 条明细 · 3 条收款 · 主表交易类型多选（现货+预定）', async () => {
   const { gateway, task } = await runScene({
     taskId: 'scene_real', ai: SCENE_AI, products: SCENE_PRODUCTS, liveInventory: SCENE_LIVE,
   });
@@ -209,13 +216,13 @@ test('AC-1~AC-10 她那条原话：一张单 · 2 条明细 · 3 条收款 · �
     draftItems.map((item) => [item.item_no, item.size, item.actual_amount, item.trade_type, item.trade_type_code]),
     [
       ['31678', 40, 119, '现货', 'SALE_CASH'],
-      ['6681-1', 42, 89, '预付', 'SALE_PREPAID'],
+      ['6681-1', 42, 89, '预定', 'SALE_PREPAID'],
     ],
   );
   assert.equal(task.draft.agreed_total, 208, '整单成交额 = 各分项之和（119 + 89）');
   assert.equal(task.draft.owed, 39, '她明说的尾款是欠款');
 
-  // ── AC-5 主表「交易类型」= 去重后的**多个**关联（现货 + 预付）──
+  // ── AC-5 主表「交易类型」= 去重后的**多个**关联（现货 + 预定）──
   const entry = entryById(gateway, task.sales_entry_record_id);
   assert.deepEqual(entry.fields['交易类型'], ['bhv_cash', 'bhv_prepaid'],
     '主表：多种交易类型就多选（去重、按明细行顺序）');
@@ -260,14 +267,14 @@ test('AC-8/AC-9 现货件交付并扣库存、预付件不交付（逐条）', a
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ③ 判据粒度：跑不跑 B（实时库存）**按明细行**，不再按整单
+// ③ 判据粒度：**每一行都查库存**（类型正是这么定下来的）
 // ══════════════════════════════════════════════════════════════════════════════
-test('AC-14 一张混合单里：现货件查库存、预付件一次都不查（逐明细的判据）', async () => {
+test('AC-14 一张混合单里：**两件都查库存**（类型由各自的实时库存定）', async () => {
   const { stockLookups } = await runScene({
     taskId: 'scene_parse_gate', ai: SCENE_AI, products: SCENE_PRODUCTS, liveInventory: SCENE_LIVE,
   });
-  assert.deepEqual(stockLookups.map((input) => input.itemNo), ['31678'],
-    'B 只对现货那件跑过；预付那件不跑（货要调，没货是常态）');
+  assert.deepEqual(stockLookups.map((input) => input.itemNo).sort(), ['31678', '6681-1'],
+    'B 对两件都跑：有货 → 现货；没货 → 预定 —— "预定跳过库存"那条策略已删除');
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -289,9 +296,10 @@ test('AC-11 那条整单判据在解析层已删除（放开，不是绕过）',
   //       "历史兜底"**（标明「上游已删除，仅防历史任务重放」），于是它**必然**出现在
   //       `src/config/salesMissingInfoText.js`（**文案配置**，不是判据）里。
   //       见 `docs/sales-missing-info-wording-2026-10-07.md` 第 14 节（AC-S3）。
+  // ⭐ 2026-10-07 口径大改后这份白名单**又小了一格**（只会变小、不会变多）：
+  //    `src/config/salesTradeTypePolicy.js` 里那句"新判据不是旧护栏的翻版"的注记
+  //    随该文件重写一起删掉了（类型判据搬去 `salesTradeTypeForStock`）⇒ 只剩文案那一处。
   const LEGACY_GUARD_RESIDUE = new Map([
-    // #234 自己的注记：那句"新判据不是旧护栏的翻版"。
-    ['src/config/salesTradeTypePolicy.js', '不是**原来那条整单护栏'],
     // #233 的文案映射：**有意保留**的历史兜底（上游已删除，仅防历史任务重放）。
     ['src/config/salesMissingInfoText.js', '上游已删除'],
   ]);
@@ -341,24 +349,25 @@ const singleLineAi = (tradeType, extra = {}) => ({
   agreed_total: 119,
 });
 
-for (const [tradeType, expectedCode, expectedDetail] of [
-  ['现货', 'SALE_CASH', '已交付'],
-  ['未付', 'SALE_UNPAID', '已交付'],
-  ['预付', 'SALE_PREPAID', '未交付'],
+// ⚠️ 2026-10-07 口径大改后，单类型单只剩**两种**：现货（库里有）/ 预定（库里没有）。
+//    同一条原话（`31678 40码，119元微信`）跑两次，只有**实时库存**不同 ——
+//    这就是"判据是库存"的哨兵（收益：整单只有一个类型、明细行永远单选）。
+for (const [liveStock, expectedCode, expectedDetail, expectedBehavior] of [
+  [true, 'SALE_CASH', '已交付', 'bhv_cash'],
+  [false, 'SALE_PREPAID', '未交付', 'bhv_prepaid'],
 ]) {
-  test(`AC-12 单类型单（只有${tradeType}）逐字不变：一个类型、一条明细、交付口径不变`, async () => {
+  test(`AC-12 单类型单（库里${liveStock ? '有' : '没有'}）→ ${expectedCode}：一个类型、一条明细、交付口径不变`, async () => {
     const { gateway, task } = await runScene({
       taskId: `sentinel_${expectedCode}`,
-      text: `31678 40码，119元微信`,
-      ai: singleLineAi(tradeType),
+      text: '31678 40码，119元微信',
+      ai: singleLineAi('现货'),
       products: SCENE_PRODUCTS,
-      liveInventory: SCENE_LIVE,
+      liveInventory: liveStock ? SCENE_LIVE : [],
     });
     // 整单仍然只有**一个**类型（"多选"没有把单选也变成两个）。
     assert.deepEqual(task.draft.trade_type_codes, [expectedCode]);
     const entry = entryById(gateway, task.sales_entry_record_id);
-    assert.deepEqual(entry.fields['交易类型'], [expectedCode === 'SALE_CASH' ? 'bhv_cash'
-      : expectedCode === 'SALE_UNPAID' ? 'bhv_unpaid' : 'bhv_prepaid']);
+    assert.deepEqual(entry.fields['交易类型'], [expectedBehavior]);
     const details = detailRows(gateway);
     assert.equal(details.length, 1);
     assert.equal(details[0].fields['交易类型'].length, 1, '明细行永远是单选');
@@ -367,7 +376,7 @@ for (const [tradeType, expectedCode, expectedDetail] of [
 }
 
 test('AC-12b 判据取值：单类型单下 itemTradeTypeCode / orderTradeTypeCodes 与旧口径逐字相同', () => {
-  for (const [label, code] of [['现货', 'SALE_CASH'], ['未付', 'SALE_UNPAID'], ['预付', 'SALE_PREPAID']]) {
+  for (const [label, code] of [['现货', 'SALE_CASH'], ['预定', 'SALE_PREPAID']]) {
     // 老形状（只有整单 label、明细不带类型）→ 每一行都取整单那个值。
     const items = [{ item_no: 'A' }, { item_no: 'B' }];
     assert.deepEqual(orderTradeTypeCodes(items, code), [code], `${label}：整单去重后仍是一个`);
@@ -379,13 +388,15 @@ test('AC-12b 判据取值：单类型单下 itemTradeTypeCode / orderTradeTypeCo
   }
   assert.equal(isPrepaidTradeType('SALE_PREPAID'), true);
   assert.equal(isPrepaidTradeType('SALE_CASH'), false);
+  // 「未付」不再是类型：取不出编码（类型交给库存判据）。
+  assert.equal(itemTradeTypeCode({ trade_type: '未付' }, ''), '');
 });
 
 test('AC-12c 交付结果那句话：单类型单读到的仍是改动前那两句（逐字）', () => {
   assert.equal(salesDeliverySummaryFor(1, 1).card, '已交付并扣库存。');
   assert.equal(salesDeliverySummaryFor(1, 1).toast, '销售已确认并交付，库存已更新');
   assert.equal(salesDeliverySummaryFor(0, 1).card, '尚未交付，库存未扣减。');
-  assert.equal(salesDeliverySummaryFor(0, 1).toast, '销售已确认；预付单尚未交付，库存未扣减');
+  assert.equal(salesDeliverySummaryFor(0, 1).toast, '销售已确认；预定单尚未交付，库存未扣减');
   // 混合单才有中间那一档。
-  assert.equal(salesDeliverySummaryFor(1, 2).card, '部分明细已交付并扣库存，预付明细尚未交付。');
+  assert.equal(salesDeliverySummaryFor(1, 2).card, '部分明细已交付并扣库存，预定明细尚未交付。');
 });

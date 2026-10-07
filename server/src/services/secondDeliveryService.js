@@ -17,18 +17,27 @@ const { mergeCorrelation } = require('../utils/correlationFields');
 
 // 「第二次交付」= 已入账之后的那次收尾：把还没收到的钱收掉、把还没交的货交掉。
 //
-// 一句话业务口径（业务负责人逐字说的）：未付单第一次录单时货已经交付、库存已经扣过，
-// 点「成交」**只补收款**；预付单第一次录单时货还没拿走，点「成交」要
+// 一句话业务口径（业务负责人逐字说的）：**现货 + 钱没结清**的单第一次录单时货已经交付、
+// 库存已经扣过，点「成交」**只补收款**；**预定**单第一次录单时货还没拿走，点「成交」要
 // ① 明细未交付 → 已交付 ② 补收款 ③ 扣库存流水与实时库存。
+//
+// 🔴 2026-10-07 口径大改：交易类型 = **库存有没有**（现货 / 预定），
+//    「未付」**不再是交易类型** ⇒ 候选**不能再按交易类型编码筛**：
+//      · 现货 + 钱没结清 的主表类型是 `SALE_CASH` —— 按老口径它**不会进候选**，
+//        于是"现货欠着钱"这笔单会永远收不到提醒（真实的静默漏单）；
+//      · 新判据 = **尚未完成履约**（货没交完 或 钱没收清），见下面 `listPendingDeliveries`。
+//    候选源 = 「**预定（未交付）**」＋「**现货但钱没结清**」 = `progress.orderStatus !== '已完成'`。
 //
 // ⚠️ 这个类**不自己实现任何库存或收款逻辑**：
 //   · 收款走 PaymentService.collectPendingReceipt（"补收款"专用，校验必须是未收款、金额必须等于该记录）；
 //   · 交付与扣库存走 SalesDeliveryService.deliver（全仓唯一的销售扣库存入口）。
 // 它只负责"先收钱、再交货"这个**顺序**和"哪些单要提醒"这个**筛选**。
 
-// 定时推送只看这两类交易类型（行为编码，见 config/salesMovements）。
-// 现货当场钱货两清，不进提醒；退货 / 换货那些行为编码不是交易类型，也不进。
-const REMINDER_TRADE_TYPE_CODES = Object.freeze(['SALE_UNPAID', 'SALE_PREPAID']);
+// 候选**不再**按交易类型编码筛（2026-10-07 口径大改）。
+// 老口径是 `['SALE_UNPAID', 'SALE_PREPAID']` 两个编码 —— 它在新模型下会**漏掉**
+// 「现货 + 钱没结清」（主表类型是 `SALE_CASH`），而且 `SALE_UNPAID` 那条行为记录
+// 已被业务负责人从「行为管理」里删掉（历史单的关联是悬空的）。
+// 新口径只有一条：**尚未完成履约**（见 listPendingDeliveries 里的 `progress.orderStatus`）。
 
 // 「最近 7 天」：今天 + 往前 6 个上海自然日（复用查找链路的窗口口径，含边界）。
 const REMINDER_WINDOW_DAYS = 7;
@@ -71,7 +80,7 @@ class SecondDeliveryService {
   /**
    * 「成交」：补收款 + 交付。卡片按钮一次点击的全部后端动作都在这里。
    *
-   * 顺序是**先收钱、再交货**：钱没记上就不该把货记成已交付（预付单的货是收了钱才给）。
+   * 顺序是**先收钱、再交货**：钱没记上就不该把货记成已交付（预定单的货是收了钱才给）。
    * 任一步失败会向上抛，卡片回调层把她能看懂的原因回给她；底层两个写操作都是幂等的，
    * 所以她照着原卡片再点一次是安全的。
    *
@@ -114,7 +123,7 @@ class SecondDeliveryService {
 
     const pending = orderPayments.filter((record) =>
       textValue(record.fields?.[paymentFields.status]) === '未收款');
-    // 只把**未交付**的明细交给交付服务。未付单的明细在第一次录单时就已是「已交付」，
+    // 只把**未交付**的明细交给交付服务。现货单的明细在第一次录单时就已是「已交付」，
     // 这里天然是空列表——所以这条链路根本走不到扣库存那一步，不存在"扣两次"。
     const undeliveredIds = orderDetails
       .filter((record) => textValue(record.fields?.[detailFields.fulfillmentStatus]) !== '已交付')
@@ -245,7 +254,10 @@ class SecondDeliveryService {
   }
 
   /**
-   * 候选单：最近 7 天里「未付 / 预付」且**尚未完成履约**的已入账销售单。
+   * 候选单：最近 7 天里**尚未完成履约**的已入账销售单 ——
+   * 即「**预定（还没交付）**」＋「**现货但钱没结清**」。
+   * ⚠️ 2026-10-07 之前这里还多一层"交易类型必须是未付 / 预付"的筛选；
+   *    新口径下类型 = 库存有没有，那一层会把"现货 + 欠着钱"整类漏掉 ⇒ 已撤掉。
    *
    * 「尚未完成履约」的判据是"我们交货、用户付钱"这两件事有没有都做到，
    * 也就是算出来的 `progress.orderStatus` 还没到「已完成」——货没交完算没完成，钱没收清算没完成。
@@ -271,15 +283,14 @@ class SecondDeliveryService {
     const paymentFields = this.gateway.table('paymentRecord').fields;
     const behaviorFields = this.gateway.table('behavior').fields;
 
-    // 「交易类型」是关联「行为管理」的字段，所以先把两类行为的 record_id 找出来。
-    // 编码与名称**都留下**：分区按**编码**（名称是她在飞书里随手能改的文案，见 config/pendingDealPush），
-    // 卡片那边照旧用名称。
-    const behaviorsById = new Map(behaviors
-      .filter((record) => REMINDER_TRADE_TYPE_CODES.includes(textValue(record.fields?.[behaviorFields.code])))
-      .map((record) => [record.record_id, {
-        code: textValue(record.fields?.[behaviorFields.code]),
-        label: textValue(record.fields?.[behaviorFields.name]) || '',
-      }]));
+    // 「交易类型」是关联「行为管理」的字段。这里只把**名称**留给卡片显示用
+    //（新口径下类型是现货 / 预定；分区**不用**它，见 config/pendingDealPush 的判据）。
+    // ⚠️ 关联悬空（她删过行为记录 / 老数据）时**不跳过这笔单** —— 账面事实是"还没收齐"，
+    //    名字读不出来不该让一笔单从提醒里消失（静默漏单是最难查的一类）。
+    const behaviorsById = new Map(behaviors.map((record) => [record.record_id, {
+      code: textValue(record.fields?.[behaviorFields.code]),
+      label: textValue(record.fields?.[behaviorFields.name]) || '',
+    }]));
 
     let itemIndex = null;
     if (includeItems) {
@@ -299,8 +310,9 @@ class SecondDeliveryService {
     for (const entry of entries) {
       if (!isPosted(postedOf(entry, entryFields))) continue;
       const tradeTypeIds = linkedRecordIds(entry.fields?.[entryFields.tradeType]);
-      const tradeTypeRecordId = tradeTypeIds.find((id) => behaviorsById.has(id));
-      if (!tradeTypeRecordId) continue;
+      // ⚠️ 取**第一个认得出来的**关联记录只为了显示名称；一个都不认得也继续往下走
+      //    （判据是履约进展，不是这个关联）。
+      const tradeTypeRecordId = tradeTypeIds.find((id) => behaviorsById.has(id)) || '';
       const orderDetails = allDetails.filter((record) =>
         linkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(entry.record_id));
       const orderPayments = allPayments.filter((record) =>
@@ -353,7 +365,8 @@ class SecondDeliveryService {
         salesEntryRecordId: entry.record_id,
         orderNo: textValue(entry.fields?.[entryFields.orderNo]) || entry.record_id,
         tradeTypeLabel: behaviorsById.get(tradeTypeRecordId)?.label || '',
-        // ⭐ 分区的**稳定判据**（`SALE_PREPAID` / `SALE_UNPAID`），不是行为名称。
+        // ⚠️ 只作**显示 / 排查**用；分区判据是履约进展（见 config/pendingDealPush），
+        //    不是这个编码。关联悬空时为空串。
         tradeTypeCode: behaviorsById.get(tradeTypeRecordId)?.code || '',
         saleDate: orderDate.toISOString(),
         pendingAmount: progress.pendingAmount,

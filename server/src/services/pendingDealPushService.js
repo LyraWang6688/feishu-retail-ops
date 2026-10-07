@@ -5,19 +5,22 @@ const { SalesGroupThreadLocator } = require('./salesGroupThreadLocator');
 const { LarkMessageLinkResolver } = require('./larkMessageLinkResolver');
 const { LarkMessagePinService } = require('./larkMessagePinService');
 const { shanghaiDayKey } = require('./saleLookupService');
-const { resolvePendingDealPushConfig } = require('../config/pendingDealPush');
+const { resolvePendingDealPushConfig, pendingDealPushCriterionFor } = require('../config/pendingDealPush');
 const { logInfo, logWarn } = require('../utils/logger');
 
-// 「维度 1」：每天 9 点（北京时间）把**最近 7 天未付 / 预付、尚未成交**的销售单
-// 推到群里，**按【预付 / 未付】分区**，**每笔一行**：单号 + 【预付/未付】 + 货号 尺码
-// + 待收金额 + 那条群消息的深链（业务负责人 2026-10-07 拍板，逐字：
-// 「**只需要这些信息，按照预付和未付分区**」；目标形状见 config/pendingDealPush）。
+// 「维度 1」：每天 9 点（北京时间）把**最近 7 天还没收齐**的销售单推到群里，
+// **按【预定 / 现货待收】分区**，**每笔一行**：单号 + 【预定/现货待收】 + 货号 尺码
+// + 待收金额 + 那条群消息的深链（业务负责人 2026-10-07 拍板；目标形状见 config/pendingDealPush）。
+//
+// 🔴 2026-10-07 口径大改：交易类型 = **库存有没有**（现货 / 预定），「未付」不再是类型。
+//   ⇒ 候选源 = 「**预定（未交付）**」＋「**现货但钱没结清**」（= 尚未完成履约）；
+//     分区**不再按交易类型编码**，改按**履约状态**判（`pendingDealPushCriterionFor`）。
 //
 // 三件事刻意**不复用第二遍**：
 //   · 「哪些单要推」= **直接复用** `SecondDeliveryService.listPendingDeliveries`
-//     （最近 7 天里未付 / 预付且尚未完成履约的已入账销售单）。口径只有一处实现，
+//     （最近 7 天里**尚未完成履约**的已入账销售单）。口径只有一处实现，
 //     这里一个字都不重写——将来口径变了（比如窗口从 7 天改成 10 天），改那一处即可。
-//     ⚠️ 2026-10-07 只向它**多要了两样既有数据的投影**：`tradeTypeCode`（分区判据）与
+//     ⚠️ 2026-10-07 只向它**多要了两样既有数据的投影**：`fulfillmentStatus`（分区判据）与
 //     `items`（货号 + 尺码的事实，走 `includeItems: true`）；**筛选与金额口径一个字没动**。
 //   · 「这笔单当初是哪条群消息」= `SalesGroupThreadLocator`（本地映射，不写业务表）。
 //   · 「深链怎么来」= `LarkMessageLinkResolver`（**只认真链接**：本地存的 → 现查；
@@ -32,10 +35,10 @@ const { logInfo, logWarn } = require('../utils/logger');
 // ⚠️ **本文件里不写用户可见的中文**：表头 / 区块标题 / 行格式 / 分隔符 / 尺码后缀 / 脚注
 //    全在 `config/pendingDealPush`（配置先行）——她换说法、换顺序、换分隔符都不用碰这里。
 //
-// ⭐ 分区顺序为什么是「预付在前、未付在后」（不是随手排的）：
-//   · 预付单**钱货都没结清**——货还在店里、尾款也还欠着，点「成交」要走完
-//     「补尾款 + 出货 + 扣库存」三步，是链条最长、最容易被拖过 7 天窗口的那一类；
-//   · 未付单的货**已经交出去了**，剩下的只是收款一步，处理动作单一；
+// ⭐ 分区顺序为什么是「预定在前、现货待收在后」（不是随手排的）：
+//   · 预定单**货还没交出去**——点「成交」要走完「补尾款 + 出货 + 扣库存」三步，
+//     是链条最长、最容易被拖过 7 天窗口的那一类；
+//   · 现货待收单的货**已经交出去了**，剩下的只是收款一步，处理动作单一；
 //   · ⇒ 先看见"链条长的"，让她当天有时间把那三步走完。顺序可配
 //     （`PENDING_DEAL_PUSH_BLOCK_ORDER`），不同意就改配置，不用改代码。
 
@@ -134,9 +137,9 @@ class PendingDealPushService {
   }
 
   /**
-   * 分区：把候选单按「行为编码」分进配置声明的区块，**按配置顺序**返回。
+   * 分区：把候选单按**履约判据**分进配置声明的区块，**按配置顺序**返回。
    *   · 只返回**有单**的区块（空区块不显示，全空时根本走不到这里）；
-   *   · 编码不认识已声明区块的单，落进兜底区块（`otherTitle`）——**宁可多显示一块，
+   *   · 判据不认得已声明区块的单，落进兜底区块（`otherTitle`）——**宁可多显示一块，
    *     也不让任何一笔单从清单里静默消失**。
    */
   buildSections(orders = []) {
@@ -144,8 +147,8 @@ class PendingDealPushService {
     const byKey = new Map(blocks.map((block) => [block.key, []]));
     const unclassified = [];
     for (const order of orders) {
-      const block = blocks.find((candidate) => candidate.tradeTypeCode
-        && candidate.tradeTypeCode === order.tradeTypeCode);
+      const criterion = pendingDealPushCriterionFor(order);
+      const block = blocks.find((candidate) => candidate.criterion && candidate.criterion === criterion);
       if (block) byKey.get(block.key).push(order);
       else unclassified.push(order);
     }
@@ -169,7 +172,7 @@ class PendingDealPushService {
   }
 
   /**
-   * 一笔单一行：序号 + 单号 + 【预付/未付】 + 货号 尺码 + 待收金额 + 深链。
+   * 一笔单一行：序号 + 单号 + 【预定/现货待收】 + 货号 尺码 + 待收金额 + 深链。
    * 逐段拼、**空的段整段不要** —— 没货号尺码 / 没深链时不会留下 ` · ` 或空壳。
    */
   buildLine(order, index, tag) {
@@ -228,16 +231,16 @@ class PendingDealPushService {
     if (!chatId) {
       // 没配群 = 不知道发哪儿。绝不回落到发给某个人（与采购 / 成交提醒同一条纪律）。
       logWarn('sales.pending_deal_push.chat_missing', {
-        env: 'PENDING_DEAL_PUSH_CHAT_ID', hint: '未配置未付/预付推送群 id，本次不推送',
+        env: 'PENDING_DEAL_PUSH_CHAT_ID', hint: '未配置待处理单推送群 id，本次不推送',
       });
       return '';
     }
-    if (!this.client?.im?.message?.create) throw new Error('未付/预付推送缺少飞书 client，无法发送群消息');
+    if (!this.client?.im?.message?.create) throw new Error('待处理单推送缺少飞书 client，无法发送群消息');
     const response = await this.client.im.message.create({
       params: { receive_id_type: 'chat_id' },
       data: { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text }) },
     });
-    if (response.code !== 0) throw new Error(`发送未付/预付推送失败: ${response.msg} (Code: ${response.code})`);
+    if (response.code !== 0) throw new Error(`发送待处理单推送失败: ${response.msg} (Code: ${response.code})`);
     return response.data?.message_id || '';
   }
 

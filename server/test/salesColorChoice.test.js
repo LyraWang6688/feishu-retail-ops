@@ -7,13 +7,10 @@ const {
   AVAILABLE_KEY,
   UNAVAILABLE_KEY,
   STOCK_LOOKUP_FAILED_TEXT_KEY,
-  SCOPE_EMPTY_TEXT_KEY,
   SALES_COLOR_STOCK_STATUS,
-  SALES_PRODUCT_STATUS_OFF_SHELF,
   SALES_COLOR_CHOICE_DEFAULTS,
   resolveSalesColorChoiceConfig,
   colorOptionButtonText,
-  formatColorOptionsScopeEmptyText,
 } = require('../src/config/salesColorChoice');
 
 test('默认后缀是「（有货）/（无货）」（她第一眼看到的那一版）', () => {
@@ -21,11 +18,11 @@ test('默认后缀是「（有货）/（无货）」（她第一眼看到的那�
   assert.equal(config.availableLabel, '（有货）');
   assert.equal(config.unavailableLabel, '（无货）');
   assert.equal(config.stockLookupFailedText, '暂时读不到库存，请再点一次颜色～');
-  assert.equal(config.scopeEmptyText, '货品信息里 {item_no} 的颜色都下架了，没有在售的颜色可选，请核实～');
+  // ⭐ 2026-10-07：候选**给全部颜色**（撤掉"只推在售"）⇒ 这一段不再有"全下架"那句文案。
+  assert.equal(config.scopeEmptyText, undefined);
   assert.deepEqual(SALES_COLOR_CHOICE_DEFAULTS, {
     availableLabel: '（有货）', unavailableLabel: '（无货）',
     stockLookupFailedText: '暂时读不到库存，请再点一次颜色～',
-    scopeEmptyText: '货品信息里 {item_no} 的颜色都下架了，没有在售的颜色可选，请核实～',
   });
 });
 
@@ -64,19 +61,21 @@ test('颜色为空时保留既有兜底「未命名颜色」（后缀照加）',
 
 // ── 第四刀：候选范围（现货 / 未付只推在售）用到的两个"值域 / 文案" ──────────────
 
-test('「不在售」的取值域在配置里（逻辑里不许出现中文字面量）：就是「下架」', () => {
-  assert.deepEqual(SALES_PRODUCT_STATUS_OFF_SHELF, ['下架']);
+test('⭐「有货 / 无货」标注的语义 = 这一双会记成现货还是预定（两种类型、每个候选都标）', () => {
+  const config = resolveSalesColorChoiceConfig({});
+  assert.equal(colorOptionButtonText({ color: '黑', stock_status: 'available' }, config), '黑（有货）');
+  assert.equal(colorOptionButtonText({ color: '白', stock_status: 'unavailable' }, config), '白（无货）');
+  // 没给状态（配品 / 索引读不到）→ 不加后缀（不猜）。
+  assert.equal(colorOptionButtonText({ color: '灰' }, config), '灰');
+  assert.equal(colorOptionButtonText({}, config), '未命名颜色');
 });
 
-test('候选被过滤空了的文案：`{item_no}` 换成货号；设成空串 → 用默认文案（它是那一刻唯一的解释）', () => {
-  const config = resolveSalesColorChoiceConfig({});
-  assert.equal(formatColorOptionsScopeEmptyText(config.scopeEmptyText, { itemNo: 'B26002-52' }),
-    '货品信息里 B26002-52 的颜色都下架了，没有在售的颜色可选，请核实～');
-  // 货号里有 `$&` 这类字符也不许被替换串的语义咬到（用 split/join，不拼正则）。
-  assert.equal(formatColorOptionsScopeEmptyText('{item_no} 没颜色', { itemNo: 'A$&B' }), 'A$&B 没颜色');
-
-  assert.equal(resolveSalesColorChoiceConfig({ [SCOPE_EMPTY_TEXT_KEY]: '' }).scopeEmptyText,
-    SALES_COLOR_CHOICE_DEFAULTS.scopeEmptyText);
-  assert.equal(resolveSalesColorChoiceConfig({ [SCOPE_EMPTY_TEXT_KEY]: '{item_no} 都在休息' }).scopeEmptyText,
-    '{item_no} 都在休息');
+test('⭐ 旧的"候选范围 / 全下架文案"那套配置已整体退场（撤掉 #230 的证据）', () => {
+  const colorChoice = require('../src/config/salesColorChoice');
+  assert.equal(colorChoice.SALES_PRODUCT_STATUS_OFF_SHELF, undefined);
+  assert.equal(colorChoice.SCOPE_EMPTY_TEXT_KEY, undefined);
+  assert.equal(colorChoice.formatColorOptionsScopeEmptyText, undefined);
+  const policy = require('../src/config/salesTradeTypePolicy');
+  assert.equal(policy.salesColorOptionsScopeFor, undefined);
+  assert.equal(policy.SALES_COLOR_OPTIONS_SCOPE, undefined);
 });

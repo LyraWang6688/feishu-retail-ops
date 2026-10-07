@@ -18,26 +18,26 @@ const { PurchaseWebhookService } = require('./purchaseWebhookService');
 // （大小写 / 空格 / 分隔符），否则会出现「A 认得出来、判据说没有」这种自相矛盾。
 const { V1ReferenceResolver, person, relation, normalizeText, normalizeColor } = require('./v1ReferenceResolver');
 const { LiveInventoryIndex, buildLiveInventoryIndex } = require('./liveInventoryIndex');
-const { tradeTypeCodeFromLabel, deliversForTradeType } = require('../config/salesMovements');
-// 「录单时要跑哪些解析」+「颜色候选推哪些」的**唯一**判据来源
+const { tradeTypeLabel, deliversForTradeType } = require('../config/salesMovements');
+// 「类型的唯一判据（查完库存再定）」+「录单时要跑哪些解析」的**唯一**判据来源
 //（配置先行，业务负责人 2026-10-07 确认）。
-// ⭐ 2026-10-07：粒度从「整单一个类型」改成「**逐明细一个类型** + 整单去重多选」——
+// ⭐ 2026-10-07 口径大改：**类型 = 实时库存里有没有这一双**（`salesTradeTypeForStock`）
+//    ⇒ A（货品信息）与 B（实时库存）**两种类型都跑**；"预定跳过库存检查"那条策略已删。
+// ⭐ 粒度仍是「**逐明细一个类型** + 整单去重多选」——
 //    `itemTradeTypeCode` 取某一行的类型，`orderTradeTypeCodes` 取整单去重后的那几个。
 //    ⚠️ `deliveryForTradeType`（整单口径）已不再被本文件使用：交付改由
 //       `deliversForTradeType` **逐行**推，不再有"整单一个交付状态"的说法。
 const {
-  salesParseRuns, salesColorOptionsScopeFor, SALES_COLOR_OPTIONS_SCOPE,
-  itemTradeTypeCode, orderTradeTypeCodes,
+  salesTradeTypeForStock, itemTradeTypeCode, orderTradeTypeCodes,
 } = require('../config/salesTradeTypePolicy');
 // 「这一单交给了多少」那句结果话（全交付 / 全未交付 / **部分交付**）的文案来源。
 const { salesDeliverySummaryFor } = require('../config/salesDeliverySummary');
-// 颜色候选上的「有货 / 无货」库存状态取值（只用录单时已读进来的实时库存索引算，零新增请求）
-// + 「不在售」的取值域 + 候选被过滤空了的文案。
+// 颜色候选上的「有货 / 无货」库存状态取值（只用录单时已读进来的实时库存索引算，零新增请求）。
+// ⚠️ 它现在**同时是类型判据的输入**：有货 → 现货，无货 → 预定（见 `salesTradeTypeForStock`）。
+//    「不在售过滤 / 全下架拦截」那套已随 2026-10-07 口径大改整体退场（候选给**全部颜色**）。
 const {
   SALES_COLOR_STOCK_STATUS,
-  SALES_PRODUCT_STATUS_OFF_SHELF,
   resolveSalesColorChoiceConfig,
-  formatColorOptionsScopeEmptyText,
 } = require('../config/salesColorChoice');
 // 「A 之后：这个货号到底有没有在「货品信息」里建档」那道判据的开关 / 文案 / 事件名。
 // ⚠️ 它与解析 A 是**两步**：A 仍然"找不到就空手回来"，本判据在它之后下结论。
@@ -75,7 +75,7 @@ const { SalesGroupThreadLocator } = require('./salesGroupThreadLocator');
 const { SalesMessageLinkService } = require('./salesMessageLinkService');
 // 「这条群消息归销售还是采购」的分派（独立 service；本类只做接线）。
 const { SalesGroupFlowService } = require('./salesGroupFlowService');
-// 「话题里的二次处理识别」（②：未付 / 预付的进展同步；独立 service，本类只做接线）。
+// 「话题里的二次处理识别」（②：预定 / 现货待收的进展同步；独立 service，本类只做接线）。
 const { SalesThreadProgressService } = require('./salesThreadProgressService');
 const { PROGRESS_KINDS } = require('../config/salesProgressIntake');
 // 「采购到货：群话题对话式核对」的编排（独立 service；本类只做接线）。
@@ -91,7 +91,7 @@ const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimen
 const { SalesStatusWriter } = require('./salesStatusWriter');
 const { recordUrl } = require('../utils/feishuLinks');
 
-// 交付与否以草稿的交易类型为准：现货/未付当场交付，预付（只付定金、货没拿走）不交付。
+// 交付与否以草稿的交易类型为准：现货当场交付，预定（货还没到 / 还没拿走）不交付。
 // 只有旧数据才没有明确的交付状态（待确认或缺失），那时退回按钮语义——
 // 旧卡片上的「确认已交付 / 确认未交付」是用户显式做出的选择。
 const shouldDeliverFor = (task, action) => {
@@ -100,7 +100,7 @@ const shouldDeliverFor = (task, action) => {
   return action === 'confirm_sale_delivered';
 };
 
-// 「这一单交付了哪些行」——**逐明细**按交易类型推（现货 / 未付交付并扣库存，预付不交付）。
+// 「这一单交付了哪些行」——**逐明细**按交易类型推（现货交付并扣库存，预定不交付）。
 // 判据全在配置：`deliversForTradeType`（要不要交付）+ `salesDeliverySummaryFor`（那三句话）。
 // ⚠️ 抽成一处是因为它在**两处**用到（入账终态卡 + 她重复点确认时的终态卡），
 //    两处必须说同一句话，否则同一状态会看到两种结果。
@@ -169,7 +169,7 @@ class LarkMvpService {
     this.recognizer = options.recognizer || doubaoService;
     this.posting = options.posting || new V1PostingService({ gateway: this.gateway, references: this.references });
     this.delivery = options.delivery || new SalesDeliveryService({ gateway: this.gateway });
-    // 「第二次交付」：已入账的未付 / 预付单点「成交」→ 补收款 + 交付。
+    // 「第二次交付」：已入账、尚未完成履约的单点「成交」→ 补收款 + 交付。
     // 刻意把上面那个 delivery 实例传进去：卡片这条路的交付与首次录单的交付
     // 共用同一个串行队列，两个入口不会各扣一次库存。
     this.secondDelivery = options.secondDelivery || new SecondDeliveryService({
@@ -1034,11 +1034,11 @@ class LarkMvpService {
    *
    * 输出：这个货号的**颜色**与**商品记录 id**（多颜色时不猜，把候选交给确认卡片）。
    *
-   * 为什么**所有交易类型都要跑**（业务负责人 2026-10-07 逐字）：
-   *   「因为它实际上还是要写销售明细的，所以这个时候需要提供颜色信息，
-   *     也就是要**以这个货号去找它的颜色**，然后只不过是它就不需要再去实时库存
-   *     里面查有没有这个库存了。」
-   * 预付单店里没货，颜色不可能从「实时库存」里读出来 —— 只能走这一步。
+   * 三步流程的第 1 步（业务负责人 2026-10-07 逐字）：
+   *   「1. 货品信息还是要先查这个货品有没有、信息全不全
+   *     2. 这里要给到**全色**，让用户去选
+   *     3. 用户选完之后，再拿着用户选的颜色去……找，如果找到了，就是现货，如果没找到，就是预定」
+   * ⇒ A 给**全部颜色**的候选（不按在售过滤）；B 拿她选的颜色去查**实时库存**定类型。
    * （走的就是入账时用的同一个 `resolveProduct`，不是第二套货品匹配逻辑。）
    *
    * ⚠️ **尽力而为、绝不抛错**：它只是"把颜色补上"。所以这里认不出、读挂了都只记一条
@@ -1061,9 +1061,8 @@ class LarkMvpService {
       const found = await this.references.resolveProduct({ itemNo, matchMode: 'sales' });
       // 多个颜色：不猜，候选交给确认卡片（形状与实时库存那条候选一致：
       // {recordId, color, number}，卡片动作 choose_sale_color 只认这三个键）。
-      // ⭐ 额外带上 `status`（「货品信息」那条记录的「货品状态」，在售 / 下架）——
-      //    现货 / 未付的候选范围要用它过滤（`colorOptionsInScope`），
-      //    而它**跟着候选一起回来**（这张表 A 已经整表读过）⇒ 过滤**零新增远端请求**。
+      // ⚠️ `status`（「货品状态」：在售 / 下架）**仍然带回来**，但 2026-10-07 起
+      //    **不再用它过滤候选**（候选给全部颜色）——留它是为了 trace 与兼容。
       if (found?.needsColor && found.options?.length) {
         return {
           needsColor: true,
@@ -1076,7 +1075,7 @@ class LarkMvpService {
               // ⚠️ 不要用 resolver 回的 `number`：那是**归一化过的「编号」**（小写、去分隔符），
               //    当卡片上的货品标签会显示成 `b2600252黑色b`。
               number: `${itemNo}${optionColor}`,
-              // 读不到时留空串：空 **不等于** 下架（见 `colorOptionsInScope` 的判据）。
+              // 读不到时留空串：空 **不等于** 下架（判据只认真证据，见 AGENTS.md 第 17 条）。
               status: String(option.status ?? '').trim(),
             };
           }),
@@ -1091,7 +1090,7 @@ class LarkMvpService {
       };
     } catch (error) {
       // 货号在「货品信息」里没有 / 读表失败：不算缺项，只记账。
-      // （缺项判定留给 B；B 不跑时也不因此拦单 —— 那正是预付的常态。）
+      // （"有没有建档"由判据 A′ 下结论；B 只回答"实时库存里有没有这一双"。）
       logWarn('lark.sales.product_info.resolve_failed', { item_no: itemNo, error: error.message });
       return {};
     }
@@ -1109,8 +1108,9 @@ class LarkMvpService {
    *    （`LiveInventoryIndex.find`，本地查表）—— 不读表、不调 B。证据：
    *    这个方法体内没有任何 `gateway` / `listAll` 调用。
    *
-   * ⚠️ `withStock=false`（该交易类型不跑 B，例如预付）时**不加状态** ——
-   *    预付本来就没货、要调货，标"无货"只会误导她（`colorOptionButtonText` 据此不加后缀）。
+   * ⭐ 2026-10-07 新口径下这个标注的**语义更好**：它不只是"能不能买"，而是
+   *    **这双会记成现货还是预定的预告**（有货 → 现货；无货 → 预定）。
+   *    所以两种类型、**每一个候选都要标**（`withStock` 形参保留只为兼容）。
    * ⚠️ 索引读不到（`liveInventory` 为空索引）时每个候选都算"无货" —— 这是**如实**的
    *    负向结论（这次确实没读到库存），不是猜。
    *
@@ -1135,58 +1135,54 @@ class LarkMvpService {
     });
   }
 
+  // ⚠️ 2026-10-07：`colorOptionsInScope`（按「在售 / 下架」过滤候选）与
+  //    `SALES_COLOR_SCOPE_EMPTY_TEXT`（"颜色全下架"那句拦截）**已整体删除** ——
+  //    口径是「候选给**全部颜色**」：预定 = 没货，若候选只推在售，她永远选不到
+  //    没货的颜色 ⇒ 预定走不通。判据与证据见
+  //    `docs/sales-type-by-stock-2026-10-07.md` AC-2。
+
   /**
-   * ── 按「候选范围」过滤 A 出的候选颜色（配置先行 · 第四刀）────────────────────
+   * 主表「交易类型」（多选关联「行为管理」）：把**最终**的逐明细类型写上去。
    *
-   * 她的口径（逐字）：
-   *   「现货和未付是需要看在售的颜色，但是**预付是需要看这个货号的颜色**」
-   * ⇒ 范围**按交易类型**配在 `config/salesTradeTypePolicy`（`colorOptionsScope`）：
-   *   · `inStockOnly`（现货 / 未付 / **认不出的编码**）→ 把明确"不在售"的颜色去掉；
-   *   · `allColors`（预付）→ 原样返回。
+   * 为什么要有它、而不是只在录单那一次写：
+   *   🔴 2026-10-07 口径大改后，**类型要等她选完颜色、查完实时库存才知道** ——
+   *   多颜色那一条明细在录单时**根本没有编码**（空串 = "还没定"）。
+   *   所以「确认入账之前」必须再同步一次，否则主表「交易类型」会漏掉整单的类型
+   *   （她选了颜色、卡片上也写着"现货"，表里却是空的）。
    *
-   * ⭐ **判据是"明确不在售"而不是"必须等于在售"**：
-   *   「货品状态」是**「货品信息」那条记录上的飞书公式字段**（在售 / 下架），
-   *   它**跟着候选一起回来**（`resolveProductInfoForSale` → resolver 同一次整表读），
-   *   所以这里**纯本地过滤、零远端请求**（方法体内没有任何 `gateway` / `listAll` 调用）。
-   *   ⚠️ 状态读不到（空串 / 认不出来的取值）**不下"下架"的结论**、**保留**候选 ——
-   *     把"没有证据"当成"负向证据"是 `AGENTS.md` 第 17 条禁的；何况现货 / 未付在
-   *     她选完颜色之后**还会跑 B**，那里会给出"这个尺码到底有没有货"的定论。
-   *   ⚠️ "不在售"的取值域（`SALES_PRODUCT_STATUS_OFF_SHELF`）在配置里，逻辑里**不出现**
-   *     「下架」这类中文字面量。
-   *
-   * ⚠️ 只过滤 **A 的候选**（来自「货品信息」）。B 兜底那条路的候选来自「实时库存」、
-   *    身上**没有**「货品状态」，不在这里过滤 —— "谁给候选、谁带状态"。
-   *
-   * ⚠️ 返回 `{ kept, dropped }` **两个数组**（都是副本），而不是只回保留下来的那些：
-   *    调用方要拿 `dropped` 记日志（"为什么没给我这个颜色"）。别让调用方自己去
-   *    用 `!kept.includes(option)` 反推 —— 那是在拿**对象身份**比**副本**，永远不相等
-   *    （2026-10-07 写这一刀时真踩过：`dropped_colors` 把留下的颜色也列进去了）。
-   *
-   * @returns {{ kept: object[], dropped: object[] }} 顺序与原数组一致
+   * ⚠️ **绝不阻塞入账**：它只是审计字段（业务事实是交付与收款，那两件事另有判据）；
+   *    关联查不到只记一条 warn。返回值只用于日志 / 排查。
    */
-  colorOptionsInScope({ options = [], scope } = {}) {
-    if (scope !== SALES_COLOR_OPTIONS_SCOPE.inStockOnly) {
-      return { kept: options.map((option) => ({ ...option })), dropped: [] };
+  async syncSalesTradeTypes({ salesEntryRecordId, items = [], taskId = '' } = {}) {
+    const recordIds = [];
+    if (typeof this.references?.resolveSalesTradeType === 'function') {
+      for (const code of orderTradeTypeCodes(items, '')) {
+        if (!code) continue;
+        try {
+          const recordId = (await this.references.resolveSalesTradeType(code)).recordId;
+          if (recordId && !recordIds.includes(recordId)) recordIds.push(recordId);
+        } catch (error) {
+          logWarn('lark.sales.trade_type.resolve_failed', {
+            task_id: taskId, code, error: error.message,
+          });
+        }
+      }
     }
-    const offShelf = SALES_PRODUCT_STATUS_OFF_SHELF.map((value) => normalizeText(value));
-    const kept = [];
-    const dropped = [];
-    options.forEach((option) => {
-      (offShelf.includes(normalizeText(option?.status)) ? dropped : kept).push({ ...option });
-    });
-    return { kept, dropped };
+    if (!recordIds.length || !salesEntryRecordId) return recordIds;
+    await this.gateway.update('salesEntry', salesEntryRecordId, { tradeType: relation(recordIds) });
+    return recordIds;
   }
 
   /**
    * ── 判据 A′：这个货号到底有没有在「货品信息」里建档 ─────────────────────────
    *
    * 位置：**在解析 A 之后**、解析 B 之前 —— 三种交易类型**都走**这里
-   * （它不在 `if (parsePolicy.stock)` 里面，所以预付也过得到）。
+   * （两种交易类型都走这里）。
    *
    * 为什么要有这一步（业务负责人 2026-10-07 真机 + 逐字）：
    *   「对，所以三种交易类型，在看完货品信息之后，如果在货架上没有找到，
    *     都应该给到这个提示，而不是说等到 B」
-   * 起因是那笔**预付**：`B26002-52` 被语音转文字漏成 `26002-52`，
+   * 起因是那笔**预定**：`B26002-52` 被语音转文字漏成 `26002-52`，
    * A 空手回来不吭声、B 按交易类型又不跑 ⇒ 她点了确认才失败。
    *
    * ⚠️ **只回答一件事**：「货品信息」这张表里**有没有这个货号的记录**。
@@ -1224,23 +1220,30 @@ class LarkMvpService {
   }
 
   /**
-   * ── 解析 B：库存可得性（只读「实时库存」表）──────────────────────────────
+   * ── 解析 B：库存可得性（只读「实时库存」表）— **类型的判据本身** ──────────────
    *
-   * 输出：门盒 / 样品 / 仓库的数量、"有没有这一双"、以及卖样品要不要补门盒。
+   * 输出：**有没有这一双**（`inStock`）、门盒 / 样品 / 仓库的数量、
+   *      以及卖样品要不要补门盒。
    *
-   * 只有配置说"要库存"的交易类型才跑（`config/salesTradeTypePolicy.js`）：
-   *   · 现货 / 未付 → 跑（没货就拦）
-   *   · 预付        → **整个不跑**：预付就是"店里没有、要调货"，
-   *                    拿"库存里没有"拦她是无中生有（业务负责人 2026-10-07 逐字）。
+   * 🔴 2026-10-07 口径大改：**有货 → 现货，没货 → 预定**（业务负责人逐字：
+   *   「库存里有这双 → 现货（当场交付 + 扣库存）；库存里没有 → 预定（不交付；
+   *     等货到了再交付、那时才扣库存）」）。
+   *   ⇒ ① 「没货」**不是错误、不再拦单** —— 它就是「预定」的结论，返回 `inStock:false`；
+   *     ② **两种类型都跑这一步**（"预定跳过库存"那条策略已整体删除）；
+   *     ③ 没有一个"缺货文案"这种东西了（那句话说的事现在由卡片上的「类型：预定」表达）。
    *
-   * ⭐ 2026-10-07 第三刀（她逐字：「B 应该是拿着 A 环节用户选的那个颜色，然后再去找库存」）：
-   *   **颜色/记录 id 由 A 定死，B 不再整体替换 A**。传了 `color` 就只按它找
-   *   （A 给单色 / 用户在卡片上选定颜色后都走这条）；找一个颜色找不到 ⇒ 走"库存里没有…"。
+   * ⭐ 颜色/记录 id 由 A 定死，B 不再整体替换 A（她逐字：「B 应该是拿着 A 环节用户选的
+   *   那个颜色，然后再去找库存」）。传了 `color` 就只按它找
+   *   （A 给单色 / 用户在卡片上选定颜色后都走这条）；找不到 ⇒ `inStock:false` ⇒ 预定。
    *   没传 `color` 只有一种情况：**「货品信息」读不到**（A 空手回来），
    *   这时才沿用旧行为 —— 按货号+尺码把实时库存里的颜色摆成候选让她点。
    *
    * ⚠️ 它只管"录单时的存在性判定"：**交付 / 扣库存**不在这里，也不受它影响
-   *    （交付与否由 `SALES_MOVEMENTS.delivery` 从交易类型推，预付 → 未交付）。
+   *    （交付与否由 `SALES_MOVEMENTS.delivery` 从类型推，预定 → 未交付）。
+   *
+   * @returns `{ inStock: false }`（没货）｜`{ inStock: true, productRecordId, color, stock,
+   *          samplePlan }`（找到一双）｜`{ inStock: true, needsColor: true, colorOptions }`
+   *          （A 没给颜色时的兜底候选）。
    */
   resolveStockAvailabilityForSale({ itemNo, size, itemQuantity = 1, color = '' }, liveInventory) {
     const found = liveInventory.find({ itemNo, size });
@@ -1253,23 +1256,16 @@ class LarkMvpService {
       ? found.colors.filter((entry) => normalizeColor(entry.color) === wantedColor)
       : found.colors;
     if (!colors.length) {
-      // 缺货只回这一句：哪一双没有 + 这个货号现在有哪些码 + 请核实
-      //（不带"销售信息还缺…请补充后重新发送"那层流程说明 —— 对她核实这件事没有帮助）。
-      // ⚠️ 文案逐字不变（她没有要求把颜色写进这一句；既有断言也钉着它）。
-      const available = (found.otherSizes || [])
-        .filter((entry) => Number(entry.total) > 0)
-        .map((entry) => entry.size);
-      return {
-        shortage: `库存里没有 ${itemNo} ${size}码（${available.length
-          ? `这个货号现在有 ${available.join('、')}码`
-          : '这个货号现在一双都没有'}）`,
-      };
+      // ⭐ **实时库存里没有这一双 = 预定**（类型的判据）。不是错误、不拦单、不再拼缺货文案。
+      //    可排查：`lark.sales.trade_type.decided` 里有 `in_stock:false` 与这一行的货号尺码。
+      return { inStock: false };
     }
     if (colors.length === 1) {
       const [only] = colors;
       const stock = { doorBox: only.doorBox, sample: only.sample, warehouse: only.warehouse };
       const productRecordId = only.productRecordId;
       return {
+        inStock: true,
         productRecordId,
         color: only.color,
         stock,
@@ -1278,9 +1274,10 @@ class LarkMvpService {
     }
     // 只有"A 没给出颜色"才会走到这里：这个货号在这个尺码上有多个颜色，不猜，把候选交给确认卡片。
     // 补样品方案按颜色预先算好——颜色定了才谈得上"用哪个门盒补"。
-    // ⚠️ 这些候选来自实时库存、必然有货（空闲颜色不会进索引）⇒ 标 `available`，
+    // ⚠️ 这些候选来自实时库存、必然有货（实时库存里一条记录 = 一双实物）⇒ 标 `available`，
     //    卡片上显示成 `黑（有货）`，与 A 那条候选的标注口径一致。
     return {
+      inStock: true,
       needsColor: true,
       colorOptions: colors.map((entry) => {
         const optionStock = { doorBox: entry.doorBox, sample: entry.sample, warehouse: entry.warehouse };
@@ -1298,7 +1295,7 @@ class LarkMvpService {
     };
   }
 
-  /**
+    /**
    * 「货品信息」整表读一次，按记录 ID 建索引。
    *
    * 为什么不按需逐条读：录单时逐条读是**串行**的（一件商品一次请求），
@@ -1523,7 +1520,7 @@ class LarkMvpService {
     const startedAt = Date.now();
     logInfo('lark.sales.processing.started', { task_id: taskId });
     const task = await this.store.get(taskId);
-    // ⭐ ② 二次处理识别（未付 / 预付的进展）：**只有群话题里、且已经定位到某笔销售**时
+    // ⭐ ② 二次处理识别（预定 / 现货待收的进展）：**只有群话题里、且已经定位到某笔销售**时
     //    才问它（两个判据都由 service 自己收口，私聊的任务两个字段都没有 → 直接返回）。
     //    它说"这条归二次处理"就**不再**往下走销售原话解析 —— 这正是这次要修的 bug：
     //    她在话题里说「收到微信 500」不该被当成新原话、更不该回"销售信息还缺…"。
@@ -1629,42 +1626,27 @@ class LarkMvpService {
     const replyTask = { ...task, sales_entry_record_id: salesEntryRecordId };
 
     const missingFields = [...(parsed.missing_fields || [])];
-    // ⭐ 交易类型：交付状态（SALES_MOVEMENTS）与"录单跑哪些解析"（salesTradeTypePolicy）
-    //    **都由它推出来**，两处用的是同一个值。
-    //    ⚠️ 判据只在配置里；这里和下面的循环里都**不许**再写 `=== '预付'` 之类的散落判断。
-    const tradeTypeCode = tradeTypeCodeFromLabel(parsed.trade_type);
-    // ⭐ 2026-10-07：**整单**的类型只作兜底/兼容；真正决定"跑不跑 B / 交不交付"的是
-    //    **每一行自己的**类型（`itemTradeTypeCode`）。下面循环里逐行算、逐行用。
-    //    整单去重后的那几个写进主表多选（`orderTradeTypeCodes`）。
-    // 缺货单独收集：这类问题只需要一句"请核实"，不需要"销售信息还缺…请补充后重新发送"
-    // 那层流程说明——那层话对"这个尺码店里没有"这件事没有任何帮助。
-    const shortageNotes = [];
-    // 「货号没建档」单独收集（与缺货同理：那是一句完整的话，前面再套一层
-    // "销售信息还缺…"反而看不清要她做什么）。它比缺货更靠前：货号根本没建档时，
-    // "这个货号现在一双都没有"只是它的副作用。
+    // ⭐ 2026-10-07 口径大改：**类型 = 实时库存里有没有这一双**（判据在
+    //    `config/salesTradeTypePolicy.salesTradeTypeForStock`），所以下面循环里
+    //    **逐行查、逐行定**；整单去重后的那几个写进主表多选（`orderTradeTypeCodes`）。
+    //    ⚠️ 解析层给的 `parsed.trade_type` **只是提示**，不再决定任何事。
+    // 缺货**不再是缺项**：实时库存里没有这一双 ⇒ **预定**，是合法输入、照出卡片，
+    // 所以这里不再有 `shortageNotes` / `colorScopeNotes`。
+    // 「货号没建档」单独收集：它是一句完整的话，前面再套一层
+    // "销售信息还缺…"反而看不清要她做什么。
     const registrationNotes = [];
-    // 「这个货号的颜色全不在售（都被范围过滤掉了）」单独收集 —— 同理：它就是那一刻
-    // 唯一的解释，套一层流程说明只会把要她做的事埋起来。
-    const colorScopeNotes = [];
     // 开关 / 文案一次读进来（**调用时才解析** process.env，不在模块加载时求值）。
     const registrationConfig = resolveSalesProductRegistrationConfig(process.env);
-    const colorChoiceConfig = resolveSalesColorChoiceConfig(process.env);
     const items = [];
     for (const [index, item] of (parsed.items?.length ? parsed.items : [parsed]).entries()) {
       const itemQuantity = Number(item.quantity || 1);
       const quantityIssue = `第${index + 1}件请逐双列出成交金额；每条销售明细只能记录一双`;
       if (itemQuantity !== 1 && !missingFields.includes(quantityIssue)) missingFields.push(quantityIssue);
-      // ── ⭐ 逐明细的交易类型（业务负责人 2026-10-07）────────────────────────────────
-      //   「**在销售明细里面分开，它是现货还是预付款**，不就可以了吗？」
-      //   A（货品信息）本来所有类型都跑；**B（实时库存）与颜色候选范围逐行判** ——
-      //   现货件查库存并交付，预付件不查库存、不交付。判据仍然是那**一份**配置注册表，
-      //   只是取值从"整单"变成"这一行"。
-      const itemTradeType = itemTradeTypeCode(item, tradeTypeCode);
-      const parsePolicy = {
-        productInfo: salesParseRuns(itemTradeType, 'productInfo'),
-        stock: salesParseRuns(itemTradeType, 'stock'),
-      };
-      const colorOptionsScope = salesColorOptionsScopeFor(itemTradeType);
+      // ── ⭐ 逐明细的交易类型（业务负责人 2026-10-07 口径大改）──────────────────────
+      //   「【类型 = 只看库存】库存里有这双 → 现货；库存里没有 → 预定」
+      //   ⇒ 解析层给的 `trade_type` **只是提示**（配品那种查不到库存的才沿用），
+      //     鞋的类型由**下面这一次实时库存查询**定（`salesTradeTypeForStock`）。
+      //   A（货品信息）与 B（实时库存）**两种类型都跑** —— 这里没有任何"按类型跳过"的开关。
       if (item.kind === 'accessory') {
         // 配品先按「种类」找，找不到再退回按名称精确匹配（见 accessoryMatchPolicy）。
         // 为什么不能只按名称精确匹配：表里叫「15元鞋油」，用户说的是「鞋油」，
@@ -1684,11 +1666,10 @@ class LarkMvpService {
         continue;
       }
       // ── 卖一双鞋要跑两个**互相独立**的解析（各读一张表，见 config/salesTradeTypePolicy）──
-      //   A 货品信息（「货品信息」）：颜色 / 商品记录 id —— **所有交易类型都跑**，
-      //     因为销售明细必须有商品和颜色才写得全。
-      //   B 库存可得性（「实时库存」）：有没有这一双 + 门盒/样品/仓库 —— **按交易类型**。
-      //     现货 / 未付 → 跑（没货就拦）；预付 → 不跑（要调货，没货是常态）。
-      //   ⭐ 2026-10-07 第三刀 —— **颜色由 A 定死，B 只拿"选定的颜色"去查库存**：
+      //   A 货品信息（「货品信息」）：颜色 / 商品记录 id —— **全部颜色都给候选**。
+      //   B 库存可得性（「实时库存」）：有没有这一双 + 门盒/样品/仓库 ——
+      //     ⭐ **这就是类型的判据**（有货 → 现货，没货 → 预定），所以**两种类型都跑**。
+      //   ⭐ 顺序（她的三步流程）：A 给候选 → 她选颜色 → 拿着选定的颜色跑 B 定类型。
       //     · A 给出**多个**颜色 ⇒ 出候选让用户选，**在她选定之前 B 一次都不跑**；
       //     · A 给出**单个**颜色 ⇒ 直接定下来（不问她），B 拿这个颜色去查；
       //     · A 什么都给不出（「货品信息」读不到）⇒ 才让 B 按货号+尺码摆候选（兜底）。
@@ -1696,67 +1677,41 @@ class LarkMvpService {
       let productRecordId = '';
       let color = '';
       let colorOptions = null;
-      // 这个货号的颜色**全部**被候选范围过滤掉了（现货 / 未付：都下架）：
-      // 不回候选、**也不再跑 B**（理由见下面 B 那一段）。
-      let colorOptionsOutOfScope = false;
       let stock = null;
       let samplePlan = null;
+      // ⭐ 类型的结论：`null` = **还没定**（多颜色、颜色还没选 / 库存还没查）；
+      //    true / false = 这一次实时库存里有没有这一双 ⇒ 现货 / 预定。
+      let inStock = null;
       if (item.item_no && item.size) {
-        // ── 解析 A ──
-        let productInfo = {};
-        if (parsePolicy.productInfo) {
-          productInfo = await this.resolveProductInfoForSale({ itemNo: item.item_no });
-          productRecordId = productInfo.productRecordId || '';
-          color = productInfo.color || '';
-          // ⭐ 多个颜色：**A 的候选**（不是 B 的）交给确认卡片让用户选。
-          //    "这个尺码有没有货"只用**录单时已经读进来的**实时库存索引标（零新增远端请求）；
-          //    不跑 B 的交易类型（预付）不加这个标注。
-          if (productInfo.colorOptions?.length) {
-            // ⭐ 第四刀：先按**交易类型**决定的**候选范围**过滤（纯本地；状态跟着候选一起来）。
-            const allOptions = productInfo.colorOptions;
-            const { kept: inScopeOptions, dropped: offShelfOptions } = this.colorOptionsInScope({
-              options: allOptions, scope: colorOptionsScope,
-            });
-            if (colorOptionsScope === SALES_COLOR_OPTIONS_SCOPE.inStockOnly) {
-              // ⭐ 正向证据日志：以后问"为什么没给我这个颜色"，看这条 ——
-              //    它同时回答了"过滤跑了吗"（scope）与"丢了哪几个"（dropped_colors）。
-              logInfo('lark.sales.color_options.filtered', {
-                task_id: taskId,
-                trade_type: item.trade_type || parsed.trade_type,
-                trade_type_code: itemTradeType,
-                item_no: item.item_no,
-                size: item.size,
-                scope: colorOptionsScope,
-                kept: inScopeOptions.length,
-                dropped: offShelfOptions.length,
-                dropped_colors: offShelfOptions.map((option) => option.color),
-              });
-            }
-            if (inScopeOptions.length) {
-              colorOptions = this.colorOptionsWithStockStatus({
-                options: inScopeOptions,
-                itemNo: item.item_no,
-                size: item.size,
-                liveInventory,
-                withStock: parsePolicy.stock,
-              });
-            } else {
-              // ⭐ **不静默**：候选被清空时她必须看到"为什么没有颜色可选"，否则只看到
-              //    "点了确认却说还没选颜色"这种走不动的状态。文案可配（`config/salesColorChoice`）。
-              //    ⚠️ 判据是"明确不在售"（见 `colorOptionsInScope`），所以这里的措辞
-              //       （"都下架了"）是有证据的，不是猜。
-              colorOptionsOutOfScope = true;
-              const text = formatColorOptionsScopeEmptyText(colorChoiceConfig.scopeEmptyText, {
-                itemNo: item.item_no,
-              });
-              if (!colorScopeNotes.includes(text)) colorScopeNotes.push(text);
-              if (!missingFields.includes(text)) missingFields.push(text);
-            }
-          }
+        // ── 解析 A ──（两种类型都跑）
+        const productInfo = await this.resolveProductInfoForSale({ itemNo: item.item_no });
+        productRecordId = productInfo.productRecordId || '';
+        color = productInfo.color || '';
+        // ⭐ 多个颜色：**A 的候选**（不是 B 的）交给确认卡片让用户选。
+        //    ⚠️ 候选 = **全部颜色**（2026-10-07 撤掉"只推在售"：预定 = 没货，
+        //       过滤掉没货的颜色她就永远选不到，预定这条路走不通）。
+        //    「有货 / 无货」标注保留 —— 它就是"这双会记成现货还是预定"的预告；
+        //    标注只用**录单时已经读进来的**实时库存索引（零新增远端请求）。
+        if (productInfo.colorOptions?.length) {
+          colorOptions = this.colorOptionsWithStockStatus({
+            options: productInfo.colorOptions,
+            itemNo: item.item_no,
+            size: item.size,
+            liveInventory,
+          });
+          logInfo('lark.sales.color_options.offered', {
+            task_id: taskId,
+            item_no: item.item_no,
+            size: item.size,
+            option_count: colorOptions.length,
+            available_count: colorOptions.filter((option) =>
+              option.stock_status === SALES_COLOR_STOCK_STATUS.available).length,
+            unavailable_count: colorOptions.filter((option) =>
+              option.stock_status === SALES_COLOR_STOCK_STATUS.unavailable).length,
+          });
         }
         // ── 判据 A′：这个货号有没有在「货品信息」里建档 ──
-        // **三种交易类型都走这里**（它在 `if (parsePolicy.stock)` **之外**，
-        // 所以预付跳过 B 也照样被这条判据看见 —— 那正是真机漏掉的那一处）。
+        // **两种交易类型都走这里**（它在库存那一段**之外**）。
         // ⚠️ 只判"这张表里有没有这个货号的记录"；"有记录但资料不齐"不走这里（不拦）。
         const registration = this.productRegistrationFrom({
           itemNo: item.item_no, productInfo, productIndex,
@@ -1774,8 +1729,8 @@ class LarkMvpService {
               item_no: item.item_no,
               size: item.size,
               item_index: index,
-              trade_type: item.trade_type || parsed.trade_type,
-              trade_type_code: itemTradeType,
+              // 类型**这时还没定**（要等库存查询）：只记解析层给的提示，便于对照。
+              trade_type_hint: item.trade_type || parsed.trade_type,
               index_available: registration.indexAvailable,
               reason: registration.reason,
             },
@@ -1800,65 +1755,63 @@ class LarkMvpService {
             reason: registration.reason,
           });
         }
-        // ── 解析 B ──
-        if (parsePolicy.stock) {
-          if (colorOptionsOutOfScope) {
-            // ⭐ 这个货号的颜色**全都不在售**（候选被范围过滤空了）⇒ **不跑 B**。
-            //    跑也只会得到两种更差的结果：① B 从「实时库存」兜底再摆一次候选
-            //    （把刚过滤掉的、明确下架的颜色又捞回来给她选）；② 回一句"库存里没有…"，
-            //    那是**症状**不是**原因** —— 真正的原因已经由上面那句文案说清了。
-            //    可排查：这一单为什么没查库存（答案不是"交易类型不查"，而是"候选空了"）。
-            logInfo('lark.sales.stock_existence.skipped', {
-              task_id: taskId, trade_type: item.trade_type || parsed.trade_type, trade_type_code: itemTradeType,
-              item_no: item.item_no, size: item.size, step: 'stock',
-              reason: 'color_options_out_of_scope',
-            });
-          } else if (colorOptions?.length) {
-            // ⭐ A 已经给出多个颜色 ⇒ 颜色还没定，**B 一次都不跑**（她的口径：
-            //    "在用户选定颜色之前，B 不跑"）。等她点完候选，`choose_sale_color`
-            //    里再拿**那个颜色**跑 B。
-            // 可排查：这一单为什么这次没查库存（而不是"静默跳过"）——答案就是"等她选颜色"。
-            logInfo('lark.sales.stock_existence.deferred', {
-              task_id: taskId, trade_type: item.trade_type || parsed.trade_type, trade_type_code: itemTradeType,
-              item_no: item.item_no, size: item.size, step: 'stock',
-              color_option_count: colorOptions.length,
-              reason: 'awaiting_color_choice',
-            });
-          } else {
-            // A 定下来的颜色（单色货号；A 读不到时是空串 ⇒ B 走兜底那条老路）。
-            const availability = this.resolveStockAvailabilityForSale(
-              { itemNo: item.item_no, size: item.size, itemQuantity, color },
-              liveInventory,
-            );
-            if (availability.shortage) {
-              // 缺货：这一条明细没有可信的颜色 / 记录 id（与 B 占主导之前的老行为一致）。
-              productRecordId = '';
-              color = '';
-              shortageNotes.push(availability.shortage);
-              missingFields.push(availability.shortage);
-            } else {
-              // ⭐ 颜色 / 记录 id **以 A（货品信息）为准**；A 没给出来的才用 B 的。
-              //    B 只回答"这个颜色在这个尺码有没有货"，**不再整体替换 A 的候选**。
-              productRecordId = productRecordId || availability.productRecordId || '';
-              color = color || availability.color || '';
-              // 只有 A 没能给出候选时 B 才补候选（「货品信息」读不到时的兜底路径）。
-              colorOptions = colorOptions || availability.colorOptions || null;
-              stock = availability.stock || null;
-              samplePlan = availability.samplePlan || null;
-            }
-          }
+        // ── 解析 B：实时库存（**类型的判据本身**，两种类型都跑）──
+        if (colorOptions?.length) {
+          // ⭐ A 已经给出多个颜色 ⇒ 颜色还没定，**B 一次都不跑**（她的口径：
+          //    "在用户选定颜色之前，B 不跑"）。等她点完候选，`choose_sale_color`
+          //    里再拿**那个颜色**跑 B —— 那一次才定类型。
+          // 可排查：这一单为什么这次还没定类型（而不是"静默跳过"）——答案就是"等她选颜色"。
+          logInfo('lark.sales.stock_existence.deferred', {
+            task_id: taskId, item_no: item.item_no, size: item.size, step: 'stock',
+            color_option_count: colorOptions.length,
+            reason: 'awaiting_color_choice',
+          });
         } else {
-          // 可排查：这一单为什么**没有**查库存（而不是"静默不看库存"）。
-          logInfo('lark.sales.stock_existence.skipped', {
-            task_id: taskId, trade_type: item.trade_type || parsed.trade_type, trade_type_code: itemTradeType,
-            item_no: item.item_no, size: item.size, step: 'stock',
-            reason: 'trade_type_policy_skips_stock_parse',
+          // A 定下来的颜色（单色货号；A 读不到时是空串 ⇒ B 走兜底那条老路）。
+          const availability = this.resolveStockAvailabilityForSale(
+            { itemNo: item.item_no, size: item.size, itemQuantity, color },
+            liveInventory,
+          );
+          inStock = Boolean(availability.inStock);
+          if (availability.inStock) {
+            // ⭐ 颜色 / 记录 id **以 A（货品信息）为准**；A 没给出来的才用 B 的。
+            //    B 只回答"这个颜色在这个尺码有没有货"，**不再整体替换 A 的候选**。
+            productRecordId = productRecordId || availability.productRecordId || '';
+            color = color || availability.color || '';
+            // 只有 A 没能给出候选时 B 才补候选（「货品信息」读不到时的兜底路径）。
+            colorOptions = colorOptions || availability.colorOptions || null;
+            stock = availability.stock || null;
+            samplePlan = availability.samplePlan || null;
+            // B 兜底又给出多个颜色 ⇒ 还是"颜色没定"，类型等她那一次点击。
+            if (colorOptions?.length) inStock = null;
+          }
+          // ⭐ 正向证据：这一单的**类型是怎么定下来的**（判据 = 库存有没有）——
+          //    以后问"为什么这单是预定 / 现货"，看这条，不用猜。
+          logInfo('lark.sales.trade_type.decided', {
+            task_id: taskId,
+            item_no: item.item_no,
+            size: item.size,
+            color,
+            judged_by: 'realtime_stock',
+            in_stock: inStock,
+            trade_type_code: inStock === null ? '' : salesTradeTypeForStock({ inStock }),
+            step: 'intake',
           });
         }
       }
+      // ⭐ 这一条明细的类型：鞋 = 上面那次库存查询的结论（还没查 → 空串 = "还没定"）；
+      //    配品没有货号 / 尺码、无从查库存 ⇒ 沿用她嘴上说的性质（解析层已收敛成编码）。
+      const itemTradeTypeCodeForSale = (item.item_no && item.size)
+        ? (inStock === null ? '' : salesTradeTypeForStock({ inStock }))
+        : String(item.trade_type_code || '').trim();
       items.push({
         ...item,
         quantity: itemQuantity,
+        // ⚠️ `trade_type` / `trade_type_code` 一律写**结论**（不是模型的原话）：
+        //    认不出来时是空串 —— 空串在 `itemTradeTypeCode` 里就是"还没定"，
+        //    绝不能让模型说的「预定」在库存明明有货时还留在行上。
+        trade_type: tradeTypeLabel(itemTradeTypeCodeForSale),
+        trade_type_code: itemTradeTypeCodeForSale,
         product_record_id: productRecordId,
         color,
         // 展示用编号：货号 + 颜色——实时库存里就是用这两个要素定位一双鞋。
@@ -1880,46 +1833,40 @@ class LarkMvpService {
       missingFields.push('已收金额和待平台结算金额不能超过本单成交金额');
     }
 
-    // 交易类型由 AI 从原话判断；**交付状态由注册表从交易类型推出来**，
-    // 不再让用户在卡片上选。现货/未付当场交付，只有预付（只付定金、货没拿走）是未交付。
-    // ⭐ 2026-10-07：一张单可以**同时**有现货与预付（业务负责人：「这就是一个人买的呀」）⇒
-    //    · 每一行自己的类型在 `items[].trade_type_code`（明细行写它，单选）；
+    // ⭐ 类型的判据是**实时库存**（上面每一条明细各查了一次），**交付状态由类型推出来**
+    //   （`config/salesMovements.delivery`），不再让用户在卡片上选。
+    // ⭐ 一张单可以**同时**有现货与预定（业务负责人：「这就是一个人买的呀」）⇒
+    //    · 每一行自己的类型在 `items[].trade_type_code`（明细行写它，单选；""= 还没定）；
     //    · 整单是 `trade_type_codes` **去重后的多个**（主表写它，多选）；
-    //    · 整单的 `delivery_status` 只在"**所有行都不交付**"时才是未交付，否则按行判
-    //      （单类型单读到的值与改动前**逐字相同**：纯预付 → 未交付，其余 → 已交付）。
-    const orderTradeTypeCodesForThisOrder = orderTradeTypeCodes(items, tradeTypeCode);
+    //    · 整单的 `delivery_status` 只在"**所有行都不交付**"时才是未交付，否则按行判。
+    // ⚠️ **整单的 `trade_type_code` 恒为空串**：新口径下"整单一个类型"不存在，
+    //    它只能当**兜底**用 —— 而拿它当兜底会把"颜色还没选、类型还没定"的行
+    //    静默当成整单的那个类型（那就等于没查库存就定了类型）。所以刻意留空。
+    const orderTradeTypeCodesForThisOrder = orderTradeTypeCodes(items, '');
     const deliverableItemCount = items.filter((item) =>
-      deliversForTradeType(itemTradeTypeCode(item, tradeTypeCode))).length;
+      deliversForTradeType(itemTradeTypeCode(item, ''))).length;
     const draft = {
       ...parsed,
       product_info_gaps: productInfoGaps,
-      trade_type: parsed.trade_type,
-      trade_type_code: tradeTypeCode,
+      // 显示用的整单类型（诊断 / 摘要里人读）：去重后的规范标签；还没定时是空串。
+      trade_type: [...new Set(orderTradeTypeCodesForThisOrder
+        .filter(Boolean).map((code) => tradeTypeLabel(code)))].join('/'),
+      trade_type_code: '',
       trade_type_codes: orderTradeTypeCodesForThisOrder,
       // 「整单要不要交付」只作**兼容字段**：只要有一行要交付，就标已交付（真正逐行判在
-      // confirm 里）。单类型单读到的值与改动前逐字相同：纯预付 → 未交付，其余 → 已交付。
+      // confirm 里）。纯预定 → 未交付，其余 → 已交付。
       delivery_status: deliverableItemCount > 0 ? '已交付' : '未交付',
       product_number: items[0]?.product_number || '',
       items,
       missing_fields: missingFields,
     };
     // 交易类型落成关联「行为管理」的记录，便于以后筛选和对账。
-    // 解析不到时记警告但**不阻塞入账**：它只是审计字段，业务事实（交付与收款）
-    // 已经由 trade_type 决定，不该因为一个关联查不到就让门店录不进单。
     // ⭐ 多选：把**去重后的每一个**编码都解析成记录 id（顺序 = 明细行出现顺序）。
-    const tradeTypeRecordIds = [];
-    const resolveTradeType = typeof this.references.resolveSalesTradeType === 'function';
-    for (const code of orderTradeTypeCodesForThisOrder) {
-      if (!code || !resolveTradeType) continue;
-      try {
-        const recordId = (await this.references.resolveSalesTradeType(code)).recordId;
-        if (recordId && !tradeTypeRecordIds.includes(recordId)) tradeTypeRecordIds.push(recordId);
-      } catch (error) {
-        logWarn('lark.sales.trade_type.resolve_failed', {
-          task_id: taskId, code, error: error.message,
-        });
-      }
-    }
+    // ⚠️ 这一步在**确认入账前**还会再同步一次（见 `syncSalesTradeTypes`）：
+    //    多颜色时类型要等她选完颜色、查完库存才知道，录单这一次可能一个编码都没有。
+    const tradeTypeRecordIds = await this.syncSalesTradeTypes({
+      salesEntryRecordId, items, taskId,
+    });
     // ⚠️ 复用已定位的那笔销售时（群话题里的后续消息），**不写**这几个"解析中间态"
     //    字段：`解析摘要` 里放的是**这一条消息**的草稿，写上去会把她原单的解析摘要盖掉。
     //    她的原单已经在表里了，这次的处理过程留在本地任务里就够（不放业务表）。
@@ -1954,28 +1901,18 @@ class LarkMvpService {
       draft,
     });
     if (draft.missing_fields?.length) {
-      // 这一单的问题**只有缺货**（或"颜色全不在售"）时，直接回那一句短的；
-      // 还夹杂别的问题（金额缺失等）时才用完整说明。
-      // ⚠️ 两个集合的**条数**要与 `missing_fields` 对上：对得上说明缺项里只有这几句
-      //    能独立成句的话（没有别的、需要整体说明的问题）——与既有 `onlyShortage` 同一判据。
-      const standaloneNotes = [
-        ...colorScopeNotes,
-        ...(shortageNotes.length ? [`${shortageNotes.join('、')}，请核实～`] : []),
-      ];
-      const onlyStandalone = (colorScopeNotes.length + shortageNotes.length) > 0
-        && (colorScopeNotes.length + shortageNotes.length) === draft.missing_fields.length;
-      // 优先级：「货号没建档」>「颜色全不在售 / 缺货」> 完整说明。
-      // 前三者那句话本身就是完整的（她照着做就行），再套一层
-      // "销售信息还缺…"只会把要她做的事埋起来；一单多双只缺一双时，这里也只报那一双。
-      // ⭐ 最后那一支（完整说明）2026-10-07 改过：原来是
+      // 优先级：「货号没建档」> 完整说明。
+      // ⚠️ 2026-10-07：「缺货」「颜色全不在售」两条独立短句**已退场** ——
+      //    没货不再是缺项（它就是「预定」，是合法输入、照出卡片）。
+      //    「货号没建档」那句话本身就是完整的（她照着做就行），再套一层
+      //    "销售信息还缺…"只会把要她做的事埋起来；一单多双只缺一双时，这里也只报那一双。
+      // ⭐ 完整说明那一支 2026-10-07 改过：原来是
       //    `销售信息还缺：${missing_fields.join('、')}。请补充后重新发送完整销售信息。`
       //    —— 把代码标识符（`items[0].actual_amount`）漏给她，还把 4~5 句串成一段。
       //    现在走渲染器：**一件事一行 + 每条都有具体动作 + 一个字都不含代码标识符**。
       await this.sendTaskText(replyTask, registrationNotes.length
         ? registrationNotes.join('\n')
-        : onlyStandalone
-          ? standaloneNotes.join('\n')
-          : missingInfoText);
+        : missingInfoText);
       return;
     }
     const cardStartedAt = Date.now();
@@ -2029,7 +1966,7 @@ class LarkMvpService {
     }
     const procurementResult = await this.purchaseWebhooks.handleCardAction(value, operatorOpenId, event);
     if (procurementResult) return procurementResult;
-    // 「第二次交付」的「成交」按钮：收尾的是**已入账**的未付 / 预付单。
+    // 「第二次交付」的「成交」按钮：收尾的是**已入账、尚未完成履约**的单。
     // ⚠️ 位置有意放在这里——采购分派之后（它只认自己的动作名，我们的动作会返回 null）、
     // 下面那句 `if (!draftId) throw` 之前：这条链路绑的是销售主表 record_id，
     // 根本没有草稿，也没有草稿状态机，落在下面那套逻辑里一定抛「卡片缺少草稿 ID」。
@@ -2048,7 +1985,7 @@ class LarkMvpService {
   }
 
   /**
-   * 「成交」：已入账的未付 / 预付单收尾（补收款 + 交付）。
+   * 「成交」：已入账、尚未完成履约的单收尾（补收款 + 交付）。
    *
    * 这里只做三件事：把按钮带上来的「销售单号 + 收款方式」转给编排服务，
    * 把"点的是哪条群消息、哪天的卡"一起带下去（成交成功后要把那张卡的这一单变灰，
@@ -2185,15 +2122,16 @@ class LarkMvpService {
         color: chosenColor,
         product_number: value.product_number || item.product_number || item.item_no || '',
       };
-      // ── 颜色定下来**之后**才跑解析 B（多颜色时它在录单阶段被刻意推迟）──
-      // "跑不跑 B"仍然只由 `salesTradeTypePolicy` 决定：现货 / 未付 跑，**预付仍然不跑**。
+      // ── ⭐ 颜色定下来**之后**才跑解析 B —— **这一次才定类型**（她的三步流程第 3 步）──
+      //   「用户选完之后，再拿着用户选的颜色去……找，如果找到了，就是现货，如果没找到，就是预定」
+      //   ⇒ 找到 → `SALE_CASH`（现货，交付并扣库存）；没找到 → `SALE_PREPAID`（预定，不交付）。
+      //   🔴 **没找到不是错误**：不再有"缺货提示 / 请核实"，也不再把候选留着让她重选。
       // 跑的是同一个 `resolveStockAvailabilityForSale`，输入带上她选定的颜色。
-      // ⭐ 判据取的是**这一行**的类型（她点的是哪一行的颜色），不是整单的类型 ——
-      //   混合单里现货那一行照样要查库存、预付那一行照样不查。
-      let shortage = '';
-      if (salesParseRuns(itemTradeTypeCode(item, tradeTypeCodeFromLabel(task.draft?.trade_type)), 'stock')) {
-        // ⚠️ 只把**远端读表**这一步当作"可重试的失败"：读不到就**不下结论**（AGENTS.md 第 17 条）、
-        //    候选保留、回她一句让她再点一次；纯函数里的编程错误仍然照旧抛出来，不被这里吞掉。
+      // ⚠️ 只把**远端读表**这一步当作"可重试的失败"：读不到就**不下结论**（AGENTS.md 第 17 条）、
+      //    候选保留、回她一句让她再点一次（**类型也不写** —— 宁可让她再点一次，
+      //    也不能在没查到库存的情况下替她定成现货或预定）；纯函数里的编程错误照旧抛出来。
+      let inStock = null;
+      {
         let liveInventory = null;
         let readError = null;
         try {
@@ -2218,30 +2156,28 @@ class LarkMvpService {
           itemQuantity: Number(item.quantity || 1),
           color: chosenColor,
         }, liveInventory);
-        if (availability.shortage) {
-          shortage = availability.shortage;
-        } else {
+        inStock = Boolean(availability.inStock);
+        if (availability.inStock) {
           if (availability.stock) settled.stock = availability.stock;
           // 颜色定了才知道"卖的是不是样品"：补样品方案由 B 现算（不是候选里预先带的）。
           Object.assign(settled, availability.samplePlan || {});
         }
       }
-      if (shortage) {
-        // ⭐ 缺货提示发生在 B **之后**：与录单时同一个形状（`库存里没有…，请核实～`）。
-        //    候选**保留**、任务留在 `ready_to_confirm` —— 她可以在同一张卡片上换一个颜色，
-        //    不必重发整条销售信息（"全都无货"时也不会被留在一个点不动、走不了的死状态）。
-        items[itemIndex] = settled;
-        await this.store.update(draftId, { draft: { ...task.draft, items } });
-        await this.sendTaskText(task, `${shortage}，请核实～`).catch((error) =>
-          logWarn('lark.sales.feedback.failed', {
-            task_id: draftId, interaction_id: context.interactionId, error: error.message,
-          }));
-        logInfo('lark.sales.color.chosen_out_of_stock', {
-          task_id: draftId, item_index: itemIndex, color: chosenColor,
-          product_record_id: value.record_id, shortage,
-        });
-        return { toast: { type: 'warning', content: shortage } };
-      }
+      const chosenTradeTypeCode = salesTradeTypeForStock({ inStock });
+      settled.trade_type_code = chosenTradeTypeCode;
+      settled.trade_type = tradeTypeLabel(chosenTradeTypeCode);
+      // ⭐ 正向证据：类型是**这一次点击、这一次库存查询**定下来的（判据 = 库存有没有）。
+      logInfo('lark.sales.trade_type.decided', {
+        task_id: draftId,
+        item_index: itemIndex,
+        item_no: item.item_no,
+        size: item.size,
+        color: chosenColor,
+        judged_by: 'realtime_stock',
+        in_stock: inStock,
+        trade_type_code: chosenTradeTypeCode,
+        step: 'color_chosen',
+      });
       items[itemIndex] = {
         ...settled,
         needs_color: false,
@@ -2277,7 +2213,7 @@ class LarkMvpService {
       // 卡片上只留一个「确认」；旧卡片上的 confirm_sale_delivered / _pending 仍然兼容。
       const shouldDeliver = shouldDeliverFor(task, action);
       // ⭐ 2026-10-07：交付是**逐明细行**的事（业务负责人：「在销售明细里面分开」）——
-      //   现货 / 未付的行要交付并扣库存，**预付的行不交付**。
+      //   现货的行要交付并扣库存，**预定（没货）的行不交付**。
       //   `shouldDeliver` 仍然决定"整单要不要走交付这一段"（纯预付单一次都不调用，
       //   与改动前逐字相同），具体交付哪几条由下面的 `deliverableDetailIds` 挑出来。
       const deliverableItemIndexes = deliverableItemIndexesOfDraft(task.draft, shouldDeliver);
@@ -2305,6 +2241,12 @@ class LarkMvpService {
       //      （那些 service 都是启动时构造的单例，放实例上会跨请求串台）。
       //   ⚠️ 只是为了"能串起来"，不改任何写入内容与顺序。
       const correlation = { task_id: draftId, sales_entry_record_id: task.sales_entry_record_id };
+      // ⭐ 主表「交易类型」在这里**再同步一次**：多颜色那一条的类型是"选完颜色、查完库存"
+      //   才定下来的，录单那一次写不到它（详见 `syncSalesTradeTypes` 的注释）。
+      //   ⚠️ 只是审计字段：解析不到只记 warn，绝不因此挡住入账。
+      await this.syncSalesTradeTypes({
+        salesEntryRecordId: task.sales_entry_record_id, items: task.draft.items || [], taskId: draftId,
+      });
       await this.salesStatus.write(task.sales_entry_record_id, { userAction: WRITE.userAction.confirmed },
         correlation);
       const startedAt = Date.now();

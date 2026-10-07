@@ -54,8 +54,10 @@ const applyGroupBuyVoucherPolicy = ({ sourceText, items, payments, vouchers = []
     issues.push('团购券暂只支持一单一双；多双鞋请逐双说明券后成交金额');
     return { issues };
   }
-  if (/定金|预付|尾款|未付|欠款|赊账/.test(source)) {
-    issues.push('团购券与预付或未付款同时出现，请人工核对成交金额和待收款');
+  // ⚠️ 判据是"她说了钱没结清的说法"（定金 / 尾款 / 欠款…），**不是交易类型** ——
+  //    「未付 / 预付」在这里都只是她的话（资金那一维），2026-10-07 起不再是一种类型。
+  if (/定金|预付|预定|尾款|未付|欠款|赊账/.test(source)) {
+    issues.push('团购券与"定/尾款、欠款"这类没结清的钱同时出现，请人工核对成交金额和待收款');
     return { issues };
   }
 

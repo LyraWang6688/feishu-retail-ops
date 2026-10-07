@@ -176,17 +176,53 @@ test('销售确认卡片：明细行是 heading 大字', () => {
   assert.equal(detail.text.text_size, 'heading');
 });
 
-test('销售确认卡片：成交/收款行与交易类型行是 heading 且不加粗（内容不含 **）', () => {
+// ⭐ 2026-10-07 口径大改：卡片把三件事**分开说**（业务负责人逐字：
+//   「【卡片 = 分开说】类型 · 履约状态 · 收款情况（已收多少、还欠多少）」）。
+//   ⚠️ 这条断言**不是放宽**：原来钉的是「交易类型：现货 · 已交付」**一行**，
+//      现在钉的是**三行**（类型 / 履约 / 收款），信息量变多了。
+test('销售确认卡片：成交/收款行 + 「类型 / 履约状态 / 收款情况」三段都是 heading 且不加粗', () => {
   const card = salesConfirmationCard('draft_1', saleDraft());
   const headings = card.elements
     .filter((element) => element.tag === 'div' && element.text?.text_size === 'heading');
-  assert.equal(headings.length, 3, '明细、成交/收款、交易类型三行是 heading');
-  // [0] 明细行、[1] 成交/收款行、[2] 交易类型行
+  assert.equal(headings.length, 5, '明细、成交/收款 + 类型/履约/收款三段，共五行 heading');
+  // [0] 明细行、[1] 成交/收款行、[2..4] 三段事实
   assert.match(headings[1].text.content, /^成交总额 ￥99/);
   assert.match(headings[1].text.content, /本次已收 微信 ￥99/);
   assert.doesNotMatch(headings[1].text.content, /\*\*/, '大字已经够重，再加粗在手机上会糊');
-  assert.match(headings[2].text.content, /^交易类型：现货 · 已交付$/);
-  assert.doesNotMatch(headings[2].text.content, /\*\*/, '大字已经够重，再加粗在手机上会糊');
+  // ⚠️ 这个草稿里明细**没有**类型编码（`saleDraft()` 的老形状）⇒ 类型未定 = 「待定」。
+  assert.match(headings[2].text.content, /^类型：/);
+  assert.match(headings[3].text.content, /^履约状态：/);
+  assert.match(headings[4].text.content, /^收款情况：已收 微信 ￥99；/);
+  for (const heading of headings) {
+    assert.doesNotMatch(heading.text.content, /\*\*/, '大字已经够重，再加粗在手机上会糊');
+  }
+  // 「未付」不许再作为一种类型出现在卡片上（它只是"现货 + 钱没结清"的状态）。
+  assert.doesNotMatch(JSON.stringify(card), /未付/);
+});
+
+test('销售确认卡片：三段按**逐明细的类型编码**说（现货已交付 / 未交付）', () => {
+  const card = salesConfirmationCard('draft_1', saleDraft({
+    trade_type_code: 'SALE_CASH',
+    items: [{ item_no: '66356', size: 42, quantity: 1, actual_amount: 99, trade_type_code: 'SALE_CASH' }],
+  }));
+  const headings = card.elements
+    .filter((element) => element.tag === 'div' && element.text?.text_size === 'heading');
+  assert.equal(headings[2].text.content, '类型：现货');
+  assert.equal(headings[3].text.content, '履约状态：已交付');
+  assert.equal(headings[4].text.content, '收款情况：已收 微信 ￥99；已结清');
+
+  const reserved = salesConfirmationCard('draft_1', saleDraft({
+    trade_type_code: 'SALE_PREPAID',
+    items: [{ item_no: '66356', size: 42, quantity: 1, actual_amount: 228, trade_type_code: 'SALE_PREPAID' }],
+    payments: [{ method: '微信', amount: 100, status: '已收' }],
+    agreed_total: 228,
+    owed: 128,
+  }));
+  const reservedHeadings = reserved.elements
+    .filter((element) => element.tag === 'div' && element.text?.text_size === 'heading');
+  assert.equal(reservedHeadings[2].text.content, '类型：预定');
+  assert.equal(reservedHeadings[3].text.content, '履约状态：未交付');
+  assert.equal(reservedHeadings[4].text.content, '收款情况：已收 微信 ￥100；还欠 ￥128');
 });
 
 // ⚠️ 2026-10-07 改写（**只因为"位置变了"，不是放宽**）：

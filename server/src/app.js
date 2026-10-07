@@ -119,12 +119,12 @@ if (require.main === module) {
   if (Number.isFinite(ttlMs) && ttlMs > 0 && Number.isFinite(intervalMs) && intervalMs > 0) {
     startUploadCleanup({ dir: uploadDir, ttlMs, intervalMs });
   }
-  // 「第二次交付」的每日 9 点（北京时间）成交提醒：把没成交的未付 / 预付单推成群卡片。
+  // 「第二次交付」的每日 9 点（北京时间）成交提醒：把**尚未完成履约**的单推成群卡片。
   // 没有 cron 依赖——setInterval 轮询 + 按天认领（见 utils/secondDeliveryReminder 与服务里
   // sendDailyReminder 的注释）。只在真正启动服务时拉起，被 require 进测试不会起定时器。
   const secondDelivery = new SecondDeliveryService();
   startSecondDeliveryReminder({ run: ({ now }) => secondDelivery.sendDailyReminder({ now }) });
-  // 「维度 1」：每天 9 点（北京时间）把最近 7 天未付 / 预付、尚未成交的销售单推到群里
+  // 「维度 1」：每天 9 点（北京时间）把最近 7 天**还没收齐**的销售单（预定 / 现货待收）推到群里
   // （每笔一行：单号 + 待收金额 + 深链）。**显式开关**，默认关：
   // 没配群 id 或开关关着时，连定时器都不起（配置在这里读一次，写错就在启动时吵）。
   const pendingDealPush = resolvePendingDealPushConfig();

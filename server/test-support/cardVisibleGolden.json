@@ -28,7 +28,23 @@
         "tag": "div",
         "text": {
           "tag": "lark_md",
-          "content": "交易类型：—",
+          "content": "类型：待定",
+          "text_size": "heading"
+        }
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "履约状态：待定",
+          "text_size": "heading"
+        }
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "收款情况：已收 微信 ￥198；已结清",
           "text_size": "heading"
         }
       },
@@ -790,7 +806,7 @@
       "template": "blue",
       "title": {
         "tag": "plain_text",
-        "content": "待成交：未付 / 预付"
+        "content": "待成交 / 待收款"
       }
     },
     "elements": [

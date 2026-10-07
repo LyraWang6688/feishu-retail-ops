@@ -8,7 +8,8 @@
 //   □ 表**整表各读一次**：货品信息 1 次、「其他配品」配了才读 1 次，
 //     **不为了货号尺码再读一遍销售明细**（复用本轮已经读进来的那份）；
 //   □ `includeItems` 默认**关**：第二次交付提醒那条路读表与返回形状**一个字都不变**；
-//   □ 分区要用的 `tradeTypeCode`（行为编码）照常给。
+//   □ 卡片显示要用的 `tradeTypeLabel`（行为名称）照常给；`fulfillmentStatus` 也照常给
+//     （**分区判据是它**，不是交易类型编码 —— 2026-10-07 口径大改）。
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
 
 const test = require('node:test');
@@ -44,15 +45,16 @@ const tables = (overrides = {}) => ({
   ...overrides,
 });
 
-// 一笔「未付、已入账、尚未成交」的单：主表 1 条 + 收款 1 条（未收款）。
+// 一笔「现货、已入账、货已交付但钱没结清」的单（= 新口径下的**现货待收**）：
+// 主表 1 条 + 明细 1 条（已交付）+ 收款 1 条（未收款）。
 const seed = ({ details, entry = {}, payments = [], products = [], accessories = [], behavior = {} } = {}) => ({
   behavior: [{
-    record_id: 'b_unpaid',
-    fields: { 行为编码: 'SALE_UNPAID', 行为名称: '未付', ...behavior },
+    record_id: 'b_cash',
+    fields: { 行为编码: 'SALE_CASH', 行为名称: '现货', ...behavior },
   }],
   salesEntry: [{
     record_id: 'o1',
-    fields: { 销售单号: 'XSD-1', 交易类型: ['b_unpaid'], 录单日: SOLD_AT, 资金状态: '已写入', ...entry },
+    fields: { 销售单号: 'XSD-1', 交易类型: ['b_cash'], 录单日: SOLD_AT, 资金状态: '已写入', ...entry },
   }],
   salesDetail: details,
   paymentRecord: payments.length ? payments : [
@@ -126,7 +128,8 @@ test('货号取「货品信息.货号」、尺码走共享解析；配品取「�
     { kind: 'shoe', itemNo: 'B26002-52', size: '37' }, // 货号，不是「编号」N-1
     { kind: 'accessory', itemNo: '腰带', size: '' }, // 配品没有尺码：空串
   ]);
-  assert.equal(orders[0].tradeTypeCode, 'SALE_UNPAID');
+  assert.equal(orders[0].tradeTypeCode, 'SALE_CASH');
+  assert.equal(orders[0].fulfillmentStatus, '已交付', '分区判据 = 履约状态（现货待收 → 已交付）');
 });
 
 test('表整表各读一次：货品信息 1 次、配品 1 次、销售明细**不重复读**', async () => {
@@ -230,13 +233,39 @@ test('includeItems 默认关：不多读表，返回对象里**没有** items �
   assert.equal(gateway.calls.filter((call) => call === 'salesDetail').length, 1);
 });
 
-test('候选口径没变：已入账 + 未付/预付 + 7 天内 + 未完成，一条都不多一条都不少', async () => {
+test('历史单：交易类型指向**已被删掉**的行为记录 → 照旧进候选（只是类型名读不出来）', async () => {
+  // 2026-10-07 业务负责人把「未付」那条行为记录从「行为管理」里删掉了 ⇒
+  // 历史销售单的「交易类型」关联**悬空**（指向一个不存在的 record_id）。
+  // 候选口径 = **履约进展**（不再按交易类型编码筛）⇒ 这类单**必须照旧进候选**，
+  // 只是 `tradeTypeLabel` / `tradeTypeCode` 读不出来（空串）。
+  const records = seed({
+    details: [shoe('d1', 'p1', [{ record_ids: ['sz37'], text: '37' }])],
+    products: [{ record_id: 'p1', fields: { 货号: 'B26002-52' } }],
+    // 行为表里**没有**这条记录（被删了）。
+    behavior: { 行为编码: 'SALE_SOMETHING_ELSE', 行为名称: '别的' },
+    entry: { 交易类型: ['b_deleted_long_ago'] },
+  });
+  const orders = await run(records, { query: { includeItems: true } });
+  assert.equal(orders.length, 1, '关联悬空不许让一笔"还没收齐"的单从提醒里消失');
+  assert.equal(orders[0].tradeTypeLabel, '');
+  assert.equal(orders[0].tradeTypeCode, '');
+  // 分区判据仍然是履约状态（这一单已交付 + 未收款 ⇒ 现货待收）。
+  assert.equal(orders[0].fulfillmentStatus, '已交付');
+});
+
+test('⭐ 候选 = 尚未完成履约：**现货待收**（已交付 + 钱没结清）也进候选；收清了 / 没入账的不进', async () => {
   const records = seed({
     details: [shoe('d1', 'p1', [{ record_ids: ['sz37'], text: '37' }])],
     products: [{ record_id: 'p1', fields: { 货号: 'B26002-52' } }],
   });
   const included = await run(records, { query: { includeItems: true } });
   assert.equal(included.length, 1);
+  // ⭐ AC-6.3：这一笔的主表交易类型是 `SALE_CASH`（现货），老口径按"未付 / 预付编码"筛
+  //    会把它整类漏掉；新口径按**履约进展**筛 ⇒ 它在候选里。
+  assert.equal(included[0].tradeTypeCode, 'SALE_CASH');
+  assert.equal(included[0].fulfillmentStatus, '已交付');
+  assert.equal(included[0].paymentStatus, '未收款');
+  assert.equal(included[0].pendingAmount, 228, '成交 228、一分没收 ⇒ 待收 228');
 
   // 已经收清的（收款状态=已收款）→ 不算候选（与口径一致：尚未成交才推）。
   const settled = await run(seed({

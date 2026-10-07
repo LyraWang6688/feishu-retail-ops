@@ -211,3 +211,10 @@ test('现场复现：她点「确认」后两次真实 patch 的 payload 都带 
 //      `assert.deepEqual({header, elements})` 逐张断言相同（17 张全过）；
 //   3. 把改动前那份的 `{header, elements}` 写成 `test-support/cardVisibleGolden.json`。
 // 卡片文案有意变更时，同步更新 golden 即可（改的是 golden，不是断言强度）。
+//
+// ⭐ 2026-10-07 **口径变更**（交易类型 = 库存有没有；卡片分三段说）——
+//    两张卡的可见内容**有意**变了，golden 已同步（改的是 golden，不是断言强度）：
+//      · `salesConfirmationCard`：原来是「交易类型：…」一行，现在是
+//        「类型 / 履约状态 / 收款情况」三行（业务负责人：「【卡片 = 分开说】…」）；
+//      · `secondDeliveryCard`：标题从「待成交：未付 / 预付」改成「待成交 / 待收款」
+//        （「未付」不再是交易类型）。

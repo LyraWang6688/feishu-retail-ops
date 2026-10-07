@@ -5,6 +5,10 @@ const { ARRIVAL_CONVERSATION_ACTIONS } = require('../config/arrivalConversation'
 const { resolveProductInfoGapsConfig } = require('../config/productInfoGaps');
 // 颜色候选按钮上的「有货 / 无货」后缀（配置先行；见那份文件的注释）。
 const { resolveSalesColorChoiceConfig, colorOptionButtonText } = require('../config/salesColorChoice');
+// 「类型 · 履约状态 · 收款情况」这三段的文案与渲染（配置先行；见那份文件的注释）。
+const { salesCardFactsFor } = require('../config/salesCardFacts');
+// 「第二次交付（成交）提醒卡片」上那几句必须与"未付不再是类型"同口径的文案（配置先行）。
+const { resolveSecondDeliveryCardConfig, fill } = require('../config/secondDeliveryCard');
 
 const text = (value) => String(value ?? '').replace(/\n/g, ' ');
 
@@ -306,7 +310,7 @@ const keepOnlyCardButton = (card, action) => {
 // 再把颜色名列一遍就是跟按钮重复了。
 // 已经确定颜色的明细（单色货号、或用户说对了）不出按钮，只在上面的明细行里显示。
 //
-// ⭐ 2026-10-07 第三刀：跑库存解析的交易类型（现货 / 未付）里，候选按钮带上
+// ⭐ 2026-10-07：候选按钮带上
 //    「有货 / 无货」后缀（`黑色（有货）`）—— 判断只用录单时**已经读进来**的实时库存索引，
 //    零新增远端请求（后缀文案在 `config/salesColorChoice`）。
 //    不跑 B 的交易类型（预付）候选上没有 `stock_status`，**不加后缀**（见 colorOptionButtonText）。
@@ -360,14 +364,14 @@ const salesSampleReplacementPicker = (draftId, draft) => {
   return elements;
 };
 
-// 交易类型是脚本按注册表从 AI 识别的性质推出来的，卡片只**展示**，不再让用户选。
-// 确认这个动作的含义因此变得单一：她核对的是"AI 听对了没有"，不是替系统决定交付方式。
-const tradeTypeLine = (draft) => {
-  const label = text(draft?.trade_type || '').trim();
-  const delivery = text(draft?.delivery_status || '').trim();
-  if (!label) return delivery || '—';
-  return delivery ? `${label} · ${delivery}` : label;
-};
+// ⭐ 2026-10-07 口径大改后，卡片把三件事**分开说**（业务负责人逐字：
+//   「【卡片 = 分开说】类型 · 履约状态 · 收款情况（已收多少、还欠多少）」）：
+//   · 类型     —— **查完实时库存再定**（现货 / 预定），不是她嘴上说的性质；
+//   · 履约状态 —— 由类型推出来（现货已交付 / 预定未交付）；
+//   · 收款情况 —— 已收多少、还欠多少（资金与类型**无关**）。
+// 三段的行内文案 / 占位符**全在 `config/salesCardFacts`**（本文件只排布，不写死中文）。
+const salesCardFactElements = (draft) => salesCardFactsFor(draft).lines
+  .map((content) => ({ tag: 'div', text: { tag: 'lark_md', content, text_size: 'heading' } }));
 
 // 第三区：货品资料不全时，把"还差哪几项"和记录链接放进**点确认之后更新的那些卡片**。
 //
@@ -457,8 +461,8 @@ const salesConfirmationCard = (draftId, draft) => {
           text_size: 'heading' },
       },
       { tag: 'div', text: { tag: 'lark_md', content: moneyLines.join('\n'), text_size: 'heading' } },
-      { tag: 'div',
-        text: { tag: 'lark_md', content: `交易类型：${tradeTypeLine(draft)}`, text_size: 'heading' } },
+      // ⭐ 三段：类型 · 履约状态 · 收款情况（文案在 `config/salesCardFacts`）。
+      ...salesCardFactElements(draft),
       ...salesColorPickers(draftId, draft),
       ...salesSampleReplacementPicker(draftId, draft),
       // ⚠️ 这里**刻意没有** `productInfoGapsElements(draft)`：
@@ -941,21 +945,25 @@ const shanghaiClock = (value) => {
   return new Date(date.getTime() + SHANGHAI_OFFSET_MS).toISOString().slice(11, 16);
 };
 
-const secondDeliveryOrderLines = (order = {}) => {
-  const lines = [`${text(order.orderNo) || '（无单号）'}　·　${text(order.tradeTypeLabel) || '未付 / 预付'}`];
+const secondDeliveryOrderLines = (order = {}, config = resolveSecondDeliveryCardConfig()) => {
+  const lines = [`${text(order.orderNo) || '（无单号）'}　·　${text(order.tradeTypeLabel) || config.typeFallback}`];
   const facts = [];
-  if (Number(order.pendingAmount) > 0) facts.push(`未收 ${yuanText(order.pendingAmount)}`);
+  if (Number(order.pendingAmount) > 0) {
+    facts.push(fill(config.pendingAmountFact, { amount: yuanText(order.pendingAmount) }));
+  }
   if (Number(order.pendingDeliveryQuantity) > 0) {
-    facts.push(`未交付 ${Number(order.pendingDeliveryQuantity)}/${Number(order.quantity) || 0} 双`);
+    facts.push(fill(config.pendingDeliveryFact, {
+      count: Number(order.pendingDeliveryQuantity), total: Number(order.quantity) || 0,
+    }));
   }
   // 钱货看着都齐了却还在候选里（进度没到「已完成」）：如实写"待核对"，不写一个像成功的说法。
-  if (!facts.length) facts.push('待核对');
+  if (!facts.length) facts.push(config.reviewText);
   lines.push(facts.join('　·　'));
   return lines.join('\n');
 };
 
 /**
- * 每日成交提醒卡片：列未付 / 预付且尚未完成履约的单，每单下面一行「成交」按钮。
+ * 每日成交提醒卡片：列**尚未完成履约**（预定 / 现货待收）的单，每单下面一行「成交」按钮。
  *
  * 为什么按钮上要带收款方式（业务规则只说"带「成交」按钮"）：
  * 补收款必须写明这笔钱是怎么收的——「交易方式」是关联字段，
@@ -973,11 +981,12 @@ const secondDeliveryOrderLines = (order = {}) => {
  * SecondDeliveryService.markCardSettled）。
  */
 const secondDeliveryCard = ({ orders = [], methods = [], dayKey = '' } = {}) => {
+  const config = resolveSecondDeliveryCardConfig();
   const elements = [];
   orders.forEach((order) => {
     elements.push({
       tag: 'div',
-      text: { tag: 'lark_md', content: secondDeliveryOrderLines(order), text_size: 'heading' },
+      text: { tag: 'lark_md', content: secondDeliveryOrderLines(order, config), text_size: 'heading' },
     });
     elements.push(...buttonRows(methods.map((method) => actionButton(
       methods.length === 1 ? '成交' : `成交·${method}`, SECOND_DELIVERY_ACTION, '',
@@ -986,10 +995,10 @@ const secondDeliveryCard = ({ orders = [], methods = [], dayKey = '' } = {}) => 
   });
   return {
     config: patchableCardConfig(),
-    header: { template: 'blue', title: { tag: 'plain_text', content: '待成交：未付 / 预付' } },
+    header: { template: 'blue', title: { tag: 'plain_text', content: config.header } },
     elements: elements.length
       ? elements
-      : [{ tag: 'div', text: { tag: 'lark_md', content: '今天没有待成交的单', text_size: 'heading' } }],
+      : [{ tag: 'div', text: { tag: 'lark_md', content: config.emptyText, text_size: 'heading' } }],
   };
 };
 

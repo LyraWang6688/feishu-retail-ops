@@ -1,8 +1,8 @@
-// 「第二次交付」：已入账之后把未付 / 预付单收尾（补收款 + 交付），以及每天 9 点的群提醒。
+// 「第二次交付」：已入账之后把预定 / 现货待收单收尾（补收款 + 交付），以及每天 9 点的群提醒。
 //
 // 这个文件盯的是**业务规则本身**，不是实现细节：
-//   · 未付单点「成交」只补收款，**一丁点库存都不许碰**（第一次交付时已经扣过了）；
-//   · 预付单点「成交」要补收款 + 明细转已交付 + 扣库存（复用 deliver，不自己写库存）；
+//   · 现货待收单点「成交」只补收款，**一丁点库存都不许碰**（第一次交付时已经扣过了）；
+//   · 预定单点「成交」要补收款 + 明细转已交付 + 扣库存（复用 deliver，不自己写库存）；
 //   · 没到账的那条收款「交易方向」留空，变成已收款的那一刻才写「收入」；
 //   · 销售明细的「交易类型」和销售主表写同一条行为关联；
 //   · 同一笔不重复推的是「同一天」：跨天照发（业务负责人否掉了"按单只推一次"）；
@@ -85,9 +85,9 @@ const tmpStore = (prefix) =>
   new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), prefix)), idField: 'task_id' });
 
 const BEHAVIOR_ROWS = [
-  { record_id: 'behavior_unpaid', fields: { 行为编码: 'SALE_UNPAID', 行为名称: '未付' } },
-  { record_id: 'behavior_prepaid', fields: { 行为编码: 'SALE_PREPAID', 行为名称: '预付' } },
+  // ⚠️ 2026-10-07：行为管理表里**只剩两条**（现货 / 预定）；「现货待收」那条记录已被业务负责人删除。
   { record_id: 'behavior_cash', fields: { 行为编码: 'SALE_CASH', 行为名称: '现货' } },
+  { record_id: 'behavior_prepaid', fields: { 行为编码: 'SALE_PREPAID', 行为名称: '预定' } },
 ];
 const METHOD_ROWS = [
   { record_id: 'method_1', fields: { 收款方式: '微信' } },
@@ -95,18 +95,18 @@ const METHOD_ROWS = [
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 一、点「成交」：未付单只补收款，一点都不碰库存
+// 一、点「成交」：**现货待收**（货已交付、钱没结清）只补收款，一点都不碰库存
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('未付单点「成交」：只补收款，库存与明细履约状态一个字都不动', async () => {
+test('现货待收单点「成交」：只补收款，库存与明细履约状态一个字都不动', async () => {
   const gateway = fakeGateway({
     behavior: BEHAVIOR_ROWS,
     paymentMethod: METHOD_ROWS,
     sizeManagement: [{ record_id: 'size_38', fields: { 尺码: 38 } }],
     product: [{ record_id: 'product_1', fields: { 编号: 'P1' } }],
-    // 未付：第一次录单时明细就已经是「已交付」（库存那时候扣过了），收款是一条全额未收款。
+    // 现货：第一次录单时明细就已经是「已交付」（库存那时候扣过了），收款是一条全额未收款。
     salesEntry: [{ record_id: 'order_unpaid', fields: {
-      '资金状态': '已写入', 销售单号: 'XSD-U-1', 交易类型: ['behavior_unpaid'],
+      '资金状态': '已写入', 销售单号: 'XSD-U-1', 交易类型: ['behavior_cash'],
     } }],
     salesDetail: [{ record_id: 'detail_u1', fields: {
       销售单号: ['order_unpaid'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 成交金额: 260,
@@ -134,7 +134,7 @@ test('未付单点「成交」：只补收款，库存与明细履约状态一�
   assert.deepEqual(result.collectedPaymentIds, ['receipt_u1']);
 
   // ② 库存：一次都没扣（applySale 没被调用，库存两张表也没有任何写入）。
-  assert.equal(inventory.applySaleCalls.length, 0, '未付单再次交付就是扣两次库存');
+  assert.equal(inventory.applySaleCalls.length, 0, '现货单再次交付就是扣两次库存');
   assert.equal(gateway.writes.filter((write) =>
     write.table === 'inventoryLedger' || write.table === 'liveInventory').length, 0);
   // ③ 明细履约状态没被重写（本来就是已交付，不重复交付）。
@@ -145,14 +145,14 @@ test('未付单点「成交」：只补收款，库存与明细履约状态一�
   assert.equal(gateway.writes.filter((write) => write.table === 'salesEntry').length, 0);
   // 进度写在新的状态维度上（这一步只补收款，没有交付 → 库存状态不该被写）。
   assert.equal(gateway.records.get('salesEntry')[0].fields['库存状态'], undefined);
-  assert.equal(result.delivery, null, '未付单不该走交付');
+  assert.equal(result.delivery, null, '现货单不该走交付（货已经交过了）');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 二、点「成交」：预付单补收款 + 明细转已交付 + 扣库存（走 deliver）
+// 二、点「成交」：预定单补收款 + 明细转已交付 + 扣库存（走 deliver）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('预付单点「成交」：补收款 + 明细未交付转已交付 + 扣库存（复用 deliver）', async () => {
+test('预定单点「成交」：补收款 + 明细未交付转已交付 + 扣库存（复用 deliver）', async () => {
   const gateway = fakeGateway({
     behavior: BEHAVIOR_ROWS,
     paymentMethod: METHOD_ROWS,
@@ -161,7 +161,7 @@ test('预付单点「成交」：补收款 + 明细未交付转已交付 + 扣�
     salesEntry: [{ record_id: 'order_prepaid', fields: {
       '资金状态': '已写入', 销售单号: 'XSD-P-1', 交易类型: ['behavior_prepaid'],
     } }],
-    // 预付：货还没拿走（未交付），钱是定金 + 余款两条，余款那条是未收款。
+    // 预定：货还没到 / 没拿走（未交付），钱是定金 + 余款两条，余款那条是未收款。
     salesDetail: [{ record_id: 'detail_p1', fields: {
       销售单号: ['order_prepaid'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '未交付', 成交金额: 400,
     } }],
@@ -216,7 +216,7 @@ test('同一张单连点两次「成交」：第二次只回"已成交"，不再
     sizeManagement: [{ record_id: 'size_38', fields: { 尺码: 38 } }],
     product: [{ record_id: 'product_1', fields: { 编号: 'P1' } }],
     salesEntry: [{ record_id: 'order_unpaid', fields: {
-      '资金状态': '已写入', 销售单号: 'XSD-U-1', 交易类型: ['behavior_unpaid'],
+      '资金状态': '已写入', 销售单号: 'XSD-U-1', 交易类型: ['behavior_cash'],
     } }],
     salesDetail: [{ record_id: 'detail_u1', fields: {
       销售单号: ['order_unpaid'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 成交金额: 260,
@@ -352,50 +352,50 @@ const OUT_OF_WINDOW = Date.parse('2026-09-20T10:00:00+08:00');
 const reminderSeed = () => ({
   behavior: BEHAVIOR_ROWS,
   paymentMethod: METHOD_ROWS,
-  // 预付那一单点「成交」要真的走交付（否则交付失败、卡片按规则本来就不该变灰），
+  // 预定那一单点「成交」要真的走交付（否则交付失败、卡片按规则本来就不该变灰），
   // 所以货品与尺码这两张参照表也得在。
   sizeManagement: [{ record_id: 'size_38', fields: { 尺码: 38 } }],
   product: [{ record_id: 'product_1', fields: { 编号: 'P1' } }],
   salesEntry: [
-    // 要推的：未付、已入账、7 天内、钱没收清。
-    { record_id: 'order_unpaid_pending', fields: {
-      '资金状态': '已写入', 销售单号: 'XSD-U-2', 交易类型: ['behavior_unpaid'],
+    // 要推的：**现货待收**（货已交付、钱没收清）—— 新口径下这类单必须进候选。
+    { record_id: 'order_cash_pending', fields: {
+      '资金状态': '已写入', 销售单号: 'XSD-U-2', 交易类型: ['behavior_cash'],
       录单日: inWindow('2026-10-02T10:00:00+08:00'),
     } },
-    // 要推的：预付、已入账、7 天内、货没交 + 钱没收清（录单更早，应排在前面）。
+    // 要推的：预定、已入账、7 天内、货没交 + 钱没收清（录单更早，应排在前面）。
     { record_id: 'order_prepaid_pending', fields: {
       '资金状态': '已写入', 销售单号: 'XSD-P-2', 交易类型: ['behavior_prepaid'],
       录单日: inWindow('2026-10-01T10:00:00+08:00'),
     } },
-    // 不推：现货（交易类型就不在范围内）。
+    // 不推：现货、钱货两清（已完成履约）。
     { record_id: 'order_cash', fields: {
       '资金状态': '已写入', 销售单号: 'XSD-C-2', 交易类型: ['behavior_cash'],
       录单日: inWindow('2026-10-03T10:00:00+08:00'),
     } },
-    // 不推：未付但钱货都齐了（已完成履约）。
-    { record_id: 'order_unpaid_done', fields: {
-      '资金状态': '已写入', 销售单号: 'XSD-U-3', 交易类型: ['behavior_unpaid'],
+    // 不推：钱货都齐了（已完成履约）。
+    { record_id: 'order_cash_done', fields: {
+      '资金状态': '已写入', 销售单号: 'XSD-U-3', 交易类型: ['behavior_cash'],
       录单日: inWindow('2026-10-03T10:00:00+08:00'),
     } },
-    // 不推：7 天以外的未付单。
-    { record_id: 'order_unpaid_old', fields: {
-      '资金状态': '已写入', 销售单号: 'XSD-U-9', 交易类型: ['behavior_unpaid'], 录单日: OUT_OF_WINDOW,
+    // 不推：7 天以外的单。
+    { record_id: 'order_cash_old', fields: {
+      '资金状态': '已写入', 销售单号: 'XSD-U-9', 交易类型: ['behavior_cash'], 录单日: OUT_OF_WINDOW,
     } },
   ],
   salesDetail: [
-    { record_id: 'd_u2', fields: { 销售单号: ['order_unpaid_pending'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 成交金额: 260 } },
+    { record_id: 'd_c1', fields: { 销售单号: ['order_cash_pending'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 成交金额: 260 } },
     { record_id: 'd_p2', fields: { 销售单号: ['order_prepaid_pending'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '未交付', 成交金额: 400 } },
     { record_id: 'd_c2', fields: { 销售单号: ['order_cash'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 成交金额: 100 } },
-    { record_id: 'd_u3', fields: { 销售单号: ['order_unpaid_done'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 成交金额: 100 } },
-    { record_id: 'd_u9', fields: { 销售单号: ['order_unpaid_old'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 成交金额: 100 } },
+    { record_id: 'd_c3', fields: { 销售单号: ['order_cash_done'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 成交金额: 100 } },
+    { record_id: 'd_c9', fields: { 销售单号: ['order_cash_old'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 成交金额: 100 } },
   ],
   paymentRecord: [
-    { record_id: 'r_u2', fields: { 关联销售单: ['order_unpaid_pending'], 收款金额: 260, 收款状态: '未收款' } },
+    { record_id: 'r_c1', fields: { 关联销售单: ['order_cash_pending'], 收款金额: 260, 收款状态: '未收款' } },
     { record_id: 'r_p2a', fields: { 关联销售单: ['order_prepaid_pending'], 收款金额: 200, 收款状态: '已收款' } },
     { record_id: 'r_p2b', fields: { 关联销售单: ['order_prepaid_pending'], 收款金额: 200, 收款状态: '未收款' } },
     { record_id: 'r_c2', fields: { 关联销售单: ['order_cash'], 收款金额: 100, 收款状态: '已收款' } },
-    { record_id: 'r_u3', fields: { 关联销售单: ['order_unpaid_done'], 收款金额: 100, 收款状态: '已收款' } },
-    { record_id: 'r_u9', fields: { 关联销售单: ['order_unpaid_old'], 收款金额: 100, 收款状态: '未收款' } },
+    { record_id: 'r_c3', fields: { 关联销售单: ['order_cash_done'], 收款金额: 100, 收款状态: '已收款' } },
+    { record_id: 'r_c9', fields: { 关联销售单: ['order_cash_old'], 收款金额: 100, 收款状态: '未收款' } },
   ],
 });
 
@@ -421,7 +421,7 @@ const cardButtons = (card) => card.elements
   .filter((element) => element.tag === 'column_set')
   .flatMap((element) => element.columns.flatMap((column) => column.elements));
 
-test('每日提醒：只推「未付 / 预付 + 7 天内 + 尚未完成履约」，卡片发到采购群', async () => {
+test('每日提醒：只推「尚未完成履约（预定 / 现货待收）+ 7 天内」，卡片发到采购群', async () => {
   const sent = [];
   const service = new SecondDeliveryService({
     gateway: fakeGateway(reminderSeed()), store: tmpStore('second-delivery-reminder-'),
@@ -450,7 +450,7 @@ test('每日提醒：只推「未付 / 预付 + 7 天内 + 尚未完成履约」
   // 按钮：每单每种收款方式一个「成交」，取值带销售单号 + 收款方式。
   const buttons = cardButtons(card);
   assert.deepEqual(buttons.map((button) => button.value.sales_entry_record_id), [
-    'order_prepaid_pending', 'order_prepaid_pending', 'order_unpaid_pending', 'order_unpaid_pending',
+    'order_prepaid_pending', 'order_prepaid_pending', 'order_cash_pending', 'order_cash_pending',
   ]);
   assert.deepEqual(buttons.map((button) => button.value.method), ['微信', '现金', '微信', '现金']);
   assert.ok(buttons.every((button) => button.value.action === 'confirm_second_delivery'));
@@ -537,11 +537,11 @@ test('没配群 id 时不发、也不抛异常（第二天配置好之后还能�
 
 test('这一单是哪天的：明细「销售日」优先、主表「录单日」兜底，两个都读不到就跳过这单', async () => {
   const seed = reminderSeed();
-  // 未付那单：主表日期清掉，靠明细的「销售日」判在窗口内。
-  delete seed.salesEntry.find((row) => row.record_id === 'order_unpaid_pending').fields['录单日'];
-  seed.salesDetail.find((row) => row.record_id === 'd_u2').fields['销售日'] =
+  // 现货待收那单：主表日期清掉，靠明细的「销售日」判在窗口内。
+  delete seed.salesEntry.find((row) => row.record_id === 'order_cash_pending').fields['录单日'];
+  seed.salesDetail.find((row) => row.record_id === 'd_c1').fields['销售日'] =
     Date.parse('2026-10-02T10:00:00+08:00');
-  // 预付那单：主表和明细都没有日期 —— 不能当成"太老了"悄悄丢掉，要跳过并记警告。
+  // 预定那单：主表和明细都没有日期 —— 不能当成"太老了"悄悄丢掉，要跳过并记警告。
   delete seed.salesEntry.find((row) => row.record_id === 'order_prepaid_pending').fields['录单日'];
 
   const sent = [];
@@ -559,7 +559,7 @@ test('这一单是哪天的：明细「销售日」优先、主表「录单日�
 test('单条数据不自洽（收款超过成交额）时跳过它，其余单照推', async () => {
   const seed = reminderSeed();
   seed.paymentRecord.push({ record_id: 'r_bad', fields: {
-    关联销售单: ['order_unpaid_pending'], 收款金额: 9999, 收款状态: '已收款',
+    关联销售单: ['order_cash_pending'], 收款金额: 9999, 收款状态: '已收款',
   } });
   const sent = [];
   const service = new SecondDeliveryService({
@@ -622,20 +622,20 @@ test('点完「成交」：被点那一单的按钮换成一行灰字，卡片�
   const { service, gateway, sent, patched } = reminderHarness();
   await service.sendDailyReminder({ now: NOW });
   const original = cardOf(sent[0]);
-  // 卡里两单：预付（10-01）在前，未付（10-02）在后 —— 点后面那一单。
+  // 卡里两单：预定（10-01）在前，现货待收（10-02）在后 —— 点后面那一单。
   assert.deepEqual(original.elements.map((element) => element.tag),
     ['div', 'column_set', 'div', 'column_set']);
 
-  await clickFirstCard(service, 'order_unpaid_pending');
+  await clickFirstCard(service, 'order_cash_pending');
 
   // ① 钱真的收了（变灰是成交的结果，不是替代）。
-  assert.equal(gateway.records.get('paymentRecord').find((row) => row.record_id === 'r_u2').fields['收款状态'], '已收款');
+  assert.equal(gateway.records.get('paymentRecord').find((row) => row.record_id === 'r_c1').fields['收款状态'], '已收款');
   // ② patch 打在**被点的那张卡**上，且只有一次。
   assert.equal(patched.length, 1, '成交成功后更新那张卡');
   assert.equal(patched[0].message_id, 'om_1');
 
   const next = JSON.parse(patched[0].content);
-  // ③ 卡片头与前半段（预付那一单的明细行 + 按钮行）原样保留。
+  // ③ 卡片头与前半段（预定那一单的明细行 + 按钮行）原样保留。
   assert.deepEqual(next.header, original.header);
   assert.deepEqual(next.config, original.config);
   assert.deepEqual(next.elements.slice(0, 3), original.elements.slice(0, 3), '别的单一个字都不动');
@@ -644,7 +644,7 @@ test('点完「成交」：被点那一单的按钮换成一行灰字，卡片�
   assert.equal(note.tag, 'div');
   assert.deepEqual(note.text, { tag: 'lark_md', content: '✅ 已成交（10:00 点击）', text_size: 'note' });
   assert.equal(next.elements.length, 4);
-  // ⑤ 未付那一单的按钮一行都不剩；预付那一单的按钮还在（不能把整张卡灰掉）。
+  // ⑤ 现货待收那一单的按钮一行都不剩；预定那一单的按钮还在（不能把整张卡灰掉）。
   const buttons = cardButtons(next);
   assert.deepEqual([...new Set(buttons.map((button) => button.value.sales_entry_record_id))],
     ['order_prepaid_pending']);
@@ -654,10 +654,10 @@ test('点完「成交」：被点那一单的按钮换成一行灰字，卡片�
 test('同一张卡再点一次（这一单已成交）：不再写账，也不再重复改那张卡', async () => {
   const { service, gateway, patched } = reminderHarness();
   await service.sendDailyReminder({ now: NOW });
-  await clickFirstCard(service, 'order_unpaid_pending');
+  await clickFirstCard(service, 'order_cash_pending');
   const writesAfterFirstClick = gateway.writes.length;
 
-  const again = await clickFirstCard(service, 'order_unpaid_pending');
+  const again = await clickFirstCard(service, 'order_cash_pending');
 
   assert.equal(again.alreadyCompleted, true);
   assert.equal(gateway.writes.length, writesAfterFirstClick, '第二次点击一个字都不写');
@@ -692,13 +692,13 @@ test('第一次 patch 失败时卡片没灰：再点一次补上变灰（补的�
   });
   await service.sendDailyReminder({ now: NOW });
 
-  const first = await clickFirstCard(service, 'order_unpaid_pending');
+  const first = await clickFirstCard(service, 'order_cash_pending');
   assert.equal(first.collectedAmount, 260, 'patch 失败不影响成交');
   assert.equal(patched.length, 0);
 
   // patch 失败时没有把改过的卡写回记录，所以那张卡还是"有按钮"的样子：再点一次
   // 会走到 alreadyCompleted，把这一单补成灰的。
-  const second = await clickFirstCard(service, 'order_unpaid_pending');
+  const second = await clickFirstCard(service, 'order_cash_pending');
   assert.equal(second.alreadyCompleted, true);
   assert.equal(patched.length, 1);
   assert.deepEqual([...new Set(cardButtons(JSON.parse(patched[0].content))
@@ -709,7 +709,7 @@ test('同一张卡里的两单先后点：先灰的那单不会被后一次 patc
   const { service, patched } = reminderHarness();
   await service.sendDailyReminder({ now: NOW });
 
-  await clickFirstCard(service, 'order_unpaid_pending');
+  await clickFirstCard(service, 'order_cash_pending');
   await clickFirstCard(service, 'order_prepaid_pending');
 
   assert.equal(patched.length, 2);
@@ -718,9 +718,9 @@ test('同一张卡里的两单先后点：先灰的那单不会被后一次 patc
   assert.deepEqual(cardButtons(last), [], '两单的按钮都该没了');
   assert.deepEqual(last.elements.filter((element) => element.tag === 'div')
     .map((element) => element.text.content), [
-    'XSD-P-2　·　预付\n未收 ￥200　·　未交付 1/1 双',
+    'XSD-P-2　·　预定\n未收 ￥200　·　未交付 1/1 双',
     '✅ 已成交（10:00 点击）',
-    'XSD-U-2　·　未付\n未收 ￥260',
+    'XSD-U-2　·　现货\n未收 ￥260',
     '✅ 已成交（10:00 点击）',
   ]);
 });
@@ -738,7 +738,7 @@ test('交付只成了一半：不变灰（那几双货还要靠这张卡再点�
   assert.equal(patched.length, 0, '成交失败（只成一半）时绝不能变灰');
   // 卡片还是原样那一张，按钮都还在。
   assert.deepEqual([...new Set(cardButtons(cardOf(sent[0])).map((button) => button.value.sales_entry_record_id))],
-    ['order_prepaid_pending', 'order_unpaid_pending']);
+    ['order_prepaid_pending', 'order_cash_pending']);
 });
 
 test('成交时底层直接抛错：卡片一个字都不动', async () => {
@@ -768,20 +768,20 @@ test('patch 失败不影响成交结果（只记一条 warn，账已经写完）
   });
   await service.sendDailyReminder({ now: NOW });
 
-  const result = await clickFirstCard(service, 'order_unpaid_pending');
+  const result = await clickFirstCard(service, 'order_cash_pending');
 
   assert.equal(result.alreadyCompleted, false);
   assert.equal(result.collectedAmount, 260);
-  assert.equal(gateway.records.get('paymentRecord').find((row) => row.record_id === 'r_u2').fields['收款状态'], '已收款');
+  assert.equal(gateway.records.get('paymentRecord').find((row) => row.record_id === 'r_c1').fields['收款状态'], '已收款');
   assert.equal(await service.markCardSettled({ reminderDay: '2026-10-05', cardMessageId: 'om_1',
-    salesEntryRecordId: 'order_unpaid_pending' }), false);
+    salesEntryRecordId: 'order_cash_pending' }), false);
 });
 
 test('老卡片（按钮里没有 reminder_day）不改灰，也不报错', async () => {
   const { service, patched } = reminderHarness();
   await service.sendDailyReminder({ now: NOW });
 
-  const result = await clickFirstCard(service, 'order_unpaid_pending', { reminderDay: '' });
+  const result = await clickFirstCard(service, 'order_cash_pending', { reminderDay: '' });
 
   assert.equal(result.collectedAmount, 260, '成交照常完成');
   assert.equal(patched.length, 0, '取不到那张卡就不猜，宁可那次不变灰');

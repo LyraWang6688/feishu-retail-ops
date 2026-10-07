@@ -1,19 +1,14 @@
-// 「待处理单推送：**按【预付 / 未付】分区**，每条补上「货号 + 尺码」」的验收用例
-// （业务负责人 2026-10-07 拍板，逐字：「**只需要这些信息，按照预付和未付分区**」）。
+// 「待处理单推送：**按【预定 / 现货待收】分区**，每条补上「货号 + 尺码」」的验收用例。
 //
-// 这份文件盯的是**分区这件事本身**，逐字对照她的目标形状：
-//   ⏰ 2026-10-07 最近 7 天未付 / 预付、尚未成交的销售单：2 笔
-//      1. ·【预付】B26002-52 37码 · 待收 ¥128 · [深链]
-//      2. ·【未付】6A637-7 43码 · 待收 ¥228 · [深链]
-//   □ ① 按预付 / 未付**分成两个区块**；只有一类时**另一块连标题都不出现**；
-//   □ ② 每条 = 单号 + 【预付/未付】 + 货号+尺码 + 待收金额 + 深链；
-//   □ ③ 不显示"售出时间"（标注靠分区与行内标签体现）；
-//   □ 配品没有尺码 → **绝不拼出「 码」**；缺货号/尺码 → **不留空壳**；
-//   □ 保留：候选口径、待收金额口径、深链（含"缺深链"的既有处理）、按天去重与置顶；
-//   □ 顺序 / 标题 / 行格式 / 分隔符都在配置里（逻辑里不写死中文）。
+// 🔴 2026-10-07 口径大改：交易类型 = **库存有没有**（现货 / 预定），「未付」不再是类型 ⇒
+//   · 候选源 = 「**预定（还没交付）**」＋「**现货但钱没结清**」= **尚未完成履约**；
+//   · 分区判据从"交易类型编码"改成 **履约状态**（`pendingDealPushCriterionFor`）；
+//   · 目标形状（`{title}` 由配置给）：
+//       ⏰ 2026-10-07 最近 7 天待处理的销售单（预定 / 现货待收）：2 笔
+//          1. ·【预定】B26002-52 37码 · 待收 ¥128 · [深链]
+//          2. ·【现货待收】6A637-7 43码 · 待收 ¥228 · [深链]
 //
-// ⚠️ 分区的**判据是行为编码**（`SALE_PREPAID` / `SALE_UNPAID`），不是「行为名称」——
-//    名称是她在飞书里随手能改的文案，拿它当判据的话，改个名字分区就静默错位。
+// 逐字对照的验收标准见 `docs/sales-type-by-stock-2026-10-07.md` AC-6。
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
 
 const test = require('node:test');
@@ -26,7 +21,9 @@ const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { SalesGroupThreadLocator, messageKey } = require('../src/services/salesGroupThreadLocator');
 const { LarkMessageLinkResolver } = require('../src/services/larkMessageLinkResolver');
 const { PendingDealPushService } = require('../src/services/pendingDealPushService');
-const { resolvePendingDealPushConfig } = require('../src/config/pendingDealPush');
+const {
+  resolvePendingDealPushConfig, pendingDealPushCriterionFor,
+} = require('../src/config/pendingDealPush');
 
 const tmpStore = (prefix) =>
   new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), prefix)), idField: 'task_id' });
@@ -34,14 +31,18 @@ const tmpStore = (prefix) =>
 const CHAT_ID = 'oc_test_pending_sections';
 const DAY = new Date('2026-10-07T02:00:00.000Z'); // 北京 10:00
 
-const PREPAID = {
-  salesEntryRecordId: 'sale_prepaid', orderNo: 'XSD-P-1', tradeTypeCode: 'SALE_PREPAID',
-  tradeTypeLabel: '预付', pendingAmount: 128, saleDate: '2026-10-06T00:00:00.000Z',
+// 预定：还没交付（货还在店里 / 还没到），钱还欠着。
+const RESERVED = {
+  salesEntryRecordId: 'sale_reserved', orderNo: 'XSD-P-1',
+  tradeTypeLabel: '预定', fulfillmentStatus: '未交付',
+  pendingAmount: 128, saleDate: '2026-10-06T00:00:00.000Z',
   items: [{ kind: 'shoe', itemNo: 'B26002-52', size: '37' }],
 };
-const UNPAID = {
-  salesEntryRecordId: 'sale_unpaid', orderNo: 'XSD-U-1', tradeTypeCode: 'SALE_UNPAID',
-  tradeTypeLabel: '未付', pendingAmount: 228, saleDate: '2026-10-06T00:00:00.000Z',
+// 现货待收：货已经交付、钱还没结清（新口径下这类单**必须**进候选）。
+const CASH_PENDING = {
+  salesEntryRecordId: 'sale_cash_pending', orderNo: 'XSD-U-1',
+  tradeTypeLabel: '现货', fulfillmentStatus: '已交付',
+  pendingAmount: 228, saleDate: '2026-10-06T00:00:00.000Z',
   items: [{ kind: 'shoe', itemNo: '6A637-7', size: '43' }],
 };
 
@@ -64,7 +65,6 @@ const fakeClient = (messageIds = ['om_push_1', 'om_push_2']) => {
   return { client, creates };
 };
 
-// 记录置顶调用的假置顶服务（真实现那份的用例在 pendingDealPushPin.test.js）。
 const fakePin = () => {
   const calls = [];
   return {
@@ -124,11 +124,26 @@ const withLinks = async (orders) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 〇、分区判据本身：只看履约状态，不看交易类型编码
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('〇 分区判据 = 履约状态：未交付 → 预定区；已交付（钱没结清）→ 现货待收区', () => {
+  assert.equal(pendingDealPushCriterionFor({ fulfillmentStatus: '未交付' }), 'undelivered');
+  assert.equal(pendingDealPushCriterionFor({ fulfillmentStatus: '部分交付' }), 'undelivered');
+  assert.equal(pendingDealPushCriterionFor({ fulfillmentStatus: '已交付' }), 'delivered_unpaid');
+  // 履约状态读不出来 → 按"还有货没交"处理（宁可放在链条最长的那一块里被看见）。
+  assert.equal(pendingDealPushCriterionFor({}), 'undelivered');
+  // 交易类型编码**不再是**判据：给一个老编码也不影响分区。
+  assert.equal(pendingDealPushCriterionFor({ fulfillmentStatus: '已交付', tradeTypeCode: 'SALE_PREPAID' }),
+    'delivered_unpaid');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 一、两个区块：各自渲染、顺序、空区块不出现
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('两区各自渲染：预付在前、未付在后；每块有自己的标题与计数', async () => {
-  const orders = [UNPAID, PREPAID]; // 故意把未付放前面：顺序只由配置决定，不按候选顺序
+test('两区各自渲染：预定在前、现货待收在后；每块有自己的标题与计数', async () => {
+  const orders = [CASH_PENDING, RESERVED]; // 故意把现货待收放前面：顺序只由配置决定
   const locator = await withLinks(orders);
   const { service, creates } = newService({ orders, locator });
   const result = await service.sendDailyPush({ now: DAY });
@@ -137,34 +152,36 @@ test('两区各自渲染：预付在前、未付在后；每块有自己的标�
   assert.equal(creates.length, 1);
   const text = textOf(creates[0]);
   assert.equal(text, [
-    '⏰ 2026-10-07 最近 7 天未付 / 预付、尚未成交的销售单：2 笔（【预付】1 笔 / 【未付】1 笔）',
-    '【预付】1 笔',
-    '1. XSD-P-1 【预付】 · B26002-52 37码 · 待收 ¥128.00 · https://applink.feishu.cn/client/message/link?message_id=om_sale_prepaid',
-    '【未付】1 笔',
-    '1. XSD-U-1 【未付】 · 6A637-7 43码 · 待收 ¥228.00 · https://applink.feishu.cn/client/message/link?message_id=om_sale_unpaid',
+    '⏰ 2026-10-07 最近 7 天待处理的销售单（预定 / 现货待收）：2 笔（【预定】1 笔 / 【现货待收】1 笔）',
+    '【预定】1 笔',
+    '1. XSD-P-1 【预定】 · B26002-52 37码 · 待收 ¥128.00 · https://applink.feishu.cn/client/message/link?message_id=om_sale_reserved',
+    '【现货待收】1 笔',
+    '1. XSD-U-1 【现货待收】 · 6A637-7 43码 · 待收 ¥228.00 · https://applink.feishu.cn/client/message/link?message_id=om_sale_cash_pending',
   ].join('\n'));
-  // ③ 她明确不要"售出时间"：正文里不许出现日期之外的时间段/时间标签。
+  // ⭐ AC-6.3：现货已交付、钱没结清的单**进了候选**，并落在【现货待收】区。
+  assert.match(text, /【现货待收】1 笔/);
   assert.doesNotMatch(text, /售出|成交时间|销售日/);
+  assert.doesNotMatch(text, /未付/);
 });
 
 test('只有一类单时：另一个区块**连标题都不出现**', async () => {
-  const prepaidOnly = await withLinks([PREPAID]);
-  const unpaidOnly = await withLinks([UNPAID]);
+  const reservedOnly = await withLinks([RESERVED]);
+  const cashOnly = await withLinks([CASH_PENDING]);
 
-  const first = newService({ orders: [PREPAID], locator: prepaidOnly });
+  const first = newService({ orders: [RESERVED], locator: reservedOnly });
   const firstResult = await first.service.sendDailyPush({ now: DAY });
   const firstText = textOf(first.creates[0]);
   assert.equal(firstResult.pushedOrderCount, 1);
-  assert.match(firstText, /（【预付】1 笔）/, '表头只报出现过的区块');
-  assert.match(firstText, /\n【预付】1 笔\n/);
-  assert.doesNotMatch(firstText, /【未付】/);
+  assert.match(firstText, /（【预定】1 笔）/, '表头只报出现过的区块');
+  assert.match(firstText, /\n【预定】1 笔\n/);
+  assert.doesNotMatch(firstText, /【现货待收】/);
 
-  const second = newService({ orders: [UNPAID], locator: unpaidOnly });
+  const second = newService({ orders: [CASH_PENDING], locator: cashOnly });
   const secondResult = await second.service.sendDailyPush({ now: DAY });
   const secondText = textOf(second.creates[0]);
   assert.equal(secondResult.pushedOrderCount, 1);
-  assert.match(secondText, /（【未付】1 笔）/);
-  assert.doesNotMatch(secondText, /【预付】/);
+  assert.match(secondText, /（【现货待收】1 笔）/);
+  assert.doesNotMatch(secondText, /【预定】/);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -173,7 +190,7 @@ test('只有一类单时：另一个区块**连标题都不出现**', async () =
 
 test('一单多件：逐件列出（用配置的分隔符）；配品没有尺码 → **不拼「码」**', async () => {
   const order = {
-    ...UNPAID,
+    ...CASH_PENDING,
     items: [
       { kind: 'shoe', itemNo: 'B26002-52', size: '37' },
       { kind: 'accessory', itemNo: '腰带', size: '' },
@@ -185,17 +202,15 @@ test('一单多件：逐件列出（用配置的分隔符）；配品没有尺�
   await service.sendDailyPush({ now: DAY });
   const text = textOf(creates[0]);
 
-  assert.match(text, /1\. XSD-U-1 【未付】 · B26002-52 37码、腰带、6A637-7 43码 · 待收 ¥228\.00/);
-  // 🔴 配品没有尺码：绝不许拼出「腰带 码」/「腰带码」这种残句。
+  assert.match(text, /1\. XSD-U-1 【现货待收】 · B26002-52 37码、腰带、6A637-7 43码 · 待收 ¥228\.00/);
   assert.doesNotMatch(text, /腰带\s*码/);
-  // 尺码后缀只跟在真实尺码后面（三件里只有两件有尺码）。
   assert.equal(text.match(/码/g).length, 2);
 });
 
 test('缺货号 / 缺尺码：**不留空壳**（不出现「 码」、不出现空的分隔段），金额与深链照旧', async () => {
   const orders = [
-    { ...PREPAID, items: [] }, // 一件都取不到货号
-    { ...UNPAID, items: [{ kind: 'shoe', itemNo: 'B26002-52', size: '' }] }, // 有货号没尺码
+    { ...RESERVED, items: [] }, // 一件都取不到货号
+    { ...CASH_PENDING, items: [{ kind: 'shoe', itemNo: 'B26002-52', size: '' }] }, // 有货号没尺码
   ];
   const locator = await withLinks(orders);
   const { service, creates } = newService({ orders, locator });
@@ -203,11 +218,11 @@ test('缺货号 / 缺尺码：**不留空壳**（不出现「 码」、不出现
   const text = textOf(creates[0]);
 
   assert.equal(text, [
-    '⏰ 2026-10-07 最近 7 天未付 / 预付、尚未成交的销售单：2 笔（【预付】1 笔 / 【未付】1 笔）',
-    '【预付】1 笔',
-    '1. XSD-P-1 【预付】 · 待收 ¥128.00 · https://applink.feishu.cn/client/message/link?message_id=om_sale_prepaid',
-    '【未付】1 笔',
-    '1. XSD-U-1 【未付】 · B26002-52 · 待收 ¥228.00 · https://applink.feishu.cn/client/message/link?message_id=om_sale_unpaid',
+    '⏰ 2026-10-07 最近 7 天待处理的销售单（预定 / 现货待收）：2 笔（【预定】1 笔 / 【现货待收】1 笔）',
+    '【预定】1 笔',
+    '1. XSD-P-1 【预定】 · 待收 ¥128.00 · https://applink.feishu.cn/client/message/link?message_id=om_sale_reserved',
+    '【现货待收】1 笔',
+    '1. XSD-U-1 【现货待收】 · B26002-52 · 待收 ¥228.00 · https://applink.feishu.cn/client/message/link?message_id=om_sale_cash_pending',
   ].join('\n'));
   assert.doesNotMatch(text, /·\s+·/, '不许留下空的分隔段');
   assert.doesNotMatch(text, /\s码/);
@@ -219,37 +234,31 @@ test('缺货号 / 缺尺码：**不留空壳**（不出现「 码」、不出现
 
 test('缺深链：行内不出现链接段（也不留空分隔符），脚注 + missingLinkCount 照旧', async () => {
   const locator = new SalesGroupThreadLocator({ store: tmpStore('pending-sections-nolink-') });
-  await seed(locator, { salesEntryRecordId: 'sale_prepaid', messageId: 'om_p' }); // 无 app_link → 拿不到
-  const { service, creates } = newService({ orders: [PREPAID, UNPAID], locator });
+  await seed(locator, { salesEntryRecordId: 'sale_reserved', messageId: 'om_p' }); // 无 app_link → 拿不到
+  const { service, creates } = newService({ orders: [RESERVED, CASH_PENDING], locator });
   const result = await service.sendDailyPush({ now: DAY });
 
   const text = textOf(creates[0]);
   assert.equal(result.missingLinkCount, 2);
   assert.equal(result.pushedOrderCount, 2, '深链缺失不影响"照推"（默认 linkRequired=false）');
-  assert.match(text, /1\. XSD-P-1 【预付】 · B26002-52 37码 · 待收 ¥128\.00$/m);
+  assert.match(text, /1\. XSD-P-1 【预定】 · B26002-52 37码 · 待收 ¥128\.00$/m);
   assert.match(text, /2 笔的深链暂不可用：飞书接口未返回 message_app_link，见日志 sales\.pending_deal_push\.link\.missing/);
   assert.doesNotMatch(text, /https?:\/\//);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 四、分区判据 = 行为编码（不是行为名称），并且绝不静默丢单
+// 四、兜底：判据认不出来的单绝不静默消失
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('分区看行为**编码**：名称被人改过（"未付销售"）也照样分进预付区', async () => {
-  const order = { ...PREPAID, tradeTypeLabel: '未付销售' }; // 名称被改得跟编码不一致
+test('判据认不出来（履约状态为空串之外的未知取值）→ 落进兜底块，绝不丢单', async () => {
+  // 判据函数对未知取值一律按"还有货没交"处理 ⇒ 正常会进【预定】区。
+  // 这里直接给一个**没有对应区块**的判据，验证兜底那一支（服务只认配置里声明的判据）。
+  const order = { ...CASH_PENDING, salesEntryRecordId: 'sale_x', orderNo: 'XSD-X-9' };
   const locator = await withLinks([order]);
-  const { service, creates } = newService({ orders: [order], locator });
-  await service.sendDailyPush({ now: DAY });
-  const text = textOf(creates[0]);
-  assert.match(text, /【预付】1 笔/);
-  assert.match(text, /1\. XSD-P-1 【预付】 ·/);
-  assert.doesNotMatch(text, /【未付】/);
-});
-
-test('编码不在已声明区块里：落进兜底块（**宁可多显示一块，也不让单消失**）', async () => {
-  const order = { ...UNPAID, salesEntryRecordId: 'sale_x', orderNo: 'XSD-X-9', tradeTypeCode: 'SALE_SOMETHING_NEW' };
-  const locator = await withLinks([order]);
-  const { service, creates } = newService({ orders: [order], locator });
+  // 把两个声明区块的判据都改掉 ⇒ 这一笔匹配不到任何区块，走兜底。
+  const settings = { ...resolvePendingDealPushConfig({}), enabled: true };
+  settings.blocks = settings.blocks.map((block) => ({ ...block, criterion: `unknown_${block.key}` }));
+  const { service, creates } = newService({ orders: [order], locator, settings });
   const result = await service.sendDailyPush({ now: DAY });
   const text = textOf(creates[0]);
   assert.equal(result.pushedOrderCount, 1);
@@ -264,9 +273,9 @@ test('编码不在已声明区块里：落进兜底块（**宁可多显示一块
 test('配置可配：换个 env 就换一套顺序、标题、行格式与分隔符（逻辑里没写死）', async () => {
   const settings = resolvePendingDealPushConfig({
     PENDING_DEAL_PUSH_ENABLED: 'true',
-    PENDING_DEAL_PUSH_BLOCK_ORDER: 'unpaid,prepaid',
+    PENDING_DEAL_PUSH_BLOCK_ORDER: 'cash_pending,prepaid',
     PENDING_DEAL_PUSH_PREPAID_TITLE: '【定金】',
-    PENDING_DEAL_PUSH_UNPAID_TITLE: '【赊账】',
+    PENDING_DEAL_PUSH_CASH_PENDING_TITLE: '【赊账】',
     PENDING_DEAL_PUSH_LINE_SEPARATOR: ' | ',
     PENDING_DEAL_PUSH_LINE_PARTS: '{index}) {orderNo} {tag}|{item}|欠 {amount}|{link}',
     PENDING_DEAL_PUSH_ITEM_SEPARATOR: ' + ',
@@ -274,11 +283,11 @@ test('配置可配：换个 env 就换一套顺序、标题、行格式与分隔
     PENDING_DEAL_PUSH_SECTION_TEMPLATE: '{title} {count} 条\n{lines}',
     PENDING_DEAL_PUSH_HEADER_TEMPLATE: '🕘 {day} 共 {total} 条{blockCounts}',
   });
-  assert.deepEqual(settings.blocks.map((block) => block.key), ['unpaid', 'prepaid'], '顺序可配');
+  assert.deepEqual(settings.blocks.map((block) => block.key), ['cash_pending', 'prepaid'], '顺序可配');
   assert.equal(settings.blocks[0].title, '【赊账】');
 
-  const locator = await withLinks([PREPAID, UNPAID]);
-  const { service, creates } = newService({ orders: [PREPAID, UNPAID], locator, settings });
+  const locator = await withLinks([RESERVED, CASH_PENDING]);
+  const { service, creates } = newService({ orders: [RESERVED, CASH_PENDING], locator, settings });
   await service.sendDailyPush({ now: DAY });
   const text = textOf(creates[0]);
   // ⚠️ 环境变量的值会被 `config/envValue` 去掉首尾空白（全仓同一套），
@@ -287,9 +296,9 @@ test('配置可配：换个 env 就换一套顺序、标题、行格式与分隔
   assert.equal(text, [
     '🕘 2026-10-07 共 2 条（【赊账】1 笔 / 【定金】1 笔）',
     '【赊账】 1 条',
-    '1) XSD-U-1 【赊账】|6A637-7 43 号|欠 ¥228.00|https://applink.feishu.cn/client/message/link?message_id=om_sale_unpaid',
+    '1) XSD-U-1 【赊账】|6A637-7 43 号|欠 ¥228.00|https://applink.feishu.cn/client/message/link?message_id=om_sale_cash_pending',
     '【定金】 1 条',
-    '1) XSD-P-1 【定金】|B26002-52 37 号|欠 ¥128.00|https://applink.feishu.cn/client/message/link?message_id=om_sale_prepaid',
+    '1) XSD-P-1 【定金】|B26002-52 37 号|欠 ¥128.00|https://applink.feishu.cn/client/message/link?message_id=om_sale_reserved',
   ].join('\n'));
 });
 
@@ -310,9 +319,15 @@ test('配置写错：未知占位符 / 没闭合的大括号 / 空的行模板 /
     () => resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_BLOCK_ORDER: 'prepaid,refund' }),
     /没声明的区块「refund」/,
   );
+  // ⚠️ 旧值 `unpaid`（"未付"那个区块）同样按"没声明的区块"处理 —— **故意的**：
+  //    宁可启动时吵一声，也不要静默按旧的三个区块推。
+  assert.throws(
+    () => resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_BLOCK_ORDER: 'prepaid,unpaid' }),
+    /没声明的区块「unpaid」/,
+  );
   // 顺序里只写了一半：另一块**不消失**，补在后面（配置写漏不该让一类单静默少推）。
-  const partial = resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_BLOCK_ORDER: 'unpaid' });
-  assert.deepEqual(partial.blocks.map((block) => block.key), ['unpaid', 'prepaid']);
+  const partial = resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_BLOCK_ORDER: 'cash_pending' });
+  assert.deepEqual(partial.blocks.map((block) => block.key), ['cash_pending', 'prepaid']);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -320,7 +335,7 @@ test('配置写错：未知占位符 / 没闭合的大括号 / 空的行模板 /
 // ─────────────────────────────────────────────────────────────────────────────
 
 test('分区改动不影响按天去重与置顶：同一天只发一条、置顶的就是那条，第二天照推', async () => {
-  const orders = [PREPAID, UNPAID];
+  const orders = [RESERVED, CASH_PENDING];
   const locator = await withLinks(orders);
   const { client, creates } = fakeClient(['om_day1', 'om_day2']);
   const pin = fakePin();
