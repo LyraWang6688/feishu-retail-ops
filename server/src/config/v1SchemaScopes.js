@@ -12,9 +12,11 @@ const V1_SCHEMA_SCOPES = {
     // ⚠️ `purchaseArrival`（「到货验收」）已从 schema 与这里**一并删除**（2026-10-07 晚）：
     //    业务负责人把那张表整个删了，到货落点搬到「报货批次」。
     //    留着它 = 部署闸门 `v1:schema-check:purchase` 去问一张不存在的表，直接判红。
-    'purchaseInbound',
+    // ⚠️ `purchaseInbound`（「采购入库」）同理，**2026-10-07 深夜被她整表删除**：
+    //    到货链路只保留「更新报货批次 + 加库存」⇒ 不再有入库明细行。
+    //    留着它同样是"闸门去问一张不存在的表"，而且代码里也不该再有任何读写点。
   ],
-  inventory: ['product', 'behavior', 'sizeManagement', 'salesDetail', 'purchaseInbound', 'inventoryLedger', 'liveInventory'],
+  inventory: ['product', 'behavior', 'sizeManagement', 'salesDetail', 'inventoryLedger', 'liveInventory'],
 };
 
 V1_SCHEMA_SCOPES.all = [...new Set(Object.values(V1_SCHEMA_SCOPES).flat())];
@@ -31,8 +33,9 @@ const getV1SchemaScope = (scope = 'sales') => {
 // 而不是让运维记住只有 inventory/all 覆盖这件事。
 const V1_SIZE_LINK_TABLES = {
   sales: ['salesDetail'],
-  purchase: ['purchaseRequest', 'purchaseInbound'],
-  inventory: ['salesDetail', 'purchaseInbound', 'inventoryLedger', 'liveInventory'],
+  // 「采购入库」表已删（2026-10-07 深夜）⇒ 它的尺码关联不用再核；报货信息照旧。
+  purchase: ['purchaseRequest'],
+  inventory: ['salesDetail', 'inventoryLedger', 'liveInventory'],
 };
 V1_SIZE_LINK_TABLES.all = [...new Set(Object.values(V1_SIZE_LINK_TABLES).flat())];
 
@@ -60,15 +63,19 @@ const getV1IdempotencyKeyTables = (scope = 'sales') =>
 // 「单选取值契约」：真表这一列必须是单选、且**已经存在**代码要写的那些选项名。
 // 字段名闸门看不出取值，而往单选里写一个不存在的取值 → 飞书**自动新建选项** →
 // 表被悄悄污染、按该取值查询静默查不到（2026-10-07 加，起因见 purchaseArrivalStatus.js）。
-// ⚠️ 取值本身在 `config/purchaseArrivalStatus.js`（配置先行），这里只声明"哪些范围要校验"。
+// ⚠️ 取值本身在各自那份配置里（配置先行），这里只负责**汇总"哪些列要校验"**：
+//    · 「报货批次.到货状态」（未到货 / 已到货）—— 2026-10-07 加；
+//    · 「报货批次.确认状态」—— 2026-10-07 深夜她把这列从**文本改成单选**之后加进来的
+//      （配置值当前是「已确认」，**取值不改**，只把它纳入闸门；不一致 → 闸门红、停下报告）。
 const V1_SELECT_OPTION_CONTRACT_SCOPES = Object.freeze(['purchase', 'all']);
 
 const getV1SelectOptionContracts = (scope = 'purchase', env = process.env) => {
   const key = getV1SchemaScope(scope).key;
   if (!V1_SELECT_OPTION_CONTRACT_SCOPES.includes(key)) return [];
-  // 延迟 require：只在真要校验的范围内才去读那份配置（它自己会在取值不合法时抛错）。
+  // 延迟 require：只在真要校验的范围内才去读那两份配置（它们自己会在取值不合法时抛错）。
   const { purchaseArrivalStatusOptionContract } = require('./purchaseArrivalStatus');
-  return purchaseArrivalStatusOptionContract(env);
+  const { purchaseAcceptanceOptionContract } = require('./purchaseAcceptance');
+  return [...purchaseArrivalStatusOptionContract(env), ...purchaseAcceptanceOptionContract(env)];
 };
 
 module.exports = {

@@ -869,10 +869,10 @@ const cmdReturn = async () => {
     quantityChange: row.fields?.[ledgerTable.fields.quantityChange],
     behavior: linkedRecordIds(row.fields?.[ledgerTable.fields.behavior])
       .map((id) => behaviorByRecord.get(id) || { name: '', code: id }),
-    hasSource: Boolean(
-      linkedRecordIds(row.fields?.[ledgerTable.fields.salesDetail]).length
-      || linkedRecordIds(row.fields?.[ledgerTable.fields.purchaseInbound]).length,
-    ),
+    // ⚠️ 2026-10-07 深夜：「采购入库」表被业务负责人整表删除 ⇒ 「库存流水.关联采购」
+    //    这一列也随表一起没了（schema 映射已删）。采购加库存的流水**不带来源关联**
+    //    （与采购退货同一条通路），所以这里只看「关联销售」。
+    hasSource: Boolean(linkedRecordIds(row.fields?.[ledgerTable.fields.salesDetail]).length),
   }));
 
   const removedLive = liveBefore.filter((row) => !liveAfter.some((item) => item.record_id === row.record_id));

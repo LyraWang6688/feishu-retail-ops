@@ -437,9 +437,11 @@ test('③ ④ 库存流水按实际数扣（一尺码一行、行为=采购减�
     '用的是这一包在「信息填写」上的那个号');
   assert.equal(Object.prototype.hasOwnProperty.call(gateway.records.purchaseOrderBatch[0].fields, '到货状态'), false,
     '退货行不写「到货状态」');
-  // 退货仍然**不写**到货/入库那两张表。
+  // 退货仍然**不写**「到货验收」那张表。
+  // ⚠️ 2026-10-07 深夜：「采购入库」表被业务负责人**整表删除** ⇒ 这条断言原来钉的
+  //    "退货不写采购入库"现在由**更强的守门**保证 —— 全仓（src/scripts/test）都不许再出现
+  //    那个表键（见 `purchaseInboundRemoval.test.js` 的 ①）。
   assert.equal(gateway.records.purchaseArrival, undefined);
-  assert.equal(gateway.records.purchaseInbound, undefined);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

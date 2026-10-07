@@ -2,7 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { validateV1SchemaScope } = require('../scripts/validate_v1_schema');
 
-const sizeLinkedTables = ['salesDetail', 'purchaseRequest', 'purchaseInbound', 'inventoryLedger', 'liveInventory'];
+// ⚠️ 2026-10-07 深夜：「采购入库」表已被业务负责人整表删除 ⇒ 它的尺码关联不用再核
+//    （见 server/test/purchaseInboundRemoval.test.js 的守门用例）。
+const sizeLinkedTables = ['salesDetail', 'purchaseRequest', 'inventoryLedger', 'liveInventory'];
 // 幂等键是文本字段：写的是 "purchase_request:<taskId>:<n>" 这类稳定键。
 // customerCredit 的键字段语义名不同（businessEventId，中文列「业务事件ID」），
 // 它是售后 prepaid 的幂等键，同样必须在 sales 范围里被校验到。
@@ -71,7 +73,7 @@ test('inventory and all CLI scopes reject numeric, multi-link and wrong-target s
   ];
   for (const scope of ['inventory', 'all']) {
     for (const invalid of invalidFields) {
-      const gateway = gatewayFor({ purchaseInbound: [invalid] });
+      const gateway = gatewayFor({ inventoryLedger: [invalid] });
       await assert.rejects(validateV1SchemaScope({ gateway, scope }), /单选关联“尺码管理”/);
     }
   }
@@ -129,13 +131,11 @@ test('sales CLI scope 校验「客户往来货款」的幂等键列', async () =
   assert.ok(gateway.seen.includes('customerCredit'));
 });
 
-test('purchase CLI scope validates both intake size relations', async () => {
-  for (const tableKey of ['purchaseRequest', 'purchaseInbound']) {
-    await assert.rejects(
-      validateV1SchemaScope({ gateway: gatewayFor({ [tableKey]: [{ field_name: '尺码', type: 2 }] }), scope: 'purchase' }),
-      /单选关联“尺码管理”/,
-    );
-  }
+test('purchase CLI scope validates the purchase-request size relation', async () => {
+  await assert.rejects(
+    validateV1SchemaScope({ gateway: gatewayFor({ purchaseRequest: [{ field_name: '尺码', type: 2 }] }), scope: 'purchase' }),
+    /单选关联“尺码管理”/,
+  );
   await assert.rejects(
     validateV1SchemaScope({ gateway: gatewayFor({ sizeManagement: [{ field_name: '尺码', type: 1 }] }), scope: 'purchase' }),
     /必须是数字字段/,
@@ -173,4 +173,46 @@ test('幂等键字段类型不是文本时 schema-check 直接失败', async () 
     validateV1SchemaScope({ gateway: gatewayFor({ liveInventory: asNumber('库存操作键') }), scope: 'inventory' }),
     /「库存操作键」必须是文本字段/,
   );
+});
+
+// ⭐ 单选取值契约（2026-10-07 深夜加了第二条）：「报货批次」的**到货状态**与**确认状态**都是单选，
+//    代码要往里写固定取值 ⇒ 真表必须**已经存在**那些选项。写一个不存在的取值，飞书会
+//    **自动新建选项**（表被污染），而按该取值查询会静默查不到（AGENTS.md 第 11 条① 的事故形态）。
+//    这两条用例把"闸门真的会红"钉住（只读校验，不写任何表）。
+test('单选取值契约：确认状态不是单选 / 缺「已确认」选项 → schema-check 直接失败', async () => {
+  // 契约按**语义键**找列（`confirmStatus` → 「确认状态」）。假 gateway 的 `table()` 默认只给
+  // 幂等键/行为那几个键，这里把「确认状态」这个语义键补上（其余契约列不暴露 ⇒ 自动跳过）。
+  const selectGateway = (field) => {
+    const gateway = gatewayFor({ purchaseOrderBatch: [{ field_name: '幂等键', type: 1 }, field] });
+    const base = gateway.table;
+    gateway.table = (key) => {
+      const table = base(key);
+      if (key !== 'purchaseOrderBatch') return table;
+      return { ...table, fields: { ...table.fields, confirmStatus: '确认状态' } };
+    };
+    return gateway;
+  };
+  // ① 不是单选（她 2026-10-07 深夜刚把它从文本改成单选；代码按单选写）。
+  await assert.rejects(
+    validateV1SchemaScope({ gateway: selectGateway({ field_name: '确认状态', type: 1 }), scope: 'purchase' }),
+    /「确认状态」必须是单选字段/,
+  );
+  // ② 是单选，但选项里没有「已确认」⇒ 必须判红（绝不放行、也绝不替她建选项）。
+  await assert.rejects(
+    validateV1SchemaScope({
+      gateway: selectGateway({
+        field_name: '确认状态', type: 3, property: { options: [{ name: '待确认' }] },
+      }),
+      scope: 'purchase',
+    }),
+    /「确认状态」缺少选项: 已确认/,
+  );
+  // ③ 选项齐了才放行。
+  await validateV1SchemaScope({
+    gateway: selectGateway({
+      field_name: '确认状态', type: 3,
+      property: { options: [{ name: '待确认' }, { name: '已确认' }] },
+    }),
+    scope: 'purchase',
+  });
 });

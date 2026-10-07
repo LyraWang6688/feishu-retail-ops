@@ -4,7 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
-const { InventoryService, operationId, STOCK_MOVEMENTS, ADJUSTMENT_BEHAVIORS } = require('../src/services/inventoryService');
+const { InventoryService, operationId, purchaseIncreaseSourceId, STOCK_MOVEMENTS, ADJUSTMENT_BEHAVIORS } = require('../src/services/inventoryService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
 // 库存动作现在按「行为编码」匹配，编码是行为管理表里的稳定标识。
@@ -78,15 +78,17 @@ test('sale matches live inventory when Feishu returns product links as record_id
 test('purchase adds one live record per pair', async () => {
   const gateway = gatewayFor([]);
   const inventory = new InventoryService({ gateway, store: store() });
-  await inventory.applyPurchase({ purchaseInboundRecordId: 'inbound_1', productRecordId: 'product_1', size: 38,
+  await inventory.applyPurchase({ purchaseBatchRecordId: 'batch_1', productRecordId: 'product_1', size: 38,
     quantity: 2, state: '仓库' });
   assert.equal(gateway.records.get('liveInventory').length, 2);
   assert.ok(gateway.records.get('liveInventory').every((row) => row.fields['所属状态'] === '仓库'));
   assert.ok(gateway.records.get('liveInventory').every((row) =>
     JSON.stringify(row.fields['尺码']) === JSON.stringify(['size_38'])));
+  // ⚠️ 2026-10-07 深夜：「采购入库」表被整表删除 ⇒ 「关联采购」这一列也没了
+  //    （`ledgerSource = null`）——这条流水**不带来源关联**（与采购退货同一条通路）。
   assert.deepEqual(gateway.records.get('inventoryLedger')[0].fields, {
     编号: ['product_1'], 尺码: ['size_38'], 变动数量: 2,
-    库存行为: ['behavior_purchase'], 关联采购: ['inbound_1'],
+    库存行为: ['behavior_purchase'],
   });
   assert.ok(gateway.records.get('liveInventory').every((row) => !Object.hasOwn(row.fields, '更新时间')));
 });
@@ -232,24 +234,29 @@ const legacyPurchase = async ({ ledgerSize = ['size_38'], liveSize = ['size_38']
     编号: ['product_1'], 尺码: liveSize, 所属状态: '门盒',
   } };
   const gateway = gatewayFor([live]);
+  // ⚠️ 2026-10-07 深夜：来源标识改用**真实三元组**（批次身份｜货品｜尺码）。
+  //    用 `purchaseIncreaseSourceId` 自己算，别在测试里再抄一份格式。
+  const sourceId = purchaseIncreaseSourceId({
+    purchaseBatchRecordId: 'batch_legacy', productRecordId: 'product_1', size: 38,
+  });
   if (includeLedger) gateway.records.set('inventoryLedger', [{ record_id: 'legacy_ledger', fields: {
     编号: ['product_1'], 尺码: ledgerSize, 变动数量: 2,
-    库存行为: ['behavior_purchase'], 关联采购: ['inbound_legacy'],
+    库存行为: ['behavior_purchase'],
   } }]);
   const taskStore = store();
-  const id = operationId('STOCK_PURCHASE_INCREASE', 'inbound_legacy');
+  const id = operationId('STOCK_PURCHASE_INCREASE', sourceId);
   await taskStore.create({
     operation_id: id, type: 'inventory_change', schema_version: 2,
     status: includeLedger ? 'ledger_created' : 'prepared', kind: 'STOCK_PURCHASE_INCREASE',
     stock_key: 'product_1|38|门盒', product_record_id: 'product_1', size: 38,
     state: '门盒', quantity: 2, direction: '增加',
-    behavior_record_id: 'behavior_purchase', source_record_id: 'inbound_legacy',
+    behavior_record_id: 'behavior_purchase', source_record_id: sourceId,
     ledger_record_id: includeLedger ? 'legacy_ledger' : undefined,
     live_record_ids: [], created_live_record_ids: ['legacy_live'],
     removed_live_record_ids: [], target_quantity: 2,
   });
   const inventory = new InventoryService({ gateway, store: taskStore });
-  const request = { purchaseInboundRecordId: 'inbound_legacy', productRecordId: 'product_1',
+  const request = { purchaseBatchRecordId: 'batch_legacy', productRecordId: 'product_1',
     size: 38, quantity: 2, state: '门盒' };
   return { gateway, taskStore, id, inventory, request };
 };
@@ -532,7 +539,7 @@ const liveKeys = (gateway) => gateway.records.get('liveInventory')
 test('C1 采购 2 双：1 条流水、2 条实时库存，且两条库存操作键不同', async () => {
   const gateway = gatewayFor([]);
   const inventory = new InventoryService({ gateway, store: store() });
-  await inventory.applyPurchase({ purchaseInboundRecordId: 'inbound_1', productRecordId: 'product_1',
+  await inventory.applyPurchase({ purchaseBatchRecordId: 'batch_1', productRecordId: 'product_1',
     size: 38, quantity: 2, state: '仓库' });
 
   assert.equal(gateway.records.get('inventoryLedger').length, 1, '一次采购入库只写一条业务流水');
@@ -550,7 +557,7 @@ test('C2 第一双已写入远端但本地清单没落盘：重试只补第二�
     gateway,
     store: failingOnceStore(store(), (patch) => Array.isArray(patch.created_live_record_ids)),
   });
-  const input = { purchaseInboundRecordId: 'inbound_1', productRecordId: 'product_1',
+  const input = { purchaseBatchRecordId: 'batch_1', productRecordId: 'product_1',
     size: 38, quantity: 2, state: '仓库' };
 
   await assert.rejects(inventory.applyPurchase(input), /模拟本地落盘失败/);
@@ -572,7 +579,7 @@ test('C3 实时库存已创建但响应丢失：按库存操作键找回，不�
   };
   const inventory = new InventoryService({ gateway, store: store() });
 
-  const result = await inventory.applyPurchase({ purchaseInboundRecordId: 'inbound_1',
+  const result = await inventory.applyPurchase({ purchaseBatchRecordId: 'batch_1',
     productRecordId: 'product_1', size: 38, quantity: 2, state: '仓库' });
 
   assert.equal(gateway.records.get('liveInventory').length, 2, '必须找回已写入的那一双，而不是再建');
@@ -601,7 +608,7 @@ test('C4 远端出现两条相同库存操作键：停止入库并转人工核�
 test('C5 同一个 applyPurchase 重复执行：流水只有一条，库存只增加一次', async () => {
   const gateway = gatewayFor([]);
   const inventory = new InventoryService({ gateway, store: store() });
-  const input = { purchaseInboundRecordId: 'inbound_1', productRecordId: 'product_1',
+  const input = { purchaseBatchRecordId: 'batch_1', productRecordId: 'product_1',
     size: 38, quantity: 3, state: '门盒' };
 
   await inventory.applyPurchase(input);

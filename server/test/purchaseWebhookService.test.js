@@ -42,12 +42,16 @@ const mapFields = (tableKey, semanticValues) => {
 
 const makeGateway = (records = {}) => {
   const uploads = [];
+  // ⭐ 2026-10-07 深夜加的：把每次 create/update 记下来 —— 「到货确认一个业务表都不新建」
+  // 这类断言需要"到底写过哪几张表"的**行为证据**（原先只有"某张表有几条记录"）。
+  const writes = [];
   // 飞书附件单元格里的 `name` 是**上传时那个文件名**（不是我们写入时给的）。
   // 这里照样模拟：token → 文件名。少了它，「重复执行不新增第二条」就测不出来
   //（去重判据正是"这一批里已经有同名的图了"）。
   const tokenNames = new Map();
   return {
     uploads,
+    writes,
     table,
     get: async (tableKey, recordId) => {
       const list = records[tableKey] || [];
@@ -62,6 +66,7 @@ const makeGateway = (records = {}) => {
     },
     create: async (tableKey, semanticValues) => {
       const fields = mapFields(tableKey, semanticValues);
+      writes.push({ op: 'create', tableKey, values: fields });
       const recordId = `new_${tableKey}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const record = { record_id: recordId, fields };
       (records[tableKey] ||= []).push(record);
@@ -69,6 +74,7 @@ const makeGateway = (records = {}) => {
     },
     update: async (tableKey, recordId, semanticValues) => {
       const patch = mapFields(tableKey, semanticValues);
+      writes.push({ op: 'update', tableKey, recordId, values: patch });
       // 飞书附件字段读回来带 `name`（= 上传时的文件名）；这里照着补上，
       // 否则「重复执行不新增第二条」的去重判据在假 Base 上永远命中不了。
       if (Array.isArray(patch['单据'])) {
@@ -769,18 +775,24 @@ const arrivalActual = (extra = {}) => ({
   ...extra,
 });
 
-// ─── 入库：写「采购入库」+ 库存（confirmArrival）──────────────────────────
+// ─── 到货确认：**只加库存 + 写批次行**（confirmArrival）─────────────────────
 // ⚠️ 2026-10-06 业务负责人口径：「既然它就是采购申请，那个表就不要动」。
-// 所以这两个用例**不再**断言「采购申请表的到货状态被回写」——那正是被删掉的行为；
+// 所以这些用例**不再**断言「采购申请表的到货状态被回写」——那正是被删掉的行为；
 // 现在断言的是**它一个字都没变**（更硬的"零写入"断言在 arrivalConversation.test.js）。
+//
+// ⚠️ 2026-10-07 **深夜**：「采购入库」表被业务负责人**整表删除** ⇒ 本节从
+//    "写入库明细行 + 加库存"整体翻成"**只加库存**（＋批次行两列）"：
+//      · 入库明细行、它的「采购行为」查找（按 `PURCHASE_IN` 编码）、按采购申请回查远端，
+//        全部**随表退场**（配置模块 `config/purchaseBehaviors` 一并删除）；
+//      · 幂等来源从"入库行 id"换成**真实三元组**（批次记录 id ｜ 货品 ｜ 尺码）。
+//    守门（全仓不再引用那张表 / 那个配置）在 `purchaseInboundRemoval.test.js` ①。
 
-test('入库：写采购入库 + 挂回采购申请 + 到货信息写到**批次行**（不回写采购申请表）', async () => {
+test('到货确认：加库存 + 到货信息写到**批次行**（不回写采购申请表、不新建任何明细行）', async () => {
   const inventory = makeInventory();
   const records = {
     purchaseRequest: [{ record_id: 'req_1', fields: { 报货批次号: ['batch_1'], 编号: ['prod_1'], 尺码: sizeLink(36), 数量: 2 } }],
     // ⭐ 到货信息的落点：**「报货批次」那一行**（2026-10-07 晚；原来写「到货验收」那张表）。
     purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-TEST-001', 到货状态: '未到货' } }],
-    purchaseInbound: [],
   };
   const { service, store, gateway } = makeService({ inventory, gateway: makeGateway(records) });
   const task = await seedArrivalTask(store, {
@@ -795,17 +807,13 @@ test('入库：写采购入库 + 挂回采购申请 + 到货信息写到**批次
   const result = await service.confirmArrival(task.task_id, task, 'ou_1');
   assert.ok(result.toast.content.includes('采购已入库'));
 
-  const inbounds = await gateway.listAll('purchaseInbound');
-  assert.equal(inbounds.length, 1);
-  assert.deepEqual(inbounds[0].fields.尺码, sizeLink(36));
-  assert.equal(inbounds[0].fields.数量, 1);
-  assert.deepEqual(inbounds[0].fields.采购申请, ['req_1'], '入库记录要挂回对应的采购申请行');
-  // ⭐ 「采购入库.采购到货批次」已被业务负责人整列删除 ⇒ 这一列一个字都不许写。
-  assert.equal('采购到货批次' in inbounds[0].fields, false);
-  // 「单据信息」（采购申请表）**一个字都不动**：到货状态这一列**没有**被写过。
+  // ⭐ 一个业务表都不新建：入库明细行整体退场（那张表已被她整表删除）。
+  assert.deepEqual(gateway.writes.filter((item) => item.op === 'create'), [],
+    '到货确认不新建任何业务表记录（库存由 InventoryService 写，这里注入的是假实现）');
+  // 「报货信息」（采购申请表）**一个字都不动**：到货状态这一列**没有**被写过。
   assert.equal((await gateway.get('purchaseRequest', 'req_1')).fields.到货状态, undefined,
-    '采购申请表的「到货状态」不许被入库链路回写');
-  // ⭐ 到货信息的落点 = 批次行：「验收原话」在入库前写、「确认状态」在入库成功后写。
+    '采购申请表的「到货状态」不许被到货链路回写');
+  // ⭐ 到货信息的落点 = 批次行：「验收原话」在加库存之前写、「确认状态」在之后写。
   const batch = await gateway.get('purchaseOrderBatch', 'batch_1');
   assert.equal(batch.fields.验收原话, '38 码少一双');
   assert.equal(batch.fields.确认状态, '已确认');
@@ -813,13 +821,13 @@ test('入库：写采购入库 + 挂回采购申请 + 到货信息写到**批次
   assert.equal('到货日' in batch.fields, false);
   assert.equal('验收人' in batch.fields, false);
   assert.equal(inventory.calls.length, 1, '库存要跟着加一次');
+  assert.equal(inventory.calls[0].quantity, 1, '加的是**实际数**');
 });
 
-test('入库：同一货品+尺码的两条明细合成一条入库（数量 2），重复确认不重复写', async () => {
+test('到货确认：同一货品+尺码的两条明细合成**一次**加库存（数量 2），重复确认不重复写', async () => {
   const inventory = makeInventory();
   const records = {
     purchaseRequest: [{ record_id: 'req_1', fields: { 编号: ['prod_1'], 尺码: sizeLink(36), 数量: 2 } }],
-    purchaseInbound: [],
   };
   const { service, store, gateway } = makeService({ inventory, gateway: makeGateway(records) });
   const task = await seedArrivalTask(store, {
@@ -835,149 +843,45 @@ test('入库：同一货品+尺码的两条明细合成一条入库（数量 2�
   //    这句 toast 不再指着任何一张表，改成按现在的落点说（断言仍是逐字）。
   assert.equal(again.toast.content, '这一批已入库');
 
-  const inbounds = await gateway.listAll('purchaseInbound');
-  assert.equal(inbounds.length, 1);
-  assert.equal(inbounds[0].fields.数量, 2);
-  assert.equal(inventory.calls.length, 1);
+  assert.equal(inventory.calls.length, 1, '两条同货品+尺码的明细合成一次');
   assert.equal(inventory.calls[0].quantity, 2);
   assert.equal((await gateway.get('purchaseRequest', 'req_1')).fields.到货状态, undefined,
-    '采购申请表的「到货状态」不许被入库链路回写');
+    '采购申请表的「到货状态」不许被到货链路回写');
 });
 
-test('入库：真的调 inventory.applyPurchase（带采购入库记录 id 作为幂等来源）', async () => {
+test('到货确认：applyPurchase 的幂等来源 = **真实三元组**（批次记录 id ｜ 货品 ｜ 尺码）', async () => {
   const inventory = makeInventory();
-  const records = {
-    purchaseInbound: [],
-  };
+  const records = {};
   const { service, store } = makeService({ inventory, gateway: makeGateway(records) });
-  const task = await seedArrivalTask(store, { taskId: 'purchase_arrival_inv', actual: [arrivalActual()] });
+  const task = await seedArrivalTask(store, {
+    taskId: 'purchase_arrival_inv',
+    batchRecordId: 'batch_1',
+    batchNo: 'BH-TEST-001',
+    actual: [arrivalActual()],
+  });
 
   await service.confirmArrival(task.task_id, task, 'ou_1');
   assert.equal(inventory.calls.length, 1);
+  assert.equal(inventory.calls[0].purchaseBatchRecordId, 'batch_1', '批次记录 id 是真值，不是编的');
+  assert.equal(inventory.calls[0].purchaseBatchNo, 'BH-TEST-001');
+  assert.equal(inventory.calls[0].arrivalTaskId, 'purchase_arrival_inv', '孤儿调用时的兜底身份，也是真值');
   assert.equal(inventory.calls[0].productRecordId, 'prod_1');
   assert.equal(inventory.calls[0].size, 36);
   assert.equal(inventory.calls[0].quantity, 1);
-  assert.ok(inventory.calls[0].purchaseInboundRecordId, '库存的幂等来源是采购入库记录 id');
+  // ⚠️ 那个随「采购入库」表一起退场的键：一个字段都不许再传（库存那一层不再认识它）。
+  assert.equal(inventory.calls[0].purchaseInboundRecordId, undefined,
+    '入库行 id 已随那张表退场；来源标识改用上面那三个真值');
 });
 
-// ─── 行为查找：按【行为编码】，不按中文名（2026-10-07 真机事故的回归钉子）──────
-//
-// 现场：业务负责人 2026-10-07 把生产「行为管理」里那条从「采购入库」改名成「入库」
-// （编码 `PURCHASE_IN` 没动）→ 老代码按中文名找 → 0 条命中 → 她点「是」永远抛
-// 「行为管理中"采购入库"必须且只能有一条记录」。这组用例把"按编码找"钉死。
+// ─── 已删除（2026-10-07 深夜）：入库①~⑥「按行为编码找 PURCHASE_IN」那一组 ──────────
+// 它们钉的是**入库明细行**的「采购行为」怎么找记录（按编码、不按中文名）。
+// 「采购入库」表被业务负责人整表删除之后，那个字段、那次查找、以及
+// `config/purchaseBehaviors`（编码的单一来源）**一起退场** ⇒ 这组用例没有测试对象了。
+// 守门改由 `purchaseInboundRemoval.test.js` 的 ①-补2 负责：全仓不再有 PURCHASE_BEHAVIORS 读取点。
 
-test('入库①：行为表里只有编码 PURCHASE_IN、**没有**中文名「采购入库」→ 照样入库（她的现场）', async () => {
+test('到货确认：没有报货批次（供应商直接送货）照样加库存，不写任何申请状态', async () => {
   const inventory = makeInventory();
-  const records = {
-    purchaseInbound: [],
-    // ⭐ 生产真表现状：名称已经改成「入库」，一个字都不叫「采购入库」。
-    behavior: [{ record_id: 'bhv_in', fields: { 行为名称: '入库', 行为编码: 'PURCHASE_IN', 库存方向: '增加', 所属环节: '采购', 是否启用: true } }],
-  };
-  const { service, store, gateway } = makeService({ inventory, gateway: makeGateway(records) });
-  const task = await seedArrivalTask(store, { taskId: 'purchase_arrival_code', actual: [arrivalActual()] });
-
-  const result = await service.confirmArrival(task.task_id, task, 'ou_1');
-
-  assert.ok(result.toast.content.includes('采购已入库'), '改名之后必须照样入库');
-  const inbounds = await gateway.listAll('purchaseInbound');
-  assert.equal(inbounds.length, 1);
-  assert.deepEqual(inbounds[0].fields['采购行为'], ['bhv_in'], '「采购行为」挂的是编码命中的那条记录');
-  assert.equal(inventory.calls.length, 1);
-});
-
-test('入库②：中文名乱改都不影响 —— 「采购入库」/「入库」/「随便叫」结果逐字一致', async () => {
-  const run = async (name, index) => {
-    const inventory = makeInventory();
-    const records = {
-      purchaseInbound: [],
-      behavior: [{ record_id: 'bhv_in', fields: { 行为名称: name, 行为编码: 'PURCHASE_IN', 库存方向: '增加', 是否启用: true } }],
-    };
-    const { service, store, gateway } = makeService({ inventory, gateway: makeGateway(records) });
-    const task = await seedArrivalTask(store, { taskId: `purchase_arrival_n${index}`, actual: [arrivalActual()] });
-    await service.confirmArrival(task.task_id, task, 'ou_1');
-    return {
-      inbound: (await gateway.listAll('purchaseInbound')).length,
-      inventoryCalls: inventory.calls.length,
-    };
-  };
-
-  const expected = { inbound: 1, inventoryCalls: 1 };
-  assert.deepEqual(await run('采购入库', 1), expected);
-  assert.deepEqual(await run('入库', 2), expected);
-  assert.deepEqual(await run('随便叫一个名字', 3), expected);
-});
-
-test('入库③：编码 0 条 → 如实抛错（不静默、不放行），错误里带编码', async () => {
-  const inventory = makeInventory();
-  const records = {
-    purchaseInbound: [],
-    // 只有别的编码（库存环节那条），没有 PURCHASE_IN。
-    behavior: [{ record_id: 'bhv_other', fields: { 行为名称: '采购增加', 行为编码: 'STOCK_PURCHASE_INCREASE', 库存方向: '增加', 是否启用: true } }],
-  };
-  const { service, store, gateway } = makeService({ inventory, gateway: makeGateway(records) });
-  const task = await seedArrivalTask(store, { taskId: 'purchase_arrival_missing', actual: [arrivalActual()] });
-
-  await assert.rejects(
-    () => service.confirmArrival(task.task_id, task, 'ou_1'),
-    (error) => {
-      assert.match(error.message, /PURCHASE_IN/, '错误里要写清缺的是哪个编码');
-      return true;
-    },
-  );
-  assert.equal((await gateway.listAll('purchaseInbound')).length, 0, '找不到行为就一条入库行都不许写');
-  assert.equal(inventory.calls.length, 0, '也不许动库存');
-});
-
-test('入库④：编码重复 → 如实抛错，不任取第一条', async () => {
-  const inventory = makeInventory();
-  const records = {
-    purchaseInbound: [],
-    behavior: [
-      { record_id: 'bhv_a', fields: { 行为名称: '入库', 行为编码: 'PURCHASE_IN', 库存方向: '增加', 是否启用: true } },
-      { record_id: 'bhv_b', fields: { 行为名称: '入库（重复）', 行为编码: 'PURCHASE_IN', 库存方向: '增加', 是否启用: true } },
-    ],
-  };
-  const { service, store, gateway } = makeService({ inventory, gateway: makeGateway(records) });
-  const task = await seedArrivalTask(store, { taskId: 'purchase_arrival_dup', actual: [arrivalActual()] });
-
-  await assert.rejects(() => service.confirmArrival(task.task_id, task, 'ou_1'), /只能留一条/);
-  assert.equal((await gateway.listAll('purchaseInbound')).length, 0, '重复时也不许任取一条写下去');
-  assert.equal(inventory.calls.length, 0);
-});
-
-test('入库⑤：源码级钉子 —— 查找按行为编码（共享常量），不许再按中文名', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../src/services/purchaseWebhookService.js'), 'utf8');
-  const start = source.indexOf('async confirmArrivalLocked(');
-  assert.ok(start > 0, '找不到 confirmArrivalLocked');
-  const body = source.slice(start, source.indexOf('\n  async nextBatchNo()', start));
-  // 只看代码，不看注释（这段的注释里**故意**写着"以前是按中文名找的"）。
-  const codeOnly = body
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '')
-    .replace(/([^:])\/\/.*$/gm, '$1');
-
-  assert.equal(/fields\.name\]/.test(codeOnly), false, '入库实现里不许再按「行为名称」找记录');
-  assert.equal(/'采购入库'/.test(codeOnly), false, '入库实现里不许再出现中文名字面量');
-  assert.equal(/fields\.code\]/.test(codeOnly), true, '要按「行为编码」匹配');
-  assert.equal(/PURCHASE_BEHAVIORS\.INBOUND/.test(codeOnly), true, '编码必须取自 config/purchaseBehaviors 的共享常量');
-  assert.equal(/PURCHASE_IN/.test(codeOnly), false, '不许在 service 里再写一份编码字面量（那是第二个来源，会漂移）');
-});
-
-test('入库⑥：编码的单一来源 —— config/purchaseBehaviors 与库存注册表**不是**同一个编码', () => {
-  const { PURCHASE_BEHAVIORS } = require('../src/config/purchaseBehaviors');
-  const { MOVEMENT_PURCHASE_INCREASE } = require('../src/services/inventoryService');
-
-  assert.equal(PURCHASE_BEHAVIORS.INBOUND, 'PURCHASE_IN');
-  // ⚠️ 两个"增加"分属**两张表两条行为记录**：采购环节的 PURCHASE_IN 挂「采购入库」的
-  //    「采购行为」；库存环节的 STOCK_PURCHASE_INCREASE 才是库存流水那一条。
-  //    这条断言是**防漂移**的：将来有人想"统一成一个编码"时必须先想清楚这件事。
-  assert.notEqual(PURCHASE_BEHAVIORS.INBOUND, MOVEMENT_PURCHASE_INCREASE,
-    'PURCHASE_IN（采购环节）与 STOCK_PURCHASE_INCREASE（库存环节）不是同一条行为，不能互相替代');
-});
-
-test('入库：没有报货批次（供应商直接送货）照样入库，不写任何申请状态', async () => {
-  const inventory = makeInventory();
-  const records = { purchaseInbound: [] };
+  const records = {};
   const { service, store, gateway } = makeService({ inventory, gateway: makeGateway(records) });
   const task = await seedArrivalTask(store, {
     taskId: 'purchase_arrival_direct',
@@ -986,30 +890,27 @@ test('入库：没有报货批次（供应商直接送货）照样入库，不�
 
   const result = await service.confirmArrival(task.task_id, task, 'ou_1');
   assert.ok(result.toast.content.includes('采购已入库'));
-  assert.equal((await gateway.listAll('purchaseInbound')).length, 1);
-  assert.equal(inventory.calls.length, 1, '直接到货也要真的入库');
+  assert.equal(inventory.calls.length, 1, '直接到货也要真的加库存');
+  // 两个批次身份都空 ⇒ 来源标识退回到**到货核对任务 id**（仍是真值，不是编的）。
+  assert.equal(inventory.calls[0].arrivalTaskId, 'purchase_arrival_direct');
   assert.equal((await gateway.listAll('purchaseRequest')).length, 0);
+  assert.deepEqual(gateway.writes.filter((item) => item.op === 'create'), [],
+    '不新建任何业务表记录');
 });
 
-test('入库：写库中途失败后重试不重复写第一条，也不重复加库存', async () => {
-  const inventory = makeInventory();
-  const records = {
-    purchaseInbound: [],
-  };
-  let inboundCreateCount = 0;
-  let failOnSecondCreate = true;
-  const baseGateway = makeGateway(records);
-  const gateway = {
-    ...baseGateway,
-    create: async (tableKey, semanticValues) => {
-      if (tableKey === 'purchaseInbound') {
-        inboundCreateCount += 1;
-        if (failOnSecondCreate && inboundCreateCount === 2) throw new Error('模拟入库写入中途失败');
-      }
-      return baseGateway.create(tableKey, semanticValues);
+test('到货确认：加库存中途失败 → 重试补齐第二条，不重复第一条', async () => {
+  const inventoryCalls = [];
+  let failOnSecond = true;
+  const inventory = {
+    calls: inventoryCalls,
+    async applyPurchase(input) {
+      inventoryCalls.push(input);
+      if (failOnSecond && inventoryCalls.length === 2) throw new Error('模拟加库存中途失败');
+      return { stockKey: `${input.productRecordId}|${input.size}`, ledgerRecordId: 'ledger_1', liveRecordIds: ['live_1'] };
     },
   };
-  const { service, store } = makeService({ inventory, gateway });
+  const records = {};
+  const { service, store, gateway } = makeService({ inventory, gateway: makeGateway(records) });
   const task = await seedArrivalTask(store, {
     taskId: 'purchase_arrival_partial',
     actual: [arrivalActual(), arrivalActual({ size: 37 })],
@@ -1017,118 +918,56 @@ test('入库：写库中途失败后重试不重复写第一条，也不重复�
 
   await assert.rejects(
     () => service.confirmArrival(task.task_id, task, 'ou_1'),
-    /模拟入库写入中途失败/,
+    /模拟加库存中途失败/,
   );
-  assert.equal((await gateway.listAll('purchaseInbound')).length, 1, '失败后应只有 1 条入库记录');
-  assert.equal(inventory.calls.length, 1, '失败后应只有 1 次库存更新');
+  assert.deepEqual(inventoryCalls.map((call) => call.size), [36, 37], '36 码成功、37 码失败');
   assert.notEqual((await store.get(task.task_id)).status, 'posted', '失败后任务不应标记为 posted');
+  assert.equal((await store.get(task.task_id)).draft.inventory_applied['prod_1|36'].inventoryApplied, true,
+    '成功那一条的进度要落盘');
 
-  failOnSecondCreate = false;
+  failOnSecond = false;
   const result = await service.confirmArrival(task.task_id, await store.get(task.task_id), 'ou_1');
   assert.ok(result.toast.content.includes('采购已入库'), result.toast.content);
 
-  const inbounds = await gateway.listAll('purchaseInbound');
-  assert.equal(inbounds.length, 2, '重试补齐第二条，不重复第一条');
-  assert.equal(inventory.calls.length, 2);
-  assert.deepEqual(inbounds.map((row) => row.fields.尺码[0]).sort(), sizeLinks(36, 37));
+  // 重试：36 码不再加（进度已落盘），只补 37 码。
+  assert.deepEqual(inventoryCalls.map((call) => call.size), [36, 37, 37], '不重复第一条');
   assert.equal((await store.get(task.task_id)).status, 'posted');
 });
 
-test('入库：飞书列表延迟时靠任务里落盘的 inbound_created 防重复', async () => {
+test('到货确认：兼容**旧进度键**①`inventoryApplied:true`（升级那一刻半路的任务不会多加库存）', async () => {
+  // 改动前进度写在 `draft.inbound_created` 上（值是 `{recordId, inventoryApplied}`）。
+  // 改名成 `inventory_applied` 之后，升级瞬间停在 posting 的任务两种形状都可能出现。
   const inventory = makeInventory();
-  const records = {
-    purchaseInbound: [],
-  };
-  let inboundCreateCount = 0;
-  let failOnSecondCreate = true;
-  let simulateListLatency = false;
-  const baseGateway = makeGateway(records);
-  const gateway = {
-    ...baseGateway,
-    listAll: async (tableKey) => {
-      if (tableKey === 'purchaseInbound' && simulateListLatency) return [];
-      return baseGateway.listAll(tableKey);
-    },
-    create: async (tableKey, semanticValues) => {
-      if (tableKey === 'purchaseInbound') {
-        inboundCreateCount += 1;
-        if (failOnSecondCreate && inboundCreateCount === 2) throw new Error('模拟入库写入中途失败');
-      }
-      return baseGateway.create(tableKey, semanticValues);
-    },
-  };
-  const { service, store } = makeService({ inventory, gateway });
+  const { service, store } = makeService({ inventory, gateway: makeGateway({}) });
   const task = await seedArrivalTask(store, {
-    taskId: 'purchase_arrival_latency',
-    actual: [arrivalActual(), arrivalActual({ size: 37 })],
+    taskId: 'purchase_arrival_legacy_applied',
+    actual: [arrivalActual()],
+    // 旧键说"已经加过" ⇒ 一个字都不许再动库存。
+    inboundCreated: { 'prod_1|36': { recordId: 'old_inbound_1', inventoryApplied: true } },
   });
 
-  await assert.rejects(
-    () => service.confirmArrival(task.task_id, task, 'ou_1'),
-    /模拟入库写入中途失败/,
-  );
-  const afterFirst = await store.get(task.task_id);
-  assert.ok(afterFirst.draft?.inbound_created, '失败后应已持久化 inbound_created');
-  assert.equal(Object.keys(afterFirst.draft.inbound_created).length, 1, '只持久化第 1 条成功的记录');
-  assert.ok(Object.keys(afterFirst.draft.inbound_created)[0].includes('36'), '持久化的应是 36 码那条');
-
-  simulateListLatency = true;
-  failOnSecondCreate = false;
-  await service.confirmArrival(task.task_id, afterFirst, 'ou_1');
-
-  const inbounds = await baseGateway.listAll('purchaseInbound');
-  assert.equal(inbounds.length, 2, '即使 listAll 返回空，36 码也不能重复');
-  assert.equal(inventory.calls.length, 2);
+  await service.confirmArrival(task.task_id, task, 'ou_1');
+  assert.equal(inventory.calls.length, 0, '旧键记着已加过库存 ⇒ 重放不许再加一次');
 });
 
-test('入库：库存更新失败后重试继续补上，不重复建入库记录', async () => {
-  let inventoryCallCount = 0;
-  const inventoryCalls = [];
-  let failInventory = true;
-  const inventory = {
-    applyPurchase: async (input) => {
-      inventoryCallCount += 1;
-      inventoryCalls.push(input);
-      if (failInventory && inventoryCallCount === 1) throw new Error('模拟库存更新失败');
-      return { stockKey: `${input.productRecordId}|${input.size}`, ledgerRecordId: 'ledger_1', liveRecordIds: ['live_1'], movementQuantity: input.quantity, direction: '增加', quantity: input.quantity };
-    },
-  };
-  const records = {
-    purchaseInbound: [],
-  };
-  const { service, store, gateway } = makeService({ inventory, gateway: makeGateway(records) });
+test('到货确认：兼容**旧进度键**②`inventoryApplied:false`（那次没加完 → 要补加一次）', async () => {
+  const inventory = makeInventory();
+  const { service, store } = makeService({ inventory, gateway: makeGateway({}) });
   const task = await seedArrivalTask(store, {
-    taskId: 'purchase_arrival_invfail',
-    actual: [arrivalActual(), arrivalActual({ size: 37 })],
+    taskId: 'purchase_arrival_legacy_pending',
+    actual: [arrivalActual()],
+    inboundCreated: { 'prod_1|36': { recordId: 'old_inbound_2', inventoryApplied: false } },
   });
 
-  await assert.rejects(
-    () => service.confirmArrival(task.task_id, task, 'ou_1'),
-    /模拟库存更新失败/,
-  );
-  const inboundsAfterFirst = await gateway.listAll('purchaseInbound');
-  assert.equal(inboundsAfterFirst.length, 1, '第一次失败后应只有 36 码那条入库记录');
-  assert.equal(inventoryCallCount, 1);
-  const entry36 = Object.values((await store.get(task.task_id)).draft.inbound_created)
-    .find((entry) => entry.recordId === inboundsAfterFirst[0].record_id);
-  assert.equal(entry36.inventoryApplied, false, '库存更新失败后 inventoryApplied 应为 false');
-
-  failInventory = false;
-  await service.confirmArrival(task.task_id, await store.get(task.task_id), 'ou_1');
-
-  assert.equal((await gateway.listAll('purchaseInbound')).length, 2, '36 码不重复创建，37 码正常创建');
-  assert.equal(inventoryCallCount, 3, '36 码失败 1 次 + 36 码重试 + 37 码');
-  const inbound36Id = inboundsAfterFirst[0].record_id;
-  assert.equal(inventoryCalls.filter((call) => call.purchaseInboundRecordId === inbound36Id).length, 2);
+  await service.confirmArrival(task.task_id, task, 'ou_1');
+  assert.equal(inventory.calls.length, 1, '旧键记着"没加完" ⇒ 补加一次');
 });
 
-test('A2 同时确认同一个采购到货：每个逻辑入库只有一条，库存只加一次', async () => {
+test('A2 同时确认同一个到货：库存只加一次（confirmationQueue 串行）', async () => {
   // 这条并发断言原先靠 handleCardAction 的 confirmationQueue 串行提供。到货卡片动作已删，
   // 串行保证原样挪进了 confirmArrival（见方法头的注释）——所以这里直接并发调它。
   const inventory = makeInventory();
-  const records = {
-    purchaseInbound: [],
-  };
+  const records = {};
   const { service, store, gateway } = makeService({ inventory, gateway: slowCreates(makeGateway(records)) });
   const task = await seedArrivalTask(store, { taskId: 'purchase_arrival_race', actual: [arrivalActual()] });
 
@@ -1137,8 +976,8 @@ test('A2 同时确认同一个采购到货：每个逻辑入库只有一条，�
     service.confirmArrival(task.task_id, task, 'ou_1'),
   ]);
 
-  assert.equal((await gateway.listAll('purchaseInbound')).length, 1, '并发确认不得创建第二条采购入库');
   assert.equal(inventory.calls.length, 1, '库存只应增加一次');
+  assert.deepEqual(gateway.writes.filter((item) => item.op === 'create'), [], '不新建任何业务表记录');
   assert.equal((await store.get(task.task_id)).status, 'posted');
 });
 
@@ -1308,7 +1147,7 @@ test('建档失败可重试：已经建好的那条不重复建，重试只补�
 });
 
 test('建档一直失败：草稿给出原因，且 confirmArrival 拒绝假装入库', async () => {
-  const records = { product: [], color: [{ record_id: 'color_black', fields: { 颜色: '黑色' } }], supplier: [], purchaseInbound: [] };
+  const records = { product: [], color: [{ record_id: 'color_black', fields: { 颜色: '黑色' } }], supplier: [] };
   const gateway = makeGateway(records);
   gateway.create = async (tableKey, semanticValues) => {
     if (tableKey === 'product') throw new Error('模拟建档总失败');
@@ -1330,7 +1169,8 @@ test('建档一直失败：草稿给出原因，且 confirmArrival 拒绝假装�
     /新品建档没成功/,
     '建档失败必须明确告诉她原因，不能静默',
   );
-  assert.equal((await gateway.listAll('purchaseInbound')).length, 0, '建不出货品就不能入库，更不能假装入了');
+  assert.deepEqual(gateway.writes.filter((item) => item.op === 'create'), [],
+    '建不出货品就什么业务表记录都不写，更不能假装入了库');
 
   // 失败可重试：修好之后再确认一次，走同一条幂等路径。
   gateway.create = makeGateway(records).create;
@@ -1425,10 +1265,9 @@ test('成本：重复跑建档不重复写成本（costApplied 落盘）', async
   assert.equal(records.product[0].fields.成本, 199);
 });
 
-test('成本：写成本失败只记 warn，不挡住入库', async () => {
+test('成本：写成本失败只记 warn，不挡住到货确认', async () => {
   const records = {
     product: [{ record_id: 'prod_fail', fields: { 编号: '1366-31棕色', 供应商: ['sup_A'] } }],
-    purchaseInbound: [],
   };
   const gateway = makeGateway(records);
   gateway.update = async (tableKey, recordId, semanticValues) => {
@@ -1451,7 +1290,8 @@ test('成本：写成本失败只记 warn，不挡住入库', async () => {
   // 货已经到了：成本写不进去不能把整批到货卡住。
   const result = await service.confirmArrival(task.task_id, await store.get(task.task_id), 'ou_1');
   assert.ok(result.toast.content.includes('采购已入库'));
-  assert.equal((await gateway.listAll('purchaseInbound')).length, 1);
+  assert.deepEqual(gateway.writes.filter((item) => item.op === 'create'), [],
+    '到货确认不新建任何业务表记录（入库明细行整体退场）');
 });
 
 test('成本：新品建档顺带写成本；单据上没有价格就不写成本字段', async () => {
@@ -1714,9 +1554,9 @@ test('采购退货一条（编号 + 尺码 + 数量说明）→ 交给退货链�
   // ⚠️ 2026-10-07 晚：退货批次**也会**在「报货批次」建一行（退货单 PNG 的落点）——
   //    但**只有这一批真的有内容要出图**时才建（`taken > 0`）。这一条 `taken = 0`
   //    （这个假表里没有实时库存）⇒ 没有图、也没有事实要挂 ⇒ **不建空行**。
-  //    仍不写「采购入库」那张表，也**没有**「到货验收」这张表可写（她 2026-10-07 晚已删除）。
+  //    仍不写任何入库明细行（「采购入库」表已被她整表删除），也**没有**「到货验收」这张表可写。
   assert.equal((await gateway.listAll('purchaseOrderBatch')).length, 0);
-  assert.equal((await gateway.listAll('purchaseInbound')).length, 0);
+  assert.equal(gateway.writes.filter((item) => item.op === 'create').length, 0, '退货没有库存事实时不新建任何记录');
 });
 
 test('一次提交多条（同一包）→ 只处理一次、只出一份申请、只出一张图', async () => {

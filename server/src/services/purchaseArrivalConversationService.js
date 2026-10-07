@@ -50,12 +50,13 @@ const rowLabel = (row) => `${textValue(row?.item_no) || '（未知货号）'}${t
  *      已经有一张卡片时她再补充/修正（或换了话题）→ **在当前话题重发一张新卡**，
  *      旧卡**尽力作废**（收掉按钮）—— 见 `retirePreviousCard` 的注释（2026-10-07 晚改）；
  *   ④ 点「是」→ 这是**唯一的入库点**：
- *        建「采购到货」一行（用户原话 + 验收人；**到货日交给飞书自动填，代码不写**）
- *        → 「采购入库」按**实际数**（= 申请数 ± 她说的差异）
- *        → 库存流水 / 实时库存跟着变（由 confirmArrival → inventory.applyPurchase 负责）；
+ *        「验收原话」写到**「报货批次」那一行** → **逐条加库存**（`inventory.applyPurchase`，
+ *        「库存流水」/「实时库存」由它负责）→ 同一行的「确认状态」改成已确认；
+ *        ⚠️ 2026-10-07 深夜起**不再写任何入库明细行**（「采购入库」表已被她整表删除），
+ *        「到货状态 = 已到货」由本类的 `notifyBatchArrived` 在事后写；
  *   ⑤ 点「否」→ **零业务表写入**，只回一句「好，那先不入库」。
  *
- * ⚠️ 「具体信息」（= 采购申请表，以前的「采购申请」）**一个字都不动**：
+ * ⚠️ 「报货信息」（= 采购申请表；表名沿革：原「采购申请」→「单据信息」→「具体信息」→「报货信息」）**一个字都不动**：
  *   本类里没有任何对 purchaseRequest 的写路径；`confirmArrival` 里原先那一段
  *   回写入库状态的代码已按她的口径删除（见 purchaseWebhookService 的注释 + 测试里的断言）。
  *
@@ -65,7 +66,7 @@ const rowLabel = (row) => `${textValue(row?.item_no) || '（未知货号）'}${t
  * ⭐ 「某一行算出来 `实际 = 0 双`」怎么办（业务负责人 **2026-10-07 当面纠正**，逐字：
  *   「**如果这个尺码算下来为 0，那么就不用入库啊！**」）：
  *   · `实际 = 0` 是**到货核实的正常结果**（供应商漏发一整双），**不是错误**；
- *     该行**不入库**（不写「采购入库」、不调 `inventory.applyPurchase`），
+ *     该行**不入库**（不写任何入库明细、不调 `inventory.applyPurchase`），
  *     **但绝不阻断整单** —— 其它 `实际 > 0` 的行照常入库；
  *   · 卡片上如实显示「申请 N 双 → 实际 0 双（这双没到）」（文案可配）；
  *   · **真正的「对不上明细」**（尺码/货号在单据里找不到、命中不唯一）仍走
@@ -150,7 +151,7 @@ class PurchaseArrivalConversationService {
   /**
    * 叫一声"这一批到货了"，并把所有失败吞成 warn。
    *
-   * 🔴 **本方法永不抛**：到这一步「采购入库」+「库存流水」+「实时库存」都已经写完了，
+   * 🔴 **本方法永不抛**：到这一步「库存流水」+「实时库存」都已经写完了，
    *    批次状态写不回去只是"她那张表上没显示已到货"，绝不能把入库成功判成失败。
    *
    * ⚠️ 方法名与注入依赖名（`this.markBatchArrived`）**必须不同**：
@@ -517,17 +518,20 @@ class PurchaseArrivalConversationService {
    *
    * 顺序（不能换）：
    *   ① 把草稿写进任务（`draft.actual` 是按实际调整完的数量、`draft.requests` 是申请行）；
-   *   ② `confirmArrival` → **「验收原话」写到「报货批次」那一行** → 「采购入库」逐行写入
-   *      + `inventory.applyPurchase`（「库存流水」+「实时库存」由它负责，这里不另写一套）
+   *   ② `confirmArrival` → **「验收原话」写到「报货批次」那一行** → **逐条 `inventory.applyPurchase`**
+   *      （「库存流水」+「实时库存」由它负责，这里不另写一套）
    *      → 批次行的「确认状态」改成已确认。
    *
    * ⭐ 2026-10-07 晚（到货落点大改）：这里**不再建「到货验收」那一行**（表已被业务负责人删除）。
    *    「验收原话」「确认状态」由 `confirmArrival` 写进**「报货批次」那一行**；
    *    本类因此**不再写任何业务表**（批次行的维护归 `PurchaseOrderBatchService`）。
+   * ⭐⭐ 2026-10-07 深夜：「采购入库」表也被她**整表删除** ⇒ `confirmArrival` 里
+   *    **不再写任何入库明细行**，只更新批次行 + 逐条加库存（口径逐字见那份方法的注释）。
    *
    * 幂等：`task.status === 'posted'` 早退；
-   * 更里面的「采购入库 / 批次行」幂等由 `confirmArrival` 自己保证
-   *（inbound_created + 远端回查 + 串行队列；「验收原话」写的是同一个文本值）。
+   * 更里面的「加库存 / 批次行」幂等由 `confirmArrival` 自己保证
+   *（`draft.inventory_applied` 落盘 ＋ 库存自己按真实来源标识去重 ＋ 串行队列；
+   *  「验收原话」写的是同一个文本值）。
    */
   async confirmLocked(taskId, operatorOpenId, event = {}) {
     const { replies } = this.config;
@@ -570,10 +574,11 @@ class PurchaseArrivalConversationService {
     }
     // ⚠️ 这里的形状就是 confirmArrival 一直在等的草稿形状：
     //    actual = 按实际调整完的明细（每行一条 货品+尺码+实际双数）
-    //    requests = 申请行原样（只用来把「采购入库」的「采购申请」关联挂回去）
+    //    requests = 申请行原样（⚠️ 2026-10-07 深夜起**不再**用来挂「采购入库」的「采购申请」——
+    //              那张表已被整表删除；仍然照传，因为到货核对卡片/建档还要用它的形状）
     //    pending_creation 空数组：到货的货品在建采购申请时就已经存在了，这里不建新品。
     // ⭐ 2026-10-07：`实际 = 0 双` 的行**到这里就被摘掉**，一张表都不写 ——
-    //    不写「采购入库」、不调 inventory.applyPurchase（库存流水/实时库存都不动）。
+    //    不写任何入库明细、不调 inventory.applyPurchase（库存流水/实时库存都不动）。
     //    为什么在**建草稿这一步**摘（而不是塞给 confirmArrival 让它跳过）：
     //      · `PurchaseWebhookService.aggregateArrivalItems` 对 `quantity <= 0` **当场抛错**
     //        （那道闸门是给"数量无效"兜底的，不能放宽 —— 它同样拦着负数）；
@@ -680,8 +685,11 @@ class PurchaseArrivalConversationService {
       skipped_zero_count: zeroRows.length,
       skipped_zero_rows: zeroRows.map(rowLabel),
       total_quantity: total,
-      // 「具体信息」（采购申请表）在这条链路上**一个字都没写**——这是断言钉住的口径。
+      // 「报货信息」（采购申请表）在这条链路上**一个字都没写**——这是断言钉住的口径。
       purchase_request_writes: 0,
+      // ⭐ 2026-10-07 深夜：「采购入库」表被整表删除 ⇒ 这次确认**没有**任何入库明细行；
+      //    库存照加，写的就是上面 summary 里那个实际数。
+      inbound_rows_written: 0,
     });
     // ⚠️ 只回自己的 toast：`confirmArrival` 返回的 toast 是"给卡片点的人看的一句话"，
     //    和这里这句"按实际到货入库"是两回事，展开到前面会把它盖掉（踩过一次）。

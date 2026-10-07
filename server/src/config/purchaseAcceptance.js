@@ -4,13 +4,17 @@
 //   「**1. 验收原话：改写到报货批次  2. 验收人：改写到报货批次  3. 确认状态：改到报货批次**」
 //   ⇒ 到货核对的落点从已被删除的「到货验收」表搬到**「报货批次」那一行**。
 //
-// 这一列在真表上是**文本**（不是单选），所以往它写一个"新取值"不会被飞书自动建选项、
-// 也就不会污染表 —— 但**取值仍然属于业务口径**（她哪天想改成「已验收」就改这里/环境变量），
-// 所以照「配置先行」放在配置文件里，不在 service 里写中文字面量。
+// ⚠️ **2026-10-07 深夜更新：这一列在真表上已经从【文本】改成【单选】**（她在生产表里改的）。
+//    ⇒ 与「到货状态」同一条风险：往单选里写一个**不存在的取值**，飞书不会报错，而是
+//    **自动新建一个选项** —— 表被悄悄污染（AGENTS.md 第 11 条① 的事故形态）。
+//    ⇒ 取值因此**不能只放在配置里**：必须对着真表 `property.options` 做**部署闸门**校验
+//      （`purchaseAcceptanceOptionContract`，由 `v1:schema-check:*` 调用，**只读**）。
+//    ⚠️ 校验失败 = 真表里没有这个选项名 ⇒ **闸门判红、停下报告**；
+//      **绝不**由代码去改选项名，更不硬写进去让飞书替我们建一个新选项。
 //
 // ⚠️ 与 `config/purchaseArrivalStatus.js`（**到货状态**：未到货 / 已到货，**单选**）
-//    是**两列两件事**：那一列的取值要对着真表 `property.options` 做闸门校验，这一列不需要。
-// ⚠️ 与它同样**不是**「具体信息」上那一列（那一列已被她删除，代码里已无映射）。
+//    是**两列两件事**：两列各有自己的取值契约，都在闸门里。
+// ⚠️ 与它同样**不是**「报货信息」（原「具体信息」）上那一列（那一列已被她删除，代码里已无映射）。
 
 const { readString } = require('./envValue');
 
@@ -40,10 +44,28 @@ const resolvePurchaseAcceptanceConfig = (env = process.env) => {
   return Object.freeze({ confirmed: String(confirmed) });
 };
 
+/**
+ * 部署闸门用的「单选取值契约」：`[{ tableKey, fieldKey, requiredOptions }]`。
+ * 只回答「真表这一列是单选、且含这个取值」——**只读**，不写任何东西。
+ *
+ * ⭐ 她 2026-10-07 深夜把这一列从文本改成单选之后，这条契约就是**唯一的守门人**：
+ *    服务器上跑 `pnpm run v1:schema-check:purchase` 会在部署前对着**生产真表**核对选项名
+ *    （本机的测试 Base 落后于生产，在本机跑红了是**预期**的，别据此改代码或改选项名）。
+ */
+const purchaseAcceptanceOptionContract = (env = process.env) => {
+  const { confirmed } = resolvePurchaseAcceptanceConfig(env);
+  return [{
+    tableKey: 'purchaseOrderBatch',
+    fieldKey: PURCHASE_ACCEPTANCE_STATUS_FIELD_KEY,
+    requiredOptions: [confirmed],
+  }];
+};
+
 module.exports = {
   PURCHASE_ACCEPTANCE_CONFIRMED_ENV_KEY,
   DEFAULT_PURCHASE_ACCEPTANCE_CONFIRMED,
   PURCHASE_ACCEPTANCE_STATUS_FIELD_KEY,
   PURCHASE_ACCEPTANCE_TEXT_FIELD_KEY,
   resolvePurchaseAcceptanceConfig,
+  purchaseAcceptanceOptionContract,
 };

@@ -67,9 +67,20 @@
 > `purchaseArrivalDetailCard` / 卡片动作 `confirm_purchase_arrival` / 视觉模型配置
 > `VISION_LLM_*` / 鞋盒与到货单两个识别方法）。理由：她删掉了那张表上的三个识别字段，
 > 并明确「不再用拍照识别，改成纯对话驱动」。
-> ⚠️ **保留**的是入库与建档这两项能力（`confirmArrival` 写「采购入库」+ 调库存
-> `inventory.applyPurchase`；`ensureArrivalProducts` 建档 + 成本）——它们现在**没有生产调用方**
-> （孤儿能力，等「对话到货」接）。⭐ **「把后者剥成 `services/productCreationService.js`」这件事
+> ⚠️ **保留**的是**加库存与建档**这两项能力（到货链路里 `confirmArrival` 逐条调
+> `inventory.applyPurchase`；`ensureArrivalProducts` 建档 + 成本）——**2026-10-06 起有调用方了**
+> （群话题对话式核对，她点「是」之后进来）。
+> ⚠️⚠️ **2026-10-07 深夜更新**：「**采购入库**」表（`tblK3Uzd0nN1GJrr`）已被业务负责人
+> **整表删除**，她的口径（逐字）：「甲 **不再写任何入库明细**：只更新「报货批次」
+> （到货状态=已到货 + 验收原话 + 确认状态）+ **加库存**（库存流水 / 实时库存照写）
+> —— 也就是"**入库明细表整个不要了**"」。
+> ⇒ 到货链路**不再写任何入库明细行**：`config/purchaseBehaviors.js`（采购环节 `PURCHASE_IN`）
+> 随它的唯一消费者一起退场；`v1BitableSchema` 的 `purchaseInbound` 整段、
+> `inventoryLedger.purchaseInbound`（「关联采购」，随对端表一起被飞书删掉）、
+> `v1SchemaScopes` 里的两处引用全部删除；幂等来源从"入库行 id"换成**真实三元组**
+> （批次记录 id ｜ 货品 ｜ 尺码，只进本地）⇒ 加库存的流水**不带来源关联**（与采购退货同一通路）。
+> ⭐ 验收标准 + 逐条对照 + 证据见 `docs/purchase-inbound-table-removal-2026-10-07.md`。
+> ⭐ **「把建档剥成 `services/productCreationService.js`」这件事
 > 还没进 main**——原分支 `refactor/decouple-creation-and-stock`（PR #80 CLOSED）已于 2026-10-06
 > 清理时删除，但**剥出来的 service 原文与全量 patch 已留档在**
 > `docs/branch-salvage-2026-10-06/`（索引见 `docs/branch-salvage-2026-10-06.md` 第 4 节）。

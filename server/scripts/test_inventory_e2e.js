@@ -48,7 +48,7 @@ async function main() {
   const requiredTables = {
     product: 'FEISHU_V1_PRODUCT_TABLE_ID', behavior: 'FEISHU_V1_BEHAVIOR_TABLE_ID',
     sizeManagement: 'FEISHU_V1_SIZE_TABLE_ID', salesEntry: 'FEISHU_V1_SALES_ENTRY_TABLE_ID',
-    salesDetail: 'FEISHU_V1_SALES_DETAIL_TABLE_ID', purchaseInbound: 'FEISHU_V1_PURCHASE_INBOUND_TABLE_ID',
+    salesDetail: 'FEISHU_V1_SALES_DETAIL_TABLE_ID',
     inventoryLedger: 'FEISHU_V1_INVENTORY_LEDGER_TABLE_ID', liveInventory: 'FEISHU_V1_LIVE_INVENTORY_TABLE_ID',
   };
   for (const [key, envName] of Object.entries(requiredTables)) {
@@ -64,7 +64,7 @@ async function main() {
   const inventory = new InventoryService({ gateway, store });
   await gateway.validateTables(Object.keys(requiredTables));
   await inventory.ensureSchema();
-  await inventory.sizeReferences.validateSchema(['salesDetail', 'purchaseInbound']);
+  await inventory.sizeReferences.validateSchema(['salesDetail']);
   await inventory.validateStockBehaviors();
   const product = await gateway.get('product', PRODUCT_ID);
   assert.equal(textValue(product.fields?.['货号']), process.env.FEISHU_V1_E2E_ITEM_NO);
@@ -73,19 +73,14 @@ async function main() {
     '所选测试货品已有 34 码门盒库存，停止以避免误扣');
   assert.equal((await inventory.findLiveInventory(PRODUCT_ID, SIZE, '样品')).length, 0,
     '所选测试货品已有 34 码样品库存，停止以避免误扣');
-  const inboundBehavior = (await gateway.listAll('behavior')).find((record) =>
-    textValue(record.fields?.['行为名称']) === '采购入库');
-  assert.ok(inboundBehavior, '测试 Base 缺少采购入库行为');
-
+  // ⭐ 2026-10-07 深夜：「采购入库」表已被业务负责人**整表删除** ⇒ 这里不再建入库行。
+  //    采购加库存的来源标识改用**真实三元组**（批次身份 | 货品 | 尺码），
+  //    本脚本用 marker 当"批次身份"（它就是这一段测试自己造的、独一无二的真值）。
   const marker = `CODEX-INV-E2E-${new Date().toISOString().slice(0, 10)}-${crypto.randomUUID().slice(0, 8)}`;
-  const inbound = await gateway.create('purchaseInbound', {
-    product: relation(PRODUCT_ID), size: relation(size.recordId), quantity: 1,
-    behavior: relation(inboundBehavior.record_id),
-  });
-  console.log('test_marker', marker, 'purchase_inbound', inbound.recordId);
-  const purchase = await inventory.applyPurchase({ purchaseInboundRecordId: inbound.recordId,
+  console.log('test_marker', marker);
+  const purchase = await inventory.applyPurchase({ purchaseBatchNo: marker,
     productRecordId: PRODUCT_ID, size: SIZE, quantity: 1, state: '门盒' });
-  assert.equal((await inventory.applyPurchase({ purchaseInboundRecordId: inbound.recordId,
+  assert.equal((await inventory.applyPurchase({ purchaseBatchNo: marker,
     productRecordId: PRODUCT_ID, size: SIZE, quantity: 1, state: '门盒' })).ledgerRecordId,
   purchase.ledgerRecordId);
   const purchasedLive = await until(async () => {
@@ -95,11 +90,11 @@ async function main() {
   assert.ok(linkedRecordIds(purchasedLive.fields?.['编号']).includes(PRODUCT_ID));
   const purchaseLedger = await until(async () => {
     const record = await gateway.get('inventoryLedger', purchase.ledgerRecordId);
-    return linkedRecordIds(record?.fields?.['尺码']).includes(size.recordId) &&
-      linkedRecordIds(record?.fields?.['关联采购']).includes(inbound.recordId) ? record : null;
+    return linkedRecordIds(record?.fields?.['尺码']).includes(size.recordId) ? record : null;
   }, '采购库存流水');
   assert.ok(linkedRecordIds(purchaseLedger.fields?.['尺码']).includes(size.recordId));
-  assert.ok(linkedRecordIds(purchaseLedger.fields?.['关联采购']).includes(inbound.recordId));
+  // ⚠️ 采购加库存的流水**不带来源关联**（「关联采购」随那张表一起没了）——这里只核数量。
+  assert.equal(purchaseLedger.fields?.['变动数量'], 1);
 
   await until(async () => (await inventory.findLiveInventory(PRODUCT_ID, SIZE, '门盒'))
     .some((record) => record.record_id === purchasedLive.record_id), '采购库存列表同步');
@@ -128,7 +123,8 @@ async function main() {
   await until(async () => (await inventory.findLiveInventory(PRODUCT_ID, SIZE, '门盒')).length === 0,
     '销售扣库后的实时库存');
   await gateway.update('salesDetail', detail.recordId, { fulfillmentStatus: '已交付' });
-  console.log(JSON.stringify({ result: 'passed', marker, purchaseInboundRecordId: inbound.recordId,
+  console.log(JSON.stringify({ result: 'passed', marker,
+    // ⚠️ 不再有 `purchaseInboundRecordId`：「采购入库」表已被整表删除（见脚本内注释）。
     purchaseLedgerRecordId: purchase.ledgerRecordId, salesEntryRecordId: order.recordId,
     salesDetailRecordId: detail.recordId, salesLedgerRecordId: sale.ledgerRecordId,
     consumedLiveRecordId: purchasedLive.record_id }));

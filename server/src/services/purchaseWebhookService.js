@@ -8,9 +8,10 @@ const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { V1BitableGateway, linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { V1ReferenceResolver, person, relation, normalizeColor } = require('./v1ReferenceResolver');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
-// 采购环节的行为编码（单一来源）。入库行要挂的「采购行为」= PURCHASE_BEHAVIORS.INBOUND。
-// ⚠️ 别拿 inventoryService 的 STOCK_PURCHASE_INCREASE 顶替：那是**库存环节**的另一条行为记录。
-const { PURCHASE_BEHAVIORS } = require('../config/purchaseBehaviors');
+// ⚠️ 2026-10-07 深夜：`config/purchaseBehaviors`（采购环节的 `PURCHASE_IN`）**随入库行一起退场**——
+//    它的唯一消费者就是"入库行的「采购行为」"那一列，而「采购入库」表已被业务负责人整表删除。
+//    ⇒ 别再把它 require 回来，也别拿 `inventoryService` 的 `STOCK_PURCHASE_INCREASE` 顶替：
+//      那是**库存环节**的另一条行为记录，用错了等于把流水挂到另一条行为上。
 const { recordUrl } = require('../utils/feishuLinks');
 const doubaoService = require('./doubaoService');
 // 采购申请确认卡片（purchaseRequestConfirmationCard）**不再从这段链路发出**（免确认），
@@ -364,7 +365,10 @@ class PurchaseWebhookService {
     const readRetry = resolveReportReadRetry(options);
     this.batchReadMaxRetries = readRetry.maxRetries;
     this.batchReadRetryDelay = readRetry.retryDelayMs;
-    this.inflightInbound = new Map();
+    // 「这一批里哪些（货品+尺码）正在加库存」的**进程内**进度（落盘那一份在 draft 上）。
+    // ⚠️ 原名 `inflightInbound`（"入库行"进度）；入库行没有了 ⇒ 改叫 `inflightInventory`
+    //    （它记的一直是"库存加过没有"，只是以前每一条都对应一行入库明细）。
+    this.inflightInventory = new Map();
     // ── 归批（把同一次表单提交的几条记录认成一批）──────────────────────────────
     // inflightBatches：同一批次号的**串行锁**。同一批正在处理时，后来的记录绝不能
     // 另起一次处理（否则同一批货会写出两套采购申请）。它是幂等的第一道防线，
@@ -1070,7 +1074,7 @@ class PurchaseWebhookService {
     // 退货记录由它自己那条链路负责——processSupplierReturn，按实时库存逐尺码扣减
     // 并出「邯美皮鞋采购退货单」。这里必须先把退货记录摘掉，否则同一批次号下只要
     // 有一条采购申请，窗口一开就会按「整批记录」重读，把退货也当成报货明细写一条
-    // 「具体信息」（#81 的旧口径），与退货链路重复出单；更糟的是会给它补上
+    // 「报货信息」（#81 的旧口径），与退货链路重复出单；更糟的是会给它补上
     // 「已生成申请」终态，把本该扣库存的退货链路整个挡在门外。
     const reportRecords = batchRecords.filter(
       (record) => behaviorKindOf(record) !== REPORT_BEHAVIOR.PURCHASE_RETURN,
@@ -1844,7 +1848,7 @@ class PurchaseWebhookService {
    * ⭐ 2026-10-07 业务负责人改的地方（逐字）：
    *   「你之前**下载完附件之后，不是要回填到那个供应商那边吗？现在不用往那边填写信息了，
    *     你需要把这些信息挪到我们的'报货批次'里面**」
-   * ⇒ 目标从「具体信息（原单据信息）.采购申请单」改成「**报货批次.单据**」。
+   * ⇒ 目标从「报货信息（表名沿革：原「具体信息」/「单据信息」）.采购申请单」改成「**报货批次.单据**」。
    *   原来那一列她已**从生产表删掉**，再往那儿写只会 `FieldNameNotFound`。
    *
    * 规则（**沿用改动前的语义**，只是换了落点）：
@@ -2150,7 +2154,7 @@ class PurchaseWebhookService {
    * 核对是拿"她说要退的"去比"当前实时库存里的行"。第一次跑已经把行删掉了，
    * 重试时再算一遍会看到**剩下的**行，然后删掉另一批——库存被多扣，而且多扣的那几双
    * 在业务上完全看不出来（每一条流水都"有来源、有数量"）。冻结之后复跑用的是同一批
-   * 尺码和同样的数量，配上"库存操作的 operationId 由具体信息行决定"，复跑是真正的空操作。
+   * 尺码和同样的数量，配上"库存操作的 operationId 由报货信息行决定"，复跑是真正的空操作。
    *
    * ⚠️ 版本仍是 `1`：生产上可能落着一份**旧形状**的 v1 计划
    *  （`sizes[] = { size, quantity }`，`quantity` = 实际退的双数）——部署重启后
@@ -2346,7 +2350,7 @@ class PurchaseWebhookService {
 
   /**
    * 真正处理一批退货：读该批次号下的**全部退货记录** → 逐条冻结核对计划 → 扣库存、
-   * 写具体信息 → 整批**只出一次图、只发一次群**。
+   * 写报货信息 → 整批**只出一次图、只发一次群**。
    *
    * 幂等与不丢单（这一段的全部意义）：
    *   · 处理前重新读表：窗口期间到的记录全部在内，不依赖任务里记了哪几条；
@@ -2528,7 +2532,7 @@ class PurchaseWebhookService {
     const fields = record?.fields || {};
     const status = textValue(fields[table.fields.status]);
     // 终态挡重复：飞书重投、双击、并发到达时不能把同一批退货扣两遍。
-    // （真正扣库存的幂等还有两层：库存操作的 operationId 由「具体信息」行 id 决定。）
+    // （真正扣库存的幂等还有两层：库存操作的 operationId 由「报货信息」行 id 决定。）
     if (['已生成申请', '已取消'].includes(status)) return { skipped: true, status };
     const productIds = linkedRecordIds(fields[table.fields.product]);
     if (productIds.length !== 1) throw new Error('信息填写必须关联一个货品编号');
@@ -2573,7 +2577,7 @@ class PurchaseWebhookService {
       supplier_record_id: supplierRecordId,
       behavior_record_id: behaviorRecordId,
       operator_open_id: operatorOpenId,
-      // 图上那一行「报货批次」用她表单里填的批次号文本（具体信息行的批次关联是
+      // 图上那一行「报货批次」用她表单里填的批次号文本（报货信息行的批次关联是
       // 指向「报货批次」表的，退货不建那张表——见交付说明的待确认项）。
       batch_no: textValue(fields[table.fields.batchNoText]),
       items,
@@ -2594,7 +2598,7 @@ class PurchaseWebhookService {
       productInfo,
       supplierRecordId,
       operatorOpenId,
-      // 逐尺码对应的「具体信息」行 id（与 items/returnEntries 一一对应），applySupplierReturn 填。
+      // 逐尺码对应的「报货信息」行 id（与 items/returnEntries 一一对应），applySupplierReturn 填。
       itemDocIds: [],
       docIds: [],
       result: null,
@@ -2602,10 +2606,10 @@ class PurchaseWebhookService {
   }
 
   /**
-   * 应用一条退货记录：逐尺码写「具体信息」→ 扣库存 → 回写报单记录终态。
+   * 应用一条退货记录：逐尺码写「报货信息」→ 扣库存 → 回写报单记录终态。
    *
-   * 落库顺序是刻意的（与单条链路一字不差）：**先写「具体信息」（拿到记录 id）→
-   * 再用它当库存操作的来源 → 最后出图**。库存操作的幂等键就是「具体信息」行的
+   * 落库顺序是刻意的（与单条链路一字不差）：**先写「报货信息」（拿到记录 id）→
+   * 再用它当库存操作的来源 → 最后出图**。库存操作的幂等键就是「报货信息」行的
    * record_id，而那一行本身由 createOnceByKey 按「幂等键」列保证只写一条，
    * 所以重跑拿到的是同一个 id、同一个库存操作——不会第二次扣库存。
    *
@@ -2621,7 +2625,7 @@ class PurchaseWebhookService {
     const correlation = purchaseCorrelation({
       taskId, batchNo: prepared.draft?.batch_no, reportRecordId: recordId,
     });
-    // 逐尺码处理：一个尺码一行「具体信息」、一次库存操作。
+    // 逐尺码处理：一个尺码一行「报货信息」、一次库存操作。
     // 一行一个来源是必须的——库存操作的幂等键就是来源行的 record_id，多个尺码共用一个
     // 来源就不会各自拿到自己的 operationId。
     // ⚠️ 只遍历 `returnEntries`（实际退得掉的尺码）：`quantity` = taken，
@@ -2674,7 +2678,7 @@ class PurchaseWebhookService {
     if (docIds.length) {
       // 报单记录的处理状态：沿用采购申请那条的终态「已生成申请」——行为管理里
       // 只有这一套终态可复用（另加一个「已退货」选项要动她的表，超出本次口径）。
-      // 顺带把「关联采购申请」指向刚写的具体信息行，两个方向都可追溯。
+      // 顺带把「关联采购申请」指向刚写的报货信息行，两个方向都可追溯。
       await this.gateway.update('purchaseReport', recordId, {
         status: '已生成申请',
         request: docIds,
@@ -2707,7 +2711,7 @@ class PurchaseWebhookService {
    * 🔴 那一行**只写 批次号 + 幂等键，不写「到货状态」** —— 留空 ⇒ 9 点推送看不见它。
    *
    * ⚠️ 失败**不阻塞**这条链路（与"附件写失败不阻塞主流程"同一条纪律）：
-   *    库存与「具体信息」那时已经落地，图也照常发；这里只记 warn，
+   *    库存与「报货信息」那时已经落地，图也照常发；这里只记 warn，
    *    重投 / 重跑会按幂等键把那一行补上（`purchase_batch:<批次号>`）。
    */
   async ensureReturnBatchRecord(batchNo, { taskId = '', correlation = {} } = {}) {
@@ -2809,10 +2813,10 @@ class PurchaseWebhookService {
    *   ③ **不再走「采购到货」和「采购入库」**
    *   ④ 直接扣「实时库存」并写「库存流水」（库存行为 = 采购减少 STOCK_PURCHASE_DECREASE）
    *   ⑤ 出图：标题「邯美皮鞋采购退货单」，格式与采购申请单一样
-   *   ⑥ 受影响的表只有 4 张：信息填写 · 具体信息 · 库存流水 · 实时库存（不碰资金）
+   *   ⑥ 受影响的表只有 4 张：信息填写 · 报货信息 · 库存流水 · 实时库存（不碰资金）
    *
-   * 落库顺序：**先写「具体信息」（拿到记录 id）→ 再用它当库存操作的来源 → 最后出图**。
-   * 库存操作的幂等键就是「具体信息」行的 record_id（`operationId(kind, sourceRecordId)`），
+   * 落库顺序：**先写「报货信息」（拿到记录 id）→ 再用它当库存操作的来源 → 最后出图**。
+   * 库存操作的幂等键就是「报货信息」行的 record_id（`operationId(kind, sourceRecordId)`），
    * 而那一行本身由 createOnceByKey 按「幂等键」列保证只写一条，所以重跑拿到的是同一个 id、
    * 同一个库存操作——不会第二次扣库存（已完成的操作用例直接返回上次的结果）。
    *
@@ -3256,32 +3260,18 @@ class PurchaseWebhookService {
   // 整段随之删除：它写的字段在表里已不存在，留着只会伪装成「识别还在跑」。
   //
   // ⚠️ 保留下来的（**2026-10-06 起有调用方了**：群话题对话式核对，她点「是」之后进来）：
-  //   · confirmArrival    —— 写「采购入库」+ 调库存 applyPurchase + 把到货记录标已确认
-  //                          （**不再回写采购申请表**，见该方法的注释）
+  //   · confirmArrival    —— **逐条加库存**（`inventory.applyPurchase`）＋ 把「报货批次」那一行写实
+  //                          （验收原话 / 确认状态；**不再回写采购申请表**，见该方法的注释）。
+  //                          ⚠️ 2026-10-07 深夜：「采购入库」表被整表删除 ⇒ 这里**不再写任何入库明细行**。
   //   · ensureArrivalProducts / ensureArrivalProduct / ensureArrivalColor / applyArrivalCost
   //                       —— 新品建档 + 成本（未合并分支 refactor/decouple-creation-and-stock
   //                          正把它剥成 services/productCreationService.js）
-  //   · aggregateArrivalItems / findRequestRowForInbound / resolvePurchaseInboundState
+  //   · aggregateArrivalItems / resolvePurchaseInboundState
   // 它们的输入（draft.actual / pending_creation / task.recognized）由
   // services/purchaseArrivalConversationService.js 写入，形状与 processArrival 原先落的草稿一致。
-
-  /**
-   * 在草稿保存的采购申请明细里，找「同一货品 + 同一尺码」的那一条。
-   *
-   * 只用来把采购入库记录的「采购申请」关联字段挂回去（以及回写到货状态用的匹配）。
-   * 原来的 compareArrival 差异比对已按产品负责人要求整体移除（未来架构：到货在采购申请
-   * 基础上修改，差异比对不再需要；产品负责人 2026-10-05 确认），这里只保留它当时顺手
-   * 提供的 request_record_id 语义：同一 货品+尺码 取第一条申请行。
-   */
-  async findRequestRowForInbound(requests, productRecordId, size, requestTable) {
-    for (const row of requests) {
-      const productId = linkedRecordIds(row.fields?.[requestTable.fields.product])[0];
-      if (productId !== productRecordId) continue;
-      const resolvedSize = await this.getSizeReferences().resolveLinkedCell(row.fields?.[requestTable.fields.size]);
-      if (Number(resolvedSize.size) === Number(size)) return row;
-    }
-    return null;
-  }
+  //
+  // ⚠️ 已删除：`findRequestRowForInbound`（2026-10-07 深夜）—— 它只用来把**入库行**的
+  //    「采购申请」关联挂回去；入库行没有了，它就没有任何调用方（不留孤儿）。
 
 
   /**
@@ -3453,7 +3443,7 @@ class PurchaseWebhookService {
           keyField: IDEMPOTENCY_KEY_FIELD,
           keyValue: item.request_key,
           label: `采购申请 ${item.item_key}`,
-          // 「具体信息」这一行属于哪一条报单记录，计划里记着（item.report_record_id）。
+          // 「报货信息」这一行属于哪一条报单记录，计划里记着（item.report_record_id）。
           correlation: mergeCorrelation(baseCorrelation, {
             purchase_report_record_id: item.report_record_id,
           }),
@@ -3519,7 +3509,7 @@ class PurchaseWebhookService {
   }
 
   /**
-   * 到货确认入库：写「采购入库」→ 调库存 applyPurchase → 把**批次行**的「确认状态」改成已确认。
+   * 到货确认：**加库存** + 把**「报货批次」那一行**写实（验收原话 / 确认状态）。
    *
    * ⚠️ **不回写采购申请表**（业务负责人 2026-10-06 口径：「那个表就不要动」）。
    * 2026-10-05 之前它还由到货明细卡片的 `confirm_purchase_arrival` 动作调用；
@@ -3528,19 +3518,33 @@ class PurchaseWebhookService {
    *
    * ⭐ 2026-10-07 晚（到货落点大改）：
    *    · 「验收原话」**入库之前**写到「报货批次」那一行（`writeArrivalAcceptance`）；
-   *    · 「确认状态 = 已确认」**入库之后**写到同一行（`orderBatches.markConfirmed`）；
+   *    · 「确认状态」**入库之后**写到同一行（`orderBatches.markConfirmed`）；
    *    · 「到货状态 = 已到货」仍由对话链路的 `notifyBatchArrived` 负责（**不在这里写**，
    *      避免两处写同一列早晚写歪）；
    *    · 「到货验收」表已被业务负责人删除 ⇒ 这里**没有任何**指向它的读写。
    *
-   * 幂等（缺一不可）：inbound_created 落盘 + **按这批发过的采购申请回查远端** + inflightInbound，
-   * 重复调用不会写出第二条采购入库、也不会重复加库存。
-   * ⚠️ 回查判据（2026-10-07 晚换过）：原先靠「采购入库.采购到货批次 == 到货记录 id」，
-   *    那一列已被业务负责人删除 ⇒ 改成「采购入库.采购申请 ∈ 本批的申请行」。
+   * ⭐⭐ 2026-10-07 **深夜**（「采购入库」表被**整表删除**）：业务负责人的口径（逐字）——
+   *    「甲 **不再写任何入库明细**：只更新「报货批次」（到货状态=已到货 + 验收原话 + 确认状态）
+   *     + **加库存**（库存流水 / 实时库存照写）—— 也就是"**入库明细表整个不要了**"」
+   *    ⇒ 这个方法里**入库明细那一整段被删掉**：`create('purchaseInbound', …)`、
+   *      `listAll('purchaseInbound')` 回查、为入库行做的「采购行为」查找、
+   *      `draft.inbound_created` 落盘 —— 它们的对象都不存在了。
+   *      `config/purchaseBehaviors.js`（采购环节 `PURCHASE_IN`）的唯一消费者就是那个「采购行为」
+   *      ⇒ 一并退场。
+   *    ⇒ **保留下来的正是"加库存"**：逐条 `inventory.applyPurchase`
+   *      （「库存流水」+「实时库存」由它负责，这里是全仓**唯一**的库存实现）。
+   *
+   * 幂等（现在两层，缺一不可）：
+   *    ① `draft.inventory_applied`（按 货品+尺码 逐个落盘）+ 进程内 `inflightInventory`；
+   *    ② **库存自己那一层**：来源标识是**真实三元组**（批次身份 | 货品 | 尺码），
+   *       由 `inventoryService.purchaseIncreaseSourceId` 算 ⇒ 重放/崩溃恢复都命中**同一条**
+   *       本地库存任务（`server/data/inventory_operations` 是落盘的），不会重复加库存。
+   *    ⚠️ 代价如实说：**不再有**"按远端关联列回查已写过的入库行"这一层（那张表已经不存在），
+   *       所以本链路的恢复强度与**采购退货**相同（靠本地库存任务 + 落盘进度）。
    *
    * 并发：同一个 taskId 的确认走 confirmationQueue **串行**。这条保证原先由
    * handleCardActionLocked（到货卡片那个入口）提供，卡片删除后原样挪进来——
-   * 否则两个调用方同时确认时，两边都会在对方落盘之前读到"还没写过"，各写一条入库。
+   * 否则两个调用方同时确认时，两边都会在对方落盘之前读到"还没加过"，各加一次库存。
    */
   async confirmArrival(taskId, task, operatorOpenId) {
     return this.confirmationQueue.run(taskId, () => this.confirmArrivalLocked(taskId, task, operatorOpenId));
@@ -3593,155 +3597,103 @@ class PurchaseWebhookService {
       throw new Error(`有 ${unresolved.length} 条到货明细没有对应货品（${unresolved
         .map((item) => `${item.item_no || ''}${item.color || ''}`).join('、')}）。请再点一次「确认入库」`);
     }
-    // ⭐ 2026-10-07 晚：**先把「验收原话」落到「报货批次」那一行**，再逐条写入库。
+    // ⭐ 2026-10-07 晚：**先把「验收原话」落到「报货批次」那一行**，再逐条加库存。
     //    顺序与改动前一致（原来是在「到货验收」建行），只是落点换成了批次行；
-    //    失败就**当场停下来**（一个字都不入库）—— 到货信息没有落点，等于她这次确认没被记下来。
+    //    失败就**当场停下来**（一个字都不写库存）—— 到货信息没有落点，等于她这次确认没被记下来。
     await this.writeArrivalAcceptance({ taskId, batchNo, batchRecordId, draft, correlation });
-    const requestTable = this.gateway.table('purchaseRequest');
-    const inboundTable = this.gateway.table('purchaseInbound');
-    // 查「采购行为」这条记录的 record_id（关联字段不能直接传字符串）。
-    //
-    // ⭐ 按「行为编码」匹配，**不按中文名**：编码是稳定标识，她在飞书里改中文名不影响代码。
-    //    （2026-10-07 真机：她把生产表里那条从「采购入库」改成了「入库」，按中文名找就直接抛
-    //     "必须且只能有一条记录"，她点「是」永远入不了库。）
-    //    范式与本仓 `inventoryService.resolveStockBehavior` 一致（那里也是按编码匹配）。
-    // ⚠️ 编码取 `config/purchaseBehaviors` 里的**那一个**常量，别在这里再写一份字面量。
-    const behaviorTable = this.gateway.table('behavior');
-    const behaviorCode = PURCHASE_BEHAVIORS.INBOUND;
-    const behaviorMatches = (await this.gateway.listAll('behavior')).filter(
-      (record) => textValue(record.fields?.[behaviorTable.fields.code]).trim() === behaviorCode
-    );
-    if (behaviorMatches.length === 0) {
-      throw new Error(`行为管理里找不到编码为「${behaviorCode}」的行为，请先在「行为管理」表补上这一条（名称随便叫，编码必须是 ${behaviorCode}）`);
+    // ⭐ 2026-10-07 深夜：这里原本是"查「采购行为」→ `listAll('purchaseInbound')` 回查已写过的
+    //    入库行 → 逐条 `create('purchaseInbound')`"，**整段随那张表一起删除**（她整表删了它）。
+    //    现在这个循环只做一件事：把**实际数**逐条交给库存（`inventory.applyPurchase`），
+    //    并把"这一条加过了"落进本地草稿 —— 那张表一个字段都不再有写入点。
+    if (!this.inflightInventory.has(taskId)) this.inflightInventory.set(taskId, new Map());
+    const inflightMap = this.inflightInventory.get(taskId);
+    // 进度落盘的键改叫 `inventory_applied`（不再有"入库行"这回事）。
+    // ⚠️ **同时读旧的 `inbound_created`**：改动前那一版把 `{recordId, inventoryApplied}` 写在这个键里，
+    //    部署那一刻正卡在半路的任务（状态 posting）不会因为改名而把已经加过的库存**再加一遍**。
+    const normalizeEntry = (value) => (typeof value === 'string' ? { inventoryApplied: false } : (value || {}));
+    const persistedApplied = {};
+    const legacyApplied = { ...(draft.inbound_created || {}), ...(draft.inventory_applied || {}) };
+    for (const [key, value] of Object.entries(legacyApplied)) {
+      persistedApplied[key] = normalizeEntry(value);
     }
-    if (behaviorMatches.length > 1) {
-      throw new Error(`行为管理里编码为「${behaviorCode}」的行为有 ${behaviorMatches.length} 条，只能留一条`);
-    }
-    const purchaseInboundBehaviorId = behaviorMatches[0].record_id;
-    if (!this.inflightInbound.has(taskId)) this.inflightInbound.set(taskId, new Map());
-    const inflightMap = this.inflightInbound.get(taskId);
-    const normalizeEntry = (value) => (typeof value === 'string' ? { recordId: value, inventoryApplied: false } : value);
-    const persistedCreated = {};
-    for (const [key, value] of Object.entries(draft.inbound_created || {})) {
-      persistedCreated[key] = normalizeEntry(value);
-    }
-    const existingByKey = new Map();
-    for (const [key, value] of inflightMap) existingByKey.set(key, value);
-    for (const [key, value] of Object.entries(persistedCreated)) {
-      if (!existingByKey.has(key)) existingByKey.set(key, value);
-    }
-    const existingInbounds = await this.gateway.listAll('purchaseInbound');
-    // ⚠️ 回查判据 2026-10-07 晚换过（**字段没了，只能换**）：
-    //    改动前是「采购入库.采购到货批次 == 到货记录 id」（那一列已被业务负责人删除）。
-    //    现在改成「采购入库.采购申请 ∈ **本批的申请行**」——
-    //    本批每一次入库都是按 `findRequestRowForInbound` 挂到这批的申请行上的，
-    //    所以"这批的申请行"就是这一批的等价身份（一个批次一个核对任务，不会串到别的批）。
-    const requestIdsOfBatch = new Set((arrival.requests || [])
-      .map((record) => String(record?.record_id || '').trim()).filter(Boolean));
-    for (const record of existingInbounds) {
-      const orderIds = linkedRecordIds(record.fields?.[inboundTable.fields.supplierOrder]);
-      if (!orderIds.some((id) => requestIdsOfBatch.has(String(id)))) continue;
-      const productId = linkedRecordIds(record.fields?.[inboundTable.fields.product])[0];
-      const size = (await this.getSizeReferences().resolveLinkedCell(record.fields?.[inboundTable.fields.size])).size;
-      const key = `${productId}|${size}`;
-      if (productId && !existingByKey.has(key)) {
-        existingByKey.set(key, { recordId: record.record_id, inventoryApplied: false });
-      }
+    const appliedByKey = new Map();
+    for (const [key, value] of inflightMap) appliedByKey.set(key, value);
+    for (const [key, value] of Object.entries(persistedApplied)) {
+      if (!appliedByKey.has(key)) appliedByKey.set(key, value);
     }
     // 落盘基线跟着最新草稿走：建档那一步往草稿里写过链接和 creation_state，
     // 用旧对象整份覆盖会把它们冲掉（她确认之后就看不到链接了）。
     let draftNow = { ...draft };
     const persistEntry = async (key, entry) => {
       inflightMap.set(key, entry);
-      persistedCreated[key] = entry;
+      persistedApplied[key] = entry;
       try {
-        draftNow = { ...draftNow, inbound_created: persistedCreated };
+        draftNow = { ...draftNow, inventory_applied: persistedApplied };
         const updated = await this.store.update(taskId, { draft: draftNow });
         draftNow = updated?.draft || draftNow;
       } catch (error) {
-        logWarn('purchase.arrival.inbound_created.persist_failed', { task_id: taskId, key, error: error.message });
+        logWarn('purchase.arrival.inventory_applied.persist_failed', { task_id: taskId, key, error: error.message });
       }
     };
-    const created = [];
+    // 她点确认的这批里，哪些（货品+尺码）真的动过库存 —— 落进任务终态，也是日志里的正向证据。
+    const inventoryAppliedKeys = [];
+    // 来源标识（= 库存那一层的本地幂等键）= **真实三元组**：批次身份 | 货品 | 尺码。
+    // ⚠️ 三样都是真值（批次记录 id / 批次号 / 到货核对任务 id ＋ 货品 record_id ＋ 尺码），
+    //    **一个都不是编的**；它只进本地任务与日志，远端没有任何关联列可写（见 ledgerSource: null）。
+    const batchIdentity = {
+      purchaseBatchRecordId: batchRecordId,
+      purchaseBatchNo: batchNo,
+      arrivalTaskId: taskId,
+    };
     for (const item of aggregateArrivalItems(arrival.actual || [])) {
       const key = `${item.product_record_id}|${item.size}`;
-      // 决定入库状态：没有样品则入样品库，有样品则入门盒库
+      // 决定入库状态：没有样品则入样品库，有样品则入门盒库（口径与改动前逐字一致）。
       const inboundState = await this.resolvePurchaseInboundState(item.product_record_id);
-      const existing = existingByKey.get(key);
-      if (existing) {
-        created.push(existing.recordId);
-        if (this.enablePurchaseInventory && !existing.inventoryApplied) {
-          await this.inventory.applyPurchase({
-            purchaseInboundRecordId: existing.recordId,
-            productRecordId: item.product_record_id,
-            size: item.size,
-            quantity: item.quantity,
-            // ⚠️ 2026-10-06：不再传 occurredAt（同下：只进本地任务记录、无人读）；
-            // 时间交给飞书自动的「创建时间」。
-            state: inboundState,
-          }, { correlation });
-          existing.inventoryApplied = true;
-          await persistEntry(key, existing);
-        }
+      const existing = appliedByKey.get(key);
+      if (existing?.inventoryApplied) {
+        inventoryAppliedKeys.push(key);
         continue;
       }
-      // 差异比对已移除；这里只找同货品+尺码的申请行，把入库记录挂回对应的采购申请。
-      const requestRow = await this.findRequestRowForInbound(
-        arrival.requests || [], item.product_record_id, item.size, requestTable,
-      );
-      const inbound = await this.gateway.create('purchaseInbound', {
-        product: relation(item.product_record_id),
-        size: relation((await this.getSizeReferences().resolveByNumber(item.size)).recordId),
-        quantity: item.quantity,
-        behavior: relation(purchaseInboundBehaviorId),
-        // ⚠️ 2026-10-07 晚：这里原先有 `batch: relation(arrival.arrival_record_id)`
-        //（「采购入库.采购到货批次」指向「到货验收」那一行）。**字段已被业务负责人整列删除**
-        //（她的原话：「「采购入库.采购到货批次」字段删除了，不需要了」）⇒ 这一项删掉。
-        // schema 里的 `purchaseInbound.batch` 映射也同步删了（两个都删才不留坑）。
-        supplierOrder: requestRow?.record_id ? relation(requestRow.record_id) : undefined,
-        // ⚠️ 2026-10-06：不再写「入库时间」——业务负责人已把这一列从生产表删除
-        // （生产真表「采购入库」11 列里没有它），入库时刻由飞书自动的「创建时间」承担
-        //（同一时刻，不丢信息）；schema 里的 inboundAt 映射也同步删掉了。
-      }, { correlation });
-      created.push(inbound.recordId);
-      const entry = { recordId: inbound.recordId, inventoryApplied: false };
-      await persistEntry(key, entry);
-      if (this.enablePurchaseInventory) {
-        await this.inventory.applyPurchase({
-          purchaseInboundRecordId: inbound.recordId,
-          productRecordId: item.product_record_id,
-          size: item.size,
-          quantity: item.quantity,
-          // ⚠️ 2026-10-06：不再传 occurredAt（只进本地任务记录、无人读）；
-          // 时间交给飞书自动的「创建时间」。
-          state: inboundState,
-        }, { correlation });
-        entry.inventoryApplied = true;
-        await persistEntry(key, entry);
+      if (!this.enablePurchaseInventory) {
+        // 库存写入被显式关掉时（`enablePurchaseInventory: false`）：一个字都不写，只记进度。
+        await persistEntry(key, { ...(existing || {}), inventoryApplied: false });
+        continue;
       }
+      await this.inventory.applyPurchase({
+        ...batchIdentity,
+        productRecordId: item.product_record_id,
+        size: item.size,
+        quantity: item.quantity,
+        // ⚠️ 2026-10-06：不再传 occurredAt（只进本地任务记录、无人读）；
+        // 时间交给飞书自动的「创建时间」。
+        state: inboundState,
+      }, { correlation });
+      await persistEntry(key, { ...(existing || {}), inventoryApplied: true });
+      inventoryAppliedKeys.push(key);
     }
-    // ⚠️ 2026-10-06：这里原先有一段**回写「具体信息」（采购申请表）**的代码——
+    // ⚠️ 2026-10-06：这里原先有一段**回写「报货信息」（采购申请表）**的代码——
     //   for (const request of arrival.requests) { … gateway.update('purchaseRequest', request.record_id,
     //     { arrivalStatus: status }) }   // 未到货 / 部分到货 / 全部到货 / 超额到货
     // 业务负责人当天的口径是：「**既然它就是采购申请，那个表就不要动**」
     //「我们要做的就是**基于采购申请表，再加上用户说的差异来进行实际入库**」。
     // 所以她删掉了这段回写：**采购申请表一个字都不改**（到货差异只体现在
-    //「采购入库」/「库存流水」/「实时库存」上）。
+    //「库存流水」/「实时库存」上）。
     // 这条口径由 `server/test/arrivalConversation.test.js` 的断言钉住：入库全过程
     // 对 `purchaseRequest` 表**零写入**（不是"看起来没写"，而是拿记录型 gateway 断言）。
     //
     // ⚠️ 也刻意**不再**把差异算成「超额到货 / 部分到货」这种状态：新口径下
     // 那个状态无处可写，算出来只会变成一个没人用的中间变量。
     //
-    // 到这为止，除「报货批次」那一行自己的「确认状态」之外，入库只写
-    //「采购入库」+「库存流水」+「实时库存」三张表。
+    // 到这为止，一次到货确认只写两张表：**「报货批次」那一行**（验收原话 / 确认状态）
+    // ＋ **「库存流水」「实时库存」**（由 InventoryService 写）。
     //
     // ⭐ 2026-10-07 晚：这一步原来是
     //   `gateway.update('purchaseArrival', arrival.arrival_record_id, { confirmStatus: '已确认' })`
     //   ——那张表已被她删除。现在写的是**「报货批次」那一行**的「确认状态」，
-    //   取值来自 `config/purchaseAcceptance.js`（不写死中文字面量）。
-    // ⚠️ 位置与改动前一致：在入库写完之后。失败照旧往上抛（她再点一次「是」会重跑，
-    //   入库本身有幂等兜底）。
+    //   取值来自 `config/purchaseAcceptance.js`（不写死中文字面量；该列现在是单选，
+    //   取值由部署闸门的单选取值契约盯住）。
+    // ⚠️ 位置与改动前一致：在加库存之后。失败照旧往上抛（她再点一次「是」会重跑，
+    //   加库存本身有幂等兜底）。
     const confirmed = await this.orderBatches.markConfirmed({ batchNo, batchRecordId, correlation });
     if (!confirmed.updated && confirmed.reason === 'no_batch_record') {
       throw new Error(`「报货批次」里找不到这一批（${batchNo || batchRecordId}），确认状态没地方落`);
@@ -3752,11 +3704,16 @@ class PurchaseWebhookService {
         task_id: taskId, reason: 'no_batch_identity',
       });
     }
-    await this.store.update(taskId, { status: 'posted', inbound_record_ids: created });
-    this.inflightInbound.delete(taskId);
+    // ⚠️ 终态里**不再有** `inbound_record_ids`（入库明细行不存在了）；改记"加过库存的（货品+尺码）"。
+    await this.store.update(taskId, {
+      status: 'posted', inventory_applied_keys: inventoryAppliedKeys,
+    });
+    this.inflightInventory.delete(taskId);
     logInfo('purchase.arrival.posted', {
       task_id: taskId, batch_record_id: batchRecordId, batch_no: batchNo,
-      inbound_count: created.length,
+      // 正向证据：这次确认到底给几条（货品+尺码）加了库存，以及**没有**写任何入库明细行。
+      inventory_applied_count: inventoryAppliedKeys.length,
+      inbound_rows_written: 0,
       inventory_applied: this.enablePurchaseInventory, ...correlation,
     });
     return { toast: { type: 'success', content: this.enablePurchaseInventory ? '采购已入库，库存已更新' : '采购入库已确认' } };
