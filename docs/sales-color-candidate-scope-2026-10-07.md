@@ -127,7 +127,7 @@ lark.sales.color_options.filtered {
 | 9 | 配置先行：逻辑里**没有**中文字面量 / `=== '预付'` | ✅ | `SALES_PRODUCT_STATUS_OFF_SHELF` / `colorOptionsScope` / `salesColorOptionsScopeFor`；`grep` 复核（见 PR） |
 | 10 | 正向证据日志（字段齐全） | ✅ | 测试 ①（逐字段 `deepEqual`）+ ⑤（`dropped=2`、两个颜色名） |
 | 11 | #227 的「A 定颜色 → 选完才跑 B」结构**一个字没动** | ✅ | 测试 ① 断言"她没选颜色 ⇒ B 零调用"；`select` 之后的 B 由既有用例继续钉住 |
-| 12 | 既有断言**不放宽** | ✅ | 只把 fixture 收紧（候选带上生产真有的「货品状态」列、默认档 deepEqual 加上范围）；全量 `node --test --test-concurrency=1` **连跑 2 次** `1096 / pass 1096 / fail 0`（已并入最新 `origin/main` 的合并态） |
+| 12 | 既有断言**不放宽** | ✅ | 只把 fixture 收紧（候选带上生产真有的「货品状态」列、默认档 deepEqual 加上范围）；全量 `node --test --test-concurrency=1` **连跑 2 次 fail 0**：分支态 `1080/1080`、并入当时最新 `origin/main` 的合并态 `1096/1096`、再并入「战报退役」后的最终合并态 `1070/1070`（用例总数变化来自别的 PR 增删用例，不是本次） |
 
 ## 6. 与第三刀的关系（有意保留的东西）
 
