@@ -77,7 +77,10 @@ const makeService = (recognizerResult, options = {}) => {
     ...(options.afterSales ? { afterSales: options.afterSales } : {}),
   });
   service.replyCard = async (_messageId, card) => { cards.push(card); return 'om_card'; };
-  service.sendCard = async (_openId, card) => { cards.push(card); return 'om_card_fallback'; };
+  // 🔴 2026-10-07 收尾：这里原来还有一行 `service.sendCard = ...` ——
+  //    `LarkMvpService.sendCard`（open_id 口径的卡片发送器）已随"缺省回落私聊"的清掉
+  //    而整体删除。`sendText` **保留**：它还在（私聊 notice 那一句），这里的打桩继续钉住
+  //    "查销售记录这条链路一次主动消息都不发"。
   service.sendText = async (openId, message) => sent.push({ openId, message });
   service.acknowledgeMessage = async () => undefined;
   return { service, store, writes, cards, sent };

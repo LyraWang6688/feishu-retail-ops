@@ -125,7 +125,9 @@ const makeService = ({ recognizerResult = {}, stubProcess = true } = {}) => {
       parseSalesText: async (text) => { parsedTexts.push(text); return recognizerResult; },
     },
   });
-  service.sendCard = async (_openId, card) => { cards.push(card); return 'om_card'; };
+  // 🔴 2026-10-07 收尾：这里原来还有一行 `service.sendCard = ...`（往 `cards` 里凑）——
+  //    `LarkMvpService.sendCard` 已随"缺省回落私聊"的清掉而**整体删除**（成了孤儿），
+  //    那个打桩再也没有被调用的可能。卡片的观察点只剩 `replyCard`（群那条路）。
   service.replyCard = async (_messageId, card) => { cards.push(card); return 'om_card'; };
   service.acknowledgeMessage = async () => undefined;
   // 默认把识别链路打桩：这些用例只关心"有没有进闸门"，不关心识别本身。

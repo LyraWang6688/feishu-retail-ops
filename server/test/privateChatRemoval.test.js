@@ -331,6 +331,52 @@ test('④ 私聊专属的入口与卡片都已删除：sendTodaySales / handleBo
   assert.equal(larkCards.todaySalesCard, undefined);
 });
 
+test('④ `LarkMvpService.sendCard`（open_id 口径的卡片发送器，全仓无调用方）已删除；`sendText` 留给 notice', () => {
+  // 🔴 2026-10-07 收尾：清掉 5 处"缺省回落发私聊"之后，`sendCard` 的两个注入方
+  //    （`SaleLookupService` / `AfterSalesFlowService` 的 `sendCard` 选项）都不存在了，
+  //    它成了**孤儿** → 整段删除。要发卡片只有**群**那几条路
+  //    （`replyCard` / `replyCardInThread` / `replyTaskCard`）。
+  assert.equal(LarkMvpService.prototype.sendCard, undefined);
+  // ⚠️ `sendText` **不能删** —— 「私聊被挡下时回一句『请到群里说』」那一句要用它
+  //    （`acceptMessage` 的非群聊分支，见 config/privateChatNotice）。
+  assert.equal(typeof LarkMvpService.prototype.sendText, 'function');
+});
+
+test('④ 三个 service 里再没有"发到某个 open_id"的代码（ⓐ：一行私聊都不留）', () => {
+  // 源码级哨兵：缺省出口那 5 处已改成"记 skip + 返 null"，
+  // **字面上**不该再出现"把 `sender_open_id` 当收件人交出去"这种代码。
+  // ⚠️ 注释里可以提（那是解释为什么删），所以先把注释剥掉再断言。
+  const stripComments = (source) => source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+  const serviceFiles = [
+    'src/services/saleLookupService.js',
+    'src/services/afterSalesFlowService.js',
+    'src/services/salesThreadProgressService.js',
+  ];
+  const patterns = [
+    [/sendCard\(\s*task\??\.?\s*sender_open_id/, 'sendCard(sender_open_id)'],
+    [/sendText\(\s*task\??\.?\s*sender_open_id/, 'sendText(sender_open_id)'],
+    [/options\.sendText\?\.\(\s*task\??\.?\s*sender_open_id/, 'options.sendText(sender_open_id)'],
+    [/sender_open_id:\s*openId/, '把 open_id 当收件人写进 payload'],
+  ];
+  for (const file of serviceFiles) {
+    const code = stripComments(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'));
+    for (const [pattern, label] of patterns) {
+      assert.equal(pattern.test(code), false, `${file} 里还有「${label}」`);
+    }
+  }
+  // ⭐ 全仓只有 `utils/privateChatSend.js` 一个地方**定义**这条 skip 日志；
+  //    其余 service 只能调它 —— 这样"哪个出口偷偷长出一条私聊路"会立刻露馅。
+  const emitter = fs.readFileSync(path.join(__dirname, '../src/utils/privateChatSend.js'), 'utf8');
+  assert.match(emitter, /lark\.private_chat\.send_skipped/);
+  for (const file of [...serviceFiles, 'src/services/larkMvpService.js', 'src/services/sampleReplacementService.js']) {
+    const code = stripComments(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'));
+    assert.equal(/logWarn\(\s*'lark\.private_chat\.send_skipped'/.test(code), false,
+      `${file} 自己打 skip 日志（应改为调 utils/privateChatSend）`);
+  }
+});
+
 test('④ 路由不再注册机器人菜单事件（application.bot.menu_v6），但消息入口还在', () => {
   const handlers = createLarkEventHandlers({
     handleCardAction: async () => ({}),

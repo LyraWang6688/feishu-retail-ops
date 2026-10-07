@@ -252,7 +252,9 @@ const build = (options = {}) => {
     sizeReferences: sizeStub(SALES.sizes),
     now: () => clock,
     replyCard: async (_messageId, card) => { cards.all.push(card); return 'om_lookup'; },
-    sendCard: async (_openId, card) => { cards.all.push(card); return 'om_lookup_fallback'; },
+    // ⚠️ 这张卡是"回复失败才补发"的兜底，本文件的用例**从不**让 lookup 的 replyCard 失败，
+    //    所以这里**刻意不注入** `sendCardToTask` —— 让服务走它自己的缺省（没有群上下文 → 不发）。
+    //    要钉"兜底真的发了"请直接构造 SaleLookupService，见 saleLookupService.test.js。
   });
   const afterSales = options.executor || new AfterSalesService({
     gateway: base,
@@ -271,8 +273,13 @@ const build = (options = {}) => {
     sizeReferences: sizeStub(SALES.sizes),
     now: () => clock,
     replyCard: async (_messageId, card) => { cards.all.push(card); return 'om_flow'; },
-    sendCard: async (_openId, card) => { cards.all.push(card); cards.sent.push(card); return 'om_flow_sent'; },
-    sendText: async (_openId, message) => texts.push(message),
+    // ⭐ 渠道感知出口**显式注入**（这是测试自己的打桩出口，不是服务内部的"缺省回落"）。
+    //    🔴 2026-10-07「私聊链路移除」后，两个 `send*ToTask` 的缺省已**不再回落私聊**：
+    //    不注入 = 没有群上下文 = **不发**。本文件的用例测的是**编排**
+    //    （该不该发、发出去的是什么），所以在这里显式给出出口。
+    //    ⚠️ 别改回 `sendCard` / `sendText`（open_id 口径）——那两个发送器已从服务里删除。
+    sendCardToTask: async (_task, card) => { cards.all.push(card); cards.sent.push(card); return 'om_flow_sent'; },
+    sendTextToTask: async (_task, message) => { texts.push(message); return null; },
     updateCard: async (_task, _event, card) => { cards.updated.push(card); return true; },
   });
   return {
@@ -1015,4 +1022,115 @@ test('不是本人的卡片点不动：别人点确认会被拒绝', async () =>
   await assert.rejects(() => cardAction({ action: 'confirm_after_sales', draft_id: 't_after_sales' }, 'ou_other'),
     /只能由原始发送人/);
   assert.deepEqual(base.writes.create, {});
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔴 2026-10-07「私聊链路移除」收尾：**没有群上下文 = 没有去处**
+//
+// 上面所有用例都在 `build()` 里**显式注入**了 `sendCardToTask` / `sendTextToTask`
+// （它们测的是编排：该不该发、发什么）。这一节反过来，钉住**服务自己的缺省出口**：
+//   · 非群任务 → **不发**（尤其不许发给 `task.sender_open_id`）；
+//   · 记一条 `lark.private_chat.send_skipped`（可排查，不是静默失效）；
+//   · 返 `null`，调用方据此知道"这次没发出去"；
+//   · 两个 open_id 发送器（`sendCard` / `sendText`）**从类里整体删除**。
+//   ⚠️ 群任务那条路不受影响：出口由 `larkMvpService` 注入（回到那条话题），
+//      上面那批用例已经钉住了它。
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** 只给"缺省出口"这一节用的最小装配：**刻意不注入**两个任务感知出口。 */
+const buildWithoutTaskPorts = () => {
+  const gateway = salesGateway();
+  const base = executorBase();
+  const inventory = fakeInventory();
+  const store = tempStore('after-sales-flow-default-ports-');
+  const lookup = new SaleLookupService({
+    gateway, store, sizeReferences: sizeStub(SALES.sizes), now: () => NOW,
+    replyCard: async () => 'om_lookup',
+  });
+  const flow = new AfterSalesFlowService({
+    gateway, store, lookup,
+    executor: new AfterSalesService({
+      gateway: base,
+      inventory,
+      store: new JsonTaskStore({
+        dir: fs.mkdtempSync(path.join(os.tmpdir(), 'after-sales-ops-default-')), idField: 'operation_id',
+      }),
+      now: () => NOW.getTime(),
+    }),
+    references: referencesStub(),
+    sizeReferences: sizeStub(SALES.sizes),
+    now: () => NOW,
+    replyCard: async () => 'om_flow',
+    updateCard: async () => false,
+  });
+  return { flow, store, lookup };
+};
+
+// 与 saleLookupService.test.js 里那份同形：抓 warn 级结构化日志（logger warn → console.warn）。
+const captureWarningLogs = () => {
+  const lines = [];
+  const originals = { log: console.log, warn: console.warn, error: console.error };
+  const capture = (...args) => { lines.push(args.map((value) => String(value)).join(' ')); };
+  console.log = capture;
+  console.warn = capture;
+  console.error = capture;
+  return {
+    lines,
+    events: (event) => lines.filter((line) => line.includes(`"event":"${event}"`)),
+    restore: () => {
+      console.log = originals.log;
+      console.warn = originals.warn;
+      console.error = originals.error;
+    },
+  };
+};
+
+test('缺省出口①：非群任务发卡 → 不发、返 null、记 `send_skipped`（不回落 `sender_open_id`）', async () => {
+  const { flow } = buildWithoutTaskPorts();
+  const noChannelTask = { task_id: 't_no_channel', type: 'sale', sender_open_id: 'ou_1' };
+
+  const logs = captureWarningLogs();
+  let sent;
+  let text;
+  try {
+    sent = await flow.sendCardToTask(noChannelTask, { header: {} });
+    text = await flow.sendTextToTask(noChannelTask, '回你一句');
+  } finally {
+    logs.restore();
+  }
+
+  assert.equal(sent, null, '没有群上下文 → 明确返"没发出去"');
+  assert.equal(text, null, '文字同理');
+  const skipped = logs.events('lark.private_chat.send_skipped');
+  assert.equal(skipped.length, 2, '两条缺省出口各记一条');
+  assert.match(skipped.join('\n'), /"kind":"card"/);
+  assert.match(skipped.join('\n'), /"kind":"text"/);
+  assert.match(skipped[0], /"reason":"no_group_context"/);
+});
+
+test('缺省出口②：类里**没有** open_id 发送器（`sendCard` / `sendText` 已整体删除）', () => {
+  const { flow } = buildWithoutTaskPorts();
+  assert.equal(flow.sendCard, undefined, 'ⓐ：代码里一行私聊都不留');
+  assert.equal(flow.sendText, undefined);
+  assert.equal(typeof flow.sendCardToTask, 'function', '只留"任务感知"的出口');
+  assert.equal(typeof flow.sendTextToTask, 'function');
+});
+
+test('缺省出口③：非群任务走完整编排（「我要退货」）→ 一句都发不出去，但仍然如实问货号', async () => {
+  // ⚠️ 这条**不是**在测"能不能发给她" —— 它测的是：缺省出口下这条编排**照跑**，
+  //    只是"发不出去"这件事如实反映出来（不崩、不静默发私聊）。发得出去的那条路
+  //    由上面 `build()` 那批用例（显式注入出口）覆盖。
+  const { flow, store } = buildWithoutTaskPorts();
+  const logs = captureWarningLogs();
+  let result;
+  try {
+    const task = await newTask(store, { original_text: '我要退货' });
+    result = await flow.handle(task, { intent: 'return', action: 'return' });
+  } finally {
+    logs.restore();
+  }
+
+  assert.equal(result.reason, 'no_item_info', '还是照样问她货号（本地编排没变）');
+  assert.match(logs.events('lark.private_chat.send_skipped').join('\n'), /"kind":"text"/,
+    '那一句追问没有去处 → 记 skip');
 });

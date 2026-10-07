@@ -24,15 +24,23 @@
 她拍板的方式是 **ⓐ：代码里一行私聊都不留，测试全部迁到群聊入口**
 （见 `docs/private-chat-removal-decision-2026-10-07.md`）。
 入口统一到【群聊 + 话题】—— 私聊（以及一切非群聊）消息**只记一条
-`lark.private_chat.disabled` 日志**：不建任务、不进 AI、不读表、不写表、**也不回消息**。
-🔴 **没有开关** —— `PRIVATE_CHAT_INTAKE_ENABLED` 之类的变量**刻意不存在**；
+`lark.private_chat.disabled` 日志**：不建任务、不进 AI、不读表、不写表。
+⭐ **唯一保留的动作是回一句固定文案**（`PRIVATE_CHAT_DISABLED_NOTICE_ENABLED` 默认 `true` /
+`PRIVATE_CHAT_DISABLED_NOTICE_TEXT`，见 `config/privateChatNotice.js`）；**空串 = 关掉那句话**；
+🔴 **仍然没有**恢复私聊入口 / 发送的开关 —— `PRIVATE_CHAT_INTAKE_ENABLED` 之类的变量**刻意不存在**；
 要恢复私聊是**重新实现那条链路**，不是翻一个开关（留开关的方案 ⓑ 已被否掉）。
 ⚠️ 顺带删掉的私聊专属件：`larkMvpService.sendTodaySales` / `handleBotMenu` / `shanghaiDay`、
 路由的 `application.bot.menu_v6` 分支、`utils/larkCards.todaySalesCard`、
 `purchaseWebhookService.sendCard`、
+`larkMvpService.sendCard`（open_id 口径的卡片发送器，2026-10-07 收尾时成孤儿）、
 `SampleReplacementService` 的 `sendCard` / `sendText` 两个 open_id 发送器。
 ⚠️ **没有群上下文的任务 = 没有去处**：`sendTaskCard` / `sendTaskText` 只记
-`lark.private_chat.send_skipped` 并返 `null`。**有意的行为变化**：
+`lark.private_chat.send_skipped` 并返 `null`。
+⭐ 2026-10-07 收尾把剩下 5 处**缺省回落发私聊**也清了
+（`saleLookupService` ×2 / `afterSalesFlowService` ×2 / `salesThreadProgressService` ×1）：
+现在缺省出口一律"记 skip + 返 `null`"，日志只有一处定义
+（`utils/privateChatSend.js` 的 `skipNoGroupContext`）。
+**有意的行为变化**：
 `SampleReplacementService.notifySampleReplacements` 在**工作台触发**（
 `routes/workbench.js`，没有群上下文）时**不再静默发私聊**；
 群销售那条则回到**那条销售话题**（`reply_in_thread`）。
@@ -157,10 +165,16 @@ pnpm run dev
 - `PURCHASE_CHAT_ID` - 采购单发到哪个群（chat_id，形如 `oc_xxx`）。**没有默认值**：留空时采购申请照常写成，但图与说明不发，并打 `purchase.request.image.skipped` 警告（**不会**回落到经办人私聊）
 - `LARK_BOT_OPEN_ID` - 机器人自己的 open_id（形如 `ou_xxx`），判「群里有没有 @ 机器人」的唯一依据。**没有默认值**：留空时群聊消息一律不处理（并打 `lark.group.bot_open_id_missing` 警告）
 
-> **私聊链路（已移除，2026-10-07）**：**没有任何环境变量** ——
-> 她拍板的是「代码里一行私聊都不留」（ⓐ），所以 `/api` 里**没有**私聊相关的开关。
+> **私聊链路（已移除，2026-10-07）**：**没有恢复私聊入口 / 发送的开关** ——
+> 她拍板的是「代码里一行私聊都不留」（ⓐ）。
+> ⭐ **只有两个可见的变量，都是"那一句 notice"的旋钮**
+>（取值在 `src/config/privateChatNotice.js`）：
+> `PRIVATE_CHAT_DISABLED_NOTICE_ENABLED`（默认 `true`）、
+> `PRIVATE_CHAT_DISABLED_NOTICE_TEXT`（默认「这个机器人现在只在群里工作，请到群里说～」；
+> **空串 = 关掉那句话**）。
 > 私聊消息只记一条 `lark.private_chat.disabled`；没有群上下文的任务只记一条
-> `lark.private_chat.send_skipped`。见 `docs/private-chat-removal-2026-10-07.md`。
+> `lark.private_chat.send_skipped`（全仓只有 `src/utils/privateChatSend.js` 一处定义）。
+> 见 `docs/private-chat-removal-2026-10-07.md`。
 - `LARK_ACK_REACTION` - 「收到」表情的 emoji_type，默认 `OneSecond`（真机验证有效）
 
 > 模型配置**没有默认值、也不跨供应商兜底**（原先缺省会回退到 `ARK_*` 豆包，已取消）：
