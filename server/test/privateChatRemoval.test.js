@@ -183,7 +183,7 @@ const sampleDelivery = (detailId = 'detail_1') => ({
 // ① 私聊入口：只记一条日志 —— 不建任务 / 不进 AI / 不写表 / **不回消息**
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('① 私聊文字 → 不建任务 / 不进 AI / 不写表 / 不加表情 / **也不回消息**，只记一条日志', async () => {
+test('① 私聊文字 → 不建任务 / 不进 AI / 不写表 / 不加表情，只记日志 + 回一句「请到群里说」', async () => {
   const { service, sent, replies, reactions, created, updated, parseCalls } = makeHarness();
 
   let result;
@@ -197,12 +197,14 @@ test('① 私聊文字 → 不建任务 / 不进 AI / 不写表 / 不加表情 /
   assert.deepEqual(updated, [], '一个业务写都没有');
   assert.deepEqual(await service.store.list(), [], '连本地任务都不建');
   assert.deepEqual(reactions, [], '不再加「收到」表情（那条链路整个不跑了）');
-  assert.deepEqual(sent, [], '**一条主动消息都不发**（那句"请到群里说"的开关已经删掉）');
+  // ⭐ 业务负责人 2026-10-07：「（回一句请到群里说的开关）保留就可以」
+  assert.equal(sent.length, 1, '私聊只回那一句，别的什么都不发');
+  assert.match(JSON.stringify(sent[0]), /请到群里说/);
   assert.deepEqual(replies, [], '也不做任何回复');
   assert.match(logs, /lark\.private_chat\.disabled/, '可排查：不是静默失效');
 });
 
-test('① 私聊的非文字 / 空文字 → 与文字**同一档**：静默 + 一条日志（旧的两条提示已删）', async () => {
+test('① 私聊的非文字 / 空文字 → 与文字**同一档**：一条日志 + 回同一句（旧的两条专属提示已删）', async () => {
   const { service, sent, replies } = makeHarness();
 
   const image = await service.acceptMessage(
@@ -212,7 +214,8 @@ test('① 私聊的非文字 / 空文字 → 与文字**同一档**：静默 + �
 
   assert.deepEqual(image, { accepted: false, reason: 'private_chat_removed' });
   assert.deepEqual(empty, { accepted: false, reason: 'private_chat_removed' });
-  assert.deepEqual(sent, []);
+  assert.equal(sent.length, 2, '两条都只回那一句');
+  assert.ok(sent.every((x) => /请到群里说/.test(JSON.stringify(x))));
   assert.deepEqual(replies, []);
 });
 
@@ -408,4 +411,17 @@ test('⑤ 主群准入判据不受影响（三条判据都在）', () => {
   assert.equal(service.resolveMainChatAdmission({ mentions: [] }, 'BH-20261005-0009 这批到哪了').accepted, true);
   assert.deepEqual(service.resolveMainChatAdmission({ mentions: [] }, '今天天气不错'),
     { accepted: false, reason: 'group_not_sales_text' });
+});
+
+// ⭐ 那句话是**可关的**（她 2026-10-07：开关保留；关掉就纯静默）。
+test('① 那句话可关：NOTICE_ENABLED=false → 私聊一个字都不发（只留日志）', async () => {
+  const { service, sent } = makeHarness();
+  process.env.PRIVATE_CHAT_DISABLED_NOTICE_ENABLED = 'false';
+  try {
+    const result = await service.acceptMessage(privateEvent('om_p2p_off', 'A100 38码一双'));
+    assert.deepEqual(result, { accepted: false, reason: 'private_chat_removed' });
+    assert.deepEqual(sent, [], '关掉就不发');
+  } finally {
+    delete process.env.PRIVATE_CHAT_DISABLED_NOTICE_ENABLED;
+  }
 });
