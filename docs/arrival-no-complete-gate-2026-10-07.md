@@ -9,6 +9,12 @@
 **要改成的样子**：收到用户关于到货情况的反馈 → **直接处理**（解析 → 算核对计划 → 出核对卡片）。
 **不再要求她说「核对完毕」这类完成信号。**
 
+> ⚠️ 本文件与已合并的 `docs/arrival-trigger-and-prompt-2026-10-07.md` 是**同一件事的两半**：
+> 那一份是她 2026-10-07 的**第二段口径**（「就以这个事件去触发 AI 识别，不用再等用户说
+> "核对完毕"了」+ 她批准的两条**提示词**改动）；本文件是**这次实现**的验收标准与逐条对照。
+> 那一份里写明"代码里的 `complete` 闸门 **+ 提示词里对应的那两条要求，一起改**" ——
+> 所以本 PR **把提示词也改了**（见下面 A12）。
+
 ## 二、改之前的现状（代码事实）
 
 `PurchaseArrivalConversationService.handleTopicMessageLocked` 里：
@@ -34,6 +40,7 @@
 | **A9** | `complete` **不再作闸门**，只作诊断（进 `last_parse` 与日志 `parse_complete`），并**只**在 A2 那个"要不要回一句"上起作用 | ✅ |
 | **A10** | 用户可见文案里不再有"等她说完了/在收集"的话术；文案全部来自 `config/arrivalConversation.js`（配置先行） | ✅ |
 | **A11** | 既有断言一条都不放宽 —— 只有**故意的行为变更**按新契约改写（本次 2 条） | ✅ |
+| **A12** | ⭐ **提示词一起改**（`docs/arrival-trigger-and-prompt-2026-10-07.md` 里她批准的两条）：①「某行一双都没到 / 没到 / 没来」→ 必须按 `less` + 该行申请数量输出（漏了会按申请数量入库 = 写错账）；② 旧口径「她明确表示说完了才 `complete=true`」删掉，改成"信息足以算清差异就处理"，**同时保留**"判断不出就不要输出这一行"的保守原则 | ✅ |
 
 ## 四、⭐ 五个边界逐条怎么处理
 
@@ -92,9 +99,10 @@
 | ---- | -------- |
 | `server/src/services/purchaseArrivalConversationService.js` | 删掉 `if (!parsed.complete)` 提前 return；改成"有没有到货内容"判据；发卡片前先看"这张任务上有没有旧卡"→ 有就 `updateCard` 更新、没有才 `replyCard`；更新失败回落补发 + 日志；`complete` 降级为诊断字段 |
 | `server/src/config/arrivalConversation.js` | `notConfirmedYet` 改文案；新增 `noArrivalContent` / `updatedCard`；`afterPosted` 补上"为什么选这个安全默认"的注释 |
-| `server/src/services/doubaoService.js` | **只加注释**（说明 `complete` 现在只作诊断、本次刻意不动提示词） |
+| `server/src/services/doubaoService.js` | ⭐ **提示词**：`complete` 的旧定义（"她明确表示说完了才填 true"）删掉 → 改成"**她给的信息够不够算**"，并写明它不是"要不要处理"的开关；**补**「某行『一双都没到 / 没到 / 没来 / 一双没来』→ 这一行必须输出 `type="less"`、`quantity` = 该行申请数量」；引入段那句"说完之后会说一句表示核对完了的话"删掉。另外加注释说明 `complete` 现在只作诊断 |
 | `server/src/services/larkMvpService.js` | **只改注释**（接线处那段流程描述不再说"判她说完了没有"） |
 | `server/src/services/groupPurchaseFlowService.js` | **只改注释**（同上） |
+| `server/test/doubaoArrivalReconcileParse.test.js` | 新增 3 条**提示词级**断言（旧口径必须消失 / 新补的「没到」规则必须在 / 保守原则还在） |
 | `server/test/arrivalConversation.test.js` | 见下 |
 
 ⚠️ **`server/src/utils/larkCards.js` 一个字都没改** —— 卡片结构、按钮、文案模板都没动；
@@ -150,8 +158,9 @@ node --test --test-concurrency=1     # run 2
 2. **她先说了到货、卡片出来后又说了一句"对不上明细"的话** → 会回 `unmatched`，
    而**旧卡片仍留在话题里**（数字是上一轮的）。点那张卡仍是按上一轮的计划入库 ——
    这个行为**改动前就存在**（不是本次引入），本次没有动它。要与不要收紧，请她拍板。
-3. **`same === true` 的语义完全交给模型**（提示词规则 2 要求她说了「完全一样 / 都到了」才填 true）。
+3. **`same === true` 的语义完全交给模型**（提示词规则 2 要求她说了「完全一样 / 都到了 / 一件不差」才填 true）。
    若模型把一句闲聊误判成 `same: true`，就会出一张"全部到货"的卡片 ——
    但**入库仍要她点「是」**，且卡片上写着具体数字，所以不会自动写错账。
-   本次**刻意没动提示词**（不动模型行为，风险最小）。要加保险的话，是个可以单独做的小任务。
+   本 PR 已经按她批准的口径改过提示词；"提示词级断言"只能钉住**文字**，
+   **模型真实行为没法在 CI 里验证** —— 要真验证得在测试 Base 上跑一次真模型。
 
