@@ -196,3 +196,63 @@
 非群任务（私聊 / 工作台触发）**再也发不出任何消息**：以前"悄悄发私聊"，
 现在只记一条 `lark.private_chat.send_skipped` 并返 `null`。
 调用方据此**不许记"已发送"**（例：`SampleReplacementService` 不写 `notice_sent`）。
+
+---
+
+## 六、2026-10-07 二次收尾：最后 2 处「非群 → 仍会回一条消息」+ 一条 CI 偶发
+
+> 承接 PR #195；口径不变（业务负责人拍板的 ⓐ「代码里一行私聊都不留」）。
+> ⚠️ **那句 notice 仍然一个字都没动**（`config/privateChatNotice.js`）。
+> 分支 `fix/private-chat-tail-defaults-and-flake`。
+>
+> ⚠️ 与 `server/scripts/e2e-*.mjs` / `docs/e2e-group-thread-*.md` /
+> `server/test/e2e-group-thread.test.js` **零交集**（那三个由另一个 agent 在写）。
+
+### 6.1 验收标准（**动手前先写**，`AGENTS.md` 协作纪律第 2 条）
+
+| # | 预期 |
+| --- | --- |
+| K1 | `LarkMvpService.replyTaskCard` 的**非群分支**：不再 `replyCard(task.message_id, card)`，改成记 `skipNoGroupContext('card', task)` + 返 `null`；**零远端调用** |
+| K2 | `AfterSalesFlowService.replyCardToTask` 的**缺省**：非群 → 记 `skipNoGroupContext('card', task)` + 返 `null`；**群那一条（`this.replyCard(task.message_id, card)`）逐字不变** |
+| K3 | 两处都**复用** `utils/privateChatSend.js`（全仓 skip 日志仍**只有一处定义**） |
+| K4 | `replyCard` 孤儿核查：`LarkMvpService.prototype.replyCard` 若还有调用方 → **保留**；若成孤儿 → 删掉 + 注释 |
+| K5 | 群路径**逐字不变**：`replyTaskCard` 群分支（`replyCardInThread` + `bindGroupSaleThread`）、`sendTaskCard` / `sendTaskText`、`reply_in_thread` |
+| K6 | 全仓仍只有 **1 处** `receive_id_type: 'open_id'`（notice 的 `sendText`）；notice 一行不动 |
+| K7 | CI 偶发用例（`purchaseWebhookService.test.js`「A：未配置 PURCHASE_CHAT_ID」）：断言改成**等到 `purchase.request.image.skipped` 出现或超时**，**再**断言恰好 1 条；**不许**放宽成"0 或 1 都行"；守卫语义不变（必须记 skipped ＋ 一条 IM 都不发） |
+| K8 | 偶发用例**故意多跑**（不是"跑一次绿了就算"）；全量 `node --test --test-concurrency=1` **连跑 2 次 fail=0** |
+| K9 | 依赖缺省端口的测试断言改成**显式注入**出口；**不许为了绿而删覆盖** |
+
+### 6.2 逐条对照（跑完填）
+
+| # | 结果 | 证据 |
+| --- | --- | --- |
+| K1 | ✅ | `larkMvpService.js:570` → `if (task?.chat_type !== 'group') return skipNoGroupContext('card', task);`。新用例：`privateChatRemoval.test.js` ② 「`replyTaskCard` 非群 → 不发 / 返 null / 记 skip」（断言 `replies`、`sent` 全空，`kind:card` + `reason:no_group_context` + `task_id` 都落日志） |
+| K2 | ✅ | `afterSalesFlowService.js` 缺省：非群 → `skipNoGroupContext('card', task)`，群 → `this.replyCard(task.message_id, card)`（**那一行逐字未动**）。新用例：`afterSalesFlow.test.js` 「缺省出口①」（三条出口全 skip、返 null、`replyCalls` 为空）+「缺省出口①b」（**群任务**仍回 `om_her_message`、零 skip） |
+| K3 | ✅ | 两处都调 `skipNoGroupContext`；`SEND_SKIPPED_EVENT` 仍只在 `utils/privateChatSend.js:20` 定义（其余命中都是注释） |
+| K4 | ✅ **不是孤儿 → 保留** | `LarkMvpService.prototype.replyCard` 仍有 **4** 个调用方（`:138` SaleLookup 接线 / `:158` AfterSalesFlow 接线 / `:442` `replyPurchaseCard` 的无话题回落 / `:1443` 销售确认卡片的非群分支）；`AfterSalesFlowService.this.replyCard` 仍有 **1** 个读取点（缺省出口的**群分支**）。故两处都按"不是孤儿就保留"处理，**没有删任何东西** |
+| K5 | ✅ | `git diff` 里 `replyCardInThread` / `bindGroupSaleThread` / `sendTaskCard` / `sendTaskText` / `reply_in_thread` 一行未动（`larkMvpService.js` 本次只动 1 行代码 + 注释）；群用例：`privateChatRemoval.test.js` ②/⑤、`afterSalesFlow.test.js` ①b |
+| K6 | ✅ | `grep -rn "receive_id_type: 'open_id'" server/src` → 只有 `larkMvpService.js:339`（notice 的 `sendText`）；`git diff --stat` 里没有 `config/privateChatNotice.js` |
+| K7 | ✅ | 改成 `await waitFor('未配置采购群的跳过日志落盘', () => logs.events('purchase.request.image.skipped').length >= 1)` 之后**再**断言 `=== 1`；"一条 IM 都不发"也移到等待之后断言。**没有**放宽成"0 或 1 都行" |
+| K8 | ✅ | 该用例单跑过滤 **25 次全绿**；全量 `node --test --test-concurrency=1` **连跑 2 次：901 tests / 901 pass / 0 fail**（`duration_ms` 23126 / 23190）。根因另有**故意注入 250 ms 延迟**的对照实验：改动前的断言复现 CI 症状（`actual: 0, expected: 1`），改动后的断言同条件通过（286 ms） |
+| K9 | ✅ | `afterSalesFlow.test.js` 的 `build()` 把 `replyCard` 打桩换成**显式注入** `replyCardToTask`；`saleQueryFlow.test.js` 的 `makeService` 显式把售后编排的回复出口接到记账打桩上。**没有为绿删覆盖**：本次新增 3 条用例（`privateChatRemoval` ×2、`afterSalesFlow` ×1） |
+
+### 6.3 ⚠️ 不确定处 / 留给下一次的
+
+1. ⚠️ **同样形状、但不在本次范围的两条路径还在**（它们不是"缺省出口"，而是**主回复路径**）：
+   - `larkMvpService.js:1443`：销售确认卡片 `task.chat_type === 'group' ? sendTaskCard(...) : replyCard(task.message_id, ...)`
+     —— 非群任务仍会回一条私聊；
+   - `saleLookupService.js:369`：`replyCardByTask` 的**主**回复（任何 `chat_type` 都先走它）。
+   - **为什么没顺手改**：本次 brief 划定的是"最后 2 处缺省出口"，且改它们会牵动
+     `larkMvpService.test.js`（16 处 `service.replyCard` 打桩）、`saleQueryFlow.test.js`、
+     `salesOrderNoIntake.test.js`、`messageGate.test.js` 这批**历史"没有渠道上下文"的用例**，
+     属于"把用例迁到群入口"的独立工作量。**建议单开一条任务**，口径与本次相同
+     （非群 → 记 skip + 返 null）。
+   - ⚠️ 生产上的触达条件：`acceptMessage` 已不再为非群消息建任务，所以这两条只在
+     **磁盘上遗留的旧任务 JSON**（`chat_type` 缺失）被重放时才会走到 —— 概率低但不是零。
+2. ⚠️ **K2 的取舍**：`replyCardToTask` 的缺省保留了"**群任务才回她那条消息**"，而不是
+   整个缺省都 skip。理由：brief 要求"群分支逐字不变"；且这样 `this.replyCard` 不会成孤儿
+   （否则要连带删 `options.replyCard` + `larkMvpService.js:158` 的接线 + JSDoc + 测试）。
+   若希望缺省**一律** skip（与 `sendCardToTask` / `sendTextToTask` 完全对称），
+   说一声即可改，代价是上面那串连带删除。
+3. ⚠️ `AfterSalesFlowService` 现在会读 `task.chat_type`（原注释写着"本类不认识 chat_type"）——
+   已把注释改成"只用它判**有没有去处**；飞书语义（`reply_in_thread`）仍只留在注入方"。

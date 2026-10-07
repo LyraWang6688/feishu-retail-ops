@@ -556,14 +556,18 @@ class LarkMvpService {
   /**
    * ⭐ ③ 售后（以及任何"带任务上下文"的回复）的**渠道感知回复**：
    *   · 群里 → 回复到 `task.message_id` 的**那个话题**（`reply_in_thread: true`）；
-   *   · 私聊 → 与改动前逐字相同：`replyCard(message_id)`，payload 一个字段都不多。
+   *   · 没有群上下文 → **没有去处**：只记一条 `lark.private_chat.send_skipped`、返 `null`。
    *
    * 与 `sendTaskCard` 的区别：这个是"回她那条消息"，不是"另发一张"。
    * 售后的确认卡片、候选卡片、结果卡片都优先走它 —— 她在话题里说话，
    * 卡片就落在同一个话题里（"在一个话题里解决一切"）。
+   *
+   * 🔴 2026-10-07 二次收尾：非群分支**不再**回落「回复她那条私聊消息」
+   *    （`replyCard(task.message_id, card)`）—— 私聊入口已移除，非群任务**没有去处**；
+   *    这是当时漏掉的最后两条口子之一。见 utils/privateChatSend.js 的口径。
    */
   async replyTaskCard(task, card) {
-    if (task?.chat_type !== 'group') return this.replyCard(task.message_id, card);
+    if (task?.chat_type !== 'group') return skipNoGroupContext('card', task);
     const sent = await this.replyCardInThread(task.message_id, card);
     await this.bindGroupSaleThread(task, sent);
     return sent.messageId;

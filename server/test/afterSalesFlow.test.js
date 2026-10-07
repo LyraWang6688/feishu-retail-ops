@@ -272,12 +272,16 @@ const build = (options = {}) => {
     references: options.references || referencesStub(),
     sizeReferences: sizeStub(SALES.sizes),
     now: () => clock,
-    replyCard: async (_messageId, card) => { cards.all.push(card); return 'om_flow'; },
     // ⭐ 渠道感知出口**显式注入**（这是测试自己的打桩出口，不是服务内部的"缺省回落"）。
-    //    🔴 2026-10-07「私聊链路移除」后，两个 `send*ToTask` 的缺省已**不再回落私聊**：
-    //    不注入 = 没有群上下文 = **不发**。本文件的用例测的是**编排**
-    //    （该不该发、发出去的是什么），所以在这里显式给出出口。
+    //    🔴 2026-10-07「私聊链路移除」后，出口的缺省一律**按渠道分流**：
+    //    没有群上下文（本文件的 task 都不带 chat_type）= **不发**。
+    //    本文件的用例测的是**编排**（该不该发、发出去的是什么），所以在这里显式给出出口。
     //    ⚠️ 别改回 `sendCard` / `sendText`（open_id 口径）——那两个发送器已从服务里删除。
+    //    🔴 2026-10-07 二次收尾：回复那个出口（`replyCardToTask`）的缺省**也**开始按渠道
+    //    分流了，所以这一条同样必须显式注入（与下面两条同一理由）——
+    //    它接管了原来的 `replyCard` 打桩，所以这里不再单独注入 `replyCard`
+    //    （缺省那条 replyCard 只在"群任务 + 没注入 replyCardToTask"时才走，见「缺省出口」一节）。
+    replyCardToTask: async (_task, card) => { cards.all.push(card); return 'om_flow'; },
     sendCardToTask: async (_task, card) => { cards.all.push(card); cards.sent.push(card); return 'om_flow_sent'; },
     sendTextToTask: async (_task, message) => { texts.push(message); return null; },
     updateCard: async (_task, _event, card) => { cards.updated.push(card); return true; },
@@ -1037,12 +1041,13 @@ test('不是本人的卡片点不动：别人点确认会被拒绝', async () =>
 //      上面那批用例已经钉住了它。
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** 只给"缺省出口"这一节用的最小装配：**刻意不注入**两个任务感知出口。 */
+/** 只给"缺省出口"这一节用的最小装配：**刻意不注入**三个任务感知出口。 */
 const buildWithoutTaskPorts = () => {
   const gateway = salesGateway();
   const base = executorBase();
   const inventory = fakeInventory();
   const store = tempStore('after-sales-flow-default-ports-');
+  const replyCalls = [];
   const lookup = new SaleLookupService({
     gateway, store, sizeReferences: sizeStub(SALES.sizes), now: () => NOW,
     replyCard: async () => 'om_lookup',
@@ -1060,10 +1065,11 @@ const buildWithoutTaskPorts = () => {
     references: referencesStub(),
     sizeReferences: sizeStub(SALES.sizes),
     now: () => NOW,
-    replyCard: async () => 'om_flow',
+    // 记下每一次"回她那条消息"：非群任务**一次都不该**走到它（那就是私聊）。
+    replyCard: async (messageId) => { replyCalls.push(messageId); return 'om_flow'; },
     updateCard: async () => false,
   });
-  return { flow, store, lookup };
+  return { flow, store, lookup, replyCalls };
 };
 
 // 与 saleLookupService.test.js 里那份同形：抓 warn 级结构化日志（logger warn → console.warn）。
@@ -1086,26 +1092,55 @@ const captureWarningLogs = () => {
 };
 
 test('缺省出口①：非群任务发卡 → 不发、返 null、记 `send_skipped`（不回落 `sender_open_id`）', async () => {
-  const { flow } = buildWithoutTaskPorts();
+  const { flow, replyCalls } = buildWithoutTaskPorts();
   const noChannelTask = { task_id: 't_no_channel', type: 'sale', sender_open_id: 'ou_1' };
 
   const logs = captureWarningLogs();
   let sent;
   let text;
+  let reply;
   try {
     sent = await flow.sendCardToTask(noChannelTask, { header: {} });
     text = await flow.sendTextToTask(noChannelTask, '回你一句');
+    // 🔴 2026-10-07 二次收尾：**回复那个出口的缺省**也要按渠道分流 ——
+    //    非群任务以前会走 `replyCard(task.message_id, card)`（= 回她一条私聊），现在不。
+    reply = await flow.replyCardToTask(noChannelTask, { header: {} });
   } finally {
     logs.restore();
   }
 
   assert.equal(sent, null, '没有群上下文 → 明确返"没发出去"');
   assert.equal(text, null, '文字同理');
+  assert.equal(reply, null, '回复那个出口同理（不许回她那条私聊消息）');
+  assert.deepEqual(replyCalls, [], '一次都不许走到 `replyCard`（那就是私聊）');
   const skipped = logs.events('lark.private_chat.send_skipped');
-  assert.equal(skipped.length, 2, '两条缺省出口各记一条');
+  assert.equal(skipped.length, 3, '三条缺省出口各记一条');
   assert.match(skipped.join('\n'), /"kind":"card"/);
   assert.match(skipped.join('\n'), /"kind":"text"/);
   assert.match(skipped[0], /"reason":"no_group_context"/);
+  assert.match(skipped[2], /"reason":"no_group_context"/);
+});
+
+test('缺省出口①b：**群任务**走缺省回复出口 → 仍然回她那条消息（群路径逐字不变）', async () => {
+  // ⚠️ 这条钉住"非群分支改掉、**群分支一行不动**"：缺省的 `replyCardToTask`
+  //    只在 `chat_type === 'group'` 时才回她那条消息，且**不记 skip**。
+  const { flow, replyCalls } = buildWithoutTaskPorts();
+  const groupTask = {
+    task_id: 't_group', type: 'sale', chat_type: 'group', chat_id: 'oc_group',
+    message_id: 'om_her_message', sender_open_id: 'ou_1',
+  };
+
+  const logs = captureWarningLogs();
+  let reply;
+  try {
+    reply = await flow.replyCardToTask(groupTask, { header: {} });
+  } finally {
+    logs.restore();
+  }
+
+  assert.equal(reply, 'om_flow', '群任务照旧回她那条消息（缺省 replyCard 原样走）');
+  assert.deepEqual(replyCalls, ['om_her_message'], '回复落在她那条消息下');
+  assert.deepEqual(logs.events('lark.private_chat.send_skipped'), [], '群任务一个 skip 都不该记');
 });
 
 test('缺省出口②：类里**没有** open_id 发送器（`sendCard` / `sendText` 已整体删除）', () => {
@@ -1114,6 +1149,7 @@ test('缺省出口②：类里**没有** open_id 发送器（`sendCard` / `sendT
   assert.equal(flow.sendText, undefined);
   assert.equal(typeof flow.sendCardToTask, 'function', '只留"任务感知"的出口');
   assert.equal(typeof flow.sendTextToTask, 'function');
+  assert.equal(typeof flow.replyCardToTask, 'function', '回复那个出口也是任务感知的（按渠道分流）');
 });
 
 test('缺省出口③：非群任务走完整编排（「我要退货」）→ 一句都发不出去，但仍然如实问货号', async () => {

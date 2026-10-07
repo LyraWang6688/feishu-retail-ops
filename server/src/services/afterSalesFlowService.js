@@ -85,9 +85,11 @@ const hasItemInfo = (parsed = {}) =>
  *   ⭐ replyCardToTask / sendCardToTask / sendTextToTask  可选，**带任务上下文**的消息端口：
  *      群话题里的售后任务走它们（回复回到**同一个话题**）；
  *      ⚠️ 🔴 2026-10-07「私聊链路移除」后，**没有群上下文的任务 = 没有去处**：
- *      不注入时这两个 `send*ToTask` 出口只记一条 `lark.private_chat.send_skipped`
- *      并返 `null`（**不再**回落到 `sendCard/sendText(open_id)` —— 那两个 open_id 发送器
- *      已整体删除）。见 docs/private-chat-removal-decision-2026-10-07.md。
+ *      不注入时这三个出口**都不会回落私聊** —— `replyCardToTask` 只在
+ *      `chat_type === 'group'` 时才回她那条消息，其余的（连同 `sendCardToTask` /
+ *      `sendTextToTask`）只记一条 `lark.private_chat.send_skipped` 并返 `null`
+ *      （那两个 open_id 发送器已整体删除）。
+ *      见 docs/private-chat-removal-decision-2026-10-07.md。
  *   now        可选，测试注入固定时间
  */
 class AfterSalesFlowService {
@@ -106,18 +108,25 @@ class AfterSalesFlowService {
     this.now = options.now || (() => new Date());
     this.replyCard = options.replyCard || (async () => '');
     this.updateCard = options.updateCard || (async () => false);
-    // 渠道感知的三个出口。回复那一个的缺省 = 回她那条消息（`replyCard`）——
-    // 那条路**不带 `reply_in_thread`**，群任务的飞书语义由注入方（`larkMvpService`）负责。
-    // ⚠️ 本类不认识 chat_type，也不认识 reply_in_thread。
+    // 渠道感知的三个出口。**缺省一律按渠道分流**：有群上下文才"回她那条消息"，
+    // 没有群上下文 = **没有去处**（记 skip + 返 null）。
+    // ⚠️ 这里读 `task.chat_type` 只判"这个任务有没有去处"；飞书消息模型的语义
+    //    （`reply_in_thread` / 话题）仍只留在注入方（`larkMvpService`），本类不认识它。
     //
-    // 🔴 2026-10-07「私聊链路移除」：后两个出口原来的缺省是
-    //   `sendCard(task.sender_open_id, card)` / `sendText(task.sender_open_id, message)`
-    //   —— **偷偷发私聊**，正是被否掉的行为。它们连同底下的 `this.sendCard` / `this.sendText`
-    //   两个 open_id 发送器一起**整体删除**（业务负责人拍板的 ⓐ：「代码里一行私聊都不留」，
+    // 🔴 2026-10-07「私聊链路移除」：出口原来的缺省都会回落私聊
+    //   （`sendCard/sendText(task.sender_open_id, …)`，回复那个是"回她那条私聊消息"）
+    //   —— 正是被否掉的行为。两个 open_id 发送器连同底下的 `this.sendCard` /
+    //   `this.sendText` 一起**整体删除**（业务负责人拍板的 ⓐ：「代码里一行私聊都不留」，
     //   见 docs/private-chat-removal-decision-2026-10-07.md）。
-    //   没有群上下文 = **没有去处**：只记一条 `lark.private_chat.send_skipped`、返 `null`。
+    //
+    // 🔴 2026-10-07 二次收尾：**回复那个出口的缺省当时漏掉了** —— 它还是
+    //   `this.replyCard(task.message_id, card)`，非群任务照样会发出一条私聊。
+    //   现在与另外两个对齐：非群 → 记 skip + 返 `null`；**群那一条逐字不变**。
     this.replyCardToTask = options.replyCardToTask
-      || (async (task, card) => this.replyCard(task.message_id, card));
+      || (async (task, card) => {
+        if (task?.chat_type !== 'group') return skipNoGroupContext('card', task);
+        return this.replyCard(task.message_id, card);
+      });
     this.sendCardToTask = options.sendCardToTask
       || (async (task) => skipNoGroupContext('card', task));
     this.sendTextToTask = options.sendTextToTask
