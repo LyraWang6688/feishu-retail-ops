@@ -426,8 +426,15 @@ Schema Check 只回答「目标 Base 的字段与关联结构是否满足契约�
   （`runForStock` / `resumePending`）与共享串行队列，从上下文读到的键会把**上一笔单**
   挂到**当前请求**的任务上 —— 那是"指向错的那一笔"，比"没有键"更坏。
   显式传参没有这个问题，而且测试直接可注入。
-- ⚠️ **采购链路本次未接**（当时 `purchaseWebhookService.js` 被另一个并行任务占着）：
-  它的 `bitable.record.created` 仍然没有关联键。扩展点只有两处，见上面那份 docs 第五节。
+- ⭐ **采购链路同一天下半场已接**（2026-10-07）：键是 **`task_id`**（报货/退货
+  `purchase_supplier-report_…`、到货核对 `arrival_reconcile_…`）· **`batch_no`**
+  （表单填的 `202610071` / 自动的 `BH-YYYYMMDD-NNNN`）· **`purchase_report_record_id`**
+  （「供应商对接」那条记录）· **`purchase_arrival_record_id`**（「采购到货」那条记录）。
+  **拿不到就不传、不许编**（批次级动作只给 `task_id` ＋ `batch_no`；到货链路没有报单记录 id）。
+  改动落在 `purchaseWebhookService` ＋ `purchaseArrivalConversationService.createArrivalRecord`
+  （「采购到货」那一行的新增写在后者），下游一行没改。
+  键清单 / 写库动作清单 / 验收标准 / 真实日志样例见
+  `docs/log-correlation-and-stock-key-label-2026-10-07.md` **第六、七节**。
 
 ### ⭐ 「库存键」两种写法并列（同一天）
 

@@ -17,11 +17,27 @@
 //   ③ **不做任何推导**：本文件不查表、不读本地任务、不猜。谁调用谁负责把**已经知道**的
 //      键放进来源对象。"取不到"是正常状态——如实少一个字段，比猜一个错的强。
 //
-// ⚠️ 扩展点（将来接采购链路时只改两处）：
-//   1) 这里的 CORRELATION_KEYS 加 `purchase_batch_no`；
-//   2) purchaseWebhookService 在调 gateway.create / inventory.applyPurchase 时把
-//      `correlation: { purchase_batch_no }` 传下去 —— 下游已经全部就位，不用再改。
-const CORRELATION_KEYS = Object.freeze(['task_id', 'order_no', 'sales_entry_record_id']);
+// ⚠️ 扩展点（**2026-10-07 已接采购链路**，两处都做完；详见
+//    docs/log-correlation-and-stock-key-label-2026-10-07.md 第六节）：
+//   1) 下面的 CORRELATION_KEYS 加了采购那几个键；
+//   2) purchaseWebhookService / purchaseArrivalConversationService 在调
+//      gateway.create/update 与 inventory.applyPurchase / applyChange 时把键传下去
+//      —— 下游（网关 / 库存引擎 / createOnceByKey）**一行都没改**。
+//
+// 采购的键名为什么是 `batch_no` 而不是 `purchase_batch_no`：
+//   采购链路**现有**日志一直用 `batch_no`（purchase.batch.* / purchase.return.batch.* /
+//   purchase.request.image.group_sent …）。改叫 purchase_batch_no 会让同一个值在同一条链上
+//   有两个字段名 ⇒ `grep '"batch_no":"202610071"'` 串不起整条链 —— 那正是这次要消灭的现象。
+const CORRELATION_KEYS = Object.freeze([
+  // 销售链路（2026-10-07 上半场）
+  'task_id',
+  'order_no',
+  'sales_entry_record_id',
+  // 采购链路（2026-10-07 下半场）
+  'batch_no', // 采购批次号：表单填的 202610071 / 自动生成的 BH-YYYYMMDD-NNNN
+  'purchase_report_record_id', // 「供应商对接」那条报单记录（采购链路的最上游）
+  'purchase_arrival_record_id', // 「采购到货」那条记录（到货核对 → 入库那一段的来源）
+]);
 
 /**
  * 从任意来源里挑出关联键。

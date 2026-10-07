@@ -55,6 +55,31 @@ const { resolvePurchaseChatId } = require('../config/groupPurchase');
 const { PurchaseBatchLocator } = require('./purchaseBatchLocator');
 // 「这批发到群里的是采购申请单还是采购退货单」的批次类型标记（到货核对靠它区分话题）。
 const { ARRIVAL_BATCH_KINDS } = require('../config/arrivalConversation');
+// 「这条写入属于哪一笔采购业务」—— 关联键的唯一取用口（**白名单**，非白名单键与空值
+// 一律不进日志）。与销售链路同一套：只把调用方**已经知道**的键带下去，不查表、不推导。
+const { mergeCorrelation, correlationFields } = require('../utils/correlationFields');
+
+/**
+ * 采购侧的关联键包（只进日志，**不改任何业务判断、不进任何业务 input**）。
+ *
+ * 与销售链路的 `options.correlation` 是同一个范式：显式传参、不用 AsyncLocalStorage
+ * （库存引擎有跨请求重放，从上下文读会指向错的那一笔）。
+ *
+ * 四个键各自"从哪来"（**拿不到就不传**，`mergeCorrelation` 会把空值 / 非白名单键丢掉，
+ * 所以不会写成 `"batch_no":""`）：
+ *   · `task_id`                    —— 本地采购任务（报货/退货 = purchase_supplier-report_…；
+ *                                     到货核对 = arrival_reconcile_…，那是另一套 task，如实照传）
+ *   · `batch_no`                   —— 采购批次号（表单填的 202610071 / 自动的 BH-…）
+ *   · `purchase_report_record_id`  —— 「供应商对接」那条报单记录
+ *   · `purchase_arrival_record_id` —— 「采购到货」那条记录
+ */
+const purchaseCorrelation = ({ taskId, batchNo, reportRecordId, arrivalRecordId } = {}) =>
+  mergeCorrelation({
+    task_id: taskId,
+    batch_no: batchNo,
+    purchase_report_record_id: reportRecordId,
+    purchase_arrival_record_id: arrivalRecordId,
+  });
 
 // 采购卡片上可以触发副作用（写采购事实）的动作。
 //
@@ -915,6 +940,8 @@ class PurchaseWebhookService {
       const finalized = await this.markRecordsAsPosted(
         pendingRecords.map((record) => record.record_id),
         reportTable,
+        // 关联键只进日志：这一批的 task_id ＋ 批次号（报单记录 id 在下面按条补上）。
+        { correlation: purchaseCorrelation({ taskId: batchTaskId, batchNo }) },
       );
       logInfo('purchase.batch.already_posted', {
         batch_no: batchNo,
@@ -966,7 +993,12 @@ class PurchaseWebhookService {
       });
     }
     // 一次提交只提示一次：把这一批里所有"对不上"的合成一条群消息，不逐条刷屏。
-    if (mismatches.length) await this.notifyQuantityMismatches(batchNo, mismatches);
+    if (mismatches.length) {
+      // 「发采购群」也是这条链路的动作之一，提示日志同样要能按同一个键串起来。
+      await this.notifyQuantityMismatches(batchNo, mismatches, {
+        correlation: purchaseCorrelation({ taskId: batchTaskId, batchNo }),
+      });
+    }
     if (entries.length === 0) {
       // 整批都没有内容可画（全是对不上）：不写任何单据、也不给记录补终态
       //（她核对后重新提交即可）。任务落 completed —— 这一批"处理完了"。
@@ -1028,12 +1060,14 @@ class PurchaseWebhookService {
    * 迟到的记录补终态、不并进已生成的那份采购申请。本职能改的是"同一批一次处理"，
    * 不改变"批次已生成之后不补写申请"。
    */
-  async markRecordsAsPosted(recordIds, reportTable) {
+  async markRecordsAsPosted(recordIds, reportTable, options = {}) {
     let updated = 0;
     for (const recordId of recordIds) {
       const patch = { status: '已生成申请' };
       if (reportTable?.fields?.failureReason) patch.failureReason = '';
-      const written = await this.gateway.update('purchaseReport', recordId, patch).catch(() => null);
+      // 关联键（task_id / batch_no）由调用方给；**报单记录 id 是这一层自己知道的**，就地补上。
+      const correlation = mergeCorrelation(options.correlation, { purchase_report_record_id: recordId });
+      const written = await this.gateway.update('purchaseReport', recordId, patch, { correlation }).catch(() => null);
       if (written) updated += 1;
     }
     return updated;
@@ -1224,10 +1258,12 @@ class PurchaseWebhookService {
    *    只"回复某条消息"在飞书里是**引用回复**，不建话题 —— 那正是她看到"两条消息"的原因。
    */
   async sendPurchaseGroupNotice(content, options = {}) {
+    // 关联键（task_id / batch_no / 记录 id）：只进日志。不传 = 日志形状**逐字不变**。
+    const correlation = correlationFields(options.correlation);
     const target = this.resolvePurchaseGroupTarget({ sandboxChatId: this.sandboxChatId });
     if (!target.chatId) {
       logWarn('purchase.group_notice.skipped', {
-        reason: 'purchase_chat_id_unconfigured', env: 'PURCHASE_CHAT_ID', content,
+        reason: 'purchase_chat_id_unconfigured', env: 'PURCHASE_CHAT_ID', content, ...correlation,
       });
       return false;
     }
@@ -1239,11 +1275,11 @@ class PurchaseWebhookService {
         inThread: Boolean(replyToMessageId),
       });
       logInfo('purchase.group_notice.sent', {
-        chat_id: target.chatId, reply_to_message_id: replyToMessageId,
+        chat_id: target.chatId, reply_to_message_id: replyToMessageId, ...correlation,
       });
       return true;
     } catch (error) {
-      logWarn('purchase.group_notice.failed', { chat_id: target.chatId, error: error.message });
+      logWarn('purchase.group_notice.failed', { chat_id: target.chatId, error: error.message, ...correlation });
       return false;
     }
   }
@@ -1252,15 +1288,16 @@ class PurchaseWebhookService {
    * 「说明和勾选对不上」的群提示：**一次提交只提示一次**（把整批合成一条，不逐条刷屏）。
    * 返回是否发出去了（发不出去只记日志，不影响任务终态）。
    */
-  async notifyQuantityMismatches(batchNo, mismatches) {
+  async notifyQuantityMismatches(batchNo, mismatches, options = {}) {
     const lines = mismatches.map((item) => `· ${item.message}`);
     const content = [
       `这批报货里有 ${mismatches.length} 条「说明和勾选的尺码对不上」，先没有生成采购申请单：`,
       ...lines,
     ].join('\n');
-    const sent = await this.sendPurchaseGroupNotice(content);
+    const sent = await this.sendPurchaseGroupNotice(content, { correlation: options.correlation });
     logInfo('purchase.report.quantity_mismatch_notified', {
       batch_no: batchNo, mismatch_count: mismatches.length, sent,
+      ...correlationFields(options.correlation),
     });
     return sent;
   }
@@ -1450,6 +1487,11 @@ class PurchaseWebhookService {
     const draft = task?.draft || {};
     const items = draft.items || [];
     if (!items.length) return { sent: [], failed: [], thread_root_message_id: '' };
+    // 这一层已经知道的关联键：task_id ＋ 批次号（只进日志）。
+    // ⚠️ 报单记录 id **刻意不给**：批次草稿里它是**多条**（report_record_ids），
+    //    挑一条当代表就是编 —— 每条记录自己那几次写入会各自带自己的 id。
+    const batchNo = posting.batch_no || draft.batch_no || '';
+    const correlation = purchaseCorrelation({ taskId, batchNo });
     // ⚠️ 采购单**只发群**（业务负责人：「不用再看经办人了」）。
     // operator_open_id 仍然留着——它是「这条记录是谁报的」，用于到货异常告知、
     // 以及权限判断，不再决定采购单发到哪儿。
@@ -1576,8 +1618,12 @@ class PurchaseWebhookService {
         const written = await this.writeSupplierImageAttachment({
           taskId, supplierName: label, png, requestRecordIds,
           fileNameSuffix: options.fileNameSuffix,
+          // 附件写回也是写库：带上这一层的关联键（task_id ＋ batch_no）。
+          correlation,
         });
-        if (written?.written) logInfo('purchase.request.image.attachment_written', { task_id: taskId, ...written });
+        if (written?.written) {
+          logInfo('purchase.request.image.attachment_written', { task_id: taskId, ...written, ...correlation });
+        }
       } catch (error) {
         // 只告警：她已经有图了。
         logWarn('purchase.request.image.attachment_write_failed', { task_id: taskId, supplier: label, error: error.message });
@@ -1588,7 +1634,6 @@ class PurchaseWebhookService {
     // 「这条消息 / 这条话题 ↔ 是哪一批」的映射：**发完就记**，失败只告警。
     // 记不上只影响 C 的定位（她会被告知"认不出"），绝不能让采购单已经发出去之后
     // 再把任务判成失败。
-    const batchNo = posting.batch_no || draft.batch_no || '';
     for (const { messageId, threadId } of groupMessages.filter((item) => item.messageId)) {
       try {
         await this.batchLocator.rememberGroupMessage({
@@ -1640,7 +1685,9 @@ class PurchaseWebhookService {
    * 「采购退货单」走同一个方法：它的单据信息行也是按同样的规则挑最早那条，
    * 附件字段也是同一个（表已改名为「单据信息」，定位就是给供应商开图片的依据）。
    */
-  async writeSupplierImageAttachment({ taskId, supplierName, png, requestRecordIds, fileNameSuffix = '采购单' }) {
+  async writeSupplierImageAttachment({
+    taskId, supplierName, png, requestRecordIds, fileNameSuffix = '采购单', correlation = {},
+  }) {
     if (!requestRecordIds?.length) {
       logWarn('purchase.request.image.no_request_record', { task_id: taskId, supplier: supplierName });
       return { written: false, reason: 'no_request_record' };
@@ -1671,7 +1718,8 @@ class PurchaseWebhookService {
       const filePath = path.join(tempDir, `${safeName}-${fileNameSuffix}.png`);
       await fs.promises.writeFile(filePath, png);
       const fileToken = await this.gateway.uploadAttachment(filePath);
-      await this.gateway.update('purchaseRequest', target.recordId, { attachment: [{ file_token: fileToken }] });
+      await this.gateway.update('purchaseRequest', target.recordId,
+        { attachment: [{ file_token: fileToken }] }, { correlation });
       return { written: true, record_id: target.recordId, file_token: fileToken };
     } finally {
       await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
@@ -1775,7 +1823,12 @@ class PurchaseWebhookService {
     // 报单记录的处理状态终态由 confirmPurchaseRequest 改成「已生成申请」。
     const updated = await this.store.update(taskId, { draft });
     const result = await this.publishPurchaseRequest(taskId, updated);
-    logInfo('purchase.report.posted', { record_id: recordId, task_id: taskId, item_count: parsed.length, request_count: result.request_ids?.length || 0 });
+    // 批次号就在这次写入的返回值里（单条路径的批次号是 nextBatchNo() 现生成的 BH-…）。
+    logInfo('purchase.report.posted', {
+      record_id: recordId, task_id: taskId, item_count: parsed.length,
+      request_count: result.request_ids?.length || 0,
+      ...purchaseCorrelation({ taskId, batchNo: result?.batch_no, reportRecordId: recordId }),
+    });
     return { status: 'posted', item_count: parsed.length };
   }
 
@@ -2349,6 +2402,11 @@ class PurchaseWebhookService {
     const { recordId, taskId, plan } = prepared;
     const progress = { returns: {} };
     const docIds = [];
+    // 关联键（只进日志）：task_id ＋ 批次号 ＋ 这条「供应商对接」记录自己的 id。
+    // ⚠️ 没有批次号的旧退货数据（batchNoText 为空）→ `batch_no` **不出现**，不编。
+    const correlation = purchaseCorrelation({
+      taskId, batchNo: prepared.draft?.batch_no, reportRecordId: recordId,
+    });
     // 逐尺码处理：一个尺码一行「单据信息」、一次库存操作。
     // 一行一个来源是必须的——库存操作的幂等键就是来源行的 record_id，多个尺码共用一个
     // 来源就不会各自拿到自己的 operationId。
@@ -2361,6 +2419,7 @@ class PurchaseWebhookService {
         keyField: IDEMPOTENCY_KEY_FIELD,
         keyValue: docKey,
         label: `退货单 ${recordId} ${entry.size}码`,
+        correlation,
         values: {
           behavior: relation(prepared.draft.behavior_record_id),
           product: relation(prepared.draft.product_record_id),
@@ -2388,10 +2447,11 @@ class PurchaseWebhookService {
         // 全仓 grep 没有任何读方；它也**不写**「库存流水」的时间列——那一列（「发生时间」）
         // 2026-10-05 就被业务负责人从生产表删掉了，映射也早删了。
         // 时间语义一律交给飞书自动的「创建时间」，代码不再自带时间戳。
-      });
+      }, { correlation });
       logInfo('purchase.return.stock_applied', {
         record_id: recordId, task_id: taskId, size: entry.size, quantity: entry.quantity,
         doc_id: doc.recordId, ledger_record_id: change?.ledgerRecordId || '', live_record_ids: change?.liveRecordIds || [],
+        ...correlation,
       });
     }
 
@@ -2402,7 +2462,7 @@ class PurchaseWebhookService {
       await this.gateway.update('purchaseReport', recordId, {
         status: '已生成申请',
         request: docIds,
-      }).catch((error) => logWarn('purchase.return.report_status.failed', {
+      }, { correlation }).catch((error) => logWarn('purchase.return.report_status.failed', {
         record_id: recordId, task_id: taskId, error: error.message,
       }));
     }
@@ -2480,12 +2540,17 @@ class PurchaseWebhookService {
     });
     if (!notice) return false;
     const replyToMessageId = String(options?.replyToMessageId || '').trim();
-    const sent = await this.sendPurchaseGroupNotice(notice, { replyToMessageId });
+    // 关联键：这条提示属于哪一笔退货（task_id ＋ 批次号 ＋ 报单记录 id），只进日志。
+    const correlation = purchaseCorrelation({
+      taskId: prepared.taskId, batchNo: prepared.draft?.batch_no, reportRecordId: prepared.recordId,
+    });
+    const sent = await this.sendPurchaseGroupNotice(notice, { replyToMessageId, correlation });
     logInfo('purchase.return.notice', {
       record_id: prepared.recordId, task_id: prepared.taskId,
       declared: prepared.plan.declared, available: prepared.plan.available,
       taken: prepared.plan.taken, shortfall: prepared.plan.shortfall,
       surplus: prepared.plan.surplus, sent, reply_to_message_id: replyToMessageId,
+      ...correlation,
     });
     return sent;
   }
@@ -2524,6 +2589,8 @@ class PurchaseWebhookService {
       record_id: recordId, task_id: taskId, declared: prepared.plan.declared,
       available: prepared.plan.available, taken: prepared.plan.taken,
       size_count: prepared.plan.sizes.length, doc_count: prepared.docIds.length,
+      // 单条退货路径：批次号来自草稿（旧数据可能是空 → 不出现）。
+      ...purchaseCorrelation({ taskId, batchNo: prepared.draft?.batch_no, reportRecordId: recordId }),
     });
     return prepared.result;
   }
@@ -2611,7 +2678,7 @@ class PurchaseWebhookService {
     const key = normalizeColor(color);
     if (context.colorIndex.has(key)) return { recordId: context.colorIndex.get(key), created: false };
 
-    const created = await this.gateway.create('color', { name: color });
+    const created = await this.gateway.create('color', { name: color }, { correlation: context.correlation });
     const recordId = created?.recordId || '';
     if (!recordId) throw new Error(`颜色「${color}」新建失败`);
     context.colorIndex.set(key, recordId);
@@ -2676,7 +2743,7 @@ class PurchaseWebhookService {
     const createdAtCost = costPlanEntry && !costPlanEntry.conflict ? costPlanEntry.cost : null;
     if (createdAtCost !== null) values.cost = createdAtCost;
 
-    const created = await this.gateway.create('product', values);
+    const created = await this.gateway.create('product', values, { correlation: context.correlation });
     const recordId = created?.recordId || created?.record_id || '';
     if (!recordId) throw new Error(`新品建档失败：${itemNo}${color}`);
 
@@ -2757,6 +2824,11 @@ class PurchaseWebhookService {
       const pending = Array.isArray(draft.pending_creation) ? draft.pending_creation : [];
       const productTable = this.gateway.table('product');
       const context = this.buildArrivalCreationContext(task);
+      // 建档 / 写成本也是写库动作：关联键（task_id ＋ 批次号 ＋ 到货记录 id）挂在这个
+      // **只在本进程内传递**的 context 上 —— 不落盘、不进任何业务入参，只进日志。
+      context.correlation = purchaseCorrelation({
+        taskId, batchNo: draft.batch_no, arrivalRecordId: draft.arrival_record_id,
+      });
       // 价格计划按任务里落盘的**到货明细**（task.recognized）重建：建档顺带写成本、
       // 老货品补成本，两条路用的是同一份计划，规则仍然是"同货号价格冲突就整条不写"。
       context.arrivalCostPlan = buildArrivalCostPlan(task.recognized || []);
@@ -2907,7 +2979,7 @@ class PurchaseWebhookService {
     }
 
     try {
-      await this.gateway.update('product', recordId, { cost: entry.cost });
+      await this.gateway.update('product', recordId, { cost: entry.cost }, { correlation: context.correlation });
     } catch (error) {
       logWarn('purchase.arrival.cost_write_failed', {
         item_no: itemNo, product_record_id: recordId, cost: entry.cost, error: error.message,
@@ -3006,7 +3078,12 @@ class PurchaseWebhookService {
       // 支持批量和单条两种取消
       const reportIds = task.draft.report_record_ids || [task.draft.report_record_id];
       for (const rid of reportIds) {
-        await this.gateway.update('purchaseReport', rid, { status: '已取消' }).catch(() => undefined);
+        // 取消也是写「供应商对接」：同一组关联键（批次号在草稿里，可能没有 → 不出现）。
+        await this.gateway.update('purchaseReport', rid, { status: '已取消' }, {
+          correlation: purchaseCorrelation({
+            taskId, batchNo: task.draft.batch_no, reportRecordId: rid,
+          }),
+        }).catch(() => undefined);
       }
       await this.store.update(taskId, { status: 'cancelled' });
       await this.updatePurchaseActionCard(task, event, purchaseStatusCard(task.draft, '采购申请已取消', '用户已取消本次采购申请。', 'grey'));
@@ -3075,6 +3152,9 @@ class PurchaseWebhookService {
     const draft = task.draft;
     const isBatch = draft.is_batch === true;
     const plan = await this.ensurePostingPlan(taskId, task);
+    // 关联键（只进日志）：task_id ＋ 批次号（plan 里已经冻结好了，重试不会换号）；
+    // 每条写入再按需补上**它自己那条报单记录**的 id。
+    const baseCorrelation = purchaseCorrelation({ taskId, batchNo: plan.batch_no });
     const progress = { ...(task.posting_progress || {}) };
     const requestIdByItemKey = { ...(progress.requests || {}) };
 
@@ -3087,6 +3167,7 @@ class PurchaseWebhookService {
         keyField: IDEMPOTENCY_KEY_FIELD,
         keyValue: plan.batch_key,
         label: '报货批次',
+        correlation: baseCorrelation,
         values: { batchNo: plan.batch_no, idempotencyKey: plan.batch_key },
       });
       batchRecordId = batch.recordId;
@@ -3108,6 +3189,10 @@ class PurchaseWebhookService {
           keyField: IDEMPOTENCY_KEY_FIELD,
           keyValue: item.request_key,
           label: `采购申请 ${item.item_key}`,
+          // 「单据信息」这一行属于哪一条报单记录，计划里记着（item.report_record_id）。
+          correlation: mergeCorrelation(baseCorrelation, {
+            purchase_report_record_id: item.report_record_id,
+          }),
           values: {
             batchNo: relation(batchRecordId),
             product: relation(item.product_record_id),
@@ -3139,6 +3224,8 @@ class PurchaseWebhookService {
       await this.gateway.update('purchaseReport', rid, {
         status: '已生成申请',
         request: itemRequestIds.length > 0 ? itemRequestIds : requestIds,
+      }, {
+        correlation: mergeCorrelation(baseCorrelation, { purchase_report_record_id: rid }),
       }).catch(() => undefined);
     }
     progress.reports_linked = true;
@@ -3203,6 +3290,13 @@ class PurchaseWebhookService {
     // 拿动作开始时那份旧草稿会既看不到链接、也拿不到新货品的 record_id。
     const latest = (await this.store.get(taskId)) || task;
     const draft = latest.draft || task.draft;
+    // 关联键（只进日志）：到货核对任务自己的 task_id（`arrival_reconcile_…`，
+    // **是另一套 task，如实照传真名**）＋ 批次号 ＋「采购到货」记录 id。
+    // ⚠️ 这条链路**拿不到**「供应商对接」报单记录 id（到货任务里只存 request_ids）
+    //    —— 拿不到就不传，不编。
+    const correlation = purchaseCorrelation({
+      taskId, batchNo: draft.batch_no, arrivalRecordId: draft.arrival_record_id,
+    });
     // 新品的明细在建档前没有 product_record_id，这里按「货号+颜色」把刚建好的记录对上。
     const productIdByKey = new Map((draft.created_products || [])
       .map((item) => [`${item.item_no}|${item.color}`, item.product_record_id]));
@@ -3295,7 +3389,7 @@ class PurchaseWebhookService {
             // ⚠️ 2026-10-06：不再传 occurredAt（同下：只进本地任务记录、无人读）；
             // 时间交给飞书自动的「创建时间」。
             state: inboundState,
-          });
+          }, { correlation });
           existing.inventoryApplied = true;
           await persistEntry(key, existing);
         }
@@ -3315,7 +3409,7 @@ class PurchaseWebhookService {
         // ⚠️ 2026-10-06：不再写「入库时间」——业务负责人已把这一列从生产表删除
         // （生产真表「采购入库」11 列里没有它），入库时刻由飞书自动的「创建时间」承担
         //（同一时刻，不丢信息）；schema 里的 inboundAt 映射也同步删掉了。
-      });
+      }, { correlation });
       created.push(inbound.recordId);
       const entry = { recordId: inbound.recordId, inventoryApplied: false };
       await persistEntry(key, entry);
@@ -3328,7 +3422,7 @@ class PurchaseWebhookService {
           // ⚠️ 2026-10-06：不再传 occurredAt（只进本地任务记录、无人读）；
           // 时间交给飞书自动的「创建时间」。
           state: inboundState,
-        });
+        }, { correlation });
         entry.inventoryApplied = true;
         await persistEntry(key, entry);
       }
@@ -3348,10 +3442,13 @@ class PurchaseWebhookService {
     //
     // 到这为止，除「采购到货」这一行自己的「确认状态」之外，入库只写
     //「采购入库」+「库存流水」+「实时库存」三张表。
-    await this.gateway.update('purchaseArrival', arrival.arrival_record_id, { confirmStatus: '已确认' });
+    await this.gateway.update('purchaseArrival', arrival.arrival_record_id, { confirmStatus: '已确认' }, { correlation });
     await this.store.update(taskId, { status: 'posted', inbound_record_ids: created });
     this.inflightInbound.delete(taskId);
-    logInfo('purchase.arrival.posted', { task_id: taskId, arrival_record_id: arrival.arrival_record_id, inbound_count: created.length, inventory_applied: this.enablePurchaseInventory });
+    logInfo('purchase.arrival.posted', {
+      task_id: taskId, arrival_record_id: arrival.arrival_record_id, inbound_count: created.length,
+      inventory_applied: this.enablePurchaseInventory, ...correlation,
+    });
     return { toast: { type: 'success', content: this.enablePurchaseInventory ? '采购已入库，库存已更新' : '采购入库已确认' } };
   }
 

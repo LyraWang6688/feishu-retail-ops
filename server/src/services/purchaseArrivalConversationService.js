@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { person, relation } = require('./v1ReferenceResolver');
+const { mergeCorrelation } = require('../utils/correlationFields');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const {
   purchaseArrivalReconcileCard,
@@ -630,16 +631,20 @@ class PurchaseArrivalConversationService {
       acceptanceText: String(task.acceptance_text || ''),
     };
     const operator = String(operatorOpenId || '').trim();
+    // 关联键（只进日志，**不改下面任何字段与顺序**）：这一行「采购到货」属于哪一批。
+    // ⚠️ 只给拿得到的两个：到货核对任务自己的 task_id（`arrival_reconcile_…`，另一套 task）
+    //    ＋ 批次号。「供应商对接」记录 id 在这里拿不到 —— 不编。
+    const correlation = mergeCorrelation({ task_id: task.task_id, batch_no: task.batch_no });
     let created;
     try {
-      created = await this.gateway.create('purchaseArrival', { ...baseValues, inspector: person(operator) });
+      created = await this.gateway.create('purchaseArrival', { ...baseValues, inspector: person(operator) }, { correlation });
     } catch (error) {
       if (!USER_FIELD_CONV_PATTERN.test(String(error?.message || ''))) throw error;
       logWarn('purchase.arrival.reconcile.inspector_rejected', {
         task_id: task.task_id, reason: 'user_field_conversion_failed',
         hint: '「验收人」写不进去（open_id 不在应用可见范围内），去掉它重试一次；其余字段照写',
       });
-      created = await this.gateway.create('purchaseArrival', baseValues);
+      created = await this.gateway.create('purchaseArrival', baseValues, { correlation });
     }
     const recordId = created?.recordId || '';
     if (!recordId) throw new Error('「采购到货」新建记录没有返回 record_id');

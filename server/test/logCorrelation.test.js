@@ -179,21 +179,37 @@ const postAndDeliver = async (world, correlation = CORRELATION, input = {}) => {
 
 // ── ① 关联键的取用口：白名单 / 去空 / 不认的对象 ────────────────────────────────
 test('correlationFields：只放行白名单里的业务键，其余（含疑似密钥）一个都不进日志', () => {
-  assert.deepEqual([...CORRELATION_KEYS], ['task_id', 'order_no', 'sales_entry_record_id']);
+  // ⚠️ 这条断言**2026-10-07 下半场改过一次**（接了采购链路）：白名单**只增不改**，
+  //    仍然是**逐字** deepEqual（没有放宽成 includes —— 多一个键就必须有人来这里改一次）。
+  assert.deepEqual([...CORRELATION_KEYS], [
+    // 销售链路
+    'task_id', 'order_no', 'sales_entry_record_id',
+    // 采购链路
+    'batch_no', 'purchase_report_record_id', 'purchase_arrival_record_id',
+  ]);
 
   const picked = correlationFields({
     task_id: 'sale_om_1',
     order_no: 'XSD-20261007-0004',
     sales_entry_record_id: 'rec_sale',
+    batch_no: '202610071',
+    purchase_report_record_id: 'rec_purchase_report',
+    purchase_arrival_record_id: 'rec_purchase_arrival',
     // 下面这些**故意**混进来：白名单是"以后谁顺手塞了密钥"的唯一一道闸门。
     app_secret: 'cli_secret_should_never_be_logged',
     authorization: 'Bearer xyz',
     随便一个键: 'v',
+    // 「看起来很像但不在白名单里」的也一律拒掉（**别为了省事把前缀放进白名单**）：
+    purchase_batch_no: '202610071',
+    stock_key: 'rec28ecYW0lkvL|38|门盒',
   });
   assert.deepEqual(picked, {
     task_id: 'sale_om_1', order_no: 'XSD-20261007-0004', sales_entry_record_id: 'rec_sale',
+    batch_no: '202610071', purchase_report_record_id: 'rec_purchase_report',
+    purchase_arrival_record_id: 'rec_purchase_arrival',
   });
   assert.equal(JSON.stringify(picked).includes('secret'), false, '密钥不许出现在日志字段里');
+  assert.equal(JSON.stringify(picked).includes('stock_key'), false, '非白名单键一个都不许进');
 });
 
 test('correlationFields：没有的键【不出现】（不是写空串），非对象/空对象返回 {}', () => {
@@ -204,6 +220,13 @@ test('correlationFields：没有的键【不出现】（不是写空串），非
   assert.deepEqual(correlationFields('sale_om_1'), {}, '字符串不是关联键的来源');
   assert.deepEqual(mergeCorrelation({ task_id: 'a' }, undefined, { order_no: 'b' }),
     { task_id: 'a', order_no: 'b' });
+  // 采购那几个键同样"空值就是不出现"（`batch_no: ''` 不许写成 `"batch_no":""`）。
+  assert.deepEqual(correlationFields({
+    batch_no: '', purchase_report_record_id: '  ', purchase_arrival_record_id: null,
+  }), {});
+  assert.deepEqual(mergeCorrelation({ task_id: 'purchase_supplier-report_x' }, { batch_no: '202610071' }), {
+    task_id: 'purchase_supplier-report_x', batch_no: '202610071',
+  });
 });
 
 // ── ② 网关层：日志字段从哪来、既有字段一个不少 ────────────────────────────────
