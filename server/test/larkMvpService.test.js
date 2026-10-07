@@ -8,8 +8,11 @@ const { LarkMvpService, aggregateRecognizedItems, looksLikeSalesText } = require
 const { PurchaseBatchLocator } = require('../src/services/purchaseBatchLocator');
 const { SalesGroupThreadLocator } = require('../src/services/salesGroupThreadLocator');
 const { PurchaseWebhookService } = require('../src/services/purchaseWebhookService');
-// 「缺口算出来了 → 会挂到**已入账终态卡**上」这个衔接点用真实渲染器证一下
-// （2026-10-07：段落从确认卡片挪到点确认之后的卡片；当天她**收窄**为**只放在终态卡**）。
+// 「缺口算出来了 → 会挂到点确认之后的卡片上」这个衔接点用真实渲染器证一下
+// （2026-10-07：段落从确认卡片挪到点确认之后的卡片 —— ⭐ 最终口径 = 处理中卡 ＋ 已入账终态卡
+//   **都带**（她当天先"两边都放"、又纠正"只放2"、再改口"中间态也要"，原话见
+//   test/productInfoGapsCardPlacement.test.js）；下面这几条断言一直用终态卡渲染器钉，
+//   与处理中卡那一段不冲突，所以**一个字没改**）。
 const { salesStatusCard } = require('../src/utils/larkCards');
 
 // 拼接「货品信息」的记录链接要读 Base token。测试里给一个占位值；
@@ -2019,13 +2022,15 @@ const openSale = (store, taskId) => store.create({ task_id: taskId, chat_type: '
   message_id: `om_${taskId}`, sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '66356黑42一双99微信' });
 
 // ⚠️ 2026-10-07 改写（**只因为"位置变了"，不是放宽**）：她拍板把「补货品信息」段落
-//   从确认卡片挪到**点确认之后的卡片**，随后又**收窄**为**只放在已入账终态卡上**
-//   （逐字：「不是，是只放在2上！」）。
+//   从确认卡片挪到**点确认之后的卡片**。⭐ 最终口径 = 处理中卡 ＋ 已入账终态卡**都带**
+//   （她当天先"两边都放"、又纠正「不是，是只放在2上！」、再改口「中间态也应该有提示」；
+//   原话见 `test/productInfoGapsCardPlacement.test.js`）。
 //   本用例的**数据断言一字未动**（缺口怎么算、url 怎么拼，全部原样钉着）；
-//   只把"卡片上看得见这一段"翻成它的反面 —— 而且段落本身的逐字渲染
+//   只把"确认卡片上看得见这一段"翻成它的反面 —— 而且段落本身的逐字渲染
 //   （标题 / 行格式 / note 小字 / 逐字 url / 上限）在
 //   `test/productInfoGapsCardPlacement.test.js` 里按同一套标准钉着，覆盖面没有丢。
-test('货品资料不齐时，缺口与记录链接算得出来；但确认卡片上不再挂这一段（已挪到终态卡）', async () => {
+//   ⚠️ 下面"用终态卡渲染器钉同一句话"这条**本次一个字没改**（终态卡口径从未变过）。
+test('货品资料不齐时，缺口与记录链接算得出来；但确认卡片上不再挂这一段（已挪到点确认之后的卡片）', async () => {
   const store = makeStore();
   const cards = [];
   const service = gapService({ store, cards,
@@ -2063,9 +2068,11 @@ test('货品齐备而且有样例图时，卡片上不出现这一区', async ()
 });
 
 // ⚠️ 2026-10-07 改写（**只因为"位置变了"**）：数据断言（齐备但缺样例图 ⇒ 记成缺口）一字未动，
-//   原先把"卡片上看得见 `还差：样例图`"钉在**确认卡片**上；现在那一段只挂在**已入账终态卡**上
-//   （她当天收窄：「不是，是只放在2上！」），所以这里改成在同一份 draft 上用
-//   **真实的终态卡渲染器 + 那个显式开关**去钉同一句话。
+//   原先把"卡片上看得见 `还差：样例图`"钉在**确认卡片**上；现在那一段挂在**点确认之后的卡片**上
+//   （⭐ 最终口径 = 处理中卡 ＋ 已入账终态卡都带；见 placement 测试与
+//   `docs/product-info-gaps-card-move-2026-10-07.md` 的口径变更时间线），
+//   所以这里改成在同一份 draft 上用**真实的终态卡渲染器 + 那个显式开关**去钉同一句话
+//   —— 这条断言**本次一个字没改**（终态卡口径从未变过）。
 test('齐备但缺样例图 → 依然算缺口，且这段文字挂在已入账终态卡上', async () => {
   const store = makeStore();
   const cards = [];
@@ -2173,9 +2180,10 @@ test('同一个货号有多个颜色时，把该货号下所有资料不全的�
   assert.deepEqual(gaps.map((gap) => gap.label), ['66356米', '66356白']);
   assert.deepEqual(gaps.map((gap) => gap.missing), [['成本'], ['单价', '品类']]);
   assert.equal(gaps[1].missing_sample_image, true, '白色还缺样例图');
-  // ⚠️ 2026-10-07：这三条原来钉在**确认卡片**上；位置挪到点确认之后的卡片、并收窄成
-  //   "只放已入账终态卡"之后，改成在同一份 draft 上用**真实终态卡渲染器**钉
-  //   （数据断言一字未动，没有放宽）。
+  // ⚠️ 2026-10-07：这三条原来钉在**确认卡片**上；位置挪到点确认之后的卡片之后，
+  //   改成在同一份 draft 上用**真实终态卡渲染器**钉
+  //   （数据断言一字未动，没有放宽）。⭐ 最终口径是处理中卡 ＋ 终态卡**都带**，
+  //   这里用终态卡钉仍然成立 —— **这一行本次一个字没改**。
   const rendered = JSON.stringify(salesStatusCard({ items: [], product_info_gaps: gaps },
     '销售订单已入账', 'm', 'green', { productInfoGaps: true }));
   assert.match(rendered, /66356米/);
