@@ -2,6 +2,8 @@ const OpenAI = require('openai');
 const { logError, logInfo } = require('../utils/logger');
 const { applyGroupBuyVoucherPolicy } = require('./groupBuyVoucherPolicy');
 const { resolveLlm, assertLlmConfigured } = require('../config/llmModels');
+// ⭐ 「全到」说法的兜底词表（配置先行）：改清单不改代码，见 config 里的长注释。
+const { ARRIVAL_ALL_PRESENT_PHRASES } = require('../config/arrivalConversation');
 const {
   normalizeMessageIntent,
   isAfterSalesIntent,
@@ -32,6 +34,111 @@ const { isPrepaidTradeType, orderTradeTypeCodes, SALES_MULTI_LINE_DEPOSIT_TARGET
 //    ② 多明细 + 定金时，定位"定金 / 尾款落在哪一件"（资金口径，见 `depositTargetIndex`）。
 //    ⚠️ 「未付」**不在**表里 —— 它不再是交易类型（那只是"现货 + 钱没结清"）。
 const SALES_TRADE_TYPE_LABELS = Object.freeze(['现货', '预定', '预付']);
+
+// ── 到货核对：「全到」说法的**兜底判定**（业务负责人 2026-10-07 批准，真机漏判）──────────
+//
+// 【这一层是干什么的】真机 2026-10-07 21:52：她在两个话题里各发一句 ——
+//   · 「都到了」  → 模型 `same:true` → 出卡片 → 确认后入库 12 行 ✅
+//   · 「都到货了」→ 模型 `same:false` / `differences:[]` → 判据 `hasArrivalContent` 不成立
+//     → `purchase.arrival.reconcile.no_arrival_content` → **不出卡片** ❌
+//   两句意思完全一样，只多了「货」两个字 ⇒ **模型漏判**。
+// ⇒ 提示词里已把这些说法列成等价（模型层）；这里再加一层**代码侧兜底**
+//   —— 真机那次就是模型没认出来，模型不是确定性的，只改提示词挡不住第二次。
+//
+// 🔴 边界（**绝不放宽"有具体内容"的情形**）：这一层只在**模型什么都没给出来**
+//    （`same !== true` 且 `differences` 为空）时补一句"这是全到"；
+//    **整句**能被清单词完整切分、且不含数字 / 数量字 / 单位 / 否定 / 疑问，才算"裸的全到说法"。
+//    词表在 `config/arrivalConversation.js` 的 `ARRIVAL_ALL_PRESENT_PHRASES`（配置先行）。
+const ARRIVAL_ALL_PRESENT_VOCABULARY = new WeakMap();
+
+/** 词表 = 三类词的并集，**按长度倒序**（贪心最长匹配：`到齐` 不会被拆成 `到` + `齐`）。 */
+const arrivalAllPresentVocabulary = (phrases) => {
+  const cached = ARRIVAL_ALL_PRESENT_VOCABULARY.get(phrases);
+  if (cached) return cached;
+  const vocabulary = [...new Set([
+    ...phrases.completeWords, ...phrases.arrivalWords, ...phrases.fillerWords,
+  ])].sort((left, right) => right.length - left.length);
+  ARRIVAL_ALL_PRESENT_VOCABULARY.set(phrases, vocabulary);
+  return vocabulary;
+};
+
+/** 去空白与标点（`，。！` / 全角空格 / 换行）—— 断句与语气不参与判定。 */
+const stripArrivalPunctuation = (raw) => String(raw ?? '')
+  .replace(/[\s\u3000]/g, '')
+  .replace(/\p{P}/gu, '');
+
+/** 「有具体内容」= 数字 / 货号字母 / 中文数量字 / 数量单位（有它就不许兜底）。 */
+const hasConcreteArrivalContent = (raw, phrases) => {
+  const text = stripArrivalPunctuation(raw);
+  if (!text) return false;
+  if (new RegExp(phrases.concreteContentPattern).test(text)) return true;
+  return [...phrases.numberWords, ...phrases.quantityUnitWords].some((word) => text.includes(word));
+};
+
+/**
+ * 一句话是不是"裸的全到说法"（保守判定，**不做业务判断**）。
+ *
+ * @param {string} raw 她说的原话
+ * @param {object} [phrases] 词表（默认取 config；可注入 = 换清单不改代码）
+ * @returns {{matched:boolean, reason:string, tokens?:string[]}}
+ *   `reason` 是排查口径：为什么算（`bare_all_arrived`）/ 为什么不算
+ *   （`question` / `negation` / `concrete_content` / `out_of_vocabulary` /
+ *    `no_complete_word` / `no_arrival_word` / `empty`）。
+ */
+const detectBareAllArrivedStatement = (raw, phrases = ARRIVAL_ALL_PRESENT_PHRASES) => {
+  const source = String(raw ?? '');
+  if (!source.trim()) return { matched: false, reason: 'empty' };
+  // 问句不是"到货反馈"（`？` 会在下面被当标点去掉，所以先看原文）。
+  if (phrases.questionMarkers.some((marker) => source.includes(marker))) {
+    return { matched: false, reason: 'question' };
+  }
+  const text = stripArrivalPunctuation(source);
+  if (!text) return { matched: false, reason: 'empty' };
+  if (phrases.negationWords.some((word) => text.includes(word))) {
+    return { matched: false, reason: 'negation' };
+  }
+  if (hasConcreteArrivalContent(source, phrases)) {
+    return { matched: false, reason: 'concrete_content' };
+  }
+  const vocabulary = arrivalAllPresentVocabulary(phrases);
+  const tokens = [];
+  let index = 0;
+  while (index < text.length) {
+    const token = vocabulary.find((word) => text.startsWith(word, index));
+    if (!token) return { matched: false, reason: 'out_of_vocabulary' };
+    tokens.push(token);
+    index += token.length;
+  }
+  // 至少要有一个"全到"的标记（全/都/齐）＋ 一个到货动词，才算"整批全到"。
+  if (!tokens.some((token) => phrases.completeWords.includes(token))) {
+    return { matched: false, reason: 'no_complete_word', tokens };
+  }
+  if (!tokens.some((token) => phrases.arrivalWords.includes(token))) {
+    return { matched: false, reason: 'no_arrival_word', tokens };
+  }
+  return { matched: true, reason: 'bare_all_arrived', tokens };
+};
+
+/**
+ * 整段原话里找"裸的全到说法"（多条消息的形状，**保守**）：
+ *   ① 整段拼起来就是一个裸说法；或
+ *   ② **最新一句**是裸说法，且**其它消息里没有任何具体内容**（数量 / 单位 / 货号）——
+ *      否则她可能正在说具体差异、只是模型没解析出来，那时**绝不兜底**。
+ */
+const detectBareAllArrivedTranscript = (messages, phrases = ARRIVAL_ALL_PRESENT_PHRASES) => {
+  const texts = (Array.isArray(messages) ? messages : [])
+    .map((line) => String(line ?? '').trim()).filter(Boolean);
+  if (!texts.length) return { matched: false, reason: 'empty_transcript' };
+  const whole = detectBareAllArrivedStatement(texts.join('\n'), phrases);
+  if (whole.matched) return { ...whole, scope: 'whole_transcript' };
+  if (texts.length === 1) return whole;
+  const latest = detectBareAllArrivedStatement(texts[texts.length - 1], phrases);
+  if (!latest.matched) return latest;
+  if (texts.slice(0, -1).some((line) => hasConcreteArrivalContent(line, phrases))) {
+    return { matched: false, reason: 'other_message_has_concrete_content' };
+  }
+  return { ...latest, scope: 'latest_message' };
+};
 
 // Log only the sale fields needed to compare AI extraction with deterministic
 // normalization. Never log the complete user message, prompt or raw model JSON.
@@ -760,7 +867,7 @@ ${requestLines}
 
 业务负责人会在会话群里用自然语言说明「这次实际到货和采购申请的差异」，她的字眼完全不固定，你要自己理解意思。
 差异只有三类：
-1. 完全一样（例如「都到了」「一件不差」「跟单子一样」）
+1. 完全一样（例如「都到了」「都到货了」「全部到货」「都到齐了」「都齐了」「全到了」「都收到了」「全部到齐」「齐了」「一件不差」「跟单子一样」）
 2. 实际比申请多（例如「多了两双 39」「39 码到了 4 双」）
 3. 实际比申请少（例如「少了两双 38」「38 码只到了一双」）
 她会分多次说，也可能一次说完。**不需要**她说「完毕 / 核对完了」这类话才处理 ——
@@ -774,7 +881,11 @@ ${requestLines}
    信息不足以算（她只说了半句、还要再补、或你判断不出是哪一行）填 false。
    ⚠️ 这**不是**"要不要处理"的开关：**不要**因为她没说「完毕」就填 false，
    也**不要**因为"内容看起来齐了"就强行填 true。
-2. same：她说「完全一样 / 都到了 / 一件不差 / 没有差异」时填 true，此时 differences 留空数组。
+2. same：她说「完全一样 / 都到了 / 都到货了 / 全部到货 / 都到齐了 / 都齐了 / 全到了 / 都收到了 / 全部到齐 / 齐了 / 一件不差 / 没有差异」时填 true，此时 differences 留空数组。
+   ⚠️ 这些说法是**同一个意思（整批全到）**，只是她的字眼不同：只要她**没有说出具体货号、尺码或双数**，
+   多了「到货 / 齐 / 收到」这样的字眼**不算差异** —— 一律 same=true、differences=[]。
+   ⚠️ 反过来，只要她给的是**具体内容**（例：「39 码到了 4 双」「少了两双 38」「8230 到了 1 双」
+   「还有一双没到」），就必须按第 2 / 3 类算具体差异，**不许**当成"整批全到"。
 3. differences 每一项是一条**具体差异**：
    · item_no / color / size 必须对应上面明细里的某一行，**照抄上面的写法**，不要改写、不要编造；
    · type 只能是 "more"（比申请多）/ "less"（比申请少）/ "same"（她说这一行就是一样的）；
@@ -819,9 +930,17 @@ ${transcript}
         return Number.isSafeInteger(item.quantity) && item.quantity > 0;
       })
       .map((item) => ({ ...item, quantity: item.type === 'same' ? 0 : item.quantity }));
+    const modelSaidSame = parsed?.same === true;
+    // ⭐ 代码侧兜底（配置在 `config/arrivalConversation.js`，判定在本文件上方）：
+    //    **只在模型什么都没给出来时**生效 —— 模型给出了具体差异（或自己说了 same）时，
+    //    这里一个字都不动（不覆盖模型的结论）。真机那次就是模型把「都到货了」漏成了
+    //    `same:false` + `differences:[]`，于是被判成"这句话里没有可核对的到货信息"。
+    const bareAllArrived = (modelSaidSame || differences.length > 0)
+      ? { matched: false, reason: 'model_already_gave_content' }
+      : detectBareAllArrivedTranscript(messages, ARRIVAL_ALL_PRESENT_PHRASES);
     const result = {
-      complete: parsed?.complete === true,
-      same: parsed?.same === true,
+      complete: parsed?.complete === true || bareAllArrived.matched,
+      same: modelSaidSame || bareAllArrived.matched,
       differences,
     };
     logInfo('purchase.arrival.reconcile.parsed', {
@@ -831,6 +950,9 @@ ${transcript}
       difference_count: differences.length,
       diff_types: [...new Set(differences.map((item) => item.type))],
       request_row_count: rows.length,
+      // ⭐ 兜底层是否生效 / **为什么没生效**（她再发一次同样的说法时，日志里一眼看出是哪一步）。
+      bare_all_arrived: bareAllArrived.matched,
+      bare_all_arrived_reason: bareAllArrived.reason,
     });
     return result;
   }
@@ -845,3 +967,7 @@ ${transcript}
 module.exports = new DoubaoService();
 module.exports.normalizeSalesResult = normalizeSalesResult;
 module.exports.normalizeAfterSalesResult = normalizeAfterSalesResult;
+// 「全到」说法的兜底判定（纯函数）：导出是为了让回归用例能**直接钉住判定口径**
+//（哪种说法算、哪种不算、以及"为什么不算"），不必绕模型。
+module.exports.detectBareAllArrivedStatement = detectBareAllArrivedStatement;
+module.exports.detectBareAllArrivedTranscript = detectBareAllArrivedTranscript;
