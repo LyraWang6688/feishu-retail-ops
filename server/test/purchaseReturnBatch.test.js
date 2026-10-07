@@ -160,6 +160,8 @@ const liveRow = (recordId, state, size, productRecordId) => ({
   fields: { 编号: [productRecordId], 尺码: [`size_${size}`], 所属状态: state },
 });
 
+// 一条**新口径**的采购退货记录：尺码（关联多选）+ 数量说明
+//（⚠️ 2026-10-07 起没有「数量」这一列了；数量说明不写 = 每个勾选尺码 1 双）。
 const returnRecord = (recordId, productRecordId, fields = {}) => ({
   record_id: recordId,
   fields: {
@@ -167,6 +169,7 @@ const returnRecord = (recordId, productRecordId, fields = {}) => ({
     采购行为: ['beh_return'],
     经办人: [{ id: 'ou_user_1' }],
     编号: [productRecordId],
+    尺码: ['size_36'],
     ...fields,
   },
 });
@@ -191,7 +194,18 @@ const makeService = (options = {}) => {
         return { recordId: productRecordId, record: { record_id: productRecordId, fields } };
       },
     },
-    recognizer: { parsePurchaseReportText: async () => options.parsedQuantities || [{ size: 36, quantity: 1 }] },
+    // 模型那一步是**确定性桩**：按「数量说明」原文解析（"36码3双、37码3双"）。
+    recognizer: {
+      parsePurchaseReportText: async (text) => {
+        const out = [];
+        const pattern = /(\d+)\s*码\s*(\d+)\s*双/g;
+        let match;
+        while ((match = pattern.exec(String(text || ''))) !== null) {
+          out.push({ size: Number(match[1]), quantity: Number(match[2]) });
+        }
+        return out;
+      },
+    },
     batchReadMaxRetries: 1,
     batchReadRetryDelay: 0,
     // 生产默认 30 秒；用例里缩到几百毫秒（不去真的等 30 秒）。
@@ -210,10 +224,16 @@ const liveOf = (gateway) => rowsOf(gateway, 'liveInventory');
 const groupMessages = (messages) => messages.filter((message) => message.toGroup);
 
 // 今天实测那个形状的假表：一次提交 2 条、同一个批次号，货号不同、供应商相同。
+// ⚠️ 2026-10-07 起退货也是「尺码（多选）+ 数量说明」⇒ 这里把原来那个「数量: 6 / 7」
+//    改成等价的「两个尺码 + 说明里的双数」，**退掉的双数与库存扣减形状一个字不变**。
 const twoRecordFixture = (batchNo = '202610061') => makeGateway({
   purchaseReport: [
-    returnRecord('rep_2070', 'prod_9', { 数量: 6, 报货批次号: batchNo }),
-    returnRecord('rep_66851', 'prod_66851', { 数量: 7, 报货批次号: batchNo }),
+    returnRecord('rep_2070', 'prod_9', {
+      尺码: ['size_36', 'size_37'], 数量说明: '36码3双、37码3双', 报货批次号: batchNo,
+    }),
+    returnRecord('rep_66851', 'prod_66851', {
+      尺码: ['size_40', 'size_41'], 数量说明: '40码4双、41码3双', 报货批次号: batchNo,
+    }),
   ],
   liveInventory: [
     // 2070-9：6 双（36 码 3 双 / 37 码 3 双）
@@ -429,8 +449,8 @@ test('③ ④ 库存流水按实际数扣（一尺码一行、行为=采购减�
 test('⑥ 不同「报货批次号」的两条：窗口内先后到达也不能合成一张单', async () => {
   const gateway = makeGateway({
     purchaseReport: [
-      returnRecord('rep_batch_a', 'prod_9', { 数量: 3, 报货批次号: 'BATCH-A' }),
-      returnRecord('rep_batch_b', 'prod_66851', { 数量: 4, 报货批次号: 'BATCH-B' }),
+      returnRecord('rep_batch_a', 'prod_9', { 尺码: ['size_36', 'size_37', 'size_38'], 报货批次号: 'BATCH-A' }),
+      returnRecord('rep_batch_b', 'prod_66851', { 尺码: ['size_40', 'size_41', 'size_42', 'size_43'], 报货批次号: 'BATCH-B' }),
     ],
     liveInventory: [
       liveRow('live_a_36', '门盒', 36, 'prod_9'),
@@ -481,7 +501,7 @@ test('⑥ 不同「报货批次号」的两条：窗口内先后到达也不能�
 
 test('⑦ 单独一条（这一包只有它自己）：到齐就发，不等时间窗，照常出单出图', async () => {
   const gateway = makeGateway({
-    purchaseReport: [returnRecord('rep_alone', 'prod_9', { 数量: 2, 报货批次号: 'BATCH-ALONE' })],
+    purchaseReport: [returnRecord('rep_alone', 'prod_9', { 尺码: ['size_36', 'size_37'], 报货批次号: 'BATCH-ALONE' })],
     liveInventory: [liveRow('live_alone_36', '门盒', 36, 'prod_9'), liveRow('live_alone_37', '门盒', 37, 'prod_9')],
     behavior: BEHAVIORS,
     supplier: SUPPLIERS,
@@ -614,7 +634,7 @@ test('⑧ 已到终态的记录混在批次里：跳过它，只处理没处理�
 test('混着采购申请与采购退货（同一批次号）：退货批不会给采购申请记录补终态、也不会把它写成退货单', async () => {
   const gateway = makeGateway({
     purchaseReport: [
-      returnRecord('rep_mix_ret', 'prod_9', { 数量: 2, 报货批次号: 'BATCH-MIX' }),
+      returnRecord('rep_mix_ret', 'prod_9', { 尺码: ['size_36', 'size_37'], 报货批次号: 'BATCH-MIX' }),
       {
         record_id: 'rep_mix_req',
         fields: {
@@ -707,8 +727,8 @@ test('④ 逐条隔离：批里第 2 条写失败 → 第 1 条照常出单出�
   // 同批其它记录照常出单/出图；失败那条的任务保持 **failed**（重投递能重跑，幂等不破）。
   const gateway = makeGateway({
     purchaseReport: [
-      returnRecord('rep_ok_iso', 'prod_9', { 数量: 2, 报货批次号: 'BATCH-ISO' }),
-      returnRecord('rep_bad_iso', 'prod_missing', { 数量: 1, 报货批次号: 'BATCH-ISO' }),
+      returnRecord('rep_ok_iso', 'prod_9', { 尺码: ['size_36', 'size_37'], 报货批次号: 'BATCH-ISO' }),
+      returnRecord('rep_bad_iso', 'prod_missing', { 尺码: ['size_36'], 报货批次号: 'BATCH-ISO' }),
     ],
     liveInventory: [
       liveRow('live_iso_36', '门盒', 36, 'prod_9'),

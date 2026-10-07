@@ -9,9 +9,16 @@ const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { RETURN_TITLE, TITLE } = require('../src/services/purchaseRequestImageService');
 
-// ⚠️ 这一组用例钉的是「采购退货」那条链路的**业务口径**（业务负责人 2026-10-05 给的）：
-//   供应商对接表单（编号 + 数量；退货不填尺码）→ 免确认 → 直接扣实时库存
-//   （样品 + 门盒 + 仓库，状态一律不看）→ 出「邯美皮鞋采购退货单」→ 只写 4 张表。
+// ⚠️ 这一组用例钉的是「采购退货」那条链路的**业务口径**。
+//
+// 🔴 2026-10-07 口径变更（业务负责人逐字）：
+//   「不分报货还是退货，都是按照同样的逻辑：如果数量说明不写，数量就默认为一双。
+//    你需要把退货原有的那个解析路线删掉，然后再把采购的那个加上退货就可以了」
+//   ⇒ 本文件里所有退货夹具都从「数量（number），没有尺码」改成
+//     **「尺码（关联多选）+ 数量说明（不写 = 每个勾选尺码 1 双）」**；
+//     「一行多尺码 → 展开成多条明细」由 `purchaseReturnUnifiedParsing.test.js` ① 钉住。
+//   库存不够仍是既有行为：**退能退的 + 把差额回报给她**（本文件 + 那个文件）。
+//
 // 库存那一段用的是**真的 InventoryService**（不是桩）：重复扣减、仓库能不能扣、
 // 流水写不写来源，都只有在真实现上才测得出来。
 
@@ -25,6 +32,18 @@ const table = (key) => V1_BITABLE_SCHEMA.tables[key];
 const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'purchase-return-'));
 
 const SIZE_RECORDS = [36, 37, 38, 39].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } }));
+
+// 模型那一步在单测里永远是桩；但桩**按「数量说明」原文**给答案，
+// 才能测出"数量确实来自数量说明"（写死一组数等于没测）。
+const parseQtyText = (text) => {
+  const out = [];
+  const pattern = /(\d+)\s*码\s*(\d+)\s*双/g;
+  let match;
+  while ((match = pattern.exec(String(text || ''))) !== null) {
+    out.push({ size: Number(match[1]), quantity: Number(match[2]) });
+  }
+  return out;
+};
 
 const mapFields = (tableKey, semanticValues) => {
   const schema = V1_BITABLE_SCHEMA.tables[tableKey];
@@ -137,7 +156,8 @@ const liveRow = (recordId, state, size, productRecordId = 'prod_1') => ({
   fields: { 编号: [productRecordId], 尺码: [`size_${size}`], 所属状态: state },
 });
 
-// 一条「采购退货」格式的供应商对接记录：编号 + 数量，**没有尺码**。
+// 一条**新口径**的「采购退货」记录：尺码（关联多选）+ 数量说明
+//（⚠️ 没有「数量」列了——它已被业务负责人从生产表删除）。
 const returnRecord = (recordId, fields = {}) => ({
   record_id: recordId,
   fields: {
@@ -145,6 +165,8 @@ const returnRecord = (recordId, fields = {}) => ({
     采购行为: ['beh_return'],
     经办人: [{ id: 'ou_user_1' }],
     编号: ['prod_1'],
+    // 数量说明不写 = 每个勾选尺码 1 双；所以每条夹具都至少要勾一个尺码。
+    尺码: ['size_36'],
     ...fields,
   },
 });
@@ -170,7 +192,7 @@ const makeService = (options = {}) => {
       },
     },
     recognizer: {
-      parsePurchaseReportText: async () => options.parsedQuantities || [{ size: 36, quantity: 1 }],
+      parsePurchaseReportText: async (text) => (options.parseText || parseQtyText)(text),
     },
     enableReportAlertBootstrap: false,
     disableBatchAlertTimers: true,
@@ -178,7 +200,7 @@ const makeService = (options = {}) => {
     batchReadRetryDelay: 0,
     // 退货归批窗口（业务负责人 2026-10-06 拍板的生产默认值是 30 秒）。
     // 这里故意给一个**远大于用例时长**的值：这些用例要验的是"这一条退货处理得对不对"，
-    // 窗口由 runReturn 显式 flush（见下），不让定时器在断言中途插进来。
+    // 窗口由服务自己在"这一包到齐"时触发（见下），不让定时器在断言中途插进来。
     purchaseReturnBatchWindowMs: options.purchaseReturnBatchWindowMs ?? 10_000,
   });
   return { service, store, gateway, messages, images, inventoryStore };
@@ -233,15 +255,16 @@ const requestsOf = (gateway) => rowsOf(gateway, 'purchaseRequest');
 const ledgerOf = (gateway) => rowsOf(gateway, 'inventoryLedger');
 const liveOf = (gateway) => rowsOf(gateway, 'liveInventory');
 
-// ─── A 情况：只填数量（= 该 货号+颜色 全退），不看状态 ──────────────────────
+// ─── 对得上：勾选的尺码逐个展开，状态一个不看（门盒 + 样品 + 仓库全退）────────
 
-test('A 情况对得上：样品+门盒+仓库全部退掉，一行一个尺码写单据信息、一条一条写流水、出退货单', async () => {
+test('对得上：勾选 3 个尺码 → 一尺码一行单据、一条一条写流水、出退货单', async () => {
   const gateway = makeGateway({
-    purchaseReport: [returnRecord('rep_1', { 数量: 3, 报货批次号: 'B-1' })],
+    purchaseReport: [returnRecord('rep_1', { 尺码: ['size_36', 'size_37', 'size_38'], 报货批次号: 'B-1' })],
     liveInventory: [liveRow('live_36', '门盒', 36), liveRow('live_37', '样品', 37), liveRow('live_38', '仓库', 38)],
     behavior: BEHAVIORS,
     supplier: SUPPLIERS,
     purchaseRequest: [],
+    purchaseOrderBatch: [],
   });
   const { task, gateway: gw, messages, images } = await runReturn({
     gateway, recordId: 'rep_1', products: { prod_1: productFields('8088', '黑色') },
@@ -249,6 +272,7 @@ test('A 情况对得上：样品+门盒+仓库全部退掉，一行一个尺码�
 
   // ④ 直接扣库存：三个状态都被退掉（仓库也在内），一条不剩
   assert.deepEqual(liveOf(gw), []);
+  assert.equal(task.result.declared, 3);
   assert.equal(task.result.taken, 3);
   assert.equal(task.result.shortfall, 0);
   assert.equal(task.result.surplus, 0);
@@ -279,8 +303,6 @@ test('A 情况对得上：样品+门盒+仓库全部退掉，一行一个尺码�
   // ⚠️ 2026-10-07 晚**口径变更**（业务负责人：「退货批次也……落到报货批次表里」）：
   //    退货现在**要**建「报货批次」一行（退货单 PNG 的落点）。这条断言原来钉的是
   //    "不建"，现在钉的是"建了、而且只写号 + 幂等键、**到货状态留空**"。
-  //    ⚠️ 这不是放宽：断言从"没有这一行"改成"这一行的三个字段逐字长这样"，
-  //    对"到货状态"仍然是**禁止出现**（不是"允许任意值"）。
   const batchRows = gw.records.purchaseOrderBatch;
   assert.equal(batchRows.length, 1, '退货包建 1 行「报货批次」');
   assert.equal(batchRows[0].fields.报货批次号, 'B-1', '用的是这一包在「信息填写」上的那个号');
@@ -309,8 +331,6 @@ test('A 情况对得上：样品+门盒+仓库全部退掉，一行一个尺码�
   // ⚠️ 2026-10-07 晚**口径变更**：附件落点从「具体信息.采购申请单」（那一列已被她从生产表
   //    删除）改成**「报货批次.单据」**；退货批次现在**也有那一行**了 ⇒ 退货单 PNG
   //    **有落点**：素材上传一次、写进那一行的「单据」。
-  //    ⚠️ 这不是放宽：断言从"没有落点、一张素材都不传"改成"**恰好传一次**、并且
-  //    「单据」里**恰好是那一个 file_token**"——对"传一次/写一条"收得更严。
   assert.deepEqual(gw.uploads.length, 1, '有落点 ⇒ 退货单素材上传一次');
   assert.deepEqual(batchRows[0].fields.单据, [{ file_token: 'file_token_1' }],
     '退货单 PNG 写进那一行的「单据」');
@@ -323,17 +343,16 @@ test('A 情况对得上：样品+门盒+仓库全部退掉，一行一个尺码�
 
 test('货品没维护供应商：退货照常出单（不再整条失败），图上不写供应商、群里归到「未标注供应商」', async () => {
   // 她的原话（2026-10-06）：「没维护供应商的货品，也应该能正常出单，是的，是这个意思」。
-  // 她踩到的就是退货这条链路——原来 prepareSupplierReturn 一读不到供应商就抛
-  // 「货品信息中未关联供应商，请先在货品信息中设置供应商」，整条退货直接失败。
   const gateway = makeGateway({
     // ⚠️ 2026-10-07：报货批次号不再手填 —— 生产上由**入口**（accept）按包生成并写回。
     //    本用例为了断言"退货单附件落点"直接调 process()（绕过了 accept），
     //    所以夹具里直接把它给上（= 入口已经写回之后的形状）。
-    purchaseReport: [returnRecord('rep_nosup', { 数量: 1, 报货批次号: 'CGD-20261007-0009' })],
+    purchaseReport: [returnRecord('rep_nosup', { 报货批次号: 'CGD-20261007-0009' })],
     liveInventory: [liveRow('live_nosup_36', '门盒', 36)],
     behavior: BEHAVIORS,
     supplier: [], // 供应商表里一条都没有
     purchaseRequest: [],
+    purchaseOrderBatch: [],
   });
   const { task, gateway: gw, images, messages } = await runReturn({
     gateway,
@@ -349,24 +368,23 @@ test('货品没维护供应商：退货照常出单（不再整条失败），�
   assert.equal(requestsOf(gw).length, 1, '单据信息照常写');
   assert.equal(images.calls.length, 1, '照常出一张退货单');
   assert.equal(images.calls[0].title, RETURN_TITLE);
-  // 图上**不写供应商**（渲染器据此不画「供应商：」那一段，也不再写「未填写」那种像警告的字样）。
+  // 图上**不写供应商**（渲染器据此不画「供应商：」那一段）。
   assert.equal(images.calls[0].supplierName, '', '图上不带供应商');
   // 群消息照发：没有供应商的归到「未标注供应商」这一组，不是失败。
-  // ⚠️ 2026-10-07：只说双数（`$` 锚住整句）。
   assert.match(textMessages(messages)[0], /未标注供应商 这批 1 双，图可以直接转给供应商。$/);
-  // ⚠️ 2026-10-07 晚**口径变更**：退货批次现在也在「报货批次」里有一行
-  //   （这一条夹具里批次号是 `CGD-20261007-0009`）⇒ 退货单 PNG 有落点：
-  //   素材上传一次、写进那一行的「单据」。这张单子的出图/发群行为一个字没变。
+  // ⚠️ 2026-10-07 晚**口径变更**：退货批次现在也在「报货批次」里有一行 ⇒ 退货单 PNG 有落点。
   assert.equal(gw.records.purchaseOrderBatch.length, 1);
   assert.equal(gw.records.purchaseOrderBatch[0].fields.报货批次号, 'CGD-20261007-0009');
   assert.deepEqual(gw.uploads.length, 1, '有落点 ⇒ 上传一次素材');
   assert.deepEqual(gw.records.purchaseOrderBatch[0].fields.单据, [{ file_token: 'file_token_1' }]);
 });
 
-test('A 情况数量比库存多：能对上的先退，差额明确告诉她', async () => {
+// ─── 库存不够：退能退的 + 把差额回报给她（业务负责人 2026-10-07 确认「按照这个」）───
+
+test('库存不够：能对上的先退，差额明确告诉她', async () => {
   const gateway = makeGateway({
-    purchaseReport: [returnRecord('rep_short', { 数量: 5 })],
-    liveInventory: [liveRow('live_36', '门盒', 36), liveRow('live_37', '仓库', 37)],
+    purchaseReport: [returnRecord('rep_short', { 尺码: ['size_38'], 数量说明: '38码5双' })],
+    liveInventory: [liveRow('live_38a', '门盒', 38), liveRow('live_38b', '仓库', 38)],
     behavior: BEHAVIORS,
     supplier: SUPPLIERS,
     purchaseRequest: [],
@@ -381,13 +399,57 @@ test('A 情况数量比库存多：能对上的先退，差额明确告诉她', 
   assert.equal(task.result.taken, 2);
   assert.equal(task.result.shortfall, 3);
   assert.deepEqual(liveOf(gw), []);
-  assert.equal(ledgerOf(gw).length, 2);
-  assert.equal(requestsOf(gw).length, 2);
+  assert.equal(ledgerOf(gw).length, 1);
+  assert.equal(ledgerOf(gw)[0].fields.变动数量, 2);
+  assert.equal(requestsOf(gw).length, 1);
+  assert.equal(requestsOf(gw)[0].fields.数量, 2);
 
   const notice = textMessages(messages).find((text) => text.includes('对不上'));
   assert.ok(notice, '必须把差额说出来');
+  assert.match(notice, /8088黑色（38 码）/);
   assert.match(notice, /你说要退 5 双，实时库存里只有 2 双/);
   assert.match(notice, /先按能对上的 2 双处理了，差的 3 双对不上/);
+});
+
+// 库存一双都没有时的那条口径（不写单据、不出图、不标终态）由
+// `purchaseReturnUnifiedParsing.test.js` 的 ④ 钉住。
+
+test('库存比她说得多：只退她说的那个尺码和双数，别的尺码按兵不动', async () => {
+  const gateway = makeGateway({
+    purchaseReport: [returnRecord('rep_surplus', { 尺码: ['size_36'], 数量说明: '36码2双' })],
+    liveInventory: [liveRow('live_36a', '门盒', 36), liveRow('live_36b', '样品', 36), liveRow('live_37', '仓库', 37)],
+    behavior: BEHAVIORS,
+    supplier: SUPPLIERS,
+    purchaseRequest: [],
+  });
+  const { task, gateway: gw, messages } = await runReturn({
+    gateway, recordId: 'rep_surplus', products: { prod_1: productFields('8088', '黑色') },
+  });
+
+  assert.equal(task.result.taken, 2);
+  assert.equal(task.result.surplus, 0, '36 码正好 2 双；37 码不在这次退货里，不算"还剩"');
+  assert.deepEqual(liveOf(gw).map((row) => row.record_id), ['live_37'], '37 码按兵不动');
+  // 对得上（这一条里没有"差"也没有"剩"）⇒ 不发差额提示
+  assert.equal(textMessages(messages).length, 1);
+});
+
+test('同一个尺码库存比她说的多：按她说的退，并告诉她还剩几双', async () => {
+  const gateway = makeGateway({
+    purchaseReport: [returnRecord('rep_left', { 尺码: ['size_36'], 数量说明: '36码1双' })],
+    liveInventory: [liveRow('live_36a', '门盒', 36), liveRow('live_36b', '样品', 36), liveRow('live_36c', '仓库', 36)],
+    behavior: BEHAVIORS,
+    supplier: SUPPLIERS,
+    purchaseRequest: [],
+  });
+  const { task, gateway: gw, messages } = await runReturn({
+    gateway, recordId: 'rep_left', products: { prod_1: productFields('8088', '黑色') },
+  });
+
+  assert.equal(task.result.taken, 1);
+  assert.equal(task.result.surplus, 2);
+  assert.equal(liveOf(gw).length, 2, '她只说了 1 双，剩下 2 双不动');
+  const notice = textMessages(messages).find((text) => text.includes('还剩'));
+  assert.match(notice, /还剩 2 双没退（总数是 3 双）/);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -411,8 +473,8 @@ const captureLogs = () => {
 };
 
 const shortfallFixture = () => makeGateway({
-  purchaseReport: [returnRecord('rep_short', { 数量: 5 })],
-  liveInventory: [liveRow('live_36', '门盒', 36), liveRow('live_37', '仓库', 37)],
+  purchaseReport: [returnRecord('rep_short', { 尺码: ['size_38'], 数量说明: '38码5双' })],
+  liveInventory: [liveRow('live_38a', '门盒', 38), liveRow('live_38b', '仓库', 38)],
   behavior: BEHAVIORS,
   supplier: SUPPLIERS,
   purchaseRequest: [],
@@ -476,91 +538,11 @@ test('① 未配置采购群：大声跳过、一条消息都不发（绝不回�
   assert.ok(skipped[0].includes('purchase_chat_id_unconfigured'));
 });
 
-test('A 情况数量比库存少：按她填的数量退，并告诉她还有多少没退', async () => {
-  const gateway = makeGateway({
-    purchaseReport: [returnRecord('rep_surplus', { 数量: 2 })],
-    liveInventory: [liveRow('live_36', '门盒', 36), liveRow('live_37', '样品', 37), liveRow('live_38', '仓库', 38)],
-    behavior: BEHAVIORS,
-    supplier: SUPPLIERS,
-    purchaseRequest: [],
-  });
-  const { task, gateway: gw, messages } = await runReturn({
-    gateway, recordId: 'rep_surplus', products: { prod_1: productFields('8088', '黑色') },
-  });
-
-  assert.equal(task.result.taken, 2);
-  assert.equal(task.result.surplus, 1);
-  assert.equal(liveOf(gw).length, 1, '她只填了 2 双，剩下那双不动');
-  const notice = textMessages(messages).find((text) => text.includes('还剩'));
-  assert.match(notice, /还剩 1 双没退（总数是 3 双）/);
-});
-
-// ─── B 情况：填了尺码 + 数量 → 按 货号+颜色+尺码 找 ─────────────────────────
-
-test('B 情况：只退勾选尺码的库存，别的尺码按兵不动', async () => {
-  const gateway = makeGateway({
-    purchaseReport: [returnRecord('rep_size', { 数量: 1, 尺码: ['size_36'] })],
-    liveInventory: [liveRow('live_36', '门盒', 36), liveRow('live_37', '仓库', 37)],
-    behavior: BEHAVIORS,
-    supplier: SUPPLIERS,
-    purchaseRequest: [],
-  });
-  const { task, gateway: gw, messages } = await runReturn({
-    gateway, recordId: 'rep_size', products: { prod_1: productFields('8088', '黑色') },
-  });
-
-  assert.equal(task.result.taken, 1);
-  assert.equal(task.result.available, 1, 'B 情况的"库存里有多少"只算勾选的那个尺码');
-  assert.deepEqual(liveOf(gw).map((row) => row.record_id), ['live_37'], '37 码不动');
-  const requests = requestsOf(gw);
-  assert.equal(requests.length, 1);
-  assert.deepEqual(requests[0].fields.尺码, ['size_36']);
-  // 对得上就不发差额提醒：图 + 一句"可以转给供应商"就是回执
-  assert.equal(textMessages(messages).length, 1);
-});
-
-test('B 情况库存不足：能对上的先退，差额说清是哪个尺码', async () => {
-  const gateway = makeGateway({
-    purchaseReport: [returnRecord('rep_b_short', { 数量: 3, 尺码: ['size_38'] })],
-    liveInventory: [liveRow('live_38a', '门盒', 38), liveRow('live_38b', '样品', 38), liveRow('live_36', '门盒', 36)],
-    behavior: BEHAVIORS,
-    supplier: SUPPLIERS,
-    purchaseRequest: [],
-  });
-  const { task, gateway: gw, messages } = await runReturn({
-    gateway, recordId: 'rep_b_short', products: { prod_1: productFields('8088', '黑色') },
-  });
-
-  assert.equal(task.result.available, 2);
-  assert.equal(task.result.taken, 2);
-  assert.equal(task.result.shortfall, 1);
-  assert.deepEqual(liveOf(gw).map((row) => row.record_id), ['live_36']);
-  const notice = textMessages(messages).find((text) => text.includes('对不上'));
-  assert.match(notice, /8088黑色（38 码）\s*你说要退 3 双/);
-});
-
-test('尺码选了多个（字段被改成多选）时停下来告诉她要拆记录，不动任何库存', async () => {
-  const gateway = makeGateway({
-    purchaseReport: [returnRecord('rep_multi_size', { 数量: 1, 尺码: ['size_36', 'size_37'] })],
-    liveInventory: [liveRow('live_36', '门盒', 36)],
-    behavior: BEHAVIORS,
-    supplier: SUPPLIERS,
-    purchaseRequest: [],
-  });
-  const { task, gateway: gw } = await runReturn({
-    gateway, recordId: 'rep_multi_size', products: { prod_1: productFields('8088', '黑色') },
-  });
-  assert.equal(task.status, 'failed');
-  assert.match(task.error, /「尺码」只能选一个/);
-  assert.equal(liveOf(gw).length, 1);
-  assert.equal(ledgerOf(gw).length, 0);
-});
-
 // ─── 重复扣库存的防线 ───────────────────────────────────────────────────────
 
 test('同一份退货重复处理：不重复扣库存、不重复写单据信息与流水', async () => {
   const gateway = makeGateway({
-    purchaseReport: [returnRecord('rep_dup', { 数量: 2 })],
+    purchaseReport: [returnRecord('rep_dup', { 尺码: ['size_36', 'size_37'] })],
     liveInventory: [liveRow('live_36', '门盒', 36), liveRow('live_37', '样品', 37)],
     behavior: BEHAVIORS,
     supplier: SUPPLIERS,
@@ -587,32 +569,6 @@ test('同一份退货重复处理：不重复扣库存、不重复写单据信�
   const report = await gateway.get('purchaseReport', 'rep_dup');
   assert.equal(report.fields.处理状态, '已生成申请');
   assert.equal(report.fields.关联采购申请.length, 2);
-});
-
-// ─── 对不上的极端：一双都没有 ───────────────────────────────────────────────
-
-test('库存里一双都没有：不写单据信息、不出图，明确告诉她没处理', async () => {
-  const messages = [];
-  const images = makeImages();
-  const gateway = makeGateway({
-    purchaseReport: [returnRecord('rep_none', { 数量: 2 })],
-    liveInventory: [],
-    behavior: BEHAVIORS,
-    supplier: SUPPLIERS,
-    purchaseRequest: [],
-  });
-  const { task, gateway: gw } = await runReturn({
-    gateway, messages, images, recordId: 'rep_none', products: { prod_1: productFields('8088', '黑色') },
-  });
-
-  assert.equal(task.result.taken, 0);
-  assert.equal(requestsOf(gw).length, 0);
-  assert.equal(ledgerOf(gw).length, 0);
-  assert.equal(images.calls.length, 0);
-  assert.match(textMessages(messages).join('\n'), /一双都没有/);
-  // 什么都没处理就不该标成「已生成申请」——她要能看出这条还欠着
-  assert.equal((await gw.get('purchaseReport', 'rep_none')).fields.处理状态, '待解析');
-  assert.equal(task.status, 'posted');
 });
 
 // ─── 分流回归：采购申请那条链路一个字都没变 ─────────────────────────────────
@@ -647,21 +603,23 @@ test('采购行为=采购申请的记录仍走原来那条链路（不被退货�
 test('采购行为读不到（行为记录被删/读失败）时退回采购申请，不会误扣库存', async () => {
   const gateway = makeGateway({
     // 记录指向的行为记录已经不在「行为管理」里（被删了 / 读失败）
-    purchaseReport: [returnRecord('rep_nobehavior', { 数量: 2, 采购行为: ['beh_gone'] })],
+    purchaseReport: [returnRecord('rep_nobehavior', { 采购行为: ['beh_gone'] })],
     liveInventory: [liveRow('live_36', '门盒', 36)],
     behavior: BEHAVIORS,
     supplier: SUPPLIERS,
     purchaseRequest: [],
+    purchaseOrderBatch: [],
   });
   const { task, gateway: gw } = await runReturn({
     gateway, recordId: 'rep_nobehavior', products: { prod_1: productFields('8088', '黑色') },
   });
-  // 退回采购申请 → 这条记录没有尺码，报货解析在"读尺码"这一步就明确失败（可重试，
-  // 报单记录不会被打成终态），库存一动不动。宁可这样大声失败，也不要把普通报货当退货扣库存。
-  assert.equal(task.status, 'failed');
-  assert.match(task.error, /尺码/);
-  assert.equal(liveOf(gw).length, 1);
+  // 退回采购申请 → 走报货那条链路（写采购申请、**不碰库存**）。
+  // 宁可这样，也不要把一条普通报货当成退货扣库存。
+  assert.equal(task.status, 'posted');
+  assert.equal(task.result.is_return, undefined);
+  assert.equal(liveOf(gw).length, 1, '库存一动不动');
   assert.equal(ledgerOf(gw).length, 0);
+  assert.equal(requestsOf(gw).length, 1, '退回采购申请那条链路照常出单');
 });
 
 // ─── 出图：退货单与采购申请单共用同一套排版 ────────────────────────────────

@@ -1673,18 +1673,24 @@ test('货品没维护供应商：报货照常出单（单条 + 归批两条链�
   assert.ok(images.calls.every((call) => call.supplierName === ''), '图上不带供应商');
 });
 
-test('采购退货一条（编号 + 数量）→ 交给退货链路、不进报货归批；数量取自「数量」字段', async () => {
+test('采购退货一条（编号 + 尺码 + 数量说明）→ 交给退货链路、不进报货归批；数量取自「数量说明」', async () => {
   // ⚠️ 归属：**采购退货不进报货的归批窗口**，由它自己那条链路负责
   // （按实时库存逐尺码扣减 + 出「采购退货单」）。
   // 2026-10-06 起退货**有自己的一套归批窗口**（业务负责人拍板 30 秒），所以这条
-  // 带批次号的记录会先等窗口（单测里 20ms）再由退货链路整批处理——本用例钉的是
-  // "分流正确 + 数量口径正确 + 不建报货批次/不走进货 + 不被报货那套写成单据"；
+  // 带批次号的记录会先等窗口再由退货链路整批处理——本用例钉的是
+  // "分流正确 + 解析口径正确 + 不建报货批次/不走进货 + 不被报货那套写成单据"；
   // 库存那一侧（能对上就退、对不上把差额说清）由 purchaseReturn.test.js
   // 用真的 InventoryService 钉住，退货归批本身由 purchaseReturnBatch.test.js 钉住。
+  //
+  // 🔴 2026-10-07 口径变更（业务负责人逐字：「不分报货还是退货，都是按照同样的逻辑：
+  //    如果数量说明不写，数量就默认为一双」）：退货**不再读「数量」列**（该列已被她
+  //    从生产表删除），数量改从**「数量说明」**解析 ⇒ 下面把夹具从
+  //    「数量: 4 + 数量说明: '36码9双'」改成「尺码 36 + 数量说明: '36码9双'」，
+  //    并断言**取说明里的 9 双**。
   const { service, store, gateway } = makeService({
     gateway: makeGateway({
       purchaseReport: [reportRecord('rep_return_1', {
-        编号: ['prod_1'], 数量: 4, 数量说明: '36码9双', 报货批次号: 'BATCH-RETURN', 采购行为: ['beh_return'],
+        编号: ['prod_1'], 尺码: sizeLink(36), 数量说明: '36码9双', 报货批次号: 'BATCH-RETURN', 采购行为: ['beh_return'],
       })],
       behavior: [{ record_id: 'beh_return', fields: { 行为名称: '采购退货', 行为编码: 'PURCHASE_RETURN' } }],
       purchaseOrderBatch: [],
@@ -1692,16 +1698,17 @@ test('采购退货一条（编号 + 数量）→ 交给退货链路、不进报�
       supplier: SUPPLIERS,
     }),
     references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
+    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 9 }] }),
   });
   const accepted = await service.accept('supplier-report', 'rep_return_1');
   const task = await waitForProcessed(store, accepted.taskId);
   assert.equal(task.status, 'posted');
   assert.equal(task.result.is_return, true, '必须走退货链路，不能被归批当成报货明细');
-  assert.equal(task.result.declared, 4, '数量取自「数量」字段，不解析「数量说明」里的 9 双');
+  assert.equal(task.result.declared, 9, '数量取自「数量说明」（「数量」那一列已经不存在了）');
   // 这个假表里没有实时库存：能对上的 0 双 → 如实报差额、一张单据都不写
   assert.equal(task.result.available, 0);
   assert.equal(task.result.taken, 0);
-  assert.equal(task.result.shortfall, 4);
+  assert.equal(task.result.shortfall, 9);
   assert.deepEqual(task.result.doc_ids, []);
   assert.equal((await gateway.listAll('purchaseRequest')).length, 0);
   // ⚠️ 2026-10-07 晚：退货批次**也会**在「报货批次」建一行（退货单 PNG 的落点）——
@@ -1855,7 +1862,10 @@ test('同一次提交里混着采购申请和采购退货 → 各走各的链路
     gateway: makeGateway({
       purchaseReport: [
         reportRecord('rep_mix_req', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'], 报货批次号: 'BATCH-MIX', 采购行为: ['beh_req'] }),
-        reportRecord('rep_mix_ret', { 编号: ['prod_1'], 数量: 5, 报货批次号: 'BATCH-MIX', 采购行为: ['beh_return'] }),
+        // 🔴 2026-10-07 口径变更：退货也是「尺码 + 数量说明」（「数量」那一列已被她从
+        //    生产表删除）。这里声明 36 码 5 双（说明里的双数），这个假表里没有实时库存
+        //    ⇒ 能对上的 0 双，如实报差额、一张单据都不写。
+        reportRecord('rep_mix_ret', { 尺码: sizeLink(36), 数量说明: '36码5双', 编号: ['prod_1'], 报货批次号: 'BATCH-MIX', 采购行为: ['beh_return'] }),
       ],
       behavior: [
         { record_id: 'beh_req', fields: { 行为名称: '采购申请', 行为编码: 'PURCHASE_REQUEST' } },
@@ -1866,7 +1876,10 @@ test('同一次提交里混着采购申请和采购退货 → 各走各的链路
       supplier: SUPPLIERS,
     }),
     references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
-    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }] }),
+    // 桩按说明里的数给答案：采购申请那条是 2 双、退货那条是 5 双。
+    recognizer: makeRecognizer({
+      parsePurchaseReportText: async (text) => [{ size: 36, quantity: String(text).includes('5') ? 5 : 2 }],
+    }),
   });
   const accepted = await service.acceptMany('supplier-report', ['rep_mix_req', 'rep_mix_ret']);
   const tasks = await waitForProcessed(store, accepted.records.map((item) => item.taskId));
