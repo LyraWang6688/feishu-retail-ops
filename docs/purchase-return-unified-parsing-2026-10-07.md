@@ -247,7 +247,16 @@ $ node scripts/validate_v1_schema.js purchase      # 本机（指向**测试 Bas
 
 ## 七、CI 三项实际输出
 
-开 PR 后回填（`gh pr checks` 的 test / CodeQL Analyze 三项，以及 `mergeStateStatus`）。
+`gh pr checks 245`（PR #245，分支 `feat/purchase-return-unified-parsing`）：
+
+```
+Analyze (javascript-typescript)	pass	1m5s	https://github.com/LyraWang6688/feishu-retail-ops/actions/runs/37641925136/job/112862858890
+CodeQL	                        pass	7s  	https://github.com/LyraWang6688/feishu-retail-ops/runs/112863297104
+test	                        pass	1m0s	https://github.com/LyraWang6688/feishu-retail-ops/actions/runs/37642032487/job/112863235789
+```
+
+`gh pr view 245 --json mergeStateStatus` → **`CLEAN`**（✅ 进入 CI、✅ 没用 `--admin`）。
+🔴 **没有合并、没有部署**（合并由业务负责人/Lead 来；部署必须拿到她**当次**的命令）。
 
 ---
 
