@@ -14,11 +14,32 @@
  *   那条链路是**卡片按钮**触发的（点「成交」）；本配置服务的是**她直接说话**触发的
  *   同一件事（"收到微信 500"）。两者写的都是同一套底层能力
  *   （PaymentService / SalesDeliveryService），不各写一套收钱/交货。
+ *
+ * ⭐⭐ 2026-10-08：**"她直接说话"这条入口已经关掉**（业务负责人拍板的**乙**：
+ *   「只留按钮：说话不再触发了」）—— 开关 `textTrigger`（默认 false）。
+ *   命中进展词时**零写库**、只回一句 `replies.textNotice`；点卡片按钮照常走完整链路。
+ *   词表与判据代码**刻意保留**（将来恢复只翻这一个开关）。
  */
 
 const DEFAULTS = Object.freeze({
   // 开关。⚠️ 显式布尔（空串 = 没配 = 用默认），不用 `|| fallback`（那会让"清空变量"关不掉）。
   enabled: true,
+
+  // ⭐⭐ 「说话还触不触发**写库**」——业务负责人 2026-10-07/08 拍板的**乙**：
+  //    「**只留按钮：说话不再触发了**」。默认 **false** = 话题里说话**零写库**、只回一句提示；
+  //    触发链路的入口只剩**那张卡上的【确认成交】**（点它照常走完整链路）。
+  //    ⚠️ 这是**显式布尔**：`false/0/no/off` = 关（说话不触发）；`true/1/yes/on` = 开（旧行为逐字恢复）；
+  //      空串 = 没配 = 用默认。
+  //    ⚠️ 与上面 `enabled` 的分工（**两个开关管两件事**）：
+  //      · `enabled=false` → 这句话**根本不归二次处理**（判据直接 NONE）→ 会被当成新销售原话；
+  //      · `textTrigger=false`（默认）→ 判据照跑、照样认出是钱 / 货 / 成交，只是**不写库**、改回提示。
+  //    恢复旧行为 = **只翻这一个开关**（词表与判据代码**刻意保留**，见文件头"配置先行"）。
+  textTrigger: false,
+
+  // ⭐ 提示的去重窗口（毫秒）：她是语音输入，可能把同一句话重复说两遍 ——
+  //    **同一话题**在这个窗口内已经提示过一次就不再提示（不刷屏）。
+  //    ⚠️ 它**不是**写入闸门，只是"这句话说一次就够了"的节流；0 = 不去重（每句都回）。
+  textNoticeWindowMs: 300000,
 
   // ── 进展信号 ─────────────────────────────────────────────────────────────
   // 命中任一类 → "这条像是在同步那笔的进展"。两类都命中 = 分不清是钱还是货 → 问她。
@@ -81,6 +102,10 @@ const DEFAULTS = Object.freeze({
 
   // ── 文案（用户可见文案一律可配，改文案不碰逻辑）─────────────────────────────
   replies: Object.freeze({
+    // ⭐⭐ 说话不再触发（`textTrigger=false`，默认）时回的那一句 —— 2026-10-08 业务负责人拍板
+    //    「乙 只留按钮：说话不再触发了」。**不静默**：她说了话却什么都没发生会更困惑。
+    //    ⚠️ 空串 = 回退这一句（不许把提示配没了 —— 那等于静默）。
+    textNotice: '这单请在卡片上的【确认成交】点一下～',
     // 判断不了时**宁可问一句，也不猜**（业务负责人明确的口径）。
     ambiguous: '这是在说这笔的收款进展吗？如果是，把「收了多少、什么方式」说一遍（例：收到微信 500）。',
     needAmount: '收到多少？说个数我再记（例：收到微信 500）。',
@@ -119,6 +144,10 @@ const PROGRESS_TASK_STATUS = Object.freeze({
   ASKED_UNKNOWN: 'ignored',
   // 尝试写入但失败了（原因写在 progress_reason）。
   FAILED: 'progress_failed',
+  // ⭐ 说话不再触发（默认）：**只回了那句"请点卡片"的提示**，业务表一个字没写。
+  //    ⚠️ 刻意与 ASKING 分开：ASKING 是"我在问你（等她答）"，
+  //    这条是"入口已经换成卡片按钮了，你去点"——排查时一眼能分清。
+  NOTICE: 'progress_notice',
 });
 
 // 「显式布尔」解析：空串 = 没配 = 用默认。见 AGENTS.md 里"开关必须是显式布尔"那条。
@@ -131,15 +160,43 @@ const parseExplicitBoolean = (raw, fallback, label = 'SALES_PROGRESS_INTAKE_ENAB
   throw new Error(`${label} 必须是 true/false，收到：${raw}`);
 };
 
+// ⚠️ 非负整数（毫秒）的显式解析：空串 = 没配 = 用默认；非法值**当场抛**（别静默变成 0 = 不去重）。
+const parseExplicitInteger = (raw, fallback, label) => {
+  if (raw === undefined || raw === null) return fallback;
+  const value = String(raw).trim();
+  if (value === '') return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${label} 必须是非负整数（毫秒），收到：${raw}`);
+  }
+  return parsed;
+};
+
 /**
  * 组装本次运行的配置。`options` 可覆盖任意一项（测试用；生产走环境变量）。
  * 环境变量在**每次调用时**读，不在模块加载时求值（避免 dotenv 顺序问题）。
  */
 const resolveSalesProgressIntakeConfig = (options = {}) => {
   const env = options.env || process.env;
-  const replies = { ...DEFAULTS.replies, ...(options.replies || {}) };
+  // ⭐ 提示文案是"留空她就不知道要干什么"的那一句 ⇒ **空串回退默认**（不许把提示配没了 = 静默）。
+  const noticeCandidate = options.replies?.textNotice ?? env.SALES_PROGRESS_TEXT_NOTICE
+    ?? DEFAULTS.replies.textNotice;
+  const replies = {
+    ...DEFAULTS.replies,
+    ...(options.replies || {}),
+    textNotice: String(noticeCandidate ?? '').trim() ? String(noticeCandidate) : DEFAULTS.replies.textNotice,
+  };
   return {
     enabled: options.enabled ?? parseExplicitBoolean(env.SALES_PROGRESS_INTAKE_ENABLED, DEFAULTS.enabled),
+    // ⭐ 说话还触不触发写库（默认 false = 只留卡片按钮）。显式布尔，不用 `|| fallback`。
+    textTrigger: options.textTrigger ?? parseExplicitBoolean(
+      env.SALES_PROGRESS_TEXT_TRIGGER_ENABLED, DEFAULTS.textTrigger, 'SALES_PROGRESS_TEXT_TRIGGER_ENABLED',
+    ),
+    // ⭐ 提示去重窗口（同一话题短时间内只说一次）。
+    textNoticeWindowMs: options.textNoticeWindowMs ?? parseExplicitInteger(
+      env.SALES_PROGRESS_TEXT_NOTICE_WINDOW_MS, DEFAULTS.textNoticeWindowMs,
+      'SALES_PROGRESS_TEXT_NOTICE_WINDOW_MS',
+    ),
     // 词表现读：测试可以覆盖成更短的词表，把判据本身测干净。
     progressCues: {
       payment: options.progressCues?.payment || DEFAULTS.progressCues.payment,

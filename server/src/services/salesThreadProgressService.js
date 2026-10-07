@@ -4,6 +4,9 @@ const { SalesProgressService } = require('./salesProgressService');
 const { V1ReferenceResolver } = require('./v1ReferenceResolver');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { postedOf, isPosted } = require('../config/salesStatusDimensions');
+const crypto = require('node:crypto');
+const path = require('node:path');
+const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const {
   PROGRESS_KINDS,
   PROGRESS_TASK_STATUS,
@@ -55,6 +58,12 @@ const formatCopy = (template, values = {}) =>
  * ⚠️ 它是**排他的**：一旦判定"这是进展"（含判不清的 ambiguous），
  *    就**不会**再吐回去当新原话解析 —— 判不清时回一句问她，**绝不猜**
  *    （业务负责人 2026-10-06 明确的口径）。
+ *
+ * ⭐⭐ 2026-10-08「触发入口只留卡片按钮」（业务负责人拍板的**乙**：「说话不再触发了」）：
+ *    命中进展词（钱 / 货 / 成交）时**说话不再写库**，只回一句提示（`replies.textNotice`）。
+ *    **判据代码与 `apply*` 全部保留**，恢复旧行为只翻 `SALES_PROGRESS_TEXT_TRIGGER_ENABLED=true`；
+ *    **卡片按钮那条路**（`completeDealFromCard`）不受这个开关影响，照常钱货一起处理。
+ *    详见 `docs/sales-text-trigger-off-card-only-2026-10-08.md`。
  */
 class SalesThreadProgressService {
   constructor(options = {}) {
@@ -84,6 +93,13 @@ class SalesThreadProgressService {
     this.sendTextToTask = options.sendTextToTask
       || (async (task) => skipNoGroupContext('text', task));
     this.store = options.store;
+    // ⭐ 「同一话题短时间内只说一次」的**本地**节流记录（2026-10-08）。
+    //    与 `data/sales_group_threads` 同一个模式：它是**机器人的节流信息**，
+    //    不是经营事实 ⇒ **不写任何业务表**（本类仍然只有 Payments/Delivery 会写业务表）。
+    this.noticeStore = options.noticeStore || new JsonTaskStore({
+      dir: path.join(__dirname, '../../data/sales_progress_notices'),
+      idField: 'task_id',
+    });
   }
 
   /**
@@ -152,6 +168,10 @@ class SalesThreadProgressService {
    * @param {{task: object}} input
    * @returns {Promise<{handled: boolean, kind?: string, reason?: string}>}
    *   handled:true = 这条归"二次处理"，调用方**不要再**走销售原话解析。
+   *
+   * ⚠️ 2026-10-08 起默认（`config.textTrigger === false`）**不再写库**：命中进展词只回提示。
+   *    要恢复"说话触发"是**翻开关**（`SALES_PROGRESS_TEXT_TRIGGER_ENABLED=true`），
+   *    下面的 apply* 一个都没删。
    */
   async handle({ task } = {}) {
     if (!task || task.chat_type !== 'group' || !task.sales_entry_record_id) {
@@ -176,6 +196,42 @@ class SalesThreadProgressService {
         progress_reason: decision.reason,
       });
       return { handled: true, kind: 'ambiguous', reason: decision.reason };
+    }
+
+    // ⭐⭐⭐ 2026-10-08「触发入口只留卡片按钮」（业务负责人拍板的**乙**：「说话不再触发了」）：
+    //    命中进展词（钱 / 货 / 成交）时**说话不再触发任何写库** ——
+    //    不交付、不扣库存、不记收款、不改状态；业务表**一个字节都不写**。
+    //    改成**回一句提示**（`replies.textNotice`，配置先行）—— 不静默：
+    //    她说了话却什么都没发生，比回一句"请点卡片"更让人困惑。
+    //    ⚠️ 她（语音输入）可能重复说同一句 ⇒ 同一话题短窗口内**只说一次**（`noticeOnce`），不刷屏。
+    //    ⚠️ 判不清（上面 AMBIGUOUS 分支）与"认不出"（NONE）**一个字都不变**：
+    //      那两条是"问清楚"，不是"触发"，不在本次要关的范围里。
+    //    ⚠️ **卡片那条路不受本开关影响**：`completeDealFromCard` 直接走下面的 applyComplete
+    //      （点【确认成交】照常钱货一起处理），本开关只关"说话"这个入口。
+    if (!this.config.textTrigger) {
+      const notice = await this.noticeOnce(task, decision);
+      // ⭐ **状态如实**（业务负责人 2026-10-06 拍板，`AGENTS.md` 第 16 条①）：
+      //    只回了提示、业务表一个字没写 ⇒ 绝不记 `progress_applied`（那正是"假成功"）。
+      await this.mark(task, {
+        status: PROGRESS_TASK_STATUS.NOTICE,
+        progress_kind: decision.kind,
+        progress_reason: `text_trigger_disabled:${decision.reason}`,
+        progress_result: { notice_replied: notice.replied },
+      });
+      logInfo('sales.thread_progress.text_trigger_disabled', {
+        task_id: task.task_id,
+        sales_entry_record_id: task.sales_entry_record_id,
+        kind: decision.kind,
+        reason: decision.reason,
+        notice_replied: notice.replied,
+        // 可排查：这次**业务表一个字节都没写**（只回了提示）。
+        written: false,
+        hint: '说话不再触发（只留卡片按钮）；点【确认成交】才走完整链路',
+      });
+      return {
+        handled: true, kind: decision.kind, reason: 'text_trigger_disabled',
+        noticeReplied: notice.replied,
+      };
     }
 
     try {
@@ -205,6 +261,78 @@ class SalesThreadProgressService {
       });
       return { handled: true, kind: decision.kind, failed: true, reason: error.message };
     }
+  }
+
+  /**
+   * ⭐ 回那句"请在卡片上点【确认成交】"的提示，并保证**同一话题短时间内只说一次**。
+   *
+   * 为什么要有"只说一次"（业务负责人的口径：「别刷屏」）：
+   *   她是**语音输入**，一句话可能重复说两遍（"收到微信500"、"收到微信500"）——
+   *   每说一遍就回一句，话题里立刻变成一堵墙，真正要看的那张卡反而被顶上去。
+   *
+   * 去重键 = **话题**（`task.group_thread_id`，缺省退回 `sales_entry_record_id`）——
+   *   与她的口径"**同一话题**短时间内只说一次"逐字对应；窗口在配置里（`textNoticeWindowMs`）。
+   * 记录落在**本地**（`data/sales_progress_notices/`，一条话题一个文件）——
+   *   只写机器人的节流信息，**不写任何业务表**（与 `data/sales_group_threads` 同一个模式）。
+   *
+   * ⚠️ **fail-open**：节流记录读/写失败时**照常提示**、只记一条 warn ——
+   *   宁可多说一次，也不能让"该点卡片"这句话消失（那才是真正的静默）。
+   *
+   * @returns {Promise<{replied: boolean, reason?: string}>} replied:false = 这次被去重吃掉了
+   */
+  async noticeOnce(task, decision) {
+    const windowMs = Number(this.config.textNoticeWindowMs) || 0;
+    const key = String(task?.group_thread_id || task?.sales_entry_record_id || '').trim();
+    const recordId = key
+      ? `progress_notice_${crypto.createHash('sha256').update(key).digest('hex').slice(0, 20)}`
+      : '';
+    const nowMs = this.now().getTime();
+    const dedupe = Boolean(recordId) && windowMs > 0 && Boolean(this.noticeStore);
+
+    if (dedupe) {
+      try {
+        const last = await this.noticeStore.get(recordId);
+        const lastAt = Number(last?.notice_at || 0);
+        if (lastAt > 0 && nowMs - lastAt < windowMs) {
+          logInfo('sales.thread_progress.notice_suppressed', {
+            task_id: task.task_id,
+            sales_entry_record_id: task.sales_entry_record_id,
+            progress_kind: decision?.kind || '',
+            notice_key: key,
+            last_notice_at: lastAt,
+            window_ms: windowMs,
+            hint: '同一话题短窗口内已经提示过 → 不再刷屏（业务表仍然一个字节都没写）',
+          });
+          return { replied: false, reason: 'notice_deduped' };
+        }
+      } catch (error) {
+        logWarn('sales.thread_progress.notice_store_failed', {
+          task_id: task?.task_id, op: 'get', error: error.message,
+        });
+      }
+    }
+
+    await this.reply(task, this.config.replies.textNotice);
+
+    if (dedupe) {
+      try {
+        await this.noticeStore.create({
+          task_id: recordId,
+          kind: 'sales_progress_notice',
+          notice_key: key,
+          notice_at: nowMs,
+          notice_text: this.config.replies.textNotice,
+          progress_kind: decision?.kind || '',
+          last_task_id: task?.task_id || '',
+          sales_entry_record_id: task?.sales_entry_record_id || '',
+        });
+      } catch (error) {
+        logWarn('sales.thread_progress.notice_store_failed', {
+          task_id: task?.task_id, op: 'create', error: error.message,
+        });
+      }
+    }
+    return { replied: true };
   }
 
   /**

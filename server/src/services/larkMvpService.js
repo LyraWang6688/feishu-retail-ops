@@ -380,6 +380,10 @@ class LarkMvpService {
       config: options.threadProgressConfig,
       now: options.now,
       store: this.store,
+      // ⭐ "同一话题短时间内只回一次提示"的**本地**节流记录（2026-10-08）。
+      //    与 `salesGroupThreadStore` 同一个模式：可注入（测试用临时目录）、
+      //    缺省走 `data/sales_progress_notices/`。**不写业务表**。
+      noticeStore: options.salesProgressNoticeStore,
       sendTextToTask: (task, message) => this.sendTaskText(task, message),
     });
   }
