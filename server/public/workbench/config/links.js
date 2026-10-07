@@ -22,12 +22,14 @@ export const PURCHASE_RETURN_FORM_URL =
 /**
  * 两个飞书表单，按这个顺序渲染。**消费方**（只负责画，不改这张表）：
  *   `features/purchase/links.js` —— 「采购和退货」页（`purchase-return.html`）的两张卡。
- *   ⚠️ 2026-10-08：首页【常用功能】**不再直接消费这张表** ——
- *      业务负责人要「采购和退货合并为一个入口，即退货的链接没有了」，
- *      首页那**一张**卡指的是工作台内页 `/workbench/purchase-return.html`
- *      （报货 / 退货两个表单卡都在那一页里），所以 `config/home.js` 里
- *      **既不复制 URL、也不再 import 本文件**。
- *      留档：`docs/workbench-purchase-return-merge-2026-10-08.md`。
+ *   `config/home.js` —— 首页【常用功能】那**一张**「报货与退货」卡的 `href`
+ *   （只 `import` 本文件的 `PURCHASE_REQUEST_FORM_URL`，**不复制 URL**）。
+ *   ⚠️ 2026-10-08（业务负责人逐字，**ⓐ**）：「ⓐ（另一种）：**采购卡继续点一次直达报货表单**，
+ *      只删退货那张卡……现在就是按照原来一样，**采购和退货用的是一个表单**」——
+ *      ⇒ 首页那**一张**卡**直连报货飞书表单**（不再指回内页 `purchase-return.html`）。
+ *      ⚠️ **`PURCHASE_RETURN_FORM_URL` 一个字节都不删**：它仍被 `features/purchase/links.js`
+ *      用着（`/workbench/purchase-return.html` 老链接打开仍是报货 / 退货两张表单卡）。
+ *      留档：`docs/workbench-report-return-direct-form-2026-10-08.md`。
  * 加 / 减表单只改这张表。
  */
 export const PURCHASE_FORMS = [
