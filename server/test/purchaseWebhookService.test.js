@@ -1480,6 +1480,12 @@ test('同一个批次的多条报单合成一个批次任务，全部标记已�
     task = tasks.find((item) => Array.isArray(item?.draft?.items) && item.draft.items.length > 0);
     return Boolean(task);
   });
+  // ⚠️ 定位到草稿后**不能立刻断言 status**：这个任务的终态（posted ＋ result）是
+  // flushReportBatch 的那一笔写盘，而「已生成申请」是 confirmPurchaseRequest **更早**
+  // 写的——waitForBatchPosted 只看记录字段，它返回时任务可能还停在 batch_waiting。
+  // CI 上偶发红就是这个窗口（本机单独跑几乎撞不上）。
+  // 复用既有判据「result 已落盘 = 真的跑完了」（见 waitForProcessed 的注释）再断言。
+  task = await waitForProcessed(store, task.task_id);
   assert.equal(task.status, 'posted');
   assert.equal(task.draft.is_batch, true);
   assert.equal(task.draft.items.length, 2);
