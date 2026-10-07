@@ -199,7 +199,7 @@ class SalesOrderService {
       //      `sales.inventory.applied`（见 salesDeliveryService），不要拿这条当日志判据。
       logInfo('v1.sale.posted', { sales_entry_record_id: salesEntryRecordId, detail_count: detailRecordIds.length,
         payment_count: paymentRecordIds.length, step: 'posting', inventory_applied_by_this_step: false,
-        inventory_planned: true, inventory_step: 'after_posting' });
+        inventory_planned: true, inventory_step: 'after_delivery' });
       // 返回值里的 inventoryApplied 与上面那条日志**逐字同义**：本步不动库存。
       return { sourceNo, detailRecordIds, paymentRecordIds, inventoryApplied: false };
     } catch (error) {

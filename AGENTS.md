@@ -777,6 +777,6 @@ Schema Check 只回答「目标 Base 的字段与关联结构是否满足契约�
   ② **措辞**：还没核过时只能说「**我还没查到这一步**」，**不许**说"没发生 / 没写 / 没扣"。
 - ⭐ **配套的代码侧改法（同日已落地，见 `fix/sale-stock-log-clarity`）**：
   日志字段名一律**带范围**（`step: 'posting'` ＋ `inventory_applied_by_this_step: false`
-  ＋ `inventory_planned: true` ＋ `inventory_step: 'after_posting'`），
+  ＋ `inventory_planned: true` ＋ `inventory_step: 'after_delivery'`），
   并在库存**真的动完**时补一条**正向证据** `sales.inventory.applied`
   （含 `ledger_ids` / `behaviors`）——"没扣"这个结论从此有地方可核。
