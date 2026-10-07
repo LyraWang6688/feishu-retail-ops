@@ -198,9 +198,25 @@ exit=0
 （中间两次带失败的运行是**修的过程中**的中间态：第 1 次 12 条、第 2 次 2 条 —— 其中 1 条是
 `purchaseReturnBatch` 的偶发时序问题，单跑 12/12 通过，见第 7 节⑥。）
 
-### 6.5 CI
+### 6.5 CI（PR [#253](https://github.com/LyraWang6688/feishu-retail-ops/pull/253)）
 
-（PR 页 `gh pr checks` 的证据见交付说明；本仓库必需检查 = **server tests / test** + **CodeQL**。）
+```
+$ gh pr checks 253
+Analyze (javascript-typescript)  pass  1m14s
+CodeQL                           pass  4s
+test                             pass  1m3s
+
+$ gh pr view 253 --json mergeStateStatus,statusCheckRollup
+{"checks":[{"conclusion":"SUCCESS","name":"Analyze (javascript-typescript)","status":"COMPLETED"},
+           {"conclusion":"SUCCESS","name":"test","status":"COMPLETED"},
+           {"conclusion":"SUCCESS","name":"CodeQL","status":"COMPLETED"}],
+ "mergeStateStatus":"CLEAN"}
+```
+
+⚠️ **`test` 这一项在改动前也是红的**（`main` 上同样）：`purchaseBatchNoGeneration` 把日期写死成
+`20261007`，而生成器按上海时区取"今天" ⇒ 上海 2026-10-08 00:00 之后永远失败。
+本 PR 的**第一个 commit** 就是修它（注入固定时钟）—— 没有它，任何 PR 都拿不到 CLEAN。
+
 
 ---
 
