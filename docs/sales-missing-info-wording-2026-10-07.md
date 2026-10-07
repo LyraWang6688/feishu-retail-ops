@@ -460,6 +460,13 @@ test                             pass  51s    https://github.com/LyraWang6688/fe
 # duration_ms 33714.000449
 ```
 
+> ⚠️ **这条记录的性质说明（免得被读成"过期"）**：上表是**代码提交 `0e46d7c`** 那一次 CI。
+> 之后**只改了本文档**的提交会**各自再跑一次** CI —— 三项结果与上表**逐字同形**
+> （已实测一次：`Analyze pass 57s` / `CodeQL pass 3s` / `test pass 47s`，`headRefOid` 为
+> 那个文档提交、`mergeStateStatus` 仍为 **`CLEAN`**）。**本文档的任何提交都不含代码改动**，
+> 所以"代码那一版 CI 绿"这件事不随文档提交而变化。
+> ⭐ 判据永远以 `gh pr view 233 --json headRefOid,mergeStateStatus` 的**当次**返回为准。
+
 > ⚠️ **没有合并、没有部署**（合并由 Lead / 业务负责人做；部署必须拿她**当次**的命令）。
 
 ## 15. 不确定处 / 已知剩余面
