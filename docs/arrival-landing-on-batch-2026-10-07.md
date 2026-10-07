@@ -149,8 +149,16 @@ $ cd server && node --test --test-concurrency=1 test/arrivalLandingOnBatch.test.
 ### 4.2 全量（`node --test --test-concurrency=1`，**连跑 2 次**，在独立 worktree 里）
 
 ```
+# 本分支自己的提交（2bed76b，基于 f3bd452）
 run1: ℹ tests 1224 / ℹ pass 1224 / ℹ fail 0   (exit=0)
 run2: ℹ tests 1224 / ℹ pass 1224 / ℹ fail 0   (exit=0)
+
+# ⚠️ 期间 main 前进了 3 个提交（#242「都到了」短语识别，改了 doubaoService /
+#    config/arrivalConversation（**与本任务改的是同一个文件**）/ 两个测试文件）
+#    ⇒ 把 origin/main 合入本分支后又连跑 2 次（语义冲突人工核对：合并结果里
+#      `replies` 段是本任务的版本、#242 新增的 card/summary 键逐字保留）
+run1: ℹ tests 1237 / ℹ pass 1237 / ℹ fail 0   (exit=0)
+run2: ℹ tests 1237 / ℹ pass 1237 / ℹ fail 0   (exit=0)
 ```
 
 ### 4.3 CI
