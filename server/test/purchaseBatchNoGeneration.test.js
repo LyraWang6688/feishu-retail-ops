@@ -121,6 +121,13 @@ const makeService = (options = {}) => {
     batchReadRetryDelay: 0,
     reportBatchWindowMs: 20,
     batchLocatorStore: options.batchLocatorStore,
+    // ⭐ 注入固定时钟（照 ④ 的写法）：批次号的"今天"取自**真实时钟**，
+    //    不钉住它，跨午夜后断言里的 `CGD-20261007-…` 会变成 `CGD-20261008-…`（②/⑥ 曾因此变红）。
+    batchNoGenerator: options.now
+      ? new PurchaseBatchNoGenerator({
+        gateway, now: options.now, settings: resolvePurchaseBatchNoConfig({}),
+      })
+      : undefined,
   });
   return { service, store, gateway };
 };
@@ -190,7 +197,8 @@ test('② 同天第 2 包 → 0002（计数取 max+1，不是条数+1）', async
     purchaseOrderBatch: [{ record_id: 'bat_1', fields: { 报货批次号: 'CGD-20261007-0001', 幂等键: 'k1' } }],
     purchaseRequest: [],
   });
-  const { service, gateway: gw } = makeService({ gateway });
+  // ⭐ 固定时钟：2026-10-07 10:00（上海）= 02:00Z —— "今天"永远是 20261007，跨午夜也不变。
+  const { service, gateway: gw } = makeService({ gateway, now: () => new Date('2026-10-07T02:00:00Z') });
   await service.acceptMany('supplier-report', ['rep_2']);
   await waitForWrittenBack(gw, 'rep_2');
   assert.equal((await gw.get('purchaseReport', 'rep_2')).fields['报货批次号'], 'CGD-20261007-0002');
@@ -348,7 +356,8 @@ test('⑥ 并发不重号：两包几乎同时进来，各拿各的号（串行�
     purchaseOrderBatch: [],
     purchaseRequest: [],
   });
-  const { service, gateway: gw } = makeService({ gateway });
+  // ⭐ 固定时钟（同 ②）：两包谁先谁后由串行队列决定，但"今天"必须是 20261007。
+  const { service, gateway: gw } = makeService({ gateway, now: () => new Date('2026-10-07T02:00:00Z') });
   // 两包**同时**投递（不 await 第一包）：没有串行保护的话它们会读到同一个 max → 同一个号。
   await Promise.all([
     service.acceptMany('supplier-report', ['rep_c_1']),
