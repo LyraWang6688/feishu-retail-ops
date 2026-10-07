@@ -155,6 +155,13 @@ const chooseColor = (service, taskId, { itemIndex = 0, recordId, colorName, prod
       record_id: recordId, color_name: colorName, product_number: productNumber } },
   });
 
+// 卡片上「选颜色」那些按钮的**逐字**文字（钉住"候选只显示颜色名"）。
+const colorButtonTexts = (card) => (card.elements || [])
+  .filter((element) => element.tag === 'column_set')
+  .flatMap((element) => element.columns.flatMap((column) => column.elements))
+  .filter((child) => child.tag === 'button' && child.value?.action === 'choose_sale_color')
+  .map((child) => child.text.content);
+
 // 真机那两条「货品信息」记录（业务负责人 2026-10-07 逐条核过）。
 const REAL_MACHINE_PRODUCTS = [
   productRow({ recordId: 'rec28eceOYVkYe', number: 'B26002-52|巧克力|B', itemNo: 'B26002-52', color: '巧克力' }),
@@ -191,13 +198,17 @@ test('① 多颜色 + 库存里没有 → 出候选让她选；选完记**预定
   assert.equal(item.product_record_id, '', '没选颜色之前不许替她挑一个');
   assert.equal(item.color, '');
   assert.equal(item.trade_type_code, '', '颜色没定、库存没查 ⇒ 类型还没定');
-  assert.deepEqual(item.color_options.map((option) => option.stock_status), ['unavailable', 'unavailable'],
-    '实时库存里一双都没有 ⇒ 每个候选都标「无货」（= 这一双会记成预定）');
+  // 🔴 「甲 去掉」：候选**只有颜色名** —— 就算这个尺码一双都没有，候选上也不标「无货」。
+  for (const option of item.color_options) {
+    assert.ok(!('stock_status' in option), `候选上不许再有 stock_status：${JSON.stringify(option)}`);
+  }
 
   const cardText = JSON.stringify(cards[0].card);
   assert.match(cardText, /请选择颜色/);
   assert.match(cardText, /choose_sale_color/);
-  assert.match(cardText, /黑色（无货）/);
+  // 反向断言（收严）：逐字只有颜色名（旧版这两个按钮是「黑色（无货）」「巧克力（无货）」）。
+  assert.deepEqual(colorButtonTexts(cards[0].card).slice().sort(), ['巧克力', '黑色']);
+  assert.doesNotMatch(cardText, /有货|无货/);
 
   // 没选颜色 → 不许入账（与现货同一条规矩）。
   const refused = await confirm(service, 'prepaid_multi');

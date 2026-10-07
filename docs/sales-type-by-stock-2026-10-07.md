@@ -42,9 +42,13 @@ Lead 的解读（按此实现）：第 3 步查的是**实时库存**（不是�
 - **AC-2.2** `SALES_COLOR_OPTIONS_SCOPE` / `salesColorOptionsScopeFor` / `colorOptionsInScope` /
   `SALES_COLOR_SCOPE_EMPTY_TEXT` / 全下架拦截**全部退场**；`config/salesColorChoice` 里
   `SALES_PRODUCT_STATUS_OFF_SHELF` 也随之下线。
-- **AC-2.3** 「有货 / 无货」标注**保留**（SALES_COLOR_STOCK_LABEL_* 两个环境变量仍是旋钮），
-  语义 = 这双会记成现货 / 预定。
-- **AC-2.4** 一个货号**全部颜色都没货** ⇒ 仍然出**全部**候选、**每条**都标「无货」；
+- **AC-2.3** ~~「有货 / 无货」标注**保留**（SALES_COLOR_STOCK_LABEL_* 两个环境变量仍是旋钮），
+  语义 = 这双会记成现货 / 预定。~~
+  🔴 **已被同日晚些时候的口径取代**（业务负责人逐字「**甲 去掉**」）：候选**只显示颜色名**，
+  预览标注与那两个环境变量一并删除 —— 见
+  [color-candidate-no-stock-preview-2026-10-07.md](color-candidate-no-stock-preview-2026-10-07.md)。
+  （`AC-2.4` 里"每条都标无货"同样作废；**"全部颜色都出候选"与"选了没货的 → 预定"不变**。）
+- **AC-2.4** 一个货号**全部颜色都没货** ⇒ 仍然出**全部**候选（⚠️ 但**不再标「无货」**，见 AC-2.3）；
   她选了其中一条 ⇒ 记 `SALE_PREPAID`（预定），不出拦截、不要求重发。
 
 ### AC-3 资金与类型彻底解耦（四形态 × 两类型）
@@ -150,9 +154,12 @@ Lead 的解读（按此实现）：第 3 步查的是**实时库存**（不是�
   `SALES_COLOR_SCOPE_EMPTY_TEXT` / `formatColorOptionsScopeEmptyText`、
   `config/salesTradeTypePolicy.SALES_COLOR_OPTIONS_SCOPE` / `salesColorOptionsScopeFor` **全部删除**；
   `.env.example` 里 `SALES_COLOR_SCOPE_EMPTY_TEXT` 也删了。
-- 「有货 / 无货」标注**保留**（`SALES_COLOR_STOCK_LABEL_AVAILABLE/UNAVAILABLE`），
-  语义现在 = **这一双会记成现货还是预定**的预告；两种类型、**每个候选都标**。
-- 新的正向证据日志 `lark.sales.color_options.offered`（候选数 / 有货数 / 无货数）。
+- ~~「有货 / 无货」标注**保留**（`SALES_COLOR_STOCK_LABEL_AVAILABLE/UNAVAILABLE`），
+  语义现在 = **这一双会记成现货还是预定**的预告；两种类型、**每个候选都标**。~~
+  🔴 **已作废（同日后续口径「甲 去掉」）**：候选只显示颜色名，后缀键与 `SALES_COLOR_STOCK_STATUS`
+  一并删除 —— 见 [color-candidate-no-stock-preview-2026-10-07.md](color-candidate-no-stock-preview-2026-10-07.md)。
+- 新的正向证据日志 `lark.sales.color_options.offered`（⚠️ 现在只剩**候选数**
+  `option_count`：候选上已没有库存状态，`available_count` / `unavailable_count` 随之删除）。
 
 ### ③ 资金与类型解耦
 - `services/doubaoService.js`：
@@ -272,8 +279,8 @@ Lead 的解读（按此实现）：第 3 步查的是**实时库存**（不是�
 | AC-1.4 无 `stock:false` 策略 / 无 skipped 日志 | ✅ | `salesTradeTypePolicy.test.js`（断言那套 API 不存在）、`salesColorCandidatesAllColors.test.js` ③（断言两条老日志不再出现） |
 | AC-1.5 配品沿用她说的性质 | ✅ | 既有配品用例（`larkMvpService.test.js` 配品 / 混合单）逐字通过 |
 | AC-2.1 / 2.2 候选全部颜色、过滤那套退场 | ✅ | `salesColorCandidatesAllColors.test.js` ①③⑤ |
-| AC-2.3 有货 / 无货标注保留 | ✅ | 同上 ①②、`larkCards.test.js`（`黑色（有货）`） |
-| AC-2.4 全都没货 → 全部候选 + 全标无货 → 选了记预定 | ✅ | `salesColorCandidatesAllColors.test.js` ② |
+| AC-2.3 ~~有货 / 无货标注保留~~ | 🔴 已作废 | 同日后续口径「甲 去掉」：候选只显示颜色名（`larkCards.test.js` 逐字 `['黑','白']`、`assert.doesNotMatch(/有货\|无货/)`）；见 `docs/color-candidate-no-stock-preview-2026-10-07.md` |
+| AC-2.4 全都没货 → 全部候选 → 选了记预定（⚠️ 不再"全标无货"） | ✅ | `salesColorCandidatesAllColors.test.js` ② |
 | AC-3.1~3.4 四形态 × 两类型 | ✅ | `salesFundTypeDecoupling.test.js` 8 条 |
 | AC-3.5 类型不影响任何金额 | ✅ | 同上最后一条「两次的收款记录逐字相同」 |
 | AC-3.6 "预定必须有定金"前提清掉 | ✅ | 同上「预定 + 全款 / 预定 + 没付都能入账」 |
@@ -347,8 +354,10 @@ test                             pass  53s  https://github.com/LyraWang6688/feis
    事实（8 + 8 条仍可读、0 条悬空）。生产上那条行为记录已被删 ⇒ 预期是"关联悬空、类型名读不出来"，
    代码已容忍（有用例），但**真实条数与读出来的形状必须在服务器上只读核一次**。
 2. **多颜色时"类型待定"**：她还没选颜色之前，卡片上三段会显示「类型：待定 / 履约状态：待定」
-   （收款情况照常）。这是**新的显示状态**（改动前那种草稿根本不显示类型）。若她想在选颜色前
-   就看到候选上的"有货 / 无货"预告（现在确实有），可以接受；如果要换措辞，改 `SALES_CARD_UNDETERMINED_TEXT`。
+   （收款情况照常）。这是**新的显示状态**（改动前那种草稿根本不显示类型）。
+   ⚠️ 2026-10-07 后续口径：**候选上不再有"有货 / 无货"预告**（「甲 去掉」，候选只显示颜色名）——
+   想知道现货还是预定，就**让她选一个颜色**，后端查完库存会告诉她；
+   要换"待定"的措辞，改 `SALES_CARD_UNDETERMINED_TEXT`。
 3. **`PENDING_DEAL_PUSH_BLOCK_ORDER` 旧值会报错**：线上若显式配过 `prepaid,unpaid`，
    启动时会抛「没声明的区块」（故意的）。需要确认线上 `.env` 没配这个键（或改成 `prepaid,cash_pending`）。
 4. **`PENDING_DEAL_PUSH_UNPAID_TITLE` 改名**为 `PENDING_DEAL_PUSH_CASH_PENDING_TITLE`：

@@ -81,7 +81,12 @@ test('销售确认卡片：颜色候选用 column_set（不再用 action）', ()
   assertButtonRowsAreEqualWeight(card);
 });
 
-test('销售确认卡片：候选带库存状态时按钮标「有货 / 无货」（后缀走配置）', () => {
+// 🔴 2026-10-07 口径（业务负责人逐字「甲 去掉」）：候选按钮**只显示颜色名**。
+// ⚠️ 这条是**反向断言**（不是放宽）：旧断言是"等于 `黑（有货）`/`白（无货）`"，
+//    现在①**逐字等于纯颜色名**（多一个字符就红），②再 `doesNotMatch` 显式禁止
+//    「有货」「无货」出现在卡片上，③并且**故意让候选带上 `stock_status`** ——
+//    证明渲染层已经完全不认识这个字段（加回去就会红）。
+test('⭐ 销售确认卡片：候选只显示颜色名 —— 即便候选带 stock_status，也不许出现「有货 / 无货」', () => {
   const card = salesConfirmationCard('draft_1', saleDraft({
     items: [{ item_no: '66356', size: 42, quantity: 1, actual_amount: 99, needs_color: true,
       color_options: [
@@ -90,18 +95,35 @@ test('销售确认卡片：候选带库存状态时按钮标「有货 / 无货�
       ] }],
   }));
   const buttons = columnSetButtons(card).filter((button) => button.value.action === 'choose_sale_color');
-  assert.deepEqual(buttons.map((button) => button.text.content), ['黑（有货）', '白（无货）']);
-  // ⚠️ 按钮带回去的 `color_name` 必须是**纯颜色**：后端按它落日志 / 兜底找记录，不认后缀。
+  assert.deepEqual(buttons.map((button) => button.text.content), ['黑', '白']);
+  assert.equal(buttons[0].text.content, '黑', '逐字：不能是「黑（有货）」或任何带后缀的串');
+  assert.equal(buttons[1].text.content, '白', '逐字：不能是「白（无货）」或任何带后缀的串');
+  assert.doesNotMatch(JSON.stringify(card), /有货|无货/, '整张卡片上都不许出现这两个词');
+  // ⚠️ 按钮带回去的 `color_name` 必须是**纯颜色**：后端按它落日志 / 兜底找记录。
   assert.deepEqual(buttons.map((button) => button.value.color_name), ['黑', '白']);
 });
 
-test('销售确认卡片：候选没带库存状态（例如预付不跑 B）时按钮就是纯颜色', () => {
+test('销售确认卡片：候选不带库存状态时按钮也是纯颜色', () => {
   const card = salesConfirmationCard('draft_1', saleDraft({
     items: [{ item_no: '66356', size: 42, quantity: 1, actual_amount: 99, needs_color: true,
       color_options: [{ color: '黑', recordId: 'color_0', number: '66356黑' }] }],
   }));
-  assert.deepEqual(columnSetButtons(card).filter((button) => button.value.action === 'choose_sale_color')
-    .map((button) => button.text.content), ['黑']);
+  const buttons = columnSetButtons(card).filter((button) => button.value.action === 'choose_sale_color');
+  assert.deepEqual(buttons.map((button) => button.text.content), ['黑']);
+  assert.doesNotMatch(JSON.stringify(card), /有货|无货/);
+});
+
+test('⭐ 销售确认卡片：多颜色候选按钮**逐字**只有颜色名（黑色 / 绿色，真实业务那种写法）', () => {
+  const card = salesConfirmationCard('draft_1', saleDraft({
+    items: [{ item_no: 'B26002-52', size: 37, quantity: 1, actual_amount: 228, needs_color: true,
+      color_options: [
+        { color: '黑色', recordId: 'p_black', number: 'B26002-52黑色' },
+        { color: '绿色', recordId: 'p_green', number: 'B26002-52绿色' },
+      ] }],
+  }));
+  const buttons = columnSetButtons(card).filter((button) => button.value.action === 'choose_sale_color');
+  assert.deepEqual(buttons.map((button) => button.text.content), ['黑色', '绿色']);
+  assert.doesNotMatch(JSON.stringify(card), /有货|无货/);
 });
 
 test('销售确认卡片：样品补门盒候选用 column_set（不再用 action）', () => {
