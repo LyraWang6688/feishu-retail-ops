@@ -305,7 +305,29 @@ $ node --test --test-concurrency=1   # 第 2 轮
 
 ## 七、CI 三项
 
-_（待 fill：PR 开出来之后补 `gh pr checks` 的实际输出）_
+PR **#259**（分支 `feat/workbench-merge-purchase-return-entry`），
+`gh pr checks 259`（head = `faab1d6`：rebase 到 `origin/main 8247f0d` 之后的那个提交）：
+
+```
+Analyze (javascript-typescript)	pass	1m4s	https://github.com/LyraWang6688/feishu-retail-ops/actions/runs/37657629823/job/112916682977
+CodeQL	                        pass	2s  	https://github.com/LyraWang6688/feishu-retail-ops/runs/112917097814
+test	                        pass	1m7s	https://github.com/LyraWang6688/feishu-retail-ops/actions/runs/37657634739/job/112916694362
+```
+
+`gh pr view 259 --json mergeStateStatus,mergeable,headRefOid`
+→ **`mergeStateStatus = CLEAN`**、`mergeable = MERGEABLE`、`headRefOid = faab1d63…`。
+
+⚠️ **如实记两件事**：
+1. **第一次推上来时 `mergeStateStatus` 是 `DIRTY` / `CONFLICTING`** —— 不是 CI 的问题：
+   我动手之后 `origin/main` 前进了 **5 个提交**（PR #258 到货卡片表单），
+   两边都往 `docs/README.md` 的现行事实表里加行 ⇒ **只有那一处文本冲突**。
+   处理：**rebase**（不是 merge）到 `origin/main`，**保留两行**（谁的一行都没丢），
+   然后 `git push --force-with-lease`（**没有** `--admin`、**没有**绕闸门）；
+   rebase 后全量重跑 2 次（**1354/1354 ×2**，见第六节）。
+2. 本节之后**还有一次 docs-only 的提交**（把 CI 证据写进本文件，**零代码 / 零测试改动**）——
+   它的三项 CI 也跑完了（见 PR 的 check 列表：最终 head 仍是三项全绿 + `CLEAN`）。
+
+🔴 **没有合并、没有部署**（按纪律：合并由业务负责人 / Lead 来；部署必须拿到她**当次**的命令）。
 
 ---
 
