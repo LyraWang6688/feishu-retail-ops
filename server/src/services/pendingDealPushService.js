@@ -3,6 +3,7 @@ const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { SecondDeliveryService } = require('./secondDeliveryService');
 const { SalesGroupThreadLocator } = require('./salesGroupThreadLocator');
 const { LarkMessageLinkResolver } = require('./larkMessageLinkResolver');
+const { LarkMessagePinService } = require('./larkMessagePinService');
 const { shanghaiDayKey } = require('./saleLookupService');
 const { resolvePendingDealPushConfig } = require('../config/pendingDealPush');
 const { logInfo, logWarn } = require('../utils/logger');
@@ -53,6 +54,11 @@ class PendingDealPushService {
     this.store = options.store || new JsonTaskStore({
       dir: path.join(__dirname, '../../data/pending_deal_push'), idField: 'task_id',
     });
+    // 发完之后**把那条消息置顶**（业务负责人 2026-10-07 单独提的那个动作）。
+    // ⚠️ 复用**同一个 store**：置顶状态与按天认领记录同目录（data/pending_deal_push），
+    //    排查时一个目录看全；也复用同一个飞书 client，不为置顶另建连接。
+    // ⚠️ 它**只干置顶这一件事**，而且内部把所有失败都吞成 warn（见 larkMessagePinService）。
+    this.pin = options.pin || new LarkMessagePinService({ client: this.client, store: this.store });
     // interval 可能在上一次还没跑完时又触发：串行化，免得同一天两次扫描并发跑，
     // 把"按天只推一次"判成都没推过（与第二次交付同款处理）。
     this.run = Promise.resolve();
@@ -137,6 +143,29 @@ class PendingDealPushService {
     return response.data?.message_id || '';
   }
 
+  /**
+   * 发出后**把那条消息置顶**（业务负责人 2026-10-07 单独提的那个动作）。
+   *
+   * 两道闸门：
+   *   · `PENDING_DEAL_PUSH_PIN_ENABLED` 关着（默认）→ **一次远端调用都不发**；
+   *   · 开着 → 交给 `LarkMessagePinService`（它保证"先取消上一条、再置顶这一条"）。
+   *
+   * 🔴 **本方法永不抛**：置顶只是增强，消息已经发出去了。万一 pinLatest 意外抛了，
+   *    这里也必须吞掉并记 warn —— 绝不能让置顶把整轮推送判成失败。
+   */
+  async pinMessage({ messageId, chatId, dayKey }) {
+    if (!this.settings.pinEnabled) return { pinned: false, reason: 'pin_disabled', previousMessageId: '' };
+    try {
+      return await this.pin.pinLatest({ messageId, chatId, day: dayKey });
+    } catch (error) {
+      logWarn('sales.pending_deal_push.pin.failed', {
+        day: dayKey, message_id: messageId, error: error.message,
+        hint: '置顶抛了异常（本不该发生）；已吞掉，推送本身不受影响',
+      });
+      return { pinned: false, reason: 'pin_failed', previousMessageId: '' };
+    }
+  }
+
   /** 每日推送。定时器每个 tick 都会调它，能不能真跑由"今天推过没有"决定。 */
   sendDailyPush({ now = new Date() } = {}) {
     const next = this.run.then(
@@ -198,19 +227,27 @@ class PendingDealPushService {
         await this.store.update(dayTaskId, { status: 'completed', pushed: [], reason: 'no_chat' });
         return { day: dayKey, pushedOrderCount: 0, messageId: '', reason: 'no_chat', missingLinkCount };
       }
+      // ⭐ 发出去了 → 顺手把**这一条**置顶（业务负责人 2026-10-07）。
+      // 🔴 置顶在**推送记录落盘之前**执行，但它永不抛、永不改推送结果（见 pinMessage）：
+      //    置顶挂掉只留一条 warn，下面这段"今天推过了"的记账照常进行。
+      const pin = await this.pinMessage({ messageId, chatId, dayKey });
       await this.store.update(dayTaskId, {
         status: 'completed', message_id: messageId, text,
         pushed: orders.map((order) => order.salesEntryRecordId),
         missing_link_count: missingLinkCount,
         link_sources: orders.map((order) => order.linkSource),
+        pinned: pin.pinned,
+        pin_reason: pin.reason,
       });
       logInfo('sales.pending_deal_push.sent', {
         day: dayKey, order_count: orders.length, missing_link_count: missingLinkCount,
         order_ids: orders.map((order) => order.salesEntryRecordId),
         message_id: messageId,
+        pinned: pin.pinned, pin_reason: pin.reason,
       });
       return {
         day: dayKey, pushedOrderCount: orders.length, messageId, missingLinkCount, reason: '',
+        pinned: pin.pinned, pinReason: pin.reason,
       };
     } catch (error) {
       // 这一天不再重试（按天认领已经落盘），但把失败写进记录里，排查时能看到是哪一天掉的；
