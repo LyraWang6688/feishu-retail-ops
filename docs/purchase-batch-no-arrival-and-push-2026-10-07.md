@@ -270,3 +270,33 @@ Error: Cannot find module '../src/config/purchaseArrivalStatus'
 | 供应商从哪取 | 「信息填写」（`purchaseReport`）里**同一批次号**的记录上的「供应商」列（真表里是 Lookup）→ 去重保序 → 渲染时才拼 |
 | 深链 | 本地映射 `data/purchase_group_messages/`（`PurchaseBatchLocator.listGroupMessages()` 整目录读一次）→ 挑第一个 `chat_id` + `thread_id` 都全的记录 → `buildSalesThreadLink`（与销售侧同一个 `config/salesThreadLink`）→ `LarkMessageLinkResolver`（与销售侧同一个解析器；还会兜底现查 `message_app_link`） |
 | 配置项 | `PURCHASE_BATCH_NO_PREFIX` / `_DATE_FORMAT` / `_DIGITS` / `_TIMEZONE` / `_PREFIXES`；`PURCHASE_ARRIVAL_STATUS_PENDING` / `_ARRIVED`；`PENDING_DEAL_PUSH_AREA_ORDER` / `_SALES_TITLE` / `_PURCHASE_TITLE` / `_PURCHASE_LINE_PARTS` / `_PURCHASE_LINE_SEPARATOR` / `_PURCHASE_SUPPLIER_SEPARATOR` / `_PURCHASE_FOOTER_TEMPLATE` |
+
+## 8. 表名/字段同步的最后两处（2026-10-07 晚补）
+
+本文第 2.1 节那句「表改名闸门拦不住，必须自己同步」当天就**又应验了一次**：部署闸门在服务器上
+对着生产跑 `pnpm run v1:schema-check:all` **报红**：
+
+```
+“采购到货”缺少 V1 字段: 图片
+ ELIFECYCLE  Command failed with exit code 1.
+```
+
+两处漏项（都在同一张表上）：
+
+| # | 生产事实 | 代码同步 |
+|---|---|---|
+| ① | 「采购到货」已被业务负责人改名为 **「到货验收」**（**tableId 不变** = `tblvLOXKESNTbZ7v`） | `schema.tableName` 改 `'到货验收'`；工作台采购页的子标签/空态文案跟着改（AGENTS.md：表改名要同步**用户可见文案**） |
+| ② | 该表的 **「图片」整列被她删除**（飞书删字段 = 删值，不可恢复） | **删** `purchaseArrival.fields.images` 映射 ＋ **全部读写点**（`purchaseQueryService.listPurchaseArrivals` 的 `image_count`、工作台「图片数」列） |
+
+⚠️ 这一行旧注释写的「2026-10-05 她明确要求保留图片字段、映射也保留」**已被她本人推翻**
+（她 7 号亲手把列删了）⇒ 注释改成"该列已删除、映射随之删除"并写明日期与理由，
+`v1:schema-check:all` 判红的正是这一行。
+
+⚠️ **闸门只校验字段、不校验表名**：所以 ① 只能靠人同步，② 才是它拦下来的那个。
+
+⚠️ **闸门是「遇到第一张缺字段的表就停」**（`validateTables` 顺序执行、抛错即止），
+所以那一轮**排在 `purchaseArrival` 之后的表（含「采购入库」）根本没走到** ——
+修完这两处后**必须在服务器上补跑一次 `all`**（见新文档第 5、8 节）。
+
+⭐ 逐表核对结论 / 「图片」读写点清单 / 验收标准与逐条对照见
+[arrival-table-rename-and-images-field-removal-2026-10-07.md](arrival-table-rename-and-images-field-removal-2026-10-07.md)。

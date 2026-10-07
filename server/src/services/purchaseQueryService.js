@@ -104,8 +104,13 @@ const createPurchaseQueryService = (gateway, options = {}) => {
       const batchIds = asLinks('purchaseArrival', record, 'batch');
       const batch = batchIds.length ? batchMap.get(batchIds[0]) : null;
       const batchNo = batch ? asText('purchaseOrderBatch', batch, 'batchNo') : '';
-      const images = record?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseArrival.fields.images];
-      const imageCount = Array.isArray(images) ? images.length : 0;
+      // ⚠️ 2026-10-07：原先这里读 `purchaseArrival.fields.images`（「图片」）算一个 image_count。
+      // 业务负责人当天把「图片」**整列**从生产表删掉了（表也改名「到货验收」），
+      // schema 的 `images` 映射随之删除 ⇒ 这里再也**不许**去读那一列：
+      // 读它只会永远拿到 undefined、投影出一个恒为 0 的 `image_count`，
+      // 让查的人以为「这张到货单没上传过图」（列都不存在了，那个 0 是假的）。
+      // 处理方式与上面 recognition_status / failure_reason 完全同形：**连 key 一起摘掉**，
+      // 而不是返回 0 或空串。工作台采购页那一列「图片数」也一并删了（否则永远是 0）。
       return {
         record_id: record.record_id,
         batch_no: batchNo,
@@ -117,7 +122,6 @@ const createPurchaseQueryService = (gateway, options = {}) => {
         // 拍照识别链路也整体退场，所以一并去掉——留着只会永远返回空串，
         // 让查的人以为「识别还没跑」。
         confirm_status: asText('purchaseArrival', record, 'confirmStatus'),
-        image_count: imageCount,
       };
     });
 

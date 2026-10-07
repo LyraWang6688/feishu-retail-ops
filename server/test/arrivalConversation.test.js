@@ -687,6 +687,16 @@ test('点「是」①：「采购到货」新增一行 —— 用户原话 + 验
   //    type=5 DateTime / property.auto_fill=true）。代码写它就是替飞书做决定。
   assert.equal('到货日' in fields, false, '代码一个字都不许写「到货日」');
   assert.equal(JSON.stringify(created[0].values).includes('到货日'), false);
+  // 🔴 2026-10-07 晚：这张表已被业务负责人改名「到货验收」，并**把「图片」整列删掉**了。
+  //    所以这条链路（到货核对 → 建行）**一个字都不许再往图片/附件上写**：
+  //      · 「不写」→ 就是下面这几条断言；
+  //      · 「不报错」→ 真写了会走 gateway.fields() 抛「未配置语义字段: purchaseArrival.images」，
+  //        整个用例会当场红；换句话说，"根本没有这个键"就是它不报错的原因；
+  //      · 「不阻塞入库」→ 最后一条断言（同一个链路里「采购入库」照常写）。
+  assert.equal('图片' in fields, false, '「图片」列已从生产表删除 → 不许再写它');
+  assert.equal('鞋盒图片' in fields, false, '「鞋盒图片」是更早一版的名字，同样不许写');
+  assert.equal(JSON.stringify(fields).includes('图片'), false, '整个 create 载荷里不许出现任何图片字段');
+  assert.equal(writesTo(harness.gateway, 'purchaseInbound').length, 2, '删图片不影响入库：该写几行还是几行');
 });
 
 test('点「是」①-补：「验收人」写不进去（UserFieldConvFail）时退一步 —— 不挡入库', async () => {

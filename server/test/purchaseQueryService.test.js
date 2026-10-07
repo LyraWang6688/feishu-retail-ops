@@ -55,6 +55,11 @@ test('listPurchaseArrivals maps fields and resolves batch link', async () => {
   // 断言里也有 recognition_status / failure_reason 两项和一个 recognitionStatus 过滤。
   // 业务负责人已把这两个字段从生产表删除（拍照识别链路整体退场），schema 映射同步删掉，
   // 查询接口也不再投影/过滤它们——所以本用例改成只断言留下来的容器字段。
+  //
+  // ⚠️ 2026-10-07 晚：同一张表又变了一次 —— 表改名「到货验收」，且**「图片」整列被她删掉**。
+  // 下面这两条假记录**故意还带着「图片」附件**（本机测试 Base 落后、那一列还在，
+  // 真实生产里已经没有它）：接口**一个字都不许再读它**，`image_count` 这个 key
+  // 必须像 recognition_status 一样**彻底消失**，而不是永远返回 0。
   const gateway = makeGateway({
     purchaseArrival: [
       { record_id: 'arr_1', fields: { 到货日: 1758844800000, 报货批次号: ['batch_1'], 图片: [{ file_token: 't1' }, { file_token: 't2' }], 确认状态: '待确认' } },
@@ -72,14 +77,15 @@ test('listPurchaseArrivals maps fields and resolves batch link', async () => {
   assert.equal(all[0].record_id, 'arr_2');
   assert.equal(all[0].batch_no, 'BH-002');
   assert.equal(all[0].confirm_status, '待确认');
-  assert.equal(all[0].image_count, 0);
   assert.equal(all[0].supplier_record_id, '');
   // 退场的字段连 key 都不该再出现（否则前端会渲染出一列永远为空的"识别状态"）。
   assert.equal('recognition_status' in all[0], false);
   assert.equal('failure_reason' in all[0], false);
+  // 同上：「图片」列已被她删除 ⇒ image_count 也必须彻底消失（留着 = 永远显示 0，比不显示更误导）。
+  assert.equal('image_count' in all[0], false, '「图片」列已删 → 不许再投影 image_count');
+  assert.equal('image_count' in all[1], false, '哪怕真表里还留着那一列（测试 Base 落后），也不许再读它');
 
   assert.equal(all[1].record_id, 'arr_1');
-  assert.equal(all[1].image_count, 2);
 
   const filtered = await service.listPurchaseArrivals({ confirmStatus: '待确认' });
   assert.equal(filtered.length, 2);
