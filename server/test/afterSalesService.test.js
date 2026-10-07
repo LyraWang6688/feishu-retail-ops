@@ -18,7 +18,13 @@ const os = require('node:os');
 const path = require('node:path');
 const { AfterSalesService } = require('../src/services/afterSalesService');
 const { InventoryService } = require('../src/services/inventoryService');
-const { afterSalesEventId, afterSalesOperationId, readAfterSalesConfig } = require('../src/config/afterSales');
+const {
+  AFTER_SALES_ACTION_SPECS,
+  AFTER_SALES_FULFILLMENT,
+  afterSalesEventId,
+  afterSalesOperationId,
+  readAfterSalesConfig,
+} = require('../src/config/afterSales');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 
@@ -665,6 +671,121 @@ test('赔货：只出货（销售赔货·减少），坏鞋不回库，不动钱
   // 不动钱
   assert.equal(paymentRows(gateway).length, 0);
   assert.equal(rowsOf(gateway, CREDIT_TABLE).length, 0);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 换货：新换出去的那条明细要写「履约状态 = 已交付」（2026-10-08）
+//
+// 真机事实（业务负责人只读核过，2026-10-08 00:02）：原单 XSD-20261007-0054 换货
+// 新写入的那条明细（record reczz28KZzAY4BBi）交易类型=换货、金额对，但
+// **「履约状态」是空的**。她的口径（逐字）：「好的，是的就叫**已交付**～」。
+//
+// 🔴 边界：只补这一处 —— 原那双仍是「已换货」；退货的复制行 / 赔货的出货行
+//    既有行为**一个字不改**（下面第二条哨兵钉住）。取值走 config/afterSales.js 的枚举。
+// ═══════════════════════════════════════════════════════════════════════════
+
+const exchangeRequest = (overrides = {}) => request({
+  action: 'exchange',
+  originalText: '那双 A100 换一双 B200 42 码，补 50',
+  newLines: [{ productId: 'product_B', sizeId: 'size_42', amount: 300 }],
+  diffAmount: 50,
+  settlement: 'cash',
+  restockState: '门盒',
+  ...overrides,
+});
+
+test('换货：新换出去的那条明细「履约状态」= 已交付（原那双仍是已换货）', async () => {
+  const { gateway, service } = build();
+  await service.execute(exchangeRequest());
+
+  const details = detailRows(gateway);
+  assert.equal(details.length, 1);
+  // 值来自配置枚举（不是执行器里的中文字面量），同时钉住它就是她说的那三个字。
+  assert.equal(details[0].fields['履约状态'], AFTER_SALES_FULFILLMENT.DELIVERED);
+  assert.equal(details[0].fields['履约状态'], '已交付');
+  // 原那双：既有正确行为，一个字不改。
+  assert.equal(rowsOf(gateway, 'salesDetail')[0].fields['履约状态'], AFTER_SALES_FULFILLMENT.EXCHANGED);
+  // 只补履约状态这一处：别的字段与真机一致（交易类型=换货 · 销售单号=原主表 · 金额=出货金额）。
+  assert.deepEqual(details[0].fields['交易类型'], ['behavior_exchange']);
+  assert.deepEqual(details[0].fields['销售单号'], ['order_old']);
+  assert.deepEqual(details[0].fields['编号'], ['product_B']);
+  assert.deepEqual(details[0].fields['尺码'], ['size_42']);
+  assert.equal(details[0].fields['成交金额'], 300);
+});
+
+test('哨兵：退货的复制行 / 赔货的出货行「履约状态」仍不写（本次只补换货那一处）', async () => {
+  const returned = build();
+  await returned.service.execute(request());
+  assert.equal(detailRows(returned.gateway)[0].fields['履约状态'], undefined,
+    '退货的复制行不写履约状态（既有行为）');
+  assert.equal(rowsOf(returned.gateway, 'salesDetail')[0].fields['履约状态'], '已退货');
+
+  const compensated = build();
+  await compensated.service.execute(request({
+    action: 'compensation',
+    newLines: [{ productId: 'product_B', sizeId: 'size_42', amount: 300 }],
+    diffAmount: null,
+    settlement: null,
+    restockState: null,
+  }));
+  assert.equal(detailRows(compensated.gateway)[0].fields['履约状态'], undefined,
+    '赔货的出货行不写履约状态（既有行为）');
+  assert.equal(rowsOf(compensated.gateway, 'salesDetail')[0].fields['履约状态'], '已赔货');
+});
+
+test('配置先行：只有换货声明「新明细行的履约状态」，退货/赔货不声明', () => {
+  assert.equal(AFTER_SALES_FULFILLMENT.DELIVERED, '已交付');
+  assert.equal(
+    AFTER_SALES_ACTION_SPECS.exchange.newLineFulfillmentStatus,
+    AFTER_SALES_FULFILLMENT.DELIVERED,
+  );
+  assert.equal(AFTER_SALES_ACTION_SPECS.return.newLineFulfillmentStatus, undefined);
+  assert.equal(AFTER_SALES_ACTION_SPECS.compensation.newLineFulfillmentStatus, undefined);
+});
+
+test('换货重放/重试：明细行只建一次，履约状态不被二次写', async () => {
+  // ① 整次重放：总闸门命中 → 一个字节都不写，结果与第一次逐字相同。
+  const replay = build();
+  const first = await replay.service.execute(exchangeRequest());
+  const writesAfterFirst = countsOf(replay.gateway);
+  const recordsAfterFirst = snapshot(replay.gateway);
+
+  const second = await replay.service.execute(exchangeRequest());
+
+  assert.deepEqual(second, first, '整次重放直接返回上次的结果');
+  assert.equal(countsOf(replay.gateway), writesAfterFirst, '重放不再产生任何 create/update/delete');
+  assert.deepEqual(snapshot(replay.gateway), recordsAfterFirst, '重放后所有表内容不变');
+  assert.equal(detailRows(replay.gateway)[0].fields['履约状态'], '已交付');
+
+  // ② 中途失败后重试（写收款明细时失败）：复用已建好的明细行 ——
+  //    不建第二行，也不把履约状态再写一遍。
+  const retried = build();
+  const originalCreate = retried.gateway.create;
+  let failed = false;
+  retried.gateway.create = async function create(key, values) {
+    if (key === 'paymentRecord' && !failed) {
+      failed = true;
+      const error = new Error('新增“收款明细”记录失败: FieldNameNotFound (Code: 1254045)');
+      error.bitableRejected = true;
+      throw error;
+    }
+    return originalCreate.call(this, key, values);
+  };
+
+  await assert.rejects(() => retried.service.execute(exchangeRequest()), /FieldNameNotFound/);
+  assert.equal(detailRows(retried.gateway).length, 1);
+  const detailAfterFailure = structuredClone(detailRows(retried.gateway)[0].fields);
+  assert.equal(detailAfterFailure['履约状态'], '已交付');
+
+  await retried.service.execute(exchangeRequest());
+
+  assert.equal(retried.gateway.writes.create.salesDetail, 1, '重试不该再建第二条明细行');
+  assert.equal(detailRows(retried.gateway).length, 1);
+  assert.deepEqual(detailRows(retried.gateway)[0].fields, detailAfterFailure,
+    '履约状态不被二次写，整行逐字段不变');
+  assert.equal(retried.gateway.writes.create.salesEntry, 1);
+  assert.equal(retried.gateway.writes.create.paymentRecord, 1);
+  assert.equal(retried.gateway.writes.create.inventoryLedger, 2, '换货两条流水各一次');
 });
 
 test('差价 0 / null：不动钱（不写收款明细，也不写客户往来货款）', async () => {
