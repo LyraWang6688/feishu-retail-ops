@@ -1,0 +1,186 @@
+# 待处理单推送：按【预付 / 未付】分区 ＋ 每条补「货号 + 尺码」（2026-10-07）
+
+> **口径（权威 · 业务负责人 2026-10-07 拍板，逐字）**
+> 「**只需要这些信息，按照预付和未付分区**」
+> 她给的目标形状（逐字）：
+> ```
+> ⏰ 2026-10-07 最近 7 天未付 / 预付、尚未成交的销售单：2 笔
+>    1. ·【预付】B26002-52 37码 · 待收 ¥128 · [深链]
+>    2. ·【未付】6A637-7 43码 · 待收 ¥228 · [深链]
+> ```
+> ⇒ ① 按 **预付 / 未付** 分成两个区块；② 每条 = **单号 + 【预付/未付】 + 货号+尺码
+> + 待收金额 + 深链**；③ **不加"售出时间"**（标注靠分区与行内标签体现）。
+>
+> 实现状态：**已实现**（`feat/pending-deal-push-sections`），验收标准与逐条对照见本文第 3、4 节。
+
+## 1. 改完之后的推送样例（逐字，默认配置）
+
+两笔单（一笔预付、一笔未付，第二笔没有深链）：
+
+```
+⏰ 2026-10-07 最近 7 天未付 / 预付、尚未成交的销售单：2 笔（【预付】1 笔 / 【未付】1 笔）
+【预付】1 笔
+1. XSD-20261007-001 【预付】 · B26002-52 37码 · 待收 ¥128.00 · https://applink.feishu.cn/client/message/link?message_id=om_a
+【未付】1 笔
+1. XSD-20261007-002 【未付】 · 6A637-7 43码、腰带 · 待收 ¥228.00
+（1 笔的深链暂不可用：飞书接口未返回 message_app_link，见日志 sales.pending_deal_push.link.missing）
+```
+
+- 表头的 `2 笔` 仍是**总数**（口径不变），后面补一句分区计数，免得她数不出两块各几笔。
+- **每条行内仍带【预付/未付】标签**（她给的形状里两处都有：分区标题 + 行内标签）。
+- **编号在每个区块内各自从 1 开始**（两块是两张独立的清单）。
+- 这是**文字消息**（`msg_type: text`），发到群的主聊天，不带 `reply_in_thread`——与改动前一致。
+
+## 2. 分区顺序与理由（预付在前）
+
+顺序 = 配置 `PENDING_DEAL_PUSH_BLOCK_ORDER`，默认 `prepaid,unpaid`。选「预付在前」的理由：
+
+1. **预付单钱货都没结清**——货还在店里、尾款还欠着，点「成交」要走完「补尾款 + 出货 + 扣库存」三步，
+   是链条最长、最容易被拖过 7 天窗口的那一类；
+2. **未付单的货已经交出去了**，剩下的只是收款一步，处理动作单一；
+3. ⇒ 先把"链条长的"摆在最上面，让她当天有时间把那三步走完。
+
+（不同意就改 `PENDING_DEAL_PUSH_BLOCK_ORDER`，不用改代码；漏写某个区块时它**不会消失**，
+会按声明顺序补在最后——宁可多显示一块，也不让一类单静默少推。）
+
+## 3. 验收标准（先写，后对照）
+
+| # | 验收标准 |
+|---|---|
+| A1 | 正文 = 表头 1 行 + 每个**有单**的区块（标题 1 行 + 该区每单 1 行）+（可选）深链缺失脚注 |
+| A2 | 区块顺序由配置决定（默认 预付 → 未付），不按候选顺序 |
+| A3 | 只有一类单时，**另一个区块连标题都不出现**；全空时整条不推（既有行为） |
+| A4 | 表头总数口径不变（`…：N 笔`），并补分区计数，N = 各区之和 |
+| A5 | 每条 = 序号 + 单号 + 【预付/未付】 + 货号 尺码 + 待收 ¥金额 + 深链（有则显示） |
+| A6 | 不出现"售出时间"之类的第四种信息 |
+| A7 | 缺深链：该行不出现链接段、不留空分隔符；脚注文案与 `missingLinkCount` 口径不变，照推 |
+| B1 | 货号取「货品信息.**货号**」；尺码取明细「尺码」（关联「尺码管理」，走共享缓存解析） |
+| B2 | 格式 `货号 尺码码`，例 `B26002-52 37码` |
+| B3 | 配品行显示配品名称，**绝不拼「码」**（不得出现「腰带 码」） |
+| B4 | 一单多件：**逐件列出**，用配置的分隔符（默认顿号）；不截断（她要的就是每件的货号尺码） |
+| B5 | 缺货号 / 缺配品名称 → 该件不渲染；整单一件都取不到 → 该行**不出现**货号尺码段（不留残句） |
+| B6 | 尺码解析不出来时退回单元格文本，且**只认正整数**；都没有就留空 |
+| B7 | 货品/配品表读不到 → 不抛错，最坏退化成"没有货号尺码段"，金额与深链照旧 |
+| C1 | 候选筛选口径、`pendingAmount` 口径、7 天窗口、按天去重、置顶流程、深链解析：**逐字不变** |
+| C2 | `larkMessagePinService` / 置顶逻辑 / `app.js` / 战报 / 颜色候选那批文件：**一行不动** |
+| C3 | 额外读表**每次推送只读一次**：货品信息 1 次、配品（配了才读）1 次、尺码走共享缓存；**不重复读销售明细** |
+| D1 | 区块标题/顺序、表头、区块模板、行格式（含分隔符）、多件分隔符、尺码后缀、脚注**全部可配** |
+| D2 | 模板里的未知占位符 / 没闭合的大括号 / 空的行模板 / 未知区块 → **解析配置时抛错**（启动就吵） |
+| D3 | 用户可见中文**不在 service 里**（全在 `config/pendingDealPush`） |
+| E1 | 新增用例钉住：两区各自渲染 / 只有一类时另一区不出现 / 货号尺码正确 / 配品不出现「码」 / 缺数据不留残句 / 深链缺失既有行为不变 / 按天去重与置顶不受影响 / 配置可配与校验 |
+| E2 | 全量 `node --test --test-concurrency=1` 连跑 2 次 `fail=0`；`gh pr checks` 见 CLEAN |
+| E3 | 既有断言**不放宽**（因文案变更必须改的，逐条说明） |
+
+## 4. 逐条对照（实现与证据）
+
+| # | 结论 | 证据 |
+|---|---|---|
+| A1–A5 | ✅ | `pendingDealPushService.buildSections / buildItemText / buildLine / buildText`；用例「两区各自渲染…」逐字断言整条正文 |
+| A2 | ✅ | 顺序来自 `config.blocks`（`resolveBlocks` 按 `PENDING_DEAL_PUSH_BLOCK_ORDER` 排）；用例「两区各自渲染…」故意把**未付**放在候选数组前面，正文仍是预付在前 |
+| A3 | ✅ | 用例「只有一类单时：另一个区块连标题都不出现」（两个方向各断言一次） |
+| A4 | ✅ | 表头 `{total}` + `{blockCounts}`；用例断言 `：2 笔（【预付】1 笔 / 【未付】1 笔）` |
+| A5/A6 | ✅ | 行模板默认 `{index}. {orderNo} {tag} \| {item} \| 待收 {amount} \| {link}`；用例断言逐字正文，并 `doesNotMatch(/售出\|成交时间\|销售日/)` |
+| A7 | ✅ | 用例「缺深链：行内不出现链接段…」断言 `missingLinkCount === 2`、仍 `pushedOrderCount === 2`、脚注逐字、正文里没有任何 `http` |
+| B1/B2 | ✅ | `salesDetailItemFacts` 取「货品信息.货号」；用例断言 `B26002-52`（**不是**同一记录上的「编号」`N-1`）与 `37码` |
+| B3 | ✅ | 配品 `size` 恒为空串；用例断言 `…37码、腰带、6A637-7 43码…`，并 `doesNotMatch(/腰带\s*码/)`、全文 `码` 只出现 2 次 |
+| B4 | ✅ | 用例「一单多件：逐件列出」（3 件，含 1 件配品） |
+| B5 | ✅ | 用例「缺货号 / 缺尺码：不留空壳」逐字断言整条正文（行内那一段整段不出现），并 `doesNotMatch(/·\s+·/)`、`doesNotMatch(/\s码/)`；取不到货号/名称的件在 `salesDetailItemFacts` 里就**不产出条目** |
+| B6 | ✅ | `secondDeliveryService.resolveDetailSize`；用例「尺码解析不出来时退回单元格文本」＋「只认正整数」（`['recXXXX']` 这种只有 record_id 的单元格**不会**被当成尺码） |
+| B7 | ✅ | 索引读失败只记 warn（`sales.second_delivery.items.index_failed`）并这一轮没有货号尺码；单条缺数据只记汇总 warn（`sales.second_delivery.items.incomplete`） |
+| C1 | ✅ | `listPendingDeliveries` 的筛选/金额那几行**一字未改**；用例「候选口径没变：已入账 + 未付/预付 + 7 天内 + 未完成」；`pending-deal-push` 的按天去重/置顶用例原样通过 |
+| C2 | ✅ | `git diff --name-only` 只含本功能 5 个文件 + `.env.example` + `docs/`（见第 5 节） |
+| C3 | ✅ | 货品信息/配品/尺码都是**整表一次**（`loadItemIndex` + 共享缓存尺码解析），销售明细复用候选筛选那一次；用例「表整表各读一次」直接数 `listAll` 调用次数 |
+| D1 | ✅ | 配置项见第 5 节；用例「配置可配：换个 env 就换一套顺序、标题、行格式与分隔符」 |
+| D2 | ✅ | `assertTemplate` 在 `resolvePendingDealPushConfig` 里跑；用例「配置写错…都在解析时抛错」 |
+| D3 | ✅ | `pendingDealPushService` 里没有任何用户可见中文（表头/区块/行/分隔符/脚注全来自配置） |
+| E1 | ✅ | 新增 `test/pendingDealPushSections.test.js`（10 条）＋ `test/secondDeliveryPendingItems.test.js`（7 条） |
+| E2/E3 | ✅ | 见第 6 节（全量 2 次 + CI 三项） |
+
+## 5. 配置项与数据来源
+
+**新增配置**（默认值在 `src/config/pendingDealPush.js`，env 可覆盖；`.env.example` 有注释版）：
+
+| 配置 | 作用 |
+|---|---|
+| `PENDING_DEAL_PUSH_BLOCK_ORDER` | 区块顺序（`prepaid` / `unpaid`），默认 `prepaid,unpaid` |
+| `PENDING_DEAL_PUSH_PREPAID_TITLE` / `PENDING_DEAL_PUSH_UNPAID_TITLE` | 两个区块的标题（也是行内标签） |
+| `PENDING_DEAL_PUSH_OTHER_TITLE` | 编码不在上面两块里时的兜底区块标题（**绝不静默丢单**） |
+| `PENDING_DEAL_PUSH_HEADER_TEMPLATE` | 表头模板（`{day}` `{total}` `{blockCounts}`） |
+| `PENDING_DEAL_PUSH_SECTION_TEMPLATE` | 区块模板（`{title}` `{count}` `{lines}`） |
+| `PENDING_DEAL_PUSH_LINE_PARTS` | 行模板，`\|` 分隔的若干段（空的段整段不要） |
+| `PENDING_DEAL_PUSH_LINE_SEPARATOR` | 行内段之间的分隔符（默认 ` · `） |
+| `PENDING_DEAL_PUSH_ITEM_TEMPLATE` | 一件商品的模板（`{itemNo}` `{size}`） |
+| `PENDING_DEAL_PUSH_ITEM_SEPARATOR` | 一单多件之间的分隔符（默认 `、`） |
+| `PENDING_DEAL_PUSH_SIZE_TEMPLATE` | 尺码后缀（默认 `{size}码`） |
+| `PENDING_DEAL_PUSH_FOOTER_TEMPLATE` | 深链缺失脚注（`{count}`） |
+
+**货号 + 尺码从哪来**（业务口径没动，只多要了两样**既有数据的投影**）：
+
+- 「哪些单要推」仍旧**只有一处实现**：`SecondDeliveryService.listPendingDeliveries`
+  （本轮本来就会把 `salesDetail` 整表读进来算进度）。
+- 这次向它多要了 `tradeTypeCode`（**行为编码**，分区的稳定判据）与 `items`
+  （`includeItems: true` 时的货号/尺码事实）。
+- 货号 = 「货品信息.**货号**」（不是「编号」）；配品 = 「其他配品.名称」；
+  尺码 = 明细「尺码」`→` 共享的 `SizeReferenceService`（**30 秒缓存**，整轮只读一次「尺码管理」）。
+- **没有为了货号尺码再读一遍销售明细**；额外代价 = 每次推送整表读一次「货品信息」
+  （+ 配了「其他配品」时再读一次它）。**`includeItems` 默认关**，所以「第二次交付提醒」那条路
+  读表与返回形状一个字都不变。
+
+## 6. 测试与 CI 证据
+
+**本地全量（在独立 worktree `.local/worktrees/pending-deal-sections` 里跑，不在主工作区跑全量）**
+`node --test --test-concurrency=1`，**连跑 2 次**：
+
+```
+=== run 1 ===
+ℹ tests 1072
+ℹ pass 1072
+ℹ fail 0
+=== run 2 ===
+ℹ tests 1072
+ℹ pass 1072
+ℹ fail 0
+```
+
+**并入最新 `origin/main` 之后再跑 2 次**（`git merge origin/main`，含同期合并的「颜色候选范围」那批；
+⚠️ 这一步是**故意**做的：合并后的全量是唯一能拦住"两边各加同名方法、git 不报冲突"的便宜手段）：
+
+```
+=== merged full run 1 ===
+ℹ tests 1087
+ℹ pass 1087
+ℹ fail 0
+=== merged full run 2 ===
+ℹ tests 1087
+ℹ pass 1087
+ℹ fail 0
+```
+
+**CI**（PR #232，`gh pr checks 232`，`mergeStateStatus = CLEAN`）：
+
+| 检查 | 结果 | 耗时 |
+|---|---|---|
+| `test`（server tests） | ✅ pass | 57s |
+| `Analyze (javascript-typescript)`（CodeQL） | ✅ pass | 58s |
+| `CodeQL` | ✅ pass | 2s |
+
+**「文案变更必须改的既有用例」逐条说明**（都不是放宽）：
+
+| 用例 | 改动 | 为什么不是放宽 |
+|---|---|---|
+| `pendingDealPush.test.js` 正常推 | 断言从 `1. XSD-A-1 · 待收 …` 改成**逐字断言整段分区正文**（表头含分区计数、区块标题、行内标签 + 货号尺码 + 金额 + 深链） | 断言**变严**：从"匹配一段"变成"两块的标题与两行正文都逐字对上"，还多了 `^…\n` 锚点 |
+| 同上（第 2 笔） | `2\. XSD-B-2 …` → `1\. XSD-B-2 【未付】 · 6A637-7 43码 …` | 编号改成**每块各自从 1 开始**（分区带来的新事实）；信息更多、位置更明确，没有放松 |
+| 同上（无深链） | `doesNotMatch(/XSD-B-2 · 待收 ¥300\.50 · http/)` → 同一断言加上标签与货号尺码 | 断言目标不变（"不许编一条 URL"），只是把行内容对齐新格式 |
+| `pendingDealPush.test.js` 配置默认值 | `deepEqual(resolvePendingDealPushConfig({}), {...})` **仍是严格全等**，把新增的 12 个文案/分区键的默认值也钉进去 | 全等断言**更严格**（多一个键就红），只是键变多了 |
+| `pendingDealPush.test.js` 金额未知 | 断言 `1. XSD-X 【未付】 · 待收 ¥—`，并新增 `doesNotMatch(/码/)`、`doesNotMatch(/ ·  · /)` | 新增两条"不许留残句"的硬断言 = 收严 |
+| `pendingDealPush.test.js` / `pendingDealPushPin.test.js` 的 `settings()` 助手 | 先 `...resolvePendingDealPushConfig({})` 再覆盖本文件关心的键 | 只是让"文案默认值"保持**单一真源**（不再在测试里复制一份）；用例本身一条没删 |
+
+## 7. 我没动、但需要她知道的两处边界
+
+1. **售后写回的「销售退货」明细行也会出现在货号尺码里**：售后那行是**关联在原单上**的
+   （`afterSalesService` 的 `salesEntry: relation(originalSalesEntryRecordId)`），
+   而「待收金额」用的**就是同一批明细行**（金额口径一个字没动）。
+   ⇒ 要改成"只列没退过的货"是**新的业务口径**，需要她点头，不在本次改动内。
+2. **深链现状没变**：飞书接口当前仍不返回 `message_app_link`（2026-10-06 实测），
+   所以多数行的链接来自她给的**话题深链格式**；两条来源都没拿到时，那一行的链接段
+   整段不出现、只在末尾留一句脚注（与改动前一致）。

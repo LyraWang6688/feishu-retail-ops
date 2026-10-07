@@ -5,6 +5,8 @@ const { V1BitableGateway, linkedRecordIds, textValue } = require('./v1BitableGat
 const { PaymentService, amount } = require('./paymentService');
 const { SalesDeliveryService } = require('./salesDeliveryService');
 const { SalesProgressService, progressFromRecords } = require('./salesProgressService');
+const { createSizeReferenceAccess } = require('./sizeReferenceService');
+const { itemFactsForDetails } = require('./salesDetailItemFacts');
 const { asDate, isWithinLookupWindow, shanghaiDayKey } = require('./saleLookupService');
 const { resolvePurchaseChatId } = require('../config/groupPurchase');
 const { postedOf, isPosted } = require('../config/salesStatusDimensions');
@@ -57,6 +59,13 @@ class SecondDeliveryService {
     // 会走到"这一单已成交"那条分支，而不是各写一遍。
     this.queue = new KeyedSerialQueue();
     this.reminderRun = Promise.resolve();
+    // 「尺码」在销售明细里是**关联**「尺码管理」，不能只信关联单元格的显示文本
+    // （部分接口只回 record_ids 不回 text）。走共享的尺码解析（30 秒缓存），
+    // 只有 `includeItems` 那条路会用到它（见 listPendingDeliveries）。
+    this.getSizeReferences = createSizeReferenceAccess({
+      gateway: this.gateway,
+      sizeReferences: options.sizeReferences,
+    });
   }
 
   /**
@@ -242,8 +251,17 @@ class SecondDeliveryService {
    * 也就是算出来的 `progress.orderStatus` 还没到「已完成」——货没交完算没完成，钱没收清算没完成。
    * （`progress.orderStatus` 是**算出来的 JS 字段**，不是表里的列：表里的「订单状态」已被业务负责人删除。）
    * 进度是**现算**的（复用销售进度那套纯函数），不看主表上可能过期的派生值。
+   *
+   * ── 2026-10-07：`includeItems`（**可选**，默认关）──────────────────────────
+   * 待处理单推送要按「货号 + 尺码」显示每条单。那两个字段的**事实**在这里顺手取最省：
+   * 本轮已经把 `salesDetail` 整表读进来了（就在下面的 `orderDetails` 里），
+   * 所以**不会为了货号尺码再读一遍销售明细**；只额外整表读一次「货品信息」，
+   * 「其他配品」**配了才读**，尺码走共享的尺码解析（有缓存）。
+   * ⚠️ 关着时（第二次交付提醒那条路）返回的对象**一个字都不变**：
+   *    `items` 根本不加，读表也一次都不多发。
+   * ⚠️ 这段是**增强**：货品表读挂了只记一条 warn、这一轮没有货号尺码，**不让整条推送失败**。
    */
-  async listPendingDeliveries({ now = new Date() } = {}) {
+  async listPendingDeliveries({ now = new Date(), includeItems = false } = {}) {
     const [entries, allDetails, allPayments, behaviors] = await Promise.all([
       this.gateway.listAll('salesEntry'), this.gateway.listAll('salesDetail'),
       this.gateway.listAll('paymentRecord'), this.gateway.listAll('behavior'),
@@ -254,15 +272,34 @@ class SecondDeliveryService {
     const behaviorFields = this.gateway.table('behavior').fields;
 
     // 「交易类型」是关联「行为管理」的字段，所以先把两类行为的 record_id 找出来。
-    const behaviorLabels = new Map(behaviors
+    // 编码与名称**都留下**：分区按**编码**（名称是她在飞书里随手能改的文案，见 config/pendingDealPush），
+    // 卡片那边照旧用名称。
+    const behaviorsById = new Map(behaviors
       .filter((record) => REMINDER_TRADE_TYPE_CODES.includes(textValue(record.fields?.[behaviorFields.code])))
-      .map((record) => [record.record_id, textValue(record.fields?.[behaviorFields.name]) || '']));
+      .map((record) => [record.record_id, {
+        code: textValue(record.fields?.[behaviorFields.code]),
+        label: textValue(record.fields?.[behaviorFields.name]) || '',
+      }]));
+
+    let itemIndex = null;
+    if (includeItems) {
+      // 货号尺码是**增强**：索引读挂了就这一轮没有它，**绝不让整条推送失败**
+      // （单号 + 金额 + 深链本身就该看得见）。
+      try {
+        itemIndex = await this.loadItemIndex();
+      } catch (error) {
+        logWarn('sales.second_delivery.items.index_failed', { error: error.message });
+        itemIndex = null;
+      }
+    }
 
     const orders = [];
+    let unlabeledItemCount = 0;
+    let missingSizeCount = 0;
     for (const entry of entries) {
       if (!isPosted(postedOf(entry, entryFields))) continue;
       const tradeTypeIds = linkedRecordIds(entry.fields?.[entryFields.tradeType]);
-      const tradeTypeRecordId = tradeTypeIds.find((id) => behaviorLabels.has(id));
+      const tradeTypeRecordId = tradeTypeIds.find((id) => behaviorsById.has(id));
       if (!tradeTypeRecordId) continue;
       const orderDetails = allDetails.filter((record) =>
         linkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(entry.record_id));
@@ -299,10 +336,25 @@ class SecondDeliveryService {
         continue;
       }
       if (progress.orderStatus === '已完成') continue;
+      // 「这单里卖的是什么」：只在 `includeItems` 时算，且复用**上面已经读到的** `orderDetails`。
+      let items = [];
+      if (itemIndex) {
+        const facts = await itemFactsForDetails({
+          details: orderDetails,
+          detailFields,
+          itemIndex,
+          resolveSize: (detail) => this.resolveDetailSize(detail, detailFields),
+        });
+        items = facts.items;
+        unlabeledItemCount += facts.unlabeledCount;
+        missingSizeCount += facts.missingSizeCount;
+      }
       orders.push({
         salesEntryRecordId: entry.record_id,
         orderNo: textValue(entry.fields?.[entryFields.orderNo]) || entry.record_id,
-        tradeTypeLabel: behaviorLabels.get(tradeTypeRecordId),
+        tradeTypeLabel: behaviorsById.get(tradeTypeRecordId)?.label || '',
+        // ⭐ 分区的**稳定判据**（`SALE_PREPAID` / `SALE_UNPAID`），不是行为名称。
+        tradeTypeCode: behaviorsById.get(tradeTypeRecordId)?.code || '',
         saleDate: orderDate.toISOString(),
         pendingAmount: progress.pendingAmount,
         platformPendingAmount: progress.platformPendingAmount,
@@ -310,10 +362,72 @@ class SecondDeliveryService {
         quantity: progress.quantity,
         fulfillmentStatus: progress.fulfillmentStatus,
         paymentStatus: progress.paymentStatus,
+        // ⚠️ 只在 `includeItems` 时才有这个键（关着时返回形状与改动前**逐字相同**）。
+        ...(includeItems ? { items } : {}),
+      });
+    }
+    if (includeItems && (unlabeledItemCount || missingSizeCount)) {
+      // 一次推送只记**一条**汇总（不是每件一条），否则日志会被刷满。
+      // 「缺货号」= 明细指不到可售品、或指向的那条记录没有货号/名称——那一件**不会**被显示；
+      // 「鞋缺尺码」= 关联了「尺码管理」但解析不出来。两种都是数据问题，得能查。
+      logWarn('sales.second_delivery.items.incomplete', {
+        order_count: orders.length,
+        unlabeled_item_count: unlabeledItemCount,
+        missing_size_count: missingSizeCount,
+        hint: '有明细行取不到货号/配品名称，或鞋的尺码解析不出来；这些件不会出现在推送文案里',
       });
     }
     // 最早的单排最前：越久没成交的越该先被看见。
     return orders.sort((left, right) => String(left.saleDate).localeCompare(String(right.saleDate)));
+  }
+
+  /**
+   * 「货号 / 配品名称」要用的两张索引：**整表各读一次**（不是每单、每件各读一次）。
+   *   · 「货品信息」：核心表，读挂了让调用方降级（这一轮没有货号尺码，不影响推送本身）；
+   *   · 「其他配品」：**没配 tableId 就不读**（有些部署只卖鞋；见 larkMvpService 同款处理）。
+   */
+  async loadItemIndex() {
+    const index = {};
+    const productTable = this.gateway.table?.('product');
+    if (productTable?.tableId) {
+      const records = await this.gateway.listAll('product');
+      index.product = {
+        labelField: productTable.fields?.itemNo,
+        byId: new Map(records.map((record) => [record.record_id, record])),
+      };
+    }
+    const accessoryTable = this.gateway.table?.('accessory');
+    if (accessoryTable?.tableId) {
+      try {
+        const records = await this.gateway.listAll('accessory');
+        index.accessory = {
+          labelField: accessoryTable.fields?.name,
+          byId: new Map(records.map((record) => [record.record_id, record])),
+        };
+      } catch (error) {
+        // 配品表读不到不该让整条推送掉：配品那一件这轮就没有名称（不会拼出空壳），其余照旧。
+        logWarn('sales.second_delivery.items.accessory_read_failed', { error: error.message });
+      }
+    }
+    return index;
+  }
+
+  /**
+   * 明细的尺码：关联「尺码管理」→ 走共享解析（有缓存）；老数据 / 没配「尺码管理」
+   * 退回单元格自带的文本；都没有就留空 —— 调用方据此**不拼「码」**。
+   * ⚠️ 配品没有尺码关联，这里会走 catch 分支拿到空串，**不是**错误。
+   * ⚠️ 退回的文本**必须是正整数**才算尺码（与 SizeReferenceService.normalizeSize 同一值域）：
+   *    有的接口把关联单元格回成 `['recXXXX']`（只有 record_id、没有文本），
+   *    照单全收就会把 record_id 当尺码拼进群里（`A-2 recXXXX码`）——那比留空更糟。
+   */
+  async resolveDetailSize(detail, detailFields) {
+    try {
+      const entry = await this.getSizeReferences().resolveLinkedCell(detail?.fields?.[detailFields?.size]);
+      return entry?.size === undefined || entry?.size === null ? '' : String(entry.size);
+    } catch (error) {
+      const fallback = textValue(detail?.fields?.[detailFields?.size]).trim();
+      return /^[1-9]\d*$/.test(fallback) ? fallback : '';
+    }
   }
 
   async paymentMethodNames() {

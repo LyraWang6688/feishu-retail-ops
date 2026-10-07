@@ -10,6 +10,12 @@ const SELLABLE_KINDS = Object.freeze({
     label: '鞋',
     // 销售明细里指向这种可售品的字段（语义键，交给 v1BitableSchema 映射成中文列名）。
     detailLinkField: 'product',
+    // 「这一件叫什么」——给**只读展示**用的表与字段（同样是语义键，见 v1BitableSchema）：
+    // 鞋的货号在「货品信息.货号」；配品没有货号，用的是「其他配品.名称」。
+    // 2026-10-07 加：待处理单推送要按「货号 + 尺码」显示每一条，
+    // 展示侧因此不该自己写死「product / itemNo」这种映射（换一种可售品就得改展示代码）。
+    detailTableKey: 'product',
+    detailLabelField: 'itemNo',
     requiresSize: true,
     tracksInventory: true,
     requiresFulfillment: true,
@@ -17,6 +23,8 @@ const SELLABLE_KINDS = Object.freeze({
   accessory: Object.freeze({
     label: '配品',
     detailLinkField: 'accessory',
+    detailTableKey: 'accessory',
+    detailLabelField: 'name',
     requiresSize: false,
     tracksInventory: false,
     // 配品当场结清，不参与交付跟踪；明细直接写成已交付，不会进待交付列表。

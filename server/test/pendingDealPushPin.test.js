@@ -33,7 +33,9 @@ const DAY_2_MORNING = new Date('2026-10-07T02:00:00.000Z'); // 第二天 10:00
 
 const ORDER_A = { salesEntryRecordId: 'sale_a', orderNo: 'XSD-A-1', pendingAmount: 1280 };
 
+// ⚠️ 文案 / 模板的默认值**只有一处**（config/pendingDealPush）：先取一遍默认值再覆盖。
 const settings = (overrides = {}) => ({
+  ...resolvePendingDealPushConfig({}),
   enabled: true,
   chatId: CHAT_ID,
   hour: 9,
