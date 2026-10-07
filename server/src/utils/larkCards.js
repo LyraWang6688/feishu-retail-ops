@@ -537,7 +537,11 @@ const purchaseRequestConfirmationCard = (draftId, draft) => {
 // `rounds` 是她说的原话（按时间顺序），`rows` 是按她的话算出来的**实际到货**明细
 // （货号 / 颜色 / 尺码 / 实际双数）。卡片上把差异写清楚，她点「是」之前还能核对一遍。
 // 文案从配置读（见 config/arrivalConversation.js），改文案不碰逻辑。
-const arrivalReconcileLines = (rows = [], differences = []) => {
+//
+// ⭐ 2026-10-07 业务负责人纠正：「**如果这个尺码算下来为 0，那么就不用入库啊！**」
+//   ⇒ `实际 = 0` 的行**不再是错误**：卡片上如实写「申请 N 双 → 实际 0 双（这双没到）」
+//     （那句 `zeroActualNote` 可配），并在有 0 行时补一句 `zeroRowsNote` 说明它们不入库。
+const arrivalReconcileLines = (rows = [], differences = [], copy = {}) => {
   // 差异说明按「货号+颜色+尺码」索引：同一行可能既有多又有少，逐条写出来。
   const diffByKey = new Map();
   for (const item of differences) {
@@ -545,16 +549,22 @@ const arrivalReconcileLines = (rows = [], differences = []) => {
     if (!diffByKey.has(key)) diffByKey.set(key, []);
     diffByKey.get(key).push(item);
   }
+  const zeroNote = text(copy.zeroActualNote) || '这双没到，不入库';
   return rows.map((row) => {
     const key = `${text(row.item_no)}|${text(row.color)}|${Number(row.size)}`;
     const diffs = diffByKey.get(key) || [];
+    const actual = Number(row.actual);
+    const head = `**${text(row.item_no) || '（未知货号）'}** ${text(row.color)} ${Number(row.size)} 码：申请 ${Number(row.quantity)} 双 → 实际 ${actual} 双`;
+    // 0 双的行不写"实际比申请少 N 双"那句差异说明 —— 对她说的是"这双没到"，
+    // 说了几句都一样的意思反而看不清（她要一眼看出"哪双没到"）。
+    if (actual === 0) return `${head}（${zeroNote}）`;
     const parts = diffs.map((item) => {
       if (item.type === 'more') return `实际比申请多 ${item.quantity} 双`;
       if (item.type === 'less') return `实际比申请少 ${item.quantity} 双`;
       return '实际与申请一致';
     });
     const detail = parts.length ? parts.join('；') : '（未特别说明，按申请数）';
-    return `**${text(row.item_no) || '（未知货号）'}** ${text(row.color)} ${Number(row.size)} 码：申请 ${Number(row.quantity)} 双 → 实际 ${Number(row.actual)} 双（${detail}）`;
+    return `${head}（${detail}）`;
   });
 };
 
@@ -562,8 +572,13 @@ const purchaseArrivalReconcileCard = ({ taskId, batchNo = '', rows = [], differe
   const elements = [];
   if (batchNo) elements.push({ tag: 'markdown', content: `**报货批次号：** ${text(batchNo)}` });
   elements.push({ tag: 'markdown', content: `**${text(copy.summaryHeading) || '按你说的实际到货'}**` });
-  const lines = arrivalReconcileLines(rows, differences);
+  const lines = arrivalReconcileLines(rows, differences, copy);
   elements.push({ tag: 'markdown', content: lines.length ? lines.join('\n') : '（这批没有可核对的申请明细）' });
+  // ⭐ 有 `实际 = 0` 的行时补一句说明（说清"这些行不入库"）—— 只在真的有 0 行时出现，
+  //    没有 0 行的卡片与改动前逐字一致（既有断言不受影响）。
+  if (rows.some((row) => Number(row.actual) === 0) && copy.zeroRowsNote) {
+    elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: text(copy.zeroRowsNote) }] });
+  }
   // 「是」「否」两个按钮走 column_set：手机上一行两列（见 buttonColumns 的注释）。
   elements.push(buttonColumns([
     actionButton(text(copy.confirmLabel) || '是', ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, taskId, 'primary'),

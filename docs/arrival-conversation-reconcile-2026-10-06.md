@@ -12,6 +12,16 @@
 > ——不然的话，之前谈好的事情，你上下文一压缩就忘记了，**跟一个失忆的人一样**」。
 >
 > ⚠️ 业务口径**不进 `AGENTS.md`**（她定过这条）；本文件与 `AGENTS.md` 的分工照旧。
+>
+> 🔴 **2026-10-07 修正（只收窄一条）**：本文第 1 节她说的「**实际到货不会为 0**」，
+> 与第 2 节 ① / 第 3.3 节的「**不为「实际为 0」写规则**」，
+> 已被她当天的当面纠正**收窄**（逐字）：
+> 「**如果这个尺码算下来为 0，那么就不用入库啊！**」
+> ⇒ **单个尺码算出来 `实际 = 0` 是正常结果**：该行**不入库**、**但不阻断整单**；
+> 差异**类型**仍然只有三类（一样/多/少），本条修正**只**动"实际数量能不能是 0"。
+> 口径见 [arrival-zero-arrived-rule-2026-10-07.md](arrival-zero-arrived-rule-2026-10-07.md)，
+> 实现与验收见 [reports/arrival-zero-actual-2026-10-07.md](reports/arrival-zero-actual-2026-10-07.md)。
+> **本文其余内容（含她 2026-10-06 的原话）按当时事实保留。**
 
 ---
 
@@ -42,7 +52,7 @@
 
 | # | 要点 | 落在哪 |
 |---|---|---|
-| ① | **差异只有三类**：完全一样 / 实际比申请多 / 实际比申请少。她用**自然语言**说（字眼不固定），由 **AI 解析出"哪一类 + 具体数字"**。**不为"实际为 0"设计任何规则**（她明确说不会为 0） | `services/doubaoService.js#parseArrivalReconciliation` · `services/purchaseArrivalConversationService.js#buildPlan` |
+| ① | **差异只有三类**：完全一样 / 实际比申请多 / 实际比申请少。她用**自然语言**说（字眼不固定），由 **AI 解析出"哪一类 + 具体数字"**。**不为"实际为 0"设计任何规则**（她明确说不会为 0）⚠️ **2026-10-07 已收窄：`实际 = 0` 是正常的、该行不入库但不阻断整单**（见文首修正） | `services/doubaoService.js#parseArrivalReconciliation` · `services/purchaseArrivalConversationService.js#buildPlan` |
 | ② | **「单据信息」（= 采购申请表）一个字都不动**。原 `confirmArrivalLocked` 会回写 `arrivalStatus` → **已移除**，并由测试**断言钉住** | `services/purchaseWebhookService.js#confirmArrivalLocked` · `test/arrivalConversation.test.js`（用例「点「是」④」+「④-补」） |
 | ③ | 她说「完毕」→ **AI 判断这个意图**（不是关键词匹配）→ **发卡片**；卡片上**必须有「是」和「否」两个按钮** | `test/arrivalConversation.test.js`（用例「说「完毕」→ …「是」和「否」两个按钮」） |
 | ④ | **「到货日」不由代码写**——它是飞书自动字段。「否」点了怎么办她没说 → **只回一句「好，那先不入库」，一个字不写、不改任何表**，并在 PR 里标注待她定 | 见第 4 节（真表结论）· `purchaseArrivalConversationService.js#rejectLocked` |
@@ -76,7 +86,9 @@
 
 - [x] 重复点「是」/ 重复投递 → **幂等**，不重复入库
 - [x] 点「否」→ **零写入**，回一句话
-- [x] **不为"实际为 0"写规则**（她说不会发生；算出来不是正数时一律不入库、回一句让她重说）
+- [x] ~~**不为"实际为 0"写规则**（她说不会发生；算出来不是正数时一律不入库、回一句让她重说）~~
+  ⚠️ **2026-10-07 收窄**：`实际 = 0` **放行**（该行不入库、不阻断整单）；仍然拒绝的是**负数**。
+  见 [reports/arrival-zero-actual-2026-10-07.md](reports/arrival-zero-actual-2026-10-07.md)。
 - [x] 采购**退货**单的话题不走到货核对（同群同话题，靠映射里的 `batch_kind` 区分）
 - [x] 读不到采购申请明细 / 模型失败 → 不猜、不写、不回错误刷屏
 

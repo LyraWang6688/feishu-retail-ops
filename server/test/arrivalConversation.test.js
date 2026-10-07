@@ -12,7 +12,8 @@
  *   □ 「单据信息」（采购申请表）一个字都没变 —— **断言钉住，不是文档里说说**
  *   □ 重复点「是」→ 幂等
  *   □ 点「否」→ 零写入 + 一句话
- *   □ 不为「实际为 0」写规则
+ *   □ ⭐「某尺码实际到 0 双」是**正常情况**（2026-10-07 她纠正）：那行不入库、不阻断整单
+ *   □ 「真对不上明细」与「算出来是负数」各自有自己的提示，**不与 0 双混为一谈**
  *
  * 测试栈：**真的**跑 `PurchaseWebhookService.confirmArrival`（入库那一段是既有能力，
  * 不重写、也不打桩），只把"远端"（多维表格 gateway / 库存 / IM）换成记录型的假实现，
@@ -195,6 +196,25 @@ const cardButtons = (card) => (card.elements || [])
   .filter((element) => element.tag === 'button')
   .map((button) => ({ label: button.text.content, action: button.value.action }));
 
+/**
+ * 结构化日志的出口就是 console.log/warn/error（src/utils/logger.js）。
+ * 捕获它们才能断言"哪些行没入库"这类**正向证据**（沿用 purchaseWebhookService.test.js 的范式）。
+ * ⚠️ 用完必须 restore()（放在 finally 里）。
+ */
+const captureLogs = () => {
+  const lines = [];
+  const originals = { log: console.log, warn: console.warn, error: console.error };
+  const capture = (...args) => { lines.push(args.map((value) => String(value)).join(' ')); };
+  console.log = capture;
+  console.warn = capture;
+  console.error = capture;
+  return {
+    lines,
+    events: (event) => lines.filter((line) => line.includes(`"event":"${event}"`)),
+    restore: () => { console.log = originals.log; console.warn = originals.warn; console.error = originals.error; },
+  };
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
 // □ 核对期间（还没点「是」）
 // ═══════════════════════════════════════════════════════════════════════════
@@ -300,20 +320,36 @@ test('三类差异④：她说的话对不上明细 → 不入库、不发卡片
   assert.equal(harness.replied[0].options.threadId, 'omt_1');
 });
 
-test('三类差异⑤：**不为「实际为 0」写规则** —— 算出来不是正数就拒绝入库（不猜、不写负数）', async () => {
-  // 她说"少 5 双"（申请只有 2 双）——真实口径是"实际到货不会为 0"，所以这不是业务场景，
-  // 而是"她说的话算不出正数"的输入错误：一律不入库。
-  const harness = makeHarness({
-    responses: [{ complete: true, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 5 }] }],
-  });
-  const result = await harness.service.handleTopicMessage({
-    batch: defaultBatch(), text: '38 码少 5 双', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1',
-  });
+test('三类差异⑤：**算出来是负数** → 不入库、不发卡片，回一句让她重说（不放行、也不静默当 0）', async () => {
+  // 她说"少 5 双"，而这一行只申请了 2 双 ⇒ 实际 = −3。这不是"她没对上行"，
+  // 而是**数字对不上**（口误/听错）：既不放行、也不夹成 0（夹成 0 = 替她编一行"没到"），
+  // 回一句**明确说算出来是负数**的话让她重说 —— 与「实际 0 双」（正常、放行）分开。
+  // ⚠️ 2026-10-07 的口径只放宽了 `实际 = 0`；负数这条闸门**一个字没动**（reason 取值也没改）。
+  const logs = captureLogs();
+  try {
+    const harness = makeHarness({
+      responses: [{ complete: true, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 5 }] }],
+    });
+    const result = await harness.service.handleTopicMessage({
+      batch: defaultBatch(), text: '38 码少 5 双', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1',
+    });
 
-  assert.equal(result.plan_ok, false);
-  assert.equal(result.reason, 'actual_not_positive');
-  assert.equal(harness.gateway.writes.length, 0);
-  assert.equal(harness.cards.length, 0);
+    assert.equal(result.plan_ok, false);
+    assert.equal(result.reason, 'actual_not_positive');
+    assert.equal(harness.gateway.writes.length, 0);
+    assert.equal(harness.cards.length, 0);
+    // 回话是"负数"那句，**不是**"对不上明细"那句（货号/尺码其实对上了）。
+    assert.equal(harness.replied.length, 1);
+    assert.match(harness.replied[0].content, /负数/);
+    assert.equal(harness.replied[0].content.includes('对不上这批采购申请的明细'), false);
+    // 两个"不算数"的日志事件分开：负数走 plan_negative，真 unmatched 走 plan_unmatched。
+    assert.equal(logs.events('purchase.arrival.reconcile.plan_negative').length, 1);
+    assert.equal(logs.events('purchase.arrival.reconcile.plan_unmatched').length, 0);
+    // 也不该留下"0 双放行"的痕迹（这一步根本没算到卡片）。
+    assert.equal(logs.events('purchase.arrival.reconcile.plan_zero_actual').length, 0);
+  } finally {
+    logs.restore();
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -566,6 +602,201 @@ test('点「否」之后再点「是」→ 仍然按她的显式指令入库（�
 
   assert.match(result.toast.content, /已按实际到货入库/);
   assert.equal(writesTo(harness.gateway, 'purchaseArrival').filter((item) => item.op === 'create').length, 1);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// □ ⭐ 2026-10-07：「某尺码实际到 0 双」是正常情况 —— 那行不入库，但不阻断整单
+//    （业务负责人原话：「**如果这个尺码算下来为 0，那么就不用入库啊！**」）
+//    口径：docs/arrival-zero-arrived-rule-2026-10-07.md
+//    验收标准与逐条对照：docs/reports/arrival-zero-actual-2026-10-07.md
+// ═══════════════════════════════════════════════════════════════════════════
+
+const PRODUCT_3 = 'prod_3';
+
+// 12 行 = 3 个货品 × 4 个尺码（37–40），**每行申请 1 双** —— 与 2026-10-07 真机现场同形：
+// 她说「8230黑色少一双38码 / 93827黑色少39 40码各一双」，那三行申请数都是 1 双 ⇒ 实际 0 双。
+const TWELVE_ROWS = [PRODUCT_1, PRODUCT_2, PRODUCT_3].flatMap((productId, productIndex) =>
+  [37, 38, 39, 40].map((size) => ({ record_id: `req_${productIndex}_${size}`, productId, size })));
+
+const twelveRowRecords = () => ({
+  purchaseOrderBatch: [{ record_id: BATCH_RECORD_ID, fields: { 报货批次号: BATCH_NO } }],
+  product: [
+    { record_id: PRODUCT_1, fields: { 货号: 'XHB8095', 颜色: '黑' } },
+    { record_id: PRODUCT_2, fields: { 货号: 'XHB8096', 颜色: '棕' } },
+    { record_id: PRODUCT_3, fields: { 货号: 'XHB8097', 颜色: '白' } },
+  ],
+  purchaseRequest: TWELVE_ROWS.map((row) => ({
+    record_id: row.record_id,
+    fields: {
+      报货批次号: [BATCH_RECORD_ID], 编号: [row.productId], 尺码: sizeLink(row.size), 数量: 1,
+    },
+  })),
+  purchaseArrival: [],
+  purchaseInbound: [],
+});
+
+const twelveRowBatch = () => defaultBatch({ request_ids: TWELVE_ROWS.map((row) => row.record_id) });
+
+// 她这次说的三行差异（各少 1 双 ⇒ 实际 0 双）。三个 (货品,尺码) 都唯一，能一一对上。
+const zeroActualDifferences = () => [
+  { item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 },
+  { item_no: 'XHB8096', color: '棕', size: 39, type: 'less', quantity: 1 },
+  { item_no: 'XHB8096', color: '棕', size: 40, type: 'less', quantity: 1 },
+];
+
+test('0 双①：12 行里 3 行实际 0 双 → 那 3 行一条都不入库、其余 9 行照常，流程走到卡片', async () => {
+  const logs = captureLogs();
+  try {
+    const harness = makeHarness({
+      records: twelveRowRecords(),
+      responses: [{ complete: true, same: false, differences: zeroActualDifferences() }],
+    });
+
+    const result = await harness.service.handleTopicMessage({
+      batch: twelveRowBatch(),
+      text: '8230黑色少一双38码\n93827黑色少39 40码各一双\n完毕',
+      messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1',
+    });
+
+    // ① 0 双不是错误提示：正常出卡片；不回任何文字（更不是"对不上明细"那句）。
+    assert.equal(result.card, true, '0 双不许阻断整单：卡照样发');
+    assert.equal(harness.cards.length, 1);
+    assert.deepEqual(harness.replied, [], '0 双不是错误提示，群里不该出现任何提示语');
+    const cardJson = JSON.stringify(harness.cards[0].card);
+    assert.equal(cardJson.includes('对不上'), false, '0 双的情况**不再**出现「对不上明细」那句');
+    // ② 卡片如实：申请 1 双 → 实际 0 双，且看得出来是"这双没到"。
+    assert.equal((cardJson.match(/申请 1 双 → 实际 0 双/g) || []).length, 3, '正好 3 行 0 双');
+    assert.match(cardJson, /这双没到/, '0 的行要看得出来是"这双没到"');
+    assert.match(cardJson, /不入库/, '卡片要说清这些行不入库');
+    // 发卡片本身仍然不是业务表写入。
+    assert.equal(harness.gateway.writes.length, 0);
+
+    const taskId = taskIdForBatch(BATCH_NO);
+    const task = await harness.store.get(taskId);
+    assert.equal(task.plan.length, 12, '12 行都在计划里（含那 3 行 0 双）');
+    assert.deepEqual(
+      task.plan.filter((row) => row.actual === 0).map((row) => [row.product_record_id, row.size]),
+      [[PRODUCT_1, 38], [PRODUCT_2, 39], [PRODUCT_2, 40]],
+    );
+    // ③ 日志：计划阶段就记下"哪几行是 0 双"（可排查）。
+    const zeroPlanLog = logs.events('purchase.arrival.reconcile.plan_zero_actual');
+    assert.equal(zeroPlanLog.length, 1);
+    assert.match(zeroPlanLog[0], /"zero_actual_count":3/);
+    assert.match(logs.events('purchase.arrival.reconcile.card_sent')[0], /"zero_actual_count":3/);
+
+    // ④ 点「是」→ **只有 9 行入库**：3 行 0 双不写「采购入库」、不调库存。
+    logs.lines.length = 0;
+    const confirmed = await harness.service.handleCardAction(
+      { action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: taskId },
+      { context: { open_message_id: 'om_card_1' } }, 'ou_1',
+    );
+
+    const inbounds = writesTo(harness.gateway, 'purchaseInbound').filter((item) => item.op === 'create');
+    assert.equal(inbounds.length, 9, '12 行里只有 9 行写「采购入库」（0 双的 3 行一条都不写）');
+    const zeroKeys = new Set([`${PRODUCT_1}|38`, `${PRODUCT_2}|39`, `${PRODUCT_2}|40`]);
+    const expectedKeys = TWELVE_ROWS
+      .map((row) => `${row.productId}|${row.size}`)
+      .filter((key) => !zeroKeys.has(key))
+      .sort();
+    assert.deepEqual(
+      harness.inventory.calls.map((call) => `${call.productRecordId}|${call.size}`).sort(),
+      expectedKeys,
+      '库存只加在 9 行上：0 双的行一次都不加（= 不写库存流水）',
+    );
+    assert.equal(harness.inventory.calls.length, 9);
+    for (const inbound of inbounds) {
+      assert.equal(inbound.values['数量'], 1, '入库数量 = **实际数量**（不是差异数、不是申请数）');
+    }
+    // 0 双的行不许出现在入库行里。
+    for (const inbound of inbounds) {
+      assert.equal(zeroKeys.has(`${inbound.values['编号'][0]}|${SIZE_RECORDS
+        .find((record) => record.record_id === inbound.values['尺码'][0]).fields['尺码']}`), false);
+    }
+
+    // ⑤ 该写的照旧：批次级「采购到货」一行 + 收尾；「单据信息」一个字没写；流程不卡。
+    assert.equal(writesTo(harness.gateway, 'purchaseArrival').filter((item) => item.op === 'create').length, 1);
+    assert.deepEqual(writesTo(harness.gateway, 'purchaseRequest'), [],
+      '「单据信息」一个字都不许变（既有口径，0 双这件事也不例外）');
+    assert.equal((await harness.store.get(taskId)).status, 'posted', '流程不卡：正常收尾');
+    assert.equal(harness.replied.length, 1, '收尾在群里回一句结果');
+    assert.match(harness.replied[0].content, /共 9 双/);
+    assert.match(harness.replied[0].content, /3 条实际 0 双（没到）/);
+
+    // ⑥ 日志（正向证据）：那 3 行**没有**入库、**没有**动库存 —— 有地方可核。
+    const skippedLog = logs.events('purchase.arrival.reconcile.zero_actual_skipped');
+    assert.equal(skippedLog.length, 1);
+    assert.match(skippedLog[0], /"zero_actual_count":3/);
+    assert.match(skippedLog[0], /"inbound_rows_written":0/);
+    assert.match(skippedLog[0], /"inventory_apply_calls":0/);
+    const postedLog = logs.events('purchase.arrival.reconcile.posted');
+    assert.match(postedLog[0], /"posted_row_count":9/);
+    assert.match(postedLog[0], /"skipped_zero_count":3/);
+    // 这条链路的红线：入库全程对「单据信息」零写入。
+    assert.match(postedLog[0], /"purchase_request_writes":0/);
+    assert.equal(confirmed.toast.type, 'success');
+  } finally {
+    logs.restore();
+  }
+});
+
+test('0 双②：整批都是 0 双（一件都没到）→ 一条入库 / 库存流水都不写，但流程不卡', async () => {
+  // 边界：把"每行 0 双不入库"这条规则用到全部行上。她没明说这个场景，
+  // 但"不写入库"恰恰是正确结果；唯一要小心的是**不能**回成"已入库 0 条"含糊过去。
+  const harness = makeHarness({
+    responses: [{
+      complete: true,
+      same: false,
+      differences: [
+        { item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 2 },
+        { item_no: 'XHB8095', color: '黑', size: 39, type: 'less', quantity: 2 },
+      ],
+    }],
+  });
+  const taskId = taskIdForBatch(BATCH_NO);
+  await harness.service.handleTopicMessage({
+    batch: defaultBatch(), text: '这单货这么久了，一双都没到，完毕', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1',
+  });
+
+  assert.equal(harness.cards.length, 1);
+  assert.equal((JSON.stringify(harness.cards[0].card).match(/实际 0 双/g) || []).length, 2);
+
+  const result = await harness.service.handleCardAction(
+    { action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: taskId },
+    { context: { open_message_id: 'om_card_1' } }, 'ou_1',
+  );
+
+  assert.equal(writesTo(harness.gateway, 'purchaseInbound').length, 0, '一件都没到 → 一条入库行都没有');
+  assert.equal(harness.inventory.calls.length, 0, '一件都没到 → 一次库存都不加');
+  assert.equal(writesTo(harness.gateway, 'purchaseArrival').filter((item) => item.op === 'create').length, 1,
+    '批次级「采购到货」照旧一行');
+  assert.deepEqual(writesTo(harness.gateway, 'purchaseRequest'), []);
+  assert.equal((await harness.store.get(taskId)).status, 'posted', '不卡单：照常收尾');
+  assert.match(result.toast.content, /一件都没到/);
+  assert.equal(result.toast.content.includes('已按实际到货入库'), false, '不许含糊成"已入库 0 条"');
+});
+
+test('0 双③：0 双的两句卡片文案 + 收尾回话都来自配置（改文案不碰逻辑）', async () => {
+  const harness = makeHarness({
+    responses: [{ complete: true, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 2 }] }],
+    config: {
+      card: { zeroActualNote: '零双·自定义', zeroRowsNote: '零行说明·自定义' },
+      summary: { postedWithZero: '自定义回话：{zeroCount} 条没到、没有入库' },
+    },
+  });
+  const taskId = taskIdForBatch(BATCH_NO);
+  await harness.service.handleTopicMessage({
+    batch: defaultBatch(), text: '38 码一双都没到，完毕', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1',
+  });
+
+  const cardJson = JSON.stringify(harness.cards[0].card);
+  assert.match(cardJson, /零双·自定义/);
+  assert.match(cardJson, /零行说明·自定义/);
+
+  const result = await harness.service.handleCardAction(
+    { action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: taskId },
+    { context: { open_message_id: 'om_card_1' } }, 'ou_1',
+  );
+  assert.equal(result.toast.content, '自定义回话：1 条没到、没有入库');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
