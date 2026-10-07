@@ -9,7 +9,7 @@
 //    走**真实的 `V1ReferenceResolver`**（= 真机链路）—— 「货品状态」是「货品信息」
 //    那条记录上的**真字段**，只有走真 resolver 才测得到"谁给候选、谁带状态"。
 //
-// 验收标准（先写、后做、逐条对照）见 `docs/sales-color-candidate-scope-2026-10-07.md`。
+// 验收标准（动手前逐条列出、实现后逐条对照；落档）见 `docs/sales-color-candidate-scope-2026-10-07.md`。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -30,7 +30,7 @@ process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKE
 const GROUP_CHAT_ID = 'oc_test_group';
 
 // ── 假 Base（形状照 `salesPrepaidColorResolution.test.js`：字段名走 schema）──
-const fakeBase = ({ products = [], liveInventory = [], productIndexRows = null } = {}) => {
+const fakeBase = ({ products = [], liveInventory = [] } = {}) => {
   const records = new Map([
     ['product', products],
     ['liveInventory', liveInventory],
@@ -66,8 +66,6 @@ const fakeBase = ({ products = [], liveInventory = [], productIndexRows = null }
     listAll: async (key) => {
       reads.total += 1;
       if (key in reads) reads[key] += 1;
-      // 产品索引那条路（`productIndexRows` 传了才有）与解析 A 走的是同一个键。
-      if (key === 'product' && productIndexRows) return productIndexRows;
       return records.get(key) || [];
     },
     get: async (key, id) => (records.get(key) || []).find((row) => row.record_id === id),
@@ -109,13 +107,13 @@ const makeStore = () =>
 // `rawParsed=true`：解析结果**原样**交给服务（不经过 `normalizeSalesResult` 的归一化），
 // 用来构造"服务拿到一个映射不到编码的交易类型"这条边界。
 const runSale = async ({
-  taskId, text, parsed, products = [], liveInventory = [], productIndexRows = null, rawParsed = false,
+  taskId, text, parsed, products = [], liveInventory = [], rawParsed = false,
 }) => {
   const store = makeStore();
   const cards = [];
   const messages = [];
   const logs = [];
-  const gateway = fakeBase({ products, liveInventory, productIndexRows });
+  const gateway = fakeBase({ products, liveInventory });
   const service = new LarkMvpService({
     client: {},
     gateway,
