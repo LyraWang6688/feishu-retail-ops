@@ -128,18 +128,6 @@ const groupEvent = (overrides = {}) => ({
   },
 });
 
-const privateEvent = (overrides = {}) => ({
-  sender: { sender_id: { open_id: overrides.senderOpenId || 'ou_sender' } },
-  message: {
-    message_id: overrides.messageId || 'om_private_return',
-    chat_id: 'oc_private',
-    chat_type: 'p2p',
-    message_type: 'text',
-    create_time: '1000',
-    content: JSON.stringify({ text: overrides.text || '' }),
-  },
-});
-
 const flushSalesTasks = async (service, openId = 'ou_sender') => {
   await new Promise((resolve) => setImmediate(resolve));
   await service.enqueueForSender(openId, async () => undefined);
@@ -212,31 +200,37 @@ test('话题里点确认 → 结果卡片也回到**同一个话题**（更新�
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ⭐ 私聊回归：一个字都不变
+// 🔴 原「私聊回归：一个字都不变」那 2 条 —— 私聊入口已整体删除，
+//    按业务负责人 2026-10-07 拍板的 ⓐ（代码里一行私聊都不留）**迁到群入口**：
+//    输入改成「群消息」、断言改成「回到那条消息的话题（reply_in_thread: true）」。
+//    见 docs/private-chat-removal-decision-2026-10-07.md。
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('回归：私聊说「退那双 1366-33」→ 卡片**不带** reply_in_thread，候选也不限定某笔销售', async () => {
+test('群入口（主群 @ 机器人）：说「退那双 1366-33」→ 卡片**回到那条消息的话题**，候选也不限定某笔销售', async () => {
   const { service, replies, lookup } = makeHarness();
 
-  const accepted = await service.acceptMessage(privateEvent({ messageId: 'om_p2p_return', text: '退那双 1366-33' }));
+  const accepted = await service.acceptMessage(groupEvent({
+    messageId: 'om_group_return', text: '@_user_1 退那双 1366-33',
+  }));
   assert.equal(accepted.accepted, true);
+  assert.equal(accepted.mode, 'new');
   await flushSalesTasks(service);
 
-  // 私聊任务上没有群聊/话题字段；候选查询**不**带 salesEntryRecordId（与改动前逐字相同）
-  const task = await service.store.get(accepted.taskId);
-  assert.equal(task.chat_type, undefined);
-  assert.equal(task.sales_entry_record_id, undefined);
+  // 主群新开一笔 → 还没绑定到某笔销售，所以候选查询**不**带 salesEntryRecordId
+  //（与"没有话题上下文"时逐字相同）。
+  const task = await service.store.get(accepted.sales.taskId);
+  assert.equal(task.chat_type, 'group');
+  assert.equal(task.sales_entry_record_id, '');
   assert.equal(lookup.calls.length, 1);
   assert.equal(lookup.calls[0].salesEntryRecordId, '');
 
   const cards = interactiveReplies(replies);
   assert.equal(cards.length, 1);
-  assert.equal(cards[0].path.message_id, 'om_p2p_return');
-  assert.equal(cards[0].data.reply_in_thread, undefined,
-    '私聊的 payload 与改动前逐字相同：一个字段都不许多');
+  assert.equal(cards[0].path.message_id, 'om_group_return');
+  assert.equal(cards[0].data.reply_in_thread, true, '群入口的卡片一律回复进那条话题');
 });
 
-test('回归：私聊的售后文字问句仍然**主动发她私聊**（sendText，reply 那条是老行为，不许变）', async () => {
+test('群入口：售后的文字问句**回到那条消息的话题**（reply + reply_in_thread）', async () => {
   // 换货缺"换成哪一双" → 走 ask() → 文字端口。
   const { service, replies } = makeHarness();
   const parse = () => normalizeSalesResult({
@@ -244,15 +238,13 @@ test('回归：私聊的售后文字问句仍然**主动发她私聊**（sendTex
   });
   service.recognizer.parseSalesText = async () => parse();
 
-  await service.acceptMessage(privateEvent({ messageId: 'om_p2p_exchange', text: '换那双 1366-33' }));
+  await service.acceptMessage(groupEvent({ messageId: 'om_group_exchange', text: '@_user_1 换那双 1366-33' }));
   await flushSalesTasks(service);
 
   const ask = replies.find((item) => item.data.msg_type === 'text');
   assert.ok(ask, '缺信息时要回一句问她');
-  // ⚠️ 私聊的文字走 `im.message.create`（主动发她私聊），**不是** reply 那条消息，
-  //    也不是带 reply_in_thread 的话题回复 —— 与改动前逐字相同。
-  assert.equal(ask.direct, true);
-  assert.equal(ask.path.message_id, '');
-  assert.equal(ask.data.receive_id, 'ou_sender');
-  assert.equal(ask.data.reply_in_thread, undefined);
+  // ⚠️ 群入口的文字走 `reply_in_thread`：回复她那条消息、落在**同一个话题**里
+  //    （不是另开一条主动消息）。
+  assert.equal(ask.path.message_id, 'om_group_exchange');
+  assert.equal(ask.data.reply_in_thread, true);
 });

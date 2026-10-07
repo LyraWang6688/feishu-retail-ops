@@ -160,14 +160,26 @@
    证据：`test/groupThreadReplyRouting.test.js` 两条新用例（端口不是缺省回落；群任务
    `reply_in_thread: true`、私聊仍是 `im.message.create` 给本人）。
 
-**⏳ 还没切（剩下的都是"私聊入口专属"或没有群上下文）**
-- `sampleReplacementService.notifySampleReplacements`（5.1 #4）：补样品**提醒**，
-  触发方（网页工作台 / 销售确认卡片）**没有群上下文**，本来就只能发私聊。
-- **私聊入口专属**（跟私聊一起删，不单独改）：`larkMvpService.sendTodaySales`（菜单「今日销售」）、
-  `acceptMessage` 的 `p2p` 分支两条非文字/空文字提示、`routes/larkEvents.js` 的
-  `application.bot.menu_v6` 分支（含失败兜底 `sendText(openId, …)`）。
-- **死代码**：`purchaseWebhookService.sendCard(openId, card)` 全仓无调用点
-  （注释写着"要回滚成确认卡片就换回它"），删私聊时可以顺手清。
+**🔴 2026-10-07 收口：私聊【入口】也删了 —— 本节的"还没切"全部落地**
+（**方式**是业务负责人拍板的 ⓐ「代码里一行私聊都不留，测试全部迁到群聊入口」，
+见 [private-chat-removal-decision-2026-10-07.md](private-chat-removal-decision-2026-10-07.md)；
+验收标准、实现与测试证据见 [private-chat-removal-2026-10-07.md](private-chat-removal-2026-10-07.md)）
+
+> 业务负责人口径（逐字）：「**以后私聊这条链路我们就没有了**」。
+
+| 本节原来的"还没切" | 处置 |
+| --- | --- |
+| `sampleReplacementService.notifySampleReplacements`（5.1 #4，补样品**提醒**，触发方没有群上下文） | ✅ **加了渠道感知入参** `channelTask`：群销售 → 卡片回到**那条销售话题**；没有群上下文（工作台触发）→ **不发私聊**，改记 `lark.private_chat.send_skipped`（`reason: no_group_context`）。⚠️ **有意的行为变化**：不再静默发私聊。顺带把这个 service 的 `sendCard` / `sendText` 两个 open_id 发送器**整体删除** |
+| `larkMvpService.sendTodaySales`（菜单「今日销售」） | ✅ **已删**（连 `todaySalesCard` / `shanghaiDay` / 那个 workbench require 一起）。要看今日销售去工作台「销售查询」 |
+| `acceptMessage` 的 `p2p` 分支两条非文字/空文字提示 | ✅ **整段删掉**：私聊（以及一切非群聊）消息**只记一条 `lark.private_chat.disabled` 日志**、**一条消息都不回** —— 没有"统一回一句文案"这回事（那要留开关，已被否） |
+| `routes/larkEvents.js` 的 `application.bot.menu_v6` 分支 | ✅ **已删**（含失败兜底的 `sendText(openId, …)`） |
+| **死代码**：`purchaseWebhookService.sendCard(openId, card)`（全仓无调用点） | ✅ **已删**（`PurchaseWebhookService.prototype.sendCard === undefined`） |
+
+**私聊入口现在的形态**：**没有开关**（`config/privateChat.js` 不存在，`PRIVATE_CHAT_*` 刻意不引入）。
+"没有群上下文的任务 = 没有去处"那条防御分支只记 `lark.private_chat.send_skipped` 并返 `null`。
+**历史用例（拿私聊当入口/出口测下游的那 ~26 条）已逐条迁到「群聊 + 话题」入口**
+（输入改成群消息、断言改成 `reply_in_thread: true`），测试 helper 已删除 —— 覆盖没丢。
+
 
 ⇒ **开工记录（本次）**：`git worktree list` 显示这 3 个文件仍被 7 条**未合并分支**碰过
 （`feat/after-sales-thread`、`feat/arrival-conversation-flow`、`feat/sales-status-dimensions-write`、

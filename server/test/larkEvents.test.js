@@ -145,7 +145,11 @@ test('① 卡片动作失败 → 同样不发私聊（也不再抛出去）', as
     '同步响应照旧 —— 她点按钮不会觉得"点不动"');
 });
 
-test('① 私聊既有行为逐字不变：非文字消息仍然回同样那一条私聊文字', async () => {
+test('① 私聊链路已移除：非文字消息**一条消息都不发**（只记一条日志）', async () => {
+  // 🔴 2026-10-07「私聊链路移除」：这条用例原来钉的是「私聊既有行为逐字不变：
+  //    非文字消息仍然回同样那一条私聊文字」。私聊入口已整体删除（业务负责人拍板的 ⓐ：
+  //    代码里一行私聊都不留，见 docs/private-chat-removal-decision-2026-10-07.md），
+  //    所以断言反过来：私聊消息**不建任务、不跑链路、也不回任何消息**。
   const { client, patched, created } = createCountingClient();
   const service = createRealService(client);
 
@@ -157,15 +161,20 @@ test('① 私聊既有行为逐字不变：非文字消息仍然回同样那一�
     },
   });
 
-  assert.equal(result.reason, 'unsupported_message_type');
-  // 私聊那条路一个字节都没动：仍然是一条 `open_id` 收件人的纯文字，文案逐字相同。
+  assert.equal(result.reason, 'private_chat_removed');
   assert.equal(patched.length, 0, '私聊这条路不碰卡片更新');
-  assert.equal(created.length, 1);
-  assert.deepEqual(created[0].params, { receive_id_type: 'open_id' });
-  assert.equal(created[0].data.receive_id, 'ou_seller');
-  assert.equal(created[0].data.msg_type, 'text');
-  assert.deepEqual(JSON.parse(created[0].data.content),
-    { text: '机器人当前只接收销售文字；采购请使用采购表单。' });
+  assert.equal(created.length, 0, '私聊不再有任何回执（那条提示链路已经删了）');
+
+  // 文字消息同样：不建任务、不回消息。
+  const text = await service.acceptMessage({
+    sender: { sender_id: { open_id: 'ou_seller' } },
+    message: {
+      chat_type: 'p2p', message_type: 'text', message_id: 'om_p2p_2',
+      content: JSON.stringify({ text: 'A100 38码一双，100元微信' }), create_time: '1759700000001',
+    },
+  });
+  assert.equal(text.reason, 'private_chat_removed');
+  assert.equal(created.length, 0);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -145,18 +145,6 @@ const groupEvent = (overrides = {}) => ({
   },
 });
 
-const privateEvent = (overrides = {}) => ({
-  sender: { sender_id: { open_id: overrides.senderOpenId || 'ou_sender' } },
-  message: {
-    message_id: overrides.messageId || 'om_private_progress',
-    chat_id: 'oc_private',
-    chat_type: 'p2p',
-    message_type: 'text',
-    create_time: '1000',
-    content: JSON.stringify({ text: overrides.text || '' }),
-  },
-});
-
 const flushSalesTasks = async (service, openId = 'ou_sender') => {
   await new Promise((resolve) => setImmediate(resolve));
   await service.enqueueForSender(openId, async () => undefined);
@@ -310,10 +298,15 @@ test('超出待收金额 → 大声拒绝，不写收款（宁可多问一句，
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ⭐ 私聊回归：一个字都不变
+// ⭐ 没有话题上下文 → 不走二次处理（原来是"私聊回归"，已按 ⓐ 迁到群入口）
+//
+// 🔴 2026-10-07「私聊链路移除」：私聊入口已整体删除，断言改成群入口那条
+//    **没有话题上下文**的路 —— 它同样**没有绑定到某笔销售**，所以这句话不该被
+//    当成"那笔的进展"，而应该照旧进 AI 当**新的销售原话**。
+//    见 docs/private-chat-removal-decision-2026-10-07.md。
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('回归：私聊说「收到微信 500」**不走**二次处理 —— 私聊仍然是原来的销售解析', async () => {
+test('群入口（主群、没有话题）：说「收到微信 500」**不走**二次处理 —— 仍然进 AI 当新的销售原话', async () => {
   const gateway = makeGateway({ entry: threadSale(), details: [threadDetail()] });
   let parsed = 0;
   const parsedResult = { intent: 'unsupported', items: [] };
@@ -322,15 +315,18 @@ test('回归：私聊说「收到微信 500」**不走**二次处理 —— 私�
     recognizer: { parseSalesText: async () => { parsed += 1; return parsedResult; } },
   });
 
-  const accepted = await service.acceptMessage(privateEvent({ messageId: 'om_p2p_progress', text: '收到微信 500' }));
+  // 主群（没有 thread_id）、不 @ 机器人：靠正文过闸门 —— 这条消息**没有**绑定到任何一笔销售。
+  const accepted = await service.acceptMessage(groupEvent({ messageId: 'om_group_progressless', text: '收到微信 500' }));
   assert.equal(accepted.accepted, true);
+  assert.equal(accepted.mode, 'new');
   await flushSalesTasks(service);
 
-  assert.equal(parsed, 1, '私聊必须仍然进 AI（不受群聊的二次处理判据影响）');
-  assert.deepEqual(gateway.created, [], '私聊这条链路不会因为这句话写收款明细');
-  const task = await service.store.get(accepted.taskId);
-  assert.equal(task.chat_type, undefined);
-  assert.equal(task.progress_kind, undefined);
+  assert.equal(parsed, 1, '没有话题上下文 → 必须照旧进 AI（不受群聊的二次处理判据影响）');
+  assert.deepEqual(gateway.created, [], '这条链路不会因为这句话写收款明细');
+  const task = await service.store.get(accepted.sales.taskId);
+  assert.equal(task.chat_type, 'group');
+  assert.equal(task.sales_entry_record_id, '', '没有话题上下文 → 不绑定任何一笔销售');
+  assert.equal(task.progress_kind, undefined, '没有定位到销售 → 不该记 progress_kind');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -444,32 +444,10 @@ const sampleReplacementProcessingCard = (productNumber, message) => ({
   elements: [{ tag: 'markdown', content: `${text(productNumber || '该货品')}：${text(message)}` }],
 });
 
-const todaySalesCard = ({ dateLabel, rows, totalQuantity, totalAmount }) => ({
-  config: { wide_screen_mode: true },
-  header: { template: 'blue', title: { tag: 'plain_text', content: `${dateLabel} 销售明细` } },
-  elements: [
-    {
-      tag: 'markdown',
-      content: rows.length
-        ? rows
-            .map(
-              (row, index) =>
-                `${index + 1}. **${text(row.product)}**｜${text(row.size)}码｜×${text(row.quantity)}｜成交金额 ${row.amount == null ? '待录入' : `￥${text(row.amount)}`}｜订单收款方式 ${text(row.paymentMethod)}`
-            )
-            .join('\n')
-        : '今天还没有已确认的销售明细。',
-    },
-    {
-      tag: 'note',
-      elements: [
-        {
-          tag: 'plain_text',
-          content: `共 ${rows.length} 条明细，${text(totalQuantity)} 件；这些订单截至当前累计已收 ￥${text(totalAmount)}`,
-        },
-      ],
-    },
-  ],
-});
+// 🔴 2026-10-07「私聊链路移除」：`todaySalesCard`（机器人菜单「今日销售」那张卡）**已删除**。
+//    它只有**私聊**一个入口（`larkMvpService.sendTodaySales` ← `application.bot.menu_v6` 菜单事件），
+//    两者都已随私聊入口一起删掉；全仓再无调用方。
+//    要看今日销售 → 飞书网页工作台「销售查询」。要用回来：`git log -S 'todaySalesCard'`。
 
 /**
  * 「最近 N 天的销售记录」候选卡片（退换货第一期：只查 + 只展示）。
@@ -935,7 +913,6 @@ module.exports = {
   sampleReplacementCard,
   sampleReplacementStatusCard,
   sampleReplacementProcessingCard,
-  todaySalesCard,
   saleLookupCard,
   afterSalesConfirmationCard,
   afterSalesResultCard,

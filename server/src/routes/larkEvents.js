@@ -86,20 +86,6 @@ const createLarkEventHandlers = (service, { heartbeat } = {}) => ({
     });
     return { toast: { type: 'info', content: '已收到，正在处理' } };
   },
-  'application.bot.menu_v6': (event) => {
-    recordBusinessHeartbeat(heartbeat);
-    const openId =
-      event?.operator?.operator_id?.open_id || event?.operator?.open_id || event?.event?.operator?.operator_id?.open_id;
-    const eventKey = event?.event_key || event?.event?.event_key;
-    logInfo('lark.bot.menu.received', { event_key: eventKey, operator_open_id: openId });
-    setImmediate(() => {
-      service.handleBotMenu(event).catch(async (error) => {
-        logError('lark.bot.menu.failed', { event_key: eventKey, error: error.message });
-        if (openId) await service.sendText(openId, `查询失败：${error.message}`).catch(() => undefined);
-      });
-    });
-    return {};
-  },
   // 多维表格记录变更事件（替代自动化工作流，无运行次数限制）
   'drive.file.bitable_record_changed_v1': (event) => {
     const fileToken = event?.file_token || event?.fileToken;

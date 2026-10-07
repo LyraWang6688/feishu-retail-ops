@@ -129,7 +129,7 @@ test('③ 补样品 / 销售查询的渠道感知出口已接上（不是默认�
   assert.equal(service.saleLookup.sendCardToTask.toString().includes('sendTaskCard'), true);
 });
 
-test('③ 补样品出口：群任务回话题（reply_in_thread），私聊与改动前逐字相同', async () => {
+test('③ 补样品出口：群任务回话题（reply_in_thread）；**没有群上下文的任务一条都不发**', async () => {
   const { service, sent } = makeService();
   const groupTask = {
     task_id: 't_group', type: 'sample_replacement', chat_type: 'group',
@@ -145,18 +145,13 @@ test('③ 补样品出口：群任务回话题（reply_in_thread），私聊与�
   assert.equal(sent[1].path.message_id, 'om_in_group');
   assert.equal(sent[1].data.reply_in_thread, true);
 
-  // 私聊（任务上没有 chat_type）→ 与改动前**逐字相同**：主动发一条新消息给本人，
-  // 不是 reply、也不带 reply_in_thread。
-  const privateTask = { task_id: 't_p2p', type: 'sample_replacement', sender_open_id: 'ou_2' };
-  await service.sampleReplacements.sendCardToTask(privateTask, { header: {} });
-  assert.equal(sent[2].direct, true, '私聊走 create（主动发），不是 reply');
-  assert.equal(sent[2].data.receive_id, 'ou_2');
-  assert.equal(sent[2].data.msg_type, 'interactive');
-  assert.equal(sent[2].data.reply_in_thread, undefined);
-
-  await service.sampleReplacements.sendTextToTask(privateTask, '已收到补样品操作，正在处理，请稍候。');
-  assert.equal(sent[3].direct, true);
-  assert.equal(sent[3].data.receive_id, 'ou_2');
-  assert.equal(sent[3].data.msg_type, 'text');
-  assert.equal(JSON.parse(sent[3].data.content).text, '已收到补样品操作，正在处理，请稍候。');
+  // 🔴 2026-10-07「私聊链路移除」：任务**没有群上下文**（原来那条"私聊"路）→ **没有去处**：
+  //    `sendTaskCard` / `sendTaskText` 只记一条 `lark.private_chat.send_skipped` 并返 `null`，
+  //    **一个远端调用都不做**（这里 `sent` 不再增长就是证据）。
+  //    业务负责人拍板的 ⓐ 是「代码里一行私聊都不留」，见
+  //    docs/private-chat-removal-decision-2026-10-07.md。
+  const noChannelTask = { task_id: 't_no_channel', type: 'sample_replacement', sender_open_id: 'ou_2' };
+  assert.equal(await service.sampleReplacements.sendCardToTask(noChannelTask, { header: {} }), null);
+  assert.equal(await service.sampleReplacements.sendTextToTask(noChannelTask, '已收到补样品操作，正在处理，请稍候。'), null);
+  assert.equal(sent.length, 2, '没有群上下文 → 一条消息都不许发（私聊那条路已经删了）');
 });

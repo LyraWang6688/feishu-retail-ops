@@ -1153,18 +1153,13 @@ class PurchaseWebhookService {
     return `<at user_id="${openId}"></at> ${content}`;
   }
 
-  async sendCard(openId, card) {
-    if (!openId) throw new Error('采购记录缺少经办人 open_id，无法发送确认卡片');
-    const response = await withTimeout(
-      this.client.im.message.create({
-        params: { receive_id_type: 'open_id' },
-        data: { receive_id: openId, msg_type: 'interactive', content: JSON.stringify(card) },
-      }),
-      this.imTimeoutMs,
-      '发送采购确认卡',
-    );
-    if (response.code !== 0) throw new Error(`发送采购确认卡失败: ${response.msg} (Code: ${response.code})`);
-  }
+  // 🔴 2026-10-07「私聊链路移除」：`sendCard(openId, card)` **整段删除**。
+  //    它是「把确认卡片发给经办人私聊」的那条路，**全仓没有调用方**
+  //    （采购申请早已改走群：`sendText(chatId, …, 'chat_id')` / `sendPurchaseGroupNotice`），
+  //    只留了一行注释说"要回滚成确认卡片就换回它"——留给下个读代码的人一个
+  //    "好像还有一条私聊链路"的错觉。要用回来：`git log -S 'sendCard(openId, card)'`。
+  //    ⚠️ 本类里「发消息」的四个方法名字仍然必须各不相同（见下面注释）：JS 类体里
+  //    后定义的同名方法会**静默覆盖**先定义的，git 合并也不报冲突。
 
   // ── 已删除：到货「等待与提示」与失败提示整段 ──────────────────────────────
   // 删掉的有：notifyArrivalReceived / notifyArrivalFailed /
@@ -1178,8 +1173,9 @@ class PurchaseWebhookService {
   // ⚠️ 合并 #57 吃过的那个亏（同类方法静默覆盖）在这里仍然有效，别重新引入：
   // 本类里同时存在语义不同的「发消息」方法时，**名字必须不同**——
   // JS 类体里后定义的同名方法会**静默覆盖**先定义的，git 合并也不报冲突。
-  // 现在有四个：sendCard / sendText / sendImage（失败即抛错）
+  // 现在有三个：sendText / sendImage（失败即抛错）
   // 与 sendPurchaseGroupNotice（发群、失败只记日志、返回 false）。
+  // ⚠️ 原本还有一个 `sendCard`（发经办人私聊的确认卡），已于 2026-10-07 整体删除（见上）。
   //
   // 🔴 2026-10-06「私聊切除」：`sendNoticeText`（发给经办人私聊的事后通知）**已整体删除**——
   // 它唯一的调用点就是采购退货的差额提示，那条现在改走 `sendPurchaseGroupNotice`
@@ -1279,7 +1275,8 @@ class PurchaseWebhookService {
    * ⚠️ 幂等与回滚没有削弱：这里仍然走 confirmPurchaseRequest，
    * 也就是原来那套 posting_plan + createOnceByKey + 幂等键的写法，
    * 只是把"等卡片点确认"换成"解析完直接调用同一个确认函数"。
-   * 要回滚成确认卡片，把这里换回 sendCard(purchaseRequestConfirmationCard(...)) 即可。
+   * 要回滚成"发确认卡片等她点"，`sendCard` 也已随私聊链路一起删除（见上），
+   * 需要的话从 git 历史里取回（`git log -S 'purchaseRequestConfirmationCard'`）。
    */
   async publishPurchaseRequest(taskId, task) {
     // 免确认路径没有卡片消息可更新，明确跳过一次卡片 patch（否则会打无意义的告警日志）。
