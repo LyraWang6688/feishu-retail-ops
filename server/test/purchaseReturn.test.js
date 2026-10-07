@@ -291,7 +291,10 @@ test('A 情况对得上：样品+门盒+仓库全部退掉，一行一个尺码�
     [['8088', '黑色', 36, 1], ['8088', '黑色', 37, 1], ['8088', '黑色', 38, 1]]);
   // 先发图、再写回附件（和采购单同序）
   assert.deepEqual(messages.map((message) => message.data.msg_type), ['image', 'text']);
-  assert.match(textMessages(messages)[0], /金猴 这批 3 条（共 3 双）/);
+  // ⚠️ 2026-10-07：采购申请单与退货单**共用这同一条话术**（同一行代码）⇒ 一起改成"只说双数"。
+  //    末尾 `$` 锚住：整句逐字确定，不靠"包含某段"的宽松写法（3 条明细、合计 3 双）。
+  assert.match(textMessages(messages)[0], /金猴 这批 3 双，图可以直接转给供应商。$/);
+  assert.ok(!textMessages(messages)[0].includes('条'), '「N 条」必须删掉');
   // 对得上时不发差额提醒（图本身就是回执）
   assert.equal(textMessages(messages).length, 1);
   assert.equal(requests.filter((row) => (row.fields.采购申请单 || []).length === 1).length, 1);
@@ -334,7 +337,8 @@ test('货品没维护供应商：退货照常出单（不再整条失败），�
   // 图上**不写供应商**（渲染器据此不画「供应商：」那一段，也不再写「未填写」那种像警告的字样）。
   assert.equal(images.calls[0].supplierName, '', '图上不带供应商');
   // 群消息照发：没有供应商的归到「未标注供应商」这一组，不是失败。
-  assert.match(textMessages(messages)[0], /未标注供应商 这批 1 条（共 1 双）/);
+  // ⚠️ 2026-10-07：只说双数（`$` 锚住整句）。
+  assert.match(textMessages(messages)[0], /未标注供应商 这批 1 双，图可以直接转给供应商。$/);
   assert.match(gw.uploads[0], /退货单\.png$/);
 });
 

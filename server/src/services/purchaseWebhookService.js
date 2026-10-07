@@ -52,6 +52,15 @@ const { getLarkAgentCredentials } = require('../config/larkAgent');
 // 采购单改成发到**群**（业务负责人：「不用再看经办人了」）。
 // 群 id 从配置读，**没有默认值**（见 config/groupPurchase 里的说明）。
 const { resolvePurchaseChatId } = require('../config/groupPurchase');
+// 采购群那条「@经办人 + 供应商名 + 这批 N 双，图可以直接转给供应商。」的**文案**。
+// 2026-10-07 业务负责人逐字：「不用（说）几条，只给出多少双就可以了」⇒ 文案进配置、
+// 逻辑里不写死中文（「N 条」与「共」都已从模板里删掉）。背景见该配置文件头。
+const {
+  resolvePurchaseGroupNoticeConfig,
+  supplierLabel,
+  renderPurchaseGroupNoticeText,
+  renderPurchaseGroupNoticeMention,
+} = require('../config/purchaseGroupNoticeText');
 const { PurchaseBatchLocator } = require('./purchaseBatchLocator');
 // 「这批发到群里的是采购申请单还是采购退货单」的批次类型标记（到货核对靠它区分话题）。
 const { ARRIVAL_BATCH_KINDS } = require('../config/arrivalConversation');
@@ -1199,12 +1208,13 @@ class PurchaseWebhookService {
    *
    * ⚠️ 拿不到经办人 open_id 时**不加 @**（只发正文）：宁可少一个提醒，也不能 @错人，
    *    更不能退回 @所有人。调用方会同时记一条 warn 日志，便于排查"为什么没 @到"。
+   *
+   * ⚠️ 2026-10-07：那段飞书 @ 标记**也进了配置**（`config/purchaseGroupNoticeText` 的
+   *    `mention`，占位符 `{openId}`）—— 这里不再有写死的 `<at …>`。
    */
-  mentionOperatorText(operatorOpenId, content) {
-    const openId = String(operatorOpenId || '').trim();
-    if (!openId) return String(content || '');
-    // 飞书文本消息里的 @ 语法：`<at user_id="ou_xxx"></at>`，名字留空由客户端渲染。
-    return `<at user_id="${openId}"></at> ${content}`;
+  mentionOperatorText(operatorOpenId, content, config = resolvePurchaseGroupNoticeConfig()) {
+    // 拿不到 open_id → 空 @ 前缀（`renderPurchaseGroupNoticeMention` 返回空串）。
+    return `${renderPurchaseGroupNoticeMention(operatorOpenId, config)}${String(content || '')}`;
   }
 
   // 🔴 2026-10-07「私聊链路移除」：`sendCard(openId, card)` **整段删除**。
@@ -1529,10 +1539,16 @@ class PurchaseWebhookService {
         task_id: taskId, chat_id: target.chatId, hint: '未解析出经办人 open_id，这条群消息不会 @任何人',
       });
     }
+    // 群里那条话术的**文案**（含 @ 标记 / 供应商占位 / 双数占位 / 未标注供应商的兜底写法）
+    // 全在 `config/purchaseGroupNoticeText`：**调用时才解析**（不在模块加载时求值）。
+    const noticeConfig = resolvePurchaseGroupNoticeConfig();
     for (const group of this.groupItemsBySupplier(items)) {
       const supplierName = await this.resolveSupplierName(group.supplierRecordId).catch(() => '');
-      const label = supplierName || '未标注供应商';
-      const rowCount = group.items.length;
+      // 供应商名取不到 → 用配置里的兜底写法（默认「未标注供应商」），**绝不编**。
+      const label = supplierLabel(supplierName, noticeConfig);
+      // ⚠️ 双数口径**一个字没动**：还是这一组明细的 `quantity` 求和。
+      //    2026-10-07 只改文案（删掉「N 条」）——`group.items.length`（条数）**不再要了**，
+      //    连那个变量一起删（留着没人读的 `rowCount` 只会让下一个人以为文案里还有条数）。
       const totalPairs = group.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
       let png;
       try {
@@ -1580,9 +1596,16 @@ class PurchaseWebhookService {
         // ⚠️ 第 1 条图没有 `threadRootMessageId`（它就是根）→ 那种情况 `textInThread` 自然是
         //    `false`：顶层 `create` 本来也没有"回复谁 / 进哪个话题"这回事。
         const textInThread = Boolean(threadRootMessageId);
+        // ⚠️ 2026-10-07（业务负责人逐字：「不用说几条，只给出多少双就可以了」）：
+        //    文案从配置渲染 —— `{supplier} 这批 {pairs} 双，图可以直接转给供应商。`
+        //    **没有「N 条」、也没有「共」**；`{pairs}` = 上面那个 `totalPairs`（口径未动）。
         const textResult = await this.sendText(
           target.chatId,
-          this.mentionOperatorText(operatorOpenId, `${label} 这批 ${rowCount} 条（共 ${totalPairs} 双），图可以直接转给供应商。`),
+          this.mentionOperatorText(
+            operatorOpenId,
+            renderPurchaseGroupNoticeText({ label, pairs: totalPairs }, noticeConfig),
+            noticeConfig,
+          ),
           'chat_id',
           { replyToMessageId: threadRootMessageId, inThread: textInThread },
         );

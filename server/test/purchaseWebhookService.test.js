@@ -313,10 +313,15 @@ test('供应商报单免确认：解析完直接生成采购申请、不发确�
   assert.equal(text.data.receive_id, 'oc_test_purchase_group');
   // @经办人：挂在那条文字说明上（图片消息没有正文，@ 只能跟着文字走）。
   // 业务负责人明确改过：不再 @所有人，只 @这条记录的经办人。
+  // ⚠️ 2026-10-07：**不再说「N 条」、也不再「共」**，只给双数（逐字，业务负责人原话
+  //    「不用说几条，只给出多少双就可以了」）。这里**逐字钉住**，不许放宽成正则。
   assert.equal(
     JSON.parse(text.data.content).text,
-    '<at user_id="ou_user_1"></at> 金猴 这批 2 条（共 3 双），图可以直接转给供应商。',
+    '<at user_id="ou_user_1"></at> 金猴 这批 3 双，图可以直接转给供应商。',
   );
+  // 双数口径未变：2 条明细（2 双 + 1 双）⇒ 「这批 3 双」（**不是 2**）。
+  assert.ok(!JSON.parse(text.data.content).text.includes('条'), '「N 条」必须删掉');
+  assert.ok(!JSON.parse(text.data.content).text.includes('共'), '「共」也要去掉');
   assert.ok(!JSON.parse(text.data.content).text.includes('user_id="all"'), '不允许再 @所有人');
 
   // 采购申请直接写出，报单记录进入终态
@@ -425,7 +430,7 @@ test('同一个供应商的多条明细合并成一张图', async () => {
   await waitFor('图片和说明发出', async () => messages.length === 2);
   assert.equal(
     JSON.parse(messages[1].data.content).text,
-    '<at user_id="ou_user_1"></at> 金猴 这批 2 条（共 3 双），图可以直接转给供应商。',
+    '<at user_id="ou_user_1"></at> 金猴 这批 3 双，图可以直接转给供应商。',
   );
 });
 
@@ -459,8 +464,9 @@ test('多个供应商：每个供应商各出一张图、各发一条说明', as
   await waitFor('两个供应商的图都发出', async () => messages.length === 4);
   const texts = messages.filter((m) => m.data.msg_type === 'text').map((m) => JSON.parse(m.data.content).text).sort();
   assert.deepEqual(texts, [
-    '<at user_id="ou_user_1"></at> 奥康 这批 1 条（共 1 双），图可以直接转给供应商。',
-    '<at user_id="ou_user_1"></at> 金猴 这批 1 条（共 2 双），图可以直接转给供应商。',
+    // ⚠️ 2026-10-07：各有 1 条明细，但**只说双数**（奥康 1 双 / 金猴 2 双）。
+    '<at user_id="ou_user_1"></at> 奥康 这批 1 双，图可以直接转给供应商。',
+    '<at user_id="ou_user_1"></at> 金猴 这批 2 双，图可以直接转给供应商。',
   ]);
   // 每条都发到群，没有一个漏到私聊。
   assert.ok(
