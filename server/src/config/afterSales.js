@@ -43,6 +43,13 @@ const AFTER_SALES_FULFILLMENT = Object.freeze({
   RETURNED: '已退货',
   EXCHANGED: '已换货',
   COMPENSATED: '已赔货',
+  // ⭐ 2026-10-08：**新换出去的那一双**当场就交到她手上了 ⇒ 新建明细行的「履约状态」写它。
+  //   为什么只在这一条腿上用：原明细行表达的是"这双被换回了"（已换货）；
+  //   而**这次换出去的新鞋**是一件已经交付的商品事实，履约状态不能空着
+  //   （真机事实：XSD-20261007-0054 的新明细 reczz28KZzAY4BBi 当时是空的）。
+  //   ⚠️ 只有换货动作声明它（见 EXCHANGE 的 newLineFulfillmentStatus）——
+  //   退货的复制行、赔货的出货行本次**一个字不改**（既有行为）。
+  DELIVERED: '已交付',
 });
 
 // 钱的方向。写「收款明细.交易方向」：差价为正要收（收入），为负要退（退回）。
@@ -54,6 +61,8 @@ const AFTER_SALES_MONEY_DIRECTIONS = Object.freeze({
 // 一个动作的完整语义。
 //   tradeTypeCode          新主表 / 新明细行「交易类型」关联的行为编码
 //   originalFulfillmentStatus  原明细行的「履约状态」改成什么
+//   newLineFulfillmentStatus   **新建明细行**（出货商品那一行）的「履约状态」写什么；
+//                              不声明 = 不写（退货/赔货保持既有行为，见各自的条目）
 //   requiresRestockState   退回的鞋回哪儿必填（门盒 / 样品）——她没说就由卡片问，执行器不猜
 //   acceptsNewLines        newLines 是不是出货商品；退货必须为空
 //   movements              库存流水 + 实时库存的动作，每条流水一行（一双一行，与销售明细一致）
@@ -83,6 +92,10 @@ const AFTER_SALES_ACTION_SPECS = Object.freeze({
     label: '换货',
     tradeTypeCode: AFTER_SALES_BEHAVIORS.SALE_EXCHANGE,
     originalFulfillmentStatus: AFTER_SALES_FULFILLMENT.EXCHANGED,
+    // ⭐ 2026-10-08（业务负责人逐字确认：「好的，是的就叫**已交付**～」）：
+    //   **新换出去的那双**是当场交到她手上的商品事实 ⇒ 新建明细行的「履约状态」= 已交付。
+    //   ⚠️ 只有换货声明这一条：退货/赔货那两条腿的既有行为（新建明细行的履约状态不写）不变。
+    newLineFulfillmentStatus: AFTER_SALES_FULFILLMENT.DELIVERED,
     requiresRestockState: true,
     acceptsNewLines: true,
     movements: Object.freeze([

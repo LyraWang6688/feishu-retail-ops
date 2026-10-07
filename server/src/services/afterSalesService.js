@@ -530,6 +530,10 @@ class AfterSalesService {
         sizeCell: [line.sizeId],
         sizeRecordId: line.sizeId,
         amount: line.amount,
+        // ⭐ 新建明细行的「履约状态」——**取值只从动作配置来**（不在这里写中文字面量）：
+        //   换货声明了 newLineFulfillmentStatus（新换出去的那双=已交付）；
+        //   退货/赔货没声明 → 空 → 建行时不带这一列（既有行为一个字不改）。
+        fulfillmentStatus: request.spec?.newLineFulfillmentStatus || '',
         originalRecordId: '',
         recordId: '',
       });
@@ -559,6 +563,10 @@ class AfterSalesService {
    * 写「销售明细」的新行。只写 writeDetail=true 的计划项：
    * 换货里被换回的旧鞋不建行，它是靠**被改状态的原明细行** + 库存流水表达的。
    * 每一行写完就把 record_id 追加进本地记录，重试时按位置复用。
+   *
+   * ⭐ 「履约状态」与建行**同一次 create** 写下去（不是随后再 update）：
+   *   ① 少一次远端调用；② 断点续做/重放时**不会**再写第二遍——
+   *   复用已建好的行时只做核验（verifyDetailRow），一个字节都不改。
    */
   async ensureDetailRows(request, plan, master, progress) {
     const detailFields = this.tableOf('salesDetail').fields;
@@ -583,6 +591,8 @@ class AfterSalesService {
         actualAmount: row.amount,
         tradeType: relation(master.tradeTypeRecordId),
         ...(row.sizeRecordId ? { size: relation(row.sizeRecordId) } : {}),
+        // 空 = 这个动作不写履约状态（退货/赔货），一个字节都不带 —— 不写空串、不写默认值。
+        ...(row.fulfillmentStatus ? { fulfillmentStatus: row.fulfillmentStatus } : {}),
       });
       row.recordId = created.recordId;
       row.reused = false;
