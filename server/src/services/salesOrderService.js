@@ -191,8 +191,16 @@ class SalesOrderService {
         () => this.gateway.get('salesEntry', salesEntryRecordId), 'sale_entry_by_id',
       );
       const sourceNo = textValue(order?.fields?.[this.gateway.table('salesEntry').fields.orderNo]) || salesEntryRecordId;
+      // ⚠️ 这条日志只回答【落表这一步】做了什么，**不是**"整单扣没扣库存"。
+      //    2026-10-07 的真实误判：有人把 `inventory_applied: false` 读成了"整单没扣库存"，
+      //    其实库存在**交付那一步**（SalesDeliveryService）才扣，而且那单已经扣了。
+      //    ⇒ 字段名一律带**范围**（`inventory_applied_by_this_step`），并写明**下一步做什么**
+      //      （`inventory_planned` / `inventory_step`）。库存真扣完时的**正向证据**是
+      //      `sales.inventory.applied`（见 salesDeliveryService），不要拿这条当日志判据。
       logInfo('v1.sale.posted', { sales_entry_record_id: salesEntryRecordId, detail_count: detailRecordIds.length,
-        payment_count: paymentRecordIds.length, inventory_applied: false });
+        payment_count: paymentRecordIds.length, step: 'posting', inventory_applied_by_this_step: false,
+        inventory_planned: true, inventory_step: 'after_posting' });
+      // 返回值里的 inventoryApplied 与上面那条日志**逐字同义**：本步不动库存。
       return { sourceNo, detailRecordIds, paymentRecordIds, inventoryApplied: false };
     } catch (error) {
       error.saleRecordsWritten = financialRecorded;
