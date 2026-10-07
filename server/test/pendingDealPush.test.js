@@ -111,7 +111,7 @@ test('开关是显式布尔：空串 = 关，不回退默认值；认不出来�
   assert.throws(() => readFlag({ X: '也许吧' }, 'X', false), /显式布尔/);
 });
 
-test('配置默认值：默认关、9 点、10 分钟一 tick、没有群 id、没有任何拼链接的口子', () => {
+test('配置默认值：默认关、9 点、10 分钟一 tick、没有群 id、没有置顶、没有任何拼链接的口子', () => {
   assert.deepEqual(resolvePendingDealPushConfig({}), {
     enabled: false,
     chatId: '',
@@ -119,6 +119,9 @@ test('配置默认值：默认关、9 点、10 分钟一 tick、没有群 id、�
     intervalMs: 600000,
     linkLookupEnabled: true,
     linkRequired: false,
+    // 「发出后置顶」是**显式开关、默认关**（2026-10-07 加）：断言仍然是严格全等，
+    // 只是多认了一个键 —— 不是放宽。
+    pinEnabled: false,
   });
   assert.equal(resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_HOUR: '7' }).hour, 7);
   assert.throws(() => resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_HOUR: '25' }), /整数/);
