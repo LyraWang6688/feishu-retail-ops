@@ -123,8 +123,10 @@ test('③ 补样品 / 销售查询的渠道感知出口已接上（不是默认�
   assert.equal(typeof service.sampleReplacements.sendCardToTask, 'function');
   assert.equal(typeof service.sampleReplacements.sendTextToTask, 'function');
   assert.equal(typeof service.saleLookup.sendCardToTask, 'function');
-  // 默认端口会 `sendCard(task.sender_open_id)`；接上之后群任务必须走 `sendTaskCard`
-  //（同一个函数引用 = 真的接线了，而不是又一个"缺省回落私聊"的壳）。
+  // 🔴 2026-10-07 收尾：**缺省端口已不再回落私聊**（原来这里写的是"默认端口会
+  // `sendCard(task.sender_open_id)`"）—— 现在缺省只记 skip + 返 null。
+  // 接上之后群任务必须走 `sendTaskCard`（同一个函数引用 = 真的接线了，
+  // 而不是又一个"缺省回落私聊"的壳）。
   assert.equal(service.sampleReplacements.sendCardToTask.toString().includes('sendTaskCard'), true);
   assert.equal(service.saleLookup.sendCardToTask.toString().includes('sendTaskCard'), true);
 });

@@ -10,6 +10,7 @@ const {
   resolveSalesProgressIntakeConfig,
 } = require('../config/salesProgressIntake');
 const { logInfo, logWarn } = require('../utils/logger');
+const { skipNoGroupContext } = require('../utils/privateChatSend');
 
 // 把"不是钱"的数字遮掉（货号 1366-33、尺码 42码、批次号 BH-…）——
 // 遮罩规则在 config/salesProgressIntake（配置先行，改规则不碰逻辑）。
@@ -65,9 +66,15 @@ class SalesThreadProgressService {
     this.references = options.references || new V1ReferenceResolver(this.gateway);
     this.config = options.config || resolveSalesProgressIntakeConfig();
     this.now = options.now || (() => new Date());
-    // 群里：文字回到那条销售话题；私聊的兜底形状与别处一致（本类在私聊根本不会被调用）。
+    // 群里：文字回到那条销售话题。
+    // 🔴 2026-10-07「私聊链路移除」：原来的缺省是
+    //   `options.sendText?.(task?.sender_open_id, message)` —— **偷偷发私聊**。
+    //   它连同 `options.sendText` 这个 open_id 口径一起**整体删除**
+    //   （业务负责人拍板的 ⓐ：「代码里一行私聊都不留」）。
+    //   没有群上下文 = **没有去处** → 只记一条 `lark.private_chat.send_skipped`、返 `null`。
+    //   见 docs/private-chat-removal-decision-2026-10-07.md。
     this.sendTextToTask = options.sendTextToTask
-      || (async (task, message) => options.sendText?.(task?.sender_open_id, message));
+      || (async (task) => skipNoGroupContext('text', task));
     this.store = options.store;
   }
 

@@ -12,6 +12,7 @@ const { normalizeColor, normalizeText } = require('./v1ReferenceResolver');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { saleLookupCard } = require('../utils/larkCards');
 const { logInfo, logWarn } = require('../utils/logger');
+const { skipNoGroupContext } = require('../utils/privateChatSend');
 
 const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
 
@@ -91,12 +92,15 @@ class SaleLookupService {
     this.config = options.config || readSaleLookupConfig();
     this.now = options.now || (() => new Date());
     this.replyCard = options.replyCard || (async () => '');
-    this.sendCard = options.sendCard || (async () => '');
-    // ⭐ 渠道感知的兜底出口（可选）。默认实现 = 改动前的私聊行为，**逐字相同**；
-    // 生产在 `larkMvpService` 里注入 `sendTaskCard`（群 → 回到那个话题 / 私聊 → 原样私聊）。
-    // ⚠️ 只有 `task.chat_type === 'group'` 时才会用到它 —— 见 replyCardByTask。
+    // ⭐ 渠道感知的出口（可选）。**没有缺省"发到某个人"这回事** ——
+    // 🔴 2026-10-07「私聊链路移除」：原来这里的缺省是
+    // `(task, card) => this.sendCard(task?.sender_open_id, card)`（偷偷发私聊），
+    // 与它底下的 `this.sendCard(open_id, card)` 一起**整体删除**。
+    // 现在没有群上下文 = **没有去处** → 只记一条 `lark.private_chat.send_skipped`、返 `null`。
+    // 生产在 `larkMvpService` 里注入 `sendTaskCard`（群 → 回到那个话题）。
+    // 见 docs/private-chat-removal-decision-2026-10-07.md。
     this.sendCardToTask = options.sendCardToTask
-      || (async (task, card) => this.sendCard(task?.sender_open_id, card));
+      || (async (task) => skipNoGroupContext('card', task));
     this.getSizeReferences = createSizeReferenceAccess({
       gateway: this.gateway,
       sizeReferences: options.sizeReferences,
@@ -355,8 +359,11 @@ class SaleLookupService {
   //   · 群任务（`chat_type === 'group'`）→ 走**渠道感知出口**，回到**那个话题**；
   //     ⚠️ **绝不回落私聊** —— 群里回复失败就如实失败（只记日志、返回空串），
   //     偷偷发一条私聊会让她以为"群里没人管"，也掩盖了群通道的故障。
-  //   · 私聊任务 → 与改动前**逐字相同**：`sendCard(task.sender_open_id, card)`，
-  //     失败照旧向上抛（这条分支一个字节都没动）。
+  //   · 非群任务（`chat_type !== 'group'`）→ 🔴 2026-10-07「私聊链路移除」：
+  //     **没有去处** —— 只记一条 `lark.private_chat.send_skipped`、返 `null`。
+  //     改动前这里是 `sendCard(task.sender_open_id, card)`（偷偷发私聊），那行已整体删除
+  //     （业务负责人拍板的 ⓐ：「代码里一行私聊都不留」，
+  //      见 docs/private-chat-removal-decision-2026-10-07.md）。
   async replyCardByTask(task, card) {
     try {
       const messageId = await this.replyCard(task.message_id, card);
@@ -380,9 +387,8 @@ class SaleLookupService {
         return '';
       }
     }
-    const messageId = await this.sendCard(task.sender_open_id, card);
-    if (messageId) await this.store.update(task.task_id, { card_message_id: messageId });
-    return messageId || '';
+    // 没有群上下文 → 没有去处：记 skip + 明确返"没发出去"（调用方不该记 card_message_id）。
+    return skipNoGroupContext('card', task);
   }
 }
 

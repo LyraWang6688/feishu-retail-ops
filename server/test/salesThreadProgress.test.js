@@ -647,3 +647,57 @@ test('⭐ 她说的方式表里没有 → 只回问一句，状态 progress_aski
   assert.equal(task.status, 'progress_asking');
   assert.equal(task.progress_reason, 'payment_method_unknown');
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔴 2026-10-07「私聊链路移除」收尾：**没有群上下文 = 没有去处**
+//
+// 本类在群里回一句话走 `sendTextToTask`（生产由 `larkMvpService` 注入 → 回到那条销售话题）。
+// 它的**缺省出口**原来的形状是 `options.sendText?.(task?.sender_open_id, message)`
+// —— 也就是"偷偷发私聊"。收尾时**整体删除**（业务负责人拍板的 ⓐ：代码里一行私聊都不留）：
+// 现在缺省 = 只记一条 `lark.private_chat.send_skipped`、返 `null`，一个远端调用都不做。
+// ═══════════════════════════════════════════════════════════════════════════
+
+// 与 saleLookupService.test.js 里那份同形：抓 warn 级结构化日志（logger warn → console.warn）。
+const captureWarningLogs = () => {
+  const lines = [];
+  const originals = { log: console.log, warn: console.warn, error: console.error };
+  const capture = (...args) => { lines.push(args.map((value) => String(value)).join(' ')); };
+  console.log = capture;
+  console.warn = capture;
+  console.error = capture;
+  return {
+    lines,
+    events: (event) => lines.filter((line) => line.includes(`"event":"${event}"`)),
+    restore: () => {
+      console.log = originals.log;
+      console.warn = originals.warn;
+      console.error = originals.error;
+    },
+  };
+};
+
+test('缺省出口：非群任务 → 不发、返 null、记 `send_skipped`；连 `options.sendText` 都不再被读取', async () => {
+  // `options.sendText` 是改动前的 open_id 口径。故意把它传进来并记账：
+  // 它**一次都不许被调**（"读不到才不发"和"根本没有这条代码"是两回事，这里钉的是后者）。
+  const legacyOpenIdSends = [];
+  const service = new SalesThreadProgressService({
+    gateway: makeGateway({ entry: threadSale() }),
+    sendText: (openId, message) => { legacyOpenIdSends.push({ openId, message }); },
+  });
+  const noChannelTask = { task_id: 't_no_channel', type: 'sale', sender_open_id: 'ou_sender' };
+
+  const logs = captureWarningLogs();
+  let returned;
+  try {
+    returned = await service.sendTextToTask(noChannelTask, '回你一句');
+  } finally {
+    logs.restore();
+  }
+
+  assert.equal(returned, null, '没有群上下文 → 明确返"没发出去"');
+  assert.deepEqual(legacyOpenIdSends, [], 'ⓐ：open_id 口径的发送器已整体删除，不是"没配才不发"');
+  const skipped = logs.events('lark.private_chat.send_skipped');
+  assert.equal(skipped.length, 1, '可排查：不是静默失败');
+  assert.match(skipped[0], /"kind":"text"/);
+  assert.match(skipped[0], /"reason":"no_group_context"/);
+});

@@ -10,6 +10,7 @@ const { getLarkAgentCredentials } = require('../config/larkAgent');
 const { sampleReplacementCard, sampleReplacementStatusCard, sampleReplacementProcessingCard } = require('../utils/larkCards');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { larkLogger } = require('../utils/larkLogger');
+const { skipNoGroupContext } = require('../utils/privateChatSend');
 // 🔴 2026-10-07「私聊链路移除」：本 service 里**一行主动私聊都没有了**——
 // 原来那两个"回落 `task.sender_open_id`"的缺省出口已整体删除（见构造函数里的注释）。
 
@@ -49,21 +50,13 @@ class SampleReplacementService {
     //    docs/private-chat-removal-decision-2026-10-07.md。
     //    没有群上下文 → **没有去处**：只记一条日志、返 `null`（调用方据此不记 `notice_sent`），
     //    一个远端调用都不做。
+    //    ⚠️ 日志与返回值走**全仓唯一**的那份实现（`utils/privateChatSend`）：
+    //      所有缺省出口的 skip 形状只有一份定义，避免"某个 service 又偷偷长出一条私聊路"。
     //    ⚠️ 为什么这两个**缺省**端口也要自己判一次（`larkMvpService` 那侧也判）：
     //      `routes/workbench.js` 是**自己 new** 这个 service 的（触发方没有群上下文），
     //      它用的是这两个缺省端口，**不经过** `larkMvpService` 的适配器。
-    this.sendCardToTask = sendCardToTask || (async (task) => {
-      logWarn('lark.private_chat.send_skipped', {
-        kind: 'card', task_id: task?.task_id, reason: 'no_group_context',
-      });
-      return null;
-    });
-    this.sendTextToTask = sendTextToTask || (async (task) => {
-      logWarn('lark.private_chat.send_skipped', {
-        kind: 'text', task_id: task?.task_id, reason: 'no_group_context',
-      });
-      return null;
-    });
+    this.sendCardToTask = sendCardToTask || (async (task) => skipNoGroupContext('card', task));
+    this.sendTextToTask = sendTextToTask || (async (task) => skipNoGroupContext('text', task));
   }
 
   async publishCard(task, event, card, metadata = {}) {
@@ -131,8 +124,9 @@ class SampleReplacementService {
         lookupFailed = true;
         logWarn('lark.sales.sample_candidates.failed', { task_id: taskId, error: error.message });
       }
-      // ⭐ 发到哪儿：有群上下文就走**那条任务**（出口据此回到它的话题）；没有就用本任务
-      //   （它的 `sender_open_id` = 本次操作的人 = 改动前的私聊收件人）。
+      // ⭐ 发到哪儿：有群上下文就走**那条任务**（出口据此回到它的话题）；
+      //   没有群上下文（例：工作台触发）就用本任务 —— 而本任务也没有群字段时，
+      //   出口**没有去处**：只记一条 `lark.private_chat.send_skipped`、返 `null`。
       //   ⚠️ 群那条必须把**销售任务**交出去、而不是补样品任务：出口会顺手记
       //   「话题 ↔ 销售」的本地路由映射，映射的 key 是**她那句话的 message_id**、
       //   值里带**那笔销售的 record_id** —— 拿补样品任务去记会把那条映射冲成空。
@@ -140,7 +134,7 @@ class SampleReplacementService {
       try {
         const cardMessageId = await this.sendCardToTask(sendTarget,
           sampleReplacementCard(taskId, { productNumber, remainingSizes, lookupFailed }));
-        // `null` = 出口**明确说"这条不发"**（私聊已关）→ 不记 `notice_sent`：
+        // `null` = 出口**明确说"这条不发"**（没有群上下文）→ 不记 `notice_sent`：
         // 没发出去就不算发过，将来有了渠道还能再发一次。
         if (cardMessageId === null) continue;
         await this.store.update(taskId, { card_message_id: cardMessageId, notice_sent: true });

@@ -48,6 +48,27 @@ const sizeStub = (byRecordId) => ({
   },
 });
 
+// 抓 warn 级结构化日志（`utils/logger` 的 warn → `console.warn`）。
+// 只用来钉"没有群上下文时**确实记了一条** `lark.private_chat.send_skipped`"，
+// 免得静默失效（改了行为却没有任何可排查的痕迹）。
+const captureLogs = () => {
+  const lines = [];
+  const originals = { log: console.log, warn: console.warn, error: console.error };
+  const capture = (...args) => { lines.push(args.map((value) => String(value)).join(' ')); };
+  console.log = capture;
+  console.warn = capture;
+  console.error = capture;
+  return {
+    lines,
+    events: (event) => lines.filter((line) => line.includes(`"event":"${event}"`)),
+    restore: () => {
+      console.log = originals.log;
+      console.warn = originals.warn;
+      console.error = originals.error;
+    },
+  };
+};
+
 // 写操作一律记下来并抛错：本期的核心验收点就是"这条链路一次业务写都没有"。
 const makeGateway = ({ details = [], entries = [], products = [], writes = [], reads = [] } = {}) => ({
   table: (tableKey) => V1_BITABLE_SCHEMA.tables[tableKey],
@@ -68,7 +89,6 @@ const makeService = async (options = {}) => {
   });
   const gateway = makeGateway({ details, entries, products, writes, reads });
   const cards = [];
-  const privateSends = [];
   const taskSends = [];
   let replyFails = options.replyFails === true;
   const service = new SaleLookupService({
@@ -82,13 +102,11 @@ const makeService = async (options = {}) => {
       cards.push(card);
       return 'om_card';
     },
-    sendCard: async (openId, card) => {
-      privateSends.push({ openId, card });
-      cards.push(card);
-      return 'om_card_fallback';
-    },
     // 渠道感知出口：**只有显式传了才注入** —— 生产在 `larkMvpService` 里注入 `sendTaskCard`。
-    // 不传时 service 用缺省端口（= 改动前的私聊行为），这样两条路都能被单独钉住。
+    // 不传时走 service 自己的缺省，而缺省**不再回落私聊**（没有群上下文 → 不发 + 记 skip）：
+    // 这样"显式注入"和"缺省不发"两条路都能被单独钉住。
+    // 🔴 2026-10-07「私聊链路移除」：这里原来还有一个 `sendCard(openId, card)` 打桩
+    //    （`privateSends`）—— 那个 open_id 发送器已从 service 里整体删除，打桩一并删掉。
     ...(options.sendCardToTask
       ? {
         sendCardToTask: async (task, card) => {
@@ -99,7 +117,7 @@ const makeService = async (options = {}) => {
       : {}),
   });
   return {
-    service, store, gateway, cards, privateSends, taskSends,
+    service, store, gateway, cards, taskSends,
     disableReply: () => { replyFails = true; },
   };
 };
@@ -362,7 +380,7 @@ test('上下文：从没查过 / 查出来 0 条时不给旧列表', async () =>
   assert.equal(service.resolvePendingCandidates(await store.get('zero_query')).status, 'empty');
 });
 
-test('查询卡片：0 条也在原消息下回一张卡，且优先 reply、失败退回发卡', async () => {
+test('查询卡片：0 条也在原消息下回一张卡，优先 reply', async () => {
   const { service, store, cards } = await makeService({
     products: [productRow('p1', '6035', '黑')],
     entries: [entryRow({ id: 'e1', orderNo: 'XSD-0001' })],
@@ -374,22 +392,6 @@ test('查询卡片：0 条也在原消息下回一张卡，且优先 reply、失
   assert.equal(cards[0].header.title.content, '最近 5 天的销售记录');
   assert.match(JSON.stringify(cards[0]), /没查到/);
   assert.equal(await store.get('sale_query_1').then((row) => row.card_message_id), 'om_card');
-
-  const fallback = await makeService({
-    replyFails: true,
-    products: [productRow('p1', '6035', '黑')],
-    entries: [entryRow({ id: 'e1', orderNo: 'XSD-0001' })],
-    details: [detailRow({ id: 'd1', orderId: 'e1', productId: 'p1' })],
-  });
-  const fallbackTask = await newTask(fallback.store);
-  await fallback.service.handleQuery(fallbackTask, { intent: 'sale_query', item_no: '6035', color: '黑' });
-  assert.equal(fallback.cards.length, 1);
-  assert.equal(await fallback.store.get('sale_query_1').then((row) => row.card_message_id), 'om_card_fallback');
-  // ⭐ 上面这条就是**私聊的既有行为**：回复失败 → 主动发卡给本人 `sendCard(sender_open_id)`。
-  // 2026-10-06「私聊切除」②之后它必须逐字不变（见下面三条新用例）。
-  assert.equal(fallback.privateSends.length, 1);
-  assert.equal(fallback.privateSends[0].openId, 'ou_1');
-  assert.equal(fallback.taskSends.length, 0, '没有 chat_type = 私聊，不走群出口');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -397,7 +399,13 @@ test('查询卡片：0 条也在原消息下回一张卡，且优先 reply、失
 //   以前：群话题里回复失败会**掉进私聊**（`sendCard(task.sender_open_id)`）。
 //   现在：`chat_type === 'group'` → 走**渠道感知出口**（回到那个话题），
 //        出口再失败也**只记日志、如实失败**，绝不静默发她私聊。
-//   私聊那条路（上面那条用例）一个字节都不动。
+//
+// 🔴 2026-10-07「私聊链路移除」收尾（本 PR）：**非群任务那条路也清掉了**。
+//   以前：非群任务回复失败 → `sendCard(task.sender_open_id, card)`（偷偷发私聊）。
+//   现在：没有群上下文 = **没有去处** → 只记 `lark.private_chat.send_skipped`、返 `null`，
+//        一个远端调用都不做；`this.sendCard` 这个 open_id 发送器**整体删除**。
+//   要让它发到某处，只能由调用方**显式注入** `sendCardToTask`
+//   （生产注入的是 `larkMvpService.sendTaskCard`，它自己按 chat_type 分流）。
 // ─────────────────────────────────────────────────────────────────────────────
 
 const lookupFixture = () => ({
@@ -406,8 +414,57 @@ const lookupFixture = () => ({
   details: [detailRow({ id: 'd1', orderId: 'e1', productId: 'p1' })],
 });
 
+test('② 非群任务：reply 失败后**任何出口都不走**（即便注入了 sendCardToTask）—— 没有群上下文就没有去处', async () => {
+  const { service, store, cards, taskSends } = await makeService({
+    ...lookupFixture(),
+    replyFails: true,
+    // 故意把出口注进去：非群任务**也不该**碰它 —— 分流的判据（chat_type）在 service 自己这层，
+    // 而不是靠"出口恰好看了一眼 chat_type"。这样"非群 = 不发"不依赖任何注入方守规矩。
+    sendCardToTask: async () => 'om_injected_card',
+  });
+  const task = await newTask(store); // 没有 chat_type = 没有群上下文
+  const returned = await service.replyCardByTask(task, { header: { title: { content: 'x' } } });
+
+  assert.equal(returned, null, '没有去处 → 明确返"没发出去"');
+  assert.equal(taskSends.length, 0, '非群任务不许走渠道感知出口');
+  assert.deepEqual(cards, [], '一条消息都不发（尤其是**不许**发给 task.sender_open_id）');
+  assert.equal(await store.get('sale_query_1').then((row) => row.card_message_id), undefined,
+    '没发出去就不许写 card_message_id');
+});
+
+test('② 非群任务 + 没有注入出口 → **不发** + 记 `send_skipped` + 返 null（缺省不再回落私聊）', async () => {
+  const logs = captureLogs();
+  let cardMessageId;
+  try {
+    const { service, store, cards } = await makeService({
+      ...lookupFixture(),
+      replyFails: true,
+      // 刻意**不注入** sendCardToTask → 走 service 自己的缺省。
+    });
+    const task = await newTask(store); // 没有 chat_type = 没有群上下文
+    const returned = await service.replyCardByTask(task, { header: { title: { content: 'x' } } });
+
+    assert.equal(returned, null, '没有去处 → 明确返"没发出去"（调用方不许记 card_message_id）');
+    assert.deepEqual(cards, [], '一条消息都不发（尤其是**不许**发给 task.sender_open_id）');
+    cardMessageId = await store.get('sale_query_1').then((row) => row.card_message_id);
+  } finally {
+    logs.restore();
+  }
+  assert.equal(cardMessageId, undefined, '没发出去就不许写 card_message_id');
+  const skipped = logs.events('lark.private_chat.send_skipped');
+  assert.equal(skipped.length, 1, '可排查：不是静默失败');
+  assert.match(skipped[0], /"kind":"card"/);
+  assert.match(skipped[0], /"reason":"no_group_context"/);
+});
+
+test('② 这个 service 里**没有** open_id 卡片发送器（`sendCard` 已整体删除）', async () => {
+  const { service } = await makeService({});
+  assert.equal(service.sendCard, undefined, 'ⓐ：代码里一行私聊都不留');
+  assert.equal(typeof service.sendCardToTask, 'function', '只留"任务感知"的出口');
+});
+
 test('② 群任务回复失败：走渠道感知出口回到那个话题，**一条私聊都不发**', async () => {
-  const { service, store, privateSends, taskSends } = await makeService({
+  const { service, store, taskSends } = await makeService({
     ...lookupFixture(),
     replyFails: true,
     sendCardToTask: async () => 'om_topic_card',
@@ -417,12 +474,11 @@ test('② 群任务回复失败：走渠道感知出口回到那个话题，**�
 
   assert.equal(taskSends.length, 1, '群任务必须走渠道感知出口（回话题）');
   assert.equal(taskSends[0].task.chat_id, 'oc_sales_group');
-  assert.deepEqual(privateSends, [], '群上下文里回复失败也绝不回落私聊');
   assert.equal(await store.get('sale_query_1').then((row) => row.card_message_id), 'om_topic_card');
 });
 
 test('② 群任务两条路都失败：如实失败（不留 card_message_id）+ 记日志，不静默掉进私聊', async () => {
-  const { service, store, privateSends, taskSends } = await makeService({
+  const { service, store, taskSends } = await makeService({
     ...lookupFixture(),
     replyFails: true,
     sendCardToTask: async () => { throw new Error('topic reply failed'); },
@@ -433,7 +489,6 @@ test('② 群任务两条路都失败：如实失败（不留 card_message_id）
   await service.handleQuery(task, { intent: 'sale_query', item_no: '6035', color: '黑' });
 
   assert.equal(taskSends.length, 1, '仍然试过一次群出口');
-  assert.deepEqual(privateSends, [], '绝不静默掉进私聊');
   assert.equal(await store.get('sale_query_1').then((row) => row.card_message_id), undefined);
 });
 

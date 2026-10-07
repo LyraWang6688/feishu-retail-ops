@@ -8,6 +8,15 @@
 > ⚠️ **没有开关**：刻意**不引入** `PRIVATE_CHAT_INTAKE_ENABLED` 之类的变量，
 > 也**没有**"测试专用 helper"。要恢复私聊是**重新实现那条链路**，不是翻一个开关
 > （留开关那个方案 ⓑ 已被否掉）。
+>
+> ⭐ **2026-10-07 追加：「私聊被挡下时回一句『请到群里说』」那一句 notice 已保留**
+>（业务负责人拍板）—— 旋钮只有两个，都在 `config/privateChatNotice.js`：
+> `PRIVATE_CHAT_DISABLED_NOTICE_ENABLED`（默认 `true`）、
+> `PRIVATE_CHAT_DISABLED_NOTICE_TEXT`（**空串 = 关掉那句话**）。
+> 🔴 仍然**没有**恢复私聊入口 / 发送的开关。⇒ 下面 **A2 那一行以本节为准**
+>（"一条消息都不回"是 PR #191 当时的状态，PR #193 起改成"只回那一句"）。
+> 同一轮收尾（**PR #195**，分支 `chore/private-chat-remaining-default-ports`）还把当时**留待确认的最后
+> 5 处「缺省回落发私聊」**清掉了 —— 验收标准与逐条对照见**第五节**。
 
 ## 一、⭐ 先写「删完应该是什么样」（验收标准）
 
@@ -18,7 +27,7 @@
 | # | 预期 | 判据 |
 | --- | --- | --- |
 | A1 | 私聊**任何**消息（文字 / 富文本 / 图片 / 空文字）→ **不建任务、不进 AI、不读表、不写表** | `store.create` 0 次、`recognizer.parseSalesText` 0 次、`gateway.create/update` 0 次 |
-| A2 | 私聊消息 → **一条消息都不回**（不主动发、也不回复），只记一条 `lark.private_chat.disabled` | `im.message.create` 0 次、`im.message.reply` 0 次 |
+| A2 | 私聊消息 → **只回那一句固定文案**（可关：`..._ENABLED=false` 或 `..._TEXT=` 空串 → 一个字都不发），另记一条 `lark.private_chat.disabled` | 默认 `im.message.create` 1 次且正文匹配 `config/privateChatNotice` 的文案；`im.message.reply` 0 次 |
 | A3 | 私聊专属的两条提示（「机器人当前只接收销售文字…」/「没有读到销售文字…」）**从代码里消失** | 全仓 grep 不到那两句文案 |
 | A4 | 改动前的 `not_p2p` 拒绝分支也一并消失 | 非群聊统一走 A1/A2 那条路 |
 
@@ -91,9 +100,10 @@
 > ⚠️ 顺带发现但**没动**：`purchaseWebhookService.js` 的 `person` 解构导入在 `main` 上就已经没有调用方
 > —— 既有问题，不属于本次改动面，留给单独一次清理。
 >
-> ⚠️ 同类但**本次没动**的"回落 open_id"缺省端口还有三处（`afterSalesFlowService` /
-> `saleLookupService` / `salesThreadProgressService` 里给单测用的缺省值）。它们在**生产路径上都已被
-> `larkMvpService` 注入真实出口**，只有单测在用。要不要一并清掉 → **待业务负责人/父代理确认**。
+> ⚠️ 同类但**当时没动**的"回落 open_id"缺省端口还有**5 处**（`afterSalesFlowService` ×2 /
+> `saleLookupService` ×2 / `salesThreadProgressService` ×1 里给单测用的缺省值）。它们在**生产路径上
+> 都已被 `larkMvpService` 注入真实出口**，只有单测在用。
+> 业务负责人 2026-10-07 批准收尾：**已全部清掉**（见第五节）。
 
 ## 三、⭐ 测试怎么救的（迁到群入口，**不删覆盖**）
 
@@ -101,7 +111,7 @@
 
 | 用例 | 钉住什么 |
 | --- | --- |
-| 私聊文字 → 不建任务 / 不进 AI / 不写表 / 不加表情 / **也不回消息**，只记一条日志 | A1 + A2 |
+| 私聊文字 → 不建任务 / 不进 AI / 不写表 / 不加表情 / **回一句「请到群里说」**，只记一条日志 | A1 + A2 |
 | 私聊的非文字 / 空文字 → 与文字**同一档**（旧的两条提示已删） | A1 + A3 |
 | 没有群上下文的任务 → `sendTaskCard` / `sendTaskText` 不发 + 记 skip + 返 null | C1 |
 | 私聊触发的补样品提醒 → 不发 + skip；**不记 `notice_sent`** | C2 + C3 |
@@ -139,3 +149,50 @@
 **没有开关可以翻。** 按 ⓐ 的口径：**重新实现那条链路**（入口 + 提示 + 发送端口），
 并且要重新想清楚"它是入口之一、还是唯一入口"。
 参考实现见 `git log -S 'private_chat_removed'`（本次改动之前的历史）。
+
+---
+
+## 五、2026-10-07 收尾：清掉最后 5 处「缺省回落发私聊」
+
+> 业务负责人 2026-10-07 批准（承接 PR #191 / #193）。
+> **PR #195**（分支 `chore/private-chat-remaining-default-ports`）。
+> ⚠️ **那句 notice 一个字都没动**（`config/privateChatNotice.js`）——
+> 见开头「2026-10-07 追加」。
+
+### 5.1 验收标准（**动手前先写**，`AGENTS.md` 协作纪律第 2 条）
+
+| # | 预期 |
+| --- | --- |
+| F1 | `saleLookupService.sendCardToTask` 缺省：没有群上下文 → 记 `lark.private_chat.send_skipped`、返 `null` |
+| F2 | `saleLookupService.replyCardByTask` 的非群分支：同上；**全类再无 `this.sendCard`** |
+| F3 / F4 | `afterSalesFlowService.sendCardToTask` / `sendTextToTask` 缺省：同上；**全类再无 `this.sendCard` / `this.sendText`** |
+| F5 | `salesThreadProgressService.sendTextToTask` 缺省：同上；**不再读 `options.sendText`**（旧 open_id 口径） |
+| F6 | skip 日志**只有一处定义**：`utils/privateChatSend.js` 的 `skipNoGroupContext`（5 处缺省出口都调它） |
+| G1 | `LarkMvpService.sendCard(openId, card)` 因此成孤儿 → **删除** |
+| G2 | `LarkMvpService.sendText` **保留**（notice 那一句要用，不许删） |
+| H1 | 群任务那条路（回到话题、`reply_in_thread`）**逐字不变** |
+| I1 | 依赖缺省端口的测试断言改成**显式注入**；**不许为了绿而删覆盖** |
+| I2 | 新增用例钉住：非群任务 → 不发 + 记 `send_skipped` + 返 `null` |
+| J1 | `AGENTS.md` 与本文档同步（那两个 env 名可见、"纯静默"表述修正） |
+
+### 5.2 逐条对照
+
+| # | 结果 | 证据 |
+| --- | --- | --- |
+| F1 | ✅ | `saleLookupService.js` 构造里缺省 = `skipNoGroupContext('card', task)` |
+| F2 | ✅ | `replyCardByTask` 的非群分支 = `return skipNoGroupContext('card', task)`；用例断言 `service.sendCard === undefined` |
+| F3 / F4 | ✅ | `afterSalesFlowService.js` 两个缺省出口；类里 `sendCard` / `sendText` 已删 |
+| F5 | ✅ | `salesThreadProgressService.js` 缺省 = `skipNoGroupContext('text', task)`；用例把旧的 `options.sendText` 传进来记账，断言**一次都没被调** |
+| F6 | ✅ | 全仓只有 `utils/privateChatSend.js` 打这条日志；`privateChatRemoval.test.js` 有源码级哨兵（剥掉注释后 grep 不到"发到 `sender_open_id`"的代码） |
+| G1 | ✅ | `privateChatRemoval.test.js`：`LarkMvpService.prototype.sendCard === undefined` |
+| G2 | ✅ | 同一条用例断言 `typeof prototype.sendText === 'function'`；notice 那条路仍走它 |
+| H1 | ✅ | 群任务用例全绿：`privateChatRemoval.test.js` ⑤、`groupThreadReplyRouting.test.js` ③、`saleLookupService.test.js` ②、`afterSalesGroupThread.test.js`、`salesThreadProgress.test.js` |
+| I1 | ✅ | `afterSalesFlow.test.js` 的 `build()` 改成显式注入 `sendCardToTask` / `sendTextToTask`；`saleLookupService.test.js` 的 `sendCard` 打桩删除；`messageGate.test.js` / `saleQueryFlow.test.js` 里给已删方法打的桩删除 |
+| I2 | ✅ | 新增 9 条：`saleLookupService.test.js` ×3、`afterSalesFlow.test.js` ×3、`salesThreadProgress.test.js` ×1、`privateChatRemoval.test.js` ×2（源码哨兵 + 孤儿） |
+| J1 | ✅ | `AGENTS.md` 两处；本文档开头 + 本节 |
+
+### 5.3 ⚠️ 与本节的"有意行为变化"
+
+非群任务（私聊 / 工作台触发）**再也发不出任何消息**：以前"悄悄发私聊"，
+现在只记一条 `lark.private_chat.send_skipped` 并返 `null`。
+调用方据此**不许记"已发送"**（例：`SampleReplacementService` 不写 `notice_sent`）。

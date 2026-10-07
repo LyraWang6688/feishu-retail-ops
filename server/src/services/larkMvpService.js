@@ -48,6 +48,7 @@ const { PurchaseArrivalConversationService } = require('./purchaseArrivalConvers
 const { ARRIVAL_CONVERSATION_ACTIONS } = require('../config/arrivalConversation');
 const { GroupPurchaseFlowService } = require('./groupPurchaseFlowService');
 const { logError, logInfo, logWarn } = require('../utils/logger');
+const { skipNoGroupContext } = require('../utils/privateChatSend');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
@@ -135,9 +136,9 @@ class LarkMvpService {
       gateway: this.gateway,
       store: this.store,
       replyCard: (messageId, card) => this.replyCard(messageId, card),
-      sendCard: (openId, card) => this.sendCard(openId, card),
-      // ⭐ 渠道感知的兜底出口：群任务回复失败时回到**那个话题**，不回落私聊
-      //（私聊任务不走它 —— SaleLookupService.replyCardByTask 里按 chat_type 分流）。
+      // ⭐ 渠道感知的出口：群任务回复失败时回到**那个话题**，不回落私聊。
+      // 🔴 2026-10-07「私聊链路移除」：**没有群上下文**的任务（`chat_type !== 'group'`）
+      //   在 `sendTaskCard` 里只记一条 `lark.private_chat.send_skipped`、返 `null`。
       sendCardToTask: (task, card) => this.sendTaskCard(task, card),
     });
     // 退换货第二期：售后**编排**（定位 → 组装方案 → 确认卡片 → 调执行器）也是独立 service。
@@ -155,13 +156,12 @@ class LarkMvpService {
       references: this.references,
       sizeReferences: options.sizeReferences,
       replyCard: (messageId, card) => this.replyCard(messageId, card),
-      sendCard: (openId, card) => this.sendCard(openId, card),
-      sendText: (openId, message) => this.sendText(openId, message),
       // ⭐ ③ 渠道感知的三个出口（售后回话题）：
       //   群话题里的售后任务 → 回复/卡片都回到**那个话题**；
-      //   私聊任务走它们时最终仍是上面那三个，payload 逐字不变
-      //   （特别是文字：私聊仍然是 `sendText(open_id)` 那条主动消息，
-      //     **不是** reply 她的消息 —— 那是改动前的行为，一个字都不能变）。
+      //   🔴 2026-10-07「私聊链路移除」：**没有群上下文**的任务 = **没有去处** ——
+      //     `sendTaskCard` / `sendTaskText` 只记一条 `lark.private_chat.send_skipped`
+      //     并返 `null`（**不再**回落到 `sendCard/sendText(open_id)`，那两个发送器已整体删除）。
+      //     见 docs/private-chat-removal-decision-2026-10-07.md。
       replyCardToTask: (task, card) => this.replyTaskCard(task, card),
       sendCardToTask: (task, card) => this.sendTaskCard(task, card),
       sendTextToTask: (task, message) => this.sendTaskText(task, message),
@@ -323,6 +323,17 @@ class LarkMvpService {
     return this.intakeSchemaValidation.get(scope);
   }
 
+  /**
+   * ⭐ 私聊文字出口 —— **只留给「私聊被挡下时回一句固定文案」那一处**
+   * （`acceptMessage` 的非群聊分支，见 config/privateChatNotice）。
+   *
+   * 🔴 2026-10-07「私聊链路移除」：同名的 `sendCard(openId, card)` 已**整体删除** ——
+   *    它的调用方（注入给子服务的 `sendCard` 出口）连同子服务里那些"缺省回落发私聊"
+   *    一起清掉了，于是它成了孤儿。要发卡片只有**群**这一条路
+   *    （`replyCard` / `replyCardInThread` / `replyTaskCard`）。
+   *    ⚠️ 别把 `sendCard` 加回来当"通用兜底"：那正是被否掉的 ⓑ 方案。
+   *    见 docs/private-chat-removal-decision-2026-10-07.md。
+   */
   async sendText(openId, message) {
     const response = await this.client.im.message.create({
       params: { receive_id_type: 'open_id' },
@@ -333,19 +344,6 @@ class LarkMvpService {
       },
     });
     if (response.code !== 0) throw new Error(`发送飞书消息失败: ${response.msg} (Code: ${response.code})`);
-  }
-
-  async sendCard(openId, card) {
-    const response = await this.client.im.message.create({
-      params: { receive_id_type: 'open_id' },
-      data: {
-        receive_id: openId,
-        msg_type: 'interactive',
-        content: JSON.stringify(card),
-      },
-    });
-    if (response.code !== 0) throw new Error(`发送飞书卡片失败: ${response.msg} (Code: ${response.code})`);
-    return response.data?.message_id || '';
   }
 
   /**
@@ -510,9 +508,12 @@ class LarkMvpService {
 
   // ── 渠道感知的输出（B）：「回复 / 卡片回到话题」────────────────────────────
   //
-  // ⚠️ 私聊那条路**一个字节都不变**：任务上没有 `chat_type`（或不是 group）时，
-  //    仍然走原来的 `sendText(open_id)` / `sendCard(open_id)`，payload 完全相同。
-  //    只有群里的销售任务（`chat_type === 'group'`）才改成"回复到那条消息的话题"。
+  // 🔴 2026-10-07「私聊链路移除」：**没有群上下文的任务 = 没有去处** ——
+  //    这两条出口只记一条 `lark.private_chat.send_skipped`、返 `null`，
+  //    **不再**回落到 `sendText(open_id)` / `sendCard(open_id)`
+  //    （那两个 open_id 发送器的卡片那个已整体删除；文字那个只剩 notice 一处用）。
+  //    只有群里的销售任务（`chat_type === 'group'`）才"回复到那条消息的话题"。
+  //    见 docs/private-chat-removal-decision-2026-10-07.md。
   //
   // 为什么必须按任务分流、而不是在 sendText 里判：
   //   群里任务才有 message_id（回哪条、进哪个话题）；**没有群上下文的**任务
@@ -528,12 +529,7 @@ class LarkMvpService {
    * （业务负责人 2026-10-07 拍板的 ⓐ，见 docs/private-chat-removal-decision-2026-10-07.md）。
    */
   async sendTaskText(task, message) {
-    if (task?.chat_type !== 'group') {
-      logWarn('lark.private_chat.send_skipped', {
-        kind: 'text', task_id: task?.task_id, reason: 'no_group_context',
-      });
-      return null;
-    }
+    if (task?.chat_type !== 'group') return skipNoGroupContext('text', task);
     const sent = await this.replyTextInThread(task.message_id, message);
     // ⚠️ 文字这条出口**只补本地路由映射，不写销售主表**（`storeLink: false`）——两条理由：
     //   ① 深链是**话题级**的（URL 里只有 chat_id + thread_id，没有 message_id）：同一话题里
@@ -551,12 +547,7 @@ class LarkMvpService {
    * `lark.private_chat.send_skipped`、返 `null`，**一个远端调用都不做**（同 `sendTaskText`）。
    */
   async sendTaskCard(task, card) {
-    if (task?.chat_type !== 'group') {
-      logWarn('lark.private_chat.send_skipped', {
-        kind: 'card', task_id: task?.task_id, reason: 'no_group_context',
-      });
-      return null;
-    }
+    if (task?.chat_type !== 'group') return skipNoGroupContext('card', task);
     const sent = await this.replyCardInThread(task.message_id, card);
     await this.bindGroupSaleThread(task, sent);
     return sent.messageId;
