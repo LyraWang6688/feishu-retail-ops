@@ -63,7 +63,7 @@ salesColorOptionsScopeFor(tradeTypeCode)  // ← 逻辑层唯一的取用口
     三者的读表次数**完全一样**（`product: 2` / `liveInventory: 1`，都是录单本来就有的读：
     解析 A + 建档索引 + 实时库存并行预读）。
 
-## 3. 三个边界（我的选择 + 理由）
+## 3. 四个边界（我的选择 + 理由）
 
 ### ① 只有 1 个颜色且它「下架」⇒ **保持既有行为**（单色直接定下来，不走候选过滤）
 
@@ -127,7 +127,7 @@ lark.sales.color_options.filtered {
 | 9 | 配置先行：逻辑里**没有**中文字面量 / `=== '预付'` | ✅ | `SALES_PRODUCT_STATUS_OFF_SHELF` / `colorOptionsScope` / `salesColorOptionsScopeFor`；`grep` 复核（见 PR） |
 | 10 | 正向证据日志（字段齐全） | ✅ | 测试 ①（逐字段 `deepEqual`）+ ⑤（`dropped=2`、两个颜色名） |
 | 11 | #227 的「A 定颜色 → 选完才跑 B」结构**一个字没动** | ✅ | 测试 ① 断言"她没选颜色 ⇒ B 零调用"；`select` 之后的 B 由既有用例继续钉住 |
-| 12 | 既有断言**不放宽** | ✅ | 只把两个 fixture 收紧（候选带上真实存在的「货品状态」列）；其余用例原文未改，186 条全绿 |
+| 12 | 既有断言**不放宽** | ✅ | 只把 fixture 收紧（候选带上生产真有的「货品状态」列、默认档 deepEqual 加上范围）；全量 `node --test --test-concurrency=1` **连跑 2 次** `1096 / pass 1096 / fail 0`（已并入最新 `origin/main` 的合并态） |
 
 ## 6. 与第三刀的关系（有意保留的东西）
 
