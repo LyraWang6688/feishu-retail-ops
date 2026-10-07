@@ -232,3 +232,57 @@ test('⭐ 防复发②（源码级）：doubaoService 里不许再出现裸 `tex
     'textValue 必须来自仓库里唯一的那个实现（v1BitableGateway），不要新造一份 helper',
   );
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// □ ⭐ 提示词口径（2026-10-07 业务负责人批准改的两条，见
+//    docs/arrival-trigger-and-prompt-2026-10-07.md）
+//    ⚠️ 这几条**只钉提示词原文**（模型行为没法在 CI 里跑真模型验证），
+//       作用是"以后有人把这两条删掉，CI 立刻红"。
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('提示词①：不再要求她说「完毕」才处理 —— `complete` 的定义改成"信息够不够算"', async () => {
+  const calls = [];
+  const service = makeService(JSON.stringify({ complete: true, same: false, differences: [] }), { calls });
+  await service.parseArrivalReconciliation({ rows: ROWS(), messages: ['38 码少一双'] });
+  const prompt = promptOf(calls);
+
+  // 🔴 旧口径必须消失：以前是"她明确说了完了才 complete=true"。
+  assert.doesNotMatch(prompt, /明确\*\*表示这次核对说完了/,
+    '旧的「她明确表示说完了才填 true」必须删掉（业务负责人 2026-10-07 拍板）');
+  assert.doesNotMatch(prompt, /说完之后会说一句表示/,
+    '旧文案里"说完之后会说一句表示核对完了的话"必须删掉');
+  assert.doesNotMatch(prompt, /不要\*\*因为内容看起来齐了就填 true/,
+    '旧的「不要因为内容看起来齐了就填 true」与"信息够就算"的新口径相反，必须改掉');
+  // ⭐ 新口径：complete 表示"信息够不够算"，且明确它不是"要不要处理"的开关。
+  assert.match(prompt, /只表示"她给的信息够不够算"/);
+  assert.match(prompt, /信息足以算清差异[\s\S]{0,80}填 true/);
+  assert.match(prompt, /不是\*\*"要不要处理"的开关/);
+  // 但要保留那个**体感**：不需要她说「完毕」。
+  assert.match(prompt, /不需要\*\*她说「完毕 \/ 核对完了」这类话才处理/);
+});
+
+test('提示词②：新增「某行一双都没到 / 没到 / 没来」→ 必须按 less + 申请数量输出（漏了就写错账）', async () => {
+  const calls = [];
+  const service = makeService(JSON.stringify({ complete: true, same: false, differences: [] }), { calls });
+  await service.parseArrivalReconciliation({ rows: ROWS(), messages: ['38 码一双都没到'] });
+  const prompt = promptOf(calls);
+
+  assert.match(prompt, /一双都没到 \/ 没到 \/ 没来 \/ 一双没来/, '要逐字写出她可能说的那几种说法');
+  assert.match(prompt, /这一行必须输出/);
+  assert.match(prompt, /quantity = \*\*该行的申请数量\*\*/);
+  assert.match(prompt, /明明没到却入库，就是写错账/, '要说清漏掉它的后果');
+  // ⚠️ 仍然是三类里的 `less`，**没有**新增第四种差异类型（与既有口径一致）。
+  assert.match(prompt, /type="less"/);
+  assert.doesNotMatch(prompt, /"zero"/, '不许新增第四种差异类型');
+});
+
+test('提示词③：保守原则还在 —— 判断不出就不要瞎猜（宁可让她再说一遍）', async () => {
+  const calls = [];
+  const service = makeService(JSON.stringify({ complete: false, same: false, differences: [] }), { calls });
+  await service.parseArrivalReconciliation({ rows: ROWS(), messages: ['嗯，我看看'] });
+  const prompt = promptOf(calls);
+
+  assert.match(prompt, /判断不出她说的是差异还是实际数量时，\*\*不要输出这一行\*\*/);
+  assert.match(prompt, /货号、尺码都不在单子上[\s\S]{0,40}不要输出那一行，也不要猜/);
+  assert.match(prompt, /她说「完全一样 \/ 都到了 \/ 一件不差 \/ 没有差异」时填 true/);
+});
