@@ -247,15 +247,24 @@ $ node scripts/validate_v1_schema.js purchase      # 本机（指向**测试 Bas
 
 ## 七、CI 三项实际输出
 
-`gh pr checks 245`（PR #245，分支 `feat/purchase-return-unified-parsing`）：
+`gh pr checks 245`（PR #245，分支 `feat/purchase-return-unified-parsing`，head = 本文件的最后一个提交）：
 
 ```
-Analyze (javascript-typescript)	pass	1m5s	https://github.com/LyraWang6688/feishu-retail-ops/actions/runs/37641925136/job/112862858890
-CodeQL	                        pass	7s  	https://github.com/LyraWang6688/feishu-retail-ops/runs/112863297104
-test	                        pass	1m0s	https://github.com/LyraWang6688/feishu-retail-ops/actions/runs/37642032487/job/112863235789
+Analyze (javascript-typescript)	pass	1m15s	https://github.com/LyraWang6688/feishu-retail-ops/actions/runs/37642529260/job/112865414305
+CodeQL	                        pass	6s   	https://github.com/LyraWang6688/feishu-retail-ops/runs/112866216687
+test	                        pass	1m2s 	https://github.com/LyraWang6688/feishu-retail-ops/actions/runs/37642508173/job/112865636563
 ```
 
 `gh pr view 245 --json mergeStateStatus` → **`CLEAN`**（✅ 进入 CI、✅ 没用 `--admin`）。
+
+⚠️ **中间有一次基础设施抖动，如实记下来**（不是代码问题）：
+PR head 推进到 `ed65eed`（**只有 docs 一个文件的一行**）时，GitHub **默认设置**的
+`Analyze (javascript-typescript)` 在 **SARIF 上传**那一步失败（日志里 `Found 0 raw diagnostic messages`、
+无任何告警，步骤之后就是 `Uploading results`；同一棵代码在 `84e4054` 上这次检查是 **pass 1m5s**）。
+当时 GitHub API 也在抖（`gh run rerun` / `gh api .../check-runs` 连续返回 **HTTP 500**、`git push` 也被
+`Internal Server Error` 拒了几次）。等它恢复后，用一次**空的 `ci:` 提交**（`d78d4ee`，代码零改动）
+触发新的分析 ⇒ 三项全 pass（上面的输出）。**没有用 `--admin`、没有绕闸门。**
+
 🔴 **没有合并、没有部署**（合并由业务负责人/Lead 来；部署必须拿到她**当次**的命令）。
 
 ---
