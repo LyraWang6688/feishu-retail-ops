@@ -20,11 +20,14 @@ export const PURCHASE_RETURN_FORM_URL =
   'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnjsqt4D5URseSSXgecYlqGd';
 
 /**
- * 两个飞书表单，按这个顺序渲染。**两个消费方**（都只负责画，不改这张表）：
- *   1. `features/purchase/links.js` —— 「采购和退货」独立页（`purchase-return.html`）的两张卡；
- *   2. `config/home.js` —— 首页【常用功能】的「采购」「退货」两张独立卡
- *      （2026-10-07：她把首页拆成两个入口，各点一次直达表单，见
- *       `docs/workbench-purchase-return-split-2026-10-07.md`）。
+ * 两个飞书表单，按这个顺序渲染。**消费方**（只负责画，不改这张表）：
+ *   `features/purchase/links.js` —— 「采购和退货」页（`purchase-return.html`）的两张卡。
+ *   ⚠️ 2026-10-08：首页【常用功能】**不再直接消费这张表** ——
+ *      业务负责人要「采购和退货合并为一个入口，即退货的链接没有了」，
+ *      首页那**一张**卡指的是工作台内页 `/workbench/purchase-return.html`
+ *      （报货 / 退货两个表单卡都在那一页里），所以 `config/home.js` 里
+ *      **既不复制 URL、也不再 import 本文件**。
+ *      留档：`docs/workbench-purchase-return-merge-2026-10-08.md`。
  * 加 / 减表单只改这张表。
  */
 export const PURCHASE_FORMS = [

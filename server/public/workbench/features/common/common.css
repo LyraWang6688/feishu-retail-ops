@@ -2,13 +2,17 @@
    其余一律复用 styles/base.css 里的既有类（panel / quick-entries / entry-card / btn），
    不另起一套样式。 */
 
-/* 首页现在有三个入口：采购 / 退货（两张飞书表单外链卡）+ 库存手工调整。
-   手机上【采购、退货并排一行，库存手工调整整行在下】——
-   三个入口在一屏之内全部可见（她只在手机上用这个工作台）。
-   桌面端不用管：`.quick-entries` 默认就是三列，正好一行三个。 */
+/* 首页现在只有两个入口：采购（→「采购和退货」页）+ 库存手工调整。
+   桌面端按**两列**排 —— `.quick-entries` 默认是三列，两个入口会留一个空位，
+   所以这里显式改成两列（与 2026-10-07 拆分前同一条规则）。 */
+.quick-entries.entries-pair { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+/* 手机上**堆成一列**（覆盖上面那条两列规则；与 `styles/base.css` 的窄屏规则一致）——
+   两个入口上下排、一屏之内全部可见（她只在手机上用这个工作台）。
+   ⚠️ 单列下每张卡本来就是整行，所以原先那条 `entry-wide`（`grid-column: 1 / -1`）
+   规则去掉；⚠️ 配置里「库存手工调整」的 `wide` 字段**一个字没动**。 */
 @media (max-width: 760px) {
-  .quick-entries.entries-pair { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .quick-entries.entries-pair > .entry-card.entry-wide { grid-column: 1 / -1; }
+  .quick-entries.entries-pair { grid-template-columns: minmax(0, 1fr); }
 }
 
 .inline-links { display: flex; flex-wrap: wrap; gap: 8px; }
