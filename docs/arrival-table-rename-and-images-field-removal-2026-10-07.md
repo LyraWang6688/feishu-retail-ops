@@ -70,7 +70,7 @@
 | D2 | ✅ | 见第 7 节：改动前 66 条里 **5 条红**（就是新增/加强的那 5 条），改完后 66/66 |
 | E1 | ✅ | 本文 + `purchase-batch-no-arrival-and-push-2026-10-07.md` 新增**第 8 节「表名/字段同步的最后两处」** + `docs/README.md` 索引 |
 | F1 | ✅ | 见第 7 节（独立 worktree `.local/worktrees/arrival-schema`，连跑 2 次） |
-| F2 | ⏳ | 见第 7 节（PR 开出后回填 `gh pr checks` 三项） |
+| F2 | ✅ | PR [#239](https://github.com/LyraWang6688/feishu-retail-ops/pull/239)：`gh pr checks 239` 三项全绿，`mergeStateStatus` = **CLEAN**（见第 7.3 节）。**没有**用 `--admin`、**没有**合并（合并由 Lead 做） |
 | F3 | ✅ | 本 PR **没有** deploy / `pm2` / 线上 `.env`；只跑只读的 `listFields`（`scripts/list-v1-fields.js`）与 `validate_v1_schema.js`；改动的文件里**没有**销售侧、`pendingDealPush*`、`app.js`（见 `git diff --name-only`） |
 
 ## 4. 「图片」字段读写点清单（删了哪些 / 哪些是别的物）
@@ -166,18 +166,43 @@ node --test --test-concurrency=1 test/purchaseTableRenameSync.test.js \
 # 改动后：ℹ tests 66 / ℹ pass 66 / ℹ fail 0
 ```
 
-### 7.2 全量（独立 worktree，**不在主工作区跑**）
+⚠️ 这 5 条里，「点「是」①」那条**没有**先红（它本来就会绿 —— 因为那条链路**从来就没有写图片的代码**）。
+先红的是**另外 4 条 + 被改成否定式的 1 条**：① schema 表名、② `images` 映射、
+③ 全仓读写点扫描、④ 工作台文案/列、⑤ `purchaseQueryService` 的 `image_count`。
+「到货核对链路不写图片」这一条是**回归钉**（钉住"已经不存在"，不是"刚删掉"）。
+
+### 7.2 全量（独立 worktree `.local/worktrees/arrival-schema`，**不在主工作区跑**）
+
+`node --test --test-concurrency=1`，**连跑 2 次**（都在**改动后**的代码上）：
 
 ```
-cd .local/worktrees/arrival-schema/server && node --test --test-concurrency=1   # 第 1 次
-cd .local/worktrees/arrival-schema/server && node --test --test-concurrency=1   # 第 2 次
+=== run 1 ===
+ℹ tests 1201
+ℹ pass 1201
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+=== run 2 ===
+ℹ tests 1201
+ℹ pass 1201
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
 ```
 
-（结果回填）
+（改动前基线：全量 1196/1196；本次新增/加强 5 条断言，全量到 1201。）
 
-### 7.3 CI（三项）
+### 7.3 CI（PR #239）
 
-（PR 开出后回填 `gh pr checks` 的 `test` / `Analyze (javascript-typescript)` / `CodeQL` 实际输出）
+`gh pr checks 239` 三项全绿；`gh pr view 239 --json mergeStateStatus` = **CLEAN**：
+
+| 检查 | 结果 | 耗时 |
+|---|---|---|
+| `test`（server tests） | ✅ pass | 54s |
+| `Analyze (javascript-typescript)`（CodeQL） | ✅ pass | 1m4s |
+| `CodeQL` | ✅ pass | 4s |
+
+**没有**用 `--admin`；**没有**合并（合并由 Lead 做）。
 
 ## 8. ⚠️ 不确定 / 需在服务器上复核 / 需她拍板
 
