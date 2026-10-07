@@ -14,6 +14,10 @@
 //
 // 收款明细不在这里声明：已收多少写在 payments 上，应收减已收的差额由后端自动补一条
 // 「未收款」（见 salesOrderService）。这样"现货 / 未付 / 预付"天然落到同一套逻辑里。
+//
+// ⚠️ 「录单时要跑哪些解析」（货品信息 / 实时库存）**不在这里**：
+//    那条规则单独放在 `config/salesTradeTypePolicy.js`（一处可配，见那份文件的注释）。
+//    本注册表只管"交易类型 → 交付状态"。
 const SALES_MOVEMENTS = Object.freeze({
   SALE_CASH: Object.freeze({ label: '现货', delivery: '已交付' }),
   SALE_UNPAID: Object.freeze({ label: '未付', delivery: '已交付' }),
