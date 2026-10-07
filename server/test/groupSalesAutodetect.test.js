@@ -153,18 +153,6 @@ const groupEvent = (overrides = {}) => ({
   },
 });
 
-const privateEvent = (overrides = {}) => ({
-  sender: { sender_id: { open_id: overrides.senderOpenId || 'ou_sender' } },
-  message: {
-    message_id: overrides.messageId || 'om_private_1',
-    chat_id: 'oc_private',
-    chat_type: 'p2p',
-    message_type: 'text',
-    create_time: '1000',
-    content: JSON.stringify({ text: overrides.text || '' }),
-  },
-});
-
 // 录单本身是 `setImmediate` 之后异步跑的（与线上一致：先回事件、再慢慢处理）。
 const flushSalesTasks = async (service, openId = 'ou_sender') => {
   await new Promise((resolve) => setImmediate(resolve));
@@ -399,41 +387,61 @@ test('话题里不 @ + 完全不像销售的一句（如「你好 小来财」�
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 【⑥】私聊行为一个字都不变
+// 🔴 原【⑥】「私聊行为一个字都不变」那 2 条 —— 私聊入口已整体删除，
+//    按业务负责人 2026-10-07 拍板的 ⓐ（代码里一行私聊都不留）**迁到群入口**。
+//    见 docs/private-chat-removal-decision-2026-10-07.md。
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('私聊：录单照旧（任务上没有群字段，回复不带 reply_in_thread）', async () => {
-  const { service, replies, calls, created, purchaseCalls } = makeHarness();
+test('话题里不 @ + 录单 → 销售主表只建 1 条、加了「收到」表情、卡片回到**那个话题**', async () => {
+  const threads = new SalesGroupThreadLocator({ store: tempStore('group-autodetect-threads-') });
+  await threads.rememberSaleThread({
+    salesEntryRecordId: 'entry_existing', taskId: 'sale_orig',
+    messageId: 'om_orig_sale', threadId: 'omt_sale_sale', chatId: CHAT_ID, senderOpenId: 'ou_sender',
+  });
+  const { service, replies, calls, created, purchaseCalls } = makeHarness({ salesGroupThreads: threads });
 
-  const result = await service.acceptMessage(privateEvent({
-    messageId: 'om_private_sale', text: '66356 黑 42 一双 230 微信',
+  const result = await service.acceptMessage(groupEvent({
+    messageId: 'om_topic_sale', threadId: 'omt_sale_sale', mentions: [], text: '再记一双 66356 黑 42 230 微信',
   }));
 
   assert.equal(result.accepted, true);
-  assert.equal(result.type, 'sale', '私聊仍然是 sales 入口，与改动前逐字相同');
-  const task = await service.store.get(result.taskId);
-  assert.equal(task.chat_type, undefined, '私聊任务不该有群字段');
-  assert.equal(task.chat_id, undefined);
-  assert.equal(task.group_thread_id, undefined);
+  assert.equal(result.mode, 'thread');
+  const task = await service.store.get(result.sales.taskId);
+  assert.equal(task.chat_type, 'group', '群入口的任务必须带群上下文');
+  assert.equal(task.chat_id, CHAT_ID);
+  assert.equal(task.group_thread_id, 'omt_sale_sale');
+  assert.equal(task.sales_entry_record_id, 'entry_existing', '绑定到话题定位到的那一笔');
 
   await flushSalesTasks(service);
-  assert.equal(created.filter((item) => item.key === 'salesEntry').length, 1);
+  // 话题已经绑定了那一笔销售 → **不新建**销售主表记录（一条销售 = 一个话题）。
+  assert.equal(created.filter((item) => item.key === 'salesEntry').length, 0);
   const cardReply = replies.find((item) => item.data.msg_type === 'interactive');
   assert.ok(cardReply);
-  assert.equal(cardReply.data.reply_in_thread, undefined, '私聊的回复绝不能带 reply_in_thread');
-  assert.equal(cardReply.path.message_id, 'om_private_sale');
-  // 私聊收到消息要加表情（+ 私聊专属的文字回执由 acknowledgeMessage 发出）
+  assert.equal(cardReply.data.reply_in_thread, true, '群入口的卡片一律回复进那条话题');
+  assert.equal(cardReply.path.message_id, 'om_topic_sale');
+  // 群聊收到消息要加表情（**不回**「已收到」文字，群里回文字会刷屏）
   assert.ok(calls.includes('im.messageReaction.create'));
-  assert.deepEqual(purchaseCalls, [], '私聊不走群聊那条分派');
+  assert.deepEqual(replies.filter((item) => item.data.msg_type === 'text'), []);
+  assert.deepEqual(purchaseCalls, [], '走了销售那条路就不该再进采购');
 
-  // 私聊的日常聊天照旧静默（闸门在 acceptSalesText 里，一个字没动）
-  const chat = await service.acceptMessage(privateEvent({ messageId: 'om_private_chat', text: '今天天气不错' }));
-  assert.deepEqual(chat, { accepted: false, reason: 'not_sales_candidate' });
+  // 主群的日常聊天照旧静默（闸门一个字没动）
+  const chat = await service.acceptMessage(groupEvent({
+    messageId: 'om_main_chat', mentions: [], text: '今天天气不错',
+  }));
+  assert.deepEqual(chat, { accepted: false, reason: 'group_not_sales_text' });
 });
 
-test('私聊：主群准入放宽**不影响**私聊的闸门开关（strict 模式下私聊照旧）', async () => {
-  const { service } = makeHarness({ mainChatRequireMention: true });
-  const result = await service.acceptMessage(privateEvent({ messageId: 'om_private_strict', text: 'A100 38码一双' }));
-  assert.equal(result.accepted, true, '主群开关只管主群');
-  assert.equal(result.type, 'sale');
+test('主群准入的 strict 开关**只管主群**：话题里的消息不受它影响', async () => {
+  const threads = new SalesGroupThreadLocator({ store: tempStore('group-autodetect-strict-') });
+  await threads.rememberSaleThread({
+    salesEntryRecordId: 'entry_existing', taskId: 'sale_orig',
+    messageId: 'om_orig_sale', threadId: 'omt_strict', chatId: CHAT_ID, senderOpenId: 'ou_sender',
+  });
+  const { service } = makeHarness({ mainChatRequireMention: true, salesGroupThreads: threads });
+
+  const result = await service.acceptMessage(groupEvent({
+    messageId: 'om_topic_strict', threadId: 'omt_strict', mentions: [], text: '再记一双 66356 黑 42 230 微信',
+  }));
+  assert.equal(result.accepted, true, 'strict 只管主群；话题里免 @ 这条判据不受它影响');
+  assert.equal(result.mode, 'thread');
 });

@@ -284,7 +284,7 @@ test('解析器：本地存着话题深链就直接用它（不需要任何远�
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 四、接线：群里发卡片 → 两处都存；私聊一个字节都不变
+// 四、接线：群里发卡片 → 两处都存；**没有群上下文的任务一个字节都不写**
 // ─────────────────────────────────────────────────────────────────────────────
 
 const wiredService = ({ chatType = 'group', appLink = APP_LINK } = {}) => {
@@ -382,13 +382,18 @@ test('两个 id 缺一个就不拼：既没回带链接、又没有 chat_id/thre
   assert.equal(updates.length, 0);
 });
 
-test('私聊任务：既不写本地映射、也不写销售主表（私聊这条路由不通它）', async () => {
+test('🔴 没有群上下文的任务：**一条消息都不发**，既不写本地映射、也不写销售主表', async () => {
+  // 🔴 2026-10-07「私聊链路移除」：这条用例原来叫「私聊任务：既不写本地映射、也不写销售主表」。
+  //    私聊入口已整体删除，所以"私聊任务"这个输入没有了；留下的是**同一条防御分支** ——
+  //    任务没有群上下文 → `sendTaskCard` 直接记日志 + 返 `null`，**没有去处**。
+  //    ⚠️ 保留它的价值：证明这条分支**绝不**碰「话题 ↔ 销售」映射、也**绝不**碰业务表
+  //    （映射的 key 是她的 message_id，被一条无渠道的任务写脏就再也定位不回那笔销售了）。
   const { service, updates, locator, task } = wiredService({ chatType: 'private' });
   const messageId = await service.sendTaskCard(task, { header: {} });
-  assert.equal(messageId, 'om_private_1');
+  assert.equal(messageId, null, '没有群上下文 → 没有去处，明确返 null');
   assert.equal(updates.length, 0);
   const all = await locator.store.list();
-  assert.equal(all.length, 0, '私聊不该产生任何「话题 ↔ 销售」记录');
+  assert.equal(all.length, 0, '没有群上下文的任务不该产生任何「话题 ↔ 销售」记录');
 });
 
 test('本地映射的 key 是「她那句话」的 message_id（后续引用/话题反查都靠它）', async () => {
