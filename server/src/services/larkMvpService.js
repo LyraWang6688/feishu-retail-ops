@@ -1993,12 +1993,24 @@ class LarkMvpService {
 
   async handleCardAction(event, context = {}) {
     const value = event?.action?.value || event?.event?.action?.value || {};
+    // ⭐ 2026-10-08：**表单容器**的提交回调多带一个 `form_value`（官方：表单项 name → 值），
+    //    它与 `value` **并列**（`event.action.form_value`），不在 `value` 里面。
+    //    这里只做"取出来、原样往下传"—— 哪一项是"实际到货情况"由到货核对那边的配置说了算。
+    const formValue = event?.action?.form_value || event?.event?.action?.form_value || {};
     const draftId = value.draft_id;
     const action = value.action;
     const operatorOpenId =
       event?.operator?.operator_id?.open_id || event?.operator?.open_id || event?.event?.operator?.operator_id?.open_id;
     if (['choose_sample_replacement', 'refresh_sample_replacement'].includes(action)) {
       return this.sampleReplacements.handleCardAction(value, event, operatorOpenId, context);
+    }
+    // ⭐⭐ 「采购到货核对」卡片的**表单提交**（业务负责人 2026-10-07 深夜：
+    //    「用户填写内容之后，再点击提交……以这个来作为触发后续的到货验收」）。
+    // ⚠️ 与下面「是 / 否」同一个位置理由：这张卡也带 draft_id（= 到货核对任务 id，
+    //    **不是**销售草稿），落到下面那套销售逻辑里一定会把别人的草稿当成自己的。
+    // ⚠️ 与「是 / 否」分派同一份常量（卡片渲染与分派不会各写一份而慢慢写歪）。
+    if (action === ARRIVAL_CONVERSATION_ACTIONS.SUBMIT) {
+      return this.arrivalConversation.handleCardFormSubmit(value, formValue, event, operatorOpenId);
     }
     // 「采购到货核对」卡片的「是 / 否」。
     // ⚠️ 位置有意放在这里（采购申请卡片分派**之前**、下面那句 `if (!draftId) throw` 之前）：

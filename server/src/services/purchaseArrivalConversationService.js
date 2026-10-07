@@ -132,7 +132,14 @@ class PurchaseArrivalConversationService {
       ? {
         ...defaults,
         ...config,
-        card: { ...defaults.card, ...(config.card || {}) },
+        card: {
+          ...defaults.card,
+          ...(config.card || {}),
+          // ⚠️ `form`（表单那块：输入框 / 提交按钮 / 降级文案）必须**嵌套合并**：
+          //    只浅合并 `card` 的话，调用方覆盖 `card.form.submitLabel` 一项就会把
+          //    `fieldName` / `required` / 降级文案…整块变成 undefined（改一项、坏一片）。
+          form: { ...defaults.card.form, ...((config.card || {}).form || {}) },
+        },
         replies: { ...defaults.replies, ...(config.replies || {}) },
         summary: { ...defaults.summary, ...(config.summary || {}) },
       }
@@ -215,7 +222,25 @@ class PurchaseArrivalConversationService {
     }));
   }
 
-  async handleTopicMessageLocked({ taskId, batch, batchNo, text, messageId, threadId, senderOpenId }) {
+  /**
+   * 话题那条**锁定管道**：一条"她说的到货反馈"从记原话 → 调模型 → 算计划 → 发卡片，
+   * **整条链路只有这一份实现**。
+   *
+   * ⭐⭐ 2026-10-08（表单提交那条路的关键）：卡片表单提交**也走这个方法**，
+   *    只是把 `messageId` 传成**被提交的那张卡片的消息 id**、`text` 传成
+   *    `form_value.actual_arrival` 的文字 —— 于是"提交"与"在话题里说同一句"
+   *    **喂给模型的原话、算出来的计划、发出去的卡片逐字一致**（用例钉住）。
+   *    这就是需求里那句「把 form_value 的文字当作她在话题里说的那句话」的落地，
+   *    **没有第二套解析**。
+   *
+   * @param {string} [callerHandledCardId] ⭐ 调用方**自己会收掉**的那张卡片
+   *   （表单提交路径 = 她提交的那张卡：提交成功后由调用方 patch 成「已提交」终态）。
+   *   命中它时这里**跳过作废**，免得同一张卡被 patch 两次（一次"已作废"、一次"已提交"）。
+   *   ⚠️ **不传时行为与改动前逐字不变**（话题那条路走的就是默认值）。
+   */
+  async handleTopicMessageLocked({
+    taskId, batch, batchNo, text, messageId, threadId, senderOpenId, callerHandledCardId = '',
+  }) {
     const { replies } = this.config;
     let task = await this.store.get(taskId);
     if (task?.status === 'posted') {
@@ -400,9 +425,15 @@ class PurchaseArrivalConversationService {
     //    绝不因为"读不到"就把发卡判成失败（发送本身已经 `code = 0`）。
     const evidence = await this.cardEvidence(cardMessageId, threadId);
     // 旧卡（若有）**尽力作废**：把按钮收掉，免得话题里同时留着两张都能点的卡。
-    const supersede = await this.retirePreviousCard(existingCardMessageId, {
-      taskId, batchNo, newCardMessageId: cardMessageId,
-    });
+    // ⚠️ 2026-10-08：`callerHandledCardId` 命中时**跳过** —— 那张卡由**调用方**收成
+    //    「已提交」终态（表单提交那条路，见 `handleFormSubmitLocked`）。
+    //    否则同一张卡会被 patch 两次（先"已作废"、再"已提交"），白白多一次远端调用。
+    const supersede = existingCardMessageId
+      && existingCardMessageId === String(callerHandledCardId || '').trim()
+      ? { attempted: false, result: 'none', reason: 'handled_by_caller' }
+      : await this.retirePreviousCard(existingCardMessageId, {
+        taskId, batchNo, newCardMessageId: cardMessageId,
+      });
     const nowIso = new Date(this.now()).toISOString();
     await this.store.update(taskId, {
       status: 'awaiting_confirmation',
@@ -472,6 +503,193 @@ class PurchaseArrivalConversationService {
     return this.queue.run(taskId, () => (action === ARRIVAL_CONVERSATION_ACTIONS.CONFIRM
       ? this.confirmLocked(taskId, operatorOpenId, event)
       : this.rejectLocked(taskId, operatorOpenId, event)));
+  }
+
+  /**
+   * ⭐⭐ 卡片表单的**提交入口**（业务负责人 2026-10-07 深夜定的口径，逐字）：
+   *   「等到货之后，**请在卡片里填写实际到货情况**……**用户填写内容之后，再点击提交**。
+   *    以这个来作为**触发后续的到货验收**」
+   *
+   * 分工（这里的职责边界要看清）：
+   *   · **本方法只管三件事**：取出 `form_value` 里那一项文字 → 空值兜底 → 丢进同一批的串行队列；
+   *   · **真正的"到货验收"一点都没重写**：非空时原样交给 `handleFormSubmitLocked`，
+   *     而它转手就把这句话当成"她在话题里说的那句话"喂给 `handleTopicMessageLocked`
+   *     ⇒ 解析 / 差异比对 / 出卡片**与在话题里说一模一样**（用例逐字钉住）。
+   *
+   * 🔴 空提交（`form_value` 里没有那一项 / 只有空白）：**明确提示 + 一个字都不写**
+   *   （不记原话、不调模型、不发卡片、不写任何业务表），并把表单与提醒一起留在她那张卡上。
+   *   ⚠️ 官方 `required` 只是**前端**闸门（未填则前端提示、不发起回传）⇒ 服务端必须自己兜一层。
+   *
+   * @param {object} value 提交按钮的 `value`（`{action, draft_id}`）
+   * @param {object} formValue 回调里的 `form_value`（官方：表单项 name → 值）
+   * @param {object} event 整个卡片回调事件（取被提交的那张卡 id、操作人）
+   * @param {string} operatorOpenId 操作人 open_id
+   * @returns {Promise<{toast?: object}>}
+   */
+  async handleCardFormSubmit(value, formValue, event = {}, operatorOpenId = '') {
+    const taskId = String(value?.draft_id || '').trim();
+    if (!taskId) throw new Error('到货核对卡片缺少任务 ID');
+    const fieldName = this.config.card.form.fieldName;
+    const raw = formValue && typeof formValue === 'object' ? formValue[fieldName] : undefined;
+    // ⚠️ 只在**两端**去空白（`trim`）：她填的正文原样保留（多行里的换行也保留）。
+    const text = String(raw ?? '').trim();
+    const cardMessageId = String(event?.context?.open_message_id || event?.open_message_id || '').trim();
+    if (!this.config.enabled) {
+      // 与"在话题里说"**同一个开关**（`PURCHASE_ARRIVAL_CONVERSATION_ENABLED`）：
+      // 关掉就是整条到货核对不处理。⚠️ 卡片动作必须回一个响应，所以如实回一句。
+      logInfo('purchase.arrival.reconcile.disabled', {
+        message_id: cardMessageId, env: 'PURCHASE_ARRIVAL_CONVERSATION_ENABLED', source: 'form_submit',
+      });
+      return { toast: { type: 'info', content: this.config.replies.disabled } };
+    }
+    if (!text) {
+      logWarn('purchase.arrival.reconcile.submit_empty', {
+        task_id: taskId, card_message_id: cardMessageId, field: fieldName,
+        note: '空提交：明确提示 + 不记原话 / 不调模型 / 不发卡片 / 不写任何业务表',
+      });
+      await this.reopenFormAfterEmptySubmit(taskId, cardMessageId);
+      return { toast: { type: 'error', content: this.config.replies.submitMissing } };
+    }
+    logInfo('purchase.arrival.reconcile.submit_received', {
+      task_id: taskId, card_message_id: cardMessageId, field: fieldName,
+      text_length: text.length, operator_open_id: operatorOpenId || '',
+    });
+    return this.queue.run(taskId, () => this.handleFormSubmitLocked({
+      taskId, text, cardMessageId, event, operatorOpenId,
+    }));
+  }
+
+  /**
+   * 提交（非空）在**队列里**的执行体：把这句话**原样**喂给话题那条锁定管道。
+   *
+   * 三个出口都对得上她的口径：
+   *   · 任务丢了 → 走既有 `visibleFailure`（patch 她那张卡 + 回一句）；
+   *   · 已经入库过 → 不重复入库、如实回执（与"在话题里又说了一句"同一句 `afterPosted`）；
+   *   · 其余 → `handleTopicMessageLocked`（**唯一**那条解析/出卡实现）。
+   *     真的算出结果并出了新卡 ⇒ **顺手把她提交的那张卡收成「已提交」终态**
+   *     （表单收掉 ⇒ 点不了第二次，这正是"避免重复提交"）。
+   *     ⚠️ 没算出结果时**不 patch**：没有到货内容 / 解析失败 / 对不上明细 —— 卡片保持可编辑，
+   *        她可以改一句再提交（或照旧在话题里说）。把没算成说成"已提交"就是谎报。
+   */
+  async handleFormSubmitLocked({ taskId, text, cardMessageId, event, operatorOpenId }) {
+    const { replies } = this.config;
+    const task = await this.store.get(taskId);
+    if (!task) {
+      logWarn('purchase.arrival.reconcile.submit_task_missing', { task_id: taskId, card_message_id: cardMessageId });
+      return this.visibleFailure({
+        tier: 'task_missing', taskId, operator: operatorOpenId, event, task,
+        copy: replies.taskMissing, logEvent: 'purchase.arrival.reconcile.submit_task_missing',
+      });
+    }
+    if (task.status === 'posted') {
+      // 已经入过库：**一个字都不写**，如实告诉她（与话题那条路同一句话、同一个判据）。
+      logInfo('purchase.arrival.reconcile.submit_after_posted', {
+        task_id: taskId, card_message_id: cardMessageId, operator_open_id: operatorOpenId || '',
+      });
+      await this.safeReplyText(cardMessageId, replies.afterPosted, this.threadOptions(task));
+      return { toast: { type: 'info', content: replies.afterPosted }, handled: true, reason: 'already_posted' };
+    }
+    const result = await this.handleTopicMessageLocked({
+      taskId,
+      // ⭐ "是哪一批"从**本地会话任务**上还原（提交没有定位器给的 batch 对象）。
+      batch: this.batchFromTask(task),
+      batchNo: String(task.batch_no || ''),
+      // ⭐ 她填的那段文字 = "她在话题里说的那句话"。逐字一致就靠这一行。
+      text,
+      // ⭐ 身份用**被提交的那张卡片**的消息 id：飞书重投同一次提交时，
+      //    管道里那道"同一条消息只记一次"的闸门会把它挡成 `duplicate_message`（幂等）。
+      messageId: cardMessageId || `form_submit:${taskId}`,
+      // 她是在**话题**里收到这张卡的 ⇒ 回话/新卡都落回**同一条话题**。
+      threadId: String(task.thread_id || ''),
+      senderOpenId: operatorOpenId,
+      // 这张卡由**下面**收成「已提交」终态，管道别再拿它当"旧卡"作废一遍。
+      callerHandledCardId: cardMessageId,
+    });
+    if (result.reason === 'duplicate_message') {
+      // 飞书重投 / 她连点两次提交：不重复核对、不重复发卡、不重复入库。
+      logInfo('purchase.arrival.reconcile.submit_duplicate', { task_id: taskId, card_message_id: cardMessageId });
+      return { toast: { type: 'info', content: replies.submitDuplicate }, ...result };
+    }
+    logInfo('purchase.arrival.reconcile.form_submitted', {
+      task_id: taskId, card_message_id: cardMessageId,
+      outcome: result.reason || 'processed', card: Boolean(result.card),
+      text_length: String(text || '').length,
+    });
+    if (result.card === true) {
+      const patched = await this.safeUpdateCard(cardMessageId, purchaseArrivalReconcileStatusCard({
+        batchNo: task.batch_no || '',
+        message: this.config.card.submittedMessage,
+        template: 'grey',
+        title: this.config.card.submittedTitle,
+      }));
+      logInfo('purchase.arrival.reconcile.submit_card_closed', {
+        task_id: taskId, card_message_id: cardMessageId, card_patched: patched,
+        note: '提交成功那一次的结果卡在话题里；她提交的这张收成「已提交」终态，避免重复提交',
+      });
+    }
+    // ⚠️ 出口形状：`toast` 给卡片点击方看（路由只读它），
+    //    其余字段（`card` / `reason` / `card_message_id`）是**排查与用例**要的证据，原样带出去。
+    // ⚠️ 回执**分两句**：真的出了新卡才说"卡片发在你下面"；没算出结果时如实说
+    //    （说错方向会让她去找一张根本不存在的卡 —— 真机 2026-10-07 23:37 就是这么被带偏的）。
+    const toastCopy = result.card === true ? replies.submitReceived : replies.submitReceivedNoCard;
+    return { toast: { type: 'info', content: toastCopy }, ...result };
+  }
+
+  /**
+   * 从**本地会话任务**上还原"是哪一批"（表单提交路径没有定位器给的 batch 对象）。
+   *
+   * ⚠️ 只还原任务上**真的记着**的东西：
+   *   · `request_ids` 优先取任务上的（发卡那一轮 `loadRequestRows` 存的）；
+   *     没有才回落到 `request_rows[].request_record_id`；
+   *   · **两个都没有就返回空数组** ⇒ `loadRequestRows` 照旧 `no_request_ids`
+   *     （**不发卡、不写表**）—— **绝不猜"最近一笔"**（AGENTS.md 那条纪律）。
+   */
+  batchFromTask(task) {
+    const rows = Array.isArray(task?.request_rows) ? task.request_rows : [];
+    const stored = Array.isArray(task?.request_ids) && task.request_ids.length
+      ? task.request_ids
+      : rows.map((row) => row.request_record_id);
+    return {
+      batch_no: textValue(task?.batch_no),
+      batch_record_id: textValue(task?.batch_record_id),
+      chat_id: textValue(task?.chat_id),
+      // 到货核对只对采购申请单开（退货批次在入口就被挡掉了，见 `handleTopicMessage`）。
+      batch_kind: ARRIVAL_BATCH_KINDS.PURCHASE_REQUEST,
+      request_ids: [...new Set(stored.map((id) => String(id || '').trim()).filter(Boolean))],
+    };
+  }
+
+  /**
+   * 空提交之后**尽力**把表单留在她那张卡上（外加一句"没收到内容"的提醒）。
+   *
+   * 🔴 它**不写任何业务表、不动本地任务**，只是重新渲染一张卡 —— 所以"零写库"这条不变。
+   * ⚠️ 任务上没有算好的计划（还没有行）就不重渲染：**宁可不做，也不渲染一张空卡**。
+   */
+  async reopenFormAfterEmptySubmit(taskId, cardMessageId) {
+    if (!cardMessageId) return false;
+    let task = null;
+    try {
+      task = await this.store.get(taskId);
+    } catch (error) {
+      logWarn('purchase.arrival.reconcile.submit_empty_reopen_skipped', {
+        task_id: taskId, card_message_id: cardMessageId, reason: 'task_unreadable', error: error.message,
+      });
+      return false;
+    }
+    if (!task || !Array.isArray(task.plan) || !task.plan.length) {
+      logInfo('purchase.arrival.reconcile.submit_empty_reopen_skipped', {
+        task_id: taskId, card_message_id: cardMessageId, reason: task ? 'no_plan' : 'task_missing',
+      });
+      return false;
+    }
+    const reopened = await this.safeUpdateCard(cardMessageId, purchaseArrivalReconcileCard({
+      taskId, batchNo: task.batch_no || '', rows: task.plan, differences: task.differences || [],
+      copy: this.config.card, formNote: this.config.card.submitMissingNote,
+    }));
+    logInfo('purchase.arrival.reconcile.submit_empty_reopened', {
+      task_id: taskId, card_message_id: cardMessageId, card_patched: reopened,
+    });
+    return reopened;
   }
 
   /**

@@ -751,7 +751,66 @@ const arrivalReconcileLines = (rows = [], differences = [], copy = {}) => {
   });
 };
 
-const purchaseArrivalReconcileCard = ({ taskId, batchNo = '', rows = [], differences = [], copy = {} } = {}) => {
+// ⭐⭐ 「表单填写 + 提交」那一块（业务负责人 2026-10-07 深夜定）：
+//   「等到货之后，**请在卡片里填写实际到货情况**……**用户填写内容之后，再点击提交**。
+//    以这个来作为**触发后续的到货验收**」
+//
+// 🔴 三件官方硬约束（curl 实查，原文与出处见 `docs/arrival-card-form-input-2026-10-08.md` 第 0 节）：
+//   ① **输入框必须与按钮一起内嵌进「表单容器」**（`tag:"form"`）——
+//      「要结合使用输入框组件与按钮组件，你需将输入框组件与按钮组件内嵌于表单容器中」；
+//   ② 表单容器**只能放在卡片根节点下**（不可被内嵌在其它组件内）⇒ 本函数只被卡片根 `elements` 用；
+//   ③ 表单内每个交互组件都要有 `name` 且**卡片全局唯一**，否则数据发送失败（飞书 200530）
+//      ⇒ `containerName` / `fieldName` / `submitButtonName` 三个名字都从配置来、互不相同。
+//
+// ⚠️ `required: true` 只是**前端**闸门（官方：未填写时前端提示"有必填项未填写"，**不会发起回传**），
+//    服务端仍然自己兜一层空值（见 `PurchaseArrivalConversationService.handleCardFormSubmit`）。
+// ⚠️ `fallback` 是**老客户端（飞书 < V6.8）的降级文案**：输入框用不了 ⇒ 那句话要指回
+//    「在话题里说一句」那条老路（老路一直在，见 `handleTopicMessage`）。
+const arrivalReconcileForm = (form = {}, taskId = '') => {
+  const settings = form || {};
+  const fieldName = text(settings.fieldName) || 'actual_arrival';
+  return {
+    tag: 'form',
+    // 官方：表单容器的唯一标识，同一张卡片内全局唯一。
+    name: text(settings.containerName) || 'arrival_reconcile_form',
+    elements: [
+      {
+        tag: 'input',
+        // 官方：该字段必填，且用于识别"用户提交的文本属于哪个输入框"（= `form_value` 的键）。
+        // ⚠️ 它的值必须跟着 config 走：service 就是按同一个 `fieldName` 去 `form_value` 里取文本的。
+        name: fieldName,
+        input_type: text(settings.inputType) || 'multiline_text',
+        rows: Number(settings.rows) > 0 ? Number(settings.rows) : 3,
+        auto_resize: settings.autoResize !== false,
+        max_rows: Number(settings.maxRows) > 0 ? Number(settings.maxRows) : 6,
+        max_length: Number(settings.maxLength) > 0 ? Number(settings.maxLength) : 1000,
+        // 必填**默认开**：只有配置显式写 `false` 才关（"没配"不等于"不要求"）。
+        required: settings.required !== false,
+        label: { tag: 'plain_text', content: text(settings.label) || '实际到货情况' },
+        label_position: text(settings.labelPosition) || 'top',
+        placeholder: { tag: 'plain_text', content: text(settings.placeholder) || '请输入实际到货情况' },
+        fallback: {
+          tag: 'fallback_text',
+          text: { tag: 'plain_text', content: text(settings.fallbackText) || '你的飞书版本太低，直接在话题里回一句实际到货情况就行。' },
+        },
+      },
+      {
+        tag: 'button',
+        // 官方：绑 `form_submit` = 点击后触发表单容器的提交事件（一次性把表单项回调给服务端）。
+        action_type: 'form_submit',
+        name: text(settings.submitButtonName) || 'submit_arrival_reconcile',
+        type: 'primary',
+        text: { tag: 'lark_md', content: text(settings.submitLabel) || '提交' },
+        // 与「是 / 否」同一个形状：动作名与任务 id 都在 value 里，分派靠它们。
+        value: { action: ARRIVAL_CONVERSATION_ACTIONS.SUBMIT, draft_id: taskId },
+      },
+    ],
+  };
+};
+
+const purchaseArrivalReconcileCard = ({
+  taskId, batchNo = '', rows = [], differences = [], copy = {}, formNote = '',
+} = {}) => {
   const elements = [];
   if (batchNo) elements.push({ tag: 'markdown', content: `**报货批次号：** ${text(batchNo)}` });
   elements.push({ tag: 'markdown', content: `**${text(copy.summaryHeading) || '按你说的实际到货'}**` });
@@ -762,6 +821,12 @@ const purchaseArrivalReconcileCard = ({ taskId, batchNo = '', rows = [], differe
   if (rows.some((row) => Number(row.actual) === 0) && copy.zeroRowsNote) {
     elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: text(copy.zeroRowsNote) }] });
   }
+  // ⭐⭐ 2026-10-08：「实际到货情况」输入框 + 「提交」按钮（同一个表单容器里，官方硬约束）。
+  //    位置：明细之后、「是 / 否」之前 —— 先让她核对算出来的数字，不对就在下面改一句再提交。
+  //    ⚠️ 只在配置给了 `form` 时才渲染（没配 = 与改动前逐字一致，既有断言不受影响）。
+  if (copy.form) elements.push(arrivalReconcileForm(copy.form, taskId));
+  // ⭐ 空提交等"卡片上必须看得见"的提醒（`formNote`）—— 不传就不出现。
+  if (formNote) elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: text(formNote) }] });
   // 「是」「否」两个按钮走 column_set：手机上一行两列（见 buttonColumns 的注释）。
   elements.push(buttonColumns([
     actionButton(text(copy.confirmLabel) || '是', ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, taskId, 'primary'),
