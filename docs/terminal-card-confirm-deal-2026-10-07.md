@@ -245,7 +245,11 @@ return this.updateSalesActionCard(task, event, card, { stage: 'confirm_deal_sett
 
 `SALES_CONFIRM_DEAL_BUTTON_LABEL` · `_HINT` · `_SETTLED_TITLE` · `_SETTLED_TEXT` ·
 `_SETTLED_CLOCK` · `_SETTLED_MESSAGE` · `_ORDER_NO_FALLBACK` · `_SHORT_STOCK` ·
-`_ASKING_TOAST` · `_ALREADY_TOAST` · `_SUCCESS_TOAST` · `_NOTHING_TEXT` · `_FAILED_TOAST`（共 13 个）。
+`_ASKING_TOAST` · `_ALREADY_TOAST` · `_SUCCESS_TOAST` · `_NOTHING_TEXT` · `_FAILED_TOAST`（当时共 13 个）。
+
+> ⚠️ **后来加了第 14 个**：`SALES_CONFIRM_DEAL_SETTLED_UNDELIVERED`（成交那句说明的续句 =
+> 「仍未交付 N 双」，2026-10-07 晚修「假成交 / 卡面不自愈」时随 AC-17 新增）——
+> 以 [confirm-deal-short-stock-and-card-selfheal-2026-10-07.md](confirm-deal-short-stock-and-card-selfheal-2026-10-07.md) 为准。
 
 - 取值规则走 `config/envValue`：**没设** → 默认值；**设了**（含空串）→ 显式取值；调用时才解析。
 - 「留空她就看不懂这张卡」的几句（按钮 / 提示 / 已成交标题与说明 / 货没到 / 汇总兜底）

@@ -511,16 +511,45 @@ class SalesThreadProgressService {
       await this.reply(task, this.config.replies.completeAlready);
       return { replied: true, reason: 'already_completed' };
     }
+    // ⭐⭐ **交付失败也是成交结论**（bug 1 的核心）：**一条都没交出去**（货还没到）时，
+    //   这一单**不算成交** —— 不许说"已成交"、不许把卡变灰，回她那句"到货入库后再点"。
+    //
+    // 为什么这里必须管：`completeDealFromCard` 那道"先做货"的闸门是**为"钱"写的**
+    // （防"货没到、钱却先记成已收"的半成品账），所以它长在 `pending.length` 上。
+    // **全款已收**的单没有"钱"要防 ⇒ 整段绕过那道闸门，走到这里；改动前这里只 `reply` 一句
+    // 「还有 N 双交付未完成」就 `return { replied, result }` —— 返回值**没有 `asked`**，
+    // 上层 `settled = !outcome.asked` 便把"一句话"读成了"成交"（假成交）。
+    //
+    // ⚠️ 判据是"**这次一条都没交成**"（`deliveredQuantity === 0`），不是"有失败"：
+    //    **部分交付**（A 双交出去、B 双没货）是既有语义（钱货各自记账），
+    //    那种情况仍算成交，只在回话/卡面里如实写上"还有 N 双"（见下面的 `failedCount`）。
+    const deliveredThisCall = Number(result.delivery?.deliveredQuantity || 0);
+    const failedCount = result.delivery?.failures?.length || 0;
+    if (failedCount && !deliveredThisCall) {
+      await this.reply(task, this.confirmDeal.shortStock);
+      logWarn('sales.confirm_deal.short_stock', {
+        task_id: task.task_id,
+        sales_entry_record_id: salesEntryRecordId,
+        failed_count: failedCount,
+        reason: result.delivery?.failures?.[0]?.error || '',
+        // 可排查：这次**钱和货都没写**（没有待收款可写；明细一条都没交成、库存没扣），
+        // 卡片也不会变灰 —— 到货入库后再点一次是安全的。
+        written: false,
+        hint: '货还没到 → 不写钱、不写交付、卡片不变灰；到货入库后再到这张卡上点确认成交',
+      });
+      return {
+        replied: true, asked: true, reason: 'short_stock',
+        result: { failures: result.delivery?.failures || [] },
+      };
+    }
     const parts = [];
     if (Number(result.collectedAmount) > 0) parts.push(`补收款 ￥${result.collectedAmount}`);
     // 交付数量取"这次 confirm 交的"；confirm 里没有交付那一段（货已经被卡片那条路先做掉了）
     // 时退回"成交前已经做掉的"数量 —— 两种情况都如实说，且**不重复计数**。
-    const deliveredThisCall = Number(result.delivery?.deliveredQuantity || 0);
     const deliveredCount = deliveredThisCall
       || (result.delivery ? 0 : Number(deliveredBefore.count || 0));
     if (deliveredCount > 0) parts.push(`交付 ${deliveredCount} 双`);
     // 交付只成了一半时**如实说**（与点卡片那条路一致：钱收下了、货没交齐不能报成功）。
-    const failedCount = result.delivery?.failures?.length || 0;
     if (failedCount) parts.push(`还有 ${failedCount} 双交付未完成，请到工作台核对`);
     await this.reply(task, formatCopy(this.config.replies.completeDone, {
       summary: parts.join('，') || '无待处理项',

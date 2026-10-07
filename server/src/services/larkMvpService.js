@@ -2058,8 +2058,21 @@ class LarkMvpService {
     const config = resolveSalesConfirmDealConfig();
     const task = draftId ? await this.store.get(draftId) : null;
     if (task?.confirm_deal_status === CONFIRM_DEAL_TASK_STATUS.SETTLED) {
+      // ⭐⭐ bug 2：**早退之前先补一次卡面**（自愈）。
+      //
+      // 与下面 `:2096-2098` 的注释本来是一句话的两半 ——「能走到 settled 分支说明上次 patch 失败了，
+      // 这是那张卡唯一一次自愈的机会」。但改动前这里**先 return、再也没试过 patch**：
+      // 第一次点击时 patch 掉了（卡片被撤回 / 权限 / 网络），任务状态却已经写成 settled，
+      // 之后再点一律走这个早退 ⇒ **那张卡永远停在"还能点"的样子上**，两处注释自相矛盾。
+      //
+      // ⚠️ 只补**卡面**：`settleConfirmDealCard` 走的是 `updateInteractiveCard`（只调
+      //    `im.message.patch`），不碰 `gateway`、也不 `store.update` —— 所以
+      //    **业务表一个字节都不写、本地任务记录也不再改**（`confirm_deal_at` 保持首次点击的值），
+      //    幂等一点没丢。卡片改不动仍然只记一条 warn，绝不影响这次回话。
+      const cardPatched = await this.settleConfirmDealCard(task, event, config, context);
       logInfo('lark.sales.confirm_deal.already_settled', {
         task_id: draftId, sales_entry_record_id: salesEntryRecordId,
+        card_repatched: cardPatched,
       });
       return { toast: { type: 'info', content: config.alreadyToast } };
     }
@@ -2096,7 +2109,12 @@ class LarkMvpService {
         // ⚠️ `already_completed`（底层的钱货本来就齐了）也算"成交状态" ⇒ 同样改成已成交：
         //   正常路径上第一次点击就改了，能走到这里说明上次 patch 失败了 ——
         //   这是那张卡**唯一一次自愈的机会**（与 `SecondDeliveryService.markCardSettled` 同一条理由）。
-        if (task) await this.settleConfirmDealCard(task, event, config, context);
+        // ⭐ 交付**只成了一半**时（部分交付 = 既有语义），卡面那句说明要把"仍未交付 N 双"
+        //   写上（问题 4：以前这个信息只出现在线程回话/toast 里，绿色卡面上一个字都没有）。
+        if (task) {
+          await this.settleConfirmDealCard(task, event, config, context,
+            { undeliveredCount: this.confirmDealUndeliveredCount(outcome) });
+        }
         const alreadyDone = outcome.reason === 'already_completed';
         return { toast: {
           type: alreadyDone ? 'info' : 'success',
@@ -2140,6 +2158,20 @@ class LarkMvpService {
   }
 
   /**
+   * 成交时**还有几双没交出去**（= 交付那一段的失败条数）。
+   *
+   * 只从**这次成交的结果**里读，不额外读表：
+   *   · 一条都没交成（货还没到）→ 走到这里之前就已经被短库存拦下（`reason: 'short_stock'`），
+   *     **根本不会渲染"已成交"卡片**；
+   *   · 部分交付（A 双交出去、B 双没货）→ 这里给出没交成的那几条；
+   *   · 钱货本来就齐（`already_completed`）/ 完全交付 → 0。
+   * ⚠️ 拿不到就报 0（**不猜**）：卡面宁可少一句，也不许编一个"未交付 N 双"。
+   */
+  confirmDealUndeliveredCount(outcome = {}) {
+    return Number(outcome.result?.delivery?.failures?.length || 0);
+  }
+
+  /**
    * 把**被点的那张终态卡**改成「已成交」：同一个位置把按钮换成一行说明，卡片其余内容
    * （明细 / 补货品信息 / 单号）原样保留 —— 走的是既有那条 patch 出口
    * （`updateInteractiveCard`：优先用回调带回来的消息 id = **她点的那张卡**）。
@@ -2147,17 +2179,27 @@ class LarkMvpService {
    * ⚠️ 这里**重新渲染**而不是"拿旧卡来改"：那张卡的输入（`task.draft`）就在本地任务上，
    *    重新渲染得到的内容与原来逐字一致（除了按钮换成说明）—— 不必为此再存一份卡片 JSON。
    *    卡片改不动（撤回 / 权限）**永远不影响成交结果**：成交这时已经写完了。
+   *
+   * `options.undeliveredCount`（可缺省，默认 0）= 这一单**还有几双没交出去**：
+   * 有值时在说明后面追一句配置文案（`SALES_CONFIRM_DEAL_SETTLED_UNDELIVERED`）。
+   * ⚠️ 缺省 = 逐字不变（既不传也没变的那几条出口一个字节都不动）。
    */
-  async settleConfirmDealCard(task, event, config = resolveSalesConfirmDealConfig(), context = {}) {
+  async settleConfirmDealCard(task, event, config = resolveSalesConfirmDealConfig(), context = {},
+    options = {}) {
     if (!task?.draft) {
       logWarn('lark.sales.confirm_deal.card.skipped', {
         task_id: task?.task_id, reason: 'missing_draft',
       });
       return false;
     }
+    const undeliveredCount = Number(options.undeliveredCount || 0);
+    const settledNote = fillConfirmDeal(config.settledMessage,
+      { orderNo: task.posting_result?.sourceNo || config.orderNoFallback });
     const card = salesStatusCard(task.draft, config.settledTitle,
-      fillConfirmDeal(config.settledMessage,
-        { orderNo: task.posting_result?.sourceNo || config.orderNoFallback }),
+      // ⭐ 仍有未交付时把"仍未交付 N 双"写进那句说明（问题 4）；没有时**一个字都不多加**。
+      undeliveredCount > 0
+        ? `${settledNote}${fillConfirmDeal(config.settledUndelivered, { count: undeliveredCount })}`
+        : settledNote,
       'green',
       { productInfoGaps: true,
         confirmDeal: { salesEntryRecordId: task.sales_entry_record_id, draftId: task.task_id,
