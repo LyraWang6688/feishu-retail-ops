@@ -96,7 +96,7 @@
 | F1 | ✅ | 退货链路的其余行为**一字未改**：`purchaseReturn.test.js`（扣库存 / 写「具体信息」/ 出图标题 / 发群话术 / 重复处理不重复扣）与 `purchaseReturnBatch.test.js`（归批 / 一个话题 / 跨批不误合）**全绿**；本次只动了"建行"那一步 |
 | G1 | ✅ | `config/arrivalConversation.js` 的 `card.failedTitle = 到货验收核对没成功`、`replies.arrivalCreateFailed` 以 `「到货验收」这一行没建成：` 开头；`purchaseWebhookService` 的 toast 逐字断言 `到货验收已入库`；两处会被拼进"她看得见的回话/提示"的报错原文（`到货验收草稿…` / `「到货验收」新建记录…`）也改了 |
 | G2 | ✅ | `utils/larkCards.js` **一个字没动**（`git diff --name-only` 里没有它）；`doubaoService` 没动；「报货批次.采购行为」仍然不读不写不映射 |
-| H1 | ✅ | 独立 worktree 里 `node --test --test-concurrency=1` **连跑 2 次**：`tests 1209 / pass 1209 / fail 0`（两次相同） |
+| H1 | ✅ | 独立 worktree 里 `node --test --test-concurrency=1` **连跑 2 次**：`tests 1209 / pass 1209 / fail 0`（两次相同）。⚠️ 这是**修掉第 7.1 节那个用例抢跑之后**重跑的两次（修之前本地两次也是全绿——所以本地绿不算数，CI 才算） |
 | H2 | ✅ | `gh pr checks` 三项见第 8 节；**没有**用 `--admin`；**没有合并**（合并由业务负责人来做）；**没有部署** |
 | H3 | ✅ | 改过的既有断言逐条见第 6 节；**没有一条是放宽**（其中两条比原来更严） |
 | H4 | ✅ | 没有部署、没有写任何表（读表只用 `scripts/list-v1-fields.js` 的**只读**接口 `appTableField.list`）、没有改 `.env`（worktree 里是临时软链，收尾删） |
@@ -178,9 +178,39 @@ purchaseWebhookService.js: '采购到货已入库' → '到货验收已入库'�
 > 也会进 `preparedList`**（只是没有 `docIds`）⇒ 上面 #8 那两套既有断言立刻**变红**。
 > 判据改成 `docIds` 非空之后两处自动恢复绿 —— **这就是"既有断言不放松"的护栏在起作用**。
 
+### 7.1 ⭐ CI 上**真红过一次**（本地全绿）：用例自己的等待判据抢跑，已修
+
+- 第一次 CI：`tests 1209 / pass 1208 / fail 1`，红的是我新写的
+  `B2 一批两个供应商的退货…` —— `assert.equal(ctx.images.calls.length, 2)` 读到 **1**。
+- **根因（是用例的问题，不是产品的问题）**：那条用例等的是
+  「两条记录的 `处理状态 = 已生成申请`」，而这个状态是在 `applySupplierReturn` 里**逐条**写的；
+  两张图却在**整批**写完之后才由 `deliverReturnImages` 渲染/发群/回填附件
+  ⇒ 断言**抢在出图之前**跑了（本地刚好躲过，CI 的调度让它露出来 —— 正是 AGENTS.md 第 15 条
+  「本地测试通过 ≠ CI 通过」的形态）。
+- **修法**：判据改成「整批任务落定 **且** 那一行的「单据」里两张图都回填到位」
+  （这两件事都在出图**之后**）。本地**连跑 12 次 7/7**。
+- 同一形态的自查：另外 6 条用例的等待判据都是「任务落定」或「附件已回填」，没有这个问题。
+
 ## 8. CI 三项实际输出
 
-（见本文件末尾「CI」一节 —— `gh pr checks` 逐字粘贴）
+`gh pr checks 241`（**第二次** CI，修完抢跑之后；`mergeStateStatus = CLEAN`）：
+
+```
+Analyze (javascript-typescript)	pass	1m10s	https://github.com/LyraWang6688/feishu-retail-ops/actions/runs/37630181983/job/112822092927
+CodeQL	pass	4s	https://github.com/LyraWang6688/feishu-retail-ops/runs/112822576263
+test	pass	50s	https://github.com/LyraWang6688/feishu-retail-ops/actions/runs/37630189596/job/112822111618
+```
+
+`gh pr view 241 --json mergeStateStatus` → `{"mergeStateStatus":"CLEAN","headRefName":"feat/purchase-return-batch-row",
+"url":"https://github.com/LyraWang6688/feishu-retail-ops/pull/241"}`。
+
+⚠️ 第一次 CI 的输出（那次 `test` 红的）：
+```
+test	fail	1m0s	https://github.com/LyraWang6688/feishu-retail-ops/actions/runs/37629867055/job/112821007576
+Analyze (javascript-typescript)	pass	59s	…/job/112820995941
+CodeQL	pass	6s	…/runs/112821388452
+```
+⇒ 修完（第 7.1 节）重跑，三项全绿；**没有用 `--admin`、没有合并、没有部署**。
 
 ## 9. 不确定 / 没做到的地方
 
