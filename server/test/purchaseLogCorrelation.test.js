@@ -291,6 +291,20 @@ test('供应商报单：写「报货批次」/「单据信息」/「供应商对
   for (const event of ['bitable.record.created', 'bitable.record.updated', 'purchase.report.posted']) {
     assert.ok(chained.some((line) => line.includes(`"event":"${event}"`)), `${event} 必须能被 task_id 一把 grep 到`);
   }
+
+  // g. ⭐ AC-P5 的另一半：关联键**只进日志**，一个字节都不许落进业务表 ——
+  //    远端收到的 fields 与改动前逐字相同（写什么值、写什么表都没动）。
+  const requestRows = world.records.get('purchaseRequest') || [];
+  assert.equal(requestRows[0].fields['数量'], 2);
+  assert.deepEqual(requestRows[0].fields['编号'], ['prod_1']);
+  assert.deepEqual(requestRows[0].fields['尺码'], ['size_36']);
+  assert.equal(requestRows[0].fields['幂等键'], `purchase_request:${taskId}:0`);
+  for (const key of CORRELATION_KEYS) {
+    for (const row of [...requestRows, ...(world.records.get('purchaseOrderBatch') || [])]) {
+      assert.equal(Object.prototype.hasOwnProperty.call(row.fields, key), false,
+        `关联键 ${key} 不许落进业务表`);
+    }
+  }
 });
 
 // ── ② 采购退货（带报货批次号）：扣库存那半也要能串 ─────────────────────────────
