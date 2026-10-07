@@ -15,6 +15,8 @@ const PENDING_DEAL_PUSH_HOUR_ENV_KEY = 'PENDING_DEAL_PUSH_HOUR';
 const PENDING_DEAL_PUSH_INTERVAL_MS_ENV_KEY = 'PENDING_DEAL_PUSH_INTERVAL_MS';
 const PENDING_DEAL_PUSH_LINK_LOOKUP_ENABLED_ENV_KEY = 'PENDING_DEAL_PUSH_LINK_LOOKUP_ENABLED';
 const PENDING_DEAL_PUSH_LINK_REQUIRED_ENV_KEY = 'PENDING_DEAL_PUSH_LINK_REQUIRED';
+// 发完之后**把那条消息置顶（飞书 Pin）**。业务负责人 2026-10-07 单独提的那个动作。
+const PENDING_DEAL_PUSH_PIN_ENABLED_ENV_KEY = 'PENDING_DEAL_PUSH_PIN_ENABLED';
 
 // 默认 9 点（北京时间，业务负责人说的）。
 const DEFAULT_PUSH_HOUR = 9;
@@ -38,6 +40,14 @@ const resolvePendingDealPushConfig = (env = process.env) => ({
   linkLookupEnabled: readFlag(env, PENDING_DEAL_PUSH_LINK_LOOKUP_ENABLED_ENV_KEY, true),
   // 拿不到深链时要不要**干脆不推**。默认 false = 照推单号 + 金额（深链是增强，不是前提）。
   linkRequired: readFlag(env, PENDING_DEAL_PUSH_LINK_REQUIRED_ENV_KEY, false),
+  // 发出后要不要**把那条消息置顶**（飞书 im/v1/pins）。**默认 false**，理由：
+  //   · 置顶是**群里每个人都看得见**的副作用，而且飞书那边有额外门槛——
+  //     应用要有 `im:message.pins:write_only`（或 `im:message`）权限、机器人必须在群里、
+  //     群若设成"仅群主/群管理员可 Pin"就直接失败（错误码 230046）；
+  //   · 本仓既有纪律：对外可见的动作一律**显式开关、默认关**（本推送的总开关自己也默认 false）；
+  //   · 打开时**必须显式写 true**，不会因为"只想试推送"就顺手把消息钉在群顶上。
+  // ⚠️ 置顶失败绝不影响推送本身（只记 warn，见 services/larkMessagePinService）。
+  pinEnabled: readFlag(env, PENDING_DEAL_PUSH_PIN_ENABLED_ENV_KEY, false),
 });
 
 module.exports = {
@@ -47,6 +57,7 @@ module.exports = {
   PENDING_DEAL_PUSH_INTERVAL_MS_ENV_KEY,
   PENDING_DEAL_PUSH_LINK_LOOKUP_ENABLED_ENV_KEY,
   PENDING_DEAL_PUSH_LINK_REQUIRED_ENV_KEY,
+  PENDING_DEAL_PUSH_PIN_ENABLED_ENV_KEY,
   DEFAULT_PUSH_HOUR,
   DEFAULT_INTERVAL_MS,
   resolvePendingDealPushConfig,
