@@ -43,6 +43,16 @@ const patchableCardConfig = () => ({ wide_screen_mode: true, update_multi: true 
 // **一单只有一件时不显示这一件的金额**——它和下一行的「成交总额」完全重复，写两遍反而看不清重点。
 // ⚠️ 例外（业务决定，不要"顺手统一"）：**一单超过一件时必须逐件显示金额**。
 // 多件时她要在确认前逐件核对金额，不显示就会记错账。这个判断在 salesConfirmationCard 里。
+//
+// ⭐ 尺码只在**真的有尺码**时才写（业务负责人 2026-10-07 真机案例）：
+//   配品（`kind: 'accessory'`：腰带 / 鞋油 / 袜子…）没有尺码，可这张卡原先无条件拼了一个
+//   「码」字，于是配品行渲染成「**腰带 码 × 1**」——一句话读起来像残句。
+//   ⚠️ 这是**渲染**层的判据，不是业务判据：配品本来就不写尺码、不碰库存
+//   （见 `services/salesOrderService.js`），这里只是不再凭空补一个字。
+//   ⇒ **有尺码的鞋逐字不变**（既有断言钉着 `1. 66356 42码 × 1`）。
+const itemSizeSegment = (item) => (item.size == null || text(item.size).trim() === ''
+  ? ''
+  : ` ${text(item.size)}码`);
 const itemLines = (items, priceKey, options = {}) => {
   const showAmount = options.showAmount !== false;
   return (items || [])
@@ -52,7 +62,7 @@ const itemLines = (items, priceKey, options = {}) => {
         || item.accessory_name || '未知货品';
       const price = showAmount ? (item[priceKey] ?? item.unitPrice ?? item.unitCost) : null;
       const gift = item.gift ? `\n   赠品：${text(item.gift_description || '有')}` : '';
-      return `${index + 1}. ${text(product)} ${text(item.size)}码 × ${text(item.quantity || 1)}${price ? ` ￥${price}` : ''}${gift}`;
+      return `${index + 1}. ${text(product)}${itemSizeSegment(item)} × ${text(item.quantity || 1)}${price ? ` ￥${price}` : ''}${gift}`;
     })
     .join('\n');
 };

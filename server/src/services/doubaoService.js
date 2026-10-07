@@ -303,7 +303,14 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
   // 定金/首付，把它当成交金额会把应收金额算丢（这条是保守的护栏，不是判断欠款）。
   const moneyNotSettled = /定金|预付|尾款|余款|剩下的|未付|欠款|还欠|欠着|赊账|下次给|下次再给|先给|先付|先交/
     .test(String(sourceText || ''));
-  if (items.length === 1) {
+  // ⭐ 有尺码的鞋**多于一件**时，"整单实收"是**整单**的钱，不属于任何单独一件：
+  //    这时若还拿它去覆盖第一件的成交金额，就会造成真机那次的错位
+  //    （鞋 400 + 腰带 140 ⇒ 各件之和 540 ≠ 总额 400）。
+  //    ⇒ 只有"这一单确实只有一件鞋"时，第 9 条的"成交金额 = 实收"才等于这一件的金额。
+  //    ⚠️ 不数配品：卖**单独一件配品**时它也会被"实收"覆盖（那是第 9 条想要的还价口径，
+  //       见既有用例「119 的腰带，是收到了 100 元微信」）。
+  const hasMultipleShoes = items.filter((item) => item.kind !== 'accessory').length > 1;
+  if (items.length === 1 || !hasMultipleShoes) {
     const coveredCents = Math.round(payments
       .reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0) * 100);
     const covered = coveredCents / 100;
@@ -314,7 +321,8 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
         items[0].actual_amount = named;
         agreedTotal = named;
       }
-    } else if (tradeType === '现货' && !moneyNotSettled && coveredCents > 0) {
+    } else if (items.length === 1 && tradeType === '现货' && !moneyNotSettled && coveredCents > 0) {
+      // 覆盖第 9 条只在**真的只有一件**时成立（多件走上面 hasMultipleShoes 的注释）。
       items[0].actual_amount = covered;
       agreedTotal = covered;
     }
@@ -361,9 +369,15 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
     }
     if (item.quantity !== 1) missing.add(`第${index + 1}件请逐双列出成交金额；每条销售明细只能记录一双`);
   }
+  // 各件成交金额之和：下面那条"和她说的总额对不对得上"的校验要用它，
+  // 而且追问文案里有具体数字她才知道差在哪（真机那次的教训：只说"不一致"没法核对）。
+  const itemsAmountCents = items.reduce((sum, item) => sum + Math.round(Number(item.actual_amount || 0) * 100), 0);
+  const itemsAmountSum = itemsAmountCents / 100;
   if (items.length && items.every((item) => item.actual_amount) && agreedTotal &&
-    Math.abs(items.reduce((sum, item) => sum + Number(item.actual_amount), 0) - agreedTotal) > 0.005) {
-    missing.add('逐双成交金额合计与整单成交金额不一致');
+    Math.abs(itemsAmountSum - Number(agreedTotal)) > 0.005) {
+    // ⚠️ 这里**只报缺项**（接线层据此问她、不出确认卡片、不入账），
+    //    **绝不**改任何一件的金额去凑总额 —— "按标价/总额分摊"是她明令禁止的。
+    missing.add(`你说的总额 ${agreedTotal} 与各件金额之和 ${itemsAmountSum} 对不上，请确认每件多少钱～`);
   }
   for (const [index, payment] of payments.entries()) {
     if (!payment.amount) missing.add(`payments[${index}].amount`);
@@ -449,8 +463,20 @@ class DoubaoService {
 3. item_no 只填写用户原话中的货号，不要把颜色、尺码或品类拼进货号。用户可能用任意顺序和标点表达，但货号中的数字和字母必须原样保留。
 4. color 单独填写颜色；“棕色”规范为“棕”、“黑色”规范为“黑”。没有提到颜色时留空，不得猜测。
 5. “628-6米紫361一双”是货号 628-6、颜色米紫、36码、数量1；末尾的 1 是数量，不是 361 码。
-6. 多双鞋必须从原话分别提取每件成交金额，actual_amount 是该明细数量对应的成交总额。只给整单金额而未给各件金额时，各件 actual_amount 留空，要求补充；严禁按标价分摊或猜测。
+6. 多双鞋必须从原话分别提取每件成交金额，actual_amount 是该明细数量对应的成交总额。
+   · **只给整单金额而未给各件金额**时，各件 actual_amount 留空、agreed_total 填整单金额，要求补充；
+     **严禁按标价分摊或猜测**。
+   · **她同时给了整单总额和各件金额**（例：「一共成交 400，鞋 260，腰带 140」）⇒
+     **每个件用它自己的分项金额**（鞋 actual_amount=260、腰带=140），
+     agreed_total = **各分项金额之和**（260 + 140 = 400）。
+     ⚠️ 若她说的总额与各分项之和**对不上**：**不许自己猜、也不许按标价分摊** ——
+     照原话把每件自己的分项金额填进 actual_amount，agreed_total 填**她说的那个总额**，
+     由后端判"对不上"并回头问她。
+   · 「赠了一双袜子，260 元」里的 260 是**鞋**的成交金额；赠品不参与金额，
+     只写进前一件的 gift / gift_description（见第 8 条）。
 7. “150元微信，100元现金”必须输出两笔 payments；“260元未付”是 agreed_total=260、payments=[]，不得输出已收款；“定金50元”但未说支付方式时，payments 包含 amount=50、method=""，供用户补充。
+   ⚠️ payments 的**笔数 = 她说收款的次数**，不是商品件数：她说「一共 400 元微信」→ **只有一笔** payments（微信 400），
+   哪怕这一笔同时付了鞋和配品；**绝不要**把某一件自己的价（如「140 的腰带」）另记成一笔收款。
 8. “一双”数量为 1；没写数量但语义明确为单件商品时，quantity=1。“赠”“送”后的物品是赠品，不是销售商品数量。赠品必须写进前一件销售商品的 gift=true、gift_description，不得作为新 item。例如“赠袜子一双”写 gift_description="袜子一双"；“赠鞋垫一双”写 gift_description="鞋垫一双"。
 9. 钱只按她说的数记，**绝不自己算差额**：
    · 成交金额（actual_amount / agreed_total）：
@@ -460,6 +486,10 @@ class DoubaoService {
        例：「卖了 119，先给 100，还欠 19」→ 成交金额 119、payments 只有 100、owed 19。
      - 她只说了价格、没说收到多少钱 → 成交金额 = 她说的那个价格（原逻辑不变）。
      - 仅有“定金”不能作为成交金额。多件逐件金额已知时可求和为 agreed_total。标价与自动公式不参与成交金额判断。
+     - **一单多件时**（含"鞋 + 配品"），她说的整单实收是**整单**的钱，**不是**某一件的成交金额：
+       每件仍填它自己的分项金额（第 6 条），agreed_total 按第 6 条算；**绝不**把整单实收填进某一件。
+     - 收款笔数按她说的收款**次数**：她说了一次「400 元微信」就是**一笔** payments，
+       不要把各件的金额各记成一笔收款。
 9.1 owed（欠款金额）只在**她明说欠**时才填：
    她说「还欠 19 / 欠 19 / 未付 260 / 尾款以后付 140」→ owed 填她说的那个欠款金额；
    整单一分钱没给、只说「未付」时 → owed 填整单金额。

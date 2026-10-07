@@ -783,6 +783,147 @@ test('提示词里写死了"欠"的识别口径（owed / tier_price），删掉�
 //       → TypeError: Cannot read properties of undefined (reading 'length')
 //       → 被包成「销售文字解析失败」→ 任务永远 failed、出不了确认卡片。
 // 口径：她说「退一双 1682 香槟 38码，钱退现金」→ 出售后确认卡片，绝不能说"解析失败"。
+// ─── ⭐ 真机案例（2026-10-07）：一句话里「总额 + 各分项金额」同时出现 ─────────────
+//
+// 她的原话（逐字）：
+//   「400 元微信卖了一双 6A637-7，43码（赠了一双袜子，260 元），然后 140 元微信卖了一条 158 元的腰带」
+// 她本人的澄清（逐字）：
+//   「其实是这笔一共成交 400 元，鞋是 260 元，腰带是 140 元，为什么理解不了呢？」
+//
+// ⇒ 一笔共收 400 = 鞋 260 + 腰带 140；赠品「袜子一双」不参与金额。
+// 改前的错法：鞋被写成 400（整单实收覆盖了单件金额），又把 140 数成第二笔付款 ⇒ 总额 540。
+const REAL_MACHINE_TEXT =
+  '400 元微信卖了一双 6A637-7，43码（赠了一双袜子，260 元），然后 140 元微信卖了一条 158 元的腰带';
+
+test('真机原话：总额 + 各分项同时出现 ⇒ 每个件用它自己的分项金额，成交总额 = 各分项之和', () => {
+  // 模型按新口径的结构：鞋 260、腰带 140（档位价 158 只用于对档）、一笔微信 400、总额 400。
+  const result = normalizeWithVouchers({
+    intent: 'sale',
+    trade_type: '现货',
+    items: [
+      { item_no: '6A637-7', size: 43, quantity: 1, actual_amount: 260, gift: true, gift_description: '袜子一双' },
+      { kind: 'accessory', accessory_name: '腰带', quantity: 1, tier_price: 158, actual_amount: 140 },
+    ],
+    payments: [{ amount: 400, method: '微信' }],
+    agreed_total: 400,
+    owed: '',
+  }, REAL_MACHINE_TEXT);
+
+  assert.equal(result.items[0].actual_amount, 260, '鞋必须是它自己的分项金额 260，不许被整单实收 400 覆盖');
+  assert.equal(result.items[1].actual_amount, 140, '腰带是 140');
+  assert.equal(result.items[1].tier_price, 158, '158 只是对档位的价位，不是成交金额');
+  assert.deepEqual(result.payments, [{ method: '微信', amount: 400 }], '她说了「400 元微信」一笔，不许拆成两笔');
+  assert.equal(result.agreed_total, 400, '成交总额 = 260 + 140 = 400');
+  assert.equal(result.total_paid, 400);
+  assert.equal(result.owed, '', '她没说欠，owed 必须为空');
+  // 赠品不参与金额：袜子只以 gift_description 出现，不是一件明细。
+  assert.equal(result.items[0].gift_description, '袜子一双');
+  assert.equal(result.items.length, 2, '袜子不许被当成第三件商品');
+  assert.deepEqual(result.missing_fields, [], `金额是自洽的，不该再报缺项：${JSON.stringify(result.missing_fields)}`);
+});
+
+test('真机错法（鞋 400 + 腰带 140、两笔微信）⇒ 合计 540 ≠ 总额 400：报缺项、绝不静默算成 540', () => {
+  // 改前的错法就是这个形状：整单实收 400 被当成鞋的成交金额，140 又被数成第二笔付款。
+  // 后端**不做分摊**（她明令禁止）：谁的数原样留着，只把"对不上"报成缺项，由她重说一遍。
+  const result = normalizeWithVouchers({
+    intent: 'sale',
+    trade_type: '现货',
+    items: [
+      { item_no: '6A637-7', size: 43, quantity: 1, actual_amount: 400, gift: true, gift_description: '袜子一双' },
+      { kind: 'accessory', accessory_name: '腰带', quantity: 1, tier_price: 158, actual_amount: 140 },
+    ],
+    payments: [{ amount: 400, method: '微信' }, { amount: 140, method: '微信' }],
+    agreed_total: 400,
+    owed: '',
+  }, REAL_MACHINE_TEXT);
+
+  assert.ok(
+    result.missing_fields.some((issue) => issue.includes('与各件金额之和') && issue.includes('对不上')),
+    `对不上时必须走缺项追问，实际：${JSON.stringify(result.missing_fields)}`,
+  );
+  // 🔴 后端**不许**把整单实收（540 那笔两笔付款之和）摊到某一件上：一件都不改。
+  //    （改前的错位就是被摊出来的：鞋 400 来自整单实收，腰带 140 又被数成第二笔付款。）
+  assert.equal(result.items[0].actual_amount, 400, '她说的数原样留着，不许后端自己摊');
+  assert.equal(result.items[1].actual_amount, 140);
+  // ⚠️ 也不许把它当成"已收 540"静默入账：`total_paid` 只是付款记录的读数，
+  //    真正拦单的是上面那条缺项（接线层据此不进确认卡片）。
+  assert.ok(result.missing_fields.length > 0);
+});
+
+test('多双鞋、只给了整单实收：绝不许把整单实收覆盖成第一双的成交金额（它会顺手把账做平）', () => {
+  // 这就是真机错位的**算术成因**：模型没给各件金额、只给了整单实收时，
+  // 旧逻辑把"实收"当成第一件的成交金额（250），于是"各件之和 = 总额"永远成立、
+  // 那条"对不上"的校验永远拦不住 —— 错账被静默做平。
+  // ⇒ 多双鞋时不套用"成交金额 = 实收"那条（它只对整单确实只有一件时成立）。
+  const result = normalizeWithVouchers({
+    intent: 'sale', agreed_total: 250,
+    items: [{ item_no: '93827', size: 43, quantity: 1 }, { item_no: '2115', size: 37, quantity: 1 }],
+    payments: [{ method: '现金', amount: 250 }],
+  }, '两双鞋，一共 250 现金');
+  assert.deepEqual(result.items.map((item) => item.actual_amount), ['', ''],
+    '一件都不许被整单实收覆盖 —— 要她逐件说，而不是替她摊');
+  assert.ok(result.missing_fields.includes('items[0].actual_amount'));
+  assert.ok(result.missing_fields.includes('items[1].actual_amount'));
+});
+
+test('「分项之和 ≠ 她说的总额」⇒ 缺项追问里带上两个数，绝不按标价分摊', () => {
+  // 她说一共 400，但报的两件是 300 + 140 = 440 —— 对不上，必须问她。
+  const result = normalizeWithVouchers({
+    intent: 'sale',
+    items: [
+      { item_no: '6A637-7', size: 43, quantity: 1, actual_amount: 300 },
+      { kind: 'accessory', accessory_name: '腰带', quantity: 1, actual_amount: 140 },
+    ],
+    payments: [{ amount: 400, method: '微信' }],
+    agreed_total: 400,
+  }, '一共 400 元微信，鞋 300，腰带 140');
+
+  const issue = result.missing_fields.find((entry) => entry.includes('与各件金额之和'));
+  assert.ok(issue, `必须有"对不上"的追问，实际：${JSON.stringify(result.missing_fields)}`);
+  assert.match(issue, /400/, '追问里要有她说的总额');
+  assert.match(issue, /440/, '追问里要有各件金额之和，让她一眼看出差在哪');
+  // 不许按标价分摊：任何一个件的金额都不许被改成"为了凑总额"的数。
+  assert.equal(result.items[0].actual_amount, 300);
+  assert.equal(result.items[1].actual_amount, 140);
+});
+
+// ⭐ 提示词侧：这条口径必须写在销售提示词里，并且与她既有规则 6 / 9 自洽。
+test('销售提示词写死了「总额 + 分项同时出现」的口径（删掉就会红）', async () => {
+  const oldKey = process.env.TEXT_LLM_API_KEY;
+  const oldBase = process.env.TEXT_LLM_BASE_URL;
+  const oldModel = process.env.TEXT_LLM_MODEL;
+  const oldGetClient = salesParser.getClient;
+  const prompts = [];
+  process.env.TEXT_LLM_API_KEY = 'test-key';
+  process.env.TEXT_LLM_BASE_URL = 'https://api.deepseek.com';
+  process.env.TEXT_LLM_MODEL = 'test-model';
+  try {
+    salesParser.getClient = () => ({ chat: { completions: { create: async ({ messages }) => {
+      prompts.push(messages[0].content);
+      return { choices: [{ message: { content: JSON.stringify({ intent: 'sale', items: [] }) } }] };
+    } } } });
+    await salesParser.parseSalesText(REAL_MACHINE_TEXT,
+      { accessoryNames: ['腰带'], vouchers: VOUCHER_CATALOG });
+    const [prompt] = prompts;
+    // ① 同时给了总额和每件金额 ⇒ 每件用它自己的分项金额、agreed_total 是各分项之和。
+    assert.match(prompt, /同时/);
+    assert.match(prompt, /各分项之和|各件金额之和|逐件金额之和/);
+    // ② 与规则 6 自洽：只给整单金额仍然留空、要求补充（这条不许被改掉）。
+    assert.match(prompt, /只给整单金额/);
+    // ③ 与规则 9 自洽：多件时整单实收不再覆盖单件金额。
+    assert.match(prompt, /多件/);
+    assert.match(prompt, /整单实收/);
+  } finally {
+    salesParser.getClient = oldGetClient;
+    if (oldKey === undefined) delete process.env.TEXT_LLM_API_KEY;
+    else process.env.TEXT_LLM_API_KEY = oldKey;
+    if (oldBase === undefined) delete process.env.TEXT_LLM_BASE_URL;
+    else process.env.TEXT_LLM_BASE_URL = oldBase;
+    if (oldModel === undefined) delete process.env.TEXT_LLM_MODEL;
+    else process.env.TEXT_LLM_MODEL = oldModel;
+  }
+});
+
 test('售后意图走 parseSalesText 不再抛 TypeError（赠品归并只对 sale 生效）', async () => {
   const oldKey = process.env.TEXT_LLM_API_KEY;
   const oldBase = process.env.TEXT_LLM_BASE_URL;

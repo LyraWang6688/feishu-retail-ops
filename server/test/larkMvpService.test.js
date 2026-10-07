@@ -1326,6 +1326,82 @@ test('配品改按分类匹配后，鞋仍然按「货号+尺码」走实时库�
   assert.equal(cards.length, 1);
 });
 
+// ─── ⭐ 真机案例（2026-10-07）：各件金额之和 与 她说的总额 对不上 ─────────────────
+//
+// 她的原话（逐字）：
+//   「400 元微信卖了一双 6A637-7，43码（赠了一双袜子，260 元），然后 140 元微信卖了一条 158 元的腰带」
+// 她本人的澄清（逐字）：
+//   「其实是这笔一共成交 400 元，鞋是 260 元，腰带是 140 元，为什么理解不了呢？」
+//
+// 这一条钉的是**改前的错法**：整单实收 400 被当成鞋的成交金额、140 又被数成第二笔付款
+// ⇒ 各件之和 540 ≠ 总额 400。口径：**对不上就走缺项追问、不入账**，
+// 绝不许静默按错数写账（也不许按标价分摊去凑）。
+test('真机错法（鞋 400 + 腰带 140 ⇒ 合计 540 ≠ 总额 400）：只回一句"对不上"的追问，绝不出发确认卡片', async () => {
+  const { normalizeSalesResult } = require('../src/services/doubaoService');
+  const REAL_MACHINE_TEXT =
+    '400 元微信卖了一双 6A637-7，43码（赠了一双袜子，260 元），然后 140 元微信卖了一条 158 元的腰带';
+  const store = makeStore();
+  const cards = [];
+  const messages = [];
+  const base = liveInventoryGateway([
+    liveRow({ itemNo: '6A637-7', color: '黑', size: 43, productRecordId: 'p43' }),
+  ]);
+  const service = new LarkMvpService({
+    client: {},
+    gateway: {
+      ...base,
+      table: (key) => {
+        if (key === 'accessory') return { tableId: 'tbl_acc', fields: { name: '名称', category: '种类' } };
+        return base.table(key);
+      },
+      listAll: async (key) => {
+        if (key === 'accessory') {
+          return [{ record_id: 'acc_belt', fields: { 名称: '158元腰带', 种类: ['腰带'] } }];
+        }
+        if (key === 'product') return [productRow('6A637-7', '黑', 'p43')];
+        return base.listAll(key);
+      },
+      validateTables: async () => [],
+      create: async () => ({ recordId: 'entry_amount_mismatch' }),
+      update: async () => undefined,
+    },
+    references: productInfoResolver([productRow('6A637-7', '黑', 'p43')]),
+    posting: {},
+    recognizer: {
+      parseSalesText: async () => normalizeSalesResult({
+        intent: 'sale', trade_type: '现货',
+        items: [
+          { item_no: '6A637-7', size: 43, quantity: 1, actual_amount: 400, gift: true, gift_description: '袜子一双' },
+          { kind: 'accessory', accessory_name: '腰带', quantity: 1, tier_price: 158, actual_amount: 140 },
+        ],
+        payments: [{ amount: 400, method: '微信' }, { amount: 140, method: '微信' }],
+        agreed_total: 400, owed: '',
+      }, REAL_MACHINE_TEXT),
+    },
+    store,
+  });
+  // 🚨 哨兵：缺项这条路上，非群那条回复路一次都不许走。
+  service.replyCard = async () => { throw new Error('非群回复路径不该被走到：缺项只回一句追问'); };
+  service.sendTaskCard = async (_task, card) => { cards.push(card); return 'om_card'; };
+  service.sendTaskText = async (_task, message) => messages.push(message);
+  await store.create({ task_id: 'sale_amount_mismatch', type: 'sale', status: 'received',
+    chat_type: 'group', chat_id: GROUP_CHAT_ID, message_id: 'om_amount_mismatch',
+    sender_open_id: 'ou_1', sent_at: Date.now(), original_text: REAL_MACHINE_TEXT });
+
+  await service.processSalesTask('sale_amount_mismatch');
+
+  const task = await store.get('sale_amount_mismatch');
+  assert.equal(task.status, 'needs_info', '对不上就是"信息不全"，不许走到 ready_to_confirm');
+  assert.equal(cards.length, 0, '对不上时**不许**发确认卡片（她确认了就会按错的账入账）');
+  assert.equal(messages.length, 1);
+  assert.match(messages[0], /各件金额之和/, `追问里要写清"和"对不上，实际：${messages[0]}`);
+  assert.match(messages[0], /400/, '追问里要有她说的总额');
+  assert.match(messages[0], /540/, '追问里要有各件之和，让她一眼看出差在哪');
+  // 缺项路径上，任何一件都不许被"为了凑总额"改成别的数。
+  assert.equal(task.draft.items[0].actual_amount, 400);
+  assert.equal(task.draft.items[1].actual_amount, 140);
+});
+
 // ─── 入口按「实时库存」匹配：卖的是实物，不是配置 ───
 
 test('库存里没有这个尺码时不发确认卡片，只回一句「库存里没有 X Y码，请核实～」', async () => {
