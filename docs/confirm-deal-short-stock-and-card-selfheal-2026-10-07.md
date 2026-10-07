@@ -230,15 +230,36 @@ $ echo "HEAD=$(git rev-parse --short HEAD) BEHIND=$(git rev-list --count HEAD..o
 HEAD=266b56d BEHIND=0
 $ node --test --test-concurrency=1          # 第 1 次
 ℹ tests 1296  ℹ pass 1296  ℹ fail 0  ℹ cancelled 0    (exit 0)
-$ node --test --test-concurrency=1          # 第 2 次   ← 见第 7 节
+$ node --test --test-concurrency=1          # 第 2 次
+ℹ tests 1296  ℹ pass 1296  ℹ fail 0  ℹ cancelled 0    (exit 0)
 ```
 
 （1296 = 本分支 HEAD 上的既有用例 ＋ 本文件新增的 **5** 条。
-⚠️ **没有在主工作区跑全量**。）
+⚠️ **没有在主工作区跑全量** —— 两次都在独立 worktree `.local/worktrees/confirm-deal-fix/server` 里跑。）
 
 ## 7. CI 三项 + 全量 2 次
 
-（跑完后填）
+### CI（PR #249；`gh pr checks` 三项全绿，**没用 `--admin`**）
+
+```
+$ export XDG_CACHE_HOME=/tmp/ghcache GH_CACHE_DIR=/tmp/ghcache
+$ gh pr checks 249
+Analyze (javascript-typescript)	pass	1m1s	.../actions/runs/37646042997/job/112876951690
+CodeQL                         	pass	3s  	.../runs/112877392657
+test                           	pass	1m2s	.../actions/runs/37646047708/job/112876958411
+
+$ gh pr view 249 --json number,url,mergeStateStatus,mergeable,statusCheckRollup
+{"number":249,"url":"https://github.com/LyraWang6688/feishu-retail-ops/pull/249",
+ "mergeStateStatus":"CLEAN","mergeable":"MERGEABLE",
+ "checks":[
+   {"name":"Analyze (javascript-typescript)","status":"COMPLETED","conclusion":"SUCCESS"},
+   {"name":"test","status":"COMPLETED","conclusion":"SUCCESS"},
+   {"name":"CodeQL","status":"COMPLETED","conclusion":"SUCCESS"}]}
+```
+
+🔴 **没有合并、没有部署**（合并由派活人做；部署必须拿到她**当次**的明确命令）。
+
+### 全量 2 次（见第 6 节末尾：1296 / 1296，两次都 exit 0）
 
 ## 8. ⭐ 待她拍板：问题 3 的两个选项（本次**一行未改**）
 
