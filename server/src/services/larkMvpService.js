@@ -16,7 +16,7 @@ const { SampleReplacementService } = require('./sampleReplacementService');
 const { PurchaseWebhookService } = require('./purchaseWebhookService');
 // `normalizeText`：新增的「货号有没有建档」判据必须与解析 A 用**同一套**货号归一
 // （大小写 / 空格 / 分隔符），否则会出现「A 认得出来、判据说没有」这种自相矛盾。
-const { V1ReferenceResolver, person, relation, normalizeText } = require('./v1ReferenceResolver');
+const { V1ReferenceResolver, person, relation, normalizeText, normalizeColor } = require('./v1ReferenceResolver');
 const { LiveInventoryIndex, buildLiveInventoryIndex } = require('./liveInventoryIndex');
 const { tradeTypeCodeFromLabel, deliveryForTradeType } = require('../config/salesMovements');
 // 「录单时要跑哪些解析」的**唯一**判据来源（配置先行，业务负责人 2026-10-07 确认）。
@@ -1075,10 +1075,12 @@ class LarkMvpService {
   colorOptionsWithStockStatus({ options = [], itemNo, size, liveInventory, withStock = true } = {}) {
     if (!withStock) return options.map((option) => ({ ...option }));
     // 这个货号 + 这个尺码在店里实际有哪些颜色（本地索引，无远端请求）。
+    // ⚠️ 比色同样走 `normalizeColor`（见 `resolveStockAvailabilityForSale` 的注释）：
+    //    A 的「棕」要对得上「库存键」里的「棕色」，否则会把有货的颜色标成「无货」。
     const found = liveInventory?.find?.({ itemNo, size });
-    const byColor = new Map((found?.colors || []).map((entry) => [String(entry.color || '').trim(), entry]));
+    const byColor = new Map((found?.colors || []).map((entry) => [normalizeColor(entry.color), entry]));
     return options.map((option) => {
-      const entry = byColor.get(String(option.color || '').trim());
+      const entry = byColor.get(normalizeColor(option.color));
       const total = entry ? Number(entry.doorBox || 0) + Number(entry.sample || 0) + Number(entry.warehouse || 0) : 0;
       return {
         ...option,
@@ -1157,9 +1159,12 @@ class LarkMvpService {
   resolveStockAvailabilityForSale({ itemNo, size, itemQuantity = 1, color = '' }, liveInventory) {
     const found = liveInventory.find({ itemNo, size });
     // 传了颜色（A 定的 / 她选的）⇒ 只看这一个颜色；没传 ⇒ 看整个尺码下的全部颜色（兜底）。
-    const wantedColor = String(color || '').trim();
+    // ⚠️ 比色走 `normalizeColor`（小写、去分隔符、去尾「色」）：A 的颜色来自「货品信息」、
+    //    B 的颜色来自「库存键」，是两个列 —— 必须与 resolver 自己那套「棕 = 棕色」同口径，
+    //    否则会出现"货其实有、却被判成没货"的假缺货。
+    const wantedColor = normalizeColor(color);
     const colors = wantedColor
-      ? found.colors.filter((entry) => String(entry.color || '').trim() === wantedColor)
+      ? found.colors.filter((entry) => normalizeColor(entry.color) === wantedColor)
       : found.colors;
     if (!colors.length) {
       // 缺货只回这一句：哪一双没有 + 这个货号现在有哪些码 + 请核实

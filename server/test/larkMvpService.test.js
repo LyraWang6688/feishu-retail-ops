@@ -1749,6 +1749,36 @@ test('③ 现货候选「全都无货」的边界：每个候选都标「无货�
   assert.doesNotMatch(cardText, /（有货）/);
 });
 
+// ⚠️ 假缺货的坑：颜色来自**两个不同的列** —— A 的是「货品信息.颜色」，B 的是「库存键」里的那一段。
+//    比色必须走 `normalizeColor`（与 resolver 同一套：「棕」=「棕色」），否则会出现
+//    "货其实有、却被判成没货"（对她来说就是把一笔正常销售挡在门外）。
+test('③b 颜色写法不一致（A 说「棕」、库存键写「棕色」）→ 仍然认得出来，不许假缺货', async () => {
+  // 单色：A 定「棕」，B 拿它去查 → 命中库存里的「棕色」。
+  const single = await runSaleScenario({
+    taskId: 'sale_color_alias_single',
+    text: '26002-52 37码，210微信',
+    rows: [liveRow({ itemNo: '26002-52', color: '棕色', size: 37, productRecordId: 'live_p37' })],
+    products: [productRow('26002-52', '棕', 'p37')],
+    parsed: multiColorParsed('现货'),
+  });
+  assert.equal(single.task.status, 'ready_to_confirm', `不该报缺货：${JSON.stringify(single.messages)}`);
+  assert.equal(single.task.draft.items[0].product_record_id, 'p37');
+  assert.equal(single.task.draft.items[0].color, '棕');
+  assert.deepEqual(single.task.draft.items[0].stock, { doorBox: 1, sample: 0, warehouse: 0 });
+
+  // 多色候选的「有货 / 无货」标注也要用同一套比色。
+  const multi = await runSaleScenario({
+    taskId: 'sale_color_alias_multi',
+    text: '26002-52 37码，210微信',
+    rows: [liveRow({ itemNo: '26002-52', color: '棕色', size: 37, productRecordId: 'live_black' })],
+    products: [productRow('26002-52', '棕', 'p_brown'), productRow('26002-52', '白', 'p_white')],
+    parsed: multiColorParsed('现货'),
+  });
+  assert.deepEqual(multi.task.draft.items[0].color_options.map((option) => option.stock_status),
+    ['available', 'unavailable'], '「棕」要对得上库存键里的「棕色」，不能被标成无货');
+  assert.equal(multi.stockLookups, 0, '还是没选颜色 ⇒ B 没跑');
+});
+
 test('② 她选定颜色之后才跑 B：用她选中那条候选的记录 id，库存分布来自 B', async () => {
   const result = await runSaleScenario({
     taskId: 'sale_multi_color_pick',
