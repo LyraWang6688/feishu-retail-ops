@@ -876,7 +876,9 @@ test('可见失败① 🔴：点「是」入库抛错 → **那张卡片被 patc
   assert.equal(harness.updated.length, 1, '失败也必须 patch 那张卡片（改前这里是 0 —— 所以她"看不到任何反应"）');
   assert.equal(harness.updated[0].messageId, 'om_card_1', 'patch 的是她点的那张卡');
   assert.equal(harness.updated[0].card.header.template, 'red');
-  assert.equal(cardHeader(harness.updated[0].card), '采购到货核对没成功');
+  // ⚠️ 2026-10-07 晚**口径/文案变更**：她在生产表把「采购到货」改名「到货验收」，
+  //    所以这张卡片的失败标题也跟着改（不是放宽——断言仍然**逐字**，只是字面量换名）。
+  assert.equal(cardHeader(harness.updated[0].card), '到货验收核对没成功');
   assert.equal(cardButtons(harness.updated[0].card).length, 0, '终态卡不许再留可点的按钮');
   // ② 同一句回到**本话题**。
   assert.equal(harness.replied.length, 1, '失败要在话题里留一条看得见的文字');
@@ -916,11 +918,11 @@ test('可见失败②：失败文案可配（`replies.inboundFailed`，改文案
   assert.equal(harness.replied[0].content.includes('{error}'), false);
 });
 
-test('可见失败③：「采购到货」这一行都没建成 → 也 patch 卡片 + 回文字（改前只有 toast）', async () => {
+test('可见失败③：「到货验收」这一行都没建成 → 也 patch 卡片 + 回文字（改前只有 toast）', async () => {
   const harness = makeHarness({
     responses: [{ complete: true, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] }],
   });
-  // 让「采购到货」那次 create 失败（其余 gateway 行为不变）。
+  // 让「到货验收」那次 create 失败（其余 gateway 行为不变）。
   const create = harness.gateway.create;
   harness.gateway.create = async (tableKey, values) => {
     if (tableKey === 'purchaseArrival') throw new Error('飞书 500：建行失败');
@@ -930,7 +932,8 @@ test('可见失败③：「采购到货」这一行都没建成 → 也 patch �
   const { result } = await confirmCard(harness);
 
   assert.equal(result.toast.type, 'error');
-  assert.match(result.toast.content, /「采购到货」这一行没建成：飞书 500：建行失败/);
+  // ⚠️ 2026-10-07 晚**文案变更**（同上）：表名「采购到货」→「到货验收」，断言仍是逐字匹配。
+  assert.match(result.toast.content, /「到货验收」这一行没建成：飞书 500：建行失败/);
   assert.equal(harness.updated.length, 1, '卡片要改成终态');
   assert.equal(harness.updated[0].card.header.template, 'red');
   assert.match(cardNote(harness.updated[0].card), /飞书 500：建行失败/);

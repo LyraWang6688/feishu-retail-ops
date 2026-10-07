@@ -814,7 +814,10 @@ test('入库：同一货品+尺码的两条明细合成一条入库（数量 2�
 
   await service.confirmArrival(task.task_id, task, 'ou_1');
   // 再确认一次：读**最新**任务（已经是 posted），直接返回，不重复写。
-  await service.confirmArrival(task.task_id, await store.get(task.task_id), 'ou_1');
+  const again = await service.confirmArrival(task.task_id, await store.get(task.task_id), 'ou_1');
+  // ⚠️ 2026-10-07 晚：表名「采购到货」→「到货验收」，这句 toast 的文案同步（断言收严：
+  //    不只是"有个 toast"，而是**逐字**带上新表名）。
+  assert.equal(again.toast.content, '到货验收已入库');
 
   const inbounds = await gateway.listAll('purchaseInbound');
   assert.equal(inbounds.length, 1);
@@ -1701,7 +1704,10 @@ test('采购退货一条（编号 + 数量）→ 交给退货链路、不进报�
   assert.equal(task.result.shortfall, 4);
   assert.deepEqual(task.result.doc_ids, []);
   assert.equal((await gateway.listAll('purchaseRequest')).length, 0);
-  // 退货不建「报货批次」、不写采购到货/入库（那是采购申请 → 到货那条链路的事）
+  // ⚠️ 2026-10-07 晚：退货批次**也会**在「报货批次」建一行（退货单 PNG 的落点）——
+  //    但**只有这一批真的有内容要出图**时才建（`taken > 0`）。这一条 `taken = 0`
+  //    （这个假表里没有实时库存）⇒ 没有图、也没有事实要挂 ⇒ **不建空行**。
+  //    仍不写「到货验收」（原「采购到货」）/「采购入库」那两张表。
   assert.equal((await gateway.listAll('purchaseOrderBatch')).length, 0);
   assert.equal((await gateway.listAll('purchaseArrival')).length, 0);
   assert.equal((await gateway.listAll('purchaseInbound')).length, 0);

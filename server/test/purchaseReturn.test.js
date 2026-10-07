@@ -273,10 +273,19 @@ test('A 情况对得上：样品+门盒+仓库全部退掉，一行一个尺码�
     'purchase_return:rep_1:36', 'purchase_return:rep_1:37', 'purchase_return:rep_1:38',
   ]);
   assert.ok(requests.every((row) => JSON.stringify(row.fields.采购行为) === JSON.stringify(['beh_return'])));
-  // ③ 不走进货/入库：3 张业务表之外没有别的写入
+  // ③ 不走进货/入库：退货**只**多写「报货批次」一行（2026-10-07 晚口径变更，见下）
   assert.equal(gw.records.purchaseInbound, undefined, '退货不写采购入库');
-  assert.equal(gw.records.purchaseArrival, undefined, '退货不写采购到货');
-  assert.equal(gw.records.purchaseOrderBatch, undefined, '退货不建报货批次（第 5 张表）');
+  assert.equal(gw.records.purchaseArrival, undefined, '退货不写「到货验收」（原「采购到货」）');
+  // ⚠️ 2026-10-07 晚**口径变更**（业务负责人：「退货批次也……落到报货批次表里」）：
+  //    退货现在**要**建「报货批次」一行（退货单 PNG 的落点）。这条断言原来钉的是
+  //    "不建"，现在钉的是"建了、而且只写号 + 幂等键、**到货状态留空**"。
+  //    ⚠️ 这不是放宽：断言从"没有这一行"改成"这一行的三个字段逐字长这样"，
+  //    对"到货状态"仍然是**禁止出现**（不是"允许任意值"）。
+  const batchRows = gw.records.purchaseOrderBatch;
+  assert.equal(batchRows.length, 1, '退货包建 1 行「报货批次」');
+  assert.equal(batchRows[0].fields.报货批次号, 'B-1', '用的是这一包在「信息填写」上的那个号');
+  assert.equal(Object.prototype.hasOwnProperty.call(batchRows[0].fields, '到货状态'), false,
+    '退货行**不写**「到货状态」（留空 ⇒ 不进 9 点推送）');
 
   // 供应商对接记录进入终态并双向可追溯
   const report = await gw.get('purchaseReport', 'rep_1');
@@ -297,13 +306,14 @@ test('A 情况对得上：样品+门盒+仓库全部退掉，一行一个尺码�
   assert.ok(!textMessages(messages)[0].includes('条'), '「N 条」必须删掉');
   // 对得上时不发差额提醒（图本身就是回执）
   assert.equal(textMessages(messages).length, 1);
-  // ⚠️ 2026-10-07：附件落点从「具体信息.采购申请单」（那一列已被她从生产表删除）
-  //    改成**「报货批次.单据」**；而**退货不建「报货批次」行**（下一段那条既有边界钉着它）
-  //    ⇒ 退货单这一刻**没有落点**：附件回填记一条 `purchase.batch.document.no_record` warn。
-  //    ⚠️ 这不是本次改动引入的回归：生产上那一列已经删了，退货单本来也写不进去。
-  //    「退货批次要不要也在「报货批次」里有一行」**需要她拍板**（见 docs 第 5 节）。
-  assert.equal(gw.records.purchaseOrderBatch, undefined, '退货不建报货批次 → 附件没有落点（既有边界）');
-  assert.deepEqual(gw.uploads, [], '没有落点就不该白传一次素材');
+  // ⚠️ 2026-10-07 晚**口径变更**：附件落点从「具体信息.采购申请单」（那一列已被她从生产表
+  //    删除）改成**「报货批次.单据」**；退货批次现在**也有那一行**了 ⇒ 退货单 PNG
+  //    **有落点**：素材上传一次、写进那一行的「单据」。
+  //    ⚠️ 这不是放宽：断言从"没有落点、一张素材都不传"改成"**恰好传一次**、并且
+  //    「单据」里**恰好是那一个 file_token**"——对"传一次/写一条"收得更严。
+  assert.deepEqual(gw.uploads.length, 1, '有落点 ⇒ 退货单素材上传一次');
+  assert.deepEqual(batchRows[0].fields.单据, [{ file_token: 'file_token_1' }],
+    '退货单 PNG 写进那一行的「单据」');
 
   assert.equal(task.status, 'posted');
   assert.equal(task.result.is_return, true);
@@ -344,9 +354,13 @@ test('货品没维护供应商：退货照常出单（不再整条失败），�
   // 群消息照发：没有供应商的归到「未标注供应商」这一组，不是失败。
   // ⚠️ 2026-10-07：只说双数（`$` 锚住整句）。
   assert.match(textMessages(messages)[0], /未标注供应商 这批 1 双，图可以直接转给供应商。$/);
-  // ⚠️ 2026-10-07：退货不建「报货批次」行 ⇒ 附件没有落点，**连素材都不上传**
-  //   （见 docs 第 5 节：退货单附件要不要有落点，需要她拍板）。
-  assert.deepEqual(gw.uploads, []);
+  // ⚠️ 2026-10-07 晚**口径变更**：退货批次现在也在「报货批次」里有一行
+  //   （这一条夹具里批次号是 `CGD-20261007-0009`）⇒ 退货单 PNG 有落点：
+  //   素材上传一次、写进那一行的「单据」。这张单子的出图/发群行为一个字没变。
+  assert.equal(gw.records.purchaseOrderBatch.length, 1);
+  assert.equal(gw.records.purchaseOrderBatch[0].fields.报货批次号, 'CGD-20261007-0009');
+  assert.deepEqual(gw.uploads.length, 1, '有落点 ⇒ 上传一次素材');
+  assert.deepEqual(gw.records.purchaseOrderBatch[0].fields.单据, [{ file_token: 'file_token_1' }]);
 });
 
 test('A 情况数量比库存多：能对上的先退，差额明确告诉她', async () => {

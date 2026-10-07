@@ -2,13 +2,16 @@ const { textValue } = require('./v1BitableGateway');
 const {
   resolvePurchaseArrivalStatusConfig,
 } = require('../config/purchaseArrivalStatus');
+const { IDEMPOTENCY_KEY_FIELD, createOnceByKey } = require('../infrastructure/idempotencyKey');
 const { logInfo, logWarn } = require('../utils/logger');
 
 // 「报货批次」**那一行**的读写（业务负责人 2026-10-07 把它定为"控制到货情况"的表）。
 //
-// 它只管三件事，一件都不多：
+// 它只管四件事，一件都不多：
 //   · 按「报货批次号」把那一行**找出来**；
-//   · 到货状态（新建 = 未到货 / 到货确认成功 = 已到货）；
+//   · **退货**批次也建那一行（2026-10-07 晚口径变更：只写 批次号 + 幂等键，
+//     **不写「到货状态」** ⇒ 不进 9 点推送的「未到货」候选）；
+//   · 到货状态（报货新建 = 未到货 / 到货确认成功 = 已到货）；
 //   · 「单据」附件（出图之后把采购申请单 / 采购退货单的 PNG 回填到这里）。
 //
 // ⚠️ 「采购行为」这一列**此刻意不读、不写、不映射**（她的原话：
@@ -21,6 +24,19 @@ const { logInfo, logWarn } = require('../utils/logger');
 // ⚠️ 取值**不写死中文**：到货状态两个值来自 `config/purchaseArrivalStatus.js`，
 //    并由部署闸门对着真表 `property.options` 核对（往单选里写不存在的取值，
 //    飞书会自动新建选项、把表污染掉，而 9 点推送按「未到货」查就静默查不到了）。
+
+/**
+ * 「报货批次」那一行的幂等键（业务负责人 2026-10-07 晚：「退货也落到报货批次表里」）。
+ *
+ * 与**报货那条同族**（同一个前缀 `purchase_batch:`，见 `ensurePostingPlan` 的
+ * `batch_key`），但**身份取批次号**，不是 task_id：
+ *   · 报货那条的键是 `purchase_batch:<批次 task_id>`——那一批的 task 是**冻结**的
+ *     （`posting_plan` 落盘在它身上），所以取 task_id 也稳；
+ *   · 退货这边不一样：一个退货批次重试时**领头的那条记录可能换人**
+ *     （先投递 A 还是 B 不由我们定），取 task_id 会算出**另一个键**、给同一个批次
+ *     多建一行；**批次号才是这一包的稳定身份**（归批键就是它）。
+ */
+const purchaseBatchRowKey = (batchNo) => `purchase_batch:${String(batchNo || '').trim()}`;
 
 /** 附件单元格 → file_token 列表（飞书 GET 回来是 `[{ file_token, name }]`）。 */
 const attachmentTokens = (value) => (Array.isArray(value) ? value : [])
@@ -43,6 +59,82 @@ class PurchaseOrderBatchService {
   /** 新建批次记录时要写的那个取值（她说的字段默认值「未到货」）。 */
   get pendingStatus() {
     return this.settings.pending;
+  }
+
+  /**
+   * **退货**批次也建那一行（业务负责人 2026-10-07 晚的口径变更，逐字：
+   *   「为什么退货批次不可以像申请一样，也自动生成呢？并且也落到报货批次表里呢？
+   *     …如果退货申请也要落到报货批次的话，那么到货状态，就需要你在报货的时候，写入未到货，
+   *     然后**退货，不用写**」）。
+   *
+   * 只写两样：**报货批次号 + 幂等键**。
+   * 🔴 **刻意不写「到货状态」**（`arrivalStatus` 这个语义键**不进 values**）——
+   *    留空 ⇒ 每天 9 点那条推送（只认字面量「未到货」）**看不见退货批次**。
+   *    ⚠️ **不许"顺手写个空串"**：往单选里写空串同样是往表里塞东西，
+   *       而且一旦哪天有人把空串当取值，飞书就会多出一个空选项。
+   *
+   * 幂等：**两步** ——
+   *   ① **先按批次号回查**（`findByBatchNo`）：命中就**原样复用**那一行
+   *      （同一批已经在「报货批次」里了，例如同一包里的"采购申请"那半边先建过）；
+   *   ② 没有才 `createOnceByKey`，键 = `purchase_batch:<批次号>`
+   *      （与报货那条**同族**，见 `purchaseBatchRowKey` 的说明）。
+   *   ⇒ 重投 / 重试拿到的是**同一行**，同一批不会出现两行。
+   */
+  async createForReturnBatch(batchNo, { correlation = {} } = {}) {
+    const wanted = String(batchNo || '').trim();
+    if (!wanted) {
+      // 没有号就**不编**（旧数据 / 入口写回失败那条路）：调用方自己决定怎么提示。
+      return { created: false, reason: 'no_batch_no', batch_no: '' };
+    }
+    const key = purchaseBatchRowKey(wanted);
+    // ⚠️ **先按批次号回查一次**：一次提交里**混着"采购申请"和"采购退货"**时，
+    //    两边的归批是**两个批次**（各自一个处理者），但**批次号是同一个**
+    //    （号在入口按包生成、写在每一条记录上）。
+    //    只按幂等键回查的话，报货那条用 `purchase_batch:<它的 task_id>`、
+    //    退货这条用 `purchase_batch:<批次号>` —— 两个键**互相看不见**，
+    //    同一批就会多出一行（她的表里一个批次号出现两行）。
+    //    ⇒ 「一批一行」由这一步保证；命中就**原样复用**那一行
+    //    （**绝不改它的「到货状态」**：报货行该是「未到货」就还是「未到货」）。
+    const existing = await this.findByBatchNo(wanted);
+    if (existing) {
+      logInfo('purchase.return.batch.record_ensured', {
+        batch_no: wanted,
+        batch_record_id: existing.record_id,
+        reused: true,
+        idempotency_key: textValue(existing.fields?.[this.gateway.table('purchaseOrderBatch')?.fields?.idempotencyKey]),
+        matched_by: 'batch_no',
+      });
+      return {
+        created: false,
+        reused: true,
+        recordId: existing.record_id,
+        batch_no: wanted,
+        idempotency_key: key,
+      };
+    }
+    const batch = await createOnceByKey({
+      gateway: this.gateway,
+      tableKey: 'purchaseOrderBatch',
+      keyField: IDEMPOTENCY_KEY_FIELD,
+      keyValue: key,
+      label: `退货批次 ${wanted}`,
+      correlation,
+      // ⚠️ 只有这两列。**没有** arrivalStatus（见上面的 🔴）。
+      values: { batchNo: wanted, idempotencyKey: key },
+    });
+    logInfo('purchase.return.batch.record_ensured', {
+      batch_no: wanted,
+      batch_record_id: batch.recordId,
+      reused: batch.reused === true,
+      idempotency_key: key,
+    });
+    return {
+      created: true,
+      reused: batch.reused === true,
+      recordId: batch.recordId,
+      batch_no: wanted,
+      idempotency_key: key,
+    };
   }
 
   /** 到货核对确认成功之后要写的那个取值。 */
@@ -166,4 +258,6 @@ class PurchaseOrderBatchService {
   }
 }
 
-module.exports = { PurchaseOrderBatchService, attachmentTokens, attachmentNames };
+module.exports = {
+  PurchaseOrderBatchService, attachmentTokens, attachmentNames, purchaseBatchRowKey,
+};

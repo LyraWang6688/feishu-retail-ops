@@ -1871,12 +1871,15 @@ class PurchaseWebhookService {
       //    既有的语义是「重复执行**连上传都不做**」（重跑批次不该白传一次素材）。
       const existing = await this.orderBatches.findDocument(batchNo, fileName);
       if (!existing.found) {
-        // 这一批在「报货批次」里**没有行**（今天只有**退货**批次是这种情况：退货不建
-        // 「报货批次」行，那条既有边界由 purchaseReturn.test.js 钉着）。
-        // 没有落点就**不白传一次素材**，只记一条 warn —— 图已经发到群里了。
+        // 这一批在「报货批次」里**没有行**。2026-10-07 晚起**报货与退货都会建行**
+        // （退货那一行由 ensureReturnBatchRecord 在出图之前建），所以走到这里只剩两种
+        // 真实可能：① 那一行的创建**失败**（建行那一步只 warn、不阻塞）；
+        // ② 没有批次号的旧数据 / 入口没写回号（writeSupplierImageAttachment 的
+        //    `no_batch_no` 已经先记了一条）。两种情况都**不白传一次素材**，
+        // 只记这条 warn —— 图已经发到群里了。
         logWarn('purchase.batch.document.no_record', {
           task_id: taskId, batch_no: batchNo, file_name: fileName,
-          hint: '这一批在「报货批次」里没有行（退货批次今天不建行）→ 单据图暂时没有落点',
+          hint: '这一批在「报货批次」里没有行（建行失败 / 没有批次号）→ 单据图暂时没有落点',
         });
         return {
           written: false, reason: 'no_batch_record', batch_no: batchNo, file_name: fileName,
@@ -2438,6 +2441,19 @@ class PurchaseWebhookService {
       }
 
       const requestIds = preparedList.flatMap((prepared) => prepared.docIds);
+      // ⭐ **退货批次也落一行「报货批次」**（业务负责人 2026-10-07 晚的口径变更）：
+      //    它是这一批退货单 PNG 的落点（那一行的「单据」）。**出图之前**建好，
+      //    附件回填才找得到行。只写 批次号 + 幂等键，**不写「到货状态」**（留空 ⇒
+      //    不进每天 9 点的「未到货」推送）。失败只 warn，不阻塞出图（见方法注释）。
+      // ⚠️ 判据是 **docIds 非空**（= 真的有一张单子要出），不是 preparedList 非空：
+      //    "一双都没退掉"（taken = 0）的记录照样会进 preparedList，但它**没有图**
+      //    ⇒ 不建空行（这一行的唯一用途就是给图当落点）。
+      if (requestIds.length) {
+        await this.ensureReturnBatchRecord(batchNo, {
+          taskId: batchTaskId,
+          correlation: purchaseCorrelation({ taskId: batchTaskId, batchNo }),
+        });
+      }
       // ⭐ 差额提示跟着**这一批退货单的话题**走：出图/发群的返回值里带话题根 message_id，
       //    传给它 → 提示回复那条根消息，和退货单落在同一个话题里（不新开话题、不发私聊）。
       const delivery = await this.deliverReturnImages(batchTaskId, batchNo, preparedList);
@@ -2665,21 +2681,43 @@ class PurchaseWebhookService {
   }
 
   /**
+   * ⭐ **退货批次也落一行「报货批次」**（业务负责人 2026-10-07 晚的口径变更，逐字见
+   * `PurchaseOrderBatchService.createForReturnBatch` 的注释）。
+   *
+   * 为什么必须建：退货单的 PNG 要有个落点（「报货批次.单据」），否则附件回填那一步
+   * 只会记一条 `purchase.batch.document.no_record` 的 warn（图的落点没了）。
+   * 🔴 那一行**只写 批次号 + 幂等键，不写「到货状态」** —— 留空 ⇒ 9 点推送看不见它。
+   *
+   * ⚠️ 失败**不阻塞**这条链路（与"附件写失败不阻塞主流程"同一条纪律）：
+   *    库存与「具体信息」那时已经落地，图也照常发；这里只记 warn，
+   *    重投 / 重跑会按幂等键把那一行补上（`purchase_batch:<批次号>`）。
+   */
+  async ensureReturnBatchRecord(batchNo, { taskId = '', correlation = {} } = {}) {
+    const wanted = String(batchNo || '').trim();
+    if (!wanted) return { created: false, reason: 'no_batch_no', batch_no: '' };
+    try {
+      return await this.orderBatches.createForReturnBatch(wanted, { correlation });
+    } catch (error) {
+      logWarn('purchase.return.batch.record_failed', {
+        batch_no: wanted, task_id: taskId || undefined, error: error.message,
+        hint: '退货批次那一行没建成 → 退货单的图暂时没有落点（图已经发到群里了）',
+      });
+      return { created: false, reason: 'create_failed', batch_no: wanted, error: error.message };
+    }
+  }
+
+  /**
    * 整批退货**只出一次图、只发一次群**（复用采购申请那条「按供应商出图 → 发到群 →
    * 写回附件」的完整流程，只换标题）。
    *
    * 整批的明细合成一份草稿挂在批次任务上：同一供应商的明细合成一张图，
    * 多个供应商时也是"每供应商一张图"，且后续的图/文字都会回复第 1 条（见
    * deliverSupplierImagesInner 的话题处理），不会各成一个话题。
+   *
+   * ⭐ 2026-10-07 晚起：**退货批次也在「报货批次」里有一行**（调用方在出图之前建，
+   *    见 `ensureReturnBatchRecord`）⇒ 退货单 PNG 有了落点（那一行的「单据」）。
    */
   async deliverReturnImages(batchTaskId, batchNo, preparedList) {
-    // ⚠️ 2026-10-07 已知缺口（**需要业务负责人拍板**，见
-    //    docs/purchase-batch-no-arrival-and-push-2026-10-07.md 第 5 节）：
-    //    退货**不建「报货批次」行**（这是既有边界，`purchaseReturn.test.js` 里
-    //    "退货不建报货批次（第 5 张表）"那条断言钉着它），所以退货单的 PNG
-    //    **现在没有落点**：附件回填那一步会记一条 `purchase.batch.document.no_record` 的 warn。
-    //    ⇒ 与生产现状一致（她已把「具体信息.采购申请单」那一列删掉，退货单本来也写不进去），
-    //      不是这次改动引入的回归；要真正回填，得先定"退货批次要不要也在「报货批次」里有一行"。
     const items = preparedList.flatMap((prepared) => prepared.items);
     const requestIds = preparedList.flatMap((prepared) => prepared.docIds);
     const requestIdByItemKey = {};
@@ -2768,6 +2806,13 @@ class PurchaseWebhookService {
     await this.applySupplierReturn(prepared);
     let delivery = null;
     if (prepared.docIds.length) {
+      // ⭐ 退货批次也落一行「报货批次」（2026-10-07 晚口径变更）——退货单 PNG 的落点。
+      //    ⚠️ 单条路径的批次号可能为空（旧数据 / 入口没写回）：那种情况**不编号、不建行**，
+      //       照既有行为只 warn（见 writeSupplierImageAttachment 的 no_batch_no）。
+      await this.ensureReturnBatchRecord(prepared.draft.batch_no, {
+        taskId,
+        correlation: purchaseCorrelation({ taskId, batchNo: prepared.draft?.batch_no, reportRecordId: recordId }),
+      });
       // 出图 → 发群 → 写回附件（复用采购申请那条完全相同的流程，只换标题）。
       // ⚠️ 整批出图走 deliverReturnImages（一次发群）；这里单条时 preparedList 只有它自己。
       delivery = await this.deliverReturnImages(taskId, prepared.draft.batch_no, [prepared]);
@@ -3009,7 +3054,9 @@ class PurchaseWebhookService {
     return this.creationQueue.run(taskId, async () => {
       const task = await this.store.get(taskId);
       const draft = task?.draft;
-      if (!draft) throw new Error('采购到货草稿不存在或已过期');
+      // ⚠️ 表名同步（业务负责人 2026-10-07 把「采购到货」改名「到货验收」）：
+      //    这句错误原文可能被上层拼进**她看得见**的回话/提示里，所以跟着改。
+      if (!draft) throw new Error('到货验收草稿不存在或已过期');
       const pending = Array.isArray(draft.pending_creation) ? draft.pending_creation : [];
       const productTable = this.gateway.table('product');
       const context = this.buildArrivalCreationContext(task);
@@ -3473,7 +3520,8 @@ class PurchaseWebhookService {
 
   /** 真正的入库实现：只由 confirmArrival 串行调用，不要直接调（会丢掉串行保证）。 */
   async confirmArrivalLocked(taskId, task, operatorOpenId) {
-    if (task.status === 'posted') return { toast: { type: 'info', content: '采购到货已入库' } };
+    // ⚠️ 表名同步（同上）：「采购到货」→「到货验收」。
+    if (task.status === 'posted') return { toast: { type: 'info', content: '到货验收已入库' } };
     // 她点确认时如果建档还没跑完（或上一次失败了），在这里同步补一次。
     // 建档是幂等的、并且和别的调用方走同一个 creationQueue，所以不会建出第二条。
     // 入库必须有货品记录，这一步不能省；失败就明确告诉她原因，别静默也不要"假装入库了"。
