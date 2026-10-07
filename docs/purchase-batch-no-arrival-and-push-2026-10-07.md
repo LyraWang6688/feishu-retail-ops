@@ -215,20 +215,28 @@ Error: Cannot find module '../src/config/purchaseArrivalStatus'
 
 ```
 === run 1 ===
-ℹ tests 1194
-ℹ pass 1194
+ℹ tests 1196
+ℹ pass 1196
 ℹ fail 0
 === run 2 ===
-ℹ tests 1194
-ℹ pass 1194
+ℹ tests 1196
+ℹ pass 1196
 ℹ fail 0
 ```
 
-（改动前的基线是 `tests 1154 / pass 1154`；本次新增 40 条用例。）
+（改动前的基线是 `tests 1154 / pass 1154`；本次新增 42 条用例。）
 
-### 6.2 CI
+### 6.2 CI（PR #238）
 
-（PR 号与 `gh pr checks` 结果在本节补；**没有**用 `--admin`。）
+`gh pr checks 238` 三项全绿，`gh pr view 238 --json mergeStateStatus` = **CLEAN**：
+
+| 检查 | 结果 | 耗时 |
+|---|---|---|
+| `test`（server tests） | ✅ pass | 59s |
+| `Analyze (javascript-typescript)`（CodeQL） | ✅ pass | 1m16s |
+| `CodeQL` | ✅ pass | 3s |
+
+**没有**用 `--admin`；**没有合并**（合并由父代理做）。
 
 ### 6.3 改动过的既有断言（逐条说明"为什么不是放宽"）
 
