@@ -277,8 +277,24 @@ test('AC-11 那条整单判据在解析层已删除（放开，不是绕过）',
   const parser = fs.readFileSync(path.join(__dirname, '../src/services/doubaoService.js'), 'utf8');
   assert.ok(!parser.includes('定金单暂只支持一条明细'),
     '那条整单护栏必须已经从**判据所在文件**删除（多明细 + 定金 不再是缺项）');
-  // 全仓只剩一处提及，且**只是历史注释**（说明新判据不是它的翻版）—— 用逐文件断言钉住，
-  // 免得以后有人把这条护栏"顺手加回来"却没人发现。
+  // 全仓只剩"历史残留"，且**只许两处**、**每处都必须带一个显式标记**证明那是
+  // "历史注记 / 文案历史兜底"，而不是把判据加回来。
+  //
+  // ⭐ 2026-10-07 收严（PR #233 并入后同步）：原来是"全仓只许一个文件、按**文件名白名单**判定"。
+  //    现在改成**按角色 + 必须有标记**判定，三条都比原来更严：
+  //      ① `src/services/`（= 一切判据 / 生产者的家）**一个字都不许再有它**；
+  //      ② 白名单里的**每个**文件都必须带它自己的**显式历史标记**（原来对文件名不要求任何标记）；
+  //      ③ 白名单**只许变小、不许悄悄变多** —— 加一个文件必须同时给出标记，否则这条红。
+  //    ⚠️ 为什么必须动这条白名单：PR #233 按业务负责人的要求把这句话**保留成文案层的
+  //       "历史兜底"**（标明「上游已删除，仅防历史任务重放」），于是它**必然**出现在
+  //       `src/config/salesMissingInfoText.js`（**文案配置**，不是判据）里。
+  //       见 `docs/sales-missing-info-wording-2026-10-07.md` 第 14 节（AC-S3）。
+  const LEGACY_GUARD_RESIDUE = new Map([
+    // #234 自己的注记：那句"新判据不是旧护栏的翻版"。
+    ['src/config/salesTradeTypePolicy.js', '不是**原来那条整单护栏'],
+    // #233 的文案映射：**有意保留**的历史兜底（上游已删除，仅防历史任务重放）。
+    ['src/config/salesMissingInfoText.js', '上游已删除'],
+  ]);
   const offenders = [];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -290,8 +306,19 @@ test('AC-11 那条整单判据在解析层已删除（放开，不是绕过）',
     }
   };
   walk(path.join(__dirname, '../src'));
-  assert.deepEqual(offenders, ['src/config/salesTradeTypePolicy.js'],
-    '除了那条"这不是它的翻版"的历史注释，源码里不许再出现这条判据');
+  // ① 判据 / 生产者的家必须**彻底干净**（比原来"全仓许一处"更严）。
+  const inServices = offenders.filter((file) => file.startsWith('src/services/'));
+  assert.deepEqual(inServices, [],
+    '判据 / 生产者里不许再出现这条护栏（#234 已把它删除 —— 不许顺手加回来）');
+  // ② 剩下的**只许**是那两处带标记的历史残留。
+  assert.deepEqual(offenders.slice().sort(), [...LEGACY_GUARD_RESIDUE.keys()].sort(),
+    '除了"历史注记 / 文案历史兜底"，源码里不许再出现这条判据');
+  // ③ 每一处残留都必须带它自己的**显式历史标记**（没说清"这是历史"就不算合格残留）。
+  for (const [file, marker] of LEGACY_GUARD_RESIDUE) {
+    const text = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+    assert.ok(text.includes(marker),
+      `${file} 提到了这条旧护栏，却没有"历史残留"标记「${marker}」—— 要么补标记，要么把它删掉`);
+  }
   // 「说不清哪一件是预付」这条**新的、可补的**判据必须还在（绝不猜）。
   const { SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS } = require('../src/config/salesTradeTypePolicy');
   assert.ok(parser.includes('SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS'));

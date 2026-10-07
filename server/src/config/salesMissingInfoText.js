@@ -53,6 +53,8 @@ const KEYS = Object.freeze({
   paymentAmount: `${PREFIX}PAYMENT_AMOUNT_TEXT`,
   depositMultiLine: `${PREFIX}DEPOSIT_MULTI_LINE_TEXT`,
   depositMultiLineExample: `${PREFIX}DEPOSIT_MULTI_LINE_EXAMPLE_TEXT`,
+  depositTargetAmbiguous: `${PREFIX}DEPOSIT_TARGET_AMBIGUOUS_TEXT`,
+  depositTargetAmbiguousGeneric: `${PREFIX}DEPOSIT_TARGET_AMBIGUOUS_GENERIC_TEXT`,
   depositAmount: `${PREFIX}DEPOSIT_AMOUNT_TEXT`,
   depositMethod: `${PREFIX}DEPOSIT_METHOD_TEXT`,
   depositTailUnclear: `${PREFIX}DEPOSIT_TAIL_TEXT`,
@@ -115,6 +117,19 @@ const DEFAULTS = Object.freeze({
   depositMultiLine: '带定金的单一次只能记一双，请把这几双分开发送～',
   depositAmount: '请说一句这次收了多少定金～',
   depositMethod: '请说一句这次定金是怎么收的（微信还是现金）～',
+  // ⭐⭐ **上游已变（PR #234 合入，2026-10-07）**：`doubaoService` 现在会在
+  //    「多明细 + 定金、但说不清定金属于哪一件」时产出**这一句新的**（定义在
+  //    `config/salesTradeTypePolicy.SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS`，逐字）：
+  //      「这一单里哪一件是付了定金的那件，我有点拿不准，请逐件说明哪双是预付、每双多少钱～」
+  //    ⚠️ 它**不含**代码标识符、也不含「；」/「明细」，所以"原样透传"**不会**被守卫拦住 ——
+  //       但那样就等于**没有映射**：不可配，也点不出到底是哪两双（逐双列出来才是她的读法）。
+  //    所以这里给它一条模板，保留原话的两个要点（哪双是预付 + 每双多少钱），并把"哪几双"当场点出来。
+  //    ⚠️ 识别用的是**生产者原话的字头**（见 `TEXT_TOPIC_PATTERNS`），有守门用例钉住这个耦合。
+  depositTargetAmbiguous:
+    '这一单里哪双是付了定金的那双，我有点拿不准～请对着「{items}」逐双说清楚哪双是预付、每双多少钱～',
+  // 一件货都取不出来时的退路（`depositTargetIndex` 在 items 为空时也会走到"说不清"那一支）。
+  depositTargetAmbiguousGeneric:
+    '这一单里哪双是付了定金的那双，我有点拿不准～请逐双说清楚哪双是预付、每双多少钱～',
   // 生产者原话带「；」。人话 + 具体动作：**把"该写哪一句"直接告诉她**。
   depositTailUnclear: '尾款还没付就请补一句「尾款以后付」，已经付了就补一句实收金额～',
   depositPriceMismatch: '成交价和「定金 + 尾款」对不上，请核对一下～',
@@ -164,7 +179,29 @@ const TEXT_TOPIC_PATTERNS = Object.freeze([
   { key: 'deposit_method', pattern: /^请明确本次定金的支付方式/ },
   { key: 'deposit_tail', pattern: /^请说明尾款是否已支付/ },
   { key: 'deposit_price_mismatch', pattern: /^成交价与定金加尾款不一致/ },
+  // ⭐⭐ **上游已删除（PR #234，2026-10-07）：这条句子的生产者已经没了，映射刻意保留。**
+  //    #234 删除了 `doubaoService` 里那句整单护栏（原 `:281-284`）：
+  //      `if (deposit.tailAmount && items.length !== 1) { deposit.issues.push('定金单暂只支持…') }`
+  //    ⇒「多明细 + 定金」现在是**合法输入**，**这句话再也不会被生产出来**。
+  //    ⭐ 保留（而不是删掉）的**理由**：`missing_fields` 会被**落盘持久化** ——
+  //       ① 本地任务 `server/data/lark_mvp_tasks/*.json` 的 `draft.missing_fields`；
+  //       ② 业务表「解析结果摘要」(`parseSummary`) 那份 JSON 快照。
+  //       部署之后，一条**改动前就存着的** `needs_info` 任务若被**重放**
+  //       （`resumePending` / 手工重跑），渲染器还会读到这句**历史原文**；
+  //       删了映射 ⇒ 它退化成"原样透传" ⇒ 她**又会看到「明细」和「；」**（本次专治的两个毛病）。
+  //    ⇒ 所以这条是**历史形状兜底**：只防历史任务重放，**当前链路永远不会走到它**。
+  //      成本为零、收益是"老任务重放也不退化"，所以选择保留。
+  //    ⚠️ 「上游已删除，仅防历史任务重放」—— 这句话是本条存在的**唯一**理由，改动它请先读
+  //       `docs/sales-missing-info-wording-2026-10-07.md` 第 14 节（AC-S3）。
+  //    ⚠️ `KNOWN_MISSING_FIELD_SHAPES` 之外它被单列进 `HISTORICAL_MISSING_FIELD_SHAPES`，
+  //       并有守门用例钉住"**当前解析层不再产出这一句**"（AC-S3）。
+  //    ⚠️ 它也是 `server/test/salesMultiLineTradeType.test.js` 的 AC-11 白名单里**唯一带
+  //       「上游已删除」标记的那一处残留**（那里按"标记"判定，不是硬编码文件名）。
   { key: 'deposit_multi_line', pattern: /^定金单暂只支持一条明细/ },
+  // ⭐ #234 **新增**的那一句（`config/salesTradeTypePolicy.SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS`）。
+  //    字头按**生产者原话**认：`这一单里哪一件是付了定金的那件…`（注意是"件"，不是"双"）。
+  //    ⚠️ 有守门用例直接拿那个配置常量喂进来断言"必须被映射、不许原样透传" —— 生产者改了字会立刻红。
+  { key: 'deposit_target_ambiguous', pattern: /^这一单里哪一件是付了定金的那件/ },
   { key: 'item_amount_generic', pattern: /^请逐件说明成交金额/ },
   { key: 'items_total_mismatch_generic', pattern: /^逐件成交金额合计与整单成交金额不一致/ },
   // 解析层那句**带数字**的（#231）：本模块**不改写它**，只把它当成"具体句"占位 → 原样透传。
@@ -203,6 +240,8 @@ const DEFAULTS_BY_KEY = Object.freeze({
   [KEYS.paymentAmount]: DEFAULTS.paymentAmount,
   [KEYS.depositMultiLine]: DEFAULTS.depositMultiLine,
   [KEYS.depositMultiLineExample]: DEFAULTS.depositMultiLineExample,
+  [KEYS.depositTargetAmbiguous]: DEFAULTS.depositTargetAmbiguous,
+  [KEYS.depositTargetAmbiguousGeneric]: DEFAULTS.depositTargetAmbiguousGeneric,
   [KEYS.depositAmount]: DEFAULTS.depositAmount,
   [KEYS.depositMethod]: DEFAULTS.depositMethod,
   [KEYS.depositTailUnclear]: DEFAULTS.depositTailUnclear,
@@ -246,6 +285,8 @@ const resolveSalesMissingInfoConfig = (env = process.env) => {
     paymentAmount: text[KEYS.paymentAmount],
     depositMultiLine: text[KEYS.depositMultiLine],
     depositMultiLineExample: text[KEYS.depositMultiLineExample],
+    depositTargetAmbiguous: text[KEYS.depositTargetAmbiguous],
+    depositTargetAmbiguousGeneric: text[KEYS.depositTargetAmbiguousGeneric],
     depositAmount: text[KEYS.depositAmount],
     depositMethod: text[KEYS.depositMethod],
     depositTailUnclear: text[KEYS.depositTailUnclear],
@@ -374,6 +415,14 @@ const renderMissingTopic = (topic, { items = [], config }) => {
     }
     case 'deposit_amount': return config.depositAmount;
     case 'deposit_method': return config.depositMethod;
+    // ⭐ #234 新增那句：把"这一单到底是哪几双"当场点出来（点不出来就用不带清单的退路）。
+    //    取 **全部** items（`topic.indices` 不适用 —— 缺的不是某一项，是"哪一项"这件事本身）。
+    case 'deposit_target_ambiguous': {
+      const all = (items || []).map((_, index) => label(index)).filter((text) => String(text || '').trim());
+      return all.length
+        ? format(config.depositTargetAmbiguous, { items: all.join('、') })
+        : config.depositTargetAmbiguousGeneric;
+    }
     case 'deposit_tail': return config.depositTailUnclear;
     case 'deposit_price_mismatch': return config.depositPriceMismatch;
     case 'item_amount_generic': return config.itemAmountGeneric;
