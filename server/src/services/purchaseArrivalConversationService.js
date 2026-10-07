@@ -519,6 +519,9 @@ class PurchaseArrivalConversationService {
    * 🔴 空提交（`form_value` 里没有那一项 / 只有空白）：**明确提示 + 一个字都不写**
    *   （不记原话、不调模型、不发卡片、不写任何业务表），并把表单与提醒一起留在她那张卡上。
    *   ⚠️ 官方 `required` 只是**前端**闸门（未填则前端提示、不发起回传）⇒ 服务端必须自己兜一层。
+   *   ⚠️ **"明确提示"落在卡片上**（`card.submitMissingNote`），不是靠返回的 toast ——
+   *      卡片动作那条路由的**同步响应是固定的「已收到，正在处理」**，service 返回的 toast
+   *      只进 `lark.card.handled` 日志（这也是 `visibleFailure` 早就"patch 卡 + 回文字"的原因）。
    *
    * @param {object} value 提交按钮的 `value`（`{action, draft_id}`）
    * @param {object} formValue 回调里的 `form_value`（官方：表单项 name → 值）
@@ -547,8 +550,18 @@ class PurchaseArrivalConversationService {
         task_id: taskId, card_message_id: cardMessageId, field: fieldName,
         note: '空提交：明确提示 + 不记原话 / 不调模型 / 不发卡片 / 不写任何业务表',
       });
-      await this.reopenFormAfterEmptySubmit(taskId, cardMessageId);
-      return { toast: { type: 'error', content: this.config.replies.submitMissing } };
+      // ⚠️ 也走**同一批的串行队列**：这是一次"重渲染那张卡"的远端动作，
+      //    跟同一批正在跑的核对排在一起，才不会把刚发出去的新卡又叠上旧表单。
+      //    ⚠️ 它**不写任何业务表、不动本地任务**（`reopenFormAfterEmptySubmit` 只 patch 卡片）。
+      return this.queue.run(taskId, async () => {
+        await this.reopenFormAfterEmptySubmit(taskId, cardMessageId);
+        // ⚠️ 这句 toast 在她那边**看不见**（卡片动作路由的同步响应固定是「已收到，正在处理」，
+        //    见 `routes/larkEvents.js` 的 `card.action.trigger`；service 返回的 toast 只进
+        //    `lark.card.handled` 日志）。所以**她真正看得见的那句提示在卡片上**
+        //    （`card.submitMissingNote`，由 `reopenFormAfterEmptySubmit` 写进卡片）。
+        //    这里照样如实返回，是为了日志口径与既有各条链路的形状一致。
+        return { toast: { type: 'error', content: this.config.replies.submitMissing } };
+      });
     }
     logInfo('purchase.arrival.reconcile.submit_received', {
       task_id: taskId, card_message_id: cardMessageId, field: fieldName,

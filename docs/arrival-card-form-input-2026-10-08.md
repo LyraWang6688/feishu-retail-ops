@@ -136,7 +136,7 @@
 | 11 | 没算出结果 → 与"说话"一致、卡片**保持可编辑**、**不放宽** | 只在 `card === true` 时 patch；既有三个提前 return 原样生效 | 表单⑦（`no_arrival_content`：不发卡 / 不写表 / **一张都不 patch** / 回执也**不说**"卡片发你下面"）、既有 60 条 |
 | 12 | 同一次提交被**重投**幂等 | `messageId = 被提交卡片的 open_message_id` ⇒ 命中管道既有的"同一条消息只记一次"闸门 | 表单⑤（不重复喂模型 / 不重复发卡 / 不写表 / `submitDuplicate` 回执） |
 | 13 | 重复提交 / 重复点「是」不重复入库 | 既有 `status === 'posted'` 闸门 ＋ 库存自身幂等（**未改**） | 表单⑤（连点两次「是」，`inventory.calls.length === 2`；入库后再提交也不动库存） |
-| 14 | 空提交 → 明确提示 + **零写库** + 不喂模型 + 不发卡 | `handleCardFormSubmit` 的 `!text` 分支（含 `reopenFormAfterEmptySubmit` 只重渲染卡） | 表单④（4 种空值形状：`{}` / 空串 / 全空白 / 字段名不对；断言本地 transcript 与 status **一字未变**、`gateway.writes` 为空、卡片上表单与提醒都还在） |
+| 14 | 空提交 → 明确提示 + **零写库** + 不喂模型 + 不发卡 | `handleCardFormSubmit` 的 `!text` 分支（含 `reopenFormAfterEmptySubmit` 只重渲染卡，**进同一批的串行队列**） | 表单④（4 种空值形状：`{}` / 空串 / 全空白 / 字段名不对；断言本地 transcript 与 status **一字未变**、`gateway.writes` 为空、卡片上表单与提醒都还在） |
 | 15 | 老客户端**降级文案** | `input.fallback` = `card.form.fallbackText`（明说"直接在话题里回一句"） | 表单⑥ |
 | 16 | ⭐ **文字入口原样保留** | `handleTopicMessage` **一行未改**；提交只是**多**一条入口 | 表单⑥（同一个 service 上两条入口都走通、卡片仍回在她说话的那条消息下面）、既有 60 条 |
 | 17 | **配置先行** | `config/arrivalConversation.js`：`ARRIVAL_FORM_DEFAULTS` ＋ `card.submittedTitle/Message` ＋ `card.submitMissingNote` ＋ `replies.submitMissing/submitReceived/submitReceivedNoCard/submitDuplicate/disabled` | 表单⑨（覆盖 8 项文案/名字；并断言**没覆盖的仍有默认值** —— `card.form` 走**嵌套合并**，只改一项不会把其余项变成 `undefined`） |
@@ -198,9 +198,16 @@ $ curl -sS http://127.0.0.1:41234/health
 
 ## 7. 不确定处 / 需要她知情的判断（**如实列出**）
 
+0. ⭐ **卡片动作返回的 toast 她其实看不见**（动手时核出来的既有事实，不是本次引入的）：
+   `routes/larkEvents.js` 的 `card.action.trigger` 是 `setImmediate(...)` 里跑 service、然后
+   **无条件** `return { toast: { type: 'info', content: '已收到，正在处理' } }` ——
+   service 返回的 `toast` 只写进 `lark.card.handled` 日志。
+   ⇒ 所以本件里"**明确提示**"一律**落在卡片上**（空提交 → `card.submitMissingNote` 写进她那张卡），
+   toast 只是日志 / 可观测性口径（与既有 `visibleFailure`"patch 卡 ＋ 回文字"的理由完全一致）。
+   ⚠️ 若将来要把 service 的 toast 真的显示给她，那是**改路由的同步响应**，会影响所有卡片动作，**本件不碰**。
 1. ⚠️ **`required: true` 只是前端闸门**（官方原文：未填写则前端提示"有必填项未填写"、
    **不会**发起回传）⇒ 我按"重放 / 模拟 / 降级都可能送空串进来"做了**服务端兜底**（表单④）。
-   若她的客户端真能发出空提交，她看到的是 toast + 卡片上那句提醒，**不会**有任何写入。
+   若她的客户端真能发出空提交，她看到的是卡片上那句提醒，**不会**有任何写入。
 2. ⚠️ **提交成功之后那张卡是「已提交」（灰）**，而**真正要点的「是/否」在下面那张新卡上**。
    我没做"就地在这张卡上直接改成是/否"（那要动既有那条"每次都在话题里重发新卡"的可见性结论
    —— 2026-10-07 真机 23:37 的教训就是"猜她在看哪张卡"）。

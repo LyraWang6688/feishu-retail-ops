@@ -1946,6 +1946,9 @@ test('表单④⚠️：空提交 / 未填 → 明确提示 + **零写库** + �
 
     const result = await submitForm(harness, { cardMessageId: context.cardMessageId, formValue });
 
+    // ⚠️ 她**真正看得见**的那句提示在**卡片上**（见下面那条断言）：卡片动作路由的同步响应
+    //    固定是「已收到，正在处理」，service 返回的 toast 只进 `lark.card.handled` 日志。
+    //    这里仍然断言 toast 形状 —— 它是日志口径，也是"不许静默"的服务端契约。
     assert.equal(result.toast.type, 'error', '空提交必须**明确提示**（不许静默）');
     assert.match(result.toast.content, /实际到货情况/);
     assert.equal(harness.recognizer.calls.length, callsBefore, '空提交连模型都不许调');
