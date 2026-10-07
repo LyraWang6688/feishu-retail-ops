@@ -238,11 +238,11 @@ $ node --test --test-concurrency=1 test/zzRedBaselineEvidence.test.js
 
 ```
 $ cd .local/worktrees/tail-payment/server && node --test --test-concurrency=1
-ℹ tests 1257   ℹ pass 1257   ℹ fail 0     （第 1 次）
-ℹ tests 1257   ℹ pass 1257   ℹ fail 0     （第 2 次）
+ℹ tests 1258   ℹ pass 1258   ℹ fail 0     （第 1 次）
+ℹ tests 1258   ℹ pass 1258   ℹ fail 0     （第 2 次）
 ```
 
-其中 **20 条是本次新增**：`salesTailPayment.test.js` **15 条**（新文件）、
+其中 **21 条是本次新增**：`salesTailPayment.test.js` **16 条**（新文件）、
 `salesMissingInfoText.test.js` **3 条**（AC-④ ×2 + AC-⑤）、
 `salesFundTypeDecoupling.test.js` **2 条**（新形状 × 现货 / 预定两种）。
 ⚠️ 我**没有**单独在 `origin/main` 上跑过一次全量（那要再建一个 worktree 跑 33 秒），

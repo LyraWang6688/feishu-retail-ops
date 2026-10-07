@@ -139,6 +139,34 @@ for (const phrase of TAIL_PHRASES) {
   });
 }
 
+// ── 边界：原话里**没有**「定金」时（「收了 100，下次收 120」）──────────────────
+// ⚠️ 确定性的尾款识别挂在 `depositTerms` 上（要求原话里有「定金」）——
+//    这条只是把**当前边界**钉住，不是新口径：
+//      · 模型按提示词 9.1 给了 owed ⇒ 走既有「成交额 = 实收 + 欠款」得到 220（正确）；
+//      · 模型漏给 owed ⇒ **回头问她**，绝不许静默把 120 算丢（原来会算成"这单就值 100"）。
+test('没有「定金」时：模型给了 owed 就推出 220；模型漏给则问她（不许静默算成 100）', () => {
+  const text = '26632 37 码，收了 100 元微信，下次收 120 元';
+
+  const withOwed = normalize({
+    intent: 'sale',
+    items: [{ item_no: '26632', size: 37, quantity: 1 }],
+    payments: [{ amount: 100, method: '微信' }], agreed_total: null, owed: 120,
+  }, text);
+  assert.equal(withOwed.agreed_total, 220, '成交额 = 实收 100 + 欠款 120');
+  assert.equal(withOwed.owed, 120);
+  assert.deepEqual(withOwed.missing_fields, []);
+
+  const withoutOwed = normalize({
+    intent: 'sale',
+    items: [{ item_no: '26632', size: 37, quantity: 1 }],
+    payments: [{ amount: 100, method: '微信' }], agreed_total: null, owed: null,
+  }, text);
+  assert.notEqual(withoutOwed.agreed_total, 100,
+    '「下次收 120」是钱没结清的说法 ⇒ 不许套用"成交金额 = 实收 100"（那会把 120 算丢）');
+  assert.ok(withoutOwed.missing_fields.includes('items[0].actual_amount'),
+    `模型漏给欠款时要回头问她：${JSON.stringify(withoutOwed.missing_fields)}`);
+});
+
 // ── 模型把尾款也塞进 payments 时，后端仍然不把它当已收款 ──────────────────────
 test('模型把「下次收 120」错记成一笔收款 → 后端按她明说的尾款剔掉它', () => {
   const result = normalize({
