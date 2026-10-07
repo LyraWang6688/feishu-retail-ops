@@ -19,10 +19,19 @@ const { PurchaseWebhookService } = require('./purchaseWebhookService');
 const { V1ReferenceResolver, person, relation, normalizeText, normalizeColor } = require('./v1ReferenceResolver');
 const { LiveInventoryIndex, buildLiveInventoryIndex } = require('./liveInventoryIndex');
 const { tradeTypeCodeFromLabel, deliveryForTradeType } = require('../config/salesMovements');
-// 「录单时要跑哪些解析」的**唯一**判据来源（配置先行，业务负责人 2026-10-07 确认）。
-const { salesParseRuns } = require('../config/salesTradeTypePolicy');
-// 颜色候选上的「有货 / 无货」库存状态取值（只用录单时已读进来的实时库存索引算，零新增请求）。
-const { SALES_COLOR_STOCK_STATUS, resolveSalesColorChoiceConfig } = require('../config/salesColorChoice');
+// 「录单时要跑哪些解析」+「颜色候选推哪些」的**唯一**判据来源
+//（配置先行，业务负责人 2026-10-07 确认）。
+const {
+  salesParseRuns, salesColorOptionsScopeFor, SALES_COLOR_OPTIONS_SCOPE,
+} = require('../config/salesTradeTypePolicy');
+// 颜色候选上的「有货 / 无货」库存状态取值（只用录单时已读进来的实时库存索引算，零新增请求）
+// + 「不在售」的取值域 + 候选被过滤空了的文案。
+const {
+  SALES_COLOR_STOCK_STATUS,
+  SALES_PRODUCT_STATUS_OFF_SHELF,
+  resolveSalesColorChoiceConfig,
+  formatColorOptionsScopeEmptyText,
+} = require('../config/salesColorChoice');
 // 「A 之后：这个货号到底有没有在「货品信息」里建档」那道判据的开关 / 文案 / 事件名。
 // ⚠️ 它与解析 A 是**两步**：A 仍然"找不到就空手回来"，本判据在它之后下结论。
 const {
@@ -1022,6 +1031,9 @@ class LarkMvpService {
       const found = await this.references.resolveProduct({ itemNo, matchMode: 'sales' });
       // 多个颜色：不猜，候选交给确认卡片（形状与实时库存那条候选一致：
       // {recordId, color, number}，卡片动作 choose_sale_color 只认这三个键）。
+      // ⭐ 额外带上 `status`（「货品信息」那条记录的「货品状态」，在售 / 下架）——
+      //    现货 / 未付的候选范围要用它过滤（`colorOptionsInScope`），
+      //    而它**跟着候选一起回来**（这张表 A 已经整表读过）⇒ 过滤**零新增远端请求**。
       if (found?.needsColor && found.options?.length) {
         return {
           needsColor: true,
@@ -1034,6 +1046,8 @@ class LarkMvpService {
               // ⚠️ 不要用 resolver 回的 `number`：那是**归一化过的「编号」**（小写、去分隔符），
               //    当卡片上的货品标签会显示成 `b2600252黑色b`。
               number: `${itemNo}${optionColor}`,
+              // 读不到时留空串：空 **不等于** 下架（见 `colorOptionsInScope` 的判据）。
+              status: String(option.status ?? '').trim(),
             };
           }),
         };
@@ -1089,6 +1103,48 @@ class LarkMvpService {
           : SALES_COLOR_STOCK_STATUS.unavailable,
       };
     });
+  }
+
+  /**
+   * ── 按「候选范围」过滤 A 出的候选颜色（配置先行 · 第四刀）────────────────────
+   *
+   * 她的口径（逐字）：
+   *   「现货和未付是需要看在售的颜色，但是**预付是需要看这个货号的颜色**」
+   * ⇒ 范围**按交易类型**配在 `config/salesTradeTypePolicy`（`colorOptionsScope`）：
+   *   · `inStockOnly`（现货 / 未付 / **认不出的编码**）→ 把明确"不在售"的颜色去掉；
+   *   · `allColors`（预付）→ 原样返回。
+   *
+   * ⭐ **判据是"明确不在售"而不是"必须等于在售"**：
+   *   「货品状态」是**「货品信息」那条记录上的飞书公式字段**（在售 / 下架），
+   *   它**跟着候选一起回来**（`resolveProductInfoForSale` → resolver 同一次整表读），
+   *   所以这里**纯本地过滤、零远端请求**（方法体内没有任何 `gateway` / `listAll` 调用）。
+   *   ⚠️ 状态读不到（空串 / 认不出来的取值）**不下"下架"的结论**、**保留**候选 ——
+   *     把"没有证据"当成"负向证据"是 `AGENTS.md` 第 17 条禁的；何况现货 / 未付在
+   *     她选完颜色之后**还会跑 B**，那里会给出"这个尺码到底有没有货"的定论。
+   *   ⚠️ "不在售"的取值域（`SALES_PRODUCT_STATUS_OFF_SHELF`）在配置里，逻辑里**不出现**
+   *     「下架」这类中文字面量。
+   *
+   * ⚠️ 只过滤 **A 的候选**（来自「货品信息」）。B 兜底那条路的候选来自「实时库存」、
+   *    身上**没有**「货品状态」，不在这里过滤 —— "谁给候选、谁带状态"。
+   *
+   * ⚠️ 返回 `{ kept, dropped }` **两个数组**（都是副本），而不是只回保留下来的那些：
+   *    调用方要拿 `dropped` 记日志（"为什么没给我这个颜色"）。别让调用方自己去
+   *    用 `!kept.includes(option)` 反推 —— 那是在拿**对象身份**比**副本**，永远不相等
+   *    （2026-10-07 写这一刀时真踩过：`dropped_colors` 把留下的颜色也列进去了）。
+   *
+   * @returns {{ kept: object[], dropped: object[] }} 顺序与原数组一致
+   */
+  colorOptionsInScope({ options = [], scope } = {}) {
+    if (scope !== SALES_COLOR_OPTIONS_SCOPE.inStockOnly) {
+      return { kept: options.map((option) => ({ ...option })), dropped: [] };
+    }
+    const offShelf = SALES_PRODUCT_STATUS_OFF_SHELF.map((value) => normalizeText(value));
+    const kept = [];
+    const dropped = [];
+    options.forEach((option) => {
+      (offShelf.includes(normalizeText(option?.status)) ? dropped : kept).push({ ...option });
+    });
+    return { kept, dropped };
   }
 
   /**
@@ -1552,6 +1608,9 @@ class LarkMvpService {
       productInfo: salesParseRuns(tradeTypeCode, 'productInfo'),
       stock: salesParseRuns(tradeTypeCode, 'stock'),
     };
+    // ⭐ 颜色候选的范围（只推在售 / 全部）——**同一份交易类型注册表**说了算：
+    //    现货 / 未付 / 认不出 → `inStockOnly`；预付 → `allColors`。
+    const colorOptionsScope = salesColorOptionsScopeFor(tradeTypeCode);
     // 缺货单独收集：这类问题只需要一句"请核实"，不需要"销售信息还缺…请补充后重新发送"
     // 那层流程说明——那层话对"这个尺码店里没有"这件事没有任何帮助。
     const shortageNotes = [];
@@ -1559,8 +1618,12 @@ class LarkMvpService {
     // "销售信息还缺…"反而看不清要她做什么）。它比缺货更靠前：货号根本没建档时，
     // "这个货号现在一双都没有"只是它的副作用。
     const registrationNotes = [];
+    // 「这个货号的颜色全不在售（都被范围过滤掉了）」单独收集 —— 同理：它就是那一刻
+    // 唯一的解释，套一层流程说明只会把要她做的事埋起来。
+    const colorScopeNotes = [];
     // 开关 / 文案一次读进来（**调用时才解析** process.env，不在模块加载时求值）。
     const registrationConfig = resolveSalesProductRegistrationConfig(process.env);
+    const colorChoiceConfig = resolveSalesColorChoiceConfig(process.env);
     const items = [];
     for (const [index, item] of (parsed.items?.length ? parsed.items : [parsed]).entries()) {
       const itemQuantity = Number(item.quantity || 1);
@@ -1597,6 +1660,9 @@ class LarkMvpService {
       let productRecordId = '';
       let color = '';
       let colorOptions = null;
+      // 这个货号的颜色**全部**被候选范围过滤掉了（现货 / 未付：都下架）：
+      // 不回候选、**也不再跑 B**（理由见下面 B 那一段）。
+      let colorOptionsOutOfScope = false;
       let stock = null;
       let samplePlan = null;
       if (item.item_no && item.size) {
@@ -1610,13 +1676,46 @@ class LarkMvpService {
           //    "这个尺码有没有货"只用**录单时已经读进来的**实时库存索引标（零新增远端请求）；
           //    不跑 B 的交易类型（预付）不加这个标注。
           if (productInfo.colorOptions?.length) {
-            colorOptions = this.colorOptionsWithStockStatus({
-              options: productInfo.colorOptions,
-              itemNo: item.item_no,
-              size: item.size,
-              liveInventory,
-              withStock: parsePolicy.stock,
+            // ⭐ 第四刀：先按**交易类型**决定的**候选范围**过滤（纯本地；状态跟着候选一起来）。
+            const allOptions = productInfo.colorOptions;
+            const { kept: inScopeOptions, dropped: offShelfOptions } = this.colorOptionsInScope({
+              options: allOptions, scope: colorOptionsScope,
             });
+            if (colorOptionsScope === SALES_COLOR_OPTIONS_SCOPE.inStockOnly) {
+              // ⭐ 正向证据日志：以后问"为什么没给我这个颜色"，看这条 ——
+              //    它同时回答了"过滤跑了吗"（scope）与"丢了哪几个"（dropped_colors）。
+              logInfo('lark.sales.color_options.filtered', {
+                task_id: taskId,
+                trade_type: parsed.trade_type,
+                trade_type_code: tradeTypeCode,
+                item_no: item.item_no,
+                size: item.size,
+                scope: colorOptionsScope,
+                kept: inScopeOptions.length,
+                dropped: offShelfOptions.length,
+                dropped_colors: offShelfOptions.map((option) => option.color),
+              });
+            }
+            if (inScopeOptions.length) {
+              colorOptions = this.colorOptionsWithStockStatus({
+                options: inScopeOptions,
+                itemNo: item.item_no,
+                size: item.size,
+                liveInventory,
+                withStock: parsePolicy.stock,
+              });
+            } else {
+              // ⭐ **不静默**：候选被清空时她必须看到"为什么没有颜色可选"，否则只看到
+              //    "点了确认却说还没选颜色"这种走不动的状态。文案可配（`config/salesColorChoice`）。
+              //    ⚠️ 判据是"明确不在售"（见 `colorOptionsInScope`），所以这里的措辞
+              //       （"都下架了"）是有证据的，不是猜。
+              colorOptionsOutOfScope = true;
+              const text = formatColorOptionsScopeEmptyText(colorChoiceConfig.scopeEmptyText, {
+                itemNo: item.item_no,
+              });
+              if (!colorScopeNotes.includes(text)) colorScopeNotes.push(text);
+              if (!missingFields.includes(text)) missingFields.push(text);
+            }
           }
         }
         // ── 判据 A′：这个货号有没有在「货品信息」里建档 ──
@@ -1667,7 +1766,18 @@ class LarkMvpService {
         }
         // ── 解析 B ──
         if (parsePolicy.stock) {
-          if (colorOptions?.length) {
+          if (colorOptionsOutOfScope) {
+            // ⭐ 这个货号的颜色**全都不在售**（候选被范围过滤空了）⇒ **不跑 B**。
+            //    跑也只会得到两种更差的结果：① B 从「实时库存」兜底再摆一次候选
+            //    （把刚过滤掉的、明确下架的颜色又捞回来给她选）；② 回一句"库存里没有…"，
+            //    那是**症状**不是**原因** —— 真正的原因已经由上面那句文案说清了。
+            //    可排查：这一单为什么没查库存（答案不是"交易类型不查"，而是"候选空了"）。
+            logInfo('lark.sales.stock_existence.skipped', {
+              task_id: taskId, trade_type: parsed.trade_type, trade_type_code: tradeTypeCode,
+              item_no: item.item_no, size: item.size, step: 'stock',
+              reason: 'color_options_out_of_scope',
+            });
+          } else if (colorOptions?.length) {
             // ⭐ A 已经给出多个颜色 ⇒ 颜色还没定，**B 一次都不跑**（她的口径：
             //    "在用户选定颜色之前，B 不跑"）。等她点完候选，`choose_sale_color`
             //    里再拿**那个颜色**跑 B。
@@ -1777,14 +1887,23 @@ class LarkMvpService {
       draft,
     });
     if (draft.missing_fields?.length) {
-      // 这一单的问题**只有缺货**时，直接回一句短的；还夹杂别的问题（金额缺失等）时才用完整说明。
-      const onlyShortage = shortageNotes.length > 0 && shortageNotes.length === draft.missing_fields.length;
-      // 「货号没建档」优先：那句话本身就是完整的（她照着做就行），再套一层
+      // 这一单的问题**只有缺货**（或"颜色全不在售"）时，直接回那一句短的；
+      // 还夹杂别的问题（金额缺失等）时才用完整说明。
+      // ⚠️ 两个集合的**条数**要与 `missing_fields` 对上：对得上说明缺项里只有这几句
+      //    能独立成句的话（没有别的、需要整体说明的问题）——与既有 `onlyShortage` 同一判据。
+      const standaloneNotes = [
+        ...colorScopeNotes,
+        ...(shortageNotes.length ? [`${shortageNotes.join('、')}，请核实～`] : []),
+      ];
+      const onlyStandalone = (colorScopeNotes.length + shortageNotes.length) > 0
+        && (colorScopeNotes.length + shortageNotes.length) === draft.missing_fields.length;
+      // 优先级：「货号没建档」>「颜色全不在售 / 缺货」> 完整说明。
+      // 前三者那句话本身就是完整的（她照着做就行），再套一层
       // "销售信息还缺…"只会把要她做的事埋起来；一单多双只缺一双时，这里也只报那一双。
       await this.sendTaskText(replyTask, registrationNotes.length
         ? registrationNotes.join('\n')
-        : onlyShortage
-          ? `${shortageNotes.join('、')}，请核实～`
+        : onlyStandalone
+          ? standaloneNotes.join('\n')
           : `销售信息还缺：${draft.missing_fields.join('、')}。请补充后重新发送完整销售信息。`);
       return;
     }
