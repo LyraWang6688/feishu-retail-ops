@@ -1436,12 +1436,19 @@ class LarkMvpService {
       return;
     }
     const cardStartedAt = Date.now();
-    // 私聊：还是"回复她那条私聊消息"（payload 不变）；群聊：回复进她的销售话题
-    // （`reply_in_thread`），并把飞书回带的话题 id 记进本地映射（B / A）。
+    // 群聊：回复进她的销售话题（`reply_in_thread`），并把飞书回带的话题 id 记进本地映射（B / A）。
+    // 🔴 2026-10-07 三次收尾：**非群任务没有去处** —— 这里原来是
+    //   `await this.replyCard(task.message_id, …)`（= 回她那条私聊消息），
+    //   那正是"非群也会回一条"的最后两条口子之一。私聊入口已移除，
+    //   非群 → 只记一条 `lark.private_chat.send_skipped`（`skipNoGroupContext`）、
+    //   `cardMessageId` 为 `null`（下面据此不写 `card_message_id`）。
+    //   见 docs/private-chat-removal-2026-10-07.md 第七节。**群那一条逐字不变。**
     const cardMessageId = task.chat_type === 'group'
       ? await this.sendTaskCard(replyTask, salesConfirmationCard(taskId, draft))
-      : await this.replyCard(task.message_id, salesConfirmationCard(taskId, draft));
-    logInfo('lark.sales.card.sent', {
+      : skipNoGroupContext('card', task);
+    // 没发出去的（`null`）就不许记「已发出」——这是 `skipNoGroupContext` 的语义
+    // （调用方据此知道"这次没发出去"；谎报已发送会让遗留任务的排查方向跑偏）。
+    if (cardMessageId !== null) logInfo('lark.sales.card.sent', {
       task_id: taskId, stage: 'confirmation',
       duration_ms: Date.now() - cardStartedAt,
       // 她感知到的"从发消息到看见卡片"就是这个数；单看它比看各段之和更准。

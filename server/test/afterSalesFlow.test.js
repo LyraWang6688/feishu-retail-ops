@@ -320,7 +320,13 @@ const cardButtons = (card) => (card.elements || []).flatMap((element) => {
 test('入口 A：先查 → 说「第 2 笔，退货，钱先存着」→ 出确认卡片，执行器还没被调用', async () => {
   const { flow, lookup, store, cards, texts } = build();
   // 先查（第一期链路）：候选按顺序 [d_new(39码, 昨天), d_old(38码, 3 天前)]
-  const queryTask = await newTask(store, { task_id: 't_query', original_text: '帮我查 6035 黑' });
+  // 🔴 2026-10-07 三次收尾：`SaleLookupService.replyCardByTask` 的**主回复**也按渠道分流 ——
+  //    非群任务不出卡（记 skip + 返 null）。查销售记录是**群里的动作** ⇒
+  //    这里显式给群上下文；**下面的断言一条都没放宽**。
+  const queryTask = await newTask(store, {
+    task_id: 't_query', original_text: '帮我查 6035 黑',
+    chat_type: 'group', chat_id: 'oc_sales_group',
+  });
   const queryResult = await lookup.handleQuery(queryTask, { intent: 'sale_query', item_no: '6035', color: '黑' });
   assert.deepEqual(queryResult.candidates.map((row) => row.record_id), ['d_new', 'd_old']);
 
