@@ -95,3 +95,24 @@
 | AC-9 | diff 里没有这些文件 |
 | AC-10 | 4 处逐字断言按新文案更新（`git diff` 可核，无正则放宽） |
 | AC-11 | `server/test/purchaseGroupNoticeText.test.js`（`.env.example` ↔ 默认值逐字） |
+
+## 8. 测试与 CI 证据
+
+| 项 | 命令 / 位置 | 结果 |
+| --- | --- | --- |
+| 定向：新守卫用例（单独） | `.local/purchase-notice-wording/server`：`node --test --test-concurrency=1 test/purchaseGroupNoticeText.test.js` | **9 pass / 0 fail** |
+| 定向：受影响链路（5 个文件） | 同上：`purchaseGroupNoticeText` ＋ `purchaseWebhookService` ＋ `purchaseReturn` ＋ `purchaseReturnBatch` ＋ `purchaseRequestImageService` | **143 pass / 0 fail**（4.1s） |
+| 全量（第 1 次） | 同上 worktree：`node --test --test-concurrency=1` | **1154 pass / 0 fail**（exit 0，29.6s） |
+| 全量（第 2 次） | 同上 | **1154 pass / 0 fail**（exit 0，33.7s） |
+| 跑测试前的版本自检 | `git rev-parse --short HEAD` = `f999efa`；`git rev-list --count HEAD..origin/main` = **0** | ✅ |
+| CI（PR #237，`gh pr checks 237`） | head `f999efa` | `test` **pass** 50s · `Analyze (javascript-typescript)` **pass** 1m6s · `CodeQL` **pass** 2s |
+| 合并状态 | `gh pr view 237 --json mergeStateStatus,headRefOid` | **`CLEAN`**（head `f999efa`） |
+
+⚠️ 全部跑在**自己的 worktree** `.local/purchase-notice-wording/server`（**不在主工作区跑全量**）；
+每次跑前先自检代码版本。⭐ 分支已 **rebase 到最新 `origin/main`（`792d639`，含 PR #236 工作台首页那条）**
+⇒ `behind = 0`，所以上面这些全量结果是**合并后的树**上跑出来的（含 workbench 的新用例）。
+⚠️ 本地全量跑的是"CI 之前的证据"，**CI 结论以 `gh pr checks` 为准**。
+⚠️ 本文件是**它自己那次全量之后**回填的证据（docs-only 提交）：上表 CI 三项取自 `f999efa` 那次
+`gh pr checks` 的当次实返；docs-only 提交会让 CI **各自重跑，结果同形**。
+🔴 **本次没有部署**（业务负责人 2026-10-07 明令：禁止自行部署，必须她当次命令）。
+🔴 **PR 只开不合**（合并由业务负责人做）。
