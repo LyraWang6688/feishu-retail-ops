@@ -138,6 +138,63 @@ test('A3 schema 里**不再有**「到货验收」表；到货落点搬到「报
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseInbound.tableName, '采购入库');
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 第四次同步（2026-10-07 深夜）：「报货批次」的两个**自动时间列被改名**
+//   · 「创建时间」→ **「报货日」**（类型没变：创建时间 `type=1001`，飞书自动）
+//   · 「更新时间」→ **「到货日」**（类型没变：更新时间 `type=1002`，飞书自动）
+//   业务负责人的口径：**只是名字变了**，两列还是飞书自动字段 —— 但 schema 里还按旧名
+//   `'创建时间'` 找 ⇒ 生产部署闸门判红（`“报货批次”缺少 V1 字段: 创建时间`）。
+//   ⚠️ 本次只改**字段名映射**（语义键 `createdAt` 原名不动）；自动时间列**代码一行都不写**。
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('A4 schema 同步「创建时间」→「报货日」；两个自动时间列都没有写入点', () => {
+  const batch = V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields;
+
+  // ① 语义键名保持不变，只换物理列名。
+  assert.equal(batch.createdAt, '报货日', '「创建时间」已被业务负责人改名为「报货日」');
+  assert.equal(Object.values(batch).includes('创建时间'), false, '旧名不许再留在映射里');
+
+  // ② ⚠️ 「到货日」= 改名后的「更新时间」（自动 `type=1002`）⇒ 仍**不建映射、不写**
+  //    （与 A3③ / B4 同一条口径：时间字段一律交给飞书自动生成）。
+  assert.equal(Object.prototype.hasOwnProperty.call(batch, 'updatedAt'), false,
+    '「到货日」= 更新时间（自动）→ 不许建映射（代码也不许写）');
+  assert.equal(Object.values(batch).includes('到货日'), false);
+
+  // ③ ⭐ 守门：两个自动时间列的**物理名**在代码里一个都不许出现。
+  //    写入只可能经两条路 —— 语义键（`createdAt`）或物理列名；两条都扫 = 钉住"没有写入点"。
+  //    ⚠️ 去注释后再扫：注释里要留沿革（"原来叫创建时间"「到货日就是更新时间」）。
+  const roots = [
+    path.join(SERVER_ROOT, 'src'),
+    path.join(SERVER_ROOT, 'public'),
+    path.join(SERVER_ROOT, 'scripts'),
+  ];
+  const files = roots.flatMap((root) => walk(root)).filter((file) => /\.(js|html)$/.test(file));
+  const SCHEMA_REL = 'src/config/v1BitableSchema.js';
+  const offenders = [];
+  for (const file of files) {
+    const rel = path.relative(SERVER_ROOT, file);
+    const codeOnly = fs.readFileSync(file, 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '')
+      .replace(/([^:])\/\/.*$/gm, '$1');
+    // 物理名：`「报货日」`只许留在 schema 的映射里；`「到货日」`任何地方都不许有映射/引用。
+    if (rel !== SCHEMA_REL && /['"]报货日['"]/.test(codeOnly)) {
+      offenders.push(`${rel}: 代码里出现「报货日」这个物理列名`);
+    }
+    if (/['"]到货日['"]/.test(codeOnly)) {
+      offenders.push(`${rel}: 代码里出现「到货日」这个物理列名`);
+    }
+    if (/['"]创建时间['"]/.test(codeOnly)) {
+      offenders.push(`${rel}: 旧名「创建时间」还留在代码里（时间列一律不映射）`);
+    }
+    // 语义键：`createdAt` 只许出现在 schema 定义文件里 —— 别处一出现就是"要碰这一列"。
+    if (rel !== SCHEMA_REL && /\bcreatedAt\b/.test(codeOnly)) {
+      offenders.push(`${rel}: 用了 createdAt 语义键（会写到自动时间列）`);
+    }
+  }
+  assert.deepEqual(offenders, [], `自动时间列不许有读写点：\n${offenders.join('\n')}`);
+});
+
 test('B4 「到货验收.图片」的问题随表一起消失：全仓没有任何换名映射回来的痕迹', () => {
   // 表都删了，`images` / `鞋盒图片` 这些历史映射当然也不许在别处复活。
   const batchNames = Object.values(V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields);
