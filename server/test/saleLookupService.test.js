@@ -122,6 +122,12 @@ const makeService = async (options = {}) => {
   };
 };
 
+// 🔴 2026-10-07 三次收尾：`replyCardByTask` 的**主回复**也按渠道分流了 ——
+//    非群任务在函数入口就 `skipNoGroupContext` + 返 `null`（不再"回她那条私聊消息"）。
+//    ⇒ 走 `handleQuery`（= 查销售记录）的用例**必须显式带群上下文**，
+//    否则卡片没有去处。见 docs/private-chat-removal-2026-10-07.md 第七节。
+const GROUP_CTX = { chat_type: 'group', chat_id: 'oc_sales_group' };
+
 const newTask = (store, overrides = {}) => store.create({
   task_id: 'sale_query_1',
   type: 'sale',
@@ -290,7 +296,7 @@ test('本期零写入：候选查询和查询流程都不碰 create/update/delet
   assert.equal(readOnlyGateway({ table: () => ({}), listAll: async () => [] }).create, undefined);
 
   await service.findCandidates({ itemNo: '6035', color: '黑' });
-  const task = await newTask(store);
+  const task = await newTask(store, GROUP_CTX);
   await service.handleQuery(task, { intent: 'sale_query', item_no: '6035', color: '黑' });
 
   assert.deepEqual(writes, [], '查询链路不允许写任何业务表');
@@ -311,7 +317,7 @@ test('上下文：候选按卡片顺序存进任务状态，序号能对上', as
       detailRow({ id: 'd_new', orderId: 'e2', productId: 'p1', soldAt: daysAgo(1), sizeRecordId: 'size_39' }),
     ],
   });
-  const task = await newTask(store);
+  const task = await newTask(store, GROUP_CTX);
   await service.handleQuery(task, { intent: 'sale_query', item_no: '6035', color: '黑' });
 
   const stored = await store.get('sale_query_1');
@@ -340,7 +346,7 @@ test('上下文：10 分钟有效，过期后明确要求重新查', async () =>
     entries: [entryRow({ id: 'e1', orderNo: 'XSD-0001' })],
     details: [detailRow({ id: 'd1', orderId: 'e1', productId: 'p1' })],
   });
-  const task = await newTask(store);
+  const task = await newTask(store, GROUP_CTX);
   await service.handleQuery(task, { intent: 'sale_query', item_no: '6035', color: '黑' });
   const stored = await store.get('sale_query_1');
 
@@ -360,7 +366,7 @@ test('上下文：10 分钟有效，过期后明确要求重新查', async () =>
     entries: [entryRow({ id: 'e1', orderNo: 'XSD-0001' })],
     details: [detailRow({ id: 'd1', orderId: 'e1', productId: 'p1' })],
   });
-  const customTask = await newTask(custom.store);
+  const customTask = await newTask(custom.store, GROUP_CTX);
   await custom.service.handleQuery(customTask, { intent: 'sale_query', item_no: '6035', color: '黑' });
   const customStored = await custom.store.get('sale_query_1');
   assert.equal(custom.service.resolvePendingCandidates(customStored,
@@ -375,7 +381,7 @@ test('上下文：从没查过 / 查出来 0 条时不给旧列表', async () =>
   });
   const fresh = await newTask(store, { task_id: 'no_query_yet' });
   assert.equal(service.resolvePendingCandidates(fresh).status, 'empty');
-  const zero = await newTask(store, { task_id: 'zero_query' });
+  const zero = await newTask(store, { task_id: 'zero_query', ...GROUP_CTX });
   await service.handleQuery(zero, { intent: 'sale_query', item_no: '9999', color: '黑' });
   assert.equal(service.resolvePendingCandidates(await store.get('zero_query')).status, 'empty');
 });
@@ -386,7 +392,7 @@ test('查询卡片：0 条也在原消息下回一张卡，优先 reply', async 
     entries: [entryRow({ id: 'e1', orderNo: 'XSD-0001' })],
     details: [detailRow({ id: 'd1', orderId: 'e1', productId: 'p1' })],
   });
-  const task = await newTask(store);
+  const task = await newTask(store, GROUP_CTX);
   await service.handleQuery(task, { intent: 'sale_query', item_no: '9999', color: '黑' });
   assert.equal(cards.length, 1);
   assert.equal(cards[0].header.title.content, '最近 5 天的销售记录');
@@ -406,6 +412,12 @@ test('查询卡片：0 条也在原消息下回一张卡，优先 reply', async 
 //        一个远端调用都不做；`this.sendCard` 这个 open_id 发送器**整体删除**。
 //   要让它发到某处，只能由调用方**显式注入** `sendCardToTask`
 //   （生产注入的是 `larkMvpService.sendTaskCard`，它自己按 chat_type 分流）。
+//
+// 🔴 2026-10-07 **三次收尾**（本 PR）：剩的**主回复**也按渠道分流了。
+//   以前：非群任务**任何** `chat_type` 都先 `replyCard(task.message_id, card)`
+//        （= 回她那条私聊消息）—— 兜底清了、主回复还在。
+//   现在：非群在 `replyCardByTask` 入口就 `skipNoGroupContext` + 返 `null`，
+//        `replyCard` **一次都不被调用**；**群那条（主回复 + 群兜底）逐字未动**。
 // ─────────────────────────────────────────────────────────────────────────────
 
 const lookupFixture = () => ({
@@ -414,10 +426,12 @@ const lookupFixture = () => ({
   details: [detailRow({ id: 'd1', orderId: 'e1', productId: 'p1' })],
 });
 
-test('② 非群任务：reply 失败后**任何出口都不走**（即便注入了 sendCardToTask）—— 没有群上下文就没有去处', async () => {
+test('② 非群任务：**主回复也不走**（即便 replyCard 打桩成功、也注入了 sendCardToTask）—— 没有群上下文就没有去处', async () => {
   const { service, store, cards, taskSends } = await makeService({
     ...lookupFixture(),
-    replyFails: true,
+    // ⚠️ 2026-10-07 三次收尾：这里**故意让 `replyCard` 可用**（原来打的是"回复必失败"）——
+    //    改之前非群任务会先走主回复，那样这张卡就漏出去了；现在入口就分流，
+    //    `replyCard` 一次都不该被调（`cards` 是它的记账数组，空 = 没漏）。
     // 故意把出口注进去：非群任务**也不该**碰它 —— 分流的判据（chat_type）在 service 自己这层，
     // 而不是靠"出口恰好看了一眼 chat_type"。这样"非群 = 不发"不依赖任何注入方守规矩。
     sendCardToTask: async () => 'om_injected_card',
@@ -427,7 +441,7 @@ test('② 非群任务：reply 失败后**任何出口都不走**（即便注入
 
   assert.equal(returned, null, '没有去处 → 明确返"没发出去"');
   assert.equal(taskSends.length, 0, '非群任务不许走渠道感知出口');
-  assert.deepEqual(cards, [], '一条消息都不发（尤其是**不许**发给 task.sender_open_id）');
+  assert.deepEqual(cards, [], '主回复一次都不许走（那就是"回她那条私聊消息"）');
   assert.equal(await store.get('sale_query_1').then((row) => row.card_message_id), undefined,
     '没发出去就不许写 card_message_id');
 });
@@ -438,8 +452,8 @@ test('② 非群任务 + 没有注入出口 → **不发** + 记 `send_skipped` 
   try {
     const { service, store, cards } = await makeService({
       ...lookupFixture(),
-      replyFails: true,
-      // 刻意**不注入** sendCardToTask → 走 service 自己的缺省。
+      // 刻意**不注入** sendCardToTask → 走 service 自己的缺省；
+      // `replyCard` 保持可用，用来证明"非群连主回复都不走"。
     });
     const task = await newTask(store); // 没有 chat_type = 没有群上下文
     const returned = await service.replyCardByTask(task, { header: { title: { content: 'x' } } });
@@ -455,6 +469,37 @@ test('② 非群任务 + 没有注入出口 → **不发** + 记 `send_skipped` 
   assert.equal(skipped.length, 1, '可排查：不是静默失败');
   assert.match(skipped[0], /"kind":"card"/);
   assert.match(skipped[0], /"reason":"no_group_context"/);
+});
+
+test('③ 非群任务走 `handleQuery` **全链路**：查得到也不出卡、记 skip、不留 card_message_id', async () => {
+  // ⚠️ 直接造任务（不带 `chat_type`）= 磁盘上遗留的旧任务形状 —— 生产上私聊入口已不再建任务，
+  //    这条只在重放遗留 JSON 时走到。钉的是"整条查询链路都不回落私聊"，不只是一次方法调用。
+  const logs = captureLogs();
+  let cardMessageId;
+  let stored;
+  try {
+    const { service, store, cards, taskSends } = await makeService({
+      ...lookupFixture(), // 查得到 1 条 —— 有内容可发，仍然不发
+      sendCardToTask: async () => 'om_injected_card', // 故意注入：非群也**不许**碰
+    });
+    const task = await newTask(store);
+    await service.handleQuery(task, { intent: 'sale_query', item_no: '6035', color: '黑' });
+    assert.deepEqual(cards, [], '非群任务一条消息都不发（尤其不许回落私聊）');
+    assert.equal(taskSends.length, 0, '非群任务也不许走渠道感知出口');
+    stored = await store.get('sale_query_1');
+    cardMessageId = stored.card_message_id;
+  } finally {
+    logs.restore();
+  }
+  assert.equal(cardMessageId, undefined, '没发出去就不许写 card_message_id');
+  // 堵的是**发送**，不是查询：候选上下文照旧存下来（她下一句「第 1 笔」还要用）。
+  assert.equal(stored.pending_candidates.length, 1);
+  const skipped = logs.events('lark.private_chat.send_skipped');
+  assert.equal(skipped.length, 1, '可排查：不是静默失败');
+  assert.match(skipped[0], /"kind":"card"/);
+  assert.match(skipped[0], /"reason":"no_group_context"/);
+  assert.match(skipped[0], /"task_id":"sale_query_1"/);
+  assert.equal(logs.events('sale_lookup.card.sent').length, 0, '没发出去就不许记「已发出」');
 });
 
 test('② 这个 service 里**没有** open_id 卡片发送器（`sendCard` 已整体删除）', async () => {

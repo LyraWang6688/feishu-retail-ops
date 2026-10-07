@@ -496,9 +496,11 @@ test('sales intake writes only intake metadata and retains actual amount before 
     },
     store,
   });
-  service.replyCard = async (messageId, card) => cards.push({ messageId, card });
+  // 卡片出口 = **渠道感知**那条（生产同款）：群任务回到那条销售话题。
+  service.sendTaskCard = async (task, card) => { cards.push({ messageId: task.message_id, card }); return 'card_reply'; };
   await store.create({
     task_id: 'sale_test',
+    chat_type: 'group', chat_id: GROUP_CHAT_ID,
     type: 'sale',
     status: 'received',
     message_id: 'om_internal_only',
@@ -552,8 +554,8 @@ test('two products and two payments stay in one sales draft and confirmation car
     }) },
     store,
   });
-  service.replyCard = async (_messageId, card) => cards.push(card);
-  await store.create({ task_id: 'multi_sale', type: 'sale', status: 'received', message_id: 'om_multi',
+  service.sendTaskCard = async (_task, card) => { cards.push(card); return 'card_reply'; };
+  await store.create({ task_id: 'multi_sale', chat_type: 'group', chat_id: GROUP_CHAT_ID, type: 'sale', status: 'received', message_id: 'om_multi',
     sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '两双鞋，250元' });
   await service.processSalesTask('multi_sale');
   const task = await store.get('multi_sale');
@@ -592,8 +594,8 @@ test('voucher sale card and posting retain separate settled and platform-pending
       return { sourceNo: 'XSD-VOUCHER', detailRecordIds: ['detail_voucher'],
         paymentRecordIds: ['cash_receipt', 'voucher_receipt'] }; } },
   });
-  service.replyCard = async (_messageId, card) => { cards.push(card); return 'card_voucher'; };
-  await store.create({ task_id: 'sale_voucher', type: 'sale', status: 'received',
+  service.sendTaskCard = async (_task, card) => { cards.push(card); return 'card_voucher'; };
+  await store.create({ task_id: 'sale_voucher', chat_type: 'group', chat_id: GROUP_CHAT_ID, type: 'sale', status: 'received',
     message_id: 'om_voucher', sender_open_id: 'ou_1', sent_at: Date.now(), original_text: source });
   await service.processSalesTask('sale_voucher');
   assert.equal((await store.get('sale_voucher')).status, 'ready_to_confirm');
@@ -628,8 +630,8 @@ test('quoted actual sale amount may differ from Bitable list price', async () =>
     store,
   });
   service.sendText = async (_openId, message) => messages.push(message);
-  service.replyCard = async () => 'card_1';
-  await store.create({ task_id: 'unpaid_sale', type: 'sale', status: 'received', message_id: 'om_unpaid',
+  service.sendTaskCard = async () => 'card_1';
+  await store.create({ task_id: 'unpaid_sale', chat_type: 'group', chat_id: GROUP_CHAT_ID, type: 'sale', status: 'received', message_id: 'om_unpaid',
     sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '815195B-6黑39码260元未付' });
   await service.processSalesTask('unpaid_sale');
   assert.equal((await store.get('unpaid_sale')).status, 'ready_to_confirm');
@@ -994,8 +996,9 @@ test('a multi-color SKU without a spoken color still reaches the confirmation ca
     },
     store,
   });
-  service.replyCard = async (messageId, card) => cards.push({ messageId, card });
-  await store.create({ task_id: 'sale_color', type: 'sale', status: 'received',
+  // 卡片出口 = **渠道感知**那条（生产同款）：群任务回到那条销售话题。
+  service.sendTaskCard = async (task, card) => { cards.push({ messageId: task.message_id, card }); return 'card_reply'; };
+  await store.create({ task_id: 'sale_color', chat_type: 'group', chat_id: GROUP_CHAT_ID, type: 'sale', status: 'received',
     message_id: 'om_color', sender_open_id: 'ou_1', sent_at: 1000, original_text: '8035 42码，200元微信' });
 
   await service.processSalesTask('sale_color');
@@ -1089,7 +1092,8 @@ const accessoryService = (accessoryRows, parsedItem) => {
     },
     store,
   });
-  service.replyCard = async (messageId, card) => cards.push({ messageId, card });
+  // 卡片出口 = **渠道感知**那条（生产同款）：群任务回到那条销售话题。
+  service.sendTaskCard = async (task, card) => { cards.push({ messageId: task.message_id, card }); return 'card_reply'; };
   service.sendText = async () => {};
   return { store, cards, service };
 };
@@ -1097,7 +1101,7 @@ const accessoryService = (accessoryRows, parsedItem) => {
 test('an accessory name is matched to the accessory table by exact name', async () => {
   const { store, cards, service } = accessoryService(['39元腰带', '49元腰带'],
     { kind: 'accessory', accessory_name: '39元腰带', quantity: 1, actual_amount: 39 });
-  await store.create({ task_id: 'sale_acc', type: 'sale', status: 'received',
+  await store.create({ task_id: 'sale_acc', chat_type: 'group', chat_id: GROUP_CHAT_ID, type: 'sale', status: 'received',
     message_id: 'om_acc', sender_open_id: 'ou_1', sent_at: 1000, original_text: '39元腰带一条，微信39' });
 
   await service.processSalesTask('sale_acc');
@@ -1135,7 +1139,7 @@ test('分类下唯一时直接用它，成交金额以用户说的为准（不�
   const { store, cards, service } = accessoryService(
     [{ name: '15元鞋油', category: '鞋油' }, { name: '9.9元袜子', category: '袜子' }],
     { kind: 'accessory', accessory_name: '鞋油', quantity: 1, actual_amount: 10 });
-  await store.create({ task_id: 'sale_acc_cat_only', type: 'sale', status: 'received',
+  await store.create({ task_id: 'sale_acc_cat_only', chat_type: 'group', chat_id: GROUP_CHAT_ID, type: 'sale', status: 'received',
     message_id: 'om_acc_cat_only', sender_open_id: 'ou_1', sent_at: 1000,
     original_text: '一盒鞋油 10 元，微信' });
 
@@ -1170,7 +1174,7 @@ test('腰带：她说的 119 只用来对档位，成交金额记实收 100（�
   // actual_amount=100（她说收到的钱）+ tier_price=119（对档位用的价位）。
   const { store, cards, service } = accessoryService(beltRows(),
     { kind: 'accessory', accessory_name: '腰带', quantity: 1, actual_amount: 100, tier_price: 119 });
-  await store.create({ task_id: 'sale_acc_belt_119_paid_100', type: 'sale', status: 'received',
+  await store.create({ task_id: 'sale_acc_belt_119_paid_100', chat_type: 'group', chat_id: GROUP_CHAT_ID, type: 'sale', status: 'received',
     message_id: 'om_acc_belt_119_paid_100', sender_open_id: 'ou_1', sent_at: 1000,
     original_text: '119 的腰带，是收到了 100 元微信' });
 
@@ -1287,8 +1291,9 @@ test('配品改按分类匹配后，鞋仍然按「货号+尺码」走实时库�
     },
     store,
   });
-  service.replyCard = async (messageId, card) => cards.push({ messageId, card });
-  await store.create({ task_id: 'sale_shoe_regression', type: 'sale', status: 'received',
+  // 卡片出口 = **渠道感知**那条（生产同款）：群任务回到那条销售话题。
+  service.sendTaskCard = async (task, card) => { cards.push({ messageId: task.message_id, card }); return 'card_reply'; };
+  await store.create({ task_id: 'sale_shoe_regression', chat_type: 'group', chat_id: GROUP_CHAT_ID, type: 'sale', status: 'received',
     message_id: 'om_shoe_regression', sender_open_id: 'ou_1', sent_at: 1000,
     original_text: '26632 36码 100元微信' });
 
@@ -1331,7 +1336,8 @@ test('库存里没有这个尺码时不发确认卡片，只回一句「库存�
     },
     store,
   });
-  service.replyCard = async (_messageId, card) => cards.push(card);
+  // 🚨 哨兵：非群那条回复路（`replyCard(task.message_id, …)`）**一次都不许走**。
+  service.replyCard = async () => { throw new Error('非群回复路径不该被走到：群任务必须走 sendTaskCard'); };
   service.sendTaskCard = async (_task, card) => { cards.push(card); return 'om_card'; };
   service.sendTaskText = async (_task, message) => messages.push(message);
   // ⚠️ 直接造任务、绕过入口：测的是"库存里没有这个尺码"这条管线。
@@ -1374,7 +1380,10 @@ test('缺货之外还有别的问题时，才用完整的补充说明', async ()
     },
     store,
   });
-  service.replyCard = async () => undefined;
+  // 🚨 这条用例在发卡片之前就该返回（缺货 + 缺金额）——真走到发卡就直接炸，
+  //    而不是悄悄多发一条（非群回复路也一样：那是被堵掉的那条口子）。
+  service.sendTaskCard = async () => { throw new Error('缺货 + 缺金额时不该发确认卡片'); };
+  service.replyCard = async () => { throw new Error('非群回复路径不该被走到'); };
   service.sendTaskText = async (_task, message) => messages.push(message);
   // ⚠️ 直接造任务、绕过入口（同上一组）：任务必须带群上下文。
   await store.create({ task_id: 'sale_mixed', type: 'sale', status: 'received',
@@ -1386,6 +1395,67 @@ test('缺货之外还有别的问题时，才用完整的补充说明', async ()
   assert.match(messages[0], /库存里没有 26632 37码/);
   assert.match(messages[0], /请逐件说明成交金额/);
   assert.match(messages[0], /销售信息还缺/, '夹杂别的问题时仍用完整说明');
+});
+
+// 抓结构化日志（info → console.log → stdout；warn/error → stderr），只旁听、照样转发。
+const captureLogs = async (fn) => {
+  const lines = [];
+  const patch = (stream) => {
+    const original = stream.write;
+    stream.write = function write(chunk, ...rest) {
+      const text = String(chunk);
+      if (text.includes('"event"')) lines.push(text);
+      return original.apply(stream, [chunk, ...rest]);
+    };
+    return () => { stream.write = original; };
+  };
+  const restoreOut = patch(process.stdout);
+  const restoreErr = patch(process.stderr);
+  try { await fn(); } finally { restoreOut(); restoreErr(); }
+  return lines.join('');
+};
+
+// 🔴 2026-10-07 三次收尾：销售确认卡片的**非群分支**不再回落"回她那条私聊消息"。
+//    生产上 `acceptMessage` 已不再为非群消息建任务，所以这条只会走到
+//    **磁盘上遗留的旧任务 JSON**（`chat_type` 缺失）被重放时 —— 概率低但不是零。
+//    因此这条用例照那个形状造任务，钉住"非群 → 不发 + 记 skip + 不留 card_message_id"。
+test('非群任务（遗留 JSON）走确认卡片路径 → **不发** + 记 `send_skipped` + 不留 `card_message_id`', async () => {
+  const { normalizeSalesResult } = require('../src/services/doubaoService');
+  const store = makeStore();
+  const service = new LarkMvpService({
+    // 连飞书 client 都不给：真走到任何远端调用都会当场炸（这就是"零远端调用"的证明）。
+    client: {},
+    gateway: {
+      ...liveInventoryGateway([liveRow({ itemNo: '26632', color: '黑', size: 37, productRecordId: 'p37' })]),
+      validateTables: async () => [],
+      create: async () => ({ recordId: 'entry_legacy_no_chat' }),
+      update: async () => undefined,
+    },
+    references: {}, posting: {},
+    recognizer: { parseSalesText: async () => normalizeSalesResult({ intent: 'sale', behavior_code: 'SALE_CASH',
+      items: [{ item_no: '26632', color: '黑', size: 37, quantity: 1, actual_amount: 210 }],
+      payments: [{ amount: 210, method: '微信' }], agreed_total: 210 }) },
+    store,
+  });
+  // 🚨 两个出口都装哨兵：非群任务**一个都不许走**
+  //    （群出口是 sendTaskCard；`replyCard(task.message_id, …)` 就是被堵掉的那条口子）。
+  service.sendTaskCard = async () => { throw new Error('非群任务不该走群出口'); };
+  service.replyCard = async () => { throw new Error('非群任务不该回落"回她那条私聊消息"'); };
+  await store.create({ task_id: 'sale_legacy_no_chat', type: 'sale', status: 'received',
+    message_id: 'om_legacy_no_chat', sender_open_id: 'ou_1', sent_at: 1000,
+    original_text: '26632黑37一双210微信' });
+
+  const logs = await captureLogs(() => service.processSalesTask('sale_legacy_no_chat'));
+
+  const task = await store.get('sale_legacy_no_chat');
+  // 堵的是**发送**，不是业务：解析/建单照旧走完，只是没有去处。
+  assert.equal(task.status, 'ready_to_confirm');
+  assert.equal(task.card_message_id, undefined, '没发出去就不许记 card_message_id');
+  assert.match(logs, /lark\.private_chat\.send_skipped/, '可排查：不是静默失效');
+  assert.match(logs, /"kind":"card"/);
+  assert.match(logs, /"reason":"no_group_context"/);
+  assert.match(logs, /"task_id":"sale_legacy_no_chat"/);
+  assert.doesNotMatch(logs, /lark\.sales\.card\.sent/, '没发出去就不许记「已发出」');
 });
 
 test('一单多双只读一次实时库存，不按双数重复全表读', async () => {
@@ -1422,7 +1492,7 @@ test('一单多双只读一次实时库存，不按双数重复全表读', async
     },
     store,
   });
-  service.replyCard = async () => 'card_multi_read';
+  service.sendTaskCard = async () => 'card_multi_read';
   await store.create({ task_id: 'sale_multi_read', type: 'sale', status: 'received', message_id: 'om_mr',
     sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '三双鞋，369元微信' });
 
@@ -1451,7 +1521,7 @@ const tradeTypeService = ({ store, cards, updates, counters, parsed }) => {
     recognizer: { parseSalesText: async () => parsed() },
     store,
   });
-  service.replyCard = async (_messageId, card) => { cards.push(card); return 'card_trade'; };
+  service.sendTaskCard = async (_task, card) => { cards.push(card); return 'card_trade'; };
   service.updateSalesActionCard = async (_task, _event, card) => { cards.push(card); return true; };
   return service;
 };
@@ -1466,7 +1536,7 @@ test('现货单：卡片显示「现货 · 已交付」，只留一个确认按�
     intent: 'sale', trade_type: '现货',
     items: [{ item_no: '26632', color: '黑', size: 37, quantity: 1, actual_amount: 210 }],
     payments: [{ amount: 210, method: '微信' }], agreed_total: 210 }) });
-  await store.create({ task_id: 'sale_type_cash', type: 'sale', status: 'received', message_id: 'om_c',
+  await store.create({ task_id: 'sale_type_cash', chat_type: 'group', chat_id: GROUP_CHAT_ID, type: 'sale', status: 'received', message_id: 'om_c',
     sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '26632黑37一双210微信' });
 
   await service.processSalesTask('sale_type_cash');
@@ -1498,7 +1568,7 @@ test('预付单：卡片显示「预付 · 未交付」，确认后不扣库存'
     intent: 'sale', trade_type: '预付',
     items: [{ item_no: '26632', color: '黑', size: 37, quantity: 1, actual_amount: 240 }],
     payments: [{ amount: 100, method: '微信' }], agreed_total: 240 }) });
-  await store.create({ task_id: 'sale_type_prepaid', type: 'sale', status: 'received', message_id: 'om_p',
+  await store.create({ task_id: 'sale_type_prepaid', chat_type: 'group', chat_id: GROUP_CHAT_ID, type: 'sale', status: 'received', message_id: 'om_p',
     sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '26632黑37一双，定金100微信，尾款以后付' });
 
   await service.processSalesTask('sale_type_prepaid');
@@ -1593,12 +1663,13 @@ const sampleSaleService = ({ store, cards, promoted, counter }) => {
     },
     notifySampleReplacements: async (_result, _openId, options) => { counter.notices += 1; counter.handled = options?.handledDetailIds; },
   };
-  service.replyCard = async (_messageId, card) => { cards.push(card); return 'card_sample'; };
+  service.sendTaskCard = async (_task, card) => { cards.push(card); return 'card_sample'; };
   service.updateSalesActionCard = async (_task, _event, card) => { cards.push(card); return true; };
   return service;
 };
 
-const openSampleSale = async (store, taskId) => store.create({ task_id: taskId, type: 'sale',
+const openSampleSale = async (store, taskId) => store.create({ task_id: taskId,
+  chat_type: 'group', chat_id: GROUP_CHAT_ID, type: 'sale',
   status: 'received', message_id: `om_${taskId}`, sender_open_id: 'ou_1', sent_at: Date.now(),
   original_text: '6V637-7黑41一双150现金' });
 
@@ -1663,8 +1734,8 @@ test('门盒够的时候卡片不出现补偿区：不需要她为"补样品"多
       payments: [{ amount: 210, method: '微信' }], agreed_total: 210 }) },
     store,
   });
-  service.replyCard = async (_messageId, card) => { cards.push(card); return 'card_ok'; };
-  await store.create({ task_id: 'sale_doorbox_ok', type: 'sale', status: 'received', message_id: 'om_ok',
+  service.sendTaskCard = async (_task, card) => { cards.push(card); return 'card_ok'; };
+  await store.create({ task_id: 'sale_doorbox_ok', chat_type: 'group', chat_id: GROUP_CHAT_ID, type: 'sale', status: 'received', message_id: 'om_ok',
     sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '26632黑37一双210微信' });
 
   await service.processSalesTask('sale_doorbox_ok');
@@ -1704,11 +1775,11 @@ const gapService = ({ store, cards, productRecord, productListFails = false }) =
       payments: [{ amount: 99, method: '微信' }], agreed_total: 99 }) },
     store,
   });
-  service.replyCard = async (_messageId, card) => { cards.push(card); return 'card_gap'; };
+  service.sendTaskCard = async (_task, card) => { cards.push(card); return 'card_gap'; };
   return service;
 };
 
-const openSale = (store, taskId) => store.create({ task_id: taskId, type: 'sale', status: 'received',
+const openSale = (store, taskId) => store.create({ task_id: taskId, chat_type: 'group', chat_id: GROUP_CHAT_ID, type: 'sale', status: 'received',
   message_id: `om_${taskId}`, sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '66356黑42一双99微信' });
 
 test('货品资料不齐时，确认卡片上直接给出「还差什么」和记录链接', async () => {
@@ -1800,8 +1871,8 @@ test('一单两件商品时，货品信息只读一次全表（不按件数重�
       ], payments: [{ amount: 400, method: '微信' }], agreed_total: 400 }) },
     store,
   });
-  service.replyCard = async (_m, card) => { cards.push(card); return 'card_two'; };
-  await store.create({ task_id: 'sale_two_products', type: 'sale', status: 'received', message_id: 'om_two',
+  service.sendTaskCard = async (_task, card) => { cards.push(card); return 'card_two'; };
+  await store.create({ task_id: 'sale_two_products', chat_type: 'group', chat_id: GROUP_CHAT_ID, type: 'sale', status: 'received', message_id: 'om_two',
     sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '66356黑42、8035灰牛仔40，共400微信' });
 
   await service.processSalesTask('sale_two_products');
@@ -1838,8 +1909,8 @@ test('同一个货号有多个颜色时，把该货号下所有资料不全的�
       payments: [{ amount: 99, method: '微信' }], agreed_total: 99 }) },
     store,
   });
-  service.replyCard = async (_m, card) => { cards.push(card); return 'card_multi'; };
-  await store.create({ task_id: 'sale_multi_color', type: 'sale', status: 'received', message_id: 'om_mc',
+  service.sendTaskCard = async (_task, card) => { cards.push(card); return 'card_multi'; };
+  await store.create({ task_id: 'sale_multi_color', chat_type: 'group', chat_id: GROUP_CHAT_ID, type: 'sale', status: 'received', message_id: 'om_mc',
     sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '66356黑42一双99微信' });
 
   await service.processSalesTask('sale_multi_color');

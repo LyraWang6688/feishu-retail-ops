@@ -101,13 +101,19 @@ const collectTags = (node, tags = []) => {
   return tags;
 };
 
+// 🔴 2026-10-07 三次收尾：`saleLookupService.replyCardByTask` 的**主回复**也按渠道分流了
+//    （非群 → 记 skip + 返 null，不再"回她那条私聊消息"）。
+//    「查销售记录」是**群里的动作** ⇒ 下面两条查询用例显式带群上下文；
+//    销售确认卡片那条（`processSalesTask`）显式把出口接在 `sendTaskCard` 上。
+const GROUP_TASK = { chat_type: 'group', chat_id: 'oc_sales_group' };
+
 test('sale_query：查销售记录走只读链路，出无按钮卡片并写入候选上下文，零业务写', async () => {
   const { service, store, writes, cards, sent } = makeService({
     // 故意给中文别名：证明意图会经 config/saleIntents 收敛，而不是靠字符串恰好相等。
     intent: '查销售记录', item_no: '6035', color: '黑',
   });
   await store.create({ task_id: 'query_task', type: 'sale', status: 'received', message_id: 'om_q',
-    sender_open_id: 'ou_1', original_text: '帮我查 6035 黑' });
+    sender_open_id: 'ou_1', original_text: '帮我查 6035 黑', ...GROUP_TASK });
 
   await service.processSalesTask('query_task');
 
@@ -136,7 +142,7 @@ test('sale_query：查销售记录走只读链路，出无按钮卡片并写入�
 test('sale_query 0 条：卡片告诉她在窗口里没查到，并问大概是哪天买的', async () => {
   const { service, store, writes, cards } = makeService({ intent: 'sale_query', item_no: '9999', color: '黑' });
   await store.create({ task_id: 'query_empty', type: 'sale', status: 'received', message_id: 'om_q2',
-    sender_open_id: 'ou_1', original_text: '帮我查 9999 黑' });
+    sender_open_id: 'ou_1', original_text: '帮我查 9999 黑', ...GROUP_TASK });
 
   await service.processSalesTask('query_empty');
 
@@ -208,9 +214,13 @@ test('原有销售链路不受影响：sale 意图照旧建销售主表并出确
       actual_amount: 230, items: [{ item_no: '6035', color: '黑', size: 38, quantity: 1, actual_amount: 230 }],
       payments: [{ amount: 230, method: '微信' }], agreed_total: 230, missing_fields: [],
     }) }, store });
-  service.replyCard = async (_messageId, card) => { cards.push(card); return 'om_sale_card'; };
+  // 销售确认卡片走**渠道感知出口**（群里 = 回到那条销售话题）。
+  service.sendTaskCard = async (_task, card) => { cards.push(card); return 'om_sale_card'; };
+  // 🚨 哨兵：非群那条路（`replyCard(task.message_id, …)`）**一次都不许走** —— 它正是
+  //    2026-10-07 三次收尾堵掉的那条"非群也会回一条"。真被走到就直接炸，而不是默默多发一张卡。
+  service.replyCard = async () => { throw new Error('非群回复路径不该被走到：群任务必须走 sendTaskCard'); };
   await store.create({ task_id: 'normal_sale', type: 'sale', status: 'received', message_id: 'om_s',
-    sender_open_id: 'ou_1', original_text: '6035黑38码230元微信' });
+    sender_open_id: 'ou_1', original_text: '6035黑38码230元微信', ...GROUP_TASK });
 
   await service.processSalesTask('normal_sale');
 

@@ -336,8 +336,11 @@ class SaleLookupService {
     const candidates = await this.findCandidates({ itemNo, color, now });
     await this.storePendingCandidates(task.task_id, candidates, { now });
     const card = saleLookupCard({ days: this.days, itemNo, color, candidates });
-    await this.replyCardByTask(task, card);
-    logInfo('sale_lookup.card.sent', {
+    const cardMessageId = await this.replyCardByTask(task, card);
+    // 没发出去的（非群任务 → `skipNoGroupContext` 返 `null`）就**不许记「已发出」**——
+    // 与 `larkMvpService` 的销售确认卡片同一口径（谎报已发送会让遗留任务的排查方向跑偏）。
+    // ⚠️ 群那条路返回的是 messageId / 空串（回复失败），两者都**不是** `null`，日志照旧。
+    if (cardMessageId !== null) logInfo('sale_lookup.card.sent', {
       task_id: task.task_id,
       item_no: itemNo,
       color,
@@ -356,15 +359,20 @@ class SaleLookupService {
   // 优先在原消息下回复（她能立刻看到对应的那张卡）；回复失败再兜底发一张。
   //
   // ⭐ 兜底**按渠道分流**（业务负责人 2026-10-06：「一律在话题群里，以后私聊路线就没有了」）：
-  //   · 群任务（`chat_type === 'group'`）→ 走**渠道感知出口**，回到**那个话题**；
+  //   · 群任务（`chat_type === 'group'`）→ 先回她那条消息，失败再走**渠道感知出口**回到**那个话题**；
   //     ⚠️ **绝不回落私聊** —— 群里回复失败就如实失败（只记日志、返回空串），
   //     偷偷发一条私聊会让她以为"群里没人管"，也掩盖了群通道的故障。
   //   · 非群任务（`chat_type !== 'group'`）→ 🔴 2026-10-07「私聊链路移除」：
   //     **没有去处** —— 只记一条 `lark.private_chat.send_skipped`、返 `null`。
-  //     改动前这里是 `sendCard(task.sender_open_id, card)`（偷偷发私聊），那行已整体删除
-  //     （业务负责人拍板的 ⓐ：「代码里一行私聊都不留」，
-  //      见 docs/private-chat-removal-decision-2026-10-07.md）。
+  //     见 docs/private-chat-removal-decision-2026-10-07.md。
+  //
+  // 🔴 2026-10-07 三次收尾：**主回复**也一样 —— 这里以前**任何** `chat_type` 都先
+  //    `await this.replyCard(task.message_id, card)`（= 回她那条私聊消息），
+  //    于是非群任务照样会回出一条私聊（`sendCard` 那条兜底清了、主回复还在）。
+  //    现在非群在函数入口就返回（记 skip + 返 `null`，**零远端调用**）；
+  //    **群那一条（主回复 + 群兜底）逐字未动**。
   async replyCardByTask(task, card) {
+    if (task?.chat_type !== 'group') return skipNoGroupContext('card', task);
     try {
       const messageId = await this.replyCard(task.message_id, card);
       if (messageId) {
@@ -374,6 +382,8 @@ class SaleLookupService {
     } catch (error) {
       logWarn('sale_lookup.card.reply_failed', { task_id: task.task_id, error: error.message });
     }
+    // ⚠️ 这个 `if` 现在**恒为真**（非群在函数入口就返了）—— 刻意保留：
+    //    群兜底那一段因此**逐字未动**（含 `sendCardToTask` 与失败日志）。
     if (task?.chat_type === 'group') {
       try {
         const messageId = await this.sendCardToTask(task, card);
@@ -387,8 +397,6 @@ class SaleLookupService {
         return '';
       }
     }
-    // 没有群上下文 → 没有去处：记 skip + 明确返"没发出去"（调用方不该记 card_message_id）。
-    return skipNoGroupContext('card', task);
   }
 }
 
