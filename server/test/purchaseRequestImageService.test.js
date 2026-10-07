@@ -21,9 +21,11 @@ const {
   formatSizeQuantity,
   SIZE_QUANTITY_SEPARATOR,
   SIZE_QUANTITY_MULTIPLIER,
-  SHOW_TOTAL,
   sizeSortValue,
   compareSize,
+  // 副标题（供应商那一行）的两个纯函数：取值 + 按配置拼串。
+  subtitleValuesOf,
+  buildSubtitle,
   COLORS,
   MARGIN,
   CELL_PADDING,
@@ -41,13 +43,19 @@ const {
 const LAYOUT = require('../src/config/purchaseRequestImageLayout');
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 验收标准（业务负责人 2026-10-06 第三次拍板）——本文件逐条钉住：
+// 验收标准（业务负责人 2026-10-07 真机测试后当面提的那一轮）——本文件逐条钉住：
 //   ① 同一货号的明细聚在一个分组行下；组内**同颜色并成一行**、不同颜色各自一行
 //   ② 货号分组行跨满整张表、有底色、字比正文重
 //   ③ 尺码×数量拼在**同一格**（`37码×1、41码×3`），颜色（首次出现）＋ 尺码（数字升序、均码最后）
-//   ④ 底部**有「合计」行**，且数字 = summarize 口径（N 条 = 明细行数，M 双 = 总双数）；空明细不画
-//   ⑤ 两个标题、供应商段（有/无）行为不变；采购单与退货单排版逐字节只差标题
-//   ⑥ 空明细不崩；**「尺码×数量」装不下就换行**（整块换行、行首不是顿号、不丢字、不截断），
+//   ④ 🔴 **底部那条「合计」整条删掉**（表格下面没有任何文本、图高里没有 FOOTER 那一截）；
+//      「合计」挪进**副标题（供应商那一行）**：`供应商：X　　报货日期：Y　　合计：M 双`
+//      —— ⚠️ **只留双数**，**「N 条」不要了**（她的原话：「共多少条以及合计多少双的不需要了，
+//      需要把合计多少双的放在，供应商那一行」）；
+//      放哪些字段/什么文案/怎么隔 **全在排版配置里**（`SUBTITLE_FIELDS` / `SUBTITLE_SEPARATOR`）
+//   ⑤ 🔴 **报货批次不再显示**（图上既没有「报货批次」四个字、也没有那个批次号文本）；
+//      两个标题不变；采购单与退货单排版逐字节只差标题
+//   ⑥ 空明细不崩、且**一个「合计」都不画**（不许出现"合计 0 双"）；
+//      「尺码×数量」装不下就**换行**（整块换行、行首不是顿号、不丢字、不截断），
 //      换行后**这一行变高、整张表跟着变高**；不换行的格子（颜色 / 货号）仍按像素宽度截断
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -69,6 +77,11 @@ const MERGED_ITEMS = [
 // 正文单元格的字号 / 分组行标题的字号：验收标准 ② 说的「字比正文重」就是这两个数。
 const BODY_FONT_SIZE = 22;
 const GROUP_FONT_SIZE = 24;
+
+// 出图日期走**上海时区**（+08）。固定成一个值，断言才能逐字节写死
+//（不然"用例跑在哪天就断言哪天的字符串"，跨零点会偶发红）。
+const GENERATED_AT = new Date('2026-10-07T02:00:00Z'); // = 2026/10/07 10:00（上海）
+const SUBTITLE_DATE = '2026/10/07';
 
 // ─── 把 SVG **按坐标解析**成有顺序的行，而不是对着整段字符串做 includes ──────
 // ⚠️ 只断言「包含某个货号」是钉不住"分组"的：那只证明它出现过，
@@ -360,55 +373,90 @@ test('① 货号缺失的明细兜底成「未标注货号」分组行，不会�
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ④ 底部「合计」回来了（2026-10-06 第三轮：「底部『合计』留」）；数字 = summarize 口径
+// ④ 副标题（供应商那一行）= 供应商 · 报货日期 · 合计 M 双；
+//    🔴 底部那条「合计」**整条删掉**（业务负责人 2026-10-07 真机测试后当面提）
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** 图上那条合计文本（不存在时返回 null）——按内容找，不靠"最后一条 text"。 */
-const totalTextOf = (svg) => parseSvg(svg)
-  .filter((element) => element.kind === 'text' && element.content.startsWith('合计'))
+/** 副标题那一条 text（画在 SUBTITLE_BASELINE 上的那条；没有则 null）。 */
+const subtitleTextOf = (svg) => parseSvg(svg)
+  .filter((element) => element.kind === 'text' && element.y === LAYOUT.SUBTITLE_BASELINE)
   .map((element) => element.content)[0] || null;
 
-test('④ 图上画「合计：N 条 / M 双」：N = 明细行数、M = 总双数，两个数都与 summarize 一致', () => {
-  const svg = buildPurchaseRequestSvg({ supplierName: '金猴', items: ITEMS });
+/** 图上**任何位置**出现的「合计：…」片段（2026-10-07 起只可能在副标题那一行里）。 */
+const totalSegmentsOf = (svg) => [...svg.matchAll(/合计：[^<]*/g)].map((match) => match[0]);
 
-  assert.equal(SHOW_TOTAL, true, '业务负责人 2026-10-06 第三轮：「底部『合计』留」');
-  assert.equal(LAYOUT.SHOW_TOTAL, true, '开关在配置里，逻辑不写死');
-  assert.equal(LAYOUT.TOTAL_LABEL({ rowCount: 3, totalPairs: 6 }), '合计：3 条 / 6 双',
-    '文案的唯一出处是配置里的 TOTAL_LABEL');
+test('④ 副标题 =「供应商：X　　报货日期：Y　　合计：M 双」；M = 总双数，且**只有双数**（「N 条」不要了）', () => {
+  const svg = buildPurchaseRequestSvg({
+    supplierName: '金猴', batchNo: '202610071', items: ITEMS, generatedAt: GENERATED_AT,
+  });
 
-  // ITEMS = 3 条明细（3 个「尺码×数量」块）/ 2+1+3 = 6 双
+  // 口径在**配置**里：放哪几个字段、顺序、文案、分隔符，逻辑不写死任何一个字符串。
+  assert.deepEqual(LAYOUT.SUBTITLE_FIELDS.map((field) => field.key), ['supplier', 'date', 'totalPairs'],
+    '副标题 = 供应商 / 报货日期 / 合计（顺序就是图上从左到右）');
+  assert.equal(LAYOUT.SUBTITLE_FIELDS[2].format(13), '13 双', '「合计」的文案由配置决定：只有双数');
+  assert.equal(LAYOUT.SUBTITLE_SEPARATOR, '　　');
+
+  // ITEMS = 3 条明细 / 2+1+3 = 6 双
   assert.deepEqual(summarize(normalizeItems(ITEMS)), { rowCount: 3, totalPairs: 6 });
-  assert.equal(totalTextOf(svg), '合计：3 条 / 6 双', '图上的数字必须与 summarize 一致');
+  assert.equal(subtitleTextOf(svg), `供应商：金猴　　报货日期：${SUBTITLE_DATE}　　合计：6 双`,
+    '副标题就是这三段，顺序与文案逐字节钉死');
 
-  // 「条」= 图上「尺码×数量」块的总数：一格里有几块就数几块 —— 与合计里的 N 对得上，
-  // 这正是"合并成一行之后『条』仍然说得通"的判据（不是图上数得出来的行数）。
-  const blocks = [...svg.matchAll(/[0-9]+(?:\.[0-9]+)?码?×\d+/g)].length;
-  assert.equal(blocks, 3, `图上应正好 3 个「尺码×数量」块：${blocks}`);
-
-  // 合并不吞数量、不丢行：图上各格 ×N 之和 == 原始双数 == 合计里的 M
+  // 🔴 她明确说「条数不需要了」：图上**一个「条」字都不许有**。
+  assert.ok(!svg.includes('条'), '「N 条」必须从图上消失');
+  assert.deepEqual(totalSegmentsOf(svg), ['合计：6 双'], '「合计」只出现在副标题里，且只有双数');
+  // 图上各格 ×N 之和 == 副标题里的 M（一个来源，不会一个说 6 双、另一个说 5 双）
   assert.equal(quantityTotalOf(svg), 6);
   assert.equal(readGroups(svg).flatMap((group) => rowsOf(group)).length, 2, '3 条明细 → 2 个颜色行');
 });
 
-test('④ 合计行在**表格下面**、居中等宽、加粗；表高不含它（它挂在 FOOTER 上）', () => {
-  const svg = buildPurchaseRequestSvg({ supplierName: '金猴', items: ITEMS });
+test('④ 底部那条合计**整条删掉**：表格下面没有任何 text，图高只剩 BOTTOM_PADDING（不留开关）', () => {
+  const svg = buildPurchaseRequestSvg({ supplierName: '金猴', items: ITEMS, generatedAt: GENERATED_AT });
   const elements = parseSvg(svg);
   const frame = elements.find((element) => element.kind === 'rect' && element.fill === 'none' && element.y === TABLE_TOP);
-  const total = elements.find((element) => element.kind === 'text' && element.content === '合计：3 条 / 6 双');
-  assert.ok(total, '必须有合计那一条 text');
-  assert.equal(total.anchor, 'middle', '合计居中');
-  assert.equal(total.x, 450, '合计在画布中线');
-  assert.ok(total.bold, '合计加粗');
-  assert.ok(total.y > frame.y + frame.height, '合计必须落在表格**下面**，不能压在明细上');
-  assert.equal(total.size, LAYOUT.BODY_FONT_SIZE, '合计沿用正文字号（这一轮不动字号）');
+  assert.ok(frame, '先找到表格外框');
+
+  // ① 表格**下面**不许再有任何文本 —— 那条「合计」连同它的留白一起没了。
+  const belowTable = elements.filter((element) => element.kind === 'text' && element.y > frame.y + frame.height);
+  assert.deepEqual(belowTable.map((element) => element.content), [],
+    '表格下面必须干干净净（以前那里是「合计：N 条 / M 双」）');
+
+  // ② 图高：等于 表顶 + 表高 + 底部留白 —— **没有** FOOTER 那一截。
+  const height = Number(/height="(\d+)"/.exec(svg)[1]);
+  assert.equal(height, TABLE_TOP + frame.height + LAYOUT.BOTTOM_PADDING, '图高里不再有 FOOTER_GAP/FOOTER_HEIGHT');
+
+  // ③ 配置里**不再留**这一套（留一个恒 false 的开关只会让下一个人以为"还能打开"）。
+  //    要回滚从 git 历史取（`git log -S 'TOTAL_LABEL'`）。
+  for (const removed of ['SHOW_TOTAL', 'TOTAL_LABEL', 'FOOTER_GAP', 'FOOTER_HEIGHT']) {
+    assert.equal(LAYOUT[removed], undefined, `底部合计那一套的 \`${removed}\` 必须已经删掉`);
+  }
 });
 
-test('④ 合计口径不是"图上数得出来的行数"：颜色并成一行后，条数照旧按明细算', () => {
-  // MERGED_ITEMS：4 条明细（黑 3 + 棕 1）→ 图上只有 2 个颜色行，但合计仍是 4 条 / 7 双。
-  const svg = buildPurchaseRequestSvg({ supplierName: '金猴', items: MERGED_ITEMS });
+test('④ 「合计 M 双」按**明细**求和，不按图上数得出来的行数', () => {
+  // MERGED_ITEMS：4 条明细（黑 3 + 棕 1）→ 图上只有 2 个颜色行，但合计仍是 7 双。
+  const svg = buildPurchaseRequestSvg({ supplierName: '金猴', items: MERGED_ITEMS, generatedAt: GENERATED_AT });
   assert.deepEqual(summarize(normalizeItems(MERGED_ITEMS)), { rowCount: 4, totalPairs: 7 });
   assert.equal(readGroups(svg).flatMap((group) => rowsOf(group)).length, 2, '图上 2 行');
-  assert.equal(totalTextOf(svg), '合计：4 条 / 7 双', '合计按**明细**算，不按图上的行数算');
+  assert.equal(subtitleTextOf(svg), `供应商：金猴　　报货日期：${SUBTITLE_DATE}　　合计：7 双`,
+    '合计按**明细**算，不按图上的行数算');
+});
+
+test('④ 副标题纯函数：取值 + 按配置拼串；空值按配置省掉整段', () => {
+  const values = subtitleValuesOf({ supplierName: ' 金猴 ', generatedAt: GENERATED_AT, totalPairs: 5 });
+  assert.deepEqual(values, { supplier: '金猴', date: SUBTITLE_DATE, totalPairs: '5' });
+  assert.equal(buildSubtitle(values), `供应商：金猴　　报货日期：${SUBTITLE_DATE}　　合计：5 双`);
+
+  // 没维护供应商 → 那一段整段不画（`hideWhenEmpty`），日期与合计照画。
+  assert.equal(
+    buildSubtitle(subtitleValuesOf({ supplierName: '', generatedAt: GENERATED_AT, totalPairs: 5 })),
+    `报货日期：${SUBTITLE_DATE}　　合计：5 双`,
+  );
+  // 0 双（空明细）→ 「合计」整段不画：那正是被禁止的"合计和为 0"。
+  // ⚠️ 这里钉的是**取值**层：0 → 空串，配置的 `hideWhenEmpty` 据此省掉整段。
+  assert.equal(subtitleValuesOf({ supplierName: '金猴', generatedAt: GENERATED_AT, totalPairs: 0 }).totalPairs, '');
+  assert.equal(
+    buildSubtitle(subtitleValuesOf({ supplierName: '金猴', generatedAt: GENERATED_AT, totalPairs: 0 })),
+    `供应商：金猴　　报货日期：${SUBTITLE_DATE}`,
+  );
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -502,30 +550,41 @@ test('⑤ 标题文案：采购单 = 「邯美皮鞋采购单」，退货单 = �
   assert.equal(TITLE, '邯美皮鞋采购单');
   assert.equal(RETURN_TITLE, '邯美皮鞋退货单');
 
-  const requestSvg = buildPurchaseRequestSvg({ supplierName: '金猴', batchNo: 'B-1', items: MERGED_ITEMS });
+  const requestSvg = buildPurchaseRequestSvg({
+    supplierName: '金猴', batchNo: 'B-1', items: MERGED_ITEMS, generatedAt: GENERATED_AT,
+  });
   assert.ok(requestSvg.includes('>邯美皮鞋采购单</text>'), '默认标题必须是「邯美皮鞋采购单」');
   assert.ok(!requestSvg.includes('邯美皮鞋采购申请单'), '旧标题「邯美皮鞋采购申请单」不能再出现');
 
   const returnSvg = buildPurchaseRequestSvg({
-    supplierName: '金猴', batchNo: 'B-1', items: MERGED_ITEMS, title: RETURN_TITLE,
+    supplierName: '金猴', batchNo: 'B-1', items: MERGED_ITEMS, title: RETURN_TITLE, generatedAt: GENERATED_AT,
   });
   assert.ok(returnSvg.includes('>邯美皮鞋退货单</text>'), '退货标题必须是「邯美皮鞋退货单」');
   assert.ok(!returnSvg.includes('邯美皮鞋采购退货单'), '旧标题「邯美皮鞋采购退货单」不能再出现');
-  // 只换标题：两种单据的合并排版必须一模一样
+  // 只换标题：两种单据的合并排版必须一模一样（副标题也是同一套 —— 她要求"同样退货单也需要改"）
   assert.deepEqual(labelsOf(readGroups(returnSvg)), labelsOf(readGroups(requestSvg)));
   assert.deepEqual(rowsOf(readGroups(returnSvg)[0]), rowsOf(readGroups(requestSvg)[0]));
+  assert.equal(subtitleTextOf(returnSvg), subtitleTextOf(requestSvg), '退货单的副标题与采购单同一口径');
+  assert.ok(returnSvg.includes('合计：'), '退货单上也有「合计 M 双」');
 });
 
-test('⑤ 没维护供应商：不画「供应商：」这一段（不是「未填写」那种像警告的文案）；有供应商时照旧画', () => {
-  const svg = buildPurchaseRequestSvg({ supplierName: '', batchNo: 'B-1', items: ITEMS });
+test('⑤ 报货批次**不再显示**；没维护供应商时不画「供应商：」这一段（不是「未填写」那种像警告的文案）', () => {
+  const svg = buildPurchaseRequestSvg({
+    supplierName: '', batchNo: 'B-1', items: ITEMS, generatedAt: GENERATED_AT,
+  });
   assert.ok(!svg.includes('供应商'), '没有供应商时不该出现「供应商」三个字');
   assert.ok(!svg.includes('未填写'), '也不该写成「供应商：未填写」');
-  assert.ok(svg.includes('报货批次：B-1'), '其余副标题照常渲染');
+  // 🔴 2026-10-07：报货批次不再显示 —— 既没有那四个字，也没有那个批次号文本。
+  assert.ok(!svg.includes('报货批次'), '「报货批次」不能再出现在图上');
+  assert.ok(!svg.includes('B-1'), '批次号文本也不能出现在图上');
+  assert.equal(subtitleTextOf(svg), `报货日期：${SUBTITLE_DATE}　　合计：6 双`, '日期与合计照画');
 
-  assert.ok(
-    buildPurchaseRequestSvg({ supplierName: '金猴', items: ITEMS }).includes('供应商：金猴'),
-    '有供应商时照旧渲染「供应商：xxx」',
-  );
+  const withSupplier = buildPurchaseRequestSvg({
+    supplierName: '金猴', batchNo: 'B-1', items: ITEMS, generatedAt: GENERATED_AT,
+  });
+  assert.equal(subtitleTextOf(withSupplier), `供应商：金猴　　报货日期：${SUBTITLE_DATE}　　合计：6 双`,
+    '有供应商时照旧渲染「供应商：xxx」');
+  assert.ok(!withSupplier.includes('报货批次'), '有供应商时也不显示报货批次');
 });
 
 test('字体显式指定 CJK 字体，中文不会渲染成方框（分组行也不例外）', () => {
@@ -543,12 +602,15 @@ test('字体显式指定 CJK 字体，中文不会渲染成方框（分组行也
 // ⑥ 空明细 / 截断 / 转义 / PNG
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('⑥ 空明细不崩：照旧给「本批次没有明细」，不画任何分组行、也不画合计（0 条 / 0 双 不许出现）', () => {
+test('⑥ 空明细不崩：照旧给「本批次没有明细」，不画任何分组行、也**一个「合计」都不画**（0 双 不许出现）', () => {
   for (const items of [[], undefined, null]) {
-    const svg = buildPurchaseRequestSvg({ supplierName: '金猴', items });
+    const svg = buildPurchaseRequestSvg({ supplierName: '金猴', items, generatedAt: GENERATED_AT });
     assert.ok(svg.startsWith('<svg '));
     assert.ok(svg.includes('本批次没有明细'));
-    assert.equal(totalTextOf(svg), null, '空明细不画合计——「合计：0 条 / 0 双」正是被禁止的"合计和为 0"');
+    // 「合计：0 双」正是被禁止的"合计和为 0"：空明细连「合计」两个字都不许出现。
+    assert.deepEqual(totalSegmentsOf(svg), [], '空明细不画任何合计');
+    assert.ok(!svg.includes('合计'), '空明细不该出现「合计」两个字');
+    assert.equal(subtitleTextOf(svg), `供应商：金猴　　报货日期：${SUBTITLE_DATE}`, '供应商/日期照画，只是不带合计');
     assert.deepEqual(readGroups(svg), [], '空明细不该产出一条空的分组行');
     assert.deepEqual(stripesOf(svg), []);
   }
@@ -813,8 +875,8 @@ test('采购申请 PNG：一个颜色 7 个尺码 → 换行后 **PNG 真的更�
   assert.equal((await metaOf(9)).height, seven.height);
 });
 
-test('合并版表高：列头 + Σ（分组行 + **折行后的**明细段高），没有隐形空行', () => {
-  const svg = buildPurchaseRequestSvg({ supplierName: '金猴', items: ITEMS });
+test('合并版表高：列头 + Σ（分组行 + **折行后的**明细段高），底部只剩 BOTTOM_PADDING', () => {
+  const svg = buildPurchaseRequestSvg({ supplierName: '金猴', items: ITEMS, generatedAt: GENERATED_AT });
   const height = Number(/height="(\d+)"/.exec(svg)[1]);
   // ITEMS：2 个货号各 1 个颜色行（都是单行）→ 2 条分组行 + 2 行正文
   const tableHeight = HEADER_ROW_HEIGHT + GROUP_ROW_HEIGHT * 2 + ROW_HEIGHT * 2;
@@ -822,19 +884,18 @@ test('合并版表高：列头 + Σ（分组行 + **折行后的**明细段高�
   const frame = parseSvg(svg).find((element) => element.kind === 'rect'
     && element.fill === 'none' && element.y === TABLE_TOP);
   assert.equal(frame.height, tableHeight);
-  // 合计**开着**：表格下面留 FOOTER_GAP + FOOTER_HEIGHT，再是底部留白（这条跟着 SHOW_TOTAL 反过来）
-  assert.equal(LAYOUT.SHOW_TOTAL, true);
-  assert.equal(height, TABLE_TOP + tableHeight + LAYOUT.FOOTER_GAP + LAYOUT.FOOTER_HEIGHT + LAYOUT.BOTTOM_PADDING);
+  // 🔴 2026-10-07：表格下面**只有底部留白** —— 那条合计与它的 FOOTER 留白整段删掉了。
+  assert.equal(height, TABLE_TOP + tableHeight + LAYOUT.BOTTOM_PADDING);
 
   // ⚠️ 换行的那一行要**真的**占两行高：表高按折行后的行高累加，不是一律 ROW_HEIGHT
   const wrapItems = [35, 36, 37, 38, 39, 40, 41].map((size) => ({
     item_no: '6C98012-15L', color: '黑色', size, quantity: 1,
   }));
-  const wrapSvg = buildPurchaseRequestSvg({ supplierName: '金猴', items: wrapItems });
+  const wrapSvg = buildPurchaseRequestSvg({ supplierName: '金猴', items: wrapItems, generatedAt: GENERATED_AT });
   const wrapHeight = Number(/height="(\d+)"/.exec(wrapSvg)[1]);
   const wrapTableHeight = HEADER_ROW_HEIGHT + GROUP_ROW_HEIGHT + (ROW_HEIGHT + LINE_HEIGHT);
   const wrapFrame = parseSvg(wrapSvg).find((element) => element.kind === 'rect'
     && element.fill === 'none' && element.y === TABLE_TOP);
   assert.equal(wrapFrame.height, wrapTableHeight, '折行的那一行必须按两行高占位');
-  assert.equal(wrapHeight, TABLE_TOP + wrapTableHeight + LAYOUT.FOOTER_GAP + LAYOUT.FOOTER_HEIGHT + LAYOUT.BOTTOM_PADDING);
+  assert.equal(wrapHeight, TABLE_TOP + wrapTableHeight + LAYOUT.BOTTOM_PADDING, '折行后的表高 + 底部留白');
 });

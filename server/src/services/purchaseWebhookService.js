@@ -66,6 +66,23 @@ const PURCHASE_CARD_ACTIONS = [
 
 const idFor = (prefix, value) => `${prefix}_${crypto.createHash('sha256').update(String(value)).digest('hex').slice(0, 24)}`;
 
+/**
+ * 「回复某条消息」时要不要**进话题**：`options.inThread === true` → `reply_in_thread: true`。
+ *
+ * 为什么需要这个字段（业务负责人 2026-10-07 真机测试后提的）：
+ *   · 飞书里**回复 ≠ 话题**：不带 `reply_in_thread` 的回复只是**引用回复**，
+ *     在普通群里就表现为**又一条并列消息** —— 她看到的就是"图一条、@文字一条，两条消息"；
+ *   · 带 `reply_in_thread: true` 才是**话题**：主群里我们那条回复会**创建**话题，
+ *     响应里回带 `thread_id`（`PurchaseBatchLocator` 正是拿它写「话题 ↔ 批次」映射的）。
+ * ⚠️ **只在真的在回复某条消息时才有意义**（调用方只在 `replyToMessageId` 非空时传它）：
+ *    顶层 `create` 没有"回复谁"这回事，带上这个字段没有意义。
+ * ⚠️ 字段名与用法与 `larkMvpService.replyMessage(..., { inThread: true })` **完全一致**
+ *    （`@larksuiteoapi/node-sdk` 的 `im.message.reply` 本来就带 `reply_in_thread`）——
+ *    **不新引 SDK、也不换调用方式**。
+ * ⚠️ 默认 `false` ⇒ 不传时出站 payload 与改动前**逐字节相同**（单测钉住了这一条）。
+ */
+const replyThreadFields = (options = {}) => (options?.inThread === true ? { reply_in_thread: true } : {});
+
 // 采购退货归批的**批次类型标记**。只写在本地任务记录（JsonTaskStore）里，
 // 用来在 PM2 重启后把"还在等窗口的退货"从所有 batch_waiting 任务里认出来、
 // 重开窗口继续处理（见 recoverPendingReturnBatches）。**不写业务表**。
@@ -1200,6 +1217,8 @@ class PurchaseWebhookService {
    * ⭐ `options.replyToMessageId`：传了就**回复那条消息**而不发顶层消息 ——
    *    采购退货的差额提示用它挂到**这一批退货单（图）的那个话题**下，
    *    而不是在群里另开一个话题（业务负责人：「一律在话题群里」）。不传 = 照旧发顶层。
+   * ⚠️ 2026-10-07：回复时**同时带 `inThread: true`**（飞书 `reply_in_thread`）。
+   *    只"回复某条消息"在飞书里是**引用回复**，不建话题 —— 那正是她看到"两条消息"的原因。
    */
   async sendPurchaseGroupNotice(content, options = {}) {
     const target = this.resolvePurchaseGroupTarget({ sandboxChatId: this.sandboxChatId });
@@ -1213,6 +1232,8 @@ class PurchaseWebhookService {
     try {
       await this.sendText(target.chatId, content, 'chat_id', {
         replyToMessageId: replyToMessageId || undefined,
+        // 有回复对象 = 挂在那一批的话题下 → 必须进话题，否则又是一条并列的引用回复。
+        inThread: Boolean(replyToMessageId),
       });
       logInfo('purchase.group_notice.sent', {
         chat_id: target.chatId, reply_to_message_id: replyToMessageId,
@@ -1300,6 +1321,15 @@ class PurchaseWebhookService {
    * `options.replyToMessageId`：传了就**回复那条消息**（`im.message.reply`）而不是
    * 发一条顶层消息——采购单发到群时用它把第 2 条起的消息都挂到第 1 条的话题下
    * （业务负责人 2026-10-06 拍板，见 deliverSupplierImagesInner）。
+   *
+   * ⚠️ 2026-10-07 新增 `options.inThread`（**只在有 `replyToMessageId` 时有意义**）：
+   * 带上它 → `im.message.reply` 的 `data.reply_in_thread = true` → 飞书把这条回复
+   * **放进话题**（主群里我们这条回复会**创建**那个话题，响应里回带 `thread_id`）。
+   * 🔴 不带它时，"回复某条消息"在飞书里只是**引用回复**、**不建话题** ——
+   * 那正是业务负责人看到的"图一条、文字一条，两条并列消息"。
+   * ⚠️ 与 `larkMvpService.replyMessage(..., { inThread: true })` 是**同一个字段、同一种用法**
+   * （`@larksuiteoapi/node-sdk` 的 `im.message.reply` 本来就带 `reply_in_thread`），
+   * **不新引 SDK、也不换调用方式**。默认 `false` ⇒ 不传时 payload 与改动前**逐字节相同**。
    */
   async sendImage(openId, imageBuffer, receiveIdType = 'open_id', options = {}) {
     if (!openId) throw new Error('采购记录缺少经办人 open_id，无法发送图片');
@@ -1319,7 +1349,7 @@ class PurchaseWebhookService {
     const response = options.replyToMessageId
       ? await this.client.im.message.reply({
         path: { message_id: String(options.replyToMessageId) },
-        data: { msg_type: 'image', content },
+        data: { msg_type: 'image', content, ...replyThreadFields(options) },
       })
       : await this.client.im.message.create({
         params: { receive_id_type: receiveIdType },
@@ -1344,6 +1374,10 @@ class PurchaseWebhookService {
    * 用它把「文字 @」挂到第 1 条图的话题下（业务负责人 2026-10-06 拍板）。
    * ⚠️ 一律回复**第 1 条**（不是回复上一条）：飞书的话题 = 一条消息 + 回复它的消息，
    * 回复话题里任何一条都算同一个话题；固定回复第 1 条，归属最稳、也最好解释。
+   *
+   * ⚠️ 2026-10-07 新增 `options.inThread`：见 `replyThreadFields` 的注释 ——
+   * **只"回复"不建话题**（飞书那是引用回复），要"图与文字落在同一个话题"就必须带它。
+   * 不传时 payload 与改动前**逐字节相同**。
    */
   async sendText(openId, content, receiveIdType = 'open_id', options = {}) {
     if (!openId) throw new Error('采购记录缺少经办人 open_id，无法发送说明');
@@ -1351,7 +1385,7 @@ class PurchaseWebhookService {
     const response = options.replyToMessageId
       ? await this.client.im.message.reply({
         path: { message_id: String(options.replyToMessageId) },
-        data: { msg_type: 'text', content: text },
+        data: { msg_type: 'text', content: text, ...replyThreadFields(options) },
       })
       : await this.client.im.message.create({
         params: { receive_id_type: receiveIdType },
@@ -1471,8 +1505,17 @@ class PurchaseWebhookService {
         // 都 `im.message.reply` 回复**第 1 条**，于是它们都挂在那一个话题下。
         // ⚠️ 固定回复第 1 条，不是回复上一条：飞书的话题 = 一条消息 + 回复它的消息，
         // 回复话题内任何一条都算同一个话题；固定成根消息归属最稳，也最好排查。
+        //
+        // 🔴 2026-10-07 关键修复（业务负责人真机测试后）：「@了经办人，但不是在同一个话题下
+        // 回复的，而是发了两条消息」。根因：**飞书里"回复"≠"话题"** —— 只 `im.message.reply`
+        // 是**引用回复**，要**再带 `reply_in_thread: true`** 才进话题（主群里我们这条回复
+        // 会**创建**话题，响应才回带 `thread_id`）。
+        // ⇒ 这一批里**凡是回复第 1 条图的消息**（第 2 张图、@文字）都带 `inThread: true`。
+        // ⚠️ **第 1 条图仍然是顶层 `create`**：群里没有"她的那条消息"可以回复（这条链路是
+        // 多维表格记录变更触发的），所以话题的根**只能是这张图** —— 我们自己的第一条消息。
         const imageResult = await this.sendImage(target.chatId, png, 'chat_id', {
           replyToMessageId: threadRootMessageId,
+          inThread: Boolean(threadRootMessageId),
         });
         // 第 1 条消息就是这一批的话题根：它之后的每一条都回到它身上。
         if (!threadRootMessageId && imageResult.messageId) threadRootMessageId = imageResult.messageId;
@@ -1487,11 +1530,16 @@ class PurchaseWebhookService {
         }
         // 图单独一条、文字带 @经办人 单独一条：飞书图片消息没有正文，
         // @ 只能挂在文字那条上（业务负责人明确要 @经办人，不再是 @所有人）。
+        // ⚠️ `inThread`：这条必须**进话题**（回复第 1 条图 + `reply_in_thread`）——
+        //    她要的就是"图与文字在同一个话题里"，而飞书单靠"回复"只会得到一条引用回复。
+        // ⚠️ 第 1 条图没有 `threadRootMessageId`（它就是根）→ 那种情况 `textInThread` 自然是
+        //    `false`：顶层 `create` 本来也没有"回复谁 / 进哪个话题"这回事。
+        const textInThread = Boolean(threadRootMessageId);
         const textResult = await this.sendText(
           target.chatId,
           this.mentionOperatorText(operatorOpenId, `${label} 这批 ${rowCount} 条（共 ${totalPairs} 双），图可以直接转给供应商。`),
           'chat_id',
-          { replyToMessageId: threadRootMessageId },
+          { replyToMessageId: threadRootMessageId, inThread: textInThread },
         );
         groupMessages.push(
           { messageId: imageResult.messageId, threadId: imageResult.threadId },
@@ -1506,6 +1554,9 @@ class PurchaseWebhookService {
           image_message_id: imageResult.messageId, image_thread_id: imageResult.threadId,
           text_message_id: textResult.messageId, text_thread_id: textResult.threadId,
           text_is_reply: Boolean(threadRootMessageId && textResult.messageId),
+          // ⭐ 2026-10-07：她要能一眼看出"这次是不是真的进了话题"——把发出去时用的
+          // `reply_in_thread` 一起记下来（排查"怎么还是两条消息"时，第一眼就看这个字段）。
+          text_reply_in_thread: textInThread,
         });
       } catch (error) {
         failed.push({ supplier: label, error: error.message });

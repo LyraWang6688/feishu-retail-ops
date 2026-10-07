@@ -2140,20 +2140,26 @@ const makeGroupPurchaseService = (options = {}) => {
   const dir = options.dir || tempDir();
   const batchLocatorStore = options.batchLocatorStore || locatorStoreFor(dir);
   const sent = [];
+  // 默认：1 条报单 → 1 个供应商。传 `reportRecords` + `references` 就能造**多供应商**那一批
+  //（两个货号、两家供应商 → 同一批出 2 张图；用来钉住"第 2 张图也进同一个话题"）。
+  const reportRecords = options.reportRecords || [reportRecord(options.recordId || 'rep_group', {
+    尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'],
+    // operator: '' → 报单记录没填经办人（专门验证"不 @任何人"那条路）。
+    ...(options.operator === undefined ? {} : { 经办人: options.operator ? [{ id: options.operator }] : [] }),
+  })];
   const built = makeService({
     dir,
     gateway: makeGateway({
-      purchaseReport: [reportRecord(options.recordId || 'rep_group', {
-        尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_1'],
-        // operator: '' → 报单记录没填经办人（专门验证"不 @任何人"那条路）。
-        ...(options.operator === undefined ? {} : { 经办人: options.operator ? [{ id: options.operator }] : [] }),
-      })],
+      purchaseReport: reportRecords,
       purchaseOrderBatch: [],
       purchaseRequest: [],
       supplier: SUPPLIERS,
     }),
-    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
-    recognizer: makeRecognizer({ parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }] }),
+    references: options.references || referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
+    recognizer: makeRecognizer({
+      parsePurchaseReportText: options.parsePurchaseReportText
+        || (async () => [{ size: 36, quantity: 2 }]),
+    }),
     client: makeClient({
       sendMessage: async (params) => {
         sent.push(params);
@@ -2161,19 +2167,24 @@ const makeGroupPurchaseService = (options = {}) => {
           code: 0,
           data: {
             message_id: `om_sent_${sent.length}`,
-            // 话题群：飞书发消息的响应里直接带这条消息所属的话题 id（真机实测有这个字段）。
-            // 只给文字那条带上：图片那条为空，正好覆盖"有的消息有话题、有的没有"。
-            thread_id: params.data.msg_type === 'text' ? 'omt_sent_thread' : '',
+            // 🔴 2026-10-07 起这个替身照**普通群**建模（= 业务负责人真机所在的那个群）：
+            //    顶层 `create` 发的消息**不是**话题消息 → 响应里**没有** thread_id。
+            //    （话题群里顶层消息自带 thread_id，但那就掩盖了"她为什么看到两条消息"这个真问题。）
+            thread_id: '',
           },
         };
       },
-      // 2026-10-06 起文字改用 `reply` 回到第 1 条（图）：回复也照样带 message_id / thread_id。
-      // 这里保留"被回复的那条没有话题 id"的形状——飞书在回复时会把（新建的）话题 id 带回来。
+      // ⚠️ **这是本次修复的钉子**：飞书里"回复"≠"话题" ——
+      //   · 带 `reply_in_thread: true` 的回复才进话题，响应里才回带 `thread_id`；
+      //   · 不带它的只是**引用回复** → 没有 thread_id（正是她看到的"两条并列消息"）。
+      //   替身严格照官方文档建模（见 docs/reports/purchase-image-layout-and-group-thread-2026-10-07.md 第 4 节），
+      //   所以"映射里有没有 thread_id"这件事**只能**靠那个字段换来 —— 少传它就一定挂。
       replyMessage: async (params) => {
         sent.push(params);
+        const inThread = params?.data?.reply_in_thread === true;
         return {
           code: 0,
-          data: { message_id: `om_sent_${sent.length}`, thread_id: 'omt_sent_thread' },
+          data: { message_id: `om_sent_${sent.length}`, thread_id: inThread ? 'omt_sent_thread' : '' },
         };
       },
     }),
@@ -2207,6 +2218,13 @@ test('A：采购单发到群 PURCHASE_CHAT_ID 并 @经办人；消息/话题 ↔
   assert.equal(text.params, undefined, '回复消息没有 receive_id_type 参数（走 path.message_id）');
   assert.equal(text.path.message_id, 'om_sent_1', '必须回复第 1 条（图），不是发一条新的顶层消息');
   assert.equal(text.data.msg_type, 'text');
+  // 🔴 2026-10-07：**只"回复"不够** —— 飞书里那是**引用回复**，不建话题（她看到的就是"两条消息"）。
+  //    必须 `reply_in_thread: true` 才把这条文字放进**第 1 条图所在的那个话题**。
+  assert.equal(text.data.reply_in_thread, true,
+    '图与文字要落在同一个话题：回复必须带 reply_in_thread（飞书单靠 reply 只是引用回复）');
+  // 第 1 条图是**顶层**消息（= 话题的根）：它没有"回复谁 / 进哪个话题"这回事，不该带这个字段。
+  // ⚠️ 这条链路是**多维表格记录变更**触发的，群里没有"她的那条消息"可回复 —— 话题根只能是我们这张图。
+  assert.equal(image.data.reply_in_thread, undefined, '顶层图片消息不该带 reply_in_thread');
   // @经办人（不是 @所有人）：业务负责人改的口径。
   const textContent = JSON.parse(text.data.content).text;
   assert.match(textContent, /^<at user_id="ou_user_1"><\/at> /);
@@ -2218,12 +2236,59 @@ test('A：采购单发到群 PURCHASE_CHAT_ID 并 @经办人；消息/话题 ↔
   assert.ok(mappings.every((m) => m.batch_no), '每条映射都要带批次号');
   assert.ok(mappings.every((m) => m.chat_id === 'oc_test_purchase_group'));
   // 飞书回了 thread_id 的那条要把它记下来（话题定位的落点）。
+  // ⚠️ 替身照**普通群 + 官方话题语义**建模：只有带 `reply_in_thread` 的那条才拿得到 thread_id
+  //    ⇒ 这一条断言同时钉住了"话题是真的建起来了"和"thread_id 真的落了映射"。
   assert.deepEqual(
     mappings.map((m) => m.thread_id).sort(),
     ['', 'omt_sent_thread'],
   );
+  assert.equal(
+    mappings.find((m) => m.message_id === 'om_sent_2').thread_id, 'omt_sent_thread',
+    '@文字那条（回复进话题的那条）必须拿到 thread_id 并记进映射',
+  );
   // 采购事实本身不受影响：采购申请照写、报单进终态。
   assert.equal((await gateway.listAll('purchaseRequest')).length, 1);
+});
+
+test('A：多供应商 → 第 2 张图也回复第 1 条并进同一个话题（reply_in_thread），不各开一个话题', async () => {
+  const { service, store, batchLocatorStore, sent } = makeGroupPurchaseService({
+    // 一条报单批次里两个货号、两家供应商（同 `报货批次号` → 会被归成同一批）。
+    reportRecords: [
+      reportRecord('rep_two_1', { 尺码: sizeLink(36), 数量说明: '36码2双', 编号: ['prod_A'], 报货批次号: 'BATCH-TWO' }),
+      reportRecord('rep_two_2', { 尺码: sizeLink(37), 数量说明: '37码1双', 编号: ['prod_B'], 报货批次号: 'BATCH-TWO' }),
+    ],
+    references: referencesFor({
+      prod_A: productFields('8088', '黑色', 'sup_A'),
+      prod_B: productFields('1366', '棕色', 'sup_B'),
+    }),
+    parsePurchaseReportText: async (text) => (String(text).includes('36')
+      ? [{ size: 36, quantity: 2 }] : [{ size: 37, quantity: 1 }]),
+  });
+  // 一次提交 = 一批：两条记录分两次"到达"（生产上就是这样被飞书分开推的）。
+  const first = await service.accept('supplier-report', 'rep_two_1');
+  await service.accept('supplier-report', 'rep_two_2');
+  await waitForTask(store, first.taskId);
+  // 2 个供应商 → 4 条：图A + 文字A + 图B + 文字B
+  await waitFor('两个供应商的采购单都发到群', async () => sent.length === 4);
+  await waitForGroupMappings(batchLocatorStore, 4);
+  const [imageA, textA, imageB, textB] = sent;
+  // 第 1 条（图A）顶层发 = 话题根；后面三条**全部回复它**。
+  assert.equal(imageA.params.receive_id_type, 'chat_id', '第 1 条图顶层发');
+  assert.equal(imageA.data.reply_in_thread, undefined, '第 1 条图是话题根，不带 reply_in_thread');
+  for (const [index, message] of [[1, textA], [2, imageB], [3, textB]]) {
+    assert.equal(message.path.message_id, 'om_sent_1', `第 ${index + 1} 条必须回复第 1 条（图）`);
+    assert.equal(message.data.reply_in_thread, true, `第 ${index + 1} 条必须进同一个话题`);
+  }
+  assert.equal(imageB.data.msg_type, 'image', '第 2 张图也是回复（同一话题）而不是新开一条顶层消息');
+  // 4 条消息的映射都在，且三个回复落在**同一个**话题 id 上。
+  const mappings = await batchLocatorStore.list();
+  assert.equal(mappings.length, 4);
+  assert.equal(mappings.filter((m) => m.thread_id === 'omt_sent_thread').length, 3, '三个回复都落在同一个话题');
+  // 换一个角度自证"定位仍可用"：只拿话题 id 就能反查回这一批。
+  const locator = new PurchaseBatchLocator({ store: batchLocatorStore });
+  const located = await locator.resolve({ threadId: 'omt_sent_thread', text: '这批到了' });
+  assert.equal(located.status, 'matched');
+  assert.equal(located.source, 'thread_id');
 });
 
 test('A：未配置 PURCHASE_CHAT_ID → 大声跳过（记 skipped 日志），绝不悄悄发私聊', async () => {
@@ -2254,6 +2319,68 @@ test('A：未配置 PURCHASE_CHAT_ID → 大声跳过（记 skipped 日志），
   } finally {
     logs.restore();
   }
+});
+
+test('B：发送器的 inThread 契约 —— 只有显式 true 才带 reply_in_thread；顶层 create 一个字段都不多', async () => {
+  const { service, sent } = makeGroupPurchaseService();
+
+  // ① 回复 + inThread:true → 进话题（图与文字落在同一个话题靠的就是这个字段）。
+  await service.sendText('oc_test_purchase_group', '进话题', 'chat_id', { replyToMessageId: 'om_root', inThread: true });
+  assert.equal(sent[0].path.message_id, 'om_root');
+  assert.equal(sent[0].data.reply_in_thread, true);
+
+  // ② 回复但**不传** inThread → payload 与改动前**逐字节相同**（一个字段都不多）。
+  //    默认值必须是"不带"：不改动默认行为，才不会误伤别的调用点。
+  await service.sendText('oc_test_purchase_group', '只回复', 'chat_id', { replyToMessageId: 'om_root' });
+  assert.deepEqual(Object.keys(sent[1].data).sort(), ['content', 'msg_type']);
+  assert.equal(sent[1].data.reply_in_thread, undefined, '不传 inThread 就不许带这个字段');
+
+  // ③ 顶层 create（没有回复对象）→ 与改动前逐字节相同：`inThread` 对它没有意义。
+  await service.sendText('oc_test_purchase_group', '顶层', 'chat_id', { inThread: true });
+  assert.equal(sent[2].params.receive_id_type, 'chat_id');
+  assert.deepEqual(Object.keys(sent[2].data).sort(), ['content', 'msg_type', 'receive_id'],
+    '顶层消息的 data 与改动前完全一样（inThread 不该泄漏到 create 上）');
+
+  // ④ 图片同理：回复可以进话题，顶层 create 一个字段都不多。
+  await service.sendImage('oc_test_purchase_group', Buffer.from('png'), 'chat_id', { replyToMessageId: 'om_root', inThread: true });
+  assert.equal(sent[3].data.reply_in_thread, true);
+  await service.sendImage('oc_test_purchase_group', Buffer.from('png'), 'chat_id', {});
+  assert.deepEqual(Object.keys(sent[4].data).sort(), ['content', 'msg_type', 'receive_id']);
+
+  // ⑤ 群提示：有回复对象 → 进那个话题；没有 → 顶层，一个字段都不多。
+  await service.sendPurchaseGroupNotice('差额提示', { replyToMessageId: 'om_root' });
+  assert.equal(sent[5].path.message_id, 'om_root');
+  assert.equal(sent[5].data.reply_in_thread, true);
+  await service.sendPurchaseGroupNotice('队列提示');
+  assert.equal(sent[6].params.receive_id_type, 'chat_id');
+  assert.equal(sent[6].data.reply_in_thread, undefined);
+});
+
+test('C：定位回归钉子 —— 只凭 thread_id 反查回批次；映射没记过的话题明确"认不出"', async () => {
+  const { service, store, batchLocatorStore, sent } = makeGroupPurchaseService();
+  const accepted = await service.accept('supplier-report', 'rep_group');
+  const task = await waitForTask(store, accepted.taskId);
+  assert.equal(task.status, 'posted');
+  await waitFor('采购单发到群', async () => sent.length === 2);
+  await waitForGroupMappings(batchLocatorStore);
+
+  const locator = new PurchaseBatchLocator({ store: batchLocatorStore });
+  // 🔴 这是本任务最重要的回归点：改了发送方式之后，**只拿 thread_id** 仍要认出是哪一批。
+  //    她后续在话题里说到货时，事件里给的就是这个 thread_id（`purchase.group.thread.bound` 那条链）。
+  const located = await locator.resolve({ threadId: 'omt_sent_thread', text: '这批到了 2 双' });
+  assert.equal(located.status, 'matched');
+  assert.equal(located.source, 'thread_id', '话题定位必须只靠 thread_id 就命中');
+  assert.ok(located.batchNo, '反查回来的批次号不能为空');
+  assert.equal(located.batch.batch_kind, 'purchase-request', '话题里到货核对只认采购申请那一类（batch_kind）');
+  assert.equal(located.batch.detail_count, 1);
+  // 引用那条图（parent_id = 图的 message_id）也要命中：两条路都还在。
+  const byParent = await locator.resolve({ parentId: 'om_sent_1', threadId: 'omt_sent_thread' });
+  assert.equal(byParent.status, 'matched');
+  assert.equal(byParent.source, 'thread_id');
+  // 没记过的话题 → 明确认不出，**绝不猜最近一笔**。
+  const unknown = await locator.resolve({ threadId: 'omt_never_seen', text: '这批到了' });
+  assert.equal(unknown.status, 'not_found');
+  assert.equal(unknown.source, 'thread_id');
 });
 
 test('C：发到群的两条消息都能用 message_id 反查回批次（引用定位的落点）', async () => {

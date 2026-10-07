@@ -66,3 +66,5 @@
 | 资产 | 说明 |
 |---|---|
 | [prototypes/工作台页面架构原型.html](prototypes/工作台页面架构原型.html) | 工作台页面架构原型（静态 HTML，直接浏览器打开） |
+| [reports/purchase-image-layout-and-group-thread-2026-10-07.md](reports/purchase-image-layout-and-group-thread-2026-10-07.md) | ⭐ **采购单 / 退货单出图排版 + 图与文字落在同一个话题**（业务负责人 2026-10-07 真机测试后当面提）：① 底部「合计 N 条 / M 双」整条删掉，改成**副标题** `供应商 · 报货日期 · 合计 M 双`（只留双数）、**不显示报货批次**、退货单同样改；② 采购群的 `im.message.reply` 补上 `reply_in_thread: true`，@经办人那条进**图所在的那个话题**。含**验收标准**、`表事件触发能否建话题` 的官方文档查证、逐条对照与定位回归证据 |
+| [prototypes/purchase-order-2026-10-07.png](prototypes/purchase-order-2026-10-07.png) · [prototypes/purchase-return-2026-10-07.png](prototypes/purchase-return-2026-10-07.png) | 上面那次改动的**示例图**（采购单 / 退货单），由**项目自己的渲染器**生成（`server/scripts/render-purchase-image-prototype.js`）⇒ 示例图 = 她实际会收到的图 |
