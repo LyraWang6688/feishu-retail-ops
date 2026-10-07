@@ -57,6 +57,25 @@ test('a row whose size link is broken does not break the whole query', async () 
   assert.equal(sizeById.get('broken'), null);
 });
 
+// ⭐ 2026-10-08：赠品的落点从「销售明细」搬到「销售主表」⇒ 工作台这一列改读**那一单**。
+// 不改的话：明细那一列已被她整列删除，`asText` 会静默返回空串（这一列无声变空）。
+test('赠品列读的是销售主表那一行（整单一条，同单多行显示同一串）', async () => {
+  const gateway = gatewayFor({
+    salesDetail: [
+      { record_id: 'd1', fields: { 编号: ['p1'], 尺码: ['size_36'], 销售单号: ['o1'], 销售日: day, 成交金额: 100 } },
+      { record_id: 'd2', fields: { 编号: ['p2'], 尺码: ['size_37'], 销售单号: ['o1'], 销售日: day, 成交金额: 150 } },
+    ],
+    salesEntry: [{ record_id: 'o1', fields: {
+      销售单号: 'XSD-001', 资金状态: '已写入', 赠品: '鞋垫一双、袜子一双' } }],
+    product: [
+      { record_id: 'p1', fields: { 编号: '93827黑' } },
+      { record_id: 'p2', fields: { 编号: '2115米' } },
+    ],
+  });
+  const report = await createWorkbenchService(gateway).getTodaySales({ date: '2026-09-25' });
+  assert.deepEqual(report.rows.map((row) => row.gift), ['鞋垫一双、袜子一双', '鞋垫一双、袜子一双']);
+});
+
 test('live inventory resolves sizes from the link and filters by the numeric size', async () => {
   const gateway = gatewayFor({
     liveInventory: [

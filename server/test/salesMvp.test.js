@@ -80,7 +80,9 @@ test('mixed payment creates two receipts for the same order and retry is idempot
   await service.confirm(input);
   await service.confirm(input);
   assert.equal(gateway.records.get('salesDetail').length, 1);
-  assert.equal(gateway.records.get('salesDetail')[0].fields['赠品'], '鞋垫一双');
+  // ⭐ 2026-10-08：赠品的落点搬到**销售主表**；明细那一列已被她整列删除。
+  assert.equal(gateway.records.get('salesEntry')[0].fields['赠品'], '鞋垫一双');
+  assert.equal(gateway.records.get('salesDetail')[0].fields['赠品'], undefined);
   assert.equal(gateway.records.get('paymentRecord').length, 2);
   assert.deepEqual(gateway.records.get('paymentRecord').map((record) => record.fields['收款金额']), [150, 100]);
   assert.equal(gateway.records.get('inventoryLedger'), undefined);
@@ -258,7 +260,9 @@ test('voucher-only sale creates one pending receipt and no zero-value cash recei
   assert.equal(payments.length, 1);
   assert.equal(payments[0].fields['收款状态'], '待平台结算');
   assert.equal(payments[0].fields['收款时间'], undefined);
-  assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['赠品'], '袜子两双');
+  // ⭐ 2026-10-08：赠品在**销售主表**；明细行不带它（`posted.detailRecordIds[0]` 那一行）。
+  assert.equal((await gateway.get('salesEntry', 'order_1')).fields['赠品'], '袜子两双');
+  assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['赠品'], undefined);
   const progress = await new SalesProgressService({ gateway }).forOrder('order_1');
   assert.equal(progress.pendingAmount, 0);
   assert.equal(progress.platformPendingAmount, 85.4);
