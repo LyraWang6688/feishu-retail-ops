@@ -53,6 +53,10 @@ const SETTLED_TITLE_KEY = 'SALES_CONFIRM_DEAL_SETTLED_TITLE';
 const SETTLED_TEXT_KEY = 'SALES_CONFIRM_DEAL_SETTLED_TEXT';
 const SETTLED_CLOCK_KEY = 'SALES_CONFIRM_DEAL_SETTLED_CLOCK';
 const SETTLED_MESSAGE_KEY = 'SALES_CONFIRM_DEAL_SETTLED_MESSAGE';
+// ⭐ 成交那句说明的**续句**：这一单还有几双没交出去（交付只成了一半时）。
+//    为什么单独一个键：它是**可变的一句话**（有几双、要不要去工作台核对），
+//    与"销售单号 + 已成交"那句事实分开配；没有未交付时**一个字都不加**。
+const SETTLED_UNDELIVERED_KEY = 'SALES_CONFIRM_DEAL_SETTLED_UNDELIVERED';
 const ORDER_NO_FALLBACK_KEY = 'SALES_CONFIRM_DEAL_ORDER_NO_FALLBACK';
 const SHORT_STOCK_KEY = 'SALES_CONFIRM_DEAL_SHORT_STOCK';
 const ASKING_TOAST_KEY = 'SALES_CONFIRM_DEAL_ASKING_TOAST';
@@ -73,6 +77,12 @@ const DEFAULTS = Object.freeze({
   settledText: '✅ 已成交{clock}',
   settledClock: '（{clock} 点击）',
   settledMessage: '销售单号：{orderNo}；已成交。',
+  // ⭐ 成交后那句说明的续句：**还有几双没交出去**（`{count}` = 没交成的条数）。
+  //    为什么必须写出来（业务负责人 2026-10-07 的问题 4）：交付是**逐条**做的，
+  //    一单里"A 双交成功、B 双没货"时这一单仍算成交（部分交付，既有语义），
+  //    但如果卡面上只写"已成交"，那几双就从她的视线里消失了 —— 她只会在客户来取货时才发现。
+  //    所以：成交那行说明要把"仍未交付 N 双"带上；没有未交付时**一个字都不加**。
+  settledUndelivered: '仍未交付 {count} 双，请到工作台核对。',
   // 单号读不出来时的兜底说法（与终态卡既有那句同一口径，不显示一个空单号）。
   orderNoFallback: '请在销售主表核对',
   // ⭐ 预定单**货还没到**（交付时库存不足）时那句回话：她说要"明确说清"。
@@ -109,6 +119,9 @@ const resolveSalesConfirmDealConfig = (env = process.env) => {
     settledText: readVisible(SETTLED_TEXT_KEY, DEFAULTS.settledText),
     settledClock: read(SETTLED_CLOCK_KEY, DEFAULTS.settledClock),
     settledMessage: readVisible(SETTLED_MESSAGE_KEY, DEFAULTS.settledMessage),
+    // ⚠️ 与 `settledMessage` 同一处理（空串回退默认）：这句是"还有几双没交出去"的**唯一**提醒，
+    //    留空等于把那几双又藏起来 —— 那正是这次要修的问题。
+    settledUndelivered: readVisible(SETTLED_UNDELIVERED_KEY, DEFAULTS.settledUndelivered),
     orderNoFallback: readVisible(ORDER_NO_FALLBACK_KEY, DEFAULTS.orderNoFallback),
     shortStock: readVisible(SHORT_STOCK_KEY, DEFAULTS.shortStock),
     askingToast: readVisible(ASKING_TOAST_KEY, DEFAULTS.askingToast),
@@ -176,6 +189,7 @@ const SALES_CONFIRM_DEAL_DEFAULTS_BY_KEY = Object.freeze({
   [SETTLED_TEXT_KEY]: DEFAULTS.settledText,
   [SETTLED_CLOCK_KEY]: DEFAULTS.settledClock,
   [SETTLED_MESSAGE_KEY]: DEFAULTS.settledMessage,
+  [SETTLED_UNDELIVERED_KEY]: DEFAULTS.settledUndelivered,
   [ORDER_NO_FALLBACK_KEY]: DEFAULTS.orderNoFallback,
   [SHORT_STOCK_KEY]: DEFAULTS.shortStock,
   [ASKING_TOAST_KEY]: DEFAULTS.askingToast,
@@ -195,6 +209,7 @@ module.exports = {
   SETTLED_TEXT_KEY,
   SETTLED_CLOCK_KEY,
   SETTLED_MESSAGE_KEY,
+  SETTLED_UNDELIVERED_KEY,
   ORDER_NO_FALLBACK_KEY,
   SHORT_STOCK_KEY,
   ASKING_TOAST_KEY,

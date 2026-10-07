@@ -86,13 +86,18 @@ const fakeGateway = (seed = {}) => {
 };
 
 // 库存：记下每一次「销售减少」的调用（= 扣库存），并可以按用例让某一次失败（货还没到）。
+// ⚠️ `applySaleCalls` = **尝试**次数（含失败的）；`appliedSaleCalls` = **真的扣成了**的那些。
+//    "货没到"时交付引擎**会尝试**一次然后失败 ⇒ 只有后者能证明"库存没被扣"。
 const fakeInventory = ({ failWith = '' } = {}) => {
   const applySaleCalls = [];
+  const appliedSaleCalls = [];
   return {
     applySaleCalls,
+    appliedSaleCalls,
     applySale: async (input) => {
       applySaleCalls.push(input);
       if (failWith) throw new Error(failWith);
+      appliedSaleCalls.push(input);
       return { productRecordId: input.productRecordId, sampleConsumedQuantity: 0, consumedLiveRecordIds: [] };
     },
     getSaleResult: async () => null,
@@ -100,17 +105,27 @@ const fakeInventory = ({ failWith = '' } = {}) => {
 };
 
 // 假飞书 client：把真实的 patch / reply payload **原样抓下来**。
-const fakeClient = () => {
+// ⭐ `failPatches` = 让**前 N 次** patch 失败（模拟卡片被撤回 / 权限 / 网络抖动）——
+//    bug 2 要测的是「第一次 patch 失败后，再点一次能不能把卡面修好」，所以必须能模拟失败。
+//    `patchAttempts` = 每一次尝试（含失败的），`patched` = **真正成功**的那些。
+const fakeClient = ({ failPatches = 0 } = {}) => {
   const patched = [];
+  const patchAttempts = [];
   const replies = [];
+  let failuresLeft = failPatches;
   return {
-    patched, replies,
+    patched, patchAttempts, replies,
     im: {
       message: { reply: async (request) => {
         replies.push(request);
         return { code: 0, data: { message_id: `om_reply_${replies.length}`, thread_id: 'omt_1' } };
       } },
       v1: { message: { patch: async (request) => {
+        patchAttempts.push(request);
+        if (failuresLeft > 0) {
+          failuresLeft -= 1;
+          throw new Error('测试模拟：卡片已被撤回，这次 patch 失败');
+        }
         patched.push(request);
         return { code: 0, data: {} };
       } } },
@@ -164,10 +179,11 @@ const draftFor = ({ tradeTypeCode, owed, paidTotal = 0 }) => ({
   ...(owed > 0 ? { owed } : {}),
 });
 
-const makeHarness = ({ seed, draft, status = 'posted', inventoryOptions = {}, taskPatch = {} } = {}) => {
+const makeHarness = ({ seed, draft, status = 'posted', inventoryOptions = {},
+  inventory: injectedInventory, clientOptions = {}, taskPatch = {} } = {}) => {
   const gateway = fakeGateway(seed);
-  const inventory = fakeInventory(inventoryOptions);
-  const client = fakeClient();
+  const inventory = injectedInventory || fakeInventory(inventoryOptions);
+  const client = fakeClient(clientOptions);
   const store = tmpStore('confirm-deal-task-');
   const salesDelivery = new SalesDeliveryService({ gateway, inventory });
   const secondDelivery = new SecondDeliveryService({
@@ -213,6 +229,39 @@ const cardButtons = (card) => (card?.elements || [])
 
 const lastPatchedCard = (client) =>
   (client.patched.length ? JSON.parse(client.patched.at(-1).data.content) : null);
+
+// 绿色成交卡底部那句 note（= 卡片上"这单怎么了"的说明行）。
+const cardNote = (card) => (card?.elements || [])
+  .filter((element) => element.tag === 'note')
+  .flatMap((element) => (element.elements || []))
+  .map((child) => String(child?.content || ''))
+  .join('');
+
+// 这张卡是不是被 patch 成「已成交」的样子（标题 = 配置里的成交标题）。
+const isSettledCard = (client) => client.patched.some((item) =>
+  JSON.parse(item.data.content).header?.title?.content === resolveSalesConfirmDealConfig().settledTitle);
+
+// 抓结构化日志（`src/utils/logger.js`；info → stdout、warn/error → stderr），只旁听、照样转发。
+// 与 `larkMvpService.test.js` 里那个同名工具同源：用来钉住"落没落那条带 written:false 的 warn"。
+const captureLogs = async (fn) => {
+  const lines = [];
+  const patch = (stream) => {
+    const original = stream.write;
+    stream.write = function write(chunk, ...rest) {
+      const text = String(chunk);
+      if (text.includes('"event"')) lines.push(text);
+      return original.apply(stream, [chunk, ...rest]);
+    };
+    return () => { stream.write = original; };
+  };
+  const restoreOut = patch(process.stdout);
+  const restoreErr = patch(process.stderr);
+  try { return { value: await fn(), logs: lines.join('') }; } finally { restoreOut(); restoreErr(); }
+};
+
+const logEvents = (logs, event) => String(logs || '').split('\n')
+  .map((line) => { try { return JSON.parse(line); } catch { return null; } })
+  .filter((line) => line && line.event === event);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 一、判据：按钮**只在需要它的单子上**（AC-1 / AC-2 / AC-3）
@@ -356,6 +405,7 @@ test('幂等：同一张卡连点两次 → 第二次只回「已经成交」，
   assert.equal(first.toast.type, 'success');
   const writesAfterFirst = gateway.writes.length;
   const patchesAfterFirst = client.patched.length;
+  const taskAfterFirst = await store.get('sale_1');
 
   // 第二次（网络重试 / 她再点一次）
   const second = await clickConfirmDeal(service);
@@ -363,7 +413,12 @@ test('幂等：同一张卡连点两次 → 第二次只回「已经成交」，
   assert.match(second.toast.content, /已经成交|无需重复/);
   assert.equal(inventory.applySaleCalls.length, 1, '扣库存只许发生一次');
   assert.equal(gateway.writes.length, writesAfterFirst, '第二次一个字节都不许写');
-  assert.equal(client.patched.length, patchesAfterFirst, '第二次不该再 patch 一次');
+  // ⭐ bug 2 修复后**有意**的行为变化：第二次点击会**再 patch 一次卡面**（卡面自愈的机会）。
+  //    旧的断言（"第二次不该再 patch"）正是 bug 2 的成因 —— 它把"唯一一次自愈机会"关掉了。
+  //    ⚠️ 变的只有**卡片呈现**：业务表一个字节不写、本地任务记录也不再改（见下一条断言）。
+  assert.equal(client.patched.length, patchesAfterFirst + 1,
+    '第二次只补一次卡面 patch（自愈），不重复写库');
+  assert.deepEqual(await store.get('sale_1'), taskAfterFirst, '本地任务记录也不许再改（confirm_deal_at 保持首次）');
   assert.equal((await store.get('sale_1')).confirm_deal_status, CONFIRM_DEAL_TASK_STATUS.SETTLED);
 });
 
@@ -461,6 +516,195 @@ test('预定单货到了再点一次：这次真成交（上一次什么都没�
   assert.equal(gateway.records.get('salesDetail')[0].fields['履约状态'], '已交付');
   assert.equal(gateway.records.get('paymentRecord').find((row) => row.record_id === 'pay_pending')
     .fields['收款状态'], '已收款');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 四之一、🔴 bug 1「假成交」：**全款已收（没有待收款）+ 货没到**
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// 改动前：`completeDealFromCard` 的"先做货"闸门**挂在 `pending.length` 上** ⇒
+// 全款已收的单整段绕过它 → 交付失败只回一句话、返回值没有 `asked`/`reason`
+// → `larkMvpService` 判 `settled = !outcome.asked = true` → **假成交**：
+// toast 绿字「已成交：无待处理项」、卡面 patch 成「销售订单已成交」、按钮消失、
+// 任务记 `confirm_deal_settled`，而明细仍「未交付」、库存一次都没扣。
+// 既有用例只覆盖"有待收款"那支（上一节 `owed: 260`）⇒ 这个分支**没有测试**。
+
+test('🔴 bug1：全款已收 + 货没到 → **不许**说已成交、**卡不变灰**、零写库、明确提示', async () => {
+  const seed = baseSeed({ tradeTypeCode: 'SALE_PREPAID', fulfillmentStatus: '未交付',
+    owed: 0, paidReceived: 260 });
+  const { service, gateway, inventory, client, store, task } = makeHarness({
+    seed, draft: draftFor({ tradeTypeCode: 'SALE_PREPAID', paidTotal: 260 }),
+    inventoryOptions: { failWith: '库存里没有 40 码这一双' },
+  });
+  await createTask(store, task);
+
+  // 前提：**全款已收** —— 收款明细里没有任何「未收款」（这正是改动前漏掉的那支）。
+  assert.equal(seed.paymentRecord.filter((row) => row.fields['收款状态'] === '未收款').length, 0,
+    '前提：这一单没有任何待收款');
+  const detailWritesBefore = gateway.writes.filter((item) => item.table === 'salesDetail').length;
+  const paymentWritesBefore = gateway.writes.filter((item) => item.table === 'paymentRecord').length;
+
+  const { value: result, logs } = await captureLogs(() => clickConfirmDeal(service));
+  const config = resolveSalesConfirmDealConfig();
+
+  // ① toast **不许**假成功、**不许**出现「已成交」；必须是那句"到货后再点"（文案走配置）。
+  assert.notEqual(result.toast.type, 'success', '货没交出去就不许报成功');
+  assert.ok(!String(result.toast.content).includes('已成交'),
+    `toast 不许说已经成交：${result.toast.content}`);
+  assert.equal(result.toast.content, config.shortStock);
+  assert.match(result.toast.content, /到货入库/);
+  assert.match(result.toast.content, /确认成交/);
+  // 线程里也要有同一句明确提示（不是"还有 N 双未完成，请到工作台核对"那种含糊话）。
+  const replyText = JSON.parse(client.replies.at(-1).data.content).text;
+  assert.ok(replyText.includes(config.shortStock), `回话要说清货没到：${replyText}`);
+
+  // ② 卡片**不变灰**：不许 patch 出「已成交」标题（她到货后还要能再点）。
+  assert.ok(!isSettledCard(client), '货没到就不许把卡片写成已成交');
+  assert.equal(client.patched.length, 0, '一张卡都不许 patch');
+
+  // ③ **零写库**：明细 / 收款一条都没写，库存一次都没扣。
+  assert.equal(gateway.writes.filter((item) => item.table === 'salesDetail').length,
+    detailWritesBefore, '明细一个字节都不许写');
+  assert.equal(gateway.writes.filter((item) => item.table === 'paymentRecord').length,
+    paymentWritesBefore, '收款一个字节都不许写');
+  assert.equal(gateway.records.get('salesDetail')[0].fields['履约状态'], '未交付');
+  assert.equal(inventory.appliedSaleCalls.length, 0, '库存一次都不许真的扣（交付尝试失败，没扣成）');
+
+  // ④ 状态如实：`confirm_deal_short_stock`（**不是** settled），可排查。
+  assert.equal((await store.get('sale_1')).confirm_deal_status, CONFIRM_DEAL_TASK_STATUS.SHORT_STOCK);
+  // ⑤ 还落了**一条 warn**，且它自证"这次什么都没写"（`written: false`）。
+  const warnings = logEvents(logs, 'sales.confirm_deal.short_stock');
+  assert.equal(warnings.length, 1, '要落且只落一条 sales.confirm_deal.short_stock');
+  assert.equal(warnings[0].written, false, 'warn 必须自证"这次一个字节都没写"');
+  assert.equal(warnings[0].failed_count, 1);
+  assert.equal(warnings[0].task_id, 'sale_1');
+});
+
+test('bug1 对照：全款已收 + **货到了** → 正常成交（交付 + 扣库存 + 已成交）', async () => {
+  const seed = baseSeed({ tradeTypeCode: 'SALE_PREPAID', fulfillmentStatus: '未交付',
+    owed: 0, paidReceived: 260 });
+  const { service, gateway, inventory, client, store, task } = makeHarness({
+    seed, draft: draftFor({ tradeTypeCode: 'SALE_PREPAID', paidTotal: 260 }),
+  });
+  await createTask(store, task);
+
+  const result = await clickConfirmDeal(service);
+
+  assert.equal(result.toast.type, 'success');
+  assert.match(result.toast.content, /已成交/);
+  assert.match(result.toast.content, /交付 1 双/);
+  assert.equal(gateway.records.get('salesDetail')[0].fields['履约状态'], '已交付');
+  assert.equal(inventory.applySaleCalls.length, 1, '货到了要有且只有一次扣库存');
+  assert.ok(isSettledCard(client), '成交了卡片要变灰');
+  assert.equal((await store.get('sale_1')).confirm_deal_status, CONFIRM_DEAL_TASK_STATUS.SETTLED);
+  // 没有未交付 ⇒ 那句"仍未交付 N 双"**一个字都不许出现**（AC-8 的卡面逐字不变）。
+  assert.ok(!JSON.stringify(lastPatchedCard(client)).includes('仍未交付'));
+});
+
+test('bug1：货没到一次都没成交（连点两次都拦得住，且第二次仍零写库）', async () => {
+  const seed = baseSeed({ tradeTypeCode: 'SALE_PREPAID', fulfillmentStatus: '未交付',
+    owed: 0, paidReceived: 260 });
+  const { service, gateway, inventory, client, store, task } = makeHarness({
+    seed, draft: draftFor({ tradeTypeCode: 'SALE_PREPAID', paidTotal: 260 }),
+    inventoryOptions: { failWith: '库存里没有这一双' },
+  });
+  await createTask(store, task);
+
+  const first = await clickConfirmDeal(service);
+  assert.notEqual(first.toast.type, 'success');
+  const writesAfterFirst = gateway.writes.length;
+
+  const second = await clickConfirmDeal(service);
+  assert.notEqual(second.toast.type, 'success', '还是没货，就还是不许说成交');
+  assert.equal(second.toast.content, resolveSalesConfirmDealConfig().shortStock);
+  assert.equal(gateway.writes.filter((item) => item.table === 'salesDetail').length, 0);
+  assert.equal(gateway.writes.filter((item) => item.table === 'paymentRecord').length, 0);
+  // 两次加起来，**钱和货**一条都没写过；只允许「销售主表.库存状态」那一格被写（既有交付语义）。
+  assert.deepEqual([...new Set(gateway.writes
+    .filter((item) => item.table !== 'salesEntry').map((item) => item.table))], [],
+  '钱和货（收款明细 / 销售明细 / 库存流水 / 实时库存）一条都不许写');
+  assert.ok(gateway.writes.length >= writesAfterFirst, '写次数只可能持平或多出"库存状态"那一格');
+  assert.equal(inventory.appliedSaleCalls.length, 0, '库存一次都没真的扣');
+  assert.ok(!isSettledCard(client));
+});
+
+test('🔴 bug2：第一次 patch 失败后，**再点一次**能把卡面修好，且不重复写库', async () => {
+  const seed = baseSeed({ tradeTypeCode: 'SALE_PREPAID', fulfillmentStatus: '未交付',
+    owed: 0, paidReceived: 260 });
+  const { service, gateway, inventory, client, store, task } = makeHarness({
+    seed, draft: draftFor({ tradeTypeCode: 'SALE_PREPAID', paidTotal: 260 }),
+    // 第一次 patch 失败（卡片被撤回 / 权限 / 网络抖动）——
+    // 这正是 `settleConfirmDealCard` 注释里说的"唯一一次自愈机会"没抓住的那个场景。
+    clientOptions: { failPatches: 1 },
+  });
+  await createTask(store, task);
+
+  const first = await clickConfirmDeal(service);
+  assert.equal(first.toast.type, 'success', '成交本身是成功的（写库成功、只是卡面没改上）');
+  assert.equal(client.patched.length, 0, '前提：第一次 patch 掉了');
+  assert.equal(client.patchAttempts.length, 1);
+  const writesAfterFirst = gateway.writes.length;
+  const taskAfterFirst = await store.get('sale_1');
+  assert.equal(taskAfterFirst.confirm_deal_status, CONFIRM_DEAL_TASK_STATUS.SETTLED);
+
+  // 再点一次：走早退分支（任务已 settled）——**早退之前**必须补一次 patch。
+  const second = await clickConfirmDeal(service);
+
+  assert.equal(second.toast.type, 'info');
+  assert.match(second.toast.content, /已经成交|无需重复/);
+  // ① 卡面自愈：这一次真的 patch 成「已成交」，打在**被点的那张卡**上。
+  assert.equal(client.patched.length, 1, '早退分支也要补一次卡面 patch');
+  assert.equal(client.patched.at(-1).path.message_id, 'om_card');
+  const card = JSON.parse(client.patched.at(-1).data.content);
+  assert.equal(card.header.title.content, resolveSalesConfirmDealConfig().settledTitle);
+  assert.deepEqual(cardButtons(card), [], '修好之后按钮要消失');
+  // ② 幂等保住：**业务表一个字节都不写**、库存不重复扣、本地任务记录也不再改。
+  assert.equal(gateway.writes.length, writesAfterFirst, '第二次一个字节都不许写');
+  assert.equal(inventory.applySaleCalls.length, 1, '不许重复扣库存');
+  assert.deepEqual(await store.get('sale_1'), taskAfterFirst,
+    '本地任务记录不许再改（confirm_deal_at 保持首次点击的值）');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 四之三、成交后变绿那句说明：**别再丢掉「仍未交付 N 双」**
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// 交付**只成了一半**（A 双交出去、B 双没货）时这一单仍算成交（钱货各自记账，
+// 见上一份文档第 11 节第 3 条"部分交付"的既有语义）。但绿色卡片的说明里
+// **一个字都没提那几双** —— 她只看到"已成交"，那几双就这么从卡面上消失了。
+// 现在：说明 = `SETTLED_MESSAGE` ＋ `SETTLED_UNDELIVERED`（`{count}` = 没交付的条数，走配置）。
+
+test('成交后变绿那句说明里含「仍未交付 N 双」（部分交付时；全交付时一个字都不多加）', async () => {
+  const seed = baseSeed({ tradeTypeCode: 'SALE_PREPAID', fulfillmentStatus: '未交付',
+    owed: 0, paidReceived: 260 });
+  // 两条明细：第一条交得出去，第二条没货（"部分交付"）。
+  seed.salesDetail.push({ record_id: 'd_2', fields: {
+    销售单号: [ENTRY_ID], 编号: ['product_1'], 尺码: ['size_40'],
+    履约状态: '未交付', 成交金额: 260,
+  } });
+  let saleCalls = 0;
+  const inventory = {
+    applySaleCalls: [],
+    applySale: async (input) => {
+      inventory.applySaleCalls.push(input);
+      saleCalls += 1;
+      if (saleCalls === 2) throw new Error('库存里没有这一双');
+      return { productRecordId: input.productRecordId, sampleConsumedQuantity: 0, consumedLiveRecordIds: [] };
+    },
+    getSaleResult: async () => null,
+  };
+  const { service, client, store, task } = makeHarness({
+    seed, draft: draftFor({ tradeTypeCode: 'SALE_PREPAID', paidTotal: 260 }), inventory,
+  });
+  await createTask(store, task);
+
+  const result = await clickConfirmDeal(service);
+
+  assert.equal(result.toast.type, 'success');
+  assert.ok(isSettledCard(client), '部分交付仍算成交（既有的部分交付语义）');
+  const note = cardNote(lastPatchedCard(client));
+  assert.equal(note, '销售单号：XSD-1；已成交。仍未交付 1 双，请到工作台核对。',
+    `绿色卡的说明里必须带上"仍未交付 N 双"：${note}`);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
