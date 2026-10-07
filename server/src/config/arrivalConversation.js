@@ -47,6 +47,51 @@ const ARRIVAL_DIFF_TYPES = Object.freeze({
   LESS: 'less',
 });
 
+// ⭐ 「全到」类说法的**保守兜底词组表**（业务负责人 2026-10-07 批准修，逐字：「这个也可以做～」）。
+//
+// 【为什么有这一层】**真机 2026-10-07 21:52** 她自己在两个话题里各发了一句：
+//   · 202610072 话题发「**都到了**」   → 模型 `same:true` → 出卡片 → 确认后入库 12 行 ✅
+//   · 202610071 话题发「**都到货了**」 → 模型 `same:false` / `differences:[]`
+//     → 撞上 `purchaseArrivalConversationService` 的 `hasArrivalContent` 判据
+//     → `purchase.arrival.reconcile.no_arrival_content` → **不出卡片** ❌
+//   两句话**意思完全一样**，只多了「货」两个字 ⇒ **说法差异导致的漏判**。
+// ⇒ 两层一起上：① 提示词把这些说法显式列成等价（模型层，`services/doubaoService.js`）；
+//   ② **这一层就是②：代码侧的兜底** —— 真机那次就是**模型没认出来**，
+//      光改提示词挡不住第二次（模型不是确定性的）。
+//      ⭐ 一句话：**这是为了兜住模型的漏判**，不是新业务规则。
+//
+// ⚠️ 这**不是**关键词匹配业务：它只在**模型什么都没给出来**（`same !== true` 且
+//   `differences` 为空）时补一句"这是全到"，绝不覆盖模型给出的任何具体结论。
+//
+// 🔴 **绝不放宽"有具体内容"的情形**（判据一个字不动，只让"全到"的说法被认出来）：
+//   · 只有**整句**（去空白/标点后）能被下面这些词**完整切分**才算"裸的全到说法"；
+//   · 句子里出现**数字 / 中文数量字 / 单位 / 货号**（`concreteContentPattern` ＋ `numberWords`
+//     ＋ `quantityUnitWords`）→ 一律不兜底；
+//   · 出现**否定**（`negationWords`）或**疑问**（`questionMarkers`）→ 一律不兜底；
+//   · 清单外的任何字 → 一律不兜底。
+//   ⇒ 「到了 2 双」「8230 到了 1 双」「还有一双没到」**必须**仍走原来的差异比对/追问 ——
+//      被这层吞掉就会按申请数**整单入库**，那是写错账。
+const ARRIVAL_ALL_PRESENT_PHRASES = Object.freeze({
+  // 「全 / 都 / 齐」这一族 = "整批全到"的意思标记（至少出现一个才算"全到"）。
+  completeWords: Object.freeze(['全部', '整批', '全都', '全齐', '收齐', '全', '都', '到齐', '齐']),
+  // 「到」这一族 = 到货动词（至少出现一个）。
+  // ⚠️ `到齐` / `全齐` / `收齐` / `齐` 同时属于两族：它们本身就同时表达了"到"和"齐"。
+  arrivalWords: Object.freeze(['到齐', '到货', '收到', '到了', '来了', '全齐', '收齐', '齐', '到']),
+  // 允许多出来的语气 / 收尾词（**不含任何数量信息**；「完毕」是她说过的旧收尾话术）。
+  fillerWords: Object.freeze(['已经', '完毕', '了', '啦', '呢', '啊', '哦', '呀', '嘛', '哈']),
+  // 出现这些 → 不兜底（她在说"没到 / 还差 / 缺"）。
+  negationWords: Object.freeze(['没', '未', '不', '少', '差', '缺', '剩', '退', '漏', '空']),
+  // 出现这些 → 不兜底（那是**问句**，不是"到货反馈"）。
+  // ⚠️ 刻意**不含**「吧」：带了它就分不清"都到了吧？"是陈述还是发问，宁可交给模型。
+  questionMarkers: Object.freeze(['?', '？', '吗']),
+  // 中文数字 / 数量字（有它们就是"有具体数量"）。
+  numberWords: Object.freeze(['零', '一', '二', '两', '三', '四', '五', '六', '七', '八', '九', '十', '半', '几']),
+  // 数量单位（「双」是鞋的业务单位；货号里通常还有阿拉伯数字/字母 → 见下面那条正则）。
+  quantityUnitWords: Object.freeze(['双', '个', '件', '只', '箱', '码', '号', '款', '色', '对']),
+  // 阿拉伯数字 / 拉丁字母（货号形如 XHB8095 / 8230）—— 有它们就是"有具体内容"。
+  concreteContentPattern: '[0-9０-９A-Za-z]',
+});
+
 const DEFAULTS = Object.freeze({
   enabled: true,
   // 交给模型的原话上限（字符）。超长只截断投喂，本地记录原样保留。
@@ -179,6 +224,7 @@ module.exports = {
   ARRIVAL_CONVERSATION_ACTIONS,
   ARRIVAL_BATCH_KINDS,
   ARRIVAL_DIFF_TYPES,
+  ARRIVAL_ALL_PRESENT_PHRASES,
   ARRIVAL_CONVERSATION_DEFAULTS: DEFAULTS,
   resolveArrivalConversationConfig,
   parseExplicitBoolean,
