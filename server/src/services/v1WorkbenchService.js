@@ -190,7 +190,11 @@ const createWorkbenchService = (gateway, options = {}) => {
           quantity,
           receivable_amount: asOptionalNumber(fieldValue(schema, 'salesDetail', record, 'actualAmount')),
           list_amount: listUnitPrice === null ? null : Math.round(listUnitPrice * quantity * 100) / 100,
-          gift: asText(schema, 'salesDetail', record, 'gift'),
+          // ⭐ 2026-10-08：赠品的落点从「销售明细」搬到「销售主表」⇒ 工作台这一列
+          //   改读**这张明细所属的那一单**（`order` 是上面已经读到的记录，**零额外请求**）。
+          //   ⚠️ 不改 = 明细那一列已被她删除 ⇒ `asText` 静默返回空串，工作台这一列**无声变空**。
+          //   语义注意：赠品是**整单一条**，所以同一单的多行明细会显示**同一个**赠品串。
+          gift: asText(schema, 'salesEntry', order, 'gift'),
           payment_method: [...new Set(receiptRows.map((payment) => relationLabel(schema, 'paymentMethod', paymentsById,
             asLinks(schema, 'paymentRecord', payment, 'method'), 'name')))].filter(Boolean).join('＋') || '未收款',
           // 取值来源走配置：**只读「资金状态」**（旧「确认状态（旧）」已被业务负责人整列删除，

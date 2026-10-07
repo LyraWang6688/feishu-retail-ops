@@ -40,10 +40,13 @@ test('sales schema matches the live three-table field snapshot', () => {
     // ⚠️ 2026-10-06 晚她又在生产「销售主表」加了**「消息链接」**一列
     //（她的原话：「我在多维表格的销售主表里加了一列叫做**消息链接**，可以写入这里～」）
     // —— 快照随手同步（`salesEntry.messageLink` 指的就是它，发销售卡片时写深链）。
+    // ⭐ 2026-10-08：她又在销售主表加了**「赠品」**一列（文本），并**把「销售明细.赠品」整列删掉**
+    //（逐字：「写入的落点放在销售主表里的赠品，销售明细没有赠品了」）—— 快照同步：
+    // 赠品只在 salesEntry 这一侧，明细那一侧**不能再有它**（下面单独钉住）。
     salesEntry: ['收款状态', '录单日', '确认状态', '销售单号', '解析状态', '失败原因',
       '销售状态', '资金状态', '库存状态',
-      '录单人', '解析结果摘要', '原话', '待交付数量', '交付数量', '交易类型', '消息链接'],
-    salesDetail: ['销售单价', '履约状态', '销售明细ID', '销售单号', '销售日', '赠品', '尺码', '成交金额', '编号', '配品', '交易类型'],
+      '录单人', '解析结果摘要', '原话', '待交付数量', '交付数量', '交易类型', '消息链接', '赠品'],
+    salesDetail: ['销售单价', '履约状态', '销售明细ID', '销售单号', '销售日', '尺码', '成交金额', '编号', '配品', '交易类型'],
     // 「支付方式」已被产品负责人改名为「交易方式」，并新增了「交易方向」。
     paymentRecord: ['交易方式', '关联销售单', '收款金额', '收款时间', '收款状态', '交易方向'],
   };
@@ -53,6 +56,9 @@ test('sales schema matches the live three-table field snapshot', () => {
     }
   }
   assert.equal(V1_BITABLE_SCHEMA.tables.paymentRecord.tableName, '收款明细');
+  // ⭐ 赠品的落点（2026-10-08）：**只在销售主表**；明细不再有 `gift` 映射。
+  assert.equal(V1_BITABLE_SCHEMA.tables.salesEntry.fields.gift, '赠品');
+  assert.equal(V1_BITABLE_SCHEMA.tables.salesDetail.fields.gift, undefined);
 });
 
 test('relation and display helpers support Feishu record field shapes', () => {

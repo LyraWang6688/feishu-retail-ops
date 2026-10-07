@@ -7,6 +7,9 @@ const { SalesProgressService, cents } = require('./salesProgressService');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { sellableKindOf } = require('../config/sellableKinds');
 const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
+// ⭐ 赠品的落点/归一（业务负责人 2026-10-08：落点从「销售明细」搬到「销售主表」）。
+//   分隔符与占位文案都在那份 config 里；这里只负责按它的规则算与写。
+const { giftTextOfItem, mergeGiftTexts } = require('../config/salesGift');
 const { SalesStatusWriter } = require('./salesStatusWriter');
 const { logInfo, logWarn, logError } = require('../utils/logger');
 const { mergeCorrelation } = require('../utils/correlationFields');
@@ -122,7 +125,9 @@ class SalesOrderService {
           kind: kind.key,
           linkField: kind.detailLinkField,
           actualAmount: actualAmountCents / 100,
-          gift: item.gift ? String(item.giftDescription || '有赠品').trim() : '',
+          // ⭐ 一件明细自己的赠品文本（有描述用描述；`gift=true` 没描述用占位；否则空）。
+          //   ⚠️ 它**不再写进明细**（那一列已被她删掉），只在下面合并成**主表那一列**。
+          gift: giftTextOfItem(item),
           // 配品当场结清、不跟踪交付，直接写成已交付，不会进待交付列表也不会扣库存。
           fulfillmentStatus: kind.requiresFulfillment ? '未交付' : '已交付',
           // **这一行自己的**交易类型关联（单选）。
@@ -172,8 +177,9 @@ class SalesOrderService {
           (item.sizeRecordId
             ? singleLinked(record.fields?.[table.size], item.sizeRecordId)
             : linkedRecordIds(record.fields?.[table.size]).length === 0) &&
-          Number(textValue(record.fields?.[table.actualAmount])) === item.actualAmount &&
-          textValue(record.fields?.[table.gift]) === item.gift);
+          Number(textValue(record.fields?.[table.actualAmount])) === item.actualAmount);
+        // ⚠️ 明细这一侧**不再比赠品**（2026-10-08）：那一列已被她删除，
+        //   赠品现在是**整单一条**、比在销售主表上（见下面的 gift 段）。
         if (knownId && !match) throw new Error(`已记录的销售明细 ${knownId} 与当前草稿不一致，已停止重试`);
         if (match) {
           used.add(match.record_id);
@@ -183,6 +189,17 @@ class SalesOrderService {
       if (existing.some((record) => !used.has(record.record_id))) {
         throw new Error('销售主表已有与当前草稿不一致的明细，已停止自动重试');
       }
+      // ⭐ 赠品：一单一条，落在**销售主表那一行**（2026-10-08）。
+      //   合并规则（按明细顺序 / 拆单个赠品 / 去重 / 用「、」连）见 `config/salesGift`。
+      //   幂等/回读比对也从"明细的赠品列"改成"主表的赠品串"：
+      //   主表已有非空、且与这次草稿算出来的**不同** ⇒ 判不一致、停止重试（草稿变了要能被识别）。
+      const orderGift = mergeGiftTexts(expected.map((item) => item.gift));
+      const existingGift = textValue(entry?.fields?.[entryFields.gift]).trim();
+      if (existingGift && existingGift !== orderGift) {
+        throw new Error('销售主表已记录的赠品与当前草稿不一致，已停止重试');
+      }
+      // 写空也要写（与 2026-10-08 之前的明细语义一致：没有赠品 ⇒ 这一列是**空串**）。
+      await this.gateway.update('salesEntry', salesEntryRecordId, { gift: orderGift }, { correlation });
       detailPlan = rows.length;
       for (const row of rows) {
         if (!row.recordId) {
@@ -191,7 +208,8 @@ class SalesOrderService {
             // 鞋写「编号」，配品写「配品」——字段由可售品配置声明。
             [row.item.linkField]: relation(row.item.linkRecordId),
             ...(row.item.sizeRecordId ? { size: relation(row.item.sizeRecordId) } : {}),
-            gift: row.item.gift,
+            // 🔴 明细**不带**赠品（那一列 2026-10-08 已被她整列删除；带了会抛「未配置语义字段」）。
+            //    赠品写在上面那段：销售主表那一行，一单一条。
             actualAmount: row.item.actualAmount, fulfillmentStatus: row.item.fulfillmentStatus,
             // ⭐ 这一行**自己的**「行为管理」记录（单选）；解析不到时退回主表那条。
             ...(row.item.tradeTypeRecordId ? { tradeType: relation(row.item.tradeTypeRecordId) } : {}),
