@@ -692,7 +692,9 @@ class PurchaseArrivalConversationService {
       created = await this.gateway.create('purchaseArrival', baseValues, { correlation });
     }
     const recordId = created?.recordId || '';
-    if (!recordId) throw new Error('「采购到货」新建记录没有返回 record_id');
+    // ⚠️ 表名同步（2026-10-07 晚）：「采购到货」→「到货验收」。这句错误原文会被上层
+    //    拼进 `replies.arrivalCreateFailed`（**她看得见的回话**），所以旧表名一个字都不留。
+    if (!recordId) throw new Error('「到货验收」新建记录没有返回 record_id');
     logInfo('purchase.arrival.reconcile.arrival_created', {
       task_id: task.task_id, arrival_record_id: recordId, batch_no: task.batch_no || '',
       // 明写"没写到货日"：这是口径，也是将来别人改这段代码时的绊线。

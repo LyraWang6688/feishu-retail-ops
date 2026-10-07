@@ -408,8 +408,16 @@ test('③ ④ 库存流水按实际数扣（一尺码一行、行为=采购减�
   );
   assert.ok(ledger.every((row) => JSON.stringify(row.fields.库存行为) === JSON.stringify(['beh_return'])));
   assert.ok(ledger.every((row) => JSON.stringify(row.fields.编号).includes('prod_9') || JSON.stringify(row.fields.编号).includes('prod_66851')));
-  // 退货不写别的表：不建报货批次、不写采购到货/入库。
-  assert.equal(gateway.records.purchaseOrderBatch, undefined);
+  // ⚠️ 2026-10-07 晚**口径变更**（业务负责人：「退货批次也……落到报货批次表里」）：
+  //    退货**要**建「报货批次」一行（退货单 PNG 的落点，只写 批次号 + 幂等键、
+  //    **到货状态留空**）。原来这条断言钉的是"不建"。
+  //    ⚠️ 这不是放宽：断言改成"恰好一行、号与本包一致、到货状态这个键**不许出现**"。
+  assert.equal(gateway.records.purchaseOrderBatch.length, 1, '这一包只建一行');
+  assert.equal(gateway.records.purchaseOrderBatch[0].fields.报货批次号, '202610061',
+    '用的是这一包在「信息填写」上的那个号');
+  assert.equal(Object.prototype.hasOwnProperty.call(gateway.records.purchaseOrderBatch[0].fields, '到货状态'), false,
+    '退货行不写「到货状态」');
+  // 退货仍然**不写**到货/入库那两张表。
   assert.equal(gateway.records.purchaseArrival, undefined);
   assert.equal(gateway.records.purchaseInbound, undefined);
 });
