@@ -34,6 +34,8 @@ const {
   renderSalesMissingInfo,
   formatItemLabel,
 } = require('../src/config/salesMissingInfoText');
+// 解析层那句「成交额压根没解析出来」的**生产者常量本身**（形状守卫直接用常量，不手抄）。
+const { SALES_DEPOSIT_TOTAL_UNKNOWN } = require('../src/config/salesDepositTerms');
 
 // 群里那条回复要走群上下文（私聊入口已移除）。
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
@@ -74,21 +76,25 @@ const HER_PARSED_MISSING_FIELDS = [
   'items[1].actual_amount',
   'payments[1].method',
 ];
-// 接线层再追加 2 条（`processSalesTask`：缺金额泛化句 + 已收超过成交金额）。
+// 接线层再追加 1 条（`processSalesTask`：缺金额泛化句）。
+// ⚠️⭐ **2026-10-07 晚去掉了一条**：改动前这里还有
+//   「已收金额和待平台结算金额不能超过本单成交金额」——
+//   而这一单里 `items` **一件都没有成交金额**（接线层的 `actualTotal` = 0）⇒ 那句话是**误导**：
+//   成交额压根是空的，却说她"已收比成交额多"。
+//   现在接线层那句只在 `actualTotal > 0`（成交额**有值**）时才报 —— 收严哨兵见本文件 AC-⑤。
+//   她这条真实场景的回复因此从 4 行变成 **3 行**，少的正是那句误导。
 const HER_ALL_MISSING_FIELDS = [
   ...HER_PARSED_MISSING_FIELDS,
   '请逐件说明成交金额',
-  '已收金额和待平台结算金额不能超过本单成交金额',
 ];
 const HER_ITEMS = [{ item_no: '31678', size: 40, quantity: 1 }, { item_no: '6681-1', size: 42, quantity: 1 }];
 
 // 改完之后她**应该**看到的那段（逐字）。改文案 = 先改这里，再看测试是不是"红"。
 const HER_EXPECTED_TEXT = [
-  '销售信息还缺 4 处，请照着补一下～',
+  '销售信息还缺 3 处，请照着补一下～',
   '1. 这一单里哪一件是付了定金的那件，我有点拿不准～请对着「31678 40码、6681-1 42码」逐件说清楚哪一件付了定金、每双多少钱～',
   '2. 请给每双鞋都说一个成交金额：31678 40码、6681-1 42码',
   '3. 收的那笔钱没说收款方式，请补一句是微信、现金还是支付宝～',
-  '4. 已收的钱比这单成交金额还多，请核对一下收了多少～',
 ].join('\n');
 
 const renderHer = (missingFields = HER_ALL_MISSING_FIELDS, items = HER_ITEMS) =>
@@ -116,12 +122,12 @@ test('① 她那条的回复 ≠ 改动前那串"、"拼接（防止回退）', 
 test('② 一次只说一件事：分行 + 行内不再用「；」串起来', () => {
   const { text, lines, intro } = renderHer();
   assert.equal(text, HER_EXPECTED_TEXT);
-  assert.equal(intro, '销售信息还缺 4 处，请照着补一下～');
-  assert.equal(lines.length, 4, '6 条缺项收成 4 件事（同类合并）');
+  assert.equal(intro, '销售信息还缺 3 处，请照着补一下～');
+  assert.equal(lines.length, 3, '5 条缺项收成 3 件事（同类合并）');
   assert.doesNotMatch(text, CHAINED_CLAUSE_PATTERN, `文案里还有「；」串句：\n${text}`);
   // 结构：第一行是汇总，后面每件事一个编号行（多行的那件事只占一个编号）。
   const numbered = text.split('\n').filter((line) => /^\d+\. /.test(line));
-  assert.equal(numbered.length, 4, `编号行数应为 4：\n${text}`);
+  assert.equal(numbered.length, 3, `编号行数应为 3：\n${text}`);
   numbered.forEach((line, index) => {
     assert.ok(line.startsWith(`${index + 1}. `), `编号应连续递增：${line}`);
   });
@@ -129,7 +135,7 @@ test('② 一次只说一件事：分行 + 行内不再用「；」串起来', (
   // ⚠️ #234 之后这一支**只有开头那句汇总**在外面 —— 旧那句"分开发送"带一行例子（续行），
   //    它已经随生产者一起退场（见本文件 `HISTORICAL_MISSING_FIELD_SHAPES`）。
   const continuation = text.split('\n').filter((line) => !/^\d+\. /.test(line));
-  assert.deepEqual(continuation, ['销售信息还缺 4 处，请照着补一下～']);
+  assert.deepEqual(continuation, ['销售信息还缺 3 处，请照着补一下～']);
 });
 
 // ── ③ 具体动作 ───────────────────────────────────────────────────────────────
@@ -190,6 +196,43 @@ const runHerTask = async () => {
   return { task, messages, cards, calls };
 };
 
+/**
+ * 通用版（AC-④ / AC-⑤ 用）：一条原话 + 一个识别器（**真的**走 `normalizeSalesResult`）
+ * → 跑**真实的** `processSalesTask` → 看它到底回了她什么。
+ * ⚠️ 缺项时不该发确认卡片 / 不该走 replyCard —— 走到了就直接炸。
+ */
+const runSalesTask = async ({ taskId, text, parsed }) => {
+  const store = makeStore();
+  const messages = [];
+  const cards = [];
+  const calls = [];
+  const service = new LarkMvpService({
+    client: {},
+    gateway: {
+      table: () => ({ tableId: 'tbl_sales_entry', fields: {} }),
+      listAll: async () => [],
+      get: async () => null,
+      validateTables: async () => [],
+      create: async (tableKey, fields) => { calls.push({ op: 'create', tableKey, fields }); return { recordId: `entry_${taskId}` }; },
+      update: async (tableKey, recordId, fields) => { calls.push({ op: 'update', tableKey, recordId, fields }); },
+    },
+    references: {}, posting: {},
+    recognizer: { parseSalesText: async (source) => parsed(source) },
+    store,
+  });
+  service.sendTaskCard = async () => { cards.push('card'); throw new Error('缺项时不该发确认卡片'); };
+  service.sendTaskText = async (_task, message) => { messages.push(message); };
+  service.replyCard = async () => { throw new Error('不该走 replyCard'); };
+
+  await store.create({
+    task_id: taskId, type: 'sale', status: 'received',
+    chat_type: 'group', chat_id: GROUP_CHAT_ID, message_id: `om_${taskId}`,
+    sender_open_id: 'ou_1', sent_at: Date.now(), original_text: text,
+  });
+  await service.processSalesTask(taskId);
+  return { task: await store.get(taskId), messages, cards, calls };
+};
+
 test('④ 判据没变：她的输入仍然 needs_info、仍然不回卡片、仍然不入账', async () => {
   const { task, messages, cards, calls } = await runHerTask();
   assert.equal(task.status, 'needs_info');
@@ -239,6 +282,10 @@ const KNOWN_MISSING_FIELD_SHAPES = [
   '请明确本次定金的支付方式',
   '成交价与定金加尾款不一致，请核对',
   '请说明尾款是否已支付；若尚未支付，请写“尾款以后付”',
+  // 解析层：**2026-10-07 晚新增**（只说了定金、没说尾款 ⇒ 成交额还没定）。
+  // ⚠️ 这一条**不是手抄的**：逐字 = `config/salesDepositTerms.SALES_DEPOSIT_TOTAL_UNKNOWN`
+  //    （生产者改了字，这里跟着变；AC-④ 那条用例也直接拿常量 compare）。
+  SALES_DEPOSIT_TOTAL_UNKNOWN,
   // 解析层：**#234 新增**（`config/salesTradeTypePolicy.SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS`，
   // 逐字 = 那个常量本身；⑤-#234 那条用例直接拿常量来 compare，保证这里不是手抄的近似句）。
   '这一单里哪一件是付了定金的那件，我有点拿不准，请逐件说明哪一件付了定金、每双多少钱～',
@@ -307,6 +354,8 @@ const MAPPED_MISSING_FIELD_SHAPES = [
   '成交价与定金加尾款不一致，请核对',
   '请说明尾款是否已支付；若尚未支付，请写“尾款以后付”',
   '这一单里哪一件是付了定金的那件，我有点拿不准，请逐件说明哪一件付了定金、每双多少钱～',
+  // ⭐ 2026-10-07 晚新增：只说了定金、没说尾款 ⇒ 成交额还没定（原话被翻成"人话"那一句）。
+  SALES_DEPOSIT_TOTAL_UNKNOWN,
   // ⭐ **历史形状**（生产者已删）—— 它的映射是**有意保留**的兜底，所以仍属"被翻译"那一类。
   '定金单暂只支持一条明细；多双请分开说明，或逐双给出成交金额',
   // 解析层：items / payments 的机器字段（**index 0 与 1 都在**）
@@ -493,6 +542,78 @@ test('⑤ #231 那句带数字的「总额 vs 各件之和」原样保留，只�
   assert.match(genericOnly.lines[0], /对不上，请核对一下/);
 });
 
+// ── AC-④ / AC-⑤：后端提示**必须分清两件事**（2026-10-07 22:59 真机）────────────────
+// 真机：她发「定金交了 100 元，微信，下次收120元」，成交额**压根没解析出来**（空），
+// 后端却回了「**已收的钱比这单成交金额还多**，请核对一下收了多少～」—— 那是误导。
+//
+// ⭐ 两件事分开：
+//   ① 成交额没解析出来（`actualTotal` = 0）→ 问「请说明这单成交金额（或定金+尾款分别是多少）」；
+//   ② 真的已收 > 成交额（成交额**有值**且确实小于已收）→ 才报「已收的钱比这单成交金额还多」。
+
+test('AC-④ 成交额没解析出来（只说了定金）→ 只剩一句「请说明这单成交金额…」+ 她的清单', () => {
+  const rendered = renderSalesMissingInfo({
+    // 解析层给的两条：这一件没金额 + 「成交额还没定」（生产者常量本身）。
+    missingFields: ['items[0].actual_amount', SALES_DEPOSIT_TOTAL_UNKNOWN],
+    items: [{ item_no: '26632', size: 37, quantity: 1 }],
+    payments: [{ amount: 100, method: '微信' }],
+  });
+  assert.equal(rendered.lines.length, 1, '两句话问的是同一件事（这单多少钱）⇒ 只留一行');
+  assert.equal(rendered.lines[0], '请说明这单成交金额（或定金+尾款分别是多少）：26632 37码',
+    '留下的那句要带定金口径，并且**继承她的清单**（她仍然看得见是哪一双）');
+  assert.doesNotMatch(rendered.text, /已收的钱比这单成交金额还多/,
+    '成交额是空的 ⇒ 绝不许说"已收比成交额多"');
+  // 生产者的原话（机器清单里那一串）不许原样漏给她。
+  assert.ok(!rendered.text.includes(SALES_DEPOSIT_TOTAL_UNKNOWN));
+});
+
+test('AC-④ 走**真实的 processSalesTask**：只说了定金 → 回复里没有「已收比成交额多」', async () => {
+  const { messages } = await runSalesTask({
+    taskId: 'sale_deposit_only',
+    text: '定制一双 37 码的 26632，定金交了 100 元，微信',
+    parsed: (text) => normalizeSalesResult({
+      intent: 'sale',
+      items: [{ item_no: '26632', size: 37, quantity: 1 }],
+      payments: [{ amount: 100, method: '微信' }],
+      agreed_total: '',
+    }, text),
+  });
+  assert.equal(messages.length, 1);
+  assert.doesNotMatch(messages[0], /已收的钱比这单成交金额还多/,
+    `成交额没解析出来，不该说她"已收比成交额多"：\n${messages[0]}`);
+  assert.match(messages[0], /请说明这单成交金额（或定金\+尾款分别是多少）：26632 37码/);
+  // 「只有定金不能当成交金额」照旧：它仍然只是**问她**，不是把 100 当成交额。
+  assert.match(messages[0], /^销售信息还缺 1 处，请照着补一下～/);
+});
+
+test('AC-⑤ 哨兵：**真的**已收 > 成交额（成交额有值）→ 仍然报原来那句', async () => {
+  const { messages } = await runSalesTask({
+    taskId: 'sale_received_exceeds',
+    text: '26632 37码一双，定金 100 微信，又收了 50 现金',
+    // 这一条直接给**归一化后**的形状（判据在接线层：成交额 100 **有值**、已收 150 **确实更多**）。
+    parsed: async () => ({
+      intent: 'sale',
+      trade_type: '现货',
+      trade_type_code: 'SALE_CASH',
+      trade_type_codes: ['SALE_CASH'],
+      items: [{
+        item_no: '26632', size: 37, quantity: 1, actual_amount: 100,
+        trade_type: '现货', trade_type_code: 'SALE_CASH',
+      }],
+      payments: [{ amount: 100, method: '微信' }, { amount: 50, method: '现金' }],
+      agreed_total: 100,
+      owed: '',
+      total_paid: 150,
+      total_covered: 150,
+      payment_method: '微信＋现金',
+      missing_fields: [],
+      voucher_policy_blocked: false,
+    }),
+  });
+  assert.equal(messages.length, 1);
+  assert.match(messages[0], /已收的钱比这单成交金额还多，请核对一下收了多少～/,
+    `成交额有值（100）且确实小于已收（150）⇒ 收严哨兵：原来那句必须还在：\n${messages[0]}`);
+});
+
 // ── ⑥ 配置先行 ───────────────────────────────────────────────────────────────
 test('⑥ 文案全部可配：改环境变量就改文案（含空串回落默认）', () => {
   // 行首编号那条文案在配置里带一个尾随空格；⚠️ 环境变量层的值会被 `trim()`
@@ -518,7 +639,7 @@ test('⑥ 文案全部可配：改环境变量就改文案（含空串回落默�
   assert.match(result.text, /2、成交金额还没说：31678 40码/);
   assert.match(result.text, new RegExp(`3、${SALES_MISSING_INFO_DEFAULTS.depositAmount}`));
   // 默认配置（不传 env）不受影响。
-  assert.match(renderHer().text, /^销售信息还缺 4 处，请照着补一下～/);
+  assert.match(renderHer().text, /^销售信息还缺 3 处，请照着补一下～/);
 });
 
 test('⑥ 一件货的说法也可配（货号 + 尺码 / 只有货号 / 只有尺码 / 都取不到）', () => {

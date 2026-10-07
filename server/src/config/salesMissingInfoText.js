@@ -36,6 +36,10 @@
 //    —— 2026-10-06 的 dotenv 加载顺序事故就是这么来的。
 
 const { readRaw, readString } = require('./envValue');
+// ⭐ 解析层那句「成交额压根没解析出来」的**生产者原话**（唯一来源，不手抄）。
+//    它的字头就是下面 `TEXT_TOPIC_PATTERNS` 里 `unknown_total` 那条的识别依据 ——
+//    生产者改了字，映射会**立刻失配**（守门用例盯着），所以这里刻意 require 常量而不是抄一遍。
+const { SALES_DEPOSIT_TOTAL_UNKNOWN } = require('./salesDepositTerms');
 
 const PREFIX = 'SALES_MISSING_INFO_';
 
@@ -44,6 +48,9 @@ const KEYS = Object.freeze({
   intro: `${PREFIX}INTRO_TEXT`,
   itemAmount: `${PREFIX}ITEM_AMOUNT_TEXT`,
   itemAmountGeneric: `${PREFIX}ITEM_AMOUNT_GENERIC_TEXT`,
+  // ⭐ 「成交额压根没解析出来」（只说了定金、没说尾款）时的两句 —— 见 `DEFAULTS` 里的长注释。
+  itemAmountUnknownTotal: `${PREFIX}ITEM_AMOUNT_UNKNOWN_TOTAL_TEXT`,
+  unknownTotal: `${PREFIX}UNKNOWN_TOTAL_TEXT`,
   itemFieldItemNo: `${PREFIX}ITEM_NO_TEXT`,
   itemFieldSize: `${PREFIX}ITEM_SIZE_TEXT`,
   itemFieldQuantity: `${PREFIX}ITEM_QUANTITY_TEXT`,
@@ -95,6 +102,16 @@ const DEFAULTS = Object.freeze({
   itemAmount: '请给每双鞋都说一个成交金额：{items}',
   // 只有泛化那句、没有具体到某一件时用（正常场景走不到；留着兜底，不留空）。
   itemAmountGeneric: '请给每双鞋都说一个成交金额～',
+  // ⭐⭐ **成交额压根没解析出来**（她只说了定金、没说尾款）时，问的那一句。
+  //    背景（业务负责人 2026-10-07 22:59 真机）：她发「定金交了 100 元，微信，下次收120元」，
+  //    后端回的第 2 句是「**已收的钱比这单成交金额还多**，请核对一下收了多少～」——
+  //    可那时成交额**根本是空的**，那句话纯属误导（她看到会莫名其妙）。
+  //    ⇒ 成交额没解析出来时改问这一句；**只有**成交额有值且确实小于已收，才用「已收比成交额多」那句。
+  // ⚠️ 它和 `itemAmount` 问的是**同一件事**（这单到底多少钱），所以渲染层把它们**合成一行**
+  //    （见 `collectMissingTopics` 末尾那段）：留这一句，并把"哪一双"的清单继承过来。
+  itemAmountUnknownTotal: '请说明这单成交金额（或定金+尾款分别是多少）：{items}',
+  // 取不到任何一件货的说法时的退路（与 `itemAmountGeneric` 同一个位置，不留空）。
+  unknownTotal: '请说明这单成交金额（或定金+尾款分别是多少）',
 
   // 单件还缺某个字段（`items[i].<字段>`）。只说这一件、只说这一件事。
   itemFieldItemNo: '{item} 没说货号，请补一下货号～',
@@ -205,6 +222,10 @@ const TEXT_TOPIC_PATTERNS = Object.freeze([
   //    ⚠️ 有守门用例直接拿那个配置常量喂进来断言"必须被映射、不许原样透传" —— 生产者改了字会立刻红。
   { key: 'deposit_target_ambiguous', pattern: /^这一单里哪一件是付了定金的那件/ },
   { key: 'item_amount_generic', pattern: /^请逐件说明成交金额/ },
+  // ⭐⭐ **成交额压根没解析出来**（解析层产出，2026-10-07 真机）：
+  //    字头**直接用生产者常量拼**（不是手抄）—— 生产者改了字，这条映射立刻失配，
+  //    守门用例会红，逼着来同步（与 #234 那句同一套做法）。
+  { key: 'unknown_total', pattern: new RegExp(`^${SALES_DEPOSIT_TOTAL_UNKNOWN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`) },
   { key: 'items_total_mismatch_generic', pattern: /^逐件成交金额合计与整单成交金额不一致/ },
   // 解析层那句**带数字**的（#231）：本模块**不改写它**，只把它当成"具体句"占位 → 原样透传。
   { key: 'items_total_mismatch_specific', pattern: /^你说的总额 .+ 与各件金额之和 .+ 对不上/ },
@@ -233,6 +254,8 @@ const DEFAULTS_BY_KEY = Object.freeze({
   [KEYS.intro]: DEFAULTS.intro,
   [KEYS.itemAmount]: DEFAULTS.itemAmount,
   [KEYS.itemAmountGeneric]: DEFAULTS.itemAmountGeneric,
+  [KEYS.itemAmountUnknownTotal]: DEFAULTS.itemAmountUnknownTotal,
+  [KEYS.unknownTotal]: DEFAULTS.unknownTotal,
   [KEYS.itemFieldItemNo]: DEFAULTS.itemFieldItemNo,
   [KEYS.itemFieldSize]: DEFAULTS.itemFieldSize,
   [KEYS.itemFieldQuantity]: DEFAULTS.itemFieldQuantity,
@@ -276,6 +299,8 @@ const resolveSalesMissingInfoConfig = (env = process.env) => {
     intro: text[KEYS.intro],
     itemAmount: text[KEYS.itemAmount],
     itemAmountGeneric: text[KEYS.itemAmountGeneric],
+    itemAmountUnknownTotal: text[KEYS.itemAmountUnknownTotal],
+    unknownTotal: text[KEYS.unknownTotal],
     itemField: {
       item_no: text[KEYS.itemFieldItemNo],
       size: text[KEYS.itemFieldSize],
@@ -374,6 +399,19 @@ const collectMissingTopics = (missingFields = []) => {
     const at = topics.findIndex((topic) => topic.kind === 'text' && topic.key === genericKey);
     if (at >= 0) topics.splice(at, 1);
   }
+  // ⭐⭐ 「成交额压根没解析出来」那句**取代**同一件事的「请给每双鞋都说一个成交金额」
+  //    —— 两句话问的都是"这单到底多少钱"，按"一次只说一件事"**只留一行**；
+  //    留下的那句用**带定金口径**的说法，并**继承**她的清单（`{items}`），
+  //    所以她仍然看得见是哪一双。
+  //    ⚠️ 只有**两句话同时存在**时合并；只剩其中一句时各自照旧说（泛化句仍会被上面那条压掉）。
+  //    场景：她只说了定金、没说尾款 ⇒ 解析层给 `items[i].actual_amount` + `unknown_total` 两条。
+  const unknownTotalAt = topics
+    .findIndex((topic) => topic.kind === 'text' && topic.key === 'unknown_total');
+  const amountTopic = topics.find((topic) => topic.kind === 'item_amount');
+  if (unknownTotalAt >= 0 && amountTopic) {
+    amountTopic.unknownTotal = true;
+    topics.splice(unknownTotalAt, 1);
+  }
   return topics;
 };
 
@@ -383,10 +421,13 @@ const renderMissingTopic = (topic, { items = [], config }) => {
   const labels = (indices) => (indices || []).map(label).join('、');
   switch (topic.kind) {
     case 'item_amount': {
-      const text = topic.indices.length
-        ? format(config.itemAmount, { items: labels(topic.indices) })
-        : config.itemAmountGeneric;
-      return text;
+      // ⭐ 同一条清单上还有「成交额压根没解析出来」那句时，用**带定金口径**的说法
+      //    （那一句已被合并进来，见 `collectMissingTopics` —— 同一件事只留一行）。
+      if (!topic.indices.length) {
+        return topic.unknownTotal ? config.unknownTotal : config.itemAmountGeneric;
+      }
+      const template = topic.unknownTotal ? config.itemAmountUnknownTotal : config.itemAmount;
+      return format(template, { items: labels(topic.indices) });
     }
     case 'item_field': {
       const template = config.itemField[topic.field] || config.itemField.fallback;
@@ -428,6 +469,9 @@ const renderMissingTopic = (topic, { items = [], config }) => {
     case 'deposit_tail': return config.depositTailUnclear;
     case 'deposit_price_mismatch': return config.depositPriceMismatch;
     case 'item_amount_generic': return config.itemAmountGeneric;
+    // ⭐ 成交额没解析出来、且**一件货的说法都取不出来**时的退路（正常情况下它已被
+    //    `item_amount` 吸走，见 `collectMissingTopics`）。
+    case 'unknown_total': return config.unknownTotal;
     case 'items_total_mismatch_generic': return config.itemsTotalMismatch;
     case 'received_exceeds_total': return config.receivedExceedsTotal;
     case 'voucher_one_order_one_pair': return config.voucherOneOrderOnePair;
