@@ -15,7 +15,7 @@
 > `PRIVATE_CHAT_DISABLED_NOTICE_TEXT`（**空串 = 关掉那句话**）。
 > 🔴 仍然**没有**恢复私聊入口 / 发送的开关。⇒ 下面 **A2 那一行以本节为准**
 >（"一条消息都不回"是 PR #191 当时的状态，PR #193 起改成"只回那一句"）。
-> 同一轮收尾（分支 `chore/private-chat-remaining-default-ports`）还把当时**留待确认的最后
+> 同一轮收尾（**PR #195**，分支 `chore/private-chat-remaining-default-ports`）还把当时**留待确认的最后
 > 5 处「缺省回落发私聊」**清掉了 —— 验收标准与逐条对照见**第五节**。
 
 ## 一、⭐ 先写「删完应该是什么样」（验收标准）
@@ -155,7 +155,7 @@
 ## 五、2026-10-07 收尾：清掉最后 5 处「缺省回落发私聊」
 
 > 业务负责人 2026-10-07 批准（承接 PR #191 / #193）。
-> 分支 / PR：`chore/private-chat-remaining-default-ports`。
+> **PR #195**（分支 `chore/private-chat-remaining-default-ports`）。
 > ⚠️ **那句 notice 一个字都没动**（`config/privateChatNotice.js`）——
 > 见开头「2026-10-07 追加」。
 
