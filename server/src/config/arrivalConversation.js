@@ -22,6 +22,47 @@
 const ARRIVAL_CONVERSATION_ACTIONS = Object.freeze({
   CONFIRM: 'confirm_arrival_reconcile',
   REJECT: 'reject_arrival_reconcile',
+  // ⭐ 2026-10-08：卡片上那个「表单填写 + 提交」（业务负责人 2026-10-07 深夜定的口径）。
+  //    与上面两个动作名同一个道理：**卡片渲染与分派共用这一份常量**，不会各写一份而慢慢写歪。
+  //    它由表单容器里的提交按钮（`action_type: "form_submit"`）带回来，
+  //    回调里还多一个 `form_value`（表单项 name → 值）。
+  SUBMIT: 'submit_arrival_reconcile',
+});
+
+// ⭐⭐ 到货核对卡片上的「表单填写 + 提交」（业务负责人 2026-10-07 深夜定，逐字）：
+//   「我们的消息卡片是否支持**输入一段文字**？……等到货之后，**请在卡片里填写实际到货情况**。
+//    也就是给到用户卡片，**用户填写内容之后，再点击提交**。以这个来作为**触发后续的到货验收**」
+//
+// 🔴 官方硬约束（curl 实查，原文见 `docs/arrival-card-form-input-2026-10-08.md` 第 0 节）：
+//   ① 输入框**必须**与按钮**一起内嵌进「表单容器」**（`tag:"form"`）—— 官方原文；
+//   ② 表单容器**只能放在卡片根节点**下，不可被内嵌在其它组件内；
+//   ③ 表单内每个交互组件都要有 `name`，且**在卡片全局内唯一**（否则飞书报 200530、数据发不出去）。
+// ⚠️ 输入框只在飞书 **V6.8+** 有（表单容器 V6.6+）⇒ 低版本走 `fallback` 降级文案，
+//    而且**「在话题里说话」那条老路必须一直留着**（见 `handleTopicMessage`）。
+// ⚠️ 这里只放**结构参数与用户可见文案**：换文案 / 换 name / 换占位符都不用改代码。
+const ARRIVAL_FORM_DEFAULTS = Object.freeze({
+  // 表单容器的唯一标识（官方：同一张卡片内全局唯一）。
+  containerName: 'arrival_reconcile_form',
+  // 输入框：`name` 就是回调里 `form_value` 的**键**（官方示例 `"Input_lf4fmxwfrd9": "1234"`）。
+  fieldName: 'actual_arrival',
+  // 多行文本（官方 `input_type`：`multiline_text`；换行符在回调里以 `\n` 返回）。
+  inputType: 'multiline_text',
+  rows: 3,
+  autoResize: true,
+  maxRows: 6,
+  maxLength: 1000,
+  label: '实际到货情况',
+  labelPosition: 'top',
+  placeholder: '例：都到了 / XHB8095 黑 38 码少 2 双 / XHB8096 棕 39 码多 1 双',
+  // 必填：前端会拦住空提交（提示"有必填项未填写"，**不会**发起回调）；
+  // ⚠️ 服务端**仍然自己兜一层空值** —— 重放 / 模拟 / 降级都可能把空串送进来。
+  required: true,
+  // 低版本客户端（< V6.8）的降级文案。必须是**一句能指路的话**：
+  // 老客户端输入框用不了，就照旧在话题里回一句 —— 那条入口一直在。
+  fallbackText: '你的飞书版本太低（输入框需 V6.8 以上），直接在话题里回一句实际到货情况就行。',
+  // 提交按钮：官方要求绑 `action_type: "form_submit"`，且 `name` 在卡片内全局唯一。
+  submitLabel: '提交',
+  submitButtonName: 'submit_arrival_reconcile',
 });
 
 // 「群消息映射」里的批次类型。定位器只回答"是哪一批"，
@@ -123,6 +164,18 @@ const DEFAULTS = Object.freeze({
     //    这两句就是那张作废卡上的文案（用户可见文案一律可配）。
     supersededTitle: '这张核对卡片已经作废',
     supersededMessage: '这张上的数量不要用了：我已经按你最新那句话重出一张新卡，**请用最新那张**（它就发在你刚说话的消息下面）。',
+    // ⭐⭐ 2026-10-08：「表单填写 + 提交」那块（输入框 / 提交按钮 / 降级文案）。
+    //    结构与文案全在 `ARRIVAL_FORM_DEFAULTS`（见文件上半部分的长注释）。
+    form: ARRIVAL_FORM_DEFAULTS,
+    // ⭐ 空提交时留在**她提交的那张卡上**的那句提醒（表单与它一起留着，她改一句再提交即可）。
+    //    只弹 toast 不算反馈 —— 真机已经吃过"只弹 toast = 她什么都没看见"的教训。
+    submitMissingNote: '没收到内容：请在上面的输入框里写一句实际到货情况，再点「提交」。',
+    // ⭐⭐ 提交**成功算出结果并出了新卡**之后，把她提交的那张卡收成的终态
+    //    （表单收掉 ⇒ 点不了第二次，这正是"避免重复提交"）。
+    //    ⚠️ 只在**真的算出结果**时才收：没有到货内容 / 解析失败时卡片保持可编辑
+    //       （把没算成说成"已提交"就是谎报）。
+    submittedTitle: '已提交',
+    submittedMessage: '你填的实际到货情况我已经收到，并按它重算了一遍 —— 最新那张核对卡片就发在你这条消息下面，**请用最新那张**（点它上面的「是」才会入库）。',
   },
   // 点「是」之后回群里那句结果的**模板**（`{key}` 由 service 填；模板可配 = 改文案不碰逻辑）。
   summary: {
@@ -183,6 +236,27 @@ const DEFAULTS = Object.freeze({
     taskMissing: '这条到货核对记录我已经找不到了，没法入库。你把「都到了」或差异再说一句，我重新核一遍。',
     // ③ 点「是」但任务里还没有算好的计划（她说的话我们没算出结果 / 卡片没发出去）——
     //    复用既有那句 `notConfirmedYet`（上面），这里不另写一份。
+    //
+    // ⭐⭐ 2026-10-08：「表单填写 + 提交」那三个出口的回执。
+    // 🔴 **注意可见性**：卡片动作那条路由的同步响应**固定**是「已收到，正在处理」
+    //    （`routes/larkEvents.js` 的 `card.action.trigger`），下面这些 toast **她那边看不见**，
+    //    只进 `lark.card.handled` 日志 ⇒ **可见反馈一律做在卡片上 / 话题里的回话上**
+    //    （空提交 → `card.submitMissingNote`；没算出结果 → 既有那几句 `replies.*`）。
+    // ① **空提交**（`form_value` 里没有那一项 / 只有空白）：明确提示，**一个字都不写**。
+    //    ⚠️ 必填只是**前端**闸门（官方原文：未填写则前端提示、**不会发起回传**），
+    //       所以服务端必须自己兜一层 —— 重放 / 模拟 / 降级都可能把空串送进来。
+    submitMissing: '没看到「实际到货情况」的内容 —— 请在上面的输入框里写一句，再点「提交」。',
+    // ② 提交**收到并真的算出结果（出了新卡）**时的回执。
+    submitReceived: '已收到你填的实际到货情况，我按它核对了一遍 —— 最新那张核对卡片就发在你的消息下面。',
+    // ②-补 提交收到了，但**这次没能算出可入库的结果**（没有到货内容 / 解析失败 / 对不上明细 /
+    //    读不到这批明细）：🔴 不许说成"卡片发你下面了"（根本没有那张卡）、
+    //    也不许说成"已核对"（没核对出来）—— 如实说 + 指回那两条还活着的路。
+    submitReceivedNoCard: '已收到你填的实际到货情况。这次我没能按它算出核对结果（没有入库、也没有写数据）—— 你改一句再点「提交」，或者直接在话题里说一句，我重算一遍。',
+    // ③ 同一次提交被飞书**重投**（同一条卡片消息 id）：幂等，不重复核对、不重复发卡。
+    submitDuplicate: '这次提交我已经处理过了，没有重复核对、也没有重复写。',
+    // ④ 到货核对**整个链路关着**（`PURCHASE_ARRIVAL_CONVERSATION_ENABLED=false`）时她提交：
+    //    不处理（与"在话题里说"**同一个开关、同一个语义**），但卡片动作必须回一个响应 ⇒ 如实说。
+    disabled: '到货核对现在没有开着，这次提交我没有处理。',
   },
 });
 
@@ -212,7 +286,12 @@ const positiveInteger = (value, fallback, label) => {
  */
 const resolveArrivalConversationConfig = (options = {}) => {
   const env = options.env || process.env;
-  const card = { ...DEFAULTS.card, ...(options.card || {}) };
+  // ⚠️ `form` 必须**嵌套合并**（与 `replies` / `summary` 同一套写法）：
+  //    只浅合并 `card` 的话，测试 / 调用方只想覆盖 `form.submitLabel` 一项时，
+  //    会把 `form` 其余项（`fieldName` / `required` / 降级文案…）整块变成 undefined
+  //    —— 那是"改一项、坏一片"的静默失效。
+  const form = { ...DEFAULTS.card.form, ...((options.card || {}).form || {}) };
+  const card = { ...DEFAULTS.card, ...(options.card || {}), form };
   const replies = { ...DEFAULTS.replies, ...(options.replies || {}) };
   const summary = { ...DEFAULTS.summary, ...(options.summary || {}) };
   return {
@@ -233,6 +312,7 @@ module.exports = {
   ARRIVAL_BATCH_KINDS,
   ARRIVAL_DIFF_TYPES,
   ARRIVAL_ALL_PRESENT_PHRASES,
+  ARRIVAL_FORM_DEFAULTS,
   ARRIVAL_CONVERSATION_DEFAULTS: DEFAULTS,
   resolveArrivalConversationConfig,
   parseExplicitBoolean,
