@@ -69,7 +69,9 @@ test('确认卡片：有缺口也不出现「补货品信息」段落（位置�
   const withGaps = salesConfirmationCard('draft_1', { items: ITEMS, product_info_gaps: GAPS });
   assert.doesNotMatch(gapsCardText(withGaps), /补货品信息/);
   assert.doesNotMatch(gapsCardText(withGaps), /去补全这条记录/);
-  assert.doesNotMatch(gapsCardText(withGaps), new RegExp(GAP_URL.replace(/[.?]/g, '\\$&')));
+  // 链接 url 也一个字都不许出现在确认卡片上（按**字面量**比，不用 RegExp 转义 ——
+  // 手工拼正则容易漏转义，CodeQL 会（正确地）报 Incomplete string escaping）。
+  assert.ok(!gapsCardText(withGaps).includes(GAP_URL));
   // 有缺口 / 无缺口两张卡**逐字相同**：确认卡片对 `product_info_gaps` 完全无感，
   // 也就不会"去掉之后留一个空壳"。
   const withoutGaps = salesConfirmationCard('draft_1', { items: ITEMS });
