@@ -1,8 +1,9 @@
 // 「从环境变量读一个配置值」的**唯一一套**取值规则（配置先行的那条纪律的落地件）。
 //
-// 为什么单独一个文件：`pendingDealPush` 与 `salesDailyReportPush` 两处都要读开关 / 时间点 /
-// 群列表，规则必须是**同一套**——否则"空串算关还是不关"这类最容易静默坏掉的地方，
-// 两处会慢慢走歪（一处 `||`、一处显式，谁也说不清）。
+// 为什么单独一个文件：`pendingDealPush` / `salesProcessingCard` / `productInfoGaps` /
+// `salesColorChoice` / `salesProductRegistration` / `privateChatNotice` 都要读开关 / 时间点 /
+// 文案，规则必须是**同一套**——否则"空串算关还是不关"这类最容易静默坏掉的地方，
+// 各处会慢慢走歪（一处 `||`、一处显式，谁也说不清）。
 //
 // ⚠️ 规则（踩过坑之后定死的）：
 //   · **变量没设**（undefined / null）→ 用默认值；

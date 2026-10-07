@@ -16,7 +16,7 @@
 //   ⇒ 这样「只改显示、只动这一条链路」是可从代码结构上自证的，不是靠记性。
 //
 // ⚠️ 取值规则走 `config/envValue`（**没设** → 默认值；**设了**（含空串）→ 就是显式取值）。
-//   与 `privateChatNotice` / `salesDailyReportPush` 共用同一套，避免"空串算不算关"各处走歪。
+//   与 `privateChatNotice` / `productInfoGaps` 共用同一套，避免"空串算不算关"各处走歪。
 // ⚠️ **调用时才解析**（`resolveSalesProcessingCardConfig(process.env)`），
 //   不在模块加载时求值 —— 2026-10-06 的 dotenv 加载顺序事故就是这么来的。
 

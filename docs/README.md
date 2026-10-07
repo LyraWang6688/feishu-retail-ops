@@ -61,6 +61,9 @@
 | [archive/legacy-agent-guide.md](archive/legacy-agent-guide.md) | 原根目录 `agent.md`，微信小程序时期的 Agent 指南 |
 | [archive/legacy-trae/](archive/legacy-trae/) | 原 `.trae/documents/`，Trae 时期的 PRD / 技术架构草稿 |
 | [archive/legacy-wechat-retirement.md](archive/legacy-wechat-retirement.md) | Legacy WeChat 退役记录（2026-10-01） |
+| [archive/sales-daily-report-retirement.md](archive/sales-daily-report-retirement.md) | ⚠️ **销售战报退役记录（2026-10-07）**：业务负责人逐字「连代码一起删」⇒ 服务 / 卡片 / 配置 / `app.js` 接线 / 用例 / `SALES_DAILY_REPORT_*` 整体删除；含**共用件（`shanghaiDailyScheduler` 等）为什么没跟着删**与**验收标准 + 逐条对照** |
+| [sales-daily-report-push-2026-10-06.md](sales-daily-report-push-2026-10-06.md) | ⚠️ **已退役（2026-10-07）**：当初的战报口径（两个数字怎么算、9/12/15/18/21 ＋ 22 点、过期不补推）；**正文按当时事实保留，不要再按它实施** |
+| [sales-report-card-design-2026-10-06.md](sales-report-card-design-2026-10-06.md) | ⚠️ **已退役（2026-10-07）**：当初战报卡片的样式口径（两个大数字块、不写计算逻辑）；卡片本身已删 |
 | [handoff-notes-2026-10-06/README.md](handoff-notes-2026-10-06/README.md) | 交接笔记归档（2026-10-06 清理）：原 7 个 worktree 根目录下的 18 份未跟踪 `.HANDOFF-*.md`，全是 **2026-10-05** 多代理并行期间父代理写给子代理的裁决/纠正/叫停便条；**历史记录，不是当前口径** |
 | [branch-salvage-2026-10-06.md](branch-salvage-2026-10-06.md) | 分支清仓留档（2026-10-06 清理）：除 `main` 外 14 条远端分支**逐条的删除判据与取代证据**（含 tip SHA）；⭐ 以及唯一一条"真有价值但没进 main"的 `refactor/decouple-creation-and-stock` 的**原件留档**（`branch-salvage-2026-10-06/`：剥出来的 `productCreationService.js` 原文 + 全量 patch） |
 
