@@ -69,7 +69,7 @@ const HER_PARSED = () => normalizeSalesResult({
 // ⭐ 下面有一条用例把这份手抄清单与**真实** `normalizeSalesResult` 的输出 `deepEqual` 钉住
 //   （比"手抄一份"更严：上游改了字，这里立刻红）。
 const HER_PARSED_MISSING_FIELDS = [
-  '这一单里哪一件是付了定金的那件，我有点拿不准，请逐件说明哪双是预付、每双多少钱～',
+  '这一单里哪一件是付了定金的那件，我有点拿不准，请逐件说明哪一件付了定金、每双多少钱～',
   'items[0].actual_amount',
   'items[1].actual_amount',
   'payments[1].method',
@@ -85,7 +85,7 @@ const HER_ITEMS = [{ item_no: '31678', size: 40, quantity: 1 }, { item_no: '6681
 // 改完之后她**应该**看到的那段（逐字）。改文案 = 先改这里，再看测试是不是"红"。
 const HER_EXPECTED_TEXT = [
   '销售信息还缺 4 处，请照着补一下～',
-  '1. 这一单里哪双是付了定金的那双，我有点拿不准～请对着「31678 40码、6681-1 42码」逐双说清楚哪双是预付、每双多少钱～',
+  '1. 这一单里哪一件是付了定金的那件，我有点拿不准～请对着「31678 40码、6681-1 42码」逐件说清楚哪一件付了定金、每双多少钱～',
   '2. 请给每双鞋都说一个成交金额：31678 40码、6681-1 42码',
   '3. 收的那笔钱没说收款方式，请补一句是微信、现金还是支付宝～',
   '4. 已收的钱比这单成交金额还多，请核对一下收了多少～',
@@ -135,8 +135,8 @@ test('② 一次只说一件事：分行 + 行内不再用「；」串起来', (
 // ── ③ 具体动作 ───────────────────────────────────────────────────────────────
 test('③ 每条缺项都给具体动作（逐字）', () => {
   const { text } = renderHer();
-  // #234 新增那句：必须把"这一单到底是哪几双"点出来（两个货号都在），并问清"哪双是预付、每双多少钱"。
-  assert.match(text, /请对着「31678 40码、6681-1 42码」逐双说清楚哪双是预付、每双多少钱/);
+  // #234 新增那句：必须把"这一单到底是哪几双"点出来（两个货号都在），并问清"哪一件付了定金、每双多少钱"。
+  assert.match(text, /请对着「31678 40码、6681-1 42码」逐件说清楚哪一件付了定金、每双多少钱/);
   // 缺金额：说清"每双各一个成交金额"，并把两双都列出来。
   assert.match(text, /请给每双鞋都说一个成交金额：31678 40码、6681-1 42码/);
   // 缺收款方式：给可选值（她自己会说到方式 —— AGENTS.md 第 16 条，所以这里只是问，不设默认）。
@@ -148,7 +148,7 @@ test('③ 每条缺项都给具体动作（逐字）', () => {
 test('④ 不说内部说法「明细」；#234 那句把"哪几双"点出来', () => {
   const { text } = renderHer();
   assert.doesNotMatch(text, INTERNAL_WORD_PATTERN, `文案里还有内部说法：\n${text}`);
-  assert.match(text, /哪双是付了定金的那双/);
+  assert.match(text, /哪一件是付了定金的那件/);
 });
 
 // ── ④ 判据没变（端到端：走真实的 processSalesTask）───────────────────────────
@@ -241,7 +241,7 @@ const KNOWN_MISSING_FIELD_SHAPES = [
   '请说明尾款是否已支付；若尚未支付，请写“尾款以后付”',
   // 解析层：**#234 新增**（`config/salesTradeTypePolicy.SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS`，
   // 逐字 = 那个常量本身；⑤-#234 那条用例直接拿常量来 compare，保证这里不是手抄的近似句）。
-  '这一单里哪一件是付了定金的那件，我有点拿不准，请逐件说明哪双是预付、每双多少钱～',
+  '这一单里哪一件是付了定金的那件，我有点拿不准，请逐件说明哪一件付了定金、每双多少钱～',
   // 解析层：items / payments 的机器字段
   'items[0].item_no', 'items[0].size', 'items[0].quantity', 'items[0].actual_amount',
   'items[0].accessory_name', 'items[1].item_no', 'items[1].size', 'items[1].quantity',
@@ -306,7 +306,7 @@ const MAPPED_MISSING_FIELD_SHAPES = [
   '请明确本次定金的支付方式',
   '成交价与定金加尾款不一致，请核对',
   '请说明尾款是否已支付；若尚未支付，请写“尾款以后付”',
-  '这一单里哪一件是付了定金的那件，我有点拿不准，请逐件说明哪双是预付、每双多少钱～',
+  '这一单里哪一件是付了定金的那件，我有点拿不准，请逐件说明哪一件付了定金、每双多少钱～',
   // ⭐ **历史形状**（生产者已删）—— 它的映射是**有意保留**的兜底，所以仍属"被翻译"那一类。
   '定金单暂只支持一条明细；多双请分开说明，或逐双给出成交金额',
   // 解析层：items / payments 的机器字段（**index 0 与 1 都在**）
@@ -455,7 +455,9 @@ test('⑤ 上游已变（增）：#234 新增那句**跟着生产者常量走**�
   assert.notEqual(one.lines[0], SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS,
     '#234 那句退化成原样透传了（等于没给它映射）');
   assert.match(one.lines[0], /31678 40码、6681-1 42码/, '映射后要把这一单的每一双都点出来');
-  assert.match(one.lines[0], /哪双是预付/);
+  // ⚠️ 2026-10-07 口径变更：这句话**只说钱的事**（哪一件付了定金）——
+  //    类型是查完库存才有的结论，不该反过来问她"哪双是预付"。
+  assert.match(one.lines[0], /哪一件付了定金/);
   // ③ 一件货都取不出来时也有话说（不留空行 / 不留半句）。
   const empty = renderSalesMissingInfo({ missingFields: [SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS], items: [] });
   assert.equal(empty.lines[0], SALES_MISSING_INFO_DEFAULTS.depositTargetAmbiguousGeneric);
@@ -565,10 +567,10 @@ test('⑥ `.env.example` 里那一段与配置默认值逐字一致（新加文�
 });
 
 // ── ⑦ 其它出口没被牵连 ───────────────────────────────────────────────────────
-test('⑦ 缺货 / 未建档 / 颜色全下架三条"独立成句"的路径**逐字不变**（不套渲染器）', async () => {
-  // 判据：`onlyStandalone` 那一支仍然直接回那一句（只有"夹杂别的问题"时才走渲染器）。
+test('⑦ 「缺货」不再是缺项：没有实时库存 ⇒ 记**预定**、照出确认卡片（不再回"请核实"）', async () => {
   const store = makeStore();
   const messages = [];
+  const cards = [];
   const service = new LarkMvpService({
     client: {},
     gateway: {
@@ -580,7 +582,6 @@ test('⑦ 缺货 / 未建档 / 颜色全下架三条"独立成句"的路径**逐
       update: async () => undefined,
     },
     references: {}, posting: {},
-    // 唯一的问题就是"这个尺码没货"（`missing_fields` 里也只有这一句）。
     recognizer: { parseSalesText: async () => normalizeSalesResult({
       intent: 'sale',
       items: [{ item_no: '26632', color: '黑', size: 37, quantity: 1, actual_amount: 210 }],
@@ -589,7 +590,8 @@ test('⑦ 缺货 / 未建档 / 颜色全下架三条"独立成句"的路径**逐
     }, '26632黑37一双210微信') },
     store,
   });
-  service.sendTaskCard = async () => { throw new Error('缺货时不该发确认卡片'); };
+  // 出货卡片是**必须**的（没货 = 预定，是合法输入）。
+  service.sendTaskCard = async (_task, card) => { cards.push(card); return 'om_card'; };
   service.sendTaskText = async (_task, message) => { messages.push(message); };
   await store.create({
     task_id: 'sale_shortage_only', type: 'sale', status: 'received',
@@ -597,6 +599,9 @@ test('⑦ 缺货 / 未建档 / 颜色全下架三条"独立成句"的路径**逐
     sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '26632黑37一双210微信',
   });
   await service.processSalesTask('sale_shortage_only');
-  assert.equal(messages.length, 1);
-  assert.equal(messages[0], '库存里没有 26632 37码（这个货号现在一双都没有），请核实～');
+  const task = await store.get('sale_shortage_only');
+  assert.deepEqual(task.draft.missing_fields, [], '没货不再是缺项');
+  assert.equal(cards.length, 1, '照出确认卡片');
+  assert.deepEqual(messages, [], '不再回"库存里没有…请核实"');
+  assert.equal(task.draft.items[0].trade_type_code, 'SALE_PREPAID', '没货 → 预定');
 });

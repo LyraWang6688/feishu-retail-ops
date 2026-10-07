@@ -1,19 +1,25 @@
-// 「维度 1：每天 9 点把最近 7 天未付 / 预付、尚未成交的销售单推到群里」的配置
+// 「维度 1：每天 9 点把**最近 7 天还没收齐**的销售单推到群里」的配置
 // （配置先行——群 id / 时间点 / 开关 / 深链策略 / **分区与文案**都是**会改的口径**，
 //   改的时候只动这一个文件，不去翻 pendingDealPushService）。
+//
+// 🔴 2026-10-07 口径大改：交易类型 = 库存有没有（现货 / 预定），「未付」不再是类型。
+//   ⇒ 候选源从"未付 / 预付两个**交易类型编码**"改成
+//     「**预定（还没交付）** ＋ **现货但钱没结清**」= **尚未完成履约**（见下方分区判据）。
+//   ⇒ 分区标题从 `预付 / 未付` 改成 `预定 / 现货待收`（文案仍可配）。
 //
 // ⚠️ 取值规则（"空串算不算关"那一套）在 `config/envValue`，本文件与销售卡片那几处共用同一套，
 //   规则只有一处实现，不会两处慢慢走歪。
 //
 // 单测直接传 env 进来（不碰全局 process.env），并发跑用例不会互相污染。
 //
-// ── 2026-10-07 追加：按【预付 / 未付】分区 + 每条补「货号+尺码」 ──────────────────
-// 业务负责人口径（逐字）：「**只需要这些信息，按照预付和未付分区**」，
-// 目标形状（逐字）：
-//   ⏰ 2026-10-07 最近 7 天未付 / 预付、尚未成交的销售单：2 笔
-//      1. ·【预付】B26002-52 37码 · 待收 ¥128 · [深链]
-//      2. ·【未付】6A637-7 43码 · 待收 ¥228 · [深链]
-// ⇒ 她只要「单号 + 【预付/未付】 + 货号+尺码 + 待收金额 + 深链」，**不要售出时间**。
+// ── 2026-10-07：按【预定 / 现货待收】分区 + 每条补「货号+尺码」 ──────────────────
+// 业务负责人口径（逐字）：最初是「**只需要这些信息，按照预付和未付分区**」；
+// 同一天口径大改（交易类型 = 库存有没有，「未付」不再是类型）⇒ 分区判据跟着换：
+// 新目标形状（`{title}` 由配置给）：
+//   ⏰ 2026-10-07 最近 7 天待处理的销售单（预定 / 现货待收）：2 笔
+//      1. ·【预定】B26002-52 37码 · 待收 ¥128 · [深链]
+//      2. ·【现货待收】6A637-7 43码 · 待收 ¥228 · [深链]
+// ⇒ 她只要「单号 + 【预定/现货待收】 + 货号+尺码 + 待收金额 + 深链」，**不要售出时间**。
 // ⚠️ 她给的那张形状里"分区"与"行内标签"是**并存**的（她两处都写了），所以这里也是两处都有：
 //    区块标题用 `sectionTemplate`，每行里的 `{tag}` 还是同一个区块标题。
 // ⚠️ 下面这些**全是显示文案**（改文案不碰逻辑）：本文件之外的 service 里
@@ -33,7 +39,7 @@ const PENDING_DEAL_PUSH_PIN_ENABLED_ENV_KEY = 'PENDING_DEAL_PUSH_PIN_ENABLED';
 // ── 分区与文案的旋钮（2026-10-07）─────────────────────────────────────────────
 const PENDING_DEAL_PUSH_BLOCK_ORDER_ENV_KEY = 'PENDING_DEAL_PUSH_BLOCK_ORDER';
 const PENDING_DEAL_PUSH_PREPAID_TITLE_ENV_KEY = 'PENDING_DEAL_PUSH_PREPAID_TITLE';
-const PENDING_DEAL_PUSH_UNPAID_TITLE_ENV_KEY = 'PENDING_DEAL_PUSH_UNPAID_TITLE';
+const PENDING_DEAL_PUSH_CASH_PENDING_TITLE_ENV_KEY = 'PENDING_DEAL_PUSH_CASH_PENDING_TITLE';
 const PENDING_DEAL_PUSH_OTHER_TITLE_ENV_KEY = 'PENDING_DEAL_PUSH_OTHER_TITLE';
 const PENDING_DEAL_PUSH_HEADER_TEMPLATE_ENV_KEY = 'PENDING_DEAL_PUSH_HEADER_TEMPLATE';
 const PENDING_DEAL_PUSH_SECTION_TEMPLATE_ENV_KEY = 'PENDING_DEAL_PUSH_SECTION_TEMPLATE';
@@ -51,37 +57,61 @@ const DEFAULT_PUSH_HOUR = 9;
 const DEFAULT_INTERVAL_MS = 10 * 60 * 1000;
 
 // 两个区块的**身份**（业务事实，不是文案）：
-//   · key  = 内部键（`blockOrder` 里写的是它）；
-//   · code = 「行为管理」里的**行为编码**（`SALE_PREPAID` / `SALE_UNPAID`，见 config/salesMovements）
-//            ——按编码分区，**不按行为名称**：名称是她在飞书里随手能改的文案，
-//            拿它当判据的话，她哪天把「未付」改成「未付销售」，分区就会静默错位。
-//   · title = 区块标题（也是行内那个 `【未付】` 标签）——文案，可配。
+//   · key       = 内部键（`blockOrder` 里写的是它）；
+//   · criterion = 分区**判据**（`PENDING_DEAL_PUSH_BLOCK_CRITERIA` 之一）——
+//                 ⚠️ **不是**交易类型编码：新口径下类型 = 库存有没有，
+//                 "未付" 不再是一种类型，"哪一笔该推" 由**履约 / 资金进展**决定。
+//   · title     = 区块标题（也是行内那个 `【预定】` 标签）——文案，可配。
+const PENDING_DEAL_PUSH_BLOCK_CRITERIA = Object.freeze({
+  // 还没交付（类型 = 预定，或一张单里还有预定行没交）——货还在店里 / 还没到。
+  undelivered: 'undelivered',
+  // 货已经交付、钱还没结清（现货 + 钱没结清的那一类）。
+  deliveredUnpaid: 'delivered_unpaid',
+});
+
+// 「已交付」是**销售明细.履约状态**里的取值（不是文案）：判据要拿它比。
+// ⚠️ 逻辑里**不许**再写这个中文字面量（见 pendingDealPushService）。
+const PENDING_DEAL_PUSH_DELIVERED_STATUS = '已交付';
+
 // 顺序 = 数组顺序，也是 `blockOrder` 的默认值。
-// ⭐ 顺序选了「**预付在前、未付在后**」，理由见 service 里的注释与 docs（不是随手排的）。
+// ⭐ 顺序选了「**预定在前、现货待收在后**」，理由见 service 里的注释与 docs（不是随手排的）。
 const PENDING_DEAL_PUSH_BLOCK_DEFS = Object.freeze([
   Object.freeze({
     key: 'prepaid',
-    tradeTypeCode: 'SALE_PREPAID',
+    criterion: PENDING_DEAL_PUSH_BLOCK_CRITERIA.undelivered,
     titleEnvKey: PENDING_DEAL_PUSH_PREPAID_TITLE_ENV_KEY,
-    defaultTitle: '【预付】',
+    defaultTitle: '【预定】',
   }),
   Object.freeze({
-    key: 'unpaid',
-    tradeTypeCode: 'SALE_UNPAID',
-    titleEnvKey: PENDING_DEAL_PUSH_UNPAID_TITLE_ENV_KEY,
-    defaultTitle: '【未付】',
+    key: 'cash_pending',
+    criterion: PENDING_DEAL_PUSH_BLOCK_CRITERIA.deliveredUnpaid,
+    titleEnvKey: PENDING_DEAL_PUSH_CASH_PENDING_TITLE_ENV_KEY,
+    defaultTitle: '【现货待收】',
   }),
 ]);
-// 「三个编码之外的」兜底区块的标题。⚠️ 它存在的意义是**绝不静默丢单**：
-// 万一将来「行为管理」多出一个也进候选的编码，那笔单会落在这一块里被看见，
-// 而不是因为它不匹配任何已声明区块就从清单里消失。
+
+/**
+ * 一笔候选单该落进哪个分区 —— **唯一的判据**（调用点只认它的返回值）。
+ *   · 履约状态 = 已交付          → `deliveredUnpaid`（货交出去了，钱还没收齐）
+ *   · 其余（未交付 / 部分交付）    → `undelivered`（还有货没交）
+ * ⚠️ 候选本身已经保证"尚未完成履约"（`SecondDeliveryService.listPendingDeliveries`），
+ *    所以"已交付"必然意味着"钱还没结清"，不必再判钱。
+ */
+const pendingDealPushCriterionFor = (order = {}) =>
+  (String(order.fulfillmentStatus || '').trim() === PENDING_DEAL_PUSH_DELIVERED_STATUS
+    ? PENDING_DEAL_PUSH_BLOCK_CRITERIA.deliveredUnpaid
+    : PENDING_DEAL_PUSH_BLOCK_CRITERIA.undelivered);
+
+// 「两个判据之外的」兜底区块的标题。⚠️ 它存在的意义是**绝不静默丢单**：
+// 万一将来多出一种履约形态（`pendingDealPushCriterionFor` 返回了没声明的判据），
+// 那笔单会落在这一块里被看见，而不是因为它不匹配任何已声明区块就从清单里消失。
 const DEFAULT_OTHER_TITLE = '【其他】';
 
 // 整条消息的形状。占位符 = 大括号里的名字，未知占位符在**启动时**抛错（见 assertTemplate）。
 const PENDING_DEAL_PUSH_DEFAULTS = Object.freeze({
   // 表头：`{total}` 仍是"总共几笔"（口径不变），`{blockCounts}` 后面补一句分区计数，
   // 免得她看到"共 2 笔"却数不出两块各几笔。
-  headerTemplate: '⏰ {day} 最近 7 天未付 / 预付、尚未成交的销售单：{total} 笔{blockCounts}',
+  headerTemplate: '⏰ {day} 最近 7 天待处理的销售单（预定 / 现货待收）：{total} 笔{blockCounts}',
   blockCountsTemplate: '（{counts}）',
   blockCountTemplate: '{title}{count} 笔',
   blockCountSeparator: ' / ',
@@ -144,7 +174,7 @@ const resolveBlocks = (env) => {
     const def = defsByKey.get(key);
     return {
       key,
-      tradeTypeCode: def.tradeTypeCode,
+      criterion: def.criterion,
       title: readString(env, def.titleEnvKey, def.defaultTitle),
     };
   });
@@ -225,7 +255,7 @@ module.exports = {
   PENDING_DEAL_PUSH_PIN_ENABLED_ENV_KEY,
   PENDING_DEAL_PUSH_BLOCK_ORDER_ENV_KEY,
   PENDING_DEAL_PUSH_PREPAID_TITLE_ENV_KEY,
-  PENDING_DEAL_PUSH_UNPAID_TITLE_ENV_KEY,
+  PENDING_DEAL_PUSH_CASH_PENDING_TITLE_ENV_KEY,
   PENDING_DEAL_PUSH_OTHER_TITLE_ENV_KEY,
   PENDING_DEAL_PUSH_HEADER_TEMPLATE_ENV_KEY,
   PENDING_DEAL_PUSH_SECTION_TEMPLATE_ENV_KEY,
@@ -236,10 +266,13 @@ module.exports = {
   PENDING_DEAL_PUSH_SIZE_TEMPLATE_ENV_KEY,
   PENDING_DEAL_PUSH_FOOTER_TEMPLATE_ENV_KEY,
   PENDING_DEAL_PUSH_BLOCK_DEFS,
+  PENDING_DEAL_PUSH_BLOCK_CRITERIA,
+  PENDING_DEAL_PUSH_DELIVERED_STATUS,
   PENDING_DEAL_PUSH_DEFAULTS,
   DEFAULT_PUSH_HOUR,
   DEFAULT_INTERVAL_MS,
   resolvePendingDealPushConfig,
+  pendingDealPushCriterionFor,
   // 显式布尔那条规矩的实现在 config/envValue；这里转发一下，单测仍然可以盯住它。
   readFlag,
 };

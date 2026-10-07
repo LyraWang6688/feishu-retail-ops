@@ -19,14 +19,19 @@ const {
 //    test/doubaoArrivalReconcileParse.test.js（源码级断言也钉住"不许再用那个名字"）。
 //    依赖方向核过：`v1BitableGateway` 不会（直接或间接）require 回本文件，不构成循环依赖。
 const { textValue } = require('./v1BitableGateway');
-// 中文交易类型 → 行为编码（`SALE_CASH` / `SALE_UNPAID` / `SALE_PREPAID`）的**唯一**对照表，
-// 以及"哪些类型是预付性质"（定金 + 尾款只对它成立）的配置判据。
+// 中文交易类型 → 行为编码（`SALE_CASH` / `SALE_PREPAID`）的**唯一**对照表，
+// 以及"定金 / 尾款落在哪一件"（资金口径）的配置判据。
 // ⚠️ 两个都从 `config/` 拿，本文件不许自己写 `'SALE_PREPAID' === ...` 这种散落判断。
-const { tradeTypeCodeFromLabel } = require('../config/salesMovements');
+const { tradeTypeCodeFromLabel, tradeTypeLabel } = require('../config/salesMovements');
 const { isPrepaidTradeType, orderTradeTypeCodes, SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS } =
   require('../config/salesTradeTypePolicy');
-// 中文交易类型只认这三个（与 config/salesMovements 的对照表同源）。
-const SALES_TRADE_TYPE_LABELS = Object.freeze(['现货', '未付', '预付']);
+// 中文交易类型只认这两个（与 config/salesMovements 的对照表同源）。
+// 🔴 2026-10-07：这里的 `trade_type` 只是**她嘴上说的性质**（提示），**不是类型判据** ——
+//    类型由 `services/larkMvpService` **查完实时库存**再定（有货 → 现货，没货 → 预定）。
+//    它只在这两处还有用：① 配品（没有货号/尺码，无从查库存）沿用她说的性质；
+//    ② 多明细 + 定金时，定位"定金 / 尾款落在哪一件"（资金口径，见 `depositTargetIndex`）。
+//    ⚠️ 「未付」**不在**表里 —— 它不再是交易类型（那只是"现货 + 钱没结清"）。
+const SALES_TRADE_TYPE_LABELS = Object.freeze(['现货', '预定', '预付']);
 
 // Log only the sale fields needed to compare AI extraction with deterministic
 // normalization. Never log the complete user message, prompt or raw model JSON.
@@ -240,13 +245,16 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
   if (isAfterSalesIntent(normalizeMessageIntent(result.intent))) {
     return normalizeAfterSalesResult(result, sourceText);
   }
-  // 交易类型由 AI 从原话判断，但只认三种；说不清时按现货处理——
-  // 门店绝大多数是"当场收钱当场交货"，不说不给钱就是现货（不是猜，是业务前提）。
-  // 交付状态不在这里定：它由 SALES_MOVEMENTS 从交易类型推出来。
-  // ⚠️ 这一份是**整单**的类型（兼容字段）；**逐明细**的类型在各行上（见下面的 items 循环）。
-  //    一张单可以同时有现货与预付（业务负责人 2026-10-07），所以"整单"只是兜底值，
-  //    真正决定交付/库存的是**每一行自己的** `trade_type_code`。
-  const tradeType = SALES_TRADE_TYPE_LABELS.includes(result.trade_type) ? result.trade_type : '现货';
+  // 交易类型只是**她嘴上说的性质**（提示）：说不清时按现货处理（门店绝大多数是
+  // "当场收钱当场交货"，不说不给钱就是现货 —— 这不是猜，是业务前提）。
+  // 🔴 **它不是类型判据**：真正的类型由接线层**查完实时库存**再定
+  //    （有货 → 现货，没货 → 预定；见 `config/salesTradeTypePolicy.salesTradeTypeForStock`）。
+  // 交付状态也不在这里定：它由 SALES_MOVEMENTS 从**最终**的交易类型推出来。
+  // ⚠️ 统一成**规范标签**（`预付` → `预定`；认不出的 → 空串）。
+  //    模型偶尔还按旧说法输出「预付」，落到草稿 / 卡片 / 日志上只许出现规范标签。
+  const tradeType = tradeTypeLabel(tradeTypeCodeFromLabel(
+    SALES_TRADE_TYPE_LABELS.includes(result.trade_type) ? result.trade_type : '现货',
+  )) || '现货';
   const rawItems = Array.isArray(result.items) && result.items.length ? result.items : [result];
   const items = [];
   for (const item of rawItems) {
@@ -256,6 +264,9 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
     //       这一行没说 → 退回整单的类型（既有单类型单走的就是这一条路，逐字不变）。
     const itemTradeType = SALES_TRADE_TYPE_LABELS.includes(item.trade_type) ? item.trade_type : tradeType;
     const itemTradeTypeCode = tradeTypeCodeFromLabel(itemTradeType);
+    // 规范标签：认得出编码就用注册表的标签（`预付` → `预定`），认不出（例如「未付」）留空串 ——
+    // 那表示"这一行没有可用的类型提示"，最终类型由实时库存定（见 larkMvpService）。
+    const itemTradeTypeLabel = tradeTypeLabel(itemTradeTypeCode);
     const giftDescription = String(item.gift_description || '').trim();
     const gift = item.gift === true || Boolean(giftDescription);
     // 配品（腰带、鞋油、袜子、包等）：没有货号、颜色、尺码，只有名字和金额。
@@ -271,7 +282,7 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
         // 所以 tier_price 不落库、也不当成交金额（业务负责人口径）。
         tier_price: moneyOrEmpty(item.tier_price ?? item.tierPrice) || spokenAmount,
         actual_amount: spokenAmount,
-        trade_type: itemTradeType,
+        trade_type: itemTradeTypeLabel,
         trade_type_code: itemTradeTypeCode,
         gift,
         gift_description: giftDescription,
@@ -291,7 +302,7 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
       size: positiveOrEmpty(item.size),
       quantity: positiveOrEmpty(item.quantity) || 1,
       actual_amount: moneyOrEmpty(item.actual_amount),
-      trade_type: itemTradeType,
+      trade_type: itemTradeTypeLabel,
       trade_type_code: itemTradeTypeCode,
       gift,
       gift_description: giftDescription,
@@ -372,7 +383,9 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
   // 只对「整单一条明细」生效：多行时整单收款额没法确定属于哪一行，拆开就变成猜测。
   // 原话里出现"钱还没给清"的说法时一律不套用上面的还价口径——这时"收到的那笔钱"只是
   // 定金/首付，把它当成交金额会把应收金额算丢（这条是保守的护栏，不是判断欠款）。
-  const moneyNotSettled = /定金|预付|尾款|余款|剩下的|未付|欠款|还欠|欠着|赊账|下次给|下次再给|先给|先付|先交/
+  // 🔴 2026-10-07：这条护栏**只看"钱"的词**，与交易类型**无关**（资金与类型解耦）。
+  //    「未付」在这里是**她说的话**（"钱没结清"），不是一种交易类型。
+  const moneyNotSettled = /定金|预付|预定|尾款|余款|剩下的|未付|欠款|还欠|欠着|赊账|下次给|下次再给|先给|先付|先交/
     .test(String(sourceText || ''));
   // ⭐ 有尺码的鞋**多于一件**时，"整单实收"是**整单**的钱，不属于任何单独一件：
   //    这时若还拿它去覆盖第一件的成交金额，就会造成真机那次的错位
@@ -392,7 +405,11 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
         items[0].actual_amount = named;
         agreedTotal = named;
       }
-    } else if (items.length === 1 && tradeType === '现货' && !moneyNotSettled && coveredCents > 0) {
+    } else if (items.length === 1 && !moneyNotSettled && coveredCents > 0) {
+      // ⚠️ 这里**不再看交易类型**（原来写的是 `tradeType === '现货'`）：
+      //    "成交金额 = 实收"这条还价口径本来就只跟**钱**有关 —— 她说收到多少、
+      //    又没说欠/定金/尾款，成交就是那笔钱。而类型现在由库存决定，
+      //    拿它来管钱就是**又把两件事绑回去**（业务负责人明说：资金与类型完全无关）。
       // 覆盖第 9 条只在**真的只有一件**时成立（多件走上面 hasMultipleShoes 的注释）。
       items[0].actual_amount = covered;
       agreedTotal = covered;
@@ -534,17 +551,20 @@ class DoubaoService {
    intent="return" 或 "exchange" 时**不输出任何销售字段**（不要 items / payments / agreed_total），
    只按下面第 13 条的售后结构输出：她退哪一双、要退要换还是赔、钱怎么走、退回的鞋放哪。
    intent="sale" 时按下面的规则输出完整销售字段，不输出售后字段。
-2. trade_type 是这笔交易的**性质**，只能填「现货」「未付」「预付」三者之一：
-   · 提到定金 / 先付 / 预定 → \"预付\"（货没拿走，之后来取）
-   · 明确说未付 / 欠着 / 下次再给 → \"未付\"（鞋拿走，钱还没给）
+2. trade_type 只填她**嘴上说的性质**，只能填「现货」「预定」两者之一（**不是判据**）：
+   🔴 **最终的交易类型由后端的实时库存决定**（有货 = 现货，没货 = 预定），你**不要**去猜有没有货。
+   · 提到定金 / 先付 / 预定 / 定制（以后来取） → \"预定\"
    · 其余一律 \"现货\"（当场收款当场交货——门店绝大多数是这一种，不说不给钱就是现货）
+   · ⚠️ 她说「未付 / 欠着 / 下次再给 / 还欠」时**仍然是「现货」** ——
+     那只是"鞋 already 拿走了、钱还没结清"，**不是一种交易类型**；
+     钱的事按第 9 条的 payments / owed 记，不要因为她说"未付"就改 trade_type。
    团购券只是一种**支付方式**（钱延期结算），不影响 trade_type；用券买走一双鞋仍然是现货。
-   不要输出交付状态，后端会按 trade_type 决定是否交付。
-   ⭐ **一张单里的每一件都要填自己的 items[].trade_type** —— 一笔生意可以**既卖现货又卖预付**：
-     当场拿走的鞋填「现货」，付了定金、以后来取的那双填「预付」。
+   不要输出交付状态，后端会按**最终的**交易类型决定是否交付。
+   ⭐ **一张单里的每一件都要填自己的 items[].trade_type** —— 一笔生意可以**既卖现货又卖预定**：
+     当场拿走的鞋填「现货」，付了定金、以后来取的那双填「预定」。
      整单的 trade_type：所有件一样就填那一个；不一样时填**第一件**的。
      例：「119元微信。卖了31678，40码。定制一双6681-1，42码，定金50元，下次付39元」
-     ⇒ items = [{31678 现货 actual_amount=119}, {6681-1 预付}]，trade_type 填「现货」。
+     ⇒ items = [{31678 现货 actual_amount=119}, {6681-1 预定}]，trade_type 填「现货」。
    ⚠️ **定金 / 尾款只属于它紧挨着的那一件**（上面例子里是 6681-1），不要摊到别的件上。
 3. item_no 只填写用户原话中的货号，不要把颜色、尺码或品类拼进货号。用户可能用任意顺序和标点表达，但货号中的数字和字母必须原样保留。
 4. color 单独填写颜色；“棕色”规范为“棕”、“黑色”规范为“黑”。没有提到颜色时留空，不得猜测。
@@ -578,7 +598,7 @@ class DoubaoService {
        不要把各件的金额各记成一笔收款。
 9.1 owed（欠款金额）只在**她明说欠**时才填：
    她说「还欠 19 / 欠 19 / 未付 260 / 尾款以后付 140」→ owed 填她说的那个欠款金额；
-   整单一分钱没给、只说「未付」时 → owed 填整单金额。
+   整单一分钱没给（她说「没付 / 未付 / 先欠着」等）→ owed 填整单金额。
    她只说「收了 100」而**没有**说欠 → owed 留空，**绝不要**拿「成交金额 − 已收」的差额去填 owed。
 10. 遇到“89.9/89块9抵100”的团购券，只把实际付给门店的微信/现金等放入 payments；券的购买价 89.9 元和抵扣面额 100 元都不是门店已收现金，不要把它们当成 payments。不要猜测平台结算金额，后端会按已配置券种确定性换算。单鞋券后成交金额无法从原话直接确定时可留空，由后端结合实际支付和券种换算。
 11. 配品（不是鞋，没有尺码）：${accessoryNames.length ? accessoryNames.join('、') : '（本租户未配置配品）'}。

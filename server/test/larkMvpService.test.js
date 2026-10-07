@@ -1404,7 +1404,7 @@ test('真机错法（鞋 400 + 腰带 140 ⇒ 合计 540 ≠ 总额 400）：只
 
 // ─── 入口按「实时库存」匹配：卖的是实物，不是配置 ───
 
-test('库存里没有这个尺码时不发确认卡片，只回一句「库存里没有 X Y码，请核实～」', async () => {
+test('库存里没有这个尺码 → 记**预定**、照出确认卡片（不再是"请核实"那句拦截）', async () => {
   const { normalizeSalesResult } = require('../src/services/doubaoService');
   const store = makeStore();
   const cards = [];
@@ -1433,7 +1433,7 @@ test('库存里没有这个尺码时不发确认卡片，只回一句「库存�
   service.replyCard = async () => { throw new Error('非群回复路径不该被走到：群任务必须走 sendTaskCard'); };
   service.sendTaskCard = async (_task, card) => { cards.push(card); return 'om_card'; };
   service.sendTaskText = async (_task, message) => messages.push(message);
-  // ⚠️ 直接造任务、绕过入口：测的是"库存里没有这个尺码"这条管线。
+  // ⚠️ 直接造任务、绕过入口：测的是"这个尺码没货"这条管线。
   //    任务带群上下文（私聊链路已移除，没群上下文就没有去处）。
   await store.create({ task_id: 'sale_no_stock', type: 'sale', status: 'received',
     chat_type: 'group', chat_id: GROUP_CHAT_ID, message_id: 'om_ns',
@@ -1442,23 +1442,27 @@ test('库存里没有这个尺码时不发确认卡片，只回一句「库存�
   await service.processSalesTask('sale_no_stock');
 
   const task = await store.get('sale_no_stock');
-  assert.equal(task.status, 'needs_info');
-  assert.equal(cards.length, 0, '库存里没有这一双，就不该出确认卡片让她点');
-  // 缺货只回这一句：哪一双没有 + 这个货号现在有哪些码 + 请核实。
-  // 没有"销售信息还缺…请补充后重新发送"那层包装，也没有"第N件："的编号。
-  assert.equal(messages[0], '库存里没有 26632 37码（这个货号现在有 36、38码），请核实～');
+  // ⭐ 2026-10-07：没货**不是缺项**、**不拦单** —— 它就是「预定」。
+  assert.deepEqual(task.draft.missing_fields, [], '没货不再是缺项');
+  assert.equal(task.status, 'ready_to_confirm');
+  assert.equal(cards.length, 1, '照出确认卡片（记预定）');
+  assert.deepEqual(messages, [], '不再回"库存里没有…请核实"');
+  assert.equal(task.draft.items[0].trade_type_code, 'SALE_PREPAID');
+  assert.equal(task.draft.items[0].trade_type, '预定');
+  assert.equal(task.draft.delivery_status, '未交付');
 });
 
-// ─── 按交易类型决定「录单跑哪些解析」（业务负责人 2026-10-07 确认的设计）────────
-// 她的原话（逐字）：「**预付的原因是因为库存里没有，所以需要调货。既然已经判断为预付，
-// 系统实际上就不应该再去库存里面找了。**」
-// 「因为它实际上还是要写销售明细的，所以这个时候需要提供颜色信息，
-//  也就是要**以这个货号去找它的颜色**……」
-// 设计落档：docs/prepaid-stock-check-decoupling-2026-10-07.md
-//   解析 A「货品信息」→ 颜色 / 商品记录 id：**所有交易类型都跑**
-//   解析 B「实时库存」→ 有没有这一双 / 门盒样品：**按交易类型**
-//   现货 / 未付 → A+B；预付 → **只有 A**（B 整个解除）
-// ⚠️ 交付 / 扣库存一个字没动：交付与否仍由 SALES_MOVEMENTS.delivery 从交易类型推。
+// ─── **类型 = 实时库存里有没有这一双**（2026-10-07 口径大改）───────────────────
+// 业务负责人的原话（逐字）：
+//   「【类型 = 只看库存】库存里有这双 → 现货（当场交付 + 扣库存）
+//     库存里没有 → 预定（不交付；等货到了再交付、那时才扣库存）
+//     ⭐ 所以：**每次都必须查库存**（这就是判据本身）→ '预定跳过库存检查'那条配置要删」
+// 设计落档：docs/sales-type-by-stock-2026-10-07.md（AC-1 / AC-2）
+//   解析 A「货品信息」→ 颜色 / 商品记录 id：候选给**全部颜色**
+//   解析 B「实时库存」→ 有没有这一双 / 门盒样品：**两种类型都跑**（它就是类型判据）
+//   有货 → SALE_CASH（已交付）；没货 → SALE_PREPAID（未交付）
+// ⚠️ 「没货」**不再是缺项 / 不再是拦截** —— 它就是「预定」，照出确认卡片。
+// ⚠️ 交付 / 扣库存的底层写入口径一个字没动：仍由 SALES_MOVEMENTS.delivery 从类型推。
 
 // 「货品信息」里的一行（解析 A 的输入）。
 const productRow = (itemNo, color, recordId) => ({ itemNo, color, recordId });
@@ -1519,9 +1523,11 @@ const runSaleScenario = async ({ taskId, text, rows, parsed, products = [], prod
   // 解析 B 到底跑没跑：包一层计数（"多颜色未选色时 B 一次都不跑"这件事要看得见，
   // 不能只靠结果反推）。⚠️ 计数是**跨这次调用**的 —— 录单 + 之后的卡片动作都在里面。
   let stockLookups = 0;
+  const stockLookupInputs = [];
   const originalStockParse = service.resolveStockAvailabilityForSale.bind(service);
   service.resolveStockAvailabilityForSale = (...args) => {
     stockLookups += 1;
+    stockLookupInputs.push(args[0]);
     return originalStockParse(...args);
   };
   // 🚨 哨兵：非群那条回复路一次都不许走（群任务必须走 sendTaskCard）。
@@ -1532,14 +1538,15 @@ const runSaleScenario = async ({ taskId, text, rows, parsed, products = [], prod
     chat_type: 'group', chat_id: GROUP_CHAT_ID, message_id: `om_${taskId}`,
     sender_open_id: 'ou_1', sent_at: Date.now(), original_text: text });
   await service.processSalesTask(taskId);
-  return { task: await store.get(taskId), cards, messages, stockLookups, service, store,
-    readStockLookups: () => stockLookups, readLiveReads: () => liveReads };
+  return { task: await store.get(taskId), cards, messages, stockLookups, stockLookupInputs, service, store,
+    readStockLookups: () => stockLookups, readLiveReads: () => liveReads,
+    readStockLookupInputs: () => stockLookupInputs };
 };
 
-test('真机原话「定金微信交了 100 元，下次欠 128 元」（预付 + 完全没库存）→ 无缺项、直接出确认卡片', async () => {
+test('真机原话「定金微信交了 100 元，下次欠 128 元」（没库存）→ 无缺项、出确认卡片、记**预定**', async () => {
   // 这一条**同时**钉住两个 bug：
   //   BUG#1 她已经说了定金金额，不该再报「请明确已经收到的定金金额」；
-  //   BUG#2 预付本来就没货（要调货），不该拿"库存里没有"拦她。
+  //   BUG#2 没货**不该拦她** —— 它就是「预定」（2026-10-07 口径：类型只看库存）。
   const text = '26002-52 37 码，定金微信交了 100 元，下次欠 128 元';
   const { task, cards, messages, stockLookups } = await runSaleScenario({
     taskId: 'sale_real_deposit',
@@ -1547,7 +1554,7 @@ test('真机原话「定金微信交了 100 元，下次欠 128 元」（预付 
     rows: [], // 这个货号现在一双都没有
     products: [productRow('26002-52', '黑', 'p37')],
     parsed: {
-      intent: 'sale', trade_type: '预付',
+      intent: 'sale', trade_type: '预定',
       items: [{ item_no: '26002-52', color: '', size: 37, quantity: 1 }],
       payments: [{ amount: 100, method: '微信' }], agreed_total: 228, owed: 128,
     },
@@ -1555,22 +1562,24 @@ test('真机原话「定金微信交了 100 元，下次欠 128 元」（预付 
 
   assert.deepEqual(task.draft.missing_fields, [], '她已经说清了，不许再让她补充');
   assert.equal(task.status, 'ready_to_confirm');
-  assert.equal(cards.length, 1, '预付照样要出确认卡片');
+  assert.equal(cards.length, 1, '没货 = 预定，照样出确认卡片');
   assert.deepEqual(messages, [], '没有缺项就不该回"请补充"');
-  assert.equal(stockLookups, 0, '预付不查实时库存（BUG#2）');
+  assert.equal(stockLookups, 1, '⭐ 每一次都必须查库存（类型判据就是它）');
   // 三个值都要对（BUG#1 的验收口径）。
   assert.deepEqual(task.draft.payments, [{ amount: 100, method: '微信' }]);
   assert.equal(task.draft.agreed_total, 228);
   assert.equal(task.draft.owed, 128);
-  // 交付那条既有逻辑**没动**：预付 = 未交付。
-  assert.equal(task.draft.trade_type, '预付');
+  // 类型由库存定：没货 → 预定 → 未交付。
+  assert.equal(task.draft.items[0].trade_type, '预定');
+  assert.equal(task.draft.items[0].trade_type_code, 'SALE_PREPAID');
+  assert.equal(task.draft.trade_type, '预定');
   assert.equal(task.draft.delivery_status, '未交付');
   // 销售明细要写得全：颜色从货品信息（解析 A）拿到。
   assert.equal(task.draft.items[0].product_record_id, 'p37');
   assert.equal(task.draft.items[0].color, '黑');
 });
 
-test('她没说定金收了多少（预付 + 也没库存）→ 仍然要求补充定金金额（这一条不放宽）', async () => {
+test('她没说定金收了多少（也没库存）→ 仍然要求补充定金金额（这一条不放宽）', async () => {
   const text = '26002-52 37 码，定金微信交的，下次欠 128 元';
   const { task, cards, messages, stockLookups } = await runSaleScenario({
     taskId: 'sale_deposit_amount_missing',
@@ -1578,7 +1587,7 @@ test('她没说定金收了多少（预付 + 也没库存）→ 仍然要求补�
     rows: [],
     products: [productRow('26002-52', '黑', 'p37')],
     parsed: {
-      intent: 'sale', trade_type: '预付',
+      intent: 'sale', trade_type: '预定',
       items: [{ item_no: '26002-52', size: 37, quantity: 1 }],
       payments: [], agreed_total: 228, owed: 128,
     },
@@ -1586,28 +1595,26 @@ test('她没说定金收了多少（预付 + 也没库存）→ 仍然要求补�
 
   assert.ok(task.draft.missing_fields.includes('请明确已经收到的定金金额'),
     `实际待补充：${JSON.stringify(task.draft.missing_fields)}`);
-  assert.equal(stockLookups, 0, '预付不查实时库存 —— 但定金金额那条仍然要问');
+  assert.equal(stockLookups, 1, '库存照样查（类型判据），但定金金额那条仍然要问');
   assert.equal(task.status, 'needs_info');
   assert.equal(cards.length, 0, '缺定金金额就不许出确认卡片');
   // 2026-10-07 文案改版（她真机撞到「这个提醒是什么意思？」）：**判据没动**（上面两条照旧钉着
-  // 机器清单里的原话），回她的那一句换成人话 —— 这里改成**逐字**钉住新文案（比原来更严：
-  // 原来只匹配一个片段，现在整句 + 整段结构都钉住）。
+  // 机器清单里的原话），回她的那一句换成人话 —— 这里**逐字**钉住新文案。
   assert.equal(messages[0], '销售信息还缺 1 处，请照着补一下～\n1. 请说一句这次收了多少定金～');
 });
 
-test('预付单：解析 B（实时库存）**整个不跑**，颜色改由解析 A（货品信息）按货号解析出来', async () => {
-  // 设计（业务负责人 2026-10-07 逐字）：
-  //   「既然已经判断为预付，系统实际上就不应该再去库存里面找了」
-  //   「以这个货号去找它的颜色」—— 销售明细要写得全，所以 A 必须跑。
+test('没库存（原「预付」单）：解析 B **照样跑** —— 它就是类型判据；颜色仍由 A 定', async () => {
+  // 🔴 2026-10-07 口径：删掉了"预定跳过库存"那条策略（那是循环论证：
+  //    "预定"是查完之后才知道的结论，不可能再看它决定"要不要查"）。
   const text = '26002-52 37码，定金微信交了100元，下次欠128元';
   const { task, cards, stockLookups } = await runSaleScenario({
     taskId: 'sale_prepaid_product_info',
     text,
-    // 实时库存里**有**这一双也不算数：预付根本不走 B。
+    // 实时库存里有**白**，而 A 给的是**黑** ⇒ 查「黑」查不到 ⇒ 预定。
     rows: [liveRow({ itemNo: '26002-52', color: '白', size: 37, productRecordId: 'live_p37' })],
     products: [productRow('26002-52', '黑', 'p37')],
     parsed: {
-      intent: 'sale', trade_type: '预付',
+      intent: 'sale', trade_type: '预定',
       items: [{ item_no: '26002-52', size: 37, quantity: 1 }],
       payments: [{ amount: 100, method: '微信' }], agreed_total: 228, owed: 128,
     },
@@ -1615,36 +1622,39 @@ test('预付单：解析 B（实时库存）**整个不跑**，颜色改由解�
 
   assert.equal(task.status, 'ready_to_confirm');
   assert.equal(cards.length, 1);
-  assert.equal(stockLookups, 0, '预付不许去实时库存里找（解析 B 被配置解除）');
+  assert.equal(stockLookups, 1, '两种类型都要查库存（这就是判据本身）');
   // 颜色 / 商品记录来自「货品信息」（A），不是实时库存那条「白」。
   assert.equal(task.draft.items[0].product_record_id, 'p37');
   assert.equal(task.draft.items[0].color, '黑');
+  // 查不到「黑」⇒ 预定（不是"缺货"）。
+  assert.equal(task.draft.items[0].trade_type_code, 'SALE_PREPAID');
+  assert.deepEqual(task.draft.missing_fields, []);
 });
 
-test('预付单：货品信息里这个货号有多个颜色 → 仍然让她在卡片上选（销售明细要写全）', async () => {
+test('没库存 + 货品信息里有多个颜色 → 仍然让她在卡片上选（销售明细要写全）', async () => {
   const text = '26002-52 37码，定金微信交了100元，下次欠128元';
-  const { task, cards, stockLookups } = await runSaleScenario({
+  const { task, cards, stockLookups, stockLookupInputs } = await runSaleScenario({
     taskId: 'sale_prepaid_multi_color',
     text,
     rows: [],
     products: [productRow('26002-52', '黑', 'p_black'), productRow('26002-52', '白', 'p_white')],
     parsed: {
-      intent: 'sale', trade_type: '预付',
+      intent: 'sale', trade_type: '预定',
       items: [{ item_no: '26002-52', size: 37, quantity: 1 }],
       payments: [{ amount: 100, method: '微信' }], agreed_total: 228, owed: 128,
     },
   });
 
-  assert.equal(stockLookups, 0, '预付不走解析 B');
-  assert.equal(task.draft.items[0].needs_color, true, '颜色是入账必要信息，预付也要选');
+  assert.equal(stockLookups, 0, '颜色没定之前 B 一次都不跑（她的口径）');
+  assert.equal(task.draft.items[0].needs_color, true, '颜色是入账必要信息');
   assert.deepEqual(task.draft.items[0].color_options.map((option) => option.color), ['黑', '白']);
-  // 没选颜色前不许确认（既有闸门，一个字没改）——出了卡片但确认会被挡。
+  // 候选上照标「有货 / 无货」（实时库存里一双都没有 ⇒ 全是"无货"= 会记成预定）。
+  assert.deepEqual(task.draft.items[0].color_options.map((option) => option.stock_status),
+    ['unavailable', 'unavailable']);
   assert.equal(cards.length, 1);
+  assert.deepEqual(stockLookupInputs, [], '选颜色之前一次都没查');
 });
 
-// ⭐ 旧行为哨兵（有意改掉，见汇报）：旧口径是「现货 / 未付：B 认得出来就以 B 为准，
-//    连颜色与记录 id 都整体替换 A」。2026-10-07 第三刀之后**颜色由 A 定死**：
-//    这条用例现在钉的是"A 说的那个颜色/记录 id 不再被 B 覆盖，B 只拿它去查库存"。
 test('现货单：A 定下的单色就是这一单的颜色与货品，B 只拿它去查库存（不再用 B 覆盖 A）', async () => {
   const { task, cards, stockLookups, readLiveReads } = await runSaleScenario({
     taskId: 'sale_cash_both_parses',
@@ -1664,15 +1674,14 @@ test('现货单：A 定下的单色就是这一单的颜色与货品，B 只拿�
   // 颜色 / 记录 id 以 A（「货品信息」）为准 —— 即使实时库存那条记录 id 是另一个。
   assert.equal(task.draft.items[0].product_record_id, 'p37');
   assert.equal(task.draft.items[0].color, '黑');
+  // ⭐ 查到了 ⇒ 现货。
+  assert.equal(task.draft.items[0].trade_type_code, 'SALE_CASH');
   // 库存分布仍然来自 B（她定的那个颜色在店里实际有几双）。
   assert.deepEqual(task.draft.items[0].stock, { doorBox: 1, sample: 0, warehouse: 0 });
   assert.equal(readLiveReads(), 1, '整单只读一次实时库存');
 });
 
-// ⭐ 同一个哨兵的另一半：A 说是「黑」、实时库存那个尺码只有「白」时，
-//    **不再**把 B 的「白」当成这一单的颜色（旧行为就是这么覆盖的）；
-//    以 A 为准去 B 里找「黑」→ 找不到 → 走"库存里没有…"。
-test('现货单：A 说「黑」、实时库存 37 码只有「白」→ 以 A 为准，走"库存里没有…"（覆盖旧行为）', async () => {
+test('现货单：A 说「黑」、实时库存 37 码只有「白」→ 查「黑」查不到 ⇒ 记**预定**（不再是拦截）', async () => {
   const { task, cards, messages, stockLookups } = await runSaleScenario({
     taskId: 'sale_cash_a_overrides_b',
     text: '26002-52 37码，210微信',
@@ -1685,14 +1694,18 @@ test('现货单：A 说「黑」、实时库存 37 码只有「白」→ 以 A �
     },
   });
 
-  assert.equal(stockLookups, 1, '现货要查库存，但查的是 A 定的「黑」');
-  assert.equal(task.status, 'needs_info');
-  assert.equal(cards.length, 0, '查不到 A 那个颜色就不出确认卡片');
-  assert.equal(messages[0], '库存里没有 26002-52 37码（这个货号现在一双都没有），请核实～');
+  assert.equal(stockLookups, 1, '查的是 A 定的「黑」');
+  assert.equal(task.status, 'ready_to_confirm', '没货不再是缺项');
+  assert.equal(cards.length, 1, '照出确认卡片（记预定）');
+  assert.deepEqual(messages, [], '不再回"库存里没有…请核实"');
+  assert.equal(task.draft.items[0].trade_type_code, 'SALE_PREPAID');
+  assert.equal(task.draft.items[0].trade_type, '预定');
+  // 颜色以 A 为准（不许拿 B 的「白」顶替她的「黑」）。
+  assert.equal(task.draft.items[0].color, '黑');
 });
 
-test('现货单且库存里没有 → 仍然被拦（既有行为，一个字没改）', async () => {
-  const { task, cards, messages, stockLookups } = await runSaleScenario({
+test('现货原话但库存里没有 → 记**预定**（不交付、不扣库存；不再拦单）', async () => {
+  const { task, cards, messages } = await runSaleScenario({
     taskId: 'sale_cash_no_stock',
     text: '26002-52 37码，210微信',
     rows: [],
@@ -1704,17 +1717,20 @@ test('现货单且库存里没有 → 仍然被拦（既有行为，一个字没
     },
   });
 
-  assert.equal(stockLookups, 1, '现货必须查库存');
-  assert.equal(task.status, 'needs_info');
-  assert.equal(cards.length, 0, '现货没库存就不该出确认卡片');
-  assert.equal(messages[0], '库存里没有 26002-52 37码（这个货号现在一双都没有），请核实～');
+  assert.equal(task.status, 'ready_to_confirm');
+  assert.equal(cards.length, 1);
+  assert.deepEqual(messages, []);
+  assert.deepEqual(task.draft.missing_fields, []);
+  assert.equal(task.draft.items[0].trade_type_code, 'SALE_PREPAID');
+  assert.equal(task.draft.delivery_status, '未交付');
 });
 
-test('未付单且库存里没有 → 仍然被拦（鞋已经被拿走了，必须确实有这双鞋）', async () => {
+test('她说「未付」但库存里没有 → 类型仍是**预定**（「未付」不再是类型，它只说钱）', async () => {
   const { task, cards, messages } = await runSaleScenario({
     taskId: 'sale_unpaid_no_stock',
     text: '26002-52 37码，260未付',
     rows: [],
+    products: [productRow('26002-52', '黑', 'p37')],
     parsed: {
       intent: 'sale', trade_type: '未付',
       items: [{ item_no: '26002-52', size: 37, quantity: 1, actual_amount: 260 }],
@@ -1722,9 +1738,13 @@ test('未付单且库存里没有 → 仍然被拦（鞋已经被拿走了，必
     },
   });
 
-  assert.equal(task.status, 'needs_info');
-  assert.equal(cards.length, 0, '未付没库存就不该出确认卡片');
-  assert.equal(messages[0], '库存里没有 26002-52 37码（这个货号现在一双都没有），请核实～');
+  assert.equal(task.status, 'ready_to_confirm', '「未付」不再是缺项 / 不再被拦');
+  assert.equal(cards.length, 1);
+  assert.deepEqual(messages, []);
+  assert.equal(task.draft.items[0].trade_type_code, 'SALE_PREPAID', '没货 → 预定（与"钱没结清"无关）');
+  assert.equal(task.draft.items[0].trade_type, '预定');
+  // 钱那一维**照她说的记**：全额待收。
+  assert.equal(task.draft.owed, 260);
 });
 
 // ─── 第三刀：颜色由 A 定死、B 拿"她选定的颜色"去查库存（业务负责人 2026-10-07）────
@@ -1886,7 +1906,7 @@ test('② 她选定颜色之后才跑 B：用她选中那条候选的记录 id�
   assert.equal(result.cards.length, 2, '选完颜色要更新那张卡片');
 });
 
-test('②b 选到无货的颜色 → 缺货提示发生在 B 之后，候选保留（她可以换一个颜色）', async () => {
+test('②b 选到无货的颜色 → **记成预定**（不再是"缺货提示"；候选收起、卡片更新）', async () => {
   const result = await runSaleScenario({
     taskId: 'sale_multi_color_pick_out',
     text: '26002-52 37码，210微信',
@@ -1895,20 +1915,25 @@ test('②b 选到无货的颜色 → 缺货提示发生在 B 之后，候选保�
     parsed: multiColorParsed('现货'),
   });
 
+  // 录单时两个候选各标各的：黑有货、白无货（= 会记成预定）。
+  assert.deepEqual(result.task.draft.items[0].color_options.map((option) => option.stock_status),
+    ['available', 'unavailable']);
+
   const picked = await result.service.handleCardAction(
     chooseColorAction('sale_multi_color_pick_out', { recordId: 'p_white', colorName: '白', productNumber: '26002-52白' }),
   );
 
-  assert.equal(picked.toast.type, 'warning');
-  assert.equal(result.readStockLookups(), 1, '缺货也是 B 跑出来的结论');
-  assert.equal(result.readLiveReads(), 2);
-  // 缺货那句与录单时同一个形状 —— 它发生在 B **之后**。
-  assert.equal(result.messages.at(-1), '库存里没有 26002-52 37码（这个货号现在一双都没有），请核实～');
+  assert.equal(picked.toast.type, 'success', '没货不是错误：记成预定就好');
+  assert.equal(result.readStockLookups(), 1, '类型就是这一次 B 查出来的');
+  assert.deepEqual(result.messages, [], '不再回"库存里没有…请核实"');
   const task = await result.store.get('sale_multi_color_pick_out');
-  assert.equal(task.status, 'ready_to_confirm', '不把任务打死：她可以在同一张卡片上换一个颜色');
-  assert.equal(task.draft.items[0].needs_color, true, '候选保留');
-  assert.equal(task.draft.items[0].color_options.length, 2);
-  assert.equal(task.draft.items[0].product_record_id, 'p_white', '她点过的那条记下来，便于排查');
+  assert.equal(task.status, 'ready_to_confirm');
+  assert.equal(task.draft.items[0].needs_color, false, '颜色定下来了');
+  assert.equal(task.draft.items[0].color, '白');
+  assert.equal(task.draft.items[0].product_record_id, 'p_white', '用她点中的那条候选');
+  assert.equal(task.draft.items[0].trade_type_code, 'SALE_PREPAID', '库存里没有 → 预定');
+  assert.equal(task.draft.items[0].trade_type, '预定');
+  assert.equal(result.cards.length, 2, '选完颜色要更新那张卡片');
 });
 
 test('②c 选完颜色但「实时库存」读不到 → 不下"有货/无货"的结论，回一句让她再点一次（候选保留）', async () => {
@@ -1963,41 +1988,42 @@ test('④ 单颜色货号不问她（未付）：A 直接定下来，B 拿这个
   assert.equal(result.cards.length, 1);
 });
 
-test('⑤ 预付：多颜色先让她选；她选完之后 B 仍然不跑，候选也不标库存', async () => {
+test('⑤ 她嘴上说「定金」的单：多颜色先让她选；**选完照样跑 B** 定类型', async () => {
   const result = await runSaleScenario({
     taskId: 'sale_prepaid_multi_pick',
     text: '26002-52 37码，定金微信交了100元，下次欠128元',
-    // 实时库存里"有"也不算数：预付根本不走 B。
     rows: [liveRow({ itemNo: '26002-52', color: '黑', size: 37, productRecordId: 'live_black' })],
     products: MULTI_COLOR_PRODUCTS,
     parsed: {
-      intent: 'sale', trade_type: '预付',
+      intent: 'sale', trade_type: '预定',
       items: [{ item_no: '26002-52', size: 37, quantity: 1 }],
       payments: [{ amount: 100, method: '微信' }], agreed_total: 228, owed: 128,
     },
   });
 
-  assert.equal(result.stockLookups, 0, '预付不跑 B');
-  assert.equal(result.task.draft.items[0].needs_color, true, '预付也要选颜色（销售明细要写全）');
-  // 不跑 B 的交易类型**不标**库存：预付本来就没货、要调货，标"无货"只会误导她。
+  assert.equal(result.stockLookups, 0, '颜色没定 ⇒ B 一次都不跑');
+  assert.equal(result.task.draft.items[0].needs_color, true, '颜色是入账必要信息');
+  // ⭐ 「有货 / 无货」标注保留（它现在 = 现货 / 预定的预告）：黑有货、白无货。
   assert.deepEqual(result.task.draft.items[0].color_options.map((option) => option.stock_status),
-    [undefined, undefined]);
-  assert.doesNotMatch(JSON.stringify(result.cards[0]), /（有货）|（无货）/);
+    ['available', 'unavailable']);
+  assert.match(JSON.stringify(result.cards[0]), /黑（有货）/);
+  assert.match(JSON.stringify(result.cards[0]), /白（无货）/);
 
   const picked = await result.service.handleCardAction(
     chooseColorAction('sale_prepaid_multi_pick', { recordId: 'p_white', colorName: '白', productNumber: '26002-52白' }),
   );
 
   assert.equal(picked.toast.type, 'success');
-  assert.equal(result.readStockLookups(), 0, '预付：她选完颜色之后 B 仍然不跑');
-  assert.equal(result.readLiveReads(), 1, '只有录单那次实时库存读数（B 一直没跑）');
+  assert.equal(result.readStockLookups(), 1, '她选完之后 B 跑一次 —— 这一次才定类型');
+  assert.equal(result.readLiveReads(), 2, '录单一次 + 她选完颜色一次');
   const task = await result.store.get('sale_prepaid_multi_pick');
   assert.equal(task.draft.items[0].product_record_id, 'p_white');
   assert.equal(task.draft.items[0].color, '白');
   assert.equal(task.draft.items[0].needs_color, false);
+  assert.equal(task.draft.items[0].trade_type_code, 'SALE_PREPAID', '白没有货 → 预定');
 });
 
-test('缺货之外还有别的问题时，才用完整的补充说明', async () => {
+test('没问题能独立成句时，用完整的补充说明（缺货已不再是缺项）', async () => {
   const { normalizeSalesResult } = require('../src/services/doubaoService');
   const store = makeStore();
   const messages = [];
@@ -2012,7 +2038,7 @@ test('缺货之外还有别的问题时，才用完整的补充说明', async ()
     references: {}, posting: {},
     recognizer: {
       parseSalesText: async () => normalizeSalesResult({ intent: 'sale', behavior_code: 'SALE_CASH',
-        // 两件：37码缺货 + 两件都没写各自成交金额（整单给了金额，但不许分摊猜测）
+        // 两件都**没写各自成交金额**（整单给了金额，但不许分摊猜测）—— 这类问题只有完整说明那一支。
         items: [
           { item_no: '26632', color: '黑', size: 37, quantity: 1 },
           { item_no: '26632', color: '黑', size: 36, quantity: 1 },
@@ -2033,7 +2059,6 @@ test('缺货之外还有别的问题时，才用完整的补充说明', async ()
 
   await service.processSalesTask('sale_mixed');
 
-  assert.match(messages[0], /库存里没有 26632 37码/);
   // 2026-10-07 文案改版：原来这里匹配的是**机器清单那句**「请逐件说明成交金额」；
   // 现在那件事与 `items[i].actual_amount` 合并成**一句人话**（还把两双都点出来）。
   // ⚠️ 这是**收严**不是放宽：原来只匹配 6 个字，现在逐字钉住整句（含两个货号），
@@ -2125,14 +2150,16 @@ const productIndexRow = (itemNo, color, recordId, completeness = '齐备') => ({
 const REGISTRATION_TEXT = (itemNo) =>
   `货品信息里没有 ${itemNo}，请先在「货品信息」建档或核对货号，再发一次～`;
 
-test('三种交易类型：货号压根没建档 → 都拦、都不出卡片、都回那句可配文案（现货/未付 的 B 照跑，预付的 B 照不跑）', async () => {
+test('两种交易类型：货号压根没建档 → 都拦、都不出卡片、都回那句可配文案（B 照跑）', async () => {
   // 这一条同时钉三件事：
-  //   ① A′ 判据在 A 之后、**三种交易类型都走**（预付跳过 B 也过得到）；
-  //   ② 现货 / 未付 的解析 B **一个字没变**（这里特意让库存里有这双鞋，
+  //   ① A′ 判据在 A 之后、**两种交易类型都走**；
+  //   ② 解析 B **一个字没变**（这里特意让库存里有这双鞋，
   //      以证明拦住它的**不是** B，而是新判据 —— 真机上就是 B 兜不住的那个洞）；
   //   ③ 判据的结论来自「货品信息」这张表（索引里只有别的货号）。
+  //   ⚠️ 2026-10-07：原来这里是三种（现货 / 未付 / 预付，且预付不跑 B）；
+  //     现在只有两种类型、**两种都跑 B**（类型就是 B 查出来的）。
   for (const [tradeType, slug, expectStockLookups] of [
-    ['现货', 'cash', 1], ['未付', 'unpaid', 1], ['预付', 'prepaid', 0],
+    ['现货', 'cash', 1], ['预定', 'prepaid', 1],
   ]) {
     const { task, cards, messages, stockLookups } = await runSaleScenario({
       taskId: `sale_unregistered_${slug}`,
@@ -2145,9 +2172,9 @@ test('三种交易类型：货号压根没建档 → 都拦、都不出卡片、
       parsed: {
         intent: 'sale', trade_type: tradeType,
         items: [{ item_no: 'B26002-52', size: 37, quantity: 1, actual_amount: 210 }],
-        payments: tradeType === '预付' ? [{ amount: 100, method: '微信' }] : [{ amount: 210, method: '微信' }],
+        payments: tradeType === '预定' ? [{ amount: 100, method: '微信' }] : [{ amount: 210, method: '微信' }],
         agreed_total: 210,
-        ...(tradeType === '预付' ? { owed: 110 } : {}),
+        ...(tradeType === '预定' ? { owed: 110 } : {}),
       },
     });
 
@@ -2157,7 +2184,7 @@ test('三种交易类型：货号压根没建档 → 都拦、都不出卡片、
     assert.ok(task.draft.missing_fields.includes(REGISTRATION_TEXT('B26002-52')),
       `${tradeType}：缺项里要看得见是哪个货号`);
     assert.equal(stockLookups, expectStockLookups,
-      `${tradeType}：解析 B 的既有行为一个字没改（现货/未付 照跑、预付照不跑）`);
+      `${tradeType}：**两种类型都要查库存**（拦它的是建档判据，不是"没货"）`);
   }
 });
 
@@ -2485,11 +2512,12 @@ test('一单多双只读一次实时库存，不按双数重复全表读', async
 
 // ─── 交易类型：AI 判断性质，脚本决定交付，用户只核对 ───
 
-const tradeTypeService = ({ store, cards, updates, counters, parsed }) => {
+const tradeTypeService = ({ store, cards, updates, counters, parsed,
+  rows = [liveRow({ itemNo: '26632', color: '黑', size: 37, productRecordId: 'p37' })] }) => {
   const service = new LarkMvpService({
     client: {},
     gateway: {
-      ...liveInventoryGateway([liveRow({ itemNo: '26632', color: '黑', size: 37, productRecordId: 'p37' })]),
+      ...liveInventoryGateway(rows),
       validateTables: async () => [],
       create: async () => ({ recordId: 'entry_trade' }),
       update: async (tableKey, recordId, fields) => { updates.push({ tableKey, recordId, fields }); },
@@ -2497,7 +2525,8 @@ const tradeTypeService = ({ store, cards, updates, counters, parsed }) => {
     references: { resolveSalesTradeType: async (code) => ({ recordId: `behavior_${code}` }) },
     posting: { postSale: async () => ({ sourceNo: 'XSD-TRADE', detailRecordIds: ['d1'], paymentRecordIds: ['p1'] }) },
     delivery: { deliver: async () => { counters.delivered += 1; return { sampleReplacements: [] }; } },
-    recognizer: { parseSalesText: async () => parsed() },
+    // ⚠️ 把**她原话**透给 fixture：资金口径（定金 / 尾款 / 欠）只看原话里的词。
+    recognizer: { parseSalesText: async (text) => parsed(text) },
     store,
   });
   service.sendTaskCard = async (_task, card) => { cards.push(card); return 'card_trade'; };
@@ -2505,7 +2534,7 @@ const tradeTypeService = ({ store, cards, updates, counters, parsed }) => {
   return service;
 };
 
-test('现货单：卡片显示「现货 · 已交付」，只留一个确认按钮，确认后扣库存', async () => {
+test('现货单（库里有）：卡片三段显示「类型：现货 / 履约状态：已交付」，确认后扣库存', async () => {
   const { normalizeSalesResult } = require('../src/services/doubaoService');
   const store = makeStore();
   const cards = [];
@@ -2524,7 +2553,10 @@ test('现货单：卡片显示「现货 · 已交付」，只留一个确认按�
   assert.equal(draft.trade_type, '现货');
   assert.equal(draft.delivery_status, '已交付', '现货当场交付，不该问用户');
   const card = JSON.stringify(cards[0]);
-  assert.match(card, /现货 · 已交付/);
+  // ⭐ 三段分开说（业务负责人：「【卡片 = 分开说】类型 · 履约状态 · 收款情况」）。
+  assert.match(card, /类型：现货/);
+  assert.match(card, /履约状态：已交付/);
+  assert.match(card, /收款情况：已收 微信 ￥210；已结清/);
   // 卡片上不再有"你来选交付"的痕迹
   assert.doesNotMatch(card, /确认已交付|确认未交付|请按实际情况选择/);
   // 交易类型落成关联「行为管理」的记录，便于以后筛选对账
@@ -2537,25 +2569,33 @@ test('现货单：卡片显示「现货 · 已交付」，只留一个确认按�
   assert.equal(counters.delivered, 1, '现货确认即交付并扣库存');
 });
 
-test('预付单：卡片显示「预付 · 未交付」，确认后不扣库存', async () => {
+test('预定单（库里没有）：卡片三段显示「类型：预定 / 履约状态：未交付」，确认后不扣库存', async () => {
   const { normalizeSalesResult } = require('../src/services/doubaoService');
   const store = makeStore();
   const cards = [];
   const updates = [];
   const counters = { delivered: 0 };
-  const service = tradeTypeService({ store, cards, updates, counters, parsed: () => normalizeSalesResult({
-    intent: 'sale', trade_type: '预付',
-    items: [{ item_no: '26632', color: '黑', size: 37, quantity: 1, actual_amount: 240 }],
-    payments: [{ amount: 100, method: '微信' }], agreed_total: 240 }) });
+  const service = tradeTypeService({ store, cards, updates, counters, rows: [],
+    // ⚠️ 必须把**她原话**一起给归一化层：资金口径现在只看"钱"的词
+    //    （`定金`/`尾款`…），没有原话就会把"收到的那笔钱"当成成交金额。
+    parsed: (text) => normalizeSalesResult({
+      intent: 'sale', trade_type: '预定',
+      items: [{ item_no: '26632', color: '黑', size: 37, quantity: 1, actual_amount: 240 }],
+      payments: [{ amount: 100, method: '微信' }], agreed_total: 240 }, text) });
   await store.create({ task_id: 'sale_type_prepaid', chat_type: 'group', chat_id: GROUP_CHAT_ID, type: 'sale', status: 'received', message_id: 'om_p',
     sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '26632黑37一双，定金100微信，尾款以后付' });
 
   await service.processSalesTask('sale_type_prepaid');
 
   const draft = (await store.get('sale_type_prepaid')).draft;
-  assert.equal(draft.trade_type, '预付');
-  assert.equal(draft.delivery_status, '未交付', '只有预付是未交付：货没拿走');
-  assert.match(JSON.stringify(cards[0]), /预付 · 未交付/);
+  // 类型**由库存定**（这个 fixture 的实时库存是空的）——她嘴上说的是不是"定金"不算数。
+  assert.equal(draft.trade_type, '预定');
+  assert.equal(draft.items[0].trade_type_code, 'SALE_PREPAID');
+  assert.equal(draft.delivery_status, '未交付', '只有预定是未交付：货没到 / 没拿走');
+  const card = JSON.stringify(cards[0]);
+  assert.match(card, /类型：预定/);
+  assert.match(card, /履约状态：未交付/);
+  assert.match(card, /收款情况：已收 微信 ￥100；还欠 ￥140/);
 
   const result = await service.handleCardAction({ operator: { operator_id: { open_id: 'ou_1' } },
     action: { value: { action: 'confirm_sale', draft_id: 'sale_type_prepaid' } } });

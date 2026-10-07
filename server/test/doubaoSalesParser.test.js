@@ -148,10 +148,14 @@ test('two pairs in one AI line must be restated as two individually priced lines
 });
 
 test('deposit alone cannot be mistaken for a shoe transaction price', () => {
+  // ⚠️ 2026-10-07 资金与类型解耦：这条护栏现在**只看"钱"的词**（定金 / 尾款 / 欠…），
+  //    不再看交易类型。所以这条用例把她的原话也带进来（生产上 `sourceText` 一定有）。
   const result = normalizeWithVouchers({ intent: 'sale', items: [{ item_no: '9A207-0', size: 43, quantity: 1 }],
-    payments: [{ method: '微信', amount: 50 }], trade_type: '预付' });
-  assert.equal(result.agreed_total, '');
-  assert.equal(result.trade_type, '预付');
+    payments: [{ method: '微信', amount: 50 }], trade_type: '预付' }, '9A207-0 43码，定金微信 50');
+  assert.equal(result.agreed_total, '', '只说了定金，不能把定金当成成交金额');
+  // 标签统一成规范说法（「预付」→「预定」）。
+  assert.equal(result.trade_type, '预定');
+  assert.equal(result.items[0].trade_type, '预定');
   assert.ok(result.missing_fields.includes('items[0].actual_amount'));
 });
 
@@ -500,7 +504,7 @@ test('真机语序「定金微信交了 100 元，下次欠 128 元」→ 定金
   assert.deepEqual(result.payments, [{ method: '微信', amount: 100 }]);
   assert.equal(result.agreed_total, 228);
   assert.equal(result.owed, 128);
-  assert.equal(result.trade_type, '预付');
+  assert.equal(result.trade_type, '预定');
 });
 
 test('后端也能自己从「定金 100 + 下次欠 128」推出成交额 228（模型漏给 agreed_total / owed 也不丢账）', () => {
