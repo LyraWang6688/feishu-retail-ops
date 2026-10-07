@@ -85,8 +85,10 @@ const fakeBase = ({ products = [], liveInventory = [] } = {}) => {
 };
 
 // 「货品信息」里的一行（真机那两条：编号 = 货号|颜色|类别）。
-const productRow = ({ recordId, number, itemNo, color }) => ({
-  record_id: recordId, fields: { 编号: number, 货号: itemNo, 颜色: color },
+// ⭐ 生产表里还有「货品状态」这一列（飞书公式：在售 / 下架）—— 现货 / 未付的候选范围
+//    就是用它过滤的，所以 fixture 必须带上它（默认「在售」，与生产一致）。
+const productRow = ({ recordId, number, itemNo, color, status = '在售' }) => ({
+  record_id: recordId, fields: { 编号: number, 货号: itemNo, 颜色: color, 货品状态: status },
 });
 
 // 「实时库存」里的一行（现货 / 未付 的**库存来源**：B 用它查"这个颜色有没有货"，
@@ -270,15 +272,17 @@ test('预付 + 货号不存在 → 不编记录、不给她选；真实解析器
 //    「A 一定要有选颜色的机制……如果有多个颜色，一定要让用户去选择」）：
 //      · 候选来自 A 的「货品信息」（顺序 = resolver 的 zh-CN 颜色排序），
 //      · **在她选定之前 B 一次都不跑** ⇒ 候选里**没有**库存分布 / 补样品方案，
-//      · 候选上改标「这个尺码有没有货」的 `stock_status`（只用录单时已读进来的索引算）。
+//      · 候选上改标「这个尺码有没有货」的 `stock_status`（只用录单时已读进来的索引算），
+//      · ⭐ 第四刀：候选还带上**「货品信息」那条记录的「货品状态」**（`status`）——
+//        现货 / 未付按它过滤（只推在售）；这里钉住它**确实被带出来了**（不是过滤完就丢）。
 //    这不是放宽：把 B 下放到"选完颜色之后"，同时钉住"候选一个字段都不能少"。
 const A_PROVIDES_CANDIDATES_ITEM = {
   item_no: 'B26002-52', color: '', size: 37, quantity: 1, actual_amount: 228,
   gift: false, gift_description: '', product_record_id: '', product_number: '',
   needs_color: true,
   color_options: [
-    { recordId: BLACK, color: '黑色', number: 'B26002-52黑色', stock_status: 'available' },
-    { recordId: CHOCO, color: '巧克力', number: 'B26002-52巧克力', stock_status: 'available' },
+    { recordId: BLACK, color: '黑色', number: 'B26002-52黑色', status: '在售', stock_status: 'available' },
+    { recordId: CHOCO, color: '巧克力', number: 'B26002-52巧克力', status: '在售', stock_status: 'available' },
   ],
 };
 

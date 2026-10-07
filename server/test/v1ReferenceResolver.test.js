@@ -4,7 +4,8 @@ const { V1ReferenceResolver } = require('../src/services/v1ReferenceResolver');
 
 const makeGateway = (records) => ({
   table: () => ({
-    fields: { number: '编号', itemNo: '货号', color: '颜色' },
+    // 与生产 schema 一致：销售口述路径也要认「货品状态」（飞书公式：在售 / 下架）。
+    fields: { number: '编号', itemNo: '货号', color: '颜色', status: '货品状态' },
   }),
   listAll: async () => records,
 });
@@ -139,6 +140,22 @@ test('sales hands every color of a multi-color SKU to the card', async () => {
   assert.equal(result.needsColor, true);
   assert.equal(result.itemNo, '8035');
   assert.deepEqual(result.options.map((option) => option.color).sort(), ['米牛仔', '黑牛仔'].sort());
+});
+
+// ⭐ 2026-10-07 第四刀：候选要**顺手带出「货品状态」**（现货 / 未付按它过滤候选）——
+//    「谁给候选、谁带状态」：这张表本来就整表读过了，带出来零新增请求。
+test('候选带上「货品状态」（在售 / 下架）；这一列读不到时留空串（空 ≠ 下架）', async () => {
+  const products = [
+    { record_id: 'rec_a', fields: { 编号: '8035|黑牛仔|A', 货号: '8035', 颜色: '黑牛仔', 货品状态: '在售' } },
+    { record_id: 'rec_b', fields: { 编号: '8035|白牛仔|A', 货号: '8035', 颜色: '白牛仔', 货品状态: '下架' } },
+    // 这一条**没有**「货品状态」列（公式没算出来 / 列缺失）。
+    { record_id: 'rec_c', fields: { 编号: '8035|灰牛仔|A', 货号: '8035', 颜色: '灰牛仔' } },
+  ];
+  const result = await new V1ReferenceResolver(makeGateway(products)).resolveProduct({
+    itemNo: '8035', matchMode: 'sales',
+  });
+  const statusByColor = Object.fromEntries(result.options.map((option) => [option.color, option.status]));
+  assert.deepEqual(statusByColor, { 黑牛仔: '在售', 白牛仔: '下架', 灰牛仔: '' });
 });
 
 test('sales ignores any color the message happened to carry', async () => {

@@ -104,6 +104,12 @@ class V1ReferenceResolver {
         return { recordId: sameSku[0].record.record_id, record: sameSku[0].record };
       }
       // 该货号有多个颜色：不猜、也不看用户说了什么，把候选交给确认卡片让用户点。
+      // ⭐ 每条候选**顺手带上「货品状态」**（飞书公式：在售 / 下架）—— 谁给候选、谁带状态：
+      //    现货 / 未付的候选范围（只推在售）要用**这条记录上的状态**判定，
+      //    而这张表在 A 里**已经整表读过一次**了 ⇒ 带上它**零新增远端请求**。
+      //    ⚠️ 字段读不到（schema 没配 / 这条没算出来）时留空串：由调用方决定怎么处理，
+      //       这里不猜（空 ≠ 下架）。
+      const statusField = table.fields.status;
       return {
         needsColor: true,
         itemNo: wantedItemNo,
@@ -112,6 +118,9 @@ class V1ReferenceResolver {
             recordId: candidate.record.record_id,
             color: candidate.colorDisplay,
             number: candidate.number,
+            status: statusField
+              ? textValue(candidate.record.fields?.[statusField]).trim()
+              : '',
           }))
           .sort((left, right) => String(left.color).localeCompare(String(right.color), 'zh-CN')),
       };
