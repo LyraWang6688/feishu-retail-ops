@@ -1,6 +1,8 @@
 // 卡片上的按钮动作名从配置读：卡片和分派共用同一份常量，不会各写一份而慢慢写歪。
 // （config 里只有纯常量，不 require 任何 service，所以不会形成循环依赖。）
 const { ARRIVAL_CONVERSATION_ACTIONS } = require('../config/arrivalConversation');
+// 「补货品信息」那一段的文案与上限（配置先行；取值规则同 config/envValue）。
+const { resolveProductInfoGapsConfig } = require('../config/productInfoGaps');
 
 const text = (value) => String(value ?? '').replace(/\n/g, ' ');
 
@@ -349,33 +351,40 @@ const tradeTypeLine = (draft) => {
   return delivery ? `${label} · ${delivery}` : label;
 };
 
-// 第三区：货品资料不全时，把"还差哪几项"和记录链接放进**同一张确认卡片**。
+// 第三区：货品资料不全时，把"还差哪几项"和记录链接放进**点确认之后更新的那些卡片**。
 //
-// 为什么放在这张卡片里而不是另发一条消息：录入时她本来就在看这张卡片，
-// 顺手就能点去补；另发一条消息只会多一次打扰，也容易漏看。
+// ⭐ 2026-10-07（业务负责人拍板，逐字）：「我们的卡片能够实时更新，更新完之后，
+//   用户要补的链接其实就看不到了。所以我们在销售信息确认卡片里不需要放这个信息；
+//   等用户点击确认之后，卡片不是会更新吗？更新时再补这个信息。」
+//   ⇒ 这一段**不在**确认卡片上（`salesConfirmationCard`），而是**在**
+//     `salesProcessingCard`（点完立刻可见）与 `salesStatusCard` 的已入账终态卡
+//     （会长期留着，是她补资料的入口）。
+//   ⚠️ 位置变了，**文案与行格式一个字不改**；文案在 `config/productInfoGaps`，本函数只排布。
+//
+// 为什么放在卡片里而不是另发一条消息：她本来就在看这张卡片，顺手就能点去补；
+// 另发一条消息只会多一次打扰，也容易漏看。
 //
 // 「信息是否齐备」是飞书公式，缺哪项它就写哪项（单一数据源在表里）；
 // 「样例图」是附件字段，公式管不到，所以在这里单独补上。
-// 飞书卡片有高度上限，太长会被截断。实测门店的货号最多 3 个颜色，
-// 这里留一道安全阀：超过 6 条就只列 6 条并注明还有多少（正常营业永远碰不到）。
-const MAX_PRODUCT_INFO_GAPS = 6;
-
-const salesProductInfoGaps = (draft) => {
-  const gaps = draft.product_info_gaps || [];
-  if (!gaps.length) return [];
-  const shown = gaps.slice(0, MAX_PRODUCT_INFO_GAPS);
+//
+// 缺口为空 → 返回**空数组**（不留空壳）：没缺口的单子上不该多出一个空段落。
+const productInfoGapsElements = (draft, config = resolveProductInfoGapsConfig()) => {
+  const gaps = draft?.product_info_gaps || [];
+  if (!gaps.length || config.maxLines <= 0) return [];
+  const shown = gaps.slice(0, config.maxLines);
   const lines = shown.map((gap) => {
     const label = text(gap.label || gap.record_id);
-    const lacks = [...(gap.missing || []), ...(gap.missing_sample_image ? ['样例图'] : [])];
-    return `${label} 还差：${lacks.map(text).join('、')}\n[去补全这条记录](${gap.url})`;
+    const lacks = [...(gap.missing || []),
+      ...(gap.missing_sample_image ? [config.sampleImageLabel] : [])];
+    return `${label} ${config.missingLabel}${lacks.map(text).join('、')}\n[${config.linkLabel}](${gap.url})`;
   });
   if (gaps.length > shown.length) {
-    lines.push(`还有 ${gaps.length - shown.length} 个颜色也缺资料，可在「货品信息」里筛选「信息是否齐备」查看。`);
+    lines.push(config.overflowText.replace('{count}', String(gaps.length - shown.length)));
   }
   // V3（移动端实测确认）：这一块是 note（最小字、层级最低）——
   // 它是"要不要去补资料"的提醒，不是这一单的金额事实，不该跟明细/成交抢视线。
   return [{ tag: 'div',
-    text: { tag: 'lark_md', content: `补货品信息\n${lines.join('\n')}`, text_size: 'note' } }];
+    text: { tag: 'lark_md', content: `${config.title}\n${lines.join('\n')}`, text_size: 'note' } }];
 };
 
 // ⚠️ V3 排版（产品负责人用真实卡片在手机上实测确认），只改"长什么样"，不改任何金额/文案事实。
@@ -383,7 +392,9 @@ const salesProductInfoGaps = (draft) => {
 // 为什么必须换元素：飞书的 `markdown` 元素**不能自定义字号**，要做出"大字/小字"的层级，
 // 只能用 `{ tag: 'div', text: { tag: 'lark_md', content, text_size } }`，
 // text_size 取 'heading'（大字）/ 'normal' / 'note'（小字）；这一步已在用户真机上验证生效。
-// 层级：明细行、成交/收款行、交易类型行 = heading；补货品信息、颜色/补样品选择 = note。
+// 层级：明细行、成交/收款行、交易类型行 = heading；颜色/补样品选择 = note。
+// ⚠️ 2026-10-07：「补货品信息」那块**已从确认卡片挪走**（改挂处理中卡与已入账终态卡，
+//    见 `productInfoGapsElements` 的注释）——它仍是 note 小字，只是不在这一张上了。
 // 成交/收款行与交易类型行**不加粗**（内容里不写 `**`）——大字本身已经是重点，
 // 再加粗在手机上会糊成一团。
 const salesConfirmationCard = (draftId, draft) => {
@@ -420,8 +431,10 @@ const salesConfirmationCard = (draftId, draft) => {
         text: { tag: 'lark_md', content: `交易类型：${tradeTypeLine(draft)}`, text_size: 'heading' } },
       ...salesColorPickers(draftId, draft),
       ...salesSampleReplacementPicker(draftId, draft),
-      ...salesProductInfoGaps(draft),
-      // 三个按钮走 column_set：移动端实测一行三列（见 buttonColumns 的注释）。
+      // ⚠️ 这里**刻意没有** `productInfoGapsElements(draft)`：
+      //   这张卡会被点确认后的 patch 覆盖，放这里等于"她永远看不到补资料的链接"。
+      //   2026-10-07 起该段落在处理中卡与已入账终态卡上（见 `productInfoGapsElements`）。
+      //   三个按钮走 column_set：移动端实测一行三列（见 buttonColumns 的注释）。
       buttonColumns([
         actionButton('确认', 'confirm_sale', draftId, 'primary'),
         actionButton('修改', 'modify_sale', draftId),
@@ -431,11 +444,19 @@ const salesConfirmationCard = (draftId, draft) => {
   };
 };
 
-const salesStatusCard = (draft, title, message, template = 'blue') => ({
+// ⭐ 2026-10-07：这张通用结果卡多了一个**可选**开关 `options.productInfoGaps`（默认关）。
+//
+//   为什么是**可选开关**、而不是"有缺口就自动带上"：这张渲染器同时服务
+//   取消 / 待修正 / 已入账 / 部分交付 / 交付失败 / 重复终态 **六个分支**。
+//   只有"**这单已经入账、卡片会长期留着**"的分支才该带补货品信息段落
+//   （取消 / 待修正 = 原草稿不会入账 ⇒ 不带）。默认关 ⇒
+//   没显式打开的调用点，输出与改动前**逐字节相同**（既有 deepEqual 断言就是这条的哨兵）。
+const salesStatusCard = (draft, title, message, template = 'blue', options = {}) => ({
   config: patchableCardConfig(),
   header: { template, title: { tag: 'plain_text', content: title } },
   elements: [
     { tag: 'markdown', content: itemLines(draft?.items || [], 'actual_amount') || '销售订单' },
+    ...(options.productInfoGaps ? productInfoGapsElements(draft) : []),
     { tag: 'note', elements: [{ tag: 'plain_text', content: message }] },
   ],
 });
@@ -456,6 +477,8 @@ const salesStatusCard = (draft, title, message, template = 'blue') => ({
 //
 // 文案 / 颜色**全部来自 `config/salesProcessingCard`**（配置先行）——本函数只排布，不写死字面量。
 // 传空串 = 那一项不要（例：`progressLine: ''` 不出提示行、`itemColor: ''` 不套颜色）。
+// ⚠️ 唯一一处**不**来自那份配置的是"补货品信息"段落（文案在 `config/productInfoGaps`）：
+//    她点完确认之后要能立刻看到补资料的链接，所以这一段**在这一张上**。
 const salesProcessingCard = (draft, { title, template = 'blue', itemColor, progressLine, note } = {}) => {
   const items = itemLines(draft?.items || [], 'actual_amount') || '销售订单';
   const elements = [];
@@ -464,6 +487,10 @@ const salesProcessingCard = (draft, { title, template = 'blue', itemColor, progr
     tag: 'div',
     text: { tag: 'lark_md', content: itemColor ? `<font color='${itemColor}'>${items}</font>` : items },
   });
+  // ⭐ 2026-10-07：补货品信息段落挂在这一张上（她点完确认**立刻**就能看见那几条补资料链接）。
+  //   缺口为空 → `[]`，卡片元素与改动前逐字节相同（不留空壳）。
+  //   位置：明细之后、note 之前 —— note 一直是最后一行。
+  elements.push(...productInfoGapsElements(draft));
   // 既有那句 note：**逐字保留**，结构与 `salesStatusCard` 一致（只是内容来自配置）。
   elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: note }] });
   return {
@@ -987,6 +1014,8 @@ module.exports = {
   purchaseArrivalReconcileStatusCard,
   salesConfirmationCard,
   salesStatusCard,
+  // 「补货品信息」那一段（2026-10-07 从确认卡片挪到点确认之后的卡片；导出是为了单独测配置）。
+  productInfoGapsElements,
   // 「点确认后立刻看得出变了」那张（只给确认链路那一次立即更新用，见函数注释）。
   salesProcessingCard,
   sampleReplacementCard,

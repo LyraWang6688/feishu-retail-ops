@@ -1677,13 +1677,17 @@ class LarkMvpService {
     if (['posted', 'posted_delivery_pending', 'cancelled'].includes(task.status)) {
       if (task.type === 'sale') {
         const completed = task.status === 'posted';
+        // ⭐ 2026-10-07：这张也是"已入账"的终态卡面（`completed` 那支与 `posted` 分支同标题），
+        //   所以**同一状态必须带同一段补货品信息**；`cancelled` 那支 = 原草稿不会入账 ⇒ 不带。
+        //   判据是"这单入账了没有"，不是"这张卡长得像不像终态"。
         const card = salesStatusCard(task.draft,
           task.status === 'cancelled' ? '销售录单已取消' : completed ? '销售订单已入账' : '订单已入账，交付待核对',
           task.status === 'cancelled' ? '原草稿不会入账。' :
             `销售单号：${task.posting_result?.sourceNo || '请在销售主表核对'}；${completed
               ? shouldDeliverFor(task, task.posting_requested_action) ? '已交付并扣库存。' : '尚未交付，库存未扣减。'
               : '交付结果尚未确认，请到工作台核对。'}`,
-          task.status === 'cancelled' ? 'blue' : completed ? 'green' : 'orange');
+          task.status === 'cancelled' ? 'blue' : completed ? 'green' : 'orange',
+          { productInfoGaps: task.status !== 'cancelled' });
         await this.publishSalesResultCard(task, event, card,
           { stage: 'duplicate_terminal', interactionId: context.interactionId });
       }
@@ -1879,9 +1883,11 @@ class LarkMvpService {
               const label = `${item.product_number || `${item.item_no || '货品'}${item.color || ''}`}${failure.size}码`;
               return `第${failure.lineNumber}双 ${label}：${failure.error}`;
             }).join('；');
+            // ⭐ 2026-10-07：这一支也是**已入账**（钱与明细都写了，只是货没交齐）⇒ 同样带上补货品信息。
             await this.publishSalesResultCard(task, event, salesStatusCard(task.draft,
               deliveryResult.deliveredQuantity ? '订单已入账，部分交付' : '订单已入账，交付待处理',
-              `销售单号：${result.sourceNo}。已交付 ${deliveryResult.deliveredQuantity}/${deliveryResult.totalQuantity} 双；未交付：${failedLines}。请到工作台待交付列表核对并处理。`, 'orange'),
+              `销售单号：${result.sourceNo}。已交付 ${deliveryResult.deliveredQuantity}/${deliveryResult.totalQuantity} 双；未交付：${failedLines}。请到工作台待交付列表核对并处理。`, 'orange',
+              { productInfoGaps: true }),
             { stage: 'delivery_partial', interactionId: context.interactionId });
             logWarn('lark.sales.delivery.partial', { task_id: draftId, source_no: result.sourceNo,
               delivered_quantity: deliveryResult.deliveredQuantity, total_quantity: deliveryResult.totalQuantity,
@@ -1890,16 +1896,22 @@ class LarkMvpService {
               `订单已入账，已交付 ${deliveryResult.deliveredQuantity}/${deliveryResult.totalQuantity} 双；其余待处理` } };
           }
         } catch (error) {
+          // ⭐ 2026-10-07：同上 —— 已入账（失败的是**交付**，不是入账）⇒ 带上补货品信息。
           await this.publishSalesResultCard(task, event, salesStatusCard(task.draft,
-            '订单已入账，交付待处理', `销售单号：${result.sourceNo}。库存交付未完成：${error.message}。请在工作台待交付列表核对并处理。`, 'orange'),
+            '订单已入账，交付待处理', `销售单号：${result.sourceNo}。库存交付未完成：${error.message}。请在工作台待交付列表核对并处理。`, 'orange',
+            { productInfoGaps: true }),
           { stage: 'delivery_failed', interactionId: context.interactionId });
           logError('lark.sales.delivery.failed', { task_id: draftId, error: error.message });
           return { toast: { type: 'warning', content: '订单已入账，库存交付待处理' } };
         }
       }
       await this.store.update(draftId, { status: 'posted', posting_result: result });
+      // ⭐⭐ 本次改动的关键一张：**已入账终态卡会长期留着**，是她回来补资料的入口。
+      //   缺口来自 `task.draft.product_info_gaps`（卖单解析时**已经**读过一次「货品信息」表），
+      //   这里**不重新读表**。
       await this.publishSalesResultCard(task, event, salesStatusCard(task.draft,
-        '销售订单已入账', `销售单号：${result.sourceNo}；${result.detailRecordIds?.length || 0} 条明细已写入。${shouldDeliver ? '已交付并扣库存。' : '尚未交付，库存未扣减。'}`, 'green'),
+        '销售订单已入账', `销售单号：${result.sourceNo}；${result.detailRecordIds?.length || 0} 条明细已写入。${shouldDeliver ? '已交付并扣库存。' : '尚未交付，库存未扣减。'}`, 'green',
+        { productInfoGaps: true }),
       { stage: 'posted', interactionId: context.interactionId });
       logInfo('lark.sales.posting.completed', {
         task_id: draftId,
