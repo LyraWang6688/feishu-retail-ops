@@ -35,6 +35,8 @@
 //   "一个布尔 + 中文注释"那种要靠注释才看得懂的形状。
 //   过滤实现在 `services/larkMvpService.colorOptionsInScope`；
 //   「不在售」的取值域与"候选被清空"的文案在 `config/salesColorChoice`。
+const { tradeTypeCodeFromLabel } = require('./salesMovements');
+
 const SALES_COLOR_OPTIONS_SCOPE = Object.freeze({
   // 只推「在售」的颜色：货品状态明确标成不在售的，从候选里去掉。
   inStockOnly: 'inStockOnly',
@@ -79,11 +81,70 @@ const salesParseRuns = (tradeTypeCode, step) => Boolean(salesParsePolicyFor(trad
 // 这种交易类型下，A 出的颜色候选推哪些（`SALES_COLOR_OPTIONS_SCOPE` 两个取值之一）。
 const salesColorOptionsScopeFor = (tradeTypeCode) => salesParsePolicyFor(tradeTypeCode).colorOptionsScope;
 
+// ─── 粒度：从「整单一个」改成「逐明细一个 + 整单多选」（2026-10-07）──────────────────
+//
+// 业务负责人口径（逐字）：
+//   「如果我们的交易类型可以多选的话，实际上这一笔是不是**既属于现货，又属于预付**呀？
+//     **在销售明细里面分开，它是现货还是预付款，不就可以了吗？**」
+//   「**但是实际到我们的销售明细里面，就这一单它是什么，那就是什么**」
+//
+// ⇒ **每一条明细行**有自己的交易类型（单选），**整单**是这些类型的**去重集合**（多选）。
+//   上面这张 `SALES_TRADE_TYPE_PARSE_POLICY` 仍是**唯一**的判据来源 —— 只是调用方
+//   从「拿整单的编码调一次」变成「拿每一行的编码各调一次」。
+//
+// ⚠️ 这里**只做"这一行是哪种类型"的解析**，不碰交付 / 扣库存：
+//    交付仍由 `config/salesMovements` 的 `delivery` 从编码推出来（`deliversForTradeType`）。
+
+// **逐明细**的交易类型编码。优先级（与解析层同一套取值，避免两处结论不一致）：
+//   ① 这一行自己的编码（解析层已经把中文 label 收敛成编码）；
+//   ② 这一行自己的中文类型（老形状 / 模型只给了 label）；
+//   ③ **整单**的编码（模型整单给了、没逐行给 —— 既有单类型单走的就是这一条）。
+// ⚠️ **认不出来就返回空串，不许兜成 `SALE_CASH`** —— 空串在下面每一个消费点都
+//    自然落到"该跑的都跑 / 该交付的都交付"的**既有默认档**（`salesParsePolicyFor` 的
+//    `SALES_PARSE_POLICY_DEFAULT`、`deliversForTradeType('')` → 交付、
+//    主表关联**不写**）。若在这里兜成现货，就等于替她"认定这是一笔现货"，
+//    既有行为（认不出 → 编码为空、主表交易类型留空）会当场变样。
+const itemTradeTypeCode = (item, orderTradeTypeCode = '') =>
+  String(item?.trade_type_code || '').trim()
+  || tradeTypeCodeFromLabel(item?.trade_type)
+  || String(orderTradeTypeCode || '').trim();
+
+// **整单**的交易类型编码集合：按明细行**出现顺序**去重。
+// ⚠️ 顺序是有意的（不是排序）：写进主表多选关联时，人读到的顺序与她说货的顺序一致；
+//    也让写入是**确定性**的（同一份草稿每次得到同一串 id，幂等重试不会写出不同形状）。
+const orderTradeTypeCodes = (items = [], orderTradeTypeCode = '') => {
+  const codes = [];
+  for (const item of Array.isArray(items) ? items : []) {
+    const code = itemTradeTypeCode(item, orderTradeTypeCode);
+    if (!codes.includes(code)) codes.push(code);
+  }
+  return codes;
+};
+
+// 「**预付性质**」的交易类型 —— 「定金 + 尾款」那套推导只对它成立
+// （定金 = 先付一部分、货还没拿走；现货/未付的鞋都是当场拿走的，没有"尾款下次付"这回事）。
+// ⚠️ 这是一个**业务判据**，所以放配置：调用点不许再写 `=== 'SALE_PREPAID'`。
+const SALES_PREPAID_TRADE_TYPE_CODES = Object.freeze(['SALE_PREPAID']);
+
+const isPrepaidTradeType = (code) => SALES_PREPAID_TRADE_TYPE_CODES.includes(String(code || ''));
+
+// 「多明细 + 定金」时，说不清定金属于哪一件的追问（**用户可见文案**，所以放配置）。
+// ⚠️ 这是**新增**的一句，**不是**原来那条整单护栏（「定金单暂只支持一条明细」）的翻版：
+//    原来那条是"一张单只许一条明细"；这一条是"明细可以多条，只是**哪一件是预付**没说清"。
+//    真机上模型按 `items[].trade_type` 标出预付那一件时，这句话根本不会出现。
+const SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS =
+  '这一单里哪一件是付了定金的那件，我有点拿不准，请逐件说明哪双是预付、每双多少钱～';
+
 module.exports = {
   SALES_TRADE_TYPE_PARSE_POLICY,
   SALES_PARSE_POLICY_DEFAULT,
   SALES_COLOR_OPTIONS_SCOPE,
+  SALES_PREPAID_TRADE_TYPE_CODES,
+  SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS,
   salesParsePolicyFor,
   salesParseRuns,
   salesColorOptionsScopeFor,
+  itemTradeTypeCode,
+  orderTradeTypeCodes,
+  isPrepaidTradeType,
 };

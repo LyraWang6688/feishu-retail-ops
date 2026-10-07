@@ -45,11 +45,22 @@ const deliveryForTradeType = (code) => SALES_MOVEMENTS[String(code || '')]?.deli
 
 const tradeTypeLabel = (code) => SALES_MOVEMENTS[String(code || '')]?.label || '';
 
+// 「这一行的交易类型要不要**交付并扣库存**」——**唯一**判据就是这个注册表的 `delivery`。
+//
+// 为什么要单独给一个布尔出参（2026-10-07：一张单可以同时有现货与预付）：
+//   交付现在是**逐明细行**决定的（现货行交付、预付行不交付），调用点会长成
+//   `items.filter(deliversForTradeType(...))` 这种形状 —— 若让调用点自己写
+//   `deliveryForTradeType(code) !== '未交付'`，那个「未交付」中文串就会散进业务逻辑里。
+//   认不出的编码（空 / 未知）沿用既有兜底 **交付**（`deliveryForTradeType` 返回空 → 视为已交付），
+//   与改动前 `delivery_status: deliveryForTradeType(code) || '已交付'` 逐字同义。
+const deliversForTradeType = (code) => deliveryForTradeType(code) !== '未交付';
+
 module.exports = {
   SALES_MOVEMENTS,
   SALES_TRADE_TYPE_CODES,
   tradeTypeCodeFromLabel,
   isSalesTradeType,
   deliveryForTradeType,
+  deliversForTradeType,
   tradeTypeLabel,
 };
