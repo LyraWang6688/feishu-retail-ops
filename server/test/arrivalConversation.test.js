@@ -166,7 +166,7 @@ const defaultBatch = (overrides = {}) => ({
   ...overrides,
 });
 
-const makeHarness = ({ records = defaultRecords(), responses = [], config } = {}) => {
+const makeHarness = ({ records = defaultRecords(), responses = [], config, messageMeta } = {}) => {
   const gateway = makeGateway(records);
   const inventory = makeInventory();
   const store = new JsonTaskStore({ dir: tempDir('arrival-conv-test-'), idField: 'task_id' });
@@ -175,6 +175,16 @@ const makeHarness = ({ records = defaultRecords(), responses = [], config } = {}
   const replied = [];
   const cards = [];
   const updated = [];
+  // ⭐ 2026-10-07 晚：「更新一张已存在的消息之前，先读一眼它到底是什么」这个能力
+  //   （`im.v1.message.get` → `msg_type` / `deleted` / `thread_id` / `updated`）的桩。
+  //   `messageMeta` 可以是 `(messageId) => 覆盖项` 的函数，也可以是 `{ messageId: 覆盖项 }` 的映射；
+  //   没给到的按「一张正常的、没被撤回的卡片」算（绝大多数用例走这条路）。
+  //   `updated` 随本桩里的 `updateCard` 变 true ⇒「改完再读一眼校验」这件事能被真的断言。
+  const metaQueries = [];
+  const patchedIds = new Set();
+  const metaOverride = (messageId) => (typeof messageMeta === 'function'
+    ? (messageMeta(messageId) || {})
+    : ((messageMeta && messageMeta[messageId]) || {}));
   const service = new PurchaseArrivalConversationService({
     gateway,
     store,
@@ -188,10 +198,20 @@ const makeHarness = ({ records = defaultRecords(), responses = [], config } = {}
     //    由**飞书发送适配器**决定要不要 `reply_in_thread`（见 larkMvpService.replyPurchaseText）。
     replyText: async (messageId, content, options) => { replied.push({ messageId, content, options }); return 'om_reply'; },
     replyCard: async (messageId, card, options) => { cards.push({ messageId, card, options }); return `om_card_${cards.length}`; },
-    updateCard: async (messageId, card) => { updated.push({ messageId, card }); return true; },
+    updateCard: async (messageId, card) => { updated.push({ messageId, card }); patchedIds.add(messageId); return true; },
+    getMessageMeta: async (messageId) => {
+      metaQueries.push(messageId);
+      return {
+        ok: true, msgType: 'interactive', deleted: false, threadId: '',
+        updated: patchedIds.has(messageId), ...metaOverride(messageId),
+      };
+    },
     config,
   });
-  return { gateway, inventory, store, webhook, recognizer, replied, cards, updated, service, records };
+  return {
+    gateway, inventory, store, webhook, recognizer, replied, cards, updated,
+    metaQueries, service, records,
+  };
 };
 
 const writesTo = (gateway, tableKey) => gateway.writes.filter((item) => item.tableKey === tableKey);
@@ -346,15 +366,17 @@ test('直接处理⑥：同一条消息被飞书重投 —— 只记一次，不
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// □ ⭐ 追加 / 修正反馈：**重算并更新那一张卡**，不发第二张、不重复建记录
+// □ ⭐ 追加 / 修正反馈：**在当前话题重发一张新卡**（她一定看得见）+ 旧卡尽力作废；
+//   不重复建记录、不重复写库
+//   ⚠️ 2026-10-07 晚改：出口从"更新已有那张"换成"重发新卡"（见上面「卡片她一定看得见」一节）。
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('追加①：已经有待确认的卡片，她又补一句（没说「核对完毕」）→ 重算并更新**那一张**', async () => {
+test('追加①：已经有待确认的卡片，她又补一句（没说「核对完毕」）→ **重发一张新卡**，旧卡作废', async () => {
   const harness = makeHarness({
     responses: [
       // 第一句：38 码少一双 → 出一张卡（实际 1 双）。
       { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] },
-      // 第二句：再补 39 码也多一双 → 重算（38 实际 1、39 实际 3），更新同一张卡。
+      // 第二句：再补 39 码也多一双 → 重算（38 实际 1、39 实际 3），重发一张新卡。
       { complete: false, same: false, differences: [
         { item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 },
         { item_no: 'XHB8095', color: '黑', size: 39, type: 'more', quantity: 1 },
@@ -369,23 +391,28 @@ test('追加①：已经有待确认的卡片，她又补一句（没说「核�
 
   const second = await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '还有 39 码多一双', messageId: 'om_2', threadId: 'omt_1', senderOpenId: 'ou_1' });
 
-  // ① 发新卡 = 0 次；更新 = 1 次，而且更新的就是**第一张**那张。
-  assert.equal(harness.cards.length, 1, '🔴 不许再发第二张卡片');
-  assert.equal(harness.updated.length, 1, '要更新那张已经存在的卡片');
+  // ① 重发一张新卡（落在她说这句话的话题里）**并且**把旧卡作废 ⇒ 她眼前始终只有**一张能点的卡**。
+  assert.equal(harness.cards.length, 2, '要重发一张新卡（可见性优先）');
+  assert.equal(harness.cards[1].messageId, 'om_2');
+  assert.equal(harness.cards[1].options.threadId, 'omt_1');
+  assert.equal(harness.updated.length, 1, '旧卡作废 = patch 那**一张**');
   assert.equal(harness.updated[0].messageId, firstCardId);
+  assert.deepEqual(cardButtons(harness.updated[0].card), [], '作废的旧卡上不许再留按钮');
   assert.equal(second.card, true);
-  assert.equal(second.card_updated, true);
-  // ② 卡片上是**重算后的**数字（38 实际 1 双、39 实际 3 双）。
-  assert.match(JSON.stringify(harness.updated[0].card), /实际 1 双/);
-  assert.match(JSON.stringify(harness.updated[0].card), /实际 3 双/);
-  // ③ 不重复建记录：还是同一条任务，卡片 id 不变，plan 覆盖成最新。
+  assert.equal(second.card_message_id, 'om_card_2');
+  // ② 新卡上是**重算后的**数字（38 实际 1 双、39 实际 3 双）。
+  assert.match(JSON.stringify(harness.cards[1].card), /实际 1 双/);
+  assert.match(JSON.stringify(harness.cards[1].card), /实际 3 双/);
+  // ③ 不重复建记录：还是同一条任务；任务上记的是**最新**那张卡；plan 覆盖成最新。
   const task = await harness.store.get(taskId);
-  assert.equal(task.card_message_id, firstCardId, '卡片 id 不变（就是更新那一张）');
+  assert.equal(task.card_message_id, 'om_card_2', '任务上记最新那张卡');
   assert.deepEqual(task.plan.map((row) => [row.size, row.actual]), [[38, 1], [39, 3]]);
   assert.deepEqual(task.transcript.map((item) => item.text), ['38 码少一双', '还有 39 码多一双']);
   assert.equal(task.acceptance_text, '38 码少一双\n还有 39 码多一双', '「验收原话」是累积的全部原话');
-  // ④ 回一句让她知道卡片已经变了（文案可配）。
-  assert.match(harness.replied.at(-1).content, /上面那张卡片已经更新/);
+  // ④ 回一句说明哪张才是准的（文案可配）。
+  //    🔴 不许再说"上面那张卡片已经更新"：真机 23:37 那句回话就是这么说的，可她那边一张卡都没有。
+  assert.match(harness.replied.at(-1).content, /最新那张核对卡片/);
+  assert.doesNotMatch(harness.replied.at(-1).content, /上面那张卡片已经更新/);
   // ⑤ 全程零业务表写入（入库仍要等她点「是」）。
   assert.equal(harness.gateway.writes.length, 0);
 });
@@ -414,7 +441,7 @@ test('追加② ⚠️：她点**旧卡**也按最新计划入库（plan 存在�
   assert.equal(inbounds[0].values['数量'], 2);
 });
 
-test('追加③：更新卡片失败 → 记 warn 并**补发一张新卡**（她不能卡在过期数字上）', async () => {
+test('追加③：旧卡作废失败 → 记 warn，但**新卡照样发出去了**（她不会卡在过期数字上）', async () => {
   const harness = makeHarness({
     responses: [
       { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] },
@@ -431,21 +458,23 @@ test('追加③：更新卡片失败 → 记 warn 并**补发一张新卡**（�
     const second = await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '不对，是少两双', messageId: 'om_2', threadId: 'omt_1', senderOpenId: 'ou_1' });
 
     assert.equal(second.card, true);
-    assert.equal(second.card_updated, false);
-    assert.equal(harness.cards.length, 2, '更新失败 → 补发一张新卡（这是唯一的出口）');
+    assert.equal(second.card_message_id, 'om_card_2');
+    // ⭐ 交付物（新卡）**不依赖**旧卡作废成不成功 —— 她一定拿得到一张能点的卡。
+    assert.equal(harness.cards.length, 2, '新卡照样发出去（旧卡作废只是收尾）');
     assert.equal(logs.events('purchase.arrival.reconcile.card_update_failed').length, 1);
-    assert.equal(logs.events('purchase.arrival.reconcile.card_update_fallback_sent').length, 1);
+    assert.equal(logs.events('purchase.arrival.reconcile.card_supersede_failed').length, 1);
+    assert.match(logs.events('purchase.arrival.reconcile.card_sent').at(-1), /"supersede_result":"failed"/);
     const task = await harness.store.get(taskIdForBatch(BATCH_NO));
     assert.notEqual(task.card_message_id, firstCardId, '任务上记的是**最新那张**卡');
     assert.equal(task.card_message_id, 'om_card_2', 'replyCard 返回的新 id（第 2 张）');
     // 旧卡仍然指向同一个 taskId —— 点它也是按最新计划入库（不会写错账）。
-    assert.match(logs.events('purchase.arrival.reconcile.card_update_fallback_sent')[0], /按最新计划入库/);
+    assert.equal(cardButtons(harness.cards[1].card).length, 2, '新卡上两个按钮齐全');
   } finally {
     logs.restore();
   }
 });
 
-test('追加④：点「否」之后又补一句 → 还是更新**那张卡**，不再发第二张', async () => {
+test('追加④：点「否」之后又补一句 → 还是**重发一张新卡** + 旧卡作废（话题里只留一张能点的）', async () => {
   const harness = makeHarness({
     responses: [
       { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] },
@@ -462,8 +491,8 @@ test('追加④：点「否」之后又补一句 → 还是更新**那张卡**�
 
   await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '算了，是少两双', messageId: 'om_2', threadId: 'omt_1', senderOpenId: 'ou_1' });
 
-  assert.equal(harness.cards.length, 1, '「否」之后补一句也不许发第二张卡');
-  assert.equal(harness.updated.length, 1);
+  assert.equal(harness.cards.length, 2, '「否」之后补一句：照样重发一张新卡');
+  assert.equal(harness.updated.length, 1, '旧卡作废（收掉按钮）');
   assert.equal((await harness.store.get(taskId)).status, 'awaiting_confirmation');
 });
 
@@ -489,6 +518,187 @@ test('追加⑤：源码级断言 —— `complete` 那道提前 return 与 coll
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// □ ⭐⭐ 卡片**她一定看得见**
+//   （真机 2026-10-07 23:37：日志说 `card_updated`，她那边**一张卡都没有**，
+//    只有一句「上面那张卡片已经更新」—— 交付物是"带「是」的核对卡片"，她只拿到一句话）
+//
+//   根因：改前的出口是"任务上有历史卡片 id 就去**更新**那一张"，而
+//     ① 那个 id 是**批次级**的（同一批跨话题共用一条会话任务，见 taskIdForBatch），
+//        她看的是**话题级**的 ⇒ 更新可能落在**另一个话题**那张卡上；
+//     ② `im.v1.message.patch` 的成功判据**只有 `code === 0`**（官方文档：该接口
+//        「仅支持更新卡片（消息类型为 interactive）」，可错误码表里**没有**"目标不是卡片"），
+//        ⇒ 对一条文字消息它完全可能回 0 却什么都没改。
+//   ⇒ 改法：出口**一律在她说这句话的那个话题里发新卡**；旧卡只**尽力作废**，
+//     而且作废前**先读一眼确认它真是卡片**、作废后**再读一眼校验**，全程有日志。
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('可见性①（真机复现）🔴：卡片在**另一个话题**里 —— 她在本话题说「货都到了」也必须拿到一张卡', async () => {
+  const harness = makeHarness({
+    responses: [
+      { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] },
+      { complete: true, same: true, differences: [] },
+    ],
+  });
+  // 第一句在话题 A：出一张卡，在 A 里等她确认。
+  await harness.service.handleTopicMessage({
+    batch: defaultBatch(), text: '38 码少一双', messageId: 'om_1', threadId: 'omt_A', senderOpenId: 'ou_1',
+  });
+  assert.equal(harness.cards.length, 1);
+  assert.equal(harness.cards[0].options.threadId, 'omt_A');
+
+  // 她换到话题 B（**同一批** —— 会话任务只跟批次有关，见 taskIdForBatch）说「货都到了」。
+  // 真机 23:37 就是这一步：旧代码把卡"更新"回 A 的那张 ⇒ 她在 B 里只看到一句回话。
+  const second = await harness.service.handleTopicMessage({
+    batch: defaultBatch(), text: '货都到了', messageId: 'om_2', threadId: 'omt_B', senderOpenId: 'ou_1',
+  });
+
+  assert.equal(second.card, true);
+  assert.equal(harness.cards.length, 2,
+    '🔴 必须**在她说这句话的那个话题**里发一张新卡（不是去更新别处那张）');
+  assert.equal(harness.cards[1].messageId, 'om_2', '新卡回复的是她刚说的那条消息');
+  assert.equal(harness.cards[1].options.threadId, 'omt_B', '新卡落在她正在看的话题里');
+  assert.deepEqual(
+    cardButtons(harness.cards[1].card).map((button) => button.action),
+    [ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, ARRIVAL_CONVERSATION_ACTIONS.REJECT],
+    '新卡上就有「是」「否」两个按钮（她点得到）',
+  );
+  // 「货都到了」= 全部到齐。
+  const task = await harness.store.get(taskIdForBatch(BATCH_NO));
+  assert.deepEqual(task.plan.map((row) => [row.size, row.actual]), [[38, 2], [39, 2]]);
+  assert.equal(task.card_message_id, 'om_card_2', '任务上记的是**最新**那张卡');
+  assert.equal(task.card_thread_id, 'omt_B', '并记下它长在哪个话题里（排查时一眼可见）');
+  // 旧卡（话题 A 里那张）**尽力作废**：按钮收掉，免得话题里同时有两张都能点的卡。
+  assert.equal(harness.updated.length, 1);
+  assert.equal(harness.updated[0].messageId, 'om_card_1');
+  assert.deepEqual(cardButtons(harness.updated[0].card), [], '作废的卡上不许再留「是 / 否」按钮');
+  assert.equal(harness.gateway.writes.length, 0, '发卡 / 作废旧卡都不写任何业务表');
+});
+
+test('可见性②🔴：历史卡片 id 指向的那条消息**不是卡片** → 一个字都不许 patch 它，照样发新卡', async () => {
+  const harness = makeHarness({
+    responses: [
+      { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] },
+      { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 2 }] },
+    ],
+    // `om_card_1` 实际上是一条**文字**消息 —— 真机那个 `om_x100b…` 的 `msg_type`
+    // 就是要在服务器上只读核一次的事（见 docs/arrival-card-visibility-2026-10-07.md 第 9 节）。
+    // `patch` 对非卡片消息可能回 `code 0` 却什么都不改，旧代码据此记成 `card_updated`。
+    messageMeta: (messageId) => (messageId === 'om_card_1' ? { msgType: 'text' } : {}),
+  });
+  const logs = captureLogs();
+  try {
+    await harness.service.handleTopicMessage({
+      batch: defaultBatch(), text: '38 码少一双', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1',
+    });
+    const second = await harness.service.handleTopicMessage({
+      batch: defaultBatch(), text: '不对，是少两双', messageId: 'om_2', threadId: 'omt_1', senderOpenId: 'ou_1',
+    });
+
+    assert.equal(second.card, true, '照样发新卡（不许静默什么都不做）');
+    assert.equal(harness.cards.length, 2);
+    assert.equal(harness.updated.length, 0, '🔴 目标不是卡片 → 一个字都不许 patch 它');
+    const skipped = logs.events('purchase.arrival.reconcile.card_supersede_skipped');
+    assert.equal(skipped.length, 1, '要留一条明确的日志，说清"为什么没动它"');
+    assert.match(skipped[0], /"reason":"target_not_interactive"/);
+    assert.match(skipped[0], /"target_msg_type":"text"/, '把那条消息**真实的**类型写进日志');
+  } finally {
+    logs.restore();
+  }
+});
+
+test('可见性③：读过之后拿不准（读不到 / 已撤回）→ **不 patch**，照样发新卡', async () => {
+  for (const [label, meta, reason] of [
+    ['读不到（缺权限 / 网络）', { ok: false, reason: 'call_failed' }, 'call_failed'],
+    ['已撤回', { deleted: true }, 'target_deleted'],
+  ]) {
+    const harness = makeHarness({
+      responses: [
+        { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] },
+        { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 2 }] },
+      ],
+      messageMeta: (messageId) => (messageId === 'om_card_1' ? meta : {}),
+    });
+    const logs = captureLogs();
+    try {
+      await harness.service.handleTopicMessage({
+        batch: defaultBatch(), text: '38 码少一双', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1',
+      });
+      await harness.service.handleTopicMessage({
+        batch: defaultBatch(), text: '不对，是少两双', messageId: 'om_2', threadId: 'omt_1', senderOpenId: 'ou_1',
+      });
+
+      assert.equal(harness.cards.length, 2, `${label}：新卡照样发`);
+      assert.equal(harness.updated.length, 0, `${label}：宁可不做，也不做一件看不见的事`);
+      assert.equal(logs.events('purchase.arrival.reconcile.card_supersede_skipped').length, 1, label);
+      assert.match(logs.events('purchase.arrival.reconcile.card_supersede_skipped')[0],
+        new RegExp(`"reason":"${reason}"`), label);
+    } finally {
+      logs.restore();
+    }
+  }
+});
+
+test('可见性④：`card_sent` 日志能回答"发出去没有 / message_id / 是不是 interactive / 在哪个话题"', async () => {
+  const harness = makeHarness({
+    responses: [{ complete: true, same: true, differences: [] }],
+    // 发出去的那条卡片消息落在她说话的话题里（`im.v1.message.get` 读回来的事实）。
+    messageMeta: (messageId) => (messageId === 'om_card_1' ? { threadId: 'omt_1' } : {}),
+  });
+  const logs = captureLogs();
+  try {
+    await harness.service.handleTopicMessage({
+      batch: defaultBatch(), text: '货都到了', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1',
+    });
+
+    const sent = logs.events('purchase.arrival.reconcile.card_sent');
+    assert.equal(sent.length, 1, '出口只有一个：`card_sent`（旧的 `card_updated` 已经删掉）');
+    assert.equal(logs.events('purchase.arrival.reconcile.card_updated').length, 0);
+    assert.match(sent[0], /"card_message_id":"om_card_1"/);
+    assert.match(sent[0], /"thread_id":"omt_1"/);
+    assert.match(sent[0], /"card_msg_type":"interactive"/, '读回来的**事实**：它就是一张卡片');
+    assert.match(sent[0], /"card_msg_type_source":"message_get"/);
+    assert.match(sent[0], /"card_thread_match":true/, '卡片落的话题 = 她说话的话题');
+    assert.match(sent[0], /"card_action":"sent"/);
+  } finally {
+    logs.restore();
+  }
+});
+
+test('可见性⑤：旧卡作废**先确认是卡片、改完再读一眼校验**，结果进日志', async () => {
+  const harness = makeHarness({
+    responses: [
+      { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] },
+      { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 2 }] },
+    ],
+  });
+  const logs = captureLogs();
+  try {
+    await harness.service.handleTopicMessage({
+      batch: defaultBatch(), text: '38 码少一双', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1',
+    });
+    await harness.service.handleTopicMessage({
+      batch: defaultBatch(), text: '不对，是少两双', messageId: 'om_2', threadId: 'omt_1', senderOpenId: 'ou_1',
+    });
+
+    const superseded = logs.events('purchase.arrival.reconcile.card_superseded');
+    assert.equal(superseded.length, 1);
+    assert.match(superseded[0], /"card_message_id":"om_card_1"/);
+    assert.match(superseded[0], /"new_card_message_id":"om_card_2"/);
+    assert.match(superseded[0], /"update_verified":true/, '改完再读一眼：`updated` 确实是 true');
+    // 作废的那张卡上写着"请用最新那张"，不再留按钮。
+    const retired = JSON.stringify(harness.updated[0].card);
+    assert.match(retired, /最新那张/);
+    assert.deepEqual(cardButtons(harness.updated[0].card), []);
+    // 回她一句：**不许再说"上面那张已经更新"**（新出口下那是假话，真机上那句回话正是误导来源）。
+    assert.equal(harness.replied.at(-1).content, resolveArrivalConversationConfig({ env: {} }).replies.recalculatedCard);
+    assert.doesNotMatch(harness.replied.at(-1).content, /上面那张卡片已经更新/);
+    assert.equal(harness.replied.at(-1).options.threadId, 'omt_1');
+  } finally {
+    logs.restore();
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // □ ⭐ 文案（配置先行）：不再有"等她说完了 / 在收集"的话术
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -499,30 +709,35 @@ test('文案①：配置里不再有「先说我核对完了」这类话术，�
   assert.match(config.replies.notConfirmedYet, /还没算出/);
   // 新增的两句都在配置里（改文案不碰逻辑）。
   assert.match(config.replies.noArrivalContent, /没听出到货的变化/);
-  assert.match(config.replies.updatedCard, /上面那张卡片已经更新/);
+  // ⭐ 2026-10-07 晚改名：`updatedCard` → `recalculatedCard`（出口从"更新那张"改成"重发一张"）。
+  assert.match(config.replies.recalculatedCard, /最新那张核对卡片/);
+  assert.doesNotMatch(config.replies.recalculatedCard, /上面那张卡片已经更新/,
+    '🔴 不许再说"上面那张已经更新"——真机 23:37 那句回话正把她带偏');
+  assert.equal(config.replies.updatedCard, undefined, '旧的那句（会误导人）已经删掉');
   // 覆盖生效。
   const overridden = resolveArrivalConversationConfig({
     env: {},
-    replies: { noArrivalContent: '自定义-没内容', updatedCard: '' },
+    replies: { noArrivalContent: '自定义-没内容', recalculatedCard: '' },
   });
   assert.equal(overridden.replies.noArrivalContent, '自定义-没内容');
-  assert.equal(overridden.replies.updatedCard, '', '置空 = 不回那句（卡片本身会原地刷新）');
+  assert.equal(overridden.replies.recalculatedCard, '', '置空 = 不回那句（卡片本身照样发）');
 });
 
-test('文案②：卡片更新后那句回话也走配置（置空就不回，但卡片照样更新）', async () => {
+test('文案②：重发新卡后那句回话也走配置（置空就不回，但卡片照样发）', async () => {
   const harness = makeHarness({
     responses: [
       { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] },
       { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 2 }] },
     ],
-    config: { replies: { updatedCard: '' } },
+    config: { replies: { recalculatedCard: '' } },
   });
   await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '38 码少一双', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1' });
   harness.replied.length = 0;
   await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '不对，是少两双', messageId: 'om_2', threadId: 'omt_1', senderOpenId: 'ou_1' });
 
   assert.equal(harness.replied.length, 0, '配置置空 = 不回这句');
-  assert.equal(harness.updated.length, 1, '但卡片照样更新');
+  assert.equal(harness.cards.length, 2, '但卡片照样发（可见性不依赖那句回话）');
+  assert.equal(harness.updated.length, 1, '旧卡照样尽力作废');
 });
 
 test('文案③：没有到货内容时那句回话也走配置', async () => {
