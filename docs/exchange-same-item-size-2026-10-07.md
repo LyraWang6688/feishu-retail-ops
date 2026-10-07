@@ -174,7 +174,7 @@ $ node --test test/doubaoExchangeParse.test.js test/afterSalesFlow.test.js
 |---|---|
 | 全量第 1 次（worktree 内，`node --test --test-concurrency=1`） | `tests 1290 / pass 1290 / fail 0`（38.4s） |
 | 全量第 2 次 | `tests 1290 / pass 1290 / fail 0`（45.9s） |
-| CI（`gh pr checks`） | 见 PR 里的实际输出（**必须 CLEAN**；未用 `--admin`） |
+| CI（`gh pr checks 247`） | `test` **pass**（50s） · `Analyze (javascript-typescript)` **pass**（1m27s） · `CodeQL` **pass**（6s） ⇒ `mergeStateStatus: CLEAN`（**未用 `--admin`**） |
 
 ⚠️ 分支已 rebase 到当时的 `origin/main`（`e2ec040`，含 #244 / #245 / #246）：
 与上游在 `docs/README.md`（索引表同一段）与 `server/src/services/doubaoService.js`
@@ -182,6 +182,8 @@ $ node --test test/doubaoExchangeParse.test.js test/afterSalesFlow.test.js
 索引两行都留。⚠️ 上面**全量 2 次是 rebase 之后**的数字（1290 = 上游新增用例 ＋ 本件 10 条）。
 
 ⚠️ 全量**只在独立 worktree 里跑**，没在主工作区跑。
+⚠️ 上面 CI 那三个数字是 PR #247 第一次 CI（commit `bd73876`，纯代码）的实际输出；
+把这段文档补进去之后 CI 会再跑一次（纯文档改动，结论相同）。
 ⚠️ 未部署、未合并（业务负责人明令：部署必须拿到她**当次**的命令）。
 
 ## 8. 丁（追问之后接着上一轮）：核过 → 本件不做
