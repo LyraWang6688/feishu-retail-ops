@@ -89,7 +89,8 @@ const productRow = ({ recordId, number, itemNo, color }) => ({
   record_id: recordId, fields: { 编号: number, 货号: itemNo, 颜色: color },
 });
 
-// 「实时库存」里的一行（现货 / 未付 的颜色候选来源）。
+// 「实时库存」里的一行（现货 / 未付 的**库存来源**：B 用它查"这个颜色有没有货"，
+// 也是候选「有货 / 无货」标注的依据；A 读不到货品时它才兜底提供候选）。
 const liveRow = ({ itemNo, color, size, state = '门盒', productRecordId }) => ({
   record_id: `live_${itemNo}_${color}_${size}_${state}`,
   fields: {
@@ -263,20 +264,21 @@ test('预付 + 货号不存在 → 不编记录、不给她选；真实解析器
   assert.match(failure.error, /找不到货品：26002-52/);
 });
 
-// ── ④⑤ 现货 / 未付 + 多颜色：与改动前**逐字一致**（颜色仍由解析 B 提供）────
-// 这个字面量是**改动前**跑出来的整件明细（一个字段都没改）：B 认得出来时以 B 为准，
-// 候选里带着库存分布与补样品方案 —— 那正是"B 提供候选"的指纹。
-const B_WINS_ITEM = {
+// ── ④⑤ 现货 / 未付 + 多颜色：**候选改由解析 A（货品信息）提供** ─────────────
+// ⭐ 旧行为哨兵（有意改掉，见汇报）：这组原来是「与改动前逐字一致（候选来自实时库存、
+//    B 覆盖 A）」的指纹。2026-10-07 第三刀之后口径变了（她的原话：
+//    「A 一定要有选颜色的机制……如果有多个颜色，一定要让用户去选择」）：
+//      · 候选来自 A 的「货品信息」（顺序 = resolver 的 zh-CN 颜色排序），
+//      · **在她选定之前 B 一次都不跑** ⇒ 候选里**没有**库存分布 / 补样品方案，
+//      · 候选上改标「这个尺码有没有货」的 `stock_status`（只用录单时已读进来的索引算）。
+//    这不是放宽：把 B 下放到"选完颜色之后"，同时钉住"候选一个字段都不能少"。
+const A_PROVIDES_CANDIDATES_ITEM = {
   item_no: 'B26002-52', color: '', size: 37, quantity: 1, actual_amount: 228,
   gift: false, gift_description: '', product_record_id: '', product_number: '',
   needs_color: true,
   color_options: [
-    { recordId: CHOCO, color: '巧克力', number: 'B26002-52巧克力',
-      stock: { doorBox: 1, sample: 0, warehouse: 0 },
-      sample_plan: { uses_sample: false, needs_sample_replacement: false, sample_replacement_options: [] } },
-    { recordId: BLACK, color: '黑色', number: 'B26002-52黑色',
-      stock: { doorBox: 1, sample: 0, warehouse: 0 },
-      sample_plan: { uses_sample: false, needs_sample_replacement: false, sample_replacement_options: [] } },
+    { recordId: BLACK, color: '黑色', number: 'B26002-52黑色', stock_status: 'available' },
+    { recordId: CHOCO, color: '巧克力', number: 'B26002-52巧克力', stock_status: 'available' },
   ],
 };
 
@@ -285,29 +287,35 @@ const MULTI_COLOR_LIVE_ROWS = [
   liveRow({ itemNo: 'B26002-52', color: '黑色', size: 37, productRecordId: BLACK }),
 ];
 
-test('现货 + 多颜色 → 与改动前逐字一致（候选仍来自实时库存，B 覆盖 A）', async () => {
+test('现货 + 多颜色 → 候选由 A 给（先让她选，B 还没跑）：候选里没有库存数字、只标有没有货', async () => {
   const { task, cards } = await runSale({
     taskId: 'cash_multi', text: 'B26002-52 37 码，228 元微信',
     parsed: itemLine('B26002-52', '现货', { payments: [{ amount: 228, method: '微信' }] }),
     products: REAL_MACHINE_PRODUCTS, liveInventory: MULTI_COLOR_LIVE_ROWS,
   });
-  assert.deepEqual(task.draft.items[0], B_WINS_ITEM);
+  assert.deepEqual(task.draft.items[0], A_PROVIDES_CANDIDATES_ITEM);
+  // 候选里没有 stock / sample_plan：那是 B 的产物，而 B 要等她选完才跑。
+  assert.ok(task.draft.items[0].color_options.every((option) => option.stock === undefined));
+  assert.ok(task.draft.items[0].color_options.every((option) => option.sample_plan === undefined));
   assert.match(JSON.stringify(cards[0].card), /choose_sale_color/);
+  // 卡片上「有货 / 无货」照标（两色在这个尺码都有货）。
+  assert.match(JSON.stringify(cards[0].card), /黑色（有货）/);
 });
 
-test('未付 + 多颜色 → 与改动前逐字一致（同上，B 覆盖 A）', async () => {
+test('未付 + 多颜色 → 与现货同一条口径（候选由 A 给，B 等她选完）', async () => {
   const { task } = await runSale({
     taskId: 'unpaid_multi', text: 'B26002-52 37 码，228 元未付',
     parsed: itemLine('B26002-52', '未付', {}),
     products: REAL_MACHINE_PRODUCTS, liveInventory: MULTI_COLOR_LIVE_ROWS,
   });
-  assert.deepEqual(task.draft.items[0], B_WINS_ITEM);
+  assert.deepEqual(task.draft.items[0], A_PROVIDES_CANDIDATES_ITEM);
 });
 
-// 现货 + 缺货：B（实时库存）说"这个尺码一双都没有" ⇒ 颜色这件事同样以 B 为准，
-// item 上**不该**冒出 A 的颜色候选（多颜色货号最容易在这里被"顺手带上"）。
-test('现货 + 缺货 → item 上既没有颜色也没有候选（B 说了算，既有行为不变）', async () => {
-  const { task, messages } = await runSale({
+// 现货 + 这个尺码一双都没有：A 仍然是"两个颜色"，所以**候选照旧摆出来**，
+// 只是每一个都如实标「无货」；缺货那句话发生在**她选完之后**的 B 之后
+// （"全都无货"这个边界是有意保留的，见 docs/ab-color-first-design-2026-10-07.md）。
+test('现货 + 这个尺码一双都没有 → 候选照旧摆出来、都标「无货」（缺货发生在选完之后的 B）', async () => {
+  const { task, cards, messages } = await runSale({
     taskId: 'cash_shortage', text: 'B26002-52 37 码，228 元微信',
     parsed: itemLine('B26002-52', '现货', { payments: [{ amount: 228, method: '微信' }] }),
     products: REAL_MACHINE_PRODUCTS,
@@ -316,10 +324,45 @@ test('现货 + 缺货 → item 上既没有颜色也没有候选（B 说了算�
   const item = task.draft.items[0];
   assert.equal(item.product_record_id, '');
   assert.equal(item.color, '');
-  assert.ok(!item.needs_color, '缺货时不该多出颜色候选');
-  assert.ok(!item.color_options);
-  assert.match(task.draft.missing_fields.join('\n'), /库存里没有 B26002-52 37码/);
-  assert.ok(messages.length >= 1, '缺货要回她一句核实的话，不许静默');
+  assert.equal(item.needs_color, true, '「全都无货」也要让她看到候选（而不是静默换一条路）');
+  assert.deepEqual(item.color_options.map((option) => option.stock_status), ['unavailable', 'unavailable']);
+  assert.equal(task.status, 'ready_to_confirm', '还没跑 B，所以现在还不是"缺货"结论');
+  assert.deepEqual(messages, [], '缺货提示发生在 B 之后（现在 B 还没跑）');
+  const cardText = JSON.stringify(cards[0].card);
+  assert.match(cardText, /黑色（无货）/);
+  assert.match(cardText, /巧克力（无货）/);
+});
+
+// 现货 + 多颜色 + 实时库存里只有其中一个颜色：她点到"没货"那个颜色时，
+// 缺货提示发生在**跑完 B 之后**（B 的输入就是她选的那个颜色）；候选保留，
+// 她可以在同一张卡片上换一个有货的颜色 —— 不重发整条销售信息。
+test('现货 + 多颜色：点到没货的颜色 → B 之后回「库存里没有…」，候选保留、可换一个颜色', async () => {
+  const { service, store, cards, messages } = await runSale({
+    taskId: 'cash_pick_out', text: 'B26002-52 37 码，228 元微信',
+    parsed: itemLine('B26002-52', '现货', { payments: [{ amount: 228, method: '微信' }] }),
+    products: REAL_MACHINE_PRODUCTS,
+    liveInventory: [liveRow({ itemNo: 'B26002-52', color: '黑色', size: 37, productRecordId: BLACK })],
+  });
+
+  const picked = await chooseColor(service, 'cash_pick_out', {
+    recordId: CHOCO, colorName: '巧克力', productNumber: 'B26002-52巧克力' });
+  assert.equal(picked.toast.type, 'warning');
+  assert.match(messages.at(-1), /^库存里没有 B26002-52 37码（/, '缺货那句话发生在 B 之后');
+  const afterOut = await store.get('cash_pick_out');
+  assert.equal(afterOut.status, 'ready_to_confirm', '不把任务打死');
+  assert.equal(afterOut.draft.items[0].needs_color, true, '候选保留');
+  assert.deepEqual(afterOut.draft.items[0].color_options.map((option) => option.recordId), [BLACK, CHOCO]);
+  assert.equal(cards.length, 1, '缺货时卡片不换面（她还要用那张卡上的按钮）');
+
+  // 换一个有货的颜色 → 这一条明细落定；库存分布由 B 现查。
+  const again = await chooseColor(service, 'cash_pick_out', {
+    recordId: BLACK, colorName: '黑色', productNumber: 'B26002-52黑色' });
+  assert.equal(again.toast.type, 'success');
+  const settled = await store.get('cash_pick_out');
+  assert.equal(settled.draft.items[0].product_record_id, BLACK);
+  assert.equal(settled.draft.items[0].needs_color, false);
+  assert.deepEqual(settled.draft.items[0].stock, { doorBox: 1, sample: 0, warehouse: 0 });
+  assert.equal(cards.length, 2, '录单 1 张 + 选完颜色 1 张');
 });
 
 // ── 解析 A 的调用方式（根因的最小钉子）──────────────────────────────────────

@@ -3,6 +3,8 @@
 const { ARRIVAL_CONVERSATION_ACTIONS } = require('../config/arrivalConversation');
 // 「补货品信息」那一段的文案与上限（配置先行；取值规则同 config/envValue）。
 const { resolveProductInfoGapsConfig } = require('../config/productInfoGaps');
+// 颜色候选按钮上的「有货 / 无货」后缀（配置先行；见那份文件的注释）。
+const { resolveSalesColorChoiceConfig, colorOptionButtonText } = require('../config/salesColorChoice');
 
 const text = (value) => String(value ?? '').replace(/\n/g, ' ');
 
@@ -293,7 +295,12 @@ const keepOnlyCardButton = (card, action) => {
 // 提示行用 note（最小字）：V3 的层级里它排在明细/成交大字之下；候选颜色由按钮表达——
 // 再把颜色名列一遍就是跟按钮重复了。
 // 已经确定颜色的明细（单色货号、或用户说对了）不出按钮，只在上面的明细行里显示。
-const salesColorPickers = (draftId, draft) => {
+//
+// ⭐ 2026-10-07 第三刀：跑库存解析的交易类型（现货 / 未付）里，候选按钮带上
+//    「有货 / 无货」后缀（`黑色（有货）`）—— 判断只用录单时**已经读进来**的实时库存索引，
+//    零新增远端请求（后缀文案在 `config/salesColorChoice`）。
+//    不跑 B 的交易类型（预付）候选上没有 `stock_status`，**不加后缀**（见 colorOptionButtonText）。
+const salesColorPickers = (draftId, draft, colorChoiceConfig = resolveSalesColorChoiceConfig()) => {
   const elements = [];
   (draft.items || []).forEach((item, index) => {
     const options = item.color_options || [];
@@ -303,7 +310,8 @@ const salesColorPickers = (draftId, draft) => {
       text: { tag: 'lark_md', content: `第 ${index + 1} 双请选择颜色`, text_size: 'note' },
     });
     // 颜色可能有 2~6 个：超过 3 个就折成多个 column_set（手机一行最多放 3 个，真机实测）。
-    elements.push(...buttonRows(options.map((option) => actionButton(option.color || '未命名颜色',
+    elements.push(...buttonRows(options.map((option) => actionButton(
+      colorOptionButtonText(option, colorChoiceConfig),
       'choose_sale_color', draftId, 'primary', { item_index: index, record_id: option.recordId,
         product_number: option.number, color_name: option.color }))));
   });
