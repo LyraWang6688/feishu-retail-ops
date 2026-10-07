@@ -316,6 +316,8 @@ const V1_BITABLE_SCHEMA = {
     //      `services/purchaseOrderBatchService.js`）；「验收原话」「确认状态」两个语义键随之下移。
     //    ⚠️ 另外两条**不许**跟着搬过来：
     //      · 「到货日」= 飞书**更新时间**（自动字段，type 1002）；
+    //        ⚠️ 2026-10-07 深夜她把这一列**从「更新时间」改名为「到货日」**——
+    //           类型没变、还是自动字段 ⇒ **仍然不建映射、不写**（旧名/新名各表都不映射）。
     //      · 「验收人」= 飞书**创建人**（自动字段，type 1003）。
     //      两者都是飞书自动字段 ⇒ **代码不许写、也不建映射**（口径：时间字段一律交给飞书；
     //      创建人同理不由代码写）。将来只读需要时再加，加的时候也要认清"它是自动的"。
@@ -330,7 +332,14 @@ const V1_BITABLE_SCHEMA = {
       // Current V1 tenant default; forks can override it with the environment variable.
       tableId: getEnv('FEISHU_V1_PURCHASE_ORDER_BATCH_TABLE_ID', 'tblwezby9wRea9qi'),
       fields: {
-        batchNo: '报货批次号', createdAt: '创建时间', idempotencyKey: '幂等键',
+        batchNo: '报货批次号',
+        // ⭐ 2026-10-07 深夜：业务负责人在生产表把这一列**改名**了 ——
+        //   「创建时间」→ **「报货日」**（类型没变：仍是创建时间 `type=1001`，飞书自动字段）。
+        //   语义键 `createdAt` 保持不变，只换物理列名；旧名留着 = 部署闸门判红
+        //  （`“报货批次”缺少 V1 字段: 创建时间`）。
+        //   ⚠️ 自动字段 ⇒ **代码一行都不写**：这个映射的用途只有一个 —— 让闸门盯住这个名字。
+        createdAt: '报货日',
+        idempotencyKey: '幂等键',
         // 到货状态（单选）：新建批次记录时显式写「未到货」；到货核对确认成功后改「已到货」。
         // 取值**不写死在代码里** —— 语义键在这里、字面量在 `config/purchaseArrivalStatus.js`，
         // 并由部署闸门（`validate_v1_schema.js`）对着真表 `property.options` 核对。
@@ -348,6 +357,8 @@ const V1_BITABLE_SCHEMA = {
         //     `config/purchaseAcceptance.js`（配置先行，不在 service 里写中文字面量）。
         //  ⚠️ **到货日 / 验收人不在这个映射里**：它们在真表上是**自动字段**
         //    （到货日=更新时间 type 1002、验收人=创建人 type 1003），代码不读不写。
+        //    ⚠️ 「到货日」这个**新名字**是 2026-10-07 深夜从「更新时间」改来的 ⇒
+        //       不许因为"名字变了、像业务字段"就补一个映射进来。
         acceptanceText: '验收原话',
         confirmStatus: '确认状态',
       },
