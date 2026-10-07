@@ -60,13 +60,68 @@ const explicitSingleShoeGifts = (sourceText) => [...String(sourceText || '')
   .matchAll(/(?:赠送?|送)(?:了)?\s*([^，,。；;、]+?)(?=[，,。；;、]|$)/g)]
   .map((match) => match[1].trim().replace(/^双(?=鞋垫|袜子|鞋带)/, '一双')).filter(Boolean);
 
+// 「定金」附近的金额（业务负责人 2026-10-07 真机 BUG#1）。
+//
+// 现场（逐字）：「26002-52 37 码，定金微信交了 100 元，下次欠 128 元」
+// 解析层给出的 payments / agreed_total / owed **全对**，可缺项判定仍然回了一句
+// 「请明确已经收到的定金金额」—— 她已经说了。根因就在旧正则里：它只认
+//   · 「定金」紧贴数字（`定金100`），或
+//   · 「100元定金」这种把收款方式省掉的写法，
+// 一旦中间夹了收款方式/动词（「定金**微信交了**100元」）就整个匹配不上，
+// 于是走到下面无条件报"没说定金金额"那一支 —— 这是**无中生有**，不是保守。
+//
+// 做法：以「定金」为锚点，**先看它后面那一小句、再看它前面那一小句**：
+//   · 不跨标点、也不跨余额词（`下次`/`欠`/`尾款`…）—— 否则会把尾款或别的数字当定金；
+//   · 后面先认「像钱」的数（`100元` / `¥100`），认不出再退回"离定金最近、
+//     且不是紧跟着码/号的那个数"（`定金100微信` 这种把「元」省掉的写法）；
+//   · 前面**只认「像钱」的数**（有 `元`/`块`/`¥`）—— 这一条是必须的：
+//     写「26002-52 37码 定金微信交的」时，前面那串 26002 / 52 / 37 **都不是钱**，
+//     放宽就会把货号里的 52 当定金，于是明明没说金额却"认"出一个来。
+//   · 前面的钱**从后往前取**（离「定金」最近的那个）：写「26002-52 37码 100元定金」时，
+//     答案该是 100。
+// 找不到就返回 null —— 仍然报「请明确已经收到的定金金额」，**这一条不放宽**。
+const DEPOSIT_CLAUSE_BOUNDARY = /[，,。；;、！!？?\n]|尾款|余款|下次|欠|剩余|剩下的|还差|再付/;
+// 「像钱」：`100元` / `100 块` / `¥100`。
+const DEPOSIT_MONEY = /[¥￥]\s*\d+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?\s*(?:元|块)/g;
+// 任意数，但**不许紧跟着「码」「号」**（那是尺码或货号，不是钱）。
+const DEPOSIT_NUMBER = /(\d+(?:\.\d{1,2})?)(?!\d)(?!\s*[码号])/g;
+
+const depositNumbers = (text, pattern) => (String(text).match(pattern) || [])
+  .map((hit) => Number(String(hit).replace(/[¥￥\s元块]/g, '')))
+  .filter((value) => Number.isFinite(value));
+
+const depositAmountNear = (source) => {
+  const anchor = source.search(/定金/);
+  if (anchor < 0) return null;
+  const cutAtBoundary = (text) => {
+    const match = text.match(DEPOSIT_CLAUSE_BOUNDARY);
+    return match ? text.slice(0, match.index) : text;
+  };
+  // ① 「定金」后面：定金微信交了 100 元 / 定金100元 / 定金100微信
+  const after = cutAtBoundary(source.slice(anchor + '定金'.length));
+  const afterMoney = depositNumbers(after, DEPOSIT_MONEY);
+  if (afterMoney.length) return afterMoney[0];
+  const afterAny = depositNumbers(after, DEPOSIT_NUMBER);
+  if (afterAny.length) return afterAny[0];
+  // ② 「定金」前面**同一小句**里最后一个「像钱」的数：100元微信定金
+  const prefix = source.slice(0, anchor);
+  const clauseStart = Math.max(...[...'，,。；;、！!？?\n'].map((mark) => prefix.lastIndexOf(mark)));
+  const beforeMoney = depositNumbers(cutAtBoundary(prefix.slice(clauseStart + 1)), DEPOSIT_MONEY);
+  return beforeMoney.length ? beforeMoney[beforeMoney.length - 1] : null;
+};
+
 const depositTerms = (sourceText) => {
   const source = String(sourceText || '');
   if (!/定金/.test(source)) return null;
-  const deposit = source.match(/定金\s*[¥￥]?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)?|[¥￥]?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)\s*定金/);
-  const tail = source.match(/尾款\s*(?:以后|之后|下次|到货后|取货时)?\s*(?:还要|再)?\s*(?:付|给|是|为)?\s*[¥￥]?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)?/);
-  if (!deposit) return { issues: ['请明确已经收到的定金金额'] };
-  const depositAmount = Number(deposit[1] || deposit[2]);
+  const afterDeposit = source.slice(source.search(/定金/) + '定金'.length);
+  const tail = source.match(/尾款\s*(?:以后|之后|下次|到货后|取货时)?\s*(?:还要|再)?\s*(?:付|给|是|为)?\s*[¥￥]?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)?/)
+    // 不带「尾款」两个字的余额说法也算余额 —— 她的原话就是「**下次欠 128 元**」。
+    // ⚠️ 只在「定金」**之后**找：定金前面的数字属于上一句，
+    //    把「上次还欠 200」当成本单尾款会把成交金额算错。
+    || afterDeposit.match(/(?:下次|以后|之后|到货后|取货时|来拿时)\s*(?:还|还要|再|要|需要|需|得)?\s*(?:欠|差|付|给|交|补)?\s*[¥￥]?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)?/)
+    || afterDeposit.match(/(?:还欠|还差|还需要再付|还要再付|还需再付)\s*[¥￥]?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)?/);
+  const depositAmount = depositAmountNear(source);
+  if (depositAmount == null) return { issues: ['请明确已经收到的定金金额'] };
   if (!tail) return { depositAmount, issues: [] };
   if (!/下次|以后|之后|到货后|取货时|来拿时|还要|待付|未付|再付/.test(source)) {
     return { issues: ['请说明尾款是否已支付；若尚未支付，请写“尾款以后付”'] };

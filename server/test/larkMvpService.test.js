@@ -1356,6 +1356,239 @@ test('库存里没有这个尺码时不发确认卡片，只回一句「库存�
   assert.equal(messages[0], '库存里没有 26632 37码（这个货号现在有 36、38码），请核实～');
 });
 
+// ─── 按交易类型决定「录单跑哪些解析」（业务负责人 2026-10-07 确认的设计）────────
+// 她的原话（逐字）：「**预付的原因是因为库存里没有，所以需要调货。既然已经判断为预付，
+// 系统实际上就不应该再去库存里面找了。**」
+// 「因为它实际上还是要写销售明细的，所以这个时候需要提供颜色信息，
+//  也就是要**以这个货号去找它的颜色**……」
+// 设计落档：docs/prepaid-stock-check-decoupling-2026-10-07.md
+//   解析 A「货品信息」→ 颜色 / 商品记录 id：**所有交易类型都跑**
+//   解析 B「实时库存」→ 有没有这一双 / 门盒样品：**按交易类型**
+//   现货 / 未付 → A+B；预付 → **只有 A**（B 整个解除）
+// ⚠️ 交付 / 扣库存一个字没动：交付与否仍由 SALES_MOVEMENTS.delivery 从交易类型推。
+
+// 「货品信息」里的一行（解析 A 的输入）。
+const productRow = (itemNo, color, recordId) => ({ itemNo, color, recordId });
+
+// 解析 A 走的就是入账时同一个 `resolveProduct`（按货号找颜色），这里给等价实现。
+const productInfoResolver = (products) => ({
+  resolveProduct: async ({ itemNo, matchMode }) => {
+    const same = products.filter((product) => product.itemNo === itemNo);
+    if (!same.length) throw new Error(`找不到货品：${itemNo}`);
+    if (same.length === 1) {
+      return { recordId: same[0].recordId, record: { fields: { 颜色: same[0].color } } };
+    }
+    // 一个货号多个颜色：不猜，候选交给确认卡片（与实时库存那条候选同形状）。
+    return {
+      needsColor: true, itemNo,
+      options: same.map((product) => ({
+        recordId: product.recordId, color: product.color, number: `${itemNo}${product.color}`,
+      })),
+    };
+  },
+});
+
+const runSaleScenario = async ({ taskId, text, rows, parsed, products = [] }) => {
+  const { normalizeSalesResult } = require('../src/services/doubaoService');
+  const store = makeStore();
+  const cards = [];
+  const messages = [];
+  const baseGateway = liveInventoryGateway(rows);
+  const service = new LarkMvpService({
+    client: {},
+    gateway: {
+      ...baseGateway,
+      // 解析 A 读的是「货品信息」，颜色字段在这里声明。
+      table: (key) => (key === 'product'
+        ? { tableId: 'tbl_product', fields: { number: '编号', itemNo: '货号', color: '颜色' } }
+        : baseGateway.table(key)),
+      validateTables: async () => [],
+      create: async () => ({ recordId: `entry_${taskId}` }),
+      update: async () => undefined,
+    },
+    references: productInfoResolver(products),
+    posting: {},
+    recognizer: { parseSalesText: async () => normalizeSalesResult(parsed, text) },
+    store,
+  });
+  // 解析 B 到底跑没跑：包一层计数（"预付不查库存"这件事要看得见，不能只靠结果反推）。
+  let stockLookups = 0;
+  const originalStockParse = service.resolveStockAvailabilityForSale.bind(service);
+  service.resolveStockAvailabilityForSale = (...args) => {
+    stockLookups += 1;
+    return originalStockParse(...args);
+  };
+  // 🚨 哨兵：非群那条回复路一次都不许走（群任务必须走 sendTaskCard）。
+  service.replyCard = async () => { throw new Error('非群回复路径不该被走到：群任务必须走 sendTaskCard'); };
+  service.sendTaskCard = async (_task, card) => { cards.push(card); return 'om_card'; };
+  service.sendTaskText = async (_task, message) => messages.push(message);
+  await store.create({ task_id: taskId, type: 'sale', status: 'received',
+    chat_type: 'group', chat_id: GROUP_CHAT_ID, message_id: `om_${taskId}`,
+    sender_open_id: 'ou_1', sent_at: Date.now(), original_text: text });
+  await service.processSalesTask(taskId);
+  return { task: await store.get(taskId), cards, messages, stockLookups };
+};
+
+test('真机原话「定金微信交了 100 元，下次欠 128 元」（预付 + 完全没库存）→ 无缺项、直接出确认卡片', async () => {
+  // 这一条**同时**钉住两个 bug：
+  //   BUG#1 她已经说了定金金额，不该再报「请明确已经收到的定金金额」；
+  //   BUG#2 预付本来就没货（要调货），不该拿"库存里没有"拦她。
+  const text = '26002-52 37 码，定金微信交了 100 元，下次欠 128 元';
+  const { task, cards, messages, stockLookups } = await runSaleScenario({
+    taskId: 'sale_real_deposit',
+    text,
+    rows: [], // 这个货号现在一双都没有
+    products: [productRow('26002-52', '黑', 'p37')],
+    parsed: {
+      intent: 'sale', trade_type: '预付',
+      items: [{ item_no: '26002-52', color: '', size: 37, quantity: 1 }],
+      payments: [{ amount: 100, method: '微信' }], agreed_total: 228, owed: 128,
+    },
+  });
+
+  assert.deepEqual(task.draft.missing_fields, [], '她已经说清了，不许再让她补充');
+  assert.equal(task.status, 'ready_to_confirm');
+  assert.equal(cards.length, 1, '预付照样要出确认卡片');
+  assert.deepEqual(messages, [], '没有缺项就不该回"请补充"');
+  assert.equal(stockLookups, 0, '预付不查实时库存（BUG#2）');
+  // 三个值都要对（BUG#1 的验收口径）。
+  assert.deepEqual(task.draft.payments, [{ amount: 100, method: '微信' }]);
+  assert.equal(task.draft.agreed_total, 228);
+  assert.equal(task.draft.owed, 128);
+  // 交付那条既有逻辑**没动**：预付 = 未交付。
+  assert.equal(task.draft.trade_type, '预付');
+  assert.equal(task.draft.delivery_status, '未交付');
+  // 销售明细要写得全：颜色从货品信息（解析 A）拿到。
+  assert.equal(task.draft.items[0].product_record_id, 'p37');
+  assert.equal(task.draft.items[0].color, '黑');
+});
+
+test('她没说定金收了多少（预付 + 也没库存）→ 仍然要求补充定金金额（这一条不放宽）', async () => {
+  const text = '26002-52 37 码，定金微信交的，下次欠 128 元';
+  const { task, cards, messages, stockLookups } = await runSaleScenario({
+    taskId: 'sale_deposit_amount_missing',
+    text,
+    rows: [],
+    products: [productRow('26002-52', '黑', 'p37')],
+    parsed: {
+      intent: 'sale', trade_type: '预付',
+      items: [{ item_no: '26002-52', size: 37, quantity: 1 }],
+      payments: [], agreed_total: 228, owed: 128,
+    },
+  });
+
+  assert.ok(task.draft.missing_fields.includes('请明确已经收到的定金金额'),
+    `实际待补充：${JSON.stringify(task.draft.missing_fields)}`);
+  assert.equal(stockLookups, 0, '预付不查实时库存 —— 但定金金额那条仍然要问');
+  assert.equal(task.status, 'needs_info');
+  assert.equal(cards.length, 0, '缺定金金额就不许出确认卡片');
+  assert.match(messages[0], /请明确已经收到的定金金额/);
+});
+
+test('预付单：解析 B（实时库存）**整个不跑**，颜色改由解析 A（货品信息）按货号解析出来', async () => {
+  // 设计（业务负责人 2026-10-07 逐字）：
+  //   「既然已经判断为预付，系统实际上就不应该再去库存里面找了」
+  //   「以这个货号去找它的颜色」—— 销售明细要写得全，所以 A 必须跑。
+  const text = '26002-52 37码，定金微信交了100元，下次欠128元';
+  const { task, cards, stockLookups } = await runSaleScenario({
+    taskId: 'sale_prepaid_product_info',
+    text,
+    // 实时库存里**有**这一双也不算数：预付根本不走 B。
+    rows: [liveRow({ itemNo: '26002-52', color: '白', size: 37, productRecordId: 'live_p37' })],
+    products: [productRow('26002-52', '黑', 'p37')],
+    parsed: {
+      intent: 'sale', trade_type: '预付',
+      items: [{ item_no: '26002-52', size: 37, quantity: 1 }],
+      payments: [{ amount: 100, method: '微信' }], agreed_total: 228, owed: 128,
+    },
+  });
+
+  assert.equal(task.status, 'ready_to_confirm');
+  assert.equal(cards.length, 1);
+  assert.equal(stockLookups, 0, '预付不许去实时库存里找（解析 B 被配置解除）');
+  // 颜色 / 商品记录来自「货品信息」（A），不是实时库存那条「白」。
+  assert.equal(task.draft.items[0].product_record_id, 'p37');
+  assert.equal(task.draft.items[0].color, '黑');
+});
+
+test('预付单：货品信息里这个货号有多个颜色 → 仍然让她在卡片上选（销售明细要写全）', async () => {
+  const text = '26002-52 37码，定金微信交了100元，下次欠128元';
+  const { task, cards, stockLookups } = await runSaleScenario({
+    taskId: 'sale_prepaid_multi_color',
+    text,
+    rows: [],
+    products: [productRow('26002-52', '黑', 'p_black'), productRow('26002-52', '白', 'p_white')],
+    parsed: {
+      intent: 'sale', trade_type: '预付',
+      items: [{ item_no: '26002-52', size: 37, quantity: 1 }],
+      payments: [{ amount: 100, method: '微信' }], agreed_total: 228, owed: 128,
+    },
+  });
+
+  assert.equal(stockLookups, 0, '预付不走解析 B');
+  assert.equal(task.draft.items[0].needs_color, true, '颜色是入账必要信息，预付也要选');
+  assert.deepEqual(task.draft.items[0].color_options.map((option) => option.color), ['黑', '白']);
+  // 没选颜色前不许确认（既有闸门，一个字没改）——出了卡片但确认会被挡。
+  assert.equal(cards.length, 1);
+});
+
+test('现货单：解析 A 与解析 B **两个都跑**（B 认得出来时以 B 为准：卖的是实物）', async () => {
+  const { task, cards, stockLookups } = await runSaleScenario({
+    taskId: 'sale_cash_both_parses',
+    text: '26002-52 37码，210微信',
+    rows: [liveRow({ itemNo: '26002-52', color: '白', size: 37, productRecordId: 'live_p37' })],
+    products: [productRow('26002-52', '黑', 'p37')],
+    parsed: {
+      intent: 'sale', trade_type: '现货',
+      items: [{ item_no: '26002-52', size: 37, quantity: 1, actual_amount: 210 }],
+      payments: [{ amount: 210, method: '微信' }], agreed_total: 210,
+    },
+  });
+
+  assert.equal(stockLookups, 1, '现货要查库存（既有行为）');
+  assert.equal(task.status, 'ready_to_confirm');
+  assert.equal(cards.length, 1);
+  // 实时库存说这一双是「白」的那条记录 —— 以它为准（不是货品信息里的「黑」）。
+  assert.equal(task.draft.items[0].product_record_id, 'live_p37');
+  assert.equal(task.draft.items[0].color, '白');
+});
+
+test('现货单且库存里没有 → 仍然被拦（既有行为，一个字没改）', async () => {
+  const { task, cards, messages, stockLookups } = await runSaleScenario({
+    taskId: 'sale_cash_no_stock',
+    text: '26002-52 37码，210微信',
+    rows: [],
+    products: [productRow('26002-52', '黑', 'p37')],
+    parsed: {
+      intent: 'sale', trade_type: '现货',
+      items: [{ item_no: '26002-52', size: 37, quantity: 1, actual_amount: 210 }],
+      payments: [{ amount: 210, method: '微信' }], agreed_total: 210,
+    },
+  });
+
+  assert.equal(stockLookups, 1, '现货必须查库存');
+  assert.equal(task.status, 'needs_info');
+  assert.equal(cards.length, 0, '现货没库存就不该出确认卡片');
+  assert.equal(messages[0], '库存里没有 26002-52 37码（这个货号现在一双都没有），请核实～');
+});
+
+test('未付单且库存里没有 → 仍然被拦（鞋已经被拿走了，必须确实有这双鞋）', async () => {
+  const { task, cards, messages } = await runSaleScenario({
+    taskId: 'sale_unpaid_no_stock',
+    text: '26002-52 37码，260未付',
+    rows: [],
+    parsed: {
+      intent: 'sale', trade_type: '未付',
+      items: [{ item_no: '26002-52', size: 37, quantity: 1, actual_amount: 260 }],
+      payments: [], agreed_total: 260, owed: 260,
+    },
+  });
+
+  assert.equal(task.status, 'needs_info');
+  assert.equal(cards.length, 0, '未付没库存就不该出确认卡片');
+  assert.equal(messages[0], '库存里没有 26002-52 37码（这个货号现在一双都没有），请核实～');
+});
+
 test('缺货之外还有别的问题时，才用完整的补充说明', async () => {
   const { normalizeSalesResult } = require('../src/services/doubaoService');
   const store = makeStore();

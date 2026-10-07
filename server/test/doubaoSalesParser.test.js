@@ -460,7 +460,10 @@ test('a deposit order with several lines is refused instead of dropping the unpa
   assert.equal(result.agreed_total, '', '不再静默跳过尾款');
 });
 
-test('[当前行为·待修复] a deposit phrased the way the cashier says it is rejected as missing', () => {
+// 2026-10-07：这条原来标着「[当前行为·待修复]」，特征化的是**不合理**的结果
+// （「100元微信定金」这种语序被判成"没说定金金额"）。真机 BUG#1 就是它，
+// 现在按修好后的行为钉住 —— 按那次提交自己的约定「修复后它们会失败，届时按新行为更新」。
+test('收款方式夹在「定金」与金额之间（100元微信定金）也认得出定金金额与余额', () => {
   const result = normalizeWithVouchers({
     intent: 'sale',
     items: [{ item_no: '695887B-5', color: '黑', size: 43, quantity: 1 }],
@@ -468,11 +471,68 @@ test('[当前行为·待修复] a deposit phrased the way the cashier says it is
     agreed_total: null,
   }, '695887B-5 43码黑，100元微信定金，还需要再付140元');
 
-  // 用户说清了「100 定金 + 140 尾款」，但规则层的正则只认「定金在前」或
-  // 「数字紧贴定金」，中间夹一个支付方式就失效，于是判为没说定金金额。
-  // 修复后这里应变成 agreed_total = 240、missing_fields 为空。
-  assert.ok(result.missing_fields.includes('请明确已经收到的定金金额'));
-  assert.equal(result.agreed_total, '');
+  // 她说清了「100 定金 + 140 余额」⇒ 应收 = 定金 + 余额 = 240，缺项为空。
+  assert.deepEqual(result.missing_fields, []);
+  assert.equal(result.agreed_total, 240);
+  assert.equal(result.items[0].actual_amount, 240);
+  // 余额是**她明说的欠款**，不是已收：已收只有定金那 100。
+  assert.deepEqual(result.payments, [{ method: '微信', amount: 100 }]);
+  assert.equal(result.owed, 140);
+});
+
+// ─── 真机 BUG#1（业务负责人 2026-10-07 逐字）──────────────────────────────────
+// 「26002-52 37 码，定金微信交了 100 元，下次欠 128 元」
+// 「定金」与金额之间夹着**收款方式 + 动词**，这是她最日常的语序。
+test('真机语序「定金微信交了 100 元，下次欠 128 元」→ 定金金额与欠款都认得出，不再报缺项', () => {
+  const result = normalizeWithVouchers({
+    intent: 'sale', trade_type: '预付',
+    items: [{ item_no: '26002-52', size: 37, quantity: 1 }],
+    payments: [{ method: '微信', amount: 100 }], agreed_total: 228, owed: 128,
+  }, '26002-52 37 码，定金微信交了 100 元，下次欠 128 元');
+
+  // 她已经说清了 ⇒ 不许再报「请明确已经收到的定金金额」。
+  assert.deepEqual(result.missing_fields, []);
+  assert.deepEqual(result.payments, [{ method: '微信', amount: 100 }]);
+  assert.equal(result.agreed_total, 228);
+  assert.equal(result.owed, 128);
+  assert.equal(result.trade_type, '预付');
+});
+
+test('后端也能自己从「定金 100 + 下次欠 128」推出成交额 228（模型漏给 agreed_total / owed 也不丢账）', () => {
+  const result = normalizeWithVouchers({
+    intent: 'sale', trade_type: '预付',
+    items: [{ item_no: '26002-52', size: 37, quantity: 1 }],
+    payments: [{ method: '微信', amount: 100 }], agreed_total: null, owed: null,
+  }, '26002-52 37 码，定金微信交了 100 元，下次欠 128 元');
+
+  // 口径依据（既有）：她**明说还欠** ⇒ 成交额 = 实收 + 欠款 = 100 + 128 = 228。
+  // 这正是提示词规则 9 / 9.1 与 normalizeSalesResult 里那条"实收 + 欠款"的算法。
+  assert.equal(result.agreed_total, 228);
+  assert.equal(result.items[0].actual_amount, 228);
+  assert.equal(result.owed, 128);
+  assert.deepEqual(result.missing_fields, []);
+});
+
+test('她没说定金收了多少 → 仍然报「请明确已经收到的定金金额」（这一条不放宽）', () => {
+  const result = normalizeWithVouchers({
+    intent: 'sale', trade_type: '预付',
+    items: [{ item_no: '26002-52', size: 37, quantity: 1 }],
+    payments: [], agreed_total: 228, owed: 128,
+  }, '26002-52 37 码，定金微信交的，下次欠 128 元');
+
+  assert.ok(result.missing_fields.includes('请明确已经收到的定金金额'),
+    `实际待补充：${JSON.stringify(result.missing_fields)}`);
+});
+
+test('定金金额**不许**从货号或鞋码里猜（「26002-52 37码 定金微信交的」→ 仍然要求补充）', () => {
+  const result = normalizeWithVouchers({
+    intent: 'sale', trade_type: '预付',
+    items: [{ item_no: '26002-52', size: 37, quantity: 1 }],
+    payments: [], agreed_total: null, owed: null,
+  }, '26002-52 37码 定金微信交的');
+
+  assert.ok(result.missing_fields.includes('请明确已经收到的定金金额'),
+    `货号 26002-52 与 37码 都不是金额：${JSON.stringify(result.missing_fields)}`);
 });
 
 test('[当前行为·待修复] mixing an accessory into a deposit order loses the receivable and demands a size', () => {
@@ -654,8 +714,9 @@ test('鞋也按同一口径：说了收到 200 就是 200；只给价格就是�
 });
 
 test('原话说的是定金/欠款那类钱没给清的话时，绝不把已收的那笔当成交金额', () => {
-  // 语序刁钻、定金正则没认出来（见上面那条「待修复」）：这时也不能退化成"成交=100"，
-  // 宁可判成信息不全让她补一句。
+  // 2026-10-07：定金语序已经认得出（见上面那条改好的用例），所以这一单不再是"信息不全"。
+  // 这条用例要守的东西**没变**：绝不退化成"成交 = 已收的 100"。
+  // 她说清了 100 定金 + 140 余额 ⇒ 应收 240、已收只有 100、她明说的欠款 140。
   const result = normalizeWithVouchers({
     intent: 'sale',
     items: [{ item_no: '695887B-5', color: '黑', size: 43, quantity: 1 }],
@@ -663,8 +724,10 @@ test('原话说的是定金/欠款那类钱没给清的话时，绝不把已收�
     agreed_total: null,
   }, '695887B-5 43码黑，100元微信定金，还需要再付140元');
 
-  assert.equal(result.agreed_total, '');
-  assert.equal(result.owed, '');
+  assert.notEqual(result.agreed_total, 100, '已有断言不放宽：已收的那笔不是成交金额');
+  assert.equal(result.agreed_total, 240);
+  assert.equal(result.total_paid, 100);
+  assert.equal(result.owed, 140);
 });
 
 test('未付单：整单没给钱时说"未付" → owed 填整单金额，payments 为空', () => {
