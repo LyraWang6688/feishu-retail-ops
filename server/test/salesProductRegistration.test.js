@@ -40,10 +40,9 @@ test('开关设成认不出来的值 → 当场抛错（不猜）', () => {
     /SALES_PRODUCT_REGISTRATION_GUARD_ENABLED/);
 });
 
-test('文案可配：设了就用设的（含空串 = 那句话为空）；{item_no} 换成这一条的货号', () => {
+test('文案可配：设了就用设的；{item_no} 换成这一条的货号', () => {
   assert.equal(resolveSalesProductRegistrationConfig({ [MISSING_TEXT_KEY]: '没建档：{item_no}' }).missingText,
     '没建档：{item_no}');
-  assert.equal(resolveSalesProductRegistrationConfig({ [MISSING_TEXT_KEY]: '' }).missingText, '');
   assert.equal(formatMissingProductText('货品信息里没有 {item_no}，请先建档～', { itemNo: 'B26002-52' }),
     '货品信息里没有 B26002-52，请先建档～');
   // 货号里可能带 `$&` 这类替换串会咬的字符：用 split/join 而不是 RegExp，原样换进去。
@@ -51,6 +50,16 @@ test('文案可配：设了就用设的（含空串 = 那句话为空）；{item
   // 模板里没有占位符 / 没有货号时都不许抛错。
   assert.equal(formatMissingProductText('缺货号', { itemNo: 'B1' }), '缺货号');
   assert.equal(formatMissingProductText(`缺 ${ITEM_NO_PLACEHOLDER}`, {}), '缺 ');
+});
+
+test('文案设成空串 → 按默认文案（这句话是拦截时唯一可见的解释，不许为空）', () => {
+  // ⚠️ 与「段落类」配置（`PRODUCT_INFO_GAPS_*`：空串 = 那一项渲染成空）**有意不同**：
+  //    拦下她却不说话，她那边只会看到"没卡片、也没回复"（比不拦更坏）。
+  //    ⇒ 想关掉拦截用开关，不是把文案清空。
+  const empty = resolveSalesProductRegistrationConfig({ [MISSING_TEXT_KEY]: '' });
+  assert.equal(empty.missingText, SALES_PRODUCT_REGISTRATION_DEFAULTS.missingText);
+  const blank = resolveSalesProductRegistrationConfig({ [MISSING_TEXT_KEY]: '   ' });
+  assert.equal(blank.missingText, SALES_PRODUCT_REGISTRATION_DEFAULTS.missingText, '只有空白也算空');
 });
 
 test('事件名在这里单点声明（拦截 / 关掉 / 不下结论 三条痕迹）', () => {

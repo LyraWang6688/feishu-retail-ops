@@ -61,9 +61,14 @@ const resolveSalesProductRegistrationConfig = (env = process.env) => {
     const raw = readRaw(env, key);
     return raw === null ? fallback : readString(env, key, fallback);
   };
+  const missingText = readText(MISSING_TEXT_KEY, DEFAULTS.missingText);
   return {
     enabled: readFlag(env, ENABLED_KEY, DEFAULTS.enabled),
-    missingText: readText(MISSING_TEXT_KEY, DEFAULTS.missingText),
+    // ⚠️ 文案**设成空串时按默认文案**处理 —— 与「段落类」配置（`PRODUCT_INFO_GAPS_*`，
+    //    空串 = 那一项渲染成空）**有意不同**：这句话是拦截时**唯一可见的解释**，
+    //    留空 = 她那边只看到"没有卡片、也没有回复"（比不拦还坏，成了说不清的静默失败）。
+    //    ⇒ 想关掉拦截请用上面的开关，不是把文案清空。
+    missingText: missingText.trim() ? missingText : DEFAULTS.missingText,
   };
 };
 

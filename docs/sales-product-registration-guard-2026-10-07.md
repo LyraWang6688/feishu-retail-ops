@@ -87,6 +87,10 @@ for (每个明细) {
 | `SALES_PRODUCT_REGISTRATION_GUARD_ENABLED` | `true` | **显式布尔**。`false` / 空串 = 不拦，但仍记一条 `lark.sales.product_missing.guard_disabled`（"为什么没拦"可查） |
 | `SALES_PRODUCT_REGISTRATION_MISSING_TEXT` | `货品信息里没有 {item_no}，请先在「货品信息」建档或核对货号，再发一次～` | 拦截时回她的那句话。`{item_no}` 替换成**这一条明细**的货号（多双只缺一双时只报那一双） |
 
+⚠️ 文案**设成空串时按默认文案**处理 —— 与「段落类」配置（`PRODUCT_INFO_GAPS_*`：空串 = 那一项渲染成空）
+**有意不同**：这句话是拦截时**唯一可见的解释**，留空 = 她那边只看到"没有卡片、也没有回复"
+（比不拦还坏）。**要关掉拦截请用开关**，不是把文案清空。
+
 ## 四、日志（正向证据）
 
 | 事件 | 级别 | 字段 |
@@ -108,13 +112,13 @@ for (每个明细) {
 | # | 验收标准 | 实现落点 | 用例（`server/test/`） |
 | --- | --- | --- | --- |
 | **AC-1** | 三种交易类型都拦、都不出卡片、都回那句文案 | `larkMvpService.processSalesTask` 明细循环：A 之后、**`if (parsePolicy.stock)` 之外**调 `productRegistrationFrom`；命中 ⇒ `missingFields.push(...)`（既有的 `needs_info` + `return` 就在发卡片之前） | `larkMvpService.test.js` →「三种交易类型：货号压根没建档 → 都拦…」：现货 / 未付 / 预付 各跑一遍；**现货 / 未付 的实时库存里故意有这双鞋**，证明拦住它的**不是 B**（预付则 `stockLookups === 0`） |
-| **AC-2** | 一单多双只缺一双 → 只报那一双 | 判据**按明细**跑；文案按 `item.item_no` 渲染（`formatMissingProductText`） | 「一单多双、只缺其中一双 → 只报那一双的货号，整单仍被拦」（并断言另一双照旧解析出来） |
+| **AC-2** | 一单多双只缺一双 → 只报那一双 | 判据**按明细**跑；文案按 `item.item_no` 渲染（`formatMissingProductText`）；同一个货号只报一次 | 「一单多双、只缺其中一双 → 只报那一双的货号，整单仍被拦」（并断言另一双照旧解析出来）+「同一个货号的两条明细（两个尺码）都没建档 → 只报一次」 |
 | **AC-3** | 「缺资料」仍然不拦 | 判据只读「**有没有这条记录**」；`productInfoGapsFromIndex` / `product_info_gaps` / 卡片渲染**一行没改** | 「货号在货品信息里、只是齐备公式说缺字段 → 仍然不拦、正常出确认卡片」（同时断言**没有** `blocked` 事件） |
 | **AC-4** | 配品不受约束 | 判据在 `if (item.kind === 'accessory') { … continue; }` **之后**才轮到 | 「配品不走「货号建档」判据…」：断言 `resolveProduct` **0 次**调用、无凭空多出的缺项、照常出卡片 |
 | **AC-5** | 现货有货照旧；B 不变；预付跳过 B 不变 | 判据不碰 B，也不改 `salesTradeTypePolicy` | 「现货单：货号已建档 + 有货 → 照旧正常出确认卡片」+ 既有那 7 条交易类型用例（**逐字未改**，全部仍绿） |
 | **AC-6** | 拦截时有正向证据日志 | `lark.sales.product_missing.blocked`（带 `task_id` / `item_no` / `size` / `item_index` / `trade_type` / `trade_type_code` / `index_available` / `reason`） | 「拦截时那条正向证据日志在…」（抓 stdout 的 JSON 逐字段比对） |
-| **AC-7** | 配置先行 | `server/src/config/salesProductRegistration.js`（开关 + 文案 + 事件名）；逻辑里**没有**中文文案、也没有 `=== '预付'` 类散落判断 | `salesProductRegistration.test.js`（6 条）+「开关关掉 → 不拦但留痕」「文案可配：`{item_no}` 换货号」 |
-| **AC-8** | 不动 A / B / 齐备公式 / `product_info_gaps` / 交付扣库存；既有断言不放宽 | 只**新增**（`git diff` 对既有测试的改动只有：`runSaleScenario` 多了一个**可选**参数 `productIndexRows`，不传时行为与改前**逐字相同**） | 全量 `node --test --test-concurrency=1` **连跑 2 次 fail=0**（1037 条 = 既有 1022 + 本分支新增 15：`larkMvpService` 9 条、配置 6 条） |
+| **AC-7** | 配置先行 | `server/src/config/salesProductRegistration.js`（开关 + 文案 + 事件名）；逻辑里**没有**中文文案、也没有 `=== '预付'` 类散落判断 | `salesProductRegistration.test.js`（7 条）+「开关关掉 → 不拦但留痕」「文案可配：`{item_no}` 换货号」 |
+| **AC-8** | 不动 A / B / 齐备公式 / `product_info_gaps` / 交付扣库存；既有断言不放宽 | 只**新增**（`git diff` 对既有测试的改动只有：`runSaleScenario` 多了一个**可选**参数 `productIndexRows`，不传时行为与改前**逐字相同**） | 全量 `node --test --test-concurrency=1` **连跑 2 次 fail=0**（1039 条 = 既有 1022 + 本分支新增 17：`larkMvpService` 10 条、配置 7 条） |
 
 ## 七、已知边界 / 不确定处（如实记）
 

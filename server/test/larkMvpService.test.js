@@ -1783,6 +1783,31 @@ test('一单多双、只缺其中一双 → 只报那一双的货号，整单仍
   assert.equal(task.draft.items[0].product_record_id, 'p_8088', '另一双照旧解析（没被牵连）');
 });
 
+test('同一个货号的两条明细（两个尺码）都没建档 → 只报一次，不重复两遍', async () => {
+  // 这句话是按**货号**说的：重复两遍不增加信息，反而像要她建两次档。
+  const { task, messages } = await runSaleScenario({
+    taskId: 'sale_unregistered_same_item_twice',
+    text: 'B26002-52 37码一双210；B26002-52 38码一双228，共438微信',
+    rows: [],
+    products: [],
+    productIndexRows: [productIndexRow('8088-26', '棕', 'p_other')],
+    parsed: {
+      intent: 'sale', trade_type: '预付',
+      items: [
+        { item_no: 'B26002-52', size: 37, quantity: 1, actual_amount: 210 },
+        { item_no: 'B26002-52', size: 38, quantity: 1, actual_amount: 228 },
+      ],
+      payments: [{ amount: 100, method: '微信' }], agreed_total: 438, owed: 338,
+    },
+  });
+
+  assert.equal(task.status, 'needs_info');
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0], REGISTRATION_TEXT('B26002-52'));
+  assert.equal(task.draft.missing_fields.filter((field) => field === REGISTRATION_TEXT('B26002-52')).length, 1,
+    '缺项里同一个货号也只出现一次');
+});
+
 test('货号在货品信息里、只是齐备公式说缺字段 → 仍然不拦、正常出确认卡片（「缺资料不拦」）', async () => {
   // 「没建档要拦」与「缺资料不拦」的**分界**：这条用例钉住后者一个字没变 ——
   // 齐备公式说缺「成本」只进 `product_info_gaps`（挂已入账终态卡），**不阻塞录单**。

@@ -1561,8 +1561,10 @@ class LarkMvpService {
             const text = formatMissingProductText(registrationConfig.missingText, {
               itemNo: item.item_no,
             });
-            registrationNotes.push(text);
-            missingFields.push(text);
+            // 同一个货号的多条明细（例如同款两个尺码）只报一次：
+            // 这句话是按**货号**说的，重复两遍不增加信息，只会让她以为要建两次档。
+            if (!registrationNotes.includes(text)) registrationNotes.push(text);
+            if (!missingFields.includes(text)) missingFields.push(text);
           }
         } else if (registration.status === 'unknown') {
           // 读不到「货品信息」⇒ 不下"没建档"的结论、也不拦单（AGENTS.md 第 17 条）。
