@@ -26,14 +26,19 @@ const sharp = require('sharp');
  * 那是 purchaseWebhookService.groupItemsBySupplier 的事，跟这里无关）。
  *
  * ⚠️ 同一天第三轮（她的原话）：「底部『合计』留，同色 7+ 尺码截断换行！」
- * ⇒ ① 合计行按配置画回来（`SHOW_TOTAL` / `TOTAL_LABEL`，配置里定文案）；
- *    ② 「尺码×数量」这一格**装不下就换行**（`layoutColorRows` + `wrapBlocksToWidth`）：
- *       换行以**整块「尺码×数量」**为单位（`37码×1` 不会被劈成两行），
- *       所以顿号永远只出现在两块**之间**，不会跑到行首；
- *       换行后这一行的行高变高（`detailRowHeight`），**整张表跟着变高**。
- *       ⚠️ 字号一个都没动（见配置里的 BODY_FONT_SIZE）。
+ * ⇒ 「尺码×数量」这一格**装不下就换行**（`layoutColorRows` + `wrapBlocksToWidth`）：
+ *   换行以**整块「尺码×数量」**为单位（`37码×1` 不会被劈成两行），
+ *   所以顿号永远只出现在两块**之间**，不会跑到行首；
+ *   换行后这一行的行高变高（`detailRowHeight`），**整张表跟着变高**。
+ *   ⚠️ 字号一个都没动（见配置里的 BODY_FONT_SIZE）。
  *
- * ⚠️ 格式（列顺序 / 列宽 / 分隔符「、」/ 乘法号「×」/ 要不要合计 / 哪一格换行）**不在本文件里写死**：
+ * ⚠️ 2026-10-07 **第四轮**（业务负责人真机测试后当面提，原话见 layout 配置的文件头）：
+ * ⇒ ① 底部那条「合计：N 条 / M 双」**整条删掉**（表高里也不再留 FOOTER 那一段）；
+ *    ② 副标题（供应商那一行）改成 `供应商：X　　报货日期：Y　　合计：M 双`
+ *      —— 逐字段由配置的 `SUBTITLE_FIELDS` 决定，本文件**不写死任何一个字符串**；
+ *    ③ **报货批次不再画**：`batchNo` 仍然收下（调用方照传，留痕/排查），但**不渲染**。
+ *
+ * ⚠️ 格式（列顺序 / 列宽 / 分隔符「、」/ 乘法号「×」/ 副标题放哪些字段 / 哪一格换行）**不在本文件里写死**：
  * 全在 `config/purchaseRequestImageLayout.js`——这里是逻辑，那里是格式。
  * 采购单与退货单**共用这一个渲染器**（只换标题），所以改一处两张图一起变。
  */
@@ -47,8 +52,6 @@ const {
   TABLE_TOP,
   TITLE_BASELINE,
   SUBTITLE_BASELINE,
-  FOOTER_GAP,
-  FOOTER_HEIGHT,
   BOTTOM_PADDING,
   CELL_PADDING,
   BODY_FONT_SIZE,
@@ -58,8 +61,10 @@ const {
   detailRowHeight,
   COLUMNS,
   COLORS,
-  SHOW_TOTAL,
-  TOTAL_LABEL,
+  SUBTITLE_FIELDS,
+  SUBTITLE_SEPARATOR,
+  SUBTITLE_FONT_SIZE,
+  SUBTITLE_FIELD_MAX_WIDTH,
   SIZE_QUANTITY_SEPARATOR,
   SIZE_QUANTITY_MULTIPLIER,
 } = require('../config/purchaseRequestImageLayout');
@@ -410,6 +415,43 @@ const formatDate = (value) => {
 };
 
 /**
+ * 副标题（「供应商」那一行）的**字段取值表**：`SUBTITLE_FIELDS[i].key` → 这一段要画的值。
+ *
+ * ⚠️ 这里只做"取值 + 规范化"，**画什么、什么格式、怎么排**全在配置里。
+ *   · `supplier`  —— 供应商名（原样；截断在下面按配置的宽度做）
+ *   · `date`      —— 出图日期（上海时区，`formatDate`）
+ *   · `totalPairs`—— **总双数**（`summarize().totalPairs`）。
+ *     例：`合计：13 双`。
+ *     ⚠️ 0 双时**返回空串**（配合配置的 `hideWhenEmpty` → 整段不画）：
+ *        「合计：0 双」正是被禁止的"合计和为 0"（空明细时就是 0）。她要看的是**双数**，
+ *        「N 条」从 2026-10-07 起**不再出现在图上**（她明确说条数不需要了）。
+ *   · `batchNo` —— ⚠️ **刻意不在表里**：报货批次 2026-10-07 起不显示。
+ *      它仍由调用方传进来（留痕/排查用），但**图上一个字都不画**。
+ */
+const subtitleValuesOf = ({ supplierName = '', generatedAt = new Date(), totalPairs = 0 } = {}) => ({
+  supplier: String(supplierName || '').trim(),
+  date: formatDate(generatedAt),
+  totalPairs: Number(totalPairs) > 0 ? String(totalPairs) : '',
+});
+
+/**
+ * 副标题 → 一行文本（或空串 = 整行不画）。
+ *
+ * 逐字段按配置来：`label` 是前缀、`format` 决定值的写法、`hideWhenEmpty` 决定空值要不要省掉，
+ * 字段之间用配置的 `SUBTITLE_SEPARATOR` 连起来。**本函数里没有任何业务字符串**。
+ */
+const buildSubtitle = (values = {}) => SUBTITLE_FIELDS
+  .map((field) => {
+    const raw = values[field.key];
+    if (field.hideWhenEmpty && (raw === '' || raw === undefined || raw === null)) return '';
+    const value = typeof field.format === 'function' ? field.format(raw) : String(raw ?? '');
+    // ⚠️ 只截断**值**、不截断 label（与改前一致：`供应商：` 那三个字永远完整）。
+    return `${field.label}${truncateToWidth(value, SUBTITLE_FIELD_MAX_WIDTH, SUBTITLE_FONT_SIZE)}`;
+  })
+  .filter(Boolean)
+  .join(SUBTITLE_SEPARATOR);
+
+/**
  * 明细 → SVG 字符串。纯函数：同样的输入永远得到同样的字节，
  * 因此排版规则（标题、尺码×数量的写法、列宽/截断）都能在没有网络、没有 sharp 的情况下单测。
  */
@@ -431,39 +473,34 @@ const buildPurchaseRequestSvg = ({ supplierName, batchNo = '', items = [], gener
       detailHeight: layoutRows.reduce((sum, row) => sum + row.height, 0),
     };
   });
-  const { rowCount, totalPairs } = summarize(rows);
+  // ⚠️ 2026-10-07 起图上**只有双数**（`totalPairs`）：底部那条合计删了，副标题的「合计：M 双」
+  //    只用这一个数。`rowCount`（= 明细行数）仍然由 `summarize` 提供、供**群文字**那条消息用
+  //    （「这批 N 条」），但**图上不再出现**，所以这里不再解构它。
+  const { totalPairs } = summarize(rows);
   // 表高 = 列头 + Σ（分组行 + 该组**折行后**的明细段高）。空明细时仍然留一行正文的高度，
   // 给「本批次没有明细」那句话站脚。
   const bodyHeight = rows.length === 0
     ? ROW_HEIGHT
     : groups.reduce((sum, group) => sum + GROUP_ROW_HEIGHT + group.detailHeight, 0);
   const tableHeight = HEADER_ROW_HEIGHT + bodyHeight;
-  const footerTop = TABLE_TOP + tableHeight + FOOTER_GAP;
-  // 合计行由配置开关控制（见 config/purchaseRequestImageLayout.js 的 SHOW_TOTAL）：
-  // 关掉时整张图**不留那条空带**，底部只留 BOTTOM_PADDING。
-  // ⚠️ 空明细时**不画合计**：那会画出「合计：0 条 / 0 双」，正是被禁止的"合计和为 0"。
-  // 空明细本来就没有可合计的东西，不画才是老实话（图上仍留着「本批次没有明细」）。
-  const showTotal = Boolean(SHOW_TOTAL) && rows.length > 0;
-  const height = TABLE_TOP + tableHeight + (showTotal ? FOOTER_GAP + FOOTER_HEIGHT : 0) + BOTTOM_PADDING;
+  // ⚠️ 2026-10-07 起表格下面**只有底部留白**：那条「合计：N 条 / M 双」与它的留白
+  //（FOOTER_GAP / FOOTER_HEIGHT）整段删掉了，图高里不再有那一截。
+  const height = TABLE_TOP + tableHeight + BOTTOM_PADDING;
 
   const parts = [];
   parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${height}" viewBox="0 0 ${WIDTH} ${height}">`);
   parts.push(`<rect x="0" y="0" width="${WIDTH}" height="${height}" fill="#ffffff"/>`);
 
   // 标题区：默认「邯美皮鞋采购单」，采购退货传「邯美皮鞋退货单」；
-  // 下面一行写清这批是给谁、哪一批。
+  // 下面那一行（副标题）写清 这批给谁 / 哪天 / 一共多少双 —— 字段清单见配置的 SUBTITLE_FIELDS。
   parts.push(`<text x="${WIDTH / 2}" y="${TITLE_BASELINE}" font-family="${FONT_FAMILY}" font-size="34" ` +
     `font-weight="bold" fill="${COLORS.ink}" text-anchor="middle">${escapeXml(title)}</text>`);
   // ⚠️ 没有供应商时**不渲染「供应商：」这一段**（业务负责人 2026-10-06：
   // 「没维护供应商的货品，也应该能正常出单」）。以前这里写「供应商：未填写」，
   // 看着像一条警告、像这张单有问题；留空才是"正常出单"的样子。
-  // 有供应商的那一段照旧渲染——供应商信息一个都没删。
-  const subtitle = [
-    supplierName ? `供应商：${truncateToWidth(supplierName, 300, 18)}` : '',
-    batchNo ? `报货批次：${truncateToWidth(batchNo, 300, 18)}` : '',
-    formatDate(generatedAt),
-  ].filter(Boolean).join('　　');
-  parts.push(`<text x="${WIDTH / 2}" y="${SUBTITLE_BASELINE}" font-family="${FONT_FAMILY}" font-size="18" ` +
+  // 2026-10-07 起这段由 `SUBTITLE_FIELDS` 的 `hideWhenEmpty` 表达，**不是**在本文件里写 if。
+  const subtitle = buildSubtitle(subtitleValuesOf({ supplierName, generatedAt, totalPairs }));
+  parts.push(`<text x="${WIDTH / 2}" y="${SUBTITLE_BASELINE}" font-family="${FONT_FAMILY}" font-size="${SUBTITLE_FONT_SIZE}" ` +
     `fill="${COLORS.muted}" text-anchor="middle">${escapeXml(subtitle)}</text>`);
 
   // 表头
@@ -537,15 +574,11 @@ const buildPurchaseRequestSvg = ({ supplierName, batchNo = '', items = [], gener
   parts.push(`<line x1="${MARGIN}" y1="${TABLE_TOP + HEADER_ROW_HEIGHT}" x2="${MARGIN + TABLE_WIDTH}" ` +
     `y2="${TABLE_TOP + HEADER_ROW_HEIGHT}" stroke="${COLORS.line}" stroke-width="1"/>`);
 
-  // 合计（见配置里的 SHOW_TOTAL；文案由配置的 TOTAL_LABEL 决定，这里不写死字符串）：
-  //   「合计：N 条 / M 双」——N = 明细行数（图上一共有多少个「尺码×数量」块，
-  //   与群文字那条消息的「这批 N 条」同一个来源），M = 总双数；两个数都直接来自 summarize。
-  // ⚠️ 空明细不画（那会是"合计：0 条 / 0 双"）——见上面的 showTotal。
-  if (showTotal) {
-    const footerY = footerTop + FOOTER_HEIGHT / 2 + 8;
-    parts.push(`<text x="${WIDTH / 2}" y="${footerY}" font-family="${FONT_FAMILY}" font-size="${BODY_FONT_SIZE}" ` +
-      `font-weight="bold" fill="${COLORS.ink}" text-anchor="middle">${escapeXml(TOTAL_LABEL({ rowCount, totalPairs }))}</text>`);
-  }
+  // 🔴 2026-10-07：底部那条「合计：N 条 / M 双」**整段删掉**（业务负责人：「图片底部有共多少条
+  //    以及合计多少双的不需要了」）。「合计」没有消失 —— 它挪到了副标题那一行（见上面的
+  //    `buildSubtitle` / `SUBTITLE_FIELDS`），而且只留**双数**。
+  //    ⇒ 这里**没有** `if (showTotal) { ... }`，也没有开关：要回滚从 git 历史取
+  //      （`git log -S 'TOTAL_LABEL'`）。
 
   parts.push('</svg>');
   return parts.join('\n');
@@ -593,9 +626,12 @@ module.exports = {
   formatSizeQuantity,
   SIZE_QUANTITY_SEPARATOR,
   SIZE_QUANTITY_MULTIPLIER,
-  SHOW_TOTAL,
   sizeSortValue,
   compareSize,
+  // 副标题（供应商那一行）的两个纯函数：取值 + 按配置拼串。
+  // 单测直接打它们，就能钉住「供应商 / 报货日期 / 合计 N 双」这一段，而不必从整段 SVG 反推。
+  subtitleValuesOf,
+  buildSubtitle,
   // 布局常量也导出：单测要按**坐标**断言「分组行跨满整张表、字比正文重」，
   // 而不是靠 includes 某段字符串蒙过去。
   COLORS,

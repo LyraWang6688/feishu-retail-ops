@@ -416,6 +416,10 @@ test('① 差额提示发采购群、并回复退货单图那条根消息（同�
   assert.equal(noticeMessage.data.msg_type, 'text');
   assert.equal(noticeMessage.path?.message_id, image.__messageId,
     '差额提示必须回复退货单图（同一个话题），而不是发顶层另开一个话题');
+  // 🔴 2026-10-07：**光"回复"不建话题** —— 飞书里那只是引用回复。必须带 `reply_in_thread: true`
+  //    才真的落进**那张退货单所在的话题**（她要的就是"在一个话题里"，退货差额提示同理）。
+  assert.equal(noticeMessage.data.reply_in_thread, true,
+    '差额提示必须带 reply_in_thread，才算"在同一个话题里"');
 });
 
 test('① 未配置采购群：大声跳过、一条消息都不发（绝不回落经办人私聊）', async () => {
