@@ -324,7 +324,16 @@ Lead 的解读（按此实现）：第 3 步查的是**实时库存**（不是�
 
 ## 10. CI 三项实际输出 + 全量 2 次
 
-见 PR 描述（`gh pr checks` 的实际输出贴在该 PR 的评论 / 描述里）。
+**PR #235**（`feat/stock-derived-trade-type`）· `gh pr checks 235`（2026-10-07 20:00 上海时间）：
+
+```
+Analyze (javascript-typescript)  pass  51s  https://github.com/LyraWang6688/feishu-retail-ops/actions/runs/37617881420/job/112780562840
+CodeQL                           pass   5s  https://github.com/LyraWang6688/feishu-retail-ops/runs/112780840848
+test                             pass  53s  https://github.com/LyraWang6688/feishu-retail-ops/actions/runs/37617884685/job/112780565485
+```
+
+`gh pr view 235 --json mergeStateStatus` ⇒ **`CLEAN`**（三项 conclusion 都是 SUCCESS）。
+⚠️ 本 PR **未合并、未部署**（部署必须拿到她当次的明确命令）。
 
 **全量（连跑 2 次，`node --test --test-concurrency=1`）**：
 ```
