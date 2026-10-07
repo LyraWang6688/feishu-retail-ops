@@ -351,15 +351,23 @@ const tradeTypeLine = (draft) => {
   return delivery ? `${label} · ${delivery}` : label;
 };
 
-// 第三区：货品资料不全时，把"还差哪几项"和记录链接放进**点确认之后更新的那些卡片**。
+// 第三区：货品资料不全时，把"还差哪几项"和记录链接放进**点确认之后的【终态卡】**。
 //
 // ⭐ 2026-10-07（业务负责人拍板，逐字）：「我们的卡片能够实时更新，更新完之后，
 //   用户要补的链接其实就看不到了。所以我们在销售信息确认卡片里不需要放这个信息；
 //   等用户点击确认之后，卡片不是会更新吗？更新时再补这个信息。」
-//   ⇒ 这一段**不在**确认卡片上（`salesConfirmationCard`），而是**在**
-//     `salesProcessingCard`（点完立刻可见）与 `salesStatusCard` 的已入账终态卡
-//     （会长期留着，是她补资料的入口）。
+//   ⇒ 这一段**不在**确认卡片上（`salesConfirmationCard`），**只在**
+//     `salesStatusCard` 的**已入账终态卡**上（会长期留着，是她补资料的入口）。
 //   ⚠️ 位置变了，**文案与行格式一个字不改**；文案在 `config/productInfoGaps`，本函数只排布。
+//
+// 🔴 2026-10-07 她的**最终口径**（先把位置说成"两边都放"，随后明确**纠正**，逐字）：
+//   「**不是，是只放在2上！**」
+//   她给两张卡的编号：① =「销售订单处理中」卡（点确认后 0.3 秒出现、只停留 1~2 分钟）；
+//   ② = 绿色「销售订单已入账」终态卡（长期留着）。**她只要 ② 有。**
+//   ⇒ ① 也就是 `salesProcessingCard`，**刻意不再挂这一段**：
+//     它 1~2 分钟后照样被终态卡 patch 覆盖，链接一样会消失 —— 那正是她要解决的问题；
+//     把它放在一张"很快就没了"的卡上等于没放。
+//   ⚠️ 这条是**收窄**（`salesProcessingCard` 里**不许**再出现本函数），不是"两边都放"。
 //
 // 为什么放在卡片里而不是另发一条消息：她本来就在看这张卡片，顺手就能点去补；
 // 另发一条消息只会多一次打扰，也容易漏看。
@@ -393,7 +401,7 @@ const productInfoGapsElements = (draft, config = resolveProductInfoGapsConfig())
 // 只能用 `{ tag: 'div', text: { tag: 'lark_md', content, text_size } }`，
 // text_size 取 'heading'（大字）/ 'normal' / 'note'（小字）；这一步已在用户真机上验证生效。
 // 层级：明细行、成交/收款行、交易类型行 = heading；颜色/补样品选择 = note。
-// ⚠️ 2026-10-07：「补货品信息」那块**已从确认卡片挪走**（改挂处理中卡与已入账终态卡，
+// ⚠️ 2026-10-07：「补货品信息」那块**已从确认卡片挪走**（改挂**已入账终态卡**，
 //    见 `productInfoGapsElements` 的注释）——它仍是 note 小字，只是不在这一张上了。
 // 成交/收款行与交易类型行**不加粗**（内容里不写 `**`）——大字本身已经是重点，
 // 再加粗在手机上会糊成一团。
@@ -433,7 +441,7 @@ const salesConfirmationCard = (draftId, draft) => {
       ...salesSampleReplacementPicker(draftId, draft),
       // ⚠️ 这里**刻意没有** `productInfoGapsElements(draft)`：
       //   这张卡会被点确认后的 patch 覆盖，放这里等于"她永远看不到补资料的链接"。
-      //   2026-10-07 起该段落在处理中卡与已入账终态卡上（见 `productInfoGapsElements`）。
+      //   2026-10-07 起该段落只挂在**已入账终态卡**上（见 `productInfoGapsElements`）。
       //   三个按钮走 column_set：移动端实测一行三列（见 buttonColumns 的注释）。
       buttonColumns([
         actionButton('确认', 'confirm_sale', draftId, 'primary'),
@@ -451,6 +459,10 @@ const salesConfirmationCard = (draftId, draft) => {
 //   只有"**这单已经入账、卡片会长期留着**"的分支才该带补货品信息段落
 //   （取消 / 待修正 = 原草稿不会入账 ⇒ 不带）。默认关 ⇒
 //   没显式打开的调用点，输出与改动前**逐字节相同**（既有 deepEqual 断言就是这条的哨兵）。
+//
+// ⚠️ 2026-10-07 收窄（业务负责人逐字：「**不是，是只放在2上！**」）：
+//   **这里是这一段唯一的出现位置** —— 处理中卡（`salesProcessingCard`）**刻意不带**
+//   （见 `productInfoGapsElements` 的注释）。
 const salesStatusCard = (draft, title, message, template = 'blue', options = {}) => ({
   config: patchableCardConfig(),
   header: { template, title: { tag: 'plain_text', content: title } },
@@ -477,8 +489,10 @@ const salesStatusCard = (draft, title, message, template = 'blue', options = {})
 //
 // 文案 / 颜色**全部来自 `config/salesProcessingCard`**（配置先行）——本函数只排布，不写死字面量。
 // 传空串 = 那一项不要（例：`progressLine: ''` 不出提示行、`itemColor: ''` 不套颜色）。
-// ⚠️ 唯一一处**不**来自那份配置的是"补货品信息"段落（文案在 `config/productInfoGaps`）：
-//    她点完确认之后要能立刻看到补资料的链接，所以这一段**在这一张上**。
+// 🔴 这里**刻意没有**「补货品信息」段落（业务负责人 2026-10-07 最终口径：
+//    「**不是，是只放在2上！**」—— 2 = 已入账终态卡）。这一张只停留 1~2 分钟就被终态卡覆盖，
+//    挂在这儿链接照样会消失 ⇒ 那一段只挂在 `salesStatusCard` 的已入账终态卡上，
+//    见 `productInfoGapsElements` 的注释。**不要**在这里加回来。
 const salesProcessingCard = (draft, { title, template = 'blue', itemColor, progressLine, note } = {}) => {
   const items = itemLines(draft?.items || [], 'actual_amount') || '销售订单';
   const elements = [];
@@ -487,10 +501,6 @@ const salesProcessingCard = (draft, { title, template = 'blue', itemColor, progr
     tag: 'div',
     text: { tag: 'lark_md', content: itemColor ? `<font color='${itemColor}'>${items}</font>` : items },
   });
-  // ⭐ 2026-10-07：补货品信息段落挂在这一张上（她点完确认**立刻**就能看见那几条补资料链接）。
-  //   缺口为空 → `[]`，卡片元素与改动前逐字节相同（不留空壳）。
-  //   位置：明细之后、note 之前 —— note 一直是最后一行。
-  elements.push(...productInfoGapsElements(draft));
   // 既有那句 note：**逐字保留**，结构与 `salesStatusCard` 一致（只是内容来自配置）。
   elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: note }] });
   return {
@@ -1014,7 +1024,9 @@ module.exports = {
   purchaseArrivalReconcileStatusCard,
   salesConfirmationCard,
   salesStatusCard,
-  // 「补货品信息」那一段（2026-10-07 从确认卡片挪到点确认之后的卡片；导出是为了单独测配置）。
+  // 「补货品信息」那一段（2026-10-07 从确认卡片挪到**已入账终态卡**；导出是为了单独测配置）。
+  // ⚠️ 现在生产调用点只剩 `salesStatusCard` 一处 —— **仍然保持可复用**（带 config 形参，
+  //   将来别处要用直接接；见函数注释）。**不要**因为它"只有一个调用点"就改签名或内联。
   productInfoGapsElements,
   // 「点确认后立刻看得出变了」那张（只给确认链路那一次立即更新用，见函数注释）。
   salesProcessingCard,

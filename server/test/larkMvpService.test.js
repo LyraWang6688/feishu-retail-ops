@@ -8,10 +8,9 @@ const { LarkMvpService, aggregateRecognizedItems, looksLikeSalesText } = require
 const { PurchaseBatchLocator } = require('../src/services/purchaseBatchLocator');
 const { SalesGroupThreadLocator } = require('../src/services/salesGroupThreadLocator');
 const { PurchaseWebhookService } = require('../src/services/purchaseWebhookService');
-// 「缺口算出来了 → 会挂到点确认之后的那两张卡上」这个衔接点用真实渲染器证一下
-// （2026-10-07：段落从确认卡片挪到处理中卡 + 已入账终态卡）。
-const { salesProcessingCard } = require('../src/utils/larkCards');
-const { resolveSalesProcessingCardConfig } = require('../src/config/salesProcessingCard');
+// 「缺口算出来了 → 会挂到**已入账终态卡**上」这个衔接点用真实渲染器证一下
+// （2026-10-07：段落从确认卡片挪到点确认之后的卡片；当天她**收窄**为**只放在终态卡**）。
+const { salesStatusCard } = require('../src/utils/larkCards');
 
 // 拼接「货品信息」的记录链接要读 Base token。测试里给一个占位值；
 // 已配置时不覆盖（CI 或本地 .env 里可能已经有真值）。
@@ -2020,12 +2019,13 @@ const openSale = (store, taskId) => store.create({ task_id: taskId, chat_type: '
   message_id: `om_${taskId}`, sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '66356黑42一双99微信' });
 
 // ⚠️ 2026-10-07 改写（**只因为"位置变了"，不是放宽**）：她拍板把「补货品信息」段落
-//   从确认卡片挪到**点确认之后更新的卡片**（处理中卡 + 已入账终态卡）。
+//   从确认卡片挪到**点确认之后的卡片**，随后又**收窄**为**只放在已入账终态卡上**
+//   （逐字：「不是，是只放在2上！」）。
 //   本用例的**数据断言一字未动**（缺口怎么算、url 怎么拼，全部原样钉着）；
 //   只把"卡片上看得见这一段"翻成它的反面 —— 而且段落本身的逐字渲染
 //   （标题 / 行格式 / note 小字 / 逐字 url / 上限）在
 //   `test/productInfoGapsCardPlacement.test.js` 里按同一套标准钉着，覆盖面没有丢。
-test('货品资料不齐时，缺口与记录链接算得出来；但确认卡片上不再挂这一段（已挪到点确认之后）', async () => {
+test('货品资料不齐时，缺口与记录链接算得出来；但确认卡片上不再挂这一段（已挪到终态卡）', async () => {
   const store = makeStore();
   const cards = [];
   const service = gapService({ store, cards,
@@ -2039,9 +2039,10 @@ test('货品资料不齐时，缺口与记录链接算得出来；但确认卡�
   assert.deepEqual(gaps[0].missing, ['成本', '品类']);
   assert.equal(gaps[0].missing_sample_image, true, '没有样例图也要算缺口');
   assert.match(gaps[0].url, /\/base\/.+\?table=tbl_product&record=prod_gap$/);
-  // 这段文字会挂到点确认之后的卡片上（在同一份 draft 上重新渲染一次，证明数据没丢）。
-  assert.match(JSON.stringify(salesProcessingCard({ items: [], product_info_gaps: gaps },
-    resolveSalesProcessingCardConfig({}))), /还差：成本、品类、样例图/);
+  // 这段文字会挂到**已入账终态卡**上（在同一份 draft 上用真实渲染器 + 那个显式开关渲染一次，
+  // 证明数据没丢、也没被这次收窄弄丢）。
+  assert.match(JSON.stringify(salesStatusCard({ items: [], product_info_gaps: gaps },
+    '销售订单已入账', 'm', 'green', { productInfoGaps: true })), /还差：成本、品类、样例图/);
 
   const card = JSON.stringify(cards[0]);
   assert.doesNotMatch(card, /补货品信息/);
@@ -2062,9 +2063,10 @@ test('货品齐备而且有样例图时，卡片上不出现这一区', async ()
 });
 
 // ⚠️ 2026-10-07 改写（**只因为"位置变了"**）：数据断言（齐备但缺样例图 ⇒ 记成缺口）一字未动，
-//   原先把"卡片上看得见 `还差：样例图`"钉在**确认卡片**上；现在那一段在点确认之后的卡片上，
-//   所以这里改成在同一份 draft 上用**真实的处理中卡渲染器**去钉同一句话。
-test('齐备但缺样例图 → 依然算缺口，且这段文字挂在点确认之后的卡片上', async () => {
+//   原先把"卡片上看得见 `还差：样例图`"钉在**确认卡片**上；现在那一段只挂在**已入账终态卡**上
+//   （她当天收窄：「不是，是只放在2上！」），所以这里改成在同一份 draft 上用
+//   **真实的终态卡渲染器 + 那个显式开关**去钉同一句话。
+test('齐备但缺样例图 → 依然算缺口，且这段文字挂在已入账终态卡上', async () => {
   const store = makeStore();
   const cards = [];
   const service = gapService({ store, cards,
@@ -2077,8 +2079,8 @@ test('齐备但缺样例图 → 依然算缺口，且这段文字挂在点确认
   const gaps = draft.product_info_gaps;
   assert.deepEqual(gaps[0].missing, []);
   assert.equal(gaps[0].missing_sample_image, true);
-  assert.match(JSON.stringify(salesProcessingCard({ items: draft.items, product_info_gaps: gaps },
-    resolveSalesProcessingCardConfig({}))), /还差：样例图/);
+  assert.match(JSON.stringify(salesStatusCard({ items: draft.items, product_info_gaps: gaps },
+    '销售订单已入账', 'm', 'green', { productInfoGaps: true })), /还差：样例图/);
   assert.doesNotMatch(JSON.stringify(cards[0]), /还差：样例图/);
 });
 
@@ -2171,10 +2173,11 @@ test('同一个货号有多个颜色时，把该货号下所有资料不全的�
   assert.deepEqual(gaps.map((gap) => gap.label), ['66356米', '66356白']);
   assert.deepEqual(gaps.map((gap) => gap.missing), [['成本'], ['单价', '品类']]);
   assert.equal(gaps[1].missing_sample_image, true, '白色还缺样例图');
-  // ⚠️ 2026-10-07：这三条原来钉在**确认卡片**上；位置挪到点确认之后的卡片之后，
-  //   改成在同一份 draft 上用真实渲染器钉（数据断言一字未动，没有放宽）。
-  const rendered = JSON.stringify(salesProcessingCard({ items: [], product_info_gaps: gaps },
-    resolveSalesProcessingCardConfig({})));
+  // ⚠️ 2026-10-07：这三条原来钉在**确认卡片**上；位置挪到点确认之后的卡片、并收窄成
+  //   "只放已入账终态卡"之后，改成在同一份 draft 上用**真实终态卡渲染器**钉
+  //   （数据断言一字未动，没有放宽）。
+  const rendered = JSON.stringify(salesStatusCard({ items: [], product_info_gaps: gaps },
+    '销售订单已入账', 'm', 'green', { productInfoGaps: true }));
   assert.match(rendered, /66356米/);
   assert.match(rendered, /66356白/);
   assert.doesNotMatch(rendered, /66356黑/, '资料全的颜色不该出现在缺口里');

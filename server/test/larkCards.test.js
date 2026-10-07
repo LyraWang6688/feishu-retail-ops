@@ -167,14 +167,14 @@ test('销售确认卡片：成交/收款行与交易类型行是 heading 且不�
 });
 
 // ⚠️ 2026-10-07 改写（**只因为"位置变了"，不是放宽**）：
-//   业务负责人拍板把「补货品信息」段落从确认卡片挪到**点确认之后更新的卡片**
-//  （`salesProcessingCard` / 已入账的 `salesStatusCard`，见
-//   test/productInfoGapsCardPlacement.test.js）。
+//   业务负责人拍板把「补货品信息」段落从确认卡片挪到**点确认之后更新的卡片**，
+//   随后又**收窄**为**只放在已入账终态卡上**（逐字：「不是，是只放在2上！」；
+//   处理中卡不带，见 test/productInfoGapsCardPlacement.test.js）。
 //   原断言钉的是"确认卡片上有这一段 note 小字"；现在钉的是**它的反面**：
 //   有缺口时确认卡片上也**没有**这一段 —— 而且与"无缺口"那张卡**逐字相同**
 //   （去掉之后连空壳都不留）。段落本身的字号 / 行格式 / 链接
 //   在新增文件里按同一套标准钉着（note 小字 + 逐字行格式 + 逐字 url），覆盖面没有丢。
-test('销售确认卡片：不再出现「补货品信息」段落（已挪到点确认之后的卡片）', () => {
+test('销售确认卡片：不再出现「补货品信息」段落（已挪到已入账终态卡）', () => {
   const withGaps = salesConfirmationCard('draft_1', saleDraft({
     product_info_gaps: [{ label: '66356米', missing: ['成本'], url: 'https://example.com/product/1' }],
   }));
