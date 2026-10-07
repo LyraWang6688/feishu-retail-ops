@@ -1005,20 +1005,33 @@ class LarkMvpService {
    *    所以这里认不出、读挂了都只记一条日志，绝不因此挡住别的路径。
    */
   async resolveProductInfoForSale({ itemNo }) {
-    const resolveProduct = this.references?.resolveProduct;
-    if (!itemNo || typeof resolveProduct !== 'function') return {};
+    // ⚠️ 必须**带着 `this`** 调用（`this.references.resolveProduct(...)`）。
+    //    把方法先摘下来再调（`const fn = this.references.resolveProduct; fn(...)`）会丢 `this`，
+    //    而 `V1ReferenceResolver.resolveProduct` 第一行就读 `this.gateway` ⇒
+    //    `TypeError: Cannot read properties of undefined (reading 'gateway')`
+    //    ⇒ 被下面这个 try/catch 吞成 `{}` ⇒ **预付（B 不跑）时既没有颜色、也没有候选**。
+    //    2026-10-07 真机 bug 的根因就是它，真机日志逐字：
+    //    `{"event":"lark.sales.product_info.resolve_failed","item_no":"26002-52",
+    //      "error":"Cannot read properties of undefined (reading 'gateway')"}`
+    if (!itemNo || typeof this.references?.resolveProduct !== 'function') return {};
     try {
-      const found = await resolveProduct({ itemNo, matchMode: 'sales' });
+      const found = await this.references.resolveProduct({ itemNo, matchMode: 'sales' });
       // 多个颜色：不猜，候选交给确认卡片（形状与实时库存那条候选一致：
       // {recordId, color, number}，卡片动作 choose_sale_color 只认这三个键）。
       if (found?.needsColor && found.options?.length) {
         return {
           needsColor: true,
-          colorOptions: found.options.map((option) => ({
-            recordId: option.recordId,
-            color: String(option.color || '').trim(),
-            number: option.number || `${itemNo}${option.color || ''}`,
-          })),
+          colorOptions: found.options.map((option) => {
+            const optionColor = String(option.color || '').trim();
+            return {
+              recordId: option.recordId,
+              color: optionColor,
+              // 展示串与解析 B / `items.push` 同口径（**货号 + 颜色**）。
+              // ⚠️ 不要用 resolver 回的 `number`：那是**归一化过的「编号」**（小写、去分隔符），
+              //    当卡片上的货品标签会显示成 `b2600252黑色b`。
+              number: `${itemNo}${optionColor}`,
+            };
+          }),
         };
       }
       if (!found?.recordId) return {};
@@ -1582,14 +1595,18 @@ class LarkMvpService {
           const availability = this.resolveStockAvailabilityForSale(
             { itemNo: item.item_no, size: item.size, itemQuantity }, liveInventory,
           );
+          // ⭐ 现货 / 未付 的**颜色、记录 id、候选一律以 B（实时库存）为准**：B 一跑，
+          //    A 的结论就不落到 item 上（"卖了哪一双"要从店里实际有什么回答）。
+          //    · 缺货 → B 三项都是空的 ⇒ 与改动前的 item 一字不差（既没有颜色也没有候选）；
+          //    · 有货 → B 的结论整体替换 A 的候选，**不叠加**（单一颜色 → 无候选；多颜色 → 它的候选）。
+          //    这样"解析 A 修好"不会改变现货 / 未付 的任何既有行为。
+          productRecordId = availability.productRecordId || '';
+          color = availability.color || '';
+          colorOptions = availability.colorOptions || null;
           if (availability.shortage) {
             shortageNotes.push(availability.shortage);
             missingFields.push(availability.shortage);
           } else {
-            productRecordId = availability.productRecordId || productRecordId;
-            color = availability.color || color;
-            // B 已经给出结论（单一颜色 → 无候选；多颜色 → 它的候选）⇒ 整体替换，不叠加。
-            colorOptions = availability.colorOptions || null;
             stock = availability.stock || null;
             samplePlan = availability.samplePlan || null;
           }
