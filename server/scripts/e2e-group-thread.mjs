@@ -124,8 +124,10 @@ const { normalizeAfterSalesResult } = require('../src/services/doubaoService');
 const { SalesGroupThreadLocator } = require('../src/services/salesGroupThreadLocator');
 const { AfterSalesService } = require('../src/services/afterSalesService');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
-const { STOCK_MOVEMENTS, MOVEMENT_SALE_RETURN, MOVEMENT_SALE_CASH,
+const { InventoryService, STOCK_MOVEMENTS, MOVEMENT_SALE_RETURN, MOVEMENT_SALE_CASH,
   MOVEMENT_PURCHASE_DECREASE } = require('../src/services/inventoryService');
+const { SalesDeliveryService } = require('../src/services/salesDeliveryService');
+const { SecondDeliveryService } = require('../src/services/secondDeliveryService');
 const { getLarkAgentCredentials } = require('../src/config/larkAgent');
 const dims = require('../src/config/salesStatusDimensions');
 const { AFTER_SALES_CARD_ACTIONS, AFTER_SALES_TASK_STATUS } = require('../src/config/afterSalesFlow');
@@ -254,13 +256,49 @@ const makeImSim = () => {
   return { im, replies, creates, patches, reactions, images, uploads, threadsByParent };
 };
 
-// 真 client（bitable 走真的）＋ IM 换成替身：同一份 client 对象两种用途
-const makeClient = (sim) => {
+// ⚠️ 为什么要有它：飞书有些失败是**HTTP 层**的（SDK 直接抛 axios 错），任务记录里只会留下
+//    `Request failed with status code 400` 这种**查不动**的一句话。这个代理把出错的接口、
+//    HTTP 状态、飞书的 code/msg、URL 一起记下来 —— 沿用 `e2e-run.mjs` 里已有的那条做法。
+const wrapApiForDiagnostics = (target, prefix, sink) => {
+  if (!target || typeof target !== 'object') return target;
+  return new Proxy(target, {
+    get(obj, prop) {
+      const value = Reflect.get(obj, prop);
+      if (typeof value === 'function') {
+        return async (...args) => {
+          try {
+            return await value.apply(obj, args);
+          } catch (error) {
+            const payload = error?.response?.data || {};
+            sink.push({
+              api: `${prefix}.${String(prop)}`,
+              status: error?.response?.status ?? null,
+              code: payload?.code ?? error?.code ?? null,
+              msg: String(payload?.msg || error?.message || '').slice(0, 300),
+              url: String(error?.response?.config?.url || ''),
+              at: new Date().toISOString(),
+            });
+            throw error;
+          }
+        };
+      }
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        return wrapApiForDiagnostics(value, `${prefix}.${String(prop)}`, sink);
+      }
+      return value;
+    },
+  });
+};
+
+// 真 client（bitable / drive 走真的）＋ IM 换成替身：同一份 client 对象两种用途
+const makeClient = (sim, apiErrors = []) => {
   const { appId, appSecret } = getLarkAgentCredentials();
   const real = new lark.Client({ appId, appSecret, logger: larkLogger });
   return new Proxy(real, {
     get(target, prop) {
       if (prop === 'im') return sim.im;
+      if (prop === 'bitable') return wrapApiForDiagnostics(target.bitable, 'bitable', apiErrors);
+      if (prop === 'drive') return wrapApiForDiagnostics(target.drive, 'drive', apiErrors);
       const value = Reflect.get(target, prop, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },
@@ -300,21 +338,38 @@ const eventsOf = (logs, names) => logs.filter((entry) => names.includes(entry.ev
 
 // ── Harness ────────────────────────────────────────────────────────────────
 const makeHarness = ({ label }) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `e2e-sales-group-${label}-`));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `e2e-group-thread-${label}-`));
   const store = new JsonTaskStore({ dir: path.join(dir, 'lark_mvp_tasks'), idField: 'task_id' });
   const salesGroupThreads = new SalesGroupThreadLocator({
     store: new JsonTaskStore({ dir: path.join(dir, 'sales_group_threads'), idField: 'task_id' }),
   });
   const afterSalesStore = new JsonTaskStore({ dir: path.join(dir, 'after_sales'), idField: 'operation_id' });
   const sim = makeImSim();
-  const client = makeClient(sim);
+  const apiErrors = [];
+  const client = makeClient(sim, apiErrors);
   const gateway = new V1BitableGateway({ client });
-  const service = new LarkMvpService({
-    client, gateway, store, salesGroupThreads,
-    // 售后执行器单独一个本地存储目录（生产上它也是自己一份，不与销售任务混）
-    afterSales: new AfterSalesService({ gateway, store: afterSalesStore }),
+  // ⭐ **完全自足**：库存操作 / 售后 / 二次交付 三份本地落盘都进本次的临时目录，
+  //    **一个字节都不写 `server/data/*`**（那是生产口径的落盘位置）。
+  //    为什么必须这样（2026-10-07 实测踩到）：这三个 service 的**默认** store 目录是
+  //    `server/data/...`；只要那个目录在跑的过程中被别的进程动过（那次是 worktree 被清理），
+  //    链路就会以 `ENOENT: ... scandir .../data/inventory_operations` 这种**与业务无关**的
+  //    方式失败（售后执行器报错、交付只完成一半 → 补样品卡片也不出现）。
+  //    自测必须能把「代码有问题」和「环境被动了」分开 —— 所以状态一律落在自己手里。
+  const inventory = new InventoryService({
+    gateway,
+    store: new JsonTaskStore({ dir: path.join(dir, 'inventory_operations'), idField: 'operation_id' }),
   });
-  return { label, dir, store, afterSalesStore, salesGroupThreads, sim, client, gateway, service };
+  const delivery = new SalesDeliveryService({ gateway, inventory });
+  const service = new LarkMvpService({
+    client, gateway, store, salesGroupThreads, delivery,
+    secondDelivery: new SecondDeliveryService({
+      gateway, delivery,
+      store: new JsonTaskStore({ dir: path.join(dir, 'second_delivery_reminder'), idField: 'task_id' }),
+    }),
+    // 售后执行器单独一个本地存储目录（生产上它也是自己一份，不与销售任务混）
+    afterSales: new AfterSalesService({ gateway, inventory, store: afterSalesStore }),
+  });
+  return { label, dir, store, afterSalesStore, salesGroupThreads, sim, client, gateway, service, inventory, apiErrors };
 };
 
 const sendGroupMessage = async (h, { text, messageId, threadId = '', parentId = '' }) => {
@@ -728,6 +783,7 @@ const confirmAndRead = async (h, { taskId, cardMessageId, salesEntryRecordId, de
 const runSpotScenario = async ({ key, name, textFor, picks, expect }) => {
   const scenario = makeScenario(key, name, expect.expectation);
   const h = makeHarness({ label: key });
+    scenario.data.api_errors = h.apiErrors;
   try {
     const text = textFor(picks);
     scenario.data.text = text;
@@ -802,6 +858,7 @@ const runSpotScenario = async ({ key, name, textFor, picks, expect }) => {
 const runDeferredScenario = async ({ key, name, text, pick, expect }) => {
   const scenario = makeScenario(key, name, expect.expectation);
   const h = makeHarness({ label: key });
+    scenario.data.api_errors = h.apiErrors;
   try {
     const liveBefore = await liveSnapshot(h);
     const started = await startSale(h, { text, messageId: `om_e2e_${key}` });
@@ -960,6 +1017,7 @@ const runDeferredScenario = async ({ key, name, text, pick, expect }) => {
 const runAfterSalesScenario = async ({ key, name, saleText, afterSalesText, pick, expect }) => {
   const scenario = makeScenario(key, name, expect.expectation);
   const h = makeHarness({ label: key });
+    scenario.data.api_errors = h.apiErrors;
   try {
     scenario.data.sale_text = saleText;
     scenario.data.after_sales_text = afterSalesText;
@@ -980,13 +1038,45 @@ const runAfterSalesScenario = async ({ key, name, saleText, afterSalesText, pick
 
     // 售后在**同一个话题**里说（同一笔）—— 先走**完整入口**，看它到底走到哪
     const messageId = `om_e2e_${key}_as`;
+    // ⚠️ 实测（2026-10-07 第 7 轮）：飞书偶尔回 `400 / 1254607 Data not ready, please try again later`
+    //    （刚写完记录再马上读它就会这样，是**飞书侧瞬时**错误）。这一下会把售后入口当场打成 failed。
+    //    ⇒ ① 等状态时给 failed 一个"稳住再看一眼"的缓冲（万一是链路自己重试成功的）；
+    //       ② 如果确认是这种瞬时错误，就**像她本人那样再发一次**，并把"重发过"如实记进报告。
+    //    这不放松任何业务判据：最终仍必须走到 after_sales_confirming 并跑完确认后的整条链路。
+    const TRANSIENT_FEISHU = new Set([1254607, 1254600, 1255001, 99991663]);
+    const apiBeforeEntry = h.apiErrors.length;
+    const waitEntry = (taskId, label) => waitFor(async () => {
+      const row = await h.store.get(taskId);
+      if (!row) return null;
+      if (row.status === AFTER_SALES_TASK_STATUS.CONFIRMING || AFTER_SALES_TERMINAL(row)) return row;
+      if (row.status === 'failed') {
+        await sleep(2500);                    // 稳住再看一眼：链路自己重试成功就当没失败过
+        const again = await h.store.get(taskId);
+        return again && again.status === 'failed' ? again : null;
+      }
+      return null;
+    }, { label, timeoutMs: 120_000, intervalMs: 400 });
+
+    let sendText = afterSalesText;
+    let sent = await sendGroupMessage(h, { text: sendText, messageId, threadId });
     const logsFrom = capturedLogs.length;
-    const sent = await sendGroupMessage(h, { text: afterSalesText, messageId, threadId });
-    const entryTask = await waitTask(h, sent.taskId,
-      (row) => AFTER_SALES_TERMINAL(row) || row.status === AFTER_SALES_TASK_STATUS.CONFIRMING
-        || row.status === 'failed',
-      { label: `售后入口 ${messageId}`, timeoutMs: 90_000 });
+    let entryTask = await waitEntry(sent.taskId, `售后入口 ${messageId}`);
+    const transientOf = (from) => h.apiErrors.slice(from).filter((item) =>
+      TRANSIENT_FEISHU.has(Number(item.code)) || Number(item.status) >= 500 || Number(item.status) === 429);
+    let transientRetried = false;
+    if (entryTask.status !== AFTER_SALES_TASK_STATUS.CONFIRMING && transientOf(apiBeforeEntry).length) {
+      transientRetried = true;
+      scenario.data.transient_entry_retry = transientOf(apiBeforeEntry);
+      note(scenario, `售后入口第一次被飞书**瞬时错误**挡下（${transientOf(apiBeforeEntry)
+        .map((item) => `${item.status}/${item.code} ${item.msg}`).join('；')}）→ 重发一次`);
+      const retryId = `${messageId}_retry`;
+      const apiBeforeRetry = h.apiErrors.length;
+      sent = await sendGroupMessage(h, { text: sendText, messageId: retryId, threadId });
+      entryTask = await waitEntry(sent.taskId, `售后入口 ${retryId}`);
+      scenario.data.transient_entry_retry_second = transientOf(apiBeforeRetry);
+    }
     scenario.data.entry_status = entryTask.status;
+    scenario.data.entry_message_id = transientRetried ? `${messageId}_retry` : messageId;
     scenario.data.entry_error = entryTask.error || '';
     scenario.data.entry_logs = eventsOf(logsSince(logsFrom),
       ['lark.mvp.task.failed', 'after_sales.confirmed']).map((e) => ({ event: e.event, error: e.error }));
@@ -1104,6 +1194,7 @@ const runThreadScenario = async ({ pick, price }) => {
       '库存方向：门盒 -1、1 条「销售减少」流水',
       '有没有多余消息：0 条主动私聊', '话题里的后续消息按 thread_id 定位到同一笔销售']);
   const h = makeHarness({ label: 's1' });
+    scenario.data.api_errors = h.apiErrors;
   try {
     const text = `卖一双 ${pick.itemNo} ${pick.color} ${pick.size}码，微信 ${price}`;
     const liveBefore = await liveSnapshot(h);
@@ -1235,7 +1326,8 @@ const outboundSummary = (sim) => {
 const makePurchaseHarness = ({ label }) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `e2e-group-thread-${label}-`));
   const sim = makeImSim();
-  const client = makeClient(sim);
+  const apiErrors = [];
+  const client = makeClient(sim, apiErrors);
   const gateway = new V1BitableGateway({ client });
   const store = new JsonTaskStore({ dir: path.join(dir, 'purchase_webhook_tasks'), idField: 'task_id' });
   const service = new PurchaseWebhookService({
@@ -1247,7 +1339,7 @@ const makePurchaseHarness = ({ label }) => {
     purchaseReturnBatchWindowMs: 1000,
     reportBatchWindowMs: 1000,
   });
-  return { label, dir, store, sim, client, gateway, service };
+  return { label, dir, store, sim, client, gateway, service, apiErrors };
 };
 
 const PURCHASE_TERMINAL = (task) => ['posted', 'completed', 'failed', 'cancelled'].includes(task?.status);
@@ -1307,6 +1399,7 @@ const runPurchaseReportScenario = async ({ pick, reportText, sizes, expectedBySi
       '没有多余消息：0 条主动私聊',
     ]);
   const h = makePurchaseHarness({ label: 's4' });
+    scenario.data.api_errors = h.apiErrors;
   try {
     const { gateway, sim } = h;
     const reportTable = gateway.table('purchaseReport');
@@ -1390,16 +1483,23 @@ const runPurchaseReportScenario = async ({ pick, reportText, sizes, expectedBySi
       ...groupCreates.filter((item) => item.msg_type === 'text'),
       ...outbound.replies.filter((item) => item.msg_type === 'text'),
     ];
-    const atMentions = groupTexts.flatMap((item) => item.content.match(/<at user_id="[^"]+"/g) || []);
+    // ⚠️ 踩过的坑：card/text 的 `content` 是 **JSON 字符串**，里面的引号是转义的（`\"`）。
+    //    直接按 `<at user_id="…"` 去匹配会**永远匹配不到** → 把"确实 @了经办人"误判成"没 @人"。
+    //    所以先把 `\"` 还原成 `"`，再取被 @ 的 user_id。
+    const normalizedTexts = groupTexts.map((item) => String(item.content || '').replace(/\\"/g, '"'));
+    const atIds = normalizedTexts.flatMap((text) =>
+      [...text.matchAll(/<at user_id="([^"]+)"/g)].map((match) => match[1]));
 
     scenario.data.requests = requestRows;
     scenario.data.report = { status: reportStatus, request_links: reportRequests.length };
     scenario.data.group_messages = {
       creates: groupCreates.map((item) => ({ msg_type: item.msg_type })),
       texts: groupTexts.map((item) => ({ msg_type: item.msg_type, content: item.content.slice(0, 200) })),
-      at_mentions: atMentions,
+      at_ids: atIds,
     };
     scenario.data.images_uploaded = outbound.images;
+    scenario.data.at_ids = atIds;
+    scenario.data.operator_borrowed = Boolean(operatorOpenId);
     scenario.data.inventory = {
       new_ledger_rows: newLedger.length,
       live_delta: diffLive(liveOfPair(before.live, pick.productRecordId, pick.sizeRecordId),
@@ -1418,8 +1518,12 @@ const runPurchaseReportScenario = async ({ pick, reportText, sizes, expectedBySi
     // 口径以**代码**为准：`deliverSupplierImagesInner` 的注释写着
     // 「飞书图片消息没有正文，@ 只能挂在文字那条上（业务负责人明确要 @经办人，**不再是 @所有人**）」。
     // ⚠️ 但 AGENTS.md 的概述仍写「带 @所有人」—— 文档与代码不一致，本次如实记进报告。
+    // 合同：**@经办人**；如果记录里根本解析不出经办人，就必须"不 @任何人 + 记一条
+    // `purchase.request.image.operator_missing`"，**绝不退回 @所有人**（代码注释里的口径）。
     check(scenario, '采购群那条文字 @的是**经办人**（不是 @所有人）', true,
-      atMentions.length > 0 && atMentions.every((item) => !item.includes('user_id="all"')));
+      operatorOpenId
+        ? (atIds.length > 0 && atIds.every((id) => id !== 'all'))
+        : (atIds.length === 0 && logs.some((entry) => entry.event === 'purchase.request.image.operator_missing')));
     check(scenario, '图 + 文字在**同一个话题**里（文字回复那条图）', true,
       groupTexts.some((item) => item.kind === 'reply'));
     check(scenario, '图写回「采购申请单」附件列（1 条带附件）', 1,
@@ -1446,12 +1550,13 @@ const runPurchaseReturnScenario = async ({ pick, quantity }) => {
   const scenario = makeScenario('s5',
     '采购退货：「采购行为=退货」的记录 → 采购退货入账 + 库存减', [
       '分流判对：走退货那条链路（purchase.return.batch.posted / purchase.return.stock_applied），**不走**采购申请、不走到货入库',
-      `「单据信息」按**退掉的每一双**各写一行（每行数量 1），合计 = ${quantity}；其中 1 行带退货单附件`,
-      `库存方向：实时库存该货品 **−${quantity} 行**；库存流水 ${quantity} 行，库存行为=采购减少（STOCK_PURCHASE_DECREASE）、每行变动数量=1`,
+      `「单据信息」**按尺码成行**（每行数量 = 该尺码退掉的双数），合计 = ${quantity}；其中 1 行带退货单附件`,
+      `库存方向：实时库存该货品 **−${quantity} 行**；库存流水行为=采购减少（STOCK_PURCHASE_DECREASE），**变动数量合计 = ${quantity}**`,
       '采购群收到 1 条退货单图',
       '没有多余消息：0 条主动私聊',
     ]);
   const h = makePurchaseHarness({ label: 's5' });
+    scenario.data.api_errors = h.apiErrors;
   try {
     const { gateway, sim } = h;
     const reportTable = gateway.table('purchaseReport');
@@ -1546,13 +1651,20 @@ const runPurchaseReturnScenario = async ({ pick, quantity }) => {
     //    所以这里按**实际契约**判：合计对得上 + 每行 1 双。
     check(scenario, '「单据信息」合计退货双数', quantity,
       requestRows.reduce((sum, row) => sum + Number(row.quantity || 0), 0));
-    check(scenario, '「单据信息」每行都是 1 双（逐双一行）', true,
-      requestRows.every((row) => Number(row.quantity) === 1));
+    // ⚠️ 口径记录（第二次修正）：本条最初写成"1 行、数量=2"，后来改成"逐双一行、每行 1"，
+    //    两次都不对 —— **真实契约是「一个尺码一行、每行数量 = 该尺码退掉的双数」**
+    //    （既有脚本 `e2e-run.mjs` 的注释逐字写着这条口径；销售 / 采购入库也是这个粒度）。
+    //    退 2 双：若吃掉的两行实时库存同尺码 → 1 行数量 2；不同尺码 → 2 行各 1。
+    //    所以判据只能落在**合计**与"每行都是整数双"上，不能钉死行数。
+    check(scenario, '「单据信息」每行数量都是正整数（按尺码成行）', true,
+      requestRows.length > 0 && requestRows.every((row) => Number(row.quantity) >= 1));
     check(scenario, '退货单附件只落在其中一行（同批次只留一条）', 1,
       requestRows.filter((row) => row.attachmentCount > 0).length);
-    check(scenario, `库存流水（${quantity} 行，库存行为=采购减少、每行变动数量=1）`,
-      Array.from({ length: quantity }, () => ({ 库存行为: '采购减少', 变动数量: '1' })),
-      newLedger.map((row) => ({ 库存行为: row.behavior.join('/'), 变动数量: String(row.quantityChange) })));
+    // 同上：流水的粒度也是「一个尺码一行、变动数量 = 该尺码双数」，所以判**合计**。
+    check(scenario, `库存流水：合计变动数量 = ${quantity}，且每行都是「采购减少」`, true,
+      newLedger.length > 0
+      && newLedger.every((row) => row.behavior.join('/') === '采购减少' && Number(row.quantityChange) >= 1)
+      && newLedger.reduce((sum, row) => sum + Number(row.quantityChange || 0), 0) === quantity);
     check(scenario, '库存流水行为编码 = STOCK_PURCHASE_DECREASE', ['STOCK_PURCHASE_DECREASE'],
       [...new Set(newLedger.map((row) => row.behaviorCode.join('/')))]);
     check(scenario, '库存方向：实时库存减少的行数', quantity, mineBefore.length - mineAfter.length);
@@ -1584,6 +1696,7 @@ const runSampleReplacementScenario = async ({ pick }) => {
       '本地补样品任务：card_message_id 非空、notice_sent = true',
     ]);
   const h = makeHarness({ label: 's6' });
+    scenario.data.api_errors = h.apiErrors;
   try {
     // ⚠️ 措辞坑（第一次跑就踩到）：写成「卖两双 X，微信 438」时，模型给出 2 条明细但
     //    **每条都没有成交金额**，而整单金额有值 → 解析判「逐件成交金额合计与整单不一致」，
@@ -1627,9 +1740,20 @@ const runSampleReplacementScenario = async ({ pick }) => {
       parent_message_id: row.parent_message_id, mark: String(row.content).includes('请补选展示样品') ? '补样品卡片' : '',
     }));
 
-    const detailRecordId = result.details[0]?.record_id || '';
-    const sampleTask = detailRecordId ? await h.store.get(sampleTaskIdFor(detailRecordId)) : null;
+    // 诊断信息：万一交付没完成，报告里要能看出**为什么**（不然只能看到"卡片没出现"）。
+    scenario.data.task_status = result.task.status;
+    scenario.data.posting_error = result.task.posting_error || '';
+    scenario.data.delivery_failures = result.task.delivery_failures || null;
+    // ⚠️ 踩过的坑：补样品任务只挂在**被吃掉样品的那一双**上，而它不一定是 details[0]
+    //    （实测就是 details[1]）—— 只查第 0 条会把"卡片确实发了"误判成"没发"。
+    let sampleTask = null;
+    let sampleTaskDetailId = '';
+    for (const detail of result.details) {
+      const candidate = await h.store.get(sampleTaskIdFor(detail.record_id));
+      if (candidate) { sampleTask = candidate; sampleTaskDetailId = detail.record_id; break; }
+    }
     scenario.data.sample_task = sampleTask ? {
+      sales_detail_record_id: sampleTaskDetailId,
       task_id: sampleTask.task_id, status: sampleTask.status,
       card_message_id: sampleTask.card_message_id || '', notice_sent: sampleTask.notice_sent === true,
       product_record_id: sampleTask.product_record_id || '',
@@ -1639,6 +1763,9 @@ const runSampleReplacementScenario = async ({ pick }) => {
       reply_in_thread: outbound.replyInThread, replies: outbound.replies.length };
     const skipLogs = capturedLogs.filter((entry) => entry.event === 'lark.private_chat.send_skipped');
 
+    check(scenario, '两双都交付了（一双吃门盒、一双吃样品）', ['已交付', '已交付'],
+      result.details.map((row) => row.履约状态).sort());
+    check(scenario, '交付没有失败项', null, scenario.data.delivery_failures);
     check(scenario, '交付真的消耗了样品（补样品卡片出现了）', 1, sampleReplies.length);
     check(scenario, '补样品卡片是"回复她那句销售消息"', 'om_e2e_s6', sampleReplies[0]?.parent_message_id);
     check(scenario, '补样品卡片带 reply_in_thread: true', true, sampleReplies[0]?.reply_in_thread === true);
@@ -1713,11 +1840,12 @@ const cmdRun = async () => {
   const pool = candidates.filter((item) => item.doorBox >= 1 && item.price && item.uniqueColor
     && !soldItemColors.has(`${item.itemNo}|${item.color}`));
   const taken = new Set();
-  const take = (filter) => {
-    const found = pool.find((item) => !taken.has(item.key) && (!filter || filter(item)));
+  const takeFrom = (source, filter) => {
+    const found = source.find((item) => !taken.has(item.key) && (!filter || filter(item)));
     if (found) taken.add(found.key);
     return found;
   };
+  const take = (filter) => takeFrom(pool, filter);
   const pairsWithTwoSizes = [];
   for (const item of pool) {
     for (const other of pool) {
@@ -1739,7 +1867,14 @@ const cmdRun = async () => {
   const x2bPair = takePair();
   const s1Pick = take();                           // s1 销售录单（话题）
   const s2Pick = take();                           // s2 销售退货的基准
-  const s6Pick = take((item) => item.sample >= 1);  // s6 补样品：门盒 ≥1（pool 已保证）且 样品 ≥1
+  // ⚠️ s6 要**故意**从一个更宽的池子里挑：它不需要「这个款没卖过」那个约束
+  //    （那是 s2/s3 售后按「货号+颜色」定位历史销售才需要的）。只按 `pool` 挑的后果
+  //    实测过：跑一次就把唯一那个"门盒≥1 且 样品≥1"的组合卖成"卖过的款"，
+  //    下一次全量运行 s6 就只能被**跳过**（脚本会如实打印"缺少可用数据"）。
+  //    补样品这条链路本来就不依赖历史销售定位，所以这里放宽不会让验收变松。
+  const samplePool = candidates.filter((item) => item.doorBox >= 1 && item.sample >= 1
+    && item.price && item.uniqueColor);
+  const s6Pick = takeFrom(samplePool);
   const x2aPick = take();
   const x2cPick = take();
   const x3Pick = take();
@@ -1787,7 +1922,8 @@ const cmdRun = async () => {
   say(`    s3 换货             ：${describe(s3Pick)} → ${describe(exchangeTarget)}`);
   say(`    s4 采购报单         ：货品 ${s4ProductId ? `${labelOf(s4ProductId)}（${s4ProductId}）` : '（找不到）'}；尺码 ${JSON.stringify(s4Sizes)}；数量说明「${s4ReportText}」`);
   say(`    s5 采购退货         ：货品 ${s5ProductId ? `${labelOf(s5ProductId)}（${s5ProductId}，实时库存 ${liveCountByProduct.get(s5ProductId)} 行）` : '（找不到实时库存 ≥ 2 行的货品）'}；数量 ${s5Quantity}`);
-  say(`    s6 补样品           ：${describe(s6Pick)}（门盒=1 + 样品≥1 → 卖两双：第 2 双吃样品）`);
+  say(`    s6 补样品           ：${describe(s6Pick)}（门盒≥1 + 样品≥1 → 卖两双：第 2 双吃样品）`);
+  say(`      （s6 的候选池更宽：${samplePool.length} 个「门盒≥1 且 样品≥1」的组合，不排除"卖过的款"）`);
   if (only.length || flags.all) {
     say(`    x2a 现货·一单一笔   ：${describe(x2aPick)}`);
     say(`    x2b 现货·一单两笔   ：${x2bPair ? `${x2bPair.list[0].itemNo} ${x2bPair.list[0].color} ${x2bPair.list[0].size}码 + ${x2bPair.list[1].size}码` : '（无）'}`);
