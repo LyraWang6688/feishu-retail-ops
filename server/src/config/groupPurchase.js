@@ -43,10 +43,44 @@ const resolveBotOpenId = (env = process.env) => readExplicit(env, BOT_OPEN_ID_EN
 /** 「收到」表情类型。未配置回落到 OneSecond。 */
 const resolveAckReaction = (env = process.env) => readExplicit(env, ACK_REACTION_ENV_KEY) || DEFAULT_ACK_REACTION;
 
+// ── 「认不出是哪一批」的两句回复（文案也配置先行）─────────────────────────────
+// 2026-10-07：报货批次号从 `BH-…`（手填 + 出单时生成）改成 `CGD-…`（代码生成），
+// 所以这两句**不能再写死「BH-开头的那个」** —— 她会照着那句话去说一个机器人
+// 已经**不生成**的前缀，然后永远"认不出"（那是静默的：只回一句问清楚）。
+// ⚠️ 占位符 `{prefixes}` 从 `config/purchaseBatchNo.js` 的**识别前缀**来（默认 `CGD / BH`）：
+//    生成只认 CGD-，但**历史号 BH- 仍然认得出**，所以那句话里两个都要提。
+const NO_BATCH_REPLY_ENV_KEY = 'PURCHASE_GROUP_NO_BATCH_REPLY';
+const AMBIGUOUS_BATCH_REPLY_ENV_KEY = 'PURCHASE_GROUP_AMBIGUOUS_BATCH_REPLY';
+const DEFAULT_NO_BATCH_REPLY = '这条消息我没认出来是哪一批采购单～你引用一下我发的采购单，或者把批次号（{prefixes} 开头的那个）说给我。';
+const DEFAULT_AMBIGUOUS_BATCH_REPLY = '我分不清你说的是哪一批～引用一下我发的采购单，或者把批次号（{prefixes} 开头的那个）说给我。';
+
+/**
+ * 两句「认不出」的回复文案（`{prefixes}` 已填好）。
+ * ⚠️ 与 `notificationText` 那类配置同一条规矩：**留空 = 回落默认值**
+ *（这是她在群里唯一能看到的那句话，留空等于把"该怎么办"弄丢了）。
+ */
+const resolvePurchaseGroupReplies = (env = process.env) => {
+  // 延迟 require：只有真要这两句话时才去解析那份配置（它自己会在取值不合法时抛错）。
+  const { resolvePurchaseBatchNoConfig } = require('./purchaseBatchNo');
+  const prefixes = resolvePurchaseBatchNoConfig(env).recognizedPrefixes
+    .map((prefix) => String(prefix).replace(/-+$/, ''))
+    .join(' / ');
+  const fill = (template) => String(template).split('{prefixes}').join(prefixes);
+  return {
+    noBatch: fill(readExplicit(env, NO_BATCH_REPLY_ENV_KEY) || DEFAULT_NO_BATCH_REPLY),
+    ambiguous: fill(readExplicit(env, AMBIGUOUS_BATCH_REPLY_ENV_KEY) || DEFAULT_AMBIGUOUS_BATCH_REPLY),
+  };
+};
+
 module.exports = {
   PURCHASE_CHAT_ID_ENV_KEY,
   BOT_OPEN_ID_ENV_KEY,
   ACK_REACTION_ENV_KEY,
+  NO_BATCH_REPLY_ENV_KEY,
+  AMBIGUOUS_BATCH_REPLY_ENV_KEY,
+  DEFAULT_NO_BATCH_REPLY,
+  DEFAULT_AMBIGUOUS_BATCH_REPLY,
+  resolvePurchaseGroupReplies,
   DEFAULT_ACK_REACTION,
   resolvePurchaseChatId,
   resolveBotOpenId,

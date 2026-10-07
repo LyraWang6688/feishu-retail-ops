@@ -62,6 +62,12 @@ const {
   renderPurchaseGroupNoticeMention,
 } = require('../config/purchaseGroupNoticeText');
 const { PurchaseBatchLocator } = require('./purchaseBatchLocator');
+// 「报货批次号」的生成器（前缀/日期/位数/时区在 config/purchaseBatchNo）。
+// 2026-10-07 业务负责人：报货批次号不再手填，改由后端代码生成。
+const { PurchaseBatchNoGenerator } = require('./purchaseBatchNoGenerator');
+// 「报货批次」那一行的读写（到货状态 / 单据附件 / 按批次号定位）。
+// 抽成独立 service：本类只管"报货 → 出单"，批次行怎么维护不属于它（模块化）。
+const { PurchaseOrderBatchService } = require('./purchaseOrderBatchService');
 // 「这批发到群里的是采购申请单还是采购退货单」的批次类型标记（到货核对靠它区分话题）。
 const { ARRIVAL_BATCH_KINDS } = require('../config/arrivalConversation');
 // 「这条写入属于哪一笔采购业务」—— 关联键的唯一取用口（**白名单**，非白名单键与空值
@@ -78,8 +84,8 @@ const { mergeCorrelation, correlationFields } = require('../utils/correlationFie
  * 所以不会写成 `"batch_no":""`）：
  *   · `task_id`                    —— 本地采购任务（报货/退货 = purchase_supplier-report_…；
  *                                     到货核对 = arrival_reconcile_…，那是另一套 task，如实照传）
- *   · `batch_no`                   —— 采购批次号（表单填的 202610071 / 自动的 BH-…）
- *   · `purchase_report_record_id`  —— 「供应商对接」那条报单记录
+ *   · `batch_no`                   —— 采购批次号（代码生成的 `CGD-YYYYMMDD-NNNN`；旧数据可能是手填的 `202610071` 或旧的 `BH-…`）
+ *   · `purchase_report_record_id`  —— 「信息填写」那条报单记录
  *   · `purchase_arrival_record_id` —— 「采购到货」那条记录
  */
 const purchaseCorrelation = ({ taskId, batchNo, reportRecordId, arrivalRecordId } = {}) =>
@@ -129,9 +135,10 @@ const PURCHASE_RETURN_BATCH_KIND = 'purchase-return';
 // （原先这里有个 number() 小工具，只被 confirmArrivalLocked 里那段"算到货状态"的
 //  回写用；那段按业务负责人口径删掉后它就没有调用方了，随之删除，不留死代码。）
 
-const attachmentTokens = (value) => (Array.isArray(value) ? value : [])
-  .map((item) => item?.file_token || item?.fileToken || item?.token || '')
-  .filter(Boolean);
+// 「附件单元格 → file_token 列表」的**唯一实现**搬到了 `purchaseOrderBatchService`
+//（2026-10-07 附件回填改到「报货批次.单据」，两边都要用同一套解析；
+//  这里只是转发导出，保持既有 `module.exports` 形状不变，避免第二份实现慢慢漂移）。
+const { attachmentTokens } = require('./purchaseOrderBatchService');
 
 const aggregateArrivalItems = (items) => {
   const byKey = new Map();
@@ -301,6 +308,20 @@ class PurchaseWebhookService {
     // ⚠️ 映射写**本地任务记录**，不写业务表：这是机器人的路由信息，
     // 不是经营事实，不该出现在她的多维表格里。
     this.batchLocator = options.batchLocator || new PurchaseBatchLocator({ store: options.batchLocatorStore });
+    // ── 报货批次号：**由代码生成**（业务负责人 2026-10-07）────────────────────
+    // 格式 `CGD-YYYYMMDD-NNNN`（前缀/日期格式/位数/时区全在 config/purchaseBatchNo）。
+    // ⚠️ 它同时承担"**入口按包写回**"这一件事（见 ensureReportBatchNo）——
+    //    归批键就是「信息填写.报货批次号」那一列，不写回的话她不再手填之后
+    //    每条记录都会各自成包 ⇒ N 个号 N 张图（她最在意的现象）。
+    this.batchNoGenerator = options.batchNoGenerator || new PurchaseBatchNoGenerator({
+      gateway: this.gateway,
+    });
+    // 「报货批次」那一行的读写（到货状态 / 单据附件 / 按批次号定位）。
+    // 单独一个小 service：本类继续只管"报货 → 出单"，批次行怎么维护是它的事。
+    this.orderBatches = options.orderBatches || new PurchaseOrderBatchService({
+      gateway: this.gateway,
+      settings: options.arrivalStatus,
+    });
     this.queues = new Map();
     // 卡片确认按 taskId 串行。重复的卡片事件（双击、飞书重投）会同时读到
     // awaiting_confirmation 并各自走一遍副作用，把同一批采购事实写两遍；
@@ -460,6 +481,13 @@ class PurchaseWebhookService {
     const id = String(recordId || '').trim();
     if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error('Webhook缺少有效 record_id');
     const taskId = this.purchaseTaskId(kind, id);
+    // ⭐ 报货批次号：**入口按包生成并写回**（业务负责人 2026-10-07：报货批次号不再手填）。
+    // 为什么必须在**入队之前**、而且**按包只做一次**：归批键就是「信息填写.报货批次号」
+    // 那一列（readReportBatchNo），process() 稍后（setImmediate）就会读它。
+    // 一包只写一个号（acceptMany 把整包 ids 交给第一次 accept），否则 N 条记录 = N 个号。
+    // ⚠️ 尽力而为：写不进去（读不到 / 没权限）就原样退回既有的单条路径（它自己是兜底），
+    //    绝不让"编号"这一步把整条采购链路打断。
+    await this.ensureIntakeBatchNo(kind, context.packageRecordIds || [id], context, taskId);
     const existing = await this.store.get(taskId);
     if (existing?.status === 'completed') {
       logInfo('purchase.webhook.duplicate_ignored', { kind, record_id: id, task_id: taskId });
@@ -505,7 +533,9 @@ class PurchaseWebhookService {
       : ids.length;
     // 包 id：不传就按这一包的 record_id 推导（确定性——同一次事件重投不会开出第二份台账）。
     const packageId = String(options.packageId || '').trim() || idFor('pkg', ids.slice().sort().join(','));
-    const context = { packageId, expected };
+    // ⭐ `packageRecordIds`：这一包**全部** record_id。报货批次号在入口按包生成一次、
+    // 写回这一包的每一条空文本记录（见 ensureReportBatchNo），所以 accept 需要知道整包。
+    const context = { packageId, expected, packageRecordIds: ids };
     this.beginPackage({ packageId, kind, expected });
     const records = [];
     const failed = [];
@@ -770,6 +800,116 @@ class PurchaseWebhookService {
   }
 
   /**
+   * 入口的「报货批次号」写回（**尽力而为**，见 `accept` 里的说明）。
+   *
+   * 「一包只做一次」的判据挂在 `context.batchNoEnsured` 上：
+   * `acceptMany` 把整包 ids 放进 `context.packageRecordIds`，第一次 `accept` 处理整包，
+   * 同包后续的 `accept` 直接复用结果 —— 否则 N 条记录会各生成一个号。
+   */
+  async ensureIntakeBatchNo(kind, recordIds, context = {}, taskId = '') {
+    if (kind !== 'supplier-report') return '';
+    if (context.batchNoEnsured) return context.batchNoValue || '';
+    context.batchNoEnsured = true;
+    try {
+      const batchNo = await this.ensureReportBatchNo(recordIds, { taskId });
+      context.batchNoValue = batchNo;
+      return batchNo;
+    } catch (error) {
+      logWarn('purchase.batch_no.intake_failed', {
+        task_id: taskId || undefined, record_ids: recordIds, error: error.message,
+        hint: '入口没能把批次号写回「信息填写」——这一条会退回既有的单条路径（它自己会生成号）',
+      });
+      return '';
+    }
+  }
+
+  /**
+   * 让这一包报单记录都带上**同一个**报货批次号（业务负责人 2026-10-07：不再手填）。
+   *
+   * 顺序（每一步都在回答一个具体的坏情况）：
+   *   ① 先读这一包记录 —— **任何一条已经有非空号**（= 重投 / 重试 / 上一轮已经写过）
+   *      → **复用它**，只把空的那些补上。**绝不重新生成**（重试不许换号）。
+   *   ② 全空 → 进**串行队列**：队列里**再读一次**（并发重投 / 跨重启时，前一个可能刚写过）
+   *      → 有号就复用（并记一条 `purchase.batch_no.collision`）→ 否则算一个新号并写回。
+   *
+   * ⚠️ 只写「空文本 **且** 未到终态」的记录：
+   *   · 历史记录（她手填过号的）本来就不空 → 天然零改动；
+   *   · 已经「已生成申请 / 已取消」的记录一个字都不改（那是别人的终态）。
+   *
+   * ⚠️ 返回空串 = 这一次没能确定号（记录读不到等），调用方按既有兜底继续 ——
+   *    **不抛错**，因为"编号"这一步的失败不该让整条采购链路停摆。
+   */
+  async ensureReportBatchNo(recordIds = [], { taskId = '' } = {}) {
+    const table = this.gateway.table('purchaseReport');
+    const fieldName = table?.fields?.batchNoText;
+    if (!fieldName) return '';
+    const ids = [...new Set((Array.isArray(recordIds) ? recordIds : [recordIds])
+      .map((value) => String(value || '').trim())
+      .filter(Boolean))];
+    if (!ids.length) return '';
+    const readOne = async (recordId) => {
+      const record = await this.gateway.get('purchaseReport', recordId).catch(() => null);
+      if (!record) return null;
+      return {
+        recordId,
+        batchNo: textValue(record.fields?.[fieldName]).trim(),
+        // 终态判据复用既有那一处（「已生成申请 / 已取消」或已经关联了采购申请）。
+        terminal: this.isReportRecordPosted(record, table),
+      };
+    };
+    const known = (await Promise.all(ids.map(readOne))).filter(Boolean);
+    if (!known.length) return '';
+    const existing = known.find((item) => item.batchNo)?.batchNo || '';
+    if (existing) {
+      await this.writeReportBatchNo(known, existing, fieldName, taskId);
+      return existing;
+    }
+    // 全空 → **算号 + 写回必须整体串行**（见 `PurchaseBatchNoGenerator` 文件头 ③）。
+    return this.batchNoGenerator.runExclusive(async () => {
+      const fresh = (await Promise.all(ids.map(readOne))).filter(Boolean);
+      const reused = fresh.find((item) => item.batchNo)?.batchNo || '';
+      if (reused) {
+        // 走到这里说明"我们刚判定全空"之后，同一条记录被写进了号 —— 只可能是
+        // 并发的另一次投递（重投 / 重试 / 双实例）。**复用它**，同一个号绝不发第二遍。
+        logWarn('purchase.batch_no.collision', {
+          batch_no: reused, task_id: taskId || undefined, record_ids: ids, source: 'intake_reread',
+        });
+        await this.writeReportBatchNo(fresh, reused, fieldName, taskId);
+        return reused;
+      }
+      const generated = await this.batchNoGenerator.next({ source: 'intake', taskId });
+      await this.writeReportBatchNo(fresh, generated.batchNo, fieldName, taskId);
+      return generated.batchNo;
+    });
+  }
+
+  /** 把号写回这一包里「空文本且未到终态」的记录；单条失败只告警、不中断其余记录。 */
+  async writeReportBatchNo(records = [], batchNo, fieldName, taskId = '') {
+    const targets = records.filter((item) => !item.batchNo && !item.terminal);
+    for (const target of targets) {
+      try {
+        await this.gateway.update('purchaseReport', target.recordId, { batchNoText: batchNo }, {
+          correlation: purchaseCorrelation({
+            taskId: taskId || this.purchaseTaskId('supplier-report', target.recordId),
+            batchNo,
+            reportRecordId: target.recordId,
+          }),
+        });
+      } catch (error) {
+        logWarn('purchase.batch_no.write_back_failed', {
+          record_id: target.recordId, batch_no: batchNo, error: error.message,
+        });
+      }
+    }
+    if (targets.length) {
+      logInfo('purchase.batch_no.written_back', {
+        batch_no: batchNo, record_ids: targets.map((item) => item.recordId), record_count: targets.length,
+      });
+    }
+    return targets.length;
+  }
+
+  /**
    * 报货入口：按「报货批次号」归批。
    *
    * 为什么必须有这一层：一次表单提交 = **N 条记录**。逐条处理会出 N 张采购申请图
@@ -929,7 +1069,7 @@ class PurchaseWebhookService {
     // 退货记录由它自己那条链路负责——processSupplierReturn，按实时库存逐尺码扣减
     // 并出「邯美皮鞋采购退货单」。这里必须先把退货记录摘掉，否则同一批次号下只要
     // 有一条采购申请，窗口一开就会按「整批记录」重读，把退货也当成报货明细写一条
-    // 「单据信息」（#81 的旧口径），与退货链路重复出单；更糟的是会给它补上
+    // 「具体信息」（#81 的旧口径），与退货链路重复出单；更糟的是会给它补上
     // 「已生成申请」终态，把本该扣库存的退货链路整个挡在门外。
     const reportRecords = batchRecords.filter(
       (record) => behaviorKindOf(record) !== REPORT_BEHAVIOR.PURCHASE_RETURN,
@@ -1634,12 +1774,13 @@ class PurchaseWebhookService {
         // 图没发出去就不写附件：保持"先发图、再写回"的顺序，留下人工补发的余地。
         continue;
       }
-      const requestRecordIds = group.indexes
-        .map((index) => posting.request_id_by_item_key?.[`${taskId}:${index}`])
-        .filter(Boolean);
       try {
         const written = await this.writeSupplierImageAttachment({
-          taskId, supplierName: label, png, requestRecordIds,
+          taskId, supplierName: label, png,
+          // ⭐ 2026-10-07：附件改回填**「报货批次」的「单据」**（业务负责人：
+          // 「把这些信息挪到我们的'报货批次'里面」）—— 原来写的「采购申请单」那一列
+          // 已被她**从生产表删掉**，再往那儿写只会 FieldNameNotFound。
+          batchNo: posting.batch_no || draft.batch_no || '',
           fileNameSuffix: options.fileNameSuffix,
           // 附件写回也是写库：带上这一层的关联键（task_id ＋ batch_no）。
           correlation,
@@ -1696,54 +1837,72 @@ class PurchaseWebhookService {
   }
 
   /**
-   * 把某个供应商的采购申请图（或采购退货单图）写进「单据信息」的附件字段。
+   * 把某个供应商的采购申请图（或采购退货单图）写进**「报货批次」的「单据」**。
    *
-   * 规则（产品负责人明确给的）：
-   * - 同一「报货批次」+ 同一「供应商」只写一条 → 写进「明细ID」最小的那条记录；
-   * - 重复执行（重跑批次）不得写出第二条 → 目标记录已经有附件就跳过，连上传都不做。
+   * ⭐ 2026-10-07 业务负责人改的地方（逐字）：
+   *   「你之前**下载完附件之后，不是要回填到那个供应商那边吗？现在不用往那边填写信息了，
+   *     你需要把这些信息挪到我们的'报货批次'里面**」
+   * ⇒ 目标从「具体信息（原单据信息）.采购申请单」改成「**报货批次.单据**」。
+   *   原来那一列她已**从生产表删掉**，再往那儿写只会 `FieldNameNotFound`。
    *
-   * 为什么按「明细ID」而不是数组下标挑：明细ID 是飞书 auto_number，写入即定，
-   * 而 posting_plan 的数组顺序、远端返回顺序在重试之后都可能变。
+   * 规则（**沿用改动前的语义**，只是换了落点）：
+   * - 按「报货批次号」定位那一行批次记录；
+   * - **重复执行（重跑批次）不得写出第二条** → 同名的图已经在「单据」里就跳过，连上传都不做；
+   * - 一批多供应商时**已有附件原样带上**再追加新的那张（不冲掉别人的图）。
    *
-   * 「采购退货单」走同一个方法：它的单据信息行也是按同样的规则挑最早那条，
-   * 附件字段也是同一个（表已改名为「单据信息」，定位就是给供应商开图片的依据）。
+   * ⚠️ 本方法**抛错**由调用方 catch（"写回失败不阻塞主流程"这条既有行为不变）——
+   *    她已经有图了，写不回附件只是"欠一次转发"，绝不是把已经发出去的采购单判成失败。
    */
   async writeSupplierImageAttachment({
-    taskId, supplierName, png, requestRecordIds, fileNameSuffix = '采购单', correlation = {},
+    taskId, supplierName, png, batchNo = '', fileNameSuffix = '采购单', correlation = {},
   }) {
-    if (!requestRecordIds?.length) {
-      logWarn('purchase.request.image.no_request_record', { task_id: taskId, supplier: supplierName });
-      return { written: false, reason: 'no_request_record' };
+    if (!String(batchNo || '').trim()) {
+      logWarn('purchase.request.image.no_batch_no', { task_id: taskId, supplier: supplierName });
+      return { written: false, reason: 'no_batch_no' };
     }
     if (typeof this.gateway.uploadAttachment !== 'function') {
       throw new Error('gateway 不支持附件上传（uploadAttachment）');
     }
-    const requestTable = this.gateway.table('purchaseRequest');
-    const candidates = [];
-    for (const recordId of requestRecordIds) {
-      const record = await this.gateway.get('purchaseRequest', recordId).catch(() => null);
-      candidates.push({
-        recordId,
-        detailId: Number(textValue(record?.fields?.[requestTable.fields.detailId])) || 0,
-        attachment: record?.fields?.[requestTable.fields.attachment],
-      });
-    }
-    // 明细ID 读不到时（字段缺失/权限）退回按 recordId 排序：至少保证"每次选同一条"的稳定性。
-    candidates.sort((a, b) => (a.detailId - b.detailId) || String(a.recordId).localeCompare(String(b.recordId)));
-    const target = candidates[0];
-    if (attachmentTokens(target.attachment).length) {
-      logInfo('purchase.request.image.attachment_exists', { task_id: taskId, record_id: target.recordId });
-      return { written: false, skipped: true, record_id: target.recordId };
-    }
     const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'purchase-request-image-'));
     try {
       const safeName = String(supplierName || 'supplier').replace(/[^\w\u4e00-\u9fa5-]/g, '') || 'supplier';
-      const filePath = path.join(tempDir, `${safeName}-${fileNameSuffix}.png`);
+      const fileName = `${safeName}-${fileNameSuffix}.png`;
+      // ⚠️ **上传之前**先判"这张图是不是已经在这一批的「单据」里了"：
+      //    既有的语义是「重复执行**连上传都不做**」（重跑批次不该白传一次素材）。
+      const existing = await this.orderBatches.findDocument(batchNo, fileName);
+      if (!existing.found) {
+        // 这一批在「报货批次」里**没有行**（今天只有**退货**批次是这种情况：退货不建
+        // 「报货批次」行，那条既有边界由 purchaseReturn.test.js 钉着）。
+        // 没有落点就**不白传一次素材**，只记一条 warn —— 图已经发到群里了。
+        logWarn('purchase.batch.document.no_record', {
+          task_id: taskId, batch_no: batchNo, file_name: fileName,
+          hint: '这一批在「报货批次」里没有行（退货批次今天不建行）→ 单据图暂时没有落点',
+        });
+        return {
+          written: false, reason: 'no_batch_record', batch_no: batchNo, file_name: fileName,
+        };
+      }
+      if (existing.exists) {
+        // 既有日志语义保持不变（原本叫 `attachment_exists`）：重复执行时的"已经有了"。
+        logInfo('purchase.request.image.attachment_exists', {
+          task_id: taskId, record_id: existing.recordId, batch_no: batchNo, file_name: fileName,
+        });
+        return {
+          written: false, skipped: true, record_id: existing.recordId, batch_no: batchNo, file_name: fileName,
+        };
+      }
+      const filePath = path.join(tempDir, fileName);
       await fs.promises.writeFile(filePath, png);
       const fileToken = await this.gateway.uploadAttachment(filePath);
-      await this.gateway.update('purchaseRequest', target.recordId,
-        { attachment: [{ file_token: fileToken }] }, { correlation });
-      return { written: true, record_id: target.recordId, file_token: fileToken };
+      const written = await this.orderBatches.writeDocument({
+        batchNo, fileToken, fileName, correlation,
+      });
+      if (written?.skipped) {
+        logInfo('purchase.request.image.attachment_exists', {
+          task_id: taskId, record_id: written.record_id, batch_no: batchNo, file_name: fileName,
+        });
+      }
+      return { ...written, supplier: supplierName };
     } finally {
       await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
     }
@@ -1846,7 +2005,7 @@ class PurchaseWebhookService {
     // 报单记录的处理状态终态由 confirmPurchaseRequest 改成「已生成申请」。
     const updated = await this.store.update(taskId, { draft });
     const result = await this.publishPurchaseRequest(taskId, updated);
-    // 批次号就在这次写入的返回值里（单条路径的批次号是 nextBatchNo() 现生成的 BH-…）。
+    // 批次号就在这次写入的返回值里（单条路径的批次号由 nextBatchNo() 兜底生成 `CGD-…`）。
     logInfo('purchase.report.posted', {
       record_id: recordId, task_id: taskId, item_count: parsed.length,
       request_count: result.request_ids?.length || 0,
@@ -1856,7 +2015,7 @@ class PurchaseWebhookService {
   }
 
   /**
-   * 读一条「供应商对接」记录，带重试（次数/间隔来自 config/reportReadRetry）。
+   * 读一条「信息填写」记录，带重试（次数/间隔来自 config/reportReadRetry）。
    *
    * 为什么必须有：飞书多维表格是**最终一致**的——记录变更事件先到、记录内容后到
    * （Data not ready / 1254607）。业务负责人 2026-10-06 的口径是「到齐 ＋ 重试 3 次」，
@@ -1882,7 +2041,7 @@ class PurchaseWebhookService {
   }
 
   /**
-   * 这条「供应商对接」记录是采购申请还是采购退货（见 purchaseReportBehaviorPolicy）。
+   * 这条「信息填写」记录是采购申请还是采购退货（见 purchaseReportBehaviorPolicy）。
    *
    * 读行为记录失败/行为没填/名称不认识 → 一律按**采购申请**处理：那是这条链路今天的行为，
    * 也是"读不到信息时唯一不发明业务规则"的选择。宁可退回现状，也不把普通报货当成退货。
@@ -1951,7 +2110,7 @@ class PurchaseWebhookService {
     for (const recordId of take) {
       const liveRecord = await this.gateway.get('liveInventory', recordId);
       // 这里读不出尺码就抛错（可重试的失败）：要退的这一双说不清是什么尺码，
-      // 就写不出对应的「单据信息」行，也不能拍一个尺码了事。
+      // 就写不出对应的「具体信息」行，也不能拍一个尺码了事。
       const linked = await this.getSizeReferences().resolveLinkedCell(liveRecord?.fields?.[sizeField]);
       bySize.set(linked.size, (bySize.get(linked.size) || 0) + 1);
     }
@@ -1977,7 +2136,7 @@ class PurchaseWebhookService {
    * 核对是拿"她填的数量"去比"当前实时库存里的行"。第一次跑已经把行删掉了，
    * 重试时再算一遍会看到**剩下的**行，然后删掉另一批——库存被多扣，而且多扣的那几双
    * 在业务上完全看不出来（每一条流水都"有来源、有数量"）。冻结之后复跑用的是同一批
-   * 尺码和同样的数量，配上"库存操作的 operationId 由单据信息行决定"，复跑是真正的空操作。
+   * 尺码和同样的数量，配上"库存操作的 operationId 由具体信息行决定"，复跑是真正的空操作。
    */
   async ensureReturnPlan(taskId, task, input) {
     if (task?.return_plan?.version === 1) return task.return_plan;
@@ -2168,7 +2327,7 @@ class PurchaseWebhookService {
 
   /**
    * 真正处理一批退货：读该批次号下的**全部退货记录** → 逐条冻结核对计划 → 扣库存、
-   * 写单据信息 → 整批**只出一次图、只发一次群**。
+   * 写具体信息 → 整批**只出一次图、只发一次群**。
    *
    * 幂等与不丢单（这一段的全部意义）：
    *   · 处理前重新读表：窗口期间到的记录全部在内，不依赖任务里记了哪几条；
@@ -2337,10 +2496,10 @@ class PurchaseWebhookService {
     const fields = record?.fields || {};
     const status = textValue(fields[table.fields.status]);
     // 终态挡重复：飞书重投、双击、并发到达时不能把同一批退货扣两遍。
-    // （真正扣库存的幂等还有两层：库存操作的 operationId 由「单据信息」行 id 决定。）
+    // （真正扣库存的幂等还有两层：库存操作的 operationId 由「具体信息」行 id 决定。）
     if (['已生成申请', '已取消'].includes(status)) return { skipped: true, status };
     const productIds = linkedRecordIds(fields[table.fields.product]);
-    if (productIds.length !== 1) throw new Error('供应商对接必须关联一个货品编号');
+    if (productIds.length !== 1) throw new Error('信息填写必须关联一个货品编号');
     // 供应商沿用采购申请那条的取法：从货品信息的供应商关联字段读，
     // 不新增表字段，也不让她在退货表单里再填一遍（见待确认项）。
     // ⚠️ 2026-10-06 业务负责人拍板：**没维护供应商的货品也能正常退货出单**——
@@ -2384,7 +2543,7 @@ class PurchaseWebhookService {
       supplier_record_id: supplierRecordId,
       behavior_record_id: behaviorRecordId,
       operator_open_id: operatorOpenId,
-      // 图上那一行「报货批次」用她表单里填的批次号文本（单据信息行的批次关联是
+      // 图上那一行「报货批次」用她表单里填的批次号文本（具体信息行的批次关联是
       // 指向「报货批次」表的，退货不建那张表——见交付说明的待确认项）。
       batch_no: textValue(fields[table.fields.batchNoText]),
       items,
@@ -2403,7 +2562,7 @@ class PurchaseWebhookService {
       productInfo,
       supplierRecordId,
       operatorOpenId,
-      // 逐尺码对应的「单据信息」行 id（与 items 一一对应），applySupplierReturn 填。
+      // 逐尺码对应的「具体信息」行 id（与 items 一一对应），applySupplierReturn 填。
       itemDocIds: [],
       docIds: [],
       result: null,
@@ -2411,10 +2570,10 @@ class PurchaseWebhookService {
   }
 
   /**
-   * 应用一条退货记录：逐尺码写「单据信息」→ 扣库存 → 回写报单记录终态。
+   * 应用一条退货记录：逐尺码写「具体信息」→ 扣库存 → 回写报单记录终态。
    *
-   * 落库顺序是刻意的（与单条链路一字不差）：**先写「单据信息」（拿到记录 id）→
-   * 再用它当库存操作的来源 → 最后出图**。库存操作的幂等键就是「单据信息」行的
+   * 落库顺序是刻意的（与单条链路一字不差）：**先写「具体信息」（拿到记录 id）→
+   * 再用它当库存操作的来源 → 最后出图**。库存操作的幂等键就是「具体信息」行的
    * record_id，而那一行本身由 createOnceByKey 按「幂等键」列保证只写一条，
    * 所以重跑拿到的是同一个 id、同一个库存操作——不会第二次扣库存。
    *
@@ -2425,12 +2584,12 @@ class PurchaseWebhookService {
     const { recordId, taskId, plan } = prepared;
     const progress = { returns: {} };
     const docIds = [];
-    // 关联键（只进日志）：task_id ＋ 批次号 ＋ 这条「供应商对接」记录自己的 id。
+    // 关联键（只进日志）：task_id ＋ 批次号 ＋ 这条「信息填写」记录自己的 id。
     // ⚠️ 没有批次号的旧退货数据（batchNoText 为空）→ `batch_no` **不出现**，不编。
     const correlation = purchaseCorrelation({
       taskId, batchNo: prepared.draft?.batch_no, reportRecordId: recordId,
     });
-    // 逐尺码处理：一个尺码一行「单据信息」、一次库存操作。
+    // 逐尺码处理：一个尺码一行「具体信息」、一次库存操作。
     // 一行一个来源是必须的——库存操作的幂等键就是来源行的 record_id，多个尺码共用一个
     // 来源就不会各自拿到自己的 operationId。
     for (const [index, entry] of plan.sizes.entries()) {
@@ -2481,7 +2640,7 @@ class PurchaseWebhookService {
     if (docIds.length) {
       // 报单记录的处理状态：沿用采购申请那条的终态「已生成申请」——行为管理里
       // 只有这一套终态可复用（另加一个「已退货」选项要动她的表，超出本次口径）。
-      // 顺带把「关联采购申请」指向刚写的单据信息行，两个方向都可追溯。
+      // 顺带把「关联采购申请」指向刚写的具体信息行，两个方向都可追溯。
       await this.gateway.update('purchaseReport', recordId, {
         status: '已生成申请',
         request: docIds,
@@ -2514,6 +2673,13 @@ class PurchaseWebhookService {
    * deliverSupplierImagesInner 的话题处理），不会各成一个话题。
    */
   async deliverReturnImages(batchTaskId, batchNo, preparedList) {
+    // ⚠️ 2026-10-07 已知缺口（**需要业务负责人拍板**，见
+    //    docs/purchase-batch-no-arrival-and-push-2026-10-07.md 第 5 节）：
+    //    退货**不建「报货批次」行**（这是既有边界，`purchaseReturn.test.js` 里
+    //    "退货不建报货批次（第 5 张表）"那条断言钉着它），所以退货单的 PNG
+    //    **现在没有落点**：附件回填那一步会记一条 `purchase.batch.document.no_record` 的 warn。
+    //    ⇒ 与生产现状一致（她已把「具体信息.采购申请单」那一列删掉，退货单本来也写不进去），
+    //      不是这次改动引入的回归；要真正回填，得先定"退货批次要不要也在「报货批次」里有一行"。
     const items = preparedList.flatMap((prepared) => prepared.items);
     const requestIds = preparedList.flatMap((prepared) => prepared.docIds);
     const requestIdByItemKey = {};
@@ -2581,15 +2747,15 @@ class PurchaseWebhookService {
   /**
    * 采购退货链路（业务负责人的完整口径）：
    *
-   *   ① 「供应商对接」填表单（编号 + 数量，退货不填尺码）→ 数据是确定性的 → **免确认**
+   *   ① 「信息填写」填表单（编号 + 数量，退货不填尺码）→ 数据是确定性的 → **免确认**
    *   ② 「采购行为」= 采购退货 → 走这条分支
    *   ③ **不再走「采购到货」和「采购入库」**
    *   ④ 直接扣「实时库存」并写「库存流水」（库存行为 = 采购减少 STOCK_PURCHASE_DECREASE）
    *   ⑤ 出图：标题「邯美皮鞋采购退货单」，格式与采购申请单一样
-   *   ⑥ 受影响的表只有 4 张：供应商对接 · 单据信息 · 库存流水 · 实时库存（不碰资金）
+   *   ⑥ 受影响的表只有 4 张：信息填写 · 具体信息 · 库存流水 · 实时库存（不碰资金）
    *
-   * 落库顺序：**先写「单据信息」（拿到记录 id）→ 再用它当库存操作的来源 → 最后出图**。
-   * 库存操作的幂等键就是「单据信息」行的 record_id（`operationId(kind, sourceRecordId)`），
+   * 落库顺序：**先写「具体信息」（拿到记录 id）→ 再用它当库存操作的来源 → 最后出图**。
+   * 库存操作的幂等键就是「具体信息」行的 record_id（`operationId(kind, sourceRecordId)`），
    * 而那一行本身由 createOnceByKey 按「幂等键」列保证只写一条，所以重跑拿到的是同一个 id、
    * 同一个库存操作——不会第二次扣库存（已完成的操作用例直接返回上次的结果）。
    *
@@ -3101,7 +3267,7 @@ class PurchaseWebhookService {
       // 支持批量和单条两种取消
       const reportIds = task.draft.report_record_ids || [task.draft.report_record_id];
       for (const rid of reportIds) {
-        // 取消也是写「供应商对接」：同一组关联键（批次号在草稿里，可能没有 → 不出现）。
+        // 取消也是写「信息填写」：同一组关联键（批次号在草稿里，可能没有 → 不出现）。
         await this.gateway.update('purchaseReport', rid, { status: '已取消' }, {
           correlation: purchaseCorrelation({
             taskId, batchNo: task.draft.batch_no, reportRecordId: rid,
@@ -3191,7 +3357,16 @@ class PurchaseWebhookService {
         keyValue: plan.batch_key,
         label: '报货批次',
         correlation: baseCorrelation,
-        values: { batchNo: plan.batch_no, idempotencyKey: plan.batch_key },
+        // ⭐ 到货状态：**新建记录时显式写「未到货」**（业务负责人 2026-10-07 的原话：
+        // 「每创建一条新记录时，默认值是「未到货」」）。取值来自 config/purchaseArrivalStatus
+        //（不是中文字面量），并由部署闸门对着真表 `property.options` 核对过。
+        // ⚠️ 只在**新建**这一支写：`createOnceByKey` 回查到已有记录时不会走这里
+        //   —— 历史批次行**零改动**（她的口径：历史不要动）。
+        values: {
+          batchNo: plan.batch_no,
+          idempotencyKey: plan.batch_key,
+          arrivalStatus: this.orderBatches.pendingStatus,
+        },
       });
       batchRecordId = batch.recordId;
       progress.batch_record_id = batchRecordId;
@@ -3212,7 +3387,7 @@ class PurchaseWebhookService {
           keyField: IDEMPOTENCY_KEY_FIELD,
           keyValue: item.request_key,
           label: `采购申请 ${item.item_key}`,
-          // 「单据信息」这一行属于哪一条报单记录，计划里记着（item.report_record_id）。
+          // 「具体信息」这一行属于哪一条报单记录，计划里记着（item.report_record_id）。
           correlation: mergeCorrelation(baseCorrelation, {
             purchase_report_record_id: item.report_record_id,
           }),
@@ -3315,7 +3490,7 @@ class PurchaseWebhookService {
     const draft = latest.draft || task.draft;
     // 关联键（只进日志）：到货核对任务自己的 task_id（`arrival_reconcile_…`，
     // **是另一套 task，如实照传真名**）＋ 批次号 ＋「采购到货」记录 id。
-    // ⚠️ 这条链路**拿不到**「供应商对接」报单记录 id（到货任务里只存 request_ids）
+    // ⚠️ 这条链路**拿不到**「信息填写」报单记录 id（到货任务里只存 request_ids）
     //    —— 拿不到就不传，不编。
     const correlation = purchaseCorrelation({
       taskId, batchNo: draft.batch_no, arrivalRecordId: draft.arrival_record_id,
@@ -3450,7 +3625,7 @@ class PurchaseWebhookService {
         await persistEntry(key, entry);
       }
     }
-    // ⚠️ 2026-10-06：这里原先有一段**回写「单据信息」（采购申请表）**的代码——
+    // ⚠️ 2026-10-06：这里原先有一段**回写「具体信息」（采购申请表）**的代码——
     //   for (const request of arrival.requests) { … gateway.update('purchaseRequest', request.record_id,
     //     { arrivalStatus: status }) }   // 未到货 / 部分到货 / 全部到货 / 超额到货
     // 业务负责人当天的口径是：「**既然它就是采购申请，那个表就不要动**」
@@ -3475,18 +3650,25 @@ class PurchaseWebhookService {
     return { toast: { type: 'success', content: this.enablePurchaseInventory ? '采购已入库，库存已更新' : '采购入库已确认' } };
   }
 
+  /**
+   * **兜底**的取号（业务负责人 2026-10-07 把格式改成 `CGD-YYYYMMDD-NNNN`）。
+   *
+   * ⚠️ 正常路径**不走这里**：号在**入口**就按包生成并写回「信息填写」了
+   *（见 ensureReportBatchNo）—— 所以归批、出图、写「报货批次」用的都是同一个号。
+   * 这个方法只在"入口没写成"时兜底（入口读不到那条记录、没权限等），
+   * 由 `ensurePostingPlan` 调用，**只生成、不写回**。
+   *
+   * ⚠️ 生成的号会落进「报货批次」的「报货批次号」，而生成器的计数**同时数**两张表
+   *   （见 `PurchaseBatchNoGenerator` 文件头 ②），所以兜底路径占掉的号也不会被别人重发。
+   * ⚠️ 走串行队列 + 生成器内部的"本进程已发集合"：即便是兜底，也不会连发两个同号。
+   */
   async nextBatchNo() {
     const table = this.gateway.table('purchaseOrderBatch');
     if (!table.tableId) throw new Error('未配置报货批次表ID：FEISHU_V1_PURCHASE_ORDER_BATCH_TABLE_ID');
-    const records = await this.gateway.listAll('purchaseOrderBatch');
-    const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date()).replace(/-/g, '');
-    const prefix = `BH-${date}-`;
-    const max = records.reduce((current, record) => {
-      const value = textValue(record.fields?.[table.fields.batchNo]);
-      const match = value.match(new RegExp(`^${prefix}(\\d{4})$`));
-      return match ? Math.max(current, Number(match[1])) : current;
-    }, 0);
-    return `${prefix}${String(max + 1).padStart(4, '0')}`;
+    return this.batchNoGenerator.runExclusive(async () => {
+      const generated = await this.batchNoGenerator.next({ source: 'fallback' });
+      return generated.batchNo;
+    });
   }
 }
 

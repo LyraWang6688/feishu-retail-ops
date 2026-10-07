@@ -42,7 +42,7 @@ const createPurchaseQueryService = (gateway, options = {}) => {
       gateway.listAll('purchaseRequest'),
       gateway.listAll('product'),
       gateway.listAll('purchaseOrderBatch'),
-      // 「单据信息」的「采购行为」是关联「行为管理」：采购申请与采购退货写在同一张表里，
+      // 「具体信息」的「采购行为」是关联「行为管理」：采购申请与采购退货写在同一张表里，
       // 靠这一列分流。分流口径复用采购链路的同一份策略（purchaseReportBehaviorPolicy），
       // 不在查询里另写一套判断——两套判断迟早在"什么算退货"上分家。
       gateway.listAll('behavior'),
@@ -70,7 +70,11 @@ const createPurchaseQueryService = (gateway, options = {}) => {
         product_record_id: productIds[0] || '',
         size: size.size,
         quantity: asNumber(record?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseRequest.fields.quantity]),
-        arrival_status: asText('purchaseRequest', record, 'arrivalStatus'),
+        // ⚠️ 2026-10-07：到货状态**不再读「具体信息」**（那一列业务负责人已从生产表删掉），
+        // 改读**「报货批次」**那一行上的同名语义键 —— 她的口径是
+        // 「采购批次这个数据表主要控制的是该批次的到货情况」。
+        // 批次行本来就已经解析出来了（`batch`），所以这是零额外请求的一次投影。
+        arrival_status: batch ? asText('purchaseOrderBatch', batch, 'arrivalStatus') : '',
         supplier_record_id: supplierIds[0] || '',
         // 'purchase_request' | 'purchase_return'（读不到行为记录时按现状=采购申请）
         report_behavior: classifyReportBehavior({

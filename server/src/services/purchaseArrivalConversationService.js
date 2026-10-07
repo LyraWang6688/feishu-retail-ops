@@ -60,7 +60,7 @@ const rowLabel = (row) => `${textValue(row?.item_no) || '（未知货号）'}${t
  *        → 库存流水 / 实时库存跟着变（由 confirmArrival → inventory.applyPurchase 负责）；
  *   ⑤ 点「否」→ **零业务表写入**，只回一句「好，那先不入库」。
  *
- * ⚠️ 「单据信息」（= 采购申请表，以前的「采购申请」）**一个字都不动**：
+ * ⚠️ 「具体信息」（= 采购申请表，以前的「采购申请」）**一个字都不动**：
  *   本类里没有任何对 purchaseRequest 的写路径；`confirmArrival` 里原先那一段
  *   回写入库状态的代码已按她的口径删除（见 purchaseWebhookService 的注释 + 测试里的断言）。
  *
@@ -87,6 +87,7 @@ class PurchaseArrivalConversationService {
     recognizer,
     sizeReferences,
     confirmArrival,
+    markBatchArrived,
     replyText,
     replyCard,
     updateCard,
@@ -106,6 +107,12 @@ class PurchaseArrivalConversationService {
       throw new Error('到货核对缺少尺码解析依赖（sizeReferences）');
     });
     this.confirmArrival = confirmArrival;
+    // ⭐ 到货核对确认成功之后，把「报货批次」那一行的到货状态改成「已到货」。
+    // 注入而不是自己 new：谁维护"报货批次"那一行是**别人的职责**
+    //（`PurchaseOrderBatchService`），本类只负责在**正确的时机**叫它一声。
+    // ⚠️ 默认空实现 = 什么都不做（单测/别的调用方不关心这条链路时行为与改动前一模一样）。
+    // 🔴 它**必须永不抛**：入库事实已经落地，批次状态只是投影。
+    this.markBatchArrived = markBatchArrived || (async () => ({ updated: false, reason: 'not_wired' }));
     // 群里的反馈一律**引用回复/回复卡片**（群聊没有"上一次对话"的概念）。
     // ⭐ ④ 两个端口都收第三个参数 `{ threadId }`：非空时由**飞书发送适配器**
     //    带 `reply_in_thread` 把这条反馈回到**那个话题**（本类不认识 reply_in_thread）。
@@ -127,6 +134,37 @@ class PurchaseArrivalConversationService {
     // 同一批的核对串行：同一条话题里两条消息几乎同时到达时，
     // 不能让两边各读到旧 transcript 再互相覆盖（会把她说的话丢掉）。
     this.queue = new KeyedSerialQueue();
+  }
+
+  /** 这一批的报货批次号（任务上冻结的那个；没有就空串 —— 空串时不去改任何批次行）。 */
+  taskBatchNo(task, draft = {}) {
+    return String(task?.batch_no || draft?.batch_no || '').trim();
+  }
+
+  /**
+   * 叫一声"这一批到货了"，并把所有失败吞成 warn。
+   *
+   * 🔴 **本方法永不抛**：到这一步「采购入库」+「库存流水」+「实时库存」都已经写完了，
+   *    批次状态写不回去只是"她那张表上没显示已到货"，绝不能把入库成功判成失败。
+   *
+   * ⚠️ 方法名与注入依赖名（`this.markBatchArrived`）**必须不同**：
+   *    同名的话构造函数里那个实例属性会**静默覆盖**原型方法（AGENTS.md 记过这个坑）。
+   */
+  async notifyBatchArrived(batchNo, { correlation = {} } = {}) {
+    const wanted = String(batchNo || '').trim();
+    if (!wanted) {
+      logInfo('purchase.arrival.reconcile.batch_arrival_skipped', { reason: 'no_batch_no' });
+      return { updated: false, reason: 'no_batch_no' };
+    }
+    try {
+      return await this.markBatchArrived(wanted, { correlation });
+    } catch (error) {
+      logWarn('purchase.arrival.reconcile.batch_arrival_failed', {
+        batch_no: wanted, error: error.message,
+        hint: '入库已经成功；只是「报货批次」的到货状态没改成已到货（不影响库存与单据）',
+      });
+      return { updated: false, reason: 'failed', error: error.message };
+    }
   }
 
   /**
@@ -536,6 +574,13 @@ class PurchaseArrivalConversationService {
       });
     }
     await this.store.update(taskId, { status: 'posted', posted_at: new Date(this.now()).toISOString() });
+    // ⭐ 到货事实落地之后 → 把「报货批次」那一行的到货状态改成「已到货」
+    //（业务负责人 2026-10-07：「**当用户在话题群里说了到货之后，状态应该改成「已到货」**」）。
+    // ⚠️ 位置**必须在入库之后**：入库是事实，批次状态是它的投影 —— 反过来的话，
+    //    写状态成功、入库失败，她会看到"已到货"而库存里没有这批货。
+    // ⚠️ 它是**增强**：失败只记 warn，**绝不**把已经入库成功的一单判成失败
+    //    （与"附件写回失败不阻塞主流程"同一条纪律）。
+    await this.notifyBatchArrived(this.taskBatchNo(task, draft), { correlation: { task_id: taskId } });
     const total = draft.actual.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
     // 回话模板（可配）：没有 0 行 → 与改动前逐字相同；有 0 行 → 说清"这些行没入库"；
     // 全是 0 行 → 不能写成"已入库 0 条"含糊过去，用专门那句。
@@ -586,7 +631,7 @@ class PurchaseArrivalConversationService {
       skipped_zero_count: zeroRows.length,
       skipped_zero_rows: zeroRows.map(rowLabel),
       total_quantity: total,
-      // 「单据信息」（采购申请表）在这条链路上**一个字都没写**——这是断言钉住的口径。
+      // 「具体信息」（采购申请表）在这条链路上**一个字都没写**——这是断言钉住的口径。
       purchase_request_writes: 0,
     });
     // ⚠️ 只回自己的 toast：`confirmArrival` 返回的 toast 是"给卡片点的人看的一句话"，
@@ -633,7 +678,7 @@ class PurchaseArrivalConversationService {
     const operator = String(operatorOpenId || '').trim();
     // 关联键（只进日志，**不改下面任何字段与顺序**）：这一行「采购到货」属于哪一批。
     // ⚠️ 只给拿得到的两个：到货核对任务自己的 task_id（`arrival_reconcile_…`，另一套 task）
-    //    ＋ 批次号。「供应商对接」记录 id 在这里拿不到 —— 不编。
+    //    ＋ 批次号。「信息填写」记录 id 在这里拿不到 —— 不编。
     const correlation = mergeCorrelation({ task_id: task.task_id, batch_no: task.batch_no });
     let created;
     try {

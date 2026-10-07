@@ -13,18 +13,21 @@ const makeGateway = (records = {}) => ({
 });
 
 test('listPurchaseRequests maps fields and filters by batchNo', async () => {
+  // ⚠️ 2026-10-07：到货状态**从「报货批次」那一行读**（「具体信息」的同名列已被
+  // 业务负责人从生产表删除，schema 映射与读取点同步删掉了）。所以这台假 Base 里，
+  // 「到货状态」挂在**批次记录**上 —— 断言口径没变（行上显示的就是这一批的到货状态）。
   const gateway = makeGateway({
     purchaseRequest: [
-      { record_id: 'req_1', fields: { 报货批次号: ['batch_1'], 编号: ['prod_1'], 尺码: sizeLink(36), 数量: 2, 到货状态: '部分到货', 报单时间: 1758844800000 } },
-      { record_id: 'req_2', fields: { 报货批次号: ['batch_2'], 编号: ['prod_2'], 尺码: sizeLink(37), 数量: 1, 到货状态: '未到货', 报单时间: 1758931200000 } },
+      { record_id: 'req_1', fields: { 报货批次号: ['batch_1'], 编号: ['prod_1'], 尺码: sizeLink(36), 数量: 2, 报单时间: 1758844800000 } },
+      { record_id: 'req_2', fields: { 报货批次号: ['batch_2'], 编号: ['prod_2'], 尺码: sizeLink(37), 数量: 1, 报单时间: 1758931200000 } },
     ],
     product: [
       { record_id: 'prod_1', fields: { 编号: '8088灰', 供应商: ['sup_1'] } },
       { record_id: 'prod_2', fields: { 编号: '9099黑', 供应商: ['sup_2'] } },
     ],
     purchaseOrderBatch: [
-      { record_id: 'batch_1', fields: { 报货批次号: 'BH-001', 供应商: ['sup_1'] } },
-      { record_id: 'batch_2', fields: { 报货批次号: 'BH-002', 供应商: ['sup_2'] } },
+      { record_id: 'batch_1', fields: { 报货批次号: 'BH-001', 供应商: ['sup_1'], 到货状态: '部分到货' } },
+      { record_id: 'batch_2', fields: { 报货批次号: 'BH-002', 供应商: ['sup_2'], 到货状态: '未到货' } },
     ],
   });
   const service = createPurchaseQueryService(gateway);

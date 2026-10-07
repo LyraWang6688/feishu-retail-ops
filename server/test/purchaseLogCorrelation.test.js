@@ -195,8 +195,11 @@ const assertGatewayCommon = (row, tableKey) => {
   assert.equal(typeof row.duration_ms, 'number');
 };
 
-// ── ① 报单（单条路径：没有报货批次号 → nextBatchNo() 现生成 BH-…）──────────────
-test('供应商报单：写「报货批次」/「单据信息」/「供应商对接」/附件写回的日志都带 task_id ＋ batch_no', async () => {
+// ── ① 报单（**单条路径**：入口写回批次号失败 → 退回单条处理，取号走 `nextBatchNo()`）────
+// ⚠️ 2026-10-07：报货批次号改成**入口按包生成并写回**之后，"单条路径"只剩一种到达方式
+//   —— 入口那一步没写成（飞书读/写抽了一下）。这条用例测的正是单条路径的日志，
+//   所以这里**刻意让那一步失败**（与真实场景同形）。
+test('供应商报单：写「报货批次」/「具体信息」/「信息填写」/附件写回的日志都带 task_id ＋ batch_no', async () => {
   const world = makeWorld({
     sizeManagement: SIZE_36_37,
     // 行为表为空 → classifyReportBehavior 退回「采购申请」（今日行为）
@@ -212,6 +215,14 @@ test('供应商报单：写「报货批次」/「单据信息」/「供应商对
       },
     }],
   });
+  // 入口"把号写回信息填写"这一步失败 ⇒ 记录里仍然是空号 ⇒ 退回单条路径（与改动前同形）。
+  const originalUpdateForIntake = world.client.bitable.appTableRecord.update;
+  world.client.bitable.appTableRecord.update = async ({ path, data }) => {
+    if (data?.fields?.['报货批次号'] !== undefined && data.fields['报货批次号'] !== null) {
+      return { code: 99991400, msg: '模拟：写回批次号失败' };
+    }
+    return originalUpdateForIntake({ path, data });
+  };
 
   const logs = captureLogs();
   let taskId = '';
@@ -223,9 +234,10 @@ test('供应商报单：写「报货批次」/「单据信息」/「供应商对
       return row?.fields?.['处理状态'] === '已生成申请' && (row.fields['关联采购申请'] || []).length > 0;
     });
     await waitFor('附件写回', async () => {
-      const rows = world.records.get('purchaseRequest') || [];
-      // ⚠️ 只写**一条**（同一报货批次 + 同一供应商只写一条，挑「明细ID」最小的那条）→ some 不是 every
-      return rows.some((row) => (row.fields['采购申请单'] || []).length === 1);
+      const rows = world.records.get('purchaseOrderBatch') || [];
+      // ⚠️ 2026-10-07：附件落点从「具体信息.采购申请单」（那一列已被她从生产表删除）
+      //    搬到**「报货批次.单据」**。判据不变：这一批只写**一条** → some 不是 every。
+      return rows.some((row) => (row.fields['单据'] || []).length === 1);
     });
     // ⚠️ 附件写回之后还有收尾（写话题映射、`purchase.report.posted`）。
     //    这里等的是**与既有采购用例同一个判据**：任务 result 已落盘 = 这一条真的处理完了。
@@ -248,7 +260,10 @@ test('供应商报单：写「报货批次」/「单据信息」/「供应商对
 
   // a. 新键真的在；批次号三条日志**逐字相同**（一个键串到底）
   const batchNo = batchRow.batch_no;
-  assert.match(batchNo, /^BH-\d{8}-0001$/, '单条路径的批次号是 nextBatchNo() 现生成的');
+  // ⚠️ 2026-10-07 口径变更：报货批次号不再手填、也不再是 `BH-…`，而是**入口代码生成**的
+  //    `CGD-YYYYMMDD-NNNN`（业务负责人给的样例 `CGD-20261007-0003`）。
+  //    断言**收严**：从"BH- + 8 位 + 0001"改成**逐字匹配整条格式的完整正则**。
+  assert.match(batchNo, /^CGD-\d{8}-\d{4}$/, `单条路径的批次号由入口生成，实际：${batchNo}`);
   assert.equal(batchRow.task_id, taskId);
   assert.equal(requestRow.task_id, taskId);
   assert.equal(requestRow.batch_no, batchNo);
@@ -270,8 +285,8 @@ test('供应商报单：写「报货批次」/「单据信息」/「供应商对
   assert.equal(reportUpdated.purchase_report_record_id, 'rep_1');
   assertGatewayCommon(reportUpdated, 'purchaseReport');
 
-  // d. 附件写回也是「单据信息」的写入：task_id ＋ batch_no 都在
-  const attachmentRow = logs.logs('bitable.record.updated').find((row) => row.table_key === 'purchaseRequest');
+  // d. 附件写回也是写库：task_id ＋ batch_no 都在（2026-10-07 起落在「报货批次.单据」上）
+  const attachmentRow = logs.logs('bitable.record.updated').find((row) => row.table_key === 'purchaseOrderBatch');
   assert.ok(attachmentRow, '附件写回必须真的发生过');
   assert.equal(attachmentRow.task_id, taskId);
   assert.equal(attachmentRow.batch_no, batchNo);
@@ -526,8 +541,13 @@ test('到货入库：写「采购到货」/「采购入库」/加库存的日志
   assert.equal(posted[0].inventory_applied, true);
 });
 
-// ── ④ 没有批次号的旧数据：只给拿得到的键，`batch_no` **不出现**（不许编）──────────
-test('没有报货批次号的退货：只给 task_id ＋ 报单记录 id，`batch_no` 一个都不许冒出来', async () => {
+// ── ④ 「拿不到批次号」这一种：只给拿得到的键，`batch_no` **不出现**（不许编）──────────
+// ⚠️ 2026-10-07 **口径变更**：报货批次号不再手填 —— 入口会按包生成一个并写回「信息填写」。
+//   所以"记录里没有号"这件事**不再能靠空夹具造出来**（`accept` 会先补上）。
+//   这条用例保住的**不变式一个字没变**：**拿不到批次号就不传这个键，绝不编一个**。
+//   造法跟着改成"入口写回失败"（真实场景：那一刻飞书读/写抽了一下）——
+//   号生成了但没落进「信息填写」，下游（退货链路）依然拿不到它。
+test('拿不到报货批次号：只给 task_id ＋ 报单记录 id，`batch_no` 一个都不许冒出来', async () => {
   const world = makeWorld({
     sizeManagement: [{ record_id: 'size_38', fields: { 尺码: 38 } }],
     behavior: [
@@ -549,6 +569,14 @@ test('没有报货批次号的退货：只给 task_id ＋ 报单记录 id，`bat
     }],
     inventoryLedger: [],
   });
+  // 让「入口把号写回信息填写」这一步失败（其余写入照常）：号没落盘 ⇒ 下游拿不到。
+  const originalUpdate = world.client.bitable.appTableRecord.update;
+  world.client.bitable.appTableRecord.update = async ({ path, data }) => {
+    if (data?.fields?.['报货批次号'] !== undefined && data.fields['报货批次号'] !== null) {
+      return { code: 99991400, msg: '模拟：写回批次号失败' };
+    }
+    return originalUpdate({ path, data });
+  };
 
   const logs = captureLogs();
   let taskId = '';
@@ -562,6 +590,13 @@ test('没有报货批次号的退货：只给 task_id ＋ 报单记录 id，`bat
   } finally {
     logs.restore();
   }
+
+  // 正向证据：这一次确实是"写回失败"那条路（不是夹具里恰好有号）
+  assert.equal(logs.logs('purchase.batch_no.write_back_failed').length >= 1, true,
+    '必须真的走到"入口写回失败"这条路，否则这条用例什么都没测到');
+  assert.equal((world.records.get('purchaseReport') || [])
+    .find((row) => row.record_id === 'rep_return_old')?.fields?.['报货批次号'] ?? '', '',
+  '入口写回失败之后，那一列必须仍然是空的（所以下游拿不到号）');
 
   const TASK = taskId;
   const REPORT = 'rep_return_old';

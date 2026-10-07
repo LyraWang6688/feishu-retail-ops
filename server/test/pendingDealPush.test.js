@@ -159,6 +159,16 @@ test('配置默认值：默认关、9 点、10 分钟一 tick、没有群 id、�
     itemSeparator: '、',
     sizeTemplate: '{size}码',
     footerTemplate: '（{count} 笔的深链暂不可用：飞书接口未返回 message_app_link，见日志 sales.pending_deal_push.link.missing）',
+    // ⚠️ 2026-10-07 加「【销售】区 + 【采购】区」那批键：断言仍然是**严格全等**
+    //    （多一个键就红），只是把新增的默认值也钉进去 —— 不是放宽。
+    //    ⭐ `salesAreaTitle: ''` 是「销售区逐字不变」的实现方式（空串 = 那一行不出现）。
+    areas: ['sales', 'purchase'],
+    salesAreaTitle: '',
+    purchaseAreaTitle: '【采购】未到货的报货批次：{count} 批',
+    purchaseLineParts: ['{index}. {batchNo}', '{supplier}', '{link}'],
+    purchaseLineSeparator: ' · ',
+    purchaseSupplierSeparator: '、',
+    purchaseFooterTemplate: '（{count} 批的深链暂不可用，见日志 sales.pending_deal_push.purchase_link.missing）',
   });
   assert.equal(resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_HOUR: '7' }).hour, 7);
   assert.throws(() => resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_HOUR: '25' }), /整数/);

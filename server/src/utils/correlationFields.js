@@ -34,8 +34,8 @@ const CORRELATION_KEYS = Object.freeze([
   'order_no',
   'sales_entry_record_id',
   // 采购链路（2026-10-07 下半场）
-  'batch_no', // 采购批次号：表单填的 202610071 / 自动生成的 BH-YYYYMMDD-NNNN
-  'purchase_report_record_id', // 「供应商对接」那条报单记录（采购链路的最上游）
+  'batch_no', // 采购批次号：表单填的 202610071 / 自动生成的 CGD-YYYYMMDD-NNNN（旧号 BH-… 仍然认）
+  'purchase_report_record_id', // 「信息填写」那条报单记录（采购链路的最上游）
   'purchase_arrival_record_id', // 「采购到货」那条记录（到货核对 → 入库那一段的来源）
 ]);
 

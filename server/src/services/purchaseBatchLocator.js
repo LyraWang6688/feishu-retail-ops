@@ -144,6 +144,17 @@ class PurchaseBatchLocator {
   }
 
   /**
+   * 全部映射（只读）。
+   *
+   * 给"一次要查很多批次"的调用方用：9 点推送的【采购】区要按**每条候选**取深链，
+   * 逐条 `findByBatchNo` 会把同一份目录读 N 遍。这里读一次、由调用方自己建索引
+   *（底层就是 `store.list()`："读一遍目录"，没有额外语义）。
+   */
+  async listGroupMessages() {
+    return this.store.list();
+  }
+
+  /**
    * 主入口：回答「这条群消息说的是哪一批」。
    *
    * @param {{ text?: string, parentId?: string, threadId?: string }} input
