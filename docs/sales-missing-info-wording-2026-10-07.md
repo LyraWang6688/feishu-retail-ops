@@ -425,13 +425,42 @@ run 1: ℹ tests 1128  ℹ pass 1128  ℹ fail 0  ℹ duration_ms 19848.676292
 run 2: ℹ tests 1128  ℹ pass 1128  ℹ fail 0  ℹ duration_ms 18959.973375
 ```
 
-- PR 上的 **CI 三项**（`gh pr checks 233`）与 `mergeStateStatus`：**见下方 14.9（以 gh 实际返回为准）**。
+- PR 上的 **CI 三项**（`gh pr checks 233`）与 `mergeStateStatus`：见 **14.9**（含实际输出；
+  `headRefOid = 0e46d7c`，三项全 pass，`CLEAN`，未用 `--admin`）。
 
 ### 14.9 PR #233 状态（本轮 push 后）
 
+- **push 方式**：`git push origin HEAD:fix/sales-missing-info-wording` → `012fe50..0e46d7c`
+  —— **fast-forward，没有 `--force`、没有 `--force-with-lease`**（因为走的是 merge，
+  没改写任何已推送历史；push 前已确认 `origin/…` 是 `HEAD` 的祖先：**只有我在动这条分支**）。
+- `gh pr checks 233`（`headRefOid = 0e46d7c`）—— **三项全 pass**：
+
 ```text
-（push 后由 gh pr checks 233 / gh pr view 233 填入 —— 见本文件的最后一次提交）
+Analyze (javascript-typescript)  pass  1m17s  https://github.com/LyraWang6688/feishu-retail-ops/actions/runs/37613188452/job/112765158503
+CodeQL                           pass  2s     https://github.com/LyraWang6688/feishu-retail-ops/runs/112765533846
+test                             pass  51s    https://github.com/LyraWang6688/feishu-retail-ops/actions/runs/37613194807/job/112765174390
 ```
+
+- `gh pr view 233 --json mergeStateStatus,mergeable,state,headRefOid` →
+
+```json
+{"headRefOid":"0e46d7cfe0652c1a0bf552c628d31b5f0acc51f6","mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","state":"OPEN"}
+```
+
+⭐ 合并前对照：并入 #234 **之前**同一 PR 是 `mergeStateStatus: DIRTY`（就是那处冲突）；
+本轮 merge 后变 **`CLEAN`**。**没有用 `--admin`。**
+
+- CI 上 `pnpm test` 的实际输出（`test` job 日志尾部）：
+
+```text
+1..1128
+# tests 1128
+# pass 1128
+# fail 0
+# duration_ms 33714.000449
+```
+
+> ⚠️ **没有合并、没有部署**（合并由 Lead / 业务负责人做；部署必须拿她**当次**的命令）。
 
 ## 15. 不确定处 / 已知剩余面
 
