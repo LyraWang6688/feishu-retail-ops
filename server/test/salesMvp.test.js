@@ -684,7 +684,7 @@ test('① 落表日志只说「这一步不动库存」：字段名带范围 ＋
   assert.equal(entry.inventory_applied_by_this_step, false);
   // c. 补一句"下一步会做什么"。
   assert.equal(entry.inventory_planned, true);
-  assert.equal(entry.inventory_step, 'after_posting');
+  assert.equal(entry.inventory_step, 'after_delivery');
   // 🔴 旧字段名不许留半句话：它正是被读成"整单没扣库存"的那个词。
   assert.equal(Object.prototype.hasOwnProperty.call(entry, 'inventory_applied'), false);
   assert.ok(!logs.lines.some((line) => line.includes('"inventory_applied":')),
@@ -726,7 +726,7 @@ test('② 库存真的扣完：sales.inventory.applied 带这次写入的流水 
   assert.equal(posted.length, 1);
   assert.equal(posted[0].step, 'posting');
   assert.equal(posted[0].inventory_applied_by_this_step, false);
-  assert.equal(posted[0].inventory_step, 'after_posting');
+  assert.equal(posted[0].inventory_step, 'after_delivery');
 
   // 库存引擎逐条写流水的证据（既有日志，原样仍在）。
   const changes = logs.logs('inventory.change.applied');
