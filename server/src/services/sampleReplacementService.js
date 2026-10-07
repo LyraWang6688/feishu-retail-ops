@@ -9,6 +9,7 @@ const { textValue } = require('./v1BitableGateway');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
 const { sampleReplacementCard, sampleReplacementStatusCard, sampleReplacementProcessingCard } = require('../utils/larkCards');
 const { logError, logInfo, logWarn } = require('../utils/logger');
+const { correlationFields } = require('../utils/correlationFields');
 const { larkLogger } = require('../utils/larkLogger');
 const { skipNoGroupContext } = require('../utils/privateChatSend');
 // 🔴 2026-10-07「私聊链路移除」：本 service 里**一行主动私聊都没有了**——
@@ -152,14 +153,16 @@ class SampleReplacementService {
    *
    * 返回已处理的销售明细 ID，调用方据此跳过对应的补选提醒。
    */
-  async applyPreChosen(replacements = []) {
+  async applyPreChosen(replacements = [], { correlation } = {}) {
     const handled = new Set();
     for (const { salesDetailRecordId, productRecordId, size } of replacements) {
       if (!salesDetailRecordId || !productRecordId || !size) continue;
-      await this.inventory.promoteToSample({ salesDetailRecordId, productRecordId, size });
+      // 关联键透传（只进日志）：补样品写的库存流水也在那条销售链上。
+      await this.inventory.promoteToSample({ salesDetailRecordId, productRecordId, size }, { correlation });
       handled.add(salesDetailRecordId);
       logInfo('lark.sales.sample_replacement.applied', {
         sales_detail_record_id: salesDetailRecordId, product_record_id: productRecordId, size,
+        ...correlationFields(correlation),
       });
     }
     return handled;

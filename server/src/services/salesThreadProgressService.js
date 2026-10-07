@@ -237,6 +237,11 @@ class SalesThreadProgressService {
     if (Math.round(decision.amount * 100) > Math.round(Number(before.pendingAmount) * 100)) {
       throw new Error(`本次收款 ￥${decision.amount} 超过待收金额 ￥${before.pendingAmount}`);
     }
+    // ⭐ 关联键（2026-10-07 业务负责人拍板「日志改下吧！」）：这条链路写的
+    //   「收款明细 / 库存流水 / 实时库存」以前一个键都没有，按 task_id grep 看不到。
+    //   单号从这条**已经读到的**主表记录（`entry`）上取，零额外请求；只进日志，不改写入内容。
+    const correlation = { task_id: task.task_id, sales_entry_record_id: salesEntryRecordId,
+      order_no: textValue(entry.fields?.[this.gateway.table('salesEntry').fields.orderNo]) };
 
     // ⭐ 有「未收款」占位就**翻它**（未收款 → 已收款 + 写收款时间 + 补交易方向），
     //    没有占位才新建 —— 与网页工作台「补记收款」（`SalesFollowupService.addPayment`）
@@ -260,12 +265,14 @@ class SalesThreadProgressService {
       operatorOpenId: task.sender_open_id || '',
       receivedAt: this.now().getTime(),
     };
+    // 「钱」这一半：收款明细的写入日志也带同一个关联键（见上面 `correlation` 的定义）。
+    const paymentOptions = { correlation };
     let recordId;
     if (pending.length) {
-      await this.payments.collectPendingReceipt(pending[0].record_id, payment);
+      await this.payments.collectPendingReceipt(pending[0].record_id, payment, paymentOptions);
       recordId = pending[0].record_id;
     } else {
-      recordId = (await this.payments.record(payment)).recordId;
+      recordId = (await this.payments.record(payment, paymentOptions)).recordId;
     }
     // 进度只算不写（和网页工作台「补记收款」同一条口径，见 salesProgressService.sync）。
     await this.progress.sync(salesEntryRecordId, { paymentRecordIds: [recordId] });
@@ -293,7 +300,7 @@ class SalesThreadProgressService {
    * 为什么抽成方法：`AGENTS.md` 第 16 条①要求「先把货那一半做掉、再就钱回问一句」，
    * 而"交付进展"那条路本来就有这段逻辑 —— 复制一份就是两处实现，改一处忘一处。
    */
-  async deliverUndelivered(salesEntryRecordId) {
+  async deliverUndelivered(salesEntryRecordId, options = {}) {
     const detailFields = this.gateway.table('salesDetail').fields;
     const undelivered = (await this.gateway.listAll('salesDetail'))
       .filter((record) => linkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(salesEntryRecordId))
@@ -302,7 +309,7 @@ class SalesThreadProgressService {
     if (!undelivered.length) return { count: 0, detailRecordIds: [], delivered: null };
     const delivered = await this.delivery.deliver({
       salesEntryRecordId, detailRecordIds: undelivered,
-    });
+    }, options);
     return { count: undelivered.length, detailRecordIds: undelivered, delivered };
   }
 
@@ -314,7 +321,9 @@ class SalesThreadProgressService {
       await this.reply(task, this.config.replies.notPosted);
       return { replied: true, asked: true, reason: 'not_posted' };
     }
-    const delivery = await this.deliverUndelivered(salesEntryRecordId);
+    const delivery = await this.deliverUndelivered(salesEntryRecordId, {
+      correlation: { task_id: task.task_id, sales_entry_record_id: salesEntryRecordId },
+    });
     if (!delivery.count) {
       await this.reply(task, this.config.replies.nothingPending);
       return { replied: true, reason: 'nothing_pending' };
@@ -385,7 +394,9 @@ class SalesThreadProgressService {
       //    但"货那一半"先做掉（`AGENTS.md` 第 16 条①）：
       //    走的是与点卡片「成交」**同一段交付能力**（SalesDeliveryService.deliver，
       //    SecondDeliveryService 内部用的也是它），所以不存第二套交付实现。
-      const delivery = await this.deliverUndelivered(salesEntryRecordId);
+      const delivery = await this.deliverUndelivered(salesEntryRecordId, {
+        correlation: { task_id: task.task_id, sales_entry_record_id: salesEntryRecordId },
+      });
       await this.reply(task, delivery.count
         ? formatCopy(this.config.replies.completeAskMethod, { count: delivery.count })
         : this.config.replies.needMethod);
@@ -404,6 +415,8 @@ class SalesThreadProgressService {
     }
     const result = await this.secondDelivery.confirm({
       salesEntryRecordId, method, operatorOpenId: task.sender_open_id || '',
+    }, {
+      correlation: { task_id: task.task_id, sales_entry_record_id: salesEntryRecordId },
     });
     if (result.alreadyCompleted) {
       await this.reply(task, this.config.replies.completeAlready);

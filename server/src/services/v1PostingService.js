@@ -12,7 +12,8 @@ class V1PostingService {
     this.sales = options.sales || new SalesOrderService({ gateway, references });
   }
 
-  postSale(input) { return this.sales.confirm(input); }
+  // `options.correlation` 原样透传给 SalesOrderService（只进日志，不改写入内容）。
+  postSale(input, options = {}) { return this.sales.confirm(input, options); }
 }
 
 module.exports = { V1PostingService };

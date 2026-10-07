@@ -6,6 +6,55 @@ const { relation } = require('./v1ReferenceResolver');
 const { SizeReferenceService, normalizeSize } = require('./sizeReferenceService');
 const { OPERATION_ITEM_KEY_FIELD, createOnceByKey, validateIdempotencyKeyFields } = require('../infrastructure/idempotencyKey');
 const { logInfo, logWarn } = require('../utils/logger');
+const { correlationFields } = require('../utils/correlationFields');
+
+// ── 「库存键」的两种写法（业务负责人 2026-10-07 拍板：两种都给）──────────────────
+//   · `stock_key`       = `商品record_id|尺码|所属状态` —— **内部键**。库存任务的串行队列
+//     （runForStock）、本地任务记录、幂等判据都用它；**原值一个字符都不许动**。
+//   · `stock_key_label` = `货号|颜色|类别|尺码` —— 飞书侧「库存键」公式算好的那串，
+//     人读得懂，也能直接拿去多维表格里搜（她举的例子：`5801-38|灰色|B|38`）。
+//
+// ⚠️ 这里**故意不重新拼** `stock_key_label`：实时库存记录上本来就有飞书算好的「库存键」列，
+//    而库存引擎在挑要扣的那几双时**已经**把这张表读进来了
+//    （applyChange / transitionState / promoteToSample 都读过）
+//    ⇒ 抄一下就有：**零额外请求、零漂移**（货号/颜色/类别的取值规则在飞书那一侧，
+//      代码这边一个字都不抄）。
+// ⚠️ 抄不到时（这一款在店里一双都没有 —— 例如采购入库第一双新品）**不猜**：
+//    只留 `stock_key_label_source: 'unavailable'`。要拼那一串就得多读一次「货品信息」，
+//    本方案选择不读：宁可少一个字段，也不在写库路径上多一次请求。
+//    ⭐ 调用方**已经知道**那一串时（例如它自己刚读过那张表），可以走
+//    `options.stockKeyLabel` 直接给 —— 那会记成 `stock_key_label_source: 'caller'`。
+//
+// ⚠️ 统一约定：**只进日志的东西一律走尾部可选参数 `options`**（`correlation` /
+//    `stockKeyLabel`），绝不塞进 `input`。这样"库存引擎的业务入参形状一个字段都没变"
+//    是可以被既有测试里那些逐字 deepEqual 当场证明的。
+const STOCK_KEY_LABEL_SOURCE = Object.freeze({
+  LIVE_INVENTORY: 'live_inventory',
+  CALLER: 'caller',
+  UNAVAILABLE: 'unavailable',
+});
+
+const stockKeyLabelFields = ({ record, fieldName, fallback } = {}) => {
+  const fromRecord = textValue(record?.fields?.[fieldName]).trim();
+  if (fromRecord) {
+    return { stock_key_label: fromRecord, stock_key_label_source: STOCK_KEY_LABEL_SOURCE.LIVE_INVENTORY };
+  }
+  const given = String(fallback || '').trim();
+  if (given) return { stock_key_label: given, stock_key_label_source: STOCK_KEY_LABEL_SOURCE.CALLER };
+  return { stock_key_label_source: STOCK_KEY_LABEL_SOURCE.UNAVAILABLE };
+};
+
+// 关联键（task_id / order_no / sales_entry_record_id）：只进日志，不改任何业务判断。
+// 空对象不落进本地任务记录，免得每个任务文件都多一个 `"correlation": {}` 噪声键。
+const correlationPatch = (correlation) =>
+  (Object.keys(correlation).length ? { correlation } : {});
+
+// 已经落在本地任务记录上的那两种键（日志用）：`stock_key_label` 只有真的抄到了才出现，
+// `stock_key_label_source` 永远有值 —— 这样"这条日志为什么没有 label"是能直接读出来的。
+const stockKeyLabelOfOperation = (operation = {}) => ({
+  ...(operation.stock_key_label ? { stock_key_label: operation.stock_key_label } : {}),
+  stock_key_label_source: operation.stock_key_label_source || STOCK_KEY_LABEL_SOURCE.UNAVAILABLE,
+});
 
 // 库存动作注册表。键 = 飞书「行为管理」表里的「行为编码」。
 //
@@ -359,7 +408,10 @@ class InventoryService {
     return next;
   }
 
-  applySale(input) {
+  // ⚠️ 关联键走**尾部可选参数**（`options.correlation`），**不塞进 `input`**：
+  //    库存引擎的业务入参形状因此一个字段都没变（既有测试对它是逐字 deepEqual 的，
+  //    那条断言就是这条边界的证明）。关联键只进日志。
+  applySale(input, options = {}) {
     return this.applyChange({
       ...input,
       kind: MOVEMENT_SALE_DECREASE,
@@ -368,7 +420,7 @@ class InventoryService {
       state: '门盒',
       sourceRecordId: input.salesDetailRecordId,
       quantity: positiveInteger(input.quantity, '销售数量'),
-    });
+    }, options);
   }
 
   async getSaleResult(salesDetailRecordId) {
@@ -376,17 +428,17 @@ class InventoryService {
     return operation?.status === 'completed' ? operation.result : null;
   }
 
-  applyPurchase(input) {
+  applyPurchase(input, options = {}) {
     return this.applyChange({
       ...input,
       kind: MOVEMENT_PURCHASE_INCREASE,
       state: input.state || '门盒',
       sourceRecordId: input.purchaseInboundRecordId,
       quantity: positiveInteger(input.quantity, '采购入库数量'),
-    });
+    }, options);
   }
 
-  async applyChange(input) {
+  async applyChange(input, options = {}) {
     if (!input.productRecordId) throw new Error('库存变化缺少商品 record_id');
     if (!input.sourceRecordId) throw new Error('库存变化缺少来源明细 record_id');
     const size = normalizeSize(input.size);
@@ -397,6 +449,9 @@ class InventoryService {
     // 配置驱动的闸门：状态类行为（方向=不影响，含转冻结/转释放/两个"转"）不许走数量通路。
     // 放在任何远端读写之前，且不改变上面几条入参校验的报错顺序。
     requireQuantityMovement(input.kind);
+    // 关联键：落进本地任务记录，**重放/续跑时用它自己的那一份**（不是当前请求的）——
+    // 这正是为什么不走 AsyncLocalStorage：resumePending 会把上一笔单的操作放到这次请求里跑。
+    const correlation = correlationFields(options.correlation);
     return this.runForStock(stockKey, async () => {
       await this.ensureSchema();
       const sizeReference = await this.sizeReferences.resolveByNumber(size);
@@ -444,6 +499,15 @@ class InventoryService {
           status: 'prepared',
           kind: input.kind,
           stock_key: stockKey,
+          // 人类可读那串：抄**这次已经读到的**实时库存记录上的「库存键」（零额外请求）。
+          // 减少方向抄的是**要扣掉的那一双**；增加方向（采购入库）抄同款同码已有的那一双。
+          ...stockKeyLabelFields({
+            // 增加、且这一款店里一双都没有（第一双新品）→ 两个都是 undefined → unavailable。
+            record: selected[0] || liveRecords[0],
+            fieldName: this.gateway.table('liveInventory').fields.stockKey,
+            fallback: options.stockKeyLabel,
+          }),
+          ...correlationPatch(correlation),
           product_record_id: input.productRecordId,
           size,
           size_record_id: sizeReference.recordId,
@@ -492,7 +556,7 @@ class InventoryService {
     return matches[0] || null;
   }
 
-  async transitionState(input = {}) {
+  async transitionState(input = {}, options = {}) {
     if (!input.productRecordId) throw new Error('库存状态变更缺少商品 record_id');
     if (!input.sourceRecordId) throw new Error('库存状态变更缺少来源标识（requestId）');
     const movement = requireStateMovement(input.kind);
@@ -510,6 +574,7 @@ class InventoryService {
     }
     if (fromState === toState) throw new Error(`库存动作「${input.kind}」的起点和终点都是「${toState}」，无需调整`);
     const stockKey = `${input.productRecordId}|${size}|${fromState}`;
+    const correlation = correlationFields(options.correlation);
     return this.runForStock(stockKey, async () => {
       await this.ensureSchema();
       const sizeReference = await this.sizeReferences.resolveByNumber(size);
@@ -540,6 +605,13 @@ class InventoryService {
           status: 'prepared',
           kind: input.kind,
           stock_key: stockKey,
+          // 同 applyChange：抄这次已经读到的实时库存记录上的「库存键」，零额外请求。
+          ...stockKeyLabelFields({
+            record: candidates[0],
+            fieldName: this.gateway.table('liveInventory').fields.stockKey,
+            fallback: options.stockKeyLabel,
+          }),
+          ...correlationPatch(correlation),
           product_record_id: input.productRecordId,
           size,
           size_record_id: sizeReference.recordId,
@@ -569,6 +641,8 @@ class InventoryService {
       throw new Error(`库存状态变更 ${operation.operation_id} 使用旧结构且尚未完成，请先人工核对，不能自动重试`);
     }
     const movement = requireStateMovement(operation.kind);
+    // 同 executeOperation：关联键取这条本地任务记录自己的（重放时不会挂到当前请求上）。
+    const correlation = correlationFields(operation.correlation);
     const sizeReference = await this.sizeReferences.resolveByNumber(operation.size);
     if (operation.size_record_id && operation.size_record_id !== sizeReference.recordId) {
       throw new Error(`库存状态变更 ${operation.operation_id} 的尺码关联已改变，请人工核对`);
@@ -594,7 +668,7 @@ class InventoryService {
         size: relation(sizeReference.recordId),
         quantityChange: 0,
         behavior: relation(operation.behavior_record_id),
-      });
+      }, { correlation });
       ledger = { record_id: created.recordId };
       operation = await this.store.update(operation.operation_id, {
         status: 'ledger_created', ledger_record_id: ledger.record_id,
@@ -618,7 +692,7 @@ class InventoryService {
           + `既不是「${operation.from_state}」也不是「${operation.to_state}」，请人工核对`);
       }
       if (current !== operation.to_state) {
-        await this.gateway.update('liveInventory', recordId, { state: operation.to_state });
+        await this.gateway.update('liveInventory', recordId, { state: operation.to_state }, { correlation });
       }
       moved.push(recordId);
       operation = await this.store.update(operation.operation_id, { moved_live_record_ids: moved });
@@ -640,12 +714,14 @@ class InventoryService {
       operation_id: operation.operation_id,
       kind: operation.kind,
       stock_key: operation.stock_key,
+      ...stockKeyLabelOfOperation(operation),
       from_state: operation.from_state,
       to_state: operation.to_state,
       quantity: operation.quantity,
       live_record_ids: moved,
       ledger_record_id: ledger.record_id,
       operator_open_id: operation.operator_open_id || undefined,
+      ...correlation,
     });
     return result;
   }
@@ -662,10 +738,12 @@ class InventoryService {
     }
   }
 
-  async promoteToSample({ salesDetailRecordId, productRecordId, size } = {}) {
+  async promoteToSample(input = {}, options = {}) {
+    const { salesDetailRecordId, productRecordId, size } = input;
     if (!salesDetailRecordId || !productRecordId) throw new Error('补样品缺少销售明细或货品');
     const normalizedSize = normalizeSize(size);
     const stockKey = `${productRecordId}|${normalizedSize}|门盒`;
+    const correlation = correlationFields(options.correlation);
     return this.runForStock(stockKey, async () => {
       await this.ensureSchema();
       const sizeReference = await this.sizeReferences.resolveByNumber(normalizedSize);
@@ -686,6 +764,13 @@ class InventoryService {
         if (!liveRecords.length) throw new Error(`${normalizedSize}码已没有门盒库存，请重新选择`);
         operation = await this.store.create({
           operation_id: id, type: 'sample_promotion', status: 'prepared', stock_key: stockKey,
+          // 同 applyChange：抄这次已经读到的门盒记录上的「库存键」，零额外请求。
+          ...stockKeyLabelFields({
+            record: liveRecords[0],
+            fieldName: this.gateway.table('liveInventory').fields.stockKey,
+            fallback: options.stockKeyLabel,
+          }),
+          ...correlationPatch(correlation),
           source_record_id: salesDetailRecordId, product_record_id: productRecordId,
           size: normalizedSize, size_record_id: sizeReference.recordId,
           live_record_id: liveRecords[0].record_id,
@@ -698,6 +783,7 @@ class InventoryService {
 
   async executeSamplePromotion(operation) {
     if (operation.status === 'completed') return operation.result;
+    const correlation = correlationFields(operation.correlation);
     let ledger = await this.findLedger(SALE_LEDGER_SOURCE, operation.source_record_id, operation.behavior_record_id);
     const record = await this.gateway.get('liveInventory', operation.live_record_id);
     if (!record) throw new Error('待补样品的门盒库存记录不存在，请人工核对');
@@ -733,18 +819,24 @@ class InventoryService {
         product: relation(operation.product_record_id), size: relation(sizeReference.recordId),
         quantityChange: 0, behavior: relation(operation.behavior_record_id),
         salesDetail: relation(operation.source_record_id),
-      });
+      }, { correlation });
       ledger = { record_id: created.recordId };
     }
     operation = await this.store.update(operation.operation_id, {
       status: 'ledger_created', ledger_record_id: ledger.record_id,
     });
-    if (state === '门盒') await this.gateway.update('liveInventory', operation.live_record_id, { state: '样品' });
+    if (state === '门盒') {
+      await this.gateway.update('liveInventory', operation.live_record_id, { state: '样品' }, { correlation });
+    }
     const result = { liveRecordId: operation.live_record_id, ledgerRecordId: ledger.record_id,
       productRecordId: operation.product_record_id, size: operation.size };
     await this.store.update(operation.operation_id, { status: 'completed', result });
+    // 「相关库存日志」也两种键都给（stock_key + stock_key_label），见文件顶部注释。
     logInfo('inventory.sample.promoted', { operation_id: operation.operation_id,
-      live_record_id: operation.live_record_id, ledger_record_id: ledger.record_id, size: operation.size });
+      stock_key: operation.stock_key,
+      ...stockKeyLabelOfOperation(operation),
+      live_record_id: operation.live_record_id, ledger_record_id: ledger.record_id, size: operation.size,
+      ...correlation });
     return result;
   }
 
@@ -754,6 +846,9 @@ class InventoryService {
       throw new Error(`库存操作 ${operation.operation_id} 使用旧结构且尚未完成，请先人工核对，不能自动重试`);
     }
     const movement = requireMovement(operation.kind);
+    // 关联键取自**这条本地任务记录自己**（不是当前请求）：resumePending 会把上一笔单
+    // 尚未完成的操作放到这次请求里续跑，用当前请求的键会把日志指向错的任务。
+    const correlation = correlationFields(operation.correlation);
     const sizeReference = await this.sizeReferences.resolveByNumber(operation.size);
     if (operation.size_record_id && operation.size_record_id !== sizeReference.recordId) {
       throw new Error(`库存操作 ${operation.operation_id} 的尺码关联已改变，请人工核对`);
@@ -780,7 +875,7 @@ class InventoryService {
         ...(movement.ledgerSource
           ? { [movement.ledgerSource]: relation(operation.source_record_id) }
           : {}),
-      });
+      }, { correlation });
       ledger = { record_id: created.recordId };
     }
     operation = await this.store.update(operation.operation_id, {
@@ -825,6 +920,7 @@ class InventoryService {
           keyField: OPERATION_ITEM_KEY_FIELD,
           keyValue: itemKey,
           label: `实时库存 ${itemKey}`,
+          correlation,
           values: {
             product: relation(operation.product_record_id),
             size: relation(sizeReference.recordId),
@@ -862,6 +958,7 @@ class InventoryService {
           operation_id: operation.operation_id,
           source_record_id: operation.source_record_id,
           error: error.message,
+          ...correlation,
         });
       }
     }
@@ -869,16 +966,23 @@ class InventoryService {
       status: 'completed',
       result,
     });
+    // ⭐ 「库存键」两种写法并列（业务负责人 2026-10-07 拍板）：
+    //    `stock_key` = 内部 `rec…|尺码|状态`（**原值不动**，既有排查脚本/断言依赖它）；
+    //    `stock_key_label` = 飞书算好的 `货号|颜色|类别|尺码`（人读得懂、表里搜得到）。
+    //    再叠上关联键 ⇒ 按 `task_id` / `order_no` / `sales_entry_record_id` 任一键
+    //    都能把这一条和它那笔业务串起来（这正是这次事故里"看不到库存"的那半）。
     logInfo('inventory.change.applied', {
       operation_id: operation.operation_id,
       kind: operation.kind,
       stock_key: operation.stock_key,
+      ...stockKeyLabelOfOperation(operation),
       movement_quantity: operation.quantity,
       direction: operation.direction,
       target_quantity: operation.target_quantity,
       ledger_record_id: ledger.record_id,
       live_record_ids: result.liveRecordIds,
       operator_open_id: operation.operator_open_id || undefined,
+      ...correlation,
     });
     return result;
   }

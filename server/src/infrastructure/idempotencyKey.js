@@ -49,6 +49,9 @@ const createOnceByKey = async ({
   label,
   attempts = 3,
   pause = 400,
+  // 关联键（task_id / order_no / sales_entry_record_id）：**只进 gateway 的写入日志**，
+  // 不改这里的任何判断。不传 = 行为逐字不变（见 utils/correlationFields）。
+  correlation,
 }) => {
   if (!keyValue) throw new Error(`${label} 缺少幂等键，拒绝创建`);
   let matches = await listByKey({ gateway, tableKey, keyField, keyValue });
@@ -59,7 +62,7 @@ const createOnceByKey = async ({
   }
 
   try {
-    const created = await gateway.create(tableKey, values);
+    const created = await gateway.create(tableKey, values, { correlation });
     return { recordId: created.recordId, reused: false };
   } catch (error) {
     // 飞书结构化拒绝（例如字段不存在）说明请求被处理且明确失败，可以确定没有写入，

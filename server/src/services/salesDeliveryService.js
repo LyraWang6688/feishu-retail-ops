@@ -7,6 +7,7 @@ const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { postedOf, isPosted, SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
 const { SalesStatusWriter } = require('./salesStatusWriter');
 const { logError, logInfo } = require('../utils/logger');
+const { mergeCorrelation } = require('../utils/correlationFields');
 
 class SalesDeliveryService {
   constructor({ gateway, inventory, progress, sizeReferences, status } = {}) {
@@ -21,22 +22,30 @@ class SalesDeliveryService {
     this.queue = Promise.resolve();
   }
 
-  deliver(input) {
-    const next = this.queue.then(() => this._deliver(input), () => this._deliver(input));
+  // 关联键走**尾部可选参数**（`options.correlation`），不塞进 `input`（同 SalesOrderService）。
+  deliver(input, options = {}) {
+    const next = this.queue.then(() => this._deliver(input, options), () => this._deliver(input, options));
     this.queue = next.catch(() => undefined);
     return next;
   }
 
-  async _deliver({ salesEntryRecordId, detailRecordIds, paymentRecordIds = [], occurredAt } = {}) {
+  async _deliver({ salesEntryRecordId, detailRecordIds, paymentRecordIds = [], occurredAt } = {},
+    options = {}) {
     if (!salesEntryRecordId) throw new Error('交付缺少销售主表 record_id');
     if (!Array.isArray(detailRecordIds) || !detailRecordIds.length) throw new Error('请选择交付的销售明细');
     if (new Set(detailRecordIds).size !== detailRecordIds.length) throw new Error('交付明细不能重复');
     await this.gateway.validateTables?.(['salesEntry', 'salesDetail', 'behavior', 'inventoryLedger', 'liveInventory']);
+    // ⭐ 关联键：交付这一段写的正是「销售明细.履约状态 / 库存流水 / 实时库存 / 库存状态」——
+    //    "一条销售被劈成两半"里看不见的那半（2026-10-07 业务负责人拍板「日志改下吧！」）。
+    //    它**只进日志**，不改任何写入内容、不改顺序。
+    let correlation = mergeCorrelation(options.correlation, { sales_entry_record_id: salesEntryRecordId });
     const entry = await withSalesReadRetry(
       () => this.gateway.get('salesEntry', salesEntryRecordId), 'delivery_sale_entry',
     );
     if (!entry) throw new Error('销售主表记录不存在');
     const entryFields = this.gateway.table('salesEntry').fields;
+    // 单号就在这条**已经读到的**主表记录上 ⇒ 零额外请求地补进关联键。
+    correlation = mergeCorrelation(correlation, { order_no: textValue(entry?.fields?.[entryFields.orderNo]) });
     // 「已入账」的取值来源走配置：**只读「资金状态」**
     // （旧「确认状态（旧）」已被业务负责人整列删除，没有回退可言）。
     // ⭐ 判据 = 「账做完了没有」：**两代字面量都算**（她手工填的「已入账」/ 代码写的「已写入」），
@@ -80,8 +89,8 @@ class SalesDeliveryService {
         const inventoryResult = await this.inventory.applySale({
           salesDetailRecordId: id, productRecordId: productIds[0],
           size, quantity, occurredAt: Number(occurredAt || Date.now()),
-        });
-        await this.gateway.update('salesDetail', id, { fulfillmentStatus: '已交付' });
+        }, { correlation });
+        await this.gateway.update('salesDetail', id, { fulfillmentStatus: '已交付' }, { correlation });
         detail.fields[fields.fulfillmentStatus] = '已交付';
         results.push({ detailRecordId: id, inventoryResult });
       } catch (error) {
@@ -89,7 +98,7 @@ class SalesDeliveryService {
           productRecordId: productIds[0] || '', size, quantity, error: error.message });
         logError('sales.delivery.line.failed', { sales_entry_record_id: salesEntryRecordId,
           detail_record_id: id, line_number: index + 1, product_record_id: productIds[0],
-          size, quantity, error: error.message });
+          size, quantity, error: error.message, ...correlation });
       }
     }
     // 「库存状态」：扣减这一步的结果（**逐条**看，不是看"整单成功/失败"）。
@@ -106,7 +115,7 @@ class SalesDeliveryService {
         sampleConsumedQuantity: item.inventoryResult.sampleConsumedQuantity,
         consumedLiveRecordIds: item.inventoryResult.consumedLiveRecordIds || [],
         remainingSizes: item.inventoryResult.remainingSizes || [] }));
-    await this.status.write(salesEntryRecordId, { stock: stockStatus });
+    await this.status.write(salesEntryRecordId, { stock: stockStatus }, correlation);
     // ⭐ 正向证据：**这一单的库存真的动完了** —— 回答"到底扣没扣库存"该看的就是这一条。
     // 与逐条的 `inventory.change.applied`（库存引擎在说"这一条流水写了"）互补：
     // 这条是**销售交付这一步**在说"该扣的都扣完了 ＋ 扣的是哪几条流水"。
@@ -134,6 +143,7 @@ class SalesDeliveryService {
       live_record_ids: results.flatMap((item) => item.inventoryResult?.liveRecordIds || []),
       sample_consumed_detail_ids: sampleReplacements.map((item) => item.salesDetailRecordId),
       stock_status: stockStatus,
+      ...correlation,
     });
     const details = [...byId.values()];
     const deliveredTotal = details.filter((detail) =>
@@ -142,7 +152,8 @@ class SalesDeliveryService {
     const progress = await this.progress.sync(salesEntryRecordId, { detailRecordIds, paymentRecordIds });
     logInfo('sales.delivery.completed', { sales_entry_record_id: salesEntryRecordId,
       detail_count: results.length, failed_count: failures.length,
-      delivered_quantity: deliveredTotal, fulfillment_status: progress.fulfillmentStatus });
+      delivered_quantity: deliveredTotal, fulfillment_status: progress.fulfillmentStatus,
+      ...correlation });
     return { salesEntryRecordId, results, failures, deliveredQuantity: deliveredTotal,
       totalQuantity: total, fulfillmentStatus: progress.fulfillmentStatus, sampleReplacements };
   }
