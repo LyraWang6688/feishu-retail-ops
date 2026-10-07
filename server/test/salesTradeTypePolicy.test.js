@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   SALES_TRADE_TYPE_PARSE_POLICY, salesParsePolicyFor, salesParseRuns,
+  SALES_COLOR_OPTIONS_SCOPE, salesColorOptionsScopeFor,
 } = require('../src/config/salesTradeTypePolicy');
 const { SALES_TRADE_TYPE_CODES, tradeTypeCodeFromLabel } = require('../src/config/salesMovements');
 
@@ -31,9 +32,27 @@ test('她定的口径：预付不跑库存解析；现货 / 未付都要跑', ()
 
 test('认不出的交易类型（空编码 / 未知编码）一律按「该跑的都跑」—— 宁可多问一句', () => {
   for (const code of ['', undefined, null, 'SALE_UNKNOWN', '销售退货']) {
-    assert.deepEqual(salesParsePolicyFor(code), { productInfo: true, stock: true },
-      `${JSON.stringify(code)} 该按最保守的那一档处理`);
+    assert.deepEqual(salesParsePolicyFor(code), {
+      productInfo: true, stock: true, colorOptionsScope: SALES_COLOR_OPTIONS_SCOPE.inStockOnly,
+    }, `${JSON.stringify(code)} 该按最保守的那一档处理（候选范围也一样：只推在售）`);
   }
+});
+
+// ⭐ 第四刀（业务负责人 2026-10-07 逐字：「现货和未付是需要看在售的颜色，
+//    但是**预付是需要看这个货号的颜色**」）：候选范围也在这份注册表里，
+//    且是**显式两个字面量**（不是"一个布尔 + 中文注释"）。
+test('每种交易类型都有显式的候选范围：现货 / 未付只推在售，预付推全部', () => {
+  for (const code of SALES_TRADE_TYPE_CODES) {
+    assert.ok([SALES_COLOR_OPTIONS_SCOPE.inStockOnly, SALES_COLOR_OPTIONS_SCOPE.allColors]
+      .includes(salesColorOptionsScopeFor(code)), `${code} 必须配一个认得出的候选范围`);
+  }
+  assert.equal(salesColorOptionsScopeFor('SALE_CASH'), SALES_COLOR_OPTIONS_SCOPE.inStockOnly);
+  assert.equal(salesColorOptionsScopeFor('SALE_UNPAID'), SALES_COLOR_OPTIONS_SCOPE.inStockOnly);
+  assert.equal(salesColorOptionsScopeFor('SALE_PREPAID'), SALES_COLOR_OPTIONS_SCOPE.allColors,
+    '预付卖的就是没货、要调货的那一双 ⇒ 不按在售过滤');
+  // 中文标签串起来也一样（模型只输出中文）。
+  assert.equal(salesColorOptionsScopeFor(tradeTypeCodeFromLabel('预付')), SALES_COLOR_OPTIONS_SCOPE.allColors);
+  assert.equal(salesColorOptionsScopeFor(tradeTypeCodeFromLabel('现货')), SALES_COLOR_OPTIONS_SCOPE.inStockOnly);
 });
 
 test('「中文标签 → 编码 → 解析策略」串起来也是配置说了算（模型只输出中文）', () => {
