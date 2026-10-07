@@ -1,20 +1,27 @@
-// 「补货品信息」段落**位置**的回归测试（业务负责人 2026-10-07 拍板 + 当天收窄）。
+// 「补货品信息」段落**位置**的回归测试（业务负责人 2026-10-07 拍板；同一天她改过两次口径）。
 //
 // 起因（她原话，逐字）：「我们的卡片能够实时更新，更新完之后，用户要补的链接其实就看不到了。
 //   所以我们在销售信息确认卡片里不需要放这个信息；等用户点击确认之后，卡片不是会更新吗？
 //   更新时再补这个信息。」
 // ⇒ 这一段从「请确认销售订单」卡（`salesConfirmationCard`）挪到**点确认之后更新的卡片**。
 //
-// 🔴 但同一天她**明确纠正**了"两边都放"（逐字）：「**不是，是只放在2上！**」
-//   她的编号：① =「销售订单处理中」卡（`salesProcessingCard`，stage=processing，
-//   点确认后 0.3 秒出现、只停留 1~2 分钟就被终态卡 patch 覆盖）；
-//   ② = 绿色「销售订单已入账」终态卡（`salesStatusCard` 的 posted 分支，长期留着）。
-//   ⇒ **她只要 ② 有**：这一段**只挂在已入账终态卡上**，处理中卡**不带**。
+// 🔴 她要的是**哪几张**：同一天改了两次，**本文件钉的是【最后一次】**（别再翻回去）：
+//   ① 第一版（PR #220）：**处理中卡 + 已入账终态卡都放**；
+//   ② 她随后**纠正**（逐字）：「**不是，是只放在2上！**」
+//      她的编号：① =「销售订单处理中」卡（`salesProcessingCard`，stage=processing，
+//      点确认后 0.3 秒出现、只停留 1~2 分钟就被终态卡 patch 覆盖）；
+//      ② = 绿色「销售订单已入账」终态卡（`salesStatusCard` 的 posted 分支，长期留着）。
+//      ⇒ PR #221 收窄成**只放 ②**（处理中卡那一行删掉）；
+//   ③ 她当天**再改口**（逐字，**这是最新口径**）：
+//      「我要说一下，我刚才跟你说我们的补货品信息提示只在终态，其实还有一个中间态。
+//        我现在觉得，中间态也应该有提示。是的，中间态也应该有，所以也需要你补充下～」
+//      ⇒ **最终 = ① 和 ② 都要有**（处理中卡那一行已加回来）。
+//   ⚠️ 从头到尾**没变**的一条：**确认卡片（点之前）不要**。
 //
 // 验收标准（逐条钉在这里；括号里是钉它的用例）：
 //   ① 确认卡片**不含**该段落 —— 有缺口不含，无缺口**也不留空壳**（1）
-//   ② 处理中卡**不含**该段落；且它的 `elements` **逐字等于**"没有该段"的那一份
-//      —— 防止将来又悄悄加回来（2、3、9）
+//   ② 处理中卡**含**该段落，行格式逐字、链接 url 逐字；且它的 `elements` **逐字等于**
+//      "进度行 + 明细 + 这一段 + note"那一份（防止将来又悄悄删掉 / 改位置）（2、3、9）
 //   ③ 终态「已入账」卡**含**该段落，行格式逐字、链接 url 逐字（4、9；一条不许放宽）
 //   ④ 无缺口时，三张卡都**不出现**该段落（1、5）
 //   ⑤ 链接仍是那条货品记录的飞书 url（3、4、9；url 直接来自 `draft.product_info_gaps[].url`）
@@ -24,8 +31,8 @@
 //   ⑧ 点确认这条链路上**没有**为了这段文字再读一次「货品信息」表（9）
 //
 // ⚠️ 本文件是**新增**的；既有断言只在"位置变了"的地方改（见 larkCards.test.js /
-//   larkMvpService.test.js 的对应注释），**没有一条是放宽** —— 处理中卡那几条是从
-//   "含"翻成"不含"的**反向断言**（收严），终态卡那几条**一条都没动**。
+//   larkMvpService.test.js 的对应注释），**没有一条是放宽** —— 处理中卡那几条被 #221 翻成
+//   "不含"（反向断言）、本次按 ③ 的最新口径又翻回"含"；**终态卡那几条从始至终一条都没动**。
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -85,39 +92,48 @@ test('确认卡片：有缺口也不出现「补货品信息」段落（位置�
 });
 
 // ── ② 处理中卡（点完确认立刻可见、1~2 分钟后被终态卡覆盖的那张）──────────────
-//     🔴 她 2026-10-07 的最终口径（逐字）：「不是，是只放在2上！」
-//     ⇒ ① 这一张**不含**该段落。下面两条都是从原来的"含"翻成"不含"的**反向断言**。
+//     🔴 她 2026-10-07 的**最新口径**（逐字）：「**中间态也应该有提示**」
+//     ⇒ ① 这一张**含**该段落。下面两条是从 #221 的"不含"翻回"含"的**正向断言**
+//       （与 PR #220 的钉法一致，另外多加了一条 `elements` 逐字加固）。
 
-test('处理中卡：**不含**「补货品信息」段落（她 2026-10-07：「不是，是只放在2上！」）', () => {
+test('处理中卡：含「补货品信息」段落，行格式与链接逐字（note 小字、note 仍是最后一行）', () => {
   const config = resolveSalesProcessingCardConfig({});
-  const withGaps = salesProcessingCard({ items: ITEMS, product_info_gaps: GAPS }, config);
-  assert.equal(sectionElement(withGaps), undefined, '处理中卡上不该有这一段 note 小字');
-  assert.doesNotMatch(gapsCardText(withGaps), /补货品信息/);
-  assert.doesNotMatch(gapsCardText(withGaps), /去补全这条记录/);
-  assert.ok(!gapsCardText(withGaps).includes(GAP_URL), '链接 url 一个字都不许出现在处理中卡上');
-  // ⭐⭐ 加固：`elements` **逐字**等于"这份草稿没有该段"的那一份 —— 将来谁又把它加回来，
-  //    哪怕加得再隐蔽（多一个元素 / 多一句文案 / 多一个空壳）这里都会红。
-  const withoutGaps = salesProcessingCard({ items: ITEMS }, config);
-  assert.deepEqual(withGaps, withoutGaps, '有缺口和无缺口两张处理中卡必须逐字相同');
-  assert.deepEqual(withGaps.elements, [
+  const card = salesProcessingCard({ items: ITEMS, product_info_gaps: GAPS }, config);
+  const section = sectionElement(card);
+  assert.ok(section, '处理中卡上必须有这一段');
+  assert.equal(section.text.tag, 'lark_md');
+  assert.equal(section.text.content, EXPECTED_SECTION);
+  assert.match(section.text.content, /^补货品信息\n/);
+  assert.match(section.text.content, /还差：成本、样例图/);
+  // 段落位置：明细之后、note 之前 —— 既有那句 note 仍在最后一行（既有断言不变）。
+  assert.equal(card.elements.at(-1).tag, 'note');
+  assert.equal(card.elements.at(-1).elements[0].content, config.note);
+  assert.ok(card.elements.indexOf(section) < card.elements.length - 1);
+  // ⭐⭐ 加固（原 #221 那条"逐字等于没有该段"的反向断言，本次**改写成含该段的逐字断言**）：
+  //    `elements` 逐字 = 进度行 + 明细 + 这一段 + note —— 将来谁把它悄悄删掉、改位置、
+  //    换成一个空壳、或者顺手多塞一个元素，这里都会红。
+  assert.deepEqual(card.elements, [
     { tag: 'div', text: { tag: 'lark_md', content: config.progressLine } },
     { tag: 'div', text: { tag: 'lark_md', content: `<font color='${config.itemColor}'>1. 66356 42码 × 1 ￥99</font>` } },
+    { tag: 'div', text: { tag: 'lark_md', text_size: 'note', content: EXPECTED_SECTION } },
     { tag: 'note', elements: [{ tag: 'plain_text', content: config.note }] },
-  ], '处理中卡的 elements 逐字 = 一行提示 + 明细 + note（没有第 4 个元素）');
-  // 既有那句 note 仍在最后一行（既有断言不变）。
-  assert.equal(withGaps.elements.at(-1).tag, 'note');
-  assert.equal(withGaps.elements.at(-1).elements[0].content, config.note);
+  ], '处理中卡的 elements 逐字 = 进度行 + 明细 + 补货品信息段 + note（第 3 个元素就是这一段）');
+  // 有缺口 = 4 个元素；缺口为空时该段自己返回 `[]`（无空壳）—— 见下面第 ④ 组用例。
+  const withoutGaps = salesProcessingCard({ items: ITEMS }, config);
+  assert.equal(withoutGaps.elements.length, 3, '无缺口时不留空壳');
+  assert.notDeepEqual(card, withoutGaps, '有缺口 / 无缺口的处理中卡必须不同（差别就是这一段）');
 });
 
-test('处理中卡：那条货品记录的飞书 url **不**出现在这一张上（内容没被删，只是去了终态卡）', () => {
+test('处理中卡：链接 url 逐字等于那条货品记录的飞书 url（不重拼、不改写）', () => {
   const processing = salesProcessingCard({ items: ITEMS, product_info_gaps: GAPS },
     resolveSalesProcessingCardConfig({}));
-  assert.ok(!gapsCardText(processing).includes(GAP_URL), '处理中卡上不许出现那条记录的 url');
-  // 同一份 draft 走终态卡：链接必须**逐字**还在（这次收窄的是"位置"，不是把内容弄丢）。
+  assert.ok(sectionElement(processing).text.content.includes(`(${GAP_URL})`),
+    'markdown 链接的 url 必须是 draft 里那一条，一个字都不能动');
+  // 同一份 draft 走终态卡：两张卡上的链接必须**逐字相同**（这次加回来的是"位置"，不是新拼法）。
   const terminal = salesStatusCard({ items: ITEMS, product_info_gaps: GAPS },
     '销售订单已入账', 'm', 'green', { productInfoGaps: true });
-  assert.ok(sectionElement(terminal).text.content.includes(`(${GAP_URL})`),
-    'markdown 链接的 url 必须是 draft 里那一条，一个字都不能动');
+  assert.equal(sectionElement(processing).text.content, sectionElement(terminal).text.content,
+    '处理中卡与终态卡上的这一段必须逐字相同');
 });
 
 // ── ③ 终态卡（已入账）—— 本次改动的关键 ──────────────────────────────────
@@ -221,9 +237,10 @@ test('渲染：段落里每一个字、每一行上限都来自配置（换一�
   assert.match(only.text.content, /还有 1 个颜色也缺资料/);
 });
 
-// ⚠️ 下面三条原来经「处理中卡」渲染这一段来钉上限 / 文案；
-//   处理中卡不再带这一段之后，改成用**真正的渲染器**（`productInfoGapsElements`）
-//   与**终态卡**（现在唯一的挂载点）来钉 —— 钉的还是同一件事，没有放宽。
+// ⚠️ 下面三条原来经「处理中卡」渲染这一段来钉上限 / 文案；#221 收窄到"只终态卡"时
+//   改成用**真正的渲染器**（`productInfoGapsElements`）与**终态卡**来钉。
+//   本次按她最新口径把处理中卡加回来，于是**再补一条**（处理中卡上也钉一次上限），
+//   原来的三条**一条都没动**；钉的还是同一件事，没有放宽。
 
 test('渲染：超过默认上限（6）时只列 6 条，最后一行是"{count}"替换后的那句', () => {
   const many = Array.from({ length: 8 }, (_unused, index) => ({
@@ -239,12 +256,30 @@ test('渲染：超过默认上限（6）时只列 6 条，最后一行是"{count
   assert.match(content, /还有 2 个颜色也缺资料/);
 });
 
+// ⭐ 新增（2026-10-07，她最新口径"中间态也要有提示"）：处理中卡上同样吃这一段的上限 ——
+//   证明加回来的**是同一个渲染器**（不是另抄一份），上限 / 溢出那句在哪张卡上都是同一套。
+test('处理中卡：缺口超过上限时同样只列这么多条，最后一行是"{count}"替换后的那句', () => {
+  const many = Array.from({ length: 8 }, (_unused, index) => ({
+    record_id: `p_${index}`, label: `6635${index}白`, missing: ['成本'],
+    missing_sample_image: false, url: `https://example.com/p/${index}`,
+  }));
+  const card = salesProcessingCard({ items: ITEMS, product_info_gaps: many },
+    resolveSalesProcessingCardConfig({}));
+  const content = sectionElement(card).text.content;
+  assert.match(content, /66350白/);
+  assert.match(content, /66355白/);
+  assert.doesNotMatch(content, /66356白/, '第 7 条（下标 6）不该出现');
+  assert.match(content, /还有 2 个颜色也缺资料/);
+});
+
 test('终态卡：缺口超过上限时只列这么多条，最后一行是"{count}"替换后的那句', () => {
   const many = Array.from({ length: 8 }, (_unused, index) => ({
     record_id: `p_${index}`, label: `6635${index}白`, missing: ['成本'],
     missing_sample_image: false, url: `https://example.com/p/${index}`,
   }));
-  // 走终态卡（现在唯一的挂载点）：说明上限也照样在这张卡上生效。
+  // 走终态卡（她最初点名要长期留着的那一张）：说明上限也照样在这张卡上生效。
+  // ⚠️ 「终态卡是这一段唯一的挂载点」是 #221 的过时说法 —— 她 2026-10-07 最新口径是
+  //    **处理中卡也有**（见本文件第 ② 组与上面新增的那条处理中卡上限用例）。
   const card = salesStatusCard({ items: ITEMS, product_info_gaps: many },
     '销售订单已入账', 'm', 'green', { productInfoGaps: true });
   const content = sectionElement(card).text.content;
@@ -312,7 +347,7 @@ const runCardAction = async ({ taskId, draft, status = 'ready_to_confirm', actio
 const DELIVERED_DRAFT = () => ({ items: ITEMS, payments: [], delivery_status: '已交付',
   product_info_gaps: GAPS });
 
-test('链路 ①：点确认后**只有终态卡**带这一段；处理中卡与确认卡都不带', async () => {
+test('链路 ①：点确认后两张卡（处理中 + 已入账）都带这一段，确认卡片不再是它的家', async () => {
   const { cards, tableReads } = await runCardAction({
     taskId: 'sale_gap_posted', draft: DELIVERED_DRAFT(),
   });
@@ -320,19 +355,24 @@ test('链路 ①：点确认后**只有终态卡**带这一段；处理中卡与
   assert.equal(cards[0].header.title.content, resolveSalesProcessingCardConfig({}).title);
   assert.equal(cards[1].header.title.content, '销售订单已入账');
 
-  // ① =「销售订单处理中」卡：**不含**（她 2026-10-07 的最终口径：「不是，是只放在2上！」）。
-  assert.equal(sectionElement(cards[0]), undefined, '处理中卡上不许有这一段');
-  assert.ok(!gapsCardText(cards[0]).includes(GAP_URL), '处理中卡上不许出现那条记录的 url');
-  // ⭐⭐ 加固：走完**真实链路**之后，处理中卡的 `elements` 仍**逐字**等于"没有该段"的那一份
-  //    —— 将来谁又把它加回来（哪怕只多一个空元素），这里就红。
+  // ① =「销售订单处理中」卡：**含**，且逐字（她 2026-10-07 最新口径：「中间态也应该有提示」）。
+  //    ⚠️ 这一条是**直接对着 EXPECTED_SECTION 比**的（不是"两个渲染器互相比"）——
+  //    所以把 `salesProcessingCard` 里那一行删掉时，它会红（这就是 mutation 自证那一刀）。
+  assert.equal(sectionElement(cards[0]).text.content, EXPECTED_SECTION,
+    '处理中卡上的这一段必须逐字（把她最新口径钉死）');
+  assert.ok(gapsCardText(cards[0]).includes(GAP_URL), '处理中卡上必须出现那条记录的 url');
+  // ⭐⭐ 加固：走完**真实链路**之后，处理中卡仍**逐字等于**"这份草稿带该段"的那一份
+  //    —— 防止链路上别的地方动过这张卡（元素个数 / 顺序 / 文案）。
   assert.deepEqual(cards[0],
-    salesProcessingCard({ items: ITEMS, payments: [], delivery_status: '已交付' },
-      resolveSalesProcessingCardConfig()),
-    '处理中卡必须逐字等于不带该段的那一份（防止将来又悄悄加回来）');
+    salesProcessingCard(DELIVERED_DRAFT(), resolveSalesProcessingCardConfig()),
+    '处理中卡必须逐字等于"带该段"的那一份');
 
-  // ② =「销售订单已入账」终态卡：含，且**逐字**。
+  // ② =「销售订单已入账」终态卡：含，且**逐字**（这一条一个字都没放宽，也没动过）。
   assert.equal(sectionElement(cards[1]).text.content, EXPECTED_SECTION,
     '终态卡上的这一段必须逐字（这一条一个字都没放宽）');
+  // 两张卡上的这一段**逐字相同**（同一次 patch 用同一份 draft 渲染）。
+  assert.equal(sectionElement(cards[0]).text.content, sectionElement(cards[1]).text.content,
+    '处理中卡与终态卡上的这一段必须逐字相同');
 
   // 这一段**不再**挂在确认卡片上：这两次更新里没有任何一张是「请确认销售订单」卡
   // （确认卡片对 `product_info_gaps` 完全无感，见本文件第一条用例）。
