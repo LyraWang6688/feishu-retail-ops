@@ -107,5 +107,5 @@
 | A9 | 按本仓既有模式留退役足迹（照 `docs/archive/legacy-wechat-retirement.md`）；两份战报专属文档标「已退役」；`docs/README.md` 索引同步 | 读文件 | ✅ 达标：新增 `docs/archive/sales-daily-report-retirement.md`（同款 1–8 节结构）；两份专属文档加「⚠️ 已退役（2026-10-07）」抬头；`docs/README.md` §4 历史文档加 3 行；顺带修正 `module-split-and-main-flow`（(c) 划掉）与两处指向已删模块的现行性描述（`card-update-multi` / `sales-confirm-processing-card-visible`） |
 | A10 | `grep -rn "daily_report\|SALES_DAILY_REPORT\|salesDailyReport" server/` = **0 命中** | 实测 | ✅ 达标：`grep -rn ... server/` 退出码 1（0 命中） |
 | A11 | 全量 `node --test --test-concurrency=1` **连跑 2 次 fail=0** | 实测 | ✅ 达标：**第 1 次 1039/1039 pass、fail 0；第 2 次 1039/1039 pass、fail 0**（改动前基线 1065/1065；差值 **−26** = 删 27 条战报用例 ＋ 搬回 1 条共享轮询器用例，账对得上） |
-| A12 | PR CI 三项 CLEAN（`gh pr checks`），未用 `--admin`，**未合并、未部署** | `gh pr checks` | 待核（PR 开出来后填） |
+| A12 | PR CI 三项 CLEAN（`gh pr checks`），未用 `--admin`，**未合并、未部署** | `gh pr checks` | ✅ 达标：PR **#228** 的 `gh pr checks` 三项全 `pass` —— `Analyze (javascript-typescript)` / `CodeQL` / `test`，`mergeStateStatus = CLEAN`；**没有用 `--admin`**，PR **未合并**、**未部署** |
 
