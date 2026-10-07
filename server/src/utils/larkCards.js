@@ -29,8 +29,8 @@ const text = (value) => String(value ?? '').replace(/\n/g, ' ');
 //   "每张卡各自独立"成为语义；字段清单（`wide_screen_mode` + `update_multi`）
 //   仍然只有这一处定义，DRY 不丢。
 //
-// ⚠️ 不走 patch 的卡片（`saleLookupCard` / `purchaseRequestConfirmationCard` /
-//    `utils/salesDailyReportCard.js`）**刻意不带**这个字段 —— 它们只发不改。
+// ⚠️ 不走 patch 的卡片（`saleLookupCard` / `purchaseRequestConfirmationCard`）
+//    **刻意不带**这个字段 —— 它们只发不改。
 const patchableCardConfig = () => ({ wide_screen_mode: true, update_multi: true });
 
 // 明细行只写她需要核对的事实：货号、尺码、数量、金额、赠品。
@@ -497,7 +497,7 @@ const salesStatusCard = (draft, title, message, template = 'blue', options = {})
 //
 // 视觉上做两件事（她的目标：「不仔细看标题也能看出变了」）：
 //   ① 明细区整段套 `<font color='…'>` **变灰** —— 颜色写法用仓库既有的那种
-//      （`utils/salesDailyReportCard.js` 的 `<font color='grey'>`，`lark_md` 元素支持），
+//      （`config/salesProcessingCard` 里配的 `<font color='grey'>`，`lark_md` 元素支持），
 //      **不自己发明 HTML**；
 //   ② 明细**上方**多一行醒目的「⏳ 正在写入…」提示（第一眼就能看到）。
 //

@@ -24,7 +24,7 @@
 // ⚠️ 这里**只有显示**：缺口从哪来（卖单解析时读一次「货品信息」表 → `productInfoGapsFromIndex`
 //   → `draft.product_info_gaps`）与这一段**无关**，本文件一行都不碰判定。
 // ⚠️ **取值规则走 `config/envValue`**（**没设** → 默认值；**设了**（含空串）→ 就是显式取值），
-//   与 `salesProcessingCard` / `privateChatNotice` / `salesDailyReportPush` 共用同一套，
+//   与 `salesProcessingCard` / `privateChatNotice` 共用同一套，
 //   避免"空串算不算关"各处走歪。
 // ⚠️ **调用时才解析**（`resolveProductInfoGapsConfig(process.env)`），不在模块加载时求值 ——
 //   2026-10-06 的 dotenv 加载顺序事故就是这么来的。

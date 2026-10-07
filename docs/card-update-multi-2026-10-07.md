@@ -5,6 +5,13 @@
 > 但她的界面上卡片纹丝不动 —— 因为飞书对**独享卡片**（`update_multi: false`，默认值）
 > 的更新**只有操作者自己看得到**，她把卡片发在群里、她不是"操作者"。
 
+> ⚠️ **后续变更（2026-10-07 晚）**：本文件第三节验收标准 ④ 与第四节两张表里列的
+> **4 张**「刻意不动」的卡，其中 `salesDailyReportCard` 已随**「销售战报」退役**整体删除
+> ⇒ 现在只剩 **3 张**（`saleLookupCard` ×2 分支 / `purchaseRequestConfirmationCard`）；
+> `server/test/cardUpdateMulti.test.js` 的反向断言相应改成 3 张。
+> **本文件正文按当时事实保留**，其余结论（① ② ③ ⑤ ⑥ ⑦ ⑧）都还有效。
+> 退役记录见 [archive/sales-daily-report-retirement.md](archive/sales-daily-report-retirement.md)。
+
 ---
 
 ## 一、现场事实（真机）

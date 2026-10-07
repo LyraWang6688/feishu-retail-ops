@@ -59,7 +59,7 @@
 | `SALES_PROCESSING_CARD_PROGRESS_LINE` | `⏳ 正在写入销售记录与收款…` | 明细上方那行提示（空串 = 不出这行） |
 | `SALES_PROCESSING_CARD_NOTE` | `已收到确认，正在写入销售记录和收款；请勿重复点击。` | 卡片底部 note（逐字沿用原句） |
 
-取值规则与 `privateChatNotice` / `salesDailyReportPush` 同一套（`config/envValue`）：
+取值规则与 `privateChatNotice` / `productInfoGaps` 同一套（`config/envValue`）：
 **没设** → 默认值；**设了**（含空串）→ 显式取值。
 
 ## 改完之后长什么样（文字示意）
