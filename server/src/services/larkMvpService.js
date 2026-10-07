@@ -735,6 +735,16 @@ class LarkMvpService {
       chat_type: message.chat_type,
       message_type: message.message_type,
     });
+    // ⭐ 业务负责人 2026-10-07 决定**保留这一句**（对面是人，完全静默会让人以为机器人坏了）。
+    //    这是私聊链路上【唯一】保留的动作：不建任务、不进 AI、不读表、不写表。
+    //    文案与"回不回"都在 config/privateChatNotice 里（显式布尔；空串 = 关掉那句话）。
+    const { resolvePrivateChatNotice } = require('../config/privateChatNotice');
+    const notice = resolvePrivateChatNotice();
+    if (notice.enabled && notice.text) {
+      await this.sendText(senderOpenId, notice.text).catch((error) => {
+        logWarn('lark.private_chat.notice_failed', { message_id: message.message_id, error: error.message });
+      });
+    }
     return { accepted: false, reason: 'private_chat_removed' };
   }
 
