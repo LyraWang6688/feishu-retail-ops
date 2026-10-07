@@ -152,3 +152,95 @@
 
 ⚠️ 飞书侧前置：应用需有 `im:message.pins:write_only`（或已有的 `im:message`）权限；
 **机器人已在该采购群**；该群**不能设置成"仅群主/群管理员可 Pin"**（否则 230046）。
+
+---
+
+## 六、逐条对照（改完之后**实际**是什么样）
+
+证据统一取自：`server/test/pendingDealPushPin.test.js`（新，假 client，**不打真机**）、
+`server/test/pendingDealPush.test.js`（既有回归）、真实日志行（跑用例时打出来的）。
+
+| 验收项 | 结果 | 证据 |
+| --- | --- | --- |
+| A1 显式布尔、默认 false、空串=关、认不出抛错 | ✅ | 用例「置顶开关是显式布尔…」（`PIN=true/1/空/false/钉住` 五种取值） |
+| A2 默认配置只多一个键，其余一字不变 | ✅ | 用例「配置默认值…」仍是 `assert.deepEqual` **严格全等**（只加了 `pinEnabled:false`） |
+| A3 `.env.example` 同步 | ✅ | `.env.example` 新增 10 行（含"为什么默认关 / 打开时的行为 / 失败不影响推送"） |
+| B1 推送行为一字不变 | ✅ | 既有 14 条用例**全部逐字未改**通过（唯一改动是默认配置那一个键） |
+| B2 置顶关着 → 零 pin 调用 | ✅ | 用例「置顶关着（默认）」断言 `calls === ['message.create']`、`pinReason='pin_disabled'` |
+| B3 无候选单 / 未配群 → 与今天一致 | ✅ | 用例「没有候选单…」「没配群 id…」断言 `calls` 为空、`reason` 不变 |
+| C1 发出后调 `im.pin.create` | ✅ | 用例「首次置顶…」：`calls = ['message.create','pin.create']` |
+| C2 **先 unpin 上一条、再 pin 新的**（顺序） | ✅ | 用例「第二天…」：`['message.create','pin.delete','pin.create']` 顺序断言 |
+| C3 首次只 create、不 delete | ✅ | 用例「首次置顶…」`calls[1].payload = { data: { message_id: 'om_day1' } }` |
+| C4 pin 成功后落本地状态 | ✅ | `pending_deal_push_pin_state.json` 的 `pinned_message_id / chat_id / day` 逐字断言 |
+| C5 unpin 失败 → 不 pin 新的、状态保留、推送仍成功 | ✅ | 用例「上一条 unpin 失败（230046）…」：`pushedOrderCount=1`、`pinReason='previous_unpin_failed'`、状态仍 `om_day1` |
+| C6 pin 失败 → 只 warn、不抛、不重试 | ✅ | 用例「pin 抛异常…」「pin 返回业务错误码（230027）…」（`pin.create` 只被调 1 次） |
+| C7 client 没有 `im.pin` | ✅ | 用例「client 没有 im.pin…」：`pinReason='client_missing'`、推送照常 |
+| C8 状态读写失败 | ✅ | 用例「状态读不出来…」（`state_unavailable`）「状态写不进去…」（`pinned=true` 仍成立） |
+| C9 返回值新增 `pinned`/`pinReason`，既有字段不变 | ✅ | 既有用例断言 `pushedOrderCount/messageId/reason/missingLinkCount` 全部通过 |
+| C10 同一天第二次：不发送也不置顶 | ✅ | 用例「上一条 unpin 失败…」末尾断言 `reason='already_ran_today'`；既有「按天认领」用例通过 |
+| C11 业务错误码 → warn、不重试 | ✅ | create 路径测 `230027`、delete 路径测 `230046`（两者共用 `code!==0 → 失败` 同一分支） |
+| D1/D2 日志事件齐全 | ✅ | 实跑输出里逐条可见（见下方日志样例），字段不含中文 |
+| D3 `…push.sent` 补 `pinned`/`pin_reason` | ✅ | `"event":"sales.pending_deal_push.sent",…,"pinned":false,"pin_reason":"pin_failed"` |
+| E1 不碰 `app.js` / 战报 / 私聊 / 口径 | ✅ | `git diff origin/main -- server/src/app.js` **为空**；改动仅 7 个文件 |
+| E2 既有断言不放宽 | ✅ | 既有文件只有 1 处改动（默认配置 deepEqual **加**一个键），仍是严格全等 |
+| E3 全量连跑 2 次 fail=0 | ✅ | 见第七节 |
+| E4 未部署 / 未写生产表 / 未改线上 .env / 未真机试置顶 | ✅ | 全程假 client；无任何 `deploy_*` / `pm2` / 生产表调用 |
+
+### 实跑出来的日志（节选，逐字）
+
+```json
+{"event":"sales.pending_deal_push.pin.succeeded","day":"2026-10-07","message_id":"om_day2","previous_message_id":"om_day1"}
+{"event":"sales.pending_deal_push.pin.unpinned","day":"2026-10-07","message_id":"om_day1"}
+{"event":"sales.pending_deal_push.pin.unpin_failed","day":"2026-10-07","message_id":"om_day1","error":"No Permission to Pin/Unpin messages in the chat (Code: 230046)","hint":"上一条取消置顶失败 → 本次不置顶新的（避免置顶堆积），状态保留，明天再试；推送本身不受影响"}
+{"event":"sales.pending_deal_push.pin.failed","day":"2026-10-06","message_id":"om_day1","error":"Lack of necessary permissions (Code: 230027)","hint":"置顶失败不影响推送本身（消息已发出）；不重试，明天照常推"}
+{"event":"sales.pending_deal_push.pin.client_missing","day":"2026-10-06","message_id":"om_day1","hint":"飞书 client 没有 im.pin（create/delete），本次不置顶；推送照常"}
+{"event":"sales.pending_deal_push.pin.state_write_failed","day":"2026-10-06","update_error":"disk full","create_error":"disk full","hint":"置顶已成功但本地状态没记上：下一次可能不会取消这一条（置顶会多一条），需要人工看一眼"}
+{"event":"sales.pending_deal_push.sent","day":"2026-10-06","order_count":1,"order_ids":["sale_a"],"message_id":"om_day1","pinned":false,"pin_reason":"pin_failed"}
+```
+
+⭐ 注意 `pin.succeeded` 里的 `previous_message_id`：它就是"**这一次先取消了哪一条**"——
+置顶到底堆没堆，grep 这一条即可。
+
+---
+
+## 七、CI 与全量测试的实际输出
+
+本地（**独立 worktree** `.local/worktrees/pending-deal-pin`，HEAD = 提交 `2ba75aa`+本分支改动）：
+
+```
+=== FULL RUN 1 ===   ℹ tests 1081  ℹ pass 1081  ℹ fail 0  ℹ cancelled 0  ℹ skipped 0  ℹ todo 0
+=== FULL RUN 2 ===   ℹ tests 1081  ℹ pass 1081  ℹ fail 0  ℹ cancelled 0  ℹ skipped 0  ℹ todo 0
+```
+
+PR #229 的 `gh pr checks`（`mergeStateStatus: CLEAN`）：
+
+```
+Analyze (javascript-typescript)   pass   55s
+CodeQL                            pass    3s
+test                              pass   47s
+```
+
+真启动面（不改 `app.js`，但要确认新 require 没破坏加载顺序）：`node -e "require('./src/app.js')"` → `app.js loaded OK`；
+再用**真配置 + 真 service** 构造过一次：`pinEnabled:true` 解析正确、`pin service wired: true`、
+`store.dir` 与按天认领同一个目录、`client` 复用同一个实例（不新建连接）。
+
+---
+
+## 八、不确定处（如实列出）
+
+1. ⚠️ **官方没有写"一个群最多能置顶几条"** —— 我把 `create/delete/list` 三篇 + 概述都 curl 过了，
+   只有"同一条消息 ≤5 QPS"和 `list.page_size ≤50`（那是分页）。所以"不会堆积"是**靠我们自己
+   unpin 上一条**保证的，不是靠平台上限；万一 unpin 连续失败，宁可**不置顶新的**（C5），
+   也不会出现"机器人一天钉一条、越钉越多"。
+2. ⚠️ **机器人是否真的能在这个群里 Pin**：与"群是否设成仅群主/管理员可 Pin"有关（230046），
+   **只有真机能验**；本次按纪律**没有在真机试**。若打开后日志出现 `pin.failed` / `pin.unpin_failed`，
+   先看错误码：230046 = 群设置，230027 = 应用缺 `im:message.pins:write_only` 权限。
+3. ⚠️ **`PENDING_DEAL_PUSH_CHAT_ID` 没有 `PURCHASE_CHAT_ID` 回落**（见第一节末与第五节的表）——
+   这是**既有事实**，不是本次引入的；我**没有**擅自加回落（那会改目标群口径）。要加的话是一行配置的事，
+   需要业务负责人点头。
+4. ⚠️ **推送文案仍然只有 单号 + 待收金额（+深链）**：没有货号 / 成交额 / 售出日期 /
+   未付 vs 预付标注 / 未交付数量。她问的"够不够"里，**筛选口径够（预付+未付都覆盖）**，
+   但**信息量不够**。扩字段=改口径，未做，等她点头。
+5. ⚠️ 「7 天窗口」是老口径（只在最近 7 个上海自然日内找单），**超过 7 天仍没成交的单不会进推送**。
+   她这次没提窗口，我没动。
+
