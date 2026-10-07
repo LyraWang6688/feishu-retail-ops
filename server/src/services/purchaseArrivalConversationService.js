@@ -397,9 +397,19 @@ class PurchaseArrivalConversationService {
    */
   async rejectLocked(taskId, operatorOpenId, event = {}) {
     const task = await this.store.get(taskId);
-    if (!task) return { toast: { type: 'error', content: '这条到货核对记录已经找不到了' } };
+    if (!task) {
+      return this.visibleFailure({
+        tier: 'task_missing', taskId, operator: operatorOpenId, event, task,
+        copy: this.config.replies.taskMissing, logEvent: 'purchase.arrival.reconcile.task_missing',
+      });
+    }
     if (task.status === 'posted') {
-      return { toast: { type: 'info', content: this.config.replies.alreadyPosted } };
+      // 已经入库了再点「否」：**不重复入库、也不改状态**，把那张卡**如实改成绿色终态**
+      // （以前这里只弹 toast，她再点一次还是"看不见任何变化"）。
+      // ⚠️ 卡片**不改内容方向**：已入库就是已入库，不因为她又点了个「否」而改成别的。
+      return this.visibleAlreadyPosted({
+        tier: 'reject_after_posted', taskId, operator: operatorOpenId, event, task,
+      });
     }
     await this.store.update(taskId, {
       status: 'rejected',
@@ -412,7 +422,9 @@ class PurchaseArrivalConversationService {
       tables_written: 0,
     });
     const cardMessageId = event?.context?.open_message_id || event?.open_message_id || task.card_message_id || '';
-    await this.safeReplyText(cardMessageId, this.config.replies.rejected);
+    // ⚠️ 点「否」**刻意不 patch 卡片**：卡片上那两个按钮要留着 —— 她还能再点「是」
+    //    （见下面的用例「点「否」之后再点「是」」）。只把回话补上 `threadId`，让它落回本话题。
+    await this.safeReplyText(cardMessageId, this.config.replies.rejected, this.threadOptions(task));
     return { toast: { type: 'info', content: this.config.replies.rejected } };
   }
 
@@ -431,15 +443,30 @@ class PurchaseArrivalConversationService {
   async confirmLocked(taskId, operatorOpenId, event = {}) {
     const { replies } = this.config;
     const task = await this.store.get(taskId);
-    if (!task) return { toast: { type: 'error', content: '这条到货核对记录已经找不到了' } };
+    if (!task) {
+      // ⭐ 2026-10-07：以前这里**只弹 toast**，她在话题里看不见任何东西 → 现在 patch 卡片 + 回文字。
+      return this.visibleFailure({
+        tier: 'task_missing', taskId, operator: operatorOpenId, event, task,
+        copy: replies.taskMissing, logEvent: 'purchase.arrival.reconcile.task_missing',
+      });
+    }
     if (task.status === 'posted') {
       // 重复点「是」（双击 / 飞书重投）：**不重复入库**，如实回执。
+      // ⭐ 2026-10-07：顺手把那张卡**再 patch 一次成绿色终态** —— 正常路径上它已经是终态，
+      //    这一次是幂等的重试；万一上一次 patch 没改成，她这一次点击就能看见结果。
       logInfo('purchase.arrival.reconcile.confirm_duplicate', { task_id: taskId, operator_open_id: operatorOpenId || '' });
-      return { toast: { type: 'info', content: replies.alreadyPosted } };
+      return this.visibleAlreadyPosted({
+        tier: 'confirm_duplicate', taskId, operator: operatorOpenId, event, task,
+      });
     }
     if (!Array.isArray(task.plan) || !task.plan.length || !task.acceptance_text
       || !task.request_ids?.length || !task.request_rows?.length) {
-      return { toast: { type: 'info', content: replies.notConfirmedYet } };
+      // 她说的话我们还没算出结果 → 同样不能只弹 toast（那是"点了没反应"的另一种样子）。
+      return this.visibleFailure({
+        tier: 'not_confirmed_yet', taskId, operator: operatorOpenId, event, task,
+        copy: replies.notConfirmedYet, logEvent: 'purchase.arrival.reconcile.not_confirmed_yet',
+        toastType: 'info',
+      });
     }
     let arrivalRecordId = String(task.arrival_record_id || '').trim();
     if (!arrivalRecordId) {
@@ -447,7 +474,11 @@ class PurchaseArrivalConversationService {
         arrivalRecordId = await this.createArrivalRecord(task, operatorOpenId);
       } catch (error) {
         logError('purchase.arrival.reconcile.arrival_create_failed', { task_id: taskId, error: error.message });
-        return { toast: { type: 'error', content: `「采购到货」这一行没建成：${error.message}。请再点一次「是」` } };
+        return this.visibleFailure({
+          tier: 'arrival_create_failed', taskId, operator: operatorOpenId, event, task, error,
+          copy: formatCopy(replies.arrivalCreateFailed, { error: error.message }),
+          logEvent: 'purchase.arrival.reconcile.arrival_create_failed',
+        });
       }
       // 立刻落盘：崩溃在"建完还没记住"之间时，重试靠它复用同一行，不会建出第二条到货记录。
       await this.store.update(taskId, { arrival_record_id: arrivalRecordId });
@@ -492,9 +523,16 @@ class PurchaseArrivalConversationService {
       await this.confirmArrival(taskId, latest, operatorOpenId);
     } catch (error) {
       // 入库中途失败：**不改状态**（停在 posting），她再点一次「是」会从断点继续。
+      // ⚠️ 错误原文**一个字都不吞**：日志（下面 `logError` 的 `error`）与**她要看到的那句话**
+      //    （`{error}` 插值）里都带着它。返回的 toast 仍然是 `error`（不许把失败写成成功）。
       logError('purchase.arrival.reconcile.confirm_failed', { task_id: taskId, error: error.message });
-      await this.safeReplyText(this.replyTarget(event, task), `入库没成功：${error.message}。请再点一次「是」`);
-      return { toast: { type: 'error', content: `入库没成功：${error.message}` } };
+      // ⭐ 2026-10-07：失败**必须在她点的那张卡片上看得见**（以前只有一行不带 `threadId` 的回话，
+      //    她连着两次反馈「卡片点击后没有任何反应」）。
+      return this.visibleFailure({
+        tier: 'inbound_failed', taskId, operator: operatorOpenId, event, task, error,
+        copy: formatCopy(this.config.replies.inboundFailed, { error: error.message }),
+        logEvent: 'purchase.arrival.reconcile.confirm_failed',
+      });
     }
     await this.store.update(taskId, { status: 'posted', posted_at: new Date(this.now()).toISOString() });
     const total = draft.actual.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
@@ -513,11 +551,18 @@ class PurchaseArrivalConversationService {
     });
     // 明确反馈（群里回一句 + 卡片改成终态）。发不出去只记日志，业务事实已经落地。
     // ⚠️ 顺序：先落库（上面那一步）再回话——回话失败不能把已经入库的事实判成失败。
-    await this.safeReplyText(this.replyTarget(event, task), summary);
-    await this.safeUpdateCard(
-      event?.context?.open_message_id || event?.open_message_id || task.card_message_id || '',
+    // ⚠️ 2026-10-07：回话补 `threadId` —— 她是在**群话题**里操作的，回复必须落回那条话题
+    //    （少了它就发到主群洪流里，她一样"看不到"）。
+    await this.safeReplyText(this.replyTarget(event, task), summary, this.threadOptions(task));
+    const cardMessageId = event?.context?.open_message_id || event?.open_message_id || task.card_message_id || '';
+    const cardPatched = await this.safeUpdateCard(
+      cardMessageId,
       purchaseArrivalReconcileStatusCard({ batchNo: task.batch_no || '', message: summary, template: 'green' }),
     );
+    // ⭐ 正向证据：成功之后**卡片到底改没改成**也留痕（改不动时她那边的现象就是"点了没反应"）。
+    logInfo('purchase.arrival.reconcile.success_notice', {
+      task_id: taskId, card_message_id: cardMessageId, card_patched: cardPatched,
+    });
     // ⭐ 正向证据：这些行**没有**入库（不是"看起来没写"，是把该写多少写进日志）。
     //    与 `purchase.arrival.reconcile.posted` 一起看，就能核清"0 双的行到底动没动库存"。
     if (zeroRows.length) {
@@ -752,6 +797,87 @@ class PurchaseArrivalConversationService {
 
   replyTarget(event, task) {
     return event?.context?.open_message_id || event?.open_message_id || task?.card_message_id || '';
+  }
+
+  /**
+   * 回复这条消息时要带的话题上下文。
+   *
+   * ⭐ 2026-10-07（她第二次说「卡片点击后没有任何反应」）：**卡片点击没有 `thread_id`**，
+   *    但对话任务上记着它是从哪个话题起的（`task.thread_id`，见 handleTopicMessageLocked）。
+   *    把它交给飞书发送适配器 → 带 `reply_in_thread` → 回复落回**她正在看的那个话题**。
+   *    任务上没有话题（主群 @ 进来的）→ 空对象，行为与改动前逐字相同。
+   */
+  threadOptions(task) {
+    const threadId = textValue(task?.thread_id);
+    return threadId ? { threadId } : {};
+  }
+
+  /**
+   * 🔴 **失败的可见反馈**（业务负责人 2026-10-07 连着两次：「卡片点击后也是没有任何反应」）。
+   *
+   * 以前失败的出口是「一行日志 + 一句不带 `threadId` 的回话 + 一个一闪而过的 toast」，
+   * 卡片**原样不动** ⇒ 她的结论就是"点了没反应"。现在两条腿一起走：
+   *   ① **把那张卡片 patch 成终态**（红色，标题 `card.failedTitle`）—— 就在她点的地方，跑不掉；
+   *   ② **回一句同样的话**（带 `threadId`，落回本话题）—— 卡片改不动时的兜底。
+   * 两者都失败也不隐藏：各记一条 `*_failed` 警告 + 下面这条 `failure_notice` 里如实写
+   * `card_patched` / `replied`，排查时能直接看出"她到底看没看到"。
+   *
+   * ⚠️ 这里**只负责"让她看见"**：错误原文原样带上（调用方用 `{error}` 插值），
+   *    **绝不**吞掉、**绝不**把失败说成成功；返回的 toast 仍是 `error`（除非调用方显式指定
+   *    为非错误的 `toastType`，例如"还没算出结果"）。
+   */
+  async visibleFailure({
+    tier, taskId, operator = '', event = {}, task = null, copy,
+    logEvent = '', error = null, toastType = 'error', template = 'red',
+  } = {}) {
+    // "还没算出结果"不是错误，只是要她再说一句：卡片用橙色，别把中性状态说成失败。
+    const headerTemplate = tier === 'not_confirmed_yet' ? 'orange' : template;
+    const messageId = this.replyTarget(event, task);
+    const cardPatched = await this.safeUpdateCard(messageId, purchaseArrivalReconcileStatusCard({
+      batchNo: task?.batch_no || '',
+      message: copy,
+      template: headerTemplate,
+      title: this.config.card.failedTitle,
+    }));
+    const replied = await this.safeReplyText(messageId, copy, this.threadOptions(task));
+    // ⭐ 正向证据：她"应该看到"的东西与"实际发出去"的东西都写下来。
+    //    ⚠️ 与调用方那条 error 级日志（如 `purchase.arrival.reconcile.confirm_failed`）**并存**，
+    //    不是替换 —— 错误原文仍然在 error 日志里。
+    logInfo('purchase.arrival.reconcile.failure_notice', {
+      tier,
+      task_id: taskId,
+      operator_open_id: operator || '',
+      card_message_id: messageId,
+      card_patched: cardPatched,
+      replied,
+      log_event: logEvent,
+      error: error ? error.message : '',
+      // 业务事实：失败**不写**入库、状态停在可重试的位置（由调用方保证）。
+      tables_written: 0,
+    });
+    return { toast: { type: toastType, content: copy } };
+  }
+
+  /**
+   * 「这一批已经入过库了」的可见终态（重复点「是」/ 已入库之后又点「否」）。
+   *
+   * 与 `visibleFailure` 的区别：这不是失败，卡片用**绿色**；也**不回文字**
+   *（她只是重复点了一次，不必再刷一条消息），只把卡片**幂等地**再改成终态 ——
+   * 上一次 patch 万一没成功，这一次点击就能看见。
+   */
+  async visibleAlreadyPosted({ tier, taskId, operator = '', event = {}, task = null } = {}) {
+    const copy = this.config.replies.alreadyPosted;
+    const messageId = this.replyTarget(event, task);
+    const cardPatched = await this.safeUpdateCard(messageId, purchaseArrivalReconcileStatusCard({
+      batchNo: task?.batch_no || '',
+      message: copy,
+      template: 'green',
+    }));
+    logInfo('purchase.arrival.reconcile.success_notice', {
+      tier, task_id: taskId, operator_open_id: operator || '',
+      card_message_id: messageId, card_patched: cardPatched, replied: false,
+    });
+    return { toast: { type: 'info', content: copy } };
   }
 
   /**

@@ -778,6 +778,125 @@ test('入库：真的调 inventory.applyPurchase（带采购入库记录 id 作�
   assert.ok(inventory.calls[0].purchaseInboundRecordId, '库存的幂等来源是采购入库记录 id');
 });
 
+// ─── 行为查找：按【行为编码】，不按中文名（2026-10-07 真机事故的回归钉子）──────
+//
+// 现场：业务负责人 2026-10-07 把生产「行为管理」里那条从「采购入库」改名成「入库」
+// （编码 `PURCHASE_IN` 没动）→ 老代码按中文名找 → 0 条命中 → 她点「是」永远抛
+// 「行为管理中"采购入库"必须且只能有一条记录」。这组用例把"按编码找"钉死。
+
+test('入库①：行为表里只有编码 PURCHASE_IN、**没有**中文名「采购入库」→ 照样入库（她的现场）', async () => {
+  const inventory = makeInventory();
+  const records = {
+    purchaseArrival: [{ record_id: 'arr_code', fields: { 确认状态: '待确认' } }],
+    purchaseInbound: [],
+    // ⭐ 生产真表现状：名称已经改成「入库」，一个字都不叫「采购入库」。
+    behavior: [{ record_id: 'bhv_in', fields: { 行为名称: '入库', 行为编码: 'PURCHASE_IN', 库存方向: '增加', 所属环节: '采购', 是否启用: true } }],
+  };
+  const { service, store, gateway } = makeService({ inventory, gateway: makeGateway(records) });
+  const task = await seedArrivalTask(store, { taskId: 'purchase_arrival_code', arrivalRecordId: 'arr_code', actual: [arrivalActual()] });
+
+  const result = await service.confirmArrival(task.task_id, task, 'ou_1');
+
+  assert.ok(result.toast.content.includes('采购已入库'), '改名之后必须照样入库');
+  const inbounds = await gateway.listAll('purchaseInbound');
+  assert.equal(inbounds.length, 1);
+  assert.deepEqual(inbounds[0].fields['采购行为'], ['bhv_in'], '「采购行为」挂的是编码命中的那条记录');
+  assert.equal(inventory.calls.length, 1);
+});
+
+test('入库②：中文名乱改都不影响 —— 「采购入库」/「入库」/「随便叫」结果逐字一致', async () => {
+  const run = async (name, index) => {
+    const inventory = makeInventory();
+    const records = {
+      purchaseArrival: [{ record_id: 'arr_n', fields: { 确认状态: '待确认' } }],
+      purchaseInbound: [],
+      behavior: [{ record_id: 'bhv_in', fields: { 行为名称: name, 行为编码: 'PURCHASE_IN', 库存方向: '增加', 是否启用: true } }],
+    };
+    const { service, store, gateway } = makeService({ inventory, gateway: makeGateway(records) });
+    const task = await seedArrivalTask(store, { taskId: `purchase_arrival_n${index}`, arrivalRecordId: 'arr_n', actual: [arrivalActual()] });
+    await service.confirmArrival(task.task_id, task, 'ou_1');
+    return {
+      inbound: (await gateway.listAll('purchaseInbound')).length,
+      inventoryCalls: inventory.calls.length,
+    };
+  };
+
+  const expected = { inbound: 1, inventoryCalls: 1 };
+  assert.deepEqual(await run('采购入库', 1), expected);
+  assert.deepEqual(await run('入库', 2), expected);
+  assert.deepEqual(await run('随便叫一个名字', 3), expected);
+});
+
+test('入库③：编码 0 条 → 如实抛错（不静默、不放行），错误里带编码', async () => {
+  const inventory = makeInventory();
+  const records = {
+    purchaseArrival: [{ record_id: 'arr_missing', fields: { 确认状态: '待确认' } }],
+    purchaseInbound: [],
+    // 只有别的编码（库存环节那条），没有 PURCHASE_IN。
+    behavior: [{ record_id: 'bhv_other', fields: { 行为名称: '采购增加', 行为编码: 'STOCK_PURCHASE_INCREASE', 库存方向: '增加', 是否启用: true } }],
+  };
+  const { service, store, gateway } = makeService({ inventory, gateway: makeGateway(records) });
+  const task = await seedArrivalTask(store, { taskId: 'purchase_arrival_missing', arrivalRecordId: 'arr_missing', actual: [arrivalActual()] });
+
+  await assert.rejects(
+    () => service.confirmArrival(task.task_id, task, 'ou_1'),
+    (error) => {
+      assert.match(error.message, /PURCHASE_IN/, '错误里要写清缺的是哪个编码');
+      return true;
+    },
+  );
+  assert.equal((await gateway.listAll('purchaseInbound')).length, 0, '找不到行为就一条入库行都不许写');
+  assert.equal(inventory.calls.length, 0, '也不许动库存');
+});
+
+test('入库④：编码重复 → 如实抛错，不任取第一条', async () => {
+  const inventory = makeInventory();
+  const records = {
+    purchaseArrival: [{ record_id: 'arr_dup', fields: { 确认状态: '待确认' } }],
+    purchaseInbound: [],
+    behavior: [
+      { record_id: 'bhv_a', fields: { 行为名称: '入库', 行为编码: 'PURCHASE_IN', 库存方向: '增加', 是否启用: true } },
+      { record_id: 'bhv_b', fields: { 行为名称: '入库（重复）', 行为编码: 'PURCHASE_IN', 库存方向: '增加', 是否启用: true } },
+    ],
+  };
+  const { service, store, gateway } = makeService({ inventory, gateway: makeGateway(records) });
+  const task = await seedArrivalTask(store, { taskId: 'purchase_arrival_dup', arrivalRecordId: 'arr_dup', actual: [arrivalActual()] });
+
+  await assert.rejects(() => service.confirmArrival(task.task_id, task, 'ou_1'), /只能留一条/);
+  assert.equal((await gateway.listAll('purchaseInbound')).length, 0, '重复时也不许任取一条写下去');
+  assert.equal(inventory.calls.length, 0);
+});
+
+test('入库⑤：源码级钉子 —— 查找按行为编码（共享常量），不许再按中文名', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/services/purchaseWebhookService.js'), 'utf8');
+  const start = source.indexOf('async confirmArrivalLocked(');
+  assert.ok(start > 0, '找不到 confirmArrivalLocked');
+  const body = source.slice(start, source.indexOf('\n  async nextBatchNo()', start));
+  // 只看代码，不看注释（这段的注释里**故意**写着"以前是按中文名找的"）。
+  const codeOnly = body
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+    .replace(/([^:])\/\/.*$/gm, '$1');
+
+  assert.equal(/fields\.name\]/.test(codeOnly), false, '入库实现里不许再按「行为名称」找记录');
+  assert.equal(/'采购入库'/.test(codeOnly), false, '入库实现里不许再出现中文名字面量');
+  assert.equal(/fields\.code\]/.test(codeOnly), true, '要按「行为编码」匹配');
+  assert.equal(/PURCHASE_BEHAVIORS\.INBOUND/.test(codeOnly), true, '编码必须取自 config/purchaseBehaviors 的共享常量');
+  assert.equal(/PURCHASE_IN/.test(codeOnly), false, '不许在 service 里再写一份编码字面量（那是第二个来源，会漂移）');
+});
+
+test('入库⑥：编码的单一来源 —— config/purchaseBehaviors 与库存注册表**不是**同一个编码', () => {
+  const { PURCHASE_BEHAVIORS } = require('../src/config/purchaseBehaviors');
+  const { MOVEMENT_PURCHASE_INCREASE } = require('../src/services/inventoryService');
+
+  assert.equal(PURCHASE_BEHAVIORS.INBOUND, 'PURCHASE_IN');
+  // ⚠️ 两个"增加"分属**两张表两条行为记录**：采购环节的 PURCHASE_IN 挂「采购入库」的
+  //    「采购行为」；库存环节的 STOCK_PURCHASE_INCREASE 才是库存流水那一条。
+  //    这条断言是**防漂移**的：将来有人想"统一成一个编码"时必须先想清楚这件事。
+  assert.notEqual(PURCHASE_BEHAVIORS.INBOUND, MOVEMENT_PURCHASE_INCREASE,
+    'PURCHASE_IN（采购环节）与 STOCK_PURCHASE_INCREASE（库存环节）不是同一条行为，不能互相替代');
+});
+
 test('入库：没有报货批次（供应商直接送货）照样入库，不写任何申请状态', async () => {
   const inventory = makeInventory();
   const records = { purchaseArrival: [{ record_id: 'arr_direct', fields: { 确认状态: '待确认' } }], purchaseInbound: [] };

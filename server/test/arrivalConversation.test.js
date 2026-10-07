@@ -828,6 +828,181 @@ test('点「是」⑥：重复点「是」/ 重复投递 → 幂等，不重复�
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// □ ⭐ 点卡片「必须看得见反馈」（业务负责人 2026-10-07 连着两次：
+//    「卡片点击后也是没有任何反应」）
+//
+// 改前的事实（读代码得到）：
+//   · 失败 → 一行 error 日志 + 一句**不带 threadId** 的回话 + 一个一闪而过的 toast，
+//     **卡片原样不动** ⇒ 她在话题里就是"点了没反应"；
+//   · 「采购到货」建行失败 / 任务找不到 / 还没算出计划 → **只 toast**（连回话都没有）；
+//   · 重复点「是」 → 只 toast。
+// 这组用例把"失败也要在她点的那张卡片上看得见"钉死。
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** 卡片终态里那句 note（`purchaseArrivalReconcileStatusCard` 的 message）。 */
+const cardNote = (card) => (card.elements || [])
+  .filter((element) => element.tag === 'note')
+  .flatMap((element) => element.elements || [])
+  .map((element) => element.content)
+  .join('\n');
+
+const cardHeader = (card) => card.header?.title?.content || '';
+
+test('可见失败① 🔴：点「是」入库抛错 → **那张卡片被 patch 成终态** + 话题里回一句（含错误原文）', async () => {
+  // 制造她现场的那个错：行为表里**没有**编码 PURCHASE_IN 的行为 → confirmArrival 抛错。
+  const harness = makeHarness({
+    records: { ...defaultRecords(), behavior: [] },
+    responses: [{ complete: true, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] }],
+  });
+  const logs = captureLogs();
+  let result;
+  try {
+    ({ result } = await confirmCard(harness));
+  } finally {
+    logs.restore();
+  }
+
+  // ① 卡片被改成**红色终态**：就在她点的地方，跑不掉。
+  assert.equal(harness.updated.length, 1, '失败也必须 patch 那张卡片（改前这里是 0 —— 所以她"看不到任何反应"）');
+  assert.equal(harness.updated[0].messageId, 'om_card_1', 'patch 的是她点的那张卡');
+  assert.equal(harness.updated[0].card.header.template, 'red');
+  assert.equal(cardHeader(harness.updated[0].card), '采购到货核对没成功');
+  assert.equal(cardButtons(harness.updated[0].card).length, 0, '终态卡不许再留可点的按钮');
+  // ② 同一句回到**本话题**。
+  assert.equal(harness.replied.length, 1, '失败要在话题里留一条看得见的文字');
+  assert.equal(harness.replied[0].options.threadId, 'omt_1', '回话必须落回她那个话题');
+  assert.equal(harness.replied[0].content, cardNote(harness.updated[0].card), '卡片与回话同源（同一句）');
+  // ③ **错误原文一个字都不吞**：日志与她要看到的话里都带着它。
+  assert.match(harness.replied[0].content, /入库没成功：/);
+  assert.match(harness.replied[0].content, /PURCHASE_IN/);
+  assert.equal(logs.events('purchase.arrival.reconcile.confirm_failed').length, 1,
+    'error 原文仍要留在日志里（既有结构不许破坏）');
+  assert.match(logs.events('purchase.arrival.reconcile.confirm_failed')[0], /PURCHASE_IN/);
+  // ④ 失败的"可见性"本身也留痕：她到底看没看到，日志里能核。
+  const notice = logs.events('purchase.arrival.reconcile.failure_notice');
+  assert.equal(notice.length, 1);
+  assert.match(notice[0], /"tier":"inbound_failed"/);
+  assert.match(notice[0], /"card_patched":true/);
+  assert.match(notice[0], /"replied":true/);
+  // ⑤ 不许把失败写成成功：toast 仍是 error，任务停在可重试的 posting。
+  assert.equal(result.toast.type, 'error');
+  assert.equal((await harness.store.get(taskIdForBatch(BATCH_NO))).status, 'posting',
+    '停在 posting —— 她再点一次「是」从断点继续');
+  assert.equal(writesTo(harness.gateway, 'purchaseInbound').length, 0, '失败时一条入库行都不许写');
+});
+
+test('可见失败②：失败文案可配（`replies.inboundFailed`，改文案不碰逻辑）', async () => {
+  const harness = makeHarness({
+    records: { ...defaultRecords(), behavior: [] },
+    responses: [{ complete: true, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] }],
+    config: { replies: { inboundFailed: '自定义-入库没成功：{error}（再点一次）' } },
+  });
+  const { result } = await confirmCard(harness);
+
+  assert.match(result.toast.content, /^自定义-入库没成功：/);
+  assert.match(harness.replied[0].content, /^自定义-入库没成功：/);
+  assert.equal(cardNote(harness.updated[0].card), harness.replied[0].content);
+  // `{error}` 占位必须真的被填上（不静默留 `{error}` 给用户看）。
+  assert.equal(harness.replied[0].content.includes('{error}'), false);
+});
+
+test('可见失败③：「采购到货」这一行都没建成 → 也 patch 卡片 + 回文字（改前只有 toast）', async () => {
+  const harness = makeHarness({
+    responses: [{ complete: true, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] }],
+  });
+  // 让「采购到货」那次 create 失败（其余 gateway 行为不变）。
+  const create = harness.gateway.create;
+  harness.gateway.create = async (tableKey, values) => {
+    if (tableKey === 'purchaseArrival') throw new Error('飞书 500：建行失败');
+    return create(tableKey, values);
+  };
+
+  const { result } = await confirmCard(harness);
+
+  assert.equal(result.toast.type, 'error');
+  assert.match(result.toast.content, /「采购到货」这一行没建成：飞书 500：建行失败/);
+  assert.equal(harness.updated.length, 1, '卡片要改成终态');
+  assert.equal(harness.updated[0].card.header.template, 'red');
+  assert.match(cardNote(harness.updated[0].card), /飞书 500：建行失败/);
+  assert.equal(harness.replied.length, 1);
+  assert.equal(harness.replied[0].options.threadId, 'omt_1');
+});
+
+test('可见失败④：卡片指向的任务已经找不到 → patch 卡片 + 回文字（不再静默/只 toast）', async () => {
+  const harness = makeHarness({ responses: [] });
+  const result = await harness.service.handleCardAction(
+    { action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: taskIdForBatch('BH-20261006-9999') },
+    { context: { open_message_id: 'om_card_gone' } }, 'ou_1',
+  );
+
+  assert.equal(result.toast.type, 'error');
+  assert.match(result.toast.content, /找不到了/);
+  assert.equal(harness.updated.length, 1);
+  assert.equal(harness.updated[0].messageId, 'om_card_gone');
+  assert.equal(cardButtons(harness.updated[0].card).length, 0);
+  assert.equal(harness.replied.length, 1);
+  assert.match(harness.replied[0].content, /找不到了/);
+  assert.deepEqual(harness.gateway.writes, [], '不写任何业务表');
+});
+
+test('可见失败⑤：她点了「是」但这边还没算出计划 → patch 卡片 + 回文字（橙色，不是错误）', async () => {
+  // 一句"没有到货信息"的话：任务建了、但 plan 是空的（模型没听出到货变化）。
+  const harness = makeHarness({ responses: [{ complete: true, same: false, differences: [] }] });
+  await harness.service.handleTopicMessage({
+    batch: defaultBatch(), text: '嗯嗯', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1',
+  });
+  const taskId = taskIdForBatch(BATCH_NO);
+  assert.equal((await harness.store.get(taskId)).plan, undefined, '这个任务本来就还没有 plan');
+  harness.replied.length = 0;
+
+  const result = await harness.service.handleCardAction(
+    { action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: taskId },
+    { context: { open_message_id: 'om_card_1' } }, 'ou_1',
+  );
+
+  assert.equal(result.toast.type, 'info', '这不是错误，只是"还没算出来"');
+  assert.match(result.toast.content, /还没算出/);
+  assert.equal(harness.updated.length, 1);
+  assert.equal(harness.updated[0].card.header.template, 'orange', '中性状态别写成失败红');
+  assert.equal(harness.replied.length, 1);
+  assert.deepEqual(writesTo(harness.gateway, 'purchaseInbound'), []);
+});
+
+test('可见终态⑥：重复点「是」→ 卡片**再 patch 成绿色终态**（幂等，不重复入库、也不刷文字）', async () => {
+  const harness = makeHarness({
+    responses: [{ complete: true, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] }],
+  });
+  const { taskId, cardEvent } = await confirmCard(harness);
+  // 模拟"上一次成功那一下卡片没改成功"：清掉记录，再看重复点有没有补上。
+  harness.updated.length = 0;
+  harness.replied.length = 0;
+
+  const again = await harness.service.handleCardAction(
+    { action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: taskId }, cardEvent, 'ou_1',
+  );
+
+  assert.equal(again.toast.type, 'info');
+  assert.match(again.toast.content, /已经入库/);
+  assert.equal(harness.updated.length, 1, '重复点也要把那张卡刷成终态（万一上次没改成）');
+  assert.equal(harness.updated[0].card.header.template, 'green');
+  assert.equal(cardNote(harness.updated[0].card), again.toast.content);
+  assert.deepEqual(harness.replied, [], '只是重复点了一次，不再刷一条文字');
+  assert.equal(harness.inventory.calls.length, 2, '库存不重复加');
+});
+
+test('可见终态⑦：成功 → 终态卡与回话**都落回本话题**（threadId）', async () => {
+  const harness = makeHarness({
+    responses: [{ complete: true, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] }],
+  });
+  await confirmCard(harness);
+
+  assert.equal(harness.updated[0].card.header.template, 'green');
+  assert.equal(harness.replied[0].options.threadId, 'omt_1',
+    '卡片点击事件里没有 thread_id —— 要用任务上记的那个话题，否则她又"看不到"');
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
 // □ 点「否」
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -847,9 +1022,13 @@ test('点「否」→ 零写入 + 只回一句「好，那先不入库」', asyn
 
   assert.equal(result.toast.content, '好，那先不入库');
   assert.deepEqual(harness.replied.map((item) => item.content), ['好，那先不入库']);
+  assert.equal(harness.replied[0].options.threadId, 'omt_1', '那句回话要落回她那个话题');
   assert.deepEqual(harness.gateway.writes, [], '点「否」= 一个字都不写');
   assert.equal(harness.inventory.calls.length, 0);
   assert.equal((await harness.store.get(taskId)).status, 'rejected');
+  // ⚠️ 点「否」**刻意不动卡片**：那两个按钮要留着 —— 她还能再点「是」
+  //    （见下一条用例）。这是既定口径，不许"顺手统一"成终态。
+  assert.deepEqual(harness.updated, [], '点「否」不许把卡片改成终态（她要还能改主意）');
 });
 
 test('点「否」之后再点「是」→ 仍然按她的显式指令入库（她没说过「否」就不能改主意）', async () => {
@@ -867,6 +1046,26 @@ test('点「否」之后再点「是」→ 仍然按她的显式指令入库（�
 
   assert.match(result.toast.content, /已按实际到货入库/);
   assert.equal(writesTo(harness.gateway, 'purchaseArrival').filter((item) => item.op === 'create').length, 1);
+});
+
+test('可见终态⑧：已经入库之后又点「否」→ 卡片 patch 成绿色终态（不再只 toast）', async () => {
+  const harness = makeHarness({
+    responses: [{ complete: true, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] }],
+  });
+  const { taskId, cardEvent } = await confirmCard(harness);
+  harness.updated.length = 0;
+  harness.gateway.writes.length = 0;
+
+  const result = await harness.service.handleCardAction(
+    { action: ARRIVAL_CONVERSATION_ACTIONS.REJECT, draft_id: taskId }, cardEvent, 'ou_1',
+  );
+
+  assert.equal(result.toast.type, 'info');
+  assert.match(result.toast.content, /已经入库/);
+  assert.equal(harness.updated.length, 1, '已入库就是终态，卡片要看得见');
+  assert.equal(harness.updated[0].card.header.template, 'green');
+  assert.deepEqual(harness.gateway.writes, [], '不因为她又点了个「否」就改账');
+  assert.equal((await harness.store.get(taskId)).status, 'posted');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
