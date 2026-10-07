@@ -195,6 +195,16 @@ pnpm run dev
 > 与 `ARRIVAL_*`（等待与提示的四个阈值）**都已随识别链路退场删除，没有任何读取点**，不要再加回来。
 > `ARK_API_KEY` / `ARK_MODEL_ENDPOINT` / `ARK_API_BASE_URL` 同样**已无任何读取点**。
 >
+> ⚠️ **「销售战报」已于 2026-10-07 退役并删代码**（业务负责人逐字：「连代码一起删」）——
+> `SALES_DAILY_REPORT_PUSH_ENABLED` · `SALES_DAILY_REPORT_PUSH_CHAT_IDS` ·
+> `SALES_DAILY_REPORT_PUSH_HOURS` · `SALES_DAILY_REPORT_PUSH_SUMMARY_HOUR` ·
+> `SALES_DAILY_REPORT_PUSH_INTERVAL_MS` · `SALES_DAILY_REPORT_FULFILLED_STATUSES` ·
+> `SALES_DAILY_REPORT_PAYMENT_STATUS` **都随功能从代码与 `.env.example` 一并删除，
+> 没有任何读取点**，不要再加回来；⚠️ 线上 `.env` 里那个开关**没动**（只是不再有人读它）。
+> 恢复这条推送 = **重新实现那条链路**，不是翻一个开关。退役记录见
+> `docs/archive/sales-daily-report-retirement.md`。
+>（**共用件没跟着删**：`utils/shanghaiDailyScheduler` 仍被「待处理单推送」用着。）
+>
 > `PURCHASE_ARRIVAL_INTAKE_ENABLED` 是唯一的例外：**模块刻意保留、但已无读取点**
 >（`src/config/purchaseArrivalIntake.js`）。将来恢复「对话到货」时它是一个现成的、
 > 语义明确的开关（已钉住"空字符串不等于关闭"那个坑）；现在改它不会有任何效果。

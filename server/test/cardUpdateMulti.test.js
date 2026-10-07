@@ -18,7 +18,7 @@
 //      `updatePurchaseActionCard`）**真实打到飞书**的 `data.content` 里也带 —— 用假 client 抓 payload；
 //   ③ `secondDeliveryCard` 经 `settleSecondDeliveryOrder` **深拷贝变换后**仍带（最易漏）；
 //   ④ 刻意不 patch 的 **3 张卡**（`saleLookupCard` ×2 分支 / `purchaseRequestConfirmationCard`）
-//      与 `salesDailyReportCard` **不出现**该字段 —— 把"刻意不动"钉住，将来谁顺手加上会挂；
+//      **不出现**该字段 —— 把"刻意不动"钉住，将来谁顺手加上会挂；
 //   ⑤ 卡片**可见内容零变化**：`header` / `elements` 与改动前（`origin/main`）逐字相同
 //      （golden 见 `test-support/cardVisibleGolden.json`，生成方式见文件末尾注释）；
 //   ⑥ 既有断言一条不放宽 —— 本文件是**新增**的，没有改动任何既有用例的判定强度。
@@ -39,7 +39,6 @@ const path = require('node:path');
 const test = require('node:test');
 
 const larkCards = require('../src/utils/larkCards');
-const { salesDailyReportCard } = require('../src/utils/salesDailyReportCard');
 const { updateInteractiveCard } = require('../src/infrastructure/interactiveCardFeedback');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { LarkMvpService } = require('../src/services/larkMvpService');
@@ -79,12 +78,7 @@ test('14 张会被 patch 的卡片：builder 直出（"更新前"那份）的 co
 // ── ④ 刻意不动的卡片：不该出现该字段（"刻意不动"钉住，不是忘了）──────────────
 test('刻意不 patch 的卡片：不出现 update_multi（只发不改 / 无调用方）', () => {
   assert.equal(UNPATCHABLE_CARD_SCENARIOS.length, 3);
-  const all = [
-    ...UNPATCHABLE_CARD_SCENARIOS,
-    // 这一张在另一个模块里（`utils/salesDailyReportCard.js`）：只 `create` 从不 `patch`。
-    { name: 'salesDailyReportCard', build: () => salesDailyReportCard({ hour: 22, isSummary: true, salesCount: 3, salesAmount: 999 }) },
-  ];
-  for (const { name, build } of all) {
+  for (const { name, build } of UNPATCHABLE_CARD_SCENARIOS) {
     const config = build(larkCards).config;
     assert.deepEqual(config, { wide_screen_mode: true }, `${name} 的 config 应当与改动前逐字相同`);
     assert.ok(!('update_multi' in config), `${name} 不被 patch，不该带 update_multi`);
