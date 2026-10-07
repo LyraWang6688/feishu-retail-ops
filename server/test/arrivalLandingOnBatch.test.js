@@ -121,7 +121,6 @@ const baseRecords = () => ({
     { record_id: 'req_38', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: [PRODUCT_1], 尺码: sizeLink(38), 数量: 2 } },
     { record_id: 'req_39', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: [PRODUCT_1], 尺码: sizeLink(39), 数量: 2 } },
   ],
-  purchaseInbound: [],
 });
 
 const makeHarness = ({ records = baseRecords(), parseResult, inboundCreated } = {}) => {
@@ -205,20 +204,27 @@ test('② 全链路一次 `purchaseArrival` 的 create/update 都没有（表已
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseArrival, undefined);
 });
 
-test('③ 采购入库写入 = 编号/尺码/数量/采购行为/采购申请；**没有** 采购到货批次、没有 入库时间', async () => {
+test('③ ⭐ 到货确认**不再写任何入库明细行**（那张表已被她整表删除）；库存照加', async () => {
   const harness = makeHarness({ parseResult: { complete: true, same: true, differences: [] } });
   await arriveAndConfirm(harness);
 
-  const inbounds = writesTo(harness.gateway, 'purchaseInbound').filter((item) => item.op === 'create');
-  assert.equal(inbounds.length, 2, '38 / 39 各一条');
-  for (const inbound of inbounds) {
-    const names = Object.keys(inbound.values).sort();
-    // 逐字：**只有**这几列（多一列都算回归 —— 尤其不许把已删的「采购到货批次」加回来）。
-    assert.deepEqual(names, ['尺码', '数量', '编号', '采购申请', '采购行为'],
-      `入库载荷只许有这几列（实际：${names.join('、')}）`);
-    assert.deepEqual(inbound.values['采购行为'], ['bhv_in']);
-    assert.equal('采购到货批次' in inbound.values, false, '「采购到货批次」列已删 → 不许写');
-    assert.equal('入库时间' in inbound.values, false, '「入库时间」是自动的创建时间 → 不许写');
+  // ⭐ 2026-10-07 深夜：「采购入库」表被业务负责人**整表删除** ⇒ 这条断言从"写了哪几列"
+  //    翻成"**一条都不写**"。守门（全仓不许再出现那个表键）见 purchaseInboundRemoval.test.js ①。
+  const createdTables = harness.gateway.writes
+    .filter((item) => item.op === 'create').map((item) => item.tableKey);
+  assert.deepEqual(createdTables, [],
+    '到货确认不新建任何业务表记录（「库存流水」/「实时库存」由 InventoryService 写，这里是假实现）');
+  // 但**加库存**一条都不能少：38 / 39 各一次，数量按实际数。
+  assert.equal(harness.inventory.calls.length, 2, '38 / 39 各加一次库存');
+  const bySize = new Map(harness.inventory.calls.map((call) => [call.size, call]));
+  assert.equal(bySize.get(38).quantity, 2);
+  assert.equal(bySize.get(39).quantity, 2);
+  // 幂等来源 = **真实三元组**（批次记录 id ｜ 货品 ｜ 尺码）—— 传的是真值，不是编的 id。
+  for (const call of harness.inventory.calls) {
+    assert.equal(call.purchaseBatchRecordId, BATCH_RECORD_ID);
+    assert.equal(call.purchaseBatchNo, BATCH_NO);
+    assert.equal(call.productRecordId, PRODUCT_1);
+    assert.equal(call.purchaseInboundRecordId, undefined, '那个键随「采购入库」表一起退场');
   }
 });
 
@@ -226,12 +232,11 @@ test('③ 采购入库写入 = 编号/尺码/数量/采购行为/采购申请；
 // □ ④ 重放 / 重试不重复写（含"本地落盘丢了"那条崩溃恢复路径）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('④-1 重复点「是」（飞书重投）：批次行 / 采购入库 / 库存 都不重复写', async () => {
+test('④-1 重复点「是」（飞书重投）：批次行 / 库存 都不重复写', async () => {
   const harness = makeHarness({ parseResult: { complete: true, same: true, differences: [] } });
   const { taskId } = await arriveAndConfirm(harness);
 
   const batchesAfterFirst = writesTo(harness.gateway, 'purchaseOrderBatch').length;
-  const inboundsAfterFirst = writesTo(harness.gateway, 'purchaseInbound').length;
 
   await harness.service.handleCardAction(
     { action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: taskId },
@@ -239,55 +244,51 @@ test('④-1 重复点「是」（飞书重投）：批次行 / 采购入库 / �
   );
 
   assert.equal(writesTo(harness.gateway, 'purchaseOrderBatch').length, batchesAfterFirst, '批次行不再写');
-  assert.equal(writesTo(harness.gateway, 'purchaseInbound').length, inboundsAfterFirst, '入库行不再写');
   assert.equal(harness.inventory.calls.length, 2, '库存不再加');
+  assert.equal(harness.gateway.writes.filter((item) => item.op === 'create').length, 0,
+    '到货确认不新建任何业务表记录');
   assert.equal(batchFields(harness.records)['验收原话'], '都到了');
   assert.equal(batchFields(harness.records)['确认状态'], '已确认');
 });
 
-test('④-2 崩溃恢复：本地 inbound_created 丢了 → 靠**采购申请关联**认出已写过的入库行，不重复写', async () => {
-  // 这是**新判据**的核心用例：改动前"这次到货已经写过哪些入库行"靠
-  // `采购入库.采购到货批次 == 到货记录 id` 回查；那一列已被业务负责人删除 ⇒
-  // 判据换成「采购入库.采购申请 ∈ 本批的申请行」。这里直接把本地草稿里的
-  // `inbound_created` 抹掉（模拟"写完远端、落盘失败"），再确认一次：
-  // 必须靠远端回查认出那两行，而不是再写一遍。
+test('④-2 崩溃恢复：本地进度丢了 → 重放仍用**同一个幂等来源**（不会变成"又加一批"）', async () => {
+  // 「采购入库」表被整表删除之后，**没有**"按远端关联列回查已写过的行"这一层了
+  // ⇒ 崩溃恢复靠两件东西：① 本地草稿上的 `inventory_applied`；② **库存自己那一层**——
+  //    来源标识是真实三元组（批次记录 id ｜ 货品 ｜ 尺码），重放必然算出**同一个键**，
+  //    于是命中同一条本地库存任务、不会重复加库存。
+  //    这条用例钉的是"①丢掉的形状下②的**契约**"（传进去的来源标识一字不差）；
+  //    "库里真的只加一次"那半由 `purchaseInboundRemoval.test.js` 用**真实** InventoryService 钉住。
   const harness = makeHarness({ parseResult: { complete: true, same: true, differences: [] } });
   const { taskId } = await arriveAndConfirm(harness);
 
-  const inboundRowsBefore = writesTo(harness.gateway, 'purchaseInbound').filter((item) => item.op === 'create');
-  assert.equal(inboundRowsBefore.length, 2);
-  const existingInboundIds = (harness.records.purchaseInbound || []).map((row) => row.record_id);
-  assert.equal(existingInboundIds.length, 2);
-  const inventoryCallsBefore = harness.inventory.calls.length;
+  const firstCalls = harness.inventory.calls.map((call) => ({
+    size: call.size,
+    purchaseBatchRecordId: call.purchaseBatchRecordId,
+    purchaseBatchNo: call.purchaseBatchNo,
+    productRecordId: call.productRecordId,
+  }));
+  assert.equal(firstCalls.length, 2);
 
-  // ⭐ 关键：把已写入库行上的「采购到货批次」抹掉 —— 那正是**生产现在的形状**
-  //    （业务负责人已把这一列从「采购入库」整列删除）。改动前的回查判据就是读这一列，
-  //    所以在真实生产形状下它**永远认不出已写过的行**（会重复建）；新判据用「采购申请」。
-  for (const row of harness.records.purchaseInbound || []) {
-    delete row.fields['采购到货批次'];
-  }
-
-  // 抹掉本地进度 + 把任务退回"没入过库"（模拟崩溃在"写完远端、还没落盘"之间）。
+  // 抹掉本地进度 + 把任务退回"没加过库存"（模拟崩溃在"写完远端、还没落盘"之间）。
   const task = await harness.store.get(taskId);
   await harness.store.update(taskId, {
     status: 'posting',
-    draft: { ...task.draft, inbound_created: {} },
+    draft: { ...task.draft, inventory_applied: {}, inbound_created: {} },
   });
 
   const again = await harness.webhook.confirmArrival(taskId, await harness.store.get(taskId), 'ou_1');
   assert.equal(again.toast.type, 'success');
 
-  assert.equal(writesTo(harness.gateway, 'purchaseInbound').filter((item) => item.op === 'create').length, 2,
-    '远端回查认出已写过的两行 → 不重复建（判据 = 采购申请关联，不再是已删的「采购到货批次」）');
-  // ⚠️ 库存**可能**再补一次（回查出来的行 `inventoryApplied` 默认 false —— 改动前就是这个语义，
-  //    因为"库里到底加没加"这一步没有远端判据）。安全性来自 `inventory.applyPurchase`
-  //    以**采购入库记录 id** 为幂等键 ⇒ 重复调用不会重复加库存。
-  //    所以这里断言的是那条契约，而不是"调用次数不变"。
-  const extraCalls = harness.inventory.calls.slice(inventoryCallsBefore);
-  for (const call of extraCalls) {
-    assert.ok(existingInboundIds.includes(call.purchaseInboundRecordId),
-      `重复确认时只允许对**已存在的入库行**再调一次库存（幂等键就是它），实际：${call.purchaseInboundRecordId}`);
-  }
+  const replayCalls = harness.inventory.calls.slice(firstCalls.length).map((call) => ({
+    size: call.size,
+    purchaseBatchRecordId: call.purchaseBatchRecordId,
+    purchaseBatchNo: call.purchaseBatchNo,
+    productRecordId: call.productRecordId,
+  }));
+  assert.deepEqual(replayCalls, firstCalls,
+    '重放必须对同一（货品+尺码）算出**同一个来源标识** —— 库存那一层才认得出来"这一条已经加过了"');
+  // 一个业务表都不新建（入库行没有了）。
+  assert.equal(harness.gateway.writes.filter((item) => item.op === 'create').length, 0);
 });
 
 test('④-3 批次行写入本身也是幂等的：重跑写的是同一个值（不新建、不追加）', async () => {
@@ -308,7 +309,7 @@ test('④-3 批次行写入本身也是幂等的：重跑写的是同一个值�
 // □ ⑤ 到货核对全链路：12 件那种多行的
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('⑤ 12 件全链路：3 行实际 0 双 → 其余 9 行入库，批次行照旧落实（验收原话 + 确认状态 + 已到货）', async () => {
+test('⑤ 12 件全链路：3 行实际 0 双 → 其余 9 行**加库存**，批次行照旧落实（验收原话 + 确认状态 + 已到货）', async () => {
   const products = ['p1', 'p2', 'p3'];
   const rows = products.flatMap((productId, index) => [37, 38, 39, 40].map((size) => ({
     record_id: `req_${index}_${size}`, productId, size,
@@ -320,7 +321,6 @@ test('⑤ 12 件全链路：3 行实际 0 双 → 其余 9 行入库，批次行
       record_id: row.record_id,
       fields: { 报货批次号: [BATCH_RECORD_ID], 编号: [row.productId], 尺码: sizeLink(row.size), 数量: 1 },
     })),
-    purchaseInbound: [],
   };
   const harness = makeHarness({
     records,
@@ -347,14 +347,15 @@ test('⑤ 12 件全链路：3 行实际 0 双 → 其余 9 行入库，批次行
   );
 
   assert.equal(result.toast.type, 'success');
-  assert.equal(writesTo(harness.gateway, 'purchaseInbound').filter((item) => item.op === 'create').length, 9,
-    '12 行里 3 行 0 双 → 只入 9 行');
-  assert.equal(harness.inventory.calls.length, 9);
+  // ⭐ 12 行里 3 行 0 双 → 只有 9 行加库存；**没有**任何入库明细行（那张表已被整表删除）。
+  assert.equal(harness.inventory.calls.length, 9, '12 行里 3 行 0 双 → 只给 9 行加库存');
+  assert.equal(harness.gateway.writes.filter((item) => item.op === 'create').length, 0,
+    '到货确认不新建任何业务表记录（入库明细表整个不要了）');
   const fields = batchFields(harness.records);
   assert.equal(fields['验收原话'], '8230黑色少一双38码\n93827黑色少39 40码各一双\n完毕');
   assert.equal(fields['确认状态'], '已确认');
   assert.equal(fields['到货状态'], '已到货');
-  // 「具体信息」（采购申请表）一个字都没写。
+  // 「报货信息」（采购申请表）一个字都没写。
   assert.deepEqual(writesTo(harness.gateway, 'purchaseRequest'), []);
 });
 
@@ -419,7 +420,7 @@ test('⑦ 任何一次写入里都没有「到货日」「验收人」（飞书�
   assert.equal(/(^|[^_\w])inspector\s*:/.test(codeOnly), false, '不许出现 inspector 这个语义键');
 });
 
-test('⑧ 没有批次身份的孤儿调用：**不阻塞入库**（既有能力），也不写批次行', async () => {
+test('⑧ 没有批次身份的孤儿调用：**不阻塞加库存**（既有能力），也不写批次行', async () => {
   const harness = makeHarness({ parseResult: { complete: true, same: true, differences: [] } });
 
   // 造一条"历史草稿"：batch_no / batch_record_id 都空（改动前这些用例的形状）。
@@ -436,11 +437,16 @@ test('⑧ 没有批次身份的孤儿调用：**不阻塞入库**（既有能力
       actual: [{ product_record_id: PRODUCT_1, item_no: 'XHB8095', color: '黑', size: 38, quantity: 1 }],
       pending_creation: [],
       created_products: [],
-      inbound_created: {},
+      inventory_applied: {},
     },
   });
 
   const result = await harness.webhook.confirmArrival(taskId, await harness.store.get(taskId), 'ou_1');
-  assert.equal(result.toast.type, 'success', '孤儿调用照常入库（改动前就有这种形状）');
-  assert.equal(writesTo(harness.gateway, 'purchaseInbound').filter((item) => item.op === 'create').length, 1);
+  assert.equal(result.toast.type, 'success', '孤儿调用照常加库存（改动前就有这种形状）');
+  assert.equal(harness.inventory.calls.length, 1, '库存照加一次');
+  // ⚠️ 两个批次身份都空 ⇒ 来源标识退回到**到货核对任务 id**（仍是真值，不是编的）。
+  assert.equal(harness.inventory.calls[0].arrivalTaskId, taskId);
+  assert.equal(harness.inventory.calls[0].purchaseBatchRecordId, '');
+  // 一个业务表都不新建（入库行没有了），批次行也找不到 ⇒ 只是不写到货信息。
+  assert.equal(harness.gateway.writes.filter((item) => item.op === 'create').length, 0);
 });

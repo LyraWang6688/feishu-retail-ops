@@ -16,7 +16,7 @@
  *
  * 用法：
  *   node server/scripts/list-v1-fields.js purchaseOrderBatch
- *   node server/scripts/list-v1-fields.js purchaseOrderBatch purchaseInbound
+ *   node server/scripts/list-v1-fields.js purchaseOrderBatch purchaseRequest
  *   # 只关心某个字段名时，加上 --field=确认状态 会额外打一行结论
  *
  * 在本机跑 = 读本机 .env 指向的 Base（按纪律：本机只有测试 Base）。

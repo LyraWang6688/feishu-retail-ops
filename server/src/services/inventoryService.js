@@ -137,21 +137,31 @@ const STOCK_MOVEMENTS = Object.freeze({
   },
   [MOVEMENT_PURCHASE_INCREASE]: {
     direction: '增加',
-    ledgerSource: 'purchaseInbound',
+    // ⚠️ **2026-10-07 深夜：`ledgerSource` 从 `'purchaseInbound'` 改成 `null`** ——
+    //    业务负责人把「采购入库」表**整表删掉了**（到货链路只留"更新报货批次 + 加库存"），
+    //    而「库存流水.关联采购」指向的就是那张表 ⇒ 飞书把这个**对端关联列一起删了**。
+    //    ⇒ **远端一个字都不传**（不编一个 id 指向不存在的表），与采购退货同一条通路。
+    //    代价如实说：这条流水不再有来源关联，崩溃恢复只靠本地 `operation.ledger_record_id`
+    //    （`findLedger` 那条"按来源回查"的兜底对它不再生效）。
+    //    ⚠️ 若哪天她在「库存流水」上**再建一列**指向「报货批次」/「报货信息」：只改这一行
+    //      （`ledgerSource: '<新的语义键>'`）＋ `v1BitableSchema` 补一条字段映射即可，
+    //      改的**只是"要不要写关联"**，幂等键（`source_record_id`）与逻辑一行都不用动。
+    ledgerSource: null,
     consumes: null,
     triggerSampleReplacement: false,
   },
   // 采购退货：方向=减少，且**状态无关**——样品、门盒、仓库都要退（见上面的注释）。
   //
   // ⚠️ ledgerSource 为 null：「库存流水」的两个来源字段是「关联销售」→销售明细、
-  // 「关联采购」→采购入库，而采购退货既不产生销售明细、也不产生采购入库
-  //（业务负责人明确退货不走采购到货/入库），表里没有能关联「具体信息」的字段。
+  // 「关联采购」→采购入库（⚠️ 后者随「采购入库」表一起被删，见上一条），
+  // 而采购退货既不产生销售明细、也不产生采购入库（业务负责人明确退货不走采购到货/入库），
+  // 表里没有能关联「报货信息」的字段。
   // 所以这条流水**不带来源关联**，而不是往错表的字段里写一个 id（那会被飞书拒绝或
   // 写出一条指错来源的流水）。
   // 👉 **此处等「关联单据」列**：父代理已去确认她要不要在「库存流水」加一个指向
-  //    「具体信息」的「关联单据」列；加好之后只改这一行（ledgerSource: 'supplierReturnOrder'
-  //    + v1BitableSchema 里补一条字段映射）就能让退货流水和销售/入库一样带远端幂等键。
-  //    在那之前，重试保护是：任务终态 + 「具体信息」行幂等键 + 落盘的核对计划
+  //    「报货信息」的「关联单据」列；加好之后只改这一行（ledgerSource: 'supplierReturnOrder'
+  //    + v1BitableSchema 里补一条字段映射）就能让退货流水和销售一样带远端幂等键。
+  //    在那之前，重试保护是：任务终态 + 「报货信息」行幂等键 + 落盘的核对计划
   //    + 本地库存任务日志（见交付说明的待确认项）。
   [MOVEMENT_PURCHASE_DECREASE]: {
     direction: '减少',
@@ -315,6 +325,31 @@ const operationId = (kind, sourceRecordId) =>
   `inventory_${kind}_${crypto.createHash('sha256').update(String(sourceRecordId)).digest('hex').slice(0, 20)}`;
 const samplePromotionId = (salesDetailRecordId) => operationId('sample', salesDetailRecordId);
 
+/**
+ * 采购加库存的**来源标识**（＝ `operationId(kind, source)` 的本地幂等键）。
+ *
+ * ⚠️ 2026-10-07 深夜：业务负责人把「采购入库」表**整表删掉**了 ⇒ **没有入库行 id 了**。
+ *    改用一个**真实三元组**：`采购批次身份 | 货品 record_id | 尺码`。
+ *    · 为什么必须带「货品 + 尺码」：`operationId` 是"这一次加库存"的键，而**一个批次里
+ *      每个（货品+尺码）各加一次**；只用批次 id 会让同一批第二个尺码撞上一个键，
+ *      直接抛「库存操作内容与首次提交不一致」。
+ *    · 为什么按可靠度取「批次记录 id → 批次号 → 到货核对任务 id」：前两个是业务身份
+ *      （`draft.batch_record_id` / `batch_no`），第三个只在"孤儿调用"（历史草稿上两个都空）
+ *      时兜底 —— 它同样是**真实** id（`arrival_reconcile_…`）。
+ *    · 🔴 一个都拿不到时**当场抛错** —— **绝不编一个 id** 出来当幂等键。
+ *    ⚠️ 它**只进本地任务记录与日志**：`ledgerSource` 已为 null ⇒ **远端一个字都不写**。
+ */
+const purchaseIncreaseSourceId = (input) => {
+  const identity = String(
+    input.purchaseBatchRecordId || input.purchaseBatchNo || input.arrivalTaskId || '',
+  ).trim();
+  if (!identity) {
+    throw new Error('采购入库缺少来源标识（批次记录 id / 批次号 / 到货核对任务 id 至少要有一个）');
+  }
+  if (!input.productRecordId) throw new Error('库存变化缺少商品 record_id');
+  return `purchase_increase:${identity}|${input.productRecordId}|${normalizeSize(input.size)}`;
+};
+
 // 一次库存操作里「第 N 双」的远端标识。实时库存是一双一条记录，
 // 本地日志丢失时只能靠这个键回答「这一双是不是已经建过了」。
 const operationItemKey = (inventoryOperationId, sequence) => `${inventoryOperationId}:${sequence}`;
@@ -428,12 +463,34 @@ class InventoryService {
     return operation?.status === 'completed' ? operation.result : null;
   }
 
-  applyPurchase(input, options = {}) {
+  /**
+   * 采购到货 → 加库存（「库存流水」+「实时库存」）。
+   *
+   * 入参（业务身份，**全是真实标识**）：
+   *   · `purchaseBatchRecordId` —— 「报货批次」那一行的 record_id（`draft.batch_record_id`）
+   *   · `purchaseBatchNo`       —— 批次号（`draft.batch_no`，上面那个拿不到时的兜底）
+   *   · `arrivalTaskId`         —— 到货核对任务 id（只在"孤儿调用"时兜底）
+   *   · `productRecordId` / `size` / `quantity` / `state`
+   *
+   * ⚠️ 2026-10-07 深夜：「采购入库」表被整表删除 ⇒ **不再有 `purchaseInboundRecordId`**。
+   *    来源标识改由 `purchaseIncreaseSourceId` 用**真实三元组**算（见它的注释）；
+   *    它**只做本地幂等键**，远端没有任何关联列可写（`ledgerSource: null`）。
+   *
+   * ⚠️ **`state` 是"看当前库存算出来的"（没有样品→样品，有→门盒）⇒ 重放时必然算得不一样**：
+   *    第一次入库那一双样品已经把「实时库存」改了。所以重放**不能**拿重算的 state 去比对
+   *    （`applyChange` 会抛「内容与首次提交不一致」——那是它的职责，别放宽它）。
+   *    ⇒ 这里先按**来源标识**回查一次本地库存任务（`findOperationBySource`，与工作台
+   *      「按实际盘点数」调库用的是同一条通路）：**有就用它自己记下的 state**（事实优先），
+   *      没有才用调用方给的 / 默认值。这样"崩溃恢复重放"与"首次提交"走的是同一份 state。
+   */
+  async applyPurchase(input, options = {}) {
+    const sourceRecordId = purchaseIncreaseSourceId(input);
+    const existing = await this.findOperationBySource(sourceRecordId);
     return this.applyChange({
       ...input,
       kind: MOVEMENT_PURCHASE_INCREASE,
-      state: input.state || '门盒',
-      sourceRecordId: input.purchaseInboundRecordId,
+      state: existing?.state || input.state || '门盒',
+      sourceRecordId,
       quantity: positiveInteger(input.quantity, '采购入库数量'),
     }, options);
   }
@@ -1156,6 +1213,9 @@ class InventoryService {
 module.exports = {
   InventoryService,
   operationId,
+  // 采购加库存的**来源标识**（= 本地幂等键）：导出它，好让测试 / 排查脚本
+  // 用**同一个函数**算出"这一条该是哪个键"，而不是在别处再抄一份格式（抄了就会漂移）。
+  purchaseIncreaseSourceId,
   STOCK_MOVEMENTS,
   ADJUSTMENT_BEHAVIORS,
   // 状态值域从这里导出，避免「实时库存」的状态清单在别处再抄一份（抄了就会漂移）。

@@ -298,7 +298,9 @@ test('对得上：勾选 3 个尺码 → 一尺码一行单据、一条一条写
   ]);
   assert.ok(requests.every((row) => JSON.stringify(row.fields.采购行为) === JSON.stringify(['beh_return'])));
   // ③ 不走进货/入库：退货**只**多写「报货批次」一行（2026-10-07 晚口径变更，见下）
-  assert.equal(gw.records.purchaseInbound, undefined, '退货不写采购入库');
+  // ⚠️ 2026-10-07 深夜：「采购入库」表被业务负责人**整表删除** ⇒ "退货不写采购入库"
+  //    改由更强的守门保证：全仓（src/scripts/test）都不许再出现那个表键
+  //    （见 `purchaseInboundRemoval.test.js` 的 ①）。
   assert.equal(gw.records.purchaseArrival, undefined, '退货不写「到货验收」（原「采购到货」）');
   // ⚠️ 2026-10-07 晚**口径变更**（业务负责人：「退货批次也……落到报货批次表里」）：
   //    退货现在**要**建「报货批次」一行（退货单 PNG 的落点）。这条断言原来钉的是

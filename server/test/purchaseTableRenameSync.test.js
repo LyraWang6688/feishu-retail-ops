@@ -29,9 +29,10 @@ const walk = (dir, out = []) => {
   return out;
 };
 
-test('A1 schema 表名 = 信息填写 / 具体信息（改名的同步点之一）', () => {
+test('A1 schema 表名 = 信息填写 / 报货信息（改名的同步点之一）', () => {
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseReport.tableName, '信息填写');
-  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseRequest.tableName, '具体信息');
+  // ⚠️ 2026-10-07 深夜她第三次改名：「具体信息」→「**报货信息**」（tableId `tbli1ygPtss5CWCH` 不变）。
+  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseRequest.tableName, '报货信息');
   // 别的表名不受影响
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.tableName, '报货批次');
 });
@@ -126,16 +127,17 @@ test('A3 schema 里**不再有**「到货验收」表；到货落点搬到「报
   assert.equal(Object.values(batch).includes('到货日'), false);
   assert.equal(Object.values(batch).includes('验收人'), false);
 
-  // ④ 「采购入库」少了「采购到货批次」这一列。
-  assert.equal(Object.prototype.hasOwnProperty.call(V1_BITABLE_SCHEMA.tables.purchaseInbound.fields, 'batch'), false,
-    '「采购入库.采购到货批次」已被她整列删除 ⇒ 映射必须删');
-  assert.equal(Object.values(V1_BITABLE_SCHEMA.tables.purchaseInbound.fields).includes('采购到货批次'), false);
+  // ④ ⭐ 2026-10-07 **深夜**：「采购入库」表被业务负责人**整表删除** ⇒ schema 里整段没了。
+  //    （原先这里钉的是"少了「采购到货批次」这一列"。）
+  //    ⚠️ 那一段的**具体断言**（`V1_BITABLE_SCHEMA.tables.<该表键> === undefined` 与全仓扫描）
+  //      集中放在 `purchaseInboundRemoval.test.js` —— 只留**一处**守门，避免两边各写一份、
+  //      将来又要同步两次。
 
-  // ⑤ 其余三张：**没漂的不许动**（这次只动「到货验收」与「采购入库」各一列）。
+  // ⑤ 其余三张：**没漂的不许动**（这一节只断言这一批改名/改列的结论）。
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseReport.tableName, '信息填写');
-  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseRequest.tableName, '具体信息');
+  // ⚠️ 2026-10-07 深夜她**又**把这张表从「具体信息」改名为「**报货信息**」（tableId 不变）。
+  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseRequest.tableName, '报货信息');
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.tableName, '报货批次');
-  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseInbound.tableName, '采购入库');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

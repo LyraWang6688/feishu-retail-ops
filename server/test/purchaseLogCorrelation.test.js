@@ -447,8 +447,10 @@ test('采购退货：写「单据信息」/扣库存/回写「供应商对接」
   assert.equal(groupSent[0].chat_id, 'oc_test_purchase_group');
 });
 
-// ── ③ 到货 → 入库：到货核对是**另一套 task**，如实照传；报单记录 id 拿不到就不给 ──
-test('到货入库：写「报货批次.到货信息」/「采购入库」/加库存的日志带 task_id ＋ batch_no ＋ **批次记录 id**（没有报单记录 id）', async () => {
+// ── ③ 到货 → 加库存：到货核对是**另一套 task**，如实照传；报单记录 id 拿不到就不给 ──
+// ⚠️ 2026-10-07 **深夜**：「采购入库」表已被业务负责人**整表删除** ⇒ 这条用例从
+//    "写「采购入库」+ 加库存"翻成"**只**加库存（＋批次行两列）"，日志断言跟着翻。
+test('到货确认：写「报货批次.到货信息」/加库存的日志带 task_id ＋ batch_no ＋ **批次记录 id**（没有报单记录 id），且**不再有**入库明细行', async () => {
   const world = makeWorld({
     sizeManagement: [{ record_id: 'size_36', fields: { 尺码: 36 } }],
     behavior: [
@@ -457,7 +459,6 @@ test('到货入库：写「报货批次.到货信息」/「采购入库」/加�
     ],
     // ⭐ 到货信息的落点 = 「报货批次」那一行（2026-10-07 晚；「到货验收」表已被业务负责人删除）。
     purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: '202610071' } }],
-    purchaseInbound: [],
     purchaseRequest: [],
     liveInventory: [],
     inventoryLedger: [],
@@ -479,7 +480,7 @@ test('到货入库：写「报货批次.到货信息」/「采购入库」/加�
       actual: [{ product_record_id: 'prod_1', item_no: '8081', color: '黑色', size: 36, quantity: 2 }],
       pending_creation: [],
       created_products: [],
-      inbound_created: {},
+      inventory_applied: {},
     },
   });
 
@@ -496,24 +497,21 @@ test('到货入库：写「报货批次.到货信息」/「采购入库」/加�
   //    换成 `purchase_batch_record_id`（「报货批次」那一行）—— 前者已无来源。
   const BATCH_RECORD = 'batch_1';
 
-  // a. 「采购入库」那一行
-  const inboundRow = logs.logs('bitable.record.created').find((row) => row.table_key === 'purchaseInbound');
-  assert.ok(inboundRow, '必须真的写过「采购入库」');
-  assert.equal(inboundRow.task_id, TASK);
-  assert.equal(inboundRow.batch_no, BATCH);
-  assert.equal(inboundRow.purchase_batch_record_id, BATCH_RECORD);
-  // ⚠️ 到货核对任务里**没有**「信息填写」记录 → 这个键一个都不许冒出来（不许编）；旧键整体退场
-  assert.equal(inboundRow.purchase_report_record_id, undefined);
-  assert.equal(inboundRow.purchase_arrival_record_id, undefined);
-  assertGatewayCommon(inboundRow, 'purchaseInbound');
+  // a. ⭐ 新建的记录**只有**「库存流水」+「实时库存」：到货链路再也不新建任何入库明细行
+  //    （「采购入库」表已被业务负责人整表删除 —— 全仓连那个表键都不许再出现，
+  //      见 purchaseInboundRemoval.test.js 的 ①）。
+  const createdTables = [...new Set(logs.logs('bitable.record.created').map((row) => row.table_key))].sort();
+  assert.deepEqual(createdTables, ['inventoryLedger', 'liveInventory'],
+    '这次确认只新建「库存流水」一条 +「实时库存」两条；入库明细行一条都没有');
 
-  // b. ⭐ 库存那半：采购入库也带同一组键
+  // b. ⭐ 库存那半：采购加库存带同一组键
   const applied = logs.logs('inventory.change.applied');
   assert.equal(applied.length, 1);
   assert.equal(applied[0].task_id, TASK);
   assert.equal(applied[0].batch_no, BATCH);
   assert.equal(applied[0].purchase_batch_record_id, BATCH_RECORD);
   assert.equal(applied[0].purchase_report_record_id, undefined);
+  assert.equal(applied[0].purchase_arrival_record_id, undefined);
   // 既有字段一个都不少
   assert.equal(applied[0].kind, 'STOCK_PURCHASE_INCREASE');
   assert.equal(applied[0].stock_key, 'prod_1|36|样品');
@@ -555,7 +553,9 @@ test('到货入库：写「报货批次.到货信息」/「采购入库」/加�
   // 既有字段一个都不少（`arrival_record_id` 已随表退场 → 换成 `batch_record_id`）
   assert.equal(posted[0].batch_record_id, BATCH_RECORD);
   assert.equal(posted[0].arrival_record_id, undefined);
-  assert.equal(posted[0].inbound_count, 1);
+  // ⚠️ 键名与事实对齐：不再有"入库几条"，改数"给几个（货品+尺码）加了库存"，并明写入库行 0。
+  assert.equal(posted[0].inventory_applied_count, 1);
+  assert.equal(posted[0].inbound_rows_written, 0);
   assert.equal(posted[0].inventory_applied, true);
 });
 
