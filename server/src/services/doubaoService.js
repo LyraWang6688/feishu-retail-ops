@@ -184,6 +184,12 @@ const salesParseSnapshot = (result = {}) => ({
   diff_amount: result.diff_amount,
   restock_state: result.restock_state,
   new_item_no: String(result.new_item_no || '').slice(0, 80),
+  // ⭐ 2026-10-07：换货"新的一双"的另外三个字段也要看得见 —— 真机那次
+  // 「6C98012-15L 换成41码」出问题时，日志里**只有 new_item_no**（为空），
+  // `new_size` 到底空没空只能靠猜；"同款换码"这条路一开，new_size 就是关键判据。
+  new_color: String(result.new_color || '').slice(0, 40),
+  new_size: result.new_size,
+  new_amount: result.new_amount,
   missing_fields: (Array.isArray(result.missing_fields) ? result.missing_fields : [])
     .map((field) => String(field).slice(0, 100)),
 });
@@ -763,6 +769,23 @@ class DoubaoService {
     · item_no / color / size 是**要退/要换的那一双**（她原话里说的），不知道就留空。
     · new_item_no / new_color / new_size / new_amount 是**换给/赔给她的那一双**的货号、颜色、尺码、成交金额
       （只有换货、赔货才有）；不知道就留空。
+    ⭐ 换货（action="exchange"）有**两种**，先分清是哪一种，再填上面两组字段：
+      · **换尺码（同款换码）**——尺码不合适，还是**同一双鞋**、只换一个码：
+        item_no / color 填**原来那双**；new_item_no **可以留空**（也可以等于原货号）；
+        **必须填 new_size = 新尺码**（她说的那个新码）。
+        ⚠️ 她说「换成 41 码」**就是换尺码**，**不是**"没说要换哪双" ——
+           这种话里 new_size 必须填出来，不许留空、也不许把 41 当成原那双的 size。
+        例：「6C98012-15L 换成41码」⇒
+          {"intent":"exchange","action":"exchange","item_no":"6C98012-15L","color":"","size":"",
+           "new_item_no":"","new_color":"","new_size":41,"new_amount":"","settlement":"","diff_amount":""}
+      · **换另一双**——这双不喜欢了，换**另一双鞋**：new_item_no = 新货号；
+        她说得出新颜色 / 新尺码 / 新金额就一起填进 new_color / new_size / new_amount。
+        例：「把 6035 黑 38 换成 1366-33 黑 40」⇒
+          {"intent":"exchange","action":"exchange","item_no":"6035","color":"黑","size":38,
+           "new_item_no":"1366-33","new_color":"黑","new_size":40,"new_amount":""}
+        ⚠️ 换另一双时，她没说的那一项留空，**不要拿原那双的颜色/尺码去补**、也不要猜。
+    🔴 intent="return" 或 "exchange" 时**不许把货号填进 items**（items / payments / agreed_total
+      都是**销售字段**，售后结果里一个都不许出现）——上面两个例子里从来没有 items。
     · settlement 只能填 "cash"（退现金/收现金/退微信）/ "prepaid"（钱先存着/存预存）；没说到就留空。
     · diff_amount 是**她说的**差价：要退给她的钱填负数（如 -230），她要补的钱填正数（如 50）；
       她没说就留空，**禁止**用原价或标价推算。
