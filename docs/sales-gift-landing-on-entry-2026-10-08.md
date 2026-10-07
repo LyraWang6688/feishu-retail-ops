@@ -191,7 +191,29 @@
 
 ## 5. 全量测试与 CI
 
-_（全量 2 次结果、CI 三项见 PR。）_
+### 5.1 全量（在独立 worktree `.local/worktrees/gift-on-entry` 里跑，**不在主工作区**）
+
+```
+$ cd server && git rev-parse --short HEAD   # 43aa47c 之前的 b09b10b 基线上改
+$ node --test --test-concurrency=1          # 第 1 次
+ℹ tests 1365   ℹ pass 1365   ℹ fail 0      (duration_ms 35612)
+$ node --test --test-concurrency=1          # 第 2 次
+ℹ tests 1365   ℹ pass 1365   ℹ fail 0      (duration_ms 34321)
+```
+
+### 5.2 CI 三项（PR #263）
+
+```
+$ export XDG_CACHE_HOME=/tmp/ghcache GH_CACHE_DIR=/tmp/ghcache
+$ gh pr checks 263
+Analyze (javascript-typescript)   pass   54s
+CodeQL                            pass    3s
+test                              pass   57s
+$ gh pr view 263 --json mergeStateStatus -q .mergeStateStatus
+CLEAN
+```
+
+⚠️ **未合并、未部署**（业务负责人的口径：合并/部署都要她当次命令）。
 
 ## 6. ⚠️ 不确定 / 需她拍板
 
