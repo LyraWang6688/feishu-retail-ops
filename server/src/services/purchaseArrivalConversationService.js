@@ -25,6 +25,17 @@ const TASK_TYPE = 'purchase_arrival_reconcile';
 // 只有这一种错误才会触发"去掉「验收人」重试一次"，别的错误一律照抛。
 const USER_FIELD_CONV_PATTERN = /UserFieldConvFail|1254066/i;
 
+// 回话模板：`{key}` 用值替换，值缺失时原样留着（不静默吞掉占位符）。
+// 与 `services/salesThreadProgressService.js` 里的 `formatCopy` 同一套写法
+//（同一件事不要有两种拼法；这里是本文件自己的小工具，不跨 service 依赖）。
+const formatCopy = (template, values = {}) =>
+  String(template || '').replace(/\{(\w+)\}/g, (whole, key) => (
+    values[key] === undefined || values[key] === null ? whole : String(values[key])
+  ));
+
+// 一行明细在卡片/日志里的身份（货号+颜色+尺码）。
+const rowLabel = (row) => `${textValue(row?.item_no) || '（未知货号）'}${textValue(row?.color) || ''} ${Number(row?.size)} 码`;
+
 /**
  * 「采购到货：群话题对话式核对」（业务负责人 2026-10-06 定的口径）。
  *
@@ -48,9 +59,20 @@ const USER_FIELD_CONV_PATTERN = /UserFieldConvFail|1254066/i;
  *   回写入库状态的代码已按她的口径删除（见 purchaseWebhookService 的注释 + 测试里的断言）。
  *
  * ⚠️ 不做的事（她没有说，就不替她决定）：
- *   · **不为「实际为 0」设计任何规则**（她说"实际到货不会为 0，因为肯定会到货"）；
- *     算出来小于 1 时一律**不入库**，回一句让她重说，绝不写负数、也不猜。
  *   · 不改采购申请、不改报货表、不建货品（申请行本来就挂着已有货品）。
+ *
+ * ⭐ 「某一行算出来 `实际 = 0 双`」怎么办（业务负责人 **2026-10-07 当面纠正**，逐字：
+ *   「**如果这个尺码算下来为 0，那么就不用入库啊！**」）：
+ *   · `实际 = 0` 是**到货核实的正常结果**（供应商漏发一整双），**不是错误**；
+ *     该行**不入库**（不写「采购入库」、不调 `inventory.applyPurchase`），
+ *     **但绝不阻断整单** —— 其它 `实际 > 0` 的行照常入库；
+ *   · 卡片上如实显示「申请 N 双 → 实际 0 双（这双没到）」（文案可配）；
+ *   · **真正的「对不上明细」**（尺码/货号在单据里找不到、命中不唯一）仍走
+ *     `plan_unmatched` + 一句让她重说的话 —— **两者不许混为一谈**；
+ *   · `实际 < 0`（她说少的双数比申请数还多）**既不静默当 0、也不放行**：
+ *     回一句"算出来是负数"让她重说（`replies.negative`，事件 `plan_negative`）。
+ *   ⚠️ 差异**类型**仍然只有三类（一样 / 多 / 少）—— 她 2026-10-06 定的那个口径一个字没改；
+ *     0 是**由「少」算出来的实际数量**，不是第四类差异。
  */
 class PurchaseArrivalConversationService {
   constructor({
@@ -92,6 +114,7 @@ class PurchaseArrivalConversationService {
         ...config,
         card: { ...defaults.card, ...(config.card || {}) },
         replies: { ...defaults.replies, ...(config.replies || {}) },
+        summary: { ...defaults.summary, ...(config.summary || {}) },
       }
       : defaults;
     this.now = now || (() => Date.now());
@@ -220,11 +243,29 @@ class PurchaseArrivalConversationService {
     // ── 算实际到货 = 申请数 ± 她说的差异 ────────────────────────────────────
     const plan = this.buildPlan(snapshot.rows, parsed);
     if (!plan.ok) {
-      logWarn('purchase.arrival.reconcile.plan_unmatched', {
+      // ⚠️ 两种"不算数"要分得清清楚楚（2026-10-07）：
+      //   · `difference_unmatched` = **她说的货号/尺码对不上明细**（真 unmatched，原样保留）；
+      //   · `actual_not_positive`  = 算出来**是负数**（数字对不上，不是没对上明细）。
+      //   两者都不入库，但回话不同 —— 让她知道该改哪儿。
+      const negative = plan.reason === 'actual_not_positive';
+      logWarn(negative ? 'purchase.arrival.reconcile.plan_negative' : 'purchase.arrival.reconcile.plan_unmatched', {
         task_id: taskId, batch_no: batchNo, reason: plan.reason,
       });
-      await this.safeReplyText(messageId, replies.unmatched, { threadId });
+      await this.safeReplyText(messageId, negative ? replies.negative : replies.unmatched, { threadId });
       return { handled: true, complete: true, plan_ok: false, reason: plan.reason };
+    }
+    // ⭐ `实际 = 0` 的行是**正常结果**（她 2026-10-07 拍板）：照常发卡片，
+    //    只是这些行在卡片上写"这双没到"、点「是」时也不会入库。这里先记一条可排查的日志。
+    const zeroRows = plan.rows.filter((row) => Number(row.actual) === 0);
+    if (zeroRows.length) {
+      logInfo('purchase.arrival.reconcile.plan_zero_actual', {
+        task_id: taskId, batch_no: batchNo, zero_actual_count: zeroRows.length,
+        request_row_count: plan.rows.length,
+        rows: zeroRows.map((row) => ({
+          item_no: row.item_no, color: row.color, size: row.size, quantity: row.quantity,
+        })),
+        note: '这些行实际 0 双：卡照样发、点「是」时不入库（不写库存流水），不阻断整单',
+      });
     }
 
     // ── 发卡片（是 / 否）────────────────────────────────────────────────────
@@ -260,6 +301,8 @@ class PurchaseArrivalConversationService {
     logInfo('purchase.arrival.reconcile.card_sent', {
       task_id: taskId, batch_no: batchNo, card_message_id: cardMessageId,
       row_count: plan.rows.length, difference_count: plan.differences.length,
+      // 0 双的行数（她 2026-10-07 起的正常情况）：卡片上写了「这双没到」。
+      zero_actual_count: zeroRows.length,
       adjustment_total: plan.rows.reduce((sum, row) => sum + (row.actual - row.quantity), 0),
     });
     return { handled: true, complete: true, card: true, taskId };
@@ -352,12 +395,23 @@ class PurchaseArrivalConversationService {
     //    actual = 按实际调整完的明细（每行一条 货品+尺码+实际双数）
     //    requests = 申请行原样（只用来把「采购入库」的「采购申请」关联挂回去）
     //    pending_creation 空数组：到货的货品在建采购申请时就已经存在了，这里不建新品。
+    // ⭐ 2026-10-07：`实际 = 0 双` 的行**到这里就被摘掉**，一张表都不写 ——
+    //    不写「采购入库」、不调 inventory.applyPurchase（库存流水/实时库存都不动）。
+    //    为什么在**建草稿这一步**摘（而不是塞给 confirmArrival 让它跳过）：
+    //      · `PurchaseWebhookService.aggregateArrivalItems` 对 `quantity <= 0` **当场抛错**
+    //        （那道闸门是给"数量无效"兜底的，不能放宽 —— 它同样拦着负数）；
+    //      · 在源头摘掉，"没到"这个事实就只存在于**核对卡片 + 日志**里，
+    //        下游入库能力完全不必认识"0 双"这个新概念（解耦：将来换入库实现也不受影响）。
+    //    其它行（actual > 0）照常入库；全部是 0 时 postable 为空 —— 那是"一件都没到"，
+    //    流程照样收尾（见 summary.postedNothingArrived），**不卡单**。
+    const zeroRows = task.plan.filter((row) => Number(row.actual) === 0);
+    const postableRows = task.plan.filter((row) => Number(row.actual) !== 0);
     const draft = {
       arrival_record_id: arrivalRecordId,
       batch_no: task.batch_no || '',
       operator_open_id: String(task.operator_open_id || operatorOpenId || ''),
       requests,
-      actual: task.plan.map((row) => ({
+      actual: postableRows.map((row) => ({
         product_record_id: row.product_record_id,
         item_no: row.item_no,
         color: row.color,
@@ -378,7 +432,19 @@ class PurchaseArrivalConversationService {
     }
     await this.store.update(taskId, { status: 'posted', posted_at: new Date(this.now()).toISOString() });
     const total = draft.actual.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
-    const summary = `已按实际到货入库：${draft.actual.length} 条明细 / 共 ${total} 双（报货批次号 ${task.batch_no || '（未知）'}）。`;
+    // 回话模板（可配）：没有 0 行 → 与改动前逐字相同；有 0 行 → 说清"这些行没入库"；
+    // 全是 0 行 → 不能写成"已入库 0 条"含糊过去，用专门那句。
+    const summaryTemplate = zeroRows.length === 0
+      ? this.config.summary.posted
+      : (draft.actual.length === 0
+        ? this.config.summary.postedNothingArrived
+        : this.config.summary.postedWithZero);
+    const summary = formatCopy(summaryTemplate, {
+      rowCount: draft.actual.length,
+      total,
+      zeroCount: zeroRows.length,
+      batchNo: task.batch_no || '（未知）',
+    });
     // 明确反馈（群里回一句 + 卡片改成终态）。发不出去只记日志，业务事实已经落地。
     // ⚠️ 顺序：先落库（上面那一步）再回话——回话失败不能把已经入库的事实判成失败。
     await this.safeReplyText(this.replyTarget(event, task), summary);
@@ -386,9 +452,28 @@ class PurchaseArrivalConversationService {
       event?.context?.open_message_id || event?.open_message_id || task.card_message_id || '',
       purchaseArrivalReconcileStatusCard({ batchNo: task.batch_no || '', message: summary, template: 'green' }),
     );
+    // ⭐ 正向证据：这些行**没有**入库（不是"看起来没写"，是把该写多少写进日志）。
+    //    与 `purchase.arrival.reconcile.posted` 一起看，就能核清"0 双的行到底动没动库存"。
+    if (zeroRows.length) {
+      logInfo('purchase.arrival.reconcile.zero_actual_skipped', {
+        task_id: taskId, batch_no: task.batch_no || '',
+        zero_actual_count: zeroRows.length,
+        rows: zeroRows.map((row) => ({
+          item_no: row.item_no, color: row.color, size: row.size, quantity: row.quantity, actual: 0,
+        })),
+        inbound_rows_written: 0,
+        inventory_apply_calls: 0,
+        note: '实际 0 双的行：不入库、不写库存流水（业务负责人 2026-10-07 口径）',
+      });
+    }
     logInfo('purchase.arrival.reconcile.posted', {
       task_id: taskId, batch_no: task.batch_no || '', arrival_record_id: arrivalRecordId,
-      row_count: draft.actual.length, total_quantity: total,
+      // row_count = 这次核对**一共几行**（含没到的），posting 的口径看下面两个字段。
+      row_count: task.plan.length,
+      posted_row_count: draft.actual.length,
+      skipped_zero_count: zeroRows.length,
+      skipped_zero_rows: zeroRows.map(rowLabel),
+      total_quantity: total,
       // 「单据信息」（采购申请表）在这条链路上**一个字都没写**——这是断言钉住的口径。
       purchase_request_writes: 0,
     });
@@ -477,9 +562,17 @@ class PurchaseArrivalConversationService {
    *   · 比申请多 → 实际 = 申请数 + 她说的双数；
    *   · 比申请少 → 实际 = 申请数 − 她说的双数。
    *
-   * ⚠️ **不为「实际为 0」设计规则**——她说"实际到货不会为 0，因为肯定会到货"。
-   *   这里只在算出来不是正数（她说的话对不上、或者多减了）时**拒绝入库**，
-   *   回一句让她重说；不猜、不写负数。
+   * ⭐ `实际 = 0`（业务负责人 **2026-10-07 当面纠正**，逐字：
+   *   「**如果这个尺码算下来为 0，那么就不用入库啊！**」）：
+   *   **放行**——它是"少"这条差异算出来的**正常结果**（供应商漏发一整双）。
+   *   该行由调用方在入库那一步摘掉（不入库、不写库存流水），**不阻断整单**。
+   *
+   * ⚠️ 仍然拦住的是**负数**（她说少的双数比这行申请数还多）：
+   *   那不是事实、只可能是口误/听错，**既不放行、也不静默夹成 0**（夹成 0 等于替她编
+   *   一行"没到"）；reason 维持 `actual_not_positive`（既有断言钉住这个取值），
+   *   回话由调用方换成"算出来是负数"那一句（见 `replies.negative`）。
+   *
+   * @returns {{ok: true, rows: Array, differences: Array} | {ok: false, reason: string}}
    */
   buildPlan(rows, parsed) {
     const actualById = new Map(rows.map((row) => [row.request_record_id, row.quantity]));
@@ -503,7 +596,8 @@ class PurchaseArrivalConversationService {
       });
     }
     const plan = rows.map((row) => ({ ...row, actual: actualById.get(row.request_record_id) }));
-    if (plan.some((row) => !Number.isSafeInteger(row.actual) || row.actual < 1)) {
+    // ⚠️ 只拦"算不出来 / 负数"：`actual === 0` 是**允许**的（2026-10-07 口径）。
+    if (plan.some((row) => !Number.isSafeInteger(row.actual) || row.actual < 0)) {
       return { ok: false, reason: 'actual_not_positive' };
     }
     return { ok: true, rows: plan, differences };

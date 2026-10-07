@@ -19,7 +19,8 @@
 | [inventory-size-reference-contract.md](inventory-size-reference-contract.md) | 库存与尺码关联字段契约 |
 | [workbench-query-contract.md](workbench-query-contract.md) | 工作台查询接口契约 |
 | [sales-line-plan.md](sales-line-plan.md) | 销售线的推进计划与判据 |
-| [arrival-conversation-reconcile-2026-10-06.md](arrival-conversation-reconcile-2026-10-06.md) | 采购到货「群话题对话式核对」：业务负责人 2026-10-06 当天口述的**权威口径**与验收标准（**已实现**） |
+| [arrival-conversation-reconcile-2026-10-06.md](arrival-conversation-reconcile-2026-10-06.md) | 采购到货「群话题对话式核对」：业务负责人 2026-10-06 当天口述的**权威口径**与验收标准（**已实现**）。⚠️ 其中「实际到货不会为 0 / 不为实际为 0 写规则」一条已被 2026-10-07 的口径**收窄**（见下一行） |
+| [arrival-zero-arrived-rule-2026-10-07.md](arrival-zero-arrived-rule-2026-10-07.md) | ⭐ **口径（权威 · 2026-10-07）**：「某个尺码实际到 0 双」是**正常情况** —— 该行不入库、**不阻断整单**；「真对不上明细」仍走原路径。**已实现**，验收标准与逐条对照见 [reports/arrival-zero-actual-2026-10-07.md](reports/arrival-zero-actual-2026-10-07.md) |
 | [private-chat-removal-2026-10-07.md](private-chat-removal-2026-10-07.md) | 🔴 **私聊链路已移除**（业务负责人 2026-10-07：「以后私聊这条链路我们就没有了」）：入口统一到【群聊 + 话题】；方式是她拍板的 **ⓐ：代码里一行私聊都不留、测试全部迁到群聊入口**（**没有开关**）。含**验收标准**（A 入口 / B 群聊回归 / C 发送出口 / D 历史用例迁移 / E 门禁）、逐条实现对照、以及"怎么恢复私聊"。配套拍板见 [private-chat-removal-decision-2026-10-07.md](private-chat-removal-decision-2026-10-07.md)；承接 2026-10-06 的切除盘清 [private-chat-excision-todo.md](private-chat-excision-todo.md) |
 | [purchase-intake-batch-spec.md](purchase-intake-batch-spec.md) | ⭐ **采购提交的归批口径（业务口径 · 权威 · 已定）**：一次提交 = 一个行为（采购申请 或 采购退货）+ N 个编号（**= N 个不同货品**）→ **只出一张图**；⭐ **一个货品的多个尺码勾在同一条记录上，记录之间不合并数量**。⚠️ **口径已定，但代码尚未按此实现**（仍在用时间窗归批）；改造方案见第 3 节 |
 | [arrival-conversation-flow.md](arrival-conversation-flow.md) | ⚠️ **已作废**（同日被上一份取代）：早一版规格；正文按当时事实保留，**不要再按它实施** |
@@ -68,3 +69,4 @@
 | [prototypes/工作台页面架构原型.html](prototypes/工作台页面架构原型.html) | 工作台页面架构原型（静态 HTML，直接浏览器打开） |
 | [reports/purchase-image-layout-and-group-thread-2026-10-07.md](reports/purchase-image-layout-and-group-thread-2026-10-07.md) | ⭐ **采购单 / 退货单出图排版 + 图与文字落在同一个话题**（业务负责人 2026-10-07 真机测试后当面提）：① 底部「合计 N 条 / M 双」整条删掉，改成**副标题** `供应商 · 报货日期 · 合计 M 双`（只留双数）、**不显示报货批次**、退货单同样改；② 采购群的 `im.message.reply` 补上 `reply_in_thread: true`，@经办人那条进**图所在的那个话题**。含**验收标准**、`表事件触发能否建话题` 的官方文档查证、逐条对照与定位回归证据 |
 | [prototypes/purchase-order-2026-10-07.png](prototypes/purchase-order-2026-10-07.png) · [prototypes/purchase-return-2026-10-07.png](prototypes/purchase-return-2026-10-07.png) | 上面那次改动的**示例图**（采购单 / 退货单），由**项目自己的渲染器**生成（`server/scripts/render-purchase-image-prototype.js`）⇒ 示例图 = 她实际会收到的图 |
+| [reports/arrival-zero-actual-2026-10-07.md](reports/arrival-zero-actual-2026-10-07.md) | ⭐ **到货核对「某尺码实际到 0 双」放行**（2026-10-07 真机误报的修复）：0 双的行**不入库、不阻断整单**；真「对不上明细」与「算出来是负数」各自有自己的提示与日志事件。含**动手前先写的验收标准**、实现落点、逐条对照、两个判断（负数 / 全 0）的理由与两次全量测试证据 |

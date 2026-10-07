@@ -35,7 +35,12 @@ const ARRIVAL_BATCH_KINDS = Object.freeze({
 
 // 三段差异（业务负责人 2026-10-06 定的口径，**只有这三类**：
 // 完全一样 / 实际比申请多 / 实际比申请少）。
-// ⚠️ 刻意**没有**「实际为 0」这一类——她明确说"实际到货不会为 0，因为肯定会到货"。
+// ⚠️ 刻意**没有**「实际为 0」这一类 —— 但那是"差异**类型**只有三类"，
+//    **不等于**"算出来的**实际数量**不能是 0"。
+// ⭐ 2026-10-07 她纠正（逐字）：「**如果这个尺码算下来为 0，那么就不用入库啊！**」
+//    ⇒ `实际 = 0` 是**由「少」这条差异算出来的正常结果**（例：申请 1 双、她说少 1 双），
+//      该行**不入库、但不阻断整单**；差异**类型**仍然只有下面这三个。
+//    口径见 `docs/arrival-zero-arrived-rule-2026-10-07.md`。
 const ARRIVAL_DIFF_TYPES = Object.freeze({
   SAME: 'same',
   MORE: 'more',
@@ -57,6 +62,19 @@ const DEFAULTS = Object.freeze({
     rejectLabel: '否',
     summaryHeading: '按你说的实际到货',
     hint: '点「是」我就按实际数量入库；点「否」我这次什么都不写。',
+    // ⭐ 2026-10-07：算出来 `实际 = 0` 的行**不是错误**（供应商漏发了一整双），
+    //    卡片上要让它看得出来是"这双没到"。这两个旋钮就是那两句可见文案。
+    zeroActualNote: '这双没到，不入库',
+    zeroRowsNote: '标「这双没到」的行我不会入库，也不会写库存流水。',
+  },
+  // 点「是」之后回群里那句结果的**模板**（`{key}` 由 service 填；模板可配 = 改文案不碰逻辑）。
+  summary: {
+    // 全部行都到货（没有 0 行）时用这句 —— 与改动前的逐字相同。
+    posted: '已按实际到货入库：{rowCount} 条明细 / 共 {total} 双（报货批次号 {batchNo}）。',
+    // 有一部分行 `实际 = 0`：那些行不入库，必须在回话里说清楚。
+    postedWithZero: '已按实际到货入库：{rowCount} 条明细 / 共 {total} 双；另有 {zeroCount} 条实际 0 双（没到），这 {zeroCount} 条我没有入库（报货批次号 {batchNo}）。',
+    // 边界：这一批**每一行**都是 0 双（一件都没到）。不能写成"已入库 0 条"含糊过去。
+    postedNothingArrived: '这批单子你说下来一件都没到（{zeroCount} 条明细全是 0 双），我没有入库、也没有写库存流水（报货批次号 {batchNo}）。',
   },
   replies: {
     // 业务负责人原话：「只回一句"好，那先不入库"」——一个字不多写。
@@ -67,6 +85,10 @@ const DEFAULTS = Object.freeze({
     notConfirmedYet: '我还没听你说「核对完了」，你补充完再说一声。',
     // 解析出来的差异对不上采购申请明细：明确说清，**不入库、不猜**。
     unmatched: '我没把你说的话对上这批采购申请的明细，先不入库。你说一下具体哪个尺码、多少双，我重算一遍。',
+    // ⭐ 2026-10-07：算出来是**负数**（她说少的双数比这行申请数还多）。
+    //    货号/尺码其实对上了，是**数字**对不上 —— 所以**不能**复用上面那句"对不上明细"
+    //    （那句话会让她去改货号/尺码）。也**不静默当成 0 双**（那是替她编一行"没到"）。
+    negative: '这个尺码你说少的双数比申请数还多，我算出来是负数，先不入库。你说一下这个尺码实际到了几双，我重算一遍。',
     // 核对期间没有任何可核对的明细（例如群里发的是别的单据）。
     noRows: '这批单子我没找到可以核对的采购申请明细，先不动。',
     // 已经入过库之后她又说话：不静默，明确告诉她这批已经处理过了。
@@ -102,6 +124,7 @@ const resolveArrivalConversationConfig = (options = {}) => {
   const env = options.env || process.env;
   const card = { ...DEFAULTS.card, ...(options.card || {}) };
   const replies = { ...DEFAULTS.replies, ...(options.replies || {}) };
+  const summary = { ...DEFAULTS.summary, ...(options.summary || {}) };
   return {
     enabled: options.enabled ?? parseExplicitBoolean(env.PURCHASE_ARRIVAL_CONVERSATION_ENABLED, DEFAULTS.enabled),
     maxTranscriptChars: positiveInteger(
@@ -111,6 +134,7 @@ const resolveArrivalConversationConfig = (options = {}) => {
     acceptanceTextSeparator: options.acceptanceTextSeparator ?? DEFAULTS.acceptanceTextSeparator,
     card,
     replies,
+    summary,
   };
 };
 
