@@ -103,22 +103,51 @@ $ cd server && node --test --test-concurrency=1 test/afterSalesService.test.js
 
 ### 6.3 全量（worktree 内，`node --test --test-concurrency=1`，连跑 2 次）
 
+**过程中先撞上一条与本改动无关的 pre-existing 失败，已由兄弟 PR 修掉（见下）——最终两次全绿：**
+
+```
+HEAD=1568e7a  behind_origin_main=0
+===== RUN 1（rebase 到修复后的 main 之后）=====
+ℹ tests 1308   pass 1308   fail 0
+===== RUN 2 =====
+ℹ tests 1308   pass 1308   fail 0
+```
+
+#### （历史）rebase 之前的 2 条失败 = 跨午夜的"日期炸弹"，**不是本次引入**
+
 ```
 RUN1_EXIT=1   ℹ tests 1308   pass 1306   fail 2
 RUN2_EXIT=1   ℹ tests 1308   pass 1306   fail 2
 ```
 
-失败的 2 条**与本次改动无关，是 pre-existing 的"日期炸弹"**：
-`test/purchaseBatchNoGeneration.test.js` 的 ②「同天第 2 包 → 0002」与 ⑥「并发不重号」
-把"今天"写死成 `CGD-20261007-*`，而生成器用真实时钟取今天 —— 上海时间 2026-10-08 00:00
-过午夜后"今天"变成 10-08，断言必挂。
+失败的 2 条是 `test/purchaseBatchNoGeneration.test.js` 的 ②「同天第 2 包 → 0002」与
+⑥「并发不重号」：它们把"今天"写死成 `CGD-20261007-*`，而生成器用真实时钟取今天 ——
+上海时间 2026-10-08 00:00 过午夜后"今天"变成 10-08，断言必挂。
 
 **证据（证明不是本次引入）**：在**未改动的 `origin/main`（b75139a）独立 worktree** 上单跑该文件：
-`tests 16 / pass 14 / fail 2`，同样是这 2 条。
+`tests 16 / pass 14 / fail 2`，同样是这 2 条；CI 上也是同样 2 条
+（`# tests 1308 / # pass 1306 / # fail 2`）。
 
 ⚠️ 影响面：最后一次绿 CI 是 `2026-10-07T15:52:08Z`（上海 23:52，午夜之前）；
-之后**任何** PR 的 `server tests` 都会红在这 2 条上（详见 PR 评论/汇报）。
-🔴 采购侧文件按任务书属于"不碰"，**本次一个字没动**。
+之后**任何** PR 的 `server tests` 都会红在这 2 条上。
+🔴 采购侧文件按任务书属于"不碰"，**本分支一个字没动**（已核对 `git diff origin/main` 里不含该文件）。
+
+✅ **上游已修**：lead 的 **PR #254**「修跨午夜的定时炸弹测试（解阻塞）」把固定时钟注入这两条用例，
+已合入 main（`748431c` / merge `1e2687f`）；本分支 rebase 到它之后 → 全绿、CI CLEAN。
+（我另外在隔离 worktree 里**临时验证过**同一套修法 16/16，随后把该采购侧文件逐字还原、未提交。）
+
+### 6.6 CI 三项（PR #252，rebase 后）
+
+```
+$ gh pr checks 252
+test                          pass   1m0s
+Analyze (javascript-typescript) pass  48s
+CodeQL                        pass   3s
+$ gh pr view 252 --json mergeStateStatus,mergeable
+{"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE"}
+```
+
+（rebase 之前是 `test fail` —— 失败的就是上面那 2 条日期用例；本 PR 的售后用例在 CI 里**全过**。）
 
 ### 6.4 关键 diff（改在哪一行）
 
