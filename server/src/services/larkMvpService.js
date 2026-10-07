@@ -300,6 +300,16 @@ class LarkMvpService {
       sizeReferences: this.purchaseWebhooks.getSizeReferences,
       confirmArrival: (taskId, task, operatorOpenId) =>
         this.purchaseWebhooks.confirmArrival(taskId, task, operatorOpenId),
+      // ⭐ 2026-10-07：到货确认成功之后，把「报货批次」那一行的到货状态改成「已到货」
+      //（业务负责人口径：「当用户在话题群里说了到货之后，状态应该改成「已到货」」）。
+      // 接线**只做一件事**：把批次号交给那个小 service；改哪张表、写什么取值都不是这里的事。
+      // ⚠️ 采购服务桩（单测注入的）可能没有 orderBatches → 退回"什么都不做"，
+      //    这样注入桩的既有用例与本条链路的接线互不影响。
+      markBatchArrived: (batchNo, options) => (
+        this.purchaseWebhooks.orderBatches?.markArrived
+          ? this.purchaseWebhooks.orderBatches.markArrived(batchNo, options)
+          : Promise.resolve({ updated: false, reason: 'not_wired' })
+      ),
       // ⭐ ④ 群里的反馈一律**回复那条消息**；她是在**话题**里说的（`{ threadId }`）
       //    就带 `reply_in_thread` 回到**同一个话题** —— 采购单/图是发群的，
       //    后续对话也必须留在话题里。适配器见下面的 replyPurchaseText / replyPurchaseCard。
@@ -721,7 +731,7 @@ class LarkMvpService {
     //   ② 主群消息（`thread_id` 为空）→ 满足**任一条**才理（见 resolveMainChatAdmission）：
     //      · `mentions` 里有机器人（@ 了）—— 改动前的老判据，照旧；
     //      · 正文过**销售闸门**（`config/messageGate`，与私聊同一把尺子）；
-    //      · 正文里有采购批次号 `BH-YYYYMMDD-NNNN` → 归采购那条路。
+    //      · 正文里有采购批次号 `CGD-YYYYMMDD-NNNN`（旧号 `BH-…` 仍然认） → 归采购那条路。
     //      三条都不满足 → **完全静默**：连日志之外的动作都没有，更没有任何远端调用
     //      （不发消息、不加表情、不读表、不进 AI）。群里所有人发的消息都会推给我们，
     //      这道闸门是拦它们的唯一一道。
@@ -809,9 +819,9 @@ class LarkMvpService {
    *   机器人它自动就能识别销售信息并进行回复呀。」→ 主群**不再要求 @**。
    * 满足**任一条**就理：
    *   ① `mentions` 里有机器人（@ 了）—— 改动前的老判据，照旧；
-   *   ② 正文里有采购批次号 `BH-YYYYMMDD-NNNN` → 归采购那条路（`extractBatchNos`）。
+   *   ② 正文里有采购批次号 `CGD-YYYYMMDD-NNNN`（旧号 `BH-…` 仍然认） → 归采购那条路（`extractBatchNos`）。
    *      先判它，顺序与分派器（`SalesGroupFlowService`）一致：带批次号的就是采购的，
-   *      即便同时含数字（"BH-20261005-0009 这批到哪了"不能被当成销售）；
+   *      即便同时含数字（"CGD-20261005-0009 这批到哪了"不能被当成销售）；
    *   ③ 正文过**销售闸门**（`config/messageGate`，与私聊**同一把尺子**）。
    * 三条都不满足 → `accepted:false`，调用方**静默返回**：不回复、不加表情、不读表、
    * 不进 AI —— 群里日常聊天（「今天天气不错」）绝不能有任何远端调用。

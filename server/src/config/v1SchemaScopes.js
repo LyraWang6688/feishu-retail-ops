@@ -55,11 +55,27 @@ V1_IDEMPOTENCY_KEY_TABLES.all = [...new Map(Object.values(V1_IDEMPOTENCY_KEY_TAB
 const getV1IdempotencyKeyTables = (scope = 'sales') =>
   V1_IDEMPOTENCY_KEY_TABLES[getV1SchemaScope(scope).key] || [];
 
+// 「单选取值契约」：真表这一列必须是单选、且**已经存在**代码要写的那些选项名。
+// 字段名闸门看不出取值，而往单选里写一个不存在的取值 → 飞书**自动新建选项** →
+// 表被悄悄污染、按该取值查询静默查不到（2026-10-07 加，起因见 purchaseArrivalStatus.js）。
+// ⚠️ 取值本身在 `config/purchaseArrivalStatus.js`（配置先行），这里只声明"哪些范围要校验"。
+const V1_SELECT_OPTION_CONTRACT_SCOPES = Object.freeze(['purchase', 'all']);
+
+const getV1SelectOptionContracts = (scope = 'purchase', env = process.env) => {
+  const key = getV1SchemaScope(scope).key;
+  if (!V1_SELECT_OPTION_CONTRACT_SCOPES.includes(key)) return [];
+  // 延迟 require：只在真要校验的范围内才去读那份配置（它自己会在取值不合法时抛错）。
+  const { purchaseArrivalStatusOptionContract } = require('./purchaseArrivalStatus');
+  return purchaseArrivalStatusOptionContract(env);
+};
+
 module.exports = {
   V1_SCHEMA_SCOPES,
   V1_SIZE_LINK_TABLES,
   V1_IDEMPOTENCY_KEY_TABLES,
+  V1_SELECT_OPTION_CONTRACT_SCOPES,
   getV1SchemaScope,
   getV1SizeLinkTables,
   getV1IdempotencyKeyTables,
+  getV1SelectOptionContracts,
 };

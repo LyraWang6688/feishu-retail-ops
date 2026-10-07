@@ -297,11 +297,13 @@ test('A 情况对得上：样品+门盒+仓库全部退掉，一行一个尺码�
   assert.ok(!textMessages(messages)[0].includes('条'), '「N 条」必须删掉');
   // 对得上时不发差额提醒（图本身就是回执）
   assert.equal(textMessages(messages).length, 1);
-  assert.equal(requests.filter((row) => (row.fields.采购申请单 || []).length === 1).length, 1);
-  // ⚠️ 附件文件名跟着单据标题走：旧名是「金猴-采购退货单.png」，现在必须是「金猴-退货单.png」。
-  //（「采购申请单」是**附件字段名**，那是生产表字段，不动。）
-  assert.match(gw.uploads[0], /退货单\.png$/);
-  assert.ok(!/采购退货单/.test(gw.uploads[0]), '附件文件名里不能再出现旧标题「采购退货单」');
+  // ⚠️ 2026-10-07：附件落点从「具体信息.采购申请单」（那一列已被她从生产表删除）
+  //    改成**「报货批次.单据」**；而**退货不建「报货批次」行**（下一段那条既有边界钉着它）
+  //    ⇒ 退货单这一刻**没有落点**：附件回填记一条 `purchase.batch.document.no_record` warn。
+  //    ⚠️ 这不是本次改动引入的回归：生产上那一列已经删了，退货单本来也写不进去。
+  //    「退货批次要不要也在「报货批次」里有一行」**需要她拍板**（见 docs 第 5 节）。
+  assert.equal(gw.records.purchaseOrderBatch, undefined, '退货不建报货批次 → 附件没有落点（既有边界）');
+  assert.deepEqual(gw.uploads, [], '没有落点就不该白传一次素材');
 
   assert.equal(task.status, 'posted');
   assert.equal(task.result.is_return, true);
@@ -314,7 +316,10 @@ test('货品没维护供应商：退货照常出单（不再整条失败），�
   // 她踩到的就是退货这条链路——原来 prepareSupplierReturn 一读不到供应商就抛
   // 「货品信息中未关联供应商，请先在货品信息中设置供应商」，整条退货直接失败。
   const gateway = makeGateway({
-    purchaseReport: [returnRecord('rep_nosup', { 数量: 1 })],
+    // ⚠️ 2026-10-07：报货批次号不再手填 —— 生产上由**入口**（accept）按包生成并写回。
+    //    本用例为了断言"退货单附件落点"直接调 process()（绕过了 accept），
+    //    所以夹具里直接把它给上（= 入口已经写回之后的形状）。
+    purchaseReport: [returnRecord('rep_nosup', { 数量: 1, 报货批次号: 'CGD-20261007-0009' })],
     liveInventory: [liveRow('live_nosup_36', '门盒', 36)],
     behavior: BEHAVIORS,
     supplier: [], // 供应商表里一条都没有
@@ -339,7 +344,9 @@ test('货品没维护供应商：退货照常出单（不再整条失败），�
   // 群消息照发：没有供应商的归到「未标注供应商」这一组，不是失败。
   // ⚠️ 2026-10-07：只说双数（`$` 锚住整句）。
   assert.match(textMessages(messages)[0], /未标注供应商 这批 1 双，图可以直接转给供应商。$/);
-  assert.match(gw.uploads[0], /退货单\.png$/);
+  // ⚠️ 2026-10-07：退货不建「报货批次」行 ⇒ 附件没有落点，**连素材都不上传**
+  //   （见 docs 第 5 节：退货单附件要不要有落点，需要她拍板）。
+  assert.deepEqual(gw.uploads, []);
 });
 
 test('A 情况数量比库存多：能对上的先退，差额明确告诉她', async () => {

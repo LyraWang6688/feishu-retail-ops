@@ -233,23 +233,32 @@ const V1_BITABLE_SCHEMA = {
         creditFlowId: '客户往来流水ID',
       },
     },
-    // 供应商填表入口。⚠️ 表名 2026-10-05 由业务负责人从「供应商报货」改成「供应商对接」，
+    // 供应商填表入口。⚠️ 表名沿革：「供应商报货」→（2026-10-05）「供应商对接」→
+    //（2026-10-07）**「信息填写」**（业务负责人当天在生产表改的名）。
     // 这里只跟着改 tableName（用户可见文案用得到）；分流与读写一律按 tableId 走，
     // 所以改名不影响任何触发链路。
+    // ⚠️ 闸门（v1:schema-check）按 **tableId** 校验字段名、**不校验表名** ——
+    //    表改名它**拦不住**，只能靠这里与各处用户可见文案自己同步。
     purchaseReport: {
-      tableName: '供应商对接',
+      tableName: '信息填写',
       tableId: getEnv('FEISHU_V1_PURCHASE_REPORT_TABLE_ID', 'tblo0ffzFt7vyQw2'),
       fields: {
         batchNoText: '报货批次号', detailId: '明细ID', behavior: '采购行为',
         product: '编号', size: '尺码', quantityDescription: '数量说明', operator: '经办人',
+        // 「供应商」：**只读**投影（生产/测试真表里是 Lookup，目标 = 货品信息.供应商名）。
+        // 用途只有一个：9 点推送的【采购】区要显示"这批是谁家的"——批次表 7 列里没有供应商，
+        // 只能从「信息填写」这一条上取。
+        // 🔴 **代码绝不写它**（Lookup 是飞书算出来的；写它会 FieldNameNotFound）——
+        //    映射存在的意义是"读它"与"闸门盯住这个名字"。
+        supplier: '供应商',
         // ⚠️ 「报单时间」(reportedAt) 映射已删除（2026-10-06）。
         // 业务负责人的口径：时间字段除了「收款时间」以外，**飞书里都设成了自动字段**
         //（表里的「创建时间」type=1001 / CreatedTime），代码不要再写、也不必再映射。
         // 生产真表核对（2026-10-06，服务器上只读、用项目自己的 gateway.listFields）：
-        // 「供应商对接」真表 14 列里**没有**「报单时间」，映射留着 = 部署闸门
+        // 「信息填写」真表 14 列里**没有**「报单时间」，映射留着 = 部署闸门
         // v1:schema-check:all 直接判红（该表缺少 V1 字段: 报单时间）。
         // grep 全仓：reportedAt 这个语义键在 server/src 里**没有任何读方与写方**
-        //（工作台「单据信息」页那一列读的是 row.reported_at，接口自 2026-09-26 起就不返回，
+        //（工作台「具体信息」页那一列读的是 row.reported_at，接口自 2026-09-26 起就不返回，
         //  属于已知历史遗留，不在本次改动内），删除不会留下悬空引用。
         // 「数量」（number）是「采购退货」那种报货的数量来源；「采购申请」格式走
         // 「尺码 + 数量说明」，这一列是空的。2026-10-05 业务负责人改了字段结构后
@@ -262,27 +271,28 @@ const V1_BITABLE_SCHEMA = {
         status: '处理状态', failureReason: '解析失败原因', request: '关联采购申请',
       },
     },
-    // ⚠️ 表名 2026-10-05 由业务负责人从「采购申请」改成「单据信息」——新定位是
-    // **给供应商开图片的依据**（采购申请单 / 采购退货单都写在这张表里）。
+    // ⚠️ 表名沿革：「采购申请」→（2026-10-05）「单据信息」→（2026-10-07）**「具体信息」**
+    //（业务负责人当天在生产表改的名）。定位不变：**给供应商开图片的依据**的明细表
+    //（采购申请 / 采购退货的**明细行**都写在这张表里）。
     // 同样只改 tableName：闸门和链路都按 tableId 走，改名不影响它们。
     purchaseRequest: {
-      tableName: '单据信息',
+      tableName: '具体信息',
       tableId: getEnv('FEISHU_V1_PURCHASE_REQUEST_TABLE_ID', 'tbli1ygPtss5CWCH'),
       fields: {
         batchNo: '报货批次号', behavior: '采购行为', product: '编号', size: '尺码', quantity: '数量',
-        arrivalStatus: '到货状态',
+        // ⚠️ 「到货状态」(arrivalStatus) 与「采购申请单」(attachment) 两行映射**已删除**：
+        // 业务负责人 2026-10-07 把这两列从生产表**删掉了**（到货状态改挂「报货批次」，
+        // 附件改回填「报货批次.单据」）。删映射是两件事的**一半**，另一半是删写入点
+        //（`writeSupplierImageAttachment` 的附件更新、`purchaseQueryService` 的到货状态读取、
+        // `routes/purchaseQuery.js` 的筛选）——只删一半的话：
+        //   · 只删写入、留映射 → 那一列永远空着（而且闸门不报错，静默）；
+        //   · 只删映射、留写入 → 写库时抛「未配置语义字段」。
         // 幂等键必须落成真实文本列：本地任务记录丢失时，只能靠远端这个值
         // 判断「这条采购申请是不是已经写过」，否则重试会写出第二笔采购事实。
         idempotencyKey: '幂等键',
-        // 「明细ID」是飞书自动编号：写入顺序 = 编号顺序，所以「同一批次+同一供应商
-        // 只留一条附件」时用它挑最早的那条，而不是靠数组下标——下标在重试后会变。
+        // 「明细ID」是飞书自动编号：写入顺序 = 编号顺序，用它挑最早的那条、
+        // 而不是靠数组下标——下标在重试后会变。
         detailId: '明细ID',
-        // 供应商要的采购申请 PNG 写回这里，产品负责人再自己转发。
-        // ⚠️ 字段真实名是「采购申请单」（2026-10-05 用 lark-cli +field-list 只读核对过），
-        // 不是口头说的「采购申请附件」；写错字段名飞书会直接 FieldNameNotFound。
-        // 「采购退货单」的 PNG 也写回这同一个附件字段：表已改名为「单据信息」，
-        // 它的定位就是"给供应商开图片的依据"，退货单同理，不再新建字段。
-        attachment: '采购申请单',
       },
     },
     purchaseArrival: {
@@ -307,11 +317,29 @@ const V1_BITABLE_SCHEMA = {
         acceptanceText: '验收原话',
       },
     },
+    // 「报货批次」：业务负责人 2026-10-07 明确它现在的定位 ——
+    //   「**采购批次这个数据表主要控制的是该批次的到货情况**」。
+    // 生产真表当天从 4 列变成 7 列（新增「到货状态」「单据」「采购行为」），
+    // 这里同步加映射；**「采购行为」刻意不映射**（她的原话：「报货批次里面的采购行为你不用管」）
+    // —— 不映射就自然读不到、写不了，也就不可能"顺手"写坏它。
     purchaseOrderBatch: {
       tableName: '报货批次',
       // Current V1 tenant default; forks can override it with the environment variable.
       tableId: getEnv('FEISHU_V1_PURCHASE_ORDER_BATCH_TABLE_ID', 'tblwezby9wRea9qi'),
-      fields: { batchNo: '报货批次号', createdAt: '创建时间', idempotencyKey: '幂等键' },
+      fields: {
+        batchNo: '报货批次号', createdAt: '创建时间', idempotencyKey: '幂等键',
+        // 到货状态（单选）：新建批次记录时显式写「未到货」；到货核对确认成功后改「已到货」。
+        // 取值**不写死在代码里** —— 语义键在这里、字面量在 `config/purchaseArrivalStatus.js`，
+        // 并由部署闸门（`validate_v1_schema.js`）对着真表 `property.options` 核对。
+        arrivalStatus: '到货状态',
+        // 「单据」：**附件字段**，出图之后把采购申请单 / 采购退货单的 PNG 回填到这里
+        //（她的原话：「把这些信息挪到我们的'报货批次'里面」）。
+        // ⚠️ 语义键叫 `document`，物理列名是她给的「单据」。
+        // ⚠️ 类型以**真表字段元数据**为准：必须是 Attachment（type 17）。
+        //    若不是附件（文本 / 关联 / 公式），写回会失败 —— 那种情况**停下来报告**，
+        //    不要改写成别的写库方式。
+        document: '单据',
+      },
     },
     purchaseInbound: {
       tableName: '采购入库',

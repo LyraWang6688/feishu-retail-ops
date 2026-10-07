@@ -6,7 +6,7 @@ import { PURCHASE_REQUEST_FORM_URL } from '../../config/links.js';
 const FORMS = [
   { label: '货品上新', desc: '新增货品基础信息', url: 'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnX0GlNcSOujePgWOLTTWr4m', icon: '🏷️' },
   // 采购申请表单的链接统一从 config/links.js 取（配置先行：换链接只改那一个文件）。
-  { label: '供应商对接', desc: '提交采购申请或采购退货', url: PURCHASE_REQUEST_FORM_URL, icon: '📦' },
+  { label: '信息填写', desc: '提交采购申请或采购退货', url: PURCHASE_REQUEST_FORM_URL, icon: '📦' },
   // ⚠️ 2026-10-05：「到货验收」表单原先的说明是"上传到货鞋盒图片并触发识别"——拍照识别链路已退场，
   // 那个表单现在只是**登记到货**（到货日 / 验收原话 / 确认状态）。链接不变，改的是说明。
   { label: '到货验收', desc: '登记到货与验收情况', url: 'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnVzhSlH9tLIxMUSfVjwF1se', icon: '✅' },
@@ -17,18 +17,18 @@ const $ = (container, selector) => container.querySelector(selector);
 function renderShell(container) {
   container.innerHTML = `
     <section class="panel">
-      <div class="panel-header"><div><h2>采购管理</h2><p class="subtitle">单据信息、到货登记和入库进度</p></div><button class="btn" type="button" data-action="refresh">刷新数据</button></div>
+      <div class="panel-header"><div><h2>采购管理</h2><p class="subtitle">具体信息、到货登记和入库进度</p></div><button class="btn" type="button" data-action="refresh">刷新数据</button></div>
       <h3 class="section-title">快捷录入入口</h3>
       <div class="quick-entries">${FORMS.map((form) => `
         <a class="entry-card" href="${form.url}" target="_blank" rel="noopener noreferrer">
           <div class="icon">${form.icon}</div><h3>${form.label}</h3><p>${form.desc}</p><div class="arrow">去填写 →</div>
         </a>`).join('')}</div>
       <div class="sub-tabs">
-        <button class="sub-tab active" type="button" data-subtab="purchase-request">单据信息情况</button>
+        <button class="sub-tab active" type="button" data-subtab="purchase-request">具体信息情况</button>
         <button class="sub-tab" type="button" data-subtab="purchase-arrival">采购到货情况</button>
         <button class="sub-tab" type="button" data-subtab="purchase-inbound">采购入库记录</button>
       </div>
-      <div id="purchase-request-subpanel" class="sub-panel"><div class="section-loading">正在加载单据信息…</div></div>
+      <div id="purchase-request-subpanel" class="sub-panel"><div class="section-loading">正在加载具体信息…</div></div>
       <div id="purchase-arrival-subpanel" class="sub-panel hidden"><div class="section-loading">打开后加载到货记录…</div></div>
       <div id="purchase-inbound-subpanel" class="sub-panel hidden"><div class="inline-placeholder"><h3>采购入库记录</h3><p>当前后端尚未提供采购入库查询接口。</p><span class="tag tag-info">规划中</span></div></div>
     </section>`;
@@ -39,7 +39,7 @@ function renderRequests(container, rows) {
     <div class="summary"><div class="metric"><span>当前查询记录</span><strong>${rows.length}</strong></div><div class="metric"><span>待到货</span><strong>${rows.filter((row) => row.arrival_status === '未到货').length}</strong></div></div>
     <div class="filters"><input data-filter="request-batch" placeholder="输入报货批次号"><select data-filter="request-status"><option value="">全部到货状态</option><option>未到货</option><option>部分到货</option><option>已全部到货</option></select><button class="btn btn-primary" type="button" data-search="requests">查询</button></div>
     <div class="table-wrap mobile-card-table"><table><thead><tr><th>报货批次号</th><th>货品编号</th><th>尺码</th><th>数量</th><th>到货状态</th><th>报单时间</th></tr></thead><tbody>${rows.map((row) => `<tr><td data-label="报货批次号"><span class="cell-value">${escapeHtml(row.batch_no || '-')}</span></td><td data-label="货品编号"><span class="cell-value">${escapeHtml(row.product_number || '-')}</span></td><td data-label="尺码"><span class="cell-value">${escapeHtml(row.size || '-')}</span></td><td data-label="数量"><span class="cell-value">${escapeHtml(row.quantity || 0)}</span></td><td data-label="到货状态"><span class="cell-value tag ${statusClass(row.arrival_status)}">${escapeHtml(row.arrival_status || '-')}</span></td><td data-label="报单时间"><span class="cell-value">${escapeHtml(dateTime(row.reported_at))}</span></td></tr>`).join('')}</tbody></table></div>
-    ${rows.length ? '' : '<p class="empty">没有匹配的单据信息。</p>'}`;
+    ${rows.length ? '' : '<p class="empty">没有匹配的具体信息。</p>'}`;
 }
 
 function renderArrivals(container, rows) {

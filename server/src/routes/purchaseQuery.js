@@ -12,7 +12,7 @@ const createPurchaseQueryRouter = (options = {}) => {
         batchNo: req.query.batchNo ? String(req.query.batchNo) : undefined,
         arrivalStatus: req.query.arrivalStatus ? String(req.query.arrivalStatus) : undefined,
         // 'purchase_request'（采购申请）/ 'purchase_return'（采购退货）—— 工作台
-        // 「采购退货」子页用它把同一张「单据信息」表分成两栏。
+        // 「采购退货」子页用它把同一张「具体信息」表分成两栏。
         reportBehavior: req.query.reportBehavior ? String(req.query.reportBehavior) : undefined,
       });
       return res.json({ success: true, rows, total: rows.length });

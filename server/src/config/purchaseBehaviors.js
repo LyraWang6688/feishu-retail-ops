@@ -10,9 +10,9 @@
  *    2026-10-07 实读生产「行为管理」表 20 条）：
  *
  *   | 所属环节 | 编码                        | 用在哪 |
- *   | 采购     | `PURCHASE_ORDER` 报货       | 「供应商对接」的「采购行为」 |
+ *   | 采购     | `PURCHASE_ORDER` 报货       | 「信息填写」的「采购行为」 |
  *   | 采购     | **`PURCHASE_IN` 入库**      | **「采购入库」的「采购行为」← 本文件负责这一个** |
- *   | 采购     | `PURCHASE_RETURN` 退货      | 「供应商对接」的「采购行为」 |
+ *   | 采购     | `PURCHASE_RETURN` 退货      | 「信息填写」的「采购行为」 |
  *   | 库存     | `STOCK_PURCHASE_INCREASE` 采购增加 | 「库存流水」的「库存行为」（`inventoryService.STOCK_MOVEMENTS`） |
  *   | …        | 其余库存 / 销售 / 资金编码   | 各自的链路 |
  *

@@ -1,9 +1,13 @@
 const { logInfo, logWarn } = require('../utils/logger');
+const { resolvePurchaseGroupReplies } = require('../config/groupPurchase');
 
 // 「认不出是哪一批」和「说不清是哪一批」的回复文案（配置先行：改文案不碰逻辑）。
 // ⚠️ 两条都是**明确的否定**，不是"我猜了一下"：参见 PurchaseBatchLocator 里的四条路。
-const NO_BATCH_REPLY = '这条消息我没认出来是哪一批采购单～你引用一下我发的采购单，或者把批次号（BH-开头的那个）说给我。';
-const AMBIGUOUS_BATCH_REPLY = '我分不清你说的是哪一批～引用一下我发的采购单，或者把批次号（BH-开头的那个）说给我。';
+// ⚠️ 2026-10-07：文案搬进 `config/groupPurchase.js`（`resolvePurchaseGroupReplies`）——
+//    里面那句"批次号是什么开头"要跟着**识别前缀**走：报货批次号改成 `CGD-…` 之后，
+//    再写死「BH-开头的那个」就是**指错方向**（她照着说一个我们已经不生成的号，
+//    只会一直"认不出"，而且那是静默的：只回一句问清楚）。
+// ⚠️ **在构造函数里解析、不在模块加载时求值**（dotenv 加载顺序那条老事故，见 app.js 注释）。
 
 /**
  * 群里进来的采购消息的分派（C 链路的使用方）。
@@ -19,9 +23,11 @@ const AMBIGUOUS_BATCH_REPLY = '我分不清你说的是哪一批～引用一下�
  * 定位这条路明天被别的东西复用也不会带上到货的口径。
  */
 class GroupPurchaseFlowService {
-  constructor({ locator, replyText, sendText = null, arrivalConversation = null } = {}) {
+  constructor({ locator, replyText, sendText = null, arrivalConversation = null, replies } = {}) {
     if (!locator) throw new Error('GroupPurchaseFlowService 需要 purchaseBatchLocator');
     this.locator = locator;
+    // 构造时解析（不在模块加载时求值）：`{prefixes}` 已按**当前配置**填好。
+    this.replies = replies || resolvePurchaseGroupReplies();
     // replyText：在**群里原地回复**那条消息（引用回复）。群聊里所有反馈都走它，
     // 免得私聊那套 sendText 把消息发到群里时没有上下文。
     // ⭐ ④ 第三个参数 `{ threadId }`：非空时由**飞书发送适配器**带 `reply_in_thread`
@@ -55,7 +61,8 @@ class GroupPurchaseFlowService {
         replied: false, arrival,
       };
     }
-    const content = located.status === 'not_found' ? NO_BATCH_REPLY : AMBIGUOUS_BATCH_REPLY;
+    // 文案来自配置（含「批次号是什么开头」那句，跟着**识别前缀**走）
+    const content = located.status === 'not_found' ? this.replies.noBatch : this.replies.ambiguous;
     let replied = false;
     try {
       // 在话题里问的，回答也回那个话题（④：采购的后续对话也必须留在话题里）。
@@ -93,4 +100,7 @@ class GroupPurchaseFlowService {
   }
 }
 
-module.exports = { GroupPurchaseFlowService, NO_BATCH_REPLY, AMBIGUOUS_BATCH_REPLY };
+// ⚠️ 两句文案**不再从这里导出**：它们现在是配置（`config/groupPurchase.js` 的
+// `resolvePurchaseGroupReplies`），而且 `{prefixes}` 要按**当前配置**填 ——
+// 导出一份"半成品模板"只会让人误用。要用就读 `new GroupPurchaseFlowService(...).replies`。
+module.exports = { GroupPurchaseFlowService };

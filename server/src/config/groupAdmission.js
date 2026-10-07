@@ -8,7 +8,7 @@
 // 判据本身（三条满足**任一条**就理，实现在 LarkMvpService.resolveMainChatAdmission）：
 //   ① `mentions` 里有机器人（@ 了）—— 改动前的老判据，照旧；
 //   ② 正文过**销售闸门**（`config/messageGate`，与私聊**同一把尺子**）；
-//   ③ 正文里有采购批次号 `BH-YYYYMMDD-NNNN` → 归采购那条路。
+//   ③ 正文里有采购批次号 `CGD-YYYYMMDD-NNNN`（旧号 `BH-…` 仍然认） → 归采购那条路。
 //
 // 这个开关只回答一个问题：**主群是否仍然要求 @ 机器人**。
 //   · 不配 / 空串 → `false`（放宽 = 新行为，**默认**）

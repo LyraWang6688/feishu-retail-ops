@@ -50,6 +50,24 @@ const PENDING_DEAL_PUSH_ITEM_SEPARATOR_ENV_KEY = 'PENDING_DEAL_PUSH_ITEM_SEPARAT
 const PENDING_DEAL_PUSH_SIZE_TEMPLATE_ENV_KEY = 'PENDING_DEAL_PUSH_SIZE_TEMPLATE';
 const PENDING_DEAL_PUSH_FOOTER_TEMPLATE_ENV_KEY = 'PENDING_DEAL_PUSH_FOOTER_TEMPLATE';
 
+// ── 2026-10-07：同一条推送里加【采购】区（销售区在前、采购区在后，顺序可配）────────
+// 业务负责人的口径（逐字）：
+//   「你每天 9 点发通知的时候，看未到货的情况就**直接去那个表里查**，然后再把消息**深链**发到用户群里」
+// ⚠️ **销售区逐字不变**是硬要求（哨兵用例锁着）⇒ 销售区的"大区标题"默认**空串**
+//    （空 = 不渲染那一行），要给她加大区标题时只改这个配置，不改代码。
+const PENDING_DEAL_PUSH_AREA_ORDER_ENV_KEY = 'PENDING_DEAL_PUSH_AREA_ORDER';
+const PENDING_DEAL_PUSH_SALES_TITLE_ENV_KEY = 'PENDING_DEAL_PUSH_SALES_TITLE';
+const PENDING_DEAL_PUSH_PURCHASE_TITLE_ENV_KEY = 'PENDING_DEAL_PUSH_PURCHASE_TITLE';
+const PENDING_DEAL_PUSH_PURCHASE_LINE_PARTS_ENV_KEY = 'PENDING_DEAL_PUSH_PURCHASE_LINE_PARTS';
+const PENDING_DEAL_PUSH_PURCHASE_LINE_SEPARATOR_ENV_KEY = 'PENDING_DEAL_PUSH_PURCHASE_LINE_SEPARATOR';
+const PENDING_DEAL_PUSH_PURCHASE_SUPPLIER_SEPARATOR_ENV_KEY = 'PENDING_DEAL_PUSH_PURCHASE_SUPPLIER_SEPARATOR';
+const PENDING_DEAL_PUSH_PURCHASE_FOOTER_TEMPLATE_ENV_KEY = 'PENDING_DEAL_PUSH_PURCHASE_FOOTER_TEMPLATE';
+
+// 两个**大区**的身份（内部键；顺序由 `PENDING_DEAL_PUSH_AREA_ORDER` 决定）。
+const PENDING_DEAL_PUSH_AREA_KEYS = Object.freeze(['sales', 'purchase']);
+// 默认顺序 = 她定的「**销售在前、采购在后**」。
+const DEFAULT_AREA_ORDER = Object.freeze(['sales', 'purchase']);
+
 // 默认 9 点（北京时间，业务负责人说的）。
 const DEFAULT_PUSH_HOUR = 9;
 // 默认 10 分钟一 tick：与「第二次交付」提醒同一个节奏。判断"今天该不该跑"不靠定时精度，
@@ -126,6 +144,18 @@ const PENDING_DEAL_PUSH_DEFAULTS = Object.freeze({
   itemSeparator: '、',
   sizeTemplate: '{size}码',
   footerTemplate: '（{count} 笔的深链暂不可用：飞书接口未返回 message_app_link，见日志 sales.pending_deal_push.link.missing）',
+  // ── 大区（2026-10-07）：销售区 + 采购区 ────────────────────────────────────
+  // ⚠️ 销售区标题**默认空串** = 不渲染那一行 ⇒ 销售区逐字不变（硬要求）。
+  salesAreaTitle: '',
+  // ⭐ 采购区的大区标题（`{count}` = 这一区几批）。
+  purchaseAreaTitle: '【采购】未到货的报货批次：{count} 批',
+  // 采购区一行 = 逐段拼（与销售区同一套"空的段整段不要"的规矩）。
+  //   `{batchNo}` 批次号 · `{supplier}` 供应商（取不到就没有这一段，**不编**）· `{link}` 深链
+  purchaseLineParts: ['{index}. {batchNo}', '{supplier}', '{link}'],
+  purchaseLineSeparator: ' · ',
+  // 一批多供应商时的连接符。
+  purchaseSupplierSeparator: '、',
+  purchaseFooterTemplate: '（{count} 批的深链暂不可用，见日志 sales.pending_deal_push.purchase_link.missing）',
 });
 
 // 每个模板认得的占位符。写错名字（`{itemNO}` 这种）**启动时**就抛错——
@@ -139,6 +169,11 @@ const TEMPLATE_PLACEHOLDERS = Object.freeze({
   itemTemplate: Object.freeze(['itemNo', 'size']),
   sizeTemplate: Object.freeze(['size']),
   footerTemplate: Object.freeze(['count']),
+  // ── 大区 ──────────────────────────────────────────────────────────────────
+  salesAreaTitle: Object.freeze(['count']),
+  purchaseAreaTitle: Object.freeze(['count']),
+  purchaseLinePart: Object.freeze(['index', 'batchNo', 'supplier', 'link']),
+  purchaseFooterTemplate: Object.freeze(['count']),
 });
 
 const assertTemplate = (label, template, allowed) => {
@@ -193,6 +228,38 @@ const resolveLineParts = (env) => {
   return parts;
 };
 
+/** 采购区的行模板（同一套规矩；段名不同 —— 见 TEMPLATE_PLACEHOLDERS.purchaseLinePart）。 */
+const resolvePurchaseLineParts = (env) => {
+  const raw = readString(env, PENDING_DEAL_PUSH_PURCHASE_LINE_PARTS_ENV_KEY, null);
+  const parts = raw === null
+    ? [...PENDING_DEAL_PUSH_DEFAULTS.purchaseLineParts]
+    : String(raw).split('|').map((part) => part.trim()).filter(Boolean);
+  if (!parts.length) {
+    throw new Error(`${PENDING_DEAL_PUSH_PURCHASE_LINE_PARTS_ENV_KEY} 至少要有一段（多段用 | 分隔），不能是空的`);
+  }
+  parts.forEach((part) => assertTemplate(
+    PENDING_DEAL_PUSH_PURCHASE_LINE_PARTS_ENV_KEY, part, TEMPLATE_PLACEHOLDERS.purchaseLinePart,
+  ));
+  return parts;
+};
+
+/**
+ * 大区顺序（`sales` / `purchase`）。
+ *
+ * ⚠️ 与区块顺序同一条纪律：**漏写的区不丢**（按声明顺序补在后面）。
+ *    少推一整个区比顺序不对严重得多，不能让一次配置写漏把它静默吃掉。
+ */
+const resolveAreas = (env) => {
+  const requested = readList(env, PENDING_DEAL_PUSH_AREA_ORDER_ENV_KEY);
+  const order = requested === null ? [...DEFAULT_AREA_ORDER] : requested;
+  const unknown = order.filter((key) => !PENDING_DEAL_PUSH_AREA_KEYS.includes(key));
+  if (unknown.length) {
+    throw new Error(`${PENDING_DEAL_PUSH_AREA_ORDER_ENV_KEY} 里有没声明的大区「${unknown[0]}」`
+      + `（可用：${PENDING_DEAL_PUSH_AREA_KEYS.join('、')}）`);
+  }
+  return [...order, ...PENDING_DEAL_PUSH_AREA_KEYS.filter((key) => !order.includes(key))];
+};
+
 /**
  * 一次把整份配置读出来。**只读一次、集中在启动时**：配置写错要在服务起来的那一刻就吵，
  * 而不是等到第二天 9 点推送时才失败（那时没人看着日志）。
@@ -243,6 +310,23 @@ const resolvePendingDealPushConfig = (env = process.env) => ({
   footerTemplate: assertTemplate(PENDING_DEAL_PUSH_FOOTER_TEMPLATE_ENV_KEY,
     readString(env, PENDING_DEAL_PUSH_FOOTER_TEMPLATE_ENV_KEY, PENDING_DEAL_PUSH_DEFAULTS.footerTemplate),
     TEMPLATE_PLACEHOLDERS.footerTemplate),
+
+  // ── 大区：销售区 + 采购区（2026-10-07）───────────────────────────────────────
+  // `areas` 已按配置排好序（默认 销售 → 采购）；渲染只认这个数组，服务里没有第二处顺序。
+  areas: resolveAreas(env),
+  // 销售区标题：**默认空串**（不渲染那一行）—— 这是"销售区逐字不变"的实现方式。
+  salesAreaTitle: readString(env, PENDING_DEAL_PUSH_SALES_TITLE_ENV_KEY, PENDING_DEAL_PUSH_DEFAULTS.salesAreaTitle),
+  purchaseAreaTitle: assertTemplate(PENDING_DEAL_PUSH_PURCHASE_TITLE_ENV_KEY,
+    readString(env, PENDING_DEAL_PUSH_PURCHASE_TITLE_ENV_KEY, PENDING_DEAL_PUSH_DEFAULTS.purchaseAreaTitle),
+    TEMPLATE_PLACEHOLDERS.purchaseAreaTitle),
+  purchaseLineParts: resolvePurchaseLineParts(env),
+  purchaseLineSeparator: readString(env, PENDING_DEAL_PUSH_PURCHASE_LINE_SEPARATOR_ENV_KEY,
+    PENDING_DEAL_PUSH_DEFAULTS.purchaseLineSeparator),
+  purchaseSupplierSeparator: readString(env, PENDING_DEAL_PUSH_PURCHASE_SUPPLIER_SEPARATOR_ENV_KEY,
+    PENDING_DEAL_PUSH_DEFAULTS.purchaseSupplierSeparator),
+  purchaseFooterTemplate: assertTemplate(PENDING_DEAL_PUSH_PURCHASE_FOOTER_TEMPLATE_ENV_KEY,
+    readString(env, PENDING_DEAL_PUSH_PURCHASE_FOOTER_TEMPLATE_ENV_KEY, PENDING_DEAL_PUSH_DEFAULTS.purchaseFooterTemplate),
+    TEMPLATE_PLACEHOLDERS.purchaseFooterTemplate),
 });
 
 module.exports = {
@@ -265,6 +349,15 @@ module.exports = {
   PENDING_DEAL_PUSH_ITEM_SEPARATOR_ENV_KEY,
   PENDING_DEAL_PUSH_SIZE_TEMPLATE_ENV_KEY,
   PENDING_DEAL_PUSH_FOOTER_TEMPLATE_ENV_KEY,
+  PENDING_DEAL_PUSH_AREA_ORDER_ENV_KEY,
+  PENDING_DEAL_PUSH_SALES_TITLE_ENV_KEY,
+  PENDING_DEAL_PUSH_PURCHASE_TITLE_ENV_KEY,
+  PENDING_DEAL_PUSH_PURCHASE_LINE_PARTS_ENV_KEY,
+  PENDING_DEAL_PUSH_PURCHASE_LINE_SEPARATOR_ENV_KEY,
+  PENDING_DEAL_PUSH_PURCHASE_SUPPLIER_SEPARATOR_ENV_KEY,
+  PENDING_DEAL_PUSH_PURCHASE_FOOTER_TEMPLATE_ENV_KEY,
+  PENDING_DEAL_PUSH_AREA_KEYS,
+  DEFAULT_AREA_ORDER,
   PENDING_DEAL_PUSH_BLOCK_DEFS,
   PENDING_DEAL_PUSH_BLOCK_CRITERIA,
   PENDING_DEAL_PUSH_DELIVERED_STATUS,

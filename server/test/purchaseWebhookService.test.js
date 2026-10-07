@@ -42,6 +42,10 @@ const mapFields = (tableKey, semanticValues) => {
 
 const makeGateway = (records = {}) => {
   const uploads = [];
+  // 飞书附件单元格里的 `name` 是**上传时那个文件名**（不是我们写入时给的）。
+  // 这里照样模拟：token → 文件名。少了它，「重复执行不新增第二条」就测不出来
+  //（去重判据正是"这一批里已经有同名的图了"）。
+  const tokenNames = new Map();
   return {
     uploads,
     table,
@@ -65,6 +69,13 @@ const makeGateway = (records = {}) => {
     },
     update: async (tableKey, recordId, semanticValues) => {
       const patch = mapFields(tableKey, semanticValues);
+      // 飞书附件字段读回来带 `name`（= 上传时的文件名）；这里照着补上，
+      // 否则「重复执行不新增第二条」的去重判据在假 Base 上永远命中不了。
+      if (Array.isArray(patch['单据'])) {
+        patch['单据'] = patch['单据'].map((item) => ({
+          ...item, name: tokenNames.get(item.file_token) || item.name || '',
+        }));
+      }
       const list = records[tableKey] || [];
       const record = list.find((r) => r.record_id === recordId);
       if (record) record.fields = { ...record.fields, ...patch };
@@ -73,7 +84,9 @@ const makeGateway = (records = {}) => {
     // 采购申请图写回附件字段时用：飞书是先传素材拿 file_token、再把 token 写进附件字段。
     uploadAttachment: async (filePath) => {
       uploads.push(filePath);
-      return `file_token_${uploads.length}`;
+      const token = `file_token_${uploads.length}`;
+      tokenNames.set(token, path.basename(filePath));
+      return token;
     },
   };
 };
@@ -273,10 +286,15 @@ const waitForBatchPosted = async (gateway, batchNo) => {
 
 // 「posted」表示采购申请已经写成，附件写回是它之后的收尾动作（顺序：先发图、再写附件）。
 // 所以断言附件不能只等任务状态，要等附件字段真的落到记录上。
+//
+// ⚠️ 2026-10-07：附件落点从「具体信息.采购申请单」搬到**「报货批次.单据」**
+//（业务负责人：「把这些信息挪到我们的'报货批次'里面」；原来那一列她已从生产表删除）。
+// 判据本身没变：**每个供应商一张图** → 「单据」里就有几个 file_token。
+const documentTokens = (rows) => rows.flatMap((record) => record.fields['单据'] || []);
 const waitForAttachments = async (gateway, expected) => {
   await waitFor('附件写回', async () => {
-    const rows = await gateway.listAll('purchaseRequest');
-    return rows.filter((record) => (record.fields['采购申请单'] || []).length === 1).length === expected;
+    const rows = await gateway.listAll('purchaseOrderBatch');
+    return documentTokens(rows).length === expected;
   });
 };
 
@@ -337,11 +355,11 @@ test('供应商报单免确认：解析完直接生成采购申请、不发确�
     [['8088', '黑色', 36, 2], ['8088', '黑色', 37, 1]],
   );
 
-  // 图写回「采购申请单」附件；同一批次+同一供应商只写一条
+  // 图写回「报货批次.单据」；同一批次+同一供应商只写一条
   await waitForAttachments(gateway, 1);
-  const withAttachment = (await gateway.listAll('purchaseRequest'))
-    .filter((record) => (record.fields['采购申请单'] || []).length === 1);
-  assert.equal(withAttachment.length, 1, '同一批次+同一供应商只应写一条附件');
+  const batchesWithAttachment = (await gateway.listAll('purchaseOrderBatch'))
+    .filter((record) => (record.fields['单据'] || []).length === 1);
+  assert.equal(batchesWithAttachment.length, 1, '同一批次+同一供应商只应写一条附件');
   assert.equal(gateway.uploads.length, 1, '附件上传只应发生一次');
 });
 
@@ -388,7 +406,10 @@ test('多尺码一次报单：每个尺码一条采购申请，尺码与批次�
 
   const batches = await gateway.listAll('purchaseOrderBatch');
   assert.equal(batches.length, 1);
-  assert.ok(batches[0].fields.报货批次号.startsWith('BH-'));
+  // ⚠️ 2026-10-07 口径变更：报货批次号不再手填/不再是 `BH-`，而是**代码生成**的
+  //    `CGD-YYYYMMDD-NNNN`（业务负责人给的样例 `CGD-20261007-0003`）。
+  //    断言**收严**：从"以 BH- 开头"改成**逐字匹配整条格式**（前缀 + 8 位日期 + 4 位序号）。
+  assert.match(batches[0].fields.报货批次号, /^CGD-\d{8}-\d{4}$/, `实际：${batches[0].fields.报货批次号}`);
   const requests = await gateway.listAll('purchaseRequest');
   assert.equal(requests.length, 2);
   // 数量说明只描述例外：36 码两双、37 码默认一双。
@@ -473,8 +494,11 @@ test('多个供应商：每个供应商各出一张图、各发一条说明', as
     messages.every((m) => m.data.receive_id === 'oc_test_purchase_group'),
     '采购单不能有任何一条发到私聊',
   );
-  const requests = await gateway.listAll('purchaseRequest');
-  assert.equal(requests.filter((record) => (record.fields['采购申请单'] || []).length === 1).length, 2);
+  const batches = await gateway.listAll('purchaseOrderBatch');
+  // ⚠️ 一批两个供应商，但「报货批次」**只有一行**（幂等键按 taskId 冻结）——
+  //    两张图都挂在它的「单据」里（附件字段），这就是"多供应商不互相冲掉"的证据。
+  assert.equal(batches.length, 1);
+  assert.equal(documentTokens(batches).length, 2, '两个供应商的两张图都要在「单据」里');
 });
 
 test('先发图再写表：写附件失败时图仍然发出，任务仍然是 posted', async () => {
@@ -488,7 +512,9 @@ test('先发图再写表：写附件失败时图仍然发出，任务仍然是 p
   const gateway = makeGateway(records);
   const originalUpdate = gateway.update;
   gateway.update = async (tableKey, recordId, values) => {
-    if (tableKey === 'purchaseRequest' && values.attachment !== undefined) throw new Error('模拟附件写入失败');
+    // ⚠️ 2026-10-07：附件落点改成「报货批次.单据」——"写附件失败"的模拟点跟着改
+    //（原来模拟的是「具体信息」的 attachment，那一列已被业务负责人从生产表删除）。
+    if (tableKey === 'purchaseOrderBatch' && values.document !== undefined) throw new Error('模拟附件写入失败');
     return originalUpdate(tableKey, recordId, values);
   };
   const { service, store } = makeService({
@@ -505,7 +531,8 @@ test('先发图再写表：写附件失败时图仍然发出，任务仍然是 p
   assert.ok(messages.some((m) => m.data.msg_type === 'text'), '说明也要发出去');
   const requests = await gateway.listAll('purchaseRequest');
   assert.equal(requests.length, 1, '采购申请本身已经写出，不受附件失败影响');
-  assert.ok(requests.every((record) => !(record.fields['采购申请单'] || []).length));
+  const batches = await gateway.listAll('purchaseOrderBatch');
+  assert.equal(documentTokens(batches).length, 0, '附件写失败时「单据」里不该留下任何 file_token');
 });
 
 test('发图失败（例如机器人缺 im:resource 图片上传权限）不把任务判成失败，采购申请照样写出', async () => {
@@ -539,7 +566,12 @@ test('发图失败（例如机器人缺 im:resource 图片上传权限）不把�
   assert.ok(recorded.image_delivery.failed[0].error.includes('99991672'), '失败原因要带上飞书错误码');
 });
 
-test('图片写回：取「明细ID」最小的那条，重复执行不新增第二条附件', async () => {
+// ⚠️ 2026-10-07：**落点变了，判据没变**。
+//   · 以前：附件写回「具体信息」里"明细ID 最小的那条采购申请行"（同一批次+同一供应商只写一条）；
+//   · 现在：附件写回**「报货批次」那一行**的「单据」（业务负责人：「把这些信息挪到我们的
+//     '报货批次'里面」；原来那一列她已从生产表删除）。
+//   ⇒ 「只写一条 + 重跑不新增 + 不重复上传」这三条**一条都没放宽**，只是换了断言的表。
+test('图片写回：写到「报货批次.单据」，重复执行不新增第二条附件', async () => {
   const records = {
     purchaseReport: [reportRecord('rep_min', { 尺码: sizeLinks(36, 37), 数量说明: '36码2双，37码1双', 编号: ['prod_1'] })],
     purchaseOrderBatch: [],
@@ -547,17 +579,6 @@ test('图片写回：取「明细ID」最小的那条，重复执行不新增第
     supplier: SUPPLIERS,
   };
   const gateway = makeGateway(records);
-  const originalCreate = gateway.create;
-  let autoNumber = 100;
-  gateway.create = async (tableKey, values) => {
-    const created = await originalCreate(tableKey, values);
-    // 「明细ID」是飞书的 auto_number：写入时由表自动发号，按创建顺序递增。
-    if (tableKey === 'purchaseRequest') {
-      autoNumber += 1;
-      created.record.fields['明细ID'] = autoNumber;
-    }
-    return created;
-  };
   const { service, store } = makeService({
     gateway,
     references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
@@ -566,20 +587,16 @@ test('图片写回：取「明细ID」最小的那条，重复执行不新增第
   await waitForTask(store, accepted.taskId);
   await waitForAttachments(gateway, 1);
 
-  const requests = await gateway.listAll('purchaseRequest');
-  assert.equal(requests.length, 2);
-  const minDetailId = Math.min(...requests.map((record) => record.fields['明细ID']));
-  const withAttachment = requests.filter((record) => (record.fields['采购申请单'] || []).length === 1);
-  assert.equal(withAttachment.length, 1, '同一批次+同一供应商只写一条附件');
-  assert.equal(withAttachment[0].fields['明细ID'], minDetailId, '必须写在明细ID最小的那条采购申请上');
+  const batches = await gateway.listAll('purchaseOrderBatch');
+  assert.equal(batches.length, 1);
+  assert.equal((batches[0].fields['单据'] || []).length, 1, '这一批只应有一条附件');
   const uploadsBefore = gateway.uploads.length;
 
   // 重复执行（重跑批次）：不得写出第二条附件，也不该重复上传
   await service.confirmPurchaseRequest(accepted.taskId, await store.get(accepted.taskId));
-  const afterRerun = await gateway.listAll('purchaseRequest');
-  assert.equal(afterRerun.filter((record) => (record.fields['采购申请单'] || []).length === 1).length, 1,
-    '重跑批次不得新增第二条附件');
-  assert.equal(gateway.uploads.length, uploadsBefore, '已经有附件的记录不该再上传一次');
+  const afterRerun = await gateway.listAll('purchaseOrderBatch');
+  assert.equal(documentTokens(afterRerun).length, 1, '重跑批次不得新增第二条附件');
+  assert.equal(gateway.uploads.length, uploadsBefore, '同一批同一张图已经在「单据」里，不该再上传一次');
 });
 
 test('已 posted 的报单任务再次收到确认卡片动作：不再产生任何写入', async () => {
@@ -605,8 +622,15 @@ test('已 posted 的报单任务再次收到确认卡片动作：不再产生任
   assert.equal((await gateway.get('purchaseReport', 'rep_done_card')).fields.处理状态, '已生成申请');
 });
 
-test('supplier report without batch number falls back to single processing', async () => {
-  const { service, store } = makeService({
+// ⚠️ 2026-10-07 **口径变更**（业务负责人：「报货批次号……后续要改为由后端代码来填写」）：
+//   以前「没有手填批次号 → 走单条处理、出单时才现生成一个号」；
+//   现在「**入口按包生成一个号并写回那一列**」—— 所以她不再手填之后，
+//   一次提交的多条记录仍然**只出一个号、只进一批**（下一个用例就是那一条）。
+//   这条用例原来断言的是「没有批次号 → 单条路径」，口径变了必须改；
+//   ⚠️ 但它**不是放宽**：新断言更强 —— 号必须**写回「信息填写」**、
+//      必须与「报货批次」那一行是**同一个号**、而且格式逐字合法。
+test('没有手填批次号：入口生成一个号并写回「信息填写」，归批走这一批', async () => {
+  const { service, store, gateway } = makeService({
     gateway: makeGateway({
       purchaseReport: [reportRecord('rep_nobatch', { 尺码: sizeLink(36), 编号: ['prod_1'] })],
       supplier: SUPPLIERS,
@@ -616,7 +640,41 @@ test('supplier report without batch number falls back to single processing', asy
   const result = await service.accept('supplier-report', 'rep_nobatch');
   const task = await waitForTask(store, result.taskId);
   assert.equal(task.status, 'posted');
-  assert.ok(!task.draft.is_batch);
+
+  const writtenBack = (await gateway.get('purchaseReport', 'rep_nobatch')).fields.报货批次号;
+  assert.match(writtenBack, /^CGD-\d{8}-\d{4}$/, `入口必须把号写回「信息填写」，实际：${writtenBack}`);
+  const batches = await gateway.listAll('purchaseOrderBatch');
+  assert.equal(batches.length, 1);
+  assert.equal(batches[0].fields.报货批次号, writtenBack, '「信息填写」与「报货批次」必须是同一个号');
+});
+
+// 真正的兜底路径：**入口读不到那条记录**（飞书最终一致 / 没权限）时，不阻塞、
+// 不报错，原样退回既有的单条处理（它自己会生成一个号，只是不写回「信息填写」）。
+test('入口读不到那条记录：不阻塞，退回单条处理（兜底仍然出单）', async () => {
+  const gateway = makeGateway({
+    purchaseReport: [reportRecord('rep_intake_fail', { 尺码: sizeLink(36), 编号: ['prod_1'] })],
+    supplier: SUPPLIERS,
+  });
+  // 第一次读（入口写回那一步）失败；后面的读照常 —— 模拟"事件先到、内容后到"。
+  const originalGet = gateway.get;
+  let failed = false;
+  gateway.get = async (tableKey, recordId) => {
+    if (!failed && tableKey === 'purchaseReport') {
+      failed = true;
+      throw new Error('Data not ready');
+    }
+    return originalGet(tableKey, recordId);
+  };
+  const { service, store } = makeService({
+    gateway,
+    references: referencesFor({ prod_1: productFields('8088', '黑色', 'sup_A') }),
+  });
+  const result = await service.accept('supplier-report', 'rep_intake_fail');
+  const task = await waitForTask(store, result.taskId);
+  assert.equal(task.status, 'posted', '入口取号失败绝不能把这一单判失败');
+  const batches = await gateway.listAll('purchaseOrderBatch');
+  assert.equal(batches.length, 1);
+  assert.match(batches[0].fields.报货批次号, /^CGD-\d{8}-\d{4}$/);
 });
 // ═══════════════════════════════════════════════════════════════════════════════
 // 「采购到货」表的**保留能力**：入库 / 库存 / 建档 / 成本
