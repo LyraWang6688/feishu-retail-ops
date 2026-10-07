@@ -164,11 +164,40 @@ $ node --test --test-concurrency=1 --test-skip-pattern="同天第 2 包|并发�
 ℹ tests 1315   ℹ pass 1315   ℹ fail 0      # 第 2 次
 ```
 
-**CI**：见第 9 节（`gh pr checks` 结果）。
+## 9. CI 证据（PR #255，head `2615a1d`）
 
-## 9. CI 证据（`gh pr checks`）
+```
+$ gh pr checks 255
+test                       fail    1m2s    https://github.com/LyraWang6688/feishu-retail-ops/actions/runs/37650633391/job/112892724851
+Analyze (javascript-typescript)  pass  1m6s  .../runs/37650630320/job/112892722307
+CodeQL                     pass    2s      https://github.com/LyraWang6688/feishu-retail-ops/runs/112893162899
+```
 
-（PR 创建后回填：`test` = 「server tests」、CodeQL，必须都 CLEAN。）
+🔴 **`test` 是红的，但根因不在本 PR** —— 它红的**就是本文件第 8 节那 2 条日期硬编码用例**，
+且**计数与本地逐字一致**（1317 条里的其余 1315 条全部通过，含本次新增的 13 条）：
+
+```
+# CI 日志（gh run view 37650633391 --log-failed）
+not ok 675 - ② 同天第 2 包 → 0002（计数取 max+1，不是条数+1）
+not ok 683 - ⑥ 并发不重号：两包几乎同时进来，各拿各的号（串行队列）
+# tests 1317
+# pass 1315
+# fail 2
+```
+
+**为什么是"时间炸弹"而不是谁的改动**：
+
+| 事实 | 时间（上海） | 结果 |
+| --- | --- | --- |
+| `main` 最后一次 CI（commit `b75139a`，= 本 PR 的 base） | 2026-10-07 **23:52** | ✅ success |
+| 本 PR CI（同一份采购代码，晚 24 分钟） | 2026-10-08 **00:16** | ❌ 那 2 条 |
+| 本机在**未改动的 `origin/main` 主工作区**跑那个文件 | 2026-10-08 00:0x | ❌ 同样 2 条 |
+
+⇒ 那条用例里写死了上海日期 `CGD-20261007-0001/0002`，**跨过上海零点就必红**，
+与本次改动（销售话题触发入口）**没有任何关系**。
+🔴 采购侧文件本次**一个字都不能碰**（另一个代理正在改 `refactor/drop-purchase-inbound-table`）
+⇒ **本 PR 不做 `--admin`、不绕过 CI**；这 2 条要么由采购那个任务顺带修，
+要么另开一个"只改日期硬编码"的小 PR（**需要 Lead 决定**）。
 
 ## 10. 不确定处 / 需要她知道的两件事
 
