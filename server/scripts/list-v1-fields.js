@@ -15,9 +15,9 @@
  * ⚠️ 不打印任何 secret / token 值，只打印"有没有配"和字段元数据。
  *
  * 用法：
- *   node server/scripts/list-v1-fields.js purchaseArrival
- *   node server/scripts/list-v1-fields.js purchaseArrival purchaseRequest
- *   # 只关心某个字段名时，加上 --field=到货日 会额外打一行结论
+ *   node server/scripts/list-v1-fields.js purchaseOrderBatch
+ *   node server/scripts/list-v1-fields.js purchaseOrderBatch purchaseInbound
+ *   # 只关心某个字段名时，加上 --field=确认状态 会额外打一行结论
  *
  * 在本机跑 = 读本机 .env 指向的 Base（按纪律：本机只有测试 Base）。
  * 要读生产 Base，在**服务器上**跑同一个脚本（服务器有生产凭证）。

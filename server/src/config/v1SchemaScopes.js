@@ -9,7 +9,9 @@ const V1_SCHEMA_SCOPES = {
     'purchaseReport',
     'purchaseRequest',
     'purchaseOrderBatch',
-    'purchaseArrival',
+    // ⚠️ `purchaseArrival`（「到货验收」）已从 schema 与这里**一并删除**（2026-10-07 晚）：
+    //    业务负责人把那张表整个删了，到货落点搬到「报货批次」。
+    //    留着它 = 部署闸门 `v1:schema-check:purchase` 去问一张不存在的表，直接判红。
     'purchaseInbound',
   ],
   inventory: ['product', 'behavior', 'sizeManagement', 'salesDetail', 'purchaseInbound', 'inventoryLedger', 'liveInventory'],

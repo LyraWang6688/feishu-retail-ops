@@ -1,7 +1,5 @@
 const crypto = require('node:crypto');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
-const { person, relation } = require('./v1ReferenceResolver');
-const { mergeCorrelation } = require('../utils/correlationFields');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const {
   purchaseArrivalReconcileCard,
@@ -21,10 +19,6 @@ const taskIdForBatch = (batchNo) =>
   `arrival_reconcile_${crypto.createHash('sha256').update(String(batchNo || '')).digest('hex').slice(0, 24)}`;
 
 const TASK_TYPE = 'purchase_arrival_reconcile';
-
-// 飞书 User 字段转换失败（open_id 不在应用可见范围内 / 不是这个租户的用户）。
-// 只有这一种错误才会触发"去掉「验收人」重试一次"，别的错误一律照抛。
-const USER_FIELD_CONV_PATTERN = /UserFieldConvFail|1254066/i;
 
 // 回话模板：`{key}` 用值替换，值缺失时原样留着（不静默吞掉占位符）。
 // 与 `services/salesThreadProgressService.js` 里的 `formatCopy` 同一套写法
@@ -471,13 +465,18 @@ class PurchaseArrivalConversationService {
    * 点「是」：**这才是入库点**。
    *
    * 顺序（不能换）：
-   *   ① 「采购到货」新增一行（用户原话 + 验收人；**到货日交给飞书自动填**）；
-   *   ② 把草稿写进任务（`draft.actual` 是按实际调整完的数量、`draft.requests` 是申请行）；
-   *   ③ `confirmArrival` → 「采购入库」逐行写入 + `inventory.applyPurchase`
-   *      （「库存流水」+「实时库存」由它负责，这里不另写一套）。
+   *   ① 把草稿写进任务（`draft.actual` 是按实际调整完的数量、`draft.requests` 是申请行）；
+   *   ② `confirmArrival` → **「验收原话」写到「报货批次」那一行** → 「采购入库」逐行写入
+   *      + `inventory.applyPurchase`（「库存流水」+「实时库存」由它负责，这里不另写一套）
+   *      → 批次行的「确认状态」改成已确认。
    *
-   * 幂等：`task.status === 'posted'` 早退；`arrival_record_id` 落盘后复用；
-   * 更里面的「采购入库」幂等由 `confirmArrival` 自己保证（inbound_created + 远端回查 + 串行队列）。
+   * ⭐ 2026-10-07 晚（到货落点大改）：这里**不再建「到货验收」那一行**（表已被业务负责人删除）。
+   *    「验收原话」「确认状态」由 `confirmArrival` 写进**「报货批次」那一行**；
+   *    本类因此**不再写任何业务表**（批次行的维护归 `PurchaseOrderBatchService`）。
+   *
+   * 幂等：`task.status === 'posted'` 早退；
+   * 更里面的「采购入库 / 批次行」幂等由 `confirmArrival` 自己保证
+   *（inbound_created + 远端回查 + 串行队列；「验收原话」写的是同一个文本值）。
    */
   async confirmLocked(taskId, operatorOpenId, event = {}) {
     const { replies } = this.config;
@@ -507,21 +506,12 @@ class PurchaseArrivalConversationService {
         toastType: 'info',
       });
     }
-    let arrivalRecordId = String(task.arrival_record_id || '').trim();
-    if (!arrivalRecordId) {
-      try {
-        arrivalRecordId = await this.createArrivalRecord(task, operatorOpenId);
-      } catch (error) {
-        logError('purchase.arrival.reconcile.arrival_create_failed', { task_id: taskId, error: error.message });
-        return this.visibleFailure({
-          tier: 'arrival_create_failed', taskId, operator: operatorOpenId, event, task, error,
-          copy: formatCopy(replies.arrivalCreateFailed, { error: error.message }),
-          logEvent: 'purchase.arrival.reconcile.arrival_create_failed',
-        });
-      }
-      // 立刻落盘：崩溃在"建完还没记住"之间时，重试靠它复用同一行，不会建出第二条到货记录。
-      await this.store.update(taskId, { arrival_record_id: arrivalRecordId });
-    }
+    // ⭐ 2026-10-07 晚：这里原先会**新建「到货验收」一行**并落盘 `arrival_record_id`。
+    //    那张表已被业务负责人删除，落点改到「报货批次」那一行 ⇒ 这一步整段删除：
+    //      · 批次记录 id 本来就在任务上（`task.batch_record_id`，发图时从采购申请行读到的，
+    //        见 `loadRequestRows` / `readBatchRecordId`）——不需要第二个 id 来定位那一行；
+    //      · 拿不到它时，`confirmArrival` 里的 `writeAcceptance` 会按**批次号**回查，
+    //        所以这里不再有"先建行再记住 id"的幂等窗口。
     const requests = [];
     for (const requestId of task.request_ids) {
       const record = await this.gateway.get('purchaseRequest', requestId).catch(() => null);
@@ -543,8 +533,13 @@ class PurchaseArrivalConversationService {
     const zeroRows = task.plan.filter((row) => Number(row.actual) === 0);
     const postableRows = task.plan.filter((row) => Number(row.actual) !== 0);
     const draft = {
-      arrival_record_id: arrivalRecordId,
+      // ⭐ 到货信息的落点（2026-10-07 晚）：**报货批次的那一行**。
+      //    `batch_record_id` 是发图时从采购申请行的「报货批次号」关联上读到的（可能为空——
+      //    空时 `confirmArrival.writeAcceptance` 会按 `batch_no` 回查）。
+      batch_record_id: String(task.batch_record_id || '').trim(),
       batch_no: task.batch_no || '',
+      // 「验收原话」随草稿传给 confirmArrival —— 由它写进批次行（本类不写业务表）。
+      acceptance_text: String(task.acceptance_text || ''),
       operator_open_id: String(task.operator_open_id || operatorOpenId || ''),
       requests,
       actual: postableRows.map((row) => ({
@@ -624,7 +619,10 @@ class PurchaseArrivalConversationService {
       });
     }
     logInfo('purchase.arrival.reconcile.posted', {
-      task_id: taskId, batch_no: task.batch_no || '', arrival_record_id: arrivalRecordId,
+      task_id: taskId, batch_no: task.batch_no || '',
+      // ⭐ 2026-10-07 晚：键从 `arrival_record_id`（「到货验收」那条记录）换成
+      //    `batch_record_id`（到货信息现在的落点 = 「报货批次」那一行）。
+      batch_record_id: draft.batch_record_id || '',
       // row_count = 这次核对**一共几行**（含没到的），posting 的口径看下面两个字段。
       row_count: task.plan.length,
       posted_row_count: draft.actual.length,
@@ -639,83 +637,18 @@ class PurchaseArrivalConversationService {
     return { toast: { type: 'success', content: summary } };
   }
 
-  /**
-   * 「采购到货」新增一行。
-   *
-   * ⚠️ **刻意不写「到货日」**：它在飞书里是「自动填写」的日期字段
-   * （2026-10-06 用项目代码读生产真表核对过：`type: 5 / ui_type: DateTime / property.auto_fill: true`），
-   * 新建记录时飞书自己按当天填。口径是「只有「收款时间」需要代码写，其余时间字段一律交给飞书自动生成」。
-   *
-   * 写进去的只有三样，一样都不多：
-   *   · 「报货批次号」= 这一批（关联）；
-   *   · 「验收原话」= 她在话题里说过的原话（多句按配置的连接符归集成一个文本）；
-   *   · 「验收人」= 点「是」的那个人（**尽力而为**，见下）。
-   * 刻意不写「确认状态」：入库那一步（confirmArrival）自己会把它改成「已确认」，
-   * 两处都写早晚会写歪。
-   *
-   * ⚠️ 「验收人」为什么是尽力而为：她**没有要求**这个字段（是我加的留痕）。
-   * 飞书的 User 字段对 open_id 很挑（不在应用可见范围内会直接
-   * `UserFieldConvFail / 1254066` 让整条 create 失败），**不能让"我加的一个附加字段"
-   * 把她真正要的入库挡住**。所以只在**确实是用户字段转换失败**时退一步重试一次
-   * （去掉「验收人」），其它错误照旧往上抛、一个字都不写。
-   * （真实 E2E 里就是被这一条抓出来的：测试 Base 用假 open_id 建记录时报 1254066。）
-   */
-  async createArrivalRecord(task, operatorOpenId) {
-    // 先回查再创建：同一个批次 + 同一句原话 = 同一次核对。
-    // 崩溃在"建完还没落盘"之间时，重试靠它复用同一行，不会建出第二条到货记录
-    //（两条到货记录会让 confirmArrival 的"按到货记录回查"失效，进而写出两套入库行）。
-    const existing = await this.findExistingArrival(task);
-    if (existing) {
-      logInfo('purchase.arrival.reconcile.arrival_reused', {
-        task_id: task.task_id, arrival_record_id: existing, batch_no: task.batch_no || '',
-      });
-      return existing;
-    }
-    const baseValues = {
-      batch: relation(String(task.batch_record_id || '').trim()),
-      acceptanceText: String(task.acceptance_text || ''),
-    };
-    const operator = String(operatorOpenId || '').trim();
-    // 关联键（只进日志，**不改下面任何字段与顺序**）：这一行「采购到货」属于哪一批。
-    // ⚠️ 只给拿得到的两个：到货核对任务自己的 task_id（`arrival_reconcile_…`，另一套 task）
-    //    ＋ 批次号。「信息填写」记录 id 在这里拿不到 —— 不编。
-    const correlation = mergeCorrelation({ task_id: task.task_id, batch_no: task.batch_no });
-    let created;
-    try {
-      created = await this.gateway.create('purchaseArrival', { ...baseValues, inspector: person(operator) }, { correlation });
-    } catch (error) {
-      if (!USER_FIELD_CONV_PATTERN.test(String(error?.message || ''))) throw error;
-      logWarn('purchase.arrival.reconcile.inspector_rejected', {
-        task_id: task.task_id, reason: 'user_field_conversion_failed',
-        hint: '「验收人」写不进去（open_id 不在应用可见范围内），去掉它重试一次；其余字段照写',
-      });
-      created = await this.gateway.create('purchaseArrival', baseValues, { correlation });
-    }
-    const recordId = created?.recordId || '';
-    // ⚠️ 表名同步（2026-10-07 晚）：「采购到货」→「到货验收」。这句错误原文会被上层
-    //    拼进 `replies.arrivalCreateFailed`（**她看得见的回话**），所以旧表名一个字都不留。
-    if (!recordId) throw new Error('「到货验收」新建记录没有返回 record_id');
-    logInfo('purchase.arrival.reconcile.arrival_created', {
-      task_id: task.task_id, arrival_record_id: recordId, batch_no: task.batch_no || '',
-      // 明写"没写到货日"：这是口径，也是将来别人改这段代码时的绊线。
-      wrote_arrival_date: false,
-    });
-    return recordId;
-  }
-
-  /** 回查同批次 + 同原话的到货记录（本地任务丢盘时的幂等兜底）。 */
-  async findExistingArrival(task) {
-    const batchRecordId = String(task.batch_record_id || '').trim();
-    const acceptanceText = String(task.acceptance_text || '');
-    if (!batchRecordId || !acceptanceText) return '';
-    const table = this.gateway.table('purchaseArrival');
-    const records = await this.gateway.listAll('purchaseArrival').catch(() => []);
-    for (const record of records) {
-      if (!linkedRecordIds(record.fields?.[table.fields.batch]).includes(batchRecordId)) continue;
-      if (textValue(record.fields?.[table.fields.acceptanceText]) === acceptanceText) return record.record_id;
-    }
-    return '';
-  }
+  // ── 已删除（2026-10-07 晚）：`createArrivalRecord` / `findExistingArrival` ──────────
+  //
+  // 两个方法都在往**已被业务负责人删除的**「到货验收」表里建行 / 回查：
+  //   · `createArrivalRecord`：写「报货批次号」+「验收原话」+「验收人」，并做
+  //     "同批次 + 同原话先回查再创建"的幂等；
+  //   · `findExistingArrival`：上面那个回查。
+  // 落点搬到「报货批次」那一行之后：
+  //   · 落点是**更新**已有的那一行，不是新建 ⇒ 不再有"重复建行"这回事，
+  //     幂等也由"写同一个值"天然保证（`PurchaseOrderBatchService.writeAcceptance`）；
+  //   · 「验收人」在真表上是**创建人**（自动字段）⇒ 代码不写（原来那次
+  //     `UserFieldConvFail` 退一步重试的补丁随之删除，连同 `person` / `relation` 依赖）；
+  //   · 批次行的维护归 `PurchaseOrderBatchService`（本类一个业务表都不写）。
 
   /**
    * 把她说的话算成"实际到货"。

@@ -50,61 +50,64 @@ test('listPurchaseRequests maps fields and filters by batchNo', async () => {
   assert.equal(byStatus[0].record_id, 'req_1');
 });
 
-test('listPurchaseArrivals maps fields and resolves batch link', async () => {
-  // ⚠️ 2026-10-05：原先这里的记录还带「识别状态」「识别失败原因」两个字段，
-  // 断言里也有 recognition_status / failure_reason 两项和一个 recognitionStatus 过滤。
-  // 业务负责人已把这两个字段从生产表删除（拍照识别链路整体退场），schema 映射同步删掉，
-  // 查询接口也不再投影/过滤它们——所以本用例改成只断言留下来的容器字段。
-  //
-  // ⚠️ 2026-10-07 晚：同一张表又变了一次 —— 表改名「到货验收」，且**「图片」整列被她删掉**。
-  // 下面这两条假记录**故意还带着「图片」附件**（本机测试 Base 落后、那一列还在，
-  // 真实生产里已经没有它）：接口**一个字都不许再读它**，`image_count` 这个 key
-  // 必须像 recognition_status 一样**彻底消失**，而不是永远返回 0。
+test('listPurchaseArrivals ⭐ 改读「报货批次」那一行（到货落点 2026-10-07 晚改到这里）', async () => {
+  // ⚠️ 2026-10-05：原先这里的记录还带「识别状态」「识别失败原因」两个字段。
+  // ⚠️ 2026-10-07 晚：同一张表又变了一次 —— 表改名「到货验收」→ 然后**被业务负责人整个删除**。
+  //    到货信息（验收原话 / 确认状态）现在写在**「报货批次」那一行**上
+  //    ⇒ 这个查询**只读「报货批次」**，一行 = 一条批次记录。
+  // ⚠️ 下面这台假 Base **故意还留着 `purchaseArrival` 的旧记录**（本机测试 Base 落后）：
+  //    接口**一个字都不许再读它** —— 断言"返回的行来自批次表"就是这条。
   const gateway = makeGateway({
     purchaseArrival: [
-      { record_id: 'arr_1', fields: { 到货日: 1758844800000, 报货批次号: ['batch_1'], 图片: [{ file_token: 't1' }, { file_token: 't2' }], 确认状态: '待确认' } },
-      { record_id: 'arr_2', fields: { 到货日: 1758931200000, 报货批次号: ['batch_2'], 图片: [], 确认状态: '待确认' } },
+      { record_id: 'arr_legacy', fields: { 到货日: 1758844800000, 报货批次号: ['batch_1'], 确认状态: '待确认' } },
     ],
     purchaseOrderBatch: [
-      { record_id: 'batch_1', fields: { 报货批次号: 'BH-001', 供应商: ['sup_1'] } },
-      { record_id: 'batch_2', fields: { 报货批次号: 'BH-002', 供应商: ['sup_2'] } },
+      {
+        record_id: 'batch_1',
+        fields: {
+          报货批次号: 'BH-001',
+          到货状态: '已到货',
+          确认状态: '已确认',
+          验收原话: '都到了\n完毕',
+        },
+      },
+      { record_id: 'batch_2', fields: { 报货批次号: 'BH-002', 到货状态: '未到货' } },
+      // ⭐ **退货批次**：只写 批次号 + 幂等键（业务负责人 2026-10-07 晚口径：退货**不写**「到货状态」）
+      //    ⇒ 它既不进 9 点推送的「未到货」候选，也不该出现在"到货验收情况"里（一行空白像数据丢了）。
+      { record_id: 'batch_ret', fields: { 报货批次号: 'BH-003', 幂等键: 'purchase_batch:BH-003' } },
     ],
   });
   const service = createPurchaseQueryService(gateway);
 
   const all = await service.listPurchaseArrivals();
-  assert.equal(all.length, 2);
-  assert.equal(all[0].record_id, 'arr_2');
-  assert.equal(all[0].batch_no, 'BH-002');
-  assert.equal(all[0].confirm_status, '待确认');
-  assert.equal(all[0].supplier_record_id, '');
-  // 退场的字段连 key 都不该再出现（否则前端会渲染出一列永远为空的"识别状态"）。
-  assert.equal('recognition_status' in all[0], false);
-  assert.equal('failure_reason' in all[0], false);
-  // 同上：「图片」列已被她删除 ⇒ image_count 也必须彻底消失（留着 = 永远显示 0，比不显示更误导）。
-  assert.equal('image_count' in all[0], false, '「图片」列已删 → 不许再投影 image_count');
-  assert.equal('image_count' in all[1], false, '哪怕真表里还留着那一列（测试 Base 落后），也不许再读它');
+  assert.equal(all.length, 2, '退货批次（没有任何到货信息）不进这个面板');
+  // 排序：批次号倒序（与「具体信息」面板一致；批次行上没有可信的"到货时刻"可排）。
+  assert.deepEqual(all.map((row) => row.batch_no), ['BH-002', 'BH-001']);
+  const arrived = all.find((row) => row.batch_no === 'BH-001');
+  assert.equal(arrived.arrival_status, '已到货');
+  assert.equal(arrived.confirm_status, '已确认');
+  assert.equal(arrived.acceptance_text, '都到了\n完毕');
+  // record_id / batch_record_id 都是**批次记录 id**（到货信息的落点）。
+  assert.equal(arrived.record_id, 'batch_1');
+  assert.equal(arrived.batch_record_id, 'batch_1');
+  // 退场的字段连 key 都不该再出现（否则前端会渲染出一列永远为空的"识别状态"/"图片数"）。
+  assert.equal('recognition_status' in arrived, false);
+  assert.equal('failure_reason' in arrived, false);
+  assert.equal('image_count' in arrived, false, '「图片」列已随表删除 → 不许再投影 image_count');
+  // ⚠️ 「到货日」不投影：批次行上那一列是飞书自动的「更新时间」，不是真的到货时刻。
+  assert.equal(arrived.arrival_at, null, '不给"到货日"编一个值（它是自动的更新时间）');
 
-  assert.equal(all[1].record_id, 'arr_1');
+  const byBatch = await service.listPurchaseArrivals({ batchNo: 'BH-002' });
+  assert.deepEqual(byBatch.map((row) => row.batch_no), ['BH-002']);
 
-  const filtered = await service.listPurchaseArrivals({ confirmStatus: '待确认' });
-  assert.equal(filtered.length, 2);
+  const byConfirm = await service.listPurchaseArrivals({ confirmStatus: '已确认' });
+  assert.deepEqual(byConfirm.map((row) => row.batch_no), ['BH-001']);
 
-  // recognitionStatus 过滤已摘掉：传了也不该再筛掉任何东西。
-  const byRetiredFilter = await service.listPurchaseArrivals({ recognitionStatus: '识别失败' });
-  assert.equal(byRetiredFilter.length, 2);
+  const byArrival = await service.listPurchaseArrivals({ arrivalStatus: '未到货' });
+  assert.deepEqual(byArrival.map((row) => row.batch_no), ['BH-002']);
 });
 
-test('listPurchaseArrivals handles missing batch link gracefully', async () => {
-  const gateway = makeGateway({
-    purchaseArrival: [
-      { record_id: 'arr_nobatch', fields: { 到货日: 1758844800000, 报货批次号: [], 图片: [], 确认状态: '待确认' } },
-    ],
-    purchaseOrderBatch: [],
-  });
-  const service = createPurchaseQueryService(gateway);
-  const rows = await service.listPurchaseArrivals();
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].batch_no, '');
-  assert.equal(rows[0].supplier_record_id, '');
+test('listPurchaseArrivals：批次表里什么都没有时返回空数组（不猜、不编）', async () => {
+  const service = createPurchaseQueryService(makeGateway({ purchaseOrderBatch: [] }));
+  assert.deepEqual(await service.listPurchaseArrivals(), []);
 });
