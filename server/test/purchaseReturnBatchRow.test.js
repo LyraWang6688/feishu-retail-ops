@@ -384,9 +384,17 @@ test('B2 一批两个供应商的退货：两张退货单都写进**同一行**�
     },
   });
   // 一次表单提交（同一包）→ 一个号、一个退货批次
-  await ctx.service.acceptMany('supplier-report', ['rep_a', 'rep_b']);
-  await waitFor('两条退货处理完', async () => reportFieldsOf(gateway, 'rep_a')['处理状态'] === '已生成申请'
-    && reportFieldsOf(gateway, 'rep_b')['处理状态'] === '已生成申请');
+  const accepted = await ctx.service.acceptMany('supplier-report', ['rep_a', 'rep_b']);
+  // ⚠️ 判据必须是**整批跑完**，不能只看「处理状态 = 已生成申请」：
+  //    那个状态是在 `applySupplierReturn` 里**逐条**写的，而两张图是在**整批**写完之后
+  //    才由 `deliverReturnImages` 渲染/发群/回填附件的 —— 只等状态会**抢在出图之前**断言
+  //    （CI 上真的红过一次：`images.calls.length` 读到 1）。这里等整批任务落定 +
+  //    附件回填到位（这两件事都在出图之后）。
+  await waitFor('两条退货整批跑完（任务落定 + 两张图都回填）', async () => {
+    const tasks = await Promise.all(accepted.records.map((item) => ctx.store.get(item.taskId)));
+    const settled = tasks.every((task) => task && !['queued', 'processing', 'batch_waiting'].includes(task.status));
+    return settled && (batchRowsOf(gateway)[0]?.fields['单据'] || []).length === 2;
+  });
 
   const batches = batchRowsOf(gateway);
   assert.equal(batches.length, 1, '同一包 = 一个批次 = 一行');
