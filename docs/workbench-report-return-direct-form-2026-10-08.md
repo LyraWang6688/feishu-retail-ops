@@ -246,7 +246,31 @@ $ node --test --test-concurrency=1   # 第 2 轮
 
 ## 七、CI 三项
 
-（**待回填**：开 PR 后填 `gh pr checks` 与 `mergeStateStatus`）
+PR **#260**（分支 `feat/workbench-report-return-direct-form`，head = `2c8752ad62960a0ccaaf8a361fa08ebede908ccd`）。
+`gh pr checks 260`（逐字）：
+
+```
+Analyze (javascript-typescript)	pass	50s	https://github.com/LyraWang6688/feishu-retail-ops/actions/runs/37659849827/job/112924267432
+CodeQL	                        pass	4s	https://github.com/LyraWang6688/feishu-retail-ops/runs/112924581863
+test	                        pass	1m1s	https://github.com/LyraWang6688/feishu-retail-ops/actions/runs/37659855070/job/112924286974
+```
+
+三项**全绿**；**没有**用 `--admin`。
+
+⚠️ **如实记 `mergeStateStatus`（这一条与 `#257`/`#258`/`#259` 不同）**：
+
+- PR #260 在 CI 三项转绿后，被 **LyraWang6688（业务负责人账号）自己合并** ——
+  `merged = true` · `merged_by = LyraWang6688` · `merged_at = 2026-10-07T17:33:49Z`
+  = **2026-10-08 01:33:49（+08）** · merge commit `accae97b864589360127267e713c8ad53d5cb95a`。
+- **我（本任务的执行代理）没有执行合并**，也没有用 `--admin`。
+- ⚠️ 合并发生在我轮询 `mergeStateStatus` 的过程中 —— **合并后 GitHub 对该 PR 返回
+  `state=closed` / `mergeable=unknown`**，所以**我没有读到 `CLEAN` 这个字面值**。
+  能确认的是：**三项 required check 在合并前都是 `pass`**，且 `main` 的分支保护
+  要求 `test` 通过才能合（否则会被 `BLOCKED`）。
+  ⇒ 「必须看到 `CLEAN`」这条**未能按字面达成**，原因**不是绕闸门**，而是
+  **合并先于我的轮询落地**（CI 转绿 → 约 1 分钟内就被合了）。
+
+本节由紧随其后的 **docs-only PR**（零代码 / 零测试改动）回填 —— 它自己的 CI 也照跑一遍。
 
 ---
 
