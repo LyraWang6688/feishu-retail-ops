@@ -142,6 +142,20 @@
 ℹ fail 0
 ```
 
+**并入最新 `origin/main` 之后再跑 2 次**（`git merge origin/main`，含同期合并的「颜色候选范围」那批；
+⚠️ 这一步是**故意**做的：合并后的全量是唯一能拦住"两边各加同名方法、git 不报冲突"的便宜手段）：
+
+```
+=== merged full run 1 ===
+ℹ tests 1087
+ℹ pass 1087
+ℹ fail 0
+=== merged full run 2 ===
+ℹ tests 1087
+ℹ pass 1087
+ℹ fail 0
+```
+
 **CI**（PR #232，`gh pr checks 232`，`mergeStateStatus = CLEAN`）：
 
 | 检查 | 结果 | 耗时 |
