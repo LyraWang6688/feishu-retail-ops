@@ -11,6 +11,10 @@ const {
 } = require('../config/salesProgressIntake');
 const { logInfo, logWarn } = require('../utils/logger');
 const { skipNoGroupContext } = require('../utils/privateChatSend');
+// ⭐【确认成交】卡片按钮（2026-10-07 业务负责人拍板的**甲**）的用户可见文案（配置先行）。
+//   本类自己只回"货还没到"那一句（`confirmDeal.shortStock`）；其余回话仍走
+//   `config/salesProgressIntake` —— 那条路是她说「已完毕 / 成交」时用的同一条。
+const { resolveSalesConfirmDealConfig } = require('../config/salesConfirmDeal');
 
 // 把"不是钱"的数字遮掉（货号 1366-33、尺码 42码、批次号 BH-…）——
 // 遮罩规则在 config/salesProgressIntake（配置先行，改规则不碰逻辑）。
@@ -65,6 +69,10 @@ class SalesThreadProgressService {
     this.secondDelivery = options.secondDelivery || null;
     this.references = options.references || new V1ReferenceResolver(this.gateway);
     this.config = options.config || resolveSalesProgressIntakeConfig();
+    // 【确认成交】卡片按钮那几句话（默认文案 + 可配）。只在"货还没到"那条回话上用得到，
+    // 但它与进度配置是两件事（一个管"她说的这句话是什么意思"，一个管"这张卡上写什么"），
+    // 所以各读各的配置，不混进 `this.config`。
+    this.confirmDeal = options.confirmDeal || resolveSalesConfirmDealConfig();
     this.now = options.now || (() => new Date());
     // 群里：文字回到那条销售话题。
     // 🔴 2026-10-07「私聊链路移除」：原来的缺省是
@@ -357,6 +365,74 @@ class SalesThreadProgressService {
     return methods.length === 1 ? methods[0] : '';
   }
 
+  /** 这一单还挂着几条「未收款」占位（= 钱那一半还有没有活）。**一处实现**，两处用。 */
+  async pendingPaymentsFor(salesEntryRecordId) {
+    const paymentFields = this.gateway.table('paymentRecord').fields;
+    return (await this.payments.recordsForSale(salesEntryRecordId))
+      .filter((record) => textValue(record.fields?.[paymentFields.status]) === '未收款');
+  }
+
+  /**
+   * ⭐【确认成交】卡片按钮（业务负责人 2026-10-07 拍板的**甲**：**不新发消息**，
+   *   就在她手里那张「已入账」终态卡上点）。
+   *
+   * **点击 = 走既有那条「成交」逻辑**：钱货两半都交给本类的 `applyComplete`
+   * （= 与她说「已完毕 / 成交」逐字同一条路 → `SecondDeliveryService.confirm`
+   *  → `PaymentService` / `SalesDeliveryService`）。本方法**不另造一套**。
+   *
+   * 它只多做一件她 2026-10-06 明确要求的事（`AGENTS.md` 第 16 条① ＋ 本次任务第 4 条）：
+   * **"货那一半"先做掉**。为什么必须由这里先做：
+   *   · 【确认成交】按钮上**没有收款方式**（她明确"选项只能点是"，卡上只有一个按钮）；
+   *   · 而 `SecondDeliveryService.confirm` 的顺序是**先收钱、再交货**（那条链路自己是有意的：
+   *     预定单"钱没记上就不该把货记成已交付"）。
+   *   ⇒ 预定单的货**很可能还没到**，照那个顺序走就会**先把「未收款」写成「已收款」**、
+   *     再交付失败 —— 那是**半成品账**（货没到，钱却已经写成收到）。
+   *   ⇒ 所以：**只有在这一单确实有待收款时**，先做货；货没到就**一个字节都不写**
+   *     （不写钱、不写交付、卡片不变灰），并回一句她能照做的话（配置里的 `shortStock`）。
+   *     货做完了，钱那一半仍交给 `applyComplete`（不猜方式、不设默认方式）。
+   *
+   * 没有待收款时**不做任何前置动作**（钱那一半本来就没活）—— 直接走 `applyComplete`，
+   * 由既有的 `SecondDeliveryService.confirm` 去交付；这保证"预定 + 全款"的回话仍是
+   * 既有的那句「交付 N 双」，不会退化成"我没有重复写"。
+   */
+  async completeDealFromCard({ task } = {}) {
+    const salesEntryRecordId = String(task?.sales_entry_record_id || '').trim();
+    if (!salesEntryRecordId) throw new Error('确认成交缺少销售主表 record_id');
+    const entry = await this.gateway.get('salesEntry', salesEntryRecordId);
+    if (!entry || !isPosted(postedOf(entry, this.gateway.table('salesEntry').fields))) {
+      await this.reply(task, this.config.replies.notPosted);
+      return { replied: true, asked: true, reason: 'not_posted' };
+    }
+    const correlation = { task_id: task.task_id, sales_entry_record_id: salesEntryRecordId };
+    const pending = await this.pendingPaymentsFor(salesEntryRecordId);
+    if (pending.length > 1) throw new Error('存在多条待收款记录，请先人工核对');
+
+    let deliveredBefore = { count: 0, detailRecordIds: [] };
+    if (pending.length) {
+      const delivery = await this.deliverUndelivered(salesEntryRecordId, { correlation });
+      const failures = delivery.delivered?.failures || [];
+      if (failures.length) {
+        await this.reply(task, this.confirmDeal.shortStock);
+        logWarn('sales.confirm_deal.short_stock', {
+          task_id: task.task_id,
+          sales_entry_record_id: salesEntryRecordId,
+          failed_count: failures.length,
+          reason: failures[0]?.error || '',
+          // 可排查：这次**什么都没写**（钱、交付、卡片都没动），到货入库后再点一次是安全的。
+          written: false,
+          hint: '货还没到 → 不写钱、不写交付、卡片不变灰；到货入库后再到这张卡上点确认成交',
+        });
+        return {
+          replied: true, asked: true, reason: 'short_stock',
+          result: { failures, detailRecordIds: delivery.detailRecordIds },
+        };
+      }
+      deliveredBefore = { count: delivery.count, detailRecordIds: delivery.detailRecordIds };
+    }
+    const applied = await this.applyComplete(task, { deliveredBefore });
+    return { ...applied, deliveredBefore };
+  }
+
   /**
    * 整单完成（「已完毕 / 成交 / 搞定 / 好了」）——**等于点那张「成交」按钮**：
    * ① 补收款（那条「未收款」→「已收款」+ 收款时间）② 交付（写「已交付」+ 扣库存）。
@@ -374,8 +450,13 @@ class SalesThreadProgressService {
    *     `progress_asking`（**不是** `progress_applied`）。
    *   · ⚠️ 改动前这里在问不出方式时**直接 return**：钱货都没动、状态却记成
    *     `progress_applied`（看起来成功了）——那正是这次要修的 bug。
+   *
+   * ⚠️ 尾部可缺省的 `{ deliveredBefore }` 是**给【确认成交】卡片那条链路用的**：
+   *    为了不写半成品账，它进来之前可能**已经替这一单做掉了"货那一半"**
+   *    （见 `completeDealFromCard`）。这里只把**回话与日志**说全，不碰任何写入、不改任何判断；
+   *    不传 = 行为逐字不变（她说「已完毕 / 成交」那条路一个字都没动）。
    */
-  async applyComplete(task) {
+  async applyComplete(task, { deliveredBefore = { count: 0, detailRecordIds: [] } } = {}) {
     const salesEntryRecordId = String(task.sales_entry_record_id || '').trim();
     if (!this.secondDelivery) throw new Error('整单完成链路没有接上成交服务');
     const entry = await this.gateway.get('salesEntry', salesEntryRecordId);
@@ -385,9 +466,9 @@ class SalesThreadProgressService {
     }
     // 收款方式只在**确实有待收款**时才必须要：钱货两清的单说「成交」只是补交付，
     // 不该因为没提收款方式就把这条正确的话挡回去。
-    const paymentFields = this.gateway.table('paymentRecord').fields;
-    const hasPending = (await this.payments.recordsForSale(salesEntryRecordId)).some((record) =>
-      textValue(record.fields?.[paymentFields.status]) === '未收款');
+    // 「有没有待收款」的取法**只有一处**（`pendingPaymentsFor`）：句子识别那条路与
+    // 【确认成交】卡片那条路读的是同一份事实，不会两边各写一个判断而慢慢走歪。
+    const hasPending = (await this.pendingPaymentsFor(salesEntryRecordId)).length > 0;
     const method = hasPending ? await this.resolveCompletePaymentMethod(task) : '';
     if (hasPending && !method) {
       // ⭐ 钱没法定（她没说方式、可选方式也不是唯一）→ **不替她挑、也不设默认方式**，
@@ -397,8 +478,11 @@ class SalesThreadProgressService {
       const delivery = await this.deliverUndelivered(salesEntryRecordId, {
         correlation: { task_id: task.task_id, sales_entry_record_id: salesEntryRecordId },
       });
-      await this.reply(task, delivery.count
-        ? formatCopy(this.config.replies.completeAskMethod, { count: delivery.count })
+      // 货可能已经由调用方（【确认成交】卡片那条路）先做掉了：回话把两次**加起来**说，
+      // 别让她以为啥也没干。不传 `deliveredBefore` 时（她说「已完毕」那条路）逐字不变。
+      const deliveredTotal = delivery.count || Number(deliveredBefore.count || 0);
+      await this.reply(task, deliveredTotal
+        ? formatCopy(this.config.replies.completeAskMethod, { count: deliveredTotal })
         : this.config.replies.needMethod);
       logInfo('sales.thread_progress.complete_asking_method', {
         task_id: task.task_id,
@@ -406,11 +490,16 @@ class SalesThreadProgressService {
         // 货做到了什么程度：说清"我只是没动钱，不是什么都没做"。
         delivered_quantity: delivery.count,
         delivered_detail_ids: delivery.detailRecordIds,
+        // ⚠️ 只有"成交前已经替它做掉过货"时才有这个键 —— 既有那条路的日志逐字不变。
+        ...(Number(deliveredBefore.count || 0) > 0
+          ? { delivered_before_click: Number(deliveredBefore.count) } : {}),
         hint: '她没说收款方式、「收款方式管理」里也不是唯一一个 → 先做货、钱回问一句，不猜方式',
       });
       return {
         replied: true, asked: true, reason: 'payment_method_missing',
-        result: { detailRecordIds: delivery.detailRecordIds },
+        result: {
+          detailRecordIds: [...(deliveredBefore.detailRecordIds || []), ...delivery.detailRecordIds],
+        },
       };
     }
     const result = await this.secondDelivery.confirm({
@@ -424,7 +513,11 @@ class SalesThreadProgressService {
     }
     const parts = [];
     if (Number(result.collectedAmount) > 0) parts.push(`补收款 ￥${result.collectedAmount}`);
-    const deliveredCount = Number(result.delivery?.deliveredQuantity || 0);
+    // 交付数量取"这次 confirm 交的"；confirm 里没有交付那一段（货已经被卡片那条路先做掉了）
+    // 时退回"成交前已经做掉的"数量 —— 两种情况都如实说，且**不重复计数**。
+    const deliveredThisCall = Number(result.delivery?.deliveredQuantity || 0);
+    const deliveredCount = deliveredThisCall
+      || (result.delivery ? 0 : Number(deliveredBefore.count || 0));
     if (deliveredCount > 0) parts.push(`交付 ${deliveredCount} 双`);
     // 交付只成了一半时**如实说**（与点卡片那条路一致：钱收下了、货没交齐不能报成功）。
     const failedCount = result.delivery?.failures?.length || 0;

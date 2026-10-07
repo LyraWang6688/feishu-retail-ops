@@ -59,6 +59,15 @@ const { isLookupIntent, isAfterSalesIntent, normalizeMessageIntent } = require('
 const { isAfterSalesCardAction } = require('../config/afterSalesFlow');
 const { isSalesCandidate, UNSUPPORTED_INTENT_REPLY } = require('../config/messageGate');
 const { salesConfirmationCard, salesStatusCard, salesProcessingCard, keepOnlyCardButton, SECOND_DELIVERY_ACTION } = require('../utils/larkCards');
+// ⭐【确认成交】按钮（2026-10-07 业务负责人拍板的**甲**：做在「已入账」终态卡上，不新发消息）：
+//   动作名 ＋ "要不要画这个按钮"的判据 ＋ 用户可见文案，全在那一份配置里（配置先行）。
+const {
+  SALES_CONFIRM_DEAL_ACTIONS,
+  CONFIRM_DEAL_TASK_STATUS,
+  needsConfirmDeal,
+  resolveSalesConfirmDealConfig,
+  fill: fillConfirmDeal,
+} = require('../config/salesConfirmDeal');
 // 「点确认后那一次立即更新」那张卡片的可见文案 / 颜色（业务负责人 2026-10-07 拍板的 ⓐ）；
 // 调用时才解析（不在模块加载时求值，避免 dotenv 加载顺序事故）。
 const { resolveSalesProcessingCardConfig } = require('../config/salesProcessingCard');
@@ -1945,6 +1954,14 @@ class LarkMvpService {
     if (action === SECOND_DELIVERY_ACTION) {
       return this.handleSecondDeliveryAction(value, operatorOpenId, event);
     }
+    // ⭐【确认成交】—— 「已入账」终态卡上的那一个按钮（业务负责人 2026-10-07 拍板的**甲**）。
+    // ⚠️ 位置与上面那条同源：也放在 `if (!draftId) throw` **之前**（它不依赖草稿状态机），
+    //    并且与销售草稿**共用同一个串行队列**（同一张卡连点两次会被排成一前一后，
+    //    真正的幂等由"任务状态 ＋ 底层两个写操作的状态判据"三道一起兜）。
+    if (action === SALES_CONFIRM_DEAL_ACTIONS.CONFIRM) {
+      return this.cardActionQueue.run(draftId || String(value?.sales_entry_record_id || ''), () =>
+        this.handleConfirmDealAction(value, operatorOpenId, event, context));
+    }
     if (!draftId) throw new Error('卡片缺少草稿 ID');
     // 售后卡片：确认 / 取消 / 选回库状态。和销售草稿共用同一个串行队列
     // （同一张卡片连点两次会被排成一前一后），执行器那一层再兜一次幂等。
@@ -1992,6 +2009,155 @@ class LarkMvpService {
     return { toast: { type: 'success', content: `已成交：${parts.join('，') || '无待处理项'}` } };
   }
 
+  /**
+   * ⭐「这张已入账终态卡要不要带【确认成交】按钮」——**一个判据、几处渲染点共用**。
+   *
+   * 判据本体在 `config/salesConfirmDeal` 的 `needsConfirmDeal`（预定未交付 / 现货有欠款）；
+   * 这里只做两件事：把 `draft` ＋"上一次交付失败"喂给它，并把**为什么有 / 没有**记进日志
+   * （排查"她那单为什么没有这个按钮"时看这一条，不用去猜）。
+   *
+   * 终态卡有**四个**出口（入账完成 / 她重复点确认 / 部分交付 / 交付失败），四处都调它 ——
+   * 同一个状态必须给出同一张卡，不能一个出口有按钮、另一个没有。
+   */
+  confirmDealOptionFor(task, { deliveryFailures = [] } = {}) {
+    const decision = needsConfirmDeal({ draft: task?.draft, deliveryFailures });
+    logInfo('lark.sales.confirm_deal.card', {
+      task_id: task?.task_id,
+      sales_entry_record_id: task?.sales_entry_record_id,
+      with_button: decision.needed,
+      reason: decision.reason,
+      delivery_failure_count: deliveryFailures.length,
+    });
+    if (!decision.needed) return null;
+    return { salesEntryRecordId: task.sales_entry_record_id, draftId: task.task_id };
+  }
+
+  /**
+   * 【确认成交】：**不新发消息**，就在她手里那张「已入账」终态卡上按一下。
+   *
+   * 这里只做接线：① 幂等短路；② 把点击转给 `SalesThreadProgressService.completeDealFromCard`
+   * （= 与她说「已完毕 / 成交」**同一条** complete 逻辑，写账 / 扣库存都不在本类）；
+   * ③ 把结果如实说成一句话，并在真正成交时把**被点的那张卡**改成「已成交」。
+   *
+   * 幂等三道（任务状态 + 底层两个写操作自己的状态判据 + 上面的串行队列）：
+   *   · 第一道在这里 —— 任务上已记 `confirm_deal_settled` ⇒ **一个字节都不写**、也不再 patch；
+   *   · 后两道在 `SecondDeliveryService` / `PaymentService` / `SalesDeliveryService` 里
+   *     （未收款才收、未交付才交），本地记录丢了也重复不了（有回归用例钉住）。
+   */
+  async handleConfirmDealAction(value, operatorOpenId, event = {}, context = {}) {
+    const salesEntryRecordId = String(value?.sales_entry_record_id || '').trim();
+    const draftId = String(value?.draft_id || '').trim();
+    const config = resolveSalesConfirmDealConfig();
+    const task = draftId ? await this.store.get(draftId) : null;
+    if (task?.confirm_deal_status === CONFIRM_DEAL_TASK_STATUS.SETTLED) {
+      logInfo('lark.sales.confirm_deal.already_settled', {
+        task_id: draftId, sales_entry_record_id: salesEntryRecordId,
+      });
+      return { toast: { type: 'info', content: config.alreadyToast } };
+    }
+    if (!salesEntryRecordId) {
+      return { toast: { type: 'warning',
+        content: fillConfirmDeal(config.failedToast, { reason: '卡片里没有销售单号' }) } };
+    }
+    // 收款「操作人」记**真正点按钮的那个人**；回话仍回到原来那条销售话题
+    // （`sendTextToTask` 只认 `task.chat_type === 'group'` ＋ `task.message_id`）。
+    // 本地任务读不到（记录过期）时也照样把业务做完 —— 只是回不了话、卡片也改不了。
+    const clickTask = task
+      ? { ...task, sender_open_id: operatorOpenId || task.sender_open_id }
+      : { task_id: '', sales_entry_record_id: salesEntryRecordId,
+        sender_open_id: operatorOpenId || '', chat_type: 'group' };
+    try {
+      const outcome = await this.threadProgress.completeDealFromCard({ task: clickTask });
+      const settled = !outcome.asked;
+      const status = settled ? CONFIRM_DEAL_TASK_STATUS.SETTLED
+        : outcome.reason === 'short_stock' ? CONFIRM_DEAL_TASK_STATUS.SHORT_STOCK
+          : CONFIRM_DEAL_TASK_STATUS.ASKING;
+      if (task) {
+        await this.store.update(draftId, {
+          confirm_deal_status: status,
+          confirm_deal_reason: outcome.reason || '',
+          confirm_deal_at: Date.now(),
+        });
+      }
+      logInfo('lark.sales.confirm_deal.handled', {
+        task_id: draftId, sales_entry_record_id: salesEntryRecordId,
+        status, reason: outcome.reason || '', operator_open_id: operatorOpenId || '',
+      });
+      if (settled) {
+        // 成交了才把卡片改成「已成交」；只成了一半 / 货没到时**绝不能变灰**（她还要再点）。
+        // ⚠️ `already_completed`（底层的钱货本来就齐了）也算"成交状态" ⇒ 同样改成已成交：
+        //   正常路径上第一次点击就改了，能走到这里说明上次 patch 失败了 ——
+        //   这是那张卡**唯一一次自愈的机会**（与 `SecondDeliveryService.markCardSettled` 同一条理由）。
+        if (task) await this.settleConfirmDealCard(task, event, config, context);
+        const alreadyDone = outcome.reason === 'already_completed';
+        return { toast: {
+          type: alreadyDone ? 'info' : 'success',
+          content: alreadyDone ? config.alreadyToast
+            : fillConfirmDeal(config.successToast,
+              { summary: this.confirmDealSummary(outcome, config) }),
+        } };
+      }
+      return {
+        toast: {
+          type: outcome.reason === 'short_stock' ? 'warning' : 'info',
+          content: outcome.reason === 'short_stock' ? config.shortStock : config.askingToast,
+        },
+      };
+    } catch (error) {
+      // 不许静默失败：如实回一句 + 记一条，任务状态也记成失败（`AGENTS.md` 第 16 条①）。
+      if (task) {
+        await this.store.update(draftId, {
+          confirm_deal_status: CONFIRM_DEAL_TASK_STATUS.FAILED,
+          confirm_deal_reason: error.message,
+          confirm_deal_at: Date.now(),
+        }).catch(() => undefined);
+      }
+      logWarn('lark.sales.confirm_deal.failed', {
+        task_id: draftId, sales_entry_record_id: salesEntryRecordId, error: error.message,
+      });
+      return { toast: { type: 'warning',
+        content: fillConfirmDeal(config.failedToast, { reason: error.message }) } };
+    }
+  }
+
+  /** 成交那一句 toast 里的"做了什么"（补收款 / 交付），与既有点卡片「成交」同口径。 */
+  confirmDealSummary(outcome = {}, config = resolveSalesConfirmDealConfig()) {
+    const parts = [];
+    const collected = Number(outcome.result?.collectedAmount || 0);
+    if (collected > 0) parts.push(`补收款 ￥${collected}`);
+    const delivered = Number(outcome.result?.delivery?.deliveredQuantity || 0)
+      || Number(outcome.deliveredBefore?.count || 0);
+    if (delivered > 0) parts.push(`交付 ${delivered} 双`);
+    return parts.join('，') || config.nothingText;
+  }
+
+  /**
+   * 把**被点的那张终态卡**改成「已成交」：同一个位置把按钮换成一行说明，卡片其余内容
+   * （明细 / 补货品信息 / 单号）原样保留 —— 走的是既有那条 patch 出口
+   * （`updateInteractiveCard`：优先用回调带回来的消息 id = **她点的那张卡**）。
+   *
+   * ⚠️ 这里**重新渲染**而不是"拿旧卡来改"：那张卡的输入（`task.draft`）就在本地任务上，
+   *    重新渲染得到的内容与原来逐字一致（除了按钮换成说明）—— 不必为此再存一份卡片 JSON。
+   *    卡片改不动（撤回 / 权限）**永远不影响成交结果**：成交这时已经写完了。
+   */
+  async settleConfirmDealCard(task, event, config = resolveSalesConfirmDealConfig(), context = {}) {
+    if (!task?.draft) {
+      logWarn('lark.sales.confirm_deal.card.skipped', {
+        task_id: task?.task_id, reason: 'missing_draft',
+      });
+      return false;
+    }
+    const card = salesStatusCard(task.draft, config.settledTitle,
+      fillConfirmDeal(config.settledMessage,
+        { orderNo: task.posting_result?.sourceNo || config.orderNoFallback }),
+      'green',
+      { productInfoGaps: true,
+        confirmDeal: { salesEntryRecordId: task.sales_entry_record_id, draftId: task.task_id,
+          settledAt: Date.now(), config } });
+    return this.updateSalesActionCard(task, event, card,
+      { stage: 'confirm_deal_settled', interactionId: context?.interactionId });
+  }
+
   async handleSalesOrLegacyCardAction(event, context = {}) {
     const value = event?.action?.value || event?.event?.action?.value || {};
     const draftId = value.draft_id;
@@ -2014,7 +2180,12 @@ class LarkMvpService {
               ? deliverySummaryOfDraft(task.draft, shouldDeliverFor(task, task.posting_requested_action)).card
               : '交付结果尚未确认，请到工作台核对。'}`,
           task.status === 'cancelled' ? 'blue' : completed ? 'green' : 'orange',
-          { productInfoGaps: task.status !== 'cancelled' });
+          // ⭐ 已入账的终态卡面（取消那一支除外）按**同一个判据**决定要不要【确认成交】：
+          //   上次交付失败过（货其实没交出去）的单也要，否则她回来时没有入口。
+          { productInfoGaps: task.status !== 'cancelled',
+            confirmDeal: task.status === 'cancelled'
+              ? null
+              : this.confirmDealOptionFor(task, { deliveryFailures: task.delivery_failures || [] }) });
         await this.publishSalesResultCard(task, event, card,
           { stage: 'duplicate_terminal', interactionId: context.interactionId });
       }
@@ -2291,10 +2462,14 @@ class LarkMvpService {
               return `第${failure.lineNumber}双 ${label}：${failure.error}`;
             }).join('；');
             // ⭐ 2026-10-07：这一支也是**已入账**（钱与明细都写了，只是货没交齐）⇒ 同样带上补货品信息。
+            //   ⭐⭐ 同一天：【确认成交】按钮在这一支上**最有用** —— 她的话就是
+            //   「这双还没到货，先走到货入库，再到这张卡上点确认成交」，指的就是这张卡。
             await this.publishSalesResultCard(task, event, salesStatusCard(task.draft,
               deliveryResult.deliveredQuantity ? '订单已入账，部分交付' : '订单已入账，交付待处理',
               `销售单号：${result.sourceNo}。已交付 ${deliveryResult.deliveredQuantity}/${deliveryResult.totalQuantity} 双；未交付：${failedLines}。请到工作台待交付列表核对并处理。`, 'orange',
-              { productInfoGaps: true }),
+              { productInfoGaps: true,
+                confirmDeal: this.confirmDealOptionFor(task,
+                  { deliveryFailures: deliveryResult.failures }) }),
             { stage: 'delivery_partial', interactionId: context.interactionId });
             logWarn('lark.sales.delivery.partial', { task_id: draftId, source_no: result.sourceNo,
               delivered_quantity: deliveryResult.deliveredQuantity, total_quantity: deliveryResult.totalQuantity,
@@ -2304,9 +2479,12 @@ class LarkMvpService {
           }
         } catch (error) {
           // ⭐ 2026-10-07：同上 —— 已入账（失败的是**交付**，不是入账）⇒ 带上补货品信息。
+          //   ⭐⭐【确认成交】按钮同样要有：交付整个挂掉时，这张卡是她回来的唯一入口。
           await this.publishSalesResultCard(task, event, salesStatusCard(task.draft,
             '订单已入账，交付待处理', `销售单号：${result.sourceNo}。库存交付未完成：${error.message}。请在工作台待交付列表核对并处理。`, 'orange',
-            { productInfoGaps: true }),
+            { productInfoGaps: true,
+              confirmDeal: this.confirmDealOptionFor(task,
+                { deliveryFailures: [{ error: error.message }] }) }),
           { stage: 'delivery_failed', interactionId: context.interactionId });
           logError('lark.sales.delivery.failed', { task_id: draftId, error: error.message });
           return { toast: { type: 'warning', content: '订单已入账，库存交付待处理' } };
@@ -2316,9 +2494,13 @@ class LarkMvpService {
       // ⭐⭐ 本次改动的关键一张：**已入账终态卡会长期留着**，是她回来补资料的入口。
       //   缺口来自 `task.draft.product_info_gaps`（卖单解析时**已经**读过一次「货品信息」表），
       //   这里**不重新读表**。
+      // ⭐⭐【确认成交】按钮（2026-10-07 业务负责人拍板的**甲**）：**只在这一类单上出现** ——
+      //   预定（未交付）或现货有欠款；现货已交付已结清的单一律没有（判据在
+      //   `config/salesConfirmDeal`，本行只是接线）。她说「不新发消息，你在原卡上点」，
+      //   所以按钮做在**这一张**卡上，不另发一张。
       await this.publishSalesResultCard(task, event, salesStatusCard(task.draft,
         '销售订单已入账', `销售单号：${result.sourceNo}；${result.detailRecordIds?.length || 0} 条明细已写入。${deliverySummary.card}`, 'green',
-        { productInfoGaps: true }),
+        { productInfoGaps: true, confirmDeal: this.confirmDealOptionFor(task) }),
       { stage: 'posted', interactionId: context.interactionId });
       logInfo('lark.sales.posting.completed', {
         task_id: draftId,

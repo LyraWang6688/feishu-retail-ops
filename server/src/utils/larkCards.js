@@ -9,6 +9,12 @@ const { colorOptionButtonText } = require('../config/salesColorChoice');
 const { salesCardFactsFor } = require('../config/salesCardFacts');
 // 「第二次交付（成交）提醒卡片」上那几句必须与"未付不再是类型"同口径的文案（配置先行）。
 const { resolveSecondDeliveryCardConfig, fill } = require('../config/secondDeliveryCard');
+// ⭐【确认成交】按钮（2026-10-07 业务负责人拍板的**甲**：做在「已入账」终态卡上，不新发消息）：
+//   动作名与用户可见文案都从这份配置读 —— 本文件只排布，一个中文都不写死。
+const {
+  SALES_CONFIRM_DEAL_ACTIONS,
+  resolveSalesConfirmDealConfig,
+} = require('../config/salesConfirmDeal');
 
 const text = (value) => String(value ?? '').replace(/\n/g, ' ');
 
@@ -477,6 +483,47 @@ const salesConfirmationCard = (draftId, draft) => {
   };
 };
 
+// ⭐ 2026-10-07【确认成交】按钮（业务负责人拍板的**甲**：做在**已经在她手里的那张终态卡**上，
+//   **不新发消息**）。口径（逐字）：
+//   「一旦判定这一单是**预订或者现货未收**，入账之后就会给用户发一个消息卡片，
+//    确认该笔交易是否成交。**只有当用户点击"是"的时候，才会触发我们后续的流程**。」
+//
+// 三个刻意的设计决定：
+//   ① **只有一个按钮**，文案来自 `config/salesConfirmDeal`（默认「确认成交」）——
+//      她明确「选项只能点"是"」，所以这里**不放**取消 / 否 / 稍后；
+//   ② 按钮**上方一行小字**说清"点了才会继续"，免得她以为不点也会走（空串 = 不出这行）；
+//   ③ `settledAt` 有值 = 这一单**已经成交**：同一个位置换成一行说明，**按钮不再出现**。
+//      飞书卡片按钮**没有 disabled 参数**，唯一能表达"这里点不了了"的办法就是让那个位置
+//      不再有按钮、只剩一句说明（与 `secondDeliverySettledElement` 同一套路）。
+//
+// ⚠️ 判据不在这里：`needsConfirmDeal`（`config/salesConfirmDeal`）决定**要不要**画这个按钮，
+//    调用点只把结论传进来（`options.confirmDeal`）。渲染器不判断业务。
+const confirmDealSettledElement = ({ settledAt, config = resolveSalesConfirmDealConfig() } = {}) => {
+  // 卡片上写给门店看的时间必须是上海时间（服务器是 UTC，直接取 ISO 会差 8 小时）。
+  const clock = shanghaiClock(settledAt || Date.now());
+  return {
+    tag: 'div',
+    text: {
+      tag: 'lark_md',
+      content: fill(config.settledText, { clock: clock ? fill(config.settledClock, { clock }) : '' }),
+      text_size: 'note',
+    },
+  };
+};
+
+const confirmDealElements = ({ salesEntryRecordId, draftId = '', settledAt, config } = {}) => {
+  const resolved = config || resolveSalesConfirmDealConfig();
+  if (settledAt) return [confirmDealSettledElement({ settledAt, config: resolved })];
+  const elements = [];
+  if (resolved.hint) {
+    elements.push({ tag: 'div', text: { tag: 'lark_md', content: resolved.hint, text_size: 'note' } });
+  }
+  elements.push(...buttonRows([actionButton(resolved.buttonLabel,
+    SALES_CONFIRM_DEAL_ACTIONS.CONFIRM, draftId, 'primary',
+    { sales_entry_record_id: salesEntryRecordId })]));
+  return elements;
+};
+
 // ⭐ 2026-10-07：这张通用结果卡多了一个**可选**开关 `options.productInfoGaps`（默认关）。
 //
 //   为什么是**可选开关**、而不是"有缺口就自动带上"：这张渲染器同时服务
@@ -490,6 +537,11 @@ const salesConfirmationCard = (draftId, draft) => {
 //   而且是**无条件**挂的（缺口为空时它自己返回 `[]`，见 `productInfoGapsElements`）。
 //   ⇒ 两张卡的**最终**口径见 `productInfoGapsElements` 的注释（她当天改过两次，
 //     最新 = 处理中卡 与 已入账终态卡 都要有）。
+//
+// ⭐ 同一天又多了第二个可选开关 `options.confirmDeal`（默认关，见上面 `confirmDealElements`）：
+//   「这一单要不要【确认成交】按钮」的**判据在 `config/salesConfirmDeal`**，调用点算好了传进来。
+//   默认关 ⇒ **没显式打开这个开关的调用点**（取消 / 待修正 / 交付待处理…）逐字节与改动前相同，
+//   而"终态卡"那几个出口**都显式传了它**（同一个状态必须给出同一张卡）。
 const salesStatusCard = (draft, title, message, template = 'blue', options = {}) => ({
   config: patchableCardConfig(),
   header: { template, title: { tag: 'plain_text', content: title } },
@@ -497,6 +549,9 @@ const salesStatusCard = (draft, title, message, template = 'blue', options = {})
     { tag: 'markdown', content: itemLines(draft?.items || [], 'actual_amount') || '销售订单' },
     ...(options.productInfoGaps ? productInfoGapsElements(draft) : []),
     { tag: 'note', elements: [{ tag: 'plain_text', content: message }] },
+    // ⭐【确认成交】：note 之后、按钮最后（与确认卡片的排布一致）。
+    //   传进来的其实是个"要不要画"的结论：`null` / 缺省 ⇒ 一个元素都不加。
+    ...(options.confirmDeal ? confirmDealElements(options.confirmDeal) : []),
   ],
 });
 
@@ -1067,6 +1122,9 @@ module.exports = {
   //   （终态卡，走 `options.productInfoGaps`）—— **仍然保持可复用**（带 config 形参，
   //   将来别处要用直接接；见函数注释）。**不要**因为它"调用点少"就改签名或内联。
   productInfoGapsElements,
+  // ⭐【确认成交】那一段（按钮 / 点完之后的说明）。导出理由与上面那条一样：单独测配置。
+  //   生产调用点是 `salesStatusCard` 的 `options.confirmDeal`（**只有终态卡这一张**）。
+  confirmDealElements,
   // 「点确认后立刻看得出变了」那张（只给确认链路那一次立即更新用，见函数注释）。
   salesProcessingCard,
   sampleReplacementCard,
