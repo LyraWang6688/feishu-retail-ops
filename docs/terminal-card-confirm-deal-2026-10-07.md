@@ -312,13 +312,26 @@ $ node --test --test-concurrency=1          # 第 2 次
 ℹ tests 1252   ℹ pass 1252   ℹ fail 0   ℹ cancelled 0     (exit 0)
 ```
 
-（1251 → 1252 的那一条就是本功能的第 15 条用例之前的基线差；最终这次两次都是 1252，
-包含本文件新增的 **15** 条 + 即有的 1237 条。**没有在主工作区跑全量**。）
+（1252 = 既有 **1237** 条 ＋ 本文件新增的 **15** 条；两次都 exit 0。**没有在主工作区跑全量**。）
 
-### CI（`gh pr checks`，见 PR）
+### CI 三项实际输出（`gh pr checks 244`，PR #244）
 
-下方"CI 三项实际输出"在 PR 建好后补（`test` / `CodeQL` / `Analyze`；**只用 `gh pr checks`，
-不许 `--admin`**）。
+```
+$ export XDG_CACHE_HOME=/tmp/ghcache GH_CACHE_DIR=/tmp/ghcache
+$ gh pr checks 244
+Analyze (javascript-typescript)	pass	1m14s	.../job/112860697710
+CodeQL                         	pass	7s   	.../runs/112861228758
+test                           	pass	56s  	.../job/112861134221
+
+$ gh pr view 244 --json mergeStateStatus,mergeable,statusCheckRollup
+{"checks":[
+  {"name":"Analyze (javascript-typescript)","status":"COMPLETED","conclusion":"SUCCESS"},
+  {"name":"test","status":"COMPLETED","conclusion":"SUCCESS"},
+  {"name":"CodeQL","status":"COMPLETED","conclusion":"SUCCESS"}],
+ "mergeStateStatus":"CLEAN","mergeable":"MERGEABLE"}
+```
+
+🔴 **没有用 `--admin`**；合并由派活人做。
 
 ## 12. 只改这张终态卡：本次 diff 的文件清单（自证边界）
 
