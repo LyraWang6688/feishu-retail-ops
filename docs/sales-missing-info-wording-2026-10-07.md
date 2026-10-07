@@ -397,6 +397,14 @@ payments[1].method
 
 > ⚠️ 更正一处旧数字：第 4 节 AC-8 与本文件早前写的「**38 种**已知形状」是**当时数错了**
 > （实际 40 条）。本轮把它拆成 `KNOWN`(40) + `HISTORICAL`(1)，并由一致性用例**强制**与映射表对齐。
+>
+> ⚠️ **上面这几个数字是【本轮当时】的快照**。**2026-10-07 22:59 之后又新增了 1 条形状**
+> （解析层「只说了定金、没说尾款」时产出 `SALES_DEPOSIT_TOTAL_UNKNOWN`，
+> 并在渲染层与「请给每双鞋都说一个成交金额」**合并成一行**）——
+> 所以**当前**实际是 `KNOWN` **41** / `ALL_GUARDED` **42** / `MAPPED` **27**。
+> 新增那一条**逐字 = `config/salesDepositTerms.SALES_DEPOSIT_TOTAL_UNKNOWN` 常量本身**
+> （与上面 `SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS` 同一套做法，生产者改字立刻红）。
+> 见 [sales-tail-payment-and-hint-2026-10-07.md](sales-tail-payment-and-hint-2026-10-07.md)（AC-4 ⭐）。
 
 ### 14.7 AC-S1~AC-S10 逐条对照
 

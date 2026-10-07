@@ -186,6 +186,23 @@ const SHAPES = [
     pendingAmount: 128,
     paymentStatus: '部分收款',
   },
+  {
+    // ⭐ 真机（2026-10-07 22:59，逐字就是这句的形状）：「下次**收**」也是尾款 ——
+    //   收款方向的词在这里等于"这笔钱**还没到手**、下次收"，**不是**本次已收款。
+    //   ⚠️ 这一条的 `modelOutput` **故意不给 actual_amount / agreed_total / owed**：
+    //   成交额 220 与欠款 120 全由后端从「定金 100 + 下次收 120」推出来（模型漏给也不丢账）。
+    //   对照：`deposit` 那条是「下次**欠**」——差别只在用词，账必须一模一样地对。
+    key: 'tail_collect',
+    label: '定金 100 + **下次收** 120（方向词是"收"，同样是尾款）',
+    text: `${ITEM_NO} 37 码，定金微信交了 100 元，下次收 120 元`,
+    modelOutput: { intent: 'sale', trade_type: '预定',
+      items: [{ item_no: ITEM_NO, color: '黑色', size: 37, quantity: 1 }],
+      payments: [{ amount: 100, method: '微信' }], agreed_total: '' },
+    // 成交额 = 定金 100 + 尾款 120 = 220 ⇒ 已收 100、未收 120。
+    receipts: [[100, '已收款'], [120, '未收款']],
+    pendingAmount: 120,
+    paymentStatus: '部分收款',
+  },
 ];
 
 for (const shape of SHAPES) {

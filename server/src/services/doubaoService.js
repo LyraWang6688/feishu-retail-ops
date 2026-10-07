@@ -27,6 +27,18 @@ const { textValue } = require('./v1BitableGateway');
 const { tradeTypeCodeFromLabel, tradeTypeLabel } = require('../config/salesMovements');
 const { isPrepaidTradeType, orderTradeTypeCodes, SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS } =
   require('../config/salesTradeTypePolicy');
+// 「定金 / 尾款」这套**资金说法**的词表与文案（配置先行）：换一种说法只改 config，不碰代码。
+// ⚠️ 真机 2026-10-07 22:59 那句话——「定金交了 100 元，微信，**下次收**120元」——
+//    就是下面 `TAIL_PATTERNS` 里的动词漏了 `收`（旧正则只认「欠 / 付 / 给 / 交 / 补」）。
+//    ⭐ 方向词**不改变性质**：她说的是"下次**收**"，那笔钱**还没到手** ⇒ 它是 `owed`（尾款），
+//    不是本次已收款。
+const {
+  TAIL_PATTERNS,
+  FUTURE_MARKER_PATTERN,
+  CLAUSE_BOUNDARY_PATTERN,
+  MONEY_NOT_SETTLED_PATTERN,
+  SALES_DEPOSIT_TOTAL_UNKNOWN,
+} = require('../config/salesDepositTerms');
 // 中文交易类型只认这两个（与 config/salesMovements 的对照表同源）。
 // 🔴 2026-10-07：这里的 `trade_type` 只是**她嘴上说的性质**（提示），**不是类型判据** ——
 //    类型由 `services/larkMvpService` **查完实时库存**再定（有货 → 现货，没货 → 预定）。
@@ -200,7 +212,8 @@ const explicitSingleShoeGifts = (sourceText) => [...String(sourceText || '')
 //   · 前面的钱**从后往前取**（离「定金」最近的那个）：写「26002-52 37码 100元定金」时，
 //     答案该是 100。
 // 找不到就返回 null —— 仍然报「请明确已经收到的定金金额」，**这一条不放宽**。
-const DEPOSIT_CLAUSE_BOUNDARY = /[，,。；;、！!？?\n]|尾款|余款|下次|欠|剩余|剩下的|还差|再付/;
+// ⚠️ 边界词表在 `config/salesDepositTerms.CLAUSE_BOUNDARY_PATTERN`（配置先行）。
+const DEPOSIT_CLAUSE_BOUNDARY = CLAUSE_BOUNDARY_PATTERN;
 // 「像钱」：`100元` / `100 块` / `¥100`。
 const DEPOSIT_MONEY = /[¥￥]\s*\d+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?\s*(?:元|块)/g;
 // 任意数，但**不许紧跟着「码」「号」**（那是尺码或货号，不是钱）。
@@ -234,16 +247,20 @@ const depositTerms = (sourceText) => {
   const source = String(sourceText || '');
   if (!/定金/.test(source)) return null;
   const afterDeposit = source.slice(source.search(/定金/) + '定金'.length);
-  const tail = source.match(/尾款\s*(?:以后|之后|下次|到货后|取货时)?\s*(?:还要|再)?\s*(?:付|给|是|为)?\s*[¥￥]?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)?/)
-    // 不带「尾款」两个字的余额说法也算余额 —— 她的原话就是「**下次欠 128 元**」。
-    // ⚠️ 只在「定金」**之后**找：定金前面的数字属于上一句，
-    //    把「上次还欠 200」当成本单尾款会把成交金额算错。
-    || afterDeposit.match(/(?:下次|以后|之后|到货后|取货时|来拿时)\s*(?:还|还要|再|要|需要|需|得)?\s*(?:欠|差|付|给|交|补)?\s*[¥￥]?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)?/)
-    || afterDeposit.match(/(?:还欠|还差|还需要再付|还要再付|还需再付)\s*[¥￥]?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)?/);
+  // ⭐ 尾款的三种说法（词表在 `config/salesDepositTerms.TAIL_PATTERNS`，配置先行）：
+  //   ① 名词说法（尾款 / 余款 / 剩下…）—— 在**整句**上找；
+  //   ② 时间词开头（下次收 / 下次付 / 以后给…）；
+  //   ③ 没有时间词（还欠 / 还差 / 还要收 / 再付 / 补收…）。
+  // ⚠️ ②③ 只在「定金」**之后**找：定金前面的数字属于上一句，
+  //    把「上次还欠 200」当成本单尾款会把成交金额算错。
+  // ⭐ 「**下次收** 120」正是 ② 那一支——`收` 与 `付` 方向**同义**：都是"还没到手的钱"。
+  const tail = source.match(TAIL_PATTERNS[0])
+    || afterDeposit.match(TAIL_PATTERNS[1])
+    || afterDeposit.match(TAIL_PATTERNS[2]);
   const depositAmount = depositAmountNear(source);
   if (depositAmount == null) return { issues: ['请明确已经收到的定金金额'] };
   if (!tail) return { depositAmount, issues: [] };
-  if (!/下次|以后|之后|到货后|取货时|来拿时|还要|待付|未付|再付/.test(source)) {
+  if (!FUTURE_MARKER_PATTERN.test(source)) {
     return { issues: ['请说明尾款是否已支付；若尚未支付，请写“尾款以后付”'] };
   }
   return { depositAmount, tailAmount: Number(tail[1]), issues: [] };
@@ -483,6 +500,16 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
       agreedTotal = Math.round(items.reduce((sum, item) => sum + Number(item.actual_amount), 0) * 100) / 100;
     }
   }
+  // ⭐ 她**只说了定金、没说尾款** ⇒ 成交额还没定（「**只有定金不能当成交金额**」这条既有规则
+  //    **一个字没动**：`agreedTotal` 照样是空的，照样报缺项、照样不入账）。
+  //    变的只是**提示**：这时**绝不许**报"已收的钱比成交金额还多"——成交额压根是空的，
+  //    那句话在她那儿就是误导。改成问她一句「这单成交金额（或定金+尾款分别是多少）」。
+  //    ⚠️ 生产者原话在 `config/salesDepositTerms`，她看到的那一层由
+  //       `config/salesMissingInfoText` 翻成人话（并把"哪一双"带上，同一件事只留一行）。
+  if (deposit && !deposit.issues.length && !deposit.tailAmount && !agreedTotal
+    && items.some((item) => !item.actual_amount)) {
+    deposit.issues.push(SALES_DEPOSIT_TOTAL_UNKNOWN);
+  }
   // ── 「成交金额」的确定性口径（业务负责人口径，对应提示词规则 9）────────────────────
   //   她说了「收到多少钱」、又没说欠款 → 成交金额 = 实收（客户还价：119 的腰带收 100，这单就是 100）；
   //   她明说「还欠 X」              → 成交金额 = 实收 + 欠款（两个数都是她说的，不做减法猜测）；
@@ -492,8 +519,10 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
   // 定金/首付，把它当成交金额会把应收金额算丢（这条是保守的护栏，不是判断欠款）。
   // 🔴 2026-10-07：这条护栏**只看"钱"的词**，与交易类型**无关**（资金与类型解耦）。
   //    「未付」在这里是**她说的话**（"钱没结清"），不是一种交易类型。
-  const moneyNotSettled = /定金|预付|预定|尾款|余款|剩下的|未付|欠款|还欠|欠着|赊账|下次给|下次再给|先给|先付|先交/
-    .test(String(sourceText || ''));
+  // ⭐ 2026-10-07 晚：词表搬进 `config/salesDepositTerms.MONEY_NOT_SETTLED_WORDS`，
+  //    并补上「下次收 / 还要收 / 还差…」这些尾款说法 —— 她说"下次收"同样是"钱还没结清"，
+  //    不补的话「收了 100，下次收 120」会被静默算成"这单就值 100"（把 120 算丢）。
+  const moneyNotSettled = MONEY_NOT_SETTLED_PATTERN.test(String(sourceText || ''));
   // ⭐ 有尺码的鞋**多于一件**时，"整单实收"是**整单**的钱，不属于任何单独一件：
   //    这时若还拿它去覆盖第一件的成交金额，就会造成真机那次的错位
   //    （鞋 400 + 腰带 140 ⇒ 各件之和 540 ≠ 总额 400）。
@@ -699,13 +728,23 @@ class DoubaoService {
        例：「卖了 119，先给 100，还欠 19」→ 成交金额 119、payments 只有 100、owed 19。
      - 她只说了价格、没说收到多少钱 → 成交金额 = 她说的那个价格（原逻辑不变）。
      - 仅有“定金”不能作为成交金额。多件逐件金额已知时可求和为 agreed_total。标价与自动公式不参与成交金额判断。
+     - ⭐ **定金 + 尾款 ⇒ 成交金额 = 定金 + 尾款**（"两次收款"之和，与第 6 条"各分项之和 = 总额"
+       是同一类推理，**不是新口径**）。例：「定金交了 100 元，下次收 120 元」→ agreed_total = 220、
+       actual_amount = 220、payments 只有定金那 100、owed = 120。
      - **一单多件时**（含"鞋 + 配品"），她说的整单实收是**整单**的钱，**不是**某一件的成交金额：
        每件仍填它自己的分项金额（第 6 条），agreed_total 按第 6 条算；**绝不**把整单实收填进某一件。
      - 收款笔数按她说的收款**次数**：她说了一次「400 元微信」就是**一笔** payments，
        不要把各件的金额各记成一笔收款。
-9.1 owed（欠款金额）只在**她明说欠**时才填：
-   她说「还欠 19 / 欠 19 / 未付 260 / 尾款以后付 140」→ owed 填她说的那个欠款金额；
+9.1 owed（欠款金额）只在**她明说还没收 / 还没付**时才填：
+   她说「还欠 19 / 欠 19 / 未付 260 / 尾款以后付 140 / **下次欠 128**」→ owed 填她说的那个欠款金额；
    整单一分钱没给（她说「没付 / 未付 / 先欠着」等）→ owed 填整单金额。
+   ⭐⭐ **尾款的同义说法一律算 owed（未收的尾款）** ——「下次收 / 下次付 / 还要收 / 还要付 / 再收 / 再付 /
+   尾款 / 余款 / 剩下 / 剩下的 / 还差 / 补收」**都填进 owed**，并把这笔金额**排除在 payments 之外**。
+   🔴 **方向词不改变性质**：她说的是「下次**收** 120 元」——「收」在这里指**这笔钱还没到手、下次收**，
+   **不是**这次已经收到的钱。**绝不要**把「下次收 / 还要收 / 再收 / 补收」的那笔金额写进 payments。
+   例（照这个判断）：「定制一双 37 码的 26632，定金交了 100 元，微信，下次收120元」
+   ⇒ items=[{item_no:"26632",size:37,quantity:1,actual_amount:220}]、payments=[{amount:100,method:"微信"}]、
+      agreed_total=220、owed=120。
    她只说「收了 100」而**没有**说欠 → owed 留空，**绝不要**拿「成交金额 − 已收」的差额去填 owed。
 10. 遇到“89.9/89块9抵100”的团购券，只把实际付给门店的微信/现金等放入 payments；券的购买价 89.9 元和抵扣面额 100 元都不是门店已收现金，不要把它们当成 payments。不要猜测平台结算金额，后端会按已配置券种确定性换算。单鞋券后成交金额无法从原话直接确定时可留空，由后端结合实际支付和券种换算。
 11. 配品（不是鞋，没有尺码）：${accessoryNames.length ? accessoryNames.join('、') : '（本租户未配置配品）'}。
