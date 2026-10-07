@@ -14,6 +14,10 @@
  *   □ 私聊那条路一个字节都不变（不写映射、不写表）。
  */
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
+// ⭐ 本文件有一条「私聊任务：既不写本地映射、也不写销售主表」的用例 —— 它**拿私聊当入口**，
+//    所以显式把私聊开关打开，回归「开关打开时行为与改动前逐字不变」。
+//    （配置是**每次调用时读 env**，所以不依赖 require 顺序，见 config/privateChat。）
+require('./helpers/enablePrivateChatForTests');
 
 const test = require('node:test');
 const assert = require('node:assert/strict');

@@ -160,14 +160,24 @@
    证据：`test/groupThreadReplyRouting.test.js` 两条新用例（端口不是缺省回落；群任务
    `reply_in_thread: true`、私聊仍是 `im.message.create` 给本人）。
 
-**⏳ 还没切（剩下的都是"私聊入口专属"或没有群上下文）**
-- `sampleReplacementService.notifySampleReplacements`（5.1 #4）：补样品**提醒**，
-  触发方（网页工作台 / 销售确认卡片）**没有群上下文**，本来就只能发私聊。
-- **私聊入口专属**（跟私聊一起删，不单独改）：`larkMvpService.sendTodaySales`（菜单「今日销售」）、
-  `acceptMessage` 的 `p2p` 分支两条非文字/空文字提示、`routes/larkEvents.js` 的
-  `application.bot.menu_v6` 分支（含失败兜底 `sendText(openId, …)`）。
-- **死代码**：`purchaseWebhookService.sendCard(openId, card)` 全仓无调用点
-  （注释写着"要回滚成确认卡片就换回它"），删私聊时可以顺手清。
+**🔴 2026-10-07 收口：私聊【入口】也删了 —— 本节的"还没切"全部落地**
+（验收标准、实现与测试证据见 [private-chat-removal-2026-10-07.md](private-chat-removal-2026-10-07.md)）
+
+> 业务负责人口径（逐字）：「**以后私聊这条链路我们就没有了**」。
+
+| 本节原来的"还没切" | 处置 |
+| --- | --- |
+| `sampleReplacementService.notifySampleReplacements`（5.1 #4，补样品**提醒**，触发方没有群上下文） | ✅ **加了渠道感知入参**：群销售 → 卡片回到**那条销售话题**；没有群上下文（工作台触发）→ 按 `PRIVATE_CHAT_SEND_ENABLED`（**默认 false**）**不发私聊**，改记 `lark.private_chat.send_skipped`（`reason: no_group_context`）。⚠️ **有意的行为变化**：不再静默发私聊 |
+| `larkMvpService.sendTodaySales`（菜单「今日销售」） | ✅ **已删**（连 `todaySalesCard` 一起）。要看今日销售去工作台「销售查询」 |
+| `acceptMessage` 的 `p2p` 分支两条非文字/空文字提示 | ✅ **随私聊入口一起删**：默认档下私聊消息统一回**一句**固定文案（`PRIVATE_CHAT_DISABLED_NOTICE_TEXT`），两条旧提示不会再出现 |
+| `routes/larkEvents.js` 的 `application.bot.menu_v6` 分支 | ✅ **已删**（含失败兜底的 `sendText(openId, …)`） |
+| **死代码**：`purchaseWebhookService.sendCard(openId, card)`（全仓无调用点） | ✅ **已删**（`PurchaseWebhookService.prototype.sendCard === undefined`） |
+
+**私聊入口现在的形态**：`config/privateChat.js` 四个**显式开关**（入口 / 发送 / notice / 文案），
+取值规则复用 `config/envValue`（**空串 = 关掉、认不出的值抛错**），且是**每次调用时读 env** ——
+所以关闭它不依赖任何加载顺序。历史用例（拿私聊当入口测下游的那一批）用
+`server/test/helpers/enablePrivateChatForTests.js` **显式打开**，转为回归"开关打开时逐字不变"。
+
 
 ⇒ **开工记录（本次）**：`git worktree list` 显示这 3 个文件仍被 7 条**未合并分支**碰过
 （`feat/after-sales-thread`、`feat/arrival-conversation-flow`、`feat/sales-status-dimensions-write`、

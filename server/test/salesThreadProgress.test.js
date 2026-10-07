@@ -13,6 +13,11 @@
  *   □ 回复回到**同一个话题**（reply_in_thread）
  */
 
+// ⭐ 本文件有「私聊回归：一个字都不变」那条用例 —— 它**拿私聊当入口**，
+//    所以显式把私聊开关打开，回归「开关打开时行为与改动前逐字不变」。
+//    （配置是**每次调用时读 env**，所以不依赖 require 顺序，见 config/privateChat。）
+require('./helpers/enablePrivateChatForTests');
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

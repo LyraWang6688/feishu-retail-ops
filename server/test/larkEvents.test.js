@@ -1,3 +1,8 @@
+// ⭐ 本文件有一条「① 私聊既有行为逐字不变：非文字消息仍然回同样那一条私聊文字」——
+//    它**拿私聊当入口**，所以显式把私聊开关打开，回归「开关打开时行为与改动前逐字不变」。
+//    另一半方向（"默认关 = 私聊不处理"）由 test/privateChatRemoval.test.js 钉住。
+//    （配置是**每次调用时读 env**，所以不依赖 require 顺序，见 config/privateChat。）
+require('./helpers/enablePrivateChatForTests');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

@@ -10,7 +10,6 @@ const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { updateInteractiveCard } = require('../infrastructure/interactiveCardFeedback');
 const { V1BitableGateway, textValue } = require('./v1BitableGateway');
 const { V1PostingService } = require('./v1PostingService');
-const { createWorkbenchService } = require('./v1WorkbenchService');
 const { SalesDeliveryService } = require('./salesDeliveryService');
 const { SecondDeliveryService } = require('./secondDeliveryService');
 const { SampleReplacementService } = require('./sampleReplacementService');
@@ -27,11 +26,18 @@ const { AfterSalesFlowService } = require('./afterSalesFlowService');
 const { isLookupIntent, isAfterSalesIntent, normalizeMessageIntent } = require('../config/saleIntents');
 const { isAfterSalesCardAction } = require('../config/afterSalesFlow');
 const { isSalesCandidate, UNSUPPORTED_INTENT_REPLY } = require('../config/messageGate');
-const { salesConfirmationCard, salesStatusCard, todaySalesCard, keepOnlyCardButton, SECOND_DELIVERY_ACTION } = require('../utils/larkCards');
+const { salesConfirmationCard, salesStatusCard, keepOnlyCardButton, SECOND_DELIVERY_ACTION } = require('../utils/larkCards');
 const { extractSalesMessageText, isMentioned, stripMentionPlaceholders } = require('../utils/larkMessageText');
 const { resolveAckReaction, resolveBotOpenId } = require('../config/groupPurchase');
 // 主群的准入口径（是否仍然要求 @）：**显式布尔、默认放宽**，见 config/groupAdmission。
 const { resolveMainChatRequireMention } = require('../config/groupAdmission');
+// 私聊链路已移除（2026-10-07）：入口默认**关**、主动发私聊默认**关**，见 config/privateChat。
+// ⚠️ 这里读的是**函数**（每次调用时读 env），不是加载时定死的常量 —— 理由见那个文件的注释。
+const {
+  isPrivateChatIntakeEnabled,
+  isPrivateChatSendEnabled,
+  resolvePrivateChatNotice,
+} = require('../config/privateChat');
 const { PurchaseBatchLocator } = require('./purchaseBatchLocator');
 const { extractBatchNos } = require('./purchaseBatchNo');
 // 「群话题 ↔ 销售记录」的本地路由映射（只写本地，不写业务表，见服务的注释）。
@@ -98,18 +104,9 @@ const aggregateRecognizedItems = (items) => {
 // 名字沿用 looksLikeSalesText：它是既有导出，改语义不改名字，避免动无关调用点。
 const looksLikeSalesText = (text) => isSalesCandidate(text);
 
-const shanghaiDay = (now = new Date()) => {
-  const parts = new Intl.DateTimeFormat('zh-CN', {
-    timeZone: 'Asia/Shanghai',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(now);
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  const dateLabel = `${values.year}-${values.month}-${values.day}`;
-  const start = Date.parse(`${dateLabel}T00:00:00+08:00`);
-  return { dateLabel, start, end: start + 24 * 60 * 60 * 1000 };
-};
+// 🔴 2026-10-07「私聊链路移除」：原来的 `shanghaiDay(now)` 只有 `sendTodaySales`（机器人菜单
+//    「今日销售」，只有私聊点得到）在用，随它一起删了。上海自然日的算法仍在
+//    `services/v1WorkbenchService` 里（工作台「今日销售」用它），要看今日销售去那儿。
 
 class LarkMvpService {
   constructor(options = {}) {
@@ -377,38 +374,24 @@ class LarkMvpService {
     return this.sampleReplacements.applyPreChosen(replacements);
   }
 
+  /**
+   * 「补样品提醒」的转发口（把渠道上下文原样透传给 `SampleReplacementService`）。
+   *
+   * `options.channelTask` = **触发这次交付的那条销售任务**（群销售时才有）。
+   * 本类**不理解**它，只当"这是哪个任务"转交；`SampleReplacementService` 把它交给
+   * 任务感知出口（`sendCardToTask`）→ 回到本类的 `sendTaskCard` → 回复进那条话题。
+   * 工作台触发时没有这条任务 → 不传 → 补样品提醒**没有群上下文**，
+   * 由出口按 `PRIVATE_CHAT_SEND_ENABLED` 决定发不发（默认不发，只记一条 skip）。
+   */
   async notifySampleReplacements(deliveryResult, operatorOpenId, options = {}) {
     return this.sampleReplacements.notifySampleReplacements(deliveryResult, operatorOpenId, options);
   }
 
-  async sendTodaySales(openId, now = new Date()) {
-    const { dateLabel } = shanghaiDay(now);
-    const report = await createWorkbenchService(this.gateway).getTodaySales({ date: dateLabel });
-    const rows = report.rows.map((row) => ({
-      product: row.product_number || '未知编号', size: row.size, quantity: row.quantity,
-      amount: row.receivable_amount, paymentMethod: row.payment_method,
-    }));
-    const totalQuantity = report.summary.quantity;
-    const totalAmount = report.summary.paid_amount;
-    await this.sendCard(openId, todaySalesCard({ dateLabel, rows, totalQuantity, totalAmount }));
-    logInfo('lark.sales.today.sent', {
-      operator_open_id: openId,
-      date: dateLabel,
-      detail_count: rows.length,
-      total_quantity: totalQuantity,
-      total_amount: totalAmount,
-    });
-    return { rows, totalQuantity, totalAmount };
-  }
+  // ⭐ 私聊专属功能已删（2026-10-07，随私聊入口一起移除）：
+  //    · sendTodaySales —— 机器人菜单「今日销售」，只有私聊点得到
+  //    · handleBotMenu  —— 那个菜单事件的处理器（路由里的 handler 也已删）
+  //    ⇒ 要看今日销售去【工作台 → 销售查询】；提醒类内容走群里的定时推送。
 
-  async handleBotMenu(event) {
-    const eventKey = event?.event_key || event?.event?.event_key;
-    const openId =
-      event?.operator?.operator_id?.open_id || event?.operator?.open_id || event?.event?.operator?.operator_id?.open_id;
-    if (!openId) throw new Error('机器人菜单事件缺少用户 open_id');
-    if (eventKey !== 'query_today_sales') throw new Error(`不支持的机器人菜单事件: ${eventKey}`);
-    return this.sendTodaySales(openId);
-  }
 
   /**
    * 「回复某条消息」的唯一出口（私聊与群聊共用）。
@@ -543,9 +526,20 @@ class LarkMvpService {
   //   私聊的任务只有 open_id（发给谁），群里的任务才有 message_id（回哪条、进哪个话题）。
   //   两者是不同的寻址方式，混在一起判会把私聊也带偏。
 
-  /** 群里：把文字回到那条销售话题；私聊：原样发她私聊（现状不变）。 */
+  /**
+   * 群里：把文字回到那条销售话题。
+   * 私聊（**没有群上下文**）：私聊链路已移除 → **默认不发**，只记一条
+   * `lark.private_chat.send_skipped` 并返 `null`；`PRIVATE_CHAT_SEND_ENABLED=true` 时
+   * 与改动前**逐字相同**（`sendText(open_id)`）。
+   */
   async sendTaskText(task, message) {
-    if (task?.chat_type !== 'group') return this.sendText(task.sender_open_id, message);
+    if (task?.chat_type !== 'group') {
+      if (!isPrivateChatSendEnabled()) {
+        logInfo('lark.private_chat.send_skipped', { kind: 'text', task_id: task?.task_id });
+        return null;
+      }
+      return this.sendText(task.sender_open_id, message);
+    }
     const sent = await this.replyTextInThread(task.message_id, message);
     // ⚠️ 文字这条出口**只补本地路由映射，不写销售主表**（`storeLink: false`）——两条理由：
     //   ① 深链是**话题级**的（URL 里只有 chat_id + thread_id，没有 message_id）：同一话题里
@@ -557,9 +551,20 @@ class LarkMvpService {
     return sent.messageId;
   }
 
-  /** 群里：把卡片回到那条销售话题（没有原卡片可改时的兜底）；私聊：原样发她私聊。 */
+  /**
+   * 群里：把卡片回到那条销售话题（没有原卡片可改时的兜底）。
+   * 私聊（**没有群上下文**）：私聊链路已移除 → **默认不发**，只记一条
+   * `lark.private_chat.send_skipped` 并返 `null`；`PRIVATE_CHAT_SEND_ENABLED=true` 时
+   * 与改动前**逐字相同**（`sendCard(open_id)`）。
+   */
   async sendTaskCard(task, card) {
-    if (task?.chat_type !== 'group') return this.sendCard(task.sender_open_id, card);
+    if (task?.chat_type !== 'group') {
+      if (!isPrivateChatSendEnabled()) {
+        logInfo('lark.private_chat.send_skipped', { kind: 'card', task_id: task?.task_id });
+        return null;
+      }
+      return this.sendCard(task.sender_open_id, card);
+    }
     const sent = await this.replyCardInThread(task.message_id, card);
     await this.bindGroupSaleThread(task, sent);
     return sent.messageId;
@@ -723,9 +728,30 @@ class LarkMvpService {
       return { accepted: true, ...flowResult };
     }
 
+    // ── 私聊（p2p）入口 ────────────────────────────────────────────────────
+    // ⭐ 私聊链路已移除（业务负责人 2026-10-07：「以后私聊这条链路我们就没有了」）。
+    //    入口统一到【群聊 + 话题】：私聊消息**不再建任务、不再跑任何链路**
+    //    （不进 AI、不读表、不写表）。
+    //    ⚠️ 别再往这里加私聊专属逻辑；要临时恢复用 PRIVATE_CHAT_INTAKE_ENABLED=true。
+    //
+    // ⚠️ 先认 p2p（**改动前就是这条判据**）：`chat_type` 既不是 group 也不是 p2p 的消息
+    //    仍然走改动前的 `not_p2p` 静默拒绝 —— 不会因为"私聊关了"反而被套上那句群提示。
     if (message.chat_type !== 'p2p') {
       logWarn('lark.mvp.message.ignored', { message_id: message.message_id, reason: 'not_p2p' });
       return { accepted: false, reason: 'not_p2p' };
+    }
+
+    if (!isPrivateChatIntakeEnabled()) {
+      // 只回一句固定文案（免得对方以为机器人坏了）；文案留空 = 没什么可说的，就不发。
+      const notice = resolvePrivateChatNotice();
+      const shouldNotice = notice.enabled && Boolean(notice.text);
+      logInfo('lark.private_chat.disabled', {
+        message_id: message.message_id,
+        message_type: message.message_type,
+        notice_sent: shouldNotice,
+      });
+      if (shouldNotice) await this.sendText(senderOpenId, notice.text).catch(() => undefined);
+      return { accepted: false, reason: 'private_chat_removed' };
     }
 
     if (!['text', 'post'].includes(message.message_type)) {
@@ -1714,8 +1740,13 @@ class LarkMvpService {
             logWarn('lark.sales.sample_replacement.apply_failed', { task_id: draftId, error: error.message });
             return new Set();
           });
-          await this.notifySampleReplacements(deliveryResult, operatorOpenId,
-            { handledDetailIds: handledSampleDetails }).catch((error) =>
+          await this.notifySampleReplacements(deliveryResult, operatorOpenId, {
+            handledDetailIds: handledSampleDetails,
+            // ⭐ 渠道感知：**群销售**的补样品提醒回到**那条销售话题**（不是另开一条私聊）。
+            //   私聊任务（`chat_type !== 'group'`）→ `null` → 补样品提醒没有群上下文，
+            //   由出口按 `PRIVATE_CHAT_SEND_ENABLED` 决定发不发（默认不发，只记一条 skip）。
+            channelTask: task.chat_type === 'group' ? task : null,
+          }).catch((error) =>
             logWarn('lark.sales.sample_notice.failed', { task_id: draftId, error: error.message }));
           if (deliveryResult.failures?.length) {
             await this.store.update(draftId, { delivery_failures: deliveryResult.failures });

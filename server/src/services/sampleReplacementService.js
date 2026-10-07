@@ -10,6 +10,9 @@ const { getLarkAgentCredentials } = require('../config/larkAgent');
 const { sampleReplacementCard, sampleReplacementStatusCard, sampleReplacementProcessingCard } = require('../utils/larkCards');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { larkLogger } = require('../utils/larkLogger');
+// 私聊链路已移除（2026-10-07）：没有群上下文时**默认不再往私聊发**，只记一条 skip。
+// 读的是**函数**（每次调用时读 env），不是加载时定死的常量 —— 见那个文件的注释。
+const { isPrivateChatSendEnabled } = require('../config/privateChat');
 
 const taskIdFor = (salesDetailRecordId) =>
   `sample_${crypto.createHash('sha256').update(String(salesDetailRecordId)).digest('hex').slice(0, 20)}`;
@@ -48,18 +51,36 @@ class SampleReplacementService {
     // ── ⭐ 渠道感知的出口（"把私聊专属的切出来"这一步）────────────────────────
     // 目标形态（业务负责人 2026-10-06：「后续就不走私聊了，你私聊的要切除出来」）：
     //   任务带渠道上下文时，由**注入方**（`larkMvpService` 的适配器）决定回到哪个群话题；
-    //   没有群上下文 → 回落私聊，且与改动前**逐字相同**的
-    //   `sendCard(task.sender_open_id)`（#148 在售后那条路上就是这么做的）。
+    //   没有群上下文 → 走这里的**缺省分支**。
     //
     // ⚠️ 边界：本 service **不认识** `reply_in_thread` / `chat_id` 这些飞书语义——
     //    飞书语义只留在 `larkMvpService` 的适配器里；这里只交"这是哪个任务"。
-    // ⚠️ 今天**没有任何调用方注入**这两个端口（补样品提醒的触发源是工作台 / 私聊卡片，
-    //    任务上还没有渠道上下文），所以默认回落分支就是当前生产行为，一个字都没变。
-    //    接线（`larkMvpService` 里传 `sendTaskCard` / `sendTaskText`）是下一步的独立小步。
-    this.sendCardToTask = sendCardToTask
-      || (async (task, card) => this.sendCard(task?.sender_open_id, card));
-    this.sendTextToTask = sendTextToTask
-      || (async (task, message) => this.sendText(task?.sender_open_id, message));
+    //
+    // 🔴 2026-10-07「私聊链路移除」：**缺省分支不再静默发私聊**。
+    //    `PRIVATE_CHAT_SEND_ENABLED`（默认 false）没开时：不发、记一条
+    //    `lark.private_chat.send_skipped`、返 `null`（调用方据此不记 `notice_sent`）。
+    //    开了就与改动前**逐字相同**：`sendCard(task.sender_open_id)`。
+    //    ⚠️ 为什么要在这两个**缺省**端口里也判一次（`larkMvpService` 那侧已经判过）：
+    //      `routes/workbench.js` 是**自己 new** 这个 service 的（没有群上下文的触发方），
+    //      它注入的是这两个缺省端口，**不经过** `larkMvpService` 的适配器。
+    this.sendCardToTask = sendCardToTask || (async (task, card) => {
+      if (!isPrivateChatSendEnabled()) {
+        logInfo('lark.private_chat.send_skipped', {
+          kind: 'card', task_id: task?.task_id, reason: 'no_group_context',
+        });
+        return null;
+      }
+      return this.sendCard(task?.sender_open_id, card);
+    });
+    this.sendTextToTask = sendTextToTask || (async (task, message) => {
+      if (!isPrivateChatSendEnabled()) {
+        logInfo('lark.private_chat.send_skipped', {
+          kind: 'text', task_id: task?.task_id, reason: 'no_group_context',
+        });
+        return null;
+      }
+      return this.sendText(task?.sender_open_id, message);
+    });
   }
 
   async publishCard(task, event, card, metadata = {}) {
@@ -79,7 +100,20 @@ class SampleReplacementService {
     }
   }
 
-  async notifySampleReplacements(deliveryResult, operatorOpenId, { handledDetailIds = new Set() } = {}) {
+  /**
+   * 「样品已售出 → 请补选」提醒。
+   *
+   * `channelTask`（**渠道感知入参**，可选）= **触发这次交付的那条任务**：
+   *   · 群销售 → 传那条销售任务 → 卡片回到**那个话题**（走注入的 `sendCardToTask`）；
+   *   · 私聊销售 / 工作台触发 → 不传（或传 null）→ 没有群上下文 →
+   *     由出口按 `PRIVATE_CHAT_SEND_ENABLED` 决定发不发（**默认不发**，只记一条 skip）。
+   *
+   * ⚠️ `operatorOpenId` 是"**本次操作的人**"，与 `channelTask.sender_open_id` 不保证同一个人
+   *    （工作台那条路根本没有 channelTask），所以**不能**拿它去替换收件人 ——
+   *    私聊分支的收件人仍然是 `operatorOpenId`，与改动前逐字相同。
+   */
+  async notifySampleReplacements(deliveryResult, operatorOpenId,
+    { handledDetailIds = new Set(), channelTask = null } = {}) {
     if (!operatorOpenId) throw new Error('补选样品提醒缺少用户 open_id');
     for (const replacement of deliveryResult.sampleReplacements || []) {
       // 已经在确认卡片上选好并补掉的，不再发第二张卡片。
@@ -106,13 +140,22 @@ class SampleReplacementService {
         lookupFailed = true;
         logWarn('lark.sales.sample_candidates.failed', { task_id: taskId, error: error.message });
       }
+      // ⭐ 发到哪儿：有群上下文就走**那条任务**（出口据此回到它的话题）；没有就用本任务
+      //   （它的 `sender_open_id` = 本次操作的人 = 改动前的私聊收件人）。
+      //   ⚠️ 群那条必须把**销售任务**交出去、而不是补样品任务：出口会顺手记
+      //   「话题 ↔ 销售」的本地路由映射，映射的 key 是**她那句话的 message_id**、
+      //   值里带**那笔销售的 record_id** —— 拿补样品任务去记会把那条映射冲成空。
+      const sendTarget = channelTask || task;
       try {
-        const cardMessageId = await this.sendCard(operatorOpenId,
+        const cardMessageId = await this.sendCardToTask(sendTarget,
           sampleReplacementCard(taskId, { productNumber, remainingSizes, lookupFailed }));
+        // `null` = 出口**明确说"这条不发"**（私聊已关）→ 不记 `notice_sent`：
+        // 没发出去就不算发过，将来有了渠道还能再发一次。
+        if (cardMessageId === null) continue;
         await this.store.update(taskId, { card_message_id: cardMessageId, notice_sent: true });
       } catch (error) {
         logWarn('lark.sales.sample_notice.failed', { task_id: taskId, error: error.message });
-        await this.sendText(operatorOpenId,
+        await this.sendTextToTask(sendTarget,
           `${productNumber} 的样品已售出，但补选卡片发送失败；销售库存已扣减，请联系管理员核对补选任务。`).catch(() => undefined);
       }
     }

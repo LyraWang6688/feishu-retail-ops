@@ -7,6 +7,10 @@
 //
 // 第 3 条同时是"引导语不能顺手把无意义聊天也回了"的防线：闸门在 AI 之前，
 // 所以这里断言的是「AI 没被调用」+「没有发出任何消息」+「没有建任务」三件事。
+// ⭐ 本文件的用例**拿私聊当入口**测入口闸门（历史回归，不该因为"入口没了"就删）。
+//    显式打开私聊开关 → 回归「开关打开时行为与改动前逐字不变」。
+//    （配置是**每次调用时读 env**，所以不依赖 require 顺序，见 config/privateChat。）
+require('./helpers/enablePrivateChatForTests');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');

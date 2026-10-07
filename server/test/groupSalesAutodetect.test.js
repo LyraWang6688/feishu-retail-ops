@@ -15,6 +15,10 @@
  * 「静默」的判据是**真实发生的远端调用计数**（飞书 client + 业务网关 + AI 识别器
  * 三个都记账），不是"我们没调用某个方法"。
  */
+// ⭐ 本文件有「⑥ 私聊行为一个字都不变」那组用例 —— 它们**拿私聊当入口**，
+//    所以显式把私聊开关打开，回归「开关打开时行为与改动前逐字不变」。
+//    （配置是**每次调用时读 env**，所以不依赖 require 顺序，见 config/privateChat。）
+require('./helpers/enablePrivateChatForTests');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');

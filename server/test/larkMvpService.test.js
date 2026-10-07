@@ -1,3 +1,9 @@
+// ⭐ 本文件有一大批历史用例是**拿私聊录单当输入**测销售链路的（回归覆盖，不该删）。
+//    这里显式把私聊开关打开 → 它们转为回归「**开关打开时行为与改动前逐字不变**」。
+//    另一半方向（"默认关 = 私聊不处理"）由 test/privateChatRemoval.test.js 钉住 ——
+//    那个文件**不** require 这个 helper。
+//    （配置是**每次调用时读 env**，所以不依赖 require 顺序，见 config/privateChat。）
+require('./helpers/enablePrivateChatForTests');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -942,40 +948,12 @@ test('sale card persists written record IDs and distinguishes pending sync from 
   assert.equal((await store.get('sale_sync_retry')).status, 'posted');
 });
 
-test('today sales menu returns only confirmed detail rows from the Shanghai calendar day', async () => {
-  const cards = [];
-  const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
-  const records = {
-    salesDetail: [
-      { record_id: 'today', fields: { 编号: ['product_1'], 尺码: 38, 数量: 1, 销售单号: ['order_1'], 销售日: Date.parse('2026-09-24T10:00:00+08:00') } },
-      { record_id: 'yesterday', fields: { 编号: ['product_1'], 尺码: 38, 数量: 1, 销售单号: ['order_1'], 销售日: Date.parse('2026-09-23T10:00:00+08:00') } },
-    ],
-    product: [{ record_id: 'product_1', fields: { 编号: '8088-26棕' } }],
-    salesEntry: [{ record_id: 'order_1', fields: { 销售单号: 'XSD-001', '资金状态': '已写入' } }],
-    paymentMethod: [{ record_id: 'method_1', fields: { 收款方式: '微信' } }],
-    paymentRecord: [{ record_id: 'payment_1', fields: { 关联销售单: ['order_1'], 交易方式: ['method_1'], 收款金额: 230 } }],
-  };
-  const service = new LarkMvpService({
-    client: {},
-    gateway: {
-      validateTables: async () => [],
-      table: (key) => V1_BITABLE_SCHEMA.tables[key],
-      listAll: async (key) => records[key] || [],
-    },
-    references: {},
-    posting: {},
-    recognizer: {},
-    store: makeStore(),
-  });
-  service.sendCard = async (openId, card) => cards.push({ openId, card });
-
-  const result = await service.sendTodaySales('ou_1', new Date('2026-09-24T02:00:00Z'));
-
-  assert.equal(result.rows.length, 1);
-  assert.equal(result.totalQuantity, 1);
-  assert.equal(result.totalAmount, 230);
-  assert.match(JSON.stringify(cards[0].card), /8088-26棕/);
-});
+// 🔴 2026-10-07「私聊链路移除」：原来这里有一条
+//    `today sales menu returns only confirmed detail rows from the Shanghai calendar day`
+//    —— 它测的是 `sendTodaySales`（机器人菜单「今日销售」，**只有私聊点得到**）。
+//    那个方法连同菜单事件 handler 已随私聊入口一起删除，所以这条用例**一并删除**：
+//    留着它就只能靠"删掉入口再断言旧行为"来维持，那是自己骗自己。
+//    要看今日销售 → 飞书网页工作台「销售查询」（`GET /api/workbench/sales/today`）。
 
 // ─── 颜色从必填变为可选 ───
 //

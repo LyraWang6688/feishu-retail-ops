@@ -9,6 +9,10 @@
  *   · 飞书语义（`reply_in_thread`）只在 `larkMvpService` 的适配器里出现。
  */
 
+// ⭐ 本文件有一条「私聊与改动前逐字相同」的用例（补样品出口的私聊分支）——
+//    它**拿私聊当出口**，所以显式把私聊开关打开。
+//    （配置是**每次调用时读 env**，所以不依赖 require 顺序，见 config/privateChat。）
+require('./helpers/enablePrivateChatForTests');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

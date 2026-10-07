@@ -1,3 +1,7 @@
+// ⭐ 本文件的用例**拿私聊当出口**（没注入端口时回落 `task.sender_open_id`）——
+//    显式打开私聊开关 → 回归「开关打开时行为与改动前逐字不变」。
+//    （配置是**每次调用时读 env**，所以不依赖 require 顺序，见 config/privateChat。）
+require('./helpers/enablePrivateChatForTests');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
