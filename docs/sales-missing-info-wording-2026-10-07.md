@@ -124,7 +124,7 @@
 | `larkMvpService.test.js`「她没说定金收了多少…（这一条不放宽）」 | `assert.match(messages[0], /请明确已经收到的定金金额/)` | `assert.equal(messages[0], '销售信息还缺 1 处，请照着补一下～\n1. 请说一句这次收了多少定金～')` | 判据那两条**原样保留**（`task.draft.missing_fields` 仍含原话、仍 `needs_info`、仍 `cards.length === 0`）。文案从"正则匹配 12 个字"改成**整段逐字相等**，是收严。 |
 | `larkMvpService.test.js`「缺货之外还有别的问题时，才用完整的补充说明」 | `/请逐件说明成交金额/` | `/请给每双鞋都说一个成交金额：26632 37码、26632 36码/` **＋新增**「不许含 `items[\d+]`/`payments[\d+]`/下划线字段名」＋「不许含 `；`」 | 由 6 个字的片段匹配 → **含两个货号的整句逐字匹配**，并**新增**两条形状禁令。原来的 `/库存里没有 …/`、`/销售信息还缺/` 两条一条没删。 |
 
-其余 1113 条用例**一条未改**（含 `doubaoSalesParser.test.js` 里那些逐字钉 `missing_fields`
+其余 1114 条用例**一条未改**（含 `doubaoSalesParser.test.js` 里那些逐字钉 `missing_fields`
 的用例 —— 它们仍然绿，正好证明**机器契约没动**）。
 
 ## 10. 先红后绿
@@ -147,7 +147,7 @@ items[0].actual_amount、items[1].actual_amount、payments[0].method、请逐件
 已收金额和待平台结算金额不能超过本单成交金额。请补充后重新发送完整销售信息。
 ```
 
-**绿**：还原接线后，同两个文件 **112 / 112 pass、fail 0**；全量 **1113 / 1113 pass、fail 0（连跑 2 次）**。
+**绿**：还原接线后，同两个文件 **114 / 114 pass、fail 0**；全量 **1114 / 1114 pass、fail 0（连跑 2 次）**。
 
 ## 11. 配置项（`config/salesMissingInfoText.js` → `SALES_MISSING_INFO_*`）
 
@@ -171,11 +171,42 @@ items[0].actual_amount、items[1].actual_amount、payments[0].method、请逐件
 | **AC-4** | 「定金单」那条说人话、一眼知道怎么办 | ✅ | ④：不含「明细」、含「一次只能记一双」、含「分开发送」、含两个货号 |
 | **AC-5** | 判据一个字没动 | ✅ | ④：`status === 'needs_info'`、`cards === []`、写入只有 `create:salesEntry` + `update:salesEntry`、`draft.missing_fields` **deepEqual** 她那条的 6 条原话 |
 | **AC-6** | 配置先行，逻辑里不写死中文 | ✅ | ⑥：改 env 就改文案；空串回落；`\n` 换行；`renderSalesMissingInfo` 函数体内**没有任何中文字面量**（只有分类正则） |
-| **AC-7** | 其它场景既有行为不破 | ✅ | ⑦（缺货 standalone 逐字不变）；⑤(c) 15 条"已经是人话"的**逐字透传**；`doubaoSalesParser.test.js` 全绿（`missing_fields` 未动）；全量 1113 绿 |
+| **AC-7** | 其它场景既有行为不破 | ✅ | ⑦（缺货 standalone 逐字不变）；⑤(c) 15 条"已经是人话"的**逐字透传**；`doubaoSalesParser.test.js` 全绿（`missing_fields` 未动）；全量 1114 绿 |
 | **AC-8** | 一条守卫测试：出现标识符形状就失败 | ✅ | ⑤：`KNOWN_MISSING_FIELD_SHAPES`（38 种已知形状）逐条 + 一次性全喂，断言不含 `items[..]`/`payments[..]`/`_[a-z]`/「明细」/「；」，且**一句都不许被吞掉** |
 
 ## 13. CI / 全量
 
-- 全量 `node --test --test-concurrency=1`（在独立 worktree 里跑）：**连跑 2 次，1113 / 1113 pass、fail 0**。
-- PR 上的 `gh pr checks` / `mergeStateStatus`（`CLEAN` 才算过）见 PR 正文与收尾汇报。
+- 全量 `node --test --test-concurrency=1`（在**独立 worktree** 里跑，非主工作区）：
+  **连跑 2 次，1114 / 1114 pass、fail 0**（`HEAD=c63a832`、`behind=0`）。
+- PR 上的 **CI 三项**（`gh pr checks 233`，全部 pass）：
+
+```
+Analyze (javascript-typescript)  pass  1m6s   https://github.com/LyraWang6688/feishu-retail-ops/actions/runs/37610059688/job/112754887436
+CodeQL                           pass  3s     https://github.com/LyraWang6688/feishu-retail-ops/runs/112755248301
+test                             pass  37s    https://github.com/LyraWang6688/feishu-retail-ops/actions/runs/37610062030/job/112754890080
+```
+
+- `gh pr view 233 --json mergeStateStatus,mergeable,state` → `{"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","state":"OPEN"}`
+  （**没有**用 `--admin`）。
+- CI 上 `pnpm test` 的实际输出（`test` job 日志尾部）：
+
+```
+1..1114
+# tests 1114
+# pass 1114
+# fail 0
+# duration_ms 22661.133085
+```
+
+## 14. 不确定处 / 已知剩余面
+
+- ⚠️ **`解析结果摘要`（`parseSummary`）里仍然是机器清单**（`JSON.stringify(draft)`，含
+  `items[0].actual_amount`）。这是**有意保留**的：它是排查用的原始快照，不是给她看的文案
+  （`failureReason` 那一列已经人话化了）。若她将来要看这一列，再单独议。
+- ⚠️ 渲染器按**生产者原话的字头**认句子（`TEXT_TOPIC_PATTERNS`）。生产者哪天改了那几个字，
+  对应条目会退化成"原样透传"（不会崩、也不会丢信息，只是文案回到改动前的样子）——
+  守卫用例盯着"不许漏标识符 / 「明细」/「；」"，所以退化会被测出来。
+- ⚠️ 行首编号文案从环境变量配时**末尾留不住空格**（`config/envValue` 会 `trim()`）——
+  已在配置注释与 `.env.example` 里写明（默认值不受影响，`{index}. ` 照旧）。
+- ⚠️ 我没有真机验证（**没有部署**）；上面全部是本地 + CI 的代码级证据。
 
