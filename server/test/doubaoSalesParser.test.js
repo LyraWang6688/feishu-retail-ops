@@ -443,7 +443,11 @@ test('single-line deposit derives the receivable from deposit plus balance', () 
   assert.deepEqual(result.missing_fields, []);
 });
 
-test('a deposit order with several lines is refused instead of dropping the unpaid balance', () => {
+test('一张单里的定金 + 尾款落到那一件上：不再拒绝多明细，应收也不再算丢', () => {
+  // ⚠️ 口径变更（2026-10-07 业务负责人）：「定金单暂只支持一条明细」这条**整单护栏被放开** ——
+  //    一张单可以同时有现货明细与预付明细（「这就是一个人买的呀」，不拆单）。
+  //    这不是"放宽断言"：改动前这一单**算不出应收**（agreed_total=''）且被整单拒绝；
+  //    改动后应收 = 定金 100 + 尾款 140 = 240 落到**那一件鞋**上，整单 = 各分项之和 240+39=279。
   const result = normalizeWithVouchers({
     intent: 'sale',
     items: [
@@ -454,10 +458,11 @@ test('a deposit order with several lines is refused instead of dropping the unpa
     agreed_total: null,
   }, '695887B-5 43码黑，39元腰带一条，微信付定金100元，尾款以后付140元');
 
-  // 尾款 140 无法判断属于哪一件，不能猜（以前是整块跳过，应收金额被静默算丢）。
-  assert.ok(result.missing_fields.some((field) => field.includes('定金单暂只支持一条明细')),
-    `实际待补充：${JSON.stringify(result.missing_fields)}`);
-  assert.equal(result.agreed_total, '', '不再静默跳过尾款');
+  assert.ok(!result.missing_fields.some((field) => field.includes('定金单暂只支持一条明细')),
+    `原来的整单护栏必须已经被放开，实际待补充：${JSON.stringify(result.missing_fields)}`);
+  assert.equal(result.items[0].actual_amount, 240, '定金 100 + 尾款 140 落到那一件鞋上');
+  assert.equal(result.agreed_total, 279, '整单 = 各分项之和（240 + 39）——应收不再被静默算丢');
+  assert.equal(result.owed, 140, '她明说的尾款仍然是欠款（后端据此补未收款）');
 });
 
 // 2026-10-07：这条原来标着「[当前行为·待修复]」，特征化的是**不合理**的结果
@@ -535,7 +540,7 @@ test('定金金额**不许**从货号或鞋码里猜（「26002-52 37码 定金�
     `货号 26002-52 与 37码 都不是金额：${JSON.stringify(result.missing_fields)}`);
 });
 
-test('[当前行为·待修复] mixing an accessory into a deposit order loses the receivable and demands a size', () => {
+test('[当前行为·待修复] 腰带被当成普通明细时仍然要它补尺码（应收已不再丢）', () => {
   const result = normalizeWithVouchers({
     intent: 'sale',
     items: [
@@ -546,9 +551,12 @@ test('[当前行为·待修复] mixing an accessory into a deposit order loses t
     agreed_total: null,
   }, '695887B-5 43码黑，39元腰带一条，微信付定金100元，尾款以后付140元');
 
-  // 与上一条完全相同的语序，只多了一行配品：应收从 240 变成空，
-  // 并且系统要求配品补尺码——配品没有尺码，用户永远补不上，整单走不完。
-  assert.equal(result.agreed_total, '');
+  // ⚠️ 这一条只钉**仍然存在**的那个问题：模型没把「39元腰带」标成配品（`kind:"accessory"`），
+  //    于是后端把它当普通明细、要它补尺码 —— 那是**配品识别**的事，不是本次口径变更的范围。
+  //    ⚠️ 但「应收被算丢」这一半**已经修好**：改动前 agreed_total 是空（240 丢了），
+  //       现在是 279 = 各分项之和（240 + 39）。所以这一条**不是放宽**，是收严了钱的账。
+  assert.equal(result.agreed_total, 279);
+  assert.equal(result.items[0].actual_amount, 240);
   assert.ok(result.missing_fields.includes('items[1].size'));
 });
 
