@@ -86,21 +86,88 @@
 **为什么不是"只把更新判据修严"就够**：那仍然把"她能不能看见"押在"猜对是哪张卡"上。
 发新卡是**唯一不依赖猜测**的做法 —— 卡片长在她刚说话的地方，这在结构上就保证了可见性。
 
-**残留（如实记）**：旧卡作废失败时，话题里可能同时留着两张可点的卡（旧卡数字是旧的）。
-两张卡指向**同一个 `taskId`**，点哪张都按**最新**计划入库（既有用例「追加②」钉住），
-**不会写错账**；作废失败会记 `card_supersede_failed`，可据此排查。
+**残留（如实记）**：
+1. 旧卡作废失败（或 `im.v1.message.get` 读不到那条消息 —— 例如线上缺读权限）时，
+   话题里可能同时留着两张可点的卡（旧卡数字是旧的）。
+   两张卡指向**同一个 `taskId`**，点哪张都按**最新**计划入库（既有用例「追加②」钉住），
+   **不会写错账**；作废失败会记 `card_supersede_failed` / 跳过会记 `card_supersede_skipped`，可据此排查。
+2. 她连着说 N 句有内容的话 → 会发 N 张卡（前 N-1 张被作废成灰色）。
+   **这是"可见性优先"的代价**：卡片一定落在她说话的地方，代价是话题里多几张"已作废"的痕迹。
+   （改动前为了省这几张卡，付出的代价是**她可能一张都看不到** —— 真机已经发生过。）
+3. 旧卡作废依赖只读接口 `im.v1.message.get`（**读不到就不动手**，不是"猜着 patch"）。
+   若线上这个口子没权限，日志里会是 `card_supersede_skipped{reason:'call_error'/'code_230027'}`
+   —— 那时"她一定看得见卡片"这条**照样成立**（新卡已经发出去了），只是旧卡不回收。
 
 ## 6. 先红后绿
 
-（改动前的失败输出贴在第 9 节下方「先红」处。）
+**改动前**（`server/`，只跑新增的 5 条「可见性」用例）：
+
+```
+$ node --test --test-concurrency=1 --test-name-pattern="可见性" test/arrivalConversation.test.js
+{"event":"purchase.arrival.reconcile.processing","batch_no":"BH-20261006-0001","message_count":2,"parse_complete":true,"parse_same":true,"difference_count":0}
+{"event":"purchase.arrival.reconcile.card_updated","task_id":"arrival_reconcile_bd2baaffb460ea7ffeb46be6",
+ "batch_no":"BH-20261006-0001","card_message_id":"om_card_1","row_count":2,"difference_count":0,
+ "zero_actual_count":0,"adjustment_total":0,"parse_complete":true,"card_action":"updated"}
+✖ 可见性①（真机复现）🔴：卡片在**另一个话题**里 —— 她在本话题说「货都到了」也必须拿到一张卡
+  AssertionError: 🔴 必须**在她说这句话的那个话题**里发一张新卡（不是去更新别处那张）
+  1 !== 2
+✖ 可见性②🔴：历史卡片 id 指向的那条消息**不是卡片** → 一个字都不许 patch 它，照样发新卡
+✖ 可见性③：读过之后拿不准（读不到 / 已撤回）→ **不 patch**，照样发新卡
+✖ 可见性④：`card_sent` 日志能回答"发出去没有 / message_id / 是不是 interactive / 在哪个话题"
+✖ 可见性⑤：旧卡作废**先确认是卡片、改完再读一眼校验**，结果进日志
+ℹ tests 5   ℹ pass 0   ℹ fail 5
+```
+
+⭐ **它复现的就是真机那三条日志的形状**：只有 `card_updated`（`card_message_id: om_card_1`）、
+**没有 `card_sent`** —— 卡片被"更新"到了她这次说话的那个话题之外。
+
+**改动后**：
+
+```
+$ node --test --test-concurrency=1 --test-name-pattern="可见性" test/arrivalConversation.test.js
+{"event":"purchase.arrival.reconcile.card_sent","task_id":"arrival_reconcile_bd2baaffb460ea7ffeb46be6",
+ "batch_no":"BH-20261006-0001","card_message_id":"om_card_2","row_count":2,"difference_count":0,
+ "zero_actual_count":0,"adjustment_total":0,"parse_complete":true,"card_action":"sent",
+ "card_requested_msg_type":"interactive","card_msg_type":"interactive","card_msg_type_source":"message_get",
+ "card_msg_type_reason":"","card_deleted":false,"card_thread_id":"","card_thread_match":null,
+ "thread_id":"omt_B","superseded_card_message_id":"om_card_1","supersede_attempted":true,"supersede_result":"ok"}
+✔ 可见性①（真机复现）🔴 …  ✔ 可见性②🔴 …  ✔ 可见性③ …  ✔ 可见性④ …  ✔ 可见性⑤ …
+ℹ tests 5   ℹ pass 5   ℹ fail 0
+```
 
 ## 7. 验收标准逐条对照
 
-（实现后填写。）
+| # | 验收标准 | 结果 | 判据（用例 / 日志） |
+|---|---|---|---|
+| AC-1 | 她说「货都到了」→ **她说话的那个话题里出现带「是」的核对卡片** | ✅ | 用例「可见性①」：`cards.length 1 → 2`、`cards[1].messageId = 她刚说的那条`、`options.threadId = 她这次的话题`、按钮 `[confirm_arrival_reconcile, reject_arrival_reconcile]` 齐全；`card_sent` 日志 |
+| AC-2 | 点「是」→ 入库 + 到货状态【已到货】 | ✅（未改动） | `arrivalConversation.test.js` 59/59、`arrivalLandingOnBatch.test.js` 全绿（入库 / 库存 / 「报货批次」到货状态那几条原样） |
+| AC-3 | 重复说一次 → 不重复写库；卡片**看得见**（策略：**旧卡作废 + 在当前话题重发新卡**） | ✅ | 用例「追加①/④」「可见性①」：第二次 `cards.length 2`（新卡在当前话题）、旧卡被 patch 成灰色"已作废"（按钮收掉）、`gateway.writes = 0` |
+| AC-4 | 目标消息**不是卡片** → 自动回落"发新卡"，不许静默 | ✅ | 用例「可见性②」：`msg_type: 'text'` → `updated.length 0`（一个字都没 patch 它）+ 新卡照发 + `card_supersede_skipped {reason:'target_not_interactive', target_msg_type:'text'}` |
+| AC-5 | 「解析不了就不发卡」不许回退 | ✅（未改动） | 用例「直接处理③」仍然绿：`no_arrival_content` → 零卡片、零写入、`status: collecting` |
+| AC-6 | 日志能回答"发出去了没有 / message_id / 是不是 interactive" | ✅ | 用例「可见性④」逐字段断言：`card_message_id` · `thread_id` · `card_msg_type:'interactive'` · `card_msg_type_source:'message_get'` · `card_thread_match:true` · `card_action:'sent'`；旧 `card_updated` 事件 0 条 |
+| AC-7 | 更新已存在的卡片前**先确认它是卡片**、改完**再校验结果** | ✅ | 用例「可见性③/⑤」：读不到 / 已撤回 → **不 patch**；是卡片 → patch → 再读一眼 `updated` → `card_superseded.update_verified:true` |
+| AC-8 | 更新成功 / 跳过 / 失败都有明确日志，且**新卡已发出**（可见性不依赖 patch） | ✅ | 用例「可见性②/③/⑤」「追加③」分别断言 `card_supersede_skipped` / `card_superseded` / `card_supersede_failed` + `card_update_failed`，且三种情况下 `cards.length` 都 +1 |
+| AC-9 | 先红后绿 | ✅ | 第 6 节（改动前 5 fail → 改动后 5 pass） |
+| AC-10 | 不写任何业务表、不部署 | ✅ | 全部用例 `gateway.writes = 0`；没碰线上 `.env`、没跑任何部署脚本（只 `git push` + 开 PR） |
+| AC-11 | 全量 `node --test --test-concurrency=1` 连跑 2 次 fail=0 | ✅ | 第 8 节（1299 / 1299 ×2） |
 
 ## 8. CI 三项 + 全量 2 次
 
-（实现后填写。）
+### 全量 2 次（在**独立 worktree** 里跑，不在主工作区）
+
+```
+$ node --test --test-concurrency=1     # 第 1 次
+ℹ tests 1299   ℹ pass 1299   ℹ fail 0   ℹ duration_ms 34830   （exit 0）
+$ node --test --test-concurrency=1     # 第 2 次
+ℹ tests 1299   ℹ pass 1299   ℹ fail 0   ℹ duration_ms 33890   （exit 0）
+```
+
+（改动前 `arrivalConversation.test.js` 54 条 + `cardUpdateMulti.test.js` 8 条；
+改动后 59 + 11 —— **只增不删**。）
+
+### CI 三项（`gh pr checks`，**不用 `--admin`**）
+
+（PR 开出来后填写。）
 
 ## 9. 需要在服务器上【只读】核的清单（不连生产、不在本机做）
 
