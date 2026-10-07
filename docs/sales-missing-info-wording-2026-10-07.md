@@ -198,7 +198,44 @@ test                             pass  37s    https://github.com/LyraWang6688/fe
 # duration_ms 22661.133085
 ```
 
-## 14. 不确定处 / 已知剩余面
+## 14. 上游变更同步（PR #234 合入后）—— 验收标准（**先写在动手之前**）
+
+**上游已变**：PR **#234**（「一单多明细」）已于 2026-10-07 合入 `origin/main`（`2d852c3`）。
+它**删掉了**原来那条整单护栏（`doubaoService.js` 原 `:281-284`）：
+
+```js
+if (deposit.tailAmount && items.length !== 1) {
+  deposit.issues.push('定金单暂只支持一条明细；多双请分开说明，或逐双给出成交金额');
+}
+```
+
+⇒ **「多明细 + 定金」现在是合法输入**，**那句话不再产生**。同时 #234 **新增**了一句追问
+（`config/salesTradeTypePolicy.js` 的 `SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS`）——
+「哪一件是付了定金的那件说不清」时问一句。本轮只做两件事：**冲突并存 + 映射同步**，
+**一行 #234 语义都不改**。
+
+| 编号 | 标准 | 怎么验 |
+|---|---|---|
+| **AC-S1** | 分支包含 `origin/main`（`2d852c3`）**全部提交**，且**不改写已推送历史**（用 merge，不用 rebase ⇒ 无需 force-push） | `git merge-base --is-ancestor 2d852c3 HEAD` 通过；`git log --oneline` 有 merge 提交；`git rev-list --count HEAD..origin/main` = 0 |
+| **AC-S2** | 已知冲突（`larkMvpService.js` **相邻两行**）**两行并存**：`failureReason:` 取 #233 版、`...(tradeTypeRecordIds.length …)` 取 #234 版 | 逐行看 `git diff`（冲突解法表见下节） |
+| **AC-S3** | 「定金单暂只支持一条明细…」的映射**保留为历史兜底**，并**补注释标明「上游已删除，仅防历史任务重放」**；且**新输入不再产生**该句 | 注释逐字存在；用例：同一份输入走 `normalizeSalesResult` **不再**产出该句 |
+| **AC-S4** | #234 **新增**的那句（`SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS`）**有人话映射**（不再原样透传），并且**可配**（进 `DEFAULTS_BY_KEY` + `.env.example`） | 单测：该形状渲染后 **≠ 原文**；`.env.example` 键集合与配置一致 |
+| **AC-S5** | **映射表 ⇄ 形状守卫双向一致**：`MAPPED ∪ PASSTHROUGH == KNOWN`，且两者 **⊆ KNOWN** —— 不许出现"映射里有、形状列表里没有"或反之 | 新增一致性用例逐条断言（含 `KNOWN` 无重复、无遗漏） |
+| **AC-S6** | 守卫覆盖**所有当前生产者形状**（含 #234 新句）；任何已知形状渲染后都不含 `items[..]` / `payments[..]` / `_[a-z]` / 「明细」/「；」，且**一句都不许被吞掉** | 全形状守卫用例（一次性全喂 + 逐条单独喂） |
+| **AC-S7** | 既有断言**不放宽**（收严可以）；她那一条的 fixture 与**真实解析层输出逐字同步** | `HER_PARSED_MISSING_FIELDS` 改为真实输出，并**新增**断言 `deepEqual normalizeSalesResult(...).missing_fields` 把它钉住（比原来更严） |
+| **AC-S8** | 受影响用例 + 全量 `node --test --test-concurrency=1` **连跑 2 次、fail = 0**（在**独立 worktree** 内跑，不在主工作区） | 两次运行的实际输出 |
+| **AC-S9** | `gh pr checks 233` **三项全 pass**，`mergeStateStatus: CLEAN`（**禁止 `--admin`**） | gh 实际输出 |
+| **AC-S10** | **没碰** #234 语义（交易类型逐明细 / 主表多选 / 交付判据 / 金额口径），也没碰 `pendingDealPush*`、`dailyReport*`、`app.js`、颜色候选那批 | `git diff --stat` 文件清单与逐行 diff |
+
+> ⭐ 冲突解法（**AC-S2**，机械解、两边语义都不动）：原来相邻的两行各自被一边改过 ——
+
+| 行 | #233 的版本 | #234 的版本 | 解法 |
+|---|---|---|---|
+| `failureReason:` | `missingInfoLines.join('\n')` | （未改） | **取 #233 版** |
+| `...(tradeTypeRecordIds.length …)` | （未改） | `...(tradeTypeRecordIds.length ? { tradeType: relation(tradeTypeRecordIds) } : {})` | **取 #234 版** |
+| 结果 | — | — | **两行并存**，一行都不删、都不改写 |
+
+## 15. 不确定处 / 已知剩余面
 
 - ⚠️ **`解析结果摘要`（`parseSummary`）里仍然是机器清单**（`JSON.stringify(draft)`，含
   `items[0].actual_amount`）。这是**有意保留**的：它是排查用的原始快照，不是给她看的文案
