@@ -186,9 +186,18 @@ $ git diff -- server/src/services/inventoryService.js \
 命令：在独立 worktree 的 `server/` 下 `node --test --test-concurrency=1`（= `pnpm test`），
 worktree HEAD = 本次分支（`git rev-parse --short HEAD` 见第 8 节）。
 
-### 6.4 CI
+### 6.4 CI（三项全绿；`gh pr checks` → **无 pending / 无 fail**）
 
-（PR 开出后回填，见第 8 节）
+PR **#257**（`fix/purchase-ledger-batch-link` → `main`，基线 `4b1b0d7`）：
+
+```
+CodeQL                              pass   4s
+test (server tests)                 pass   49s
+Analyze (javascript-typescript)      pass   1m12s
+```
+
+`gh pr view 257 --json mergeStateStatus,mergeable` → `mergeStateStatus: CLEAN` /
+`mergeable: MERGEABLE`（**没有用 `--admin`**）。
 
 ## 7. 不确定处（**如实说，不猜**）
 
@@ -213,5 +222,7 @@ worktree HEAD = 本次分支（`git rev-parse --short HEAD` 见第 8 节）。
 
 - 分支：`fix/purchase-ledger-batch-link`（worktree `.local/purchase-ledger-batch-link`）
 - 基线：`origin/main` = `4b1b0d7`（PR #256 合并后）
-- PR：_（回填）_
-- CI：_（回填）_
+- 改动 HEAD：`960d603`（本文件这一行之后的**文档回填提交**不改任何代码/测试）
+- PR：**#257** — https://github.com/LyraWang6688/feishu-retail-ops/pull/257
+  （**只开 PR，不合并、不部署** —— 业务负责人的部署授权是一次性的）
+- CI：CodeQL ✅ · `test` ✅ · `Analyze (javascript-typescript)` ✅ · `mergeStateStatus = CLEAN`
