@@ -324,6 +324,10 @@ class LarkMvpService {
       replyText: (messageId, content, options) => this.replyPurchaseText(messageId, content, options),
       replyCard: (messageId, card, options) => this.replyPurchaseCard(messageId, card, options),
       updateCard: (messageId, card) => this.patchCardMessage(messageId, card),
+      // ⭐ 2026-10-07 晚：更新任何"已经存在的消息"之前先读一眼它是什么（只读，
+      //   `im.v1.message.get`）。`patch` 对非卡片消息可能回 `code 0` 却什么都没改
+      //   —— 真机 23:37「日志说卡片已更新、她那边一张都没有」就是这么来的。
+      getMessageMeta: (messageId) => this.getMessageMeta(messageId),
     });
     this.groupPurchaseFlow = options.groupPurchaseFlow || new GroupPurchaseFlowService({
       locator: this.purchaseBatchLocator,
@@ -553,6 +557,54 @@ class LarkMvpService {
     });
     if (response.code !== 0) throw new Error(`更新飞书卡片失败: ${response.msg} (Code: ${response.code})`);
     return true;
+  }
+
+  /**
+   * ⭐ 只读一眼**一条已经存在的消息**是什么（`im.v1.message.get`）。
+   *
+   * 为什么需要它（真机 2026-10-07 23:37）：`im.v1.message.patch` 的官方文档写明
+   * 路径参数 `message_id` "**仅支持更新卡片（消息类型为 `interactive`）**"，
+   * 可它的错误码表里**没有**"目标不是卡片"这一条（只有 230001 参数错 / 230011 已撤回 /
+   * 230031 超 14 天 / 230110 已删除 / 230027 无权限…）⇒ 对一条文字/图片消息，
+   * patch 完全可能回 `code 0` 却什么都没改。所以"能不能安全地 patch 它"这件事
+   * **必须靠读一次事实**，不能靠猜（`purchaseArrivalConversationService.retirePreviousCard` 用的就是它）。
+   *
+   * 交付的字段：`msgType`（`interactive` 才是卡片）· `deleted`（撤回）·
+   * `updated`（这条消息被更新过没有）· `threadId`（它落在哪个话题）· `updateTime`。
+   *
+   * ⚠️ **本方法永不抛**：没接线 / 缺权限 / 网络抖动一律返 `{ ok: false, reason }`，
+   *    调用方据此"拿不准就不动手"，**绝不影响**任何业务事实。
+   * ⚠️ 它是**读**接口（`im:message:readonly` / `im:message` 都能调）；
+   *    项目里已有别处在生产调它（`larkMessageLinkResolver` 的 `im.message.get` 实测 `code = 0`）。
+   */
+  async getMessageMeta(messageId) {
+    const id = String(messageId || '').trim();
+    if (!id) return { ok: false, reason: 'no_message_id' };
+    const get = this.client.im?.v1?.message?.get || this.client.im?.message?.get;
+    if (!get) return { ok: false, reason: 'sdk_missing' };
+    try {
+      const response = await get.call(this.client.im?.v1?.message || this.client.im.message, {
+        path: { message_id: id },
+      });
+      if (response.code !== 0) {
+        return { ok: false, reason: `code_${response.code}`, error: response.msg || '' };
+      }
+      // 合并转发（merge_forward）也走这个接口，此时 `items` 里还有 N 条子消息 ——
+      // 取第一条（也就是被查的那条本身）即可。
+      const item = response.data?.items?.[0];
+      // `code 0` 但一条都没回 = **没读到它是什么** ⇒ 如实报"读不到"（调用方据此不动手）。
+      if (!item) return { ok: false, reason: 'items_missing' };
+      return {
+        ok: true,
+        msgType: item.msg_type || '',
+        deleted: Boolean(item.deleted),
+        updated: Boolean(item.updated),
+        threadId: item.thread_id || '',
+        updateTime: item.update_time || '',
+      };
+    } catch (error) {
+      return { ok: false, reason: 'call_failed', error: error.message };
+    }
   }
 
   async updateSalesActionCard(task, event, card, metadata = {}) {

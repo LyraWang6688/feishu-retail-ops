@@ -218,3 +218,83 @@ test('现场复现：她点「确认」后两次真实 patch 的 payload 都带 
 //        「类型 / 履约状态 / 收款情况」三行（业务负责人：「【卡片 = 分开说】…」）；
 //      · `secondDeliveryCard`：标题从「待成交：未付 / 预付」改成「待成交 / 待收款」
 //        （「未付」不再是交易类型）。
+
+// ── ⑦ 只读一眼"这条消息是什么"（`im.v1.message.get`）────────────────────────────
+// 2026-10-07 晚真机：日志说 `card_updated`、她那边**一张卡都没有**。根因之一是
+// `im.v1.message.patch` 的**唯一成功判据是 `code === 0`** —— 官方文档写着该接口
+// "**仅支持更新卡片（消息类型为 `interactive`）**"，可错误码表里**没有**
+// "目标不是卡片"这一条 ⇒ 对一条文字/图片消息可能回 `code 0` 却什么都没改。
+// ⇒ 到货核对那条链路改成"先读一眼确认它真是卡片，才 patch；改完再读一眼校验"，
+//   这个只读口子就是 `LarkMvpService.getMessageMeta`。这里把它的**payload 形状**
+//   与**永不抛**的契约钉住（读不到 = 拿不准 = 不动手，绝不影响业务）。
+const captureMessageGet = (response) => {
+  const payloads = [];
+  const client = { im: { v1: { message: { get: async (request) => {
+    payloads.push(request);
+    if (response instanceof Error) throw response;
+    return response;
+  } } } } };
+  return { client, payloads };
+};
+
+test('getMessageMeta：payload 只有 message_id，并把 msg_type / deleted / updated / thread_id 原样交回', async () => {
+  const { client, payloads } = captureMessageGet({
+    code: 0,
+    data: { items: [{
+      message_id: 'om_x100b636b253ca430c453e956f10f224',
+      msg_type: 'interactive', deleted: false, updated: true,
+      thread_id: 'omt_abc', update_time: '1759800000000',
+    }] },
+  });
+  const service = new LarkMvpService({
+    client, gateway: {}, references: {}, recognizer: {}, store: makeStore(), posting: {},
+  });
+
+  const meta = await service.getMessageMeta('om_x100b636b253ca430c453e956f10f224');
+
+  assert.deepEqual(meta, {
+    ok: true, msgType: 'interactive', deleted: false, updated: true,
+    threadId: 'omt_abc', updateTime: '1759800000000',
+  });
+  assert.deepEqual(payloads, [{ path: { message_id: 'om_x100b636b253ca430c453e956f10f224' } }],
+    '只读接口：payload 里不许出现别的东西（尤其不许带 patch 的 content）');
+});
+
+test('getMessageMeta：非 0 / 抛错 / 没接线 一律 `{ok:false}`，**永不抛**（调用方据此"拿不准就不动手"）', async () => {
+  const cases = [
+    ['业务码非 0', { code: 230027, msg: 'Lack of necessary permissions.' }, 'code_230027'],
+    ['接口抛错', new Error('socket hang up'), 'call_failed'],
+    ['没回 items', { code: 0, data: {} }, ''],
+  ];
+  for (const [label, response, reason] of cases) {
+    const { client } = captureMessageGet(response);
+    const service = new LarkMvpService({
+      client, gateway: {}, references: {}, recognizer: {}, store: makeStore(), posting: {},
+    });
+    const meta = await service.getMessageMeta('om_x');
+    assert.equal(meta.ok, false, label);
+    if (reason) assert.equal(meta.reason, reason, label);
+  }
+
+  // 没接线（SDK 里没有 get）/ 空 id：同样只是"读不到"，不许抛。
+  const bare = new LarkMvpService({
+    client: {}, gateway: {}, references: {}, recognizer: {}, store: makeStore(), posting: {},
+  });
+  assert.deepEqual(await bare.getMessageMeta('om_x'), { ok: false, reason: 'sdk_missing' });
+  assert.deepEqual(await bare.getMessageMeta(''), { ok: false, reason: 'no_message_id' });
+});
+
+test('接线：到货核对的 `getMessageMeta` 端口**真的接到了** LarkMvpService 上（不是永远 not_wired）', async () => {
+  const { client, payloads } = captureMessageGet({
+    code: 0, data: { items: [{ message_id: 'om_card_1', msg_type: 'text', deleted: false }] },
+  });
+  const service = new LarkMvpService({
+    client, gateway: {}, references: {}, recognizer: {}, store: makeStore(), posting: {},
+  });
+
+  const meta = await service.arrivalConversation.getMessageMeta('om_card_1');
+
+  assert.equal(meta.ok, true);
+  assert.equal(meta.msgType, 'text', '真机那次那个 om_x100b… 到底是不是卡片，就靠这条路只读核出来');
+  assert.equal(payloads.length, 1, '接到了真东西上（没接的话这里会是 0 次调用 + not_wired）');
+});
