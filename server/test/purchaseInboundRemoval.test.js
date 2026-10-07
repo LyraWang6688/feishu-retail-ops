@@ -236,17 +236,21 @@ test('① 守门：全仓（src/public/scripts/test）不再引用已删除的�
   assert.deepEqual(offenders, [], `已删除的表不许再被引用：\n${offenders.join('\n')}`);
 });
 
-test('①-补 schema / 范围 / 尺码关联清单里都没有它了；「关联采购」映射也删了', () => {
+test('①-补 schema / 范围 / 尺码关联清单里都没有它了；「关联采购」映射指向的是**报货批次**', () => {
   assert.equal(V1_BITABLE_SCHEMA.tables[DELETED_TABLE_KEY], undefined,
     '「采购入库」表已被业务负责人整个删除 ⇒ schema 里不许再有这一段');
   const ledgerFields = V1_BITABLE_SCHEMA.tables.inventoryLedger.fields;
   assert.equal(Object.prototype.hasOwnProperty.call(ledgerFields, DELETED_TABLE_KEY), false,
-    '「库存流水.关联采购」指向的就是那张被删的表 ⇒ 映射必须删');
-  assert.equal(Object.values(ledgerFields).includes('关联采购'), false,
-    '物理列名也不许再留在映射里');
-  // 它自己的来源字段（ledgerSource）也必须不再是那张表。
+    '「库存流水.关联采购」原来指向的就是那张被删的表 ⇒ 那个**语义键名**不许回来');
+  // ⭐ 2026-10-08 补刀：业务负责人在真表里把「关联采购」**改成了指向「报货批次」**
+  //    ⇒ 映射**加回来**（新的语义键名 `purchaseBatch`），写的是批次那一行的 record id。
+  //    详见 `purchaseLedgerBatchLink.test.js` 与 docs/purchase-ledger-batch-link-2026-10-08.md。
+  assert.equal(ledgerFields.purchaseBatch, '关联采购',
+    '「关联采购」这一列还在（她已改成指向报货批次）⇒ 映射必须指向它');
+  // 它自己的来源字段（ledgerSource）仍必须是 null：`ledgerSource` 是**参与幂等/恢复**的
+  // "按来源回查"字段，而一个批次对应多条流水（值还带 |货品|尺码）⇒ 不能拿它顶上。
   assert.equal(STOCK_MOVEMENTS[PURCHASE_INCREASE_CODE].ledgerSource, null,
-    'ledgerSource 必须为 null（远端一个字都不传，绝不编一个 id 指向已删的表）');
+    'ledgerSource 必须仍为 null（补的是"只写不查"的关联列，不是把按来源回查接回来）');
 
   for (const scope of ['purchase', 'inventory', 'all']) {
     assert.equal(V1_SCHEMA_SCOPES[scope].includes(DELETED_TABLE_KEY), false,
@@ -336,9 +340,11 @@ test('② 真实库存引擎：12 行 → 9 条流水 / 9 双实时库存；`inv
   assert.equal(ledger.length, 9, '一个（货品+尺码）一条「库存流水」');
   assert.equal(live.length, 9, '每一行按**实际数**（1 双）加库存 —— 一雙都不能少');
   assert.equal(logs.events('inventory.change.applied').length, 9, '正向证据：9 条「库存已加」日志');
-  // ⭐ 「库存流水.关联采购」随那张表一起没了 ⇒ 一个字都不写（也不编一个 id）。
+  // ⭐ 2026-10-08 补刀：业务负责人把「关联采购」改成指向**「报货批次」**
+  //    ⇒ 采购加库存的流水**带上**批次那一行的 record id（真实链路端到端，AC-10）。
   for (const row of ledger) {
-    assert.equal('关联采购' in row.fields, false, '「关联采购」列已随表删除 → 不许再写它');
+    assert.deepEqual(row.fields['关联采购'], [BATCH_RECORD_ID],
+      '「关联采购」= 报货批次那一行的 record id（她 2026-10-08 的口径）');
     assert.equal('关联销售' in row.fields, false, '采购加库存不该挂销售来源');
     assert.deepEqual(row.fields['库存行为'], ['bhv_stock_in'], '「库存行为」仍是库存环节那条编码');
     assert.equal(row.fields['变动数量'], 1);

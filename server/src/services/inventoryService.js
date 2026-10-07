@@ -137,16 +137,25 @@ const STOCK_MOVEMENTS = Object.freeze({
   },
   [MOVEMENT_PURCHASE_INCREASE]: {
     direction: '增加',
-    // ⚠️ **2026-10-07 深夜：`ledgerSource` 从 `'purchaseInbound'` 改成 `null`** ——
-    //    业务负责人把「采购入库」表**整表删掉了**（到货链路只留"更新报货批次 + 加库存"），
-    //    而「库存流水.关联采购」指向的就是那张表 ⇒ 飞书把这个**对端关联列一起删了**。
-    //    ⇒ **远端一个字都不传**（不编一个 id 指向不存在的表），与采购退货同一条通路。
-    //    代价如实说：这条流水不再有来源关联，崩溃恢复只靠本地 `operation.ledger_record_id`
-    //    （`findLedger` 那条"按来源回查"的兜底对它不再生效）。
-    //    ⚠️ 若哪天她在「库存流水」上**再建一列**指向「报货批次」/「报货信息」：只改这一行
-    //      （`ledgerSource: '<新的语义键>'`）＋ `v1BitableSchema` 补一条字段映射即可，
-    //      改的**只是"要不要写关联"**，幂等键（`source_record_id`）与逻辑一行都不用动。
+    // ⚠️ `ledgerSource` **仍为 `null`**（2026-10-07 深夜定的，2026-10-08 补刀**没动它**）：
+    //    它是**参与幂等/恢复**的"按来源回查流水"字段（`findLedger` / `audit…` 都用它），
+    //    值取本地 `source_record_id`。而采购加库存的 `source_record_id` 是**三元组**
+    //    （`purchase_increase:<批次身份>|<货品>|<尺码>`）—— 一个批次对应**多条**流水，
+    //    拿它当来源回查会判成「存在重复库存流水」⇒ 只能继续为 null。
     ledgerSource: null,
+    // ⭐ 2026-10-08 补刀：业务负责人把「库存流水.关联采购」从"指向已删除的「采购入库」"
+    //    **改成了指向「报货批次」** ⇒ 这条流水**多写一个**「关联采购」= 报货批次那一行的
+    //    record id（走 `input.purchaseBatchRecordId`，**真实值；拿不到就不写、绝不编**）。
+    //    ⚠️ `ledgerLink` 与 `ledgerSource` 的分工（**两个都别混**）：
+    //      · `ledgerSource` = **查得到才写得对**的幂等来源列（值 = `source_record_id`）；
+    //      · `ledgerLink`   = **只写不查**的关联列，值**不一定等于** `source_record_id`。
+    //    取空时 `executeOperation` 整列不写（不是写空串、也不是回退成批次号 / 任务 id）。
+    //    它不改变任何幂等判据 —— 幂等仍是 `source_record_id` + `operationId`。
+    ledgerLink: {
+      field: 'purchaseBatch',
+      inputKey: 'purchaseBatchRecordId',
+      operationKey: 'purchase_batch_record_id',
+    },
     consumes: null,
     triggerSampleReplacement: false,
   },
@@ -337,7 +346,8 @@ const samplePromotionId = (salesDetailRecordId) => operationId('sample', salesDe
  *      （`draft.batch_record_id` / `batch_no`），第三个只在"孤儿调用"（历史草稿上两个都空）
  *      时兜底 —— 它同样是**真实** id（`arrival_reconcile_…`）。
  *    · 🔴 一个都拿不到时**当场抛错** —— **绝不编一个 id** 出来当幂等键。
- *    ⚠️ 它**只进本地任务记录与日志**：`ledgerSource` 已为 null ⇒ **远端一个字都不写**。
+ *    ⚠️ 它**只进本地任务记录与日志**（`ledgerLink` 那个远端关联值**另算**，
+ *      见 `movementLedgerLinkPatch` / `movementLedgerLinkValue`）。
  */
 const purchaseIncreaseSourceId = (input) => {
   const identity = String(
@@ -349,6 +359,21 @@ const purchaseIncreaseSourceId = (input) => {
   if (!input.productRecordId) throw new Error('库存变化缺少商品 record_id');
   return `purchase_increase:${identity}|${input.productRecordId}|${normalizeSize(input.size)}`;
 };
+
+// ── `ledgerLink`：**只写不查**的"库存流水 → 来源表"关联列（2026-10-08 加）─────────────
+// 与 `ledgerSource` 的分工见 STOCK_MOVEMENTS[采购增加] 的注释。两个 helper 只在
+// `applyChange`（落本地任务）与 `executeOperation`（写流水）里各用一次，配置驱动、无 if 分支。
+//
+// ① 落本地任务：**必须在 prepare 那一刻就存下来** —— 流水只创建一次，
+//    崩溃后经 `resumePending` 补写的那一次也必须有得写（否则重放的那条会静默丢关联）。
+const movementLedgerLinkPatch = (movement, input) => (movement.ledgerLink
+  ? { [movement.ledgerLink.operationKey]: String(input?.[movement.ledgerLink.inputKey] || '').trim() }
+  : {});
+
+// ② 写流水时取值：**拿不到就返回空串 ⇒ 整列不写**（绝不回退成批次号 / 任务 id / 三元组键）。
+const movementLedgerLinkValue = (movement, operation) => (movement.ledgerLink
+  ? String(operation?.[movement.ledgerLink.operationKey] || '').trim()
+  : '');
 
 // 一次库存操作里「第 N 双」的远端标识。实时库存是一双一条记录，
 // 本地日志丢失时只能靠这个键回答「这一双是不是已经建过了」。
@@ -474,7 +499,11 @@ class InventoryService {
    *
    * ⚠️ 2026-10-07 深夜：「采购入库」表被整表删除 ⇒ **不再有 `purchaseInboundRecordId`**。
    *    来源标识改由 `purchaseIncreaseSourceId` 用**真实三元组**算（见它的注释）；
-   *    它**只做本地幂等键**，远端没有任何关联列可写（`ledgerSource: null`）。
+   *    它是**本地幂等键**，参与幂等/恢复的 `ledgerSource` 仍是 `null`。
+   * ⭐ 2026-10-08 补刀：业务负责人把「库存流水.关联采购」改成了指向**「报货批次」**
+   *    ⇒ 这条流水**多写一个**「关联采购」= `purchaseBatchRecordId`（走 `ledgerLink`，
+   *      **只写不查**；拿不到就不写整列）。`purchaseBatchRecordId` 从此有**两个去处**：
+   *      ① 参与本地三元组幂等键；② 作为远端关联值写进「关联采购」。两者互不替代。
    *
    * ⚠️ **`state` 是"看当前库存算出来的"（没有样品→样品，有→门盒）⇒ 重放时必然算得不一样**：
    *    第一次入库那一双样品已经把「实时库存」改了。所以重放**不能**拿重算的 state 去比对
@@ -573,6 +602,11 @@ class InventoryService {
           direction: behavior.direction,
           behavior_record_id: behavior.recordId,
           source_record_id: input.sourceRecordId,
+          // ⭐ 2026-10-08：`ledgerLink` 那列要写的**远端关联值**也要落进本地任务
+          //    （采购加库存 = 报货批次那一行的 record id）—— 流水只创建一次，
+          //    崩溃后 `resumePending` 补写的那一次必须有得写，否则重放的那条会静默丢关联。
+          //    ⚠️ 它**不是幂等判据**（幂等仍是 `source_record_id` + `operationId`），只是载荷。
+          ...movementLedgerLinkPatch(movement, input),
           occurred_at: Number(input.occurredAt || Date.now()),
           // 谁做的这次调整（人工调整时由工作台传入飞书 open_id）。
           // ⚠️ 「库存流水」目前**没有「操作人」列**（2026-10-06 只读核过测试 Base：
@@ -922,16 +956,21 @@ class InventoryService {
         operation.quantity);
     }
     if (!ledger) {
+      // 远端关联值：注册表声明的"只写不查"关联列（`ledgerLink`）。取不到就**整列不写**。
+      const ledgerLinkValue = movementLedgerLinkValue(movement, operation);
       const created = await this.gateway.create('inventoryLedger', {
         product: relation(operation.product_record_id),
         size: relation(sizeReference.recordId),
         quantityChange: operation.quantity,
         behavior: relation(operation.behavior_record_id),
         // 来源字段由注册表声明：新增动作不必再改这里。
-        // ledgerSource 为 null 的动作（采购退货）没有可关联的来源表，整列不写。
+        // ledgerSource 为 null 的动作（采购退货 / 采购加库存）没有可"按来源回查"的列，整列不写。
         ...(movement.ledgerSource
           ? { [movement.ledgerSource]: relation(operation.source_record_id) }
           : {}),
+        // ⭐ 2026-10-08：「关联采购」——只写不查的关联列（值 = 报货批次那一行的 record id，
+        //    与本地幂等键 `source_record_id` 是**两个东西**）。拿不到就一个字都不写。
+        ...(ledgerLinkValue ? { [movement.ledgerLink.field]: relation(ledgerLinkValue) } : {}),
       }, { correlation });
       ledger = { record_id: created.recordId };
     }

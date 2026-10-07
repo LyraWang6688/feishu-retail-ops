@@ -84,11 +84,12 @@ test('purchase adds one live record per pair', async () => {
   assert.ok(gateway.records.get('liveInventory').every((row) => row.fields['所属状态'] === '仓库'));
   assert.ok(gateway.records.get('liveInventory').every((row) =>
     JSON.stringify(row.fields['尺码']) === JSON.stringify(['size_38'])));
-  // ⚠️ 2026-10-07 深夜：「采购入库」表被整表删除 ⇒ 「关联采购」这一列也没了
-  //    （`ledgerSource = null`）——这条流水**不带来源关联**（与采购退货同一条通路）。
+  // ⭐ 2026-10-08：业务负责人把「库存流水.关联采购」从"指向已删除的「采购入库」"
+  //    **改成指向「报货批次」** ⇒ 采购加库存的流水**带上**批次那一行的 record id
+  //    （`ledgerSource` 仍为 null；这条关联是**只写不查**的，见 purchaseLedgerBatchLink.test.js）。
   assert.deepEqual(gateway.records.get('inventoryLedger')[0].fields, {
     编号: ['product_1'], 尺码: ['size_38'], 变动数量: 2,
-    库存行为: ['behavior_purchase'],
+    库存行为: ['behavior_purchase'], 关联采购: ['batch_1'],
   });
   assert.ok(gateway.records.get('liveInventory').every((row) => !Object.hasOwn(row.fields, '更新时间')));
 });
