@@ -2,7 +2,10 @@
 //
 // 这份文件盯的是**业务规则与口径**，不是实现细节：
 //   □ 「哪些单」**复用**第二次交付那套筛选（这里只注入它，不重写候选口径）；
-//   □ 每笔一行：单号 + 待收金额 + 深链；发到**群的主聊天**（不是话题、不引用任何消息）；
+//   □ 每笔一行：单号 + 【预付/未付】 + 货号 尺码 + 待收金额 + 深链；发到**群的主聊天**
+//     （不是话题、不引用任何消息）；
+//   □ **按【预付 / 未付】分区**（2026-10-07）：区块顺序、标题、行格式全在 config；
+//     分区那条口径自己的用例在 `pendingDealPushSections.test.js`（那里是逐字对照）；
 //   □ 深链拿不到时**照推**（单号 + 金额本身就该看得见），并在文案里说清楚；
 //   □ 同一天只推一次（跨天照推）；开关关着时连一条都不发；
 //   □ 所有开关都是**显式布尔**：空串 = 关，不回退默认值（这是最容易静默坏掉的一条）；
@@ -30,7 +33,10 @@ const DAY_1_MORNING = new Date('2026-10-06T02:00:00.000Z'); // 北京 10:00，�
 const DAY_1_AFTERNOON = new Date('2026-10-06T06:00:00.000Z'); // 北京 14:00，同一天
 const DAY_2_MORNING = new Date('2026-10-07T02:00:00.000Z'); // 北京 10:00，第二天
 
+// ⚠️ 文案 / 模板的默认值**只有一处**（config/pendingDealPush）——这里不复制第二份，
+//    先取一遍配置默认值再覆盖本文件关心的那几个键。
 const settings = (overrides = {}) => ({
+  ...resolvePendingDealPushConfig({}),
   enabled: true,
   chatId: CHAT_ID,
   hour: 9,
@@ -40,8 +46,18 @@ const settings = (overrides = {}) => ({
   ...overrides,
 });
 
-const ORDER_A = { salesEntryRecordId: 'sale_a', orderNo: 'XSD-A-1', pendingAmount: 1280, saleDate: '2026-10-05T00:00:00.000Z' };
-const ORDER_B = { salesEntryRecordId: 'sale_b', orderNo: 'XSD-B-2', pendingAmount: 300.5, saleDate: '2026-10-06T00:00:00.000Z' };
+// 两笔单：一笔预付、一笔未付 —— 正好把「按预付 / 未付分区」那条口径跑起来。
+// `items` 是 2026-10-07 新要的「货号 + 尺码」事实（由 listPendingDeliveries 的 includeItems 给）。
+const ORDER_A = {
+  salesEntryRecordId: 'sale_a', orderNo: 'XSD-A-1', pendingAmount: 1280, saleDate: '2026-10-05T00:00:00.000Z',
+  tradeTypeCode: 'SALE_PREPAID', tradeTypeLabel: '预付',
+  items: [{ kind: 'shoe', itemNo: 'B26002-52', size: '37' }],
+};
+const ORDER_B = {
+  salesEntryRecordId: 'sale_b', orderNo: 'XSD-B-2', pendingAmount: 300.5, saleDate: '2026-10-06T00:00:00.000Z',
+  tradeTypeCode: 'SALE_UNPAID', tradeTypeLabel: '未付',
+  items: [{ kind: 'shoe', itemNo: '6A637-7', size: '43' }],
+};
 
 // 假的「第二次交付」服务：**只**提供本服务要复用的那一个方法 + 一个 client。
 // 刻意不实现别的——本服务若偷偷绕过它自己筛单，这里会直接报错。
@@ -112,6 +128,8 @@ test('开关是显式布尔：空串 = 关，不回退默认值；认不出来�
 });
 
 test('配置默认值：默认关、9 点、10 分钟一 tick、没有群 id、没有置顶、没有任何拼链接的口子', () => {
+  // ⚠️ 2026-10-07 加「分区 + 文案」那批键：断言仍然是**严格全等**（多一个键就红），
+  //    只是把新增的默认值也钉进去 —— 不是放宽。
   assert.deepEqual(resolvePendingDealPushConfig({}), {
     enabled: false,
     chatId: '',
@@ -122,6 +140,23 @@ test('配置默认值：默认关、9 点、10 分钟一 tick、没有群 id、�
     // 「发出后置顶」是**显式开关、默认关**（2026-10-07 加）：断言仍然是严格全等，
     // 只是多认了一个键 —— 不是放宽。
     pinEnabled: false,
+    // 分区顺序：预付在前、未付在后（理由见 pendingDealPushService 顶部注释）。
+    blocks: [
+      { key: 'prepaid', tradeTypeCode: 'SALE_PREPAID', title: '【预付】' },
+      { key: 'unpaid', tradeTypeCode: 'SALE_UNPAID', title: '【未付】' },
+    ],
+    otherTitle: '【其他】',
+    headerTemplate: '⏰ {day} 最近 7 天未付 / 预付、尚未成交的销售单：{total} 笔{blockCounts}',
+    blockCountsTemplate: '（{counts}）',
+    blockCountTemplate: '{title}{count} 笔',
+    blockCountSeparator: ' / ',
+    sectionTemplate: '{title}{count} 笔\n{lines}',
+    lineParts: ['{index}. {orderNo} {tag}', '{item}', '待收 {amount}', '{link}'],
+    lineSeparator: ' · ',
+    itemTemplate: '{itemNo} {size}',
+    itemSeparator: '、',
+    sizeTemplate: '{size}码',
+    footerTemplate: '（{count} 笔的深链暂不可用：飞书接口未返回 message_app_link，见日志 sales.pending_deal_push.link.missing）',
   });
   assert.equal(resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_HOUR: '7' }).hour, 7);
   assert.throws(() => resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_HOUR: '25' }), /整数/);
@@ -201,7 +236,7 @@ test('深链解析：本地存着的优先；现查能拿到就用现查的；�
 // 四、每日推送本身
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('正常推：每笔一行（单号 + 待收金额 + 深链），发到群的主聊天，不引用任何消息', async () => {
+test('正常推：按【预付 / 未付】分两块，每笔一行（单号 + 标签 + 货号尺码 + 待收金额 + 深链），发到群的主聊天', async () => {
   const locator = new SalesGroupThreadLocator({ store: tmpStore('pending-push-push-') });
   await seedMapping(locator, {
     salesEntryRecordId: 'sale_a', messageId: 'om_a', threadId: 'omt_a', orderNo: 'XSD-A-1',
@@ -221,11 +256,13 @@ test('正常推：每笔一行（单号 + 待收金额 + 深链），发到群�
   assert.equal(creates[0].data.msg_type, 'text');
 
   const text = JSON.parse(creates[0].data.content).text;
-  assert.match(text, /最近 7 天未付 \/ 预付、尚未成交的销售单：2 笔/);
-  assert.match(text, /1\. XSD-A-1 · 待收 ¥1280\.00 · https:\/\/applink\.feishu\.cn\/client\/message\/link\?message_id=om_a/);
-  assert.match(text, /2\. XSD-B-2 · 待收 ¥300\.50/);
+  // 表头：总数 2 笔（口径不变）＋ 分区计数（预付 1 / 未付 1）。
+  assert.match(text, /^⏰ 2026-10-06 最近 7 天未付 \/ 预付、尚未成交的销售单：2 笔（【预付】1 笔 \/ 【未付】1 笔）\n/);
+  // 分区：预付在前、未付在后；每块各自从 1 开始编号。
+  assert.match(text, /\n【预付】1 笔\n1\. XSD-A-1 【预付】 · B26002-52 37码 · 待收 ¥1280\.00 · https:\/\/applink\.feishu\.cn\/client\/message\/link\?message_id=om_a\n/);
+  assert.match(text, /\n【未付】1 笔\n1\. XSD-B-2 【未付】 · 6A637-7 43码 · 待收 ¥300\.50\n/);
   // 第 2 笔没有深链 → 那一段不出现，另起一行说明；不能编一条 URL 出来。
-  assert.doesNotMatch(text, /XSD-B-2 · 待收 ¥300\.50 · http/);
+  assert.doesNotMatch(text, /XSD-B-2 【未付】 · 6A637-7 43码 · 待收 ¥300\.50 · http/);
   assert.match(text, /1 笔的深链暂不可用/);
   assert.equal(result.missingLinkCount, 1);
 });
@@ -304,18 +341,22 @@ test('一笔单在本地映射里没有记录：照推单号 + 金额，只是�
   assert.equal(result.pushedOrderCount, 1);
   assert.equal(result.missingLinkCount, 1);
   const text = JSON.parse(creates[0].data.content).text;
-  assert.match(text, /1\. XSD-A-1 · 待收 ¥1280\.00/);
+  assert.match(text, /1\. XSD-A-1 【预付】 · B26002-52 37码 · 待收 ¥1280\.00/);
 });
 
-test('金额未知（null）时显示占位，不显示 NaN', () => {
+test('金额未知（null）时显示占位，不显示 NaN；一条货号尺码都没有时**不留残句**', () => {
   const { service } = newService({ orders: [] });
   const text = service.buildText({
     dayKey: '2026-10-06',
     missingLinkCount: 0,
-    orders: [{ orderNo: 'XSD-X', pendingAmount: null, url: '' }],
+    // ⚠️ `items` 空 = 一件都取不到货号 → 「货号 尺码」那一段**整段不出现**，
+    //    绝不能拼出 `XSD-X 【未付】 ·  · 待收 ¥—` 或 ` 码` 这种空壳。
+    orders: [{ orderNo: 'XSD-X', tradeTypeCode: 'SALE_UNPAID', pendingAmount: null, items: [], url: '' }],
   });
-  assert.match(text, /1\. XSD-X · 待收 ¥—/);
+  assert.match(text, /1\. XSD-X 【未付】 · 待收 ¥—/);
   assert.doesNotMatch(text, /NaN/);
+  assert.doesNotMatch(text, /码/);
+  assert.doesNotMatch(text, / ·  · /);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

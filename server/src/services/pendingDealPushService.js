@@ -9,12 +9,16 @@ const { resolvePendingDealPushConfig } = require('../config/pendingDealPush');
 const { logInfo, logWarn } = require('../utils/logger');
 
 // 「维度 1」：每天 9 点（北京时间）把**最近 7 天未付 / 预付、尚未成交**的销售单
-// 推到群里，**每笔一行**：单号 + 待收金额 + 那条群消息的深链。
+// 推到群里，**按【预付 / 未付】分区**，**每笔一行**：单号 + 【预付/未付】 + 货号 尺码
+// + 待收金额 + 那条群消息的深链（业务负责人 2026-10-07 拍板，逐字：
+// 「**只需要这些信息，按照预付和未付分区**」；目标形状见 config/pendingDealPush）。
 //
 // 三件事刻意**不复用第二遍**：
 //   · 「哪些单要推」= **直接复用** `SecondDeliveryService.listPendingDeliveries`
 //     （最近 7 天里未付 / 预付且尚未完成履约的已入账销售单）。口径只有一处实现，
 //     这里一个字都不重写——将来口径变了（比如窗口从 7 天改成 10 天），改那一处即可。
+//     ⚠️ 2026-10-07 只向它**多要了两样既有数据的投影**：`tradeTypeCode`（分区判据）与
+//     `items`（货号 + 尺码的事实，走 `includeItems: true`）；**筛选与金额口径一个字没动**。
 //   · 「这笔单当初是哪条群消息」= `SalesGroupThreadLocator`（本地映射，不写业务表）。
 //   · 「深链怎么来」= `LarkMessageLinkResolver`（**只认真链接**：本地存的 → 现查；
 //     拿不到就返回空，**绝不自己拼 URL**——运营兜底模板那个口子 2026-10-06 已删）。
@@ -24,6 +28,16 @@ const { logInfo, logWarn } = require('../utils/logger');
 // 与「第二次交付」提醒（`secondDeliveryService.sendDailyReminder`）是**两条独立的推送**：
 // 那一条发**群卡片**、带「成交」按钮、点了会写库；这一条只发**一条文字**、纯提醒、点进去
 // 由她去话题里处理。两条各有各的按天认领记录，互不影响（一条挂了不牵连另一条）。
+//
+// ⚠️ **本文件里不写用户可见的中文**：表头 / 区块标题 / 行格式 / 分隔符 / 尺码后缀 / 脚注
+//    全在 `config/pendingDealPush`（配置先行）——她换说法、换顺序、换分隔符都不用碰这里。
+//
+// ⭐ 分区顺序为什么是「预付在前、未付在后」（不是随手排的）：
+//   · 预付单**钱货都没结清**——货还在店里、尾款也还欠着，点「成交」要走完
+//     「补尾款 + 出货 + 扣库存」三步，是链条最长、最容易被拖过 7 天窗口的那一类；
+//   · 未付单的货**已经交出去了**，剩下的只是收款一步，处理动作单一；
+//   · ⇒ 先看见"链条长的"，让她当天有时间把那三步走完。顺序可配
+//     （`PENDING_DEAL_PUSH_BLOCK_ORDER`），不同意就改配置，不用改代码。
 
 // 「同一天只推一次」的认领键。与第二次交付同一个思路：跨天照推（只要那笔单还在窗口里、
 // 还没成交），防的只是"同一天因为重启 / 重复 tick 推两遍"。
@@ -37,6 +51,15 @@ const money = (value) => {
   const number = Number(value);
   return Number.isFinite(number) ? `¥${number.toFixed(2)}` : '¥—';
 };
+
+/** 把 `{名字}` 换成值（认不出来的占位符在 config 里**启动时**就拦下了）。 */
+const fillTemplate = (template, values) => String(template ?? '')
+  .replace(/\{([^{}]*)\}/g, (whole, key) => (
+    values[key] === undefined || values[key] === null ? '' : String(values[key])));
+
+// 行里的**一段**：替换后把多余空白收掉。于是 `{itemNo} {size}` 在尺码为空时
+// 变成 `B26002-52`（而不是 `B26002-52 `，更不会出现「 码」这种残句）。
+const fillLinePart = (template, values) => fillTemplate(template, values).replace(/\s+/g, ' ').trim();
 
 class PendingDealPushService {
   constructor(options = {}) {
@@ -64,9 +87,13 @@ class PendingDealPushService {
     this.run = Promise.resolve();
   }
 
-  /** 候选单：**复用**第二次交付那套筛选，不重写口径。 */
+  /**
+   * 候选单：**复用**第二次交付那套筛选，不重写口径。
+   * ⚠️ `includeItems: true` = 顺带把「货号 + 尺码」的事实要回来。它**不改筛选**：
+   *    只是把本轮已经读进来的销售明细投影成 `items`（外加整表读一次「货品信息」）。
+   */
   listPendingOrders({ now }) {
-    return this.secondDelivery.listPendingDeliveries({ now });
+    return this.secondDelivery.listPendingDeliveries({ now, includeItems: true });
   }
 
   /**
@@ -106,20 +133,91 @@ class PendingDealPushService {
     return { orders: linked, missingLinkCount };
   }
 
-  /** 每笔一行：序号 + 单号 + 待收金额 + 深链（拿不到就不放链接，另起一行说明）。 */
-  buildText({ orders, missingLinkCount = 0, dayKey = '' } = {}) {
-    const header = `⏰ ${dayKey} 最近 7 天未付 / 预付、尚未成交的销售单：${orders.length} 笔`;
-    const lines = orders.map((order, index) => {
-      const parts = [`${index + 1}. ${order.orderNo}`, `待收 ${money(order.pendingAmount)}`];
-      if (order.url) parts.push(order.url);
-      return parts.join(' · ');
+  /**
+   * 分区：把候选单按「行为编码」分进配置声明的区块，**按配置顺序**返回。
+   *   · 只返回**有单**的区块（空区块不显示，全空时根本走不到这里）；
+   *   · 编码不认识已声明区块的单，落进兜底区块（`otherTitle`）——**宁可多显示一块，
+   *     也不让任何一笔单从清单里静默消失**。
+   */
+  buildSections(orders = []) {
+    const { blocks = [], otherTitle = '' } = this.settings;
+    const byKey = new Map(blocks.map((block) => [block.key, []]));
+    const unclassified = [];
+    for (const order of orders) {
+      const block = blocks.find((candidate) => candidate.tradeTypeCode
+        && candidate.tradeTypeCode === order.tradeTypeCode);
+      if (block) byKey.get(block.key).push(order);
+      else unclassified.push(order);
+    }
+    const sections = blocks
+      .map((block) => ({ title: block.title, orders: byKey.get(block.key) }))
+      .filter((section) => section.orders.length);
+    if (unclassified.length) sections.push({ title: otherTitle, orders: unclassified });
+    return sections;
+  }
+
+  /** 一件商品：`货号 尺码码`。**配品没有尺码 → 不拼「码」**（`{size}` 是空串，整段只剩名称）。 */
+  buildItemText(items = []) {
+    const { itemTemplate, itemSeparator = '', sizeTemplate } = this.settings;
+    return (items || [])
+      .map((item) => fillLinePart(itemTemplate, {
+        itemNo: item.itemNo || '',
+        size: item.size ? fillTemplate(sizeTemplate, { size: item.size }) : '',
+      }))
+      .filter(Boolean)
+      .join(itemSeparator);
+  }
+
+  /**
+   * 一笔单一行：序号 + 单号 + 【预付/未付】 + 货号 尺码 + 待收金额 + 深链。
+   * 逐段拼、**空的段整段不要** —— 没货号尺码 / 没深链时不会留下 ` · ` 或空壳。
+   */
+  buildLine(order, index, tag) {
+    const { lineParts = [], lineSeparator = ' ' } = this.settings;
+    const values = {
+      index: index + 1,
+      orderNo: order.orderNo || '',
+      tag: tag || '',
+      item: this.buildItemText(order.items),
+      amount: money(order.pendingAmount),
+      link: order.url || '',
+    };
+    return lineParts
+      .map((part) => fillLinePart(part, values))
+      .filter(Boolean)
+      .join(lineSeparator);
+  }
+
+  /**
+   * 整条推送：表头（总数 + 分区计数）→ 每个有单的区块（标题 + 每单一行）→ 深链缺失脚注。
+   * 文案形状全在 `config/pendingDealPush`，这里只做拼装。
+   */
+  buildText({ orders = [], missingLinkCount = 0, dayKey = '' } = {}) {
+    const {
+      headerTemplate, blockCountsTemplate, blockCountTemplate = '', blockCountSeparator = '',
+      sectionTemplate, footerTemplate,
+    } = this.settings;
+    const sections = this.buildSections(orders);
+    const blockCounts = sections
+      .map((section) => fillTemplate(blockCountTemplate, { title: section.title, count: section.orders.length }))
+      .join(blockCountSeparator);
+    const header = fillTemplate(headerTemplate, {
+      day: dayKey,
+      total: orders.length,
+      blockCounts: sections.length ? fillTemplate(blockCountsTemplate, { counts: blockCounts }) : '',
     });
+    const body = sections.map((section) => fillTemplate(sectionTemplate, {
+      title: section.title,
+      count: section.orders.length,
+      lines: section.orders.map((order, index) => this.buildLine(order, index, section.title)).join('\n'),
+    }));
     // 深链缺失是**已知的**（见 larkMessageLinkResolver 的实测结论），
     // 在消息里说一句，免得她以为是漏发了。
-    const footer = missingLinkCount
-      ? `（${missingLinkCount} 笔的深链暂不可用：飞书接口未返回 message_app_link，见日志 sales.pending_deal_push.link.missing）`
-      : '';
-    return [header, ...lines, footer].filter(Boolean).join('\n');
+    const footer = missingLinkCount ? fillTemplate(footerTemplate, { count: missingLinkCount }) : '';
+    return [header, ...body, footer]
+      .map((part) => String(part ?? ''))
+      .filter((part) => part.trim() !== '')
+      .join('\n');
   }
 
   /**
