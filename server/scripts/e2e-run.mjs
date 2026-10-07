@@ -116,10 +116,25 @@ const { person, relation } = require('../src/services/v1ReferenceResolver');
 const { classifyReportBehavior, REPORT_BEHAVIOR } = require('../src/services/purchaseReportBehaviorPolicy');
 const { getLarkAgentCredentials } = require('../src/config/larkAgent');
 
-// 授权可写的测试 Base（业务负责人明确授权：测试 Base 可随便写）。
-const TEST_APP_TOKEN = 'GqMMbhnxGaaEdDsNz2Tcug1nnlb';
-// 生产 Base：**只读**，一个字都不许写。写死在这里做闸门。
-const PROD_APP_TOKEN = 'QrXlbwXMLaJ2TNsxSfFcIA3rnwh';
+// 🔴 授权可写的测试 Base / 禁止写入的生产 Base：**一律从环境（.env）读，不硬编码**
+//    （AGENTS.md 第 7 条：不许把任何 token / secret 硬编码进源码）。
+//    · `FEISHU_V1_E2E_TEST_APP_TOKEN`：业务负责人授权的测试 Base（可随便写）。
+//    · `FEISHU_V1_FORBIDDEN_APP_TOKENS`（或单数的 `FEISHU_V1_PROD_APP_TOKEN`）：
+//      逗号分隔的**禁止写入清单**（生产 Base 放这里）—— 命中即拒绝运行。
+//      ⚠️ 本机 `.env` **刻意不放生产 token**（AGENTS.md 第 8 条：物理上够不着），
+//      所以这条皮带在本机是"空转"的；主闸门是下面那句
+//      「app_token 必须逐字等于授权测试 Base」——它本身就挡住了生产 Base。
+//      ⚠️ 生产上部署这个脚本时，请在服务器 `.env` 里填 `FEISHU_V1_FORBIDDEN_APP_TOKENS`
+//      （线上 `FEISHU_V1_BITABLE_APP_TOKEN` 就是生产 Base 的值）。
+const authorizedTestBase = () => String(process.env.FEISHU_V1_E2E_TEST_APP_TOKEN || '').trim();
+const forbiddenAppTokens = () => String(
+  process.env.FEISHU_V1_FORBIDDEN_APP_TOKENS || process.env.FEISHU_V1_PROD_APP_TOKEN || '',
+).split(',').map((item) => item.trim()).filter(Boolean);
+// 只打印指纹，绝不打印 token 本身。
+const tokenFingerprint = (value) => {
+  const raw = String(value || '');
+  return raw ? `${raw.slice(0, 6)}…(len=${raw.length})` : '(空)';
+};
 
 const line = (char = '─') => console.log(char.repeat(72));
 const head = (title) => { console.log(''); line('═'); console.log(`  ${title}`); line('═'); };
@@ -483,12 +498,17 @@ const guardEnvironment = (gateway) => {
   say(`  Base app_token：${appToken}`);
   say(`  环境标记 FEISHU_TARGET_ENV：${process.env.FEISHU_TARGET_ENV || '(未设置)'}`);
   say(`  采购群 PURCHASE_CHAT_ID：${process.env.PURCHASE_CHAT_ID || '(未设置 → 出图后不会发送)'}`);
+  const testBase = authorizedTestBase();
+  const forbidden = forbiddenAppTokens();
   if (!appToken) throw new Error('未配置 FEISHU_V1_BITABLE_APP_TOKEN，拒绝运行');
-  if (appToken === PROD_APP_TOKEN) {
-    throw new Error('检测到 app_token 是**生产 Base** —— 本脚本只允许写测试 Base，已拒绝运行');
+  if (forbidden.includes(appToken)) {
+    throw new Error('检测到 app_token 在**禁止写入清单**里（生产 Base）—— 本脚本只允许写测试 Base，已拒绝运行');
   }
-  if (appToken !== TEST_APP_TOKEN && flag('force-env', false) !== true) {
-    throw new Error(`app_token 既不是授权的测试 Base(${TEST_APP_TOKEN})，也不等于生产 Base。`
+  if (!testBase) {
+    throw new Error('缺少 FEISHU_V1_E2E_TEST_APP_TOKEN（授权可写的测试 Base），拒绝运行');
+  }
+  if (appToken !== testBase && flag('force-env', false) !== true) {
+    throw new Error(`app_token 不等于授权的测试 Base（${tokenFingerprint(testBase)}，当前 ${tokenFingerprint(appToken)}）。`
       + '为安全起见拒绝运行；确认无误可加 --force-env。');
   }
   if (process.env.FEISHU_TARGET_ENV !== 'test' && flag('force-env', false) !== true) {
