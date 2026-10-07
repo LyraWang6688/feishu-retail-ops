@@ -43,10 +43,14 @@
 ⭐ 同日**二次收尾**又补了最后 2 处**同形状**的（都只在非群分支）：
 `larkMvpService.replyTaskCard`（不再 `replyCard(task.message_id, …)`）与
 `afterSalesFlowService.replyCardToTask` 的缺省（非群 → skip + `null`，**群那一条逐字不变**）。
-⚠️ `replyCard` **不是孤儿**（`LarkMvpService` 里仍有 4 个调用方）→ 保留；
-⚠️ 仍有 2 处**主回复路径**同形状（`larkMvpService` 的销售确认卡片非群分支 /
-`saleLookupService.replyCardByTask` 的主回复）**未清**，见
-`docs/private-chat-removal-2026-10-07.md` 第 6.3 节（建议单开一条任务）。
+⭐ 同日**三次收尾**把最后 2 处**主回复路径**也堵了 ——
+`larkMvpService` 的销售确认卡片非群分支（不再 `replyCard(task.message_id, …)`）与
+`saleLookupService.replyCardByTask` 的主回复（非群在函数入口 skip + 返 `null`）；
+两处都**只在非群分支**，**群那一条逐字不变**；没发出去时**也不记**「已发出」日志
+（`lark.sales.card.sent` / `sale_lookup.card.sent`）。
+⚠️ `replyCard` **不是孤儿**（`LarkMvpService` 里仍有 **3** 个调用方：
+`:138` 销售查单群路径 / `:158` 售后接线 / `:442` 采购卡片无话题回落）→ 保留。
+⭐ 详见 `docs/private-chat-removal-2026-10-07.md` 第七节（验收标准 + 逐条对照）。
 **有意的行为变化**：
 `SampleReplacementService.notifySampleReplacements` 在**工作台触发**（
 `routes/workbench.js`，没有群上下文）时**不再静默发私聊**；
