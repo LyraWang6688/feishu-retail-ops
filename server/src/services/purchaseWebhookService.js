@@ -20,7 +20,10 @@ const doubaoService = require('./doubaoService');
 // 到货不再有"识别结果待确认"这一步，也就没有要发的卡片。
 const { purchaseStatusCard } = require('../utils/larkCards');
 // MOVEMENT_PURCHASE_DECREASE 是 #83 采购退货扣库存用的流水类型（退货独占链，见 processSupplierReturn）。
-const { InventoryService, MOVEMENT_PURCHASE_DECREASE } = require('./inventoryService');
+// STOCK_MOVEMENTS 是「库存行为注册表」：退货核对"能退几双"时要数的可退状态
+//（= STOCK_PURCHASE_DECREASE 的 consumes：门盒 + 样品 + 仓库）**只从它读**，
+// 不在本文件里再抄一份字面量（配置先行，见 AGENTS.md）。
+const { InventoryService, MOVEMENT_PURCHASE_DECREASE, STOCK_MOVEMENTS } = require('./inventoryService');
 const {
   buildPurchaseQuantities,
   isPurchaseQuantityMismatch,
@@ -201,42 +204,59 @@ const genderToCategory = (value) => {
 };
 
 /**
- * 「采购退货」格式的数量：「数量」是 number 字段（业务负责人 2026-10-05 改的字段结构）。
- *
- * 非法/为空就抛错，由 process() 落成**可重试的失败**——绝不静默算成 0：
- * 一条退货记录数量读成 0，等于什么都没退，而她还以为系统处理过了。
- */
-const parseReturnQuantity = (value) => {
-  const quantity = Number(textValue(value));
-  if (!Number.isSafeInteger(quantity) || quantity <= 0) throw new Error('采购退货的「数量」必须是正整数');
-  return quantity;
-};
-
-/**
  * 退货核对结果 → 一句人话（业务负责人的口径：「把差额明确告诉她」）。
  *
- * 只在**对不上**的时候发（差额、或库存里一双都没有）：对得上时图本身就是回执，
+ * ⚠️ 2026-10-07 口径变更（验收标准与逐条对照见
+ *    `docs/purchase-return-unified-parsing-2026-10-07.md`）：
+ *    退货与报货**共用同一条解析** ⇒ 一条退货记录可以带**多个尺码**（尺码是关联多选），
+ *    所以差额也**逐尺码**说（"哪一码差几双"），不再是"一条记录一个尺码"。
+ *
+ * 只在**对不上**的时候发（差额、或某一码一双都没有）：对得上时图本身就是回执，
  * 再发一条等于刷屏。文案里不出现"实时库存/校验/差额"以外的内部术语，
- * 最后一律给出下一步动作（补数量 / 重新提交一条）。
+ * 每一句都给出下一步动作（补数量 / 重新提交一条）。
+ *
+ * 兼容：`plan.sizes[].quantity`（= 实际退的双数，旧冻结计划的形状）
+ * 与新的 `declared / available / taken / shortfall / surplus` 逐项字段都能读。
  */
-const buildPurchaseReturnNotice = ({ itemNo, color, size, plan }) => {
+const buildPurchaseReturnNotice = ({ itemNo, color, plan }) => {
   const label = `${itemNo || ''}${color || ''}`.trim() || '这个货品';
-  const sizeText = size ? `（${size} 码）` : '';
-  if (plan.available === 0) {
-    return `采购退货没处理：${label}${sizeText} 在实时库存里一双都没有，我没有扣库存，也没有把这条记录标成已处理。` +
-      '库存补上之后再提交一条退货记录就好～';
+  const sizeText = (size) => (size ? `（${size} 码）` : '');
+  // 逐尺码归一化：新计划每一项都带全字段；旧形状（只有 size/quantity）用计划级总数兜底
+  //（旧计划永远只有一个尺码，所以"计划级总数"就是"这一项的数"）。
+  const entries = (plan?.sizes || []).map((entry) => {
+    const declared = Number(entry.declared ?? plan?.declared ?? 0) || 0;
+    const taken = Number(entry.taken ?? entry.quantity ?? plan?.taken ?? 0) || 0;
+    return {
+      size: entry.size,
+      declared,
+      available: Number(entry.available ?? plan?.available ?? 0) || 0,
+      taken,
+      shortfall: Number(entry.shortfall ?? Math.max(0, declared - taken)) || 0,
+      surplus: Number(entry.surplus ?? 0) || 0,
+    };
+  });
+  const shortfalls = entries.filter((entry) => entry.taken < entry.declared);
+  const surpluses = entries.filter((entry) => entry.surplus > 0);
+  if (!shortfalls.length && !surpluses.length) return '';
+  // 整条记录一双都没退掉（所有尺码都没货）：照既有口径"这一条没处理"，
+  // 而不是逐尺码刷一串"差 N 双"。
+  if (entries.every((entry) => entry.taken === 0)) {
+    const sizeNames = entries.map((entry) => `${entry.size} 码`).join('、');
+    return `采购退货没处理：${label}${sizeNames ? `（${sizeNames}）` : ''}在实时库存里一双都没有，` +
+      '我没有扣库存，也没有把这条记录标成已处理。库存补上之后再提交一条退货记录就好～';
   }
-  if (plan.shortfall > 0) {
-    return `采购退货：${label}${sizeText} 你说要退 ${plan.declared} 双，实时库存里只有 ${plan.available} 双 —— ` +
-      `我先按能对上的 ${plan.taken} 双处理了，差的 ${plan.shortfall} 双对不上。` +
-      '要我一起退的话，把数量改成能对上的数再提交一条～';
-  }
-  if (plan.surplus > 0) {
-    return `采购退货：${label}${sizeText} 你填的 ${plan.declared} 双对上了，已经退回。` +
-      `⚠️ ${label}${sizeText} 在实时库存里还剩 ${plan.surplus} 双没退（总数是 ${plan.available} 双）——` +
-      '要一起退就把数量改成总数再提交一条～';
-  }
-  return '';
+  const parts = [
+    ...shortfalls.map((entry) => (
+      `${label}${sizeText(entry.size)} 你说要退 ${entry.declared} 双，实时库存里只有 ${entry.available} 双 —— ` +
+      `我先按能对上的 ${entry.taken} 双处理了，差的 ${entry.shortfall} 双对不上。` +
+      '要我一起退的话，把数量改成能对上的数再提交一条～'
+    )),
+    ...surpluses.map((entry) => (
+      `⚠️ ${label}${sizeText(entry.size)} 在实时库存里还剩 ${entry.surplus} 双没退（总数是 ${entry.available} 双）——` +
+      '要一起退就把数量改成总数再提交一条～'
+    )),
+  ];
+  return `采购退货：${parts.join('')}`;
 };
 
 /**
@@ -412,33 +432,12 @@ class PurchaseWebhookService {
     return items.map((item) => ({ ...item, size_record_id: recordIdBySize.get(item.size) }));
   }
 
-  /**
-   * 「采购退货」格式的明细：编号 + 「数量」（number），**没有尺码**。
-   *
-   * ⚠️ 业务语义（退货到底要不要出图、要不要写「采购申请」表、会不会动库存）
-   * 还没有经业务负责人确认过——代码里只做**字段形态**的搬运：
-   * 解析出数量，且明确不带尺码（size=null），避免"顺手补一个尺码"发明业务规则。
-   * 数量非法时抛错（由 process() 落成可重试的失败），不静默算 0。
-   */
-  parseReportReturnQuantities(fields, reportTable) {
-    const raw = fields?.[reportTable.fields.quantity];
-    const quantity = Number(textValue(raw));
-    if (!Number.isSafeInteger(quantity) || quantity <= 0) {
-      throw new Error('采购退货的「数量」必须是正整数');
-    }
-    return [{ size: null, size_record_id: null, quantity }];
-  }
-
-  /**
-   * 按「采购行为」把一条报单记录解析成明细。
-   * 采购申请 → 尺码 + 数量说明；采购退货 → 数量，无尺码。
-   */
-  async parseReportItems(fields, reportTable, behaviorKind) {
-    if (behaviorKind === REPORT_BEHAVIOR.PURCHASE_RETURN) {
-      return this.parseReportReturnQuantities(fields, reportTable);
-    }
-    return this.parseReportQuantities(fields, reportTable);
-  }
+  // ⚠️ 2026-10-07：**解析只有一条路**（业务负责人的口径，逐字：「不分报货还是退货，
+  // 都是按照同样的逻辑：如果数量说明不写，数量就默认为一双」）——报货与退货都调
+  // `parseReportQuantities`（尺码多选逐个展开 + 数量说明，说明不写 ⇒ 每个勾选尺码 1 双）。
+  // 「采购行为」只决定**走哪条链路**（出采购申请 / 扣库存出退货单），
+  // **不再决定怎么解析**。原来的 `parseReportReturnQuantities`（"读「数量」列、无尺码"）
+  // 与承接分流的壳 `parseReportItems` 都已随本次口径删除。
 
   /**
    * 「行为管理」表的 record_id → 行为记录。一次读表建索引，供整批复用：
@@ -1113,8 +1112,9 @@ class PurchaseWebhookService {
       const detailId = textValue(fields[reportTable.fields.detailId]);
       let details;
       try {
-        // 按行为分流解析：采购申请 = 尺码 + 数量说明；采购退货 = 数量、无尺码。
-        details = await this.parseReportItems(fields, reportTable, behaviorKind);
+        // 解析**不分行为**：尺码（多选，逐个展开）+ 数量说明（不写 ⇒ 每个尺码 1 双）。
+        // 「采购行为」只影响行为记录写在明细上、以及这条记录走哪条链路。
+        details = await this.parseReportQuantities(fields, reportTable);
       } catch (error) {
         // ⚠️ 「说明和勾选对不上」**不再**把整批打挂（以前：解析层一抛 → 整批 failed、
         // 报单记录「处理状态」留空、静默，运营上就是"提交了没反应"）。她的口径：
@@ -1955,8 +1955,8 @@ class PurchaseWebhookService {
     if (productIds.length !== 1) throw new Error('供应商报单必须关联一个货品编号');
     const behaviorIds = linkedRecordIds(fields[table.fields.behavior]);
     const behaviorRecordId = behaviorIds[0] || '';
-    // 单条路径也按「采购行为」分流：采购申请（尺码+数量说明）/ 采购退货（数量，无尺码）。
-    // 不这样做的话，一条没有批次号的退货记录会在"必须选尺码"这一步炸掉。
+    // 「采购行为」在这里只用于**分流走哪条链路**（退货在 process() 里就分走了，能走到
+    // 这里的通常是采购申请）与写在明细上的行为标记；解析**不分行为**。
     const behaviorKind = classifyReportBehavior((await this.loadBehaviorIndex()).get(behaviorRecordId));
     // 从货品信息表的供应商关联字段直接获取供应商 record_id；**没有也不算错**
     //（业务负责人 2026-10-06：「没维护供应商的货品，也应该能正常出单」）——
@@ -1967,7 +1967,8 @@ class PurchaseWebhookService {
     const supplierRecordId = productSupplierIds[0] || '';
     let parsed;
     try {
-      parsed = await this.parseReportItems(fields, table, behaviorKind);
+      // 与报货那条**同一段解析**：尺码（多选，逐个展开）+ 数量说明（不写 ⇒ 每个尺码 1 双）。
+      parsed = await this.parseReportQuantities(fields, table);
     } catch (error) {
       // 「说明和勾选对不上」（单条路径，没有批次号）：不再整条静默失败——
       // 在采购群说一句（一次提交就这一条 → 一条提示），这条没有内容可画，处理到此为止。
@@ -2080,57 +2081,65 @@ class PurchaseWebhookService {
   }
 
   /**
-   * 退货核对：**只读 + 只算，不写任何东西**（业务负责人 2026-10-05 的口径）。
+   * 退货核对：**只读 + 只算，不写任何东西**（业务负责人 2026-10-05 的口径；
+   * 2026-10-07 只换了"输入从哪来"）。
    *
-   *   A. 只填数量（没有尺码）→ 该 货号+颜色 全退
-   *      · 核对所填数量 vs 该 货号+颜色 在「实时库存」里的**总数**
-   *      · ⚠️ **不看形态、不看所属状态**：样品 + 门盒 + 仓库（"仓库"=非当季在售）全部加总
-   *   B. 填了尺码 + 数量 → 按 货号+颜色+尺码 去「实时库存」里找
+   * ⭐ 输入 = **表单给的** `items`（`parseReportQuantities` 的结果：尺码多选逐个展开，
+   * 数量来自「数量说明」，说明不写 ⇒ 每个勾选尺码 1 双）。
+   * ⚠️ **不再从「实时库存」反推有哪些尺码、各几双**——那是旧口径（"只填数量、没有尺码"）
+   *    才需要的；现在尺码与数量都来自表单，实时库存**只回答一个问题：这一项最多能退几双**。
    *
-   *   数量对得上 → 这些行**全部**退掉（顺序无关）
-   *   数量对不上 → 「能对上的就处理，不能对上的就说这部分对不上」
-   *                = 退 min(她填的数量, 库存里有的)，差额交给调用方告诉她
+   * 业务负责人 2026-10-07 的口径（逐字）：
+   *   「它除了是删数量映射，它也删除了"不需要再去实时库存表里找数量有哪些尺码"的逻辑，对不对？」
+   *  库存不够时「按照这个」= **退能退的 + 把差额回报给她**（所以下面还是要**数一次**：
+   *  `available` = 这个 货品 + 这个尺码 + 可退状态 的实时库存行数）。
    *
-   * 取哪几行的顺序：对得上时是"全部"，顺序只影响日志；对不上时按 record_id 排，
-   * 让同一份输入永远得到同一份计划（重试/人工核对时可比对）。
-   * 状态**一律不过滤**——这是这条链路和销售出库最关键的区别（销售只吃门盒+样品）。
+   * 可退状态**不写死**：抄 `STOCK_MOVEMENTS[STOCK_PURCHASE_DECREASE].consumes`
+   *（= 门盒 + 样品 + 仓库，"仓库"= 非当季在售）。这一条与真正扣库存时引擎挑行的口径
+   *  **同源**，改口径只改注册表那一行。
+   *
+   * 结果形状（逐尺码 + 总数）：
+   *   · `sizes[] = { size, quantity, declared, available, taken, shortfall, surplus }`
+   *     —— `quantity` 与 `taken` 同值（沿用旧字段名，冻结计划在盘上兼容）；
+   *   · 总数 `declared / available / taken / shortfall / surplus`（整批汇总用）。
    */
-  async planPurchaseReturn({ productRecordId, declared, size = null }) {
+  async planReturnFromItems({ productRecordId, items }) {
     const liveTable = this.gateway.table('liveInventory');
     const sizeField = liveTable.fields.size;
-    // 尺码用关联 record_id 比较（B 情况），不逐个解析成整数：这样别的坏行
-    // （尺码关联为空的那种）不会把整条退货链路拖挂，只在真正要退它时才暴露。
-    const sizeRecordId = size === null
-      ? ''
-      : (await this.getSizeReferences().resolveByNumber(size)).recordId;
-    const matching = [];
-    for (const record of await this.gateway.listAll('liveInventory')) {
-      if (!linkedRecordIds(record.fields?.[liveTable.fields.product]).includes(productRecordId)) continue;
-      if (sizeRecordId && !linkedRecordIds(record.fields?.[sizeField]).includes(sizeRecordId)) continue;
-      matching.push(record.record_id);
-    }
-    matching.sort((left, right) => String(left).localeCompare(String(right)));
-    const take = matching.slice(0, Math.min(declared, matching.length));
-    const bySize = new Map();
-    for (const recordId of take) {
-      const liveRecord = await this.gateway.get('liveInventory', recordId);
-      // 这里读不出尺码就抛错（可重试的失败）：要退的这一双说不清是什么尺码，
-      // 就写不出对应的「具体信息」行，也不能拍一个尺码了事。
-      const linked = await this.getSizeReferences().resolveLinkedCell(liveRecord?.fields?.[sizeField]);
-      bySize.set(linked.size, (bySize.get(linked.size) || 0) + 1);
-    }
-    const sizes = [...bySize.entries()]
-      .map(([entrySize, quantity]) => ({ size: entrySize, quantity }))
-      .sort((left, right) => left.size - right.size);
+    const stateField = liveTable.fields.state;
+    const consumableStates = STOCK_MOVEMENTS[MOVEMENT_PURCHASE_DECREASE].consumes || [];
+    // 一次读表，逐尺码数行数：**不解析库存行上的尺码**（那正是被删掉的"反推"），
+    // 只按关联 record_id 比对——坏行（尺码关联为空）不会把整条退货链路拖挂。
+    const liveRecords = await this.gateway.listAll('liveInventory');
+    const sizes = (items || []).map((item) => {
+      const sizeRecordId = item.size_record_id;
+      const declared = Number(item.quantity);
+      const available = liveRecords.filter((record) => (
+        linkedRecordIds(record.fields?.[liveTable.fields.product]).includes(productRecordId)
+        && linkedRecordIds(record.fields?.[sizeField]).includes(sizeRecordId)
+        && consumableStates.includes(textValue(record.fields?.[stateField]))
+      )).length;
+      const taken = Math.min(declared, available);
+      return {
+        size: item.size,
+        // 实际退掉的双数（旧字段名，见上面注释）。
+        quantity: taken,
+        declared,
+        available,
+        taken,
+        shortfall: Math.max(0, declared - taken),
+        surplus: Math.max(0, available - taken),
+      };
+    }).sort((left, right) => left.size - right.size);
+    const sum = (key) => sizes.reduce((total, entry) => total + entry[key], 0);
     return {
-      declared,
-      size,
-      available: matching.length,
-      taken: take.length,
+      declared: sum('declared'),
+      available: sum('available'),
+      taken: sum('taken'),
       sizes,
-      // 正数 = 库存比她说得少（退不全）；负数（surplus） = 库存比她说得多（还有没退的）。
-      shortfall: Math.max(0, declared - take.length),
-      surplus: Math.max(0, matching.length - take.length),
+      // 正数 = 库存比她说得少（退不全）；surplus = 库存比她说得多（还有没退的）。
+      shortfall: sum('shortfall'),
+      surplus: sum('surplus'),
     };
   }
 
@@ -2138,14 +2147,19 @@ class PurchaseWebhookService {
    * 退货核对计划**只算一次**，以后重试都复用落盘的那一份。
    *
    * 为什么必须冻结（和采购申请的 ensurePostingPlan 同一个理由，这里后果更严重）：
-   * 核对是拿"她填的数量"去比"当前实时库存里的行"。第一次跑已经把行删掉了，
+   * 核对是拿"她说要退的"去比"当前实时库存里的行"。第一次跑已经把行删掉了，
    * 重试时再算一遍会看到**剩下的**行，然后删掉另一批——库存被多扣，而且多扣的那几双
    * 在业务上完全看不出来（每一条流水都"有来源、有数量"）。冻结之后复跑用的是同一批
    * 尺码和同样的数量，配上"库存操作的 operationId 由具体信息行决定"，复跑是真正的空操作。
+   *
+   * ⚠️ 版本仍是 `1`：生产上可能落着一份**旧形状**的 v1 计划
+   *  （`sizes[] = { size, quantity }`，`quantity` = 实际退的双数）——部署重启后
+   *  `applySupplierReturn` / 差额文案读的都是 `entry.quantity`，
+   * 旧形状照样读得出来，不会把在跑的退货算成 0 双。
    */
   async ensureReturnPlan(taskId, task, input) {
     if (task?.return_plan?.version === 1) return task.return_plan;
-    const plan = await this.planPurchaseReturn(input);
+    const plan = await this.planReturnFromItems(input);
     const updated = await this.store.update(taskId, { return_plan: { version: 1, ...plan } });
     return updated.return_plan;
   }
@@ -2529,22 +2543,20 @@ class PurchaseWebhookService {
     const productInfo = this.productDisplayInfo(product.record, productTable);
     const operatorOpenId = this.recordOperator(record, table.fields.operator);
     const behaviorRecordId = linkedRecordIds(fields[table.fields.behavior])[0] || '';
-    const declared = parseReturnQuantity(fields[table.fields.quantity]);
-    // 「尺码」在表里是单选关联。**空值不是错误**：A 情况（只填数量）本来就不填尺码——
-    // 用 resolveLinkedCells 会在空关联上抛「尺码关联字段为空」，把 A 情况整条挡住。
-    const linkedSizeIds = linkedRecordIds(fields[table.fields.size]);
-    if (linkedSizeIds.length > 1) {
-      // 正常最多一个。真出现多个说明字段被改成了多选：一个数量摊不到多个尺码上，
-      // 停下来告诉她，绝不替她分配。
-      const names = (await this.getSizeReferences().resolveLinkedCells(fields[table.fields.size]))
-        .map((item) => item.size).join('、');
-      throw new Error(`采购退货的「尺码」只能选一个（现在是 ${names}），请拆成多条记录`);
-    }
-    const size = linkedSizeIds.length === 1
-      ? (await this.getSizeReferences().resolveLinkedCell(fields[table.fields.size])).size
-      : null;
-    const plan = await this.ensureReturnPlan(taskId, task, { productRecordId: product.recordId, declared, size });
-    const items = plan.sizes.map((entry) => ({
+    // ⭐ 2026-10-07：解析**与报货同一条路**（尺码多选逐个展开 + 「数量说明」，
+    //    说明不写 ⇒ 每个勾选尺码 1 双）。原来那条"读「数量」列、没有尺码"的
+    //    退货解析路线已删除。
+    //    ⚠️ 尺码关联为空 / 说明和勾选对不上 → 这里抛 PurchaseQuantityMismatchError，
+    //    由调用方（runReturnBatch 的逐条隔离）落成**可重试的 failed**，绝不静默算 0。
+    const parsed = await this.parseReportQuantities(fields, table);
+    const plan = await this.ensureReturnPlan(taskId, task, {
+      productRecordId: product.recordId,
+      items: parsed,
+    });
+    // 只把**退得掉**的尺码写进单据/出图（`quantity` = 实际退的双数；
+    // 库存为零的那些尺码没有单据可写，只在差额提示里回报给她）。
+    const returnEntries = plan.sizes.filter((entry) => Number(entry.quantity) > 0);
+    const items = returnEntries.map((entry) => ({
       item_no: productInfo.itemNo,
       color: productInfo.color,
       size: entry.size,
@@ -2575,12 +2587,14 @@ class PurchaseWebhookService {
       taskId,
       task: updated,
       plan,
+      // 实际要退的逐尺码条目（`applySupplierReturn` 与出图的 `itemDocIds` 一一对应）。
+      returnEntries,
       items,
       draft,
       productInfo,
       supplierRecordId,
       operatorOpenId,
-      // 逐尺码对应的「具体信息」行 id（与 items 一一对应），applySupplierReturn 填。
+      // 逐尺码对应的「具体信息」行 id（与 items/returnEntries 一一对应），applySupplierReturn 填。
       itemDocIds: [],
       docIds: [],
       result: null,
@@ -2610,7 +2624,9 @@ class PurchaseWebhookService {
     // 逐尺码处理：一个尺码一行「具体信息」、一次库存操作。
     // 一行一个来源是必须的——库存操作的幂等键就是来源行的 record_id，多个尺码共用一个
     // 来源就不会各自拿到自己的 operationId。
-    for (const [index, entry] of plan.sizes.entries()) {
+    // ⚠️ 只遍历 `returnEntries`（实际退得掉的尺码）：`quantity` = taken，
+    //    库存为 0 的尺码没有单据可写，只在差额提示里回报（与 `items` 一一对应）。
+    for (const [index, entry] of (prepared.returnEntries || []).entries()) {
       const sizeReference = await this.getSizeReferences().resolveByNumber(entry.size);
       const docKey = `purchase_return:${recordId}:${entry.size}`;
       const doc = await createOnceByKey({
@@ -2761,10 +2777,11 @@ class PurchaseWebhookService {
    * 不能因为一条提示发不出去就把业务事实判成失败。
    */
   async sendReturnNotice(prepared, options = {}) {
+    // ⚠️ 2026-10-07：差额**逐尺码**说（一条退货记录可以勾多个尺码）——
+    //    文案由 `plan.sizes` 决定，不再传单一的 `size`。
     const notice = buildPurchaseReturnNotice({
       itemNo: prepared.productInfo.itemNo,
       color: prepared.productInfo.color,
-      size: prepared.plan.size,
       plan: prepared.plan,
     });
     if (!notice) return false;

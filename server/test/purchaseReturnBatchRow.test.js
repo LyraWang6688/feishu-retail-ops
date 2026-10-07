@@ -149,7 +149,8 @@ const liveRow = (recordId, state, size, productRecordId = 'prod_1') => ({
   fields: { 编号: [productRecordId], 尺码: [`size_${size}`], 所属状态: state },
 });
 
-// 一条「采购退货」格式的「信息填写」记录：编号 + 数量，**没有尺码**。
+// 一条「采购退货」格式的「信息填写」记录（**2026-10-07 新口径**）：编号 + 尺码（多选）。
+// 数量说明不写 = 每个勾选尺码 1 双；⚠️ 「数量」那一列已被她从生产表删除，夹具里不再有它。
 // ⚠️ 刻意**不带**「报货批次号」：新口径下号是**入口按包生成并写回**的（这里就是要验这件事）。
 const returnRecord = (recordId, fields = {}) => ({
   record_id: recordId,
@@ -158,6 +159,7 @@ const returnRecord = (recordId, fields = {}) => ({
     采购行为: ['beh_return'],
     经办人: [{ id: 'ou_user_1' }],
     编号: ['prod_1'],
+    尺码: ['size_36'],
     ...fields,
   },
 });
@@ -242,7 +244,7 @@ const reportFieldsOf = (gateway, recordId) => (rowsOf(gateway, 'purchaseReport')
 
 test('A/B/C 退货包：入口生成号 → 建「报货批次」1 行（号一致 · 到货状态**空**）· 退货单 PNG 写进「单据」', async () => {
   const gateway = makeGateway({
-    purchaseReport: [returnRecord('rep_1', { 数量: 1 })],
+    purchaseReport: [returnRecord('rep_1', {})],
     liveInventory: [liveRow('live_36', '门盒', 36)],
     behavior: BEHAVIORS,
     supplier: SUPPLIERS,
@@ -285,7 +287,7 @@ test('A/B/C 退货包：入口生成号 → 建「报货批次」1 行（号一�
 test('A4/C1/E1 报货行写「未到货」· 退货行不进 9 点推送候选 · 退货与报货不会拿到同一个号', async () => {
   const gateway = makeGateway({
     purchaseReport: [
-      returnRecord('rep_ret', { 数量: 1 }),
+      returnRecord('rep_ret', {}),
       reportRecord('rep_apply'),
     ],
     liveInventory: [liveRow('live_36', '门盒', 36)],
@@ -327,7 +329,7 @@ test('A4/C1/E1 报货行写「未到货」· 退货行不进 9 点推送候选 �
 
 test('D 重投 + 重跑：还是 1 行 / 1 份附件（同名图跳过，连上传都不做）', async () => {
   const gateway = makeGateway({
-    purchaseReport: [returnRecord('rep_dup', { 数量: 1 })],
+    purchaseReport: [returnRecord('rep_dup', {})],
     liveInventory: [liveRow('live_36', '门盒', 36)],
     behavior: BEHAVIORS,
     supplier: SUPPLIERS,
@@ -367,8 +369,8 @@ test('D 重投 + 重跑：还是 1 行 / 1 份附件（同名图跳过，连上�
 test('B2 一批两个供应商的退货：两张退货单都写进**同一行**的「单据」（已有附件带上再追加）', async () => {
   const gateway = makeGateway({
     purchaseReport: [
-      returnRecord('rep_a', { 数量: 1, 编号: ['prod_a'] }),
-      returnRecord('rep_b', { 数量: 1, 编号: ['prod_b'] }),
+      returnRecord('rep_a', { 编号: ['prod_a'] }),
+      returnRecord('rep_b', { 编号: ['prod_b'] }),
     ],
     liveInventory: [liveRow('live_a_36', '门盒', 36, 'prod_a'), liveRow('live_b_36', '门盒', 36, 'prod_b')],
     behavior: BEHAVIORS,
@@ -413,7 +415,7 @@ test('B2 一批两个供应商的退货：两张退货单都写进**同一行**�
 
 test('⑦ 同一个批次号已经有一行（混着采购申请的那一包）：退货复用那一行，不建第二行、不改它的到货状态', async () => {
   const gateway = makeGateway({
-    purchaseReport: [returnRecord('rep_shared', { 数量: 1, 报货批次号: 'BATCH-SHARED' })],
+    purchaseReport: [returnRecord('rep_shared', { 报货批次号: 'BATCH-SHARED' })],
     liveInventory: [liveRow('live_36', '门盒', 36)],
     behavior: BEHAVIORS,
     supplier: SUPPLIERS,
@@ -444,7 +446,7 @@ test('⑦ 同一个批次号已经有一行（混着采购申请的那一包）�
 
 test('B3 没有批次号的旧退货数据：不建行、不上传素材，图照常发（既有行为不变）', async () => {
   const gateway = makeGateway({
-    purchaseReport: [returnRecord('rep_legacy', { 数量: 1 })],
+    purchaseReport: [returnRecord('rep_legacy', {})],
     liveInventory: [liveRow('live_36', '门盒', 36)],
     behavior: BEHAVIORS,
     supplier: SUPPLIERS,
