@@ -467,9 +467,16 @@ test('B3 没有批次号的旧退货数据：不建行、不上传素材，图�
 // G：用户可见文案里的旧表名同步成「到货验收」
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('G 到货那条链路的用户可见文案：旧表名「采购到货」→「到货验收」', () => {
+test('G 到货那条链路的用户可见文案：不再提任何**已被删除的表**（到货落点在「报货批次」）', () => {
   const config = resolveArrivalConversationConfig({});
   assert.equal(config.card.failedTitle, '到货验收核对没成功', '卡片失败标题（她点的那张卡上看得见）');
-  assert.match(config.replies.arrivalCreateFailed, /^「到货验收」这一行没建成：/);
-  assert.equal(config.replies.arrivalCreateFailed.includes('「采购到货」'), false);
+  // ⚠️ 2026-10-07 晚：原先那个 `arrivalCreateFailed`（"「到货验收」这一行没建成"）**删掉了** ——
+  //    那张表已被业务负责人整个删除，这条链路不再"建行"，失败原文由 `inboundFailed` 承载
+  //    （"入库没成功：{error}"，错误原文里已经写清楚是哪一步）。
+  assert.equal('arrivalCreateFailed' in config.replies, false,
+    '配置里不许再留"建「到货验收」这一行"的文案（那条路径已不存在）');
+  assert.match(config.replies.inboundFailed, /^入库没成功：\{error\}/);
+  const allCopy = JSON.stringify(config.replies);
+  assert.equal(allCopy.includes('「采购到货」'), false);
+  assert.equal(allCopy.includes('没建成'), false, '不再有"建行失败"这一类文案');
 });

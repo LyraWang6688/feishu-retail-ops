@@ -67,7 +67,7 @@ const PAGED_TIMEOUT_FACTOR = 3;
  * 用 Proxy 而不是逐个包：这类对象的方法很多，漏包一个就等于留了一条永不返回的路径，
  * 而「漏包」在 code review 里很难看出来。
  *
- * ⚠️ 只对**返回 Promise 的方法**套超时：`gateway.table('purchaseArrival')` 这类是同步的，
+ * ⚠️ 只对**返回 Promise 的方法**套超时：`gateway.table('purchaseOrderBatch')` 这类是同步的，
  * 把它变成 Promise 会让 `gateway.table('x').fields.y` 全变成 undefined——这个坑踩过一次。
  * 同步方法（含同步抛错）保持原样。非函数属性原样透传。
  */

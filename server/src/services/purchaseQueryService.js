@@ -19,14 +19,10 @@ const asNumber = (value) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-const asDate = (value) => {
-  if (value == null || value === '') return null;
-  const raw = typeof value === 'number' ? value : textValue(value).trim();
-  if (raw === '') return null;
-  const timestamp = typeof raw === 'number' || /^\d{10,13}$/.test(raw) ? Number(raw) : null;
-  const date = timestamp === null ? new Date(raw) : new Date(timestamp < 1e12 ? timestamp * 1000 : timestamp);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-};
+// （原先这里有个 `asDate`，只被 `listPurchaseArrivals` 用来把「到货验收.到货日」转成 ISO。
+//  2026-10-07 晚：那张表已被业务负责人删除、面板改读「报货批次」，而批次行上**没有**可投影的
+//  到货时刻（「到货日」在真表上是自动的「更新时间」）⇒ 这个转换没有调用方了，随之删除，
+//  不留死代码。）
 
 const indexByRecordId = (records) => new Map(records.map((r) => [r.record_id, r]));
 
@@ -93,47 +89,50 @@ const createPurchaseQueryService = (gateway, options = {}) => {
     }).sort((a, b) => String(b.batch_no).localeCompare(String(a.batch_no)) || a.size - b.size);
   };
 
+  /**
+   * 工作台「到货验收情况」面板的数据源。
+   *
+   * ⭐ 2026-10-07 晚（到货落点大改）：**改读「报货批次」**，不再读「到货验收」——
+   *    那张表已被业务负责人**整个删除**（Base 里没有任何名字含「到货」/「验收」的表）。
+   *    为什么是"改读"而不是"摘掉面板"：
+   *      · 她要看的「这一批到货了没有、核对确认了没有、验收说的什么」正好就是
+   *        「报货批次」那一行的三列，改读之后面板仍有信息量；
+   *      · 摘掉面板等于把一个能用的视图删掉（而且工作台其它子页与它共享筛选/渲染代码）。
+   *    投影口径：一行 = 「报货批次」的一条记录（原来是「到货验收」的一条记录）。
+   *    字段名保持兼容（`batch_no` / `confirm_status` 等），前端只需换列。
+   *
+   * ⚠️ **不投影「到货日」「验收人」**：它们在真表上是飞书**自动字段**
+   *   （到货日=更新时间、验收人=创建人），schema 里刻意没有映射；
+   *   而且批次行的「更新时间」会被写附件等动作刷新，把它当"到货日"展示会误导。
+   *   （同一条口径也钉在 `v1BitableSchema` 的注释里。）
+   *
+   * ⚠️ 过滤掉"没有任何到货信息"的行：**退货批次**只写 批次号 + 幂等键
+   *   （业务负责人 2026-10-07 晚口径：退货**不写**「到货状态」），它既不进 9 点推送的
+   *   「未到货」候选，也不该出现在"到货验收情况"里（否则一行空白，看着像数据丢了）。
+   */
   const listPurchaseArrivals = async (filters = {}) => {
-    const [arrivals, batches] = await Promise.all([
-      gateway.listAll('purchaseArrival'),
-      gateway.listAll('purchaseOrderBatch'),
-    ]);
-    const batchMap = indexByRecordId(batches);
+    const batches = await gateway.listAll('purchaseOrderBatch');
 
-    const rows = arrivals.map((record) => {
-      const batchIds = asLinks('purchaseArrival', record, 'batch');
-      const batch = batchIds.length ? batchMap.get(batchIds[0]) : null;
-      const batchNo = batch ? asText('purchaseOrderBatch', batch, 'batchNo') : '';
-      // ⚠️ 2026-10-07：原先这里读 `purchaseArrival.fields.images`（「图片」）算一个 image_count。
-      // 业务负责人当天把「图片」**整列**从生产表删掉了（表也改名「到货验收」），
-      // schema 的 `images` 映射随之删除 ⇒ 这里再也**不许**去读那一列：
-      // 读它只会永远拿到 undefined、投影出一个恒为 0 的 `image_count`，
-      // 让查的人以为「这张到货单没上传过图」（列都不存在了，那个 0 是假的）。
-      // 处理方式与上面 recognition_status / failure_reason 完全同形：**连 key 一起摘掉**，
-      // 而不是返回 0 或空串。工作台采购页那一列「图片数」也一并删了（否则永远是 0）。
-      return {
-        record_id: record.record_id,
-        batch_no: batchNo,
-        batch_record_id: batchIds[0] || '',
-        supplier_record_id: '',
-        arrival_at: asDate(record?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseArrival.fields.arrivalAt]),
-        // ⚠️ 2026-10-05：原先这里还有 recognition_status / failure_reason 两项，
-        // 它们的源字段（识别状态 / 识别失败原因）已被业务负责人从生产表删除，
-        // 拍照识别链路也整体退场，所以一并去掉——留着只会永远返回空串，
-        // 让查的人以为「识别还没跑」。
-        confirm_status: asText('purchaseArrival', record, 'confirmStatus'),
-      };
-    });
+    const rows = (batches || []).map((record) => ({
+      // `record_id` / `batch_record_id` 都是**批次记录 id**（到货信息的落点）。
+      record_id: record.record_id,
+      batch_record_id: record.record_id,
+      batch_no: asText('purchaseOrderBatch', record, 'batchNo'),
+      arrival_status: asText('purchaseOrderBatch', record, 'arrivalStatus'),
+      confirm_status: asText('purchaseOrderBatch', record, 'confirmStatus'),
+      acceptance_text: asText('purchaseOrderBatch', record, 'acceptanceText'),
+      // 兼容字段（前端与既有调用方原先读它）：到货落点搬到批次行之后**没有**可投影的日期
+      // —— 批次行上那个「到货日」是自动的「更新时间」，不是真的到货时刻（见方法注释）。
+      arrival_at: null,
+      supplier_record_id: '',
+    })).filter((row) => row.arrival_status || row.confirm_status || row.acceptance_text);
 
     return rows.filter((row) => {
       if (filters.batchNo && row.batch_no !== filters.batchNo) return false;
       if (filters.confirmStatus && row.confirm_status !== filters.confirmStatus) return false;
+      if (filters.arrivalStatus && row.arrival_status !== filters.arrivalStatus) return false;
       return true;
-    }).sort((a, b) => {
-      const aTime = a.arrival_at ? new Date(a.arrival_at).getTime() : 0;
-      const bTime = b.arrival_at ? new Date(b.arrival_at).getTime() : 0;
-      return bTime - aTime;
-    });
+    }).sort((a, b) => String(b.batch_no).localeCompare(String(a.batch_no)));
   };
 
   return { listPurchaseRequests, listPurchaseArrivals };

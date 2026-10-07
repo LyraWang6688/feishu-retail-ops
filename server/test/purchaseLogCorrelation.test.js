@@ -5,8 +5,9 @@
 //      inventory.change.applied）必须带上「这一层已经知道的」关联键：
 //      `task_id`（purchase_supplier-report_… / arrival_reconcile_…）·
 //      `batch_no`（202610071 / BH-YYYYMMDD-NNNN）·
-//      `purchase_report_record_id`（「供应商对接」那条记录）·
-//      `purchase_arrival_record_id`（「采购到货」那条记录）
+//      `purchase_report_record_id`（「信息填写」那条记录）·
+//      `purchase_batch_record_id`（「报货批次」那条记录；⭐ 2026-10-07 晚替换掉了原来的
+//      `purchase_arrival_record_id` —— 「到货验收」表已被业务负责人删除，到货信息落在批次行上）
 //      ⇒ 按 `task_id`（或 `batch_no`）一个 grep 就能串起整条链；
 //   ② **拿不到就不传**：到货/入库那条链路没有报单记录 id，就不许冒出这个键；
 //   ③ 既有字段一个都不少；不传关联键时**一个键都不出现**（不是空串）。
@@ -270,6 +271,8 @@ test('供应商报单：写「报货批次」/「具体信息」/「信息填写
   assert.equal(requestRow.purchase_report_record_id, 'rep_1');
   // ⚠️ 「报货批次」那一行是**批次级**的：它没有"哪一条报单记录"这回事 → 不编。
   assert.equal(batchRow.purchase_report_record_id, undefined);
+  assert.equal(batchRow.purchase_batch_record_id, undefined);
+  // ⚠️ 2026-10-07 晚：`purchase_arrival_record_id` 这个键**整体退场**（表已被删除）⇒ 一个都不许冒出来。
   assert.equal(batchRow.purchase_arrival_record_id, undefined);
 
   // b. 既有字段一个都不少
@@ -372,8 +375,9 @@ test('采购退货：写「单据信息」/扣库存/回写「供应商对接」
   assert.equal(docRow.task_id, TASK);
   assert.equal(docRow.batch_no, BATCH);
   assert.equal(docRow.purchase_report_record_id, REPORT);
-  // 退货不写「采购到货」→ 那个键一个都不许冒出来
+  // 退货不写「采购到货」/「报货批次」上的到货信息 → 那两个键一个都不许冒出来
   assert.equal(docRow.purchase_arrival_record_id, undefined);
+  assert.equal(docRow.purchase_batch_record_id, undefined);
   assertGatewayCommon(docRow, 'purchaseRequest');
 
   // b. ⭐ 库存那半（这条以前**一个键都没有**）
@@ -439,14 +443,15 @@ test('采购退货：写「单据信息」/扣库存/回写「供应商对接」
 });
 
 // ── ③ 到货 → 入库：到货核对是**另一套 task**，如实照传；报单记录 id 拿不到就不给 ──
-test('到货入库：写「采购到货」/「采购入库」/加库存的日志带 task_id ＋ batch_no ＋ 到货记录 id（没有报单记录 id）', async () => {
+test('到货入库：写「报货批次.到货信息」/「采购入库」/加库存的日志带 task_id ＋ batch_no ＋ **批次记录 id**（没有报单记录 id）', async () => {
   const world = makeWorld({
     sizeManagement: [{ record_id: 'size_36', fields: { 尺码: 36 } }],
     behavior: [
       { record_id: 'beh_in', fields: { 行为名称: '入库', 行为编码: 'PURCHASE_IN', 库存方向: '增加', 是否启用: true } },
       { record_id: 'beh_stock_in', fields: { 行为名称: '采购增加', 行为编码: 'STOCK_PURCHASE_INCREASE', 库存方向: '增加', 是否启用: true } },
     ],
-    purchaseArrival: [{ record_id: 'arr_1', fields: { 验收原话: '都到了', 确认状态: '待确认' } }],
+    // ⭐ 到货信息的落点 = 「报货批次」那一行（2026-10-07 晚；「到货验收」表已被业务负责人删除）。
+    purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: '202610071' } }],
     purchaseInbound: [],
     purchaseRequest: [],
     liveInventory: [],
@@ -461,8 +466,9 @@ test('到货入库：写「采购到货」/「采购入库」/加库存的日志
     batch_record_id: 'batch_1',
     request_ids: ['req_1'],
     draft: {
-      arrival_record_id: 'arr_1',
+      batch_record_id: 'batch_1',
       batch_no: '202610071',
+      acceptance_text: '都到了',
       operator_open_id: 'ou_user_1',
       requests: [{ record_id: 'req_1', fields: { 编号: ['prod_1'], 尺码: ['size_36'] } }],
       actual: [{ product_record_id: 'prod_1', item_no: '8081', color: '黑色', size: 36, quantity: 2 }],
@@ -481,16 +487,19 @@ test('到货入库：写「采购到货」/「采购入库」/加库存的日志
 
   const TASK = taskId;
   const BATCH = '202610071';
-  const ARRIVAL = 'arr_1';
+  // ⭐ 2026-10-07 晚：关联键从 `purchase_arrival_record_id`（「到货验收」那条记录）
+  //    换成 `purchase_batch_record_id`（「报货批次」那一行）—— 前者已无来源。
+  const BATCH_RECORD = 'batch_1';
 
   // a. 「采购入库」那一行
   const inboundRow = logs.logs('bitable.record.created').find((row) => row.table_key === 'purchaseInbound');
   assert.ok(inboundRow, '必须真的写过「采购入库」');
   assert.equal(inboundRow.task_id, TASK);
   assert.equal(inboundRow.batch_no, BATCH);
-  assert.equal(inboundRow.purchase_arrival_record_id, ARRIVAL);
-  // ⚠️ 到货核对任务里**没有**「供应商对接」记录 → 这个键一个都不许冒出来（不许编）
+  assert.equal(inboundRow.purchase_batch_record_id, BATCH_RECORD);
+  // ⚠️ 到货核对任务里**没有**「信息填写」记录 → 这个键一个都不许冒出来（不许编）；旧键整体退场
   assert.equal(inboundRow.purchase_report_record_id, undefined);
+  assert.equal(inboundRow.purchase_arrival_record_id, undefined);
   assertGatewayCommon(inboundRow, 'purchaseInbound');
 
   // b. ⭐ 库存那半：采购入库也带同一组键
@@ -498,7 +507,7 @@ test('到货入库：写「采购到货」/「采购入库」/加库存的日志
   assert.equal(applied.length, 1);
   assert.equal(applied[0].task_id, TASK);
   assert.equal(applied[0].batch_no, BATCH);
-  assert.equal(applied[0].purchase_arrival_record_id, ARRIVAL);
+  assert.equal(applied[0].purchase_batch_record_id, BATCH_RECORD);
   assert.equal(applied[0].purchase_report_record_id, undefined);
   // 既有字段一个都不少
   assert.equal(applied[0].kind, 'STOCK_PURCHASE_INCREASE');
@@ -516,27 +525,31 @@ test('到货入库：写「采购到货」/「采购入库」/加库存的日志
   for (const row of liveRows) {
     assert.equal(row.task_id, TASK);
     assert.equal(row.batch_no, BATCH);
-    assert.equal(row.purchase_arrival_record_id, ARRIVAL);
+    assert.equal(row.purchase_batch_record_id, BATCH_RECORD);
+    assert.equal(row.purchase_arrival_record_id, undefined);
     assertGatewayCommon(row, 'liveInventory');
   }
 
-  // d. 「采购到货」自己的确认状态回写
-  const arrivalRow = logs.logs('bitable.record.updated').find((row) => row.table_key === 'purchaseArrival');
-  assert.ok(arrivalRow);
-  assert.equal(arrivalRow.task_id, TASK);
-  assert.equal(arrivalRow.batch_no, BATCH);
-  assert.equal(arrivalRow.purchase_arrival_record_id, ARRIVAL);
-  assert.equal(arrivalRow.record_id, ARRIVAL);
-  assertGatewayCommon(arrivalRow, 'purchaseArrival');
+  // d. ⭐ 到货信息在**批次行**上的两次写入：写「验收原话」＋ 写「确认状态」，都带同一组键
+  const batchRows = logs.logs('bitable.record.updated').filter((row) => row.table_key === 'purchaseOrderBatch');
+  assert.equal(batchRows.length, 2, '「验收原话」与「确认状态」各写一次');
+  for (const row of batchRows) {
+    assert.equal(row.task_id, TASK);
+    assert.equal(row.batch_no, BATCH);
+    assert.equal(row.purchase_batch_record_id, BATCH_RECORD);
+    assert.equal(row.record_id, BATCH_RECORD);
+    assertGatewayCommon(row, 'purchaseOrderBatch');
+  }
 
   // e. 业务日志：purchase.arrival.posted
   const posted = logs.logs('purchase.arrival.posted');
   assert.equal(posted.length, 1);
   assert.equal(posted[0].task_id, TASK);
   assert.equal(posted[0].batch_no, BATCH);
-  assert.equal(posted[0].purchase_arrival_record_id, ARRIVAL);
-  // 既有字段一个都不少
-  assert.equal(posted[0].arrival_record_id, ARRIVAL);
+  assert.equal(posted[0].purchase_batch_record_id, BATCH_RECORD);
+  // 既有字段一个都不少（`arrival_record_id` 已随表退场 → 换成 `batch_record_id`）
+  assert.equal(posted[0].batch_record_id, BATCH_RECORD);
+  assert.equal(posted[0].arrival_record_id, undefined);
   assert.equal(posted[0].inbound_count, 1);
   assert.equal(posted[0].inventory_applied, true);
 });

@@ -180,19 +180,23 @@ test('① 私聊链路已移除：非文字消息只回那一句「请到群里�
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 「采购到货 → 拍照识别 → 入库」链路**已退场**（2026-10-05）
+// 「采购到货 → 拍照识别 → 入库」链路**已退场**（2026-10-05），
+// 而且那张表本身**已被业务负责人整个删除**（2026-10-07 晚）——到货落点搬到「报货批次」。
 //
-// 业务负责人删掉了「采购到货」表的「类型」「识别状态」「识别失败原因」三个字段，
-// 并决定这条链路整体退场（改成纯对话驱动）。路由层因此把它从分派表里摘掉：
+// 所以路由层现在的状态是：
 //   1) 判定函数本身仍然保留单测（config/purchaseArrivalIntake.js 这个开关模块
 //      **刻意留着**，将来恢复「对话到货」时是现成的显式开关，且它钉住了
 //      "空字符串不等于关闭"那个坑）；
-//   2) 「采购到货」新增 → 不再分派给任何链路，只留一条排查日志；
-//   3) 报货（supplier-report）**照常分派**：它是当前唯一的采购入口（关键回归）。
+//   2) **schema 里不再有 `purchaseArrival`** ⇒ 路由里也没有它的任何分派/排查分支；
+//   3) 就算飞书还推来一条**旧表 id** 的事件（订阅没来得及删），也必须
+//      "什么都不做、也不报错"（下面两条用例钉住这一点）；
+//   4) 报货（supplier-report）**照常分派**：它是当前唯一的采购入口（关键回归）。
 // ─────────────────────────────────────────────────────────────────────────────
 
 // 表 ID 从 schema 读，测试里不再写死一份——换 Base 时测试自动跟着走。
-const ARRIVAL_TABLE_ID = V1_BITABLE_SCHEMA.tables.purchaseArrival.tableId;
+// ⚠️ 但**已删除的**「到货验收」表没有 schema 可读了：下面这条常量就是那个**已作废**的
+//    生产 tableId，专门用来模拟"飞书还推来旧表事件"（回归钉子）。
+const DELETED_ARRIVAL_TABLE_ID = 'tblvLOXKESNTbZ7v';
 const REPORT_TABLE_ID = V1_BITABLE_SCHEMA.tables.purchaseReport.tableId;
 
 const bitableEvent = (tableId, recordId) => ({
@@ -265,25 +269,28 @@ test('开关判定：未配置、空字符串、true、1 以及写错的值一�
   assert.equal(isPurchaseArrivalIntakeEnabled(), true, '默认参数 process.env 未配置时应判定为开启');
 });
 
-test('链路已退场：采购到货表的新增记录不再被分派，只留下排查线索', async () => {
-  // 原先这条断言的是"开关默认开启 → 会分派到 arrival 链路"。识别链路退场后行为反转：
-  // 一条都不分派（accept('arrival') 已经没有对应的处理分支了），并且要能区分
-  // "链路已退场"与"表 ID 配错导致的静默失效"。
+test('链路已退场：旧「到货验收」表 id 的事件不再被分派，也不报错（schema 里已没有那张表）', async () => {
+  // 2026-10-07 晚：业务负责人把那张表**整个删掉了** ⇒ schema 里不再有 `purchaseArrival`，
+  // 路由里也没有任何指向它的分支。这条用例模拟"飞书订阅还没删、旧表事件仍推过来"：
+  // 必须什么都不做、也不抛错（那个排查日志 `lark.intake.arrival_retired` 也一并退场了）。
+  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseArrival, undefined,
+    'schema 里不许再有「到货验收」这张表（她已删除，到货落点搬到「报货批次」）');
   const { service, accepted, packages } = createRecordingService();
   const handlers = createLarkEventHandlers(service);
 
   const logs = await captureLogs(async () => {
     assert.doesNotThrow(() =>
-      handlers['drive.file.bitable_record_changed_v1'](bitableEvent(ARRIVAL_TABLE_ID, 'rec_arrival_retired')),
+      handlers['drive.file.bitable_record_changed_v1'](bitableEvent(DELETED_ARRIVAL_TABLE_ID, 'rec_arrival_retired')),
     );
     await flushDispatch();
   });
 
-  assert.deepEqual(accepted, [], '退场后到货表的新增不应触达任何采购链路');
+  assert.deepEqual(accepted, [], '旧到货表的新增不应触达任何采购链路');
   assert.deepEqual(packages, [], '连 acceptMany 都不该被调用');
-  assert.ok(
-    logs.some((line) => line.includes('lark.intake.arrival_retired') && line.includes('rec_arrival_retired')),
-    `应留下排查线索 lark.intake.arrival_retired，实际日志：${logs.join(' | ')}`,
+  assert.equal(
+    logs.some((line) => line.includes('lark.intake.arrival_retired')),
+    false,
+    '那条"链路已退场"的排查日志随表一起删了（表都不在了，不存在"配错表 ID"这回事）',
   );
 });
 
@@ -352,15 +359,14 @@ test('一包里非 record_added 的动作不进包：编辑/删除不触发报�
 });
 
 // 原先还有一条「一包里的多条到货记录也合成一次分派（到货链路行为不变）」。
-// 到货链路已退场（整包都不再分派），那条用例测的行为不存在了，删除；
-// 上一条「链路已退场：…不再被分派」用的就是单条形态，这里再补一条"一包多条也不分派"。
-test('一包里的多条到货记录同样一条都不分派（链路已退场）', async () => {
+// 到货那张表已被删除（2026-10-07 晚）⇒ 这里只留"旧表 id 的一包也不分派"这条回归钉子。
+test('同一包里的多条旧到货表记录同样一条都不分派（表已删除）', async () => {
   const { service, packages } = createRecordingService();
   const handlers = createLarkEventHandlers(service);
 
   handlers['drive.file.bitable_record_changed_v1']({
     file_token: APP_TOKEN,
-    table_id: ARRIVAL_TABLE_ID,
+    table_id: DELETED_ARRIVAL_TABLE_ID,
     action_list: [
       { record_id: 'arr_a', action: 'record_added' },
       { record_id: 'arr_b', action: 'record_added' },

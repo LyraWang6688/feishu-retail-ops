@@ -36,7 +36,13 @@ const CORRELATION_KEYS = Object.freeze([
   // 采购链路（2026-10-07 下半场）
   'batch_no', // 采购批次号：表单填的 202610071 / 自动生成的 CGD-YYYYMMDD-NNNN（旧号 BH-… 仍然认）
   'purchase_report_record_id', // 「信息填写」那条报单记录（采购链路的最上游）
-  'purchase_arrival_record_id', // 「采购到货」那条记录（到货核对 → 入库那一段的来源）
+  // ⭐ 2026-10-07 晚替换：原来是 `purchase_arrival_record_id`（「到货验收」那条记录）。
+  //    那张表已被业务负责人**整个删除**，到货信息的落点搬到**「报货批次」那一行** ⇒
+  //    这个键换成**批次记录 id**（`purchaseOrderBatch.record_id`）。
+  //    为什么**不改叫 `batch_record_id`**：本仓采购链路的日志一直用 `batch_no` 表示批次号，
+  //    再加一个同前缀的 `batch_record_id` 会和 `batch_no` 混起来（一个号、一个记录 id）；
+  //    `purchase_*_record_id` 这一族已经有两个成员（report / 原来的 arrival），语义自解释。
+  'purchase_batch_record_id', // 「报货批次」那条记录（到货核对 → 入库那一段的来源）
 ]);
 
 /**

@@ -2,28 +2,37 @@ const { textValue } = require('./v1BitableGateway');
 const {
   resolvePurchaseArrivalStatusConfig,
 } = require('../config/purchaseArrivalStatus');
+const {
+  resolvePurchaseAcceptanceConfig,
+} = require('../config/purchaseAcceptance');
 const { IDEMPOTENCY_KEY_FIELD, createOnceByKey } = require('../infrastructure/idempotencyKey');
 const { logInfo, logWarn } = require('../utils/logger');
 
 // 「报货批次」**那一行**的读写（业务负责人 2026-10-07 把它定为"控制到货情况"的表）。
 //
-// 它只管四件事，一件都不多：
+// 它只管这几件事，一件都不多：
 //   · 按「报货批次号」把那一行**找出来**；
 //   · **退货**批次也建那一行（2026-10-07 晚口径变更：只写 批次号 + 幂等键，
 //     **不写「到货状态」** ⇒ 不进 9 点推送的「未到货」候选）；
 //   · 到货状态（报货新建 = 未到货 / 到货确认成功 = 已到货）；
-//   · 「单据」附件（出图之后把采购申请单 / 采购退货单的 PNG 回填到这里）。
+//   · 「单据」附件（出图之后把采购申请单 / 采购退货单的 PNG 回填到这里）；
+//   · ⭐ **到货核对的落点**（2026-10-07 晚）：「验收原话」＋「确认状态」——
+//     原来写在**已被业务负责人删除的**「到货验收」表那一行，现在写到这里。
 //
 // ⚠️ 「采购行为」这一列**此刻意不读、不写、不映射**（她的原话：
 //    「报货批次里面的采购行为你不用管」）—— 不碰它就不可能"顺手"写坏它。
+//
+// ⚠️ 「到货日」「验收人」**不在这个 service 的读写范围里**：它们在真表上是飞书
+//    **自动字段**（更新时间 / 创建人），代码一律不写（写了会被自动覆盖或直接报错）。
 //
 // ⚠️ 为什么单独一个 service（AGENTS.md《底层工程原则》的「模块化」）：
 //    `PurchaseWebhookService` 已经背了"报货 → 出单 → 出图 → 发群"整条链路；
 //    批次行怎么维护是另一件事，将来还会被 9 点推送 / 到货核对复用。
 //
-// ⚠️ 取值**不写死中文**：到货状态两个值来自 `config/purchaseArrivalStatus.js`，
-//    并由部署闸门对着真表 `property.options` 核对（往单选里写不存在的取值，
-//    飞书会自动新建选项、把表污染掉，而 9 点推送按「未到货」查就静默查不到了）。
+// ⚠️ 取值**不写死中文**：到货状态两个值来自 `config/purchaseArrivalStatus.js`
+//    （并由部署闸门对着真表 `property.options` 核对 —— 往单选里写不存在的取值，
+//    飞书会自动新建选项、把表污染掉，而 9 点推送按「未到货」查就静默查不到了）；
+//    确认状态来自 `config/purchaseAcceptance.js`。
 
 /**
  * 「报货批次」那一行的幂等键（业务负责人 2026-10-07 晚：「退货也落到报货批次表里」）。
@@ -49,11 +58,12 @@ const attachmentNames = (value) => (Array.isArray(value) ? value : [])
   .filter(Boolean);
 
 class PurchaseOrderBatchService {
-  constructor({ gateway, settings } = {}) {
+  constructor({ gateway, settings, acceptance } = {}) {
     if (!gateway) throw new Error('PurchaseOrderBatchService 需要 gateway');
     this.gateway = gateway;
     // 配置读一次（启动时）：取值写错要在服务起来那一刻就吵，而不是等她第一次提交报单。
     this.settings = settings || resolvePurchaseArrivalStatusConfig();
+    this.acceptance = acceptance || resolvePurchaseAcceptanceConfig();
   }
 
   /** 新建批次记录时要写的那个取值（她说的字段默认值「未到货」）。 */
@@ -188,6 +198,105 @@ class PurchaseOrderBatchService {
       batch_no: batchNo, record_id: record.record_id, arrival_status: status,
     });
     return { updated: true, record_id: record.record_id, batch_no: batchNo, arrival_status: status };
+  }
+
+  // ── 到货核对的落点（2026-10-07 晚：从已删除的「到货验收」表搬到这里）───────────
+
+  /** 到货核对**确认成功之后**要写的那个取值（配置来的，不是中文字面量）。 */
+  get confirmedStatus() {
+    return this.acceptance.confirmed;
+  }
+
+  /**
+   * 定位这一批在「报货批次」里的**那一行**。
+   *
+   * 优先用**批次 record id**（调用方从采购申请行的「报货批次号」关联上读到的，最准、零额外请求）；
+   * 拿不到才按**批次号**整表回查（`findByBatchNo`）。
+   *
+   * @returns {Promise<{record_id: string, matched_by: 'record_id'|'batch_no'}|null>}
+   */
+  async locate({ batchNo = '', batchRecordId = '' } = {}) {
+    const wantedId = String(batchRecordId || '').trim();
+    if (wantedId) return { record_id: wantedId, matched_by: 'record_id' };
+    const record = await this.findByBatchNo(batchNo);
+    return record ? { record_id: record.record_id, matched_by: 'batch_no' } : null;
+  }
+
+  /**
+   * ⭐ 把「验收原话」写到这一批的批次行上（**到货确认的第一步**，在入库之前）。
+   *
+   * 为什么要单独一步、而且在入库之前：
+   *   · 她的口径是"到货信息的落点搬到报货批次"——原话是这次核对**唯一的人工输入**，
+   *     先落上，后续入库失败重试时也不用她再说一遍；
+   *   · 「确认状态」刻意**不在这里**写（见 `markConfirmed`）：入库才是事实，
+   *     确认状态是它的投影，两处都写早晚会写歪。
+   *
+   * 幂等：写的是同一个文本值，重复执行结果一致（不新建行）。
+   *
+   * @returns {Promise<{updated: boolean, record_id?: string, reason?: string, matched_by?: string}>}
+   *   找不到批次行时**返回 updated:false**（不抛）——调用方决定要不要因此中断（当前会中断，
+   *   因为"到货信息没有落点"等于她这次确认没被记下来）。
+   */
+  async writeAcceptance({
+    batchNo = '', batchRecordId = '', acceptanceText = '', correlation = {},
+  }) {
+    const text = String(acceptanceText == null ? '' : acceptanceText);
+    // 没有批次身份（两个都空）= "孤儿调用"（历史草稿 / 手工种的测试任务）：
+    // 明确区分于"有身份但找不到行"，调用方对两者的处置不同（前者不阻塞、后者要报）。
+    if (!String(batchNo || '').trim() && !String(batchRecordId || '').trim()) {
+      return { updated: false, reason: 'no_batch_identity', batch_no: '' };
+    }
+    const target = await this.locate({ batchNo, batchRecordId });
+    if (!target) {
+      logWarn('purchase.batch.acceptance.no_record', { batch_no: batchNo, batch_record_id: batchRecordId });
+      return { updated: false, reason: 'no_batch_record', batch_no: batchNo };
+    }
+    await this.gateway.update('purchaseOrderBatch', target.record_id, { acceptanceText: text }, { correlation });
+    logInfo('purchase.batch.acceptance_text.written', {
+      batch_no: batchNo,
+      batch_record_id: target.record_id,
+      matched_by: target.matched_by,
+      acceptance_text_length: text.length,
+      // 明写"没写到货日 / 验收人"：这是口径，也是将来别人改这段代码时的绊线
+      //（两者在真表上是飞书自动字段：到货日=更新时间、验收人=创建人）。
+      wrote_arrival_date: false,
+      wrote_inspector: false,
+    });
+    return { updated: true, record_id: target.record_id, matched_by: target.matched_by, batch_no: batchNo };
+  }
+
+  /**
+   * ⭐ 入库成功之后：把这一批的「确认状态」改成「已确认」（取值来自 config）。
+   *
+   * ⚠️ 与 `markArrived`（到货状态）是**两列两件事**：
+   *    · 「确认状态」= 这次**核对**确认过（文本列，配置在 `config/purchaseAcceptance.js`）；
+   *    · 「到货状态」= 这一批**到货了**（单选列，配置在 `config/purchaseArrivalStatus.js`）。
+   *
+   * ⚠️ 语义与改动前**逐字一致**：改动前这一句是
+   *    `gateway.update('purchaseArrival', … , { confirmStatus: '已确认' })`，
+   *    位于入库循环**之后**；那时若它抛错，整次确认会失败、状态停在 `posting`、
+   *    她再点一次「是」会重跑（入库本身有幂等兜底）。这里保持同一语义，只是换成批次行。
+   *    找不到批次行时**返回 updated:false**（不抛）——与 `writeAcceptance` 同理。
+   */
+  async markConfirmed({ batchNo = '', batchRecordId = '', correlation = {} } = {}) {
+    // 与 `writeAcceptance` 同形：没有批次身份 = 孤儿调用（不阻塞）；有身份找不到行 = 要报。
+    if (!String(batchNo || '').trim() && !String(batchRecordId || '').trim()) {
+      return { updated: false, reason: 'no_batch_identity', batch_no: '' };
+    }
+    const target = await this.locate({ batchNo, batchRecordId });
+    if (!target) {
+      logWarn('purchase.batch.confirm_status.no_record', { batch_no: batchNo, batch_record_id: batchRecordId });
+      return { updated: false, reason: 'no_batch_record', batch_no: batchNo };
+    }
+    const status = this.confirmedStatus;
+    await this.gateway.update('purchaseOrderBatch', target.record_id, { confirmStatus: status }, { correlation });
+    logInfo('purchase.batch.confirm_status.updated', {
+      batch_no: batchNo,
+      batch_record_id: target.record_id,
+      matched_by: target.matched_by,
+      confirm_status: status,
+    });
+    return { updated: true, record_id: target.record_id, batch_no: batchNo, confirm_status: status };
   }
 
   /**

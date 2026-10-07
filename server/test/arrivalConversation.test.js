@@ -7,7 +7,9 @@
  *   □ 话题里免 @
  *   □ 三类差异（完全一样 / 比申请多 / 比申请少）都能解析对
  *   □ 说「完毕」→ 发卡片，卡片上有「是」和「否」
- *   □ 点「是」→「采购到货」新增一行（原话；**到货日由飞书自动填，代码不写**）
+ *   □ 点「是」→ 到货信息写到**「报货批次」那一行**（验收原话 / 确认状态；到货状态=已到货）
+ *     ⭐ 2026-10-07 晚：落点从**已被业务负责人删除**的「到货验收」表搬到「报货批次」；
+ *       「到货日」「验收人」在真表上是**飞书自动字段**（更新时间 / 创建人），代码一个字都不写。
  *   □ 点「是」→「采购入库」按实际数、「库存流水」/「实时库存」跟着变
  *   □ 「单据信息」（采购申请表）一个字都没变 —— **断言钉住，不是文档里说说**
  *   □ 重复点「是」→ 幂等
@@ -141,7 +143,8 @@ const makeRecognizer = (responses) => ({
 
 /** 采购申请明细：38 码 2 双、39 码 2 双（两个尺码，便于验证"只改说的那一行"）。 */
 const defaultRecords = () => ({
-  purchaseOrderBatch: [{ record_id: BATCH_RECORD_ID, fields: { 报货批次号: BATCH_NO } }],
+  // ⭐ 2026-10-07 晚：到货信息的落点就是**这一行** —— 到货状态 / 验收原话 / 确认状态都写它。
+  purchaseOrderBatch: [{ record_id: BATCH_RECORD_ID, fields: { 报货批次号: BATCH_NO, 到货状态: '未到货' } }],
   product: [
     { record_id: PRODUCT_1, fields: { 货号: 'XHB8095', 颜色: '黑' } },
     { record_id: PRODUCT_2, fields: { 货号: 'XHB8096', 颜色: '棕' } },
@@ -150,8 +153,9 @@ const defaultRecords = () => ({
     { record_id: 'req_38', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: [PRODUCT_1], 尺码: sizeLink(38), 数量: 2 } },
     { record_id: 'req_39', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: [PRODUCT_1], 尺码: sizeLink(39), 数量: 2 } },
   ],
-  purchaseArrival: [],
   purchaseInbound: [],
+  // ⚠️ 这里**故意没有** `purchaseArrival`：那张表已被业务负责人整个删除，代码里也没有这个表键。
+  //    真写了会在记录型 gateway 上抛「未配置语义字段」（这正是守门测试想要的效果）。
 });
 
 const defaultBatch = (overrides = {}) => ({
@@ -177,6 +181,9 @@ const makeHarness = ({ records = defaultRecords(), responses = [], config } = {}
     recognizer,
     sizeReferences: webhook.getSizeReferences,
     confirmArrival: (taskId, task, operatorOpenId) => webhook.confirmArrival(taskId, task, operatorOpenId),
+    // ⭐ 2026-10-07 晚：到货状态的落点也是「报货批次」那一行（改成「已到货」），
+    //    与生产接线一致（`larkMvpService` 就是这么注入的）。
+    markBatchArrived: (batchNo, options) => webhook.orderBatches.markArrived(batchNo, options),
     // ⭐ ④ 两个端口都记下第三个参数 `options`：里面带着 threadId，
     //    由**飞书发送适配器**决定要不要 `reply_in_thread`（见 larkMvpService.replyPurchaseText）。
     replyText: async (messageId, content, options) => { replied.push({ messageId, content, options }); return 'om_reply'; },
@@ -188,6 +195,10 @@ const makeHarness = ({ records = defaultRecords(), responses = [], config } = {}
 };
 
 const writesTo = (gateway, tableKey) => gateway.writes.filter((item) => item.tableKey === tableKey);
+
+/** 「报货批次」那一行当前的样子（到货信息的落点）。 */
+const batchFields = (records) =>
+  (records.purchaseOrderBatch || []).find((item) => item.record_id === BATCH_RECORD_ID)?.fields || {};
 
 /** 卡片上的按钮（column_set → column → button）：返回 [{label, action}]。 */
 const cardButtons = (card) => (card.elements || [])
@@ -671,59 +682,51 @@ const confirmCard = async (harness, text = '38 码少一双，完毕') => {
   return { taskId, result, cardEvent };
 };
 
-test('点「是」①：「采购到货」新增一行 —— 用户原话 + 验收人；**到货日由飞书自动填，代码不写**', async () => {
+test('点「是」① ⭐：「验收原话」「确认状态」写到**「报货批次」那一行**（不再建「到货验收」行）', async () => {
   const harness = makeHarness({
     responses: [{ complete: true, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] }],
   });
   await confirmCard(harness, '38 码少一双\n完毕');
 
-  const created = writesTo(harness.gateway, 'purchaseArrival').filter((item) => item.op === 'create');
-  assert.equal(created.length, 1, '「采购到货」只新增一行');
-  const fields = created[0].values;
+  // ⭐ 到货信息的落点 = 「报货批次」那一行（业务负责人 2026-10-07 晚：「写入的点变到了报货批次里面」）。
+  const fields = batchFields(harness.records);
   assert.equal(fields['验收原话'], '38 码少一双\n完毕', '用户说的原话归集进「验收原话」');
-  assert.deepEqual(fields['报货批次号'], [BATCH_RECORD_ID]);
-  assert.deepEqual(fields['验收人'], [{ id: 'ou_1' }]);
-  // 🔴 「到货日」是飞书里**自动填写**的日期字段（2026-10-06 读生产真表核对过：
-  //    type=5 DateTime / property.auto_fill=true）。代码写它就是替飞书做决定。
-  assert.equal('到货日' in fields, false, '代码一个字都不许写「到货日」');
-  assert.equal(JSON.stringify(created[0].values).includes('到货日'), false);
-  // 🔴 2026-10-07 晚：这张表已被业务负责人改名「到货验收」，并**把「图片」整列删掉**了。
-  //    所以这条链路（到货核对 → 建行）**一个字都不许再往图片/附件上写**：
-  //      · 「不写」→ 就是下面这几条断言；
-  //      · 「不报错」→ 真写了会走 gateway.fields() 抛「未配置语义字段: purchaseArrival.images」，
-  //        整个用例会当场红；换句话说，"根本没有这个键"就是它不报错的原因；
-  //      · 「不阻塞入库」→ 最后一条断言（同一个链路里「采购入库」照常写）。
-  assert.equal('图片' in fields, false, '「图片」列已从生产表删除 → 不许再写它');
-  assert.equal('鞋盒图片' in fields, false, '「鞋盒图片」是更早一版的名字，同样不许写');
-  assert.equal(JSON.stringify(fields).includes('图片'), false, '整个 create 载荷里不许出现任何图片字段');
-  assert.equal(writesTo(harness.gateway, 'purchaseInbound').length, 2, '删图片不影响入库：该写几行还是几行');
+  assert.equal(fields['确认状态'], '已确认', '入库成功之后「确认状态」= 已确认（取值来自 config）');
+  assert.equal(fields['到货状态'], '已到货', '到货状态照旧（这一条本来就有，别重复写歪）');
+
+  // 🔴 不再有任何「到货验收」的写入 —— 那张表已被她整个删除。
+  //    真写了会在记录型 gateway 上抛「未配置语义字段: purchaseArrival.*」（本用例会当场红）。
+  assert.equal(harness.gateway.writes.some((item) => item.tableKey === 'purchaseArrival'), false,
+    '不许再写「到货验收」这张表（表都不存在了）');
+
+  // 🔴 两个飞书**自动字段**代码一个字都不许写：
+  //    「到货日」= 更新时间（type 1002）、「验收人」= 创建人（type 1003）。
+  const batchWrites = writesTo(harness.gateway, 'purchaseOrderBatch');
+  for (const write of batchWrites) {
+    assert.equal('到货日' in write.values, false, '代码一个字都不许写「到货日」');
+    assert.equal('验收人' in write.values, false, '代码一个字都不许写「验收人」');
+    assert.equal(JSON.stringify(write.values).includes('图片'), false, '「图片」列已随表删除，任何载荷里都不许出现');
+  }
+
+  assert.equal(writesTo(harness.gateway, 'purchaseInbound').length, 2, '落点变更不影响入库：该写几行还是几行');
 });
 
-test('点「是」①-补：「验收人」写不进去（UserFieldConvFail）时退一步 —— 不挡入库', async () => {
-  // 「验收人」是我加的留痕，她没要求；飞书 User 字段对 open_id 很挑，
-  // 写不进去时**不能让附加字段把入库挡住**（真实 E2E 抓到的 1254066）。
-  const harness = makeHarness({
-    responses: [{ complete: true, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] }],
-  });
-  const originalCreate = harness.gateway.create;
-  harness.gateway.create = async (tableKey, values) => {
-    if (tableKey === 'purchaseArrival' && values.inspector) {
-      throw new Error('新增“采购到货”记录失败: UserFieldConvFail (Code: 1254066)');
-    }
-    return originalCreate(tableKey, values);
-  };
-
-  const { result } = await confirmCard(harness);
-
-  assert.match(result.toast.content, /已按实际到货入库/);
-  const created = writesTo(harness.gateway, 'purchaseArrival').filter((item) => item.op === 'create');
-  assert.equal(created.length, 1);
-  assert.equal('验收人' in created[0].values, false, '退一步之后只写必须写的字段');
-  assert.equal(created[0].values['验收原话'], '38 码少一双，完毕');
-  assert.equal(writesTo(harness.gateway, 'purchaseInbound').length, 2, '入库照常发生');
+test('点「是」①-补：「验收人」现在是飞书自动字段（创建人）—— 代码**没有任何**写入点', async () => {
+  // 改动前「验收人」是代码写的（还带一个 UserFieldConvFail 退一步重试的补丁）。
+  // 2026-10-07 晚它在真表上是**创建人**（type 1003，自动）⇒ 代码不写、也不建映射：
+  // 这一条用源码断言钉住"那个补丁不许回来"（行为断言在 ① 里）。
+  const source = fs.readFileSync(path.join(__dirname, '../src/services/purchaseArrivalConversationService.js'), 'utf8');
+  const codeOnly = source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+    .replace(/([^:])\/\/.*$/gm, '$1');
+  assert.equal(/inspector/.test(codeOnly), false, '代码里不许再出现 inspector（验收人=创建人，自动字段）');
+  assert.equal(/UserFieldConvFail/.test(codeOnly), false, '那个"写不进验收人就退一步"的补丁随之删除，不许回来');
+  assert.equal(/person\(/.test(codeOnly), false, '人员字段写入器不许再被这条链路用到');
+  assert.equal(/purchaseArrival'/.test(codeOnly), false, '代码里不许再出现 purchaseArrival 这个表键');
 });
 
-test('点「是」②：「采购入库」按**实际**数量写入（不是申请数）', async () => {
+test('点「是」②：「采购入库」按**实际**数量写入（不是申请数）· 且**不含**「采购到货批次」', async () => {
   const harness = makeHarness({
     responses: [{ complete: true, same: false, differences: [
       { item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 },
@@ -740,7 +743,9 @@ test('点「是」②：「采购入库」按**实际**数量写入（不是申�
   assert.equal(bySize.get(JSON.stringify(sizeLink(39)))['数量'], 4, '多到的也要按实际数入库');
   for (const inbound of inbounds) {
     assert.deepEqual(inbound.values['采购行为'], ['bhv_in']);
-    assert.ok(inbound.values['采购到货批次'], '入库行要挂回这次到货记录');
+    // ⭐ 2026-10-07 晚：「采购入库.采购到货批次」已被业务负责人**整列删除** ⇒ 一个字都不许再写。
+    assert.equal('采购到货批次' in inbound.values, false, '「采购到货批次」列已删 → 不许再写它');
+    assert.equal(JSON.stringify(inbound.values).includes('采购到货批次'), false);
     // 🔴 「入库时间」代码一个字都不许写（与 #102 `fix/no-time-field-writes` 对齐）：
     //   业务负责人 2026-10-06 已把这一列从生产表删掉（生产真表「采购入库」11 列里没有它，
     //   见 docs/reports/time-field-writes-cleanup-2026-10-06.md §1），schema 里的
@@ -831,9 +836,15 @@ test('点「是」⑥：重复点「是」/ 重复投递 → 幂等，不重复�
     { action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: taskId }, cardEvent, 'ou_1',
   );
 
-  assert.equal(writesTo(harness.gateway, 'purchaseArrival').filter((item) => item.op === 'create').length, 1, '到货记录不重复建');
+  // ⭐ 2026-10-07 晚：幂等的落点也换了 —— 批次行**不重复写**（重复点「是」时任务已经是
+  //    posted，直接早退，连一次 update 都不会发出去）。
+  const batchWritesAfter = writesTo(harness.gateway, 'purchaseOrderBatch').length;
+  assert.equal(batchWritesAfter, 3,
+    '第一批就三次 update：写「验收原话」→ 写「确认状态」→ 写「到货状态=已到货」；重复点一次都不再写');
   assert.equal(writesTo(harness.gateway, 'purchaseInbound').filter((item) => item.op === 'create').length, 2, '入库行不重复写');
   assert.equal(harness.inventory.calls.length, 2, '库存不重复加');
+  assert.equal(batchFields(harness.records)['验收原话'], '38 码少一双，完毕', '批次行上的原话还是那一句');
+  assert.equal(batchFields(harness.records)['确认状态'], '已确认');
   assert.match(again.toast.content, /已经入库/);
 });
 
@@ -918,27 +929,32 @@ test('可见失败②：失败文案可配（`replies.inboundFailed`，改文案
   assert.equal(harness.replied[0].content.includes('{error}'), false);
 });
 
-test('可见失败③：「到货验收」这一行都没建成 → 也 patch 卡片 + 回文字（改前只有 toast）', async () => {
+test('可见失败③：到货信息**写不进批次行** → 也 patch 卡片 + 回文字（且一个字都不入库）', async () => {
   const harness = makeHarness({
     responses: [{ complete: true, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] }],
   });
-  // 让「到货验收」那次 create 失败（其余 gateway 行为不变）。
-  const create = harness.gateway.create;
-  harness.gateway.create = async (tableKey, values) => {
-    if (tableKey === 'purchaseArrival') throw new Error('飞书 500：建行失败');
-    return create(tableKey, values);
+  // 让「报货批次」那次 update 失败（其余 gateway 行为不变）——落点写不进去 = 她这次确认没被记下来。
+  const update = harness.gateway.update;
+  harness.gateway.update = async (tableKey, recordId, values, options) => {
+    if (tableKey === 'purchaseOrderBatch' && values.acceptanceText !== undefined) {
+      throw new Error('飞书 500：写「验收原话」失败');
+    }
+    return update(tableKey, recordId, values, options);
   };
 
   const { result } = await confirmCard(harness);
 
   assert.equal(result.toast.type, 'error');
-  // ⚠️ 2026-10-07 晚**文案变更**（同上）：表名「采购到货」→「到货验收」，断言仍是逐字匹配。
-  assert.match(result.toast.content, /「到货验收」这一行没建成：飞书 500：建行失败/);
+  // ⚠️ 文案走 `replies.inboundFailed`（改动前那个"「到货验收」这一行没建成"的专用文案随表一起删了）。
+  assert.match(result.toast.content, /入库没成功：飞书 500：写「验收原话」失败/);
   assert.equal(harness.updated.length, 1, '卡片要改成终态');
   assert.equal(harness.updated[0].card.header.template, 'red');
-  assert.match(cardNote(harness.updated[0].card), /飞书 500：建行失败/);
+  assert.match(cardNote(harness.updated[0].card), /飞书 500：写「验收原话」失败/);
   assert.equal(harness.replied.length, 1);
   assert.equal(harness.replied[0].options.threadId, 'omt_1');
+  // 🔴 到货信息没有落点 ⇒ **一个字都不入库**（这是"先写到货、再写入库"的顺序保证）。
+  assert.equal(writesTo(harness.gateway, 'purchaseInbound').length, 0, '落点失败就不入库');
+  assert.equal(harness.inventory.calls.length, 0, '库存也不动');
 });
 
 test('可见失败④：卡片指向的任务已经找不到 → patch 卡片 + 回文字（不再静默/只 toast）', async () => {
@@ -1058,7 +1074,8 @@ test('点「否」之后再点「是」→ 仍然按她的显式指令入库（�
   );
 
   assert.match(result.toast.content, /已按实际到货入库/);
-  assert.equal(writesTo(harness.gateway, 'purchaseArrival').filter((item) => item.op === 'create').length, 1);
+  assert.equal(batchFields(harness.records)['验收原话'], '38 码少一双，完毕');
+  assert.equal(batchFields(harness.records)['确认状态'], '已确认');
 });
 
 test('可见终态⑧：已经入库之后又点「否」→ 卡片 patch 成绿色终态（不再只 toast）', async () => {
@@ -1096,7 +1113,7 @@ const TWELVE_ROWS = [PRODUCT_1, PRODUCT_2, PRODUCT_3].flatMap((productId, produc
   [37, 38, 39, 40].map((size) => ({ record_id: `req_${productIndex}_${size}`, productId, size })));
 
 const twelveRowRecords = () => ({
-  purchaseOrderBatch: [{ record_id: BATCH_RECORD_ID, fields: { 报货批次号: BATCH_NO } }],
+  purchaseOrderBatch: [{ record_id: BATCH_RECORD_ID, fields: { 报货批次号: BATCH_NO, 到货状态: '未到货' } }],
   product: [
     { record_id: PRODUCT_1, fields: { 货号: 'XHB8095', 颜色: '黑' } },
     { record_id: PRODUCT_2, fields: { 货号: 'XHB8096', 颜色: '棕' } },
@@ -1108,7 +1125,6 @@ const twelveRowRecords = () => ({
       报货批次号: [BATCH_RECORD_ID], 编号: [row.productId], 尺码: sizeLink(row.size), 数量: 1,
     },
   })),
-  purchaseArrival: [],
   purchaseInbound: [],
 });
 
@@ -1190,8 +1206,11 @@ test('0 双①：12 行里 3 行实际 0 双 → 那 3 行一条都不入库、�
         .find((record) => record.record_id === inbound.values['尺码'][0]).fields['尺码']}`), false);
     }
 
-    // ⑤ 该写的照旧：批次级「采购到货」一行 + 收尾；「单据信息」一个字没写；流程不卡。
-    assert.equal(writesTo(harness.gateway, 'purchaseArrival').filter((item) => item.op === 'create').length, 1);
+    // ⑤ 该写的照旧：批次行上的到货信息（验收原话 / 确认状态）+ 收尾；
+    //    「单据信息」一个字没写；流程不卡。
+    assert.equal(batchFields(harness.records)['验收原话'], '8230黑色少一双38码\n93827黑色少39 40码各一双\n完毕',
+      '12 行那种全链路的「验收原话」照旧落到批次行');
+    assert.equal(batchFields(harness.records)['确认状态'], '已确认');
     assert.deepEqual(writesTo(harness.gateway, 'purchaseRequest'), [],
       '「单据信息」一个字都不许变（既有口径，0 双这件事也不例外）');
     assert.equal((await harness.store.get(taskId)).status, 'posted', '流程不卡：正常收尾');
@@ -1244,8 +1263,9 @@ test('0 双②：整批都是 0 双（一件都没到）→ 一条入库 / 库�
 
   assert.equal(writesTo(harness.gateway, 'purchaseInbound').length, 0, '一件都没到 → 一条入库行都没有');
   assert.equal(harness.inventory.calls.length, 0, '一件都没到 → 一次库存都不加');
-  assert.equal(writesTo(harness.gateway, 'purchaseArrival').filter((item) => item.op === 'create').length, 1,
-    '批次级「采购到货」照旧一行');
+  // 到货信息的落点照旧（一件都没到也是"核对过"）：验收原话 + 确认状态照样写批次行。
+  assert.equal(batchFields(harness.records)['验收原话'], '这单货这么久了，一双都没到，完毕');
+  assert.equal(batchFields(harness.records)['确认状态'], '已确认');
   assert.deepEqual(writesTo(harness.gateway, 'purchaseRequest'), []);
   assert.equal((await harness.store.get(taskId)).status, 'posted', '不卡单：照常收尾');
   assert.match(result.toast.content, /一件都没到/);
@@ -1280,7 +1300,7 @@ test('0 双③：0 双的两句卡片文案 + 收尾回话都来自配置（改�
 // □ 边界：不是采购申请单的话题 / 开关 / 配置
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('边界①：采购**退货**单的话题不走到货核对（否则会给退货批次建一条「采购到货」）', async () => {
+test('边界①：采购**退货**单的话题不走到货核对（否则会给退货批次写一条到货信息）', async () => {
   const harness = makeHarness({ responses: [{ complete: true, same: true, differences: [] }] });
   const result = await harness.service.handleTopicMessage({
     batch: defaultBatch({ batch_kind: ARRIVAL_BATCH_KINDS.PURCHASE_RETURN }),

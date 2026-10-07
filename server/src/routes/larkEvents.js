@@ -115,7 +115,11 @@ const createLarkEventHandlers = (service, { heartbeat } = {}) => ({
     // ⚠️ 2026-10-05：业务负责人把「采购到货」表的识别字段（类型/识别状态/识别失败原因）删了，
     // 并决定「拍照 → 识别 → 入库」这条链路整体退场（改成纯对话驱动）。
     // 「类型」「识别状态」「识别失败原因」三个字段已不在生产表里，识别流程也没有出口了，
-    // 所以这里**把 arrival 从分派表里摘掉**：往「采购到货」表新增记录不再触发任何事。
+    // 所以这里**把 arrival 从分派表里摘掉**：往那张表新增记录不再触发任何事。
+    // ⚠️ 2026-10-07 晚：那张表（「到货验收」）**已被她整个删除**，到货落点搬到「报货批次」——
+    //    所以现在连"那张表的新增事件"都不存在了，下面原有的 `arrivalTableId` 判据一并删除。
+    //    这里保留这段历史说明：**arrival 不再是本文件里的一个 kind，将来也别加回来**
+    //   （到货只由「群话题对话式核对」驱动，不靠表变更事件）。
     //
     // 为什么"摘掉"而不是"留着让它什么都不做"：留着 kind:'arrival' 的话，
     // accept('arrival') 会走进一条已经被删掉的链路——那是死路，还会在日志里
@@ -133,8 +137,6 @@ const createLarkEventHandlers = (service, { heartbeat } = {}) => ({
     const purchaseIntake = [
       { tableId: V1_BITABLE_SCHEMA.tables.purchaseReport.tableId, kind: 'supplier-report', label: '供应商报单' },
     ];
-    // 到货表 ID 只用于下面那条"链路已退场"的排查日志，不再进分派表。
-    const arrivalTableId = V1_BITABLE_SCHEMA.tables.purchaseArrival.tableId;
 
     // 遍历 action_list：同一张表的多个 record_added 收成**一包**再分派。
     //
@@ -155,13 +157,9 @@ const createLarkEventHandlers = (service, { heartbeat } = {}) => ({
         continue;
       }
 
-      // 开关关闭时的排查线索（保留给将来恢复「对话到货」用）：确实有人往「采购到货」
-      // 表新增了记录，但这条链路当前不存在。只在**到货表真的新增**时记这一条，
-      // 不在每条 Base 变更事件上刷日志——销售录入走的是同一个事件，否则日志会被淹没。
-      if (arrivalTableId && tableId === arrivalTableId) {
-        logInfo('lark.intake.arrival_retired', { table_id: tableId, record_id: recordId });
-        continue;
-      }
+      // ⚠️ 2026-10-07 晚：原先这里有一段「往「到货验收」表新增 → 记一条
+      //    lark.intake.arrival_retired 日志并 continue」的排查线索。那张表已被删除 ⇒ 删除。
+      //    （保留这条注释是为了让下一次改这里的人知道：这里**曾经**有一段到货相关的分派。）
 
       const intake = purchaseIntake.find((entry) => entry.tableId && entry.tableId === tableId);
       if (!intake) continue;

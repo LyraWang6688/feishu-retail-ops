@@ -94,50 +94,66 @@ test('A2 旧表名不再出现在用户可见文案与代码里（历史沿革�
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 第三张改动（2026-10-07 晚）：「采购到货」→「到货验收」+ 删「图片」列
+// 第三张改动（2026-10-07 晚）：「采购到货」→「到货验收」→（**同日稍晚整表删除**）
+//   业务负责人的口径（逐字）：
+//     「我们到货验收数据表需要写入的点**变到了报货批次里面**……
+//       也就是说，我们要把原来到货信息数据表里的落点改写到报货批次里面，
+//       **「采购入库.采购到货批次」字段删除了，不需要了**」
+//   她还把「采购到货批次」从「采购入库」里整列删掉了。
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('A3 schema 表名 = 到货验收（tableId 不变）· 其余四张采购表名一个都没动', () => {
-  const arrival = V1_BITABLE_SCHEMA.tables.purchaseArrival;
-  assert.equal(arrival.tableName, '到货验收', '「采购到货」已在生产改名「到货验收」');
-  assert.ok(arrival.tableId, 'tableId 不许为空');
-  // 改名**不许动** tableId（动它就是把数据指到别的表去）。
-  // ⚠️ 本机 .env 指向测试 Base 时 tableId 会被环境变量覆盖，所以核的是**默认值那一行**。
+test('A3 schema 里**不再有**「到货验收」表；到货落点搬到「报货批次」的两列上', () => {
+  // ① 整段删除：Base 里已经没有任何名字含「到货」/「验收」的表（`tblvLOXKESNTbZ7v` 已不存在）。
+  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseArrival, undefined,
+    '「到货验收」表已被业务负责人整个删除 ⇒ schema 里不许再有这一段');
   const schemaSource = fs.readFileSync(path.join(SERVER_ROOT, 'src/config/v1BitableSchema.js'), 'utf8');
-  assert.match(
-    schemaSource,
-    /tableId: getEnv\('FEISHU_V1_PURCHASE_ARRIVAL_TABLE_ID', 'tblvLOXKESNTbZ7v'\)/,
-    'tableId 的默认值必须还是生产真表那个 tblvLOXKESNTbZ7v',
-  );
+  assert.equal(/FEISHU_V1_PURCHASE_ARRIVAL_TABLE_ID/.test(schemaSource), false,
+    '那张表的 tableId 环境变量也没有读取点了');
+  assert.equal(/tableName:\s*'到货验收'/.test(schemaSource), false, '不许换个位置把这张表映射回来');
 
-  // 其余四张：**没漂的不许动**（这次只改「到货验收」一张的表名）
+  // ② 落点：验收原话 / 确认状态 两个语义键搬到「报货批次」。
+  const batch = V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields;
+  assert.equal(batch.acceptanceText, '验收原话');
+  assert.equal(batch.confirmStatus, '确认状态');
+  assert.equal(batch.arrivalStatus, '到货状态', '到货状态照旧（这一条本来就有）');
+
+  // ③ ⚠️ 「到货日」「验收人」在真表上是**飞书自动字段**（更新时间 / 创建人）⇒ 不建映射、不写。
+  //    只读需要时才会加，加的时候也要认清"它是自动的"——现在两处都不需要。
+  assert.equal(Object.prototype.hasOwnProperty.call(batch, 'arrivalAt'), false,
+    '「到货日」= 更新时间（自动）→ 不许建映射（代码也不许写）');
+  assert.equal(Object.prototype.hasOwnProperty.call(batch, 'inspector'), false,
+    '「验收人」= 创建人（自动）→ 不许建映射（代码也不许写）');
+  assert.equal(Object.values(batch).includes('到货日'), false);
+  assert.equal(Object.values(batch).includes('验收人'), false);
+
+  // ④ 「采购入库」少了「采购到货批次」这一列。
+  assert.equal(Object.prototype.hasOwnProperty.call(V1_BITABLE_SCHEMA.tables.purchaseInbound.fields, 'batch'), false,
+    '「采购入库.采购到货批次」已被她整列删除 ⇒ 映射必须删');
+  assert.equal(Object.values(V1_BITABLE_SCHEMA.tables.purchaseInbound.fields).includes('采购到货批次'), false);
+
+  // ⑤ 其余三张：**没漂的不许动**（这次只动「到货验收」与「采购入库」各一列）。
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseReport.tableName, '信息填写');
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseRequest.tableName, '具体信息');
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.tableName, '报货批次');
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseInbound.tableName, '采购入库');
 });
 
-test('B4 「到货验收.图片」列已删：映射删除，且没有换个语义键把它映射回来', () => {
-  const fields = V1_BITABLE_SCHEMA.tables.purchaseArrival.fields;
-  assert.equal(
-    Object.prototype.hasOwnProperty.call(fields, 'images'), false,
-    '「图片」整列已被她从生产表删除 → images 映射必须删（闸门红的就是它）',
-  );
-  const mappedNames = Object.values(fields);
-  assert.equal(mappedNames.includes('图片'), false, '不许换个语义键把「图片」映射回来');
-  assert.equal(mappedNames.includes('鞋盒图片'), false, '「鞋盒图片」是更早一版的名字，同样不许出现');
-  // 剩下的 5 个映射 = 生产真表那 7 列里的业务列（到货日 / 报货批次号 / 验收人 / 确认状态 / 验收原话）
-  assert.deepEqual(fields, {
-    arrivalAt: '到货日',
-    batch: '报货批次号',
-    inspector: '验收人',
-    confirmStatus: '确认状态',
-    acceptanceText: '验收原话',
-  });
+test('B4 「到货验收.图片」的问题随表一起消失：全仓没有任何换名映射回来的痕迹', () => {
+  // 表都删了，`images` / `鞋盒图片` 这些历史映射当然也不许在别处复活。
+  const batchNames = Object.values(V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields);
+  assert.equal(batchNames.includes('图片'), false, '不许把「图片」映射到「报货批次」');
+  assert.equal(batchNames.includes('鞋盒图片'), false, '「鞋盒图片」是更早一版的名字，同样不许出现');
+  const allNames = Object.values(V1_BITABLE_SCHEMA.tables)
+    .flatMap((table) => Object.values(table.fields || {}));
+  assert.equal(allNames.includes('到货日'), false, '「到货日」是自动字段，不许在任何表里建映射');
 });
 
-test('B5 已删列的读写点全清：全仓不再读/写「到货验收.图片」（去注释后扫描）', () => {
-  const roots = [path.join(SERVER_ROOT, 'src'), path.join(SERVER_ROOT, 'public')];
+test('B5 「到货验收」表的读写点全清：全仓不再引用这个表键（去注释后扫描）', () => {
+  const roots = [
+    path.join(SERVER_ROOT, 'src'),
+    path.join(SERVER_ROOT, 'public'),
+    path.join(SERVER_ROOT, 'scripts'),
+  ];
   const files = roots.flatMap((root) => walk(root)).filter((file) => /\.(js|html)$/.test(file));
   const offenders = [];
   for (const file of files) {
@@ -146,14 +162,18 @@ test('B5 已删列的读写点全清：全仓不再读/写「到货验收.图片
       .replace(/^\s*\/\/.*$/gm, '')
       .replace(/([^:])\/\/.*$/gm, '$1');
     const rel = path.relative(SERVER_ROOT, file);
-    // 读：`purchaseArrival.fields.images`（唯一的读点原在 purchaseQueryService）
+    // ⚠️ 只认**表键**与表 ID 配置，不认同名的 service / 卡片 / 配置模块
+    //    （`purchaseArrivalConversationService` / `purchaseArrivalReconcileCard` /
+    //      `purchaseArrivalStatus` / `purchaseArrivalIntake` 都还在，它们是"到货核对"这条链路的名字）。
+    if (/'purchaseArrival'/.test(codeOnly)) offenders.push(`${rel}: 还在用 purchaseArrival 这个表键`);
+    if (/tables\.purchaseArrival\b/.test(codeOnly)) offenders.push(`${rel}: 还在从 schema 取这张表`);
+    if (/purchaseArrival\.fields\b/.test(codeOnly)) offenders.push(`${rel}: 还在读这张表的字段`);
+    if (/FEISHU_V1_PURCHASE_ARRIVAL_TABLE_ID/.test(codeOnly)) offenders.push(`${rel}: 还在读这张表的环境变量`);
     if (/fields\.images\b/.test(codeOnly)) offenders.push(`${rel}: 读 fields.images`);
-    // 写：`images: [...]`（附件值），或往 purchaseArrival 里塞 images 语义键
     if (/\bimages\s*:\s*\[/.test(codeOnly)) offenders.push(`${rel}: 往 images 写附件`);
-    // 投影/渲染：image_count（列没了还留着它 ⇒ 永远显示 0，误导）
     if (/\bimage_count\b/.test(codeOnly)) offenders.push(`${rel}: 还在用 image_count`);
   }
-  assert.deepEqual(offenders, [], `已删除的列不许再被读/写：${offenders.join('；')}`);
+  assert.deepEqual(offenders, [], `已删除的表不许再被读/写：${offenders.join('；')}`);
 });
 
 test('B6 ⭐ 同名不同物**不许被误删**：采购申请 PNG 出图器 `this.images.render` 还在', () => {
@@ -165,11 +185,14 @@ test('B6 ⭐ 同名不同物**不许被误删**：采购申请 PNG 出图器 `th
   assert.match(source, /await this\.images\.render\(/, '出图的调用点必须还在');
 });
 
-test('B7 工作台采购页：表名文案同步成「到货验收」· 并且不再有「图片数」列', () => {
+test('B7 工作台采购页：到货面板改读「报货批次」，列 = 到货状态 / 确认状态 / 验收原话', () => {
   const rel = 'public/workbench/features/purchase/index.js';
   const source = fs.readFileSync(path.join(SERVER_ROOT, rel), 'utf8');
-  assert.match(source, /到货验收情况/, '子标签要跟着表名走（AGENTS.md：表改名同步用户可见文案）');
+  assert.match(source, /到货验收情况/, '子标签保留（这是"这一批到货了没有、核对确认了没有"的面板）');
   assert.match(source, /没有匹配的到货验收记录/);
+  // 新列（到货信息的落点在批次行上）。
+  assert.match(source, /验收原话/);
+  assert.match(source, /到货状态/);
   // ⚠️ 去注释后再核"旧东西不许再出现"：**注释里要留着沿革**
   //（"原先这里有一列「图片数」…已删"），扫注释会把那段说明本身当成违规。
   const codeOnly = source
@@ -180,4 +203,24 @@ test('B7 工作台采购页：表名文案同步成「到货验收」· 并且�
   assert.equal(codeOnly.includes('没有匹配的采购到货记录'), false);
   assert.equal(codeOnly.includes('图片数'), false, '列都被删了，这一列留着只会永远显示 0');
   assert.equal(codeOnly.includes('image_count'), false);
+  // ⚠️ 不再显示「到货日」：批次行上那一列是飞书自动的**更新时间**，不是真的到货时刻
+  //    （写附件等动作也会刷新它）——拿它当"到货日"展示会误导。
+  assert.equal(codeOnly.includes('到货日'), false, '「到货日」是自动的更新时间 → 面板不展示它');
+  // ⚠️ 「到货验收」那张表已被删除 ⇒ 那张**表单**的快捷入口也不许再留在页面上（点了打不开）。
+  assert.equal(codeOnly.includes('登记到货与验收情况'), false, '被删表的表单入口要摘掉');
+});
+
+test('B8 工作台查询接口：到货面板的数据来自「报货批次」，不再有 purchaseArrival 读点', () => {
+  const rel = 'src/services/purchaseQueryService.js';
+  const source = fs.readFileSync(path.join(SERVER_ROOT, rel), 'utf8');
+  const codeOnly = source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+    .replace(/([^:])\/\/.*$/gm, '$1');
+  assert.equal(/'purchaseArrival'/.test(codeOnly), false, 'listPurchaseArrivals 必须改读「报货批次」');
+  assert.match(codeOnly, /gateway\.listAll\('purchaseOrderBatch'\)/);
+  // 投影出来的新字段（前端就靠这三个 + 批次号）。
+  for (const key of ['arrival_status', 'confirm_status', 'acceptance_text']) {
+    assert.ok(codeOnly.includes(key), `投影里必须有 ${key}`);
+  }
 });

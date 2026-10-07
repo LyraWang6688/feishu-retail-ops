@@ -7,9 +7,10 @@ const FORMS = [
   { label: '货品上新', desc: '新增货品基础信息', url: 'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnX0GlNcSOujePgWOLTTWr4m', icon: '🏷️' },
   // 采购申请表单的链接统一从 config/links.js 取（配置先行：换链接只改那一个文件）。
   { label: '信息填写', desc: '提交采购申请或采购退货', url: PURCHASE_REQUEST_FORM_URL, icon: '📦' },
-  // ⚠️ 2026-10-05：「到货验收」表单原先的说明是"上传到货鞋盒图片并触发识别"——拍照识别链路已退场，
-  // 那个表单现在只是**登记到货**（到货日 / 验收原话 / 确认状态）。链接不变，改的是说明。
-  { label: '到货验收', desc: '登记到货与验收情况', url: 'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnVzhSlH9tLIxMUSfVjwF1se', icon: '✅' },
+  // ⚠️ 2026-10-07 晚：原先这里还有一张「到货验收」表单卡（"登记到货与验收情况"）——
+  //    那张**表已被业务负责人整个删除**（飞书里表一删，表单跟着不可用），
+  //    而且新口径下到货不用表单登记：**在采购群那个话题里说一句**就行。
+  //    ⇒ 这张卡删掉（留着一个打不开的表单链接比少一个入口更糟）。
 ];
 
 const $ = (container, selector) => container.querySelector(selector);
@@ -45,14 +46,18 @@ function renderRequests(container, rows) {
 function renderArrivals(container, rows) {
   // ⚠️ 2026-10-05：原先这里还有「识别状态」「失败原因」两列和「失败记录」指标——
   // 识别状态 / 识别失败原因两个字段已被业务负责人从生产表删除、拍照识别链路整体退场，
-  // 接口也不再返回这两项。到货这条链路现在只剩下"登记 + 确认状态"。
+  // 接口也不再返回这两项。
   // ⚠️ 2026-10-07 晚：表改名「到货验收」（子标签跟着改），并且**「图片」整列被她删掉** ——
-  // 原先这里还有一列「图片数」（读接口的 image_count）**一并删掉**：
-  // 列都不存在了，留着这一列只会永远显示 0，比不显示更误导（接口也不再返回 image_count）。
+  // 原先这里还有一列「图片数」（读接口的 image_count）**一并删掉**。
+  // ⭐ 2026-10-07 晚（到货落点大改）：**「到货验收」表已被她整个人删除**，
+  //    到货信息（验收原话 / 确认状态）现在写在**「报货批次」那一行**上
+  //    ⇒ 这个面板改读「报货批次」，列换成 报货批次号 / 到货状态 / 确认状态 / 验收原话。
+  //    刻意**不再显示「到货日」**：批次行上那一列是飞书自动的「更新时间」，
+  //    不是真的到货时刻（写附件等动作也会刷新它），拿它当"到货日"会误导。
   $(container, '#purchase-arrival-subpanel').innerHTML = `
-    <div class="summary"><div class="metric"><span>当前查询记录</span><strong>${rows.length}</strong></div><div class="metric"><span>待确认</span><strong>${rows.filter((row) => row.confirm_status === '待确认').length}</strong></div></div>
+    <div class="summary"><div class="metric"><span>当前查询记录</span><strong>${rows.length}</strong></div><div class="metric"><span>还没核对确认</span><strong>${rows.filter((row) => !row.confirm_status).length}</strong></div></div>
     <div class="filters"><input data-filter="arrival-batch" placeholder="输入报货批次号"><select data-filter="arrival-status"><option value="">全部确认状态</option><option>待确认</option><option>已确认</option><option>已入库</option><option>入库失败</option><option>已取消</option></select><button class="btn btn-primary" type="button" data-search="arrivals">查询</button></div>
-    <div class="table-wrap mobile-card-table"><table><thead><tr><th>报货批次号</th><th>到货日</th><th>确认状态</th></tr></thead><tbody>${rows.map((row) => `<tr><td data-label="报货批次号"><span class="cell-value">${escapeHtml(row.batch_no || '-')}</span></td><td data-label="到货日"><span class="cell-value">${escapeHtml(dateTime(row.arrival_at))}</span></td><td data-label="确认状态"><span class="cell-value tag ${statusClass(row.confirm_status)}">${escapeHtml(row.confirm_status || '-')}</span></td></tr>`).join('')}</tbody></table></div>
+    <div class="table-wrap mobile-card-table"><table><thead><tr><th>报货批次号</th><th>到货状态</th><th>确认状态</th><th>验收原话</th></tr></thead><tbody>${rows.map((row) => `<tr><td data-label="报货批次号"><span class="cell-value">${escapeHtml(row.batch_no || '-')}</span></td><td data-label="到货状态"><span class="cell-value tag ${statusClass(row.arrival_status)}">${escapeHtml(row.arrival_status || '-')}</span></td><td data-label="确认状态"><span class="cell-value tag ${statusClass(row.confirm_status)}">${escapeHtml(row.confirm_status || '-')}</span></td><td data-label="验收原话"><span class="cell-value">${escapeHtml(row.acceptance_text || '-')}</span></td></tr>`).join('')}</tbody></table></div>
     ${rows.length ? '' : '<p class="empty">没有匹配的到货验收记录。</p>'}`;
 }
 
