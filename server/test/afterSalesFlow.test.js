@@ -59,20 +59,29 @@ const detailRow = ({ id, orderId, productId, soldAt, sizeRecordId, amount = 230 
   },
 });
 
-// 两笔可退的 6035 黑（39 码最近、38 码更早）+ 一笔 1366-33 黑（1 条就命中）。
+// 两笔可退的 6035 黑（39 码最近、38 码更早）+ 一笔 1366-33 黑（1 条就命中）
+// + 一笔 6C98012-15L（业务负责人**真机那句**的货号，「同款换码」用例要按逐字原话跑）。
 const SALES = {
-  products: [productRow('p1', '6035', '黑'), productRow('p2', '1366-33', '黑')],
+  // ⚠️ 6C98012-15L 的颜色留空：她真机原话里就没说颜色（"15L" 是货号本身的一部分）。
+  products: [productRow('p1', '6035', '黑'), productRow('p2', '1366-33', '黑'),
+    productRow('p3', '6C98012-15L', '')],
   entries: [
     entryRow({ id: 'e2', orderNo: 'XSD-20261004-0001', recordedAt: daysAgo(1) }),
     entryRow({ id: 'e_old', orderNo: 'XSD-20261002-0001', recordedAt: daysAgo(3) }),
     entryRow({ id: 'e_single', orderNo: 'XSD-20261003-0001', recordedAt: daysAgo(2) }),
+    entryRow({ id: 'e_real', orderNo: 'XSD-20261003-0002', recordedAt: daysAgo(2) }),
   ],
   details: [
     detailRow({ id: 'd_new', orderId: 'e2', productId: 'p1', soldAt: daysAgo(1), sizeRecordId: 'size_39' }),
     detailRow({ id: 'd_old', orderId: 'e_old', productId: 'p1', soldAt: daysAgo(3), sizeRecordId: 'size_38' }),
     detailRow({ id: 'd_single', orderId: 'e_single', productId: 'p2', soldAt: daysAgo(2), sizeRecordId: 'size_40' }),
+    // 她原话里没说尺码 ⇒ 明细上记的是 40 码；"同款换码"要把这一双换到 41 码。
+    detailRow({ id: 'd_real', orderId: 'e_real', productId: 'p3', soldAt: daysAgo(2),
+      sizeRecordId: 'size_40', amount: 230 }),
   ],
-  sizes: { size_38: 38, size_39: 39, size_40: 40 },
+  // size_41 = 同款换码要换到的那个新尺码；size_42 = "换另一双"那条用例的新尺码
+  //（「尺码管理」里得有它，换货才落得下）。
+  sizes: { size_38: 38, size_39: 39, size_40: 40, size_41: 41, size_42: 42 },
 };
 
 const salesGateway = () => ({
@@ -218,9 +227,12 @@ const referencesStub = () => ({
     return { recordId, record: { record_id: recordId } };
   },
   resolveProduct: async ({ itemNo, color }) => {
+    // ⭐ 6C98012-15L = 她真机那句的货号（同款换码用例用逐字原话跑）；颜色她没说 ⇒ 留空。
     const record = itemNo === '1366-33'
       ? { record_id: 'p2', fields: { 货号: '1366-33', 颜色: color || '黑', 单价: 300 } }
-      : { record_id: 'p1', fields: { 货号: itemNo, 颜色: color || '黑', 单价: 230 } };
+      : itemNo === '6C98012-15L'
+        ? { record_id: 'p3', fields: { 货号: '6C98012-15L', 颜色: color || '', 单价: 230 } }
+        : { record_id: 'p1', fields: { 货号: itemNo, 颜色: color || '黑', 单价: 230 } };
     return { recordId: record.record_id, record, ambiguousCount: 1 };
   },
 });
@@ -1175,4 +1187,116 @@ test('缺省出口③：非群任务走完整编排（「我要退货」）→ �
   assert.equal(result.reason, 'no_item_info', '还是照样问她货号（本地编排没变）');
   assert.match(logs.events('lark.private_chat.send_skipped').join('\n'), /"kind":"text"/,
     '那一句追问没有去处 → 记 skip');
+});
+
+// ---------------------------------------------------------------------------
+// ⭐ 换货的两种情形（业务负责人 2026-10-07 的口径：
+//    「1. 换尺码（尺码不合适）  2. 换另一双鞋（这双鞋可能不太喜欢，又换了另一双）」）
+//
+// 真机事实（2026-10-07 23:06）：「6C98012-15L 换成41码」被回了一句
+// 「换成哪一双？发我货号和颜色。」——根因是接线层的判据写死成"必须有 new_item_no"，
+// 而**"换尺码"本来就不该有新货号**（同款换码，货号还是原那双）。
+// 这三条用例把两种换货 + "什么都没说"三档都钉住。
+// ---------------------------------------------------------------------------
+
+test('⭐ 同款换码（业务负责人真机那句）：「6C98012-15L 换成41码」→ 不再问"换成哪一双"，直接出确认卡片', async () => {
+  const calls = [];
+  const { flow, store, cards, texts, cardAction } = build({
+    executor: { execute: async (request) => { calls.push(request); return {}; } },
+  });
+  const task = await newTask(store, { task_id: 't_same_item', original_text: '6C98012-15L 换成41码' });
+
+  await flow.handle(task, {
+    intent: 'exchange', action: 'exchange',
+    item_no: '6C98012-15L', color: '', size: '',
+    // 同款换码：模型只给得出 new_size（新货号/新颜色本来就该留空）
+    new_item_no: '', new_color: '', new_size: 41,
+  });
+
+  assert.deepEqual(texts, [], '信息齐了就不该再问她「换成哪一双」');
+  assert.equal(cards.all.length, 1, '直接出确认卡片');
+
+  const plan = (await store.get('t_same_item')).after_sales_plan;
+  assert.equal(plan.action, 'exchange');
+  // 换的就是**原明细那一双**换了个码 ⇒ 货号/颜色取原明细，尺码取她说的 41
+  assert.deepEqual(plan.new_lines.map((line) => [line.productId, line.sizeId, line.label]),
+    [['p3', 'size_41', '6C98012-15L 41码']]);
+  // 同一双鞋换个码 ⇒ 成交金额 = 原明细的成交金额（230）、差价 0（不动钱）
+  assert.deepEqual(plan.new_lines.map((line) => line.amount), [230]);
+  assert.equal(plan.diff_amount, 0);
+  assert.equal(plan.requires_settlement, false, '同款换码不动钱 ⇒ 不用她说钱怎么走');
+  assert.equal(plan.settlement, null);
+  assert.match(cardText(cards.all[0]), /换货（换成 6C98012-15L 41码）/);
+  assert.match(cardText(cards.all[0]), /钱：不动钱/);
+
+  await cardAction({ action: AFTER_SALES_CARD_ACTIONS.CONFIRM, draft_id: 't_same_item' });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].newLines, [{ productId: 'p3', sizeId: 'size_41', amount: 230 }]);
+  assert.equal(calls[0].settlement, null);
+  assert.equal(calls[0].diffAmount, 0);
+});
+
+test('同款换码：她只说了新颜色（没有新货号）→ 也算"有信息"，缺尺码就只问尺码', async () => {
+  const { flow, store, cards, texts } = build();
+  const task = await newTask(store, { task_id: 't_same_item_color', original_text: '1366-33 换个棕色的' });
+
+  await flow.handle(task, {
+    intent: 'exchange', action: 'exchange', item_no: '1366-33', color: '黑', size: 40,
+    new_item_no: '', new_color: '棕', new_size: '',
+  });
+
+  assert.deepEqual(cards.all, [], '还缺尺码 → 先不出卡片');
+  assert.deepEqual(texts, ['换的那双 1366-33棕 多大码？'], '只问缺的那一项，不问"换成哪一双"');
+  assert.equal((await store.get('t_same_item_color')).status, AFTER_SALES_TASK_STATUS.ASKING);
+});
+
+test('换另一双：新货号 / 新颜色 / 新尺码各就各位（这条路一个字没改）', async () => {
+  const { flow, store, cards, texts } = build();
+  const task = await newTask(store, { task_id: 't_other_shoe',
+    original_text: '把 1366-33 黑 40 换成 6035 黑 42码' });
+
+  await flow.handle(task, {
+    intent: 'exchange', action: 'exchange', item_no: '1366-33', color: '黑', size: 40,
+    new_item_no: '6035', new_color: '黑', new_size: 42,
+  });
+
+  assert.deepEqual(texts, [], '信息齐了 → 不许再问');
+  const plan = (await store.get('t_other_shoe')).after_sales_plan;
+  assert.deepEqual(plan.new_lines.map((line) => [line.productId, line.sizeId, line.label]),
+    [['p1', 'size_42', '6035黑 42码']]);
+  assert.match(cardText(cards.all[0]), /换货（换成 6035黑 42码）/);
+});
+
+test('换货：新货号 / 新颜色 / 新尺码三者全空（她只说"换一双"）→ 仍然追问，不瞎猜（文案逐字）', async () => {
+  const { flow, store, cards, texts } = build();
+  const task = await newTask(store, { task_id: 't_ask_all_empty', original_text: '把 1366-33 黑 40 换一双' });
+
+  await flow.handle(task, {
+    intent: 'exchange', action: 'exchange', item_no: '1366-33', color: '黑', size: 40,
+  });
+
+  assert.deepEqual(cards.all, [], '什么都没说就不许出卡片（更不许猜一双给她）');
+  assert.equal(texts.length, 1);
+  assert.equal(texts[0], '换成哪一双？发我货号，或者只说新尺码也行。');
+  assert.equal((await store.get('t_ask_all_empty')).status, AFTER_SALES_TASK_STATUS.ASKING);
+});
+
+// ⑥ 哨兵：退货那条路一个字都不许被这次改动带偏（她只说"退货"+钱怎么走 → 照旧出卡片）。
+test('⑥ 哨兵：退货（return）不受换货改动影响 —— 货号颜色定位、差价、回库状态照旧', async () => {
+  const { flow, store, cards, texts } = build();
+  const task = await newTask(store, { task_id: 't_return_sentinel',
+    original_text: '退那双 1366-33 黑，退我现金' });
+
+  await flow.handle(task, {
+    intent: 'return', action: 'return', item_no: '1366-33', color: '黑', settlement: 'cash',
+  });
+
+  assert.deepEqual(texts, [], '退货信息齐了，不用追问');
+  assert.equal(cards.all.length, 1);
+  const plan = (await store.get('t_return_sentinel')).after_sales_plan;
+  assert.equal(plan.action, 'return');
+  assert.deepEqual(plan.new_lines, [], '退货没有"换给她的那一双"');
+  assert.equal(plan.diff_amount, -230, '她没说自己退多少 → 建议值 = 原价退回（负）');
+  assert.equal(plan.settlement, 'cash');
+  assert.equal(plan.restock_state, '门盒', '她没说回库状态 → 默认门盒');
 });

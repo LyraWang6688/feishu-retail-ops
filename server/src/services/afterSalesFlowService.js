@@ -41,6 +41,8 @@ const {
   resolveAfterSalesRestockState,
   DEFAULT_AFTER_SALES_RESTOCK_STATE,
   afterSalesContextId,
+  // 「换给她的那一双」缺信息时的问法（用户可见文案一律在 config，见那里的说明）。
+  AFTER_SALES_ASK_TEXTS,
 } = require('../config/afterSalesFlow');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { V1ReferenceResolver } = require('./v1ReferenceResolver');
@@ -316,7 +318,9 @@ class AfterSalesFlowService {
 
     const newLines = [];
     if (spec.acceptsNewLines) {
-      const outgoing = await this.resolveOutgoing(parsed);
+      // ⭐ 把**已定位到的那一笔**（原明细）一起交过去：她说的是"同款换码"时，
+      //    换给她的那一双就是**原明细那一双**换个尺码 —— 货号/颜色/金额都从它身上取。
+      const outgoing = await this.resolveOutgoing(parsed, candidate);
       if (!outgoing.ok) {
         await this.ask(task, outgoing.message);
         return { ok: false, reason: outgoing.reason };
@@ -405,13 +409,46 @@ class AfterSalesFlowService {
    * 换货/赔货的"新的一双"：货号 + 颜色 + 尺码 + 成交金额。
    * 货品走既有 V1ReferenceResolver（和采购/销售同一套匹配），尺码走共享的尺码解析。
    * 缺哪一项就明确问她要哪一项——不拿标价猜、不拿第一个尺码顶。
+   *
+   * ⭐ 两种换货（业务负责人 2026-10-07：「1. 换尺码  2. 换另一双鞋」）：
+   *   · **换尺码（同款换码）**：`new_item_no`/`new_color` 留空（也可以等于原货号）——换给她的
+   *     那一双就是**原明细那一双**换个码 ⇒ 货号/颜色/金额都从**原明细**（`original`）上取；
+   *     **必须有 `new_size`**。
+   *   · **换另一双**：`new_item_no` = 新货号（+ new_color / new_size / new_amount）。
+   * ⇒ 判据因此是"**三者任一有值**就算齐"，**只有三者全空**才回一句问她（她真的什么都没说）。
+   *   ⚠️ 这不是放宽成"猜"：一个字段都不替她填（金额也不推算，见下）；
+   *      "取原明细的货号/颜色/金额"只发生在**她没给新货号**时，而那正是"同款换码"的定义
+   *      （提示词第 13 条逐字写着，见 doubaoService 的规则 13）。
+   *
+   * @param {object} parsed   解析结果（new_item_no / new_color / new_size / new_amount）
+   * @param {object} original 已定位到的**原明细**（candidate：item_no / color / actual_amount）
    */
-  async resolveOutgoing(parsed = {}) {
-    const itemNo = String(parsed.new_item_no || '').trim();
-    const color = String(parsed.new_color || '').trim();
-    if (!itemNo) return { ok: false, reason: 'need_new_item', message: '换成哪一双？发我货号和颜色。' };
-    const size = positiveInteger(parsed.new_size);
-    if (!size) return { ok: false, reason: 'need_new_size', message: `换的那双 ${itemNo}${color} 多大码？` };
+  async resolveOutgoing(parsed = {}, original = {}) {
+    const spokenItemNo = String(parsed.new_item_no || '').trim();
+    const spokenColor = String(parsed.new_color || '').trim();
+    const spokenSize = positiveInteger(parsed.new_size);
+    // 三者全空 = 她没提"换给她的那一双"的**任何**信息 → 回一句问她（只有这一档才问）。
+    if (!spokenItemNo && !spokenColor && !spokenSize) {
+      return { ok: false, reason: 'need_new_item', message: AFTER_SALES_ASK_TEXTS.needNewItem };
+    }
+    // 同款换码 = 她**没给新货号**，或者给的就是**原货号**
+    //（提示词第 13 条逐字写着：换尺码时 new_item_no 可以留空、**也可以等于原货号**）
+    // ⇒ 货号/颜色/金额都从**原明细**上取（这不是"拿别的字段硬填"：换的就是同一双鞋）。
+    const originalItemNo = String(original.item_no || '').trim();
+    const originalColor = String(original.color || '').trim();
+    const sameItem = !spokenItemNo
+      || (Boolean(originalItemNo) && spokenItemNo.toLowerCase() === originalItemNo.toLowerCase());
+    const itemNo = spokenItemNo || originalItemNo;
+    const color = spokenColor || (sameItem ? originalColor : '');
+    if (!itemNo) {
+      // 原明细连货号都没有（异常形状），而她也没给新货号 → 还是那句"发我货号"。
+      return { ok: false, reason: 'need_new_item', message: AFTER_SALES_ASK_TEXTS.needNewItem };
+    }
+    const size = spokenSize;
+    if (!size) {
+      return { ok: false, reason: 'need_new_size',
+        message: AFTER_SALES_ASK_TEXTS.needNewSize({ itemNo, color }) };
+    }
     if (typeof this.references?.resolveProduct !== 'function') {
       throw new Error('售后需要货品解析能力（references.resolveProduct）才能处理换货/赔货');
     }
@@ -420,19 +457,31 @@ class AfterSalesFlowService {
       product = await this.references.resolveProduct({ itemNo, color });
     } catch (error) {
       return { ok: false, reason: 'new_product_not_found',
-        message: `货品表里找不到 ${itemNo}${color}，核对一下货号。` };
+        message: AFTER_SALES_ASK_TEXTS.newProductNotFound({ itemNo, color }) };
     }
     const sizeEntry = await this.getSizeReferences().resolveByNumber(size);
-    // 成交金额：她说多少就多少；没说时用「货品信息.单价」做建议值（卡片上她会核对）。
-    // 一个都拿不到就问她——执行器要求出货明细必须有正数金额，猜不得。
+    // 成交金额：她说多少就多少（`new_amount`）；
+    //   · 同款换码（她没给新货号 / 给的就是原货号）→ 用**原明细的成交金额**：同一双鞋换个码、
+    //     钱不变（差价 0、不动钱）。⚠️ 这不是"用标价/原价**推算**"——原明细的成交金额是
+    //     **这一笔的既有事实**，取它才不会凭空造出一个差价来；原明细没有成交金额时
+    //     **绝不拿标价顶**，直接问她（`needNewAmount`）。
+    //   · 换另一双 → 用「货品信息.单价」做建议值（卡片上她会核对，这是改动前的既有口径）。
     let amount = optionalMoney(parsed.new_amount);
+    if (amount == null && sameItem) {
+      amount = optionalMoney(original.actual_amount);
+      if (amount == null) {
+        return { ok: false, reason: 'need_new_amount',
+          message: AFTER_SALES_ASK_TEXTS.needNewAmount({ itemNo, color }) };
+      }
+    }
     if (amount == null) {
       const priceField = this.references?.gateway?.table?.('product')?.fields?.price;
       const price = priceField ? Number(textValue(product.record?.fields?.[priceField])) : NaN;
       amount = Number.isFinite(price) && price > 0 ? round2(price) : null;
     }
     if (amount == null) {
-      return { ok: false, reason: 'need_new_amount', message: `换的那双 ${itemNo}${color} 多少钱？` };
+      return { ok: false, reason: 'need_new_amount',
+        message: AFTER_SALES_ASK_TEXTS.needNewAmount({ itemNo, color }) };
     }
     return {
       ok: true,
