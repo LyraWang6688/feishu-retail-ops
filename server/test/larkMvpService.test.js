@@ -1391,20 +1391,25 @@ const productInfoResolver = (products) => ({
   },
 });
 
-const runSaleScenario = async ({ taskId, text, rows, parsed, products = [] }) => {
+const runSaleScenario = async ({ taskId, text, rows, parsed, products = [], productIndexRows = null }) => {
   const { normalizeSalesResult } = require('../src/services/doubaoService');
   const store = makeStore();
   const cards = [];
   const messages = [];
-  const baseGateway = liveInventoryGateway(rows);
+  const baseGateway = liveInventoryGateway(rows, { products: productIndexRows || [] });
+  // `productIndexRows` 传了才把「缺失信息说明」映射上：那样 `loadProductIndex` 才会真的
+  // 整表读一次「货品信息」（**生产就是这么配的**，见 v1BitableSchema）。
+  // 「这个货号有没有建档」那道判据的**正证据**正是这份索引 —— 不传 = 模拟"读不到货品信息"。
+  const productTable = productIndexRows
+    ? { tableId: 'tbl_product', fields: { number: '编号', itemNo: '货号', color: '颜色',
+        completeness: '缺失信息说明', sampleImage: '样例图' } }
+    : { tableId: 'tbl_product', fields: { number: '编号', itemNo: '货号', color: '颜色' } };
   const service = new LarkMvpService({
     client: {},
     gateway: {
       ...baseGateway,
       // 解析 A 读的是「货品信息」，颜色字段在这里声明。
-      table: (key) => (key === 'product'
-        ? { tableId: 'tbl_product', fields: { number: '编号', itemNo: '货号', color: '颜色' } }
-        : baseGateway.table(key)),
+      table: (key) => (key === 'product' ? productTable : baseGateway.table(key)),
       validateTables: async () => [],
       create: async () => ({ recordId: `entry_${taskId}` }),
       update: async () => undefined,
@@ -1692,6 +1697,308 @@ test('非群任务（遗留 JSON）走确认卡片路径 → **不发** + 记 `s
   assert.match(logs, /"reason":"no_group_context"/);
   assert.match(logs, /"task_id":"sale_legacy_no_chat"/);
   assert.doesNotMatch(logs, /lark\.sales\.card\.sent/, '没发出去就不许记「已发出」');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 判据 A′：A（读「货品信息」）之后 —— **这个货号到底有没有建档**（业务负责人 2026-10-07）
+//
+// 她的口径（逐字）：「对，所以三种交易类型，在看完货品信息之后，如果在货架上没有找到，
+// 都应该给到这个提示，而不是说等到 B」
+//
+// 判据的**正证据**口径：只有「「货品信息」整表读成功」＋「里面确实没有这个货号」才拦；
+// 读不到就不下结论、不拦单（AGENTS.md 第 17 条）。
+// ⚠️ 与「货号找到了、只是齐备公式说缺字段」是**两件事**：后者仍然不拦（见 AC-3 那条用例）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+// 「货品信息」里的一条记录（判据读的整表索引）。
+const productIndexRow = (itemNo, color, recordId, completeness = '齐备') => ({
+  record_id: recordId,
+  fields: { 货号: itemNo, 颜色: [{ text: color }], 缺失信息说明: completeness, 样例图: [{ file_token: 't' }] },
+});
+
+const REGISTRATION_TEXT = (itemNo) =>
+  `货品信息里没有 ${itemNo}，请先在「货品信息」建档或核对货号，再发一次～`;
+
+test('三种交易类型：货号压根没建档 → 都拦、都不出卡片、都回那句可配文案（现货/未付 的 B 照跑，预付的 B 照不跑）', async () => {
+  // 这一条同时钉三件事：
+  //   ① A′ 判据在 A 之后、**三种交易类型都走**（预付跳过 B 也过得到）；
+  //   ② 现货 / 未付 的解析 B **一个字没变**（这里特意让库存里有这双鞋，
+  //      以证明拦住它的**不是** B，而是新判据 —— 真机上就是 B 兜不住的那个洞）；
+  //   ③ 判据的结论来自「货品信息」这张表（索引里只有别的货号）。
+  for (const [tradeType, slug, expectStockLookups] of [
+    ['现货', 'cash', 1], ['未付', 'unpaid', 1], ['预付', 'prepaid', 0],
+  ]) {
+    const { task, cards, messages, stockLookups } = await runSaleScenario({
+      taskId: `sale_unregistered_${slug}`,
+      text: 'B26002-52 37码，210微信',
+      // 实时库存里**有**这一双：现货 / 未付 不会因为"没货"被拦，只能是新判据拦的。
+      rows: [liveRow({ itemNo: 'B26002-52', color: '黑', size: 37, productRecordId: 'live_p37' })],
+      // 解析 A 找不到（货品信息里压根没这个货号）；整表索引读成功、里面也没有它。
+      products: [],
+      productIndexRows: [productIndexRow('8088-26', '棕', 'p_other')],
+      parsed: {
+        intent: 'sale', trade_type: tradeType,
+        items: [{ item_no: 'B26002-52', size: 37, quantity: 1, actual_amount: 210 }],
+        payments: tradeType === '预付' ? [{ amount: 100, method: '微信' }] : [{ amount: 210, method: '微信' }],
+        agreed_total: 210,
+        ...(tradeType === '预付' ? { owed: 110 } : {}),
+      },
+    });
+
+    assert.equal(task.status, 'needs_info', `${tradeType}：没建档要当缺项`);
+    assert.equal(cards.length, 0, `${tradeType}：没建档就不许发确认卡片`);
+    assert.deepEqual(messages, [REGISTRATION_TEXT('B26002-52')], `${tradeType}：回那句可配文案`);
+    assert.ok(task.draft.missing_fields.includes(REGISTRATION_TEXT('B26002-52')),
+      `${tradeType}：缺项里要看得见是哪个货号`);
+    assert.equal(stockLookups, expectStockLookups,
+      `${tradeType}：解析 B 的既有行为一个字没改（现货/未付 照跑、预付照不跑）`);
+  }
+});
+
+test('一单多双、只缺其中一双 → 只报那一双的货号，整单仍被拦', async () => {
+  const { task, cards, messages } = await runSaleScenario({
+    taskId: 'sale_unregistered_one_of_two',
+    text: '8088-26 38码一双210；B26002-52 37码一双228，共438微信',
+    rows: [
+      liveRow({ itemNo: '8088-26', color: '棕', size: 38, productRecordId: 'p_8088' }),
+      liveRow({ itemNo: 'B26002-52', color: '黑', size: 37, productRecordId: 'p_b26002' }),
+    ],
+    products: [productRow('8088-26', '棕', 'p_8088')],
+    productIndexRows: [productIndexRow('8088-26', '棕', 'p_8088')],
+    parsed: {
+      intent: 'sale', trade_type: '现货',
+      items: [
+        { item_no: '8088-26', size: 38, quantity: 1, actual_amount: 210 },
+        { item_no: 'B26002-52', size: 37, quantity: 1, actual_amount: 228 },
+      ],
+      payments: [{ amount: 438, method: '微信' }], agreed_total: 438,
+    },
+  });
+
+  assert.equal(task.status, 'needs_info');
+  assert.equal(cards.length, 0, '整单被拦：缺一双也不许先出卡片');
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0], REGISTRATION_TEXT('B26002-52'), '按货号粒度：只报缺的那一双');
+  assert.doesNotMatch(messages[0], /8088-26/, '已建档的那一双不该出现在这句话里');
+  assert.equal(task.draft.items[0].product_record_id, 'p_8088', '另一双照旧解析（没被牵连）');
+});
+
+test('货号在货品信息里、只是齐备公式说缺字段 → 仍然不拦、正常出确认卡片（「缺资料不拦」）', async () => {
+  // 「没建档要拦」与「缺资料不拦」的**分界**：这条用例钉住后者一个字没变 ——
+  // 齐备公式说缺「成本」只进 `product_info_gaps`（挂已入账终态卡），**不阻塞录单**。
+  let result;
+  const logs = await captureLogs(async () => {
+    result = await runSaleScenario({
+      taskId: 'sale_registered_but_incomplete',
+      text: '66356 42码，99微信',
+      rows: [liveRow({ itemNo: '66356', color: '黑', size: 42, productRecordId: 'prod_gap' })],
+      products: [productRow('66356', '黑', 'prod_gap')],
+      productIndexRows: [productIndexRow('66356', '黑', 'prod_gap', '成本')],
+      parsed: {
+        intent: 'sale', trade_type: '现货',
+        items: [{ item_no: '66356', size: 42, quantity: 1, actual_amount: 99 }],
+        payments: [{ amount: 99, method: '微信' }], agreed_total: 99,
+      },
+    });
+  });
+
+  assert.equal(result.task.status, 'ready_to_confirm', '缺资料不拦单（她明确过）');
+  assert.equal(result.cards.length, 1, '照常出确认卡片');
+  assert.deepEqual(result.messages, [], '没有缺项就不该回"请补充"');
+  // 缺口照算、结构没动（渲染那一段在 productInfoGapsCardPlacement.test.js 里钉着）。
+  assert.deepEqual(result.task.draft.product_info_gaps.map((gap) => gap.missing), [['成本']]);
+  assert.doesNotMatch(logs, /lark\.sales\.product_missing\.blocked/, '没建档才拦；缺资料不许记拦截事件');
+});
+
+test('配品不走「货号建档」判据：不去货品信息里找它、也不因此多一条缺项', async () => {
+  const { normalizeSalesResult } = require('../src/services/doubaoService');
+  const store = makeStore();
+  const cards = [];
+  const messages = [];
+  const base = liveInventoryGateway([]);
+  let resolveProductCalls = 0;
+  const service = new LarkMvpService({
+    client: {},
+    gateway: {
+      ...base,
+      // 「货品信息」映射齐全（索引会真的读一次），但表里**没有**任何鞋的行 ——
+      // 配品要是被拉去这张表里找，就会凭空多一条"没建档"。
+      table: (key) => {
+        if (key === 'product') {
+          return { tableId: 'tbl_product', fields: { number: '编号', itemNo: '货号', color: '颜色',
+            completeness: '缺失信息说明', sampleImage: '样例图' } };
+        }
+        if (key === 'accessory') return { tableId: 'tbl_acc', fields: { name: '名称', category: '种类' } };
+        return base.table(key);
+      },
+      listAll: async (key) => (key === 'accessory'
+        ? [{ record_id: 'acc_0', fields: { 名称: '39元腰带', 种类: ['腰带'] } }]
+        : []),
+      validateTables: async () => [],
+      create: async () => ({ recordId: 'entry_acc' }),
+      update: async () => undefined,
+    },
+    references: { resolveProduct: async () => { resolveProductCalls += 1; return {}; } },
+    posting: {},
+    recognizer: {
+      parseSalesText: async () => normalizeSalesResult({ intent: 'sale', trade_type: '现货',
+        items: [{ kind: 'accessory', accessory_name: '39元腰带', quantity: 1, actual_amount: 39 }],
+        payments: [{ amount: 39, method: '微信' }], agreed_total: 39 }),
+    },
+    store,
+  });
+  service.sendTaskCard = async (_task, card) => { cards.push(card); return 'card_acc'; };
+  service.sendTaskText = async (_task, message) => messages.push(message);
+  await store.create({ task_id: 'sale_acc_guard', chat_type: 'group', chat_id: GROUP_CHAT_ID, type: 'sale',
+    status: 'received', message_id: 'om_acc_guard', sender_open_id: 'ou_1', sent_at: Date.now(),
+    original_text: '39元腰带一条，微信39' });
+
+  await service.processSalesTask('sale_acc_guard');
+
+  const task = await store.get('sale_acc_guard');
+  assert.equal(task.draft.items[0].accessory_record_id, 'acc_0', '配品照旧按配品表匹配');
+  assert.deepEqual(task.draft.missing_fields, [], '不许因为判据凭空多一条缺项');
+  assert.equal(cards.length, 1, '配品照常出确认卡片');
+  assert.equal(resolveProductCalls, 0, '配品**不去**「货品信息」里找货号');
+  assert.deepEqual(messages, []);
+});
+
+test('现货单：货号已建档 + 有货 → 照旧正常出确认卡片（既有链路不破，也不记拦截事件）', async () => {
+  let result;
+  const logs = await captureLogs(async () => {
+    result = await runSaleScenario({
+      taskId: 'sale_cash_registered_with_stock',
+      text: '26002-52 37码，210微信',
+      rows: [liveRow({ itemNo: '26002-52', color: '白', size: 37, productRecordId: 'live_p37' })],
+      products: [productRow('26002-52', '黑', 'p37')],
+      productIndexRows: [productIndexRow('26002-52', '黑', 'p37')],
+      parsed: {
+        intent: 'sale', trade_type: '现货',
+        items: [{ item_no: '26002-52', size: 37, quantity: 1, actual_amount: 210 }],
+        payments: [{ amount: 210, method: '微信' }], agreed_total: 210,
+      },
+    });
+  });
+
+  assert.equal(result.stockLookups, 1, '现货照旧查库存');
+  assert.equal(result.task.status, 'ready_to_confirm');
+  assert.equal(result.cards.length, 1);
+  assert.equal(result.task.draft.items[0].product_record_id, 'live_p37', 'B 认得出来时仍以 B 为准');
+  assert.doesNotMatch(logs, /lark\.sales\.product_missing\.blocked/);
+});
+
+test('拦截时那条正向证据日志在：lark.sales.product_missing.blocked 带 task_id / item_no / size', async () => {
+  let result;
+  const logs = await captureLogs(async () => {
+    result = await runSaleScenario({
+      taskId: 'sale_registration_log',
+      text: 'B26002-52 37码，210微信',
+      rows: [],
+      products: [],
+      productIndexRows: [productIndexRow('8088-26', '棕', 'p_other')],
+      parsed: {
+        intent: 'sale', trade_type: '预付',
+        items: [{ item_no: 'B26002-52', size: 37, quantity: 1, actual_amount: 210 }],
+        payments: [{ amount: 100, method: '微信' }], agreed_total: 210, owed: 110,
+      },
+    });
+  });
+
+  assert.equal(result.cards.length, 0);
+  assert.match(logs, /lark\.sales\.product_missing\.blocked/, '拦截事件必须留下（否则"为什么没出卡片"查不到）');
+  assert.match(logs, /"task_id":"sale_registration_log"/);
+  assert.match(logs, /"item_no":"B26002-52"/);
+  assert.match(logs, /"size":37/);
+  // 另外两个上下文：哪个货号（item_index）、这份结论有没有索引做后盾。
+  assert.match(logs, /"index_available":true/);
+  assert.match(logs, /"reason":"product_index_miss"/);
+});
+
+test('开关关掉（SALES_PRODUCT_REGISTRATION_GUARD_ENABLED=false）→ 不拦，但仍留一条"本可以拦"的痕迹', async () => {
+  const previous = process.env.SALES_PRODUCT_REGISTRATION_GUARD_ENABLED;
+  process.env.SALES_PRODUCT_REGISTRATION_GUARD_ENABLED = 'false';
+  let result;
+  let logs;
+  try {
+    logs = await captureLogs(async () => {
+      result = await runSaleScenario({
+        taskId: 'sale_registration_guard_off',
+        text: '26002-52 37码，210微信',
+        rows: [liveRow({ itemNo: '26002-52', color: '黑', size: 37, productRecordId: 'live_p37' })],
+        products: [],
+        productIndexRows: [productIndexRow('8088-26', '棕', 'p_other')],
+        parsed: {
+          intent: 'sale', trade_type: '现货',
+          items: [{ item_no: '26002-52', size: 37, quantity: 1, actual_amount: 210 }],
+          payments: [{ amount: 210, method: '微信' }], agreed_total: 210,
+        },
+      });
+    });
+  } finally {
+    if (previous === undefined) delete process.env.SALES_PRODUCT_REGISTRATION_GUARD_ENABLED;
+    else process.env.SALES_PRODUCT_REGISTRATION_GUARD_ENABLED = previous;
+  }
+
+  // 关掉 = 回到判据之前的行为：不拦、照常出卡片（现货有货）。
+  assert.equal(result.task.status, 'ready_to_confirm');
+  assert.equal(result.cards.length, 1);
+  assert.doesNotMatch(result.task.draft.missing_fields.join('、'), /货品信息里没有/);
+  assert.match(logs, /lark\.sales\.product_missing\.guard_disabled/, '关掉也要留痕（区分"配置关了"与"判据没跑"）');
+  assert.doesNotMatch(logs, /lark\.sales\.product_missing\.blocked/);
+});
+
+test('文案可配：SALES_PRODUCT_REGISTRATION_MISSING_TEXT 里 {item_no} 换成这一条的货号', async () => {
+  const previous = process.env.SALES_PRODUCT_REGISTRATION_MISSING_TEXT;
+  process.env.SALES_PRODUCT_REGISTRATION_MISSING_TEXT = '【{item_no}】没建档，先去建档再发一次';
+  let result;
+  try {
+    result = await runSaleScenario({
+      taskId: 'sale_registration_text_configurable',
+      text: 'B26002-52 37码，210微信',
+      rows: [],
+      products: [],
+      productIndexRows: [productIndexRow('8088-26', '棕', 'p_other')],
+      parsed: {
+        intent: 'sale', trade_type: '预付',
+        items: [{ item_no: 'B26002-52', size: 37, quantity: 1, actual_amount: 210 }],
+        payments: [{ amount: 100, method: '微信' }], agreed_total: 210, owed: 110,
+      },
+    });
+  } finally {
+    if (previous === undefined) delete process.env.SALES_PRODUCT_REGISTRATION_MISSING_TEXT;
+    else process.env.SALES_PRODUCT_REGISTRATION_MISSING_TEXT = previous;
+  }
+
+  assert.deepEqual(result.messages, ['【B26002-52】没建档，先去建档再发一次']);
+});
+
+test('读不到「货品信息」（索引没建出来）→ 不下"没建档"的结论、不拦单，但记一条 undetermined 警告', async () => {
+  // AGENTS.md 第 17 条：结论是「没有」必须去事实表核过再说。
+  // 这里模拟"这一次读不到「货品信息」"（映射没配 / 整表读挂 ⇒ `loadProductIndex` 返 null）：
+  // 判据**不下结论**、保持既有行为（**不是**拿一句猜出来的"没建档"拦单）。
+  // ⚠️ 生产上这条映射是配着的（`v1BitableSchema` 的 completeness），所以真机走的是"拦"那条；
+  //    这个分支的既有约定是「读表失败不挡单」（同 `productInfoGapsFromIndex`）。
+  let result;
+  const logs = await captureLogs(async () => {
+    result = await runSaleScenario({
+      taskId: 'sale_registration_index_unavailable',
+      text: '26002-52 37码，210微信',
+      rows: [],
+      products: [],
+      // ⚠️ 刻意不传 productIndexRows：索引建不出来。
+      parsed: {
+        intent: 'sale', trade_type: '预付',
+        items: [{ item_no: '26002-52', size: 37, quantity: 1, actual_amount: 210 }],
+        payments: [{ amount: 100, method: '微信' }], agreed_total: 210, owed: 110,
+      },
+    });
+  });
+
+  assert.match(logs, /lark\.sales\.product_missing\.undetermined/, '不下结论也要留痕（不是静默）');
+  assert.match(logs, /"reason":"product_index_unavailable"/);
+  assert.doesNotMatch(logs, /lark\.sales\.product_missing\.blocked/, '读不到就不许拿"没建档"拦单');
+  assert.equal(result.task.status, 'ready_to_confirm', '不下结论 ⇒ 保持既有行为（不拦）');
+  assert.equal(result.cards.length, 1);
 });
 
 test('一单多双只读一次实时库存，不按双数重复全表读', async () => {

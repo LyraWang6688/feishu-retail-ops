@@ -14,11 +14,20 @@ const { SalesDeliveryService } = require('./salesDeliveryService');
 const { SecondDeliveryService } = require('./secondDeliveryService');
 const { SampleReplacementService } = require('./sampleReplacementService');
 const { PurchaseWebhookService } = require('./purchaseWebhookService');
-const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
+// `normalizeText`：新增的「货号有没有建档」判据必须与解析 A 用**同一套**货号归一
+// （大小写 / 空格 / 分隔符），否则会出现「A 认得出来、判据说没有」这种自相矛盾。
+const { V1ReferenceResolver, person, relation, normalizeText } = require('./v1ReferenceResolver');
 const { LiveInventoryIndex, buildLiveInventoryIndex } = require('./liveInventoryIndex');
 const { tradeTypeCodeFromLabel, deliveryForTradeType } = require('../config/salesMovements');
 // 「录单时要跑哪些解析」的**唯一**判据来源（配置先行，业务负责人 2026-10-07 确认）。
 const { salesParseRuns } = require('../config/salesTradeTypePolicy');
+// 「A 之后：这个货号到底有没有在「货品信息」里建档」那道判据的开关 / 文案 / 事件名。
+// ⚠️ 它与解析 A 是**两步**：A 仍然"找不到就空手回来"，本判据在它之后下结论。
+const {
+  SALES_PRODUCT_REGISTRATION_EVENTS,
+  resolveSalesProductRegistrationConfig,
+  formatMissingProductText,
+} = require('../config/salesProductRegistration');
 const { isDataNotReady, withSalesReadRetry } = require('./salesReadRetry');
 const { allocateSalesOrderNo } = require('./salesOrderNo');
 const { resolveAccessory } = require('./accessoryMatchPolicy');
@@ -1028,6 +1037,51 @@ class LarkMvpService {
   }
 
   /**
+   * ── 判据 A′：这个货号到底有没有在「货品信息」里建档 ─────────────────────────
+   *
+   * 位置：**在解析 A 之后**、解析 B 之前 —— 三种交易类型**都走**这里
+   * （它不在 `if (parsePolicy.stock)` 里面，所以预付也过得到）。
+   *
+   * 为什么要有这一步（业务负责人 2026-10-07 真机 + 逐字）：
+   *   「对，所以三种交易类型，在看完货品信息之后，如果在货架上没有找到，
+   *     都应该给到这个提示，而不是说等到 B」
+   * 起因是那笔**预付**：`B26002-52` 被语音转文字漏成 `26002-52`，
+   * A 空手回来不吭声、B 按交易类型又不跑 ⇒ 她点了确认才失败。
+   *
+   * ⚠️ **只回答一件事**：「货品信息」这张表里**有没有这个货号的记录**。
+   *    与「货号找到了、只是齐备公式说缺字段（缺成本…）」是**两件事** ——
+   *    后者仍然不拦，只进终态卡上那段「补货品信息」（见 `config/productInfoGaps.js`）。
+   *
+   * ⚠️ **正证据口径**（`AGENTS.md` 第 17 条：结论是「没有」→ 必须去事实表核过再说）：
+   *    只有「货品信息**整表读成功**」＋「里面**确实没有**这个货号」才判 `missing`。
+   *    A 的"空手回来"是**有歧义**的（`resolveProductInfoForSale` 把"找不到货品"与
+   *    "读表失败"都收敛成 `{}` + 一条 warn），只凭它拦单会把"飞书抖了一下"
+   *    误判成"没建档"、把一笔正常销售挡在门外；索引也读不到时**不下结论**
+   *    （`unknown`，调用方记一条 undetermined 警告，不拦单）。
+   *    反过来，**只要有一处正证据**（A 认得出来，或索引里有这个货号）就**不拦** ✅
+   *
+   * @returns {{ status: 'not_applicable'|'registered'|'missing'|'unknown', reason: string, indexAvailable: boolean }}
+   */
+  productRegistrationFrom({ itemNo, productInfo, productIndex } = {}) {
+    const indexAvailable = Boolean(productIndex?.byNormalizedItemNo);
+    const wanted = normalizeText(itemNo);
+    // 没有货号不是本判据的事：缺货号由解析层自己报缺项（`items[i].item_no`）。
+    if (!wanted) return { status: 'not_applicable', reason: 'no_item_no', indexAvailable };
+    // 正证据①：解析 A 认得出来（拿到商品记录 / 多颜色候选）⇒ 一定建过档。
+    if (productInfo?.productRecordId || productInfo?.colorOptions?.length) {
+      return { status: 'registered', reason: 'resolved_by_product_info', indexAvailable };
+    }
+    // 正证据②：这次已经读回来的「货品信息」整表索引里有这个货号。
+    if (productIndex?.byNormalizedItemNo?.has(wanted)) {
+      return { status: 'registered', reason: 'product_index_hit', indexAvailable };
+    }
+    // 索引建出来了（整表读成功）⇒ 这是**负向结论的正证据**：表里确实没有这个货号。
+    if (indexAvailable) return { status: 'missing', reason: 'product_index_miss', indexAvailable };
+    // 两路都没给出可判定的证据（例如「货品信息」读挂了）⇒ 不下结论、不拦单。
+    return { status: 'unknown', reason: 'product_index_unavailable', indexAvailable };
+  }
+
+  /**
    * ── 解析 B：库存可得性（只读「实时库存」表）──────────────────────────────
    *
    * 输出：门盒 / 样品 / 仓库的数量、"有没有这一双"、以及卖样品要不要补门盒。
@@ -1105,6 +1159,11 @@ class LarkMvpService {
     // 卖货时要把**这个货号下所有颜色**里资料不全的都提示出来——同款不同色通常
     // 一起上架，让她一次补齐，比每次卖一个颜色提醒一次省事。
     const byItemNo = new Map();
+    // 同时按**归一后**的货号建一份（`normalizeText`：小写、去空格、去分隔符）：
+    // 这是新增的「货号有没有建档」判据用的键，**必须与解析 A 的匹配规则同一套** ——
+    // 否则「B26002-52」写成「b26002-52」时会得出"A 认得出来、判据说没建档"的自相矛盾。
+    // 上面那份**原值**索引不动：`productInfoGapsFromIndex` 仍按 `item.item_no` 原值取。
+    const byNormalizedItemNo = new Map();
     // 配置写错（例如用了界面显示名而记录里是内部名）时，整表都读不到这个键。
     // 那种情况下不报错、只是永远不提示她补资料——最难查，所以单独留一条警告。
     let completenessSeen = 0;
@@ -1129,6 +1188,11 @@ class LarkMvpService {
       if (itemNo) {
         if (!byItemNo.has(itemNo)) byItemNo.set(itemNo, []);
         byItemNo.get(itemNo).push({ recordId: record.record_id, ...info });
+        const normalized = normalizeText(itemNo);
+        if (normalized) {
+          if (!byNormalizedItemNo.has(normalized)) byNormalizedItemNo.set(normalized, []);
+          byNormalizedItemNo.get(normalized).push(record.record_id);
+        }
       }
     }
     if (records.length && completenessSeen === 0) {
@@ -1143,7 +1207,7 @@ class LarkMvpService {
       // 不是"让用户多等了多久"——排查时看它有没有盖过另外两路即可。
       duration_ms: Date.now() - readStartedAt,
     });
-    return { tableId: table.tableId, byId, byItemNo };
+    return { tableId: table.tableId, byId, byItemNo, byNormalizedItemNo };
   }
 
   /**
@@ -1418,6 +1482,12 @@ class LarkMvpService {
     // 缺货单独收集：这类问题只需要一句"请核实"，不需要"销售信息还缺…请补充后重新发送"
     // 那层流程说明——那层话对"这个尺码店里没有"这件事没有任何帮助。
     const shortageNotes = [];
+    // 「货号没建档」单独收集（与缺货同理：那是一句完整的话，前面再套一层
+    // "销售信息还缺…"反而看不清要她做什么）。它比缺货更靠前：货号根本没建档时，
+    // "这个货号现在一双都没有"只是它的副作用。
+    const registrationNotes = [];
+    // 开关 / 文案一次读进来（**调用时才解析** process.env，不在模块加载时求值）。
+    const registrationConfig = resolveSalesProductRegistrationConfig(process.env);
     const items = [];
     for (const [index, item] of (parsed.items?.length ? parsed.items : [parsed]).entries()) {
       const itemQuantity = Number(item.quantity || 1);
@@ -1454,11 +1524,56 @@ class LarkMvpService {
       let samplePlan = null;
       if (item.item_no && item.size) {
         // ── 解析 A ──
+        let productInfo = {};
         if (parsePolicy.productInfo) {
-          const info = await this.resolveProductInfoForSale({ itemNo: item.item_no });
-          productRecordId = info.productRecordId || '';
-          color = info.color || '';
-          if (info.colorOptions) colorOptions = info.colorOptions;
+          productInfo = await this.resolveProductInfoForSale({ itemNo: item.item_no });
+          productRecordId = productInfo.productRecordId || '';
+          color = productInfo.color || '';
+          if (productInfo.colorOptions) colorOptions = productInfo.colorOptions;
+        }
+        // ── 判据 A′：这个货号有没有在「货品信息」里建档 ──
+        // **三种交易类型都走这里**（它在 `if (parsePolicy.stock)` **之外**，
+        // 所以预付跳过 B 也照样被这条判据看见 —— 那正是真机漏掉的那一处）。
+        // ⚠️ 只判"这张表里有没有这个货号的记录"；"有记录但资料不齐"不走这里（不拦）。
+        const registration = this.productRegistrationFrom({
+          itemNo: item.item_no, productInfo, productIndex,
+        });
+        if (registration.status === 'missing') {
+          // ⭐ 正向证据：这一单**为什么没出卡片**，看这条 —— 带 task_id / item_no / size。
+          //    开关关掉时记的是另一条（`…guard_disabled`）：两条合起来才能回答
+          //    "是判据拦的"还是"配置关了"（都不拦时也不至于看不出原因）。
+          logInfo(
+            registrationConfig.enabled
+              ? SALES_PRODUCT_REGISTRATION_EVENTS.blocked
+              : SALES_PRODUCT_REGISTRATION_EVENTS.guardDisabled,
+            {
+              task_id: taskId,
+              item_no: item.item_no,
+              size: item.size,
+              item_index: index,
+              trade_type: parsed.trade_type,
+              trade_type_code: tradeTypeCode,
+              index_available: registration.indexAvailable,
+              reason: registration.reason,
+            },
+          );
+          if (registrationConfig.enabled) {
+            const text = formatMissingProductText(registrationConfig.missingText, {
+              itemNo: item.item_no,
+            });
+            registrationNotes.push(text);
+            missingFields.push(text);
+          }
+        } else if (registration.status === 'unknown') {
+          // 读不到「货品信息」⇒ 不下"没建档"的结论、也不拦单（AGENTS.md 第 17 条）。
+          // ⚠️ 这里只记一条 warn：它**不是**拦截证据，别拿它当"已经提示过"。
+          logWarn(SALES_PRODUCT_REGISTRATION_EVENTS.undetermined, {
+            task_id: taskId,
+            item_no: item.item_no,
+            size: item.size,
+            item_index: index,
+            reason: registration.reason,
+          });
         }
         // ── 解析 B ──
         if (parsePolicy.stock) {
@@ -1554,9 +1669,13 @@ class LarkMvpService {
     if (draft.missing_fields?.length) {
       // 这一单的问题**只有缺货**时，直接回一句短的；还夹杂别的问题（金额缺失等）时才用完整说明。
       const onlyShortage = shortageNotes.length > 0 && shortageNotes.length === draft.missing_fields.length;
-      await this.sendTaskText(replyTask, onlyShortage
-        ? `${shortageNotes.join('、')}，请核实～`
-        : `销售信息还缺：${draft.missing_fields.join('、')}。请补充后重新发送完整销售信息。`);
+      // 「货号没建档」优先：那句话本身就是完整的（她照着做就行），再套一层
+      // "销售信息还缺…"只会把要她做的事埋起来；一单多双只缺一双时，这里也只报那一双。
+      await this.sendTaskText(replyTask, registrationNotes.length
+        ? registrationNotes.join('\n')
+        : onlyShortage
+          ? `${shortageNotes.join('、')}，请核实～`
+          : `销售信息还缺：${draft.missing_fields.join('、')}。请补充后重新发送完整销售信息。`);
       return;
     }
     const cardStartedAt = Date.now();
