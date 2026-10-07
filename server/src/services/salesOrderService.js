@@ -8,7 +8,7 @@ const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { sellableKindOf } = require('../config/sellableKinds');
 const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
 const { SalesStatusWriter } = require('./salesStatusWriter');
-const { logInfo, logError } = require('../utils/logger');
+const { logInfo, logWarn, logError } = require('../utils/logger');
 const { mergeCorrelation } = require('../utils/correlationFields');
 
 const positiveInteger = (value, label) => {
@@ -69,13 +69,16 @@ class SalesOrderService {
     let detailPlan = 0;
     let detailsPersisted = 0;
     try {
-      // 销售明细的「交易类型」必须和「销售主表」保持一致（业务负责人口径）：
-      // 明细行的数量记的都是正数，退货 / 换货只能靠「交易类型」表明这一行的方向，
-      // 所以它得跟主表说同一件事。
+      // 销售明细的「交易类型」要表明这一行**自己**是哪种交易（业务负责人 2026-10-07）：
+      // 「**但是实际到我们的销售明细里面，就这一单它是什么，那就是什么**」
+      // —— 一张单可以同时有现货行与预付行，所以**逐行**写、每行单选。
       //
-      // 为什么是**读主表已经写好的那条关联**、不在这里重新解析一次：
-      // 重新解析就有两处结论，两处就可能不一致；读同一处写下去，天然一致。
-      // 主表没解析出交易类型时（AI 没认出来）这里留空——空着比写错方向好。
+      // 取值优先级：
+      //   ① 这一行自己的编码（`item.tradeTypeCode`，接线层从解析草稿带下来）
+      //      → 解析成「行为管理」记录；同一个编码只解析一次（本地缓存，不重复读表）；
+      //   ② 解析不出来 / 这一行没带编码 → **退回读主表已经写好的那条关联**
+      //      （既有行为：主表写哪条，明细就写哪条 —— 单类型单走的就是这一条，逐字不变）。
+      // 主表没解析出交易类型时（AI 没认出来）留空——空着比写错方向好。
       const entryFields = this.gateway.table('salesEntry').fields;
       const entry = await withSalesReadRetry(
         () => this.gateway.get('salesEntry', salesEntryRecordId), 'sale_entry_trade_type',
@@ -84,6 +87,26 @@ class SalesOrderService {
       // 单号就在这条**已经读到的**主表记录上 ⇒ 零额外请求地补进关联键。
       // 读不到（AI 还没生成 / 老单）就不写这个键，不是写一个空串。
       correlation = mergeCorrelation(correlation, { order_no: textValue(entry?.fields?.[entryFields.orderNo]) });
+      // 编码 → 「行为管理」记录 id 的**一次解析、逐行复用**（同一编码不重复读表）。
+      const tradeTypeByCode = new Map();
+      const tradeTypeRecordIdForItem = async (code) => {
+        const wanted = String(code || '').trim();
+        if (!wanted) return tradeTypeRecordId;
+        if (tradeTypeByCode.has(wanted)) return tradeTypeByCode.get(wanted);
+        let resolved = tradeTypeRecordId;
+        if (typeof this.references.resolveSalesTradeType === 'function') {
+          try {
+            resolved = (await this.references.resolveSalesTradeType(wanted)).recordId || tradeTypeRecordId;
+          } catch (error) {
+            // 解析不到**不阻塞入账**：退回主表那条（与接线层的口径一致：它只是审计字段）。
+            logWarn('lark.sales.detail.trade_type.resolve_failed', {
+              sales_entry_record_id: salesEntryRecordId, code: wanted, error: error.message,
+            });
+          }
+        }
+        tradeTypeByCode.set(wanted, resolved);
+        return resolved;
+      };
       const expected = [];
       for (const item of input.items) {
         // 可售品按属性走：鞋才需要解析尺码和跟踪库存，配品只记「卖了什么、收了多少」。
@@ -102,6 +125,8 @@ class SalesOrderService {
           gift: item.gift ? String(item.giftDescription || '有赠品').trim() : '',
           // 配品当场结清、不跟踪交付，直接写成已交付，不会进待交付列表也不会扣库存。
           fulfillmentStatus: kind.requiresFulfillment ? '未交付' : '已交付',
+          // **这一行自己的**交易类型关联（单选）。
+          tradeTypeRecordId: await tradeTypeRecordIdForItem(item.tradeTypeCode),
         };
         if (!kind.requiresSize) {
           const accessoryRecordId = String(item.accessoryRecordId || '').trim();
@@ -168,8 +193,8 @@ class SalesOrderService {
             ...(row.item.sizeRecordId ? { size: relation(row.item.sizeRecordId) } : {}),
             gift: row.item.gift,
             actualAmount: row.item.actualAmount, fulfillmentStatus: row.item.fulfillmentStatus,
-            // 主表写的是哪条「行为管理」记录，明细就写同一条（见上面读主表那段注释）。
-            ...(tradeTypeRecordId ? { tradeType: relation(tradeTypeRecordId) } : {}),
+            // ⭐ 这一行**自己的**「行为管理」记录（单选）；解析不到时退回主表那条。
+            ...(row.item.tradeTypeRecordId ? { tradeType: relation(row.item.tradeTypeRecordId) } : {}),
           }, { correlation });
           row.recordId = created.recordId;
         }

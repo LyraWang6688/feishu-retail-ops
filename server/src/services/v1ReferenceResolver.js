@@ -10,7 +10,15 @@ const normalizeText = (value) =>
 
 const normalizeColor = (value) => normalizeText(value).replace(/色$/, '');
 
-const relation = (recordId) => (recordId ? [recordId] : undefined);
+// 关联字段的写入形状 = **记录 id 的数组**（飞书多选关联就是多个 id 并列，单选就是长度 1）。
+// ⭐ 2026-10-07：`relation` 现在**也认数组** —— 「销售主表.交易类型」是**多选**关联字段，
+//    一张单可以同时是「现货 + 预付」（业务负责人：「多种交易类型，你多选就行了」）。
+//    以前只收单个 id，调用点就得自己拼 `[id1, id2]`；让这一个 helper 同时管单选与多选，
+//    写入形状只有一处定义（既有调用点全传单个字符串，行为逐字不变）。
+const relation = (recordId) => {
+  if (Array.isArray(recordId)) return recordId.length ? recordId : undefined;
+  return recordId ? [recordId] : undefined;
+};
 const person = (openId) => (openId ? [{ id: openId }] : undefined);
 
 // OCR 相似字符映射：用于识别错误时的纠正

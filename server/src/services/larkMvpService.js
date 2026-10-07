@@ -18,12 +18,19 @@ const { PurchaseWebhookService } = require('./purchaseWebhookService');
 // （大小写 / 空格 / 分隔符），否则会出现「A 认得出来、判据说没有」这种自相矛盾。
 const { V1ReferenceResolver, person, relation, normalizeText, normalizeColor } = require('./v1ReferenceResolver');
 const { LiveInventoryIndex, buildLiveInventoryIndex } = require('./liveInventoryIndex');
-const { tradeTypeCodeFromLabel, deliveryForTradeType } = require('../config/salesMovements');
+const { tradeTypeCodeFromLabel, deliversForTradeType } = require('../config/salesMovements');
 // 「录单时要跑哪些解析」+「颜色候选推哪些」的**唯一**判据来源
 //（配置先行，业务负责人 2026-10-07 确认）。
+// ⭐ 2026-10-07：粒度从「整单一个类型」改成「**逐明细一个类型** + 整单去重多选」——
+//    `itemTradeTypeCode` 取某一行的类型，`orderTradeTypeCodes` 取整单去重后的那几个。
+//    ⚠️ `deliveryForTradeType`（整单口径）已不再被本文件使用：交付改由
+//       `deliversForTradeType` **逐行**推，不再有"整单一个交付状态"的说法。
 const {
   salesParseRuns, salesColorOptionsScopeFor, SALES_COLOR_OPTIONS_SCOPE,
+  itemTradeTypeCode, orderTradeTypeCodes,
 } = require('../config/salesTradeTypePolicy');
+// 「这一单交给了多少」那句结果话（全交付 / 全未交付 / **部分交付**）的文案来源。
+const { salesDeliverySummaryFor } = require('../config/salesDeliverySummary');
 // 颜色候选上的「有货 / 无货」库存状态取值（只用录单时已读进来的实时库存索引算，零新增请求）
 // + 「不在售」的取值域 + 候选被过滤空了的文案。
 const {
@@ -88,6 +95,25 @@ const shouldDeliverFor = (task, action) => {
   if (declared === '已交付' || declared === '未交付') return declared === '已交付';
   return action === 'confirm_sale_delivered';
 };
+
+// 「这一单交付了哪些行」——**逐明细**按交易类型推（现货 / 未付交付并扣库存，预付不交付）。
+// 判据全在配置：`deliversForTradeType`（要不要交付）+ `salesDeliverySummaryFor`（那三句话）。
+// ⚠️ 抽成一处是因为它在**两处**用到（入账终态卡 + 她重复点确认时的终态卡），
+//    两处必须说同一句话，否则同一状态会看到两种结果。
+//
+// ⚠️ `orderDelivers` 是**老草稿 / 手工草稿的兜底**：一行都没有逐行类型时（改动前建的草稿、
+//    或者别处直接拼出来的 draft），退回**整单**口径 —— 与改动前逐字同义，不会凭空变样。
+const deliverableItemIndexesOfDraft = (draft = {}, orderDelivers = true) => {
+  const items = draft.items || [];
+  const hasItemTradeTypes = items.some((item) => itemTradeTypeCode(item, '') !== '');
+  if (!hasItemTradeTypes) return orderDelivers ? items.map((_, index) => index) : [];
+  return items
+    .map((item, index) => (deliversForTradeType(itemTradeTypeCode(item, draft.trade_type_code)) ? index : -1))
+    .filter((index) => index >= 0);
+};
+
+const deliverySummaryOfDraft = (draft = {}, orderDelivers = true) =>
+  salesDeliverySummaryFor(deliverableItemIndexesOfDraft(draft, orderDelivers).length, (draft.items || []).length);
 
 const idFor = (prefix, value) =>
   `${prefix}_${crypto.createHash('sha256').update(String(value || '')).digest('hex').slice(0, 20)}`;
@@ -1603,14 +1629,9 @@ class LarkMvpService {
     //    **都由它推出来**，两处用的是同一个值。
     //    ⚠️ 判据只在配置里；这里和下面的循环里都**不许**再写 `=== '预付'` 之类的散落判断。
     const tradeTypeCode = tradeTypeCodeFromLabel(parsed.trade_type);
-    // 解析 A（货品信息）/ B（库存可得性）各跑不跑 —— 配置说了算。
-    const parsePolicy = {
-      productInfo: salesParseRuns(tradeTypeCode, 'productInfo'),
-      stock: salesParseRuns(tradeTypeCode, 'stock'),
-    };
-    // ⭐ 颜色候选的范围（只推在售 / 全部）——**同一份交易类型注册表**说了算：
-    //    现货 / 未付 / 认不出 → `inStockOnly`；预付 → `allColors`。
-    const colorOptionsScope = salesColorOptionsScopeFor(tradeTypeCode);
+    // ⭐ 2026-10-07：**整单**的类型只作兜底/兼容；真正决定"跑不跑 B / 交不交付"的是
+    //    **每一行自己的**类型（`itemTradeTypeCode`）。下面循环里逐行算、逐行用。
+    //    整单去重后的那几个写进主表多选（`orderTradeTypeCodes`）。
     // 缺货单独收集：这类问题只需要一句"请核实"，不需要"销售信息还缺…请补充后重新发送"
     // 那层流程说明——那层话对"这个尺码店里没有"这件事没有任何帮助。
     const shortageNotes = [];
@@ -1629,6 +1650,17 @@ class LarkMvpService {
       const itemQuantity = Number(item.quantity || 1);
       const quantityIssue = `第${index + 1}件请逐双列出成交金额；每条销售明细只能记录一双`;
       if (itemQuantity !== 1 && !missingFields.includes(quantityIssue)) missingFields.push(quantityIssue);
+      // ── ⭐ 逐明细的交易类型（业务负责人 2026-10-07）────────────────────────────────
+      //   「**在销售明细里面分开，它是现货还是预付款**，不就可以了吗？」
+      //   A（货品信息）本来所有类型都跑；**B（实时库存）与颜色候选范围逐行判** ——
+      //   现货件查库存并交付，预付件不查库存、不交付。判据仍然是那**一份**配置注册表，
+      //   只是取值从"整单"变成"这一行"。
+      const itemTradeType = itemTradeTypeCode(item, tradeTypeCode);
+      const parsePolicy = {
+        productInfo: salesParseRuns(itemTradeType, 'productInfo'),
+        stock: salesParseRuns(itemTradeType, 'stock'),
+      };
+      const colorOptionsScope = salesColorOptionsScopeFor(itemTradeType);
       if (item.kind === 'accessory') {
         // 配品先按「种类」找，找不到再退回按名称精确匹配（见 accessoryMatchPolicy）。
         // 为什么不能只按名称精确匹配：表里叫「15元鞋油」，用户说的是「鞋油」，
@@ -1686,8 +1718,8 @@ class LarkMvpService {
               //    它同时回答了"过滤跑了吗"（scope）与"丢了哪几个"（dropped_colors）。
               logInfo('lark.sales.color_options.filtered', {
                 task_id: taskId,
-                trade_type: parsed.trade_type,
-                trade_type_code: tradeTypeCode,
+                trade_type: item.trade_type || parsed.trade_type,
+                trade_type_code: itemTradeType,
                 item_no: item.item_no,
                 size: item.size,
                 scope: colorOptionsScope,
@@ -1738,8 +1770,8 @@ class LarkMvpService {
               item_no: item.item_no,
               size: item.size,
               item_index: index,
-              trade_type: parsed.trade_type,
-              trade_type_code: tradeTypeCode,
+              trade_type: item.trade_type || parsed.trade_type,
+              trade_type_code: itemTradeType,
               index_available: registration.indexAvailable,
               reason: registration.reason,
             },
@@ -1773,7 +1805,7 @@ class LarkMvpService {
             //    那是**症状**不是**原因** —— 真正的原因已经由上面那句文案说清了。
             //    可排查：这一单为什么没查库存（答案不是"交易类型不查"，而是"候选空了"）。
             logInfo('lark.sales.stock_existence.skipped', {
-              task_id: taskId, trade_type: parsed.trade_type, trade_type_code: tradeTypeCode,
+              task_id: taskId, trade_type: item.trade_type || parsed.trade_type, trade_type_code: itemTradeType,
               item_no: item.item_no, size: item.size, step: 'stock',
               reason: 'color_options_out_of_scope',
             });
@@ -1783,7 +1815,7 @@ class LarkMvpService {
             //    里再拿**那个颜色**跑 B。
             // 可排查：这一单为什么这次没查库存（而不是"静默跳过"）——答案就是"等她选颜色"。
             logInfo('lark.sales.stock_existence.deferred', {
-              task_id: taskId, trade_type: parsed.trade_type, trade_type_code: tradeTypeCode,
+              task_id: taskId, trade_type: item.trade_type || parsed.trade_type, trade_type_code: itemTradeType,
               item_no: item.item_no, size: item.size, step: 'stock',
               color_option_count: colorOptions.length,
               reason: 'awaiting_color_choice',
@@ -1814,7 +1846,7 @@ class LarkMvpService {
         } else {
           // 可排查：这一单为什么**没有**查库存（而不是"静默不看库存"）。
           logInfo('lark.sales.stock_existence.skipped', {
-            task_id: taskId, trade_type: parsed.trade_type, trade_type_code: tradeTypeCode,
+            task_id: taskId, trade_type: item.trade_type || parsed.trade_type, trade_type_code: itemTradeType,
             item_no: item.item_no, size: item.size, step: 'stock',
             reason: 'trade_type_policy_skips_stock_parse',
           });
@@ -1846,14 +1878,23 @@ class LarkMvpService {
 
     // 交易类型由 AI 从原话判断；**交付状态由注册表从交易类型推出来**，
     // 不再让用户在卡片上选。现货/未付当场交付，只有预付（只付定金、货没拿走）是未交付。
-    // ⚠️ `tradeTypeCode` 在循环**之前**就算好了（上面还要用它查"跑哪些解析"），
-    //    这里不再算第二遍 —— 同一件事只在一处下结论。
+    // ⭐ 2026-10-07：一张单可以**同时**有现货与预付（业务负责人：「这就是一个人买的呀」）⇒
+    //    · 每一行自己的类型在 `items[].trade_type_code`（明细行写它，单选）；
+    //    · 整单是 `trade_type_codes` **去重后的多个**（主表写它，多选）；
+    //    · 整单的 `delivery_status` 只在"**所有行都不交付**"时才是未交付，否则按行判
+    //      （单类型单读到的值与改动前**逐字相同**：纯预付 → 未交付，其余 → 已交付）。
+    const orderTradeTypeCodesForThisOrder = orderTradeTypeCodes(items, tradeTypeCode);
+    const deliverableItemCount = items.filter((item) =>
+      deliversForTradeType(itemTradeTypeCode(item, tradeTypeCode))).length;
     const draft = {
       ...parsed,
       product_info_gaps: productInfoGaps,
       trade_type: parsed.trade_type,
       trade_type_code: tradeTypeCode,
-      delivery_status: deliveryForTradeType(tradeTypeCode) || '已交付',
+      trade_type_codes: orderTradeTypeCodesForThisOrder,
+      // 「整单要不要交付」只作**兼容字段**：只要有一行要交付，就标已交付（真正逐行判在
+      // confirm 里）。单类型单读到的值与改动前逐字相同：纯预付 → 未交付，其余 → 已交付。
+      delivery_status: deliverableItemCount > 0 ? '已交付' : '未交付',
       product_number: items[0]?.product_number || '',
       items,
       missing_fields: missingFields,
@@ -1861,13 +1902,17 @@ class LarkMvpService {
     // 交易类型落成关联「行为管理」的记录，便于以后筛选和对账。
     // 解析不到时记警告但**不阻塞入账**：它只是审计字段，业务事实（交付与收款）
     // 已经由 trade_type 决定，不该因为一个关联查不到就让门店录不进单。
-    let tradeTypeRecordId = '';
-    if (tradeTypeCode && typeof this.references.resolveSalesTradeType === 'function') {
+    // ⭐ 多选：把**去重后的每一个**编码都解析成记录 id（顺序 = 明细行出现顺序）。
+    const tradeTypeRecordIds = [];
+    const resolveTradeType = typeof this.references.resolveSalesTradeType === 'function';
+    for (const code of orderTradeTypeCodesForThisOrder) {
+      if (!code || !resolveTradeType) continue;
       try {
-        tradeTypeRecordId = (await this.references.resolveSalesTradeType(tradeTypeCode)).recordId;
+        const recordId = (await this.references.resolveSalesTradeType(code)).recordId;
+        if (recordId && !tradeTypeRecordIds.includes(recordId)) tradeTypeRecordIds.push(recordId);
       } catch (error) {
         logWarn('lark.sales.trade_type.resolve_failed', {
-          task_id: taskId, code: tradeTypeCode, error: error.message,
+          task_id: taskId, code, error: error.message,
         });
       }
     }
@@ -1879,7 +1924,8 @@ class LarkMvpService {
         parseStatus: draft.missing_fields?.length ? '需补充' : '解析成功',
         parseSummary: JSON.stringify(draft),
         failureReason: draft.missing_fields?.length ? draft.missing_fields.join('、') : '',
-        ...(tradeTypeRecordId ? { tradeType: relation(tradeTypeRecordId) } : {}),
+        // 「交易类型」是**多选**关联字段：一个 id 就是单选（长度 1），多个就是多选。
+        ...(tradeTypeRecordIds.length ? { tradeType: relation(tradeTypeRecordIds) } : {}),
       });
     }
     await this.store.update(taskId, {
@@ -2032,7 +2078,7 @@ class LarkMvpService {
           task.status === 'cancelled' ? '销售录单已取消' : completed ? '销售订单已入账' : '订单已入账，交付待核对',
           task.status === 'cancelled' ? '原草稿不会入账。' :
             `销售单号：${task.posting_result?.sourceNo || '请在销售主表核对'}；${completed
-              ? shouldDeliverFor(task, task.posting_requested_action) ? '已交付并扣库存。' : '尚未交付，库存未扣减。'
+              ? deliverySummaryOfDraft(task.draft, shouldDeliverFor(task, task.posting_requested_action)).card
               : '交付结果尚未确认，请到工作台核对。'}`,
           task.status === 'cancelled' ? 'blue' : completed ? 'green' : 'orange',
           { productInfoGaps: task.status !== 'cancelled' });
@@ -2117,8 +2163,10 @@ class LarkMvpService {
       // ── 颜色定下来**之后**才跑解析 B（多颜色时它在录单阶段被刻意推迟）──
       // "跑不跑 B"仍然只由 `salesTradeTypePolicy` 决定：现货 / 未付 跑，**预付仍然不跑**。
       // 跑的是同一个 `resolveStockAvailabilityForSale`，输入带上她选定的颜色。
+      // ⭐ 判据取的是**这一行**的类型（她点的是哪一行的颜色），不是整单的类型 ——
+      //   混合单里现货那一行照样要查库存、预付那一行照样不查。
       let shortage = '';
-      if (salesParseRuns(tradeTypeCodeFromLabel(task.draft?.trade_type), 'stock')) {
+      if (salesParseRuns(itemTradeTypeCode(item, tradeTypeCodeFromLabel(task.draft?.trade_type)), 'stock')) {
         // ⚠️ 只把**远端读表**这一步当作"可重试的失败"：读不到就**不下结论**（AGENTS.md 第 17 条）、
         //    候选保留、回她一句让她再点一次；纯函数里的编程错误仍然照旧抛出来，不被这里吞掉。
         let liveInventory = null;
@@ -2203,6 +2251,13 @@ class LarkMvpService {
       // 交付与否由**交易类型**决定，不由用户点哪个按钮决定。
       // 卡片上只留一个「确认」；旧卡片上的 confirm_sale_delivered / _pending 仍然兼容。
       const shouldDeliver = shouldDeliverFor(task, action);
+      // ⭐ 2026-10-07：交付是**逐明细行**的事（业务负责人：「在销售明细里面分开」）——
+      //   现货 / 未付的行要交付并扣库存，**预付的行不交付**。
+      //   `shouldDeliver` 仍然决定"整单要不要走交付这一段"（纯预付单一次都不调用，
+      //   与改动前逐字相同），具体交付哪几条由下面的 `deliverableDetailIds` 挑出来。
+      const deliverableItemIndexes = deliverableItemIndexesOfDraft(task.draft, shouldDeliver);
+      // 交付结果那句话（全交付 / 全未交付 / **部分交付**）—— 文案在 config/salesDeliverySummary。
+      const deliverySummary = deliverySummaryOfDraft(task.draft, shouldDeliver);
       // ⭐ 她**点了「确认」**这件事要**立刻在卡片上看得出来**（业务负责人 2026-10-07 拍板的 ⓐ）：
       //   标题换成醒目的「处理中/正在写入」＋ 明细区变灰 ＋ 一行"正在写入"提示
       //   （文案与颜色全在 `config/salesProcessingCard`）。
@@ -2259,13 +2314,22 @@ class LarkMvpService {
           actualAmount: item.actual_amount,
           gift: item.gift,
           giftDescription: item.gift_description,
+          // ⭐ 每一行的交易类型编码 → 入账层据此把**这一行自己的**类型写进
+          //   「销售明细.交易类型」（单选关联）。它不是关联键、不进日志，是业务字段。
+          //   ⚠️ 缺省是空串 → 入账层退回"读主表第一条"，既有调用点行为逐字不变。
+          tradeTypeCode: itemTradeTypeCode(item, task.draft.trade_type_code),
         })),
       }, { correlation });
       await this.store.update(draftId, { status: 'posted_delivery_pending', posting_result: result });
-      if (shouldDeliver) {
+      // ⭐ 只把**要交付的那几行**的明细 id 交给交付服务（预付行不交付、不扣库存）。
+      //   明细 id 的顺序与 `items` 一一对应（入账层按同一个顺序建行），所以按下标取。
+      const deliverableDetailIds = deliverableItemIndexes
+        .map((index) => result.detailRecordIds?.[index])
+        .filter(Boolean);
+      if (shouldDeliver && deliverableDetailIds.length) {
         try {
           const deliveryResult = await this.delivery.deliver({ salesEntryRecordId: task.sales_entry_record_id,
-            detailRecordIds: result.detailRecordIds, paymentRecordIds: result.paymentRecordIds },
+            detailRecordIds: deliverableDetailIds, paymentRecordIds: result.paymentRecordIds },
           { correlation });
           // 卡片上已经选好"用哪个门盒补样品"的，在这里直接补掉，不再为它另发一张卡片。
           // 补失败不阻断入账：库存已经扣了，补样品失败只影响展示样品，交给工作台处理。
@@ -2315,7 +2379,7 @@ class LarkMvpService {
       //   缺口来自 `task.draft.product_info_gaps`（卖单解析时**已经**读过一次「货品信息」表），
       //   这里**不重新读表**。
       await this.publishSalesResultCard(task, event, salesStatusCard(task.draft,
-        '销售订单已入账', `销售单号：${result.sourceNo}；${result.detailRecordIds?.length || 0} 条明细已写入。${shouldDeliver ? '已交付并扣库存。' : '尚未交付，库存未扣减。'}`, 'green',
+        '销售订单已入账', `销售单号：${result.sourceNo}；${result.detailRecordIds?.length || 0} 条明细已写入。${deliverySummary.card}`, 'green',
         { productInfoGaps: true }),
       { stage: 'posted', interactionId: context.interactionId });
       logInfo('lark.sales.posting.completed', {
@@ -2328,7 +2392,7 @@ class LarkMvpService {
       return {
         toast: {
           type: 'success',
-          content: shouldDeliver ? '销售已确认并交付，库存已更新' : '销售已确认；预付单尚未交付，库存未扣减',
+          content: deliverySummary.toast,
         },
       };
     }

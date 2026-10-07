@@ -276,15 +276,19 @@ test('预付 + 货号不存在 → 不编记录、不给她选；真实解析器
 //      · ⭐ 第四刀：候选还带上**「货品信息」那条记录的「货品状态」**（`status`）——
 //        现货 / 未付按它过滤（只推在售）；这里钉住它**确实被带出来了**（不是过滤完就丢）。
 //    这不是放宽：把 B 下放到"选完颜色之后"，同时钉住"候选一个字段都不能少"。
-const A_PROVIDES_CANDIDATES_ITEM = {
+// 逐明细交易类型（2026-10-07）：每一行现在**自己**带 `trade_type` / `trade_type_code`。
+// ⚠️ 这是**收严**（明细行现在必须说得出"这一行是哪种交易"），不是放宽：
+//    原来这里靠整单一个类型，混合单根本表达不出来；现在逐行断言得更死。
+const A_PROVIDES_CANDIDATES_ITEM = (tradeType, tradeTypeCode) => ({
   item_no: 'B26002-52', color: '', size: 37, quantity: 1, actual_amount: 228,
+  trade_type: tradeType, trade_type_code: tradeTypeCode,
   gift: false, gift_description: '', product_record_id: '', product_number: '',
   needs_color: true,
   color_options: [
     { recordId: BLACK, color: '黑色', number: 'B26002-52黑色', status: '在售', stock_status: 'available' },
     { recordId: CHOCO, color: '巧克力', number: 'B26002-52巧克力', status: '在售', stock_status: 'available' },
   ],
-};
+});
 
 const MULTI_COLOR_LIVE_ROWS = [
   liveRow({ itemNo: 'B26002-52', color: '巧克力', size: 37, productRecordId: CHOCO }),
@@ -297,7 +301,7 @@ test('现货 + 多颜色 → 候选由 A 给（先让她选，B 还没跑）：�
     parsed: itemLine('B26002-52', '现货', { payments: [{ amount: 228, method: '微信' }] }),
     products: REAL_MACHINE_PRODUCTS, liveInventory: MULTI_COLOR_LIVE_ROWS,
   });
-  assert.deepEqual(task.draft.items[0], A_PROVIDES_CANDIDATES_ITEM);
+  assert.deepEqual(task.draft.items[0], A_PROVIDES_CANDIDATES_ITEM('现货', 'SALE_CASH'));
   // 候选里没有 stock / sample_plan：那是 B 的产物，而 B 要等她选完才跑。
   assert.ok(task.draft.items[0].color_options.every((option) => option.stock === undefined));
   assert.ok(task.draft.items[0].color_options.every((option) => option.sample_plan === undefined));
@@ -312,7 +316,7 @@ test('未付 + 多颜色 → 与现货同一条口径（候选由 A 给，B 等�
     parsed: itemLine('B26002-52', '未付', {}),
     products: REAL_MACHINE_PRODUCTS, liveInventory: MULTI_COLOR_LIVE_ROWS,
   });
-  assert.deepEqual(task.draft.items[0], A_PROVIDES_CANDIDATES_ITEM);
+  assert.deepEqual(task.draft.items[0], A_PROVIDES_CANDIDATES_ITEM('未付', 'SALE_UNPAID'));
 });
 
 // 现货 + 这个尺码一双都没有：A 仍然是"两个颜色"，所以**候选照旧摆出来**，

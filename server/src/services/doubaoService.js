@@ -19,6 +19,14 @@ const {
 //    test/doubaoArrivalReconcileParse.test.js（源码级断言也钉住"不许再用那个名字"）。
 //    依赖方向核过：`v1BitableGateway` 不会（直接或间接）require 回本文件，不构成循环依赖。
 const { textValue } = require('./v1BitableGateway');
+// 中文交易类型 → 行为编码（`SALE_CASH` / `SALE_UNPAID` / `SALE_PREPAID`）的**唯一**对照表，
+// 以及"哪些类型是预付性质"（定金 + 尾款只对它成立）的配置判据。
+// ⚠️ 两个都从 `config/` 拿，本文件不许自己写 `'SALE_PREPAID' === ...` 这种散落判断。
+const { tradeTypeCodeFromLabel } = require('../config/salesMovements');
+const { isPrepaidTradeType, orderTradeTypeCodes, SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS } =
+  require('../config/salesTradeTypePolicy');
+// 中文交易类型只认这三个（与 config/salesMovements 的对照表同源）。
+const SALES_TRADE_TYPE_LABELS = Object.freeze(['现货', '未付', '预付']);
 
 // Log only the sale fields needed to compare AI extraction with deterministic
 // normalization. Never log the complete user message, prompt or raw model JSON.
@@ -129,6 +137,32 @@ const depositTerms = (sourceText) => {
   return { depositAmount, tailAmount: Number(tail[1]), issues: [] };
 };
 
+/**
+ * 「定金 / 尾款」属于**哪一条明细**？（业务负责人 2026-10-07：一张单可以多明细，不拆单）
+ *
+ *   ① 单明细 → 就是它（**逐字沿用**旧行为，单类型单不受这次改动影响）；
+ *   ② 多明细 → **唯一一件**「预付性质」的明细（判据在 `config/salesTradeTypePolicy`，
+ *      本文件不认识「预付」这个词；真机上模型会把付了定金的那一件标成预付）；
+ *   ③ 一件都没标成预付时退一步：**只有一件"带尺码的鞋"** → 就是那双鞋
+ *      （定金/定制说的都是那双鞋；配品没有尺码，鞋才有）；
+ *   ④ 其余（0 件或多件说得通）→ -1，**说不清就绝不猜**，调用方报缺项。
+ */
+const depositTargetIndex = (items = [], singleLine = false) => {
+  if (!items.length) return -1;
+  if (singleLine) return 0;
+  const prepaid = items
+    .map((item, index) => (isPrepaidTradeType(item.trade_type_code) ? index : -1))
+    .filter((index) => index >= 0);
+  if (prepaid.length === 1) return prepaid[0];
+  if (prepaid.length === 0) {
+    const shoes = items
+      .map((item, index) => (item.kind !== 'accessory' && item.size ? index : -1))
+      .filter((index) => index >= 0);
+    if (shoes.length === 1) return shoes[0];
+  }
+  return -1;
+};
+
 const positiveOrEmpty = (value) => {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : '';
@@ -206,9 +240,22 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
   if (isAfterSalesIntent(normalizeMessageIntent(result.intent))) {
     return normalizeAfterSalesResult(result, sourceText);
   }
+  // 交易类型由 AI 从原话判断，但只认三种；说不清时按现货处理——
+  // 门店绝大多数是"当场收钱当场交货"，不说不给钱就是现货（不是猜，是业务前提）。
+  // 交付状态不在这里定：它由 SALES_MOVEMENTS 从交易类型推出来。
+  // ⚠️ 这一份是**整单**的类型（兼容字段）；**逐明细**的类型在各行上（见下面的 items 循环）。
+  //    一张单可以同时有现货与预付（业务负责人 2026-10-07），所以"整单"只是兜底值，
+  //    真正决定交付/库存的是**每一行自己的** `trade_type_code`。
+  const tradeType = SALES_TRADE_TYPE_LABELS.includes(result.trade_type) ? result.trade_type : '现货';
   const rawItems = Array.isArray(result.items) && result.items.length ? result.items : [result];
   const items = [];
   for (const item of rawItems) {
+    // ── 逐明细的交易类型（业务负责人 2026-10-07 拍板）──────────────────────────────
+    //   「**在销售明细里面分开，它是现货还是预付款**，不就可以了吗？」
+    // 取法：这一行自己说的优先（模型现在按 `items[].trade_type` 输出）；
+    //       这一行没说 → 退回整单的类型（既有单类型单走的就是这一条路，逐字不变）。
+    const itemTradeType = SALES_TRADE_TYPE_LABELS.includes(item.trade_type) ? item.trade_type : tradeType;
+    const itemTradeTypeCode = tradeTypeCodeFromLabel(itemTradeType);
     const giftDescription = String(item.gift_description || '').trim();
     const gift = item.gift === true || Boolean(giftDescription);
     // 配品（腰带、鞋油、袜子、包等）：没有货号、颜色、尺码，只有名字和金额。
@@ -224,6 +271,8 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
         // 所以 tier_price 不落库、也不当成交金额（业务负责人口径）。
         tier_price: moneyOrEmpty(item.tier_price ?? item.tierPrice) || spokenAmount,
         actual_amount: spokenAmount,
+        trade_type: itemTradeType,
+        trade_type_code: itemTradeTypeCode,
         gift,
         gift_description: giftDescription,
       });
@@ -242,6 +291,8 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
       size: positiveOrEmpty(item.size),
       quantity: positiveOrEmpty(item.quantity) || 1,
       actual_amount: moneyOrEmpty(item.actual_amount),
+      trade_type: itemTradeType,
+      trade_type_code: itemTradeTypeCode,
       gift,
       gift_description: giftDescription,
     });
@@ -255,11 +306,6 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
     amount: moneyOrEmpty(payment.amount), method: String(payment.method || '').trim(),
   }));
   let agreedTotal = moneyOrEmpty(result.agreed_total);
-  // 交易类型由 AI 从原话判断，但只认三种；说不清时按现货处理——
-  // 门店绝大多数是"当场收钱当场交货"，不说不给钱就是现货（不是猜，是业务前提）。
-  // 交付状态不在这里定：它由 SALES_MOVEMENTS 从交易类型推出来。
-  // 这个值在下面「成交金额」的口径里要用，所以提前到这里算。
-  const tradeType = ['现货', '未付', '预付'].includes(result.trade_type) ? result.trade_type : '现货';
   // 她**明说**的欠款金额（owed）。它是"要不要挂未收款"的唯一依据：
   // ⚠️ 本系统**没有「打折」这个概念**（业务负责人明确说过）：真实现象只有一种——
   // 她说收到多少钱，那就是这一单的成交金额；没收到的那部分，只在她说了"欠"时才是未收款。
@@ -271,27 +317,52 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
   }
   const deposit = depositTerms(sourceText);
   if (deposit && !deposit.issues.length) {
+    // ⭐ 一条单里可以既有现货明细、又有预付明细（业务负责人 2026-10-07）：
+    //   「**这就是一个人买的呀**」——不拆单，定金/尾款落到**那一件预付明细**上。
+    const singleLine = items.length === 1;
     const matching = payments.filter((payment) => Number(payment.amount) === deposit.depositAmount);
     if (matching.length === 1) {
       const spokenMethod = sourceText.match(/(微信|现金|支付宝)\s*(?:支付|付|交|收)?\s*定金/)?.[1] ||
         sourceText.match(/定金\s*[¥￥]?\s*\d+(?:\.\d{1,2})?\s*(?:元|块)?\s*(微信|现金|支付宝)/)?.[1];
-      payments = [{ ...matching[0], method: spokenMethod || matching[0].method }];
+      if (singleLine) {
+        // 单明细：**逐字沿用**旧行为（只留定金那一笔 —— 尾款还没付，不是已收款）。
+        payments = [{ ...matching[0], method: spokenMethod || matching[0].method }];
+      } else {
+        // 多明细：**别的收款都要留着**（真机那单里现货那笔 119 不能被定金这段丢掉）；
+        // 只做两件事：① 修正定金那笔的收款方式（她说了就用她说的）；
+        //              ② 去掉"还没付的尾款"那笔（模型偶尔会把它当成一笔收款）。
+        const kept = payments.filter((payment) =>
+          !(deposit.tailAmount && Number(payment.amount) === deposit.tailAmount));
+        payments = kept.map((payment) => (payment === matching[0]
+          ? { ...payment, method: spokenMethod || payment.method } : payment));
+      }
     }
     else deposit.issues.push('请明确本次定金的支付方式');
-    if (deposit.tailAmount && items.length !== 1) {
-      // 定金 + 尾款的推导只对「整单一条明细」成立：多行时无法判断尾款属于哪一件。
-      // 以前是整块跳过，应收金额被静默算丢（不报错、金额却不对），所以改成明确拒绝。
-      deposit.issues.push('定金单暂只支持一条明细；多双请分开说明，或逐双给出成交金额');
-    } else if (deposit.tailAmount) {
-      const expectedTotal = Math.round((deposit.depositAmount + deposit.tailAmount) * 100) / 100;
-      const statedPrice = sourceText.match(/(?:成交价|成交金额|总价)\s*(?:是|为)?\s*[¥￥]?\s*(\d+(?:\.\d{1,2})?)/);
-      if (statedPrice && Number(statedPrice[1]) !== expectedTotal) {
-        deposit.issues.push('成交价与定金加尾款不一致，请核对');
+    if (deposit.tailAmount) {
+      const targetIndex = depositTargetIndex(items, singleLine);
+      if (targetIndex < 0) {
+        // 说不清定金属于哪一件 ⇒ 绝不猜（宁可问一句，也不把尾款挂到错的鞋上）。
+        // ⚠️ 这是**新的**判据/文案（进 config），不是原来那条整单护栏的翻版：
+        //    真机上模型按 `items[].trade_type` 给出「哪一件是预付」时，这里根本不会走到。
+        deposit.issues.push(SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS);
+      } else {
+        const expectedTotal = Math.round((deposit.depositAmount + deposit.tailAmount) * 100) / 100;
+        const statedPrice = sourceText.match(/(?:成交价|成交金额|总价)\s*(?:是|为)?\s*[¥￥]?\s*(\d+(?:\.\d{1,2})?)/);
+        if (statedPrice && Number(statedPrice[1]) !== expectedTotal) {
+          deposit.issues.push('成交价与定金加尾款不一致，请核对');
+        }
+        items[targetIndex].actual_amount = expectedTotal;
+        // 单明细：整单成交额就是「定金 + 尾款」（逐字沿用旧行为）。
+        if (singleLine) agreedTotal = expectedTotal;
+        // 「尾款以后付」= 她明说欠这笔尾款 → 后端据此补一条未收款（见 salesOrderService）。
+        owed = deposit.tailAmount;
       }
-      agreedTotal = expectedTotal;
-      items[0].actual_amount = agreedTotal;
-      // 「尾款以后付」= 她明说欠这笔尾款 → 后端据此补一条未收款（见 salesOrderService）。
-      owed = deposit.tailAmount;
+    }
+    // 多明细：整单成交额按「**各分项之和**」（#231 的口径）重算 —— 定金那段**不再**直接
+    // 决定整单金额（否则一件预付的定金+尾款会盖住整单里别的行）。
+    if (!singleLine && !deposit.issues.length && items.length &&
+      items.every((item) => item.actual_amount)) {
+      agreedTotal = Math.round(items.reduce((sum, item) => sum + Number(item.actual_amount), 0) * 100) / 100;
     }
   }
   // ── 「成交金额」的确定性口径（业务负责人口径，对应提示词规则 9）────────────────────
@@ -337,14 +408,23 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
     owed = '';
   }
   const first = items[0] || {};
+  const tradeTypeCode = tradeTypeCodeFromLabel(tradeType);
   const normalized = {
     // 意图值统一走注册表收敛（见 config/saleIntents）：模型输出「退货」还是 "return"
     // 都落到同一个规范值；认不出来一律 unsupported，绝不猜成 sale 去写单。
     // 本期真正会执行的非 sale 意图只有 sale_query（只读查询）；
     // return / exchange 只识别、不执行。
     intent: normalizeMessageIntent(result.intent),
-    trade_type: tradeType,
+    // ⚠️ `...first` 必须在 `trade_type` **之前**：`first` 是 items[0]，它现在自己带着
+    //    `trade_type` / `trade_type_code`（逐明细的类型）。顺序反了会让"整单的类型"
+    //    被第一行的类型静默覆盖 —— 而这两个是不同的东西（整单可以是"现货+预付"两选）。
     ...first,
+    // **整单**的交易类型（兼容字段 / 兜底）：模型整单给的值。
+    trade_type: tradeType,
+    trade_type_code: tradeTypeCode,
+    // **整单**去重后的多个编码（业务负责人 2026-10-07：「多种交易类型，你多选就行了」）。
+    // 主表「交易类型」写的就是它们；每一件明细的**单选**类型在 `items[].trade_type_code`。
+    trade_type_codes: orderTradeTypeCodes(items, tradeTypeCode),
     items,
     payments,
     agreed_total: agreedTotal,
@@ -436,7 +516,7 @@ class DoubaoService {
 {
   "intent": "sale",
   "trade_type": "现货",
-  "items": [{"item_no":"8088-26","color":"棕","size":38,"quantity":1,"actual_amount":230,"gift":false,"gift_description":""}],
+  "items": [{"item_no":"8088-26","color":"棕","size":38,"quantity":1,"actual_amount":230,"trade_type":"现货","gift":false,"gift_description":""}],
   "payments": [{"amount":230,"method":"微信"}],
   "agreed_total": 230,
   "owed": ""
@@ -460,6 +540,12 @@ class DoubaoService {
    · 其余一律 \"现货\"（当场收款当场交货——门店绝大多数是这一种，不说不给钱就是现货）
    团购券只是一种**支付方式**（钱延期结算），不影响 trade_type；用券买走一双鞋仍然是现货。
    不要输出交付状态，后端会按 trade_type 决定是否交付。
+   ⭐ **一张单里的每一件都要填自己的 items[].trade_type** —— 一笔生意可以**既卖现货又卖预付**：
+     当场拿走的鞋填「现货」，付了定金、以后来取的那双填「预付」。
+     整单的 trade_type：所有件一样就填那一个；不一样时填**第一件**的。
+     例：「119元微信。卖了31678，40码。定制一双6681-1，42码，定金50元，下次付39元」
+     ⇒ items = [{31678 现货 actual_amount=119}, {6681-1 预付}]，trade_type 填「现货」。
+   ⚠️ **定金 / 尾款只属于它紧挨着的那一件**（上面例子里是 6681-1），不要摊到别的件上。
 3. item_no 只填写用户原话中的货号，不要把颜色、尺码或品类拼进货号。用户可能用任意顺序和标点表达，但货号中的数字和字母必须原样保留。
 4. color 单独填写颜色；“棕色”规范为“棕”、“黑色”规范为“黑”。没有提到颜色时留空，不得猜测。
 5. “628-6米紫361一双”是货号 628-6、颜色米紫、36码、数量1；末尾的 1 是数量，不是 361 码。
