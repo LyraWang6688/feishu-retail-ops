@@ -187,8 +187,25 @@ $ node --test --test-concurrency=1     # 第 2 次
 （主工作区 `origin/main` 的基线是 **1339** 条；本次新增 **13** 条 ⇒ 1352。
 ⚠️ 全量只在**独立 worktree** 里跑，主工作区一次都没跑。）
 
-**真启动一次**（`AGENTS.md` 第 5 条的精神；本次**没有**改 `app.js` 的 require 顺序，
-但改到了 `larkCards` / `larkMvpService` 的加载链）：
+### CI（**三项全绿 + `mergeStateStatus: CLEAN`**，PR [#258](https://github.com/LyraWang6688/feishu-retail-ops/pull/258)）
+
+```
+$ export XDG_CACHE_HOME=/tmp/ghcache GH_CACHE_DIR=/tmp/ghcache
+$ gh pr checks 258
+Analyze (javascript-typescript)  pass  1m10s
+CodeQL                           pass  5s
+test                             pass  58s
+
+$ gh pr view 258 --json mergeStateStatus,headRefOid
+{"mergeStateStatus":"CLEAN","headRefOid":"43be1001…"}
+```
+
+⚠️ **没有用 `--admin`**、**没有合并**、**没有部署**（她明令：部署要她当次的命令）。
+
+### 真启动一次
+
+（`AGENTS.md` 第 5 条的精神；本次**没有**改 `app.js` 的 require 顺序，
+但改到了它下面那条加载链 `larkCards` / `larkMvpService`。）
 
 ```
 $ PORT=41234 node src/app.js     # 独立端口，只探自己这一个 PID
