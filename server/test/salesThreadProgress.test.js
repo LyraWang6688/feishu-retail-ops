@@ -11,7 +11,16 @@
  *   □ 判断不了时**回一句问她**，不回退去当新原话解析
  *   □ ⭐ 私聊行为**一个字都不变**：同样的句子在私聊仍然走销售解析（不是进展）
  *   □ 回复回到**同一个话题**（reply_in_thread）
+ *
+ * ⭐⭐ 2026-10-08「触发入口只留卡片按钮」（业务负责人拍板的**乙**）：
+ *   默认已经改成**说话不再触发写库**（只回提示，见 `salesTextTriggerOff.test.js`）。
+ *   本文件钉的是**开关打开时**的旧行为 ⇒ 在进程内**显式把开关打开**
+ *   （`SALES_PROGRESS_TEXT_TRIGGER_ENABLED=true`），这样"将来要恢复只翻开关"这句话
+ *   有回归保护：开关一开，下面每一条逐字与改动前一致。
+ *   ⚠️ node --test 每个测试文件一个子进程，这里改 process.env 不会影响别的文件。
  */
+
+process.env.SALES_PROGRESS_TEXT_TRIGGER_ENABLED = 'true';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');

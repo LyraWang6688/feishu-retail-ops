@@ -105,6 +105,10 @@ const makeHarness = ({ salesGroupThreads, gateway = makeGateway().gateway, recog
     botOpenId: TEST_BOT_OPEN_ID,
     salesGroupThreads: salesGroupThreads
       || new SalesGroupThreadLocator({ store: tempStore() }),
+    // ⭐ 2026-10-08「说话不再触发」起，话题里命中进展词会回一句提示，并把
+    //    "同一话题短时间只说一次"的节流记录写进**本地**目录（`data/sales_progress_notices/`）。
+    //    测试里换成临时目录：不许往仓库的 data/ 里落文件（免得跑两遍互相影响）。
+    salesProgressNoticeStore: tempStore('sales-group-notice-'),
     // 采购那条路换成一个记录型的桩：用它证明"这条消息没走采购"。
     groupPurchaseFlow: {
       handleGroupPurchaseMessage: async (input) => {
