@@ -81,6 +81,29 @@ test('销售确认卡片：颜色候选用 column_set（不再用 action）', ()
   assertButtonRowsAreEqualWeight(card);
 });
 
+test('销售确认卡片：候选带库存状态时按钮标「有货 / 无货」（后缀走配置）', () => {
+  const card = salesConfirmationCard('draft_1', saleDraft({
+    items: [{ item_no: '66356', size: 42, quantity: 1, actual_amount: 99, needs_color: true,
+      color_options: [
+        { color: '黑', recordId: 'color_0', number: '66356黑', stock_status: 'available' },
+        { color: '白', recordId: 'color_1', number: '66356白', stock_status: 'unavailable' },
+      ] }],
+  }));
+  const buttons = columnSetButtons(card).filter((button) => button.value.action === 'choose_sale_color');
+  assert.deepEqual(buttons.map((button) => button.text.content), ['黑（有货）', '白（无货）']);
+  // ⚠️ 按钮带回去的 `color_name` 必须是**纯颜色**：后端按它落日志 / 兜底找记录，不认后缀。
+  assert.deepEqual(buttons.map((button) => button.value.color_name), ['黑', '白']);
+});
+
+test('销售确认卡片：候选没带库存状态（例如预付不跑 B）时按钮就是纯颜色', () => {
+  const card = salesConfirmationCard('draft_1', saleDraft({
+    items: [{ item_no: '66356', size: 42, quantity: 1, actual_amount: 99, needs_color: true,
+      color_options: [{ color: '黑', recordId: 'color_0', number: '66356黑' }] }],
+  }));
+  assert.deepEqual(columnSetButtons(card).filter((button) => button.value.action === 'choose_sale_color')
+    .map((button) => button.text.content), ['黑']);
+});
+
 test('销售确认卡片：样品补门盒候选用 column_set（不再用 action）', () => {
   const card = salesConfirmationCard('draft_1', saleDraft({
     items: [{ item_no: '66356', size: 42, quantity: 1, actual_amount: 99, uses_sample: true,

@@ -1028,13 +1028,24 @@ test('confirming is refused until every item has a chosen color, and choosing on
   const store = makeStore();
   await store.create({ task_id: 'sale_pick_color', type: 'sale', status: 'ready_to_confirm',
     sender_open_id: 'ou_1', sales_entry_record_id: 'entry_1',
-    draft: { items: [{ item_no: '8035', size: 42, quantity: 1, actual_amount: 200,
-      needs_color: true, color_options: [
-        { recordId: 'rec_black', color: '黑牛仔', number: '8035|黑牛仔|A' },
-        { recordId: 'rec_grey', color: '灰牛仔', number: '8035|灰牛仔|A' },
-      ] }], payments: [] } });
-  const service = new LarkMvpService({ client: {}, gateway: {}, references: {},
-    recognizer: {}, store, posting: {} });
+    draft: { trade_type: '现货',
+      items: [{ item_no: '8035', size: 42, quantity: 1, actual_amount: 200,
+        needs_color: true, color_options: [
+          { recordId: 'rec_black', color: '黑牛仔', number: '8035|黑牛仔|A' },
+          { recordId: 'rec_grey', color: '灰牛仔', number: '8035|灰牛仔|A' },
+        ] }], payments: [] } });
+  // ⚠️ 第三刀之后，选完颜色要**跑一次 B**（她选定的颜色去查库存）⇒ 这个 fixture 必须有
+  //    实时库存，否则"这个颜色没货"会（正确地）把选色判成缺货。断言本身一个字没放宽。
+  const service = new LarkMvpService({
+    client: {},
+    gateway: {
+      ...liveInventoryGateway([
+        liveRow({ itemNo: '8035', color: '黑牛仔', size: 42, productRecordId: 'rec_black' }),
+      ]),
+      update: async () => undefined,
+    },
+    references: {}, recognizer: {}, store, posting: {},
+  });
   service.publishSalesResultCard = async () => true;
 
   const refused = await service.handleCardAction({
@@ -1407,10 +1418,17 @@ const runSaleScenario = async ({ taskId, text, rows, parsed, products = [], prod
     ? { tableId: 'tbl_product', fields: { number: '编号', itemNo: '货号', color: '颜色',
         completeness: '缺失信息说明', sampleImage: '样例图' } }
     : { tableId: 'tbl_product', fields: { number: '编号', itemNo: '货号', color: '颜色' } };
+  // 「实时库存」整表到底读了几次：候选上的「有货 / 无货」标注**只许用已读进来的索引**，
+  // 一次都不许多读（多读 = 新增远端请求）。这里把它数出来当证据。
+  let liveReads = 0;
   const service = new LarkMvpService({
     client: {},
     gateway: {
       ...baseGateway,
+      listAll: async (key) => {
+        if (key === 'liveInventory') liveReads += 1;
+        return baseGateway.listAll(key);
+      },
       // 解析 A 读的是「货品信息」，颜色字段在这里声明。
       table: (key) => (key === 'product' ? productTable : baseGateway.table(key)),
       validateTables: async () => [],
@@ -1422,7 +1440,8 @@ const runSaleScenario = async ({ taskId, text, rows, parsed, products = [], prod
     recognizer: { parseSalesText: async () => normalizeSalesResult(parsed, text) },
     store,
   });
-  // 解析 B 到底跑没跑：包一层计数（"预付不查库存"这件事要看得见，不能只靠结果反推）。
+  // 解析 B 到底跑没跑：包一层计数（"多颜色未选色时 B 一次都不跑"这件事要看得见，
+  // 不能只靠结果反推）。⚠️ 计数是**跨这次调用**的 —— 录单 + 之后的卡片动作都在里面。
   let stockLookups = 0;
   const originalStockParse = service.resolveStockAvailabilityForSale.bind(service);
   service.resolveStockAvailabilityForSale = (...args) => {
@@ -1437,7 +1456,8 @@ const runSaleScenario = async ({ taskId, text, rows, parsed, products = [], prod
     chat_type: 'group', chat_id: GROUP_CHAT_ID, message_id: `om_${taskId}`,
     sender_open_id: 'ou_1', sent_at: Date.now(), original_text: text });
   await service.processSalesTask(taskId);
-  return { task: await store.get(taskId), cards, messages, stockLookups };
+  return { task: await store.get(taskId), cards, messages, stockLookups, service, store,
+    readStockLookups: () => stockLookups, readLiveReads: () => liveReads };
 };
 
 test('真机原话「定金微信交了 100 元，下次欠 128 元」（预付 + 完全没库存）→ 无缺项、直接出确认卡片', async () => {
@@ -1543,11 +1563,14 @@ test('预付单：货品信息里这个货号有多个颜色 → 仍然让她在
   assert.equal(cards.length, 1);
 });
 
-test('现货单：解析 A 与解析 B **两个都跑**（B 认得出来时以 B 为准：卖的是实物）', async () => {
-  const { task, cards, stockLookups } = await runSaleScenario({
+// ⭐ 旧行为哨兵（有意改掉，见汇报）：旧口径是「现货 / 未付：B 认得出来就以 B 为准，
+//    连颜色与记录 id 都整体替换 A」。2026-10-07 第三刀之后**颜色由 A 定死**：
+//    这条用例现在钉的是"A 说的那个颜色/记录 id 不再被 B 覆盖，B 只拿它去查库存"。
+test('现货单：A 定下的单色就是这一单的颜色与货品，B 只拿它去查库存（不再用 B 覆盖 A）', async () => {
+  const { task, cards, stockLookups, readLiveReads } = await runSaleScenario({
     taskId: 'sale_cash_both_parses',
     text: '26002-52 37码，210微信',
-    rows: [liveRow({ itemNo: '26002-52', color: '白', size: 37, productRecordId: 'live_p37' })],
+    rows: [liveRow({ itemNo: '26002-52', color: '黑', size: 37, productRecordId: 'live_p37' })],
     products: [productRow('26002-52', '黑', 'p37')],
     parsed: {
       intent: 'sale', trade_type: '现货',
@@ -1559,9 +1582,34 @@ test('现货单：解析 A 与解析 B **两个都跑**（B 认得出来时以 B
   assert.equal(stockLookups, 1, '现货要查库存（既有行为）');
   assert.equal(task.status, 'ready_to_confirm');
   assert.equal(cards.length, 1);
-  // 实时库存说这一双是「白」的那条记录 —— 以它为准（不是货品信息里的「黑」）。
-  assert.equal(task.draft.items[0].product_record_id, 'live_p37');
-  assert.equal(task.draft.items[0].color, '白');
+  // 颜色 / 记录 id 以 A（「货品信息」）为准 —— 即使实时库存那条记录 id 是另一个。
+  assert.equal(task.draft.items[0].product_record_id, 'p37');
+  assert.equal(task.draft.items[0].color, '黑');
+  // 库存分布仍然来自 B（她定的那个颜色在店里实际有几双）。
+  assert.deepEqual(task.draft.items[0].stock, { doorBox: 1, sample: 0, warehouse: 0 });
+  assert.equal(readLiveReads(), 1, '整单只读一次实时库存');
+});
+
+// ⭐ 同一个哨兵的另一半：A 说是「黑」、实时库存那个尺码只有「白」时，
+//    **不再**把 B 的「白」当成这一单的颜色（旧行为就是这么覆盖的）；
+//    以 A 为准去 B 里找「黑」→ 找不到 → 走"库存里没有…"。
+test('现货单：A 说「黑」、实时库存 37 码只有「白」→ 以 A 为准，走"库存里没有…"（覆盖旧行为）', async () => {
+  const { task, cards, messages, stockLookups } = await runSaleScenario({
+    taskId: 'sale_cash_a_overrides_b',
+    text: '26002-52 37码，210微信',
+    rows: [liveRow({ itemNo: '26002-52', color: '白', size: 37, productRecordId: 'live_p37' })],
+    products: [productRow('26002-52', '黑', 'p37')],
+    parsed: {
+      intent: 'sale', trade_type: '现货',
+      items: [{ item_no: '26002-52', size: 37, quantity: 1, actual_amount: 210 }],
+      payments: [{ amount: 210, method: '微信' }], agreed_total: 210,
+    },
+  });
+
+  assert.equal(stockLookups, 1, '现货要查库存，但查的是 A 定的「黑」');
+  assert.equal(task.status, 'needs_info');
+  assert.equal(cards.length, 0, '查不到 A 那个颜色就不出确认卡片');
+  assert.equal(messages[0], '库存里没有 26002-52 37码（这个货号现在一双都没有），请核实～');
 });
 
 test('现货单且库存里没有 → 仍然被拦（既有行为，一个字没改）', async () => {
@@ -1598,6 +1646,246 @@ test('未付单且库存里没有 → 仍然被拦（鞋已经被拿走了，必
   assert.equal(task.status, 'needs_info');
   assert.equal(cards.length, 0, '未付没库存就不该出确认卡片');
   assert.equal(messages[0], '库存里没有 26002-52 37码（这个货号现在一双都没有），请核实～');
+});
+
+// ─── 第三刀：颜色由 A 定死、B 拿"她选定的颜色"去查库存（业务负责人 2026-10-07）────
+// 她的原话（逐字）：「A 一定要有选颜色的机制……如果有多个颜色，一定要让用户去选择」
+//  「B 应该是拿着 A 环节用户选的那个颜色，然后再去找库存，这样子的话，
+//   这个流程其实三个类型都是要这样走的，只不过对于预付来说，它不会再走 B 了」
+// 设计落档：docs/ab-color-first-design-2026-10-07.md（含验收标准与逐条对照）。
+//   · 多颜色未选色 ⇒ 卡片给候选，**B 一次都不跑**；
+//   · 她选定颜色 ⇒ 用**那条候选的 recordId**，**这时才跑 B**，缺货提示在 B 之后；
+//   · 现货 / 未付 的候选标「有货 / 无货」（只用录单时已读进来的实时库存索引，零新增请求）；
+//   · 单颜色不问她，A 直接定（三种类型）；
+//   · 预付选完颜色**仍然不跑** B。
+
+// 多颜色货品的两个颜色（A 的「货品信息」里同一个货号两条记录）。
+const MULTI_COLOR_PRODUCTS = [
+  productRow('26002-52', '黑', 'p_black'),
+  productRow('26002-52', '白', 'p_white'),
+];
+const multiColorParsed = (tradeType) => ({
+  intent: 'sale', trade_type: tradeType,
+  items: [{ item_no: '26002-52', size: 37, quantity: 1, actual_amount: 210 }],
+  payments: [{ amount: 210, method: '微信' }], agreed_total: 210,
+});
+// 未付那一档：整单 260 全都还没收（金额前后要自洽 —— 否则会被"金额不一致"拦成 needs_info）。
+const unpaidParsed = () => ({
+  intent: 'sale', trade_type: '未付',
+  items: [{ item_no: '26002-52', size: 37, quantity: 1, actual_amount: 260 }],
+  payments: [], agreed_total: 260, owed: 260,
+});
+const chooseColorAction = (draftId, { recordId, colorName, productNumber }) => ({
+  operator: { operator_id: { open_id: 'ou_1' } },
+  action: { value: { action: 'choose_sale_color', draft_id: draftId, item_index: 0,
+    record_id: recordId, product_number: productNumber, color_name: colorName } },
+});
+
+test('① 现货 + 多颜色未选颜色 → B 一次都没跑；卡片给候选并标「有货 / 无货」', async () => {
+  let result;
+  const logs = await captureLogs(async () => {
+    result = await runSaleScenario({
+      taskId: 'sale_multi_color_pending',
+      text: '26002-52 37码，210微信',
+      // 实时库存里这个尺码只有「黑」有货 ⇒ 白应当标成「无货」。
+      rows: [liveRow({ itemNo: '26002-52', color: '黑', size: 37, productRecordId: 'live_black' })],
+      products: MULTI_COLOR_PRODUCTS,
+      parsed: multiColorParsed('现货'),
+    });
+  });
+
+  assert.equal(result.stockLookups, 0, '她还没选颜色，B 一次都不许跑');
+  assert.equal(result.task.status, 'ready_to_confirm', '待选颜色不该让整单停在「需要补充」');
+  const item = result.task.draft.items[0];
+  assert.equal(item.needs_color, true);
+  assert.equal(item.product_record_id, '', '颜色没定，明细先不挂货品');
+  assert.deepEqual(item.color_options.map((option) => option.color), ['黑', '白']);
+  assert.deepEqual(item.color_options.map((option) => option.stock_status), ['available', 'unavailable']);
+  assert.equal(result.cards.length, 1, '应当照常发确认卡片，而不是回一句「请补充颜色」');
+  const cardText = JSON.stringify(result.cards[0]);
+  assert.match(cardText, /choose_sale_color/);
+  assert.match(cardText, /黑（有货）/, '有货的颜色要标「有货」');
+  assert.match(cardText, /白（无货）/, '这个尺码没货的颜色要标「无货」');
+  // 可排查：为什么这一单这次没查库存 —— 答案就是"等她选颜色"。
+  assert.match(logs, /lark\.sales\.stock_existence\.deferred/);
+  assert.match(logs, /"reason":"awaiting_color_choice"/);
+  // 候选标注用的是**已经读进来的**索引：整单只读一次实时库存（零新增远端请求）。
+  assert.equal(result.readLiveReads(), 1, '候选标注不许新增远端请求');
+});
+
+test('①b 未付 + 多颜色：与现货一致 —— 先让她选，B 一次都不跑', async () => {
+  const result = await runSaleScenario({
+    taskId: 'sale_unpaid_multi_color',
+    text: '26002-52 37码，260未付',
+    rows: [liveRow({ itemNo: '26002-52', color: '黑', size: 37, productRecordId: 'live_black' })],
+    products: MULTI_COLOR_PRODUCTS,
+    parsed: unpaidParsed(),
+  });
+
+  assert.equal(result.stockLookups, 0, '未付也一样：未选颜色时 B 不跑');
+  assert.equal(result.task.status, 'ready_to_confirm');
+  assert.equal(result.task.draft.items[0].needs_color, true);
+  assert.deepEqual(result.task.draft.items[0].color_options.map((option) => option.stock_status),
+    ['available', 'unavailable']);
+  assert.equal(result.cards.length, 1);
+});
+
+test('③ 现货候选「全都无货」的边界：每个候选都标「无货」，但候选照旧摆出来', async () => {
+  const result = await runSaleScenario({
+    taskId: 'sale_multi_color_all_out',
+    text: '26002-52 37码，210微信',
+    rows: [], // 这个货号在这个尺码一双都没有
+    products: MULTI_COLOR_PRODUCTS,
+    parsed: multiColorParsed('现货'),
+  });
+
+  assert.equal(result.stockLookups, 0, '还是"没选颜色"⇒ B 不跑');
+  const item = result.task.draft.items[0];
+  assert.deepEqual(item.color_options.map((option) => option.stock_status),
+    ['unavailable', 'unavailable'], '全都无货时每一个都要如实标「无货」');
+  const cardText = JSON.stringify(result.cards[0]);
+  assert.match(cardText, /黑（无货）/);
+  assert.match(cardText, /白（无货）/);
+  assert.doesNotMatch(cardText, /（有货）/);
+});
+
+test('② 她选定颜色之后才跑 B：用她选中那条候选的记录 id，库存分布来自 B', async () => {
+  const result = await runSaleScenario({
+    taskId: 'sale_multi_color_pick',
+    text: '26002-52 37码，210微信',
+    rows: [liveRow({ itemNo: '26002-52', color: '黑', size: 37, productRecordId: 'live_black' })],
+    products: MULTI_COLOR_PRODUCTS,
+    parsed: multiColorParsed('现货'),
+  });
+  assert.equal(result.readStockLookups(), 0, '录单阶段：她没选颜色 ⇒ B 不跑');
+
+  const picked = await result.service.handleCardAction(
+    chooseColorAction('sale_multi_color_pick', { recordId: 'p_black', colorName: '黑', productNumber: '26002-52黑' }),
+  );
+
+  assert.equal(picked.toast.type, 'success');
+  assert.equal(result.readStockLookups(), 1, '颜色定了，B 这时才跑（恰好一次）');
+  assert.equal(result.readLiveReads(), 2, '选色后的 B 需要一次实时库存读数（录单 1 次 + 这里 1 次）');
+  const task = await result.store.get('sale_multi_color_pick');
+  const item = task.draft.items[0];
+  // ⭐ 用**她选中的那条候选**（A 的货品记录），不是实时库存里那条关联记录。
+  assert.equal(item.product_record_id, 'p_black');
+  assert.equal(item.color, '黑');
+  assert.equal(item.needs_color, false);
+  assert.deepEqual(item.color_options, []);
+  assert.deepEqual(item.stock, { doorBox: 1, sample: 0, warehouse: 0 }, '库存分布由 B 现查');
+  assert.equal(result.cards.length, 2, '选完颜色要更新那张卡片');
+});
+
+test('②b 选到无货的颜色 → 缺货提示发生在 B 之后，候选保留（她可以换一个颜色）', async () => {
+  const result = await runSaleScenario({
+    taskId: 'sale_multi_color_pick_out',
+    text: '26002-52 37码，210微信',
+    rows: [liveRow({ itemNo: '26002-52', color: '黑', size: 37, productRecordId: 'live_black' })],
+    products: MULTI_COLOR_PRODUCTS,
+    parsed: multiColorParsed('现货'),
+  });
+
+  const picked = await result.service.handleCardAction(
+    chooseColorAction('sale_multi_color_pick_out', { recordId: 'p_white', colorName: '白', productNumber: '26002-52白' }),
+  );
+
+  assert.equal(picked.toast.type, 'warning');
+  assert.equal(result.readStockLookups(), 1, '缺货也是 B 跑出来的结论');
+  assert.equal(result.readLiveReads(), 2);
+  // 缺货那句与录单时同一个形状 —— 它发生在 B **之后**。
+  assert.equal(result.messages.at(-1), '库存里没有 26002-52 37码（这个货号现在一双都没有），请核实～');
+  const task = await result.store.get('sale_multi_color_pick_out');
+  assert.equal(task.status, 'ready_to_confirm', '不把任务打死：她可以在同一张卡片上换一个颜色');
+  assert.equal(task.draft.items[0].needs_color, true, '候选保留');
+  assert.equal(task.draft.items[0].color_options.length, 2);
+  assert.equal(task.draft.items[0].product_record_id, 'p_white', '她点过的那条记下来，便于排查');
+});
+
+test('②c 选完颜色但「实时库存」读不到 → 不下"有货/无货"的结论，回一句让她再点一次（候选保留）', async () => {
+  const store = makeStore();
+  await store.create({ task_id: 'sale_pick_color_read_fail', type: 'sale', status: 'ready_to_confirm',
+    chat_type: 'group', chat_id: GROUP_CHAT_ID, message_id: 'om_rf', sender_open_id: 'ou_1',
+    sales_entry_record_id: 'entry_rf',
+    draft: { trade_type: '现货',
+      items: [{ item_no: '8035', size: 42, quantity: 1, actual_amount: 200,
+        needs_color: true, color_options: [
+          { recordId: 'rec_black', color: '黑牛仔', number: '8035黑牛仔', stock_status: 'available' },
+        ] }], payments: [] } });
+  const messages = [];
+  const service = new LarkMvpService({
+    client: {},
+    gateway: {
+      ...liveInventoryGateway([]),
+      // ⚠️ 只让**读表**失败：这是"可重试的失败"，不是"没货"。
+      listAll: async () => { throw new Error('飞书 500'); },
+      update: async () => undefined,
+    },
+    references: {}, recognizer: {}, store, posting: {},
+  });
+  service.publishSalesResultCard = async () => true;
+  service.sendTaskText = async (_task, message) => messages.push(message);
+
+  const picked = await service.handleCardAction(chooseColorAction('sale_pick_color_read_fail',
+    { recordId: 'rec_black', colorName: '黑牛仔', productNumber: '8035黑牛仔' }));
+
+  assert.equal(picked.toast.type, 'warning');
+  assert.deepEqual(messages, ['暂时读不到库存，请再点一次颜色～']);
+  const task = await store.get('sale_pick_color_read_fail');
+  assert.equal(task.status, 'ready_to_confirm');
+  assert.equal(task.draft.items[0].needs_color, true, '读不到库存就不许替她定下来（候选保留）');
+  assert.equal(task.draft.items[0].color_options.length, 1);
+});
+
+test('④ 单颜色货号不问她（未付）：A 直接定下来，B 拿这个颜色去查', async () => {
+  const result = await runSaleScenario({
+    taskId: 'sale_unpaid_single_color',
+    text: '26002-52 37码，260未付',
+    rows: [liveRow({ itemNo: '26002-52', color: '黑', size: 37, productRecordId: 'live_black' })],
+    products: [productRow('26002-52', '黑', 'p37')],
+    parsed: unpaidParsed(),
+  });
+
+  assert.equal(result.stockLookups, 1, '未付跑 B');
+  assert.equal(result.task.status, 'ready_to_confirm');
+  assert.equal(result.task.draft.items[0].needs_color, undefined, '单颜色不问她');
+  assert.equal(result.task.draft.items[0].product_record_id, 'p37');
+  assert.equal(result.task.draft.items[0].color, '黑');
+  assert.equal(result.cards.length, 1);
+});
+
+test('⑤ 预付：多颜色先让她选；她选完之后 B 仍然不跑，候选也不标库存', async () => {
+  const result = await runSaleScenario({
+    taskId: 'sale_prepaid_multi_pick',
+    text: '26002-52 37码，定金微信交了100元，下次欠128元',
+    // 实时库存里"有"也不算数：预付根本不走 B。
+    rows: [liveRow({ itemNo: '26002-52', color: '黑', size: 37, productRecordId: 'live_black' })],
+    products: MULTI_COLOR_PRODUCTS,
+    parsed: {
+      intent: 'sale', trade_type: '预付',
+      items: [{ item_no: '26002-52', size: 37, quantity: 1 }],
+      payments: [{ amount: 100, method: '微信' }], agreed_total: 228, owed: 128,
+    },
+  });
+
+  assert.equal(result.stockLookups, 0, '预付不跑 B');
+  assert.equal(result.task.draft.items[0].needs_color, true, '预付也要选颜色（销售明细要写全）');
+  // 不跑 B 的交易类型**不标**库存：预付本来就没货、要调货，标"无货"只会误导她。
+  assert.deepEqual(result.task.draft.items[0].color_options.map((option) => option.stock_status),
+    [undefined, undefined]);
+  assert.doesNotMatch(JSON.stringify(result.cards[0]), /（有货）|（无货）/);
+
+  const picked = await result.service.handleCardAction(
+    chooseColorAction('sale_prepaid_multi_pick', { recordId: 'p_white', colorName: '白', productNumber: '26002-52白' }),
+  );
+
+  assert.equal(picked.toast.type, 'success');
+  assert.equal(result.readStockLookups(), 0, '预付：她选完颜色之后 B 仍然不跑');
+  assert.equal(result.readLiveReads(), 1, '只有录单那次实时库存读数（B 一直没跑）');
+  const task = await result.store.get('sale_prepaid_multi_pick');
+  assert.equal(task.draft.items[0].product_record_id, 'p_white');
+  assert.equal(task.draft.items[0].color, '白');
+  assert.equal(task.draft.items[0].needs_color, false);
 });
 
 test('缺货之外还有别的问题时，才用完整的补充说明', async () => {
@@ -1891,13 +2179,17 @@ test('配品不走「货号建档」判据：不去货品信息里找它、也�
   assert.deepEqual(messages, []);
 });
 
+// ⭐ 旧行为哨兵（有意改掉，见汇报）：这条原来用「A=黑 / 实时库存=白」来演示
+//    "B 认得出来时以 B 为准"。第三刀之后**颜色由 A 定死**，那样的 fixture 会（正确地）
+//    变成"库存里没有"；所以把实时库存那条改成与 A 同色（生产上两者本来就该同色），
+//    断言也随之改成"货品 / 颜色以 A 为准"。这条用例的本意（已建档 + 有货 ⇒ 不拦、出卡片）不变。
 test('现货单：货号已建档 + 有货 → 照旧正常出确认卡片（既有链路不破，也不记拦截事件）', async () => {
   let result;
   const logs = await captureLogs(async () => {
     result = await runSaleScenario({
       taskId: 'sale_cash_registered_with_stock',
       text: '26002-52 37码，210微信',
-      rows: [liveRow({ itemNo: '26002-52', color: '白', size: 37, productRecordId: 'live_p37' })],
+      rows: [liveRow({ itemNo: '26002-52', color: '黑', size: 37, productRecordId: 'live_p37' })],
       products: [productRow('26002-52', '黑', 'p37')],
       productIndexRows: [productIndexRow('26002-52', '黑', 'p37')],
       parsed: {
@@ -1911,7 +2203,8 @@ test('现货单：货号已建档 + 有货 → 照旧正常出确认卡片（既
   assert.equal(result.stockLookups, 1, '现货照旧查库存');
   assert.equal(result.task.status, 'ready_to_confirm');
   assert.equal(result.cards.length, 1);
-  assert.equal(result.task.draft.items[0].product_record_id, 'live_p37', 'B 认得出来时仍以 B 为准');
+  assert.equal(result.task.draft.items[0].product_record_id, 'p37', '颜色/货品以 A 为准（第三刀）');
+  assert.equal(result.task.draft.items[0].color, '黑');
   assert.doesNotMatch(logs, /lark\.sales\.product_missing\.blocked/);
 });
 
