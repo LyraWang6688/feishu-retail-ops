@@ -158,7 +158,7 @@
 | --- | --- | --- |
 | E1 | 全量 `node --test --test-concurrency=1` 连跑 2 次 fail=0 | ✅ 在 `e23ab0e` 上两次都是 `tests 897 / pass 897 / fail 0` |
 | E2 | 真启动一次 `GET /health` → 200 | ✅ `PORT=39187 node src/app.js` → `HTTP=200`，`{"status":"ok","version":"0.3.0",...}` |
-| E3 | CI `server tests` CLEAN ＋ CodeQL | ⏳ 见 PR（提交后补） |
+| E3 | CI `server tests` CLEAN ＋ CodeQL | ✅ PR **#192**（`feat/remove-private-chat-hard`）：`test` pass 51s · `Analyze (javascript-typescript)` pass 1m8s · `CodeQL` pass；`mergeStateStatus: CLEAN`。**未使用 `--admin`**，**未合并** |
 
 ## 五、私聊实测行为（本次实现后的形状）
 
