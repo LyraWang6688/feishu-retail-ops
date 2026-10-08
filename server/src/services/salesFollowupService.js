@@ -7,6 +7,7 @@ const { SalesDeliveryService } = require('./salesDeliveryService');
 const { SalesProgressService, progressFromRecords, cents } = require('./salesProgressService');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { postedOf, isPosted } = require('../config/salesStatusDimensions');
+const { logWarn } = require('../utils/logger');
 
 class SalesFollowupService {
   constructor(options = {}) {
@@ -41,38 +42,60 @@ class SalesFollowupService {
       // ⭐ 「账做完了没有」= 两代字面量都算（见 config/salesStatusDimensions 的 POSTED_VALUES）。
       orders: (await Promise.all(orders.filter((order) => isPosted(postedOf(order, orderFields)))
         .map(async (order) => {
-          const orderDetails = details.filter((detail) => linkedRecordIds(detail.fields?.[detailFields.salesEntry]).includes(order.record_id));
-          const orderPayments = payments.filter((payment) => linkedRecordIds(payment.fields?.[paymentFields.salesEntry]).includes(order.record_id));
-          const progress = progressFromRecords(orderDetails, orderPayments, detailFields, paymentFields);
-          return {
-          record_id: order.record_id,
-          order_no: textValue(order.fields?.[orderFields.orderNo]) || order.record_id,
-          fulfillment_status: progress.fulfillmentStatus,
-          payment_status: progress.paymentStatus,
-          receivable_amount: progress.receivableAmount,
-          paid_amount: progress.paidAmount,
-          pending_amount: progress.pendingAmount,
-          platform_pending_amount: progress.platformPendingAmount,
-          pending_delivery_quantity: progress.pendingDeliveryQuantity,
-          details: await Promise.all(orderDetails
-            .map(async (detail) => ({
-              record_id: detail.record_id,
-              product: productById.get(linkedRecordIds(detail.fields?.[detailFields.product])[0]) || '',
-              size: (await this.getSizeReferences().resolveLinkedCell(detail.fields?.[detailFields.size])).size,
-              quantity: 1,
-              delivered_quantity: textValue(detail.fields?.[detailFields.fulfillmentStatus]) === '已交付' ? 1 : 0,
-              fulfillment_status: textValue(detail.fields?.[detailFields.fulfillmentStatus]) || '未交付',
-              actual_amount: textValue(detail.fields?.[detailFields.actualAmount]) === '' ? null : Number(textValue(detail.fields?.[detailFields.actualAmount])),
-            }))),
-          payments: orderPayments
-            .map((payment) => ({
-              record_id: payment.record_id,
-              amount: Number(textValue(payment.fields?.[paymentFields.amount])),
-              status: textValue(payment.fields?.[paymentFields.status]) || '已收款',
-              received_at: payment.fields?.[paymentFields.receivedAt] || null,
-              method: methodById.get(linkedRecordIds(payment.fields?.[paymentFields.method])[0]) || '',
-            })),
-        }; })))
+          const orderNo = textValue(order.fields?.[orderFields.orderNo]) || order.record_id;
+          try {
+            const orderDetails = details.filter((detail) => linkedRecordIds(detail.fields?.[detailFields.salesEntry]).includes(order.record_id));
+            const orderPayments = payments.filter((payment) => linkedRecordIds(payment.fields?.[paymentFields.salesEntry]).includes(order.record_id));
+            const progress = progressFromRecords(orderDetails, orderPayments, detailFields, paymentFields);
+            return {
+              record_id: order.record_id,
+              order_no: orderNo,
+              fulfillment_status: progress.fulfillmentStatus,
+              payment_status: progress.paymentStatus,
+              receivable_amount: progress.receivableAmount,
+              paid_amount: progress.paidAmount,
+              pending_amount: progress.pendingAmount,
+              platform_pending_amount: progress.platformPendingAmount,
+              pending_delivery_quantity: progress.pendingDeliveryQuantity,
+              details: await Promise.all(orderDetails
+                .map(async (detail) => ({
+                  record_id: detail.record_id,
+                  product: productById.get(linkedRecordIds(detail.fields?.[detailFields.product])[0]) || '',
+                  size: (await this.getSizeReferences().resolveLinkedCell(detail.fields?.[detailFields.size])).size,
+                  quantity: 1,
+                  delivered_quantity: textValue(detail.fields?.[detailFields.fulfillmentStatus]) === '已交付' ? 1 : 0,
+                  fulfillment_status: textValue(detail.fields?.[detailFields.fulfillmentStatus]) || '未交付',
+                  actual_amount: textValue(detail.fields?.[detailFields.actualAmount]) === '' ? null : Number(textValue(detail.fields?.[detailFields.actualAmount])),
+                }))),
+              payments: orderPayments
+                .map((payment) => ({
+                  record_id: payment.record_id,
+                  amount: Number(textValue(payment.fields?.[paymentFields.amount])),
+                  status: textValue(payment.fields?.[paymentFields.status]) || '已收款',
+                  received_at: payment.fields?.[paymentFields.receivedAt] || null,
+                  method: methodById.get(linkedRecordIds(payment.fields?.[paymentFields.method])[0]) || '',
+                })),
+            };
+          } catch (error) {
+            // ⭐ 2026-10-08 小修（业务负责人批准的"小修"）：**单条订单出问题不许整页失败**。
+            //   线上事实（2026-10-08 01:41 +8）：一条含「已换货」明细的销售单，让
+            //   `GET /api/workbench/sales/orders` 整页 500（event=workbench.sales.orders.failed）。
+            //   ⚠️ 语义层的缺口已经堵上（`progressFromRecords` 现在认 `已退货 / 已换货 / 已赔货`，
+            //      判据 = config/afterSales.isAfterSalesFulfillment）；这一层管的是**剩下的**
+            //      单条数据不自洽（例：收款状态是预期之外的取值、收款超过成交额、尺码关联解析不出来）
+            //      —— 跳过该单、如实记一条 warn，其余订单**照常返回**。
+            //   ⚠️ **不是静默吞错**：warn 带 `order_no` 与原因；计算器本身照旧大声抛
+            //      （预期之外的状态不会在这里被当成已知）。
+            logWarn('workbench.sales.orders.order_skipped', {
+              order_no: orderNo,
+              sales_entry_record_id: order.record_id,
+              error: error.message,
+              hint: '这一单的数据不自洽，已跳过；其余订单照常返回',
+            });
+            return null;
+          }
+        })))
+        .filter(Boolean)
         .reverse(),
     };
   }

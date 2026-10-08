@@ -81,3 +81,35 @@ test('⭐ 售后的「已退款 / 已留存」不再是"未知收款状态"（�
   assert.throws(() => progressFromRecords([shoe(250, true)], [receipt(250, '红包')], detailFields, paymentFields),
     /未知收款状态：红包/);
 });
+
+// ⭐ 2026-10-08 小修（线上工单 bug，业务负责人批准的"小修"）：
+//   售后会把**原销售明细行**的「履约状态」改成 已退货 / 已换货 / 已赔货
+//   （判据 = config/afterSales.isAfterSalesFulfillment；取值见 AFTER_SALES_FULFILLMENT）。
+//   这三种取值以前会抛「未知销售明细履约状态」⇒ **一条明细把整页工作台订单列表打成 500**：
+//     2026-10-08 01:41（+8）event=workbench.sales.orders.failed
+//     request_id=fe605d92-b824-4e4f-b86c-ab3c44502829 error="未知销售明细履约状态：已换货"
+//   口径（唯一的判据来源是 config/afterSales，别新造一份中文）：
+//     **这条明细在履约这一维"已结清" ⇒ 不再计待交付**，归到既有的「已交付」档。
+test('⭐ 售后的「已退货 / 已换货 / 已赔货」不再是"未知销售明细履约状态"（按这一维已结清算）', () => {
+  const inStatus = (amount, status) => ({ fields: { 成交金额: amount, 履约状态: status } });
+  for (const status of ['已退货', '已换货', '已赔货']) {
+    // 同一张单：一条已交付 + 一条售后件。与"那一条写已交付"逐字段对照 ——
+    // 这就是"归到既有档位、不改待交付/待收算法"的证据。
+    const afterSales = progressFromRecords([shoe(250, true), inStatus(120, status)],
+      [receipt(250)], detailFields, paymentFields);
+    const sameAsDelivered = progressFromRecords([shoe(250, true), shoe(120, true)],
+      [receipt(250)], detailFields, paymentFields);
+    assert.deepEqual(afterSales, sameAsDelivered, `${status}：口径必须与"这一条=已交付"完全一致`);
+    assert.equal(afterSales.pendingDeliveryQuantity, 0, `${status}：不再计待交付`);
+    assert.equal(afterSales.fulfillmentStatus, '已交付', `${status}：这一维按已结清算`);
+    assert.equal(afterSales.receivableAmount, 370, `${status}：待收口径不变（金额照记）`);
+  }
+  // 一张**全是**售后件的单：不许算成"没有明细 ⇒ 未交付"（那与事实相反）。
+  const onlyAfterSales = progressFromRecords([inStatus(0, '已赔货')], [], detailFields, paymentFields);
+  assert.equal(onlyAfterSales.quantity, 1);
+  assert.equal(onlyAfterSales.pendingDeliveryQuantity, 0);
+  assert.equal(onlyAfterSales.fulfillmentStatus, '已交付');
+  // ⚠️ 但**预期之外**的履约状态仍然要**大声抛**（不许把"兜底"做进计算器）。
+  assert.throws(() => progressFromRecords([shoe(250, true), inStatus(120, '已撤单')], [], detailFields, paymentFields),
+    /未知销售明细履约状态：已撤单/);
+});
