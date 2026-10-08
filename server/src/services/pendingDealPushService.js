@@ -252,12 +252,19 @@ class PendingDealPushService {
     return sections;
   }
 
-  /** 一件商品：`货号 尺码码`。**配品没有尺码 → 不拼「码」**（`{size}` 是空串，整段只剩名称）。 */
+  /**
+   * 一件商品：`货号 [颜色] 尺码码`。
+   * ⭐ 2026-10-08 晚（业务负责人：「还需要在**货号和尺码中间**加上**颜色**」）⇒ `{color}` 进模板。
+   * ⚠️ 颜色取不到（配品没有颜色列、或货品信息那一列为空）时 `{color}` 是空串，
+   *    由 `fillLinePart` 收掉多余空格 —— 不会出现「货号  41码」。
+   * ⚠️ 配品没有尺码 → **不拼「码」**（`{size}` 是空串，整段只剩名称）。
+   */
   buildItemText(items = []) {
     const { itemTemplate, itemSeparator = '', sizeTemplate } = this.settings;
     return (items || [])
       .map((item) => fillLinePart(itemTemplate, {
         itemNo: item.itemNo || '',
+        color: item.color || '',
         size: item.size ? fillTemplate(sizeTemplate, { size: item.size }) : '',
       }))
       .filter(Boolean)

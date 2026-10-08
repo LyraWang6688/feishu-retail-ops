@@ -125,8 +125,8 @@ test('货号取「货品信息.货号」、尺码走共享解析；配品取「�
 
   assert.equal(orders.length, 1);
   assert.deepEqual(orders[0].items, [
-    { kind: 'shoe', itemNo: 'B26002-52', size: '37' }, // 货号，不是「编号」N-1
-    { kind: 'accessory', itemNo: '腰带', size: '' }, // 配品没有尺码：空串
+    { kind: 'shoe', itemNo: 'B26002-52', color: '黑色', size: '37' }, // 货号，不是「编号」N-1；颜色也带出来了
+    { kind: 'accessory', itemNo: '腰带', color: '', size: '' }, // 配品没有尺码：空串；也没有颜色列
   ]);
   assert.equal(orders[0].tradeTypeCode, 'SALE_CASH');
   assert.equal(orders[0].fulfillmentStatus, '已交付', '分区判据 = 履约状态（现货待收 → 已交付）');
@@ -162,7 +162,7 @@ test('没配「其他配品」表：不去读它（只卖鞋的部署照样工�
     gateway, sizeReferences: sizeStub(), store: {}, client: {},
   }).listPendingDeliveries({ now: DAY, includeItems: true });
 
-  assert.deepEqual(orders[0].items, [{ kind: 'shoe', itemNo: 'B26002-52', size: '37' }]);
+  assert.deepEqual(orders[0].items, [{ kind: 'shoe', itemNo: 'B26002-52', color: '', size: '37' }]);
   assert.equal(gateway.calls.includes('accessory'), false);
 });
 
@@ -188,8 +188,8 @@ test('缺货号 / 缺配品名称 / 鞋缺尺码：这些件**不产出**（展�
   });
 
   assert.deepEqual(orders[0].items, [
-    { kind: 'shoe', itemNo: 'NO-SIZE', size: '' }, // 鞋缺尺码：留空串（不拼「码」）
-    { kind: 'shoe', itemNo: '6A637-7', size: '43' },
+    { kind: 'shoe', itemNo: 'NO-SIZE', color: '', size: '' }, // 鞋缺尺码：留空串（不拼「码」）
+    { kind: 'shoe', itemNo: '6A637-7', color: '', size: '43' },
   ]);
   // 一条空壳都没有：没有 itemNo 为空的条目。
   assert.equal(orders[0].items.some((item) => !item.itemNo), false);
@@ -208,8 +208,8 @@ test('尺码解析不出来时退回单元格自带的文本；两个都没有�
   });
   const orders = await run(gatewayRecords, { query: { includeItems: true } });
   assert.deepEqual(orders[0].items, [
-    { kind: 'shoe', itemNo: 'A-1', size: '37' },
-    { kind: 'shoe', itemNo: 'A-2', size: '' },
+    { kind: 'shoe', itemNo: 'A-1', color: '', size: '37' },
+    { kind: 'shoe', itemNo: 'A-2', color: '', size: '' },
   ]);
 });
 

@@ -168,7 +168,8 @@ test('配置默认值：默认关、9 点、10 分钟一 tick、没有群 id、�
     // ⚠️ 2026-10-08：**去掉 `{orderNo}`**（她明确说不需要单号）；金额与链接段各自可整段消失。
     lineParts: ['{index}. {item}', '{tag}', '{amount}', '{link}'],
     lineSeparator: ' · ',
-    itemTemplate: '{itemNo} {size}',
+    // ⭐ 2026-10-08 晚：货号与尺码**中间加颜色**（她：「还需要在货号和尺码中间加上颜色」）。
+    itemTemplate: '{itemNo} {color} {size}',
     itemSeparator: '、',
     sizeTemplate: '{size}码',
     amountTemplate: '待收 {amount}',
