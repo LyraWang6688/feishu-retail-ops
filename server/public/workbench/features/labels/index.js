@@ -188,7 +188,10 @@ export function createLabelPrintModule() {
       },
     },
     fields: {
-      qr: true, brand: true, itemNo: true, color: true, category: true,
+      // ⚠️ `category: false` —— 2026-10-08 业务负责人明确"标签上不印品类"
+      //（她原话：「我只能放货号、颜色，然后单价，然后尺码。放品类了吗？没放品类啊」）。
+      // 这里是服务端 `config/labelPrint.js` 的镜子，改那边必须同步这一份（防漂移用例钉着）。
+      qr: true, brand: true, itemNo: true, color: true, category: false,
       size: true, price: true, state: false, footer: false,
     },
     texts: { missingValue: '—', overflowMark: '…', stateSeparator: '/' },
