@@ -422,7 +422,7 @@ test('D1 大区/采购区的标题、行格式、分隔符、脚注都可配；�
     PENDING_DEAL_PUSH_PURCHASE_SUPPLIER_SEPARATOR: ' / ',
     PENDING_DEAL_PUSH_PURCHASE_FOOTER_TEMPLATE: '（{count} 批没有深链）',
   });
-  assert.deepEqual(custom.areas, ['purchase', 'sales']);
+  assert.deepEqual(custom.areas, ['purchase', 'sales', 'voucher']);
   assert.equal(custom.salesAreaTitle, '【销售】{count} 笔');
   assert.equal(custom.purchaseAreaTitle, '【采购】{count} 批待收货');
   assert.deepEqual(custom.purchaseLineParts, ['{index}、{batchNo}', '{supplier}', '{link}']);
@@ -439,6 +439,7 @@ test('D1 大区/采购区的标题、行格式、分隔符、脚注都可配；�
   assert.throws(() => resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_PURCHASE_LINE_PARTS: '  ' }), /至少要有一段/);
   assert.throws(() => resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_PURCHASE_FOOTER_TEMPLATE: '{nope}' }), /无法识别的占位符/);
   // 漏写一个大区不会让它消失（宁可多显示，也不静默少推一整个区）
+  // ⚠️ 2026-10-08（第二步）：多了一个 `voucher`（【团购券待结算】）⇒ 漏写时也按声明顺序补上。
   assert.deepEqual(resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_AREA_ORDER: 'purchase' }).areas,
-    ['purchase', 'sales']);
+    ['purchase', 'sales', 'voucher']);
 });

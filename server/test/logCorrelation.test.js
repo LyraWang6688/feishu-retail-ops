@@ -189,6 +189,10 @@ test('correlationFields：只放行白名单里的业务键，其余（含疑似
     // ⭐ 2026-10-07 晚替换：`purchase_arrival_record_id`（「到货验收」那条记录）→
     //    `purchase_batch_record_id`（「报货批次」那一行）。表被删了，旧键已无来源。
     'purchase_batch_record_id',
+    // ⭐ 2026-10-08（第二步，团购券待结算）：卡片按钮改业务数据 —— 一次点击写一批，
+    //    只有逐笔的 `payment_record_id` 才能把 `bitable.record.updated` 对回那一条收款明细；
+    //    `settle_day` = 她点的那一行（卡面上一行就是一个结算日）。
+    'payment_record_id', 'settle_day',
   ]);
 
   const picked = correlationFields({

@@ -43,6 +43,15 @@ const CORRELATION_KEYS = Object.freeze([
   //    再加一个同前缀的 `batch_record_id` 会和 `batch_no` 混起来（一个号、一个记录 id）；
   //    `purchase_*_record_id` 这一族已经有两个成员（report / 原来的 arrival），语义自解释。
   'purchase_batch_record_id', // 「报货批次」那条记录（到货核对 → 入库那一段的来源）
+  // ⭐ 2026-10-08（第二步，团购券待结算）加：那条链路是**卡片按钮改业务数据**，
+  //   写的是「收款明细」的某一条，而且**一次点击写一批**（同一个结算日好几笔）。
+  //   ⇒ 光有 lark 那边的 `interaction_id` / 结算日**串不到具体那一笔**：
+  //      日志里 `bitable.record.updated` 只有 record_id，而"这一批是哪几笔"在业务侧。
+  //   · `payment_record_id` —— 这一次 update 写的是**哪一条收款明细**（逐笔给，不是整批一个）；
+  //   · `settle_day`        —— 这一批的**结算日**（YYYY-MM-DD，上海自然日）=
+  //                            "她点的是哪一行"（卡片上那一行就是这个键）。
+  'payment_record_id',
+  'settle_day',
 ]);
 
 /**

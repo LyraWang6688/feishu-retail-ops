@@ -43,6 +43,9 @@ const { readString, readFlag, readInt, readList } = require('./envValue');
 //    ⚠️ service 里那两层重试分别拿：`settings.retryDelaysMs`（按天层）+
 //      `config/pushRetry` 的 `transient` / `alert`（瞬时层与告警）。
 const { resolveDailyRetryConfig } = require('./pushRetry');
+// ⭐ 2026-10-08（第二步）：【团购券待结算】那一块的口径（配置先行，真源在那一份文件里）——
+//   这里只挂进整份配置（`settings.voucher`），service 拿它时不必再读第二遍环境变量。
+const { resolveVoucherSettlementConfig } = require('./voucherSettlement');
 
 const PENDING_DEAL_PUSH_ENABLED_ENV_KEY = 'PENDING_DEAL_PUSH_ENABLED';
 const PENDING_DEAL_PUSH_CHAT_ID_ENV_KEY = 'PENDING_DEAL_PUSH_CHAT_ID';
@@ -93,10 +96,15 @@ const PENDING_DEAL_PUSH_PURCHASE_LINE_SEPARATOR_ENV_KEY = 'PENDING_DEAL_PUSH_PUR
 const PENDING_DEAL_PUSH_PURCHASE_SUPPLIER_SEPARATOR_ENV_KEY = 'PENDING_DEAL_PUSH_PURCHASE_SUPPLIER_SEPARATOR';
 const PENDING_DEAL_PUSH_PURCHASE_FOOTER_TEMPLATE_ENV_KEY = 'PENDING_DEAL_PUSH_PURCHASE_FOOTER_TEMPLATE';
 
-// 两个**大区**的身份（内部键；顺序由 `PENDING_DEAL_PUSH_AREA_ORDER` 决定）。
-const PENDING_DEAL_PUSH_AREA_KEYS = Object.freeze(['sales', 'purchase']);
-// 默认顺序 = 她定的「**销售在前、采购在后**」。
-const DEFAULT_AREA_ORDER = Object.freeze(['sales', 'purchase']);
+// 三个**大区**的身份（内部键；顺序由 `PENDING_DEAL_PUSH_AREA_ORDER` 决定）。
+// ⭐ 2026-10-08（第二步）：加 `voucher` = 【团购券待结算】块 + 「确认到账」按钮。
+//    她的口径是「放在**销售两块之后、采购之前**」⇒ 默认顺序就是
+//    `sales`（里面两块：预定 / 现货待收）→ `voucher` → `purchase`。
+//    ⚠️ 这一块的口径（天数 / 状态 / 金额 / 文案 / 按钮动作）**全在 `config/voucherSettlement`**，
+//       这里只声明"它在整条消息里的位置"。
+const PENDING_DEAL_PUSH_AREA_KEYS = Object.freeze(['sales', 'voucher', 'purchase']);
+// 默认顺序 = 她定的「**销售在前、团购券待结算居中、采购在后**」。
+const DEFAULT_AREA_ORDER = Object.freeze(['sales', 'voucher', 'purchase']);
 
 // 默认 9 点（北京时间，业务负责人说的）。
 const DEFAULT_PUSH_HOUR = 9;
@@ -281,6 +289,13 @@ const PENDING_DEAL_PUSH_DEFAULTS = Object.freeze({
     buttonText: '查看话题',
     // 两栏宽度权重（文字 : 按钮）。
     columnWeights: Object.freeze([4, 1]),
+    // ── ⭐ 2026-10-08（第二步）：【团购券待结算】块的两栏 ─────────────────────────
+    // 与上面那行**同一形状**（第 1 栏文字说明、第 2 栏按钮），只是：
+    //   · 第 2 栏是**回调按钮**（不是 open_url）——`rowColumnSet` 按 `action` 分支渲染；
+    //   · 第 1 栏那句 = `config/voucherSettlement.rowTemplate`（`{settleDay} 应结算 ¥{amount}`）
+    //     +（结算日 < 今天时）`overdueTemplate`；两个模板都在那份配置里，改文案只动它。
+    // ⚠️ 缺这一栏的按钮文案 / 配色时，渲染层从 `config/voucherSettlement` 取（同一个 settings）。
+    voucherButtonType: 'primary',
   }),
 });
 
@@ -466,6 +481,8 @@ const resolveCardConfig = (env) => {
     missingQuantityText: defaults.missingQuantityText,
     buttonText: defaults.buttonText,
     columnWeights: [...defaults.columnWeights],
+    // 【团购券待结算】的「确认到账」按钮类型（回调按钮；配色可配）。
+    voucherButtonType: readString(env, 'PENDING_DEAL_PUSH_VOUCHER_BUTTON_TYPE', defaults.voucherButtonType),
   };
 };
 
@@ -552,6 +569,11 @@ const resolvePendingDealPushConfig = (env = process.env) => ({
     TEMPLATE_PLACEHOLDERS.purchaseFooterTemplate),
   // ── 卡片标记骨架（2026-10-08）──────────────────────────────────────────────
   card: resolveCardConfig(env),
+  // ── ⭐ 2026-10-08（第二步）：【团购券待结算】块 ────────────────────────────────
+  // 这一块的口径（5 个自然日 / 「待平台结算」/ 「确认到账」/ 金额取券的「平台结算款」/
+  // 逾期说法 / 按钮动作名）**全在 `config/voucherSettlement`** —— 配置只有一处真源，
+  // 这里只是把它**挂进整条推送的配置**，一次解析完（写错在服务起来的那一刻就吵）。
+  voucher: resolveVoucherSettlementConfig(env),
 });
 
 module.exports = {
