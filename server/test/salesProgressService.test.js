@@ -62,3 +62,22 @@ test('an old detail with no actual amount is not shown as zero-amount debt', () 
   assert.equal(result.pendingAmount, null);
   assert.equal(result.paymentStatus, '');
 });
+
+// ⭐ 2026-10-08 售后退货口径：退货"改原收款状态"会把**原单**的收款行改成 已退款 / 已留存
+//（业务负责人逐字：「把收款改成"已退款"……用户留存，那就是已留存」）。
+// 这两个取值必须被进度口径**认出来**，否则原单的每一次进度计算都会抛「未知收款状态」。
+test('⭐ 售后的「已退款 / 已留存」不再是"未知收款状态"（按已结清算，且不制造假欠款）', () => {
+  for (const status of ['已退款', '已留存']) {
+    const result = progressFromRecords([shoe(250, true)], [receipt(250, status)], detailFields, paymentFields);
+    assert.equal(result.paidAmount, 250, `${status}：金额仍算作已结清（与改动前一致）`);
+    assert.equal(result.pendingAmount, 0, `${status}：不许把退过款的单算成"客户还欠钱"`);
+    assert.equal(result.paymentStatus, '已收款');
+  }
+  // 混合：一笔已退款 + 一笔未收款占位 → 只把占位算成待收（退款那笔不参与待收）
+  const mixed = progressFromRecords([shoe(300)],
+    [receipt(300, '已退款'), receipt(0, '未收款')], detailFields, paymentFields);
+  assert.equal(mixed.pendingAmount, 0);
+  // 别的取值仍然要**大声抛**（不许把未知状态当成已知）
+  assert.throws(() => progressFromRecords([shoe(250, true)], [receipt(250, '红包')], detailFields, paymentFields),
+    /未知收款状态：红包/);
+});

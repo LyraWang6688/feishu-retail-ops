@@ -76,10 +76,97 @@ const isAfterSalesFulfillment = (status) => AFTER_SALES_FULFILLMENT_EXCLUDED
   .includes(String(status ?? '').trim());
 
 // 钱的方向。写「收款明细.交易方向」：差价为正要收（收入），为负要退（退回）。
+// ⚠️ 真表核对（业务负责人 2026-10-08）：「收款明细.交易方向」的选项**只有 收入 / 退回**，
+//    她确认就用现成的「退回」，不新增选项（所以这里的取值一个字都不改）。
 const AFTER_SALES_MONEY_DIRECTIONS = Object.freeze({
   RECEIVE: '收入',
   REFUND: '退回',
 });
+
+// ⭐⭐ 2026-10-08 售后口径（业务负责人逐字，权威；出处 docs/goods-and-money-flows-2026-10-08.md §2/§3）：
+//
+//   「**退货**：我们就在**原有的销售明细**里面操作：找到当时的销售单，把那双鞋的状态改为"**已退货**"，
+//    然后把**收款改成"已退款"**就可以了，如果是用户要资金，那就是**已退款**；
+//    用户留存，那就是**已留存**。」
+//
+// ⇒ 退货的钱**不新建记录**，而是把**原收款记录**的「收款状态」改成 已退款 / 已留存。
+// 旧行为（新建一条「交易方向=退回」的收款记录）**整体保留**，做成一个显式枚举：
+//   · `updateStatus`（**默认**，按她 2026-10-08 的口径）—— 改原收款行的状态；
+//   · `newReturnRow`（**旧行为**，回退用）—— 新建一条 退回 收款行。
+// 两种实现都有用例（test/afterSalesService.test.js），翻配置即可回退，不用改代码。
+//
+// ⚠️ 值只认下面两个，其余**当场抛错**、不静默取默认：
+//    这一项决定"钱记在哪一行"，拼错一个字母就悄悄换一种记账口径，属于最难查的静默失效。
+const AFTER_SALES_RETURN_FUNDS_MODES = Object.freeze({
+  UPDATE_STATUS: 'updateStatus',
+  NEW_RETURN_ROW: 'newReturnRow',
+});
+const AFTER_SALES_RETURN_FUNDS_MODE_ENV = 'AFTER_SALES_RETURN_FUNDS_MODE';
+const AFTER_SALES_RETURN_FUNDS_MODE_DEFAULT = AFTER_SALES_RETURN_FUNDS_MODES.UPDATE_STATUS;
+
+/**
+ * 退货收款走哪种实现。没设 / 设成空串 → 默认（她的口径）；
+ * 设了认不出来的值 → 抛错（不静默）。
+ */
+const resolveAfterSalesReturnFundsMode = (env = process.env) => {
+  const raw = env ? env[AFTER_SALES_RETURN_FUNDS_MODE_ENV] : undefined;
+  const value = String(raw ?? '').trim();
+  if (!value) return AFTER_SALES_RETURN_FUNDS_MODE_DEFAULT;
+  const known = Object.values(AFTER_SALES_RETURN_FUNDS_MODES);
+  if (!known.includes(value)) {
+    throw new Error(
+      `${AFTER_SALES_RETURN_FUNDS_MODE_ENV} 只接受 ${known.join(' / ')}，当前取值认不出；`
+      + `留空 = 默认 ${AFTER_SALES_RETURN_FUNDS_MODE_DEFAULT}（业务负责人 2026-10-08 的退货口径：改原收款记录的状态）`,
+    );
+  }
+  return value;
+};
+
+// 「收款明细.收款状态」的取值。**真表选项已核（业务负责人 2026-10-08）**：
+//   待平台结算 / 已收款 / 未收款 / **已退款** / **已留存**
+// ⇒ 她要用的是现成的两个，代码**不新建选项**（新建 = 悄悄污染生产表的选项集）。
+//
+// 口径（逐字）：「**收款明细表**：如果金额没变，就没有记录；如果是有价差，如果是**增加资金**的话，
+//   就是**已收款**，收款方向是**收入**；如果是我们**付差价**的话，方向就是**退回**，状态是**已退款**。」
+const AFTER_SALES_PAYMENT_STATUS = Object.freeze({
+  // 增加资金（收入）
+  RECEIVED: '已收款',
+  // 我们付差价（退回）—— 她的口径
+  REFUNDED: '已退款',
+  // 用户留存（退货时"钱先放我们这儿"）
+  RETAINED: '已留存',
+});
+
+/**
+ * 这一次售后的钱是不是走「改原收款记录的状态」这条腿。
+ * **只有退货** + 模式 = `updateStatus` 才是；换货 / 赔货的差价照旧写「收款明细」（她的口径只改了退货）。
+ */
+const usesOriginalPaymentStatus = ({ action, returnFundsMode } = {}) => (
+  String(action ?? '').trim() === AFTER_SALES_ACTIONS.RETURN
+  && String(returnFundsMode ?? '').trim() === AFTER_SALES_RETURN_FUNDS_MODES.UPDATE_STATUS
+);
+
+// ⭐ 售后写在「收款明细.收款状态」上的两个"已经处理完"的状态。
+//
+// 为什么单列出来：**销售进度口径**（`services/salesProgressService.progressFromRecords`）
+// 只认识 已收款 / 待平台结算 / 未收款 —— 见到别的取值会**当场抛「未知收款状态」**。
+// 而退货"改状态"这一支恰恰会把**原单**的收款行改成这两个取值 ⇒ 不认它们，
+// 那一单的进度计算（查单 / 跟进 / 待处理候选）就会炸。
+//
+// ⚠️ 口径选择（**最小改动**，需业务负责人确认，别当成定论）：
+//    这两个状态在进度口径里**按"已结清"算**（与改动前一致 —— 改动前原单的收款行一直是
+//    「已收款」，售后那条新行的方向/状态在原单之外）。
+//    代价：原单的「已收金额」不会因为退款而变小（退款事实记在**原明细履约状态**与**售后单**上）。
+//    另一种做法（退款的金额从"已收"里扣掉）会让这一单重新显示成"客户还欠钱"，
+//    反而可能把它重新推进「现货待收」那类待处理清单 —— **比高估更危险**，所以没采用。
+const AFTER_SALES_SETTLED_PAYMENT_STATUSES = Object.freeze([
+  AFTER_SALES_PAYMENT_STATUS.REFUNDED,
+  AFTER_SALES_PAYMENT_STATUS.RETAINED,
+]);
+
+/** 这个收款状态是不是"售后已经处理完、不再挂账"（进度口径里按已结清算）。 */
+const isSettledAfterSalesPaymentStatus = (status) => AFTER_SALES_SETTLED_PAYMENT_STATUSES
+  .includes(String(status ?? '').trim());
 
 // 一个动作的完整语义。
 //   tradeTypeCode          新主表 / 新明细行「交易类型」关联的行为编码
@@ -117,7 +204,9 @@ const AFTER_SALES_ACTION_SPECS = Object.freeze({
     originalFulfillmentStatus: AFTER_SALES_FULFILLMENT.EXCHANGED,
     // ⭐ 2026-10-08（业务负责人逐字确认：「好的，是的就叫**已交付**～」）：
     //   **新换出去的那双**是当场交到她手上的商品事实 ⇒ 新建明细行的「履约状态」= 已交付。
-    //   ⚠️ 只有换货声明这一条：退货/赔货那两条腿的既有行为（新建明细行的履约状态不写）不变。
+    //   ⚠️ 赔货那一条 2026-10-08 下午也声明了自己的取值（已赔货，见下）；
+    //      只有**退货**的复制行仍然一个字不写（退货的复制行表达"退回来的那双"，
+    //      履约状态由**原明细行 = 已退货**表达）。
     newLineFulfillmentStatus: AFTER_SALES_FULFILLMENT.DELIVERED,
     requiresRestockState: true,
     acceptsNewLines: true,
@@ -131,9 +220,23 @@ const AFTER_SALES_ACTION_SPECS = Object.freeze({
     label: '赔货',
     tradeTypeCode: AFTER_SALES_BEHAVIORS.SALE_COMPENSATION,
     originalFulfillmentStatus: AFTER_SALES_FULFILLMENT.COMPENSATED,
+    // ⭐⭐ 2026-10-08 赔付口径（业务负责人逐字，权威；出处 docs/goods-and-money-flows-2026-10-08.md §2）：
+    //   「**赔付**：如果是赔货，我们就**直接在销售明细里面创建一个赔付对应颜色和编号、尺码**的信息，
+    //    **成交金额记为 0**，**标记为赔货**」
+    // ⇒ 赔出去的那双**新建一条销售明细行**：
+    //   · 编号 / 颜色 / 尺码 = 赔出去的那一双（颜色是「编号」那一列关联的货品自带的，
+    //     销售明细契约里**没有**颜色列 —— 见报告）；
+    //   · 「成交金额」= **0**（赔货不是卖，不能记成收入）；
+    //   · 「履约状态」= **已赔货**。
     // 赔货是直接赔一双出去（坏鞋不回库），所以只有出货这一腿，也不需要 restockState。
     requiresRestockState: false,
     acceptsNewLines: true,
+    // 新明细行的「履约状态」= 已赔货（配置先行：执行器里不写中文字面量）。
+    newLineFulfillmentStatus: AFTER_SALES_FULFILLMENT.COMPENSATED,
+    // ⭐ 新明细行的「成交金额」**由口径固定成 0**，不用调用方传来的那个价格。
+    //   为什么固定而不是"让调用方传 0"：调用方（afterSalesFlowService）确实会带新鞋的挂牌价
+    //   （它要用那个价算差价），执行器**不能**把挂牌价当成交金额写进赔货行 —— 那会凭空多一笔销售额。
+    newLineAmount: 0,
     movements: Object.freeze([
       Object.freeze({ source: 'new', behaviorCode: AFTER_SALES_BEHAVIORS.SALE_COMPENSATION, state: '门盒' }),
     ]),
@@ -231,8 +334,29 @@ const readAfterSalesConfig = (env = process.env) => ({
   //    （SALES_STATUS_FIELDS / SALES_STATUS_WRITE_VALUES）提供：
   //    售后主表写 userAction=已确认 + sales/funds=未写入（见 afterSalesService.ensureMaster）。
   //    「确认状态（旧）」那一列已被她整列删除，也没有任何代码再指向它。
-  // 收款明细：钱真收/真退之后就是已收款；退款在业务上也用同一个"已结清"口径。
-  cashPaymentStatus: '已收款',
+  //
+  // ⭐ 退货收款走哪种实现（她的口径 = updateStatus，**默认**；回退用 newReturnRow）。
+  //    取值只从环境变量 `AFTER_SALES_RETURN_FUNDS_MODE` 来，认不出的值当场抛（见上面的解析函数）。
+  returnFundsMode: resolveAfterSalesReturnFundsMode(env),
+  // ⭐ 「收款明细.收款状态」写什么（她的 2026-10-08 口径，真表选项里都已有）：
+  //    · received —— 「增加资金」：新建的收款行状态 = 已收款（方向 收入）
+  //    · refunded —— 「我们付差价」：新建的收款行状态 = **已退款**（方向 退回）
+  //    · retained —— 「用户留存」：**改原收款行**时用的状态 = 已留存
+  //    · legacyReturnRow —— **旧行为**（newReturnRow 模式下那条"退回"新行）的状态。
+  //      ⚠️ 刻意与 refunded 分开：回退到旧行为时，那一行的状态要与旧代码**逐字一致**（已收款），
+  //      否则"翻开关回退"就不是真的回退。
+  paymentStatus: Object.freeze({
+    received: AFTER_SALES_PAYMENT_STATUS.RECEIVED,
+    refunded: AFTER_SALES_PAYMENT_STATUS.REFUNDED,
+    retained: AFTER_SALES_PAYMENT_STATUS.RETAINED,
+    legacyReturnRow: '已收款',
+  }),
+  // 退货"改原收款状态"时，哪些状态的收款行算**这笔钱退得回去**：
+  //   · 已收款   —— 钱真收到了；
+  //   · 待平台结算 —— 团购券的钱在平台上（还没到我们账上，但那一笔是"要退给她的钱"）。
+  // ⚠️ **未收款**（她明说欠款的占位）**不在内**：那笔钱根本没收到，没有"退款"可言，
+  //    改它会把"还欠我们钱"记成"已退款"。
+  refundablePaymentStatuses: Object.freeze([AFTER_SALES_PAYMENT_STATUS.RECEIVED, '待平台结算']),
   // 客户往来货款：这一次变动的类型（表的选项里已有「退货退款」）。
   // ⛔ 2026-10-08：那张表被她**整表删除**，prepaid 通路随之下线 ⇒ 这个值**当前没有读取点**，
   //    留着是为了重建时直接复用（不要因为"没人用"就删掉，它是业务口径的一部分）。
@@ -251,6 +375,14 @@ module.exports = {
   AFTER_SALES_FULFILLMENT_EXCLUDED,
   isAfterSalesFulfillment,
   AFTER_SALES_MONEY_DIRECTIONS,
+  AFTER_SALES_PAYMENT_STATUS,
+  AFTER_SALES_SETTLED_PAYMENT_STATUSES,
+  isSettledAfterSalesPaymentStatus,
+  AFTER_SALES_RETURN_FUNDS_MODES,
+  AFTER_SALES_RETURN_FUNDS_MODE_ENV,
+  AFTER_SALES_RETURN_FUNDS_MODE_DEFAULT,
+  resolveAfterSalesReturnFundsMode,
+  usesOriginalPaymentStatus,
   AFTER_SALES_ACTION_SPECS,
   AFTER_SALES_KEY_PREFIX,
   actionSpecOf,

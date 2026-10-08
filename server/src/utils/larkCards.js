@@ -1030,7 +1030,14 @@ const afterSalesWrittenLines = (result = {}) => {
   const money = result.money || {};
   if (money.route === 'cash') lines.push(`收款明细 1 笔（${text(money.direction)} ${yuanText(money.amount)}）`);
   else if (money.route === 'prepaid') lines.push(`客户往来货款 1 笔（${text(money.changeType)} ${yuanText(money.amount)}）`);
-  else lines.push('没动钱');
+  // ⭐ 2026-10-08 退货口径：钱**不新建记录**，而是把**原收款记录**改成 已退款 / 已留存。
+  //   卡片要如实说"改了哪几笔、改成什么"，不能显示成"没动钱"（那是记错账的展示）。
+  else if (money.route === 'originalPaymentStatus') {
+    const count = (money.recordIds || []).length;
+    lines.push(count
+      ? `原收款 ${count} 笔改为「${text(money.status)}」（${yuanText(money.amount)}）`
+      : `原收款没有可改的行（应有 ${yuanText(money.amount)} 要退/留存，请人工核对）`);
+  } else lines.push('没动钱');
   const stockLines = afterSalesStockLines(result.stock);
   lines.push(stockLines.length ? `库存：${stockLines.join('、')}` : '库存未变（配品不跟踪库存）');
   return lines;

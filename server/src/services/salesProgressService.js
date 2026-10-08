@@ -1,6 +1,13 @@
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { readSaleLinkedRecord } = require('./salesRecordReader');
 const { withSalesReadRetry } = require('./salesReadRetry');
+// ⭐ 2026-10-08：售后"退货改原收款状态"那一支会往「收款明细.收款状态」写 **已退款 / 已留存**
+//（业务负责人的退货口径，取值与理由见 `config/afterSales.js`）。
+// 这两个取值必须在这里被**认出来**：否则**原单**的任何一次进度计算都会抛「未知收款状态」
+// ——查单 / 跟进 / 待处理候选会跟着一起挂（改动前原单的收款行一直是已收款，所以以前不会）。
+// ⚠️ 口径选择见 config/afterSales.js 里 `AFTER_SALES_SETTLED_PAYMENT_STATUSES` 的注释
+//    （按"已结清"算 = 与改动前一致，且不会把退过款的单又算成"客户还欠钱"）。
+const { isSettledAfterSalesPaymentStatus } = require('../config/afterSales');
 
 const cents = (value, label) => {
   const number = Number(value);
@@ -31,7 +38,9 @@ const progressFromRecords = (details, receipts, detailFields, paymentFields) => 
     const value = cents(textValue(receipt.fields?.[paymentFields.amount]), '收款金额');
     if (status === '待平台结算') platformPendingCents += value;
     else if (status === '未收款') continue;
-    else if (status === '已收款' || status === '已收清' || status === '已结清') paidCents += value;
+    // 已收款 / 已收清 / 已结清 = 钱到了；已退款 / 已留存 = 售后已经处理完（口径见文件头注释）。
+    else if (status === '已收款' || status === '已收清' || status === '已结清'
+      || isSettledAfterSalesPaymentStatus(status)) paidCents += value;
     else throw new Error(`未知收款状态：${status}`);
   }
   if (amountKnown && paidCents + platformPendingCents > amountCents) {
