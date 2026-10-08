@@ -52,7 +52,7 @@ const gatewayFor = (overrides = {}) => {
       { record_id: 'manual_increase', fields: { 行为编码: 'STOCK_MANUAL_INCREASE', 行为名称: '手工调增', 库存方向: '增加', 是否启用: true } },
       { record_id: 'manual_decrease', fields: { 行为编码: 'STOCK_MANUAL_DECREASE', 行为名称: '手工调减', 库存方向: '减少', 是否启用: true } },
       { record_id: 'freeze', fields: { 行为编码: 'STOCK_FREEZE', 行为名称: '转冻结', 库存方向: '不影响', 是否启用: true } },
-      { record_id: 'unfreeze', fields: { 行为编码: 'STOCK_UNFREEZE', 行为名称: '转释放', 库存方向: '不影响', 是否启用: true } },
+      { record_id: 'release_to_doorbox', fields: { 行为编码: 'STOCK_RELEASE_TO_DOOR_BOX', 行为名称: '转释放门盒', 库存方向: '不影响', 是否启用: true } },
       { record_id: 'sample_to_doorbox', fields: { 行为编码: 'STOCK_SAMPLE_TO_DOORBOX', 行为名称: '样品转门盒', 库存方向: '不影响', 是否启用: true } },
       { record_id: 'doorbox_to_sample', fields: { 行为编码: 'STOCK_DOORBOX_TO_SAMPLE', 行为名称: '门盒转样品', 库存方向: '不影响', 是否启用: true } },
     ] : [],

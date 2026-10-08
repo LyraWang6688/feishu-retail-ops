@@ -6,7 +6,12 @@
  *      · 行为 = STOCK_MANUAL_INCREASE / STOCK_MANUAL_DECREASE
  *      · 走 `InventoryService.applyChange`（数量通路，新建或删除「实时库存」记录）
  *   ② 换季调整（改**状态**，数量不变）→ `adjustSeason`
- *      · 行为 = STOCK_FREEZE（门盒/样品 → 仓库）/ STOCK_UNFREEZE（仓库 → 门盒/样品）
+ *      · 行为 = STOCK_FREEZE（门盒/样品 → 仓库）/ STOCK_RELEASE_TO_DOOR_BOX（仓库 → 门盒/样品）
+ *        ⚠️ 2026-10-08：业务负责人把原「转释放」（编码 STOCK_UNFREEZE）改成了
+ *        「转释放门盒」（编码 STOCK_RELEASE_TO_DOOR_BOX），表里已无 STOCK_UNFREEZE。
+ *        新名字字面像「仓库 → 门盒」，但本 service ⇄ inventoryService 的流转目标
+ *        目前仍是「门盒 / 样品」二选一（`UNFREEZE_STATE_TRANSITION`）——
+ *        **待她确认**是否收窄成只回门盒；确认前描述保留为「仓库 → 门盒/样品」。
  *      · 走 `InventoryService.transitionState`（状态通路，**不增删记录**）
  *
  * 为什么单独一个 service（而不是加到 InventoryService 里）：
@@ -196,7 +201,7 @@ class InventoryAdjustmentService {
 
   // ── ② 换季调整（改状态，数量不变）────────────────────────────────────────
   // targets: [{ productRecordId, size, state(起点), quantity }]
-  // 转释放时要传 toState（回门盒还是样品，由她选）。
+  // 转释放门盒时要传 toState（回门盒还是样品，由她选）。
   async adjustSeason({ action, targets, toState, requestId, operatorOpenId } = {}) {
     const source = requireText(requestId, '请求编号');
     const adjustAction = requireText(action, '调整动作');
@@ -206,7 +211,7 @@ class InventoryAdjustmentService {
     if (targets.length > INVENTORY_ADJUSTMENT_MAX_TARGETS) {
       throw userError(`一次最多调整 ${INVENTORY_ADJUSTMENT_MAX_TARGETS} 条，请分批提交`);
     }
-    // 「转释放」回到门盒还是样品**必须由她选**（记录进了「仓库」后原来在哪就查不到了）。
+    // 「转释放门盒」回到门盒还是样品**必须由她选**（记录进了「仓库」后原来在哪就查不到了）。
     // 在这一层先校验：否则同一个错误会变成"每一条都失败"，她看到一堆重复的报错。
     const transition = STOCK_MOVEMENTS[kind].stateTransition;
     let targetState = toState;

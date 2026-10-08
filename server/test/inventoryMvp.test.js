@@ -389,7 +389,7 @@ test('stock behavior lookup survives renaming the display name', async () => {
     behavior('behavior_manual_increase', 'STOCK_MANUAL_INCREASE', '手工调增', '增加'),
     behavior('behavior_manual_decrease', 'STOCK_MANUAL_DECREASE', '手工调减', '减少'),
     behavior('behavior_freeze', 'STOCK_FREEZE', '转冻结', '不影响'),
-    behavior('behavior_unfreeze', 'STOCK_UNFREEZE', '转释放', '不影响'),
+    behavior('behavior_release_to_doorbox', 'STOCK_RELEASE_TO_DOOR_BOX', '转释放门盒', '不影响'),
     behavior('behavior_sample_to_doorbox', 'STOCK_SAMPLE_TO_DOORBOX', '样品转门盒', '不影响'),
     behavior('behavior_doorbox_to_sample', 'STOCK_DOORBOX_TO_SAMPLE', '门盒转样品', '不影响'),
   ]);
@@ -449,7 +449,7 @@ test('人工库存 6 条行为的注册表契约：两个数量类、四个状�
   assert.deepEqual(STOCK_MOVEMENTS[ADJUSTMENT_BEHAVIORS.DOORBOX_TO_SAMPLE].stateTransition,
     { from: '门盒', to: '样品' });
   // 换季调整的两条（业务负责人 2026-10-06 在工作台需求里定死）：
-  //   转冻结 = 门盒/样品 → 仓库；转释放 = 仓库 → 门盒/样品（回哪个由界面选，所以 to 为 null）。
+  //   转冻结 = 门盒/样品 → 仓库；转释放门盒 = 仓库 → 门盒/样品（回哪个由界面选，所以 to 为 null）。
   assert.deepEqual(STOCK_MOVEMENTS[ADJUSTMENT_BEHAVIORS.FREEZE].stateTransition,
     { from: ['门盒', '样品'], to: '仓库' });
   assert.deepEqual(STOCK_MOVEMENTS[ADJUSTMENT_BEHAVIORS.UNFREEZE].stateTransition,
