@@ -434,6 +434,9 @@ class SecondDeliveryService {
       const records = await this.gateway.listAll('product');
       index.product = {
         labelField: productTable.fields?.itemNo,
+        // ⭐ 2026-10-08 晚：9 点推送的行要「货号 **颜色** 尺码」⇒ 索引里也带上「颜色」这一列
+        //    （取值与显示都在 `salesDetailItemFacts`，这里只负责把列名交出去）。
+        colorField: productTable.fields?.color,
         byId: new Map(records.map((record) => [record.record_id, record])),
       };
     }

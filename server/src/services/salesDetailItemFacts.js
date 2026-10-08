@@ -60,12 +60,21 @@ const itemFactsForDetails = async ({
     const labelField = itemIndex?.[tableKey]?.labelField;
     const itemNo = textValue(recordsById?.get(recordId)?.fields?.[labelField]).trim();
     if (!itemNo) { unlabeledCount += 1; continue; }
+    // ⭐ 2026-10-08 晚（业务负责人：「**还需要在货号和尺码中间加上颜色**」）：
+    //    颜色取自**货品信息**上的「颜色」列（单选关联「颜色管理」；单元格文本就是颜色名）。
+    //    ⚠️ 只用于**显示**（9 点推送那行「货号 颜色 尺码」）；取不到就留空，
+    //    由 `itemTemplate` 自己把多余空格收掉（不会出现「货号  41码」）。
+    //    ⚠️ 配品（其他配品表）没有「颜色」列 ⇒ `colorField` 为空 ⇒ color 为空，**不编值**。
+    const colorField = itemIndex?.[tableKey]?.colorField;
+    const color = colorField
+      ? textValue(recordsById?.get(recordId)?.fields?.[colorField]).trim()
+      : '';
     let size = '';
     if (kind.requiresSize) {
       size = String(await resolveSize?.(detail) || '').trim();
       if (!size) missingSizeCount += 1;
     }
-    items.push({ kind: kindKey, itemNo, size });
+    items.push({ kind: kindKey, itemNo, color, size });
   }
   return { items, unlabeledCount, missingSizeCount };
 };

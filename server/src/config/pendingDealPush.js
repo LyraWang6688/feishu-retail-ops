@@ -187,8 +187,11 @@ const PENDING_DEAL_PUSH_DEFAULTS = Object.freeze({
   //    这样"降级纯文本"读起来就是卡片上那套字样（只差 URL 藏不藏得住）。
   lineParts: ['{index}. {item}', '{tag}', '{amount}', '{link}'],
   lineSeparator: ' · ',
-  // 一件商品：`货号 尺码码`；配品没有尺码 → `{size}` 为空 → 拼完只剩名称（**不会出现「 码」**）。
-  itemTemplate: '{itemNo} {size}',
+  // 一件商品：`货号 [颜色] 尺码码`。
+  // ⭐ 2026-10-08 晚她加的口径：「**还需要在货号和尺码中间加上颜色**」⇒ 默认模板里加 `{color}`
+  //    （颜色取自「货品信息.颜色」，见 `services/salesDetailItemFacts`；取不到就留空、空格自动收掉）。
+  // 配品没有尺码 → `{size}` 为空 → 拼完只剩名称（**不会出现「 码」**）。
+  itemTemplate: '{itemNo} {color} {size}',
   // 一单多件时**逐件列出**，件与件之间用这个分隔符（默认顿号）。
   itemSeparator: '、',
   sizeTemplate: '{size}码',
@@ -260,7 +263,7 @@ const TEMPLATE_PLACEHOLDERS = Object.freeze({
   blockCountTemplate: Object.freeze(['title', 'count']),
   sectionTemplate: Object.freeze(['title', 'count', 'lines']),
   linePart: Object.freeze(['index', 'orderNo', 'tag', 'item', 'amount', 'link']),
-  itemTemplate: Object.freeze(['itemNo', 'size']),
+  itemTemplate: Object.freeze(['itemNo', 'color', 'size']),
   sizeTemplate: Object.freeze(['size']),
   footerTemplate: Object.freeze(['count']),
   amountTemplate: Object.freeze(['amount']),
