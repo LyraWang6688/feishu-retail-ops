@@ -254,6 +254,44 @@ echo "✅ 已打 tag：${next_tag} → ${commit_short}"
 $GIT push origin "$next_tag"
 echo "✅ 已推送：origin ${next_tag}"
 echo ""
+
+# ---------------------------------------------------------------------------
+# 6b. ⭐ 顺手建一个 **GitHub Release**（2026-10-08 加）
+#
+# 起因（业务负责人逐字）：「**打完tag你也没发布啊～**」—— 她看的是 GitHub 的
+# **Releases 页**，而本脚本原先只 `git push` 了 **tag**：tag ≠ Release，
+# 于是 Releases 页一直停在上一版（当时停着 v0.3.2），看起来就像"没发布"。
+#
+# ⇒ 现在打完 tag 就顺手 `gh release create`（**只影响 GitHub 的展示，不动代码、不部署**）。
+#    · 没装 gh / 没登录 ⇒ **只警告**，给出可照抄的手工命令（不让这件事挡住打 tag）；
+#    · 想跳过：`TAG_RELEASE_SKIP_GH_RELEASE=1`。
+# ---------------------------------------------------------------------------
+if [ "${TAG_RELEASE_SKIP_GH_RELEASE:-}" = "1" ]; then
+  echo "ℹ️  TAG_RELEASE_SKIP_GH_RELEASE=1 —— 跳过建 GitHub Release（tag 已推）。"
+elif command -v gh >/dev/null 2>&1; then
+  # Release 说明 = 这次的一句话 + 从上一个 tag 到本次 commit 的提交清单（给人看）。
+  release_notes="$arg_message"
+  if [ -n "$latest_tag" ]; then
+    commits="$($GIT log --oneline --no-merges "${latest_tag}..${commit_sha}" 2>/dev/null | head -n 40 || true)"
+  else
+    commits="$($GIT log --oneline --no-merges -n 40 "$commit_sha" 2>/dev/null || true)"
+  fi
+  if [ -n "$commits" ]; then
+    release_notes="${release_notes}
+
+$(printf '%s' "$commits" | sed 's/^/- /')"
+  fi
+  if gh release create "$next_tag" --title "${next_tag} · ${arg_message}" --notes "$release_notes" >/dev/null 2>&1; then
+    echo "✅ 已建 GitHub Release：${next_tag}（Releases 页会立刻显示这一版）"
+  else
+    echo "⚠️  GitHub Release 没建成（tag 已推，不影响部署）。手工建：" >&2
+    echo "      gh release create ${next_tag} --title \"${next_tag}\" --notes \"${arg_message}\"" >&2
+  fi
+else
+  echo "ℹ️  本机没有 gh（或没登录）⇒ 跳过建 GitHub Release；手工建：" >&2
+  echo "      gh release create ${next_tag} --title \"${next_tag}\" --notes \"${arg_message}\"" >&2
+fi
+echo ""
 echo "ℹ️  之后那一版部署时，deploy_run.sh 的版本自检就会算出 APP_VERSION=${next_tag}，"
 echo "    /health 的 version 会跟着报出来。"
 echo "ℹ️  记得把这一版补进 docs/releases.md（只记录【已部署】的版本）。"

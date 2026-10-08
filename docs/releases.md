@@ -124,3 +124,17 @@ bash server/scripts/tag_release.sh HEAD "一句话说明这一版改了什么"
   ③ 刷完仍失败 → 退出码 1 且 restart **仍然只有一次**；④ `--check-only` → 一次 pm2 都不调用；
   ⑤ 显式关掉自动刷 env → 照旧报红。
 - ⚠️ **本次 v0.3.5 部署走的是手工那 4 步**（脚本改动当时还没上线）；**下一版部署**才会自动生效。
+
+## ⭐ 为什么她看到「打完 tag 没发布」：**tag ≠ GitHub Release**（2026-10-08 修）
+
+业务负责人 2026-10-08 发来的截图 = **GitHub 的 Releases 页**，上面停在 **v0.3.2**，
+所以她以为"打了 tag 却没发布"。真相：
+
+- `tag_release.sh` 原先只做三件事：算版本号 → `git tag -a` → `git push origin <tag>`
+  ⇒ **只推了 tag**；GitHub 的 **Releases 页只显示 Release**（不是 tag），于是那一页一直停在上一版。
+- 已处置：① 补建了 `v0.3.4` / `v0.3.5` 两版的 Release（都**实际部署过**，v0.3.5 标 `Latest`）；
+  ② `tag_release.sh` **打完 tag 顺手 `gh release create`**（Release 说明 = 一句话 + 从上一个 tag 到本 commit
+  的提交清单）——没装 gh / 没登录时**只警告 + 打印可照抄的手工命令**，不挡住打 tag；
+  想跳过用 `TAG_RELEASE_SKIP_GH_RELEASE=1`。
+- ⚠️ 没建 Release 的 `v0.3.1` / `v0.3.3`：前者当时没建，后者是"打了 tag 但从未部署"
+  ⇒ 按「只记录已部署的版本」的口径，**故意不补**。
