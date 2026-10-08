@@ -31,6 +31,37 @@ const formatCopy = (template, values = {}) =>
 // 一行明细在卡片/日志里的身份（货号+颜色+尺码）。
 const rowLabel = (row) => `${textValue(row?.item_no) || '（未知货号）'}${textValue(row?.color) || ''} ${Number(row?.size)} 码`;
 
+// ⭐⭐ 2026-10-08：「实际金额」那一项的**服务端**解析（业务负责人：必填、必须让用户填）。
+//
+// 🔴 为什么数字校验在**服务端**：飞书卡片的输入框**没有数字类型** —— 官方 `input_type`
+//   只有 `text` / `multiline_text` / `password` 三个取值（curl 实查的原文与出处见
+//   `config/arrivalConversation.js` 的 `amountInputType` 注释）。⇒ "非数字"只能我们自己拦。
+//
+// 口径（她说的「缺失 / 非数字 / 为负 ⇒ 一个字都不许写」）：
+//   · 空白（或没这一项）        → `amount_missing`；
+//   · 去掉空白 / 千分位逗号 / 前缀 ￥¥ 之后不是纯数字、或是负数 → `amount_invalid`；
+//   · **0 允许**（她只说了"为负"要拒；"这次金额 0"是真实存在的输入形状）。
+// ⚠️ 刻意**不**做任何"猜"：`12800元` / `1.2万` / `1e3` 一律判非法，让她改成数字。
+const AMOUNT_PATTERN = /^\d+(?:\.\d+)?$/;
+const parseActualAmount = (raw) => {
+  const source = String(raw ?? '').trim();
+  if (!source) return { ok: false, reason: 'amount_missing' };
+  const normalized = source.replace(/[\s,，]/g, '').replace(/^[￥¥]/, '');
+  if (!AMOUNT_PATTERN.test(normalized)) return { ok: false, reason: 'amount_invalid' };
+  const value = Number(normalized);
+  // ⭐ 2026-10-08 晚业务负责人定：金额**必填且必须是正数** ——
+  //    「不会出现零的情况的。如果这个金额没填，就提交不了」⇒ **0 也当"没填"**（拒）。
+  if (!Number.isFinite(value) || value <= 0) return { ok: false, reason: 'amount_invalid' };
+  return { ok: true, value };
+};
+
+/** 这一批**在本地任务上**有没有一个可用的金额（点「是」那条路的闸门判据）。 */
+const hasActualAmount = (task) => {
+  const raw = task?.actual_amount;
+  // ⭐ 与 `parseActualAmount` 同一口径：**正数**才算"这一批已经有金额"（0 不算）。
+  return raw !== undefined && raw !== null && raw !== '' && Number.isFinite(Number(raw)) && Number(raw) > 0;
+};
+
 /**
  * 「采购到货：群话题对话式核对」（业务负责人 2026-10-06 定的口径）。
  *
@@ -523,6 +554,15 @@ class PurchaseArrivalConversationService {
    *      卡片动作那条路由的**同步响应是固定的「已收到，正在处理」**，service 返回的 toast
    *      只进 `lark.card.handled` 日志（这也是 `visibleFailure` 早就"patch 卡 + 回文字"的原因）。
    *
+   * ⭐⭐ 2026-10-08：「实际金额」是**第二个必填项**（业务负责人：「**金额这个是必填的，
+   *   必须让用户填，否则点不了按钮**」）。官方 `required` 只拦前端 ⇒ 这里再拒一次：
+   *   缺失 / 非数字 / 为负 ⇒ **一个字都不写** + 把提醒留在她那张卡上
+   *   （`card.amountMissingNote` / `card.amountInvalidNote`）。
+   *   ⚠️ 校验顺序是**先"实际到货情况"、后"金额"**：两项都缺时先说哪一项都没错，
+   *      保持既有空提交的语义与文案逐字不变（既有用例钉住的就是这一条）。
+   *   ⚠️ 金额**只记在本地任务上**（`handleFormSubmitLocked`），提交这一步**一张业务表都不写**；
+   *      「实际金额」的落点仍是「报货批次」那一行，由点「是」之后的 `confirmArrival` 写。
+   *
    * @param {object} value 提交按钮的 `value`（`{action, draft_id}`）
    * @param {object} formValue 回调里的 `form_value`（官方：表单项 name → 值）
    * @param {object} event 整个卡片回调事件（取被提交的那张卡 id、操作人）
@@ -532,10 +572,10 @@ class PurchaseArrivalConversationService {
   async handleCardFormSubmit(value, formValue, event = {}, operatorOpenId = '') {
     const taskId = String(value?.draft_id || '').trim();
     if (!taskId) throw new Error('到货核对卡片缺少任务 ID');
+    const fields = formValue && typeof formValue === 'object' ? formValue : {};
     const fieldName = this.config.card.form.fieldName;
-    const raw = formValue && typeof formValue === 'object' ? formValue[fieldName] : undefined;
     // ⚠️ 只在**两端**去空白（`trim`）：她填的正文原样保留（多行里的换行也保留）。
-    const text = String(raw ?? '').trim();
+    const text = String(fields[fieldName] ?? '').trim();
     const cardMessageId = String(event?.context?.open_message_id || event?.open_message_id || '').trim();
     if (!this.config.enabled) {
       // 与"在话题里说"**同一个开关**（`PURCHASE_ARRIVAL_CONVERSATION_ENABLED`）：
@@ -563,12 +603,45 @@ class PurchaseArrivalConversationService {
         return { toast: { type: 'error', content: this.config.replies.submitMissing } };
       });
     }
+    // ⭐⭐ 2026-10-08（业务负责人亲自批准）：「实际金额」**必填** ——
+    //   她的原话：「**金额这个是必填的，必须让用户填，否则点不了按钮**」。
+    // 🔴 官方 `required` 只拦**前端**（未填则前端提示、不发起回传）⇒ 服务端**必须再拒一次**：
+    //   缺失 / 非数字 / 为负 ⇒ **一个字都不许写**（不记原话、不调模型、不发卡片、不写业务表），
+    //   并且**明确回话**要她补（沿用"可见反馈落在卡片上"的既有套路，**不静默**）。
+    const amountFieldName = this.config.card.form.amountFieldName;
+    const amount = parseActualAmount(fields[amountFieldName]);
+    if (!amount.ok) {
+      const missing = amount.reason === 'amount_missing';
+      const copy = missing ? this.config.replies.amountMissing : this.config.replies.amountInvalid;
+      logWarn('purchase.arrival.reconcile.submit_amount_rejected', {
+        task_id: taskId, card_message_id: cardMessageId, field: amountFieldName, reason: amount.reason,
+        note: '服务端金额闸门：缺失 / 非数字 / 为负 → 一个字都不写，并把提醒留在她提交的那张卡上',
+      });
+      // ⚠️ 与空提交同形：也走**同一批的串行队列**（这是一次"重渲染那张卡"的远端动作），
+      //    并且 `reopenFormAfterEmptySubmit` **不写任何业务表、不动本地任务**。
+      return this.queue.run(taskId, async () => {
+        const reopened = await this.reopenFormAfterEmptySubmit(
+          taskId, cardMessageId, missing ? this.config.card.amountMissingNote : this.config.card.amountInvalidNote,
+        );
+        if (!reopened) {
+          // 🔴 表单**没能**重新留在她那张卡上（她那张卡指向的任务已经找不到 / 没有算好的计划 /
+          //    卡片 id 都没拿到）⇒ 只返回一个她**看不见**的 toast 就是静默失败。
+          //    照既有 `visibleFailure` 的套路：把话说在那张卡上 + 往话题里回一句。
+          return this.visibleFailure({
+            tier: 'submit_amount_rejected', taskId, operator: operatorOpenId, event, task: null,
+            copy, logEvent: 'purchase.arrival.reconcile.submit_amount_rejected', toastType: 'error',
+          });
+        }
+        return { toast: { type: 'error', content: copy } };
+      });
+    }
     logInfo('purchase.arrival.reconcile.submit_received', {
       task_id: taskId, card_message_id: cardMessageId, field: fieldName,
+      amount_field: amountFieldName, amount: amount.value,
       text_length: text.length, operator_open_id: operatorOpenId || '',
     });
     return this.queue.run(taskId, () => this.handleFormSubmitLocked({
-      taskId, text, cardMessageId, event, operatorOpenId,
+      taskId, text, amount: amount.value, cardMessageId, event, operatorOpenId,
     }));
   }
 
@@ -583,8 +656,11 @@ class PurchaseArrivalConversationService {
    *     （表单收掉 ⇒ 点不了第二次，这正是"避免重复提交"）。
    *     ⚠️ 没算出结果时**不 patch**：没有到货内容 / 解析失败 / 对不上明细 —— 卡片保持可编辑，
    *        她可以改一句再提交（或照旧在话题里说）。把没算成说成"已提交"就是谎报。
+   *
+   * ⭐ 2026-10-08：`amount` 是「实际金额」（**服务端已校验过**的数字）—— 只落到本地任务的
+   *   `actual_amount` 上；真正的写库在点「是」之后（见 `confirmLocked` / `confirmArrival`）。
    */
-  async handleFormSubmitLocked({ taskId, text, cardMessageId, event, operatorOpenId }) {
+  async handleFormSubmitLocked({ taskId, text, amount, cardMessageId, event, operatorOpenId }) {
     const { replies } = this.config;
     const task = await this.store.get(taskId);
     if (!task) {
@@ -602,6 +678,13 @@ class PurchaseArrivalConversationService {
       await this.safeReplyText(cardMessageId, replies.afterPosted, this.threadOptions(task));
       return { toast: { type: 'info', content: replies.afterPosted }, handled: true, reason: 'already_posted' };
     }
+    // ⭐⭐ 2026-10-08：把她这次填的**整批金额**记在**本地任务**上（**一张业务表都不写**）。
+    //   为什么记在这里而不是当场写库：她的口径是"整批一个金额，填到实际金额里面"，
+    //   而「实际金额」的落点是**「报货批次」那一行** —— 那一行的写入口子是
+    //   点「是」之后的 `confirmArrival` → `PurchaseOrderBatchService.writeAcceptance`
+    //   （与「验收原话」同一次 update）。提交这一步只负责"记住这一次她说的数"。
+    //   ⚠️ 幂等：同一个字段覆盖同一个值（整批一个数），重复提交**不会**写两遍/累加。
+    await this.store.update(taskId, { actual_amount: Number(amount) });
     const result = await this.handleTopicMessageLocked({
       taskId,
       // ⭐ "是哪一批"从**本地会话任务**上还原（提交没有定位器给的 batch 对象）。
@@ -673,12 +756,16 @@ class PurchaseArrivalConversationService {
   }
 
   /**
-   * 空提交之后**尽力**把表单留在她那张卡上（外加一句"没收到内容"的提醒）。
+   * 空提交 / 金额不合法之后**尽力**把表单留在她那张卡上（外加一句提醒）。
    *
    * 🔴 它**不写任何业务表、不动本地任务**，只是重新渲染一张卡 —— 所以"零写库"这条不变。
    * ⚠️ 任务上没有算好的计划（还没有行）就不重渲染：**宁可不做，也不渲染一张空卡**。
+   *
+   * ⭐ 2026-10-08：`note` 是那张卡上要显示的那句提醒（**不传时 = 既有的空提交文案**，
+   *   于是"实际到货情况没填"这条老路的卡片与改动前逐字一致）；
+   *   金额缺失 / 非数字走的是同一个函数、只是换一句可配的提醒。
    */
-  async reopenFormAfterEmptySubmit(taskId, cardMessageId) {
+  async reopenFormAfterEmptySubmit(taskId, cardMessageId, note = '') {
     if (!cardMessageId) return false;
     let task = null;
     try {
@@ -697,10 +784,13 @@ class PurchaseArrivalConversationService {
     }
     const reopened = await this.safeUpdateCard(cardMessageId, purchaseArrivalReconcileCard({
       taskId, batchNo: task.batch_no || '', rows: task.plan, differences: task.differences || [],
-      copy: this.config.card, formNote: this.config.card.submitMissingNote,
+      copy: this.config.card,
+      // 不传 `note` = 既有的空提交提醒（"实际到货情况"那一条，逐字不变）。
+      formNote: note || this.config.card.submitMissingNote,
     }), { task, taskId });
     logInfo('purchase.arrival.reconcile.submit_empty_reopened', {
       task_id: taskId, card_message_id: cardMessageId, card_patched: reopened,
+      note_kind: note ? 'custom' : 'submit_missing',
     });
     return reopened;
   }
@@ -813,6 +903,32 @@ class PurchaseArrivalConversationService {
         toastType: 'info',
       });
     }
+    // ⭐⭐ 2026-10-08（业务负责人亲自批准）：**「实际金额」必填** —— 点「是」这条路
+    //   **没有金额输入**（输入框在表单里），所以这一批**还没有金额**时：
+    //     · 🔴 **不许**写一个空的「实际金额」（她的口径："必须让用户填"）；
+    //     · 🔴 也**不许静默跳过** —— 明确把话指回表单那条路（可见失败：patch 卡 + 回文字）。
+    //   ⚠️ 位置**在任何写入之前**（连 `status:'posting'` 都还没落）⇒ 这一批一个字都没动。
+    //   ⚠️ 这**不是**放宽"提交"那条路的必填，而是它的对称面：金额只能从表单进来，
+    //      而写库发生在「是」这一刻。
+    if (!hasActualAmount(task)) {
+      logWarn('purchase.arrival.reconcile.amount_missing', {
+        task_id: taskId, batch_no: task.batch_no || '', operator_open_id: operatorOpenId || '',
+        note: '点「是」但这一批还没有金额：不写空的「实际金额」、不写任何业务表，明确提示她先在表单里填',
+      });
+      return this.visibleFailure({
+        tier: 'amount_missing', taskId, operator: operatorOpenId, event, task,
+        copy: replies.amountMissingOnConfirm, logEvent: 'purchase.arrival.reconcile.amount_missing',
+        toastType: 'info',
+        // ⚠️ 橙色（不是红色）：这不是"核对失败"，而是"还差一步、她补上就能继续"
+        //    —— 与"还没算出结果"那一条同理，别把中性状态说成失败。
+        template: 'orange',
+      });
+    }
+    const actualAmount = Number(task.actual_amount);
+    // ⭐ 「实际数量」= **代码算出来的**实际到货数合计（`plan.rows` 的 `actual` 求和）。
+    //    ⚠️ 与**库存口径一致**：`actual = 0` 的行不入库、但它们在这里加的是 **0**
+    //       ⇒ "按全量求和"与"按实际入库的行求和"是**同一个数**（0 加不加都一样）。
+    const actualQuantity = task.plan.reduce((sum, row) => sum + Number(row.actual || 0), 0);
     // ⭐ 2026-10-07 晚：这里原先会**新建「到货验收」一行**并落盘 `arrival_record_id`。
     //    那张表已被业务负责人删除，落点改到「报货批次」那一行 ⇒ 这一步整段删除：
     //      · 批次记录 id 本来就在任务上（`task.batch_record_id`，发图时从采购申请行读到的，
@@ -848,6 +964,12 @@ class PurchaseArrivalConversationService {
       batch_no: task.batch_no || '',
       // 「验收原话」随草稿传给 confirmArrival —— 由它写进批次行（本类不写业务表）。
       acceptance_text: String(task.acceptance_text || ''),
+      // ⭐⭐ 2026-10-08：这两个值也随草稿下去，由 `confirmArrival` → `writeAcceptance`
+      //   在**同一次 update** 里写到「报货批次」那一行（本类自己仍然一张业务表都不写）：
+      //     · actual_amount   = 她在卡片表单里填的**整批金额**（上面已校验：非空、非负、是数字）；
+      //     · actual_quantity = **代码算出来的**实际到货数合计（与库存口径一致）。
+      actual_amount: actualAmount,
+      actual_quantity: actualQuantity,
       operator_open_id: String(task.operator_open_id || operatorOpenId || ''),
       requests,
       actual: postableRows.map((row) => ({
@@ -940,6 +1062,10 @@ class PurchaseArrivalConversationService {
       skipped_zero_count: zeroRows.length,
       skipped_zero_rows: zeroRows.map(rowLabel),
       total_quantity: total,
+      // ⭐⭐ 2026-10-08：这两个值就是这次写到「报货批次」那一行的「实际数量」「实际金额」
+      //   （正向证据：日志能直接回答"到底写了什么数"，而不用去表里翻）。
+      actual_quantity: actualQuantity,
+      actual_amount: actualAmount,
       // 「报货信息」（采购申请表）在这条链路上**一个字都没写**——这是断言钉住的口径。
       purchase_request_writes: 0,
       // ⭐ 2026-10-07 深夜：「采购入库」表被整表删除 ⇒ 这次确认**没有**任何入库明细行；

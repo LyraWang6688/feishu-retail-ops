@@ -428,6 +428,7 @@ test('追加② ⚠️：她点**旧卡**也按最新计划入库（plan 存在�
   const taskId = taskIdForBatch(BATCH_NO);
   await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '38 码少一双', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1' });
   await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '不对，是少两双', messageId: 'om_2', threadId: 'omt_1', senderOpenId: 'ou_1' });
+  await seedActualAmount(harness);
 
   // 她点的是**第一张卡**那条消息（`om_card_1`），但入库必须按最新的计划（38 实际 0 双）。
   await harness.service.handleCardAction(
@@ -892,11 +893,24 @@ test('模型说「她还没说完」（complete=false）**也要出卡片** —�
 // □ 点「是」之后 —— 这才是入库点
 // ═══════════════════════════════════════════════════════════════════════════
 
-const confirmCard = async (harness, text = '38 码少一双，完毕') => {
+// ⭐⭐ 2026-10-08：「实际金额」是**必填**（业务负责人：「必须让用户填」）——
+//   点「是」那条路**没有金额输入** ⇒ 这一批**还没有金额**时，`confirmLocked` 会拒绝
+//   （不写空的「实际金额」、一个字都不写业务表，并明确提示她先去表单填）。
+//   所以凡是"要走到入库"的用例，都得先让这一批**已经有金额**（前置条件）。
+//   生产上这个值由卡片表单提交进来（`handleFormSubmitLocked` 落到本地任务）；
+//   这里直接写本地任务，等价于"她已经填过金额"，不再多绕一轮模型调用。
+const seedActualAmount = async (harness, amount = 12800) => {
+  await harness.store.update(taskIdForBatch(BATCH_NO), { actual_amount: amount });
+  return amount;
+};
+
+const confirmCard = async (harness, text = '38 码少一双，完毕', { amount = 12800 } = {}) => {
   await harness.service.handleTopicMessage({
     batch: defaultBatch(), text, messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1',
   });
   const taskId = taskIdForBatch(BATCH_NO);
+  // 金额前置条件（见 `seedActualAmount` 的注释）：不填的话点「是」会被金额闸门拦下。
+  await seedActualAmount(harness, amount);
   const cardEvent = { context: { open_message_id: 'om_card_1' } };
   const result = await harness.service.handleCardAction(
     { action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: taskId }, cardEvent, 'ou_1',
@@ -1316,6 +1330,7 @@ test('点「否」之后再点「是」→ 仍然按她的显式指令入库（�
   });
   await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '38 码少一双，完毕', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1' });
   const taskId = taskIdForBatch(BATCH_NO);
+  await seedActualAmount(harness);
   await harness.service.handleCardAction(
     { action: ARRIVAL_CONVERSATION_ACTIONS.REJECT, draft_id: taskId }, { context: { open_message_id: 'om_card_1' } }, 'ou_1',
   );
@@ -1535,6 +1550,7 @@ test('0 双①：12 行里 3 行实际 0 双 → 那 3 行一条都不入库、�
 
     // ④ 点「是」→ **只有 9 行加库存**：3 行 0 双不写任何入库明细、也不调库存。
     logs.lines.length = 0;
+    await seedActualAmount(harness);
     const confirmed = await harness.service.handleCardAction(
       { action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: taskId },
       { context: { open_message_id: 'om_card_1' } }, 'ou_1',
@@ -1612,6 +1628,7 @@ test('0 双②：整批都是 0 双（一件都没到）→ 一条入库 / 库�
   assert.equal(harness.cards.length, 1);
   assert.equal((JSON.stringify(harness.cards[0].card).match(/实际 0 双/g) || []).length, 2);
 
+  await seedActualAmount(harness);
   const result = await harness.service.handleCardAction(
     { action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: taskId },
     { context: { open_message_id: 'om_card_1' } }, 'ou_1',
@@ -1646,6 +1663,7 @@ test('0 双③：0 双的两句卡片文案 + 收尾回话都来自配置（改�
   assert.match(cardJson, /零双·自定义/);
   assert.match(cardJson, /零行说明·自定义/);
 
+  await seedActualAmount(harness);
   const result = await harness.service.handleCardAction(
     { action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: taskId },
     { context: { open_message_id: 'om_card_1' } }, 'ou_1',
@@ -1916,6 +1934,10 @@ test('接线④：别的卡片动作不会被到货核对抢走（照旧走销�
 // ═══════════════════════════════════════════════════════════════════════════
 
 const FORM_FIELD = 'actual_arrival';
+// ⭐ 2026-10-08：表单里**第二个**必填项 ——「实际金额」（`form_value` 里的键）。
+const AMOUNT_FIELD = 'actual_amount';
+/** 一个合法的金额（默认值；用例里要改数字时显式传）。 */
+const AMOUNT = 12800;
 
 /** 卡片里的表单容器（官方硬约束：只能放在**卡片根节点**下）。 */
 const cardForm = (card) => (card.elements || []).find((element) => element.tag === 'form') || null;
@@ -1976,10 +1998,15 @@ test('表单①⭐：输入框与提交按钮都在**卡片根节点的表单容
   assert.equal(form.tag, 'form');
   assert.equal(form.name, 'arrival_reconcile_form');
 
-  // ② 容器内恰好两项：输入框 + 提交按钮。
-  const input = (form.elements || []).find((element) => element.tag === 'input');
+  // ② 容器内恰好三项：**两个输入框 + 一个提交按钮**
+  //    （2026-10-08 起第二个输入框 = 「实际金额」；两个输入框共用同一个提交按钮）。
+  const inputs = (form.elements || []).filter((element) => element.tag === 'input');
+  const input = inputs.find((element) => element.name === FORM_FIELD);
+  const amountInput = inputs.find((element) => element.name === AMOUNT_FIELD);
   const submit = (form.elements || []).find((element) => element.tag === 'button');
+  assert.equal(inputs.length, 2, '表单容器里是两个输入框（实际到货情况 + 实际金额）');
   assert.ok(input, '表单容器里必须有输入框');
+  assert.ok(amountInput, '表单容器里必须有**金额**输入框（2026-10-08 新增的必填项）');
   assert.ok(submit, '表单容器里必须有提交按钮（官方：输入框与按钮**一起**内嵌）');
   assert.equal(input.name, FORM_FIELD, '输入框 name = form_value 里的键');
   assert.equal(input.input_type, 'multiline_text', '业务负责人要的是**多行**文本框');
@@ -1988,6 +2015,21 @@ test('表单①⭐：输入框与提交按钮都在**卡片根节点的表单容
   assert.ok(String(input.placeholder.content || '').length > 0, 'placeholder 可配且非空');
   assert.equal(input.fallback.tag, 'fallback_text', '低版本客户端的降级文案（老路还留着）');
   assert.match(input.fallback.text.content, /话题/);
+
+  // ②-补 ⭐ 2026-10-08：第二个输入框 = 「实际金额」（必填；官方没有数字类型 ⇒ `text`）。
+  assert.equal(amountInput.name, AMOUNT_FIELD, '金额输入框 name = form_value 里的键');
+  assert.notEqual(amountInput.name, input.name, '两个 name 必须不同（否则飞书 200530、数据发不出去）');
+  assert.equal(amountInput.input_type, 'text',
+    '官方 input_type 只有 text / multiline_text / password ⇒ 数字校验在服务端');
+  assert.equal(amountInput.required, true, '金额必填（她的口径："否则点不了按钮"）');
+  assert.equal(amountInput.label.content, '实际金额');
+  assert.match(String(amountInput.placeholder.content || ''), /金额/);
+  assert.equal(amountInput.fallback.tag, 'fallback_text', '金额这一项也有老客户端降级文案');
+  assert.match(amountInput.fallback.text.content, /话题/);
+  // 官方：`rows` / `auto_resize` / `max_rows` **只对** `multiline_text` 有效 ⇒ 金额这一项不许带。
+  for (const key of ['rows', 'auto_resize', 'max_rows']) {
+    assert.equal(key in amountInput, false, `金额输入框不许带 ${key}（官方：只对 multiline_text 有效）`);
+  }
 
   // ③ 提交按钮绑 `form_submit`，value 里带得回任务 id。
   assert.equal(submit.action_type, 'form_submit', '官方：提交按钮必须绑 form_submit');
@@ -1998,6 +2040,7 @@ test('表单①⭐：输入框与提交按钮都在**卡片根节点的表单容
   // ④ `name` 全局唯一（否则飞书报 200530）。
   const names = cardInteractiveNames(card);
   assert.ok(names.includes(FORM_FIELD) && names.includes('arrival_reconcile_form'));
+  assert.ok(names.includes(AMOUNT_FIELD), '金额输入框的 name 也在卡片里');
   assert.equal(new Set(names).size, names.length, `交互组件 name 必须全局唯一，实际：${names.join(' / ')}`);
 
   // ⑤ 入库闸门那两个按钮**一个都没少**（提交不是入库，入库仍然要点「是」）。
@@ -2011,6 +2054,7 @@ test('表单②⭐⭐：提交带文字 = 在话题里说同一句 —— 模型
   const first = { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] };
   const second = { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 39, type: 'more', quantity: 1 }] };
   const SENTENCE = 'XHB8095 39 码多一双';
+  const amt = String(AMOUNT);
 
   // A 组：她在**话题里**说这一句。
   const topic = makeHarness({ responses: [first, second] });
@@ -2023,7 +2067,7 @@ test('表单②⭐⭐：提交带文字 = 在话题里说同一句 —— 模型
   const form = makeHarness({ responses: [first, second] });
   const context = await withReconcileCard(form);
   const byForm = await submitForm(form, {
-    cardMessageId: context.cardMessageId, formValue: { [FORM_FIELD]: SENTENCE },
+    cardMessageId: context.cardMessageId, formValue: { [FORM_FIELD]: SENTENCE, [AMOUNT_FIELD]: amt },
   });
 
   // ① 喂给模型的入参（taskId / rows / messages）**深度相等**。
@@ -2054,7 +2098,7 @@ test('表单③⭐：提交之后点「是」→ 就是按**表单里说的数**
     ],
   });
   const context = await withReconcileCard(harness, '都到了');
-  await submitForm(harness, { cardMessageId: context.cardMessageId, formValue: { [FORM_FIELD]: '38 码少了一双' } });
+  await submitForm(harness, { cardMessageId: context.cardMessageId, formValue: { [FORM_FIELD]: '38 码少了一双', [AMOUNT_FIELD]: String(AMOUNT) } });
 
   const result = await harness.service.handleCardAction(
     { action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: context.taskId },
@@ -2108,7 +2152,7 @@ test('表单⑤：同一次提交被飞书重投 → 不重复喂模型 / 不重
     ],
   });
   const context = await withReconcileCard(harness, '都到了');
-  const payload = { cardMessageId: context.cardMessageId, formValue: { [FORM_FIELD]: '38 码少一双' } };
+  const payload = { cardMessageId: context.cardMessageId, formValue: { [FORM_FIELD]: '38 码少一双', [AMOUNT_FIELD]: String(AMOUNT) } };
   const first = await submitForm(harness, payload);
   assert.equal(first.card, true);
 
@@ -2131,7 +2175,7 @@ test('表单⑤：同一次提交被飞书重投 → 不重复喂模型 / 不重
 
   // 已经入库之后又提交一次：不重复入库、如实回执（任务上原话也不再追加）。
   const transcriptBefore = (await harness.store.get(context.taskId)).transcript.length;
-  const third = await submitForm(harness, { cardMessageId: 'om_card_3', formValue: { [FORM_FIELD]: '再补一双' } });
+  const third = await submitForm(harness, { cardMessageId: 'om_card_3', formValue: { [FORM_FIELD]: '再补一双', [AMOUNT_FIELD]: String(AMOUNT) } });
   assert.equal(third.toast.type, 'info');
   assert.match(third.toast.content, /已经入过库|没有再动/);
   assert.equal(harness.inventory.calls.length, 2, '已入库之后提交不许再动库存');
@@ -2177,7 +2221,7 @@ test('表单⑦⚠️：提交里**没有**到货内容 → 与"在话题里说�
     const context = await withReconcileCard(harness, '都到了');
     const before = await harness.store.get(context.taskId);
 
-    const result = await submitForm(harness, { cardMessageId: context.cardMessageId, formValue: { [FORM_FIELD]: '你好' } });
+    const result = await submitForm(harness, { cardMessageId: context.cardMessageId, formValue: { [FORM_FIELD]: '你好', [AMOUNT_FIELD]: String(AMOUNT) } });
 
     assert.equal(harness.cards.length, 1, '没有到货内容就不许发卡片 —— 提交这条路也不例外');
     assert.deepEqual(harness.gateway.writes, [], '也不许写任何业务表');
@@ -2210,7 +2254,7 @@ test('表单⑭：她提交的是**另一张**（不是最新那张）→ 最新
   assert.equal((await harness.store.get(taskIdForBatch(BATCH_NO))).card_message_id, 'om_card_2', '最新那张是第二张');
   assert.deepEqual(harness.updated, [], '第二张发出来时旧卡没读成事实 ⇒ 一张都没 patch');
 
-  await submitForm(harness, { cardMessageId: 'om_card_1', formValue: { [FORM_FIELD]: '38 码少一双' } });
+  await submitForm(harness, { cardMessageId: 'om_card_1', formValue: { [FORM_FIELD]: '38 码少一双', [AMOUNT_FIELD]: String(AMOUNT) } });
 
   // ① 最新那张（om_card_2）作废（它上面的数字相对这次提交已经过期）；
   // ② 她提交的那张（om_card_1）收成「已提交」终态。
@@ -2227,7 +2271,7 @@ test('表单⑬：到货核对整个链路关着时提交 → 不处理、不写
   });
   // 开关是在**入口**判的 ⇒ 连任务都不该建（与"在话题里说"同一条判据）。
   const result = await submitForm(harness, {
-    cardMessageId: 'om_card_1', formValue: { [FORM_FIELD]: '都到了' },
+    cardMessageId: 'om_card_1', formValue: { [FORM_FIELD]: '都到了', [AMOUNT_FIELD]: String(AMOUNT) },
   });
 
   assert.match(result.toast.content, /没有开着/);
@@ -2245,7 +2289,7 @@ test('表单⑧：提交成功 → 她提交的那张卡被 patch 成「已提�
     ],
   });
   const context = await withReconcileCard(harness, '都到了');
-  await submitForm(harness, { cardMessageId: context.cardMessageId, formValue: { [FORM_FIELD]: '38 码少一双' } });
+  await submitForm(harness, { cardMessageId: context.cardMessageId, formValue: { [FORM_FIELD]: '38 码少一双', [AMOUNT_FIELD]: String(AMOUNT) } });
 
   assert.equal(harness.updated.length, 1, '只 patch 一张（提交入口自己收；管道不再拿它当"旧卡"作废一遍）');
   assert.equal(harness.updated[0].messageId, context.cardMessageId);
@@ -2269,47 +2313,77 @@ test('表单⑨：表单全部文案走配置（改文案不碰逻辑；只覆�
           containerName: 'my_form', fieldName: 'my_field', label: '填这里',
           placeholder: '自定义占位', submitLabel: '交上去', submitButtonName: 'my_submit',
           fallbackText: '升级飞书或直接在话题里说',
+          // ⭐ 2026-10-08：金额那一项**也全部可配**（label / placeholder / 字段名 / 降级文案）。
+          amountFieldName: 'my_amount', amountLabel: '自定义金额',
+          amountPlaceholder: '自定义金额占位', amountFallbackText: '升级飞书或直接在话题里说金额',
         },
         submittedTitle: '我自己定的已提交',
         submittedMessage: '自定义已提交说明',
+        // ⭐ 金额那两句"留在卡上"的提醒也可配。
+        amountMissingNote: '自定义金额没填提示',
+        amountInvalidNote: '自定义金额非法提示',
       },
-      replies: { submitMissing: '自定义空提交提示', submitReceived: '自定义收到提示', submitDuplicate: '自定义重复提示' },
+      replies: {
+        submitMissing: '自定义空提交提示',
+        submitReceived: '自定义收到提示',
+        submitDuplicate: '自定义重复提示',
+        amountMissing: '自定义金额缺失回执',
+        amountInvalid: '自定义金额非法回执',
+      },
     },
   });
   await harness.service.handleTopicMessage({
     batch: defaultBatch(), text: '都到了', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1',
   });
   const form = cardForm(harness.cards[0].card);
-  const input = form.elements.find((element) => element.tag === 'input');
+  // ⭐ 表单容器是三个元素：两个输入框（到货情况 / 金额）+ 一个提交按钮。
+  const inputs = form.elements.filter((element) => element.tag === 'input');
+  const input = inputs.find((element) => element.name === 'my_field');
+  const amountInput = inputs.find((element) => element.name === 'my_amount');
   const submit = form.elements.find((element) => element.tag === 'button');
+  assert.ok(amountInput, '表单容器里必须有第二个输入框（金额）');
   assert.equal(form.name, 'my_form');
   assert.equal(input.name, 'my_field');
   assert.equal(input.label.content, '填这里');
   assert.equal(input.placeholder.content, '自定义占位');
   assert.equal(input.fallback.text.content, '升级飞书或直接在话题里说');
+  assert.equal(amountInput.label.content, '自定义金额', '金额 label 走配置');
+  assert.equal(amountInput.placeholder.content, '自定义金额占位', '金额 placeholder 走配置');
+  assert.equal(amountInput.fallback.text.content, '升级飞书或直接在话题里说金额', '金额降级文案走配置');
   assert.equal(submit.text.content, '交上去');
   assert.equal(submit.name, 'my_submit');
   // 没覆盖的那些仍然有默认值（嵌套合并 = 只改一项不会把其余项变成 undefined）。
   assert.equal(input.input_type, 'multiline_text');
   assert.equal(input.required, true);
   assert.ok(Number(input.rows) > 1, '多行行数是默认值，没被这次覆盖弄丢');
+  assert.equal(amountInput.input_type, 'text', '金额的输入类型是默认值（官方没有数字类型 ⇒ text）');
+  assert.equal(amountInput.required, true, '金额必填的默认值没被这次覆盖弄丢');
 
   // 空提交用的是自定义提示。
   const empty = await submitForm(harness, { cardMessageId: 'om_card_1', formValue: {} });
   assert.equal(empty.toast.content, '自定义空提交提示');
 
-  // 提交成功用的是自定义的「已提交」文案与自定义收到提示。
-  const ok = await submitForm(harness, { cardMessageId: 'om_card_1', formValue: { my_field: '38 码少一双' } });
+  // ⭐ 金额没填 / 填错时用的是自定义回执，且提醒留在卡上。
+  const noAmount = await submitForm(harness, { cardMessageId: 'om_card_1', formValue: { my_field: '38 码少一双' } });
+  assert.equal(noAmount.toast.content, '自定义金额缺失回执');
+  assert.match(JSON.stringify(harness.updated.at(-1).card), /自定义金额没填提示/);
+  const badAmount = await submitForm(harness, { cardMessageId: 'om_card_1', formValue: { my_field: '38 码少一双', my_amount: '一万二' } });
+  assert.equal(badAmount.toast.content, '自定义金额非法回执');
+  assert.match(JSON.stringify(harness.updated.at(-1).card), /自定义金额非法提示/);
+
+  // 提交成功用的是自定义的「已提交」文案与自定义收到提示（金额原样带到任务上）。
+  const ok = await submitForm(harness, { cardMessageId: 'om_card_1', formValue: { my_field: '38 码少一双', my_amount: '25600' } });
   assert.equal(ok.toast.content, '自定义收到提示');
   assert.equal(harness.updated.at(-1).card.header.title.content, '我自己定的已提交');
   assert.match(JSON.stringify(harness.updated.at(-1).card), /自定义已提交说明/);
+  assert.equal((await harness.store.get(taskIdForBatch(BATCH_NO))).actual_amount, 25600);
 });
 
 test('表单⑩：她提交的那张卡指向的任务已经找不到 → 可见失败（不静默、不写表、不喂模型）', async () => {
   const harness = makeHarness({ responses: [] });
   const result = await submitForm(harness, {
     cardMessageId: 'om_card_x', taskId: 'arrival_reconcile_missing',
-    formValue: { [FORM_FIELD]: '都到了' },
+    formValue: { [FORM_FIELD]: '都到了', [AMOUNT_FIELD]: String(AMOUNT) },
   });
 
   assert.equal(result.toast.type, 'error');
@@ -2359,3 +2433,298 @@ test('表单⑫：源码级断言 —— 提交这条路**没有第二套解析*
   assert.equal(planCalls.length, 1, '算计划也只有一处（提交不另造一套差异比对）');
 });
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// □ ⭐⭐ 「实际金额」（业务负责人 2026-10-08 亲自批准）
+//
+// 她的原话（逐字）：
+//   · 「**实际金额**：到货确认卡片……现在需要增加一个**单选/填写文本框**，让用户填写
+//      **这一次供应商的金额**，然后我们填到实际金额里面」；
+//   · 「**金额这个是必填的，必须让用户填，否则点不了按钮**」；
+//   · 「**实际数量**……对，就是**你从原话里面算出来的**，不用（用户填）」；
+//   · 「**录入数量**：我们报单时候的数量；**实际数量**：我们到货的数量；
+//      **实际金额**：这一次供应商的金额」。
+//
+// 官方依据（curl 实查，`.md?lang=zh-CN`）：
+//   「input_type | 否 | String | text | 指定输入框的输入类型。默认为 text，即文本类型。
+//     支持以下枚举值：- text：普通文本 - multiline_text：多行文本…… - password：密码」
+//   ⇒ **没有数字类型** ⇒ 金额用 `text`，数字校验在**服务端**做。
+//   https://open.feishu.cn/document/feishu-cards/card-components/interactive-components/input.md?lang=zh-CN
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** 「报货批次」那一行上跟这次改动有关的三列（收尾断言用）。 */
+const arrivalColumns = (records) => {
+  const fields = batchFields(records);
+  return {
+    验收原话: fields['验收原话'], 实际数量: fields['实际数量'], 实际金额: fields['实际金额'],
+  };
+};
+
+test('金额②⚠️：金额没填 / 只有空白 → 服务端拒绝：明确回话 + 提醒留在卡上 + 一个字都不写', async () => {
+  for (const formValue of [
+    { [FORM_FIELD]: '都到了' },                          // 只有到货情况，完全没有金额这一项
+    { [FORM_FIELD]: '都到了', [AMOUNT_FIELD]: '' },      // 空串
+    { [FORM_FIELD]: '都到了', [AMOUNT_FIELD]: '   ' },   // 只有空白
+  ]) {
+    const harness = makeHarness({ responses: [{ complete: false, same: true, differences: [] }] });
+    const context = await withReconcileCard(harness, '都到了');
+    const before = await harness.store.get(context.taskId);
+    const callsBefore = harness.recognizer.calls.length;
+    const cardsBefore = harness.cards.length;
+
+    const result = await submitForm(harness, { cardMessageId: context.cardMessageId, formValue });
+
+    // 她真正看得见的那句提醒在**卡片上**（下面断言）；toast 是服务端契约与日志口径。
+    assert.equal(result.toast.type, 'error', '金额缺失必须**明确回话**（不许静默）');
+    assert.match(result.toast.content, /实际金额/);
+    assert.match(result.toast.content, /必填/);
+    assert.equal(harness.recognizer.calls.length, callsBefore, '金额没填 → 连模型都不许调');
+    assert.equal(harness.cards.length, cardsBefore, '也不许发新卡');
+    assert.deepEqual(harness.gateway.writes, [], '一个字都不许写业务表');
+    const after = await harness.store.get(context.taskId);
+    assert.deepEqual(after.transcript, before.transcript, '本地原话一个字都不许加');
+    assert.equal(after.actual_amount, undefined, '没有金额就什么都不记');
+    assert.equal(after.status, before.status, '状态也不许动');
+    // 卡片**仍然可用**：表单 + 金额提醒一起留在她提交的那张卡上（改一下再提交即可）。
+    const patch = harness.updated.at(-1);
+    assert.equal(patch.messageId, context.cardMessageId);
+    assert.ok(cardForm(patch.card), '金额没填之后表单要留着，别把她堵死');
+    assert.match(JSON.stringify(patch.card), /金额/);
+  }
+});
+
+test('金额②-补🔴：金额没填 + 那张卡指向的任务已经找不到 → **不能只留一个她看不见的 toast**', async () => {
+  // 表单**重渲染不了**（任务没了）时，`reopenFormAfterEmptySubmit` 什么都不会做 ⇒
+  // 必须有兜底：照 `visibleFailure` 的套路把话说在卡上 + 回话题（AGENTS.md：只弹 toast = 她什么都没看见）。
+  const harness = makeHarness({ responses: [] });
+  const result = await submitForm(harness, {
+    cardMessageId: 'om_card_x', taskId: 'arrival_reconcile_missing',
+    formValue: { [FORM_FIELD]: '都到了' }, // 金额也没填
+  });
+
+  assert.equal(result.toast.type, 'error');
+  assert.match(result.toast.content, /实际金额/);
+  assert.equal(harness.recognizer.calls.length, 0, '不许调模型');
+  assert.deepEqual(harness.gateway.writes, [], '一个字都不许写');
+  assert.equal(harness.cards.length, 0, '不许发新卡');
+  assert.equal(harness.updated.at(-1).messageId, 'om_card_x', '那张卡必须变成终态（她看得见）');
+  assert.match(JSON.stringify(harness.updated.at(-1).card), /实际金额/);
+  assert.equal(harness.replied.length, 1, '话题里也要有一句');
+  assert.match(harness.replied[0].content, /实际金额/);
+});
+
+test('金额③⚠️：金额非数字 / 为负 → 同样拒绝（官方没有数字类型 ⇒ 这道闸门只能在我们这层）', async () => {
+  for (const raw of ['一万二', '12800元', 'abc', '-1', '-0.01', '12.3.4', '1e3']) {
+    const harness = makeHarness({ responses: [{ complete: false, same: true, differences: [] }] });
+    const context = await withReconcileCard(harness, '都到了');
+    const before = await harness.store.get(context.taskId);
+    const callsBefore = harness.recognizer.calls.length;
+
+    const result = await submitForm(harness, {
+      cardMessageId: context.cardMessageId,
+      formValue: { [FORM_FIELD]: '都到了', [AMOUNT_FIELD]: raw },
+    });
+
+    assert.equal(result.toast.type, 'error', `「${raw}」必须被拒（不许静默接受）`);
+    assert.match(result.toast.content, /数字/, `「${raw}」的提示要说清"要数字"`);
+    assert.equal(harness.recognizer.calls.length, callsBefore, '被拒的提交不许调模型');
+    assert.deepEqual(harness.gateway.writes, [], '被拒的提交一个字都不许写');
+    assert.equal((await harness.store.get(context.taskId)).actual_amount, undefined);
+    assert.deepEqual((await harness.store.get(context.taskId)).transcript, before.transcript);
+  }
+});
+
+test('金额③-补：能接受的形状（千分位 / ￥ / 小数）—— 只是格式差异，不该把她拦下来', async () => {
+  // ⭐ 2026-10-08 晚业务负责人定：「不会出现零的情况的。如果这个金额没填，就提交不了」
+  //    ⇒ **0 也当"没填"**：这里只列正数形状；0 / 负数 / 非数字各有专门的拒绝用例。
+  for (const [raw, expected] of [
+    ['12800', 12800],
+    ['12,800', 12800],
+    ['￥12800', 12800],
+    ['12800.50', 12800.5],
+  ]) {
+    const harness = makeHarness({
+      responses: [
+        { complete: false, same: true, differences: [] },
+        { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] },
+      ],
+    });
+    const context = await withReconcileCard(harness, '都到了');
+    await submitForm(harness, {
+      cardMessageId: context.cardMessageId,
+      formValue: { [FORM_FIELD]: '38 码少一双', [AMOUNT_FIELD]: raw },
+    });
+    const task = await harness.store.get(context.taskId);
+    assert.equal(task.actual_amount, expected, `「${raw}」应被解析成 ${expected}`);
+    assert.equal(typeof task.actual_amount, 'number', '落到任务上的是**数字**（不是字符串）');
+  }
+});
+
+test('金额③-补2：**0 也当"没填"**（她 2026-10-08：「不会出现零的情况」）⇒ 明确拒绝、零写库、卡片留在原地', async () => {
+  const harness = makeHarness({
+    responses: [
+      { complete: false, same: true, differences: [] },
+      { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] },
+    ],
+  });
+  const context = await withReconcileCard(harness, '都到了');
+  const writesBefore = harness.gateway.writes.length;
+  await submitForm(harness, {
+    cardMessageId: context.cardMessageId,
+    formValue: { [FORM_FIELD]: '38 码少一双', [AMOUNT_FIELD]: '0' },
+  });
+  const task = await harness.store.get(context.taskId);
+  assert.equal(task.actual_amount ?? null, null, '0 不许落到任务上（当"没填"）');
+  assert.equal(harness.gateway.writes.length, writesBefore, '拒绝一次金额：零业务表写入');
+});
+
+test('金额④⭐：点「是」→「实际金额」= 她填的整批金额、「实际数量」= actual 合计，与「验收原话」同一次 update', async () => {
+  const harness = makeHarness({
+    responses: [
+      { complete: false, same: true, differences: [] },
+      { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 2 }] },
+    ],
+  });
+  const context = await withReconcileCard(harness, '都到了');
+  await submitForm(harness, {
+    cardMessageId: context.cardMessageId,
+    formValue: { [FORM_FIELD]: '38 码少两双', [AMOUNT_FIELD]: '12800.50' },
+  });
+  assert.equal((await harness.store.get(context.taskId)).actual_amount, 12800.5, '她填的金额以**数字**记在本地任务上');
+
+  const result = await harness.service.handleCardAction(
+    { action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: context.taskId },
+    { context: { open_message_id: 'om_card_2' } }, 'ou_1',
+  );
+  assert.equal(result.toast.type, 'success');
+
+  // ⭐ 三列都在**「报货批次」那一行**上。
+  assert.deepEqual(arrivalColumns(harness.records), {
+    验收原话: '都到了\n38 码少两双',
+    实际数量: 2,          // 38 码申请 2 − 少 2 = 0 双（不入库）；39 码按申请 2 双 ⇒ 0 + 2
+    实际金额: 12800.5,    // 她填的整批金额
+  });
+  // ⚠️ 库存口径**一个字没改**：还是按"实际到货数"加，0 双那一行不加。
+  assert.equal(harness.inventory.calls.length, 1, '0 双那一行不入库（库存口径没变）');
+  assert.equal(harness.inventory.calls[0].size, 39);
+  assert.equal(harness.inventory.calls[0].quantity, 2);
+  // ⭐ 三个值在**同一次** update 里写下去（少一次远端调用、少一个失败窗口）。
+  const acceptanceWrites = writesTo(harness.gateway, 'purchaseOrderBatch')
+    .filter((write) => '验收原话' in write.values);
+  assert.equal(acceptanceWrites.length, 1, '「验收原话 / 实际数量 / 实际金额」是同一次 update');
+  assert.deepEqual(acceptanceWrites[0].values, {
+    验收原话: '都到了\n38 码少两双', 实际数量: 2, 实际金额: 12800.5,
+  });
+});
+
+test('金额⑤🔴：点「是」但这一批**还没有金额** → 不写空的「实际金额」、一个字都不写，并明确指回表单', async () => {
+  const harness = makeHarness({
+    responses: [{ complete: true, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] }],
+  });
+  // 走的是**话题那条路**发卡（她没在表单里填过金额）⇒ 点「是」时这一批还没有金额。
+  await harness.service.handleTopicMessage({
+    batch: defaultBatch(), text: '38 码少一双，完毕', messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1',
+  });
+  const taskId = taskIdForBatch(BATCH_NO);
+  assert.equal((await harness.store.get(taskId)).actual_amount, undefined, '前置条件：还没有金额');
+
+  const result = await harness.service.handleCardAction(
+    { action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: taskId },
+    { context: { open_message_id: 'om_card_1' } }, 'ou_1',
+  );
+
+  // ① 明确提示（不静默）：指回"先在表单里填这次金额"。
+  assert.equal(result.toast.type, 'info', '这不是错误，是"还差一步"');
+  assert.match(result.toast.content, /实际金额/);
+  assert.match(result.toast.content, /表单/);
+  // ② 🔴 一个字都不写：不写空的「实际金额」、不写验收原话、不加库存、不推进状态。
+  assert.deepEqual(harness.gateway.writes, [], '不许写任何业务表');
+  assert.equal(JSON.stringify(harness.gateway.writes).includes('实际金额'), false,
+    '任何载荷里都不许出现「实际金额」（尤其不许写空值）');
+  assert.equal(harness.inventory.calls.length, 0, '不加库存');
+  assert.equal((await harness.store.get(taskId)).status, 'awaiting_confirmation', '状态不推进（连 posting 都不落）');
+  // ③ 失败/待补要看得见：patch 那张卡 + 话题里回一句（橙色，不是红色 —— 不算"核对失败"）。
+  const patch = harness.updated.at(-1);
+  assert.equal(patch.messageId, 'om_card_1');
+  assert.equal(patch.card.header.title.content, '到货验收核对没成功');
+  assert.equal(patch.card.header.template, 'orange');
+  assert.match(JSON.stringify(patch.card), /实际金额/);
+  assert.equal(harness.replied.length, 1);
+  assert.match(harness.replied[0].content, /实际金额/);
+  // ④ 补上金额之后，同一张卡照旧能入库（这条路没被堵死）。
+  await seedActualAmount(harness, 9900);
+  const again = await harness.service.handleCardAction(
+    { action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: taskId },
+    { context: { open_message_id: 'om_card_1' } }, 'ou_1',
+  );
+  assert.equal(again.toast.type, 'success');
+  assert.equal(batchFields(harness.records)['实际金额'], 9900);
+  assert.equal(batchFields(harness.records)['实际数量'], 3, '38 码 1 双 + 39 码 2 双 = 3');
+});
+
+test('金额⑥：幂等 —— 重复提交 / 重复点「是」都不会把金额写两遍（整批一个数）', async () => {
+  const harness = makeHarness({
+    responses: [
+      { complete: false, same: true, differences: [] },
+      { complete: false, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] },
+    ],
+  });
+  const context = await withReconcileCard(harness, '都到了');
+  const payload = {
+    cardMessageId: context.cardMessageId,
+    formValue: { [FORM_FIELD]: '38 码少一双', [AMOUNT_FIELD]: '12800' },
+  };
+  await submitForm(harness, payload);
+  // 同一次提交被飞书**重投**：既有的 `duplicate_message` 闸门挡住（不重复喂模型 / 不重复发卡）。
+  const duplicate = await submitForm(harness, payload);
+  assert.match(duplicate.toast.content, /已经处理过|没有重复/);
+  assert.deepEqual(harness.gateway.writes, [], '提交本身**一张业务表都不写**（金额只是记在本地任务上）');
+  assert.equal((await harness.store.get(context.taskId)).actual_amount, 12800, '整批一个数');
+
+  const click = () => harness.service.handleCardAction(
+    { action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: context.taskId },
+    { context: { open_message_id: 'om_card_2' } }, 'ou_1',
+  );
+  await click();
+  await click(); // 双击 / 飞书重投：既有 `status === 'posted'` 闸门挡住
+
+  // ① 值没被写两遍（不是 25600 / 不是 6）。
+  assert.equal(batchFields(harness.records)['实际金额'], 12800, '重复点「是」之后金额还是 12800');
+  assert.equal(batchFields(harness.records)['实际数量'], 3, '实际数量还是 1 + 2 = 3');
+  // ② 写「实际金额」的远端调用**只有一次**（第二下根本没进写库那一段）。
+  const amountWrites = writesTo(harness.gateway, 'purchaseOrderBatch')
+    .filter((write) => '实际金额' in write.values);
+  assert.equal(amountWrites.length, 1, '写「实际金额」的 update 只有一次');
+  assert.deepEqual(amountWrites[0].values, { 验收原话: '都到了\n38 码少一双', 实际数量: 3, 实际金额: 12800 });
+  // ③ 库存也没被加两遍。
+  assert.equal(harness.inventory.calls.length, 2, '两条明细各加一次，重复点击不重复入库');
+});
+
+test('金额⑦：源码级断言 —— 「实际金额」的数字校验只有一处，且写库只有一个落点', () => {
+  const serviceSource = fs.readFileSync(
+    path.join(__dirname, '../src/services/purchaseArrivalConversationService.js'), 'utf8',
+  );
+  assert.equal((serviceSource.match(/const parseActualAmount/g) || []).length, 1,
+    '金额解析只有一份实现（不许各地各写一套）');
+  assert.match(serviceSource, /parseActualAmount\(fields\[amountFieldName\]\)/,
+    '提交入口必须走这一份实现');
+  // ⚠️ 提交那一步**不许**写业务表：`gateway.update/create` 在 handleCardFormSubmit 里一次都不许出现。
+  const submitBody = serviceSource.slice(
+    serviceSource.indexOf('async handleCardFormSubmit('),
+    serviceSource.indexOf('async handleFormSubmitLocked('),
+  );
+  assert.equal(/this\.gateway\.(update|create)\(/.test(submitBody), false,
+    '提交这一步只把金额记在本地任务上，一张业务表都不写');
+  // 写库只有一个落点：`PurchaseOrderBatchService.writeAcceptance`。
+  const batchSource = fs.readFileSync(
+    path.join(__dirname, '../src/services/purchaseOrderBatchService.js'), 'utf8',
+  );
+  const amountFieldWrites = batchSource.match(/actualAmount/g) || [];
+  assert.equal(amountFieldWrites.length > 0, true, '「实际金额」的写点在 PurchaseOrderBatchService');
+  const webhookSource = fs.readFileSync(
+    path.join(__dirname, '../src/services/purchaseWebhookService.js'), 'utf8',
+  );
+  assert.equal((webhookSource.match(/gateway\.(update|create)\(\s*'purchaseOrderBatch'/g) || []).length, 0,
+    '批次行的写入口子只有 PurchaseOrderBatchService（webhook 不许绕过去直接写）');
+  assert.match(webhookSource, /actualAmount: draft\?\.actual_amount/, '草稿上的金额原样传给批次服务');
+});

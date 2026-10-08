@@ -193,6 +193,10 @@ const seedConfirmedTask = async (store, overrides = {}) => {
     batch_kind: ARRIVAL_BATCH_KINDS.PURCHASE_REQUEST,
     status: 'awaiting_confirmation',
     acceptance_text: '都到了',
+    // ⭐⭐ 2026-10-08：「实际金额」是**必填**（业务负责人：「必须让用户填」）——
+    //   点「是」时这一批还没有金额会被 `confirmLocked` 拒绝（不写空的金额、一个字都不写）。
+    //   生产上这个值由卡片表单提交进来；这里给"要走到入库"的用例补上前置条件。
+    actual_amount: 12800,
     request_ids: ['req_38'],
     request_rows: [{ record_id: 'req_38', item_no: '8088', color: '黑', size: 38, quantity: 2 }],
     plan: [{ product_record_id: 'prod_1', item_no: '8088', color: '黑', size: 38, quantity: 2, actual: 2 }],
