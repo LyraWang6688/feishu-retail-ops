@@ -3567,6 +3567,10 @@ class PurchaseWebhookService {
     // ⭐ 2026-10-07 晚：**先把「验收原话」落到「报货批次」那一行**，再逐条加库存。
     //    顺序与改动前一致（原来是在「到货验收」建行），只是落点换成了批次行；
     //    失败就**当场停下来**（一个字都不写库存）—— 到货信息没有落点，等于她这次确认没被记下来。
+    // ⭐⭐ 2026-10-08：「实际数量」「实际金额」**搭同一次 update 一起写**（业务负责人批准的口径），
+    //    两者都在草稿上、由到货核对那一步算好/校验好（本方法只"照草稿写，不重算"）：
+    //      · `draft.actual_quantity` = 代码算出的实际到货数合计（与库存口径一致）；
+    //      · `draft.actual_amount`   = 她在卡片表单里填的整批金额（提交时已校验必填/数字/非负）。
     await this.writeArrivalAcceptance({ taskId, batchNo, batchRecordId, draft, correlation });
     // ⭐ 2026-10-07 深夜：这里原本是"查「采购行为」→ `listAll('purchaseInbound')` 回查已写过的
     //    入库行 → 逐条 `create('purchaseInbound')`"，**整段随那张表一起删除**（她整表删了它）。
@@ -3692,6 +3696,13 @@ class PurchaseWebhookService {
   /**
    * ⭐ 「验收原话」→「报货批次」那一行（2026-10-07 晚的到货落点）。
    *
+   * ⭐⭐ 2026-10-08：**同一次 update** 里还写「实际数量」「实际金额」两列（业务负责人批准）——
+   *   值来自草稿（`draft.actual_quantity` / `draft.actual_amount`），本方法**不重算**：
+   *   算/校验是到货核对那一步的职责（`PurchaseArrivalConversationService.confirmLocked`
+   *   与 `handleCardFormSubmit`）。
+   *   ⚠️ 拿不到（`undefined`）时**那一列不写**（不写空值）—— 由 `writeAcceptance` 判，
+   *      这样既有的"孤儿草稿"路径行为逐字不变。
+   *
    * 三条边界（都在测试里钉住）：
    *   · **没有批次身份**（`batchNo` 与 `batchRecordId` 都空）→ 只记 warn、**不阻塞**：
    *     这是"孤儿调用"（历史草稿 / 手工种的测试任务）的形状，入库能力本身不该被它挡住。
@@ -3712,6 +3723,9 @@ class PurchaseWebhookService {
       batchNo,
       batchRecordId,
       acceptanceText: String(draft?.acceptance_text == null ? '' : draft.acceptance_text),
+      // ⭐⭐ 2026-10-08：草稿上那两个值原样传下去（`undefined` = 这一列不写）。
+      actualQuantity: draft?.actual_quantity,
+      actualAmount: draft?.actual_amount,
       correlation,
     });
     if (!result.updated) {

@@ -225,6 +225,17 @@ class PurchaseOrderBatchService {
   /**
    * ⭐ 把「验收原话」写到这一批的批次行上（**到货确认的第一步**，在入库之前）。
    *
+   * ⭐⭐ 2026-10-08（业务负责人亲自批准）：「**实际数量**」「**实际金额**」两个值
+   *   在**同一次 update** 里一起写（她的口径：「录入数量：我们报单时候的数量；
+   *   实际数量：我们到货的数量；实际金额：这一次供应商的金额」）：
+   *     · `actualQuantity` = **代码算出来的**实际到货数合计（`actual = 0` 的行加 0
+   *       ⇒ 与库存口径一致）；
+   *     · `actualAmount`   = 她在卡片表单里填的**整批金额**（提交时已校验：非空、数字、非负）。
+   *   ⚠️ 本方法**只照传进来的值写，不重算**（算/校验是到货核对那一步的职责）。
+   *   ⚠️ 值为 `undefined` / `null` / 非数字时**那一列不写**（绝不写空值进去：
+   *      往数字列写空串是"往表里塞东西"，而且会让"谁写的"变得看不出来）。
+   *   ⚠️ 幂等：写的是**同一个值**（整批一个数），重复执行结果一致（不新建行、不累加）。
+   *
    * 为什么要单独一步、而且在入库之前：
    *   · 她的口径是"到货信息的落点搬到报货批次"——原话是这次核对**唯一的人工输入**，
    *     先落上，后续入库失败重试时也不用她再说一遍；
@@ -238,7 +249,7 @@ class PurchaseOrderBatchService {
    *   因为"到货信息没有落点"等于她这次确认没被记下来）。
    */
   async writeAcceptance({
-    batchNo = '', batchRecordId = '', acceptanceText = '', correlation = {},
+    batchNo = '', batchRecordId = '', acceptanceText = '', actualQuantity, actualAmount, correlation = {},
   }) {
     const text = String(acceptanceText == null ? '' : acceptanceText);
     // 没有批次身份（两个都空）= "孤儿调用"（历史草稿 / 手工种的测试任务）：
@@ -251,18 +262,39 @@ class PurchaseOrderBatchService {
       logWarn('purchase.batch.acceptance.no_record', { batch_no: batchNo, batch_record_id: batchRecordId });
       return { updated: false, reason: 'no_batch_record', batch_no: batchNo };
     }
-    await this.gateway.update('purchaseOrderBatch', target.record_id, { acceptanceText: text }, { correlation });
+    // ⚠️ 「实际数量」「实际金额」**只在拿得到有效数字时才进 values**（见方法头的 ⚠️）。
+    const numeric = (value) => (value === undefined || value === null || value === ''
+      ? null
+      : (Number.isFinite(Number(value)) ? Number(value) : null));
+    const quantityValue = numeric(actualQuantity);
+    const amountValue = numeric(actualAmount);
+    const values = { acceptanceText: text };
+    if (quantityValue !== null) values.actualQuantity = quantityValue;
+    if (amountValue !== null) values.actualAmount = amountValue;
+    await this.gateway.update('purchaseOrderBatch', target.record_id, values, { correlation });
     logInfo('purchase.batch.acceptance_text.written', {
       batch_no: batchNo,
       batch_record_id: target.record_id,
       matched_by: target.matched_by,
       acceptance_text_length: text.length,
+      // ⭐ 2026-10-08：这两个值也写在同一行（`null` = 这一列这次没写）。
+      actual_quantity: quantityValue,
+      actual_amount: amountValue,
+      wrote_actual_quantity: quantityValue !== null,
+      wrote_actual_amount: amountValue !== null,
       // 明写"没写到货日 / 验收人"：这是口径，也是将来别人改这段代码时的绊线
       //（两者在真表上是飞书自动字段：到货日=更新时间、验收人=创建人）。
       wrote_arrival_date: false,
       wrote_inspector: false,
     });
-    return { updated: true, record_id: target.record_id, matched_by: target.matched_by, batch_no: batchNo };
+    return {
+      updated: true,
+      record_id: target.record_id,
+      matched_by: target.matched_by,
+      batch_no: batchNo,
+      actual_quantity: quantityValue,
+      actual_amount: amountValue,
+    };
   }
 
   /**

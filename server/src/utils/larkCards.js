@@ -756,6 +756,39 @@ const arrivalReconcileLines = (rows = [], differences = [], copy = {}) => {
 //    服务端仍然自己兜一层空值（见 `PurchaseArrivalConversationService.handleCardFormSubmit`）。
 // ⚠️ `fallback` 是**老客户端（飞书 < V6.8）的降级文案**：输入框用不了 ⇒ 那句话要指回
 //    「在话题里说一句」那条老路（老路一直在，见 `handleTopicMessage`）。
+//
+// ⭐⭐ 2026-10-08（业务负责人亲自批准）：「实际金额」= 表单里**第二个**输入项
+//   （她的原话：「让用户填写**这一次供应商的金额**，然后我们填到实际金额里面」；
+//    「**金额这个是必填的，必须让用户填，否则点不了按钮**」）。
+// 🔴 为什么 `input_type` 用 `text`（curl 实查官方文档，不是猜的）：
+//   官方「输入框」组件的 `input_type` **只有 `text` / `multiline_text` / `password`** 三个取值，
+//   **没有数字类型** —— 原文见 `config/arrivalConversation.js` 的 `amountInputType` 注释
+//   （出处：https://open.feishu.cn/document/feishu-cards/card-components/interactive-components/input.md?lang=zh-CN）。
+//   ⇒ 按「拿不准就用 text 并做服务端数字校验」办：**数字校验在服务端**
+//     （`PurchaseArrivalConversationService.handleCardFormSubmit` 的金额闸门）。
+// ⚠️ 两个输入框的 `name` 必须**互不相同**且在卡片全局唯一（否则飞书 200530、数据发不出去）。
+const arrivalReconcileAmountInput = (settings = {}) => {
+  const name = text(settings.amountFieldName) || 'actual_amount';
+  return {
+    tag: 'input',
+    name,
+    // 官方：`text` = 普通文本（没有数字类型；数字校验在服务端）。
+    input_type: text(settings.amountInputType) || 'text',
+    // 官方：`max_length` 1~1000，对**所有** input_type 有效（`rows` / `auto_resize` /
+    // `max_rows` 只对 `multiline_text` 有效 ⇒ 金额这一项**一个都不带**）。
+    max_length: Number(settings.amountMaxLength) > 0 ? Number(settings.amountMaxLength) : 32,
+    // 必填**默认开**：只有配置显式写 `false` 才关（"没配"不等于"不要求"）。
+    required: settings.amountRequired !== false,
+    label: { tag: 'plain_text', content: text(settings.amountLabel) || '实际金额' },
+    label_position: text(settings.labelPosition) || 'top',
+    placeholder: { tag: 'plain_text', content: text(settings.amountPlaceholder) || '请输入这一次供应商的金额' },
+    fallback: {
+      tag: 'fallback_text',
+      text: { tag: 'plain_text', content: text(settings.amountFallbackText) || '你的飞书版本太低，直接在话题里回一句实际到货情况和这一次的金额就行。' },
+    },
+  };
+};
+
 const arrivalReconcileForm = (form = {}, taskId = '') => {
   const settings = form || {};
   const fieldName = text(settings.fieldName) || 'actual_arrival';
@@ -784,6 +817,9 @@ const arrivalReconcileForm = (form = {}, taskId = '') => {
           text: { tag: 'plain_text', content: text(settings.fallbackText) || '你的飞书版本太低，直接在话题里回一句实际到货情况就行。' },
         },
       },
+      // ⭐⭐ 2026-10-08：「实际金额」（必填）—— 与「实际到货情况」**同一个表单容器**里
+      //    （官方硬约束：输入框必须与按钮一起内嵌进表单容器；按钮只有一个，两个输入框共用它）。
+      arrivalReconcileAmountInput(settings),
       {
         tag: 'button',
         // 官方：绑 `form_submit` = 点击后触发表单容器的提交事件（一次性把表单项回调给服务端）。
