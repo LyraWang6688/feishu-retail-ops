@@ -79,7 +79,10 @@ class PaymentService {
     }, { correlation: options.correlation });
   }
 
-  async settlePlatformReceipt(recordId, receivedAt = Date.now()) {
+  // ⚠️ 关联键走**尾部可选参数**（`options.correlation`），不塞进入参
+  //    —— 与其他收款写入口同一形状（`record` / `collectPendingReceipt`）。
+  //    语义一个字节都没变：状态 → 已收款、补 `receivedAt`、补方向。
+  async settlePlatformReceipt(recordId, receivedAt = Date.now(), options = {}) {
     if (!recordId) throw new Error('缺少收款记录 record_id');
     const timestamp = Number(receivedAt);
     if (!Number.isFinite(timestamp) || timestamp <= 0) throw new Error('实际收款时间无效');
@@ -92,7 +95,7 @@ class PaymentService {
     // 平台结算到账同样是"钱收到了"，方向这时才补上（待平台结算期间一直留空）。
     return this.gateway.update('paymentRecord', recordId, {
       status: '已收款', receivedAt: timestamp, tradeDirection: MONEY_DIRECTION_INCOME,
-    });
+    }, { correlation: options.correlation });
   }
 
   // First confirmation may contain multiple payment methods. Match existing

@@ -44,11 +44,38 @@ const plainText = (content) => String(content ?? '')
  *   · 深链缺失 ⇒ **只出第 1 栏**（不留空壳、也不给一个点不动的按钮），仍计入脚注；
  *   · 文字为空 ⇒ 只出按钮栏；两样都空 ⇒ 整行不要（返回 null）。
  *   · 列宽 = `card.columnWeights`（默认 4 : 1）。
+ *
+ * ⭐ 2026-10-08（第二步）：第 2 栏支持**两种按钮**（同一处渲染，不另开一条路）：
+ *   · `row.url`                 → `open_url`（跳深链，既有行为，一个字没改）；
+ *   · `row.action`（回调按钮）  → `callback`，`value` 里带 `card.actionValueOf(row)`
+ *     ——【团购券待结算】的「确认到账」用它；**只带结算日**，名单由服务端重新查。
+ *   ⚠️ `children`（块内子元素）也支持：那是「确认成交」卡片的写法，本卡片暂时不用，
+ *      但两栏里的列元素与块元素**共用同一份渲染**，免得将来两处各写一遍。
  */
+const rowButton = (row = {}, card = {}) => {
+  const buttonText = String(row.buttonText ?? card.buttonText ?? '').trim() || '查看话题';
+  const base = {
+    tag: 'button',
+    type: String(row.buttonType || (row.action ? (card.voucherButtonType || 'default') : 'default')),
+    width: 'fill',
+    text: { tag: 'plain_text', content: buttonText },
+  };
+  if (row.action) {
+    return {
+      ...base,
+      // 回调按钮：`value` 的形状由**调用方**决定（渲染层只搬运，不认识业务字段）。
+      behaviors: [{ type: 'callback', value: row.action }],
+    };
+  }
+  const url = String(row.url ?? '').trim();
+  if (!url) return null;
+  return { ...base, behaviors: [{ type: 'open_url', default_url: url }] };
+};
+
 const rowColumnSet = (row = {}, card = {}) => {
   const text = String(row.text ?? '').trim();
-  const url = String(row.url ?? '').trim();
-  const buttonText = String(card.buttonText ?? '').trim() || '查看话题';
+  const children = (row.children || []).filter(Boolean);
+  const button = rowButton(row, card);
   const weights = Array.isArray(card.columnWeights) ? card.columnWeights : [];
   const textWeight = Number(weights[0]) > 0 ? Number(weights[0]) : 4;
   const buttonWeight = Number(weights[1]) > 0 ? Number(weights[1]) : 1;
@@ -58,22 +85,15 @@ const rowColumnSet = (row = {}, card = {}) => {
       tag: 'column',
       width: 'weighted',
       weight: textWeight,
-      elements: [{ tag: 'div', text: { tag: 'lark_md', content: text } }],
+      elements: [{ tag: 'div', text: { tag: 'lark_md', content: text } }, ...children],
     });
   }
-  if (url) {
+  if (button) {
     columns.push({
       tag: 'column',
       width: 'weighted',
       weight: buttonWeight,
-      elements: [{
-        tag: 'button',
-        type: 'default',
-        width: 'fill',
-        text: { tag: 'plain_text', content: buttonText },
-        // 官方支持的跳转交互（与 `larkCards` 里那几张卡的 open_url 写法一致）。
-        behaviors: [{ type: 'open_url', default_url: url }],
-      }],
+      elements: [button],
     });
   }
   if (!columns.length) return null;
@@ -142,12 +162,11 @@ const visibleCardText = (card) => {
     if (element.tag === 'note') {
       return String((element.elements || []).map((piece) => piece.content || '').join('\n'));
     }
-    // 两栏行：`文字说明 | 查看话题`（按钮只取它的文案）。
+    // 两栏行：`文字说明 | 查看话题`（按钮只取它的文案；回调按钮的文案也在 `text.content`）。
     if (element.tag === 'column_set') {
       return (element.columns || [])
-        .map((column) => (column.elements || []).map((child) => plainText(
-          child.tag === 'button' ? child.text?.content : child.text?.content,
-        )).filter(Boolean).join(' '))
+        .map((column) => (column.elements || []).map((child) => plainText(child.text?.content))
+          .filter(Boolean).join(' '))
         .filter(Boolean)
         .join(' | ');
     }

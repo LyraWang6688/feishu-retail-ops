@@ -12,10 +12,19 @@ const { PurchaseBatchLocator } = require('./purchaseBatchLocator');
 // ⭐ 2026-10-08（第一步）：三块候选的**取数**单独一条（不给 9 点推送再复用
 //   `listPendingDeliveries` —— 那个方法被「二次交付成交提醒」共用，改它两条都会变）。
 const { PendingPushCandidateService } = require('./pendingPushCandidateService');
+// ⭐ 2026-10-08（第二步）：【团购券待结算】块 + 「确认到账」按钮。
+//   取数（按**结算日**分组）与写库（复用 `PaymentService.settlePlatformReceipt`）都在那个 service；
+//   本类只负责"这一块长什么样"与"按钮点了之后回哪句话"（一个 service 干一件事）。
+const { VoucherSettlementService } = require('./voucherSettlementService');
+// 卡片点击之后的卡面更新（**唯一**的实现：优先用回调带回的 `open_message_id`）。
+const { updateInteractiveCard } = require('../infrastructure/interactiveCardFeedback');
 const { shanghaiDayKey } = require('./saleLookupService');
 // ⭐ 2026-10-08 晚：采购那行的「报货日」怎么显示（上海自然日）—— 与取数那边**同一处实现**。
 const { formatReportedAtText } = require('./reportedAt');
 const { resolvePendingDealPushConfig } = require('../config/pendingDealPush');
+// ⭐ 2026-10-08（第二步）：【团购券待结算】的**全部口径**（天数 / 状态名 / 文案 / 按钮动作名）
+//   —— 与 `config/pendingDealPush` 同一个"配置先行"档；本文件里**一行中文都不写**。
+const { resolveVoucherSettlementConfig } = require('../config/voucherSettlement');
 // ⭐ 2026-10-08：卡片骨架（纯函数；只排布）+ 同一套"段与段怎么拼"的规矩（两处只留一处）。
 const { pendingDealPushCard, joinLineSegments } = require('../utils/pendingDealPushCard');
 // ⭐ 2026-10-08：飞书错误里的真实 code / msg / log_id / method_id（唯一取用口）。
@@ -169,6 +178,12 @@ class PendingDealPushService {
     this._gateway = options.gateway || null;
     this._purchasePending = options.purchasePending || null;
     this._candidates = options.candidates || null;
+    // ⭐ 2026-10-08（第二步）：【团购券待结算】那块（取数 + 「确认到账」落库）。
+    //   注入优先（单测给替身时**一次远端调用都不会发**）；没注入才按网关惰性自建。
+    this._settlements = options.settlements || null;
+    this._voucherSettings = options.voucherSettings || null;
+    // 「现在」可注入：单测的日期断言（今天 / 昨天 / 逾期 N 天）不能跟着真实时钟走。
+    this.now = options.now || (() => new Date());
     this._client = options.client || null;
     // 采购区的两个可选注入（惰性自建时要转交给 `PurchasePendingBatchService`）。
     this._batchLocator = options.batchLocator || null;
@@ -218,6 +233,31 @@ class PendingDealPushService {
   }
 
   /**
+   * ⭐【团购券待结算】那块（2026-10-08 第二步）：取数按**结算日**分组，写库经 `PaymentService`。
+   * ⚠️ 与 `purchasePending` 同一条形状：`app.js` 只传 `settings` 进来，所以这里按本类已有的
+   *    网关惰性自建（复用同一个飞书 client / 应用连接）。要注入时传 `options.settlements`。
+   * ⚠️ 它的口径（天数 5 / `待平台结算` / 文案 / 按钮动作名）**全在 `config/voucherSettlement`**。
+   */
+  get settlements() {
+    if (!this._settlements) {
+      this._settlements = new VoucherSettlementService({
+        gateway: this.gateway,
+        settings: this.voucherSettings,
+        now: this.now,
+      });
+    }
+    return this._settlements;
+  }
+
+  /** 券那一块的配置（**只解析一次**；注入的 `settings.voucher` 优先）。 */
+  get voucherSettings() {
+    if (!this._voucherSettings) {
+      this._voucherSettings = this._settings?.voucher || resolveVoucherSettlementConfig();
+    }
+    return this._voucherSettings;
+  }
+
+  /**
    * 一次**读**或一次**发**的瞬时错误小退避（业务负责人 P0 第 3 条）。
    * 瞬时错误 → 1s / 2s 各再来一次；**确定性错误一次都不重试**（只留一条清晰日志）。
    * ⚠️ `operation` 只进日志（例 `pending_deal_push.candidates`）。
@@ -238,9 +278,19 @@ class PendingDealPushService {
     return this._client;
   }
 
+  /**
+   * ⚠️ 这是**给注入进来的网关用的**：`LarkMvpService` 接线时把**它自己那个网关**传进来
+   *    （`{ gateway: this.gateway }`，复用同一个应用连接 / 一份字段缓存），于是本类
+   *    不该再按环境变量自建一个网关。
+   *    返回 `undefined` 时 `gateway` 那条路照旧自建（生产 `app.js` 只传 `settings`）。
+   */
+  get injectedClient() {
+    return this._client || this._gateway?.client || undefined;
+  }
+
   /** 读表网关（**全仓共享一个「网关」概念**；这里只按 client 建一次）。 */
   get gateway() {
-    if (!this._gateway) this._gateway = new V1BitableGateway({ client: this.client });
+    if (!this._gateway) this._gateway = new V1BitableGateway({ client: this.injectedClient });
     return this._gateway;
   }
 
@@ -298,14 +348,129 @@ class PendingDealPushService {
   /**
    * 三块候选（**自己那条取数**，见 `PendingPushCandidateService`）：
    *   · `sections` —— 【预定】/【现货待收】两块按**配置顺序**排好、空块已经不在里面；
-   *   · `rows`     —— 上面那些行的**扁平视图**（深链、计数、落盘、脚注都按它算）。
+   *   · `rows`     —— 上面那些行的**扁平视图**（深链、计数、落盘、脚注都按它算）；
+   *   · `settlements` —— ⭐【团购券待结算】（2026-10-08 第二步）**一行 = 一个结算日**，
+   *     由 `VoucherSettlementService` 取数（它**不在** `PendingPushCandidateService` 里：
+   *     券这块按**结算日**聚合，与销售那两块"按销售单号聚合"不是同一件事）。
    * ⚠️ 这是**唯一**的候选入口：渲染层不认识"销售单聚合"，只认识"一行"。
    */
   async listPendingOrders({ now } = {}) {
     const { sales = [], cash = [], purchase = [] } = await this.candidates.listCandidates({ now });
     const sections = this.buildSections([...sales, ...cash]);
     const rows = sections.flatMap((section) => section.rows);
-    return { sections, rows, purchase };
+    // ⭐ 2026-10-08（第二步）：【团购券待结算】的候选（**一行 = 一个结算日**）。
+    //   ⚠️ 它**不在** `PendingPushCandidateService` 里（那个 service 管的是销售两块 + 采购，
+    //     一个字都没改）：券这块的口径是"按**结算日**聚合"，与"按销售单号聚合"不是一件事。
+    //   ⚠️ 整段包进**瞬时小退避**（它要读收款明细 + 券表两张表，与其他取数同一档）。
+    const settlement = await this.transientRetry(
+      () => this.listSettlements({ now }), 'pending_deal_push.voucher_settlements',
+    );
+    return { sections, rows, purchase, ...settlement };
+  }
+
+  /**
+   * 券那块候选的**安全包装**：只读失败**不许拖垮销售那半条**（销售是既有的、每天都在用的）。
+   * 读挂 ⇒ 当成"今天没有券候选" + 一条 warn（与采购那半同一档处理）。
+   * ⚠️ `config/voucherSettlement.enabled = false` 时**一次远端调用都不发**（显式关掉这块）。
+   */
+  async listSettlements({ now } = {}) {
+    if (!this.voucherSettings.enabled) return { settlements: [], settlementPendingCount: 0 };
+    try {
+      const { rows = [], pendingRowCount = 0 } = await this.settlements.listSettlements({ now });
+      return { settlements: rows, settlementPendingCount: pendingRowCount };
+    } catch (error) {
+      logWarn('sales.pending_deal_push.voucher_settlements_failed', {
+        error: error.message,
+        hint: '【团购券待结算】取数失败 ⇒ 这一次推送里**没有这一块**（销售 / 采购那两块照发）；'
+          + '下一班 tick 会重试整轮',
+      });
+      return { settlements: [], settlementPendingCount: 0 };
+    }
+  }
+
+  /**
+   * ⭐「确认到账」：「【团购券待结算】那一行的右栏按钮」被点之后的**唯一接线点**。
+   *
+   * 这里只做三件事（其余都在 `VoucherSettlementService` / `PaymentService`）：
+   *   ① 从句柄 value 里取**结算日**（**只有它**，名单由服务端按结算日重新查 —— 不信任旧卡片）；
+   *   ② 把点击转给 `settlements.confirmSettlementDay`（整批 `待平台结算 → 已收款` + 写收款时间，
+   *      **幂等**：一条待结算都没有 ⇒ 回"已经确认过了"，**不重复写**）；
+   *   ③ 回一句人话（成功 / 部分失败 / 全失败都**不静默**），并把**被点的那张卡**补一次卡面。
+   *
+   * ⚠️ 卡面补丁**永不改变业务结果**：`updateInteractiveCard` 自己把所有失败吞成 warn 并返回
+   *    `false`（飞书那边失败也不会把已经写好的账回滚）。
+   */
+  async confirmVoucherSettlement(value = {}, event = {}, context = {}, operatorOpenId = '') {
+    const settings = this.voucherSettings;
+    const dayField = settings.settleDayField || 'settle_day';
+    const settleDay = String(value?.[dayField] ?? '').trim();
+    if (!settleDay) {
+      // 老卡片 / 手拼的 value：**明确回绝**，不去猜是哪一天（猜错就是写错账）。
+      return { toast: { type: 'warning', content: settings.messages?.missingDay || '' } };
+    }
+    const result = await this.settlements.confirmSettlementDay(settleDay, {
+      // ⚠️ 关联键：这条链路上没有本地任务，能给的业务键就是结算日。
+      correlation: { settle_day: settleDay },
+    });
+    const toast = this.settlements.confirmationToast(result);
+    // 卡面：把刚刚确认掉的那一行**去掉**（她点完要看得见变化）。失败只留 warn，不影响上面的结论。
+    const cardPatched = await this.patchSettlementCard({ event, context }).catch(() => false);
+    logInfo('voucher_settlement.confirm.handled', {
+      settle_day: settleDay,
+      confirmed_count: result.confirmedCount,
+      total_amount: result.totalAmount,
+      already_settled: result.alreadySettled,
+      failed_count: result.failures?.length || 0,
+      card_patched: cardPatched,
+      operator_open_id: operatorOpenId,
+      interaction_id: context?.interactionId,
+    });
+    return { toast, settleDay, ...result, cardPatched };
+  }
+
+  /**
+   * 点完「确认到账」之后**把卡面改掉**：重新渲染一次卡片，**只留还没确认的结算日**。
+   *
+   * ⚠️ 刻意**只重算券那一块**，不再回头查销售 / 采购（那是下一次 9 点推送的事，
+   *    而且这里多读一圈只会让点击变慢）：卡面变化 = "她刚确认掉的那一行消失了"。
+   * ⚠️ 原卡片上**没有**销售 / 采购块时（不可能：能点这个按钮就说明有券块），这一版会只剩券块；
+   *    真要保真就调 `_sendDailyPush` 重推一条 —— 那会**重发消息**，不是这里的语义。
+   */
+  async patchSettlementCard({ event, context } = {}) {
+    const messageId = event?.context?.open_message_id || event?.open_message_id
+      || context?.openMessageId || '';
+    if (!messageId) return false;
+    const { settlements = [] } = await this.listSettlements({ now: this.now() });
+    if (!settlements.length) {
+      // 全部确认完了：**整张卡**换成一句"都到账了"（不留一个点不动的空壳）。
+      return updateInteractiveCard({
+        client: this.client,
+        task: {},
+        event,
+        stage: 'voucher_settlement_all_done',
+        interactionId: context?.interactionId,
+        eventPrefix: 'voucher_settlement.card.update',
+        card: pendingDealPushCard({
+          header: '',
+          card: this.settings.card,
+          parts: [{ text: this.voucherSettings.cardDoneText || '' }],
+        }),
+      });
+    }
+    const card = pendingDealPushCard({
+      header: '',
+      card: this.settings.card,
+      parts: [this.buildSettlementPart(settlements)],
+    });
+    return updateInteractiveCard({
+      client: this.client,
+      task: {},
+      event,
+      stage: 'voucher_settlement_remaining',
+      interactionId: context?.interactionId,
+      eventPrefix: 'voucher_settlement.card.update',
+      card,
+    });
   }
 
   /**
@@ -451,6 +616,75 @@ class PendingDealPushService {
   itemsTextOf(row = {}) {
     const facts = Array.isArray(row.facts) ? row.facts : (row.facts ? [row.facts] : []);
     return this.buildItemText(facts.filter(Boolean));
+  }
+
+  // ── ⭐ 2026-10-08（第二步）：【团购券待结算】那一行（**一行 = 一个结算日**）──────────
+  //   左栏文字 = `{结算日} 应结算 ¥{总额}` +（结算日 < 今天时）`（逾期 N 天）`；
+  //   右栏     = 「确认到账」按钮（**回调**，value 只带结算日）。
+  //   ⚠️ 所有文案 / 天数 / 状态名都在 `config/voucherSettlement`：本文件里一行中文都不写。
+
+  /** 左栏那句话（模板在 `config/voucherSettlement.rowTemplate` + `overdueTemplate`）。 */
+  voucherRowText(row = {}) {
+    const settings = this.voucherSettings;
+    const amount = row.amountKnown === false
+      ? (settings.missingAmountText || '')
+      : `${settings.currencySymbol || ''}${Number(row.totalAmount || 0).toFixed(2)}`;
+    const main = fillLinePart(settings.rowTemplate, { settleDay: row.settleDay || '', amount });
+    // 「逾期 N 天」只给 **结算日 < 今天** 的那几行（今天那行不加，她的口径就这两档）。
+    const overdue = Number(row.overdueDays) > 0
+      ? fillLinePart(settings.overdueTemplate, { days: row.overdueDays })
+      : '';
+    return [main, overdue].filter(Boolean).join('');
+  }
+
+  /** 右栏按钮的**回调 value**：只带结算日（**名单由服务端按结算日重新查**）。 */
+  voucherActionOf(row = {}) {
+    const settings = this.voucherSettings;
+    return {
+      action: settings.action,
+      [settings.settleDayField || 'settle_day']: row.settleDay || '',
+    };
+  }
+
+  /** 券那一行（卡片·两栏版）：第 1 栏文字、第 2 栏**回调**按钮「确认到账」。 */
+  buildCardSettlementRow(row = {}) {
+    const settings = this.voucherSettings;
+    return {
+      text: this.voucherRowText(row),
+      action: this.voucherActionOf(row),
+      buttonText: settings.buttonText,
+      buttonType: this.settings.card?.voucherButtonType || 'default',
+    };
+  }
+
+  /**
+   * 券那一**块**（卡片用）：块标题（`{title}{count} 笔`，与销售区同一形状）+ 每个结算日一行。
+   * ⚠️ 空块整块不要（`pendingDealPushCard` 自己再兜一层）。
+   */
+  buildSettlementPart(settlements = []) {
+    const settings = this.voucherSettings;
+    return {
+      title: fillTemplate(settings.titleTemplate, { title: settings.title, count: settlements.length }),
+      rows: settlements.map((row) => this.buildCardSettlementRow(row)),
+    };
+  }
+
+  /**
+   * 券那一块（**纯文本降级版**）：块标题 + 每个结算日一行（左栏文字 · 右栏按钮文案）。
+   * ⚠️ 与卡片那条**同一套段**（`config/voucherSettlement.textParts`），只差"按钮点不动"。
+   */
+  buildSettlementText(settlements = []) {
+    const settings = this.voucherSettings;
+    if (!settlements.length) return '';
+    const title = fillTemplate(settings.titleTemplate, { title: settings.title, count: settlements.length });
+    const lines = settlements.map((row) => joinLineSegments(
+      (settings.textParts || ['{text}', '{button}']).map((part) => fillLinePart(part, {
+        text: this.voucherRowText(row),
+        button: settings.buttonText || '',
+      })),
+      settings.textSeparator || ' ',
+    ));
+    return [title, ...lines].filter((part) => String(part || '').trim() !== '').join('\n');
   }
 
   /**
@@ -630,14 +864,16 @@ class PendingDealPushService {
    */
   buildText({
     sections = [], rows = [], missingLinkCount = 0, dayKey = '',
-    purchaseBatches = [], purchaseMissingLinkCount = 0,
+    purchaseBatches = [], purchaseMissingLinkCount = 0, settlements = [],
   } = {}) {
-    const { areas = ['sales', 'purchase'] } = this.settings;
+    const { areas = ['sales', 'voucher', 'purchase'] } = this.settings;
     const renderers = {
       // 空区返回空串 ⇒ 连标题都不出现。
       sales: () => (rows.length
         ? this.buildSalesArea({ sections, rows, missingLinkCount, dayKey })
         : ''),
+      // ⭐【团购券待结算】（2026-10-08 第二步）：排在销售之后、采购之前（`areas` 给的顺序）。
+      voucher: () => this.buildSettlementText(settlements),
       purchase: () => this.buildPurchaseArea({
         batches: purchaseBatches, missingLinkCount: purchaseMissingLinkCount,
       }),
@@ -659,10 +895,10 @@ class PendingDealPushService {
    */
   buildCard({
     sections, rows = [], missingLinkCount = 0, dayKey = '',
-    purchaseBatches = [], purchaseMissingLinkCount = 0,
+    purchaseBatches = [], purchaseMissingLinkCount = 0, settlements = [],
   } = {}) {
     const {
-      areas = ['sales', 'purchase'], card = {},
+      areas = ['sales', 'voucher', 'purchase'], card = {},
       blockCountTemplate = '', purchaseAreaTitle = '', salesAreaTitle = '',
       footerTemplate = '', purchaseFooterTemplate = '',
     } = this.settings;
@@ -678,6 +914,10 @@ class PendingDealPushService {
             rows: section.rows.map((row) => this.buildCardRow(row)),
           });
         }
+      }
+      if (key === 'voucher' && settlements.length) {
+        // ⭐【团购券待结算】：一行 = 一个结算日，右栏是「确认到账」回调按钮。
+        parts.push(this.buildSettlementPart(settlements));
       }
       if (key === 'purchase' && purchaseBatches.length) {
         parts.push({
@@ -950,15 +1190,19 @@ class PendingDealPushService {
       //   `SecondDeliveryService.listPendingDeliveries` 一个字都没改（它还供着成交提醒）。
       // ⭐ 2026-10-08（P0·瞬时错误自动重试）：**整段取数**包进小退避 —— 里面是一次读多张表
       //   （候选 service 自己已经对 1254607 重试 3 次；这里再兜住 5xx / 429 / 网络中断）。
-      const { sections, rows: candidateRows, purchase: purchaseCandidates = [] } =
+      const { sections, rows: candidateRows, purchase: purchaseCandidates = [],
+        settlements = [] } =
         await this.transientRetry(() => this.listPendingOrders({ now }), 'pending_deal_push.candidates');
-      // 两区都空 → 与改动前一样：**不发**（只留一条记录，当天不再试）。
-      if (!candidateRows.length && !purchaseCandidates.length) {
+      // ⭐⭐ 三个区都空 → **不发**（与改动前同一档，只是现在多算了券那一块）。
+      //    ⚠️ 判据里必须带上券那块：以前只有"销售 / 采购"，漏掉它会让
+      //       「今天只有一笔待结算」的那一天**整天不发**（那一块就永远没入口）。
+      if (!candidateRows.length && !purchaseCandidates.length && !settlements.length) {
         await this.store.update(dayTaskId, {
           status: 'completed', sent: false, attempts: attempt, pushed: [], reason: 'no_pending_order',
         });
         logInfo('sales.pending_deal_push.empty', {
-          day: dayKey, candidate_count: 0, purchase_candidate_count: 0, attempt,
+          day: dayKey, candidate_count: 0, purchase_candidate_count: 0,
+          settlement_count: 0, attempt,
         });
         return { day: dayKey, pushedOrderCount: 0, messageId: '', reason: 'no_pending_order' };
       }
@@ -1006,10 +1250,12 @@ class PendingDealPushService {
       //    `listPendingOrders` 那一份是**没有深链**的候选形状，不能拿来渲染。
       const linkedSections = this.buildSections(rows);
       const card = this.buildCard({
-        sections: linkedSections, rows, missingLinkCount, dayKey, purchaseBatches, purchaseMissingLinkCount,
+        sections: linkedSections, rows, missingLinkCount, dayKey, purchaseBatches,
+        purchaseMissingLinkCount, settlements,
       });
       const text = this.buildText({
-        sections: linkedSections, rows, missingLinkCount, dayKey, purchaseBatches, purchaseMissingLinkCount,
+        sections: linkedSections, rows, missingLinkCount, dayKey, purchaseBatches,
+        purchaseMissingLinkCount, settlements,
       });
       const delivery = await this.deliver({ chatId, dayKey, card, text });
       const messageId = delivery.messageId;
@@ -1040,6 +1286,11 @@ class PendingDealPushService {
         purchase_pushed: purchaseBatches.map((batch) => batch.batchNo),
         purchase_missing_link_count: purchaseMissingLinkCount,
         purchase_link_sources: purchaseBatches.map((batch) => batch.linkSource),
+        // ⭐ 2026-10-08（第二步）：券那块推了哪些**结算日**（追加键，不改既有键的含义）。
+        //   排查"她点的那行到底是今天推的还是昨天推的"时看这几个键。
+        settlement_days: settlements.map((row) => row.settleDay),
+        settlement_amounts: settlements.map((row) => row.totalAmount),
+        settlement_pending_count: settlements.reduce((sum, row) => sum + (row.count || 0), 0),
         pinned: pin.pinned,
         pin_reason: pin.reason,
       });
@@ -1050,6 +1301,9 @@ class PendingDealPushService {
         purchase_batch_count: purchaseBatches.length,
         purchase_missing_link_count: purchaseMissingLinkCount,
         purchase_batch_nos: purchaseBatches.map((batch) => batch.batchNo),
+        settlement_days: settlements.map((row) => row.settleDay),
+        settlement_amounts: settlements.map((row) => row.totalAmount),
+        settlement_record_count: settlements.reduce((sum, row) => sum + (row.count || 0), 0),
         message_id: messageId,
         message_format: delivery.format, degraded: delivery.degraded, attempt,
         pinned: pin.pinned, pin_reason: pin.reason,
@@ -1058,6 +1312,8 @@ class PendingDealPushService {
         day: dayKey, pushedOrderCount: rows.length, messageId, missingLinkCount, reason: '',
         purchaseBatchCount: purchaseBatches.length,
         purchaseMissingLinkCount,
+        settlements: settlements.map((row) => row.settleDay),
+        settlementCount: settlements.reduce((sum, row) => sum + (row.count || 0), 0),
         messageFormat: delivery.format, degraded: delivery.degraded, attemptCount: attempt,
         pinned: pin.pinned, pinReason: pin.reason,
       };

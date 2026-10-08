@@ -90,6 +90,11 @@ const { PROGRESS_KINDS } = require('../config/salesProgressIntake');
 const { PurchaseArrivalConversationService } = require('./purchaseArrivalConversationService');
 // 到货核对卡片上的两个动作名（与卡片渲染共用同一份常量，见 utils/larkCards）。
 const { ARRIVAL_CONVERSATION_ACTIONS } = require('../config/arrivalConversation');
+// ⭐ 2026-10-08：【团购券待结算】那一行右栏「确认到账」按钮的动作名。
+//   ⚠️ **不写死字符串**：卡片渲染（`config/voucherSettlement.action`）与这里的判据
+//      取的是**同一份配置**（配置先行）—— 改动作名只改 env / 那一份文件，两处不会走歪。
+const { resolveVoucherSettlementConfig } = require('../config/voucherSettlement');
+const { PendingDealPushService } = require('./pendingDealPushService');
 const { GroupPurchaseFlowService } = require('./groupPurchaseFlowService');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { skipNoGroupContext } = require('../utils/privateChatSend');
@@ -279,6 +284,15 @@ class LarkMvpService {
     // 开关是**显式布尔**，取值在 config/groupAdmission（默认 false = 放宽 = 新行为）。
     // ⚠️ 只影响 `thread_id` 为空的主群消息；话题里的消息与**私聊**一个字节都不变。
     this.mainChatRequireMention = options.mainChatRequireMention ?? resolveMainChatRequireMention();
+    // ⭐ 2026-10-08：【团购券待结算】卡片的「确认到账」按钮点了之后走哪儿。
+    //   ⚠️ **惰性自建**（不在构造时建）：它会去建网关 / 读配置，而本类的既有用例构造时
+    //      不注入网关（构造时建会要凭证 → 那些用例会红）。只有真点到那个按钮才建。
+    //   注入优先（`options.pendingDealPush`）：单测给替身时**一次远端调用都不会发**。
+    this._pendingDealPush = options.pendingDealPush || null;
+    // 那个按钮的**动作名**（配置先行）：渲染与服务端分派读的是同一份取值的来源。
+    // ⚠️ 这里只解析**一次**（解析要读环境变量；每次卡片回调都解析一遍没有意义）。
+    this.voucherSettlementSettings = options.voucherSettlementSettings
+      || resolveVoucherSettlementConfig();
     if (!this.botOpenId) {
       // 没配 = 群聊里判不出 @ 机器人（`isMentioned` 对空 open_id 恒为 false）。
       // ⚠️ 放宽口径下**主群仍然能靠正文处理"像销售 / 带批次号"的消息**——
@@ -1989,6 +2003,28 @@ class LarkMvpService {
     });
   }
 
+  /**
+   * ⭐ 2026-10-08：【团购券待结算】那张卡片上的「确认到账」按钮点完之后走哪儿。
+   *
+   * 这里**只做接线**：把点击（`value.settle_day` + 回调事件）转给
+   * `PendingDealPushService.confirmVoucherSettlement`，由它转给
+   * `VoucherSettlementService.confirmSettlementDay`（整批改状态 + 写收款时间，幂等）。
+   * 写账、幂等、卡面更新都不在本类 —— 那几件事各只有一处实现。
+   *
+   * ⚠️ **惰性自建**（不在构造时建）：构造时会去建飞书网关，而本类几百个既有用例
+   *    构造时不注入网关（构造时建会要凭证 → 那些用例会红）。
+   * ⚠️ 它**不认识草稿**：这条链路绑的是收款明细，与销售草稿状态机无关。
+   */
+  get pendingDealPush() {
+    if (!this._pendingDealPush) {
+      this._pendingDealPush = new PendingDealPushService({
+        gateway: this.gateway,
+        client: this.client,
+      });
+    }
+    return this._pendingDealPush;
+  }
+
   async handleCardAction(event, context = {}) {
     const value = event?.action?.value || event?.event?.action?.value || {};
     // ⭐ 2026-10-08：**表单容器**的提交回调多带一个 `form_value`（官方：表单项 name → 值），
@@ -2039,6 +2075,29 @@ class LarkMvpService {
     if (action === SALES_CONFIRM_DEAL_ACTIONS.CONFIRM) {
       return this.cardActionQueue.run(draftId || String(value?.sales_entry_record_id || ''), () =>
         this.handleConfirmDealAction(value, operatorOpenId, event, context));
+    }
+    // ⭐⭐ 2026-10-08（第二步）：9 点推送【团购券待结算】那一行右栏的「**确认到账**」。
+    // ⚠️ **位置有意放在这里**（下面那句 `if (!draftId) throw` **之前**）：
+    //    这条链路绑的是**收款明细**（按结算日重新查那一批），**不是销售草稿** ——
+    //    那张卡片上根本没有 `draft_id`，落到下面那套草稿状态机里必然抛「卡片缺少草稿 ID」。
+    // ⚠️ 与销售草稿**共用同一个串行队列**：同一张卡连点两次会被排成一前一后，
+    //    真正的幂等由 `VoucherSettlementService`（按结算日重新查 + `PaymentService`
+    //    写之前回查状态）兜住 —— 连点两次只写一次。
+    // ⚠️ 队列键用**结算日**（不是草稿 id）：这一批就是"这个结算日那几笔"。
+    if (action === this.voucherSettlementSettings.action) {
+      const dayField = this.voucherSettlementSettings.settleDayField || 'settle_day';
+      const settleDay = String(value?.[dayField] ?? '').trim();
+      if (!settleDay) {
+        // 老卡片 / 手拼的 value：**明确回绝**，不去猜是哪一天（猜错就是写错账）。
+        // ⚠️ 与 `PendingDealPushService.confirmVoucherSettlement` 的同一道闸门**刻意各有一份**：
+        //    这一层挡住"根本不该进服务的请求"，那一层保证"谁来调都不会写错那批账"。
+        return { toast: {
+          type: 'warning',
+          content: this.voucherSettlementSettings.messages?.missingDay || '',
+        } };
+      }
+      return this.cardActionQueue.run(`voucher_settlement:${settleDay}`, () =>
+        this.pendingDealPush.confirmVoucherSettlement(value, event, context, operatorOpenId));
     }
     if (!draftId) throw new Error('卡片缺少草稿 ID');
     // 售后卡片：确认 / 取消 / 选回库状态。和销售草稿共用同一个串行队列

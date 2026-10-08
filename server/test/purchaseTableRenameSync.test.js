@@ -216,6 +216,14 @@ test('A4 schema 同步「创建时间」→「报货日」；两个自动时间�
       //（退货"改原收款状态"时按**后进先出**决定先冲哪一笔，见
       // `afterSalesService.originalPaymentOrderKey`）—— 一个字节都不写这一列。
       'src/services/afterSalesService.js',
+      // ⭐ 2026-10-08（第二步，团购券待结算）加：这一处也**只读**「收款明细.创建时间」——
+      //   它是「结算日 = 创建时间(上海日) + 5 个自然日」的算法输入（业务负责人逐字口径：
+      //   「抖音团购券是从收款明细里的**创建时间**开始算」）。服务端**不写**这一列：
+      //   那一批确认到账时只写 `receivedAt`（收款时间，全仓唯一允许代码写的时间列）。
+      //   ⚠️ 断言这一条没有写入点的方式：这两处只出现 `paymentFields.createdAt` 的**读取**
+      //      （`fields?.[payment.createdAt]`），入参里没有 `createdAt:`（写入点判据见本注释上一条）。
+      'src/config/voucherSettlement.js',
+      'src/services/voucherSettlementService.js',
     ];
     if (/\bcreatedAt\b/.test(codeOnly)
       && !CREATED_AT_READONLY_FILES.includes(rel.replaceAll('\\', '/'))) {

@@ -23,6 +23,9 @@ const { SalesGroupThreadLocator, messageKey } = require('../src/services/salesGr
 const { LarkMessageLinkResolver } = require('../src/services/larkMessageLinkResolver');
 const { PendingDealPushService } = require('../src/services/pendingDealPushService');
 const { resolvePendingDealPushConfig, readFlag } = require('../src/config/pendingDealPush');
+// ⭐ 2026-10-08（第二步）：【团购券待结算】那块的口径真源（严格全等断言引用它的默认值，
+//   不在本文件里抄第二份 —— 改一处就够）。
+const { resolveVoucherSettlementConfig } = require('../src/config/voucherSettlement');
 const { startShanghaiDailyScheduler, shanghaiHour } = require('../src/utils/shanghaiDailyScheduler');
 // ⭐ 2026-10-08：默认形态改成**消息卡片**；本文件里那些"逐字"断言改盯**卡片里她看得见的字**
 //   （去掉 ** / text_tag / font 壳，文字链接摊成「文案 URL」）—— 卡片结构本身由
@@ -188,7 +191,9 @@ test('配置默认值：默认关、9 点、10 分钟一 tick、没有群 id、�
     // ⚠️ 2026-10-07 加「【销售】区 + 【采购】区」那批键：断言仍然是**严格全等**
     //    （多一个键就红），只是把新增的默认值也钉进去 —— 不是放宽。
     //    ⭐ `salesAreaTitle: ''` 是「销售区不额外多一行」的实现方式（空串 = 那一行不出现）。
-    areas: ['sales', 'purchase'],
+    // ⭐ 2026-10-08（第二步）：大区多了一个 `voucher`（【团购券待结算】），默认顺序 =
+    //    **销售 → 团购券待结算 → 采购**（她的口径：券那块放在销售两块之后、采购之前）。
+    areas: ['sales', 'voucher', 'purchase'],
     salesAreaTitle: '',
     purchaseAreaTitle: '【采购】未到货的报货批次：{count} 批',
     purchaseLineParts: [
@@ -218,7 +223,13 @@ test('配置默认值：默认关、9 点、10 分钟一 tick、没有群 id、�
       missingQuantityText: '（未读到）',
       buttonText: '查看话题',
       columnWeights: [4, 1],
+      // ⭐ 2026-10-08（第二步）：【团购券待结算】那一行右栏「确认到账」按钮的配色。
+      voucherButtonType: 'primary',
     },
+    // ⭐ 2026-10-08（第二步）：【团购券待结算】那块的口径 —— **真源在 `config/voucherSettlement`**
+    //    （天数 5 / 「待平台结算」/ 文案 / 按钮动作名 / 金额解析正则），这里只把它挂进整份配置。
+    //    严格全等的断言用**那一份的默认值**（不在这里抄一遍，免得两处慢慢走歪）。
+    voucher: resolveVoucherSettlementConfig({}),
   });
   assert.equal(resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_HOUR: '7' }).hour, 7);
   assert.throws(() => resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_HOUR: '25' }), /整数/);
