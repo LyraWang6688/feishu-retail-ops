@@ -1,16 +1,21 @@
 /**
- * 鞋盒标签打印 service 的回归护栏（业务负责人 2026-10-08 定案的 **40×30mm 版式改造**）。
+ * 鞋盒标签打印 service 的回归护栏（业务负责人 2026-10-08 定案的 **40×30mm 版式改造**，
+ * 以及她**看了实物标签之后**的第二次定案：品牌置顶居中 / 货号+颜色第一行 / 价格第二行 / 尺码升序）。
  *
  * 钉住的几件事（brief 里逐条点名的那些）：
  *   ① **尺码按「编号」聚合**：一张标签 = 一个编号（= `货号|颜色|类别`，= 库存键前三段），
  *      尺码那一项 = 该编号下**所有尺码 + 各自数量**（数量 = 这个尺码有几双）；
  *   ② **只印有库存的尺码**（数量 > 0；0 的不印，缺号扫码看）；
- *   ③ **一行放不下自动换第二行**（最多两行；再超出省略 —— `size_overflow` 让页面补 `…`）；
- *   ④ **单价**来自「货品信息.单价」（按编号取）；**读不到照发标签、不印价格并计数**（不许静默丢）；
- *   ⑤ **二维码 URL 来自 `tagQrCode` 的单一真源**：`https://hm.bamamei.online/s/{编号}`，
+ *   ③ **尺码按数值从小到大**（`38` < `40` < `100`；比较方式与方向都来自 `config/labelPrint.js`
+ *      的 `sizes.compare` / `sizes.order`）；
+ *   ④ 一行放不下自动换行（最多 `maxLines` 行；再超出省略 —— `size_overflow` 让页面补 `…`）；
+ *   ⑤ **单价**来自「货品信息.单价」（按编号取）；**读不到照发标签、不印价格并计数**（不许静默丢）；
+ *   ⑥ **二维码 URL 来自 `tagQrCode` 的单一真源**：`https://hm.bamamei.online/s/{编号}`，
  *      模板与替换实现都 import 复用，`config/labelPrint.js` 里**一个 URL 都不许有**；
- *   ⑥ **40×30 的每页行列数**由 `resolveGrid()` 算（A4 + 6mm 边距 ⇒ 4 列 × 9 行 = 36 张）；
- *   ⑦ **只读**：网关上只调 `listAll`（两次：实时库存 + 货品信息），create/update/delete 一次都不碰。
+ *   ⑦ **40×30 的每页行列数**由 `resolveGrid()` 算（A4 + 6mm 边距 ⇒ 4 列 × 9 行 = 36 张）；
+ *   ⑧ **版式参数（品牌置顶居中 / 右栏行序 / 价格位置 / 货号+颜色同行的超宽规则）随 `layout.body`
+ *      下发给页面** —— 渲染层不写死（见 `labelPrintRender.test.js`）；
+ *   ⑨ **只读**：网关上只调 `listAll`（两次：实时库存 + 货品信息），create/update/delete 一次都不碰。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -20,7 +25,7 @@ const path = require('node:path');
 const { LABEL_PRINT } = require('../src/config/labelPrint');
 const { SCAN_URL } = require('../src/config/tagQrCode');
 const {
-  createLabelPrintService, buildLabelScanUrl, buildSizeLines, formatPrice, asAmount,
+  createLabelPrintService, buildLabelScanUrl, buildSizeLines, compareSizes, formatPrice, asAmount,
   buildText, asTimestamp,
 } = require('../src/services/labelPrintService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
@@ -202,6 +207,78 @@ test('只印有库存的尺码：没有库存条目的尺码不出现在标签�
   });
   const data = await service.listLabels({});
   assert.deepEqual(data.labels[0].sizes.map((item) => item.size), [38, 40]);
+});
+
+// ── ③-2 尺码**按数值从小到大**（她 2026-10-08 定案：「按照从小到大排序」）──────────────────
+
+test('尺码按数值升序：38 < 40 < 100（**不是字符串序** —— 字符串序会把 100 排到 38 前面）', async () => {
+  const { service } = serviceFor({
+    liveInventory: [
+      record('r1', { stockKey: 'YD6693-2|黑色|A|100' }),
+      record('r2', { stockKey: 'YD6693-2|黑色|A|38' }),
+      record('r3', { stockKey: 'YD6693-2|黑色|A|40' }),
+      record('r4', { stockKey: 'YD6693-2|黑色|A|40' }),
+    ],
+  });
+  const data = await service.listLabels({});
+  const label = data.labels[0];
+  assert.deepEqual(label.sizes, [
+    { size: 38, qty: 1 }, { size: 40, qty: 2 }, { size: 100, qty: 1 },
+  ], '数值升序，数量跟着尺码走');
+  assert.deepEqual(label.size_lines.map((line) => line.map((token) => token.size)), [[38, 40, 100]],
+    '分行用的也是这个顺序');
+});
+
+test('尺码排序可配：`sizes.order` 倒序 / `sizes.compare` 文本序（只改 config，不改代码）', async () => {
+  const liveInventory = [38, 40, 100].map((size, index) => record(`r${index}`, { stockKey: `A1|黑色|A|${size}` }));
+  const { service: desc } = serviceFor({ liveInventory }, { sizes: { order: 'desc' } });
+  assert.deepEqual((await desc.listLabels({})).labels[0].sizes.map((item) => item.size), [100, 40, 38]);
+
+  const { service: asText } = serviceFor({ liveInventory }, { sizes: { compare: 'string' } });
+  assert.deepEqual((await asText.listLabels({})).labels[0].sizes.map((item) => item.size), [100, 38, 40],
+    '文本序："100" < "38" < "40"（留着这个开关是为了 S/M/L 这类非数字尺码）');
+});
+
+test('compareSizes：纯函数，默认数值升序；读不出数字时退化成文本比较（不产出 NaN）', () => {
+  assert.ok(compareSizes(38, 100, {}) < 0, '默认按数值：38 在 100 前面');
+  assert.ok(compareSizes('38', '100', {}) < 0, '字符串数字也按数值比');
+  assert.equal(compareSizes(42, 42, {}), 0);
+  assert.ok(compareSizes(38, 100, { order: 'desc' }) > 0);
+  assert.ok(compareSizes('38', '100', { compare: 'string' }) > 0, '文本序："38" > "100"');
+  assert.ok(Number.isFinite(compareSizes('不是数字', '也不是', {})), '读不出数字时不许返回 NaN');
+});
+
+test('版式参数随响应下发：品牌**顶部居中** + 右栏行序「货号+颜色 → 单价 → 尺码」都在 layout.body 里', async () => {
+  const { service } = serviceFor({
+    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|A|38' })],
+  });
+  const data = await service.listLabels({});
+  assert.equal(data.layout.body.brandRow, 'top', '品牌在整张标签顶部（她定案）');
+  assert.equal(data.layout.body.brandAlign, 'center', '顶部居中');
+  assert.deepEqual(data.layout.body.rows, ['brand', 'itemNoColor', 'price', 'state', 'sizes'],
+    '右栏行序：货号+颜色 → 单价 → 尺码（状态那行默认不印）');
+  assert.equal(data.layout.body.itemNoColor.preferColorOverCategory, true, '放不下时优先保颜色');
+  assert.equal(data.layout.body.itemNoColor.minItemNoMm, 2.4, '货号缩字号的下限也在 config 里');
+  assert.equal(data.layout.sizes.order, 'asc');
+  assert.equal(data.layout.sizes.compare, 'numeric');
+
+  // 换一份 config（倒序 + 不保颜色 + 品牌回右栏）⇒ 响应里的 layout 跟着变。
+  const { service: custom } = serviceFor({
+    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|A|38' })],
+  }, {
+    body: {
+      rows: ['itemNoColor', 'price', 'sizes'],
+      brandRow: 'inline',
+      brandAlign: 'left',
+      itemNoColor: { ...LABEL_PRINT.body.itemNoColor, preferColorOverCategory: false },
+    },
+    sizes: { order: 'desc' },
+  });
+  const customData = await custom.listLabels({});
+  assert.equal(customData.layout.body.brandRow, 'inline');
+  assert.deepEqual(customData.layout.body.rows, ['itemNoColor', 'price', 'sizes']);
+  assert.equal(customData.layout.body.itemNoColor.preferColorOverCategory, false);
+  assert.equal(customData.layout.sizes.order, 'desc');
 });
 
 // ── ③ 换行（最多两行，超出留 …）────────────────────────────────────────────
