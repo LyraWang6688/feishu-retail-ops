@@ -85,4 +85,8 @@ module.exports = {
   queryInventoryProducts,
   queryInventoryStock,
   queryInventoryCategories,
+  // 查询类接口的**失败口径**只有这一份实现（400 原样回显她填错的 / 503 飞书数据未准备好 /
+  // 其余 500 不回显内部细节）。鞋盒标签打印那条只读查询挂在 `routes/workbench.js` 里，
+  // 它复用这一个函数而不另写一套 —— 两套口径迟早在"什么算她填错"上分家。
+  respondQueryFailure,
 };

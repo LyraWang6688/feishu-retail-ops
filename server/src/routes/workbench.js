@@ -5,6 +5,7 @@ const { SalesFollowupService } = require('../services/salesFollowupService');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { createPurchaseQueryRouter } = require('./purchaseQuery');
 const { createInventoryAdjustmentRouter } = require('./workbenchInventoryAdjustment');
+const { createLabelPrintService } = require('../services/labelPrintService');
 const { SampleReplacementService } = require('../services/sampleReplacementService');
 const { logError, logWarn } = require('../utils/logger');
 
@@ -46,6 +47,30 @@ const createWorkbenchRouter = (options = {}) => {
   router.get('/inventory/stock', controller.queryInventoryStock);
   router.get('/inventory/categories', controller.queryInventoryCategories);
   router.get('/inventory', controller.queryInventory);
+  // 鞋盒标签打印（业务负责人 2026-10-08 批准的第一个功能）—— **只读**：
+  // 从「实时库存」（一双一条）取数，返回"每张标签要印什么"（含内联 SVG 二维码）+
+  // 排版参数（50×30mm / A4 / 字号 / 字段开关，全部来自 `config/labelPrint.js`）。
+  // ⚠️ 这里**不新开鉴权**：它挂在同一个 router 上，沿用上面那条 `requireWorkbenchAccess`
+  //    （未启用认证 503 / 未登录 401 / 白名单外 403），与其它工作台接口一字不差。
+  // ⚠️ 失败口径复用控制器那一份（400 / 503 / 500），不另写一套。
+  const labelPrint = options.labelPrint || createLabelPrintService(options.gateway || new V1BitableGateway());
+  router.get('/labels', async (req, res) => {
+    try {
+      const result = await labelPrint.listLabels({
+        keyword: req.query.keyword,
+        state: req.query.state,
+        category: req.query.category,
+        size: req.query.size,
+        recentDays: req.query.recentDays,
+        sort: req.query.sort,
+      });
+      return res.json({ success: true, ...result });
+    } catch (error) {
+      return controller.respondQueryFailure(res, error, {
+        requestId: req.requestId, event: 'workbench.labels.failed', fallback: '标签数据读取失败',
+      });
+    }
+  });
   router.get('/sales/orders', async (req, res) => {
     try { return res.json({ success: true, ...await followup.listOrders() }); }
     catch (error) {

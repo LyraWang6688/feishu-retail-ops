@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>鞋盒标签打印｜邯美数智经营工作台</title>
+  <link rel="stylesheet" href="/workbench/styles/tokens.css">
+  <link rel="stylesheet" href="/workbench/styles/base.css">
+  <!-- 标签纸的 mm 排版与打印规则都在这个文件里（尺寸本身来自服务端 config/labelPrint.js）。 -->
+  <link rel="stylesheet" href="/workbench/features/labels/labels.css">
+</head>
+<!--
+  鞋盒标签打印（业务负责人 2026-10-08 批准的第一个功能）。
+  · 她怎么进来：工作台「信息录入」→ 卡片「🏷️ 鞋盒标签打印」（`config/home.js` 的 COMMON_ENTRIES），
+    或直接开这个页面。
+  · 页面只读「实时库存」，**不写任何表**；排版 50×30mm、A4 一页铺多张，用**浏览器打印**打出来。
+  · 与「库存手工调整」「采购和退货」一样是独立页（`data-view` 由 `standalone.js` 注册），
+    沿用同一套飞书登录（`core/auth.js`）——**没有另开一套鉴权**。
+-->
+<body data-view="label-print">
+  <main class="shell standalone-shell">
+    <header class="header compact-header">
+      <div><div class="eyebrow">邯美数智经营工作台</div><h1>鞋盒标签打印</h1></div>
+      <div class="auth"><span id="auth-status" class="muted">正在检查飞书登录状态…</span><button id="logout" class="btn btn-ghost hidden" type="button">退出登录</button></div>
+    </header>
+    <nav class="standalone-nav">
+      <a href="/workbench/common.html">返回信息录入</a>
+      <a href="/workbench/inventory-adjustment.html">库存手工调整</a>
+      <a href="/workbench/purchase-return.html">采购和退货</a>
+      <a class="active" href="/workbench/label-print.html">鞋盒标签打印</a>
+    </nav>
+    <section id="standalone-host"></section>
+    <p id="page-error" class="error hidden" role="alert"></p>
+  </main>
+  <script type="module" src="/workbench/standalone.js"></script>
+</body>
+</html>

@@ -109,7 +109,13 @@ test('⑦ 新建「报货批次」记录时显式写「未到货」（值来自�
     reportBatchWindowMs: 20,
   });
   await service.acceptMany('supplier-report', ['rep_1']);
-  await new Promise((resolve) => setTimeout(resolve, 60));
+  // ⚠️ 原来是**固定 sleep 60ms** —— 2026-10-08 CI 上真红过一次（慢机器等不到那批记录：
+  //    期望 1 得到 0）。改成"**轮询到出现为止**（上限 3s）"，断言一个字不变，
+  //    这样慢机器只是慢，不会假红。
+  for (let waited = 0; waited < 3000; waited += 50) {
+    if ((await gateway.listAll('purchaseOrderBatch')).length) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
   const batches = await gateway.listAll('purchaseOrderBatch');
   assert.equal(batches.length, 1);
   assert.equal(batches[0].fields['到货状态'], DEFAULT_PURCHASE_ARRIVAL_STATUS_PENDING);
