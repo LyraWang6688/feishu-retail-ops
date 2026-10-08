@@ -5,6 +5,7 @@
 
 | 版次 | commit | 部署时间(+8) | 一句话 |
 |---|---|---|---|
+| v0.3.4 | `1bd33ea` | 2026-10-08 12:13（+8，取自 `/health`） | 赠品改到主表（「销售明细」删掉「赠品」列后不再静默失败）· 工作台一级页签 3→2 并删自建查询 · 9 点推送卡片三列改版 · 销售查询挂飞书外链 · 契约跟随生产表删掉「客户往来货款」（闸门由红转绿） |
 | v0.3.2 | `accae97` | 2026-10-08 01:35（+8） | 到货核对卡片加「实际到货情况」表单+提交 · 工作台首页一张「报货与退货」卡直达表单 |
 | v0.3.1 | `b75139a` | 2026-10-07 23:52（推定，见下） | 到货卡片可见性 + 确认成交不再假成交 + 采购侧那批 |
 
@@ -68,3 +69,30 @@ bash server/scripts/tag_release.sh HEAD "一句话说明这一版改了什么"
 `/health` 的 `version` 才会与 tag 一致。
 ⚠️ 反例（本仓库真实发生过）：先部署（01:35:08）后打 tag（01:35:56）⇒ `/health` 报的是**上一个** tag（v0.3.1），
 而 commit 是对的。业务负责人的处置口径：**不动它**，下次部署自然就对了 —— 但**以后一律先打 tag 再部署**。
+
+## ⚠️ v0.3.4 部署实录：`pm2 startOrReload --update-env` **又**没换新 env（自检当场抓住）
+
+2026-10-08 12:13 部署 `v0.3.4` 时的真实过程（值得下次照抄）：
+
+1. `deploy_build.sh` → **闸门全绿**（14 张表 OK）—— 这一版正是把红着的闸门修绿的（#269）；
+2. `deploy_run.sh` → `pm2 startOrReload ecosystem.config.js --update-env` 回 `✓`、进程 online，
+   但**部署后自检失败**：`/health` 仍报 `v0.3.1 / accae97`（期望 `v0.3.4 / 1bd33ea`）——
+   这正是 2026-10-07 记录过的那条坑（`docs/deploy-post-restart-selfcheck-2026-10-07.md`）。
+   ⭐ **这次是自检把问题拦下来的**：pm2 自己报的是成功。
+3. 照脚本提示处置（**同一个 shell 里先 export**，否则 `--update-env` 带上去的还是空值）：
+   ```bash
+   cd /opt/box2bitable/server
+   export PORT=5000 NODE_ENV=production
+   export APP_VERSION=v0.3.4 APP_COMMIT=1bd33ea
+   export APP_DEPLOYED_AT="$(TZ=Asia/Shanghai date -Iseconds)"
+   pm2 restart box2bitable-server --update-env
+   bash scripts/deploy_run.sh --check-only          # ✅ 版本自检通过：commit=1bd33ea
+   ```
+   ⇒ 进程里的 `APP_*` 立刻换成新值，`/health` 报 `v0.3.4 / 1bd33ea / 2026-10-08T12:13:34+08:00`。
+4. 外部（走 nginx）复核：`curl -sSk https://43.143.239.42/health` → 同样回报 `v0.3.4 / 1bd33ea`。
+
+**两条结论**：① `deploy_run.sh` 的部署后自检**一次都不能省**（`DEPLOY_SKIP_VERSION_CHECK=1` 只在明确知道在做什么时用）；
+② 下次若又出现"pm2 说成功、`/health` 报旧版"，直接照上面第 3 步做，**不要靠再跑一次 `deploy_run.sh`**。
+
+ℹ️ `v0.3.3`（在 `833d982` 上）**打了 tag 但从没部署过**（部署前被闸门挡住，后一版 `v0.3.4` 直接带上去了）
+⇒ 按「只记录已部署的版本」的口径，它不进上面的表。
