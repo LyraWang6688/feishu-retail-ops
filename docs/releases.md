@@ -110,6 +110,17 @@ bash server/scripts/tag_release.sh HEAD "一句话说明这一版改了什么"
 4. 外部（走 nginx）+ 线上静态文件都复核过：
    `curl -sSk https://43.143.239.42/workbench/config/links.js` 里两条 URL 逐字 = 她给的分享链接。
 
-⇒ **结论**：这不是偶发，**每次部署都会遇到**。现成的便宜修法（可选，等业务负责人点头）：
-让 `deploy_run.sh` 在自检失败时**自动**用正确的 `APP_VERSION/APP_COMMIT/APP_DEPLOYED_AT`
-再 `pm2 restart --update-env` **一次**，然后重新自检；仍失败就照旧报红（不循环、不静默）。
+⇒ **结论**：这不是偶发，**每次部署都会遇到**。
+⭐ 业务负责人 2026-10-08 当场批准把它做进脚本 ⇒ **已实现**：
+`deploy_run.sh` 在**第一次**自检失败时会**自动**带上
+`APP_VERSION / APP_COMMIT / APP_DEPLOYED_AT` 执行一次 `pm2 restart <应用名> --update-env`，
+然后**重新自检**；仍失败就照旧报红退出（**不循环、不静默**）。
+- 应用名从 `ecosystem.config.js` 读（不硬编码，改应用名不会静默刷错进程）；
+- `--check-only` 模式**刻意不重启** ⇒ 不自动刷 env（仍打印手工那两步）；
+- 关掉用 `DEPLOY_HEALTH_AUTO_ENV_REFRESH=0`（旧名 `DEPLOY_SKIP_ENV_REFRESH=1` 也认）；
+  刷完等待秒数 `DEPLOY_HEALTH_AUTO_REFRESH_WAIT`（默认 3）。
+- 行为由 `server/test/deployRunAutoEnvRefresh.test.js` 用**假的 pm2 / 假的 curl** 真跑脚本守住：
+  ① 一开始就对上 → 不重启；② 刷完对上 → restart 恰好一次、用 ecosystem 里的应用名；
+  ③ 刷完仍失败 → 退出码 1 且 restart **仍然只有一次**；④ `--check-only` → 一次 pm2 都不调用；
+  ⑤ 显式关掉自动刷 env → 照旧报红。
+- ⚠️ **本次 v0.3.5 部署走的是手工那 4 步**（脚本改动当时还没上线）；**下一版部署**才会自动生效。

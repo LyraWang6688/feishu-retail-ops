@@ -17,20 +17,30 @@ usage() {
 用法：bash server/scripts/deploy_run.sh [--check-only]
 
   （默认）      pm2 startOrReload 重启，然后做【部署后版本自检】——对不上就非零退出
+                 ⭐ 2026-10-08 起：第一次自检对不上时，会**自动带上正确的 APP_***
+                    再 `pm2 restart <name> --update-env` **一次**，然后重新自检；
+                    仍对不上就照旧报红退出（**不循环、不静默**）。
   --check-only  跳过重启，只对【已经在跑的服务】做一次版本自检
                 （只比 commit，不比重启时间：这次并没有部署，算出来的时间是"现在"）
+                ⚠️ --check-only **刻意不重启**，所以它也不会自动刷 env（要修就手工执行下面那两步）
   -h|--help     看这段用法
 
 版本自检为什么存在：2026-10-07 事故 —— pm2 显示 online，但进程里的 APP_* 还是上一次的
 值，/health 于是回报旧 commit（f0a2f3f），而磁盘上的代码已经是 aff273e。
 ⇒「重启成功」不等于「版本生效」，所以必须自己去看一眼 /health，不一致就当场报错。
+⚠️ 这条坑 2026-10-08 **同一天又复现两次**（v0.3.4 / v0.3.5 部署）：
+   `pm2 startOrReload ecosystem.config.js --update-env` 回 ✓ 但 APP_* 没换新
+   ⇒ 所以现在把这个"手工那 4 步"做进了脚本（只做一次，见上）。
 
 可用环境变量覆盖（默认值够用，一般不用设）：
   DEPLOY_HEALTH_URL        默认 http://127.0.0.1:${PORT:-5000}/health
-  DEPLOY_HEALTH_RETRIES    默认 10   重试次数
+  DEPLOY_HEALTH_RETRIES    默认 10   重试次数（每一轮自检各自算）
   DEPLOY_HEALTH_INTERVAL   默认 1    每次之间等几秒
   DEPLOY_HEALTH_TIMEOUT    默认 5    单次 curl 超时秒数
+  DEPLOY_HEALTH_AUTO_ENV_REFRESH  默认 1；设 0 = 关掉"自检失败自动刷一次 env"
+  DEPLOY_HEALTH_AUTO_REFRESH_WAIT 默认 3；自动刷 env 之后等几秒再自检
   DEPLOY_SKIP_VERSION_CHECK=1  应急跳过自检（会打印醒目 ⚠️，不推荐；仅限明确知道在做什么）
+  DEPLOY_SKIP_ENV_REFRESH=1    同 DEPLOY_HEALTH_AUTO_ENV_REFRESH=0（旧名，保留兼容）
 USAGE
 }
 
@@ -63,6 +73,10 @@ APP_VERSION="$(git -C "$REPO_DIR" describe --tags --abbrev=0 2>/dev/null || echo
 APP_COMMIT="$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 APP_DEPLOYED_AT="$(date -Iseconds)"
 export APP_VERSION APP_COMMIT APP_DEPLOYED_AT
+
+# 应用名从 ecosystem.config.js 读（`pm2 restart <name> --update-env` 要用它）——
+# ⚠️ **不硬编码**：改 pm2 应用名时这里要跟着走，硬编码会静默刷错进程。
+APP_NAME="$(cd "$PROJECT_DIR" && node -e 'try{const c=require("./ecosystem.config.js");process.stdout.write(String((c.apps&&c.apps[0]&&c.apps[0].name)||""))}catch(e){}' 2>/dev/null || true)"
 
 if [ "$APP_COMMIT" = "unknown" ] || [ -z "$APP_COMMIT" ]; then
   echo "⚠️  取不到 git commit（$REPO_DIR 不是 git 检出？或者机器上没有 git）。" >&2
@@ -138,55 +152,125 @@ json_field() {
   ' "$2" 2>/dev/null || true
 }
 
-echo "🔎 ${MODE_LABEL}：等 ${HEALTH_URL} 回报 commit=${APP_COMMIT}（最多 ${HEALTH_RETRIES} 次，每次间隔 ${HEALTH_INTERVAL}s）..."
+# ---------------------------------------------------------------------------
+# 自检循环（抽成函数：自动刷 env 之后要**再跑一次**，两次的判据必须共用同一份实现）
+#   · 成功 → return 0
+#   · 失败 → return 1；`got_*` / `last_body` / `last_err` 保留**最后一次**的结果供报错用
+# ---------------------------------------------------------------------------
+wait_for_version() {
+  local attempt=1 ok=0 raw=""
+  last_body=""
+  last_err=""
+  got_version=""
+  got_commit=""
+  got_deployed_at=""
 
-attempt=1
-ok=0
-last_body=""
-last_err=""
-got_version=""
-got_commit=""
-got_deployed_at=""
+  echo "🔎 ${MODE_LABEL}：等 ${HEALTH_URL} 回报 commit=${APP_COMMIT}（最多 ${HEALTH_RETRIES} 次，每次间隔 ${HEALTH_INTERVAL}s）..."
 
-while [ "$attempt" -le "$HEALTH_RETRIES" ]; do
-  if raw="$(curl -fsS --max-time "$HEALTH_TIMEOUT" "$HEALTH_URL" 2>&1)"; then
-    last_err=""
-    last_body="$raw"
-    got_version="$(json_field "$raw" version)"
-    got_commit="$(json_field "$raw" commit)"
-    got_deployed_at="$(json_field "$raw" deployed_at)"
-    if [ "$got_commit" = "$APP_COMMIT" ] &&
-       { [ "$COMPARE_DEPLOYED_AT" = "0" ] ||
-         [ -z "$APP_DEPLOYED_AT" ] ||
-         [ "$got_deployed_at" = "$APP_DEPLOYED_AT" ]; }; then
-      ok=1
-      break
+  while [ "$attempt" -le "$HEALTH_RETRIES" ]; do
+    if raw="$(curl -fsS --max-time "$HEALTH_TIMEOUT" "$HEALTH_URL" 2>&1)"; then
+      last_err=""
+      last_body="$raw"
+      got_version="$(json_field "$raw" version)"
+      got_commit="$(json_field "$raw" commit)"
+      got_deployed_at="$(json_field "$raw" deployed_at)"
+      if [ "$got_commit" = "$APP_COMMIT" ] &&
+         { [ "$COMPARE_DEPLOYED_AT" = "0" ] ||
+           [ -z "$APP_DEPLOYED_AT" ] ||
+           [ "$got_deployed_at" = "$APP_DEPLOYED_AT" ]; }; then
+        ok=1
+        break
+      fi
+    else
+      # 连不上 / 超时 / HTTP 非 2xx：把 curl 的话留着，失败时打出来。
+      last_err="$raw"
+      last_body=""
     fi
-  else
-    # 连不上 / 超时 / HTTP 非 2xx：把 curl 的话留着，失败时打出来。
-    last_err="$raw"
-    last_body=""
-  fi
 
-  attempt=$((attempt + 1))
-  if [ "$attempt" -le "$HEALTH_RETRIES" ]; then
-    sleep "$HEALTH_INTERVAL"
-  fi
-done
+    attempt=$((attempt + 1))
+    if [ "$attempt" -le "$HEALTH_RETRIES" ]; then
+      sleep "$HEALTH_INTERVAL"
+    fi
+  done
 
-if [ "$ok" -eq 1 ]; then
+  [ "$ok" -eq 1 ]
+}
+
+report_success() {
   if [ "$COMPARE_DEPLOYED_AT" -eq 1 ]; then
-    echo "✅ 部署后自检通过：/health 已回报【刚部署】的版本（commit=${got_commit}  deployed_at=${got_deployed_at}）"
+    echo "✅ ${SUCCESS_LABEL}：/health 已回报【刚部署】的版本（commit=${got_commit}  deployed_at=${got_deployed_at}）"
   else
-    echo "✅ 版本自检通过：此刻在跑的就是本仓库这一版（commit=${got_commit}）"
+    echo "✅ ${SUCCESS_LABEL}：此刻在跑的就是本仓库这一版（commit=${got_commit}）"
   fi
   echo "   ${HEALTH_URL} → ${last_body}"
+}
+
+if [ "$CHECK_ONLY" -eq 1 ]; then
+  SUCCESS_LABEL="版本自检通过"
+else
+  SUCCESS_LABEL="部署后自检通过"
+fi
+
+if wait_for_version; then
+  report_success
   exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# ⭐ 2026-10-08 加：第一次自检没对上 → **自动刷一次 env，再自检一次**
+#
+# 起因（同一天两次真实部署）：`pm2 startOrReload ecosystem.config.js --update-env` 回 ✓、
+# 进程 online，但进程里的 APP_* 还是上一次的 ⇒ /health 报旧 commit（详见脚本顶部说明）。
+# 业务负责人 2026-10-08 拍板：「自检失败时自动带上正确的版本号再刷一次 env，然后重新自检
+# （只重试一次，仍失败就照旧报红、不循环不静默）」。这就是下面这段。
+#
+# 三条边界：
+#   · 只做**一次**：再失败就走原来的报红退出（绝不循环重启）；
+#   · `--check-only` **不做**：那个模式的语义是"只自检、不重启"；
+#   · 应用名取自 ecosystem.config.js（`APP_NAME`），取不到就不做（退回手工那两步）。
+# ---------------------------------------------------------------------------
+AUTO_ENV_REFRESH="${DEPLOY_HEALTH_AUTO_ENV_REFRESH:-${DEPLOY_SKIP_ENV_REFRESH:+0}}"
+AUTO_ENV_REFRESH="${AUTO_ENV_REFRESH:-1}"
+AUTO_REFRESH_WAIT="${DEPLOY_HEALTH_AUTO_REFRESH_WAIT:-3}"
+AUTO_REFRESH_DONE=0
+
+if [ "$CHECK_ONLY" -eq 1 ]; then
+  echo "" >&2
+  echo "ℹ️  --check-only 模式：刻意**不重启**，因此也不会自动刷 env。要修就手工执行：" >&2
+  echo "      pm2 restart ${APP_NAME:-<应用名>} --update-env   # 先 export APP_VERSION/APP_COMMIT/APP_DEPLOYED_AT" >&2
+  echo "      bash server/scripts/deploy_run.sh --check-only" >&2
+elif [ "$AUTO_ENV_REFRESH" != "1" ]; then
+  echo "" >&2
+  echo "ℹ️  已显式关掉自动刷 env（DEPLOY_HEALTH_AUTO_ENV_REFRESH=${AUTO_ENV_REFRESH}）—— 按部署失败处理。" >&2
+elif [ -z "$APP_NAME" ]; then
+  echo "" >&2
+  echo "⚠️  取不到 pm2 应用名（ecosystem.config.js 里读不到 apps[0].name）⇒ 不做自动刷 env，" >&2
+  echo "    请按下面的提示手工处理。" >&2
+else
+  AUTO_REFRESH_DONE=1
+  echo "" >&2
+  echo "⚠️  第一次自检没对上：进程里的 APP_* 还是旧的（2026-10-07 / 10-08 反复出现的形状）。" >&2
+  echo "    ⇒ 自动带上正确的版本号刷一次 env，再自检一次（只这一次）：" >&2
+  echo "       pm2 restart ${APP_NAME} --update-env" >&2
+  echo "       （APP_VERSION=${APP_VERSION}  APP_COMMIT=${APP_COMMIT}  APP_DEPLOYED_AT=${APP_DEPLOYED_AT}）" >&2
+  pm2 restart "$APP_NAME" --update-env || true
+  sleep "$AUTO_REFRESH_WAIT"
+  if wait_for_version; then
+    SUCCESS_LABEL="部署后自检通过（自动刷 env 之后）"
+    report_success
+    exit 0
+  fi
+  echo "" >&2
+  echo "❌❌❌ 自动刷 env 之后【仍然】对不上：说明问题不是『env 没换新』这么简单。" >&2
+  echo "     ⇒ 按部署失败处理（**不再重试**，避免把线上转成重启循环）。" >&2
 fi
 
 # ---- 失败：这里【必须】非零退出，不许静默放过 ----
 echo "" >&2
 echo "❌❌❌ ${MODE_LABEL}失败：/health 仍在报【旧版本】，或服务没起来。" >&2
+if [ "$AUTO_REFRESH_DONE" -eq 1 ]; then
+  echo "     （本次已自动执行过一次 \`pm2 restart ${APP_NAME} --update-env\` 并重新自检 —— 仍未对上）" >&2
+fi
 if [ "$COMPARE_DEPLOYED_AT" -eq 1 ]; then
   echo "     （比对项：commit + deployed_at）" >&2
 else
