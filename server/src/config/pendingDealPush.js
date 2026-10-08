@@ -212,8 +212,19 @@ const PENDING_DEAL_PUSH_DEFAULTS = Object.freeze({
   // ⭐ 采购区的大区标题（`{count}` = 这一区几批）。
   purchaseAreaTitle: '【采购】未到货的报货批次：{count} 批',
   // 采购区一行 = 逐段拼（与销售区同一套"空的段整段不要"的规矩）。
-  //   `{batchNo}` 批次号 · `{supplier}` 供应商（取不到就没有这一段，**不编**）· `{link}` 深链
-  purchaseLineParts: ['{index}. {batchNo}', '{supplier}', '{link}'],
+  //   `{batchNo}` 批次号 · `{supplier}` 供应商（取不到就没有这一段，**不编**）
+  //   ⭐ 2026-10-08 晚（业务负责人逐字）：「这里的文字说明，包括**供应商和创建时间以及报货数量**」，
+  //      同日的补充口径把两个名字钉死：「采购数量用**「录入数量」**」、
+  //      时间那一列的真表名是**「报货日」**（飞书自动字段，schema 语义键 `createdAt`）。
+  //   ⇒ 行里加 `{reportedAt}`（报货日，上海自然日 `YYYY-MM-DD`）与 `{quantity}`（录入数量）。
+  //      ⚠️ **整段（含"报货日/录入数量"这两个标签）都写在模板里**：她哪天要换个说法
+  //         （例：`报货时间：{reportedAt}`）只改配置，不去翻代码。
+  //      ⚠️ 两个段各自**取不到就整段不要**（不编 `—`），要占位就填下面卡片配置里的
+  //         `missingReportedAtText` / `missingQuantityText`。
+  //   · `{link}` 深链
+  purchaseLineParts: [
+    '{index}. {batchNo}', '{supplier}', '报货日 {reportedAt}', '录入数量 {quantity}', '{link}',
+  ],
   purchaseLineSeparator: ' · ',
   // 一批多供应商时的连接符。
   purchaseSupplierSeparator: '、',
@@ -246,8 +257,17 @@ const PENDING_DEAL_PUSH_DEFAULTS = Object.freeze({
     rowTextSeparator: ' · ',
     // 货号/尺码读不出来时的占位（**绝不静默丢这一行**）。
     missingItemText: '（未读到货号/尺码）',
-    // 采购区一行（两栏版的第 1 栏）：批次号 + 供应商（取不到就整段不要）。
-    purchaseRowTextParts: ['{batchNo}', '{supplier}'],
+    // 采购区一行（两栏版的第 1 栏）：批次号 + 供应商 + 报货日 + 录入数量（取不到就整段不要）。
+    // ⚠️ 与文本降级那份**同一套段**（含"报货日/录入数量"这两个标签）。
+    purchaseRowTextParts: ['{batchNo}', '{supplier}', '报货日 {reportedAt}', '录入数量 {quantity}'],
+    // ⭐ 2026-10-08 晚：采购那两个新字段**读不出来时的占位**（与 `missingItemText` 同一档）。
+    //   为什么要占位而不是留空：她点名过"缺字段**照推**、绝不静默丢单"——
+    //   留空会让那一行看起来"这一批本来就没有报货日 / 数量"，占位才看得出来是**读不到**。
+    //   ⚠️ 占位**只填值的位置**：`报货日`/`录入数量` 这两个标签写在段模板里
+    //     （所以这里不再重复写一遍标签，否则会出现「报货日 （未读到报货日）」）。
+    //   ⚠️ 想要"读不到就什么都不显示"（与金额同一形状）就把这两个键设成空串。
+    missingReportedAtText: '（未读到）',
+    missingQuantityText: '（未读到）',
     // 按钮文案（两栏里的第 2 栏）；没有深链时**整栏不出现**（不留空壳）。
     buttonText: '查看话题',
     // 两栏宽度权重（文字 : 按钮）。
@@ -277,11 +297,11 @@ const TEMPLATE_PLACEHOLDERS = Object.freeze({
   cardAmountTemplate: Object.freeze(['color', 'amount']),
   cardLinkTemplate: Object.freeze(['text', 'url']),
   cardRowTextPart: Object.freeze(['index', 'tag', 'item', 'amount']),
-  cardPurchaseRowTextPart: Object.freeze(['index', 'batchNo', 'supplier']),
+  cardPurchaseRowTextPart: Object.freeze(['index', 'batchNo', 'supplier', 'reportedAt', 'quantity']),
   // ── 大区 ──────────────────────────────────────────────────────────────────
   salesAreaTitle: Object.freeze(['count']),
   purchaseAreaTitle: Object.freeze(['count']),
-  purchaseLinePart: Object.freeze(['index', 'batchNo', 'supplier', 'link']),
+  purchaseLinePart: Object.freeze(['index', 'batchNo', 'supplier', 'reportedAt', 'quantity', 'link']),
   purchaseFooterTemplate: Object.freeze(['count']),
 });
 
@@ -430,6 +450,10 @@ const resolveCardConfig = (env) => {
     purchaseRowTextParts: [...defaults.purchaseRowTextParts].map((part) => assertTemplate(
       'card.purchaseRowTextParts', part, TEMPLATE_PLACEHOLDERS.cardPurchaseRowTextPart,
     )),
+    // ⚠️ 这两个占位是**新加的键**（默认非空）。既有用例里那份 `card` 的严格全等断言
+    //    要一起补上它们；不想要占位就在那里把它们设成空串。
+    missingReportedAtText: defaults.missingReportedAtText,
+    missingQuantityText: defaults.missingQuantityText,
     buttonText: defaults.buttonText,
     columnWeights: [...defaults.columnWeights],
   };

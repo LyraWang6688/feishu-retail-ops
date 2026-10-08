@@ -22,6 +22,9 @@ const { LarkMessageLinkResolver } = require('../src/services/larkMessageLinkReso
 const { PendingDealPushService } = require('../src/services/pendingDealPushService');
 const { LarkMessagePinService, PIN_STATE_TASK_ID } = require('../src/services/larkMessagePinService');
 const { resolvePendingDealPushConfig, readFlag } = require('../src/config/pendingDealPush');
+// ⭐ 2026-10-08（第一步）：候选换成"行"（`{ sections, rows, purchase }`）——
+//   本文件只关心置顶，候选由这个替身给（`orderNo` 原样带过去，行模板里的 `{orderNo}` 照旧能用）。
+const { fakeCandidates } = require('./helpers/pendingPushTestData');
 
 const tmpStore = (prefix) =>
   new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), prefix)), idField: 'task_id' });
@@ -84,16 +87,11 @@ const fakeClient = ({
   return { client, calls };
 };
 
-const fakeSecondDelivery = ({ orders, client }) => ({
-  client,
-  listPendingDeliveries: async () => orders,
-});
-
 const newService = ({ orders = [ORDER_A], client, store, settings: overrides = {}, locator, pin } = {}) => {
   const resolvedSettings = settings(overrides);
   const service = new PendingDealPushService({
     settings: resolvedSettings,
-    secondDelivery: fakeSecondDelivery({ orders, client }),
+    candidates: fakeCandidates({ orders }),
     locator: locator || new SalesGroupThreadLocator({ store: tmpStore('pending-pin-mapping-') }),
     resolver: new LarkMessageLinkResolver({ client: {}, lookupEnabled: false }),
     client,

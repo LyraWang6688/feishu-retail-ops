@@ -28,6 +28,10 @@ const { startShanghaiDailyScheduler, shanghaiHour } = require('../src/utils/shan
 //   （去掉 ** / text_tag / font 壳，文字链接摊成「文案 URL」）—— 卡片结构本身由
 //   `pendingDealPushCard.test.js` 逐元素钉住。
 const { visibleCardText } = require('../src/utils/pendingDealPushCard');
+// ⭐ 2026-10-08（第一步）：候选口径改成"逐件 / 逐条一行"之后，本文件里那些
+//   "一大票单据"要翻译成**行**（`{ sections, rows, purchase }`）——
+//   翻译器只做搬运，业务口径由 `pendingPushCandidateCaliber.test.js` 直接盯住。
+const { fakeCandidates } = require('./helpers/pendingPushTestData');
 
 const tmpStore = (prefix) =>
   new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), prefix)), idField: 'task_id' });
@@ -65,8 +69,9 @@ const ORDER_B = {
   items: [{ kind: 'shoe', itemNo: '6A637-7', size: '43' }],
 };
 
-// 假的「第二次交付」服务：**只**提供本服务要复用的那一个方法 + 一个 client。
-// 刻意不实现别的——本服务若偷偷绕过它自己筛单，这里会直接报错。
+// 假的「第二次交付」服务：⭐ 2026-10-08（第一步）起**本链路不再问它要候选**
+// （`listPendingDeliveries` 被成交提醒共用、一个字都不许改）——保留这个替身只用来证明
+// "即使它还在，候选也不从它来"（`candidates` 才是入口）。
 const fakeSecondDelivery = (orders = []) => ({
   client: { im: { message: { create: async () => ({ code: 0, data: { message_id: 'om_fallback' } }) } } },
   listPendingDeliveries: async () => orders,
@@ -107,7 +112,9 @@ const newService = ({ orders, locator, client, settings: overrides = {}, store, 
   const { client: defaultClient, creates } = fakeClient();
   const service = new PendingDealPushService({
     settings: resolvedSettings,
-    secondDelivery: fakeSecondDelivery(orders),
+    // ⚠️ 2026-10-08（第一步）：候选不再从 `secondDelivery` 来（那个方法被成交提醒共用、
+    //    一个字都不许改）⇒ 注入**候选取数**的替身。
+    candidates: fakeCandidates({ orders }),
     locator: locator || new SalesGroupThreadLocator({ store: tmpStore('pending-push-mapping-') }),
     resolver: new LarkMessageLinkResolver({
       client: client || {},
@@ -183,7 +190,9 @@ test('配置默认值：默认关、9 点、10 分钟一 tick、没有群 id、�
     areas: ['sales', 'purchase'],
     salesAreaTitle: '',
     purchaseAreaTitle: '【采购】未到货的报货批次：{count} 批',
-    purchaseLineParts: ['{index}. {batchNo}', '{supplier}', '{link}'],
+    purchaseLineParts: [
+      '{index}. {batchNo}', '{supplier}', '报货日 {reportedAt}', '录入数量 {quantity}', '{link}',
+    ],
     purchaseLineSeparator: ' · ',
     purchaseSupplierSeparator: '、',
     purchaseFooterTemplate: '（{count} 批的深链暂不可用，见日志 sales.pending_deal_push.purchase_link.missing）',
@@ -202,7 +211,10 @@ test('配置默认值：默认关、9 点、10 分钟一 tick、没有群 id、�
       rowTextParts: ['{item}', '{amount}'],
       rowTextSeparator: ' · ',
       missingItemText: '（未读到货号/尺码）',
-      purchaseRowTextParts: ['{batchNo}', '{supplier}'],
+      // ⭐ 2026-10-08 晚：采购那行新加的两个字段（报货日 / 录入数量）**读不到时的占位**。
+      purchaseRowTextParts: ['{batchNo}', '{supplier}', '报货日 {reportedAt}', '录入数量 {quantity}'],
+      missingReportedAtText: '（未读到）',
+      missingQuantityText: '（未读到）',
       buttonText: '查看话题',
       columnWeights: [4, 1],
     },
@@ -409,9 +421,15 @@ test('金额读不出来时**整段不渲染**（不显示 ¥— / ¥0.00 / NaN�
     dayKey: '2026-10-06',
     missingLinkCount: 0,
     // ⚠️ 2026-10-08 口径变更：金额读不出来时**不再**渲染 `¥—` 占位（业务负责人点名的 nit），
-    //    而是整段不出现；`items` 空 = 「货号 尺码」那一段也整段不出现 ——
+    //    而是整段不出现；`facts` 空 = 「货号 颜色 尺码」那一段也整段不出现 ——
     //    绝不能拼出 ` ·  · 待收 ¥—` 或 ` 码` 这种空壳。
-    orders: [{ orderNo: 'XSD-X', fulfillmentStatus: '未交付', pendingAmount: null, items: [], url: '' }],
+    // ⚠️ 2026-10-08（第一步）：入口是**行**（`rows` + `sections`），不再是"单据"。
+    sections: service.buildSections([
+      { rowId: 'd1', salesEntryRecordId: 'sale_x', criterion: 'undelivered', facts: [], pendingAmount: null, url: '' },
+    ]),
+    rows: [
+      { rowId: 'd1', salesEntryRecordId: 'sale_x', criterion: 'undelivered', facts: [], pendingAmount: null, url: '' },
+    ],
   });
   assert.equal(text, [
     '⏰ 2026-10-06 最近 7 天待处理的销售单（预定 / 现货待收）：1 笔',

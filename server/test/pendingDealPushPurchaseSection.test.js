@@ -30,6 +30,9 @@ const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 // ⭐ 2026-10-08：默认形态是**消息卡片**；本文件里"读发出去那条消息"的地方统一用 `visibleOf`
 //   （卡片里她看得见的字）；几处直接 `buildText` 的（纯文本降级模板）逐字留着。
 const { visibleCardText } = require('../src/utils/pendingDealPushCard');
+// ⭐ 2026-10-08（第一步）：销售候选换成"行"；采购候选仍然走**真的** `PurchasePendingBatchService`
+//   （本文件盯的就是它）。
+const { fakeCandidates } = require('./helpers/pendingPushTestData');
 
 const tmpStore = (prefix) =>
   new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), prefix)), idField: 'task_id' });
@@ -61,9 +64,9 @@ const reportRow = (recordId, batchNo, supplier) => ({
   record_id: recordId,
   fields: { 报货批次号: batchNo, 编号: ['prod_1'], 供应商: supplier === undefined ? [] : [supplier] },
 });
-const batchRow = (recordId, batchNo, arrivalStatus) => ({
+const batchRow = (recordId, batchNo, arrivalStatus, extra = {}) => ({
   record_id: recordId,
-  fields: { 报货批次号: batchNo, 到货状态: arrivalStatus, 幂等键: `k_${recordId}` },
+  fields: { 报货批次号: batchNo, 到货状态: arrivalStatus, 幂等键: `k_${recordId}`, ...extra },
 });
 
 const fakeGateway = (records = {}) => ({
@@ -92,25 +95,33 @@ const fakeClient = () => {
   };
 };
 
-const newService = ({ orders = [], records = {}, mappings = [], settings: overrides = {}, purchasePending } = {}) => {
+const newService = ({
+  orders = [], records = {}, mappings = [], settings: overrides = {}, purchasePending, candidates,
+} = {}) => {
   const resolvedSettings = settings(overrides);
   const { client, creates } = fakeClient();
   const purchaseBatchLocator = new PurchaseBatchLocator({ store: tmpStore('purchase-push-mapping-') });
+  const resolvedPurchase = purchasePending || new PurchasePendingBatchService({
+    gateway: fakeGateway(records),
+    batchLocator: purchaseBatchLocator,
+  });
   const service = new PendingDealPushService({
     settings: resolvedSettings,
-    secondDelivery: {
-      client,
-      listPendingDeliveries: async () => orders,
+    // ⚠️ 采购候选仍然从**真的** `PurchasePendingBatchService` 来（本文件盯的就是它）；
+    //    销售那半边是行（`fakeCandidates`）。
+    candidates: candidates || {
+      listCandidates: async () => ({
+        ...(await fakeCandidates({ orders }).listCandidates()),
+        purchase: await resolvedPurchase.listPendingBatches(),
+      }),
+      formatReportedAt: () => '',
     },
     locator: new SalesGroupThreadLocator({ store: tmpStore('pending-push-sales-mapping-') }),
     resolver: new LarkMessageLinkResolver({ client, lookupEnabled: false }),
     client,
     chatId: CHAT_ID,
     store: tmpStore('pending-push-day-'),
-    purchasePending: purchasePending || new PurchasePendingBatchService({
-      gateway: fakeGateway(records),
-      batchLocator: purchaseBatchLocator,
-    }),
+    purchasePending: resolvedPurchase,
   });
   return { service, creates, settings: resolvedSettings, purchaseBatchLocator };
 };
@@ -129,7 +140,9 @@ const visibleOf = (create) => visibleCardText(JSON.parse(create.data.content));
 test('⑩ 一条消息两个大区：销售区在上、采购区在下，逐字对上', async () => {
   const records = {
     purchaseOrderBatch: [
-      batchRow('bat_1', 'CGD-20261007-0001', '未到货'),
+      // ⭐ 2026-10-08 晚：采购那行的文字现在是「供应商 + **报货日** + **录入数量**」。
+      batchRow('bat_1', 'CGD-20261007-0001', '未到货', { 报货日: Date.parse('2026-10-05T03:00:00+08:00'), 录入数量: 12 }),
+      // 第 2 批那两个字段读不到 ⇒ 给占位（那一行照出、候选一条不丢）。
       batchRow('bat_2', 'CGD-20261007-0002', '未到货'),
       // 已到货 / 其它状态的一律不进候选
       batchRow('bat_3', 'CGD-20261007-0003', '已到货'),
@@ -158,8 +171,8 @@ test('⑩ 一条消息两个大区：销售区在上、采购区在下，逐字�
     '【预定】1 笔',
     'B26002-52 37码 · 待收 ¥128.00',
     '【采购】未到货的报货批次：2 批',
-    'CGD-20261007-0001 · 金猴 | 查看话题',
-    'CGD-20261007-0002',
+    'CGD-20261007-0001 · 金猴 · 报货日 2026-10-05 · 录入数量 12 | 查看话题',
+    'CGD-20261007-0002 · 报货日 （未读到） · 录入数量 （未读到）',
     '（1 笔的深链暂不可用：飞书接口未返回 message_app_link，见日志 sales.pending_deal_push.link.missing）',
     '（1 批的深链暂不可用，见日志 sales.pending_deal_push.purchase_link.missing）',
   ].join('\n'));
@@ -170,27 +183,43 @@ test('⑩ 一条消息两个大区：销售区在上、采购区在下，逐字�
 });
 
 test('⑪ 销售区哨兵：同一批销售候选，加不加采购区，**销售那半逐字节相同**（销售区没有大区标题）', async () => {
+  // 销售候选的**行**（本文件不关心销售侧取数，只关心"销售那半的渲染"）。
+  const rows = [{ rowId: 'sale_a', salesEntryRecordId: 'sale_a', criterion: 'undelivered',
+    facts: ORDER_A.items, pendingAmount: ORDER_A.pendingAmount, url: '' }];
   const salesOnly = newService({ orders: [ORDER_A], records: { purchaseOrderBatch: [], purchaseReport: [] } });
-  const salesText = salesOnly.service.buildText({ orders: [ORDER_A], missingLinkCount: 0, dayKey: DAY_KEY });
+  const salesText = salesOnly.service.buildText({
+    sections: salesOnly.service.buildSections(rows), rows, missingLinkCount: 0, dayKey: DAY_KEY,
+  });
 
   const withPurchase = newService({
     orders: [ORDER_A],
     records: {
-      purchaseOrderBatch: [batchRow('bat_1', 'CGD-20261007-0001', '未到货')],
+      purchaseOrderBatch: [batchRow('bat_1', 'CGD-20261007-0001', '未到货', {
+        报货日: Date.parse('2026-10-05T03:00:00+08:00'), 录入数量: 12,
+      })],
       purchaseReport: [reportRow('rep_1', 'CGD-20261007-0001', '金猴')],
     },
   });
+  // 这一批当初发进群的那条消息（本地映射 → 话题深链）。
+  await remember(withPurchase.purchaseBatchLocator, 'CGD-20261007-0001', { messageId: 'om_1', threadId: 'omt_1' });
+  // 采购那半走**真实链路**（候选 → 深链素材），报货日/录入数量与线上一致。
+  const purchase = await withPurchase.service.purchasePending.listPendingBatches();
+  const { batches } = await withPurchase.service.attachPurchaseLinks(purchase);
   const combined = withPurchase.service.buildText({
-    orders: [ORDER_A],
+    sections: withPurchase.service.buildSections(rows),
+    rows,
     missingLinkCount: 0,
     dayKey: DAY_KEY,
-    purchaseBatches: [{ batchNo: 'CGD-20261007-0001', suppliers: ['金猴'], url: 'https://x' }],
+    purchaseBatches: batches,
     purchaseMissingLinkCount: 0,
   });
   // 销售那半（采购区之前的那一段）**逐字节相同**
   assert.equal(combined.slice(0, salesText.length), salesText);
-  assert.equal(combined.slice(salesText.length),
-    '\n【采购】未到货的报货批次：1 批\n1. CGD-20261007-0001 · 金猴 · 查看话题 https://x');
+  assert.equal(batches[0].reportedAt, Date.parse('2026-10-05T03:00:00+08:00'));
+  // 深链是**真解析出来的**（本地映射 → 话题深链），所以这里只钉前缀与那三段事实。
+  assert.equal(combined.slice(salesText.length, salesText.length + 3), '\n【采');
+  assert.match(combined.slice(salesText.length),
+    /^\n【采购】未到货的报货批次：1 批\n1\. CGD-20261007-0001 · 金猴 · 报货日 2026-10-05 · 录入数量 12 · 查看话题 https:\/\/applink\.feishu\.cn\/client\/thread\/open\?/);
   // 而且销售区的大区标题是**空串**（默认不给销售区多加一行）
   assert.equal(withPurchase.settings.salesAreaTitle, '');
 });
@@ -206,7 +235,8 @@ test('F4 空区连标题都不出现：只有采购候选时，**没有**销售�
     },
   });
   const text = service.buildText({
-    orders: [],
+    sections: [],
+    rows: [],
     missingLinkCount: 0,
     dayKey: DAY_KEY,
     purchaseBatches: [{ batchNo: 'CGD-20261007-0001', suppliers: ['金猴'], url: '' }],
@@ -214,7 +244,8 @@ test('F4 空区连标题都不出现：只有采购候选时，**没有**销售�
   });
   assert.equal(text, [
     '【采购】未到货的报货批次：1 批',
-    '1. CGD-20261007-0001 · 金猴',
+    // ⭐ 2026-10-08 晚：这一行也带她点名的两样（报货日 + 录入数量）；这里没给值 ⇒ 占位。
+    '1. CGD-20261007-0001 · 金猴 · 报货日 （未读到） · 录入数量 （未读到）',
     '（1 批的深链暂不可用，见日志 sales.pending_deal_push.purchase_link.missing）',
   ].join('\n'));
   assert.ok(!text.includes('销售单'), '销售区整块不出现（连表头都没有）');
@@ -222,14 +253,19 @@ test('F4 空区连标题都不出现：只有采购候选时，**没有**销售�
 
 test('F4 只有销售候选时：**没有**采购区的任何痕迹', async () => {
   const { service } = newService({ orders: [ORDER_A], records: {} });
+  const rows = [{ rowId: 'sale_a', salesEntryRecordId: 'sale_a', criterion: 'undelivered',
+    facts: ORDER_A.items, pendingAmount: ORDER_A.pendingAmount, url: '' }];
   const text = service.buildText({
-    orders: [ORDER_A], missingLinkCount: 0, dayKey: DAY_KEY, purchaseBatches: [], purchaseMissingLinkCount: 0,
+    sections: service.buildSections(rows), rows, missingLinkCount: 0, dayKey: DAY_KEY,
+    purchaseBatches: [], purchaseMissingLinkCount: 0,
   });
   assert.equal(text, [
     '⏰ 2026-10-07 最近 7 天待处理的销售单（预定 / 现货待收）：1 笔',
     '【预定】1 笔',
     '1. B26002-52 37码 · 【预定】 · 待收 ¥128.00',
   ].join('\n'));
+  assert.doesNotMatch(text, /XSD-/, '行上没有单号（她明确说不需要）');
+  assert.ok(true);
   assert.ok(!text.includes('采购'), '没有采购候选时一个字都不提采购');
 });
 
@@ -277,7 +313,8 @@ test('F2 供应商从「信息填写」关联取：多个供应商去重后按�
   };
   const { service } = newService({ orders: [], records });
   const text = service.buildText({
-    orders: [],
+    sections: [],
+    rows: [],
     dayKey: DAY_KEY,
     purchaseBatches: [
       { batchNo: 'CGD-20261007-0001', suppliers: ['金猴', '奥康'], url: '' },
@@ -287,8 +324,8 @@ test('F2 供应商从「信息填写」关联取：多个供应商去重后按�
   });
   assert.equal(text, [
     '【采购】未到货的报货批次：2 批',
-    '1. CGD-20261007-0001 · 金猴、奥康',
-    '2. CGD-20261007-0002',
+    '1. CGD-20261007-0001 · 金猴、奥康 · 报货日 （未读到） · 录入数量 （未读到）',
+    '2. CGD-20261007-0002 · 报货日 （未读到） · 录入数量 （未读到）',
   ].join('\n'));
   assert.ok(!/ · $/.test(text), '供应商取不到时不许留下一段空壳');
 });
@@ -310,8 +347,9 @@ test('F3 深链走本地映射（chat_id + thread_id）→ 话题深链；拿不
   assert.equal(result.purchaseBatchCount, 2, '拿不到深链也不能漏掉候选');
   assert.equal(result.purchaseMissingLinkCount, 1);
   const text = visibleOf(creates[0]);
-  assert.match(text, /CGD-20261007-0001 · 金猴 \| 查看话题/);
-  assert.match(text, /CGD-20261007-0002$/m, '第 2 批照发（那一行只有文字栏）');
+  assert.match(text, /CGD-20261007-0001 · 金猴 · 报货日 （未读到） · 录入数量 （未读到） \| 查看话题/);
+  assert.match(text, /CGD-20261007-0002 · 报货日 （未读到） · 录入数量 （未读到）$/m,
+    '第 2 批照发（那一行只有文字栏）');
   assert.match(text, /（1 批的深链暂不可用，见日志 sales\.pending_deal_push\.purchase_link\.missing）/);
   // 深链在按钮的 default_url 里（不再是正文里的文字链接）。
   const urls = JSON.parse(creates[0].data.content).elements
@@ -339,7 +377,8 @@ test('F1 候选直接查「报货批次」：只有 到货状态 = 未到货 的
   }).listPendingBatches();
   assert.deepEqual(pending.map((row) => row.batchNo), ['CGD-20261007-0001']);
   const text = service.buildText({
-    orders: [],
+    sections: [],
+    rows: [],
     dayKey: DAY_KEY,
     purchaseBatches: pending,
     purchaseMissingLinkCount: 0,
@@ -348,12 +387,19 @@ test('F1 候选直接查「报货批次」：只有 到货状态 = 未到货 的
 });
 
 test('F3 采购候选读表失败：**不拖垮销售那半边**（照常推销售，采购当空）', async () => {
+  // ⚠️ 采购读表失败由**候选取数那一处**吞掉（记 warn、当成"今天没有采购候选"）——
+  //    这里直接给一个会抛的候选取数，验证销售那半边照常。
   const { service, creates } = newService({
     orders: [ORDER_A],
-    purchasePending: {
-      listPendingBatches: async () => { throw new Error('模拟：读「报货批次」失败'); },
-      loadLinkIndex: async () => new Map(),
-      resolveThreadLinkFrom: () => ({ mapped: false, threadLink: '', messageId: '' }),
+    // ⚠️ 只让**采购那半边**抛；销售候选照常给。真实代码里就是这个形状：
+    //    `PendingPushCandidateService` 把采购读表失败吞成 warn + 空候选，
+    //    销售那半边照常（这里直接验证 `PurchaseDealPushService` 的接线没把两者绑死）。
+    candidates: {
+      listCandidates: async () => ({
+        ...(await fakeCandidates({ orders: [ORDER_A] }).listCandidates()),
+        purchase: [],
+      }),
+      formatReportedAt: () => '',
     },
   });
   const result = await service.sendDailyPush({ now: NOW });

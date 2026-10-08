@@ -21,10 +21,13 @@ const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { SalesGroupThreadLocator, messageKey } = require('../src/services/salesGroupThreadLocator');
 const { LarkMessageLinkResolver } = require('../src/services/larkMessageLinkResolver');
 const { PendingDealPushService } = require('../src/services/pendingDealPushService');
-const {
-  resolvePendingDealPushConfig, pendingDealPushCriterionFor,
-} = require('../src/config/pendingDealPush');
+const { resolvePendingDealPushConfig } = require('../src/config/pendingDealPush');
 const { visibleCardText } = require('../src/utils/pendingDealPushCard');
+// ⭐ 2026-10-08（第一步）：候选口径变成"逐件 / 逐条一行" ⇒ 这里的"单据对象"由翻译器变**行**；
+//    ⚠️ **判据本身已经不在这里了** —— 现在长在**行**上、由取数那一处给
+//    （`PendingPushCandidateService` + `config/pendingPushCandidates`），
+//    逐条盯着它的用例在 `pendingPushCandidateCaliber.test.js`。
+const { fakeCandidates } = require('./helpers/pendingPushTestData');
 
 const tmpStore = (prefix) =>
   new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), prefix)), idField: 'task_id' });
@@ -92,14 +95,9 @@ const newService = ({
   const usedClient = client || defaultClient;
   const service = new PendingDealPushService({
     settings: resolvedSettings,
-    secondDelivery: {
-      client: usedClient,
-      // ⚠️ 本服务的候选**只能**从这儿来；分区不许自己去找单。
-      listPendingDeliveries: async ({ includeItems } = {}) => {
-        assert.equal(includeItems, true, '货号尺码要靠 includeItems 拿（不额外读一遍销售明细）');
-        return orders;
-      },
-    },
+    // ⚠️ 2026-10-08（第一步）：本服务的候选**只能**从这儿来；
+    //    销售单 → 行的翻译在 helper 里，分区仍然是 `buildSections` 按行的 `criterion` 做。
+    candidates: fakeCandidates({ orders }),
     locator: locator || new SalesGroupThreadLocator({ store: tmpStore('pending-sections-mapping-') }),
     resolver: new LarkMessageLinkResolver({ client: {}, lookupEnabled: false }),
     client: usedClient,
@@ -131,18 +129,22 @@ const withLinks = async (orders) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 〇、分区判据本身：只看履约状态，不看交易类型编码
+// 〇、分区：按**行自己带的判据**分组（判据怎么来的在取数那一处，见 caliber 文件）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('〇 分区判据 = 履约状态：未交付 → 预定区；已交付（钱没结清）→ 现货待收区', () => {
-  assert.equal(pendingDealPushCriterionFor({ fulfillmentStatus: '未交付' }), 'undelivered');
-  assert.equal(pendingDealPushCriterionFor({ fulfillmentStatus: '部分交付' }), 'undelivered');
-  assert.equal(pendingDealPushCriterionFor({ fulfillmentStatus: '已交付' }), 'delivered_unpaid');
-  // 履约状态读不出来 → 按"还有货没交"处理（宁可放在链条最长的那一块里被看见）。
-  assert.equal(pendingDealPushCriterionFor({}), 'undelivered');
-  // 交易类型编码**不再是**判据：给一个老编码也不影响分区。
-  assert.equal(pendingDealPushCriterionFor({ fulfillmentStatus: '已交付', tradeTypeCode: 'SALE_PREPAID' }),
-    'delivered_unpaid');
+test('〇 分组只看行自己的 criterion：undelivered → 预定区；delivered_unpaid → 现货待收区', () => {
+  const { service } = newService({ orders: [] });
+  const sections = service.buildSections([
+    { rowId: 'r1', criterion: 'delivered_unpaid', facts: [], url: '' },
+    { rowId: 'r2', criterion: 'undelivered', facts: [], url: '' },
+  ]);
+  // 顺序**只由配置决定**（行进来的先后不影响区块顺序）。
+  assert.deepEqual(sections.map((section) => section.key), ['prepaid', 'cash_pending']);
+  assert.deepEqual(sections[0].rows.map((row) => row.rowId), ['r2']);
+  assert.deepEqual(sections[1].rows.map((row) => row.rowId), ['r1']);
+  // 没有候选的区块**根本不在**（空块不出现）。
+  const onlyUndelivered = service.buildSections([{ rowId: 'r2', criterion: 'undelivered', facts: [], url: '' }]);
+  assert.deepEqual(onlyUndelivered.map((section) => section.key), ['prepaid']);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -315,12 +317,14 @@ test('配置可配：换个 env 就换一套顺序、标题、行格式与分隔
   // ⚠️ 环境变量的值会被 `config/envValue` 去掉首尾空白（全仓同一套），
   //    所以分隔符写 ` | ` 取到的是 `|`；要带空格就把空格写进 `lineParts` 的模板里。
   assert.equal(settings.lineSeparator, '|');
+  // ⚠️ 2026-10-08（第一步）：行上**没有 `orderNo`**（她明确说不需要单号），
+  //    所以即使行模板里写着 `{orderNo}`，那一段也是空的、被收掉。
   assert.equal(text, [
     '🕘 2026-10-07 共 2 条（【赊账】1 笔 / 【定金】1 笔）',
     '【赊账】 1 条',
-    '1) XSD-U-1 【赊账】|6A637-7 43 号|待收 ¥228.00|查看话题 https://applink.feishu.cn/client/message/link?message_id=om_sale_cash_pending',
+    '1) 【赊账】|6A637-7 43 号|待收 ¥228.00|查看话题 https://applink.feishu.cn/client/message/link?message_id=om_sale_cash_pending',
     '【定金】 1 条',
-    '1) XSD-P-1 【定金】|B26002-52 37 号|待收 ¥128.00|查看话题 https://applink.feishu.cn/client/message/link?message_id=om_sale_reserved',
+    '1) 【定金】|B26002-52 37 号|待收 ¥128.00|查看话题 https://applink.feishu.cn/client/message/link?message_id=om_sale_reserved',
   ].join('\n'));
 });
 

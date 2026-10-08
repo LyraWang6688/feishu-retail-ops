@@ -26,6 +26,9 @@ const { PendingDealPushService } = require('../src/services/pendingDealPushServi
 const {
   resolvePendingDealPushConfig, resolveRetryDelaysMs, DEFAULT_RETRY_DELAYS_MS,
 } = require('../src/config/pendingDealPush');
+// ⭐ 2026-10-08（第一步）：候选换成"行"（`{ sections, rows, purchase }`）——
+//   本文件只关心重试状态机，候选由这个替身给。
+const { fakeCandidates } = require('./helpers/pendingPushTestData');
 
 const tmpStore = (prefix) =>
   new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), prefix)), idField: 'task_id' });
@@ -100,7 +103,7 @@ const newService = ({ failTimes = 0, store, scheduled = [], settings: overrides 
       messageFormat: 'text',
       ...overrides,
     },
-    secondDelivery: { client, listPendingDeliveries: async () => [ORDER] },
+    candidates: fakeCandidates({ orders: [ORDER] }),
     locator: new SalesGroupThreadLocator({ store: tmpStore('pending-retry-mapping-') }),
     resolver: new LarkMessageLinkResolver({ client: {}, lookupEnabled: false }),
     client,
@@ -108,7 +111,6 @@ const newService = ({ failTimes = 0, store, scheduled = [], settings: overrides 
     store: store || tmpStore('pending-retry-day-'),
     pin: { pinLatest: async () => ({ pinned: false, reason: 'pin_disabled', previousMessageId: '' }) },
     scheduleRetry: (delayMs, callback) => { scheduled.push({ delayMs, callback }); return { delayMs }; },
-    purchasePending: { listPendingBatches: async () => [], loadLinkIndex: async () => new Map(), resolveThreadLinkFrom: () => ({}) },
   });
   return { service, creates };
 };
@@ -232,7 +234,7 @@ test('D8 没有候选单（非失败）与改动前一致：当天不再试，�
     settings: {
       ...resolvePendingDealPushConfig({}), enabled: true, chatId: CHAT_ID, linkLookupEnabled: false, linkRequired: false,
     },
-    secondDelivery: { client, listPendingDeliveries: async () => [] },
+    candidates: fakeCandidates({ orders: [] }),
     locator: new SalesGroupThreadLocator({ store: tmpStore('pending-retry-empty-map-') }),
     resolver: new LarkMessageLinkResolver({ client: {}, lookupEnabled: false }),
     client,
@@ -240,7 +242,6 @@ test('D8 没有候选单（非失败）与改动前一致：当天不再试，�
     store,
     pin: { pinLatest: async () => ({ pinned: false, reason: 'pin_disabled', previousMessageId: '' }) },
     scheduleRetry: (delayMs, callback) => { scheduled.push({ delayMs, callback }); return {}; },
-    purchasePending: { listPendingBatches: async () => [], loadLinkIndex: async () => new Map(), resolveThreadLinkFrom: () => ({}) },
   });
 
   const first = await service.sendDailyPush({ now: T0 });

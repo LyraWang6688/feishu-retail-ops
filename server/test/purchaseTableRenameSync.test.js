@@ -165,6 +165,14 @@ test('A4 schema 同步「创建时间」→「报货日」；两个自动时间�
   // ③ ⭐ 守门：两个自动时间列的**物理名**在代码里一个都不许出现。
   //    写入只可能经两条路 —— 语义键（`createdAt`）或物理列名；两条都扫 = 钉住"没有写入点"。
   //    ⚠️ 去注释后再扫：注释里要留沿革（"原来叫创建时间"「到货日就是更新时间」）。
+  //    ⭐ 2026-10-08（这条守门相应收窄）：`'创建时间'` / `createdAt` 不再"全仓禁字"，
+  //       改为**按表**判 —— 「报货批次」那一列仍然不许有**写入点**，但：
+  //         · **「收款明细」的「创建时间」是另一张表的自动列**：9 点推送【现货待收】的时间窗
+  //           正按它算（`config/pendingPushCandidates` / `services/pendingPushCandidateService`）；
+  //         · 「报货批次」的 `createdAt` 语义键**只读**也合法（9 点推送那一行的「报货日」），
+  //           ⇒ 允许"只读语义键"的声明式写法（`readOnlyCreatedAtFiles`），仍然禁**写入**。
+  //    ⚠️ 真正的写入点判据是这一条：仓里**没有任何** `createdAt:` 出现在 create/update 的入参里
+  //       —— 由下面 `CREATED_AT_READONLY_FILES` 的显式清单 + 逐处人工核对保证。
   const roots = [
     path.join(SERVER_ROOT, 'src'),
     path.join(SERVER_ROOT, 'public'),
@@ -186,11 +194,27 @@ test('A4 schema 同步「创建时间」→「报货日」；两个自动时间�
     if (/['"]到货日['"]/.test(codeOnly)) {
       offenders.push(`${rel}: 代码里出现「到货日」这个物理列名`);
     }
-    if (/['"]创建时间['"]/.test(codeOnly)) {
-      offenders.push(`${rel}: 旧名「创建时间」还留在代码里（时间列一律不映射）`);
+    // ⚠️ 「创建时间」/ `createdAt` 现在**两张表都有**：
+    //    · 「报货批次」的那一列 = 被改名为「报货日」⇒ 旧名与语义键都不许再出现在别处；
+    //    · 「收款明细」的「创建时间」= **另一张表**的自动列，本链路**只读**它当时间窗
+    //      ⇒ 允许出现在取数那一处（`pendingPushCandidateService` / `pendingPushCandidates`）。
+    const inBatchContext = /['"]报货批次['"]|purchaseOrderBatch/.test(codeOnly);
+    // 「创建时间」这个**物理名**：只允许出现在 schema 的映射里（而且是**别的表**那一列）。
+    if (rel !== SCHEMA_REL && /['"]创建时间['"]/.test(codeOnly)
+      && /purchaseOrderBatch|报货批次/.test(codeOnly)) {
+      offenders.push(`${rel}: 「报货批次」的语境里出现了物理名「创建时间」`);
     }
-    // 语义键：`createdAt` 只许出现在 schema 定义文件里 —— 别处一出现就是"要碰这一列"。
-    if (rel !== SCHEMA_REL && /\bcreatedAt\b/.test(codeOnly)) {
+    // `createdAt` 语义键：schema 里声明；**只读**的取数那一处允许（那一处只是把它交出去渲染），
+    // 其余任何地方出现都视为"要碰这一列"。
+    const CREATED_AT_READONLY_FILES = [
+      'src/config/v1BitableSchema.js',
+      'src/services/purchasePendingBatchService.js',
+      'src/services/pendingPushCandidateService.js',
+      'src/services/pendingDealPushService.js',
+      'src/services/reportedAt.js',
+    ];
+    if (/\bcreatedAt\b/.test(codeOnly)
+      && !CREATED_AT_READONLY_FILES.includes(rel.replaceAll('\\', '/'))) {
       offenders.push(`${rel}: 用了 createdAt 语义键（会写到自动时间列）`);
     }
   }
