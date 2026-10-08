@@ -37,6 +37,12 @@
 //    **一行中文都不写**，所以换说法 / 换顺序 / 换分隔符只改这里或环境变量。
 
 const { readString, readFlag, readInt, readList } = require('./envValue');
+// ⭐ 2026-10-08（P0）：失败重试的**间隔与上限**、瞬时错误的小退避、失败告警的开关与文案
+//    都在 `config/pushRetry`（两条推送共用一处实现）。本文件只接**这一个**值：
+//    按天重试的偏移表（它同时还是 `PENDING_DEAL_PUSH_RETRY_DELAYS_MS` 的兜底默认值）。
+//    ⚠️ service 里那两层重试分别拿：`settings.retryDelaysMs`（按天层）+
+//      `config/pushRetry` 的 `transient` / `alert`（瞬时层与告警）。
+const { resolveDailyRetryConfig } = require('./pushRetry');
 
 const PENDING_DEAL_PUSH_ENABLED_ENV_KEY = 'PENDING_DEAL_PUSH_ENABLED';
 const PENDING_DEAL_PUSH_CHAT_ID_ENV_KEY = 'PENDING_DEAL_PUSH_CHAT_ID';
@@ -104,11 +110,14 @@ const MESSAGE_FORMAT_CARD = 'card';
 const MESSAGE_FORMAT_TEXT = 'text';
 const PENDING_DEAL_PUSH_MESSAGE_FORMATS = Object.freeze([MESSAGE_FORMAT_CARD, MESSAGE_FORMAT_TEXT]);
 
-// 失败重试的默认节奏：**首次失败之后**隔 5 分钟、再隔 15 分钟各重试一次
-// （业务负责人 2026-10-08 逐字：「失败后隔 **5/15 分钟**各重试一次，别一次失败就整天不发」）。
-// ⚠️ 两个数字是**相对首次失败的偏移量**，不是"上一次失败之后再等"。
-// ⚠️ 只重试**两次**；两次都失败 ⇒ 当天不再试（记明原因），第二天照常进候选。
-const DEFAULT_RETRY_DELAYS_MS = Object.freeze([5 * 60 * 1000, 15 * 60 * 1000]);
+// 失败重试的默认节奏：**每 10 分钟一次、最多 6 次重试**（= 一天最多 7 次尝试），
+// 由共享的按天策略派生（`config/pushRetry` 的 `PUSH_DAILY_RETRY_*`）。
+// 🔴 2026-10-08（P0）**改掉了上午那版**（相对首次失败 5 分钟 / 15 分钟各一次 = 只有 2 次重试）：
+//    上午的口径挡不住真机那一次"09:05 失败 ⇒ 一整天不发"（两次都在 20 分钟内用完）。
+//    现在的口径是「直到当天成功一次，上限 6 次」；**成功一次即停、绝不重发**。
+// ⚠️ 想回到老节奏（或换成任意节奏）**不用改代码**：`PENDING_DEAL_PUSH_RETRY_DELAYS_MS`
+//    仍然是**显式覆盖**（相对首次失败的毫秒偏移，逗号分隔；空串 = 不重试）。
+const DEFAULT_RETRY_DELAYS_MS = Object.freeze(resolveDailyRetryConfig({}).retryDelaysMs);
 
 // 两个区块的**身份**（业务事实，不是文案）：
 //   · key       = 内部键（`blockOrder` 里写的是它）；
@@ -403,13 +412,14 @@ const resolveMessageFormat = (env) => {
 
 /**
  * 失败重试的时刻（**相对首次失败**的毫秒偏移）。
- *   · 没设 → 默认 `[5 分钟, 15 分钟]`；
+ *   · 没设 → 共享按天策略派生的默认值（`PUSH_DAILY_RETRY_INTERVAL_MS` × 1..N，
+ *     默认 = 每 10 分钟一次、共 6 次）；
  *   · 设成空串 → `[]`（显式"不重试"，按 envValue 的统一规矩：空串 = 一个都不要）；
  *   · 非法值（非正整数 / 超过一天）→ 启动时抛错。
  */
 const resolveRetryDelaysMs = (env) => {
   const list = readList(env, PENDING_DEAL_PUSH_RETRY_DELAYS_MS_ENV_KEY);
-  if (list === null) return [...DEFAULT_RETRY_DELAYS_MS];
+  if (list === null) return [...resolveDailyRetryConfig(env).retryDelaysMs];
   return list.map((item) => {
     const value = Number(item);
     const max = 24 * 60 * 60 * 1000;

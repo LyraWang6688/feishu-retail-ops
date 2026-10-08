@@ -30,6 +30,7 @@ const { PurchasePendingBatchService } = require('../src/services/purchasePending
 const { PurchaseBatchLocator } = require('../src/services/purchaseBatchLocator');
 const { PendingDealPushService } = require('../src/services/pendingDealPushService');
 const { resolvePendingDealPushConfig } = require('../src/config/pendingDealPush');
+const { resolvePushRetryConfig } = require('../src/config/pushRetry');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { visibleCardText } = require('../src/utils/pendingDealPushCard');
 // ⭐ 2026-10-08（第一步）：候选口径变成"逐件 / 逐条一行" ⇒ 本文件里那些"单据对象"
@@ -100,7 +101,7 @@ const fakeGateway = (records = {}) => ({
 
 const newService = ({
   orders = [], records = {}, settings: overrides = {}, client: injected, locator, store,
-  purchasePending, candidates,
+  purchasePending, candidates, retrySettings, sleep,
 } = {}) => {
   const { client, creates } = injected ? { client: injected, creates: injected.creates } : fakeClient();
   const service = new PendingDealPushService({
@@ -115,6 +116,11 @@ const newService = ({
     store: store || tmpStore('pending-card-day-'),
     pin: fakePin(),
     scheduleRetry: () => ({}),
+    // ⚠️ 2026-10-08（P0）：本文件盯的是**卡片长什么样** ⇒ 默认把"瞬时错误小退避"关掉
+    //    （`maxRetries: 0`），免得每次 `create` 都被重试 3 次、把 ⑧ 那条降级用例的计数与耗时搞乱。
+    //    瞬时层本身由 `pendingDealPushRetry.test.js` 直接钉住。
+    retrySettings: retrySettings || resolvePushRetryConfig({ PUSH_TRANSIENT_RETRY_MAX_RETRIES: '0' }),
+    sleep: sleep || (async () => {}),
     purchasePending: purchasePending || new PurchasePendingBatchService({
       gateway: fakeGateway(records),
       batchLocator: new PurchaseBatchLocator({ store: tmpStore('pending-card-purchase-') }),
