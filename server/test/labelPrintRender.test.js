@@ -61,7 +61,9 @@ const layout = (patch = {}) => {
       },
     },
     fields: {
-      qr: true, brand: true, itemNo: true, color: true, category: true,
+      // ⚠️ `category: false` —— 2026-10-08 业务负责人明确"标签上不印品类"；
+      // 需要"印品类"那条路径的用例**显式**传 `layout({ fields: { category: true } })`。
+      qr: true, brand: true, itemNo: true, color: true, category: false,
       size: true, price: true, state: false, footer: false, ...(patch.fields || {}),
     },
     texts: { missingValue: '—', overflowMark: '…', stateSeparator: '/', ...(patch.texts || {}) },
@@ -215,33 +217,39 @@ test('品牌位置与对齐都来自 config：brandRow 改 inline 就回到右�
 
 test('货号 + 颜色同行：她给的例子「0225 棕色 · B」缩一点点也保品类；要牺牲货号才塞得下就丢品类保颜色', async () => {
   const render = await loadRenderModule();
+  // ⚠️ 2026-10-08 起**默认不印品类**（`FIELDS.category = false`）⇒ 这条专测"印品类时"的
+  //    阶梯规则，所以**显式**把品类打开；"默认不印"那一条由下面 noCategory 那段钉着。
+  const categoryOn = layout({ fields: { category: true } });
   // 她给的例子：4 位货号 + 2 字颜色 + 1 字品类 ⇒ 货号**缩一点点**就让得开，品类照印。
   const shortLabel = label({ item_no: '0225', color: '棕色', category: 'B' });
-  const short = render.labelHtml(shortLabel, layout());
+  const short = render.labelHtml(shortLabel, categoryOn);
   assert.ok(short.includes('<span class="label-item-no">0225</span>'));
   assert.ok(short.includes('<span class="label-color">棕色 · B</span>'), '颜色 · 品类跟在货号后面同一行');
-  const shortPlan = render.planItemNoColor(shortLabel, layout());
+  const shortPlan = render.planItemNoColor(shortLabel, categoryOn);
   assert.equal(shortPlan.categoryIncluded, true);
   assert.ok(shortPlan.itemNoSizeMm >= 2.4 && shortPlan.itemNoSizeMm <= 3.6, '为保住品类，货号缩了一点点');
   assert.ok(shortPlan.estimatedWidthMm <= shortPlan.availableWidthMm + 1e-9);
 
   // 货号长 / 品类长 ⇒ 保品类就得把货号缩到下限（甚至截断）⇒ 丢品类、保颜色，颜色一个字不少。
-  const plan = render.planItemNoColor(label(), layout());
+  const plan = render.planItemNoColor(label(), categoryOn);
   assert.equal(plan.colorText, '黑色', '放不下时优先保颜色：品类被丢掉、颜色保住');
   assert.equal(plan.categoryIncluded, false);
-  assert.ok(!render.labelHtml(label(), layout()).includes('休闲鞋'), '被丢掉的品类不出现在 HTML 里');
+  assert.ok(!render.labelHtml(label(), categoryOn).includes('休闲鞋'), '被丢掉的品类不出现在 HTML 里');
 
   // 关掉"优先保颜色"⇒ 品类优先：货号缩到最小也要把品类印上。
   const keepCategory = render.planItemNoColor(label(), layout({
+    fields: { category: true },
     body: { itemNoColor: { preferColorOverCategory: false } },
   }));
   assert.equal(keepCategory.categoryIncluded, true);
   assert.ok(keepCategory.colorText.includes('休闲鞋'), 'preferColorOverCategory = false ⇒ 品类保住');
   assert.ok(keepCategory.itemNoSizeMm <= 2.4 + 1e-9, '代价是货号缩到配置里的下限');
 
-  // 整个品类关掉（fields.category = false）⇒ 只剩货号 + 颜色。
+  // 整个品类关掉（fields.category = false，**也就是现在的默认**）⇒ 只剩货号 + 颜色。
   const noCategory = render.labelHtml(label(), layout({ fields: { category: false } }));
   assert.ok(noCategory.includes('黑色') && !noCategory.includes('休闲鞋'));
+  assert.ok(render.labelHtml(label(), layout()).includes('<span class="label-color">黑色</span>'),
+    '默认那份 layout（未显式开品类）只印货号 + 颜色：颜色后面没有 ·、也没有空段');
 });
 
 test('超长货号**不许压到二维码**：先缩字号、缩到底再截断补 …；估算宽度永远 ≤ 右栏可用宽度', async () => {
@@ -338,10 +346,19 @@ test('字段开关：打开所属状态与底部小字就印（与打样图那�
 
 test('取不到的值用 config 的占位顶（不留空），文字一律转义（货号里的 < > & 不许当 HTML）', async () => {
   const render = await loadRenderModule();
+  // ⚠️ 这条要断言"颜色为空 → 用 missingValue 顶上，品类照印"，所以**显式**开品类
+  //（默认 `category: false` 时颜色后面不跟品类，见下面那两行）。
   const html = render.labelHtml(label({ color: '', item_no: 'A1', footer_text: 'a&b' }),
-    layout({ fields: { footer: true } }));
+    layout({ fields: { footer: true, category: true } }));
   assert.ok(html.includes('— · 休闲鞋'), '颜色为空时用 layout.texts.missingValue');
   assert.ok(html.includes('a&amp;b'));
+
+  // 默认（不印品类）⇒ 只剩占位「—」：**颜色后面不许拖一个 `·`、也不许留空段**。
+  const withoutCategory = render.labelHtml(label({ color: '', item_no: 'A1' }), layout());
+  assert.ok(withoutCategory.includes('<span class="label-color">—</span>'),
+    '品类关掉时颜色那一格就是 missingValue 本身，没有 ·、没有空段');
+  assert.ok(!withoutCategory.includes('休闲鞋') && !withoutCategory.includes(' · '),
+    '默认那份标签上不许出现品类，也不许出现多余的分隔符');
 
   // 长货号（带尖括号）走"缩字号 / 截断"这条路时也必须转义。
   const escaped = render.labelHtml(label({ item_no: '<script>alert(1)</script>' }), layout());
