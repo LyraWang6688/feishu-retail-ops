@@ -37,17 +37,16 @@ const stripComments = (source) => source
 const LINK_PENDING = '链接待配置';
 
 /**
- * 业务负责人 2026-10-08 给的「销售查询」URL（逐字）。
- * ⚠️ 这是**多维表格里的一个页面**（`wbpzfEmPGK` 是页面 id、不是 tableId）——
+ * 业务负责人 2026-10-08 定稿的**两条**URL（逐字）—— 她原话：
+ * 「我们的URL就是用的这两个，**严禁你换成别的**」。
+ * ⚠️ 两条都是**发布分享链接**（`/share/base/webpage/<shareId>`）；
+ *    不要改成内部页面 URL（`/base/<appToken>?table=<页面id>`）。
  * 页面口径与系统口径的对照留档在 `docs/sales-query-page-and-system-caliber-2026-10-08.md`。
  */
 const SALES_QUERY_URL =
-  'https://scnzoiwpgxik.feishu.cn/base/QrXlbwXMLaJ2TNsxSfFcIA3rnwh?table=wbpzfEmPGK';
+  'https://scnzoiwpgxik.feishu.cn/share/base/webpage/shrcnY3ZG9LAjrArEe5RzfS8UGh';
 
-/**
- * 业务负责人 2026-10-08 给的「库存查询」URL（逐字）—— 这次是**发布分享链接**形状
- * （`/share/base/webpage/<shareId>`），与销售查询的内部页面 URL 不同；两种都按她给的原样落。
- */
+/** 「库存查询」URL（逐字，同一条消息里给的）。 */
 const INVENTORY_QUERY_URL =
   'https://scnzoiwpgxik.feishu.cn/share/base/webpage/shrcnaSFKbJAci7YxvC1AXpweBc';
 
