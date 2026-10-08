@@ -1,5 +1,10 @@
 const express = require('express');
 const controller = require('../controllers/workbenchController');
+// 准入闸门（未启用认证 503 / 未登录 401 / 白名单外 403）：**工作台与扫码页共用这一份**。
+// 它留在本文件里（没有搬去 middleware/）—— 既有哨兵用例
+// （`test/workbenchTwoTabsAndQueryEntries.test.js` 的 AC9/AC10）钉着这里必须看得见
+// `require('./feishuWebAuth')`，而"扫码页也走同一道闸门"只要求**共用同一个函数**，
+// 不需要搬家。扫码路由 `routes/scanPage.js` 从这里 require 它。
 const { enabled: feishuAuthEnabled, getSessionUser, allowedOpenIds } = require('./feishuWebAuth');
 const { SalesFollowupService } = require('../services/salesFollowupService');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
@@ -9,6 +14,8 @@ const { createLabelPrintService } = require('../services/labelPrintService');
 const { SampleReplacementService } = require('../services/sampleReplacementService');
 const { logError, logWarn } = require('../utils/logger');
 
+// ⚠️ 准入闸门只有这一份实现：语义与文案**逐字不变**（2026-10-08 的《工作台准入口径》沿用它）。
+// 扫码页（`GET /s/:number`）require 的也是它 —— 不新开鉴权、也不抄第二份判断。
 const requireWorkbenchAccess = (req, res, next) => {
   if (!feishuAuthEnabled()) return res.status(503).json({ success: false, error: '飞书身份认证尚未启用' });
   const user = getSessionUser(req);
@@ -113,4 +120,5 @@ const createWorkbenchRouter = (options = {}) => {
   return router;
 };
 
-module.exports = { createWorkbenchRouter };
+// `requireWorkbenchAccess` 也导出：扫码路由（`routes/scanPage.js`）要用**同一个**闸门函数。
+module.exports = { createWorkbenchRouter, requireWorkbenchAccess };

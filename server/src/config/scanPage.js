@@ -1,0 +1,215 @@
+/**
+ * 扫码页（**第一版：只读查库存**）的全部可配参数 —— **配置先行**。
+ *
+ * 背景（业务负责人 2026-10-08 定的第一件事）：
+ *   她给「货品信息」每一条出了**标签二维码**，码里的 URL 是
+ *   `https://hm.bamamei.online/s/{编号}`（唯一真源在 `config/tagQrCode.js` 的
+ *   `scanUrl.urlTemplate`，`编号` = `货号|颜色|类别`，做 URL 编码）。
+ *   ⇒ **那些码今天扫开是 404** —— 这个文件配的就是"扫开以后那一页"。
+ *
+ * 本版**只读**：页面只回答"这个编号有多少双、都在哪儿、缺哪些码"，
+ *   **一行都不写**（补货 / 销售 / 验收是下一版的事）。
+ *
+ * 放在这里的：路由挂载点 / 编号切分规则 / 三种「所属状态」的取值与列序 / 缺码文案 /
+ * 取数上限 / 用户可见文案 / 价格格式 / 认哪个物理列读「品类 · 类别」。
+ * 逻辑里**一个中文、一个数字都不写死** —— 改文案、换列名、调上限只动这个文件。
+ *
+ * ⚠️ 与 `config/labelPrint.js` 刻意**不合并**：那一份是"打印页"的排版参数
+ *   （纸张 / 字号 / 每行几个尺码），这一份是"扫码看库存"的展示与取数参数。
+ *   两者唯一共享的是二维码 URL 模板，而那个模板**不在这里**（在 `tagQrCode.js`）。
+ */
+
+/**
+ * 路由挂载点：`GET /s/:number`。
+ * ⚠️ **不放在 `/api/*` 下面**：那一段被 `API_KEY`（`x-api-key` 头）保护，
+ *    而扫码的人是**手机浏览器直接打开**的，没有这个头 ⇒ 会被挡。
+ *    挂到 `/s` 后走的是**工作台那一道飞书身份闸门**（未启用 503 / 未登录 401 / 白名单外 403）。
+ */
+const ROUTE = Object.freeze({
+  // `app.js` 用 basePath 挂载，router 里用 path（两边不许各写一份）。
+  basePath: '/s',
+  path: '/:number',
+});
+
+/**
+ * 「编号」= `货号|颜色|类别`（例：`YD6693-2|黑色|A`）。
+ * 例外的形状（只有两段、或颜色里带 `|`）**不改判据**：
+ * 一律按分隔符切，取前三段；切不出第 3 段就没有"类别"，缺码判定随之降级（见下）。
+ */
+const NUMBER = Object.freeze({
+  separator: '|',
+  segment: Object.freeze({ itemNo: 0, color: 1, category: 2 }),
+  // 手输 URL（大小写与原表不一致）时的兜底匹配。二维码里的编号**原样就是表里的值**，
+  // 正常情况下走精确匹配；这一条只为"她照着标签手打一遍"时不至于查不到。
+  caseInsensitiveFallback: true,
+  // 最多解几次百分号编码（Express 已经解过一次；这里容忍客户端**又编了一遍**的情况）。
+  // ⚠️ 只有"还看得见 `%XX`"才继续解 —— 孤立 `%`（`50%OFF`）一个字都不动。
+  decodePasses: 3,
+  // 关联单元格（「实时库存.编号」）为空时，用「库存键」公式的前三段兜底认行。
+  // 公式 = `货号|颜色|类别|尺码`，前三段就是「编号」+ 一个分隔符。
+  stockKeyPrefixFallback: true,
+});
+
+/**
+ * 「实时库存.所属状态」的三个取值 = 页面上的三列（顺序即列序）。
+ * ⚠️ 她哪天在表里加/改状态：数据里出现配置外的取值**不丢、不猜**，
+ *    按原值**追加一列**（列头就是原值）并记一条 warn ——
+ *    否则"共 N 双"会与明细对不上（这是本页最不能出的错）。
+ */
+const STATES = Object.freeze({
+  columns: Object.freeze(['门盒', '样品', '仓库']),
+  unknownColumns: 'append',
+  // 「所属状态」为空的行：同样不丢，列头用这个文案。
+  emptyLabel: '未标状态',
+});
+
+/**
+ * 缺码判定（设计稿上那行 `41 — — — ⚠️ 缺`）。
+ *
+ * 定义：**该编号的「类别」在「尺码管理」里有的尺码，在「实时库存」里数量为 0**。
+ * ⚠️ 全部尺码来自「尺码管理」按**类别**（A/B，= 编号第 3 段）筛出来的那一组。
+ *    · 拿不到「类别」列（列不存在 / 这个类别一条尺码都没有）⇒ **降级**：
+ *      只显示有库存的尺码，**不编造缺码**，并在页面上写明"只显示有库存的尺码"+ 记 warn。
+ */
+const MISSING_SIZE = Object.freeze({
+  enabled: true,
+  // 缺码行上的标记（尺码格子里那一个小徽标）。
+  badge: '缺',
+  icon: '⚠️',
+  // 缺码行整行的说明（放在页脚备注里，给"这行是什么意思"一个解释）。
+  hint: '标注「缺」的尺码 = 该编号在「尺码管理」里存在、但三种状态都没有库存。',
+});
+
+/**
+ * 用户可见文案。占位符用 `{...}`，由渲染层替换（**不留空段**）。
+ * ⚠️ 页面是**手机上看**的，文案尽量短。
+ */
+const TEXTS = Object.freeze({
+  pageTitle: '{itemNo} · 库存',
+  priceLabel: '单价',
+  identitySeparator: ' · ',
+  stockHeading: '库存（共 {total} 双）',
+  columnSize: '尺码',
+  // 数量为 0 的格子：一个破折号（设计稿就是这么定的）。
+  zero: '—',
+  missingValue: '—',
+  // 尺码格子里那个小徽标的 title（长按/悬停才看得到，移动端主要是给读屏用）。
+  missingBadgeTitle: '缺码：这个尺码没有库存',
+  unknownSizeLabel: '尺码未识别',
+  updatedAtLabel: '库存更新时间',
+  updatedAtUnknown: '—',
+  footerNumberLabel: '编号',
+  // 降级与截断都**写在页面上**，不只在日志里（她看不到日志）。
+  degradedSizesNote: '暂时读不到该类别在「尺码管理」里的全部尺码，本页只显示有库存的尺码。',
+  unknownStateNote: '有 {count} 双的「所属状态」不在预期取值里，已按原值另列。',
+  unknownSizeNote: '有 {count} 双读不出尺码，单独列在最后一行。',
+  truncatedSizesNote: '该类别尺码过多，缺码判定只看前 {count} 个。',
+  notFoundTitle: '没找到这个编号',
+  notFoundBody: '可能已删除、或编号变了。',
+  notFoundHint: '扫到的编号：',
+  // 空编号（`/s/` 或全是空白）与解码失败都回这一页。
+  badNumberTitle: '这个链接不对',
+  badNumberBody: '链接里的编号读不出来，请重新扫一次标签上的二维码。',
+  errorTitle: '暂时打不开，请稍后再试',
+  errorBody: '读库存时出错了。',
+  busyTitle: '库存数据正在准备中',
+  busyBody: '飞书那边还没准备好，请过几秒刷新这一页。',
+  retryHint: '若反复出现，请把这一页截图发给运营。',
+  requestIdLabel: '请求号',
+  limitTitle: '这次读的库存太多了',
+  limitBody: '为了避免显示不完整的库存，本页没有继续算。请稍后再试。',
+});
+
+/** 价格格式（来自「货品信息.单价」）。整数不补零：`¥399`；带角分才显示小数。 */
+const PRICE = Object.freeze({
+  prefix: '¥',
+  decimals: 2,
+});
+
+/**
+ * ⚠️ **只有这一处物理列名不在 `v1BitableSchema.js` 里**（与该文件"字段映射只有一个真源"的
+ * 规矩有偏差，**这是有意的临时取舍**）：
+ *   · 本轮 `config/v1BitableSchema.js` 正被**另一个子代理**改动（本任务明确不许碰它）；
+ *   · 加进 schema 的映射会被 `v1:schema-check:*` 当成契约 ——
+ *     而这两列在**生产 Base 上是否都叫这个名字，本机核不到**（本机 .env 指向测试 Base）。
+ *     加错了 = 部署闸门直接判红、而这一版是"最急的一件事"。
+ *   ⇒ 先放在这里，**读不到就降级**（缺码判定退化成"只显示有库存的尺码" + warn），
+ *     绝不会因为这一列对不上而让整页打不开。
+ *   ⇒ TODO（等 `v1BitableSchema.js` 解冻）：把这两条并进 schema 的
+ *     `product.fields` / `sizeManagement.fields`，然后删掉这一段。
+ *
+ * 证据：
+ *   · `product.categoryName`（「品类」，关联「品类管理」）：**生产只读核对过**
+ *     （`docs/production-base-changes-2026-10-08.md` 第 55 行：货品信息 15 列里有「品类(关联)」）；
+ *   · `sizeManagement.category`（「类别」）：**本机测试 Base 只读实测有这一列，而且是
+ *     **多选**（`type=4`，选项 A/B）—— 一条尺码可以同时属于 A 与 B（38–43 就是 `['A','B']`）。
+ *     ⇒ 判定"这个尺码属不属于这个编号的类别"必须用**成员判断**（见 service 的 `categoryValues`），
+ *     不能拿整格文本做等号比较。生产那一列本机核不到。
+ */
+const FIELD_NAMES_PENDING_SCHEMA = Object.freeze({
+  productCategoryName: '品类',
+  sizeCategory: '类别',
+});
+
+/**
+ * 取数上限 —— **宁可明说"这次读的太多"，也不显示一张不完整的库存表**。
+ * 超限时页面给一句人话（`texts.limitTitle/Body`）+ 记一条 warn，不是静默截断。
+ */
+const LIMITS = Object.freeze({
+  // 整张「实时库存」的记录数上限（一双一条；本页要按编号过滤，只能整表读）。
+  inventoryRecords: 20000,
+  // 整张「货品信息」的记录数上限（按「编号」找那一条）。
+  productRecords: 20000,
+  // 整张「尺码管理」的记录数上限（缺码判定用）。
+  sizeRecords: 5000,
+  // 一个类别的尺码清单超过这个数：缺码判定只看前 N 个（页面上写明）。
+  sizesPerNumber: 100,
+});
+
+/**
+ * 结构化日志事件名（**只读**链路：只有"看了 / 没找到 / 降级 / 出错"，没有任何写入事件）。
+ * 取值放这里，是为了让她那边的现象能在 PM2 日志里按一个词 grep 到。
+ */
+const EVENTS = Object.freeze({
+  viewed: 'scan.page.viewed',
+  notFound: 'scan.page.not_found',
+  badNumber: 'scan.page.bad_number',
+  sizesDegraded: 'scan.sizes.scope_unavailable',
+  unknownState: 'scan.state.unexpected',
+  unknownSize: 'scan.size.unresolved',
+  limitExceeded: 'scan.data.limit_exceeded',
+  failed: 'scan.page.failed',
+});
+
+const SCAN_PAGE = Object.freeze({
+  route: ROUTE,
+  number: NUMBER,
+  states: STATES,
+  missingSize: MISSING_SIZE,
+  texts: TEXTS,
+  price: PRICE,
+  fieldNamesPendingSchema: FIELD_NAMES_PENDING_SCHEMA,
+  limits: LIMITS,
+  events: EVENTS,
+});
+
+/** `{name}` 占位符替换（缺的值用 `missing` 顶，**不留空段**）。 */
+const fillText = (template, values = {}, missing = TEXTS.missingValue) => String(template ?? '')
+  .replace(/\{(\w+)\}/g, (match, key) => {
+    const value = values[key];
+    return value === undefined || value === null || value === '' ? missing : String(value);
+  });
+
+module.exports = {
+  SCAN_PAGE,
+  ROUTE,
+  NUMBER,
+  STATES,
+  MISSING_SIZE,
+  TEXTS,
+  PRICE,
+  FIELD_NAMES_PENDING_SCHEMA,
+  LIMITS,
+  EVENTS,
+  fillText,
+};
