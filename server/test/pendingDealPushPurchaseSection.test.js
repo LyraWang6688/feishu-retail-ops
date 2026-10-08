@@ -152,21 +152,21 @@ test('⑩ 一条消息两个大区：销售区在上、采购区在下，逐字�
 
   const text = visibleOf(creates[0]);
   assert.equal(text, [
-    // ⚠️ 2026-10-08：一个销售区块 ⇒ 标题**不再补分区计数**；行里**没有单号**；
-    //    两个缺失脚注合并到卡片最下面那一条 note（卡片本来就该把脚注放末尾）。
+    // ⚠️ 2026-10-08 晚：每行**两栏**（文字说明 | 查看话题）—— 没有序号、没有类型标签；
+    //    类型由**区域标题**表达；两个缺失脚注合并到卡片最下面那一条 note。
     '⏰ 2026-10-07 最近 7 天待处理的销售单（预定 / 现货待收）：1 笔',
     '【预定】1 笔',
-    '1. B26002-52 37码 · 【预定】 · 待收 ¥128.00',
+    'B26002-52 37码 · 待收 ¥128.00',
     '【采购】未到货的报货批次：2 批',
-    '1. CGD-20261007-0001 · 金猴 · 查看原话 https://applink.feishu.cn/client/thread/open?open_chat_id=oc_test_pending_push&open_thread_id=omt_1&openchatid=oc_test_pending_push&openthreadid=omt_1&thread_position=-1',
-    '2. CGD-20261007-0002',
+    'CGD-20261007-0001 · 金猴 | 查看话题',
+    'CGD-20261007-0002',
     '（1 笔的深链暂不可用：飞书接口未返回 message_app_link，见日志 sales.pending_deal_push.link.missing）',
     '（1 批的深链暂不可用，见日志 sales.pending_deal_push.purchase_link.missing）',
   ].join('\n'));
   // 两个区块之间**一条分割线**（采购区之前那条）。
   const card = JSON.parse(creates[0].data.content);
   assert.deepEqual(card.elements.map((element) => element.tag),
-    ['div', 'div', 'hr', 'div', 'div', 'div', 'note']);
+    ['div', 'column_set', 'hr', 'div', 'column_set', 'column_set', 'note']);
 });
 
 test('⑪ 销售区哨兵：同一批销售候选，加不加采购区，**销售那半逐字节相同**（销售区没有大区标题）', async () => {
@@ -190,7 +190,7 @@ test('⑪ 销售区哨兵：同一批销售候选，加不加采购区，**销�
   // 销售那半（采购区之前的那一段）**逐字节相同**
   assert.equal(combined.slice(0, salesText.length), salesText);
   assert.equal(combined.slice(salesText.length),
-    '\n【采购】未到货的报货批次：1 批\n1. CGD-20261007-0001 · 金猴 · 查看原话 https://x');
+    '\n【采购】未到货的报货批次：1 批\n1. CGD-20261007-0001 · 金猴 · 查看话题 https://x');
   // 而且销售区的大区标题是**空串**（默认不给销售区多加一行）
   assert.equal(withPurchase.settings.salesAreaTitle, '');
 });
@@ -310,9 +310,16 @@ test('F3 深链走本地映射（chat_id + thread_id）→ 话题深链；拿不
   assert.equal(result.purchaseBatchCount, 2, '拿不到深链也不能漏掉候选');
   assert.equal(result.purchaseMissingLinkCount, 1);
   const text = visibleOf(creates[0]);
-  assert.match(text, /1\. CGD-20261007-0001 · 金猴 · 查看原话 https:\/\/applink\.feishu\.cn\/client\/thread\/open\?/);
-  assert.match(text, /2\. CGD-20261007-0002$/m, '第 2 批照发（那一行不出现链接段）');
+  assert.match(text, /CGD-20261007-0001 · 金猴 \| 查看话题/);
+  assert.match(text, /CGD-20261007-0002$/m, '第 2 批照发（那一行只有文字栏）');
   assert.match(text, /（1 批的深链暂不可用，见日志 sales\.pending_deal_push\.purchase_link\.missing）/);
+  // 深链在按钮的 default_url 里（不再是正文里的文字链接）。
+  const urls = JSON.parse(creates[0].data.content).elements
+    .flatMap((element) => (element.columns || []).flatMap((column) => column.elements))
+    .filter((element) => element.tag === 'button')
+    .map((element) => element.behaviors[0].default_url);
+  assert.equal(urls.length, 1);
+  assert.match(urls[0], /https:\/\/applink\.feishu\.cn\/client\/thread\/open\?/);
 });
 
 test('F1 候选直接查「报货批次」：只有 到货状态 = 未到货 的进候选（其余状态一律不进）', async () => {
