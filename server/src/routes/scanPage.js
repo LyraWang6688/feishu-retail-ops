@@ -14,17 +14,35 @@
  *     **没有新开一套鉴权**；
  *   · 第一版**只读**：service 只 `listAll`，本文件连一个写调用都没有。
  *
- * ⚠️ 手机浏览器上的 401/403/503 目前是**工作台那套 JSON**（与工作台一字不差——
- *    brief 要求"既有语义不变"）。给她更好的做法是"跳到飞书登录再回来"，
- *    那是**下一版**的事，本轮不动鉴权语义（见交付报告"发现但没动"一节）。
+ * 「扫码即用」（2026-10-08 下半场加）：
+ *   ⚠️ 她是在**手机浏览器**上扫标签二维码的 —— 手机里没有 `hm.bamamei.online` 的登录
+ *   cookie，原来那一版会把工作台那套 **401 JSON** 甩到她脸上。
+ *   现在：**未登录 → 302 去 `/api/auth/feishu/start?next=<刚才那一页>`**，登录成功后
+ *   自动回到刚才那个扫码页（逻辑与白名单在 `routes/feishuWebAuth.js` +
+ *   `config/scanAuthRedirect.js`）。
+ *   🔴 **共享闸门 `requireWorkbenchAccess` 的默认语义一个字都没改**
+ *   （未启用 503 JSON / 未登录 401 JSON / 白名单外 403 JSON）—— 工作台的 fetch 接口
+ *   与既有哨兵用例都钉着它。这里只在**扫码页这一个 router** 上把"未登录"那一种情况
+ *   提前接住换成 302，另外两种原样交给下面那道共享闸门。
+ *   ⚠️ 作用域是**整个扫码 router**（`/s/` 与 `/s/:number` 都算"扫码页"）：
+ *   没登录的人先登录再看页面，页面本身（200/400/404/503）对已登录的人**逐字不变**。
  */
 const express = require('express');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { createScanPageService } = require('../services/scanPageService');
 const { renderScanPage, renderScanMessagePage } = require('../views/scanPageRenderer');
 const { requireWorkbenchAccess } = require('./workbench');
+// ⚠️ 会话读取/解码与回跳校验**复用 feishuWebAuth 里那一份**（`getSessionUser` =
+//    `requireWorkbenchAccess` 判 401 用的同一个函数），**不重写第二份**。
+const {
+  enabled: feishuAuthEnabled,
+  getSessionUser,
+  buildLoginStartUrl,
+  resolveScanNext,
+} = require('./feishuWebAuth');
 const { SCAN_PAGE } = require('../config/scanPage');
-const { logError, logWarn } = require('../utils/logger');
+const { SCAN_AUTH_REDIRECT } = require('../config/scanAuthRedirect');
+const { logError, logInfo, logWarn } = require('../utils/logger');
 
 // 飞书偶发「数据未准备好」(1254607)：回 503 + Retry-After，让她"过几秒刷新"，
 // 这与工作台查询接口的口径一致（`controllers/workbenchController.js`）。
@@ -46,6 +64,36 @@ const createScanPageRouter = (options = {}) => {
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     next();
   });
+
+  /**
+   * 「扫码即用」：未登录 → **302** 去飞书登录（登录成功后自动回到刚才那一页）。
+   *
+   * 判定"未登录"用的是**共享闸门同一套能力**（`feishuWebAuth.enabled` + `getSessionUser`），
+   * 不是新写一份：`getSessionUser` 就是 `requireWorkbenchAccess` 判 401 时读会话的那个函数
+   * （读 `workbench_session` cookie → HMAC 验签 → 查过期）。
+   *
+   * 三种准入情况的分工（**共享闸门语义不变**）：
+   *   · 认证**没启用** → 这里 `next()`，由共享闸门回 **503 JSON**（一字不变）；
+   *   · **没登录**      → 这里回 **302**（本轮唯一的行为变化，只发生在扫码页）；
+   *   · **已登录但白名单外** → 这里 `next()`，由共享闸门回 **403 JSON**（一字不变）。
+   * ⚠️ 已登录且白名单内的人，下面的页面行为（200/400/404/503）**逐字不变**。
+   */
+  router.use((req, res, next) => {
+    if (!feishuAuthEnabled()) return next();
+    if (getSessionUser(req)) return next();
+    // 「刚才那一页」= 原 path + 原 query（本 router 挂在 `SCAN_PAGE.route.basePath` 上，
+    // `req.originalUrl` 已经含挂载点）。再过一次回跳白名单：只放行扫码页自己，
+    // 别的（`//host`、协议、绝对 URL、`/s/../api/...`）一律回落工作台首页。
+    const target = resolveScanNext(
+      String(req.originalUrl || `${config.route.basePath}${req.url || ''}`),
+    );
+    logInfo(SCAN_AUTH_REDIRECT.events.loginRedirect, {
+      request_id: req.requestId,
+      next: String(target).slice(0, 200),
+    });
+    return res.redirect(302, buildLoginStartUrl(target));
+  });
+
   router.use(requireWorkbenchAccess);
 
   const message = ({ title, body, number = '', requestId = '', retryHint = '' }) => renderScanMessagePage(
