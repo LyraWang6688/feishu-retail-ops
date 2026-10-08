@@ -250,20 +250,31 @@ class V1BitableGateway {
     return records.find((record) => textValue(record.fields?.[fieldName]).trim() === target) || null;
   }
 
-  async uploadAttachment(filePath) {
+  /**
+   * 上传一个附件到本 Base 的素材库，拿回 `file_token`（之后用它写附件字段）。
+   *
+   * `options.parentType`（默认 `bitable_image`）由各链路的 config 决定 —— 官方文档
+   * （`drive/v1/medias/upload_all`，原文片段见 `config/tagQrCode.js` 的注释）规定：
+   * 多维表格图片 = `bitable_image`、多维表格文件 = `bitable_file`，
+   * 两者 `parent_node` 都传**多维表格的 app_token**（本网关自己有，调用方不用管）。
+   * `options.operation` 只用于报错文案：**默认值与文案逐字不变**，
+   * 所以既有的采购调用方（只传 filePath）行为一个字都没改。
+   */
+  async uploadAttachment(filePath, options = {}) {
     const stat = await fs.promises.stat(filePath);
+    const operation = options.operation || '上传采购原始图片';
     const response = await this.client.drive.media.uploadAll({
       data: {
         file_name: path.basename(filePath),
-        parent_type: 'bitable_image',
+        parent_type: options.parentType || 'bitable_image',
         parent_node: this.schema.appToken,
         size: stat.size,
         file: fs.createReadStream(filePath),
       },
     });
-    if (typeof response?.code === 'number') this.assertSuccess(response, '上传采购原始图片');
+    if (typeof response?.code === 'number') this.assertSuccess(response, operation);
     const token = response?.file_token || response?.data?.file_token || response?.data?.data?.file_token;
-    if (!token) throw new Error('上传采购原始图片成功但未返回 file_token');
+    if (!token) throw new Error(`${operation}成功但未返回 file_token`);
     return token;
   }
 

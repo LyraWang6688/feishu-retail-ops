@@ -377,3 +377,119 @@ test('同一包里的多条旧到货表记录同样一条都不分派（表已�
   assert.deepEqual(packages, []);
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ⑤ 「货品信息」的新支路：`标签二维码` 自动补齐（2026-10-08）
+//
+// 路由层只做**一件事**：按 **table_id** 认出"事件来自货品信息表"，把整个 `action_list`
+// 原样交给 `tagQrCodes.handleTableChanges`（判定与写库都在那个 service 里）。
+//
+// 这里钉住的是**分派**，不是业务：
+//   · 只认货品信息 —— 报货表的事件**一个字都不许**流到这条新支路；
+//   · 反向也要钉：货品信息的事件**不许**碰 `purchaseWebhooks`（报货那条路逐字不变）；
+//   · 异步 —— handler 同步返回 `{}`（飞书要求及时响应），处理在 `setImmediate` 之后。
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PRODUCT_TABLE_ID = V1_BITABLE_SCHEMA.tables.product.tableId;
+
+const createTagQrRecordingService = () => {
+  const calls = [];
+  const purchaseCalls = [];
+  return {
+    calls,
+    purchaseCalls,
+    service: {
+      tagQrCodes: {
+        handleTableChanges: async (actionList) => {
+          calls.push(actionList);
+          return { enabled: true, results: [] };
+        },
+      },
+      purchaseWebhooks: {
+        acceptMany: async (kind, recordIds, options) => {
+          purchaseCalls.push([kind, recordIds, options?.expectedCount]);
+        },
+      },
+    },
+  };
+};
+
+test('⑤ 分派：货品信息表的新增 + 修改**整包**交给 tagQrCodes，且一个采购分派都不产生', async () => {
+  const { service, calls, purchaseCalls } = createTagQrRecordingService();
+  const handlers = createLarkEventHandlers(service);
+  const actionList = [
+    { record_id: 'rec_p_new', action: 'record_added' },
+    { record_id: 'rec_p_edit', action: 'record_edited' },
+  ];
+
+  assert.doesNotThrow(() => handlers['drive.file.bitable_record_changed_v1']({
+    file_token: APP_TOKEN,
+    table_id: PRODUCT_TABLE_ID,
+    action_list: actionList,
+  }));
+  await flushDispatch();
+
+  assert.equal(calls.length, 1, '一次事件只调一次 handleTableChanges');
+  // 原样透传：**判定"哪条动作要出码"不在这层**（口径在 config + service），所以连
+  // record_edited 也一起交下去，不在这里筛。
+  assert.deepEqual(calls[0], actionList);
+  assert.deepEqual(purchaseCalls, [], '货品信息的事件不许流进报货那条路');
+});
+
+test('⑤ 分派只认货品信息：报货表的事件不碰 tagQrCodes（报货那条路逐字不变的哨兵）', async () => {
+  const { service, calls, purchaseCalls } = createTagQrRecordingService();
+  const handlers = createLarkEventHandlers(service);
+
+  handlers['drive.file.bitable_record_changed_v1'](bitableEvent(REPORT_TABLE_ID, 'rec_report_sentinel'));
+  await flushDispatch();
+
+  assert.deepEqual(calls, [], '报货表的事件只能走 purchaseWebhooks');
+  assert.deepEqual(purchaseCalls, [['supplier-report', ['rec_report_sentinel'], 1]], '报货那条路的形状没变');
+});
+
+test('⑤ 异步：handler 同步返回 {} ，处理在 setImmediate 之后才发生', async () => {
+  const { service, calls } = createTagQrRecordingService();
+  const handlers = createLarkEventHandlers(service);
+
+  const response = handlers['drive.file.bitable_record_changed_v1']({
+    file_token: APP_TOKEN,
+    table_id: PRODUCT_TABLE_ID,
+    action_list: [{ record_id: 'rec_async', action: 'record_added' }],
+  });
+
+  assert.deepEqual(response, {}, '事件响应不阻塞');
+  assert.deepEqual(calls, [], '返回时还没开始处理（异步）');
+  await flushDispatch();
+  assert.equal(calls.length, 1, '下一拍才开始处理');
+});
+
+test('⑤ 没接线（service 上没有 tagQrCodes）→ 不抛错，并留下明确的排查线索', async () => {
+  const { service, purchaseCalls } = createTagQrRecordingService();
+  delete service.tagQrCodes;
+  const handlers = createLarkEventHandlers(service);
+
+  // ⚠️ 这条线索是 `logWarn`（→ console.warn），上面那个共用 helper 只收 console.log，
+  //    所以这里本地收一份（info + warn）。
+  const logs = [];
+  const originalLog = console.log;
+  const originalWarn = console.warn;
+  console.log = (line) => logs.push(String(line));
+  console.warn = (line) => logs.push(String(line));
+  try {
+    assert.doesNotThrow(() => handlers['drive.file.bitable_record_changed_v1']({
+      file_token: APP_TOKEN,
+      table_id: PRODUCT_TABLE_ID,
+      action_list: [{ record_id: 'rec_no_wire', action: 'record_added' }],
+    }));
+    await flushDispatch();
+  } finally {
+    console.log = originalLog;
+    console.warn = originalWarn;
+  }
+
+  assert.deepEqual(purchaseCalls, []);
+  assert.ok(
+    logs.some((line) => line.includes('product.tag_qr.not_wired')),
+    '没接线要说清楚，不能静默什么都不做',
+  );
+});
+
