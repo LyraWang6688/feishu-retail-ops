@@ -7,19 +7,25 @@
 //   · 不另写库存逻辑：库存流水与实时库存一律走既有的 InventoryService（见下面 inventory 端口）。
 //   · 不改生产表结构：不给销售主表 / 销售明细 / 收款明细加字段（见幂等一节）。
 //
-// 写入（默认口径：**售后不影响原单**）：
+// 写入（默认口径 = 业务负责人 2026-10-08 逐字给的售后口径）：
 //   1) 新「销售主表」：原话 + 原销售单号 + 交易类型=行为(SALE_RETURN/EXCHANGE/COMPENSATION)
 //   2) 新「销售明细」行：交易类型=行为 · 销售单号=**原主表**（关联）· 成交金额=正数
+//      ⭐ 赔货那一条：成交金额 **0**（口径：「成交金额记为 0」）· 履约状态 **已赔货**
 //   3) 原「销售明细」的「履约状态」→ 已退货 / 已换货 / 已赔货
-//   4) 钱：cash → 「收款明细」一条（交易方向=收入/退回，金额正数，关联=新主表，
-//          交易方式 = **她说的那个**；她没说才沿用原单的 —— 见 settleCash）；
-//          prepaid → ⛔ **已下线**：它的唯一落点「客户往来货款」被业务负责人**整表删除**
-//          （2026-10-08，生产 Base 里已没有这张表）⇒ 这条路现在**在任何写入之前大声失败**，
-//          见 assertPrepaidAvailable()。等「已留存」的新落点定下来再按新表重建。
+//   4) 钱（她的 2026-10-08 口径，出处 docs/goods-and-money-flows-2026-10-08.md §3）：
+//      · **退货**（默认 `returnFundsMode = updateStatus`）→ **不新建记录**，
+//        把**原收款记录**的「收款状态」改成 **已退款**（退钱）/ **已留存**（用户留存）；
+//        旧行为（新建一条「交易方向=退回」的收款行）保留在 `newReturnRow` 模式下，翻配置即可回退。
+//      · **换货 / 赔货**的差价 → 新建「收款明细」一条：
+//        方向 = 收入（她补差价，状态 已收款）/ 退回（我们付差价，状态 **已退款**）。
+//      · ⛔ 预存（prepaid）那条**老**通路仍**已下线**（落点「客户往来货款」被整表删除）；
+//        但它现在**只在"不是退货改状态"的场合**才拦（退货的"用户留存"改走原收款行的 已留存）。
 //   5) 「库存流水」：退货 1 行 / 赔货 1 行 / 换货 2 行（方向相反），数量都是正数
 //   6) 「实时库存」：退货/换货把旧鞋加回 restockState；换货/赔货按声明从门盒减一行
+//   7) ⭐ **原「销售主表」的「售后次数」+1**（她的口径：「根据售后行为去叠加这个数量」）——
+//      这是「原主表一字不动」的**唯一例外**；同一次售后重放只 +1（见 countAfterSales）。
 //
-//   ⭐ 原「销售主表」**一字不动**（业务负责人 2026-10-06 定过）：
+//   ⭐ 除「售后次数」外，原「销售主表」**一字不动**（业务负责人 2026-10-06 定过）：
 //      「退过没退过」记在原「销售明细」的「履约状态 = 已退货/已换货/已赔货」＋
 //      新建的那条退货单（交易类型 = 销售退货）上，**不写原单的「销售状态」** ——
 //      那一列的语义是"明细写进去了没有"（未写入/部分写入/已写入/写入失败），
@@ -58,6 +64,7 @@ const {
   afterSalesEventId,
   afterSalesOperationId,
   readAfterSalesConfig,
+  usesOriginalPaymentStatus,
 } = require('../config/afterSales');
 const { SELLABLE_KINDS, sellableKindOf } = require('../config/sellableKinds');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
@@ -109,6 +116,41 @@ const cellText = (value) => textValue(value).trim();
 const cellNumber = (value) => {
   const raw = cellText(value).replace(/,/g, '').replace(/¥/g, '');
   return raw === '' ? null : Number(raw);
+};
+
+/**
+ * 原收款记录的排序键（多笔收款时"先冲哪一笔"）：飞书「创建时间」(自动字段) → 「收款时间」→ 0。
+ * 只用于**确定性排序**：同一份数据每次得到同一个顺序，不会因为 listAll 的返回顺序变化换一组目标行。
+ */
+const originalPaymentOrderKey = (record, fields = {}) => {
+  for (const semantic of ['createdAt', 'receivedAt']) {
+    const name = fields[semantic];
+    if (!name) continue;
+    const value = Number(record?.fields?.[name]);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return 0;
+};
+
+/**
+ * 退货要改哪几条原收款记录 —— **最简单且可解释**的做法（业务口径见 config/afterSales.js）：
+ * 退款金额按**后进先出**从最近一笔收款往前冲抵，被冲抵到的行**整行**改成目标状态。
+ *   例：退 250，原收款「尾款 200（后）＋ 定金 100（前）」
+ *       ⇒ 两条都被冲抵到（200 < 250）⇒ 两条都改成 已退款，`uncovered` = 0。
+ *
+ * ⚠️ 已知局限（**刻意不发明复杂规则**）：收款状态是**单选**，没有"部分退款"这一档，
+ *    所以被**部分**冲抵的那一行也整行显示成 已退款/已留存；
+ *    冲不完的差额只报 `uncovered`（调用方打 warning），**不新建行**。
+ */
+const selectReturnFundTargets = (candidates = [], amount = 0) => {
+  const targets = [];
+  let remaining = Number(amount) || 0;
+  for (const candidate of candidates) {
+    if (remaining <= 0) break;
+    targets.push(candidate);
+    remaining -= Math.abs(Number(candidate.amount) || 0);
+  }
+  return { targets, uncovered: Math.max(0, Math.round(remaining * 100) / 100) };
 };
 
 /**
@@ -265,13 +307,19 @@ class AfterSalesService {
    */
   async runWithGate(request) {
     const existing = await this.store.get(request.operationId);
-    // 「已经写进去过东西」才需要认指纹：主表/明细/状态/收款任一落过盘，
+    // 「已经写进去过东西」才需要认指纹：主表/明细/状态/收款/原收款状态/售后次数任一落过盘，
     // 就说明这一个分片上已经产生业务事实，换一笔请求不能直接接管。
     const wroteSomething = Boolean(existing && (
       existing.master_record_id
       || (existing.detail_record_ids || []).length
       || (existing.original_details_marked || []).length
       || existing.payment_record_id
+      // ⭐ 退货「改原收款状态」那一支：目标行的**意图**一落盘就算写过东西
+      //   （哪怕状态还没改完），否则重试会被当成"没写过"而重新选一遍目标行。
+      || (existing.original_payment_targets || []).length
+      || (existing.original_payments_updated || []).length
+      // ⭐ 「售后次数」的意图（改动前/改动后）同样算业务事实。
+      || existing.after_sales_count
     ));
     if (wroteSomething && existing.request_fingerprint !== request.fingerprint) {
       throw new Error(
@@ -308,6 +356,11 @@ class AfterSalesService {
       detail_record_ids: [],
       original_details_marked: [],
       payment_record_id: '',
+      // ⭐ 退货"改原收款状态"那一支的进度（意图先落盘，再改远端 —— 重放不会重复冲抵）。
+      original_payment_targets: [],
+      original_payments_updated: [],
+      // ⭐ 「售后次数」的意图 { record_id, before, after }（同一次售后只 +1）。
+      after_sales_count: null,
     });
     return this.run(request, progress);
   }
@@ -322,9 +375,15 @@ class AfterSalesService {
     // **不写**任何飞书时间列（2026-10-06 起：「发生时间」不再写，「入库时间」「报单时间」
     // 已从生产表删除）。调用方给了时间就用它，否则用当前时间。
     request.occurredAt = request.receivedAt ?? this.now();
-    // 预存（prepaid）这条路已下线（落点「客户往来货款」被她 2026-10-08 整表删除）：
+    // 预存（prepaid）的**老**通路已下线（落点「客户往来货款」被她 2026-10-08 整表删除）：
     // 在这里就停 —— 这是 run() 的校验阶段，**任何写入之前**，失败时一个字节都没写。
-    if (request.settlement === 'prepaid') this.assertPrepaidAvailable();
+    // ⚠️ 例外：**退货 + 她的默认口径（updateStatus）**下，"钱先存着"（prepaid）的落点
+    //    不再是那张表，而是**原收款记录的「收款状态」= 已留存**（她 2026-10-08 的逐字口径：
+    //    「……如果是用户要资金，那就是已退款；**用户留存，那就是已留存**」）
+    //    ⇒ 这一支不需要那张表，所以不在这里拦。
+    if (request.settlement === 'prepaid' && !this.usesOriginalPaymentStatusRoute(request)) {
+      this.assertPrepaidAvailable();
+    }
 
     const original = await this.readOriginal(request);
     const master = await this.ensureMaster(request, spec, progress);
@@ -342,11 +401,16 @@ class AfterSalesService {
       await this.status.write(master.recordId, { stock: WRITE.stock.failed });
       throw error;
     }
+    // ⭐ 「售后次数」+1 —— 放在**所有业务写入之后、收口之前**：
+    //    只有这一笔的货 / 钱 / 库存都落完了，才算"来售后过一次"。
+    //    幂等靠本地记录里的 { before, after }（见 countAfterSales）。
+    const afterSalesCount = await this.countAfterSales(request, original, progress);
     // 走到这里 = 主表 / 明细 / 钱 / 库存四件事都落完了 → 三个维度一起收口。
     await this.status.write(master.recordId, {
       sales: WRITE.sales.done, funds: WRITE.funds.done, stock: WRITE.stock.done,
     });
-    // ⭐ 到这里就结束了：**原「销售主表」一字不动**（业务负责人 2026-10-06 定过）。
+    // ⭐ 到这里就结束了：除**「售后次数」**外，**原「销售主表」一字不动**（业务负责人 2026-10-06 定过；
+    //    「售后次数」是 2026-10-08 她明确要的那一个例外：「根据售后行为去叠加这个数量」）。
     //    "退过没退过"记在原「销售明细」的「履约状态」和新建的退货单上；
     //    原单的「销售状态」那一列语义是"明细写进去了没有"，没有「已退货」这个选项，
     //    写了飞书会自动新建选项。（回写原单「销售状态」的开关与实现已于 2026-10-06 整体删除。）
@@ -361,6 +425,8 @@ class AfterSalesService {
       originalDetailIdsMarked,
       money,
       stock,
+      // ⭐ 原单「售后次数」这一次的结果（{ before, after }）；没写成功时是 null。
+      afterSalesCount,
     };
     await this.saveProgress(request, {
       status: 'completed',
@@ -380,9 +446,23 @@ class AfterSalesService {
       // 这是"她说现金、账上写微信"这类问题的排查入口。
       money_method_source: money.methodSource || '',
       money_method_id: money.methodId || '',
+      // ⭐ 退货"改原收款状态"那一支：改了哪几行、改成了什么状态（新的记账落点）。
+      money_payment_status: money.status || '',
+      money_payment_record_ids: money.recordIds || [],
+      // ⭐ 原单「售后次数」这一次从 before 叠到 after。
+      after_sales_count_before: afterSalesCount?.before ?? null,
+      after_sales_count_after: afterSalesCount?.after ?? null,
       stock_rows: stock.map((item) => `${item.behaviorCode}:${item.state}:${item.quantity}`),
     });
     return result;
+  }
+
+  /** 这一次售后的钱是不是走「改原收款记录的状态」这条腿（只有退货 + 默认口径才是）。 */
+  usesOriginalPaymentStatusRoute(request) {
+    return usesOriginalPaymentStatus({
+      action: request?.action,
+      returnFundsMode: this.config.returnFundsMode,
+    });
   }
 
   // --- 0) 读原单：原主表 + 被退被换的原明细行 + 原单的收款方式 ------------------------
@@ -414,30 +494,65 @@ class AfterSalesService {
       details.push(record);
     }
 
+    // 原单的收款记录**只读一次**：收款方式（她没说时沿用）与退货"改状态"共用这一份。
+    const payments = await this.readOriginalPayments(request.originalSalesEntryRecordId);
     return {
       entry,
       orderNo,
       details,
-      paymentMethodRecordId: await this.readOriginalPaymentMethod(request.originalSalesEntryRecordId),
+      payments,
+      paymentMethodRecordId: this.originalPaymentMethodOf(payments),
     };
+  }
+
+  /** 从已读到的收款记录里挑"原单的收款方式"（记录 id 最小那条，结果确定）。 */
+  originalPaymentMethodOf(payments = []) {
+    const candidates = payments
+      .filter((item) => item.methodIds.length === 1)
+      .sort((left, right) => String(left.recordId).localeCompare(String(right.recordId)));
+    return candidates[0]?.methodIds[0] || '';
+  }
+
+  /**
+   * 原单的**全部**收款记录（这次售后可能要改它们的「收款状态」——见 settleReturnFundsOnOriginalPayments）。
+   * 返回 [{ recordId, fields, status, amount, methodIds, orderKey }]，按**后进先出**排好序
+   * （最近一笔在最前）：她 2026-10-08 的退货口径是"把收款改成…"，多笔收款时先冲最近那笔。
+   *
+   * 排序键：飞书「创建时间」(createdAt，自动字段，只读) → 「收款时间」(receivedAt) → record_id。
+   * 三个都取不到时退化成 record_id 降序 —— 顺序**确定**（同一份数据每次结果一致），
+   * 不会因为 listAll 的返回顺序变化而换一组目标行。
+   */
+  async readOriginalPayments(salesEntryRecordId) {
+    const fields = this.tableOf('paymentRecord').fields;
+    const records = await withSalesReadRetry(
+      () => this.gateway.listAll('paymentRecord'), 'after_sales_original_payments',
+    );
+    return records
+      .filter((record) => linkedRecordIds(record.fields?.[fields.salesEntry]).includes(salesEntryRecordId))
+      .map((record) => ({
+        recordId: record.record_id,
+        fields: record.fields || {},
+        status: cellText(record.fields?.[fields.status]),
+        amount: cellNumber(record.fields?.[fields.amount]),
+        methodIds: linkedRecordIds(record.fields?.[fields.method]),
+        orderKey: originalPaymentOrderKey(record, fields),
+      }))
+      .sort((left, right) => {
+        if (left.orderKey !== right.orderKey) return right.orderKey - left.orderKey;
+        return String(right.recordId).localeCompare(String(left.recordId));
+      });
   }
 
   /**
    * 售后收/退款沿用**原单的收款方式**。原单可能有多条收款记录（混合支付），
    * 取记录 id 最小的那条：同一份数据每次结果一致，不会因为列表顺序变化换方式。
+   * `payments` 可传入 readOriginal 已经读到的那一份（省一次 listAll）。
    */
-  async readOriginalPaymentMethod(salesEntryRecordId) {
+  async readOriginalPaymentMethod(salesEntryRecordId, payments) {
     const fields = this.tableOf('paymentRecord').fields;
     if (!fields.method) return '';
-    const records = await withSalesReadRetry(
-      () => this.gateway.listAll('paymentRecord'), 'after_sales_original_payments',
-    );
-    const candidates = records
-      .filter((record) => linkedRecordIds(record.fields?.[fields.salesEntry]).includes(salesEntryRecordId))
-      .map((record) => ({ recordId: record.record_id, methodIds: linkedRecordIds(record.fields?.[fields.method]) }))
-      .filter((item) => item.methodIds.length === 1)
-      .sort((left, right) => String(left.recordId).localeCompare(String(right.recordId)));
-    return candidates[0]?.methodIds[0] || '';
+    const list = payments || await this.readOriginalPayments(salesEntryRecordId);
+    return this.originalPaymentMethodOf(list);
   }
 
   // --- 1) 新「销售主表」记录 ---------------------------------------------------------
@@ -499,9 +614,16 @@ class AfterSalesService {
    *   退货  → 写：退回商品的**复制明细行**（newLines 为空；退货"退回的那一行"就是它，金额取原值且为正）
    *   换货  → 旧鞋**不写**明细行（契约里 newLines 才是新增明细行），只有出货商品写
    *   赔货  → 坏鞋不回库也不写行，只有出货商品写
+   *
+   * ⭐ 新明细行的「成交金额」：默认用调用方给的那个价；**赔货在动作配置里把它固定成 0**
+   *    （她的 2026-10-08 口径：「**成交金额记为 0**」）—— 配置里没声明才用请求值，
+   *    执行器里不写死业务数字（配置先行）。
    */
   buildPlan(request, original) {
     const detailFields = this.tableOf('salesDetail').fields;
+    const newLineAmountOf = (line) => (
+      request.spec?.newLineAmount == null ? line.amount : Number(request.spec.newLineAmount)
+    );
     const plan = [];
     if (request.action !== AFTER_SALES_ACTIONS.COMPENSATION) {
       const originals = [...original.details].sort((left, right) =>
@@ -535,10 +657,11 @@ class AfterSalesService {
         // 尺码单元格用关联 id 的形态，后面统一按关联解析成数字交给库存服务。
         sizeCell: [line.sizeId],
         sizeRecordId: line.sizeId,
-        amount: line.amount,
+        // ⭐ 成交金额：配置声明了固定值就用固定值（赔货 = 0），否则用调用方给的价。
+        amount: newLineAmountOf(line),
         // ⭐ 新建明细行的「履约状态」——**取值只从动作配置来**（不在这里写中文字面量）：
-        //   换货声明了 newLineFulfillmentStatus（新换出去的那双=已交付）；
-        //   退货/赔货没声明 → 空 → 建行时不带这一列（既有行为一个字不改）。
+        //   换货 = 已交付（新换出去的那双）；赔货 = 已赔货（赔出去的那双）；
+        //   退货没声明 → 空 → 退货的复制行不写这一列（"退回来的那双"由**原明细行=已退货**表达）。
         fulfillmentStatus: request.spec?.newLineFulfillmentStatus || '',
         originalRecordId: '',
         recordId: '',
@@ -662,8 +785,24 @@ class AfterSalesService {
 
   // --- 4) 钱 -------------------------------------------------------------------------
 
+  /**
+   * 钱怎么落，按**她的 2026-10-08 口径**分两条腿：
+   *
+   *   · **退货** + 默认口径（`returnFundsMode = updateStatus`）→
+   *     `settleReturnFundsOnOriginalPayments`：**不新建记录**，把**原收款记录**的
+   *     「收款状态」改成 已退款（退钱）/ 已留存（用户留存）。
+   *     ⚠️ 这是"把收款改成…"那句话的落地；旧行为（新建一条 退回 行）在
+   *        `returnFundsMode = newReturnRow` 时照旧走下面那条 `settleCash`。
+   *   · **换货 / 赔货**（以及回退模式下的退货）→ `settleCash`：新建「收款明细」一条。
+   *
+   * 金额为 0 / 没定 → 两条腿都不走（`route: 'none'`，**一笔收款记录都不写**）：
+   * 她的口径「如果金额没变，就没有记录」—— 连"改状态"也不做。
+   */
   async settleMoney(request, original, master, progress) {
     if (!request.settlement) return { route: 'none', recordId: '', direction: '', amount: 0 };
+    if (this.usesOriginalPaymentStatusRoute(request)) {
+      return this.settleReturnFundsOnOriginalPayments(request, original, progress);
+    }
     if (request.settlement === 'cash') return this.settleCash(request, original, master, progress);
     // prepaid：第二道闸门（第一道在 run() 的校验阶段，那里保证"任何写入之前就停"）。
     // 这里再拦一次是为了**将来有人直接从别处调 settleMoney 时**也不会写错。
@@ -683,6 +822,13 @@ class AfterSalesService {
    *   · `request.paymentMethod` 为空（她**没说**方式）→ **沿用原单的方式**（现有逻辑，保持不变）。
    *
    * ⭐ `methodId` 算好后**两个分支共用**（新建 / 断点续做的核验），所以续做时核验的也是同一个方式。
+   *
+   * ⭐ 「收款状态」按**方向**取（她的 2026-10-08 口径）：
+   *   · 收入（她补差价）→ 已收款；
+   *   · 退回（我们付差价）→ **已退款**。
+   *   ⚠️ **例外**：回退模式（`newReturnRow`）下那条"退货退款"的新行，
+   *     状态取 `config.paymentStatus.legacyReturnRow`（= 已收款，与旧行为逐字一致）——
+   *     否则"翻开关回退"就不是真的回退。
    */
   async settleCash(request, original, master, progress) {
     const fields = this.tableOf('paymentRecord').fields;
@@ -690,6 +836,7 @@ class AfterSalesService {
     const direction = request.diffAmount > 0
       ? this.config.moneyDirections.RECEIVE
       : this.config.moneyDirections.REFUND;
+    const status = this.statusForNewReceiptRow(request, direction);
     // 她说了 → 用她说的；没说 → 沿用原单的。
     // 溯源写进日志（`after_sales.executed` / 结果对象），排查"账上为什么是这个方式"一眼能看到。
     const spokenMethodId = request.paymentMethod
@@ -698,10 +845,10 @@ class AfterSalesService {
     const methodId = spokenMethodId || original.paymentMethodRecordId || '';
     const methodSource = spokenMethodId ? 'spoken' : (methodId ? 'original' : '');
     if (progress.payment_record_id) {
-      await this.verifyPayment(progress.payment_record_id, { amount, direction, methodId }, fields);
+      await this.verifyPayment(progress.payment_record_id, { amount, direction, status, methodId }, fields);
       return {
         route: 'cash', recordId: progress.payment_record_id, direction, amount, changeType: '',
-        methodId, methodSource,
+        status, methodId, methodSource,
       };
     }
     if (!methodId) {
@@ -714,7 +861,7 @@ class AfterSalesService {
       // 收款金额一律正数，方向由「交易方向」表达。
       tradeDirection: direction,
       amount,
-      status: this.config.cashPaymentStatus,
+      status,
       receivedAt: request.occurredAt,
     });
     await this.saveProgress(request, { payment_record_id: created.recordId });
@@ -724,11 +871,21 @@ class AfterSalesService {
       method_source: methodSource,
       spoken_payment_method: request.paymentMethod || '',
       payment_record_id: created.recordId,
+      payment_status: status,
     });
     return {
       route: 'cash', recordId: created.recordId, direction, amount, changeType: '',
-      methodId, methodSource,
+      status, methodId, methodSource,
     };
+  }
+
+  /** 新建「收款明细」那一条的「收款状态」（她的 2026-10-08 口径，见 config/afterSales.js）。 */
+  statusForNewReceiptRow(request, direction) {
+    if (direction === this.config.moneyDirections.RECEIVE) return this.config.paymentStatus.received;
+    // ⚠️ 回退模式（newReturnRow）下那条"退货退款"的新行用**旧口径**（已收款），
+    //    与改动前的行为逐字一致 —— 否则"翻开关回退"就不是真的回退。
+    if (request.action === AFTER_SALES_ACTIONS.RETURN) return this.config.paymentStatus.legacyReturnRow;
+    return this.config.paymentStatus.refunded;
   }
 
   async verifyPayment(recordId, expected, fields) {
@@ -737,12 +894,145 @@ class AfterSalesService {
     if (!record) mismatch = '记录已不存在';
     else if (Number(cellNumber(record.fields?.[fields.amount])) !== Number(expected.amount)) mismatch = '收款金额不一致';
     else if (cellText(record.fields?.[fields.tradeDirection]) !== expected.direction) mismatch = '交易方向不一致';
+    else if (expected.status && cellText(record.fields?.[fields.status]) !== expected.status) mismatch = '收款状态不一致';
     else if (expected.methodId && !linkedRecordIds(record.fields?.[fields.method]).includes(expected.methodId)) {
       mismatch = '交易方式不一致';
     }
     if (mismatch) {
       throw new Error(`已记录的售后收款 ${recordId} 与当前请求不一致（${mismatch}），请人工核对，不能自动重试`);
     }
+  }
+
+  /**
+   * ⭐⭐ 退货收款 = **改原收款记录的状态**（业务负责人 2026-10-08 的逐字口径，权威）：
+   *
+   *   「**退货**：我们就在**原有的销售明细**里面操作：找到当时的销售单，把那双鞋的状态改为"**已退货**"，
+   *    然后把**收款改成"已退款"**就可以了，如果是用户要资金，那就是**已退款**；
+   *    用户留存，那就是**已留存**。」
+   *
+   * ⇒ **不新建任何记录**：把**原销售单**下、状态属于 `config.refundablePaymentStatuses`
+   *   的收款行，改成 已退款（`settlement = cash`）/ 已留存（`settlement = prepaid`）。
+   *
+   * ⭐ 多笔收款 / 部分退款怎么选行（**最简单且可解释**，刻意不发明复杂规则）：
+   *   退款金额按「**后进先出**」从**最近一笔**收款往前冲抵，被冲抵到的行**整行**改状态；
+   *   冲不完的差额只记一条 warning（`after_sales.return_funds.uncovered`），**不新建行**。
+   *   ⚠️ 已知局限（报告里也写了）：「收款状态」是**单选、没有"部分退款"**这一档，
+   *      所以被**部分**冲抵的那一行也会**整行**显示成 已退款/已留存；
+   *      金额是不是刚好对得上，要靠 warning 里那个差额人工看。
+   *
+   * ⭐ 幂等（**重放/重试只能改一次、不能改错**）：
+   *   · 目标行的**意图**（record_id + 改动前状态 + 金额）在改任何东西**之前**就落进本地任务记录
+   *     （`original_payment_targets`）⇒ 重试**不再重新选一遍**（否则已被改掉的行会退出候选集，
+   *     选出来的就是另一组，越重试越错）；
+   *   · 每一行改完追加进 `original_payments_updated`，重放时跳过；
+   *   · 当前状态既不是「改动前」也不是「目标」→ **大声失败**（有人手工改过，不能自动覆盖）。
+   *
+   * ⚠️ **她说的"收款方式"在这条腿上不写**（她的口径只说改状态）——
+   *   只解析一次（表里没有这个名字照样当场抛），并写进日志，
+   *   见报告里"与 AGENTS.md 第 16 条(2) 的冲突"那一节。
+   */
+  async settleReturnFundsOnOriginalPayments(request, original, progress) {
+    const fields = this.tableOf('paymentRecord').fields;
+    const amount = Math.abs(request.diffAmount);
+    const status = request.settlement === 'prepaid'
+      ? this.config.paymentStatus.retained
+      : this.config.paymentStatus.refunded;
+    // 她说了收款方式 → 解析一次（找不到就抛，与 cash 那条腿同一道闸门），但**不写**。
+    const spokenMethodId = request.paymentMethod
+      ? (await this.references.resolvePaymentMethod(request.paymentMethod))?.recordId || ''
+      : '';
+    const methodSource = spokenMethodId ? 'spoken' : '';
+
+    // 目标行的意图先落盘（见上面幂等那一节）。
+    let targets = progress.original_payment_targets;
+    let uncovered;
+    if (!Array.isArray(targets) || !targets.length) {
+      // 复用 readOriginal 已经读到的那一份（没有时自己再读一次）。
+      const payments = original.payments
+        || await this.readOriginalPayments(request.originalSalesEntryRecordId);
+      const candidates = payments
+        .filter((row) => this.config.refundablePaymentStatuses.includes(row.status))
+        .map((row) => ({
+          record_id: row.recordId,
+          amount: Number(row.amount) || 0,
+          before: row.status,
+        }));
+      const selected = selectReturnFundTargets(candidates, amount);
+      targets = selected.targets;
+      uncovered = selected.uncovered;
+      await this.saveProgress(request, {
+        original_payment_targets: targets,
+        original_payment_uncovered: uncovered,
+      });
+    } else {
+      uncovered = Number(progress.original_payment_uncovered) || 0;
+    }
+
+    const updated = new Set(progress.original_payments_updated || []);
+    for (const target of targets) {
+      if (updated.has(target.record_id)) continue;
+      const record = await this.gateway.get('paymentRecord', target.record_id);
+      if (!record) {
+        throw new Error(`原收款记录 ${target.record_id} 已不存在，无法改成「${status}」，请人工核对`);
+      }
+      const current = cellText(record.fields?.[fields.status]);
+      // 已经是目标状态 → 上一次改过了（断点续做/重放），跳过，一个字节都不写。
+      if (current === status) {
+        updated.add(target.record_id);
+        continue;
+      }
+      if (current !== target.before) {
+        throw new Error(
+          `原收款记录 ${target.record_id} 的「收款状态」现在是「${current}」`
+          + `（既不是「${target.before}」也不是「${status}」），请人工核对，不能自动重试`,
+        );
+      }
+      await this.gateway.update('paymentRecord', target.record_id, { status });
+      updated.add(target.record_id);
+      await this.saveProgress(request, { original_payments_updated: [...updated] });
+      logInfo('after_sales.return_funds.payment_status_updated', {
+        operation_id: request.operationId,
+        payment_record_id: target.record_id,
+        from_status: target.before,
+        to_status: status,
+        // 她说的方式（这条腿**不写**它，只记录"她说过什么"）。
+        declared_payment_method: request.paymentMethod || '',
+        declared_payment_method_id: spokenMethodId,
+      });
+    }
+
+    const recordIds = [...updated];
+    if (!recordIds.length) {
+      logWarn('after_sales.return_funds.no_original_payment', {
+        operation_id: request.operationId,
+        original_sales_entry_record_id: request.originalSalesEntryRecordId,
+        to_status: status,
+        amount,
+        reason: '原单没有可改状态的收款记录（已收款 / 待平台结算）',
+      });
+    }
+    if (uncovered > 0) {
+      logWarn('after_sales.return_funds.uncovered', {
+        operation_id: request.operationId,
+        amount,
+        uncovered,
+        record_ids: recordIds,
+        reason: '退款金额超过了可改状态的收款行合计，多出的部分没有落点（不新建行）',
+      });
+    }
+    return {
+      route: 'originalPaymentStatus',
+      recordId: recordIds[0] || '',
+      recordIds,
+      direction: this.config.moneyDirections.REFUND,
+      amount,
+      changeType: '',
+      status,
+      uncovered,
+      methodId: '',
+      methodSource,
+      declaredMethodId: spokenMethodId,
+    };
   }
 
   /**
@@ -761,9 +1051,87 @@ class AfterSalesService {
    *   · 同步 `v1BitableSchema`（新表映射）＋ `v1SchemaScopes`（sales 范围与幂等键清单）；
    *   · 把这里换回"校验新表的键列存在"（原来的实现见 git history：
    *     `validateCreditKey` / `verifyCredit` / `createOnceByKey(customerCredit)`）。
+   *
+   * ⚠️ 2026-10-08 起的**例外**：**退货** + 她的默认口径（`returnFundsMode = updateStatus`）下，
+   *    「钱先存着 / 用户留存」的落点**不再是那张表**，而是**原收款记录的「收款状态」= 已留存**
+   *    （她 2026-10-08 逐字：「……如果是用户要资金，那就是已退款；**用户留存，那就是已留存**」）
+   *    ⇒ 这一支走 `settleReturnFundsOnOriginalPayments`，**不调用本方法**。
+   *    本方法仍然管住其余场合：换货/赔货的 prepaid、以及回退模式（`newReturnRow`）下的退货 prepaid。
    */
   assertPrepaidAvailable() {
     throw new Error(PREPAID_UNAVAILABLE);
+  }
+
+  // --- 7) 原「销售主表」的「售后次数」+1 ----------------------------------------------
+
+  /**
+   * ⭐⭐ 「售后次数」+1（业务负责人 2026-10-08 逐字口径，权威）：
+   *
+   *   「在这个售后过程当中，其实**不需要去修改我们销售主表的信息**」＋
+   *   「我增加了一个字段：**售后次数**，默认为 0。如果他来换一次鞋就是 1，
+   *    来退一次鞋也是 1，就是根据**售后行为去叠加**这个数量」
+   *
+   * ⇒ 每一笔售后（退货 / 换货 / 赔货各算一次）执行成功后，把**原销售主表**那一单的
+   *   「售后次数」+1。这是「原主表一字不动」的**唯一例外**（她明确要的那一个）。
+   *
+   * ⭐ 幂等（**同一次售后重放/重试只能 +1，不许加到 2**）——两阶段意图：
+   *   ① **改远端之前**先把 `{ record_id, before, after }` 写进本地任务记录
+   *      （`after_sales_count`）——它同时让总闸门把这一笔记成"已经写过东西"；
+   *   ② 再改远端。于是三种重试都有确定结果：
+   *      · 远端 == after  → 上一次改成了，跳过（一个字节都不写）；
+   *      · 远端 == before → 上一次没改成，照意图再改一次（结果仍是 after，**不会 +2**）；
+   *      · 远端既不是 before 也不是 after → **大声失败**（别人手工改过，不能覆盖）。
+   *
+   * ⚠️ 「默认为 0」：单元格空 / null → 按 0 算；但**填了非数字**要当场抛
+   *    （那是数据坏了，宁可停下让人看，也不要把脏数据 +1 写回去）。
+   * ⚠️ 一单一条：多件商品一次售后（批次里含多条原明细）**只 +1**（"来一次算一次"）。
+   */
+  async countAfterSales(request, original, progress) {
+    const fields = this.tableOf('salesEntry').fields;
+    if (!fields.afterSalesCount) return null;
+    const recordId = request.originalSalesEntryRecordId;
+    const intent = progress.after_sales_count;
+    if (intent) {
+      // 断点续做 / 重放：按**已经落盘的意图**核对远端，绝不再算一次 before+1。
+      return this.applyAfterSalesCountIntent(request, recordId, intent, fields);
+    }
+    const raw = original.entry?.fields?.[fields.afterSalesCount];
+    const text = cellText(raw);
+    const before = text === '' ? 0 : Number(text);
+    if (!Number.isFinite(before) || before < 0) {
+      throw new Error(
+        `原销售主表 ${recordId} 的「售后次数」不是有效数字（当前值：${text}），`
+        + '已停止这次售后，请人工核对这一列',
+      );
+    }
+    const next = { record_id: recordId, before, after: before + 1 };
+    await this.saveProgress(request, { after_sales_count: next });
+    return this.applyAfterSalesCountIntent(request, recordId, next, fields);
+  }
+
+  /** 按已落盘的意图改远端（三种情形见 countAfterSales 的说明）。 */
+  async applyAfterSalesCountIntent(request, recordId, intent, fields) {
+    const record = await this.gateway.get('salesEntry', recordId);
+    if (!record) throw new Error(`找不到原销售主表 ${recordId}，无法累加「售后次数」`);
+    const current = cellText(record.fields?.[fields.afterSalesCount]);
+    const currentNumber = current === '' ? 0 : Number(current);
+    if (currentNumber === intent.after) {
+      return { before: intent.before, after: intent.after, written: false };
+    }
+    if (currentNumber !== intent.before) {
+      throw new Error(
+        `原销售主表 ${recordId} 的「售后次数」现在是「${current}」`
+        + `（既不是「${intent.before}」也不是「${intent.after}」），请人工核对，不能自动重试`,
+      );
+    }
+    await this.gateway.update('salesEntry', recordId, { afterSalesCount: intent.after });
+    logInfo('after_sales.count.applied', {
+      operation_id: request.operationId,
+      sales_entry_record_id: recordId,
+      before: intent.before,
+      after: intent.after,
+    });
+    return { before: intent.before, after: intent.after, written: true };
   }
 
   // --- 5) + 6) 库存流水 / 实时库存：交给既有 InventoryService ------------------------

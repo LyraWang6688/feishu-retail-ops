@@ -213,6 +213,24 @@ test('结果卡片：说清写了什么（明细 / 钱 / 库存）', () => {
     stock: [],
   });
   assert.match(textOf(prepaid), /客户往来货款 1 笔（退货退款 ￥230）/);
+
+  // ⭐ 2026-10-08 退货口径：钱**不新建记录**，而是把**原收款记录**改成 已退款 / 已留存
+  //    —— 卡片必须如实说"改了哪几笔、改成什么"，**绝不能**显示成"没动钱"（那是记错账的展示）。
+  const originalStatus = afterSalesResultCard(plan(), {
+    detailRecordIds: ['rec_5'],
+    money: { route: 'originalPaymentStatus', status: '已退款', amount: 250, recordIds: ['pay_1'] },
+    stock: [{ behaviorCode: 'SALE_RETURN', state: '门盒', quantity: 1 }],
+  });
+  assert.match(textOf(originalStatus), /原收款 1 笔改为「已退款」（￥250）/);
+  assert.doesNotMatch(textOf(originalStatus), /没动钱/);
+
+  // 一笔可改的收款行都没有（例如原单全是「未收款」占位）：如实提示人工核对，不谎报"已改"。
+  const nothingChanged = afterSalesResultCard(plan(), {
+    detailRecordIds: ['rec_6'],
+    money: { route: 'originalPaymentStatus', status: '已退款', amount: 250, recordIds: [] },
+    stock: [],
+  });
+  assert.match(textOf(nothingChanged), /原收款没有可改的行/);
 });
 
 test('失败卡片 / 状态卡片：必须把原因写出来，并**保留可重试的按钮**', () => {
