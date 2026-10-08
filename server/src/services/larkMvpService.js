@@ -14,6 +14,10 @@ const { SalesDeliveryService } = require('./salesDeliveryService');
 const { SecondDeliveryService } = require('./secondDeliveryService');
 const { SampleReplacementService } = require('./sampleReplacementService');
 const { PurchaseWebhookService } = require('./purchaseWebhookService');
+// 「货品信息.标签二维码」：表变更事件（新增 / 编号变更）→ 自动生成二维码并写回那一列。
+// 独立 service（一个 service 只干一件事），这里只负责把它接上（见构造函数）。
+const { createTagQrCodeService } = require('./tagQrCodeService');
+const { TAG_QR_CODE } = require('../config/tagQrCode');
 // `normalizeText`：新增的「货号有没有建档」判据必须与解析 A 用**同一套**货号归一
 // （大小写 / 空格 / 分隔符），否则会出现「A 认得出来、判据说没有」这种自相矛盾。
 const { V1ReferenceResolver, person, relation, normalizeText, normalizeColor } = require('./v1ReferenceResolver');
@@ -193,6 +197,14 @@ class LarkMvpService {
       gateway: this.gateway,
       references: this.references,
       recognizer: this.recognizer,
+    });
+    // 「货品信息.标签二维码」的自动补齐（2026-10-08 业务负责人定的能力）。
+    // ⚠️ 只**新增**这一个成员：上面报货那条链路（`purchaseWebhooks`）一行都没动。
+    // 入口在 `routes/larkEvents.js` 的 `drive.file.bitable_record_changed_v1` 分支里，
+    // 按 **table_id** 分派（货品信息走这里，报货表走上面那个）——两条路互不影响。
+    this.tagQrCodes = options.tagQrCodes || createTagQrCodeService({
+      gateway: this.gateway,
+      config: TAG_QR_CODE,
     });
     this.store =
       options.store ||

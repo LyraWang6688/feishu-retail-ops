@@ -48,6 +48,14 @@ const V1_BITABLE_SCHEMA = {
         completeness: '缺失信息说明',
         // 「样例图」是附件字段，不在齐备公式里，要单独判断"有没有图"。
         sampleImage: '样例图',
+        // ⭐ 2026-10-08 业务负责人新建的列：**`标签二维码`（字段类型 = 附件）**。
+        // 内容 = `https://hm.bamamei.online/s/{编号}`（编号做 URL 编码），唯一真源在
+        // `config/tagQrCode.js` 的 `scanUrl.urlTemplate`；这里**只加映射**。
+        // ⚠️ 「代码能不能写这个附件列」已核实：附件字段可用 `file_token` 写
+        //   （官方 FAQ「如何在多维表格中上传附件」＋ 本仓已在生产验证的
+        //   `V1BitableGateway.uploadAttachment`，写「报货批次.单据」走的就是这条路）。
+        // ⚠️ 本轮**只加这一行**，不动本表其余映射（schema 里还有别的链路在用）。
+        tagQrCode: '标签二维码',
       },
     },
     // 「颜色管理」：货品信息的「颜色」是**关联字段**，不是文本。

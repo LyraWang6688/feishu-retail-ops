@@ -193,6 +193,32 @@ const createLarkEventHandlers = (service, { heartbeat } = {}) => ({
       });
     }
 
+    // ── 货品信息：「标签二维码」自动补齐（**新增** / **编号变更**才触发）──────────────
+    //
+    // ⚠️ 2026-10-08 新增的**另一条支路**，与上面报货那条**完全独立**：
+    //    · 报货那条只认 `record_added`、整包交给 `purchaseWebhooks.acceptMany` —— 上面一个字没改；
+    //    · 这里按 **table_id 分派**（`schema.tables.product.tableId`，**不写死表 ID**）：
+    //      只有"事件来自货品信息表"时才进这条支路，报货表的事件根本不会走到这里。
+    //    · 「哪条动作要出码」（新增 / 修改）与「编号变没变」的判定**不在路由里**，
+    //      整个 `action_list` 原样交给 `tagQrCodes.handleTableChanges`，
+    //      口径在 `config/tagQrCode.js`（`events.created` / `events.updated`）+ 那个 service 里。
+    //      ⇒ 将来加一个触发动作只改配置，不用碰这个路由（也就不会碰到报货那条路）。
+    //    · 写库是**异步**的（`setImmediate`，沿用本文件既有形状），不阻塞事件响应。
+    const productTableId = V1_BITABLE_SCHEMA.tables.product.tableId;
+    if (productTableId && tableId === productTableId) {
+      const tagQrCodes = service?.tagQrCodes;
+      if (tagQrCodes && typeof tagQrCodes.handleTableChanges === 'function') {
+        setImmediate(() => {
+          tagQrCodes.handleTableChanges(actionList).catch((error) => {
+            logError('product.tag_qr.dispatch_failed', { table_id: tableId, error: error.message });
+          });
+        });
+      } else {
+        // 没接线时给一条**明确的**排查线索，而不是静默什么都不做。
+        logWarn('product.tag_qr.not_wired', { table_id: tableId, action_count: actionList.length });
+      }
+    }
+
     return {};
   },
 });
