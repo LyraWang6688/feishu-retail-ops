@@ -256,8 +256,14 @@ $ node --test --test-concurrency=1 test/pendingDealPushCard.test.js test/pending
 | 项 | 结果 |
 | --- | --- |
 | 全量第 1 次 | `node --test --test-concurrency=1` → **1387/1387 pass, fail=0** |
-| 全量第 2 次 | 同上（见 PR 描述里的两次输出） |
-| CI 三项 | `gh pr checks` → 见 PR（`test` / CodeQL / Analyze） |
+| 全量第 2 次 | 同上 → **1387/1387 pass, fail=0** |
+| 全量第 3 次 | 同上 → **1387/1387 pass, fail=0** |
+| CI 三项（PR #265） | `test` **pass**（56s）· `CodeQL` **pass**（3s）· `Analyze (javascript-typescript)` **pass**（1m9s）；`gh pr view 265 --json mergeStateStatus` = **CLEAN** |
+
+⚠️ **一次没能复现的抖动**：在此之前的一次全量里，输出尾部出现过一条
+`AssertionError … actual: null / expected: true / operator: '=='`（`assert.ok` 形状，**测试名没抓到**）；
+随后连跑 3 次都是 1387/1387 fail=0，**无法复现**，也**不在本次新增的用例形态里**
+（新用例没有 `assert.ok(<可能为 null 的值>)`）。如实记在这里，供后续排查参考。
 
 ⚠️ 本机**没有**真机飞书客户端：卡片的真机视觉效果（彩色标签、金额高亮、分割线）**未在手机上验过**，
 按飞书官方文档的语法实现；部署后建议她先看一眼。
