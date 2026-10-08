@@ -67,35 +67,35 @@ export const PURCHASE_FORMS = [
  *
  * 写法与 `PURCHASE_REQUEST_FORM_URL` 同一套（`*_URL` 常量；`config/query.js` 只 import、不复制）。
  */
-// ⭐ 2026-10-08 业务负责人已给（逐字）：
-//   「「销售查询」URL ：https://scnzoiwpgxik.feishu.cn/base/QrXlbwXMLaJ2TNsxSfFcIA3rnwh?table=wbpzfEmPGK」
-// ⚠️ 这是**多维表格里的那个页面**：`wbpzfEmPGK` 是**页面 id、不是 tableId** ——
-//    页面类型 = 飞书多维表格的「AI 生成网页」（vibe view：她在 Base 里对 AI 说要什么，AI 生成并发布）。
+// ⭐ 2026-10-08 业务负责人**改口定稿**（逐字）：
+//   「另外我们的URL就是用的这两个，**严禁你换成别的**：
+//    销售的，https://scnzoiwpgxik.feishu.cn/share/base/webpage/shrcnY3ZG9LAjrArEe5RzfS8UGh ；
+//    库存的，https://scnzoiwpgxik.feishu.cn/share/base/webpage/shrcnaSFKbJAci7YxvC1AXpweBc」
+// ⇒ 两条都**逐字**用她给的**发布分享链接**（`/share/base/webpage/<shareId>`），
+//    谁都不许改成另一种形状（早先我自作主张用过内部页面 URL `/base/<appToken>?table=<页面id>`，已按她的口径改回）。
+// ⚠️ 这是**多维表格里的 AI 生成网页**（vibe view）：`wbpzfEmPGK` / `wbpmx4eW9A` 是**页面 id、不是 tableId**。
 //    **页面代码不在本仓库** ⇒ 不进 CI、不受 `v1:schema-check` 保护；
-//    她在生产表改名 / 删列之后，**页面会静默算错或变空，我们这边没有任何告警**。
-// ⭐ 刻意用**内部页面 URL**（不选 `/share/base/webpage/...` 那条发布分享链接）：
-//    内部页面走**打开者自己的 Base 权限**；而那条分享链接她自己页面上写着
+//    她改生产表之后，**页面可能静默算错或变空，我们这边没有任何告警**
+//    （她 2026-10-08 已经遇到一次：「今日销售减少和采购增加的数据不对」，排查留档在
+//     `docs/todo-inventory-query-page-logic.md`）。
+// ⚠️ 分享链接的权限提示（她知情）：飞书页面上写着
 //    「通过分享链接访问的用户可查看当前页面展示的**全部数据，不受多维表格高级权限限制**」。
-//    同页面的分享链接（留档备查、刻不使用）：
-//    `https://scnzoiwpgxik.feishu.cn/share/base/webpage/shrcnY3ZG9LAjrArEe5RzfS8UGh`
 // ⚠️ 该页面声明的统计口径 + 与系统口径的差异，留档：
 //    `docs/sales-query-page-and-system-caliber-2026-10-08.md`（她定的定位 = **最小 MVP，之后迭代**）。
 export const SALES_QUERY_PAGE_URL =
-  'https://scnzoiwpgxik.feishu.cn/base/QrXlbwXMLaJ2TNsxSfFcIA3rnwh?table=wbpzfEmPGK';
+  'https://scnzoiwpgxik.feishu.cn/share/base/webpage/shrcnY3ZG9LAjrArEe5RzfS8UGh';
 
 /**
- * 「库存查询」URL —— 业务负责人 **2026-10-08** 在飞书里直接给的发布分享链接（逐字）：
+ * 「库存查询」URL —— 业务负责人 **2026-10-08** 给的发布分享链接（逐字）：
  *   「你可以把库存URL也放上去，https://scnzoiwpgxik.feishu.cn/share/base/webpage/shrcnaSFKbJAci7YxvC1AXpweBc」
+ *   （她同一条消息里定稿：「我们的URL就是用的这两个，**严禁你换成别的**」）
  *
- * ⚠️ **与「销售查询」不是同一种链接形状**（两边都按她给的原样落，不做加工）：
- *   · 销售查询 = **内部页面 URL**（`/base/<appToken>?table=<页面id>`）—— 走打开者自己的 Base 权限；
- *   · 库存查询 = **发布分享链接**（`/share/base/webpage/<shareId>`）—— 飞书对这种链接的提示是
- *     「通过分享链接访问的用户可查看当前页面展示的**全部数据，不受多维表格高级权限限制**」。
- *   ⇒ 想把两条统一成"内部页面 URL"（`…/base/QrXlbwXMLaJ2TNsxSfFcIA3rnwh?table=wbpmx4eW9A`，
- *      `wbpmx4eW9A` = 她那个「库存数据查询」页面 id）**只改这一行**，页面一行都不用动；
- *      要不要统一由她定（安全 vs 能不能打开，两者取一）。
- *   · 页面代码同样**不在本仓库** ⇒ 口径与风险见 `docs/todo-inventory-query-page-logic.md`
- *     （口径她 2026-10-08 已定，给页面生成 AI 的提示词 v3 也在那一份里）。
+ * ⇒ **两条都是发布分享链接**（`/share/base/webpage/<shareId>`），逐字用她给的，不做任何加工、
+ *    也不换成内部页面 URL（`/base/<appToken>?table=<页面id>`）。
+ * ⚠️ 权限提示（她知情）：飞书对这种链接写着「通过分享链接访问的用户可查看当前页面展示的
+ *    **全部数据，不受多维表格高级权限限制**」。
+ * ⚠️ 页面代码**不在本仓库** ⇒ 口径与风险见 `docs/todo-inventory-query-page-logic.md`
+ *    （口径她 2026-10-08 已定；给页面生成 AI 的提示词、以及「今日变动」的对账表都在那一份里）。
  */
 export const INVENTORY_QUERY_PAGE_URL =
   'https://scnzoiwpgxik.feishu.cn/share/base/webpage/shrcnaSFKbJAci7YxvC1AXpweBc';
