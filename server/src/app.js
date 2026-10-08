@@ -83,14 +83,16 @@ app.use('/workbench', express.static(workbenchPath, { index: 'index.html' }));
 // Feishu web apps commonly open the configured homepage as "/".
 app.get('/', (req, res) => res.sendFile(path.join(workbenchPath, 'index.html')));
 
-// 扫码页（第一版：**只读查库存**）：标签二维码里的 `https://hm.bamamei.online/s/{编号}`
-// 走的就是这一条（挂载点 `SCAN_PAGE.route.basePath` = `/s`，路径段在 router 里）。
+// 扫码页（标签二维码里的 `https://hm.bamamei.online/s/{编号}`）：标签二维码指向的就是这一条
+//（挂载点 `SCAN_PAGE.route.basePath` = `/s`，路径段在 router 里）。
 // ⚠️ 刻意**不挂在 `/api/*` 下面**：那一段由下面的 `API_KEY`（`x-api-key` 头）保护，
 //    而扫码的人是手机浏览器**直接打开页面**的，没有那个头 ⇒ 挂过去必被挡。
 // ⚠️ 准入用的是**工作台同一道飞书身份闸门**（`routes/workbench.js` 导出的
 //    `requireWorkbenchAccess`，与 `/api/workbench/*` 是**同一个函数**），
-//    不是新开的一套：认证没启用 503 / 未登录 401 / 白名单外 403，与工作台一字不差。
-// ⚠️ 这一版**一行都不写**：service 只读「实时库存 / 尺码管理 / 货品信息」。
+//    不是新开的一套：认证没启用 503 / 未登录 302 去登录 / 白名单外 403。
+// ⭐ 2026-10-08：`GET` 仍然**只读**（第一版：查库存）；**写入口**是同一条路径上的 `POST`
+//    （销售建单 / 补货报单），实现全在 `services/scanWriteService.js` ——
+//    它只调**既有业务层**（销售入账 / 采购申请发布），入口参数在 `config/scanWrite.js`。
 app.use(SCAN_PAGE.route.basePath, require('./routes/scanPage').createScanPageRouter());
 
 // Health check route. Also answers "服务器上跑的是哪一版"——部署时由 deploy_run.sh

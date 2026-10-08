@@ -62,6 +62,21 @@ body {
 .state-msg p { margin: 8px 0; color: #646a73; }
 .state-msg .number { color: #1f2329; font-weight: 600; }
 .state-msg .hint { color: #8f959e; font-size: 13px; }
+.result { margin: 12px 0 0; padding: 0; list-style: none; color: #1f2329; font-size: 15px; }
+.result li { margin-top: 4px; }
+.draft-count { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
+.notice { margin: 0; color: #2b6cf6; font-size: 15px; font-weight: 600; }
+.draft-list { margin: 0 0 10px; padding-left: 18px; color: #646a73; font-size: 14px; }
+.write-form { margin: 10px 0 0; padding: 10px 0 0; border-top: 1px solid #eef0f3; }
+.form-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.form-row label { flex: 0 0 42%; color: #646a73; font-size: 14px; }
+.form-row select, .form-row input { flex: 1 1 auto; min-width: 0; padding: 8px 10px; border: 1px solid #d9dbe0; border-radius: 8px; font-size: 16px; background: #fff; }
+.size-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.size-check { flex: 1 1 auto; font-size: 16px; }
+.size-qty { flex: 0 0 84px; padding: 8px 10px; border: 1px solid #d9dbe0; border-radius: 8px; font-size: 16px; text-align: center; }
+.btn { display: block; width: 100%; margin-top: 6px; padding: 11px 12px; border: 0; border-radius: 8px; background: #eef0f3; color: #1f2329; font-size: 16px; font-weight: 600; }
+.btn--primary { background: #2b6cf6; color: #fff; }
+.btn--ghost { background: transparent; color: #8f959e; font-weight: 500; }
 `;
 
 const renderDocument = ({ title, content, requestId, config = SCAN_PAGE }) => `<!doctype html>
@@ -127,27 +142,126 @@ ${notes}
 </section>`;
 };
 
-/** 正常页：身份 + 单价 + 库存表。 */
-const renderScanPage = (view, config = SCAN_PAGE) => renderDocument({
+/**
+ * ── 两个写入口的表单（销售建单 / 补货报单）────────────────────────────────────
+ *
+ * 都是**原生 HTML 表单**（没有一行 JS）：手机浏览器直接打开就能用，也不给这一页
+ * 添任何前端构建产物（与第一版只读页的取舍一致）。
+ *
+ * 🔴 每个表单里都带一个 `submit_key`（**幂等键**，由服务端会话给出）：
+ *   连点两次 = 同一个键 = 只写一次（见 `services/scanWriteService.js`）。
+ * ⚠️ 所有值都 `escapeHtml`：它们从表里来（货号 / 尺码），不是可信 HTML。
+ */
+const hiddenField = (name, value) => `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`;
+
+const optionsHtml = (values, selected) => values
+  .map((value) => `<option value="${escapeHtml(value)}"${String(value) === String(selected) ? ' selected' : ''}>${escapeHtml(value)}</option>`)
+  .join('');
+
+/** 销售表单：加入本单（只动本地会话）＋ 提交这一单（**唯一的写库时机**）。 */
+const saleFormHtml = (view, write) => {
+  const t = write.texts;
+  const fields = write.fields;
+  const sizes = write.sizes || [];
+  const lines = write.draft?.lines || [];
+  const draftList = lines.length
+    ? `<ul class="draft-list">${lines.map((line) => `<li>${escapeHtml(fillText(
+      t.draftItem, { itemNo: line.item_no || line.number || '', size: line.size },
+    ))}</li>`).join('')}</ul>`
+    : `<p class="hint">${escapeHtml(t.draftEmpty)}</p>`;
+  const sizeInput = sizes.length
+    ? `<select name="${escapeHtml(fields.size)}">${optionsHtml(sizes.map((item) => item.size_text), '')}</select>`
+    : `<span class="hint">${escapeHtml(t.sizePlaceholder)}</span>`;
+  return `<section class="card">
+<h2 class="stock__heading">${escapeHtml(t.saleHeading)}</h2>
+<p class="draft-count">${escapeHtml(fillText(t.draftHeading, { count: lines.length }))}</p>
+${draftList}
+<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
+${hiddenField(fields.action, write.actions.addLine)}
+${hiddenField(fields.submitKey, write.saleKey)}
+<div class="form-row"><label>${escapeHtml(t.sizeLabel)}</label>${sizeInput}</div>
+<div class="form-row"><label>${escapeHtml(t.amountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" placeholder="${escapeHtml(t.amountPlaceholder)}"></div>
+<div class="form-row"><label>${escapeHtml(t.giftLabel)}</label><input name="${escapeHtml(fields.gift)}"></div>
+<button type="submit" class="btn">${escapeHtml(t.addButton)}</button>
+</form>
+<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
+${hiddenField(fields.action, write.actions.submitOrder)}
+${hiddenField(fields.submitKey, write.saleKey)}
+<div class="form-row"><label>${escapeHtml(t.paymentLabel)}</label><select name="${escapeHtml(fields.paymentMethod)}">${optionsHtml(write.paymentMethods, write.defaultPaymentMethod)}</select></div>
+<div class="form-row"><label>${escapeHtml(t.paymentAmountLabel)}</label><input name="${escapeHtml(fields.paymentAmount)}" inputmode="decimal" placeholder="${escapeHtml(t.paymentAmountPlaceholder)}"></div>
+<button type="submit" class="btn btn--primary">${escapeHtml(t.submitButton)}</button>
+<p class="hint">${escapeHtml(t.fundsPendingNote)}</p>
+</form>
+${lines.length ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
+${hiddenField(fields.action, write.actions.clearDraft)}
+${hiddenField(fields.submitKey, write.saleKey)}
+<button type="submit" class="btn btn--ghost">${escapeHtml(t.clearButton)}</button>
+</form>` : ''}
+</section>`;
+};
+
+/** 补货表单：勾选缺的尺码 + 填数量 → 生成采购申请。 */
+const replenishFormHtml = (view, write) => {
+  const t = write.texts;
+  const fields = write.fields;
+  const sizes = write.sizes || [];
+  if (!sizes.length) return '';
+  const rows = sizes.map((item) => {
+    const size = item.size_text;
+    return `<div class="size-row">
+<label class="size-check"><input type="checkbox" name="${escapeHtml(fields.replenishSizes)}" value="${escapeHtml(size)}"${item.missing ? ' checked' : ''}> ${escapeHtml(size)} 码</label>
+<input class="size-qty" name="${escapeHtml(`${fields.replenishQuantityPrefix}${size}`)}" inputmode="numeric" placeholder="${escapeHtml(t.replenishQuantityLabel)}">
+</div>`;
+  }).join('');
+  return `<section class="card">
+<h2 class="stock__heading">${escapeHtml(t.replenishHeading)}</h2>
+<p class="hint">${escapeHtml(t.replenishHint)}</p>
+<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
+${hiddenField(fields.action, write.actions.replenish)}
+${hiddenField(fields.submitKey, write.replenishKey)}
+${rows}
+<button type="submit" class="btn">${escapeHtml(t.replenishButton)}</button>
+</form>
+</section>`;
+};
+
+const writeFormsHtml = (view, write) => {
+  if (!write || write.enabled === false) return '';
+  // 「刚加入本单」那一句：文案来自配置、只有数字来自会话（**没有回显注入面**）。
+  const notice = write.notice
+    ? `<section class="card"><p class="notice">${escapeHtml(write.notice)}</p></section>`
+    : '';
+  const sale = write.saleEnabled === false ? '' : saleFormHtml(view, write);
+  const replenish = write.replenishEnabled === false ? '' : replenishFormHtml(view, write);
+  return `${notice}${sale}${replenish}`;
+};
+
+/** 正常页：身份 + 单价 + 库存表（＋ 可选的两个写入口表单）。 */
+const renderScanPage = (view, config = SCAN_PAGE, write = null) => renderDocument({
   title: fillText(config.texts.pageTitle, { itemNo: view.item_no || view.number, number: view.number }),
   config,
   content: `${identityHtml(view, config)}
 ${stockTableHtml(view, config)}
+${write ? writeFormsHtml(view, write) : ''}
 <p class="foot">${escapeHtml(config.texts.footerNumberLabel)} <span class="mono">${escapeHtml(view.number)}</span>`
   + `${view.updated_at_text ? ` · ${escapeHtml(config.texts.updatedAtLabel)} ${escapeHtml(view.updated_at_text)}` : ''}</p>`,
 });
 
 /**
- * 「不是库存表」的那些页（没找到 / 链接不对 / 出错 / 数据准备中 / 超上限）——
+ * 「不是库存表」的那些页（没找到 / 链接不对 / 出错 / 数据准备中 / 超上限 / **写失败**）——
  * 一张都不许白屏：标题 + 一句人话 + （有的话）她扫到的编号与我给她的重试建议。
+ *
+ * `details` 是**写成功/写失败**时给她看的几行事实（单号 / 双数 / 批次号…）：
+ * 有就逐行列出来，没有就一个字都不多渲染（既有那几种页面**逐字不变**）。
  */
-const renderScanMessagePage = ({ title, body, number = '', requestId = '', retryHint = '' }, config = SCAN_PAGE) => renderDocument({
+const renderScanMessagePage = ({ title, body, number = '', requestId = '', retryHint = '', details = [] }, config = SCAN_PAGE) => renderDocument({
   title,
   config,
   requestId,
   content: `<section class="card state-msg">
 <h1>${escapeHtml(title)}</h1>
 <p>${escapeHtml(body)}</p>
+${details.length ? `<ul class="result">${details.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}
 ${number ? `<p>${escapeHtml(config.texts.notFoundHint)}<span class="number mono">${escapeHtml(number)}</span></p>` : ''}
 ${retryHint ? `<p class="hint">${escapeHtml(retryHint)}</p>` : ''}
 </section>`,
