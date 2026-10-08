@@ -60,10 +60,10 @@ export const PURCHASE_FORMS = [
  * ⇒ 「信息查询」那两个板块**就是两张外链卡**，点一下直接打开她配好的多维表格网页；
  *    工作台**不新增任何接口 / 页面**，也不在本地重算任何业务事实。
  *
- * ⚠️ 空值的**明确行为**（现在还剩下「库存查询」是空的）：
+ * ⚠️ 空值的**明确行为**（现在两条都配好了，这段留给将来再加板块时用）：
  *    `features/query/index.js` 把它渲染成 `<div class="entry-card disabled-card">`（**不是 `<a>`**），
  *    卡面 arrow 文案 = **「链接待配置」** ⇒ **不产生空 `href`、点了不跳空链接、不报错**。
- *    她给了 URL 就**只改下面这一行**（配置先行），页面一行都不用动。
+ *    给了 URL 就**只改下面那一行**（配置先行），页面一行都不用动。
  *
  * 写法与 `PURCHASE_REQUEST_FORM_URL` 同一套（`*_URL` 常量；`config/query.js` 只 import、不复制）。
  */
@@ -83,5 +83,19 @@ export const PURCHASE_FORMS = [
 export const SALES_QUERY_PAGE_URL =
   'https://scnzoiwpgxik.feishu.cn/base/QrXlbwXMLaJ2TNsxSfFcIA3rnwh?table=wbpzfEmPGK';
 
-// TODO(业务负责人): 库存查询 —— 飞书多维表格网页 URL（她给之前留空串，空值 = 卡面「链接待配置」）
-export const INVENTORY_QUERY_PAGE_URL = '';
+/**
+ * 「库存查询」URL —— 业务负责人 **2026-10-08** 在飞书里直接给的发布分享链接（逐字）：
+ *   「你可以把库存URL也放上去，https://scnzoiwpgxik.feishu.cn/share/base/webpage/shrcnaSFKbJAci7YxvC1AXpweBc」
+ *
+ * ⚠️ **与「销售查询」不是同一种链接形状**（两边都按她给的原样落，不做加工）：
+ *   · 销售查询 = **内部页面 URL**（`/base/<appToken>?table=<页面id>`）—— 走打开者自己的 Base 权限；
+ *   · 库存查询 = **发布分享链接**（`/share/base/webpage/<shareId>`）—— 飞书对这种链接的提示是
+ *     「通过分享链接访问的用户可查看当前页面展示的**全部数据，不受多维表格高级权限限制**」。
+ *   ⇒ 想把两条统一成"内部页面 URL"（`…/base/QrXlbwXMLaJ2TNsxSfFcIA3rnwh?table=wbpmx4eW9A`，
+ *      `wbpmx4eW9A` = 她那个「库存数据查询」页面 id）**只改这一行**，页面一行都不用动；
+ *      要不要统一由她定（安全 vs 能不能打开，两者取一）。
+ *   · 页面代码同样**不在本仓库** ⇒ 口径与风险见 `docs/todo-inventory-query-page-logic.md`
+ *     （口径她 2026-10-08 已定，给页面生成 AI 的提示词 v3 也在那一份里）。
+ */
+export const INVENTORY_QUERY_PAGE_URL =
+  'https://scnzoiwpgxik.feishu.cn/share/base/webpage/shrcnaSFKbJAci7YxvC1AXpweBc';
