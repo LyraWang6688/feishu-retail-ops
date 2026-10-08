@@ -20,6 +20,13 @@ const { resolvePendingDealPushConfig } = require('../config/pendingDealPush');
 const { pendingDealPushCard, joinLineSegments } = require('../utils/pendingDealPushCard');
 // ⭐ 2026-10-08：飞书错误里的真实 code / msg / log_id / method_id（唯一取用口）。
 const { larkErrorFields, larkResponseError } = require('../utils/larkError');
+// ⭐ 2026-10-08（P0）· 失败要重试 + 失败要可见 + 瞬时错误自动重试：
+//   两层重试（**按天层**分钟级 / **瞬时层**秒级）与失败告警的判据、状态机、执行器、文案
+//   全在 `config/pushRetry` —— 与「二次交付每日提醒」**共用一处实现**，不在这里抄第二份。
+const {
+  resolvePushRetryConfig, withTransientRetry, resolveDailyAttempt,
+  shouldSendFailureAlert, formatPushAlertText, pushFailureReason, DEFAULT_SLEEP,
+} = require('../config/pushRetry');
 const { logInfo, logWarn } = require('../utils/logger');
 
 // 「维度 1」：每天 9 点（北京时间）把**最近 7 天还没收齐**的销售单推到群里，
@@ -41,7 +48,14 @@ const { logInfo, logWarn } = require('../utils/logger');
 //   「② **推送失败自动重试**：失败后隔 **5/15 分钟**各重试一次，别一次失败就整天不发」
 //   ⇒ 默认发**卡片**；下面那套文本模板保留成**降级**（`PENDING_DEAL_PUSH_MESSAGE_FORMAT=text`
 //     或卡片发送失败时自动回退）；行内容去掉单号；待收 0 → 「已付清」；金额读不出来 → 整段不渲染；
-//     第一次失败**不算跑过**，按 `retryDelaysMs`（默认 5/15 分钟）各重试一次，成功即停、绝不重发。
+//     第一次失败**不算跑过**，成功即停、绝不重发。
+//   ⭐ 2026-10-08（P0）把上面那一句的**节奏改了**：从「5/15 分钟各一次（共 2 次重试）」改成
+//     「每 10 分钟一次、最多 6 次重试」—— 真机那次 09:05 失败之后两次重试都在 20 分钟内用完，
+//     照样一整天不发。现在同时具备三件（全部可配，见 `config/pushRetry`）：
+//       ① **失败跨 tick 重试**：当天失败 ≠ 今天跑过（`resolveAttempt` + `retryDelaysMs`）；
+//       ② **失败要可见**：次数用完往群里回一句人话（`alertFailure`，一天最多一句）；
+//       ③ **瞬时错误自动重试**：读表 / 发消息的 1254607 / 5xx / 429 / 网络中断，1s→2s 小退避；
+//          确定性错误（权限 / 参数 / 缺配置）**一次都不重试**，只留一条清晰日志。
 //
 // 🔴 2026-10-07 口径大改：交易类型 = **库存有没有**（现货 / 预定），「未付」不再是类型。
 //   ⭐ 2026-10-08（第一步）这一层具体化成**行级**判据，见下面 `PendingPushCandidateService`：
@@ -77,8 +91,9 @@ const { logInfo, logWarn } = require('../utils/logger');
 // 与「第二次交付」提醒（`secondDeliveryService.sendDailyReminder`）是**两条独立的推送**：
 // 那一条发**群卡片**、带「成交」按钮、点了会写库；这一条只发**一条提醒**、点进去
 // 由她去话题里处理。两条各有各的按天认领记录，互不影响（一条挂了不牵连另一条）。
-// ⚠️ 2026-10-08：**失败自动重试只加在这一条**（业务负责人点名的就是它）；
-//    那一条只同步修了"日志打真实错误"（见 secondDeliveryService 里的注释与说明）。
+// ⚠️ 2026-10-08：失败自动重试**两条链路现在都有**（P0 批准后：
+//    `secondDeliveryService` 也从"只修日志"补齐了同一套按天重试 + 告警，
+//    两层策略与状态机共用 `config/pushRetry`）。
 //
 // ⚠️ **本文件里不写用户可见的中文**：表头 / 区块标题 / 行格式 / 分隔符 / 尺码后缀 / 金额段 /
 //    链接文案 / 脚注 / 卡片标记全在 `config/pendingDealPush`（配置先行）——
@@ -121,12 +136,31 @@ const fillTemplate = (template, values) => String(template ?? '')
 // 变成 `B26002-52`（而不是 `B26002-52 `，更不会出现「 码」这种残句）。
 const fillLinePart = (template, values) => fillTemplate(template, values).replace(/\s+/g, ' ').trim();
 
+/**
+ * ⭐ 2026-10-08（P0）：当天的**失败记录** → 一个"像 error"的对象，
+ * 让告警文案复用 `larkErrorFields` / `pushFailureReason` **同一套取值**（不在这里另拼一份）。
+ * 用途：下一次 tick 走进 `retries_exhausted` 时，手里只有落盘的 `error` 与 `lark_error`。
+ */
+const failureLikeFromRecord = (record) => ({
+  message: record?.error || 'unknown',
+  larkData: record?.lark_error || {},
+});
+
 class PendingDealPushService {
   constructor(options = {}) {
     // 配置在这里**读一次**（启动时）：写错要在服务起来的那一刻就吵，而不是等第二天 9 点。
     // ⚠️ 惰性解析（只解析一次）：注入候选取数的用例不必把整份文案配置读出来 ——
     //    与 2026-10-08 之前"构造时就 `resolvePendingDealPushConfig()`"的行为对调用方一致。
     this._settings = options.settings || null;
+    // ⭐ 2026-10-08（P0）：**共享的**重试 / 告警策略（惰性解析一次）。
+    //    · `transient` —— 一次读 / 一次发的秒级小退避（2~3 次）；
+    //    · `alert`     —— 当天重试用完时的可见告警（开关 / 群 / 文案 / 这条推送的名字）。
+    //    ⚠️ 按天层的节奏不在这里：它是 `settings.retryDelaysMs`（`PENDING_DEAL_PUSH_RETRY_DELAYS_MS`
+    //      可显式覆盖）—— 见 `config/pendingDealPush` 的注释。
+    //    注入优先（单测用它把"瞬时层"与"按天层"分开钉），没注入才现读环境变量。
+    this._retrySettings = options.retrySettings || null;
+    // 「等一会儿再试」的睡眠：单测注入假的，避免真等 1s / 2s。
+    this.sleep = options.sleep || DEFAULT_SLEEP;
     // ⚠️ 依赖**全部惰性自建**（只建一次、只在该用到时）：
     //   · 生产那条路（`app.js` 只传 settings）第一次推送时按需建；
     //   · 单测里的替身一律走 `options.*`（例：`candidates` / `purchasePending`），
@@ -155,9 +189,9 @@ class PendingDealPushService {
     //    排查时一个目录看全；也复用同一个飞书 client，不为置顶另建连接。
     // ⚠️ 它**只干置顶这一件事**，而且内部把所有失败都吞成 warn（见 larkMessagePinService）。
     this.pin = options.pin || new LarkMessagePinService({ client: this.client, store: this.store });
-    // ⭐ 失败后的**定时重试**（业务负责人 2026-10-08：隔 5/15 分钟各重试一次）。
+    // ⭐ 失败后的**定时重试**（节奏来自 `settings.retryDelaysMs`，默认每 10 分钟一次 × 6）。
     //   默认 = setTimeout（unref，不阻止进程退出）；单测注入假的，直接把
-    //   「5 分钟 / 15 分钟」钉成断言，不需要真等。
+    //   「10 分钟 / 20 分钟 …」钉成断言，不需要真等。
     // ⚠️ 定时器只是"到点叫她"；**该不该发**由当天记录（`resolveAttempt`）说了算，
     //    所以进程重启丢了定时器也不会漏（下一次 tick 会按 `next_retry_at` 补上），
     //    更不会重复发（成功过就是 `completed` + `sent:true`）。
@@ -175,6 +209,23 @@ class PendingDealPushService {
   get settings() {
     if (!this._settings) this._settings = resolvePendingDealPushConfig();
     return this._settings;
+  }
+
+  /** 共享的重试 / 告警策略（**只解析一次**；注入的优先）。 */
+  get retrySettings() {
+    if (!this._retrySettings) this._retrySettings = resolvePushRetryConfig();
+    return this._retrySettings;
+  }
+
+  /**
+   * 一次**读**或一次**发**的瞬时错误小退避（业务负责人 P0 第 3 条）。
+   * 瞬时错误 → 1s / 2s 各再来一次；**确定性错误一次都不重试**（只留一条清晰日志）。
+   * ⚠️ `operation` 只进日志（例 `pending_deal_push.candidates`）。
+   */
+  transientRetry(fn, operation) {
+    return withTransientRetry(fn, {
+      operation, config: this.retrySettings.transient, sleep: this.sleep,
+    });
   }
 
   /**
@@ -669,11 +720,16 @@ class PendingDealPushService {
       return '';
     }
     if (!this.client?.im?.message?.create) throw new Error('待处理单推送缺少飞书 client，无法发送群消息');
-    const response = await this.client.im.message.create({
-      params: { receive_id_type: 'chat_id' },
-      data: { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text }) },
-    });
-    if (response.code !== 0) throw larkResponseError('发送待处理单推送失败', response);
+    // ⭐ 2026-10-08（P0）：发消息也走**瞬时错误小退避**（她点名的 400 / 5xx / 429 那类）。
+    //    ⚠️ 两次尝试都用 `client.im.message.create`，**结果只有最后返回的那一次算数**。
+    const response = await this.transientRetry(async () => {
+      const created = await this.client.im.message.create({
+        params: { receive_id_type: 'chat_id' },
+        data: { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text }) },
+      });
+      if (created.code !== 0) throw larkResponseError('发送待处理单推送失败', created);
+      return created;
+    }, 'pending_deal_push.send_text');
     return response.data?.message_id || '';
   }
 
@@ -686,11 +742,14 @@ class PendingDealPushService {
       return '';
     }
     if (!this.client?.im?.message?.create) throw new Error('待处理单推送缺少飞书 client，无法发送群消息');
-    const response = await this.client.im.message.create({
-      params: { receive_id_type: 'chat_id' },
-      data: { receive_id: chatId, msg_type: 'interactive', content: JSON.stringify(card) },
-    });
-    if (response.code !== 0) throw larkResponseError('发送待处理单推送卡片失败', response);
+    const response = await this.transientRetry(async () => {
+      const created = await this.client.im.message.create({
+        params: { receive_id_type: 'chat_id' },
+        data: { receive_id: chatId, msg_type: 'interactive', content: JSON.stringify(card) },
+      });
+      if (created.code !== 0) throw larkResponseError('发送待处理单推送卡片失败', created);
+      return created;
+    }, 'pending_deal_push.send_card');
     return response.data?.message_id || '';
   }
 
@@ -750,25 +809,85 @@ class PendingDealPushService {
    *   · `sent:true` / completed → `already_ran_today`（**幂等的根据**）
    *   · `running`               → `in_progress`（进程崩在两次写之间：与改动前一致，当天不再发，
    *                               第二天照常进候选；宁可少推一天，也绝不重复发）
-   *   · `failed`                → 按 `retryDelaysMs`（默认 5/15 分钟）判：没到点 `retry_waiting`、
+   *   · `failed`                → 按 `retryDelaysMs` 判：没到点 `retry_waiting`、
    *                               次数用完 `retries_exhausted` / `retry_disabled`、到点则**重试**
+   * ⚠️ 实现搬到了 `config/pushRetry.resolveDailyAttempt`（**两条推送共用一份状态机**）；
+   *    这个方法只是保留调用口（本类与既有用例都从它进来）。
    */
   resolveAttempt({ record, nowMs, retryDelaysMs = [] }) {
-    if (!record) return { attempt: true, attemptNumber: 1, reason: '' };
-    if (record.sent || record.status === 'completed') return { attempt: false, reason: 'already_ran_today' };
-    if (record.status === 'running') return { attempt: false, reason: 'in_progress' };
-    if (!retryDelaysMs.length) return { attempt: false, reason: 'retry_disabled' };
-    const attempts = Number(record.attempts) || 1;
-    if (attempts > retryDelaysMs.length) return { attempt: false, reason: 'retries_exhausted' };
-    const delay = retryDelaysMs[attempts - 1];
-    const failedAtMs = Date.parse(record.first_failed_at || record.failed_at || '');
-    const dueAtMs = Number.isFinite(failedAtMs) ? failedAtMs + delay : NaN;
-    if (Number.isFinite(dueAtMs) && nowMs < dueAtMs) {
-      return {
-        attempt: false, reason: 'retry_waiting', nextRetryAt: new Date(dueAtMs).toISOString(),
-      };
+    return resolveDailyAttempt({ record, nowMs, retryDelaysMs });
+  }
+
+  /** 告警发到哪儿：显式配了 `PUSH_RETRY_ALERT_CHAT_ID` 就用它，否则用这条推送**自己的群**。 */
+  alertChatId() {
+    const configured = String(this.retrySettings?.alert?.chatId ?? '').trim();
+    if (configured !== '') return configured;
+    return this.chatId === undefined ? this.settings.chatId : this.chatId;
+  }
+
+  /**
+   * ⭐ 2026-10-08（P0·失败要可见）：**当天不会再试**时，往群里回一句人话。
+   *
+   * 文案（`{push}` / `{day}` / `{reason}` …）全在 `config/pushRetry`，这里只填值。
+   * 🔴 **幂等**：一天最多一次 —— 先看当天的 `alert_attempted`（读**当前**记录，不信任调用方
+   *    手里那份旧的），发完把结果写回去；下一班 tick 再进来会被它挡住，绝不刷屏。
+   * 🔴 **永不抛**：告警只是"让她知道"，绝不能反过来改变"今天不再试"这个结论。
+   */
+  async alertFailure({ dayKey, attempt, error, maxAttempts }) {
+    const alert = this.retrySettings.alert;
+    const meta = { day: dayKey, attempt, max_attempts: maxAttempts };
+    const dayTaskId = dayMarkerId(dayKey);
+    if (!alert.enabled) {
+      logWarn('sales.pending_deal_push.alert.skipped', { ...meta, reason: 'alert_disabled' });
+      return { sent: false, reason: 'alert_disabled' };
     }
-    return { attempt: true, attemptNumber: attempts + 1, reason: '' };
+    const current = await this.store.get(dayTaskId).catch(() => null);
+    if (!shouldSendFailureAlert(current, alert)) {
+      return { sent: false, reason: 'already_alerted' };
+    }
+    const fields = larkErrorFields(error);
+    const reason = pushFailureReason(error);
+    const text = formatPushAlertText(alert.template, {
+      push: alert.names.pendingDealPush,
+      day: dayKey,
+      attempt,
+      maxAttempts,
+      reason,
+      code: fields.code === '' || fields.code === undefined ? '' : fields.code,
+      msg: fields.msg,
+    });
+    const chatId = this.alertChatId();
+    let sent = false;
+    let messageId = '';
+    let alertError = '';
+    if (!chatId) {
+      alertError = 'no_chat';
+      logWarn('sales.pending_deal_push.alert.skipped', {
+        ...meta, reason: 'no_chat', env: 'PENDING_DEAL_PUSH_CHAT_ID', hint: '没有群可发，告警发不出去',
+      });
+    } else {
+      try {
+        messageId = await this.sendTextToChat(text, chatId);
+        sent = Boolean(messageId);
+      } catch (alertSendError) {
+        alertError = alertSendError.message;
+        logWarn('sales.pending_deal_push.alert.failed', {
+          ...meta, error: alertSendError.message, ...larkErrorFields(alertSendError),
+        });
+      }
+    }
+    await this.store.update(dayTaskId, {
+      alert_attempted: true,
+      alert_sent: sent,
+      alert_message_id: messageId,
+      ...(alertError ? { alert_error: alertError } : {}),
+    }).catch(() => undefined);
+    if (sent) {
+      logWarn('sales.pending_deal_push.alert.sent', {
+        ...meta, message_id: messageId, chat_id: chatId, reason,
+      });
+    }
+    return { sent, reason: alertError || 'sent' };
   }
 
   /** 每日推送。定时器每个 tick 都会调它，能不能真跑由"今天发出去没有 / 该不该重试"决定。 */
@@ -799,6 +918,17 @@ class PendingDealPushService {
         attempts: Number(record?.attempts) || 0,
         ...(decision.nextRetryAt ? { next_retry_at: decision.nextRetryAt } : {}),
       });
+      // ⭐ 2026-10-08（P0·失败要可见）：**重试用完（或压根没开重试）⇒ 当天一定发不出去了** ——
+      //    在这里补一次告警，正好覆盖"进程崩在'写 failed'与'发告警'之间"那个窗口。
+      //    一天最多一次（`alertFailure` 自己按当天记录的 `alert_attempted` 挡）。
+      if (decision.reason === 'retries_exhausted' || decision.reason === 'retry_disabled') {
+        await this.alertFailure({
+          dayKey,
+          attempt: Number(record?.attempts) || 1,
+          maxAttempts: 1 + retryDelaysMs.length,
+          error: failureLikeFromRecord(record),
+        });
+      }
       return {
         day: dayKey, skipped: true, reason: decision.reason, pushedOrderCount: 0,
         attemptCount: Number(record?.attempts) || 0,
@@ -818,8 +948,10 @@ class PendingDealPushService {
       // ⭐ 2026-10-08（第一步）：三块候选都从**这一条**来（【预定】/【现货待收】逐行 +
       //   「报货批次」里未到货的批次）。`listPendingOrders` 是唯一入口 ——
       //   `SecondDeliveryService.listPendingDeliveries` 一个字都没改（它还供着成交提醒）。
+      // ⭐ 2026-10-08（P0·瞬时错误自动重试）：**整段取数**包进小退避 —— 里面是一次读多张表
+      //   （候选 service 自己已经对 1254607 重试 3 次；这里再兜住 5xx / 429 / 网络中断）。
       const { sections, rows: candidateRows, purchase: purchaseCandidates = [] } =
-        await this.listPendingOrders({ now });
+        await this.transientRetry(() => this.listPendingOrders({ now }), 'pending_deal_push.candidates');
       // 两区都空 → 与改动前一样：**不发**（只留一条记录，当天不再试）。
       if (!candidateRows.length && !purchaseCandidates.length) {
         await this.store.update(dayTaskId, {
@@ -832,7 +964,10 @@ class PendingDealPushService {
       }
 
       // ⚠️ 销售侧与采购侧的深链**各自算各自的计数**（口径不同、脚注也不同）。
-      const { rows, missingLinkCount } = await this.attachLinks(candidateRows);
+      // ⭐ 这两段也会读远端（`im.message.get` 现查深链 / 采购映射），一起走瞬时小退避。
+      const { rows, missingLinkCount } = await this.transientRetry(
+        () => this.attachLinks(candidateRows), 'pending_deal_push.attach_links',
+      );
       if (missingLinkCount) {
         // 一次推送只记**一条**汇总（不是每行一条），否则日志会被刷满。
         logWarn('sales.pending_deal_push.link.missing', {
@@ -843,7 +978,10 @@ class PendingDealPushService {
       // 采购区的深链：本地映射（`data/purchase_group_messages` 的 chat_id + thread_id）→
       // 话题深链（与销售侧**同一个** `buildSalesThreadLink`）。
       // ⚠️ 拿不到就留空 —— 由渲染层"照发 + 脚注"，**绝不因此漏掉候选**。
-      const { batches: purchaseBatches, missingLinkCount: purchaseMissingLinkCount } = await this.attachPurchaseLinks(purchaseCandidates);
+      const { batches: purchaseBatches, missingLinkCount: purchaseMissingLinkCount } =
+        await this.transientRetry(
+          () => this.attachPurchaseLinks(purchaseCandidates), 'pending_deal_push.attach_purchase_links',
+        );
       if (purchaseMissingLinkCount) {
         logWarn('sales.pending_deal_push.purchase_link.missing', {
           day: dayKey, batch_count: purchaseBatches.length, missing_link_count: purchaseMissingLinkCount,
@@ -926,7 +1064,7 @@ class PendingDealPushService {
     } catch (error) {
       // 🔴 2026-10-08：**失败不再等于"今天跑过了"** —— 记下第几次、下次什么时候再试，
       //    并把飞书返回的**真实四项**（code / msg / log_id / method_id）落进日志与记录。
-      //    两次重试都用完才认输（`will_retry:false`），当天不再试，第二天照常进候选。
+      //    次数用完才认输（`will_retry:false`），当天不再试，第二天照常进候选。
       const fields = larkErrorFields(error);
       const firstFailedAt = record?.first_failed_at || now.toISOString();
       const delay = retryDelaysMs[attempt - 1];
@@ -949,6 +1087,13 @@ class PendingDealPushService {
         // ⚠️ 回调里吞掉异常：定时任务不该产生 unhandledRejection（与 shanghaiDailyScheduler 同款）。
         this.scheduleRetry(delay, () => {
           this.sendDailyPush({ now: new Date() }).catch(() => undefined);
+        });
+      } else {
+        // ⭐ 2026-10-08（P0·失败要可见）：**当天不会再有下一次 ⇒ 必须有人知道**。
+        //    业务负责人要的四样都在文案里：哪条推送 / 哪天 / 什么原因 / 今天不会再试。
+        //    🔴 一天最多一句（幂等），🔴 发不出去也**绝不改变**这条失败记录。
+        await this.alertFailure({
+          dayKey, attempt, maxAttempts: 1 + retryDelaysMs.length, error,
         });
       }
       throw error;
