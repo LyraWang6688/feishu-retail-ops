@@ -5,8 +5,11 @@
  *   ① **挂载点**：真 `app.js` 里就有 `/s` 这一条 —— 不是只在测试里拼出来的；
  *      而且它**不在 `API_KEY` 保护的 `/api/*` 之下**（扫码的人是手机浏览器直接打开，没有 `x-api-key`）；
  *   ② **准入**：与工作台**同一道**闸门（`routes/workbench.js` 导出的
- *      `requireWorkbenchAccess`，两处是**同一个函数**）—— 未启用认证 503 / 未登录 401 /
- *      白名单外 403（既有语义不变；`/api/workbench/*` 那一侧也一并回归了）；
+ *      `requireWorkbenchAccess`，两处是**同一个函数**）—— 未启用认证 503 /
+ *      白名单外 403（`/api/workbench/*` 那一侧也一并回归了）。
+ *      ⚠️ **未登录**这一种在扫码页是**例外**（2026-10-08「扫码即用」）：
+ *      扫码的人是在手机浏览器上打开的，没登录时 **302 去飞书登录**（登录完自动回来），
+ *      不再是 401 JSON。共享闸门本身一个字没改 —— 逐条用例见 `scanPageAuthRedirect.test.js`。
  *   ③ **页面**：200 出库存表；没找到 404 一张人话页；编号读不出来 400；远端出错 500 不回显内部细节；
  *      飞书没准备好 503 + `Retry-After`；
  *   ④ **只读**：整条链路上 `create/update/delete` 一次都没被调用（假网关一碰就抛）。
@@ -164,10 +167,10 @@ test('远端出错 → 500 不回显内部细节；飞书没准备好 → 503 + 
   });
 });
 
-test('准入（与工作台同一道闸门）：未启用认证 503、未登录 401、白名单外 403 —— 且不碰 service', async () => {
+test('准入（与工作台同一道闸门）：未启用认证 503、未登录 302 去登录、白名单外 403 —— 且不碰 service', async () => {
   const app = appFor(async () => { throw new Error('闸门没过时不许查数据'); });
 
-  delete process.env.LARK_WEB_AUTH_ENABLED;
+  process.env.LARK_WEB_AUTH_ENABLED = 'false';
   await withServer(app, async (base) => {
     const response = await fetch(`${base}/s/${ENCODED}`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 503, '认证没启用时必须拒绝，即使带着会话 cookie');
@@ -175,11 +178,13 @@ test('准入（与工作台同一道闸门）：未启用认证 503、未登录 
 
   login();
   await withServer(app, async (base) => {
-    const response = await fetch(`${base}/s/${ENCODED}`);
-    assert.equal(response.status, 401, '没登录时必须 401');
-    assert.equal((await response.json()).auth_required, true);
-    assert.equal(response.headers.get('content-type').includes('application/json'), true,
-      '工作台那套闸门的语义一个字都没改（还是 JSON 响应）');
+    // ⚠️ 2026-10-08「扫码即用」：**扫码页**未登录不再回 401 JSON，而是 302 去飞书登录
+    //    （`next` = 刚才那一页，登录完自动回来）。共享闸门 `requireWorkbenchAccess`
+    //    的语义没动，只是这一种情况在扫码页被提前接住了；工作台那一侧仍是 401 JSON
+    //    （见下面最后一段与 `scanPageAuthRedirect.test.js`）。
+    const response = await fetch(`${base}/s/${ENCODED}`, { redirect: 'manual' });
+    assert.equal(response.status, 302, '没登录时必须去登录');
+    assert.match(response.headers.get('location'), /^\/api\/auth\/feishu\/start\?next=/, '目标是登录入口');
   });
 
   process.env.WORKBENCH_ALLOWED_OPEN_IDS = 'ou_allowed';
@@ -246,9 +251,11 @@ test('真 app.js：`/s/:number` 确实挂上了、不要 API_KEY、走同一道�
       assert.match(html, /class="missing"/, '41 码在「尺码管理」里有、库存为 0 ⇒ 缺码');
       assert.match(html, /2026-10-08 20:30/, '库存更新时间按上海 +8 显示');
 
-      // 闸门还在：不带会话时 401（与工作台一字不差）
-      const anonymous = await fetch(`${base}/s/${ENCODED}`);
-      assert.equal(anonymous.status, 401);
+      // 闸门还在：不带会话时**扫码页** 302 去登录（"扫码即用"）；
+      // 工作台那一侧仍是 401 JSON（下面两行，逐字不变）
+      const anonymous = await fetch(`${base}/s/${ENCODED}`, { redirect: 'manual' });
+      assert.equal(anonymous.status, 302);
+      assert.match(anonymous.headers.get('location'), /^\/api\/auth\/feishu\/start\?next=/);
 
       // 扫码页与工作台共用同一个闸门函数：工作台自己的接口照旧（回归）
       const workbench = await fetch(`${base}/api/workbench/inventory`);
