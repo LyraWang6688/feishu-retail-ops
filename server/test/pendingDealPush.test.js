@@ -173,7 +173,7 @@ test('配置默认值：默认关、9 点、10 分钟一 tick、没有群 id、�
     sizeTemplate: '{size}码',
     amountTemplate: '待收 {amount}',
     paidUpText: '已付清',
-    linkText: '查看原话',
+    linkText: '查看话题',
     linkTextTemplate: '{text} {url}',
     footerTemplate: '（{count} 笔的深链暂不可用：飞书接口未返回 message_app_link，见日志 sales.pending_deal_push.link.missing）',
     // ⚠️ 2026-10-07 加「【销售】区 + 【采购】区」那批键：断言仍然是**严格全等**
@@ -197,6 +197,13 @@ test('配置默认值：默认关、9 点、10 分钟一 tick、没有群 id、�
       amountTemplate: "<font color='{color}'>待收 {amount}</font>",
       amountColor: 'red',
       linkTemplate: '[{text}]({url})',
+      // ⭐ 2026-10-08 晚：每行**两栏**（她拍板）—— 严格全等，新键也钉进来（不是放宽）。
+      rowTextParts: ['{item}', '{amount}'],
+      rowTextSeparator: ' · ',
+      missingItemText: '（未读到货号/尺码）',
+      purchaseRowTextParts: ['{batchNo}', '{supplier}'],
+      buttonText: '查看话题',
+      columnWeights: [4, 1],
     },
   });
   assert.equal(resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_HOUR: '7' }).hour, 7);
@@ -300,12 +307,13 @@ test('正常推：按【预付 / 未付】分两块，每笔一行（单号 + �
   const text = visibleOf(creates[0]);
   // 表头：总数 2 笔（口径不变）＋ 分区计数（预定 1 / 现货待收 1）。
   assert.match(text, /^⏰ 2026-10-06 最近 7 天待处理的销售单（预定 \/ 现货待收）：2 笔（【预定】1 笔 \/ 【现货待收】1 笔）\n/);
-  // 分区：预定在前、现货待收在后；每块各自从 1 开始编号。
-  // ⚠️ 2026-10-08 口径变更：**单号从行里去掉**（她明确说不需要）；文字链接摊成「查看原话 URL」。
-  assert.match(text, /\n【预定】1 笔\n1\. B26002-52 37码 · 【预定】 · 待收 ¥1280\.00 · 查看原话 https:\/\/applink\.feishu\.cn\/client\/message\/link\?message_id=om_a\n/);
-  assert.match(text, /\n【现货待收】1 笔\n1\. 6A637-7 43码 · 【现货待收】 · 待收 ¥300\.50\n/);
-  // 第 2 笔没有深链 → 那一段不出现，另起一行说明；不能编一条 URL 出来。
-  assert.doesNotMatch(text, /6A637-7 43码 · 【现货待收】 · 待收 ¥300\.50 · 查看原话/);
+  // 分区：预定在前、现货待收在后；每块里每行**两栏**（文字说明 + 「查看话题」按钮）。
+  // ⚠️ 2026-10-08 晚她的口径：去掉单号、序号与彩色类型标签；类型由**区域标题**表达，
+  //    深链放在按钮的 `default_url` 里（`visibleCardText` 把它摊成「文字栏 | 查看话题」）。
+  assert.match(text, /\n【预定】1 笔\nB26002-52 37码 · 待收 ¥1280\.00 \| 查看话题\n/);
+  assert.match(text, /\n【现货待收】1 笔\n6A637-7 43码 · 待收 ¥300\.50\n/);
+  // 第 2 笔没有深链 → **只有文字栏**（不给点不动的按钮）；另起一行说明，不能编一条 URL 出来。
+  assert.doesNotMatch(text, /6A637-7 43码 · 待收 ¥300\.50 \| 查看话题/);
   assert.match(text, /1 笔的深链暂不可用/);
   assert.equal(result.missingLinkCount, 1);
 });
@@ -323,8 +331,15 @@ test('本地只有【话题深链】（她给的格式拼的那条）时，也�
   const result = await service.sendDailyPush({ now: DAY_1_MORNING });
   assert.equal(result.missingLinkCount, 0, '话题深链也算链接，不该报"缺链接"');
   const text = visibleOf(creates[0]);
-  assert.match(text, /https:\/\/applink\.feishu\.cn\/client\/thread\/open\?open_chat_id=/);
-  assert.match(text, /open_thread_id=omt_a/);
+  assert.match(text, /\| 查看话题/, '有深链 ⇒ 按钮那栏在');
+  // 深链现在放在**按钮的 default_url** 里（不再是正文里的文字链接）。
+  const urls = JSON.parse(creates[0].data.content).elements
+    .flatMap((element) => (element.columns || []).flatMap((column) => column.elements))
+    .filter((element) => element.tag === 'button')
+    .map((element) => element.behaviors[0].default_url);
+  assert.equal(urls.length, 1);
+  assert.match(urls[0], /https:\/\/applink\.feishu\.cn\/client\/thread\/open\?open_chat_id=/);
+  assert.match(urls[0], /open_thread_id=omt_a/);
 });
 
 test('按天认领：同一天推第二遍什么都不做，第二天照推', async () => {
@@ -384,7 +399,7 @@ test('一笔单在本地映射里没有记录：照推货号 + 金额，只是�
   assert.equal(result.pushedOrderCount, 1);
   assert.equal(result.missingLinkCount, 1);
   const text = visibleOf(creates[0]);
-  assert.match(text, /1\. B26002-52 37码 · 【预定】 · 待收 ¥1280\.00/);
+  assert.match(text, /B26002-52 37码 · 待收 ¥1280\.00/);
 });
 
 test('金额读不出来时**整段不渲染**（不显示 ¥— / ¥0.00 / NaN）；一件货号尺码都没有时**不留残句**', () => {

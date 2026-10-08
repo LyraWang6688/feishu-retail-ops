@@ -300,33 +300,50 @@ class PendingDealPushService {
   }
 
   /**
-   * 一笔单一行（**卡片**版）：每一"段"是一段已经渲染好的 markdown，由
-   * `utils/pendingDealPushCard` 用 `card.lineSeparator` 拼起来。
-   *   · `{item}`  = **加粗的货号 + 尺码**（她最看重的那两样）；
-   *   · `{tag}`   = 彩色标签（`text_tag`），颜色来自区块配置；
-   *   · `{amount}`= 突出显示的待收金额（待收 0 → 「已付清」；读不出来 → 整段不要）；
-   *   · `{link}`  = `[查看原话](深链)`（URL 藏在文字后面；没有深链 → 整段不要）。
+   * 一笔单一行（**卡片·两栏版**，2026-10-08 晚她的口径）：
+   *   第 1 栏 = **文字说明**（加粗货号+尺码 · 待收金额 / 已付清）；第 2 栏 = 「查看话题」按钮。
+   * ⚠️ 与上一版（div 平铺：序号 + 标签 + 金额 + 文字链接）相比：
+   *   · **去掉了序号、类型彩色标签、文字链接** —— 类型由**区域标题**（【预定】…）表达，
+   *     链接由**按钮**表达（`utils/pendingDealPushCard` 渲染 open_url）；
+   *   · 货号/尺码读不出来时给 `card.missingItemText` 占位，**绝不静默丢掉这一行**。
    */
-  buildCardLine(order, index, tag, tagColor) {
+  buildCardRow(order) {
     const { card = {} } = this.settings;
     const amount = this.amountOf(order);
+    const item = this.buildItemText(order.items);
     const values = {
-      index: index + 1,
-      tag: tag ? fillLinePart(card.tagTemplate, { color: tagColor || '', text: tag }) : '',
-      item: (() => {
-        const item = this.buildItemText(order.items);
-        return item ? fillLinePart(card.itemTemplate, { item }) : '';
-      })(),
+      tag: '',
+      index: '',
+      item: item ? fillLinePart(card.itemTemplate, { item }) : '',
       amount: amount.known
         ? (amount.paidUp
           ? fillLinePart(amount.text, {})
           : fillLinePart(card.amountTemplate, { color: card.amountColor || '', amount: amount.text }))
         : '',
-      link: order.url ? fillLinePart(card.linkTemplate, { text: this.settings.linkText, url: order.url }) : '',
     };
-    return (card.lineParts || [])
+    const segments = (card.rowTextParts || ['{item}'])
       .map((part) => fillLinePart(part, values))
       .filter(Boolean);
+    if (!item && card.missingItemText) segments.unshift(String(card.missingItemText));
+    return {
+      text: segments.join(card.rowTextSeparator ?? ' · '),
+      url: order.url || '',
+    };
+  }
+
+  /** 采购区一行（**同一套两栏**）：第 1 栏 = 批次号 · 供应商；第 2 栏 = 「查看话题」。 */
+  buildCardPurchaseRow(batch = {}, index = 0) {
+    const { card = {} } = this.settings;
+    const values = {
+      index: index + 1,
+      batchNo: batch.batchNo || '',
+      supplier: (batch.suppliers || []).join(this.settings.purchaseSupplierSeparator),
+    };
+    const text = (card.purchaseRowTextParts || ['{batchNo}'])
+      .map((part) => fillLinePart(part, values))
+      .filter(Boolean)
+      .join(card.rowTextSeparator ?? ' · ');
+    return { text, url: batch.url || '' };
   }
 
   /**
@@ -465,8 +482,8 @@ class PendingDealPushService {
         for (const section of resolvedSections) {
           parts.push({
             title: fillTemplate(blockCountTemplate, { title: section.title, count: section.orders.length }),
-            lines: section.orders.map((order, index) =>
-              this.buildCardLine(order, index, section.title, section.tagColor)),
+            // ⭐ 每行 = 两栏（文字说明 | 查看话题）；区域标题就是它的"块标题"。
+            rows: section.orders.map((order) => this.buildCardRow(order)),
           });
         }
       }
@@ -475,17 +492,7 @@ class PendingDealPushService {
           title: purchaseAreaTitle
             ? fillTemplate(purchaseAreaTitle, { count: purchaseBatches.length })
             : '',
-          lines: purchaseBatches.map((batch, index) => {
-            const values = {
-              index: index + 1,
-              batchNo: batch.batchNo || '',
-              supplier: (batch.suppliers || []).join(purchaseSupplierSeparator),
-              link: batch.url ? fillLinePart(card.linkTemplate, { text: this.settings.linkText, url: batch.url }) : '',
-            };
-            return purchaseLineParts
-              .map((part) => fillLinePart(part, values))
-              .filter(Boolean);
-          }),
+          rows: purchaseBatches.map((batch, index) => this.buildCardPurchaseRow(batch, index)),
         });
       }
     }

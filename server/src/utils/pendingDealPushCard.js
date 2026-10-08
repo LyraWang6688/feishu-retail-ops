@@ -31,6 +31,55 @@ const joinLineSegments = (segments, separator = ' ') => {
   return body ? `${head} ${body}` : head;
 };
 
+// 去掉 markdown 标记，得到"她看得见的字"（纯文本降级 / 测试比对用）。
+const plainText = (content) => String(content ?? '')
+  .replace(/<\/?text_tag[^>]*>/g, '')
+  .replace(/<\/?font[^>]*>/g, '')
+  .replace(/\*\*/g, '')
+  .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 $2');
+
+/**
+ * ⭐ 一行 = 一个 `column_set`（**两栏**，业务负责人 2026-10-08 晚的口径）：
+ *   第 1 栏 = 文字说明（货号 + 尺码 + 待收金额）；第 2 栏 = 「查看话题」按钮。
+ *   · 深链缺失 ⇒ **只出第 1 栏**（不留空壳、也不给一个点不动的按钮），仍计入脚注；
+ *   · 文字为空 ⇒ 只出按钮栏；两样都空 ⇒ 整行不要（返回 null）。
+ *   · 列宽 = `card.columnWeights`（默认 4 : 1）。
+ */
+const rowColumnSet = (row = {}, card = {}) => {
+  const text = String(row.text ?? '').trim();
+  const url = String(row.url ?? '').trim();
+  const buttonText = String(card.buttonText ?? '').trim() || '查看话题';
+  const weights = Array.isArray(card.columnWeights) ? card.columnWeights : [];
+  const textWeight = Number(weights[0]) > 0 ? Number(weights[0]) : 4;
+  const buttonWeight = Number(weights[1]) > 0 ? Number(weights[1]) : 1;
+  const columns = [];
+  if (text) {
+    columns.push({
+      tag: 'column',
+      width: 'weighted',
+      weight: textWeight,
+      elements: [{ tag: 'div', text: { tag: 'lark_md', content: text } }],
+    });
+  }
+  if (url) {
+    columns.push({
+      tag: 'column',
+      width: 'weighted',
+      weight: buttonWeight,
+      elements: [{
+        tag: 'button',
+        type: 'default',
+        width: 'fill',
+        text: { tag: 'plain_text', content: buttonText },
+        // 官方支持的跳转交互（与 `larkCards` 里那几张卡的 open_url 写法一致）。
+        behaviors: [{ type: 'open_url', default_url: url }],
+      }],
+    });
+  }
+  if (!columns.length) return null;
+  return { tag: 'column_set', flex_mode: 'none', background_style: 'default', columns };
+};
+
 const pendingDealPushCard = ({
   header = '', card = {}, parts = [], footerLines = [],
 } = {}) => {
@@ -51,14 +100,17 @@ const pendingDealPushCard = ({
       continue;
     }
     const title = String(part.title ?? '').trim();
+    // ⭐ 新形状（2026-10-08 晚）：每一行是一个 `rows[]` 项 → 两栏 column_set。
+    const rowElements = (part.rows || []).map((row) => rowColumnSet(row, card)).filter(Boolean);
     const lines = (part.lines || [])
       .map((segments) => joinLineSegments(segments, lineSeparator))
       .filter((line) => line.trim() !== '');
     // 空块**整块不要**（连它前面那条分割线也不出现）。
-    if (!lines.length) continue;
+    if (!rowElements.length && !lines.length) continue;
     // 分割线只**夹在**两块之间：第一块之前没有，最后一块之后也没有。
     if (renderedBlocks > 0) elements.push({ tag: 'hr' });
     elements.push({ tag: 'div', text: { tag: 'lark_md', content: fill(sectionTitleTemplate, { title }) } });
+    for (const element of rowElements) elements.push(element);
     for (const line of lines) {
       elements.push({ tag: 'div', text: { tag: 'lark_md', content: line } });
     }
@@ -90,13 +142,17 @@ const visibleCardText = (card) => {
     if (element.tag === 'note') {
       return String((element.elements || []).map((piece) => piece.content || '').join('\n'));
     }
+    // 两栏行：`文字说明 | 查看话题`（按钮只取它的文案）。
+    if (element.tag === 'column_set') {
+      return (element.columns || [])
+        .map((column) => (column.elements || []).map((child) => plainText(
+          child.tag === 'button' ? child.text?.content : child.text?.content,
+        )).filter(Boolean).join(' '))
+        .filter(Boolean)
+        .join(' | ');
+    }
     if (element.tag !== 'div') return '';
-    return String(element.text?.content || '')
-      .replace(/<\/?text_tag[^>]*>/g, '')
-      .replace(/<\/?font[^>]*>/g, '')
-      .replace(/\*\*/g, '')
-      // 文字链接 → 「文案 URL」：纯文本降级里就是这个形状，比对时两边可逐字对齐。
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 $2');
+    return plainText(element.text?.content);
   });
   return [header, ...elements].filter((line) => String(line).trim() !== '').join('\n');
 };

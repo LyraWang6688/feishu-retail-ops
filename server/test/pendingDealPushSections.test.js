@@ -157,15 +157,15 @@ test('两区各自渲染：预定在前、现货待收在后；每块有自己�
 
   assert.equal(result.pushedOrderCount, 2);
   assert.equal(creates.length, 1);
-  // ⭐ 2026-10-08 口径变更：默认发**卡片**；行里**不再有单号**，深链变成「查看原话」文字链接。
+  // ⭐ 2026-10-08 晚口径：每行**两栏**（文字说明 | 「查看话题」按钮），没有序号与类型标签。
   assert.equal(creates[0].data.msg_type, 'interactive');
   const text = visibleOf(creates[0]);
   assert.equal(text, [
     '⏰ 2026-10-07 最近 7 天待处理的销售单（预定 / 现货待收）：2 笔（【预定】1 笔 / 【现货待收】1 笔）',
     '【预定】1 笔',
-    '1. B26002-52 37码 · 【预定】 · 待收 ¥128.00 · 查看原话 https://applink.feishu.cn/client/message/link?message_id=om_sale_reserved',
+    'B26002-52 37码 · 待收 ¥128.00 | 查看话题',
     '【现货待收】1 笔',
-    '1. 6A637-7 43码 · 【现货待收】 · 待收 ¥228.00 · 查看原话 https://applink.feishu.cn/client/message/link?message_id=om_sale_cash_pending',
+    '6A637-7 43码 · 待收 ¥228.00 | 查看话题',
   ].join('\n'));
   // ⭐ AC-6.3：现货已交付、钱没结清的单**进了候选**，并落在【现货待收】区。
   assert.match(text, /【现货待收】1 笔/);
@@ -216,7 +216,7 @@ test('一单多件：逐件列出（用配置的分隔符）；配品没有尺�
   await service.sendDailyPush({ now: DAY });
   const text = visibleOf(creates[0]);
 
-  assert.match(text, /1\. B26002-52 37码、腰带、6A637-7 43码 · 【现货待收】 · 待收 ¥228\.00/);
+  assert.match(text, /B26002-52 37码、腰带、6A637-7 43码 · 待收 ¥228\.00/);
   assert.doesNotMatch(text, /腰带\s*码/);
   assert.equal(text.match(/码/g).length, 2);
 });
@@ -234,9 +234,10 @@ test('缺货号 / 缺尺码：**不留空壳**（不出现「 码」、不出现
   assert.equal(text, [
     '⏰ 2026-10-07 最近 7 天待处理的销售单（预定 / 现货待收）：2 笔（【预定】1 笔 / 【现货待收】1 笔）',
     '【预定】1 笔',
-    '1. 【预定】 · 待收 ¥128.00 · 查看原话 https://applink.feishu.cn/client/message/link?message_id=om_sale_reserved',
+    // 货号/尺码一件都取不到 ⇒ 给占位（**绝不静默丢掉这一行**），金额照旧
+    '（未读到货号/尺码） · 待收 ¥128.00 | 查看话题',
     '【现货待收】1 笔',
-    '1. B26002-52 · 【现货待收】 · 待收 ¥228.00 · 查看原话 https://applink.feishu.cn/client/message/link?message_id=om_sale_cash_pending',
+    'B26002-52 · 待收 ¥228.00 | 查看话题',
   ].join('\n'));
   assert.doesNotMatch(text, /·\s+·/, '不许留下空的分隔段');
   assert.doesNotMatch(text, /\s码/);
@@ -255,7 +256,7 @@ test('缺深链：行内不出现链接段（也不留空分隔符），脚注 +
   const text = visibleOf(creates[0]);
   assert.equal(result.missingLinkCount, 2);
   assert.equal(result.pushedOrderCount, 2, '深链缺失不影响"照推"（默认 linkRequired=false）');
-  assert.match(text, /1\. B26002-52 37码 · 【预定】 · 待收 ¥128\.00$/m);
+  assert.match(text, /B26002-52 37码 · 待收 ¥128\.00$/m);
   assert.match(text, /2 笔的深链暂不可用：飞书接口未返回 message_app_link，见日志 sales\.pending_deal_push\.link\.missing/);
   assert.doesNotMatch(text, /https?:\/\//);
 });
@@ -277,7 +278,7 @@ test('判据认不出来（履约状态为空串之外的未知取值）→ 落�
   const text = visibleOf(creates[0]);
   assert.equal(result.pushedOrderCount, 1);
   assert.match(text, /：1 笔\n【其他】1 笔\n/);
-  assert.match(text, /1\. 6A637-7 43码 · 【其他】 · 待收 ¥228\.00/);
+  assert.match(text, /6A637-7 43码 · 待收 ¥228\.00/);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -317,9 +318,9 @@ test('配置可配：换个 env 就换一套顺序、标题、行格式与分隔
   assert.equal(text, [
     '🕘 2026-10-07 共 2 条（【赊账】1 笔 / 【定金】1 笔）',
     '【赊账】 1 条',
-    '1) XSD-U-1 【赊账】|6A637-7 43 号|待收 ¥228.00|查看原话 https://applink.feishu.cn/client/message/link?message_id=om_sale_cash_pending',
+    '1) XSD-U-1 【赊账】|6A637-7 43 号|待收 ¥228.00|查看话题 https://applink.feishu.cn/client/message/link?message_id=om_sale_cash_pending',
     '【定金】 1 条',
-    '1) XSD-P-1 【定金】|B26002-52 37 号|待收 ¥128.00|查看原话 https://applink.feishu.cn/client/message/link?message_id=om_sale_reserved',
+    '1) XSD-P-1 【定金】|B26002-52 37 号|待收 ¥128.00|查看话题 https://applink.feishu.cn/client/message/link?message_id=om_sale_reserved',
   ].join('\n'));
 });
 

@@ -198,7 +198,9 @@ const PENDING_DEAL_PUSH_DEFAULTS = Object.freeze({
   paidUpText: '已付清',
   // 文字链接：卡片上是 `[查看原话](url)`，纯文本降级里是 `查看原话 https://…`
   //（纯文本藏不住 URL，但至少不再是一行裸链接）。
-  linkText: '查看原话',
+  // ⭐ 2026-10-08 晚她的口径：「**应该都是查看话题**」⇒ 统一成「查看话题」
+  //（卡片上那颗按钮的文案也是它，见 `card.buttonText`）。
+  linkText: '查看话题',
   linkTextTemplate: '{text} {url}',
   footerTemplate: '（{count} 笔的深链暂不可用：飞书接口未返回 message_app_link，见日志 sales.pending_deal_push.link.missing）',
   // ── 大区（2026-10-07）：销售区 + 采购区 ────────────────────────────────────
@@ -230,6 +232,23 @@ const PENDING_DEAL_PUSH_DEFAULTS = Object.freeze({
     amountTemplate: "<font color='{color}'>待收 {amount}</font>",
     amountColor: 'red',
     linkTemplate: '[{text}]({url})',
+
+    // ── ⭐ 2026-10-08 晚：每行**两栏**（她拍板，替换掉先前"三列含分类列"的方案）─────────
+    // 她的原话：「可以按照**预定、现货待收和采购分为 3 个区域**，并且按照区域进行分块，
+    //            **每块有两栏**，第一栏是**文字说明**，第二栏是**查看话题的点击按钮**」
+    // ⇒ 区域 = 各块标题（【预定】/【现货待收】/【采购…】，配置给的 title）；
+    //    每行 = 一个 `column_set`：第 1 栏文字说明、第 2 栏按钮。
+    // ⚠️ 先前那版"第 1 列再放一个分类名（销售-预定）"**已按她这次的口径去掉**。
+    rowTextParts: ['{item}', '{amount}'],
+    rowTextSeparator: ' · ',
+    // 货号/尺码读不出来时的占位（**绝不静默丢这一行**）。
+    missingItemText: '（未读到货号/尺码）',
+    // 采购区一行（两栏版的第 1 栏）：批次号 + 供应商（取不到就整段不要）。
+    purchaseRowTextParts: ['{batchNo}', '{supplier}'],
+    // 按钮文案（两栏里的第 2 栏）；没有深链时**整栏不出现**（不留空壳）。
+    buttonText: '查看话题',
+    // 两栏宽度权重（文字 : 按钮）。
+    columnWeights: Object.freeze([4, 1]),
   }),
 });
 
@@ -254,6 +273,8 @@ const TEMPLATE_PLACEHOLDERS = Object.freeze({
   cardTagTemplate: Object.freeze(['color', 'text']),
   cardAmountTemplate: Object.freeze(['color', 'amount']),
   cardLinkTemplate: Object.freeze(['text', 'url']),
+  cardRowTextPart: Object.freeze(['index', 'tag', 'item', 'amount']),
+  cardPurchaseRowTextPart: Object.freeze(['index', 'batchNo', 'supplier']),
   // ── 大区 ──────────────────────────────────────────────────────────────────
   salesAreaTitle: Object.freeze(['count']),
   purchaseAreaTitle: Object.freeze(['count']),
@@ -397,6 +418,17 @@ const resolveCardConfig = (env) => {
     amountColor: readString(env, PENDING_DEAL_PUSH_CARD_AMOUNT_COLOR_ENV_KEY, defaults.amountColor),
     linkTemplate: assertTemplate('card.linkTemplate', defaults.linkTemplate,
       TEMPLATE_PLACEHOLDERS.cardLinkTemplate),
+    // ⭐ 两栏那一版（2026-10-08 晚）
+    rowTextParts: [...defaults.rowTextParts].map((part) => assertTemplate(
+      'card.rowTextParts', part, TEMPLATE_PLACEHOLDERS.cardRowTextPart,
+    )),
+    rowTextSeparator: defaults.rowTextSeparator,
+    missingItemText: defaults.missingItemText,
+    purchaseRowTextParts: [...defaults.purchaseRowTextParts].map((part) => assertTemplate(
+      'card.purchaseRowTextParts', part, TEMPLATE_PLACEHOLDERS.cardPurchaseRowTextPart,
+    )),
+    buttonText: defaults.buttonText,
+    columnWeights: [...defaults.columnWeights],
   };
 };
 

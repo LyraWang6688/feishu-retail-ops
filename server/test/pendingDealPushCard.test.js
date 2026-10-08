@@ -175,8 +175,8 @@ test('① 发的是卡片（interactive）：标题含日期与总计、两区�
     card.header.title.content,
     '⏰ 2026-10-08 最近 7 天待处理的销售单（预定 / 现货待收）：2 笔（【预定】1 笔 / 【现货待收】1 笔）',
   );
-  // 结构：块标题 / 行 / hr / 块标题 / 行（首块之前与尾块之后都没有 hr）。
-  assert.deepEqual(card.elements.map((element) => element.tag), ['div', 'div', 'hr', 'div', 'div']);
+  // 结构：块标题 / 行（两栏 column_set）/ hr / 块标题 / 行（首块之前与尾块之后都没有 hr）。
+  assert.deepEqual(card.elements.map((element) => element.tag), ['div', 'column_set', 'hr', 'div', 'column_set']);
   assert.equal(card.elements[0].text.content, '**【预定】1 笔**');
   assert.equal(card.elements[3].text.content, '**【现货待收】1 笔**');
   assert.equal(card.elements[0].text.tag, 'lark_md');
@@ -186,7 +186,7 @@ test('⑨ 采购区：为空时整块（含它前面那条分割线）都不出�
   const empty = newService({ orders: [RESERVED], locator: await withLinks([RESERVED]) });
   await empty.service.sendDailyPush({ now: DAY });
   const emptyCard = cardOf(empty.creates[0]);
-  assert.deepEqual(emptyCard.elements.map((element) => element.tag), ['div', 'div']);
+  assert.deepEqual(emptyCard.elements.map((element) => element.tag), ['div', 'column_set']);
   assert.ok(!emptyCard.elements.some((element) => element.tag === 'hr'), '采购区为空 → 一条分割线都不该有');
   assert.ok(!emptyCard.elements.some((element) => element.tag === 'note'), '没有缺链接就不该有脚注');
 
@@ -200,10 +200,13 @@ test('⑨ 采购区：为空时整块（含它前面那条分割线）都不出�
   const card = cardOf(filled.creates[0]);
   // 只有采购候选 ⇒ 没有销售表头（表头那句写的是"待处理的销售单"），块标题就是抬头。
   assert.equal(card.header, undefined);
-  assert.deepEqual(card.elements.map((element) => element.tag), ['div', 'div', 'note']);
+  assert.deepEqual(card.elements.map((element) => element.tag), ['div', 'column_set', 'note']);
   assert.equal(card.elements[0].text.content, '**【采购】未到货的报货批次：1 批**');
-  // 这一批没有本地映射 ⇒ 那一行没有链接段（也不留空壳），并且计入脚注。
-  assert.equal(card.elements[1].text.content, '1. CGD-20261008-0001 · 金猴');
+  // 这一批没有本地映射 ⇒ **只有文字栏**（不给一个点不动的按钮、也不留空壳），并且计入脚注。
+  const row = card.elements[1];
+  assert.equal(row.tag, 'column_set');
+  assert.equal(row.columns.length, 1, '没有深链 ⇒ 只出第 1 栏');
+  assert.equal(row.columns[0].elements[0].text.content, 'CGD-20261008-0001 · 金猴');
   assert.match(card.elements[2].elements[0].content, /^（1 批的深链暂不可用/);
 });
 
@@ -211,22 +214,38 @@ test('⑨ 采购区：为空时整块（含它前面那条分割线）都不出�
 // ② 行内容：货号 + 尺码（加粗）+ 彩色类型标签 + 突出显示的待收金额 + 「查看原话」
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('② 行内容逐字：加粗的货号+尺码 · 彩色类型标签 · 高亮待收 · [查看原话](深链)；**没有单号**、没有裸 URL', async () => {
+test('② 行内容逐字：**两栏**（加粗货号+尺码 · 高亮待收 | 「查看话题」按钮跳深链）；**没有单号**、正文没有裸 URL', async () => {
   const { service, creates } = newService({ orders: [RESERVED], locator: await withLinks([RESERVED]) });
   await service.sendDailyPush({ now: DAY });
 
-  const line = elementsOf(creates[0])[1].text.content;
-  assert.equal(line, `1. **JC002 40码** · <text_tag color='blue'>【预定】</text_tag>`
-    + ` · <font color='red'>待收 ¥128.00</font> · [查看原话](${APP_LINK})`);
+  const elements = elementsOf(creates[0]);
+  const row = elements[1];
+  assert.equal(row.tag, 'column_set', '每行 = 一个两栏 column_set');
+  assert.equal(row.columns.length, 2, '第 1 栏文字说明 + 第 2 栏「查看话题」按钮');
+  assert.equal(row.columns[0].elements[0].text.content,
+    "**JC002 40码** · <font color='red'>待收 ¥128.00</font>");
+  const button = row.columns[1].elements[0];
+  assert.equal(button.tag, 'button');
+  assert.equal(button.text.content, '查看话题');
+  assert.deepEqual(button.behaviors, [{ type: 'open_url', default_url: APP_LINK }]);
+  // 类型由**区域标题**表达（行里不再有彩色标签）；区域标题仍在第一行。
+  assert.equal(elements[0].text.content, '**【预定】1 笔**');
+  assert.ok(!JSON.stringify(cardOf(creates[0])).includes('<text_tag'), '行里不再放类型彩色标签');
 
   // 🔴 她明确说不需要单号。
   assert.ok(!JSON.stringify(cardOf(creates[0])).includes('XSD-P-1'), '卡片里不许出现单号');
-  // ①② URL **只**藏在文字链接的 () 里，正文一个裸 URL 都没有。
-  assert.ok(!/https?:\/\//.test(withoutLinkTargets(JSON.stringify(cardOf(creates[0])))),
-    '卡片正文里不许有裸 URL');
-  // 她看得见的字（降级文本与卡片在这套字样上逐字对齐）。
-  assert.equal(visibleOf(creates[0]).split('\n')[2],
-    `1. JC002 40码 · 【预定】 · 待收 ¥128.00 · 查看原话 ${APP_LINK}`);
+  // URL **只**放按钮的 `default_url`，正文（div / 文字栏）一个裸 URL 都没有。
+  const plainContents = elements
+    .filter((element) => element.tag === 'div')
+    .map((element) => element.text.content);
+  assert.ok(!plainContents.some((content) => /https?:\/\//.test(content)), '正文里不许有裸 URL');
+  const buttonUrls = elements
+    .flatMap((element) => (element.columns || []).flatMap((column) => column.elements))
+    .filter((element) => element.tag === 'button')
+    .map((element) => element.behaviors[0].default_url);
+  assert.deepEqual(buttonUrls, [APP_LINK], '深链只在按钮上出现一次');
+  // 她看得见的字（降级文本与卡片在这套字样上对齐：文字栏 · 按钮文案）。
+  assert.equal(visibleOf(creates[0]).split('\n')[2], 'JC002 40码 · 待收 ¥128.00 | 查看话题');
 });
 
 test('② 一单多件逐件列出；配品没有尺码 → 不拼「码」，整件都在加粗段里', async () => {
@@ -239,8 +258,8 @@ test('② 一单多件逐件列出；配品没有尺码 → 不拼「码」，�
   };
   const { service, creates } = newService({ orders: [order], locator: await withLinks([order]) });
   await service.sendDailyPush({ now: DAY });
-  const line = elementsOf(creates[0])[1].text.content;
-  assert.match(line, /^1\. \*\*6A637-7 43码、腰带\*\*/);
+  const line = elementsOf(creates[0])[1].columns[0].elements[0].text.content;
+  assert.match(line, /^\*\*6A637-7 43码、腰带\*\*/);
   assert.ok(!/腰带\s*码/.test(line));
 });
 
@@ -250,21 +269,22 @@ test('② 一单多件逐件列出；配品没有尺码 → 不拼「码」，�
 
 test('④ 待收 0 → 「已付清」；金额读不出来 → **整段不渲染**（不出现 ¥— / ¥0.00 / NaN）', () => {
   const { service } = newService({ orders: [] });
-  const paidUp = service.buildCardLine({ ...CASH_PENDING, pendingAmount: 0 }, 0, '【现货待收】', 'orange');
-  assert.ok(paidUp.join(' · ').includes('已付清'), paidUp.join(' · '));
-  assert.ok(!paidUp.join(' · ').includes('待收 ¥'), '不许再渲染「待收 ¥0.00」');
+  const paidUp = service.buildCardRow({ ...CASH_PENDING, pendingAmount: 0 });
+  assert.ok(paidUp.text.includes('已付清'), paidUp.text);
+  assert.ok(!paidUp.text.includes('待收 ¥'), '不许再渲染「待收 ¥0.00」');
 
-  const unknown = service.buildCardLine({ ...CASH_PENDING, pendingAmount: null }, 0, '【现货待收】', 'orange');
-  const unknownText = unknown.join(' · ');
-  assert.ok(!unknownText.includes('¥'), `金额拿不到不许渲染占位：${unknownText}`);
-  assert.ok(!unknownText.includes('NaN'));
-  assert.equal(unknownText, `1. **6A637-7 43码** · <text_tag color='orange'>【现货待收】</text_tag>`,
+  const unknown = service.buildCardRow({ ...CASH_PENDING, pendingAmount: null });
+  assert.ok(!unknown.text.includes('¥'), `金额拿不到不许渲染占位：${unknown.text}`);
+  assert.ok(!unknown.text.includes('NaN'));
+  assert.equal(unknown.text, '**6A637-7 43码**',
     '空的金额段整段不要，也不留空的 · ');
-  // 有深链时链接段照旧在（金额缺席不影响它）。
+  // 有深链时按钮那栏照旧在（金额缺席不影响它）。
   assert.equal(
-    service.buildCardLine({ ...CASH_PENDING, pendingAmount: null, url: APP_LINK }, 0, '【现货待收】', 'orange').join(' · '),
-    `1. **6A637-7 43码** · <text_tag color='orange'>【现货待收】</text_tag> · [查看原话](${APP_LINK})`,
+    service.buildCardRow({ ...CASH_PENDING, pendingAmount: null, url: APP_LINK }).url, APP_LINK,
   );
+  // 货号/尺码读不出来 → 给占位，**绝不静默丢掉这一行**。
+  const noItem = service.buildCardRow({ ...CASH_PENDING, items: [], pendingAmount: null });
+  assert.match(noItem.text, /未读到货号\/尺码/);
 
   // 纯文本降级那边同一套口径（段序与卡片一致）。
   const text = service.buildLine({ ...CASH_PENDING, pendingAmount: null, url: '' }, 0, '【现货待收】');
@@ -277,7 +297,7 @@ test('④ 待收 0 → 「已付清」；金额读不出来 → **整段不渲�
 // ⑤ 深链缺失 → 无链接段 + 脚注计数
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('⑤ 缺深链：行里不出现链接段（也不留空 ` · `），脚注 + missingLinkCount 照旧', async () => {
+test('⑤ 缺深链：那一行**只出文字栏**（不给点不动的按钮、也不留空壳），脚注 + missingLinkCount 照旧', async () => {
   const locator = await withLinks([RESERVED, CASH_PENDING], { appLink: '' });
   const { service, creates } = newService({ orders: [RESERVED, CASH_PENDING], locator });
   const result = await service.sendDailyPush({ now: DAY });
@@ -285,9 +305,13 @@ test('⑤ 缺深链：行里不出现链接段（也不留空 ` · `），脚注
   assert.equal(result.missingLinkCount, 2);
   assert.equal(result.pushedOrderCount, 2, '缺深链不影响"照推"（默认 linkRequired=false）');
   const card = cardOf(creates[0]);
-  const lines = card.elements.filter((element) => element.tag === 'div').map((element) => element.text.content);
-  assert.match(lines[1], /^1\. \*\*JC002 40码\*\* · <text_tag color='blue'>【预定】<\/text_tag> · <font color='red'>待收 ¥128\.00<\/font>$/);
-  assert.ok(!lines[1].includes(' · ' + ' · '));
+  const rows = card.elements.filter((element) => element.tag === 'column_set');
+  assert.equal(rows.length, 2);
+  for (const row of rows) {
+    assert.equal(row.columns.length, 1, '没有深链 ⇒ 只出第 1 栏文字说明');
+  }
+  assert.equal(rows[0].columns[0].elements[0].text.content,
+    "**JC002 40码** · <font color='red'>待收 ¥128.00</font>");
   assert.ok(!JSON.stringify(card).includes('http'), '拿不到深链就一个 URL 都不许出现');
   const note = card.elements.find((element) => element.tag === 'note');
   assert.match(note.elements[0].content, /^（2 笔的深链暂不可用/);
@@ -297,7 +321,7 @@ test('⑤ 缺深链：行里不出现链接段（也不留空 ` · `），脚注
 // ⑧ 降级：format=text（纯文本仍可读）；卡片发不出去 → 自动改发纯文本
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('⑧ 降级：PENDING_DEAL_PUSH_MESSAGE_FORMAT=text → 发纯文本，内容仍可读（无单号、有「查看原话 + URL」）', async () => {
+test('⑧ 降级：PENDING_DEAL_PUSH_MESSAGE_FORMAT=text → 发纯文本，内容仍可读（无单号、有「查看话题 + URL」）', async () => {
   const { service, creates } = newService({
     orders: [RESERVED], locator: await withLinks([RESERVED]), settings: { messageFormat: 'text' },
   });
@@ -308,7 +332,7 @@ test('⑧ 降级：PENDING_DEAL_PUSH_MESSAGE_FORMAT=text → 发纯文本，内�
   assert.equal(text, [
     '⏰ 2026-10-08 最近 7 天待处理的销售单（预定 / 现货待收）：1 笔',
     '【预定】1 笔',
-    `1. JC002 40码 · 【预定】 · 待收 ¥128.00 · 查看原话 ${APP_LINK}`,
+    `1. JC002 40码 · 【预定】 · 待收 ¥128.00 · 查看话题 ${APP_LINK}`,
   ].join('\n'));
   assert.ok(!text.includes('XSD-P-1'), '纯文本降级里也不出现单号');
 });
