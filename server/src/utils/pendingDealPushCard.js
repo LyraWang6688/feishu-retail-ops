@@ -3,7 +3,7 @@
 // 为什么另立一个文件（而不是塞进 `utils/larkCards`）：
 //   · `larkCards.js` 里那 14 张卡都被 `im.message.patch` 更新过，**必须**整体带
 //     `config.update_multi:true`（见那份文件顶部的长注释）；这张推送卡**从不 patch**，
-//     按仓库既有纪律（`saleLookupCard` / `purchaseRequestConfirmationCard`）**刻意不带**那个字段。
+//     按仓库既有纪律（`saleLookupCard`）**刻意不带**那个字段。
 //     两张卡的硬前提不同 ⇒ 不放在同一处，免得将来有人"顺手统一"把 update_multi 加上去。
 //   · 本文件**不含任何用户可见中文**：文案 / 颜色 / 标记骨架全在 `config/pendingDealPush`
 //     （配置先行）；这里只把"已经渲染好的段"排成飞书卡片 JSON。

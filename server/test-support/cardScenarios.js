@@ -79,15 +79,14 @@ const PATCHABLE_CARD_SCENARIOS = [
       methods: ['微信', '现金'], dayKey: '2026-10-07' }) },
 ];
 
-// 刻意**不动**的卡片（只发不 patch / 无调用方）：它们**不该**出现 `update_multi`。
+// 刻意**不动**的卡片（只发不 patch）：它们**不该**出现 `update_multi`。
+// ⚠️ 2026-10-08：原第三张 `purchaseRequestConfirmationCard` 已随「报货确认卡」整张删除。
 const UNPATCHABLE_CARD_SCENARIOS = [
   { name: 'saleLookupCard(0 条)',
     build: (c) => c.saleLookupCard({ days: 3, itemNo: 'A100', color: '黑', candidates: [] }) },
   { name: 'saleLookupCard(N 条)',
     build: (c) => c.saleLookupCard({ days: 3, itemNo: 'A100', color: '黑',
       candidates: [{ date: '2026-10-01', item_no: 'A100', color: '黑', size: 38, actual_amount: 99 }] }) },
-  { name: 'purchaseRequestConfirmationCard',
-    build: (c) => c.purchaseRequestConfirmationCard('draft_2', { items: ITEMS }) },
 ];
 
 module.exports = { ITEMS, PAYMENTS, AFTER_SALES_PLAN, PATCHABLE_CARD_SCENARIOS, UNPATCHABLE_CARD_SCENARIOS };

@@ -41,6 +41,7 @@ const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const {
   ARRIVAL_CONVERSATION_ACTIONS,
   ARRIVAL_BATCH_KINDS,
+  ARRIVAL_CONVERSATION_DEFAULTS,
   parseExplicitBoolean,
   resolveArrivalConversationConfig,
 } = require('../src/config/arrivalConversation');
@@ -491,11 +492,14 @@ test('追加④：点「否」之后又补一句 → 还是**重发一张新卡*
     { context: { open_message_id: 'om_card_1' } }, 'ou_1',
   );
   assert.equal((await harness.store.get(taskId)).status, 'rejected');
+  // ⭐ 2026-10-08：点「否」自己就会 patch 一次（卡面原地变终态）——下面按增量断言。
+  assert.equal(harness.updated.length, 1, '点「否」先把那张卡改成终态');
+  assert.equal(harness.updated[0].card.header.template, 'grey');
 
   await harness.service.handleTopicMessage({ batch: defaultBatch(), text: '算了，是少两双', messageId: 'om_2', threadId: 'omt_1', senderOpenId: 'ou_1' });
 
   assert.equal(harness.cards.length, 2, '「否」之后补一句：照样重发一张新卡');
-  assert.equal(harness.updated.length, 1, '旧卡作废（收掉按钮）');
+  assert.equal(harness.updated.length, 2, '她补一句 → 上一张卡再作废一次（收掉按钮）');
   assert.equal((await harness.store.get(taskId)).status, 'awaiting_confirmation');
 });
 
@@ -1261,7 +1265,7 @@ test('可见终态⑦：成功 → 终态卡与回话**都落回本话题**（th
 // □ 点「否」
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('点「否」→ 零写入 + 只回一句「好，那先不入库」', async () => {
+test('点「否」→ 零写入 + **卡面原地变终态** + 只回一句「好，那先不入库」（patch 在前、回话在后）', async () => {
   const harness = makeHarness({
     responses: [{ complete: true, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] }],
   });
@@ -1269,24 +1273,44 @@ test('点「否」→ 零写入 + 只回一句「好，那先不入库」', asyn
   const taskId = taskIdForBatch(BATCH_NO);
   // 发卡片那一步不是业务表写入 —— 从这里开始记，断言"点了「否」之后一个字都没写"。
   harness.gateway.writes.length = 0;
+  // 顺序证据（业务负责人 2026-10-08：她要的是"**原地更新卡片**"，回话只是兜底）：
+  // 两条出口各记一笔，断言 patch 一定发生在回话**之前**。
+  const order = [];
+  const patch = harness.service.updateCard;
+  harness.service.updateCard = async (...args) => { order.push('patch'); return patch(...args); };
+  const reply = harness.service.replyText;
+  harness.service.replyText = async (...args) => { order.push('reply'); return reply(...args); };
 
   const result = await harness.service.handleCardAction(
     { action: ARRIVAL_CONVERSATION_ACTIONS.REJECT, draft_id: taskId },
     { context: { open_message_id: 'om_card_1' } }, 'ou_1',
   );
 
-  assert.equal(result.toast.content, '好，那先不入库');
-  assert.deepEqual(harness.replied.map((item) => item.content), ['好，那先不入库']);
+  assert.equal(result.toast.content, ARRIVAL_CONVERSATION_DEFAULTS.replies.rejected);
+  assert.deepEqual(order, ['patch', 'reply'], 'patch 在前、回话在后（卡片是主、回话是兜底）');
+  // ① 卡面**原地变**：她点的那一张、灰色终态、按钮收掉。
+  assert.equal(harness.updated.length, 1, '点「否」也必须 patch 卡面（改前这里是 0 —— 点了没任何反应）');
+  assert.equal(harness.updated[0].messageId, 'om_card_1', 'patch 的是她点的那张卡');
+  assert.equal(harness.updated[0].card.header.template, 'grey');
+  assert.equal(harness.updated[0].card.header.title.content, ARRIVAL_CONVERSATION_DEFAULTS.card.rejectedTitle,
+    '标题走 config（不新造中文硬编码）');
+  assert.equal(cardNote(harness.updated[0].card), ARRIVAL_CONVERSATION_DEFAULTS.replies.rejected,
+    '卡面正文复用既有那句 `replies.rejected`');
+  assert.equal(cardButtons(harness.updated[0].card).length, 0, '终态卡不再给按钮（改主意在话题里再说一句）');
+  // ② 兜底回话：**复用**既有那句，只发一条、不重复。
+  assert.deepEqual(harness.replied.map((item) => item.content), [ARRIVAL_CONVERSATION_DEFAULTS.replies.rejected],
+    '「否」只回一句（patch 之后再回，不重复发两句）');
   assert.equal(harness.replied[0].options.threadId, 'omt_1', '那句回话要落回她那个话题');
+  // ③ 业务事实：一个表都不写。
   assert.deepEqual(harness.gateway.writes, [], '点「否」= 一个字都不写');
   assert.equal(harness.inventory.calls.length, 0);
   assert.equal((await harness.store.get(taskId)).status, 'rejected');
-  // ⚠️ 点「否」**刻意不动卡片**：那两个按钮要留着 —— 她还能再点「是」
-  //    （见下一条用例）。这是既定口径，不许"顺手统一"成终态。
-  assert.deepEqual(harness.updated, [], '点「否」不许把卡片改成终态（她要还能改主意）');
 });
 
-test('点「否」之后再点「是」→ 仍然按她的显式指令入库（她没说过「否」就不能改主意）', async () => {
+// ⚠️ 2026-10-08：点「否」现在**会**把卡面改成终态（按钮收掉）⇒ 她**在卡上**点不到「是」了。
+// 这条用例钉的是**服务端语义**没变：同一次「是」的请求（飞书重投 / 旧卡回调 / 她在话题里
+// 再说一句后点新卡）照样按她的显式指令入库。卡面不给按钮 ≠ 服务端拒绝这个动作。
+test('点「否」之后再点「是」→ 仍然按她的显式指令入库（服务端语义：她没说过「否」就不能改主意）', async () => {
   const harness = makeHarness({
     responses: [{ complete: true, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] }],
   });
@@ -1323,6 +1347,113 @@ test('可见终态⑧：已经入库之后又点「否」→ 卡片 patch 成绿
   assert.deepEqual(harness.gateway.writes, [], '不因为她又点了个「否」就改账');
   assert.equal((await harness.store.get(taskId)).status, 'posted');
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// □ ⭐⭐ 2026-10-08（业务负责人逐条批准）：**顺序是 patch 在前、回话在后**，
+//    而且**卡片没刷新成功必须看得见**（往那条话题回一句人话）。
+//    她的口径：要的是"原地更新卡片"，回话只是兜底 ⇒ 回话不许抢在 patch 前面。
+//    改前 `safeUpdateCard` 失败只 `logWarn` + 返 false —— 她那边的现象还是"点了没反应"。
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** 把两条出口按真实调用顺序记下来（patch / reply）。 */
+const recordOrder = (harness) => {
+  const order = [];
+  const patch = harness.service.updateCard;
+  harness.service.updateCard = async (...args) => { order.push('patch'); return patch(...args); };
+  const reply = harness.service.replyText;
+  harness.service.replyText = async (...args) => { order.push('reply'); return reply(...args); };
+  return order;
+};
+
+test('顺序① 🔴：点「是」成功 → **先 patch 卡面、再回一句结果**（原地更新卡片是主，回话是兜底）', async () => {
+  const harness = makeHarness({
+    responses: [{ complete: true, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] }],
+  });
+  const order = recordOrder(harness);
+
+  await confirmCard(harness);
+
+  assert.deepEqual(order, ['patch', 'reply'], 'patch 在前、回话在后（顺序不能反）');
+  assert.equal(harness.updated.length, 1, 'patch 的还是她点的那张卡');
+  assert.equal(harness.replied.length, 1, '结果仍然只回一句（不重复）');
+});
+
+test('失败回话①（单测）🔴：卡片没刷新成功 → warn + 往那条话题回一句人话（带 threadId）', async () => {
+  const harness = makeHarness({});
+  harness.service.updateCard = async () => false;
+  const logs = captureLogs();
+  let ok;
+  try {
+    ok = await harness.service.safeUpdateCard('om_card_1',
+      { config: {}, header: {}, elements: [] },
+      { task: { task_id: 't1', thread_id: 'omt_1' } });
+  } finally {
+    logs.restore();
+  }
+
+  assert.equal(ok, false, '没改成就是 false');
+  assert.equal(logs.events('purchase.arrival.reconcile.card_update_failed').length, 1, '原来的 warn 保留');
+  assert.deepEqual(harness.replied.map((item) => item.content),
+    [ARRIVAL_CONVERSATION_DEFAULTS.replies.cardUpdateFailed], '失败必须往话题里回一句人话');
+  assert.equal(harness.replied[0].options.threadId, 'omt_1', '回话要落回她那个话题');
+  assert.equal(logs.events('purchase.arrival.reconcile.card_update_failed_notice').length, 1);
+});
+
+test('失败回话②（单测）：适配器**抛错**与**返假值**一样走兜底回话', async () => {
+  const harness = makeHarness({});
+  harness.service.updateCard = async () => { throw new Error('patch 炸了'); };
+  const logs = captureLogs();
+  let ok;
+  try {
+    ok = await harness.service.safeUpdateCard('om_card_1', { config: {}, header: {}, elements: [] },
+      { task: { task_id: 't1', thread_id: 'omt_1' } });
+  } finally {
+    logs.restore();
+  }
+  assert.equal(ok, false);
+  assert.equal(harness.replied.length, 1, '抛错也要兜底回话（改前这里只记一行 warn）');
+  assert.equal(harness.replied[0].content, ARRIVAL_CONVERSATION_DEFAULTS.replies.cardUpdateFailed);
+});
+
+test('失败回话③（单测）🔴：**兜底那句自己也发不出去** → 不抛、只记 reply_failed（不再套第二层兜底）', async () => {
+  const harness = makeHarness({});
+  harness.service.updateCard = async () => false;
+  harness.service.replyText = async () => { throw new Error('那条消息被撤回了'); };
+  const logs = captureLogs();
+  let ok;
+  try {
+    ok = await harness.service.safeUpdateCard('om_card_1', { config: {}, header: {}, elements: [] },
+      { task: { task_id: 't1', thread_id: 'omt_1' } });
+  } finally {
+    logs.restore();
+  }
+
+  assert.equal(ok, false, '绝对不许把"回话失败"升级成抛错');
+  assert.equal(logs.events('purchase.arrival.reconcile.reply_failed').length, 1);
+  assert.equal(logs.events('purchase.arrival.reconcile.card_update_failed_notice').length, 1,
+    '只走一层兜底 ⇒ 不会无限递归、也不会重复回话');
+});
+
+test('失败回话④（集成）🔴：重复点「是」时 patch 失败 → 话题里出现"卡片没刷新成功"那句', async () => {
+  const harness = makeHarness({
+    responses: [{ complete: true, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] }],
+  });
+  const { taskId, cardEvent } = await confirmCard(harness);
+  harness.updated.length = 0;
+  harness.replied.length = 0;
+  // 模拟"上一次成功那一下卡片没改成功"这一下也改不动（权限 / 撤回 / 网络）。
+  harness.service.updateCard = async () => false;
+
+  const again = await harness.service.handleCardAction(
+    { action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: taskId }, cardEvent, 'ou_1',
+  );
+
+  assert.match(again.toast.content, /已经入库/);
+  assert.deepEqual(harness.replied.map((item) => item.content),
+    [ARRIVAL_CONVERSATION_DEFAULTS.replies.cardUpdateFailed], '卡片改不动 → 必须回一句，不能静默');
+  assert.equal(harness.replied[0].options.threadId, 'omt_1');
+});
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // □ ⭐ 2026-10-07：「某尺码实际到 0 双」是正常情况 —— 那行不入库，但不阻断整单
@@ -1748,16 +1879,19 @@ test('接线③：卡片上的「是 / 否」被分派到到货核对（不会�
   assert.equal(calls[0].value.draft_id, 't1');
 });
 
-test('接线④：别的卡片动作不会被到货核对抢走（照旧走采购/销售那套分派）', async () => {
+test('接线④：别的卡片动作不会被到货核对抢走（照旧走销售那套分派）', async () => {
   let arrivalCalled = 0;
   const service = await makeLarkService({
     arrivalConversation: { handleCardAction: async () => { arrivalCalled += 1; return null; } },
   });
 
+  // ⚠️ 2026-10-08：这里原先是 `confirm_purchase_request`（报货确认卡的动作）——
+  //    那张卡已整条删除，改用一个**明确的未知动作**来验同一条边界：
+  //    到货核对只认自己的三个动作名，其余原样落到销售那套分派（草稿找不到 → 当场抛）。
   await assert.rejects(
     () => service.handleCardAction({
       operator: { operator_id: { open_id: 'ou_1' } },
-      action: { tag: 'button', value: { action: 'confirm_purchase_request', draft_id: 'not_a_real_task' } },
+      action: { tag: 'button', value: { action: 'some_other_card_action', draft_id: 'not_a_real_task' } },
       context: { open_message_id: 'om_card_1' },
     }),
     /草稿/,

@@ -2,7 +2,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   salesConfirmationCard,
-  purchaseRequestConfirmationCard,
   purchaseStatusCard,
   sampleReplacementCard,
   keepOnlyCardButton,
@@ -139,14 +138,14 @@ test('销售确认卡片：样品补门盒候选用 column_set（不再用 actio
   assertButtonRowsAreEqualWeight(card);
 });
 
-test('采购申请确认卡片：确认/取消用 column_set，不再用 action', () => {
-  const card = purchaseRequestConfirmationCard('draft_1', {
-    items: [{ item_no: 'A100', color: '黑', size: 40, quantity: 2 }],
-  });
-  assert.deepEqual(actionButtons(card), []);
-  assert.deepEqual(columnSetButtons(card).map((button) => button.text.content),
-    ['确认生成采购申请', '取消']);
-  assert.deepEqual(buttonRowWidths(card), [2]);
+test('采购状态卡片：尺码网格走 column_set（不是 action）—— 共用同一套明细渲染器', () => {
+  const card = purchaseStatusCard({ items: [{ item_no: 'A100', color: '黑', size: 40, quantity: 2 }] },
+    '采购申请处理中', '已收到确认，正在生成采购申请；请勿重复点击。', 'blue');
+  assert.deepEqual(actionButtons(card), [], '明细网格不许退化成 action（手机上会竖排）');
+  const grid = sizeGridRows(card);
+  assert.equal(grid.length, 1);
+  assert.equal(grid[0].length, 6, '只有 1 个尺码也要铺成 6 列，否则最后一行宽度不齐');
+  assert.equal(grid[0][0], '**40**\n×2');
   assertButtonRowsAreEqualWeight(card);
 });
 
@@ -317,8 +316,10 @@ test('重试卡片：只留确认按钮，颜色/补样品选择组原样保留'
 //
 // ⚠️ 这一段原先是用「采购到货明细卡片」（purchaseArrivalDetailCard）验证的。
 // 2026-10-05 拍照识别链路退场、到货卡片删除，于是改用**仍在使用同一套渲染器**
-// （purchaseItemElements）的「采购申请确认卡片」来钉同样的排版规则——
+// （purchaseItemElements）的「采购状态卡片」（`purchaseStatusCard`）来钉同样的排版规则——
 // 渲染器没被削弱，只是换了个入口去测它。
+// ⚠️ 2026-10-08：「采购申请确认卡片」（purchaseRequestConfirmationCard）也已删除，
+// 上面那条"换入口"的结论不变：现在用的是 `purchaseStatusCard`（免确认链路在跑）。
 // 锁的是产品负责人 2026-10-05 提的两条：
 //   1. 尺码网格每行至少 6 个（现在是 6，超过换行，且每行都恰好 6 列）；
 //   2. 明细先按货号、再按颜色、颜色下面是尺码，顺序稳定。
@@ -361,7 +362,7 @@ const groupingSkeleton = (card) => {
 };
 
 // 明细行：渲染器只认 item_no / color / size / quantity / created_product 这些字段，
-// 到货卡片退场后由采购申请卡片（draft.items）承载同样的输入形状。
+// 采购申请确认卡片 2026-10-08 删除后，改由仍在跑的「采购状态卡片」承载同样的输入形状。
 const detailItem = (itemNo, color, size, quantity = 1, extra = {}) => ({
   product_record_id: `prod_${itemNo}_${color}`,
   item_no: itemNo,
@@ -371,11 +372,11 @@ const detailItem = (itemNo, color, size, quantity = 1, extra = {}) => ({
   ...extra,
 });
 
-const detailCard = (draftId, items) => purchaseRequestConfirmationCard(draftId, { items });
+const detailCard = (items) => purchaseStatusCard({ items }, '采购申请处理中', '测试用状态卡', 'blue');
 
 test('明细尺码网格：每行恰好 6 列，超过 6 个换行（产品负责人要求每行至少 6 个）', () => {
   const sizes = [36, 37, 38, 39, 40, 41, 42, 43];
-  const card = detailCard('draft_grid', sizes.map((size) => detailItem('1366-31', '棕色', size)));
+  const card = detailCard(sizes.map((size) => detailItem('1366-31', '棕色', size)));
   const rows = sizeGridRows(card);
   assert.equal(rows.length, 2, '8 个尺码要折成 2 行');
   for (const row of rows) {
@@ -389,7 +390,7 @@ test('明细尺码网格：每行恰好 6 列，超过 6 个换行（产品负�
 });
 
 test('明细尺码格：用「尺码 + ×数量」短文本，不写会撑破 6 列格子的「码」字', () => {
-  const card = detailCard('draft_cell', [detailItem('1366-31', '棕色', 37, 2, { unit_cost: 199 })]);
+  const card = detailCard([detailItem('1366-31', '棕色', 37, 2, { unit_cost: 199 })]);
   const row = sizeGridRows(card)[0];
   assert.equal(row[0], '**37**\n×2\n￥199');
   assert.doesNotMatch(row[0], /码/, '6 列下「37码 × 2」会换行撑破格子（移动端实测），别改回长写法');
@@ -406,7 +407,7 @@ test('明细分組：货号 → 颜色 → 尺码，各组按字典序稳定排�
     detailItem('A100', '红', 41),
     detailItem('A100', '红', 40),
   ];
-  const card = detailCard('draft_group', items);
+  const card = detailCard(items);
   assert.deepEqual(groupingSkeleton(card), [
     '货号:A100',
     '颜色:红',
@@ -418,12 +419,12 @@ test('明细分組：货号 → 颜色 → 尺码，各组按字典序稳定排�
     '尺码:38,39',
   ]);
   // 同一份输入渲染两次，顺序必须完全一样（不能跟着模型返回的顺序跳）。
-  const again = detailCard('draft_group', [...items].reverse());
+  const again = detailCard([...items].reverse());
   assert.deepEqual(groupingSkeleton(again), groupingSkeleton(card), '分组顺序必须与输入顺序无关');
 });
 
 test('明细分組：没匹配到货品表的货号标 ⚠️；单据上没颜色就不编一个颜色标题', () => {
-  const card = detailCard('draft_colorless', [
+  const card = detailCard([
     { product_record_id: '', item_no: 'A100', color: '', size: 38, quantity: 1 },
   ]);
   const lines = markdownLines(card);
@@ -432,14 +433,12 @@ test('明细分組：没匹配到货品表的货号标 ⚠️；单据上没颜�
   assert.deepEqual(sizeGridRows(card), [['**38**\n×1', ' ', ' ', ' ', ' ', ' ']]);
 });
 
-test('采购申请确认卡片：供应商分组保留，供应商内也是 货号 → 颜色 → 尺码', () => {
-  const card = purchaseRequestConfirmationCard('draft_supplier', {
-    items: [
-      { item_no: 'A1', color: '黑', size: 40, quantity: 1, supplier: '金猴' },
-      { item_no: 'A1', color: '黑', size: 41, quantity: 1, supplier: '金猴' },
-      { item_no: 'B1', color: '白', size: 38, quantity: 1, supplier: '奥康' },
-    ],
-  });
+test('采购状态卡片：供应商分组保留，供应商内也是 货号 → 颜色 → 尺码', () => {
+  const card = detailCard([
+    { item_no: 'A1', color: '黑', size: 40, quantity: 1, supplier: '金猴' },
+    { item_no: 'A1', color: '黑', size: 41, quantity: 1, supplier: '金猴' },
+    { item_no: 'B1', color: '白', size: 38, quantity: 1, supplier: '奥康' },
+  ]);
   const lines = markdownLines(card);
   assert.ok(lines.some((line) => line.includes('供应商：金猴')), '非批量卡片仍要按供应商分区');
   assert.ok(lines.some((line) => line.includes('供应商：奥康')));
@@ -456,7 +455,7 @@ test('采购申请确认卡片：供应商分组保留，供应商内也是 货�
 // 建档能力本身的断言在 purchaseWebhookService.test.js 里保留（ensureArrivalProducts）。
 
 test('明细卡片：新品按货号级标一次（多行/多颜色不重复），颜色级不标', () => {
-  const card = detailCard('draft_new_item', [
+  const card = detailCard([
     // 同一货号：两个颜色、三个尺码，全部是新品 → 只在货号标题上标一次。
     { item_no: '6035', color: '黑', size: 36, quantity: 1, created_product: true },
     { item_no: '6035', color: '黑', size: 37, quantity: 1, created_product: true },

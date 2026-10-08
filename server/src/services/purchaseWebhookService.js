@@ -17,11 +17,10 @@ const { recordUrl } = require('../utils/feishuLinks');
 // （本文件下面那个 `larkErrorText` 就是它的薄壳，形状不变）。
 const { larkErrorText: larkErrorTextOf } = require('../utils/larkError');
 const doubaoService = require('./doubaoService');
-// 采购申请确认卡片（purchaseRequestConfirmationCard）**不再从这段链路发出**（免确认），
-// 卡片本身仍留在 utils/larkCards 并且 handleCardAction 仍能处理它——
-// 线上已经发出去的老卡片要能点得动，将来要回滚也只需要把 publishPurchaseRequest 换回发卡片。
-// ⚠️ 2026-10-05：`purchaseArrivalDetailCard`（到货明细确认卡片）已随「拍照识别」退场删除——
-// 到货不再有"识别结果待确认"这一步，也就没有要发的卡片。
+// 采购申请确认卡片（purchaseRequestConfirmationCard）**已于 2026-10-08 删除**：
+// 报单链路 2026-10-07 起就是免确认（`publishPurchaseRequest` 直接调 `confirmPurchaseRequest`），
+// 那张卡没有任何发送方、动作也认领不了 —— 业务负责人逐条批准后连卡片、动作常量、
+// `handleCardAction` 一起删干净（历史注释见文件下半部分 `updatePurchaseActionCard` 之后）。
 const { purchaseStatusCard } = require('../utils/larkCards');
 // MOVEMENT_PURCHASE_DECREASE 是 #83 采购退货扣库存用的流水类型（退货独占链，见 processSupplierReturn）。
 // STOCK_MOVEMENTS 是「库存行为注册表」：退货核对"能退几双"时要数的可退状态
@@ -105,16 +104,16 @@ const purchaseCorrelation = ({ taskId, batchNo, reportRecordId, batchRecordId } 
     purchase_batch_record_id: batchRecordId,
   });
 
-// 采购卡片上可以触发副作用（写采购事实）的动作。
-//
-// ⚠️ 2026-10-05：「采购到货」的拍照识别链路整体退场，随之删掉了
-// `confirm_purchase_arrival` / `cancel_purchase_arrival` 两个动作。
-// 线上可能还有极少数**历史**到货卡片没点过，但那张卡片对应的记录现在
-// 只会被当成"表里的一条数据"（确认状态字段还在，可人工改），不再有自动入库动作。
-const PURCHASE_CARD_ACTIONS = [
-  'confirm_purchase_request',
-  'cancel_purchase_request',
-];
+// 🔴 2026-10-08（业务负责人逐条批准）：**采购卡片动作整体退场**。
+//   · 2026-10-05 先删了「采购到货」拍照识别链路的 `confirm_purchase_arrival` / `cancel_purchase_arrival`；
+//   · 2026-10-08 再删掉最后的两个 —— `confirm_purchase_request` / `cancel_purchase_request`，
+//     连同 `purchaseRequestConfirmationCard`（`utils/larkCards`）与这里的
+//     `handleCardAction` / `handleCardActionLocked`。
+//   为什么可以删干净：报单链路 2026-10-07 起就是**免确认**（`publishPurchaseRequest`
+//   直接调 `confirmPurchaseRequest`），那张卡**早就没有任何发送方**；线上若还躺着老卡片，
+//   点下去只会落空（不再写任何采购事实）。
+//   ⚠️ `confirmPurchaseRequest` / `updatePurchaseActionCard` / `purchaseStatusCard`
+//      **保留**：免确认链路（处理中 / 已生成 / 未完成那三张状态卡）还在用它们。
 
 const idFor = (prefix, value) => `${prefix}_${crypto.createHash('sha256').update(String(value)).digest('hex').slice(0, 24)}`;
 
@@ -1493,8 +1492,10 @@ class PurchaseWebhookService {
    * ⚠️ 幂等与回滚没有削弱：这里仍然走 confirmPurchaseRequest，
    * 也就是原来那套 posting_plan + createOnceByKey + 幂等键的写法，
    * 只是把"等卡片点确认"换成"解析完直接调用同一个确认函数"。
-   * 要回滚成"发确认卡片等她点"，`sendCard` 也已随私聊链路一起删除（见上），
-   * 需要的话从 git 历史里取回（`git log -S 'purchaseRequestConfirmationCard'`）。
+   * ⚠️ **回滚代价（2026-10-08 起变了）**：要回滚成"发确认卡片等她点"，
+   * 卡片（`purchaseRequestConfirmationCard`）、两个动作常量与 `handleCardAction` 入口
+   * **都已删除**（业务负责人逐条批准），`sendCard` 更早随私聊链路一起删——三条都得从
+   * git 历史里取回（`git log -S 'purchaseRequestConfirmationCard'`）。
    */
   async publishPurchaseRequest(taskId, task) {
     // 免确认路径没有卡片消息可更新，明确跳过一次卡片 patch（否则会打无意义的告警日志）。
@@ -3299,52 +3300,17 @@ class PurchaseWebhookService {
     }
   }
 
-  async handleCardAction(value, operatorOpenId, event = {}) {
-    const taskId = value?.draft_id;
-    const action = value?.action;
-    if (!taskId || !PURCHASE_CARD_ACTIONS.includes(action)) return null;
-    // 同一个 taskId 的确认/取消串行执行：第二个请求要等第一个结束后重新读任务，
-    // 才能看到 posted 而不是又走一遍创建。
-    return this.confirmationQueue.run(taskId, () =>
-      this.handleCardActionLocked(taskId, action, operatorOpenId, event));
-  }
+  // ── 已删除（2026-10-08，业务负责人逐条批准）：`handleCardAction` / `handleCardActionLocked` ──
+  //
+  // 它们只服务「报货确认卡」的两个动作（`confirm_purchase_request` / `cancel_purchase_request`）：
+  //   · 取消分支：把「信息填写」的状态改成「已取消」+ patch 卡片；
+  //   · 确认分支：`posting` → 出「处理中」状态卡 → `confirmPurchaseRequest` → 出「已生成」状态卡。
+  // 报单链路 2026-10-07 起就是**免确认**（`publishPurchaseRequest` 直接调 `confirmPurchaseRequest`），
+  // 那张卡没有任何发送方 ⇒ 入口、动作常量、卡片一并删除。
+  // ⚠️ **保留**的：`confirmPurchaseRequest`（免确认链路在跑）、`updatePurchaseActionCard` 与
+  //    `purchaseStatusCard`（处理中 / 已生成 / 未完成三张状态卡）。
+  // ⚠️ 串行保证**没丢**：`confirmArrival` 自己就 `confirmationQueue.run(...)`（见它的注释）。
 
-  async handleCardActionLocked(taskId, action, operatorOpenId, event) {
-    // 排队结束后重新读取：锁外读到的 task 可能已经被前一个动作改过状态，
-    // 拿旧对象判断状态正是并发重复写入的来源。
-    const task = await this.store.get(taskId);
-    if (!task?.draft) throw new Error('采购申请草稿不存在或已过期');
-    if (task.draft.operator_open_id !== operatorOpenId) throw new Error('只能由原始填写人确认采购流程');
-    if (task.status === 'cancelled') return { toast: { type: 'info', content: '本次采购流程已取消' } };
-    // ⚠️ 2026-10-05：`confirm_purchase_arrival` / `cancel_purchase_arrival` 两个动作
-    // 已随「拍照识别」退场删除（见 PURCHASE_CARD_ACTIONS 的注释）。到货的确认状态
-    // （待确认/已确认/已取消…）现在是表里的普通字段，需要时人工改。
-    if (action === 'cancel_purchase_request') {
-      if (task.status === 'posted') return { toast: { type: 'info', content: '采购申请已生成，不能取消' } };
-      // 支持批量和单条两种取消
-      const reportIds = task.draft.report_record_ids || [task.draft.report_record_id];
-      for (const rid of reportIds) {
-        // 取消也是写「信息填写」：同一组关联键（批次号在草稿里，可能没有 → 不出现）。
-        await this.gateway.update('purchaseReport', rid, { status: '已取消' }, {
-          correlation: purchaseCorrelation({
-            taskId, batchNo: task.draft.batch_no, reportRecordId: rid,
-          }),
-        }).catch(() => undefined);
-      }
-      await this.store.update(taskId, { status: 'cancelled' });
-      await this.updatePurchaseActionCard(task, event, purchaseStatusCard(task.draft, '采购申请已取消', '用户已取消本次采购申请。', 'grey'));
-      return { toast: { type: 'info', content: '采购申请已取消' } };
-    }
-    if (task.status === 'posted') return { toast: { type: 'info', content: '采购申请已生成' } };
-    await this.store.update(taskId, { status: 'posting' });
-    await this.updatePurchaseActionCard(task, event, purchaseStatusCard(task.draft, '采购申请处理中', '已收到确认，正在生成采购申请；请勿重复点击。', 'blue'));
-    try {
-      return await this.confirmPurchaseRequest(taskId, task, event);
-    } catch (error) {
-      await this.updatePurchaseActionCard(task, event, purchaseStatusCard(task.draft, '采购申请未完成', `已停止自动处理：${error.message}`, 'red'));
-      throw error;
-    }
-  }
 
   /**
    * 生成并持久化 Posting Plan。
@@ -3544,7 +3510,7 @@ class PurchaseWebhookService {
    *       所以本链路的恢复强度与**采购退货**相同（靠本地库存任务 + 落盘进度）。
    *
    * 并发：同一个 taskId 的确认走 confirmationQueue **串行**。这条保证原先由
-   * handleCardActionLocked（到货卡片那个入口）提供，卡片删除后原样挪进来——
+   * `handleCardActionLocked`（到货卡片那个入口，2026-10-08 已删）提供，卡片删除后原样挪进来——
    * 否则两个调用方同时确认时，两边都会在对方落盘之前读到"还没加过"，各加一次库存。
    */
   async confirmArrival(taskId, task, operatorOpenId) {
