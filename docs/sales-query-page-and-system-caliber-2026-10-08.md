@@ -106,15 +106,15 @@ https://scnzoiwgxik.feishu.cn/base/QrXlbwXMLaJ2TNsxSfFcIA3rnwh?table=wbpzfEmPGK
 - 页面是 AI 生成的网页，**不在我们仓库、不进 CI、不受 `v1:schema-check` 闸门保护**。
   她在生产表改名 / 删列后，**这个页面会静默算错或变空，我们这边不会有任何告警**。
   ⇒ 所以页面口径必须像本文一样**落文件**，而"生产表结构变了"这条要**通知她顺手看一眼页面**。
-- 「销售查询」页面的 URL 要填进工作台：
-  `server/public/workbench/config/links.js` 的 `SALES_QUERY_PAGE_URL`（现为空串 = 卡面「链接待配置」）。
-  两个候选：
-  - 内部页面：`https://scnzoiwgxik.feishu.cn/base/QrXlbwXMLaJ2TNsxSfFcIA3rnwh?table=wbpzfEmPGK`
-    —— 走打开者自己的 Base 权限，**不绕过高级权限**；
-  - 发布分享链接：`https://scnzoiwgxik.feishu.cn/share/base/webpage/shrcnY3ZG9LAjrArEe5RzfS8UGh`
-    —— 任何人拿到链接都能看**全部**数据，**不受高级权限限制**。
-  ⭐ 建议用**内部页面**（工作台本身已在飞书登录之后）；若店员没有 Base 权限再退回分享链接 —— **她定**。
-- 库存查询页面她还没给 URL（`INVENTORY_QUERY_PAGE_URL` 同样留空）。
+- ✅ **已完成（PR #266，2026-10-08）**：「销售查询」页面的 URL 已填进
+  `server/public/workbench/config/links.js` 的 `SALES_QUERY_PAGE_URL` —— **只改配置，渲染层一行未动**。
+  填的是**内部页面**那条：
+  `https://scnzoiwgxik.feishu.cn/base/QrXlbwXMLaJ2TNsxSfFcIA3rnwh?table=wbpzfEmPGK`
+  （走打开者自己的 Base 权限，**不绕过高级权限**）。
+  ⚠️ **没用**发布分享链接 `https://scnzoiwgxik.feishu.cn/share/base/webpage/shrcnY3ZG9LAjrArEe5RzfS8UGh`
+  —— 那条她页面自己写着「**不受多维表格高级权限限制**」；**原文留档备查，不启用**。
+  同一处后续说明见 `docs/workbench-two-tabs-and-external-query-2026-10-08.md` 第八节。
+- 库存查询页面她还没给 URL（`INVENTORY_QUERY_PAGE_URL` 仍留空 + TODO）。
 
 ## 6.5 业务负责人 2026-10-08 的拍板（她逐字）
 
@@ -135,13 +135,47 @@ https://scnzoiwgxik.feishu.cn/base/QrXlbwXMLaJ2TNsxSfFcIA3rnwh?table=wbpzfEmPGK
    目前大的思路是没有问题的，对不对？」。
    ⇒ 「销售查询」页面**就是 MVP**；工作台只负责挂链接（`links.js`），
    **不自建查询接口 / 页面**，不在本地重算业务事实。
-5. 她**已给「销售查询」的 URL**（正文里那条）、**库存查询的 URL 稍后给**。
-   ⚠️ 落档时正文里未见 URL 字符串（疑似漏贴），**以她重发的那条为准**。
+5. 她**已给「销售查询」的 URL**（并已按它改配置，PR #266）；**库存查询的 URL 稍后给**。
+   （第一轮她那条消息里正文没带上链接字符串，她随后**重发了** —— 以重发那条为准。）
+
+## 6.6 「退款那条写的是不是『已退款』」——代码核查结论（2026-10-08）
+
+她要求「**需要你实际看下代码**」。核完全仓，结论是：**代码从来没有写过「已退款」**。
+
+| 证据 | 内容 |
+| --- | --- |
+| `grep -rn "已退款"`（全仓 `*.js/*.md/*.json`，排除 `node_modules`） | **0 命中**（只有本文档自己那几行） |
+| `server/src/config/afterSales.js:231` | `cashPaymentStatus: '已收款'` |
+| `server/src/services/afterSalesService.js:708` | 退款/收款那条：`status: this.config.cashPaymentStatus`（= 「已收款」），方向另写 `tradeDirection` |
+| `server/src/services/paymentService.js:42` | 写入前**硬校验**：`收款状态` 只允许 `['已收款','未收款','待平台结算']` —— **不在这三个里直接抛错** |
+| `server/src/services/salesProgressService.js:34` | 读取侧另认历史值 `已收清` / `已结清`（只是**读**，代码不写它们） |
+| `server/src/services/secondDeliveryService.js` | 「成交」那条只做 `未收款 → 已收款` |
+
+⇒ **写「收款状态」的取值集合就是三个：`已收款` / `未收款` / `待平台结算`。**
+所以那条退款记录能显示成「已退款」，**只能来自代码之外**，三种可能（按可能性排序）：
+
+1. **Base 里的自动化流程**把「交易方向 = 退回」的行改成「已退款」；
+2. **她（或同事）在表里手工改**；
+3. **那不是「收款明细」这张表** —— 是别的表/别的视图（例：抖音团购券那条链路的
+   「核销管理」/「对账管理」，那些表**不在我们代码的写入范围**里）。
+
+⚠️ **为什么这仍然要查清（不是吹毛求疵）**：页面的金额口径是
+「`收款明细.收款状态 = 已收款` **+ 按收款时间筛**」。
+- 若「已退款」确实落在收款状态上 ⇒ 退款**天然被排除**，页面金额是对的；
+- 若哪一次那道手工/自动化**漏了**（状态留在「已收款」）⇒ 那笔退款会**当成一笔正收入**计入，
+  页面金额**静默虚高**，而**我们这边没有任何告警**（页面代码不在本仓库、不进 CI）。
+
+⭐ **最便宜的定论方式**（二选一）：
+- 🅐 她**打开一条退款记录**，看「收款状态」那一格**逐字**是什么 —— 10 秒；
+- 🅑 我在**服务器上只读**核一次：`收款状态` 字段的**选项清单** +
+  「交易方向 = 退回」那几行的**实际取值**（走项目代码、一个字不写）。
 
 ## 7. 待办
 
+- [ ] 🔴 **定论「已退款」从哪来**（见 6.6）：她看一眼退款记录的「收款状态」逐字，**或**我上服务器只读核。
 - [ ] 只读核生产真表：「销售明细」是否有独立的「更新时间」自动列、「销售日」是什么类型（`type` 1001 / 5）。
-- [ ] 用一个「已退货 + 已退款」的真实区间核 ①（页面金额有没有把退款算进去）。
+- [ ] 只用「已退货 + 已退款」的真实区间核一次页面金额（① 只有在上面那条定论为"已收款"时才需要）。
 - [ ] 核「收款明细」里非「收入」方向的行数与金额，量化 ① 的影响面。
 - [ ] 统计「货品信息」品类 / 类别为空的记录数，量化 ③ 的影响面。
-- [ ] 拿到 URL 后填 `links.js` 两行（**改配置不改代码**）。
+- [x] 拿到「销售查询」URL 后填 `links.js`（**改配置不改代码**）—— ✅ PR #266，2026-10-08。
+- [ ] 等「库存查询」URL → 填 `INVENTORY_QUERY_PAGE_URL`（同样只改配置）。
