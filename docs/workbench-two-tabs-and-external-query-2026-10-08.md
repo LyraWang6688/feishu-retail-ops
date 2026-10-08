@@ -233,6 +233,25 @@ export const INVENTORY_QUERY_PAGE_URL = '';  // TODO(业务负责人): 库存查
 
 ---
 
-## 七、CI 三项（回填）
+## 七、CI 三项（实测输出）
 
-（`gh pr checks` 输出回填在此。）
+`export XDG_CACHE_HOME=/tmp/ghcache GH_CACHE_DIR=/tmp/ghcache` 之后：
+
+```
+$ gh pr checks 264
+Analyze (javascript-typescript)  pass  1m1s  …/runs/37719458137/job/113123509953
+CodeQL                           pass  2s    …/runs/113123748295
+test                             pass  56s   …/runs/37719458843/job/113123508749
+
+$ gh pr view 264 --json mergeStateStatus,state
+OPEN / CLEAN
+```
+
+- **PR**：<https://github.com/LyraWang6688/feishu-retail-ops/pull/264>
+  （分支 `feat/workbench-two-tabs-external-query`，base `main`，commit `a563cbd`）。
+- 🔴 **没有** `gh pr merge --admin`；🔴 **没有合并**（合并由业务负责人 / 派活人来做）。
+- **全量 2 次**（独立 worktree，`node --test --test-concurrency=1`）：
+  ① `1377 pass / 0 fail`（`duration 25.3s`）· ② `1377 pass / 0 fail`（`duration 22.6s`）。
+- ⚠️ 该 worktree 里 `server/node_modules` 与根 `.env` 都是**临时软链**（`node_modules` 指向主工作区、
+  `.env` 指向主工作区的 `.env`），**验完即删** —— 所以那 2 次全量是"同一份依赖 + 同一份测试凭证"下跑的，
+  **结论只对本次改动有效**（合并后按第 14 条在主工作区重新同步）。
