@@ -13,6 +13,9 @@ const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 //    ⇒ 别再把它 require 回来，也别拿 `inventoryService` 的 `STOCK_PURCHASE_INCREASE` 顶替：
 //      那是**库存环节**的另一条行为记录，用错了等于把流水挂到另一条行为上。
 const { recordUrl } = require('../utils/feishuLinks');
+// ⭐ 2026-10-08：飞书错误的真实 code / msg / log_id / method_id —— **唯一**取用口
+// （本文件下面那个 `larkErrorText` 就是它的薄壳，形状不变）。
+const { larkErrorText: larkErrorTextOf } = require('../utils/larkError');
 const doubaoService = require('./doubaoService');
 // 采购申请确认卡片（purchaseRequestConfirmationCard）**不再从这段链路发出**（免确认），
 // 卡片本身仍留在 utils/larkCards 并且 handleCardAction 仍能处理它——
@@ -171,13 +174,11 @@ const aggregateArrivalItems = (items) => {
  * 飞书 SDK 抛错时 message 往往只有 "Request failed with status code 400"，
  * 真正有用的错误码和原因在 response.data 里（例如缺权限的 99991672）。
  * 出图/发图的失败只会写日志，所以日志必须带上这两个字段，否则线上排查只能靠猜。
+ *
+ * ⚠️ 2026-10-08：实现**收敛到 `utils/larkError`**（同一个形状只留一处实现）；
+ *    这里的 `larkErrorText` 仍然是 `msg (Code: code)`，调用点与文案一个字不变。
  */
-const larkErrorText = (error) => {
-  const data = error?.response?.data;
-  const code = data?.code ?? error?.code;
-  const message = data?.msg || error?.message || 'unknown';
-  return code ? `${message} (Code: ${code})` : message;
-};
+const larkErrorText = (error) => larkErrorTextOf(error);
 
 // ── 已删除：拍照识别那一套 ────────────────────────────────────────────────
 // 2026-10-05 业务负责人删掉了「采购到货」表的「类型」「识别状态」「识别失败原因」三个字段，

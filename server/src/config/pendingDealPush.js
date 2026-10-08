@@ -1,11 +1,22 @@
 // 「维度 1：每天 9 点把**最近 7 天还没收齐**的销售单推到群里」的配置
-// （配置先行——群 id / 时间点 / 开关 / 深链策略 / **分区与文案**都是**会改的口径**，
-//   改的时候只动这一个文件，不去翻 pendingDealPushService）。
+// （配置先行——群 id / 时间点 / 开关 / 深链策略 / **分区与文案** / **卡片标记** / **失败重试**
+//   都是**会改的口径**，改的时候只动这一个文件，不去翻 pendingDealPushService）。
 //
 // 🔴 2026-10-07 口径大改：交易类型 = 库存有没有（现货 / 预定），「未付」不再是类型。
 //   ⇒ 候选源从"未付 / 预付两个**交易类型编码**"改成
 //     「**预定（还没交付）** ＋ **现货但钱没结清**」= **尚未完成履约**（见下方分区判据）。
 //   ⇒ 分区标题从 `预付 / 未付` 改成 `预定 / 现货待收`（文案仍可配）。
+//
+// ⭐ 2026-10-08 口径（业务负责人逐字）：
+//   「甲 **改成消息卡片**（interactive）—— · 单号**加粗**、类型用彩色标签、【待收金额】突出显示 ·
+//    长链接改成「**查看原话**」这样的**文字链接**（URL 藏起来，不再占一行）· 分区块加分割线、
+//    采购区单独一块 · 客户端不支持时降级成纯文本（可用飞书的 fallback）」
+//   「其实**不需要单号**，需要的是那个**编号和尺码信息**～……然后销售按照**预定和现货待收**分区，
+//    **不需要退货和换货的**」
+//   「② **推送失败自动重试**：失败后隔 **5/15 分钟**各重试一次，别一次失败就整天不发」
+//   ⇒ 默认发**卡片**（`PENDING_DEAL_PUSH_MESSAGE_FORMAT=card`）；
+//     下面这套**文本模板保留改造**成**降级**（客户端/租户不支持卡片、或卡片发不出去时用它）；
+//     行内容去掉单号、补「查看原话」文字链接；待收为 0 写「已付清」；金额拿不到**整段不渲染**。
 //
 // ⚠️ 取值规则（"空串算不算关"那一套）在 `config/envValue`，本文件与销售卡片那几处共用同一套，
 //   规则只有一处实现，不会两处慢慢走歪。
@@ -19,7 +30,7 @@
 //   ⏰ 2026-10-07 最近 7 天待处理的销售单（预定 / 现货待收）：2 笔
 //      1. ·【预定】B26002-52 37码 · 待收 ¥128 · [深链]
 //      2. ·【现货待收】6A637-7 43码 · 待收 ¥228 · [深链]
-// ⇒ 她只要「单号 + 【预定/现货待收】 + 货号+尺码 + 待收金额 + 深链」，**不要售出时间**。
+// ⇒ 她只要「【预定/现货待收】 + 货号+尺码 + 待收金额 + 深链」，**不要售出时间**、**不要单号**。
 // ⚠️ 她给的那张形状里"分区"与"行内标签"是**并存**的（她两处都写了），所以这里也是两处都有：
 //    区块标题用 `sectionTemplate`，每行里的 `{tag}` 还是同一个区块标题。
 // ⚠️ 下面这些**全是显示文案**（改文案不碰逻辑）：本文件之外的 service 里
@@ -50,11 +61,24 @@ const PENDING_DEAL_PUSH_ITEM_SEPARATOR_ENV_KEY = 'PENDING_DEAL_PUSH_ITEM_SEPARAT
 const PENDING_DEAL_PUSH_SIZE_TEMPLATE_ENV_KEY = 'PENDING_DEAL_PUSH_SIZE_TEMPLATE';
 const PENDING_DEAL_PUSH_FOOTER_TEMPLATE_ENV_KEY = 'PENDING_DEAL_PUSH_FOOTER_TEMPLATE';
 
+// ── 2026-10-08 新增的旋钮 ─────────────────────────────────────────────────────
+// 发送形态：`card`（默认，消息卡片）/ `text`（纯文本，客户端不支持卡片时的降级出口）。
+const PENDING_DEAL_PUSH_MESSAGE_FORMAT_ENV_KEY = 'PENDING_DEAL_PUSH_MESSAGE_FORMAT';
+// 失败重试的时刻（**相对首次失败**的毫秒偏移，逗号分隔）；空串 = 不重试。
+const PENDING_DEAL_PUSH_RETRY_DELAYS_MS_ENV_KEY = 'PENDING_DEAL_PUSH_RETRY_DELAYS_MS';
+// 文字链接的可见文案（URL 藏在它后面）、纯文本降级里的金额段、待收为 0 时的文案。
+const PENDING_DEAL_PUSH_LINK_TEXT_ENV_KEY = 'PENDING_DEAL_PUSH_LINK_TEXT';
+const PENDING_DEAL_PUSH_AMOUNT_TEMPLATE_ENV_KEY = 'PENDING_DEAL_PUSH_AMOUNT_TEMPLATE';
+const PENDING_DEAL_PUSH_PAID_UP_TEXT_ENV_KEY = 'PENDING_DEAL_PUSH_PAID_UP_TEXT';
+// 卡片的配色（标题 / 金额高亮 / 两个区块的类型标签）。
+const PENDING_DEAL_PUSH_CARD_HEADER_COLOR_ENV_KEY = 'PENDING_DEAL_PUSH_CARD_HEADER_COLOR';
+const PENDING_DEAL_PUSH_CARD_AMOUNT_COLOR_ENV_KEY = 'PENDING_DEAL_PUSH_CARD_AMOUNT_COLOR';
+const PENDING_DEAL_PUSH_PREPAID_TAG_COLOR_ENV_KEY = 'PENDING_DEAL_PUSH_PREPAID_TAG_COLOR';
+const PENDING_DEAL_PUSH_CASH_PENDING_TAG_COLOR_ENV_KEY = 'PENDING_DEAL_PUSH_CASH_PENDING_TAG_COLOR';
+
 // ── 2026-10-07：同一条推送里加【采购】区（销售区在前、采购区在后，顺序可配）────────
 // 业务负责人的口径（逐字）：
 //   「你每天 9 点发通知的时候，看未到货的情况就**直接去那个表里查**，然后再把消息**深链**发到用户群里」
-// ⚠️ **销售区逐字不变**是硬要求（哨兵用例锁着）⇒ 销售区的"大区标题"默认**空串**
-//    （空 = 不渲染那一行），要给她加大区标题时只改这个配置，不改代码。
 const PENDING_DEAL_PUSH_AREA_ORDER_ENV_KEY = 'PENDING_DEAL_PUSH_AREA_ORDER';
 const PENDING_DEAL_PUSH_SALES_TITLE_ENV_KEY = 'PENDING_DEAL_PUSH_SALES_TITLE';
 const PENDING_DEAL_PUSH_PURCHASE_TITLE_ENV_KEY = 'PENDING_DEAL_PUSH_PURCHASE_TITLE';
@@ -71,8 +95,20 @@ const DEFAULT_AREA_ORDER = Object.freeze(['sales', 'purchase']);
 // 默认 9 点（北京时间，业务负责人说的）。
 const DEFAULT_PUSH_HOUR = 9;
 // 默认 10 分钟一 tick：与「第二次交付」提醒同一个节奏。判断"今天该不该跑"不靠定时精度，
-// 而靠**按天认领**（见 pendingDealPushService.sendDailyPush），所以 tick 落在哪一刻无所谓。
+// 而靠**按天认领 + 失败重试**（见 pendingDealPushService.sendDailyPush），
+// 所以 tick 落在哪一刻无所谓。
 const DEFAULT_INTERVAL_MS = 10 * 60 * 1000;
+
+// 发消息的形态（**显式**取值，认不出来就抛 —— 静默按某一种处理是最坏的一种）。
+const MESSAGE_FORMAT_CARD = 'card';
+const MESSAGE_FORMAT_TEXT = 'text';
+const PENDING_DEAL_PUSH_MESSAGE_FORMATS = Object.freeze([MESSAGE_FORMAT_CARD, MESSAGE_FORMAT_TEXT]);
+
+// 失败重试的默认节奏：**首次失败之后**隔 5 分钟、再隔 15 分钟各重试一次
+// （业务负责人 2026-10-08 逐字：「失败后隔 **5/15 分钟**各重试一次，别一次失败就整天不发」）。
+// ⚠️ 两个数字是**相对首次失败的偏移量**，不是"上一次失败之后再等"。
+// ⚠️ 只重试**两次**；两次都失败 ⇒ 当天不再试（记明原因），第二天照常进候选。
+const DEFAULT_RETRY_DELAYS_MS = Object.freeze([5 * 60 * 1000, 15 * 60 * 1000]);
 
 // 两个区块的**身份**（业务事实，不是文案）：
 //   · key       = 内部键（`blockOrder` 里写的是它）；
@@ -80,6 +116,7 @@ const DEFAULT_INTERVAL_MS = 10 * 60 * 1000;
 //                 ⚠️ **不是**交易类型编码：新口径下类型 = 库存有没有，
 //                 "未付" 不再是一种类型，"哪一笔该推" 由**履约 / 资金进展**决定。
 //   · title     = 区块标题（也是行内那个 `【预定】` 标签）——文案，可配。
+//   · tagColor  = 卡片上那个**彩色标签**的颜色（`text_tag` 的 color 枚举）——也是文案，可配。
 const PENDING_DEAL_PUSH_BLOCK_CRITERIA = Object.freeze({
   // 还没交付（类型 = 预定，或一张单里还有预定行没交）——货还在店里 / 还没到。
   undelivered: 'undelivered',
@@ -99,12 +136,16 @@ const PENDING_DEAL_PUSH_BLOCK_DEFS = Object.freeze([
     criterion: PENDING_DEAL_PUSH_BLOCK_CRITERIA.undelivered,
     titleEnvKey: PENDING_DEAL_PUSH_PREPAID_TITLE_ENV_KEY,
     defaultTitle: '【预定】',
+    tagColorEnvKey: PENDING_DEAL_PUSH_PREPAID_TAG_COLOR_ENV_KEY,
+    defaultTagColor: 'blue',
   }),
   Object.freeze({
     key: 'cash_pending',
     criterion: PENDING_DEAL_PUSH_BLOCK_CRITERIA.deliveredUnpaid,
     titleEnvKey: PENDING_DEAL_PUSH_CASH_PENDING_TITLE_ENV_KEY,
     defaultTitle: '【现货待收】',
+    tagColorEnvKey: PENDING_DEAL_PUSH_CASH_PENDING_TAG_COLOR_ENV_KEY,
+    defaultTagColor: 'orange',
   }),
 ]);
 
@@ -127,25 +168,41 @@ const DEFAULT_OTHER_TITLE = '【其他】';
 
 // 整条消息的形状。占位符 = 大括号里的名字，未知占位符在**启动时**抛错（见 assertTemplate）。
 const PENDING_DEAL_PUSH_DEFAULTS = Object.freeze({
-  // 表头：`{total}` 仍是"总共几笔"（口径不变），`{blockCounts}` 后面补一句分区计数，
-  // 免得她看到"共 2 笔"却数不出两块各几笔。
+  // 表头：`{total}` 仍是"总共几笔"（口径不变），`{blockCounts}` 后面补一句分区计数。
+  // ⚠️ 2026-10-08 文案 nit：**只有一个区块时不再补分区计数** ——
+  //    她真机看到的成品是「…（预定 / 现货待收）：5 笔（【预定】5 笔）」，同一件事说了两遍。
+  //    判据在 service（`sections.length > 1` 才补），不需要新配置项。
   headerTemplate: '⏰ {day} 最近 7 天待处理的销售单（预定 / 现货待收）：{total} 笔{blockCounts}',
   blockCountsTemplate: '（{counts}）',
   blockCountTemplate: '{title}{count} 笔',
   blockCountSeparator: ' / ',
   // 区块 = 标题行 + 该区块每单一行。
   sectionTemplate: '{title}{count} 笔\n{lines}',
-  // 行 = 逐段拼，**空的那一段整段不要**（缺深链时不会留下 ` · ` 或空壳）。
-  lineParts: ['{index}. {orderNo} {tag}', '{item}', '待收 {amount}', '{link}'],
+  // 行 = 逐段拼，**空的那一段整段不要**（缺深链 / 金额读不出来时不会留下 ` · ` 或空壳）。
+  // ⚠️ 2026-10-08：**去掉 `{orderNo}`**（她明确说不需要单号），把类型标签提到最前，
+  //    金额与链接段各自可整段消失。
+  // ⚠️ `{amount}` 给的是**整段**（按下面的 `amountTemplate` 渲染好，或者「已付清」）——
+  //    所以自定义行模板时**不要再写「待收」**，写 `{amount}` 就够了。
+  // ⚠️ 段序与卡片那条**保持一致**（货号尺码在前、类型标签在后）——
+  //    这样"降级纯文本"读起来就是卡片上那套字样（只差 URL 藏不藏得住）。
+  lineParts: ['{index}. {item}', '{tag}', '{amount}', '{link}'],
   lineSeparator: ' · ',
   // 一件商品：`货号 尺码码`；配品没有尺码 → `{size}` 为空 → 拼完只剩名称（**不会出现「 码」**）。
   itemTemplate: '{itemNo} {size}',
   // 一单多件时**逐件列出**，件与件之间用这个分隔符（默认顿号）。
   itemSeparator: '、',
   sizeTemplate: '{size}码',
+  // 金额段：`待收 ¥128.00`。⚠️ 待收为 0 → 换成 `paidUpText`；**读不出来**就整段不要
+  //（**绝不**渲染 `¥—`，更不会变成 `¥0.00` —— 那是在说"这单不用收钱"）。
+  amountTemplate: '待收 {amount}',
+  paidUpText: '已付清',
+  // 文字链接：卡片上是 `[查看原话](url)`，纯文本降级里是 `查看原话 https://…`
+  //（纯文本藏不住 URL，但至少不再是一行裸链接）。
+  linkText: '查看原话',
+  linkTextTemplate: '{text} {url}',
   footerTemplate: '（{count} 笔的深链暂不可用：飞书接口未返回 message_app_link，见日志 sales.pending_deal_push.link.missing）',
   // ── 大区（2026-10-07）：销售区 + 采购区 ────────────────────────────────────
-  // ⚠️ 销售区标题**默认空串** = 不渲染那一行 ⇒ 销售区逐字不变（硬要求）。
+  // ⚠️ 销售区标题**默认空串** = 不渲染那一行。
   salesAreaTitle: '',
   // ⭐ 采购区的大区标题（`{count}` = 这一区几批）。
   purchaseAreaTitle: '【采购】未到货的报货批次：{count} 批',
@@ -156,6 +213,24 @@ const PENDING_DEAL_PUSH_DEFAULTS = Object.freeze({
   // 一批多供应商时的连接符。
   purchaseSupplierSeparator: '、',
   purchaseFooterTemplate: '（{count} 批的深链暂不可用，见日志 sales.pending_deal_push.purchase_link.missing）',
+
+  // ── 卡片（2026-10-08）──────────────────────────────────────────────────────
+  // 卡片上每一处的**标记骨架**（与 `blockCountsTemplate` 同一档：改文案 / 改标记只动这里）。
+  // ⚠️ 卡片元素里**没有** `{"tag":"a"}` 这种独立超链接组件（飞书 1.0 / 2.0 组件总览里都没有），
+  //    官方支持的等价物是富文本里的文字链接 `[查看原话](url)` —— URL 一样藏在文字后面。
+  card: Object.freeze({
+    headerColor: 'blue',
+    sectionTitleTemplate: '**{title}**',
+    lineParts: ['{index}. {item}', '{tag}', '{amount}', '{link}'],
+    lineSeparator: ' · ',
+    // 她最看重的两样：**货号 + 尺码**（加粗）与类型彩色标签。
+    itemTemplate: '**{item}**',
+    tagTemplate: "<text_tag color='{color}'>{text}</text_tag>",
+    // 金额突出显示（配色可配）。
+    amountTemplate: "<font color='{color}'>待收 {amount}</font>",
+    amountColor: 'red',
+    linkTemplate: '[{text}]({url})',
+  }),
 });
 
 // 每个模板认得的占位符。写错名字（`{itemNO}` 这种）**启动时**就抛错——
@@ -169,6 +244,16 @@ const TEMPLATE_PLACEHOLDERS = Object.freeze({
   itemTemplate: Object.freeze(['itemNo', 'size']),
   sizeTemplate: Object.freeze(['size']),
   footerTemplate: Object.freeze(['count']),
+  amountTemplate: Object.freeze(['amount']),
+  paidUpText: Object.freeze([]),
+  linkTextTemplate: Object.freeze(['text', 'url']),
+  // ── 卡片 ──────────────────────────────────────────────────────────────────
+  cardSectionTitleTemplate: Object.freeze(['title']),
+  cardLinePart: Object.freeze(['index', 'tag', 'item', 'amount', 'link']),
+  cardItemTemplate: Object.freeze(['item']),
+  cardTagTemplate: Object.freeze(['color', 'text']),
+  cardAmountTemplate: Object.freeze(['color', 'amount']),
+  cardLinkTemplate: Object.freeze(['text', 'url']),
   // ── 大区 ──────────────────────────────────────────────────────────────────
   salesAreaTitle: Object.freeze(['count']),
   purchaseAreaTitle: Object.freeze(['count']),
@@ -191,7 +276,7 @@ const assertTemplate = (label, template, allowed) => {
   return text;
 };
 
-/** 区块（**已按配置排好序**）：`[{ key, tradeTypeCode, title }]`。 */
+/** 区块（**已按配置排好序**）：`[{ key, criterion, title, tagColor }]`。 */
 const resolveBlocks = (env) => {
   const requested = readList(env, PENDING_DEAL_PUSH_BLOCK_ORDER_ENV_KEY);
   const order = requested === null ? PENDING_DEAL_PUSH_BLOCK_DEFS.map((def) => def.key) : requested;
@@ -211,6 +296,7 @@ const resolveBlocks = (env) => {
       key,
       criterion: def.criterion,
       title: readString(env, def.titleEnvKey, def.defaultTitle),
+      tagColor: readString(env, def.tagColorEnvKey, def.defaultTagColor),
     };
   });
 };
@@ -260,6 +346,60 @@ const resolveAreas = (env) => {
   return [...order, ...PENDING_DEAL_PUSH_AREA_KEYS.filter((key) => !order.includes(key))];
 };
 
+/** 发送形态：`card` / `text`。**认不出来就抛**（含空串 —— 空串不是一种形态）。 */
+const resolveMessageFormat = (env) => {
+  const raw = readString(env, PENDING_DEAL_PUSH_MESSAGE_FORMAT_ENV_KEY, MESSAGE_FORMAT_CARD);
+  const value = String(raw).trim().toLowerCase();
+  if (!PENDING_DEAL_PUSH_MESSAGE_FORMATS.includes(value)) {
+    throw new Error(`${PENDING_DEAL_PUSH_MESSAGE_FORMAT_ENV_KEY} 只能是 `
+      + `${PENDING_DEAL_PUSH_MESSAGE_FORMATS.join(' / ')}，当前值无法识别`);
+  }
+  return value;
+};
+
+/**
+ * 失败重试的时刻（**相对首次失败**的毫秒偏移）。
+ *   · 没设 → 默认 `[5 分钟, 15 分钟]`；
+ *   · 设成空串 → `[]`（显式"不重试"，按 envValue 的统一规矩：空串 = 一个都不要）；
+ *   · 非法值（非正整数 / 超过一天）→ 启动时抛错。
+ */
+const resolveRetryDelaysMs = (env) => {
+  const list = readList(env, PENDING_DEAL_PUSH_RETRY_DELAYS_MS_ENV_KEY);
+  if (list === null) return [...DEFAULT_RETRY_DELAYS_MS];
+  return list.map((item) => {
+    const value = Number(item);
+    const max = 24 * 60 * 60 * 1000;
+    if (!Number.isInteger(value) || value <= 0 || value > max) {
+      throw new Error(`${PENDING_DEAL_PUSH_RETRY_DELAYS_MS_ENV_KEY} 必须是 1~${max} 之间的整数毫秒`
+        + `（多个用逗号分隔；留空表示不重试），当前值无法识别`);
+    }
+    return value;
+  });
+};
+
+/** 卡片标记骨架（**已按配置填好颜色**）。 */
+const resolveCardConfig = (env) => {
+  const defaults = PENDING_DEAL_PUSH_DEFAULTS.card;
+  return {
+    headerColor: readString(env, PENDING_DEAL_PUSH_CARD_HEADER_COLOR_ENV_KEY, defaults.headerColor),
+    sectionTitleTemplate: assertTemplate('card.sectionTitleTemplate', defaults.sectionTitleTemplate,
+      TEMPLATE_PLACEHOLDERS.cardSectionTitleTemplate),
+    lineParts: [...defaults.lineParts].map((part) => assertTemplate(
+      'card.lineParts', part, TEMPLATE_PLACEHOLDERS.cardLinePart,
+    )),
+    lineSeparator: defaults.lineSeparator,
+    itemTemplate: assertTemplate('card.itemTemplate', defaults.itemTemplate,
+      TEMPLATE_PLACEHOLDERS.cardItemTemplate),
+    tagTemplate: assertTemplate('card.tagTemplate', defaults.tagTemplate,
+      TEMPLATE_PLACEHOLDERS.cardTagTemplate),
+    amountTemplate: assertTemplate('card.amountTemplate', defaults.amountTemplate,
+      TEMPLATE_PLACEHOLDERS.cardAmountTemplate),
+    amountColor: readString(env, PENDING_DEAL_PUSH_CARD_AMOUNT_COLOR_ENV_KEY, defaults.amountColor),
+    linkTemplate: assertTemplate('card.linkTemplate', defaults.linkTemplate,
+      TEMPLATE_PLACEHOLDERS.cardLinkTemplate),
+  };
+};
+
 /**
  * 一次把整份配置读出来。**只读一次、集中在启动时**：配置写错要在服务起来的那一刻就吵，
  * 而不是等到第二天 9 点推送时才失败（那时没人看着日志）。
@@ -274,7 +414,7 @@ const resolvePendingDealPushConfig = (env = process.env) => ({
   // 默认开——那是官方声明过的字段，将来飞书开始返回就自动生效，不用改代码。
   // 实测（2026-10-06）当前**不返回**，见 services/larkMessageLinkResolver 的注释。
   linkLookupEnabled: readFlag(env, PENDING_DEAL_PUSH_LINK_LOOKUP_ENABLED_ENV_KEY, true),
-  // 拿不到深链时要不要**干脆不推**。默认 false = 照推单号 + 金额（深链是增强，不是前提）。
+  // 拿不到深链时要不要**干脆不推**。默认 false = 照推货号 + 尺码 + 金额（深链是增强，不是前提）。
   linkRequired: readFlag(env, PENDING_DEAL_PUSH_LINK_REQUIRED_ENV_KEY, false),
   // 发出后要不要**把那条消息置顶**（飞书 im/v1/pins）。**默认 false**，理由：
   //   · 置顶是**群里每个人都看得见**的副作用，而且飞书那边有额外门槛——
@@ -284,6 +424,10 @@ const resolvePendingDealPushConfig = (env = process.env) => ({
   //   · 打开时**必须显式写 true**，不会因为"只想试推送"就顺手把消息钉在群顶上。
   // ⚠️ 置顶失败绝不影响推送本身（只记 warn，见 services/larkMessagePinService）。
   pinEnabled: readFlag(env, PENDING_DEAL_PUSH_PIN_ENABLED_ENV_KEY, false),
+  // 发送形态：卡片（默认）/ 纯文本（降级）。
+  messageFormat: resolveMessageFormat(env),
+  // 失败重试的时刻（相对首次失败的 ms 偏移）；`[]` = 不重试。
+  retryDelaysMs: resolveRetryDelaysMs(env),
 
   // ── 分区与文案（2026-10-07）────────────────────────────────────────────────
   // 区块**已按配置排好序**；渲染只认这个数组，服务里没有第二处顺序。
@@ -307,6 +451,16 @@ const resolvePendingDealPushConfig = (env = process.env) => ({
   sizeTemplate: assertTemplate(PENDING_DEAL_PUSH_SIZE_TEMPLATE_ENV_KEY,
     readString(env, PENDING_DEAL_PUSH_SIZE_TEMPLATE_ENV_KEY, PENDING_DEAL_PUSH_DEFAULTS.sizeTemplate),
     TEMPLATE_PLACEHOLDERS.sizeTemplate),
+  // ── 金额 / 链接（2026-10-08）──────────────────────────────────────────────
+  amountTemplate: assertTemplate(PENDING_DEAL_PUSH_AMOUNT_TEMPLATE_ENV_KEY,
+    readString(env, PENDING_DEAL_PUSH_AMOUNT_TEMPLATE_ENV_KEY, PENDING_DEAL_PUSH_DEFAULTS.amountTemplate),
+    TEMPLATE_PLACEHOLDERS.amountTemplate),
+  paidUpText: assertTemplate(PENDING_DEAL_PUSH_PAID_UP_TEXT_ENV_KEY,
+    readString(env, PENDING_DEAL_PUSH_PAID_UP_TEXT_ENV_KEY, PENDING_DEAL_PUSH_DEFAULTS.paidUpText),
+    TEMPLATE_PLACEHOLDERS.paidUpText),
+  linkText: readString(env, PENDING_DEAL_PUSH_LINK_TEXT_ENV_KEY, PENDING_DEAL_PUSH_DEFAULTS.linkText),
+  linkTextTemplate: assertTemplate('linkTextTemplate', PENDING_DEAL_PUSH_DEFAULTS.linkTextTemplate,
+    TEMPLATE_PLACEHOLDERS.linkTextTemplate),
   footerTemplate: assertTemplate(PENDING_DEAL_PUSH_FOOTER_TEMPLATE_ENV_KEY,
     readString(env, PENDING_DEAL_PUSH_FOOTER_TEMPLATE_ENV_KEY, PENDING_DEAL_PUSH_DEFAULTS.footerTemplate),
     TEMPLATE_PLACEHOLDERS.footerTemplate),
@@ -314,7 +468,7 @@ const resolvePendingDealPushConfig = (env = process.env) => ({
   // ── 大区：销售区 + 采购区（2026-10-07）───────────────────────────────────────
   // `areas` 已按配置排好序（默认 销售 → 采购）；渲染只认这个数组，服务里没有第二处顺序。
   areas: resolveAreas(env),
-  // 销售区标题：**默认空串**（不渲染那一行）—— 这是"销售区逐字不变"的实现方式。
+  // 销售区标题：**默认空串**（不渲染那一行）。
   salesAreaTitle: readString(env, PENDING_DEAL_PUSH_SALES_TITLE_ENV_KEY, PENDING_DEAL_PUSH_DEFAULTS.salesAreaTitle),
   purchaseAreaTitle: assertTemplate(PENDING_DEAL_PUSH_PURCHASE_TITLE_ENV_KEY,
     readString(env, PENDING_DEAL_PUSH_PURCHASE_TITLE_ENV_KEY, PENDING_DEAL_PUSH_DEFAULTS.purchaseAreaTitle),
@@ -327,6 +481,8 @@ const resolvePendingDealPushConfig = (env = process.env) => ({
   purchaseFooterTemplate: assertTemplate(PENDING_DEAL_PUSH_PURCHASE_FOOTER_TEMPLATE_ENV_KEY,
     readString(env, PENDING_DEAL_PUSH_PURCHASE_FOOTER_TEMPLATE_ENV_KEY, PENDING_DEAL_PUSH_DEFAULTS.purchaseFooterTemplate),
     TEMPLATE_PLACEHOLDERS.purchaseFooterTemplate),
+  // ── 卡片标记骨架（2026-10-08）──────────────────────────────────────────────
+  card: resolveCardConfig(env),
 });
 
 module.exports = {
@@ -349,6 +505,15 @@ module.exports = {
   PENDING_DEAL_PUSH_ITEM_SEPARATOR_ENV_KEY,
   PENDING_DEAL_PUSH_SIZE_TEMPLATE_ENV_KEY,
   PENDING_DEAL_PUSH_FOOTER_TEMPLATE_ENV_KEY,
+  PENDING_DEAL_PUSH_MESSAGE_FORMAT_ENV_KEY,
+  PENDING_DEAL_PUSH_RETRY_DELAYS_MS_ENV_KEY,
+  PENDING_DEAL_PUSH_LINK_TEXT_ENV_KEY,
+  PENDING_DEAL_PUSH_AMOUNT_TEMPLATE_ENV_KEY,
+  PENDING_DEAL_PUSH_PAID_UP_TEXT_ENV_KEY,
+  PENDING_DEAL_PUSH_CARD_HEADER_COLOR_ENV_KEY,
+  PENDING_DEAL_PUSH_CARD_AMOUNT_COLOR_ENV_KEY,
+  PENDING_DEAL_PUSH_PREPAID_TAG_COLOR_ENV_KEY,
+  PENDING_DEAL_PUSH_CASH_PENDING_TAG_COLOR_ENV_KEY,
   PENDING_DEAL_PUSH_AREA_ORDER_ENV_KEY,
   PENDING_DEAL_PUSH_SALES_TITLE_ENV_KEY,
   PENDING_DEAL_PUSH_PURCHASE_TITLE_ENV_KEY,
@@ -358,6 +523,10 @@ module.exports = {
   PENDING_DEAL_PUSH_PURCHASE_FOOTER_TEMPLATE_ENV_KEY,
   PENDING_DEAL_PUSH_AREA_KEYS,
   DEFAULT_AREA_ORDER,
+  DEFAULT_RETRY_DELAYS_MS,
+  MESSAGE_FORMAT_CARD,
+  MESSAGE_FORMAT_TEXT,
+  PENDING_DEAL_PUSH_MESSAGE_FORMATS,
   PENDING_DEAL_PUSH_BLOCK_DEFS,
   PENDING_DEAL_PUSH_BLOCK_CRITERIA,
   PENDING_DEAL_PUSH_DELIVERED_STATUS,
@@ -365,6 +534,7 @@ module.exports = {
   DEFAULT_PUSH_HOUR,
   DEFAULT_INTERVAL_MS,
   resolvePendingDealPushConfig,
+  resolveRetryDelaysMs,
   pendingDealPushCriterionFor,
   // 显式布尔那条规矩的实现在 config/envValue；这里转发一下，单测仍然可以盯住它。
   readFlag,

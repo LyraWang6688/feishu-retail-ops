@@ -52,6 +52,29 @@ const AFTER_SALES_FULFILLMENT = Object.freeze({
   DELIVERED: '已交付',
 });
 
+// ⭐ 2026-10-08：「**退过 / 换过 / 赔过**的明细**不再属于待处理**」——
+//    两份"待处理"清单（9 点待处理单推送 / 成交提醒）都按这条把整单排除。
+//
+// 业务负责人的口径（逐字）：
+//   「其实**不需要单号**，需要的是那个**编号和尺码信息**～……然后销售按照**预定和现货待收**分区，
+//    **不需要退货和换货的**，销售就是预定和现货待收的」
+//
+// ⚠️ 这是**口径变更、不是放宽**：改动前这些单**也是**被跳过的 —— `progressFromRecords`
+//    见到这三种履约状态会抛「未知销售明细履约状态：已换货」，调用方 catch 之后同样把整单跳过，
+//    只是日志把它说成"未知"（今天日志里就有这一条），看着像代码没想过这个取值。
+//    现在把它写成明确规则：**判据从这里取，日志如实说 reason（不再出现"未知"的 warn）**。
+// ⚠️ 必须在**候选那一处**判（`SecondDeliveryService.listPendingDeliveries`）：
+//    两条推送共用同一份候选口径，判两遍迟早走歪。
+const AFTER_SALES_FULFILLMENT_EXCLUDED = Object.freeze([
+  AFTER_SALES_FULFILLMENT.RETURNED,
+  AFTER_SALES_FULFILLMENT.EXCHANGED,
+  AFTER_SALES_FULFILLMENT.COMPENSATED,
+]);
+
+/** 这一条明细的履约状态是不是"退过 / 换过 / 赔过"（**唯一判据**，两边共用）。 */
+const isAfterSalesFulfillment = (status) => AFTER_SALES_FULFILLMENT_EXCLUDED
+  .includes(String(status ?? '').trim());
+
 // 钱的方向。写「收款明细.交易方向」：差价为正要收（收入），为负要退（退回）。
 const AFTER_SALES_MONEY_DIRECTIONS = Object.freeze({
   RECEIVE: '收入',
@@ -219,6 +242,8 @@ module.exports = {
   AFTER_SALES_ACTIONS,
   AFTER_SALES_BEHAVIORS,
   AFTER_SALES_FULFILLMENT,
+  AFTER_SALES_FULFILLMENT_EXCLUDED,
+  isAfterSalesFulfillment,
   AFTER_SALES_MONEY_DIRECTIONS,
   AFTER_SALES_ACTION_SPECS,
   AFTER_SALES_KEY_PREFIX,

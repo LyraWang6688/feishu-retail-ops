@@ -30,9 +30,70 @@ test('describe 不会带出 error.config.data（密钥就在这里）', () => {
   assert.equal(described.method, 'post');
   assert.ok(!JSON.stringify(described).includes(CANARY));
 
-  // 非 Error 的对象一律不序列化——序列化本身就可能把 config 带出来。
-  assert.equal(describe({ config: { data: CANARY } }), '[object]');
+  // 非 Error 的对象：**不再**是 '[object]'（那等于什么都没说），而是白名单投影 ——
+  // 但同样一个密钥字节都不能带出来。
+  // ⚠️ 2026-10-08 口径变更：业务负责人点名的 ①（`lark.sdk.error detail:[["[object]","[object]"]]`）。
+  const describedObject = describe({ config: { data: CANARY } });
+  assert.notEqual(describedObject, '[object]');
+  assert.ok(!JSON.stringify(describedObject).includes(CANARY));
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ① 日志真实错误：SDK 传进来的**两个普通对象**也要打出真实 code / msg / log_id / method_id
+// ─────────────────────────────────────────────────────────────────────────────
+
+// `@larksuiteoapi/node-sdk` 的 `formatErrors(e)` 的形状（真机 `[object]` 那一条的来源）：
+//   [ {message, config:{data,url,params,method}, request, response:{data,status,statusText}},
+//     {…response.data 摊平后的那份（含真实 code / msg / log_id）} ]
+const sdkErrorPair = () => ([
+  {
+    message: 'Request failed with status code 400',
+    config: { data: JSON.stringify({ app_secret: CANARY }), url: 'https://open.feishu.cn/open-apis/bitable/v1/apps/x', method: 'get' },
+    request: { protocol: 'https:', host: 'open.feishu.cn', path: '/open-apis/bitable/v1/apps/x', method: 'GET' },
+    response: {
+      status: 400,
+      statusText: 'Bad Request',
+      data: { code: 1254607, msg: 'Data not ready, please try again later', log_id: 'log-real-1' },
+    },
+  },
+  { code: 1254607, msg: 'Data not ready, please try again later', log_id: 'log-real-1', error: { method_id: 'method-real-1' } },
+]);
+
+test('① 普通对象（SDK 那个形状）也打出真实四项，且绝不出现 [object]、绝不带 App Secret', () => {
+  const described = describe(sdkErrorPair());
+  const joined = JSON.stringify(described);
+  assert.ok(!joined.includes('[object]'), joined);
+  assert.ok(!joined.includes(CANARY), joined);
+  assert.equal(described[0].code, 1254607);
+  assert.equal(described[0].msg, 'Data not ready, please try again later');
+  assert.equal(described[0].log_id, 'log-real-1');
+  assert.equal(described[0].status, 400);
+  assert.equal(described[0].method, 'get');
+  assert.equal(described[1].method_id, 'method-real-1', '真实错误嵌在 data.error 里也要取到');
+});
+
+test('① lark.sdk.error 落盘的那一行就是真实四项（不是 [object]）', () => {
+  const captured = [];
+  const originals = { log: console.log, warn: console.warn, error: console.error };
+  console.error = (...args) => captured.push(args.map((value) => String(value)).join(' '));
+  try {
+    larkLogger.error(sdkErrorPair());
+  } finally {
+    console.error = originals.error;
+    console.log = originals.log;
+    console.warn = originals.warn;
+  }
+  const line = captured.join('\n');
+  assert.ok(line.includes('lark.sdk.error'), line);
+  assert.ok(!line.includes('[object]'), line);
+  assert.ok(!line.includes(CANARY), line);
+  const payload = JSON.parse(captured[0]);
+  assert.equal(payload.detail[0].code, 1254607);
+  assert.equal(payload.detail[0].msg, 'Data not ready, please try again later');
+  assert.equal(payload.detail[0].log_id, 'log-real-1');
+  assert.equal(payload.detail[1].method_id, 'method-real-1');
+});
+
 
 test('真实的 SDK 网络失败不会把 App Secret 写进日志', async () => {
   const captured = [];
