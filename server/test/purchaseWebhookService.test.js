@@ -605,7 +605,31 @@ test('图片写回：写到「报货批次.单据」，重复执行不新增第�
   assert.equal(gateway.uploads.length, uploadsBefore, '同一批同一张图已经在「单据」里，不该再上传一次');
 });
 
-test('已 posted 的报单任务再次收到确认卡片动作：不再产生任何写入', async () => {
+// ⭐ 哨兵（业务负责人 2026-10-08 逐条批准删卡）：**「报货确认卡」整条链路已删干净**。
+// 这条用例的存在意义就是"它要是回来了，这里当场挂"：
+//   · 卡片 builder 不再导出；
+//   · 服务上不再有 `handleCardAction` 入口（线上老卡片点下去落空 = 不写任何采购事实）；
+//   · 源码里连那两个动作名都不许再出现（删的是功能，不是改个名）。
+test('哨兵：报货确认卡与它的两个动作已整条删除（卡片 / 入口 / 动作名 / 零写入）', async () => {
+  const larkCards = require('../src/utils/larkCards');
+  assert.equal(larkCards.purchaseRequestConfirmationCard, undefined,
+    'purchaseRequestConfirmationCard 不许再导出（卡片已整张删除）');
+  assert.equal(typeof PurchaseWebhookService.prototype.handleCardAction, 'undefined',
+    'handleCardAction 入口已删除（它只服务那两个已删动作）');
+  assert.equal(typeof PurchaseWebhookService.prototype.handleCardActionLocked, 'undefined',
+    'handleCardActionLocked 一并删除');
+  const source = fs.readFileSync(path.join(__dirname, '../src/services/purchaseWebhookService.js'), 'utf8');
+  // ⚠️ 只查**代码**、不查注释：上面留了"这两个动作哪来的、为什么能删"的历史说明，
+  //    那是给人看的，不是还在跑的分支（与 arrivalConversation.test.js 里那条源码断言同一套写法）。
+  const codeOnly = source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+    .replace(/([^:])\/\/.*$/gm, '$1');
+  for (const action of ['confirm_purchase_request', 'cancel_purchase_request']) {
+    assert.equal(codeOnly.includes(action), false, `源码（去掉注释后）里不许再出现动作名 ${action}`);
+  }
+
+  // 行为面：免确认链路**一个字都没受影响**（报单照样直接出采购申请）。
   const { service, store, gateway } = makeService({
     gateway: makeGateway({
       purchaseReport: [reportRecord('rep_done_card', { 尺码: sizeLink(36), 编号: ['prod_1'] })],
@@ -617,14 +641,7 @@ test('已 posted 的报单任务再次收到确认卡片动作：不再产生任
   });
   const accepted = await service.accept('supplier-report', 'rep_done_card');
   await waitForTask(store, accepted.taskId);
-  const snapshot = () => gateway.listAll('purchaseRequest').then((rows) => rows.length);
-  const before = await snapshot();
-  // 线上已经发出去的老确认卡片仍然点得动，但采购申请已经生成，不能再写一遍
-  const result = await service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_user_1');
-  assert.ok(result.toast.content.includes('采购申请已生成'));
-  const cancel = await service.handleCardAction({ draft_id: accepted.taskId, action: 'cancel_purchase_request' }, 'ou_user_1');
-  assert.ok(cancel.toast.content.includes('不能取消'));
-  assert.equal(await snapshot(), before);
+  assert.equal((await gateway.listAll('purchaseRequest')).length, 1, '免确认报单链路照旧出采购申请');
   assert.equal((await gateway.get('purchaseReport', 'rep_done_card')).fields.处理状态, '已生成申请');
 });
 
@@ -1325,21 +1342,6 @@ test('invalid record_id is rejected', async () => {
   const { service } = makeService();
   // 原先传的 kind 是 'arrival'；入口已摘掉，改用仍然在跑的报单链路来验同一个守卫。
   await assert.rejects(() => service.accept('supplier-report', 'invalid id!'), /缺少有效 record_id/);
-});
-
-test('采购卡片：只有原始填写人能确认（操作人校验仍在）', async () => {
-  // 原先这条用「确认入库」卡片验。到货卡片动作已随识别链路删除，改用仍然在跑的
-  // 采购申请卡片验同一个校验（它在 handleCardActionLocked 的最前面，与动作无关）。
-  const { service, store } = makeService({
-    gateway: makeGateway({ purchaseReport: [reportRecord('rep_auth', { 尺码: sizeLink(36), 编号: ['prod_1'] })] }),
-  });
-  const accepted = await service.accept('supplier-report', 'rep_auth');
-  await waitForProcessed(store, accepted.taskId);
-
-  await assert.rejects(
-    () => service.handleCardAction({ draft_id: accepted.taskId, action: 'confirm_purchase_request' }, 'ou_other'),
-    /只能由原始填写人确认/,
-  );
 });
 
 // ─── 供应商报单批次聚合链路 ───

@@ -39,8 +39,8 @@ const text = (value) => String(value ?? '').replace(/\n/g, ' ');
 //   "每张卡各自独立"成为语义；字段清单（`wide_screen_mode` + `update_multi`）
 //   仍然只有这一处定义，DRY 不丢。
 //
-// ⚠️ 不走 patch 的卡片（`saleLookupCard` / `purchaseRequestConfirmationCard`）
-//    **刻意不带**这个字段 —— 它们只发不改。
+// ⚠️ 不走 patch 的卡片（`saleLookupCard`）**刻意不带**这个字段 —— 它只发不改。
+//    （另一张 `purchaseRequestConfirmationCard` 已于 2026-10-08 删除。）
 const patchableCardConfig = () => ({ wide_screen_mode: true, update_multi: true });
 
 // 明细行只写她需要核对的事实：货号、尺码、数量、金额、赠品。
@@ -681,22 +681,12 @@ const saleLookupCard = ({ days, itemNo = '', color = '', candidates = [] } = {})
   };
 };
 
-const purchaseRequestConfirmationCard = (draftId, draft) => {
-  const isBatch = draft.is_batch === true;
-  const headerTitle = isBatch ? '请确认采购申请（批次）' : '请确认采购申请';
-  const elements = [];
-  if (isBatch) {
-    elements.push({ tag: 'markdown', content: `**报货批次号：** ${text(draft.batch_no)}\n**明细数量：** ${text(draft.items?.length || 0)} 条` });
-  }
-  elements.push(...purchaseItemElements(draft.items || [], { skipSupplierGroup: isBatch }));
-  // 两个按钮走 column_set：移动端实测一行两列（见 buttonColumns 的注释）。
-  elements.push(buttonColumns([
-    actionButton('确认生成采购申请', 'confirm_purchase_request', draftId, 'primary'),
-    actionButton('取消', 'cancel_purchase_request', draftId, 'danger'),
-  ]));
-  return { config: { wide_screen_mode: true }, header: { template: 'orange', title: { tag: 'plain_text', content: headerTitle } }, elements };
-};
-
+// 原「采购申请确认卡片」（purchaseRequestConfirmationCard）已于 2026-10-08 **整张删除**
+//（业务负责人逐条批准）：报单链路 2026-10-07 起就是免确认，那张卡没有任何发送方；
+// 两个动作 `confirm_purchase_request` / `cancel_purchase_request` 与
+// `PurchaseWebhookService.handleCardAction` 一并删除。
+// ⚠️ 它用的 `purchaseItemElements` **保留**（`purchaseStatusCard` 与到货核对卡片还在用）。
+//
 // 原「采购到货差异确认卡片」（purchaseArrivalComparisonCard）已删除：产品负责人 2026-10-05
 // 确认采购差异这块不用了（未来架构改成"到货在采购申请基础上修改"，不再比对差异），
 // 对应的差异计算也一并移除，留着就是没人调用的死代码。
@@ -704,8 +694,8 @@ const purchaseRequestConfirmationCard = (draftId, draft) => {
 // （newProductResultElements）已删除：产品负责人 2026-10-05 删掉了「采购到货」表的
 // 「类型」「识别状态」「识别失败原因」三个识别字段，并决定「拍照 → 识别 → 卡片确认」
 // 这条链路整体退场（改成纯对话驱动）。没有识别结果要确认，也就没有这张卡片；
-// 卡片上的两个动作 confirm_purchase_arrival / cancel_purchase_arrival 也一并从
-// purchaseWebhookService 的 PURCHASE_CARD_ACTIONS 里摘掉了。
+// 卡片上的两个动作 confirm_purchase_arrival / cancel_purchase_arrival 也一并摘掉了
+//（那两个动作所在的 `PURCHASE_CARD_ACTIONS` 本身也已在 2026-10-08 随报货确认卡删除）。
 //
 // ⚠️ 保留 purchaseStatusCard：报货链路（采购申请处理中/已生成/未完成）还在用它。
 
@@ -1175,7 +1165,6 @@ const settleSecondDeliveryOrder = (card, { salesEntryRecordId, settledAt } = {})
 module.exports = {
   // 重试卡片收窄按钮用（按 column_set/action 结构遍历，见 keepOnlyCardButton）。
   keepOnlyCardButton,
-  purchaseRequestConfirmationCard,
   purchaseStatusCard,
   // 「采购到货：群话题对话式核对」的确认卡片（是 / 否）与终态卡片。
   purchaseArrivalReconcileCard,

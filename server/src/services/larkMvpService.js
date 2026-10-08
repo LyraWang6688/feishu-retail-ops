@@ -323,7 +323,24 @@ class LarkMvpService {
       //    后续对话也必须留在话题里。适配器见下面的 replyPurchaseText / replyPurchaseCard。
       replyText: (messageId, content, options) => this.replyPurchaseText(messageId, content, options),
       replyCard: (messageId, card, options) => this.replyPurchaseCard(messageId, card, options),
-      updateCard: (messageId, card) => this.patchCardMessage(messageId, card),
+      // ⭐⭐ 2026-10-08（业务负责人逐条批准）：采购侧**统一改用销售那条共享实现**
+      //    `updateInteractiveCard`（`infrastructure/interactiveCardFeedback.js`）——
+      //    与销售确认卡是同一条出口，于是自动获得它两件事：
+      //      ① **id 优先 + 失败告警**（失败打 `purchase.card.update.failed`，不再是吞异常的自研 patch）；
+      //      ② 到货核对那边的 `safeUpdateCard` 只看返回值 ⇒ 现在"改没改成"是可信的（false = 真没改成）。
+      //    ⚠️ 这里的 `messageId` 是**调用方明确传进来的那条消息**（她要 patch 的那张卡），
+      //       所以用 `event.context.open_message_id` 把它交进去 —— 正是共享实现"id 优先"的口径。
+      //    ⚠️ 刻意**不复用**销售那个 `updateSalesActionCard`：它按 `task.type` 选日志前缀、
+      //       并且会去读 `task.card_message_id`；采购这条没有销售任务，只有明确的 message_id。
+      //       共享的是**实现**（`updateInteractiveCard`），不是那层按任务分流的包装。
+      updateCard: (messageId, card) => updateInteractiveCard({
+        client: this.client,
+        task: null,
+        event: { context: { open_message_id: String(messageId || '') } },
+        card,
+        stage: 'purchase_arrival_card',
+        eventPrefix: 'purchase.card.update',
+      }),
       // ⭐ 2026-10-07 晚：更新任何"已经存在的消息"之前先读一眼它是什么（只读，
       //   `im.v1.message.get`）。`patch` 对非卡片消息可能回 `code 0` 却什么都没改
       //   —— 真机 23:37「日志说卡片已更新、她那边一张都没有」就是这么来的。
@@ -542,25 +559,6 @@ class LarkMvpService {
       msgType: 'interactive', content: JSON.stringify(card),
       failureLabel: '回复飞书卡片失败', inThread: true,
     });
-  }
-
-  /**
-   * 把**已经发出去的那张卡片**改成新内容（例如「已入库」）。
-   *
-   * 与私聊那几张卡的 update 走的是同一套 SDK patch；区别只是这里拿的是
-   * **明确的 message_id**（群话题里的卡片不是"某个销售草稿的卡"，没有 task 可以查）。
-   * 卡片改不动（权限、消息被撤回）只记日志——业务事实早就落地了，不能因此判失败。
-   */
-  async patchCardMessage(messageId, card) {
-    if (!messageId) return false;
-    const patch = this.client.im?.v1?.message?.patch || this.client.im?.message?.patch;
-    if (!patch) return false;
-    const response = await patch.call(this.client.im?.v1?.message || this.client.im.message, {
-      path: { message_id: String(messageId) },
-      data: { content: JSON.stringify(card) },
-    });
-    if (response.code !== 0) throw new Error(`更新飞书卡片失败: ${response.msg} (Code: ${response.code})`);
-    return true;
   }
 
   /**
@@ -2013,19 +2011,23 @@ class LarkMvpService {
       return this.arrivalConversation.handleCardFormSubmit(value, formValue, event, operatorOpenId);
     }
     // 「采购到货核对」卡片的「是 / 否」。
-    // ⚠️ 位置有意放在这里（采购申请卡片分派**之前**、下面那句 `if (!draftId) throw` 之前）：
+    // ⚠️ 位置有意放在这里（下面那句 `if (!draftId) throw` 之前）：
     //   这张卡片也带 draft_id（= 到货核对任务 id，不是销售草稿），落到下面那套销售逻辑里
     //   一定会报「卡片缺少草稿 ID」或更糟——把别人的草稿当成自己的。
     //   动作名与卡片渲染共用 config 里的同一份常量。
     if ([ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, ARRIVAL_CONVERSATION_ACTIONS.REJECT].includes(action)) {
       return this.arrivalConversation.handleCardAction(value, event, operatorOpenId);
     }
-    const procurementResult = await this.purchaseWebhooks.handleCardAction(value, operatorOpenId, event);
-    if (procurementResult) return procurementResult;
+    // ⚠️ 2026-10-08：「报货确认卡」（`confirm_purchase_request` / `cancel_purchase_request`）
+    //    已按业务负责人逐条批准**整张删除**（报单链路 2026-10-07 起就是免确认，那张卡没有任何发送方）。
+    //    采购那侧因此**不再有**任何卡片动作可认领 —— 这里原先那句
+    //    `purchaseWebhooks.handleCardAction(...)` 的分派随之删除（`PurchaseWebhookService.handleCardAction`
+    //    也已删掉）。线上还躺着的老采购确认卡片点下去 = **一个未知动作**，会照下面的兜底
+    //    落到销售草稿分派（找不到那份草稿 → 明确报错），**不会再写任何采购事实**。
     // 「第二次交付」的「成交」按钮：收尾的是**已入账、尚未完成履约**的单。
-    // ⚠️ 位置有意放在这里——采购分派之后（它只认自己的动作名，我们的动作会返回 null）、
-    // 下面那句 `if (!draftId) throw` 之前：这条链路绑的是销售主表 record_id，
-    // 根本没有草稿，也没有草稿状态机，落在下面那套逻辑里一定抛「卡片缺少草稿 ID」。
+    // ⚠️ 位置有意放在这里——采购那条分派（今天已删）之后、下面那句 `if (!draftId) throw` 之前：
+    //    这条链路绑的是销售主表 record_id，根本没有草稿，也没有草稿状态机，
+    //    落在下面那套逻辑里一定抛「卡片缺少草稿 ID」。
     // 动作名用 larkCards 里那一个常量，卡片和分派不会各写一份而慢慢写歪。
     if (action === SECOND_DELIVERY_ACTION) {
       return this.handleSecondDeliveryAction(value, operatorOpenId, event);

@@ -634,7 +634,7 @@ class PurchaseArrivalConversationService {
         message: this.config.card.submittedMessage,
         template: 'grey',
         title: this.config.card.submittedTitle,
-      }));
+      }), { task, taskId });
       logInfo('purchase.arrival.reconcile.submit_card_closed', {
         task_id: taskId, card_message_id: cardMessageId, card_patched: patched,
         note: '提交成功那一次的结果卡在话题里；她提交的这张收成「已提交」终态，避免重复提交',
@@ -698,7 +698,7 @@ class PurchaseArrivalConversationService {
     const reopened = await this.safeUpdateCard(cardMessageId, purchaseArrivalReconcileCard({
       taskId, batchNo: task.batch_no || '', rows: task.plan, differences: task.differences || [],
       copy: this.config.card, formNote: this.config.card.submitMissingNote,
-    }));
+    }), { task, taskId });
     logInfo('purchase.arrival.reconcile.submit_empty_reopened', {
       task_id: taskId, card_message_id: cardMessageId, card_patched: reopened,
     });
@@ -706,7 +706,18 @@ class PurchaseArrivalConversationService {
   }
 
   /**
-   * 点「否」：**零业务表写入**，只回一句「好，那先不入库」（她 2026-10-06 定的最保守做法）。
+   * 点「否」：**零业务表写入**，把那张卡 patch 成终态，再回一句「好，那先不入库」。
+   *
+   * ⭐ 2026-10-08（业务负责人逐条批准）：**点「否」也 patch 卡面**。
+   *   改前这里只 `safeReplyText`（卡片原样不动）—— 这正是"点了没反应"的同一个根因：
+   *   她点完只看得到一句话，那张卡上还是「是 / 否」两个按钮。
+   *   ⚠️ **有意接受的行为变化**：终态卡收掉按钮 ⇒ 点过「否」之后在**这张卡上**点不了「是」了；
+   *      要改主意，在话题里再说一句实际到货（会按最新那句话重出一张新卡）。
+   *      `confirmLocked` 里那条"rejected 之后仍可按显式指令入库"的服务端语义**一个字没改**
+   *      （飞书重投 / 旧卡回调照样能走通，只是卡面上不再给按钮）。
+   *
+   * ⚠️ 顺序：**patch 在前、回话在后**（她要的是"原地更新卡片"，回话只是兜底）。
+   *   回话复用既有的 `replies.rejected`，**不重复发第二句**。
    *
    * 刻意**不把状态定成终态**：她没说过"否完就不能改主意"。
    * 点了「否」之后再点「是」，仍然按"她的显式指令"入库（那时候入库点还是「是」）。
@@ -738,8 +749,18 @@ class PurchaseArrivalConversationService {
       tables_written: 0,
     });
     const cardMessageId = event?.context?.open_message_id || event?.open_message_id || task.card_message_id || '';
-    // ⚠️ 点「否」**刻意不 patch 卡片**：卡片上那两个按钮要留着 —— 她还能再点「是」
-    //    （见下面的用例「点「否」之后再点「是」」）。只把回话补上 `threadId`，让它落回本话题。
+    // ① patch 卡面（终态、收掉按钮）—— 她点的地方**看得见**。
+    const cardPatched = await this.safeUpdateCard(cardMessageId, purchaseArrivalReconcileStatusCard({
+      batchNo: task.batch_no || '',
+      message: this.config.replies.rejected,
+      template: 'grey',
+      title: this.config.card.rejectedTitle,
+    }), { task, taskId });
+    logInfo('purchase.arrival.reconcile.reject_notice', {
+      task_id: taskId, card_message_id: cardMessageId, card_patched: cardPatched,
+      note: '点「否」= 零业务表写入，但卡面必须原地变（改前只回一句、卡片不动）',
+    });
+    // ② 兜底回话：复用既有的 `replies.rejected` —— 只发这一句，不重复。
     await this.safeReplyText(cardMessageId, this.config.replies.rejected, this.threadOptions(task));
     return { toast: { type: 'info', content: this.config.replies.rejected } };
   }
@@ -877,16 +898,19 @@ class PurchaseArrivalConversationService {
       zeroCount: zeroRows.length,
       batchNo: task.batch_no || '（未知）',
     });
-    // 明确反馈（群里回一句 + 卡片改成终态）。发不出去只记日志，业务事实已经落地。
-    // ⚠️ 顺序：先落库（上面那一步）再回话——回话失败不能把已经入库的事实判成失败。
+    // 明确反馈：**先把卡片改成终态，再在群里回一句结果**（业务负责人 2026-10-08：
+    // 她要的是"原地更新卡片"，回话只是兜底 ⇒ 顺序 patch 在前、回话在后）。
+    // 发不出去只记日志，业务事实已经落地。
     // ⚠️ 2026-10-07：回话补 `threadId` —— 她是在**群话题**里操作的，回复必须落回那条话题
     //    （少了它就发到主群洪流里，她一样"看不到"）。
-    await this.safeReplyText(this.replyTarget(event, task), summary, this.threadOptions(task));
     const cardMessageId = event?.context?.open_message_id || event?.open_message_id || task.card_message_id || '';
     const cardPatched = await this.safeUpdateCard(
       cardMessageId,
       purchaseArrivalReconcileStatusCard({ batchNo: task.batch_no || '', message: summary, template: 'green' }),
+      // 下面紧接着就回这句结果（同一句话），所以这里不再叠一句"卡片没刷新成功"。
+      { task, taskId, replyOnFailure: false },
     );
+    await this.safeReplyText(this.replyTarget(event, task), summary, this.threadOptions(task));
     // ⭐ 正向证据：成功之后**卡片到底改没改成**也留痕（改不动时她那边的现象就是"点了没反应"）。
     logInfo('purchase.arrival.reconcile.success_notice', {
       task_id: taskId, card_message_id: cardMessageId, card_patched: cardPatched,
@@ -1113,7 +1137,9 @@ class PurchaseArrivalConversationService {
       message: copy,
       template: headerTemplate,
       title: this.config.card.failedTitle,
-    }));
+      // ⚠️ 下面紧接着就用**同一句**回话（失败本来就要回到话题里）⇒ 这里不再叠一句
+      //    "卡片没刷新成功"，免得她一次点击收到两句。
+    }), { task, taskId, replyOnFailure: false });
     const replied = await this.safeReplyText(messageId, copy, this.threadOptions(task));
     // ⭐ 正向证据：她"应该看到"的东西与"实际发出去"的东西都写下来。
     //    ⚠️ 与调用方那条 error 级日志（如 `purchase.arrival.reconcile.confirm_failed`）**并存**，
@@ -1147,7 +1173,7 @@ class PurchaseArrivalConversationService {
       batchNo: task?.batch_no || '',
       message: copy,
       template: 'green',
-    }));
+    }), { task, taskId });
     logInfo('purchase.arrival.reconcile.success_notice', {
       tier, task_id: taskId, operator_open_id: operator || '',
       card_message_id: messageId, card_patched: cardPatched, replied: false,
@@ -1291,12 +1317,14 @@ class PurchaseArrivalConversationService {
       return { attempted: false, result: 'skipped', reason: 'target_deleted' };
     }
     // ② 动手：把它改成"已作废"的终态（按钮收掉、指向最新那张）。
+    // ⚠️ `replyOnFailure: false`：这里的失败**不该**往话题里插一句"卡片没刷新成功" ——
+    //    新卡已经发出去了、她看到的那张是好的；真正的失败证据是下面的 `card_supersede_failed`。
     const updated = await this.safeUpdateCard(id, purchaseArrivalReconcileStatusCard({
       batchNo,
       message: this.config.card.supersededMessage,
       template: 'grey',
       title: this.config.card.supersededTitle,
-    }));
+    }), { taskId, replyOnFailure: false });
     if (!updated) {
       logWarn('purchase.arrival.reconcile.card_supersede_failed', {
         task_id: taskId, card_message_id: id, new_card_message_id: newCardMessageId,
@@ -1317,10 +1345,27 @@ class PurchaseArrivalConversationService {
     return { attempted: true, result: 'ok', verified: after.ok ? after.updated === true : null };
   }
 
-  async safeUpdateCard(messageId, card) {
+  /**
+   * 更新一张**已经存在的**卡片；**失败必须看得见**（业务负责人 2026-10-08 逐条批准）。
+   *
+   * 改前：失败只 `logWarn` + 返 `false` —— 她那边的现象就是"点了一点反应都没有"
+   *（卡片没动、也没有任何文字），日志里却只有一行 warn。
+   * 现在两条腿一起走：
+   *   ① **warn 留痕**（保留原有的 `card_update_failed`，把"适配器返回假值"与"抛错"都写上）；
+   *   ② **往那条话题回一句人话**（`replies.cardUpdateFailed`，可置空）——
+   *      文案说清"卡片没刷新成功，以这条话为准 / 重新说一句我重出卡"。
+   *      ⚠️ 这句回话**自己失败也不许抛**（`safeReplyText` 内部已吞并记 `reply_failed`），
+   *         这里**不再套第二层兜底**。
+   *
+   * @param {object} [options] `{ task, taskId, threadId, replyOnFailure }`
+   *   · `task` / `taskId`：拿 `task.thread_id` 把兜底那句回到**同一条话题**（拿不到就不带）；
+   *   · `replyOnFailure: false`：调用方**自己紧接着就会回话**（或回话会误导）⇒ 不叠这句。
+   */
+  async safeUpdateCard(messageId, card, options = {}) {
     if (!messageId) return false;
+    let updated = false;
     try {
-      const updated = await this.updateCard(messageId, card);
+      updated = await this.updateCard(messageId, card);
       // ⚠️ 适配器**不抛错但返回假值**也是"没改成"（例如 `client.im.v1.message.patch` 不存在），
       //    一样要留痕 —— 否则排查时只看到"卡片没变"，不知道为什么。
       if (!updated) {
@@ -1328,10 +1373,46 @@ class PurchaseArrivalConversationService {
           message_id: messageId, error: 'updateCard 返回了假值（卡片没改成功）',
         });
       }
-      return updated;
     } catch (error) {
       logWarn('purchase.arrival.reconcile.card_update_failed', { message_id: messageId, error: error.message });
-      return false;
+      updated = false;
+    }
+    if (!updated) await this.notifyCardUpdateFailed(messageId, options);
+    return updated;
+  }
+
+  /**
+   * 卡片没刷新成功时，往那条话题回一句人话（**本身永不抛**）。
+   *
+   * ⚠️ 它是 `safeUpdateCard` 的兜底，**不反向调用 `safeUpdateCard`**（否则就是无限兜底）。
+   * ⚠️ 文案在 config（`replies.cardUpdateFailed`）；置空 = 只留 warn、不回话。
+   */
+  async notifyCardUpdateFailed(messageId, options = {}) {
+    const copy = options.replyOnFailure === false ? '' : this.config.replies.cardUpdateFailed;
+    if (!copy) return false;
+    const task = options.task || await this.loadTaskQuietly(options.taskId);
+    const thread = options.threadId ? { threadId: String(options.threadId) } : this.threadOptions(task);
+    const replied = await this.safeReplyText(messageId, copy, thread);
+    logWarn('purchase.arrival.reconcile.card_update_failed_notice', {
+      message_id: messageId,
+      task_id: options.taskId || task?.task_id || '',
+      replied,
+      note: '卡片没刷新的兜底回话（这句本身失败也只记日志，绝不抛）',
+    });
+    return replied;
+  }
+
+  /** 读一眼任务拿 `thread_id` 用；读不到（没接线 / 记录没了）返 null，**不抛**。 */
+  async loadTaskQuietly(taskId) {
+    const id = String(taskId || '').trim();
+    if (!id) return null;
+    try {
+      return await this.store.get(id);
+    } catch (error) {
+      logWarn('purchase.arrival.reconcile.task_read_failed', {
+        task_id: id, error: error.message, note: '只为拿 thread_id；读不到就不带话题',
+      });
+      return null;
     }
   }
 }

@@ -14,11 +14,14 @@
 //
 // 本文件钉住六件事（验收标准见 docs/card-update-multi-2026-10-07.md 第三节）：
 //   ① 会被 patch 的 **14 张卡** builder **直出**（= 首次发出的"更新前"那份）都带该字段；
-//   ② **三条 patch 出口**（`patchCardMessage` / `updateInteractiveCard` /
-//      `updatePurchaseActionCard`）**真实打到飞书**的 `data.content` 里也带 —— 用假 client 抓 payload；
+//   ② **两条 patch 出口**（`updateInteractiveCard` / `updatePurchaseActionCard`）
+//      **真实打到飞书**的 `data.content` 里也带 —— 用假 client 抓 payload；
+//      （2026-10-08：第三条 `LarkMvpService.patchCardMessage` 已随"采购侧统一改用共享实现"删除，
+//       采购到货核对现在接的就是 `updateInteractiveCard` —— 见下面"patch 出口 ①"。）
 //   ③ `secondDeliveryCard` 经 `settleSecondDeliveryOrder` **深拷贝变换后**仍带（最易漏）；
-//   ④ 刻意不 patch 的 **3 张卡**（`saleLookupCard` ×2 分支 / `purchaseRequestConfirmationCard`）
-//      **不出现**该字段 —— 把"刻意不动"钉住，将来谁顺手加上会挂；
+//   ④ 刻意不 patch 的 **2 张卡**（`saleLookupCard` ×2 分支）
+//      **不出现**该字段 —— 把"刻意不动"钉住，将来谁顺手加上会挂
+//      （2026-10-08：`purchaseRequestConfirmationCard` 已整张删除，不再是这里的场景）；
 //   ⑤ 卡片**可见内容零变化**：`header` / `elements` 与改动前（`origin/main`）逐字相同
 //      （golden 见 `test-support/cardVisibleGolden.json`，生成方式见文件末尾注释）；
 //   ⑥ 既有断言一条不放宽 —— 本文件是**新增**的，没有改动任何既有用例的判定强度。
@@ -76,8 +79,8 @@ test('14 张会被 patch 的卡片：builder 直出（"更新前"那份）的 co
 });
 
 // ── ④ 刻意不动的卡片：不该出现该字段（"刻意不动"钉住，不是忘了）──────────────
-test('刻意不 patch 的卡片：不出现 update_multi（只发不改 / 无调用方）', () => {
-  assert.equal(UNPATCHABLE_CARD_SCENARIOS.length, 3);
+test('刻意不 patch 的卡片：不出现 update_multi（只发不改）', () => {
+  assert.equal(UNPATCHABLE_CARD_SCENARIOS.length, 2);
   for (const { name, build } of UNPATCHABLE_CARD_SCENARIOS) {
     const config = build(larkCards).config;
     assert.deepEqual(config, { wide_screen_mode: true }, `${name} 的 config 应当与改动前逐字相同`);
@@ -99,18 +102,22 @@ test('卡片可见内容零变化：header / elements 与改动前（origin/main
   }
 });
 
-// ── ② 三条 patch 出口：真实 payload 里也带（用假 client 抓 data.content）────────
-test('patch 出口 ①：LarkMvpService.patchCardMessage 打到飞书的 payload 里带 update_multi', async () => {
+// ── ② 两条 patch 出口：真实 payload 里也带（用假 client 抓 data.content）────────
+// ⭐ 2026-10-08（业务负责人逐条批准）：采购到货核对**统一改用销售那条共享实现**
+//    `updateInteractiveCard`（原先走 `LarkMvpService.patchCardMessage`；它已删除）——
+//    所以这里改成**走接线**验证：`arrivalConversation.updateCard` 打到飞书的就是共享出口，
+//    而且 payload 里照样带 `update_multi`（否则她那边还是"点了没反应"）。
+test('patch 出口 ①：采购到货核对接的 `updateCard` 走 updateInteractiveCard，payload 里带 update_multi', async () => {
   const { client, payloads } = capturePatch();
   const service = new LarkMvpService({
     client, gateway: {}, references: {}, recognizer: {}, store: makeStore(), posting: {},
   });
-  // 走这条出口的真实卡片：到货核对卡（`arrivalConversation.updateCard` 注入的就是它）。
   const card = larkCards.purchaseArrivalReconcileStatusCard({
     batchNo: 'BH-20261007-0001', message: '已入库 2 双。', template: 'green',
   });
 
-  assert.equal(await service.patchCardMessage('om_arrival', card), true);
+  // 走生产接线注入给到货核对的那个端口（不是直接调共享实现 —— 那样测不到接线）。
+  assert.equal(await service.arrivalConversation.updateCard('om_arrival', card), true);
   assert.equal(payloads.length, 1);
   assert.equal(payloads[0].path.message_id, 'om_arrival');
   assert.deepEqual(JSON.parse(payloads[0].data.content).config, PATCHABLE_CONFIG);
