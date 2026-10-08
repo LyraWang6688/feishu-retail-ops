@@ -45,6 +45,13 @@ const SALES_QUERY_URL =
   'https://scnzoiwpgxik.feishu.cn/base/QrXlbwXMLaJ2TNsxSfFcIA3rnwh?table=wbpzfEmPGK';
 
 /**
+ * 业务负责人 2026-10-08 给的「库存查询」URL（逐字）—— 这次是**发布分享链接**形状
+ * （`/share/base/webpage/<shareId>`），与销售查询的内部页面 URL 不同；两种都按她给的原样落。
+ */
+const INVENTORY_QUERY_URL =
+  'https://scnzoiwpgxik.feishu.cn/share/base/webpage/shrcnaSFKbJAci7YxvC1AXpweBc';
+
+/**
  * 把要跑的前端模块复制成 `.mjs` 平铺到一个临时目录，**只把 import 的文件名改成复制后的名字**
  * （源码逻辑一个字不改）。每一条替换都必须命中 —— 命不中说明源码的 import 变了，测试要跟着更新。
  */
@@ -175,13 +182,13 @@ test('AC4 href 单一来源 config/links.js：config/query.js 只 import、渲�
   for (const key of ['SALES_QUERY_PAGE_URL', 'INVENTORY_QUERY_PAGE_URL']) {
     assert.ok(new RegExp(`export const ${key}`).test(links), `config/links.js 必须有 ${key}（与 PURCHASE_REQUEST_FORM_URL 同一套写法）`);
   }
-  assert.ok(/TODO\(业务负责人\): 库存查询/.test(links),
-    '库存查询 URL 她还没给 ⇒ 必须留明确的 TODO 占位');
+  assert.ok(!/TODO\(业务负责人\): 库存查询/.test(links),
+    '库存查询 URL 她 2026-10-08 已给 ⇒ 那行 TODO 必须已经删掉');
   assert.ok(!/TODO\(业务负责人\): 销售查询/.test(links),
     '销售查询 URL 她 2026-10-08 已给 ⇒ 那行 TODO 必须已经删掉');
 });
 
-test('AC5 当前配置：销售查询有 URL（可点 <a>）、库存查询仍待配置（不可点 <div>）', async () => {
+test('AC5 当前配置：两个板块都有 URL，两张卡都是可点的 <a>', async () => {
   const modules = loadFrontendModules();
   const [links, html] = await Promise.all([
     modules.links,
@@ -190,21 +197,21 @@ test('AC5 当前配置：销售查询有 URL（可点 <a>）、库存查询仍�
 
   assert.equal(links.SALES_QUERY_PAGE_URL, SALES_QUERY_URL,
     '销售查询 URL 逐字 = 业务负责人 2026-10-08 给的那条（不多一字、不加工）');
-  assert.equal(links.INVENTORY_QUERY_PAGE_URL, '', '库存查询 URL 她还没给 ⇒ 仍刻意留空串');
+  assert.equal(links.INVENTORY_QUERY_PAGE_URL, INVENTORY_QUERY_URL,
+    '库存查询 URL 逐字 = 业务负责人 2026-10-08 给的那条（分享链接形状，也不加工）');
 
   const blocks = parseEntryBlocks(html);
-  assert.deepEqual(blocks.map((block) => block.tag), ['a', 'div'],
-    '有 URL 那张是 <a>、空 URL 那张不是');
+  assert.deepEqual(blocks.map((block) => block.tag), ['a', 'a'],
+    '两条都配好了 ⇒ 两张卡都是 <a>');
   assert.equal(blocks[0].href, SALES_QUERY_URL, '销售查询卡 href 逐字 = 配置值');
-  assert.ok(blocks[0].attrs.includes('rel="noopener"'), '外链必须带 rel="noopener"');
-  assert.equal(blocks[0].arrow, '进入 →', '有 URL 时 arrow = 进入 →');
-  assert.equal(blocks[1].href, null, '空 URL ⇒ 一个 href 都不产生');
-  assert.equal(blocks[1].arrow, LINK_PENDING,
-    `空 URL ⇒ 卡面明确显示「${LINK_PENDING}」`);
+  assert.equal(blocks[1].href, INVENTORY_QUERY_URL, '库存查询卡 href 逐字 = 配置值');
+  for (const block of blocks) {
+    assert.ok(block.attrs.includes('rel="noopener"'), '外链必须带 rel="noopener"');
+    assert.equal(block.arrow, '进入 →', '有 URL 时 arrow = 进入 →');
+    assert.ok(!block.classes.includes('disabled-card'), '有 URL 的卡不许带 disabled-card');
+  }
   assert.ok(!/href\s*=\s*""/.test(html), '整块 HTML 里不许出现空 href（含 href=""）');
-  assert.ok(blocks[1].classes.includes('disabled-card'),
-    '空 URL 的卡带 disabled-card（不可点样式）');
-  assert.ok(!blocks[0].classes.includes('disabled-card'), '有 URL 的卡不许带 disabled-card');
+  assert.ok(!html.includes(LINK_PENDING), '两条都配好了 ⇒ 不该再出现「链接待配置」');
 });
 
 test('AC5b 非空 URL（她给了之后）：href 逐字 = 配置值、rel="noopener"、同窗口', async () => {
