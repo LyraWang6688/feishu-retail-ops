@@ -175,8 +175,12 @@ const actionSpecOf = (action) => {
 // 已知并接受；如果哪天要补，就是给三张表加文本列 + 在这里声明 keyField。
 const AFTER_SALES_KEY_PREFIX = 'after_sales';
 
-/** 「客户往来货款」的幂等键字段（语义名，中文列名见 v1BitableSchema.tables.customerCredit）。 */
-const AFTER_SALES_CREDIT_KEY_FIELD = 'businessEventId';
+// ⛔ 「客户往来货款」的幂等键字段曾在这里（AFTER_SALES_CREDIT_KEY_FIELD = 'businessEventId'）：
+//    那张表被业务负责人**整表删除**（2026-10-08），prepaid 通路随之下线
+//    （见 `services/afterSalesService.assertPrepaidAvailable`）⇒ 常量与导出一并删除，
+//    免得留一个指向"不存在的表"的配置让人以为它还在用。
+//    接回来时：新表的键列写进 `v1BitableSchema`，并在 `v1SchemaScopes` 的
+//    V1_IDEMPOTENCY_KEY_TABLES.sales 里加一条。
 
 /**
  * 这一次售后涉及的原明细批次指纹：把 record_id 去重、排序后拼接再取短哈希。
@@ -230,6 +234,8 @@ const readAfterSalesConfig = (env = process.env) => ({
   // 收款明细：钱真收/真退之后就是已收款；退款在业务上也用同一个"已结清"口径。
   cashPaymentStatus: '已收款',
   // 客户往来货款：这一次变动的类型（表的选项里已有「退货退款」）。
+  // ⛔ 2026-10-08：那张表被她**整表删除**，prepaid 通路随之下线 ⇒ 这个值**当前没有读取点**，
+  //    留着是为了重建时直接复用（不要因为"没人用"就删掉，它是业务口径的一部分）。
   prepaidChangeType: '退货退款',
   // 退回的鞋只能回这两个状态之一。
   restockStates: Object.freeze(['门盒', '样品']),
@@ -247,7 +253,6 @@ module.exports = {
   AFTER_SALES_MONEY_DIRECTIONS,
   AFTER_SALES_ACTION_SPECS,
   AFTER_SALES_KEY_PREFIX,
-  AFTER_SALES_CREDIT_KEY_FIELD,
   actionSpecOf,
   afterSalesEventId,
   afterSalesOperationId,

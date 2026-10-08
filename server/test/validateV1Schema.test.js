@@ -1,20 +1,23 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { validateV1SchemaScope } = require('../scripts/validate_v1_schema');
+const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const {
+  V1_SCHEMA_SCOPES, getV1SchemaScope, getV1IdempotencyKeyTables,
+} = require('../src/config/v1SchemaScopes');
 
 // ⚠️ 2026-10-07 深夜：「采购入库」表已被业务负责人整表删除 ⇒ 它的尺码关联不用再核
 //    （见 server/test/purchaseInboundRemoval.test.js 的守门用例）。
 const sizeLinkedTables = ['salesDetail', 'purchaseRequest', 'inventoryLedger', 'liveInventory'];
 // 幂等键是文本字段：写的是 "purchase_request:<taskId>:<n>" 这类稳定键。
-// customerCredit 的键字段语义名不同（businessEventId，中文列「业务事件ID」），
-// 它是售后 prepaid 的幂等键，同样必须在 sales 范围里被校验到。
+// ⚠️ 2026-10-08：「客户往来货款.业务事件ID」（售后 prepaid 的幂等键）随那张表**整表被删**一起下线，
+//    sales 这一档因此**暂时没有幂等键要核**（见下面的哨兵用例）。
 const idempotencyKeyFields = {
-  purchaseOrderBatch: '幂等键', purchaseRequest: '幂等键', liveInventory: '库存操作键', customerCredit: '业务事件ID',
+  purchaseOrderBatch: '幂等键', purchaseRequest: '幂等键', liveInventory: '库存操作键',
 };
-// 每张表的键字段语义名不同：采购用 idempotencyKey，实时库存用 operationItemKey，往来货款用 businessEventId。
+// 每张表的键字段语义名不同：采购用 idempotencyKey，实时库存用 operationItemKey。
 const keyFieldOf = (tableKey) => {
   if (tableKey === 'liveInventory') return 'operationItemKey';
-  if (tableKey === 'customerCredit') return 'businessEventId';
   return 'idempotencyKey';
 };
 const gatewayFor = (overrides = {}) => {
@@ -113,22 +116,16 @@ test('sales CLI scope validates the sales-detail size relation', async () => {
   );
 });
 
-// 售后 prepaid 写「客户往来货款」时用「业务事件ID」当幂等键：它必须真的存在于 sales 范围，
-// 且是文本字段。否则这张表改名/缺列部署门槛查不出来，只会在用户确认售后时才炸。
-test('sales CLI scope 校验「客户往来货款」的幂等键列', async () => {
-  await assert.rejects(
-    validateV1SchemaScope({ gateway: gatewayFor({ customerCredit: [] }), scope: 'sales' }),
-    /缺少「业务事件ID」字段/,
-  );
-  await assert.rejects(
-    validateV1SchemaScope({
-      gateway: gatewayFor({ customerCredit: [{ field_name: '业务事件ID', type: 2 }] }), scope: 'sales',
-    }),
-    /「业务事件ID」必须是文本字段/,
-  );
-  const gateway = gatewayFor();
-  await validateV1SchemaScope({ gateway, scope: 'sales' });
-  assert.ok(gateway.seen.includes('customerCredit'));
+// 哨兵（2026-10-08）：业务负责人把「客户往来货款」**整表删除** ⇒ 契约与各范围里都不许再有它。
+// 为什么要有这条：闸门只会说"某张表读不到"，而"她删了表 → 契约要跟着删"这件事必须**有人守着**；
+// 将来要接回「已留存」的新落点，应该是有意识地加**新表**，而不是顺手把这段 revert 回来
+//（revert 回来会让闸门立刻变红：TableIdNotFound 1254041）。
+test('哨兵：「客户往来货款」已随表删除，契约与 sales 范围里都不该再有它', () => {
+  assert.equal(V1_BITABLE_SCHEMA.tables.customerCredit, undefined);
+  assert.equal(V1_SCHEMA_SCOPES.sales.includes('customerCredit'), false);
+  assert.equal(V1_SCHEMA_SCOPES.all.includes('customerCredit'), false);
+  assert.deepEqual(getV1IdempotencyKeyTables('sales'), []);
+  assert.equal(getV1SchemaScope('sales').tables.includes('customerCredit'), false);
 });
 
 test('purchase CLI scope validates the purchase-request size relation', async () => {

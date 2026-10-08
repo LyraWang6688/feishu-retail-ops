@@ -1,7 +1,8 @@
 // 退换货第二期·第一步：售后执行器 + 幂等 的测试。
 //
 // 覆盖：三种动作各一条 · 重复调用只写一次（本步最重要的用例）· 原主表/原明细逐字段未变 ·
-//       差价正/负/0 · 资金 cash/prepaid · 退回状态 门盒/样品 · 库存流水 1 行 / 2 行方向相反 ·
+//       差价正/负/0 · 资金 cash（prepaid **已下线**：落点「客户往来货款」被整表删除，
+//       现在只验"在任何写入之前大声失败"）· 退回状态 门盒/样品 · 库存流水 1 行 / 2 行方向相反 ·
 //       失败后重试成功 · 入参校验 · 总闸门（指纹不同就停 · 缺列大声失败）。
 //
 // 说明：库存那一侧默认已经接入真的 InventoryService（接线完成），
@@ -30,8 +31,6 @@ const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 
 const FIXED_NOW = Date.parse('2026-10-05T10:00:00+08:00');
 const ORDER_NO = 'XSD-20261005-001';
-const CREDIT_TABLE = 'customerCredit';
-
 const behaviorRow = (recordId, code, name, direction) => ({
   record_id: recordId,
   fields: { 行为编码: code, 行为名称: name, 库存方向: direction, 是否启用: true },
@@ -87,7 +86,6 @@ const seed = () => ({
 
 /**
  * 假 Base。字段按语义名（schema）→ 中文列名映射后落库，和真网关一致。
- * options.missingCreditKey：listFields 里不含「业务事件ID」，用来验证"缺列大声失败"。
  */
 const fakeBase = (options = {}) => {
   const records = new Map(Object.entries(seed()).map(([key, rows]) => [
@@ -112,7 +110,6 @@ const fakeBase = (options = {}) => {
     validateTables: async () => [],
     async listFields(key) {
       return Object.entries(this.table(key).fields)
-        .filter(([semantic]) => !(options.missingCreditKey && key === CREDIT_TABLE && semantic === 'businessEventId'))
         .map(([, fieldName]) => ({ field_name: fieldName, type: 1 }));
     },
     listAll: async (key) => records.get(key) || [],
@@ -572,21 +569,22 @@ test('同一批明细重复调用只写一次；同一条明细再退一次仍�
   assert.equal(rowsOf(gateway, 'salesDetail')[0].fields['履约状态'], '已退货');
 });
 
-test('部分退货（prepaid）：两批明细各写一笔往来货款，业务事件ID 不同', async () => {
+test('⛔ prepaid（钱留在我们这里）已下线：两批明细都停住，一个字节都不写', async () => {
+  // 落点「客户往来货款」被业务负责人 2026-10-08 整表删除 ⇒ 这条路只能"大声失败"，
+  // 而且必须失败在**任何写入之前**（不能写一半，也不能偷偷改成写「收款明细」）。
   const { gateway, service } = build();
-  await service.execute(request({ settlement: 'prepaid' }));
-  await service.execute(request({
-    originalSalesDetailRecordIds: ['detail_old_3'], settlement: 'prepaid',
-    originalText: '另一双也退，钱存着', diffAmount: -300,
-  }));
-
-  const rows = rowsOf(gateway, CREDIT_TABLE);
-  assert.equal(rows.length, 2);
-  assert.deepEqual(rows.map((row) => row.fields['业务事件ID']), [
-    'after_sales:order_old:return:d5268040a9a4',
-    'after_sales:order_old:return:8955ba8cdcf9',
-  ]);
-  assert.deepEqual(rows.map((row) => row.fields['应收变化']), [-250, -300]);
+  const expected = /「客户往来货款」表已被整表删除/;
+  await assert.rejects(() => service.execute(request({ settlement: 'prepaid' })), expected);
+  await assert.rejects(
+    () => service.execute(request({
+      originalSalesDetailRecordIds: ['detail_old_3'], settlement: 'prepaid',
+      originalText: '另一双也退，钱存着', diffAmount: -300,
+    })),
+    expected,
+  );
+  assert.deepEqual(gateway.writes.create, {}, 'prepaid 失败时不能写任何东西');
+  assert.deepEqual(gateway.writes.update, {});
+  assert.deepEqual(gateway.writes.delete, {});
 });
 
 test('换货：旧鞋回库 + 新鞋出门盒，两条流水方向相反且数量都是正数', async () => {
@@ -670,7 +668,6 @@ test('赔货：只出货（销售赔货·减少），坏鞋不回库，不动钱
 
   // 不动钱
   assert.equal(paymentRows(gateway).length, 0);
-  assert.equal(rowsOf(gateway, CREDIT_TABLE).length, 0);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -788,68 +785,46 @@ test('换货重放/重试：明细行只建一次，履约状态不被二次写'
   assert.equal(retried.gateway.writes.create.inventoryLedger, 2, '换货两条流水各一次');
 });
 
-test('差价 0 / null：不动钱（不写收款明细，也不写客户往来货款）', async () => {
+test('差价 0 / null：不动钱（收款明细一笔都不写）', async () => {
   for (const diffAmount of [0, null]) {
     const { gateway, service } = build();
     const result = await service.execute(request({ diffAmount, settlement: 'cash' }));
     assert.equal(result.money.route, 'none');
     assert.equal(paymentRows(gateway).length, 0);
-    assert.equal(rowsOf(gateway, CREDIT_TABLE).length, 0);
     assert.equal(gateway.writes.create.paymentRecord, undefined);
     // 钱不动，但货照退（库存与明细照写）
     assert.equal(rowsOf(gateway, 'inventoryLedger').length, 1);
   }
 });
 
-test('资金 prepaid：走「客户往来货款」，用「业务事件ID」做远端幂等键，客户留空', async () => {
+test('⛔ 资金 prepaid：表已被删 → 在任何写入之前大声失败，并把"下一步怎么办"写清楚', async () => {
   const refund = build();
-  const refundResult = await refund.service.execute(request({ settlement: 'prepaid', diffAmount: -250 }));
-  const rows = rowsOf(refund.gateway, CREDIT_TABLE);
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].fields['变动类型'], '退货退款');
-  assert.equal(rows[0].fields['应收变化'], -250); // 负=我们欠客户（转成预存）
-  assert.equal(rows[0].fields['来源单号'], ORDER_NO);
-  // 幂等键 = 原单 + 动作 + 本次明细批次哈希（12 位十六进制）
-  assert.equal(rows[0].fields['业务事件ID'], 'after_sales:order_old:return:d5268040a9a4');
-  // ⚠️ 2026-10-06 起代码**不写**任何时间列：「发生时间」不再由我们填
-  //（生产真表里这一列还在，但是一次性的 DateTime，不是自动字段 —— 已单独提给业务负责人确认）。
-  assert.equal(rows[0].fields['发生时间'], undefined);
-  // 销售主表里没有"客人是谁"这个信息 → 不编值、不从原单取不存在的字段
-  assert.equal(rows[0].fields['客户'], undefined);
-  assert.equal(refundResult.money.route, 'prepaid');
-  // prepaid 不写「收款明细」
-  assert.equal(paymentRows(refund.gateway).length, 0);
-
-  const charge = build();
-  await charge.service.execute(request({
-    action: 'exchange',
-    newLines: [{ productId: 'product_B', sizeId: 'size_42', amount: 300 }],
-    settlement: 'prepaid',
-    diffAmount: 50,
-    restockState: '门盒',
-  }));
-  const chargeRows = rowsOf(charge.gateway, CREDIT_TABLE);
-  assert.equal(chargeRows.length, 1);
-  assert.equal(chargeRows[0].fields['应收变化'], 50); // 正=客户还欠我们
-  assert.equal(paymentRows(charge.gateway).length, 0);
-
-  // 重复执行只写一次
-  const before = countsOf(refund.gateway);
-  await refund.service.execute(request({ settlement: 'prepaid', diffAmount: -250 }));
-  assert.equal(countsOf(refund.gateway), before);
-  assert.equal(rowsOf(refund.gateway, CREDIT_TABLE).length, 1);
-});
-
-// 同一批明细 = 同一个业务事件ID：第二笔换了 taskId 也躲不过远端回查。
-// 命中的记录内容不同（金额不同）时必须大声失败，而不是复用后静默改掉。
-test('同一批明细的第二笔（金额不同）→ 远端幂等键命中同一笔 → 大声失败，不写第二笔', async () => {
-  const { gateway, service } = build();
-  await service.execute(request({ taskId: 'om_a', settlement: 'prepaid', diffAmount: -250 }));
   await assert.rejects(
-    () => service.execute(request({ taskId: 'om_b', settlement: 'prepaid', diffAmount: -200 })),
-    /客户往来货款 .* 与当前请求不一致（应收变化不一致）/,
+    () => refund.service.execute(request({ settlement: 'prepaid', diffAmount: -250 })),
+    (error) => {
+      assert.match(error.message, /「客户往来货款」表已被整表删除/);
+      assert.match(error.message, /不会写任何记录/);
+      assert.match(error.message, /退现金/, '要告诉她现在该怎么办，而不是只报一个表名');
+      return true;
+    },
   );
-  assert.equal(rowsOf(gateway, CREDIT_TABLE).length, 1);
+  assert.deepEqual(refund.gateway.writes.create, {}, 'prepaid 不写任何记录');
+  assert.deepEqual(refund.gateway.writes.update, {});
+  assert.equal(paymentRows(refund.gateway).length, 0, '更不能偷偷改成写「收款明细」');
+
+  // 换货 + prepaid（她还欠我们 → 原意是记预存）同样在下线范围内
+  const charge = build();
+  await assert.rejects(
+    () => charge.service.execute(request({
+      action: 'exchange',
+      newLines: [{ productId: 'product_B', sizeId: 'size_42', amount: 300 }],
+      settlement: 'prepaid',
+      diffAmount: 50,
+      restockState: '门盒',
+    })),
+    /「客户往来货款」表已被整表删除/,
+  );
+  assert.deepEqual(charge.gateway.writes.create, {});
 });
 
 test('退回的鞋：门盒 / 样品两种状态都按她说的落库', async () => {
@@ -935,17 +910,6 @@ test('重试时发现已写入的远端记录被改动/删除 → 停下来让�
   const masterId = masterRows(gateway)[0].record_id;
   gateway.records.set('salesEntry', rowsOf(gateway, 'salesEntry').filter((row) => row.record_id !== masterId));
   await assert.rejects(() => service.execute(request()), /已记录的售后主表 .*记录已不存在/);
-});
-
-test('缺「业务事件ID」列：prepaid 在任何写入之前就大声失败', async () => {
-  const { gateway, service } = build({ missingCreditKey: true });
-  await assert.rejects(
-    () => service.execute(request({ settlement: 'prepaid' })),
-    /依赖「业务事件ID」文本列/,
-  );
-  // 一个字节都没写（失败发生在写主表之前）
-  assert.equal(masterRows(gateway).length, 0);
-  assert.deepEqual(gateway.writes.create, {});
 });
 
 test('入参校验：动作 / newLines / restockState / 原单号 / 原明细归属', async () => {
