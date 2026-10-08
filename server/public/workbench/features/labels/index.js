@@ -188,7 +188,7 @@ export function createLabelPrintModule() {
       },
     },
     fields: {
-      qr: true, brand: true, itemNo: true, color: true, category: true,
+      qr: true, brand: true, itemNo: true, color: true, category: false,
       size: true, price: true, state: false, footer: false,
     },
     texts: { missingValue: '—', overflowMark: '…', stateSeparator: '/' },
