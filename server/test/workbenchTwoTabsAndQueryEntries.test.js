@@ -293,8 +293,10 @@ test('AC2 哨兵：信息录入（原「常用功能」只改名）里的两个�
     render(modules.common, 'createCommonModule'),
   ]);
 
-  assert.deepEqual(home.COMMON_ENTRIES.map((entry) => entry.title), ['报货与退货', '库存手工调整'],
-    '【信息录入】里的入口不动 —— 报货与退货 / 库存手工调整逐字不变');
+  // ⚠️ 2026-10-08（业务负责人批准的第一个功能「鞋盒标签打印」）**末尾追加了第三张卡** ——
+  //    前两条（报货与退货 / 库存手工调整）的文案 / 顺序 / 目标**逐字未动**（见下面两条断言）。
+  assert.deepEqual(home.COMMON_ENTRIES.map((entry) => entry.title), ['报货与退货', '库存手工调整', '鞋盒标签打印'],
+    '【信息录入】里的入口：前两个不动，末尾追加「鞋盒标签打印」');
   assert.equal(home.COMMON_ENTRIES[0].href, links.PURCHASE_REQUEST_FORM_URL,
     '「报货与退货」仍然直连报货飞书表单');
   assert.deepEqual(home.COMMON_ENTRIES.find((entry) => entry.id === 'inventory-adjustment'), {
@@ -306,7 +308,7 @@ test('AC2 哨兵：信息录入（原「常用功能」只改名）里的两个�
     arrow: '进入 →',
     wide: true,
   }, '「库存手工调整」那条（含 wide）一个字节不动');
-  assert.equal(parseEntryBlocks(html).length, 2, '信息录入仍然只有这两张卡');
+  assert.equal(parseEntryBlocks(html).length, 3, '信息录入 = 报货与退货 / 库存手工调整 / 鞋盒标签打印');
 });
 
 test('AC9/AC10 哨兵：工作台 auth 闸门与写入类接口不回退；共用的库存接口保留', () => {

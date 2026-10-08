@@ -1,0 +1,89 @@
+/**
+ * 鞋盒标签打印的样式 —— **只负责"怎么摆"**：真正的毫米数全部由服务端 `config/labelPrint.js`
+ * 通过 CSS 变量（`--label-w` / `--qr-size` / …）与 `@page`（由 `render.js` 拼好注入）传进来，
+ * 这里一个 mm 都不写死 —— 换标签纸尺寸只改服务端 config。
+ *
+ * ⚠️ 为什么是 HTML + CSS 而不是 PNG（她 2026-10-08 的口径）：**不许用 sharp 出图**。
+ *    浏览器打印走矢量二维码 + mm 单位，缩放 100% 时所见即所得，且没有任何二进制依赖。
+ */
+
+/* ── 筛选区（屏幕上）──────────────────────────────────────────────────── */
+.label-filters { flex-wrap: wrap; margin: 12px 0; }
+.label-preview { margin-top: 18px; }
+.label-print-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 16px 0 4px; }
+.label-print-bar .muted { font-size: 12px; }
+.label-summary { margin: 10px 0 0; font-size: 14px; }
+.label-notice { margin: 6px 0 0; font-size: 13px; color: var(--warning); }
+
+/* ── 标签纸（屏幕预览 + 打印同一个 DOM）───────────────────────────────── */
+/* 手机上 A4 宽（210mm ≈ 794px）比屏幕宽 ⇒ 横向滚动看，不挤压排版。 */
+.label-sheet-scroll { overflow-x: auto; padding: 8px 0 16px; }
+.label-sheet {
+  display: grid;
+  grid-template-columns: repeat(var(--cols), var(--label-w));
+  gap: var(--gap-y) var(--gap-x);
+  justify-content: center;
+  width: var(--sheet-w);
+  margin: 0 auto;
+  background: white;
+  box-shadow: var(--shadow-card);
+}
+.label-empty {
+  display: grid; gap: 6px; padding: 40px 20px; text-align: center; color: var(--text-muted);
+  grid-column: 1 / -1;
+}
+.label-empty strong { color: var(--text); }
+
+.label {
+  width: var(--label-w);
+  height: var(--label-h);
+  padding: var(--label-pad);
+  display: flex; flex-direction: column; gap: 0.6mm;
+  overflow: hidden;
+  background: white;
+  /* 屏幕上是虚线（看得出是一张张标签）；打印时换成细实线当裁切线。 */
+  border: 0.2mm dashed #b9c2d4;
+  /* 一张标签绝不被拆到两页上 —— A4 一页铺多张全靠这一条。 */
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+/* 二维码在左、字段在右（二维码关掉时这一层只剩字段，排版不变）。 */
+.label-main { flex: 1; min-height: 0; display: flex; align-items: center; gap: 1.2mm; }
+.label-qr { width: var(--qr-size); height: var(--qr-size); flex: none; }
+.label-qr svg { display: block; width: 100%; height: 100%; }
+/* 货号是最大字，第一眼就要看到。 */
+.label-body { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+.label-item-no {
+  font-size: var(--item-no-size);
+  line-height: 1.05;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  overflow-wrap: anywhere;
+}
+.label-field { font-size: var(--field-size); line-height: 1.25; overflow-wrap: anywhere; }
+.label-footer {
+  flex: none;
+  padding-top: 0.4mm;
+  border-top: 0.15mm solid #333;
+  font-size: var(--footer-size);
+  line-height: 1.2;
+  color: #333;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ── 打印：只印标签纸 ─────────────────────────────────────────────────── */
+@media print {
+  /* 屏幕上的一切外壳：筛选区、页头、导航条、错误条 —— 都不进纸。 */
+  .no-print,
+  .compact-header,
+  .standalone-nav,
+  #page-error { display: none !important; }
+
+  body { background: white; }
+  .shell, .standalone-shell { max-width: none; margin: 0; padding: 0; }
+  .label-preview { margin: 0; }
+  .label-sheet-scroll { overflow: visible; padding: 0; }
+  .label-sheet { width: auto; margin: 0; box-shadow: none; justify-content: start; }
+  /* 虚线换细实线 = 裁切线（复印/打印都看得见，又不抢眼）。 */
+  .label { border: 0.2mm solid #c8cede; }
+}

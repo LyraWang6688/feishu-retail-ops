@@ -119,10 +119,11 @@ test('首页【常用功能】：只有【报货与退货】一个采购类入�
   ]);
   const cards = parseCards(html);
 
-  // ① 逐字：首页就是这两张卡，顺序也是这个（采购在上 —— 她 2026-10-06：「采购放在库存上面」）。
-  assert.deepEqual(cards.map((card) => card.title), ['报货与退货', '库存手工调整'],
+  // ① 逐字：首页就是这三张卡，顺序也是这个（采购在上 —— 她 2026-10-06：「采购放在库存上面」；
+  //    ⭐ 2026-10-08 新增第三张「鞋盒标签打印」= 她批准的第一个功能，排在最后）。
+  assert.deepEqual(cards.map((card) => card.title), ['报货与退货', '库存手工调整', '鞋盒标签打印'],
     '首页必须只剩【报货与退货】一个采购类入口，且标题逐字 = 报货与退货');
-  assert.equal(cards.length, 2, '首页卡片数量必须是 2');
+  assert.equal(cards.length, 3, '首页卡片数量必须是 3（报货与退货 / 库存手工调整 / 鞋盒标签打印）');
 
   // ② ⭐ 点一次直达：href 逐字等于报货飞书表单 URL（报货与退货现在是同一个表单）。
   assert.equal(cards[0].href, links.PURCHASE_REQUEST_FORM_URL,
@@ -133,7 +134,7 @@ test('首页【常用功能】：只有【报货与退货】一个采购类入�
   // ③ 逐字：没有哪张卡的标题是「退货」（那个独立入口已不在首页）。
   assert.equal(cards.filter((card) => card.title === '退货').length, 0,
     '「退货」那张独立卡必须不在首页（报货与退货是同一个表单）');
-  assert.deepEqual(cards.map((card) => card.arrow), ['进入 →', '进入 →']);
+  assert.deepEqual(cards.map((card) => card.arrow), ['进入 →', '进入 →', '进入 →']);
 
   // ④ 配置里也不许再有「退货」那条独立入口；采购那条 id 必须仍是 purchase。
   assert.ok(Array.isArray(home.COMMON_ENTRIES));
