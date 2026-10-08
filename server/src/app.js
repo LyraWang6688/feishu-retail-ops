@@ -33,6 +33,9 @@ const { startSecondDeliveryReminder } = require('./utils/secondDeliveryReminder'
 const { PendingDealPushService } = require('./services/pendingDealPushService');
 const { resolvePendingDealPushConfig } = require('./config/pendingDealPush');
 const { startShanghaiDailyScheduler } = require('./utils/shanghaiDailyScheduler');
+// 扫码页的挂载点（`/s`）与它的配置：**与二维码里的 URL 同源**
+// （`config/tagQrCode.js` 的 `scanUrl.urlTemplate` = `https://hm.bamamei.online/s/{编号}`）。
+const { SCAN_PAGE } = require('./config/scanPage');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -79,6 +82,16 @@ app.use('/api/workbench', require('./routes/workbench').createWorkbenchRouter())
 app.use('/workbench', express.static(workbenchPath, { index: 'index.html' }));
 // Feishu web apps commonly open the configured homepage as "/".
 app.get('/', (req, res) => res.sendFile(path.join(workbenchPath, 'index.html')));
+
+// 扫码页（第一版：**只读查库存**）：标签二维码里的 `https://hm.bamamei.online/s/{编号}`
+// 走的就是这一条（挂载点 `SCAN_PAGE.route.basePath` = `/s`，路径段在 router 里）。
+// ⚠️ 刻意**不挂在 `/api/*` 下面**：那一段由下面的 `API_KEY`（`x-api-key` 头）保护，
+//    而扫码的人是手机浏览器**直接打开页面**的，没有那个头 ⇒ 挂过去必被挡。
+// ⚠️ 准入用的是**工作台同一道飞书身份闸门**（`routes/workbench.js` 导出的
+//    `requireWorkbenchAccess`，与 `/api/workbench/*` 是**同一个函数**），
+//    不是新开的一套：认证没启用 503 / 未登录 401 / 白名单外 403，与工作台一字不差。
+// ⚠️ 这一版**一行都不写**：service 只读「实时库存 / 尺码管理 / 货品信息」。
+app.use(SCAN_PAGE.route.basePath, require('./routes/scanPage').createScanPageRouter());
 
 // Health check route. Also answers "服务器上跑的是哪一版"——部署时由 deploy_run.sh
 // 写入版本号与 commit，否则回落到 package.json 的版本。
