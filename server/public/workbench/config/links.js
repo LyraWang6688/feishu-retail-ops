@@ -60,15 +60,28 @@ export const PURCHASE_FORMS = [
  * ⇒ 「信息查询」那两个板块**就是两张外链卡**，点一下直接打开她配好的多维表格网页；
  *    工作台**不新增任何接口 / 页面**，也不在本地重算任何业务事实。
  *
- * ⚠️ **现在刻意留空串（TODO：等她给 URL）** —— 空值的**明确行为**：
+ * ⚠️ 空值的**明确行为**（现在还剩下「库存查询」是空的）：
  *    `features/query/index.js` 把它渲染成 `<div class="entry-card disabled-card">`（**不是 `<a>`**），
  *    卡面 arrow 文案 = **「链接待配置」** ⇒ **不产生空 `href`、点了不跳空链接、不报错**。
- *    拿到 URL 后**只改下面这两行**（配置先行），页面一行都不用动。
+ *    她给了 URL 就**只改下面这一行**（配置先行），页面一行都不用动。
  *
  * 写法与 `PURCHASE_REQUEST_FORM_URL` 同一套（`*_URL` 常量；`config/query.js` 只 import、不复制）。
  */
-// TODO(业务负责人): 销售查询 —— 飞书多维表格网页 URL（她给之前留空串，空值 = 卡面「链接待配置」）
-export const SALES_QUERY_PAGE_URL = '';
+// ⭐ 2026-10-08 业务负责人已给（逐字）：
+//   「「销售查询」URL ：https://scnzoiwpgxik.feishu.cn/base/QrXlbwXMLaJ2TNsxSfFcIA3rnwh?table=wbpzfEmPGK」
+// ⚠️ 这是**多维表格里的那个页面**：`wbpzfEmPGK` 是**页面 id、不是 tableId** ——
+//    页面类型 = 飞书多维表格的「AI 生成网页」（vibe view：她在 Base 里对 AI 说要什么，AI 生成并发布）。
+//    **页面代码不在本仓库** ⇒ 不进 CI、不受 `v1:schema-check` 保护；
+//    她在生产表改名 / 删列之后，**页面会静默算错或变空，我们这边没有任何告警**。
+// ⭐ 刻意用**内部页面 URL**（不选 `/share/base/webpage/...` 那条发布分享链接）：
+//    内部页面走**打开者自己的 Base 权限**；而那条分享链接她自己页面上写着
+//    「通过分享链接访问的用户可查看当前页面展示的**全部数据，不受多维表格高级权限限制**」。
+//    同页面的分享链接（留档备查、刻不使用）：
+//    `https://scnzoiwpgxik.feishu.cn/share/base/webpage/shrcnY3ZG9LAjrArEe5RzfS8UGh`
+// ⚠️ 该页面声明的统计口径 + 与系统口径的差异，留档：
+//    `docs/sales-query-page-and-system-caliber-2026-10-08.md`（她定的定位 = **最小 MVP，之后迭代**）。
+export const SALES_QUERY_PAGE_URL =
+  'https://scnzoiwpgxik.feishu.cn/base/QrXlbwXMLaJ2TNsxSfFcIA3rnwh?table=wbpzfEmPGK';
 
 // TODO(业务负责人): 库存查询 —— 飞书多维表格网页 URL（她给之前留空串，空值 = 卡面「链接待配置」）
 export const INVENTORY_QUERY_PAGE_URL = '';

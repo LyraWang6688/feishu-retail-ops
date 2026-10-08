@@ -255,3 +255,27 @@ OPEN / CLEAN
 - ⚠️ 该 worktree 里 `server/node_modules` 与根 `.env` 都是**临时软链**（`node_modules` 指向主工作区、
   `.env` 指向主工作区的 `.env`），**验完即删** —— 所以那 2 次全量是"同一份依赖 + 同一份测试凭证"下跑的，
   **结论只对本次改动有效**（合并后按第 14 条在主工作区重新同步）。
+
+---
+
+## 八、后续（2026-10-08 同日）：销售查询 URL 已给，AC4 / AC5 跟着改
+
+业务负责人当天给了「销售查询」的 URL（逐字）：
+
+```
+「销售查询」URL ：https://scnzoiwpgxik.feishu.cn/base/QrXlbwXMLaJ2TNsxSfFcIA3rnwh?table=wbpzfEmPGK
+```
+
+⇒ **只改配置**（本文件第 2.4 节留的 TODO 就是这个位置），渲染层一行未动：
+
+- `config/links.js`：`SALES_QUERY_PAGE_URL` 由空串 → 上面那条；**`INVENTORY_QUERY_PAGE_URL` 仍留空 + TODO**（她还没给）。
+- ⭐ 选的是**内部页面 URL**，**不是**那条发布分享链接
+  （`/share/base/webpage/shrcnY3ZG9LAjrArEe5RzfS8UGh`）——后者页面自己写着
+  「不受多维表格高级权限限制」；内部页面走打开者自己的 Base 权限。
+- ⚠️ `wbpzfEmPGK` 是**页面 id、不是 tableId**：那是多维表格里的**「AI 生成网页」（vibe view）**，
+  由 AI 生成并发布，**代码不在本仓库** ⇒ **不进 CI、不受 `v1:schema-check` 保护**。
+  页面声明的统计口径 + 与系统口径的对照：
+  `docs/sales-query-page-and-system-caliber-2026-10-08.md`（她定：**最小 MVP，之后迭代**）。
+- 测试跟着改（**AC4** 加"销售查询那行 TODO 必须已删"；**AC5** 从"两张都空"改成
+  "销售查询可点 `<a>` + 库存查询仍 `disabled-card`"；**AC5b** 不动，它测的是注入配置）。
+  ⇒ 本文件第 4 / 5 节对 AC5 的旧描述（"两个 URL 现在故意留空串"）**以本节为准**，不再回溯改写。
