@@ -7,9 +7,7 @@
   <link rel="stylesheet" href="/workbench/styles/tokens.css">
   <link rel="stylesheet" href="/workbench/styles/base.css">
   <link rel="stylesheet" href="/workbench/features/common/common.css">
-  <link rel="stylesheet" href="/workbench/features/sales/sales.css">
   <link rel="stylesheet" href="/workbench/features/purchase/purchase.css">
-  <link rel="stylesheet" href="/workbench/features/inventory/inventory.css">
 </head>
 <body>
   <main class="shell">
@@ -25,18 +23,18 @@
     </header>
 
     <!--
-      一级 tab 只有 3 个（业务负责人 2026-10-06 定的）：
-        常用功能 · 销售查询 · 实时库存
+      一级 tab 只有 2 个（业务负责人 2026-10-08 定的）：
+        ① 信息录入（原「常用功能」**只改名**，里面入口不动）
+        ② 信息查询（两个板块：销售查询 · 库存查询，各是一张**飞书多维表格网页外链卡**）
+      ⚠️ **文案与顺序不在这个文件里** —— 唯一来源是 `config/tabs.js` 的 `MAIN_TABS`，
+         由 `main.js` 用 `core/tabs.js` 的 `mainTabsHtml()` 渲染进来（配置先行）。
       ⚠️ 「采购管理 / 资金管理 / 抖音运营 / 平台管理」**只是把入口隐去**——
-        对应模块的代码仍然在 main.js 的 modules 里（见那里的 HIDDEN 注释），
-        要恢复只加回一个 <button class="main-tab" data-module="..."> 即可，不用改逻辑。
-      三个 tab 各自都有独立页面：common.html / sales-query.html / inventory.html。
+         对应模块的代码仍然在 main.js 的 modules 里（见那里的 HIDDEN 注释），
+         要恢复只加回一条 `MAIN_TABS` 记录即可，不用改逻辑。
+      ⚠️ 自建的「销售查询 / 实时库存」页面与查询接口已于同日整体删除
+         （她：「现有的我们自己搭的销售查询/库存查询页面与接口，顺手删掉～」）。
     -->
-    <nav id="main-tabs" class="main-tabs" aria-label="工作台模块">
-      <button class="main-tab active" type="button" data-module="sales">销售查询</button>
-      <button class="main-tab" type="button" data-module="inventory">实时库存</button>
-      <button class="main-tab" type="button" data-module="common">常用功能</button>
-    </nav>
+    <nav id="main-tabs" class="main-tabs" aria-label="工作台模块"></nav>
 
     <section id="module-host" aria-live="polite"></section>
     <p id="page-error" class="error hidden" role="alert"></p>

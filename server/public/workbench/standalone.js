@@ -1,22 +1,19 @@
 import { requireFeishuAuth, showLoginButton } from './core/auth.js';
 import { describeError, showPageError } from './core/ui.js';
 import { createCommonModule } from './features/common/index.js';
-import { createSalesModule } from './features/sales/index.js';
-import { createInventoryModule } from './features/inventory/index.js';
 import { createInventoryAdjustmentModule } from './features/inventory/adjustment.js';
 import { createPurchaseLinksModule } from './features/purchase/links.js';
 
 // 独立页面注册表：key = 页面的 <body data-view="...">，value = 该页面的模块工厂。
-// 三个一级 tab 各一个页面，另加两个子页：
-//   common.html               → 常用功能
-//   sales-query.html          → 销售查询（原「今日销售」，支持按某日 / 按区间）
-//   inventory.html            → 实时库存
-//   inventory-adjustment.html → 常用功能 → 库存手工调整（盘点调整 / 换季调整）
-//   purchase-return.html      → 常用功能 → 采购和退货（两个飞书表单外链，不做查询）
+//   common.html               → 信息录入（原「常用功能」**只改名**，里面入口不动）
+//   inventory-adjustment.html → 信息录入 → 库存手工调整（盘点调整 / 换季调整）
+//   purchase-return.html      → 信息录入 → 报货与退货（两个飞书表单外链，不做查询）
+//
+// ⚠️ 2026-10-08：「信息查询」两个板块（销售查询 / 库存查询）**就是飞书多维表格的外链卡**，
+//    按她的口径「**我们不用自己搭建接口**」—— 所以这里**不再注册** `sales-query` / `inventory`
+//    两个视图（它们对应的自建页面与接口已于同日删除）。**不为查询新增任何页面**。
 const factories = {
   common: () => createCommonModule({ focused: true }),
-  'sales-query': () => createSalesModule({ focused: true }),
-  inventory: () => createInventoryModule({ focused: true }),
   'inventory-adjustment': () => createInventoryAdjustmentModule(),
   'purchase-return': () => createPurchaseLinksModule(),
 };

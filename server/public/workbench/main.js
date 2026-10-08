@@ -1,25 +1,26 @@
 import { requireFeishuAuth, showLoginButton } from './core/auth.js';
 import { describeError, showPageError } from './core/ui.js';
+import { mainTabsHtml } from './core/tabs.js';
 import { createCommonModule } from './features/common/index.js';
-import { createSalesModule } from './features/sales/index.js';
+import { createQueryModule } from './features/query/index.js';
 import { createPurchaseModule } from './features/purchase/index.js';
-import { createInventoryModule } from './features/inventory/index.js';
 import { createPlaceholderModule } from './features/shared/placeholder.js';
 
-// 一级 tab 只有 3 个，顺序（业务负责人 2026-10-06 晚定）：销售查询 / 实时库存 / 常用功能。
-// 每个 tab 在 index.html 里对应一个 data-module，也各自有一个独立页面：
-//   common → /workbench/common.html · sales → /workbench/sales-query.html
-//   inventory → /workbench/inventory.html
+// 一级 tab 只有 2 个（业务负责人 2026-10-08 定）：
+//   ① 信息录入（原「常用功能」只改名）· ② 信息查询（销售查询 / 库存查询 两个板块 = 飞书外链卡）
+// ⚠️ **文案 / 顺序 / data-module 的唯一来源是 `config/tabs.js` 的 `MAIN_TABS`**，
+//    由 `core/tabs.js` 的 `mainTabsHtml()` 渲染进 `#main-tabs`（配置先行：加减 tab 只改配置）。
+//    `index.html` 里的 `<nav id="main-tabs">` 因此是空的。
+// ⚠️ 自建的「销售查询 / 实时库存」页面与查询接口已于同一天整体删除
+//    （三个静态页 · 两个前端模块 · 路由 `/sales/query` · `/sales/today`）。
+//    独立页 `common.html`（信息录入）· `inventory-adjustment.html` · `purchase-return.html` 照旧。
 //
 // ⚠️ HIDDEN（入口隐去、**代码保留**）：purchase / finance / douyin / platform。
-//    它们仍然在这个 modules 表里，只是 index.html 里没有对应的 data-module 按钮，
-//    所以点不到。要恢复某个入口：在 index.html 的 #main-tabs 里加回一行
-//    <button class="main-tab" data-module="purchase">采购管理</button> 即可，逻辑不用改。
-//    她明确说过「其余的入口可以先隐去，先不做」——是**隐去**，不是删。
+//    它们仍然在这个 modules 表里，只是 `config/tabs.js` 里没有对应的 tab，
+//    所以点不到。要恢复某个入口：在 `config/tabs.js` 的 `MAIN_TABS` 里加回一条即可，逻辑不用改。
 const modules = new Map([
   ['common', createCommonModule()],
-  ['sales', createSalesModule()],
-  ['inventory', createInventoryModule()],
+  ['query', createQueryModule()],
   // ── 以下四个是隐去的入口（保留代码）────────────────────────────────────
   ['purchase', createPurchaseModule()],
   ['finance', createPlaceholderModule({
@@ -41,9 +42,16 @@ const modules = new Map([
 
 const mounted = new Map();
 const host = document.getElementById('module-host');
-// 页面加载时打开的 tab = 第一个可见 tab（现在是「销售查询」）。写死成 'sales'
-// 会在 tab 顺序调整后又对不上，所以从 DOM 里取。
-const initialModule = document.querySelector('.main-tab')?.dataset.module || 'common';
+// 页面加载时打开的 tab = 第一个可见 tab（配置里的第一条 = 「信息录入」）。
+// 写死某个 module 会在 tab 顺序调整后又对不上，所以从 DOM 里取。
+let initialModule = 'common';
+
+// 把一级 tab 渲染进 nav —— 文案 / 顺序 / data-module 全部来自 `config/tabs.js`（配置先行）。
+function renderMainTabs() {
+  const nav = document.getElementById('main-tabs');
+  nav.innerHTML = mainTabsHtml();
+  initialModule = nav.querySelector('.main-tab')?.dataset.module || 'common';
+}
 
 function activateModule(moduleId) {
   showPageError('');
@@ -60,10 +68,11 @@ function activateModule(moduleId) {
 }
 
 async function start() {
-  // ⚠️ tab 的监听**先绑上**（放在鉴权之前）。原来它绑在 `requireFeishuAuth` 之后，
-  //    而 `/me` 一返回 401 就在那里面抛了错，这一句永远走不到 —— 现象正是她遇到的
-  //    「工作台启动失败：请求失败（401）」＋ 三个 tab 点了没反应。
+  // ⚠️ 先把 tab 渲染出来、再把监听**绑上**（都放在鉴权之前）。原来监听绑在 `requireFeishuAuth`
+  //    之后，而 `/me` 一返回 401 就在那里面抛了错，这一句永远走不到 —— 现象正是她遇到的
+  //    「工作台启动失败：请求失败（401）」＋ tab 点了没反应。
   //    绑在这里之后，鉴权失败时页面仍然是可交互的（各模块自己会提示取不到数据）。
+  renderMainTabs();
   document.querySelectorAll('.main-tab').forEach((tab) => {
     tab.addEventListener('click', () => activateModule(tab.dataset.module));
   });
