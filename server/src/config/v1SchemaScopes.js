@@ -1,8 +1,11 @@
 const V1_SCHEMA_SCOPES = {
   // accessory（其他配品）也纳入销售范围：销售明细的「配品」字段指向它，缺配置会在运行时才炸。
-  // customerCredit（客户往来货款）同样落在销售范围：退换货 prepaid 走这张表，
-  // 不纳入范围的话它改名/缺列只能在用户确认售后时才炸（今天已经因字段不同步踩过两次）。
-  sales: ['product', 'accessory', 'paymentMethod', 'salesEntry', 'salesDetail', 'paymentRecord', 'customerCredit'],
+  // ⚠️ `customerCredit`（「客户往来货款」）已从这里**删除**（2026-10-08）：
+  //    业务负责人把那张表**整表删除**了 ⇒ 留着它 = 闸门去问一张不存在的表，
+  //    `v1:schema-check:all` 直接判红（TableIdNotFound 1254041）。
+  //    售后 prepaid 通路随之下线（见 services/afterSalesService.assertPrepaidAvailable）；
+  //    等她定了「已留存」的新落点，把新表加回这个列表即可。
+  sales: ['product', 'accessory', 'paymentMethod', 'salesEntry', 'salesDetail', 'paymentRecord'],
   purchase: [
     'product',
     'supplier',
@@ -44,10 +47,11 @@ const getV1SizeLinkTables = (scope = 'sales') => V1_SIZE_LINK_TABLES[getV1Schema
 // 幂等键字段同样必须真实存在，且是文本字段（见 infrastructure/idempotencyKey.js）。
 // 采购批次 / 采购申请 / 实时库存的写入都靠它做「先回查再创建」，字段缺失时
 // 宁可部署门槛拦下来，也不能等到用户确认采购时才报错。
-// 「客户往来货款」的「业务事件ID」是售后 prepaid 的幂等键：同一批明细重复调用时靠它认出
-// 「这一笔已经写过了」，所以它也在闸门里校验（缺列 = 售后写入会重复，必须拦在部署前）。
+// ⚠️ sales 这一档**现在是空的**（2026-10-08）：原先唯一的条目是「客户往来货款.业务事件ID」，
+//    那张表被她整表删除、prepaid 通路下线 ⇒ 条目删除，但**这一档结构保留**，
+//    等她定下「已留存」的新表再把新表的键列加回来。
 const V1_IDEMPOTENCY_KEY_TABLES = {
-  sales: [{ tableKey: 'customerCredit', keyField: 'businessEventId' }],
+  sales: [],
   purchase: [
     { tableKey: 'purchaseOrderBatch', keyField: 'idempotencyKey' },
     { tableKey: 'purchaseRequest', keyField: 'idempotencyKey' },

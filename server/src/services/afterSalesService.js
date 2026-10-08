@@ -13,7 +13,9 @@
 //   3) 原「销售明细」的「履约状态」→ 已退货 / 已换货 / 已赔货
 //   4) 钱：cash → 「收款明细」一条（交易方向=收入/退回，金额正数，关联=新主表，
 //          交易方式 = **她说的那个**；她没说才沿用原单的 —— 见 settleCash）；
-//          prepaid → 「客户往来货款」一条（变动类型=退货退款，应收变化=带符号差价）
+//          prepaid → ⛔ **已下线**：它的唯一落点「客户往来货款」被业务负责人**整表删除**
+//          （2026-10-08，生产 Base 里已没有这张表）⇒ 这条路现在**在任何写入之前大声失败**，
+//          见 assertPrepaidAvailable()。等「已留存」的新落点定下来再按新表重建。
 //   5) 「库存流水」：退货 1 行 / 赔货 1 行 / 换货 2 行（方向相反），数量都是正数
 //   6) 「实时库存」：退货/换货把旧鞋加回 restockState；换货/赔货按声明从门盒减一行
 //
@@ -36,9 +38,9 @@
 //      「批次哈希」= 本次涉及的原明细 record_id 排序后的短哈希（见 config/afterSales.js）：
 //      同一批明细重复调用 → 同一个分片 → 幂等；不同批明细（部分退货）→ 不同分片 → 各做各的。
 //
-//   ② 「客户往来货款」用它自己的幂等键字段「业务事件ID」
-//      = after_sales:<原主表id>:<action>:<批次哈希>，
-//      走既有的 createOnceByKey（先按键回查远端，命中就复用）——本地记录丢了也能认出这一笔。
+//   ② ⛔ 「客户往来货款」的幂等键那一路**已随表一起下线**（2026-10-08 她整表删除）：
+//      原来靠它的「业务事件ID」= after_sales:<原主表id>:<action>:<批次哈希> 做远端回查。
+//      ⇒ 这一层现在只剩 ①；等「已留存」有了新落点，再按新表把这一层接回来。
 //
 // 已知窗口：飞书 create 成功但本地落盘失败时，本地闸门看不出来，理论上会重复写。
 // 要堵住这个窗口必须有远端键列（这一期明确不加）；库存那一侧不受影响——
@@ -52,14 +54,12 @@
 const path = require('node:path');
 const {
   AFTER_SALES_ACTIONS,
-  AFTER_SALES_CREDIT_KEY_FIELD,
   actionSpecOf,
   afterSalesEventId,
   afterSalesOperationId,
   readAfterSalesConfig,
 } = require('../config/afterSales');
 const { SELLABLE_KINDS, sellableKindOf } = require('../config/sellableKinds');
-const { createOnceByKey, validateIdempotencyKeyFields } = require('../infrastructure/idempotencyKey');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
@@ -71,6 +71,14 @@ const { cents } = require('./salesProgressService');
 const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
 const { SalesStatusWriter } = require('./salesStatusWriter');
 const { logInfo, logWarn } = require('../utils/logger');
+
+// ⛔ 预存（prepaid）这条路**已下线**：它唯一的落点「客户往来货款」被业务负责人整表删除（2026-10-08）。
+//    这段文案是给业务负责人看的 —— 要说清"哪条路走不通、为什么、现在该怎么办"，
+//    而不是抛一句 `Unknown V1 table: customerCredit`。
+const PREPAID_UNAVAILABLE =
+  '「客户往来货款」表已被整表删除（2026-10-08）：退换货里「钱留在我们这里（预存 / 已留存）」这一笔' +
+  '现在没有落点，这笔售后**不会写任何记录**（也不会写一半）。' +
+  '请先说明这笔钱记到哪张表；在接上之前，钱要退给对方时请说「退现金 / 退微信」。';
 
 const DEFAULT_STORE_DIR = path.join(__dirname, '../../data/after_sales_operations');
 
@@ -152,7 +160,6 @@ class AfterSalesService {
     // 四个状态维度的唯一写入口（名字与取值都在 config/salesStatusDimensions）。
     this.status = options.status || new SalesStatusWriter({ gateway: this.gateway });
     this.now = options.now || (() => Date.now());
-    this.creditSchemaValidated = null;
   }
 
   tableOf(tableKey) {
@@ -258,14 +265,13 @@ class AfterSalesService {
    */
   async runWithGate(request) {
     const existing = await this.store.get(request.operationId);
-    // 「已经写进去过东西」才需要认指纹：主表/明细/状态/收款/往来货款任一落过盘，
+    // 「已经写进去过东西」才需要认指纹：主表/明细/状态/收款任一落过盘，
     // 就说明这一个分片上已经产生业务事实，换一笔请求不能直接接管。
     const wroteSomething = Boolean(existing && (
       existing.master_record_id
       || (existing.detail_record_ids || []).length
       || (existing.original_details_marked || []).length
       || existing.payment_record_id
-      || existing.credit_record_id
     ));
     if (wroteSomething && existing.request_fingerprint !== request.fingerprint) {
       throw new Error(
@@ -302,7 +308,6 @@ class AfterSalesService {
       detail_record_ids: [],
       original_details_marked: [],
       payment_record_id: '',
-      credit_record_id: '',
     });
     return this.run(request, progress);
   }
@@ -317,8 +322,9 @@ class AfterSalesService {
     // **不写**任何飞书时间列（2026-10-06 起：「发生时间」不再写，「入库时间」「报单时间」
     // 已从生产表删除）。调用方给了时间就用它，否则用当前时间。
     request.occurredAt = request.receivedAt ?? this.now();
-    // 要用「客户往来货款」的幂等键时先校验它真实存在：缺列要大声失败，而且要在任何写入之前。
-    if (request.settlement === 'prepaid') await this.validateCreditKey();
+    // 预存（prepaid）这条路已下线（落点「客户往来货款」被她 2026-10-08 整表删除）：
+    // 在这里就停 —— 这是 run() 的校验阶段，**任何写入之前**，失败时一个字节都没写。
+    if (request.settlement === 'prepaid') this.assertPrepaidAvailable();
 
     const original = await this.readOriginal(request);
     const master = await this.ensureMaster(request, spec, progress);
@@ -659,7 +665,10 @@ class AfterSalesService {
   async settleMoney(request, original, master, progress) {
     if (!request.settlement) return { route: 'none', recordId: '', direction: '', amount: 0 };
     if (request.settlement === 'cash') return this.settleCash(request, original, master, progress);
-    return this.settlePrepaid(request, progress);
+    // prepaid：第二道闸门（第一道在 run() 的校验阶段，那里保证"任何写入之前就停"）。
+    // 这里再拦一次是为了**将来有人直接从别处调 settleMoney 时**也不会写错。
+    this.assertPrepaidAvailable();
+    throw new Error(`未知的资金走向：${request.settlement}`);
   }
 
   /**
@@ -737,95 +746,24 @@ class AfterSalesService {
   }
 
   /**
-   * 存预存：钱不进「收款明细」，而是记到「客户往来货款」上（变动类型=退货退款）。
+   * ⛔ 预存（prepaid）这条路已经下线 —— 它唯一的落点「客户往来货款」被业务负责人**整表删除**（2026-10-08）。
    *
-   * 「应收变化」写**带符号的差价**：正=客户还欠我们（要收），负=我们欠客户（要退，转成预存）。
-   * 只写正数会把方向丢掉，而这一列正是用来算余额的。
+   * 为什么留着这个方法、而不是把 prepaid 悄悄删掉：
+   *   · `settlement === 'prepaid'` 仍然是一个**合法的用户输入**（她说「钱先存着」就是它，
+   *     见 config/afterSalesFlow.js 的词表）⇒ 必须有地方**大声**说"这条路现在走不通"；
+   *   · 更不能**静默改成写「收款明细」** —— 那等于把她说的"钱留在这里"偷偷记成"退给客户"，是记错账。
    *
-   * 客户字段**留空**：销售主表里没有"客人是谁"这个信息（父代理核对过），
-   * 所以不编值、也不从原单取一个不存在的字段；追溯靠「来源单号」。
+   * 它在 run() 的**校验阶段**被调用（任何写入之前）⇒ 失败时**一个字节都没写**。
+   *
+   * 🔧 怎么接回来（等业务负责人定「已留存」的新落点：哪张表、哪些列）：
+   *   · 把 `settlePrepaid` 按新表重建（幂等键仍是 `request.eventId` =
+   *     `after_sales:<原主表id>:<action>:<批次哈希>`，只是键列跟着新表走）；
+   *   · 同步 `v1BitableSchema`（新表映射）＋ `v1SchemaScopes`（sales 范围与幂等键清单）；
+   *   · 把这里换回"校验新表的键列存在"（原来的实现见 git history：
+   *     `validateCreditKey` / `verifyCredit` / `createOnceByKey(customerCredit)`）。
    */
-  async settlePrepaid(request, progress) {
-    if (progress.credit_record_id) {
-      await this.verifyCredit(progress.credit_record_id, request);
-      return {
-        route: 'prepaid',
-        recordId: progress.credit_record_id,
-        direction: request.diffAmount > 0 ? '要收' : '要退',
-        amount: Math.abs(request.diffAmount),
-        changeType: this.config.prepaidChangeType,
-      };
-    }
-    const { recordId } = await createOnceByKey({
-      gateway: this.gateway,
-      tableKey: 'customerCredit',
-      keyField: AFTER_SALES_CREDIT_KEY_FIELD,
-      keyValue: request.eventId,
-      label: `客户往来货款（${request.action} ${request.diffAmount}）`,
-      values: {
-        changeType: this.config.prepaidChangeType,
-        receivableChange: request.diffAmount,
-        // ⚠️ 2026-10-06：不再写「发生时间」。
-        // 业务负责人的口径：时间字段除了「收款时间」以外，飞书里都由自动字段负责
-        //（表里的「创建时间」/「更新时间」），代码一律不写时间列。
-        // ⚠️ 但这一列在生产真表「客户往来货款」里**还在**，而且是一次性的 DateTime
-        // （type=5），不是自动的「创建时间」——所以从此这一列会是空的，等业务负责人
-        // 确认是删掉它还是改成自动字段；在那之前 schema 里的映射刻意保留（见 v1BitableSchema）。
-        sourceOrderNo: request.originalSalesOrderNo,
-        // 这个字段就是这张表的幂等键：本地记录丢了也能按它回查认出这一笔。
-        [AFTER_SALES_CREDIT_KEY_FIELD]: request.eventId,
-        ...(request.operatorOpenId ? { operator: person(request.operatorOpenId) } : {}),
-      },
-    });
-    await this.verifyCredit(recordId, request);
-    await this.saveProgress(request, { credit_record_id: recordId });
-    return {
-      route: 'prepaid',
-      recordId,
-      direction: request.diffAmount > 0 ? '要收' : '要退',
-      amount: Math.abs(request.diffAmount),
-      changeType: this.config.prepaidChangeType,
-    };
-  }
-
-  async verifyCredit(recordId, request) {
-    const fields = this.tableOf('customerCredit').fields;
-    const record = await this.gateway.get('customerCredit', recordId);
-    let mismatch = '';
-    if (!record) mismatch = '记录已不存在';
-    else if (cellText(record.fields?.[fields.changeType]) !== this.config.prepaidChangeType) mismatch = '变动类型不一致';
-    else if (Number(cellNumber(record.fields?.[fields.receivableChange])) !== Number(request.diffAmount)) {
-      mismatch = '应收变化不一致';
-    } else if (cellText(record.fields?.[fields.sourceOrderNo]) !== request.originalSalesOrderNo) {
-      mismatch = '来源单号不一致';
-    } else if (cellText(record.fields?.[fields[AFTER_SALES_CREDIT_KEY_FIELD]]) !== request.eventId) {
-      mismatch = '业务事件ID不一致';
-    }
-    if (mismatch) {
-      throw new Error(
-        `已记录的客户往来货款 ${recordId} 与当前请求不一致（${mismatch}）：` +
-        '同一批原明细只允许一笔，请人工核对，不能自动重试',
-      );
-    }
-  }
-
-  /** 「客户往来货款」的幂等键必须是真实存在的文本列（数字/关联字段存不下 after_sales:... 这种键）。 */
-  async validateCreditKey() {
-    if (!this.creditSchemaValidated) {
-      const table = this.tableOf('customerCredit');
-      if (!table?.tableId) throw new Error('「客户往来货款」未配置 table_id，无法登记预存退款');
-      if (!table.fields?.[AFTER_SALES_CREDIT_KEY_FIELD]) {
-        throw new Error(`「${table.tableName}」未在 v1BitableSchema 声明「业务事件ID」字段，无法做幂等写入`);
-      }
-      this.creditSchemaValidated = validateIdempotencyKeyFields({
-        gateway: this.gateway,
-        tables: [{ tableKey: 'customerCredit', keyField: AFTER_SALES_CREDIT_KEY_FIELD }],
-      }).catch((error) => {
-        this.creditSchemaValidated = null;
-        throw new Error(`客户往来货款的幂等写入依赖「业务事件ID」文本列：${error.message}`);
-      });
-    }
-    return this.creditSchemaValidated;
+  assertPrepaidAvailable() {
+    throw new Error(PREPAID_UNAVAILABLE);
   }
 
   // --- 5) + 6) 库存流水 / 实时库存：交给既有 InventoryService ------------------------

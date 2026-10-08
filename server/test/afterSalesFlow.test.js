@@ -151,7 +151,6 @@ const executorBase = () => {
       { record_id: 'pay_old', fields: { 关联销售单: ['e_old'], 交易方式: ['method_wechat'], 收款金额: 230, 收款状态: '已收款' } },
       { record_id: 'pay_single', fields: { 关联销售单: ['e_single'], 交易方式: ['method_wechat'], 收款金额: 230, 收款状态: '已收款' } },
     ],
-    customerCredit: [],
     inventoryLedger: [],
     liveInventory: [
       { record_id: 'live_39', fields: { 编号: ['p1'], 尺码: ['size_39'], 所属状态: '门盒' } },
