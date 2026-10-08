@@ -88,7 +88,7 @@ const MOVEMENT_SALE_CASH = 'SALE_CASH';
 // 两类语义截然不同，别混：
 //   · 数量类（手工调增 / 手工调减）：改**数量**，一双一条地新建或消耗「实时库存」
 //     ＋ 写一条带「变动数量」的流水。只有这两条能走 `applyChange`。
-//   · 状态类（转冻结 / 转释放 / 样品转门盒 / 门盒转样品）：**方向=不影响**，
+//   · 状态类（转冻结 / 转释放门盒 / 样品转门盒 / 门盒转样品）：**方向=不影响**，
 //     只改「实时库存」的「所属状态」，数量不变。它们**不许**走 `applyChange`
 //     （走进去会被当成"增加"凭空建鞋），必须走状态变更通路——
 //     下面 `requireQuantityMovement` 就是拦这个的闸门。
@@ -96,7 +96,13 @@ const ADJUSTMENT_BEHAVIORS = Object.freeze({
   MANUAL_INCREASE: 'STOCK_MANUAL_INCREASE',
   MANUAL_DECREASE: 'STOCK_MANUAL_DECREASE',
   FREEZE: 'STOCK_FREEZE',
-  UNFREEZE: 'STOCK_UNFREEZE',
+  // ⚠️ 2026-10-08：业务负责人在生产「行为管理」表里把这条行为**改了编码**——
+  //    原来的「转释放」`STOCK_UNFREEZE` 已被她改成「转释放门盒」`STOCK_RELEASE_TO_DOOR_BOX`
+  //    （表里**不再有** `STOCK_UNFREEZE`）⇒ 代码跟着表走，这里同步成新编码。
+  //    ⚠️ 待确认：新名字/新编码字面指向「仓库 → 门盒」，但 `UNFREEZE_STATE_TRANSITION`
+  //    目前仍允许回「门盒 / 样品」两种（工作台也仍让她选）。若她确实要收窄成只回门盒，
+  //    要一并改 `UNFREEZE_STATE_TRANSITION` 与工作台入口——**确认前不动配置**。
+  UNFREEZE: 'STOCK_RELEASE_TO_DOOR_BOX',
   SAMPLE_TO_DOORBOX: 'STOCK_SAMPLE_TO_DOORBOX',
   // 门盒转样品＝补样品链路已经在用的同一个编码（见 BEHAVIOR_SAMPLE_PROMOTION），
   // 这里登记的是**同一个行为**，不是新行为：一边是"卖出去一双样品后补回来"，
@@ -112,11 +118,15 @@ const ADJUSTMENT_BEHAVIORS = Object.freeze({
 const MANUAL_DECREASE_CONSUMES = null;
 
 // ✅ 待定 ② 已定（业务负责人 2026-10-06，工作台改造需求）：
-//    **转冻结 = 门盒/样品 → 仓库；转释放 = 仓库 → 门盒/样品**（换季收鞋 / 拿鞋）。
+//    **转冻结 = 门盒/样品 → 仓库；转释放门盒 = 仓库 → 门盒/样品**（换季收鞋 / 拿鞋）。
+//    ⚠️ 待确认（2026-10-08）：她把这条行为的名字改成「转释放门盒」、编码改成
+//      `STOCK_RELEASE_TO_DOOR_BOX`（见 ADJUSTMENT_BEHAVIORS.UNFREEZE），字面指向
+//      **「仓库 → 门盒」**；但下面 `UNFREEZE_STATE_TRANSITION` 目前仍是**门盒/样品二选一**。
+//      若她确实要收窄，改这一处常量 + 工作台入口（现在仍让她选）——**确认前不动**。
 //    即采用方案 B 的形状——只改「所属状态」这一列，**不新增「冻结状态」列**。
 //    ⚠️ 方案 B 的已知代价：记录进了「仓库」以后**原来在门盒还是样品就查不到了**
 //      （「库存流水」没有操作人列、也没有指向单据的来源列，翻不回来）。
-//      所以**转释放必须由她在界面上选"回门盒还是回样品"**——
+//      所以**转释放门盒（当前口径：仓库 → 门盒/样品）必须由她在界面上选"回门盒还是回样品"**——
 //      `to: null` + `targets` 就是把这个选择权留在入口，代码不替她猜。
 const FREEZE_STATE_TRANSITION = Object.freeze({ from: ['门盒', '样品'], to: '仓库' });
 const UNFREEZE_STATE_TRANSITION = Object.freeze({ from: ['仓库'], to: null, targets: ['门盒', '样品'] });
@@ -532,7 +542,7 @@ class InventoryService {
     const state = String(input.state || '门盒');
     if (!LIVE_STATES.includes(state)) throw new Error('库存所属状态无效');
     const stockKey = `${input.productRecordId}|${size}|${state}`;
-    // 配置驱动的闸门：状态类行为（方向=不影响，含转冻结/转释放/两个"转"）不许走数量通路。
+    // 配置驱动的闸门：状态类行为（方向=不影响，含转冻结/转释放门盒/两个"转"）不许走数量通路。
     // 放在任何远端读写之前，且不改变上面几条入参校验的报错顺序。
     requireQuantityMovement(input.kind);
     // 关联键：落进本地任务记录，**重放/续跑时用它自己的那一份**（不是当前请求的）——
@@ -626,7 +636,7 @@ class InventoryService {
     });
   }
 
-  // ── 状态变更通路（人工「换季调整」：转冻结 / 转释放，以及样品 ↔ 门盒）────────
+  // ── 状态变更通路（人工「换季调整」：转冻结 / 转释放门盒，以及样品 ↔ 门盒）────────
   // 与 applyChange 的分工：
   //   · applyChange   = 数量类（增加 / 减少）——新建或删除「实时库存」记录；
   //   · transitionState = 状态类（方向=不影响）——**只改「所属状态」，一条记录都不增删**。
@@ -656,7 +666,7 @@ class InventoryService {
     const size = normalizeSize(input.size);
     const quantity = positiveInteger(input.quantity, '变更数量');
     const toState = resolveTargetState(input.kind, transition, input.toState);
-    // 单一起点（转释放：仓库）可以由配置决定；多起点（转冻结：门盒/样品）必须由入口指明，
+    // 单一起点（转释放门盒：仓库）可以由配置决定；多起点（转冻结：门盒/样品）必须由入口指明，
     // 否则"这一双原来在哪"就靠猜了。
     const fromState = fromStates.length === 1 ? fromStates[0] : String(input.fromState || '').trim();
     if (!fromStates.includes(fromState)) {

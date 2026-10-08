@@ -231,7 +231,7 @@ test('③-补 来源注册表：**只有**采购增加的来源被补了这一�
     STOCK_MANUAL_INCREASE: null,
     STOCK_MANUAL_DECREASE: null,
     STOCK_FREEZE: null,
-    STOCK_UNFREEZE: null,
+    STOCK_RELEASE_TO_DOOR_BOX: null,
     STOCK_SAMPLE_TO_DOORBOX: null,
     STOCK_DOORBOX_TO_SAMPLE: null,
   };

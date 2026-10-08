@@ -23,7 +23,7 @@ const BEHAVIORS = [
   behavior('behavior_manual_increase', 'STOCK_MANUAL_INCREASE', '手工调增', '增加'),
   behavior('behavior_manual_decrease', 'STOCK_MANUAL_DECREASE', '手工调减', '减少'),
   behavior('behavior_freeze', 'STOCK_FREEZE', '转冻结', '不影响'),
-  behavior('behavior_unfreeze', 'STOCK_UNFREEZE', '转释放', '不影响'),
+  behavior('behavior_release_to_doorbox', 'STOCK_RELEASE_TO_DOOR_BOX', '转释放门盒', '不影响'),
 ];
 
 const SIZES = [38, 40, 41, 42, 43, 44].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } }));
@@ -163,7 +163,7 @@ test('换季调整：转冻结只改「所属状态」，一条记录都不增�
   assert.equal(ledger(gateway)[0]['关联销售'], undefined, '人工调整没有来源列，整列不写');
 });
 
-test('换季调整：转释放必须由界面选回门盒还是样品', async () => {
+test('换季调整：转释放门盒必须由界面选回门盒还是样品', async () => {
   const { gateway, adjustment } = setup([unit('wh_1', '仓库'), unit('wh_2', '仓库')]);
 
   await assert.rejects(adjustment.adjustSeason({ action: ADJUSTMENT_ACTIONS.SEASON_RELEASE,
