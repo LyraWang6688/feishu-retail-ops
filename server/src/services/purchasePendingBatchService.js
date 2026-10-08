@@ -45,7 +45,15 @@ class PurchasePendingBatchService {
 
   /**
    * 候选批次（**只读**）：
-   * @returns {Promise<Array<{ batchNo: string, recordId: string, suppliers: string[] }>>}
+   * @returns {Promise<Array<{ batchNo: string, recordId: string, suppliers: string[],
+   *   reportedAt: (number|string|''), quantity: string }>>}
+   *
+   * ⭐ 2026-10-08 晚（业务负责人逐字）：「这里的文字说明，包括**供应商和创建时间以及报货数量**」，
+   *    补充口径把两个名字钉死：「采购数量用**「录入数量」**」、时间那一列的真表名是**「报货日」**
+   *    （飞书自动字段，schema 语义键 `createdAt`）。
+   *    ⇒ 这里**只多带两个字段**（`reportedAt` 原始值、`quantity` 文本），
+   *      「怎么显示 / 读不到给不给占位」是渲染层的事（模块化：换推送形式不影响这里）。
+   *    ⚠️ 两个字段都**只读**，且**读不到不算"这一批不该推"** —— 照出（她那句"绝不静默丢单"）。
    */
   async listPendingBatches() {
     const table = this.gateway.table('purchaseOrderBatch');
@@ -66,6 +74,10 @@ class PurchasePendingBatchService {
         batchNo,
         recordId: record?.record_id || '',
         suppliers: supplierIndex.get(batchNo) || [],
+        // 报货日（原值；格式化与"读不到怎么办"在渲染层）。
+        reportedAt: record?.fields?.[table?.fields?.createdAt] ?? '',
+        // 录入数量（表里的文本 / 数字都取成文本；读不到是空串）。
+        quantity: textValue(record?.fields?.[table?.fields?.quantity]).trim(),
       };
     }).filter((item) => item.batchNo);
   }

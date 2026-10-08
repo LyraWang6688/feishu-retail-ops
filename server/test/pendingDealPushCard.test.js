@@ -32,6 +32,9 @@ const { PendingDealPushService } = require('../src/services/pendingDealPushServi
 const { resolvePendingDealPushConfig } = require('../src/config/pendingDealPush');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { visibleCardText } = require('../src/utils/pendingDealPushCard');
+// ⭐ 2026-10-08（第一步）：候选口径变成"逐件 / 逐条一行" ⇒ 本文件里那些"单据对象"
+//   统一由这个翻译器变成**行**（业务口径由 `pendingPushCandidateCaliber.test.js` 直接盯住）。
+const { fakeCandidates, saleRowsFromOrders } = require('./helpers/pendingPushTestData');
 
 const tmpStore = (prefix) =>
   new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), prefix)), idField: 'task_id' });
@@ -97,18 +100,14 @@ const fakeGateway = (records = {}) => ({
 
 const newService = ({
   orders = [], records = {}, settings: overrides = {}, client: injected, locator, store,
-  purchasePending,
+  purchasePending, candidates,
 } = {}) => {
   const { client, creates } = injected ? { client: injected, creates: injected.creates } : fakeClient();
   const service = new PendingDealPushService({
     settings: settings(overrides),
-    secondDelivery: {
-      client,
-      listPendingDeliveries: async ({ includeItems } = {}) => {
-        assert.equal(includeItems, true, '货号尺码要靠 includeItems 拿（不额外读一遍销售明细）');
-        return orders;
-      },
-    },
+    // ⚠️ 2026-10-08（第一步）：候选**不再**从 `secondDelivery.listPendingDeliveries` 来
+    //（那个方法被成交提醒共用、一个字都不许改）⇒ 注入候选取数的替身。
+    candidates: candidates || fakeCandidates({ orders }),
     locator: locator || new SalesGroupThreadLocator({ store: tmpStore('pending-card-mapping-') }),
     resolver: new LarkMessageLinkResolver({ client: {}, lookupEnabled: false }),
     client,
@@ -194,7 +193,15 @@ test('⑨ 采购区：为空时整块（含它前面那条分割线）都不出�
     purchaseOrderBatch: [{ record_id: 'bat_1', fields: { 报货批次号: 'CGD-20261008-0001', 到货状态: '未到货' } }],
     purchaseReport: [{ record_id: 'rep_1', fields: { 报货批次号: 'CGD-20261008-0001', 供应商: ['金猴'] } }],
   };
-  const filled = newService({ orders: [], records });
+  const filled = newService({
+    orders: [],
+    records,
+    // 采购候选也走**同一条候选入口**（真实口径由 PurchasePendingBatchService 取，
+    // 这里只喂一条"批次 + 供应商"的行给渲染层）。
+    candidates: fakeCandidates({
+      purchase: [{ batchNo: 'CGD-20261008-0001', suppliers: ['金猴'], reportedAt: '', quantity: '' }],
+    }),
+  });
   const filledResult = await filled.service.sendDailyPush({ now: DAY });
   assert.equal(filledResult.purchaseBatchCount, 1);
   const card = cardOf(filled.creates[0]);
@@ -206,7 +213,10 @@ test('⑨ 采购区：为空时整块（含它前面那条分割线）都不出�
   const row = card.elements[1];
   assert.equal(row.tag, 'column_set');
   assert.equal(row.columns.length, 1, '没有深链 ⇒ 只出第 1 栏');
-  assert.equal(row.columns[0].elements[0].text.content, 'CGD-20261008-0001 · 金猴');
+  // ⭐ 2026-10-08 晚：采购那行末尾加了她点名的两样（报货日 + 录入数量）；
+  //    这一批没填过那两列 ⇒ 给占位（**不编值**、也不让这一行消失）。
+  assert.equal(row.columns[0].elements[0].text.content,
+    'CGD-20261008-0001 · 金猴 · 报货日 （未读到） · 录入数量 （未读到）');
   assert.match(card.elements[2].elements[0].content, /^（1 批的深链暂不可用/);
 });
 
@@ -269,27 +279,29 @@ test('② 一单多件逐件列出；配品没有尺码 → 不拼「码」，�
 
 test('④ 待收 0 → 「已付清」；金额读不出来 → **整段不渲染**（不出现 ¥— / ¥0.00 / NaN）', () => {
   const { service } = newService({ orders: [] });
-  const paidUp = service.buildCardRow({ ...CASH_PENDING, pendingAmount: 0 });
+  // ⚠️ 2026-10-08（第一步）：`buildCardRow` 的入参是**行**（`{ facts, pendingAmount, url }`）。
+  const rowOf = (order) => saleRowsFromOrders([order])[0];
+  const paidUp = service.buildCardRow({ ...rowOf(CASH_PENDING), pendingAmount: 0 });
   assert.ok(paidUp.text.includes('已付清'), paidUp.text);
   assert.ok(!paidUp.text.includes('待收 ¥'), '不许再渲染「待收 ¥0.00」');
 
-  const unknown = service.buildCardRow({ ...CASH_PENDING, pendingAmount: null });
+  const unknown = service.buildCardRow({ ...rowOf(CASH_PENDING), pendingAmount: null });
   assert.ok(!unknown.text.includes('¥'), `金额拿不到不许渲染占位：${unknown.text}`);
   assert.ok(!unknown.text.includes('NaN'));
   assert.equal(unknown.text, '**6A637-7 43码**',
     '空的金额段整段不要，也不留空的 · ');
   // 有深链时按钮那栏照旧在（金额缺席不影响它）。
   assert.equal(
-    service.buildCardRow({ ...CASH_PENDING, pendingAmount: null, url: APP_LINK }).url, APP_LINK,
+    service.buildCardRow({ ...rowOf(CASH_PENDING), pendingAmount: null, url: APP_LINK }).url, APP_LINK,
   );
   // 货号/尺码读不出来 → 给占位，**绝不静默丢掉这一行**。
-  const noItem = service.buildCardRow({ ...CASH_PENDING, items: [], pendingAmount: null });
+  const noItem = service.buildCardRow({ ...rowOf(CASH_PENDING), facts: [], pendingAmount: null });
   assert.match(noItem.text, /未读到货号\/尺码/);
 
   // 纯文本降级那边同一套口径（段序与卡片一致）。
-  const text = service.buildLine({ ...CASH_PENDING, pendingAmount: null, url: '' }, 0, '【现货待收】');
+  const text = service.buildLine({ ...rowOf(CASH_PENDING), pendingAmount: null, url: '' }, 0, '【现货待收】');
   assert.equal(text, '1. 6A637-7 43码 · 【现货待收】');
-  assert.equal(service.buildLine({ ...CASH_PENDING, pendingAmount: 0, url: '' }, 0, '【现货待收】'),
+  assert.equal(service.buildLine({ ...rowOf(CASH_PENDING), pendingAmount: 0, url: '' }, 0, '【现货待收】'),
     '1. 6A637-7 43码 · 【现货待收】 · 已付清');
 });
 
@@ -403,7 +415,15 @@ test('A5 深链缺失脚注仍然进卡片（note 元素），销售 / 采购各
     purchaseReport: [],
   };
   const locator = await withLinks([RESERVED], { appLink: '' });
-  const { service, creates } = newService({ orders: [RESERVED], records, locator });
+  const { service, creates } = newService({
+    orders: [RESERVED],
+    records,
+    locator,
+    candidates: fakeCandidates({
+      orders: [RESERVED],
+      purchase: [{ batchNo: 'CGD-20261008-0001', suppliers: [], reportedAt: '', quantity: '' }],
+    }),
+  });
   await service.sendDailyPush({ now: DAY });
   const note = elementsOf(creates[0]).find((element) => element.tag === 'note');
   const lines = note.elements[0].content.split('\n');

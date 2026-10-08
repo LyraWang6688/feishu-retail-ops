@@ -9,8 +9,13 @@ const { LarkMessagePinService } = require('./larkMessagePinService');
 // 抽成独立 service：本类只管"这条推送长什么样"，"哪些批次该推"是另一件事。
 const { PurchasePendingBatchService } = require('./purchasePendingBatchService');
 const { PurchaseBatchLocator } = require('./purchaseBatchLocator');
+// ⭐ 2026-10-08（第一步）：三块候选的**取数**单独一条（不给 9 点推送再复用
+//   `listPendingDeliveries` —— 那个方法被「二次交付成交提醒」共用，改它两条都会变）。
+const { PendingPushCandidateService } = require('./pendingPushCandidateService');
 const { shanghaiDayKey } = require('./saleLookupService');
-const { resolvePendingDealPushConfig, pendingDealPushCriterionFor } = require('../config/pendingDealPush');
+// ⭐ 2026-10-08 晚：采购那行的「报货日」怎么显示（上海自然日）—— 与取数那边**同一处实现**。
+const { formatReportedAtText } = require('./reportedAt');
+const { resolvePendingDealPushConfig } = require('../config/pendingDealPush');
 // ⭐ 2026-10-08：卡片骨架（纯函数；只排布）+ 同一套"段与段怎么拼"的规矩（两处只留一处）。
 const { pendingDealPushCard, joinLineSegments } = require('../utils/pendingDealPushCard');
 // ⭐ 2026-10-08：飞书错误里的真实 code / msg / log_id / method_id（唯一取用口）。
@@ -39,22 +44,31 @@ const { logInfo, logWarn } = require('../utils/logger');
 //     第一次失败**不算跑过**，按 `retryDelaysMs`（默认 5/15 分钟）各重试一次，成功即停、绝不重发。
 //
 // 🔴 2026-10-07 口径大改：交易类型 = **库存有没有**（现货 / 预定），「未付」不再是类型。
-//   ⇒ 候选源 = 「**预定（未交付）**」＋「**现货但钱没结清**」（= 尚未完成履约）；
-//     分区**不再按交易类型编码**，改按**履约状态**判（`pendingDealPushCriterionFor`）。
+//   ⭐ 2026-10-08（第一步）这一层具体化成**行级**判据，见下面 `PendingPushCandidateService`：
+//     【预定】= 销售明细 **履约状态 ≠ 已交付**（含「未交付」，售后那三种已被整单排除）；
+//     【现货待收】= 收款明细 **收款状态 = 未收款** 且 **交易类型含「现货」**。
+//   ⇒ 原来那个"整单是否已交付"的判据函数（`pendingDealPushCriterionFor`）**已不再被本链路使用**
+//     （成交提醒那边也不看它）—— 判据现在长在**行**上。
 //
 // 三件事刻意**不复用第二遍**：
-//   · 「哪些单要推」= **直接复用** `SecondDeliveryService.listPendingDeliveries`
-//     （最近 7 天里**尚未完成履约**的已入账销售单）。口径只有一处实现，
-//     这里一个字都不重写——将来口径变了（比如窗口从 7 天改成 10 天），改那一处即可。
-//     ⚠️ 2026-10-07 只向它**多要了两样既有数据的投影**：`fulfillmentStatus`（分区判据）与
-//     `items`（货号 + 尺码的事实，走 `includeItems: true`）；**筛选与金额口径一个字没动**。
-//     ⚠️ 2026-10-08：**退货 / 换货 / 赔货的单不进候选**这条规则落在**候选那一处**
-//     （`listPendingDeliveries` 的显式排除），不在这里再判一遍——两条推送共用同一份候选口径。
+//   · 「哪些**行**要推」= ⭐ 2026-10-08（第一步）改成**自己那条取数**
+//     （`PendingPushCandidateService`）：【预定】= 销售明细里 **履约状态 = 未交付** 的**逐件**行、
+//     【现货待收】= 收款明细里 **收款状态 = 未收款** 且 **交易类型含「现货」** 的**逐条**行。
+//     🔴 **没有再复用** `SecondDeliveryService.listPendingDeliveries`（那个方法按**销售主表**聚合、
+//     判据是整单履约状态，而且被「二次交付成交提醒」共用）——改它两条推送都会变，
+//     所以 9 点推送**单独取一条候选**（`docs/push-blocks-caliber-2026-10-08.md` 第一步）。
+//     ⚠️ 唯一**借用**的是它身上那两句既有实现：`loadItemIndex()`（货品/配品的整表索引）与
+//     `resolveDetailSize()`（关联「尺码管理」的共享解析）—— 那两句在 `includeItems` 那条路上也读，
+//     不抄第二份；替身没有它们时这一轮没有货号事实（给占位、**那行照出**）。
+//     ⚠️ 两块的**判据**（明细是否未交付 / 收款是否现货 / 金额怎么算）只在
+//     `PendingPushCandidateService` + `config/pendingPushCandidates` 那一处；
+//     这里只按行自己的 `criterion` **分组**，不重新判一遍。
 //   · 「这笔单当初是哪条群消息」= `SalesGroupThreadLocator`（本地映射，不写业务表）。
 //   · 「深链怎么来」= `LarkMessageLinkResolver`（**只认真链接**：本地存的 → 现查；
 //     拿不到就返回空，**绝不自己拼 URL**——运营兜底模板那个口子 2026-10-06 已删）。
 //     ⚠️ 深链今天**基本拿不到**，原因与后续方案见
 //     `docs/reports/group-message-deep-link-2026-10-06.md`。
+//     ⚠️ **一行一个链接**：同一单的多行共用同一条（按销售单 record id 去重解析）。
 //
 // 与「第二次交付」提醒（`secondDeliveryService.sendDailyReminder`）是**两条独立的推送**：
 // 那一条发**群卡片**、带「成交」按钮、点了会写库；这一条只发**一条提醒**、点进去
@@ -78,7 +92,8 @@ const { logInfo, logWarn } = require('../utils/logger');
 // ⚠️ **失败不再等于"今天跑过了"** —— 这正是 2026-10-08 那次"09:05 失败 ⇒ 一整天不再发"的坑。
 const dayMarkerId = (dayKey) => `pending_deal_push_day_${dayKey}`;
 
-// 金额：**只在显示这一层**格式化；业务计算一律用 listPendingDeliveries 给的分。
+// 金额：**只在显示这一层**格式化；业务计算在**取数那一处**
+// （【预定】走 `progressFromRecords` 的 `pendingAmount`；【现货待收】= 那条收款明细的「收款金额」）。
 // ⚠️ 三个分支各有各的口径（业务负责人 2026-10-08 点名的两条 nit）：
 //   · `0`        → 「已付清」（不再渲染「待收 ¥0.00」——那笔其实已付清）；
 //   · 读不出来    → `known:false` ⇒ 调用方**整段不要**（绝不渲染 `¥—`，更不能变成 `¥0.00`：
@@ -104,25 +119,29 @@ const fillLinePart = (template, values) => fillTemplate(template, values).replac
 class PendingDealPushService {
   constructor(options = {}) {
     // 配置在这里**读一次**（启动时）：写错要在服务起来的那一刻就吵，而不是等第二天 9 点。
-    this.settings = options.settings || resolvePendingDealPushConfig();
-    this.secondDelivery = options.secondDelivery || new SecondDeliveryService();
+    // ⚠️ 惰性解析（只解析一次）：注入候选取数的用例不必把整份文案配置读出来 ——
+    //    与 2026-10-08 之前"构造时就 `resolvePendingDealPushConfig()`"的行为对调用方一致。
+    this._settings = options.settings || null;
+    // ⚠️ 依赖**全部惰性自建**（只建一次、只在该用到时）：
+    //   · 生产那条路（`app.js` 只传 settings）第一次推送时按需建；
+    //   · 单测里的替身一律走 `options.*`（例：`candidates` / `purchasePending`），
+    //     于是**连飞书 client 都不会去建**（构造时建会要凭证 → 既有用例会红）。
+    this._secondDelivery = options.secondDelivery || null;
+    this._gateway = options.gateway || null;
+    this._purchasePending = options.purchasePending || null;
+    this._candidates = options.candidates || null;
+    this._client = options.client || null;
+    // 采购区的两个可选注入（惰性自建时要转交给 `PurchasePendingBatchService`）。
+    this._batchLocator = options.batchLocator || null;
+    this._arrivalStatus = options.arrivalStatus;
+    this._candidateSettings = options.candidateSettings;
     this.locator = options.locator || new SalesGroupThreadLocator();
-    this.client = options.client || this.secondDelivery.client;
     this.resolver = options.resolver || new LarkMessageLinkResolver({
       client: this.client,
       lookupEnabled: this.settings.linkLookupEnabled,
     });
     // 群 id：显式传了就用它（测试注入）；传 `undefined` = 按配置每次现读。
     this.chatId = options.chatId;
-    // ⭐ 【采购】区（2026-10-07）：候选 = 「报货批次」里 到货状态 = 未到货。
-    // ⚠️ gateway **按需自建**（复用本类已有的那个飞书 client，与销售侧同一个应用）：
-    //   `app.js` 只传 `settings` 进来，所以这里不能要求外部必须注入 gateway
-    //   （那条链路的起法一行都不用改）。要注入时传 `options.gateway` 即可。
-    this.purchasePending = options.purchasePending || new PurchasePendingBatchService({
-      gateway: options.gateway || new V1BitableGateway({ client: this.client }),
-      batchLocator: options.batchLocator || new PurchaseBatchLocator(),
-      settings: options.arrivalStatus,
-    });
     this.store = options.store || new JsonTaskStore({
       dir: path.join(__dirname, '../../data/pending_deal_push'), idField: 'task_id',
     });
@@ -147,51 +166,166 @@ class PendingDealPushService {
     this.run = Promise.resolve();
   }
 
+  /** 配置（**只解析一次**；显式注入的以注入的为准）。读取成本与"构造时读一次"等价。 */
+  get settings() {
+    if (!this._settings) this._settings = resolvePendingDealPushConfig();
+    return this._settings;
+  }
+
   /**
-   * 候选单：**复用**第二次交付那套筛选，不重写口径。
-   * ⚠️ `includeItems: true` = 顺带把「货号 + 尺码」的事实要回来。它**不改筛选**：
-   *    只是把本轮已经读进来的销售明细投影成 `items`（外加整表读一次「货品信息」）。
-   * ⚠️ 2026-10-08：「明细含 已退货 / 已换货 / 已赔货 的单**不进**」这条规则在**那一处**统一排除。
+   * 飞书 client：显式注入的优先；否则用「第二次交付」那个 service 身上的
+   * （它本来就持有网关与 client —— 不为这条推送另建一个应用连接）。
    */
-  listPendingOrders({ now }) {
-    return this.secondDelivery.listPendingDeliveries({ now, includeItems: true });
+  get client() {
+    if (this._client) return this._client;
+    this._client = this.secondDelivery?.client || undefined;
+    return this._client;
+  }
+
+  /** 读表网关（**全仓共享一个「网关」概念**；这里只按 client 建一次）。 */
+  get gateway() {
+    if (!this._gateway) this._gateway = new V1BitableGateway({ client: this.client });
+    return this._gateway;
+  }
+
+  /**
+   * 「第二次交付」service：**只借用**它身上那两句既有实现
+   * （`loadItemIndex()` / `resolveDetailSize()`，见 `candidates` 的注释），
+   * 以及它的网关 / client。⚠️ 它的 `listPendingDeliveries` 本链路**一次都不调**
+   * （那个方法被「二次交付成交提醒」共用，一个字都不许改）。
+   */
+  get secondDelivery() {
+    if (!this._secondDelivery) this._secondDelivery = new SecondDeliveryService();
+    return this._secondDelivery;
+  }
+
+  /**
+   * ⭐【采购】区（2026-10-07）：候选 = 「报货批次」里 到货状态 = 未到货。
+   * ⚠️ gateway **按需自建**（复用本类已有的那个飞书 client，与销售侧同一个应用）：
+   *   `app.js` 只传 `settings` 进来，所以这里不能要求外部必须注入 gateway
+   *   （那条链路的起法一行都不用改）。要注入时传 `options.gateway` 即可。
+   */
+  get purchasePending() {
+    if (!this._purchasePending) {
+      this._purchasePending = new PurchasePendingBatchService({
+        gateway: this.gateway,
+        batchLocator: this._batchLocator || (this._batchLocator = new PurchaseBatchLocator()),
+        settings: this._arrivalStatus,
+      });
+    }
+    return this._purchasePending;
+  }
+
+  /**
+   * ⭐ 2026-10-08（第一步）：三块候选（【预定】【现货待收】【采购】）**单独取数**。
+   *   · 只给这条路用；**没有**复用 `SecondDeliveryService.listPendingDeliveries`；
+   *   · 拿到本类已有的那个采购 service（它只干"哪些批次该推"），不重复建一个；
+   *   · 货号/颜色/尺码复用 `secondDelivery.loadItemIndex` / `resolveDetailSize`
+   *     —— 那两句的实现在第二交付那边（`includeItems` 那条路也读它们），不抄第二份。
+   *   · 只有生产那个 `SecondDeliveryService` 身上有这两个方法；替身（旧用例的 stub）
+   *     没有 → 那一轮没有货号事实，渲染层给占位、**那一行照出**（绝不静默丢单）。
+   */
+  get candidates() {
+    if (!this._candidates) {
+      this._candidates = new PendingPushCandidateService({
+        gateway: this.gateway,
+        // ⚠️ 尺码那一路由那个 service 自己从 `secondDelivery.resolveDetailSize` 取
+        //   （它构造时就接了；替身没有那个方法时会退回自建的共享尺码解析）。
+        secondDelivery: this.secondDelivery,
+        purchasePending: this.purchasePending,
+        settings: this._candidateSettings,
+      });
+    }
+    return this._candidates;
+  }
+
+  /**
+   * 三块候选（**自己那条取数**，见 `PendingPushCandidateService`）：
+   *   · `sections` —— 【预定】/【现货待收】两块按**配置顺序**排好、空块已经不在里面；
+   *   · `rows`     —— 上面那些行的**扁平视图**（深链、计数、落盘、脚注都按它算）。
+   * ⚠️ 这是**唯一**的候选入口：渲染层不认识"销售单聚合"，只认识"一行"。
+   */
+  async listPendingOrders({ now } = {}) {
+    const { sales = [], cash = [], purchase = [] } = await this.candidates.listCandidates({ now });
+    const sections = this.buildSections([...sales, ...cash]);
+    const rows = sections.flatMap((section) => section.rows);
+    return { sections, rows, purchase };
+  }
+
+  /**
+   * 分区：把候选**行**按行自己的 `criterion`（= 配置里的判据）分进配置声明的区块，
+   * **按配置顺序**返回。
+   *   · 只返回**有行**的区块（空区块不显示，全空时根本走不到这里）；
+   *   · 判据不认得已声明区块的行，落进兜底区块（`otherTitle`）——**宁可多显示一块，
+   *     也不让任何一行从清单里静默消失**；
+   *   · `tagColor` 供卡片上的彩色标签用（文本渲染不看它）。
+   * ⚠️ 判据由**取数那一处**给（`PendingPushCandidateService`：明细是否未交付 / 收款是否现货），
+   *    这里只做分组，**不重新判一遍**（两处判迟早走歪）。
+   */
+  buildSections(rows = []) {
+    const { blocks = [], otherTitle = '' } = this.settings;
+    const byKey = new Map(blocks.map((block) => [block.key, []]));
+    const unclassified = [];
+    for (const row of rows) {
+      const block = blocks.find((candidate) => candidate.criterion && candidate.criterion === row.criterion);
+      if (block) byKey.get(block.key).push(row);
+      else unclassified.push(row);
+    }
+    const sections = blocks
+      .map((block) => ({ key: block.key, title: block.title, tagColor: block.tagColor, rows: byKey.get(block.key) }))
+      .filter((section) => section.rows.length);
+    if (unclassified.length) sections.push({ key: 'other', title: otherTitle, tagColor: '', rows: unclassified });
+    return sections;
   }
 
   /**
    * 每笔单 → 它当初那条群消息 → 深链。
    *
-   * 映射查不到 / 深链拿不到都**不抛**：这两种都不是致命错误（业务负责人要的是"货号尺码 + 金额"
+   * ⚠️ **一行一个链接**：同一单的多行（预定逐件、现货待收并列）**共用同一条**深链 ——
+   *    查映射、解析都按**销售单 record id** 去重（一张单只查一次），行只拿结果。
+   *
+   * 映射查不到 / 深链拿不到都**不抛**：这两种都不是致命错误（业务负责人要的是"货号颜色尺码 + 金额"
    * 先看得见），但要**留下可排查的计数**，见 `missingLinkCount` 与那两条日志。
    */
-  async attachLinks(orders) {
+  async attachLinks(rows = []) {
     const linked = [];
+    const cache = new Map();
     let missingLinkCount = 0;
-    for (const order of orders) {
-      const record = await this.locator.findBySalesEntryRecordId(order.salesEntryRecordId)
-        .catch((error) => {
-          logWarn('sales.pending_deal_push.mapping.lookup_failed', {
-            sales_entry_record_id: order.salesEntryRecordId, error: error.message,
-          });
-          return null;
-        });
-      const { url, source } = await this.resolver.resolve({
-        // 飞书深链优先；没有就用**按她给的话题格式拼的那条**（今天真正管用的一条）。
-        storedAppLink: record?.app_link,
-        storedThreadLink: record?.thread_link,
-        messageId: record?.message_id,
-        threadId: record?.thread_id,
-        chatId: record?.chat_id,
-      });
-      if (!url) missingLinkCount += 1;
-      linked.push({
-        ...order,
-        messageId: record?.message_id || '',
-        threadId: record?.thread_id || '',
-        url,
-        linkSource: source,
-      });
+    for (const row of rows) {
+      const salesEntryRecordId = row.salesEntryRecordId || '';
+      if (!cache.has(salesEntryRecordId)) {
+        cache.set(salesEntryRecordId, await this.resolveLinkForOrder(salesEntryRecordId));
+      }
+      const resolved = cache.get(salesEntryRecordId);
+      if (!resolved.url) missingLinkCount += 1;
+      linked.push({ ...row, ...resolved, url: resolved.url });
     }
-    return { orders: linked, missingLinkCount };
+    return { rows: linked, missingLinkCount };
+  }
+
+  /** 一笔销售单的深链素材（同一条单只解析一次；`attachLinks` 负责去重）。 */
+  async resolveLinkForOrder(salesEntryRecordId) {
+    const record = await this.locator.findBySalesEntryRecordId(salesEntryRecordId)
+      .catch((error) => {
+        logWarn('sales.pending_deal_push.mapping.lookup_failed', {
+          sales_entry_record_id: salesEntryRecordId, error: error.message,
+        });
+        return null;
+      });
+    const { url, source } = await this.resolver.resolve({
+      // 飞书深链优先；没有就用**按她给的话题格式拼的那条**（今天真正管用的一条）。
+      storedAppLink: record?.app_link,
+      storedThreadLink: record?.thread_link,
+      messageId: record?.message_id,
+      threadId: record?.thread_id,
+      chatId: record?.chat_id,
+    });
+    return {
+      messageId: record?.message_id || '',
+      threadId: record?.thread_id || '',
+      url,
+      linkSource: source,
+    };
   }
 
   /**
@@ -227,31 +361,6 @@ class PendingDealPushService {
     }
     return { batches: linked, missingLinkCount };
   }
-
-  /**
-   * 分区：把候选单按**履约判据**分进配置声明的区块，**按配置顺序**返回。
-   *   · 只返回**有单**的区块（空区块不显示，全空时根本走不到这里）；
-   *   · 判据不认得已声明区块的单，落进兜底区块（`otherTitle`）——**宁可多显示一块，
-   *     也不让任何一笔单从清单里静默消失**。
-   *   · `tagColor` 供卡片上的彩色标签用（文本渲染不看它）。
-   */
-  buildSections(orders = []) {
-    const { blocks = [], otherTitle = '' } = this.settings;
-    const byKey = new Map(blocks.map((block) => [block.key, []]));
-    const unclassified = [];
-    for (const order of orders) {
-      const criterion = pendingDealPushCriterionFor(order);
-      const block = blocks.find((candidate) => candidate.criterion && candidate.criterion === criterion);
-      if (block) byKey.get(block.key).push(order);
-      else unclassified.push(order);
-    }
-    const sections = blocks
-      .map((block) => ({ key: block.key, title: block.title, tagColor: block.tagColor, orders: byKey.get(block.key) }))
-      .filter((section) => section.orders.length);
-    if (unclassified.length) sections.push({ key: 'other', title: otherTitle, tagColor: '', orders: unclassified });
-    return sections;
-  }
-
   /**
    * 一件商品：`货号 [颜色] 尺码码`。
    * ⭐ 2026-10-08 晚（业务负责人：「还需要在**货号和尺码中间**加上**颜色**」）⇒ `{color}` 进模板。
@@ -271,9 +380,9 @@ class PendingDealPushService {
       .join(itemSeparator);
   }
 
-  /** 这一单的待收金额（三态：已付清 / 有数 / 读不出来）。 */
-  amountOf(order = {}) {
-    return amountValueOf(order.pendingAmount, this.settings.paidUpText);
+  /** 一行（销售侧）的待收金额（三态：已付清 / 有数 / 读不出来）。 */
+  amountOf(row = {}) {
+    return amountValueOf(row.pendingAmount, this.settings.paidUpText);
   }
 
   /** 纯文本降级里的**链接段**：`查看原话 https://…`（纯文本藏不住 URL，但至少不再是一行裸链接）。 */
@@ -282,23 +391,30 @@ class PendingDealPushService {
     return fillLinePart(this.settings.linkTextTemplate, { text: this.settings.linkText, url });
   }
 
+  /** 这一行的事实 → `货号 颜色 尺码`（配品没有尺码 ⇒ 不拼「码」；取不到 ⇒ 空串）。 */
+  itemsTextOf(row = {}) {
+    const facts = Array.isArray(row.facts) ? row.facts : (row.facts ? [row.facts] : []);
+    return this.buildItemText(facts.filter(Boolean));
+  }
+
   /**
-   * 一笔单一行（**纯文本降级**版）：序号 + 【预定/现货待收】 + 货号 尺码 + 待收金额 + 查看原话。
+   * **一行**（纯文本降级版）：序号 + 【预定/现货待收】 + 货号 颜色 尺码 + 待收金额 + 查看话题。
    * 逐段拼、**空的段整段不要** —— 没货号尺码 / 没深链 / 金额读不出来时不会留下 ` · ` 或空壳。
    * ⚠️ 2026-10-08：**不再出现单号**（她明确说不需要）。
+   * ⚠️ 一行 = 一条记录（【预定】一条明细 / 【现货待收】一条收款明细），多行**各自**一行。
    */
-  buildLine(order, index, tag) {
+  buildLine(row, index, tag) {
     const { lineParts = [], lineSeparator = ' ', amountTemplate = '' } = this.settings;
-    const amount = this.amountOf(order);
+    const amount = this.amountOf(row);
     const values = {
       index: index + 1,
-      orderNo: order.orderNo || '',
+      orderNo: row.orderNo || '',
       tag: tag || '',
-      item: this.buildItemText(order.items),
+      item: this.itemsTextOf(row),
       amount: amount.known
         ? (amount.paidUp ? amount.text : fillTemplate(amountTemplate, { amount: amount.text }))
         : '',
-      link: this.textLinkOf(order.url),
+      link: this.textLinkOf(row.url),
     };
     return joinLineSegments(
       lineParts.map((part) => fillLinePart(part, values)),
@@ -307,17 +423,17 @@ class PendingDealPushService {
   }
 
   /**
-   * 一笔单一行（**卡片·两栏版**，2026-10-08 晚她的口径）：
-   *   第 1 栏 = **文字说明**（加粗货号+尺码 · 待收金额 / 已付清）；第 2 栏 = 「查看话题」按钮。
+   * **一行**（卡片·两栏版，2026-10-08 晚她的口径）：
+   *   第 1 栏 = **文字说明**（加粗货号颜色尺码 · 待收金额 / 已付清）；第 2 栏 = 「查看话题」按钮。
    * ⚠️ 与上一版（div 平铺：序号 + 标签 + 金额 + 文字链接）相比：
    *   · **去掉了序号、类型彩色标签、文字链接** —— 类型由**区域标题**（【预定】…）表达，
    *     链接由**按钮**表达（`utils/pendingDealPushCard` 渲染 open_url）；
    *   · 货号/尺码读不出来时给 `card.missingItemText` 占位，**绝不静默丢掉这一行**。
    */
-  buildCardRow(order) {
+  buildCardRow(row = {}) {
     const { card = {} } = this.settings;
-    const amount = this.amountOf(order);
-    const item = this.buildItemText(order.items);
+    const amount = this.amountOf(row);
+    const item = this.itemsTextOf(row);
     const values = {
       tag: '',
       index: '',
@@ -334,17 +450,25 @@ class PendingDealPushService {
     if (!item && card.missingItemText) segments.unshift(String(card.missingItemText));
     return {
       text: segments.join(card.rowTextSeparator ?? ' · '),
-      url: order.url || '',
+      url: row.url || '',
     };
   }
 
-  /** 采购区一行（**同一套两栏**）：第 1 栏 = 批次号 · 供应商；第 2 栏 = 「查看话题」。 */
+  /**
+   * 采购区一行（**同一套两栏**）：第 1 栏 = 批次号 · 供应商 · 报货日 · 录入数量；第 2 栏 = 「查看话题」。
+   * ⭐ 2026-10-08 晚：加了她点名的两样（「供应商和**创建时间**以及**报货数量**」；
+   *    数量取「录入数量」）。两个字段**读不到就给占位**（`card.missingXxxText`），
+   *    占位设成空串则整段不出现 —— 两种都**不会**让这一批消失。
+   */
   buildCardPurchaseRow(batch = {}, index = 0) {
-    const { card = {} } = this.settings;
+    const { card = {}, purchaseSupplierSeparator = '、' } = this.settings;
+    const reportedAt = formatReportedAtText(batch.reportedAt);
     const values = {
       index: index + 1,
       batchNo: batch.batchNo || '',
-      supplier: (batch.suppliers || []).join(this.settings.purchaseSupplierSeparator),
+      supplier: (batch.suppliers || []).join(purchaseSupplierSeparator),
+      reportedAt: reportedAt || card.missingReportedAtText || '',
+      quantity: String(batch.quantity ?? '').trim() || card.missingQuantityText || '',
     };
     const text = (card.purchaseRowTextParts || ['{batchNo}'])
       .map((part) => fillLinePart(part, values))
@@ -358,42 +482,42 @@ class PendingDealPushService {
    * ⚠️ 2026-10-08 文案 nit：**只有一个区块时不补分区计数** ——
    *    她真机看到的「…：5 笔（【预定】5 笔）」把同一件事说了两遍。
    */
-  buildHeader({ dayKey = '', orders = [], sections = [] } = {}) {
+  buildHeader({ dayKey = '', rows = [], sections = [] } = {}) {
     const {
       headerTemplate, blockCountsTemplate, blockCountTemplate = '', blockCountSeparator = '',
     } = this.settings;
     const counts = sections.length > 1
       ? sections
-        .map((section) => fillTemplate(blockCountTemplate, { title: section.title, count: section.orders.length }))
+        .map((section) => fillTemplate(blockCountTemplate, { title: section.title, count: section.rows.length }))
         .join(blockCountSeparator)
       : '';
     return fillTemplate(headerTemplate, {
       day: dayKey,
-      total: orders.length,
+      total: rows.length,
       blockCounts: counts ? fillTemplate(blockCountsTemplate, { counts }) : '',
     });
   }
 
   /**
-   * **销售区**（纯文本降级版）：表头（总数 + 分区计数）→ 每个有单的区块（标题 + 每单一行）
+   * **销售区**（纯文本降级版）：表头（总数 + 分区计数）→ 每个有行的区块（标题 + 每行一行）
    * → 深链缺失脚注。文案形状全在 `config/pendingDealPush`，这里只做拼装。
    *
    * ⚠️ `salesAreaTitle` 默认**空串**（不渲染）—— 她哪天要给它加大区标题，只改配置。
    */
-  buildSalesArea({ orders = [], missingLinkCount = 0, dayKey = '' } = {}) {
+  buildSalesArea({ sections = [], rows = [], missingLinkCount = 0, dayKey = '' } = {}) {
     const { sectionTemplate, footerTemplate, salesAreaTitle = '' } = this.settings;
-    const sections = this.buildSections(orders);
-    const header = this.buildHeader({ dayKey, orders, sections });
-    const body = sections.map((section) => fillTemplate(sectionTemplate, {
+    const resolved = sections || this.buildSections(rows);
+    const header = this.buildHeader({ dayKey, rows, sections: resolved });
+    const body = resolved.map((section) => fillTemplate(sectionTemplate, {
       title: section.title,
-      count: section.orders.length,
-      lines: section.orders.map((order, index) => this.buildLine(order, index, section.title)).join('\n'),
+      count: section.rows.length,
+      lines: section.rows.map((row, index) => this.buildLine(row, index, section.title)).join('\n'),
     }));
     // 深链缺失是**已知的**（见 larkMessageLinkResolver 的实测结论），
     // 在消息里说一句，免得她以为是漏发了。
     const footer = missingLinkCount ? fillTemplate(footerTemplate, { count: missingLinkCount }) : '';
     // 大区标题：空串 = **整行都不出现**。
-    const title = salesAreaTitle ? fillTemplate(salesAreaTitle, { count: orders.length }) : '';
+    const title = salesAreaTitle ? fillTemplate(salesAreaTitle, { count: rows.length }) : '';
     return [title, header, ...body, footer]
       .map((part) => String(part ?? ''))
       .filter((part) => part.trim() !== '')
@@ -403,13 +527,15 @@ class PendingDealPushService {
   /**
    * **采购区**（纯文本降级版）：大区标题（含几批）+ 每批一行 + 深链缺失脚注。
    *
-   * 一行 = 批次号 + 供应商（**取不到就没有这一段，不编**）+ 深链（拿不到就没有这一段）。
-   * 逐段拼、空的段整段不要 —— 与销售区同一套规矩（不会留下 ` · ` 或空壳）。
+   * 一行 = 批次号 + 供应商（**取不到就没有这一段，不编**）+ 报货日 + 录入数量
+   * + 深链（拿不到就没有这一段）。逐段拼、空的段整段不要 —— 与销售区同一套规矩。
+   * ⚠️ 报货日 / 录入数量读不到时给 `card.missingXxxText` 占位（**这一批照出**）；
+   *    占位设成空串则整段不出现（与卡片那半**同一套取值**，不两处各写一遍）。
    */
   buildPurchaseArea({ batches = [], missingLinkCount = 0 } = {}) {
     const {
       purchaseAreaTitle = '', purchaseLineParts = [], purchaseLineSeparator = ' ',
-      purchaseFooterTemplate = '', purchaseSupplierSeparator = '、',
+      purchaseFooterTemplate = '', purchaseSupplierSeparator = '、', card = {},
     } = this.settings;
     if (!batches.length) return '';
     const lines = batches.map((batch, index) => {
@@ -417,6 +543,8 @@ class PendingDealPushService {
         index: index + 1,
         batchNo: batch.batchNo || '',
         supplier: (batch.suppliers || []).join(purchaseSupplierSeparator),
+        reportedAt: formatReportedAtText(batch.reportedAt) || card.missingReportedAtText || '',
+        quantity: String(batch.quantity ?? '').trim() || card.missingQuantityText || '',
         link: this.textLinkOf(batch.url),
       };
       return joinLineSegments(
@@ -445,13 +573,15 @@ class PendingDealPushService {
    *    **内容与卡片同口径**（分区 / 货号尺码 / 类型 / 待收或已付清 / 查看原话），只是没有卡片样式。
    */
   buildText({
-    orders = [], missingLinkCount = 0, dayKey = '',
+    sections = [], rows = [], missingLinkCount = 0, dayKey = '',
     purchaseBatches = [], purchaseMissingLinkCount = 0,
   } = {}) {
     const { areas = ['sales', 'purchase'] } = this.settings;
     const renderers = {
       // 空区返回空串 ⇒ 连标题都不出现。
-      sales: () => (orders.length ? this.buildSalesArea({ orders, missingLinkCount, dayKey }) : ''),
+      sales: () => (rows.length
+        ? this.buildSalesArea({ sections, rows, missingLinkCount, dayKey })
+        : ''),
       purchase: () => this.buildPurchaseArea({
         batches: purchaseBatches, missingLinkCount: purchaseMissingLinkCount,
       }),
@@ -472,25 +602,24 @@ class PendingDealPushService {
    *    销售一笔都没有时套用它是在说假话；采购区自己的块标题就是那一屏的抬头。
    */
   buildCard({
-    orders = [], sections, missingLinkCount = 0, dayKey = '',
+    sections, rows = [], missingLinkCount = 0, dayKey = '',
     purchaseBatches = [], purchaseMissingLinkCount = 0,
   } = {}) {
     const {
       areas = ['sales', 'purchase'], card = {},
       blockCountTemplate = '', purchaseAreaTitle = '', salesAreaTitle = '',
-      purchaseLineParts = [], purchaseLineSeparator = ' ', purchaseSupplierSeparator = '、',
       footerTemplate = '', purchaseFooterTemplate = '',
     } = this.settings;
-    const resolvedSections = sections || this.buildSections(orders);
+    const resolvedSections = sections || this.buildSections(rows);
     const parts = [];
     for (const key of areas) {
-      if (key === 'sales' && orders.length) {
-        if (salesAreaTitle) parts.push({ text: fillTemplate(salesAreaTitle, { count: orders.length }) });
+      if (key === 'sales' && rows.length) {
+        if (salesAreaTitle) parts.push({ text: fillTemplate(salesAreaTitle, { count: rows.length }) });
         for (const section of resolvedSections) {
           parts.push({
-            title: fillTemplate(blockCountTemplate, { title: section.title, count: section.orders.length }),
+            title: fillTemplate(blockCountTemplate, { title: section.title, count: section.rows.length }),
             // ⭐ 每行 = 两栏（文字说明 | 查看话题）；区域标题就是它的"块标题"。
-            rows: section.orders.map((order) => this.buildCardRow(order)),
+            rows: section.rows.map((row) => this.buildCardRow(row)),
           });
         }
       }
@@ -513,8 +642,8 @@ class PendingDealPushService {
       //    表头那句写的是"待处理的**销售单**"，销售区排在采购区后面（`areas` 可配）时
       //    把它顶在卡片最上面会读成"这一屏是销售单" —— 那一屏其实是采购；没有销售一笔时同理。
       //    没有标题时由各块自己的加粗块标题当抬头。
-      header: (orders.length && areas[0] === 'sales')
-        ? this.buildHeader({ dayKey, orders, sections: resolvedSections })
+      header: (rows.length && areas[0] === 'sales')
+        ? this.buildHeader({ dayKey, rows, sections: resolvedSections })
         : '',
       card,
       parts,
@@ -681,20 +810,13 @@ class PendingDealPushService {
       });
     }
     try {
-      const candidates = await this.listPendingOrders({ now });
-      // ⭐ 【采购】区：候选 = 「报货批次」里 到货状态 = 未到货。
-      // ⚠️ 采购那半边**读表失败不许拖垮销售那半边**（销售是既有的、每天都在用的那条）：
-      //    读失败只记 warn，当成"今天没有采购候选"。
-      let purchaseCandidates = [];
-      try {
-        purchaseCandidates = await this.purchasePending.listPendingBatches();
-      } catch (error) {
-        logWarn('sales.pending_deal_push.purchase_candidates_failed', {
-          day: dayKey, error: error.message, ...larkErrorFields(error),
-        });
-      }
+      // ⭐ 2026-10-08（第一步）：三块候选都从**这一条**来（【预定】/【现货待收】逐行 +
+      //   「报货批次」里未到货的批次）。`listPendingOrders` 是唯一入口 ——
+      //   `SecondDeliveryService.listPendingDeliveries` 一个字都没改（它还供着成交提醒）。
+      const { sections, rows: candidateRows, purchase: purchaseCandidates = [] } =
+        await this.listPendingOrders({ now });
       // 两区都空 → 与改动前一样：**不发**（只留一条记录，当天不再试）。
-      if (!candidates.length && !purchaseCandidates.length) {
+      if (!candidateRows.length && !purchaseCandidates.length) {
         await this.store.update(dayTaskId, {
           status: 'completed', sent: false, attempts: attempt, pushed: [], reason: 'no_pending_order',
         });
@@ -704,11 +826,12 @@ class PendingDealPushService {
         return { day: dayKey, pushedOrderCount: 0, messageId: '', reason: 'no_pending_order' };
       }
 
-      const { orders, missingLinkCount } = await this.attachLinks(candidates);
+      // ⚠️ 销售侧与采购侧的深链**各自算各自的计数**（口径不同、脚注也不同）。
+      const { rows, missingLinkCount } = await this.attachLinks(candidateRows);
       if (missingLinkCount) {
-        // 一次推送只记**一条**汇总（不是每笔一条），否则日志会被刷满。
+        // 一次推送只记**一条**汇总（不是每行一条），否则日志会被刷满。
         logWarn('sales.pending_deal_push.link.missing', {
-          day: dayKey, order_count: orders.length, missing_link_count: missingLinkCount,
+          day: dayKey, row_count: rows.length, missing_link_count: missingLinkCount,
           hint: 'im.message.get 未返回 message_app_link；深链只能靠发消息时存进 sales_group_threads 的 app_link',
         });
       }
@@ -722,9 +845,9 @@ class PendingDealPushService {
           hint: '本地映射（data/purchase_group_messages）里这一批没有 chat_id + thread_id；深链只能靠发采购单时记下的那条映射',
         });
       }
-      // 「没有深链就不推」是配置项（默认**不**这样）：深链是增强，货号尺码 + 金额本身就该看得见。
+      // 「没有深链就不推」是配置项（默认**不**这样）：深链是增强，货号颜色尺码 + 金额本身就该看得见。
       // ⚠️ 这条闸门**只管销售区**：采购区拿不到深链时**照推**（她的口径是"不许因此漏掉候选"）。
-      if (linkRequired && missingLinkCount && orders.length) {
+      if (linkRequired && missingLinkCount && rows.length) {
         await this.store.update(dayTaskId, {
           status: 'completed', sent: false, attempts: attempt, pushed: [], reason: 'link_unavailable',
           missing_link_count: missingLinkCount,
@@ -736,12 +859,14 @@ class PendingDealPushService {
       }
 
       const chatId = this.chatId === undefined ? this.settings.chatId : this.chatId;
-      const sections = this.buildSections(orders);
+      // ⚠️ 区块要**带着深链**重建（`attachLinks` 之后的行才有 `url`）：
+      //    `listPendingOrders` 那一份是**没有深链**的候选形状，不能拿来渲染。
+      const linkedSections = this.buildSections(rows);
       const card = this.buildCard({
-        orders, sections, missingLinkCount, dayKey, purchaseBatches, purchaseMissingLinkCount,
+        sections: linkedSections, rows, missingLinkCount, dayKey, purchaseBatches, purchaseMissingLinkCount,
       });
       const text = this.buildText({
-        orders, missingLinkCount, dayKey, purchaseBatches, purchaseMissingLinkCount,
+        sections: linkedSections, rows, missingLinkCount, dayKey, purchaseBatches, purchaseMissingLinkCount,
       });
       const delivery = await this.deliver({ chatId, dayKey, card, text });
       const messageId = delivery.messageId;
@@ -759,9 +884,15 @@ class PendingDealPushService {
         status: 'completed', sent: true, attempts: attempt, message_id: messageId, text, card,
         message_format: delivery.format, degraded: delivery.degraded,
         retry_delays_ms: retryDelaysMs,
-        pushed: orders.map((order) => order.salesEntryRecordId),
+        // ⚠️ 落盘的"推了哪些"仍然是**销售单 record id**（跨天/跨轮的既有排查口径；
+        //    同一单的多行会重复出现 —— 那是"这一单推了几行"，不是笔数）。
+        pushed: rows.map((row) => row.salesEntryRecordId),
         missing_link_count: missingLinkCount,
-        link_sources: orders.map((order) => order.linkSource),
+        link_sources: rows.map((row) => row.linkSource),
+        // ⭐ 2026-10-08（第一步）：新增两块的**行身份**（明细记录 id / 收款明细 id），
+        //   排查"这一行到底推没推"时不必再去猜。（追加键，不改上面那些既有键的含义。）
+        pushed_rows: rows.map((row) => row.rowId),
+        pushed_row_count: rows.length,
         // 采购区的落盘字段（新增键，不改既有键的含义/形状）。
         purchase_pushed: purchaseBatches.map((batch) => batch.batchNo),
         purchase_missing_link_count: purchaseMissingLinkCount,
@@ -770,8 +901,9 @@ class PendingDealPushService {
         pin_reason: pin.reason,
       });
       logInfo('sales.pending_deal_push.sent', {
-        day: dayKey, order_count: orders.length, missing_link_count: missingLinkCount,
-        order_ids: orders.map((order) => order.salesEntryRecordId),
+        day: dayKey, order_count: rows.length, missing_link_count: missingLinkCount,
+        order_ids: [...new Set(rows.map((row) => row.salesEntryRecordId))],
+        row_ids: rows.map((row) => row.rowId),
         purchase_batch_count: purchaseBatches.length,
         purchase_missing_link_count: purchaseMissingLinkCount,
         purchase_batch_nos: purchaseBatches.map((batch) => batch.batchNo),
@@ -780,7 +912,7 @@ class PendingDealPushService {
         pinned: pin.pinned, pin_reason: pin.reason,
       });
       return {
-        day: dayKey, pushedOrderCount: orders.length, messageId, missingLinkCount, reason: '',
+        day: dayKey, pushedOrderCount: rows.length, messageId, missingLinkCount, reason: '',
         purchaseBatchCount: purchaseBatches.length,
         purchaseMissingLinkCount,
         messageFormat: delivery.format, degraded: delivery.degraded, attemptCount: attempt,

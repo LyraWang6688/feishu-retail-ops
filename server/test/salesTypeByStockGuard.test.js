@@ -69,15 +69,16 @@ test('① 待处理单推送渲染 0 命中「未付 / 预付」（分区标题�
     secondDelivery: { client: {}, listPendingDeliveries: async () => [] },
     locator: {}, resolver: {}, client: {}, chatId: 'oc_x', store: {}, pin: {},
   });
+  // ⚠️ 2026-10-08（第一步）：入口是**行**（`{ sections, rows }`），判据由取数那一处给。
+  const rows = [
+    { rowId: 'd1', salesEntryRecordId: 'a', criterion: 'undelivered', facts: [], pendingAmount: 128, url: '' },
+    { rowId: 'p1', salesEntryRecordId: 'b', criterion: 'delivered_unpaid', facts: [], pendingAmount: 228, url: '' },
+  ];
   const text = service.buildText({
     dayKey: '2026-10-07',
     missingLinkCount: 0,
-    orders: [
-      { orderNo: 'XSD-P', salesEntryRecordId: 'a', pendingAmount: 128, items: [], url: '',
-        fulfillmentStatus: '未交付' },
-      { orderNo: 'XSD-C', salesEntryRecordId: 'b', pendingAmount: 228, items: [], url: '',
-        fulfillmentStatus: '已交付' },
-    ],
+    sections: service.buildSections(rows),
+    rows,
   });
   for (const word of FORBIDDEN_IN_TEXT) {
     assert.ok(!text.includes(word), `推送文案里出现了「${word}」：\n${text}`);

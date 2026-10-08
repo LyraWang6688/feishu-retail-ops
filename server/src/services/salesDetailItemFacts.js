@@ -48,18 +48,45 @@ const itemFactsForDetails = async ({
   itemIndex = {},
   resolveSize,
 } = {}) => {
+  // ⭐ 逐条明细产出、**按明细记录 id 对齐**（不是按数组下标）：
+  //    取不到货号的那一件**不产出条目**，按下标对齐会把后面每一件都错位挂到前一行上。
+  //    这条不变式由 `itemFactsByDetail` 一处实现，9 点推送那条候选直接复用它。
+  const byDetail = await itemFactsByDetail({ details, detailFields, itemIndex, resolveSize });
   const items = [];
   let unlabeledCount = 0;
   let missingSizeCount = 0;
   for (const detail of details) {
+    const entry = byDetail.get(detail?.record_id);
+    if (!entry || !entry.item) { unlabeledCount += 1; continue; }
+    if (entry.missingSize) missingSizeCount += 1;
+    items.push(entry.item);
+  }
+  return { items, unlabeledCount, missingSizeCount };
+};
+
+/**
+ * 同一条口径，但返回**明细记录 id → 事实**的 Map（`{ item, missingSize }`）。
+ *
+ * 为什么要有这个入口：9 点推送【预定】是**逐件一行**、【现货待收】要"取它关联销售单下的明细"，
+ * 两处都得把"这一条明细是哪一件"对准**那一条明细**本身。用 Map 对齐就不会因为
+ * 某一件缺货号而把后面的件错位（这是按下标对齐时的真实错误形态）。
+ */
+const itemFactsByDetail = async ({
+  details = [],
+  detailFields = {},
+  itemIndex = {},
+  resolveSize,
+} = {}) => {
+  const byDetail = new Map();
+  for (const detail of details) {
     const link = itemLinkOfDetail(detail?.fields, detailFields);
-    if (!link) { unlabeledCount += 1; continue; }
+    if (!link) continue;
     const { kindKey, kind, recordId } = link;
     const tableKey = kind.detailTableKey;
     const recordsById = itemIndex?.[tableKey]?.byId;
     const labelField = itemIndex?.[tableKey]?.labelField;
     const itemNo = textValue(recordsById?.get(recordId)?.fields?.[labelField]).trim();
-    if (!itemNo) { unlabeledCount += 1; continue; }
+    if (!itemNo) continue;
     // ⭐ 2026-10-08 晚（业务负责人：「**还需要在货号和尺码中间加上颜色**」）：
     //    颜色取自**货品信息**上的「颜色」列（单选关联「颜色管理」；单元格文本就是颜色名）。
     //    ⚠️ 只用于**显示**（9 点推送那行「货号 颜色 尺码」）；取不到就留空，
@@ -72,11 +99,14 @@ const itemFactsForDetails = async ({
     let size = '';
     if (kind.requiresSize) {
       size = String(await resolveSize?.(detail) || '').trim();
-      if (!size) missingSizeCount += 1;
     }
-    items.push({ kind: kindKey, itemNo, color, size });
+    byDetail.set(detail.record_id, {
+      item: { kind: kindKey, itemNo, color, size },
+      // 「鞋缺尺码」= 关联了「尺码管理」但解析不出来（不是错误，是要能查的数据问题）。
+      missingSize: Boolean(kind.requiresSize && !size),
+    });
   }
-  return { items, unlabeledCount, missingSizeCount };
+  return byDetail;
 };
 
-module.exports = { itemFactsForDetails, itemLinkOfDetail };
+module.exports = { itemFactsForDetails, itemFactsByDetail, itemLinkOfDetail };
