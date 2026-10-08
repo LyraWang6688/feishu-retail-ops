@@ -2,8 +2,8 @@
  * 工作台「信息录入 → 鞋盒标签打印」页面 —— 业务负责人 2026-10-08 批准的第一个功能。
  *
  * 她点哪里 / 怎么用：
- *   ① 选条件（货号 / 所属状态 / 类别 / 尺码 / 最近新增 / 排序）→「查询可打印的标签」；
- *   ② 下面就是 A4 预览（每张 50×30mm，同款同码有几双就出几张，**每张都印**）；
+ *   ① 选条件（货号 / 所属状态 / 品类 / 尺码 / 最近新增 / 排序）→「查询可打印的标签」；
+ *   ② 下面就是 A4 预览（每张 40×30mm，**一个「编号」一张**：尺码那一项带各尺码的库存数量）；
  *   ③ 点「打印这些标签」→ 浏览器打印对话框 → 选 A4、缩放 100% → 打印 → 沿虚线剪开贴鞋盒。
  *
  * ⚠️ 排版参数**全部来自服务端** `config/labelPrint.js`（随响应 `layout` 下来，
@@ -161,12 +161,18 @@ export function createLabelPrintModule() {
   //  ⚠️ 这几个数字是**镜子**：改了服务端 config 的默认值，这里也要跟着改 —— 只影响
   //  "第一次查询就失败"那一屏，成功一次之后一律用服务端下来的 layout）。
   const fallbackLayout = () => ({
-    label: { widthMm: 50, heightMm: 30, paddingMm: 1.5 },
+    label: { widthMm: 40, heightMm: 30, paddingMm: 1.5 },
     page: { name: 'A4', widthMm: 210, heightMm: 297, marginMm: { top: 6, right: 6, bottom: 6, left: 6 } },
-    grid: { columns: 3, rows: 9, perPage: 27, usableWidthMm: 198, gapXMm: 0, gapYMm: 0 },
-    typography: { itemNoMm: 5, fieldMm: 2.6, footerMm: 1.7, qrSizeMm: 18 },
-    fields: { qr: true, itemNo: true, color: true, category: true, size: true, state: true, footer: true },
-    texts: { sizeSuffix: '码', missingValue: '—' },
+    grid: { columns: 4, rows: 9, perPage: 36, usableWidthMm: 198, gapXMm: 0, gapYMm: 0 },
+    typography: {
+      itemNoMm: 3.6, brandMm: 2.4, fieldMm: 2.8, sizeMm: 2.8, priceMm: 3.2, footerMm: 1.7, qrSizeMm: 15,
+    },
+    sizes: { perLine: 3, maxLines: 2, itemGapMm: 1, qtyFontRatio: 0.64, qtyBaselineShiftEm: 0.2 },
+    fields: {
+      qr: true, brand: true, itemNo: true, color: true, category: true,
+      size: true, price: true, state: false, footer: false,
+    },
+    texts: { missingValue: '—', overflowMark: '…', stateSeparator: '/' },
   });
 
   return {

@@ -3,6 +3,11 @@
  * 通过 CSS 变量（`--label-w` / `--qr-size` / …）与 `@page`（由 `render.js` 拼好注入）传进来，
  * 这里一个 mm 都不写死 —— 换标签纸尺寸只改服务端 config。
  *
+ * ⚠️ 版式是她 2026-10-08 **定案**的 40×30mm（打样 `docs/prototypes/label-40x30-203dpi-fit.png`）：
+ *    左二维码（竖向居中）+ 右栏自上而下 = 品牌（小灰字）· 货号（最大字）· 颜色 · 品类 ·
+ *    尺码+数量角标（最多两行，超出留 `…`）· 单价。
+ *    右栏**顶部对齐**（打样图就是这样：品牌贴着标签上沿 1.5mm），二维码**竖直居中**。
+ *
  * ⚠️ 为什么是 HTML + CSS 而不是 PNG（她 2026-10-08 的口径）：**不许用 sharp 出图**。
  *    浏览器打印走矢量二维码 + mm 单位，缩放 100% 时所见即所得，且没有任何二进制依赖。
  */
@@ -38,7 +43,7 @@
   width: var(--label-w);
   height: var(--label-h);
   padding: var(--label-pad);
-  display: flex; flex-direction: column; gap: 0.6mm;
+  display: flex; flex-direction: column;
   overflow: hidden;
   background: white;
   /* 屏幕上是虚线（看得出是一张张标签）；打印时换成细实线当裁切线。 */
@@ -47,20 +52,30 @@
   break-inside: avoid;
   page-break-inside: avoid;
 }
-/* 二维码在左、字段在右（二维码关掉时这一层只剩字段，排版不变）。 */
-.label-main { flex: 1; min-height: 0; display: flex; align-items: center; gap: 1.2mm; }
+/* 二维码在左、文字在右。二维码关掉时右栏自然占满，排版不变。 */
+.label-main { flex: 1; min-height: 0; display: flex; align-items: center; gap: var(--label-pad); }
 .label-qr { width: var(--qr-size); height: var(--qr-size); flex: none; }
 .label-qr svg { display: block; width: 100%; height: 100%; }
+/* 右栏：**顶部对齐**（打样图的版式），行与行之间靠各行的 line-height 挤紧。 */
+.label-body { flex: 1; min-width: 0; align-self: flex-start; display: flex; flex-direction: column; }
+/* 品牌：小灰字（颜色本身不在 config 里，它是"灰"这件事，不是尺寸）。 */
+.label-brand { font-size: var(--brand-size); line-height: 1.15; color: #8a8f99; }
 /* 货号是最大字，第一眼就要看到。 */
-.label-body { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
 .label-item-no {
   font-size: var(--item-no-size);
-  line-height: 1.05;
+  line-height: 1.1;
   font-weight: 800;
   letter-spacing: 0.2px;
   overflow-wrap: anywhere;
 }
 .label-field { font-size: var(--field-size); line-height: 1.25; overflow-wrap: anywhere; }
+/* 尺码那一项：每行一个 div（**分行是服务端按 config 算好的**，这里只管排）。
+   ⚠️ 角标不是 Unicode 下标字符，是真的 span：小号字 + 下沉（字号/下沉量都来自 config）。 */
+.label-sizes { display: flex; align-items: baseline; gap: var(--size-gap); font-size: var(--size-size); line-height: 1.25; }
+.label-size { white-space: nowrap; }
+.label-size-qty { font-size: var(--size-qty-size); vertical-align: var(--size-qty-shift); }
+.label-size-more { color: #333; }
+.label-price { font-size: var(--price-size); line-height: 1.15; font-weight: 700; }
 .label-footer {
   flex: none;
   padding-top: 0.4mm;
