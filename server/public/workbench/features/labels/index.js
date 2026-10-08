@@ -161,13 +161,32 @@ export function createLabelPrintModule() {
   //  ⚠️ 这几个数字是**镜子**：改了服务端 config 的默认值，这里也要跟着改 —— 只影响
   //  "第一次查询就失败"那一屏，成功一次之后一律用服务端下来的 layout）。
   const fallbackLayout = () => ({
-    label: { widthMm: 40, heightMm: 30, paddingMm: 1.5 },
+    label: { widthMm: 40, heightMm: 30, paddingMm: 1.5, borderMm: 0.2 },
     page: { name: 'A4', widthMm: 210, heightMm: 297, marginMm: { top: 6, right: 6, bottom: 6, left: 6 } },
     grid: { columns: 4, rows: 9, perPage: 36, usableWidthMm: 198, gapXMm: 0, gapYMm: 0 },
     typography: {
       itemNoMm: 3.6, brandMm: 2.4, fieldMm: 2.8, sizeMm: 2.8, priceMm: 3.2, footerMm: 1.7, qrSizeMm: 15,
     },
-    sizes: { perLine: 3, maxLines: 2, itemGapMm: 1, qtyFontRatio: 0.64, qtyBaselineShiftEm: 0.2 },
+    sizes: { perLine: 3, maxLines: 2, itemGapMm: 1, qtyFontRatio: 0.64, qtyBaselineShiftEm: 0.2, order: 'asc', compare: 'numeric' },
+    // 标签内部版式（品牌**顶部居中**、右栏行序、货号+颜色同行的超宽规则）—— 服务端 config 的镜子。
+    body: {
+      rows: ['brand', 'itemNoColor', 'price', 'state', 'sizes'],
+      brandRow: 'top',
+      brandAlign: 'center',
+      brandGapMm: 0.6,
+      qrGapMm: 1.5,
+      itemNoColor: {
+        gapMm: 1.2,
+        categorySeparator: ' · ',
+        preferColorOverCategory: true,
+        minItemNoMm: 2.4,
+        truncateMark: '…',
+        widthEm: {
+          narrow: 0.25, ascii: 0.66, wide: 0.72, cjk: 1,
+          narrowChars: [' '], wideChars: ['·', '-', '—', '/'],
+        },
+      },
+    },
     fields: {
       qr: true, brand: true, itemNo: true, color: true, category: true,
       size: true, price: true, state: false, footer: false,

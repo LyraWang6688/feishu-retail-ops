@@ -3,13 +3,18 @@
  * 按**编号**（= `货号|颜色|类别`）聚合成"**每张标签要印什么**"
  * （品牌 / 货号 / 颜色 · 品类 / 尺码+数量 / 单价 / 二维码）。
  *
- * 业务负责人 2026-10-08 **定案**的版式改造（40×30mm，打样见
- * `docs/prototypes/label-40x30-203dpi-fit.png`）：
+ * 业务负责人 2026-10-08 **定案**的版式改造（40×30mm）：
  *   · **一张标签 = 一个编号**（不是一双）—— 尺码那一项 = 该编号下**所有尺码 + 各自数量**
  *     （数量是角标：小号字下沉；**不用 Unicode 下标字符**，见 config 的 `SIZES`）；
  *   · **只印有库存（数量>0）的尺码**（0 的不印，缺号扫码看）；
- *   · 一行放不下**自动换第二行**（最多两行；再超出省略并留 `…`）—— `perLine` / `maxLines` 来自 config；
+ *   · **尺码按数值从小到大**（`38` < `40` < `100`，不是字符串序）⇒ config 的 `sizes.order` / `sizes.compare`；
+ *     一行放不下**自动换行**（最多 `maxLines` 行；再超出省略并留 `…`）—— `perLine` / `maxLines` 来自 config；
  *   · 价格印**单价**（「货品信息.单价」，按编号取）；读不到**照发标签、不印价格**并计数（不静默丢）。
+ *
+ * ⭐ **2026-10-08 她看了实物标签后的第二次定案**（「品牌顶部居中 / 货号+颜色第一行 / 价格第二行 /
+ *    下面尺码区」）改的**只是"怎么摆"**：右栏行序、品牌位置、货号+颜色同行的超宽处理都在
+ *    config 的 `BODY` 里，由页面落成 HTML/CSS —— **本文件照旧只回答"印什么"**
+ *    （唯一跟着动的是**尺码排序**，因为它属于"取什么数"）。
  *
  * ⚠️ **只读**：本文件**没有任何写入路径** —— 只调 `gateway.listAll('liveInventory' | 'product')`
  *    这两次读（`V1BitableGateway` 的 create / update / delete 一次都不调）。
@@ -115,6 +120,22 @@ const formatPrice = (amount, priceConfig = {}) => {
  * （`货号|颜色|类别`，与「货品信息.编号」同格式，见 `docs/production-base-changes-2026-10-08.md`）。
  */
 const numberOf = (row) => `${row.item_no}|${row.color || ''}|${row.category_code || ''}`;
+
+/**
+ * 尺码比较器 —— **配置先行**：`sizes.compare` 决定按数值还是按文本（她定案：**数值**，
+ * 这样 `38` < `40` < `100`；字符串序会把 `100` 排到 `38` 前面）；`sizes.order` 决定升/降序。
+ * ⚠️ 读不出数字时**不猜**：两边都退化成文本比较（而不是让 `NaN` 污染排序、把整表顺序搅乱）。
+ */
+const compareSizes = (left, right, sizesConfig = {}) => {
+  const leftNumber = Number(left);
+  const rightNumber = Number(right);
+  const numeric = sizesConfig.compare !== 'string'
+    && Number.isFinite(leftNumber) && Number.isFinite(rightNumber);
+  const delta = numeric
+    ? leftNumber - rightNumber
+    : String(left).localeCompare(String(right), 'zh-CN');
+  return sizesConfig.order === 'desc' ? -delta : delta;
+};
 
 /**
  * 尺码 + 数量 → **按每行几个自动分行**（她定案的规则 ③）。
@@ -336,7 +357,8 @@ const createLabelPrintService = (gateway, options = {}) => {
       const priceText = config.fields?.price ? formatPrice(price, config.price) : '';
       const sizes = [...group.sizes.entries()]
         .map(([sizeValue, quantity]) => ({ size: sizeValue, qty: quantity }))
-        .sort((left, right) => left.size - right.size);
+        // 尺码**按数值升序**（她 2026-10-08 定案：「按照从小到大排序」）—— 比较方式与方向都来自 config。
+        .sort((left, right) => compareSizes(left.size, right.size, config.sizes));
       const { lines, overflow } = buildSizeLines(sizes, config.sizes);
       const states = [...group.states].sort((left, right) => stateRank(left) - stateRank(right));
       const totalQty = sizes.reduce((sum, item) => sum + item.qty, 0);
@@ -458,12 +480,14 @@ const createLabelPrintService = (gateway, options = {}) => {
         sort_modes: config.sortModes,
       },
       // 排版参数（**怎么摆**）——页面把它落到 CSS 变量与 `@page` 上，逻辑里不写死 mm。
+      // `body` = 品牌摆哪（默认**顶部居中**）+ 右栏自上而下的行序 + 货号+颜色同行的超宽规则。
       layout: {
         label: config.label,
         page: config.page,
         grid: { ...grid, gapXMm: config.grid.gapXMm, gapYMm: config.grid.gapYMm },
         typography: config.typography,
         sizes: config.sizes,
+        body: config.body,
         fields: config.fields,
         texts: config.texts,
       },
@@ -480,6 +504,7 @@ module.exports = {
   createLabelPrintService,
   buildLabelScanUrl,
   buildSizeLines,
+  compareSizes,
   buildProductIndex,
   formatPrice,
   asAmount,
