@@ -142,15 +142,23 @@
 | `POST /api/lark/events`                                                                                               | 飞书事件回调（**群聊 / 群话题**消息、卡片动作；私聊消息到达但**默认不处理**）   |
 | `GET /api/lark/events/health`                                                                                         | 事件回调健康检查                        |
 | `GET /api/auth/feishu/me`、`GET /api/auth/feishu/start`、`GET /api/auth/feishu/callback`、`POST /api/auth/feishu/logout` | 工作台飞书身份认证                       |
-| `GET /api/workbench/sales/today`                                                                                      | 今日销售                            |
-| `GET /api/workbench/sales/orders`                                                                                     | 订单列表                            |
+| `GET /api/workbench/sales/orders`                                                                                     | 订单列表（交付 / 收款管理用；**写入类**那半的入口，2026-10-08 保留） |
 | `POST /api/workbench/sales/payments`                                                                                  | 补记收款                            |
 | `POST /api/workbench/sales/deliveries`                                                                                | 交付并扣减库存                         |
-| `GET /api/workbench/inventory`                                                                                        | 库存查询                            |
+| `GET /api/workbench/inventory`                                                                                        | 实时库存（⚠️ **共用**：「库存手工调整」页在用，**不是**孤儿） |
 | `GET /api/workbench/purchase/requests`、`GET /api/workbench/purchase/arrivals`                                         | 采购申请与到货查询                       |
 | `GET /workbench`                                                                                                      | 网页工作台静态页面（`GET /` 同样回落到工作台首页）   |
 | `GET /health`                                                                                                         | 健康检查（含版本与 commit）               |
 | 其余 `/api/*`                                                                                                           | 由 `API_KEY`（`x-api-key` 头）中间件保护 |
+
+> ⚠️ **2026-10-08 删除的两条自建查询接口**：`GET /api/workbench/sales/today`（今日销售）与
+> `GET /api/workbench/sales/query`（销售查询按某日 / 按区间）——
+> 业务负责人逐字：「现有的**我们自己搭的**销售查询/库存查询页面与接口（`/api/workbench/*`），
+> **顺手删掉**～」。工作台一级 tab 从 3 个改成 **2 个**：「信息录入」（原「常用功能」只改名）＋
+> 「信息查询」（销售查询 · 库存查询**两个板块** = 两张**飞书多维表格网页外链卡**，
+> 她：「这个维度上我们**不用自己搭建接口**」）。
+> ⚠️ `v1WorkbenchService.getSalesReport` / `getTodaySales` **保留**（`services/**` 当时不在改动范围内），
+> 但已无生产调用方。逐条对照见 `docs/workbench-two-tabs-and-external-query-2026-10-08.md`。
 
 - **Legacy / Removed from current V1**：`/api/recognition`、`/api/sync`、`/api/query`。对应 route 文件已在 V1 删除，只剩遗留微信链路中的痕迹，**不是**当前 V1 的主要 API，不要据此排查线上问题。
 - **部署脚本**：`server/scripts/deploy_build.sh` / `server/scripts/deploy_run.sh`

@@ -32,9 +32,15 @@ const createWorkbenchRouter = (options = {}) => {
   // 人工库存调整（盘点调整 / 换季调整）：真写「实时库存」+「库存流水」，
   // 所以放在身份闸门之后挂载（见 workbenchInventoryAdjustment.js 的说明）。
   router.use('/inventory/adjustments', createInventoryAdjustmentRouter(options.inventoryAdjustment || {}));
-  router.get('/sales/today', controller.queryTodaySales);
-  // 「销售查询」：支持 date（按某日）与 from/to（按区间）；/sales/today 保持不变。
-  router.get('/sales/query', controller.querySales);
+  // ⚠️ 2026-10-08：自建的「销售查询」接口已删（`GET /sales/query` 与老的 `GET /sales/today`）。
+  //    业务负责人的口径（逐字）：「现有的**我们自己搭的**销售查询/库存查询页面与接口（`/api/workbench/*`），
+  //    **顺手删掉**」—— 查询改走**飞书多维表格的网页外链**（前端「信息查询」两张卡，见
+  //    `public/workbench/config/query.js`），所以这一维**不再自建接口**。
+  // ⚠️ **`GET /inventory` 不是"库存查询"的孤儿**：下面这四条只读接口是
+  //    【库存手工调整】（信息录入的入口，`features/inventory/adjustment.js`）在用的
+  //    （换季调整要按品类列鞋、盘点要按尺码看三种状态的数量）⇒ **必须保留**。
+  // ⚠️ 下面的 `/sales/orders` + `/sales/payments` + `/sales/deliveries` 是**写入类**
+  //    （补记收款 / 交付并扣库存），不属于"查询"，本次**保留**（见 `docs/module-boundaries.md`）。
   // 货品选择器 / 库存数量 / 品类清单 —— 都只读，供「库存手工调整」两个子页用。
   router.get('/inventory/products', controller.queryInventoryProducts);
   router.get('/inventory/stock', controller.queryInventoryStock);

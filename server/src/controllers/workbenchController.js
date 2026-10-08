@@ -5,9 +5,9 @@ const { logError } = require('../utils/logger');
 const service = createWorkbenchService(new V1BitableGateway());
 
 // 飞书偶发「数据未准备好」(1254607)：这类要回 503 + Retry-After，让页面提示"稍后刷新"，
-// 而不是当成系统错误回 500。三个查询接口共用这一条判断。
+// 而不是当成系统错误回 500。剩下的库存类查询接口共用这一条判断。
 const isDataNotReady = (error) => /1254607|data not ready|数据未准备好/i.test(String(error?.message || ''));
-// 入参错误（日期格式 / 区间太大 / 缺货号）由 service 打 statusCode=400，
+// 入参错误（缺货号 / 尺码格式错）由 service 打 statusCode=400，
 // 原样回显她填错的地方；其余一律不回显内部细节。
 const userInputError = (error) => (error?.statusCode === 400 ? error.message : '');
 
@@ -22,32 +22,12 @@ const respondQueryFailure = (res, error, { requestId, event, fallback }) => {
   return res.status(500).json({ success: false, error: fallback });
 };
 
-const queryTodaySales = async (req, res) => {
-  try {
-    return res.json({ success: true, ...await service.getTodaySales({ date: req.query.date, requestId: req.requestId }) });
-  } catch (error) {
-    return respondQueryFailure(res, error, {
-      requestId: req.requestId, event: 'workbench.sales.query_failed', fallback: '今日销售明细查询失败',
-    });
-  }
-};
-
-// 「销售查询」：按某日（date）或按区间（from / to）。**与 /sales/today 同一套口径**，
-// 只是多了 from/to —— 老的 /sales/today 调用方不受影响。
-const querySales = async (req, res) => {
-  try {
-    return res.json({
-      success: true,
-      ...await service.getSalesReport({
-        date: req.query.date, from: req.query.from, to: req.query.to, requestId: req.requestId,
-      }),
-    });
-  } catch (error) {
-    return respondQueryFailure(res, error, {
-      requestId: req.requestId, event: 'workbench.sales.range_query_failed', fallback: '销售查询失败',
-    });
-  }
-};
+// ⚠️ 2026-10-08：`queryTodaySales`（`GET /sales/today`）与 `querySales`（`GET /sales/query`）
+// 已随**自建的销售查询**一起删除 —— 业务负责人的口径（逐字）：「现有的**我们自己搭的**
+// 销售查询/库存查询页面与接口（`/api/workbench/*`），**顺手删掉**」。
+// ⇒ 销售查询改走**飞书多维表格的网页外链**（前端「信息查询」的两张卡），这一维不再自建接口。
+// ⚠️ `v1WorkbenchService` 的 `getSalesReport` / `getTodaySales` **保留**（那个文件属
+// `server/src/services/**`，本次边界不碰），但**已没有任何生产调用方**。
 
 const queryInventory = async (req, res) => {
   try {
@@ -101,8 +81,6 @@ const queryInventoryCategories = async (req, res) => {
 };
 
 module.exports = {
-  queryTodaySales,
-  querySales,
   queryInventory,
   queryInventoryProducts,
   queryInventoryStock,

@@ -8,7 +8,14 @@
 | 收款 | 一次实际收款一条记录；同一销售单可有多笔 | `PaymentService.record(input)`；`recordInitialBatch(orderId, payments)` | 销售明细、库存变化、金额公式 |
 | 库存 | 库存流水及一双一条的实时库存 | `InventoryService.applySale(input)`；`applyPurchase(input)` | 判断订单是否已付款、解析销售或采购原文 |
 | 采购 | 报单、到货确认及采购入库事实 | `PurchaseWebhookService` 接受 record_id；确认到货后调用 `InventoryService.applyPurchase` | 销售单、收款记录 |
-| 查询 | 将飞书表记录转换为稳定的工作台响应 | `GET /api/workbench/sales/today`；`GET /api/workbench/inventory` | 写入、修正业务事实或在浏览器重复计算 |
+| 查询 | 将飞书表记录转换为稳定的工作台响应 | `GET /api/workbench/inventory`（+ `/inventory/products`、`/inventory/stock`、`/inventory/categories` —— 都是「库存手工调整」页在用） | 写入、修正业务事实或在浏览器重复计算 |
+
+> ⚠️ **2026-10-08**：`GET /api/workbench/sales/today` 与 `GET /api/workbench/sales/query` 这两条
+> **自建的销售查询接口已删除**（业务负责人逐字：「现有的**我们自己搭的**销售查询/库存查询页面与接口
+> （`/api/workbench/*`），**顺手删掉**～」）—— 销售查询 / 库存查询都改走**飞书多维表格网页外链**
+> （工作台「信息查询」两个板块的两张卡），这一维**不再自建接口**。
+> ⚠️ **`GET /api/workbench/inventory` 保留**：它是**共用**的（「库存手工调整」页在用），不是孤儿。
+> 逐条对照见 `docs/workbench-two-tabs-and-external-query-2026-10-08.md`。
 
 ## 调用顺序与不变量
 
