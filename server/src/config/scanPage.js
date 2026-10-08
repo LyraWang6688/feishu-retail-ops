@@ -19,6 +19,8 @@
  *   两者唯一共享的是二维码 URL 模板，而那个模板**不在这里**（在 `tagQrCode.js`）。
  */
 
+const { readFlag, readInt } = require('./envValue');
+
 /**
  * 路由挂载点：`GET /s/:number`。
  * ⚠️ **不放在 `/api/*` 下面**：那一段被 `API_KEY`（`x-api-key` 头）保护，
@@ -156,19 +158,90 @@ const FIELD_NAMES_PENDING_SCHEMA = Object.freeze({
  * 超限时页面给一句人话（`texts.limitTitle/Body`）+ 记一条 warn，不是静默截断。
  */
 const LIMITS = Object.freeze({
-  // 整张「实时库存」的记录数上限（一双一条；本页要按编号过滤，只能整表读）。
+  // ⚠️ 下面三条是**回退整表读**时的上限（语义与提速前一字不差）。
+  // 整张「实时库存」的记录数上限（一双一条）。
   inventoryRecords: 20000,
   // 整张「货品信息」的记录数上限（按「编号」找那一条）。
   productRecords: 20000,
   // 整张「尺码管理」的记录数上限（缺码判定用）。
   sizeRecords: 5000,
+  // ⭐ 下面两条是**按条件读**的单次结果上限：正常远小于它
+  // （一款货品的库存行 ≤ 尺码数 × 3 种状态；一个编号 1 条）。
+  // 超了说明"条件没起到过滤作用"（数据或接口异常）⇒ 同样**明确报错**，不显示半张表。
+  inventoryRowsPerNumber: 1000,
+  productRowsPerNumber: 200,
   // 一个类别的尺码清单超过这个数：缺码判定只看前 N 个（页面上写明）。
   sizesPerNumber: 100,
 });
 
 /**
+ * ⭐ 逐张表的**取数方式**（2026-10-08 提速）—— 配置先行，一键可退回。
+ *
+ * 背景：提速前这一页**每次扫码整表读三张表**（货品信息 + 实时库存 + 尺码管理），
+ * 其中「实时库存」随库存增长越来越慢（真机实测 5~9 秒）。
+ * 改成"只读这一次真正需要的那几行"。
+ *
+ * 逐张表的判据（**都已在本机 Base 上只读实测过**）：
+ *   · 「实时库存」→ 走 `filter` 公式
+ *     `OR(CurrentValue.[编号]="<这一款的编号文本>", CurrentValue.[库存键].contains("<编号>|"))`
+ *     —— 与内存里 `belongsToNumber` 的判据同源（关联命中 ∪ 公式前缀兜底），
+ *       读回来**仍然过一遍 `belongsToNumber`** ⇒ 结果集与提速前逐字一致；
+ *   · 「货品信息」→ `CurrentValue.[编号]="<编号>"` **精确匹配**（正常 1 条），
+ *       再在内存里跑同一个 `findProduct`（大小写兜底也在里面）；
+ *   · 「尺码管理」→ **保持整表读**：一共 15 条、一次请求就回来，按类别过滤省不下请求，
+ *       而缺码判定的降级路径（读不到「类别」列）反而需要整表 ⟹ 不值得多一条分支。
+ *
+ * 🔴 **用 GET `list` 的 `filter` 公式，不用官方更推荐的 `POST .../records/search`**：
+ *    本机只读实测两个接口**返回的记录形状不一样** ——
+ *    GET 的公式列是 `[{text:"…"}]`、关联列**带显示文本**（与 `listAll` 逐字同形状）；
+ *    search 的公式列是 `{type:1,value:[{text:"…"}]}`、关联列只有 `link_record_ids`
+ *    （**没有显示文本**，会让「品类」「颜色」掉成空 ⇒ 页面内容变）。详见
+ *    `services/v1BitableGateway.listByFilter` 的注释。
+ *    ⚠️ 代价：GET 的 filter **区分大小写**（实测 `编号="xhb8095|黑色|A"` 匹配不到大写那条）
+ *      —— 手打的大小写不一致走下面的整表回退（慢一次，结论不变）。
+ *
+ * ⚠️ 两种情况**自动回退整表读**（行为与提速前逐字一致，只是慢）：
+ *   ① 网关没有"按条件读"这个能力（测试桩 / 注入实现）/ 关掉了本开关 /
+ *      编号里带 `"` `\` `[` `]` 这类没法安全拼进公式的字符；
+ *   ② 飞书不认这个公式（字段改名、权限不足…）—— 记一条 warn。
+ * ⚠️ 「货品信息」按条件读**一条都没命中**时也会回退整表再找一次：
+ *   宁可慢这一次，也不许把"有货"判成"没这条编号"。
+ */
+const READS = Object.freeze({
+  // 总开关（**显式布尔**：空串 = 关掉，见 config/envValue 的规矩）。
+  // 关掉 = 回到提速前的"整表读"，用于线上出问题时一键退回。
+  filterEnabled: readFlag(process.env, 'SCAN_PAGE_FILTER_READ_ENABLED', true),
+  // ⚠️ 按条件读的结果**一条都没有**时记一条 warn（见 events.filteredEmpty）：
+  //    "库存真的为 0" 与 "filter 悄悄不生效" 在返回体上长得一样，
+  //    所以这里留一条可 grep 的日志，不当成静默的成功。
+  warnOnEmptyFilteredRead: true,
+});
+
+/**
+ * ⭐ 进程内**短 TTL 缓存**（编号 → 视图模型）—— 兜底 + 连续扫码更快。
+ *
+ * 为什么 TTL 必须短且可配：这条链路本身只读，但**库存会变**
+ * （销售 / 到货 / 手工调整都会动「实时库存」）——缓存只是"同一款连着扫几次不再重复读"
+ * 的兜底，不是数据源。写操作**不会**主动清它（那要跨模块耦合），
+ * 所以"脏窗口"就等于 `ttlMs`：默认 45 秒，进 config、可用环境变量调。
+ *
+ * ⚠️ 实现**不引新依赖**（`services/scanPageCache.js`：一个 Map + 时间戳）。
+ * ⚠️ 只缓存 `found: true` 的视图，**不缓存"没找到"**（新品刚建档就该立刻扫得到）。
+ */
+const CACHE = Object.freeze({
+  enabled: readFlag(process.env, 'SCAN_PAGE_CACHE_ENABLED', true),
+  // 30~60 秒是业务侧认可的窗口：短到"库存变了肉眼几乎撞不上"，
+  // 长到"她连着扫同一款几次"不再打飞书。
+  ttlMs: readInt(process.env, 'SCAN_PAGE_CACHE_TTL_MS', 45000, { min: 1000, max: 600000 }),
+  // 最多缓存多少个编号（LRU 近似：满了先清过期的，再淘汰最久没被用到的）。
+  maxEntries: readInt(process.env, 'SCAN_PAGE_CACHE_MAX_ENTRIES', 200, { min: 1, max: 10000 }),
+});
+
+/**
  * 结构化日志事件名（**只读**链路：只有"看了 / 没找到 / 降级 / 出错"，没有任何写入事件）。
  * 取值放这里，是为了让她那边的现象能在 PM2 日志里按一个词 grep 到。
+ * `cacheHit` / `cacheMiss` 是 2026-10-08 提速时加的：一条 `cache_hit: true/false` 就能回答
+ * "这次扫码到底有没有省掉飞书请求"。
  */
 const EVENTS = Object.freeze({
   viewed: 'scan.page.viewed',
@@ -179,6 +252,12 @@ const EVENTS = Object.freeze({
   unknownSize: 'scan.size.unresolved',
   limitExceeded: 'scan.data.limit_exceeded',
   failed: 'scan.page.failed',
+  cacheHit: 'scan.page.cache_hit',
+  cacheMiss: 'scan.page.cache_miss',
+  // 按条件读用不了 / 飞书不认这个 filter ⇒ 回退整表读（慢，但对）。
+  filterFallback: 'scan.data.filter_fallback',
+  // 按条件读**一条都没读到**（可能是库存真的为 0，也可能是 filter 没生效）。
+  filteredEmpty: 'scan.data.filtered_empty',
 });
 
 const SCAN_PAGE = Object.freeze({
@@ -190,6 +269,8 @@ const SCAN_PAGE = Object.freeze({
   price: PRICE,
   fieldNamesPendingSchema: FIELD_NAMES_PENDING_SCHEMA,
   limits: LIMITS,
+  reads: READS,
+  cache: CACHE,
   events: EVENTS,
 });
 
@@ -210,6 +291,8 @@ module.exports = {
   PRICE,
   FIELD_NAMES_PENDING_SCHEMA,
   LIMITS,
+  READS,
+  CACHE,
   EVENTS,
   fillText,
 };

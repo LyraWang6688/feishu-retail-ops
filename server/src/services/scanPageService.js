@@ -4,11 +4,24 @@
  * 输入：`编号`（= `货号|颜色|类别`，扫码 URL 里那一段）。
  * 输出：一个**给渲染层用的视图模型**（身份 / 单价 / 每个尺码 × 每种状态的库存 / 缺码标记）。
  *
- * 🔴 **只读**：本文件只调 `gateway.listAll`（外加共享的 `SizeReferenceService` 读尺码表），
+ * 🔴 **只读**：本文件只调 `gateway.listAll` / `gateway.listByFilter`（外加共享的
+ *    `SizeReferenceService` 读尺码表），
  *    全文件**没有任何 `create` / `update` / `delete`** ——
  *    这条链路是"扫码就能看"，写操作（补货 / 销售 / 验收）是下一版的事，
  *    而且必须落到 `入口隔离`（`docs/entry-isolation-2026-10-08.md`）允许共享的**业务处理层**去。
  *    `test/scanPage.test.js` 有一条用例**逐字扫这三个文件**，出现写调用就判红。
+ *
+ * ⭐ **2026-10-08 提速（业务负责人：「扫码页打开有点慢」）**：
+ *    提速前**每次扫码整表读三张表**（货品信息 + 实时库存 + 尺码管理，4+ 次分页请求，
+ *    其中整表读「实时库存」真机实测 5~9 秒）。现在：
+ *      · 「实时库存」→ 按**「编号」关联的显示文本** +「库存键」前缀过滤读，只取这一款的行；
+ *      · 「货品信息」→ 按**「编号」**精确过滤读（公式 → 1 条），再在内存里跑同一个 `findProduct`；
+ *      · 「尺码管理」→ 保持整表读（一共 15 条，一次请求就回来），**并给这 15 条单独加一层 TTL 缓存**
+ *        （每次扫码都要用它算缺码，而它几乎不变）；
+ *      · 外面再套一层**进程内短 TTL 缓存**（`编号` → 视图模型，TTL 进 config）。
+ *    ⚠️ 过滤读**拿不到 / 飞书不认**时**自动回退整表读**（`reads.filterEnabled` 是一键退回的开关）
+ *       —— 回退路径的行为与提速前**逐字一致**；过滤读回来**仍然过一遍原来的内存判据**
+ *       （`findProduct` / `belongsToNumber`），所以"读到的行"与提速前是同一个集合。
  *
  * 口径与降级（都是业务负责人拍过的，见 `config/scanPage.js` 的注释）：
  *   · 「实时库存」一双一条 ⇒ **数量 = 记录条数**（与工作台 `getLiveInventory` 同一口径）；
@@ -19,6 +32,7 @@
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
+const { createScanPageCache } = require('./scanPageCache');
 const { SCAN_PAGE, fillText } = require('../config/scanPage');
 const { logInfo, logWarn } = require('../utils/logger');
 
@@ -149,17 +163,134 @@ const limitError = (tableName, actual, limit) => {
   return error;
 };
 
+/**
+ * 飞书 GET `filter` 的**公式**拼装（官方《记录筛选的开发指南》：
+ * `CurrentValue.[字段名]="值"`、`CurrentValue.[字段名].contains("值")`、`OR(...)`）。
+ * `field_name` 一律由调用方按 schema 的物理列名传进来 —— 这里不写死任何一个业务字段名。
+ *
+ * 🔴 **值是要嵌进公式里的**，所以必须过安全字符检查：
+ *    带双引号 / 反斜杠 / 方括号 / 换行的值**一律不拼**（返回 `null` ⇒ 调用方回退整表读）。
+ *    宁可慢一次，也绝不让一个"颜色名里带引号"的编号把公式拼坏 ——
+ *    拼坏了飞书要么报错、要么按错的条件返回（**错的数据比慢更坏**）。
+ */
+const FILTER_TEXT_UNSAFE = /["\\[\]\r\n\t]/;
+// 官方：`filter` 参数长度不超过 2000 个字符。
+const MAX_FILTER_CHARS = 2000;
+// 「尺码管理」整表在它自己那份缓存里的键（只有这一张表，键就是常量）。
+const SIZE_CACHE_KEY = 'sizeManagement';
+
+const filterTextLiteral = (value) => {
+  const text = String(value ?? '');
+  if (!text || FILTER_TEXT_UNSAFE.test(text)) return null;
+  return `"${text}"`;
+};
+
+/** `CurrentValue.[字段]="值"`（值不安全 / 字段没配 → `null`）。 */
+const equalsFormula = (field, value) => {
+  const literal = filterTextLiteral(value);
+  return field && literal ? `CurrentValue.[${field}]=${literal}` : null;
+};
+
+/** `CurrentValue.[字段].contains("值")`（同上）。 */
+const containsFormula = (field, value) => {
+  const literal = filterTextLiteral(value);
+  return field && literal ? `CurrentValue.[${field}].contains(${literal})` : null;
+};
+
+/** `OR(条件1,条件2)`；只有一个条件时就去掉 OR（少一层解析）；拼出来太长也不拼。 */
+const orFormula = (parts) => {
+  const conditions = (parts || []).filter(Boolean);
+  if (!conditions.length) return null;
+  if (conditions.length === 1) return conditions[0];
+  const formula = `OR(${conditions.join(',')})`;
+  return formula.length <= MAX_FILTER_CHARS ? formula : null;
+};
+
 const createScanPageService = (gateway, options = {}) => {
   if (!gateway) throw new Error('ScanPageService requires gateway');
   const schema = options.schema || V1_BITABLE_SCHEMA;
   const config = options.config || SCAN_PAGE;
   const getSizeReferences = createSizeReferenceAccess({ gateway, sizeReferences: options.sizeReferences });
   const limits = config.limits;
+  const reads = config.reads || {};
+  // ⚠️ 开关只在**显式 false** 时关掉（配置项缺失 = 用默认的"开"）：
+  //    `filterEnabled` 是"一键退回整表读"的闸门，别因为少传一个字段就静默关掉提速。
+  const filterEnabled = reads.filterEnabled !== false;
+  const warnOnEmptyFilteredRead = reads.warnOnEmptyFilteredRead !== false;
+  // TTL 缓存：`config.cache` 是唯一真源；`options.cache` 供用例注入（自己的时钟/预置条目）。
+  const cacheConfig = config.cache || {};
+  const cacheTtlMs = cacheConfig.enabled === false ? 0 : cacheConfig.ttlMs;
+  const cache = options.cache || createScanPageCache({
+    ttlMs: cacheTtlMs,
+    maxEntries: cacheConfig.maxEntries,
+    now: options.now,
+  });
+  // 「尺码管理」整表（15 条）单独一份缓存：**每次扫码都要读它**，而它几乎不变
+  // （她偶尔改一次尺码清单）⇒ 让第二次开始的扫码少一次飞书请求（真机一次往返 1.5~2.5 秒）。
+  // ⚠️ 复用同一个 TTL / 同一个开关，不另开旋钮：这一层只是把"同一个 15 条的表"读一次就够。
+  const sizeCache = options.sizeCache || createScanPageCache({
+    ttlMs: cacheTtlMs,
+    maxEntries: 1,
+    now: options.now,
+  });
 
   const tableName = (tableKey) => schema?.tables?.[tableKey]?.tableName || tableKey;
 
   const readAllCapped = async (tableKey, cap, requestId) => {
     const records = await gateway.listAll(tableKey);
+    if (cap > 0 && records.length > cap) {
+      logWarn(config.events.limitExceeded, {
+        request_id: requestId, table_key: tableKey, records: records.length, limit: cap,
+      });
+      throw limitError(tableName(tableKey), records.length, cap);
+    }
+    return records;
+  };
+
+  /**
+   * 「尺码管理」整表读（15 条）——**带 TTL 缓存**：每次扫码都要用它算缺码判定，
+   * 而这张表几乎不变（她偶尔改一次尺码清单）⇒ 同一个 TTL 窗口内只读一次。
+   * 缓存里放的是**已经过完上限检查**的记录数组（超限那一次直接抛，不进缓存）。
+   * 返回 `{ records, cacheHit }`：`cacheHit` 只进 `scan.page.viewed` 日志（可 grep）。
+   */
+  const readSizeRecordsCapped = async (requestId) => {
+    const cached = sizeCache.get(SIZE_CACHE_KEY);
+    if (cached) return { records: cached, cacheHit: true };
+    const records = await readAllCapped('sizeManagement', limits.sizeRecords, requestId);
+    sizeCache.set(SIZE_CACHE_KEY, records);
+    return { records, cacheHit: false };
+  };
+
+  /**
+   * 用 `gateway.listByFilter` 读（**唯一**一处 `search/filter` 能力的入口）。
+   *
+   * 两种**预期**回退（都记 `scan.data.filter_fallback`，行为与提速前逐字一致，只是慢）：
+   *   ① 开关关掉了（`reads.filterEnabled=false`）或压根拼不出可用的公式（值含引号等）；
+   *   ② 网关没有"按条件读"这个能力（测试桩 / 别的注入实现）。
+   * 一种**意外**回退：③ 飞书不认这个公式（字段改名 / 权限不足…）—— 抛错，同样回退。
+   *
+   * `cap` 是**按条件读的单次上限**（按 `cap + 1` 去读，一眼看出超没超）；
+   * `fallbackCap` 是回退整表读时沿用的老上限。超了都**明确报错**，不静默截断。
+   */
+  const readFilteredCapped = async ({ tableKey, filter, cap, fallbackCap, requestId }) => {
+    const fallback = (reason, error) => {
+      logWarn(config.events.filterFallback, {
+        request_id: requestId,
+        table_key: tableKey,
+        reason,
+        error: error ? error.message : '',
+      });
+      return readAllCapped(tableKey, fallbackCap, requestId);
+    };
+    if (!filterEnabled || !filter || typeof gateway.listByFilter !== 'function') {
+      return fallback('unavailable', null);
+    }
+    let records;
+    try {
+      records = await gateway.listByFilter(tableKey, filter, { maxRecords: cap > 0 ? cap + 1 : 0 });
+    } catch (error) {
+      return fallback('failed', error);
+    }
     if (cap > 0 && records.length > cap) {
       logWarn(config.events.limitExceeded, {
         request_id: requestId, table_key: tableKey, records: records.length, limit: cap,
@@ -191,6 +322,81 @@ const createScanPageService = (gateway, options = {}) => {
     if (ids.length || !config.number.stockKeyPrefixFallback || !stockKeyField) return false;
     const key = textValue(record?.fields?.[stockKeyField]).trim();
     return key.startsWith(`${number}${config.number.separator}`);
+  };
+
+  /**
+   * 「货品信息」：**按「编号」精确匹配读**（正常就 1 条），再在内存里跑同一个 `findProduct`
+   * （精确 + 大小写兜底都在里面）。
+   *
+   * ⚠️ 按「编号」过滤用 **GET 的 filter 公式**（官方《记录筛选的开发指南》的字段表里
+   *    **公式**是支持的类型），不用 `POST .../records/search`：
+   *    那个接口返回的公式列是 `{type:1,value:[{text}]}`、关联列只有 `link_record_ids`
+   *    （**没有显示文本**）—— 会让「品类」「颜色」这类关联文字读不出来（页面会变）。
+   *    GET + filter 的返回体与 `listAll` **逐字同形状**（见 `V1BitableGateway.listByFilter` 的注释）。
+   * ⚠️ GET 的 filter **区分大小写**（本机实测：`编号="xhb8095|黑色|A"` 匹配不到大写那条）
+   *    ⇒ "她照着标签手打一遍"那种大小写不一致的输入会走下面的整表回退，**结论不变、只是慢一次**。
+   *
+   * 返回 `resolved`：
+   *   · `true`  —— 按条件读**确实读到了行** ⇒ 没匹配上「编号」就是真的没有；
+   *   · `false` —— 一条都没读到（大小写不一致 / 老数据 / 值里有引号拼不出公式）
+   *               ⇒ 调用方**回退整表读**再找一次，"找不到"的判定与提速前逐字一致。
+   */
+  const readProductsByNumber = async ({ number, requestId }) => {
+    const numberField = fieldName(schema, 'product', 'number');
+    const filter = equalsFormula(numberField, number);
+    if (!filterEnabled || !filter) return { product: null, resolved: false };
+    const records = await readFilteredCapped({
+      tableKey: 'product',
+      filter,
+      cap: limits.productRowsPerNumber,
+      fallbackCap: limits.productRecords,
+      requestId,
+    });
+    if (!records.length && warnOnEmptyFilteredRead) {
+      logWarn(config.events.filteredEmpty, { request_id: requestId, table_key: 'product', number });
+    }
+    return { product: findProduct(records, number), resolved: records.length > 0 };
+  };
+
+  /**
+   * 「实时库存」：**按条件只读这一款的行**（提速的主要手段 —— 提速前这里是整表读，真机 5~9 秒）。
+   *
+   * filter = `OR(「编号」关联 = 这一款的编号文本, 「库存键」.contains(「编号|」))`：
+   *   · 两条**同源**于内存判据 `belongsToNumber`（① 关联命中；② 关联为空时按公式前缀兜底）；
+   *   · ⚠️ **缺一不可**：只按关联读会漏掉"关联单元格被清空、但公式还在"的数据残缺行
+   *     （既有用例 `② 关联单元格为空时用「库存键」前缀认行` 钉着它）。
+   *     关联列按**显示文本**筛（GET 的 filter 只支持这么筛，实测可用）；
+   *   · 过滤读回来**仍然过一遍 `belongsToNumber`**（OR 前缀那条是**超集**：
+   *     关联存在但指错的行也会被前缀命中）⇒ 最终行集与提速前**逐字一致**。
+   *
+   * ⚠️ 拼公式用的是**表里那条货品的编号**（`tableNumber`，调用方从刚读到的货品上抄），
+   *    **不是** URL 里那串：URL 可能是大小写不一致的手输值，而 filter 区分大小写 ——
+   *    用 URL 那串去筛会**一条都读不到**（页面会显示"一双都没有"，是最坏的那种错）。
+   *    内存判据仍然用 URL 那串（与提速前一致）。
+   */
+  const readInventoryRows = async ({ productId, tableNumber, number, stockKeyField, requestId }) => {
+    const linkField = fieldName(schema, 'liveInventory', 'product');
+    const conditions = [
+      equalsFormula(linkField, tableNumber),
+      config.number.stockKeyPrefixFallback
+        ? containsFormula(stockKeyField, `${tableNumber}${config.number.separator}`)
+        : null,
+    ];
+    const records = await readFilteredCapped({
+      tableKey: 'liveInventory',
+      filter: orFormula(conditions),
+      cap: limits.inventoryRowsPerNumber,
+      fallbackCap: limits.inventoryRecords,
+      requestId,
+    });
+    const rows = records.filter((record) => belongsToNumber(record, { productId, number, stockKeyField }));
+    // 「库存真的为 0」与「filter 悄悄不生效」在返回体上长得一样 ⇒ 留一条可 grep 的 warn，不当成静默的成功。
+    if (!rows.length && warnOnEmptyFilteredRead) {
+      logWarn(config.events.filteredEmpty, {
+        request_id: requestId, table_key: 'liveInventory', number, product_record_id: productId,
+      });
+    }
+    return rows;
   };
 
   /** 一行的尺码：关联记录（共享解析，带 30 秒缓存）→ 「库存键」最后一段 → 读不出。 */
@@ -235,23 +441,53 @@ const createScanPageService = (gateway, options = {}) => {
    * 查一个编号。
    * 返回 `{ found: false, number, reason }`（`reason`: `empty` / `unknown`）或
    *      `{ found: true, ...视图模型 }`。
+   *
+   * ⭐ 取数顺序（2026-10-08 提速后）：缓存 → 「货品信息」（按编号过滤）→「实时库存」
+   *    （按关联 + 库存键前缀过滤）→「尺码管理」（整表，15 条）。
+   *    命中缓存时**一次飞书请求都不打**，并且照样记 `scan.page.viewed`（日志口径不断）。
    */
   const lookup = async ({ number: rawNumber, requestId } = {}) => {
     const number = decodeScanNumber(rawNumber, config);
     if (!number) return { found: false, number, reason: 'empty' };
 
-    const products = await readAllCapped('product', limits.productRecords, requestId);
-    const product = findProduct(products, number);
+    const cached = cache.get(number);
+    if (cached) {
+      logInfo(config.events.cacheHit, { request_id: requestId, number, cache_hit: true, ttl_ms: cache.ttlMs });
+      // 「看了这一页」这个事实**不许因为走了缓存就消失**（她那边按这个词 grep）。
+      logInfo(config.events.viewed, {
+        request_id: requestId,
+        number,
+        product_record_id: cached.product_record_id,
+        total: cached.total,
+        sizes: cached.rows.length,
+        missing: cached.missing_count,
+        sizes_degraded: cached.sizes_degraded,
+        cache_hit: true,
+      });
+      return cached;
+    }
+    logInfo(config.events.cacheMiss, { request_id: requestId, number, cache_hit: false });
+
+    const parsed = parseNumberSegments(number, config);
+    const filteredProduct = await readProductsByNumber({ number, requestId });
+    let product = filteredProduct.product;
+    if (!product && !filteredProduct.resolved) {
+      // 按条件读一条都没读到 ⇒ **回退整表读**再找一次：
+      // 「找不到」的判定与提速前**逐字一致**（宁可慢这一次，也不许把"有货"判成"没这条编号"）。
+      const products = await readAllCapped('product', limits.productRecords, requestId);
+      product = findProduct(products, number);
+    }
     if (!product) {
       logInfo(config.events.notFound, { request_id: requestId, number });
       return { found: false, number, reason: 'unknown' };
     }
 
-    const parsed = parseNumberSegments(number, config);
     const stockKeyField = fieldName(schema, 'liveInventory', 'stockKey');
     const productId = product.record_id || '';
-    const inventory = await readAllCapped('liveInventory', limits.inventoryRecords, requestId);
-    const rows = inventory.filter((record) => belongsToNumber(record, { productId, number, stockKeyField }));
+    // ⚠️ 拼 filter 用**表里那条货品的编号**（大小写与表一致），内存判据仍用 URL 那串：
+    //    GET 的 filter 区分大小写，拿 URL 那串去筛可能一条都读不到（最坏的那种错）。
+    const tableNumber = textValue(readField(schema, 'product', product, 'number')).trim() || number;
+    const rows = await readInventoryRows({ productId, tableNumber, number, stockKeyField, requestId });
 
     const stateField = fieldName(schema, 'liveInventory', 'state');
     const updatedAtField = fieldName(schema, 'liveInventory', 'updatedAt');
@@ -283,7 +519,8 @@ const createScanPageService = (gateway, options = {}) => {
     }
     const total = rows.length;
 
-    const sizeRecords = await readAllCapped('sizeManagement', limits.sizeRecords, requestId);
+    const sizeRead = await readSizeRecordsCapped(requestId);
+    const sizeRecords = sizeRead.records;
     const scope = await loadSizeScope({ sizeRecords, categoryCode: parsed.categoryCode });
     if (!scope.degraded) {
       // 只有**没有库存**的那些清单尺码才需要限流：有库存的尺码一行都不许丢，
@@ -383,11 +620,16 @@ const createScanPageService = (gateway, options = {}) => {
       sizes: viewRows.length,
       missing: missingCount,
       sizes_degraded: scope.degraded,
+      cache_hit: false,
+      // 「尺码管理」那一份缓存有没有省下一次飞书请求（排查"这次扫码到底读了哪些表"用）。
+      size_cache_hit: sizeRead.cacheHit,
     });
+    // 只缓存 `found: true`（否定结果不缓存：新品刚建档就该立刻扫得到）。
+    cache.set(number, view);
     return view;
   };
 
-  return { lookup };
+  return { lookup, cache };
 };
 
 module.exports = {

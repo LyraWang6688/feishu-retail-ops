@@ -242,6 +242,57 @@ class V1BitableGateway {
     return records;
   }
 
+  /**
+   * ⭐ **按条件读**记录（GET `.../records` 的 `filter` 参数，官方
+   * 《记录筛选的开发指南》：`CurrentValue.[字段名]="值"` / `.contains("…")` / `AND(...)` `OR(...)`）
+   * —— 只读回需要的那些行，不把整张表拉回来。
+   *
+   * 为什么新增而不是改 `listAll`：`listAll`（同一个 GET 接口、不带 filter）有**二十多个调用方**，
+   * 语义是"整表读"；本方法是"按条件读"。两个方法并存，谁在自己链路上更合适就用谁 ——
+   * 改 `listAll` 等于把所有人的行为一起改了。
+   *
+   * 🔴 为什么是 **GET + filter 公式**，而不是官方更推荐的
+   *    `POST .../records/search`（结构化 filter）—— **本机只读实测的硬事实**：
+   *    两个接口**返回的记录形状不一样**：
+   *      · GET list   ：公式列 → `[{text:"…",type:"text"}]`、数字公式 → `1`、
+   *                     关联 → `[{record_ids:[…],text:"…",text_arr:[…]}]`（**带显示文本**）；
+   *      · POST search：公式列 → `{type:1,value:[{text:"…"}]}`、数字公式 → `{type:2,value:[1]}`、
+   *                     关联 → `{link_record_ids:[…]}`（**没有显示文本**）。
+   *    ⇒ 用 search 读，扫码页的 `textValue` / `findProduct` 得跟着改，而且**关联列的显示文本拿不到**
+   *      （例：没有库存的货品，「品类」会从「休闲鞋」掉成空）—— 那与"页面内容一个字都不许变"正面冲突。
+   *    ⇒ 用 GET + filter 读，返回体与 `listAll` **逐字同形状**，页面口径不可能漂。
+   *    ⚠️ 代价（已实测）：GET 的 filter **区分大小写**（`货号="x7601"` 匹配不到 `X7601`），
+   *      且它被官方标注为"历史接口" —— 但 `listAll` 本来就走这个接口，没有新增风险面。
+   *      大小写不一致的输入（她照标签手打）由调用方**回退整表读**兜住：慢一次，但对。
+   *
+   * `filter` 是**公式字符串**，由调用方按 schema 的物理列名拼好（本层不认识任何业务字段名）。
+   * ⚠️ 值嵌进公式是有语法的 ⇒ 调用方必须先过安全字符检查（本层也会拦：空白公式直接退回整表读）。
+   *
+   * `options.maxRecords`：**读够这么多行就停**（不再翻页）。默认不限。
+   * 调用方按 `上限 + 1` 传，就能一眼看出"是不是超了"（超了明确报错，不静默截断）。
+   */
+  async listByFilter(tableKey, filter, options = {}) {
+    const table = this.tableWithId(tableKey);
+    const expression = String(filter ?? '').trim();
+    // 没有可用的条件 ⇒ 语义上等价于"整表读"（调用方一般不会走到这里，走到了也不该炸）。
+    if (!expression) return this.listAll(tableKey);
+    const maxRecords = Number.isInteger(options.maxRecords) && options.maxRecords > 0 ? options.maxRecords : 0;
+    const requested = Number.isInteger(options.pageSize) && options.pageSize > 0 ? options.pageSize : 500;
+    const pageSize = Math.min(requested, 500);
+    const records = [];
+    let pageToken;
+    do {
+      const response = await this.client.bitable.appTableRecord.list({
+        path: { app_token: this.schema.appToken, table_id: table.tableId },
+        params: { page_size: pageSize, page_token: pageToken, filter: expression },
+      });
+      this.assertSuccess(response, `按条件读取“${table.tableName}”记录`);
+      records.push(...(response.data?.items || []));
+      pageToken = response.data?.has_more ? response.data?.page_token : undefined;
+    } while (pageToken && (!maxRecords || records.length < maxRecords));
+    return records;
+  }
+
   async findOneByText(tableKey, semanticKey, expected) {
     const fieldName = this.table(tableKey).fields[semanticKey];
     if (!fieldName) throw new Error(`未配置查询字段: ${tableKey}.${semanticKey}`);
