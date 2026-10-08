@@ -24,6 +24,7 @@ const { PendingDealPushService } = require('../src/services/pendingDealPushServi
 const {
   resolvePendingDealPushConfig, pendingDealPushCriterionFor,
 } = require('../src/config/pendingDealPush');
+const { visibleCardText } = require('../src/utils/pendingDealPushCard');
 
 const tmpStore = (prefix) =>
   new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), prefix)), idField: 'task_id' });
@@ -76,6 +77,11 @@ const fakePin = () => {
   };
 };
 
+// ⭐ 2026-10-08：默认形态是**消息卡片**。
+//   · `visibleOf` = 卡片里她看得见的字（去掉 ** / text_tag / font 壳，文字链接摊成「文案 URL」）；
+//   · `textOf`   = **降级纯文本**（只有 `messageFormat:'text'` 或卡片发送失败时才有这一份）。
+const cardOf = (create) => JSON.parse(create.data.content);
+const visibleOf = (create) => visibleCardText(cardOf(create));
 const textOf = (create) => JSON.parse(create.data.content).text;
 
 const newService = ({
@@ -100,6 +106,7 @@ const newService = ({
     chatId,
     store: store || tmpStore('pending-sections-day-'),
     pin: pin || fakePin(),
+    scheduleRetry: () => ({}),
   });
   return { service, creates };
 };
@@ -150,37 +157,44 @@ test('两区各自渲染：预定在前、现货待收在后；每块有自己�
 
   assert.equal(result.pushedOrderCount, 2);
   assert.equal(creates.length, 1);
-  const text = textOf(creates[0]);
+  // ⭐ 2026-10-08 口径变更：默认发**卡片**；行里**不再有单号**，深链变成「查看原话」文字链接。
+  assert.equal(creates[0].data.msg_type, 'interactive');
+  const text = visibleOf(creates[0]);
   assert.equal(text, [
     '⏰ 2026-10-07 最近 7 天待处理的销售单（预定 / 现货待收）：2 笔（【预定】1 笔 / 【现货待收】1 笔）',
     '【预定】1 笔',
-    '1. XSD-P-1 【预定】 · B26002-52 37码 · 待收 ¥128.00 · https://applink.feishu.cn/client/message/link?message_id=om_sale_reserved',
+    '1. B26002-52 37码 · 【预定】 · 待收 ¥128.00 · 查看原话 https://applink.feishu.cn/client/message/link?message_id=om_sale_reserved',
     '【现货待收】1 笔',
-    '1. XSD-U-1 【现货待收】 · 6A637-7 43码 · 待收 ¥228.00 · https://applink.feishu.cn/client/message/link?message_id=om_sale_cash_pending',
+    '1. 6A637-7 43码 · 【现货待收】 · 待收 ¥228.00 · 查看原话 https://applink.feishu.cn/client/message/link?message_id=om_sale_cash_pending',
   ].join('\n'));
   // ⭐ AC-6.3：现货已交付、钱没结清的单**进了候选**，并落在【现货待收】区。
   assert.match(text, /【现货待收】1 笔/);
   assert.doesNotMatch(text, /售出|成交时间|销售日/);
   assert.doesNotMatch(text, /未付/);
+  // 🔴 她明确说不需要单号。
+  assert.doesNotMatch(text, /XSD-/);
 });
 
-test('只有一类单时：另一个区块**连标题都不出现**', async () => {
+test('只有一类单时：另一个区块**连标题都不出现**，标题也不重复计数', async () => {
   const reservedOnly = await withLinks([RESERVED]);
   const cashOnly = await withLinks([CASH_PENDING]);
 
   const first = newService({ orders: [RESERVED], locator: reservedOnly });
   const firstResult = await first.service.sendDailyPush({ now: DAY });
-  const firstText = textOf(first.creates[0]);
+  const firstText = visibleOf(first.creates[0]);
   assert.equal(firstResult.pushedOrderCount, 1);
-  assert.match(firstText, /（【预定】1 笔）/, '表头只报出现过的区块');
+  // ⚠️ 2026-10-08 文案 nit：**只有一个区块时不补分区计数**（她真机看到的
+  //    「…：5 笔（【预定】5 笔）」把同一件事说了两遍）。
+  assert.equal(firstText.split('\n')[0],
+    '⏰ 2026-10-07 最近 7 天待处理的销售单（预定 / 现货待收）：1 笔');
   assert.match(firstText, /\n【预定】1 笔\n/);
   assert.doesNotMatch(firstText, /【现货待收】/);
 
   const second = newService({ orders: [CASH_PENDING], locator: cashOnly });
   const secondResult = await second.service.sendDailyPush({ now: DAY });
-  const secondText = textOf(second.creates[0]);
+  const secondText = visibleOf(second.creates[0]);
   assert.equal(secondResult.pushedOrderCount, 1);
-  assert.match(secondText, /（【现货待收】1 笔）/);
+  assert.match(secondText, /：1 笔\n【现货待收】1 笔/);
   assert.doesNotMatch(secondText, /【预定】/);
 });
 
@@ -200,9 +214,9 @@ test('一单多件：逐件列出（用配置的分隔符）；配品没有尺�
   const locator = await withLinks([order]);
   const { service, creates } = newService({ orders: [order], locator });
   await service.sendDailyPush({ now: DAY });
-  const text = textOf(creates[0]);
+  const text = visibleOf(creates[0]);
 
-  assert.match(text, /1\. XSD-U-1 【现货待收】 · B26002-52 37码、腰带、6A637-7 43码 · 待收 ¥228\.00/);
+  assert.match(text, /1\. B26002-52 37码、腰带、6A637-7 43码 · 【现货待收】 · 待收 ¥228\.00/);
   assert.doesNotMatch(text, /腰带\s*码/);
   assert.equal(text.match(/码/g).length, 2);
 });
@@ -215,14 +229,14 @@ test('缺货号 / 缺尺码：**不留空壳**（不出现「 码」、不出现
   const locator = await withLinks(orders);
   const { service, creates } = newService({ orders, locator });
   await service.sendDailyPush({ now: DAY });
-  const text = textOf(creates[0]);
+  const text = visibleOf(creates[0]);
 
   assert.equal(text, [
     '⏰ 2026-10-07 最近 7 天待处理的销售单（预定 / 现货待收）：2 笔（【预定】1 笔 / 【现货待收】1 笔）',
     '【预定】1 笔',
-    '1. XSD-P-1 【预定】 · 待收 ¥128.00 · https://applink.feishu.cn/client/message/link?message_id=om_sale_reserved',
+    '1. 【预定】 · 待收 ¥128.00 · 查看原话 https://applink.feishu.cn/client/message/link?message_id=om_sale_reserved',
     '【现货待收】1 笔',
-    '1. XSD-U-1 【现货待收】 · B26002-52 · 待收 ¥228.00 · https://applink.feishu.cn/client/message/link?message_id=om_sale_cash_pending',
+    '1. B26002-52 · 【现货待收】 · 待收 ¥228.00 · 查看原话 https://applink.feishu.cn/client/message/link?message_id=om_sale_cash_pending',
   ].join('\n'));
   assert.doesNotMatch(text, /·\s+·/, '不许留下空的分隔段');
   assert.doesNotMatch(text, /\s码/);
@@ -238,10 +252,10 @@ test('缺深链：行内不出现链接段（也不留空分隔符），脚注 +
   const { service, creates } = newService({ orders: [RESERVED, CASH_PENDING], locator });
   const result = await service.sendDailyPush({ now: DAY });
 
-  const text = textOf(creates[0]);
+  const text = visibleOf(creates[0]);
   assert.equal(result.missingLinkCount, 2);
   assert.equal(result.pushedOrderCount, 2, '深链缺失不影响"照推"（默认 linkRequired=false）');
-  assert.match(text, /1\. XSD-P-1 【预定】 · B26002-52 37码 · 待收 ¥128\.00$/m);
+  assert.match(text, /1\. B26002-52 37码 · 【预定】 · 待收 ¥128\.00$/m);
   assert.match(text, /2 笔的深链暂不可用：飞书接口未返回 message_app_link，见日志 sales\.pending_deal_push\.link\.missing/);
   assert.doesNotMatch(text, /https?:\/\//);
 });
@@ -260,10 +274,10 @@ test('判据认不出来（履约状态为空串之外的未知取值）→ 落�
   settings.blocks = settings.blocks.map((block) => ({ ...block, criterion: `unknown_${block.key}` }));
   const { service, creates } = newService({ orders: [order], locator, settings });
   const result = await service.sendDailyPush({ now: DAY });
-  const text = textOf(creates[0]);
+  const text = visibleOf(creates[0]);
   assert.equal(result.pushedOrderCount, 1);
-  assert.match(text, /（【其他】1 笔）/);
-  assert.match(text, /1\. XSD-X-9 【其他】 · 6A637-7 43码 · 待收 ¥228\.00/);
+  assert.match(text, /：1 笔\n【其他】1 笔\n/);
+  assert.match(text, /1\. 6A637-7 43码 · 【其他】 · 待收 ¥228\.00/);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -277,7 +291,9 @@ test('配置可配：换个 env 就换一套顺序、标题、行格式与分隔
     PENDING_DEAL_PUSH_PREPAID_TITLE: '【定金】',
     PENDING_DEAL_PUSH_CASH_PENDING_TITLE: '【赊账】',
     PENDING_DEAL_PUSH_LINE_SEPARATOR: ' | ',
-    PENDING_DEAL_PUSH_LINE_PARTS: '{index}) {orderNo} {tag}|{item}|欠 {amount}|{link}',
+    // ⚠️ 2026-10-08：`{amount}` 给的是**整段**（`待收 ¥…` / `已付清`；读不出来整段没有），
+    //    所以自定义行模板里不要再写「待收」。
+    PENDING_DEAL_PUSH_LINE_PARTS: '{index}) {orderNo} {tag}|{item}|{amount}|{link}',
     PENDING_DEAL_PUSH_ITEM_SEPARATOR: ' + ',
     PENDING_DEAL_PUSH_SIZE_TEMPLATE: '{size} 号',
     PENDING_DEAL_PUSH_SECTION_TEMPLATE: '{title} {count} 条\n{lines}',
@@ -287,7 +303,12 @@ test('配置可配：换个 env 就换一套顺序、标题、行格式与分隔
   assert.equal(settings.blocks[0].title, '【赊账】');
 
   const locator = await withLinks([RESERVED, CASH_PENDING]);
-  const { service, creates } = newService({ orders: [RESERVED, CASH_PENDING], locator, settings });
+  // ⚠️ 2026-10-08：下面这批键（行模板 / 分隔符 / 尺码后缀 / 区块模板）是**降级纯文本**的旋钮
+  //    —— 默认形态是卡片，所以这一条显式走 `messageFormat: 'text'`。
+  //    卡片那套标记骨架可配性见 pendingDealPushCard.test.js。
+  const { service, creates } = newService({
+    orders: [RESERVED, CASH_PENDING], locator, settings: { ...settings, messageFormat: 'text' },
+  });
   await service.sendDailyPush({ now: DAY });
   const text = textOf(creates[0]);
   // ⚠️ 环境变量的值会被 `config/envValue` 去掉首尾空白（全仓同一套），
@@ -296,9 +317,9 @@ test('配置可配：换个 env 就换一套顺序、标题、行格式与分隔
   assert.equal(text, [
     '🕘 2026-10-07 共 2 条（【赊账】1 笔 / 【定金】1 笔）',
     '【赊账】 1 条',
-    '1) XSD-U-1 【赊账】|6A637-7 43 号|欠 ¥228.00|https://applink.feishu.cn/client/message/link?message_id=om_sale_cash_pending',
+    '1) XSD-U-1 【赊账】|6A637-7 43 号|待收 ¥228.00|查看原话 https://applink.feishu.cn/client/message/link?message_id=om_sale_cash_pending',
     '【定金】 1 条',
-    '1) XSD-P-1 【定金】|B26002-52 37 号|欠 ¥128.00|https://applink.feishu.cn/client/message/link?message_id=om_sale_reserved',
+    '1) XSD-P-1 【定金】|B26002-52 37 号|待收 ¥128.00|查看原话 https://applink.feishu.cn/client/message/link?message_id=om_sale_reserved',
   ].join('\n'));
 });
 

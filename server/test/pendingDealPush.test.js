@@ -24,6 +24,10 @@ const { LarkMessageLinkResolver } = require('../src/services/larkMessageLinkReso
 const { PendingDealPushService } = require('../src/services/pendingDealPushService');
 const { resolvePendingDealPushConfig, readFlag } = require('../src/config/pendingDealPush');
 const { startShanghaiDailyScheduler, shanghaiHour } = require('../src/utils/shanghaiDailyScheduler');
+// ⭐ 2026-10-08：默认形态改成**消息卡片**；本文件里那些"逐字"断言改盯**卡片里她看得见的字**
+//   （去掉 ** / text_tag / font 壳，文字链接摊成「文案 URL」）—— 卡片结构本身由
+//   `pendingDealPushCard.test.js` 逐元素钉住。
+const { visibleCardText } = require('../src/utils/pendingDealPushCard');
 
 const tmpStore = (prefix) =>
   new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), prefix)), idField: 'task_id' });
@@ -95,6 +99,9 @@ const seedMapping = async (locator, { salesEntryRecordId, messageId, threadId = 
   if (appLink) await locator.store.update(messageKey(messageId), { app_link: appLink });
 };
 
+// 卡片里"她看得见的字"：`**` / `<text_tag>` / `<font>` 壳去掉，`[文案](url)` 摊成 `文案 url`。
+const visibleOf = (create) => visibleCardText(JSON.parse(create.data.content));
+
 const newService = ({ orders, locator, client, settings: overrides = {}, store, chatId = CHAT_ID } = {}) => {
   const resolvedSettings = settings(overrides);
   const { client: defaultClient, creates } = fakeClient();
@@ -142,10 +149,15 @@ test('配置默认值：默认关、9 点、10 分钟一 tick、没有群 id、�
     // 「发出后置顶」是**显式开关、默认关**（2026-10-07 加）：断言仍然是严格全等，
     // 只是多认了一个键 —— 不是放宽。
     pinEnabled: false,
+    // ⭐ 2026-10-08 加：发送形态（默认卡片）与失败重试窗口（默认 5/15 分钟）。
+    //    断言仍然是**严格全等**，只是把新增的默认值也钉进去 —— 不是放宽。
+    messageFormat: 'card',
+    retryDelaysMs: [300000, 900000],
     // 分区顺序：预定在前、现货待收在后（理由见 pendingDealPushService 顶部注释）。
+    // ⚠️ 每个区块多了一个 `tagColor`（卡片上那个**彩色类型标签**的颜色）—— 同样是严格全等。
     blocks: [
-      { key: 'prepaid', criterion: 'undelivered', title: '【预定】' },
-      { key: 'cash_pending', criterion: 'delivered_unpaid', title: '【现货待收】' },
+      { key: 'prepaid', criterion: 'undelivered', title: '【预定】', tagColor: 'blue' },
+      { key: 'cash_pending', criterion: 'delivered_unpaid', title: '【现货待收】', tagColor: 'orange' },
     ],
     otherTitle: '【其他】',
     headerTemplate: '⏰ {day} 最近 7 天待处理的销售单（预定 / 现货待收）：{total} 笔{blockCounts}',
@@ -153,15 +165,20 @@ test('配置默认值：默认关、9 点、10 分钟一 tick、没有群 id、�
     blockCountTemplate: '{title}{count} 笔',
     blockCountSeparator: ' / ',
     sectionTemplate: '{title}{count} 笔\n{lines}',
-    lineParts: ['{index}. {orderNo} {tag}', '{item}', '待收 {amount}', '{link}'],
+    // ⚠️ 2026-10-08：**去掉 `{orderNo}`**（她明确说不需要单号）；金额与链接段各自可整段消失。
+    lineParts: ['{index}. {item}', '{tag}', '{amount}', '{link}'],
     lineSeparator: ' · ',
     itemTemplate: '{itemNo} {size}',
     itemSeparator: '、',
     sizeTemplate: '{size}码',
+    amountTemplate: '待收 {amount}',
+    paidUpText: '已付清',
+    linkText: '查看原话',
+    linkTextTemplate: '{text} {url}',
     footerTemplate: '（{count} 笔的深链暂不可用：飞书接口未返回 message_app_link，见日志 sales.pending_deal_push.link.missing）',
     // ⚠️ 2026-10-07 加「【销售】区 + 【采购】区」那批键：断言仍然是**严格全等**
     //    （多一个键就红），只是把新增的默认值也钉进去 —— 不是放宽。
-    //    ⭐ `salesAreaTitle: ''` 是「销售区逐字不变」的实现方式（空串 = 那一行不出现）。
+    //    ⭐ `salesAreaTitle: ''` 是「销售区不额外多一行」的实现方式（空串 = 那一行不出现）。
     areas: ['sales', 'purchase'],
     salesAreaTitle: '',
     purchaseAreaTitle: '【采购】未到货的报货批次：{count} 批',
@@ -169,6 +186,18 @@ test('配置默认值：默认关、9 点、10 分钟一 tick、没有群 id、�
     purchaseLineSeparator: ' · ',
     purchaseSupplierSeparator: '、',
     purchaseFooterTemplate: '（{count} 批的深链暂不可用，见日志 sales.pending_deal_push.purchase_link.missing）',
+    // ── 卡片标记骨架（2026-10-08）──────────────────────────────────────────────
+    card: {
+      headerColor: 'blue',
+      sectionTitleTemplate: '**{title}**',
+      lineParts: ['{index}. {item}', '{tag}', '{amount}', '{link}'],
+      lineSeparator: ' · ',
+      itemTemplate: '**{item}**',
+      tagTemplate: "<text_tag color='{color}'>{text}</text_tag>",
+      amountTemplate: "<font color='{color}'>待收 {amount}</font>",
+      amountColor: 'red',
+      linkTemplate: '[{text}]({url})',
+    },
   });
   assert.equal(resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_HOUR: '7' }).hour, 7);
   assert.throws(() => resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_HOUR: '25' }), /整数/);
@@ -265,16 +294,18 @@ test('正常推：按【预付 / 未付】分两块，每笔一行（单号 + �
   assert.equal(creates[0].params.receive_id_type, 'chat_id');
   assert.equal(creates[0].data.receive_id, CHAT_ID);
   assert.equal(creates[0].data.reply_in_thread, undefined);
-  assert.equal(creates[0].data.msg_type, 'text');
+  // ⚠️ 2026-10-08 口径变更：默认形态从纯文本改成**消息卡片**。
+  assert.equal(creates[0].data.msg_type, 'interactive');
 
-  const text = JSON.parse(creates[0].data.content).text;
+  const text = visibleOf(creates[0]);
   // 表头：总数 2 笔（口径不变）＋ 分区计数（预定 1 / 现货待收 1）。
   assert.match(text, /^⏰ 2026-10-06 最近 7 天待处理的销售单（预定 \/ 现货待收）：2 笔（【预定】1 笔 \/ 【现货待收】1 笔）\n/);
   // 分区：预定在前、现货待收在后；每块各自从 1 开始编号。
-  assert.match(text, /\n【预定】1 笔\n1\. XSD-A-1 【预定】 · B26002-52 37码 · 待收 ¥1280\.00 · https:\/\/applink\.feishu\.cn\/client\/message\/link\?message_id=om_a\n/);
-  assert.match(text, /\n【现货待收】1 笔\n1\. XSD-B-2 【现货待收】 · 6A637-7 43码 · 待收 ¥300\.50\n/);
+  // ⚠️ 2026-10-08 口径变更：**单号从行里去掉**（她明确说不需要）；文字链接摊成「查看原话 URL」。
+  assert.match(text, /\n【预定】1 笔\n1\. B26002-52 37码 · 【预定】 · 待收 ¥1280\.00 · 查看原话 https:\/\/applink\.feishu\.cn\/client\/message\/link\?message_id=om_a\n/);
+  assert.match(text, /\n【现货待收】1 笔\n1\. 6A637-7 43码 · 【现货待收】 · 待收 ¥300\.50\n/);
   // 第 2 笔没有深链 → 那一段不出现，另起一行说明；不能编一条 URL 出来。
-  assert.doesNotMatch(text, /XSD-B-2 【现货待收】 · 6A637-7 43码 · 待收 ¥300\.50 · http/);
+  assert.doesNotMatch(text, /6A637-7 43码 · 【现货待收】 · 待收 ¥300\.50 · 查看原话/);
   assert.match(text, /1 笔的深链暂不可用/);
   assert.equal(result.missingLinkCount, 1);
 });
@@ -291,7 +322,7 @@ test('本地只有【话题深链】（她给的格式拼的那条）时，也�
   const { service, creates } = newService({ orders: [ORDER_A], locator });
   const result = await service.sendDailyPush({ now: DAY_1_MORNING });
   assert.equal(result.missingLinkCount, 0, '话题深链也算链接，不该报"缺链接"');
-  const text = JSON.parse(creates[0].data.content).text;
+  const text = visibleOf(creates[0]);
   assert.match(text, /https:\/\/applink\.feishu\.cn\/client\/thread\/open\?open_chat_id=/);
   assert.match(text, /open_thread_id=omt_a/);
 });
@@ -347,27 +378,34 @@ test('linkRequired=true 且拿不到深链：宁可不推，也不推一条点�
   assert.equal(creates.length, 0);
 });
 
-test('一笔单在本地映射里没有记录：照推单号 + 金额，只是没有深链', async () => {
+test('一笔单在本地映射里没有记录：照推货号 + 金额，只是没有深链', async () => {
   const { service, creates } = newService({ orders: [ORDER_A], locator: new SalesGroupThreadLocator({ store: tmpStore('pending-push-nomap-') }) });
   const result = await service.sendDailyPush({ now: DAY_1_MORNING });
   assert.equal(result.pushedOrderCount, 1);
   assert.equal(result.missingLinkCount, 1);
-  const text = JSON.parse(creates[0].data.content).text;
-  assert.match(text, /1\. XSD-A-1 【预定】 · B26002-52 37码 · 待收 ¥1280\.00/);
+  const text = visibleOf(creates[0]);
+  assert.match(text, /1\. B26002-52 37码 · 【预定】 · 待收 ¥1280\.00/);
 });
 
-test('金额未知（null）时显示占位，不显示 NaN；一条货号尺码都没有时**不留残句**', () => {
+test('金额读不出来时**整段不渲染**（不显示 ¥— / ¥0.00 / NaN）；一件货号尺码都没有时**不留残句**', () => {
   const { service } = newService({ orders: [] });
   const text = service.buildText({
     dayKey: '2026-10-06',
     missingLinkCount: 0,
-    // ⚠️ `items` 空 = 一件都取不到货号 → 「货号 尺码」那一段**整段不出现**，
-    //    绝不能拼出 `XSD-X 【预定】 ·  · 待收 ¥—` 或 ` 码` 这种空壳。
+    // ⚠️ 2026-10-08 口径变更：金额读不出来时**不再**渲染 `¥—` 占位（业务负责人点名的 nit），
+    //    而是整段不出现；`items` 空 = 「货号 尺码」那一段也整段不出现 ——
+    //    绝不能拼出 ` ·  · 待收 ¥—` 或 ` 码` 这种空壳。
     orders: [{ orderNo: 'XSD-X', fulfillmentStatus: '未交付', pendingAmount: null, items: [], url: '' }],
   });
-  assert.match(text, /1\. XSD-X 【预定】 · 待收 ¥—/);
+  assert.equal(text, [
+    '⏰ 2026-10-06 最近 7 天待处理的销售单（预定 / 现货待收）：1 笔',
+    '【预定】1 笔',
+    '1. 【预定】',
+  ].join('\n'));
   assert.doesNotMatch(text, /NaN/);
+  assert.doesNotMatch(text, /¥/);
   assert.doesNotMatch(text, /码/);
+  assert.doesNotMatch(text, /XSD-X/, '不要单号');
   assert.doesNotMatch(text, / ·  · /);
 });
 

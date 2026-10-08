@@ -14,6 +14,10 @@ const { secondDeliveryCard, settleSecondDeliveryOrder } = require('../utils/lark
 const { updateInteractiveCard } = require('../infrastructure/interactiveCardFeedback');
 const { logInfo, logWarn } = require('../utils/logger');
 const { mergeCorrelation } = require('../utils/correlationFields');
+// ⭐ 2026-10-08：「退过 / 换过 / 赔过 的明细不属于待处理」——判据（唯一一处）在售后配置里。
+const { isAfterSalesFulfillment } = require('../config/afterSales');
+// ⭐ 2026-10-08：飞书错误的**真实** code / msg / log_id / method_id（唯一取用口）。
+const { larkErrorFields, larkResponseError } = require('../utils/larkError');
 
 // 「第二次交付」= 已入账之后的那次收尾：把还没收到的钱收掉、把还没交的货交掉。
 //
@@ -264,6 +268,12 @@ class SecondDeliveryService {
    * （`progress.orderStatus` 是**算出来的 JS 字段**，不是表里的列：表里的「订单状态」已被业务负责人删除。）
    * 进度是**现算**的（复用销售进度那套纯函数），不看主表上可能过期的派生值。
    *
+   * ── 2026-10-08：**退过 / 换过 / 赔过 的单不进候选**（业务负责人逐字）────────────
+   *   「**不需要退货和换货的**，销售就是预定和现货待收的」
+   *   ⇒ 明细里含「已退货 / 已换货 / 已赔货」的单，在这里**明确跳过**（记 info，不再打
+   *     "未知销售明细履约状态"的 warn）。判据只从 `config/afterSales` 取。
+   *   ⚠️ 这条对**两个调用方都生效**（9 点待处理单推送 / 成交提醒卡片）——候选口径只有一处。
+   *
    * ── 2026-10-07：`includeItems`（**可选**，默认关）──────────────────────────
    * 待处理单推送要按「货号 + 尺码」显示每条单。那两个字段的**事实**在这里顺手取最省：
    * 本轮已经把 `salesDetail` 整表读进来了（就在下面的 `orderDetails` 里），
@@ -336,6 +346,24 @@ class SecondDeliveryService {
       }
       // 「最近 7 天」按上海自然日算（线上服务器是 UTC，用本地时区会把凌晨的单算错一天）。
       if (!isWithinLookupWindow(orderDate, { now, days: REMINDER_WINDOW_DAYS })) continue;
+      // ⭐ 2026-10-08（业务负责人逐字：「**不需要退货和换货的**，销售就是预定和现货待收的」）：
+      //   明细里含「已退货 / 已换货 / 已赔货」的单**不进**这两份待处理清单。
+      // ⚠️ 这是**明确规则**，不是兜底：改动前这些单会走到 `progressFromRecords` 抛
+      //   「未知销售明细履约状态：已换货」，被下面的 catch 当成"数据不自洽"跳过并打 warn
+      //   —— 同一个结果，但日志说的是"未知"，看着像代码没想过这个取值。
+      // ⚠️ 判据只从 `config/afterSales` 取（不在本文件写第二份中文）。
+      const afterSalesStatuses = orderDetails
+        .map((record) => textValue(record.fields?.[detailFields.fulfillmentStatus]))
+        .filter((status) => isAfterSalesFulfillment(status));
+      if (afterSalesStatuses.length) {
+        logInfo('sales.second_delivery.reminder.order_skipped', {
+          sales_entry_record_id: entry.record_id,
+          reason: 'after_sales_fulfillment',
+          fulfillment_status: afterSalesStatuses.join(','),
+          hint: '这一单里有退过/换过/赔过的明细 ⇒ 不属于"预定 / 现货待收"，两份待处理清单都不推',
+        });
+        continue;
+      }
       let progress;
       try {
         progress = progressFromRecords(orderDetails, orderPayments, detailFields, paymentFields);
@@ -470,7 +498,8 @@ class SecondDeliveryService {
       params: { receive_id_type: 'chat_id' },
       data: { receive_id: chatId, msg_type: 'interactive', content: JSON.stringify(card) },
     });
-    if (response.code !== 0) throw new Error(`发送成交提醒卡片失败: ${response.msg} (Code: ${response.code})`);
+    // ⚠️ 2026-10-08：`code !== 0` 这条路也把**真实四项**挂在 error 上（不靠 message 猜）。
+    if (response.code !== 0) throw larkResponseError('发送成交提醒卡片失败', response);
     return response.data?.message_id || '';
   }
 
@@ -547,8 +576,17 @@ class SecondDeliveryService {
     } catch (error) {
       // 这一天不再重试（按天认领已经落盘），但把失败写进记录里，排查时能看到是哪一步、
       // 哪一天掉的；第二天会重新进候选。
-      await this.store.update(dayTaskId, { status: 'failed', error: error.message }).catch(() => undefined);
-      logWarn('sales.second_delivery.reminder.failed', { day: dayKey, error: error.message });
+      // ⚠️ 2026-10-08：**日志要打飞书返回的真实 code / msg / log_id / method_id**
+      //    （业务负责人点名的①：`Request failed with status code 400` 什么也说明不了）。
+      // ⚠️ 自动重试**只加在 9 点待处理单推送**上（她点名的那一条）；这一条只做日志修复
+      //    —— 理由与边界见 docs/pending-push-card-and-retry-2026-10-08.md 第 4.5 节。
+      const fields = larkErrorFields(error);
+      await this.store.update(dayTaskId, {
+        status: 'failed', error: fields.msg || error.message, lark_error: fields,
+      }).catch(() => undefined);
+      logWarn('sales.second_delivery.reminder.failed', {
+        day: dayKey, error: error.message, ...fields,
+      });
       throw error;
     }
   }

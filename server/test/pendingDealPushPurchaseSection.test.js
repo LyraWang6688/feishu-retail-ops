@@ -27,6 +27,9 @@ const { LarkMessageLinkResolver } = require('../src/services/larkMessageLinkReso
 const { PendingDealPushService } = require('../src/services/pendingDealPushService');
 const { resolvePendingDealPushConfig } = require('../src/config/pendingDealPush');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+// ⭐ 2026-10-08：默认形态是**消息卡片**；本文件里"读发出去那条消息"的地方统一用 `visibleOf`
+//   （卡片里她看得见的字）；几处直接 `buildText` 的（纯文本降级模板）逐字留着。
+const { visibleCardText } = require('../src/utils/pendingDealPushCard');
 
 const tmpStore = (prefix) =>
   new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), prefix)), idField: 'task_id' });
@@ -118,6 +121,9 @@ const remember = async (locator, batchNo, { messageId, threadId, chatId = CHAT_I
   });
 };
 
+// 卡片里"她看得见的字"（去掉 ** / text_tag / font 壳，文字链接摊成「文案 URL」）。
+const visibleOf = (create) => visibleCardText(JSON.parse(create.data.content));
+
 // ── ⑩ 两个大区逐字 ─────────────────────────────────────────────────────────────
 
 test('⑩ 一条消息两个大区：销售区在上、采购区在下，逐字对上', async () => {
@@ -144,21 +150,26 @@ test('⑩ 一条消息两个大区：销售区在上、采购区在下，逐字�
   assert.equal(result.purchaseMissingLinkCount, 1);
   assert.equal(creates.length, 1);
 
-  const text = JSON.parse(creates[0].data.content).text;
+  const text = visibleOf(creates[0]);
   assert.equal(text, [
-    '⏰ 2026-10-07 最近 7 天待处理的销售单（预定 / 现货待收）：1 笔（【预定】1 笔）',
+    // ⚠️ 2026-10-08：一个销售区块 ⇒ 标题**不再补分区计数**；行里**没有单号**；
+    //    两个缺失脚注合并到卡片最下面那一条 note（卡片本来就该把脚注放末尾）。
+    '⏰ 2026-10-07 最近 7 天待处理的销售单（预定 / 现货待收）：1 笔',
     '【预定】1 笔',
-    '1. XSD-20261007-001 【预定】 · B26002-52 37码 · 待收 ¥128.00',
-    // 这一笔销售没有本地深链映射 → 沿用既有的"照发 + 脚注"（销售区的行为一个字没改）
-    '（1 笔的深链暂不可用：飞书接口未返回 message_app_link，见日志 sales.pending_deal_push.link.missing）',
+    '1. B26002-52 37码 · 【预定】 · 待收 ¥128.00',
     '【采购】未到货的报货批次：2 批',
-    '1. CGD-20261007-0001 · 金猴 · https://applink.feishu.cn/client/thread/open?open_chat_id=oc_test_pending_push&open_thread_id=omt_1&openchatid=oc_test_pending_push&openthreadid=omt_1&thread_position=-1',
+    '1. CGD-20261007-0001 · 金猴 · 查看原话 https://applink.feishu.cn/client/thread/open?open_chat_id=oc_test_pending_push&open_thread_id=omt_1&openchatid=oc_test_pending_push&openthreadid=omt_1&thread_position=-1',
     '2. CGD-20261007-0002',
+    '（1 笔的深链暂不可用：飞书接口未返回 message_app_link，见日志 sales.pending_deal_push.link.missing）',
     '（1 批的深链暂不可用，见日志 sales.pending_deal_push.purchase_link.missing）',
   ].join('\n'));
+  // 两个区块之间**一条分割线**（采购区之前那条）。
+  const card = JSON.parse(creates[0].data.content);
+  assert.deepEqual(card.elements.map((element) => element.tag),
+    ['div', 'div', 'hr', 'div', 'div', 'div', 'note']);
 });
 
-test('⑪ 销售区逐字不变（哨兵）：同一批销售候选，加不加采购区，销售那半逐字节相同', async () => {
+test('⑪ 销售区哨兵：同一批销售候选，加不加采购区，**销售那半逐字节相同**（销售区没有大区标题）', async () => {
   const salesOnly = newService({ orders: [ORDER_A], records: { purchaseOrderBatch: [], purchaseReport: [] } });
   const salesText = salesOnly.service.buildText({ orders: [ORDER_A], missingLinkCount: 0, dayKey: DAY_KEY });
 
@@ -178,8 +189,9 @@ test('⑪ 销售区逐字不变（哨兵）：同一批销售候选，加不加�
   });
   // 销售那半（采购区之前的那一段）**逐字节相同**
   assert.equal(combined.slice(0, salesText.length), salesText);
-  assert.equal(combined.slice(salesText.length), '\n【采购】未到货的报货批次：1 批\n1. CGD-20261007-0001 · 金猴 · https://x');
-  // 而且销售区的默认标题是**空串**（这就是"逐字不变"的实现方式）
+  assert.equal(combined.slice(salesText.length),
+    '\n【采购】未到货的报货批次：1 批\n1. CGD-20261007-0001 · 金猴 · 查看原话 https://x');
+  // 而且销售区的大区标题是**空串**（默认不给销售区多加一行）
   assert.equal(withPurchase.settings.salesAreaTitle, '');
 });
 
@@ -208,15 +220,15 @@ test('F4 空区连标题都不出现：只有采购候选时，**没有**销售�
   assert.ok(!text.includes('销售单'), '销售区整块不出现（连表头都没有）');
 });
 
-test('F4 只有销售候选时：**没有**采购区的任何痕迹（逐字等于改动前）', async () => {
+test('F4 只有销售候选时：**没有**采购区的任何痕迹', async () => {
   const { service } = newService({ orders: [ORDER_A], records: {} });
   const text = service.buildText({
     orders: [ORDER_A], missingLinkCount: 0, dayKey: DAY_KEY, purchaseBatches: [], purchaseMissingLinkCount: 0,
   });
   assert.equal(text, [
-    '⏰ 2026-10-07 最近 7 天待处理的销售单（预定 / 现货待收）：1 笔（【预定】1 笔）',
+    '⏰ 2026-10-07 最近 7 天待处理的销售单（预定 / 现货待收）：1 笔',
     '【预定】1 笔',
-    '1. XSD-20261007-001 【预定】 · B26002-52 37码 · 待收 ¥128.00',
+    '1. B26002-52 37码 · 【预定】 · 待收 ¥128.00',
   ].join('\n'));
   assert.ok(!text.includes('采购'), '没有采购候选时一个字都不提采购');
 });
@@ -239,9 +251,13 @@ test('F4 顺序可配：PENDING_DEAL_PUSH_AREA_ORDER=purchase,sales → 采购�
     settings: { areas: ['purchase', 'sales'] },
   });
   await service.sendDailyPush({ now: NOW });
-  const text = JSON.parse(creates[0].data.content).text;
+  const text = visibleOf(creates[0]);
   assert.ok(text.startsWith('【采购】'), `采购区该在最上面，实际：${text.split('\n')[0]}`);
-  assert.ok(text.includes('最近 7 天待处理的销售单'), '销售区照样在，只是排在后面');
+  // 销售区照样在，只是排在后面；⚠️ 这时**没有销售表头**当卡片标题
+  //   ——「最近 7 天待处理的销售单」那句写的是销售单，采购区在上面时顶在卡片最上面是错的。
+  assert.ok(text.includes('【预定】'), '销售区照样在，只是排在后面');
+  assert.ok(text.includes('B26002-52 37码'), '销售那一行也在');
+  assert.ok(!text.includes('最近 7 天待处理的销售单'));
 });
 
 // ── F2 / F3 候选与深链 ────────────────────────────────────────────────────────
@@ -293,8 +309,8 @@ test('F3 深链走本地映射（chat_id + thread_id）→ 话题深链；拿不
   const result = await service.sendDailyPush({ now: NOW });
   assert.equal(result.purchaseBatchCount, 2, '拿不到深链也不能漏掉候选');
   assert.equal(result.purchaseMissingLinkCount, 1);
-  const text = JSON.parse(creates[0].data.content).text;
-  assert.match(text, /1\. CGD-20261007-0001 · 金猴 · https:\/\/applink\.feishu\.cn\/client\/thread\/open\?/);
+  const text = visibleOf(creates[0]);
+  assert.match(text, /1\. CGD-20261007-0001 · 金猴 · 查看原话 https:\/\/applink\.feishu\.cn\/client\/thread\/open\?/);
   assert.match(text, /2\. CGD-20261007-0002$/m, '第 2 批照发（那一行不出现链接段）');
   assert.match(text, /（1 批的深链暂不可用，见日志 sales\.pending_deal_push\.purchase_link\.missing）/);
 });
@@ -336,7 +352,7 @@ test('F3 采购候选读表失败：**不拖垮销售那半边**（照常推销�
   const result = await service.sendDailyPush({ now: NOW });
   assert.equal(result.pushedOrderCount, 1, '销售照推');
   assert.equal(result.purchaseBatchCount, 0);
-  const text = JSON.parse(creates[0].data.content).text;
+  const text = visibleOf(creates[0]);
   assert.ok(text.includes('最近 7 天待处理的销售单'));
   assert.ok(!text.includes('【采购】'));
 });
