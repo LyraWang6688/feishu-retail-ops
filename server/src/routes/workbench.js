@@ -10,6 +10,11 @@ const { SalesFollowupService } = require('../services/salesFollowupService');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { createPurchaseQueryRouter } = require('./purchaseQuery');
 const { createInventoryAdjustmentRouter } = require('./workbenchInventoryAdjustment');
+const { createWorkbenchOrderActionsRouter } = require('./workbenchOrderActions');
+const { WorkbenchPurchaseArrivalService } = require('../services/workbenchPurchaseArrivalService');
+const { createPurchaseQueryService } = require('../services/purchaseQueryService');
+const { PurchaseWebhookService } = require('../services/purchaseWebhookService');
+const { PurchaseArrivalConversationService } = require('../services/purchaseArrivalConversationService');
 const { createLabelPrintService } = require('../services/labelPrintService');
 const { SampleReplacementService } = require('../services/sampleReplacementService');
 const { logError, logWarn } = require('../utils/logger');
@@ -36,6 +41,59 @@ const createWorkbenchRouter = (options = {}) => {
     next();
   });
   router.use(requireWorkbenchAccess);
+  // ⭐ 2026-10-09（业务负责人当天 15:07：「**采购**，按照**采购订单**，有**验收到货**的按钮」）：
+  //   订单列表 · **采购**子 tab 那一行上的「验收到货」。
+  //   🔴 **不新开鉴权**：它就挂在这条 `requireWorkbenchAccess` 之后（与其它工作台接口同一道闸门）。
+  //   🔴 **不新写一套入库**：本路由只收 `{ batchNo, actualAmount, acceptanceText }`，
+  //      原样交给 `WorkbenchPurchaseArrivalService` → 既有
+  //      `PurchaseArrivalConversationService.confirmBatchArrival` →
+  //      既有 `PurchaseWebhookService.confirmArrival`（逐条 `InventoryService.applyPurchase`）。
+  //   ⚠️ 「实际金额」是**既有必填口径**（业务负责人 2026-10-08：「金额这个是必填的」），
+  //      所以那个按钮点开的是一个小表单，不是一个"点了就入库"的裸按钮。
+  //   ⚠️ 依赖**延迟构建**：只想注入一个桩的调用方（测试）不必先配好飞书凭证。
+  let purchaseArrival = options.purchaseArrival || null;
+  const resolvePurchaseArrival = () => {
+    if (!purchaseArrival) {
+      const arrivalGateway = options.gateway || new V1BitableGateway();
+      const webhooks = new PurchaseWebhookService({ gateway: arrivalGateway });
+      const arrivalConversation = new PurchaseArrivalConversationService({
+        gateway: arrivalGateway,
+        // ⚠️ 与采购链路**共用同一个任务存储**：`confirmArrival` 要读的草稿就在那里。
+        store: webhooks.store,
+        sizeReferences: webhooks.getSizeReferences,
+        confirmArrival: (taskId, task, operatorOpenId) =>
+          webhooks.confirmArrival(taskId, task, operatorOpenId),
+        // 入库之后把批次行的「到货状态」改成已到货 —— 仍是**既有** `PurchaseOrderBatchService`。
+        markBatchArrived: (batchNo, arriveOptions) =>
+          webhooks.orderBatches.markArrived(batchNo, arriveOptions),
+      });
+      purchaseArrival = new WorkbenchPurchaseArrivalService({
+        purchaseQuery: createPurchaseQueryService(arrivalGateway),
+        arrivalConversation,
+      });
+    }
+    return purchaseArrival;
+  };
+  router.post('/purchase/arrivals/confirm', async (req, res) => {
+    const batchNo = String(req.body?.batchNo || '').trim();
+    try {
+      const result = await resolvePurchaseArrival().confirmArrival({
+        batchNo,
+        actualAmount: req.body?.actualAmount,
+        acceptanceText: req.body?.acceptanceText,
+        operatorOpenId: req.workbenchUser?.open_id,
+      });
+      return res.json({ success: true, ...result });
+    } catch (error) {
+      logError('workbench.purchase.arrival_confirm.failed', {
+        request_id: req.requestId, batch_no: batchNo, error: error.message,
+      });
+      // 失败口径与 `workbenchOrderActions` 同一套：她填错的 400 / 业务拒绝 502，
+      // **两种都把原因原样回到页面**（页面上看得见原因，不许静默）。
+      const status = error?.statusCode === 400 ? 400 : error?.statusCode === 503 ? 503 : 502;
+      return res.status(status).json({ success: false, error: error.message });
+    }
+  });
   router.use('/purchase', createPurchaseQueryRouter({ gateway: options.gateway || new V1BitableGateway() }));
   // 人工库存调整（盘点调整 / 换季调整）：真写「实时库存」+「库存流水」，
   // 所以放在身份闸门之后挂载（见 workbenchInventoryAdjustment.js 的说明）。
@@ -49,6 +107,17 @@ const createWorkbenchRouter = (options = {}) => {
   //    （换季调整要按品类列鞋、盘点要按尺码看三种状态的数量）⇒ **必须保留**。
   // ⚠️ 下面的 `/sales/orders` + `/sales/payments` + `/sales/deliveries` 是**写入类**
   //    （补记收款 / 交付并扣库存），不属于"查询"，本次**保留**（见 `docs/module-boundaries.md`）。
+  // ⭐ 2026-10-09（业务负责人：「我们建一个**订单列表**吧……工作台要对移动端友好……
+  //    如果它在移动端进行**补收款、售后，以及二次交付**，这些都是可以的」）：
+  //    订单列表的另外两个动作挂在这里 —— 售后（退 / 换 / 赔）与二次交付（收尾款 + 交付）。
+  //    ⚠️ 它们**复用既有的 `requireWorkbenchAccess`**（下面那条 `router.use`，不新开鉴权），
+  //       并且**一次写库都不做**：全部交 `services/workbenchOrderActionService.js` →
+  //       既有 `AfterSalesService.execute` / `SecondDeliveryService.confirm`。
+  //    补收款 / 交付两条沿用既有路由（上面 `followup` 那个实例），一个字没改。
+  router.use(createWorkbenchOrderActionsRouter({
+    gateway: options.gateway || followup.gateway,
+    service: options.orderActions,
+  }));
   // 货品选择器 / 库存数量 / 品类清单 —— 都只读，供「库存手工调整」两个子页用。
   router.get('/inventory/products', controller.queryInventoryProducts);
   router.get('/inventory/stock', controller.queryInventoryStock);

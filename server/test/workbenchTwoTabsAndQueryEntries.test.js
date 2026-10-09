@@ -120,24 +120,32 @@ function parseEntryBlocks(html) {
   });
 }
 
-// ── AC1：一级 tab 只有 2 个 ───────────────────────────────────────────────────
+// ── AC1：一级 tab ────────────────────────────────────────────────────────────
+// ⚠️ 2026-10-09 修订（**不是把 2026-10-08 的口径推翻**）：业务负责人当天要的
+//    「订单列表」是**新增的第三个**一级 tab —— 前两个（信息录入 / 信息查询）**一个字没动**
+//    （信息查询仍然是飞书外链卡，没有自建查询接口）。
+//    她的原话：「我们建一个**订单列表**吧……订单列表实际上就是**看销售情况**」。
+//    ⇒ 这条断言从"只有 2 个"改成"前两个逐字不变 + 末尾追加「订单列表」"。
+//    新 tab 自己的验收标准在 `test/workbenchOrders.test.js`（AC1–AC8）。
 
-test('AC1 一级 tab 只有 2 个：逐字「信息录入」「信息查询」，文案单一来源 config/tabs.js', async () => {
+test('AC1 一级 tab：前两个逐字「信息录入」「信息查询」不变，2026-10-09 末尾追加「订单列表」', async () => {
   const modules = loadFrontendModules();
   const [tabs, coreTabs] = await Promise.all([modules.tabs, modules.coreTabs]);
 
   assert.deepEqual(tabs.MAIN_TABS, [
     { module: 'common', label: '信息录入' },
     { module: 'query', label: '信息查询' },
-  ], '一级 tab 必须逐字是 信息录入 / 信息查询（顺序也是这个），一个不多一个不少');
+    { module: 'orders', label: '订单列表' },
+  ], '前两个 tab 逐字不变；2026-10-09 追加「订单列表」（文案的单一来源仍是 config/tabs.js）');
 
   const html = coreTabs.mainTabsHtml();
   const buttons = [...html.matchAll(/<button class="([^"]*)" type="button" data-module="([^"]*)">([^<]*)<\/button>/g)];
-  assert.equal(buttons.length, 2, 'nav 里必须只有 2 个 tab 按钮');
-  assert.deepEqual(buttons.map((button) => button[3]), ['信息录入', '信息查询'], 'tab 文案逐字');
-  assert.deepEqual(buttons.map((button) => button[2]), ['common', 'query'], 'data-module 仍是既有机制');
-  assert.ok(buttons[0][1].includes('active'), '默认打开的 tab = 第一个（信息录入）');
-  assert.ok(!buttons[1][1].includes('active'), '只有第一个带 active');
+  assert.equal(buttons.length, 3, 'nav 里 3 个 tab 按钮（信息录入 / 信息查询 / 订单列表）');
+  assert.deepEqual(buttons.slice(0, 2).map((button) => button[3]), ['信息录入', '信息查询'], '前两个 tab 文案逐字不变');
+  assert.deepEqual(buttons.map((button) => button[3]), ['信息录入', '信息查询', '订单列表']);
+  assert.deepEqual(buttons.map((button) => button[2]), ['common', 'query', 'orders'], 'data-module 仍是既有机制');
+  assert.ok(buttons[0][1].includes('active'), '默认打开的 tab = 第一个（信息录入，与 2026-10-08 一致）');
+  assert.ok(!buttons[1][1].includes('active') && !buttons[2][1].includes('active'), '只有第一个带 active');
 });
 
 test('AC1b index.html：nav 留空（文案不在 HTML 里再写一遍）、不再加载已删的销售/库存样式', () => {

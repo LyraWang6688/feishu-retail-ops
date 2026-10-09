@@ -3,11 +3,13 @@ import { describeError, showPageError } from './core/ui.js';
 import { mainTabsHtml } from './core/tabs.js';
 import { createCommonModule } from './features/common/index.js';
 import { createQueryModule } from './features/query/index.js';
+import { createOrdersModule } from './features/orders/index.js';
 import { createPurchaseModule } from './features/purchase/index.js';
 import { createPlaceholderModule } from './features/shared/placeholder.js';
 
-// 一级 tab 只有 2 个（业务负责人 2026-10-08 定）：
+// 一级 tab（业务负责人 2026-10-08 定 2 个；⭐ 2026-10-09 追加第 3 个「订单列表」）：
 //   ① 信息录入（原「常用功能」只改名）· ② 信息查询（销售查询 / 库存查询 两个板块 = 飞书外链卡）
+//   ③ 订单列表（看销售情况 + 补收款 / 交付 / 售后 / 二次交付；移动端友好）
 // ⚠️ **文案 / 顺序 / data-module 的唯一来源是 `config/tabs.js` 的 `MAIN_TABS`**，
 //    由 `core/tabs.js` 的 `mainTabsHtml()` 渲染进 `#main-tabs`（配置先行：加减 tab 只改配置）。
 //    `index.html` 里的 `<nav id="main-tabs">` 因此是空的。
@@ -21,6 +23,8 @@ import { createPlaceholderModule } from './features/shared/placeholder.js';
 const modules = new Map([
   ['common', createCommonModule()],
   ['query', createQueryModule()],
+  // ⭐ 2026-10-09：订单列表（看销售情况 + 单条操作）。一级 tab 的文案在 `config/tabs.js`。
+  ['orders', createOrdersModule()],
   // ── 以下四个是隐去的入口（保留代码）────────────────────────────────────
   ['purchase', createPurchaseModule()],
   ['finance', createPlaceholderModule({

@@ -2430,7 +2430,15 @@ test('表单⑫：源码级断言 —— 提交这条路**没有第二套解析*
   assert.equal(parseCalls.length, 1, '整条链路只有一处调模型解析（提交与"在话题里说"共用它）');
   assert.match(source, /handleTopicMessageLocked/, '提交入口必须复用话题那条锁定管道');
   const planCalls = source.match(/this\.buildPlan\(/g) || [];
-  assert.equal(planCalls.length, 1, '算计划也只有一处（提交不另造一套差异比对）');
+  // ⭐ 2026-10-09：多出来的那一处是**工作台「验收到货」**的薄入口（`confirmBatchArrival`）——
+  //    它调的是**同一个** `buildPlan` 的 `same: true` 分支（"全部按申请数到货"，
+  //    **根本不做差异比对**）⇒ 仍然**只有一处**"按模型解析出的差异算计划"。
+  //    ⇒ 这条哨兵**收紧**成两问：调用点确实多了一个（如实），但"差异比对"的实现仍然只有一处。
+  assert.equal(planCalls.length, 2, '算计划的调用点：话题/表单那条 + 工作台的 same 分支');
+  const diffPlanCalls = source.match(/this\.buildPlan\(snapshot\.rows, parsed\)/g) || [];
+  assert.equal(diffPlanCalls.length, 1, '按模型解析的差异算计划**只有一处**（提交/工作台都不另造一套差异比对）');
+  assert.match(source, /buildPlan\(snapshot\.rows, \{ same: true, differences: \[\] \}\)/,
+    '工作台那条只能走"全部按申请数到货"的 same 分支（不做差异比对）');
 });
 
 

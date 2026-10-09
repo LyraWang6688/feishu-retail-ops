@@ -1077,6 +1077,131 @@ class PurchaseArrivalConversationService {
     return { toast: { type: 'success', content: summary } };
   }
 
+  /**
+   * ⭐⭐ 2026-10-09（业务负责人当天 15:07 定的「订单列表 · 采购」子 tab：
+   *   「**采购**，按照**采购订单**，有**验收到货**的按钮」）：
+   *   工作台那个「验收到货」按钮的**服务端入口**。
+   *
+   * 🔴 这个方法**不实现任何入库 / 写库逻辑**，它只做三件"翻译"的事：
+   *   ① 读这一批的申请行 —— 复用**既有** `loadRequestRows`（同一个只读实现，
+   *      退货行没有尺码那条数据闸门也照旧生效）；
+   *   ② 「全部按申请数到货」 —— 复用**既有** `buildPlan(rows, { same: true, differences: [] })`
+   *      （不新增第二条"算实际到货"的算法）；
+   *   ③ 把结果种进**同一批**的会话任务（task id 用同一个 `taskIdForBatch`），
+   *      然后调**既有** `confirmLocked` —— 建草稿、写「验收原话 / 实际数量 / 实际金额」、
+   *      逐条 `inventory.applyPurchase`、写「确认状态」「到货状态」**全部还是那一份实现**。
+   *
+   * 🔴 为什么不直接调 `PurchaseWebhookService.confirmArrival`：
+   *    它读的是**任务上的草稿**，草稿由 `confirmLocked` 按核对计划建。绕过它 = 自己拼草稿、
+   *    自己拼入库明细 = **第二套写库逻辑**（明令禁止）。
+   *
+   * ⚠️ 「实际金额」**必填**（业务负责人 2026-10-08：「金额这个是必填的，必须让用户填」）
+   *    —— 工作台表单收的就是它；缺失 / 非数字 / 0 / 负数一律**一个字都不写**（与卡片
+   *    表单那条路**同一个** `parseActualAmount`）。
+   * ⚠️ 「验收原话」也是**她给的**（工作台表单里的「到货说明」，默认值由前端配置给）：
+   *    这里**不替她编一句话**，空了就拒绝。
+   * ⚠️ 串行：与群话题那条路**共用同一个 `this.queue`**（同一批不会被两条路同时写）。
+   *
+   * @returns {Promise<{ok: boolean, reason?: string, message: string, taskId?: string}>}
+   *   `message` 是**给人看的一句话**（工作台直接显示它），不是内部术语。
+   */
+  async confirmBatchArrival({ batch, acceptanceText = '', actualAmount, operatorOpenId = '' } = {}) {
+    const batchNo = String(batch?.batch_no || '').trim();
+    if (!batchNo) {
+      return { ok: false, reason: 'no_batch_no', message: '这一行没有报货批次号，不能验收到货' };
+    }
+    const amount = parseActualAmount(actualAmount);
+    if (!amount.ok) {
+      return {
+        ok: false,
+        reason: amount.reason,
+        message: amount.reason === 'amount_missing'
+          ? '请先填这次的「实际金额」，再点验收到货'
+          : '「实际金额」要填一个大于 0 的数字（不能是 0 或负数）',
+      };
+    }
+    const text = String(acceptanceText == null ? '' : acceptanceText).trim();
+    if (!text) {
+      return {
+        ok: false,
+        reason: 'acceptance_text_missing',
+        message: '请先写一句到货说明（例如「跟单子一样，全部到货」），再点验收到货',
+      };
+    }
+    const taskId = taskIdForBatch(batchNo);
+    const existing = await this.store.get(taskId).catch(() => null);
+    if (existing?.status === 'posted') {
+      // 已经入过库：**一个字都不写**，如实告诉她（与群话题那条路同一个判据）。
+      logInfo('purchase.arrival.reconcile.workbench_already_posted', { task_id: taskId, batch_no: batchNo });
+      return {
+        ok: true, reason: 'already_posted', taskId,
+        message: `这批（${batchNo}）已经验收入库过了，没有重复入库`,
+      };
+    }
+    return this.queue.run(taskId, async () => {
+      // ① 读申请行（既有只读实现；退货行没有尺码会在这里被挡住）
+      const snapshot = await this.loadRequestRows(batch);
+      if (!snapshot.ok) {
+        logWarn('purchase.arrival.reconcile.workbench_rows_unavailable', {
+          task_id: taskId, batch_no: batchNo, reason: snapshot.reason,
+        });
+        return { ok: false, reason: snapshot.reason, taskId, message: this.workbenchRowsMessage(snapshot.reason) };
+      }
+      // ② 全部按申请数到货（既有纯函数）
+      const plan = this.buildPlan(snapshot.rows, { same: true, differences: [] });
+      if (!plan.ok) {
+        logWarn('purchase.arrival.reconcile.workbench_plan_failed', {
+          task_id: taskId, batch_no: batchNo, reason: plan.reason,
+        });
+        return { ok: false, reason: plan.reason, taskId, message: this.workbenchRowsMessage(plan.reason) };
+      }
+      // ③ 种任务（形状与"卡片核对算完之后"那一份逐字对齐；接着走既有 confirmLocked）
+      const seed = {
+        type: TASK_TYPE,
+        batch_no: batchNo,
+        batch_record_id: String(batch?.batch_record_id || snapshot.batchRecordId || '').trim(),
+        request_ids: snapshot.requestIds,
+        request_rows: snapshot.rows,
+        plan: plan.rows,
+        differences: plan.differences,
+        acceptance_text: text,
+        actual_amount: amount.value,
+        status: 'awaiting_confirmation',
+        source: 'workbench',
+        operator_open_id: String(operatorOpenId || existing?.operator_open_id || ''),
+      };
+      if (existing) await this.store.update(taskId, seed);
+      else await this.store.create({ task_id: taskId, ...seed, transcript: [] });
+      logInfo('purchase.arrival.reconcile.workbench_seeded', {
+        task_id: taskId, batch_no: batchNo, row_count: plan.rows.length,
+        actual_amount: amount.value,
+        note: '工作台「验收到货」：种进与群话题同一个任务，接着走既有 confirmLocked',
+      });
+      const result = await this.confirmLocked(taskId, operatorOpenId);
+      const failure = result?.toast?.type === 'error';
+      const message = result?.toast?.content || '';
+      return { ok: !failure, reason: failure ? 'inbound_failed' : 'posted', taskId, message };
+    });
+  }
+
+  /**
+   * 「读不到 / 算不出」时的**人话**（工作台直接显示）。
+   * ⚠️ 每个 reason 都对得上一条**数据事实**，不糊成"系统错误"；认不出的 reason 也要给一句话。
+   */
+  workbenchRowsMessage(reason) {
+    const copy = {
+      no_request_ids: '这一批没有找到采购申请明细，不能验收到货',
+      too_many_request_rows: '这一批的明细太多，一次核对不了；请在采购群那个话题里说',
+      request_rows_unreadable: '这一批的采购申请明细读不到，稍后再试',
+      request_row_without_product: '这一批有明细没挂货品，不能验收入库',
+      request_row_without_size: '这一批有明细没有尺码（采购退货单不能验收到货）',
+      request_row_bad_quantity: '这一批有明细的申请数量不是正整数，不能验收入库',
+      actual_not_positive: '这一批算出来的实际到货数不对，不能验收入库',
+      difference_unmatched: '这一批的到货明细对不上单据，不能验收入库',
+    };
+    return copy[reason] || '这一批现在不能验收入库（原因已记日志，请找管理员看一眼）';
+  }
+
   // ── 已删除（2026-10-07 晚）：`createArrivalRecord` / `findExistingArrival` ──────────
   //
   // 两个方法都在往**已被业务负责人删除的**「到货验收」表里建行 / 回查：
