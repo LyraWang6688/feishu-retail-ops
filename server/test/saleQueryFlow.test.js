@@ -15,7 +15,17 @@ process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKE
 // lark.group.bot_open_id_missing 警告把真正的失败淹掉。
 process.env.LARK_BOT_OPEN_ID = process.env.LARK_BOT_OPEN_ID || 'ou_test_bot_open_id';
 const DAY_MS = 24 * 60 * 60 * 1000;
-const TODAY_9AM = Date.parse('2026-10-05T09:00:00+08:00');
+// ⚠️ 夹具的时间锚点必须**相对当前时间**算，不能写死某一天。
+//    查询窗口是「今天 + 往前 4 个上海自然日」（`saleLookupService.lookupWindowStart`，
+//    天数见 `config/saleLookup` 的默认 5 天）——写死锚点（原来是 2026-10-05T09:00+08:00）
+//    之后窗口一往前滑，夹具的 daysAgo(1) 就掉出窗口，用例变成"日期腐烂"式的假红
+//    （2026-10-09 实测：窗口起点 2026-10-05 00:00+08 > 夹具 2026-10-04 09:00+08）。
+//    ⇒ 锚点改成「**今天**的上海日 09:00」，daysAgo(n) = 往前 n 个上海自然日；
+//    这样它永远落在窗口内，且**不需要放宽/删除任何断言**。
+const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
+const shanghaiDayStartOf = (date) =>
+  Date.parse(`${new Date(date.getTime() + SHANGHAI_OFFSET_MS).toISOString().slice(0, 10)}T00:00:00+08:00`);
+const TODAY_9AM = shanghaiDayStartOf(new Date()) + 9 * 60 * 60 * 1000;
 const daysAgo = (n) => TODAY_9AM - n * DAY_MS;
 
 // 这一组测的是「消息 → 意图 → 只读查询 → 卡片」的接线：

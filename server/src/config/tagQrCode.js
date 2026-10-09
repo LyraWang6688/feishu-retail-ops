@@ -143,6 +143,31 @@ const BATCH = Object.freeze({
   limit: 0,
 });
 
+/**
+ * ⭐ **兜底巡检**（2026-10-09 加）—— 事件那条路只管"改这一下"，**万一判漏了**
+ * （2026-10-09 生产真事：公式列「编号」的前后值在事件里读不出可比文本 ⇒ 被当成"没变"，
+ * 那条记录留下了一张**过期二维码**）就会静默留脏数据。这个入口**不看事件、只认当前事实**：
+ * 全表扫一遍，「附件文件名 ≠ 当前编号应有的文件名」⇒ 重新生成。
+ *
+ * 它是一个**纯函数式入口**，可以被 cron / scheduler 直接调用（`services/tagQrCodeService.js`
+ * 的 `sweepStaleTagQrCodes`）——本文件**不挂任何定时器**，挂不挂由业务负责人决定。
+ *
+ * `enabled`    —— 巡检总开关（显式布尔，**不用 `||` 兜底**）。
+ * `limit`      —— 单次最多处理多少条（**0 = 不限**）。给定时任务留的刹车：
+ *                 哪怕某天全表都过期，一次也不会打满飞书「上传素材」的频控。
+ * `intervalMs` —— 每条之间的间隔（毫秒）。上传素材 **5 QPS 且不支持并发**（并发会 `1061045`）
+ *                 ⇒ 串行 + 间隔。
+ * `dryRun`     —— 干跑：只报告"要修哪些"，一个字都不写。
+ *                 **默认 `false`**：这个入口的语义就是"自愈兜底"，默认干跑等于它悄悄不干活
+ *                 （那是本仓最讨厌的静默失效）。要看影响面时**显式**传 `dryRun: true`。
+ */
+const SWEEP = Object.freeze({
+  enabled: true,
+  limit: 0,
+  intervalMs: 500,
+  dryRun: false,
+});
+
 const TAG_QR_CODE = Object.freeze({
   enabled: ENABLED,
   scanUrl: SCAN_URL,
@@ -152,6 +177,7 @@ const TAG_QR_CODE = Object.freeze({
   temp: TEMP,
   events: EVENTS,
   batch: BATCH,
+  sweep: SWEEP,
   // 物理列名只有一个去处：`config/v1BitableSchema.js` 的 `product.fields`。
   // 这里只放**语义键**（网关 update 收的就是它），避免同一个列名有两份真源。
   fields: Object.freeze({
@@ -169,4 +195,5 @@ module.exports = {
   TEMP,
   EVENTS,
   BATCH,
+  SWEEP,
 };

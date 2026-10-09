@@ -13,7 +13,8 @@
  *   "出什么码、叫什么名、该不该写"，不自己 new 飞书客户端。
  *
  * 三条硬口径：
- *   · **幂等**：这一列**已经有值就跳过**（记 `product.tag_qr.skipped_existing`）；
+ *   · **幂等**：这一列**已经有值就跳过**（脚本/新增记录记 `product.tag_qr.skipped_existing`；
+ *     事件那一路判不了、退化成比文件名之后**一致**的，记 `product.tag_qr.skipped_number_unchanged`）；
  *     只有"显式要求覆盖"（编号变了 / 脚本带 `--overwrite`）才重写，
  *     而且**覆盖前先记一条 `product.tag_qr.overwriting`**（先留证据，再动手）。
  *   · **失败大声报错 + 可重试**：任何一步失败都 `logError('product.tag_qr.failed')` 并
@@ -24,11 +25,26 @@
  *
  * 编号变更怎么判（这是本轮唯一"拿不准"的地方，所以做成**三层**，一层判不了退下一层）：
  *   ① **事件里的字段值**（`action_list[].before_value` / `after_value`，含 `field_id`）：
- *      找到「编号」列的 `field_id`，两边取值不同 ⇒ 变了；两边都没有这一列 ⇒ 没变（不触发）。
- *   ② 事件里**根本没带**这一列的字段值（老版本推送 / 只推了其它列）⇒ 判不了，
- *      改为读一次记录：**现存附件的文件名 ≠ 当前编号该有的文件名** ⇒ 认定过期，重写。
+ *      ⭐ **只有"两边都读得出可比较的文本、且真的不同"才算变了**；
+ *      **只有"两边都读得出、且完全相同"才算没变**（这一档才走快路径，省一次读）。
+ *      🔴 **"读不出"绝不许当成"没变"** —— 见下面 2026-10-09 的真事。
+ *   ② 判不了（事件没带这一列 / 值读不出可比文本，比如公式列推过来的是富文本数组或空值）
+ *      ⇒ 读一次记录：**现存附件的文件名 ≠ 当前编号该有的文件名** ⇒ 认定过期，重写。
  *      （文件名由编号决定、同一条记录每次一样，见 config 的 `fileName`。）
  *   ③ 连文件名都读不出来 ⇒ **不写**（宁可漏一次，也不盲写覆盖她表里的东西）。
+ *
+ * 🔴 **2026-10-09 生产事故（本文件必须记住的教训）**：
+ *   她在「货品信息」把一条记录的颜色由 `黑` 改成 `黑色`（编号 `3357|黑|B` → `3357|黑色|B`），
+ *   日志却是 `product.tag_qr.skipped_number_unchanged` —— 二维码停在旧编号上，**被跳过了**。
+ *   根因就在旧的第①层：`String(before ?? '') !== String(after ?? '')`。
+ *   「编号」现在是**公式列**（`type=20`，内容 `货号|颜色|类别`），事件里推过来的
+ *   `field_value` **不是一个普通字符串**（公式列在本仓别处也被证实是富文本数组 `[{text}]`，
+ *   也可能是空值）⇒ `String()` 两边都变成同一个串（`'[object Object]'` / `''`）⇒
+ *   判成"没变" ⇒ **永远轮不到第②层的文件名兜底** ⇒ 编号变了也不重生成。
+ *   ⇒ 改法：把"值读不出可比文本"**显式判成 `null`（不确定）**，而不是 `false`（没变）。
+ *
+ * 🔴 **还有一层兜底**（同一天加）：`sweepStaleTagQrCodes` —— 不看事件、全表巡检
+ *   「文件名 ≠ 当前编号应有文件名 ⇒ 重生成」，供 cron / scheduler 调用（见 `config.sweep`）。
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -105,6 +121,47 @@ const findFieldValue = (values, fieldId) => {
   return hit ? hit.field_value : undefined;
 };
 
+/**
+ * 把事件里的 `field_value` 读成**能比较的文本**（`services/v1BitableGateway` 的 `textValue`
+ * 的**严格版**：读不出就返回 `null` = "不确定"，**绝不返回空串冒充"没有值"**）。
+ *
+ * 🔴 为什么要这么写：飞书事件里的 `field_value` **不保证是普通字符串**——
+ *   · **公式列**（「编号」`type=20`）在**记录 API** 里返回的就是富文本数组 `[{text:'…'}]`；
+ *   · 事件里也可能是 `null`（这一列没被推过来）或空串（老版本 / 没带值）。
+ *   旧实现直接 `String(value)`：数组/对象 ⇒ 两边都是 `'[object Object]'`、空值 ⇒ 两边都是 `''`
+ *   ⇒ **"读不懂"被当成了"没变"** —— 这就是 2026-10-09 那次漏判（详见文件头）。
+ *
+ * @returns {string|null} 可比较的文本；`null` = 读不出（**判不了**，不是"没变"）
+ */
+const readableFieldText = (value) => {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) {
+    // 富文本数组：`[{ text: '…' }, …]`；任何一段读不出就直接判"读不出"（不猜、不拼接半截）。
+    const parts = value.map(readableFieldText);
+    if (!parts.length || parts.some((part) => part === null)) return null;
+    return parts.join(',');
+  }
+  if (value && typeof value === 'object') {
+    const nested = value.text ?? value.name ?? value.value;
+    if (typeof nested === 'string') return nested;
+    if (typeof nested === 'number') return String(nested);
+    return null;
+  }
+  return null; // null / undefined / 其他 ⇒ 不确定
+};
+
+/** 事件里的原始值裁成**短、可读**的一小段，只用于日志（这是这类漏判唯一的现场证据）。 */
+const previewValue = (value) => {
+  let text;
+  try {
+    text = value === undefined ? 'undefined' : (JSON.stringify(value) ?? String(value));
+  } catch {
+    text = String(value);
+  }
+  return text.length > 120 ? `${text.slice(0, 120)}…` : text;
+};
+
 /** 生成二维码 PNG（默认实现；测试可注入，避免每次真出图）。 */
 const generateQrPng = (text, qrConfig = TAG_QR_CODE.qr) => QRCode.toBuffer(text, {
   type: 'png',
@@ -156,17 +213,41 @@ const createTagQrCodeService = ({
 
   /**
    * 判「编号」这一列在这一次变更里动没动。
-   * @returns {Promise<true|false|null>} true=变了；false=没变（不触发）；
-   *   null=事件里没带这一列的字段值，**判不了**（交给文件名那一层）。
+   *
+   * ⭐ **只有"读得出可比文本"才下结论**（2026-10-09 的漏判就死在这里）：
+   *   · 两边都读得出、且**不同** ⇒ `true`（变了）；
+   *   · 两边都读得出、且**相同**（都是非空文本）⇒ `false`（没变，可走快路径省一次读）；
+   *   · **其余一律 `null`（判不了）** —— 事件没带这一列、值读不出（公式列的富文本数组、
+   *     对象、`null`）、或任一侧是空串。**"不确定"绝不许当成"没变"。**
+   *
+   * @returns {Promise<{changed: true|false|null, why: string, before: *, after: *}>}
    */
-  const resolveNumberChange = async (actionItem) => {
+  const resolveNumberChangeDetail = async (actionItem) => {
     const fieldId = await resolveNumberFieldId();
-    if (!fieldId) return null;
-    const before = findFieldValue(actionItem?.before_value, fieldId);
-    const after = findFieldValue(actionItem?.after_value, fieldId);
-    if (before === undefined && after === undefined) return null;
-    return String(before ?? '') !== String(after ?? '');
+    if (!fieldId) {
+      return { changed: null, why: 'field_id_unavailable', before: undefined, after: undefined };
+    }
+    const rawBefore = findFieldValue(actionItem?.before_value, fieldId);
+    const rawAfter = findFieldValue(actionItem?.after_value, fieldId);
+    const before = readableFieldText(rawBefore);
+    const after = readableFieldText(rawAfter);
+    if (before === null || after === null) {
+      // 值读不出可比文本（`null` / 富文本数组 / 对象 / 这一列根本没被推过来）。
+      return { changed: null, why: 'value_not_readable', before: rawBefore, after: rawAfter };
+    }
+    if (!before.trim() || !after.trim()) {
+      // 任一侧是空串：多半是"这一列没被推过来"，**不是**"编号被清空了" ⇒ 判不了。
+      return { changed: null, why: 'value_empty', before: rawBefore, after: rawAfter };
+    }
+    return { changed: before !== after, why: 'compared', before: rawBefore, after: rawAfter };
   };
+
+  /**
+   * @returns {Promise<true|false|null>} true=变了；false=**确定**没变（可走快路径）；
+   *   null=判不了 ⇒ 交给"读一次记录 + 比文件名"那一层（**绝不当成"没变"**）。
+   */
+  const resolveNumberChange = async (actionItem) =>
+    (await resolveNumberChangeDetail(actionItem)).changed;
 
   /**
    * 让一条货品记录的「标签二维码」与它的「编号」一致。
@@ -177,9 +258,12 @@ const createTagQrCodeService = ({
    * @param {true|false|null} [options.numberChanged]
    *   `true`    = 已经确定编号变了 ⇒ **覆盖**；
    *   `false` / 不传 = 走**幂等**：这一列有值就跳过（脚本 / 新增记录都用这一档）；
-   *   `null`    = 判不了 ⇒ 只有在"现存附件的文件名与当前编号不符"时才覆盖。
+   *   `null`    = **判不了**（事件没带值 / 值读不出）⇒ 只有在"现存附件的文件名与当前编号不符"
+   *               时才覆盖；名字对得上就跳过。⭐ **绝不许把"判不了"当"没变"**（2026-10-09 的教训）。
    * @returns {Promise<{record_id, status, reason, file_token?, file_name?, scan_url?}>}
    *   `status` ∈ written | skipped；**失败一律抛错**（由调用方记日志/计失败数）。
+   *   ⚠️ 靠文件名判出过期而重写时，`reason` 一律记成 **`number_changed`**（事实如此）；
+   *      判不了但比完**一致** ⇒ `number_unchanged`；脚本/新增那一路的幂等跳过 ⇒ `already_present`。
    */
   const syncRecord = async (recordId, { reason = 'manual', numberChanged } = {}) => {
     if (!config.enabled) {
@@ -199,14 +283,33 @@ const createTagQrCodeService = ({
     const fileName = buildFileName(number, config);
     const existing = attachmentsOf(fields[tagQrFieldName]);
 
+    // 「现存附件的文件名 ≠ 当前编号应有的文件名」= **事实上的编号变了**（只读一次就判得出，
+    // 不依赖事件带没带前后值）。这一档才是 `numberChanged === null` 时的**唯一**判据。
+    const staleByFileName = existing.length > 0
+      && numberChanged === null
+      && !existing.some((item) => item.name === fileName);
+    // ⭐ 覆盖原因**如实**：靠文件名判出来的不匹配，就是 `number_changed`
+    //   （而不是含混的 `number_change_unknown`）——日志/返回值里要能一眼看出是"改了"。
+    const effectiveReason = staleByFileName ? 'number_changed' : reason;
+
     if (existing.length) {
-      const staleByFileName = numberChanged === null
-        && !existing.some((item) => item.name === fileName);
       const overwrite = numberChanged === true || staleByFileName;
       if (!overwrite) {
+        if (numberChanged === null) {
+          // `numberChanged === null` 只可能来自**事件那一路**（判不了 ⇒ 退化成比文件名）：
+          // 比完一致 ⇒ 结论就是"编号没变"，**如实记成 skipped_number_unchanged**
+          //（与快路径同一个事件名；`verified_by` 说明这一次是靠文件名核出来的）。
+          logInfo('product.tag_qr.skipped_number_unchanged', {
+            record_id: recordId,
+            verified_by: 'file_name',
+            number,
+            file_names: existing.map((item) => item.name),
+          });
+          return { record_id: recordId, status: 'skipped', reason: 'number_unchanged', scan_url: scanUrl };
+        }
         logInfo('product.tag_qr.skipped_existing', {
           record_id: recordId,
-          reason,
+          reason: effectiveReason,
           number,
           file_names: existing.map((item) => item.name),
         });
@@ -215,7 +318,7 @@ const createTagQrCodeService = ({
       // ⭐ **先记日志，再覆盖**（业务负责人的口径：覆盖时先留证据）。
       logInfo('product.tag_qr.overwriting', {
         record_id: recordId,
-        reason,
+        reason: effectiveReason,
         number,
         existing_file_tokens: existing.map((item) => item.file_token),
         existing_file_names: existing.map((item) => item.name),
@@ -228,7 +331,7 @@ const createTagQrCodeService = ({
     try {
       png = await generatePng(scanUrl, config.qr);
     } catch (error) {
-      logError('product.tag_qr.failed', { record_id: recordId, reason, step: 'generate', error: error.message });
+      logError('product.tag_qr.failed', { record_id: recordId, reason: effectiveReason, step: 'generate', error: error.message });
       throw error;
     }
 
@@ -243,12 +346,12 @@ const createTagQrCodeService = ({
           operation: config.upload.operation,
         });
       } catch (error) {
-        logError('product.tag_qr.failed', { record_id: recordId, reason, step: 'upload', error: error.message });
+        logError('product.tag_qr.failed', { record_id: recordId, reason: effectiveReason, step: 'upload', error: error.message });
         throw error;
       }
       if (!fileToken) {
         const error = new Error('上传标签二维码成功但未返回 file_token');
-        logError('product.tag_qr.failed', { record_id: recordId, reason, step: 'upload', error: error.message });
+        logError('product.tag_qr.failed', { record_id: recordId, reason: effectiveReason, step: 'upload', error: error.message });
         throw error;
       }
       try {
@@ -256,13 +359,13 @@ const createTagQrCodeService = ({
         await gateway.update('product', recordId, { [config.fields.tagQrCode]: [{ file_token: fileToken }] });
       } catch (error) {
         logError('product.tag_qr.failed', {
-          record_id: recordId, reason, step: 'write_back', file_token: fileToken, error: error.message,
+          record_id: recordId, reason: effectiveReason, step: 'write_back', file_token: fileToken, error: error.message,
         });
         throw error;
       }
       logInfo('product.tag_qr.written', {
         record_id: recordId,
-        reason,
+        reason: effectiveReason,
         number,
         file_token: fileToken,
         file_name: fileName,
@@ -271,7 +374,12 @@ const createTagQrCodeService = ({
         overwritten: existing.length > 0,
       });
       return {
-        record_id: recordId, status: 'written', reason, file_token: fileToken, file_name: fileName, scan_url: scanUrl,
+        record_id: recordId,
+        status: 'written',
+        reason: effectiveReason,
+        file_token: fileToken,
+        file_name: fileName,
+        scan_url: scanUrl,
       };
     } finally {
       await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
@@ -304,12 +412,24 @@ const createTagQrCodeService = ({
           results.push(await syncRecord(recordId, { reason: 'record_added' }));
           continue;
         }
-        const numberChanged = await resolveNumberChange(actionItem);
+        const detail = await resolveNumberChangeDetail(actionItem);
+        const numberChanged = detail.changed;
         if (numberChanged === false) {
-          // ⭐ 其他字段变更**不触发**：连读表都不读，只记一条。
+          // ⭐ 只有**确定**没变才走快路径（其他字段变更）：连读表都不读，只记一条。
           logInfo('product.tag_qr.skipped_number_unchanged', { record_id: recordId, action });
           results.push({ record_id: recordId, status: 'skipped', reason: 'number_unchanged' });
           continue;
+        }
+        if (numberChanged === null) {
+          // ⭐⭐ **判不了 ≠ 没变**（2026-10-09 就是在这里漏判的）：退化到"读一次记录、比文件名"。
+          //    把事件里的原始值一并记下来 —— 这是这类漏判**唯一**的现场证据。
+          logInfo('product.tag_qr.number_change_unknown', {
+            record_id: recordId,
+            action,
+            why: detail.why,
+            before_value: previewValue(detail.before),
+            after_value: previewValue(detail.after),
+          });
         }
         results.push(await syncRecord(recordId, {
           reason: numberChanged === true ? 'number_changed' : 'number_change_unknown',
@@ -326,12 +446,147 @@ const createTagQrCodeService = ({
     return { enabled: true, results, failed };
   };
 
+  /**
+   * ⭐ **兜底巡检**（2026-10-09 加，供 cron / scheduler 调用；本函数**不挂定时器**）。
+   *
+   * 干什么：**不看事件**，只认**当前事实** —— `gateway.listAll('product')` 读全表，
+   * 逐条用**同一个** `buildFileName`（不抄第二份规则）算出"这条记录当前编号应有的文件名"：
+   *   · 附件名里**有一个对得上** ⇒ 不动它（`consistent`）；
+   *   · 有附件但对不上 ⇒ 重生成（`stale`）；**一个附件都没有** ⇒ 按"要补"处理（`missing`）；
+   *   · 没有「编号」⇒ 跳过（生不出码来，不是故障）。
+   * ⇒ 正好补住事件那条路**万一判漏**留下的过期二维码（2026-10-09 生产就漏了一条）。
+   *
+   * ⚠️ **不复用别处的判据**：文件名规则只有 `buildFileName` 一处真源；
+   *    真正写回还是走 `syncRecord`（幂等、先记 `overwriting` 再动手、失败抛错都在那儿）。
+   * ⚠️ **上限 / 间隔 / 开关全在 `config.sweep`**（`enabled` / `limit` / `intervalMs` / `dryRun`），
+   *    这里一个数字都不写死；三个参数也可以由调用方显式覆盖（定时任务想跑小批时用）。
+   * ⚠️ **一条失败不带走别的**：逐条 try/catch，失败进 `failed` 并 `logError`（大声、可重跑）。
+   *
+   * @param {object} [options]
+   * @param {number} [options.limit]       单次最多处理多少条（>0 时覆盖 config；0 = 不限）
+   * @param {number} [options.intervalMs]  每条之间的间隔（毫秒，覆盖 config）
+   * @param {boolean} [options.dryRun]     干跑：只报告要修哪些，一个字都不写
+   * @returns {Promise<{enabled, dry_run, scanned, consistent, number_missing,
+   *   candidates, planned, written, skipped, failed, results}>}
+   */
+  const sweepStaleTagQrCodes = async ({ limit, intervalMs, dryRun } = {}) => {
+    // 整条链路关掉时，巡检也不该动（否则会为每一条都跑一遍 syncRecord 再各自记一条 disabled）。
+    if (config.enabled !== true) {
+      logInfo('product.tag_qr.disabled', { reason: 'sweep' });
+      return { enabled: false, dry_run: true, results: [] };
+    }
+    const sweepConfig = config.sweep || {};
+    if (sweepConfig.enabled !== true) {
+      logInfo('product.tag_qr.sweep_disabled', {});
+      return { enabled: false, dry_run: true, results: [] };
+    }
+    if (typeof gateway?.listAll !== 'function') {
+      // 网关不支持整表读 ⇒ 巡检根本跑不起来。**当场抛**，不要"安静地什么都没做"。
+      throw new Error('网关不支持 listAll，「标签二维码」巡检无法扫全表');
+    }
+    const configuredLimit = Number.isInteger(sweepConfig.limit) && sweepConfig.limit > 0
+      ? sweepConfig.limit : 0;
+    const maxRecords = Number.isInteger(limit) && limit > 0 ? limit : configuredLimit;
+    const configuredGap = Number.isFinite(sweepConfig.intervalMs) && sweepConfig.intervalMs > 0
+      ? sweepConfig.intervalMs : 0;
+    const gapMs = Number.isFinite(intervalMs) && intervalMs >= 0 ? intervalMs : configuredGap;
+    // `dryRun` 缺省看 config；config 里也没有 `sweep.dryRun` 这个键时**按干跑**（最保守）。
+    const isDryRun = dryRun === undefined ? sweepConfig.dryRun !== false : Boolean(dryRun);
+
+    const records = await gateway.listAll('product');
+    const candidates = [];
+    let consistent = 0;
+    let numberMissing = 0;
+    for (const record of records || []) {
+      const recordId = record?.record_id;
+      if (!recordId) continue;
+      const number = textValue(record?.fields?.[numberFieldName]).trim();
+      if (!number) { numberMissing += 1; continue; }
+      const expectedFileName = buildFileName(number, config);
+      const existing = attachmentsOf(record?.fields?.[tagQrFieldName]);
+      if (existing.length && existing.some((item) => item.name === expectedFileName)) {
+        consistent += 1;
+        continue;
+      }
+      candidates.push({
+        record_id: recordId,
+        number,
+        expected_file_name: expectedFileName,
+        existing_file_names: existing.map((item) => item.name),
+        kind: existing.length ? 'stale' : 'missing',
+      });
+    }
+    const planned = maxRecords > 0 ? candidates.slice(0, maxRecords) : candidates;
+    const summary = {
+      enabled: true,
+      dry_run: isDryRun,
+      scanned: (records || []).length,
+      consistent,
+      number_missing: numberMissing,
+      candidates: candidates.length,
+      planned: planned.length,
+      written: 0,
+      skipped: 0,
+      failed: [],
+      results: [],
+    };
+
+    if (isDryRun) {
+      logInfo('product.tag_qr.sweep_dry_run', {
+        scanned: summary.scanned,
+        consistent,
+        number_missing: numberMissing,
+        candidates: candidates.length,
+        planned: planned.length,
+        record_ids: planned.slice(0, 20).map((item) => item.record_id),
+      });
+      summary.results = planned.map((item) => ({ ...item, status: 'dry_run' }));
+      return summary;
+    }
+
+    for (let index = 0; index < planned.length; index += 1) {
+      const item = planned[index];
+      // 上传素材 5 QPS 且不支持并发 ⇒ 串行 + 间隔。
+      if (index > 0 && gapMs > 0) {
+        await new Promise((resolve) => { setTimeout(resolve, gapMs); });
+      }
+      try {
+        // 巡检已经按**同一个** `buildFileName` 判过期 ⇒ 直接要求覆盖（reason 标明来源是巡检）。
+        const result = await syncRecord(item.record_id, { reason: 'sweep_stale', numberChanged: true });
+        summary.results.push(result);
+        if (result.status === 'written') summary.written += 1;
+        else summary.skipped += 1;
+      } catch (error) {
+        summary.failed.push({ record_id: item.record_id, error: error.message });
+      }
+    }
+    logInfo('product.tag_qr.sweep_done', {
+      scanned: summary.scanned,
+      consistent,
+      number_missing: numberMissing,
+      candidates: candidates.length,
+      planned: planned.length,
+      written: summary.written,
+      skipped: summary.skipped,
+      failed_count: summary.failed.length,
+    });
+    if (summary.failed.length) {
+      logError('product.tag_qr.sweep_failed', {
+        failed_count: summary.failed.length,
+        failed: summary.failed,
+      });
+    }
+    return summary;
+  };
+
   return {
     buildScanUrl: (number) => buildScanUrl(config.scanUrl.urlTemplate, number, config),
     buildFileName: (number) => buildFileName(number, config),
     resolveNumberChange,
+    resolveNumberChangeDetail,
     syncRecord,
     handleTableChanges,
+    sweepStaleTagQrCodes,
   };
 };
 
@@ -341,5 +596,6 @@ module.exports = {
   buildFileName,
   attachmentsOf,
   findFieldValue,
+  readableFieldText,
   generateQrPng,
 };
