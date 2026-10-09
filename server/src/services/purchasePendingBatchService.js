@@ -16,10 +16,12 @@ const { logInfo, logWarn } = require('../utils/logger');
 //
 // ── 三个字段各从哪来（核过再写，**取不到就不显示，绝不编**）──────────────────
 //   · 批次号   ：「报货批次.报货批次号」自己那一列；
-//   · 供应商   ：批次表 **7 列里没有供应商** ⇒ 从「信息填写」里**同批次**的记录上取
-//                （那一列在生产/测试真表里是 Lookup，目标 = 货品信息.供应商名）。
-//                一条批次可能对应多个供应商（多供应商批次）⇒ 返回**去重后的数组**，
-//                怎么拼是渲染层的事。
+//   · 供应商   ：⭐ **「报货批次.供应商」自己那一列**（2026-10-09 改）。
+//                ⚠️ 原先是从「信息填写」里同批次的记录上取 —— 那张表被业务负责人
+//                **整个删掉**了，而她在「报货批次」上**新加的那一列「供应商」**
+//                （SingleLink → 供应商管理）本来就是为这件事加的 ⇒ 这里改读它。
+//                好处：**零额外请求**（关联单元格自带被关联记录的主字段文本）、
+//                且不再跨表。一格可能多个 ⇒ 返回**去重后的数组**，怎么拼是渲染层的事。
 //   · 深链     ：本地映射 `data/purchase_group_messages/`（`chat_id` + `thread_id`）
 //                → 拼话题深链（`config/salesThreadLink` 那条**销售侧现役**的格式）。
 //                ⚠️ **不是** `client/message/link?message_id=` 那一种（实测拿不到）。
@@ -37,10 +39,17 @@ class PurchasePendingBatchService {
     return this.settings.pending;
   }
 
-  /** 一条「信息填写」记录上的供应商名（那一列是 Lookup；可能一格多个、可能一格没有）。 */
+  /**
+   * 一条「报货批次」记录上的供应商名（SingleLink；可能一格多个、可能一格没有）。
+   * ⚠️ **去重、保序**：关联单元格里同一个供应商可能连着出现（历史数据 / 多次关联），
+   *    直接拼会把「金猴、金猴、奥康」原样发给她。去重在这里做一次，渲染层不必再管。
+   */
   supplierLabelsOf(record, table) {
     const raw = textValue(record?.fields?.[table?.fields?.supplier]);
-    return String(raw || '').split(/[,，、;；]/).map((item) => item.trim()).filter(Boolean);
+    const labels = String(raw || '').split(/[,，、;；]/).map((item) => item.trim()).filter(Boolean);
+    const unique = [];
+    for (const label of labels) if (!unique.includes(label)) unique.push(label);
+    return unique;
   }
 
   /**
@@ -66,14 +75,13 @@ class PurchasePendingBatchService {
       return value === this.pendingStatus;
     });
     if (!pending.length) return [];
-    // 供应商：整表读一次「信息填写」，按批次号建索引（不逐条 get，也不 N 次往返）。
-    const supplierIndex = await this.loadSupplierIndex();
     return pending.map((record) => {
       const batchNo = textValue(record?.fields?.[batchField]).trim();
       return {
         batchNo,
         recordId: record?.record_id || '',
-        suppliers: supplierIndex.get(batchNo) || [],
+        // ⭐ 供应商就地取（同一行、同一份已读数据）——**不**再为它多读一张表。
+        suppliers: this.supplierLabelsOf(record, table),
         // 报货日（原值；格式化与"读不到怎么办"在渲染层）。
         reportedAt: record?.fields?.[table?.fields?.createdAt] ?? '',
         // 录入数量（表里的文本 / 数字都取成文本；读不到是空串）。
@@ -82,28 +90,10 @@ class PurchasePendingBatchService {
     }).filter((item) => item.batchNo);
   }
 
-  /** 批次号 → 供应商名（去重、保序）。读不到就空索引（**不抛**：推送不能被一张表拖死）。 */
-  async loadSupplierIndex() {
-    const index = new Map();
-    try {
-      const table = this.gateway.table('purchaseReport');
-      const batchField = table?.fields?.batchNoText;
-      if (!batchField) return index;
-      const records = await this.gateway.listAll('purchaseReport');
-      for (const record of records || []) {
-        const batchNo = textValue(record?.fields?.[batchField]).trim();
-        if (!batchNo) continue;
-        const labels = this.supplierLabelsOf(record, table);
-        if (!labels.length) continue;
-        const current = index.get(batchNo) || [];
-        for (const label of labels) if (!current.includes(label)) current.push(label);
-        index.set(batchNo, current);
-      }
-    } catch (error) {
-      logWarn('sales.pending_deal_push.purchase_supplier_index_failed', { error: error.message });
-    }
-    return index;
-  }
+  // ⛔ `loadSupplierIndex`（整表读「信息填写」、按批次号建索引）**已删除（2026-10-09）**：
+  //   供应商现在就在批次行上（`supplierLabelsOf` 就地取）。**不再有任何跨表请求**。
+  //   ⚠️ 连带删掉的是那条 `sales.pending_deal_push.purchase_supplier_index_failed` 日志
+  //      —— 它监视的那次读表已经不存在了。
 
   /**
    * 这一批的深链素材（本地映射 → 话题深链）。

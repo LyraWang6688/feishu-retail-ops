@@ -67,9 +67,10 @@ const WORKBENCH_SETTLEMENT_LABELS = Object.freeze({
  *   「**采购**，按照**采购订单**，有**验收到货**的按钮」）。
  *
  * 这一组是**服务端**给页面的人话（页面把 `error` 原样显示出来）。
- * ⚠️ 它们**不是业务状态**：到货状态 / 确认状态的取值仍在
- *    `config/purchaseArrivalStatus.js` / `config/purchaseAcceptance.js`，
+ * ⚠️ 它们**不是业务状态**：到货状态的取值仍在 `config/purchaseArrivalStatus.js`，
  *    这里一句都不新增、不改。
+ *    （原文还提过 `config/purchaseAcceptance.js` 的「确认状态」——那份配置与那一列
+ *      已于 2026-10-09 随生产表删列一起退场。）
  */
 const WORKBENCH_ARRIVAL_TEXTS = Object.freeze({
   needBatchNo: '请选择要验收的采购批次（这一行没有报货批次号）',

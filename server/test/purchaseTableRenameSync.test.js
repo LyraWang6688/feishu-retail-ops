@@ -29,8 +29,11 @@ const walk = (dir, out = []) => {
   return out;
 };
 
-test('A1 schema 表名 = 信息填写 / 报货信息（改名的同步点之一）', () => {
-  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseReport.tableName, '信息填写');
+test('A1 schema 表名 = 报货信息（「信息填写」整段已随入口退场）', () => {
+  // ⛔ 2026-10-09：「信息填写」表（`purchaseReport`）被业务负责人**整个从 Base 删除**，
+  //   口径是「自然语言 ＋ AI 录入」整套退场 ⇒ schema 里那一段与它的表名一起删掉了
+  //   （守门见 `purchaseIntakeRetired.test.js`）。
+  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseReport, undefined);
   // ⚠️ 2026-10-07 深夜她第三次改名：「具体信息」→「**报货信息**」（tableId `tbli1ygPtss5CWCH` 不变）。
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseRequest.tableName, '报货信息');
   // 别的表名不受影响
@@ -53,8 +56,12 @@ test('B1/B3 字段映射同步：具体信息删两列、报货批次加两列�
   assert.equal(Object.prototype.hasOwnProperty.call(batch, 'behavior'), false,
     '「报货批次.采购行为」不读不写不映射');
 
-  // 供应商（9 点推送【采购】区要显示的那一列）：只读投影
-  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseReport.fields.supplier, '供应商');
+  // ⭐ 2026-10-09：9 点推送【采购】区要显示的供应商**改读「报货批次.供应商」这一列**
+  //   （她新加的那一列就是为这件事加的）—— 只读投影，代码不写。
+  assert.equal(batch.supplier, '供应商');
+  // ⛔ 同日：「验收原话」「确认状态」两列在真表上也没有了 ⇒ 映射一起删除。
+  assert.equal(Object.prototype.hasOwnProperty.call(batch, 'acceptanceText'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(batch, 'confirmStatus'), false);
 });
 
 test('B2 已删列**全仓不再有写入/读取点**：附件只会写「报货批次.单据」', () => {
@@ -103,7 +110,7 @@ test('A2 旧表名不再出现在用户可见文案与代码里（历史沿革�
 //   她还把「采购到货批次」从「采购入库」里整列删掉了。
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('A3 schema 里**不再有**「到货验收」表；到货落点搬到「报货批次」的两列上', () => {
+test('A3 schema 里**不再有**「到货验收」表；到货落点 = 「报货批次」的结构化验收藏量', () => {
   // ① 整段删除：Base 里已经没有任何名字含「到货」/「验收」的表（`tblvLOXKESNTbZ7v` 已不存在）。
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseArrival, undefined,
     '「到货验收」表已被业务负责人整个删除 ⇒ schema 里不许再有这一段');
@@ -112,11 +119,16 @@ test('A3 schema 里**不再有**「到货验收」表；到货落点搬到「报
     '那张表的 tableId 环境变量也没有读取点了');
   assert.equal(/tableName:\s*'到货验收'/.test(schemaSource), false, '不许换个位置把这张表映射回来');
 
-  // ② 落点：验收原话 / 确认状态 两个语义键搬到「报货批次」。
+  // ② 落点：到货信息写在「报货批次」那一行上 ——
+  //    ⛔ 2026-10-09：「验收原话」「确认状态」两列在生产真表上**也没有了**
+  //      （她当天的只读核对：报货批次 12 列里找不到）⇒ 映射 + 写入点 + 读取投影一起删除。
+  //    ⭐ 保留下来的结构化验收是「到货状态」＋「实际数量」＋「实际金额」。
   const batch = V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields;
-  assert.equal(batch.acceptanceText, '验收原话');
-  assert.equal(batch.confirmStatus, '确认状态');
+  assert.equal(Object.prototype.hasOwnProperty.call(batch, 'acceptanceText'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(batch, 'confirmStatus'), false);
   assert.equal(batch.arrivalStatus, '到货状态', '到货状态照旧（这一条本来就有）');
+  assert.equal(batch.actualQuantity, '实际数量');
+  assert.equal(batch.actualAmount, '实际金额');
 
   // ③ ⚠️ 「到货日」「验收人」在真表上是**飞书自动字段**（更新时间 / 创建人）⇒ 不建映射、不写。
   //    只读需要时才会加，加的时候也要认清"它是自动的"——现在两处都不需要。
@@ -133,8 +145,8 @@ test('A3 schema 里**不再有**「到货验收」表；到货落点搬到「报
   //      集中放在 `purchaseInboundRemoval.test.js` —— 只留**一处**守门，避免两边各写一份、
   //      将来又要同步两次。
 
-  // ⑤ 其余三张：**没漂的不许动**（这一节只断言这一批改名/改列的结论）。
-  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseReport.tableName, '信息填写');
+  // ⑤ 其余各张：**没漂的不许动**（这一节只断言这一批改名/改列的结论）。
+  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseReport, undefined, '「信息填写」整段已删除');
   // ⚠️ 2026-10-07 深夜她**又**把这张表从「具体信息」改名为「**报货信息**」（tableId 不变）。
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseRequest.tableName, '报货信息');
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.tableName, '报货批次');
@@ -314,8 +326,10 @@ test('B8 工作台查询接口：到货面板的数据来自「报货批次」�
     .replace(/([^:])\/\/.*$/gm, '$1');
   assert.equal(/'purchaseArrival'/.test(codeOnly), false, 'listPurchaseArrivals 必须改读「报货批次」');
   assert.match(codeOnly, /gateway\.listAll\('purchaseOrderBatch'\)/);
-  // 投影出来的新字段（前端就靠这三个 + 批次号）。
-  for (const key of ['arrival_status', 'confirm_status', 'acceptance_text']) {
-    assert.ok(codeOnly.includes(key), `投影里必须有 ${key}`);
-  }
+  // 投影出来的字段（前端就靠这个 + 批次号）。
+  // ⛔ 2026-10-09：`confirm_status` / `acceptance_text` 两个投影**已删除**
+  //   （那两列在真表上没有了）⇒ 不许再出现；`arrival_status` 照旧。
+  assert.ok(codeOnly.includes('arrival_status'), '投影里必须有 arrival_status');
+  assert.equal(/confirm_status/.test(codeOnly), false, '「确认状态」投影已退场');
+  assert.equal(/acceptance_text/.test(codeOnly), false, '「验收原话」投影已退场');
 });

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { validateV1SchemaScope } = require('../scripts/validate_v1_schema');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const {
-  V1_SCHEMA_SCOPES, getV1SchemaScope, getV1IdempotencyKeyTables,
+  V1_SCHEMA_SCOPES, getV1SchemaScope, getV1IdempotencyKeyTables, getV1SelectOptionContracts,
 } = require('../src/config/v1SchemaScopes');
 
 // ⚠️ 2026-10-07 深夜：「采购入库」表已被业务负责人整表删除 ⇒ 它的尺码关联不用再核
@@ -172,44 +172,50 @@ test('幂等键字段类型不是文本时 schema-check 直接失败', async () 
   );
 });
 
-// ⭐ 单选取值契约（2026-10-07 深夜加了第二条）：「报货批次」的**到货状态**与**确认状态**都是单选，
-//    代码要往里写固定取值 ⇒ 真表必须**已经存在**那些选项。写一个不存在的取值，飞书会
-//    **自动新建选项**（表被污染），而按该取值查询会静默查不到（AGENTS.md 第 11 条① 的事故形态）。
-//    这两条用例把"闸门真的会红"钉住（只读校验，不写任何表）。
-test('单选取值契约：确认状态不是单选 / 缺「已确认」选项 → schema-check 直接失败', async () => {
-  // 契约按**语义键**找列（`confirmStatus` → 「确认状态」）。假 gateway 的 `table()` 默认只给
-  // 幂等键/行为那几个键，这里把「确认状态」这个语义键补上（其余契约列不暴露 ⇒ 自动跳过）。
+// ⭐ 单选取值契约（2026-10-07 起）：「报货批次」的**到货状态**是单选，代码要往里写固定取值
+//    ⇒ 真表必须**已经存在**那些选项。写一个不存在的取值，飞书会**自动新建选项**（表被污染），
+//    而按该取值查询会静默查不到（AGENTS.md 第 11 条① 的事故形态）。
+//    ⛔ 2026-10-09：原先还有第二条（「确认状态」）—— 那一列在真表上**已经被删掉**，
+//       契约与 `config/purchaseAcceptance.js` 一起退场。下面只留「到货状态」那条，
+//       并补一条守门：**契约里不许再有 confirmStatus**（留着 = 闸门去问一列不存在的字段、直接判红）。
+test('单选取值契约：到货状态不是单选 / 缺「未到货」选项 → schema-check 直接失败；确认状态已退场', async () => {
+  // 契约按**语义键**找列（`arrivalStatus` → 「到货状态」）。假 gateway 的 `table()` 默认只给
+  // 幂等键/行为那几个键，这里把「到货状态」这个语义键补上（其余契约列不暴露 ⇒ 自动跳过）。
   const selectGateway = (field) => {
     const gateway = gatewayFor({ purchaseOrderBatch: [{ field_name: '幂等键', type: 1 }, field] });
     const base = gateway.table;
     gateway.table = (key) => {
       const table = base(key);
       if (key !== 'purchaseOrderBatch') return table;
-      return { ...table, fields: { ...table.fields, confirmStatus: '确认状态' } };
+      return { ...table, fields: { ...table.fields, arrivalStatus: '到货状态' } };
     };
     return gateway;
   };
-  // ① 不是单选（她 2026-10-07 深夜刚把它从文本改成单选；代码按单选写）。
+  // ① 不是单选。
   await assert.rejects(
-    validateV1SchemaScope({ gateway: selectGateway({ field_name: '确认状态', type: 1 }), scope: 'purchase' }),
-    /「确认状态」必须是单选字段/,
+    validateV1SchemaScope({ gateway: selectGateway({ field_name: '到货状态', type: 1 }), scope: 'purchase' }),
+    /「到货状态」必须是单选字段/,
   );
-  // ② 是单选，但选项里没有「已确认」⇒ 必须判红（绝不放行、也绝不替她建选项）。
+  // ② 是单选，但选项里没有「未到货」⇒ 必须判红（绝不放行、也绝不替她建选项）。
   await assert.rejects(
     validateV1SchemaScope({
       gateway: selectGateway({
-        field_name: '确认状态', type: 3, property: { options: [{ name: '待确认' }] },
+        field_name: '到货状态', type: 3, property: { options: [{ name: '已到货' }] },
       }),
       scope: 'purchase',
     }),
-    /「确认状态」缺少选项: 已确认/,
+    /「到货状态」缺少选项: 未到货/,
   );
   // ③ 选项齐了才放行。
   await validateV1SchemaScope({
     gateway: selectGateway({
-      field_name: '确认状态', type: 3,
-      property: { options: [{ name: '待确认' }, { name: '已确认' }] },
+      field_name: '到货状态', type: 3,
+      property: { options: [{ name: '未到货' }, { name: '已到货' }] },
     }),
     scope: 'purchase',
   });
+  // ④ 守门：「确认状态」那一列与它的契约都不许回来。
+  const contracts = getV1SelectOptionContracts('purchase');
+  assert.equal(contracts.some((item) => item.fieldKey === 'confirmStatus'), false,
+    '确认状态那一列已从真表删除 ⇒ 契约里不许再有它');
 });

@@ -79,18 +79,6 @@ const makeGateway = (records = {}) => ({
   },
 });
 
-const reportRecord = (recordId, fields = {}) => ({
-  record_id: recordId,
-  fields: {
-    处理状态: '待解析',
-    采购行为: ['beh_1'],
-    经办人: [{ id: 'ou_user_1' }],
-    编号: ['prod_1'],
-    尺码: ['size_36'],
-    数量说明: '36码2双',
-    ...fields,
-  },
-});
 
 const makeService = (options = {}) => {
   const gateway = options.gateway || makeGateway();
@@ -132,27 +120,16 @@ const makeService = (options = {}) => {
   return { service, store, gateway };
 };
 
-const waitFor = async (label, check, { attempts = 800, pause = 5 } = {}) => {
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (await check()) return;
-    await new Promise((resolve) => setTimeout(resolve, pause));
-  }
-  throw new Error(`等待「${label}」超时`);
-};
 
 // 「入口把号写回这一包的记录」是异步的（accept 里 await 完成才入队）；
 // 但 process() 是 setImmediate 之后才跑。断言"号"要等写回落定。
-const waitForWrittenBack = (gateway, recordId) => waitFor(
-  `记录 ${recordId} 拿到报货批次号`,
-  async () => Boolean((await gateway.get('purchaseReport', recordId))?.fields?.['报货批次号']),
-);
 
 // ── 生成器本身：格式 / 计数 / 跨天 / 补零 ───────────────────────────────────────
 
 test('① 格式逐字：CGD- + 上海日期 + 4 位补零序号（今天的第一个号就是 0001）', async () => {
   // 2026-10-07 10:00（上海）= 02:00Z
   const now = () => new Date('2026-10-07T02:00:00Z');
-  const gateway = makeGateway({ purchaseOrderBatch: [], purchaseReport: [] });
+  const gateway = makeGateway({ purchaseOrderBatch: [] });
   const generator = new PurchaseBatchNoGenerator({
     gateway, now, settings: resolvePurchaseBatchNoConfig({}),
   });
@@ -164,44 +141,33 @@ test('① 格式逐字：CGD- + 上海日期 + 4 位补零序号（今天的第�
   assert.equal(first.datePart, '20261007');
 });
 
-test('① 一个 webhook 报货包 = 一个号：一包 3 条记录只出一个号，且都写回同一列', async () => {
+test('① 号源只有「报货批次」一张表：表里今天的号参与计数，生成 0002', async () => {
   const gateway = makeGateway({
-    purchaseReport: [
-      reportRecord('rep_pkg_1'),
-      reportRecord('rep_pkg_2', { 尺码: ['size_37'], 数量说明: '37码1双' }),
-      reportRecord('rep_pkg_3'),
-    ],
-    purchaseOrderBatch: [],
-    purchaseRequest: [],
+    purchaseOrderBatch: [{ record_id: 'bat_1', fields: { 报货批次号: 'CGD-20261007-0001', 幂等键: 'k1' } }],
   });
-  const { service, store, gateway: gw } = makeService({ gateway });
-  const accepted = await service.acceptMany('supplier-report', ['rep_pkg_1', 'rep_pkg_2', 'rep_pkg_3']);
-  assert.equal(accepted.records.length, 3);
-  const rows = await Promise.all(['rep_pkg_1', 'rep_pkg_2', 'rep_pkg_3']
-    .map((id) => gw.get('purchaseReport', id)));
-  const numbers = rows.map((row) => row.fields['报货批次号']);
-  assert.equal(new Set(numbers).size, 1, `一包只能有一个号，实际：${JSON.stringify(numbers)}`);
-  assert.match(numbers[0], /^CGD-\d{8}-\d{4}$/);
-  // 三条任务都跑完（证明写回没有把链路打断）
-  const ids = accepted.records.map((item) => item.taskId);
-  await waitFor('三条都进终态', async () => {
-    const tasks = await Promise.all(ids.map((id) => store.get(id)));
-    return tasks.every((task) => ['posted', 'completed', 'failed'].includes(task?.status));
+  const generator = new PurchaseBatchNoGenerator({
+    gateway, now: () => new Date('2026-10-07T02:00:00Z'), settings: resolvePurchaseBatchNoConfig({}),
   });
+  const next = await generator.next();
+  assert.equal(next.batchNo, 'CGD-20261007-0002');
+  assert.equal(next.todayCount, 1, '只数「报货批次」那一张表');
 });
 
-test('② 同天第 2 包 → 0002（计数取 max+1，不是条数+1）', async () => {
+test('② 同一天取 max+1（不是条数+1）：已有 0001 / 0003 → 下一个是 0004', async () => {
   const gateway = makeGateway({
-    purchaseReport: [reportRecord('rep_2')],
-    // 「报货批次」里已经有今天第 1 个号（上一包写的）
-    purchaseOrderBatch: [{ record_id: 'bat_1', fields: { 报货批次号: 'CGD-20261007-0001', 幂等键: 'k1' } }],
-    purchaseRequest: [],
+    // 两条号、中间有空洞（某号作废）：条数+1 会给出 0003（撞号），max+1 才安全。
+    purchaseOrderBatch: [
+      { record_id: 'bat_1', fields: { 报货批次号: 'CGD-20261007-0001', 幂等键: 'k1' } },
+      { record_id: 'bat_3', fields: { 报货批次号: 'CGD-20261007-0003', 幂等键: 'k3' } },
+    ],
   });
-  // ⭐ 固定时钟：2026-10-07 10:00（上海）= 02:00Z —— "今天"永远是 20261007，跨午夜也不变。
-  const { service, gateway: gw } = makeService({ gateway, now: () => new Date('2026-10-07T02:00:00Z') });
-  await service.acceptMany('supplier-report', ['rep_2']);
-  await waitForWrittenBack(gw, 'rep_2');
-  assert.equal((await gw.get('purchaseReport', 'rep_2')).fields['报货批次号'], 'CGD-20261007-0002');
+  const generator = new PurchaseBatchNoGenerator({
+    gateway, now: () => new Date('2026-10-07T02:00:00Z'), settings: resolvePurchaseBatchNoConfig({}),
+  });
+  const next = await generator.next();
+  assert.equal(next.batchNo, 'CGD-20261007-0004');
+  assert.equal(next.sequence, 4);
+  assert.equal(next.todayCount, 2);
 });
 
 test('④ 补零：今天第 10 个 → 0010', async () => {
@@ -209,7 +175,7 @@ test('④ 补零：今天第 10 个 → 0010', async () => {
     record_id: `bat_${index + 1}`,
     fields: { 报货批次号: `CGD-20261007-000${index + 1}`, 幂等键: `k${index}` },
   }));
-  const gateway = makeGateway({ purchaseOrderBatch: existing, purchaseReport: [] });
+  const gateway = makeGateway({ purchaseOrderBatch: existing });
   const generator = new PurchaseBatchNoGenerator({
     gateway,
     now: () => new Date('2026-10-07T02:00:00Z'),
@@ -225,9 +191,6 @@ test('③ 跨天归零：昨天到 0009，今天第一个仍然是 0001', async 
   const gateway = makeGateway({
     purchaseOrderBatch: [
       { record_id: 'bat_y', fields: { 报货批次号: 'CGD-20261006-0009', 幂等键: 'ky' } },
-    ],
-    purchaseReport: [
-      { record_id: 'rep_y', fields: { 报货批次号: 'CGD-20261006-0009' } },
     ],
   });
   const generator = new PurchaseBatchNoGenerator({
@@ -250,7 +213,6 @@ test('⑫ 旧号零改动、且不参与计数：手填的 202610071 / 202610072
       // 位数不对的也不许参与（5 位序号）
       { record_id: 'bat_old_4', fields: { 报货批次号: 'CGD-20261007-00012', 幂等键: 'k4' } },
     ],
-    purchaseReport: [],
   });
   const generator = new PurchaseBatchNoGenerator({
     gateway,
@@ -268,23 +230,27 @@ test('⑫ 旧号零改动、且不参与计数：手填的 202610071 / 202610072
   );
 });
 
-test('② 计数同时数两张表：退货占掉的号下一次报货不会重发（并集求 max）', async () => {
+test('② 号源只有「报货批次」一张表：别的任何一张表一被读就抛，生成照常', async () => {
   const gateway = makeGateway({
-    // 「报货批次」只有 0001（报货写的）
     purchaseOrderBatch: [{ record_id: 'bat_1', fields: { 报货批次号: 'CGD-20261007-0001' } }],
-    // 「信息填写」里有 0002（入口写回写在那一列上）
-    purchaseReport: [{ record_id: 'rep_1', fields: { 报货批次号: 'CGD-20261007-0002' } }],
   });
+  const originalListAll = gateway.listAll;
+  // ⭐ 2026-10-09：号源收窄成**一张表** —— 原先还要并上「信息填写」那一列
+  //   （入口按包写回 / 退货也消耗号），那张表已被业务负责人整表删除。
+  //   这里把"读别的表"变成硬失败：只要生成器还去读第二张表，这条用例当场红。
+  gateway.listAll = async (tableKey) => {
+    if (tableKey !== 'purchaseOrderBatch') throw new Error(`取号只许读「报货批次」，实际读了：${tableKey}`);
+    return originalListAll(tableKey);
+  };
   const generator = new PurchaseBatchNoGenerator({
-    gateway,
-    now: () => new Date('2026-10-07T02:00:00Z'),
-    settings: resolvePurchaseBatchNoConfig({}),
+    gateway, now: () => new Date('2026-10-07T02:00:00Z'), settings: resolvePurchaseBatchNoConfig({}),
   });
-  assert.equal((await generator.next()).batchNo, 'CGD-20261007-0003');
+  const next = await generator.next();
+  assert.equal(next.batchNo, 'CGD-20261007-0002', '只数「报货批次」，不再跨表求并集');
 });
 
 test('③/④/② 配置先行：前缀 / 日期格式 / 位数 / 时区 / 识别前缀都是配置', async () => {
-  const gateway = makeGateway({ purchaseOrderBatch: [], purchaseReport: [] });
+  const gateway = makeGateway({ purchaseOrderBatch: [] });
   const generator = new PurchaseBatchNoGenerator({
     gateway,
     now: () => new Date('2026-10-07T16:30:00Z'), // 上海 = 2026-10-08 00:30（跨天由时区决定）
@@ -308,88 +274,80 @@ test('③/④/② 配置先行：前缀 / 日期格式 / 位数 / 时区 / 识�
   assert.equal(formatBatchDate(new Date('2026-10-07T02:00:00Z'), custom), '20261007');
 });
 
-// ── 入口：重投 / 并发 ─────────────────────────────────────────────────────────
+// ── 取号的幂等 / 并发保护（2026-10-09：入口退场后，这些性质由
+//    「posting_plan 冻结号」＋ 生成器自己的串行队列与进程内已发集合保证）──────────
 
-test('⑤ 重投不生成第二个号：同一条记录再收一次 webhook，号不变', async () => {
-  const gateway = makeGateway({
-    purchaseReport: [reportRecord('rep_dup')],
-    purchaseOrderBatch: [],
-    purchaseRequest: [],
-  });
-  const { service, store, gateway: gw } = makeService({ gateway });
-  const first = await service.accept('supplier-report', 'rep_dup');
-  await waitForWrittenBack(gw, 'rep_dup');
-  const firstNo = (await gw.get('purchaseReport', 'rep_dup')).fields['报货批次号'];
-
-  await waitFor('第一条跑完', async () => {
-    const task = await store.get(first.taskId);
-    return Boolean(task) && (task.result !== undefined || task.status === 'failed');
-  });
-  const second = await service.accept('supplier-report', 'rep_dup');
-  assert.equal(second.taskId, first.taskId);
-  const secondNo = (await gw.get('purchaseReport', 'rep_dup')).fields['报货批次号'];
-  assert.equal(secondNo, firstNo, '重投不许换号');
-  // 而且没有多写一条「报货批次」（重投被幂等挡掉）
-  assert.equal((await gw.listAll('purchaseOrderBatch')).length, 1);
+/** 造一个"扫码补货"的本地任务（与 `scanWriteService` 落盘的草稿同形）。 */
+const seedPostingTask = async (store, taskId = 'task_freeze') => store.create({
+  task_id: taskId,
+  kind: 'scan_replenish',
+  status: 'posting',
+  draft: {
+    is_batch: true,
+    operator_open_id: 'ou_user_1',
+    supplier_record_id: 'sup_1',
+    items: [{
+      product_record_id: 'prod_1', item_no: '8088', color: '黑色',
+      size: 36, quantity: 2, behavior_record_id: 'beh_1',
+    }],
+  },
 });
 
-test('⑤ 重试不生成第二个号：入口写回之后重跑 acceptMany，号不变、只写一次', async () => {
-  const gateway = makeGateway({
-    purchaseReport: [reportRecord('rep_retry_1'), reportRecord('rep_retry_2', { 尺码: ['size_37'] })],
-    purchaseOrderBatch: [],
-    purchaseRequest: [],
-  });
-  const { service, gateway: gw } = makeService({ gateway });
-  await service.acceptMany('supplier-report', ['rep_retry_1', 'rep_retry_2']);
-  await waitForWrittenBack(gw, 'rep_retry_1');
-  const numbers = await Promise.all(['rep_retry_1', 'rep_retry_2'].map(async (id) => (await gw.get('purchaseReport', id)).fields['报货批次号']));
-  assert.equal(new Set(numbers).size, 1);
-  // ⚠️ 关键：**第二次**投递时，那一列已经非空 ⇒ 只能复用，不许再算一个新号
-  await service.acceptMany('supplier-report', ['rep_retry_1', 'rep_retry_2']);
-  const after = await Promise.all(['rep_retry_1', 'rep_retry_2'].map(async (id) => (await gw.get('purchaseReport', id)).fields['报货批次号']));
-  assert.deepEqual(after, numbers, '重试不许生成第二个号');
+test('⑤ 重投不换号：posting_plan 冻结批次号，ensurePostingPlan 跑两次拿到同一个号', async () => {
+  const gateway = makeGateway({ purchaseOrderBatch: [] });
+  const { service, store } = makeService({ gateway, now: () => new Date('2026-10-07T02:00:00Z') });
+  const task = await seedPostingTask(store, 'task_freeze');
+  const first = await service.ensurePostingPlan('task_freeze', task);
+  // 重试（本地已经落盘）：拿回**同一份**计划，号不变、也不再多取一个号。
+  const second = await service.ensurePostingPlan('task_freeze', await store.get('task_freeze'));
+  assert.equal(first.batch_no, 'CGD-20261007-0001');
+  assert.equal(second.batch_no, first.batch_no, '重试不许换号');
+  assert.deepEqual(second.items.map((item) => item.request_key), first.items.map((item) => item.request_key));
 });
 
-test('⑥ 并发不重号：两包几乎同时进来，各拿各的号（串行队列）', async () => {
-  const gateway = makeGateway({
-    purchaseReport: [reportRecord('rep_c_1'), reportRecord('rep_c_2')],
-    purchaseOrderBatch: [],
-    purchaseRequest: [],
+test('⑤ 本进程同一个号绝不发第二遍：表里读不到刚发的号 → 重算下一个并记 collision', async () => {
+  // 远端不落库（模拟"写回失败 / 复制延迟"）：第二次算号仍会读到同名 max ⇒ 算出同一个号。
+  const gateway = makeGateway({ purchaseOrderBatch: [] });
+  const generator = new PurchaseBatchNoGenerator({
+    gateway, now: () => new Date('2026-10-07T02:00:00Z'), settings: resolvePurchaseBatchNoConfig({}),
   });
-  // ⭐ 固定时钟（同 ②）：两包谁先谁后由串行队列决定，但"今天"必须是 20261007。
-  const { service, gateway: gw } = makeService({ gateway, now: () => new Date('2026-10-07T02:00:00Z') });
-  // 两包**同时**投递（不 await 第一包）：没有串行保护的话它们会读到同一个 max → 同一个号。
-  await Promise.all([
-    service.acceptMany('supplier-report', ['rep_c_1']),
-    service.acceptMany('supplier-report', ['rep_c_2']),
+  const first = await generator.next();
+  const second = await generator.next();
+  assert.equal(first.batchNo, 'CGD-20261007-0001');
+  assert.equal(second.batchNo, 'CGD-20261007-0002', '同一个号绝不发第二遍（进程内已发集合兜底）');
+  assert.equal(second.attempts, 2, '第二次是重算出来的');
+});
+
+test('⑥ 并发不重号：runExclusive 串行算号，两包各拿一个号', async () => {
+  const gateway = makeGateway({ purchaseOrderBatch: [] });
+  const generator = new PurchaseBatchNoGenerator({
+    gateway, now: () => new Date('2026-10-07T02:00:00Z'), settings: resolvePurchaseBatchNoConfig({}),
+  });
+  // 两包**同时**进来（不 await 第一包）：串行队列保证它们不读到同一个 max。
+  const numbers = await Promise.all([
+    generator.runExclusive(() => generator.next()),
+    generator.runExclusive(() => generator.next()),
   ]);
-  await Promise.all([waitForWrittenBack(gw, 'rep_c_1'), waitForWrittenBack(gw, 'rep_c_2')]);
-  const first = (await gw.get('purchaseReport', 'rep_c_1')).fields['报货批次号'];
-  const second = (await gw.get('purchaseReport', 'rep_c_2')).fields['报货批次号'];
-  assert.notEqual(first, second, `两包不能重号：${first} / ${second}`);
-  assert.deepEqual([first, second].sort(), ['CGD-20261007-0001', 'CGD-20261007-0002'].sort());
+  const values = numbers.map((item) => item.batchNo).sort();
+  assert.deepEqual(values, ['CGD-20261007-0001', 'CGD-20261007-0002']);
 });
 
-test('⑤ 同一条记录在队列里被并发的两次投递抢到：复用先写进去的那个号（记 collision）', async () => {
-  const gateway = makeGateway({
-    purchaseReport: [reportRecord('rep_race')],
-    purchaseOrderBatch: [],
-    purchaseRequest: [],
+test('⑤ 撞号时记一条可 grep 的 purchase.batch_no.collision（排查用）', async () => {
+  const gateway = makeGateway({ purchaseOrderBatch: [] });
+  const generator = new PurchaseBatchNoGenerator({
+    gateway, now: () => new Date('2026-10-07T02:00:00Z'), settings: resolvePurchaseBatchNoConfig({}),
   });
-  const { service, gateway: gw } = makeService({ gateway });
-  // 同一个包并发两次（模拟重投与首次几乎同时到达）
-  await Promise.all([
-    service.acceptMany('supplier-report', ['rep_race']),
-    service.acceptMany('supplier-report', ['rep_race']),
-  ]);
-  await waitForWrittenBack(gw, 'rep_race');
-  const value = (await gw.get('purchaseReport', 'rep_race')).fields['报货批次号'];
-  assert.match(value, /^CGD-\d{8}-\d{4}$/);
-  // 那条记录只被写过**一个**号（不是先 0001 再 0002）
-  const written = (await gw.listAll('purchaseReport'))
-    .map((row) => row.fields['报货批次号'])
-    .filter((item) => item && item.startsWith('CGD-'));
-  assert.deepEqual(written, [value]);
+  const lines = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { lines.push(args.map(String).join(' ')); };
+  try {
+    await generator.next();
+    await generator.next();
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.ok(lines.some((line) => line.includes('purchase.batch_no.collision')),
+    `撞号必须留下可 grep 的日志，实际：${lines.join(' | ')}`);
 });
 
 // ── ⑬ 群准入 / 定位认得 CGD- ──────────────────────────────────────────────────

@@ -13,14 +13,14 @@
  *   s1 销售录单   群话题发文字 → 识别 → 确认卡片 → 确认 → 入账销售明细 → 交付 → 扣库存
  *   s2 销售退货   话题里说「退那双…」→ 定位那笔销售 → 确认 → 退货入账 + 库存加回
  *   s3 换货       话题里说「换成…」→ 新鞋出库（现货销售 SALE_CASH）+ 旧鞋入库
- *   s4 采购报单   「数量说明」变更事件 → 免确认生成采购申请 → 发采购群 → 图写回附件
- *   s5 采购退货   「采购行为=退货」的记录 → 采购退货入账 + 库存减
+ *   （原 s4 采购报单 / s5 采购退货两个场景**已随「信息填写」入口退场删除**，2026-10-09）
  *   s6 补样品     群销售消耗了样品 → 补样品卡片**回到那条销售话题**（reply_in_thread；不发私聊）
  *
  * 硬纪律（业务负责人 2026-10-06 明确，逐条守）：
  *   ⭐ **走项目代码**：直接 require 项目源码、调项目自己的入口——
  *      `LarkMvpService.acceptMessage` / `handleCardAction` /
- *      `PurchaseWebhookService.accept('supplier-report', …)`，
+ *      （原话里还有 `PurchaseWebhookService.accept('supplier-report', …)` ——
+ *       那条「信息填写」表变更入口已于 2026-10-09 随整表删除退场），
  *      让**生产上那条链路**真跑。**不是**用 CLI 手工拼结果。
  *   🔴 **严禁飞书 CLI**（**包括"读表验证"**）：验证一律走项目自己的只读路径
  *      （`V1BitableGateway` 的 get / listAll / listFields）——脚本把结果打印出来。
@@ -31,8 +31,9 @@
  * 子命令：
  *   node scripts/e2e-group-thread.mjs inspect
  *       只读：打印测试 Base 现状（实时库存候选 / 单价 / 行为管理 / 采购前置），不写任何表。
- *   node scripts/e2e-group-thread.mjs run [--only s1,s4] [--show-logs] [--all]
- *       跑六个场景（s1..s6，写测试 Base）；`--all` 连销售侧补充场景 e1..e5 一起跑。
+ *   node scripts/e2e-group-thread.mjs run [--only s1,s6] [--show-logs] [--all]
+ *       跑销售侧场景（s1/s2/s3/s6，写测试 Base）；`--all` 连补充场景 e1..e5 一起跑。
+ *       ⚠️ 原 s4/s5（采购报单 / 采购退货）已随「信息填写」入口退场删除。
  *
  * 飞书外发：默认**全部拦住**（记录型 IM 替身），只把出站 payload 记下来当证据
  *   （「回复是不是话题形式」唯一的可核对证据就是 `reply_in_thread: true`）。
@@ -116,7 +117,11 @@ const require = createRequire(import.meta.url);
 const crypto = require('node:crypto');
 const lark = require('@larksuiteoapi/node-sdk');
 const { person, relation } = require('../src/services/v1ReferenceResolver');
-const { classifyReportBehavior, REPORT_BEHAVIOR } = require('../src/services/purchaseReportBehaviorPolicy');
+// ⛔ 2026-10-09：原先这里 import 的是 `purchaseReportBehaviorPolicy`（「采购行为」分流）
+//   与 `PurchaseWebhookService`（s4/s5 采购报单/退货场景用的）—— 那两个场景随
+//   「信息填写」整表删除一起退场，本脚本现在**只跑销售侧场景**，两个 import 都不再需要。
+//   （策略模块本身**还在**：改名成 `services/purchaseBehaviorPolicy.js`，
+//     现役调用方是 `services/purchaseQueryService`。）
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { V1BitableGateway, linkedRecordIds, textValue } = require('../src/services/v1BitableGateway');
 const { LarkMvpService, idFor } = require('../src/services/larkMvpService');
@@ -132,8 +137,6 @@ const { getLarkAgentCredentials } = require('../src/config/larkAgent');
 const dims = require('../src/config/salesStatusDimensions');
 const { AFTER_SALES_CARD_ACTIONS, AFTER_SALES_TASK_STATUS } = require('../src/config/afterSalesFlow');
 const { larkLogger } = require('../src/utils/larkLogger');
-// 场景 s4 / s5：采购链路的**项目入口**——生产上由 routes/larkEvents.js 的记录变更事件调它。
-const { PurchaseWebhookService } = require('../src/services/purchaseWebhookService');
 
 // ── 参数常量（测试标识，不是凭证）──────────────────────────────────────────────
 // 「录单人」是飞书的**人员字段**：写一个不存在的 open_id 会让建单直接
@@ -728,31 +731,12 @@ const cmdInspect = async () => {
   say('');
   say(`  测试 Base 现有：销售主表 ${entries.length} 条 · 销售明细 ${details.length} 条 · 收款明细 ${payments.length} 条`);
 
-  // ── 采购侧的只读前置（s4 / s5 需要）──────────────────────────────────────
+  // ⛔ 2026-10-09：这里原有「采购侧的只读前置（s4 / s5 需要）」——
+  //   那两个场景（采购报单 / 采购退货）随「信息填写」整表删除一起退场，
+  //   本脚本现在**只跑销售侧场景**。这里只留两行与销售场景无关的环境指纹。
   say('');
   say(`  采购群 PURCHASE_CHAT_ID：${fingerprint(process.env.PURCHASE_CHAT_ID)}`);
   say(`  禁止写入清单（生产 app_token）：${forbiddenAppTokens().length} 个`);
-  const reportTable = gateway.table('purchaseReport');
-  const requestTable = gateway.table('purchaseRequest');
-  const reportBehaviors = behaviors.map((record) => ({
-    record_id: record.record_id,
-    name: textValue(record.fields?.[behaviorFields.name]),
-    code: textValue(record.fields?.[behaviorFields.code]),
-  }));
-  const orderBehavior = reportBehaviors.find((item) => item.code === 'PURCHASE_ORDER');
-  const returnBehaviors = reportBehaviors.filter((item) => classifyReportBehavior(item) === REPORT_BEHAVIOR.PURCHASE_RETURN);
-  say(`  s4 用的「采购申请」行为（PURCHASE_ORDER）：${orderBehavior ? `${orderBehavior.name}（${orderBehavior.record_id}）` : '✗ 缺失'}`);
-  say(`  s5 用的「采购退货」行为（能识别成退货的共 ${returnBehaviors.length} 条）：`
-    + `${returnBehaviors.map((item) => `${item.name}/${item.code}`).join('，') || '✗ 缺失'}`);
-  const quantityType = await fieldTypeOf(gateway, 'purchaseReport', 'quantity');
-  say(`  「供应商对接.数量」（写退货数量用）字段类型 type=${quantityType}`);
-  const sizes = await gateway.listAll('sizeManagement');
-  say(`  「尺码管理」共 ${sizes.length} 条：${sizes.map((r) => textValue(r.fields?.[gateway.table('sizeManagement').fields.size])).sort((a, b) => Number(a) - Number(b)).join('、')}`);
-  const [reports, requests] = await Promise.all([
-    gateway.listAll('purchaseReport'), gateway.listAll('purchaseRequest'),
-  ]);
-  say(`  测试 Base 现有：供应商对接 ${reports.length} 条 · 单据信息 ${requests.length} 条`);
-  say(`  字段映射（只读核对）：单据信息「${requestTable.fields.idempotencyKey}」「${requestTable.fields.attachment}」· 供应商对接「${reportTable.fields.quantityDescription}」「${reportTable.fields.behavior}」`);
   return { candidates, fieldTypes };
 };
 
@@ -1292,13 +1276,14 @@ const runThreadScenario = async ({ pick, price }) => {
 
 
 // ══════════════════════════════════════════════════════════════════════════
-//  采购侧（s4 / s5）＋ 补样品（s6）
-//  · 采购：bitable / drive 都是**真的**（退货单图要真上传、真写回附件），
-//    只有 IM 是替身；入口是 `PurchaseWebhookService.accept('supplier-report', …)`
-//    —— 生产上由 `routes/larkEvents.js` 的「记录变更事件」分派调它，同一条路。
+//  补样品（s6）
+//  ⛔ 原「采购侧（s4 / s5）」整段已删除（2026-10-09）：那个入口
+//    （`PurchaseWebhookService.accept('supplier-report', …)` ← 「信息填写」表变更事件）
+//    随业务负责人删掉整张表一起退场。
 // ══════════════════════════════════════════════════════════════════════════
 
-const stamp = () => new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
+// ⛔ `stamp()`（时间戳，用于 s4/s5 的批次号）已随那两个场景删除（2026-10-09）。
+
 
 // 出站消息清单：判「发到哪个群 / 有没有多余消息」用（证据全来自我们记录的真实调用）。
 const outboundSummary = (sim) => {
@@ -1323,362 +1308,6 @@ const outboundSummary = (sim) => {
 };
 
 // 采购侧 harness
-const makePurchaseHarness = ({ label }) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `e2e-group-thread-${label}-`));
-  const sim = makeImSim();
-  const apiErrors = [];
-  const client = makeClient(sim, apiErrors);
-  const gateway = new V1BitableGateway({ client });
-  const store = new JsonTaskStore({ dir: path.join(dir, 'purchase_webhook_tasks'), idField: 'task_id' });
-  const service = new PurchaseWebhookService({
-    client, gateway, store,
-    batchLocatorStore: new JsonTaskStore({ dir: path.join(dir, 'purchase_group_messages'), idField: 'task_id' }),
-    // 归批窗口：生产默认 30s。E2E 压到 1s 只为省时间——决定"什么时候出图"的是
-    // 「到齐」（见 config/purchaseReturnBatchWindow 的文件头），压窗口不改变
-    // "同一批只处理一次"的语义，也不改变任何业务判据。
-    purchaseReturnBatchWindowMs: 1000,
-    reportBatchWindowMs: 1000,
-  });
-  return { label, dir, store, sim, client, gateway, service, apiErrors };
-};
-
-const PURCHASE_TERMINAL = (task) => ['posted', 'completed', 'failed', 'cancelled'].includes(task?.status);
-const waitPurchaseTask = (h, taskId, { timeoutMs = 300_000, label = '采购任务' } = {}) =>
-  waitFor(async () => {
-    const task = await h.store.get(taskId);
-    return PURCHASE_TERMINAL(task) ? task : null;
-  }, { label: `${label} ${taskId}`, timeoutMs, intervalMs: 500 });
-
-// 经办人：借一条已有报单记录的 open_id（@人要真的 open_id；取不到就留空，链路照跑）
-const pickReportOperatorOpenId = async (gateway) => {
-  const table = gateway.table('purchaseReport');
-  for (const row of await gateway.listAll('purchaseReport')) {
-    const cell = row.fields?.[table.fields.operator];
-    const first = Array.isArray(cell) ? cell[0] : cell;
-    const id = first?.id || first?.open_id || '';
-    if (id) return id;
-  }
-  return '';
-};
-
-const sizeIndex = async (gateway) => {
-  const table = gateway.table('sizeManagement');
-  const rows = await gateway.listAll('sizeManagement');
-  return new Map(rows.map((row) => [Number(textValue(row.fields?.[table.fields.size])), row.record_id]));
-};
-
-// 数量字段在两个 Base 里的类型可能不同（number vs text），按真实类型写。
-const coerceNumberCell = (type, value) => (type === 2 ? value : String(value));
-const fieldTypeOf = async (gateway, tableKey, semanticKey) => {
-  const wanted = gateway.table(tableKey).fields[semanticKey];
-  const fields = await gateway.listFields(tableKey, { refresh: true });
-  return fields.find((item) => item.field_name === wanted)?.type ?? null;
-};
-
-const behaviorIndex = async (gateway) => {
-  const table = gateway.table('behavior');
-  const rows = await gateway.listAll('behavior');
-  return new Map(rows.map((row) => ({
-    record_id: row.record_id,
-    name: textValue(row.fields?.[table.fields.name]),
-    code: textValue(row.fields?.[table.fields.code]),
-    enabled: row.fields?.[table.fields.enabled],
-  })).map((item) => [item.record_id, item]));
-};
-
-// ── 场景 s4：采购报单 ───────────────────────────────────────────────────────
-const runPurchaseReportScenario = async ({ pick, reportText, sizes, expectedBySize }) => {
-  const scenario = makeScenario('s4',
-    '采购报单：「数量说明」变更事件 → 免确认生成采购申请 → 发采购群 → 图写回附件', [
-      '免确认：任务直接落终态 posted（不出现确认卡片、不等任何人点）',
-      `「单据信息」按数量说明逐尺码落行：${JSON.stringify(expectedBySize)}`,
-      '「供应商对接」处理状态=已生成申请，且回填「关联采购申请」',
-      '采购群收到 **1 条图片消息**（msg_type=image）+ 那条 @经办人的文字（同一个话题里）',
-      '图写回「单据信息」的「采购申请单」附件列（同批次只留一条带附件）',
-      '库存：**不动**（采购申请 ≠ 入库）：0 条新库存流水、实时库存 0 变化',
-      '没有多余消息：0 条主动私聊',
-    ]);
-  const h = makePurchaseHarness({ label: 's4' });
-    scenario.data.api_errors = h.apiErrors;
-  try {
-    const { gateway, sim } = h;
-    const reportTable = gateway.table('purchaseReport');
-    const requestTable = gateway.table('purchaseRequest');
-    const behaviorTable = gateway.table('behavior');
-    const chatId = String(process.env.PURCHASE_CHAT_ID || '');
-    const orderBehavior = (await gateway.listAll('behavior'))
-      .find((row) => textValue(row.fields?.[behaviorTable.fields.code]).trim() === 'PURCHASE_ORDER');
-    if (!orderBehavior) throw new Error('「行为管理」里没有 code=PURCHASE_ORDER（采购申请）→ 没法构造报单记录');
-    const sizesById = await sizeIndex(gateway);
-    const missing = sizes.filter((size) => !sizesById.has(Number(size)));
-    if (missing.length) throw new Error(`「尺码管理」里没有 ${missing.join('、')} 码`);
-    const operatorOpenId = await pickReportOperatorOpenId(gateway);
-    const batchNo = `E2E-${stamp()}`;
-
-    const before = {
-      requestIds: new Set((await gateway.listAll('purchaseRequest')).map((row) => row.record_id)),
-      ledgerIds: new Set((await gateway.listAll('inventoryLedger')).map((row) => row.record_id)),
-      live: await liveSnapshot(h),
-    };
-    const values = {
-      product: relation(pick.productRecordId),
-      size: sizes.flatMap((size) => relation(sizesById.get(Number(size)))),
-      quantityDescription: reportText,
-      behavior: relation(orderBehavior.record_id),
-      batchNoText: batchNo,
-    };
-    if (operatorOpenId) values.operator = person(operatorOpenId);
-    const created = await gateway.create('purchaseReport', values);
-    scenario.data.record = { record_id: created.recordId, batch_no: batchNo,
-      text: reportText, sizes, operator_borrowed: Boolean(operatorOpenId), product: pick.itemNo };
-
-    const logsFrom = capturedLogs.length;
-    const accepted = await h.service.accept('supplier-report', created.recordId);
-    scenario.data.accept = accepted;
-    const task = await waitPurchaseTask(h, accepted.taskId, { label: '报单任务' });
-    // ⚠️ 顺序坑（第一次跑就踩到了）：任务是**先置 posted、再发图/回写附件**的
-    //   （`flushReportBatch` 里 `status:'posted'` 在前，`deliverSupplierImages` 在后）。
-    //   只等 posted 就立刻读表 → 读到"附件还没写回"的中间态、日志快照也缺发图那几条。
-    const settle = async (events, label) => {
-      await waitFor(() => capturedLogs.slice(logsFrom).some((entry) => events.includes(entry.event)),
-        { label, timeoutMs: 90_000, intervalMs: 300 }).catch(() => null);
-    };
-    await settle(['purchase.request.image.group_sent', 'purchase.request.image.skipped',
-      'purchase.request.image.send_failed', 'purchase.request.image.no_request_record'], '采购单出图/发群');
-    await settle(['purchase.request.image.attachment_written',
-      'purchase.request.image.attachment_write_failed'], '附件回写');
-    // 日志快照放到**所有读表动作之后**再取（否则会漏掉"刚好晚一步写下的那几条"）。
-
-    const requestRows = (await gateway.listAll('purchaseRequest'))
-      .filter((row) => textValue(row.fields?.[requestTable.fields.idempotencyKey])
-        .startsWith(`purchase_request:${accepted.taskId}:`))
-      .map((row) => ({
-        record_id: row.record_id,
-        size: Number(textValue(row.fields?.[requestTable.fields.size])) || textValue(row.fields?.[requestTable.fields.size]),
-        quantity: Number(row.fields?.[requestTable.fields.quantity]),
-        attachmentCount: Array.isArray(row.fields?.[requestTable.fields.attachment])
-          ? row.fields[requestTable.fields.attachment].length
-          : (row.fields?.[requestTable.fields.attachment] ? 1 : 0),
-      }))
-      .sort((left, right) => Number(left.size) - Number(right.size));
-    const freshReport = await gateway.get('purchaseReport', created.recordId);
-    const reportStatus = textValue(freshReport?.fields?.[reportTable.fields.status]);
-    const reportRequests = linkedRecordIds(freshReport?.fields?.[reportTable.fields.request]);
-    const newLedger = (await gateway.listAll('inventoryLedger'))
-      .filter((row) => !before.ledgerIds.has(row.record_id));
-    const liveAfter = await liveSnapshot(h);
-    const outbound = outboundSummary(sim);
-    const logs = logsSince(logsFrom);
-    scenario.logs = eventsOf(logs, ['purchase.webhook.accepted', 'purchase.batch.posted',
-      'purchase.report.posted', 'purchase.request.created', 'purchase.group_notice.sent',
-      'purchase.request.image.group_sent', 'purchase.request.image.attachment_written',
-      'purchase.request.image.skipped', 'purchase.request.image.attachment_write_failed',
-      'inventory.change.applied', 'bitable.record.created', 'bitable.record.updated'])
-      .map((entry) => ({ event: entry.event }));
-    const groupCreates = outbound.creates.filter((item) => item.receive_id === chatId);
-    const groupImages = groupCreates.filter((item) => item.msg_type === 'image');
-    // ⚠️ 「带 @的那条文字」是 `im.message.reply`（回复第 1 条图，让整批只占一个话题），
-    //    所以它**不在 creates 里、在 replies 里** —— 只看 creates 会误判成"没发文字"。
-    const groupTexts = [
-      ...groupCreates.filter((item) => item.msg_type === 'text'),
-      ...outbound.replies.filter((item) => item.msg_type === 'text'),
-    ];
-    // ⚠️ 踩过的坑：card/text 的 `content` 是 **JSON 字符串**，里面的引号是转义的（`\"`）。
-    //    直接按 `<at user_id="…"` 去匹配会**永远匹配不到** → 把"确实 @了经办人"误判成"没 @人"。
-    //    所以先把 `\"` 还原成 `"`，再取被 @ 的 user_id。
-    const normalizedTexts = groupTexts.map((item) => String(item.content || '').replace(/\\"/g, '"'));
-    const atIds = normalizedTexts.flatMap((text) =>
-      [...text.matchAll(/<at user_id="([^"]+)"/g)].map((match) => match[1]));
-
-    scenario.data.requests = requestRows;
-    scenario.data.report = { status: reportStatus, request_links: reportRequests.length };
-    scenario.data.group_messages = {
-      creates: groupCreates.map((item) => ({ msg_type: item.msg_type })),
-      texts: groupTexts.map((item) => ({ msg_type: item.msg_type, content: item.content.slice(0, 200) })),
-      at_ids: atIds,
-    };
-    scenario.data.images_uploaded = outbound.images;
-    scenario.data.at_ids = atIds;
-    scenario.data.operator_borrowed = Boolean(operatorOpenId);
-    scenario.data.inventory = {
-      new_ledger_rows: newLedger.length,
-      live_delta: diffLive(liveOfPair(before.live, pick.productRecordId, pick.sizeRecordId),
-        liveOfPair(liveAfter, pick.productRecordId, pick.sizeRecordId)),
-    };
-
-    check(scenario, '任务终态（免确认，直接 posted）', 'posted', task.status);
-    check(scenario, '「单据信息」行数 = 勾选的尺码数', sizes.length, requestRows.length);
-    check(scenario, '「单据信息」按尺码的数量',
-      sizes.map((size) => Number(expectedBySize[String(size)])), requestRows.map((row) => row.quantity));
-    check(scenario, '「供应商对接」处理状态', '已生成申请', reportStatus);
-    check(scenario, '「供应商对接」回填的关联采购申请条数', requestRows.length, reportRequests.length);
-    check(scenario, '采购群收到图片消息（msg_type=image）', 1, groupImages.length);
-    check(scenario, '那张图真的渲染并上传过（image.create 收到字节）', true,
-      (outbound.images[0]?.bytes || 0) > 0);
-    // 口径以**代码**为准：`deliverSupplierImagesInner` 的注释写着
-    // 「飞书图片消息没有正文，@ 只能挂在文字那条上（业务负责人明确要 @经办人，**不再是 @所有人**）」。
-    // ⚠️ 但 AGENTS.md 的概述仍写「带 @所有人」—— 文档与代码不一致，本次如实记进报告。
-    // 合同：**@经办人**；如果记录里根本解析不出经办人，就必须"不 @任何人 + 记一条
-    // `purchase.request.image.operator_missing`"，**绝不退回 @所有人**（代码注释里的口径）。
-    check(scenario, '采购群那条文字 @的是**经办人**（不是 @所有人）', true,
-      operatorOpenId
-        ? (atIds.length > 0 && atIds.every((id) => id !== 'all'))
-        : (atIds.length === 0 && logs.some((entry) => entry.event === 'purchase.request.image.operator_missing')));
-    check(scenario, '图 + 文字在**同一个话题**里（文字回复那条图）', true,
-      groupTexts.some((item) => item.kind === 'reply'));
-    check(scenario, '图写回「采购申请单」附件列（1 条带附件）', 1,
-      requestRows.filter((row) => row.attachmentCount > 0).length);
-    check(scenario, '库存不动：0 条新库存流水', 0, newLedger.length);
-    check(scenario, '库存不动：实时库存 0 变化', 0, scenario.data.inventory.live_delta.total);
-    check(scenario, '没有多余消息：0 条主动私聊', 0, outbound.privateCreates.length);
-    check(scenario, '自证日志：purchase.batch.posted + purchase.request.created', true,
-      logs.some((entry) => entry.event === 'purchase.batch.posted')
-      && logs.some((entry) => entry.event === 'purchase.request.created'));
-    check(scenario, '自证日志：发群 + 图写回附件', true,
-      logs.some((entry) => entry.event === 'purchase.request.image.group_sent')
-      && logs.some((entry) => entry.event === 'purchase.request.image.attachment_written'));
-    if (task.status === 'failed') scenario.error = task.error || '(任务 failed，无 error 字段)';
-    return scenario;
-  } catch (error) {
-    scenario.error = error.message;
-    return scenario;
-  }
-};
-
-// ── 场景 s5：采购退货 ───────────────────────────────────────────────────────
-const runPurchaseReturnScenario = async ({ pick, quantity }) => {
-  const scenario = makeScenario('s5',
-    '采购退货：「采购行为=退货」的记录 → 采购退货入账 + 库存减', [
-      '分流判对：走退货那条链路（purchase.return.batch.posted / purchase.return.stock_applied），**不走**采购申请、不走到货入库',
-      `「单据信息」**按尺码成行**（每行数量 = 该尺码退掉的双数），合计 = ${quantity}；其中 1 行带退货单附件`,
-      `库存方向：实时库存该货品 **−${quantity} 行**；库存流水行为=采购减少（STOCK_PURCHASE_DECREASE），**变动数量合计 = ${quantity}**`,
-      '采购群收到 1 条退货单图',
-      '没有多余消息：0 条主动私聊',
-    ]);
-  const h = makePurchaseHarness({ label: 's5' });
-    scenario.data.api_errors = h.apiErrors;
-  try {
-    const { gateway, sim } = h;
-    const reportTable = gateway.table('purchaseReport');
-    const requestTable = gateway.table('purchaseRequest');
-    const ledgerTable = gateway.table('inventoryLedger');
-    const behaviorTable = gateway.table('behavior');
-    const chatId = String(process.env.PURCHASE_CHAT_ID || '');
-    const behaviors = (await gateway.listAll('behavior')).map((row) => ({
-      recordId: row.record_id,
-      name: textValue(row.fields?.[behaviorTable.fields.name]),
-      code: textValue(row.fields?.[behaviorTable.fields.code]),
-    }));
-    const candidates = behaviors.filter((item) => classifyReportBehavior(item) === REPORT_BEHAVIOR.PURCHASE_RETURN);
-    const returnBehavior = candidates.find((item) => item.code === 'STOCK_PURCHASE_DECREASE') || candidates[0];
-    if (!returnBehavior) throw new Error('「行为管理」里没有能识别成「采购退货」的行为 → 没法构造退货记录');
-    const quantityType = await fieldTypeOf(gateway, 'purchaseReport', 'quantity');
-    const operatorOpenId = await pickReportOperatorOpenId(gateway);
-    const batchNo = `E2E-RET-${stamp()}`;
-
-    const liveBefore = await liveSnapshot(h);
-    const mineBefore = liveBefore.filter((row) => row.productRecordId === pick.productRecordId);
-    const ledgerIdsBefore = new Set((await gateway.listAll('inventoryLedger')).map((row) => row.record_id));
-
-    const values = {
-      product: relation(pick.productRecordId),
-      behavior: relation(returnBehavior.recordId),
-      quantity: coerceNumberCell(quantityType, quantity),
-      batchNoText: batchNo,
-    };
-    if (operatorOpenId) values.operator = person(operatorOpenId);
-    const created = await gateway.create('purchaseReport', values);
-    scenario.data.record = { record_id: created.recordId, batch_no: batchNo, quantity,
-      quantity_field_type: quantityType, behavior: `${returnBehavior.name}/${returnBehavior.code}`,
-      product: pick.itemNo, live_rows_for_product: mineBefore.length };
-
-    const logsFrom = capturedLogs.length;
-    const accepted = await h.service.accept('supplier-report', created.recordId);
-    scenario.data.accept = accepted;
-    const task = await waitPurchaseTask(h, accepted.taskId, { label: '退货任务' });
-    const logs = logsSince(logsFrom);
-    scenario.logs = eventsOf(logs, ['purchase.webhook.accepted', 'purchase.return.batch.opened',
-      'purchase.return.batch.joined', 'purchase.return.batch.posted', 'purchase.return.posted',
-      'purchase.return.stock_applied', 'purchase.request.created', 'inventory.change.applied',
-      'bitable.record.created', 'bitable.record.updated', 'purchase.return.record_failed'])
-      .map((entry) => ({ event: entry.event }));
-
-    const behaviorById = await behaviorIndex(gateway);
-    const requestRows = (await gateway.listAll('purchaseRequest'))
-      .filter((row) => textValue(row.fields?.[requestTable.fields.idempotencyKey])
-        .startsWith(`purchase_return:${created.recordId}:`))
-      .map((row) => ({
-        record_id: row.record_id,
-        quantity: Number(row.fields?.[requestTable.fields.quantity]),
-        behavior: linkedRecordIds(row.fields?.[requestTable.fields.behavior])
-          .map((id) => behaviorById.get(id)?.name || id),
-        attachmentCount: Array.isArray(row.fields?.[requestTable.fields.attachment])
-          ? row.fields[requestTable.fields.attachment].length
-          : (row.fields?.[requestTable.fields.attachment] ? 1 : 0),
-      }));
-    const newLedger = (await gateway.listAll('inventoryLedger'))
-      .filter((row) => !ledgerIdsBefore.has(row.record_id))
-      .filter((row) => linkedRecordIds(row.fields?.[ledgerTable.fields.product]).includes(pick.productRecordId))
-      .map((row) => ({
-        record_id: row.record_id,
-        quantityChange: row.fields?.[ledgerTable.fields.quantityChange],
-        behavior: linkedRecordIds(row.fields?.[ledgerTable.fields.behavior])
-          .map((id) => behaviorById.get(id)?.name || id),
-        behaviorCode: linkedRecordIds(row.fields?.[ledgerTable.fields.behavior])
-          .map((id) => behaviorById.get(id)?.code || ''),
-      }));
-    const liveAfter = await liveSnapshot(h);
-    const mineAfter = liveAfter.filter((row) => row.productRecordId === pick.productRecordId);
-    const outbound = outboundSummary(sim);
-    const groupCreates = outbound.creates.filter((item) => item.receive_id === chatId);
-    const groupImages = groupCreates.filter((item) => item.msg_type === 'image');
-
-    scenario.data.requests = requestRows;
-    scenario.data.ledger = newLedger;
-    scenario.data.live = { before: mineBefore.length, after: mineAfter.length };
-    scenario.data.group_messages = groupCreates.map((item) => ({ msg_type: item.msg_type }));
-    scenario.data.images_uploaded = outbound.images;
-
-    check(scenario, '任务终态', 'posted', task.status);
-    check(scenario, '分流：走的是「退货」链路', true,
-      logs.some((entry) => entry.event === 'purchase.return.batch.posted')
-      && logs.some((entry) => entry.event === 'purchase.return.stock_applied'));
-    check(scenario, '分流：没有走「采购申请」那条', 0, logs.filter((entry) => entry.event === 'purchase.request.created').length);
-    // ⚠️ 口径记录：本条最初写成"「单据信息」1 行、数量=2"，第一次跑就被证伪 ——
-    //    实现是**按实时库存逐双扣减**：退 2 双写 2 行（每行数量 1），流水也是 2 行（每行变动 1）。
-    //    这与既有脚本 `e2e-run.mjs`（已评审）的判据一致：它写的是
-    //    「单据信息新增 N 行 … 合计 = 填的双数」「库存流水：每行变动数量 1」。
-    //    所以这里按**实际契约**判：合计对得上 + 每行 1 双。
-    check(scenario, '「单据信息」合计退货双数', quantity,
-      requestRows.reduce((sum, row) => sum + Number(row.quantity || 0), 0));
-    // ⚠️ 口径记录（第二次修正）：本条最初写成"1 行、数量=2"，后来改成"逐双一行、每行 1"，
-    //    两次都不对 —— **真实契约是「一个尺码一行、每行数量 = 该尺码退掉的双数」**
-    //    （既有脚本 `e2e-run.mjs` 的注释逐字写着这条口径；销售 / 采购入库也是这个粒度）。
-    //    退 2 双：若吃掉的两行实时库存同尺码 → 1 行数量 2；不同尺码 → 2 行各 1。
-    //    所以判据只能落在**合计**与"每行都是整数双"上，不能钉死行数。
-    check(scenario, '「单据信息」每行数量都是正整数（按尺码成行）', true,
-      requestRows.length > 0 && requestRows.every((row) => Number(row.quantity) >= 1));
-    check(scenario, '退货单附件只落在其中一行（同批次只留一条）', 1,
-      requestRows.filter((row) => row.attachmentCount > 0).length);
-    // 同上：流水的粒度也是「一个尺码一行、变动数量 = 该尺码双数」，所以判**合计**。
-    check(scenario, `库存流水：合计变动数量 = ${quantity}，且每行都是「采购减少」`, true,
-      newLedger.length > 0
-      && newLedger.every((row) => row.behavior.join('/') === '采购减少' && Number(row.quantityChange) >= 1)
-      && newLedger.reduce((sum, row) => sum + Number(row.quantityChange || 0), 0) === quantity);
-    check(scenario, '库存流水行为编码 = STOCK_PURCHASE_DECREASE', ['STOCK_PURCHASE_DECREASE'],
-      [...new Set(newLedger.map((row) => row.behaviorCode.join('/')))]);
-    check(scenario, '库存方向：实时库存减少的行数', quantity, mineBefore.length - mineAfter.length);
-    check(scenario, '采购群收到退货单图', 1, groupImages.length);
-    check(scenario, '没有多余消息：0 条主动私聊', 0, outbound.privateCreates.length);
-    check(scenario, '自证日志：purchase.return.stock_applied', true,
-      logs.some((entry) => entry.event === 'purchase.return.stock_applied'));
-    if (task.status === 'failed') scenario.error = task.error || '(任务 failed，无 error 字段)';
-    return scenario;
-  } catch (error) {
-    scenario.error = error.message;
-    return scenario;
-  }
-};
 
 // ── 场景 s6：补样品 ─────────────────────────────────────────────────────────
 // 补样品任务的 id 由 service 按销售明细 id 派生（`sample_` + sha256 前 20 位）；
@@ -1791,8 +1420,7 @@ const ACCEPTANCE_CRITERIA = [
   's1 销售录单：话题里发文字 → 确认卡片（reply_in_thread）→ 确认 → 销售明细=已交付 / 收款=已收款 → 门盒 -1 → 0 条私聊',
   's2 销售退货：话题里说「退那双…」→ 按 thread_id 定位那笔 → 确认 → 原明细=已退货 / 新售后主表 / 门盒 +1 / 退款 1 条',
   's3 换货：话题里说「换成…」→ 旧鞋 +1（销售退货行为）/ 新鞋 -1（现货销售 SALE_CASH）/ 净 0 / 2 条流水 / 差价 0 不动钱',
-  's4 采购报单：「数量说明」变更事件 → accept("supplier-report") → 免确认生成采购申请（单据信息逐尺码）→ 发采购群 1 张图 + 1 条 @经办人的文字（同一话题）→ 图写回附件 → 库存不动',
-  's5 采购退货：「采购行为=退货」的记录 → 退货入账 + 库存减（逐双一行 / 库存行为=采购减少，每行变动 1）→ 退货单图发采购群',
+  // ⛔ s4 / s5（采购报单 / 采购退货）的验收标准行**已删除**：那条入口退场了。
   's6 补样品：群销售吃掉样品 → 补样品卡片回到**那条销售话题**（reply_in_thread）→ 0 条私聊 / 0 条 send_skipped 兜底',
 ];
 
@@ -1895,24 +1523,7 @@ const cmdRun = async () => {
       liveCountByProduct.set(id, (liveCountByProduct.get(id) || 0) + 1);
     }
   }
-  const hasSupplier = (id) => linkedRecordIds(productById.get(id)?.fields?.[productTable.fields.supplier]).length > 0;
   const labelOf = (id) => textValue(productById.get(id)?.fields?.[productTable.fields.number]) || id;
-  const byLive = [...liveCountByProduct.entries()].sort((left, right) => right[1] - left[1]);
-  // s4：优先用 .env 指定的 E2E 货品，其次"有供应商 + 实时库存最多"的那个
-  const s4ProductId = String(process.env.FEISHU_V1_E2E_PRODUCT_RECORD_ID || '').trim()
-    || (byLive.find(([id]) => hasSupplier(id)) || byLive[0] || [])[0] || '';
-  // s5：退货要真扣掉 N 行实时库存 —— 挑一个实时库存 ≥ 2 行的货品
-  const s5ProductId = (byLive.find(([id, count]) => count >= 2 && hasSupplier(id))
-    || byLive.find(([id, count]) => count >= 2) || [])[0] || '';
-  const sizeTable = gateway.table('sizeManagement');
-  const availableSizes = (await gateway.listAll('sizeManagement'))
-    .map((row) => Number(textValue(row.fields?.[sizeTable.fields.size])))
-    .filter((size) => Number.isFinite(size) && size > 0)
-    .sort((left, right) => left - right);
-  const s4Sizes = (availableSizes.includes(38) && availableSizes.includes(39)) ? [38, 39] : availableSizes.slice(0, 2);
-  const s4ReportText = `${s4Sizes[0]} 码 3 双，${s4Sizes[1]} 码 2 双`;
-  const s4Expected = { [String(s4Sizes[0])]: 3, [String(s4Sizes[1])]: 2 };
-  const s5Quantity = 2;
 
   say('');
   say(`  实时库存候选（门盒有货 + 有单价 + 颜色唯一）：${pool.length} 个 (货品, 尺码) 组合`);
@@ -1920,8 +1531,6 @@ const cmdRun = async () => {
   say(`    s1 销售录单（话题）  ：${describe(s1Pick)}`);
   say(`    s2 销售退货         ：${describe(s2Pick)}`);
   say(`    s3 换货             ：${describe(s3Pick)} → ${describe(exchangeTarget)}`);
-  say(`    s4 采购报单         ：货品 ${s4ProductId ? `${labelOf(s4ProductId)}（${s4ProductId}）` : '（找不到）'}；尺码 ${JSON.stringify(s4Sizes)}；数量说明「${s4ReportText}」`);
-  say(`    s5 采购退货         ：货品 ${s5ProductId ? `${labelOf(s5ProductId)}（${s5ProductId}，实时库存 ${liveCountByProduct.get(s5ProductId)} 行）` : '（找不到实时库存 ≥ 2 行的货品）'}；数量 ${s5Quantity}`);
   say(`    s6 补样品           ：${describe(s6Pick)}（门盒≥1 + 样品≥1 → 卖两双：第 2 双吃样品）`);
   say(`      （s6 的候选池更宽：${samplePool.length} 个「门盒≥1 且 样品≥1」的组合，不排除"卖过的款"）`);
   if (only.length || flags.all) {
@@ -1935,8 +1544,7 @@ const cmdRun = async () => {
   const price = Number(s1Pick?.price || 0);
   const scenarios = [];
   const required = {
-    s1: s1Pick, s2: s2Pick, s3: s3Pick && exchangeTarget, s4: s4ProductId && s4Sizes.length === 2,
-    s5: s5ProductId, s6: s6Pick,
+    s1: s1Pick, s2: s2Pick, s3: s3Pick && exchangeTarget, s6: s6Pick,
     x2a: x2aPick, x2b: x2bPair && x2bPair.list[0] && x2bPair.list[1], x2c: x2cPick, x3: x3Pick, x4: x4Pick,
   };
   const extraKeys = ['x2a', 'x2b', 'x2c', 'x3', 'x4'];
@@ -2005,19 +1613,6 @@ const cmdRun = async () => {
           new_size: exchangeTarget.size, settlement: '现金',
         },
       },
-    }));
-  }
-  if (wanted('s4')) {
-    say('  ▶ s4 采购报单 …');
-    scenarios.push(await runPurchaseReportScenario({
-      pick: { productRecordId: s4ProductId, itemNo: labelOf(s4ProductId), sizeRecordId: '' },
-      reportText: s4ReportText, sizes: s4Sizes, expectedBySize: s4Expected,
-    }));
-  }
-  if (wanted('s5')) {
-    say('  ▶ s5 采购退货 …');
-    scenarios.push(await runPurchaseReturnScenario({
-      pick: { productRecordId: s5ProductId, itemNo: labelOf(s5ProductId) }, quantity: s5Quantity,
     }));
   }
   if (wanted('s6')) {

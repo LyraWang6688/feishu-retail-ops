@@ -9,11 +9,10 @@ const V1_SCHEMA_SCOPES = {
   purchase: [
     'product',
     'supplier',
-    // ⚠️ 2026-10-09 只读核对生产真表：**「信息填写」这张表在生产 Base 里已经没有了**
-    //    （`TableIdNotFound` 1254041）⇒ 本档闸门现在**就是红的**。
-    //    它**刻意留在这里**：那是"供应商报单入口要不要整个退场"的业务决定，
-    //    不是我们能顺手删的一行（详见 `v1BitableSchema.purchaseReport` 那一段的说明）。
-    'purchaseReport',
+    // ⛔ `purchaseReport`（「信息填写」，tableId `tblo0ffzFt7vyQw2`）**已从 schema 与这里一并删除
+    //    （2026-10-09）**：业务负责人把那张表**整个从 Base 删掉**了（`TableIdNotFound` 1254041），
+    //    口径是**「自然语言 ＋ AI 录入」整套退场** ⇒ 供应商文字报单这条入口退场。
+    //    留着它 = 部署闸门去问一张不存在的表、`v1:schema-check:all` 持续判红（就是本次要修的那件事）。
     'purchaseRequest',
     'purchaseOrderBatch',
     // ⚠️ 2026-10-09 新表「付款明细」**刻意不在这里**：真表只有主字段「文本」、
@@ -75,18 +74,18 @@ const getV1IdempotencyKeyTables = (scope = 'sales') =>
 // 字段名闸门看不出取值，而往单选里写一个不存在的取值 → 飞书**自动新建选项** →
 // 表被悄悄污染、按该取值查询静默查不到（2026-10-07 加，起因见 purchaseArrivalStatus.js）。
 // ⚠️ 取值本身在各自那份配置里（配置先行），这里只负责**汇总"哪些列要校验"**：
-//    · 「报货批次.到货状态」（未到货 / 已到货）—— 2026-10-07 加；
-//    · 「报货批次.确认状态」—— 2026-10-07 深夜她把这列从**文本改成单选**之后加进来的
-//      （配置值当前是「已确认」，**取值不改**，只把它纳入闸门；不一致 → 闸门红、停下报告）。
+//    · 「报货批次.到货状态」（未到货 / 已到货）—— 2026-10-07 加。
+//    ⛔ 「报货批次.确认状态」的契约**已删除（2026-10-09）**：那一列在真表上没有了
+//      （生产 12 列里没有「确认状态」）⇒ 契约留着 = 闸门去问一列不存在的字段、直接判红；
+//      `config/purchaseAcceptance.js` 随它一起退场（全仓零读取点）。
 const V1_SELECT_OPTION_CONTRACT_SCOPES = Object.freeze(['purchase', 'all']);
 
 const getV1SelectOptionContracts = (scope = 'purchase', env = process.env) => {
   const key = getV1SchemaScope(scope).key;
   if (!V1_SELECT_OPTION_CONTRACT_SCOPES.includes(key)) return [];
-  // 延迟 require：只在真要校验的范围内才去读那两份配置（它们自己会在取值不合法时抛错）。
+  // 延迟 require：只在真要校验的范围内才去读那份配置（它自己会在取值不合法时抛错）。
   const { purchaseArrivalStatusOptionContract } = require('./purchaseArrivalStatus');
-  const { purchaseAcceptanceOptionContract } = require('./purchaseAcceptance');
-  return [...purchaseArrivalStatusOptionContract(env), ...purchaseAcceptanceOptionContract(env)];
+  return [...purchaseArrivalStatusOptionContract(env)];
 };
 
 module.exports = {

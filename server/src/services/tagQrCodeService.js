@@ -53,6 +53,8 @@ const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { TAG_QR_CODE } = require('../config/tagQrCode');
 const { textValue } = require('./v1BitableGateway');
 const { logInfo, logWarn, logError } = require('../utils/logger');
+// ⭐ 2026-10-09：扫码页「货品信息」内存快照的跨模块失效（写标签二维码 = 改了货品）。
+const { invalidateLiveInventorySnapshot } = require('./liveInventorySnapshot');
 
 const SCAN_URL_PLACEHOLDER = 'number';
 
@@ -357,6 +359,9 @@ const createTagQrCodeService = ({
       try {
         // 附件字段的写法（官方 FAQ「如何在多维表格中上传附件」）：`[{ file_token }]`。
         await gateway.update('product', recordId, { [config.fields.tagQrCode]: [{ file_token: fileToken }] });
+        // ⭐ 2026-10-09：改了货品（写标签二维码附件）⇒ 作废扫码页那份「货品信息」内存快照
+        //   （**只作废货品那一份**：写附件不影响库存）。
+        invalidateLiveInventorySnapshot('product_tag_qr_written', { tableKey: 'product' });
       } catch (error) {
         logError('product.tag_qr.failed', {
           record_id: recordId, reason: effectiveReason, step: 'write_back', file_token: fileToken, error: error.message,

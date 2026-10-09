@@ -14,9 +14,11 @@
  *   ④ **不许硬编码任何 token/secret**（`server/scripts/` 全目录静态扫）；
  *   ⑤ **不许用飞书 CLI**（脚本里不许出现 `lark-cli` / `lark` CLI 调用）；
  *   ⑥ 走的是**项目代码**：必须 require 项目自己的入口
- *      （`LarkMvpService.acceptMessage` / `handleCardAction`、`PurchaseWebhookService` 的
- *       `accept('supplier-report', …)`），而不是自己拼 SDK 调用；
- *   ⑦ 六个场景（s1..s6）与它们各自的验收标准都在脚本里声明了。
+ *      （`LarkMvpService.acceptMessage` / `handleCardAction` / `V1BitableGateway`），
+ *      而不是自己拼 SDK 调用；
+ *      ⛔ 2026-10-09：原先还要求 `PurchaseWebhookService.accept('supplier-report', …)` ——
+ *        那条「信息填写」表变更入口已随整表删除退场，脚本里那两个采购场景（s4/s5）也删了。
+ *   ⑦ 场景（s1/s2/s3/s6 ＋ 销售侧补充）与它们各自的验收标准都在脚本里声明了。
  *
  * ⚠️ 这里**只做只读的静态检查 + 子进程闸门**：不读飞书、不写飞书、不需要任何凭证。
  *    （闸门那一组子进程会在"任何远端调用之前"就退出。）
@@ -126,10 +128,8 @@ test('e2e-group-thread 脚本不许调用飞书 CLI（含"读表验证"）', () 
 test('e2e-group-thread 走的是项目代码（项目自己的入口函数）', () => {
   const required = [
     "require('../src/services/larkMvpService')",
-    "require('../src/services/purchaseWebhookService')",
     'service.acceptMessage(',
     'handleCardAction(',
-    "accept('supplier-report'",
     'new V1BitableGateway(',
   ];
   for (const needle of required) {
@@ -137,15 +137,17 @@ test('e2e-group-thread 走的是项目代码（项目自己的入口函数）', 
   }
 });
 
-// ── ⑦ 六个场景与验收标准都在脚本里声明 ──────────────────────────────────────
-test('e2e-group-thread 声明了六个场景 + 跑之前先打印验收标准', () => {
-  for (const key of ['s1', 's2', 's3', 's4', 's5', 's6']) {
+// ── ⑦ 场景与验收标准都在脚本里声明 ──────────────────────────────────────────
+test('e2e-group-thread 声明了销售侧场景 + 跑之前先打印验收标准', () => {
+  // ⛔ 2026-10-09：原先还有 s4（采购报单）/ s5（采购退货）两个场景 ——
+  //   它们走的入口（「信息填写」表变更）已随整表删除退场，脚本里也删了。
+  for (const key of ['s1', 's2', 's3', 's6']) {
     // 场景在 ACCEPTANCE_CRITERIA 里声明（跑之前打印），并且在 cmdRun 里被真正登记
     assert.ok(new RegExp(`^  '${key} `, 'm').test(runnerSource), `缺少验收标准声明 ${key}`);
     assert.ok(runnerSource.includes(`wanted('${key}')`), `缺少场景执行分支 ${key}`);
   }
-  // s1 / s4 / s5 / s6 是各自独立的 runner（s2 / s3 复用售后那条，key 由调用方传）
-  for (const key of ['s1', 's4', 's5', 's6']) {
+  // s1 / s6 是各自独立的 runner（s2 / s3 复用售后那条，key 由调用方传）
+  for (const key of ['s1', 's6']) {
     assert.ok(runnerSource.includes(`makeScenario('${key}'`), `缺少场景 runner ${key}`);
   }
   assert.match(runnerSource, /ACCEPTANCE_CRITERIA/);

@@ -67,8 +67,7 @@ test('listPurchaseArrivals ⭐ 改读「报货批次」那一行（到货落点 
         fields: {
           报货批次号: 'BH-001',
           到货状态: '已到货',
-          确认状态: '已确认',
-          验收原话: '都到了\n完毕',
+          // ⛔ 2026-10-09：「确认状态」「验收原话」两列已从真表删除 ⇒ fixture 里不再有它们。
         },
       },
       { record_id: 'batch_2', fields: { 报货批次号: 'BH-002', 到货状态: '未到货' } },
@@ -85,8 +84,9 @@ test('listPurchaseArrivals ⭐ 改读「报货批次」那一行（到货落点 
   assert.deepEqual(all.map((row) => row.batch_no), ['BH-002', 'BH-001']);
   const arrived = all.find((row) => row.batch_no === 'BH-001');
   assert.equal(arrived.arrival_status, '已到货');
-  assert.equal(arrived.confirm_status, '已确认');
-  assert.equal(arrived.acceptance_text, '都到了\n完毕');
+  // ⛔ 那两个投影**已删除**（列都没有了，留着只会永远读出空串、把"没记"伪装成"记了但空"）。
+  assert.equal('confirm_status' in arrived, false, '确认状态投影已退场');
+  assert.equal('acceptance_text' in arrived, false, '验收原话投影已退场');
   // record_id / batch_record_id 都是**批次记录 id**（到货信息的落点）。
   assert.equal(arrived.record_id, 'batch_1');
   assert.equal(arrived.batch_record_id, 'batch_1');
@@ -100,8 +100,8 @@ test('listPurchaseArrivals ⭐ 改读「报货批次」那一行（到货落点 
   const byBatch = await service.listPurchaseArrivals({ batchNo: 'BH-002' });
   assert.deepEqual(byBatch.map((row) => row.batch_no), ['BH-002']);
 
-  const byConfirm = await service.listPurchaseArrivals({ confirmStatus: '已确认' });
-  assert.deepEqual(byConfirm.map((row) => row.batch_no), ['BH-001']);
+  // ⛔ 2026-10-09：`confirmStatus` 过滤**已删除**（「确认状态」那一列在真表上没有了，
+  //   路由层与这里都不再接受这个筛选条件）。留下的筛选只有 batchNo / arrivalStatus。
 
   const byArrival = await service.listPurchaseArrivals({ arrivalStatus: '未到货' });
   assert.deepEqual(byArrival.map((row) => row.batch_no), ['BH-002']);

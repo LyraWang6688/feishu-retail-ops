@@ -424,7 +424,8 @@ const sizeGroupsHtml = (view, write) => {
  *   · 一键补货 = 把**缺的尺码**默认勾上、**默认各 1 双**、数量可改（`<details>` 折叠，
  *     点一下 "一键补货" 就展开；没有一行 JS）；
  *   · 走的是**既有**补货写入口（`views/../services/scanWriteService.js` 的 `submitReplenish`）→
- *     既有采购报单链路（就是「信息填写」表变更那条免确认路径）—— 渲染层一行业务逻辑都没有。
+ *     既有采购免确认链路（`publishPurchaseRequest`；「信息填写」表变更那条入口
+ *     已于 2026-10-09 退场，函数本身没变）—— 渲染层一行业务逻辑都没有。
  */
 const replenishFormHtml = (view, write) => {
   const t = write.texts;

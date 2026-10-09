@@ -7,6 +7,12 @@ const { SizeReferenceService, normalizeSize } = require('./sizeReferenceService'
 const { OPERATION_ITEM_KEY_FIELD, createOnceByKey, validateIdempotencyKeyFields } = require('../infrastructure/idempotencyKey');
 const { logInfo, logWarn } = require('../utils/logger');
 const { correlationFields } = require('../utils/correlationFields');
+// ⭐ 2026-10-09：扫码页「实时库存」内存快照的**跨模块失效**。
+//   全仓真正动「实时库存」的只有本文件的三个方法（`executeOperation` / `transitionState` /
+//   `promoteToSample`），而它们最终都落到 `executeOperation` 那一次写入
+//   ⇒ **在那一处写成功之后作废一次**就够（写操作立刻失效，不是等 30 秒那一拍）。
+//   这里只认识一个词（invalidate），不认识扫码页、也不需要注入任何依赖（解耦）。
+const { invalidateLiveInventorySnapshot } = require('./liveInventorySnapshot');
 
 // ── 「库存键」的两种写法（业务负责人 2026-10-07 拍板：两种都给）──────────────────
 //   · `stock_key`       = `商品record_id|尺码|所属状态` —— **内部键**。库存任务的串行队列
@@ -824,6 +830,10 @@ class InventoryService {
       operator_open_id: operation.operator_open_id || undefined,
       ...correlation,
     });
+    // ⭐ 2026-10-09：库存**已经写进飞书**了 ⇒ 当场作废扫码页那份内存快照
+    //   （她的第一要求是"库存准确"；不作废就会给她看一份最多 30 秒前的库存）。
+    //   ⚠️ 放在 `logInfo` 之后、`return` 之前：这一行**永不抛**（模块内部自己 try/catch 了 no-op 路径）。
+    invalidateLiveInventorySnapshot('inventory_changed');
     return result;
   }
 
@@ -938,6 +948,8 @@ class InventoryService {
       ...stockKeyLabelOfOperation(operation),
       live_record_id: operation.live_record_id, ledger_record_id: ledger.record_id, size: operation.size,
       ...correlation });
+    // ⭐ 2026-10-09：补样品**改了实时库存**（门盒 → 样品）⇒ 当场作废扫码页那份内存快照。
+    invalidateLiveInventorySnapshot('inventory_changed');
     return result;
   }
 
@@ -1090,6 +1102,10 @@ class InventoryService {
       operator_open_id: operation.operator_open_id || undefined,
       ...correlation,
     });
+    // ⭐ 2026-10-09：**这里是全仓唯一真正写「实时库存」的地方**（销售入账 / 到货 /
+    //   库存状态变更 / 补样品最后都落到这一处）⇒ 写成功之后当场作废扫码页的内存快照。
+    //   ⚠️ 连告警/日志都写完了才作废：作废本身只清内存 + fire-and-forget 重拉，永不抛。
+    invalidateLiveInventorySnapshot('inventory_changed');
     return result;
   }
 

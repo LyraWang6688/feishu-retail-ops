@@ -197,7 +197,10 @@ test('① 私聊链路已移除：非文字消息只回那一句「请到群里�
 // ⚠️ 但**已删除的**「到货验收」表没有 schema 可读了：下面这条常量就是那个**已作废**的
 //    生产 tableId，专门用来模拟"飞书还推来旧表事件"（回归钉子）。
 const DELETED_ARRIVAL_TABLE_ID = 'tblvLOXKESNTbZ7v';
-const REPORT_TABLE_ID = V1_BITABLE_SCHEMA.tables.purchaseReport.tableId;
+// ⛔ 2026-10-09：原先还有 `REPORT_TABLE_ID = …tables.purchaseReport.tableId` ——
+//   「信息填写」表被业务负责人整个删除、报单入口整块退场 ⇒ 这里不再有任何采购表 id。
+//   下面这些用例改成"**任何**表的记录变更都不再分派采购链路"（比原来更硬）。
+const UNKNOWN_TABLE_ID = 'tbl_unknown_not_ours';
 
 const bitableEvent = (tableId, recordId) => ({
   file_token: APP_TOKEN,
@@ -294,69 +297,30 @@ test('链路已退场：旧「到货验收」表 id 的事件不再被分派，�
   );
 });
 
-test('到货退场不影响报货：供应商报单新增记录仍然分派到 supplier-report', async () => {
-  const { service, accepted } = createRecordingService();
-  const handlers = createLarkEventHandlers(service);
-
-  assert.doesNotThrow(() =>
-    handlers['drive.file.bitable_record_changed_v1'](bitableEvent(REPORT_TABLE_ID, 'rec_report_ok')),
-  );
-  await flushDispatch();
-
-  assert.deepEqual(accepted, [['supplier-report', 'rec_report_ok']]);
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 归批的首选信号：「同一包」
-//
-// 一次表单提交 = 同一张表的多条记录，飞书把它们放在**同一个 action_list** 里推过来。
-// 逐条分派会让报货链路各自走一遍处理（N 条 → N 张采购申请图），所以这里要能看出
-// 「这一包里的 record_added 是一起交出去的」。
-// ─────────────────────────────────────────────────────────────────────────────
-
-test('同一包里的多条 record_added 合成一次分派（一次提交 = 一包）', async () => {
+test('采购入口整块退场：任何表的记录变更都不再分派采购链路（2026-10-09）', async () => {
+  // 「信息填写」表被业务负责人整个删掉 ⇒ `routes/larkEvents.js` 里那张 `purchaseIntake`
+  // 分派表连同 `acceptMany` 调用一起删除了。
+  // 这条用例钉住"退场之后**一条都不分派**"：连一个陌生 table_id 也一样（零远端调用）。
   const { service, accepted, packages } = createRecordingService();
   const handlers = createLarkEventHandlers(service);
 
-  handlers['drive.file.bitable_record_changed_v1']({
-    file_token: APP_TOKEN,
-    table_id: REPORT_TABLE_ID,
-    action_list: [
-      { record_id: 'rec_p1', action: 'record_added' },
-      { record_id: 'rec_p2', action: 'record_added' },
-      { record_id: 'rec_p3', action: 'record_added' },
-    ],
-  });
+  for (const tableId of [DELETED_ARRIVAL_TABLE_ID, UNKNOWN_TABLE_ID]) {
+    assert.doesNotThrow(() =>
+      handlers['drive.file.bitable_record_changed_v1'](bitableEvent(tableId, 'rec_any')),
+    );
+  }
   await flushDispatch();
 
-  assert.deepEqual(
-    packages,
-    [['supplier-report', ['rec_p1', 'rec_p2', 'rec_p3'], 3]],
-    '三条要作为一包一起分派，并把「这一包应有 3 条」传下去（到齐的判据）',
-  );
-  assert.deepEqual(accepted, [
-    ['supplier-report', 'rec_p1'],
-    ['supplier-report', 'rec_p2'],
-    ['supplier-report', 'rec_p3'],
-  ]);
+  assert.deepEqual(accepted, [], '不再有任何采购 kind 被分派');
+  assert.deepEqual(packages, [], '连 acceptMany 都不该被调用');
 });
 
-test('一包里非 record_added 的动作不进包：编辑/删除不触发报货', async () => {
-  const { service, packages } = createRecordingService();
-  const handlers = createLarkEventHandlers(service);
-
-  handlers['drive.file.bitable_record_changed_v1']({
-    file_token: APP_TOKEN,
-    table_id: REPORT_TABLE_ID,
-    action_list: [
-      { record_id: 'rec_edited', action: 'record_edited' },
-      { record_id: 'rec_added', action: 'record_added' },
-    ],
-  });
-  await flushDispatch();
-
-  assert.deepEqual(packages, [['supplier-report', ['rec_added'], 1]]);
-});
+// ⛔⛔ 2026-10-09：这一节原先测的是「**报货的归批信号**」——同一 `action_list` 里的多条
+//   `record_added` 收成一包交给 `purchaseWebhooks.acceptMany`（三条一起分派、
+//   非 record_added 不进包）。
+//   那张表（「信息填写」）被业务负责人**整个删除** ⇒ 报单入口与 `acceptMany` 一起退场，
+//   **"归批"这回事不存在了**（没有入口就没有"一次表单提交的多条记录"）。
+//   上面那条「任何表的记录变更都不再分派采购链路」就是它的替代守门用例。
 
 // 原先还有一条「一包里的多条到货记录也合成一次分派（到货链路行为不变）」。
 // 到货那张表已被删除（2026-10-07 晚）⇒ 这里只留"旧表 id 的一包也不分派"这条回归钉子。
@@ -435,15 +399,15 @@ test('⑤ 分派：货品信息表的新增 + 修改**整包**交给 tagQrCodes�
   assert.deepEqual(purchaseCalls, [], '货品信息的事件不许流进报货那条路');
 });
 
-test('⑤ 分派只认货品信息：报货表的事件不碰 tagQrCodes（报货那条路逐字不变的哨兵）', async () => {
+test('⑤ 分派只认货品信息：别的表的事件不碰 tagQrCodes，也不碰采购链路', async () => {
   const { service, calls, purchaseCalls } = createTagQrRecordingService();
   const handlers = createLarkEventHandlers(service);
 
-  handlers['drive.file.bitable_record_changed_v1'](bitableEvent(REPORT_TABLE_ID, 'rec_report_sentinel'));
+  handlers['drive.file.bitable_record_changed_v1'](bitableEvent(UNKNOWN_TABLE_ID, 'rec_other_sentinel'));
   await flushDispatch();
 
-  assert.deepEqual(calls, [], '报货表的事件只能走 purchaseWebhooks');
-  assert.deepEqual(purchaseCalls, [['supplier-report', ['rec_report_sentinel'], 1]], '报货那条路的形状没变');
+  assert.deepEqual(calls, [], '只有货品信息表的事件才进 tagQrCodes');
+  assert.deepEqual(purchaseCalls, [], '采购入口已整块退场：一条采购分派都不该有');
 });
 
 test('⑤ 异步：handler 同步返回 {} ，处理在 setImmediate 之后才发生', async () => {

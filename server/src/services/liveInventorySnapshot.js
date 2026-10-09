@@ -207,9 +207,15 @@ const createLiveInventorySnapshot = (options = {}) => {
  *
  * ⚠️ 没配快照 / 快照关掉时它就是个 no-op（不会报错、也不会拖慢写入口）。
  */
-const invalidateLiveInventorySnapshot = (reason = 'write') => {
+const invalidateLiveInventorySnapshot = (reason = 'write', options = {}) => {
+  // ⭐ 2026-10-09：多了一个「只作废某一张表的快照」的可选过滤（`{ tableKey: 'product' }`）。
+  //   为什么不直接作废全部：写「货品信息」（新建货品 / 改价 / 写标签二维码）**不影响库存**，
+  //   把库存快照一起作废等于让它白重拉一次两万行（每改一次价就一次）。
+  //   ⚠️ **不传 tableKey 时行为与改动前逐字相同**（作废全部）—— 库存写入口就是这么调的。
+  const wanted = String(options?.tableKey || '').trim();
   let hit = 0;
   for (const snapshot of [...registry]) {
+    if (wanted && snapshot.tableKey !== wanted) continue;
     if (snapshot.invalidate(reason)) hit += 1;
   }
   return hit;

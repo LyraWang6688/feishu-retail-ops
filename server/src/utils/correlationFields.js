@@ -35,7 +35,10 @@ const CORRELATION_KEYS = Object.freeze([
   'sales_entry_record_id',
   // 采购链路（2026-10-07 下半场）
   'batch_no', // 采购批次号：表单填的 202610071 / 自动生成的 CGD-YYYYMMDD-NNNN（旧号 BH-… 仍然认）
-  'purchase_report_record_id', // 「信息填写」那条报单记录（采购链路的最上游）
+  // ⛔ `purchase_report_record_id`（「信息填写」那条报单记录）**已删除（2026-10-09）**：
+  //    业务负责人把那张表**整个删掉**、供应商文字报单入口退场 ⇒ 这个键**已无来源**
+  //    （原先最上游那条记录不存在了）。按"删写入点 ＋ 删白名单键"处理——
+  //    留着它只会让日志里永远少一个"本该有值"的键，反而误导排查。
   // ⭐ 2026-10-07 晚替换：原来是 `purchase_arrival_record_id`（「到货验收」那条记录）。
   //    那张表已被业务负责人**整个删除**，到货信息的落点搬到**「报货批次」那一行** ⇒
   //    这个键换成**批次记录 id**（`purchaseOrderBatch.record_id`）。

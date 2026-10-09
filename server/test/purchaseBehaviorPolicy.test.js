@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const {
   REPORT_BEHAVIOR,
   classifyReportBehavior,
-} = require('../src/services/purchaseReportBehaviorPolicy');
+} = require('../src/services/purchaseBehaviorPolicy');
 
 // 「采购行为」分流是采购退货链路的第一道门：认错了，一条退货记录会掉进
 // 「采购申请」分支，然后在"必须选尺码"那一步失败（她能看到的只是"没反应/报错"）。

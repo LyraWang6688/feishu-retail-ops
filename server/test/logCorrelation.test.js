@@ -185,7 +185,9 @@ test('correlationFields：只放行白名单里的业务键，其余（含疑似
     // 销售链路
     'task_id', 'order_no', 'sales_entry_record_id',
     // 采购链路
-    'batch_no', 'purchase_report_record_id',
+    // ⛔ 2026-10-09：`purchase_report_record_id`（「信息填写」那条报单记录）**已从白名单删除** ——
+    //    那张表被业务负责人整个删掉、报单入口退场 ⇒ 这个键**已无来源**。
+    'batch_no',
     // ⭐ 2026-10-07 晚替换：`purchase_arrival_record_id`（「到货验收」那条记录）→
     //    `purchase_batch_record_id`（「报货批次」那一行）。表被删了，旧键已无来源。
     'purchase_batch_record_id',
@@ -200,8 +202,9 @@ test('correlationFields：只放行白名单里的业务键，其余（含疑似
     order_no: 'XSD-20261007-0004',
     sales_entry_record_id: 'rec_sale',
     batch_no: '202610071',
-    purchase_report_record_id: 'rec_purchase_report',
     purchase_batch_record_id: 'rec_purchase_batch',
+    // ⛔ 已经退场的那个键：**混进来也必须被拒**（白名单里没有它了）。
+    purchase_report_record_id: 'rec_purchase_report_retired',
     // 下面这些**故意**混进来：白名单是"以后谁顺手塞了密钥"的唯一一道闸门。
     app_secret: 'cli_secret_should_never_be_logged',
     authorization: 'Bearer xyz',
@@ -213,8 +216,7 @@ test('correlationFields：只放行白名单里的业务键，其余（含疑似
   });
   assert.deepEqual(picked, {
     task_id: 'sale_om_1', order_no: 'XSD-20261007-0004', sales_entry_record_id: 'rec_sale',
-    batch_no: '202610071', purchase_report_record_id: 'rec_purchase_report',
-    purchase_batch_record_id: 'rec_purchase_batch',
+    batch_no: '202610071', purchase_batch_record_id: 'rec_purchase_batch',
   });
   assert.equal(JSON.stringify(picked).includes('secret'), false, '密钥不许出现在日志字段里');
   assert.equal(JSON.stringify(picked).includes('stock_key'), false, '非白名单键一个都不许进');
@@ -230,7 +232,7 @@ test('correlationFields：没有的键【不出现】（不是写空串），非
     { task_id: 'a', order_no: 'b' });
   // 采购那几个键同样"空值就是不出现"（`batch_no: ''` 不许写成 `"batch_no":""`）。
   assert.deepEqual(correlationFields({
-    batch_no: '', purchase_report_record_id: '  ', purchase_batch_record_id: null,
+    batch_no: '', purchase_report_record_id: 'rec_purchase_report_retired', purchase_batch_record_id: null,
     purchase_arrival_record_id: 'retired_key_must_not_pass',
   }), {});
   assert.deepEqual(mergeCorrelation({ task_id: 'purchase_supplier-report_x' }, { batch_no: '202610071' }), {

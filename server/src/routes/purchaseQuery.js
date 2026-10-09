@@ -26,9 +26,12 @@ const createPurchaseQueryRouter = (options = {}) => {
     try {
       // ⚠️ 原先还接受 recognitionStatus 过滤。识别状态字段已从生产表删除、
       // 识别链路整体退场，这个过滤条件永远命中不了任何东西，所以摘掉。
+      // ⚠️ 2026-10-09：原先还接受 `confirmStatus` 过滤 —— 「报货批次.确认状态」
+      // 那一列在真表上已经被删掉（写入点与投影一起退场），这个过滤条件永远命中不了
+      // 任何东西，所以摘掉（与上面 recognitionStatus 同一个处置）。
       const rows = await service.listPurchaseArrivals({
         batchNo: req.query.batchNo ? String(req.query.batchNo) : undefined,
-        confirmStatus: req.query.confirmStatus ? String(req.query.confirmStatus) : undefined,
+        arrivalStatus: req.query.arrivalStatus ? String(req.query.arrivalStatus) : undefined,
       });
       return res.json({ success: true, rows, total: rows.length });
     } catch (error) {

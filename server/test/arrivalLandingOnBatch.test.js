@@ -9,7 +9,10 @@
  *    **「采购入库.采购到货批次」字段删除了，不需要了**，你重新看下～」
  *
  * 这张文件把**改动之后的验收标准**一条条钉住（按 brief 给的六条 + 两条补充）：
- *   □ ① 到货确认之后：**批次行**上同时有 验收原话 ＋ 确认状态 ＋ 到货状态=已到货
+ *   □ ① 到货确认之后：**批次行**上有 到货状态=已到货 ＋ 实际数量 ＋ 实际金额
+ *        ⛔ 2026-10-09：「验收原话」「确认状态」两列在生产真表上**也没有了**
+ *          （业务负责人的只读核对：报货批次 12 列里找不到）⇒ 它们**一个字都不写**；
+ *          schema 映射、写入点（`markConfirmed`）、读取投影与单选取值契约一起退场。
  *   □ ② 不再有任何 `purchaseArrival` 的创建/更新调用（表已被她删除）
  *   □ ③ 采购入库写入**不含**「采购到货批次」
  *   □ ④ 重放 / 重试**不重复写**（批次行、采购入库、库存三者都不重复）
@@ -115,7 +118,11 @@ const batchFields = (records) =>
 
 /** 两个尺码的最小批次（38 / 39，各申请 2 双）。 */
 const baseRecords = () => ({
-  purchaseOrderBatch: [{ record_id: BATCH_RECORD_ID, fields: { 报货批次号: BATCH_NO, 到货状态: '未到货' } }],
+  purchaseOrderBatch: [{
+    record_id: BATCH_RECORD_ID,
+    // ⭐ 2026-10-09：9 点推送的供应商**改读这一列**（SingletonLink 单元格自带被关联记录的主字段文本）。
+    fields: { 报货批次号: BATCH_NO, 到货状态: '未到货', 供应商: '供应商A' },
+  }],
   product: [{ record_id: PRODUCT_1, fields: { 货号: 'XHB8095', 颜色: '黑' } }],
   purchaseRequest: [
     { record_id: 'req_38', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: [PRODUCT_1], 尺码: sizeLink(38), 数量: 2 } },
@@ -193,8 +200,10 @@ test('① 点「是」之后：到货信息的落点 = **「报货批次」那�
 
   assert.equal(result.toast.type, 'success');
   const fields = batchFields(harness.records);
-  assert.equal(fields['验收原话'], '都到了\n完毕', '验收原话（她说的原话）');
-  assert.equal(fields['确认状态'], '已确认', '确认状态（入库成功之后写，取值来自 config）');
+  // ⛔ 2026-10-09：这两列在生产真表上已经被删掉 ⇒ **一个字都不许写**
+  //   （不是"写了空值"，而是根本没进那次 values）。
+  assert.equal('验收原话' in fields, false, '「验收原话」那一列已从真表删除，不许再写');
+  assert.equal('确认状态' in fields, false, '「确认状态」那一列已从真表删除，不许再写');
   assert.equal(fields['到货状态'], '已到货', '到货状态（这条本来就有，不许被写歪）');
   // ⭐⭐ 2026-10-08：「实际数量」（代码算出来的）= 申请 2 + 2；「实际金额」= 她填的整批金额。
   assert.equal(fields['实际数量'], 4, '实际数量 = plan.rows 的 actual 合计（代码算，不用她填）');
@@ -260,8 +269,9 @@ test('④-1 重复点「是」（飞书重投）：批次行 / 库存 都不重�
   assert.equal(harness.inventory.calls.length, 2, '库存不再加');
   assert.equal(harness.gateway.writes.filter((item) => item.op === 'create').length, 0,
     '到货确认不新建任何业务表记录');
-  assert.equal(batchFields(harness.records)['验收原话'], '都到了');
-  assert.equal(batchFields(harness.records)['确认状态'], '已确认');
+  assert.equal('验收原话' in batchFields(harness.records), false, '那两列已被真表删除，重投也不许写');
+  assert.equal('确认状态' in batchFields(harness.records), false);
+  assert.equal(batchFields(harness.records)['实际数量'], 4);
 });
 
 test('④-2 崩溃恢复：本地进度丢了 → 重放仍用**同一个幂等来源**（不会变成"又加一批"）', async () => {
@@ -307,9 +317,10 @@ test('④-2 崩溃恢复：本地进度丢了 → 重放仍用**同一个幂等�
 test('④-3 批次行写入本身也是幂等的：重跑写的是同一个值（不新建、不追加）', async () => {
   const harness = makeHarness({ parseResult: { complete: true, same: true, differences: [] } });
   const { taskId } = await arriveAndConfirm(harness);
+  // ⚠️ 2026-10-09 起那次 update 写的是「实际数量 / 实际金额」（「验收原话」已从真表删除）。
   const acceptanceWrites = writesTo(harness.gateway, 'purchaseOrderBatch')
-    .filter((item) => item.values['验收原话'] !== undefined);
-  assert.equal(acceptanceWrites.length, 1, '「验收原话」只写一次');
+    .filter((item) => item.values['实际数量'] !== undefined);
+  assert.equal(acceptanceWrites.length, 1, '「实际数量 / 实际金额」只写一次');
 
   // 再跑一次 confirmArrival（任务已经被置成 posted，直接早退 —— 连写都不发）。
   const before = writesTo(harness.gateway, 'purchaseOrderBatch').length;
@@ -322,7 +333,7 @@ test('④-3 批次行写入本身也是幂等的：重跑写的是同一个值�
 // □ ⑤ 到货核对全链路：12 件那种多行的
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('⑤ 12 件全链路：3 行实际 0 双 → 其余 9 行**加库存**，批次行照旧落实（验收原话 + 确认状态 + 已到货）', async () => {
+test('⑤ 12 件全链路：3 行实际 0 双 → 其余 9 行**加库存**，批次行照旧落实（已到货 + 实际数量/金额）', async () => {
   const products = ['p1', 'p2', 'p3'];
   const rows = products.flatMap((productId, index) => [37, 38, 39, 40].map((size) => ({
     record_id: `req_${index}_${size}`, productId, size,
@@ -366,8 +377,8 @@ test('⑤ 12 件全链路：3 行实际 0 双 → 其余 9 行**加库存**，�
   assert.equal(harness.gateway.writes.filter((item) => item.op === 'create').length, 0,
     '到货确认不新建任何业务表记录（入库明细表整个不要了）');
   const fields = batchFields(harness.records);
-  assert.equal(fields['验收原话'], '8230黑色少一双38码\n93827黑色少39 40码各一双\n完毕');
-  assert.equal(fields['确认状态'], '已确认');
+  assert.equal('验收原话' in fields, false, '「验收原话」那一列已从真表删除，不许再写');
+  assert.equal('确认状态' in fields, false, '「确认状态」那一列已从真表删除，不许再写');
   assert.equal(fields['到货状态'], '已到货');
   // ⭐ 2026-10-08：实际数量 = 12 行 − 3 行 0 双 = 9（0 双的行加 0 ⇒ 与库存口径一致）。
   assert.equal(fields['实际数量'], 9, '实际数量只数真的到货的那些（0 双的行不影响合计）');
@@ -383,12 +394,12 @@ test('⑤ 12 件全链路：3 行实际 0 双 → 其余 9 行**加库存**，�
 test('⑥ 9 点推送候选：到货确认之后这一批**不再**进「未到货」候选；退货批次从来不在候选里', async () => {
   const gateway = makeGateway({
     purchaseOrderBatch: [
-      { record_id: 'b_pending', fields: { 报货批次号: 'BH-PENDING', 到货状态: '未到货' } },
-      { record_id: 'b_arrived', fields: { 报货批次号: 'BH-ARRIVED', 到货状态: '已到货', 确认状态: '已确认' } },
+      // ⭐ 2026-10-09：供应商**就在批次行上**（她新加的那一列）——不再从别的表取。
+      { record_id: 'b_pending', fields: { 报货批次号: 'BH-PENDING', 到货状态: '未到货', 供应商: '供应商A' } },
+      { record_id: 'b_arrived', fields: { 报货批次号: 'BH-ARRIVED', 到货状态: '已到货' } },
       // 退货批次：只写 批次号 + 幂等键（不写「到货状态」）——她说「退货，不用写」。
       { record_id: 'b_return', fields: { 报货批次号: 'BH-RETURN', 幂等键: 'purchase_batch:BH-RETURN' } },
     ],
-    purchaseReport: [{ record_id: 'rep_1', fields: { 报货批次号: 'BH-PENDING', 供应商: '供应商A' } }],
   });
   const service = new PurchasePendingBatchService({ gateway });
 
@@ -399,8 +410,8 @@ test('⑥ 9 点推送候选：到货确认之后这一批**不再**进「未到�
 });
 
 test('⑥-补 到货确认**真的会**把这一批从 9 点候选里摘掉（同一台假 Base，前后对照）', async () => {
+  // ⭐ 2026-10-09：供应商改从**批次行**取（`baseRecords()` 那一行上就带着它）。
   const records = baseRecords();
-  records.purchaseReport = [{ record_id: 'rep_1', fields: { 报货批次号: BATCH_NO, 供应商: '供应商A' } }];
   const harness = makeHarness({ records, parseResult: { complete: true, same: true, differences: [] } });
   const pending = new PurchasePendingBatchService({ gateway: harness.gateway });
 

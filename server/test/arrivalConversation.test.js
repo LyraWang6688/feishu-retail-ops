@@ -918,7 +918,7 @@ const confirmCard = async (harness, text = '38 码少一双，完毕', { amount 
   return { taskId, result, cardEvent };
 };
 
-test('点「是」① ⭐：「验收原话」「确认状态」写到**「报货批次」那一行**（不再建「到货验收」行）', async () => {
+test('点「是」① ⭐：**结构化验收**（到货状态 + 实际数量/金额）写到**「报货批次」那一行**（不再建「到货验收」行）', async () => {
   const harness = makeHarness({
     responses: [{ complete: true, same: false, differences: [{ item_no: 'XHB8095', color: '黑', size: 38, type: 'less', quantity: 1 }] }],
   });
@@ -926,9 +926,14 @@ test('点「是」① ⭐：「验收原话」「确认状态」写到**「报�
 
   // ⭐ 到货信息的落点 = 「报货批次」那一行（业务负责人 2026-10-07 晚：「写入的点变到了报货批次里面」）。
   const fields = batchFields(harness.records);
-  assert.equal(fields['验收原话'], '38 码少一双\n完毕', '用户说的原话归集进「验收原话」');
-  assert.equal(fields['确认状态'], '已确认', '入库成功之后「确认状态」= 已确认（取值来自 config）');
+  // ⛔ 2026-10-09：「验收原话」「确认状态」两列在生产真表上**也没有了**
+  //   ⇒ 一个字都不许写（不是写空值，而是根本不进那次 values）。
+  assert.equal('验收原话' in fields, false, '「验收原话」那一列已从真表删除，不许再写');
+  assert.equal('确认状态' in fields, false, '「确认状态」那一列已从真表删除，不许再写');
   assert.equal(fields['到货状态'], '已到货', '到货状态照旧（这一条本来就有，别重复写歪）');
+  // ⭐ 保留下来的结构化验收：实际数量 = 申请 2 + 2 − 少 1 = 3；实际金额 = 她填的整批金额。
+  assert.equal(fields['实际数量'], 3, '实际数量 = 代码算出来的实际到货数合计');
+  assert.equal(fields['实际金额'], AMOUNT, '实际金额 = 她填的整批金额（原样照写）');
 
   // 🔴 不再有任何「到货验收」的写入 —— 那张表已被她整个删除。
   //    真写了会在记录型 gateway 上抛「未配置语义字段: purchaseArrival.*」（本用例会当场红）。
@@ -1074,13 +1079,13 @@ test('点「是」⑥：重复点「是」/ 重复投递 → 幂等，不重复�
   // ⭐ 2026-10-07 晚：幂等的落点也换了 —— 批次行**不重复写**（重复点「是」时任务已经是
   //    posted，直接早退，连一次 update 都不会发出去）。
   const batchWritesAfter = writesTo(harness.gateway, 'purchaseOrderBatch').length;
-  assert.equal(batchWritesAfter, 3,
-    '第一批就三次 update：写「验收原话」→ 写「确认状态」→ 写「到货状态=已到货」；重复点一次都不再写');
+  assert.equal(batchWritesAfter, 2,
+    '第一批两次 update：写「实际数量 / 实际金额」→ 写「到货状态=已到货」；重复点一次都不再写');
   assert.equal(harness.gateway.writes.filter((item) => item.op === 'create').length, 0,
     '重复点「是」不新建任何业务表记录（入库明细行早就不存在了）');
   assert.equal(harness.inventory.calls.length, 2, '库存不重复加');
-  assert.equal(batchFields(harness.records)['验收原话'], '38 码少一双，完毕', '批次行上的原话还是那一句');
-  assert.equal(batchFields(harness.records)['确认状态'], '已确认');
+  assert.equal(batchFields(harness.records)['实际数量'], 3, '批次行上的实际数量还是那一个（不重复累加）');
+  assert.equal(batchFields(harness.records)['实际金额'], AMOUNT);
   assert.match(again.toast.content, /已经入库/);
 });
 
@@ -1177,8 +1182,8 @@ test('可见失败③：到货信息**写不进批次行** → 也 patch 卡片 
   // 让「报货批次」那次 update 失败（其余 gateway 行为不变）——落点写不进去 = 她这次确认没被记下来。
   const update = harness.gateway.update;
   harness.gateway.update = async (tableKey, recordId, values, options) => {
-    if (tableKey === 'purchaseOrderBatch' && values.acceptanceText !== undefined) {
-      throw new Error('飞书 500：写「验收原话」失败');
+    if (tableKey === 'purchaseOrderBatch' && values.actualAmount !== undefined) {
+      throw new Error('飞书 500：写「实际数量 / 实际金额」失败');
     }
     return update(tableKey, recordId, values, options);
   };
@@ -1187,10 +1192,10 @@ test('可见失败③：到货信息**写不进批次行** → 也 patch 卡片 
 
   assert.equal(result.toast.type, 'error');
   // ⚠️ 文案走 `replies.inboundFailed`（改动前那个"「到货验收」这一行没建成"的专用文案随表一起删了）。
-  assert.match(result.toast.content, /入库没成功：飞书 500：写「验收原话」失败/);
+  assert.match(result.toast.content, /入库没成功：飞书 500：写「实际数量 \/ 实际金额」失败/);
   assert.equal(harness.updated.length, 1, '卡片要改成终态');
   assert.equal(harness.updated[0].card.header.template, 'red');
-  assert.match(cardNote(harness.updated[0].card), /飞书 500：写「验收原话」失败/);
+  assert.match(cardNote(harness.updated[0].card), /飞书 500：写「实际数量 \/ 实际金额」失败/);
   assert.equal(harness.replied.length, 1);
   assert.equal(harness.replied[0].options.threadId, 'omt_1');
   // 🔴 到货信息没有落点 ⇒ **一个字都不入库**（这是"先写到货、再写入库"的顺序保证）。
@@ -1339,8 +1344,8 @@ test('点「否」之后再点「是」→ 仍然按她的显式指令入库（�
   );
 
   assert.match(result.toast.content, /已按实际到货入库/);
-  assert.equal(batchFields(harness.records)['验收原话'], '38 码少一双，完毕');
-  assert.equal(batchFields(harness.records)['确认状态'], '已确认');
+  assert.equal(batchFields(harness.records)['实际数量'], 3, '点「否」之后又点「是」：照旧入库并落实结构化验收');
+  assert.equal('验收原话' in batchFields(harness.records), false);
 });
 
 test('可见终态⑧：已经入库之后又点「否」→ 卡片 patch 成绿色终态（不再只 toast）', async () => {
@@ -1578,11 +1583,12 @@ test('0 双①：12 行里 3 行实际 0 双 → 那 3 行一条都不入库、�
     const appliedKeys = new Set(harness.inventory.calls.map((call) => `${call.productRecordId}|${call.size}`));
     for (const key of zeroKeys) assert.equal(appliedKeys.has(key), false, `0 双的行不该加库存：${key}`);
 
-    // ⑤ 该写的照旧：批次行上的到货信息（验收原话 / 确认状态）+ 收尾；
+    // ⑤ 该写的照旧：批次行上的**结构化验收**（实际数量 / 实际金额）+ 收尾；
     //    「报货信息」一个字没写；流程不卡。
-    assert.equal(batchFields(harness.records)['验收原话'], '8230黑色少一双38码\n93827黑色少39 40码各一双\n完毕',
-      '12 行那种全链路的「验收原话」照旧落到批次行');
-    assert.equal(batchFields(harness.records)['确认状态'], '已确认');
+    //    ⛔ 「验收原话」「确认状态」两列已从真表删除 ⇒ 一个字都不写。
+    assert.equal('验收原话' in batchFields(harness.records), false);
+    assert.equal('确认状态' in batchFields(harness.records), false);
+    assert.equal(batchFields(harness.records)['实际数量'], 9, '12 行里 3 行 0 双 ⇒ 实际数量 9');
     assert.deepEqual(writesTo(harness.gateway, 'purchaseRequest'), [],
       '「报货信息」一个字都不许变（既有口径，0 双这件事也不例外）');
     assert.equal((await harness.store.get(taskId)).status, 'posted', '流程不卡：正常收尾');
@@ -1637,9 +1643,11 @@ test('0 双②：整批都是 0 双（一件都没到）→ 一条入库 / 库�
   assert.equal(harness.gateway.writes.filter((item) => item.op === 'create').length, 0,
     '一件都没到 → 一条业务表记录都不新建（入库明细行早就不存在了）');
   assert.equal(harness.inventory.calls.length, 0, '一件都没到 → 一次库存都不加');
-  // 到货信息的落点照旧（一件都没到也是"核对过"）：验收原话 + 确认状态照样写批次行。
-  assert.equal(batchFields(harness.records)['验收原话'], '这单货这么久了，一双都没到，完毕');
-  assert.equal(batchFields(harness.records)['确认状态'], '已确认');
+  // 到货信息的落点照旧（一件都没到也是"核对过"）：实际数量 = 0 照样落批次行。
+  // ⛔ 「验收原话」「确认状态」两列已从真表删除 ⇒ 一个字都不写。
+  assert.equal('验收原话' in batchFields(harness.records), false);
+  assert.equal('确认状态' in batchFields(harness.records), false);
+  assert.equal(batchFields(harness.records)['实际数量'], 0, '一件都没到 ⇒ 实际数量 0');
   assert.deepEqual(writesTo(harness.gateway, 'purchaseRequest'), []);
   assert.equal((await harness.store.get(taskId)).status, 'posted', '不卡单：照常收尾');
   assert.match(result.toast.content, /一件都没到/);
@@ -2460,11 +2468,15 @@ test('表单⑫：源码级断言 —— 提交这条路**没有第二套解析*
 //   https://open.feishu.cn/document/feishu-cards/card-components/interactive-components/input.md?lang=zh-CN
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** 「报货批次」那一行上跟这次改动有关的三列（收尾断言用）。 */
+/**
+ * 「报货批次」那一行上跟这次改动有关的列（收尾断言用）。
+ * ⛔ 2026-10-09：「验收原话」「确认状态」两列在真表上**已经没有了** ⇒ 这里不再投影它们；
+ *   保留下来的结构化验收是「实际数量」「实际金额」（＋本来就在的「到货状态」）。
+ */
 const arrivalColumns = (records) => {
   const fields = batchFields(records);
   return {
-    验收原话: fields['验收原话'], 实际数量: fields['实际数量'], 实际金额: fields['实际金额'],
+    实际数量: fields['实际数量'], 实际金额: fields['实际金额'],
   };
 };
 
@@ -2586,7 +2598,7 @@ test('金额③-补2：**0 也当"没填"**（她 2026-10-08：「不会出现�
   assert.equal(harness.gateway.writes.length, writesBefore, '拒绝一次金额：零业务表写入');
 });
 
-test('金额④⭐：点「是」→「实际金额」= 她填的整批金额、「实际数量」= actual 合计，与「验收原话」同一次 update', async () => {
+test('金额④⭐：点「是」→「实际金额」= 她填的整批金额、「实际数量」= actual 合计，同一次 update', async () => {
   const harness = makeHarness({
     responses: [
       { complete: false, same: true, differences: [] },
@@ -2608,7 +2620,6 @@ test('金额④⭐：点「是」→「实际金额」= 她填的整批金额、
 
   // ⭐ 三列都在**「报货批次」那一行**上。
   assert.deepEqual(arrivalColumns(harness.records), {
-    验收原话: '都到了\n38 码少两双',
     实际数量: 2,          // 38 码申请 2 − 少 2 = 0 双（不入库）；39 码按申请 2 双 ⇒ 0 + 2
     实际金额: 12800.5,    // 她填的整批金额
   });
@@ -2618,11 +2629,9 @@ test('金额④⭐：点「是」→「实际金额」= 她填的整批金额、
   assert.equal(harness.inventory.calls[0].quantity, 2);
   // ⭐ 三个值在**同一次** update 里写下去（少一次远端调用、少一个失败窗口）。
   const acceptanceWrites = writesTo(harness.gateway, 'purchaseOrderBatch')
-    .filter((write) => '验收原话' in write.values);
-  assert.equal(acceptanceWrites.length, 1, '「验收原话 / 实际数量 / 实际金额」是同一次 update');
-  assert.deepEqual(acceptanceWrites[0].values, {
-    验收原话: '都到了\n38 码少两双', 实际数量: 2, 实际金额: 12800.5,
-  });
+    .filter((write) => '实际金额' in write.values);
+  assert.equal(acceptanceWrites.length, 1, '「实际数量 / 实际金额」是同一次 update（且只有一次）');
+  assert.deepEqual(acceptanceWrites[0].values, { 实际数量: 2, 实际金额: 12800.5 });
 });
 
 test('金额⑤🔴：点「是」但这一批**还没有金额** → 不写空的「实际金额」、一个字都不写，并明确指回表单', async () => {
@@ -2703,7 +2712,7 @@ test('金额⑥：幂等 —— 重复提交 / 重复点「是」都不会把金
   const amountWrites = writesTo(harness.gateway, 'purchaseOrderBatch')
     .filter((write) => '实际金额' in write.values);
   assert.equal(amountWrites.length, 1, '写「实际金额」的 update 只有一次');
-  assert.deepEqual(amountWrites[0].values, { 验收原话: '都到了\n38 码少一双', 实际数量: 3, 实际金额: 12800 });
+  assert.deepEqual(amountWrites[0].values, { 实际数量: 3, 实际金额: 12800 });
   // ③ 库存也没被加两遍。
   assert.equal(harness.inventory.calls.length, 2, '两条明细各加一次，重复点击不重复入库');
 });
