@@ -129,80 +129,33 @@ const createLarkEventHandlers = (service, { heartbeat } = {}) => ({
     // 它是一个现成的、语义明确的显式开关（且已钉住"空字符串不等于关闭"那个坑）。
     // 现在它没有任何读取点，属于孤儿配置——这是有意的。
     //
-    // ⚠️ 报货（supplier-report）是当前唯一的采购入口，不受影响，永远留在分派表里。
+    // ⛔⛔ 2026-10-09：**「信息填写」报单入口整块删除**。
     //
-    // 表 ID → 采购链路入口。**从 schema 读，不写死表 ID**：
-    // 写死的话，换 Base / 多租户时这里不会报错、也不会触发——
-    // 现象只是"采购没反应"，属于最难查的一类静默失效。
-    const purchaseIntake = [
-      { tableId: V1_BITABLE_SCHEMA.tables.purchaseReport.tableId, kind: 'supplier-report', label: '供应商报单' },
-    ];
-
-    // 遍历 action_list：同一张表的多个 record_added 收成**一包**再分派。
+    // 事实：业务负责人把那张表（`purchaseReport`，`tblo0ffzFt7vyQw2`）**整个从 Base 删掉了**
+    //   ⇒ 这里原先按 `V1_BITABLE_SCHEMA.tables.purchaseReport.tableId` 分派 `supplier-report`
+    //   的 `purchaseIntake` 表、以及「把同一 action_list 的多条记录收成一包交给
+    //   `purchaseWebhooks.acceptMany`」那一段（连同它的 `recordsByIntake` 台账）**全部删除**。
+    //   她的口径是**「自然语言 ＋ AI 录入」整套退场** —— 这条就是从"表变更事件"进来的那条链。
     //
-    // 为什么：一次表单提交会写成同一张表的多条记录，飞书把它们放在同一个
-    // action_list 里推过来。逐条 accept 会让这一批记录各自走一遍处理，
-    // 报货链路就会出 N 张采购申请图。收成一包交给 acceptMany，语义上就是
-    // 「这几条是一起来的」；即便飞书把包拆开，报货链路的批次窗口仍会把
-    // 同批次号的记录归成一批（见 PurchaseWebhookService.handleReportBatch）。
-    const recordsByIntake = new Map();
-    for (const actionItem of actionList) {
-      const recordId = actionItem?.record_id;
-      const action = actionItem?.action;
-
-      // 只处理新增记录
-      if (action !== 'record_added') continue;
-      if (!recordId) {
-        logError('lark.bitable.record_changed.no_record_id', { table_id: tableId });
-        continue;
-      }
-
-      // ⚠️ 2026-10-07 晚：原先这里有一段「往「到货验收」表新增 → 记一条
-      //    lark.intake.arrival_retired 日志并 continue」的排查线索。那张表已被删除 ⇒ 删除。
-      //    （保留这条注释是为了让下一次改这里的人知道：这里**曾经**有一段到货相关的分派。）
-
-      const intake = purchaseIntake.find((entry) => entry.tableId && entry.tableId === tableId);
-      if (!intake) continue;
-
-      if (!recordsByIntake.has(intake.kind)) {
-        recordsByIntake.set(intake.kind, { intake, recordIds: [] });
-      }
-      recordsByIntake.get(intake.kind).recordIds.push(recordId);
-    }
-
-    for (const { intake, recordIds } of recordsByIntake.values()) {
-      setImmediate(() => {
-        try {
-          // acceptMany 对单条与多条都能用：多条 = 同一包一起交给处理逻辑。
-          //
-          // ⚠️ 第三个参数刻意把「这一包应有几条」传下去（业务负责人 2026-10-06 的最终口径：
-          // 「到齐就发」）。链路不再靠时间窗决定"什么时候出图"，而是等这一包里**真正进了
-          // 链路的每一条**都处理完（成功 / 跳过 / 重试 3 次读不到，都算处理完）再出图。
-          // 传下去的 recordIds.length 就是"到齐"的分母——它已经筛过了（修改/删除、
-          // 无 record_id、到货表都在上面 continue 掉了），所以数的是"进了链路的条数"。
-          service.purchaseWebhooks.acceptMany(intake.kind, recordIds, {
-            expectedCount: recordIds.length,
-          }).catch((error) => {
-            logError(`lark.bitable.${intake.kind}.failed`, {
-              table_id: tableId, record_ids: recordIds, error: error.message,
-            });
-          });
-        } catch (error) {
-          logError('lark.bitable.record_changed.handler_error', { error: error.message });
-        }
-      });
-    }
+    // ⇒ 现在本分支对**任何**表的记录变更都**不做采购分派**：
+    //   · 采购申请不再由"表里新增一行"触发；它由**扫码补货报单 / 工作台**直接调
+    //     `PurchaseWebhookService.publishPurchaseRequest`（免确认那条路，一行没动）；
+    //   · 到货仍然只由**群话题对话式核对**驱动（见文件上面对 arrival 的说明）；
+    //   · 下面「货品信息 → 标签二维码」那条支路**不受影响**，照旧按 table_id 分派。
+    //
+    // ⚠️ 恢复这条入口（她改主意时）= **重新实现**：从 git 历史取回 `acceptMany` 与
+    //    那一串解析方法（`git log -S 'ensureReportBatchNo'`），不是翻开关。
 
     // ── 货品信息：「标签二维码」自动补齐（**新增** / **编号变更**才触发）──────────────
     //
-    // ⚠️ 2026-10-08 新增的**另一条支路**，与上面报货那条**完全独立**：
-    //    · 报货那条只认 `record_added`、整包交给 `purchaseWebhooks.acceptMany` —— 上面一个字没改；
+    // ⚠️ 2026-10-08 新增的**另一条支路**；2026-10-09 报单入口退场之后，
+    //    这里成了**本分支唯一还会按 table_id 分派**的地方：
     //    · 这里按 **table_id 分派**（`schema.tables.product.tableId`，**不写死表 ID**）：
-    //      只有"事件来自货品信息表"时才进这条支路，报货表的事件根本不会走到这里。
+    //      只有"事件来自货品信息表"时才进这条支路，别的表的事件根本不会走到这里。
     //    · 「哪条动作要出码」（新增 / 修改）与「编号变没变」的判定**不在路由里**，
     //      整个 `action_list` 原样交给 `tagQrCodes.handleTableChanges`，
     //      口径在 `config/tagQrCode.js`（`events.created` / `events.updated`）+ 那个 service 里。
-    //      ⇒ 将来加一个触发动作只改配置，不用碰这个路由（也就不会碰到报货那条路）。
+    //      ⇒ 将来加一个触发动作只改配置，不用碰这个路由。
     //    · 写库是**异步**的（`setImmediate`，沿用本文件既有形状），不阻塞事件响应。
     const productTableId = V1_BITABLE_SCHEMA.tables.product.tableId;
     if (productTableId && tableId === productTableId) {

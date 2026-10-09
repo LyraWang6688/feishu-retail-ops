@@ -19,7 +19,7 @@ const { logInfo } = require('../utils/logger');
  *      （由 `test/workbenchOrders.test.js` 的 AC12 源码哨兵钉住）。
  *
  * ⚠️ 只收「采购申请」的批次：`reportBehavior: 'purchase_request'` 是**既有**过滤器
- *    （`services/purchaseReportBehaviorPolicy`），采购退货单不进这个入口。
+ *    （`services/purchaseBehaviorPolicy`），采购退货单不进这个入口。
  * ⚠️ 失败一律**抛**（由路由按既有口径映射成 400 / 502，原因原样回到页面），
  *    参考 `services/workbenchOrderActionService.js` 的同一条纪律。
  */

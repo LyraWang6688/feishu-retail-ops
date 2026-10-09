@@ -59,11 +59,9 @@ const ORDER_A = {
   items: [{ kind: 'shoe', itemNo: 'B26002-52', size: '37' }],
 };
 
-// 「信息填写」那 14 列里我们只用得上 报货批次号 / 编号 / 供应商
-const reportRow = (recordId, batchNo, supplier) => ({
-  record_id: recordId,
-  fields: { 报货批次号: batchNo, 编号: ['prod_1'], 供应商: supplier === undefined ? [] : [supplier] },
-});
+// ⛔ 2026-10-09：原先这里有个 `reportRow`（造「信息填写」那一侧的行，从中取供应商）——
+//   那张表被业务负责人整个删除、报单入口退场，**供应商现在就在「报货批次」那一行上**
+//   （她新加的那一列）⇒ 这个 helper 与它造的行一起删除。
 const batchRow = (recordId, batchNo, arrivalStatus, extra = {}) => ({
   record_id: recordId,
   fields: { 报货批次号: batchNo, 到货状态: arrivalStatus, 幂等键: `k_${recordId}`, ...extra },
@@ -141,17 +139,16 @@ test('⑩ 一条消息两个大区：销售区在上、采购区在下，逐字�
   const records = {
     purchaseOrderBatch: [
       // ⭐ 2026-10-08 晚：采购那行的文字现在是「供应商 + **报货日** + **录入数量**」。
-      batchRow('bat_1', 'CGD-20261007-0001', '未到货', { 报货日: Date.parse('2026-10-05T03:00:00+08:00'), 录入数量: 12 }),
+      batchRow('bat_1', 'CGD-20261007-0001', '未到货', {
+        报货日: Date.parse('2026-10-05T03:00:00+08:00'), 录入数量: 12,
+        // ⭐ 供应商就在这一行上（2026-10-09 起）。
+        供应商: [{ text: '金猴' }],
+      }),
       // 第 2 批那两个字段读不到 ⇒ 给占位（那一行照出、候选一条不丢）。
       batchRow('bat_2', 'CGD-20261007-0002', '未到货'),
       // 已到货 / 其它状态的一律不进候选
       batchRow('bat_3', 'CGD-20261007-0003', '已到货'),
       batchRow('bat_4', 'CGD-20261007-0004', ''),
-    ],
-    purchaseReport: [
-      reportRow('rep_1', 'CGD-20261007-0001', '金猴'),
-      // 第 2 批没有供应商 → 那一段整段不出现（**不编**）
-      reportRow('rep_2', 'CGD-20261007-0002', ''),
     ],
   };
   const { service, creates, purchaseBatchLocator } = newService({ orders: [ORDER_A], records });
@@ -186,7 +183,7 @@ test('⑪ 销售区哨兵：同一批销售候选，加不加采购区，**销�
   // 销售候选的**行**（本文件不关心销售侧取数，只关心"销售那半的渲染"）。
   const rows = [{ rowId: 'sale_a', salesEntryRecordId: 'sale_a', criterion: 'undelivered',
     facts: ORDER_A.items, pendingAmount: ORDER_A.pendingAmount, url: '' }];
-  const salesOnly = newService({ orders: [ORDER_A], records: { purchaseOrderBatch: [], purchaseReport: [] } });
+  const salesOnly = newService({ orders: [ORDER_A], records: { purchaseOrderBatch: [] } });
   const salesText = salesOnly.service.buildText({
     sections: salesOnly.service.buildSections(rows), rows, missingLinkCount: 0, dayKey: DAY_KEY,
   });
@@ -196,8 +193,8 @@ test('⑪ 销售区哨兵：同一批销售候选，加不加采购区，**销�
     records: {
       purchaseOrderBatch: [batchRow('bat_1', 'CGD-20261007-0001', '未到货', {
         报货日: Date.parse('2026-10-05T03:00:00+08:00'), 录入数量: 12,
+        供应商: [{ text: '金猴' }],
       })],
-      purchaseReport: [reportRow('rep_1', 'CGD-20261007-0001', '金猴')],
     },
   });
   // 这一批当初发进群的那条消息（本地映射 → 话题深链）。
@@ -231,7 +228,6 @@ test('F4 空区连标题都不出现：只有采购候选时，**没有**销售�
     orders: [],
     records: {
       purchaseOrderBatch: [batchRow('bat_1', 'CGD-20261007-0001', '未到货')],
-      purchaseReport: [reportRow('rep_1', 'CGD-20261007-0001', '金猴')],
     },
   });
   const text = service.buildText({
@@ -282,7 +278,6 @@ test('F4 顺序可配：PENDING_DEAL_PUSH_AREA_ORDER=purchase,sales → 采购�
     orders: [ORDER_A],
     records: {
       purchaseOrderBatch: [batchRow('bat_1', 'CGD-20261007-0001', '未到货')],
-      purchaseReport: [reportRow('rep_1', 'CGD-20261007-0001', '金猴')],
     },
     settings: { areas: ['purchase', 'sales'] },
   });
@@ -298,17 +293,15 @@ test('F4 顺序可配：PENDING_DEAL_PUSH_AREA_ORDER=purchase,sales → 采购�
 
 // ── F2 / F3 候选与深链 ────────────────────────────────────────────────────────
 
-test('F2 供应商从「信息填写」关联取：多个供应商去重后按配置的连接符拼；取不到就不显示', async () => {
+test('F2 供应商从**「报货批次.供应商」**那一列取：多个去重后按配置的连接符拼；取不到就不显示', async () => {
+  // ⭐ 2026-10-09：改读批次行自己那一列（原先从「信息填写」的同批次记录上取；那张表已删除）。
+  //    一格多个（关联单元格）→ 去重；一格没有 → 空数组（**不编**）。
   const records = {
     purchaseOrderBatch: [
-      batchRow('bat_1', 'CGD-20261007-0001', '未到货'),
+      batchRow('bat_1', 'CGD-20261007-0001', '未到货', {
+        供应商: [{ text: '金猴' }, { text: '奥康' }, { text: '金猴' }],
+      }),
       batchRow('bat_2', 'CGD-20261007-0002', '未到货'),
-    ],
-    purchaseReport: [
-      reportRow('rep_1', 'CGD-20261007-0001', '金猴'),
-      reportRow('rep_2', 'CGD-20261007-0001', '奥康'),
-      reportRow('rep_3', 'CGD-20261007-0001', '金猴'), // 重复 → 去重
-      reportRow('rep_4', 'CGD-20261007-0002', ''), // 取不到 → 空数组
     ],
   };
   const { service } = newService({ orders: [], records });
@@ -333,10 +326,9 @@ test('F2 供应商从「信息填写」关联取：多个供应商去重后按�
 test('F3 深链走本地映射（chat_id + thread_id）→ 话题深链；拿不到就照发 + 脚注，候选一条不丢', async () => {
   const records = {
     purchaseOrderBatch: [
-      batchRow('bat_1', 'CGD-20261007-0001', '未到货'),
+      batchRow('bat_1', 'CGD-20261007-0001', '未到货', { 供应商: [{ text: '金猴' }] }),
       batchRow('bat_2', 'CGD-20261007-0002', '未到货'),
     ],
-    purchaseReport: [reportRow('rep_1', 'CGD-20261007-0001', '金猴')],
   };
   const { service, creates, purchaseBatchLocator } = newService({ orders: [], records });
   // 只有第 1 批记过映射；映射里同批次两条（图 + 文字）→ 取第一个"两个 id 都全"的
@@ -368,7 +360,6 @@ test('F1 候选直接查「报货批次」：只有 到货状态 = 未到货 的
       batchRow('bat_3', 'CGD-20261007-0003', '部分到货'),
       { record_id: 'bat_4', fields: { 报货批次号: 'BH-20261007-0004' } },
     ],
-    purchaseReport: [],
   };
   const { service } = newService({ orders: [], records });
   // 直接问那个 service（它的唯一职责就是"该推哪些批次"）

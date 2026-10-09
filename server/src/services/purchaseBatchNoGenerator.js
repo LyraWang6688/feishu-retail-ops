@@ -21,12 +21,11 @@ const { logInfo, logWarn } = require('../utils/logger');
 //    **不匹配、不参与**，所以今天下一个新号仍然是 `CGD-20261007-0001`。
 //    取 max+1 而不是条数+1 还有一个好处：中间有空洞（例如某号作废）也不会撞号。
 //
-// ② **两张表求并集**（`信息填写` ＋ `报货批次`）：
-//    · 入口写回把号写在「信息填写」那一列；
-//    · 出单时把同一个号写进「报货批次」；
-//    · 而"入口写回失败"的兜底路径只在「报货批次」有号。
-//    ⇒ **只数其中一张表都会漏**，漏了就会撞号（尤其**采购退货也会消耗号**：
-//      只数「报货批次」时，退货占掉的号下一次报货会再发一遍）。
+// ② **号源只剩「报货批次」一张表**（2026-10-09 收窄）：
+//    · 原先还要并上「信息填写」那一列（入口按包写回 / 退货也消耗号）；
+//    · 那张表被业务负责人**整个删掉**、报单入口退场 ⇒ 号只在「报货批次」上。
+//    ⚠️ 因此"**只数一张表会漏号**"这个风险**随入口一起消失了**：现在全仓
+//      只有 `confirmPurchaseRequest` 一处会写批次号（新批次行）。
 //
 // ③ **并发保护不能照抄销售**：销售的判据是"同一个号出现两次 = 撞号"，而采购
 //    **一个号天然对应 N 条记录**（一次提交 N 个货品），照抄会把正常的 N 条误报成撞号。
@@ -45,9 +44,11 @@ class PurchaseBatchNoGenerator {
     this.assigned = new Set();
   }
 
-  /** 串行键：算号 + 写回必须整体互斥（见文件头 ③）。 */
+  /** 串行键：算号（＋当天那次写）必须整体互斥（见文件头 ③）。 */
   static get QUEUE_KEY() {
-    return 'purchase_report_batch_no';
+    // ⚠️ 2026-10-09 改名：`purchase_report_batch_no` → `purchase_batch_no`
+    //   ——"报单"（`purchaseReport`）那张表已经不存在了，键名别再说谎。
+    return 'purchase_batch_no';
   }
 
   /** 今天的日期部分（上海时区，见 config/purchaseBatchNo）。 */
@@ -64,31 +65,33 @@ class PurchaseBatchNoGenerator {
     return new RegExp(`^${escapeRegExp(prefix)}${escapeRegExp(datePart)}-(\\d{${digits}})$`);
   }
 
-  /** 把两张表里符合"今天 + 本前缀 + 正好 N 位"的号都收上来（含所在表，便于排查）。 */
+  /**
+   * 把「报货批次」里符合"今天 + 本前缀 + 正好 N 位"的号收上来（含 recordId，便于排查）。
+   *
+   * ⚠️ 2026-10-09：`sources` 原先还有一张「信息填写」——那张表被业务负责人整个删掉了
+   *    （`TableIdNotFound`）⇒ 号源收窄成**一张表**。这一处正是当时部署闸门之外
+   *    唯一还会去读那张表的地方（9 点推送那处在同一天改读「报货批次.供应商」）。
+   */
   async collectTodayNumbers(datePart) {
     const pattern = this.patternFor(datePart);
     const found = [];
-    const sources = [
-      ['purchaseOrderBatch', (table) => table?.fields?.batchNo],
-      ['purchaseReport', (table) => table?.fields?.batchNoText],
-    ];
-    for (const [tableKey, fieldOf] of sources) {
-      const fieldName = fieldOf(this.gateway.table(tableKey));
-      if (!fieldName) continue;
-      const records = await this.gateway.listAll(tableKey);
-      for (const record of records || []) {
-        const value = textValue(record?.fields?.[fieldName]);
-        if (pattern.test(value)) found.push({ batchNo: value, tableKey, recordId: record?.record_id || '' });
-      }
+    const tableKey = 'purchaseOrderBatch';
+    const fieldName = this.gateway.table(tableKey)?.fields?.batchNo;
+    if (!fieldName) return found;
+    const records = await this.gateway.listAll(tableKey);
+    for (const record of records || []) {
+      const value = textValue(record?.fields?.[fieldName]);
+      if (pattern.test(value)) found.push({ batchNo: value, tableKey, recordId: record?.record_id || '' });
     }
     return found;
   }
 
   /**
-   * 取下一个号。**只负责算号**（写回由调用方在同一个串行块里做，见 PurchaseWebhookService）。
+   * 取下一个号。**只负责算号**（落库由调用方在同一个串行块里做，见 PurchaseWebhookService）。
    *
    * @param {{ source?: string, taskId?: string }} options
-   *   `source` 只进日志：`intake`（入口按包生成）/ `fallback`（入口写回失败后的兜底）。
+   *   `source` 只进日志：现在只有 `fallback` 一种（入口退场之后没有"按包写回"那条路了；
+   *   保留这个字段是为了日志口径不乱改）。
    * @returns {Promise<{ batchNo: string, sequence: number, todayCount: number, attempts: number, datePart: string }>}
    */
   async next({ source = 'intake', taskId = '' } = {}) {

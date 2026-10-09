@@ -14,11 +14,8 @@ const {
   DEFAULT_PURCHASE_ARRIVAL_STATUS_PENDING,
   DEFAULT_PURCHASE_ARRIVAL_STATUS_ARRIVED,
 } = require('../src/config/purchaseArrivalStatus');
-const {
-  resolvePurchaseAcceptanceConfig,
-  DEFAULT_PURCHASE_ACCEPTANCE_CONFIRMED,
-} = require('../src/config/purchaseAcceptance');
 const { validateV1SchemaScope } = require('../scripts/validate_v1_schema');
+const { getV1SelectOptionContracts } = require('../src/config/v1SchemaScopes');
 
 // ⭐ 2026-10-07 业务负责人：报货批次这张表现在**主要控制该批次的到货情况**：
 //   ① 每创建一条新记录时，默认值是「未到货」；
@@ -77,25 +74,18 @@ const makeGateway = (records = {}) => {
 // ── ⑦ 新建「报货批次」记录 = 未到货 ─────────────────────────────────────────────
 
 test('⑦ 新建「报货批次」记录时显式写「未到货」（值来自配置，不是中文字面量）', async () => {
-  const gateway = makeGateway({
-    purchaseReport: [{
-      record_id: 'rep_1',
-      fields: {
-        处理状态: '待解析', 采购行为: ['beh_1'], 经办人: [{ id: 'ou_1' }],
-        编号: ['prod_1'], 尺码: sizeLink(38), 数量说明: '38码2双',
-      },
-    }],
-    purchaseOrderBatch: [],
-    purchaseRequest: [],
-  });
+  // ⚠️ 2026-10-09：这条用例原先从 `acceptMany('supplier-report')` 进（「信息填写」入口）；
+  //    那条入口已随整表删除退场 ⇒ 改成走**现役**那条免确认路径
+  //    `publishPurchaseRequest`（扫码补货报单用的就是它），断言一个字不变。
+  const gateway = makeGateway({ purchaseOrderBatch: [], purchaseRequest: [] });
+  const store = new JsonTaskStore({ dir: tempDir() });
   const service = new PurchaseWebhookService({
     gateway,
-    store: new JsonTaskStore({ dir: tempDir() }),
+    store,
     references: {
       resolveProduct: async () => ({ recordId: 'prod_1', record: { record_id: 'prod_1', fields: { 编号: '8088黑', 供应商: ['sup_1'] } } }),
       resolveSupplier: async () => ({ recordId: 'sup_1', record: { record_id: 'sup_1', fields: { 供应商名称: '金猴' } } }),
     },
-    recognizer: { parsePurchaseReportText: async () => [{ size: 38, quantity: 2 }] },
     inventory: { applyPurchase: async () => ({}) },
     client: {
       im: {
@@ -104,18 +94,23 @@ test('⑦ 新建「报货批次」记录时显式写「未到货」（值来自�
       },
     },
     images: { render: async () => Buffer.from('png') },
-    batchReadMaxRetries: 1,
-    batchReadRetryDelay: 0,
-    reportBatchWindowMs: 20,
   });
-  await service.acceptMany('supplier-report', ['rep_1']);
-  // ⚠️ 原来是**固定 sleep 60ms** —— 2026-10-08 CI 上真红过一次（慢机器等不到那批记录：
-  //    期望 1 得到 0）。改成"**轮询到出现为止**（上限 3s）"，断言一个字不变，
-  //    这样慢机器只是慢，不会假红。
-  for (let waited = 0; waited < 3000; waited += 50) {
-    if ((await gateway.listAll('purchaseOrderBatch')).length) break;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
+  const taskId = 'scan_replenish_arrival_status';
+  const task = await store.create({
+    task_id: taskId, kind: 'scan_replenish', status: 'posting',
+    draft: {
+      is_batch: true,
+      operator_open_id: 'ou_1',
+      supplier_record_id: 'sup_1',
+      items: [{
+        product_record_id: 'prod_1', item_no: '8088', color: '黑色',
+        size: 38, quantity: 2, behavior_record_id: 'beh_1',
+      }],
+    },
+  });
+  const result = await service.publishPurchaseRequest(taskId, task);
+  assert.ok(result.batch_no, '免确认那条路照常出号');
+
   const batches = await gateway.listAll('purchaseOrderBatch');
   assert.equal(batches.length, 1);
   assert.equal(batches[0].fields['到货状态'], DEFAULT_PURCHASE_ARRIVAL_STATUS_PENDING);
@@ -129,7 +124,7 @@ test('⑦ 值域来自配置：换一套字面量，写进去的就是那一套�
     PURCHASE_ARRIVAL_STATUS_PENDING: 'PENDING-X',
     PURCHASE_ARRIVAL_STATUS_ARRIVED: 'ARRIVED-X',
   });
-  const gateway = makeGateway({ purchaseOrderBatch: [], purchaseReport: [] });
+  const gateway = makeGateway({ purchaseOrderBatch: [] });
   await gateway.create('purchaseOrderBatch', {
     batchNo: BATCH_NO, idempotencyKey: 'k1', arrivalStatus: settings.pending,
   });
@@ -278,70 +273,75 @@ test('⑧ 按批次号定位那一行：找不到就只 warn，不抛（写不�
 //    「验收原话」（入库之前写）＋「确认状态」（入库成功之后写）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('⭐ writeAcceptance：按**批次 record id** 写「验收原话」（拿不到 id 时按批次号回查）', async () => {
+test('⭐ writeAcceptance：按**批次 record id** 写「实际数量 / 实际金额」（拿不到 id 时按批次号回查）', async () => {
   const records = { purchaseOrderBatch: [{ record_id: BATCH_RECORD_ID, fields: { 报货批次号: BATCH_NO } }] };
   const gateway = makeGateway(records);
   const service = new PurchaseOrderBatchService({ gateway, settings: resolvePurchaseArrivalStatusConfig({}) });
 
   // ① 有 record id：直接用（零额外请求）
   const byId = await service.writeAcceptance({
-    batchNo: BATCH_NO, batchRecordId: BATCH_RECORD_ID, acceptanceText: '38 码少一双', correlation: {},
+    batchNo: BATCH_NO, batchRecordId: BATCH_RECORD_ID, actualQuantity: 3, actualAmount: 1680, correlation: {},
   });
   assert.equal(byId.updated, true);
   assert.equal(byId.matched_by, 'record_id');
-  assert.equal((await gateway.get('purchaseOrderBatch', BATCH_RECORD_ID)).fields['验收原话'], '38 码少一双');
+  const first = (await gateway.get('purchaseOrderBatch', BATCH_RECORD_ID)).fields;
+  assert.equal(first['实际数量'], 3);
+  assert.equal(first['实际金额'], 1680);
+  // ⛔ 2026-10-09：「验收原话」那一列在生产真表上**已经没有了** ⇒ 一个字都不写。
+  assert.equal('验收原话' in first, false, '已经退场的那一列不许再写');
 
   // ② 只有批次号：整表回查定位
   const byNo = await service.writeAcceptance({
-    batchNo: BATCH_NO, batchRecordId: '', acceptanceText: '都到了', correlation: {},
+    batchNo: BATCH_NO, batchRecordId: '', actualQuantity: 4, actualAmount: 2000, correlation: {},
   });
   assert.equal(byNo.updated, true);
   assert.equal(byNo.matched_by, 'batch_no');
-  assert.equal((await gateway.get('purchaseOrderBatch', BATCH_RECORD_ID)).fields['验收原话'], '都到了');
+  const second = (await gateway.get('purchaseOrderBatch', BATCH_RECORD_ID)).fields;
+  assert.equal(second['实际数量'], 4, '同一个值覆盖，不累加');
 
   // ③ 两个都没有 = 孤儿调用：如实说 no_batch_identity（调用方决定不阻塞）
-  const orphan = await service.writeAcceptance({ acceptanceText: 'x', correlation: {} });
+  const orphan = await service.writeAcceptance({ actualQuantity: 1, correlation: {} });
   assert.equal(orphan.updated, false);
   assert.equal(orphan.reason, 'no_batch_identity');
 
   // ④ 有身份但找不到那一行：no_batch_record（调用方会报给她）
   const missing = await service.writeAcceptance({
-    batchNo: 'CGD-20261007-9999', batchRecordId: '', acceptanceText: 'x', correlation: {},
+    batchNo: 'CGD-20261007-9999', batchRecordId: '', actualQuantity: 1, correlation: {},
   });
   assert.equal(missing.updated, false);
   assert.equal(missing.reason, 'no_batch_record');
 });
 
-test('⭐ markConfirmed：入库成功之后按**批次 record id** 写「确认状态」，取值来自配置', async () => {
+test('⭐ 两个值都没给：**不发那次空的 update**（不往飞书写空对象），如实记一条 warn', async () => {
   const records = { purchaseOrderBatch: [{ record_id: BATCH_RECORD_ID, fields: { 报货批次号: BATCH_NO } }] };
   const gateway = makeGateway(records);
   const service = new PurchaseOrderBatchService({ gateway, settings: resolvePurchaseArrivalStatusConfig({}) });
-
-  const done = await service.markConfirmed({ batchNo: BATCH_NO, batchRecordId: BATCH_RECORD_ID, correlation: {} });
-  assert.equal(done.updated, true);
-  assert.equal(done.confirm_status, DEFAULT_PURCHASE_ACCEPTANCE_CONFIRMED);
-  assert.equal((await gateway.get('purchaseOrderBatch', BATCH_RECORD_ID)).fields['确认状态'], '已确认');
-  // ⚠️ 到货日 / 验收人是飞书自动字段 ⇒ 这次写入的载荷里一个字都没有。
-  const write = gateway.writes.at(-1);
-  assert.deepEqual(Object.keys(write.fields), ['确认状态']);
-
-  const orphan = await service.markConfirmed({ correlation: {} });
-  assert.equal(orphan.reason, 'no_batch_identity');
-  const missing = await service.markConfirmed({ batchNo: 'CGD-20261007-9999', correlation: {} });
-  assert.equal(missing.reason, 'no_batch_record');
+  const result = await service.writeAcceptance({ batchNo: BATCH_NO, correlation: {} });
+  assert.equal(result.updated, true);
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'no_actual_values');
+  assert.deepEqual(gateway.writes, [], '一次空的 update 都不许发');
 });
 
-test('⭐ 确认状态取值可配（证明没写死中文）；空串当场抛错', async () => {
-  const custom = new PurchaseOrderBatchService({
-    gateway: makeGateway({ purchaseOrderBatch: [{ record_id: BATCH_RECORD_ID, fields: { 报货批次号: BATCH_NO } }] }),
-    settings: resolvePurchaseArrivalStatusConfig({}),
-    acceptance: resolvePurchaseAcceptanceConfig({ PURCHASE_ACCEPTANCE_CONFIRMED_STATUS: '验收通过-X' }),
-  });
-  const result = await custom.markConfirmed({ batchNo: BATCH_NO, correlation: {} });
-  assert.equal(result.confirm_status, '验收通过-X');
-
-  assert.equal(resolvePurchaseAcceptanceConfig({}).confirmed, DEFAULT_PURCHASE_ACCEPTANCE_CONFIRMED);
-  assert.throws(() => resolvePurchaseAcceptanceConfig({ PURCHASE_ACCEPTANCE_CONFIRMED_STATUS: '  ' }), /不能是空串/);
+test('⛔ 守门：「确认状态」整条退场 —— 映射 / 写入方法 / 配置模块 / 单选取值契约一个都不许回来', () => {
+  // 业务负责人 2026-10-09 的只读核对：报货批次真表 12 列里**没有**「确认状态」。
+  const fields = V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields;
+  assert.equal(fields.confirmStatus, undefined, 'schema 里不许再有 confirmStatus 映射');
+  assert.equal(fields.acceptanceText, undefined, 'schema 里不许再有「验收原话」映射');
+  assert.equal(Object.prototype.hasOwnProperty.call(fields, 'acceptanceText'), false);
+  assert.deepEqual(
+    Object.keys(fields).filter((key) => ['acceptanceText', 'confirmStatus'].includes(key)), []);
+  // 写入方法必须整个消失（不是"留着不用"）。
+  assert.equal(PurchaseOrderBatchService.prototype.markConfirmed, undefined);
+  assert.equal(PurchaseOrderBatchService.prototype.confirmedStatus, undefined);
+  // 配置模块也随它退场（全仓零读取点）。
+  assert.equal(fs.existsSync(path.join(__dirname, '../src/config/purchaseAcceptance.js')), false);
+  // 部署闸门的"单选取值契约"里只剩「到货状态」一列。
+  const contracts = getV1SelectOptionContracts('purchase');
+  assert.equal(contracts.some((item) => item.fieldKey === 'confirmStatus'), false,
+    '那一列不存在了 ⇒ 契约留着 = 闸门去问一列不存在的字段、直接判红');
+  const arrival = contracts.find((item) => item.fieldKey === 'arrivalStatus');
+  assert.deepEqual(arrival.requiredOptions, ['未到货', '已到货']);
 });
 
 // ── 部署闸门：到货状态的**取值**要对着真表字段元数据核对 ────────────────────────

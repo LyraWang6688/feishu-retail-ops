@@ -683,7 +683,6 @@ test('⑦ 报货日 / 录入数量：`PurchasePendingBatchService` 只多带字�
         batch('b2', 'CGD-2', '已到货', { 报货日: atShanghai('2026-10-05'), 录入数量: 3 }),
         batch('b3', 'CGD-3', '未到货'),
       ],
-      purchaseReport: [],
     }),
   });
   const pending = await service.listPendingBatches();

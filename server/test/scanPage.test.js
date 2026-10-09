@@ -126,20 +126,24 @@ test('② 按编号聚合：每个尺码一行 × 门盒/样品/仓库，0 显�
   assert.equal(view.total, 3, '共 N 双 = 「实时库存」里属于这个编号的记录条数');
   assert.deepEqual(view.columns.map((column) => column.label), ['门盒', '样品', '仓库']);
 
-  assert.deepEqual(view.rows.map((row) => row.size_text), ['40', '41', '42'], '尺码按数字升序');
+  // ⭐ 2026-10-09：缺码判定改读**配置里的尺码段**（A 男 38–48）⇒ 行的清单就是这一整段
+  //   （不再是「尺码管理」里那个类别勾了哪几个码）。
+  assert.deepEqual(
+    view.rows.map((row) => row.size_text),
+    ['38', '39', '40', '41', '42', '43', '44', '45', '46', '47', '48'],
+    '尺码按数字升序，且 = 配置段（A 男 38–48）',
+  );
   const bySize = new Map(view.rows.map((row) => [row.size_text, row]));
   assert.deepEqual(bySize.get('40').cells.map((cell) => cell.count), [1, 0, 0]);
   assert.deepEqual(bySize.get('42').cells.map((cell) => cell.count), [1, 1, 0]);
-  // 缺码：41 在「尺码管理」的 A 类里有、库存为 0
+  // 缺码：**A 段里库存为 0 的每一个码**（41 与其余 8 个）
   assert.equal(bySize.get('41').missing, true);
   assert.deepEqual(bySize.get('41').cells.map((cell) => cell.count), [0, 0, 0]);
   assert.equal(bySize.get('40').missing, false);
   assert.equal(bySize.get('42').missing, false);
-  assert.equal(view.missing_count, 1);
+  assert.equal(bySize.get('38').missing, true, '38 也在 A 段（38–48）里、且库存为 0 ⇒ 缺码');
+  assert.equal(view.missing_count, 9, 'A 段 11 个码 − 有货的 40/42 = 9 个缺码');
   assert.equal(view.sizes_degraded, false);
-
-  // 女鞋（B）的 38 码**不许**被算成缺码（否则每个编号都会显示一堆别的品类的尺码）
-  assert.equal(bySize.has('38'), false);
 
   // 每一行的合计与"共 N 双"必须自洽（本页最不能出的错）
   assert.equal(view.rows.reduce((sum, row) => sum + row.total, 0), view.total);
@@ -147,17 +151,20 @@ test('② 按编号聚合：每个尺码一行 × 门盒/样品/仓库，0 显�
   assert.equal(view.updated_at_text, shanghaiDateTimeText(Date.UTC(2026, 9, 8, 12, 30)));
 });
 
-test('② 降级：拿不到「尺码管理.类别」时**只显示有库存的尺码**，不编造缺码 + 页面写明', async () => {
-  // 生产表上万一没有「类别」这一列（或被清空）——本机测试 Base 有，生产核不到，
-  // 所以这条降级路径必须真的能走通，且**不猜**。
-  const sizesWithoutCategory = SIZE_RECORDS.map((record) => ({ ...record, fields: { 尺码: record.fields.尺码 } }));
-  const view = await service({ sizes: sizesWithoutCategory }).lookup({ number: NUMBER, requestId: 'req_2' });
+test('② 降级：**配置里没有这个类别**时只显示有库存的尺码、不编造缺码 + 页面写明', async () => {
+  // ⭐ 2026-10-09：降级判据从"「尺码管理.类别」这一列读不到"改成
+  //   **"配置的尺码段里没有这个类别"**（配置先行）。她表里真有的类别是 A/B；
+  //   这里用一个不在配置里的类别（C）⇒ 降级：只显示有库存的尺码、**一个缺码都不标**。
+  const numberC = 'YD6693-2|黑色|C';
+  const view = await service({
+    products: [{ ...PRODUCT, fields: { ...PRODUCT.fields, 编号: numberC } }],
+  }).lookup({ number: numberC, requestId: 'req_2' });
 
   assert.equal(view.found, true);
   assert.equal(view.sizes_degraded, true);
-  assert.equal(view.scope_reason, 'no_category_column');
+  assert.equal(view.scope_reason, 'no_sizes_for_category');
   assert.deepEqual(view.rows.map((row) => row.size_text), ['40', '42'], '只显示有库存的尺码');
-  assert.equal(view.missing_count, 0, '拿不到全部尺码时一个缺码都不许标');
+  assert.equal(view.missing_count, 0, '降级时一个缺码都不许标');
   assert.equal(view.total, 3);
   assert.equal(view.rows.reduce((sum, row) => sum + row.total, 0), view.total);
   assert.ok(view.notes.includes(SCAN_PAGE.texts.degradedSizesNote));
@@ -173,11 +180,15 @@ test('② 降级：编号里没有类别（`货号|颜色`）→ 同样退回"�
   assert.equal(view.missing_count, 0);
 });
 
-test('② 类别是**多选**（A,B 同时勾）时按成员判定：男女鞋都用的尺码算男鞋有、女鞋专属的不算', async () => {
+test('② 缺码**只看配置段**，不再看「尺码管理.类别」（多选也影响不了它了）', async () => {
+  // ⭐ 2026-10-09：这一段行为**整个变了**（提速项之一）：
+  //   提速前：缺码 = 「尺码管理」里该类别**勾了**的那些码 − 有库存的；
+  //   现在：缺码 = **配置段**（A 男 38–48）− 有库存的。
+  //   ⇒ 表里把 41 标成"女鞋专属（B）"也**不再**影响男鞋（A）那一页的缺码判定。
   const sizes = [
-    { record_id: 'size_40', fields: { 尺码: 40, 类别: ['A', 'B'] } }, // 男女鞋都用
-    { record_id: 'size_41', fields: { 尺码: 41, 类别: ['B'] } },      // 女鞋专属
-    { record_id: 'size_42', fields: { 尺码: 42, 类别: 'A' } },        // 单选/文本形状也认
+    { record_id: 'size_40', fields: { 尺码: 40, 类别: ['A', 'B'] } },
+    { record_id: 'size_41', fields: { 尺码: 41, 类别: ['B'] } }, // 表里说它是女鞋专属
+    { record_id: 'size_42', fields: { 尺码: 42, 类别: 'A' } },
   ];
   const view = await service({
     sizes,
@@ -185,11 +196,11 @@ test('② 类别是**多选**（A,B 同时勾）时按成员判定：男女鞋�
   }).lookup({ number: NUMBER, requestId: 'req_multi' });
 
   assert.equal(view.sizes_degraded, false);
-  assert.deepEqual(view.rows.map((row) => row.size_text), ['40', '42']);
-  assert.equal(view.rows.find((row) => row.size_text === '40').missing, false);
-  assert.equal(view.rows.find((row) => row.size_text === '42').missing, true,
-    '42 在她的 A 类清单里、但一双库存都没有 ⇒ 缺码');
-  assert.equal(view.missing_count, 1);
+  const bySize = new Map(view.rows.map((row) => [row.size_text, row]));
+  assert.equal(bySize.get('40').missing, false, '有货 ⇒ 不缺');
+  assert.equal(bySize.get('41').missing, true, '41 在**配置的 A 段**里且无货 ⇒ 缺码（表里标 B 不算数）');
+  assert.equal(bySize.get('42').missing, true, '42 在 A 段里且无货 ⇒ 缺码');
+  assert.equal(view.missing_count, 10, 'A 段 11 个码里只有 40 有货');
 });
 
 test('② 状态里出现配置外的取值 / 读不出尺码：**不丢**、另列，且"共 N 双"仍然对得上', async () => {
@@ -231,7 +242,10 @@ test('② 关联单元格为空时用「库存键」前缀认行（数据残缺�
   const inventory = [{ record_id: 'inv_1', fields: { 编号: [], 尺码: ['size_40'], 所属状态: '门盒', 库存键: 'YD6693-2|黑色|A|40' } }];
   const view = await service({ inventory }).lookup({ number: NUMBER, requestId: 'req_6' });
   assert.equal(view.total, 1);
-  assert.equal(view.rows[0].size_text, '40');
+  // ⚠️ 行清单按配置段补全（38–48）⇒ 40 不一定是第一行。
+  const row40 = view.rows.find((row) => row.size_text === '40');
+  assert.ok(row40, '40 码那一行必须在（关联为空也能按库存键前缀认回来）');
+  assert.equal(row40.total, 1);
 });
 
 test('② 大小写兜底：她照着标签手打一遍（大小写不一致）也能查到', async () => {

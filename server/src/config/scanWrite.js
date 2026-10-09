@@ -145,13 +145,14 @@ const SALE = Object.freeze({
 /**
  * 补货报单（扫码入口）。
  *
- * 走**现有采购链路**：`purchaseWebhookService.publishPurchaseRequest`（= 免确认那条，
- * 与「信息填写」表变更事件走的是**同一个函数**）。本配置只提供"这次要补什么"。
+ * 走**现有采购链路**：`purchaseWebhookService.publishPurchaseRequest`（= 免确认那条；
+ * 它原先也是「信息填写」表变更事件走的那条路，那条入口 2026-10-09 已退场，函数没变）。
+ * 本配置只提供"这次要补什么"。
  */
 const REPLENISH = Object.freeze({
   enabled: readFlag(process.env, 'SCAN_REPLENISH_WRITE_ENABLED', true),
   // 「采购行为」的**行为编码**：采购申请那条（「行为管理」表里已核实的编码）。
-  // ⚠️ 与 `services/purchaseReportBehaviorPolicy.js` 的口径**同源**：
+  // ⚠️ 与 `services/purchaseBehaviorPolicy.js` 的口径**同源**：
   //    那条策略写着「采购申请那条永远是 STOCK_PURCHASE_INCREASE，采购退货是 ..._DECREASE」。
   //    扫码补货只可能是**采购申请**，所以这里固定按这个编码解析行为记录；
   //    解析不到 ⇒ **停下来报人话**（绝不写一条没有"采购行为"的采购申请）。
@@ -167,7 +168,7 @@ const REPLENISH = Object.freeze({
   // 单次补货最多勾几个尺码 / 单个尺码最多几双（防手滑输入 9999）。
   maxSizes: readInt(process.env, 'SCAN_REPLENISH_MAX_SIZES', 30, { min: 1, max: 100 }),
   maxQuantity: readInt(process.env, 'SCAN_REPLENISH_MAX_QUANTITY', 99, { min: 1, max: 999 }),
-  // 勾了尺码但没填数量 ⇒ 按 1 双算（与「信息填写」报单那条口径一致）。
+  // 勾了尺码但没填数量 ⇒ 按 1 双算（"每条明细至少一双"）。
   defaultQuantity: readInt(process.env, 'SCAN_REPLENISH_DEFAULT_QUANTITY', 1, { min: 1, max: 99 }),
 });
 

@@ -4,7 +4,7 @@
  * 她的原话（逐字）：
  *   「在 4 个 tab 页里面，我们**都能扫同一个二维码**，但是**点击的按钮不同，触发的逻辑就不一样**」
  *   ＋ 本任务的口径：「扫描页（扫码入口）**保持 `GET /s/:number` 不变**，但**顶部加"领域切换"**：
- *     `?from=sales|inventory|purchase|product`（缺省=销售），切换后**只显示该领域的操作**」
+ *     `?from=sales|inventory|purchase|product`（缺省=**库存**，2026-10-09 改），切换后**只显示该领域的操作**」
  *
  * ⇒ 四个领域与**工作台一级 tab 一一对应**（销售 · 库存 · 采购 · 货品，顺序都一样）：
  *     · `sales`     → 销售建单（加入本单 / 提交这一单；资金等非必填、可后续补）
@@ -40,6 +40,16 @@
  *   ⚠️ 交易类型**不在这一层写编码**：写入口按 `config/salesTradeTypePolicy.salesTradeTypeForStock`
  *      （"有货 → 现货 / 没货 → 预订"的**唯一判据**）推出来，用的是**既有**行为编码。
  */
+// ⭐⭐ 2026-10-09（业务负责人定）：**扫码"第一眼"= 库存**。
+//   「标签上的码**不带参数** ⇒ 缺省领域改为 `inventory`（库存·单款查询）」；
+//   想建单/补货 ⇒ 页面顶部点【销售】/【采购】/【货品】。
+//   ⚠️ 部署后**可见变化**：裸码扫开**先看到库存表**（之前缺省是销售）。
+const { SCAN_PAGE } = require('../config/scanPage');
+
+// ⭐ 2026-10-09：男女两组尺码段**进配置**（`config/scanPage.js` 的 `sizeSegments`）——
+//   页面上那句"这一组是男 38–48"与**缺码判定**用的是**同一份配置**（唯一真源）。
+const SIZE_GROUP_RANGES = SCAN_PAGE.sizeSegments.ranges;
+
 const REALMS = Object.freeze([
   Object.freeze({ id: 'sales', label: '销售' }),
   Object.freeze({ id: 'inventory', label: '库存' }),
@@ -47,8 +57,8 @@ const REALMS = Object.freeze([
   Object.freeze({ id: 'product', label: '货品' }),
 ]);
 
-/** 缺省领域 = **销售**（她 2026-10-09 的口径：「缺省=销售」）。 */
-const DEFAULT_REALM = 'sales';
+/** 缺省领域 = **库存**（她 2026-10-09 的口径：「**扫码第一眼 = 库存**」）。 */
+const DEFAULT_REALM = 'inventory';
 
 /** 切换条与「货品标签」那一块的文案（页面上的每一个字都在这里，渲染层不写死句子）。 */
 const REALM_TEXTS = Object.freeze({
@@ -88,15 +98,8 @@ const REALM_TEXTS = Object.freeze({
  */
 const SELLABLE_STATES = Object.freeze(['门盒', '样品']);
 
-/**
- * 男女两组尺码范围（她 2026-10-09 给的：**男 A = 38–48 / 女 B = 34–43**）。
- * ⚠️ 第一段（`A`/`B`）来自编号的第 3 段（「类别」）；这一份只用于**页面上那句话**
- *    （"这一组是男 38–48"）—— 真正可选的尺码仍然以「尺码管理」里有的为准（见 `sizeRowsOf`）。
- */
-const SIZE_GROUP_RANGES = Object.freeze({
-  A: Object.freeze({ label: '男', from: 38, to: 48 }),
-  B: Object.freeze({ label: '女', from: 34, to: 43 }),
-});
+// （`SIZE_GROUP_RANGES` 已上移到文件顶部：从 `config/scanPage.js` 的 `sizeSegments` 取，
+//   与缺码判定**同源**——2026-10-09 之前这里另有一份内联的硬编码副本。）
 
 /** 这一款的类别（编号第 3 段）属于哪一组（认不出返回 null，不猜）。 */
 const sizeGroupOf = (categoryCode) => {

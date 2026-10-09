@@ -681,8 +681,11 @@ class PurchaseArrivalConversationService {
     // ⭐⭐ 2026-10-08：把她这次填的**整批金额**记在**本地任务**上（**一张业务表都不写**）。
     //   为什么记在这里而不是当场写库：她的口径是"整批一个金额，填到实际金额里面"，
     //   而「实际金额」的落点是**「报货批次」那一行** —— 那一行的写入口子是
-    //   点「是」之后的 `confirmArrival` → `PurchaseOrderBatchService.writeAcceptance`
-    //   （与「验收原话」同一次 update）。提交这一步只负责"记住这一次她说的数"。
+    //   点「是」之后的 `confirmArrival` → `PurchaseOrderBatchService.writeAcceptance`。
+    //   ⚠️ 2026-10-09：那次 update 现在**只再写「实际数量」「实际金额」**；
+    //      「验收原话」那一列在真表上已经被删掉（这里仍收着她那段话，因为它同时是
+    //      **解析实际到货情况的输入**，只是不再往表里落一列）。提交这一步只负责
+    //      "记住这一次她说的数"。
     //   ⚠️ 幂等：同一个字段覆盖同一个值（整批一个数），重复提交**不会**写两遍/累加。
     await this.store.update(taskId, { actual_amount: Number(amount) });
     const result = await this.handleTopicMessageLocked({
@@ -1098,8 +1101,10 @@ class PurchaseArrivalConversationService {
    * ⚠️ 「实际金额」**必填**（业务负责人 2026-10-08：「金额这个是必填的，必须让用户填」）
    *    —— 工作台表单收的就是它；缺失 / 非数字 / 0 / 负数一律**一个字都不写**（与卡片
    *    表单那条路**同一个** `parseActualAmount`）。
-   * ⚠️ 「验收原话」也是**她给的**（工作台表单里的「到货说明」，默认值由前端配置给）：
-   *    这里**不替她编一句话**，空了就拒绝。
+   * ⚠️ 「到货说明」（本地草稿里的 `acceptance_text`，也是**她给的**，默认值由前端配置给）：
+   *    这里**不替她编一句话**，空了就拒绝 —— 它是**解析实际到货情况的输入**。
+   *    ⚠️ 2026-10-09：这一段文字**不再落进表里**（那一列在真表上没有了），
+   *      仍然逐字留在本地任务草稿上，供解析与排查复读。
    * ⚠️ 串行：与群话题那条路**共用同一个 `this.queue`**（同一批不会被两条路同时写）。
    *
    * @returns {Promise<{ok: boolean, reason?: string, message: string, taskId?: string}>}

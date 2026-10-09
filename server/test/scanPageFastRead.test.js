@@ -20,6 +20,13 @@
  *   · 「货品信息.编号」是**公式**（`type=20`，内容 `货号|颜色|类别`）、「货号」是多行文本；
  *   · 「实时库存.编号」是**关联**（`record_ids` + 显示文本）、「库存键」是公式；
  *   · 「尺码管理.类别」是**多选**（`type=4`，选项 A/B）。
+ *
+ * ⭐⭐ 2026-10-09（业务负责人定）：**缺码判定改读配置里的尺码段**
+ *   （`config/scanPage.js` 的 `sizeSegments`：A 男 38–48 / B 女 34–43）——
+ *   不再每次扫码读「尺码管理」算类别清单 ⇒ 本文件里"缺码 = 1 个"那类断言
+ *   按新口径改（A 段的 11 个码里，库存为 0 的**每一个**都算缺码）。
+ *   ⚠️ 「尺码管理」现在只被**一致性保险**（定期，默认 10 分钟一次）与
+ *      共享的 `SizeReferenceService` 读。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -205,13 +212,20 @@ test('① 按条件读：只读这款货品的行 —— 两张表的 filter 公
   });
   assert.equal(gateway.filterCalls().length, 2, '只有这两张表走"按条件读"');
 
-  // 「尺码管理」：一共 15 条，**保持整表读**（按类别过滤省不下请求）
+  // ⭐ 2026-10-09：缺码判定**读配置**，不再为它整表读「尺码管理」——
+  //    这张表现在只被两件事读：① 行尺码的关联解析（`SizeReferenceService`，带缓存）；
+  //    ② **一致性保险**（定期比对配置与表，默认 10 分钟一次）。
   assert.deepEqual(
     gateway.listAllCalls().map((call) => call.tableKey).filter((key) => key === 'product' || key === 'liveInventory'),
     [],
     '货品信息 / 实时库存**一次整表读都不许有**（这就是提速本身）',
   );
-  assert.ok(gateway.listAllCalls().some((call) => call.tableKey === 'sizeManagement'));
+  // ⭐ 2026-10-09：这一趟读「尺码管理」的次数是**常数**（与扫码次数无关）：
+  //    ① 行尺码的关联解析（`SizeReferenceService`，每个 service 只整表读一次）；
+  //    ② **一致性保险**（每个 service 每个 TTL 窗口最多一次）。
+  //    ⇒ 缺码判定这条路上**一次都不读**（与提速前"每次扫码都读"正好相反）。
+  const sizeReads = gateway.listAllCalls().filter((call) => call.tableKey === 'sizeManagement').length;
+  assert.ok(sizeReads <= 2, `「尺码管理」在这一趟里最多两次（实际 ${sizeReads}）`);
 });
 
 test('① 按条件读 vs 整表读：视图**逐字一致**（少读 ≠ 少算）', async () => {
@@ -219,8 +233,13 @@ test('① 按条件读 vs 整表读：视图**逐字一致**（少读 ≠ 少算
   const wholeView = await service(fakeGateway({ filtered: false })).lookup({ number: NUMBER, requestId: 'req_w' });
   assert.deepEqual(filteredView, wholeView);
   assert.equal(filteredView.total, 3);
-  assert.equal(filteredView.missing_count, 1, '41 码在 A 类里、库存为 0 ⇒ 缺码');
-  assert.deepEqual(filteredView.rows.map((row) => row.size_text), ['40', '41', '42']);
+  // ⭐ 2026-10-09：缺码 = **配置段（A 男 38–48）里库存为 0 的码** ⇒ 11 个码里 40/42 有货，
+  //    其余 9 个（38/39/41/43/44/45/46/47/48）都算缺码。
+  assert.equal(filteredView.missing_count, 9, 'A 段里库存为 0 的码都算缺码（配置先行）');
+  assert.deepEqual(
+    filteredView.rows.map((row) => row.size_text),
+    ['38', '39', '40', '41', '42', '43', '44', '45', '46', '47', '48'],
+  );
   assert.equal(filteredView.color, '黑色', '关联列的**显示文本**要读得出来（这是不用 search 接口的原因）');
   assert.equal(filteredView.category_name, '休闲鞋');
 });
@@ -233,7 +252,10 @@ test('① 关联单元格为空（数据残缺）时：按条件读的「库存�
   const gateway = fakeGateway({ fixtures: { ...FIXTURES, liveInventory: orphans } });
   const view = await service(gateway).lookup({ number: NUMBER, requestId: 'req_orphan' });
   assert.equal(view.total, 1, '既有用例「关联为空时用库存键前缀认行」的行为一个字都不许变');
-  assert.equal(view.rows[0].size_text, '40');
+  // ⚠️ 行的清单现在按**配置段**补全（38–48），所以 40 那一行不一定是第一行。
+  const row40 = view.rows.find((row) => row.size_text === '40');
+  assert.ok(row40, '40 码那一行必须在（按库存键前缀认回来的）');
+  assert.equal(row40.total, 1);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -251,13 +273,14 @@ test('② 回退：飞书不认这个公式（抛错）→ 整表读，页面照
   }
   assert.equal(view.found, true);
   assert.equal(view.total, 3);
-  assert.equal(view.missing_count, 1);
+  // ⭐ 2026-10-09：缺码按配置段算 ⇒ A 段 11 个码里有 9 个库存为 0。
+  assert.equal(view.missing_count, 9);
   assert.equal(gateway.filterCalls().length, 2, '两次都试过了');
-  assert.deepEqual(
-    gateway.listAllCalls().map((call) => call.tableKey).sort(),
-    ['liveInventory', 'product', 'sizeManagement', 'sizeManagement'],
-    '回退到整表读（尺码表被共享的 SizeReferenceService 读了两次/带缓存）',
-  );
+  const wholeTables = gateway.listAllCalls().map((call) => call.tableKey);
+  assert.ok(wholeTables.includes('product') && wholeTables.includes('liveInventory'),
+    '回退到整表读：货品信息与实时库存都要整表读一遍');
+  assert.ok(wholeTables.filter((key) => key === 'sizeManagement').length >= 1,
+    '「尺码管理」照旧会被行尺码解析读到（共享的 SizeReferenceService，带缓存）');
   assert.equal(logs.events(SCAN_PAGE.events.filterFallback).length, 2, '每次回退都记一条 warn');
   assert.match(logs.events(SCAN_PAGE.events.filterFallback)[0], /"reason":"failed"/);
 });
@@ -384,23 +407,36 @@ test('③ 「没找到」不进缓存（新品刚建档就该立刻扫得到）'
   assert.ok(gateway.calls.length > callsAfterFirst, '第二次仍然真的去读（不许把否定结果缓存住）');
 });
 
-test('③ 「尺码管理」整表也只在 TTL 内读一次（每次扫码都要用它，而它几乎不变）', async () => {
+test('③ ⭐ 缺码判定不再读「尺码管理」：一致性保险只在 TTL 到点那一趟比对一次', async () => {
+  // ⭐ 2026-10-09：这一条的性质**整个变了**（业务负责人定的提速项之一）：
+  //   提速前：缺码判定**每次扫码**都要整表读「尺码管理」；
+  //   现在：缺码 = 配置段（`sizeSegments`）里库存为 0 的码 ⇒ 判定本身 **0 次读**；
+  //         那张表只被**一致性保险**读（定期，默认 10 分钟；这里压到 1000ms 便于验证）。
   const gateway = fakeGateway();
   let clock = 0;
-  const scan = service(gateway, SCAN_PAGE, { now: () => clock });
+  const config = {
+    ...SCAN_PAGE,
+    // ⚠️ 视图缓存 TTL 压到 1ms：第三次扫码才会真的走到取数那一段
+    //   （否则会命中视图缓存 —— 那条路**一次飞书都不打**，也就到不了保险那一步）。
+    cache: { ...SCAN_PAGE.cache, ttlMs: 1 },
+    sizeSegments: {
+      ...SCAN_PAGE.sizeSegments,
+      consistencyCheck: { enabled: true, ttlMs: 1000 },
+    },
+  };
+  const scan = service(gateway, config, { now: () => clock });
   const sizeReads = () => gateway.listAllCalls().filter((call) => call.tableKey === 'sizeManagement').length;
 
   await scan.lookup({ number: NUMBER, requestId: 'req_s1' });
   const afterFirst = sizeReads();
-  assert.ok(afterFirst >= 1);
 
-  // 换一个编号（视图缓存不命中），但尺码表在 TTL 内 ⇒ 不再读第二遍
+  // 换一个编号（视图缓存不命中）：缺码判定读配置 ⇒ 不再读尺码表；TTL 内连保险也不读。
   await scan.lookup({ number: 'X7601|蓝|A', requestId: 'req_s2' });
-  assert.equal(sizeReads(), afterFirst, 'TTL 内不重复读尺码表');
+  assert.equal(sizeReads(), afterFirst, '缺码判定读配置、保险在 TTL 内 ⇒ 不重复读尺码表');
 
-  clock += SCAN_PAGE.cache.ttlMs + 1;
+  clock += 1001;
   await scan.lookup({ number: 'X7601|蓝|A', requestId: 'req_s3' });
-  assert.ok(sizeReads() > afterFirst, 'TTL 一过就重读');
+  assert.ok(sizeReads() > afterFirst, 'TTL 一过，一致性保险会比对一次（这是唯一会读它的地方）');
 });
 
 test('③ 缓存有上限（不无界增长）：塞满以后仍然只留 maxEntries 条', async () => {

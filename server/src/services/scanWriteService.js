@@ -7,7 +7,9 @@
  *     明细 / 收款 / 四个状态维度 / 进度全部走**既有的** `SalesOrderService.confirm`
  *     （地址簿：`services/salesOrderService.js`）——与群聊入口、工作台入口**同一个函数**；
  *   · 采购：采购申请走**既有的** `PurchaseWebhookService.publishPurchaseRequest`
- *     （就是「信息填写」表变更事件走的那条免确认路径），本文件只把"这次要补什么"给它。
+ *     （**免确认**那条路：写「报货批次」＋「报货信息」；它原先也是「信息填写」表变更
+ *      事件走的那条路，那条入口已于 2026-10-09 退场、本函数一行没变），
+ *     本文件只把"这次要补什么"给它。
  *   ⇒ 换一个入口不会多出一本账：扫码侧**没有第二套写库逻辑**（`scanPageWrite.test.js`
  *     有一条源码哨兵钉住"本文件里没有 create/update/delete"）。
  *
@@ -36,7 +38,7 @@ const { SalesStatusWriter } = require('./salesStatusWriter');
 const { textValue, linkedRecordIds } = require('./v1BitableGateway');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
-const { REPORT_BEHAVIOR } = require('./purchaseReportBehaviorPolicy');
+const { REPORT_BEHAVIOR } = require('./purchaseBehaviorPolicy');
 // ⭐ 2026-10-09：扫码建单也要写**交易类型**（现货 / 预定），判据用既有的那一个：
 //    「实时库存里有没有这一双」→ `salesTradeTypeForStock`（**唯一**判据，本文件不写死编码）。
 const { salesTradeTypeForStock } = require('../config/salesTradeTypePolicy');
@@ -500,7 +502,7 @@ const createScanWriteService = (options = {}) => {
       return fail({ code: 'session_expired', message: texts.replenishAgainBody, requestId });
     }
 
-    // ① 校验：勾了哪些尺码、每个几双（勾了不填数量按 1 双，与「信息填写」报单那条口径一致）。
+    // ① 校验：勾了哪些尺码、每个几双（勾了不填数量按 1 双 —— 每条明细至少一双）。
     const picked = [];
     for (const entry of Array.isArray(entries) ? entries : []) {
       const size = positiveInteger(entry?.size);
@@ -533,7 +535,7 @@ const createScanWriteService = (options = {}) => {
 
     try {
       // ② 货品 + 供应商 + 采购行为：**全部来自既有表**（供应商取「货品信息.供应商」，
-      //    与「信息填写」报单那条链路在 `processSupplierReport` 里取的是**同一个字段**）。
+      //    那条文字报单链路退场之前取的也是**同一个字段** ⇒ 出图分组口径没变）。
       const product = await resolveProductRecord({ productRecordId, number });
       if (!product) {
         const error = new Error(texts.sizeUnknownBody);
@@ -555,17 +557,18 @@ const createScanWriteService = (options = {}) => {
         quantity,
         // 供应商只用于"按供应商出图"（既有链路的分组依据），不从扫码页另立一套。
         supplier_record_id: supplierRecordId,
-        // 扫码补货**没有报单记录**（不是「信息填写」触发的）⇒ 如实留空、不编一个 id。
-        report_record_id: '',
+        // ⛔ 2026-10-09：这里原有 `report_record_id: ''`（"扫码补货没有报单记录 ⇒ 留空"）
+        //   —— 「信息填写」整表被删之后，**报单记录这个身份彻底不存在了**，
+        //   计划（`ensurePostingPlan`）里那个字段也一起删了 ⇒ 不再往下传。
         behavior_record_id: behavior.recordId,
         behavior_kind: REPORT_BEHAVIOR.PURCHASE_REQUEST,
       }));
       const draft = {
-        // 不是"多记录归批"，但走同一条计划/幂等代码：`is_batch: true` + 空的报单记录清单
-        // ⇒ 既有链路里"回写报单记录状态"那一步自然跳过（我们**没有**报单记录可写）。
+        // ⚠️ 2026-10-09：`is_batch: true` 保留着 —— 它只是"这一次提交是**一批**明细"的标记，
+        //   走同一条计划/幂等代码；原先那两行 `report_record_id` / `report_record_ids`
+        //   （报单记录清单）**已删除**：报单记录这个身份随「信息填写」退场消失了，
+        //   "回写报单记录状态"那一步在 `confirmPurchaseRequest` 里也整段删掉了。
         is_batch: true,
-        report_record_id: '',
-        report_record_ids: [],
         product_record_id: productId,
         product_number: productNumber(product),
         supplier_record_id: supplierRecordId,

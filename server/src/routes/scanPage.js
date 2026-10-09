@@ -43,7 +43,7 @@ const { createScanWriteService } = require('../services/scanWriteService');
 const { renderScanPage, renderScanMessagePage, renderMinimalPage } = require('../views/scanPageRenderer');
 // ⚠️ 只借这两个**纯函数**：所选尺码在「样品 + 门盒」有没有货（= 页面上那两个分组的判据），
 //    以及 `?from=` → 领域 id（认不出来回落缺省，不报错、不白屏）。
-const { sellableSizeTexts, resolveRealm } = require('../views/scanPageRealm');
+const { sellableSizeTexts, resolveRealm, DEFAULT_REALM } = require('../views/scanPageRealm');
 // ⭐ 写操作之后**立刻作废**「实时库存」内存快照（她：库存必须准确，不是等 30 秒）。
 const { invalidateLiveInventorySnapshot } = require('../services/liveInventorySnapshot');
 const { requireWorkbenchAccess } = require('./workbench');
@@ -226,7 +226,18 @@ const createScanPageRouter = (options = {}) => {
     req.workbenchUser?.open_id || getSessionUser(req)?.open_id || '',
   );
 
-  const postActionFor = (number) => `${config.route.basePath}/${encodeURIComponent(String(number || ''))}`;
+  /**
+   * 表单的 POST 目标（= 处理完回跳到哪一页）。
+   *
+   * ⭐ 2026-10-09（缺省领域改成**库存**之后必需的一处）：把**领域**一起带上
+   *   —— 不然她在【销售】那一块点「加入本单」，303 回来会落在**库存**那一块
+   *   （默认领域），刚填的本单看不见了。
+   *   ⚠️ 缺省领域不带 `?from=`（URL 干净，且既有断言一字不变）。
+   */
+  const postActionFor = (number, realm = DEFAULT_REALM) => {
+    const path = `${config.route.basePath}/${encodeURIComponent(String(number || ''))}`;
+    return realm && realm !== DEFAULT_REALM ? `${path}?from=${encodeURIComponent(realm)}` : path;
+  };
 
   /**
    * 页面上的两个写入口要用的东西（尺寸清单 / 本单已加几双 / 两张表单的幂等键 / 文案）。
@@ -387,13 +398,15 @@ const createScanPageRouter = (options = {}) => {
         logInfo(writeConfig.events.lineAdded, {
           request_id: requestId, number: view.number, count: result.count,
         });
-        return res.redirect(303, `${postActionFor(view.number)}?added=1`);
+        return res.redirect(303, `${postActionFor(view.number, resolveRealm(req.query?.from))}${resolveRealm(req.query?.from) === DEFAULT_REALM ? '?' : '&'}added=1`);
       }
 
       // ── 清空本单 ────────────────────────────────────────────────────────────
       if (action === actions.clearDraft) {
         await writeService.clearDraft({ openId, requestId });
-        return res.redirect(303, postActionFor(decodeURIComponent(String(req.params.number || ''))));
+        return res.redirect(303, postActionFor(
+          decodeURIComponent(String(req.params.number || '')), resolveRealm(req.query?.from),
+        ));
       }
 
       // ── 提交销售单 ──────────────────────────────────────────────────────────

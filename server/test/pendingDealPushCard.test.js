@@ -196,8 +196,8 @@ test('⑨ 采购区：为空时整块（含它前面那条分割线）都不出�
   assert.ok(!emptyCard.elements.some((element) => element.tag === 'note'), '没有缺链接就不该有脚注');
 
   const records = {
-    purchaseOrderBatch: [{ record_id: 'bat_1', fields: { 报货批次号: 'CGD-20261008-0001', 到货状态: '未到货' } }],
-    purchaseReport: [{ record_id: 'rep_1', fields: { 报货批次号: 'CGD-20261008-0001', 供应商: ['金猴'] } }],
+    // ⭐ 2026-10-09：供应商改从**批次行自己那一列**取（「信息填写」整表已删除）。
+    purchaseOrderBatch: [{ record_id: 'bat_1', fields: { 报货批次号: 'CGD-20261008-0001', 到货状态: '未到货', 供应商: [{ text: '金猴' }] } }],
   };
   const filled = newService({
     orders: [],
@@ -418,7 +418,6 @@ test('A2 只有一个区块时标题不再补分区计数（她真机看到的�
 test('A5 深链缺失脚注仍然进卡片（note 元素），销售 / 采购各一行', async () => {
   const records = {
     purchaseOrderBatch: [{ record_id: 'bat_1', fields: { 报货批次号: 'CGD-20261008-0001', 到货状态: '未到货' } }],
-    purchaseReport: [],
   };
   const locator = await withLinks([RESERVED], { appLink: '' });
   const { service, creates } = newService({

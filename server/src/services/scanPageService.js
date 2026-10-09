@@ -178,7 +178,6 @@ const FILTER_TEXT_UNSAFE = /["\\[\]\r\n\t]/;
 // 官方：`filter` 参数长度不超过 2000 个字符。
 const MAX_FILTER_CHARS = 2000;
 // 「尺码管理」整表在它自己那份缓存里的键（只有这一张表，键就是常量）。
-const SIZE_CACHE_KEY = 'sizeManagement';
 
 const filterTextLiteral = (value) => {
   const text = String(value ?? '');
@@ -226,15 +225,6 @@ const createScanPageService = (gateway, options = {}) => {
     maxEntries: cacheConfig.maxEntries,
     now: options.now,
   });
-  // 「尺码管理」整表（15 条）单独一份缓存：**每次扫码都要读它**，而它几乎不变
-  // （她偶尔改一次尺码清单）⇒ 让第二次开始的扫码少一次飞书请求（真机一次往返 1.5~2.5 秒）。
-  // ⚠️ 复用同一个 TTL / 同一个开关，不另开旋钮：这一层只是把"同一个 15 条的表"读一次就够。
-  const sizeCache = options.sizeCache || createScanPageCache({
-    ttlMs: cacheTtlMs,
-    maxEntries: 1,
-    now: options.now,
-  });
-
   /**
    * ⭐ 「实时库存」**内存快照**（业务负责人 2026-10-09 同意的第二项优化）。
    *
@@ -257,6 +247,26 @@ const createScanPageService = (gateway, options = {}) => {
       now: options.now,
     }));
   if (snapshot && options.startSnapshot === true) snapshot.start();
+
+  /**
+   * ⭐⭐ 「货品信息」**内存快照**（业务负责人 2026-10-09：单价以「货品信息」为唯一真源）。
+   *
+   * 机制与上面那个「实时库存」快照**完全同一套**（同一个工厂，只是 `tableKey: 'product'`）：
+   *   后台定期整表拉一次（默认 60 秒）+ **写操作立刻失效**；
+   *   未就绪 / 过期 / 刷新失败 ⇒ **回退现有过滤读**。
+   * ⚠️ 它不是"第二套逻辑"：命中时用的仍是**同一个 `findProduct`**（大小写兜底也在里面），
+   *    结果与"按编号过滤读"逐字一致。
+   */
+  const productSnapshot = options.productSnapshot === false
+    ? null
+    : (options.productSnapshot || createLiveInventorySnapshot({
+      gateway,
+      config: config.productSnapshot,
+      limits,
+      tableKey: 'product',
+      now: options.now,
+    }));
+  if (productSnapshot && options.startSnapshot === true) productSnapshot.start();
 
   /** 时钟：与 TTL 缓存共用（用例可以注入一个假时钟，两个窗口一起被推进）。 */
   const clock = options.now || Date.now;
@@ -282,6 +292,11 @@ const createScanPageService = (gateway, options = {}) => {
       number: timing.number || '',
       cache_hit: timing.cache_hit === true,
       snapshot_hit: timing.snapshot_hit === true,
+      // ⭐ 2026-10-09：这两条就是"一次扫码打几次飞书"的直接证据 ——
+      //   库存吃快照 + 单价吃「货品信息」内存索引 + 缺码读配置 ⇒ **0 次读**；
+      //   任一为 false / `size_source != 'config'` 就说明那一段回退去读了飞书。
+      product_snapshot_hit: timing.product_snapshot_hit === true,
+      size_source: timing.size_source || '',
       product_ms: Number(timing.product_ms) || 0,
       inventory_ms: Number(timing.inventory_ms) || 0,
       size_ms: Number(timing.size_ms) || 0,
@@ -303,20 +318,6 @@ const createScanPageService = (gateway, options = {}) => {
       throw limitError(tableName(tableKey), records.length, cap);
     }
     return records;
-  };
-
-  /**
-   * 「尺码管理」整表读（15 条）——**带 TTL 缓存**：每次扫码都要用它算缺码判定，
-   * 而这张表几乎不变（她偶尔改一次尺码清单）⇒ 同一个 TTL 窗口内只读一次。
-   * 缓存里放的是**已经过完上限检查**的记录数组（超限那一次直接抛，不进缓存）。
-   * 返回 `{ records, cacheHit }`：`cacheHit` 只进 `scan.page.viewed` 日志（可 grep）。
-   */
-  const readSizeRecordsCapped = async (requestId) => {
-    const cached = sizeCache.get(SIZE_CACHE_KEY);
-    if (cached) return { records: cached, cacheHit: true };
-    const records = await readAllCapped('sizeManagement', limits.sizeRecords, requestId);
-    sizeCache.set(SIZE_CACHE_KEY, records);
-    return { records, cacheHit: false };
   };
 
   /**
@@ -514,26 +515,99 @@ const createScanPageService = (gateway, options = {}) => {
   };
 
   /**
-   * 缺码判定用的尺码清单：**「尺码管理」里这个「类别」（A/B）的全部尺码**。
-   * 拿不到就降级（`degraded: true`），由调用方改成"只显示有库存的尺码"。
+   * 缺码判定用的尺码清单：**配置里的尺码段**（A 男 38–48 / B 女 34–43）。
+   *
+   * ⭐⭐ 2026-10-09（业务负责人定）：这一段原来每次扫码都要整表读「尺码管理」算类别清单
+   *   （一次飞书往返 1.5~2.5 秒）⇒ 改成**读配置**（`config.sizeSegments.ranges`）。
+   *   ⚠️ 这不是"把会变的东西写死"：段本身是**配置**（换一个值不用改代码），
+   *      而且有**一致性保险**——`maybeCheckSizeConsistency` 定期拿配置与「尺码管理」比对，
+   *      不一致就 logWarn（例如表里加了 49 码）。
+   *
+   * 降级口径**一个字没变**（拿不到就不做缺码提示，只显示有货的尺码）：
+   *   · 类别为空（编号里没有第 3 段）→ `number_without_category`；
+   *   · 配置里没有这个类别 → `no_sizes_for_category`。
    */
-  const loadSizeScope = async ({ sizeRecords, categoryCode }) => {
-    const sizeField = fieldName(schema, 'sizeManagement', 'size');
-    const categoryField = config.fieldNamesPendingSchema?.sizeCategory || '';
-    const byCategory = new Map();
-    for (const record of sizeRecords) {
-      const categories = categoryField ? categoryValues(record?.fields?.[categoryField]) : [];
-      const size = positiveInteger(readField(schema, 'sizeManagement', record, 'size') ?? record?.fields?.[sizeField]);
-      if (!categories.length || size === null) continue;
-      for (const category of categories) {
-        if (!byCategory.has(category)) byCategory.set(category, new Set());
-        byCategory.get(category).add(size);
-      }
-    }
-    if (!categoryField || !byCategory.size) return { degraded: true, reason: 'no_category_column', sizes: [] };
+  const loadSizeScope = async ({ categoryCode }) => {
+    const ranges = config.sizeSegments?.ranges || {};
     if (!categoryCode) return { degraded: true, reason: 'number_without_category', sizes: [] };
-    if (!byCategory.has(categoryCode)) return { degraded: true, reason: 'no_sizes_for_category', sizes: [] };
-    return { degraded: false, reason: '', sizes: sortSizes([...byCategory.get(categoryCode)]) };
+    const range = ranges[String(categoryCode).trim().toUpperCase()];
+    if (!range) return { degraded: true, reason: 'no_sizes_for_category', sizes: [] };
+    const from = positiveInteger(range.from);
+    const to = positiveInteger(range.to);
+    if (from === null || to === null || to < from) {
+      return { degraded: true, reason: 'segment_config_invalid', sizes: [] };
+    }
+    const sizes = [];
+    for (let size = from; size <= to; size += 1) sizes.push(size);
+    return { degraded: false, reason: '', sizes: sortSizes(sizes) };
+  };
+
+  /**
+   * ⭐ **一致性保险**（业务负责人 2026-10-09）：定期拿**配置里的尺码段**与
+   * 「尺码管理」表比对，不一致就 `logWarn(scan.size_consistency.mismatch)`。
+   *
+   * 为什么要有它：缺码判定改成读配置之后，"表里改了尺码、配置没跟"这类漂移就没人拦了
+   * —— 这条 warn 就是那道拦网（**只记日志**：不改配置、不改表）。
+   *
+   * ⚠️ **定期**（TTL 内一次都不读那张表，默认 10 分钟）：若每次扫码都比对，
+   *    等于又把那 1.5~2.5 秒的往返加回来了。
+   * ⚠️ 比对本⾝**永不抛**、也不阻塞失败路径：读不到就静默跳过（下次 TTL 到了再试）。
+   */
+  // ⚠️ `at: -1`（不是 0）：注入时钟从 0 开始的用例也要能区分“从没查过”与“0 时刻查过”。
+  const sizeConsistencyCheckedAt = { at: -1 };
+  // ⚠️ 时钟走 `options.now`（与缓存/快照同一口）：用例注入自己的时钟就能测"TTL 到点才比对"。
+  const nowFn = options.now || Date.now;
+  const maybeCheckSizeConsistency = async ({ requestId = '', force = false } = {}) => {
+    const settings = config.sizeSegments?.consistencyCheck || {};
+    if (settings.enabled === false) return { checked: false, reason: 'disabled' };
+    const ttlMs = Number(settings.ttlMs) > 0 ? Number(settings.ttlMs) : 0;
+    const nowMs = nowFn();
+    if (!force && ttlMs > 0 && sizeConsistencyCheckedAt.at >= 0
+      && nowMs - sizeConsistencyCheckedAt.at < ttlMs) {
+      return { checked: false, reason: 'ttl' };
+    }
+    sizeConsistencyCheckedAt.at = nowMs;
+    try {
+      const sizeRecords = await readAllCapped('sizeManagement', limits.sizeRecords, requestId);
+      const sizeField = fieldName(schema, 'sizeManagement', 'size');
+      const categoryField = config.fieldNamesPendingSchema?.sizeCategory || '';
+      const actual = new Map();
+      for (const record of sizeRecords) {
+        const categories = categoryField ? categoryValues(record?.fields?.[categoryField]) : [];
+        const size = positiveInteger(readField(schema, 'sizeManagement', record, 'size') ?? record?.fields?.[sizeField]);
+        if (size === null) continue;
+        for (const category of categories) {
+          if (!actual.has(category)) actual.set(category, new Set());
+          actual.get(category).add(size);
+        }
+      }
+      if (!categoryField) return { checked: false, reason: 'no_category_column' };
+      const mismatches = [];
+      for (const [category, range] of Object.entries(config.sizeSegments?.ranges || {})) {
+        const expected = new Set();
+        for (let size = range.from; size <= range.to; size += 1) expected.add(size);
+        const found = actual.get(category) || new Set();
+        const missingInConfig = [...found].filter((size) => !expected.has(size)).sort((a, b) => a - b);
+        const missingInTable = [...expected].filter((size) => !found.has(size)).sort((a, b) => a - b);
+        if (missingInConfig.length || missingInTable.length) {
+          mismatches.push({
+            category, in_table_not_in_config: missingInConfig, in_config_not_in_table: missingInTable,
+          });
+        }
+      }
+      if (mismatches.length) {
+        logWarn(config.events.sizeConsistencyMismatch, {
+          request_id: requestId || undefined,
+          // ⚠️ 只报**尺寸段**这一层的不一致（哪些码多了/少了），不改配置、不改表。
+          mismatches: mismatches.map((item) => `${item.category}:+[${item.in_table_not_in_config.join(',')}]-[${item.in_config_not_in_table.join(',')}]`),
+          hint: '配置里的尺码段与「尺码管理」不一致：要么改配置（SCAN_PAGE 的 sizeSegments），要么改表',
+        });
+      }
+      return { checked: true, mismatches };
+    } catch (error) {
+      // 读不到「尺码管理」：静默跳过（下次 TTL 到了再试）—— 这条保险不该让扫码变慢或变红。
+      return { checked: false, reason: 'read_failed', error: error.message };
+    }
   };
 
   /**
@@ -568,6 +642,8 @@ const createScanPageService = (gateway, options = {}) => {
       timing.number = number;
       timing.cache_hit = false;
       timing.snapshot_hit = false;
+      timing.product_snapshot_hit = false;
+      timing.size_source = '';
       timing.product_ms = 0;
       timing.inventory_ms = 0;
       timing.size_ms = 0;
@@ -605,15 +681,25 @@ const createScanPageService = (gateway, options = {}) => {
     let product = null;
     let wholeTableFallback = false;
     try {
-      const filteredProduct = await readProductsByNumber({ number, requestId });
-      product = filteredProduct.product;
-      wholeTableFallback = Boolean(filteredProduct.fallback);
-      if (!product && !filteredProduct.resolved) {
-        // 按条件读一条都没读到 ⇒ **回退整表读**再找一次：
-        // 「找不到」的判定与提速前**逐字一致**（宁可慢这一次，也不许把"有货"判成"没这条编号"）。
-        const products = await readAllCapped('product', limits.productRecords, requestId);
-        product = findProduct(products, number);
-        wholeTableFallback = true;
+      // ⭐⭐ 2026-10-09：**先查「货品信息」内存快照**（按编号索引）——命中就 **0 次飞书调用**。
+      //    单价仍以「货品信息」为唯一真源（她的口径），只是从内存里取。
+      //    未就绪 / 过期 / 没这一条 ⇒ 回退下面那条**既有的过滤读**（行为逐字不变）。
+      const indexed = productSnapshot ? productSnapshot.get() : { ready: false, reason: 'disabled' };
+      if (indexed.ready) {
+        product = findProduct(indexed.records, number);
+        if (timing) timing.product_snapshot_hit = Boolean(product);
+      }
+      if (!product) {
+        const filteredProduct = await readProductsByNumber({ number, requestId });
+        product = filteredProduct.product;
+        wholeTableFallback = Boolean(filteredProduct.fallback);
+        if (!product && !filteredProduct.resolved) {
+          // 按条件读一条都没读到 ⇒ **回退整表读**再找一次：
+          // 「找不到」的判定与提速前**逐字一致**（宁可慢这一次，也不许把"有货"判成"没这条编号"）。
+          const products = await readAllCapped('product', limits.productRecords, requestId);
+          product = findProduct(products, number);
+          wholeTableFallback = true;
+        }
       }
     } finally {
       // ⚠️ 用 finally：这一阶段**抛错时也要**留下 product_ms（"卡在货品信息那一步"就是这么看出来的）。
@@ -677,14 +763,18 @@ const createScanPageService = (gateway, options = {}) => {
     const total = rows.length;
 
     const sizeStartedAt = startStage();
-    let sizeRead;
+    let scope;
     try {
-      sizeRead = await readSizeRecordsCapped(requestId);
+      // ⭐ 2026-10-09：缺码判定**读配置段**（不再每次读「尺码管理」）。
+      scope = await loadSizeScope({ categoryCode: parsed.categoryCode });
+      // ⭐ 缺码这一段是**读配置**还是**降级**（`scan.lookup.timing` 里就靠它看"有没有回退"）。
+      if (timing) timing.size_source = scope.degraded ? `degraded:${scope.reason}` : 'config';
+      // ⭐ 一致性保险（**定期**，默认 10 分钟一次）：拿配置与「尺码管理」比对，不一致就 warn。
+      //    它只在 TTL 到点那一趟真的读一次那张表 —— 平时这一趟是 **0 次调用**。
+      await maybeCheckSizeConsistency({ requestId });
     } finally {
       if (timing) timing.size_ms = elapsed(sizeStartedAt);
     }
-    const sizeRecords = sizeRead.records;
-    const scope = await loadSizeScope({ sizeRecords, categoryCode: parsed.categoryCode });
     if (!scope.degraded) {
       // 只有**没有库存**的那些清单尺码才需要限流：有库存的尺码一行都不许丢，
       // 否则"共 N 双"会与明细对不上。
@@ -784,8 +874,9 @@ const createScanPageService = (gateway, options = {}) => {
       missing: missingCount,
       sizes_degraded: scope.degraded,
       cache_hit: false,
-      // 「尺码管理」那一份缓存有没有省下一次飞书请求（排查"这次扫码到底读了哪些表"用）。
-      size_cache_hit: sizeRead.cacheHit,
+      // ⚠️ 2026-10-09：`size_cache_hit` 不再有意义（缺码判定读配置，不读「尺码管理」）——
+      //    这一趟有没有读那张表，看有没有 `scan.size_consistency.mismatch` / 那条 TTL 就够。
+      size_source: 'config',
     });
     // 只缓存 `found: true`（否定结果不缓存：新品刚建档就该立刻扫得到）。
     cache.set(number, view);

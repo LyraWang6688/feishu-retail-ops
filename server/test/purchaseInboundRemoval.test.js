@@ -30,7 +30,6 @@ const {
 } = require('../src/config/v1SchemaScopes');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { PurchaseWebhookService } = require('../src/services/purchaseWebhookService');
-const { resolvePurchaseAcceptanceConfig } = require('../src/config/purchaseAcceptance');
 
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
 
@@ -157,6 +156,11 @@ const writesTo = (gateway, tableKey) => gateway.writes.filter((item) => item.tab
 const seedArrivalTask = async (store, {
   taskId, batchRecordId = BATCH_RECORD_ID, batchNo = BATCH_NO,
   acceptanceText = '都到了', actual = [], requests = [],
+  // ⭐ 2026-10-09：到货确认写进批次行的**结构化验收** = 「实际数量」「实际金额」
+  //   （「验收原话 / 确认状态」两列已随生产表删列退场）。
+  //   生产上这两个值由到货核对那一步算好放在草稿上；这里按 actual 逐行求和。
+  actualQuantity = (actual || []).reduce((sum, item) => sum + Number(item?.quantity || 0), 0),
+  actualAmount = 1200,
 } = {}) => {
   await store.create({
     task_id: taskId, kind: 'arrival', record_id: batchRecordId, status: 'awaiting_confirmation',
@@ -167,6 +171,8 @@ const seedArrivalTask = async (store, {
       batch_record_id: batchRecordId,
       batch_no: batchNo,
       acceptance_text: acceptanceText,
+      actual_quantity: actualQuantity,
+      actual_amount: actualAmount,
       direct_arrival: true,
       operator_open_id: 'ou_1',
       requests,
@@ -298,11 +304,14 @@ test('① 到货确认真实链路：一碰「采购入库」表就抛 —— �
   assert.equal(result.toast.type, 'success');
   assert.deepEqual(writesTo(gateway, DELETED_TABLE_KEY), [], '那张表一个字都不许写');
   assert.equal(inventoryCalls.length, 12, '12 行 → 12 次加库存（一行都不能少）');
-  // 「报货批次」那一行照旧写上：验收原话 + 确认状态。
+  // 「报货批次」那一行照旧写上**结构化验收**（2026-10-09 起只有实际数量 / 实际金额；
+  // 「验收原话」「确认状态」两列已随生产表删列一起退场 ⇒ 一个字都不写）。
   const batchWrites = writesTo(gateway, 'purchaseOrderBatch');
-  assert.ok(batchWrites.some((item) => item.values['验收原话'] === '都到了'), '「验收原话」要写到批次行');
-  assert.ok(batchWrites.some((item) => item.values['确认状态'] === resolvePurchaseAcceptanceConfig({}).confirmed),
-    '「确认状态」要写到批次行（取值来自配置）');
+  assert.ok(batchWrites.some((item) => item.values['实际数量'] === 12), '「实际数量」要写到批次行');
+  for (const write of batchWrites) {
+    assert.equal('验收原话' in (write.values || {}), false, '「验收原话」已退场，不许再写');
+    assert.equal('确认状态' in (write.values || {}), false, '「确认状态」已退场，不许再写');
+  }
   // ⚠️ 飞书自动字段一个字都不写（到货日 = 更新时间、验收人 = 创建人）。
   for (const write of gateway.writes) {
     assert.equal('到货日' in (write.values || {}), false);
@@ -442,16 +451,15 @@ test('F-补 工作台采购页的用户可见文案里没有「具体信息」�
   assert.ok(codeOnly.includes('报货信息'), `${rel} 要改成「报货信息」`);
 });
 
-test('G 「报货批次.确认状态」现在是**单选** ⇒ 取值纳入部署闸门的单选取值契约', () => {
-  const { confirmed } = resolvePurchaseAcceptanceConfig({});
+test('G ⛔ 「报货批次.确认状态」整条退场 ⇒ 它的单选取值契约也删掉（契约只剩到货状态）', () => {
+  // 2026-10-09 只读核对生产真表：报货批次 12 列里**没有**「确认状态」⇒
+  // 契约留着 = 部署闸门去问一列不存在的字段、直接判红，所以它与
+  // `config/purchaseAcceptance.js` 一起退场。
   const contracts = getV1SelectOptionContracts('purchase');
-  const contract = contracts.find((item) =>
-    item.tableKey === 'purchaseOrderBatch' && item.fieldKey === 'confirmStatus');
-  assert.ok(contract, '确认状态（单选）必须像「到货状态」一样进闸门：写一个不存在的取值，飞书会自动建选项');
-  assert.deepEqual(contract.requiredOptions, [confirmed]);
-  // 到货状态那条**逐字不变**（这次只是多一条）。
+  assert.equal(contracts.some((item) => item.fieldKey === 'confirmStatus'), false,
+    '确认状态那一列不存在了 ⇒ 契约里不许再有它');
   const arrival = contracts.find((item) => item.fieldKey === 'arrivalStatus');
   assert.deepEqual(arrival.requiredOptions, ['未到货', '已到货']);
-  // inventory 范围不该被带上这条契约（它不含「报货批次」）。
+  // inventory 范围不该被带上「报货批次」的任何契约。
   assert.deepEqual(getV1SelectOptionContracts('inventory'), []);
 });

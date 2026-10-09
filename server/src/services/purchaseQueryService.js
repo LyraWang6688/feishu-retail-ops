@@ -1,7 +1,7 @@
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
-const { classifyReportBehavior, REPORT_BEHAVIOR } = require('./purchaseReportBehaviorPolicy');
+const { classifyReportBehavior, REPORT_BEHAVIOR } = require('./purchaseBehaviorPolicy');
 
 const asText = (tableKey, record, semanticKey) => {
   const fieldName = V1_BITABLE_SCHEMA.tables[tableKey]?.fields?.[semanticKey];
@@ -39,7 +39,7 @@ const createPurchaseQueryService = (gateway, options = {}) => {
       gateway.listAll('product'),
       gateway.listAll('purchaseOrderBatch'),
       // 「报货信息」的「采购行为」是关联「行为管理」：采购申请与采购退货写在同一张表里，
-      // 靠这一列分流。分流口径复用采购链路的同一份策略（purchaseReportBehaviorPolicy），
+      // 靠这一列分流。分流口径复用采购链路的同一份策略（purchaseBehaviorPolicy），
       // 不在查询里另写一套判断——两套判断迟早在"什么算退货"上分家。
       gateway.listAll('behavior'),
     ]);
@@ -95,11 +95,12 @@ const createPurchaseQueryService = (gateway, options = {}) => {
    * ⭐ 2026-10-07 晚（到货落点大改）：**改读「报货批次」**，不再读「到货验收」——
    *    那张表已被业务负责人**整个删除**（Base 里没有任何名字含「到货」/「验收」的表）。
    *    为什么是"改读"而不是"摘掉面板"：
-   *      · 她要看的「这一批到货了没有、核对确认了没有、验收说的什么」正好就是
-   *        「报货批次」那一行的三列，改读之后面板仍有信息量；
+   *      · 她要看的「这一批到货了没有」正好就是「报货批次」那一行的列，改读之后面板仍有信息量；
    *      · 摘掉面板等于把一个能用的视图删掉（而且工作台其它子页与它共享筛选/渲染代码）。
    *    投影口径：一行 = 「报货批次」的一条记录（原来是「到货验收」的一条记录）。
-   *    字段名保持兼容（`batch_no` / `confirm_status` 等），前端只需换列。
+   *    ⚠️ 2026-10-09：`confirm_status` / `acceptance_text` 两个投影**删除**
+   *      （那两列在真表上没有了）；现在一行 = 到货状态 + 批次号，
+   *      过滤掉"没有任何到货信息"的行（退货批次只写批次号 + 幂等键，永远不会出现在这里）。
    *
    * ⚠️ **不投影「到货日」「验收人」**：它们在真表上是飞书**自动字段**
    *   （到货日=更新时间、验收人=创建人），schema 里刻意没有映射；
@@ -109,6 +110,7 @@ const createPurchaseQueryService = (gateway, options = {}) => {
    * ⚠️ 过滤掉"没有任何到货信息"的行：**退货批次**只写 批次号 + 幂等键
    *   （业务负责人 2026-10-07 晚口径：退货**不写**「到货状态」），它既不进 9 点推送的
    *   「未到货」候选，也不该出现在"到货验收情况"里（否则一行空白，看着像数据丢了）。
+   *   ⚠️ 2026-10-09 之后"有到货信息"的判据**只剩「到货状态」**（另两列已删）。
    */
   const listPurchaseArrivals = async (filters = {}) => {
     const batches = await gateway.listAll('purchaseOrderBatch');
@@ -119,17 +121,17 @@ const createPurchaseQueryService = (gateway, options = {}) => {
       batch_record_id: record.record_id,
       batch_no: asText('purchaseOrderBatch', record, 'batchNo'),
       arrival_status: asText('purchaseOrderBatch', record, 'arrivalStatus'),
-      confirm_status: asText('purchaseOrderBatch', record, 'confirmStatus'),
-      acceptance_text: asText('purchaseOrderBatch', record, 'acceptanceText'),
+      // ⛔ 2026-10-09：`confirm_status` / `acceptance_text` 两个投影**已删除**——
+      //   「确认状态」「验收原话」两列在生产真表上没有了（写入点也一起退场），
+      //   留着投影只会永远读出空串、把"没记"伪装成"记了但空"。
       // 兼容字段（前端与既有调用方原先读它）：到货落点搬到批次行之后**没有**可投影的日期
       // —— 批次行上那个「到货日」是自动的「更新时间」，不是真的到货时刻（见方法注释）。
       arrival_at: null,
       supplier_record_id: '',
-    })).filter((row) => row.arrival_status || row.confirm_status || row.acceptance_text);
+    })).filter((row) => row.arrival_status);
 
     return rows.filter((row) => {
       if (filters.batchNo && row.batch_no !== filters.batchNo) return false;
-      if (filters.confirmStatus && row.confirm_status !== filters.confirmStatus) return false;
       if (filters.arrivalStatus && row.arrival_status !== filters.arrivalStatus) return false;
       return true;
     }).sort((a, b) => String(b.batch_no).localeCompare(String(a.batch_no)));

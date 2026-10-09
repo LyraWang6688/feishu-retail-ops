@@ -233,7 +233,11 @@ test('AC-S3 写操作立刻失效：下一次扫码一定拿到最新库存，�
 
   const after = await service.lookup({ number: NUMBER, requestId: 'req_s3b' });
   assert.equal(after.total, 1, '这一趟拿到的一定是最新库存（不是快照里那份旧的）');
-  assert.equal(after.rows[0].cells[0].count, 1);
+  // ⚠️ 2026-10-09：行的清单按**配置尺码段**补全（A 男 38–48）⇒ 第一行不再是 40，
+  //    要按尺码找那一行。
+  const row40 = after.rows.find((row) => row.size_text === '40');
+  assert.ok(row40, '40 码那一行必须在');
+  assert.equal(row40.cells[0].count, 1, '拿到的是最新那一双');
 });
 
 test('AC-S3 失效之后若还没重拉完：这一趟回退"按编号过滤读"并记 miss（不静默）', async () => {

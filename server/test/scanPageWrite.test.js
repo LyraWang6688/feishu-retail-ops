@@ -578,7 +578,8 @@ test('⑧ 路由：加入本单 → 回跳带上"本单几双"；提交整单 �
     const openId = 'ou_scan_route';
     const app = formApp(h);
     await withServer(app, async (base) => {
-      const pageUrl = `${base}/s/${encodeURIComponent(NUMBER)}`;
+      // ⭐ 2026-10-09：缺省领域改成**库存** ⇒ 建单表单在【销售】那一块，这里显式带 `?from=sales`。
+      const pageUrl = `${base}/s/${encodeURIComponent(NUMBER)}?from=sales`;
       const page = await fetch(pageUrl, { headers: { cookie: sessionCookie(openId) } });
       const html = await page.text();
       const saleKey = html.match(/name="submit_key" value="(scan_sale:[^"]+)"/)[1];
@@ -590,9 +591,10 @@ test('⑧ 路由：加入本单 → 回跳带上"本单几双"；提交整单 �
         body: new URLSearchParams({ action: SCAN_WRITE.actions.addLine, submit_key: saleKey, size: '40', amount: '399', gift: '袜子' }).toString(),
       });
       assert.equal(added.status, 303);
-      assert.match(String(added.headers.get('location')), /\?added=1$/);
+      // ⭐ 2026-10-09：回跳要**带上领域**（不然会落到缺省的库存那一块，本单看不见了）。
+      assert.match(String(added.headers.get('location')), /from=sales&added=1$/);
 
-      const afterAdd = await fetch(`${pageUrl}?added=1`, { headers: { cookie: sessionCookie(openId) } });
+      const afterAdd = await fetch(`${pageUrl}&added=1`, { headers: { cookie: sessionCookie(openId) } });
       const afterHtml = await afterAdd.text();
       assert.match(afterHtml, /已加入本单：现在共 1 双。/);
       assert.match(afterHtml, /本单已加 1 双/);
@@ -766,7 +768,8 @@ test('⑩ 现货 / 预订：所选尺码在（样品 + 门盒）有货 ⇒ SALE_
   try {
     const openId = 'ou_scan_realm';
     await withServer(formApp(h, async () => realmView()), async (base) => {
-      const pageUrl = `${base}/s/${encodeURIComponent(NUMBER)}`;
+      // ⭐ 2026-10-09：缺省领域 = 库存 ⇒ 现货/预订这两组在【销售】那一块，显式带 `?from=sales`。
+      const pageUrl = `${base}/s/${encodeURIComponent(NUMBER)}?from=sales`;
       const page = await fetch(pageUrl, { headers: { cookie: sessionCookie(openId) } });
       const html = await page.text();
 

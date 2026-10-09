@@ -278,6 +278,51 @@ const SNAPSHOT = Object.freeze({
 });
 
 /**
+ * ⭐⭐ 2026-10-09（业务负责人定）：**尺码段进配置**，缺码判定不再每次读「尺码管理」。
+ *
+ *   · A（**男**）= 38–48 · B（**女**）= 34–43 —— 这两段就是"这个类别应该有哪些码"；
+ *   · 缺码判定 = 该编号的**类别**（编号第 3 段）对应的**配置段**里、库存为 0 的那些码；
+ *   · ⚠️ **类别为空 / 配置里没有这个类别** ⇒ **降级**：只显示有货的尺码、**不做缺码提示**
+ *     （现状保持，别改坏），并记一条可 grep 的 `scan.sizes.scope_unavailable`（带 reason）。
+ *
+ * ⭐ **一致性保险**（`consistencyCheck`）：定期拿**配置**与「尺码管理」表比对，
+ *    不一致就 `logWarn('scan.size_consistency.mismatch')`（例如表里加了 49 码而配置没跟）。
+ *    ⚠️ 它是**定期**的（TTL 内一次都不读那张表），不是每次扫码都读 ——
+ *    否则这次提速就白做了（真机一次往返 1.5~2.5 秒）。
+ */
+const SIZE_SEGMENTS = Object.freeze({
+  ranges: Object.freeze({
+    A: Object.freeze({ label: '男', from: 38, to: 48 }),
+    B: Object.freeze({ label: '女', from: 34, to: 43 }),
+  }),
+  consistencyCheck: Object.freeze({
+    enabled: readFlag(process.env, 'SCAN_PAGE_SIZE_CONSISTENCY_CHECK_ENABLED', true),
+    // 两次比对之间的最小间隔（默认 10 分钟）。`0` = 每次都查（只建议排查时用）。
+    ttlMs: readInt(process.env, 'SCAN_PAGE_SIZE_CONSISTENCY_TTL_MS', 600000, { min: 0, max: 86400000 }),
+  }),
+});
+
+/**
+ * ⭐⭐ 2026-10-09（业务负责人定）：**单价以「货品信息」为唯一真源**，
+ *   把「货品信息」整表进内存索引（按编号）⇒ 扫码时单价**零飞书调用**。
+ *
+ * ⚠️ 与她否掉的方案的区别：**不是**改成读「实时库存」的单价列
+ *    （那会造成同一款多份单价、改价要批量改、容易不一致）。
+ *
+ * 机制与「实时库存」快照**完全同一套**（`services/liveInventorySnapshot.js` 那个工厂，
+ * 传 `tableKey: 'product'`）：后台定期整表拉一次 + **写操作立刻失效**；
+ * 未就绪 / 过期 / 刷新失败 ⇒ **回退现有过滤读**（行为与提速前逐字一致）。
+ */
+const PRODUCT_SNAPSHOT = Object.freeze({
+  enabled: readFlag(process.env, 'SCAN_PAGE_PRODUCT_SNAPSHOT_ENABLED', true),
+  refreshIntervalMs: readInt(process.env, 'SCAN_PAGE_PRODUCT_SNAPSHOT_REFRESH_MS', 60000, { min: 1000, max: 3600000 }),
+  maxAgeMs: readInt(process.env, 'SCAN_PAGE_PRODUCT_SNAPSHOT_MAX_AGE_MS', 300000, { min: 1000, max: 7200000 }),
+  // 整张「货品信息」的记录数上限（线上约 2 万行）：超了**不作快照**（回退过滤读 + warn）。
+  maxRecords: readInt(process.env, 'SCAN_PAGE_PRODUCT_SNAPSHOT_MAX_RECORDS', 50000, { min: 1, max: 1000000 }),
+  refreshOnInvalidate: readFlag(process.env, 'SCAN_PAGE_PRODUCT_SNAPSHOT_REFRESH_ON_INVALIDATE', true),
+});
+
+/**
  * 结构化日志事件名（**只读**链路：只有"看了 / 没找到 / 降级 / 出错"，没有任何写入事件）。
  * 取值放这里，是为了让她那边的现象能在 PM2 日志里按一个词 grep 到。
  * `cacheHit` / `cacheMiss` 是 2026-10-08 提速时加的：一条 `cache_hit: true/false` 就能回答
@@ -306,6 +351,9 @@ const EVENTS = Object.freeze({
   snapshotFailed: 'scan.snapshot.refresh_failed',
   snapshotMiss: 'scan.snapshot.miss',
   snapshotInvalidated: 'scan.snapshot.invalidated',
+  // ⭐ 2026-10-09：**配置里的尺码段**与「尺码管理」表比对不一致（例如表里加了 49 码）——
+  //    只 warn，不改配置、不改表（配置先行；这条日志是给她/我们的排查线索）。
+  sizeConsistencyMismatch: 'scan.size_consistency.mismatch',
 });
 
 const SCAN_PAGE = Object.freeze({
@@ -320,6 +368,9 @@ const SCAN_PAGE = Object.freeze({
   reads: READS,
   cache: CACHE,
   snapshot: SNAPSHOT,
+  // ⭐ 2026-10-09 新增两块（都由她在 2026-10-09 拍板）：
+  sizeSegments: SIZE_SEGMENTS,
+  productSnapshot: PRODUCT_SNAPSHOT,
   events: EVENTS,
 });
 

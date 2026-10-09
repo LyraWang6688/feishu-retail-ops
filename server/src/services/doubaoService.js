@@ -632,12 +632,16 @@ const normalizeSalesResult = (result = {}, sourceText = '', { vouchers = [] } = 
 // 「采购到货 → 拍照识别」链路退场删除（2026-10-05）。
 //
 // 为什么删：这条链路整段不存在了（入口、卡片、字段都撤了），留在 service 里
-// 只会让人以为"还有一条图片识别的路可走"。文字解析（parseSalesText /
-// parsePurchaseReportText）完全没动，下面这个 class 只剩文字一组。
+// 只会让人以为"还有一条图片识别的路可走"。
+//
+// ⚠️ 2026-10-09 再收窄一次：**采购那一半（`parsePurchaseReportText`）也退场了**
+//    （「信息填写」整表被删 ⇒ 「自然语言 ＋ AI 录入」整套退场）。
+//    ⇒ 下面这个 class 现在**只剩销售一组文字解析**（`parseSalesText` 与到货核对解析）。
 
 /**
- * Doubao 文字解析服务：销售录单（parseSalesText）与采购报单数量说明
- * （parsePurchaseReportText）。视觉识别已随到货识别链路退场，不再有 vision 这一组。
+ * Doubao 文字解析服务：销售录单（`parseSalesText`）、到货核对解析、
+ * 9 点推送/待处理候选的口径（都属于**销售/到货**那两条现役链路）。
+ * 视觉识别（2026-10-05）与采购报单数量说明解析（2026-10-09）都已退场。
  */
 class DoubaoService {
   constructor() {
@@ -833,60 +837,14 @@ class DoubaoService {
     }
   }
 
-  async parsePurchaseReportText(text, { selectedSizes = [] } = {}) {
-    const llm = this.resolveModel('text');
-    const originalText = String(text || '').trim();
-    if (!originalText) throw new Error('采购报单说明不能为空');
-    const allowedSizes = selectedSizes.map(Number);
-    if (!allowedSizes.length || allowedSizes.some((size) => !Number.isSafeInteger(size) || size <= 0)) {
-      throw new Error('采购报单已选尺码必须是正整数');
-    }
-    const prompt = `
-你是鞋店采购数量说明解析助手。表单已经明确勾选尺码：${allowedSizes.join('、')}。
-请只从数量说明中识别“数量不是默认一双”的例外，不要补充未勾选尺码，也不要输出没有特别说明的尺码。
-输出格式：{"items":[{"size":39,"quantity":1}]}
-规则：
-1. 数量说明没有提到的已选尺码由后端保持默认一双，不需要输出。
-   ⚠️ 但“她明确说了数量”时必须输出，哪怕数量就是 1，也不许当成“没提到”：
-   例如“1 双”“一双”都是**明确说了数量**，必须输出这一条；
-   只有“完全没提数量”（例如只说“38 码”）才算没提到。
-   ⚠️ 前提是那个数量确实是**正整数**：0 双、2.5 双这类不是正整数，按规则 5 处理。
-2. 如果说明是在确认“全部按默认一双”（例如“各一双”“每个码一双”“都是一双”“1 双”“一双”“按默认来”），
-   必须输出全部已选尺码且数量都是 1，不能返回空数组——这种情况数量是明确的，不是语义不明确。
-3. “40两双”只输出40码数量2；“每个码两双”输出全部已选尺码数量2。
-   ⚠️ 两位数要**看全**：“10 双”= 10、“12 双”= 12、“20 双”= 20；
-   数字里有 0 **不等于**数量是 0，也不许看漏 0 当成 1。
-4. 只能输出已选尺码列表中的正整数尺码；禁止输出42.5等小数尺码。
-5. 数量必须是正整数。**只有**说明里那个数量本身就是 0 或小数时（例如“0 双”“2.5 双”“一双半”），
-   **不要四舍五入、也不要替她猜一个整数**，返回空数组 {"items":[]}——由后端拒绝整条报单；
-   “10 双”“20 双”是正常的两位数，**必须正常输出**，不要当成 0。
-   只有在完全无法判断数量时才返回空数组，不得猜测。
-6. 只输出 JSON，不输出 Markdown 或说明。
-数量说明：${originalText}`.trim();
-    const response = await this.getClient('text').chat.completions.create({
-      model: llm.model,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0,
-      response_format: { type: 'json_object' },
-    });
-    const content = response.choices?.[0]?.message?.content || '';
-    try {
-      const parsed = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
-      const items = Array.isArray(parsed) ? parsed : parsed.items;
-      if (!Array.isArray(items) || !items.length) throw new Error('未识别出有效尺码数量');
-      return items.map((item) => {
-        const size = Number(item.size);
-        const quantity = Number(item.quantity);
-        if (!Number.isSafeInteger(size) || size <= 0 || !allowedSizes.includes(size)) {
-          throw new Error(`数量说明包含未勾选或无效的尺码：${item.size}`);
-        }
-        if (!Number.isSafeInteger(quantity) || quantity <= 0) throw new Error('采购数量必须是正整数');
-        return { size, quantity };
-      });
-    } catch (error) {
-      throw new Error(`采购报单解析失败: ${error.message}`);
-    }
-  }
+  // ⛔ `parsePurchaseReportText`（采购「数量说明」→ 尺码/数量）**已删除（2026-10-09）**。
+  //
+  // 它唯一的调用方是 `PurchaseWebhookService.parseReportQuantities`（供应商文字报单
+  // → AI 解析那一段）—— 业务负责人把「信息填写」表整个删掉、口径是
+  // **「自然语言 ＋ AI 录入」整套退场** ⇒ 这条提示词与它的解析路径一并删除。
+  // ⚠️ **销售那一半（`parseSalesText`）一行没动**：它走的是群聊自然语言录入那条现役链路。
+  // ⚠️ 恢复 = 重新实现（从 git 历史取回；`git log -S 'parsePurchaseReportText'`）。
+
 
   /**
    * 「采购到货核对」解析：把她在群话题里说的自然语言，解析成
