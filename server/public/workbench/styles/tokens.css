@@ -1,17 +1,70 @@
+/*
+ * ⭐⭐ 工作台**唯一的主题真源**（业务负责人 2026-10-09：「现在这个**不太美观**」）。
+ *
+ * 她拿到「库存 / 销售查询」多维表格 AI 页面的截图之后，**只改这一个文件**就能对齐配色 ——
+ * 所以**配色 / 间距 / 圆角 / 字号**全部是这里的 CSS 变量，别的文件里**一个都不许写死**：
+ *   · `styles/base.css` 与各 feature 的 CSS **只用 `var(--…)`**；
+ *   · 服务端渲染的扫码页（`src/views/scanPageRenderer.js`）**在渲染时把本文件的变量内联进
+ *     `:root`**（见 `readThemeTokens()`）—— 所以改这里，工作台与扫码页**一起变**。
+ *   ⚠️ 判据（有测试钉着）：本文件以外的工作台 CSS 里**不许出现十六进制颜色**。
+ *
+ * 分四族（改外观时按族找，别一处处翻）：
+ *   ① 颜色 —— `--primary*` / `--text*` / `--surface*` / `--border*` / 语义色
+ *   ② 间距 —— `--space-*`（4 的倍数）
+ *   ③ 圆角 —— `--radius-*`
+ *   ④ 字号 —— `--font-size-*` / `--line-height*` / `--weight-*`
+ * 另外两条是"尺寸与手感"：`--control-height`（手机上 ≥44px 命中区）、`--shell-max` / `--page-max`。
+ */
 :root {
   color-scheme: light;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+
+  /* ── ④ 字体 ────────────────────────────────────────────────────────────── */
+  --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-md: 14px;
+  --font-size-base: 16px;
+  --font-size-lg: 18px;
+  --font-size-xl: 21px;
+  --font-size-2xl: 24px;
+  --font-size-3xl: 28px;
+  --line-height: 1.5;
+  --line-height-tight: 1.35;
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-bold: 600;
+
+  /* ── ② 间距（4 的倍数）────────────────────────────────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* ── ③ 圆角 ────────────────────────────────────────────────────────────── */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  /* ── ① 颜色：主色只有一个 ─────────────────────────────────────────────── */
   --primary: #185abd;
   --primary-hover: #154ea8;
   --primary-soft: #edf4ff;
+  /* 深浅文字层级：正文最深、次要、最浅（说明小字） */
   --text: #172033;
   --text-secondary: #65728a;
   --text-muted: #768198;
   --border: #e3e8f0;
   --border-light: #edf0f5;
+  /* 浅灰底 + 白卡片（她说的"干净、现代"） */
   --background: #f5f7fb;
   --surface: #ffffff;
   --surface-soft: #f7f9fc;
+  --surface-sunken: #fafbfc;
+  /* 语义色（成功 / 提醒 / 危险 / 信息）—— 每个都配一个浅底 */
   --success: #15803d;
   --success-soft: #dcfce7;
   --warning: #b45309;
@@ -20,8 +73,32 @@
   --danger-soft: #fee2e2;
   --info: #0369a1;
   --info-soft: #e0f2fe;
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 14px;
+  /* 表单控件描边 / 占位文字 */
+  --control-border: #d6dce8;
+  --placeholder: #a9aeb8;
+  --error-surface: #fff0ee;
+  --error-text: #b91c1c;
+  --warning-text: #8a5a00;
+  --warning-surface: #fff7dd;
+
+  /* ── 尺寸与手感 ────────────────────────────────────────────────────────── */
+  --control-height: 44px;   /* 手机上按钮 / 输入框的命中区下限（她只在手机上用） */
+  --card-pad: var(--space-5);
+  --card-pad-mobile: var(--space-4);
+  --shell-max: 1280px;
+  --page-max: 480px;        /* 扫码页 / 单列阅读的最大宽度 */
   --shadow-card: 0 4px 16px rgba(37, 56, 88, 0.05);
+  --shadow-pop: 0 8px 24px rgba(37, 56, 88, 0.12);
+
+  /* ── 标签打印（40×30mm 纸上的墨色；页面里的字节大小来自服务端 config/labelPrint.js）── */
+  --label-outline: #b9c2d4;
+  --label-outline-strong: #c8cede;
+  --label-brand: #8a8f99;
+  --label-ink: #333333;
+}
+
+html {
+  font-family: var(--font-family);
+  line-height: var(--line-height);
+  -webkit-text-size-adjust: 100%;
 }

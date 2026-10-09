@@ -4,61 +4,61 @@
 
 ## 页面入口
 
-一级 tab 只有 **2 个**（业务负责人 2026-10-08 定的）：
+一级 tab = **四个业务领域**（业务负责人 **2026-10-09** 定的**最终结构**，逐字：
+「我们就按照**四个 tab 页**来规划：**销售、采购、库存和货品**……
+Tab 页的顺序从左往右是：**销售、库存、采购和货品**」）：
 
-| 一级 tab | `data-module` | 面板内容 | 独立页面 |
+| 一级 tab | `data-module` | 子页面 | 落到哪 |
 | --- | --- | --- | --- |
-| **信息录入**（原「常用功能」**只改名**） | `common` | 两张入口卡（见下） | `common.html` |
-| **信息查询**（新） | `query` | **两个板块**：销售查询 · 库存查询 —— 各一张**飞书多维表格网页外链卡** | 无（**不为查询自建页面**） |
+| **销售** | `sales` | ① 销售建单 ② 订单列表（补充信息单 ｜ 待交割单 ｜ 售后列表）③ 销售查询 | 扫码页的**销售领域**（`/s/{编号}?from=sales`）· 既有订单模块（`mode: 'sales'`）· 多维表格外链 |
+| **库存** | `inventory` | ① 单款查询 ② 全仓查询 ③ 手工调整 | 扫码页的**库存领域**（`?from=inventory`）· 多维表格外链 · 既有「库存手工调整」模块（内嵌） |
+| **采购** | `purchase` | ① 报货 / 验收 / 退货 ② 采购订单列表 | 两个飞书表单 +「验收到货」跳子页 · 既有订单模块（`mode: 'purchase'`） |
+| **货品** | `product` | ① 货品上新 ② 标签打印（单个 + 批量） | 飞书表单外链 · 既有标签打印页（单个带 `?keyword=<货号>`） |
 
-> ⚠️ **一级 tab 的文案 / 顺序 / `data-module` 的唯一来源是 `config/tabs.js` 的 `MAIN_TABS`**
-> （**配置先行**）：`index.html` 里的 `<nav id="main-tabs">` 是**空的**，由 `main.js` 用
-> `core/tabs.js` 的 `mainTabsHtml()` 渲染进来；**改 tab 名字 / 加减 tab 只改配置**。
-> `index.html` 里**不许**再硬编码 `main-tab` 按钮（有测试守着）。
+> ⚠️ **子页面清单的唯一来源是 `config/domains.js`**（**配置先行**：加减子页 / 改文案 / 换链接只改它）；
+> 渲染与切换在 `features/domains/`（`index.js` 挂模块、`nav.js` 画子 tab、`pages.js` 画三类静态子页）。
+> ⚠️ **一级 tab 的文案 / 顺序 / `data-module` 的唯一来源是 `config/tabs.js` 的 `MAIN_TABS`**：
+> `index.html` 里的 `<nav id="main-tabs">` 是**空的**，由 `main.js` 用 `core/tabs.js` 的
+> `mainTabsHtml()` 渲染进来；`index.html` 里**不许**再硬编码 `main-tab` 按钮（有测试守着）。
 > 渲染与事件绑定**都排在 `requireFeishuAuth` 之前** —— 保住 2026-10-06 那条修复
-> （鉴权 401 时 tab 也要能点）。默认打开的是**第一个** = 信息录入。
+> （鉴权 401 时 tab 也要能点）。默认打开的是**第一个** = 销售。
 
-### ① 信息录入（原「常用功能」）
+### 旧入口：一个都没删（页脚 →「其它 / 历史功能」）
 
-入口卡片由 `config/home.js` 的 `COMMON_ENTRIES` 决定（名称 / 图标 / 目标 / 顺序）。
-⭐ **只有两张卡：报货与退货 + 库存手工调整**（业务负责人 2026-10-08 拍板 **ⓐ**，逐字：
-「ⓐ（另一种）：**采购卡继续点一次直达报货表单**，只删退货那张卡……
-现在就是按照原来一样，**采购和退货用的是一个表单**，所以你那个点击卡片上应该是"**报货与退货**"」）——
-所以**不再有「退货」那张独立卡**，【报货与退货】那一张卡**直连报货飞书表单外链**
-（`config/links.js` 的 `PURCHASE_REQUEST_FORM_URL`）：**点一次直达**，不再经过内页。
-口径与取舍见 `docs/workbench-report-return-direct-form-2026-10-08.md`。
+业务负责人 2026-10-09：「**其余旧功能不删**：集中到一个**不显眼的"其它/历史功能"入口**
+（例如页脚一行，点开一个独立页列出它们）」。
 
-它下面还有两个子页（**旧收藏仍然能开**）：
+- 首页页脚那一行 → `/workbench/others.html`（清单在 `config/others.js`，模块 `features/others/`）：
+  - 📋 **信息录入**（原「常用功能」首页，**内容一个字没动**）→ `common.html`（`config/home.js` 的三张卡：
+    报货与退货 / 库存手工调整 / 鞋盒标签打印）
+  - 🚚 **采购管理**（原一级 tab：报货信息情况 / 到货验收情况两个查询面板）→ `purchase.html`
+    （模块还是 `features/purchase/index.js`）
+  - 🧮 库存手工调整 · 🛒 采购和退货 · 🏷️ 鞋盒标签打印 —— 三个独立页的老链接照旧能开
+  - 一直只是占位的 **资金管理 / 抖音运营 / 平台管理**：模块代码仍在 `main.js` 的 `modules` 表里，
+    「其它」页如实列出来（标着"规划中"）
+- 原「信息查询」的**两个板块**没有被丢掉，而是各回各的领域：
+  `sales-query` → 销售 · 销售查询；`inventory-query` → 库存 · **全仓查询**（清单仍在 `config/query.js`，
+  URL 仍只在 `config/links.js`：`SALES_QUERY_PAGE_URL` / `INVENTORY_QUERY_PAGE_URL`）。
+  ⚠️ 这一维**不新增任何接口 / 页面**（渲染层一次 `fetch` 都没有，有测试守着）。
+- 原「订单列表」也是同一个模块（`features/orders/`）挂两处：销售 tab 只看销售、采购 tab 只看采购
+  （`createOrdersModule({ mode })`，`mode` 由 `config/domains.js` 给）。
 
-- `/workbench/inventory-adjustment.html`：库存手工调整（盘点调整 / 换季调整）
-- `/workbench/purchase-return.html`：采购和退货（**两个飞书表单外链**，不做查询）——
-  ⚠️ 首页那张卡**不再走它**，但**它没删**：不带参数打开时，默认仍然把
-  「报货」「退货」两张表单卡都显示出来（老链接继续可用）。
-  （2026-10-07 拆分那份留档见 `docs/workbench-purchase-return-split-2026-10-07.md`；
-   2026-10-08 合并那份留档见 `docs/workbench-purchase-return-merge-2026-10-08.md`。）
+> 口径与逐条对照：`test/workbenchFourTabs.test.js`（AC1–AC7）+ `test/workbenchTwoTabsAndQueryEntries.test.js`
+> + `test/workbenchOrders.test.js`。**本文件不改 `docs/`**。
 
-### ② 信息查询（2026-10-08 新增）
+### 扫码页的领域切换（一个二维码，四个领域）
 
-⭐ 业务负责人逐字：「**2. 信息查询**：整合已有的两个 tab 页，放到同一个 tab 页里的**两个板块**，
-即"销售查询"和"库存查询"」·「目前我采用的并不是我们自己搭建的页面，而是**多维表格里的页面**……
-**销售查询和库存查询点开也是多维表格上的一个网页**。⇒ 在这个维度上我们**不用自己搭建接口**」。
+`GET /s/:number` **一个字没改**（路由与 `config/scanPage.js` 都不动），顶部多了一排**领域切换**：
+`?from=sales|inventory|purchase|product`（**缺省 = 销售**）。四个领域的操作块**全都渲染进 HTML**，
+由 CSS 按 `<html data-realm="…">` 只显示当前领域；那一行属性由页面 `<head>` 里一小段内联脚本
+在 body 解析前从 `location.search` 读出来（实现与取舍见 `src/views/scanPageRealm.js`）。
+⇒ 既有扫码页用例断言的那些 HTML 片段（两个写入口、库存表、结果页）**一个都没少**。
 
-- 清单在 `config/query.js` 的 `QUERY_SECTIONS`（两个板块），**URL 只来自 `config/links.js`**：
-  `SALES_QUERY_PAGE_URL` / `INVENTORY_QUERY_PAGE_URL`。
-- ⚠️ **两个 URL 现在还是空串 + TODO**（等她给）。空值的**明确行为**：
-  `features/query/index.js` 渲染成 `<div class="entry-card disabled-card">`（**不是 `<a>`**）、
-  卡面 arrow = **「链接待配置」** ⇒ **不产生空 `href`、点了不跳空链接、不报错**。
-  拿到 URL 后**只改 `config/links.js` 两行**。
-- ⚠️ 这一维**不新增任何接口 / 页面**（渲染层一次 `fetch` 都没有，有测试守着）。
+### 主题（要改配色只改一个文件）
 
-其它入口：
-
-- `/workbench/`：完整经营工作台（一级 tab + 各模块面板）。
-
-### 隐去的入口（代码保留）
-
-`config/tabs.js` 的 `MAIN_TABS` 里**没有**「采购管理 / 资金管理 / 抖音运营 / 平台管理」四个 tab，
-但它们的模块仍注册在 `main.js` 的 `modules` 表里。恢复某个入口 = 在 `MAIN_TABS` 里加回一行，逻辑不用改。
+`styles/tokens.css` 是**唯一的主题真源**：配色 / 间距 / 圆角 / 字号 / 命中区（`--control-height: 44px`）。
+其余工作台 CSS **只许用 `var(--…)`**（一个十六进制颜色都不许有，有测试守着）；
+扫码页在渲染时**把同一份令牌内联进 `:root`** ⇒ 改那一个文件，工作台与扫码页一起变。
 
 ### 2026-10-08 删掉的（自建的销售 / 库存查询面）
 
@@ -75,25 +75,37 @@
 ## 目录边界
 
 - `core/`：登录、HTTP 请求、格式化、一级 tab 渲染（`tabs.js`）和通用交互。
-- `config/`：前端配置 —— `tabs.js`（一级 tab 文案 / 顺序）· `links.js`（飞书表单与查询页外链）·
-  `home.js`（信息录入的入口清单）· `query.js`（信息查询的两个板块）。
-  **配置先行** —— 换链接 / 改 tab 名 / 加减少一个入口只改这里，页面模块不写死 URL 与清单。
-- `features/<domain>/`：录入、采购、库存、查询等业务模块；模块不得查询其他模块的 DOM。
+- `config/`：前端配置 —— `tabs.js`（一级 tab 文案 / 顺序）· **`domains.js`（四个领域的子页面清单）** ·
+  `links.js`（飞书表单与查询页外链）· `home.js`（原「信息录入」首页的入口清单）·
+  `query.js`（两个多维表格查询板块）· `others.js`（「其它 / 历史功能」的遗留入口）·
+  `orders.js`（订单列表的分组 / 文案 / 接口路径）。
+  **配置先行** —— 换链接 / 改 tab 名 / 加减一个入口只改这里，页面模块不写死 URL 与清单。
+- `features/<domain>/`：录入、采购、库存、查询、标签等业务模块；模块不得查询其他模块的 DOM。
+- `features/domains/`：**四个领域 tab 的骨架**（子 tab + 子页面；业务逻辑一行都没有）。
+- `features/others/`：「其它 / 历史功能」页。
 - `features/shared/`：无业务状态的共享视图。
-- `styles/`：设计变量和全局布局；业务模块样式与模块放在一起。
+- `styles/`：**主题变量（`tokens.css`）** 和全局布局；业务模块样式与模块放在一起。
 - `main.js`：模块注册和一级导航，不承载业务规则。
 - `standalone.js`：独立入口的共享启动器（页面用 `<body data-view="...">` 声明自己是谁）。
+
+## 移动端优先（硬要求）
+
+业务负责人 2026-10-09：「工作台**一定要对移动端友好**，而且我觉得现在这个**不太美观**」。
+
+- **默认样式就是手机**：单列卡片、按钮 / 输入框 ≥ `--control-height`(44px)、不横向滚动、
+  长文本 `overflow-wrap: anywhere`；桌面（`@media (min-width: 761px)`）才铺成多列。
+- 领域页与订单列表**一律不用 `<table>`**（旧查询页那种表格只留在「其它」里，窄屏会折成卡片）。
+- 静态哨兵：`test/workbenchFourTabs.test.js` 的 AC4。
 
 ## 新增模块
 
 1. 在 `features/<module>/` 中实现 `createXxxModule()`，返回包含 `mount(container)` 的对象。
 2. 在 `main.js`（完整工作台）和/或 `standalone.js`（独立页面）注册模块；
-   要在**一级 tab** 露出来，再去 `config/tabs.js` 的 `MAIN_TABS` 加一条。
+   要在**一级 tab** 露出来，再去 `config/tabs.js` 的 `MAIN_TABS` 加一条，
+   **子页面**再加到 `config/domains.js` 对应领域里。
 3. 模块通过 `core/api-client.js` 调用已约定的后端接口。
 4. 新接口或响应字段先更新 `docs/workbench-query-contract.md` 和后端测试。
 5. 无后端能力的功能必须明确显示“规划中”，不能放演示数据或无效按钮。
-
-移动端查询表格使用 `.mobile-card-table` 和单元格 `data-label`，桌面端保持表格，窄屏自动切换为卡片。
 
 ## 库存手工调整的两个硬约束（改这一块之前先读）
 

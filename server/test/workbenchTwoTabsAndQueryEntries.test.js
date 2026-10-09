@@ -121,31 +121,37 @@ function parseEntryBlocks(html) {
 }
 
 // ── AC1：一级 tab ────────────────────────────────────────────────────────────
-// ⚠️ 2026-10-09 修订（**不是把 2026-10-08 的口径推翻**）：业务负责人当天要的
-//    「订单列表」是**新增的第三个**一级 tab —— 前两个（信息录入 / 信息查询）**一个字没动**
-//    （信息查询仍然是飞书外链卡，没有自建查询接口）。
-//    她的原话：「我们建一个**订单列表**吧……订单列表实际上就是**看销售情况**」。
-//    ⇒ 这条断言从"只有 2 个"改成"前两个逐字不变 + 末尾追加「订单列表」"。
-//    新 tab 自己的验收标准在 `test/workbenchOrders.test.js`（AC1–AC8）。
+// ⚠️ 2026-10-09 **最终结构**（业务负责人当天定的）：一级 tab 从"按动作"改成"按业务领域"——
+//    「我们就按照**四个 tab 页**来规划：销售、采购、库存和货品……Tab 页的顺序从左往右是：
+//     **销售、库存、采购和货品**」。
+//    ⇒ 这条断言第三次改写：**2 个 → 3 个 → 4 个（按领域）**。
+//    前两次的口径**不是被推翻，而是被收编**：
+//      · 「信息查询」的两个板块 → 拆进「销售 · 销售查询」「库存 · 全仓查询」（AC3/AC4/AC5 照旧管它们）；
+//      · 「订单列表」→ 拆进「销售 · 订单列表」「采购 · 采购订单列表」；
+//      · 「信息录入」（原「常用功能」）首页 → 原样在 `/workbench/common.html`，
+//        从首页页脚的「其它 / 历史功能」进（AC2 照旧钉着它里面的三张卡）。
+//    新增的验收标准（四个 tab 的子页面映射 / 移动端 / 扫码页领域切换 / 主题变量）在
+//    `test/workbenchFourTabs.test.js`（AC1–AC7）。
 
-test('AC1 一级 tab：前两个逐字「信息录入」「信息查询」不变，2026-10-09 末尾追加「订单列表」', async () => {
+test('AC1 一级 tab = 四个业务领域，顺序逐字「销售 · 库存 · 采购 · 货品」（配置先行）', async () => {
   const modules = loadFrontendModules();
   const [tabs, coreTabs] = await Promise.all([modules.tabs, modules.coreTabs]);
 
   assert.deepEqual(tabs.MAIN_TABS, [
-    { module: 'common', label: '信息录入' },
-    { module: 'query', label: '信息查询' },
-    { module: 'orders', label: '订单列表' },
-  ], '前两个 tab 逐字不变；2026-10-09 追加「订单列表」（文案的单一来源仍是 config/tabs.js）');
+    { module: 'sales', label: '销售' },
+    { module: 'inventory', label: '库存' },
+    { module: 'purchase', label: '采购' },
+    { module: 'product', label: '货品' },
+  ], '四个领域 tab，顺序 = 业务负责人 2026-10-09 念的顺序（文案的单一来源仍是 config/tabs.js）');
 
   const html = coreTabs.mainTabsHtml();
   const buttons = [...html.matchAll(/<button class="([^"]*)" type="button" data-module="([^"]*)">([^<]*)<\/button>/g)];
-  assert.equal(buttons.length, 3, 'nav 里 3 个 tab 按钮（信息录入 / 信息查询 / 订单列表）');
-  assert.deepEqual(buttons.slice(0, 2).map((button) => button[3]), ['信息录入', '信息查询'], '前两个 tab 文案逐字不变');
-  assert.deepEqual(buttons.map((button) => button[3]), ['信息录入', '信息查询', '订单列表']);
-  assert.deepEqual(buttons.map((button) => button[2]), ['common', 'query', 'orders'], 'data-module 仍是既有机制');
-  assert.ok(buttons[0][1].includes('active'), '默认打开的 tab = 第一个（信息录入，与 2026-10-08 一致）');
-  assert.ok(!buttons[1][1].includes('active') && !buttons[2][1].includes('active'), '只有第一个带 active');
+  assert.equal(buttons.length, 4, 'nav 里 4 个 tab 按钮（销售 / 库存 / 采购 / 货品）');
+  assert.deepEqual(buttons.map((button) => button[3]), ['销售', '库存', '采购', '货品']);
+  assert.deepEqual(buttons.map((button) => button[2]), ['sales', 'inventory', 'purchase', 'product'], 'data-module 仍是既有机制');
+  assert.ok(buttons[0][1].includes('active'), '默认打开的 tab = 第一个（销售）');
+  assert.ok(!buttons[1][1].includes('active') && !buttons[2][1].includes('active') && !buttons[3][1].includes('active'),
+    '只有第一个带 active');
 });
 
 test('AC1b index.html：nav 留空（文案不在 HTML 里再写一遍）、不再加载已删的销售/库存样式', () => {
@@ -161,19 +167,24 @@ test('AC1b index.html：nav 留空（文案不在 HTML 里再写一遍）、不�
   assert.ok(!html.includes('features/inventory/inventory.css'), '实时库存样式已随页面一起删');
 });
 
-// ── AC3 / AC4 / AC5：信息查询的两个板块 = 两张外链卡 ──────────────────────────
+// ── AC3 / AC4 / AC5：两个查询板块 = 两张外链卡（2026-10-09 起各回各的领域）─────────
+// ⚠️ 这两条 URL / 两个板块本身**一个字没变**，只是**不再同属一个「信息查询」tab**：
+//    · `sales-query`     → 「销售」tab · ③ 销售查询（文案不变）
+//    · `inventory-query` → 「库存」tab · ② **全仓查询**（她这次的叫法是「全仓查询」；URL 没换）
+//    子页面清单与顺序在 `config/domains.js`（按 id 引用这里的板块）；
+//    四个 tab 的映射验收标准见 `test/workbenchFourTabs.test.js` 的 AC2。
 
-test('AC3 信息查询 = 两个板块：销售查询 / 库存查询，各一张卡', async () => {
+test('AC3 两个查询板块：销售查询 / 全仓查询，各一张卡', async () => {
   const modules = loadFrontendModules();
   const [query, html] = await Promise.all([
     modules.query,
     render(modules.queryIndex, 'createQueryModule'),
   ]);
 
-  assert.deepEqual(query.QUERY_SECTIONS.map((section) => section.title), ['销售查询', '库存查询'],
-    '「信息查询」里必须正好是这两个板块，顺序也是这个');
+  assert.deepEqual(query.QUERY_SECTIONS.map((section) => section.title), ['销售查询', '全仓查询'],
+    '两个板块（业务负责人 2026-10-09 把库存那一张改叫「全仓查询」）');
   const blocks = parseEntryBlocks(html);
-  assert.deepEqual(blocks.map((block) => block.title), ['销售查询', '库存查询'],
+  assert.deepEqual(blocks.map((block) => block.title), ['销售查询', '全仓查询'],
     '两个板块各一张卡（渲染出来的标题逐字）');
   assert.ok(html.includes('信息查询'), '面板标题 = 信息查询');
 });

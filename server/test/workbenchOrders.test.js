@@ -657,8 +657,8 @@ test('AC9 订单列表内部两个子 tab：销售 / 采购 —— 选中态与�
   assert.ok(!/main-tab|MAIN_TABS/.test(source), '子 tab 的实现不许碰一级 tab');
   assert.ok(source.includes('data-subtab'), '子 tab 走容器上的 data-subtab 事件委托');
   assert.ok(source.includes('resolveSubTab('), '切换必须走那个纯状态机（不是就地改字符串）');
-  // 一级 tab 清单仍是逐字三个（与 workbenchTwoTabsAndQueryEntries.test.js 的 AC1 同一口径）
-  assert.deepEqual((await loadFrontendTabs()).map((tab) => tab.label), ['信息录入', '信息查询', '订单列表']);
+  // 一级 tab 清单仍是逐字四个业务领域（2026-10-09 最终结构；与 workbenchFourTabs.test.js 的 AC1 同一口径）
+  assert.deepEqual((await loadFrontendTabs()).map((tab) => tab.label), ['销售', '库存', '采购', '货品']);
 });
 
 /** 一级 tab 清单（只读 config/tabs.js；用来证明子 tab 那件事没动它）。 */

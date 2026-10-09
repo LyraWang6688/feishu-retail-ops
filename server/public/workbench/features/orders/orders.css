@@ -18,6 +18,12 @@
 .order-group-head .muted { font-size: 12px; }
 .order-group .empty.compact { margin: 0; }
 
+/* ⭐ 2026-10-09（她定的最终结构）：订单列表内部**三份单子** —— 补充信息单 ｜ 待交割单 ｜ 售后列表。
+   一列到底（标题 + 卡片），窄屏不横向滚动；「待交割单」里再按既有的三类细分展示。 */
+.orders-sections { display: grid; gap: 20px; min-width: 0; }
+.order-section { display: grid; gap: 10px; min-width: 0; }
+.order-section .order-group-head h3 { font-size: 16px; }
+
 .order-card {
   display: grid;
   gap: 12px;
