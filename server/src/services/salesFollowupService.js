@@ -58,15 +58,25 @@ class SalesFollowupService {
               platform_pending_amount: progress.platformPendingAmount,
               pending_delivery_quantity: progress.pendingDeliveryQuantity,
               details: await Promise.all(orderDetails
-                .map(async (detail) => ({
-                  record_id: detail.record_id,
-                  product: productById.get(linkedRecordIds(detail.fields?.[detailFields.product])[0]) || '',
-                  size: (await this.getSizeReferences().resolveLinkedCell(detail.fields?.[detailFields.size])).size,
-                  quantity: 1,
-                  delivered_quantity: textValue(detail.fields?.[detailFields.fulfillmentStatus]) === '已交付' ? 1 : 0,
-                  fulfillment_status: textValue(detail.fields?.[detailFields.fulfillmentStatus]) || '未交付',
-                  actual_amount: textValue(detail.fields?.[detailFields.actualAmount]) === '' ? null : Number(textValue(detail.fields?.[detailFields.actualAmount])),
-                }))),
+                .map(async (detail) => {
+                  // ⭐ 2026-10-09（工作台订单列表要"点进去操作"）：
+                  //   明细上多带两个**只读的关联 record_id**（货品 / 尺码），页面才能把
+                  //   「换货同款换码」「售后指哪一条明细」原样交给既有业务层。
+                  //   ⚠️ 纯新增字段：既有字段名与取值一个字节没动（既有用例仍逐条断言）。
+                  const sizeEntry = await this.getSizeReferences()
+                    .resolveLinkedCell(detail.fields?.[detailFields.size]);
+                  return {
+                    record_id: detail.record_id,
+                    product: productById.get(linkedRecordIds(detail.fields?.[detailFields.product])[0]) || '',
+                    product_record_id: linkedRecordIds(detail.fields?.[detailFields.product])[0] || '',
+                    size: sizeEntry.size,
+                    size_record_id: sizeEntry.recordId || '',
+                    quantity: 1,
+                    delivered_quantity: textValue(detail.fields?.[detailFields.fulfillmentStatus]) === '已交付' ? 1 : 0,
+                    fulfillment_status: textValue(detail.fields?.[detailFields.fulfillmentStatus]) || '未交付',
+                    actual_amount: textValue(detail.fields?.[detailFields.actualAmount]) === '' ? null : Number(textValue(detail.fields?.[detailFields.actualAmount])),
+                  };
+                })),
               payments: orderPayments
                 .map((payment) => ({
                   record_id: payment.record_id,

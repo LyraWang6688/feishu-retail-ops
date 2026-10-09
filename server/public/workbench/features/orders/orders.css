@@ -1,0 +1,126 @@
+/* 工作台【订单列表】的样式 —— 移动端友好是硬要求（业务负责人 2026-10-09）：
+   「工作台要对移动端友好」。
+   三条原则：
+     · 一列卡片，**没有表格版式** ⇒ 不横向滚动（长单号 / 长货号一律可断行）；
+     · 按钮 / 输入框 ≥44px 命中区，窄屏整行可点；
+     · 电脑上复用 base.css 的两列 / 自适应栅格（响应式：宽屏多列、窄屏一列）。 */
+
+.orders-list { display: grid; gap: 14px; }
+
+/* ⭐ 2026-10-09：订单列表内部的**四个销售分组** / **采购列表**（子 tab 用 base.css 的 .sub-tabs）。
+   ⚠️ 依旧是"一列卡片"：分组只是标题 + 卡片，不引入表格 / 不横向滚动。 */
+.orders-board,
+.purchase-orders { display: grid; gap: 18px; min-width: 0; }
+
+.order-group { display: grid; gap: 10px; min-width: 0; }
+.order-group-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.order-group-head h3 { margin: 0; font-size: 15px; overflow-wrap: anywhere; }
+.order-group-head .muted { font-size: 12px; }
+.order-group .empty.compact { margin: 0; }
+
+.order-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+
+.order-card-head,
+.order-detail-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.order-card-head { justify-content: space-between; }
+.order-no { margin: 0; font-size: 17px; overflow-wrap: anywhere; word-break: break-word; }
+.order-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.order-money { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.order-payment-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; }
+
+.order-details-toggle summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  cursor: pointer;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.order-lines { display: grid; gap: 8px; margin: 8px 0 0; padding: 0; list-style: none; }
+.order-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.order-line .line-product { font-weight: 600; }
+.order-line .line-amount { margin-left: auto; }
+
+.order-card-actions { display: grid; }
+.order-card-actions .btn { width: 100%; min-height: 44px; }
+
+.detail-block { margin: 18px 0; min-width: 0; }
+.detail-block h4 { margin: 0 0 8px; font-size: 15px; }
+
+.order-actions { display: grid; gap: 14px; margin-top: 18px; min-width: 0; }
+.order-actions .action-form { min-width: 0; }
+.action-form summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  cursor: pointer;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.action-body { display: grid; gap: 6px; margin-top: 10px; min-width: 0; }
+.action-body .btn,
+.action-body input,
+.action-body select { width: 100%; min-height: 44px; }
+.check-list { display: grid; gap: 4px; }
+.check-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.check-line input { flex: none; width: 22px; height: 22px; min-height: 22px; }
+.check-fieldset { border: 0; padding: 0; margin: 0; }
+
+/* 换 / 赔那一块复用的**只读**货品选择器（同一个既有接口，这个页面自带一份样式：
+   `features/inventory/inventory.css` 在 index.html 上并没有加载）。 */
+.product-picker { max-height: 260px; margin: 12px 0; overflow-y: auto; }
+.picker-list { display: grid; gap: 8px; }
+.picker-item {
+  display: flex;
+  min-height: 44px;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: white;
+  cursor: pointer;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.picker-item:hover { border-color: var(--primary); background: var(--primary-soft); }
+.picker-item.active { border-color: var(--primary); background: var(--primary-soft); box-shadow: var(--shadow-card); }
+.picker-item span { font-size: 12px; }
+
+@media (max-width: 760px) {
+  /* 窄屏：一列到底（单列卡片）—— 列表、收款情况、动作区都只占一行宽，不横向滚动。 */
+  .orders-list,
+  .order-money,
+  .order-actions { grid-template-columns: 1fr; }
+  .order-line .line-amount { margin-left: 0; }
+  .order-card-actions .btn { min-height: 48px; }
+  .order-detail-head { align-items: stretch; flex-direction: column; }
+  .order-detail-head .btn { width: 100%; text-align: center; }
+}
