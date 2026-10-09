@@ -31,6 +31,7 @@ const path = require('node:path');
 const { SCAN_PAGE, fillText } = require('../config/scanPage');
 const {
   REALMS, DEFAULT_REALM, REALM_TEXTS, resolveRealm, labelPrintUrls,
+  saleSizeGroups, purchaseSizeLines, sizeGroupOf,
 } = require('./scanPageRealm');
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -92,6 +93,10 @@ const REALM_SCRIPT = `<script>(function(){var ids=${JSON.stringify(REALMS.map((r
 /**
  * 内联样式。刻意用**系统字体**与**浅色**：与工作台同一个主题（同一个 `tokens.css`），
  * 且不引外部字体/图片（她那边可能只有移动网络，多一个外链就多一次等待）。
+ *
+ * ⭐ 2026-10-09 下半场：按"移动端优先 + 现代干净"重做了一版（浅灰底 / 白卡片 / 12~16px 圆角 /
+ * 很轻的阴影 / 一个主色 / 卡片整块可点 / 次要操作进 `<details>`）；
+ * 颜色 / 间距 / 圆角 / 字号仍然**全部走 `tokens.css` 的令牌**（上面内联进来的那一份）。
  */
 const STYLE = `
 ${THEME_ROOT}
@@ -100,16 +105,18 @@ html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0; background: var(--background); color: var(--text);
   font-family: var(--font-family); font-size: var(--font-size-base); line-height: var(--line-height);
+  -webkit-font-smoothing: antialiased;
 }
-.page { max-width: var(--page-max); margin: 0 auto; padding: var(--space-3) var(--space-3) var(--space-8); }
-.card { background: var(--surface); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); margin: 0 0 var(--space-3); box-shadow: var(--shadow-card); }
+.page { max-width: var(--page-max); margin: 0 auto; padding: var(--space-4) var(--space-3) var(--space-8); }
+.card { background: var(--surface); border-radius: var(--radius-lg); padding: var(--space-4); margin: 0 0 var(--space-3); box-shadow: var(--shadow-card); }
 .identity { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
-.identity__item { margin: 0; font-size: var(--font-size-2xl); font-weight: 700; letter-spacing: .3px; word-break: break-all; }
-.identity__meta { margin: var(--space-1) 0 0; color: var(--text-secondary); font-size: var(--font-size-md); word-break: break-all; }
+.identity__main { min-width: 0; }
+.identity__item { margin: 0; font-size: var(--font-size-xl); font-weight: 700; letter-spacing: .3px; overflow-wrap: anywhere; }
+.identity__meta { margin: var(--space-1) 0 0; color: var(--text-secondary); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
 .price { text-align: right; white-space: nowrap; }
 .price__label { display: block; color: var(--text-muted); font-size: var(--font-size-xs); }
-.price__value { font-size: var(--font-size-xl); font-weight: 700; }
-.stock__heading { margin: 0 0 var(--space-2); font-size: var(--font-size-base); }
+.price__value { font-size: var(--font-size-amount); font-weight: 700; }
+.stock__heading { margin: 0 0 var(--space-2); font-size: var(--font-size-lg); }
 .stock { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 .stock thead th { padding: var(--space-1) var(--space-1) var(--space-2); border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: var(--font-size-sm); font-weight: 500; text-align: center; }
 .stock thead th:first-child { text-align: left; }
@@ -123,32 +130,59 @@ body {
 .badge { display: inline-block; margin-left: var(--space-1); padding: 1px 7px; border-radius: var(--radius-pill); background: var(--warning-soft); color: var(--warning); font-size: var(--font-size-xs); font-weight: 600; vertical-align: 2px; }
 .notes { margin: var(--space-3) 0 0; padding: 0; list-style: none; color: var(--text-muted); font-size: var(--font-size-sm); }
 .notes li { margin-top: var(--space-1); }
-.foot { margin: var(--space-1) var(--space-1) 0; color: var(--placeholder); font-size: var(--font-size-xs); word-break: break-all; }
+.foot { margin: var(--space-2) var(--space-1) 0; color: var(--text-muted); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .state-msg { text-align: center; padding: var(--space-8) var(--space-4); }
 .state-msg h1 { margin: 0 0 var(--space-2); font-size: var(--font-size-xl); }
 .state-msg p { margin: var(--space-2) 0; color: var(--text-secondary); }
-.state-msg .number { color: var(--text); font-weight: 600; }
+.state-msg .number { color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
 .state-msg .hint { color: var(--text-muted); font-size: var(--font-size-sm); }
-.result { margin: var(--space-3) 0 0; padding: 0; list-style: none; color: var(--text); font-size: var(--font-size-md); }
+.result { margin: var(--space-3) 0 0; padding: 0; list-style: none; color: var(--text); font-size: var(--font-size-base); }
 .result li { margin-top: var(--space-1); }
-.draft-count { margin: 0 0 var(--space-1); font-size: var(--font-size-md); font-weight: 600; }
-.notice { margin: 0; color: var(--primary); font-size: var(--font-size-md); font-weight: 600; }
+.draft-count { margin: 0 0 var(--space-1); font-size: var(--font-size-base); font-weight: 600; }
+.notice { margin: 0; color: var(--primary); font-size: var(--font-size-base); font-weight: 600; }
 .draft-list { margin: 0 0 var(--space-2); padding-left: var(--space-5); color: var(--text-secondary); font-size: var(--font-size-md); }
-.write-form { margin: var(--space-2) 0 0; padding: var(--space-2) 0 0; border-top: 1px solid var(--border-light); }
+.write-form { margin: var(--space-3) 0 0; }
+.write-form + .write-form { padding-top: var(--space-3); border-top: 1px solid var(--border-light); }
 .form-row { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
 .form-row label { flex: 0 0 42%; color: var(--text-secondary); font-size: var(--font-size-md); }
 .form-row select, .form-row input { flex: 1 1 auto; min-width: 0; min-height: var(--control-height); padding: var(--space-2) var(--space-3); border: 1px solid var(--control-border); border-radius: var(--radius-sm); font-size: var(--font-size-base); background: var(--surface); }
 .size-row { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
-.size-check { flex: 1 1 auto; min-height: var(--control-height); display: flex; align-items: center; font-size: var(--font-size-base); }
+.size-check { flex: 1 1 auto; min-height: var(--control-height); display: flex; align-items: center; gap: var(--space-2); font-size: var(--font-size-base); }
+.size-check input { width: 20px; height: 20px; }
 .size-qty { flex: 0 0 84px; min-height: var(--control-height); padding: var(--space-2) var(--space-3); border: 1px solid var(--control-border); border-radius: var(--radius-sm); font-size: var(--font-size-base); text-align: center; }
 .hint { color: var(--text-muted); font-size: var(--font-size-sm); }
-.btn { display: block; width: 100%; min-height: var(--control-height); margin-top: var(--space-1); padding: var(--space-3) var(--space-3); border: 0; border-radius: var(--radius-sm); background: var(--border-light); color: var(--text); font-size: var(--font-size-base); font-weight: 600; text-align: center; text-decoration: none; }
+.tag { display: inline-flex; align-items: center; padding: 2px 10px; border-radius: var(--radius-pill); font-size: var(--font-size-xs); font-weight: 600; }
+.tag--success { color: var(--success); background: var(--success-soft); }
+.tag--warning { color: var(--warning); background: var(--warning-soft); }
+.btn { display: block; width: 100%; min-height: var(--control-height); margin-top: var(--space-2); padding: var(--space-3) var(--space-3); border: 0; border-radius: var(--radius-sm); background: var(--border-light); color: var(--text); font-size: var(--font-size-base); font-weight: 600; text-align: center; text-decoration: none; cursor: pointer; }
 .btn--primary { background: var(--primary); color: var(--surface); }
 .btn--ghost { background: transparent; color: var(--text-muted); font-weight: 500; }
+summary { cursor: pointer; }
+/* 【一键补货】= 一个**看起来就是按钮**的折叠头（点开才是尺码 + 数量 + 生成采购申请）。
+   ⚠️ 不用 JS：summary 自己就是"点一下展开"，样式上让它长得像主按钮。 */
+.disclosure { margin: var(--space-3) 0 0; padding: 0; border: 0; background: transparent; }
+.disclosure__summary { display: flex; align-items: center; justify-content: center; min-height: var(--control-height); padding: var(--space-3); border-radius: var(--radius-sm); background: var(--primary); color: var(--surface); font-size: var(--font-size-base); font-weight: 600; text-align: center; overflow-wrap: anywhere; }
+.disclosure[open] .disclosure__summary { margin-bottom: var(--space-2); }
+.disclosure > .hint { margin: 0 0 var(--space-2); }
+.disclosure .write-form { margin: 0; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-soft); }
+/* ── 销售：尺码两组（有货 ⇒ 现货 / 没有 ⇒ 预订）─────────────────────────── */
+.size-group { min-width: 0; margin: 0 0 var(--space-3); padding: var(--space-3); border: 1px solid var(--border-light); border-radius: var(--radius-md); background: var(--surface-soft); }
+.size-group__legend { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: 0; font-size: var(--font-size-base); font-weight: 700; }
+.size-group .hint { display: block; margin: var(--space-1) 0 var(--space-2); }
+.size-chips { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
+.size-chip { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-height); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer; }
+.size-chip input { flex: none; width: 20px; height: 20px; margin: 0; }
+.size-chip__size { font-size: var(--font-size-lg); font-weight: 700; }
+.size-chip__meta { margin-left: auto; color: var(--text-secondary); font-size: var(--font-size-sm); }
+/* ── 采购：各尺码（样品 + 门盒）数量 + 一键补货 ──────────────────────────── */
+.purchase-sizes { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); margin: var(--space-3) 0; padding: 0; list-style: none; }
+.purchase-size { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-height); padding: var(--space-2) var(--space-3); border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--surface-soft); }
+.purchase-size__size { font-size: var(--font-size-lg); font-weight: 700; }
+.purchase-size__count { margin-left: auto; font-size: var(--font-size-amount); font-weight: 700; font-variant-numeric: tabular-nums; }
 /* ── 领域切换（一个二维码，四个领域）────────────────────────────────────── */
-.realm-bar { display: flex; gap: var(--space-1); margin: 0 0 var(--space-2); padding: var(--space-1); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-card); overflow-x: auto; }
-.realm-tab { flex: 1 0 auto; display: flex; align-items: center; justify-content: center; min-height: var(--control-height); padding: 0 var(--space-3); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: var(--font-size-base); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.realm-bar { display: flex; gap: var(--space-1); margin: 0 0 var(--space-2); padding: var(--space-1); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); overflow-x: auto; }
+.realm-tab { flex: 1 0 auto; display: flex; align-items: center; justify-content: center; min-height: var(--control-height); padding: 0 var(--space-3); border-radius: var(--radius-md); color: var(--text-secondary); font-size: var(--font-size-base); font-weight: 600; text-decoration: none; white-space: nowrap; }
 .realm-hint { margin: 0 0 var(--space-3); color: var(--text-muted); font-size: var(--font-size-xs); text-align: center; }
 ${REALM_STYLE}
 `;
@@ -262,16 +296,13 @@ const optionsHtml = (values, selected) => values
 const saleFormHtml = (view, write) => {
   const t = write.texts;
   const fields = write.fields;
-  const sizes = write.sizes || [];
   const lines = write.draft?.lines || [];
   const draftList = lines.length
     ? `<ul class="draft-list">${lines.map((line) => `<li>${escapeHtml(fillText(
       t.draftItem, { itemNo: line.item_no || line.number || '', size: line.size },
     ))}</li>`).join('')}</ul>`
     : `<p class="hint">${escapeHtml(t.draftEmpty)}</p>`;
-  const sizeInput = sizes.length
-    ? `<select name="${escapeHtml(fields.size)}">${optionsHtml(sizes.map((item) => item.size_text), '')}</select>`
-    : `<span class="hint">${escapeHtml(t.sizePlaceholder)}</span>`;
+  const sizeInput = sizeGroupsHtml(view, write);
   return `<section class="card">
 <h2 class="stock__heading">${escapeHtml(t.saleHeading)}</h2>
 <p class="draft-count">${escapeHtml(fillText(t.draftHeading, { count: lines.length }))}</p>
@@ -279,7 +310,7 @@ ${draftList}
 <form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
 ${hiddenField(fields.action, write.actions.addLine)}
 ${hiddenField(fields.submitKey, write.saleKey)}
-<div class="form-row"><label>${escapeHtml(t.sizeLabel)}</label>${sizeInput}</div>
+${sizeInput}
 <div class="form-row"><label>${escapeHtml(t.amountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" placeholder="${escapeHtml(t.amountPlaceholder)}"></div>
 <div class="form-row"><label>${escapeHtml(t.giftLabel)}</label><input name="${escapeHtml(fields.gift)}"></div>
 <button type="submit" class="btn">${escapeHtml(t.addButton)}</button>
@@ -300,28 +331,115 @@ ${hiddenField(fields.submitKey, write.saleKey)}
 </section>`;
 };
 
-/** 补货表单：勾选缺的尺码 + 填数量 → 生成采购申请。 */
+/**
+ * ⭐ 销售建单的**尺码两组**（业务负责人 2026-10-09：「选的是库存里面的 = 现货；不是 = 预订」）：
+ *   · 第一组 = **有货（样品 + 门盒）**的尺码 ⇒ 选中它 = **现货**；
+ *   · 第二组 = 该组（类别）**目前没有的**尺码 ⇒ 选中它 = **预订**。
+ *
+ * ⚠️ 分组**只来自视图模型**（`views/scanPageRealm.saleSizeGroups`）—— 页面上看到的两组
+ *    与提交时判"现货 / 预订"用的是**同一份**（路由按同一份算 `inStock`）。
+ * ⚠️ 没有一行 JS：两个 `<fieldset>` 里的 radio 都叫 `size`，选哪个就是哪个；
+ *    每个可选项都是一整块（≥44px 命中区，见 STYLE 的 `.size-chip`）。
+ * ⚠️ 视图模型里一行尺码都没有时（老数据 / 降级）退回 `write.sizes`，**不把页面空着**。
+ */
+const sizeGroupHtml = ({ id, heading, tag, tone, hint, note = '', items, empty }) => `
+<fieldset class="size-group" data-stock-group="${escapeHtml(id)}">
+<legend class="size-group__legend">
+<span class="size-group__title">${escapeHtml(heading)}</span>
+<span class="tag tag--${escapeHtml(tone)}">${escapeHtml(tag)}</span>
+</legend>
+<p class="hint">${escapeHtml(hint)}${note ? ` ${escapeHtml(note)}` : ''}</p>
+<div class="size-chips">${items.length
+    ? items.map((item) => `<label class="size-chip">
+<input type="radio" name="size" value="${escapeHtml(item.size_text)}">
+<span class="size-chip__size">${escapeHtml(item.size_text)} 码</span>
+<span class="size-chip__meta">${escapeHtml(item.meta)}</span>
+</label>`).join('\n')
+    : `<span class="hint">${escapeHtml(empty)}</span>`}</div>
+</fieldset>`;
+
+const sizeGroupsHtml = (view, write) => {
+  const t = REALM_TEXTS;
+  const groups = saleSizeGroups(view);
+  const fallback = (write.sizes || []).map((item) => ({ size_text: item.size_text, missing: Boolean(item.missing) }));
+  const inStock = groups.inStock.length || groups.prepaid.length
+    ? groups.inStock
+    : fallback.filter((item) => !item.missing).map((item) => ({ size_text: item.size_text, count: null }));
+  const prepaid = groups.inStock.length || groups.prepaid.length
+    ? groups.prepaid
+    : fallback.filter((item) => item.missing).map((item) => ({ size_text: item.size_text, count: 0 }));
+  if (!inStock.length && !prepaid.length) return `<span class="hint">${escapeHtml(t.saleSizeEmpty)}</span>`;
+  const countText = (item) => (item.count === null
+    ? t.saleInStockTag
+    : fillText(t.saleCountTemplate, { count: item.count }));
+  // 「这一组是男 38–48 / 女 34–43」（她 2026-10-09 给的范围）——判据在 views/scanPageRealm。
+  const group = sizeGroupOf(view.category_code);
+  const groupNote = group ? `（这一组 = ${group.label} ${group.key} · ${group.from}–${group.to}）` : '';
+  return sizeGroupHtml({
+    id: 'in_stock',
+    heading: t.saleInStockHeading,
+    tag: t.saleInStockTag,
+    tone: 'success',
+    hint: t.saleInStockHint,
+    items: inStock.map((item) => ({ ...item, meta: countText(item) })),
+    empty: t.saleSizeEmpty,
+  }) + sizeGroupHtml({
+    id: 'prepaid',
+    heading: t.salePrepaidHeading,
+    tag: t.salePrepaidTag,
+    tone: 'warning',
+    hint: t.salePrepaidHint,
+    note: groupNote,
+    items: prepaid.map((item) => ({ ...item, meta: t.salePrepaidTag })),
+    empty: t.saleSizeEmpty,
+  });
+};
+
+/**
+ * 补货表单：勾选缺的尺码 + 填数量 → 生成采购申请。
+ *
+ * ⭐ 2026-10-09（下半场）采购领域 = **先列各尺码（样品 + 门盒）数量** + 【**一键补货**】：
+ *   · 一键补货 = 把**缺的尺码**默认勾上、**默认各 1 双**、数量可改（`<details>` 折叠，
+ *     点一下 "一键补货" 就展开；没有一行 JS）；
+ *   · 走的是**既有**补货写入口（`views/../services/scanWriteService.js` 的 `submitReplenish`）→
+ *     既有采购报单链路（就是「信息填写」表变更那条免确认路径）—— 渲染层一行业务逻辑都没有。
+ */
 const replenishFormHtml = (view, write) => {
   const t = write.texts;
+  const v = REALM_TEXTS;
   const fields = write.fields;
-  const sizes = write.sizes || [];
+  const lines = purchaseSizeLines(view);
+  const sizes = lines.length ? lines : (write.sizes || []).map((item) => ({
+    size_text: item.size_text, sellable: null, missing: Boolean(item.missing), checked: Boolean(item.missing),
+  }));
   if (!sizes.length) return '';
+  const stockList = `<ul class="purchase-sizes" data-view="purchase-sizes">${sizes.map((item) => `
+<li class="purchase-size" data-purchase-size="${escapeHtml(item.size_text)}">
+<span class="purchase-size__size">${escapeHtml(item.size_text)} 码</span>
+<span class="purchase-size__count">${escapeHtml(fillText(v.saleCountTemplate, { count: item.sellable ?? 0 }))}</span>
+<span class="tag tag--${item.sellable > 0 ? 'success' : 'warning'}">${escapeHtml(item.sellable > 0 ? v.purchaseInStockTag : (item.missing ? v.purchaseMissingTag : v.purchaseNoneTag))}</span>
+</li>`).join('')}</ul>`;
   const rows = sizes.map((item) => {
     const size = item.size_text;
     return `<div class="size-row">
-<label class="size-check"><input type="checkbox" name="${escapeHtml(fields.replenishSizes)}" value="${escapeHtml(size)}"${item.missing ? ' checked' : ''}> ${escapeHtml(size)} 码</label>
-<input class="size-qty" name="${escapeHtml(`${fields.replenishQuantityPrefix}${size}`)}" inputmode="numeric" placeholder="${escapeHtml(t.replenishQuantityLabel)}">
+<label class="size-check"><input type="checkbox" name="${escapeHtml(fields.replenishSizes)}" value="${escapeHtml(size)}"${item.checked ? ' checked' : ''}> ${escapeHtml(size)} 码</label>
+<input class="size-qty" name="${escapeHtml(`${fields.replenishQuantityPrefix}${size}`)}" value="1" inputmode="numeric" aria-label="${escapeHtml(`${size} ${t.replenishQuantityLabel}`)}" placeholder="${escapeHtml(t.replenishQuantityLabel)}">
 </div>`;
   }).join('');
   return `<section class="card">
 <h2 class="stock__heading">${escapeHtml(t.replenishHeading)}</h2>
+<p class="hint">${escapeHtml(v.purchaseSizesHint)}</p>
+${stockList}
+<details class="disclosure" data-view="one-tap-replenish">
+<summary class="disclosure__summary">${escapeHtml(v.oneTapReplenish)}</summary>
 <p class="hint">${escapeHtml(t.replenishHint)}</p>
 <form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
 ${hiddenField(fields.action, write.actions.replenish)}
 ${hiddenField(fields.submitKey, write.replenishKey)}
 ${rows}
-<button type="submit" class="btn">${escapeHtml(t.replenishButton)}</button>
+<button type="submit" class="btn btn--primary">${escapeHtml(t.replenishButton)}</button>
 </form>
+</details>
 </section>`;
 };
 
@@ -340,7 +458,9 @@ const writeFormsHtml = (view, write) => {
     ? `<div class="realm-block realm-block--sales"><section class="card"><p class="notice">${escapeHtml(write.notice)}</p></section></div>`
     : '';
   const sale = write.saleEnabled === false ? '' : `<div class="realm-block realm-block--sales">${saleFormHtml(view, write)}</div>`;
-  const replenish = write.replenishEnabled === false ? '' : `<div class="realm-block realm-block--purchase">${replenishFormHtml(view, write)}</div>`;
+  // ⚠️ 一个尺码都没有（降级到连库存行都没有）时，**不画一个空块** —— 宁可这一块不出现。
+  const replenishBody = write.replenishEnabled === false ? '' : replenishFormHtml(view, write);
+  const replenish = replenishBody ? `<div class="realm-block realm-block--purchase">${replenishBody}</div>` : '';
   return `${notice}${sale}${replenish}`;
 };
 

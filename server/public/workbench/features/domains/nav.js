@@ -1,7 +1,7 @@
 import { QUERY_SECTIONS } from '../../config/query.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { renderQueryEntries } from '../query/index.js';
-import { entryPageHtml, linksPageHtml } from './pages.js';
+import { entryPageHtml, linksPageHtml, placeholderPageHtml } from './pages.js';
 
 /**
  * 领域 tab 的**纯渲染**（不碰 DOM、不发请求）—— 单独一个文件是为了能被测试直接跑：
@@ -27,10 +27,11 @@ export function domainSubTabsHtml(domain, active = domain.pages[0].id) {
           data-domain-page="${escapeHtml(page.id)}" aria-selected="${page.id === active}">${escapeHtml(page.label)}</button>`).join('');
 }
 
-/** 一个"静态"子页面的 HTML：`entry`（编号入口）/ `links`（卡片组）/ `query`（多维表格外链卡）。 */
+/** 一个"静态"子页面的 HTML：`entry` / `links` / `query` / `placeholder`（认不出的返回空）。 */
 export function domainPageHtml(page) {
   if (page.kind === 'entry') return entryPageHtml(page);
   if (page.kind === 'links') return linksPageHtml(page);
+  if (page.kind === 'placeholder') return placeholderPageHtml(page);
   if (page.kind === 'query') {
     return `
       <div class="domain-page" data-page-kind="query">

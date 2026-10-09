@@ -41,6 +41,8 @@ const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { createScanPageService } = require('../services/scanPageService');
 const { createScanWriteService } = require('../services/scanWriteService');
 const { renderScanPage, renderScanMessagePage } = require('../views/scanPageRenderer');
+// ⚠️ 只借这一个**纯函数**：所选尺码在「样品 + 门盒」有没有货（= 页面上那两个分组的判据）。
+const { sellableSizeTexts } = require('../views/scanPageRealm');
 const { requireWorkbenchAccess } = require('./workbench');
 // ⚠️ 会话读取/解码与回跳校验**复用 feishuWebAuth 里那一份**（`getSessionUser` =
 //    `requireWorkbenchAccess` 判 401 用的同一个函数），**不重写第二份**。
@@ -297,6 +299,11 @@ const createScanPageRouter = (options = {}) => {
           size: body[fields.size],
           amount: body[fields.amount],
           gift: body[fields.gift],
+          // ⭐ 2026-10-09（**本文件唯一的一处新增**）：「选中的这一双是现货还是预订」——
+          //    判据与页面上那两个分组**同一份**（所选尺码在「样品 + 门盒」有没有货，
+          //    纯函数在 `views/scanPageRealm.js`）。交易类型**编码**不在这里写死：
+          //    写服务按既有判据 `salesTradeTypeForStock` 推出来（现货 / 预订）。
+          inStock: sellableSizeTexts(view).has(String(body[fields.size] ?? '').trim()),
         });
         if (!result.ok) return respondWriteFailure(res, result, requestId);
         logInfo(writeConfig.events.lineAdded, {

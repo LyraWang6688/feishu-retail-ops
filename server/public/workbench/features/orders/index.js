@@ -201,7 +201,7 @@ export function ordersSectionsHtml(orders = []) {
     return `
       <section class="order-section" data-sales-section="${escapeHtml(section.key)}">
         <div class="order-group-head">
-          <h3>${escapeHtml(section.label)}</h3>
+          <h3>${escapeHtml(section.label)}<span class="tag tag-${escapeHtml(section.tone || 'info')}">${escapeHtml(section.tag || '')}</span></h3>
           <span class="muted">${escapeHtml(section.hint)} · ${list.length} 单</span>
         </div>
         ${body}

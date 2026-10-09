@@ -32,16 +32,40 @@
 }
 .card-button:disabled { cursor: wait; opacity: .65; }
 
-/* 内嵌的既有模块（订单列表 / 库存手工调整）自己也带一层 `.panel` ——
+/* 内嵌的既有模块（订单列表 / 库存手工调整 / **采购 → 验收台**）自己也带一层 `.panel` ——
    嵌进来之后降级成"卡片里的一块"，避免白卡套白卡、阴影叠阴影。 */
-[data-domain-host] > .panel {
+[data-domain-host] > .panel,
+[data-embed-host] > .panel {
   padding: var(--space-4);
   border-color: var(--border-light);
   background: var(--surface-soft);
   box-shadow: none;
 }
-[data-domain-host] > .panel > .panel-header h2 { font-size: var(--font-size-lg); }
+[data-domain-host] > .panel > .panel-header h2,
+[data-embed-host] > .panel > .panel-header h2 { font-size: var(--font-size-lg); }
 [data-domain-host] > .panel > .sub-tabs { margin-top: var(--space-2); }
+
+/* ⭐ 「采购 → 报货 / 验收 / 退货」里内嵌的验收台（既有订单模块的 purchase 模式）。
+   ⚠️ 去掉模块自带的「订单列表」抬头 —— 这一块自己的标题已经写着「验收到货」，
+      留着会变成"一个标题套一个标题"（模块本体一个字没改，只是嵌进来时不显示它那行）。 */
+.domain-embed { display: grid; gap: var(--space-2); min-width: 0; }
+.domain-embed > .section-title { margin: var(--space-5) 0 0; }
+[data-embed-host] > .panel > .panel-header { display: none; }
+
+/* ⭐ 占位页（统一「待建设」）：标题 + 一句话 + 彩色小标签 —— 也是一张白卡片，
+   一眼能看出"这页还没建好"，而不是加载失败（虚线边框 = 还没建成）。 */
+.placeholder-card {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-5) var(--space-4);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+.placeholder-note { margin: 0; color: var(--text-secondary); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
 
 /* 桌面（≥761px）：卡片可以并排，其余与手机一致（≥44px 命中区不因为屏幕大就缩小）。 */
 @media (min-width: 761px) {

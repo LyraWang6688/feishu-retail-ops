@@ -11,6 +11,11 @@
  *   ⑦ **不读写 `data/lark_mvp_tasks/`**（哨兵：跑完整条写入流程，那个目录一个字节都没变）；
  *   ⑧ 未登录 302 / 白名单外 403 语义不变（GET 与 POST 同一道闸门）；
  *   ⑨ 失败**有人话**（页面上说清楚；内部错误不回显）。
+ *   ⭐ 2026-10-09（下半场）新增两条（"一个码、三个领域扫出来不一样"里销售与采购那两条）：
+ *   ⑩ 销售：所选尺码在（样品 + 门盒）**有货 ⇒ 现货 `SALE_CASH`**，
+ *      **没货 ⇒ 预订 `SALE_PREPAID`** —— 用**既有**行为编码写进**每条明细自己的**「交易类型」；
+ *   ⑪ 采购【一键补货】：**勾了不填数量按 1 双算**（既有 `replenish.defaultQuantity`），
+ *      填了就按她填的 —— 走**既有** `purchaseWebhookService.publishPurchaseRequest` 那条链路。
  *
  * 另有一条源码哨兵：扫码侧**没有第二套写库逻辑**
  *（`scanWriteService.js` 里没有任何 `gateway.create/update/delete`，只有对既有业务层的调用）。
@@ -63,6 +68,9 @@ const SIZE_RECORDS = [
   { record_id: 'size_40', fields: { 尺码: 40 } },
   { record_id: 'size_41', fields: { 尺码: 41 } },
   { record_id: 'size_42', fields: { 尺码: 42 } },
+  // ⭐ 2026-10-09：现货 / 预订那两组要用到的另外两个尺码（43 只有仓库货 / 44 完全没有）
+  { record_id: 'size_43', fields: { 尺码: 43 } },
+  { record_id: 'size_44', fields: { 尺码: 44 } },
 ];
 
 const seedTables = (overrides = {}) => ({
@@ -73,7 +81,13 @@ const seedTables = (overrides = {}) => ({
     { record_id: 'pm_wechat', fields: { 收款方式: '微信' } },
     { record_id: 'pm_cash', fields: { 收款方式: '现金' } },
   ],
-  behavior: [{ record_id: 'bh_request', fields: { 行为名称: '采购申请', 行为编码: 'STOCK_PURCHASE_INCREASE' } }],
+  behavior: [
+    { record_id: 'bh_request', fields: { 行为名称: '采购申请', 行为编码: 'STOCK_PURCHASE_INCREASE' } },
+    // ⭐ 2026-10-09：现货 / 预订 = 扫码页销售建单要写的**既有**交易类型编码
+    //    （「行为管理」表里就这两条，见 `config/salesMovements.js`）。
+    { record_id: 'bh_cash', fields: { 行为名称: '现货', 行为编码: 'SALE_CASH' } },
+    { record_id: 'bh_prepaid', fields: { 行为名称: '预定', 行为编码: 'SALE_PREPAID' } },
+  ],
   supplier: [{ record_id: 'sup_1', fields: { 供应商名称: '大发鞋厂' } }],
   salesEntry: [],
   salesDetail: [],
@@ -709,6 +723,101 @@ test('⑨ 失败有人话：清空本单 / 未知动作也给页面回应（不�
       assert.equal(unknown.status, 400);
       assert.match(await unknown.text(), /这一页上的按钮我认不出来/);
     });
+  } finally { h.cleanup(); }
+});
+
+// ── ⭐ 2026-10-09（下半场）⑩ 现货 / 预订（既有行为编码）─────────────────────────
+/**
+ * 一个"有货 / 没货"齐全的视图模型（页面上的两个分组就是按它分的）：
+ *   40 门盒 1            ⇒ 现货
+ *   41 三种状态都没有     ⇒ 预订（缺码）
+ *   42 门盒 1 + 样品 1    ⇒ 现货
+ *   43 只有仓库 2        ⇒ 预订（**可卖 = 样品 + 门盒**，仓库不算）
+ */
+const realmView = (overrides = {}) => ({
+  ...view(),
+  total: 5,
+  columns: [{ key: '门盒', label: '门盒' }, { key: '样品', label: '样品' }, { key: '仓库', label: '仓库' }],
+  rows: [
+    { size_text: '40', cells: [{ count: 1 }, { count: 0 }, { count: 0 }], total: 1, missing: false },
+    { size_text: '41', cells: [{ count: 0 }, { count: 0 }, { count: 0 }], total: 0, missing: true },
+    { size_text: '42', cells: [{ count: 1 }, { count: 1 }, { count: 0 }], total: 2, missing: false },
+    { size_text: '43', cells: [{ count: 0 }, { count: 0 }, { count: 2 }], total: 2, missing: false },
+  ],
+  ...overrides,
+});
+
+test('⑩ 现货 / 预订：所选尺码在（样品 + 门盒）有货 ⇒ SALE_CASH，没货 ⇒ SALE_PREPAID', async () => {
+  login();
+  const h = createHarness();
+  try {
+    const openId = 'ou_scan_realm';
+    await withServer(formApp(h, async () => realmView()), async (base) => {
+      const pageUrl = `${base}/s/${encodeURIComponent(NUMBER)}`;
+      const page = await fetch(pageUrl, { headers: { cookie: sessionCookie(openId) } });
+      const html = await page.text();
+
+      // ① 页面上就是两组（有货 ⇒ 现货 / 其余 ⇒ 预订）
+      assert.ok(html.includes('data-stock-group="in_stock"'), '第一组 = 有货（现货）');
+      assert.ok(html.includes('data-stock-group="prepaid"'), '第二组 = 没有的（预订）');
+      const saleKey = html.match(/name="submit_key" value="(scan_sale:[^"]+)"/)[1];
+
+      // ② 加"有货的 42" + "只有仓库货的 43"
+      for (const size of ['42', '43']) {
+        const response = await fetch(pageUrl, {
+          method: 'POST', redirect: 'manual',
+          headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ action: SCAN_WRITE.actions.addLine, submit_key: saleKey, size }).toString(),
+        });
+        assert.equal(response.status, 303, `加入 ${size} 码应当回跳`);
+      }
+      const session = await h.sessions.get(openId);
+      assert.deepEqual(
+        session.sale.lines.map((line) => [String(line.size), line.trade_type_code]),
+        [['42', 'SALE_CASH'], ['43', 'SALE_PREPAID']],
+        '交易类型按"选中的那一组"定，用的是**既有**行为编码',
+      );
+
+      // ③ 提交 → **每条明细写自己那一个**交易类型（关联「行为管理」里那两条既有记录）
+      const result = await h.write.submitSale({
+        openId, submitKey: await currentKey(h, openId), paymentAmount: '',
+      });
+      assert.equal(result.ok, true, JSON.stringify(result));
+      const tradeType = V1_BITABLE_SCHEMA.tables.salesDetail.fields.tradeType;
+      const bySize = new Map(entriesOf(h.gateway, 'salesDetail')
+        .map((detail) => [detail.fields['尺码'][0], detail.fields[tradeType]]));
+      assert.deepEqual(bySize.get('size_42'), ['bh_cash'], '现货那一行 = 现货（SALE_CASH）');
+      assert.deepEqual(bySize.get('size_43'), ['bh_prepaid'], '预订那一行 = 预订（SALE_PREPAID）');
+    });
+  } finally { h.cleanup(); }
+});
+
+// ── ⭐ 2026-10-09（下半场）⑪ 一键补货：默认各 1 双（数量可改）────────────────────
+test('⑪ 一键补货：勾了不填数量按 **1 双**算（填了就按她填的）→ 既有采购链路', async () => {
+  const h = createHarness();
+  try {
+    const openId = 'ou_scan_replenish_default';
+    // 扫开就直接补货：会话还没建，页面上的键就是第 1 轮那把（纯函数算出来的）。
+    const key = h.write.sessions.submitKeyFor(openId, null, 'replenish');
+    const result = await h.write.submitReplenish({
+      openId,
+      submitKey: key,
+      productRecordId: 'prod_1',
+      number: NUMBER,
+      // 缺的尺码默认各 1 双（页面预勾 + 预填 1）；她改了 42 就按她填的写。
+      entries: [{ size: 41 }, { size: 42, quantity: 3 }],
+    });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const requests = entriesOf(h.gateway, 'purchaseRequest');
+    const bySize = new Map(requests.map((record) => [String(record.fields['尺码']), record.fields['数量']]));
+    assert.equal(bySize.get('size_41'), 1, '没填数量 → 1 双（既有 defaultQuantity）');
+    assert.equal(bySize.get('size_42'), 3, '填了 3 → 按她填的写（数量可改）');
+    // 走的是**既有**采购链路：批次 / 幂等键 / 采购行为都在
+    assert.equal(entriesOf(h.gateway, 'purchaseOrderBatch').length, 1);
+    for (const record of requests) {
+      assert.ok(record.fields['幂等键'], '既有 createOnceByKey 的判据');
+      assert.deepEqual(record.fields['采购行为'], ['bh_request']);
+    }
   } finally { h.cleanup(); }
 });
 
