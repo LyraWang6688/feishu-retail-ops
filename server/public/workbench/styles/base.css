@@ -1,10 +1,19 @@
 /*
  * 工作台基础骨架样式 —— **移动优先**（业务负责人 2026-10-09：「工作台一定要对移动端友好」）。
  *
+ * 这一版的视觉口径（"现代、干净"）：
+ *   · **浅灰底 + 白卡片**：一屏一件事，卡片之间留足空白；
+ *   · **12~16px 圆角 + 很轻的阴影**（值在 `--radius-*` / `--shadow-card`）；
+ *   · **一个主色**（`--primary`）：只用在主按钮 / 选中态 / 链接，其余一律中性灰；
+ *   · **字号层级**：页面标题 `--font-size-xl` · 卡片标题 `--font-size-lg` · 正文 `--font-size-base`
+ *     · 次要 `--font-size-sm`；**金额 / 数量**用 `--font-size-amount`（大数字）；
+ *   · **状态用彩色小标签**（`.tag-*`，颜色来自语义色令牌）；
+ *   · **次要操作收进 `<details>`**（summary 也是 ≥44px 命中区）。
+ *
  * 写法的三条规矩：
  *   ① **默认样式 = 手机**：单列卡片、按钮 / 输入框 ≥ `--control-height`(44px)、不横向滚动。
  *      桌面（≥761px）才用 `@media (min-width: 761px)` 铺成多列 —— 反过来写会漏掉手机。
- *   ② **颜色 / 间距 / 圆角 / 字号一律 `var(--…)`**，值只在 `styles/tokens.css`（主题唯一真源）。
+ *   ② **颜色 / 间距 / 圆角 / 字号 / 阴影一律 `var(--…)`**，值只在 `styles/tokens.css`（主题唯一真源）。
  *   ③ 长文本一律 `overflow-wrap: anywhere`（单号 / 货号 / 链接不许把页面撑出横向滚动条）。
  */
 * { box-sizing: border-box; }
@@ -16,6 +25,7 @@ body {
   font-family: var(--font-family);
   font-size: var(--font-size-base);
   line-height: var(--line-height);
+  -webkit-font-smoothing: antialiased;
 }
 button, input, select { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
@@ -23,13 +33,14 @@ h1, h2, h3, p { margin-top: 0; }
 h1 { margin: var(--space-1) 0 0; font-size: var(--font-size-2xl); }
 h2 { margin-bottom: 0; font-size: var(--font-size-xl); }
 h3 { font-size: var(--font-size-lg); }
+h4 { font-size: var(--font-size-base); }
 
 /* ── 外壳 ─────────────────────────────────────────────────────────────────── */
 .shell { max-width: var(--shell-max); margin: 0 auto; padding: var(--space-4); padding-bottom: calc(var(--space-6) + env(safe-area-inset-bottom)); }
 .header { display: flex; align-items: stretch; flex-direction: column; gap: var(--space-3); margin-bottom: var(--space-5); }
 .eyebrow { color: var(--text-secondary); font-size: var(--font-size-sm); }
 .auth { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
-.muted, .subtitle, .data-caption { color: var(--text-muted); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+.muted, .subtitle, .data-caption { color: var(--text-secondary); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
 .subtitle { margin: var(--space-1) 0 0; }
 .data-caption { margin: calc(-1 * var(--space-1)) 0 var(--space-4); }
 
@@ -45,9 +56,25 @@ h3 { font-size: var(--font-size-lg); }
 .btn { cursor: pointer; color: var(--primary); font-weight: var(--weight-bold); }
 .btn:hover { background: var(--primary-soft); }
 .btn:disabled { cursor: wait; opacity: .65; }
-.btn-primary { color: var(--surface); border-color: var(--primary); background: var(--primary); }
+/* 主按钮**占满一行**（她的口径：手机上主操作一眼就能点到）。 */
+.btn-primary { width: 100%; color: var(--surface); border-color: var(--primary); background: var(--primary); text-align: center; }
 .btn-primary:hover { background: var(--primary-hover); }
 .btn-ghost { min-height: var(--control-height); border: 0; background: transparent; }
+/* 次要操作收进 <details>：summary 也是 ≥44px 的命中区。 */
+details { border-radius: var(--radius-md); }
+details > summary { list-style-position: inside; }
+summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--control-height);
+  cursor: pointer;
+  color: var(--primary);
+  font-weight: var(--weight-bold);
+  overflow-wrap: anywhere;
+}
+summary::marker { color: var(--text-muted); }
+.disclosure { margin: var(--space-3) 0 0; padding: var(--space-1) var(--space-3) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-soft); }
+.disclosure[open] > summary { margin-bottom: var(--space-1); }
 
 /* ── 一级 / 二级 tab ──────────────────────────────────────────────────────── */
 .main-tabs {
@@ -58,7 +85,7 @@ h3 { font-size: var(--font-size-lg); }
   gap: var(--space-1);
   margin: 0 calc(-1 * var(--space-4)) var(--space-5);
   padding: 0 var(--space-4);
-  border-bottom: 2px solid var(--border-light);
+  border-bottom: 1px solid var(--border);
   background: var(--background);
   overflow-x: auto;
 }
@@ -83,45 +110,50 @@ h3 { font-size: var(--font-size-lg); }
 .header-actions { display: flex; align-items: stretch; flex-direction: column; gap: var(--space-2); }
 .header-actions a { text-decoration: none; }
 .header-actions .btn { text-align: center; }
-.page-hint { margin: 0; color: var(--text-muted); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+.page-hint { margin: 0; color: var(--text-secondary); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
 .panel-lead { display: flex; align-items: stretch; flex-direction: column; gap: var(--space-3); }
 .panel-lead .btn { width: 100%; text-align: center; }
 .page-hint + .sub-tabs, .panel-lead + .sub-tabs { margin-top: var(--space-3); }
-.section-title { margin: var(--space-5) 0 var(--space-3); font-size: var(--font-size-base); }
+.section-title { margin: var(--space-5) 0 var(--space-3); font-size: var(--font-size-lg); }
+.panel-header h2 { font-size: var(--font-size-xl); }
 
 /* ── 入口卡片（信息录入 / 查询 / 各领域子页都用这一套）───────────────────── */
+/* ⚠️ 默认**单列**（手机优先）；桌面在 ≥761px 那一层才铺成多列 —— 顺序不能反。 */
 .quick-entries, .domain-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); }
 .entry-card {
   position: relative;
   display: flex;
   min-width: 0;
+  min-height: var(--control-height);
   flex-direction: column;
   gap: var(--space-1);
   padding: var(--space-4);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   color: inherit;
-  background: var(--surface-soft);
+  background: var(--surface);
   text-decoration: none;
+  box-shadow: var(--shadow-card);
 }
-.entry-card:hover:not(.disabled-card) { border-color: var(--primary); background: var(--primary-soft); box-shadow: var(--shadow-card); }
+.entry-card:hover:not(.disabled-card) { border-color: var(--primary); background: var(--primary-soft); }
 .entry-card .icon { font-size: var(--font-size-2xl); }
-.entry-card h3 { margin: 0; font-size: var(--font-size-base); }
-.entry-card p { margin: 0; color: var(--text-muted); font-size: var(--font-size-sm); }
+.entry-card h3 { margin: 0; font-size: var(--font-size-lg); }
+.entry-card p { margin: 0; color: var(--text-secondary); font-size: var(--font-size-sm); }
 .entry-card .arrow { margin-top: auto; padding-top: var(--space-2); color: var(--primary); font-weight: var(--weight-bold); }
 .disabled-card { cursor: default; opacity: .75; }
 
 /* ── 列表 / 指标 / 标签 ───────────────────────────────────────────────────── */
 .summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); margin: var(--space-4) 0; }
 .metric { min-width: 0; padding: var(--space-3); border-radius: var(--radius-md); background: var(--surface-soft); }
-.metric span { display: block; color: var(--text-muted); font-size: var(--font-size-sm); }
-.metric strong { display: block; margin-top: var(--space-1); font-size: var(--font-size-xl); overflow-wrap: anywhere; }
-.list-card { display: flex; align-items: stretch; flex-direction: column; gap: var(--space-3); margin-bottom: var(--space-2); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-soft); }
+.metric span { display: block; color: var(--text-secondary); font-size: var(--font-size-sm); }
+.metric strong { display: block; margin-top: var(--space-1); font-size: var(--font-size-amount); overflow-wrap: anywhere; }
+.list-card { display: flex; align-items: stretch; flex-direction: column; gap: var(--space-3); margin-bottom: var(--space-3); padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-card); }
 .list-card .info { min-width: 0; }
 .list-card .title { font-weight: var(--weight-bold); overflow-wrap: anywhere; }
-.list-card .desc { margin-top: var(--space-1); color: var(--text-muted); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+.list-card .desc { margin-top: var(--space-1); color: var(--text-secondary); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
 .card-action { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
-.tag { display: inline-block; padding: 3px 10px; border-radius: var(--radius-pill); font-size: var(--font-size-xs); font-weight: var(--weight-bold); }
+/* 状态 = 彩色小标签（颜色来自语义色令牌；没有第二个品牌色）。 */
+.tag { display: inline-block; padding: 3px 10px; border-radius: var(--radius-pill); font-size: var(--font-size-xs); font-weight: var(--weight-bold); white-space: nowrap; }
 .tag-success { color: var(--success); background: var(--success-soft); }
 .tag-warning { color: var(--warning); background: var(--warning-soft); }
 .tag-danger { color: var(--danger); background: var(--danger-soft); }
@@ -131,7 +163,7 @@ h3 { font-size: var(--font-size-lg); }
 .compact-toolbar { align-items: stretch; flex-direction: column; }
 .form-field { display: grid; gap: var(--space-1); margin: var(--space-3) 0; font-weight: var(--weight-bold); }
 .form-field.grow { width: 100%; max-width: none; }
-.action-form { min-width: 0; padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-soft); }
+.action-form { min-width: 0; padding: var(--space-4); border: 1px solid var(--border-light); border-radius: var(--radius-md); background: var(--surface-soft); }
 .action-form h3 { margin-bottom: var(--space-2); }
 .action-form .btn { width: 100%; }
 .filters { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-4) 0; }
@@ -139,8 +171,8 @@ h3 { font-size: var(--font-size-lg); }
 .mode-choice { display: flex; flex-wrap: wrap; gap: var(--space-4); margin: var(--space-3) 0; }
 .mode-choice label { display: flex; align-items: center; gap: var(--space-1); font-weight: var(--weight-bold); }
 .order-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: var(--space-2); margin: var(--space-4) 0; }
-.order-details > div { display: grid; gap: var(--space-1); padding: var(--space-2); border-radius: var(--radius-sm); background: var(--surface-soft); }
-.order-details span { color: var(--text-muted); font-size: var(--font-size-xs); }
+.order-details > div { display: grid; gap: var(--space-1); padding: var(--space-3); border-radius: var(--radius-sm); background: var(--surface-soft); }
+.order-details span { color: var(--text-secondary); font-size: var(--font-size-xs); }
 .order-details p { margin: 0; }
 .operation-result { min-height: 24px; margin: var(--space-4) 0 0; color: var(--primary); }
 .error-text { color: var(--error-text); }
@@ -149,12 +181,12 @@ h3 { font-size: var(--font-size-lg); }
 .error, .warning { margin-top: var(--space-4); padding: var(--space-3); border-radius: var(--radius-sm); }
 .error { color: var(--error-text); background: var(--error-surface); }
 .warning { color: var(--warning-text); background: var(--warning-surface); }
-.empty, .section-loading { padding: var(--space-6); color: var(--text-muted); text-align: center; }
+.empty, .section-loading { padding: var(--space-6); color: var(--text-secondary); text-align: center; }
 .empty.compact { padding: var(--space-4); }
 .inline-placeholder, .placeholder-panel { color: var(--text-secondary); text-align: center; }
 .inline-placeholder { padding: var(--space-6) var(--space-5); border-radius: var(--radius-md); background: var(--surface-soft); }
 .inline-placeholder p { margin-bottom: var(--space-4); }
-.placeholder-panel { padding: var(--space-8) var(--space-6); }
+.placeholder-panel { padding: var(--space-8) var(--space-6); border-radius: var(--radius-md); background: var(--surface-soft); }
 .placeholder-panel ul { display: inline-block; margin: 0 0 var(--space-5); text-align: left; }
 .placeholder-icon { margin-bottom: var(--space-3); font-size: 38px; }
 .hidden { display: none !important; }
@@ -201,7 +233,7 @@ th { color: var(--text-secondary); background: var(--surface-sunken); font-weigh
   .two-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-5); }
   .col-section { min-width: 0; }
   .summary { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
-  .metric strong { font-size: var(--font-size-2xl); }
+  .metric strong { font-size: var(--font-size-amount); }
   .filters input:first-child { flex: 1 1 260px; }
   .filters input, .filters select, .filters .btn { width: auto; }
   .list-card { align-items: center; flex-direction: row; justify-content: space-between; gap: var(--space-3); }

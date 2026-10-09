@@ -1,18 +1,28 @@
 /*
- * ⭐⭐ 工作台**唯一的主题真源**（业务负责人 2026-10-09：「现在这个**不太美观**」）。
+ * ⭐⭐ 工作台**唯一的主题真源**（业务负责人 2026-10-09：「现在这个**不太美观**」＋
+ * 「工作台一定要对移动端友好」）。
  *
  * 她拿到「库存 / 销售查询」多维表格 AI 页面的截图之后，**只改这一个文件**就能对齐配色 ——
- * 所以**配色 / 间距 / 圆角 / 字号**全部是这里的 CSS 变量，别的文件里**一个都不许写死**：
+ * 所以**配色 / 间距 / 圆角 / 字号 / 阴影**全部是这里的 CSS 变量，别的文件里**一个都不许写死**：
  *   · `styles/base.css` 与各 feature 的 CSS **只用 `var(--…)`**；
  *   · 服务端渲染的扫码页（`src/views/scanPageRenderer.js`）**在渲染时把本文件的变量内联进
  *     `:root`**（见 `readThemeTokens()`）—— 所以改这里，工作台与扫码页**一起变**。
  *   ⚠️ 判据（有测试钉着）：本文件以外的工作台 CSS 里**不许出现十六进制颜色**。
  *
- * 分四族（改外观时按族找，别一处处翻）：
+ * 这一版的视觉口径（"现代、干净、移动端优先"）：
+ *   · **一个主色**（深蓝 `--primary`），**没有第二个品牌色**；其余颜色都是语义色（成功 / 提醒 / 危险 / 信息）；
+ *   · **浅灰底 + 白卡片**：`--background` 浅灰、`--surface` 纯白；
+ *   · **12~16px 圆角**（`--radius-md` 12 / `--radius-lg` 16）＋ **很轻的阴影**（`--shadow-card` alpha ≤ 0.12）；
+ *   · **字号层级**：页面标题 20 · 卡片标题 18 · 正文 16（小一号 15）· 次要 13 · 行高 1.5；
+ *     金额 / 数量用 `--font-size-amount`（大数字）；
+ *   · **命中区** `--control-height` 44px（她只在手机上用）。
+ *
+ * 分五族（改外观时按族找，别一处处翻）：
  *   ① 颜色 —— `--primary*` / `--text*` / `--surface*` / `--border*` / 语义色
  *   ② 间距 —— `--space-*`（4 的倍数）
  *   ③ 圆角 —— `--radius-*`
  *   ④ 字号 —— `--font-size-*` / `--line-height*` / `--weight-*`
+ *   ⑤ 阴影 —— `--shadow-card` / `--shadow-pop`
  * 另外两条是"尺寸与手感"：`--control-height`（手机上 ≥44px 命中区）、`--shell-max` / `--page-max`。
  */
 :root {
@@ -20,21 +30,22 @@
 
   /* ── ④ 字体 ────────────────────────────────────────────────────────────── */
   --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-  --font-size-xs: 12px;
-  --font-size-sm: 13px;
-  --font-size-md: 14px;
-  --font-size-base: 16px;
-  --font-size-lg: 18px;
-  --font-size-xl: 21px;
-  --font-size-2xl: 24px;
+  --font-size-xs: 12px;     /* 标签 / 脚注 */
+  --font-size-sm: 13px;     /* 次要文字（说明、辅助信息） */
+  --font-size-md: 15px;     /* 正文小一号（表单标签、列表行） */
+  --font-size-base: 16px;   /* 正文 */
+  --font-size-lg: 18px;     /* 卡片 / 分组标题 */
+  --font-size-xl: 20px;     /* 页面标题（18~20） */
+  --font-size-2xl: 22px;    /* 工作台大标题 */
   --font-size-3xl: 28px;
+  --font-size-amount: 24px; /* 金额 / 数量（大数字，一眼看清） */
   --line-height: 1.5;
   --line-height-tight: 1.35;
   --weight-normal: 400;
   --weight-medium: 500;
   --weight-bold: 600;
 
-  /* ── ② 间距（4 的倍数）────────────────────────────────────────────────── */
+  /* ── ② 间距（4 的倍数；留白充足 = 只从这里取）──────────────────────────── */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -43,43 +54,43 @@
   --space-6: 24px;
   --space-8: 32px;
 
-  /* ── ③ 圆角 ────────────────────────────────────────────────────────────── */
-  --radius-sm: 8px;
+  /* ── ③ 圆角（卡片 12~16）───────────────────────────────────────────────── */
+  --radius-sm: 10px;
   --radius-md: 12px;
   --radius-lg: 16px;
   --radius-pill: 999px;
 
-  /* ── ① 颜色：主色只有一个 ─────────────────────────────────────────────── */
+  /* ── ① 颜色：主色只有一个（深蓝）──────────────────────────────────────── */
   --primary: #185abd;
   --primary-hover: #154ea8;
-  --primary-soft: #edf4ff;
-  /* 深浅文字层级：正文最深、次要、最浅（说明小字） */
+  --primary-soft: #eef4ff;
+  /* 深浅文字层级：正文最深、次要（中性灰）、最浅（说明小字） */
   --text: #172033;
-  --text-secondary: #65728a;
-  --text-muted: #768198;
-  --border: #e3e8f0;
-  --border-light: #edf0f5;
+  --text-secondary: #6b7280;
+  --text-muted: #8b93a1;
+  --border: #e5e8ee;
+  --border-light: #eef1f5;
   /* 浅灰底 + 白卡片（她说的"干净、现代"） */
-  --background: #f5f7fb;
+  --background: #f5f6f8;
   --surface: #ffffff;
-  --surface-soft: #f7f9fc;
+  --surface-soft: #f8f9fb;
   --surface-sunken: #fafbfc;
-  /* 语义色（成功 / 提醒 / 危险 / 信息）—— 每个都配一个浅底 */
-  --success: #15803d;
-  --success-soft: #dcfce7;
-  --warning: #b45309;
-  --warning-soft: #fff4e5;
-  --danger: #b91c1c;
-  --danger-soft: #fee2e2;
-  --info: #0369a1;
-  --info-soft: #e0f2fe;
+  /* 语义色（成功 / 提醒 / 危险 / 信息）—— 每个都配一个浅底；不艳 */
+  --success: #157f4a;
+  --success-soft: #e4f5ec;
+  --warning: #a15c00;
+  --warning-soft: #fdf2e0;
+  --danger: #b3261e;
+  --danger-soft: #fdeceb;
+  --info: #0b6bcb;
+  --info-soft: #e8f2fe;
   /* 表单控件描边 / 占位文字 */
-  --control-border: #d6dce8;
+  --control-border: #d8dde6;
   --placeholder: #a9aeb8;
-  --error-surface: #fff0ee;
-  --error-text: #b91c1c;
+  --error-surface: #fdeceb;
+  --error-text: #b3261e;
   --warning-text: #8a5a00;
-  --warning-surface: #fff7dd;
+  --warning-surface: #fdf2e0;
 
   /* ── 尺寸与手感 ────────────────────────────────────────────────────────── */
   --control-height: 44px;   /* 手机上按钮 / 输入框的命中区下限（她只在手机上用） */
@@ -87,8 +98,10 @@
   --card-pad-mobile: var(--space-4);
   --shell-max: 1280px;
   --page-max: 480px;        /* 扫码页 / 单列阅读的最大宽度 */
-  --shadow-card: 0 4px 16px rgba(37, 56, 88, 0.05);
-  --shadow-pop: 0 8px 24px rgba(37, 56, 88, 0.12);
+
+  /* ── ⑤ 阴影（很轻：卡片浮起来一点点就够）──────────────────────────────── */
+  --shadow-card: 0 1px 2px rgba(23, 32, 51, 0.04), 0 2px 8px rgba(23, 32, 51, 0.05);
+  --shadow-pop: 0 8px 24px rgba(23, 32, 51, 0.12);
 
   /* ── 标签打印（40×30mm 纸上的墨色；页面里的字节大小来自服务端 config/labelPrint.js）── */
   --label-outline: #b9c2d4;

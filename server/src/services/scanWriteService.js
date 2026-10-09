@@ -37,6 +37,9 @@ const { textValue, linkedRecordIds } = require('./v1BitableGateway');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
 const { REPORT_BEHAVIOR } = require('./purchaseReportBehaviorPolicy');
+// ⭐ 2026-10-09：扫码建单也要写**交易类型**（现货 / 预定），判据用既有的那一个：
+//    「实时库存里有没有这一双」→ `salesTradeTypeForStock`（**唯一**判据，本文件不写死编码）。
+const { salesTradeTypeForStock } = require('../config/salesTradeTypePolicy');
 const { SCAN_WRITE, fillText } = require('../config/scanWrite');
 const { createScanSessionService } = require('./scanSessionService');
 const { logError, logInfo } = require('../utils/logger');
@@ -187,9 +190,17 @@ const createScanWriteService = (options = {}) => {
   // ── 销售：加入本单（**只写本地会话**）────────────────────────────────────
   /**
    * 加一双进"本单"。**业务表一个字都不写** —— 她说"点【提交】才写"。
+   *
+   * ⭐ 2026-10-09：「选的是库存里面的 → 现货；不是 → 预订」——
+   *    调用方（路由）按**页面上那两个分组**给出 `inStock`（= 所选尺码在「样品 + 门盒」有没有货），
+   *    这里用**既有判据** `salesTradeTypeForStock` 推成**既有行为编码**
+   *    （`SALE_CASH` / `SALE_PREPAID`，取值在 `config/salesMovements.js`），
+   *    落在会话的这一行上；提交时逐行写进「销售明细.交易类型」（既有业务层本来就支持逐行类型）。
+   *    ⚠️ `inStock` 不是布尔（老页面 / 没传）时**留空**，不猜 —— 空着比写错方向好。
+   *
    * @returns {Promise<{ok:boolean, code?:string, message?:string, count?:number, limit?:number}>}
    */
-  const addSaleLine = async ({ openId, productRecordId = '', number = '', itemNo = '', color = '', size, amount = '', gift = '', requestId = '' }) => {
+  const addSaleLine = async ({ openId, productRecordId = '', number = '', itemNo = '', color = '', size, amount = '', gift = '', inStock, requestId = '' }) => {
     if (!config.sale.enabled) {
       return fail({ code: 'disabled', message: texts.writeDisabledBody, requestId });
     }
@@ -206,12 +217,16 @@ const createScanWriteService = (options = {}) => {
       return fail({ code: 'amount_invalid', message: userMessageFor(error), requestId, error });
     }
     const giftText = String(gift ?? '').trim().slice(0, config.sale.giftMaxLength);
+    // ⭐ 「现货 / 预订」：判据是**既有**的 `salesTradeTypeForStock`（有货 → 现货 / 没货 → 预订）。
+    const tradeTypeCode = typeof inStock === 'boolean' ? salesTradeTypeForStock({ inStock }) : '';
     const added = await queue.run(`sale:${openId}`, () => sessions.addLine(openId, {
       number: String(number || '').trim(),
       item_no: String(itemNo || '').trim(),
       color: String(color || '').trim(),
       product_record_id: String(productRecordId || '').trim(),
       size: parsedSize,
+      // ⭐ 这一行自己的交易类型编码（提交时写进「销售明细.交易类型」；空串 = 还没定，不猜）。
+      trade_type_code: tradeTypeCode,
       // 金额留空就是 null（提交时按「货品信息.单价」兜底）——**不在加单这一刻读表**，
       // 这样连扫几次不会因为读价格而变慢。
       amount: parsedAmount.value,
@@ -360,6 +375,10 @@ const createScanWriteService = (options = {}) => {
         // ⭐ 赠品：一件明细的赠品文本 —— 落点是**销售主表**那一列（合并规则在
         //    `config/salesGift` + `salesOrderService`，这里只把她的输入传下去）。
         giftDescription: String(line.gift || '').trim(),
+        // ⭐ 这一行自己的交易类型（现货 / 预订，既有行为编码）。
+        //    既有业务层按它解析「行为管理」记录、写进「销售明细.交易类型」；
+        //    解析不到不阻塞入账（退回主表那条 / 留空），与它原来的口径一字不差。
+        tradeTypeCode: String(line.trade_type_code || '').trim(),
       });
     }
 

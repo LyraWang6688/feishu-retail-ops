@@ -51,6 +51,13 @@ export function createDomainModule(domainId) {
     if (page.kind === 'orders') return void createOrdersModule({ mode: page.mode }).mount(host);
     if (page.kind === 'inventory-adjustment') return void createInventoryAdjustmentModule().mount(host);
     host.innerHTML = domainPageHtml(page);
+    // ⭐ 2026-10-09（下半场）：「验收到货」的入口在「采购 → 报货 / 验收 / 退货」这一页里 ——
+    //    这一页**内嵌**既有订单模块的 `purchase` 模式（原来那套一批一批点的验收台），
+    //    模块 / 模式都写在 `config/domains.js` 的 `embed` 里（配置先行）。
+    if (page.kind === 'links' && page.embed?.module === 'orders') {
+      const embedHost = host.querySelector(`[data-embed-host="${page.embed.id}"]`);
+      if (embedHost) createOrdersModule({ mode: page.embed.mode }).mount(embedHost);
+    }
     return undefined;
   }
 

@@ -1,4 +1,5 @@
 import { escapeHtml } from '../../core/formatters.js';
+import { PLACEHOLDER_STATUS } from '../shared/placeholder.js';
 
 /**
  * 领域子页里的「**输入编号 → 打开既有页面**」小入口（配置驱动，纯渲染 + 一个纯函数）。
@@ -35,12 +36,15 @@ const cardBody = (card, arrow) => `
         <p>${escapeHtml(card.desc || '')}</p>
         <div class="arrow">${escapeHtml(arrow)}</div>`;
 
-/** 卡片组：`href` = 外链 / 工作台内页；`jumpTo` = 同一个 tab 里的另一个子页。 */
+/**
+ * 卡片组：`href` = 外链 / 工作台内页；`anchor` = **本页里的一块**（例：采购 → 验收，
+ * 验收台就内嵌在同一页下面）；`jumpTo` = 同一个 tab 里的另一个子页。
+ */
 export function cardsHtml(cards = []) {
   return cards.map((card) => (card.jumpTo
     ? `<button class="entry-card card-button" type="button" data-jump="${escapeHtml(card.jumpTo)}">${cardBody(card, card.arrow || '打开 →')}
       </button>`
-    : `<a class="entry-card" href="${escapeHtml(card.href || '')}" rel="noopener">${cardBody(card, card.arrow || '进入 →')}
+    : `<a class="entry-card" href="${escapeHtml(card.href || card.anchor || '')}" rel="noopener">${cardBody(card, card.arrow || '进入 →')}
       </a>`)).join('\n');
 }
 
@@ -65,10 +69,37 @@ export function entryPageHtml(page) {
       </div>`;
 }
 
-/** 一个 `kind: 'links'` 子页的 HTML（纯卡片，没有表单）。 */
+/**
+ * 一个 `kind: 'links'` 子页的 HTML（纯卡片，没有表单）。
+ * `page.embed` 时再多一个**内嵌宿主**：把**既有模块**（例：订单模块的 purchase 模式 =
+ * 一批一批点的验收台）挂进来 —— 挂载在 `features/domains/index.js`（本文件只画宿主）。
+ */
 export const linksPageHtml = (page) => `
       <div class="domain-page" data-page-kind="links">
         <h3 class="section-title">${escapeHtml(page.title)}</h3>
         <p class="subtitle">${escapeHtml(page.subtitle || '')}</p>
         <div class="domain-cards">${cardsHtml(page.cards || [])}</div>
+        ${embedHtml(page.embed)}
+      </div>`;
+
+/** 内嵌既有模块的宿主（`embed` 为空串 ⇒ 什么都不画）。 */
+const embedHtml = (embed) => (embed?.module ? `
+        <section class="domain-embed" data-domain-embed="${escapeHtml(embed.module)}">
+          <h4 class="section-title">${escapeHtml(embed.title || '')}</h4>
+          ${embed.subtitle ? `<p class="subtitle">${escapeHtml(embed.subtitle)}</p>` : ''}
+          <div data-embed-host="${escapeHtml(embed.id || '')}"></div>
+        </section>` : '');
+
+/**
+ * ⭐ 一个 `kind: 'placeholder'` 子页面（业务负责人 2026-10-09）：
+ * **占位页统一写「待建设」** —— 简洁到只有"标题 + 一句待建设 +（可注明将来放什么）"，
+ * 但仍然给她一个**彩色小标签**（一眼看出这是没建好的页面，不是加载失败）。
+ */
+export const placeholderPageHtml = (page) => `
+      <div class="domain-page" data-page-kind="placeholder">
+        <h3 class="section-title">${escapeHtml(page.title)}</h3>
+        <div class="placeholder-card" data-placeholder="${escapeHtml(page.id || '')}">
+          <span class="tag tag-info">${escapeHtml(PLACEHOLDER_STATUS)}</span>
+          ${page.note ? `<p class="placeholder-note">${escapeHtml(page.note)}</p>` : ''}
+        </div>
       </div>`;

@@ -73,11 +73,13 @@ export const SALES_GROUPS = [
  *   · **售后列表** —— **钱货两清**（履约「已交付」且收款「已收款」）。
  * ⚠️ 三份单子**互斥且覆盖全部单子**（先判补充信息 → 再看是否两清），不重不漏。
  * ⚠️ 这里**不新增任何状态枚举**：不含"已两清 / 未付清"这类自造词（有测试钉着）。
+ * ⭐ 2026-10-09（下半场）：每份单子配一个**彩色小标签**（`tag` + `tone`，她要求
+ *    "状态用彩色小标签"）：**待补充 / 待交割 / 已两清**。`tone` 只决定颜色（用既有语义色令牌）。
  */
 export const SALES_SECTIONS = [
-  { key: 'supplement', label: '补充信息单', hint: '信息还没填全（尺码 / 金额 / 状态缺），补完就不会出现在这里' },
-  { key: 'pending', label: '待交割单', hint: '货没给完 / 钱没付完' },
-  { key: 'afterSales', label: '售后列表', hint: '钱货两清' },
+  { key: 'supplement', label: '补充信息单', tag: '待补充', tone: 'warning', hint: '信息还没填全（尺码 / 金额 / 状态缺），补完就不会出现在这里' },
+  { key: 'pending', label: '待交割单', tag: '待交割', tone: 'info', hint: '货没给完 / 钱没付完' },
+  { key: 'afterSales', label: '售后列表', tag: '已两清', tone: 'success', hint: '钱货两清' },
 ];
 
 /**
