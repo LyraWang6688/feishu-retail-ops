@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>采购管理｜邯美数智经营工作台</title>
+  <link rel="stylesheet" href="/workbench/styles/tokens.css">
+  <link rel="stylesheet" href="/workbench/styles/base.css">
+  <link rel="stylesheet" href="/workbench/features/purchase/purchase.css">
+</head>
+<!--
+  原「采购管理」一级 tab 的页面（业务负责人 2026-10-09 换领域 tab 之后**入口收进「其它 / 历史功能」**）。
+  · 页面本体、模块与两个查询面板（报货信息情况 / 到货验收情况）**一个字都没改**：
+    `features/purchase/index.js` 还是原来那一份，读的还是既有接口（`/api/workbench/purchase/*`）。
+  · 这一页只是给它一个**进得去的地方** —— 老链接 / 老收藏 / 其它页那张卡都落到这里。
+  ⚠️ 沿用既有独立页导航与同一套飞书登录，没有新开鉴权、没有重做导航。
+-->
+<body data-view="purchase">
+  <main class="shell standalone-shell">
+    <header class="header compact-header">
+      <div><div class="eyebrow">邯美数智经营工作台</div><h1>采购管理</h1></div>
+      <div class="auth"><span id="auth-status" class="muted">正在检查飞书登录状态…</span><button id="logout" class="btn btn-ghost hidden" type="button">退出登录</button></div>
+    </header>
+    <nav class="standalone-nav">
+      <a href="/workbench/">返回完整工作台</a>
+      <a href="/workbench/others.html">其它 / 历史功能</a>
+      <a class="active" href="/workbench/purchase.html">采购管理</a>
+      <a href="/workbench/purchase-return.html">采购和退货</a>
+    </nav>
+    <section id="standalone-host"></section>
+    <p id="page-error" class="error hidden" role="alert"></p>
+  </main>
+  <script type="module" src="/workbench/standalone.js"></script>
+</body>
+</html>

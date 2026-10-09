@@ -4,7 +4,7 @@ import { describeError, setBusy, showPageError } from '../../core/ui.js';
 import {
   ORDERS_API, ORDERS_PAGE, ORDERS_TEXTS, DEFAULT_COLLECTION_METHOD, COLLECTION_METHODS,
   REFUND_METHOD_PLACEHOLDER, RESTOCK_STATES, AFTER_SALES_ACTIONS, SETTLEMENTS,
-  ORDERS_SUB_TABS, SALES_GROUPS, DELIVERED_FULFILLMENT, PAID_PAYMENT_STATUS,
+  ORDERS_SUB_TABS, SALES_GROUPS, SALES_SECTIONS, DELIVERED_FULFILLMENT, PAID_PAYMENT_STATUS,
   ARRIVAL_CONFIRM,
 } from '../../config/orders.js';
 
@@ -145,9 +145,10 @@ export function groupSalesOrders(orders = []) {
 }
 
 /** 销售子 tab 的看板：四类分组 + 每类下面照旧是一张单一张卡（操作入口一个字没变）。 */
-export function ordersBoardHtml(orders = []) {
+export function ordersBoardHtml(orders = [], groupKeys = SALES_GROUPS.map((group) => group.key)) {
   if (!(orders || []).length) return `<p class="empty" data-view="orders-empty">${escapeHtml(P.empty)}</p>`;
-  return `<div class="orders-board" data-view="orders-board">${groupSalesOrders(orders).map((group) => `
+  const groups = groupSalesOrders(orders).filter((group) => groupKeys.includes(group.key));
+  return `<div class="orders-board" data-view="orders-board">${groups.map((group) => `
       <section class="order-group" data-sales-group="${escapeHtml(group.key)}">
         <div class="order-group-head">
           <h3>${escapeHtml(group.label)}</h3>
@@ -157,6 +158,55 @@ export function ordersBoardHtml(orders = []) {
     ? ordersListHtml(group.orders)
     : `<p class="empty compact">${escapeHtml(T.groupEmpty)}</p>`}
       </section>`).join('')}
+    </div>`;
+}
+
+// ── ⭐⭐ 2026-10-09（她定的最终结构）：订单列表内部的三份单子 ────────────────────────
+//
+// 她逐字：「② **订单列表**（**补充信息单** ｜ **待交割单**（货没给 / 钱没付完）｜ **售后列表**（钱货两清的））」
+// ⚠️ 判据只用**既有字段与取值**（`fulfillment_status` / `payment_status` / 明细的 `size`、
+//    `actual_amount`），**不新增任何状态枚举**；分段互斥且覆盖全部单子。
+
+/**
+ * 一张单属于哪一份单子（**纯函数**，配置里的三段顺序就是判定的优先级）：
+ *   · `supplement` —— 信息还没填全：履约 / 收款状态读不出来，或有明细缺尺码 / 缺成交金额
+ *     （「资金等非必填、可后续补」建出来的单就落在这里）；
+ *   · `afterSales` —— **钱货两清**（`salesCategoryOf` 判成 `settled`）；
+ *   · `pending`    —— 其余（信息齐了，但货没给完 / 钱没付完）。
+ */
+export function salesSectionOf(order) {
+  const lines = order?.details || [];
+  const infoMissing = !order?.fulfillment_status || !order?.payment_status
+    || lines.some((line) => line?.size == null || line.size === '' || line.actual_amount == null);
+  if (infoMissing) return SALES_SECTIONS[0].key;
+  return salesCategoryOf(order) === 'settled'
+    ? SALES_SECTIONS[SALES_SECTIONS.length - 1].key
+    : 'pending';
+}
+
+/**
+ * 三份单子（**顺序 = 配置顺序**）：每一段一个标题 + 条数，下面照旧是一张单一张卡。
+ * ⚠️ 「待交割单」那一段**仍按既有的三类细分展示**（有二次 · 货未交付 / 资金未收 / 两者都有）
+ *    —— 她 2026-10-09 上半场定的那三类**一条信息都没丢**，只是收在"待交割单"这一段里。
+ */
+export function ordersSectionsHtml(orders = []) {
+  if (!(orders || []).length) return `<p class="empty" data-view="orders-empty">${escapeHtml(P.empty)}</p>`;
+  return `<div class="orders-sections" data-view="orders-sections">${SALES_SECTIONS.map((section) => {
+    const list = orders.filter((order) => salesSectionOf(order) === section.key);
+    const body = !list.length
+      ? `<p class="empty compact">${escapeHtml(T.groupEmpty)}</p>`
+      : (section.key === 'pending'
+        ? ordersBoardHtml(list, SALES_GROUPS.filter((group) => group.key !== 'settled').map((group) => group.key))
+        : ordersListHtml(list));
+    return `
+      <section class="order-section" data-sales-section="${escapeHtml(section.key)}">
+        <div class="order-group-head">
+          <h3>${escapeHtml(section.label)}</h3>
+          <span class="muted">${escapeHtml(section.hint)} · ${list.length} 单</span>
+        </div>
+        ${body}
+      </section>`;
+  }).join('')}
     </div>`;
 }
 
@@ -387,15 +437,21 @@ const uuid = () => (typeof crypto !== 'undefined' && crypto.randomUUID
 /**
  * 页面模块。**事件全部走容器上的委托** —— 每次重画 innerHTML 后不需要重新绑定，
  * 也就不会出现"重画一次、按钮点不动"的老毛病。
+ *
+ * ⭐ 2026-10-09：多了 `mode`（`'both' | 'sales' | 'purchase'`，由 `config/domains.js` 给）——
+ *    同一个模块现在挂在**两个领域**里：销售 tab 只看销售、采购 tab 只看采购；
+ *    `mode: 'both'`（缺省）保留原来"内部两个子 tab"的老行为（既有用例钉着）。
  */
-export function createOrdersModule() {
+export function createOrdersModule({ mode = 'both' } = {}) {
+  const singleMode = mode === 'sales' || mode === 'purchase';
   const state = {
     container: null,
     orders: [],
     methods: [],
     order: null,
     // ⭐ 2026-10-09：订单列表内部的子 tab（销售 / 采购）—— 选中态自己实现。
-    subTab: ORDERS_SUB_TABS[0].value,
+    //    单领域模式（销售 tab / 采购 tab）下没有这一排按钮，直接从 mode 定住。
+    subTab: mode === 'purchase' ? 'purchase' : ORDERS_SUB_TABS[0].value,
     purchaseRows: [],
     // 幂等：一次提交生成一个 requestId，重试复用同一个（成功后清空）。
     // 与「库存手工调整」页同一套做法（服务端就是这么认同一笔的）。
@@ -418,21 +474,27 @@ export function createOrdersModule() {
   }
 
   function renderShell() {
+    const subtitle = mode === 'purchase' ? (P.purchaseSubtitle || P.subtitle) : P.subtitle;
+    // 单领域模式（销售 tab / 采购 tab）**不画**内部那排子 tab —— 一级 tab 已经分好领域了，
+    // 再套一层"销售 / 采购"只会让她多点一下（移动端尤其烦）。默认模式一个字没变。
+    const subTabs = singleMode ? '' : `<div class="sub-tabs" data-view="orders-subtabs">${subTabsHtml(state.subTab)}</div>`;
+    const salesPanel = `<div class="sub-panel${state.subTab === 'sales' ? '' : ' hidden'}" data-view="sales-panel">
+          <div data-view="orders-host"><p class="section-loading">正在读取订单…</p></div>
+        </div>`;
+    const purchasePanel = `<div class="sub-panel${state.subTab === 'purchase' ? '' : ' hidden'}" data-view="purchase-panel">
+          <div data-view="purchase-host"><p class="section-loading">${state.subTab === 'purchase' ? '正在读取采购申请…' : '打开后读取采购申请…'}</p></div>
+        </div>`;
     state.container.innerHTML = `
       <section class="panel">
         <div class="panel-header">
           <div>
             <h2>${escapeHtml(P.title)}</h2>
-            <p class="subtitle">${escapeHtml(P.subtitle)}</p>
+            <p class="subtitle">${escapeHtml(subtitle)}</p>
           </div>
         </div>
-        <div class="sub-tabs" data-view="orders-subtabs">${subTabsHtml(state.subTab)}</div>
-        <div class="sub-panel" data-view="sales-panel">
-          <div data-view="orders-host"><p class="section-loading">正在读取订单…</p></div>
-        </div>
-        <div class="sub-panel hidden" data-view="purchase-panel">
-          <div data-view="purchase-host"><p class="section-loading">打开后读取采购申请…</p></div>
-        </div>
+        ${subTabs}
+        ${mode === 'purchase' ? '' : salesPanel}
+        ${mode === 'sales' ? '' : purchasePanel}
         <p class="operation-result" data-view="action-result" role="status"></p>
       </section>`;
   }
@@ -467,7 +529,9 @@ export function createOrdersModule() {
 
   function renderList() {
     state.order = null;
-    $('[data-view="orders-host"]').innerHTML = ordersBoardHtml(state.orders);
+    const host = $('[data-view="orders-host"]');
+    // 三份单子（补充信息单 ｜ 待交割单 ｜ 售后列表）—— 她的口径，见 config/orders.js 的 SALES_SECTIONS。
+    if (host) host.innerHTML = ordersSectionsHtml(state.orders);
   }
 
   function renderPurchaseList() {
@@ -792,7 +856,9 @@ export function createOrdersModule() {
       state.container = container;
       renderShell();
       bind();
-      loadOrders();
+      // 单领域模式只读自己那一边（采购 tab 不发销售订单请求，销售 tab 不发采购申请请求）。
+      if (mode === 'purchase') loadPurchaseOrders();
+      else loadOrders();
     },
   };
 }

@@ -14,7 +14,7 @@
 .picker-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
 .picker-item {
   display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; text-align: left;
-  border: 1px solid var(--border); border-radius: var(--radius-sm); background: white; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer;
 }
 .picker-item:hover { border-color: var(--primary); background: var(--primary-soft); }
 .picker-item.active { border-color: var(--primary); background: var(--primary-soft); box-shadow: var(--shadow-card); }

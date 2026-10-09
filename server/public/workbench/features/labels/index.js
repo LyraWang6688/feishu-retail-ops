@@ -19,6 +19,17 @@ import { FILTER_OPTIONS, TEXTS, pageStyleText, sheetHtml, sheetStyleVars, summar
 
 const $ = (container, selector) => container.querySelector(selector);
 
+/**
+ * ⭐ 2026-10-09：「货品 → 标签打印 → **单个**」把编号 / 货号从 URL 带进来（`?keyword=`），
+ *    于是只出这一款的标签；**不带参数时一个字都不变**（打开就把全部库存查一遍，最多配置里的张数）。
+ * ⚠️ 只是**预填一个筛选框**，不新增任何请求 / 不绕过后端过滤（`keyword` 是既有筛选参数）。
+ */
+const keywordFromUrl = () => {
+  if (typeof window === 'undefined' || !window.location) return '';
+  const params = new URLSearchParams(window.location.search);
+  return String(params.get('keyword') || params.get('number') || '').trim();
+};
+
 const stateLabel = (state) => FILTER_OPTIONS.stateLabels[state] || state;
 const recentLabel = (days) => FILTER_OPTIONS.recentDayLabels[days] || `最近 ${days} 天`;
 const sortLabel = (sort) => FILTER_OPTIONS.sortLabels[sort] || sort;
@@ -201,6 +212,9 @@ export function createLabelPrintModule() {
     mount(container) {
       state.container = container;
       renderShell(container);
+      // ⭐ 「单个」入口带进来的编号 / 货号 → 预填筛选框（见上面 keywordFromUrl 的说明）。
+      const preset = keywordFromUrl();
+      if (preset) $(panel(), '[data-field="keyword"]').value = preset;
       $(panel(), '[data-action="query"]').addEventListener('click', (event) => query(event.currentTarget));
       $(panel(), '[data-field="keyword"]').addEventListener('keydown', (event) => {
         if (event.key === 'Enter') $(panel(), '[data-action="query"]').click();

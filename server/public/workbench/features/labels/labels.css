@@ -55,14 +55,14 @@
   overflow: hidden;
   background: white;
   /* 屏幕上是虚线（看得出是一张张标签）；打印时换成细实线当裁切线。粗细来自服务端 config。 */
-  border: var(--label-border) dashed #b9c2d4;
+  border: var(--label-border) dashed var(--label-outline);
   /* 一张标签绝不被拆到两页上 —— A4 一页铺多张全靠这一条。 */
   break-inside: avoid;
   page-break-inside: avoid;
 }
 /* 品牌行（默认 = 顶部跨整张的那一行；`brandRow:'inline'` 时它落在右栏里）。
    水平对齐由服务端 config（`body.brandAlign`）以内联 style 下来，这里只管字号与颜色。 */
-.label-brand { flex: none; font-size: var(--brand-size); line-height: 1.15; color: #8a8f99; }
+.label-brand { flex: none; font-size: var(--brand-size); line-height: 1.15; color: var(--label-brand); }
 .label-brand-top { margin-bottom: var(--brand-gap); }
 /* 二维码在左、文字在右（品牌行在它们上面）。二维码关掉时右栏自然占满，排版不变。 */
 .label-main { flex: 1; min-height: 0; display: flex; align-items: center; gap: var(--qr-gap); }
@@ -100,15 +100,15 @@
 .label-sizes { display: flex; align-items: baseline; gap: var(--size-gap); font-size: var(--size-size); line-height: 1.25; }
 .label-size { white-space: nowrap; }
 .label-size-qty { font-size: var(--size-qty-size); vertical-align: var(--size-qty-shift); }
-.label-size-more { color: #333; }
+.label-size-more { color: var(--label-ink); }
 .label-price { font-size: var(--price-size); line-height: 1.15; font-weight: 700; }
 .label-footer {
   flex: none;
   padding-top: 0.4mm;
-  border-top: 0.15mm solid #333;
+  border-top: 0.15mm solid var(--label-ink);
   font-size: var(--footer-size);
   line-height: 1.2;
-  color: #333;
+  color: var(--label-ink);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
@@ -126,5 +126,5 @@
   .label-sheet-scroll { overflow: visible; padding: 0; }
   .label-sheet { width: auto; margin: 0; box-shadow: none; justify-content: start; }
   /* 虚线换细实线 = 裁切线（复印/打印都看得见，又不抢眼）。 */
-  .label { border: var(--label-border) solid #c8cede; }
+  .label { border: var(--label-border) solid var(--label-outline-strong); }
 }

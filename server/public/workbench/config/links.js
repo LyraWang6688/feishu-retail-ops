@@ -20,6 +20,16 @@ export const PURCHASE_RETURN_FORM_URL =
   'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnjsqt4D5URseSSXgecYlqGd';
 
 /**
+ * 「货品上新」飞书表单 —— ⭐ **2026-10-09 起是「货品」tab 的第①个子页面**。
+ *
+ * 这个 URL 原来**只写死在** `features/purchase/index.js` 的 `FORMS[0]` 里（旧「采购管理」页）。
+ * 现在它同时被「货品 · 货品上新」那张卡用 ⇒ 按本仓库「URL 单一来源」的规矩**提到这里**，
+ * 两处都只 `import`（那份旧页面也改成从这里取，不再各写一份字面量）。
+ */
+export const PRODUCT_NEW_FORM_URL =
+  'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnX0GlNcSOujePgWOLTTWr4m';
+
+/**
  * 两个飞书表单，按这个顺序渲染。**消费方**（只负责画，不改这张表）：
  *   `features/purchase/links.js` —— 「采购和退货」页（`purchase-return.html`）的两张卡。
  *   `config/home.js` —— 首页【常用功能】那**一张**「报货与退货」卡的 `href`

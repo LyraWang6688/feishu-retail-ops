@@ -1,32 +1,30 @@
 import { requireFeishuAuth, showLoginButton } from './core/auth.js';
 import { describeError, showPageError } from './core/ui.js';
 import { mainTabsHtml } from './core/tabs.js';
-import { createCommonModule } from './features/common/index.js';
-import { createQueryModule } from './features/query/index.js';
-import { createOrdersModule } from './features/orders/index.js';
-import { createPurchaseModule } from './features/purchase/index.js';
+import { createDomainModule } from './features/domains/index.js';
 import { createPlaceholderModule } from './features/shared/placeholder.js';
 
-// 一级 tab（业务负责人 2026-10-08 定 2 个；⭐ 2026-10-09 追加第 3 个「订单列表」）：
-//   ① 信息录入（原「常用功能」只改名）· ② 信息查询（销售查询 / 库存查询 两个板块 = 飞书外链卡）
-//   ③ 订单列表（看销售情况 + 补收款 / 交付 / 售后 / 二次交付；移动端友好）
+// ⭐⭐ 一级 tab（业务负责人 2026-10-09 定的**最终结构**）：
+//   ① 销售 · ② 库存 · ③ 采购 · ④ 货品 —— **按业务领域分**（不再按动作分）。
+//   每个领域的**子页面清单**在 `config/domains.js`（销售建单 / 订单列表 / 销售查询…）。
 // ⚠️ **文案 / 顺序 / data-module 的唯一来源是 `config/tabs.js` 的 `MAIN_TABS`**，
 //    由 `core/tabs.js` 的 `mainTabsHtml()` 渲染进 `#main-tabs`（配置先行：加减 tab 只改配置）。
-//    `index.html` 里的 `<nav id="main-tabs">` 因此是空的。
-// ⚠️ 自建的「销售查询 / 实时库存」页面与查询接口已于同一天整体删除
-//    （三个静态页 · 两个前端模块 · 路由 `/sales/query` · `/sales/today`）。
-//    独立页 `common.html`（信息录入）· `inventory-adjustment.html` · `purchase-return.html` 照旧。
 //
-// ⚠️ HIDDEN（入口隐去、**代码保留**）：purchase / finance / douyin / platform。
-//    它们仍然在这个 modules 表里，只是 `config/tabs.js` 里没有对应的 tab，
-//    所以点不到。要恢复某个入口：在 `config/tabs.js` 的 `MAIN_TABS` 里加回一条即可，逻辑不用改。
+// ⚠️ 旧的一级 tab（信息录入 / 信息查询 / 订单列表）**一个都没删**：
+//    · 信息查询的两个板块 → 拆进「销售 · 销售查询」「库存 · 全仓查询」（`config/query.js` 一个字没少）；
+//    · 订单列表 → 拆进「销售 · 订单列表」「采购 · 采购订单列表」（同一个 `features/orders` 模块）；
+//    · 信息录入（原「常用功能」首页）→ 原样在 `/workbench/common.html`，
+//      从首页页脚的「其它 / 历史功能」进（`features/others` + `config/others.js`）。
+// ⚠️ HIDDEN（入口隐去、**代码保留**）：finance / douyin / platform ——
+//    它们仍在下面这个 modules 表里（占位模块），在「其它 / 历史功能」页如实列出（"规划中"）。
+//    要恢复某个入口：在 `config/tabs.js` 的 `MAIN_TABS` 里加回一条即可，逻辑不用改。
 const modules = new Map([
-  ['common', createCommonModule()],
-  ['query', createQueryModule()],
-  // ⭐ 2026-10-09：订单列表（看销售情况 + 单条操作）。一级 tab 的文案在 `config/tabs.js`。
-  ['orders', createOrdersModule()],
-  // ── 以下四个是隐去的入口（保留代码）────────────────────────────────────
-  ['purchase', createPurchaseModule()],
+  // ── 四个业务领域（唯一的一级 tab 来源）────────────────────────────────────
+  ['sales', createDomainModule('sales')],
+  ['inventory', createDomainModule('inventory')],
+  ['purchase', createDomainModule('purchase')],
+  ['product', createDomainModule('product')],
+  // ── 以下三个是隐去的入口（保留代码；在「其它 / 历史功能」里如实列出）──────
   ['finance', createPlaceholderModule({
     title: '资金管理',
     description: '统一展示实际到账、顾客待收款、平台待结算和供应商应付款。',
@@ -46,15 +44,15 @@ const modules = new Map([
 
 const mounted = new Map();
 const host = document.getElementById('module-host');
-// 页面加载时打开的 tab = 第一个可见 tab（配置里的第一条 = 「信息录入」）。
+// 页面加载时打开的 tab = 第一个可见 tab（配置里的第一条 = 「销售」）。
 // 写死某个 module 会在 tab 顺序调整后又对不上，所以从 DOM 里取。
-let initialModule = 'common';
+let initialModule = 'sales';
 
 // 把一级 tab 渲染进 nav —— 文案 / 顺序 / data-module 全部来自 `config/tabs.js`（配置先行）。
 function renderMainTabs() {
   const nav = document.getElementById('main-tabs');
   nav.innerHTML = mainTabsHtml();
-  initialModule = nav.querySelector('.main-tab')?.dataset.module || 'common';
+  initialModule = nav.querySelector('.main-tab')?.dataset.module || 'sales';
 }
 
 function activateModule(moduleId) {

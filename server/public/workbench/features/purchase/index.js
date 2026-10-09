@@ -1,10 +1,13 @@
 import { api } from '../../core/api-client.js';
 import { dateTime, escapeHtml, statusClass } from '../../core/formatters.js';
 import { bindSubTabs, describeError, showPageError } from '../../core/ui.js';
-import { PURCHASE_REQUEST_FORM_URL } from '../../config/links.js';
+// ⚠️ 三个表单 URL **一律从 `config/links.js` 取**（URL 单一来源，本文件不写死字面量）：
+//    `PRODUCT_NEW_FORM_URL` 2026-10-09 起同时被「货品 → 货品上新」那张卡用，
+//    所以它从"写在这里"提到了 `config/links.js`（值一个字没改）。
+import { PRODUCT_NEW_FORM_URL, PURCHASE_REQUEST_FORM_URL } from '../../config/links.js';
 
 const FORMS = [
-  { label: '货品上新', desc: '新增货品基础信息', url: 'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnX0GlNcSOujePgWOLTTWr4m', icon: '🏷️' },
+  { label: '货品上新', desc: '新增货品基础信息', url: PRODUCT_NEW_FORM_URL, icon: '🏷️' },
   // 采购申请表单的链接统一从 config/links.js 取（配置先行：换链接只改那一个文件）。
   { label: '信息填写', desc: '提交采购申请或采购退货', url: PURCHASE_REQUEST_FORM_URL, icon: '📦' },
   // ⚠️ 2026-10-07 晚：原先这里还有一张「到货验收」表单卡（"登记到货与验收情况"）——

@@ -1,0 +1,52 @@
+/*
+ * 四个**领域 tab**（销售 / 库存 / 采购 / 货品）的骨架样式。
+ *
+ * 移动优先（业务负责人 2026-10-09：「工作台一定要对移动端友好」）：
+ *   · 子页面 = 一屏一列（卡片 / 表单 / 步骤说明都是单列，**没有表格**）；
+ *   · 每个能点的东西 ≥ `--control-height`(44px)；
+ *   · 长文本（编号 / 单号 / 货号）一律断行，不撑出横向滚动条。
+ * 颜色 / 间距 / 圆角 / 字号全部 `var(--…)` —— 值只在 `styles/tokens.css`（主题唯一真源）。
+ */
+
+.domain-page { display: grid; gap: var(--space-3); min-width: 0; }
+.domain-page .section-title { margin: var(--space-2) 0 0; }
+.domain-page p { overflow-wrap: anywhere; }
+
+/* 「怎么用」那三步：手机上竖排、字号小一号，不抢主体。 */
+.domain-steps { margin: 0; padding-left: var(--space-5); color: var(--text-secondary); font-size: var(--font-size-sm); }
+.domain-steps li { margin: var(--space-1) 0; overflow-wrap: anywhere; }
+
+/* 编号入口表单（销售建单 / 单款查询 / 标签打印单个）。 */
+.entry-open { margin: 0; }
+.entry-open input { width: 100%; }
+
+/* 卡片组：查询板块那种"只有一张卡"的页面不要铺成三列。 */
+.domain-cards-single { grid-template-columns: minmax(0, 1fr); }
+
+/* 「跳到本 tab 里另一个子页」的卡片 = 一个整行按钮（外观与 <a> 卡一致）。 */
+.card-button {
+  width: 100%;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.card-button:disabled { cursor: wait; opacity: .65; }
+
+/* 内嵌的既有模块（订单列表 / 库存手工调整）自己也带一层 `.panel` ——
+   嵌进来之后降级成"卡片里的一块"，避免白卡套白卡、阴影叠阴影。 */
+[data-domain-host] > .panel {
+  padding: var(--space-4);
+  border-color: var(--border-light);
+  background: var(--surface-soft);
+  box-shadow: none;
+}
+[data-domain-host] > .panel > .panel-header h2 { font-size: var(--font-size-lg); }
+[data-domain-host] > .panel > .sub-tabs { margin-top: var(--space-2); }
+
+/* 桌面（≥761px）：卡片可以并排，其余与手机一致（≥44px 命中区不因为屏幕大就缩小）。 */
+@media (min-width: 761px) {
+  .domain-page { gap: var(--space-4); }
+  .domain-cards { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .domain-cards-single { grid-template-columns: minmax(0, 1fr); }
+  .entry-open { max-width: 560px; }
+}

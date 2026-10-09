@@ -2,84 +2,158 @@
  * 扫码页的服务端渲染（**纯函数**：视图模型 → HTML 字符串）。
  *
  * 为什么是服务端渲染 + 内联样式（业务负责人 2026-10-08 批准的第一版就这么定）：
- *   · 手机上打开**越快越好**：一次请求就有完整内容，没有前端构建、没有第二个请求、没有 JS；
+ *   · 手机上打开**越快越好**：一次请求就有完整内容，没有前端构建、没有第二个请求；
  *   · 不改工作台的前端（`public/workbench/**`）：这一页是**独立**的一个小页面，
  *     样式内联在这里，谁都不影响。
+ *
+ * ⭐ 2026-10-09 加的两件事（都只在这一层，`routes/**` 与 `config/**` 一个字没改）：
+ *   ① **领域切换**（`?from=sales|inventory|purchase|product`，缺省销售）——
+ *      四块操作**全都渲染进 HTML**，由 CSS 按 `<html data-realm="…">` 只显示当前领域；
+ *      那一行属性由 `<head>` 里一小段内联脚本在 body 解析前从 `location.search` 读出来
+ *      （细节与取舍见 `views/scanPageRealm.js`）。⚠️ 显示规则由 CSS 决定 ⇒
+ *      **既有用例断言的 HTML 一个字都没少**（销售表单与补货表单都还在）。
+ *   ② **主题与工作台对齐**：配色 / 间距 / 圆角 / 字号**全部来自 `styles/tokens.css`**
+ *      （工作台那一个主题文件）—— 这里在模块加载时把它读出来、内联成 `:root{…}`，
+ *      所以"改配色只改那一个文件"，扫码页也跟着变（见 `readThemeTokens`）。
  *
  * ⚠️ 这一页是**给她在手机上扫开看的**，所以：
  *   · `viewport` + `max-width: 480px` 居中：手机上不横向滚动、平板上也不会拉成一条；
  *   · 字号按移动端可读性给（正文 16px 起、尺码/数量 17–18px，避免 iOS 自动放大）；
  *   · 表格只有 4 列（尺码 + 三种状态），窄屏也放得下；缺码那一行**整行高亮**，
  *     标记 `⚠️ 缺` 放在**尺码格子里**（设计稿把标记画在行尾，窄屏上第五列会被挤掉）。
+ *   · 领域切换的那一排按钮 **≥44px 命中区**（`--control-height`）—— 手机上点得准。
  *
  * ⚠️ 所有来自表里的值（编号 / 颜色 / 品类 / 尺码 / 状态）一律 `escapeHtml` ——
  *    这些是**业务数据**，不是可信 HTML。
  */
+const fs = require('node:fs');
+const path = require('node:path');
 const { SCAN_PAGE, fillText } = require('../config/scanPage');
+const {
+  REALMS, DEFAULT_REALM, REALM_TEXTS, resolveRealm, labelPrintUrls,
+} = require('./scanPageRealm');
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 }[char]));
 
 /**
- * 内联样式。刻意用**系统字体**与**浅色**：与工作台观感一致，且不引外部字体/图片
- * （她那边可能只有移动网络，多一个外链就多一次等待）。
+ * ⭐ **主题唯一真源** = 工作台的 `public/workbench/styles/tokens.css`。
+ * 读出来只是为了把它**内联**进这一页（保持"一次请求打开"的初衷，不再引一个外链 CSS），
+ * 所以改配色 / 间距 / 圆角 / 字号**只改那一个文件**，工作台与扫码页一起变。
+ *
+ * 读不到时（文件被删 / 权限异常）**不抛**：`:root` 为空，页面退化成"浏览器默认字体与颜色"
+ * 但内容照常可读可点（本页的值全部走 `var(--…)`，没有第二份硬编码的兜底值 —— 那正是要避免的漂移）。
+ */
+const THEME_FILE = path.join(__dirname, '..', '..', 'public', 'workbench', 'styles', 'tokens.css');
+
+function readThemeTokens(file = THEME_FILE) {
+  let css = '';
+  try {
+    css = fs.readFileSync(file, 'utf8');
+  } catch (error) {
+    // 读不到（文件被删 / 权限异常）⇒ 不抛：`:root` 为空，页面退化成浏览器默认外观，内容照常可读。
+    return [];
+  }
+  // ⚠️ 先去掉注释再抓变量：注释里会写 `--xxx`（说明文字），别把它们当成真令牌。
+  const source = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const tokens = [];
+  for (const match of source.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;{}]+);/gi)) {
+    tokens.push(`${match[1]}: ${match[2].trim()};`);
+  }
+  return tokens;
+}
+
+const THEME_TOKENS = readThemeTokens();
+const THEME_ROOT = `:root {\ncolor-scheme: light;\n${THEME_TOKENS.join('\n')}\n}`;
+
+/**
+ * 领域切换的两组规则（**从 `REALMS` 生成**，加减领域只改那个文件）：
+ *   · `.realm-block--<id>` 默认不显示；当前领域那一个显示出来；
+ *   · 当前领域的那颗按钮变主色。
+ * ⚠️ `:not([data-realm])` 那一行是**没 JS 时的兜底**：四块全显示，绝不白屏。
+ */
+const REALM_STYLE = [
+  `.realm-block--${REALMS.map((realm) => realm.id).join(', .realm-block--')} { display: none; }`,
+  `html:not([data-realm]) .realm-block { display: block; }`,
+  REALMS.map((realm) => `html[data-realm="${realm.id}"] .realm-block--${realm.id} { display: block; }`).join('\n'),
+  REALMS.map((realm) => `html[data-realm="${realm.id}"] .realm-tab[data-realm-id="${realm.id}"] { color: var(--surface); background: var(--primary); }`).join('\n'),
+].join('\n');
+
+/**
+ * 在 `<head>` 里（body 解析之前）把当前领域写到 `<html data-realm="…">` 上 ——
+ * 于是 CSS 从一开始就只显示该领域，不会闪一下"四块全显示"。
+ * 认不出的 `from` 与缺省一律 = 销售（`DEFAULT_REALM`）。
+ */
+const REALM_SCRIPT = `<script>(function(){var ids=${JSON.stringify(REALMS.map((realm) => realm.id))};`
+  + 'var raw="";try{raw=String(new URLSearchParams(location.search).get("from")||"").trim().toLowerCase();}catch(e){}'
+  + `document.documentElement.setAttribute("data-realm",ids.indexOf(raw)>=0?raw:${JSON.stringify(DEFAULT_REALM)});}());</script>`;
+
+/**
+ * 内联样式。刻意用**系统字体**与**浅色**：与工作台同一个主题（同一个 `tokens.css`），
+ * 且不引外部字体/图片（她那边可能只有移动网络，多一个外链就多一次等待）。
  */
 const STYLE = `
-:root { color-scheme: light; }
+${THEME_ROOT}
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
 body {
-  margin: 0; background: #f4f5f7; color: #1f2329;
-  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  margin: 0; background: var(--background); color: var(--text);
+  font-family: var(--font-family); font-size: var(--font-size-base); line-height: var(--line-height);
 }
-.page { max-width: 480px; margin: 0 auto; padding: 12px 12px 28px; }
-.card { background: #fff; border-radius: 12px; padding: 14px 16px; margin: 0 0 12px; box-shadow: 0 1px 2px rgba(31, 35, 41, .08); }
-.identity { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.identity__item { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: .3px; word-break: break-all; }
-.identity__meta { margin: 4px 0 0; color: #646a73; font-size: 15px; word-break: break-all; }
+.page { max-width: var(--page-max); margin: 0 auto; padding: var(--space-3) var(--space-3) var(--space-8); }
+.card { background: var(--surface); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); margin: 0 0 var(--space-3); box-shadow: var(--shadow-card); }
+.identity { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
+.identity__item { margin: 0; font-size: var(--font-size-2xl); font-weight: 700; letter-spacing: .3px; word-break: break-all; }
+.identity__meta { margin: var(--space-1) 0 0; color: var(--text-secondary); font-size: var(--font-size-md); word-break: break-all; }
 .price { text-align: right; white-space: nowrap; }
-.price__label { display: block; color: #8f959e; font-size: 12px; }
-.price__value { font-size: 22px; font-weight: 700; }
-.stock__heading { margin: 0 0 10px; font-size: 16px; }
+.price__label { display: block; color: var(--text-muted); font-size: var(--font-size-xs); }
+.price__value { font-size: var(--font-size-xl); font-weight: 700; }
+.stock__heading { margin: 0 0 var(--space-2); font-size: var(--font-size-base); }
 .stock { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-.stock thead th { padding: 4px 4px 8px; border-bottom: 1px solid #e5e6eb; color: #8f959e; font-size: 13px; font-weight: 500; text-align: center; }
+.stock thead th { padding: var(--space-1) var(--space-1) var(--space-2); border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: var(--font-size-sm); font-weight: 500; text-align: center; }
 .stock thead th:first-child { text-align: left; }
-.stock tbody th { padding: 11px 4px; border-bottom: 1px solid #eef0f3; font-size: 18px; font-weight: 600; text-align: left; width: 34%; }
-.stock tbody td { padding: 11px 4px; border-bottom: 1px solid #eef0f3; font-size: 17px; text-align: center; }
+.stock tbody th { padding: var(--space-3) var(--space-1); border-bottom: 1px solid var(--border-light); font-size: var(--font-size-lg); font-weight: 600; text-align: left; width: 34%; }
+.stock tbody td { padding: var(--space-3) var(--space-1); border-bottom: 1px solid var(--border-light); font-size: var(--font-size-base); text-align: center; }
 .stock tbody tr:last-child th, .stock tbody tr:last-child td { border-bottom: 0; }
-.stock td.zero { color: #c9cdd4; }
-.stock tr.missing { background: #fff7e6; }
-.stock tr.missing th { color: #a8710f; }
-.stock tr.missing td.zero { color: #d4b483; }
-.badge { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 9px; background: #ffedd0; color: #a8710f; font-size: 12px; font-weight: 600; vertical-align: 2px; }
-.notes { margin: 12px 0 0; padding: 0; list-style: none; color: #8f959e; font-size: 13px; }
-.notes li { margin-top: 4px; }
-.foot { margin: 4px 2px 0; color: #a9aeb8; font-size: 12px; word-break: break-all; }
+.stock td.zero { color: var(--placeholder); }
+.stock tr.missing { background: var(--warning-soft); }
+.stock tr.missing th { color: var(--warning); }
+.stock tr.missing td.zero { color: var(--warning); opacity: .55; }
+.badge { display: inline-block; margin-left: var(--space-1); padding: 1px 7px; border-radius: var(--radius-pill); background: var(--warning-soft); color: var(--warning); font-size: var(--font-size-xs); font-weight: 600; vertical-align: 2px; }
+.notes { margin: var(--space-3) 0 0; padding: 0; list-style: none; color: var(--text-muted); font-size: var(--font-size-sm); }
+.notes li { margin-top: var(--space-1); }
+.foot { margin: var(--space-1) var(--space-1) 0; color: var(--placeholder); font-size: var(--font-size-xs); word-break: break-all; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.state-msg { text-align: center; padding: 36px 16px; }
-.state-msg h1 { margin: 0 0 10px; font-size: 20px; }
-.state-msg p { margin: 8px 0; color: #646a73; }
-.state-msg .number { color: #1f2329; font-weight: 600; }
-.state-msg .hint { color: #8f959e; font-size: 13px; }
-.result { margin: 12px 0 0; padding: 0; list-style: none; color: #1f2329; font-size: 15px; }
-.result li { margin-top: 4px; }
-.draft-count { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
-.notice { margin: 0; color: #2b6cf6; font-size: 15px; font-weight: 600; }
-.draft-list { margin: 0 0 10px; padding-left: 18px; color: #646a73; font-size: 14px; }
-.write-form { margin: 10px 0 0; padding: 10px 0 0; border-top: 1px solid #eef0f3; }
-.form-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.form-row label { flex: 0 0 42%; color: #646a73; font-size: 14px; }
-.form-row select, .form-row input { flex: 1 1 auto; min-width: 0; padding: 8px 10px; border: 1px solid #d9dbe0; border-radius: 8px; font-size: 16px; background: #fff; }
-.size-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.size-check { flex: 1 1 auto; font-size: 16px; }
-.size-qty { flex: 0 0 84px; padding: 8px 10px; border: 1px solid #d9dbe0; border-radius: 8px; font-size: 16px; text-align: center; }
-.btn { display: block; width: 100%; margin-top: 6px; padding: 11px 12px; border: 0; border-radius: 8px; background: #eef0f3; color: #1f2329; font-size: 16px; font-weight: 600; }
-.btn--primary { background: #2b6cf6; color: #fff; }
-.btn--ghost { background: transparent; color: #8f959e; font-weight: 500; }
+.state-msg { text-align: center; padding: var(--space-8) var(--space-4); }
+.state-msg h1 { margin: 0 0 var(--space-2); font-size: var(--font-size-xl); }
+.state-msg p { margin: var(--space-2) 0; color: var(--text-secondary); }
+.state-msg .number { color: var(--text); font-weight: 600; }
+.state-msg .hint { color: var(--text-muted); font-size: var(--font-size-sm); }
+.result { margin: var(--space-3) 0 0; padding: 0; list-style: none; color: var(--text); font-size: var(--font-size-md); }
+.result li { margin-top: var(--space-1); }
+.draft-count { margin: 0 0 var(--space-1); font-size: var(--font-size-md); font-weight: 600; }
+.notice { margin: 0; color: var(--primary); font-size: var(--font-size-md); font-weight: 600; }
+.draft-list { margin: 0 0 var(--space-2); padding-left: var(--space-5); color: var(--text-secondary); font-size: var(--font-size-md); }
+.write-form { margin: var(--space-2) 0 0; padding: var(--space-2) 0 0; border-top: 1px solid var(--border-light); }
+.form-row { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
+.form-row label { flex: 0 0 42%; color: var(--text-secondary); font-size: var(--font-size-md); }
+.form-row select, .form-row input { flex: 1 1 auto; min-width: 0; min-height: var(--control-height); padding: var(--space-2) var(--space-3); border: 1px solid var(--control-border); border-radius: var(--radius-sm); font-size: var(--font-size-base); background: var(--surface); }
+.size-row { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
+.size-check { flex: 1 1 auto; min-height: var(--control-height); display: flex; align-items: center; font-size: var(--font-size-base); }
+.size-qty { flex: 0 0 84px; min-height: var(--control-height); padding: var(--space-2) var(--space-3); border: 1px solid var(--control-border); border-radius: var(--radius-sm); font-size: var(--font-size-base); text-align: center; }
+.hint { color: var(--text-muted); font-size: var(--font-size-sm); }
+.btn { display: block; width: 100%; min-height: var(--control-height); margin-top: var(--space-1); padding: var(--space-3) var(--space-3); border: 0; border-radius: var(--radius-sm); background: var(--border-light); color: var(--text); font-size: var(--font-size-base); font-weight: 600; text-align: center; text-decoration: none; }
+.btn--primary { background: var(--primary); color: var(--surface); }
+.btn--ghost { background: transparent; color: var(--text-muted); font-weight: 500; }
+/* ── 领域切换（一个二维码，四个领域）────────────────────────────────────── */
+.realm-bar { display: flex; gap: var(--space-1); margin: 0 0 var(--space-2); padding: var(--space-1); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-card); overflow-x: auto; }
+.realm-tab { flex: 1 0 auto; display: flex; align-items: center; justify-content: center; min-height: var(--control-height); padding: 0 var(--space-3); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: var(--font-size-base); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.realm-hint { margin: 0 0 var(--space-3); color: var(--text-muted); font-size: var(--font-size-xs); text-align: center; }
+${REALM_STYLE}
 `;
 
-const renderDocument = ({ title, content, requestId, config = SCAN_PAGE }) => `<!doctype html>
+const renderDocument = ({ title, content, requestId, config = SCAN_PAGE, realm = DEFAULT_REALM }) => `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -87,6 +161,7 @@ const renderDocument = ({ title, content, requestId, config = SCAN_PAGE }) => `<
 <meta name="robots" content="noindex">
 <title>${escapeHtml(title)}</title>
 <style>${STYLE}</style>
+${realm ? REALM_SCRIPT : ''}
 </head>
 <body>
 <main class="page">
@@ -116,6 +191,16 @@ ${meta ? `<p class="identity__meta">${escapeHtml(meta)}</p>` : ''}
 </header>`;
 };
 
+/**
+ * ⭐ 领域切换条（顶部）：四个领域各一颗按钮（`?from=<id>`）。
+ * 当前领域的高亮由 CSS 按 `<html data-realm>` 决定（见 `REALM_STYLE`）——
+ * 服务端**不需要**读 `from`（那一层在 `routes/**`，本任务不碰）。
+ */
+const realmBarHtml = () => `<nav class="realm-bar" aria-label="${escapeHtml(REALM_TEXTS.barLabel)}">
+${REALMS.map((realm) => `<a class="realm-tab" data-realm-id="${escapeHtml(realm.id)}" href="?from=${escapeHtml(realm.id)}">${escapeHtml(realm.label)}</a>`).join('\n')}
+</nav>
+<p class="realm-hint">${escapeHtml(REALM_TEXTS.barHint)}</p>`;
+
 const stockTableHtml = (view, config) => {
   const head = [config.texts.columnSize, ...view.columns.map((column) => column.label)]
     .map((label) => `<th>${escapeHtml(label)}</th>`).join('');
@@ -143,9 +228,24 @@ ${notes}
 };
 
 /**
+ * ⭐ 「**货品**」领域那一块：打这一款的标签（**单个**）+ 去批量打印。
+ * ⚠️ 复用**既有**标签打印页（`/workbench/label-print.html`，40×30mm 那一版），
+ *    这里只拼链接（货号来自这一页已经读到的视图模型）—— 不在这里重做打印。
+ */
+const labelBlockHtml = (view) => {
+  const urls = labelPrintUrls(view);
+  return `<section class="card">
+<h2 class="stock__heading">${escapeHtml(REALM_TEXTS.labelHeading)}</h2>
+<p class="hint">${escapeHtml(REALM_TEXTS.labelHint)}</p>
+<a class="btn btn--primary" href="${escapeHtml(urls.single)}" rel="noopener">${escapeHtml(REALM_TEXTS.labelSingleButton)}</a>
+<a class="btn" href="${escapeHtml(urls.batch)}" rel="noopener">${escapeHtml(REALM_TEXTS.labelBatchButton)}</a>
+</section>`;
+};
+
+/**
  * ── 两个写入口的表单（销售建单 / 补货报单）────────────────────────────────────
  *
- * 都是**原生 HTML 表单**（没有一行 JS）：手机浏览器直接打开就能用，也不给这一页
+ * 都是**原生 HTML 表单**（没有一行业务 JS）：手机浏览器直接打开就能用，也不给这一页
  * 添任何前端构建产物（与第一版只读页的取舍一致）。
  *
  * 🔴 每个表单里都带一个 `submit_key`（**幂等键**，由服务端会话给出）：
@@ -225,24 +325,38 @@ ${rows}
 </section>`;
 };
 
+/**
+ * 三个领域的操作块（每个都带 `realm-block--<领域>`，CSS 只显示当前那一个）：
+ *   · `sales`     —— 「刚加入本单」那一句 + 销售建单表单；
+ *   · `purchase`  —— 补货报单表单；
+ *   · `inventory` —— 库存表（在 `renderScanPage` 里包）；
+ *   · `product`   —— 货品标签（在 `renderScanPage` 里包）。
+ * ⚠️ **三块都渲染进 HTML**（既有用例断言的就是这个）：只是屏幕上按领域显示其中一块。
+ */
 const writeFormsHtml = (view, write) => {
   if (!write || write.enabled === false) return '';
   // 「刚加入本单」那一句：文案来自配置、只有数字来自会话（**没有回显注入面**）。
   const notice = write.notice
-    ? `<section class="card"><p class="notice">${escapeHtml(write.notice)}</p></section>`
+    ? `<div class="realm-block realm-block--sales"><section class="card"><p class="notice">${escapeHtml(write.notice)}</p></section></div>`
     : '';
-  const sale = write.saleEnabled === false ? '' : saleFormHtml(view, write);
-  const replenish = write.replenishEnabled === false ? '' : replenishFormHtml(view, write);
+  const sale = write.saleEnabled === false ? '' : `<div class="realm-block realm-block--sales">${saleFormHtml(view, write)}</div>`;
+  const replenish = write.replenishEnabled === false ? '' : `<div class="realm-block realm-block--purchase">${replenishFormHtml(view, write)}</div>`;
   return `${notice}${sale}${replenish}`;
 };
 
-/** 正常页：身份 + 单价 + 库存表（＋ 可选的两个写入口表单）。 */
+/** 正常页：领域切换 + 身份 + 单价 + 当前领域的操作块（库存表 / 销售建单 / 补货 / 标签）。 */
 const renderScanPage = (view, config = SCAN_PAGE, write = null) => renderDocument({
   title: fillText(config.texts.pageTitle, { itemNo: view.item_no || view.number, number: view.number }),
   config,
-  content: `${identityHtml(view, config)}
+  content: `${realmBarHtml()}
+${identityHtml(view, config)}
+<div class="realm-block realm-block--inventory">
 ${stockTableHtml(view, config)}
+</div>
 ${write ? writeFormsHtml(view, write) : ''}
+<div class="realm-block realm-block--product">
+${labelBlockHtml(view)}
+</div>
 <p class="foot">${escapeHtml(config.texts.footerNumberLabel)} <span class="mono">${escapeHtml(view.number)}</span>`
   + `${view.updated_at_text ? ` · ${escapeHtml(config.texts.updatedAtLabel)} ${escapeHtml(view.updated_at_text)}` : ''}</p>`,
 });
@@ -253,11 +367,14 @@ ${write ? writeFormsHtml(view, write) : ''}
  *
  * `details` 是**写成功/写失败**时给她看的几行事实（单号 / 双数 / 批次号…）：
  * 有就逐行列出来，没有就一个字都不多渲染（既有那几种页面**逐字不变**）。
+ * ⚠️ 这些页面**不挂领域切换条**（它们是"结果页"，不是她操作的地方）：
+ *    给 `realm: null` 就不注入那一行脚本，四块内容本来也不在这里。
  */
 const renderScanMessagePage = ({ title, body, number = '', requestId = '', retryHint = '', details = [] }, config = SCAN_PAGE) => renderDocument({
   title,
   config,
   requestId,
+  realm: null,
   content: `<section class="card state-msg">
 <h1>${escapeHtml(title)}</h1>
 <p>${escapeHtml(body)}</p>
@@ -267,4 +384,6 @@ ${retryHint ? `<p class="hint">${escapeHtml(retryHint)}</p>` : ''}
 </section>`,
 });
 
-module.exports = { renderScanPage, renderScanMessagePage, escapeHtml, STYLE };
+module.exports = {
+  renderScanPage, renderScanMessagePage, escapeHtml, STYLE, readThemeTokens, REALM_SCRIPT, resolveRealm,
+};
