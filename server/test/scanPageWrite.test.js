@@ -236,8 +236,14 @@ test('① 连续扫三双加入本单 → 提交后是**一张销售单 + 三条
     }
     // 「确认状态」= 已确认（她在页面上点了【提交】——提交就是确认）
     assert.equal(entries[0].fields['确认状态'], '已确认');
-    // 主表「原话」留一句人话
-    assert.match(String(entries[0].fields['原话']), /扫码建单（3 双）/);
+    // 🔴 2026-10-09：主表「原话」那一列已被业务负责人删除 ⇒ 扫码建单**不再写**它
+    //（映射 + 写入点一起删，见 `config/v1BitableSchema.salesEntry` 段）。
+    // ⚠️ 扫码侧那个「扫码建单（N 双）：…」模板（`config/scanWrite.js` 的
+    // `SCAN_SALE_ORIGINAL_TEXT`）现在**没有落点**了 —— 本次**没动那个文件**
+    //（它在"不要碰"清单里），已写进收尾报告的待办。
+    // ⚠️ 这个假网关对未配置的语义键**当场抛**（与真网关同一个形状）⇒ 写入点回来这条就红。
+    assert.equal(entries[0].fields['原话'], undefined,
+      '「原话」列已删 ⇒ 扫码建单不许再写');
   } finally { h.cleanup(); }
 });
 
@@ -516,19 +522,25 @@ test('⑧ 页面上的两个写入口：默认收款方式「微信」+ 缺码�
       assert.equal(anonymousPost.status, 302, '写入口也在同一道闸门里');
       assert.match(anonymousPost.headers.get('location'), /^\/api\/auth\/feishu\/start\?next=/);
 
-      // 已登录：拿到写入口表单
-      const page = await fetch(`${base}/s/${encodeURIComponent(NUMBER)}`, { headers: { cookie: sessionCookie() } });
-      assert.equal(page.status, 200);
-      const html = await page.text();
-      assert.match(html, /销售（可以连着扫，最后一起提交）/);
-      assert.match(html, /补货报单（勾选要补的尺码）/);
+      // 已登录：拿到写入口表单。
+      // ⚠️ 2026-10-09（手机白屏之后）起：**服务端按 `?from` 只渲染那一块** ——
+      //    销售建单在 `from=sales`、补货报单在 `from=purchase`，一次请求只回其中一块。
+      const salePage = await fetch(`${base}/s/${encodeURIComponent(NUMBER)}?from=sales`, { headers: { cookie: sessionCookie() } });
+      assert.equal(salePage.status, 200);
+      const saleHtml = await salePage.text();
+      assert.match(saleHtml, /销售（可以连着扫，最后一起提交）/);
       // 默认选中「微信」
-      assert.match(html, new RegExp(`<option value="微信" selected>微信</option>`));
+      assert.match(saleHtml, new RegExp(`<option value="微信" selected>微信</option>`));
+      // 幂等键在表单里（这一把就是"连点两次只写一次"的判据）
+      assert.match(saleHtml, /name="submit_key" value="scan_sale:scan_session_[0-9a-f]{16}:1"/);
+
+      const purchasePage = await fetch(`${base}/s/${encodeURIComponent(NUMBER)}?from=purchase`, { headers: { cookie: sessionCookie() } });
+      assert.equal(purchasePage.status, 200);
+      const html = await purchasePage.text();
+      assert.match(html, /补货报单（勾选要补的尺码）/);
       // 缺码的 41 默认勾上
       assert.match(html, /name="sizes" value="41" checked/);
       assert.equal(/name="sizes" value="40" checked/.test(html), false, '40 不缺码 → 不预勾');
-      // 幂等键在表单里（这一把就是"连点两次只写一次"的判据）
-      assert.match(html, /name="submit_key" value="scan_sale:scan_session_[0-9a-f]{16}:1"/);
       assert.match(html, /name="submit_key" value="scan_replenish:scan_session_[0-9a-f]{16}:1"/);
     });
 
@@ -614,7 +626,8 @@ test('⑧ 路由：补货表单勾两个尺码 → 采购申请结果页（批�
     const openId = 'ou_scan_route';
     await withServer(formApp(h), async (base) => {
       const pageUrl = `${base}/s/${encodeURIComponent(NUMBER)}`;
-      const html = await (await fetch(pageUrl, { headers: { cookie: sessionCookie(openId) } })).text();
+      // ⚠️ 补货表单在 `from=purchase` 那一块（服务端只渲染当前领域）
+      const html = await (await fetch(`${pageUrl}?from=purchase`, { headers: { cookie: sessionCookie(openId) } })).text();
       const replenishKey = html.match(/name="submit_key" value="(scan_replenish:[^"]+)"/)[1];
       const response = await fetch(pageUrl, {
         method: 'POST',

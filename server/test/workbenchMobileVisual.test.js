@@ -162,7 +162,9 @@ test('AC5 手机默认单列、桌面（≥761px）才多列；留白充足且�
 
 test('AC6 不依赖外链资源、不引新依赖、页面不白屏', () => {
   // ① 页面里没有任何外链资源（字体 / 图片 / 脚本 / 样式）
-  for (const page of ['index.html', 'others.html', 'common.html', 'label-print.html']) {
+  //    ⚠️ 2026-10-09：`others.html` / `common.html` 已按她的口令删掉 ⇒ 改成扫**留下来的**页面
+  //       （首页 + 两个独立页）。这不是放宽：另外两个页面已经不在了，扫不存在的文件会直接报错。
+  for (const page of ['index.html', 'inventory-adjustment.html', 'label-print.html']) {
     const html = read(page);
     for (const match of html.matchAll(/<(link|script|img)\b[^>]*>/gi)) {
       assert.equal(/https?:\/\/|\/\/[a-z0-9-]+\./i.test(match[0]), false,

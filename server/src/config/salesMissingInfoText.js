@@ -17,10 +17,13 @@
 //    它在 `services/doubaoService` 的 `normalizeSalesResult`（解析层）
 //    与 `services/larkMvpService.processSalesTask`（接线层），**本次一行未改**：
 //    `draft.missing_fields` 仍然是改动前那串**机器清单**（`items[0].actual_amount` 还在里面），
-//    它照旧写进 `解析结果摘要`（JSON）与本地任务 —— 改的只是**给她看的那一层**。
+//    它照旧写进**本地任务记录**（`data/lark_mvp_tasks/*.json`）—— 改的只是**给她看的那一层**。
+//    ⚠️ 2026-10-09：它原来还写进业务表「解析结果摘要」(`parseSummary`) 那一列 —— 那一列
+//       （连同原话 / 解析状态 / 失败原因 / 消息链接）被业务负责人从生产表删掉了，
+//       写入点随映射一起删（见 `config/v1BitableSchema.salesEntry` 段）。
 //
 // ⭐ 为什么在渲染层做、而不是去改 `missing_fields` 的产生点：
-//    `missing_fields` 是**机器契约**（既有用例逐字钉着它、`failureReason` 也用它），
+//    `missing_fields` 是**机器契约**（既有用例逐字钉着它，缺项人话也从它渲染），
 //    改它等于动判据。渲染层只做「机器清单 → 人话」的翻译，判据与契约都不动。
 //
 // ⭐ 结构（她的话：**一次只说一件事**）：每条缺项 = **一行**，同类合并（见 `GENERIC_TOPICS`），
@@ -204,7 +207,9 @@ const TEXT_TOPIC_PATTERNS = Object.freeze([
   //    ⇒「多明细 + 定金」现在是**合法输入**，**这句话再也不会被生产出来**。
   //    ⭐ 保留（而不是删掉）的**理由**：`missing_fields` 会被**落盘持久化** ——
   //       ① 本地任务 `server/data/lark_mvp_tasks/*.json` 的 `draft.missing_fields`；
-  //       ② 业务表「解析结果摘要」(`parseSummary`) 那份 JSON 快照。
+  //       ② ~~业务表「解析结果摘要」(`parseSummary`) 那份 JSON 快照~~
+  //          （⚠️ 2026-10-09：那一列已随「销售主表」那 5 列被业务负责人删掉 ⇒ 这条来源没了，
+  //           只有①；**保留本条映射的理由不变**：① 里的历史任务重放照样会读到这句原文）。
   //       部署之后，一条**改动前就存着的** `needs_info` 任务若被**重放**
   //       （`resumePending` / 手工重跑），渲染器还会读到这句**历史原文**；
   //       删了映射 ⇒ 它退化成"原样透传" ⇒ 她**又会看到「明细」和「；」**（本次专治的两个毛病）。

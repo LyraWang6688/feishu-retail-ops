@@ -10,14 +10,19 @@ import { createPlaceholderModule } from './features/shared/placeholder.js';
 // ⚠️ **文案 / 顺序 / data-module 的唯一来源是 `config/tabs.js` 的 `MAIN_TABS`**，
 //    由 `core/tabs.js` 的 `mainTabsHtml()` 渲染进 `#main-tabs`（配置先行：加减 tab 只改配置）。
 //
-// ⚠️ 旧的一级 tab（信息录入 / 信息查询 / 订单列表）**一个都没删**：
+// ⚠️ 旧的一级 tab（信息录入 / 信息查询 / 订单列表）的口径**不是被推翻，而是被收编**：
 //    · 信息查询的两个板块 → 拆进「销售 · 销售查询」「库存 · 全仓查询」（`config/query.js` 一个字没少）；
 //    · 订单列表 → 拆进「销售 · 订单列表」「采购 · 采购订单列表」（同一个 `features/orders` 模块）；
-//    · 信息录入（原「常用功能」首页）→ 原样在 `/workbench/common.html`，
-//      从首页页脚的「其它 / 历史功能」进（`features/others` + `config/others.js`）。
+//    · 信息录入（原「常用功能」）→ 它的三张卡在四个领域 tab 上都有对应入口
+//      （采购 → 报货 / 退货两张表单卡 · 库存 → 手工调整 · 货品 → 标签打印）。
+//      ⚠️ 2026-10-09 下半场：业务负责人点头把承载它的那四个老页面**整个删掉**
+//      （`common.html` / `others.html` / `purchase.html` / `purchase-return.html`，
+//      口径：「代码从仓库里删，不是隐藏」）⇒ `features/common` + `config/home.js`
+//      **当前没有任何页面挂载**（`standalone.js` 的注册已摘），只是先留着没删。
 // ⚠️ HIDDEN（入口隐去、**代码保留**）：finance / douyin / platform ——
-//    它们仍在下面这个 modules 表里（占位模块），在「其它 / 历史功能」页如实列出（"规划中"）。
-//    要恢复某个入口：在 `config/tabs.js` 的 `MAIN_TABS` 里加回一条即可，逻辑不用改。
+//    它们仍在下面这个 modules 表里（占位模块），但**当前没有任何页面列出它们**
+//    （原先列它们的「其它 / 历史功能」页已删）。要恢复某个入口：在 `config/tabs.js` 的
+//    `MAIN_TABS` 里加回一条即可，逻辑不用改。
 const modules = new Map([
   // ── 四个业务领域（唯一的一级 tab 来源）────────────────────────────────────
   ['sales', createDomainModule('sales')],

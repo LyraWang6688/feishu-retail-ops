@@ -130,6 +130,9 @@ function parseEntryBlocks(html) {
 //      · 「订单列表」→ 拆进「销售 · 订单列表」「采购 · 采购订单列表」；
 //      · 「信息录入」（原「常用功能」）首页 → 原样在 `/workbench/common.html`，
 //        从首页页脚的「其它 / 历史功能」进（AC2 照旧钉着它里面的三张卡）。
+//        ⚠️ 2026-10-09 下半场：那一页与「其它 / 历史功能」页都已按她的口令删掉
+//        （`common.html` / `others.html` / `purchase.html` / `purchase-return.html` 四页一起删）——
+//        AC2 钉的**清单**（`config/home.js`）仍在，AC10b 已按"注册表只剩两个独立页"改写。
 //    新增的验收标准（四个 tab 的子页面映射 / 移动端 / 扫码页领域切换 / 主题变量）在
 //    `test/workbenchFourTabs.test.js`（AC1–AC7）。
 
@@ -176,17 +179,17 @@ test('AC1b index.html：nav 留空（文案不在 HTML 里再写一遍）、不�
 
 test('AC3 两个查询板块：销售查询 / 全仓查询，各一张卡', async () => {
   const modules = loadFrontendModules();
-  const [query, html] = await Promise.all([
-    modules.query,
-    render(modules.queryIndex, 'createQueryModule'),
-  ]);
+  const [query, queryIndex] = await Promise.all([modules.query, modules.queryIndex]);
+  // ⚠️ 2026-10-09：`createQueryModule()`（渲染独立页「信息查询」整页）已删 ——
+  //    它 2026-10-08 起就没有任何调用方（两个板块现在各自嵌在领域 tab 里）。
+  //    这里改成直接跑**保留下来**的纯函数 `renderQueryEntries`（领域 tab 走的就是它）。
+  const html = queryIndex.renderQueryEntries(query.QUERY_SECTIONS);
 
   assert.deepEqual(query.QUERY_SECTIONS.map((section) => section.title), ['销售查询', '全仓查询'],
     '两个板块（业务负责人 2026-10-09 把库存那一张改叫「全仓查询」）');
   const blocks = parseEntryBlocks(html);
   assert.deepEqual(blocks.map((block) => block.title), ['销售查询', '全仓查询'],
     '两个板块各一张卡（渲染出来的标题逐字）');
-  assert.ok(html.includes('信息查询'), '面板标题 = 信息查询');
 });
 
 test('AC4 href 单一来源 config/links.js：config/query.js 只 import、渲染层不写死 URL', () => {
@@ -208,10 +211,8 @@ test('AC4 href 单一来源 config/links.js：config/query.js 只 import、渲�
 
 test('AC5 当前配置：两个板块都有 URL，两张卡都是可点的 <a>', async () => {
   const modules = loadFrontendModules();
-  const [links, html] = await Promise.all([
-    modules.links,
-    render(modules.queryIndex, 'createQueryModule'),
-  ]);
+  const [links, query, queryIndex] = await Promise.all([modules.links, modules.query, modules.queryIndex]);
+  const html = queryIndex.renderQueryEntries(query.QUERY_SECTIONS);
 
   assert.equal(links.SALES_QUERY_PAGE_URL, SALES_QUERY_URL,
     '销售查询 URL 逐字 = 业务负责人 2026-10-08 给的那条（不多一字、不加工）');
@@ -260,7 +261,7 @@ test('AC6 信息查询不新增任何接口：渲染层一次网络调用都没�
 
 // ── AC7 / AC8：删干净 + 零引用守门 ───────────────────────────────────────────
 
-test('AC7 自建的销售/库存查询页面与模块已删', () => {
+test('AC7 自建的销售/库存查询页面与模块已删', async () => {
   for (const gone of [
     'sales-query.html',
     'sales-today.html',
@@ -271,10 +272,21 @@ test('AC7 自建的销售/库存查询页面与模块已删', () => {
   ]) {
     assert.equal(workbenchHas(gone), false, `${gone} 必须已删（自建的销售/库存查询面）`);
   }
-  // 要保留的（信息录入的两个入口）一个都不能跟着走
-  for (const kept of ['features/inventory/adjustment.js', 'features/inventory/inventory.css', 'inventory-adjustment.html', 'purchase-return.html', 'common.html']) {
+  // 要保留的（她 2026-10-09 明确要保的两页 + 库存手工调整的模块/样式）一个都不能跟着走
+  // ⚠️ 2026-10-09：`purchase-return.html` / `common.html` **已从这份保留清单里去掉** ——
+  //    她当天点头把这四个老页面删掉（`others.html` / `common.html` / `purchase.html` /
+  //    `purchase-return.html`）；这两条断言相应翻转（见 `workbenchFourTabs.test.js` 的 AC3）。
+  for (const kept of ['features/inventory/adjustment.js', 'features/inventory/inventory.css', 'inventory-adjustment.html', 'label-print.html']) {
     assert.equal(workbenchHas(kept), true, `${kept} 必须保留`);
   }
+  // 两个查询板块的渲染函数（领域 tab 的「销售查询 / 全仓查询」外链卡）仍在用 ⇒ 必须保留。
+  // ⚠️ 2026-10-09：`createQueryModule()`（渲染独立页整页的那个）已删 ⇒ 这里同时钉住
+  //    "导出只剩这两个"（`renderQueryEntries` + `LINK_PENDING_TEXT`）。
+  const queryIndex = await loadFrontendModules().queryIndex;
+  assert.equal(typeof queryIndex.renderQueryEntries, 'function',
+    'renderQueryEntries 必须保留（两个飞书外链卡还在用）');
+  assert.equal(Object.prototype.hasOwnProperty.call(queryIndex, 'createQueryModule'), false,
+    'createQueryModule 已无人调用 ⇒ 必须已删（不是隐藏）');
 });
 
 test('AC8 零引用守门：工作台静态资源 + 路由 + 控制器都不再提已删的自建查询', () => {
@@ -348,11 +360,16 @@ test('AC9/AC10 哨兵：工作台 auth 闸门与写入类接口不回退；共�
     '库存手工调整页在调 /api/workbench/inventory ⇒ 这个接口必须保留');
 });
 
-test('AC10b 独立页面启动器：删了 sales-query / inventory 两个视图，保留信息录入与两个子页', () => {
+test('AC10b 独立页面启动器：删了 sales-query / inventory 两个视图，保留两个独立页', () => {
   const source = readWorkbench('standalone.js');
   assert.ok(!source.includes("'sales-query'"), 'standalone.js 不许再注册 sales-query 视图');
   assert.ok(!/createSalesModule|createInventoryModule/.test(source), '不许再 import 已删的销售/库存模块');
-  for (const kept of ["common:", "'inventory-adjustment':", "'purchase-return':"]) {
+  // ⚠️ 2026-10-09 改写：原先这份保留清单是 `common:` / `'inventory-adjustment':` / `'purchase-return':`。
+  //    她当天点头删掉 common.html 与 purchase-return.html ⇒ 注册表**只剩这两个独立页**。
+  for (const kept of ["'inventory-adjustment':", "'label-print':"]) {
     assert.ok(source.includes(kept), `standalone.js 必须保留 ${kept}`);
+  }
+  for (const gone of ["common:", "'purchase-return':", "others:", "purchase:"]) {
+    assert.ok(!source.includes(gone), `standalone.js 不许再注册 ${gone}（那个页面已删）`);
   }
 });

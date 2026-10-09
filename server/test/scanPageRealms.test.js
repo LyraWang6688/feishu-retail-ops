@@ -24,7 +24,9 @@
  *  AC3 **采购领域**：先列该编号各尺码的（样品 + 门盒）数量；【一键补货】列出缺的尺码、
  *      默认各 1 双、数量可改；「仓库」有货的尺码**不预勾**（既有缺码口径不变）。
  *  AC4 **三个领域共用业务处理层、各自独立出口**（源码哨兵）：渲染层不认识业务写入；
- *      三块各自带 `realm-block--<领域>`，没有 JS 时四块全显示（兜底、绝不白屏）。
+ *      三块各自带 `realm-block--<领域>` 标记，**服务端按 `?from` 只把当前那一块拼进 HTML**
+ *      （2026-10-09 真机「手机在飞书 webview 里白屏」之后改的：不再靠 CSS 显隐 +
+ *      `<head>` 内联脚本，整页**一行前端脚本都没有** ⇒ 没 JS 也 100% 正确）。
  * ─────────────────────────────────────────────────────────────────────────
  */
 const test = require('node:test');
@@ -35,7 +37,8 @@ const path = require('node:path');
 const { renderScanPage, STYLE } = require('../src/views/scanPageRenderer');
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const {
-  SELLABLE_STATES, SIZE_GROUP_RANGES, REALM_TEXTS, sellableCountOf, saleSizeGroups, purchaseSizeLines,
+  SELLABLE_STATES, SIZE_GROUP_RANGES, REALM_TEXTS, DEFAULT_REALM,
+  sellableCountOf, saleSizeGroups, purchaseSizeLines,
 } = require('../src/views/scanPageRealm');
 
 const SRC = path.join(__dirname, '..', 'src');
@@ -123,18 +126,21 @@ const WRITE = {
   notice: '',
 };
 
-const html = renderScanPage(VIEW, SCAN_PAGE, WRITE);
+/**
+ * ⭐ 2026-10-09 之后：**渲染是按领域来的** —— 每个领域单独渲染一份 HTML，
+ * 里面**只有当前那一块**（另外三块连字符串都不拼）。
+ */
+const htmlFor = (realm) => renderScanPage(VIEW, SCAN_PAGE, WRITE, realm);
+const html = htmlFor(DEFAULT_REALM);
 const body = html.slice(html.indexOf('</head>'));
 
-/** 取某一个领域那一块的 HTML（到下一个领域块开始为止，并收在它自己的 `</div>`）。 */
-const blockOf = (id) => {
-  const start = body.indexOf(`realm-block--${id}`);
+/** 取某一份 HTML 里领域那一块（收在页脚 `<p class="foot">` 之前，含它自己的 `</div>`）。 */
+const blockOf = (htmlText, id) => {
+  const page = htmlText.slice(htmlText.indexOf('</head>'));
+  const start = page.indexOf(`realm-block--${id}"`);
   assert.ok(start > -1, `缺 ${id} 块`);
-  const next = ['sales', 'inventory', 'purchase', 'product']
-    .map((other) => body.indexOf(`realm-block--${other}`, start + 1))
-    .filter((index) => index > -1).sort((left, right) => left - right)[0] ?? body.length;
-  const slice = body.slice(start, next);
-  return slice.slice(0, slice.lastIndexOf('</div>') + '</div>\n'.length);
+  const foot = page.indexOf('<p class="foot">', start);
+  return page.slice(start, foot > -1 ? foot : page.length);
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -142,8 +148,10 @@ const blockOf = (id) => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC1 `from=inventory` 就是现在这个页面：库存领域那一块 + 身份区**逐字不变**', () => {
+  const inventoryHtml = htmlFor('inventory');
+  const inventoryBody = inventoryHtml.slice(inventoryHtml.indexOf('</head>'));
   // 身份区（在领域块之外，四个领域共用）逐字不变
-  assert.ok(body.includes(`<header class="card identity">
+  assert.ok(inventoryBody.includes(`<header class="card identity">
 <div class="identity__main">
 <h1 class="identity__item">YD6693-2</h1>
 <p class="identity__meta">黑色 · 休闲鞋</p>
@@ -172,15 +180,19 @@ test('AC1 `from=inventory` 就是现在这个页面：库存领域那一块 + �
 </section>
 </div>
 `;
-  assert.equal(blockOf('inventory'), golden, '库存领域那一块一个字都不许变（她是既有用例的哨兵）');
+  assert.equal(blockOf(inventoryHtml, 'inventory'), golden,
+    '库存领域那一块一个字都不许变（她是既有用例的哨兵）');
 
   // 库存块里不许混进销售 / 采购的新东西
   for (const forbidden of ['data-stock-group', 'data-view="one-tap-replenish"', 'purchase-sizes', 'size-chip']) {
-    assert.equal(blockOf('inventory').includes(forbidden), false, `库存块里混进了 ${forbidden}`);
+    assert.equal(blockOf(inventoryHtml, 'inventory').includes(forbidden), false, `库存块里混进了 ${forbidden}`);
   }
-  // 领域切换条与兜底规则不变
-  assert.ok(html.includes('href="?from=inventory"'));
-  assert.ok(/html:not\(\[data-realm\]\) \.realm-block \{ display: block; \}/.test(STYLE));
+  // 领域切换条照旧（四个真链接）；
+  // 🔴 但"靠 CSS 显隐 + `<head>` 脚本"那一层**整层拿掉**了（手机白屏之后的改法）
+  assert.ok(inventoryHtml.includes('href="?from=inventory"'));
+  assert.equal(STYLE.includes('data-realm'), false, 'CSS 不许再依赖 data-realm');
+  assert.equal(/display:\s*none/.test(STYLE), false, '不许再出现"默认藏起来"的写法（那是白屏的形状）');
+  assert.equal(/<script[\s>]/i.test(inventoryHtml), false, '页面里一行前端脚本都没有');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -213,7 +225,7 @@ test('AC2 `from=sales` 尺码分两组：有货（样品+门盒）⇒ 现货；�
   assert.deepEqual(SIZE_GROUP_RANGES.B, { label: '女', from: 34, to: 43 });
 
   // ③ 页面上真的分了两组：两组各自的可选项 / 组标题 / 状态标签
-  const sales = blockOf('sales');
+  const sales = blockOf(htmlFor('sales'), 'sales');
   const groupOf = (id) => {
     const start = sales.indexOf(`data-stock-group="${id}"`);
     assert.ok(start > -1, `销售块里缺 ${id} 那一组`);
@@ -263,7 +275,7 @@ test('AC3 `from=purchase`：列出各尺码（样品+门盒）数量 + 【一键
     { size_text: '44', sellable: 0, missing: true, checked: true },
   ], '缺码（三种状态都没有）默认勾上；43 只有仓库 → 不预勾');
 
-  const purchase = blockOf('purchase');
+  const purchase = blockOf(htmlFor('purchase'), 'purchase');
   // ② 先给她看"各尺码现在有多少"
   assert.ok(purchase.includes('data-view="purchase-sizes"'), '要先列出各尺码的（样品 + 门盒）数量');
   for (const size of ['40', '41', '42', '43', '44']) {
@@ -296,9 +308,14 @@ test('AC4 三个领域共用业务处理层、各自独立出口（渲染层不�
     /(applySale|applyPurchase|applyChange|applyReturn)\s*\(/, /inventoryService|salesOrderService|purchaseWebhookService/]) {
     assert.equal(pattern.test(renderer), false, `scanPageRenderer.js 出现了业务写入：${pattern}`);
   }
-  // 三块各自带领域标记（入口隔离：各领域各自一块，没有 JS 时全显示 —— 绝不白屏）
+  // 三块各自带领域标记，而且是**服务端按领域单独渲染**的（一份 HTML 里只有当前那一块）
   for (const id of ['sales', 'inventory', 'purchase']) {
-    assert.ok(blockOf(id).length > 0, `缺 ${id} 领域块`);
+    const htmlText = htmlFor(id);
+    assert.ok(blockOf(htmlText, id).length > 0, `缺 ${id} 领域块`);
+    for (const other of ['sales', 'inventory', 'purchase', 'product'].filter((item) => item !== id)) {
+      assert.equal(htmlText.includes(`realm-block--${other}"`), false,
+        `渲染 ${id} 时不该把 ${other} 块也拼进来`);
+    }
   }
   // 三块共用**同一份视图模型**（渲染层不自己查表：分组 / 补货清单都是纯函数算的）
   const source = readSrc('views/scanPageRenderer.js');

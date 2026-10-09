@@ -1,31 +1,26 @@
 import { requireFeishuAuth, showLoginButton } from './core/auth.js';
 import { describeError, showPageError } from './core/ui.js';
-import { createCommonModule } from './features/common/index.js';
 import { createInventoryAdjustmentModule } from './features/inventory/adjustment.js';
 import { createLabelPrintModule } from './features/labels/index.js';
-import { createOthersModule } from './features/others/index.js';
-import { createPurchaseLinksModule } from './features/purchase/links.js';
-import { createPurchaseModule } from './features/purchase/index.js';
 
 // 独立页面注册表：key = 页面的 <body data-view="...">，value = 该页面的模块工厂。
-//   common.html               → 信息录入（原「常用功能」**只改名**，里面入口不动）
 //   inventory-adjustment.html → 库存 tab → 手工调整（盘点调整 / 换季调整）
-//   purchase-return.html      → 采购：报货 / 退货（两个飞书表单外链，不做查询）
 //   label-print.html          → 货品 tab → 标签打印（**只读**实时库存+货品信息 → 40×30mm A4 标签 → 浏览器打印）
-//   ⭐ 2026-10-09 新增两个（一级 tab 换成四个业务领域之后，旧入口**一个都没删**）：
-//   others.html               → 首页页脚「其它 / 历史功能」（`config/others.js`）
-//   purchase.html             → 原「采购管理」一级 tab 的页面（报货信息情况 / 到货验收情况）
 //
 // ⚠️ 2026-10-08：「信息查询」两个板块（销售查询 / 库存查询）**就是飞书多维表格的外链卡**，
 //    按她的口径「**我们不用自己搭建接口**」—— 所以这里**不再注册** `sales-query` / `inventory`
 //    两个视图（它们对应的自建页面与接口已于同日删除）。**不为查询新增任何页面**。
+//
+// ⚠️ 2026-10-09：业务负责人点头删掉四个老页面（她的口径：**代码从仓库里删，不是隐藏**）——
+//    `others.html`（「其它 / 历史功能」页）· `common.html`（老「信息录入 / 常用功能」首页）·
+//    `purchase.html`（老「采购管理」页）· `purchase-return.html`（老采购退货独立页）。
+//    ⇒ 这四个视图的注册与模块 import **一并删除**（页面都删了，注册留着就是死入口）。
+//    ⭐ 功能一个都没丢：四个领域 tab（`config/domains.js`）上已经有等价入口 ——
+//      采购 →「报货 / 验收 / 退货」两张飞书表单卡、库存 →「手工调整」、货品 →「标签打印」。
+// ⚠️ 留下来的就是**这两个**独立页；两个都**保留**（她要的）。
 const factories = {
-  common: () => createCommonModule({ focused: true }),
   'inventory-adjustment': () => createInventoryAdjustmentModule(),
-  'purchase-return': () => createPurchaseLinksModule(),
   'label-print': () => createLabelPrintModule(),
-  others: () => createOthersModule(),
-  purchase: () => createPurchaseModule(),
 };
 
 async function start() {

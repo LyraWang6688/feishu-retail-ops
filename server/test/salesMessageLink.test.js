@@ -1,17 +1,24 @@
 /**
- * ①「消息深链」的验收：**发消息那一刻**存下来，存到**两处**。
+ * ①「消息深链」的验收：**发消息那一刻**存下来。
  *
  * 业务负责人 2026-10-06 逐字确认的口径：
  *   「我们现在不需要历史消息的补拉了。我们只要后续的消息能够取回来就行」
  *   「我在多维表格的销售主表里加了一列叫做**消息链接**，可以写入这里～」
  *
- * 这份用例盯的就是这几条（不是实现细节）：
+ * 🔴 **2026-10-09 口径变更（业务负责人）**：「当前这个状态下，现有的一些字段已经不太适配
+ *    我们当前的决定了，也就是我们要用**扫码**」⇒ 她把「消息链接」那一列**从生产表删掉了**，
+ *    代码同步**删映射 + 删写入点**（`config/v1BitableSchema.salesEntry` 段有完整记录）。
+ *    ⇒ 本文件原来的"存两处"验收改成了"**只存本地一处**"：
+ *
+ * 这份用例现在盯的是这几条（不是实现细节）：
  *   □ 链接来源只有一处 —— 发送响应 `data.message_app_link`（poster 实测：历史消息取不回来）；
- *   □ 存两处：本地路由映射 `data/sales_group_threads` ＋ 销售主表「消息链接」列；
+ *   □ 存**本地**路由映射 `data/sales_group_threads`：
+ *       既是"她后面在话题里说话能不能被认出来"的判据，也是「9 点推送」那句
+ *       「**查看原话**」深链的来源（`pendingDealPushService`）—— 这条功能没死；
  *   □ 存的是**我们回复的那条（卡片）消息**的链接（话题根是她发的，我们拿不到它的链接）；
  *   □ 老单 / 拿不到链接 → **留空**，绝不自己拼一条 URL；
- *   □ 写表失败 / 字段没同步 → 只告警，**绝不让已经发出去的卡片判失败**；
- *   □ 私聊那条路一个字节都不变（不写映射、不写表）。
+ *   □ 🔴 **业务表一个字段都不写**（「消息链接」列已删）：方法 / 常量 / 导出都不许留下；
+ *   □ 没有群上下文的任务一个字节都不写（不写映射、也不写表）。
  */
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
 
@@ -28,7 +35,7 @@ const {
   buildSalesThreadLink, resolveSalesThreadLinkTemplate, DEFAULT_SALES_THREAD_LINK_TEMPLATE,
 } = require('../src/config/salesThreadLink');
 const {
-  SalesMessageLinkService, MESSAGE_LINK_FIELD_KEY, BITABLE_URL_FIELD_TYPE,
+  SalesMessageLinkService,
 } = require('../src/services/salesMessageLinkService');
 
 const APP_LINK = 'https://applink.feishu.cn/client/message/link?openChatId=oc_1&message_id=om_reply_1';
@@ -36,30 +43,24 @@ const APP_LINK = 'https://applink.feishu.cn/client/message/link?openChatId=oc_1&
 const tempStore = (prefix) =>
   new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), prefix)), idField: 'task_id' });
 
-/** 假网关：只实现本链路要用的三个面（表配置 / 更新记录 / 读字段元数据）。 */
-const fakeGateway = ({ fieldType = 1, hasField = true, updateError = null, fieldsError = null } = {}) => {
+/** 记录所有写库动作的假网关：本文件里它**只用来证明"一个字段都没写"**（updates 恒为空）。 */
+const recordingGateway = () => {
   const updates = [];
-  const fields = hasField ? { messageLink: '消息链接' } : {};
   return {
     updates,
-    table: (key) => (key === 'salesEntry' ? { tableName: '销售主表', fields } : {}),
-    listFields: async () => {
-      if (fieldsError) throw fieldsError;
-      return hasField
-        ? [{ field_name: '消息链接', type: fieldType, field_id: 'fld_link' }]
-        : [{ field_name: '销售单号', type: 1, field_id: 'fld_no' }];
-    },
+    table: () => ({ tableName: '销售主表', fields: {} }),
+    listAll: async () => [],
+    validateTables: async () => [],
+    listFields: async () => [],
     update: async (tableKey, recordId, semanticValues) => {
-      if (updateError) throw updateError;
       updates.push({ tableKey, recordId, semanticValues });
       return { record_id: recordId };
     },
   };
 };
 
-const newLinkService = (gateway, locator) => new SalesMessageLinkService({
+const newLinkService = (locator) => new SalesMessageLinkService({
   locator: locator || new SalesGroupThreadLocator({ store: tempStore('sales-link-map-') }),
-  gateway,
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -110,32 +111,46 @@ test('发送响应里没有 message_app_link 时交回空串（不抛、不编�
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 二、存哪儿：本地映射 + 销售主表「消息链接」
+// 二、存哪儿：**只剩本地映射**（业务表「消息链接」列 2026-10-09 已删）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('存两处：本地映射写 app_link，销售主表「消息链接」写同一条链接', async () => {
-  const gateway = fakeGateway({ fieldType: 1 });
-  const locator = new SalesGroupThreadLocator({ store: tempStore('sales-link-both-') });
-  const service = newLinkService(gateway, locator);
+test('🔴 2026-10-09「消息链接」列已删：写表那半（方法 / 常量 / 导出）一点都不留', () => {
+  const module = require('../src/services/salesMessageLinkService');
+  // 写入点本体
+  assert.equal(SalesMessageLinkService.prototype.writeToSalesEntry, undefined,
+    '「消息链接」列已被她删除 ⇒ 写它的方法必须一起删');
+  // 为了写它才需要的"运行时读字段类型"
+  assert.equal(SalesMessageLinkService.prototype.resolveMessageLinkFieldType, undefined);
+  // 语义键与飞书超链接字段类型常量
+  assert.equal(module.MESSAGE_LINK_FIELD_KEY, undefined);
+  assert.equal(module.BITABLE_URL_FIELD_TYPE, undefined);
+  // 构造函数不再需要网关（它原来只为写表而存在）
+  assert.doesNotThrow(() => new SalesMessageLinkService({
+    locator: new SalesGroupThreadLocator({ store: tempStore('sales-link-ctor-') }),
+  }));
+});
 
-  const { record, storedInBitable } = await service.rememberFromSend({
+test('存本地映射：app_link 与话题深链都记下来（旧接口的 storedInBitable 已随写入点一起删）', async () => {
+  const locator = new SalesGroupThreadLocator({ store: tempStore('sales-link-both-') });
+  const service = newLinkService(locator);
+
+  const result = await service.rememberFromSend({
     salesEntryRecordId: 'sale_rec_1', taskId: 'task_1', orderNo: 'XSD-1',
     messageId: 'om_her_message', threadId: 'omt_1', chatId: 'oc_1',
     replyMessageId: 'om_reply_1', appLink: APP_LINK,
   });
 
-  assert.equal(record.app_link, APP_LINK, '本地映射要留着它（机器人回查用）');
-  assert.equal(record.thread_id, 'omt_1');
-  assert.equal(storedInBitable, true);
-  assert.deepEqual(gateway.updates, [{
-    tableKey: 'salesEntry', recordId: 'sale_rec_1', semanticValues: { [MESSAGE_LINK_FIELD_KEY]: APP_LINK },
-  }]);
+  assert.equal(result.record.app_link, APP_LINK, '本地映射要留着它（机器人回查 / 9 点推送用）');
+  assert.equal(result.record.thread_id, 'omt_1');
+  assert.equal(result.link, APP_LINK);
+  assert.equal(result.linkSource, 'send_response');
+  assert.equal('storedInBitable' in result, false,
+    '业务表那一列已删 ⇒ 这个"写没写表"的字段没有意义，必须一起删');
 });
 
 test('存的是【我们回复的那条】消息（卡片消息）—— 链接指向它，它就在同一个话题里', async () => {
-  const gateway = fakeGateway({ fieldType: 1 });
   const locator = new SalesGroupThreadLocator({ store: tempStore('sales-link-which-') });
-  const service = newLinkService(gateway, locator);
+  const service = newLinkService(locator);
 
   const { record } = await service.rememberFromSend({
     salesEntryRecordId: 'sale_rec_1', messageId: 'om_her_message', threadId: 'omt_1',
@@ -148,48 +163,28 @@ test('存的是【我们回复的那条】消息（卡片消息）—— 链接�
   assert.equal(record.app_link, APP_LINK);
 });
 
-test('「消息链接」是超链接列（type=15）时，写 {text, link}；文本列写字符串', async () => {
-  const urlGateway = fakeGateway({ fieldType: BITABLE_URL_FIELD_TYPE });
-  await newLinkService(urlGateway).writeToSalesEntry({
-    salesEntryRecordId: 'sale_rec_url', url: APP_LINK, messageId: 'om_reply_1',
-  });
-  assert.deepEqual(urlGateway.updates[0].semanticValues[MESSAGE_LINK_FIELD_KEY], { text: APP_LINK, link: APP_LINK });
-
-  const textGateway = fakeGateway({ fieldType: 1 });
-  await newLinkService(textGateway).writeToSalesEntry({
-    salesEntryRecordId: 'sale_rec_text', url: APP_LINK, messageId: 'om_reply_1',
-  });
-  assert.equal(textGateway.updates[0].semanticValues[MESSAGE_LINK_FIELD_KEY], APP_LINK);
-});
-
-test('字段元数据读不到时按字符串写（宁可写进去让她看见，也不因为读类型失败整条不写）', async () => {
-  const gateway = fakeGateway({ fieldType: 1, fieldsError: new Error('appTableField.list 挂了') });
-  await newLinkService(gateway).writeToSalesEntry({ salesEntryRecordId: 'sale_rec_x', url: APP_LINK });
-  assert.equal(gateway.updates[0].semanticValues[MESSAGE_LINK_FIELD_KEY], APP_LINK);
-});
-
 // ─────────────────────────────────────────────────────────────────────────────
-// 三、拿不到 / 写不进：留空 + 只告警（绝不伪造、绝不连累卡片）
+// 三、拿不到链接：留空（绝不伪造）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('拿不到链接：本地映射照旧记，销售主表一个字段都不写（老单/飞书不回带时都是这条）', async () => {
-  const gateway = fakeGateway();
+test('拿不到链接：本地映射照旧记，深链留空（老单/飞书不回带时都是这条）', async () => {
   const locator = new SalesGroupThreadLocator({ store: tempStore('sales-link-empty-') });
-  const service = newLinkService(gateway, locator);
+  const service = newLinkService(locator);
 
-  const { record, storedInBitable } = await service.rememberFromSend({
+  const result = await service.rememberFromSend({
     salesEntryRecordId: 'sale_rec_old', messageId: 'om_her_message', threadId: 'omt_1',
     replyMessageId: 'om_reply_1', appLink: '',
   });
 
-  assert.equal(record.app_link, '');
-  assert.equal(storedInBitable, false);
-  assert.equal(gateway.updates.length, 0, '拿不到就留空——绝不自己拼一条 URL');
+  assert.equal(result.record.app_link, '');
+  assert.equal(result.record.thread_link, '', 'chat_id 缺一个就不拼（两个 id 都在才拼）');
+  assert.equal(result.link, '');
+  assert.equal(result.linkSource, '');
 });
 
 test('后面那次发送没有链接时，不把先存下来的 app_link 覆盖成空（深链只补不清）', async () => {
   const locator = new SalesGroupThreadLocator({ store: tempStore('sales-link-merge-') });
-  const service = newLinkService(fakeGateway(), locator);
+  const service = newLinkService(locator);
 
   await service.rememberFromSend({
     salesEntryRecordId: 'sale_rec_1', messageId: 'om_her_message', threadId: 'omt_1',
@@ -202,26 +197,6 @@ test('后面那次发送没有链接时，不把先存下来的 app_link 覆盖�
 
   assert.equal(record.app_link, APP_LINK, '先存下来的链接不能被清掉');
   assert.equal(record.thread_id, 'omt_1', '话题 id 同理：只补不清');
-});
-
-test('字段还没同步（schema 里没有 messageLink）：不写表、只告警', async () => {
-  const gateway = fakeGateway({ hasField: false });
-  const service = newLinkService(gateway);
-  const stored = await service.rememberFromSend({
-    salesEntryRecordId: 'sale_rec_1', messageId: 'om_her_message', replyMessageId: 'om_reply_1', appLink: APP_LINK,
-  });
-  assert.equal(stored.storedInBitable, false);
-  assert.equal(gateway.updates.length, 0);
-});
-
-test('写表失败：不抛（卡片已经发出去了，绝不能因为写链接失败判失败）', async () => {
-  const gateway = fakeGateway({ updateError: new Error('FieldNameNotFound') });
-  const service = newLinkService(gateway);
-  const result = await service.rememberFromSend({
-    salesEntryRecordId: 'sale_rec_1', messageId: 'om_her_message', replyMessageId: 'om_reply_1', appLink: APP_LINK,
-  });
-  assert.equal(result.storedInBitable, false);
-  assert.equal(result.record.app_link, APP_LINK, '本地映射仍然记下了（本地那处是可靠的）');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -259,9 +234,8 @@ test('格式可配：模板从环境变量读，没配就用她给的那条；�
 });
 
 test('飞书给了发送响应链接就用飞书的（她给的格式当第二来源）', async () => {
-  const gateway = fakeGateway();
   const locator = new SalesGroupThreadLocator({ store: tempStore('sales-link-priority-') });
-  const service = newLinkService(gateway, locator);
+  const service = newLinkService(locator);
   const { record, linkSource } = await service.rememberFromSend({
     salesEntryRecordId: 'sale_rec_1', messageId: 'om_her', chatId: 'oc_1', threadId: 'omt_1',
     replyMessageId: 'om_reply', appLink: APP_LINK,
@@ -269,7 +243,6 @@ test('飞书给了发送响应链接就用飞书的（她给的格式当第二�
   assert.equal(linkSource, 'send_response');
   assert.equal(record.app_link, APP_LINK);
   assert.ok(record.thread_link, '话题格式那条也留着（排查时能看到两条来源）');
-  assert.equal(gateway.updates[0].semanticValues[MESSAGE_LINK_FIELD_KEY], APP_LINK);
 });
 
 test('解析器：本地存着话题深链就直接用它（不需要任何远端调用）', async () => {
@@ -284,21 +257,11 @@ test('解析器：本地存着话题深链就直接用它（不需要任何远�
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 四、接线：群里发卡片 → 两处都存；**没有群上下文的任务一个字节都不写**
+// 四、接线：群里发卡片 → 记本地映射，**业务表一个字段都不写**
 // ─────────────────────────────────────────────────────────────────────────────
 
 const wiredService = ({ chatType = 'group', appLink = APP_LINK } = {}) => {
-  const updates = [];
-  const gateway = {
-    table: (key) => (key === 'salesEntry' ? { tableName: '销售主表', fields: { messageLink: '消息链接' } } : {}),
-    listAll: async () => [],
-    validateTables: async () => [],
-    listFields: async () => [{ field_name: '消息链接', type: 1, field_id: 'fld_link' }],
-    update: async (tableKey, recordId, semanticValues) => {
-      updates.push({ tableKey, recordId, semanticValues });
-      return { record_id: recordId };
-    },
-  };
+  const gateway = recordingGateway();
   const client = {
     im: {
       message: {
@@ -317,10 +280,10 @@ const wiredService = ({ chatType = 'group', appLink = APP_LINK } = {}) => {
     store: tempStore('sales-link-wired-'),
     botOpenId: 'ou_test_bot',
     salesGroupThreads: locator,
-    salesMessageLinks: new SalesMessageLinkService({ locator, gateway }),
+    salesMessageLinks: new SalesMessageLinkService({ locator }),
   });
   return {
-    service, updates, locator,
+    service, updates: gateway.updates, locator,
     task: {
       task_id: 'task_1', chat_type: chatType, chat_id: 'oc_1', message_id: 'om_her_message',
       sender_open_id: 'ou_her', sales_entry_record_id: 'sale_rec_1',
@@ -329,12 +292,11 @@ const wiredService = ({ chatType = 'group', appLink = APP_LINK } = {}) => {
   };
 };
 
-test('🔴 群里发【文字】：本地映射照记，但销售主表一个字段都不写（话题级深链卡片那条已写过）', async () => {
+test('🔴 群里发【文字】：记本地映射，销售主表一个字段都不写', async () => {
   // 回归：2026-10-06 CI 红。`sendTaskText` 也走 `bindGroupSaleThread`，于是"回她一句话"
   // 顺手写了销售主表 —— 而文字这条出口里混着【不猜、不写业务表】的路径（多笔未收款占位 /
-  // 金额对不上时回「有多条待收款」），`salesThreadProgress.test.js` 那条用例的
-  // `updated == []` 保证就被这个不相干的副作用破掉了。深链是**话题级**的（URL 里只有
-  // chat_id + thread_id），卡片那条出口已经写过同一条，文字这条不必再写。
+  // 金额对不上时回「有多条待收款」）。那一列 2026-10-09 已被她删除 ⇒ 这条出口现在**结构上**
+  // 就碰不到业务表（写入点整体删掉了），但这条用例继续守着它。
   const { service, updates, locator, task } = wiredService();
   await service.sendTaskText(task, '有多条待收款，请先人工核对');
 
@@ -344,34 +306,32 @@ test('🔴 群里发【文字】：本地映射照记，但销售主表一个字
   assert.deepEqual(updates, [], '文字这条出口不碰业务表');
 });
 
-test('群里发【卡片】：仍然写「消息链接」（文字那条收紧，不影响卡片那条）', async () => {
-  const { service, updates, task } = wiredService();
+test('🔴 群里发【卡片】：同样**不再写**销售主表（「消息链接」列已被她删除）', async () => {
+  const { service, updates, locator, task } = wiredService();
   await service.replyTaskCard(task, { header: {} });
-  assert.equal(updates.length, 1, '售后/结果卡片也是卡片那条出口，照旧写');
-  assert.equal(updates[0].semanticValues[MESSAGE_LINK_FIELD_KEY], APP_LINK);
+  assert.deepEqual(updates, [], '售后/结果卡片这条出口也不再碰业务表');
+  const record = await locator.findByMessageId('om_her_message');
+  assert.equal(record.app_link, APP_LINK, '链接只落本地映射');
 });
 
-test('群里发卡片：本地映射有 app_link，销售主表「消息链接」同步写上', async () => {
+test('群里发卡片：本地映射有 app_link 与销售 record_id（业务表那列已删，链接不丢）', async () => {
   const { service, updates, locator, task } = wiredService();
   await service.sendTaskCard(task, { header: {} });
 
   const record = await locator.findByMessageId('om_her_message');
   assert.equal(record.app_link, APP_LINK);
   assert.equal(record.sales_entry_record_id, 'sale_rec_1');
-  assert.equal(updates.length, 1);
-  assert.equal(updates[0].tableKey, 'salesEntry');
-  assert.equal(updates[0].recordId, 'sale_rec_1');
-  assert.equal(updates[0].semanticValues[MESSAGE_LINK_FIELD_KEY], APP_LINK);
+  assert.equal(record.thread_link, buildSalesThreadLink({ chatId: 'oc_1', threadId: 'omt_1' }));
+  assert.deepEqual(updates, [], '一个字段都不写');
 });
 
-test('飞书没回带链接时：按【她给的话题格式】拼一条，写进「消息链接」', async () => {
+test('飞书没回带链接时：按【她给的话题格式】拼一条，也只进本地映射', async () => {
   const { service, updates, locator, task } = wiredService({ appLink: '' });
   await service.sendTaskCard(task, { header: {} });
   const record = await locator.findByMessageId('om_her_message');
   assert.equal(record.app_link, '', '飞书没给就是空，不伪造');
   assert.equal(record.thread_link, buildSalesThreadLink({ chatId: 'oc_1', threadId: 'omt_1' }));
-  assert.equal(updates.length, 1, '话题深链是真的，照样写进表');
-  assert.equal(updates[0].semanticValues[MESSAGE_LINK_FIELD_KEY], record.thread_link);
+  assert.equal(updates.length, 0);
 });
 
 test('两个 id 缺一个就不拼：既没回带链接、又没有 chat_id/thread_id → 留空、不写表', async () => {
@@ -398,7 +358,7 @@ test('🔴 没有群上下文的任务：**一条消息都不发**，既不写�
 
 test('本地映射的 key 是「她那句话」的 message_id（后续引用/话题反查都靠它）', async () => {
   const locator = new SalesGroupThreadLocator({ store: tempStore('sales-link-key-') });
-  const service = newLinkService(fakeGateway(), locator);
+  const service = newLinkService(locator);
   await service.rememberFromSend({
     salesEntryRecordId: 'sale_rec_1', messageId: 'om_her_message', replyMessageId: 'om_reply_1', appLink: APP_LINK,
   });

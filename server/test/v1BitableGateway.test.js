@@ -33,22 +33,26 @@ test('V1 gateway schema validation reports renamed or missing fields', async () 
 });
 
 test('sales schema matches the live three-table field snapshot', () => {
-  // ⚠️ 快照 = 生产「销售主表」在 2026-10-06（业务负责人新建四个状态维度、并**删掉
-  // 「确认状态（旧）」与「订单状态」两列之后**）的字段名。映射指到快照里没有的名字 = 静默失效；
+  // ⚠️ 快照 = 生产「销售主表」**当前还存在的**列里我们关心的那些名字（2026-10-06 建四个状态维度、
+  // 删「确认状态（旧）」「订单状态」；2026-10-08 加「赠品」「售后次数」；
+  // ⭐ 2026-10-09 她**又删了 5 列**并已同步代码 —— 见下）。
+  // 映射指到快照里没有的名字 = 静默失效；
   // 而映射**指回已删除的旧列** = 生产上闸门当场报「缺少 V1 字段」。
   const fields = {
-    // ⚠️ 2026-10-06 晚她又在生产「销售主表」加了**「消息链接」**一列
-    //（她的原话：「我在多维表格的销售主表里加了一列叫做**消息链接**，可以写入这里～」）
-    // —— 快照随手同步（`salesEntry.messageLink` 指的就是它，发销售卡片时写深链）。
     // ⭐ 2026-10-08：她又在销售主表加了**「赠品」**一列（文本），并**把「销售明细.赠品」整列删掉**
     //（逐字：「写入的落点放在销售主表里的赠品，销售明细没有赠品了」）—— 快照同步：
     // 赠品只在 salesEntry 这一侧，明细那一侧**不能再有它**（下面单独钉住）。
     // ⭐ 2026-10-08：她又在销售主表加了**「售后次数」**（数字，默认为 0；逐字：
     // 「我增加了一个字段：**售后次数**，默认为 0……根据**售后行为去叠加**这个数量」）
     // —— 快照同步；写入点是 `services/afterSalesService.js` 的 `countAfterSales`。
-    salesEntry: ['收款状态', '录单日', '确认状态', '销售单号', '解析状态', '失败原因',
+    // 🔴🔴 2026-10-09：她**从生产表删掉了 5 列** —— 原话 / 解析状态 / 解析结果摘要 /
+    // 失败原因 / 消息链接（她的口径：「我们要用扫码」＋「解析状态就是我们对于原话的解析」）。
+    // ⇒ 快照里**也把这 5 个名字去掉**：这一来，下面那条"映射 ⊆ 快照"的循环就**自动变成守门用例** ——
+    // 谁把映射加回来，这条当场红（`still maps deleted field 原话`）。
+    // 映射 + 写入点一起删的完整记录见 `config/v1BitableSchema.salesEntry` 段。
+    salesEntry: ['收款状态', '录单日', '确认状态', '销售单号',
       '销售状态', '资金状态', '库存状态',
-      '录单人', '解析结果摘要', '原话', '待交付数量', '交付数量', '交易类型', '消息链接', '赠品',
+      '录单人', '待交付数量', '交付数量', '交易类型', '赠品',
       '售后次数'],
     salesDetail: ['销售单价', '履约状态', '销售明细ID', '销售单号', '销售日', '尺码', '成交金额', '编号', '配品', '交易类型'],
     // 「支付方式」已被产品负责人改名为「交易方式」，并新增了「交易方向」。
@@ -68,6 +72,11 @@ test('sales schema matches the live three-table field snapshot', () => {
   // ⭐ 赠品的落点（2026-10-08）：**只在销售主表**；明细不再有 `gift` 映射。
   assert.equal(V1_BITABLE_SCHEMA.tables.salesEntry.fields.gift, '赠品');
   assert.equal(V1_BITABLE_SCHEMA.tables.salesDetail.fields.gift, undefined);
+  // 🔴 2026-10-09：这 5 列已被她删掉 ⇒ 映射**一个都不许留**（留了就是写库 FieldNameNotFound）。
+  for (const key of ['originalText', 'parseStatus', 'parseSummary', 'failureReason', 'messageLink']) {
+    assert.equal(V1_BITABLE_SCHEMA.tables.salesEntry.fields[key], undefined,
+      `${key} 的物理列已被她删除 ⇒ 映射必须一起删`);
+  }
 });
 
 test('relation and display helpers support Feishu record field shapes', () => {

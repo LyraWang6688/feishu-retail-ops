@@ -23,25 +23,34 @@ Tab 页的顺序从左往右是：**销售、库存、采购和货品**」）：
 > 渲染与事件绑定**都排在 `requireFeishuAuth` 之前** —— 保住 2026-10-06 那条修复
 > （鉴权 401 时 tab 也要能点）。默认打开的是**第一个** = 销售。
 
-### 旧入口：一个都没删（页脚 →「其它 / 历史功能」）
+### ⚠️ 2026-10-09 下半场：四个老页面已按她的口令**删掉**（代码从仓库里删，不是隐藏）
 
-业务负责人 2026-10-09：「**其余旧功能不删**：集中到一个**不显眼的"其它/历史功能"入口**
-（例如页脚一行，点开一个独立页列出它们）」。
+业务负责人 2026-10-09 点头：「是的逻辑没有问题」——下面四个页面连同它们的**启动器注册 /
+清单 / 页脚入口**一起从仓库删除：
 
-- 首页页脚那一行 → `/workbench/others.html`（清单在 `config/others.js`，模块 `features/others/`）：
-  - 📋 **信息录入**（原「常用功能」首页，**内容一个字没动**）→ `common.html`（`config/home.js` 的三张卡：
-    报货与退货 / 库存手工调整 / 鞋盒标签打印）
-  - 🚚 **采购管理**（原一级 tab：报货信息情况 / 到货验收情况两个查询面板）→ `purchase.html`
-    （模块还是 `features/purchase/index.js`）
-  - 🧮 库存手工调整 · 🛒 采购和退货 · 🏷️ 鞋盒标签打印 —— 三个独立页的老链接照旧能开
-  - 一直只是占位的 **资金管理 / 抖音运营 / 平台管理**：模块代码仍在 `main.js` 的 `modules` 表里，
-    「其它」页如实列出来（标着"规划中"）
+| 删掉的 | 原先是什么 | 等价入口现在在哪 |
+| --- | --- | --- |
+| `others.html` + `config/others.js` + `features/others/` | 「其它 / 历史功能」页（页脚那一行） | —— （不再需要这个页） |
+| `common.html` | 老「信息录入 / 常用功能」首页 | 采购 tab → 报货 / 退货两张表单卡；库存 tab → 手工调整；货品 tab → 标签打印 |
+| `purchase.html` | 老「采购管理」页（报货信息情况 / 到货验收情况） | 采购 tab ①「报货 / 验收 / 退货」（验收到货**内嵌**既有订单模块的 `purchase` 模式） |
+| `purchase-return.html` | 老采购退货独立页（两张表单卡） | 采购 tab ①「报货 / 验收 / 退货」的两张卡 |
+
+- ⚠️ `features/query/index.js` 里**已无人调用**的 `createQueryModule()` 同时删除；
+  **`renderQueryEntries` 保留**（销售 · 销售查询 / 库存 · 全仓查询两张外链卡还在用它）。
+- ⚠️ **保留**（她要的）：`inventory-adjustment.html`（库存 · 手工调整）· `label-print.html`（货品 · 标签打印）·
+  订单列表模块 · 扫码页 · `features/domains/**`。
+- ⚠️ 先留着没删（**当前没有任何页面挂载，属孤儿**，等她一句话再决定）：
+  `features/common/index.js` + `config/home.js`（信息录入三张卡）· `features/purchase/{index,links}.js`
+  （老采购管理 / 采购和退货页的模块）。
 - 原「信息查询」的**两个板块**没有被丢掉，而是各回各的领域：
   `sales-query` → 销售 · 销售查询；`inventory-query` → 库存 · **全仓查询**（清单仍在 `config/query.js`，
   URL 仍只在 `config/links.js`：`SALES_QUERY_PAGE_URL` / `INVENTORY_QUERY_PAGE_URL`）。
   ⚠️ 这一维**不新增任何接口 / 页面**（渲染层一次 `fetch` 都没有，有测试守着）。
 - 原「订单列表」也是同一个模块（`features/orders/`）挂两处：销售 tab 只看销售、采购 tab 只看采购
   （`createOrdersModule({ mode })`，`mode` 由 `config/domains.js` 给）。
+- 一直只是占位的 **资金管理 / 抖音运营 / 平台管理**：模块代码仍在 `main.js` 的 `modules` 表里，
+  但**当前没有任何页面列出它们**（列它们的「其它」页已删）；要恢复某个入口，在
+  `config/tabs.js` 的 `MAIN_TABS` 里加回一条即可。
 
 > 口径与逐条对照：`test/workbenchFourTabs.test.js`（AC1–AC7）+ `test/workbenchTwoTabsAndQueryEntries.test.js`
 > + `test/workbenchOrders.test.js`。**本文件不改 `docs/`**。
@@ -76,13 +85,11 @@ Tab 页的顺序从左往右是：**销售、库存、采购和货品**」）：
 
 - `core/`：登录、HTTP 请求、格式化、一级 tab 渲染（`tabs.js`）和通用交互。
 - `config/`：前端配置 —— `tabs.js`（一级 tab 文案 / 顺序）· **`domains.js`（四个领域的子页面清单）** ·
-  `links.js`（飞书表单与查询页外链）· `home.js`（原「信息录入」首页的入口清单）·
-  `query.js`（两个多维表格查询板块）· `others.js`（「其它 / 历史功能」的遗留入口）·
-  `orders.js`（订单列表的分组 / 文案 / 接口路径）。
+  `links.js`（飞书表单与查询页外链）· `home.js`（原「信息录入」首页的入口清单，⚠️ 页面已删、模块暂无挂载）·
+  `query.js`（两个多维表格查询板块）· `orders.js`（订单列表的分组 / 文案 / 接口路径）。
   **配置先行** —— 换链接 / 改 tab 名 / 加减一个入口只改这里，页面模块不写死 URL 与清单。
 - `features/<domain>/`：录入、采购、库存、查询、标签等业务模块；模块不得查询其他模块的 DOM。
 - `features/domains/`：**四个领域 tab 的骨架**（子 tab + 子页面；业务逻辑一行都没有）。
-- `features/others/`：「其它 / 历史功能」页。
 - `features/shared/`：无业务状态的共享视图。
 - `styles/`：**主题变量（`tokens.css`）** 和全局布局；业务模块样式与模块放在一起。
 - `main.js`：模块注册和一级导航，不承载业务规则。
@@ -94,7 +101,8 @@ Tab 页的顺序从左往右是：**销售、库存、采购和货品**」）：
 
 - **默认样式就是手机**：单列卡片、按钮 / 输入框 ≥ `--control-height`(44px)、不横向滚动、
   长文本 `overflow-wrap: anywhere`；桌面（`@media (min-width: 761px)`）才铺成多列。
-- 领域页与订单列表**一律不用 `<table>`**（旧查询页那种表格只留在「其它」里，窄屏会折成卡片）。
+- 领域页与订单列表**一律不用 `<table>`**（⚠️ 2026-10-09：原先"只留在「其它」里"的那种旧查询页
+  已随「其它 / 历史功能」页一起删掉，现在全工作台都没有表格版式）。
 - 静态哨兵：`test/workbenchFourTabs.test.js` 的 AC4。
 
 ## 新增模块

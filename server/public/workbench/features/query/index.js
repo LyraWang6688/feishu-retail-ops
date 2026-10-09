@@ -47,21 +47,9 @@ export function renderQueryEntries(sections = QUERY_SECTIONS) {
               </div>`)).join('');
 }
 
-export function createQueryModule() {
-  return {
-    mount(container) {
-      container.innerHTML = `
-        <section class="panel">
-          <div class="panel-header">
-            <div>
-              <h2>信息查询</h2>
-              <p class="subtitle">销售查询与库存查询都在飞书多维表格里，点卡片直接打开</p>
-            </div>
-          </div>
-          <div class="quick-entries entries-pair">
-            ${renderQueryEntries()}
-          </div>
-        </section>`;
-    },
-  };
-}
+// ⚠️ 2026-10-09：原先这里还有一个 `createQueryModule()`（渲染独立页「信息查询」整页）。
+//    那个独立页 2026-10-08 就没了（「销售查询 / 库存查询」两个板块现在分别嵌在
+//    领域 tab 里：`features/domains/nav.js` 的 `query` 子页 **只调 `renderQueryEntries`**）——
+//    它**已经没有任何调用方**（全仓 grep 只有测试），业务负责人 2026-10-09 点头按
+//    「代码从仓库里删，不是隐藏」删掉。
+//    ⭐ **`renderQueryEntries` 保留**：两个飞书多维表格外链卡仍在用（销售查询 / 全仓查询）。

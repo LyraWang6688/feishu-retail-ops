@@ -1,0 +1,101 @@
+{
+  "task_id": "purchase_supplier-report_c602aa426af4d15bbe1d561c",
+  "kind": "supplier-report",
+  "record_id": "reczz28JnL0SZuoS",
+  "status": "posted",
+  "created_at": "2026-10-05T16:27:20.168Z",
+  "updated_at": "2026-10-05T16:28:43.813Z",
+  "started_at": "2026-10-05T16:27:20.172Z",
+  "return_plan": {
+    "version": 1,
+    "declared": 2,
+    "size": null,
+    "available": 8,
+    "taken": 2,
+    "sizes": [
+      {
+        "size": 40,
+        "quantity": 1
+      },
+      {
+        "size": 43,
+        "quantity": 1
+      }
+    ],
+    "shortfall": 0,
+    "surplus": 6
+  },
+  "draft": {
+    "is_return": true,
+    "report_record_id": "reczz28JnL0SZuoS",
+    "product_record_id": "rec28dNP1CqQcY",
+    "product_number": "832-555|黑色|A",
+    "supplier_record_id": "recvvnfaQiZS5n",
+    "behavior_record_id": "reczz28Jn7SBKCdm",
+    "operator_open_id": "某员工",
+    "batch_no": "SELFTEST-20261005162716",
+    "items": [
+      {
+        "item_no": "832-555",
+        "color": "黑色",
+        "size": 40,
+        "quantity": 1,
+        "product_record_id": "rec28dNP1CqQcY",
+        "supplier_record_id": "recvvnfaQiZS5n",
+        "report_record_id": "reczz28JnL0SZuoS"
+      },
+      {
+        "item_no": "832-555",
+        "color": "黑色",
+        "size": 43,
+        "quantity": 1,
+        "product_record_id": "rec28dNP1CqQcY",
+        "supplier_record_id": "recvvnfaQiZS5n",
+        "report_record_id": "reczz28JnL0SZuoS"
+      }
+    ],
+    "return_plan": {
+      "version": 1,
+      "declared": 2,
+      "size": null,
+      "available": 8,
+      "taken": 2,
+      "sizes": [
+        {
+          "size": 40,
+          "quantity": 1
+        },
+        {
+          "size": 43,
+          "quantity": 1
+        }
+      ],
+      "shortfall": 0,
+      "surplus": 6
+    }
+  },
+  "posting_progress": {
+    "returns": {
+      "40": "reczz28JnLNUA3Dk",
+      "43": "reczz28JnM3NH3Dc"
+    }
+  },
+  "posting_stage": "return_doc:43",
+  "request_ids": [
+    "reczz28JnLNUA3Dk",
+    "reczz28JnM3NH3Dc"
+  ],
+  "result": {
+    "status": "posted",
+    "is_return": true,
+    "declared": 2,
+    "available": 8,
+    "taken": 2,
+    "shortfall": 0,
+    "surplus": 6,
+    "doc_ids": [
+      "reczz28JnLNUA3Dk",
+      "reczz28JnM3NH3Dc"
+    ]
+  }
+}
