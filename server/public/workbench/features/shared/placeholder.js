@@ -6,7 +6,9 @@ import { escapeHtml } from '../../core/formatters.js';
  * 她用它的地方：
  *   · 领域 tab 里的**占位子页面**（客户往来款 / 采购订单列表 / 供应商往来款，
  *     见 `config/domains.js` 的 `kind: 'placeholder'`）；
- *   · 一直只是占位的那三个模块（资金管理 / 抖音运营 / 平台管理，见 `config/others.js`）。
+ *   · 一直只是占位的那三个模块（资金管理 / 抖音运营 / 平台管理，在 `main.js` 的 `modules` 表里）。
+ * ⚠️ 2026-10-09：原先列那三个模块的「其它 / 历史功能」页（`config/others.js`）**已删** ⇒
+ *    那三个模块现在**没有任何页面列出**（代码保留，见 `main.js` 那一段说明）。
  * ⚠️ 两个地方**共用这一个常量**（统一口径：占位就写"待建设"，不各写各的说法）。
  */
 export const PLACEHOLDER_STATUS = '待建设';

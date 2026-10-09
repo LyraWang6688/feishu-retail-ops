@@ -60,7 +60,11 @@ class SalesOrderService {
     //   · 销售状态 = 未写入（销售明细还没开始写）
     //   · 资金状态 = 未写入（收款明细还没开始写）
     // 显式写这两列（而不是留空），是为了让"到哪一步了"在表里看得见。
-    await this.gateway.update('salesEntry', salesEntryRecordId, { failureReason: '' }, { correlation });
+    // ⚠️ 2026-10-09：这里原来还有一句 `update(..., { failureReason: '' })`（重试时先清空
+    //    「失败原因」）—— 那一列被她从生产表删掉了，**写入点随列一起删**
+    //    （见 `config/v1BitableSchema.salesEntry` 段）。下游 catch 里那次回填同样删掉：
+    //    失败现在只落在**状态维度**（销售/资金状态）＋ `v1.sale.post_failed` /
+    //    `v1.sale.sync_pending` 日志上。
     await this.status.write(salesEntryRecordId, {
       sales: WRITE.sales.none, funds: WRITE.funds.none,
     }, correlation);
@@ -273,9 +277,13 @@ class SalesOrderService {
         sales: salesStatus,
         funds: financialRecorded ? WRITE.funds.done : WRITE.funds.failed,
       }, correlation);
-      await this.gateway.update('salesEntry', salesEntryRecordId, {
-        failureReason: financialRecorded ? `销售记录已写入，后续同步待恢复：${error.message}` : error.message,
-      }, { correlation }).catch(() => undefined);
+      // ⚠️ 2026-10-09：这里原来会把失败的**人话**回填进「失败原因」列（她照着改就能重试）。
+      //    那一列被业务负责人从生产表删掉了 ⇒ **写入点随列一起删**（见
+      //    `config/v1BitableSchema.salesEntry` 段）。失败的可见落点现在是：
+      //      · 状态维度（上面那次 `status.write`：写入失败 / 部分写入）；
+      //      · 日志 `v1.sale.post_failed`（一条都没成）/ `v1.sale.sync_pending`（明细已写、
+      //        后续同步待恢复，带 `error.message`）；
+      //      · 她在群里看到的卡片 / 文案（那条链路一个字没动）。
       logError(financialRecorded ? 'v1.sale.sync_pending' : 'v1.sale.post_failed', {
         sales_entry_record_id: salesEntryRecordId, error: error.message, ...correlation,
       });

@@ -521,10 +521,23 @@ test('sales intake writes only intake metadata and retains actual amount before 
   assert.equal(created.tableKey, 'salesEntry');
   assert.equal('messageId' in created.fields, false);
   assert.equal('sentAt' in created.fields, false);
-  const parsedUpdate = calls.find(
-    (call) => call.operation === 'update' && call.fields.parseStatus === '解析成功'
-  );
-  assert.equal('behavior' in parsedUpdate.fields, false);
+  // 🔴 2026-10-09：业务负责人把「原话 / 解析状态」两列从生产「销售主表」删掉了
+  //（她的口径：「我们要用**扫码**」＋「**解析状态就是我们对于原话的解析**」）
+  // ⇒ 建单**不再写**它们（映射 + 写入点一起删，见 `config/v1BitableSchema.salesEntry` 段）。
+  assert.equal('originalText' in created.fields, false, '「原话」列已删 ⇒ 建单不再写');
+  assert.equal('parseStatus' in created.fields, false, '「解析状态」列已删 ⇒ 建单不再写');
+  // 建单仍要写的三列一个字都不能少（少一个就是「未配置语义字段」当场炸）。
+  assert.ok(created.fields.orderNo, '「销售单号」照旧要写');
+  assert.ok(created.fields.sender, '「录单人」照旧要写');
+  assert.ok(created.fields.userAction, '「确认状态」照旧要写（建单 = 未确认）');
+  // 🔴 解析收尾那一次 update 原来写「解析状态 / 解析结果摘要 / 失败原因」——
+  //    那三列全被删了 ⇒ 这一单**根本不该再有那一次 update**
+  //    （剩下的只有「交易类型」，本用例没解析出编码 ⇒ 连它也不写）。
+  const removedMetaUpdate = calls.find((call) => call.operation === 'update'
+    && ['parseStatus', 'parseSummary', 'failureReason'].some((key) => key in call.fields));
+  assert.equal(removedMetaUpdate, undefined, '解析诊断三列已删 ⇒ 不许再写');
+  const parsedUpdate = calls.find((call) => call.operation === 'update' && 'tradeType' in call.fields);
+  if (parsedUpdate) assert.equal('behavior' in parsedUpdate.fields, false);
   assert.equal(cards.length, 1);
   assert.doesNotMatch(JSON.stringify(cards[0].card), /现货销售/);
   // 卡片上的展示编号来自实时库存（货号 + 颜色），库存分布也一并写出来。

@@ -610,7 +610,13 @@ test('exhausted progress read preserves posted sale and known IDs recover when l
     onRecordPersisted: async (kind, index, id) => { knownRecordIds[kind][index] = id; } };
   await assert.rejects(sales.confirm(input), (error) => error.saleRecordsWritten === true);
   assert.equal(gateway.records.get('salesEntry')[0].fields['资金状态'], '已写入');
-  assert.match(gateway.records.get('salesEntry')[0].fields['失败原因'], /后续同步待恢复/);
+  // 🔴 2026-10-09：业务负责人把「失败原因」那一列从生产「销售主表」删掉了 ⇒ 写入点随列一起删
+  //（`salesOrderService` 原来在这里回填"后续同步待恢复：…"；见 `v1BitableSchema.salesEntry` 段）。
+  // 失败的可见落点现在是**状态维度**（上面那行）+ `v1.sale.sync_pending` 日志。
+  // ⚠️ 这里是**断定它没写**（而不是"值不对"）：这个假网关对未配置的语义键**当场抛**
+  //    ⇒ 只要写入点回来，这条用例立刻红。
+  assert.equal(gateway.records.get('salesEntry')[0].fields['失败原因'], undefined,
+    '「失败原因」列已删 ⇒ 不许再写（失败只落状态维度 + 日志）');
   assert.equal(gateway.records.get('salesDetail').length, 1);
   assert.equal(gateway.records.get('paymentRecord').length, 1);
   assert.equal(knownRecordIds.details.length, 1);

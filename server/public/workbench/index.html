@@ -42,13 +42,13 @@
     <p id="page-error" class="error hidden" role="alert"></p>
 
     <!--
-      页脚那一行 = 业务负责人要的**不显眼的「其它 / 历史功能」入口**：
-      「其余旧功能不删：集中到一个不显眼的"其它/历史功能"入口（例如页脚一行，点开一个独立页列出它们）」
-      ⇒ 点开 `others.html`（清单在 `config/others.js`：信息录入首页 / 采购管理 / 三个独立页 …）。
+      ⚠️ 2026-10-09：原先这里有一行「其它 / 历史功能」入口（→ `others.html`）。
+      业务负责人点头把那一页与它底下的老页面（信息录入首页 / 采购管理 / 采购退货独立页）
+      **一起删掉**（「代码从仓库里删，不是隐藏」）⇒ 这一行连同 `config/others.js` 一起删除。
+      ⭐ 四个领域 tab（`config/domains.js`）上已有等价入口，功能一个都没少。
+      页脚现在只剩扫码入口那半句。
     -->
     <p class="foot-links">
-      <a href="/workbench/others.html">其它 / 历史功能</a>
-      <span aria-hidden="true"> · </span>
       <span>扫码入口：扫鞋盒标签上的二维码（页面顶部可切换 销售 / 库存 / 采购 / 货品）</span>
     </p>
   </main>

@@ -328,6 +328,11 @@ const readAfterSalesConfig = (env = process.env) => ({
   //    没有「已退货」这个选项（业务负责人 2026-10-06：原主表一字不动）。
   //    这里曾经有一个 writeOriginalSalesStatus 开关，已整体删除。
   // 新主表的解析状态：走与销售链路**同一套取值**（larkMvpService 里用的那个），不自创新词。
+  // 🔴 2026-10-09：**这个值已无任何读取点** —— 「解析状态」那一列被业务负责人从生产
+  //    「销售主表」删掉了，`afterSalesService.ensureMaster` 里写它的那一次也随列一起删
+  //    （见 `config/v1BitableSchema.salesEntry` 段）。本文件**刻意保留这个键**（不顺手删）：
+  //    真实表恢复这一列时它是现成的、语义明确的取值来源（与 `PURCHASE_ARRIVAL_INTAKE_ENABLED`
+  //    同一处置 —— 留一个没有读取点的常量，比在逻辑里写死 '解析成功' 好）。
   masterParseStatus: '解析成功',
   // ⚠️ 这里**曾经**有一个 masterConfirmStatus: '已入账' —— 2026-10-06 起售后主表只写四个状态维度，
   //    名字与取值统一由 `config/salesStatusDimensions.js`

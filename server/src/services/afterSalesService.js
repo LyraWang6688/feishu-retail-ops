@@ -567,10 +567,15 @@ class AfterSalesService {
       return { recordId: progress.master_record_id, tradeTypeRecordId: behavior.recordId, reused: true };
     }
     const created = await this.gateway.create('salesEntry', {
-      originalText: request.originalText,
+      // ⚠️ 2026-10-09：「原话」与「解析状态」**不再写** —— 这两列被业务负责人从生产
+      //   「销售主表」删掉了（她的口径：「我们要用扫码」）。映射 + 写入点一起删，
+      //   见 `config/v1BitableSchema.salesEntry` 段。
+      //   ⚠️ 请求里的 `originalText`（她这次售后说的那句话）**仍然必须非空**：它是
+      //      **幂等指纹**的一部分（`fingerprintOf`），只是不再落业务表；
+      //      原来 `verifyMaster` 拿它对账那一句也一并删了（读已删的列只会拿到 undefined，
+      //      会让"重试"每一次都误判「原话不一致」而必抛）。
       // 售后沿用原单号，不生成新号（退货/换货不建新单）。
       orderNo: request.originalSalesOrderNo,
-      parseStatus: this.config.masterParseStatus,
       // 「确认状态」（用户那一维）：售后主表**只在她点过卡片「确认」之后**才会被创建
       // （execute 只从 AfterSalesFlowService 的确认动作进来），所以那一刻记为「已确认」。
       // ⚠️ 不写「未确认」：这张卡已经点过了，写「未确认」会让它永远停在"等她确认"上。
@@ -592,7 +597,11 @@ class AfterSalesService {
     const record = await this.gateway.get('salesEntry', recordId);
     let mismatch = '';
     if (!record) mismatch = '记录已不存在';
-    else if (cellText(record.fields?.[fields.originalText]) !== request.originalText) mismatch = '原话不一致';
+    // ⚠️ 2026-10-09：原来这里还比一句「原话」（`cellText(record.fields?.[fields.originalText])`）
+    //   —— 「原话」那一列已被业务负责人从生产表删掉、映射随之删除 ⇒ `fields.originalText`
+    //   是 `undefined`，那句判据会**恒为真**（undefined !== 请求原话）⇒ 每一次重试都判
+    //   「原话不一致」而必抛。**随映射一起删**（这是功能依赖，不是顺手清理）。
+    //   剩下的两条判据（单号 / 交易类型）都在，足以认出"这条主表是不是这次请求写的"。
     else if (cellText(record.fields?.[fields.orderNo]) !== request.originalSalesOrderNo) mismatch = '销售单号不一致';
     else if (!linkedRecordIds(record.fields?.[fields.tradeType]).includes(tradeTypeRecordId)) mismatch = '交易类型不一致';
     if (mismatch) {

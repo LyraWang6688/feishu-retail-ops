@@ -24,9 +24,13 @@
  *      ⚠️ **采购订单列表从"可用的订单列表"变成占位页** ⇒ 「验收到货」的入口搬到
  *      「采购 → 报货 / 验收 / 退货」这一页里（内嵌既有 `features/orders` 的 `purchase` 模式，
  *      见 AC9）—— 既有模块**一个都没删**。
- *  AC3 **旧功能仍可达**：旧入口一个都没删，集中到**首页页脚那一行「其它 / 历史功能」**
- *      → `others.html`，上面能点到「信息录入（原常用功能）」「采购管理（原一级 tab）」
- *      与三个独立页；占位的三个模块如实列出；老链接 / 老页面文件都还在。
+ *  AC3 ⚠️ **2026-10-09 下半场改写：旧页面已按她的口令删掉**（她的口径：
+ *      「代码从仓库里删，不是隐藏」）——`others.html`（「其它 / 历史功能」页）·
+ *      `common.html`（老「信息录入 / 常用功能」首页）· `purchase.html`（老「采购管理」页）·
+ *      `purchase-return.html`（老采购退货独立页）**四个页面 + 它们的注册/清单/页脚入口**一起删；
+ *      ⭐ **功能一个都没丢**：四个领域 tab（`config/domains.js`）上已有等价入口
+ *      （采购 → 报货 / 退货两张飞书表单卡 · 库存 → 手工调整 · 货品 → 标签打印）。
+ *      `inventory-adjustment.html` / `label-print.html` **保留**（这两页她要）。
  *  AC4 **移动端哨兵**：viewport · 默认单列卡片 · **无 `<table>`** ·
  *      按钮 / 输入框 **≥44px**（`--control-height`）· **无固定 `min-width`** ·
  *      长文本 `overflow-wrap: anywhere` · `html, body` 不横向滚动；桌面（≥761px）才铺多列。
@@ -34,7 +38,7 @@
  *      `?from=sales|inventory|purchase|product`，**缺省 = 销售**；切到哪个领域就**只显示**
  *      那个领域的操作；认不出的值一律回落缺省（不报错、不白屏）；没 JS 时四块全显示（兜底）。
  *      ⚠️ 这一条**没有改 `routes/scanPage.js` / `config/scanPage.js`**：四块都渲染进 HTML，
- *      由 CSS 按 `<html data-realm>` 显示其中一块（细节见 `src/views/scanPageRealm.js`）。
+ *      （2026-10-09 之前是"四块全渲染 + CSS 按 `<html data-realm>` 显隐"，已改）。
  *  AC6 **主题变量集中在一处**：配色 / 间距 / 圆角 / 字号全在 `styles/tokens.css`；
  *      其余工作台 CSS **一个十六进制颜色都不许有**（只用 `var(--…)`）；
  *      扫码页在渲染时**把同一份令牌内联进 `:root`** ⇒ 改那一个文件，两边一起变。
@@ -99,9 +103,8 @@ function loadFrontendModules() {
     // ⚠️ 可选：这一条只在"按 id 引用查询板块"的写法下存在（现在由 features/domains/nav.js 解析 id）。
     ["from './query.js'", "from './query.mjs'", true],
   ]);
-  copy('config/others.js', 'others-config.mjs');
-  copy('config/home.js', 'home.mjs', [["from './links.js'", "from './links.mjs'"]]);
   copy('core/tabs.js', 'core-tabs.mjs', [["from '../config/tabs.js'", "from './tabs.mjs'"]]);
+  copy('config/home.js', 'home.mjs', [["from './links.js'", "from './links.mjs'"]]);
   copy('core/formatters.js', 'formatters.mjs');
   copy('features/query/index.js', 'query-index.mjs', [
     ["from '../../config/query.js'", "from './query.mjs'"],
@@ -121,11 +124,8 @@ function loadFrontendModules() {
     ["from '../query/index.js'", "from './query-index.mjs'"],
     ["from './pages.js'", "from './domains-pages.mjs'"],
   ]);
-  copy('features/others/index.js', 'others-index.mjs', [
-    ["from '../../config/others.js'", "from './others-config.mjs'"],
-    ["from '../../core/formatters.js'", "from './formatters.mjs'"],
-    ["from '../domains/pages.js'", "from './domains-pages.mjs'"],
-  ]);
+  // ⚠️ 2026-10-09：`config/others.js` 与 `features/others/index.js` **已随 others.html 一起删除**
+  //    ⇒ 这里不再复制、也不再从 `loadFrontendModules()` 里导出（AC3 已按"页面已删"改写）。
   copy('features/common/index.js', 'common.mjs', [
     ["from '../../config/home.js'", "from './home.mjs'"],
     ["from '../../core/formatters.js'", "from './formatters.mjs'"],
@@ -146,13 +146,11 @@ function loadFrontendModules() {
     links: load('links'),
     query: load('query'),
     domains: load('domains'),
-    othersConfig: load('others-config'),
     home: load('home'),
     queryIndex: load('query-index'),
     domainPages: load('domains-pages'),
     domainNav: load('domains-nav'),
     placeholder: load('placeholder'),
-    othersIndex: load('others-index'),
     common: load('common'),
     ordersConfig: load('orders-config'),
     orders: load('orders-index'),
@@ -197,13 +195,17 @@ test('AC1 一级 tab 恰好 4 个，顺序逐字 = 销售 · 库存 · 采购 ·
   }
 });
 
-test('AC1b index.html：nav 留空（文案不在这里再写一遍）+ 有「其它 / 历史功能」页脚入口', () => {
+test('AC1b index.html：nav 留空（文案不在这里再写一遍）+ 页脚不再有「其它 / 历史功能」入口', () => {
   const html = readWorkbench('index.html');
   const nav = html.match(/<nav id="main-tabs"[\s\S]*?<\/nav>/);
   assert.ok(nav, 'index.html 必须仍有 <nav id="main-tabs">');
   assert.ok(!/<button/.test(nav[0]) && !/data-module=/.test(nav[0]),
     'index.html 里不许再硬编码 main-tab 按钮 —— 文案的单一来源是 config/tabs.js（配置先行）');
-  assert.match(html, /href="\/workbench\/others\.html"/, '页脚要有「其它 / 历史功能」那一行（她的硬要求）');
+  // ⚠️ 2026-10-09 改写：原先这里钉的是"页脚要有「其它 / 历史功能」入口（→ others.html）"。
+  //    她当天点头把那一页删掉 ⇒ 断言翻转成"页脚里不许再有这个入口"（去注释后再判，
+  //    免得把上面那段"原先这里有一行…已删"的历史说明本身当成入口）。
+  assert.ok(!/href="\/workbench\/others\.html"/.test(html), '页脚不许再留 others.html 的入口');
+  assert.ok(stripComments(html).includes('扫码入口'), '页脚剩下的扫码入口那半句保留');
   assert.match(html, /features\/domains\/domains\.css/, '四个领域的样式要加载');
 });
 
@@ -396,53 +398,48 @@ test('AC2d 订单列表的三份单子：补充信息单 / 待交割单 / 售后
 // AC3 旧功能仍可达（「其它 / 历史功能」页）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC3 旧功能一个都没丢：页脚 →「其它 / 历史功能」页里能点到（含原「信息录入」首页与「采购管理」）', async () => {
+test('AC3 四个老页面已按她的口令删掉（代码从仓库里删）—— 但四张等价入口一个都没丢', async () => {
   const modules = loadFrontendModules();
-  const [config, othersHtml, home, commonHtml] = await Promise.all([
-    modules.othersConfig,
-    render(modules.othersIndex, 'createOthersModule'),
-    modules.home,
-    render(modules.common, 'createCommonModule'),
-  ]);
 
-  // ① 清单里就是这些遗留入口，且 **href 逐字**（老链接照旧）
-  assert.deepEqual(config.LEGACY_ENTRIES.map((entry) => entry.href), [
-    '/workbench/common.html',
-    '/workbench/purchase.html',
-    '/workbench/inventory-adjustment.html',
-    '/workbench/purchase-return.html',
-    '/workbench/label-print.html',
-  ], '五个遗留入口都在「其它」页里（信息录入首页 / 采购管理 / 三个独立页）');
-
-  // ② 渲染出来真的能点（是 <a href>，不是死文案）
-  for (const entry of config.LEGACY_ENTRIES) {
-    assert.ok(othersHtml.includes(`href="${entry.href}"`), `「其它」页里必须有能点的 ${entry.href}`);
+  // ① 四个页面**文件没了**（不是隐藏：文件、启动器注册、清单、页脚入口一起删）。
+  for (const gone of ['others.html', 'common.html', 'purchase.html', 'purchase-return.html']) {
+    assert.equal(workbenchHas(gone), false, `${gone} 必须已删（业务负责人 2026-10-09 点头）`);
   }
-  assert.ok(othersHtml.includes('其它 / 历史功能'), '页面标题');
-
-  // ③ 那个独立页真的存在、也真的注册进了既有启动器（不是只写了个链接）
-  for (const page of ['others.html', 'purchase.html', 'common.html', 'inventory-adjustment.html', 'purchase-return.html', 'label-print.html']) {
-    assert.equal(workbenchHas(page), true, `${page} 必须存在（旧入口不许因为换 tab 就失效）`);
+  // ② 页面的模块/清单也一起删干净（只删页面、留模块 = 孤儿引用）。
+  for (const gone of ['config/others.js', 'features/others/index.js']) {
+    assert.equal(workbenchHas(gone), false, `${gone} 必须已删（它只服务已删的 others.html）`);
   }
-  const standalone = readWorkbench('standalone.js');
-  for (const view of ["others: () => createOthersModule()", "purchase: () => createPurchaseModule()", 'common:', "'inventory-adjustment':", "'purchase-return':", "'label-print': () => createLabelPrintModule()"]) {
-    assert.ok(standalone.includes(view), `standalone.js 必须注册 ${view}`);
+  // ③ 启动器里不许再注册这四个视图（注册留着 = 死入口），也不许再 import 它们。
+  const standalone = stripComments(readWorkbench('standalone.js'));
+  for (const view of ["others:", "purchase:", "'purchase-return':", "common:"]) {
+    assert.ok(!standalone.includes(view), `standalone.js 不许再注册 ${view} 这个视图`);
+  }
+  for (const mod of ['features/others', 'features/purchase', 'features/common']) {
+    assert.ok(!standalone.includes(mod), `standalone.js 不许再 import ${mod}`);
+  }
+  // ④ 启动器**只**留这两个独立页（她要的两个）；自建的销售 / 库存查询视图仍然不许回来。
+  for (const kept of ["'inventory-adjustment'", "'label-print'"]) {
+    assert.ok(standalone.includes(kept), `standalone.js 必须仍有 ${kept}`);
   }
   assert.ok(!standalone.includes("'sales-query'") && !standalone.includes("'inventory':"),
     '自建的销售 / 库存查询视图仍然不许回来（她 2026-10-08：那两个接口顺手删掉）');
-
-  // ④ 原「信息录入（常用功能）」的内容逐字还在（报货与退货 / 库存手工调整 / 鞋盒标签打印）
-  assert.deepEqual(home.COMMON_ENTRIES.map((entry) => entry.title), ['报货与退货', '库存手工调整', '鞋盒标签打印']);
-  assert.deepEqual((commonHtml.match(/<h3>([\s\S]*?)<\/h3>/g) || []).map((item) => item.replace(/<\/?h3>/g, '')),
-    ['报货与退货', '库存手工调整', '鞋盒标签打印'], '旧首页渲染出来的卡片一张都没少');
-
-  // ⑤ 占位的三个模块：模块代码仍在 main.js（`modules` 表里），「其它」页如实列出，两边文案一致
-  const main = readWorkbench('main.js');
-  for (const module of config.PLANNED_MODULES) {
-    assert.ok(main.includes(`'${module.id}', createPlaceholderModule({`), `main.js 里 ${module.id} 的占位模块必须保留（代码不删）`);
-    assert.ok(main.includes(module.desc), `${module.id} 的说明要与 config/others.js 逐字一致`);
-    assert.ok(othersHtml.includes(module.title), `「其它」页要列出 ${module.title}`);
-  }
+  // ⑤ 首页页脚那一行「其它 / 历史功能」入口也删了（点了会 404）。
+  //    ⚠️ 只判 **href**：index.html 的注释里**要留**"原先这里有一行、已删"的沿革说明
+  //    （`stripComments` 只去 JS/CSS 注释，不会去 HTML 注释 —— 不去注释会把那段说明本身当入口）。
+  const indexHtml = readWorkbench('index.html');
+  assert.ok(!/href="\/workbench\/others\.html"/.test(indexHtml), 'index.html 不许再留 others.html 的入口');
+  assert.ok(indexHtml.includes('扫码入口'), '页脚剩下的扫码入口那半句保留');
+  // ⑥ ⭐ 功能一个都没丢：四个领域 tab 上都有等价入口（采购 = 报货 / 退货两张表单卡；
+  //    库存 = 手工调整；货品 = 标签打印）。这是"删页面"而不是"删功能"的判据。
+  const [domains, links] = await Promise.all([modules.domains, modules.links]);
+  const purchase = domains.domainById('purchase');
+  const cards = purchase.pages[0].cards.map((card) => card.href);
+  assert.ok(cards.includes(links.PURCHASE_REQUEST_FORM_URL), '采购 tab 上仍有「报货」表单卡');
+  assert.ok(cards.includes(links.PURCHASE_RETURN_FORM_URL), '采购 tab 上仍有「退货」表单卡');
+  assert.equal(domains.domainById('inventory').pages.at(-1).kind, 'inventory-adjustment',
+    '库存 tab 上仍有「手工调整」（＝ inventory-adjustment.html）');
+  const labelEntry = domains.domainById('product').pages.find((page) => page.id === 'product-labels');
+  assert.match(labelEntry.targetTemplate, /label-print\.html/, '货品 tab 上仍有「标签打印」');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -587,58 +584,74 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
   }
 
   // ③ 顶部那一排领域按钮：四个值都在，URL 就是 ?from=<id>
-  const html = renderScanPage(SCAN_VIEW, SCAN_PAGE, SCAN_WRITE);
+  // ③ 顶部那一排领域按钮：四个值都在，URL 就是 ?from=<id>（**真链接**，服务端跳转）
+  const html = renderScanPage(SCAN_VIEW, SCAN_PAGE, SCAN_WRITE, 'sales');
+  const body = html.slice(html.indexOf('</head>'));
   for (const id of ['sales', 'inventory', 'purchase', 'product']) {
-    assert.ok(html.includes(`href="?from=${id}"`), `顶部必须有 ?from=${id} 的领域按钮`);
-    assert.ok(html.includes(`data-realm-id="${id}"`), '领域按钮的标记（高亮由 CSS 按 data-realm 决定）');
+    assert.ok(body.includes(`href="?from=${id}"`), `顶部必须有 ?from=${id} 的领域按钮`);
+    assert.ok(body.includes(`data-realm-id="${id}"`), '领域按钮的标记');
   }
+  assert.equal((body.match(/realm-tab--active/g) || []).length, 1, '当前领域那一颗高亮（服务端决定）');
 
-  // ④ 四个领域的操作块都渲染进 HTML，靠 CSS 只显示当前领域
+  // ④ ⭐ 2026-10-09（手机白屏之后）起：**服务端按 `?from` 只渲染那一块** ——
+  //    另外三块**连 HTML 都不进**，页面里**一行前端脚本都没有**（没 JS 也 100% 正确）。
+  for (const [id, needle, hasNot] of [
+    ['sales', '加入本单', '库存（共'],
+    ['inventory', '库存（共 3 双）', '加入本单'],
+    ['purchase', '补货报单（勾选要补的尺码）', '加入本单'],
+    ['product', '货品标签', '加入本单'],
+  ]) {
+    const page = renderScanPage(SCAN_VIEW, SCAN_PAGE, SCAN_WRITE, id);
+    const pageBody = page.slice(page.indexOf('</head>'));
+    assert.ok(pageBody.includes(`realm-block--${id}`), `缺 ${id} 领域的内容块`);
+    for (const other of ['sales', 'inventory', 'purchase', 'product'].filter((item) => item !== id)) {
+      assert.equal(pageBody.includes(`realm-block--${other}"`), false, `渲染 ${id} 时不该有 ${other} 块`);
+    }
+    assert.ok(pageBody.includes(needle), `${id} 领域该有「${needle}」`);
+    assert.equal(pageBody.includes(hasNot), false, `${id} 领域不该有「${hasNot}」`);
+    assert.equal(/<script[\s>]/i.test(page), false, '页面里一行前端脚本都没有');
+  }
+  // CSS 里也不再有按 data-realm 显隐的规则（更不会有"未设 realm 时全隐藏"那种白屏写法）
+  assert.equal(STYLE.includes('data-realm'), false, 'CSS 不许再依赖 data-realm');
+  assert.equal(/display:\s*none/.test(STYLE), false, '不许再出现"默认藏起来"的写法');
+
+  // ⑤ `<noscript>` 兜底：没有 JS 时四条领域链接照旧可点（"手机上无论如何都有看得见的东西"）
   for (const id of ['sales', 'inventory', 'purchase', 'product']) {
-    assert.ok(html.includes(`realm-block--${id}`), `缺 ${id} 领域的内容块`);
+    const page = renderScanPage(SCAN_VIEW, SCAN_PAGE, SCAN_WRITE, id);
+    const noScript = page.slice(page.indexOf('<noscript>'), page.indexOf('</noscript>'));
+    for (const other of ['sales', 'inventory', 'purchase', 'product']) {
+      assert.ok(noScript.includes(`href="?from=${other}"`), `<noscript> 里缺 ${other} 的链接`);
+    }
   }
-  assert.ok(/html\[data-realm="sales"\] \.realm-block--sales \{ display: block; \}/.test(STYLE), '当前领域那一块要显示');
-  assert.ok(/\.realm-block--sales, \.realm-block--inventory, \.realm-block--purchase, \.realm-block--product \{ display: none; \}/.test(STYLE),
-    '其余领域默认不显示');
-  assert.ok(/html:not\(\[data-realm\]\) \.realm-block \{ display: block; \}/.test(STYLE),
-    '没 JS（没有 data-realm）时四块全显示 —— 绝不白屏');
-
-  // ⑤ `data-realm` 由 <head> 里那一小段脚本在 body 解析前设好；缺省写的就是销售
-  assert.match(html, /<head>[\s\S]*data-realm[\s\S]*<\/head>/, '领域判定脚本必须在 <head> 里（不然会闪一下四块全显示）');
-  assert.ok(html.includes('"sales","inventory","purchase","product"'), '脚本里的四个 id 从配置生成（加减领域只改一个文件）');
-  assert.match(html, /indexOf\(raw\)>=0\?raw:"sales"/, '缺省 = 销售');
-  assert.match(html, /location\.search/, '从 ?from= 读（她给的参数名就是这个）');
 
   // ⑥ 各领域的操作确实按领域分开：销售 = 建单表单；库存 = 库存表；采购 = 补货报单；货品 = 标签
-  //    ⚠️ 只看 <body>（`<style>` 里也有 `realm-block--…` 这些选择器，别切到 CSS 上）
-  const body = html.slice(html.indexOf('</head>'));
-  const blockOf = (id) => {
-    const start = body.indexOf(`realm-block--${id}`);
+  const blockOf = (realm, id) => {
+    const page = renderScanPage(SCAN_VIEW, SCAN_PAGE, SCAN_WRITE, realm);
+    const pageBody = page.slice(page.indexOf('</head>'));
+    const start = pageBody.indexOf(`realm-block--${id}"`);
     assert.ok(start > -1, `缺 ${id} 块`);
-    const next = ['sales', 'inventory', 'purchase', 'product']
-      .map((other) => body.indexOf(`realm-block--${other}`, start + 1))
-      .filter((index) => index > -1).sort((left, right) => left - right)[0] ?? body.length;
-    return body.slice(start, next);
+    const foot = pageBody.indexOf('<p class="foot">', start);
+    return pageBody.slice(start, foot > -1 ? foot : pageBody.length);
   };
-  assert.ok(blockOf('sales').includes('加入本单') && blockOf('sales').includes('提交这一单'), '销售领域 = 销售建单');
-  assert.ok(blockOf('sales').includes('资金不是必填'), '她说的「资金等非必填、可后续补」要在页面上写着');
-  assert.ok(blockOf('inventory').includes('库存（共 3 双）'), '库存领域 = 库存查询（库存表）');
-  assert.ok(blockOf('purchase').includes('补货报单（勾选要补的尺码）'), '采购领域 = 采购报货');
-  assert.ok(blockOf('product').includes('货品标签'), '货品领域 = 货品标签');
+  assert.ok(blockOf('sales', 'sales').includes('加入本单') && blockOf('sales', 'sales').includes('提交这一单'), '销售领域 = 销售建单');
+  assert.ok(blockOf('sales', 'sales').includes('资金不是必填'), '她说的「资金等非必填、可后续补」要在页面上写着');
+  assert.ok(blockOf('inventory', 'inventory').includes('库存（共 3 双）'), '库存领域 = 库存查询（库存表）');
+  assert.ok(blockOf('purchase', 'purchase').includes('补货报单（勾选要补的尺码）'), '采购领域 = 采购报货');
+  assert.ok(blockOf('product', 'product').includes('货品标签'), '货品领域 = 货品标签');
 
   // ⑦ 货品标签 = 既有标签打印页（单个带货号 / 批量），没有重做打印
   assert.deepEqual(labelPrintUrls(SCAN_VIEW), {
     single: '/workbench/label-print.html?keyword=YD6693-2',
     batch: '/workbench/label-print.html',
   });
-  assert.ok(blockOf('product').includes('href="/workbench/label-print.html?keyword=YD6693-2"'));
+  assert.ok(blockOf('product', 'product').includes('href="/workbench/label-print.html?keyword=YD6693-2"'));
 
   // ⑧ 结果页（写成功 / 写失败 / 没找到…）不挂领域切换条，也没有 realm 块
   const { renderScanMessagePage } = require('../src/views/scanPageRenderer');
   const message = renderScanMessagePage({ title: '没找到这个编号', body: '可能已删除、或编号变了。', number: 'NOPE|黑色|A', requestId: 'req_1' });
   const messageBody = message.slice(message.indexOf('</head>'));
   assert.ok(!messageBody.includes('realm-bar'), '结果页不挂领域切换');
-  assert.ok(!messageBody.includes('data-realm'), '结果页不注入领域脚本（脚本只在 <head> 里出现）');
+  assert.equal(/<script[\s>]/i.test(message), false, '结果页也没有任何脚本');
   assert.ok(message.includes('没找到这个编号'), '结果页内容照旧');
 });
 
@@ -699,20 +712,39 @@ test('AC7 既有扫码页 / 标签打印的用例文件都在，且它们钉住�
     assert.equal(fs.existsSync(path.join(__dirname, file)), true, `${file} 必须还在`);
   }
 
-  // ② 扫码页 200 的那一页：既有片段逐字还在（领域切换只是把不相关的那块 CSS 隐藏起来）
+  // ② 扫码页 200 的那一页：既有片段逐字还在。
+  //    ⚠️ 2026-10-09 起**服务端按领域渲染**，所以同一份模板要在两个领域各看一遍
+  //    （库存表在 `inventory`、两个写入口在 `sales` / `purchase`）。
   const { renderScanPage, renderScanMessagePage } = require('../src/views/scanPageRenderer');
   const { SCAN_PAGE } = require('../src/config/scanPage');
-  const html = renderScanPage(SCAN_VIEW, SCAN_PAGE, SCAN_WRITE);
+  const fragmentsOf = (realm) => {
+    const page = renderScanPage(SCAN_VIEW, SCAN_PAGE, SCAN_WRITE, realm);
+    return { html: page, body: page.slice(page.indexOf('</head>')) };
+  };
+  const common = ['YD6693-2', '黑色 · 休闲鞋', '¥399'];
+  for (const realm of ['sales', 'inventory', 'purchase', 'product']) {
+    const { body } = fragmentsOf(realm);
+    for (const needle of common) {
+      assert.ok(body.includes(needle), `扫码页（${realm}）少了既有片段：${needle}`);
+    }
+  }
   for (const needle of [
-    'YD6693-2', '黑色 · 休闲鞋', '¥399', '库存（共 3 双）',
-    '<th>门盒</th><th>样品</th><th>仓库</th>', 'class="missing"', '⚠️ 缺', '<td class="zero">—</td>',
-    // 两个写入口（scanPageWrite.test.js 断言的就是它们同时在这份 HTML 里）
-    '销售（可以连着扫，最后一起提交）', '补货报单（勾选要补的尺码）',
-    '<option value="微信" selected>微信</option>', 'name="sizes" value="41" checked',
+    '库存（共 3 双）', '<th>门盒</th><th>样品</th><th>仓库</th>', 'class="missing"', '⚠️ 缺', '<td class="zero">—</td>',
+  ]) {
+    assert.ok(fragmentsOf('inventory').body.includes(needle), `扫码页少了既有片段：${needle}`);
+  }
+  // 两个写入口（`scanPageWrite.test.js` 钉的是它们在各自领域里照旧）
+  for (const needle of [
+    '销售（可以连着扫，最后一起提交）', '<option value="微信" selected>微信</option>',
     'name="submit_key" value="scan_sale:scan_session_0123456789abcdef:1"',
+  ]) {
+    assert.ok(fragmentsOf('sales').body.includes(needle), `销售领域少了既有片段：${needle}`);
+  }
+  for (const needle of [
+    '补货报单（勾选要补的尺码）', 'name="sizes" value="41" checked',
     'name="submit_key" value="scan_replenish:scan_session_0123456789abcdef:1"',
   ]) {
-    assert.ok(html.includes(needle), `扫码页少了既有片段：${needle}`);
+    assert.ok(fragmentsOf('purchase').body.includes(needle), `采购领域少了既有片段：${needle}`);
   }
 
   // ③ 结果页（写失败 / 没找到）逐字不变
@@ -733,7 +765,9 @@ test('AC7 既有扫码页 / 标签打印的用例文件都在，且它们钉住�
   }
   const routes = stripComments(readSrc('routes/scanPage.js'));
   assert.ok(routes.includes('router.get(config.route.path'), '扫码路由仍是既有那一条');
-  assert.ok(!/query\.from|req\.query\.from/.test(routes), '领域切换没有走路由：四块都渲染进 HTML，由 CSS 只显示当前领域');
+  // ⭐ 2026-10-09（手机白屏之后）：领域切换**改到路由/渲染这一层** ——
+  //    服务端读 `?from` 只渲染那一块（页面里一行前端脚本都没有）。
+  assert.match(routes, /resolveRealm\(req\.query\?\.from\)/, '领域在路由层从 `?from` 解析（认不出回落缺省）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

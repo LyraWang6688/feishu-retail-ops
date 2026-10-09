@@ -239,8 +239,13 @@ test('④ 判据没变：她的输入仍然 needs_info、仍然不回卡片、�
   assert.deepEqual(cards, [], '缺项时不该发确认卡片');
   // 写库只有两笔：建销售记录 + 回填解析元数据（都是 salesEntry）——
   // 不许出现明细 / 收款 / 库存 的写入（即"没入账"）。
+  // ⚠️ 2026-10-09：原来这里是 `['create:salesEntry', 'update:salesEntry']`（建单 + 回填解析元数据）。
+  //    业务负责人把「解析状态 / 解析结果摘要 / 失败原因」三列从生产「销售主表」删掉了
+  //    ⇒ 映射 + 写入点一起删 ⇒ **那一次 update 不再发生**（本用例没解析出交易类型，
+  //      连仅剩的 `tradeType` 也不写）⇒ 只剩建单这一笔。
+  //    ⚠️ 这条**没有放宽**：原来它证明的是"没入账"，现在"只剩建单"更强。
   assert.deepEqual(calls.map((call) => `${call.op}:${call.tableKey}`),
-    ['create:salesEntry', 'update:salesEntry'],
+    ['create:salesEntry'],
     `不该有别的写入：${JSON.stringify(calls)}`);
   assert.equal(messages.length, 1);
   assert.equal(messages[0], HER_EXPECTED_TEXT);
@@ -260,15 +265,22 @@ test('④ fixture 与真实解析层输出逐字同步（上游改了字 → 这
     '手抄的 fixture 与真实 normalizeSalesResult 输出不一致 —— 上游变了，来同步映射表');
 });
 
-test('④ 表里的「解析失败原因」也不漏代码标识符（同一份渲染器）', async () => {
-  const { calls } = await runHerTask();
-  const meta = calls.find((call) => call.op === 'update' && call.fields?.failureReason !== undefined);
-  assert.ok(meta, '应当回填过解析失败原因');
-  assert.doesNotMatch(String(meta.fields.failureReason), CODE_IDENTIFIER_PATTERN);
-  assert.doesNotMatch(String(meta.fields.failureReason), INTERNAL_WORD_PATTERN);
-  assert.doesNotMatch(String(meta.fields.failureReason), CHAINED_CLAUSE_PATTERN);
-  // ⚠️ `解析结果摘要`（JSON）**仍是机器清单** —— 排查时要看得到原值，这里是有意保留的。
-  assert.match(String(meta.fields.parseSummary), /items\[0\]\.actual_amount/);
+test('④ 回她的那句话不漏代码标识符（原来表里那份「失败原因」已随列删除）', async () => {
+  const { calls, messages } = await runHerTask();
+  // 🔴 2026-10-09：业务负责人把「解析状态 / 解析结果摘要 / 失败原因」三列从生产「销售主表」
+  //    删掉了 ⇒ 映射 + 写入点一起删（`config/v1BitableSchema.salesEntry` 段）——
+  //    **这三个键一个都不许再出现在写表的入参里**。
+  const removedMeta = calls.find((call) => call.op === 'update'
+    && ['parseStatus', 'parseSummary', 'failureReason'].some((key) => key in (call.fields || {})));
+  assert.equal(removedMeta, undefined,
+    `这三列已被她删除 ⇒ 不许再写：${JSON.stringify(removedMeta)}`);
+  // ⭐ 守卫**不降级**：原来盯的是"表里那份人话也要干净"，表里那份没有了
+  //    ⇒ 改盯**她实际看到的那一句话**（同一个渲染器 `renderSalesMissingInfo` 的产物）：
+  //    行内不许有代码标识符 / 内部词 / 「；」串句。
+  assert.equal(messages.length, 1);
+  assert.doesNotMatch(messages[0], CODE_IDENTIFIER_PATTERN);
+  assert.doesNotMatch(messages[0], INTERNAL_WORD_PATTERN);
+  assert.doesNotMatch(messages[0], CHAINED_CLAUSE_PATTERN);
 });
 
 // ── ⑤ 全形状守卫：仓库里**所有**缺项形状都不许漏标识符 / 「；」/「明细」──────────
@@ -326,7 +338,9 @@ const KNOWN_MISSING_FIELD_SHAPES = [
 //    当前链路**永远不会再产出**的句子。
 //    保留（而不是从守卫里删掉）的**理由**：`missing_fields` 会被**落盘持久化** ——
 //      ① 本地任务 `server/data/lark_mvp_tasks/*.json` 的 `draft.missing_fields`；
-//      ② 业务表「解析结果摘要」(`parseSummary`) 那份 JSON 快照。
+//      ② ~~业务表「解析结果摘要」(`parseSummary`) 那份 JSON 快照~~
+//         （⚠️ 2026-10-09：那一列已随「销售主表」那 5 列被她删除 ⇒ 这条来源没了；只有①，
+//          但**保留本条映射的理由不变**：① 里的历史任务重放照样会读到这句原文）。
 //    部署之后，一条**改动前就存着的** `needs_info` 任务若被**重放**（`resumePending` / 手工重跑），
 //    渲染器仍会读到这句历史原文 ⇒ **它的映射必须留着**
 //    （`config/salesMissingInfoText.TEXT_TOPIC_PATTERNS` 里 `deposit_multi_line` 那条带

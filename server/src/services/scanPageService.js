@@ -33,6 +33,7 @@ const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { createScanPageCache } = require('./scanPageCache');
+const { createLiveInventorySnapshot } = require('./liveInventorySnapshot');
 const { SCAN_PAGE, fillText } = require('../config/scanPage');
 const { logInfo, logWarn } = require('../utils/logger');
 
@@ -234,6 +235,63 @@ const createScanPageService = (gateway, options = {}) => {
     now: options.now,
   });
 
+  /**
+   * ⭐ 「实时库存」**内存快照**（业务负责人 2026-10-09 同意的第二项优化）。
+   *
+   * `options.snapshot`：
+   *   · 传实例 → 用它（用例注入自己的时钟 / 预置条目）；
+   *   · `false` → **彻底不用快照**（行为与提速后逐字一致）；
+   *   · 不传 → 按 `config.snapshot` 建一个。
+   *
+   * ⚠️ `startSnapshot` **默认 false**：定时器/预热只由**生产接线**（`routes/scanPage.js`）打开。
+   *    理由有二：① 单测里"多出来一次整表读"会破坏既有用例逐字的调用计数；
+   *    ② 定时器是**进程级**资源，不该由"构造一个 service"这种动作偷偷拉起。
+   *    没启动的快照永远 `not_ready` ⇒ 调用方**自动回退**到老路径（行为与今天完全一样）。
+   */
+  const snapshot = options.snapshot === false
+    ? null
+    : (options.snapshot || createLiveInventorySnapshot({
+      gateway,
+      config: config.snapshot,
+      limits,
+      now: options.now,
+    }));
+  if (snapshot && options.startSnapshot === true) snapshot.start();
+
+  /** 时钟：与 TTL 缓存共用（用例可以注入一个假时钟，两个窗口一起被推进）。 */
+  const clock = options.now || Date.now;
+  /**
+   * 各阶段耗时（`Date.now()` 差值）—— 出参 `timing` 由调用方传一个空对象进来，
+   * 这样**视图模型一个字都不加**（既有用例对它是逐字 `deepEqual`）。
+   * ⚠️ 任何一段抛错时，前面几段已经写进去了 —— "卡在哪一步"正是这么看出来的。
+   */
+  const startStage = () => clock();
+  const elapsed = (startedAt) => Math.max(0, clock() - startedAt);
+
+  /**
+   * ⭐ **一条**分阶段耗时汇总（她：「以后一查日志就知道卡在哪一步」）。
+   *
+   * 只在这里打一次（不是每个阶段一条）—— 由路由在**渲染完之后**调用，
+   * 于是 `render_ms` 也能进同一行；失败路径（没找到 / 抛错）同样调用。
+   */
+  const logTiming = (timing, { requestId = '', found = false } = {}) => {
+    if (!timing || typeof timing !== 'object') return;
+    logInfo(config.events.lookupTiming, {
+      request_id: requestId,
+      found: found === true,
+      number: timing.number || '',
+      cache_hit: timing.cache_hit === true,
+      snapshot_hit: timing.snapshot_hit === true,
+      product_ms: Number(timing.product_ms) || 0,
+      inventory_ms: Number(timing.inventory_ms) || 0,
+      size_ms: Number(timing.size_ms) || 0,
+      whole_table_fallback: timing.whole_table_fallback === true,
+      render_ms: Number(timing.render_ms) || 0,
+      total_ms: Number(timing.total_ms) || 0,
+      rows: Number(timing.rows) || 0,
+    });
+  };
+
   const tableName = (tableKey) => schema?.tables?.[tableKey]?.tableName || tableKey;
 
   const readAllCapped = async (tableKey, cap, requestId) => {
@@ -271,16 +329,21 @@ const createScanPageService = (gateway, options = {}) => {
    *
    * `cap` 是**按条件读的单次上限**（按 `cap + 1` 去读，一眼看出超没超）；
    * `fallbackCap` 是回退整表读时沿用的老上限。超了都**明确报错**，不静默截断。
+   *
+   * @returns {Promise<{records:Array, fallback:string}>}
+   *   `fallback` 非空 = **这一趟走了整表回退**（取值与改动前**逐字一致**：
+   *   `unavailable` / `failed`）—— 它就是耗时日志里那个 `whole_table_fallback` 的真源
+   *   （"卡在哪一步"要看得见这一档，它正是线上 25 秒那一次的成因）。
    */
   const readFilteredCapped = async ({ tableKey, filter, cap, fallbackCap, requestId }) => {
-    const fallback = (reason, error) => {
+    const fallback = async (reason, error) => {
       logWarn(config.events.filterFallback, {
         request_id: requestId,
         table_key: tableKey,
         reason,
         error: error ? error.message : '',
       });
-      return readAllCapped(tableKey, fallbackCap, requestId);
+      return { records: await readAllCapped(tableKey, fallbackCap, requestId), fallback: reason };
     };
     if (!filterEnabled || !filter || typeof gateway.listByFilter !== 'function') {
       return fallback('unavailable', null);
@@ -297,7 +360,7 @@ const createScanPageService = (gateway, options = {}) => {
       });
       throw limitError(tableName(tableKey), records.length, cap);
     }
-    return records;
+    return { records, fallback: '' };
   };
 
   const findProduct = (products, number) => {
@@ -340,22 +403,27 @@ const createScanPageService = (gateway, options = {}) => {
    *   · `true`  —— 按条件读**确实读到了行** ⇒ 没匹配上「编号」就是真的没有；
    *   · `false` —— 一条都没读到（大小写不一致 / 老数据 / 值里有引号拼不出公式）
    *               ⇒ 调用方**回退整表读**再找一次，"找不到"的判定与提速前逐字一致。
+   * `fallback` 非空 = 这一趟已经走了整表回退（耗时日志的 `whole_table_fallback` 用它）。
    */
   const readProductsByNumber = async ({ number, requestId }) => {
     const numberField = fieldName(schema, 'product', 'number');
     const filter = equalsFormula(numberField, number);
-    if (!filterEnabled || !filter) return { product: null, resolved: false };
-    const records = await readFilteredCapped({
+    if (!filterEnabled || !filter) return { product: null, resolved: false, fallback: 'unavailable' };
+    const read = await readFilteredCapped({
       tableKey: 'product',
       filter,
       cap: limits.productRowsPerNumber,
       fallbackCap: limits.productRecords,
       requestId,
     });
-    if (!records.length && warnOnEmptyFilteredRead) {
+    if (!read.records.length && warnOnEmptyFilteredRead) {
       logWarn(config.events.filteredEmpty, { request_id: requestId, table_key: 'product', number });
     }
-    return { product: findProduct(records, number), resolved: records.length > 0 };
+    return {
+      product: findProduct(read.records, number),
+      resolved: read.records.length > 0,
+      fallback: read.fallback,
+    };
   };
 
   /**
@@ -373,6 +441,8 @@ const createScanPageService = (gateway, options = {}) => {
    *    **不是** URL 里那串：URL 可能是大小写不一致的手输值，而 filter 区分大小写 ——
    *    用 URL 那串去筛会**一条都读不到**（页面会显示"一双都没有"，是最坏的那种错）。
    *    内存判据仍然用 URL 那串（与提速前一致）。
+   *
+   * @returns {Promise<{rows:Array, fallback:string}>} `fallback` 非空 = 走了整表回退。
    */
   const readInventoryRows = async ({ productId, tableNumber, number, stockKeyField, requestId }) => {
     const linkField = fieldName(schema, 'liveInventory', 'product');
@@ -382,21 +452,50 @@ const createScanPageService = (gateway, options = {}) => {
         ? containsFormula(stockKeyField, `${tableNumber}${config.number.separator}`)
         : null,
     ];
-    const records = await readFilteredCapped({
+    const read = await readFilteredCapped({
       tableKey: 'liveInventory',
       filter: orFormula(conditions),
       cap: limits.inventoryRowsPerNumber,
       fallbackCap: limits.inventoryRecords,
       requestId,
     });
-    const rows = records.filter((record) => belongsToNumber(record, { productId, number, stockKeyField }));
+    const rows = read.records.filter((record) => belongsToNumber(record, { productId, number, stockKeyField }));
     // 「库存真的为 0」与「filter 悄悄不生效」在返回体上长得一样 ⇒ 留一条可 grep 的 warn，不当成静默的成功。
     if (!rows.length && warnOnEmptyFilteredRead) {
       logWarn(config.events.filteredEmpty, {
         request_id: requestId, table_key: 'liveInventory', number, product_record_id: productId,
       });
     }
-    return rows;
+    return { rows, fallback: read.fallback };
+  };
+
+  /**
+   * ⭐ 「实时库存」这一款的行 —— **内存快照优先**，未就绪 / 过期就回退"按编号过滤读"。
+   *
+   * ⚠️ 两条路径用的是**同一份内存判据**（`belongsToNumber`）⇒ 行集逐字一致
+   *    （用例 `AC-S1` 对 `rows` / `total` / `missing_count` 做 deepEqual 钉着）。
+   * ⚠️ 未就绪 / 过期时**记一条 `scan.snapshot.miss`**（带 `reason`）—— 不静默；
+   *    她那边按这个词就能回答"这次为什么又慢了"。
+   */
+  const readInventoryRecords = async ({ productId, tableNumber, number, stockKeyField, requestId }) => {
+    if (snapshot) {
+      const current = snapshot.get();
+      if (current.ready) {
+        return {
+          rows: current.records.filter((record) => belongsToNumber(record, { productId, number, stockKeyField })),
+          snapshotHit: true,
+          fallback: '',
+        };
+      }
+      logInfo(config.events.snapshotMiss, {
+        request_id: requestId,
+        number,
+        reason: current.reason,
+        age_ms: current.ageMs === null || current.ageMs === undefined ? -1 : current.ageMs,
+      });
+    }
+    const read = await readInventoryRows({ productId, tableNumber, number, stockKeyField, requestId });
+    return { rows: read.rows, snapshotHit: false, fallback: read.fallback };
   };
 
   /** 一行的尺码：关联记录（共享解析，带 30 秒缓存）→ 「库存键」最后一段 → 读不出。 */
@@ -443,11 +542,39 @@ const createScanPageService = (gateway, options = {}) => {
    *      `{ found: true, ...视图模型 }`。
    *
    * ⭐ 取数顺序（2026-10-08 提速后）：缓存 → 「货品信息」（按编号过滤）→「实时库存」
-   *    （按关联 + 库存键前缀过滤）→「尺码管理」（整表，15 条）。
+   *    （**内存快照**优先，未就绪才回退按关联 + 库存键前缀过滤读）→「尺码管理」（整表，15 条）。
    *    命中缓存时**一次飞书请求都不打**，并且照样记 `scan.page.viewed`（日志口径不断）。
+   *
+   * ⭐ 2026-10-09：多了**出参 `timing`**（调用方给一个空对象，这里把各阶段毫秒写进去）。
+   *    刻意用出参而不是往视图模型上挂字段：既有的用例对视图模型是**逐字 deepEqual**。
    */
-  const lookup = async ({ number: rawNumber, requestId } = {}) => {
+  /**
+   * 外面这一层只管**总耗时**：取数这一段无论成功、抛错、还是提前 return，
+   * `total_ms` 都会被写进 `timing` —— 她要的正是"**失败也看得出卡在哪一步**"。
+   * 真正的取数在 `performLookup`（下面），两层的参数逐字相同。
+   */
+  const lookup = async ({ number: rawNumber, requestId, timing = null } = {}) => {
+    const totalStartedAt = startStage();
+    try {
+      return await performLookup({ rawNumber, requestId, timing });
+    } finally {
+      if (timing) timing.total_ms = elapsed(totalStartedAt);
+    }
+  };
+
+  const performLookup = async ({ rawNumber, requestId, timing = null } = {}) => {
     const number = decodeScanNumber(rawNumber, config);
+    if (timing) {
+      timing.number = number;
+      timing.cache_hit = false;
+      timing.snapshot_hit = false;
+      timing.product_ms = 0;
+      timing.inventory_ms = 0;
+      timing.size_ms = 0;
+      timing.whole_table_fallback = false;
+      timing.rows = 0;
+      timing.total_ms = 0;
+    }
     if (!number) return { found: false, number, reason: 'empty' };
 
     const cached = cache.get(number);
@@ -464,18 +591,36 @@ const createScanPageService = (gateway, options = {}) => {
         sizes_degraded: cached.sizes_degraded,
         cache_hit: true,
       });
+      if (timing) {
+        // 命中缓存 = 一次飞书都没打 ⇒ 三个阶段都是 0（"快在哪"也要看得见）。
+        timing.cache_hit = true;
+        timing.rows = cached.total;
+      }
       return cached;
     }
     logInfo(config.events.cacheMiss, { request_id: requestId, number, cache_hit: false });
 
     const parsed = parseNumberSegments(number, config);
-    const filteredProduct = await readProductsByNumber({ number, requestId });
-    let product = filteredProduct.product;
-    if (!product && !filteredProduct.resolved) {
-      // 按条件读一条都没读到 ⇒ **回退整表读**再找一次：
-      // 「找不到」的判定与提速前**逐字一致**（宁可慢这一次，也不许把"有货"判成"没这条编号"）。
-      const products = await readAllCapped('product', limits.productRecords, requestId);
-      product = findProduct(products, number);
+    const productStartedAt = startStage();
+    let product = null;
+    let wholeTableFallback = false;
+    try {
+      const filteredProduct = await readProductsByNumber({ number, requestId });
+      product = filteredProduct.product;
+      wholeTableFallback = Boolean(filteredProduct.fallback);
+      if (!product && !filteredProduct.resolved) {
+        // 按条件读一条都没读到 ⇒ **回退整表读**再找一次：
+        // 「找不到」的判定与提速前**逐字一致**（宁可慢这一次，也不许把"有货"判成"没这条编号"）。
+        const products = await readAllCapped('product', limits.productRecords, requestId);
+        product = findProduct(products, number);
+        wholeTableFallback = true;
+      }
+    } finally {
+      // ⚠️ 用 finally：这一阶段**抛错时也要**留下 product_ms（"卡在货品信息那一步"就是这么看出来的）。
+      if (timing) {
+        timing.product_ms = elapsed(productStartedAt);
+        timing.whole_table_fallback = wholeTableFallback;
+      }
     }
     if (!product) {
       logInfo(config.events.notFound, { request_id: requestId, number });
@@ -487,7 +632,19 @@ const createScanPageService = (gateway, options = {}) => {
     // ⚠️ 拼 filter 用**表里那条货品的编号**（大小写与表一致），内存判据仍用 URL 那串：
     //    GET 的 filter 区分大小写，拿 URL 那串去筛可能一条都读不到（最坏的那种错）。
     const tableNumber = textValue(readField(schema, 'product', product, 'number')).trim() || number;
-    const rows = await readInventoryRows({ productId, tableNumber, number, stockKeyField, requestId });
+    const inventoryStartedAt = startStage();
+    let inventory;
+    try {
+      inventory = await readInventoryRecords({ productId, tableNumber, number, stockKeyField, requestId });
+    } finally {
+      if (timing) timing.inventory_ms = elapsed(inventoryStartedAt);
+    }
+    const rows = inventory.rows;
+    if (timing) {
+      timing.snapshot_hit = inventory.snapshotHit === true;
+      timing.whole_table_fallback = timing.whole_table_fallback || Boolean(inventory.fallback);
+      timing.rows = rows.length;
+    }
 
     const stateField = fieldName(schema, 'liveInventory', 'state');
     const updatedAtField = fieldName(schema, 'liveInventory', 'updatedAt');
@@ -519,7 +676,13 @@ const createScanPageService = (gateway, options = {}) => {
     }
     const total = rows.length;
 
-    const sizeRead = await readSizeRecordsCapped(requestId);
+    const sizeStartedAt = startStage();
+    let sizeRead;
+    try {
+      sizeRead = await readSizeRecordsCapped(requestId);
+    } finally {
+      if (timing) timing.size_ms = elapsed(sizeStartedAt);
+    }
     const sizeRecords = sizeRead.records;
     const scope = await loadSizeScope({ sizeRecords, categoryCode: parsed.categoryCode });
     if (!scope.degraded) {
@@ -626,10 +789,11 @@ const createScanPageService = (gateway, options = {}) => {
     });
     // 只缓存 `found: true`（否定结果不缓存：新品刚建档就该立刻扫得到）。
     cache.set(number, view);
+    // ⚠️ `total_ms`（取数这一段）由最外层的 `lookup` 统一写；路由渲染完再把 `render_ms` 加进来。
     return view;
   };
 
-  return { lookup, cache };
+  return { lookup, logTiming, cache, snapshot };
 };
 
 module.exports = {

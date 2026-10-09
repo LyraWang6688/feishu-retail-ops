@@ -40,9 +40,12 @@ const express = require('express');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { createScanPageService } = require('../services/scanPageService');
 const { createScanWriteService } = require('../services/scanWriteService');
-const { renderScanPage, renderScanMessagePage } = require('../views/scanPageRenderer');
-// ⚠️ 只借这一个**纯函数**：所选尺码在「样品 + 门盒」有没有货（= 页面上那两个分组的判据）。
-const { sellableSizeTexts } = require('../views/scanPageRealm');
+const { renderScanPage, renderScanMessagePage, renderMinimalPage } = require('../views/scanPageRenderer');
+// ⚠️ 只借这两个**纯函数**：所选尺码在「样品 + 门盒」有没有货（= 页面上那两个分组的判据），
+//    以及 `?from=` → 领域 id（认不出来回落缺省，不报错、不白屏）。
+const { sellableSizeTexts, resolveRealm } = require('../views/scanPageRealm');
+// ⭐ 写操作之后**立刻作废**「实时库存」内存快照（她：库存必须准确，不是等 30 秒）。
+const { invalidateLiveInventorySnapshot } = require('../services/liveInventorySnapshot');
 const { requireWorkbenchAccess } = require('./workbench');
 // ⚠️ 会话读取/解码与回跳校验**复用 feishuWebAuth 里那一份**（`getSessionUser` =
 //    `requireWorkbenchAccess` 判 401 用的同一个函数），**不重写第二份**。
@@ -72,7 +75,18 @@ const createScanPageRouter = (options = {}) => {
   const config = options.config || SCAN_PAGE;
   const writeConfig = options.writeConfig === undefined ? SCAN_WRITE : options.writeConfig;
   const gateway = options.gateway || new V1BitableGateway();
-  const service = options.service || createScanPageService(gateway, { config });
+  // ⚠️ 只读那一半的 service：`options.service` 供用例注入一个假的（既有用例就是这么做的，
+  //    注入之后**连内存快照都不会建** —— 见 `services/scanPageService.js` 的注释）。
+  const service = options.service || createScanPageService(gateway, {
+    config,
+    snapshot: options.snapshot,
+    // ⭐ 生产接线（`app.js` 挂这个 router）默认**开着**后台快照；
+    //    用例可以传 `startSnapshot: false`（不然会多出一次整表读 + 一个进程级定时器）。
+    startSnapshot: options.startSnapshot !== false,
+  });
+  // 渲染器也留一个注入点：**只为验证"渲染抛错也必须回人话页"**（见用例 AC-W5）。
+  const renderScan = options.render?.scan || renderScanPage;
+  const renderMessage = options.render?.message || renderScanMessagePage;
   // ⚠️ 写服务**只为 POST 与"本单还有几双"服务**；`GET` 的库存表一个字都不依赖它。
   //    用例可以注入一个假的（`options.writeService`），`false` = 这一版不挂写入口。
   const writeService = writeConfig && options.writeService !== false
@@ -117,37 +131,58 @@ const createScanPageRouter = (options = {}) => {
 
   router.use(requireWorkbenchAccess);
 
-  const message = ({ title, body, number = '', requestId = '', retryHint = '', details = [] }) => renderScanMessagePage(
-    { title, body, number, requestId, retryHint, details }, config,
-  );
+  /**
+   * 🔴 **绝不空白**：所有"人话页"都从这里发出去 —— 连渲染本身抛错都还有最后一道兜底
+   *（`renderMinimalPage` 不依赖任何配置，只有字符串拼接 + 转义，几乎不可能再抛）。
+   *
+   * 业务负责人 2026-10-09 真机反馈「手机扫码一片空白」之后定的口径：
+   * **页面上无论如何都要有看得见的东西** —— 宁可给她一句"暂时打不开"，也不给一张白纸。
+   */
+  const sendHuman = (res, status, payload) => {
+    try {
+      return sendHtml(res, status, renderMessage(payload, config));
+    } catch (error) {
+      logError(config.events.failed, {
+        request_id: payload?.requestId, reason: 'message_render_failed', error: error.message,
+      });
+      return sendHtml(res, status, renderMinimalPage({
+        title: payload?.title || config.texts.errorTitle,
+        body: payload?.body || config.texts.errorBody,
+        requestId: payload?.requestId,
+      }));
+    }
+  };
 
-  const badNumberPage = (res, status, requestId, number = '') => sendHtml(res, status, message({
+  const badNumberPage = (res, status, requestId, number = '') => sendHuman(res, status, {
     title: config.texts.badNumberTitle,
     body: config.texts.badNumberBody,
     number,
     requestId,
-  }));
+  });
 
-  const respondFailure = (res, error, requestId) => {
+  const respondFailure = (res, error, requestId, timing = null) => {
+    // ⭐ 失败也要看得出卡在哪一步（她：「一查日志就知道卡在哪一步」）——
+    //    在发页面之前把已经量到的那几段打出去（`total_ms` 由 service 写、`render_ms` 为 0）。
+    service.logTiming?.(timing, { requestId, found: false });
     if (error?.scanLimitExceeded) {
       // service 已经记过 limitExceeded；这里只负责给她一张人话页面（**不显示半张库存表**）。
-      return sendHtml(res, 503, message({
+      return sendHuman(res, 503, {
         title: config.texts.limitTitle, body: config.texts.limitBody, requestId,
-      }));
+      });
     }
     if (isDataNotReady(error)) {
       res.set('Retry-After', '5');
-      return sendHtml(res, 503, message({
+      return sendHuman(res, 503, {
         title: config.texts.busyTitle, body: config.texts.busyBody, requestId,
-      }));
+      });
     }
     logError(config.events.failed, { request_id: requestId, error: error.message });
-    return sendHtml(res, 500, message({
+    return sendHuman(res, 500, {
       title: config.texts.errorTitle,
       body: config.texts.errorBody,
       requestId,
       retryHint: config.texts.retryHint,
-    }));
+    });
   };
 
   /**
@@ -157,12 +192,34 @@ const createScanPageRouter = (options = {}) => {
    */
   const respondWriteFailure = (res, result, requestId) => {
     const status = result.code === 'sale_write_failed' || result.code === 'replenish_write_failed' ? 500 : 400;
-    return sendHtml(res, status, message({
+    return sendHuman(res, status, {
       title: writeConfig.texts.failedTitle,
       body: result.message || writeConfig.texts.internalFailedBody,
       requestId,
       retryHint: writeConfig.texts.failedRetryHint,
-    }));
+    });
+  };
+
+  /**
+   * ⭐ 写成功之后**立刻作废**「实时库存」内存快照（她的硬要求：**库存准确**，
+   * 不能等 30 秒那一拍）。
+   *
+   * 🔴 为什么调用点在**路由**（而不是写服务）：本任务的写作用域只覆盖到扫码这条链路的
+   *    `routes/scanPage.js`；`services/scanWriteService.js` 刻意一行都没动。
+   *    其余写入口（销售入账 / 到货 / 手工库存调整 / 交付扣减）**不在本任务作用域内**，
+   *    它们各自在写成功后加一行同样的调用即可（跨模块、零注入，谁都不认识扫码页）：
+   *    `require('../services/liveInventorySnapshot').invalidateLiveInventorySnapshot('原因')`
+   *    —— 详见 `services/liveInventorySnapshot.js` 的注释。
+   */
+  const invalidateInventorySnapshot = (requestId, reason) => {
+    try {
+      invalidateLiveInventorySnapshot(reason);
+    } catch (error) {
+      // 失效失败**不许**把已经写成功的业务打成 500（那才是最坏的）：记一条 warn 就够了。
+      logWarn(config.events.failed, {
+        request_id: requestId, reason: 'snapshot_invalidate_failed', error: error.message,
+      });
+    }
   };
 
   const openIdOf = (req) => String(
@@ -225,28 +282,49 @@ const createScanPageRouter = (options = {}) => {
     return badNumberPage(res, 400, req.requestId);
   });
 
+  /**
+   * ⭐⭐ **`GET /s/:number?from=<领域>`** —— 手机扫开的那一页。
+   *
+   * 2026-10-09 真机（飞书 webview 白屏）之后这一条重做过：
+   *   · **服务端按 `from` 只渲染那一块**（不再靠 `<head>` 内联脚本 + CSS 显隐）；
+   *   · 页面里**一行前端脚本都没有** ⇒ 飞书 webview 执不执行脚本都一个样；
+   *   · 认不出的 `from` 回落缺省（销售），**永不报错、永不空白**。
+   *   · 任何异常（取数 / 渲染）都落到 `respondFailure` → **人话页**（还有 `renderMinimalPage` 兜底）。
+   */
   router.get(config.route.path, async (req, res) => {
     const requestId = req.requestId;
+    // ⚠️ 领域来自查询串（她给的参数名就是 `from`）；认不出来一律回落缺省，**不报错**。
+    const realm = resolveRealm(req.query?.from);
+    // ⭐ 分阶段耗时（出参）：失败 / 找不到时同样能看出卡在哪一步。
+    const timing = {};
     try {
       // ⚠️ Express 已经把路由参数解码过一次（`%7C` → `|`，未编码的中文也照收）；
       //    service 里再解一次是为了容忍双重编码，并且对孤立 `%` 的输入不抛。
-      const view = await service.lookup({ number: req.params.number, requestId });
+      const view = await service.lookup({ number: req.params.number, requestId, timing });
       if (!view.found) {
         if (view.reason === 'empty') {
           logWarn(config.events.badNumber, { request_id: requestId, reason: 'empty_number' });
+          service.logTiming?.(timing, { requestId, found: false });
           return badNumberPage(res, 400, requestId);
         }
-        return sendHtml(res, 404, message({
+        service.logTiming?.(timing, { requestId, found: false });
+        return sendHuman(res, 404, {
           title: config.texts.notFoundTitle,
           body: config.texts.notFoundBody,
           number: view.number,
           requestId,
-        }));
+        });
       }
       const write = await buildWriteContext(req, view);
-      return sendHtml(res, 200, renderScanPage(view, config, write));
+      const renderStartedAt = Date.now();
+      const html = renderScan(view, config, write, realm);
+      timing.render_ms = Math.max(0, Date.now() - renderStartedAt);
+      // `total_ms` = 取数 + 渲染（整条链路的墙钟）—— 她要的是"这一页到底花了多久"。
+      timing.total_ms = (Number(timing.total_ms) || 0) + timing.render_ms;
+      service.logTiming?.(timing, { requestId, found: true });
+      return sendHtml(res, 200, html);
     } catch (error) {
-      return respondFailure(res, error, requestId);
+      return respondFailure(res, error, requestId, timing);
     }
   });
 
@@ -266,11 +344,11 @@ const createScanPageRouter = (options = {}) => {
   router.post(config.route.path, async (req, res) => {
     const requestId = req.requestId;
     if (!writeService) {
-      return sendHtml(res, 503, message({
+      return sendHuman(res, 503, {
         title: writeConfig.texts.writeDisabledTitle,
         body: writeConfig.texts.writeDisabledBody,
         requestId,
-      }));
+      });
     }
     const body = req.body || {};
     const fields = writeConfig.fields;
@@ -282,12 +360,12 @@ const createScanPageRouter = (options = {}) => {
       if (action === actions.addLine) {
         const view = await service.lookup({ number: req.params.number, requestId });
         if (!view.found) {
-          return sendHtml(res, 404, message({
+          return sendHuman(res, 404, {
             title: config.texts.notFoundTitle,
             body: config.texts.notFoundBody,
             number: view.number,
             requestId,
-          }));
+          });
         }
         const result = await writeService.addSaleLine({
           openId,
@@ -328,13 +406,15 @@ const createScanPageRouter = (options = {}) => {
           paymentAmount: body[fields.paymentAmount],
         });
         if (!result.ok) return respondWriteFailure(res, result, requestId);
+        // ⭐ 销售单写成功 ⇒ **立刻作废**「实时库存」快照（她：库存必须准确，不是等 30 秒）。
+        invalidateInventorySnapshot(requestId, 'scan_sale_submitted');
         const texts = writeConfig.texts;
         const details = [
           fillWriteText(texts.submittedOrderLine, { orderNo: result.order_no || '—' }),
           fillWriteText(texts.submittedDetailLine, { count: result.detail_count || 0 }),
         ];
         if (!result.payment_count) details.push(texts.fundsPendingNote);
-        return sendHtml(res, 200, message({
+        return sendHuman(res, 200, {
           title: result.reused ? texts.submittedAgainTitle : texts.submittedTitle,
           body: result.reused
             ? fillWriteText(texts.submittedAgainBody, { orderNo: result.order_no || '—' })
@@ -344,19 +424,19 @@ const createScanPageRouter = (options = {}) => {
           requestId,
           details,
           retryHint: texts.submittedNextHint,
-        }));
+        });
       }
 
       // ── 补货报单 ────────────────────────────────────────────────────────────
       if (action === actions.replenish) {
         const view = await service.lookup({ number: req.params.number, requestId });
         if (!view.found) {
-          return sendHtml(res, 404, message({
+          return sendHuman(res, 404, {
             title: config.texts.notFoundTitle,
             body: config.texts.notFoundBody,
             number: view.number,
             requestId,
-          }));
+          });
         }
         const entries = parseReplenishEntries(body, fields, writeConfig);
         const result = await writeService.submitReplenish({
@@ -368,8 +448,11 @@ const createScanPageRouter = (options = {}) => {
           entries,
         });
         if (!result.ok) return respondWriteFailure(res, result, requestId);
+        // ⭐ 补货报单写成功 ⇒ 同样失效快照（她点名了「补货」也要；这一步不动库存，
+        //    但"写完就失效"永远比"猜它动没动库存"安全）。
+        invalidateInventorySnapshot(requestId, 'scan_replenish_submitted');
         const texts = writeConfig.texts;
-        return sendHtml(res, 200, message({
+        return sendHuman(res, 200, {
           title: result.reused ? texts.replenishAgainTitle : texts.replenishDoneTitle,
           body: result.reused
             ? fillWriteText(texts.replenishAgainBody, { batchNo: result.batch_no || '—' })
@@ -382,7 +465,7 @@ const createScanPageRouter = (options = {}) => {
             fillWriteText(texts.replenishDetailLine, { count: result.request_count || 0 }),
           ],
           retryHint: texts.submittedNextHint,
-        }));
+        });
       }
 
       // 动作名不认识（老页面 / 手改表单）：**明确回一张人话页**，不静默。
@@ -392,9 +475,9 @@ const createScanPageRouter = (options = {}) => {
       // 走到这里说明是**没预料到**的异常（写服务内部已把业务失败都收敛成人话结果）。
       if (isDataNotReady(error)) {
         res.set('Retry-After', '5');
-        return sendHtml(res, 503, message({
+        return sendHuman(res, 503, {
           title: config.texts.busyTitle, body: config.texts.busyBody, requestId,
-        }));
+        });
       }
       return respondFailure(res, error, requestId);
     }

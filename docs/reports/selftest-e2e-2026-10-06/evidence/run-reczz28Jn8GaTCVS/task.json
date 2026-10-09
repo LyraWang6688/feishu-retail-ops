@@ -1,0 +1,81 @@
+{
+  "task_id": "purchase_supplier-report_b42308eb51ff1b5e097956f9",
+  "kind": "supplier-report",
+  "record_id": "reczz28Jn8GaTCVS",
+  "status": "posted",
+  "created_at": "2026-10-05T16:15:16.504Z",
+  "updated_at": "2026-10-05T16:16:12.587Z",
+  "started_at": "2026-10-05T16:15:16.508Z",
+  "return_plan": {
+    "version": 1,
+    "declared": 2,
+    "size": null,
+    "available": 8,
+    "taken": 2,
+    "sizes": [
+      {
+        "size": 40,
+        "quantity": 2
+      }
+    ],
+    "shortfall": 0,
+    "surplus": 6
+  },
+  "draft": {
+    "is_return": true,
+    "report_record_id": "reczz28Jn8GaTCVS",
+    "product_record_id": "rec28e2HD1zrQE",
+    "product_number": "86822|黑色|A",
+    "supplier_record_id": "recvvxCEw43c2H",
+    "behavior_record_id": "recvvyKQhvc6hm",
+    "operator_open_id": "某员工",
+    "batch_no": "SELFTEST-20261005161513",
+    "items": [
+      {
+        "item_no": "86822",
+        "color": "黑色",
+        "size": 40,
+        "quantity": 2,
+        "product_record_id": "rec28e2HD1zrQE",
+        "supplier_record_id": "recvvxCEw43c2H",
+        "report_record_id": "reczz28Jn8GaTCVS"
+      }
+    ],
+    "return_plan": {
+      "version": 1,
+      "declared": 2,
+      "size": null,
+      "available": 8,
+      "taken": 2,
+      "sizes": [
+        {
+          "size": 40,
+          "quantity": 2
+        }
+      ],
+      "shortfall": 0,
+      "surplus": 6
+    }
+  },
+  "posting_progress": {
+    "returns": {
+      "40": "reczz28Jn8eA9vu2"
+    }
+  },
+  "posting_stage": "return_doc:40",
+  "request_ids": [
+    "reczz28Jn8eA9vu2"
+  ],
+  "result": {
+    "status": "posted",
+    "is_return": true,
+    "declared": 2,
+    "available": 8,
+    "taken": 2,
+    "shortfall": 0,
+    "surplus": 6,
+    "doc_ids": [
+      "reczz28Jn8eA9vu2"
+    ]
+  }
+}

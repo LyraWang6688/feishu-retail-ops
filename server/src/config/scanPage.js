@@ -109,6 +109,12 @@ const TEXTS = Object.freeze({
   notFoundTitle: '没找到这个编号',
   notFoundBody: '可能已删除、或编号变了。',
   notFoundHint: '扫到的编号：',
+  // ⭐ 2026-10-09（手机白屏之后加的）：领域块**没内容时也绝不留白** —— 一张人话卡片
+  //（标题 + 为什么 + 一个下一步）。她那边看到空 div 就是"白屏"，这是最后一道体验兜底。
+  realmEmptyTitle: '这一块现在没有可操作的内容',
+  realmEmptySalesBody: '没能确认你的身份（或这一版还没开写入口），所以先不显示建单表单。',
+  realmEmptyPurchaseBody: '这一款现在没有可补货的尺码清单。',
+  realmEmptyAction: '看看这一款的库存 →',
   // 空编号（`/s/` 或全是空白）与解码失败都回这一页。
   badNumberTitle: '这个链接不对',
   badNumberBody: '链接里的编号读不出来，请重新扫一次标签上的二维码。',
@@ -238,10 +244,45 @@ const CACHE = Object.freeze({
 });
 
 /**
+ * ⭐ **「实时库存」内存快照**（业务负责人 2026-10-09 同意的第二项优化）。
+ *
+ * 她的原话（要点）：「**首屏毫秒级，不再依赖 filter、也不会回退整表**」——
+ * 前提是她要的「**库存准确**」⇒ **任何写操作必须立刻失效**（不是等 30 秒）。
+ *
+ * 为什么：每次扫码都要打飞书读「实时库存」（按条件读 2~5 秒；条件没命中/接口不认时
+ * **回退整表读 20 秒以上** —— 线上就有一次 25 秒还没回来，她在飞书 webview 里等成白页，
+ * nginx 记 499）。快照把这**整张表**搬进内存（后台每 30 秒一拍），扫码时直接查内存。
+ *
+ * 🔴 三条不许破的边界：
+ *   ① **只读**：快照只调 `gateway.listAll`，一个字都不写（写入口的失效是另一件事）；
+ *   ② **不改业务语义**：命中快照时用的是**同一份内存判据**（`belongsToNumber`），
+ *      行集与"按编号过滤读"逐字一致（用例 `AC-S1` 钉着）；
+ *   ③ **未就绪 / 过期 / 刷新失败一律回退**老路径，并记一条可 grep 的日志 —— 不静默。
+ *
+ * ⚠️ 刷新失败时**当场作废**（不是留着旧数据）：宁可慢一次（走回退真读），
+ *    也不给她看一份"我们不确定还是不是最新"的库存。
+ * ⚠️ 三个旋钮全部可配（开关 / 间隔 / 上限 / 过期阈值）—— 线上出问题一键退回。
+ */
+const SNAPSHOT = Object.freeze({
+  // 总开关（**显式布尔**）。关掉 = 回到"每次扫码都去飞书读"，行为与提速后逐字一致。
+  enabled: readFlag(process.env, 'SCAN_PAGE_SNAPSHOT_ENABLED', true),
+  // 后台每一拍把整表拉进内存（她说 30 秒；可调）。
+  refreshIntervalMs: readInt(process.env, 'SCAN_PAGE_SNAPSHOT_REFRESH_MS', 30000, { min: 1000, max: 600000 }),
+  // 超过这个年龄就不再吃快照（回退真读）。默认 3 拍：连着两次刷新失败还能顶一下，
+  // 再久就宁可慢也不要旧数据。
+  maxAgeMs: readInt(process.env, 'SCAN_PAGE_SNAPSHOT_MAX_AGE_MS', 90000, { min: 1000, max: 3600000 }),
+  // 整表上限：超了**不作快照**（回退老路径 + 记 warn）——绝不截断出一张错的库存表。
+  maxRecords: readInt(process.env, 'SCAN_PAGE_SNAPSHOT_MAX_RECORDS', 20000, { min: 1, max: 500000 }),
+  // 失效之后立刻重拉一次（下一次扫码尽量还能吃到快照）；关掉就只有 30 秒那一拍。
+  refreshOnInvalidate: readFlag(process.env, 'SCAN_PAGE_SNAPSHOT_REFRESH_ON_INVALIDATE', true),
+});
+
+/**
  * 结构化日志事件名（**只读**链路：只有"看了 / 没找到 / 降级 / 出错"，没有任何写入事件）。
  * 取值放这里，是为了让她那边的现象能在 PM2 日志里按一个词 grep 到。
  * `cacheHit` / `cacheMiss` 是 2026-10-08 提速时加的：一条 `cache_hit: true/false` 就能回答
  * "这次扫码到底有没有省掉飞书请求"。
+ * `lookupTiming` / `snapshot*` 是 2026-10-09 加的（她：「以后一查日志就知道卡在哪一步」）。
  */
 const EVENTS = Object.freeze({
   viewed: 'scan.page.viewed',
@@ -258,6 +299,13 @@ const EVENTS = Object.freeze({
   filterFallback: 'scan.data.filter_fallback',
   // 按条件读**一条都没读到**（可能是库存真的为 0，也可能是 filter 没生效）。
   filteredEmpty: 'scan.data.filtered_empty',
+  // ⭐ 一次扫码**只打一条**的分阶段耗时汇总（她：「一查日志就知道卡在哪一步」）。
+  lookupTiming: 'scan.lookup.timing',
+  // 内存快照的四条（命中不必单独记：「耗时行里 inventory_ms ≈ 0 且 snapshot_hit=true」就是它）。
+  snapshotRefreshed: 'scan.snapshot.refreshed',
+  snapshotFailed: 'scan.snapshot.refresh_failed',
+  snapshotMiss: 'scan.snapshot.miss',
+  snapshotInvalidated: 'scan.snapshot.invalidated',
 });
 
 const SCAN_PAGE = Object.freeze({
@@ -271,6 +319,7 @@ const SCAN_PAGE = Object.freeze({
   limits: LIMITS,
   reads: READS,
   cache: CACHE,
+  snapshot: SNAPSHOT,
   events: EVENTS,
 });
 
@@ -293,6 +342,7 @@ module.exports = {
   LIMITS,
   READS,
   CACHE,
+  SNAPSHOT,
   EVENTS,
   fillText,
 };

@@ -1,0 +1,294 @@
+{
+  "ran_at": "2026-10-05T16:16:31.071Z",
+  "mode": "return",
+  "base_app_token": "FEISHU_V1_E2E_TEST_APP_TOKEN 指向的那个（见 .env.example）",
+  "im": "intercepted(fake)",
+  "chat_id": "oc_selftest_local_group",
+  "input": {
+    "recordId": "reczz28Jn8GaTCVS",
+    "productRecordId": "rec28e2HD1zrQE",
+    "productLabel": "86822|黑色|A",
+    "quantity": 2,
+    "size": null,
+    "returnBehavior": {
+      "recordId": "recvvyKQhvc6hm",
+      "name": "采购退单",
+      "code": "PURCHASE_RETURN",
+      "enabled": true
+    },
+    "operatorOpenId": "某员工"
+  },
+  "task": {
+    "task_id": "purchase_supplier-report_b42308eb51ff1b5e097956f9",
+    "status": "posted",
+    "error": "",
+    "return_plan": {
+      "version": 1,
+      "declared": 2,
+      "size": null,
+      "available": 8,
+      "taken": 2,
+      "sizes": [
+        {
+          "size": 40,
+          "quantity": 2
+        }
+      ],
+      "shortfall": 0,
+      "surplus": 6
+    },
+    "draft": {
+      "is_return": true,
+      "report_record_id": "reczz28Jn8GaTCVS",
+      "product_record_id": "rec28e2HD1zrQE",
+      "product_number": "86822|黑色|A",
+      "supplier_record_id": "recvvxCEw43c2H",
+      "behavior_record_id": "recvvyKQhvc6hm",
+      "operator_open_id": "某员工",
+      "batch_no": "SELFTEST-20261005161513",
+      "items": [
+        {
+          "item_no": "86822",
+          "color": "黑色",
+          "size": 40,
+          "quantity": 2,
+          "product_record_id": "rec28e2HD1zrQE",
+          "supplier_record_id": "recvvxCEw43c2H",
+          "report_record_id": "reczz28Jn8GaTCVS"
+        }
+      ],
+      "return_plan": {
+        "version": 1,
+        "declared": 2,
+        "size": null,
+        "available": 8,
+        "taken": 2,
+        "sizes": [
+          {
+            "size": 40,
+            "quantity": 2
+          }
+        ],
+        "shortfall": 0,
+        "surplus": 6
+      }
+    }
+  },
+  "before": {
+    "liveRows": [
+      {
+        "record_id": "recvw7x8AxDEON",
+        "state": "门盒",
+        "size": "40",
+        "stockKey": "86822|黑色|A|40"
+      },
+      {
+        "record_id": "recvw7x8AxM8q1",
+        "state": "样品",
+        "size": "40",
+        "stockKey": "86822|黑色|A|40"
+      },
+      {
+        "record_id": "recvw7x91GOI5K",
+        "state": "门盒",
+        "size": "38",
+        "stockKey": "86822|黑色|A|38"
+      },
+      {
+        "record_id": "recvwkECsiQBaP",
+        "state": "门盒",
+        "size": "41",
+        "stockKey": "86822|黑色|A|41"
+      },
+      {
+        "record_id": "recvwkED9jIjEJ",
+        "state": "门盒",
+        "size": "41",
+        "stockKey": "86822|黑色|A|41"
+      },
+      {
+        "record_id": "recvwkEIHpMwBw",
+        "state": "门盒",
+        "size": "39",
+        "stockKey": "86822|黑色|A|39"
+      },
+      {
+        "record_id": "recvwkEraFOzKf",
+        "state": "门盒",
+        "size": "43",
+        "stockKey": "86822|黑色|A|43"
+      },
+      {
+        "record_id": "recvwkEwZjewlk",
+        "state": "门盒",
+        "size": "42",
+        "stockKey": "86822|黑色|A|42"
+      }
+    ],
+    "ledgerCount": 164,
+    "requestCount": 80
+  },
+  "after": {
+    "liveRows": [
+      {
+        "record_id": "recvw7x91GOI5K",
+        "state": "门盒",
+        "size": "38",
+        "stockKey": "86822|黑色|A|38"
+      },
+      {
+        "record_id": "recvwkECsiQBaP",
+        "state": "门盒",
+        "size": "41",
+        "stockKey": "86822|黑色|A|41"
+      },
+      {
+        "record_id": "recvwkED9jIjEJ",
+        "state": "门盒",
+        "size": "41",
+        "stockKey": "86822|黑色|A|41"
+      },
+      {
+        "record_id": "recvwkEIHpMwBw",
+        "state": "门盒",
+        "size": "39",
+        "stockKey": "86822|黑色|A|39"
+      },
+      {
+        "record_id": "recvwkEraFOzKf",
+        "state": "门盒",
+        "size": "43",
+        "stockKey": "86822|黑色|A|43"
+      },
+      {
+        "record_id": "recvwkEwZjewlk",
+        "state": "门盒",
+        "size": "42",
+        "stockKey": "86822|黑色|A|42"
+      }
+    ],
+    "removedLive": [
+      {
+        "record_id": "recvw7x8AxDEON",
+        "state": "门盒",
+        "size": "40",
+        "stockKey": "86822|黑色|A|40"
+      },
+      {
+        "record_id": "recvw7x8AxM8q1",
+        "state": "样品",
+        "size": "40",
+        "stockKey": "86822|黑色|A|40"
+      }
+    ],
+    "ledgerRows": [
+      {
+        "record_id": "reczz28Jn8wejXEQ",
+        "size": "40",
+        "quantityChange": "2",
+        "behavior": [
+          {
+            "name": "采购减少",
+            "code": "STOCK_PURCHASE_DECREASE"
+          }
+        ],
+        "hasSource": false
+      }
+    ],
+    "requestRows": [
+      {
+        "record_id": "reczz28Jn8eA9vu2",
+        "size": "40",
+        "quantity": "2",
+        "behavior": [
+          {
+            "name": "采购退单",
+            "code": "PURCHASE_RETURN"
+          }
+        ],
+        "idempotencyKey": "purchase_return:reczz28Jn8GaTCVS:40",
+        "attachmentCount": 0
+      }
+    ],
+    "report": {
+      "status": "已生成申请",
+      "request": [
+        "reczz28Jn8eA9vu2"
+      ]
+    }
+  },
+  "outbox": {
+    "images": [
+      {
+        "bytes": 27349,
+        "image_type": "message"
+      }
+    ],
+    "messages": [
+      {
+        "params": {
+          "receive_id_type": "chat_id"
+        },
+        "data": {
+          "receive_id": "oc_selftest_local_group",
+          "msg_type": "image",
+          "content": "{\"image_key\":\"img_selftest_1\"}"
+        }
+      },
+      {
+        "params": {
+          "receive_id_type": "chat_id"
+        },
+        "data": {
+          "receive_id": "oc_selftest_local_group",
+          "msg_type": "text",
+          "content": "{\"text\":\"<at user_id=\\\"某员工\\\"></at> 三星 这批 1 条（共 2 双），图可以直接转给供应商。\"}"
+        }
+      },
+      {
+        "params": {
+          "receive_id_type": "open_id"
+        },
+        "data": {
+          "receive_id": "某员工",
+          "msg_type": "text",
+          "content": "{\"text\":\"采购退货：86822黑色 你填的 2 双对上了，已经退回。⚠️ 86822黑色 在实时库存里还剩 6 双没退（总数是 8 双）——要一起退就把数量改成总数再提交一条～\"}"
+        }
+      }
+    ]
+  },
+  "checks": [
+    {
+      "id": "①",
+      "pass": true,
+      "text": "出「采购退货单」：单据信息新增 1 行（本次退货涉及 1 个尺码），合计 2 双 = 填的 2",
+      "evidence": "单据信息行=[{\"id\":\"reczz28Jn8eA9vu2\",\"size\":\"40\",\"qty\":\"2\"}]"
+    },
+    {
+      "id": "②",
+      "pass": false,
+      "text": "「库存流水」新增 2 行，库存行为 = 采购减少 / STOCK_PURCHASE_DECREASE",
+      "evidence": "新增流水=1 行 [{\"id\":\"reczz28Jn8wejXEQ\",\"size\":\"40\",\"qty\":\"2\",\"behavior\":[\"STOCK_PURCHASE_DECREASE\"]}]"
+    },
+    {
+      "id": "③",
+      "pass": true,
+      "text": "「实时库存」对应尺码减少：被退的 2 行消失；减到 0 的尺码不再有行",
+      "evidence": "消失行=[{\"id\":\"recvw7x8AxDEON\",\"size\":\"40\",\"state\":\"门盒\"},{\"id\":\"recvw7x8AxM8q1\",\"size\":\"40\",\"state\":\"样品\"}]；按尺码核对=[{\"size\":40,\"before\":2,\"taken\":2,\"after\":0,\"expectedAfter\":0}]；剩余行=[{\"id\":\"recvw7x91GOI5K\",\"size\":\"38\",\"state\":\"门盒\"},{\"id\":\"recvwkECsiQBaP\",\"size\":\"41\",\"state\":\"门盒\"},{\"id\":\"recvwkED9jIjEJ\",\"size\":\"41\",\"state\":\"门盒\"},{\"id\":\"recvwkEIHpMwBw\",\"size\":\"39\",\"state\":\"门盒\"},{\"id\":\"recvwkEraFOzKf\",\"size\":\"43\",\"state\":\"门盒\"},{\"id\":\"recvwkEwZjewlk\",\"size\":\"42\",\"state\":\"门盒\"}]"
+    },
+    {
+      "id": "④",
+      "pass": true,
+      "text": "「供应商对接」处理状态 = 已生成申请，且「关联采购申请」回填到刚生成的那几行",
+      "evidence": "处理状态=已生成申请；关联采购申请=[\"reczz28Jn8eA9vu2\"]；单据信息行=[\"reczz28Jn8eA9vu2\"]"
+    },
+    {
+      "id": "⑤",
+      "pass": true,
+      "text": "往群里发 1 张退货单图 + 1 条 @经办人 的文字",
+      "evidence": "图片消息=1 条；文字消息=[{\"receive_id\":\"oc_selftest_local_group\",\"receive_id_type\":\"chat_id\",\"text\":\"<at user_id=\\\"某员工\\\"></at> 三星 这批 1 条（共 2 双），图可以直接转给供应商。\",\"mentions\":[\"<at user_id=\\\"某员工\\\"\"]},{\"receive_id\":\"某员工\",\"receive_id_type\":\"open_id\",\"text\":\"采购退货：86822黑色 你填的 2 双对上了，已经退回。⚠️ 86822黑色 在实时库存里还剩 6 双没退（总数是 8 双）——要一起退就把数量改成总数再提交一条～\",\"mentions\":[]}]；附件回写=[0]"
+    }
+  ],
+  "passed": 4,
+  "total": 5
+}

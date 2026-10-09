@@ -91,7 +91,9 @@ test('页面：200 出库存表（含缺码高亮、0 用「—」、单价与�
   login();
   const app = appFor(async () => view());
   await withServer(app, async (base) => {
-    const response = await fetch(`${base}/s/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    // ⚠️ 2026-10-09（手机白屏之后）起：**服务端按 `?from` 只渲染那一块**，
+    //    库存表属于 `from=inventory` 那一块（缺省是销售）—— 想看库存必须点名这个领域。
+    const response = await fetch(`${base}/s/${ENCODED}?from=inventory`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 200);
     assert.match(response.headers.get('content-type'), /text\/html/);
     assert.match(String(response.headers.get('cache-control')), /no-store/);
@@ -242,7 +244,8 @@ test('真 app.js：`/s/:number` 确实挂上了、不要 API_KEY、走同一道�
   try {
     app = require('../src/app'); // 真的入口：所有挂载都在里面
     await withServer(app, async (base) => {
-      const response = await fetch(`${base}/s/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+      // 库存表 = `from=inventory` 那一块（缺省是销售；服务端只渲染当前这一块）
+      const response = await fetch(`${base}/s/${ENCODED}?from=inventory`, { headers: { cookie: sessionCookie() } });
       assert.equal(response.status, 200);
       assert.match(response.headers.get('content-type'), /text\/html/);
       const html = await response.text();

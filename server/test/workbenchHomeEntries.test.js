@@ -224,26 +224,20 @@ test('首页卡片同窗口跳转（手机上在飞书内置浏览器里打开�
     '只有「库存手工调整」带 entry-wide（报货与退货那张是普通卡）');
 });
 
-test('老链接不坏：/workbench/purchase-return.html 仍然能开、仍然是两张表单卡（回归）', async () => {
-  // 页面本体与启动器注册一行都不该动。
-  assert.ok(fs.existsSync(path.join(WORKBENCH, 'purchase-return.html')), 'purchase-return.html 必须还在');
-  assert.match(read('purchase-return.html'), /data-view="purchase-return"/);
-  assert.match(read('standalone.js'), /'purchase-return':/, 'standalone.js 仍要注册这个独立页');
+test('老页面已按她的口令删掉：purchase-return.html 与它的启动器注册都不在；两张表单 URL 一个字没少', async () => {
+  // ⚠️ 2026-10-09 改写（业务负责人点头：「代码从仓库里删，不是隐藏」）：
+  //    原先这一条钉的是"老链接不坏：`/workbench/purchase-return.html` 仍然能开"。
+  //    那一页**已删** ⇒ 改成钉"页面与注册都真的没了"，同时保住**两张表单 URL**
+  //    （它们现在是「采购」tab ① 报货 / 验收 / 退货 那两张卡的 URL 单一来源，一个都不许少）。
+  assert.equal(fs.existsSync(path.join(WORKBENCH, 'purchase-return.html')), false,
+    'purchase-return.html 必须已删（代码从仓库里删，不是隐藏）');
+  const standalone = read('standalone.js');
+  assert.ok(!standalone.includes("'purchase-return'"), 'standalone.js 不许再注册这个独立页的视图');
+  assert.ok(!standalone.includes('features/purchase'), 'standalone.js 也不许再 import 它那个模块');
 
-  // 真跑一遍那个页面的模块：不带任何参数时，默认仍然把两张表单卡都画出来。
+  // 🔴 两个 URL / 两张表单一个都没删（「采购」tab 的两张卡还在用它们）。
   const modules = loadFrontendModules();
-  const [html, links] = await Promise.all([
-    render(modules.purchaseLinks, 'createPurchaseLinksModule'),
-    modules.links,
-  ]);
-  const hrefs = [...html.matchAll(/class="purchase-link-card" href="([^"]+)"/g)].map((match) => match[1]);
-  const titles = [...html.matchAll(/<h3>([\s\S]*?)<\/h3>/g)].map((match) => match[1]);
-
-  assert.deepEqual(hrefs, [links.PURCHASE_REQUEST_FORM_URL, links.PURCHASE_RETURN_FORM_URL],
-    '不带参数打开 purchase-return.html：默认视图 = 两张飞书表单都显示（与改动前逐字一致）');
-  assert.deepEqual(titles, ['报货', '退货']);
-
-  // 🔴 两个 URL / 两张表单一个都没删（老链接继续可用）。
+  const links = await modules.links;
   assert.equal(typeof links.PURCHASE_REQUEST_FORM_URL, 'string');
   assert.ok(links.PURCHASE_REQUEST_FORM_URL.length > 0);
   assert.equal(typeof links.PURCHASE_RETURN_FORM_URL, 'string');
@@ -253,13 +247,21 @@ test('老链接不坏：/workbench/purchase-return.html 仍然能开、仍然是
     [links.PURCHASE_REQUEST_FORM_URL, links.PURCHASE_RETURN_FORM_URL]);
 });
 
-test('一级 tab（index.html 的常用功能）与独立页（common.html）渲染同一份清单', async () => {
+test('老首页文件已删（common.html）：清单仍然只来自 config/home.js，渲染层不自己写死', async () => {
+  // ⚠️ 2026-10-09 改写：原先这条比的是"一级 tab"与独立页 `common.html` 两处渲染同一份清单。
+  //    那个独立页已按她的口令删掉（代码从仓库里删）⇒ 前提没了；但"清单只来自 config/home.js"
+  //    这条口径仍然有效，下面继续钉住它。
+  assert.equal(fs.existsSync(path.join(WORKBENCH, 'common.html')), false,
+    'common.html 必须已删（业务负责人 2026-10-09 点头）');
+
   const modules = loadFrontendModules();
-  const [tab, standalone] = await Promise.all([
+  const [home, tab, focused] = await Promise.all([
+    modules.home,
     render(modules.common, 'createCommonModule'),
     render(modules.common, 'createCommonModule', { focused: true }),
   ]);
 
-  assert.deepEqual(parseCards(standalone), parseCards(tab),
-    '两处必须是同一份清单（不许各写一份）');
+  assert.deepEqual(parseCards(focused), parseCards(tab), '两处必须是同一份清单（不许各写一份）');
+  assert.deepEqual(parseCards(tab).map((card) => card.title), home.COMMON_ENTRIES.map((entry) => entry.title),
+    '卡片的顺序与标题必须逐条等于 config/home.js 的清单（配置先行）');
 });

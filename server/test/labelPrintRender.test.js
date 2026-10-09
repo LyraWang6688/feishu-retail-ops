@@ -448,7 +448,12 @@ test('页面接线：label-print.html 存在、注册进 standalone.js、首页�
 test('接线：走的是既有工作台鉴权与既有导航（没有新开鉴权、没有重做导航）', () => {
   const html = read('label-print.html');
   assert.match(html, /class="standalone-nav"/, '沿用既有独立页导航条');
-  assert.match(html, /返回信息录入/, '导航里保留回信息录入的那条');
+  // ⚠️ 2026-10-09 改写：原先这条钉的是"导航里保留回『信息录入』（`common.html`）的那条"。
+  //    那个页面已按她的口令删掉（代码从仓库里删）⇒ 改成钉"回完整工作台 + 另一个保留的独立页"。
+  assert.match(html, /href="\/workbench\/"[^>]*>返回完整工作台/, '导航里保留回完整工作台的那条');
+  assert.match(html, /href="\/workbench\/inventory-adjustment\.html"/, '导航里保留另一个保留页（库存手工调整）');
+  assert.ok(!html.includes('common.html'), '不许再留『信息录入』那条死链（页面已删）');
+  assert.ok(!html.includes('purchase-return.html'), '不许再留『采购和退货』那条死链（页面已删）');
 
   const routes = fs.readFileSync(path.join(__dirname, '../src/routes/workbench.js'), 'utf8');
   assert.equal(routes.match(/const requireWorkbenchAccess/g).length, 1,

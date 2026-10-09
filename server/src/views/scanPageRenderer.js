@@ -6,15 +6,20 @@
  *   · 不改工作台的前端（`public/workbench/**`）：这一页是**独立**的一个小页面，
  *     样式内联在这里，谁都不影响。
  *
- * ⭐ 2026-10-09 加的两件事（都只在这一层，`routes/**` 与 `config/**` 一个字没改）：
+ * ⭐ 2026-10-09 加的两件事：
  *   ① **领域切换**（`?from=sales|inventory|purchase|product`，缺省销售）——
- *      四块操作**全都渲染进 HTML**，由 CSS 按 `<html data-realm="…">` 只显示当前领域；
- *      那一行属性由 `<head>` 里一小段内联脚本在 body 解析前从 `location.search` 读出来
- *      （细节与取舍见 `views/scanPageRealm.js`）。⚠️ 显示规则由 CSS 决定 ⇒
- *      **既有用例断言的 HTML 一个字都没少**（销售表单与补货表单都还在）。
+ *      **服务端按 `from` 只渲染该领域那一块**，另外三块**连 HTML 都不进**；
+ *      切换条是**真链接**（`<a href="?from=…">`）。
+ *      ⚠️ 这一点在 **2026-10-09 真机反馈（手机在飞书 webview 里白屏）之后重做过**：
+ *      旧版是"四块全渲染进 HTML + `<head>` 内联脚本读 `location.search` 设
+ *      `<html data-realm>` + CSS 显隐"。那一版**多了一层"行为取决于脚本有没有跑"**，
+ *      在飞书 webview 里是额外的不确定性；而这一页的初衷本来就是"没有 JS"。
+ *      现在整页**一行前端脚本都没有**，没 JS / 脚本被拦 / 老内核**行为完全一样**。
  *   ② **主题与工作台对齐**：配色 / 间距 / 圆角 / 字号**全部来自 `styles/tokens.css`**
  *      （工作台那一个主题文件）—— 这里在模块加载时把它读出来、内联成 `:root{…}`，
  *      所以"改配色只改那一个文件"，扫码页也跟着变（见 `readThemeTokens`）。
+ *      ⚠️ 读不到时 `:root` 就是空的（页面退化成浏览器默认外观），
+ *      **内容照常可读可点** —— 显隐 / 可见性一律不依赖任何令牌（那是白屏的另一个可能成因）。
  *
  * ⚠️ 这一页是**给她在手机上扫开看的**，所以：
  *   · `viewport` + `max-width: 480px` 居中：手机上不横向滚动、平板上也不会拉成一条；
@@ -69,26 +74,19 @@ const THEME_TOKENS = readThemeTokens();
 const THEME_ROOT = `:root {\ncolor-scheme: light;\n${THEME_TOKENS.join('\n')}\n}`;
 
 /**
- * 领域切换的两组规则（**从 `REALMS` 生成**，加减领域只改那个文件）：
- *   · `.realm-block--<id>` 默认不显示；当前领域那一个显示出来；
- *   · 当前领域的那颗按钮变主色。
- * ⚠️ `:not([data-realm])` 那一行是**没 JS 时的兜底**：四块全显示，绝不白屏。
+ * ⭐⭐ 领域切换（**服务端**版，2026-10-09 手机白屏之后重做）。
+ *
+ * 旧版：四块操作**全都渲染进 HTML**，由 `<html data-realm="…">` + 几行 CSS 只显示一块，
+ *       而那一行 `data-realm` 由 `<head>` 里一段内联脚本读 `location.search` 设好。
+ * 新版：**请求什么领域，服务端就只拼那一块** ——
+ *   · 页面里**一行前端脚本都没有**（没有 `<script>`、没有 `location.search`）；
+ *   · 领域切换是**真链接**（`<a href="?from=…">`），点一下 = 一次新的服务端请求；
+ *   · 没 JS / 脚本被 webview 拦 / 老内核 ⇒ **行为完全一样**（这正是要的）。
+ *
+ * 为什么不干脆留一点 JS：这一页的初衷就是"**一次请求就有完整内容、没有 JS**"
+ *（见文件头）。旧版那一层"行为取决于脚本有没有跑"在飞书 webview 里是**额外的不确定性**，
+ * 而她真机上看到的就是一张白页 —— 与其猜测 webview 干了什么，不如让它**不需要**猜。
  */
-const REALM_STYLE = [
-  `.realm-block--${REALMS.map((realm) => realm.id).join(', .realm-block--')} { display: none; }`,
-  `html:not([data-realm]) .realm-block { display: block; }`,
-  REALMS.map((realm) => `html[data-realm="${realm.id}"] .realm-block--${realm.id} { display: block; }`).join('\n'),
-  REALMS.map((realm) => `html[data-realm="${realm.id}"] .realm-tab[data-realm-id="${realm.id}"] { color: var(--surface); background: var(--primary); }`).join('\n'),
-].join('\n');
-
-/**
- * 在 `<head>` 里（body 解析之前）把当前领域写到 `<html data-realm="…">` 上 ——
- * 于是 CSS 从一开始就只显示该领域，不会闪一下"四块全显示"。
- * 认不出的 `from` 与缺省一律 = 销售（`DEFAULT_REALM`）。
- */
-const REALM_SCRIPT = `<script>(function(){var ids=${JSON.stringify(REALMS.map((realm) => realm.id))};`
-  + 'var raw="";try{raw=String(new URLSearchParams(location.search).get("from")||"").trim().toLowerCase();}catch(e){}'
-  + `document.documentElement.setAttribute("data-realm",ids.indexOf(raw)>=0?raw:${JSON.stringify(DEFAULT_REALM)});}());</script>`;
 
 /**
  * 内联样式。刻意用**系统字体**与**浅色**：与工作台同一个主题（同一个 `tokens.css`），
@@ -97,6 +95,9 @@ const REALM_SCRIPT = `<script>(function(){var ids=${JSON.stringify(REALMS.map((r
  * ⭐ 2026-10-09 下半场：按"移动端优先 + 现代干净"重做了一版（浅灰底 / 白卡片 / 12~16px 圆角 /
  * 很轻的阴影 / 一个主色 / 卡片整块可点 / 次要操作进 `<details>`）；
  * 颜色 / 间距 / 圆角 / 字号仍然**全部走 `tokens.css` 的令牌**（上面内联进来的那一份）。
+ *
+ * 🔴 这里**不许出现 `display: none`** 这种"默认藏起来、等谁来打开"的写法 ——
+ *    那正是白屏的形状（服务端已经把不需要的那几块**根本没渲染**）。
  */
 const STYLE = `
 ${THEME_ROOT}
@@ -183,11 +184,15 @@ summary { cursor: pointer; }
 /* ── 领域切换（一个二维码，四个领域）────────────────────────────────────── */
 .realm-bar { display: flex; gap: var(--space-1); margin: 0 0 var(--space-2); padding: var(--space-1); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); overflow-x: auto; }
 .realm-tab { flex: 1 0 auto; display: flex; align-items: center; justify-content: center; min-height: var(--control-height); padding: 0 var(--space-3); border-radius: var(--radius-md); color: var(--text-secondary); font-size: var(--font-size-base); font-weight: 600; text-decoration: none; white-space: nowrap; }
+/* 当前领域那一颗 = 主色（**服务端**决定，不是脚本切 class） */
+.realm-tab--active { color: var(--surface); background: var(--primary); }
 .realm-hint { margin: 0 0 var(--space-3); color: var(--text-muted); font-size: var(--font-size-xs); text-align: center; }
-${REALM_STYLE}
+/* noscript 兜底那一排（webview 禁脚本时才会出现）：朴素的文字链接，不用卡片阴影 */
+.realm-bar--plain { display: block; margin: 0; padding: 0; background: transparent; box-shadow: none; }
+.realm-bar--plain .realm-link { display: inline-block; margin: 0 var(--space-2) var(--space-1) 0; color: var(--primary); font-size: var(--font-size-base); }
 `;
 
-const renderDocument = ({ title, content, requestId, config = SCAN_PAGE, realm = DEFAULT_REALM }) => `<!doctype html>
+const renderDocument = ({ title, content, requestId, config = SCAN_PAGE }) => `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -195,7 +200,6 @@ const renderDocument = ({ title, content, requestId, config = SCAN_PAGE, realm =
 <meta name="robots" content="noindex">
 <title>${escapeHtml(title)}</title>
 <style>${STYLE}</style>
-${realm ? REALM_SCRIPT : ''}
 </head>
 <body>
 <main class="page">
@@ -226,14 +230,32 @@ ${meta ? `<p class="identity__meta">${escapeHtml(meta)}</p>` : ''}
 };
 
 /**
- * ⭐ 领域切换条（顶部）：四个领域各一颗按钮（`?from=<id>`）。
- * 当前领域的高亮由 CSS 按 `<html data-realm>` 决定（见 `REALM_STYLE`）——
- * 服务端**不需要**读 `from`（那一层在 `routes/**`，本任务不碰）。
+ * ⭐ 领域切换条（顶部）：四个领域各一条**真链接**（`?from=<id>`）。
+ *
+ * 🔴 当前领域那一颗的高亮是**服务端**决定的（`realm-tab--active` + `aria-current="page"`），
+ *    不是脚本在浏览器里切 class —— 没 JS 也完全正确。
+ * 领域顺序 / 名字全部来自 `views/scanPageRealm.js`（加减领域只改那个文件）。
  */
-const realmBarHtml = () => `<nav class="realm-bar" aria-label="${escapeHtml(REALM_TEXTS.barLabel)}">
-${REALMS.map((realm) => `<a class="realm-tab" data-realm-id="${escapeHtml(realm.id)}" href="?from=${escapeHtml(realm.id)}">${escapeHtml(realm.label)}</a>`).join('\n')}
+const realmBarHtml = (realm = DEFAULT_REALM) => `<nav class="realm-bar" aria-label="${escapeHtml(REALM_TEXTS.barLabel)}">
+${REALMS.map((item) => (item.id === realm
+    ? `<a class="realm-tab realm-tab--active" data-realm-id="${escapeHtml(item.id)}" href="?from=${escapeHtml(item.id)}" aria-current="page">${escapeHtml(item.label)}</a>`
+    : `<a class="realm-tab" data-realm-id="${escapeHtml(item.id)}" href="?from=${escapeHtml(item.id)}">${escapeHtml(item.label)}</a>`)).join('\n')}
 </nav>
 <p class="realm-hint">${escapeHtml(REALM_TEXTS.barHint)}</p>`;
+
+/**
+ * `<noscript>` 兜底：把四条领域链接**再给一遍**。
+ *
+ * ⚠️ 这一页**本来就不需要 JavaScript**（切换条是真链接、服务端只渲染当前那一块），
+ *    所以这一段不是"页面能不能用"的前提，而是"万一 webview 禁脚本/样式被裁掉"的保险带
+ *    —— 她的第一要求是"**手机上无论如何都要有看得见的东西**"。
+ */
+const noScriptHtml = () => `<noscript>
+<p class="realm-hint">${escapeHtml(REALM_TEXTS.noScriptHint)}</p>
+<nav class="realm-bar realm-bar--plain" aria-label="${escapeHtml(REALM_TEXTS.barLabel)}">
+${REALMS.map((realm) => `<a class="realm-link" href="?from=${escapeHtml(realm.id)}">${escapeHtml(realm.label)}</a>`).join('\n')}
+</nav>
+</noscript>`;
 
 const stockTableHtml = (view, config) => {
   const head = [config.texts.columnSize, ...view.columns.map((column) => column.label)]
@@ -444,42 +466,83 @@ ${rows}
 };
 
 /**
- * 三个领域的操作块（每个都带 `realm-block--<领域>`，CSS 只显示当前那一个）：
- *   · `sales`     —— 「刚加入本单」那一句 + 销售建单表单；
- *   · `purchase`  —— 补货报单表单；
- *   · `inventory` —— 库存表（在 `renderScanPage` 里包）；
- *   · `product`   —— 货品标签（在 `renderScanPage` 里包）。
- * ⚠️ **三块都渲染进 HTML**（既有用例断言的就是这个）：只是屏幕上按领域显示其中一块。
+ * 某个领域**"没内容"**时的那张人话卡片（标题 + 为什么 + 一个下一步）。
+ *
+ * 🔴 为什么必须有它：这是"**手机上无论如何都要有看得见的东西**"的最后一道体验兜底 ——
+ *    没有写上下文（拿不到飞书身份 / 写入口没开）时，旧版会**什么块都不渲染**，
+ *    屏幕上只剩身份区那一行；现在给一张说清楚的卡片，她至少知道"为什么没有表单、下一步去哪"。
  */
-const writeFormsHtml = (view, write) => {
-  if (!write || write.enabled === false) return '';
-  // 「刚加入本单」那一句：文案来自配置、只有数字来自会话（**没有回显注入面**）。
-  const notice = write.notice
-    ? `<div class="realm-block realm-block--sales"><section class="card"><p class="notice">${escapeHtml(write.notice)}</p></section></div>`
-    : '';
-  const sale = write.saleEnabled === false ? '' : `<div class="realm-block realm-block--sales">${saleFormHtml(view, write)}</div>`;
-  // ⚠️ 一个尺码都没有（降级到连库存行都没有）时，**不画一个空块** —— 宁可这一块不出现。
-  const replenishBody = write.replenishEnabled === false ? '' : replenishFormHtml(view, write);
-  const replenish = replenishBody ? `<div class="realm-block realm-block--purchase">${replenishBody}</div>` : '';
-  return `${notice}${sale}${replenish}`;
+const realmEmptyHtml = (realm, config) => {
+  const body = realm === 'purchase' ? config.texts.realmEmptyPurchaseBody : config.texts.realmEmptySalesBody;
+  return `<section class="card state-msg">
+<h1>${escapeHtml(config.texts.realmEmptyTitle)}</h1>
+<p>${escapeHtml(body)}</p>
+<a class="btn" href="?from=${escapeHtml('inventory')}">${escapeHtml(config.texts.realmEmptyAction)}</a>
+</section>`;
 };
 
-/** 正常页：领域切换 + 身份 + 单价 + 当前领域的操作块（库存表 / 销售建单 / 补货 / 标签）。 */
-const renderScanPage = (view, config = SCAN_PAGE, write = null) => renderDocument({
-  title: fillText(config.texts.pageTitle, { itemNo: view.item_no || view.number, number: view.number }),
-  config,
-  content: `${realmBarHtml()}
+/**
+ * ⭐⭐ **只渲染当前领域那一块**（2026-10-09 手机白屏之后的改法）。
+ *
+ * 四个领域各自的正文（每个都带 `realm-block--<领域>` 标记，方便对照 / 断言）：
+ *   · `sales`     —— 「刚加入本单」那一句 + 销售建单表单；
+ *   · `inventory` —— 库存表；
+ *   · `purchase`  —— 补货报单表单；
+ *   · `product`   —— 货品标签。
+ *
+ * ⚠️ **只有当前这一块进 HTML**（另外三块**连字符串都不拼**）—— 页面里没有"靠 CSS 藏起来"
+ *    的东西，也就没有"脚本没跑 ⇒ 什么都没显示"的可能。
+ * ⚠️ 认不出的领域一律回落缺省（`resolveRealm` 在路由那一层已经做过一次；这里再兜一次，
+ *    **渲染层永远不抛、永远有正文**）。
+ */
+const realmBlockHtml = (realm, view, config, write) => {
+  const id = REALMS.some((item) => item.id === realm) ? realm : DEFAULT_REALM;
+  const wrap = (inner) => `<div class="realm-block realm-block--${escapeHtml(id)}">\n${inner}\n</div>`;
+  if (id === 'inventory') return wrap(stockTableHtml(view, config));
+  if (id === 'product') return wrap(labelBlockHtml(view));
+  if (id === 'purchase') {
+    const form = write && write.enabled !== false && write.replenishEnabled !== false
+      ? replenishFormHtml(view, write)
+      : '';
+    // 一个尺码都没有（降级到连库存行都没有）⇒ 给一张人话卡片，而不是空 div。
+    return wrap(form || realmEmptyHtml('purchase', config));
+  }
+  // sales（缺省）
+  if (!write || write.enabled === false || write.saleEnabled === false) {
+    return wrap(realmEmptyHtml('sales', config));
+  }
+  // 「刚加入本单」那一句：文案来自配置、只有数字来自会话（**没有回显注入面**）。
+  const notice = write.notice
+    ? `<section class="card"><p class="notice">${escapeHtml(write.notice)}</p></section>\n`
+    : '';
+  return wrap(`${notice}${saleFormHtml(view, write)}`);
+};
+
+/**
+ * 正常页：领域切换（真链接）+ 身份区 + 单价 + **当前领域那一块**。
+ *
+ * ⚠️ 渲染层**绝不抛**：任何一块拼装出问题都退化成一张人话卡片 ——
+ *    这一页对她是"扫码就能看"，**空白页是最坏的结果**（比她看到一句"暂时打不开"还坏）。
+ */
+const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEFAULT_REALM) => {
+  const safeRealm = resolveRealm(realm);
+  let block;
+  try {
+    block = realmBlockHtml(safeRealm, view, config, write);
+  } catch (error) {
+    block = `<div class="realm-block realm-block--${escapeHtml(safeRealm)}">${realmEmptyHtml(safeRealm, config)}</div>`;
+  }
+  return renderDocument({
+    title: fillText(config.texts.pageTitle, { itemNo: view.item_no || view.number, number: view.number }),
+    config,
+    content: `${realmBarHtml(safeRealm)}
+${noScriptHtml()}
 ${identityHtml(view, config)}
-<div class="realm-block realm-block--inventory">
-${stockTableHtml(view, config)}
-</div>
-${write ? writeFormsHtml(view, write) : ''}
-<div class="realm-block realm-block--product">
-${labelBlockHtml(view)}
-</div>
+${block}
 <p class="foot">${escapeHtml(config.texts.footerNumberLabel)} <span class="mono">${escapeHtml(view.number)}</span>`
   + `${view.updated_at_text ? ` · ${escapeHtml(config.texts.updatedAtLabel)} ${escapeHtml(view.updated_at_text)}` : ''}</p>`,
-});
+  });
+};
 
 /**
  * 「不是库存表」的那些页（没找到 / 链接不对 / 出错 / 数据准备中 / 超上限 / **写失败**）——
@@ -487,14 +550,12 @@ ${labelBlockHtml(view)}
  *
  * `details` 是**写成功/写失败**时给她看的几行事实（单号 / 双数 / 批次号…）：
  * 有就逐行列出来，没有就一个字都不多渲染（既有那几种页面**逐字不变**）。
- * ⚠️ 这些页面**不挂领域切换条**（它们是"结果页"，不是她操作的地方）：
- *    给 `realm: null` 就不注入那一行脚本，四块内容本来也不在这里。
+ * ⚠️ 这些页面**不挂领域切换条**（它们是"结果页"，不是她操作的地方）。
  */
 const renderScanMessagePage = ({ title, body, number = '', requestId = '', retryHint = '', details = [] }, config = SCAN_PAGE) => renderDocument({
   title,
   config,
   requestId,
-  realm: null,
   content: `<section class="card state-msg">
 <h1>${escapeHtml(title)}</h1>
 <p>${escapeHtml(body)}</p>
@@ -504,6 +565,31 @@ ${retryHint ? `<p class="hint">${escapeHtml(retryHint)}</p>` : ''}
 </section>`,
 });
 
+/**
+ * 🔴 **最后一道兜底页**（"绝不空白"的物理保证）。
+ *
+ * 为什么单独一个函数：上面那些页都依赖 `config`。万一 `config` 本身坏了 /
+ * 渲染抛到一个没预料到的地方，路由需要一个**几乎不可能再抛**的渲染器 ——
+ * 只有三行字符串拼接 + `escapeHtml`，不需要任何配置、不读文件、不解析任何东西。
+ * ⚠️ 任何输入（`undefined` / `null` / 对象 / 带标签的字符串）都**必须**返回一段有正文的 HTML。
+ */
+const renderMinimalPage = (input = {}) => {
+  const title = escapeHtml(input?.title || SCAN_PAGE.texts.errorTitle) || '打不开';
+  const body = escapeHtml(input?.body || SCAN_PAGE.texts.errorBody) || '请稍后再试。';
+  const requestId = input?.requestId ? `<p>请求号 ${escapeHtml(input.requestId)}</p>` : '';
+  return '<!doctype html>\n<html lang="zh-CN"><head><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width, initial-scale=1">'
+    + `<title>${title}</title></head>`
+    + `<body style="margin:0;padding:24px;font:16px/1.6 -apple-system,BlinkMacSystemFont,\"PingFang SC\",sans-serif;color:#1f2329;background:#fff">`
+    + `<h1 style="font-size:20px">${title}</h1><p>${body}</p>${requestId}</body></html>\n`;
+};
+
 module.exports = {
-  renderScanPage, renderScanMessagePage, escapeHtml, STYLE, readThemeTokens, REALM_SCRIPT, resolveRealm,
+  renderScanPage,
+  renderScanMessagePage,
+  renderMinimalPage,
+  escapeHtml,
+  STYLE,
+  readThemeTokens,
+  resolveRealm,
 };

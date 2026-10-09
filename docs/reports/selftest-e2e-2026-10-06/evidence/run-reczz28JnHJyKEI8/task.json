@@ -1,0 +1,88 @@
+{
+  "task_id": "purchase_supplier-report_001c2d5ae9d262390143d976",
+  "kind": "supplier-report",
+  "record_id": "reczz28JnHJyKEI8",
+  "status": "processing",
+  "created_at": "2026-10-05T16:23:50.783Z",
+  "updated_at": "2026-10-05T16:25:18.249Z",
+  "started_at": "2026-10-05T16:23:50.786Z",
+  "return_plan": {
+    "version": 1,
+    "declared": 2,
+    "size": null,
+    "available": 6,
+    "taken": 2,
+    "sizes": [
+      {
+        "size": 42,
+        "quantity": 1
+      },
+      {
+        "size": 43,
+        "quantity": 1
+      }
+    ],
+    "shortfall": 0,
+    "surplus": 4
+  },
+  "draft": {
+    "is_return": true,
+    "report_record_id": "reczz28JnHJyKEI8",
+    "product_record_id": "rec28dZGihmivx",
+    "product_number": "6A637-7|黑色|A",
+    "supplier_record_id": "recvvnfaQiZS5n",
+    "behavior_record_id": "reczz28Jn7SBKCdm",
+    "operator_open_id": "某员工",
+    "batch_no": "SELFTEST-20261005162348",
+    "items": [
+      {
+        "item_no": "6A637-7",
+        "color": "黑色",
+        "size": 42,
+        "quantity": 1,
+        "product_record_id": "rec28dZGihmivx",
+        "supplier_record_id": "recvvnfaQiZS5n",
+        "report_record_id": "reczz28JnHJyKEI8"
+      },
+      {
+        "item_no": "6A637-7",
+        "color": "黑色",
+        "size": 43,
+        "quantity": 1,
+        "product_record_id": "rec28dZGihmivx",
+        "supplier_record_id": "recvvnfaQiZS5n",
+        "report_record_id": "reczz28JnHJyKEI8"
+      }
+    ],
+    "return_plan": {
+      "version": 1,
+      "declared": 2,
+      "size": null,
+      "available": 6,
+      "taken": 2,
+      "sizes": [
+        {
+          "size": 42,
+          "quantity": 1
+        },
+        {
+          "size": 43,
+          "quantity": 1
+        }
+      ],
+      "shortfall": 0,
+      "surplus": 4
+    }
+  },
+  "posting_progress": {
+    "returns": {
+      "42": "reczz28JnHzB0wPv",
+      "43": "reczz28JnISL0Wol"
+    }
+  },
+  "posting_stage": "return_doc:43",
+  "request_ids": [
+    "reczz28JnHzB0wPv",
+    "reczz28JnISL0Wol"
+  ]
+}

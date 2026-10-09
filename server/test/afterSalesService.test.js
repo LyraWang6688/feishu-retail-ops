@@ -293,12 +293,16 @@ test('退货（cash 退款）· 她的口径：原收款记录改成「已退款
 
   const result = await service.execute(request());
 
-  // 1) 新「销售主表」：原话 + 原单号 + 与销售链路同口径的状态 + 交易类型=行为
+  // 1) 新「销售主表」：原单号 + 与销售链路同口径的状态 + 交易类型=行为
   const masters = masterRows(gateway);
   assert.equal(masters.length, 1);
-  assert.equal(masters[0].fields['原话'], '把那双 A100 退了，鞋没穿过');
   assert.equal(masters[0].fields['销售单号'], ORDER_NO);
-  assert.equal(masters[0].fields['解析状态'], '解析成功');
+  // 🔴 2026-10-09：业务负责人把「原话 / 解析状态」两列从生产「销售主表」删掉了 ⇒ 售后新主表
+  // **不再写**它们（映射 + 写入点一起删，见 `config/v1BitableSchema.salesEntry` 段）。
+  // ⚠️ 这两个键真去写会当场抛「未配置语义字段」（假 Base 与真网关同一个形状）⇒
+  //    它们**必须**是 `undefined`，不是"值变成了别的"。
+  assert.equal(masters[0].fields['原话'], undefined, '「原话」列已删 ⇒ 不许再写');
+  assert.equal(masters[0].fields['解析状态'], undefined, '「解析状态」列已删 ⇒ 不许再写');
   // 2026-10-06 起：只写四个状态维度（旧列已随 schema 删除，写它们会当场抛
   // 「未配置语义字段」——所以这里不需要、也无法再断言那两个旧列名）。
   // 售后主表只在她点过卡片「确认」之后才会被创建 → 「确认状态」= 已确认；
@@ -1079,7 +1083,10 @@ test('⭐ 售后次数：原值是 3 → 这一笔退完变成 4（不是覆盖�
   // 只写这一列（不碰别的）
   const entry = rowsOf(gateway, 'salesEntry').find((row) => row.record_id === 'order_old');
   assert.equal(entry.fields['销售状态'], '已写入');
-  assert.equal(entry.fields['原话'], '卖一双 A100 41 码');
+  // ⚠️ 2026-10-09：这里原来还抽查了「原话」—— 那一列已被业务负责人从生产表删掉
+  //（映射 + 写入点一起删，见 `config/v1BitableSchema.salesEntry` 段）⇒ 改抽查**还在的**
+  // 那一列（原单号），证明"除了售后次数，原主表一个字都没动"这件事没有变。
+  assert.equal(entry.fields['销售单号'], ORDER_NO);
 });
 
 test('⭐ 售后次数：三个动作（退 / 换 / 赔）各 +1（"根据售后行为去叠加"）', async () => {

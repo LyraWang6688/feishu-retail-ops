@@ -281,12 +281,13 @@ class LarkMvpService {
     this.salesGroupThreads = options.salesGroupThreads || new SalesGroupThreadLocator({
       store: options.salesGroupThreadStore,
     });
-    // 「把消息深链存到该存的两处」的唯一落点。业务负责人 2026-10-06 要的：
-    // 本地映射（机器人回查用）＋ 销售主表「消息链接」列（她在表里点）。
-    // ⚠️ 链接只可能在**发送响应**里出现（实测当前不回带），所以它挂在"我们发卡片/文字的那一刻"上。
+    // 「这条话题 ↔ 这笔销售」的**本地**路由映射的唯一落点（业务负责人 2026-10-06 要的）。
+    // ⚠️ 它同时算/存话题深链，但**只存本地**：原来还往销售主表「消息链接」列写一份，
+    //    那一列 + 那个写入点已在 2026-10-09 随"扫码时代不要这几列了"一起删掉
+    //    （见 `salesMessageLinkService` 与 `config/v1BitableSchema.salesEntry` 段）。
+    //    链接只可能在**发送响应**里出现（实测当前不回带），所以它挂在"我们发卡片/文字的那一刻"上。
     this.salesMessageLinks = options.salesMessageLinks || new SalesMessageLinkService({
       locator: this.salesGroupThreads,
-      gateway: this.gateway,
     });
     // @ 判据用的机器人 open_id：**只从配置读，不写死**（见 config/groupPurchase）。
     // 启动时解析一次：解析结果只影响"这条群消息理不理"，不会影响私聊的既有行为。
@@ -688,13 +689,17 @@ class LarkMvpService {
   async sendTaskText(task, message) {
     if (task?.chat_type !== 'group') return skipNoGroupContext('text', task);
     const sent = await this.replyTextInThread(task.message_id, message);
-    // ⚠️ 文字这条出口**只补本地路由映射，不写销售主表**（`storeLink: false`）——两条理由：
+    // ⚠️ 文字这条出口**只补本地路由映射** —— 两条理由：
     //   ① 深链是**话题级**的（URL 里只有 chat_id + thread_id，没有 message_id）：同一话题里
-    //      不管哪条回复拼出来都是同一条，**卖卡片那条出口（sendTaskCard）已经写过了**，再写是空转；
+    //      不管哪条回复拼出来都是同一条，卖卡片那条出口（sendTaskCard）已经记过了，再记是空转；
     //   ② 这条出口里混着"**不猜、不写业务表**"的路径（例：多笔未收款占位 / 金额对不上时
     //      回一句「有多条待收款，请先人工核对」）——业务表的写入**绝不能搭在它上面**，
     //      否则"一个字都不写"这条保证会被一个不相干的副作用破掉。
-    await this.bindGroupSaleThread(task, sent, { storeLink: false });
+    //   ⭐ 2026-10-09：销售主表「消息链接」那一列已被她删掉、**写入点整体删除**
+    //      （见 `salesMessageLinkService` / `v1BitableSchema.salesEntry` 段）——
+    //      于是"写表/不写表"这个开关本身没有了，两条出口现在都只记本地映射
+    //      （本地映射是「话题 ↔ 这笔销售」的路由，本来就必须记）。
+    await this.bindGroupSaleThread(task, sent);
     return sent.messageId;
   }
 
@@ -731,21 +736,21 @@ class LarkMvpService {
   }
 
   /**
-   * 记下「这条话题 ↔ 这笔销售」的路由映射，并把**消息深链**存到该存的两处
-   * （本地映射 + 销售主表「消息链接」列，见 SalesMessageLinkService）。
+   * 记下「这条话题 ↔ 这笔销售」的**本地**路由映射（`data/sales_group_threads/`）。
    *
    * 时机就是"我们第一条回复发出去之后"：`reply_in_thread` 的响应里才带 thread_id
    * （普通群里这个话题是**我们这条回复**创建的）。`message_app_link` 一旦飞书回带，就只有
    * "发出去的那一刻"能拿到（实测 2026-10-06：这个应用当前**根本不回带**，见
    * docs/reports/group-message-deep-link-2026-10-06.md 的实测四）——所以这里是唯一的落点。
-   * 失败只告警——它只影响"她后面在这个话题里说话能不能被认出来 / 表里那列有没有链接"，
+   * 失败只告警——它只影响"她后面在这个话题里说话能不能被认出来"，
    * 绝不能因此把已经发出去的卡片判失败。
    *
-   * ⚠️ `storeLink`（默认 true）：**只有卡片那条出口**才写销售主表的「消息链接」列。
-   *    文字出口（`sendTaskText`）传 false —— 理由见那个方法的注释（话题级深链已经写过了，
-   *    且文字出口里有"不猜、不写业务表"的路径）。本地路由映射**任何情况都记**。
+   * ⚠️ 2026-10-09：原来这里还有一个 `storeLink` 开关（要不要顺手写销售主表「消息链接」列）——
+   *    那一列已被业务负责人删除、**写入点整体下线** ⇒ 开关删掉。
+   *    **本地路由映射仍然是任何情况都记**（「9 点推送」里那句「查看原话」的深链读的就是它，
+   *    与业务表那一列无关）：功能没死，只是不再往业务表写。
    */
-  async bindGroupSaleThread(task, sent = {}, { storeLink = true } = {}) {
+  async bindGroupSaleThread(task, sent = {}) {
     if (task?.chat_type !== 'group') return null;
     try {
       const result = await this.salesMessageLinks.rememberFromSend({
@@ -758,7 +763,6 @@ class LarkMvpService {
         senderOpenId: task.sender_open_id || '',
         replyMessageId: sent?.messageId || '',
         appLink: sent?.appLink || '',
-        storeInBitable: storeLink,
       });
       return result.record;
     } catch (error) {
@@ -1560,9 +1564,13 @@ class LarkMvpService {
           return;
         }
         created = await this.gateway.create('salesEntry', {
-          originalText: task.original_text,
+          // ⚠️ 2026-10-09：原话（`originalText`）与解析状态（`parseStatus='解析中'`）**不再写** ——
+          //    这两列被业务负责人从生产「销售主表」里删掉了（她的口径：「我们要用扫码」、
+          //    「解析状态就是我们对于原话的解析」）。映射与写入点**一起删**，见
+          //    `config/v1BitableSchema.js` 的 `salesEntry` 段。
+          //    ⚠️ `task.original_text`（**本地**任务里她那句话）照旧留着：解析要读它、
+          //      缺项文案要读它；只是**不再落业务表**。
           sender: person(task.sender_open_id),
-          parseStatus: '解析中',
           // 建单 = 还没轮到她做任何动作 → 「确认状态」= 未确认。
           // ⚠️ 旧「确认状态（旧）」那一列已被她 2026-10-06 整列删除，四个维度是唯一入口。
           userAction: WRITE.userAction.pending,
@@ -1935,14 +1943,12 @@ class LarkMvpService {
     const tradeTypeRecordIds = await this.syncSalesTradeTypes({
       salesEntryRecordId, items, taskId,
     });
-    // ⚠️ 复用已定位的那笔销售时（群话题里的后续消息），**不写**这几个"解析中间态"
-    //    字段：`解析摘要` 里放的是**这一条消息**的草稿，写上去会把她原单的解析摘要盖掉。
-    //    她的原单已经在表里了，这次的处理过程留在本地任务里就够（不放业务表）。
-    // ⭐ 「销售信息还缺…」那段话**只在这里渲染一次**（两处出口共用同一份，见下）：
-    //    · 「解析失败原因」列（表里给她看的解释）—— 只取分行的**条目**、不带开头那句汇总；
-    //    · 群里回她那一条 —— 带开头汇总 + 行首编号。
-    // ⚠️ 渲染器只把 `missing_fields`（机器清单）翻成人话，**不改条数、不改判据**；
-    //    `missing_fields` 本身与 `解析结果摘要`（JSON）**逐字不变** —— 排查时仍看得到原值。
+    // ⭐ 「销售信息还缺…」那段话**只在这里渲染一次**（出口共用同一份，见下）：
+    //    · 群里回她那一条 —— 带开头汇总 + 行首编号；
+    //    · ⚠️ 2026-10-09：原来还有**一处出口**是「失败原因」列（只取分行的条目、不带汇总，
+    //      即 `missingInfo.lines`）—— 那一列已被她删掉、写入点同步删除
+    //      ⇒ 缺项解释现在**只在群里回她**这一处渲染。
+    //    （渲染器 `renderSalesMissingInfo` 一个字没动，机器清单 `missing_fields` 也没动。）
     const missingInfo = renderSalesMissingInfo({
       missingFields: draft.missing_fields || [],
       items,
@@ -1951,18 +1957,19 @@ class LarkMvpService {
     // 摸底：万一将来冒出一种"渲染不出来的形状"，**绝不静默** ——
     // 退回改动前的原样拼接（宁可不好看，也不能让她以为"没事了"）。
     const missingInfoText = missingInfo.text || draft.missing_fields.join('\n');
-    const missingInfoLines = missingInfo.lines.length ? missingInfo.lines : draft.missing_fields;
-    if (!created.reused) {
-      await this.gateway.update('salesEntry', salesEntryRecordId, {
-        parseStatus: draft.missing_fields?.length ? '需补充' : '解析成功',
-        parseSummary: JSON.stringify(draft),
-        // ⭐ 这一行是 #233 的（缺项文案人话化）：渲染成分行的人话。
-        failureReason: draft.missing_fields?.length ? missingInfoLines.join('\n') : '',
-        // ⭐ 这一行是 #234 的（一单多明细）：交易类型**按明细行**收集、主表**多选**。
-        // 两行来自不同的改动，各自都是对的、互不相干 —— 所以**两行并存**，一行都不删。
-        // 「交易类型」是**多选**关联字段：一个 id 就是单选（长度 1），多个就是多选。
-        ...(tradeTypeRecordIds.length ? { tradeType: relation(tradeTypeRecordIds) } : {}),
-      });
+    // ⚠️ 2026-10-09：解析状态 / 解析结果摘要 / 失败原因 **三个字段的写入点随列一起删**
+    //    （业务负责人当天口径：「我们要用扫码」——语音+文字时代的诊断列不要了；
+    //      详见 `config/v1BitableSchema.js` 的 `salesEntry` 段）。
+    //    这一处 update 原来就是为它们而写；现在只剩**「交易类型」**（多选关联，按明细行收集，
+    //    一个 id 就是单选、多个就是多选）。
+    //    ⚠️ 复用已定位的那笔销售时（群话题里的后续消息）**不写**它：那属于**这一条消息**，
+    //      写上去会把她原单的关联盖掉；这次的处理过程留在本地任务里就够（不放业务表）。
+    //    ⚠️ 没有东西可写时**不再发一次空 update**（空 patch 是纯空转）。
+    const parsedMetaPatch = {
+      ...(tradeTypeRecordIds.length ? { tradeType: relation(tradeTypeRecordIds) } : {}),
+    };
+    if (!created.reused && Object.keys(parsedMetaPatch).length) {
+      await this.gateway.update('salesEntry', salesEntryRecordId, parsedMetaPatch);
     }
     await this.store.update(taskId, {
       status: draft.missing_fields?.length ? 'needs_info' : 'ready_to_confirm',

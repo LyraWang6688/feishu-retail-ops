@@ -9,9 +9,16 @@ const V1_SCHEMA_SCOPES = {
   purchase: [
     'product',
     'supplier',
+    // ⚠️ 2026-10-09 只读核对生产真表：**「信息填写」这张表在生产 Base 里已经没有了**
+    //    （`TableIdNotFound` 1254041）⇒ 本档闸门现在**就是红的**。
+    //    它**刻意留在这里**：那是"供应商报单入口要不要整个退场"的业务决定，
+    //    不是我们能顺手删的一行（详见 `v1BitableSchema.purchaseReport` 那一段的说明）。
     'purchaseReport',
     'purchaseRequest',
     'purchaseOrderBatch',
+    // ⚠️ 2026-10-09 新表「付款明细」**刻意不在这里**：真表只有主字段「文本」、
+    //    一个业务列都还没有 ⇒ 现在纳入闸门只会把"她还在建表"变成部署红
+    //    （与 `groupBuyVoucher` 同一处置）。等她定了列再决定进不进这一档。
     // ⚠️ `purchaseArrival`（「到货验收」）已从 schema 与这里**一并删除**（2026-10-07 晚）：
     //    业务负责人把那张表整个删了，到货落点搬到「报货批次」。
     //    留着它 = 部署闸门 `v1:schema-check:purchase` 去问一张不存在的表，直接判红。

@@ -1,0 +1,345 @@
+{
+  "ran_at": "2026-10-05T16:28:56.521Z",
+  "mode": "return",
+  "base_app_token": "FEISHU_V1_E2E_TEST_APP_TOKEN 指向的那个（见 .env.example）",
+  "im": "intercepted(fake)",
+  "chat_id": "oc_selftest_local_group",
+  "input": {
+    "recordId": "reczz28JnL0SZuoS",
+    "productRecordId": "rec28dNP1CqQcY",
+    "productLabel": "832-555|黑色|A",
+    "quantity": 2,
+    "size": null,
+    "returnBehavior": {
+      "recordId": "reczz28Jn7SBKCdm",
+      "name": "采购减少",
+      "code": "STOCK_PURCHASE_DECREASE",
+      "enabled": true
+    },
+    "operatorOpenId": "某员工"
+  },
+  "task": {
+    "task_id": "purchase_supplier-report_c602aa426af4d15bbe1d561c",
+    "status": "posted",
+    "error": "",
+    "return_plan": {
+      "version": 1,
+      "declared": 2,
+      "size": null,
+      "available": 8,
+      "taken": 2,
+      "sizes": [
+        {
+          "size": 40,
+          "quantity": 1
+        },
+        {
+          "size": 43,
+          "quantity": 1
+        }
+      ],
+      "shortfall": 0,
+      "surplus": 6
+    },
+    "draft": {
+      "is_return": true,
+      "report_record_id": "reczz28JnL0SZuoS",
+      "product_record_id": "rec28dNP1CqQcY",
+      "product_number": "832-555|黑色|A",
+      "supplier_record_id": "recvvnfaQiZS5n",
+      "behavior_record_id": "reczz28Jn7SBKCdm",
+      "operator_open_id": "某员工",
+      "batch_no": "SELFTEST-20261005162716",
+      "items": [
+        {
+          "item_no": "832-555",
+          "color": "黑色",
+          "size": 40,
+          "quantity": 1,
+          "product_record_id": "rec28dNP1CqQcY",
+          "supplier_record_id": "recvvnfaQiZS5n",
+          "report_record_id": "reczz28JnL0SZuoS"
+        },
+        {
+          "item_no": "832-555",
+          "color": "黑色",
+          "size": 43,
+          "quantity": 1,
+          "product_record_id": "rec28dNP1CqQcY",
+          "supplier_record_id": "recvvnfaQiZS5n",
+          "report_record_id": "reczz28JnL0SZuoS"
+        }
+      ],
+      "return_plan": {
+        "version": 1,
+        "declared": 2,
+        "size": null,
+        "available": 8,
+        "taken": 2,
+        "sizes": [
+          {
+            "size": 40,
+            "quantity": 1
+          },
+          {
+            "size": 43,
+            "quantity": 1
+          }
+        ],
+        "shortfall": 0,
+        "surplus": 6
+      }
+    }
+  },
+  "before": {
+    "liveRows": [
+      {
+        "record_id": "recvw7x87Li1lZ",
+        "state": "样品",
+        "size": "40",
+        "stockKey": "832-555|黑色|A|40"
+      },
+      {
+        "record_id": "recvw7x8Ax6YqS",
+        "state": "门盒",
+        "size": "43",
+        "stockKey": "832-555|黑色|A|43"
+      },
+      {
+        "record_id": "recvw7x8AxFicn",
+        "state": "门盒",
+        "size": "42",
+        "stockKey": "832-555|黑色|A|42"
+      },
+      {
+        "record_id": "recvw7x8AxgDre",
+        "state": "门盒",
+        "size": "42",
+        "stockKey": "832-555|黑色|A|42"
+      },
+      {
+        "record_id": "recvw7x8Axhkx9",
+        "state": "门盒",
+        "size": "44",
+        "stockKey": "832-555|黑色|A|44"
+      },
+      {
+        "record_id": "recvw7x8AxjBNQ",
+        "state": "门盒",
+        "size": "42",
+        "stockKey": "832-555|黑色|A|42"
+      },
+      {
+        "record_id": "recvw7x8AxKPnR",
+        "state": "门盒",
+        "size": "44",
+        "stockKey": "832-555|黑色|A|44"
+      },
+      {
+        "record_id": "recvw7x8AxsVa7",
+        "state": "门盒",
+        "size": "39",
+        "stockKey": "832-555|黑色|A|39"
+      }
+    ],
+    "ledgerCount": 168,
+    "requestCount": 84
+  },
+  "after": {
+    "liveRows": [
+      {
+        "record_id": "recvw7x8AxFicn",
+        "state": "门盒",
+        "size": "42",
+        "stockKey": "832-555|黑色|A|42"
+      },
+      {
+        "record_id": "recvw7x8AxgDre",
+        "state": "门盒",
+        "size": "42",
+        "stockKey": "832-555|黑色|A|42"
+      },
+      {
+        "record_id": "recvw7x8Axhkx9",
+        "state": "门盒",
+        "size": "44",
+        "stockKey": "832-555|黑色|A|44"
+      },
+      {
+        "record_id": "recvw7x8AxjBNQ",
+        "state": "门盒",
+        "size": "42",
+        "stockKey": "832-555|黑色|A|42"
+      },
+      {
+        "record_id": "recvw7x8AxKPnR",
+        "state": "门盒",
+        "size": "44",
+        "stockKey": "832-555|黑色|A|44"
+      },
+      {
+        "record_id": "recvw7x8AxsVa7",
+        "state": "门盒",
+        "size": "39",
+        "stockKey": "832-555|黑色|A|39"
+      }
+    ],
+    "removedLive": [
+      {
+        "record_id": "recvw7x87Li1lZ",
+        "state": "样品",
+        "size": "40",
+        "stockKey": "832-555|黑色|A|40"
+      },
+      {
+        "record_id": "recvw7x8Ax6YqS",
+        "state": "门盒",
+        "size": "43",
+        "stockKey": "832-555|黑色|A|43"
+      }
+    ],
+    "ledgerRows": [
+      {
+        "record_id": "reczz28JnLbnCCtp",
+        "size": "40",
+        "quantityChange": "1",
+        "behavior": [
+          {
+            "name": "采购减少",
+            "code": "STOCK_PURCHASE_DECREASE"
+          }
+        ],
+        "hasSource": false
+      },
+      {
+        "record_id": "reczz28JnMFm5iYh",
+        "size": "43",
+        "quantityChange": "1",
+        "behavior": [
+          {
+            "name": "采购减少",
+            "code": "STOCK_PURCHASE_DECREASE"
+          }
+        ],
+        "hasSource": false
+      }
+    ],
+    "requestRows": [
+      {
+        "record_id": "reczz28JnLNUA3Dk",
+        "size": "40",
+        "quantity": "1",
+        "behavior": [
+          {
+            "name": "采购减少",
+            "code": "STOCK_PURCHASE_DECREASE"
+          }
+        ],
+        "idempotencyKey": "purchase_return:reczz28JnL0SZuoS:40",
+        "attachmentCount": 0
+      },
+      {
+        "record_id": "reczz28JnM3NH3Dc",
+        "size": "43",
+        "quantity": "1",
+        "behavior": [
+          {
+            "name": "采购减少",
+            "code": "STOCK_PURCHASE_DECREASE"
+          }
+        ],
+        "idempotencyKey": "purchase_return:reczz28JnL0SZuoS:43",
+        "attachmentCount": 0
+      }
+    ],
+    "report": {
+      "status": "已生成申请",
+      "request": [
+        "reczz28JnLNUA3Dk",
+        "reczz28JnM3NH3Dc"
+      ]
+    }
+  },
+  "outbox": {
+    "images": [
+      {
+        "bytes": 33458,
+        "image_type": "message"
+      }
+    ],
+    "messages": [
+      {
+        "params": {
+          "receive_id_type": "chat_id"
+        },
+        "data": {
+          "receive_id": "oc_selftest_local_group",
+          "msg_type": "image",
+          "content": "{\"image_key\":\"img_selftest_1\"}"
+        }
+      },
+      {
+        "params": {
+          "receive_id_type": "chat_id"
+        },
+        "data": {
+          "receive_id": "oc_selftest_local_group",
+          "msg_type": "text",
+          "content": "{\"text\":\"<at user_id=\\\"某员工\\\"></at> 七匹狼/吉祥鸟 这批 2 条（共 2 双），图可以直接转给供应商。\"}"
+        }
+      },
+      {
+        "params": {
+          "receive_id_type": "open_id"
+        },
+        "data": {
+          "receive_id": "某员工",
+          "msg_type": "text",
+          "content": "{\"text\":\"采购退货：832-555黑色 你填的 2 双对上了，已经退回。⚠️ 832-555黑色 在实时库存里还剩 6 双没退（总数是 8 双）——要一起退就把数量改成总数再提交一条～\"}"
+        }
+      }
+    ]
+  },
+  "checks": [
+    {
+      "id": "①",
+      "pass": true,
+      "text": "出「采购退货单」：单据信息新增 2 行（本次退货涉及 2 个尺码），合计 2 双 = 填的 2",
+      "evidence": "单据信息行=[{\"id\":\"reczz28JnLNUA3Dk\",\"size\":\"40\",\"qty\":\"1\"},{\"id\":\"reczz28JnM3NH3Dc\",\"size\":\"43\",\"qty\":\"1\"}]；PNG=1 张",
+      "substance": null
+    },
+    {
+      "id": "②",
+      "pass": true,
+      "text": "「库存流水」新增 2 行（每行变动数量 1），库存行为 = 采购减少 / STOCK_PURCHASE_DECREASE",
+      "evidence": "新增流水=[{\"id\":\"reczz28JnLbnCCtp\",\"size\":\"40\",\"qty\":\"1\",\"behavior\":[\"STOCK_PURCHASE_DECREASE\"]},{\"id\":\"reczz28JnMFm5iYh\",\"size\":\"43\",\"qty\":\"1\",\"behavior\":[\"STOCK_PURCHASE_DECREASE\"]}]",
+      "substance": {
+        "pass": true,
+        "text": "实现口径是「一个尺码一行、变动数量=该尺码退掉的双数」（销售/入库也是这个粒度）：实际 2 行、变动数量合计 2 双、行为 [\"STOCK_PURCHASE_DECREASE\"]"
+      }
+    },
+    {
+      "id": "③",
+      "pass": true,
+      "text": "「实时库存」对应尺码减少：被退的 2 行消失；减到 0 的尺码不再有行",
+      "evidence": "消失行=[{\"id\":\"recvw7x87Li1lZ\",\"size\":\"40\",\"state\":\"样品\"},{\"id\":\"recvw7x8Ax6YqS\",\"size\":\"43\",\"state\":\"门盒\"}]；按尺码核对=[{\"size\":40,\"before\":1,\"taken\":1,\"after\":0,\"expectedAfter\":0},{\"size\":43,\"before\":1,\"taken\":1,\"after\":0,\"expectedAfter\":0}]；剩余行=[{\"id\":\"recvw7x8AxFicn\",\"size\":\"42\",\"state\":\"门盒\"},{\"id\":\"recvw7x8AxgDre\",\"size\":\"42\",\"state\":\"门盒\"},{\"id\":\"recvw7x8Axhkx9\",\"size\":\"44\",\"state\":\"门盒\"},{\"id\":\"recvw7x8AxjBNQ\",\"size\":\"42\",\"state\":\"门盒\"},{\"id\":\"recvw7x8AxKPnR\",\"size\":\"44\",\"state\":\"门盒\"},{\"id\":\"recvw7x8AxsVa7\",\"size\":\"39\",\"state\":\"门盒\"}]",
+      "substance": null
+    },
+    {
+      "id": "④",
+      "pass": true,
+      "text": "「供应商对接」处理状态 = 已生成申请，且「关联采购申请」回填到刚生成的那几行",
+      "evidence": "处理状态=已生成申请；关联采购申请=[\"reczz28JnLNUA3Dk\",\"reczz28JnM3NH3Dc\"]；单据信息行=[\"reczz28JnLNUA3Dk\",\"reczz28JnM3NH3Dc\"]",
+      "substance": null
+    },
+    {
+      "id": "⑤",
+      "pass": false,
+      "text": "往群里发 1 张退货单图 + 1 条 @经办人 的文字，并把图写回「单据信息」附件",
+      "evidence": "图片消息=1 条；文字消息=[{\"receive_id\":\"oc_selftest_local_group\",\"receive_id_type\":\"chat_id\",\"text\":\"<at user_id=\\\"某员工\\\"></at> 七匹狼/吉祥鸟 这批 2 条（共 2 双），图可以直接转给供应商。\",\"mentions\":[\"<at user_id=\\\"某员工\\\"\"]},{\"receive_id\":\"某员工\",\"receive_id_type\":\"open_id\",\"text\":\"采购退货：832-555黑色 你填的 2 双对上了，已经退回。⚠️ 832-555黑色 在实时库存里还剩 6 双没退（总数是 8 双）——要一起退就把数量改成总数再提交一条～\",\"mentions\":[]}]；附件回写（每条单据信息行的附件数）=[0,0]",
+      "substance": null
+    }
+  ],
+  "passed": 4,
+  "total": 5
+}
