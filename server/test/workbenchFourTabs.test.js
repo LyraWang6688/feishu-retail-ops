@@ -380,9 +380,11 @@ test('AC2d 订单列表的三份单子：补充信息单 / 待交割单 / 售后
   for (const key of ['supplement', 'pending', 'afterSales']) {
     assert.ok(html.includes(`data-sales-section="${key}"`), `缺 ${key} 这一段`);
   }
-  // 每一段的条数（只看**段头**那一个 `· N 单`；待交割单里面还有三类小标题，别数错）
+  // 每一段的条数（只看**段头**那一个 `N 单`；待交割单里面还有三类小标题，别数错）
+  // ⚠️ 2026-10-10 改写：段头那句解释（`hint`）已按她"文字解释就不用了"删掉，
+  //    `· N 单` 因此变成 `N 单`（**只改格式，条数的判据一个字没放宽**）。
   const counts = html.split('data-sales-section="').slice(1)
-    .map((chunk) => Number((chunk.match(/· (\d+) 单/) || [])[1]));
+    .map((chunk) => Number((chunk.match(/(\d+) 单/) || [])[1]));
   assert.deepEqual(counts, [1, 1, 1], '每一段各一单（不重不漏）');
   // ⭐ 三份单子各带一个**彩色小标签**（她 2026-10-09：状态用彩色小标签）
   assert.deepEqual(frontConfig.SALES_SECTIONS.map((section) => section.tag), ['待补充', '待交割', '已两清']);
@@ -791,16 +793,20 @@ test('AC8 三个占位页统一写「待建设」：客户往来款 / 采购订�
   for (const page of pages) {
     const html = nav.domainPageHtml(page);
     assert.ok(html.includes('data-page-kind="placeholder"'), `${page.label} 要按占位页渲染`);
-    assert.ok(html.includes('<h3 class="section-title">'), `${page.label} 要有标题`);
+    // ⚠️ 2026-10-10 断言翻转（业务负责人真机反馈：「下面的这些文字解释就不用了」）：
+    //    占位页**只留「待建设」一个小标记** —— 标题（与子 tab 重复）与"将来放…"那句说明
+    //    **必须不存在**（原来这里钉的是"要有标题 / 要注明将来放什么"）。
+    assert.ok(!/class="section-title"/.test(html), `${page.label} 不许再画一遍标题（子 tab 上已经有了）`);
     assert.ok(html.includes(placeholder.PLACEHOLDER_STATUS), `${page.label} 要写「待建设」`);
-    assert.ok(page.note && html.includes(page.note), `${page.label} 要注明将来放什么`);
+    assert.equal(page.note, undefined, `${page.label} 的「将来放…」说明句必须删掉`);
+    assert.ok(!/将来放/.test(html), `${page.label} 不许再写「将来放…」`);
     assert.ok(html.includes('class="tag'), `${page.label} 要有彩色小标签（状态标记）`);
     // 移动端哨兵同样适用于新页面
     assert.ok(!/<table/i.test(html), `${page.label} 不许用表格`);
     assert.ok(!/min-width:\s*\d{3,}px/.test(html), `${page.label} 不许内联超宽固定宽度`);
   }
-  // 采购订单列表 = 她点名的"未来放 AI 页面"
-  assert.match(nav.domainPageHtml(pages[1]), /AI 页面/, '采购订单列表要写明将来放 AI 页面');
+  // 采购订单列表 = 她说的"占位页"：连「将来放 AI 页面」那句也删掉了（口径 2026-10-10 收紧）
+  assert.ok(!/AI 页面/.test(nav.domainPageHtml(pages[1])), '占位页只留「待建设」，不再写将来放什么');
   // 子 tab 上也能点得到这三个占位页
   const salesTabs = nav.domainSubTabsHtml(byId.get('sales'));
   assert.ok(salesTabs.includes('>客户往来款</button>'));
@@ -821,7 +827,7 @@ test('AC8 三个占位页统一写「待建设」：客户往来款 / 采购订�
 
 test('AC9 「验收到货」入口搬进「采购 → 报货 / 验收 / 退货」：内嵌既有 orders 的 purchase 模式', async () => {
   const modules = loadFrontendModules();
-  const domains = await modules.domains;
+  const [domains, pages] = await Promise.all([modules.domains, modules.domainPages]);
   const purchase = domains.domainById('purchase');
   const report = purchase.pages.find((page) => page.id === 'purchase-report');
 
@@ -831,8 +837,15 @@ test('AC9 「验收到货」入口搬进「采购 → 报货 / 验收 / 退货�
     ['purchase-arrival', 'orders', 'purchase'],
     '验收块 = 既有订单模块的 purchase 模式（配置先行）',
   );
-  assert.ok(report.embed.title && report.embed.subtitle, '验收块自带标题与一句说明（文案在配置里）');
+  // ⚠️ 2026-10-10 断言翻转（业务负责人真机反馈：「下面的这些文字解释就不用了」）：
+  //    验收块那句说明（例「按采购订单（= 报货批次那些单）：一张报货批次一张卡…」）
+  //    与和卡片重复的块标题**都必须不存在** —— 验收台本身（批次卡 + 验收入口）照旧。
+  assert.equal(report.embed.subtitle, undefined, '验收块那句说明必须删掉');
+  assert.equal(report.embed.title, undefined, '验收块的标题与卡片重复 ⇒ 删掉');
   assert.equal(report.cards.find((card) => card.title === '验收到货').anchor, '#purchase-arrival');
+  // 那张卡点一下要**真的**跳到验收台：锚点目标在渲染出来的 HTML 里真实存在
+  assert.ok(pages.linksPageHtml(report).includes('id="purchase-arrival"'),
+    '锚点目标必须真实存在（不然那张卡点了没反应）');
 
   // ② 渲染层：把既有模块挂进宿主（**一行新验收逻辑都没有**）
   const index = stripComments(readWorkbench('features/domains/index.js'));

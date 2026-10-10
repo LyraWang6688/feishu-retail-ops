@@ -152,7 +152,7 @@ export function ordersBoardHtml(orders = [], groupKeys = SALES_GROUPS.map((group
       <section class="order-group" data-sales-group="${escapeHtml(group.key)}">
         <div class="order-group-head">
           <h3>${escapeHtml(group.label)}</h3>
-          <span class="muted">${escapeHtml(group.hint)} · ${group.orders.length} 单</span>
+          <span class="muted">${group.orders.length} 单</span>
         </div>
         ${group.orders.length
     ? ordersListHtml(group.orders)
@@ -202,7 +202,7 @@ export function ordersSectionsHtml(orders = []) {
       <section class="order-section" data-sales-section="${escapeHtml(section.key)}">
         <div class="order-group-head">
           <h3>${escapeHtml(section.label)}<span class="tag tag-${escapeHtml(section.tone || 'info')}">${escapeHtml(section.tag || '')}</span></h3>
-          <span class="muted">${escapeHtml(section.hint)} · ${list.length} 单</span>
+          <span class="muted">${list.length} 单</span>
         </div>
         ${body}
       </section>`;
@@ -258,7 +258,6 @@ export function purchaseOrdersHtml(rows = []) {
         <details class="action-form" data-action-block="verify-arrival" data-arrival-batch="${escapeHtml(batch.batch_no)}">
           <summary>${escapeHtml(T.arrivalVerifyTitle)}</summary>
           <div class="action-body">
-            <p class="muted">${escapeHtml(T.arrivalVerifyHint)}</p>
             <label class="form-field">${escapeHtml(T.arrivalAmount)}
               <input data-field="arrival-amount" type="text" inputmode="decimal" placeholder="${escapeHtml(ARRIVAL_CONFIRM.amountPlaceholder)}">
             </label>
@@ -287,7 +286,6 @@ const deliveryBlock = (order) => {
       <details class="action-form" data-action-block="delivery">
         <summary>${escapeHtml(T.deliveryTitle)}</summary>
         <div class="action-body">
-          <p class="muted">${escapeHtml(T.deliveryHint)}</p>
           ${body}
         </div>
       </details>`;
@@ -297,7 +295,6 @@ const paymentFormBlock = (order, methods) => `
       <details class="action-form" data-action-block="payment">
         <summary>${escapeHtml(T.collectTitle)}</summary>
         <div class="action-body">
-          <p class="muted">${escapeHtml(T.collectHint)}</p>
           <label class="form-field">${escapeHtml(T.collectAmount)}（还差 ${amount(order.pending_amount)}）
             <input data-field="payment-amount" type="text" inputmode="decimal" value="${escapeHtml(order.pending_amount == null ? '' : order.pending_amount)}">
           </label>
@@ -312,7 +309,6 @@ const secondDeliveryBlock = (order, methods) => `
       <details class="action-form" data-action-block="second-delivery">
         <summary>${escapeHtml(T.secondDeliveryTitle)}</summary>
         <div class="action-body">
-          <p class="muted">${escapeHtml(T.secondDeliveryHint)}</p>
           <label class="form-field">${escapeHtml(T.secondDeliveryMethod)}
             <select data-field="second-delivery-method">${methodOptionsHtml(methods)}</select>
           </label>
@@ -327,7 +323,6 @@ const afterSalesBlock = (order, methods) => {
       <details class="action-form" data-action-block="after-sales">
         <summary>${escapeHtml(T.afterSalesTitle)}</summary>
         <div class="action-body">
-          <p class="muted">${escapeHtml(T.afterSalesHint)}</p>
           <label class="form-field">${escapeHtml(T.afterSalesAction)}
             <select data-field="after-sales-action">
               ${AFTER_SALES_ACTIONS.map((item, index) => `<option value="${escapeHtml(item.value)}"${index === 0 ? ' selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}
@@ -474,9 +469,11 @@ export function createOrdersModule({ mode = 'both' } = {}) {
   }
 
   function renderShell() {
-    const subtitle = mode === 'purchase' ? (P.purchaseSubtitle || P.subtitle) : P.subtitle;
-    // 单领域模式（销售 tab / 采购 tab）**不画**内部那排子 tab —— 一级 tab 已经分好领域了，
-    // 再套一层"销售 / 采购"只会让她多点一下（移动端尤其烦）。默认模式一个字没变。
+    // ⭐ 2026-10-10（业务负责人真机反馈：「下面的这些文字解释就不用了」）：
+    //    一级领域页里**不再画大标题与描述行** —— 与子 tab 重复（订单列表在「销售」/「采购」
+    //    两个领域里都是子 tab）。这里只留**能点的**：内部子 tab（非单领域模式）+ 列表正文。
+    //    单领域模式（销售 tab / 采购 tab）**不画**内部那排子 tab —— 一级 tab 已经分好领域了，
+    //    再套一层"销售 / 采购"只会让她多点一下（移动端尤其烦）。默认模式一个字没变。
     const subTabs = singleMode ? '' : `<div class="sub-tabs" data-view="orders-subtabs">${subTabsHtml(state.subTab)}</div>`;
     const salesPanel = `<div class="sub-panel${state.subTab === 'sales' ? '' : ' hidden'}" data-view="sales-panel">
           <div data-view="orders-host"><p class="section-loading">正在读取订单…</p></div>
@@ -486,12 +483,6 @@ export function createOrdersModule({ mode = 'both' } = {}) {
         </div>`;
     state.container.innerHTML = `
       <section class="panel">
-        <div class="panel-header">
-          <div>
-            <h2>${escapeHtml(P.title)}</h2>
-            <p class="subtitle">${escapeHtml(subtitle)}</p>
-          </div>
-        </div>
         ${subTabs}
         ${mode === 'purchase' ? '' : salesPanel}
         ${mode === 'sales' ? '' : purchasePanel}

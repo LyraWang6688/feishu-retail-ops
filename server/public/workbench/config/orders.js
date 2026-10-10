@@ -15,11 +15,9 @@
 
 /** 面板文案。 */
 export const ORDERS_PAGE = {
-  title: '订单列表',
-  subtitle: '销售单号 · 销售明细 · 收款情况；按「补充信息单 ｜ 待交割单 ｜ 售后列表」分段，点开一张单可以补收款、交付、售后、二次交付',
-  // ⭐ 2026-10-09：同一个模块现在挂在**两个领域**里 —— 销售 tab 只看销售、采购 tab 只看采购；
-  //    从 `createOrdersModule({ mode })` 进来（`mode` 由 `config/domains.js` 给）。
-  purchaseSubtitle: '按采购订单（= 报货批次那些单）：一张报货批次一张卡，每张卡都能「验收到货」',
+  // ⭐ 2026-10-10（业务负责人真机反馈：「下面的这些文字解释就不用了」）：
+  //    `title` / `subtitle` / `purchaseSubtitle` **整字段退场** —— 那是一级领域页里
+  //    与子 tab 重复的大标题和它下面那行说明（订单列表在「销售」/「采购」两个领域里都是子 tab）。
   empty: '还没有已入账的销售单',
   purchaseEmpty: '还没有采购申请（报货批次）记录',
   detailTitle: '订单详情',
@@ -53,11 +51,16 @@ export const ORDERS_SUB_TABS = [
 export const DELIVERED_FULFILLMENT = '已交付';
 export const PAID_PAYMENT_STATUS = '已收款';
 
+/**
+ * 四类分组（空的那类也留着 —— 页面要显式告诉她这一类现在没有单）。
+ * ⚠️ 2026-10-10：每组那句解释（`hint`，例「货已交付、钱已收清」）**已删** ——
+ *    段头只留「名字 + 状态小标签 + N 单」（她：「下面的这些文字解释就不用了」）。
+ */
 export const SALES_GROUPS = [
-  { key: 'settled', label: '钱货两清', hint: '货已交付、钱已收清' },
-  { key: 'undelivered', label: '有二次 · 货未交付', hint: '钱收清了，货还没交完' },
-  { key: 'unpaid', label: '有二次 · 资金未收', hint: '货交付了，钱还没收清' },
-  { key: 'both', label: '有二次 · 两者都有', hint: '货没交完，钱也没收清' },
+  { key: 'settled', label: '钱货两清' },
+  { key: 'undelivered', label: '有二次 · 货未交付' },
+  { key: 'unpaid', label: '有二次 · 资金未收' },
+  { key: 'both', label: '有二次 · 两者都有' },
 ];
 
 /**
@@ -75,11 +78,12 @@ export const SALES_GROUPS = [
  * ⚠️ 这里**不新增任何状态枚举**：不含"已两清 / 未付清"这类自造词（有测试钉着）。
  * ⭐ 2026-10-09（下半场）：每份单子配一个**彩色小标签**（`tag` + `tone`，她要求
  *    "状态用彩色小标签"）：**待补充 / 待交割 / 已两清**。`tone` 只决定颜色（用既有语义色令牌）。
+ * ⚠️ 2026-10-10：每段那句解释（`hint`）**已删** —— 段头只留「名字 + 小标签 + N 单」。
  */
 export const SALES_SECTIONS = [
-  { key: 'supplement', label: '补充信息单', tag: '待补充', tone: 'warning', hint: '信息还没填全（尺码 / 金额 / 状态缺），补完就不会出现在这里' },
-  { key: 'pending', label: '待交割单', tag: '待交割', tone: 'info', hint: '货没给完 / 钱没付完' },
-  { key: 'afterSales', label: '售后列表', tag: '已两清', tone: 'success', hint: '钱货两清' },
+  { key: 'supplement', label: '补充信息单', tag: '待补充', tone: 'warning' },
+  { key: 'pending', label: '待交割单', tag: '待交割', tone: 'info' },
+  { key: 'afterSales', label: '售后列表', tag: '已两清', tone: 'success' },
 ];
 
 /**
@@ -166,7 +170,16 @@ export const SETTLEMENTS = [
   { value: 'prepaid', label: '钱留在我们这里（已留存，仅退货）', actions: ['return'] },
 ];
 
-/** 页面上的一切固定文案（渲染层不写死句子）。 */
+/**
+ * 页面上的一切固定文案（渲染层不写死句子）。
+ *
+ * ⭐ 2026-10-10（业务负责人真机反馈：「下面的这些文字解释就不用了」）：
+ *    ⚠️ 五个**使用说明句**已整字段退场（`collectHint` / `deliveryHint` / `afterSalesHint` /
+ *       `secondDeliveryHint` / `arrivalVerifyHint`）—— 每个动作的标题（`<summary>`）与
+ *       字段标签本身就说清了"能做什么"，再写一句解释就是说明书。
+ *    ⭐ **保留下来的都是"填表要用到的"**：动作标题 · 字段标签 · 下拉占位 · 空状态人话 ·
+ *       校验提示（校验句在 `features/orders/index.js` 里，原样保留）。
+ */
 export const ORDERS_TEXTS = {
   orderNo: '销售单号',
   details: '销售明细',
@@ -176,15 +189,12 @@ export const ORDERS_TEXTS = {
   receivable: '应收',
   pendingDelivery: '待交付',
   collectTitle: '补收款',
-  collectHint: '记一笔收款（收款方式默认微信，可以改）',
   collectAmount: '收款金额',
   collectSubmit: '提交收款',
   deliveryTitle: '交付',
-  deliveryHint: '把货出库（勾上这次交付的明细）',
   deliveryEmpty: '这张单没有待交付的明细了',
   deliverySubmit: '提交交付',
   afterSalesTitle: '售后（退 / 换 / 赔）',
-  afterSalesHint: '退回 / 换出 / 赔出的鞋都走既有售后处理层，原单不会被改',
   afterSalesDetails: '要处理的销售明细',
   afterSalesAction: '动作',
   restockState: '退回的鞋回哪儿',
@@ -201,15 +211,14 @@ export const ORDERS_TEXTS = {
   refundMethod: '收款方式（资金走向 = 退给她 / 她补差价 时必填）',
   afterSalesSubmit: '提交售后',
   secondDeliveryTitle: '二次交付（收尾款 + 交付）',
-  secondDeliveryHint: '把还没收的尾款记成已收，并把还没交的货交付（扣库存）；收款方式默认微信',
   secondDeliveryMethod: '收款方式',
   secondDeliverySubmit: '收尾款并交付',
   paymentMethod: '收款方式',
   select: '请选择',
-  // ── ⭐ 2026-10-09 追加：子 tab + 采购验收 ──────────────────────────────────
+  // ── ⭐ 2026-10-09 追加：采购验收 ──────────────────────────────────────────
   verifyArrival: '验收到货',
-  arrivalVerifyTitle: '验收到货（按采购申请数全部到货，走既有入库链路）',
-  arrivalVerifyHint: '实际金额必填（她 2026-10-08 定：「金额这个是必填的」）。到货说明会写进「报货批次」的「验收原话」',
+  // 验收表单的标题（`<details>` 的 summary）：与按钮同名，不再带"按采购申请数全部到货…"那串解释。
+  arrivalVerifyTitle: '验收到货',
   arrivalAmount: '实际金额',
   arrivalNote: '到货说明（写进验收原话）',
   arrivalSubmit: '确认到货并入库',

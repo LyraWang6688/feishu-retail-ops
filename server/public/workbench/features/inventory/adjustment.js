@@ -19,14 +19,12 @@ const SEASON_ACTIONS = {
 };
 
 function renderShell(container) {
+  // ⭐ 2026-10-10（业务负责人真机反馈：「下面的这些文字解释就不用了」）：
+  //    这一页现在**两个地方**都用（工作台「库存 → 手工调整」内嵌 + `inventory-adjustment.html`
+  //    独立页）—— 两边都已经有"这一页叫什么"（子 tab / 独立页的 h1）⇒ 下面这层同名大标题
+  //    与它那行说明、以及子面板里那两句使用说明**全部删掉**，只留能填能点的。
   container.innerHTML = `
     <section class="panel">
-      <div class="panel-header">
-        <div>
-          <h2>库存手工调整</h2>
-          <p class="subtitle">盘点调整改数量（可增可减）；换季调整只改状态，数量一双都不变</p>
-        </div>
-      </div>
       <div class="sub-tabs">
         <button class="sub-tab active" type="button" data-subtab="adjust-count">盘点调整</button>
         <button class="sub-tab" type="button" data-subtab="adjust-season">换季调整</button>
@@ -43,8 +41,6 @@ function renderShell(container) {
           <p class="empty compact">先按货号查找，再从结果里选一双鞋</p>
         </div>
         <div class="action-form">
-          <h3>盘点调整</h3>
-          <p class="muted">选货号 + 尺码 → 看当前库存 → 填「实际盘点数」或「增减几双」。</p>
           <div class="order-details" data-view="count-selected"><div><span>已选</span><strong>未选择</strong></div></div>
           <div class="two-col">
             <label class="form-field">尺码
@@ -71,8 +67,6 @@ function renderShell(container) {
       </div>
 
       <div id="adjust-season-subpanel" class="sub-panel hidden">
-        <p class="muted">换季调整只改「所属状态」，**不新建也不删除**库存记录，所以总双数不变。
-          记录进了「仓库」以后，原来在门盒还是样品就查不到了——转释放时请自己选回哪里。</p>
         <div class="toolbar compact-toolbar">
           <label class="form-field grow">动作
             <select data-field="season-action">
