@@ -36,7 +36,7 @@ const path = require('node:path');
 const { SCAN_PAGE, fillText } = require('../config/scanPage');
 const {
   REALMS, DEFAULT_REALM, REALM_TEXTS, resolveRealm, labelPrintUrls,
-  saleSizeGroups, purchaseSizeLines, sizeGroupOf,
+  saleSizeGroups, purchaseSizeLines,
 } = require('./scanPageRealm');
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -186,7 +186,6 @@ summary { cursor: pointer; }
 .realm-tab { flex: 1 0 auto; display: flex; align-items: center; justify-content: center; min-height: var(--control-height); padding: 0 var(--space-3); border-radius: var(--radius-md); color: var(--text-secondary); font-size: var(--font-size-base); font-weight: 600; text-decoration: none; white-space: nowrap; }
 /* 当前领域那一颗 = 主色（**服务端**决定，不是脚本切 class） */
 .realm-tab--active { color: var(--surface); background: var(--primary); }
-.realm-hint { margin: 0 0 var(--space-3); color: var(--text-muted); font-size: var(--font-size-xs); text-align: center; }
 /* noscript 兜底那一排（webview 禁脚本时才会出现）：朴素的文字链接，不用卡片阴影 */
 .realm-bar--plain { display: block; margin: 0; padding: 0; background: transparent; box-shadow: none; }
 .realm-bar--plain .realm-link { display: inline-block; margin: 0 var(--space-2) var(--space-1) 0; color: var(--primary); font-size: var(--font-size-base); }
@@ -240,18 +239,18 @@ const realmBarHtml = (realm = DEFAULT_REALM) => `<nav class="realm-bar" aria-lab
 ${REALMS.map((item) => (item.id === realm
     ? `<a class="realm-tab realm-tab--active" data-realm-id="${escapeHtml(item.id)}" href="?from=${escapeHtml(item.id)}" aria-current="page">${escapeHtml(item.label)}</a>`
     : `<a class="realm-tab" data-realm-id="${escapeHtml(item.id)}" href="?from=${escapeHtml(item.id)}">${escapeHtml(item.label)}</a>`)).join('\n')}
-</nav>
-<p class="realm-hint">${escapeHtml(REALM_TEXTS.barHint)}</p>`;
+</nav>`;
 
 /**
- * `<noscript>` 兜底：把四条领域链接**再给一遍**。
+ * `<noscript>` 兜底：把四条领域链接**再给一遍**（**只给能点的，不解释怎么用**）。
  *
  * ⚠️ 这一页**本来就不需要 JavaScript**（切换条是真链接、服务端只渲染当前那一块），
  *    所以这一段不是"页面能不能用"的前提，而是"万一 webview 禁脚本/样式被裁掉"的保险带
  *    —— 她的第一要求是"**手机上无论如何都要有看得见的东西**"。
+ * ⭐ 2026-10-10：原来那句「本页不需要 JavaScript；点下面的领域换个用法：」是**说明书**，删掉；
+ *    四条领域链接（能点的）一个字不动。
  */
 const noScriptHtml = () => `<noscript>
-<p class="realm-hint">${escapeHtml(REALM_TEXTS.noScriptHint)}</p>
 <nav class="realm-bar realm-bar--plain" aria-label="${escapeHtml(REALM_TEXTS.barLabel)}">
 ${REALMS.map((realm) => `<a class="realm-link" href="?from=${escapeHtml(realm.id)}">${escapeHtml(realm.label)}</a>`).join('\n')}
 </nav>
@@ -268,8 +267,11 @@ const stockTableHtml = (view, config) => {
     return `<tr${row.missing ? ' class="missing"' : ''}>`
       + `<th scope="row">${escapeHtml(row.size_text)}${badge}</th>${cells}</tr>`;
   }).join('\n');
-  const notes = view.notes?.length
-    ? `<ul class="notes">${view.notes.map((note) => `<li>${escapeHtml(note)}</li>`).join('')}</ul>`
+  // ⚠️ 只渲染**有字的**备注：某条备注的文案被删掉（配置里只剩一个空位）时，
+  //    绝不留下一个空的 `<li>`（她看到的会是"莫名其妙的一条空行"）。
+  const notes = (Array.isArray(view.notes) ? view.notes : []).filter((note) => String(note ?? '').trim());
+  const notesHtml = notes.length
+    ? `<ul class="notes">${notes.map((note) => `<li>${escapeHtml(note)}</li>`).join('')}</ul>`
     : '';
   return `<section class="card">
 <h2 class="stock__heading">${escapeHtml(fillText(config.texts.stockHeading, { total: view.total }))}</h2>
@@ -279,7 +281,7 @@ const stockTableHtml = (view, config) => {
 ${rows}
 </tbody>
 </table>
-${notes}
+${notesHtml}
 </section>`;
 };
 
@@ -287,12 +289,12 @@ ${notes}
  * ⭐ 「**货品**」领域那一块：打这一款的标签（**单个**）+ 去批量打印。
  * ⚠️ 复用**既有**标签打印页（`/workbench/label-print.html`，40×30mm 那一版），
  *    这里只拼链接（货号来自这一页已经读到的视图模型）—— 不在这里重做打印。
+ * ⭐ 2026-10-10：那颗按钮**下面那句"怎么打印"的说明删掉** —— 只留标题 + 两颗能点的按钮。
  */
 const labelBlockHtml = (view) => {
   const urls = labelPrintUrls(view);
   return `<section class="card">
 <h2 class="stock__heading">${escapeHtml(REALM_TEXTS.labelHeading)}</h2>
-<p class="hint">${escapeHtml(REALM_TEXTS.labelHint)}</p>
 <a class="btn btn--primary" href="${escapeHtml(urls.single)}" rel="noopener">${escapeHtml(REALM_TEXTS.labelSingleButton)}</a>
 <a class="btn" href="${escapeHtml(urls.batch)}" rel="noopener">${escapeHtml(REALM_TEXTS.labelBatchButton)}</a>
 </section>`;
@@ -314,7 +316,12 @@ const optionsHtml = (values, selected) => values
   .map((value) => `<option value="${escapeHtml(value)}"${String(value) === String(selected) ? ' selected' : ''}>${escapeHtml(value)}</option>`)
   .join('');
 
-/** 销售表单：加入本单（只动本地会话）＋ 提交这一单（**唯一的写库时机**）。 */
+/** 销售表单：加入本单（只动本地会话）＋ 提交这一单（**唯一的写库时机**）。
+ *
+ * ⭐ 2026-10-10：卡片的说明标题（`saleHeading`，「销售（可以连着扫，最后一起提交）」）
+ *   与「资金不是必填…」那句说明（`fundsPendingNote`）**都删掉** —— 子 tab 上已经写着「销售」，
+ *   剩下的只留能填能点的（本单双数 / 尺码 / 金额 / 收款 / 按钮）。
+ */
 const saleFormHtml = (view, write) => {
   const t = write.texts;
   const fields = write.fields;
@@ -326,7 +333,6 @@ const saleFormHtml = (view, write) => {
     : `<p class="hint">${escapeHtml(t.draftEmpty)}</p>`;
   const sizeInput = sizeGroupsHtml(view, write);
   return `<section class="card">
-<h2 class="stock__heading">${escapeHtml(t.saleHeading)}</h2>
 <p class="draft-count">${escapeHtml(fillText(t.draftHeading, { count: lines.length }))}</p>
 ${draftList}
 <form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
@@ -343,7 +349,6 @@ ${hiddenField(fields.submitKey, write.saleKey)}
 <div class="form-row"><label>${escapeHtml(t.paymentLabel)}</label><select name="${escapeHtml(fields.paymentMethod)}">${optionsHtml(write.paymentMethods, write.defaultPaymentMethod)}</select></div>
 <div class="form-row"><label>${escapeHtml(t.paymentAmountLabel)}</label><input name="${escapeHtml(fields.paymentAmount)}" inputmode="decimal" placeholder="${escapeHtml(t.paymentAmountPlaceholder)}"></div>
 <button type="submit" class="btn btn--primary">${escapeHtml(t.submitButton)}</button>
-<p class="hint">${escapeHtml(t.fundsPendingNote)}</p>
 </form>
 ${lines.length ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
 ${hiddenField(fields.action, write.actions.clearDraft)}
@@ -363,14 +368,15 @@ ${hiddenField(fields.submitKey, write.saleKey)}
  * ⚠️ 没有一行 JS：两个 `<fieldset>` 里的 radio 都叫 `size`，选哪个就是哪个；
  *    每个可选项都是一整块（≥44px 命中区，见 STYLE 的 `.size-chip`）。
  * ⚠️ 视图模型里一行尺码都没有时（老数据 / 降级）退回 `write.sizes`，**不把页面空着**。
+ * ⭐ 2026-10-10：「选这一组 = 现货 / 预订…」那两句说明与「（这一组 = 男 A · 38–48）」那句备注
+ *    **都删掉** —— 组名 + 状态小标签 + 能选的尺码就够了。
  */
-const sizeGroupHtml = ({ id, heading, tag, tone, hint, note = '', items, empty }) => `
+const sizeGroupHtml = ({ id, heading, tag, tone, items, empty }) => `
 <fieldset class="size-group" data-stock-group="${escapeHtml(id)}">
 <legend class="size-group__legend">
 <span class="size-group__title">${escapeHtml(heading)}</span>
 <span class="tag tag--${escapeHtml(tone)}">${escapeHtml(tag)}</span>
 </legend>
-<p class="hint">${escapeHtml(hint)}${note ? ` ${escapeHtml(note)}` : ''}</p>
 <div class="size-chips">${items.length
     ? items.map((item) => `<label class="size-chip">
 <input type="radio" name="size" value="${escapeHtml(item.size_text)}">
@@ -394,15 +400,11 @@ const sizeGroupsHtml = (view, write) => {
   const countText = (item) => (item.count === null
     ? t.saleInStockTag
     : fillText(t.saleCountTemplate, { count: item.count }));
-  // 「这一组是男 38–48 / 女 34–43」（她 2026-10-09 给的范围）——判据在 views/scanPageRealm。
-  const group = sizeGroupOf(view.category_code);
-  const groupNote = group ? `（这一组 = ${group.label} ${group.key} · ${group.from}–${group.to}）` : '';
   return sizeGroupHtml({
     id: 'in_stock',
     heading: t.saleInStockHeading,
     tag: t.saleInStockTag,
     tone: 'success',
-    hint: t.saleInStockHint,
     items: inStock.map((item) => ({ ...item, meta: countText(item) })),
     empty: t.saleSizeEmpty,
   }) + sizeGroupHtml({
@@ -410,8 +412,6 @@ const sizeGroupsHtml = (view, write) => {
     heading: t.salePrepaidHeading,
     tag: t.salePrepaidTag,
     tone: 'warning',
-    hint: t.salePrepaidHint,
-    note: groupNote,
     items: prepaid.map((item) => ({ ...item, meta: t.salePrepaidTag })),
     empty: t.saleSizeEmpty,
   });
@@ -450,12 +450,9 @@ const replenishFormHtml = (view, write) => {
 </div>`;
   }).join('');
   return `<section class="card">
-<h2 class="stock__heading">${escapeHtml(t.replenishHeading)}</h2>
-<p class="hint">${escapeHtml(v.purchaseSizesHint)}</p>
 ${stockList}
 <details class="disclosure" data-view="one-tap-replenish">
 <summary class="disclosure__summary">${escapeHtml(v.oneTapReplenish)}</summary>
-<p class="hint">${escapeHtml(t.replenishHint)}</p>
 <form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
 ${hiddenField(fields.action, write.actions.replenish)}
 ${hiddenField(fields.submitKey, write.replenishKey)}

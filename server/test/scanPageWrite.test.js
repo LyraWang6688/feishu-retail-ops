@@ -528,7 +528,11 @@ test('⑧ 页面上的两个写入口：默认收款方式「微信」+ 缺码�
       const salePage = await fetch(`${base}/s/${encodeURIComponent(NUMBER)}?from=sales`, { headers: { cookie: sessionCookie() } });
       assert.equal(salePage.status, 200);
       const saleHtml = await salePage.text();
-      assert.match(saleHtml, /销售（可以连着扫，最后一起提交）/);
+      // ⚠️ 2026-10-10 断言翻转（她：「删掉解释我怎么用的句子」）：原先这里钉着
+      //    卡片标题「销售（可以连着扫，最后一起提交）」（`saleHeading`）**要在页面上**；
+      //    现在它必须不存在。**不放宽**：能填能点的（加入本单 / 提交这一单 / 默认微信）照旧。
+      assert.equal(saleHtml.includes('销售（可以连着扫，最后一起提交）'), false, '销售那句说明必须删掉');
+      assert.match(saleHtml, /加入本单/);
       // 默认选中「微信」
       assert.match(saleHtml, new RegExp(`<option value="微信" selected>微信</option>`));
       // 幂等键在表单里（这一把就是"连点两次只写一次"的判据）
@@ -537,7 +541,11 @@ test('⑧ 页面上的两个写入口：默认收款方式「微信」+ 缺码�
       const purchasePage = await fetch(`${base}/s/${encodeURIComponent(NUMBER)}?from=purchase`, { headers: { cookie: sessionCookie() } });
       assert.equal(purchasePage.status, 200);
       const html = await purchasePage.text();
-      assert.match(html, /补货报单（勾选要补的尺码）/);
+      // ⚠️ 2026-10-10 断言翻转：补货那句标题「补货报单（勾选要补的尺码）」必须不存在；
+      //    能点的（各尺码清单 + 一键补货 + 默认勾上的缺码）照旧。
+      assert.equal(html.includes('补货报单（勾选要补的尺码）'), false, '补货那句标题必须删掉');
+      assert.match(html, /data-view="purchase-sizes"/);
+      assert.match(html, /data-view="one-tap-replenish"/);
       // 缺码的 41 默认勾上
       assert.match(html, /name="sizes" value="41" checked/);
       assert.equal(/name="sizes" value="40" checked/.test(html), false, '40 不缺码 → 不预勾');

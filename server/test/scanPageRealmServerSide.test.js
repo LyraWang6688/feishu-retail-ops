@@ -94,7 +94,6 @@ const WRITE = {
   saleEnabled: true,
   replenishEnabled: true,
   texts: {
-    saleHeading: '销售（可以连着扫，最后一起提交）',
     draftHeading: '本单现在 {count} 双',
     draftEmpty: '本单还没有鞋',
     draftItem: '{itemNo} {size} 码',
@@ -106,10 +105,7 @@ const WRITE = {
     paymentAmountLabel: '收款金额',
     paymentAmountPlaceholder: '不填就是还没收钱',
     submitButton: '提交这一单',
-    fundsPendingNote: '资金不是必填，之后可以在订单列表里补',
     clearButton: '清空本单',
-    replenishHeading: '补货报单（勾选要补的尺码）',
-    replenishHint: '打勾的尺码会生成采购申请；不填数量按 1 双算。',
     replenishQuantityLabel: '数量',
     replenishButton: '生成采购申请',
   },
@@ -135,12 +131,14 @@ const WRITE = {
   notice: '',
 };
 
-/** 每个领域的"应该出现"与"绝不该出现"的正文（不看切换条与 `<noscript>` 里的链接文字）。 */
+/** 每个领域的"应该出现"与"绝不该出现"的正文（不看切换条与 `<noscript>` 里的链接文字）。
+ *  ⭐ 2026-10-10：采购块的识别句从「补货报单（勾选要补的尺码）」（那句说明已删）换成
+ *     功能标记 `data-view="purchase-sizes"` / `一键补货`。 */
 const EXPECT = {
-  sales: { has: ['加入本单', '提交这一单'], hasNot: ['库存（共', '补货报单（勾选要补的尺码）', '货品标签'] },
-  inventory: { has: ['库存（共 5 双）'], hasNot: ['加入本单', '补货报单（勾选要补的尺码）', '货品标签'] },
-  purchase: { has: ['补货报单（勾选要补的尺码）', '一键补货'], hasNot: ['加入本单', '库存（共', '货品标签'] },
-  product: { has: ['货品标签', '/workbench/label-print.html'], hasNot: ['加入本单', '库存（共', '补货报单（勾选要补的尺码）'] },
+  sales: { has: ['加入本单', '提交这一单'], hasNot: ['库存（共', '一键补货', '货品标签'] },
+  inventory: { has: ['库存（共 5 双）'], hasNot: ['加入本单', '一键补货', '货品标签'] },
+  purchase: { has: ['data-view="purchase-sizes"', '一键补货'], hasNot: ['加入本单', '库存（共', '货品标签'] },
+  product: { has: ['货品标签', '/workbench/label-print.html'], hasNot: ['加入本单', '库存（共', '一键补货'] },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -232,7 +230,10 @@ test('AC-W4 拿不到写上下文时销售领域给一张人话卡片；每页�
     for (const other of REALMS) {
       assert.ok(noScript.includes(`href="?from=${other.id}"`), `<noscript> 里缺 ${other.id} 的链接`);
     }
-    assert.ok(noScript.includes(REALM_TEXTS.noScriptHint), 'noscript 里要有一句人话');
+    // ⚠️ 2026-10-10 断言翻转（她：「删掉解释我怎么用的句子」）：原先这里钉着
+    //    `<noscript>` 里要有一句解释（`noScriptHint`）；现在那句必须不存在，
+    //    而**四条领域链接**（能点的）照旧 —— 上面那段已经逐条断言。
+    assert.equal(/本页不需要 JavaScript/.test(noScript), false, 'noscript 里不许再解释怎么用');
   }
 });
 
@@ -354,9 +355,16 @@ test('AC-W4/W7 结果页（没找到 / 链接不对）也永远有人话（既�
 test('领域配置是唯一真源（加减领域只改 views/scanPageRealm.js）', () => {
   assert.deepEqual(REALMS.map((realm) => realm.id), ['sales', 'inventory', 'purchase', 'product']);
   assert.equal(DEFAULT_REALM, 'inventory');
-  // 领域文案也在配置里（渲染层不写死句子）
-  for (const key of ['barLabel', 'barHint', 'noScriptHint', 'labelHeading']) {
+  // 领域文案也在配置里（渲染层不写死句子）—— ⭐ 2026-10-10 之后只留**功能性的字**
+  for (const key of ['barLabel', 'labelHeading', 'labelSingleButton', 'labelBatchButton',
+    'saleInStockHeading', 'salePrepaidHeading', 'saleInStockTag', 'salePrepaidTag',
+    'purchaseInStockTag', 'purchaseMissingTag', 'oneTapReplenish']) {
     assert.equal(typeof REALM_TEXTS[key], 'string', `REALM_TEXTS.${key} 必须是文案`);
     assert.ok(REALM_TEXTS[key].length > 0);
   }
+  // ⚠️ 2026-10-10 断言翻转：那几个"解释我怎么用"的 key 整体退场
+  for (const key of ['barHint', 'noScriptHint', 'labelHint', 'saleInStockHint', 'salePrepaidHint', 'purchaseSizesHint']) {
+    assert.equal(REALM_TEXTS[key], undefined, `REALM_TEXTS.${key} 是说明句 ⇒ 必须删掉`);
+  }
+  assert.equal(REALM_TEXTS.oneTapReplenish, '一键补货', '「一键补货」压成最短');
 });

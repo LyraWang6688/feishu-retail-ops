@@ -78,8 +78,12 @@ const MISSING_SIZE = Object.freeze({
   // 缺码行上的标记（尺码格子里那一个小徽标）。
   badge: '缺',
   icon: '⚠️',
-  // 缺码行整行的说明（放在页脚备注里，给"这行是什么意思"一个解释）。
-  hint: '标注「缺」的尺码 = 该编号在「尺码管理」里存在、但三种状态都没有库存。',
+  // ⭐ 2026-10-10（业务负责人）：「标注「缺」的尺码 = …」那句**解释**退场 ——
+  //    `⚠️ 缺` 高亮本身（`badge` / `icon`）留，它是"能看见的事"；解释"这行是什么意思"是说明书。
+  // ⚠️ 遗留一处（**本任务不许改 `src/services/**`**）：`services/scanPageService.js` 仍有一行
+  //    `notes.push(config.missingSize.hint)`，删掉这个 key 之后那一位是 `undefined`；
+  //    渲染层 (`views/scanPageRenderer.js`) 已经把**空备注过滤掉** ⇒ 页面上不会出现空 `<li>`。
+  //    等那个文件解冻，连那一行 push 一起删（TODO）。
 });
 
 /**

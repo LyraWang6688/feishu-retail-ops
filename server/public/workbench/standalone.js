@@ -16,7 +16,8 @@ import { createLabelPrintModule } from './features/labels/index.js';
 //    `purchase.html`（老「采购管理」页）· `purchase-return.html`（老采购退货独立页）。
 //    ⇒ 这四个视图的注册与模块 import **一并删除**（页面都删了，注册留着就是死入口）。
 //    ⭐ 功能一个都没丢：四个领域 tab（`config/domains.js`）上已经有等价入口 ——
-//      采购 →「报货 / 验收 / 退货」两张飞书表单卡、库存 →「手工调整」、货品 →「标签打印」。
+//      采购 →「报货」/「退货」两个子页的飞书表单卡（「验收到货」是独立子页）、
+//      库存 →「手工调整」、货品 →「标签打印」。
 // ⚠️ 留下来的就是**这两个**独立页；两个都**保留**（她要的）。
 const factories = {
   'inventory-adjustment': () => createInventoryAdjustmentModule(),

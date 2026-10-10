@@ -13,7 +13,7 @@ import { domainPageHtml, domainSubTabsHtml } from './nav.js';
  *   | Tab  | 子页面                                                        |
  *   | 销售 | 销售建单 · 订单列表 · 销售查询                                 |
  *   | 库存 | 单款查询 · 全仓查询 · 手工调整                                 |
- *   | 采购 | 报货 / 验收 / 退货 · 采购订单列表                              |
+ *   | 采购 | 报货 · 验收到货（独立页）· 退货 · 采购订单列表                 |
  *   | 货品 | 货品上新 · 标签打印（单个 / 批量）                             |
  *
  * ⚠️ **一个字节的业务逻辑都不在这里**：每个子页面要么是**既有模块**（订单列表 / 库存手工调整 /
@@ -48,16 +48,12 @@ export function createDomainModule(domainId) {
     const host = hostOf(page.id);
     if (!host) return;
     // 两个"既有模块"直接挂进来（切回来时不用重挂 —— 状态留在模块自己那儿）。
+    // ⭐ 2026-10-10：「验收到货」走的就是下面这条 —— 它是**独立子页**（`kind: 'orders'` /
+    //    `mode: 'purchase'`），点一下子 tab 换一屏；**不是**在报货那一页下面展开
+    //    （她真机反馈：「不应该是一点完之后在同一个 tab 页里下面出现」）。
     if (page.kind === 'orders') return void createOrdersModule({ mode: page.mode }).mount(host);
     if (page.kind === 'inventory-adjustment') return void createInventoryAdjustmentModule().mount(host);
     host.innerHTML = domainPageHtml(page);
-    // ⭐ 2026-10-09（下半场）：「验收到货」的入口在「采购 → 报货 / 验收 / 退货」这一页里 ——
-    //    这一页**内嵌**既有订单模块的 `purchase` 模式（原来那套一批一批点的验收台），
-    //    模块 / 模式都写在 `config/domains.js` 的 `embed` 里（配置先行）。
-    if (page.kind === 'links' && page.embed?.module === 'orders') {
-      const embedHost = host.querySelector(`[data-embed-host="${page.embed.id}"]`);
-      if (embedHost) createOrdersModule({ mode: page.embed.mode }).mount(embedHost);
-    }
     return undefined;
   }
 

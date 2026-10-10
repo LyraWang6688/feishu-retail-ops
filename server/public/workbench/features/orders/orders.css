@@ -131,6 +131,24 @@
 .picker-item.active { border-color: var(--primary); background: var(--primary-soft); box-shadow: var(--shadow-card); }
 .picker-item span { color: var(--text-secondary); font-size: var(--font-size-xs); }
 
+/* ⭐ 2026-10-10（采购 → 验收到货）：**未到货的批次排前面、已到货的折叠在下面**。
+   折叠头 = 一个 ≥44px 的实心条（手机上点得准），展开后还是原来那张批次卡。 */
+.purchase-arrived { margin: var(--space-3) 0 0; min-width: 0; }
+.purchase-arrived__summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--control-height);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+  color: var(--text-secondary);
+  font-weight: var(--weight-bold);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.purchase-arrived[open] > .purchase-arrived__summary { margin-bottom: var(--space-3); }
+
 @media (max-width: 760px) {
   /* 窄屏：一列到底（单列卡片）—— 列表、收款情况、动作区都只占一行宽，不横向滚动。 */
   .orders-list,

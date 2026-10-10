@@ -241,15 +241,20 @@ test('AC3 卡片只留标题 + 动作：卡片的说明句（desc）一个字都
   }
 
   // ③ 她截图点名的那三句（采购页三张卡的副标题）逐字不许在
-  const purchaseHtml = pages.linksPageHtml(domains.domainById('purchase').pages[0]);
+  const purchase = domains.domainById('purchase');
+  const purchaseHtml = pages.linksPageHtml(purchase.pages[0]);
   for (const gone of ['供应商报货（飞书表单）', '把货退给供应商', '就在这一页下面']) {
     assert.ok(!purchaseHtml.includes(gone), `采购卡片的说明句必须删掉：${gone}`);
   }
-  // 卡片标题与动作照旧（她点名要留的）
-  for (const title of ['报货', '退货', '验收到货']) {
-    assert.ok(purchaseHtml.includes(`<h3>${title}</h3>`), `卡片标题必须还在：${title}`);
-  }
+  // 卡片标题与动作照旧（她点名要留的）。
+  // ⚠️ 2026-10-10：报货 / 退货 / 验收到货 拆成**三个子页** ⇒ 三张卡不再挤在同一页里，
+  //    但一张都没少（验收那张卡整体退场 —— 它已经是独立子页，见下面的断言）。
+  assert.ok(purchaseHtml.includes('<h3>报货</h3>'), '报货卡还在');
   assert.ok(purchaseHtml.includes('class="arrow"'), '卡片右下角的动作照旧');
+  const backHtml = pages.linksPageHtml(purchase.pages.find((page) => page.id === 'purchase-return'));
+  assert.ok(backHtml.includes('<h3>退货</h3>'), '退货卡还在（它自己的子页）');
+  assert.ok(!purchaseHtml.includes('<h3>验收到货</h3>'),
+    '报货页上不许再有验收卡（验收 = 独立子页）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -291,33 +296,33 @@ test('AC4 页面内不许重复子 tab 的名字（步骤 / 提示句 / 占位�
 // AC5 验收台那句说明必须不存在 —— 但验收台本身一个都不能少
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC5 验收台那句说明必须不存在；验收台本身（批次卡 + 验收入口 + 锚点）一个都不能少', async () => {
+test('AC5 验收台那句说明必须不存在；验收台本身（批次卡 + 验收入口）一个都不能少', async () => {
   const modules = loadFrontendModules();
   const [domains, pages, ordersConfig, orders] = await Promise.all([
     modules.domains, modules.domainPages, modules.ordersConfig, modules.orders,
   ]);
-  const report = domains.domainById('purchase').pages.find((page) => page.id === 'purchase-report');
+  const purchase = domains.domainById('purchase');
+  const report = purchase.pages.find((page) => page.id === 'purchase-report');
+  const arrival = purchase.pages.find((page) => page.id === 'purchase-arrival');
 
-  // ① 配置：那句说明（+ 与子 tab / 卡片重复的验收块标题）退场
-  assert.equal(report.embed.subtitle, undefined, '验收块那句「按采购订单（= 报货批次那些单）…」必须删掉');
-  assert.equal(report.embed.title, undefined, '验收块标题与卡片 / 子 tab 重复 ⇒ 删掉');
+  // ① 配置：那句说明与**内嵌宿主**整体退场；验收改成**独立子页**
+  //    （⚠️ 2026-10-10 断言翻转（业务负责人真机反馈）：「不应该是一点完之后在同一个 tab 页里
+  //     下面出现」—— 原先这里钉的是"报货页里有锚点卡 + 内嵌验收块"。）
+  assert.equal(report.embed, undefined, '内嵌验收块必须删掉（验收 = 独立子页）');
+  assert.equal(report.cards.some((card) => card.anchor), false, '本页锚点卡必须删掉');
+  assert.equal(arrival.kind, 'orders', '「验收到货」= 独立子页（既有订单模块的 purchase 模式）');
+  assert.equal(arrival.mode, 'purchase');
   assert.equal(ordersConfig.ORDERS_PAGE.purchaseSubtitle, undefined, '订单列表的采购描述行也必须删');
   assert.equal(ordersConfig.ORDERS_PAGE.subtitle, undefined, '订单列表的描述行也必须删');
 
-  // ② 渲染出来一个字都不许有它
+  // ② 渲染出来一个字都不许有它（锚点 / 内嵌宿主 / 那句说明）
   const html = pages.linksPageHtml(report);
-  for (const gone of ['按采购订单', '一张报货批次一张卡', '每张卡都能']) {
-    assert.ok(!html.includes(gone), `验收台说明句必须删掉：${gone}`);
+  for (const gone of ['按采购订单', '一张报货批次一张卡', '每张卡都能', '#purchase-arrival', 'data-embed-host']) {
+    assert.ok(!html.includes(gone), `报货页里必须没有：${gone}`);
   }
 
-  // ③ 那张「验收到货」卡照旧能点，而且**锚点目标真实存在**（不是点了没反应）
-  assert.ok(html.includes('href="#purchase-arrival"'), '「验收到货」那张卡仍然锚到本页下面的验收块');
-  assert.ok(html.includes('id="purchase-arrival"'), '锚点目标必须真实存在（不然那张卡点了没反应）');
-  assert.ok(html.includes('data-embed-host="purchase-arrival"'), '验收台仍有"既有模块挂进来"的宿主');
-  assert.equal(report.embed.module, 'orders', '验收块 = 内嵌既有订单模块（配置先行）');
-  assert.equal(report.embed.mode, 'purchase', '内嵌的是 purchase 模式');
-
-  // ④ 验收台本身：一张报货批次一张卡 + 每张卡都能「验收到货」+ 实际金额必填
+  // ③ 验收台本身（现在挂在**独立子页**的 host 上）：一张报货批次一张卡 + 每张卡都能
+  //    「验收到货」+ 实际金额必填
   const purchaseHtml = orders.purchaseOrdersHtml([
     { record_id: 'pr1', batch_no: 'CGD-1', product_number: 'XHB8095', size: 38, quantity: 2, arrival_status: '未到货' },
   ]);
@@ -406,18 +411,24 @@ test('AC8 功能性内容一个都不能少：子 tab / 卡片标题与动作 / 
   assert.deepEqual(byId.get('inventory').pages.map((page) => page.label),
     ['单款查询', '全仓查询', '手工调整']);
   assert.deepEqual(byId.get('purchase').pages.map((page) => page.label),
-    ['报货 / 验收 / 退货', '采购订单列表', '供应商往来款']);
+    ['报货', '验收到货', '退货', '采购订单列表', '供应商往来款']);
   assert.deepEqual(byId.get('product').pages.map((page) => page.label),
     ['货品上新', '标签打印']);
 
-  // ② 采购三张卡：标题 + 目标（两个飞书表单外链 + 本页锚点）逐字
-  const report = byId.get('purchase').pages[0];
-  assert.deepEqual(report.cards.map((card) => card.title), ['报货', '退货', '验收到货']);
-  assert.deepEqual(report.cards.map((card) => card.href || card.anchor),
-    [links.PURCHASE_REQUEST_FORM_URL, links.PURCHASE_RETURN_FORM_URL, '#purchase-arrival']);
+  // ② 采购：报货 / 退货两张飞书表单外链逐字（各在自己那一页）+ 验收 = 独立子页
+  const purchase = byId.get('purchase');
+  const report = purchase.pages.find((page) => page.id === 'purchase-report');
+  const back = purchase.pages.find((page) => page.id === 'purchase-return');
+  assert.deepEqual(report.cards.map((card) => card.title), ['报货']);
+  assert.deepEqual(report.cards.map((card) => card.href), [links.PURCHASE_REQUEST_FORM_URL]);
+  assert.deepEqual(back.cards.map((card) => card.title), ['退货']);
+  assert.deepEqual(back.cards.map((card) => card.href), [links.PURCHASE_RETURN_FORM_URL]);
+  const arrivalPage = purchase.pages.find((page) => page.id === 'purchase-arrival');
+  assert.equal(arrivalPage.kind, 'orders');
+  assert.equal(arrivalPage.mode, 'purchase');
   const reportHtml = pages.linksPageHtml(report);
-  assert.ok(reportHtml.includes(links.PURCHASE_REQUEST_FORM_URL)
-    && reportHtml.includes(links.PURCHASE_RETURN_FORM_URL), '两张飞书表单外链照旧可点');
+  assert.ok(reportHtml.includes(links.PURCHASE_REQUEST_FORM_URL), '报货那张飞书表单外链照旧可点');
+  assert.ok(pages.linksPageHtml(back).includes(links.PURCHASE_RETURN_FORM_URL), '退货那张飞书表单外链照旧可点');
   assert.ok(reportHtml.includes('rel="noopener"'), '外链卡的 rel="noopener" 照旧');
 
   // ③ 入口页：编号表单 + 提交按钮 + 目标模板（"能做的事"照旧）

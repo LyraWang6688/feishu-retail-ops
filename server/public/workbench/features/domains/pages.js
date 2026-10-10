@@ -38,14 +38,15 @@ const cardBody = (card, arrow) => `
         <div class="arrow">${escapeHtml(arrow)}</div>`;
 
 /**
- * 卡片组：`href` = 外链 / 工作台内页；`anchor` = **本页里的一块**（例：采购 → 验收，
- * 验收台就内嵌在同一页下面）；`jumpTo` = 同一个 tab 里的另一个子页。
+ * 卡片组：`href` = 外链 / 工作台内页；`jumpTo` = 同一个 tab 里的另一个子页。
+ * ⚠️ 2026-10-10：`anchor`（本页锚点）与内嵌宿主**整层退场** —— 「验收到货」已经是独立子页，
+ *    报货 / 退货页上只剩"去飞书表单"的外链卡（她：「不应该是一点完之后在同一个 tab 页里下面出现」）。
  */
 export function cardsHtml(cards = []) {
   return cards.map((card) => (card.jumpTo
     ? `<button class="entry-card card-button" type="button" data-jump="${escapeHtml(card.jumpTo)}">${cardBody(card, card.arrow || '打开 →')}
       </button>`
-    : `<a class="entry-card" href="${escapeHtml(card.href || card.anchor || '')}" rel="noopener">${cardBody(card, card.arrow || '进入 →')}
+    : `<a class="entry-card" href="${escapeHtml(card.href || '')}" rel="noopener">${cardBody(card, card.arrow || '进入 →')}
       </a>`)).join('\n');
 }
 
@@ -74,23 +75,14 @@ export function entryPageHtml(page) {
 
 /**
  * 一个 `kind: 'links'` 子页的 HTML（纯卡片，没有表单）。
- * `page.embed` 时再多一个**内嵌宿主**：把**既有模块**（例：订单模块的 purchase 模式 =
- * 一批一批点的验收台）挂进来 —— 挂载在 `features/domains/index.js`（本文件只画宿主）。
  *
- * ⭐ 2026-10-10：同名标题 / 描述行删掉；内嵌块**不再画标题与那句说明**，但给它一个**真锚点 id**
- *    （`#purchase-arrival`）—— 上面那张「验收到货」卡点一下真的能跳到验收台（"能点的事"要真的能点）。
+ * ⭐ 2026-10-10：同名标题 / 描述行删掉；**卡片 + 动作**就是这一页的全部
+ *    （「验收到货」已经改成独立子页 ⇒ 这一页不再有任何"本页锚点 / 内嵌宿主"）。
  */
 export const linksPageHtml = (page) => `
       <div class="domain-page" data-page-kind="links">
         <div class="domain-cards">${cardsHtml(page.cards || [])}</div>
-        ${embedHtml(page.embed)}
       </div>`;
-
-/** 内嵌既有模块的宿主（`embed` 为空串 ⇒ 什么都不画）。 */
-const embedHtml = (embed) => (embed?.module ? `
-        <section class="domain-embed" data-domain-embed="${escapeHtml(embed.module)}"${embed.id ? ` id="${escapeHtml(embed.id)}"` : ''}>
-          <div data-embed-host="${escapeHtml(embed.id || '')}"></div>
-        </section>` : '');
 
 /**
  * ⭐ 一个 `kind: 'placeholder'` 子页面（业务负责人 2026-10-09；口径 2026-10-10 收紧）：
