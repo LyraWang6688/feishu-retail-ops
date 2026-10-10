@@ -25,15 +25,16 @@ export function entryTarget(template, rawNumber) {
     .split('{itemNo}').join(encodeURIComponent(itemNo));
 }
 
-const stepsHtml = (steps = []) => (steps.length
-  ? `<ol class="domain-steps">${steps.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}</ol>`
-  : '');
-
-/** 卡片体（与 `features/common` / `features/query` 的卡长得一样，复用 base.css 的类）。 */
+/**
+ * 卡片体（与 `features/common` / `features/query` 的卡长得一样，复用 base.css 的类）。
+ *
+ * ⭐ 2026-10-10（业务负责人真机反馈：「下面的这些文字解释就不用了」）：
+ *    卡片**只留标题 + 动作** —— 那句副标题（`desc`，例「供应商报货（飞书表单）—— 填完直接生成报货单」）
+ *    **一个字都不再渲染**（配置里的 `desc` 字段也一并退场，免得将来又长回来）。
+ */
 const cardBody = (card, arrow) => `
         <div class="icon">${escapeHtml(card.icon || '')}</div>
         <h3>${escapeHtml(card.title || '')}</h3>
-        <p>${escapeHtml(card.desc || '')}</p>
         <div class="arrow">${escapeHtml(arrow)}</div>`;
 
 /**
@@ -48,23 +49,25 @@ export function cardsHtml(cards = []) {
       </a>`)).join('\n');
 }
 
-/** 一个 `kind: 'entry'` 子页的 HTML（表单本体；提交在 `features/domains/index.js` 里统一接）。 */
+/**
+ * 一个 `kind: 'entry'` 子页的 HTML（表单本体；提交在 `features/domains/index.js` 里统一接）。
+ *
+ * ⭐ 2026-10-10（业务负责人真机反馈）：**不画同名标题、不画描述行、不画使用步骤、不画提示句** ——
+ *    子 tab 上已经写了这一页叫什么，剩下的只留"能填能点的"（编号输入 + 按钮 + 相关入口卡）。
+ *    （她点名的正是"标题下面那一堆文字"。）见 `test/workbenchNoManualText.test.js` AC3 / AC4。
+ */
 export function entryPageHtml(page) {
   const links = page.links?.length
-    ? `<h4 class="section-title">相关入口</h4><div class="domain-cards">${cardsHtml(page.links)}</div>`
+    ? `<div class="domain-cards">${cardsHtml(page.links)}</div>`
     : '';
   return `
       <div class="domain-page" data-page-kind="entry">
-        <h3 class="section-title">${escapeHtml(page.title)}</h3>
-        <p class="subtitle">${escapeHtml(page.subtitle || '')}</p>
-        ${stepsHtml(page.steps)}
         <form class="action-form entry-open" data-entry-form data-target-template="${escapeHtml(page.targetTemplate)}">
           <label class="form-field">${escapeHtml(page.fieldLabel || '编号')}
             <input name="number" type="text" autocomplete="off" enterkeyhint="go" placeholder="${escapeHtml(page.placeholder || '')}">
           </label>
           <button class="btn btn-primary" type="submit">${escapeHtml(page.buttonLabel || '打开 →')}</button>
         </form>
-        ${page.hint ? `<p class="page-hint">${escapeHtml(page.hint)}</p>` : ''}
         ${links}
       </div>`;
 }
@@ -73,33 +76,31 @@ export function entryPageHtml(page) {
  * 一个 `kind: 'links'` 子页的 HTML（纯卡片，没有表单）。
  * `page.embed` 时再多一个**内嵌宿主**：把**既有模块**（例：订单模块的 purchase 模式 =
  * 一批一批点的验收台）挂进来 —— 挂载在 `features/domains/index.js`（本文件只画宿主）。
+ *
+ * ⭐ 2026-10-10：同名标题 / 描述行删掉；内嵌块**不再画标题与那句说明**，但给它一个**真锚点 id**
+ *    （`#purchase-arrival`）—— 上面那张「验收到货」卡点一下真的能跳到验收台（"能点的事"要真的能点）。
  */
 export const linksPageHtml = (page) => `
       <div class="domain-page" data-page-kind="links">
-        <h3 class="section-title">${escapeHtml(page.title)}</h3>
-        <p class="subtitle">${escapeHtml(page.subtitle || '')}</p>
         <div class="domain-cards">${cardsHtml(page.cards || [])}</div>
         ${embedHtml(page.embed)}
       </div>`;
 
 /** 内嵌既有模块的宿主（`embed` 为空串 ⇒ 什么都不画）。 */
 const embedHtml = (embed) => (embed?.module ? `
-        <section class="domain-embed" data-domain-embed="${escapeHtml(embed.module)}">
-          <h4 class="section-title">${escapeHtml(embed.title || '')}</h4>
-          ${embed.subtitle ? `<p class="subtitle">${escapeHtml(embed.subtitle)}</p>` : ''}
+        <section class="domain-embed" data-domain-embed="${escapeHtml(embed.module)}"${embed.id ? ` id="${escapeHtml(embed.id)}"` : ''}>
           <div data-embed-host="${escapeHtml(embed.id || '')}"></div>
         </section>` : '');
 
 /**
- * ⭐ 一个 `kind: 'placeholder'` 子页面（业务负责人 2026-10-09）：
- * **占位页统一写「待建设」** —— 简洁到只有"标题 + 一句待建设 +（可注明将来放什么）"，
- * 但仍然给她一个**彩色小标签**（一眼看出这是没建好的页面，不是加载失败）。
+ * ⭐ 一个 `kind: 'placeholder'` 子页面（业务负责人 2026-10-09；口径 2026-10-10 收紧）：
+ * **占位页只留「待建设」一个小标记** —— 标题与子 tab 重复 ⇒ 不画，
+ * 「将来放…」那句长说明也删掉（她的原话：「这些文字解释就不用了」）。
+ * 仍然给她一个**彩色小标签**（一眼看出这是没建好的页面，不是加载失败）。
  */
 export const placeholderPageHtml = (page) => `
       <div class="domain-page" data-page-kind="placeholder">
-        <h3 class="section-title">${escapeHtml(page.title)}</h3>
         <div class="placeholder-card" data-placeholder="${escapeHtml(page.id || '')}">
           <span class="tag tag-info">${escapeHtml(PLACEHOLDER_STATUS)}</span>
-          ${page.note ? `<p class="placeholder-note">${escapeHtml(page.note)}</p>` : ''}
         </div>
       </div>`;

@@ -33,10 +33,10 @@ export function domainPageHtml(page) {
   if (page.kind === 'links') return linksPageHtml(page);
   if (page.kind === 'placeholder') return placeholderPageHtml(page);
   if (page.kind === 'query') {
+    // ⭐ 2026-10-10：同名标题与那句「在飞书多维表格里看——点一下直接打开」都删掉 ——
+    //    子 tab 上已经写了这一页叫什么，卡片本身就是能点的外链（她：「文字解释就不用了」）。
     return `
       <div class="domain-page" data-page-kind="query">
-        <h3 class="section-title">${escapeHtml(page.label)}</h3>
-        <p class="subtitle">在飞书多维表格里看——点一下直接打开</p>
         <div class="domain-cards domain-cards-single">${renderQueryEntries([sectionById(page.sectionId)])}</div>
       </div>`;
   }

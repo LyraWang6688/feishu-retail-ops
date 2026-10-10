@@ -64,14 +64,12 @@ export function createDomainModule(domainId) {
   return {
     mount(container) {
       state.container = container;
+      // ⭐ 2026-10-10（业务负责人真机反馈：「我已经点到了采购，直接出来报货、退货、到货就行，
+      //    下面的这些文字解释就不用了」）⇒ **一级领域的大标题与它下面那行描述整行删掉**：
+      //    一级 tab 上已经写了领域名，页内再写一遍就是"说明书"。
+      //    她要留的只有**子 tab + 卡片 + 按钮**（下面那些）。见 `test/workbenchNoManualText.test.js` AC1。
       container.innerHTML = `
         <section class="panel">
-          <div class="panel-header">
-            <div>
-              <h2>${escapeHtml(domain.title)}</h2>
-              <p class="subtitle">${escapeHtml(domain.subtitle || '')}</p>
-            </div>
-          </div>
           <div class="sub-tabs" data-view="domain-subtabs">${domainSubTabsHtml(domain, state.active)}</div>
           ${domain.pages.map((page) => `<div class="sub-panel${page.id === state.active ? '' : ' hidden'}" data-domain-host="${escapeHtml(page.id)}"></div>`).join('\n          ')}
         </section>`;

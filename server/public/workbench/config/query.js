@@ -15,11 +15,13 @@ import { SALES_QUERY_PAGE_URL, INVENTORY_QUERY_PAGE_URL } from './links.js';
  *       **URL 一个字没换**，还是她 2026-10-08 给的同一张多维表格页面）
  *   ⇒ 页面清单与顺序在 `config/domains.js`（那里只按 id 引用这里的板块）。
  *
+ * ⭐ 2026-10-10（她真机反馈「下面的这些文字解释就不用了」）：卡片**只留标题**（点一下直接跳），
+ *   那句「在飞书多维表格里看——点一下直接打开」的副标题（`desc`）**已整字段退场**。
+ *
  * 字段：
  *   `id`    稳定标识（测试 / 排重用，不渲染；`config/domains.js` 按它引用）
  *   `icon`  卡片图标
  *   `title` 板块标题（逐字 = 她说的名字）
- *   `desc`  一句话说明
  *   `href`  飞书多维表格网页外链（空串 = 待配置；空值时渲染成不可点的卡，见 `config/links.js`）
  */
 export const QUERY_SECTIONS = [
@@ -27,14 +29,12 @@ export const QUERY_SECTIONS = [
     id: 'sales-query',
     icon: '📈',
     title: '销售查询',
-    desc: '销售明细在飞书多维表格里看——点一下直接打开',
     href: SALES_QUERY_PAGE_URL,
   },
   {
     id: 'inventory-query',
     icon: '📦',
     title: '全仓查询',
-    desc: '实时库存在飞书多维表格里看（全仓）——点一下直接打开',
     href: INVENTORY_QUERY_PAGE_URL,
   },
 ];
