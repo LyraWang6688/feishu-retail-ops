@@ -60,18 +60,22 @@ const REALMS = Object.freeze([
 /** 缺省领域 = **库存**（她 2026-10-09 的口径：「**扫码第一眼 = 库存**」）。 */
 const DEFAULT_REALM = 'inventory';
 
-/** 切换条与「货品标签」那一块的文案（页面上的每一个字都在这里，渲染层不写死句子）。 */
+/** 切换条与「货品标签」那一块的文案（页面上的每一个字都在这里，渲染层不写死句子）。
+ *
+ * ⭐⭐ **2026-10-10（业务负责人）：「只留能点、能做的事，删掉解释我怎么用的句子」** ——
+ *   这里**只剩功能性的字**：领域名（`REALMS[].label`）· 无障碍用的条标签（`barLabel`）·
+ *   货品标签页的标题与两颗按钮 · 销售两组的标题与状态小标签 · 采购那一列的三个小标签 ·
+ *   以及压成最短的【一键补货】。
+ *   ⇒ 退场的说明句（逐条）：`barHint`（「同一个二维码，四个领域都能扫；点一下切换」）·
+ *     `noScriptHint`（「本页不需要 JavaScript…」）· `labelHint` · `saleInStockHint` /
+ *     `salePrepaidHint`（「选这一组里的尺码 = 现货…」）· `purchaseSizesHint`（「只算可卖的…」）·
+ *     `oneTapReplenish` 里那半句用法说明。
+ *   ⚠️ **保留**：数据不全的如实说明（`config/scanPage.js` 的四条 note）· `⚠️ 缺` 高亮 ·
+ *     状态小标签 · `noscript` **兜底链接**（没有脚本时四条领域链接照旧可点，只是不再解释）。
+ */
 const REALM_TEXTS = Object.freeze({
   barLabel: '这一页要做什么',
-  barHint: '同一个二维码，四个领域都能扫；点一下切换',
-  // 无 JS 兜底（`<noscript>` 里那一句）：这一页**本来就不需要脚本** ——
-  // 领域切换是真链接（`?from=`），服务端按它只渲染那一块。
-  // ⚠️ 2026-10-09 手机白屏之后：**整页一行前端脚本都没有**（连 `<head>` 里那段读
-  // `location.search` 的也删了），所以这句 `<noscript>` 只是"万一 webview 禁脚本"的
-  // 保险带，而不是页面能不能用的前提。
-  noScriptHint: '本页不需要 JavaScript；点下面的领域换个用法：',
   labelHeading: '货品标签',
-  labelHint: '打这一款（按货号）的鞋盒标签：40×30mm、A4 一页多张，用浏览器打印出来贴鞋盒',
   labelSingleButton: '打印这一款的标签 →',
   labelBatchButton: '批量打印（按条件挑货）→',
   // ── 销售（`from=sales`）：尺码**分两组** —— 有货 ⇒ 现货 / 其余 ⇒ 预订 ──────────
@@ -79,17 +83,15 @@ const REALM_TEXTS = Object.freeze({
   salePrepaidHeading: '现在没有（预订）',
   saleInStockTag: '现货',
   salePrepaidTag: '预订',
-  saleInStockHint: '选这一组里的尺码 = 现货：当场交付、扣库存。',
-  salePrepaidHint: '选这一组里的尺码 = 预订：货到了再交付，那时才扣库存。',
   saleSizeEmpty: '这一款现在没有可选的尺码',
   saleCountTemplate: '{count} 双',
   // ── 采购（`from=purchase`）：各尺码（样品 + 门盒）数量 + 一键补货 ──────────────
   purchaseSizesHeading: '这一款各尺码现在有多少（样品 + 门盒）',
-  purchaseSizesHint: '只算可卖的：样品 + 门盒；仓库不算。缺的尺码可以直接补货。',
   purchaseInStockTag: '现货',
   purchaseMissingTag: '缺码',
   purchaseNoneTag: '无',
-  oneTapReplenish: '一键补货（缺的尺码已勾上，默认各 1 双）',
+  // ⭐ 2026-10-10：原来那句「一键补货（缺的尺码已勾上，默认各 1 双）」是**用法说明**，压成功能名。
+  oneTapReplenish: '一键补货',
 });
 
 /**

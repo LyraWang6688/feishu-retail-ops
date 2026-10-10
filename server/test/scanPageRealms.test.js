@@ -79,11 +79,12 @@ const VIEW = {
   product_record_id: 'prod_1',
 };
 
-/** 最小写上下文（字段名 / 动作 / 文案都照 `config/scanWrite.js` 的形状）。 */
+/** 最小写上下文（字段名 / 动作 / 文案都照 `config/scanWrite.js` 的形状）。
+ *  ⭐ 2026-10-10：`saleHeading` / `replenishHeading` / `fundsPendingNote` / `replenishHint`
+ *     四个**说明句**已从配置里退场 ⇒ 这里也不再放（放进来就是在钉一个不存在的文案）。 */
 const WRITE = {
   enabled: true,
   texts: {
-    saleHeading: '销售（可以连着扫，最后一起提交）',
     draftHeading: '本单现在 {count} 双',
     draftEmpty: '本单还没有鞋',
     draftItem: '{itemNo} {size} 码',
@@ -97,10 +98,7 @@ const WRITE = {
     paymentAmountLabel: '收款金额',
     paymentAmountPlaceholder: '不填就是还没收钱',
     submitButton: '提交这一单',
-    fundsPendingNote: '资金不是必填，之后可以在订单列表里补',
     clearButton: '清空本单',
-    replenishHeading: '补货报单（勾选要补的尺码）',
-    replenishHint: '打勾的尺码会生成采购申请；不填数量按 1 双算。',
     replenishQuantityLabel: '数量',
     replenishButton: '生成采购申请',
   },
@@ -252,7 +250,10 @@ test('AC2 `from=sales` 尺码分两组：有货（样品+门盒）⇒ 现货；�
     '尺码卡片的命中区 ≥44px（手机上好点）');
   // 销售建单该有的东西一样不少（提交走既有链路）
   assert.ok(sales.includes('加入本单') && sales.includes('提交这一单'));
-  assert.ok(sales.includes('资金不是必填') || sales.includes(WRITE.texts.fundsPendingNote));
+  // ⚠️ 2026-10-10 断言翻转（她：「删掉解释我怎么用的句子」）：
+  //    原先这里钉着「资金不是必填…」那句（`fundsPendingNote`）**要在页面上写着**；
+  //    现在它必须不存在。**不放宽**：能填能点的（尺码 / 成交金额 / 收款方式 + 两颗按钮）照旧。
+  assert.equal(/资金不是必填|这一单先记了货/.test(sales), false, '资金那句说明必须删掉');
   assert.ok(sales.includes('<option value="微信" selected>微信</option>'));
 
   // ④ 降级（拿不到该类别尺码）时：第二组为空、页面上说明只显示有库存的尺码

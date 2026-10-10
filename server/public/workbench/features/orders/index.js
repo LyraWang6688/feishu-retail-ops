@@ -5,7 +5,7 @@ import {
   ORDERS_API, ORDERS_PAGE, ORDERS_TEXTS, DEFAULT_COLLECTION_METHOD, COLLECTION_METHODS,
   REFUND_METHOD_PLACEHOLDER, RESTOCK_STATES, AFTER_SALES_ACTIONS, SETTLEMENTS,
   ORDERS_SUB_TABS, SALES_GROUPS, SALES_SECTIONS, DELIVERED_FULFILLMENT, PAID_PAYMENT_STATUS,
-  ARRIVAL_CONFIRM,
+  ARRIVAL_CONFIRM, ARRIVAL_STATUS_PENDING, ARRIVAL_STATUS_ARRIVED,
 } from '../../config/orders.js';
 
 // 工作台【订单列表】（业务负责人 2026-10-09）—— 一级 tab 的第三个。
@@ -230,20 +230,24 @@ export function groupPurchaseOrders(rows = []) {
 /** 这一批的到货状态（既有字段；同批次里任一明细说没到货就算没到货）。 */
 const arrivalStatusOf = (batch) => {
   const statuses = (batch.rows || []).map((row) => String(row.arrival_status || '').trim()).filter(Boolean);
-  if (statuses.includes('未到货')) return '未到货';
+  if (statuses.includes(ARRIVAL_STATUS_PENDING)) return ARRIVAL_STATUS_PENDING;
   return statuses[0] || '';
 };
 
-/** 采购子 tab 的列表：一张报货批次一张卡，每张卡上都有「验收到货」。 */
-export function purchaseOrdersHtml(rows = []) {
-  const batches = groupPurchaseOrders(rows);
-  if (!batches.length) return `<p class="empty" data-view="purchase-empty">${escapeHtml(P.purchaseEmpty)}</p>`;
-  return `<div class="purchase-orders" data-view="purchase-orders">${batches.map((batch) => `
+/**
+ * ⭐ 2026-10-10：这一批是不是**已经到过货**（只有取值严格等于「已到货」才算）。
+ *   其余（含状态为空 / 未来她新加的取值）一律当"还没到货" ⇒ 排前面等验收 ——
+ *   **宁可多给她一张待验收的卡，也不把一个还没验收的批次收进折叠里**。
+ */
+const isArrivedBatch = (batch) => arrivalStatusOf(batch) === ARRIVAL_STATUS_ARRIVED;
+
+/** 一张报货批次的卡（未到货 / 已到货共用 —— 内容一个字不变，只是摆放位置不同）。 */
+const purchaseBatchCardHtml = (batch) => `
       <article class="order-card" data-purchase-batch="${escapeHtml(batch.batch_no)}">
         <div class="order-card-head">
           <h3 class="order-no">${escapeHtml(batch.batch_no)}</h3>
           <div class="order-tags">
-            <span class="tag ${statusClass(arrivalStatusOf(batch))}">${escapeHtml(arrivalStatusOf(batch) || '未到货')}</span>
+            <span class="tag ${statusClass(arrivalStatusOf(batch))}">${escapeHtml(arrivalStatusOf(batch) || ARRIVAL_STATUS_PENDING)}</span>
           </div>
         </div>
         <ul class="order-lines">${batch.rows.map((row) => `
@@ -267,7 +271,28 @@ export function purchaseOrdersHtml(rows = []) {
             <button class="btn btn-primary" type="button" data-action="submit-arrival" data-batch="${escapeHtml(batch.batch_no)}">${escapeHtml(T.arrivalSubmit)}</button>
           </div>
         </details>
-      </article>`).join('')}
+      </article>`;
+
+/**
+ * 采购子 tab 的列表：一张报货批次一张卡，每张卡上都有「验收到货」。
+ *
+ * ⭐ 2026-10-10（业务负责人真机反馈：「验收到货」要能一眼看到她该干的事）：
+ *   · **未到货的批次排在前面**（还没验收的 = 她要动的）；
+ *   · **已到货的折叠**在下面（`<details data-view="purchase-arrived">`，默认收起）——
+ *     不占屏幕，但一个批次都没丢，点开还是那张卡 + 那颗【验收到货】（重复验收由后端幂等兜底）。
+ */
+export function purchaseOrdersHtml(rows = []) {
+  const batches = groupPurchaseOrders(rows);
+  if (!batches.length) return `<p class="empty" data-view="purchase-empty">${escapeHtml(P.purchaseEmpty)}</p>`;
+  const pending = batches.filter((batch) => !isArrivedBatch(batch));
+  const arrived = batches.filter(isArrivedBatch);
+  const pendingHtml = pending.map(purchaseBatchCardHtml).join('');
+  const arrivedHtml = arrived.length ? `
+      <details class="purchase-arrived" data-view="purchase-arrived">
+        <summary class="purchase-arrived__summary">${escapeHtml(P.purchaseArrivedSummary)}（${escapeHtml(arrived.length)}）</summary>
+        ${arrived.map(purchaseBatchCardHtml).join('')}
+      </details>` : '';
+  return `<div class="purchase-orders" data-view="purchase-orders">${pendingHtml}${arrivedHtml}
     </div>`;
 }
 

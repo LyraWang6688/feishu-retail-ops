@@ -20,11 +20,24 @@ export const ORDERS_PAGE = {
   //    与子 tab 重复的大标题和它下面那行说明（订单列表在「销售」/「采购」两个领域里都是子 tab）。
   empty: '还没有已入账的销售单',
   purchaseEmpty: '还没有采购申请（报货批次）记录',
+  // ⭐ 2026-10-10：「验收到货」独立子页里，**已到货的批次折叠**在下面 —— 折叠头就写这一句
+  //    （后面跟条数；不写"我为什么这么排"那种说明句）。
+  purchaseArrivedSummary: '已到货',
   detailTitle: '订单详情',
   back: '← 返回订单列表',
   open: '查看 / 操作 →',
   reload: '刷新',
 };
+
+/**
+ * ⭐ 2026-10-10：「报货批次」的**到货状态取值**（唯一来源 = `server/src/config/purchaseArrivalStatus.js`，
+ *   那一边管"写"，这一边只管"读出来怎么摆"）。
+ *   · 取值**原样来自既有字段**（`GET /api/workbench/purchase/requests` 的 `arrival_status`），
+ *     这里一个状态都不新造；
+ *   · 用途只有两处：卡片上那个小标签的兜底文案 + 「未到货排前面 / 已到货折叠在下面」的判据。
+ */
+export const ARRIVAL_STATUS_PENDING = '未到货';
+export const ARRIVAL_STATUS_ARRIVED = '已到货';
 
 /**
  * ⭐⭐ 2026-10-09（业务负责人 15:07 逐字）：「第三个 tab 是**订单列表**，分**两个子 tab**：

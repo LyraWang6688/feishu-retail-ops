@@ -147,7 +147,17 @@ test('② 按编号聚合：每个尺码一行 × 门盒/样品/仓库，0 显�
 
   // 每一行的合计与"共 N 双"必须自洽（本页最不能出的错）
   assert.equal(view.rows.reduce((sum, row) => sum + row.total, 0), view.total);
-  assert.ok(view.notes.some((note) => note.includes('缺')));
+  // ⚠️ 2026-10-10 断言翻转（业务负责人：「只留能点、能做的事，删掉解释我怎么用的句子」）：
+  //    原先这里钉的是"备注里要有一句缺码解释"；`config/scanPage.js` 的 `missingSize.hint`
+  //    已按她的口径删掉 ⇒ 那句话必须不存在。**不放宽**：`⚠️ 缺` 高亮本身由上面的
+  //    `bySize.get('41').missing === true` 与下面渲染出来的 `⚠️ 缺` 钉着。
+  assert.equal(SCAN_PAGE.missingSize.hint, undefined, '缺码那句解释必须删掉');
+  assert.equal(SCAN_PAGE.missingSize.badge, '缺', '「缺」这个标记本身留');
+  assert.equal(SCAN_PAGE.missingSize.icon, '⚠️');
+  // ⚠️ 去注释后再判：注释里留的那句"原先这里钉着…"是沿革说明，不是页面上的字。
+  const scanPageConfig = fs.readFileSync(path.join(SERVER_SRC, 'config', 'scanPage.js'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+  assert.equal(/标注「缺」的尺码/.test(scanPageConfig), false, '那句解释不许还在配置里');
   assert.equal(view.updated_at_text, shanghaiDateTimeText(Date.UTC(2026, 9, 8, 12, 30)));
 });
 

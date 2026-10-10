@@ -175,10 +175,18 @@ const REPLENISH = Object.freeze({
 /**
  * 用户可见文案。占位符用 `{...}`，由 `fillText` 替换（**不留空段**）。
  * ⚠️ 手机上看，尽量短；页面上**不出现任何代码标识符**（在表单里给她的提示也一样）。
+ *
+ * ⭐⭐ **2026-10-10（业务负责人）：「只留能点、能做的事，删掉解释我怎么用的句子」** ——
+ *   这里退场的是**说明句 / 用法标题**（逐条）：
+ *     · `saleHeading`（「销售（可以连着扫，最后一起提交）」）—— 子 tab 上已经写着「销售」；
+ *     · `replenishHeading`（「补货报单（勾选要补的尺码）」）—— 同上；
+ *     · `fundsPendingNote`（「这一单先记了货、还没记钱…」）—— 解释既有口径，不是能点的事；
+ *     · `replenishHint`（「打勾的尺码会生成采购申请；不填数量按 1 双算。」）—— 用法说明。
+ *   ⚠️ **保留**的都是功能性的：字段标签 / 按钮 / 成功失败页的事实与**失败原因** /
+ *     空本单与过期那两句（不填就会懵）—— 见下面每一条。
  */
 const TEXTS = Object.freeze({
   // ── 销售表单 ──────────────────────────────────────────────────────────────
-  saleHeading: '销售（可以连着扫，最后一起提交）',
   draftHeading: '本单已加 {count} 双',
   draftItem: '{itemNo} · {size} 码',
   draftEmpty: '还没加入任何一双：选好尺码，点「加入本单」。',
@@ -193,9 +201,6 @@ const TEXTS = Object.freeze({
   paymentLabel: '收款方式',
   paymentAmountLabel: '这次收到多少钱（可不填）',
   paymentAmountPlaceholder: '不填 = 先货后钱',
-  // 钱没记时页面上的说明（**不新造状态**：收款明细是空的 ⇒ 既有进度口径就是「未收款」，
-  // 工作台那一列显示的正是它）。
-  fundsPendingNote: '这一单先记了货、还没记钱：收款明细是空的，按既有口径就是「未收款」（待补资金）。',
   submittedTitle: '这一单提交好了',
   submittedBody: '销售单号 {orderNo}，共 {count} 双。',
   // 结果页上逐行列出来的事实（单号 / 双数 / 收款）。
@@ -208,8 +213,6 @@ const TEXTS = Object.freeze({
   // 「刚加入本单」那一句（加完回跳到这一页时显示）。
   lineAddedBanner: '已加入本单：现在共 {count} 双。',
   // ── 补货表单 ──────────────────────────────────────────────────────────────
-  replenishHeading: '补货报单（勾选要补的尺码）',
-  replenishHint: '打勾的尺码会生成采购申请；不填数量按 1 双算。',
   replenishQuantityLabel: '数量',
   replenishButton: '生成采购申请',
   replenishDoneTitle: '采购申请已生成',

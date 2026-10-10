@@ -426,7 +426,8 @@ const createScanPageRouter = (options = {}) => {
           fillWriteText(texts.submittedOrderLine, { orderNo: result.order_no || '—' }),
           fillWriteText(texts.submittedDetailLine, { count: result.detail_count || 0 }),
         ];
-        if (!result.payment_count) details.push(texts.fundsPendingNote);
+        // ⚠️ 2026-10-10：原来钱没记时会补一句「这一单先记了货、还没记钱…」（`fundsPendingNote`）——
+        //    那是**解释既有口径**的说明句，按业务负责人的口径删掉；写完的事实（单号 / 双数）照旧。
         return sendHuman(res, 200, {
           title: result.reused ? texts.submittedAgainTitle : texts.submittedTitle,
           body: result.reused

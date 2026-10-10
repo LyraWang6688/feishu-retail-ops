@@ -4,7 +4,7 @@ import { escapeHtml } from '../../core/formatters.js';
 // 「采购和退货」——常用功能里的第二个子页。
 // ⚠️ 2026-10-09（业务负责人点头）：它服务的那个独立页 `purchase-return.html` **已从仓库删掉**
 //    （同批删的还有 `common.html` / `others.html` / `purchase.html`）⇒ 本模块**当前没有页面挂载**。
-//    两张表单卡现在的正式入口在「采购」tab ①「报货 / 验收 / 退货」（`config/domains.js`），
+//    两张表单卡现在的正式入口在「采购」tab 的「报货」/「退货」两个子页（`config/domains.js`；
 //    URL 仍是 `config/links.js` 那一份；本模块**先留着没删**，等业务负责人一句话。
 //
 // 业务负责人 2026-10-06 定的口径（`docs/workbench-requirements-2026-10-06.md` 一①）：
