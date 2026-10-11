@@ -598,3 +598,69 @@ test('AC-R10 试方向不会被防连点挡住：90° 与 270° 各出一条任�
     harness.cleanup();
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 【2026-10-11 真机三组对照】画布方向（竖版 = 旋转画布 ⇒ 方向对 + 原尺寸铺满）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-R11 ⭐ 手机侧带 `canvas: portrait` ⇒ 这一条走"旋转画布"（原尺寸铺满）；不传 ⇒ 跟随配置', async () => {
+  const harness = buildHarness();
+  login();
+  try {
+    await withServer(harness.app, async (base) => {
+      const response = await phone(base, '/jobs', {
+        method: 'POST', body: { mode: 'single', number: NUMBER, canvas: 'portrait' },
+      });
+      assert.equal(response.status, 200);
+      const body = await response.json();
+      const job = await harness.service.getJob(body.job_id);
+      assert.equal(job.canvas, 'portrait', '任务上要留痕"这一张是竖版（旋转画布）"');
+      assert.equal(job.rotate, 90, '竖版画布的内部旋转 = 90°');
+      assert.equal(job.artifact.width_pt, 113.3858, '页面仍是 40×30（不换纸型）');
+      assert.equal(job.artifact.height_pt, 85.0394);
+      // 不传 ⇒ 跟随服务器配置（默认 landshape）。
+      const follow = await phone(base, '/jobs', {
+        method: 'POST', body: { mode: 'single', number: NUMBER, again: true },
+      });
+      assert.equal((await harness.service.getJob((await follow.json()).job_id)).canvas, 'landscape');
+    });
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test('AC-R11 手机侧非法 canvas ⇒ 400（不许静默按横版印一堆方向反的标签）', async () => {
+  const harness = buildHarness();
+  login();
+  try {
+    await withServer(harness.app, async (base) => {
+      const response = await phone(base, '/jobs', {
+        method: 'POST', body: { mode: 'single', number: NUMBER, canvas: 'diagonal' },
+      });
+      assert.equal(response.status, 400);
+      assert.match((await response.json()).error, /landscape \/ portrait/);
+      assert.equal((await harness.store.listAll()).length, 0);
+    });
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test('AC-R11 试方向不会被防连点挡住：竖版 / 横版 90° / 横版原样 各出一条任务', async () => {
+  const harness = buildHarness();
+  login();
+  try {
+    await withServer(harness.app, async (base) => {
+      const send = (body) => phone(base, '/jobs', { method: 'POST', body: { mode: 'single', number: NUMBER, ...body } })
+        .then((response) => response.json());
+      const a = await send({ canvas: 'portrait' });
+      const b = await send({ canvas: 'landscape', rotate: 90 });
+      const c = await send({ canvas: 'landscape', rotate: 0 });
+      const ids = [a.job_id, b.job_id, c.job_id];
+      assert.equal(new Set(ids).size, 3, '三个方向方案必须各建一条任务（她要挨个打一张对比）');
+      assert.equal((await harness.store.listAll()).length, 3);
+    });
+  } finally {
+    harness.cleanup();
+  }
+});

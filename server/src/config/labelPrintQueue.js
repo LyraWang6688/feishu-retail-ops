@@ -108,19 +108,32 @@ const LABEL_PRINT_QUEUE = Object.freeze({
     //    有的驱动对 PDF 的页面尺寸挑食，PNG 让她能一眼看出"图对不对"。
     keepPng: true,
     /**
-     * ⭐⭐ **打印方向**（业务负责人 2026-10-11 真机反馈：「标签是 40×30 横版，
-     *     但内容**整体转了 90°**（品牌与货号都是竖着的）」）。
+     * ⭐⭐ **排版画布方向**（业务负责人 2026-10-11 真机三组对照之后的**最终修法**）。
      *
-     * `rotate` —— **只转内容**，0 / 90 / 180 / 270，**默认 0（不动）**。
-     *   在**尺寸不变**的 40×30 页面里转 90/270，40×30 的图会占成 30×40 ⇒ **塞不进同一张纸**，
-     *   所以这一档会自动**等比缩小到 75%**（方向对、但整张标签变小、二维码 15mm ⇒ 11.25mm）。
+     * 她的三组实测（都有照片）：
+     *   A. `rotate:0 + 不换页面`      ⇒ ❌ 平行于**短边**（不是她要的）
+     *   B. `rotate:90 + 不换页面`      ⇒ ✅ **平行于长边（她要的）**，但 ❌ 缩到 **75%**（四周留白的小框）
+     *   C. `rotate:90 + 换页面(30×40)` ⇒ ❌ 方向又反了，✅ 铺满
+     * ⇒ **要的是"B 的方向 + C 的铺满"**。做法：**旋转【布局画布】**——
+     *   `portrait` = 按转过之后的画布（30 宽 × 40 高）**重新排版**，再整幅**按 1:1** 转进 40×30 的页面。
+     *   这样：方向 = B ✅、**原尺寸铺满** ✅、页面仍是 40×30 ✅、二维码仍 15mm ✅。
      *
-     * `rotatePageWithContent` —— **页面尺寸也跟着转**（40×30 ⇒ 30×40），默认 `false`：
-     *   这一档**保原尺寸**（推荐，前提是那台打印机的纸型/驱动也认 30×40 的页面）。
+     *   · `landscape`（**默认**）—— 老版式（画布 40×30）。**线上/浏览器打印那条路一个字没变**；
+     *   · `portrait`            —— **旋转画布**（画布 30×40；行序走 `body.portraitRows`，二维码自己占一行）。
      *
-     * ⇒ 她先在真机上试 `90` 还是 `270`（也可以先在**驱动**里把【旋转】改 90°/270° 立刻看效果），
-     *   试出来之后改这里就行 —— **免得以后换电脑/换驱动方向又反**。
-     * ⚠️ 默认两个都关 ⇒ **今天的行为一个字节都不变**。
+     * ⇒ **建议的线上取值**：`LABEL_PRINT_CANVAS=portrait` + `LABEL_PRINT_ROTATE=0`
+     *   + `LABEL_PRINT_ROTATE_PAGE=false`（后两个保持默认即可）。
+     */
+    canvas: 'landscape',
+    /**
+     * ⚠️ **更底层的两个旋钮（保留，但别当默认）**：
+     *   · `rotate` —— 把**已渲染的内容**整体转（0/90/180/270），**默认 0**。
+     *     横版转 90° 时 40×30 的图会占成 30×40 ⇒ **塞不进同一张纸**，只能等比缩到 75%
+     *     ⇒ 那就是真机 **B**（方向对、小一圈）。**线上现在跑的就是它**，所以这条路原样保留。
+     *   · `rotatePageWithContent` —— 让**页面尺寸也跟着转**（40×30 ⇒ 30×40）。
+     *     🔴 **实测：它会让打印驱动把整页再转 90° ⇒ 方向又变回"平行于短边"（真机 C）**
+     *     ⇒ **不推荐**、别再当默认；只作为万一换机器时的一条备用路。
+     *     ⚠️ 在 `canvas: 'portrait'` 下这个旋钮**被忽略**（并如实回报 false）。
      */
     rotate: 0,
     rotatePageWithContent: false,
@@ -225,6 +238,13 @@ const resolveLabelPrintQueueConfig = (env = process.env, base = LABEL_PRINT_QUEU
   //   `rotatePageWithContent` = 页面尺寸要不要跟着转（见 `artifact.rotate` 那一段说明）。
   artifact: {
     ...base.artifact,
+    canvas: (() => {
+      const value = readString(env, 'LABEL_PRINT_CANVAS', base.artifact.canvas);
+      if (!['landscape', 'portrait'].includes(value)) {
+        throw new Error('LABEL_PRINT_CANVAS 只能是 landscape 或 portrait');
+      }
+      return value;
+    })(),
     rotate: (() => {
       const value = readInt(env, 'LABEL_PRINT_ROTATE', base.artifact.rotate, { min: 0, max: 270 });
       if (![0, 90, 180, 270].includes(value)) {

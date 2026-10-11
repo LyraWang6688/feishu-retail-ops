@@ -104,7 +104,7 @@ const textWidthMm = (text, fontMm, em = {}) => {
  *    为了不让两份走歪：① 规则与系数**全部来自 config**（一个数字都不写死）；
  *    ② `test/labelPrintArtifact.test.js` 用**同一批夹具**跑两份实现，**逐字段比对**结果。
  */
-const planItemNoColor = (label, layout) => {
+const planItemNoColor = (label, layout, options = {}) => {
   const body = layout.body || {};
   const config = body.itemNoColor || {};
   const fields = layout.fields || {};
@@ -116,7 +116,7 @@ const planItemNoColor = (label, layout) => {
   const mark = String(config.truncateMark ?? '…');
   const separator = String(config.categorySeparator ?? ' · ');
   const preferColor = config.preferColorOverCategory !== false;
-  const available = availableWidthMm(layout);
+  const available = availableWidthMm(layout, options);
 
   const missing = String(layout.texts?.missingValue ?? '—');
   const value = (raw) => String(raw ?? '').trim() || missing;
@@ -198,13 +198,18 @@ const planItemNoColor = (label, layout) => {
  * 标签宽 − 左右留白 − 裁切线 × 2 − （二维码宽 + 二维码与右栏的空隙）。
  * 40×30 + 15mm 二维码 + 1.5mm 留白 + 0.2mm 裁切线 ⇒ **20.1mm**。
  */
-function availableWidthMm(layout) {
+function availableWidthMm(layout, options = {}) {
   const label = layout.label || {};
   const body = layout.body || {};
   const fields = layout.fields || {};
-  const qr = fields.qr === false ? 0 : num(layout.typography?.qrSizeMm, 15) + num(body.qrGapMm, 1.5);
+  // ⚠️ 竖版画布下二维码**自己占一行** ⇒ 它不再从"行方向"里扣宽度（货号拿到整行）。
+  const qrInFlow = options.qrInFlow === true;
+  const designWidthMm = num(options.designWidthMm, num(label.widthMm, 40));
+  const qr = (fields.qr === false || qrInFlow)
+    ? 0
+    : num(layout.typography?.qrSizeMm, 15) + num(body.qrGapMm, 1.5);
   const borders = num(label.borderMm, 0.2) * 2;
-  return Math.max(0, num(label.widthMm, 40) - num(label.paddingMm, 1.5) * 2 - borders - qr);
+  return Math.max(0, designWidthMm - num(label.paddingMm, 1.5) * 2 - borders - qr);
 }
 
 /**
@@ -223,6 +228,22 @@ const placeQrSvg = (qrSvg, { x, y, sizeMm }) => {
 };
 
 const ROTATIONS = Object.freeze([0, 90, 180, 270]);
+/**
+ * ⭐ 排版**画布方向**：
+ *   · `landscape`（**默认**）—— 老版式：画布 40 宽 × 30 高，品牌沿页面的 40mm 排；
+ *   · `portrait`            —— **旋转画布**：按"转过来之后"的画布（30 宽 × 40 高）**重新排版**，
+ *     再整幅**按原尺寸**转进 40×30 的页面 ⇒ 方向对（= 真机 B）**且铺满**（= 真机 C），
+ *     **不再**"先画好 40×30 再转、转不下就缩到 75%"。
+ * 认不出的值当场抛错（不许静默按横版印出一堆方向反的标签）。
+ */
+const CANVASES = Object.freeze(['landscape', 'portrait']);
+const normalizeCanvas = (value) => {
+  const canvas = String(value ?? 'landscape').trim() || 'landscape';
+  if (!CANVASES.includes(canvas)) {
+    throw new Error(`标签画布方向（canvas）只能是 landscape / portrait（横版 / 竖版），当前是「${value}」`);
+  }
+  return canvas;
+};
 
 /** 旋转角度归一化。认不出的值**当场抛错**（配置写错时不许静默按 0 处理 —— 那会印出一堆方向反的标签）。 */
 const normalizeRotation = (value) => {
@@ -234,52 +255,87 @@ const normalizeRotation = (value) => {
 };
 
 /**
- * ⭐ **打印方向**（业务负责人 2026-10-11 真机反馈：「标签是 40×30 横版，但内容整体转了 90°」）。
+ * ⭐⭐ **画布几何**（这次"旋转画布"的核心，一段话讲清三件事）：
  *
- * 两个旋钮（都在 `config/labelPrintQueue.js` 的 `artifact` 里，默认都是"不动"）：
- *   · `rotate`                 —— **只转内容**（0 / 90 / 180 / 270）；
- *   · `rotatePageWithContent`  —— **页面尺寸也跟着转**（40×30 ⇒ 30×40）。
+ * ```
+ *   画布（怎么排版）          页面（MediaBox）        内容相对页面转多少度
+ *   landscape（默认）= 40×30  40×30（换页面那档才 30×40）   0 / 90 / 180 / 270（rotate 原样）
+ *   portrait        = 30×40   **40×30（永远不换）**         90（+ 可再叠 rotate）
+ * ```
  *
- * ⚠️ **为什么需要第二个旋钮**（这一段是这次真机问题的核心，别删）：
- *    在**尺寸不变**的 40×30 页面里把一幅 40×30 的图转 90°，它占的地方变成 30×40 ——
- *    **塞不进同一张纸**。数学上只有两条路：
- *      ① **等比缩小**（×0.75）塞进去 ⇒ 方向对了，但**整张标签缩到 75%**（二维码 15mm ⇒ 11.25mm）；
- *      ② **让页面也跟着转**（MediaBox 变成 30×40）⇒ 方向对了，而且**原尺寸**。
- *    ⇒ 默认两个都关（**今天的行为一个字节都不变**）；她要哪个方向、要不要保原尺寸，
- *      由她在真机上试出来之后改配置 —— 所以这里做成配置，不写死。
+ * ⚠️ **为什么竖版要"换画布"而不是"转位图"**（真机结论，别改回去）：
+ *    把一幅 40×30 的图转 90° 之后它占 30×40 —— **塞不进 40×30 的页面**，
+ *    只能等比缩到 75%（真机 B：方向对、但**四周留白的小框**）；
+ *    而"换页面尺寸"（真机 C）会让驱动**再转 90°**（方向又反）。
+ *    ⇒ 唯一同时满足"方向对 + 原尺寸铺满 + 页面不换"的做法：
+ *      **按转过之后的画布（30×40）重新排版**，再整幅按 1:1 转进 40×30 的页面。
+ *
+ * 返回里 `scale` = 1 表示**原尺寸**（铺满）；< 1 只在"横版 + 转 90° 且不换页面"那条老路上出现
+ * （真机 B 就是它 —— **线上正跑着**，所以那条路必须原样保留）。
  */
-const rotationTransform = ({ rotate, pageW, pageH, labelW, labelH }) => {
-  if (rotate === 0) return '';
-  if (rotate === 180) {
-    // 页面不动：整幅图绕页面中心转 180°。
-    return `translate(${round(pageW)} ${round(pageH)}) rotate(180)`;
-  }
-  const swapped = pageW !== labelW; // 页面已经跟着转了（pageW 变成了 labelH）
-  if (swapped) {
-    // 页面跟着转：把 labelW×labelH 的图**原尺寸**放进 pageW×pageH 的新页面里。
-    return rotate === 90
-      // 顺时针 90°：(x, y) → (pageW − y, x)
-      ? `translate(${round(pageW)} 0) rotate(90)`
-      // 逆时针 90°（= 270°）：(x, y) → (y, pageH − x)
-      : `translate(0 ${round(pageH)}) rotate(270)`;
-  }
-  // 页面不动 ⇒ 等比缩小到塞得下（长边转到短边那一侧）。
-  // ⚠️ 乘 0.98 留一丝余量：刚好贴边的话，裁切线会落在纸的最外一像素上（打印机很容易把它切掉/糊掉）。
-  const fit = Math.min(1, Math.min(labelW, labelH) / Math.max(labelW, labelH));
-  const scale = round(fit * 0.98);
-  const cx = round(labelW / 2);
-  const cy = round(labelH / 2);
-  return `translate(${cx} ${cy}) rotate(${rotate}) scale(${scale}) translate(${-cx} ${-cy})`;
-};
-
-/** 页面尺寸（mm）：`rotatePageWithContent` 且 90/270 ⇒ 宽高互换。 */
-const pageSizeMm = (layout, options = {}) => {
+const canvasGeometry = (layout, options = {}) => {
   const labelCfg = layout.label || {};
   const labelW = num(labelCfg.widthMm, 40);
   const labelH = num(labelCfg.heightMm, 30);
-  const rotate = normalizeRotation(options.rotate);
-  const swap = Boolean(options.rotatePageWithContent) && (rotate === 90 || rotate === 270);
-  return { labelW, labelH, pageW: swap ? labelH : labelW, pageH: swap ? labelW : labelH, rotate, swapped: swap };
+  const canvas = normalizeCanvas(options.canvas);
+  const rotateOption = normalizeRotation(options.rotate);
+  const portrait = canvas === 'portrait';
+  // 逻辑画布：竖版 = 宽高互换（"按旋转后的画布重新排版"）
+  const designW = portrait ? labelH : labelW;
+  const designH = portrait ? labelW : labelH;
+  // 内容相对页面要转多少度：竖版画布天生就带一次 90°（把 30×40 的画布转进 40×30 的页面）。
+  const rotation = ((((portrait ? 90 : 0) + rotateOption) % 360) + 360) % 360;
+  // ⚠️ 竖版画布下**忽略** `rotatePageWithContent`：实测换页面会让驱动**再转 90°**、方向又反。
+  const allowSwap = !portrait
+    && Boolean(options.rotatePageWithContent)
+    && (rotateOption === 90 || rotateOption === 270);
+  const pageW = allowSwap ? labelH : labelW;
+  const pageH = allowSwap ? labelW : labelH;
+  // 转完之后内容占多大；**塞不下才缩**（老路 B 靠这一档；竖版画布在 40×30 里正好 1:1）。
+  const needW = rotation % 180 === 0 ? designW : designH;
+  const needH = rotation % 180 === 0 ? designH : designW;
+  const fit = Math.min(1, pageW / needW, pageH / needH);
+  // ⚠️ 只有"要缩小"时才留那 2% 余量（刚好贴边会被打印机切到）；原尺寸那一档保持 1:1。
+  const scale = fit >= 1 ? 1 : round(fit * 0.98);
+  return {
+    canvas,
+    portrait,
+    labelW,
+    labelH,
+    designW,
+    designH,
+    pageW,
+    pageH,
+    rotate: rotation,
+    scale,
+    // 竖版画布：二维码**自己占一行**（见 `body.portraitRows` 的说明）。
+    qrInFlow: portrait,
+    allowSwap,
+  };
+};
+
+/** 页面尺寸（mm）—— 兼容旧调用（竖版画布 = 画布 30×40、页面仍 40×30）。 */
+const pageSizeMm = (layout, options = {}) => {
+  const geo = canvasGeometry(layout, options);
+  return {
+    labelW: geo.labelW, labelH: geo.labelH,
+    pageW: geo.pageW, pageH: geo.pageH,
+    rotate: geo.rotate, swapped: geo.allowSwap,
+  };
+};
+
+/**
+ * 内容相对页面的那个 `transform`。
+ * ⚠️ `rotate === 0 && scale === 1`（横版默认）⇒ **返回空串（不套 `<g>`）**，
+ *    保证横版原样的输出与"加画布之前"**逐字节一致**。
+ */
+const rotationTransform = (geo) => {
+  if (geo.rotate === 0 && geo.scale >= 1) return '';
+  const parts = [`translate(${round(geo.pageW / 2)} ${round(geo.pageH / 2)})`];
+  if (geo.rotate) parts.push(`rotate(${geo.rotate})`);
+  if (geo.scale !== 1) parts.push(`scale(${geo.scale})`);
+  parts.push(`translate(${round(-geo.designW / 2)} ${round(-geo.designH / 2)})`);
+  return parts.join(' ');
 };
 
 /**
@@ -307,15 +363,16 @@ function labelSvg(label, layout, options = {}) {
   const sizesCfg = layout.sizes || {};
   const texts = layout.texts || {};
 
-  const widthMm = num(labelCfg.widthMm, 40);
-  const heightMm = num(labelCfg.heightMm, 30);
+  // ⭐⭐ 画布几何：`widthMm/heightMm` 这里是**逻辑画布**（怎么排版），
+  //    页面（MediaBox）与"转多少度"由 `geometry` 决定 —— 竖版画布下两者不同（30×40 画布 → 40×30 页面）。
+  const geometry = canvasGeometry(layout, options);
+  const widthMm = geometry.designW;
+  const heightMm = geometry.designH;
   const padMm = num(labelCfg.paddingMm, 1.5);
   const borderMm = num(labelCfg.borderMm, 0.2);
 
-  // ⭐ 打印方向：页面尺寸可能与标签自身尺寸不同（`rotatePageWithContent` 且 90/270）。
-  const page = pageSizeMm(layout, options);
-  const widthPx = mmToPx(page.pageW, dpi);
-  const heightPx = mmToPx(page.pageH, dpi);
+  const widthPx = mmToPx(geometry.pageW, dpi);
+  const heightPx = mmToPx(geometry.pageH, dpi);
 
   // 内容区（`box-sizing: border-box` ⇒ 留白与裁切线都占尺寸）。
   const x0 = padMm + borderMm;
@@ -356,19 +413,23 @@ function labelSvg(label, layout, options = {}) {
   // ── 二维码（左，竖直居中）──────────────────────────────────────────────
   const qrMm = num(typography.qrSizeMm, 15);
   const qrGapMm = num(body.qrGapMm, 1.5);
+  // ⭐ 二维码在哪：横版 = **左栏**（老版式，二维码旁边是文字）；竖版画布 = **自己占一行**
+  //   （行方向只有 30mm，二维码挤在里面会把货号压到截断 —— 见 `body.portraitRows` 的说明）。
+  const qrInFlow = geometry.qrInFlow === true && fields.qr && qrMm > 0;
   let rightX = x0;
-  if (fields.qr && qrMm > 0) {
+  if (fields.qr && qrMm > 0 && !qrInFlow) {
     const qrY = mainTop + Math.max(0, (mainH - qrMm) / 2);
     parts.push(placeQrSvg(label.qr_svg, { x: round(x0), y: round(qrY), sizeMm: round(qrMm) }));
     rightX = x0 + qrMm + qrGapMm;
   }
-  // 右栏从 `rightX` 到内容区右边（`rightW` = 20.1mm 当二维码开着时）—— 具体画多宽由下面的估算决定，
+  // 右栏从 `rightX` 到内容区右边（竖版画布下 = 整幅内容宽）—— 具体画多宽由下面的估算决定，
   // 排版不会越过这条界线（`planItemNoColor` 已经把字宽算进可用宽度里）。
 
-  // ── 右栏：行序与每一行的画法都来自 config（`body.rows`）─────────────────
-  const rows = Array.isArray(body.rows) && body.rows.length
-    ? body.rows
-    : ['brand', 'itemNoColor', 'price', 'state', 'sizes'];
+  // ── 右栏：行序与每一行的画法都来自 config（横版 `body.rows` / 竖版 `body.portraitRows`）──
+  const rowIds = geometry.portrait
+    ? (Array.isArray(body.portraitRows) && body.portraitRows.length ? body.portraitRows : ['brand', 'itemNoColor', 'price', 'sizes'])
+    : (Array.isArray(body.rows) && body.rows.length ? body.rows : ['brand', 'itemNoColor', 'price', 'state', 'sizes']);
+  const rows = rowIds;
   const itemNoMm = num(typography.itemNoMm, 3.6);
   const fieldMm = num(typography.fieldMm, 2.8);
   const priceMm = num(typography.priceMm, 3.2);
@@ -377,7 +438,7 @@ function labelSvg(label, layout, options = {}) {
   const qtyShiftEm = num(sizesCfg.qtyBaselineShiftEm, 0.2);
   const sizeGapMm = num(sizesCfg.itemGapMm, 1);
 
-  const itemPlan = planItemNoColor(label, layout);
+  const itemPlan = planItemNoColor(label, layout, { designWidthMm: widthMm, qrInFlow });
   const sizeLines = Array.isArray(label.size_lines) ? label.size_lines.filter((line) => Array.isArray(line) && line.length) : [];
   const overflowMark = String(texts.overflowMark ?? '…');
 
@@ -391,6 +452,8 @@ function labelSvg(label, layout, options = {}) {
     if (id === 'state') return fieldMm * LINE_HEIGHTS.state;
     if (id === 'sizes') return Math.max(1, sizeLines.length) * sizeMm * LINE_HEIGHTS.sizes;
     if (id === 'brand') return brandMmRow();
+    // ⭐ 二维码自己占一行（竖版画布）：高度 = 二维码边长 + 上面一点空隙。
+    if (id === 'qr') return qrInFlow ? qrMm + 0.8 : 0;
     return 0;
   };
 
@@ -400,6 +463,7 @@ function labelSvg(label, layout, options = {}) {
     if (id === 'price') return Boolean(fields.price && label.price_text);
     if (id === 'state') return Boolean(fields.state);
     if (id === 'sizes') return Boolean(fields.size) && sizeLines.length > 0;
+    if (id === 'qr') return qrInFlow;
     return false;
   });
   const totalH = activeRows.reduce((sum, id) => sum + rowHeight(id), 0);
@@ -446,22 +510,20 @@ function labelSvg(label, layout, options = {}) {
           parts.push(`<text x="${round(x)}" y="${round(lineBaseline)}" font-family="${FONT_FAMILY}" font-size="${round(sizeMm)}">${escapeXml(overflowMark)}</text>`);
         }
       });
+    } else if (id === 'qr') {
+      // 二维码那一行：**左对齐**（与她定案的"二维码在左边"一致），自己占一行 ⇒ 15mm 原尺寸。
+      parts.push(placeQrSvg(label.qr_svg, { x: round(rightX), y: round(cursor + 0.4), sizeMm: round(qrMm) }));
     }
     cursor += h;
   }
 
   const inner = parts.join('');
-  // ⚠️ `rotate === 0`（默认）**不套 `<g>`** —— 输出与加旋转之前逐字节一致（既有版式/既有用例不受影响）。
-  const transform = rotationTransform({
-    rotate: page.rotate,
-    pageW: page.pageW,
-    pageH: page.pageH,
-    labelW: widthMm,
-    labelH: heightMm,
-  });
+  // ⚠️ 横版 + 0°（默认）⇒ `transform` 是空串 ⇒ **不套 `<g>`**，
+  //    输出与"加画布之前"逐字节一致（线上/浏览器打印那条老路一个字都没变）。
+  const transform = rotationTransform(geometry);
   const body2 = transform ? `<g transform="${transform}">${inner}</g>` : inner;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${widthPx}" height="${heightPx}" viewBox="0 0 ${page.pageW} ${page.pageH}">`
-    + `<rect width="${page.pageW}" height="${page.pageH}" fill="#ffffff" />`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${widthPx}" height="${heightPx}" viewBox="0 0 ${geometry.pageW} ${geometry.pageH}">`
+    + `<rect width="${geometry.pageW}" height="${geometry.pageH}" fill="#ffffff" />`
     + body2
     + '</svg>';
 }
@@ -597,14 +659,16 @@ async function renderLabels({ labels, layout, config = {}, logger = null }) {
   const list = Array.isArray(labels) ? labels : [];
   if (!list.length) throw new Error('没有可打印的标签（renderLabels 收到空列表）');
   const dpi = num(config.dpi, 203);
-  // ⭐ 打印方向：`rotate` 只转内容；`rotatePageWithContent` 让页面尺寸也跟着转（见 rotationTransform）。
+  // ⭐⭐ 画布方向：`canvas` 决定"按哪个画布排版"（竖版 = 旋转画布、原尺寸铺满）；
+  //    `rotate` / `rotatePageWithContent` 是更底层的旋钮（老路 A/B/C 都靠它们精确复现）。
+  const canvas = normalizeCanvas(config.canvas);
   const rotate = normalizeRotation(config.rotate);
   const rotatePageWithContent = Boolean(config.rotatePageWithContent);
-  const page = pageSizeMm(layout, { rotate, rotatePageWithContent });
+  const page = canvasGeometry(layout, { canvas, rotate, rotatePageWithContent });
   const pages = [];
   let pngFirst = null;
   for (const label of list) {
-    const svg = labelSvg(label, layout, { dpi, rotate, rotatePageWithContent });
+    const svg = labelSvg(label, layout, { dpi, canvas, rotate, rotatePageWithContent });
     const png = await svgToPng(svg);
     if (!pngFirst) pngFirst = png;
     const jpeg = await pngToJpeg(png, { quality: config.jpegQuality });
@@ -629,11 +693,14 @@ async function renderLabels({ labels, layout, config = {}, logger = null }) {
     logger.info('label_print.artifact.rendered', {
       pages: pages.length,
       dpi,
-      rotate,
-      rotate_page_with_content: rotatePageWithContent || undefined,
+      canvas,
+      rotate: page.rotate,
+      scale: page.scale,
+      // ⚠️ 竖版画布下这个旋钮**被忽略** ⇒ 如实回报 false（不是"配了没生效还不知道"）。
+      rotate_page_with_content: page.allowSwap || undefined,
       pdf_bytes: pdf.length,
       page_mm: `${page.pageW}x${page.pageH}`,
-      label_mm: `${page.labelW}x${page.labelH}`,
+      canvas_mm: `${page.designW}x${page.designH}`,
     });
   }
   return {
@@ -642,14 +709,20 @@ async function renderLabels({ labels, layout, config = {}, logger = null }) {
     pages: pages.map(({ jpeg, ...rest }) => rest),
     meta: {
       dpi,
-      rotate,
-      rotate_page_with_content: rotatePageWithContent,
+      canvas,
+      // 内容相对页面实际转了多少度（竖版画布 = 90 + rotate）
+      rotate: page.rotate,
+      // 1 = **原尺寸**（铺满）；<1 只会出现在"横版 + 转 90° + 不换页面"那条老路上
+      scale: page.scale,
+      rotate_page_with_content: page.allowSwap,
       // 页面尺寸（送打印机那一份的真实 MediaBox）
       width_mm: page.pageW,
       height_mm: page.pageH,
       width_pt: mmToPt(page.pageW),
       height_pt: mmToPt(page.pageH),
-      // 标签自身尺寸（纸没换，只是方向不同 —— 页面尺寸可能与它不同）
+      // 逻辑画布（"按哪个方向排版"）与标签自身尺寸
+      canvas_width_mm: page.designW,
+      canvas_height_mm: page.designH,
       label_width_mm: page.labelW,
       label_height_mm: page.labelH,
       page_count: pages.length,
@@ -663,6 +736,9 @@ module.exports = {
   LINE_HEIGHTS,
   MM_TO_PT,
   ROTATIONS,
+  CANVASES,
+  normalizeCanvas,
+  canvasGeometry,
   escapeXml,
   textWidthMm,
   availableWidthMm,

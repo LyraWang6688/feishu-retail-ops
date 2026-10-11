@@ -162,6 +162,16 @@ const SIZES = Object.freeze({
  */
 const BODY = Object.freeze({
   rows: Object.freeze(['brand', 'itemNoColor', 'price', 'state', 'sizes']),
+  /**
+   * ⭐⭐ 2026-10-11（真机三组对照之后的**旋转画布**）：**竖版画布**那一档的行序。
+   *
+   * 为什么竖版要另一份行序：竖版画布是"按旋转后的画布重新排版"（画布 30 宽 × 40 高），
+   * 那一边**只有 30mm 的"行方向"**——二维码（15mm）要是还挤在这一行里，货号就只剩 ~10mm、
+   * 必然被缩到最小字号甚至截断（货号是这张标签**第一眼要看的东西**）。
+   * ⇒ 竖版里让**二维码自己占一行**（占的是 40mm 那一边），货号照旧拿到整行宽度（26.6mm）。
+   * ⚠️ 横版（默认）仍用上面的 `rows`（**一个字节都没变**）。
+   */
+  portraitRows: Object.freeze(['brand', 'itemNoColor', 'price', 'state', 'sizes', 'qr']),
   brandRow: 'top',
   brandAlign: 'center',
   brandGapMm: 0.6,
