@@ -53,7 +53,7 @@ const createScanSessionService = (options = {}) => {
     return expiresAt > 0 && now() > expiresAt;
   };
 
-  /** 新建一份会话（全新的一轮：销售一把键、补货一把键，都从第 1 轮开始）。 */
+  /** 新建一份会话（全新的一轮：销售 / 补货 / 退货**各一把键**，都从第 1 轮开始）。 */
   const freshSession = (openId) => {
     const sessionId = idOf(openId);
     return {
@@ -78,6 +78,15 @@ const createScanSessionService = (options = {}) => {
       },
       replenish: {
         key: keyFor(sessionConfig.replenishKeyPrefix, sessionId, 1),
+        seq: 1,
+        status: sessionConfig.statuses.draft,
+        last_error: '',
+        completed: [],
+      },
+      // ⭐ 2026-10-11：**采购退货**（扫码页采购领域第二个动作）—— 第三条链，
+      //    与销售 / 补货**各用各的键**：一条提交不动另外两条（有专门用例钉住）。
+      purchaseReturn: {
+        key: keyFor(sessionConfig.returnKeyPrefix, sessionId, 1),
         seq: 1,
         status: sessionConfig.statuses.draft,
         last_error: '',
@@ -241,22 +250,56 @@ const createScanSessionService = (options = {}) => {
     }));
   };
 
+  /** 退货提交成功：**只轮换退货那一把键** + 留档结果（销售 / 补货两把键一个字不动）。 */
+  const completePurchaseReturn = async (openId, { key, result }) => {
+    const session = await ensure(openId);
+    const purchaseReturn = session.purchaseReturn || {};
+    const completed = [...(purchaseReturn.completed || []), { key, ...result }].slice(-5);
+    const next = await store.update(session[sessionConfig.idField], touch({
+      purchaseReturn: {
+        ...purchaseReturn,
+        key: keyFor(
+          sessionConfig.returnKeyPrefix, session[sessionConfig.idField], (purchaseReturn.seq || 1) + 1,
+        ),
+        seq: (purchaseReturn.seq || 1) + 1,
+        status: sessionConfig.statuses.submitted,
+        last_error: '',
+        completed,
+      },
+    }));
+    return next;
+  };
+
+  const markPurchaseReturnFailed = async (openId, message) => {
+    const session = await ensure(openId);
+    return store.update(session[sessionConfig.idField], touch({
+      purchaseReturn: { ...(session.purchaseReturn || {}), last_error: String(message || '') },
+    }));
+  };
+
   /**
    * 页面表单里那一把幂等键（**纯函数，不读不写**）。
    * · 已经有会话 → 用会话里当前这一轮的键；
    * · 还没有会话（她只是扫开看了一眼、什么都还没点）→ 用**第 1 轮**的键
    *   （与 `ensure()` 建出来的那一把**逐字一致** ⇒ "先看后点"不会对不上）。
    * ⚠️ 渲染页面时**绝不**因为这一下就建会话文件：会话在第一次「加入本单」时才落盘。
+   *
+   * ⭐ 2026-10-11：**三条链各一把键**（`sale` / `replenish` / `purchase_return`）——
+   *   前缀与所在块都由**配置**给；认不出的 flow 一律回落到销售（与改动前逐字一致），
+   *   绝不"猜成某一条新链"。
    */
-  const submitKeyFor = (openId, session, flow) => {
-    const useReplenish = flow === 'replenish';
-    const existing = useReplenish ? session?.replenish?.key : session?.sale?.key;
-    if (existing) return existing;
-    return keyFor(
-      useReplenish ? sessionConfig.replenishKeyPrefix : sessionConfig.saleKeyPrefix,
-      idOf(openId),
-      1,
-    );
+  const FLOW_KEY_PREFIX = Object.freeze({
+    sale: sessionConfig.saleKeyPrefix,
+    replenish: sessionConfig.replenishKeyPrefix,
+    purchase_return: sessionConfig.returnKeyPrefix,
+  });
+  const submitKeyFor = (openId, session, flow = 'sale') => {
+    const name = Object.prototype.hasOwnProperty.call(FLOW_KEY_PREFIX, flow) ? flow : 'sale';
+    const block = name === 'replenish'
+      ? session?.replenish
+      : (name === 'purchase_return' ? session?.purchaseReturn : session?.sale);
+    if (block?.key) return block.key;
+    return keyFor(FLOW_KEY_PREFIX[name], idOf(openId), 1);
   };
 
   return {
@@ -270,8 +313,10 @@ const createScanSessionService = (options = {}) => {
     saveSaleProgress,
     completeSale,
     completeReplenish,
+    completePurchaseReturn,
     markSaleFailed,
     markReplenishFailed,
+    markPurchaseReturnFailed,
     store,
   };
 };

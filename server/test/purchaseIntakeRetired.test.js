@@ -282,7 +282,28 @@ test('⑤ 「报货批次」不再映射「验收原话 / 确认状态」；写�
   assert.equal(fields.actualAmount, '实际金额');
 
   assert.equal(PurchaseOrderBatchService.prototype.markConfirmed, undefined, '写「确认状态」的方法整个删除');
-  assert.equal(PurchaseOrderBatchService.prototype.createForReturnBatch, undefined, '退货批次建行随退货入口删除');
+  // ── ⚠️ 2026-10-11 断言**翻转**（退货入口改走扫码页）────────────────────────────
+  //  改前（逐字）：`assert.equal(PurchaseOrderBatchService.prototype.createForReturnBatch, undefined, '退货批次建行随退货入口删除');`
+  //  改后（逐字）：下面这一段 —— 方法**在**，且把老口径钉成**行为断言**
+  //    （只写「报货批次号 + 幂等键」、**不写「到货状态」**、同一批只建一行）。
+  //  理由：那一句断言的前提是"采购退货入口已退场"（2026-10-09「信息填写」整表删除带来的）。
+  //    2026-10-11 业务负责人把退货重新定在**扫码页**（口径逐字：「和"报货"逻辑一样，也走扫码」）
+  //    ⇒ 「退货入口不存在」不再成立，而**方法的实现一个字没变**（与 2026-10-07 那一版同形）
+  //    ⇒ 断言从"方法不存在"改成"方法存在且行为对"。
+  assert.equal(typeof PurchaseOrderBatchService.prototype.createForReturnBatch, 'function',
+    '退货批次建行随退货入口（改走扫码页）一起恢复 —— 2026-10-11');
+  const returnGateway = makeGateway({ purchaseOrderBatch: [] });
+  const returnBatches = new PurchaseOrderBatchService({ gateway: returnGateway });
+  const returnBatch = await returnBatches.createForReturnBatch('BH-RET-1');
+  assert.equal(returnBatch.created, true);
+  // 🔴 只写两列：批次号 + 幂等键（**没有**「到货状态」⇒ 不混进 9 点「未到货」推送 / 工作台待验收）
+  assert.deepEqual(
+    Object.keys(returnGateway.writes.at(-1).fields).sort(),
+    ['幂等键', '报货批次号'].sort(),
+  );
+  const returnBatchAgain = await returnBatches.createForReturnBatch('BH-RET-1');
+  assert.equal(returnBatchAgain.created, false, '同一批只建一行（先按批次号回查复用）');
+  assert.equal(returnBatchAgain.recordId, returnBatch.recordId);
 
   // 写入点：`writeAcceptance` 只写实际数量 / 实际金额（行为级断言）。
   const gateway = makeGateway({ purchaseOrderBatch: [{ record_id: 'bat_1', fields: { 报货批次号: 'BH-1' } }] });

@@ -2442,11 +2442,20 @@ test('表单⑫：源码级断言 —— 提交这条路**没有第二套解析*
   //    它调的是**同一个** `buildPlan` 的 `same: true` 分支（"全部按申请数到货"，
   //    **根本不做差异比对**）⇒ 仍然**只有一处**"按模型解析出的差异算计划"。
   //    ⇒ 这条哨兵**收紧**成两问：调用点确实多了一个（如实），但"差异比对"的实现仍然只有一处。
-  assert.equal(planCalls.length, 2, '算计划的调用点：话题/表单那条 + 工作台的 same 分支');
+  // ⚠️ 2026-10-11 断言**更新**（计数 2 → 3；不变量"差异比对只有一处"一个字没变）：
+  //    改前（逐字）：`assert.equal(planCalls.length, 2, '算计划的调用点：话题/表单那条 + 工作台的 same 分支');`
+  //    改后（逐字）：`assert.equal(planCalls.length, 3, '算计划的调用点：话题/表单那条 + 工作台的 same 分支 + 扫码验收的 scanLines 分支');`
+  //    理由：第三处是**扫码验收**（业务负责人 2026-10-11 选定的方案A）——
+  //      它同样**不做差异比对**（输入是她扫到的逐码实际数 `parsed.scanLines`），
+  //      走的是**同一个** `buildPlan` 纯函数的一个新输入口；下面两条逐字保留，
+  //      并新钉一条"扫码那条只能走 scanLines 分支"（比原来更强）。
+  assert.equal(planCalls.length, 3, '算计划的调用点：话题/表单那条 + 工作台的 same 分支 + 扫码验收的 scanLines 分支');
   const diffPlanCalls = source.match(/this\.buildPlan\(snapshot\.rows, parsed\)/g) || [];
-  assert.equal(diffPlanCalls.length, 1, '按模型解析的差异算计划**只有一处**（提交/工作台都不另造一套差异比对）');
+  assert.equal(diffPlanCalls.length, 1, '按模型解析的差异算计划**只有一处**（提交/工作台/扫码都不另造一套差异比对）');
   assert.match(source, /buildPlan\(snapshot\.rows, \{ same: true, differences: \[\] \}\)/,
     '工作台那条只能走"全部按申请数到货"的 same 分支（不做差异比对）');
+  assert.match(source, /buildPlan\(snapshot\.rows, \{ scanLines: scans \}\)/,
+    '扫码验收那条只能走"逐码实际到货"的 scanLines 分支（同样不做差异比对）');
 });
 
 

@@ -376,6 +376,29 @@ const purchaseIncreaseSourceId = (input) => {
   return `purchase_increase:${identity}|${input.productRecordId}|${normalizeSize(input.size)}`;
 };
 
+/**
+ * ⭐ 2026-10-11：**采购退货**的来源标识（= 本地幂等键）。
+ *
+ * 与 `purchaseIncreaseSourceId` 同一个形状与同一条纪律：**真实三元组**
+ * （批次身份 | 货品 record_id | 尺码），一个都拿不到就**当场抛**，绝不编一个 id。
+ *
+ * ⚠️ 为什么不能拿"退货明细行的 record_id"当来源：那条行**先写、库存后扣**，
+ *    崩溃后重放要看的是"这一次退货的（货品+尺码）"是不是已经扣过 —— 用三元组最稳
+ *    （与采购入库那条同源；「库存流水.关联采购」是**只写不查**的关联列，不参与幂等）。
+ * ⚠️ 退货批次的身份优先用「报货批次」那一行的 record_id（最准、零额外请求），
+ *    拿不到才回落到批次号。
+ */
+const purchaseReturnSourceId = (input) => {
+  const identity = String(
+    input.purchaseBatchRecordId || input.purchaseBatchNo || input.returnTaskId || '',
+  ).trim();
+  if (!identity) {
+    throw new Error('采购退货缺少来源标识（批次记录 id / 批次号 / 退货任务 id 至少要有一个）');
+  }
+  if (!input.productRecordId) throw new Error('库存变化缺少商品 record_id');
+  return `purchase_return:${identity}|${input.productRecordId}|${normalizeSize(input.size)}`;
+};
+
 // ── `ledgerLink`：**只写不查**的"库存流水 → 来源表"关联列（2026-10-08 加）─────────────
 // 与 `ledgerSource` 的分工见 STOCK_MOVEMENTS[采购增加] 的注释。两个 helper 只在
 // `applyChange`（落本地任务）与 `executeOperation`（写流水）里各用一次，配置驱动、无 if 分支。
@@ -537,6 +560,33 @@ class InventoryService {
       state: existing?.state || input.state || '门盒',
       sourceRecordId,
       quantity: positiveInteger(input.quantity, '采购入库数量'),
+    }, options);
+  }
+
+  /**
+   * ⭐ 2026-10-11：**采购退货 → 扣库存**（扫码页退货那条链路唯一允许走的库存入口）。
+   *
+   * 它就是 `applyChange` 的一层**薄封装**（和 `applyPurchase` 对入库那样）：
+   *   · `kind` = `MOVEMENT_PURCHASE_DECREASE`（**库存行为编码不在这里写死**，
+   *     由注册表 `STOCK_MOVEMENTS` 决定扣哪些状态 —— 现存口径 = 门盒 + 样品 + 仓库）；
+   *   · 来源标识 = 真实三元组（见 `purchaseReturnSourceId`）；
+   *   · `state` 与 `applyPurchase` 同一条纪律：**先按来源回查本地任务**，重放时用它自己
+   *     记下的那一份（否则重放会拿"重新算出来的 state"去比对，被 `applyChange`
+   *     的"内容与首次提交不一致"当场拦下）。
+   *
+   * 🔴 **超库存由 `applyChange` 兜底**：现有数量 < 要退的数量 ⇒ **当场抛错**、
+   *    一双都不动（绝不退成负数）。所以"退能退的"必须在**调用方**先把 `quantity`
+   *    算成 `min(她说要退的, 现有)` —— 本方法不做业务判断、不夹取、不静默少扣。
+   */
+  async applyPurchaseReturn(input, options = {}) {
+    const sourceRecordId = purchaseReturnSourceId(input);
+    const existing = await this.findOperationBySource(sourceRecordId);
+    return this.applyChange({
+      ...input,
+      kind: MOVEMENT_PURCHASE_DECREASE,
+      state: existing?.state || input.state || '门盒',
+      sourceRecordId,
+      quantity: positiveInteger(input.quantity, '采购退货数量'),
     }, options);
   }
 
@@ -1281,6 +1331,9 @@ module.exports = {
   // 采购加库存的**来源标识**（= 本地幂等键）：导出它，好让测试 / 排查脚本
   // 用**同一个函数**算出"这一条该是哪个键"，而不是在别处再抄一份格式（抄了就会漂移）。
   purchaseIncreaseSourceId,
+  // ⭐ 2026-10-11：采购退货的来源标识（= 本地幂等键）——同样导出，好让测试 / 排查脚本
+  // 用**同一个函数**算键，而不是在别处再抄一份格式（抄了就会漂移）。
+  purchaseReturnSourceId,
   STOCK_MOVEMENTS,
   ADJUSTMENT_BEHAVIORS,
   // 状态值域从这里导出，避免「实时库存」的状态清单在别处再抄一份（抄了就会漂移）。

@@ -35,7 +35,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { SCAN_PAGE, fillText } = require('../config/scanPage');
 const {
-  REALMS, DEFAULT_REALM, REALM_TEXTS, resolveRealm, labelPrintUrls,
+  REALMS, DEFAULT_REALM, REALM_TEXTS, ACCEPTANCE_REALM, resolveRealm, labelPrintUrls,
   saleSizeGroups, purchaseSizeLines,
 } = require('./scanPageRealm');
 
@@ -690,13 +690,14 @@ const replenishFormHtml = (view, write) => {
 <span class="purchase-size__count">${escapeHtml(fillText(v.saleCountTemplate, { count: item.sellable ?? 0 }))}</span>
 <span class="tag tag--${item.sellable > 0 ? 'success' : 'warning'}">${escapeHtml(item.sellable > 0 ? v.purchaseInStockTag : (item.missing ? v.purchaseMissingTag : v.purchaseNoneTag))}</span>
 </li>`).join('')}</ul>`;
-  const rows = sizes.map((item) => {
-    const size = item.size_text;
-    return `<div class="size-row">
-<label class="size-check"><input type="checkbox" name="${escapeHtml(fields.replenishSizes)}" value="${escapeHtml(size)}"${item.checked ? ' checked' : ''}> ${escapeHtml(size)} 码</label>
-<input class="size-qty" name="${escapeHtml(`${fields.replenishQuantityPrefix}${size}`)}" value="1" inputmode="numeric" aria-label="${escapeHtml(`${size} ${t.replenishQuantityLabel}`)}" placeholder="${escapeHtml(t.replenishQuantityLabel)}">
-</div>`;
-  }).join('');
+  const rows = sizeRowsHtml({
+    sizes,
+    name: fields.replenishSizes,
+    quantityPrefix: fields.replenishQuantityPrefix,
+    quantityLabel: t.replenishQuantityLabel,
+    // 补货：**缺码默认勾上**（她要补的就是缺的那些）
+    checkedOf: (item) => Boolean(item.checked),
+  });
   return `<section class="card">
 ${stockList}
 <details class="disclosure" data-view="one-tap-replenish">
@@ -712,8 +713,139 @@ ${rows}
 };
 
 /**
- * 某个领域**"没内容"**时的那张人话卡片（标题 + 为什么 + 一个下一步）。
+ * 一列"尺码 + 数量"的行（补货与退货**共形**，只有字段名与是否预勾不同）。
  *
+ * ⚠️ 两个表单各自是独立的 `<form>`，所以同名控件互不影响；但**字段名仍然各用各的**
+ *   （配置里的 `sizes` / `return_sizes`），断言与将来的合并提交都不至于互相串。
+ */
+const sizeRowsHtml = ({ sizes, name, quantityPrefix, quantityLabel, checkedOf }) => sizes.map((item) => {
+  const size = item.size_text;
+  return `<div class="size-row">
+<label class="size-check"><input type="checkbox" name="${escapeHtml(name)}" value="${escapeHtml(size)}"${checkedOf(item) ? ' checked' : ''}> ${escapeHtml(size)} 码</label>
+<input class="size-qty" name="${escapeHtml(`${quantityPrefix}${size}`)}" value="1" inputmode="numeric" aria-label="${escapeHtml(`${size} ${quantityLabel}`)}" placeholder="${escapeHtml(quantityLabel)}">
+</div>`;
+}).join('');
+
+/**
+ * ⭐⭐ 2026-10-11（业务负责人定）：采购领域的【**退货**】——与【一键补货】**同形**
+ *   （同一个 POST 端点、同一套会话与幂等键风格、勾尺码 + 填数量）。
+ *
+ * 口径要点：
+ *   · **不预勾任何尺码**：退哪几个码是**业务事实**（她现场看货才知道），替她预勾就是猜；
+ *   · 数量默认 1（与补货同一条"至少一双"），可改；
+ *   · **一行业务逻辑都没有**：动作名 / 字段名 / 幂等键 / 文案全来自配置，
+ *     写库在既有构件里（见 `services/purchaseReturnService.js` 的文件头）。
+ */
+const returnFormHtml = (view, write) => {
+  const t = write.texts;
+  const v = REALM_TEXTS;
+  const fields = write.fields;
+  const lines = purchaseSizeLines(view);
+  const sizes = lines.length ? lines : (write.sizes || []).map((item) => ({
+    size_text: item.size_text, sellable: null, missing: Boolean(item.missing), checked: false,
+  }));
+  if (!sizes.length) return '';
+  const rows = sizeRowsHtml({
+    sizes,
+    name: fields.returnSizes,
+    quantityPrefix: fields.returnQuantityPrefix,
+    quantityLabel: t.replenishQuantityLabel,
+    checkedOf: () => false,
+  });
+  return `<section class="card">
+<details class="disclosure" data-view="purchase-return">
+<summary class="disclosure__summary">${escapeHtml(v.purchaseReturn)}</summary>
+<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
+${hiddenField(fields.action, write.actions.purchaseReturn)}
+${hiddenField(fields.submitKey, write.returnKey)}
+${rows}
+<button type="submit" class="btn btn--primary">${escapeHtml(t.returnButton)}</button>
+</form>
+</details>
+</section>`;
+};
+
+/** 【继续扫下一个】：飞书客户端（手机）给 AppLink；桌面/自带浏览器给那句人话（绝不给死按钮）。 */
+const acceptanceScanNextHtml = (userAgent) => (canScanNextWithFeishu(userAgent)
+  ? `<a class="btn" href="${escapeHtml(SCAN_PAGE.scanNext.applink)}" rel="noopener">${escapeHtml(SCAN_PAGE.texts.scanNextLabel)}</a>`
+  : `<p class="hint">${escapeHtml(SCAN_PAGE.texts.scanNextHint)}</p>`);
+
+/** 验收模式的**本单条**：已验收 N 双 / 应到 M 双（她点名要的那一行）+ 一句提示（可有可无）。 */
+const acceptanceSummaryHtml = (write, acceptance) => {
+  const t = write.texts;
+  return `<p class="draft-bar__count" data-view="acceptance-summary">${escapeHtml(fillText(t.acceptSummary, {
+    scanned: Number(acceptance.scanned || 0), expected: Number(acceptance.expected || 0),
+  }))}</p>
+${acceptance.notice ? `<p class="notice">${escapeHtml(acceptance.notice)}</p>` : ''}`;
+};
+
+/** 【完成验收】：只收「实际金额」（必填，既有业务口径）——**没有**「到货说明」那一栏。 */
+const acceptanceFinishHtml = (write, acceptance) => {
+  const t = write.texts;
+  const fields = write.fields;
+  return `<form method="post" action="${escapeHtml(acceptance.postAction)}" class="write-form" data-view="acceptance-finish">
+${hiddenField(fields.action, write.actions.acceptFinish)}
+<label class="size-check">${escapeHtml(t.acceptFinishAmountLabel)}
+<input class="size-qty" name="${escapeHtml(fields.acceptAmount)}" inputmode="decimal" aria-label="${escapeHtml(t.acceptFinishAmountLabel)}">
+</label>
+<button type="submit" class="btn btn--primary">${escapeHtml(t.acceptFinishSubmit)}</button>
+</form>`;
+};
+
+/**
+ * ⭐⭐ 2026-10-11（方案A）：「**验收模式**」那一块（她扫开某款那一页时看到的东西）。
+ *
+ * 一屏三件事（**只有能点、能做的事**）：
+ *   ① 本单条：**已验收 N 双 / 应到 M 双**；
+ *   ② 这一款**各尺码** + 数量（默认 1、可改）⇒【加入本次验收】（**只写本地会话**）；
+ *   ③ 【继续扫下一个】+【完成验收】（实际金额必填）。
+ * 一行前端脚本都没有（与这一页的既有设计同一条硬要求）。
+ */
+const acceptanceBlockHtml = (view, write, acceptance, userAgent = '') => {
+  const t = write.texts;
+  const fields = write.fields;
+  const sizes = (view?.rows || [])
+    .filter((row) => !row.unknown_size && String(row.size_text ?? '').trim())
+    .map((row) => String(row.size_text));
+  const rows = sizes.map((size, index) => `<div class="size-row">
+<label class="size-check"><input type="radio" name="${escapeHtml(fields.acceptSize)}" value="${escapeHtml(size)}"${index === 0 ? ' checked' : ''}> ${escapeHtml(size)} 码</label>
+<input class="size-qty" name="${escapeHtml(fields.acceptQuantity)}" value="${escapeHtml(String(acceptance.defaultQuantity ?? 1))}" inputmode="numeric" aria-label="${escapeHtml(`${size} ${t.replenishQuantityLabel}`)}" placeholder="${escapeHtml(t.replenishQuantityLabel)}">
+</div>`).join('');
+  return `<section class="card" data-view="acceptance" data-batch="${escapeHtml(acceptance.batchNo)}">
+${acceptanceSummaryHtml(write, acceptance)}
+${sizes.length ? `<form method="post" action="${escapeHtml(acceptance.postAction)}" class="write-form">
+${hiddenField(fields.action, write.actions.acceptAdd)}
+${rows}
+<button type="submit" class="btn btn--primary">${escapeHtml(t.acceptAddButton)}</button>
+</form>` : ''}
+${acceptanceScanNextHtml(userAgent)}
+${acceptanceFinishHtml(write, acceptance)}
+</section>`;
+};
+
+/**
+ * **验收模式落地页**（`GET /s/accept?batch=<批次号>`，工作台点【验收】跳过来）：没有编号、
+ * 只给本单条 +【继续扫下一个】+【完成验收】。这一页**不挂领域切换条**（它是"模式页"）。
+ */
+const renderAcceptancePage = ({ acceptance, config = SCAN_PAGE, write = null, userAgent = '' } = {}) => {
+  if (!write) {
+    return renderMinimalPage({ title: config.texts.errorTitle, body: config.texts.errorBody });
+  }
+  const batchNo = String(acceptance?.batchNo || '');
+  return renderDocument({
+    title: fillText(config.texts.pageTitle, { itemNo: batchNo, number: batchNo }),
+    config,
+    content: `<section class="card" data-view="acceptance" data-batch="${escapeHtml(batchNo)}">
+${acceptanceSummaryHtml(write, acceptance)}
+${acceptanceScanNextHtml(userAgent)}
+${acceptanceFinishHtml(write, acceptance)}
+</section>
+<p class="foot">${escapeHtml(fillText(write.texts.acceptBatchLine, { batchNo }))}</p>`,
+  });
+};
+
+/**
+ * 某个领域**"没内容"**时的那张人话卡片（标题 + 为什么 + 一个下一步）。 *
  * 🔴 为什么必须有它：这是"**手机上无论如何都要有看得见的东西**"的最后一道体验兜底 ——
  *    没有写上下文（拿不到飞书身份 / 写入口没开）时，旧版会**什么块都不渲染**，
  *    屏幕上只剩身份区那一行；现在给一张说清楚的卡片，她至少知道"为什么没有表单、下一步去哪"。
@@ -741,17 +873,31 @@ const realmEmptyHtml = (realm, config) => {
  * ⚠️ 认不出的领域一律回落缺省（`resolveRealm` 在路由那一层已经做过一次；这里再兜一次，
  *    **渲染层永远不抛、永远有正文**）。
  */
-const realmBlockHtml = (realm, view, config, write) => {
-  const id = REALMS.some((item) => item.id === realm) ? realm : DEFAULT_REALM;
+const realmBlockHtml = (realm, view, config, write, page = {}) => {
+  const id = (REALMS.some((item) => item.id === realm) || realm === ACCEPTANCE_REALM)
+    ? realm : DEFAULT_REALM;
   const wrap = (inner) => `<div class="realm-block realm-block--${escapeHtml(id)}">\n${inner}\n</div>`;
+  // ⭐⭐ 2026-10-11（方案A）：**验收模式**（非 tab 的领域）—— 上下文来自 `page.acceptance`
+  //    （由路由按"正开着一场验收"给）；拿不到就什么都不猜，回落缺省领域那张卡。
+  if (id === ACCEPTANCE_REALM) {
+    return wrap(page?.acceptance
+      ? acceptanceBlockHtml(view, write, page.acceptance, page?.userAgent)
+      : realmEmptyHtml(DEFAULT_REALM, config));
+  }
   if (id === 'inventory') return wrap(stockTableHtml(view, config));
   if (id === 'product') return wrap(labelBlockHtml(view));
   if (id === 'purchase') {
-    const form = write && write.enabled !== false && write.replenishEnabled !== false
-      ? replenishFormHtml(view, write)
-      : '';
-    // 一个尺码都没有（降级到连库存行都没有）⇒ 给一张人话卡片，而不是空 div。
-    return wrap(form || realmEmptyHtml('purchase', config));
+    // ⭐ 2026-10-11：采购领域现在有**两个动作**（报货 / 退货），各自一个折叠块；两张表单
+    //    都 POST 到同一个端点。关掉哪一个，那一块就不渲染（开关在配置里）。
+    //    一个尺码都没有（降级到连库存行都没有）⇒ 给一张人话卡片，而不是空 div。
+    const blocks = [];
+    if (write && write.enabled !== false && write.replenishEnabled !== false) {
+      blocks.push(replenishFormHtml(view, write));
+    }
+    if (write && write.enabled !== false && write.returnEnabled !== false) {
+      blocks.push(returnFormHtml(view, write));
+    }
+    return wrap(blocks.filter(Boolean).join('\n') || realmEmptyHtml('purchase', config));
   }
   // sales（缺省）
   if (!write || write.enabled === false || write.saleEnabled === false) {
@@ -772,17 +918,20 @@ const realmBlockHtml = (realm, view, config, write) => {
  * （见 `canScanNextWithFeishu`）；不传 = 认成"不是飞书客户端" ⇒ 给那句人话，不给死按钮。
  */
 const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEFAULT_REALM, page = {}) => {
-  const safeRealm = resolveRealm(realm);
+  const safeRealm = realm === ACCEPTANCE_REALM ? ACCEPTANCE_REALM : resolveRealm(realm);
   let block;
   try {
-    block = realmBlockHtml(safeRealm, view, config, write);
+    block = realmBlockHtml(safeRealm, view, config, write, page);
   } catch (error) {
     block = `<div class="realm-block realm-block--${escapeHtml(safeRealm)}">${realmEmptyHtml(safeRealm, config)}</div>`;
   }
+  // ⚠️ 验收模式下**不挂销售本单条**：那一条讲的是"销售本单几双"，与"这次验收扫了几双"
+  //    是两件事，同屏出现只会让她看错数（验收自己的本单条在验收块里）。
+  const bar = safeRealm === ACCEPTANCE_REALM ? '' : draftBarHtml(write, config, page?.userAgent, safeRealm);
   return renderDocument({
     title: fillText(config.texts.pageTitle, { itemNo: view.item_no || view.number, number: view.number }),
     config,
-    content: `${draftBarHtml(write, config, page?.userAgent, safeRealm)}
+    content: `${bar}
 ${realmBarHtml(safeRealm)}
 ${noScriptHtml()}
 ${identityHtml(view, config)}
@@ -836,6 +985,8 @@ module.exports = {
   renderScanPage,
   renderScanMessagePage,
   renderMinimalPage,
+  // ⭐⭐ 2026-10-11（方案A）：验收模式落地页（`GET /s/accept?batch=` 那一屏）
+  renderAcceptancePage,
   escapeHtml,
   STYLE,
   readThemeTokens,
