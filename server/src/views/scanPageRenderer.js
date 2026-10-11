@@ -161,7 +161,6 @@ body {
 .result li { margin-top: var(--space-1); }
 .draft-count { margin: 0 0 var(--space-1); font-size: var(--font-size-base); font-weight: 600; }
 .notice { margin: 0; color: var(--primary); font-size: var(--font-size-base); font-weight: 600; }
-.draft-list { margin: 0 0 var(--space-2); padding-left: var(--space-5); color: var(--text-secondary); font-size: var(--font-size-md); }
 .write-form { margin: var(--space-3) 0 0; }
 .write-form + .write-form { padding-top: var(--space-3); border-top: 1px solid var(--border-light); }
 .form-row { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
@@ -172,6 +171,26 @@ body {
 .size-check input { width: 20px; height: 20px; }
 .size-qty { flex: 0 0 84px; min-height: var(--control-height); padding: var(--space-2) var(--space-3); border: 1px solid var(--control-border); border-radius: var(--radius-sm); font-size: var(--font-size-base); text-align: center; }
 .hint { color: var(--text-muted); font-size: var(--font-size-sm); }
+/* ── ⭐⭐ 2026-10-11 销售建单两层结构（每件实收 + 多笔收款）──────────────────
+   ① 校验失败原地给她的人话（差额）—— 挂在表单**上方**，她改一下就能再提交；
+   ② 收款行 = 方式 + 金额（两栏并排，各自 ≥44px 命中区）；
+   ③ 每件实收 = 本单里一行一双、行尾一个输入框。 */
+.form-alert { margin: 0 0 var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); background: var(--warning-soft); color: var(--warning); font-size: var(--font-size-md); font-weight: 600; }
+.form-row--pay select { flex: 1 1 55%; }
+.form-row--pay input { flex: 1 1 45%; }
+/* ⭐⭐ 2026-10-11（最终口径）：「付款情况」（**整单**）三档 ——
+   一个 fieldset 里三个 radio，每个都是一整块（≥44px 命中区）；**零 JS**：
+   哪一档被选中由浏览器自己提交，服务端按取值分支（见 services/scanWriteService.js）。 */
+.pay-status { margin: 0 0 var(--space-2); padding: 0; border: 0; }
+.pay-status__legend { padding: 0; margin-bottom: var(--space-1); color: var(--text-secondary); font-size: var(--font-size-md); }
+.pay-status__options { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
+.pay-status__option { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-height); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer; }
+.pay-status__option input { flex: none; width: 20px; height: 20px; margin: 0; }
+.pay-status__label { font-size: var(--font-size-base); font-weight: 600; }
+.draft-lines { margin: 0 0 var(--space-2); }
+.draft-line { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
+.draft-line__text { flex: 1 1 auto; min-width: 0; font-size: var(--font-size-md); overflow-wrap: anywhere; }
+.draft-line__amount { flex: 0 0 38%; min-height: var(--control-height); padding: var(--space-2) var(--space-3); border: 1px solid var(--control-border); border-radius: var(--radius-sm); font-size: var(--font-size-base); text-align: right; }
 .tag { display: inline-flex; align-items: center; padding: 2px 10px; border-radius: var(--radius-pill); font-size: var(--font-size-xs); font-weight: 600; }
 .tag--success { color: var(--success); background: var(--success-soft); }
 .tag--warning { color: var(--warning); background: var(--warning-soft); }
@@ -398,26 +417,128 @@ const optionsHtml = (values, selected) => values
   .map((value) => `<option value="${escapeHtml(value)}"${String(value) === String(selected) ? ' selected' : ''}>${escapeHtml(value)}</option>`)
   .join('');
 
-/** 销售表单：加入本单（只动本地会话）＋ 提交这一单（**唯一的写库时机**）。
+/** 本单里一行的人话（配品行只有名称；鞋行是 `货号 · N 码`）。 */
+const draftLineText = (t, line) => (line.accessory_record_id
+  ? fillText(t.draftAccessoryItem, { name: line.accessory_name || '' })
+  : fillText(t.draftItem, { itemNo: line.item_no || line.number || '', size: line.size }));
+
+/**
+ * ⭐⭐ 2026-10-11：**每件实收** —— 提交表单里**一行一双**，行尾一个数字输入框。
+ *
+ * 她的口径里这是第①层（每件）：`这一件实际收到多少` 是**她唯一要填的金额**；
+ * 页面上**没有第二个金额输入框**（旧的「成交金额」框已整体退场）。
+ * ⚠️ 这些输入框同名重复（`fields.lineAmount`）⇒ POST 上来是**有序数组**，
+ *    下标与本单的明细行一一对应（服务端按同一个顺序落「销售明细.实收金额」）。
+ * ⚠️ 值来自会话（她加单时填过 / 上一次提交填过）—— `escapeHtml` 之后回填。
+ */
+const draftLinesHtml = (write) => {
+  const t = write.texts;
+  const fields = write.fields;
+  const lines = write.draft?.lines || [];
+  if (!lines.length) return `<p class="hint">${escapeHtml(t.draftEmpty)}</p>`;
+  const rows = lines.map((line) => {
+    const label = line.accessory_record_id ? t.accessoryLineAmountLabel : t.lineAmountLabel;
+    const value = line.amount === null || line.amount === undefined ? '' : String(line.amount);
+    return `<div class="draft-line">
+<span class="draft-line__text">${escapeHtml(draftLineText(t, line))}</span>
+<input class="draft-line__amount" name="${escapeHtml(fields.lineAmount)}" inputmode="decimal" value="${escapeHtml(value)}" placeholder="${escapeHtml(t.lineAmountPlaceholder)}" aria-label="${escapeHtml(label || '')}">
+</div>`;
+  }).join('\n');
+  return `<div class="draft-lines">${rows}</div>`;
+};
+
+/**
+ * ⭐⭐ 收款行的**预置规则**（纯函数；路由与渲染层共用同一份 —— 不写第二遍）。
+ *   · 正常打开页面（`rows` 没给）⇒ 预置 `count` 行，**第一行默认选中「微信」**（她 2026-10-08 定的），
+ *     其余行留空（空 = 这一行不用）；
+ *   · 校验失败**原地重渲染**（`rows` = 她刚填的那几行）⇒ 原样带回来，行数补齐到 `count`
+ *     —— ⚠️ 补齐的那几行**不注入默认方式**（她明明没选，替她选上就等于替她记账）。
+ */
+const buildPaymentRows = ({ count, defaultMethod, rows } = {}) => {
+  const given = Array.isArray(rows) ? rows : [];
+  const total = Math.max(1, Number(count) || 1, given.length);
+  return Array.from({ length: total }, (_, index) => {
+    const row = given[index];
+    if (row) {
+      return {
+        method: String(row.method || ''),
+        amount: row.amount === undefined || row.amount === null ? '' : String(row.amount),
+      };
+    }
+    return { method: given.length ? '' : (index === 0 ? String(defaultMethod || '') : ''), amount: '' };
+  });
+};
+
+/**
+ * ⭐⭐ 2026-10-11（**最终口径**）：「付款情况」（**整单**）三档单选 —— 全付（默认）/ 部分付 / 未付。
+ *
+ * 她的原话：「**「付款情况」= 全付（默认）/ 部分付 / 未付 ← 这是整单的收款情况**」。
+ *   · **全付** ⇒ 收款合计**必须 == 每件实收合计** ⇒ 按收款方式写收款明细；
+ *   · **部分付** ⇒ 只写付了的那几条 ＋ 差额一条【未收款】；
+ *   · **未付** ⇒ 一条【未收款】。
+ *
+ * ⚠️ **零 JS**（她 2026-10-10 的硬要求；两条哨兵钉着"页面里不许有 `<script>`"）：
+ *    三档就是三个同名的 `radio`，默认选中配置里的那一档（**全付**），
+ *    剩下的判断全在服务端（`services/scanWriteService.js` 的 `submitSale`）。
+ * ⚠️ 取值与组名都来自 `config/scanWrite.js`（配置先行；这里一个字面量都不写死）。
+ * ⚠️ 「部分付」那个「实付多少」输入框**照常渲染**（没有 JS 就藏不起来）：
+ *    另外两档服务端**不看它**（全付必须两边相等；未付本来就不填）—— 取舍写在交付报告里。
+ */
+const paymentStatusHtml = (write) => {
+  const t = write.texts;
+  const fields = write.fields;
+  const options = Array.isArray(t.paymentStatusOptions) ? t.paymentStatusOptions : [];
+  const selected = String(write.paymentStatus || write.defaultPaymentStatus || '');
+  const chips = options.map((option) => `<label class="pay-status__option">
+<input type="radio" name="${escapeHtml(fields.paymentStatus)}" value="${escapeHtml(option.value)}"${String(option.value) === selected ? ' checked' : ''}>
+<span class="pay-status__label">${escapeHtml(option.label || option.value)}</span>
+</label>`).join('\n');
+  return `<fieldset class="pay-status">
+<legend class="pay-status__legend">${escapeHtml(t.paymentStatusLabel)}</legend>
+<div class="pay-status__options">${chips}</div>
+</fieldset>
+<div class="form-row"><label>${escapeHtml(t.paidAmountLabel)}</label><input name="${escapeHtml(fields.paidAmount)}" inputmode="decimal" placeholder="${escapeHtml(t.paidAmountPlaceholder)}" value="${escapeHtml(String(write.paidAmount || ''))}"></div>`;
+};
+
+/**
+ * ⭐⭐ 总单层的**多笔收款**（收款方式 + 金额，一行一笔）。
+ *
+ * 她的例子：「本次共收 500 = 微信 200 + 现金 300」⇒ 一行一笔、方式来自「收款方式管理」。
+ * ⚠️ 这一页是**零 JS** 的原生表单 ⇒"可增删行"落地成"预置 N 行（`sale.paymentRowCount`），
+ *    填了金额的行才算一笔，没填的行不用"（服务端同一个判据）。
+ * ⚠️ 校验失败**原地重渲染**时，`write.paymentRows` 是**她刚填的那几行**（值原样回填）。
+ */
+const paymentRowsHtml = (write) => {
+  const t = write.texts;
+  const fields = write.fields;
+  const rows = Array.isArray(write.paymentRows)
+    ? write.paymentRows
+    : buildPaymentRows({
+      count: write.paymentRowCount,
+      defaultMethod: write.defaultPaymentMethod,
+    });
+  return rows.map((row) => `<div class="form-row form-row--pay">
+<select name="${escapeHtml(fields.paymentMethod)}" aria-label="${escapeHtml(t.paymentLabel)}"><option value="">${escapeHtml(t.paymentNoneOption)}</option>${optionsHtml(write.paymentMethods, row.method)}</select>
+<input name="${escapeHtml(fields.paymentAmount)}" inputmode="decimal" placeholder="${escapeHtml(t.paymentAmountPlaceholder)}" aria-label="${escapeHtml(t.paymentAmountLabel)}" value="${escapeHtml(row.amount)}">
+</div>`).join('\n');
+};
+
+/** 销售表单：**每件层**（加入本单 / 加配品）+ **总单层**（每件实收 + 付款情况 + 收款行 + 提交）。
  *
  * ⭐ 2026-10-10：卡片的说明标题（`saleHeading`，「销售（可以连着扫，最后一起提交）」）
  *   与「资金不是必填…」那句说明（`fundsPendingNote`）**都删掉** —— 子 tab 上已经写着「销售」，
- *   剩下的只留能填能点的（本单双数 / 尺码 / 金额 / 收款 / 按钮）。
+ *   剩下的只留能填能点的（本单双数 / 尺码 / 每件实收 / 付款情况 / 收款行 / 按钮）。
+ * ⭐⭐ 2026-10-11（**最终口径**）：
+ *   · 每件**只有一个金额**：「实收金额」（旧的「成交金额」输入框整体退场）；
+ *   · 总单加**「付款情况」三档**（全付（默认）/ 部分付 / 未付）+「实付多少」；
+ *   · 收款明细**预置 1 行**（方式 + 金额，填了金额才算一笔）。
  */
 const saleFormHtml = (view, write) => {
   const t = write.texts;
   const fields = write.fields;
   const lines = write.draft?.lines || [];
-  // ⭐ 2026-10-11（B）：配品行**单独占一行**（`配品` 有值、编号/尺码留空、实收金额单列）——
-  //    本单里那一行就按"它有没有配品关联"来画（渲染层**不写** `'accessory'` 这种 kind 字面量）。
-  const draftLineText = (line) => (line.accessory_record_id
-    ? fillText(t.draftAccessoryItem, { name: line.accessory_name || '' })
-    : fillText(t.draftItem, { itemNo: line.item_no || line.number || '', size: line.size }));
-  const draftList = lines.length
-    ? `<ul class="draft-list">${lines.map((line) => `<li>${escapeHtml(draftLineText(line))}</li>`).join('')}</ul>`
-    : `<p class="hint">${escapeHtml(t.draftEmpty)}</p>`;
   const sizeInput = sizeGroupsHtml(view, write);
-  // ⭐ 配品表单（B）：下拉选「其他配品」的名称 + **实收金额单列** + 备注（可为空）。
+  // ⭐ 配品表单（B）：下拉选「其他配品」的名称 + **配品实收金额** + 备注（可为空）。
   //    ⚠️ 一件配品都没有时**不画这个表单**（不留一个只有"不加配品"的死下拉）。
   const accessories = Array.isArray(write.accessories) ? write.accessories : [];
   const accessoryOptions = accessories
@@ -432,9 +553,12 @@ ${hiddenField(fields.submitKey, write.saleKey)}
 <button type="submit" class="btn">${escapeHtml(t.addButton)}</button>
 </form>`
     : '';
+  // 校验失败原地给她的那句话（差额）—— 没有就不渲染这一个块。
+  const alert = String(write.errorText || '').trim()
+    ? `<p class="form-alert">${escapeHtml(write.errorText)}</p>`
+    : '';
   return `<section class="card">
 <p class="draft-count">${escapeHtml(fillText(t.draftHeading, { count: lines.length }))}</p>
-${draftList}
 <form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
 ${hiddenField(fields.action, write.actions.addLine)}
 ${hiddenField(fields.submitKey, write.saleKey)}
@@ -447,8 +571,10 @@ ${accessoryForm}
 <form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
 ${hiddenField(fields.action, write.actions.submitOrder)}
 ${hiddenField(fields.submitKey, write.saleKey)}
-<div class="form-row"><label>${escapeHtml(t.paymentLabel)}</label><select name="${escapeHtml(fields.paymentMethod)}">${optionsHtml(write.paymentMethods, write.defaultPaymentMethod)}</select></div>
-<div class="form-row"><label>${escapeHtml(t.paymentAmountLabel)}</label><input name="${escapeHtml(fields.paymentAmount)}" inputmode="decimal" placeholder="${escapeHtml(t.paymentAmountPlaceholder)}"></div>
+${alert}
+${draftLinesHtml(write)}
+${paymentStatusHtml(write)}
+${paymentRowsHtml(write)}
 <button type="submit" class="btn btn--primary">${escapeHtml(t.submitButton)}</button>
 </form>
 ${lines.length ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
@@ -695,4 +821,6 @@ module.exports = {
   resolveRealm,
   // ⭐ 2026-10-11：本单条的设备能力判据（用例直接钉它）。
   canScanNextWithFeishu,
+  // ⭐⭐ 2026-10-11：收款行的预置规则（路由与渲染层**共用这一份**）。
+  buildPaymentRows,
 };

@@ -170,6 +170,57 @@ const createScanWriteService = (options = {}) => {
     return { ok: true, value: Math.round(value * 100) / 100 };
   };
 
+  /** 金额 → 分（整数运算，**不拿浮点数比大小**：0.1 + 0.2 那类误差会误报）。 */
+  const toCents = (value) => Math.round(Number(value || 0) * 100);
+
+  /**
+   * 分 → 她看的人话金额（整数不带小数点；带角分才给两位）。
+   * 前缀（`¥`）在 `config/scanWrite.sale.moneyPrefix` —— 逻辑里不写死。
+   */
+  const moneyText = (value) => {
+    const number = Number(value || 0);
+    const text = Number.isInteger(number) ? String(number) : number.toFixed(2);
+    return `${config.sale.moneyPrefix || ''}${text}`;
+  };
+
+  /**
+   * ⭐⭐ **核心校验的人话**（业务负责人 2026-10-11：「必须相等，所以系统需要校验！」）。
+   *
+   * 说清三件事：① 每件实收合计多少 ② 收款合计多少 ③ **哪边多了 / 少了、差多少** ——
+   * 她照着改一下就能再提交（不是"校验失败"四个字）。
+   */
+  /**
+   * 「全付」那一档的人话：**每件实收合计 ≠ 收款合计**。
+   *
+   * @param {object} input
+   * @param {number} input.itemsCents    每件实收合计（分）
+   * @param {number} input.paymentsCents 收款行合计（分）
+   * @param {boolean} [input.strict]     `true` = **全付档**（两边必须相等，包括"两边都是 0"）。
+   *   ⚠️ 只有全付档才传 `strict`：部分付 / 未付两档**允许差一条【未收款】**，
+   *      走各自的人话（部分付那句在 `partialAmountMismatchBody`）。
+   */
+  const amountMismatchMessage = ({ itemsCents, paymentsCents, strict = false }) => {
+    const diffCents = Math.abs(paymentsCents - itemsCents);
+    const side = itemsCents === 0 && !strict
+      ? fillText(texts.amountMismatchNoItems, { diff: moneyText(diffCents / 100) })
+      : fillText(
+        paymentsCents > itemsCents ? texts.amountMismatchOver : texts.amountMismatchShort,
+        { diff: moneyText(diffCents / 100) },
+      );
+    return fillText(texts.amountMismatchBody, {
+      items: moneyText(itemsCents / 100),
+      payments: moneyText(paymentsCents / 100),
+      side,
+    });
+  };
+
+  /** 一串原始金额（`line_amount` / `payment_amount` 同名重复 ⇒ 数组）→ 逐项原始字符串。 */
+  const amountList = (value) => {
+    if (Array.isArray(value)) return value.map((item) => (item === undefined || item === null ? '' : String(item)));
+    if (value === undefined || value === null) return [];
+    return [String(value)];
+  };
+
   const positiveInteger = (raw) => {
     const text = String(raw ?? '').trim();
     return /^[1-9]\d*$/.test(text) ? Number(text) : null;
@@ -443,13 +494,43 @@ const createScanWriteService = (options = {}) => {
   /**
    * 提交"本单"：**一张销售主表 + N 条明细（一单一双一行）**。
    *
+   * ⭐⭐ 2026-10-11（业务负责人**最终口径**，唯一权威）：这一层是"**总单层**"——
+   *   ① **每件实收**（`lineAmounts`，按下标对应本单的明细行）→ 落**销售明细.「实收金额」**；
+   *      没填（空）⇒ 读那张表的「单价」当落点；两边都取不到 ⇒ 人话拦住，**绝不写 0**。
+   *      🔴 **没有第二个金额概念**（她只填「实收金额」，代码里也不再提旧列名）。
+   *   ② **「付款情况」三档**（`paymentStatus`，整单口径，默认**全付**）：
+   *      · **全付** —— 按**收款方式**写收款明细（1 条或多条）；
+   *        🔴 **收款合计必须 == 每件实收合计**；不等 ⇒ **拦住、一个字都不写** + 人话说明差额；
+   *      · **部分付** —— 资金区填**实付多少**（`paidAmount`）⇒ 按方式写已收的那几条
+   *        （状态 = 既有「已收款」）＋ ⭐ **差额写一条【未收款】**（金额 = 每件实收合计 − 已收合计）；
+   *      · **未付** —— 不用填 ⇒ ⭐ **写一条【未收款】**（金额 = 每件实收合计）。
+   *
+   * ⚠️ **三档都只跟"这个单子所有的实收金额加起来"比**，
+   *    **绝不引入"应收 / 单价"当判据**（她逐字：「只跟"这个单子所有的实收金额加起来"比，
+   *    不跟应收/单价相比」）—— 「单价」只出现在"她没填实收时的落点"那一步（在比对**之前**
+   *    就已经算进 `itemsCents`，所以比对仍然只对着"每件实收金额"）。
+   * ⚠️ 那一条【未收款】**不是扫码侧自己拼出来的**：本文件算出差额 → 交给**既有业务层**
+   *    `SalesOrderService.confirm({ owed })`，由它按既有协议追加
+   *    （`PaymentService.recordInitialBatch` → 状态「未收款」、**方式留空**、关联既有销售单）。
+   *    🔴 本文件因此仍然**不写任何业务表**（源码哨兵钉着）。
+   *
    * @param {object} input
    * @param {string} input.openId   录单人（会话按他分）
    * @param {string} input.submitKey 表单带回来的幂等键（连点两次 = 同一把）
-   * @param {string} [input.paymentMethod] 收款方式（**默认「微信」由 config 给**，可改）
-   * @param {string} [input.paymentAmount] 这次收到的钱；**留空 = 先货后钱（不写收款明细）**
+   * @param {Array<{method:string, amount:string|number}>} [input.payments]
+   *        多笔收款（表单里同名重复的 `payment_method` / `payment_amount` 按行拼出来的）。
+   *        ⚠️ 某一行**金额空** ⇒ 这一行不用（方式选了也不算）；填了金额 ⇒ **方式必填**。
+   * @param {Array<string|number>} [input.lineAmounts]
+   *        **每件实收**（提交表单里那一排输入框，顺序 = 本单的明细行顺序）。
+   *        这一项没带（例：本单条上那颗快捷提交）⇒ 用会话里已经记下的值。
+   * @param {string} [input.paymentStatus] **「付款情况」**（整单）：`全付` / `部分付` / `未付`；
+   *        没带（老页面 / 直接调服务）⇒ 按配置的默认档（**全付**）走。
+   * @param {string|number} [input.paidAmount] 「部分付」时资金区填的**实付多少**。
    */
-  const submitSale = async ({ openId, submitKey, paymentMethod = '', paymentAmount = '', requestId = '' }) => queue.run(`sale:${openId}`, async () => {
+  const submitSale = async ({
+    openId, submitKey, payments: paymentRows = [], lineAmounts = [],
+    paymentStatus = '', paidAmount = '', requestId = '',
+  }) => queue.run(`sale:${openId}`, async () => {
     if (!config.sale.enabled) {
       return fail({ code: 'disabled', message: texts.writeDisabledBody, requestId });
     }
@@ -507,24 +588,199 @@ const createScanWriteService = (options = {}) => {
     if (!lines.length) {
       return fail({ code: 'session_empty', message: texts.sessionEmptyBody, requestId });
     }
-    const parsedPayment = positiveAmount(paymentAmount);
-    if (!parsedPayment.ok) {
-      const error = new Error(texts.paymentAmountInvalidBody);
-      error.scanUserMessage = texts.paymentAmountInvalidBody;
-      return fail({ code: 'payment_amount_invalid', message: userMessageFor(error), requestId, error });
-    }
-    // 「钱可以先不填」：没填收款金额 ⇒ **不写任何收款明细**，
-    // 表里那一单的「资金状态」就停在既有的「未写入」（= 她说的"待补资金"，不新造状态）。
-    const payments = parsedPayment.value === null ? [] : [{
-      amount: parsedPayment.value,
-      // 收款方式：她页面上选的（默认「微信」由 config 给）；这里只兜底"没传"那一种。
-      method: String(paymentMethod || '').trim() || config.sale.defaultPaymentMethod,
-      operatorOpenId: openId,
-    }];
 
-    // ③ 逐行把明细准备好（金额留空 → 用「货品信息.单价」；取不到就让她填，绝不写 0）。
+    // ── ① 每件实收（**总单层那一排输入框**；没带这一项就用会话里已经记下的值）────────
+    //    ⚠️ 这一项**先落回本地会话**（只动 `data/scan_sessions/` 那一份草稿，**不碰业务表**）：
+    //       · 差额页要把她刚填的数回显出来（不用重打）；
+    //       · "写了一半崩掉"的**重试**要接着同一份草稿写（与 `master_record_id` 同一个道理）。
+    const postedLineAmounts = amountList(lineAmounts);
+    const hasPostedLineAmounts = postedLineAmounts.length > 0;
+    const resolvedLines = [];
+    for (const [index, line] of lines.entries()) {
+      const raw = hasPostedLineAmounts && index < postedLineAmounts.length
+        ? postedLineAmounts[index]
+        : (line.amount === null || line.amount === undefined ? '' : String(line.amount));
+      const parsed = positiveAmount(raw);
+      if (!parsed.ok) {
+        const sellableKind = SELLABLE_KINDS[String(line.kind || '').trim() || 'shoe'];
+        const message = sellableKind && !sellableKind.requiresSize
+          ? texts.accessoryAmountInvalidBody : texts.amountInvalidBody;
+        const error = new Error(message);
+        error.scanUserMessage = message;
+        return fail({ code: 'line_amount_invalid', message, requestId, error });
+      }
+      resolvedLines.push({ ...line, amount: parsed.value, explicit_amount: parsed.value !== null });
+    }
+    if (hasPostedLineAmounts) {
+      await sessions.saveSaleProgress(openId, { lines: resolvedLines });
+    }
+
+    // ── ①' ⭐⭐ 每件实收的**落点**：留空的那些先补上（鞋读「货品信息.单价」/ 配品读「其他配品.单价」）。
+    //    🔴 为什么必须**在比对之前**做（2026-10-11 修正的一处真 bug）：
+    //       「付款情况」三档都只跟"每件实收金额加起来"比 —— 而"每件实收"的**落点**
+    //       就是明细上那一个数。留空时若等到建明细那一步才读单价，
+    //       比对就会拿着 **0** 去算，「未付 / 部分付」两档的【未收款】差额会算成 0，等于没记。
+    //    ⚠️ 取不到单价 ⇒ **当场人话拦住**（绝不写 0、也绝不写一条金额为 0 的未收款）。
+    //    ⚠️ 这一步**只读**（`gateway.get('product' / 'accessory')`）—— 一个字节都不写库。
+    for (const line of resolvedLines) {
+      if (line.explicit_amount) continue;                 // 她填了 ⇒ 就用她填的
+      if (config.sale.amountFallback !== 'product_price') continue; // 兜底方式可配（关掉就不兜底）
+      const kindKey = String(line.kind || '').trim() || 'shoe';
+      const sellableKind = SELLABLE_KINDS[kindKey];
+      const isAccessory = Boolean(sellableKind && !sellableKind.requiresSize);
+      const fallback = isAccessory
+        ? await accessoryPrice(String(line.accessory_record_id || '').trim())
+        : await productPrice(String(line.product_record_id || '').trim());
+      if (!Number.isFinite(fallback) || fallback <= 0) {
+        const message = isAccessory
+          ? fillText(texts.accessoryAmountMissingBody, { name: line.accessory_name || '' })
+          : fillText(texts.amountMissingBody, { itemNo: line.item_no || line.number || '' });
+        const error = new Error(message);
+        error.scanUserMessage = message;
+        return fail({
+          code: isAccessory ? 'accessory_amount_missing' : 'line_amount_missing', message, requestId, error,
+        });
+      }
+      line.amount = Math.round(fallback * 100) / 100;
+    }
+
+    // ── ② 多笔收款（可增删行：**填了金额的行才算一笔**）────────────────────────────
+    const usedPayments = [];
+    for (const row of (Array.isArray(paymentRows) ? paymentRows : [])) {
+      const parsed = positiveAmount(row?.amount);
+      if (!parsed.ok) {
+        const error = new Error(texts.paymentAmountInvalidBody);
+        error.scanUserMessage = texts.paymentAmountInvalidBody;
+        return fail({ code: 'payment_amount_invalid', message: userMessageFor(error), requestId, error });
+      }
+      // 金额空 ⇒ 这一行不用（方式选了也不算）；**金额填了就必须有方式**。
+      if (parsed.value === null) continue;
+      const method = String(row?.method || '').trim();
+      if (!method) {
+        const error = new Error(texts.paymentRowIncompleteBody);
+        error.scanUserMessage = texts.paymentRowIncompleteBody;
+        return fail({ code: 'payment_row_incomplete', message: userMessageFor(error), requestId, error });
+      }
+      usedPayments.push({ amount: parsed.value, method, operatorOpenId: openId });
+    }
+
+    // ── ③ ⭐⭐ 「付款情况」（整单）→ 收款明细的写法 ──────────────────────────────
+    //    她 2026-10-11 的最终口径（唯一权威），三档：
+    //      · **全付**（默认）：收款合计 **必须 ==** 每件实收合计；
+    //      · **部分付**：只写她填的那几条（状态 = 既有「已收款」）＋差额一条【未收款】；
+    //      · **未付**：不填 ⇒ 一条【未收款】（金额 = 每件实收合计）。
+    //    ⚠️ 三档都**只跟"每件实收金额加起来"比**（`itemsCents`）—— 这里没有"应收/单价"这个判据。
+    //    ⚠️ 比大小用**分**（整数），不拿浮点数比：0.1 + 0.2 ≠ 0.3 那类误差会误报。
+    const itemsCents = resolvedLines.reduce((sum, line) => sum
+      + (line.amount === null || line.amount === undefined ? 0 : toCents(line.amount)), 0);
+    const paymentsCents = usedPayments.reduce((sum, payment) => sum + toCents(payment.amount), 0);
+    const statusValues = (config.sale.paymentStatus?.values) || [];
+    const statusDefault = config.sale.paymentStatus?.default || '';
+    // ⚠️ 逻辑里**只认语义键**（`mode.full` / `mode.partial` / `mode.unpaid`）——
+    //    取值本身是可配的中文（改一句话、换一个说法都不该动逻辑）。
+    const statusMode = config.sale.paymentStatus?.mode || {};
+    // 老页面 / 直接调服务时**没带**这一项 ⇒ 用配置的默认档（她定的「全付（默认）」）。
+    const statusRaw = String(paymentStatus ?? '').trim();
+    const payMode = statusRaw || statusDefault;
+    if (!statusValues.includes(payMode)) {
+      // 手改表单塞了第四种取值 ⇒ 人话拦住（**不静默当成某一档**：猜错档位会写错账）。
+      logWarn(config.events.failed, {
+        session_id: current.session_id, submit_key: key, reason: 'payment_status_invalid',
+        payment_status: statusRaw, request_id: requestId,
+      });
+      const error = new Error(texts.paymentStatusInvalidBody);
+      error.scanUserMessage = texts.paymentStatusInvalidBody;
+      return fail({
+        code: 'payment_status_invalid', message: texts.paymentStatusInvalidBody, requestId, error,
+      });
+    }
+    // 这一步之后要交给既有业务层的**收款那一半**：
+    //   · `payments` = 真收到钱的那几条（状态由业务层落成既有「已收款」）；
+    //   · `owed`     = 差额（> 0 时业务层按既有协议补一条【未收款】，**方式留空**）。
+    //     走 `owed` 而不是让扫码侧自己拼一条「未收款」：那一条的形状（状态取值 / 方式留空 /
+    //     不写「交易方向」）是既有业务层的口径，这里一个字段都不重复实现。
+    let payments = usedPayments;
+    let owedCents = 0;
+    if (payMode === statusMode.full) {
+      // ── 全付：**只有这一档必须相等**（连"两边都是 0"也算不等：全付 0 元不成话）──
+      if (itemsCents !== paymentsCents) {
+        const message = amountMismatchMessage({ itemsCents, paymentsCents, strict: true });
+        logWarn(config.events.amountMismatch, {
+          session_id: current.session_id, submit_key: key, payment_status: payMode,
+          items_cents: itemsCents, payments_cents: paymentsCents,
+          detail_count: resolvedLines.length, payment_count: payments.length, request_id: requestId,
+        });
+        const error = new Error(message);
+        error.scanUserMessage = message;
+        return fail({ code: 'amount_mismatch', message, requestId, error, extra: { result: { amount: {
+          items: itemsCents, payments: paymentsCents, diff: paymentsCents - itemsCents,
+        } } } });
+      }
+    } else {
+      const partial = payMode === statusMode.partial;
+      let paidCents = paymentsCents;
+      if (partial) {
+        // ── 部分付：资金区填的"实付多少"与收款行合计**必须一致**（都是"已经收到的钱"）──
+        const parsedPaid = positiveAmount(paidAmount);
+        if (!parsedPaid.ok) {
+          const error = new Error(texts.paymentAmountInvalidBody);
+          error.scanUserMessage = texts.paymentAmountInvalidBody;
+          return fail({ code: 'payment_amount_invalid', message: userMessageFor(error), requestId, error });
+        }
+        if (parsedPaid.value === null) {
+          const message = fillText(texts.partialAmountMissingBody, { payments: moneyText(paymentsCents / 100) });
+          logWarn(config.events.failed, {
+            session_id: current.session_id, submit_key: key, reason: 'partial_amount_missing',
+            payments_cents: paymentsCents, request_id: requestId,
+          });
+          const error = new Error(message);
+          error.scanUserMessage = message;
+          return fail({ code: 'partial_amount_missing', message, requestId, error });
+        }
+        paidCents = toCents(parsedPaid.value);
+        if (paidCents !== paymentsCents) {
+          const message = fillText(texts.partialAmountMismatchBody, {
+            paid: moneyText(paidCents / 100), payments: moneyText(paymentsCents / 100),
+          });
+          logWarn(config.events.amountMismatch, {
+            session_id: current.session_id, submit_key: key, payment_status: payMode,
+            items_cents: itemsCents, paid_cents: paidCents, payments_cents: paymentsCents,
+            request_id: requestId,
+          });
+          const error = new Error(message);
+          error.scanUserMessage = message;
+          return fail({ code: 'partial_amount_mismatch', message, requestId, error });
+        }
+      }
+      // 已收的钱**不许超过**每件实收合计（部分付填多了 / 未付却带了收款行）——
+      // 既有业务层也会拦（「本次收款超过本单实收金额」），这里先拦是为了给她**带差额的人话**，
+      // 而且**一个字都不写库**（拦在建主表之前）。
+      if (paidCents > itemsCents) {
+        const message = amountMismatchMessage({ itemsCents, paymentsCents: paidCents });
+        logWarn(config.events.amountMismatch, {
+          session_id: current.session_id, submit_key: key, payment_status: payMode,
+          items_cents: itemsCents, payments_cents: paidCents, request_id: requestId,
+        });
+        const error = new Error(message);
+        error.scanUserMessage = message;
+        return fail({ code: 'amount_mismatch', message, requestId, error, extra: { result: { amount: {
+          items: itemsCents, payments: paidCents, diff: paidCents - itemsCents,
+        } } } });
+      }
+      // ⭐ 差额 ⇒ 一条【未收款】。她 2026-10-11 原话：
+      //    · 部分付「差额在收款明细里写一条是未收款」；
+      //    · 未付  「差额在收款明细里写一条是未收款」。
+      //    ⇒ 两档**同一个落点**，只是 未付 的"已收"天然是 0。
+      //    ⚠️ 那一条**不由本文件拼**：只把差额（`owed`）交给既有业务层，它自己写
+      //       「收款金额」「关联销售单」与那个**既有的**收款状态取值 —— 连那个取值的中文
+      //       都不在本文件里（源码哨兵：扫码侧不许把状态取值写死，见 AC-7y）。
+      owedCents = itemsCents - paidCents;
+      if (payMode === statusMode.unpaid) payments = [];
+    }
+
+    // ④ 逐行把明细准备好（每件实收留空 → 用那张表自己的「单价」；取不到就让她填，绝不写 0）。
     const items = [];
-    for (const line of lines) {
+    for (const line of resolvedLines) {
       // ⚠️ `SELLABLE_KINDS` 里的一行**没有 `key`**（`key` 是 `sellableKindOf` 补上去的）
       //    —— 这里自己补上，别拿 `undefined` 当 kind 传给业务层（那会被当成"鞋"）。
       const kindKey = String(line.kind || '').trim() || 'shoe';
@@ -540,16 +796,9 @@ const createScanWriteService = (options = {}) => {
           error.scanUserMessage = texts.accessoryMissingBody;
           return fail({ code: 'line_accessory_missing', message: userMessageFor(error), requestId, error });
         }
-        let accessoryAmount = line.amount === null || line.amount === undefined ? null : Number(line.amount);
-        if (!Number.isFinite(accessoryAmount) || accessoryAmount <= 0) {
-          accessoryAmount = await accessoryPrice(accessoryRecordId);
-        }
-        if (!Number.isFinite(accessoryAmount) || accessoryAmount <= 0) {
-          const message = fillText(texts.accessoryAmountMissingBody, { name: line.accessory_name || '' });
-          const error = new Error(message);
-          error.scanUserMessage = message;
-          return fail({ code: 'accessory_amount_missing', message, requestId, error });
-        }
+        // ⚠️ 金额**已经在 ①' 那一步定稿**（她填的 / 留空读单价的落点都在那里算完）
+        //    —— 这里不再兜底读一次价（同一个数算两遍 = 两处口径）。
+        const accessoryAmount = Number(line.amount);
         items.push({
           kind: sellableKind.key,
           // 既有业务层按可售品配置决定落哪个字段（「销售明细.配品」）——本文件不写字段名。
@@ -574,16 +823,8 @@ const createScanWriteService = (options = {}) => {
         error.scanUserMessage = texts.sizeUnknownBody;
         return fail({ code: 'line_size_missing', message: userMessageFor(error), requestId, error });
       }
-      let actualAmount = line.amount === null || line.amount === undefined ? null : Number(line.amount);
-      if (!Number.isFinite(actualAmount) || actualAmount <= 0) {
-        actualAmount = await productPrice(productRecordId);
-      }
-      if (!Number.isFinite(actualAmount) || actualAmount <= 0) {
-        const message = fillText(texts.amountMissingBody, { itemNo: line.item_no || line.number || '' });
-        const error = new Error(message);
-        error.scanUserMessage = message;
-        return fail({ code: 'line_amount_missing', message, requestId, error });
-      }
+      // ⚠️ 同上：金额已经定稿（见 ①'）。
+      const actualAmount = Number(line.amount);
       items.push({
         kind: (sellableKind && sellableKind.key) || 'shoe',
         productRecordId,
@@ -602,7 +843,8 @@ const createScanWriteService = (options = {}) => {
 
     logInfo(config.events.saleSubmitting, {
       session_id: current.session_id, submit_key: key, line_count: items.length,
-      payment_count: payments.length, request_id: requestId,
+      payment_count: payments.length, payment_status: payMode, owed: owedCents / 100,
+      request_id: requestId,
     });
 
     try {
@@ -636,10 +878,14 @@ const createScanWriteService = (options = {}) => {
       }
       // ⑤ 明细 / 收款 / 进度：**既有业务函数**（与群聊、工作台是同一条路）。
       //    `knownRecordIds` + `onRecordPersisted` = 既有链路那套"写到一半崩了也能接着写"的协议。
+      //    ⭐ `owed`（元）= 上面算出来的差额 ⇒ 既有业务层**按既有协议**补那一条【未收款】
+      //       （状态「未收款」、**方式留空**、关联既有销售单、**不写交易方向**）。
+      //       为 0 ⇒ 不传（`0` 与"没说欠"在业务层是同一个意思，见 salesOrderService 的 owed 段）。
       const result = await sales().confirm({
         salesEntryRecordId,
         items,
         payments,
+        ...(owedCents > 0 ? { owed: owedCents / 100 } : {}),
         operatorOpenId: openId,
         knownRecordIds: {
           details: sale.detail_ids || [],
@@ -655,6 +901,10 @@ const createScanWriteService = (options = {}) => {
       }, { correlation });
       const detailCount = (result.detailRecordIds || []).length || items.length;
       const paymentCount = (result.paymentRecordIds || []).length;
+      // ⭐ `paid_amount` = **真收到钱的那几条**（她填的收款行）之和；
+      //    `owed_amount` = 那一条【未收款】的差额（部分付 / 未付两档才有）。
+      //    ⚠️ 两笔数**分开报**，不合成一个"收款合计"：合成之后她就分不清
+      //       "这单收了多少现金"和"这单还欠多少"。
       const paidAmount = payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
       const summary = {
         order_no: result.sourceNo || orderNo,
@@ -662,6 +912,8 @@ const createScanWriteService = (options = {}) => {
         detail_count: detailCount,
         payment_count: paymentCount,
         paid_amount: paidAmount,
+        owed_amount: owedCents / 100,
+        payment_status: payMode,
       };
       // ⑥ ⭐ 2026-10-11（A）：**现货 ⇒ 提交即交付 + 扣库存**。
       //    她 2026-10-09 的原话：「选现货 ⇒ 提交就直接当已交付并扣库存，这个肯定是的」。

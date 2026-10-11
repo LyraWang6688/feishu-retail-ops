@@ -34,7 +34,7 @@ process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'scan_w
 
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { SCAN_PAGE } = require('../src/config/scanPage');
-const { SCAN_WRITE } = require('../src/config/scanWrite');
+const { SCAN_WRITE, PAYMENT_STATUS } = require('../src/config/scanWrite');
 const { createScanWriteService } = require('../src/services/scanWriteService');
 const { createScanSessionService } = require('../src/services/scanSessionService');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
@@ -219,9 +219,11 @@ test('① 连续扫三双加入本单 → 提交后是**一张销售单 + 三条
   const h = createHarness();
   try {
     const openId = 'ou_scan_1';
-    for (const [size, amount] of [[40, 399], [41, 399], [42, 359]]) {
+    // ⭐ 2026-10-11：金额不再是"她填的成交金额"——每件实收留空 ⇒ 成交金额自动读「货品信息.单价」；
+    //    两边都没填 = 先货后钱（金额口径见 scanSaleTwoLayerMoney.test.js）。
+    for (const size of [40, 41, 42]) {
       const added = await addLine(h, openId, {
-        productRecordId: 'prod_1', number: NUMBER, itemNo: 'YD6693-2', color: '黑色', size, amount,
+        productRecordId: 'prod_1', number: NUMBER, itemNo: 'YD6693-2', color: '黑色', size,
       });
       assert.equal(added.ok, true, JSON.stringify(added));
     }
@@ -229,8 +231,9 @@ test('① 连续扫三双加入本单 → 提交后是**一张销售单 + 三条
     assert.deepEqual(entriesOf(h.gateway, 'salesEntry'), []);
     assert.deepEqual(entriesOf(h.gateway, 'salesDetail'), []);
 
+    // ⚠️ 资金区必须选一档（2026-10-11 最终口径）：这里没填钱 ⇒ 明确按【未付】走。
     const result = await h.write.submitSale({
-      openId, submitKey: await currentKey(h, openId), paymentMethod: '微信', paymentAmount: '',
+      openId, submitKey: await currentKey(h, openId), paymentStatus: PAYMENT_STATUS.unpaid,
     });
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.match(result.order_no, /^XSD-\d{8}-\d{4}$/, '单号由既有 salesOrderNo 逻辑生成');
@@ -263,11 +266,11 @@ test('② 同一把提交键连点两次（含并发）→ **只写一次**，�
   const h = createHarness();
   try {
     const openId = 'ou_scan_2';
-    await addLine(h, openId, { productRecordId: 'prod_1', number: NUMBER, size: 41, amount: 399 });
+    await addLine(h, openId, { productRecordId: 'prod_1', number: NUMBER, size: 41 });
     const key = await currentKey(h, openId);
 
-    const first = await h.write.submitSale({ openId, submitKey: key, paymentAmount: '' });
-    const second = await h.write.submitSale({ openId, submitKey: key, paymentAmount: '' });
+    const first = await h.write.submitSale({ openId, submitKey: key, paymentStatus: PAYMENT_STATUS.unpaid });
+    const second = await h.write.submitSale({ openId, submitKey: key, paymentStatus: PAYMENT_STATUS.unpaid });
     assert.equal(first.ok, true);
     assert.equal(first.reused, false);
     assert.equal(second.ok, true);
@@ -277,11 +280,11 @@ test('② 同一把提交键连点两次（含并发）→ **只写一次**，�
     assert.equal(entriesOf(h.gateway, 'salesDetail').length, 1);
 
     // 并发：另开一张单，两个请求**同时**打进来
-    await addLine(h, openId, { productRecordId: 'prod_1', number: NUMBER, size: 42, amount: 399 });
+    await addLine(h, openId, { productRecordId: 'prod_1', number: NUMBER, size: 42 });
     const key2 = await currentKey(h, openId);
     const [a, b] = await Promise.all([
-      h.write.submitSale({ openId, submitKey: key2, paymentAmount: '' }),
-      h.write.submitSale({ openId, submitKey: key2, paymentAmount: '' }),
+      h.write.submitSale({ openId, submitKey: key2, paymentStatus: PAYMENT_STATUS.unpaid }),
+      h.write.submitSale({ openId, submitKey: key2, paymentStatus: PAYMENT_STATUS.unpaid }),
     ]);
     assert.equal(a.ok && b.ok, true);
     assert.equal([a, b].filter((item) => item.reused).length, 1, '并发时恰好一次真写、一次复用');
@@ -291,18 +294,25 @@ test('② 同一把提交键连点两次（含并发）→ **只写一次**，�
 });
 
 // ── ③ 钱留空也能成单 + 状态如实 ─────────────────────────────────────────────
-test('③ 实收金额留空（按货品单价）+ 收款留空（先货后钱）→ 成单，状态如实', async () => {
+test('③ 实收金额留空（按货品单价）+【未付】→ 成单，状态如实（差额一条未收款）', async () => {
   const h = createHarness();
   try {
     const openId = 'ou_scan_3';
-    await addLine(h, openId, { productRecordId: 'prod_1', number: NUMBER, size: 40, amount: '' });
-    const result = await h.write.submitSale({ openId, submitKey: await currentKey(h, openId), paymentAmount: '' });
+    await addLine(h, openId, { productRecordId: 'prod_1', number: NUMBER, size: 40 });
+    // ⚠️ 2026-10-11 最终口径：资金区必须选一档「付款情况」；**什么都没填 = 未付**
+    //    ⇒ 差额写一条【未收款】（金额 = 每件实收合计）。见 scanSaleTwoLayerMoney.test.js 的 AC-6。
+    const result = await h.write.submitSale({
+      openId, submitKey: await currentKey(h, openId), paymentStatus: PAYMENT_STATUS.unpaid,
+    });
     assert.equal(result.ok, true, JSON.stringify(result));
-    assert.equal(result.payment_count, 0);
+    assert.equal(result.payment_count, 1, '未付 ⇒ 那一条【未收款】');
 
     const entry = entriesOf(h.gateway, 'salesEntry')[0];
     assert.equal(entry.fields['销售状态'], '已写入', '货写上了');
-    assert.equal(entriesOf(h.gateway, 'paymentRecord').length, 0, '钱可以不填：一条收款明细都没有');
+    const unpaid = entriesOf(h.gateway, 'paymentRecord');
+    assert.equal(unpaid.length, 1, '钱可以先不填：只挂一条【未收款】占位（不带收款方式）');
+    assert.equal(unpaid[0].fields['收款状态'], '未收款');
+    assert.equal(unpaid[0].fields['收款方式'], undefined, '未收款没有方式');
     assert.equal(entriesOf(h.gateway, 'salesDetail')[0].fields['实收金额'], 399, '金额留空按「货品信息.单价」');
     // 「资金状态」这一列是**既有业务层**的口径（= "收款这一步跑完了"），扫码侧一个字都没改它。
     // 「待补资金」是**既有进度口径**推出来的：收款明细为空 ⇒ 未收款 / 欠款 = 实收金额。
@@ -325,23 +335,24 @@ test('④ 收款方式默认「微信」；改成现金就写现金（扫码入�
   const h = createHarness();
   try {
     const openId = 'ou_scan_4';
-    // ① 不改：写微信
-    await addLine(h, openId, { productRecordId: 'prod_1', number: NUMBER, size: 40, amount: 399 });
+    // ⭐ 2026-10-11：默认值落在**页面第一行**（渲染用例见第 ⑧ 条）；服务端只写她给的那一笔。
+    // ① 微信那一笔
+    await addLine(h, openId, { productRecordId: 'prod_1', number: NUMBER, size: 40, amount: 100 });
     const wechat = await h.write.submitSale({
-      openId, submitKey: await currentKey(h, openId), paymentAmount: '100', paymentMethod: '',
+      openId, submitKey: await currentKey(h, openId), payments: [{ method: '微信', amount: '100' }],
     });
     assert.equal(wechat.ok, true, JSON.stringify(wechat));
-    // ② 改成现金：写现金
-    await addLine(h, openId, { productRecordId: 'prod_1', number: NUMBER, size: 41, amount: 399 });
+    // ② 改成现金：写现金（每件实收 = 这一笔的金额，核心校验才相等）
+    await addLine(h, openId, { productRecordId: 'prod_1', number: NUMBER, size: 41, amount: 200 });
     const cash = await h.write.submitSale({
-      openId, submitKey: await currentKey(h, openId), paymentAmount: '200', paymentMethod: '现金',
+      openId, submitKey: await currentKey(h, openId), payments: [{ method: '现金', amount: '200' }],
     });
     assert.equal(cash.ok, true, JSON.stringify(cash));
 
     const methodField = V1_BITABLE_SCHEMA.tables.paymentRecord.fields.method;
     const payments = entriesOf(h.gateway, 'paymentRecord');
     assert.equal(payments.length, 2);
-    assert.deepEqual(payments[0].fields[methodField], ['pm_wechat'], '没传方式 → 用扫码页的默认「微信」');
+    assert.deepEqual(payments[0].fields[methodField], ['pm_wechat'], '她给的那一笔方式 = 微信');
     assert.deepEqual(payments[1].fields[methodField], ['pm_cash'], '她改了方式 → 按她说的写');
     assert.equal(payments[0].fields['收款金额'], 100);
     assert.equal(payments[0].fields['收款状态'], '已收款');
@@ -354,12 +365,14 @@ test('⑤ 赠品写**销售主表**的「赠品」列（明细不带赠品）', 
   try {
     const openId = 'ou_scan_5';
     await addLine(h, openId, {
-      productRecordId: 'prod_1', number: NUMBER, size: 40, amount: 399, gift: '袜子',
+      productRecordId: 'prod_1', number: NUMBER, size: 40, gift: '袜子',
     });
     await addLine(h, openId, {
-      productRecordId: 'prod_1', number: NUMBER, size: 41, amount: 399, gift: '鞋垫',
+      productRecordId: 'prod_1', number: NUMBER, size: 41, gift: '鞋垫',
     });
-    const result = await h.write.submitSale({ openId, submitKey: await currentKey(h, openId), paymentAmount: '' });
+    const result = await h.write.submitSale({
+      openId, submitKey: await currentKey(h, openId), paymentStatus: PAYMENT_STATUS.unpaid,
+    });
     assert.equal(result.ok, true, JSON.stringify(result));
     const entry = entriesOf(h.gateway, 'salesEntry')[0];
     assert.equal(entry.fields['赠品'], '袜子、鞋垫', '一单一条：合并规则来自 config/salesGift');
@@ -451,8 +464,10 @@ test('⑦ 整条写入链路**不读写** `data/lark_mvp_tasks/`（群聊入口�
   const h = createHarness();
   try {
     const openId = 'ou_scan_7';
-    await addLine(h, openId, { productRecordId: 'prod_1', number: NUMBER, size: 40, amount: 399 });
-    await h.write.submitSale({ openId, submitKey: await currentKey(h, openId), paymentAmount: '' });
+    await addLine(h, openId, { productRecordId: 'prod_1', number: NUMBER, size: 40 });
+    await h.write.submitSale({
+      openId, submitKey: await currentKey(h, openId), paymentStatus: PAYMENT_STATUS.unpaid,
+    });
     await h.write.submitReplenish({
       openId, submitKey: await currentKey(h, openId, 'replenish'),
       productRecordId: 'prod_1', number: NUMBER, entries: [{ size: 41, quantity: 1 }],
@@ -607,7 +622,7 @@ test('⑧ 路由：加入本单 → 回跳带上"本单几双"；提交整单 �
       const added = await fetch(pageUrl, {
         method: 'POST', redirect: 'manual',
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ action: SCAN_WRITE.actions.addLine, submit_key: saleKey, size: '40', amount: '399', gift: '袜子' }).toString(),
+        body: new URLSearchParams({ action: SCAN_WRITE.actions.addLine, submit_key: saleKey, size: '40', amount: '100', gift: '袜子' }).toString(),
       });
       assert.equal(added.status, 303);
       // ⭐ 2026-10-11：缺省领域改回**销售** ⇒ 缺省领域不带 `?from=`（URL 干净），
@@ -628,7 +643,8 @@ test('⑧ 路由：加入本单 → 回跳带上"本单几双"；提交整单 �
         method: 'POST',
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
-          action: SCAN_WRITE.actions.submitOrder, submit_key: saleKey, payment_method: '现金', payment_amount: '100',
+          action: SCAN_WRITE.actions.submitOrder, submit_key: saleKey,
+          payment_method: '现金', payment_amount: '100', [SCAN_WRITE.fields.lineAmount]: '100',
         }).toString(),
       });
       assert.equal(submitted.status, 200);
@@ -690,18 +706,24 @@ test('⑨ 失败有人话：没单价又没填金额 → 页面上说清"要填�
       const response = await fetch(`${base}/s/${encodeURIComponent('YD1111|白色|A')}`, {
         method: 'POST',
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ action: SCAN_WRITE.actions.submitOrder, submit_key: key }).toString(),
+        body: new URLSearchParams({
+          action: SCAN_WRITE.actions.submitOrder, submit_key: key,
+          // ⚠️ 资金区必须有一档「付款情况」（没填钱 ⇒ 未付，差额挂一条未收款）。
+          payment_status: PAYMENT_STATUS.unpaid,
+        }).toString(),
       });
       assert.equal(response.status, 400, '她可以改一下就再提交 → 400 而不是 500');
       const html = await response.text();
-      assert.match(html, /这一步没成功/);
-      assert.match(html, /「YD1111」在「货品信息」里没有单价，请填一下实收金额再提交。/);
-      assert.match(html, /可以照上面那句话改一下再点一次/);
+      // ⭐ 2026-10-11：这一条也归"原地重渲染"那一组（她可以在本单里当场补填实收）——
+      //    所以页面上是**销售那一块** + 一句人话，而不是一张干巴巴的失败页。
+      assert.ok(html.includes('realm-block--sales'), '原地回到销售那一块（她改一下就能再提交）');
+      assert.match(html, /「YD1111」在「货品信息」里没有单价：请在本单里填上这一双实收，再提交。/);
+      assert.match(html, /class="form-alert"/, '人话挂在表单上方');
       // 金额是在**建主表之前**算的 ⇒ 这一种失败不会留下半张空单（更好，不是更差）。
       assert.equal(entriesOf(h.gateway, 'salesEntry').length, 0);
       assert.equal(entriesOf(h.gateway, 'salesDetail').length, 0);
       // 而她改完金额再提交，就能成单（同一把键、同一页）
-      const fixed = await h.write.submitSale({ openId, submitKey: key, paymentAmount: '' });
+      const fixed = await h.write.submitSale({ openId, submitKey: key });
       // 金额仍取不到 ⇒ 仍然是人话失败（**不许写 0**）
       assert.equal(fixed.ok, false);
       assert.match(fixed.message, /没有单价/);
@@ -714,7 +736,7 @@ test('⑨ 失败有人话：内部错误（字段名/错误码）**不回显**�
   const h = createHarness();
   try {
     const openId = 'ou_scan_fail2';
-    await addLine(h, openId, { productRecordId: 'prod_1', number: NUMBER, size: 40, amount: 399 });
+    await addLine(h, openId, { productRecordId: 'prod_1', number: NUMBER, size: 40 });
     const key = await currentKey(h, openId);
     // 让业务层在写明细那一步抛一个"内部形状"的错误（真实现里长这样）。
     const original = h.gateway.update;
@@ -728,7 +750,11 @@ test('⑨ 失败有人话：内部错误（字段名/错误码）**不回显**�
       const response = await fetch(`${base}/s/${encodeURIComponent(NUMBER)}`, {
         method: 'POST',
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ action: SCAN_WRITE.actions.submitOrder, submit_key: key }).toString(),
+        body: new URLSearchParams({
+          action: SCAN_WRITE.actions.submitOrder, submit_key: key,
+          // ⚠️ 资金区必须有一档「付款情况」（没填钱 ⇒ 未付，差额挂一条未收款）。
+          payment_status: PAYMENT_STATUS.unpaid,
+        }).toString(),
       });
       assert.equal(response.status, 500);
       const html = await response.text();
@@ -819,7 +845,7 @@ test('⑩ 现货 / 预订：所选尺码在（样品 + 门盒）有货 ⇒ SALE_
 
       // ③ 提交 → **每条明细写自己那一个**交易类型（关联「行为管理」里那两条既有记录）
       const result = await h.write.submitSale({
-        openId, submitKey: await currentKey(h, openId), paymentAmount: '',
+        openId, submitKey: await currentKey(h, openId), paymentStatus: PAYMENT_STATUS.unpaid,
       });
       assert.equal(result.ok, true, JSON.stringify(result));
       const tradeType = V1_BITABLE_SCHEMA.tables.salesDetail.fields.tradeType;
@@ -927,7 +953,7 @@ test('AC-DB5 ⭐ 一单多双·多次扫码：扫 A 加单 → 扫 B 加单 → 
 
       // ① 扫 A（YD6693-2）：加入本单
       const keyA = keyOf(await (await fetch(urlA, { headers: { cookie } })).text());
-      const addedA = await post(urlA, { action: SCAN_WRITE.actions.addLine, submit_key: keyA, size: '40', amount: '399' });
+      const addedA = await post(urlA, { action: SCAN_WRITE.actions.addLine, submit_key: keyA, size: '40' });
       assert.equal(addedA.status, 303);
 
       // ② 扫 B（XHB8095，**另一个编号**）：本单条上已经读得到 A 那一双
@@ -937,7 +963,7 @@ test('AC-DB5 ⭐ 一单多双·多次扫码：扫 A 加单 → 扫 B 加单 → 
 
       // ③ 就在 B 页加第二双
       const keyB = keyOf(htmlB);
-      const addedB = await post(urlB, { action: SCAN_WRITE.actions.addLine, submit_key: keyB, size: '41', amount: '359' });
+      const addedB = await post(urlB, { action: SCAN_WRITE.actions.addLine, submit_key: keyB, size: '41' });
       assert.equal(addedB.status, 303);
 
       // ④ B 页（回跳后）：本单 2 双 + 极简反馈 + 顶部**就地**能提交（不用回第 1 双那一页）
@@ -948,7 +974,9 @@ test('AC-DB5 ⭐ 一单多双·多次扫码：扫 A 加单 → 扫 B 加单 → 
         'B 页顶部的本单条上就有【提交这一单】');
 
       // ⑤ 就在 B 页提交这一单 → **一张主表 + 两行明细**
-      const submitted = await post(urlB, { action: SCAN_WRITE.actions.submitOrder, submit_key: keyB });
+      const submitted = await post(urlB, {
+        action: SCAN_WRITE.actions.submitOrder, submit_key: keyB, payment_status: PAYMENT_STATUS.unpaid,
+      });
       assert.equal(submitted.status, 200);
       const doneHtml = await submitted.text();
       assert.match(doneHtml, /这一单提交好了/);

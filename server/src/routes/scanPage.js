@@ -40,7 +40,7 @@ const express = require('express');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { createScanPageService } = require('../services/scanPageService');
 const { createScanWriteService } = require('../services/scanWriteService');
-const { renderScanPage, renderScanMessagePage, renderMinimalPage } = require('../views/scanPageRenderer');
+const { renderScanPage, renderScanMessagePage, renderMinimalPage, buildPaymentRows } = require('../views/scanPageRenderer');
 // ⚠️ 只借这两个**纯函数**：所选尺码在「样品 + 门盒」有没有货（= 页面上那两个分组的判据），
 //    以及 `?from=` → 领域 id（认不出来回落缺省，不报错、不白屏）。
 const { sellableSizeTexts, resolveRealm, DEFAULT_REALM } = require('../views/scanPageRealm');
@@ -248,8 +248,16 @@ const createScanPageRouter = (options = {}) => {
    * ⚠️ **只读**：这里最多读一次自己的会话文件（`sessions.get`，**不是** ensure）——
    *    连"新建会话"都不做 ⇒ 她只是看一眼库存、什么都没点，本地不会多出任何记录。
    *    会话的建立发生在**第一次点「加入本单」**那一刻（`addLine` 内部会 ensure）。
+   *
+   * ⭐⭐ 2026-10-11（两层结构）：
+   *   · **每件层**：`draft.lines` 逐行带上她填过的「这一双实收」（渲染层把它画成每行一个输入框）；
+   *   · **总单层**：`paymentRows` = 预置的多笔收款行（第一行默认选中「微信」）；
+   *   · `errorText`（可选）= **校验失败时原地给她的人话**（差额），不是一张干巴巴的失败页。
+   *
+   * @param {object} [extra] `{ paymentRows, errorText }` —— 校验失败**原地重渲染**时把她刚填的
+   *  收款行原样带回来（她不用重打），以及在表单上方挂一句差额人话。
    */
-  const buildWriteContext = async (req, view, realm = DEFAULT_REALM) => {
+  const buildWriteContext = async (req, view, realm = DEFAULT_REALM, extra = {}) => {
     if (!writeService) return null;
     const openId = openIdOf(req);
     if (!openId) return null;
@@ -294,6 +302,22 @@ const createScanPageRouter = (options = {}) => {
       replenishKey: writeService.sessions.submitKeyFor(openId, session, 'replenish'),
       paymentMethods,
       defaultPaymentMethod,
+      // ⭐⭐ 总单层的**「付款情况」**（整单三档）：默认档来自配置（**全付**）；
+      //     校验失败原地重渲染时，用**她刚才选的那一档**（`extra.paymentStatus`）。
+      paymentStatus: String(extra.paymentStatus || writeConfig.sale.paymentStatus?.default || ''),
+      defaultPaymentStatus: writeConfig.sale.paymentStatus?.default || '',
+      // ⭐ 「部分付」时资金区填的**实付多少**（另外两档服务端不看它）；同样原样回填。
+      paidAmount: extra.paidAmount === undefined || extra.paidAmount === null
+        ? '' : String(extra.paidAmount),
+      // ⭐⭐ 总单层的多笔收款行：预置 N 行（第一行默认「微信」）；校验失败重渲染时
+      //     用**她刚填的那几行**（值原样带回来，她改一改就能再提交）。
+      paymentRows: buildPaymentRows({
+        count: writeConfig.sale.paymentRowCount,
+        defaultMethod: defaultPaymentMethod,
+        rows: extra.paymentRows,
+      }),
+      // 校验失败时挂在表单上方的那句人话（差额）；成功路径上是空串。
+      errorText: String(extra.errorText || ''),
       // 「刚加入本单」那一句（**文案来自配置**，只有数字来自会话 ⇒ 没有回显注入面）。
       notice: String(req.query?.added || '') === '1' && lines.length
         ? fillWriteText(texts.lineAddedBanner, { count: lines.length })
@@ -454,14 +478,41 @@ const createScanPageRouter = (options = {}) => {
 
       // ── 提交销售单 ──────────────────────────────────────────────────────────
       if (action === actions.submitOrder) {
+        // ⭐⭐ 2026-10-11（**最终口径**）：总单层 = ①每件实收（同名重复 ⇒ 有序数组，下标 = 明细行）
+        //    + ②**「付款情况」三档**（整单：全付（默认）/ 部分付 / 未付）
+        //    + ③多笔收款（同名重复 ⇒ 两个数组按下标对齐）+ 「部分付」的实付多少。
+        //    **原样交给写服务**，校验（含"全付必须相等"那条）在写服务里做 —— 路由不判业务。
+        const payments = parsePaymentRows(body, fields);
+        const lineAmounts = asList(body[fields.lineAmount]);
+        const paymentStatus = String(body[fields.paymentStatus] || '').trim();
+        const paidAmount = body[fields.paidAmount] ?? '';
         const result = await writeService.submitSale({
           openId,
           requestId,
           submitKey: body[fields.submitKey],
-          paymentMethod: body[fields.paymentMethod],
-          paymentAmount: body[fields.paymentAmount],
+          payments,
+          lineAmounts,
+          paymentStatus,
+          paidAmount,
         });
-        if (!result.ok) return respondWriteFailure(res, result, requestId);
+        if (!result.ok) {
+          // ⭐⭐ 校验类失败（**核心那条：全付时每件实收合计 ≠ 收款合计**，以及付款情况 /
+          //    收款行 / 每件实收本身的格式问题）⇒ **原地重渲染销售那一块**：
+          //    差额人话挂在表单上方，她刚填的每件实收（在会话里）/ 付款情况 / 实付多少 /
+          //    多笔收款（原样带回）都还在 —— 改一下再点提交即可。
+          //    🔴 这一条**不写库**（写服务里那一段在校验之后才建主表），页面上也会把差额说清。
+          if ((writeConfig.sale.formFailureCodes || []).includes(result.code)) {
+            const view = await service.lookup({ number: req.params.number, requestId }).catch(() => null);
+            if (view?.found) {
+              const write = await buildWriteContext(req, view, 'sales', {
+                paymentRows: payments, paymentStatus, paidAmount, errorText: result.message,
+              });
+              const html = renderScan(view, config, write, 'sales', { userAgent: req.headers['user-agent'] });
+              return sendHtml(res, 400, html);
+            }
+          }
+          return respondWriteFailure(res, result, requestId);
+        }
         // ⭐ 销售单写成功 ⇒ **立刻作废**「实时库存」快照（她：库存必须准确，不是等 30 秒）。
         invalidateInventorySnapshot(requestId, 'scan_sale_submitted');
         const texts = writeConfig.texts;
@@ -595,4 +646,31 @@ const parseReplenishEntries = (body, fields, writeConfig) => {
   }));
 };
 
-module.exports = { createScanPageRouter, isDataNotReady, parseReplenishEntries };
+/**
+ * 表单里**同名重复**的字段（`line_amount` / `payment_method` / `payment_amount`）
+ * 在 `express.urlencoded({extended:true})` 下是**数组**；只出现一次时是**字符串**。
+ * 这个纯函数把两种形状统一成有序数组（顺序 = 页面上的行顺序）。
+ */
+const asList = (value) => {
+  if (Array.isArray(value)) return value.map((item) => (item === undefined || item === null ? '' : item));
+  if (value === undefined || value === null) return [];
+  return [value];
+};
+
+/**
+ * 表单 → **多笔收款**（`[{ method, amount }]`，按下标对齐）。
+ * ⚠️ 这里**不判业务**（哪一行算一笔、方式必不必填 ⇒ 写服务说了算）；
+ *    只负责把两个同名数组拼成行 —— 少一个字段的行也照拼（缺的那位是空串）。
+ */
+const parsePaymentRows = (body, fields) => {
+  const methods = asList(body[fields.paymentMethod]);
+  const amounts = asList(body[fields.paymentAmount]);
+  const total = Math.max(methods.length, amounts.length);
+  return Array.from({ length: total }, (_, index) => ({
+    method: methods[index] ?? '', amount: amounts[index] ?? '',
+  }));
+};
+
+module.exports = {
+  createScanPageRouter, isDataNotReady, parseReplenishEntries, parsePaymentRows,
+};
