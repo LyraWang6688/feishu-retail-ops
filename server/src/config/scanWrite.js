@@ -210,8 +210,10 @@ const TEXTS = Object.freeze({
   submittedFundsBody: '收款也记上了，共 {paid} 元。',
   submittedAgainTitle: '这一单已经提交过了',
   submittedAgainBody: '销售单号 {orderNo}，没有重复写入。',
-  // 「刚加入本单」那一句（加完回跳到这一页时显示）。
-  lineAddedBanner: '已加入本单：现在共 {count} 双。',
+  // 「刚加入本单」那一句：**极简**（她 2026-10-11：「一句极简反馈（例："已加入本单（2 双）"）
+  // —— 不要写说明书」）。它渲染在**每个领域页顶部的本单条**里（见
+  // `views/scanPageRenderer.js` 的 `draftBarHtml`），加完一双无论停在哪个领域都看得见。
+  lineAddedBanner: '已加入本单（{count} 双）',
   // ── 补货表单 ──────────────────────────────────────────────────────────────
   replenishQuantityLabel: '数量',
   replenishButton: '生成采购申请',
