@@ -1,6 +1,10 @@
 import { api } from '../../core/api-client.js';
 import { escapeHtml, money, statusClass } from '../../core/formatters.js';
 import { describeError, setBusy, showPageError } from '../../core/ui.js';
+
+/** 文案模板填充（`{name}` 占位符）—— 文案在 `config/orders.js` 里，代码只填值。 */
+const fillText = (template, values = {}) => String(template ?? '')
+  .replace(/\{(\w+)\}/g, (match, key) => (values[key] === undefined || values[key] === null ? match : String(values[key])));
 import {
   ORDERS_API, ORDERS_PAGE, ORDERS_TEXTS, DEFAULT_COLLECTION_METHOD, COLLECTION_METHODS,
   REFUND_METHOD_PLACEHOLDER, RESTOCK_STATES, AFTER_SALES_ACTIONS, SETTLEMENTS,
@@ -211,6 +215,10 @@ export function salesInfoOf(order = {}) {
  *   · `pending`    —— 其余（两个校验项齐了，但货没给完 / 钱没付完）。
  */
 export function salesSectionOf(order) {
+  // ⭐⭐ 2026-10-11：「**卖了样品、没指定门盒**」也是一类**待补充**（服务端只读事实
+  //    `order.sample_pending`，见 `salesFollowupService.listOrders`）—— **先判它**。
+  //    ⚠️ 其余判据**一个字都没动**（货品信息 / 资金信息 / 两清那三段照旧）。
+  if (order?.sample_pending) return SALES_SECTIONS[0].key;
   const info = salesInfoOf(order);
   // ⚠️ 履约 / 收款状态读不出来（空）时不敢说"两清"：`salesCategoryOf` 会把它归到
   //    「有二次」那一侧 —— 但那种单**往往连资金信息都还没有**（收款明细为空），
@@ -396,6 +404,43 @@ const detailAmountBlock = (order) => {
       </details>`;
 };
 
+/**
+ * ⭐⭐ 2026-10-11（业务负责人）：「**卖了样品、没指定把门盒变成谁的**」那条待办的操作块。
+ *
+ * 一条待办一行：`哪双鞋 · 哪个码 的样品卖掉了` + **选一个还有门盒的码** ⇒ 补上
+ * （服务端：那一双 **门盒 → 样品**，**1 双**、库存总数不变；与群卡片共用同一个幂等键）。
+ * ⚠️ 候选码与"还剩几双门盒"**都来自服务端**（`sample_pending_lines[].candidates`），
+ *    页面不猜、也不自己设默认值之外的东西；一个候选都没有 ⇒ 只给一句人话，**不给假按钮**。
+ */
+const sampleFillBlock = (order) => {
+  const lines = (order.sample_pending_lines || []).filter((line) => line?.detail_record_id);
+  if (!lines.length) return '';
+  const rows = lines.map((line) => {
+    const label = fillText(T.sampleFillLine, {
+      product: line.product_number || '这一双', size: line.size == null ? '—' : line.size,
+    });
+    if (!(line.candidates || []).length) {
+      return `<p class="muted" data-sample-line="${escapeHtml(line.detail_record_id)}">${escapeHtml(label)}</p>
+          <p class="muted">${escapeHtml(T.sampleFillNoCandidate)}</p>`;
+    }
+    return `<label class="form-field">${escapeHtml(label)}
+            <select data-field="sample-fill-size" data-detail="${escapeHtml(line.detail_record_id)}">
+              ${line.candidates.map((candidate) => `<option value="${escapeHtml(String(candidate.size))}">${escapeHtml(fillText(T.sampleFillOption, { size: candidate.size, count: candidate.doorBoxCount }))}</option>`).join('')}
+            </select>
+          </label>`;
+  }).join('');
+  const actionable = lines.some((line) => (line.candidates || []).length);
+  return `
+      <details class="action-form" data-action-block="sample-fill">
+        <summary>${escapeHtml(T.sampleFillTitle)}</summary>
+        <div class="action-body">
+          <span class="muted">${escapeHtml(T.sampleFillSizeLabel)}</span>
+          ${rows}
+          ${actionable ? `<button class="btn btn-primary" type="button" data-action="submit-sample-fill">${escapeHtml(T.sampleFillSubmit)}</button>` : ''}
+        </div>
+      </details>`;
+};
+
 const secondDeliveryBlock = (order, methods) => `
       <details class="action-form" data-action-block="second-delivery">
         <summary>${escapeHtml(T.secondDeliveryTitle)}</summary>
@@ -506,6 +551,7 @@ export function orderDetailHtml(order, { methods = [] } = {}) {
       </section>
       <div class="order-actions">
         ${detailAmountBlock(order)}
+        ${sampleFillBlock(order)}
         ${paymentFormBlock(order, methods)}
         ${deliveryBlock(order)}
         ${secondDeliveryBlock(order, methods)}
@@ -766,6 +812,26 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     });
   }
 
+  // ── 补样品（卖了样品没指定门盒的那条待办）────────────────────────────────
+  async function submitSampleFill(button) {
+    const selects = [...state.container.querySelectorAll('[data-field="sample-fill-size"]')];
+    const wanted = selects
+      .map((select) => ({ detailRecordId: select.dataset.detail, size: select.value }))
+      .filter((item) => item.detailRecordId && item.size !== '');
+    if (!wanted.length) return renderResult(T.sampleFillNoCandidate, true);
+    const requestId = state.pendingRequest || uuid();
+    state.pendingRequest = requestId;
+    const lines = [];
+    await runAction(button, '正在补样品…', async () => {
+      for (const item of wanted) {
+        const result = await api.post(ORDERS_API.sampleFill, { ...item, requestId });
+        lines.push(result.message || fillText(T.sampleFillDone, { size: item.size }));
+      }
+      state.pendingRequest = null;
+      return lines.join('；');
+    });
+  }
+
   // ── 交付 ─────────────────────────────────────────────────────────────────
   async function submitDelivery(button) {
     const order = state.order;
@@ -933,6 +999,7 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       if (action === 'search-product') return searchProduct();
       if (action === 'submit-payment') return submitPayment(trigger);
       if (action === 'submit-detail-amount') return submitDetailAmount(trigger);
+      if (action === 'submit-sample-fill') return submitSampleFill(trigger);
       if (action === 'deliver') return submitDelivery(trigger);
       if (action === 'submit-second-delivery') return submitSecondDelivery(trigger);
       if (action === 'submit-after-sales') return submitAfterSales(trigger);

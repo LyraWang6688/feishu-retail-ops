@@ -24,10 +24,33 @@ class SalesFollowupService {
     this.store = options.store || new JsonTaskStore({
       dir: path.join(__dirname, '../../data/sales_followup_tasks'), idField: 'task_id',
     });
+    // ⭐⭐ 2026-10-11：「卖了样品、没指定门盒」的**待办**（复用既有的 `sample_replacement` 任务，
+    //    落在 `data/lark_mvp_tasks`；工作台交付路径本来就在写它）。
+    //    ⚠️ 本 service 对它是**只读 + 一个补掉的动作**：订单列表据此挂 `sample_pending`。
+    //    用例可注入 `options.samplePending`。
+    // eslint-disable-next-line global-require
+    const { createSamplePendingService } = require('./samplePendingService');
+    this.samplePending = options.samplePending || createSamplePendingService({
+      gateway: this.gateway,
+      inventory: this.delivery.inventory,
+      store: options.sampleTaskStore,
+      taskDir: options.sampleTaskDir,
+    });
     this.queue = Promise.resolve();
   }
 
   async listOrders() {
+    // ⭐⭐ 2026-10-11：待补样品待办（**一次读表**，与下面几处取数并行不了 —— 它要看明细 id，
+    //    但读任务本身与明细无关 ⇒ 先并行发出）。读失败**不打挂整页**：当成"没有待办"+ 一条 warn。
+    const pendingSampleTasks = await this.samplePending.listPending().catch((error) => {
+      logWarn('workbench.sales.sample_pending.tasks_unreadable', {
+        error: error.message, hint: '这一次订单列表里不显示"待补样品"待办，其余照常',
+      });
+      return [];
+    });
+    const pendingSampleByDetail = new Map(
+      pendingSampleTasks.map((task) => [task.sales_detail_record_id, task]),
+    );
     // ⭐ 2026-10-11（C）：「其他配品」这张表是**可选配置**（没配时销售只支持鞋，见
     //    `LarkMvpService.listAccessories` 的注释）。这里先看 tableId 再读 ——
     //    未配置时**跳过**（配品行照样认得出来，只是没有名称），绝不把整页打成 500。
@@ -59,17 +82,8 @@ class SalesFollowupService {
             const orderDetails = details.filter((detail) => linkedRecordIds(detail.fields?.[detailFields.salesEntry]).includes(order.record_id));
             const orderPayments = payments.filter((payment) => linkedRecordIds(payment.fields?.[paymentFields.salesEntry]).includes(order.record_id));
             const progress = progressFromRecords(orderDetails, orderPayments, detailFields, paymentFields);
-            return {
-              record_id: order.record_id,
-              order_no: orderNo,
-              fulfillment_status: progress.fulfillmentStatus,
-              payment_status: progress.paymentStatus,
-              receivable_amount: progress.receivableAmount,
-              paid_amount: progress.paidAmount,
-              pending_amount: progress.pendingAmount,
-              platform_pending_amount: progress.platformPendingAmount,
-              pending_delivery_quantity: progress.pendingDeliveryQuantity,
-              details: await Promise.all(orderDetails
+            // ⭐⭐ 2026-10-11：先把明细那一行算完 —— 待补样品待办要拿**明细的 ID + 尺码**去对。
+            const detailRows = await Promise.all(orderDetails
                 .map(async (detail) => {
                   // ⭐ 2026-10-09（工作台订单列表要"点进去操作"）：
                   //   明细上多带两个**只读的关联 record_id**（货品 / 尺码），页面才能把
@@ -118,7 +132,48 @@ class SalesFollowupService {
                     fulfillment_status: textValue(detail.fields?.[detailFields.fulfillmentStatus]) || '未交付',
                     actual_amount: textValue(detail.fields?.[detailFields.actualAmount]) === '' ? null : Number(textValue(detail.fields?.[detailFields.actualAmount])),
                   };
-                })),
+                }));
+            // ⭐⭐ 待补样品待办 → 每条待办一行：**哪条明细** + 这一款**还有哪些码有门盒**
+            //    （她点进去就能选；与群里那条卡片同一个取数实现 `inventoryService.js:1308`）。
+            //    ⚠️ 取候选失败**不打断整页**：这一行照给，候选为空 + 一条 warn。
+            const samplePendingLines = (await Promise.all(orderDetails.map(async (detail) => {
+              const task = pendingSampleByDetail.get(detail.record_id);
+              if (!task) return null;
+              let candidates = [];
+              try {
+                // ⚠️ 只列**还有门盒**的码：她选中一个码就是要拿它补 ⇒ 不给"门盒 0 双"的选项
+                //    （群里那张卡片列全部码，是因为那边失败后会重发一张 —— 这里直接不给不能选的）。
+                candidates = (await this.samplePending.candidatesFor(task.product_record_id,
+                  { excludeRecordIds: task.consumed_live_record_ids || [] }))
+                  .filter((candidate) => Number(candidate.doorBoxCount || 0) > 0);
+              } catch (error) {
+                logWarn('workbench.sales.sample_pending.candidates_unreadable', {
+                  order_no: orderNo, sales_detail_record_id: detail.record_id, error: error.message,
+                });
+              }
+              const row = detailRows.find((item) => item.record_id === detail.record_id);
+              return {
+                detail_record_id: detail.record_id,
+                product_record_id: task.product_record_id,
+                product_number: task.product_number || '',
+                size: row?.size ?? null,
+                candidates,
+              };
+            }))).filter(Boolean);
+            return {
+              record_id: order.record_id,
+              order_no: orderNo,
+              fulfillment_status: progress.fulfillmentStatus,
+              payment_status: progress.paymentStatus,
+              receivable_amount: progress.receivableAmount,
+              paid_amount: progress.paidAmount,
+              pending_amount: progress.pendingAmount,
+              platform_pending_amount: progress.platformPendingAmount,
+              pending_delivery_quantity: progress.pendingDeliveryQuantity,
+              details: detailRows,
+              // ⭐⭐ 待补样品待办（**只读字段**；判据在页面那一侧：`sample_pending` 为真 ⇒ 进「待补充」）。
+              sample_pending: samplePendingLines.length > 0,
+              sample_pending_lines: samplePendingLines,
               payments: orderPayments
                 .map((payment) => ({
                   record_id: payment.record_id,
@@ -150,6 +205,23 @@ class SalesFollowupService {
         .filter(Boolean)
         .reverse(),
     };
+  }
+
+  /**
+   * ⭐⭐ 2026-10-11：**补样品**（工作台 → 销售 → 订单列表 →【待补充】里那条待办）。
+   *
+   * 她把"卖了样品、没指定门盒"的那一单选一个尺码 ⇒ 那一双 **门盒 → 样品**（**1 双**）。
+   * ⚠️ 真正的动作与幂等在 `SamplePendingService.fill` → `InventoryService.promoteToSample`
+   *    （**与群卡片共用同一个 `operationId`** ⇒ 跨入口绝不重复挪）。
+   */
+  async fillSample(input = {}) {
+    return this.samplePending.fill({
+      detailRecordId: input.detailRecordId,
+      size: input.size,
+      operatorOpenId: input.operatorOpenId,
+      requestId: input.requestId,
+      correlation: { request_id: input.requestId },
+    });
   }
 
   async addPayment(input) {
