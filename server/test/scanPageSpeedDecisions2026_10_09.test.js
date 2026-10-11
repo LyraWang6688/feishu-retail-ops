@@ -1,4 +1,11 @@
 /**
+ * ⚠️ 2026-10-11 晚（业务负责人批准六领域）——本文件**改写**的断言（逐字）：
+ *   改前：领域清单写 `['sales', 'inventory', 'purchase', 'product']`；补货那一块用 `?from=purchase`。
+ *   改后：六领域 = `['sales','replenish','purchase_return','accept','inventory','product']`；
+ *        补货那一块 = `?from=replenish`（页面内容一个字没变）。
+ *   理由：原「采购」领域被业务负责人拆成 补货 / 退货 / 验收 三个领域；其余断言一条没放宽。
+ */
+/**
  * ⭐⭐ 扫码页提速三项（业务负责人 2026-10-09 定，见 `docs/scan-speed-decisions-2026-10-09.md`）
  * 的**验收标准 / 守门用例**。
  *
@@ -296,7 +303,7 @@ test('A3 扫码缺省领域 = **sales**（她：「默认打开是销售页」�
   assert.match(source, /默认打开是销售页/);
   // 领域本身没变（还是那四个、顺序也一样）。
   const { REALMS } = require('../src/views/scanPageRealm');
-  assert.deepEqual(REALMS.map((realm) => realm.id), ['sales', 'inventory', 'purchase', 'product']);
+  assert.deepEqual(REALMS.map((realm) => realm.id), ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product']);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

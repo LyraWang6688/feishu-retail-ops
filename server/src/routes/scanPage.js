@@ -484,9 +484,14 @@ const createScanPageRouter = (options = {}) => {
   router.get(config.route.path, async (req, res) => {
     const requestId = req.requestId;
     // ⚠️ 领域来自查询串（她给的参数名就是 `from`）；认不出来一律回落缺省，**不报错**。
-    //    ⭐ 2026-10-11：`accept` 是**验收模式**那个非 tab 的领域（她扫开标签时会被自动切进来）。
-    const asked = String(req.query?.from || '').trim().toLowerCase();
-    let realm = asked === ACCEPTANCE_REALM ? ACCEPTANCE_REALM : resolveRealm(asked);
+    //    ⭐ 2026-10-11：六个领域（销售 · 补货 · 退货 · 验收 · 库存 · 货品）都是**真领域**，
+    //      统一走 `resolveRealm` 就够；已退役的 `purchase` 认不出来 ⇒ 回落销售（既有口径）。
+    //    ⚠️ `explicit` 区分"**裸扫**（一个 `from` 都没有，标签二维码就是这样）"与
+    //      "她**点**了某个领域 tab（链接一定带 `?from=`）" —— 下面验收接管只对**裸扫**生效，
+    //      这样"她点销售/库存…就能离开验收"才真的成立（`?from=sales` 不能被接管）。
+    const askedRaw = String(req.query?.from ?? '').trim();
+    const explicitRealm = askedRaw !== '';
+    let realm = resolveRealm(askedRaw);
     // ⭐ 分阶段耗时（出参）：失败 / 找不到时同样能看出卡在哪一步。
     const timing = {};
     let acceptance = null;
@@ -508,11 +513,14 @@ const createScanPageRouter = (options = {}) => {
           requestId,
         });
       }
-      // ⭐⭐ 2026-10-11（方案A）：**验收模式**（她先在验收模式里，然后每扫一个码打开一页）。
+      // ⭐⭐ 2026-10-11（方案A + 六领域）：**服务器记住她正在做什么** ——
+      //    「每次扫码都会打开一个新页面」（标签上的码内容固定、不带参数）⇒ 新页面不知道她刚在哪个领域。
       //    规则只有一条、且**只覆盖缺省领域**：正开着一场验收（会话未完成、未过期）时，
-      //    裸扫（没有 `?from=`）或显式 `?from=accept` 这一页 = 验收那一块；
-      //    她点【销售】/【库存】/【货品】/【采购】照旧去那些领域（**随时能离开验收模式**）。
-      if (arrival() && (realm === DEFAULT_REALM || realm === ACCEPTANCE_REALM)) {
+      //    **裸扫**（没有 `?from=`）这一页 = **【验收】领域**；
+      //    她点【销售】/【补货】/【退货】/【库存】/【货品】照旧去那些领域（**随时能离开**）；
+      //    她点【验收】而这一场已结束/过期 ⇒ 验收领域自己那张人话卡（"回工作台点【验收】"）。
+      //    ⚠️ 本轮**只做验收接管**（业务负责人批的就是这一条）；退货 / 补货**暂不接管**。
+      if (arrival() && !explicitRealm) {
         const session = await arrival().get(openIdOf(req)).catch(() => null);
         if (session && session.status === 'open') {
           realm = ACCEPTANCE_REALM;
@@ -524,9 +532,6 @@ const createScanPageRouter = (options = {}) => {
                 ? fillWriteText(writeConfig.texts.acceptAddedBanner, { scanned: session.scanned || 0 })
                 : ''),
           });
-        } else if (realm === ACCEPTANCE_REALM) {
-          // 认不出/已完成的验收会话：如实说一句，**回落缺省领域**（不白屏、不假装还在验收）。
-          realm = DEFAULT_REALM;
         }
       }
       const write = await buildWriteContext(req, view, realm);

@@ -1,4 +1,11 @@
 /**
+ * ⚠️ 2026-10-11 晚（业务负责人批准六领域）——本文件**改写**的断言（逐字）：
+ *   改前：领域清单写 `['sales', 'inventory', 'purchase', 'product']`；补货那一块用 `?from=purchase`。
+ *   改后：六领域 = `['sales','replenish','purchase_return','accept','inventory','product']`；
+ *        补货那一块 = `?from=replenish`（页面内容一个字没变）。
+ *   理由：原「采购」领域被业务负责人拆成 补货 / 退货 / 验收 三个领域；其余断言一条没放宽。
+ */
+/**
  * ⭐⭐ 扫码页「**去说明书**」的验收标准（业务负责人 **2026-10-10**，与工作台同一批口径）。
  *
  * 她的规则（逐字要点）：**只留"能点、能做的事"，删掉"解释我怎么用"的句子**。
@@ -122,7 +129,7 @@ test('AC-S1 那些"解释我怎么用"的文案字段整体退场（配置里连
   assert.equal(SCAN_PAGE.missingSize.icon, '⚠️');
 
   // ⑤ 四个领域渲染出来的 HTML 里，一句说明都不许有
-  for (const realm of ['sales', 'inventory', 'purchase', 'product']) {
+  for (const realm of ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product']) {
     const html = pageFor(realm);
     for (const gone of REMOVED_SENTENCES) {
       assert.equal(html.includes(gone), false, `realm=${realm} 的页面里还有说明句：「${gone}」`);
@@ -167,7 +174,7 @@ test('AC-S3 功能性的东西一个都不能少：⚠️ 缺 / 状态小标签 
   assert.ok(REALM_TEXTS.saleInStockHeading && REALM_TEXTS.salePrepaidHeading, '两组标题照旧');
 
   // ③ 「一键补货」= 折叠头（最短文案），里面的表单一个字段都不少
-  const purchase = pageFor('purchase');
+  const purchase = pageFor('replenish');
   assert.ok(purchase.includes('data-view="one-tap-replenish"'), '一键补货折叠还在');
   assert.match(purchase, /<summary[^>]*>一键补货<\/summary>/, '折叠头就是最短的「一键补货」');
   for (const needle of ['name="sizes" value="41" checked', 'name="qty_41"', 'name="submit_key"',
@@ -186,7 +193,7 @@ test('AC-S3 功能性的东西一个都不能少：⚠️ 缺 / 状态小标签 
   assert.ok(pageFor('product').includes('货品标签') && pageFor('product').includes('/workbench/label-print.html'));
 
   // ⑥ `<noscript>` 兜底链接照旧（没有脚本时四条领域链接可点；只是不再有解释句）
-  for (const realm of ['sales', 'inventory', 'purchase', 'product']) {
+  for (const realm of ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product']) {
     const page = pageFor(realm);
     const start = page.indexOf('<noscript>');
     assert.ok(start > -1, `realm=${realm} 缺 noscript 兜底`);
@@ -203,7 +210,7 @@ test('AC-S3 功能性的东西一个都不能少：⚠️ 缺 / 状态小标签 
   assert.ok(emptySales.includes(SCAN_PAGE.texts.realmEmptyTitle), '销售领域没人话卡');
   assert.ok(emptySales.includes(SCAN_PAGE.texts.realmEmptySalesBody));
   assert.ok(emptySales.includes(SCAN_PAGE.texts.realmEmptyAction));
-  const emptyPurchase = renderScanPage({ ...VIEW, rows: [] }, SCAN_PAGE, { ...WRITE, sizes: [] }, 'purchase');
+  const emptyPurchase = renderScanPage({ ...VIEW, rows: [] }, SCAN_PAGE, { ...WRITE, sizes: [] }, 'replenish');
   assert.ok(emptyPurchase.includes(SCAN_PAGE.texts.realmEmptyTitle), '采购领域没人话卡');
   const emptyPurchaseBody = emptyPurchase.slice(emptyPurchase.indexOf('</head>'));
   assert.equal(emptyPurchaseBody.includes('一键补货'), false, '没有可补的尺码时不该还画补货表单');

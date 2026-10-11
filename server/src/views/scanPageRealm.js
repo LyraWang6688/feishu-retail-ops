@@ -54,27 +54,43 @@ const { SCAN_PAGE } = require('../config/scanPage');
 //   页面上那句"这一组是男 38–48"与**缺码判定**用的是**同一份配置**（唯一真源）。
 const SIZE_GROUP_RANGES = SCAN_PAGE.sizeSegments.ranges;
 
+/**
+ * ⭐⭐ 2026-10-11（业务负责人批准）：**扫码页六个领域**，顺序逐字 = 销售 · 补货 · 退货 · 验收 · 库存 · 货品。
+ *
+ * 与上一版（四个领域）的差别：
+ *   · 原「**采购**」领域**去掉** —— 它里面的两个动作各自成领域：**补货**（原一键补货）与**退货**；
+ *   · **验收**从"非 tab 的临时模式"升级成**正式领域**（有活跃验收会话时，裸扫仍会被自动切进来）；
+ *   · 销售 / 库存 / 货品 照旧。
+ *
+ * ⚠️ **一个二维码、六个领域**：标签二维码内容**一个字没变**（`https://hm.bamamei.online/s/{编号}`，
+ *    只含编号）⇒ 每个领域都是"同一个码扫开、点不同 tab / 带不同 `?from=`"。
+ * ⚠️ `?from=purchase`（已退役的领域）**认不出来 ⇒ 回落缺省（销售）** —— 与"认不出的值一律回落"
+ *    同一条既有口径；工作台那边指向它的入口已全部撤掉（见 `public/workbench/config/domains.js`）。
+ */
 const REALMS = Object.freeze([
   Object.freeze({ id: 'sales', label: '销售' }),
+  Object.freeze({ id: 'replenish', label: '补货' }),
+  Object.freeze({ id: 'purchase_return', label: '退货' }),
+  Object.freeze({ id: 'accept', label: '验收' }),
   Object.freeze({ id: 'inventory', label: '库存' }),
-  Object.freeze({ id: 'purchase', label: '采购' }),
   Object.freeze({ id: 'product', label: '货品' }),
 ]);
 
 /** 缺省领域 = **销售**（她 2026-10-11：「默认打开是销售页」；2026-10-09 曾一度是库存）。 */
 const DEFAULT_REALM = 'sales';
 
-/**
- * ⭐⭐ 2026-10-11（方案A）：「**验收模式**」那个**非 tab 的领域**。
- *
- * 它不在 `REALMS`（那四个是领域切换条上的 tab，一年多没变、有用例钉着）—— 验收模式是
- * 「工作台点【验收】之后、到【完成验收】之前」的一段**临时状态**：
- *   · 落地页 `GET /s/accept?batch=<批次号>` 直接渲染这一块（**没有编号**）；
- *   · 之后每扫一个标签（二维码就是 `/s/{编号}`）在**缺省领域**上被自动切进这一块
- *     （见 `routes/scanPage.js`：**只覆盖缺省领域**，她点销售/库存/货品/采购照旧去那些领域）；
- *   · 完成验收（或会话过期）⇒ 这一块不再出现，裸扫回到销售。
- */
+/** 补货 / 退货 / 验收 三个领域的 id（渲染层与路由**不写字符串字面量**）。 */
+const REPLENISH_REALM = 'replenish';
+const PURCHASE_RETURN_REALM = 'purchase_return';
 const ACCEPTANCE_REALM = 'accept';
+
+/** 领域 id → 它"空态"时那句人话的配置键（`config/scanPage.js` 的文案）。 */
+const REALM_EMPTY_TEXT_KEYS = Object.freeze({
+  sales: 'realmEmptySalesBody',
+  replenish: 'realmEmptyPurchaseBody',
+  purchase_return: 'realmEmptyPurchaseBody',
+  accept: 'realmEmptyAcceptanceBody',
+});
 
 /** 切换条与「货品标签」那一块的文案（页面上的每一个字都在这里，渲染层不写死句子）。
  *
@@ -219,7 +235,10 @@ const labelPrintUrls = (view = {}) => {
 module.exports = {
   REALMS,
   DEFAULT_REALM,
+  REPLENISH_REALM,
+  PURCHASE_RETURN_REALM,
   ACCEPTANCE_REALM,
+  REALM_EMPTY_TEXT_KEYS,
   REALM_TEXTS,
   LABEL_PRINT_PATH,
   SELLABLE_STATES,

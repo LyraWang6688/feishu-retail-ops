@@ -1,0 +1,154 @@
+/**
+ * ⭐⭐ 2026-10-11（业务负责人批准）：工作台「采购」= **只留「验收到货」**。
+ *
+ * 她的口径（逐字要点）：
+ *   · 「报货」「退货」两个子页**隐藏**（那两个动作现在都在**扫码页**：补货 / 退货 各一个领域）；
+ *   · 「采购订单列表」「供应商往来款」两个**占位页保留**（待建设）；
+ *   · ⚠️ **清掉那两条死链**：隐藏的老「采购管理」页面（`features/purchase/**`）里挂的
+ *     **飞书表单死链**清掉（她已批准"可以清掉"）。
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * 验收标准（**先写后做**；下面每条 test 的名字 = 这条 AC）
+ *
+ *  AC-W1 采购子 tab 逐字 = **验收到货 · 采购订单列表 · 供应商往来款**（报货 / 退货不再出现）；
+ *         其余三个领域的子 tab 清单**一条不变**（销售 4 / 库存 3 / 货品 2）。
+ *  AC-W2 「验收到货」仍是**独立子页**（`kind:'orders'` / `mode:'purchase'`），采购不再有 `kind:'entry'` 页。
+ *  AC-W3 两个占位页保留（`purchase-orders` / `purchase-supplier-money`，都还是 `placeholder`）。
+ *  AC-W4 **死链清掉**：`features/purchase/**` 里不再出现任何飞书表单 URL / `share/base/form`
+ *         （源码哨兵）；被它引用的那两个 URL 常量仍在 `config/links.js`（不删，等业务负责人定）。
+ *  AC-W5 采购子页上不再有任何指向 `/s/{number}?from=purchase`（已退役领域）的入口。
+ *  AC-W6 其它领域的入口一个没丢：销售建单 / 单款查询 / 全仓查询 / 标签打印 / 库存手工调整。
+ */
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+
+const WORKBENCH = path.join(__dirname, '../public/workbench');
+const readWorkbench = (relative) => fs.readFileSync(path.join(WORKBENCH, relative), 'utf8');
+const stripComments = (source) => source
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+/** 把前端 ES 模块复制成 `.mjs`（只改 import 的文件名），**真跑**配置与渲染层。 */
+async function loadFrontendModules() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-purchase-only-'));
+  const copy = (from, to, replacements = []) => {
+    let source = readWorkbench(from);
+    for (const [needle, replacement, optional] of replacements) {
+      if (!source.includes(needle)) {
+        assert.ok(optional, `${from} 里没有找到要改的 import：${needle}`);
+        continue;
+      }
+      source = source.split(needle).join(replacement);
+    }
+    fs.writeFileSync(path.join(dir, to), source, 'utf8');
+  };
+  copy('config/links.js', 'links.mjs');
+  copy('config/query.js', 'query.mjs', [["from './links.js'", "from './links.mjs'", true]]);
+  copy('config/domains.js', 'domains.mjs', [
+    ["from './links.js'", "from './links.mjs'"],
+    ["from './query.js'", "from './query.mjs'", true],
+  ]);
+  const load = (name) => import(pathToFileURL(path.join(dir, `${name}.mjs`)).href);
+  // ⚠️ **await 在这里**（模块是动态 import，返回 Promise）——别把 Promise 当成模块用。
+  return { links: await load('links'), domains: await load('domains') };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-W1 采购子 tab 只留「验收到货」
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-W1 采购子 tab 逐字 = 验收到货 · 采购订单列表 · 供应商往来款（报货/退货已隐藏）', async () => {
+  const { domains } = await loadFrontendModules();
+  const byId = new Map(domains.DOMAIN_TABS.map((domain) => [domain.id, domain]));
+  assert.deepEqual(byId.get('purchase').pages.map((page) => page.label),
+    ['验收到货', '采购订单列表', '供应商往来款']);
+  assert.deepEqual(byId.get('purchase').pages.map((page) => page.id),
+    ['purchase-arrival', 'purchase-orders', 'purchase-supplier-money']);
+  // 报货 / 退货两个子页**不再出现**（它们现在在扫码页）
+  for (const gone of ['purchase-report', 'purchase-return']) {
+    assert.equal(byId.get('purchase').pages.some((page) => page.id === gone), false, `${gone} 应已隐藏`);
+  }
+  for (const gone of ['报货', '退货']) {
+    assert.equal(byId.get('purchase').pages.some((page) => page.label === gone), false, `${gone} 子 tab 应已隐藏`);
+  }
+  // 其余三个领域的子 tab 清单**一条不变**
+  assert.deepEqual(byId.get('sales').pages.map((page) => page.label),
+    ['销售建单', '订单列表', '销售查询', '客户往来款']);
+  assert.deepEqual(byId.get('inventory').pages.map((page) => page.label),
+    ['单款查询', '全仓查询', '手工调整']);
+  assert.deepEqual(byId.get('product').pages.map((page) => page.label),
+    ['货品上新', '标签打印']);
+});
+
+test('AC-W2 「验收到货」仍是独立子页；采购不再有入口页', async () => {
+  const { domains } = await loadFrontendModules();
+  const purchase = domains.domainById('purchase');
+  const arrival = purchase.pages.find((page) => page.id === 'purchase-arrival');
+  assert.equal(arrival.kind, 'orders');
+  assert.equal(arrival.mode, 'purchase');
+  assert.equal(arrival.embed, undefined);
+  assert.equal(arrival.anchor, undefined);
+  assert.equal(purchase.pages.some((page) => page.kind === 'entry'), false, '采购不再有"填编号"的入口页');
+});
+
+test('AC-W3 两个占位页保留（待建设）', async () => {
+  const { domains } = await loadFrontendModules();
+  const purchase = domains.domainById('purchase');
+  for (const id of ['purchase-orders', 'purchase-supplier-money']) {
+    const page = purchase.pages.find((item) => item.id === id);
+    assert.equal(page?.kind, 'placeholder', `${id} 仍是占位页`);
+    assert.ok(page.label, `${id} 仍有子 tab 名`);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-W4 死链清掉（隐藏的老「采购管理」页面）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-W4 死链清掉：features/purchase/** 里不再有飞书表单 URL；链接常量仍在 config/links.js', async () => {
+  const dir = path.join(WORKBENCH, 'features/purchase');
+  const files = fs.readdirSync(dir).filter((name) => name.endsWith('.js') || name.endsWith('.css'));
+  const sources = files.map((name) => ({ name, code: stripComments(fs.readFileSync(path.join(dir, name), 'utf8')) }));
+  for (const { name, code } of sources) {
+    assert.equal(/feishu\.cn/.test(code), false, `${name} 里不许再有飞书表单 URL`);
+    assert.equal(/share\/base\/form/.test(code), false, `${name} 里不许再有飞书表单外链`);
+    assert.equal(/PURCHASE_(REQUEST|RETURN)_FORM_URL/.test(code), false, `${name} 里不许再引用那两个表单 URL`);
+  }
+  // 已被删掉的那个模块（两张死链卡）**不在仓库里**了
+  assert.equal(fs.existsSync(path.join(dir, 'links.js')), false, 'features/purchase/links.js（两张死链卡）已删');
+  // ⚠️ `config/links.js` 的两个 URL 常量**仍在**（删 or 留由业务负责人定；这里只钉"没被顺手删掉"）
+  const { links } = await loadFrontendModules();
+  assert.equal(typeof links.PURCHASE_REQUEST_FORM_URL, 'string');
+  assert.equal(typeof links.PURCHASE_RETURN_FORM_URL, 'string');
+  assert.deepEqual(links.PURCHASE_FORMS.map((form) => form.id), ['purchase-request', 'purchase-return']);
+});
+
+test('AC-W5 采购子页上不再有指向已退役领域（?from=purchase）的入口', () => {
+  // 注释里要留沿革（"原先指向哪里、为什么撤"）——**去注释后**再看代码里有没有。
+  const domains = stripComments(readWorkbench('config/domains.js'));
+  assert.equal(/from=purchase(&|"|'|\))/.test(domains), false, 'domains 配置里不许再有 ?from=purchase');
+  assert.equal(domains.includes('PURCHASE_REQUEST_FORM_URL'), false, 'domains 里不再引用报货表单 URL');
+  assert.equal(domains.includes('PURCHASE_RETURN_FORM_URL'), false, 'domains 里不再引用退货表单 URL');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-W6 其它领域入口一个没丢
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-W6 其它领域的入口一个没丢（销售建单 / 单款查询 / 全仓查询 / 标签打印 / 手工调整）', async () => {
+  const { domains } = await loadFrontendModules();
+  const byId = new Map(domains.DOMAIN_TABS.map((domain) => [domain.id, domain]));
+  assert.equal(byId.get('sales').pages.find((page) => page.id === 'sales-create').targetTemplate,
+    '/s/{number}?from=sales');
+  assert.equal(byId.get('inventory').pages.find((page) => page.id === 'inventory-single').targetTemplate,
+    '/s/{number}?from=inventory');
+  assert.equal(byId.get('inventory').pages.find((page) => page.id === 'inventory-all').kind, 'query');
+  assert.equal(byId.get('inventory').pages.find((page) => page.id === 'inventory-adjust').kind, 'inventory-adjustment');
+  assert.equal(byId.get('product').pages.find((page) => page.id === 'product-labels').targetTemplate,
+    '/workbench/label-print.html?keyword={itemNo}');
+  assert.equal(byId.get('sales').pages.find((page) => page.id === 'sales-orders').mode, 'sales');
+});

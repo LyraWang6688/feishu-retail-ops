@@ -45,11 +45,12 @@
  * ⚠️ `label` = 子 tab 上的短名（**页内不再重复写一遍** —— 那正是 2026-10-10 删掉的那一类）。
  */
 
-// ⚠️ 2026-10-11：采购的「报货 / 退货」两张卡改成**扫码入口**（`/s/{number}?from=purchase`）
-//   ⇒ 本文件**不再** import 那两个飞书表单 URL（它们写的「信息填写」表已被删除，是死链）。
+// ⚠️ 2026-10-11（业务负责人批准）：采购的「报货 / 退货」两个子页**已隐藏**（那两个动作现在都在
+//   扫码页各自的领域里）⇒ 本文件**不 import 任何采购飞书表单 URL**（它们写的「信息填写」表
+//   已被业务负责人整表删除 ⇒ 是死链）。本文件里只留货品上新那一个表单外链。
 //   ⚠️ `config/links.js` 里的 `PURCHASE_REQUEST_FORM_URL` / `PURCHASE_RETURN_FORM_URL` /
-//      `PURCHASE_FORMS` **一个都没删**：隐藏的「采购管理」老页面（`features/purchase/links.js`）
-//      仍在用它们（那是另一个页面的事，本次不动）。
+//      `PURCHASE_FORMS` **一个都没删**（删 or 留由业务负责人定；隐藏的老「采购管理」页面里
+//      已经没有任何地方再引用它们了）。
 import { PRODUCT_NEW_FORM_URL } from './links.js';
 
 export const DOMAIN_TABS = [
@@ -126,61 +127,25 @@ export const DOMAIN_TABS = [
   },
 
   // ── ③ 采购 ────────────────────────────────────────────────────────────────
+  // ⭐⭐ 2026-10-11（业务负责人批准）：**采购子 tab 只留「验收到货」** ＋ 两个待建设占位页。
+  //    「报货」「退货」两个子页**隐藏**（= 从这份清单里去掉）—— 那两个动作现在都在**扫码页**：
+  //      · 补货 = 扫码页的【补货】领域（`/s/{number}?from=replenish`）；
+  //      · 退货 = 扫码页的【退货】领域（`/s/{number}?from=purchase_return`）。
+  //    ⚠️ 它们**曾经**是飞书表单外链；那张表（「信息填写」）已被整表删除 ⇒ 那两张卡是死链，
+  //      本文件不再提供任何指向它的入口（`config/links.js` 里的 URL 常量仍在，见那份文件）。
   {
     id: 'purchase',
     label: '采购',
     pages: [
       {
-        // ⭐⭐ 2026-10-11（业务负责人 / Lead 批准）：「报货」原来那张卡是**飞书表单外链**，
-        //    而那个表单写的「**信息填写**」表已被业务负责人**整表删除**（2026-10-09）
-        //    ⇒ 那张卡今天是**死链** ⇒ 换成**扫码入口**（与「销售建单」同一个形状）：
-        //    填编号 → 采购领域那一页（`/s/{number}?from=purchase`）——
-        //    那一页现在同时有【一键补货】与【退货】两张表单（**不新开页面、不新写链路**）。
-        id: 'purchase-report',
-        label: '报货',
-        kind: 'entry',
-        targetTemplate: '/s/{number}?from=purchase',
-        fieldLabel: '编号',
-        placeholder: '编号（货号|颜色|类别），例如 YD6693-2|黑色|A',
-        buttonLabel: '打开采购页 →',
-        links: [
-          {
-            icon: '🏷️',
-            title: '还没有标签二维码？',
-            href: '/workbench/label-print.html',
-            arrow: '去打印 →',
-          },
-        ],
-      },
-      {
         // ⭐ 2026-10-10：「验收到货」= **独立子页**（既有订单模块的 purchase 模式）——
         //    点一下子 tab 就换一屏，**不是**在报货那一页下面展开。
         //    ⚠️ 走的是既有接口与既有入库链路，这里一个字节的业务逻辑都没有。
+        //    ⭐ 2026-10-11：批次卡上另有一颗【扫码验收】（扫码页的【验收】领域，见 `config/orders.js`）。
         id: 'purchase-arrival',
         label: '验收到货',
         kind: 'orders',
         mode: 'purchase',
-      },
-      {
-        // ⭐⭐ 2026-10-11（同一天、同一条理由）：「退货」原来那张卡也是**飞书表单外链**
-        //    （她 2026-10-08 的口径是"报货与退货用同一个表单" ⇒ 两张卡指向的其实是同一张已删表）
-        //    ⇒ 同样换成**扫码入口**；与「报货」落到**同一页**（那一页上【退货】是一个折叠块，
-        //    点开就是"勾尺码 + 填退货数量 → 生成采购退货"，见 `views/scanPageRenderer.js`）。
-        id: 'purchase-return',
-        label: '退货',
-        kind: 'entry',
-        targetTemplate: '/s/{number}?from=purchase',
-        fieldLabel: '编号',
-        placeholder: '编号（货号|颜色|类别），例如 YD6693-2|黑色|A',
-        buttonLabel: '打开采购页 →',
-        links: [
-          {
-            icon: '🏷️',
-            title: '还没有标签二维码？',
-            href: '/workbench/label-print.html',
-            arrow: '去打印 →',
-          },
-        ],
       },
       {
         id: 'purchase-orders',

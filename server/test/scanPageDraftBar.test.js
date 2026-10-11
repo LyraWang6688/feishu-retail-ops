@@ -1,4 +1,11 @@
 /**
+ * ⚠️ 2026-10-11 晚（业务负责人批准六领域）——本文件**改写**的断言（逐字）：
+ *   改前：领域清单写 `['sales', 'inventory', 'purchase', 'product']`；补货那一块用 `?from=purchase`。
+ *   改后：六领域 = `['sales','replenish','purchase_return','accept','inventory','product']`；
+ *        补货那一块 = `?from=replenish`（页面内容一个字没变）。
+ *   理由：原「采购」领域被业务负责人拆成 补货 / 退货 / 验收 三个领域；其余断言一条没放宽。
+ */
+/**
  * ⭐⭐ 扫码页「**一单多双 · 多次扫码**」的验收标准（业务负责人 **2026-10-11**）。
  *
  * 她的原话（逐字）：
@@ -134,8 +141,9 @@ test('AC-DB1 本单条在**每个领域**页面的**顶部**：显示 `本单：
   assert.equal(SCAN_PAGE.texts.draftBarCount, '本单：{count} 双');
   assert.equal(fillText(SCAN_PAGE.texts.draftBarCount, { count: 2 }), '本单：2 双');
 
-  // ② 四个领域都渲染出这一条，而且它在**领域块之前**（= 顶部）
-  for (const realm of REALMS.map((item) => item.id)) {
+  // ② **除验收外**的每个领域都渲染出这一条，而且它在**领域块之前**（= 顶部）
+  //    ⚠️ 2026-10-11：验收领域有自己的本单条（已验收 N 双 / 应到 M 双）⇒ 销售这条**刻意不渲染**。
+  for (const realm of REALMS.map((item) => item.id).filter((id) => id !== 'accept')) {
     const html = pageFor(realm, WRITE([line(40), line(41, 'XHB8095')]));
     const bar = barOf(html);
     assert.ok(bar.includes('本单：2 双'), `realm=${realm} 的本单条没有"N 双"：${bar}`);
@@ -191,7 +199,7 @@ test('AC-DB3 【加入本单】成功后：本单条立即变成 N+1 + 一句极
   const write = WRITE([line(40), line(41, 'XHB8095')], {
     notice: fillText(SCAN_WRITE.texts.lineAddedBanner, { count: 2 }),
   });
-  for (const realm of REALMS.map((item) => item.id)) {
+  for (const realm of REALMS.map((item) => item.id).filter((id) => id !== 'accept')) {
     const bar = barOf(pageFor(realm, write, FEISHU_MOBILE_UA));
     assert.ok(bar.includes('本单：2 双'), `realm=${realm}：加完之后条里还是旧数字`);
     assert.ok(bar.includes('已加入本单（2 双）'), `realm=${realm}：条里没有那句极简反馈`);
@@ -373,11 +381,11 @@ test('AC-DB7 【加入本单】的 303 回跳**停在本单所在的领域**（�
 
     // ②' ⭐ 非缺省领域上**还能看到**的"带 ?from= 的表单 action" = **采购页的补货表单**
     //     （2026-10-11 修的那条规则：action 要带上领域，否则回跳会掉到缺省领域）
-    const purchaseHtml = await (await fetch(`${base}/s/${ENCODED}?from=purchase`, {
+    const purchaseHtml = await (await fetch(`${base}/s/${ENCODED}?from=replenish`, {
       headers: { cookie: sessionCookie() },
     })).text();
-    assert.match(purchaseHtml, new RegExp(`action="/s/${ENCODED}\\?from=purchase"`),
-      '非缺省领域的表单 action 要带上领域（采购页的补货表单仍在，它带着 ?from=purchase）');
+    assert.match(purchaseHtml, new RegExp(`action="/s/${ENCODED}\\?from=replenish"`),
+      '非缺省领域的表单 action 要带上领域（补货那一块仍在，它带着 ?from=replenish）');
 
     // ③ 用**同一把幂等键**（会话级，四个领域通用）从库存 URL 加第二双：303 回跳仍是库存领域
     //    ⚠️ 2026-10-11 改写：原来从**库存页**取 `submit_key`（那颗提交按钮在库存页上）；
@@ -397,7 +405,7 @@ test('AC-DB7 【加入本单】的 303 回跳**停在本单所在的领域**（�
 
 test('AC-DB8 默认领域 = **销售**；`?from=` 四个值照旧可用（认不出的回落销售）', () => {
   assert.equal(DEFAULT_REALM, 'sales', '她 2026-10-11：「默认打开是销售页」');
-  for (const id of ['sales', 'inventory', 'purchase', 'product']) assert.equal(resolveRealm(id), id);
+  for (const id of ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product']) assert.equal(resolveRealm(id), id);
   for (const bad of [undefined, null, '', '   ', 'bogus', '库存']) {
     assert.equal(resolveRealm(bad), 'sales', `认不出的 from「${String(bad)}」必须回落缺省（销售）`);
   }
@@ -424,7 +432,9 @@ test('AC-DB9 ⭐【提交这一单】只在「销售」页：其余三个领域�
   assert.equal(barOf(pageFor('sales', WRITE([]), FEISHU_MOBILE_UA)).includes(SCAN_WRITE.texts.submitButton),
     false, '销售页：没有草稿 ⇒ 不渲染（不是灰按钮）');
   // ③ 其余三个领域：`本单：N 双` ＋【继续扫下一个】照旧，**提交相关的痕迹一个都不许有**
-  for (const realm of ['inventory', 'purchase', 'product']) {
+  // ⚠️ **验收领域不在这一条里**：验收有自己的本单条（「已验收 N 双 / 应到 M 双」），
+  //    所以销售那条本单条在验收领域**刻意不渲染**（见 `renderScanPage` 的 `bar` 分支）。
+  for (const realm of ['inventory', 'replenish', 'purchase_return', 'product']) {
     const bar = barOf(pageFor(realm, write, FEISHU_MOBILE_UA));
     assert.ok(bar.includes('本单：2 双'), `realm=${realm}：条的"几双"照旧要在（跨领域共用同一份本单）`);
     assert.ok(bar.includes(SCAN_PAGE.texts.scanNextLabel), `realm=${realm}：【继续扫下一个】照旧要在`);

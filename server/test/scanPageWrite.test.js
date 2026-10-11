@@ -1,4 +1,11 @@
 /**
+ * ⚠️ 2026-10-11 晚（业务负责人批准六领域）——本文件**改写**的断言（逐字）：
+ *   改前：领域清单写 `['sales', 'inventory', 'purchase', 'product']`；补货那一块用 `?from=purchase`。
+ *   改后：六领域 = `['sales','replenish','purchase_return','accept','inventory','product']`；
+ *        补货那一块 = `?from=replenish`（页面内容一个字没变）。
+ *   理由：原「采购」领域被业务负责人拆成 补货 / 退货 / 验收 三个领域；其余断言一条没放宽。
+ */
+/**
  * 扫码页**两个写入口**的验收用例（销售建单 / 补货报单）。
  *
  * 先写"按我们的链路应该是什么效果"，再逐条对照（业务负责人 2026-10-06 定的测试流程）：
@@ -555,7 +562,7 @@ test('⑧ 页面上的两个写入口：默认收款方式「微信」+ 缺码�
 
       // 已登录：拿到写入口表单。
       // ⚠️ 2026-10-09（手机白屏之后）起：**服务端按 `?from` 只渲染那一块** ——
-      //    销售建单在 `from=sales`、补货报单在 `from=purchase`，一次请求只回其中一块。
+      //    销售建单在 `from=sales`、补货报单在 `from=replenish`，一次请求只回其中一块。
       const salePage = await fetch(`${base}/s/${encodeURIComponent(NUMBER)}?from=sales`, { headers: { cookie: sessionCookie() } });
       assert.equal(salePage.status, 200);
       const saleHtml = await salePage.text();
@@ -569,7 +576,7 @@ test('⑧ 页面上的两个写入口：默认收款方式「微信」+ 缺码�
       // 幂等键在表单里（这一把就是"连点两次只写一次"的判据）
       assert.match(saleHtml, /name="submit_key" value="scan_sale:scan_session_[0-9a-f]{16}:1"/);
 
-      const purchasePage = await fetch(`${base}/s/${encodeURIComponent(NUMBER)}?from=purchase`, { headers: { cookie: sessionCookie() } });
+      const purchasePage = await fetch(`${base}/s/${encodeURIComponent(NUMBER)}?from=replenish`, { headers: { cookie: sessionCookie() } });
       assert.equal(purchasePage.status, 200);
       const html = await purchasePage.text();
       // ⚠️ 2026-10-10 断言翻转：补货那句标题「补货报单（勾选要补的尺码）」必须不存在；
@@ -672,8 +679,8 @@ test('⑧ 路由：补货表单勾两个尺码 → 采购申请结果页（批�
     const openId = 'ou_scan_route';
     await withServer(formApp(h), async (base) => {
       const pageUrl = `${base}/s/${encodeURIComponent(NUMBER)}`;
-      // ⚠️ 补货表单在 `from=purchase` 那一块（服务端只渲染当前领域）
-      const html = await (await fetch(`${pageUrl}?from=purchase`, { headers: { cookie: sessionCookie(openId) } })).text();
+      // ⚠️ 补货表单在 `from=replenish` 那一块（服务端只渲染当前领域）
+      const html = await (await fetch(`${pageUrl}?from=replenish`, { headers: { cookie: sessionCookie(openId) } })).text();
       const replenishKey = html.match(/name="submit_key" value="(scan_replenish:[^"]+)"/)[1];
       const response = await fetch(pageUrl, {
         method: 'POST',

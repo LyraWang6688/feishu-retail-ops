@@ -1,4 +1,15 @@
 /**
+ * ⚠️ 2026-10-11 晚（业务负责人批准六领域）——本文件**改写**的断言（逐字）：
+ *   改前：`blockOf(htmlFor('purchase'), 'purchase')` / `test('AC3 \`from=purchase\`：…')` /
+ *        `for (const id of ['sales', 'inventory', 'purchase'])` /
+ *        `['sales', 'inventory', 'purchase', 'product']`
+ *   改后：领域换成 **`replenish`**（原「采购」领域里的补货那半），六领域清单
+ *        `['sales','replenish','purchase_return','accept','inventory','product']`。
+ *   理由：原「采购」领域被业务负责人拆成 **补货 / 退货 / 验收** 三个领域（其一就是本文件在验的补货），
+ *        页面上的补货块、尺码清单、一键补货表单**一个字没变** —— 只是它现在挂在 `from=replenish` 下。
+ *   ⚠️ 其余断言（尺码分组 / 数量 / 预勾 / 幂等键 / 零 JS …）一条都没放宽。
+ */
+/**
  * ⭐⭐ 扫码页「**一个码、三个领域扫出来不一样**」的验收标准（业务负责人 **2026-10-09**）。
  *
  * 她的口径（逐字要点）：
@@ -8,7 +19,7 @@
  *       第一组 = **有货（样品 + 门盒）**的尺码 ⇒ 选中它 = **现货**；
  *       第二组 = 该组（男 A = 38–48 / 女 B = 34–43）**目前没有的** ⇒ 选中它 = **预订**；
  *       提交走**既有**销售建单链路，交易类型用**既有**行为编码（`SALE_CASH` / `SALE_PREPAID`）；
- *   · **`from=purchase`（补货）**：列出该编号下**各尺码及数量（样品 + 门盒）** + 【**一键补货**】——
+ *   · **`from=replenish`（补货；2026-10-11 前叫 `from=purchase`）**：列出该编号下**各尺码及数量（样品 + 门盒）** + 【**一键补货**】——
  *       一键补货 = 列出**缺的尺码**、**默认各 1 双**、**数量可改** ⇒ 走**既有**
  *       `purchaseWebhookService` 那条链路生成采购申请。
  *   · 三个领域**共用业务处理层**、各自**独立的状态 / 出口**（入口隔离不变）。
@@ -298,7 +309,7 @@ test('AC2b 尺码区一行 4 个：3 个码排一行、5 个码排 4+1；**不�
   const inventory = blockOf(htmlFor('inventory'), 'inventory');
   assert.match(inventory, /<td[^>]*>\d+<\/td>/, '库存页照旧有数量');
   // ── ⑥ 采购页的数量**不许**跟着一起删（那是补货的依据）────────────────────────
-  assert.ok(blockOf(htmlFor('purchase'), 'purchase').includes('2 双'), '采购页仍按尺码显示数量');
+  assert.ok(blockOf(htmlFor('replenish'), 'replenish').includes('2 双'), '采购页仍按尺码显示数量');
   // ── ⑦ 5 个码 ⇒ 排成 4+1：五个 chip 都在同一组里（换行由四列网格决定）──────────
   const fiveInStock = {
     ...VIEW,
@@ -322,7 +333,7 @@ test('AC2b 尺码区一行 4 个：3 个码排一行、5 个码排 4+1；**不�
 // AC3 采购领域：各尺码（样品+门盒）数量 + 一键补货
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC3 `from=purchase`：列出各尺码（样品+门盒）数量 + 【一键补货】列出缺的尺码、默认各 1 双', () => {
+test('AC3 `from=replenish`：列出各尺码（样品+门盒）数量 + 【一键补货】列出缺的尺码、默认各 1 双', () => {
   // ① 取数：每个尺码的（样品 + 门盒）数量 + 是不是"三种状态都没有"（既有缺码口径）
   assert.deepEqual(purchaseSizeLines(VIEW), [
     { size_text: '40', sellable: 1, missing: false, checked: false },
@@ -332,7 +343,7 @@ test('AC3 `from=purchase`：列出各尺码（样品+门盒）数量 + 【一键
     { size_text: '44', sellable: 0, missing: true, checked: true },
   ], '缺码（三种状态都没有）默认勾上；43 只有仓库 → 不预勾');
 
-  const purchase = blockOf(htmlFor('purchase'), 'purchase');
+  const purchase = blockOf(htmlFor('replenish'), 'replenish');
   // ② 先给她看"各尺码现在有多少"
   assert.ok(purchase.includes('data-view="purchase-sizes"'), '要先列出各尺码的（样品 + 门盒）数量');
   for (const size of ['40', '41', '42', '43', '44']) {
@@ -366,10 +377,10 @@ test('AC4 三个领域共用业务处理层、各自独立出口（渲染层不�
     assert.equal(pattern.test(renderer), false, `scanPageRenderer.js 出现了业务写入：${pattern}`);
   }
   // 三块各自带领域标记，而且是**服务端按领域单独渲染**的（一份 HTML 里只有当前那一块）
-  for (const id of ['sales', 'inventory', 'purchase']) {
+  for (const id of ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product']) {
     const htmlText = htmlFor(id);
     assert.ok(blockOf(htmlText, id).length > 0, `缺 ${id} 领域块`);
-    for (const other of ['sales', 'inventory', 'purchase', 'product'].filter((item) => item !== id)) {
+    for (const other of ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product'].filter((item) => item !== id)) {
       assert.equal(htmlText.includes(`realm-block--${other}"`), false,
         `渲染 ${id} 时不该把 ${other} 块也拼进来`);
     }

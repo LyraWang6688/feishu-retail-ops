@@ -35,7 +35,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { SCAN_PAGE, fillText } = require('../config/scanPage');
 const {
-  REALMS, DEFAULT_REALM, REALM_TEXTS, ACCEPTANCE_REALM, resolveRealm, labelPrintUrls,
+  REALMS, DEFAULT_REALM, REALM_TEXTS, REALM_EMPTY_TEXT_KEYS,
+  REPLENISH_REALM, PURCHASE_RETURN_REALM, ACCEPTANCE_REALM, resolveRealm, labelPrintUrls,
   saleSizeGroups, purchaseSizeLines,
 } = require('./scanPageRealm');
 
@@ -226,9 +227,13 @@ summary { cursor: pointer; }
 .purchase-size { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-height); padding: var(--space-2) var(--space-3); border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--surface-soft); }
 .purchase-size__size { font-size: var(--font-size-lg); font-weight: 700; }
 .purchase-size__count { margin-left: auto; font-size: var(--font-size-amount); font-weight: 700; font-variant-numeric: tabular-nums; }
-/* ── 领域切换（一个二维码，四个领域）────────────────────────────────────── */
-.realm-bar { display: flex; gap: var(--space-1); margin: 0 0 var(--space-2); padding: var(--space-1); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); overflow-x: auto; }
-.realm-tab { flex: 1 0 auto; display: flex; align-items: center; justify-content: center; min-height: var(--control-height); padding: 0 var(--space-3); border-radius: var(--radius-md); color: var(--text-secondary); font-size: var(--font-size-base); font-weight: 600; text-decoration: none; white-space: nowrap; }
+/* ── 领域切换（一个二维码，**六个领域**）────────────────────────────────────
+   ⭐⭐ 2026-10-11（业务负责人批准）：六个领域 = 销售 · 补货 · 退货 · 验收 · 库存 · 货品。
+   ⚠️ 她要的是「**紧凑两行网格**」⇒ grid 三列 × 两行（6 格正好两行）、
+      **不横滑**（去掉原先的 overflow-x: auto + flex: 1 0 auto）、
+      每格 min-height: var(--control-height)（既有 ≥44px 的可点高度）。 */
+.realm-bar { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-1); margin: 0 0 var(--space-2); padding: var(--space-1); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); }
+.realm-tab { display: flex; align-items: center; justify-content: center; min-height: var(--control-height); padding: 0 var(--space-2); border-radius: var(--radius-md); color: var(--text-secondary); font-size: var(--font-size-base); font-weight: 600; text-decoration: none; white-space: nowrap; }
 /* 当前领域那一颗 = 主色（**服务端**决定，不是脚本切 class） */
 .realm-tab--active { color: var(--surface); background: var(--primary); }
 /* noscript 兜底那一排（webview 禁脚本时才会出现）：朴素的文字链接，不用卡片阴影 */
@@ -284,7 +289,7 @@ ${meta ? `<p class="identity__meta">${escapeHtml(meta)}</p>` : ''}
 };
 
 /**
- * ⭐ 领域切换条（顶部）：四个领域各一条**真链接**（`?from=<id>`）。
+ * ⭐ 领域切换条（顶部）：**六个领域**各一条**真链接**（`?from=<id>`；3 列 × 2 行、不横滑）。
  *
  * 🔴 当前领域那一颗的高亮是**服务端**决定的（`realm-tab--active` + `aria-current="page"`），
  *    不是脚本在浏览器里切 class —— 没 JS 也完全正确。
@@ -851,7 +856,8 @@ ${acceptanceFinishHtml(write, acceptance)}
  *    屏幕上只剩身份区那一行；现在给一张说清楚的卡片，她至少知道"为什么没有表单、下一步去哪"。
  */
 const realmEmptyHtml = (realm, config) => {
-  const body = realm === 'purchase' ? config.texts.realmEmptyPurchaseBody : config.texts.realmEmptySalesBody;
+  const textKey = REALM_EMPTY_TEXT_KEYS[realm] || REALM_EMPTY_TEXT_KEYS[DEFAULT_REALM];
+  const body = config.texts[textKey] || config.texts.realmEmptySalesBody;
   return `<section class="card state-msg">
 <h1>${escapeHtml(config.texts.realmEmptyTitle)}</h1>
 <p>${escapeHtml(body)}</p>
@@ -862,49 +868,53 @@ const realmEmptyHtml = (realm, config) => {
 /**
  * ⭐⭐ **只渲染当前领域那一块**（2026-10-09 手机白屏之后的改法）。
  *
- * 四个领域各自的正文（每个都带 `realm-block--<领域>` 标记，方便对照 / 断言）：
- *   · `sales`     —— 「刚加入本单」那一句 + 销售建单表单；
- *   · `inventory` —— 库存表；
- *   · `purchase`  —— 补货报单表单；
- *   · `product`   —— 货品标签。
+ * **六个领域**各自的正文（每个都带 `realm-block--<领域>` 标记，方便对照 / 断言）：
+ *   · `sales`            —— 销售建单表单；
+ *   · `replenish`        —— 补货（原「采购」领域里的【一键补货】）；
+ *   · `purchase_return`  —— 退货；
+ *   · `accept`           —— 验收（有活跃验收会话时那一块；没有就一张人话卡）；
+ *   · `inventory`        —— 库存表；
+ *   · `product`          —— 货品标签。
  *
- * ⚠️ **只有当前这一块进 HTML**（另外三块**连字符串都不拼**）—— 页面里没有"靠 CSS 藏起来"
+ * ⚠️ **只有当前这一块进 HTML**（另外五块**连字符串都不拼**）—— 页面里没有"靠 CSS 藏起来"
  *    的东西，也就没有"脚本没跑 ⇒ 什么都没显示"的可能。
  * ⚠️ 认不出的领域一律回落缺省（`resolveRealm` 在路由那一层已经做过一次；这里再兜一次，
  *    **渲染层永远不抛、永远有正文**）。
  */
 const realmBlockHtml = (realm, view, config, write, page = {}) => {
-  const id = (REALMS.some((item) => item.id === realm) || realm === ACCEPTANCE_REALM)
-    ? realm : DEFAULT_REALM;
+  const id = REALMS.some((item) => item.id === realm) ? realm : DEFAULT_REALM;
   const wrap = (inner) => `<div class="realm-block realm-block--${escapeHtml(id)}">\n${inner}\n</div>`;
   // ⭐⭐ 2026-10-11（方案A）：**验收模式**（非 tab 的领域）—— 上下文来自 `page.acceptance`
   //    （由路由按"正开着一场验收"给）；拿不到就什么都不猜，回落缺省领域那张卡。
   if (id === ACCEPTANCE_REALM) {
     return wrap(page?.acceptance
       ? acceptanceBlockHtml(view, write, page.acceptance, page?.userAgent)
-      : realmEmptyHtml(DEFAULT_REALM, config));
+      // 没有正在进行的验收（她还没在工作台点【验收】，或那一场已结束/过期）⇒ 一张人话卡
+      // （标题 + 为什么 + 一个下一步），绝不留空 div。
+      : realmEmptyHtml(ACCEPTANCE_REALM, config));
   }
   if (id === 'inventory') return wrap(stockTableHtml(view, config));
   if (id === 'product') return wrap(labelBlockHtml(view));
-  if (id === 'purchase') {
-    // ⭐ 2026-10-11：采购领域现在有**两个动作**（报货 / 退货），各自一个折叠块；两张表单
-    //    都 POST 到同一个端点。关掉哪一个，那一块就不渲染（开关在配置里）。
-    //    一个尺码都没有（降级到连库存行都没有）⇒ 给一张人话卡片，而不是空 div。
-    const blocks = [];
-    if (write && write.enabled !== false && write.replenishEnabled !== false) {
-      blocks.push(replenishFormHtml(view, write));
-    }
-    if (write && write.enabled !== false && write.returnEnabled !== false) {
-      blocks.push(returnFormHtml(view, write));
-    }
-    return wrap(blocks.filter(Boolean).join('\n') || realmEmptyHtml('purchase', config));
+  if (id === REPLENISH_REALM) {
+    // ⭐ 2026-10-11：**补货**从原「采购」领域里独立成一块（内容一个字没变）。
+    const form = write && write.enabled !== false && write.replenishEnabled !== false
+      ? replenishFormHtml(view, write)
+      : '';
+    return wrap(form || realmEmptyHtml(REPLENISH_REALM, config));
+  }
+  if (id === PURCHASE_RETURN_REALM) {
+    // ⭐ 2026-10-11：**退货**同样独立成一块（内容一个字没变）。
+    const form = write && write.enabled !== false && write.returnEnabled !== false
+      ? returnFormHtml(view, write)
+      : '';
+    return wrap(form || realmEmptyHtml(PURCHASE_RETURN_REALM, config));
   }
   // sales（缺省）
   if (!write || write.enabled === false || write.saleEnabled === false) {
     return wrap(realmEmptyHtml('sales', config));
   }
   // ⚠️ 2026-10-11：「刚加入本单」那一句**上移到顶部的本单条**（`draftBarHtml`）——
-  //    她无论停在哪个领域（库存 / 采购 / 货品）都该立刻看见 N+1，而不只是销售那一块。
+  //    她无论停在哪个领域（库存 / 补货 / 退货 / 验收 / 货品）都该立刻看见 N+1。
   return wrap(saleFormHtml(view, write));
 };
 

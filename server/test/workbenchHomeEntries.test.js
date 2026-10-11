@@ -1,4 +1,12 @@
 /**
+ * ⚠️ 2026-10-11 晚（业务负责人批准「死链可以清掉」）——本文件**改写**的断言（逐字）：
+ *   改前：`copy('features/purchase/links.js', 'purchase-links.mjs', …)` ＋ `purchaseLinks: load('purchase-links')`
+ *        （那两份是"隐藏的老「采购和退货」独立页"的两张**飞书表单死链卡**的渲染模块）。
+ *   改后：删掉那两行（该模块**已从仓库删除**：它挂的两个飞书表单写的是已被整表删除的「信息填写」表）。
+ *   理由：死链清掉（她的批准）；`config/links.js` 的两个 URL 常量**仍在**（删 or 留由业务负责人定）。
+ *   ⚠️ 首页那几张卡与其它哨兵**一条都没放宽**。
+ */
+/**
  * 工作台首页【常用功能】入口清单的回归护栏。
  *
  * ⭐ 2026-10-08（业务负责人逐字，**ⓐ**）：
@@ -74,16 +82,11 @@ function loadFrontendModules() {
     ["from '../../config/home.js'", "from './home.mjs'"],
     ["from '../../core/formatters.js'", "from './formatters.mjs'"],
   ]);
-  copy('features/purchase/links.js', 'purchase-links.mjs', [
-    ["from '../../config/links.js'", "from './links.mjs'"],
-    ["from '../../core/formatters.js'", "from './formatters.mjs'"],
-  ]);
   const load = (name) => import(pathToFileURL(path.join(dir, `${name}.mjs`)).href);
   return {
     links: load('links'),
     home: load('home'),
     common: load('common'),
-    purchaseLinks: load('purchase-links'),
   };
 }
 
