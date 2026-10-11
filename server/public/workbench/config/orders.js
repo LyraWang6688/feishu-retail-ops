@@ -142,6 +142,8 @@ export const ARRIVAL_CONFIRM = {
 export const ORDERS_API = {
   orders: '/api/workbench/sales/orders',
   payments: '/api/workbench/sales/payments',
+  // ⭐ 2026-10-11：逐件补「实收金额」（窄写入路径；服务端 = `SalesFollowupService.updateDetailAmounts`）
+  detailAmounts: '/api/workbench/sales/detail-amounts',
   deliveries: '/api/workbench/sales/deliveries',
   afterSales: '/api/workbench/sales/after-sales',
   secondDelivery: '/api/workbench/sales/second-delivery',
@@ -231,6 +233,11 @@ export const ORDERS_TEXTS = {
   collectTitle: '补收款',
   collectAmount: '收款金额',
   collectSubmit: '提交收款',
+  // ⭐⭐ 2026-10-11（方案甲之后的**补充入口**）：逐件补「实收金额」。
+  //    字段名与扫码页**逐字一致**（「实收金额」）—— 两个入口填的是同一份字段。
+  detailAmountTitle: '实收金额',
+  detailAmountLabel: '实收金额',
+  detailAmountSubmit: '保存实收金额',
   deliveryTitle: '交付',
   deliveryEmpty: '这张单没有待交付的明细了',
   deliverySubmit: '提交交付',

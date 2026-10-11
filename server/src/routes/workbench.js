@@ -167,6 +167,27 @@ const createWorkbenchRouter = (options = {}) => {
       return res.status(400).json({ success: false, error: error.message });
     }
   });
+  /**
+   * ⭐⭐ 2026-10-11（方案甲之后**唯一的补充入口**）：**逐件补「实收金额」**。
+   * 业务负责人 2026-10-11：「待补充的时候，**一定要把每件的实收都留下来**」。
+   * ⚠️ 本路由**一行业务判断都没有**：校验与两条红线全在
+   *    `services/salesFollowupService.updateDetailAmounts`（同一个 service 管工作台这一页的写入，
+   *    鉴权走本文件既有的那道闸门，不新开）。
+   */
+  router.post('/sales/detail-amounts', async (req, res) => {
+    try {
+      const result = await followup.updateDetailAmounts({
+        salesEntryRecordId: req.body?.salesEntryRecordId,
+        amounts: req.body?.amounts,
+        requestId: req.body?.requestId,
+        operatorOpenId: req.workbenchUser.open_id,
+      });
+      return res.json({ success: true, ...result });
+    } catch (error) {
+      logError('workbench.sales.detail_amount.failed', { request_id: req.requestId, error: error.message });
+      return res.status(400).json({ success: false, error: error.message });
+    }
+  });
   router.post('/sales/deliveries', async (req, res) => {
     try {
       const result = await followup.delivery.deliver({

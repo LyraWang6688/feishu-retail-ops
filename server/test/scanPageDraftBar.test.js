@@ -18,9 +18,10 @@
  *         （N 从扫码会话实时读；**跨编号共用**同一份会话 ⇒ 扫 A、扫 B 是同一个 N）。
  *  AC-DB2 **【提交这一单】有草稿才出现**（没有草稿时**不是**灰按钮，而是**不渲染**）；
  *         出现时是一个**真能提交**的表单（带 `action=submit_order` + 那一轮的幂等键）。
+ *         ⚠️ **2026-10-11 起它只在「销售」页出现**（见 AC-DB9）⇒ 这条的样例页从库存页换成销售页。
  *  AC-DB3 **【加入本单】成功后**：本单条立即反映 **N+1**，并在条内给一句**极简**反馈
  *         （`已加入本单（2 双）`）—— **不留说明书**（她 2026-10-10 的硬要求）；
- *         反馈旁边就是【继续扫下一个】/【提交这一单】。
+ *         反馈旁边就是【继续扫下一个】（**销售页**上还多一颗【提交这一单】，见 AC-DB9）。
  *  AC-DB4 **【继续扫下一个】**：飞书**手机**客户端内 = **可点的扫一扫 AppLink**
  *         （`https://applink.feishu.cn/client/qrcode/main`，官方文档实查过）；
  *         **电脑 / 手机自带浏览器** = **一句如实的人话**（`scanNextHint`）——
@@ -34,7 +35,13 @@
  *         而且成功页是"结果页"、**不挂本单条**（既有形状不变）。
  *  AC-DB7 **【加入本单】的 303 回跳停在本单所在的领域**：表单 action 带上 `?from=`
  *         （2026-10-11 修的一处：原来 action 漏传 realm，回跳会掉到缺省领域）。
+ *         ⚠️ 2026-10-11 起【提交这一单】只在销售页 ⇒ 非缺省领域上**还能看到**的带 `?from=` 的
+ *            表单是**采购页的补货表单**（本 AC 改核它）；回跳那一条仍按 URL 里的 `from` 走。
  *  AC-DB8 **默认领域 = 销售**（她 2026-10-11：「默认打开是销售页」）+ 领域切换四个值照旧可用。
+ *  AC-DB9 ⭐ **【提交这一单】只在「销售」页**（她 2026-10-11：「提交这一单只在销售页显示」）：
+ *         规则在 `config/scanPage.draftBar.submitRealms`（配置先行，缺省 `['sales']`，
+ *         渲染层**不写死 `'sales'`**）；其余三个领域页顶部只有 `本单：N 双` ＋【继续扫下一个】，
+ *         **连提交表单都不出现**（本单条里一个 `<button>` 都没有）。
  * ─────────────────────────────────────────────────────────────────────────
  */
 const test = require('node:test');
@@ -97,7 +104,7 @@ const WRITE = (lines = [], overrides = {}) => ({
   texts: SCAN_WRITE.texts,
   fields: SCAN_WRITE.fields,
   actions: SCAN_WRITE.actions,
-  postAction: `/s/${ENCODED}?from=inventory`,
+  postAction: `/s/${ENCODED}`,
   sizes: [{ size_text: '40', missing: false }, { size_text: '41', missing: true }],
   draft: { lines },
   saleKey: 'scan_sale:scan_session_0123456789abcdef:1',
@@ -157,8 +164,9 @@ test('AC-DB2 【提交这一单】**有草稿才出现**（没有草稿时不渲
   assert.equal(empty.includes('submit_key'), false);
 
   // ② 有草稿 ⇒ 是一个**真能提交**的表单：POST 目标 + 动作 + 幂等键
+  //    ⚠️ 样例页 = **销售页**（2026-10-11 起【提交这一单】只在销售页，见 AC-DB9）
   const write = WRITE([line(40), line(41)]);
-  const filled = barOf(pageFor('inventory', write));
+  const filled = barOf(pageFor('sales', write));
   assert.ok(filled.includes(`action="${write.postAction}"`), '提交表单要 POST 回本单所在的领域');
   assert.ok(filled.includes(`value="${SCAN_WRITE.actions.submitOrder}"`), '动作 = submit_order');
   assert.ok(filled.includes(`value="${write.saleKey}"`), '表单里带着这一轮的幂等键');
@@ -187,8 +195,11 @@ test('AC-DB3 【加入本单】成功后：本单条立即变成 N+1 + 一句极
     const bar = barOf(pageFor(realm, write, FEISHU_MOBILE_UA));
     assert.ok(bar.includes('本单：2 双'), `realm=${realm}：加完之后条里还是旧数字`);
     assert.ok(bar.includes('已加入本单（2 双）'), `realm=${realm}：条里没有那句极简反馈`);
-    assert.ok(bar.includes('继续扫下一个') && bar.includes(SCAN_WRITE.texts.submitButton),
-      `realm=${realm}：反馈旁边就该是【继续扫下一个】/【提交这一单】`);
+    // ⚠️ 2026-10-11 起（她：「提交这一单只在销售页显示」）：四个领域**都有**【继续扫下一个】，
+    //    但【提交这一单】只在销售页 —— 见 AC-DB9。
+    assert.ok(bar.includes('继续扫下一个'), `realm=${realm}：反馈旁边就该是【继续扫下一个】`);
+    assert.equal(bar.includes(SCAN_WRITE.texts.submitButton), realm === 'sales',
+      `realm=${realm}：【提交这一单】只在销售页（其余领域只有【继续扫下一个】）`);
   }
 
   // ③ 反馈句里**只有数字**来自会话（不回显编号 / 货号之外的任何输入）
@@ -351,16 +362,28 @@ test('AC-DB7 【加入本单】的 303 回跳**停在本单所在的领域**（�
     assert.equal(added.status, 303);
     assert.match(String(added.headers.get('location')), /added=1$/, '缺省领域回跳不带 ?from=');
 
-    // ② 切到【库存】：本单条上有【提交这一单】，它的 action 必须带上 `?from=inventory`
+    // ② 切到【库存】：（2026-10-11 改写，见文件头）
+    //    **改前**：`assert.ok(barOf(inventoryHtml).includes(submitButton), '有草稿 ⇒ 库存页上也能提交')`
+    //    **改后**：库存页的本单条**没有**【提交这一单】——她 2026-10-11 定「只在销售页显示」。
+    //    保留的部分：库存页顶部照旧读得到"本单：1 双"（N 是跨领域共用的），回跳那一条一个字没动。
     const inventoryHtml = await (await fetch(inventoryUrl, { headers: { cookie: sessionCookie() } })).text();
     assert.ok(barOf(inventoryHtml).includes('本单：1 双'), '库存页顶部读得到销售页加的那一双');
-    assert.ok(barOf(inventoryHtml).includes(SCAN_WRITE.texts.submitButton), '有草稿 ⇒ 库存页上也能提交');
-    assert.match(inventoryHtml, new RegExp(`action="/s/${ENCODED}\\?from=inventory"`),
-      '非缺省领域的表单 action 要带上领域');
+    assert.equal(barOf(inventoryHtml).includes(SCAN_WRITE.texts.submitButton), false,
+      '【提交这一单】只在销售页（2026-10-11 她的口径）⇒ 库存页的本单条上没有它');
 
-    // ③ 从库存页加第二双：303 回跳仍是库存领域
-    const inventoryKey = inventoryHtml.match(/name="submit_key" value="(scan_sale:[^"]+)"/)[1];
-    const added2 = await post(inventoryUrl, { action: SCAN_WRITE.actions.addLine, submit_key: inventoryKey, size: '41' });
+    // ②' ⭐ 非缺省领域上**还能看到**的"带 ?from= 的表单 action" = **采购页的补货表单**
+    //     （2026-10-11 修的那条规则：action 要带上领域，否则回跳会掉到缺省领域）
+    const purchaseHtml = await (await fetch(`${base}/s/${ENCODED}?from=purchase`, {
+      headers: { cookie: sessionCookie() },
+    })).text();
+    assert.match(purchaseHtml, new RegExp(`action="/s/${ENCODED}\\?from=purchase"`),
+      '非缺省领域的表单 action 要带上领域（采购页的补货表单仍在，它带着 ?from=purchase）');
+
+    // ③ 用**同一把幂等键**（会话级，四个领域通用）从库存 URL 加第二双：303 回跳仍是库存领域
+    //    ⚠️ 2026-10-11 改写：原来从**库存页**取 `submit_key`（那颗提交按钮在库存页上）；
+    //       现在提交按钮只在销售页 ⇒ 幂等键从**销售页**取（`submitKeyFor` 按会话给，
+    //       与领域无关 —— 这也正是"四个领域共用一份本单"的意思）。
+    const added2 = await post(inventoryUrl, { action: SCAN_WRITE.actions.addLine, submit_key: salesKey, size: '41' });
     assert.equal(added2.status, 303);
     assert.match(String(added2.headers.get('location')), /\?from=inventory&added=1$/,
       '回跳要停在本单所在的领域（不是缺省领域）');
@@ -383,4 +406,35 @@ test('AC-DB8 默认领域 = **销售**；`?from=` 四个值照旧可用（认不
   assert.ok(renderScanPage(VIEW, SCAN_PAGE, WRITE([])).includes('realm-block--sales'),
     '认不出的领域也回落销售（不报错、不空白）');
   assert.ok(renderScanPage(VIEW, SCAN_PAGE, WRITE([]), '不存在的领域').includes('realm-block--sales'));
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-DB9 ⭐ 2026-10-11（业务负责人）：【提交这一单】只在「销售」页
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-DB9 ⭐【提交这一单】只在「销售」页：其余三个领域只有 `本单：N 双` ＋【继续扫下一个】', () => {
+  // ① 规则可配（配置先行）：缺省只有 sales；渲染层不许写死 'sales'
+  assert.deepEqual([...SCAN_PAGE.draftBar.submitRealms], ['sales'],
+    '缺省只有「销售」页能提交（她要的口径）——改它只改 config/scanPage.js');
+  // ② 销售页（含缺省 / 认不出的领域）：有草稿 ⇒ 真按钮；没有草稿 ⇒ 一个字都没有
+  const write = WRITE([line(40), line(41)]);
+  const salesBar = barOf(pageFor('sales', write, FEISHU_MOBILE_UA));
+  assert.match(salesBar, new RegExp(`<button type="submit"[^>]*>${SCAN_WRITE.texts.submitButton}</button>`),
+    '销售页：有草稿 ⇒【提交这一单】是真能点的按钮');
+  assert.equal(barOf(pageFor('sales', WRITE([]), FEISHU_MOBILE_UA)).includes(SCAN_WRITE.texts.submitButton),
+    false, '销售页：没有草稿 ⇒ 不渲染（不是灰按钮）');
+  // ③ 其余三个领域：`本单：N 双` ＋【继续扫下一个】照旧，**提交相关的痕迹一个都不许有**
+  for (const realm of ['inventory', 'purchase', 'product']) {
+    const bar = barOf(pageFor(realm, write, FEISHU_MOBILE_UA));
+    assert.ok(bar.includes('本单：2 双'), `realm=${realm}：条的"几双"照旧要在（跨领域共用同一份本单）`);
+    assert.ok(bar.includes(SCAN_PAGE.texts.scanNextLabel), `realm=${realm}：【继续扫下一个】照旧要在`);
+    assert.equal(bar.includes(SCAN_WRITE.texts.submitButton), false, `realm=${realm}：不该有【提交这一单】`);
+    assert.equal(bar.includes(SCAN_WRITE.actions.submitOrder), false, `realm=${realm}：连那个提交表单都不该有`);
+    assert.equal(bar.includes('<button'), false, `realm=${realm}：本单条里一个按钮都不该有`);
+  }
+  // ④ 缺省领域与"认不出的领域"都回落销售 ⇒ 照旧能提交
+  assert.ok(barOf(pageFor(undefined, write, FEISHU_MOBILE_UA)).includes(SCAN_WRITE.texts.submitButton),
+    '缺省（销售）⇒ 能提交');
+  assert.ok(barOf(pageFor('不存在的领域', write, FEISHU_MOBILE_UA)).includes(SCAN_WRITE.texts.submitButton),
+    '认不出的领域回落销售（不报错、不空白）⇒ 也能提交');
 });

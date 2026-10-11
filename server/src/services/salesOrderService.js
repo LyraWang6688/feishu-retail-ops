@@ -118,8 +118,19 @@ class SalesOrderService {
       for (const item of input.items) {
         // 可售品按属性走：鞋才需要解析尺码和跟踪库存，配品只记「卖了什么、收了多少」。
         const kind = sellableKindOf(item);
-        const actualAmountCents = cents(item.actualAmount, '销售明细实收金额');
-        if (actualAmountCents <= 0) throw new Error('销售明细实收金额必须大于 0');
+        // ⭐⭐ 2026-10-11（业务负责人选"方案甲"）：「**实收金额可以是空的**」——
+        //   扫码建单允许"先只记货"（她什么钱都没填），她事后再去工作台订单列表逐件补。
+        //   ⇒ **空 ⇒ 不写这一列、不计入合计**；
+        //   🔴 **放宽只针对"缺省"**：**填了就必须 > 0**（0 / 负数照旧拦住）。
+        //   ⚠️ **「0」与「空」是两件事**：赔货那条路写的是**明确的 0**
+        //      （`config/afterSales` 的 `newLineAmount: 0`），它走的是 `afterSalesService`
+        //      自己的 `create`、**不经本函数**；读侧 `salesProgressService` 也用
+        //      `textValue` 判真值 ⇒ `0` 仍算"已填"、空才算"没填"（两处口径一致）。
+        const rawAmount = item.actualAmount;
+        const amountKnown = !(rawAmount === undefined || rawAmount === null
+          || String(rawAmount).trim() === '');
+        const actualAmountCents = amountKnown ? cents(rawAmount, '销售明细实收金额') : 0;
+        if (amountKnown && actualAmountCents <= 0) throw new Error('销售明细实收金额必须大于 0');
         if (positiveInteger(item.quantity, '销售数量') !== 1) {
           throw new Error(kind.requiresSize
             ? '一条销售明细只能记录一双鞋；请逐双说明实收金额'
@@ -128,7 +139,8 @@ class SalesOrderService {
         const row = {
           kind: kind.key,
           linkField: kind.detailLinkField,
-          actualAmount: actualAmountCents / 100,
+          amountKnown,
+          actualAmount: amountKnown ? actualAmountCents / 100 : null,
           // ⭐ 一件明细自己的赠品文本（有描述用描述；`gift=true` 没描述用占位；否则空）。
           //   ⚠️ 它**不再写进明细**（那一列已被她删掉），只在下面合并成**主表那一列**。
           gift: giftTextOfItem(item),
@@ -154,7 +166,11 @@ class SalesOrderService {
       if (payments.some((payment) => payment.status === '未收款')) {
         throw new Error('待收款记录由销售入账自动生成，请勿作为实际收款提交');
       }
-      const totalCents = expected.reduce((sum, item) => sum + cents(item.actualAmount, '实收金额'), 0);
+      // ⚠️ 2026-10-11：**空的实收不计入合计**（`amountKnown` 为假 ⇒ 贡献 0），
+      //    它不该被当成"卖了 0 元"，也不该让 `paidCents > totalCents` 的护栏永远触发。
+      const totalCents = expected.reduce((sum, item) => (
+        sum + (item.amountKnown ? cents(item.actualAmount, '实收金额') : 0)
+      ), 0);
       const paidCents = payments.reduce((sum, payment) => sum + cents(payment.amount, '收款金额'), 0);
       if (paidCents > totalCents) throw new Error('本次收款超过本单实收金额');
       if ((input.knownRecordIds?.details || []).slice(expected.length).some(Boolean)) {
@@ -174,6 +190,14 @@ class SalesOrderService {
       const reserved = new Set((input.knownRecordIds?.details || []).filter(Boolean));
       const rows = expected.map((item, index) => {
         const knownId = input.knownRecordIds?.details?.[index];
+        // ⚠️ 「实收金额」的比对必须认**「空对空」**（2026-10-11 方案甲）：
+        //    她什么都没填时写进去的就是**空**，重试时"空 vs 空"要算**一致**，
+        //    否则一次普通重试会被误判成「与当前草稿不一致，已停止重试」。
+        const amountMatches = (record) => {
+          const cell = textValue(record.fields?.[table.actualAmount]).trim();
+          if (cell === '') return !item.amountKnown;
+          return item.amountKnown && Number(cell) === item.actualAmount;
+        };
         const match = existing.find((record) => !used.has(record.record_id) &&
           (knownId ? record.record_id === knownId : !reserved.has(record.record_id)) &&
           linkedRecordIds(record.fields?.[table[item.linkField]]).includes(item.linkRecordId) &&
@@ -181,7 +205,7 @@ class SalesOrderService {
           (item.sizeRecordId
             ? singleLinked(record.fields?.[table.size], item.sizeRecordId)
             : linkedRecordIds(record.fields?.[table.size]).length === 0) &&
-          Number(textValue(record.fields?.[table.actualAmount])) === item.actualAmount);
+          amountMatches(record));
         // ⚠️ 明细这一侧**不再比赠品**（2026-10-08）：那一列已被她删除，
         //   赠品现在是**整单一条**、比在销售主表上（见下面的 gift 段）。
         if (knownId && !match) throw new Error(`已记录的销售明细 ${knownId} 与当前草稿不一致，已停止重试`);
@@ -214,7 +238,9 @@ class SalesOrderService {
             ...(row.item.sizeRecordId ? { size: relation(row.item.sizeRecordId) } : {}),
             // 🔴 明细**不带**赠品（那一列 2026-10-08 已被她整列删除；带了会抛「未配置语义字段」）。
             //    赠品写在上面那段：销售主表那一行，一单一条。
-            actualAmount: row.item.actualAmount, fulfillmentStatus: row.item.fulfillmentStatus,
+            // ⭐ 2026-10-11（方案甲）：实收**没填就不带这一列**（那一格留空，不写 0）。
+            ...(row.item.amountKnown ? { actualAmount: row.item.actualAmount } : {}),
+            fulfillmentStatus: row.item.fulfillmentStatus,
             // ⭐ 这一行**自己的**「行为管理」记录（单选）；解析不到时退回主表那条。
             ...(row.item.tradeTypeRecordId ? { tradeType: relation(row.item.tradeTypeRecordId) } : {}),
           }, { correlation });
@@ -234,6 +260,11 @@ class SalesOrderService {
       //   · 「卖了 119，先给 100，还欠 19」    → owed=19 → 补一条未收款 19。
       // 后端不拿「成交 − 已收」的差额去猜是还价还是欠款：她说欠才算欠。
       const owedCents = input.owed ? cents(input.owed, '欠款金额') : 0;
+      // 🔴 2026-10-11（方案甲）：**只要有明细没填「实收金额」，差额就算不出来** ⇒
+      //    这时**不许**传 `owed > 0`（宁可拦住，也不写一条金额算错的欠款）。
+      if (owedCents > 0 && !expected.every((item) => item.amountKnown)) {
+        throw new Error('还有明细没填「实收金额」，算不出欠款差额；请先补上实收金额再确认');
+      }
       if (owedCents > 0 && owedCents !== outstandingCents) {
         // 说出的欠款和「成交 − 已收」对不上：宁可拦下来人工核对，也不静默写一条错账。
         throw new Error('她说的欠款与「实收金额−已收金额」不一致，请核对后再确认');

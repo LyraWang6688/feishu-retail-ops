@@ -226,28 +226,6 @@ const createScanWriteService = (options = {}) => {
     return /^[1-9]\d*$/.test(text) ? Number(text) : null;
   };
 
-  /** 「货品信息.单价」——她"钱可以先不填"时的兜底（取不到就让她填，绝不写 0）。 */
-  const productPrice = async (productRecordId) => {
-    const field = fieldOf('product', 'price');
-    if (!field) return null;
-    const record = await gateway.get('product', productRecordId).catch(() => null);
-    const value = Number(textValue(record?.fields?.[field]));
-    return Number.isFinite(value) && value > 0 ? value : null;
-  };
-
-  /**
-   * 「**其他配品**.单价」—— 配品行金额留空时的兜底（与鞋那一行的口径**同一条**：
-   * 取那张表自己的「单价」；取不到就让她填，**绝不写 0**）。
-   * ⚠️ 这是"现状口径的平移"，不是新规则：字段名来自 `v1BitableSchema`（`accessory.price`）。
-   */
-  const accessoryPrice = async (accessoryRecordId) => {
-    const field = fieldOf('accessory', 'price');
-    if (!field) return null;
-    const record = await gateway.get('accessory', accessoryRecordId).catch(() => null);
-    const value = Number(textValue(record?.fields?.[field]));
-    return Number.isFinite(value) && value > 0 ? value : null;
-  };
-
   /** 「其他配品.名称」——本单里要能看出加的是哪一件（只用于展示 / 会话）。 */
   const accessoryName = (record) => textValue(record?.fields?.[fieldOf('accessory', 'name')]).trim();
 
@@ -501,9 +479,17 @@ const createScanWriteService = (options = {}) => {
    *   ② **「付款情况」三档**（`paymentStatus`，整单口径，默认**全付**）：
    *      · **全付** —— 按**收款方式**写收款明细（1 条或多条）；
    *        🔴 **收款合计必须 == 每件实收合计**；不等 ⇒ **拦住、一个字都不写** + 人话说明差额；
+   *        ⚠️ **这一条只在她填了资金时生效**（见下面「建单门槛」）—— 她一个字都没填 ⇒ 放行；
    *      · **部分付** —— 资金区填**实付多少**（`paidAmount`）⇒ 按方式写已收的那几条
    *        （状态 = 既有「已收款」）＋ ⭐ **差额写一条【未收款】**（金额 = 每件实收合计 − 已收合计）；
    *      · **未付** —— 不用填 ⇒ ⭐ **写一条【未收款】**（金额 = 每件实收合计）。
+   *
+   * ⭐⭐ **建单门槛 = 只要「货品信息」齐**（业务负责人 2026-10-11 晚）：
+   *    **资金类（每件实收 / 收款行）不构成"不能建单"的理由**，可以全空 ⇒ 照样成单
+   *    （明细实收按「单价」落、资金状态 = 既有「未写入」⇒ 那张单进工作台「待补充」，事后在
+   *    订单列表里逐件补实收 + 补收款）。⇒ 缺省档「全付」的相等校验**只在她填了资金时**才跑。
+   *    ⚠️ **例外**：显式选了「部分付」却一分钱不填 = 自相矛盾的输入，仍请她填"实付多少"
+   *       （既有口径，见 `partial_amount_missing`）。
    *
    * ⚠️ **三档都只跟"这个单子所有的实收金额加起来"比**，
    *    **绝不引入"应收 / 单价"当判据**（她逐字：「只跟"这个单子所有的实收金额加起来"比，
@@ -615,34 +601,13 @@ const createScanWriteService = (options = {}) => {
       await sessions.saveSaleProgress(openId, { lines: resolvedLines });
     }
 
-    // ── ①' ⭐⭐ 每件实收的**落点**：留空的那些先补上（鞋读「货品信息.单价」/ 配品读「其他配品.单价」）。
-    //    🔴 为什么必须**在比对之前**做（2026-10-11 修正的一处真 bug）：
-    //       「付款情况」三档都只跟"每件实收金额加起来"比 —— 而"每件实收"的**落点**
-    //       就是明细上那一个数。留空时若等到建明细那一步才读单价，
-    //       比对就会拿着 **0** 去算，「未付 / 部分付」两档的【未收款】差额会算成 0，等于没记。
-    //    ⚠️ 取不到单价 ⇒ **当场人话拦住**（绝不写 0、也绝不写一条金额为 0 的未收款）。
-    //    ⚠️ 这一步**只读**（`gateway.get('product' / 'accessory')`）—— 一个字节都不写库。
-    for (const line of resolvedLines) {
-      if (line.explicit_amount) continue;                 // 她填了 ⇒ 就用她填的
-      if (config.sale.amountFallback !== 'product_price') continue; // 兜底方式可配（关掉就不兜底）
-      const kindKey = String(line.kind || '').trim() || 'shoe';
-      const sellableKind = SELLABLE_KINDS[kindKey];
-      const isAccessory = Boolean(sellableKind && !sellableKind.requiresSize);
-      const fallback = isAccessory
-        ? await accessoryPrice(String(line.accessory_record_id || '').trim())
-        : await productPrice(String(line.product_record_id || '').trim());
-      if (!Number.isFinite(fallback) || fallback <= 0) {
-        const message = isAccessory
-          ? fillText(texts.accessoryAmountMissingBody, { name: line.accessory_name || '' })
-          : fillText(texts.amountMissingBody, { itemNo: line.item_no || line.number || '' });
-        const error = new Error(message);
-        error.scanUserMessage = message;
-        return fail({
-          code: isAccessory ? 'accessory_amount_missing' : 'line_amount_missing', message, requestId, error,
-        });
-      }
-      line.amount = Math.round(fallback * 100) / 100;
-    }
+    // ── ①' ⭐⭐ 每件实收**不再兜底读「单价」**（业务负责人 2026-10-11 选"方案甲"）──────────
+    //    她没填 ⇒ **那一列就留空**（`salesOrderService` 里空值 = **不写这一列**），
+    //    表里因此**不会出现"按单价顶上去的假数字"** —— 她事后在工作台订单列表里逐件补真值。
+    //    🔴 **放宽只针对"缺省"**：她**填了**就必须 `> 0`（填 0 / 负数在 ① 那一步已经被拦）。
+    //    ⚠️ 曾经的实现（2026-10-11 上半场、已退场）：留空 ⇒ 读「货品信息.单价 / 其他配品.单价」顶上，
+    //       两边都读不到就人话拦住。那条路已删 —— 它正是"表里出现假数字"的来源。
+    //    ⇒ 本段现在**一个飞书请求都不打**（只读也没了）。
 
     // ── ② 多笔收款（可增删行：**填了金额的行才算一笔**）────────────────────────────
     const usedPayments = [];
@@ -701,9 +666,19 @@ const createScanWriteService = (options = {}) => {
     //     不写「交易方向」）是既有业务层的口径，这里一个字段都不重复实现。
     let payments = usedPayments;
     let owedCents = 0;
+    // ⭐⭐ 2026-10-11 晚（业务负责人）：「**建单门槛 = 只要「货品信息」齐（选了尺码）**」——
+    //    ⇒ 资金类（每件实收 / 收款行）**不构成"不能建单"的理由**；
+    //      「**全付必须相等**」这条校验**只在她真的填了资金时才生效**（她一个字都没填 ⇒ 放行，
+    //      明细实收照旧按「单价」落 —— 这正是"先货后钱"那条既有口径）。
+    //    ⚠️ 「填了资金」的判据 = 本单里有**她显式填的每件实收**（`explicit_amount`）
+    //       **或**至少一笔收款行；**留空走「单价」兜底不算"她填了"** ——
+    //       否则默认档「全付」会把"她什么都没填"永远拦死（那正是这次要修的那条）。
+    //    ⚠️ 只放行**这一档**：显式选了「部分付」却一分钱不填 = 自相矛盾的输入，
+    //       仍按 AC-7x 请她填"实付多少"（那一条断言没动）。
+    const moneyFilled = resolvedLines.some((line) => line.explicit_amount) || usedPayments.length > 0;
     if (payMode === statusMode.full) {
-      // ── 全付：**只有这一档必须相等**（连"两边都是 0"也算不等：全付 0 元不成话）──
-      if (itemsCents !== paymentsCents) {
+      // ── 全付：**只有这一档必须相等**，且**只在她填了资金时**才校验 ──────────────
+      if (moneyFilled && itemsCents !== paymentsCents) {
         const message = amountMismatchMessage({ itemsCents, paymentsCents, strict: true });
         logWarn(config.events.amountMismatch, {
           session_id: current.session_id, submit_key: key, payment_status: payMode,
@@ -778,9 +753,15 @@ const createScanWriteService = (options = {}) => {
       if (payMode === statusMode.unpaid) payments = [];
     }
 
-    // ④ 逐行把明细准备好（每件实收留空 → 用那张表自己的「单价」；取不到就让她填，绝不写 0）。
+    // ④ 逐行把明细准备好。
+    //    ⭐⭐ 2026-10-11（方案甲）：**她没填实收 ⇒ 不带 `actualAmount`**（那一列留空，
+    //       表里不会出现"按单价顶上去的假数字"）；填了 ⇒ 带着她填的数（> 0，已在 ① 校验）。
     const items = [];
     for (const line of resolvedLines) {
+      // 金额**只在她真填了的时候**才带上（`explicit_amount` 就是"她填了"；空 ⇒ 不带这个键）。
+      const amountField = line.amount === null || line.amount === undefined
+        ? {}
+        : { actualAmount: Math.round(Number(line.amount) * 100) / 100 };
       // ⚠️ `SELLABLE_KINDS` 里的一行**没有 `key`**（`key` 是 `sellableKindOf` 补上去的）
       //    —— 这里自己补上，别拿 `undefined` 当 kind 传给业务层（那会被当成"鞋"）。
       const kindKey = String(line.kind || '').trim() || 'shoe';
@@ -796,15 +777,12 @@ const createScanWriteService = (options = {}) => {
           error.scanUserMessage = texts.accessoryMissingBody;
           return fail({ code: 'line_accessory_missing', message: userMessageFor(error), requestId, error });
         }
-        // ⚠️ 金额**已经在 ①' 那一步定稿**（她填的 / 留空读单价的落点都在那里算完）
-        //    —— 这里不再兜底读一次价（同一个数算两遍 = 两处口径）。
-        const accessoryAmount = Number(line.amount);
         items.push({
           kind: sellableKind.key,
           // 既有业务层按可售品配置决定落哪个字段（「销售明细.配品」）——本文件不写字段名。
           accessoryRecordId,
           quantity: 1,
-          actualAmount: Math.round(accessoryAmount * 100) / 100,
+          ...amountField,
           giftDescription: String(line.gift || '').trim(),
           // 配品没有货号 / 尺码 ⇒ 没有"现货 / 预订"这回事：**不写**交易类型（空着比写错好）。
           tradeTypeCode: '',
@@ -823,14 +801,12 @@ const createScanWriteService = (options = {}) => {
         error.scanUserMessage = texts.sizeUnknownBody;
         return fail({ code: 'line_size_missing', message: userMessageFor(error), requestId, error });
       }
-      // ⚠️ 同上：金额已经定稿（见 ①'）。
-      const actualAmount = Number(line.amount);
       items.push({
         kind: (sellableKind && sellableKind.key) || 'shoe',
         productRecordId,
         size,
         quantity: 1,
-        actualAmount: Math.round(actualAmount * 100) / 100,
+        ...amountField,
         // ⭐ 赠品：一件明细的赠品文本 —— 落点是**销售主表**那一列（合并规则在
         //    `config/salesGift` + `salesOrderService`，这里只把她的输入传下去）。
         giftDescription: String(line.gift || '').trim(),

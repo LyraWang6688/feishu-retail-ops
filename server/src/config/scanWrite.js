@@ -99,7 +99,8 @@ const FIELDS = Object.freeze({
   // ⚠️ 2026-10-11 起：`amount` = **「实收金额」**（加单那一步填的那一个数 = 这一件实际收到多少）。
   //    🔴 它**没有第二个金额概念**：页面上、表里都只有这一个数
   //      （物理列名 = 「实收金额」，见 `v1BitableSchema.salesDetail.actualAmount`）。
-  //    留空 ⇒ 自动读「货品信息.单价」（见 `sale.amountFallback`）—— 只是"没填时的落点"。
+  //    留空 ⇒ **那一列就留空**（2026-10-11 方案甲：**不再读「单价」兜底**，表里不出现假数字）；
+  //    填了 ⇒ 必须 > 0（0 / 非数字照旧拦住，见 `line_amount_invalid` / `accessory_amount_invalid`）。
   amount: 'amount',
   gift: 'gift',
   // ⭐ 配品那一行的「其他配品」记录 id（下拉里选中的名称对应的记录）。
@@ -177,13 +178,13 @@ const SALE = Object.freeze({
   paymentRowCount: readInt(process.env, 'SCAN_SALE_PAYMENT_ROWS', 1, { min: 1, max: 10 }),
   // 金额文本的显示前缀（人话里报差额时用；页面上的「单价」另有 `config/scanPage` 的 `PRICE`）。
   moneyPrefix: readString(process.env, 'SCAN_SALE_MONEY_PREFIX', '¥'),
-  // 实收金额留空时的兜底：用「货品信息.单价」（她"钱可以先不填"）。
-  // 取不到单价 → 明确让她填（**不猜、不写 0**）。
-  // ⚠️ 2026-10-11：页面上那个旧的金额输入框已删 —— 每件**只有一个数**：「实收金额」。
-  //    填了就用它；没填才走这个兜底读「单价」；两边都取不到 → 人话拦住。
-  //    🔴 **它只是"没填时的落点"，不是校验判据**：三档收款的比对**永远只跟
-  //       "每件实收金额加起来"比**（她逐字：「不跟应收/单价相比」）。
-  amountFallback: readString(process.env, 'SCAN_SALE_AMOUNT_FALLBACK', 'product_price'),
+  // ⛔ **2026-10-11（方案甲）：「留空 ⇒ 读「单价」兜底」这条已整条退场** ——
+  //    她没填实收 ⇒ **那一列就留空**（不写进表），表里因此不会出现"按单价顶上去的假数字"。
+  //    ⇒ 那个旋钮（原来的 `amountFallback` / `SCAN_SALE_AMOUNT_FALLBACK`）**已删除**：
+  //      留着一个"没有读取点、且与新口径相反"的开关，比删掉更容易把人带偏。
+  //    ⚠️ 「单价」现在只在**货品那一页显示**（`config/scanPage` 的 `PRICE`），
+  //       **不再参与建单**；三档收款的比对**永远只跟"每件实收金额加起来"比**。
+  //    ⚠️ **填了就必须 > 0**（0 / 负数照旧拦住）—— 放宽只针对"缺省"。
   // ⭐⭐ **「付款情况」三档**（整单口径）—— 取值定义在上面的 `PAYMENT_STATUS`。
   //    · `default` = 表单上默认选中的那一档（她：**全付（默认）**）；
   //    · `values` = 合法的三档取值（手改表单塞第四种 ⇒ 人话拦住，不静默）；
@@ -211,9 +212,9 @@ const SALE = Object.freeze({
     'payment_status_invalid',
     // 收款行：填了金额没选方式 / 金额不是数字
     'payment_row_incomplete', 'payment_amount_invalid',
-    // 每件实收：不是数字 / 取不到金额（没填实收、又没有单价）
-    'line_amount_invalid', 'line_amount_missing',
-    'accessory_amount_invalid', 'accessory_amount_missing',
+    // 每件实收：不是数字（**空不再是失败** —— 2026-10-11 方案甲：没填 ⇒ 那一列留空）
+    'line_amount_invalid',
+    'accessory_amount_invalid',
   ],
   // 主表「原话」那一列：扫码来的单也留一句人话（谁、扫了什么、几双）。
   originalTextTemplate: readString(
@@ -390,15 +391,13 @@ const TEXTS = Object.freeze({
   sizeMissingBody: '请先选一个尺码。',
   sizeUnknownBody: '这个尺码不在「尺码管理」里，请刷新这一页重新选。',
   amountInvalidBody: '实收金额要填数字（例：399 或 399.5）。',
-  // ⚠️ 2026-10-11：页面上那个旧的金额输入框已删 ⇒ 这句人话要指**能做的事**：
-  //    她可以在本单里给这一双填上实收，或者去「货品信息」补单价。
-  amountMissingBody: '「{itemNo}」在「货品信息」里没有单价：请在本单里填上这一双实收，再提交。',
+  // ⛔ 2026-10-11（方案甲）两句"没有单价 ⇒ 请填"已随"读单价兜底"一起退场：
+  //    没填实收**不再是失败**（那一列留空，她事后再补）⇒ 留着它们就是**说反了**。
   // ── 配品（B）：三条人话 ────────────────────────────────────────────────────
   // ⚠️ 配品**不是校验项**（不选不报错）；下面两句只在"选了配品但缺东西"时才出现。
   accessoryMissingBody: '请先选一件配品。',
   accessoryUnknownBody: '这件配品不在「其他配品」里，请刷新这一页重新选。',
   accessoryAmountInvalidBody: '配品实收金额要填数字（例：39 或 39.9）。',
-  accessoryAmountMissingBody: '「{name}」在「其他配品」里没有单价：请在本单里填上配品实收金额，再提交。',
   // ⭐⭐ 总单层：多笔收款的人话。
   //    ⚠️ 「每件实收」不是数字时复用上面的 `amountInvalidBody` / `accessoryAmountInvalidBody`
   //      （同一个字段、同一个说法；不为第二个入口再抄一句）。

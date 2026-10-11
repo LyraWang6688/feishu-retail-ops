@@ -20,8 +20,9 @@
  *        `SalesDeliveryService.deliver` ⇒ 结果里**如实标出"跳过"**，库存一动不动
  *        （不是"碰巧因为它已交付所以没扣"）。
  *  AC-B4 **备注写销售主表「赠品」**（明细不带赠品列）；**可以为空**（不填不报错）。
- *  AC-B5 **实收金额口径**：配品金额留空 ⇒ 取「其他配品.单价」；单价也没有 ⇒
- *        **明确让她填**（不是静默写 0、也不是拿别的数字顶）。
+ *  AC-B5 **实收金额口径**（⭐ 2026-10-11 **方案甲**）：配品**填了** ⇒ 写她填的数；
+ *        **留空 ⇒ 那一列留空**（**不再取「其他配品.单价」顶上去**、也绝不写 0）——
+ *        与鞋那一行同一条规则（`scanSaleTwoLayerMoney.test.js` 的 AC-2b / AC-15）。
  *  AC-B6 **页面上能填**：销售领域渲染出①配品下拉（选项 = 「其他配品」的**名称**）
  *        ②配品实收金额 ③**备注输入框**；没有配品可选时**不画一个空下拉**（不留死控件）。
  *        页面里**没有说明书**（她 2026-10-10 的硬要求）。
@@ -183,8 +184,8 @@ test('AC-B1 配品单独占一行：配品有值、编号/尺码留空、实收�
   const h = createHarness();
   try {
     const openId = 'ou_acc_1';
-    assert.equal((await addShoe(h, openId)).ok, true);
-    assert.equal((await addAccessory(h, openId, { amount: '' })).ok, true);
+    assert.equal((await addShoe(h, openId, { amount: 399 })).ok, true);
+    assert.equal((await addAccessory(h, openId, { amount: 15 })).ok, true);   // 配品实收她填了 15
 
     const result = await h.write.submitSale({ openId, submitKey: await currentKey(h, openId), paymentStatus: PAYMENT_STATUS.unpaid });
     assert.equal(result.ok, true, JSON.stringify(result));
@@ -197,13 +198,15 @@ test('AC-B1 配品单独占一行：配品有值、编号/尺码留空、实收�
     assert.deepEqual(accessoryRow.fields[accessoryField], ['acc_oil'], '配品 = 「其他配品」那一条记录');
     assert.equal(accessoryRow.fields['编号'], undefined, '配品行**不写编号**');
     assert.equal(accessoryRow.fields['尺码'], undefined, '配品行**不写尺码**');
-    assert.equal(accessoryRow.fields['实收金额'], 15, '实收金额**单列**（她的口径）');
+    // ⚠️ 2026-10-11（方案甲）改写：改前配品留空 ⇒ 读「其他配品.单价」顶成 15；
+    //    现在**留空就留空** ⇒ 这里改成"她填了 15 就写 15"（留空那条见 AC-B5）。
+    assert.equal(accessoryRow.fields['实收金额'], 15, '实收金额**单列**（她填的那个数）');
     assert.equal(accessoryRow.fields['履约状态'], '已交付', '配品当场结清（既有可售品口径）');
-    // 鞋那一行不受影响
+    // 鞋那一行不受影响：她填了 399
     const shoeRow = details.find((detail) => !detail.fields[accessoryField]);
     assert.deepEqual(shoeRow.fields['编号'], ['prod_1']);
     assert.deepEqual(shoeRow.fields['尺码'], ['size_40']);
-    assert.equal(shoeRow.fields['实收金额'], 399);
+    assert.equal(shoeRow.fields['实收金额'], 399, '鞋那一行按她自己填的数写');
   } finally { h.cleanup(); }
 });
 
@@ -286,31 +289,38 @@ test('AC-B4 备注写**销售主表.「赠品」**（明细不带这一列）；
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AC-B5 配品实收金额的口径（留空 → 那张表的单价；取不到 → 让她填）
+// AC-B5 配品实收金额的口径（⭐ 2026-10-11 方案甲：留空 ⇒ 那一列留空）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-B5 配品金额留空 ⇒ 取「其他配品.单价」；单价也没有 ⇒ 明确让她填（绝不写 0）', async () => {
+test('AC-B5 配品金额留空 ⇒ **那一列留空**（不再取「其他配品.单价」）；填了就写她填的', async () => {
   const h = createHarness();
   try {
-    // ① 留空 → 「其他配品.单价」= 15
+    const accessoryField = V1_BITABLE_SCHEMA.tables.salesDetail.fields.accessory;
+    // ⚠️ 三小段共用同一个 harness（明细表是累积的）⇒ 一律取**最后一条配品明细**。
+    const lastAccessoryRow = () => entriesOf(h, 'salesDetail')
+      .filter((detail) => detail.fields[accessoryField]).pop();
+
+    // ① 留空 ⇒ 什么都不写（**改前**：读「其他配品.单价」顶成 15）
     const openId = 'ou_acc_amount';
     await addAccessory(h, openId, { amount: '' });
     const ok = await h.write.submitSale({ openId, submitKey: await currentKey(h, openId), paymentStatus: PAYMENT_STATUS.unpaid });
     assert.equal(ok.ok, true, JSON.stringify(ok));
-    const accessoryField = V1_BITABLE_SCHEMA.tables.salesDetail.fields.accessory;
-    const row = entriesOf(h, 'salesDetail').find((detail) => detail.fields[accessoryField]);
-    assert.equal(row.fields['实收金额'], 15, '金额留空 ⇒ 用那张表自己的「单价」');
+    assert.equal('实收金额' in lastAccessoryRow().fields, false, '留空 ⇒ 那一列不写（不拿配品单价顶、也不写 0）');
 
-    // ② 没有单价（`赠品鞋垫`）又没填 → 明确报错，**不写 0**（也不建单）
+    // ② 没有单价（`赠品鞋垫`）又没填 ⇒ **照样成单**（改前是 `accessory_amount_missing` 拦住）
     const openId2 = 'ou_acc_amount_missing';
     const added = await addAccessory(h, openId2, { accessoryRecordId: 'acc_insole', amount: '' });
     assert.equal(added.ok, true, '加进本单不校验金额（点【提交】才校验）');
-    const failed = await h.write.submitSale({ openId: openId2, submitKey: await currentKey(h, openId2), paymentStatus: PAYMENT_STATUS.unpaid });
-    assert.equal(failed.ok, false);
-    assert.equal(failed.code, 'accessory_amount_missing');
-    assert.match(failed.message, /赠品鞋垫/, '人话里点名是哪一件');
-    assert.match(failed.message, /配品实收金额/, '告诉她填哪个字段（配品与鞋同规则）');
-    assert.equal(entriesOf(h, 'salesDetail').length, 1, '没成单：一条配品明细都不许写');
+    const ok2 = await h.write.submitSale({ openId: openId2, submitKey: await currentKey(h, openId2), paymentStatus: PAYMENT_STATUS.unpaid });
+    assert.equal(ok2.ok, true, JSON.stringify(ok2));
+    assert.equal('实收金额' in lastAccessoryRow().fields, false, '没有单价也一样：留空 + 单照建成');
+
+    // ③ 她**填了** ⇒ 写她填的（配品与鞋同规则）
+    const openId3 = 'ou_acc_amount_filled';
+    await addAccessory(h, openId3, { accessoryRecordId: 'acc_insole', amount: 39 });
+    const ok3 = await h.write.submitSale({ openId: openId3, submitKey: await currentKey(h, openId3), paymentStatus: PAYMENT_STATUS.unpaid });
+    assert.equal(ok3.ok, true, JSON.stringify(ok3));
+    assert.equal(lastAccessoryRow().fields['实收金额'], 39, '填了就按她填的写');
   } finally { h.cleanup(); }
 });
 

@@ -1336,3 +1336,27 @@ test('入参校验：动作 / newLines / restockState / 原单号 / 原明细归
   assert.equal(rowsOf(gateway, 'inventoryLedger').length, 0);
   assert.deepEqual(gateway.writes.create, {});
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-11（业务负责人选"方案甲"之后**必须配的一处**）：
+//     原「销售明细」的「实收金额」**可以是空的**（扫码建单允许"先只记货"，
+//     她事后再去工作台订单列表逐件补）。可售后拿它当**退款金额** ⇒ 空的时候没有数可退：
+//     给一句**明确让她去补**的人话，**绝不按 0 退**、也**不许静默通过**。
+// ⚠️ **「0」与「空」是两件事**：赔货行写的是**明确的 0**，那条路一个字不动
+//    （上面「赔货 · 她的口径」那条既有用例就是哨兵）。
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('⭐ 方案甲：原明细「实收金额」**为空** ⇒ 售后给人话拦住、**一个字都不写**（绝不按 0 退）', async () => {
+  const { gateway, service } = build();
+  // 那一列被清空（模拟"她建单时什么都没填"）
+  const original = rowsOf(gateway, 'salesDetail').find((row) => row.record_id === 'detail_old_1');
+  original.fields['实收金额'] = '';
+  const before = snapshot(gateway);
+
+  await assert.rejects(() => service.execute(request()), /先去工作台订单列表把它补上/);
+
+  assert.deepEqual(snapshot(gateway), before, '一个字都不写（原单 / 明细 / 收款 / 实时库存全不动）');
+  assert.deepEqual(gateway.writes, { create: {}, update: {}, delete: {} }, '连一次写操作都没发生');
+  assert.equal(typeof readAfterSalesConfig().missingOriginalAmountText, 'string',
+    '那句人话在配置里（配置先行）');
+});
