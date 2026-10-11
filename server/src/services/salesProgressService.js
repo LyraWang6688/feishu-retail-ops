@@ -48,7 +48,12 @@ const progressFromRecords = (details, receipts, detailFields, paymentFields) => 
     //       （那样它会显示成"未交付"，与事实相反）；
     //     · 与钱那一维的做法**同一个口径**：`已退款 / 已留存` 收款状态在这里按"已结清"算
     //       （见上面文件的注释），履约这一维的"已结清"就是已交付。
-    //   ⚠️ 这不是"兜底吞错"：**预期之外的**履约状态（例：'已撤单'）照旧在下一行**大声抛**。
+    // ⚠️ 这**不兜底吞错**：预期之外的履约状态（例：'已撤单'）照旧在下一行**大声抛**。
+    // ⭐ 2026-10-11（B/C）：**配品行**（`config/sellableKinds` 里 `requiresFulfillment: false`
+    //    的配品）在写单时就是「已交付」⇒ 它对 `pendingDeliveryQuantity` 的贡献**恒为 0**，
+    //    也就是"不参与待交付计算"（与交付那一步显式跳过它同一个口径）。
+    //    ⚠️ 刻意**不**把它整个排除出 `quantity`：纯配品单若 quantity=0，会被算成"未交付"
+    //    （`delivered === 0 ? '未交付'`），那与事实正好相反。
     const status = isAfterSalesFulfillment(rawStatus) ? '已交付' : rawStatus;
     if (!['未交付', '已交付'].includes(status)) throw new Error(`未知销售明细履约状态：${status}`);
     quantity += 1;

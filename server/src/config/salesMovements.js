@@ -31,9 +31,17 @@
 //
 // ⚠️ 「录单时要跑哪些解析」（货品信息 / 实时库存）**不在这里**：
 //    那条规则单独放在 `config/salesTradeTypePolicy.js`。本注册表只管"类型 → 交付状态"。
+//
+// ⭐ 2026-10-11（业务负责人：「**选现货 ⇒ 提交就直接当已交付并扣库存，这个肯定是的**」）：
+//    `deliverOnSubmit` 声明**这一种类型的单子，在"提交"这一刻就要交付并扣库存**
+//    （现货：当场把鞋给她；预定：货还没到，等到了再交付、那时才扣）。
+//    ⚠️ 它是**判据的唯一来源**：扫码提交那一段**不许**自己写 `trade_type === 'SALE_CASH'`
+//       （散落的中文/编码迟早与这里漂移），一律调 `deliversOnSubmit(code)`。
+//    ⚠️ 认不出的编码（空串 = 页面上还没定 / 老页面）**一律 false** —— 不猜、不交付，
+//       交给工作台那条既有交付入口（"猜错方向"比"晚一步交付"贵得多）。
 const SALES_MOVEMENTS = Object.freeze({
-  SALE_CASH: Object.freeze({ label: '现货', delivery: '已交付' }),
-  SALE_PREPAID: Object.freeze({ label: '预定', delivery: '未交付' }),
+  SALE_CASH: Object.freeze({ label: '现货', delivery: '已交付', deliverOnSubmit: true }),
+  SALE_PREPAID: Object.freeze({ label: '预定', delivery: '未交付', deliverOnSubmit: false }),
 });
 
 // 只认这两个编码。「销售主表.交易类型」是关联「行为管理」的字段，而那张表里还有
@@ -72,6 +80,13 @@ const tradeTypeLabel = (code) => SALES_MOVEMENTS[String(code || '')]?.label || '
 //   与改动前 `delivery_status: deliveryForTradeType(code) || '已交付'` 逐字同义。
 const deliversForTradeType = (code) => deliveryForTradeType(code) !== '未交付';
 
+// 「**提交这一刻**要不要交付并扣库存」——唯一判据是注册表的 `deliverOnSubmit`
+//（业务负责人 2026-10-09：「选现货 ⇒ 提交就直接当已交付并扣库存」）。
+// ⚠️ 与上面的 `deliversForTradeType`（"最终要不要交付"）**是两件事**，别合并：
+//   · `deliversForTradeType('')`  = true（认不出时沿用既有兜底：交给交付那一步判）；
+//   · `deliversOnSubmit('')`      = false（**提交时**拿不到类型 ⇒ 不猜、不扣）。
+const deliversOnSubmit = (code) => SALES_MOVEMENTS[String(code || '')]?.deliverOnSubmit === true;
+
 module.exports = {
   SALES_MOVEMENTS,
   SALES_TRADE_TYPE_CODES,
@@ -80,5 +95,6 @@ module.exports = {
   isSalesTradeType,
   deliveryForTradeType,
   deliversForTradeType,
+  deliversOnSubmit,
   tradeTypeLabel,
 };

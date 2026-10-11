@@ -51,6 +51,10 @@ const ROUTE = Object.freeze({
 const ACTIONS = Object.freeze({
   // 销售：把当前这一双加进"本单"（**只写本地会话**，一个字都不落业务表）
   addLine: readString(process.env, 'SCAN_WRITE_ACTION_ADD', 'add_line'),
+  // ⭐ 2026-10-11（B）：把**一件配品**加进"本单"（同样只写本地会话）。
+  //    与「加入本单」分成两个动作（表单不同：配品没有尺码、金额单列），
+  //    但落进本单之后是**同一种东西** —— 一行销售明细（`kind` 不同而已）。
+  addAccessory: readString(process.env, 'SCAN_WRITE_ACTION_ADD_ACCESSORY', 'add_accessory'),
   // 销售：提交整单（**这是唯一的写库时机** —— 她说"点【提交】才写"）
   submitOrder: readString(process.env, 'SCAN_WRITE_ACTION_SUBMIT', 'submit_order'),
   // 销售：清空本单（还没提交时撤掉加错的那些）
@@ -67,6 +71,9 @@ const FIELDS = Object.freeze({
   size: 'size',
   amount: 'amount',
   gift: 'gift',
+  // ⭐ 配品那一行的「其他配品」记录 id（下拉里选中的名称对应的记录）。
+  //    ⚠️ 与 `size` 二选一：配品行没有尺码、鞋行没有配品（见 `config/sellableKinds`）。
+  accessory: 'accessory_record_id',
   paymentMethod: 'payment_method',
   paymentAmount: 'payment_amount',
   // 补货：多选尺码的复选框名（同一批勾选的尺码）+ 每个尺码一个数量输入框（`qty_<尺码>`）。
@@ -129,6 +136,11 @@ const SALE = Object.freeze({
   //    （那正是"扫码侧另写一套写库逻辑"）。取舍与建议写在本次任务的报告里。
   // 赠品文本上限（主表「赠品」是文本列，写太长没意义、也容易被截断）。
   giftMaxLength: readInt(process.env, 'SCAN_SALE_GIFT_MAX_LENGTH', 100, { min: 1, max: 500 }),
+  // ⭐ 2026-10-11（B）：「其他配品」清单的**进程内缓存**（毫秒；0 = 每次都读）。
+  //    为什么要有它：她**连着扫码**，每一页都要画那个配品下拉 —— 一次扫码不该多打一次飞书。
+  //    30 秒足够短：她在飞书里新加一件配品，最迟半分钟后刷新这一页就能选到。
+  accessoryCacheTtlMs: readInt(process.env, 'SCAN_SALE_ACCESSORY_CACHE_TTL_MS', 30_000,
+    { min: 0, max: 10 * 60 * 1000 }),
   // 金额文本框允许的小数位（两位 = 分）。
   amountDecimals: readInt(process.env, 'SCAN_SALE_AMOUNT_DECIMALS', 2, { min: 0, max: 2 }),
   // 「失败原因要不要原样给她看」的闸门：业务层抛出来的中文业务话（例：
@@ -189,13 +201,27 @@ const TEXTS = Object.freeze({
   // ── 销售表单 ──────────────────────────────────────────────────────────────
   draftHeading: '本单已加 {count} 双',
   draftItem: '{itemNo} · {size} 码',
+  // 配品行在本单里的那一行（没有尺码、没有货号 —— 只有名称）。
+  draftAccessoryItem: '配品 · {name}',
   draftEmpty: '还没加入任何一双：选好尺码，点「加入本单」。',
   sizeLabel: '尺码',
   sizePlaceholder: '选尺码',
   amountLabel: '成交金额（可不填）',
   amountPlaceholder: '留空按货品单价',
-  giftLabel: '赠品（可不填）',
+  // ⭐ 2026-10-11（B）：她的口径是「**备注**」——落点是**销售主表.「赠品」**（文本列，
+  //    见 docs/sales-order-states-and-gifts-2026-10-09.md 第四节）。
+  //    ⚠️ 页面上写"备注"、表里写"赠品"，是**一列两个叫法**，不是两件事（别再拆一个字段出来）。
+  giftLabel: '备注（可不填）',
   addButton: '加入本单',
+  // ── ⭐ 2026-10-11（B）：配品（单独一行销售明细；不是校验项）────────────────
+  //    「配品」选的是「其他配品」表里的**名称**；选中后它是**独立的一行销售明细**：
+  //    `配品` 有值、`编号`/`尺码` 留空、**成交金额单列**。
+  accessoryLabel: '配品',
+  // 不选配品时下拉里的那一项（空 value = 不加这一行）。
+  accessoryPlaceholder: '不加配品',
+  accessoryAmountLabel: '配品成交金额（可不填）',
+  accessoryAmountPlaceholder: '留空按配品单价',
+  accessoryAddedBanner: '已加入本单（{count} 项）',
   submitButton: '提交这一单',
   clearButton: '清空本单',
   paymentLabel: '收款方式',
@@ -210,9 +236,14 @@ const TEXTS = Object.freeze({
   submittedFundsBody: '收款也记上了，共 {paid} 元。',
   submittedAgainTitle: '这一单已经提交过了',
   submittedAgainBody: '销售单号 {orderNo}，没有重复写入。',
-  // 「刚加入本单」那一句：**极简**（她 2026-10-11：「一句极简反馈（例："已加入本单（2 双）"）
-  // —— 不要写说明书」）。它渲染在**每个领域页顶部的本单条**里（见
-  // `views/scanPageRenderer.js` 的 `draftBarHtml`），加完一双无论停在哪个领域都看得见。
+  // ⭐ 2026-10-11（A）：现货行"提交即交付 + 扣库存"**没扣成**时的如实结果页。
+  //    她要知道的是三件事：单子已经记上了、哪几双没扣成、怎么办 —— 一句说明书都不写。
+  stockFailedTitle: '这一单记上了，库存没扣成',
+  stockFailedBody: '{failed} 双没扣成：{reason}',
+  stockFailedRetryHint: '照上面的原因处理一下，再点一次【提交这一单】就能接着扣（不会重复记账）。',
+  // 「刚加入本单」那一句：**极简**（她 2026-10-11 要的"一句极简反馈"）。它渲染在
+  // **每个领域页顶部的本单条**里（见 `views/scanPageRenderer.js` 的 `draftBarHtml`），
+  // 加完一双无论停在哪个领域都看得见。
   lineAddedBanner: '已加入本单（{count} 双）',
   // ── 补货表单 ──────────────────────────────────────────────────────────────
   replenishQuantityLabel: '数量',
@@ -239,6 +270,12 @@ const TEXTS = Object.freeze({
   sizeUnknownBody: '这个尺码不在「尺码管理」里，请刷新这一页重新选。',
   amountInvalidBody: '成交金额要填数字（例：399 或 399.5）。',
   amountMissingBody: '「{itemNo}」在「货品信息」里没有单价，请填一下成交金额再提交。',
+  // ── 配品（B）：三条人话 ────────────────────────────────────────────────────
+  // ⚠️ 配品**不是校验项**（不选不报错）；下面两句只在"选了配品但缺东西"时才出现。
+  accessoryMissingBody: '请先选一件配品。',
+  accessoryUnknownBody: '这件配品不在「其他配品」里，请刷新这一页重新选。',
+  accessoryAmountInvalidBody: '配品成交金额要填数字（例：39 或 39.9）。',
+  accessoryAmountMissingBody: '「{name}」在「其他配品」里没有单价，请填一下配品成交金额再提交。',
   paymentAmountInvalidBody: '这次收款金额要填数字（例：100 或 100.5）。',
   quantityInvalidBody: '数量要填 1 ~ {max} 之间的整数。',
   replenishNoneBody: '至少要勾一个要补的尺码。',
@@ -260,6 +297,9 @@ const EVENTS = Object.freeze({
   saleSubmitting: 'scan.sale.submitting',
   saleSubmitted: 'scan.sale.submitted',
   saleReused: 'scan.sale.reused',
+  // ⭐ 2026-10-11（A）：现货行"提交即交付 + 扣库存"**没扣成**的如实记录
+  //    （页面上同时会告诉她一句人话；这条日志是排查口）。
+  stockFailed: 'scan.sale.stock_failed',
   replenishSubmitting: 'scan.purchase.submitting',
   replenishSubmitted: 'scan.purchase.submitted',
   replenishReused: 'scan.purchase.reused',

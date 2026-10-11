@@ -6,6 +6,7 @@ const {
 } = require('../src/config/salesTradeTypePolicy');
 const {
   SALES_MOVEMENTS, SALES_TRADE_TYPE_CODES, tradeTypeCodeFromLabel, tradeTypeLabel,
+  deliversOnSubmit,
 } = require('../src/config/salesMovements');
 
 // 「类型的判据」与「逐明细类型取法」的唯一来源是这份配置（业务负责人 2026-10-07 拍板）。
@@ -13,8 +14,11 @@ const {
 
 test('行为管理表里只有两条：SALE_CASH（现货）/ SALE_PREPAID（预定）—— 不发明新编码', () => {
   assert.deepEqual([...SALES_TRADE_TYPE_CODES].sort(), ['SALE_CASH', 'SALE_PREPAID']);
-  assert.deepEqual(SALES_MOVEMENTS.SALE_CASH, { label: '现货', delivery: '已交付' });
-  assert.deepEqual(SALES_MOVEMENTS.SALE_PREPAID, { label: '预定', delivery: '未交付' });
+  // ⭐ 2026-10-11（A）新增 `deliverOnSubmit`：**提交这一刻**要不要交付并扣库存。
+  //    ⚠️ 与 `delivery`（"最终交付到哪一档"）是两件事，两条都在这里被钉住：
+  //       现货 ⇒ 提交即交付；预定 ⇒ 不交付（等货到了再交付、那时才扣库存）。
+  assert.deepEqual(SALES_MOVEMENTS.SALE_CASH, { label: '现货', delivery: '已交付', deliverOnSubmit: true });
+  assert.deepEqual(SALES_MOVEMENTS.SALE_PREPAID, { label: '预定', delivery: '未交付', deliverOnSubmit: false });
 });
 
 test('未付不再是交易类型：中文标签「未付」不映射任何编码，主表也不会写出第三个编码', () => {

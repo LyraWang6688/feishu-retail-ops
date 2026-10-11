@@ -40,6 +40,11 @@ const { createScanSessionService } = require('../src/services/scanSessionService
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { PurchaseWebhookService } = require('../src/services/purchaseWebhookService');
 const { SalesProgressService } = require('../src/services/salesProgressService');
+// ⭐ 2026-10-11（A）：现货行"提交即交付 + 扣库存"之后，**交付**成了提交这一步的一部分。
+//    本文件的假网关里没有「实时库存」（它只管扫码入口这一段），所以这里注入一个
+//    只记账、不真动库存的库存替身 —— 交付**走的是真的** `SalesDeliveryService.deliver`，
+//    库存真的被扣的验收在 `scanSaleCashDeliveryOnSubmit.test.js`（那边用真库存引擎）。
+const { SalesDeliveryService } = require('../src/services/salesDeliveryService');
 const { createScanPageRouter } = require('../src/routes/scanPage');
 
 const SERVER_SRC = path.join(__dirname, '..', 'src');
@@ -182,11 +187,17 @@ const createHarness = (options = {}) => {
     batchLocator: { rememberGroupMessage: async (entry) => { batchMessages.push(entry); } },
     batchNoGenerator: { runExclusive: async (work) => work(), next: async () => ({ batchNo: 'CGD-20261008-0001' }) },
   });
+  const delivery = options.delivery || new SalesDeliveryService({
+    gateway,
+    // 库存替身：只回一个成功结果（本文件不验库存，验的是扫码入口这一段）。
+    inventory: { applySale: async () => ({ sampleConsumedQuantity: 0 }), getSaleResult: async () => null },
+  });
   const write = createScanWriteService({
     gateway,
     sessions,
     purchase,
     purchaseStore,
+    delivery,
     now: options.now,
   });
   return {
