@@ -177,6 +177,40 @@ const looksLikeSalesText = (text) => isSalesCandidate(text);
 //    「今日销售」，只有私聊点得到）在用，随它一起删了。上海自然日的算法仍在
 //    `services/v1WorkbenchService` 里（工作台「今日销售」用它），要看今日销售去那儿。
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ⚠️⚠️ 已不可达的方法（2026-10-12 起）—— **归 C5 统一评估，请勿手快删掉**
+//
+// 【依据】可达性分析（脚本，2026-10-12）：以**现行入口**求可达集 ——
+//   `routes/larkEvents.js`（`acceptMessage` / `handleCardAction` / 表变更）·
+//   `routes/scanPage.js` · `routes/workbench*.js` · `routes/purchaseQuery.js` ·
+//   `routes/feishuWebAuth.js` · `app.js`（定时任务）—— 从本类的两个入口方法
+//   `acceptMessage` 与 `handleCardAction` 出发做方法级可达性，下列方法**不在可达集内**：
+//     · `acceptSalesText`            —— 群销售入站（入口已于 #331 关闭）
+//     · `processSalesTask`（443 行）  —— 销售原话解析 → 出卡 → 入账
+//     · `handleSalesOrLegacyCardAction`（402 行）—— 销售草稿卡片的动作分派
+//     · `handleTaskFailure` / `enqueueForSender` / `ensureIntakeSchema` / `acknowledgeMessage`
+//     · `createSalesEntryWithOrderNo` / `listSalesOrderNos` / `listAccessories`
+//       （⭐ C0 剥出的三处**转发薄方法**：扫码侧早已改走 `services/salesEntryService`，
+//         这里只剩转发，且只被上面这些不可达方法调用）
+//
+// 【为什么不删】删这 10 个方法会**同时带走 122 条测试**（实测：删完 1871 → 1749 pass / 122 fail）——
+//   那些用例**不是"群入口用例"，而是销售管线 / 共享层的回归网**：
+//   解析 · 交易类型（现货/预定）· 颜色候选 · 配品匹配 · 金额口径 · 销售卡片状态机。
+//   ⚠️ **扫码入口与工作台同样依赖这一层**（`salesOrderService` / `v1PostingService` /
+//   `salesDeliveryService` / `PaymentService`）⇒ 删掉 = **净损失覆盖**，换来的只是"代码好看"。
+//   ⇒ 结论（Lead 2026-10-12 拍）：**只标注、不删**；它不影响行为、不影响安全、
+//     也不影响她（群消息在 `acceptMessage` 就已回绝，零远端调用）。
+//
+// 【将来真要删】= 先决定那 122 条用例的去向（**建议把共享层断言"迁到扫码入口"而不是删**），
+//   再动这里；**不要**只删一半（`acceptSalesText` 与 `processSalesTask` 互为调用方，
+//   删一半会留半死链）。
+//
+// 【顺带标注·半遗留】`this.salesMessageLinks` / `this.salesGroupThreads` 两个字段：
+//   只被上面已不可达的 `bindGroupSaleThread`（其唯一调用方在 `handleSalesOrLegacyCardAction` 里）
+//   与 `handleSalesOrLegacyCardAction` 使用 ⇒ **随上面那批一起处理**；
+//   ⚠️ 但 `salesGroupThreadLocator` **模块本体必须留**（9 点推送的「查看原话」深链在用）。
+// ═══════════════════════════════════════════════════════════════════════════
+
 class LarkMvpService {
   constructor(options = {}) {
     if (options.client) this.client = options.client;
