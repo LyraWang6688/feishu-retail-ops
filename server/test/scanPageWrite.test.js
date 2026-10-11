@@ -597,7 +597,7 @@ test('⑧ 路由：加入本单 → 回跳带上"本单几双"；提交整单 �
     const openId = 'ou_scan_route';
     const app = formApp(h);
     await withServer(app, async (base) => {
-      // ⭐ 2026-10-09：缺省领域改成**库存** ⇒ 建单表单在【销售】那一块，这里显式带 `?from=sales`。
+      // ⭐ 2026-10-11：缺省领域改回**销售** ⇒ 销售页的显式 `?from=sales` 照旧可用（四个值都还在）。
       const pageUrl = `${base}/s/${encodeURIComponent(NUMBER)}?from=sales`;
       const page = await fetch(pageUrl, { headers: { cookie: sessionCookie(openId) } });
       const html = await page.text();
@@ -610,12 +610,16 @@ test('⑧ 路由：加入本单 → 回跳带上"本单几双"；提交整单 �
         body: new URLSearchParams({ action: SCAN_WRITE.actions.addLine, submit_key: saleKey, size: '40', amount: '399', gift: '袜子' }).toString(),
       });
       assert.equal(added.status, 303);
-      // ⭐ 2026-10-09：回跳要**带上领域**（不然会落到缺省的库存那一块，本单看不见了）。
-      assert.match(String(added.headers.get('location')), /from=sales&added=1$/);
+      // ⭐ 2026-10-11：缺省领域改回**销售** ⇒ 缺省领域不带 `?from=`（URL 干净），
+      //    但**绝不许掉到别的领域**。非缺省领域的回跳带上 `?from=`（见 `postActionFor`
+      //    与 `scanPageDraftBar.test.js` 的 AC-DB7）。
+      assert.match(String(added.headers.get('location')), /added=1$/);
+      assert.equal(String(added.headers.get('location')).includes('from=inventory'), false,
+        '加单回跳必须停在本单所在的领域（销售），不许掉到库存');
 
       const afterAdd = await fetch(`${pageUrl}&added=1`, { headers: { cookie: sessionCookie(openId) } });
       const afterHtml = await afterAdd.text();
-      assert.match(afterHtml, /已加入本单：现在共 1 双。/);
+      assert.match(afterHtml, /已加入本单（1 双）/);
       assert.match(afterHtml, /本单已加 1 双/);
       assert.match(afterHtml, /YD6693-2 · 40 码/);
 
@@ -882,4 +886,87 @@ test('只读页的取数代码一个字都没动（scanPageService 仍是只读�
   for (const pattern of [/gateway\.(create|update|delete)\s*\(/, /inventoryService|salesOrderService|purchaseWebhookService/]) {
     assert.equal(pattern.test(source), false, `scanPageService.js 出现了写链路：${pattern}`);
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-DB5 ⭐ 2026-10-11（业务负责人）「一单多双 · 多次扫码」的**命门**：跨编号累积
+//
+// 她的原话：「我们在扫码页卖了多双鞋的时候，怎么可以**一双订单多次扫码**呢？」
+// 会话 key 核过是**按人（登录会话）**存的、**不是按编号** ⇒ 扫 A 加一双、再扫 B 加一双，
+// 读到的是**同一份本单**。这一条用真路由 + 真会话 + 真业务层把它钉住：
+// 一旦将来有人把会话改成"按编号隔离"，这里当场红（症状 = 每次换款都新开一单）。
+// ═══════════════════════════════════════════════════════════════════════════
+test('AC-DB5 ⭐ 一单多双·多次扫码：扫 A 加单 → 扫 B 加单 → 本单 2 双 → 提交后**一张单两行**', async () => {
+  login();
+  // 第二款 = **另一个编号**（没有它，这条用例证明不了"跨编号"）。
+  const NUMBER_B = 'XHB8095|黑色|A';
+  const PRODUCT_B = {
+    record_id: 'prod_b',
+    fields: {
+      编号: NUMBER_B, 货号: 'XHB8095', 颜色: { text: '黑色', record_ids: ['color_black'] },
+      类别: 'A', 品类: { text: '休闲鞋', record_ids: ['cat_casual'] }, 单价: 359, 供应商: ['sup_1'],
+    },
+  };
+  const h = createHarness({ tables: seedTables({ product: [PRODUCT, PRODUCT_B] }) });
+  try {
+    const openId = 'ou_scan_multi_number';
+    const lookup = async ({ number }) => (String(number) === NUMBER_B
+      ? view({ number: NUMBER_B, item_no: 'XHB8095', product_record_id: 'prod_b' })
+      : view());
+    await withServer(formApp(h, lookup), async (base) => {
+      const urlA = `${base}/s/${encodeURIComponent(NUMBER)}?from=sales`;
+      const urlB = `${base}/s/${encodeURIComponent(NUMBER_B)}?from=sales`;
+      const cookie = sessionCookie(openId);
+      const post = (url, body) => fetch(url, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(body).toString(),
+      });
+      const keyOf = (html) => html.match(/name="submit_key" value="(scan_sale:[^"]+)"/)[1];
+
+      // ① 扫 A（YD6693-2）：加入本单
+      const keyA = keyOf(await (await fetch(urlA, { headers: { cookie } })).text());
+      const addedA = await post(urlA, { action: SCAN_WRITE.actions.addLine, submit_key: keyA, size: '40', amount: '399' });
+      assert.equal(addedA.status, 303);
+
+      // ② 扫 B（XHB8095，**另一个编号**）：本单条上已经读得到 A 那一双
+      const pageB = await fetch(urlB, { headers: { cookie } });
+      const htmlB = await pageB.text();
+      assert.match(htmlB, /本单：1 双/, 'B 页顶部的本单条要读到 A 那一双（跨编号累积 = 一单，不是新开一单）');
+
+      // ③ 就在 B 页加第二双
+      const keyB = keyOf(htmlB);
+      const addedB = await post(urlB, { action: SCAN_WRITE.actions.addLine, submit_key: keyB, size: '41', amount: '359' });
+      assert.equal(addedB.status, 303);
+
+      // ④ B 页（回跳后）：本单 2 双 + 极简反馈 + 顶部**就地**能提交（不用回第 1 双那一页）
+      const afterHtml = await (await fetch(urlB, { headers: { cookie } })).text();
+      assert.match(afterHtml, /本单：2 双/);
+      const bar = afterHtml.slice(afterHtml.indexOf('data-view="draft-bar"'));
+      assert.ok(bar.slice(0, bar.indexOf('</section>')).includes(SCAN_WRITE.texts.submitButton),
+        'B 页顶部的本单条上就有【提交这一单】');
+
+      // ⑤ 就在 B 页提交这一单 → **一张主表 + 两行明细**
+      const submitted = await post(urlB, { action: SCAN_WRITE.actions.submitOrder, submit_key: keyB });
+      assert.equal(submitted.status, 200);
+      const doneHtml = await submitted.text();
+      assert.match(doneHtml, /这一单提交好了/);
+      assert.match(doneHtml, /明细：2 双/);
+      const entries = entriesOf(h.gateway, 'salesEntry');
+      const details = entriesOf(h.gateway, 'salesDetail');
+      assert.equal(entries.length, 1, '两次扫码只该有**一张**销售单');
+      assert.equal(details.length, 2, '一张单**两行**（每双一行）');
+      for (const detail of details) {
+        assert.equal(detail.fields['销售单号'][0], entries[0].record_id, '两行都挂在这一张单上');
+      }
+
+      // ⑥ 提交完再打开任一一页：本单条归零（提交按钮跟着消失）
+      const afterSubmit = await (await fetch(urlA, { headers: { cookie } })).text();
+      assert.match(afterSubmit, /本单：0 双/);
+      const barAfter = afterSubmit.slice(afterSubmit.indexOf('data-view="draft-bar"'));
+      assert.equal(barAfter.slice(0, barAfter.indexOf('</section>')).includes(SCAN_WRITE.texts.submitButton),
+        false, '提交后本单条上不该还有【提交这一单】');
+    });
+  } finally { h.cleanup(); }
 });

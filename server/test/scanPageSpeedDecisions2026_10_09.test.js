@@ -13,7 +13,8 @@
  *        未就绪 / 过期回退现有过滤读；
  *        ⚠️ 失效点：`inventoryService` 的三个方法（`executeOperation` / `transitionState` /
  *        `promoteToSample`）＋「货品信息」的写入口（新建货品 / 写成本 / 写标签二维码）。
- *   □ A3 **扫码缺省领域改 `inventory`**（她：「扫码第一眼 = 库存」）＋ 文案/注释同步。
+ *   □ A3 **扫码缺省领域**：2026-10-09 曾改成 `inventory`（她：「扫码第一眼 = 库存」）；
+ *        2026-10-11 她**改回** `sales`（「默认打开是销售页」）＋ 文案/注释同步。
  *   □ A4 **一次扫码 0~1 次飞书调用**：库存走快照、单价走内存索引、缺码走配置
  *        ⇒ 用 `scan.lookup.timing` 的字段证明。
  */
@@ -283,14 +284,16 @@ test('A2 失效点齐不齐（源码哨兵）：库存三处 + 货品写入口�
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// □ A3 缺省领域 = inventory
+// □ A3 缺省领域 = sales（2026-10-11 业务负责人：「默认打开是销售页」）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('A3 扫码缺省领域 = **inventory**（她：「扫码第一眼 = 库存」），且注释/文案不再说谎', () => {
-  assert.equal(DEFAULT_REALM, 'inventory', '裸码扫开先看到库存表');
+test('A3 扫码缺省领域 = **sales**（她：「默认打开是销售页」），且注释/文案不许再说谎', () => {
+  assert.equal(DEFAULT_REALM, 'sales', '裸码扫开先看到销售（建单）那一块');
   const source = fs.readFileSync(path.join(SERVER_ROOT, 'src/views/scanPageRealm.js'), 'utf8');
-  assert.equal(/缺省\s*=\s*销售/.test(source), false, '注释里不许再写"缺省=销售"');
-  assert.match(source, /扫码第一眼\s*=\s*库存/);
+  // ⚠️ 2026-10-11 断言翻转：2026-10-09 曾把缺省改成库存，那时这里钉的是
+  //    「注释里不许再写缺省=销售」；现在**反过来** —— 缺省=销售，注释里不许再写缺省=库存。
+  assert.equal(/缺省\s*=\s*库存/.test(source), false, '注释里不许再写"缺省=库存"');
+  assert.match(source, /默认打开是销售页/);
   // 领域本身没变（还是那四个、顺序也一样）。
   const { REALMS } = require('../src/views/scanPageRealm');
   assert.deepEqual(REALMS.map((realm) => realm.id), ['sales', 'inventory', 'purchase', 'product']);

@@ -19,7 +19,7 @@
  *   两者唯一共享的是二维码 URL 模板，而那个模板**不在这里**（在 `tagQrCode.js`）。
  */
 
-const { readFlag, readInt } = require('./envValue');
+const { readFlag, readInt, readString } = require('./envValue');
 
 /**
  * 路由挂载点：`GET /s/:number`。
@@ -91,7 +91,9 @@ const MISSING_SIZE = Object.freeze({
  * ⚠️ 页面是**手机上看**的，文案尽量短。
  */
 const TEXTS = Object.freeze({
-  pageTitle: '{itemNo} · 库存',
+  // ⚠️ 2026-10-11：缺省领域改回**销售** ⇒ 这一页不再只叫"库存页"，标题改成与领域无关的
+  //    （浏览器的标签页标题；她手机上是飞书 webview 的标题）。
+  pageTitle: '{itemNo} · 扫码',
   priceLabel: '单价',
   identitySeparator: ' · ',
   stockHeading: '库存（共 {total} 双）',
@@ -130,6 +132,43 @@ const TEXTS = Object.freeze({
   requestIdLabel: '请求号',
   limitTitle: '这次读的库存太多了',
   limitBody: '为了避免显示不完整的库存，本页没有继续算。请稍后再试。',
+  // ── ⭐ 2026-10-11「本单条」（一单多双 · 多次扫码）──────────────────────────
+  // 她原话：「我们在扫码页卖了多双鞋的时候，怎么可以一双订单多次扫码呢？」
+  // ⇒ 每个扫码页（任意领域）顶部固定一条：
+  //    `本单：N 双` +（有草稿才出现）【提交这一单】+ 【继续扫下一个】。
+  // ⚠️ 只留"能点、能做的事" + 状态：这里一句话都不解释"我为什么要这样用"。
+  draftBarLabel: '本单',
+  // 状态：本单现在累积了几双（数字来自扫码会话，**跨编号共用**）。
+  draftBarCount: '本单：{count} 双',
+  // 能点的：【继续扫下一个】（飞书客户端内 = AppLink 打开扫一扫，见下面的 `SCAN_NEXT`）；
+  // **不是**飞书客户端（电脑浏览器 / 手机自带浏览器）时，这里只剩一句如实的状态 ——
+  // 「这台设备没有扫码能力」，**绝不给一个点了没反应的按钮**。
+  scanNextLabel: '继续扫下一个',
+  scanNextHint: '这里不能扫码：请用飞书的「扫一扫」再扫下一个标签。',
+});
+
+/**
+ * ⭐ 2026-10-11：【继续扫下一个】的手段（**飞书官方文档实查过**，见本次任务报告）。
+ *
+ * 两条官方路子都查了 `open.feishu.cn` 的官方文档（`.md?lang=zh-CN`，规矩：不许 web_search）：
+ *   ① **H5 JSAPI `tt.scanCode`**（`/document/client-docs/gadget/-web-app-api/device/scan-code/scancode`）：
+ *      官方写明"该接口支持小程序和**网页应用**调用"，网页应用 Android/iOS **V3.44.0+**、**PC ✗**；
+ *      但用它要引入 JSSDK ＋ 走 JSAPI 鉴权（`h5sdk.config`：appId/timestamp/nonceStr/signature，
+ *      签名要服务端拿 access_token → jsapi_ticket 现算）＋ 配 **H5 可信域名**；
+ *      ⚠️ 而这一页的硬性设计是"**一行前端脚本都没有**"（2026-10-09 手机白屏之后定的，
+ *      有用例当哨兵）—— 为它引入 `<script>`/JSSDK 会把这层不确定性又装回来。
+ *   ② **AppLink 打开扫一扫**（`/document/common-capabilities/applink-protocol/supported-protocol/open-scan-function`）：
+ *      `https://applink.feishu.cn/client/qrcode/main`，**飞书 5.7.0+**、**PC 端不支持**，无参数。
+ *      ⇒ **就是"点一下直接扫下一个"**，而且只是一个**真链接**（零 JS、零鉴权、零新请求）。
+ *
+ * ⇒ 选 ②：同一个用户结果（点一下进飞书扫一扫 → 扫下一张标签 → 回到同一浏览器会话继续加单），
+ *   代价最小、且不破坏"没有 JS 也 100% 正确"那条底线。
+ *   设备能力判据 = **服务端看 UA**（`views/scanPageRenderer.js` 的 `canScanNextWithFeishu`）：
+ *   飞书客户端（Android/iOS）才给按钮；电脑 / 手机自带浏览器给 `scanNextHint` 那句人话。
+ */
+const SCAN_NEXT = Object.freeze({
+  // 飞书官方 AppLink：打开「扫一扫」（改它只改这一处）。
+  applink: readString(process.env, 'SCAN_NEXT_APPLINK', 'https://applink.feishu.cn/client/qrcode/main'),
 });
 
 /** 价格格式（来自「货品信息.单价」）。整数不补零：`¥399`；带角分才显示小数。 */
@@ -376,6 +415,8 @@ const SCAN_PAGE = Object.freeze({
   sizeSegments: SIZE_SEGMENTS,
   productSnapshot: PRODUCT_SNAPSHOT,
   events: EVENTS,
+  // ⭐ 2026-10-11：【继续扫下一个】的手段（飞书扫一扫 AppLink，见上面的长注释）。
+  scanNext: SCAN_NEXT,
 });
 
 /** `{name}` 占位符替换（缺的值用 `missing` 顶，**不留空段**）。 */
@@ -399,5 +440,6 @@ module.exports = {
   CACHE,
   SNAPSHOT,
   EVENTS,
+  SCAN_NEXT,
   fillText,
 };

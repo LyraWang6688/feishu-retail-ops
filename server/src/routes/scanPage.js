@@ -229,10 +229,13 @@ const createScanPageRouter = (options = {}) => {
   /**
    * 表单的 POST 目标（= 处理完回跳到哪一页）。
    *
-   * ⭐ 2026-10-09（缺省领域改成**库存**之后必需的一处）：把**领域**一起带上
-   *   —— 不然她在【销售】那一块点「加入本单」，303 回来会落在**库存**那一块
-   *   （默认领域），刚填的本单看不见了。
-   *   ⚠️ 缺省领域不带 `?from=`（URL 干净，且既有断言一字不变）。
+   * ⭐ **必须带上领域**：不然她在【销售】那一块点「加入本单」，303 回来会落在
+   *   **缺省领域**、刚填的本单看不见了。
+   *   ⚠️ 缺省领域（2026-10-11 起 = **销售**）不带 `?from=`（URL 干净，且既有断言一字不变）；
+   *      另外三个领域一律带 `?from=<领域>` ⇒ **回跳停在本单所在的领域**。
+   *   ⚠️ 这个函数**同时被 `buildWriteContext`（拼表单 action）与 POST 的 303 两处用** ——
+   *      表单 action 带上了 `?from=`，POST 里 `resolveRealm(req.query?.from)` 才读得到领域。
+   *      （2026-10-11 修的一处：表单 action 原来漏传 realm，导致回跳落到缺省领域。）
    */
   const postActionFor = (number, realm = DEFAULT_REALM) => {
     const path = `${config.route.basePath}/${encodeURIComponent(String(number || ''))}`;
@@ -252,6 +255,9 @@ const createScanPageRouter = (options = {}) => {
     if (!openId) return null;
     const texts = writeConfig.texts;
     const fields = writeConfig.fields;
+    // ⭐ 本单是**按人（登录会话）**存的（`scanSessionService.idOf(openId)`），
+    //    **不是按编号** ⇒ 扫 A 加一双、再扫 B 加一双，读到的**是同一份本单**
+    //    （"一单跨款累积"就是这么成立的；见 `services/scanSessionService.js` 的文件头）。
     const session = await writeService.sessions.get(openId).catch((error) => {
       // 读自己的会话失败**不影响看库存**：把表单退化成"还没加任何一双"，
       // 她照样能加单（加的时候会重建）。只记一条 warn，不给她报错。
@@ -279,7 +285,7 @@ const createScanPageRouter = (options = {}) => {
       texts,
       fields,
       actions: writeConfig.actions,
-      postAction: postActionFor(view.number),
+      postAction: postActionFor(view.number, realm),
       sizes,
       draft: { lines },
       // ⭐ 配品行要的东西（没有配品时渲染层不画那个表单）。
@@ -336,7 +342,9 @@ const createScanPageRouter = (options = {}) => {
       }
       const write = await buildWriteContext(req, view, realm);
       const renderStartedAt = Date.now();
-      const html = renderScan(view, config, write, realm);
+      // ⭐ 2026-10-11：把 UA 交给渲染层 —— 它只用来决定本单条上【继续扫下一个】
+      //    是"飞书客户端内的扫一扫 AppLink"还是那句如实的人话（`canScanNextWithFeishu`）。
+      const html = renderScan(view, config, write, realm, { userAgent: req.headers['user-agent'] });
       timing.render_ms = Math.max(0, Date.now() - renderStartedAt);
       // `total_ms` = 取数 + 渲染（整条链路的墙钟）—— 她要的是"这一页到底花了多久"。
       timing.total_ms = (Number(timing.total_ms) || 0) + timing.render_ms;

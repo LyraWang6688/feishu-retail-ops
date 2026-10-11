@@ -241,8 +241,10 @@ const TEXTS = Object.freeze({
   stockFailedTitle: '这一单记上了，库存没扣成',
   stockFailedBody: '{failed} 双没扣成：{reason}',
   stockFailedRetryHint: '照上面的原因处理一下，再点一次【提交这一单】就能接着扣（不会重复记账）。',
-  // 「刚加入本单」那一句（加完回跳到这一页时显示）。
-  lineAddedBanner: '已加入本单：现在共 {count} 双。',
+  // 「刚加入本单」那一句：**极简**（她 2026-10-11 要的"一句极简反馈"）。它渲染在
+  // **每个领域页顶部的本单条**里（见 `views/scanPageRenderer.js` 的 `draftBarHtml`），
+  // 加完一双无论停在哪个领域都看得见。
+  lineAddedBanner: '已加入本单（{count} 双）',
   // ── 补货表单 ──────────────────────────────────────────────────────────────
   replenishQuantityLabel: '数量',
   replenishButton: '生成采购申请',
