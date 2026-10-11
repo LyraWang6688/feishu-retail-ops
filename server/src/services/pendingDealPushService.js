@@ -122,8 +122,11 @@ const { logInfo, logWarn } = require('../utils/logger');
 const dayMarkerId = (dayKey) => `pending_deal_push_day_${dayKey}`;
 
 // 金额：**只在显示这一层**格式化；业务计算在**取数那一处**
-// （两块共用一个口径：`PendingPushCandidateService.sumUnpaidAmount` = **该销售单号下
-//  所有 `收款状态 = 未收款` 的金额之和**）。
+// ⚠️ 2026-10-11 晚更新：两块销售候选的金额口径改成 **现算待收**
+//    （`PendingPushCandidateService.pendingAmountOf` = Σ销售明细「实收金额」− 已收 − 待平台结算，
+//     与工作台订单列表**同一个** `progressFromRecords`）。
+//    🔴 为什么换掉旧的"未收款行之和"：扫码建单的「未付」档**不再自动写那条【未收款】**，
+//       拿行合计当金额 ⇒ 未付的单算成 0 ⇒ 这里会渲染成「已付清」——那是给她**错的信息**。
 // ⚠️ 三个分支各有各的口径（业务负责人 2026-10-08 点名的两条 nit）：
 //   · `0`        → 「已付清」（不再渲染「待收 ¥0.00」——那笔其实已付清）；
 //   · 读不出来    → `known:false` ⇒ 调用方**整段不要**（绝不渲染 `¥—`，更不能变成 `¥0.00`：

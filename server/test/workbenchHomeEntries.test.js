@@ -113,7 +113,7 @@ function parseCards(html) {
   });
 }
 
-test('首页【常用功能】：只有【报货与退货】一个采购类入口 —— 标题逐字、点一次直达报货飞书表单', async () => {
+test('首页【常用功能】：**只剩两张卡**（库存手工调整 / 鞋盒标签打印）—— 报货与退货那张已删', async () => {
   const modules = loadFrontendModules();
   const [html, links, home] = await Promise.all([
     render(modules.common, 'createCommonModule'),
@@ -122,33 +122,31 @@ test('首页【常用功能】：只有【报货与退货】一个采购类入�
   ]);
   const cards = parseCards(html);
 
-  // ① 逐字：首页就是这三张卡，顺序也是这个（采购在上 —— 她 2026-10-06：「采购放在库存上面」；
-  //    ⭐ 2026-10-08 新增第三张「鞋盒标签打印」= 她批准的第一个功能，排在最后）。
-  assert.deepEqual(cards.map((card) => card.title), ['报货与退货', '库存手工调整', '鞋盒标签打印'],
-    '首页必须只剩【报货与退货】一个采购类入口，且标题逐字 = 报货与退货');
-  assert.equal(cards.length, 3, '首页卡片数量必须是 3（报货与退货 / 库存手工调整 / 鞋盒标签打印）');
+  // ⚠️ 2026-10-11 **改写**（业务负责人：「那张『报货与退货』卡**直接去掉**，那是死链」）：
+  //    改前：首页三张卡，第一张就是「报货与退货」（href = 报货飞书表单外链）；
+  //    改后：**只剩两张** —— 库存手工调整 / 鞋盒标签打印；**一张采购类卡都没有**。
+  assert.deepEqual(cards.map((card) => card.title), ['库存手工调整', '鞋盒标签打印'],
+    '首页只剩【库存手工调整】+【鞋盒标签打印】两张卡');
+  assert.equal(cards.length, 2, '首页卡片数量必须是 2（报货与退货那张已删）');
 
-  // ② ⭐ 点一次直达：href 逐字等于报货飞书表单 URL（报货与退货现在是同一个表单）。
-  assert.equal(cards[0].href, links.PURCHASE_REQUEST_FORM_URL,
-    '「报货与退货」卡必须直连报货飞书表单（PURCHASE_REQUEST_FORM_URL）');
+  // ① 首页**不再有任何采购类入口**（也不再有指向飞书表单的外链）
+  assert.equal(cards.filter((card) => card.title.includes('报货') || card.title.includes('退货')).length, 0,
+    '首页不许再有「报货与退货」那张卡');
+  assert.equal(cards.filter((card) => card.href.includes('feishu.cn')).length, 0,
+    '首页不再有飞书表单外链入口（那张卡是死链，已删）');
   assert.ok(!cards.some((card) => card.href.includes('purchase-return.html')),
-    '点一次直达表单，首页那张卡不许再指向内页 purchase-return.html');
+    '首页那张卡不许再指向内页 purchase-return.html');
+  assert.deepEqual(cards.map((card) => card.arrow), ['进入 →', '进入 →']);
 
-  // ③ 逐字：没有哪张卡的标题是「退货」（那个独立入口已不在首页）。
-  assert.equal(cards.filter((card) => card.title === '退货').length, 0,
-    '「退货」那张独立卡必须不在首页（报货与退货是同一个表单）');
-  assert.deepEqual(cards.map((card) => card.arrow), ['进入 →', '进入 →', '进入 →']);
-
-  // ④ 配置里也不许再有「退货」那条独立入口；采购那条 id 必须仍是 purchase。
+  // ② 配置里那一条也必须真的删掉（不是渲染层藏起来）
   assert.ok(Array.isArray(home.COMMON_ENTRIES));
-  assert.equal(home.COMMON_ENTRIES.filter((entry) => entry.id === 'purchase-return').length, 0,
-    'COMMON_ENTRIES 里不许有 id = purchase-return 的独立入口');
+  assert.equal(home.COMMON_ENTRIES.some((entry) => entry.id === 'purchase'), false,
+    'COMMON_ENTRIES 里不许再留 id = purchase 的那一条（她：直接去掉）');
   assert.equal(home.COMMON_ENTRIES.filter((entry) => entry.title === '退货').length, 0,
     'COMMON_ENTRIES 里不许有标题为「退货」的独立入口');
-  const purchase = home.COMMON_ENTRIES.find((entry) => entry.id === 'purchase');
-  assert.ok(purchase, 'COMMON_ENTRIES 里必须仍有 id = purchase 的那一条（不许改 id）');
-  assert.equal(purchase.icon, '🛒', 'icon 保持风格一致（🛒）');
-  assert.equal(purchase.arrow, '进入 →', 'arrow 保持风格一致（进入 →）');
+  // ⚠️ 两张表单 URL **一个都没删**（「采购」tab 那两张卡还在用它们，见文件末尾那条哨兵）
+  assert.equal(typeof links.PURCHASE_REQUEST_FORM_URL, 'string');
+  assert.equal(typeof links.PURCHASE_RETURN_FORM_URL, 'string');
 });
 
 test('首页里不出现退货飞书表单 URL（退货独占的外链不在首页）', async () => {
@@ -166,6 +164,9 @@ test('首页里不出现退货飞书表单 URL（退货独占的外链不在首�
     '首页 HTML 里不许出现退货飞书表单 URL');
   assert.ok(!home.COMMON_ENTRIES.some((entry) => entry.href === links.PURCHASE_RETURN_FORM_URL),
     'COMMON_ENTRIES 里不许有哪一条的 href 是退货飞书表单 URL');
+  // ⭐ 2026-10-11：报货表单 URL 同样**不再**出现在首页（那张卡已删）
+  assert.ok(!html.includes(links.PURCHASE_REQUEST_FORM_URL),
+    '首页 HTML 里也不再出现报货飞书表单 URL（那张「报货与退货」卡已删）');
 });
 
 test('首页入口清单是配置驱动的：config/home.js 是唯一清单来源，URL 单一来源 config/links.js', async () => {
@@ -185,11 +186,13 @@ test('首页入口清单是配置驱动的：config/home.js 是唯一清单来�
   assert.deepEqual(parseCards(html).map((card) => card.href), home.COMMON_ENTRIES.map((entry) => entry.href));
   assert.deepEqual(parseCards(html).map((card) => card.title), home.COMMON_ENTRIES.map((entry) => entry.title));
 
-  // ⭐ URL 单一来源：`config/home.js` 只 **import** links.js，**不复制** URL 字面量；
-  //    渲染层更不许写死任何 URL。
+  // ⭐ URL 单一来源：`config/home.js` **不复制** URL 字面量；渲染层更不许写死任何 URL。
+  //    ⚠️ 2026-10-11 改写：首页**已经没有任何外链入口**（报货与退货那张卡删了）⇒
+  //       `config/home.js` 里那个 `import { PURCHASE_REQUEST_FORM_URL } from './links.js'`
+  //       变成了**孤儿**，按纪律一并清掉 ⇒ 这里改成钉"它**不再** import links.js"。
   const homeSource = read('config/home.js');
-  assert.ok(homeSource.includes("from './links.js'"),
-    'config/home.js 必须 import config/links.js（URL 单一来源，不复制字面量）');
+  assert.ok(!homeSource.includes("from './links.js'"),
+    '首页已无外链入口 ⇒ config/home.js 不再 import links.js（孤儿 import 必须清掉）');
   assert.ok(!/feishu\.cn/.test(homeSource),
     'config/home.js 里不许出现飞书表单 URL 字面量（只能从 links.js 引用）');
   assert.ok(!/feishu\.cn/.test(read('features/common/index.js')),

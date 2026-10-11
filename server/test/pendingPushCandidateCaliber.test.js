@@ -201,40 +201,45 @@ test('①【预定】一行里只列「预定 + 未交付」的件：现货那�
   assert.deepEqual(skipped.trade_type_codes, ['SALE_CASH']);
 });
 
-test('①【预定】一单两条未收款 ⇒ 只出一行，金额是**该单所有未收款之和**（不是某一条）', async () => {
+test('①【预定】一单两条未收款 ⇒ 只出一行；金额 = **现算待收**（不是未收款行合计）', async () => {
   const { sales } = await listCandidates({
     salesEntry: [entry('o1')],
-    salesDetail: [detail('d1', 'o1', 'prod_a', { status: '未交付' })],
+    salesDetail: [detail('d1', 'o1', 'prod_a', { status: '未交付', amount: 200 })],
     paymentRecord: [
       payment('p1', 'o1', { status: '未收款', amount: 60 }),
       payment('p2', 'o1', { status: '未收款', amount: 40 }),
-      // 已收款 / 待平台结算的**不算**未收款。
-      payment('p3', 'o1', { status: '已收款', amount: 500 }),
-      payment('p4', 'o1', { status: '待平台结算', amount: 85.4 }),
+      // 已收款 / 待平台结算 = **已经算进来的钱**（现算待收要把它们扣掉）。
+      payment('p3', 'o1', { status: '已收款', amount: 20 }),
+      payment('p4', 'o1', { status: '待平台结算', amount: 30 }),
     ],
     product: PRODUCTS,
   });
   assert.equal(sales.length, 1);
-  assert.equal(sales[0].pendingAmount, 100, '60 + 40（不是 500、也不是成交额 − 已收）');
+  // ⚠️ 2026-10-11 晚**改写**：改前金额 = 「该单未收款行合计」= 60 + 40 = **100**；
+  //    改后 = **现算待收** = Σ实收 200 − 已收 20 − 待平台结算 30 = **150**。
+  //    理由：「未付」档不再自动写那条【未收款】⇒ 拿行合计当金额会算成 0 / 偏小。
+  assert.equal(sales[0].pendingAmount, 150, '现算待收 150（不是未收款行合计 100）');
 });
 
-test('①【预定】金额逐单算：别的单的收款不冲抵这一单的未收款', async () => {
+test('①【预定】金额**逐单**算：别的单的收款不冲抵这一单的待收', async () => {
   const { sales } = await listCandidates({
     salesEntry: [entry('o1'), entry('o2')],
     salesDetail: [
-      detail('d1', 'o1', 'prod_a', { status: '未交付' }),
-      detail('d2', 'o2', 'prod_b', { status: '未交付' }),
+      detail('d1', 'o1', 'prod_a', { status: '未交付', amount: 128 }),
+      detail('d2', 'o2', 'prod_b', { status: '未交付', amount: 500 }),
     ],
     paymentRecord: [
-      payment('p_o2', 'o2', { status: '未收款', amount: 200 }),
-      payment('p_o2_paid', 'o2', { status: '已收款', amount: 999 }),
+      payment('p_o2', 'o2', { status: '未收款', amount: 300 }),
+      payment('p_o2_paid', 'o2', { status: '已收款', amount: 200 }),
     ],
     product: PRODUCTS,
   });
   assert.deepEqual(sales.map((row) => [row.salesEntryRecordId, row.pendingAmount]), [
-    // o1 一分未收（没有收款明细）⇒ 合计 0 ⇒ 渲染层写「已付清」；这一行**照样在**。
-    ['o1', 0],
-    ['o2', 200],
+    // ⚠️ 2026-10-11 晚改写：o1 一分未收、连收款明细都没有 ⇒ 现算待收 = 实收 128
+    //    （**改前是 0** ⇒ 渲染层会给这一行写「已付清」，那是错的）。
+    ['o1', 128],
+    // o2：实收 500 − 已收 200 = 300（o1 的收款绝不会被拿来冲 o2）
+    ['o2', 300],
   ]);
 });
 
@@ -242,33 +247,36 @@ test('①【预定】金额逐单算：别的单的收款不冲抵这一单的�
 // ② 【现货未收】：收款明细里「交易类型 = 现货」且「收款状态 = 未收款」，**一张销售单一行**
 // ═════════════════════════════════════════════════════════════════════════════
 
-test('②【现货未收】一单两条未收款 ⇒ **只出一行**，金额是两条的合计', async () => {
+test('②【现货未收】一单多笔未收款 ⇒ **只出一行**（金额 = 现算待收）', async () => {
   const { cash } = await listCandidates({
     salesEntry: [entry('o1')],
-    salesDetail: [detail('d1', 'o1', 'prod_a', { status: '已交付' })],
+    salesDetail: [detail('d1', 'o1', 'prod_a', { tradeType: 'bhv_cash', status: '已交付', amount: 200.5 })],
     paymentRecord: [
       payment('p1', 'o1', { status: '未收款', amount: 120.5, tradeType: 'bhv_cash' }),
       payment('p2', 'o1', { status: '未收款', amount: 80, tradeType: 'bhv_cash' }),
     ],
     product: PRODUCTS,
   });
-  assert.equal(cash.length, 1, '⭐ 同一单的两条未收款也只有一个销售单号 ⇒ 一行');
+  assert.equal(cash.length, 1, '⭐ 同一单多笔未收款也只有一个销售单号 ⇒ 一行');
   assert.equal(cash[0].rowId, 'o1');
   assert.equal(cash[0].criterion, 'delivered_unpaid');
-  assert.equal(cash[0].pendingAmount, 200.5, '120.5 + 80 = 合计（不是其中一条）');
+  // ⚠️ 2026-10-11 晚改写：判据从"收款行里有一条未收款"改成"**明细里有现货件 且 还没收清**"，
+  //    金额从"未收款行合计"改成"现算待收"（这里两者恰好都是 200.5 —— 数据自洽时应当相等）。
+  assert.equal(cash[0].pendingAmount, 200.5, '现算待收 = Σ实收 200.5 − 已收 0');
 });
 
-test('②【现货未收】按**行为编码**筛：「预定」那条 / 已收款 / 待平台结算都不进', async () => {
+test('②【现货未收】按**明细的**行为编码筛：预定件不进，并留一条 detail_skipped', async () => {
   const logs = captureLogs();
   let result;
   try {
     result = await listCandidates({
       salesEntry: [entry('o1')],
-      // 这一单的明细都**已交付** ⇒ 不属于【预定】（但现货未收那条照样要出）。
-      salesDetail: [detail('d1', 'o1', 'prod_a', { status: '已交付' })],
+      // 两件都**已交付** ⇒ 都不属于【预定】；只有**现货**那一件让这一单进【现货未收】。
+      salesDetail: [
+        detail('d_cash', 'o1', 'prod_a', { tradeType: 'bhv_cash', status: '已交付', amount: 300 }),
+        detail('d_prepaid', 'o1', 'prod_b', { tradeType: 'bhv_prepaid', status: '已交付', amount: 0 }),
+      ],
       paymentRecord: [
-        payment('p_cash', 'o1', { status: '未收款', amount: 300, tradeType: 'bhv_cash' }),
-        payment('p_prepaid', 'o1', { status: '未收款', amount: 50, tradeType: 'bhv_prepaid' }),
         payment('p_paid', 'o1', { status: '已收款', amount: 10, tradeType: 'bhv_cash' }),
         payment('p_settle', 'o1', { status: '待平台结算', amount: 20, tradeType: 'bhv_cash' }),
       ],
@@ -279,12 +287,12 @@ test('②【现货未收】按**行为编码**筛：「预定」那条 / 已收�
   }
   assert.deepEqual(result.cash.map((row) => row.rowId), ['o1']);
   assert.deepEqual(result.sales, [], '明细都已交付 ⇒【预定】为空');
-  // ⚠️ 金额口径是"**该销售单号下所有 `收款状态 = 未收款` 的金额之和**"（她的口径逐字）
-  //    ⇒ 同一单里那笔"预定未收"的 50 **也在内**：这一行说的是"这一单还欠多少钱"。
-  assert.equal(result.cash[0].pendingAmount, 350, '300（现货未收）+ 50（同一单的另一笔未收款）');
-  const skipped = logs.events().find((log) => log.event === 'sales.pending_deal_push.candidate.payment_skipped');
-  assert.ok(skipped, '被判据排除的那条要留一条 info');
-  assert.equal(skipped.payment_record_id, 'p_prepaid');
+  // ⚠️ 2026-10-11 晚改写：判据从"**收款明细**里有一条未收款（交易类型=现货）"改成
+  //    "**明细**里有现货件 且 该单还没收清" ⇒ 金额 = 现算待收（300 − 已收 10 − 待结算 20 = 270）。
+  assert.equal(result.cash[0].pendingAmount, 270, '300 − 10 − 20 = 270');
+  const skipped = logs.events().find((log) => log.event === 'sales.pending_deal_push.candidate.detail_skipped');
+  assert.ok(skipped, '被判据排除的那**件**要留一条 info');
+  assert.equal(skipped.detail_record_id, 'd_prepaid');
   assert.equal(skipped.reason, 'trade_type_not_cash');
   assert.deepEqual(skipped.trade_type_codes, ['SALE_PREPAID']);
 });
@@ -293,28 +301,29 @@ test('②【现货未收】文字 = **该单的明细**（多件并列在同一�
   const { cash } = await listCandidates({
     salesEntry: [entry('o1')],
     salesDetail: [
-      detail('d1', 'o1', 'prod_a', { status: '已交付', size: 'sz_37' }),
-      detail('d2', 'o1', 'prod_b', { status: '已交付', size: 'sz_43' }),
+      detail('d1', 'o1', 'prod_a', { tradeType: 'bhv_cash', status: '已交付', amount: 100, size: 'sz_37' }),
+      detail('d2', 'o1', 'prod_b', { tradeType: 'bhv_cash', status: '已交付', amount: 200, size: 'sz_43' }),
     ],
-    paymentRecord: [payment('p1', 'o1', { status: '未收款', amount: 300 })],
+    // ⚠️ 2026-10-11 晚起判据看**明细**（不再看收款行）⇒ 这里连一条收款明细都不需要。
+    paymentRecord: [],
     product: PRODUCTS,
   });
   assert.equal(cash.length, 1);
   assert.deepEqual(itemsOf(cash[0]), ['B26002-52 黑色 37', '6A637-7 白色 43']);
 });
 
-test('②【现货未收】收款明细的「交易类型」是**查表引用**（格里是文字）也认得出编码', async () => {
+test('②【现货未收】**明细**的「交易类型」是查表引用（格里是文字）也认得出编码', async () => {
   const { cash } = await listCandidates({
     salesEntry: [entry('o1')],
-    salesDetail: [detail('d1', 'o1', 'prod_a', { status: '已交付' })],
-    paymentRecord: [
-      payment('p_ref_cash', 'o1', { status: '未收款', amount: 100, tradeType: { text: '现货' } }),
-      payment('p_ref_prepaid', 'o1', { status: '未收款', amount: 20, tradeType: { text: '预定' } }),
+    salesDetail: [
+      detail('d1', 'o1', 'prod_a', { tradeType: { text: '现货' }, status: '已交付', amount: 100 }),
+      detail('d2', 'o1', 'prod_b', { tradeType: { text: '预定' }, status: '已交付', amount: 30 }),
     ],
+    paymentRecord: [],
     product: PRODUCTS,
   });
   assert.deepEqual(cash.map((row) => row.rowId), ['o1'], '查表引用形状照进【现货未收】');
-  assert.equal(cash[0].pendingAmount, 120, '同一单两条未收款之和（100 + 20）');
+  assert.equal(cash[0].pendingAmount, 130, '现算待收 = 100 + 30（两件都没收钱）');
 });
 
 test('② 判据读得到但**按文字认不出编码** ⇒ 进候选 + 记 warn（宁可不丢单）', async () => {
@@ -323,15 +332,18 @@ test('② 判据读得到但**按文字认不出编码** ⇒ 进候选 + 记 war
   try {
     result = await listCandidates({
       salesEntry: [entry('o1')],
-      salesDetail: [detail('d1', 'o1', 'prod_a', { status: '已交付' })],
       // 真表上出现一个**没见过的**说法（换过名字 / 新加的行为）⇒ 编码认不出来。
-      paymentRecord: [payment('p1', 'o1', { status: '未收款', amount: 66, tradeType: { text: '门市' } })],
+      salesDetail: [detail('d1', 'o1', 'prod_a', {
+        status: '已交付', amount: 66, tradeType: { text: '门市' },
+      })],
+      paymentRecord: [],
       product: PRODUCTS,
     });
   } finally {
     logs.restore();
   }
-  assert.deepEqual(result.cash.map((row) => row.rowId), ['o1']);
+  assert.deepEqual(result.cash.map((row) => row.rowId), ['o1'], '认不出编码 ⇒ 照进（不静默丢单）');
+  assert.equal(result.cash[0].pendingAmount, 66);
   assert.ok(logs.events().some((log) => log.event === 'sales.pending_deal_push.candidate.trade_type_unreadable'));
 });
 
@@ -401,21 +413,24 @@ test('④【预定】按**销售明细的销售日**判 7 天窗口：第 7 天�
   assert.deepEqual(sales.map((row) => row.salesEntryRecordId), ['o1']);
 });
 
-test('④【现货未收】按**收款明细的创建时间**判 7 天窗口（不是销售日）', async () => {
+test('④【现货未收】按**销售明细的销售日**判 7 天窗口（与【预定】同一列）', async () => {
+  // ⚠️ 2026-10-11 晚**改写**：这一块原来看"**收款明细**的创建时间"判窗口；
+  //    可"未付"档已经不再自动写那条【未收款】⇒ **没有收款行可看** ⇒ 改成与【预定】
+  //    一样按**销售明细的销售日**判（同一张表、同一列，口径统一）。
   const { cash } = await listCandidates({
-    salesEntry: [entry('o1')],
-    salesDetail: [detail('d1', 'o1', 'prod_a', { status: '已交付', soldAt: atShanghai('2026-09-01') })],
-    paymentRecord: [
-      payment('p_in', 'o1', { status: '未收款', amount: 10, createdAt: atShanghai('2026-10-03') }),
-      payment('p_out', 'o1', { status: '未收款', amount: 20, createdAt: atShanghai('2026-09-30') }),
+    salesEntry: [entry('o1'), entry('o2')],
+    salesDetail: [
+      detail('d1', 'o1', 'prod_a', {
+        tradeType: 'bhv_cash', status: '已交付', amount: 10, soldAt: atShanghai('2026-10-02'),
+      }),
+      detail('d2', 'o2', 'prod_b', {
+        tradeType: 'bhv_cash', status: '已交付', amount: 20, soldAt: atShanghai('2026-10-01'),
+      }),
     ],
+    paymentRecord: [],
     product: PRODUCTS,
   });
-  // 销售日是 09-01（早就出了 7 天窗）但收款创建时间在窗内 ⇒ **照进**。
-  assert.deepEqual(cash.map((row) => row.rowId), ['o1']);
-  // ⚠️ 窗口只管"这单出不出现在这一块"；**金额**仍是"该销售单号下所有未收款之和"
-  //    （她的口径逐字，没有加窗口限定）⇒ 窗口外那 20 也算在这一单的未收款里。
-  assert.equal(cash[0].pendingAmount, 30);
+  assert.deepEqual(cash.map((row) => row.rowId), ['o1'], '第 7 天在、第 8 天不在（销售日判窗口）');
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -443,14 +458,14 @@ test('⑤【预定】交易类型**那一格没值** ⇒ 照进候选 + 一条 w
   assert.equal(warned.trade_type_field, '交易类型');
 });
 
-test('⑤【现货未收】交易类型**那一格没值** ⇒ 照进候选 + 一条 warn（不静默丢单）', async () => {
+test('⑤【现货未收】**明细**的交易类型那一格没值 ⇒ 照进候选 + 一条 warn（不静默丢单）', async () => {
   const logs = captureLogs();
   let result;
   try {
     result = await listCandidates({
       salesEntry: [entry('o1')],
-      salesDetail: [detail('d1', 'o1', 'prod_a', { status: '已交付' })],
-      paymentRecord: [payment('p1', 'o1', { status: '未收款', amount: 66, tradeType: null })],
+      salesDetail: [detail('d1', 'o1', 'prod_a', { tradeType: null, status: '已交付', amount: 66 })],
+      paymentRecord: [],
       product: PRODUCTS,
     });
   } finally {
@@ -460,7 +475,7 @@ test('⑤【现货未收】交易类型**那一格没值** ⇒ 照进候选 + �
   assert.equal(result.cash[0].pendingAmount, 66);
   const warned = logs.events().find((log) => log.event === 'sales.pending_deal_push.candidate.trade_type_unreadable');
   assert.ok(warned, '读不到就要留一条 warn');
-  assert.deepEqual(warned.payment_record_ids, ['p1']);
+  assert.deepEqual(warned.detail_record_ids, ['d1']);
 });
 
 test('⑤「行为管理」读不到（关联形状换不出编码）⇒ 照样照推 + warn，绝不静默丢单', async () => {
@@ -483,15 +498,17 @@ test('⑤「行为管理」读不到（关联形状换不出编码）⇒ 照样�
   assert.ok(logs.events().some((log) => log.event === 'sales.pending_deal_push.candidate.trade_type_unreadable'));
 });
 
-test('⑤ 未收款那笔的金额读不出来 ⇒ 行**照出**、金额留空（null）+ 一条 warn', async () => {
+test('⑤ 金额**算不出来**（收款状态认不出）⇒ 行照出、金额留空（null）+ 一条 warn', async () => {
   const logs = captureLogs();
   let result;
   try {
     result = await listCandidates({
       salesEntry: [entry('o1')],
-      salesDetail: [detail('d1', 'o1', 'prod_a', { status: '未交付' })],
-      // 未收款那一笔没填金额 ⇒ 合计算不出来（少算一笔也是错的）。
-      paymentRecord: [payment('p1', 'o1', { status: '未收款', amount: '' })],
+      salesDetail: [detail('d1', 'o1', 'prod_a', { status: '未交付', amount: 128 })],
+      // ⚠️ 2026-10-11 晚**改写**：改前"金额读不出来"指的是"那条未收款行没填金额"；
+      //    现在金额走 `progressFromRecords`（现算待收），它遇到**认不出的收款状态**会当场抛
+      //    ⇒ 这一行金额留空（**绝不吞成 0**，也绝不说「已付清」）。
+      paymentRecord: [payment('p1', 'o1', { status: '说不清的状态', amount: 10 })],
       product: PRODUCTS,
     });
   } finally {
@@ -520,7 +537,8 @@ test('⑤ 货号取不到 ⇒ 那一行仍然产出（`facts` 为空，渲染层
   }
   assert.equal(result.sales.length, 1, '取不到货号也不许把这一行丢掉');
   assert.deepEqual(result.sales[0].facts, []);
-  assert.equal(result.sales[0].pendingAmount, 0);
+  // ⚠️ 2026-10-11 晚改写：改前这里断言 0（未收款行合计）；现在金额 = 现算待收 = 实收 128。
+  assert.equal(result.sales[0].pendingAmount, 128);
   assert.ok(logs.events().some((log) => log.event === 'sales.pending_deal_push.candidate.items_incomplete'));
 });
 
@@ -596,8 +614,12 @@ test('⑥ 两块都没有候选 ⇒ 两块都是空；**空块整块不出现**�
 test('⑥ 只有【现货未收】有行时，【预定】那一块**整块不出现**', async () => {
   const { sales, cash } = await listCandidates({
     salesEntry: [entry('o1')],
-    salesDetail: [detail('d1', 'o1', 'prod_a', { status: '已交付' })],
-    paymentRecord: [payment('p1', 'o1', { status: '未收款', amount: 100 })],
+    salesDetail: [
+      // 现货那一件（已交付）+ 预定那一件（**也已交付**）⇒【预定】没有候选。
+      detail('d1', 'o1', 'prod_a', { tradeType: 'bhv_cash', status: '已交付', amount: 100 }),
+      detail('d2', 'o1', 'prod_b', { tradeType: 'bhv_prepaid', status: '已交付', amount: 0 }),
+    ],
+    paymentRecord: [],
     product: PRODUCTS,
   });
   assert.deepEqual(sales, [], '【预定】没有候选');
@@ -637,42 +659,31 @@ test('⑥ 交易类型是**查表引用文字**时不去读「行为管理」（
 // ⑦ 配置先行：判据是**行为编码**（不是中文）、且不写死在逻辑里
 // ═════════════════════════════════════════════════════════════════════════════
 
-test('⑦ 判据取值来自配置：交易类型是**行为编码**，履约/收款状态沿用既有常量', () => {
-  const defaults = resolvePendingPushCandidateConfig({});
-  assert.equal(defaults.undeliveredStatus, '未交付');
-  assert.equal(defaults.deliveredStatus, '已交付');
-  assert.equal(defaults.unpaidPaymentStatus, '未收款');
-  assert.equal(defaults.platformPendingPaymentStatus, '待平台结算');
-  assert.equal(defaults.prepaidTradeTypeCode, 'SALE_PREPAID');
-  assert.equal(defaults.cashTradeTypeCode, 'SALE_CASH');
-  // 编码与「行为管理」注册表**同一处**（不新造编码）。
-  assert.deepEqual(Object.keys(SALES_MOVEMENTS).sort(), ['SALE_CASH', 'SALE_PREPAID']);
-  assert.ok(SALES_MOVEMENTS[defaults.prepaidTradeTypeCode]);
-  assert.ok(SALES_MOVEMENTS[defaults.cashTradeTypeCode]);
-});
-
 test('⑦ 判据按编码比：把两个编码对调，两块跟着换（逻辑里没有写死）', async () => {
   const seed = {
     salesEntry: [entry('o1')],
-    salesDetail: [detail('d1', 'o1', 'prod_a', { status: '未交付', tradeType: 'bhv_prepaid' })],
-    paymentRecord: [
-      payment('p_cash', 'o1', { status: '未收款', amount: 10, tradeType: 'bhv_cash' }),
-      payment('p_prepaid', 'o1', { status: '未收款', amount: 20, tradeType: 'bhv_prepaid' }),
+    salesDetail: [
+      detail('d1', 'o1', 'prod_a', { status: '未交付', tradeType: 'bhv_prepaid', amount: 30 }),
+      detail('d2', 'o1', 'prod_b', { status: '已交付', tradeType: 'bhv_cash', amount: 10 }),
     ],
+    paymentRecord: [],
     product: PRODUCTS,
   };
   const defaults = await listCandidates(seed);
   assert.deepEqual(defaults.sales.map((row) => row.rowId), ['o1'], '预定那件进【预定】');
-  assert.deepEqual(defaults.cash.map((row) => row.rowId), ['o1'], '现货那笔进【现货未收】');
+  assert.deepEqual(defaults.cash.map((row) => row.rowId), ['o1'], '现货那件进【现货未收】');
 
   // 把两个编码对调（模拟"行为表里的编码改了、配置跟着改"）。
   const swapped = resolvePendingPushCandidateConfig({});
   const { sales, cash } = await listCandidates(seed, {
     settings: { ...swapped, prepaidTradeTypeCode: 'SALE_CASH', cashTradeTypeCode: 'SALE_PREPAID' },
   });
-  assert.deepEqual(sales, [], '没有 `SALE_CASH` 的明细 ⇒【预定】空');
-  assert.deepEqual(cash.map((row) => row.rowId), ['o1'], '`SALE_PREPAID` 那笔未收款改由【现货未收】收');
+  // 对调之后：`SALE_CASH` 那件成了"预定"，但它**已交付** ⇒【预定】空；
+  // `SALE_PREPAID` 那件成了"现货"（未交付也算现货件）⇒ 由【现货未收】收。
+  assert.deepEqual(sales, [], '按新编码：`SALE_CASH` 那件是"预定"但已交付 ⇒【预定】空');
+  assert.deepEqual(cash.map((row) => row.rowId), ['o1'], '`SALE_PREPAID` 那件改由【现货未收】收');
 });
+
 
 test('⑦ 报货日 / 录入数量：`PurchasePendingBatchService` 只多带字段，不改候选判据', async () => {
   const { PurchasePendingBatchService } = require('../src/services/purchasePendingBatchService');
@@ -700,4 +711,88 @@ test('⑦ 报货日 → 上海自然日：跨 UTC 日界的那个凌晨仍算**�
   assert.equal(service.formatReportedAt(Date.parse('2026-10-05T00:30:00+08:00')), '2026-10-05');
   assert.equal(service.formatReportedAt(''), '', '读不到 ⇒ 空串（渲染层给占位）');
   assert.equal(service.formatReportedAt(undefined), '');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-11 晚（业务负责人真机卡住之后）：**金额口径从「未收款行合计」改成「现算待收」**
+//
+// 起因（逐字）：2026-10-11 晚扫码建单的「未付」档改成**不再自动写那条【未收款】**，
+//   而这两块候选的金额一直取"该单未收款行之和" ⇒ **未付的单会算成 0、在推送里显示成
+//   「已付清」**（`pendingDealPushService` 的 `amountValueOf`：0 ⇒ `paidUpText`）。
+//   ⚠️ 9 点推送是业务负责人明确要保住的功能（她：「每天 9 点定时推送的卡片还是需要啊！」）
+//   ⇒ **不能让推送给她错的信息**。
+//
+// 改后口径（唯一权威）：
+//   · **金额** = `progressFromRecords(...).pendingAmount`（**与工作台订单列表同一个口径**：
+//     Σ销售明细「实收金额」− 已收 − 待平台结算）；
+//   · 【现货未收】的**判据** = 该单在 7 天窗口内**有现货件**（`SALE_CASH`）**且还有待收**
+//     —— 不再看"有没有那条未收款行"；
+//   · 实收留空 / 数据脏 ⇒ 金额算不出来 ⇒ **行照出、金额段不渲染**（**绝不说「已付清」**）。
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('⭐ 2026-10-11【现货未收】：未付的单（**一条未收款行都没有**）⇒ 照样进提醒，金额 = 现算待收', async () => {
+  // 她现场的形状：一条现货明细、实收 128、**收款明细一条都没有**（未付档不再写【未收款】）
+  const { cash } = await listCandidates({
+    salesEntry: [entry('o1')],
+    salesDetail: [detail('d1', 'o1', 'prod_a', { tradeType: 'bhv_cash', status: '已交付', amount: 128 })],
+    paymentRecord: [],
+  });
+  assert.equal(cash.length, 1,
+    '未付（没有未收款行）的单**必须照样进**【现货未收】—— 改前它算不出未收款合计、这一块直接没有它');
+  assert.equal(cash[0].pendingAmount, 128,
+    '金额 = 现算待收（Σ实收 128 − 已收 0），**不是**未收款行合计（0 ⇒ 会被渲染成「已付清」）');
+});
+
+test('⭐ 2026-10-11【现货未收】：真的收清了（实收 = 已收）⇒ **不进**提醒（也就不会显示"已付清"）', async () => {
+  const { cash } = await listCandidates({
+    salesEntry: [entry('o1')],
+    salesDetail: [detail('d1', 'o1', 'prod_a', { tradeType: 'bhv_cash', status: '已交付', amount: 128 })],
+    paymentRecord: [payment('p1', 'o1', { status: '已收款', amount: 128, tradeType: 'bhv_cash' })],
+  });
+  assert.deepEqual(cash, [], '收清了 ⇒ 不进【现货未收】（"已付清"只在 pendingAmount === 0 时才该出现）');
+});
+
+test('⭐ 2026-10-11【现货未收】：部分付 ⇒ 金额 = **剩余待收**（不是全款）', async () => {
+  const { cash } = await listCandidates({
+    salesEntry: [entry('o1')],
+    salesDetail: [detail('d1', 'o1', 'prod_a', { tradeType: 'bhv_cash', status: '已交付', amount: 300 })],
+    paymentRecord: [
+      payment('p1', 'o1', { status: '已收款', amount: 200, tradeType: 'bhv_cash' }),
+      payment('p2', 'o1', { status: '未收款', amount: 100, tradeType: 'bhv_cash' }),
+    ],
+  });
+  assert.equal(cash.length, 1);
+  assert.equal(cash[0].pendingAmount, 100, '待收 = 300 − 200 = 100（剩余那部分）');
+});
+
+test('⭐ 2026-10-11【现货未收】：实收**留空**⇒ 行照出、金额**算不出来**（不渲染金额段，绝不说"已付清"）', async () => {
+  const detailNoAmount = detail('d1', 'o1', 'prod_a', { tradeType: 'bhv_cash', status: '已交付' });
+  detailNoAmount.fields['实收金额'] = '';            // 方案甲：她没填 ⇒ 那一列留空
+  const { cash } = await listCandidates({ salesEntry: [entry('o1')], salesDetail: [detailNoAmount], paymentRecord: [] });
+  assert.equal(cash.length, 1, '还没填实收的单**更要提醒**（行照出）');
+  assert.equal(cash[0].pendingAmount, null, '算不出来 ⇒ `null`（渲染层整段不渲染金额，**不是 0**）');
+});
+
+test('⭐ 2026-10-11【预定】：金额改成现算待收 ⇒ 未付（无未收款行）的单显示"还欠 X"，不再算成 0', async () => {
+  const { sales } = await listCandidates({
+    salesEntry: [entry('o1')],
+    salesDetail: [detail('d1', 'o1', 'prod_a', { tradeType: 'bhv_prepaid', status: '未交付', amount: 128 })],
+    paymentRecord: [],
+  });
+  assert.equal(sales.length, 1, '预定 + 未交付 ⇒ 照旧出一行');
+  assert.equal(sales[0].pendingAmount, 128,
+    '金额 = 现算待收（128），**不是**未收款行合计（0 ⇒ 「已付清」）');
+});
+
+test('⭐ 2026-10-11【预定】：部分付 ⇒ 显示**剩余待收**（现算，不是那一条未收款行的金额）', async () => {
+  const { sales } = await listCandidates({
+    salesEntry: [entry('o1')],
+    salesDetail: [detail('d1', 'o1', 'prod_a', { tradeType: 'bhv_prepaid', status: '未交付', amount: 500 })],
+    paymentRecord: [
+      payment('p1', 'o1', { status: '已收款', amount: 300, tradeType: 'bhv_prepaid' }),
+      payment('p2', 'o1', { status: '未收款', amount: 200, tradeType: 'bhv_prepaid' }),
+    ],
+  });
+  assert.equal(sales.length, 1);
+  assert.equal(sales[0].pendingAmount, 200, '待收 = 500 − 300 = 200');
 });

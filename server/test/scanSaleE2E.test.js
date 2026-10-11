@@ -27,6 +27,10 @@
  *            流水只多 1 条且只关联现货那一行）。
  *  AC-E2E-6 **幂等**：同一把提交键**连点两次（含并发）**⇒ 只建一张单、只扣一次库存。
  *  AC-E2E-7 **提交后本单归零**：再打开那一页 ⇒ `本单：0 双`，**本单条上不再渲染【提交这一单】**。
+ *  AC-E2E-8 ⭐⭐ **她真机卡住的那一步（回归）**：扫码建单 ——
+ *            **只填了每件实收、收款一行都没填**（线上日志 `scan.sale.amount_mismatch
+ *            items_cents=9900 payments_cents=0`）以及**什么都不填** ⇒ **一定能提交成单**；
+ *            而且**不会**自动冒出一条【未收款】。
  * ─────────────────────────────────────────────────────────────────────────
  */
 const test = require('node:test');
@@ -566,6 +570,65 @@ test('AC-E2E-7 提交后本单归零：再打开 ⇒ 本单：0 双，本单条�
       assert.equal(bar.includes(SCAN_WRITE.texts.submitButton), false,
         '第3步：没有草稿 ⇒ 本单条上不再渲染【提交这一单】（不是灰按钮）');
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第3步：表里仍然只有那一张单');
+    });
+  } finally { e2e.cleanup(); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-E2E-8 ⭐⭐ 她真机卡住的那一步（回归）：
+//   「只有一笔单子，一直提交不了」（线上日志 `scan.sale.amount_mismatch
+//    payment_status="全付" items_cents=9900 payments_cents=0`）
+//   ⇒ 扫码建单：**只填实收 / 什么都不填** 都必须能提交成单。
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-E2E-8 ⭐ 只填实收（或什么都不填）⇒ **一定能提交成单**；不会自动冒出一条【未收款】', async () => {
+  login();
+  const e2e = createE2E();
+  try {
+    await withServer(e2e.app, async (base) => {
+      // ── 第一单：她**只填了每件实收**、收款一行都没填（线上卡的正是这一种）────────
+      const cookie1 = sessionCookie('ou_e2e_8a');
+      await getPage(pageUrlOf(base, NUMBER_A), cookie1);
+      await addLine(base, cookie1, NUMBER_A, '40');            // 现货
+      const page1 = await getPage(pageUrlOf(base, NUMBER_A), cookie1);
+      const key1 = submitKeyOf(page1.html);
+      // 表单**原样**提交：付款情况 = 页面上预选的那一档（现在是「未付」）+ 每件实收 99、收款行空
+      const first = await postForm(pageUrlOf(base, NUMBER_A), cookie1, {
+        action: SCAN_WRITE.actions.submitOrder, submit_key: key1,
+        payment_status: PAYMENT_STATUS.unpaid,
+        payment_method: '', payment_amount: '',
+        line_amount: ['99'],
+      });
+      const firstHtml = await first.text();
+      assert.equal(first.status, 200,
+        `第1步：**只填实收也要能提交**（她卡的就是这一步）：${firstHtml.slice(0, 300)}`);
+      assert.match(firstHtml, /这一单提交好了/, '第1步：给她"提交好了"那一页');
+      assert.match(firstHtml, /明细：1 双（每双一行）/, '第1步：结果页上有双数');
+      assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第1步：单子建出来了');
+      assert.equal(rowsOf(e2e, 'salesDetail')[0].fields[F('salesDetail', 'actualAmount')], 99,
+        '第1步：她填的实收照旧落表');
+      assert.equal(rowsOf(e2e, 'paymentRecord').length, 0,
+        '第1步：**不会**自动冒出一条【未收款】（她没说欠钱）');
+
+      // ── 第二单：**什么都不填**（每件实收空 + 收款空）──────────────────────────
+      const cookie2 = sessionCookie('ou_e2e_8b');
+      await getPage(pageUrlOf(base, NUMBER_B), cookie2);
+      await addLine(base, cookie2, NUMBER_B, '41');
+      const page2 = await getPage(pageUrlOf(base, NUMBER_B), cookie2);
+      const second = await postForm(pageUrlOf(base, NUMBER_B), cookie2, {
+        action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page2.html),
+        payment_status: PAYMENT_STATUS.unpaid,
+        payment_method: '', payment_amount: '', line_amount: [''],
+      });
+      const secondHtml = await second.text();
+      assert.equal(second.status, 200, `第2步：什么都不填也要能提交：${secondHtml.slice(0, 300)}`);
+      assert.match(secondHtml, /这一单提交好了/, '第2步：给她"提交好了"那一页');
+      assert.equal(rowsOf(e2e, 'salesEntry').length, 2, '第2步：第二张单也建出来了');
+      assert.equal(rowsOf(e2e, 'paymentRecord').length, 0, '第2步：一条收款明细都没有');
+      // 第3步：两张单都**不缺货那一半**（钱可以待补充，货不能丢）
+      assert.equal(rowsOf(e2e, 'salesDetail').length, 2, '第3步：两张单各 1 行明细');
+      assert.equal(rowsOf(e2e, 'liveInventory').length, 0,
+        '第3步：现货那一双照旧提交即交付、库存扣掉');
     });
   } finally { e2e.cleanup(); }
 });
