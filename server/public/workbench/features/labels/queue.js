@@ -22,9 +22,12 @@ export const QUEUE_FALLBACK_TEXTS = {
   online: '打印电脑在线',
   offline: '未连接（任务已排队，打开小助手就会打）',
   printBatch: '打印到店里那台电脑',
+  // ⭐ 2026-10-11：**她真想再打一份**的路 —— 这个按钮带 `again=1`，**绕过**防连点窗口。
+  printBatchAgain: '再打一份',
   refresh: '刷新状态',
   lastJobPrefix: '最近一次：',
   enqueuedTitle: '已提交打印',
+  duplicatedBanner: '刚刚已经发过一次：本次 {count} 张（没有重复提交）',
   unavailable: '打印服务暂时不可用，稍后再试',
 };
 
@@ -33,7 +36,16 @@ export function queueBarHtml() {
   return `
       <div class="label-queue-bar" data-view="queue-bar">
         <button class="btn btn-primary" type="button" data-action="queue-print" disabled>打印到店里那台电脑</button>
+        <button class="btn" type="button" data-action="queue-again" disabled>再打一份</button>
         <button class="btn btn-ghost" type="button" data-action="queue-refresh">刷新状态</button>
+        <label class="queue-rotate">打印方向
+          <select data-field="queue-rotate" data-view="queue-rotate">
+            <option value="">跟随服务器设置</option>
+            <option value="90">90°</option>
+            <option value="180">180°</option>
+            <option value="270">270°</option>
+          </select>
+        </label>
         <span class="queue-badge" data-view="queue-badge"></span>
       </div>
       <p class="label-notice" data-view="queue-notice"></p>
@@ -74,23 +86,38 @@ export function createLabelQueuePanel({ api, onError = () => {} } = {}) {
     // ⚠️ 没查到可打印的标签时不许点（与旁边那颗「打印这些标签」同一条口径）。
     hasLabels: false,
     notice: '',
+    // ⭐ 幂等键：**一批查询结果一个 key**（同一批连点 ⇒ 服务端只建一个任务）。
+    //   每次查询成功由 `setBatchKey` 换新（= 新的一批 = 一次新的提交意图）。
+    batchKey: '',
   };
   let root = null;
   let getFilters = () => ({});
 
   const pick = (name) => (root ? root.querySelector(`[data-action="${name}"]`) : null);
   const view = (name) => (root ? root.querySelector(`[data-view="${name}"]`) : null);
+  /** 选中的打印方向（'' = 跟随服务器配置）。 */
+  const currentRotate = () => {
+    const select = view('queue-rotate');
+    return select ? String(select.value || '') : '';
+  };
 
   function render() {
     if (!root) return;
     const button = pick('queue-print');
+    const againButton = pick('queue-again');
     const badge = view('queue-badge');
     const jobs = view('queue-jobs');
     const notice = view('queue-notice');
+    const canClick = state.online !== null && !state.submitting && state.hasLabels;
     if (button) {
       button.textContent = state.texts.printBatch;
       // ⚠️ 状态还没拿到之前**不许点**（免得提交到一个"不知道在不在线"的队列上，让她以为没反应）。
-      button.disabled = state.online === null || state.submitting || !state.hasLabels;
+      button.disabled = !canClick;
+    }
+    if (againButton) {
+      // ⭐ 「再打一份」= **她明确知道刚打过、还要再打一份**（绕过防连点窗口）。
+      againButton.textContent = state.texts.printBatchAgain;
+      againButton.disabled = !canClick;
     }
     if (badge) {
       badge.textContent = state.online === null ? '' : queueBadgeText({ online: state.online }, state.texts);
@@ -118,19 +145,28 @@ export function createLabelQueuePanel({ api, onError = () => {} } = {}) {
     }
   }
 
-  async function submit() {
+  /** `again = true` ⇒ 明确表达"再打一份"（服务端会绕过防连点窗口）。 */
+  async function submit({ again = false } = {}) {
     if (!root || state.submitting) return null;
     state.submitting = true;
     state.notice = '';
     render();
     try {
+      const rotate = currentRotate();
       const result = await api.post('/api/workbench/label-print/jobs', {
         mode: 'batch',
         filters: getFilters(),
+        // 同一批查询结果用同一个 key ⇒ 连点只建一个任务。
+        submit_key: state.batchKey,
+        ...(again ? { again: true } : {}),
+        // ⭐ 打印方向：空 = 跟随服务器配置；选了就只对这一次生效（试 90°/270° 用，不用重启）。
+        ...(rotate ? { rotate } : {}),
       });
       await refresh();
-      // 提交了就说提交了几张（**不静默**）。
-      state.notice = submittedText(result, state.texts);
+      // 提交了就说提交了几张（**不静默**）；命中去重就**说清楚没有重复提交**（她上次就是不知道才连点的）。
+      state.notice = result?.reused
+        ? filledText(state.texts.duplicatedBanner, { count: result.total_labels ?? 0 })
+        : submittedText(result, state.texts);
       return result;
     } catch (error) {
       onError(error);
@@ -147,13 +183,19 @@ export function createLabelQueuePanel({ api, onError = () => {} } = {}) {
       root = container;
       getFilters = filtersProvider || (() => ({}));
       const printButton = pick('queue-print');
+      const againButton = pick('queue-again');
       const refreshButton = pick('queue-refresh');
       if (printButton) printButton.addEventListener('click', () => { void submit(); });
+      if (againButton) againButton.addEventListener('click', () => { void submit({ again: true }); });
       if (refreshButton) refreshButton.addEventListener('click', () => { void refresh(); });
       render();
     },
     refresh,
     submit,
+    /** 每次查询成功换一把新 key（同一批结果 = 同一个提交意图）。 */
+    setBatchKey(key) {
+      state.batchKey = String(key || '');
+    },
     setEnabled(hasLabels) {
       // 没有可打印的标签时，按钮一起挂起（与旁边那颗「打印这些标签」同一条口径）。
       state.hasLabels = Boolean(hasLabels);
@@ -161,6 +203,13 @@ export function createLabelQueuePanel({ api, onError = () => {} } = {}) {
     },
     render,
   };
+}
+
+/** 文案模板填充（`{count}`）。认不出的占位符**原样留着**（不静默吞掉）。 */
+export function filledText(template, values = {}) {
+  return String(template ?? '').replace(/\{(\w+)\}/g, (match, key) => (
+    Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match
+  ));
 }
 
 /** 提交成功后给她看的那一句（**不静默**：提交了就说提交了几张）。 */

@@ -283,19 +283,30 @@ const createScanPageRouter = (options = {}) => {
   };
 
   /**
-   * 渲染「货品」领域要的**打印上下文**（只放事实：在线与否 + 这一款最近一次任务 + 文案 + 回跳）。
+   * 渲染「货品」领域要的**打印上下文**（只放事实：在线与否 + 本次/最近一次任务 + 文案 + 回跳）。
+   *
+   * ⭐⭐ 2026-10-11 真机反馈（「点完没有反馈 ⇒ 她以为没点上、连点几次 ⇒ 多打了好几张」）之后：
+   *    · `submitted`（`?printed=1&job=<id>`）⇒ 渲染层出**显眼横幅**：
+   *      「✅ 已发送给打印电脑：本次 N 张」+ 在线/未连接 + 「已提交，不用重复点」；
+   *      N 与状态**从那条任务上读**（`jobId`）—— 不是页面上猜的。
+   *    · `duplicated`（`?dup=1&job=<id>`，= 去重窗口内又点了一次）⇒ 横幅改成
+   *      「刚刚已经发过一次：本次 N 张（没有重复提交）」+ 一句"确实要再打一张"+
+   *      **【再打一张】** 按钮（带 `again=1`，绕过窗口）。
    *
    * ⚠️ **绝不让这一页因为打印链路坏掉而空白**：队列不可用 ⇒ `enabled: false`，
    *    渲染层如实说一句"打印服务暂时不可用" + 保留原来那两条链接（人话，不是白屏）。
    */
-  const buildPrintContext = async (number, realm, { requestId, submitted } = {}) => {
+  const buildPrintContext = async (number, realm, { requestId, submitted, duplicated, jobId } = {}) => {
     const texts = LABEL_PRINT_QUEUE.texts;
     const base = {
       enabled: true,
       submitted: Boolean(submitted),
+      duplicated: Boolean(duplicated),
       postAction: postActionFor(number, realm),
       actionField: writeConfig.fields.action,
       actionValue: writeConfig.actions.printLabel,
+      submitKeyField: LABEL_PRINT_QUEUE.submitKeyField,
+      againField: LABEL_PRINT_QUEUE.againField,
       texts,
     };
     try {
@@ -303,16 +314,22 @@ const createScanPageRouter = (options = {}) => {
       if (typeof queue.isEnabled === 'function' && !queue.isEnabled()) {
         return { ...base, enabled: false };
       }
-      const [status, job] = await Promise.all([
+      const [status, latest] = await Promise.all([
         queue.status(),
         queue.latestJobForNumber(number),
       ]);
+      // 本次（刚提交的那一条）优先：横幅上的"N 张"要跟**她刚点的那一次**对得上。
+      const justNow = jobId ? await queue.getJob(jobId).catch(() => null) : null;
+      // ⚠️ 只认"这一条任务确实是这一款"的 —— URL 里的 job 参数是手改得了的，不许拿来显示别的款。
+      const mine = justNow && Array.isArray(justNow.numbers) && justNow.numbers.includes(number) ? justNow : null;
       return {
         ...base,
         online: Boolean(status.online),
         last_seen_at: status.last_seen_at || '',
         count_queued: status.counts?.queued || 0,
-        job,
+        // 横幅用"刚提交的那一条"（拿不到就退回最近一次 —— 至少不是空白）。
+        banner_job: mine ? queue.summaryOf(mine) : null,
+        job: mine ? queue.summaryOf(mine) : latest,
       };
     } catch (error) {
       logError('scan.label_print.ready_failed', { request_id: requestId, error: error.message });
@@ -613,6 +630,8 @@ const createScanPageRouter = (options = {}) => {
         ? await buildPrintContext(view.number, realm, {
           requestId,
           submitted: String(req.query?.printed || '') === '1',
+          duplicated: String(req.query?.dup || '') === '1',
+          jobId: String(req.query?.job || '').trim(),
         })
         : null;
       // ⭐ 2026-10-11：把 UA 交给渲染层 —— 它只用来决定本单条上【继续扫下一个】
@@ -663,16 +682,28 @@ const createScanPageRouter = (options = {}) => {
     //    刷新不会重复提交），状态由 GET 重新渲染。
     if (action === actions.printLabel) {
       const number = decodeURIComponent(String(req.params.number || '')).trim();
+      // ⭐ 连点去重 / 二次确认：
+      //   · `submit_key`（表单里带回来的幂等键）—— 同一个 key 只会有一个任务；
+      //   · `again=1`（横幅上那颗【再打一张】）—— **明确表达"我知道刚打过，还要再打"** ⇒ 绕过两道去重。
+      const submitKey = String(body[LABEL_PRINT_QUEUE.submitKeyField] || '').trim();
+      const again = String(body[LABEL_PRINT_QUEUE.againField] || '').trim() === '1';
       try {
         const queue = resolveLabelPrintQueue();
-        const result = await queue.enqueueSingle({ number, actor: openId, source: 'scan' });
+        const result = await queue.enqueueSingle({ number, actor: openId, source: 'scan', submitKey, again });
         logInfo('scan.label_print.enqueued', {
           request_id: requestId,
           number,
           job_id: result.job_id,
           total_labels: result.total_labels,
+          again: again || undefined,
+          // ⭐ 去重命中（她连点了 / 换了个页面又来点）—— 排障时一眼能看出来。
+          reused: result.reused || undefined,
+          reused_reason: result.reused_reason || undefined,
         });
-        return res.redirect(303, `${postActionFor(number, realm)}&printed=1`);
+        // Post-Redirect-Get：刷新不会重复提交；页面上那句**显眼横幅**由 GET 重新渲染。
+        // `printed=1` = 这次真的新建了任务；`dup=1` = 命中去重（没有重复提交）。
+        const flag = result.reused ? 'dup=1' : 'printed=1';
+        return res.redirect(303, `${postActionFor(number, realm)}&${flag}&job=${encodeURIComponent(result.job_id)}`);
       } catch (error) {
         // 她这一款没库存 / 条件是打不出来 ⇒ 400（**原因原样给她**，她要能看懂为什么）；
         // 系统这一侧坏了（产物画不出来 / 队列写不进盘）⇒ 502/503，**只给一句人话**，

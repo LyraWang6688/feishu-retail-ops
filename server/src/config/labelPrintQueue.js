@@ -107,7 +107,38 @@ const LABEL_PRINT_QUEUE = Object.freeze({
     // ⚠️ PNG 是给"测试打印 / 排障 / 本地页面预览"用的（PDF 才是送打印机那一份）：
     //    有的驱动对 PDF 的页面尺寸挑食，PNG 让她能一眼看出"图对不对"。
     keepPng: true,
+    /**
+     * ⭐⭐ **打印方向**（业务负责人 2026-10-11 真机反馈：「标签是 40×30 横版，
+     *     但内容**整体转了 90°**（品牌与货号都是竖着的）」）。
+     *
+     * `rotate` —— **只转内容**，0 / 90 / 180 / 270，**默认 0（不动）**。
+     *   在**尺寸不变**的 40×30 页面里转 90/270，40×30 的图会占成 30×40 ⇒ **塞不进同一张纸**，
+     *   所以这一档会自动**等比缩小到 75%**（方向对、但整张标签变小、二维码 15mm ⇒ 11.25mm）。
+     *
+     * `rotatePageWithContent` —— **页面尺寸也跟着转**（40×30 ⇒ 30×40），默认 `false`：
+     *   这一档**保原尺寸**（推荐，前提是那台打印机的纸型/驱动也认 30×40 的页面）。
+     *
+     * ⇒ 她先在真机上试 `90` 还是 `270`（也可以先在**驱动**里把【旋转】改 90°/270° 立刻看效果），
+     *   试出来之后改这里就行 —— **免得以后换电脑/换驱动方向又反**。
+     * ⚠️ 默认两个都关 ⇒ **今天的行为一个字节都不变**。
+     */
+    rotate: 0,
+    rotatePageWithContent: false,
   }),
+
+  // ── ⭐ 防连点（业务负责人 2026-10-11 真机反馈：「点完没有反馈 ⇒ 她以为没点上、
+  //    连点几次 ⇒ 多打了好几张」）────────────────────────────────────────────
+  // 同一份请求（同编号 / 同筛选条件）在这个窗口内**只建一个任务**：
+  //   · 手机扫码页那一颗是**零 JS** ⇒ 连点 2~3 次会发出 2~3 个一模一样的 POST，
+  //     靠的就是"同一个 `request_key` + 窗口内复用同一个任务"；
+  //   · 她**真想再打一张**的路没被堵死：窗口内再点 ⇒ 页面**明确二次确认**并给【再打一张】
+  //     （那个按钮带 `again=1`，**绕过**窗口）；过了窗口再点就是一次全新提交。
+  dedupeWindowMs: 60 * 1000,
+  // 表单带回来的幂等键（可选）：**同一次提交同 key ⇒ 复用**（比窗口更硬的一道）。
+  // ⚠️ 扫码页零 JS、不强依赖它；工作台那一页会带（同一批查询结果一个 key）。
+  submitKeyField: 'submit_key',
+  // 「再打一张 / 再打一份」按钮带的字段（**明确表达"我知道刚打过，还要再打"**）。
+  againField: 'again',
 
   // ── 保留期（小 VPS 磁盘有限）────────────────────────────────────────────
   // `done` / `failed` 超过这么久 ⇒ 任务 JSON 与产物一起清掉。
@@ -134,11 +165,24 @@ const LABEL_PRINT_QUEUE = Object.freeze({
   texts: Object.freeze({
     online: '打印电脑在线',
     offline: '未连接（任务已排队，打开小助手就会打）',
+    // ⭐⭐ 2026-10-11 真机反馈后加的：**提交完必须"显眼地"说清楚**
+    //   （她的现象：点完没反馈 ⇒ 以为没点上 ⇒ 连点几次 ⇒ 多打了好几张）。
+    //   `{count}` = 本次几张。
+    submittedBanner: '✅ 已发送给打印电脑：本次 {count} 张',
+    submittedOnline: '打印电脑在线 —— 马上打',
+    submittedOffline: '未连接 —— 已排队，开机自动补打',
+    submittedNoRepeat: '已提交，不用重复点',
+    // 连点去重（窗口内第二次提交）⇒ **明确二次确认**，并给【再打一张】的路。
+    duplicatedBanner: '刚刚已经发过一次：本次 {count} 张（没有重复提交）',
+    duplicatedHint: '确实要再打一张，点下面的按钮',
+    printAgain: '再打一张',
     queued: '已排队，等打印电脑取走',
     enqueuedTitle: '已提交打印',
     enqueueFailed: '提交打印失败',
     printSingle: '打印这一款',
     printBatch: '打印到店里那台电脑',
+    // 「再打一份」= 工作台那一页**明确要再打一份**的路（带 `again`，绕过防连点窗口）。
+    printBatchAgain: '再打一份',
     reprint: '补打',
     refresh: '刷新状态',
     // 「最近一次：已打印」—— 扫码页「货品」领域那一行（失败时后面接 `— 原因`）。
@@ -175,6 +219,21 @@ const resolveLabelPrintQueueConfig = (env = process.env, base = LABEL_PRINT_QUEU
   claimTimeoutMs: readInt(env, 'LABEL_PRINT_CLAIM_TIMEOUT_MS', base.claimTimeoutMs, { min: 10 * 1000, max: 24 * 60 * 60 * 1000 }),
   maxLabelsPerJob: readInt(env, 'LABEL_PRINT_MAX_LABELS_PER_JOB', base.maxLabelsPerJob, { min: 1, max: 1000 }),
   retentionMs: readInt(env, 'LABEL_PRINT_RETENTION_MS', base.retentionMs, { min: 60 * 1000, max: 365 * 24 * 60 * 60 * 1000 }),
+  // ⭐ 连点去重窗口：设成 0 = 关掉"按内容复用"那一道（幂等键那一道仍在）。
+  dedupeWindowMs: readInt(env, 'LABEL_PRINT_DEDUPE_WINDOW_MS', base.dedupeWindowMs, { min: 0, max: 60 * 60 * 1000 }),
+  // ⭐ 打印方向：`rotate` 只认 0/90/180/270（**认不出的值当场抛错**，不许静默按 0 处理）；
+  //   `rotatePageWithContent` = 页面尺寸要不要跟着转（见 `artifact.rotate` 那一段说明）。
+  artifact: {
+    ...base.artifact,
+    rotate: (() => {
+      const value = readInt(env, 'LABEL_PRINT_ROTATE', base.artifact.rotate, { min: 0, max: 270 });
+      if (![0, 90, 180, 270].includes(value)) {
+        throw new Error('LABEL_PRINT_ROTATE 只能是 0 / 90 / 180 / 270');
+      }
+      return value;
+    })(),
+    rotatePageWithContent: readFlag(env, 'LABEL_PRINT_ROTATE_PAGE', base.artifact.rotatePageWithContent),
+  },
   device: {
     ...base.device,
     // ⚠️ 空串 = 显式的"没配"（readString 的语义）⇒ 电脑侧接口一律 503，**不回退到任何默认令牌**。

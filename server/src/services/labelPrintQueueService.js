@@ -24,8 +24,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { STATES, SOURCES } = require('../config/labelPrintQueue');
+const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { logInfo, logWarn } = require('../utils/logger');
-const { renderLabels } = require('./labelPrintArtifactService');
+const { renderLabels, normalizeRotation } = require('./labelPrintArtifactService');
 
 /** 她填错 / 业务上做不到 ⇒ 400，原因原样回页面（与工作台其它写接口同一套口径）。 */
 const userError = (message) => Object.assign(new Error(message), { statusCode: 400 });
@@ -62,6 +63,24 @@ const normalizeRequest = (input = {}) => {
   throw userError('打印请求的 mode 只能是 single（按编号）或 batch（按条件）');
 };
 
+/**
+ * 一份请求的**内容指纹**（连点去重用）—— 与"她点了什么"一一对应：
+ *   · `single`：`single|编号`（同编号 = 同一款 = 同一份请求）；
+ *   · `batch` ：`batch|` + 固定字段顺序的筛选条件（**顺序固定**，否则同样的条件会算出两个键）。
+ * ⚠️ 键里**不含时间/用户**：她连点的那几次必须算出同一个键（不然去重就白做了）。
+ * ⚠️ **含打印方向**（`rotate`）：试方向时"打 90°"和"打 270°"是**两件事**，
+ *    不能被防连点窗口认成同一次提交（否则她试第二张会被"没有重复提交"挡住，白等）。
+ */
+const requestKeyOf = (request, rotate) => {
+  const suffix = rotate === undefined || rotate === null ? '' : `|rotate=${rotate}`;
+  if (request.mode === 'single') return `single|${request.number}${suffix}`;
+  const filters = request.filters || {};
+  const ordered = ['keyword', 'state', 'category', 'size', 'recentDays', 'sort']
+    .map((name) => `${name}=${String(filters[name] ?? '').trim()}`)
+    .join('&');
+  return `batch|${ordered}${suffix}`;
+};
+
 const createLabelPrintQueueService = (deps = {}) => {
   if (!deps.store) throw new Error('LabelPrintQueueService requires store');
   if (!deps.labelPrint) throw new Error('LabelPrintQueueService requires labelPrint');
@@ -77,6 +96,9 @@ const createLabelPrintQueueService = (deps = {}) => {
 
   // SSE 订阅者（每个长连接一个；小助手断开时自己摘掉）。
   const subscribers = new Set();
+  // ⭐ 连点去重的**并发闸门**：同一个 `request_key`/`submit_key` 的"再查一次 + 建任务"串行执行
+  //   （两个一模一样的 POST 同时到达时，只有一个会真的建任务）。
+  const enqueueLock = new KeyedSerialQueue();
   // 每台电脑最后一次心跳（内存即可：服务重启后"未连接"是**如实**的，小助手下一次 ping 就补上）。
   const devices = new Map();
   let lastCleanupAt = 0;
@@ -128,10 +150,60 @@ const createLabelPrintQueueService = (deps = {}) => {
 
   /**
    * 入队（内部共用一个实现，`single` 与 `batch` 只差"怎么挑出要打的标签"）。
+   *
+   * ⭐⭐ 2026-10-11 真机反馈：「点完没有反馈 ⇒ 她以为没点上、**连点几次 ⇒ 多打了好几张**」
+   * ⇒ 这里有两道**去重**（都只在"她没有明确说要再打"时才生效）：
+   *   ① `submitKey` —— 表单带回来的幂等键，**同一个 key 只会有一个任务**（最硬的一道）；
+   *   ② `request_key` + `dedupeWindowMs` —— 同一份请求（同编号 / 同筛选）在**短窗口内**
+   *      复用同一个任务（扫描页是零 JS，连点会发出几个一模一样的 POST，就靠这道兜住）。
+   * 🔴 她**真想再打一张**时：带 `again: true`（页面上那颗【再打一张】）⇒ **两道都绕过**。
    */
-  const enqueue = async (input, { actor = '', source = SOURCES.workbench } = {}) => {
+  const enqueue = async (input, { actor = '', source = SOURCES.workbench, submitKey = '', again = false, rotate } = {}) => {
     if (config.enabled === false) throw Object.assign(new Error('打印队列没有启用'), { statusCode: 503 });
     const request = normalizeRequest(input);
+    // ⭐ 打印方向：**默认跟随配置**（`artifact.rotate`）；页面可以**按这一次**覆盖（试 90°/270° 用）。
+    //    ⚠️ 认不出的角度 ⇒ **400**（她/页面填错了，原样回页面），**不许静默按 0**
+    //    印出一堆方向反的标签（那是最费纸的一种失败）。
+    let rotateOverride;
+    if (rotate !== undefined && rotate !== null && rotate !== '') {
+      try {
+        rotateOverride = normalizeRotation(rotate);
+      } catch (error) {
+        throw userError(error.message);
+      }
+    }
+    const renderConfig = rotateOverride === undefined
+      ? artifactConfig
+      : { ...artifactConfig, rotate: rotateOverride };
+    const requestKey = requestKeyOf(request, rotateOverride);
+    const key = String(submitKey || '').trim();
+    const force = Boolean(again);
+    const dedupeWindowMs = Number(config.dedupeWindowMs || 0);
+
+    /** 这一份请求现在能不能复用一条已有任务（**只复用没有失败过的**）。 */
+    const findReusable = async () => {
+      if (force) return null;
+      const jobs = await store.listAll();
+      if (key) {
+        const sameSubmit = jobs.find((job) => job.submit_key === key && job.status !== STATES.failed.id);
+        if (sameSubmit) return { job: sameSubmit, reason: 'same_submit_key' };
+      }
+      if (dedupeWindowMs > 0) {
+        const since = now() - dedupeWindowMs;
+        const recent = jobs.find((job) => job.request_key === requestKey
+          && job.status !== STATES.failed.id
+          && Number(job.created_at_ms || 0) >= since);
+        if (recent) return { job: recent, reason: 'recent_same_request' };
+      }
+      return null;
+    };
+
+    // 快路：先在锁外看一眼（省掉一次"其实不用画"的渲染）。
+    const fast = await findReusable();
+    if (fast) {
+      logInfo('label_print.job.reused', { job_id: fast.job.job_id, request_key: requestKey, reason: fast.reason });
+      return { job: summaryOf(fast.job), job_id: fast.job.job_id, total_labels: fast.job.total_labels, reused: true, reused_reason: fast.reason };
+    }
 
     // ── 挑出要打的标签（**只读**「实时库存」+「货品信息」，与页面预览同一条 service）──────
     let data;
@@ -159,11 +231,33 @@ const createLabelPrintQueueService = (deps = {}) => {
     // ── 画产物（**在服务器上画好**，电脑那边只负责送进打印机）────────────────────────
     let rendered;
     try {
-      rendered = await render({ labels, layout: data.layout, config: artifactConfig });
+      rendered = await render({ labels, layout: data.layout, config: renderConfig });
     } catch (error) {
       throw systemError(`打印文件生成失败：${error.message}`);
     }
 
+    // ⚠️ **并发兜底**：两个一模一样的请求可能同时越过上面的快路（真·连点），
+    //    所以"再查一次 + 建任务"这一段按 `request_key`/`submit_key` **串行**。
+    return enqueueLock.run(`enqueue:${key || requestKey}`, async () => {
+      const second = await findReusable();
+      if (second) {
+        logInfo('label_print.job.reused', {
+          job_id: second.job.job_id, request_key: requestKey, reason: second.reason, phase: 'locked',
+        });
+        return {
+          job: summaryOf(second.job),
+          job_id: second.job.job_id,
+          total_labels: second.job.total_labels,
+          reused: true,
+          reused_reason: second.reason,
+        };
+      }
+      return createJob({ request, requestKey, labels, data, rendered, actor, source, submitKey: key, rotate: rendered.meta?.rotate });
+    });
+  };
+
+  /** 真正建任务（**只在持锁的那一段里调**）。 */
+  const createJob = async ({ request, requestKey, labels, data, rendered, actor, source, submitKey, rotate }) => {
     const jobId = idFactory();
     const enqueuedAtMs = now();
     let pdfName;
@@ -197,6 +291,11 @@ const createLabelPrintQueueService = (deps = {}) => {
         sha256: crypto.createHash('sha256').update(rendered.pdf).digest('hex'),
       },
       requested_by: actor || '',
+      // ⭐ 去重用的两个键（补打/排障时也看得见"这一条是怎么被认出来的"）。
+      request_key: requestKey,
+      submit_key: submitKey || '',
+      // 这一批是按哪个方向印的（试方向时一眼能看出"刚才那张是 90° 还是 270°"）。
+      rotate: rotate ?? null,
       created_at: ISO(enqueuedAtMs),
       created_at_ms: enqueuedAtMs,
     };
@@ -229,13 +328,25 @@ const createLabelPrintQueueService = (deps = {}) => {
   /** 手机侧：按**编号**打这一款（扫码页「货品」领域那颗【打印这一款】）。 */
   const enqueueSingle = (input = {}) => enqueue(
     { mode: 'single', number: input.number },
-    { actor: input.actor, source: input.source || SOURCES.scan },
+    {
+      actor: input.actor,
+      source: input.source || SOURCES.scan,
+      submitKey: input.submitKey,
+      again: input.again,
+      rotate: input.rotate,
+    },
   );
 
   /** 手机侧：按条件打一批（标签打印页那颗「打印到店里那台电脑」）。 */
   const enqueueBatch = (input = {}) => enqueue(
     { mode: 'batch', filters: input.filters },
-    { actor: input.actor, source: input.source || SOURCES.workbench },
+    {
+      actor: input.actor,
+      source: input.source || SOURCES.workbench,
+      submitKey: input.submitKey,
+      again: input.again,
+      rotate: input.rotate,
+    },
   );
 
   const getJob = (jobId) => store.get(jobId);
@@ -542,4 +653,4 @@ const createLabelPrintQueueService = (deps = {}) => {
   };
 };
 
-module.exports = { createLabelPrintQueueService, normalizeRequest };
+module.exports = { createLabelPrintQueueService, normalizeRequest, requestKeyOf };

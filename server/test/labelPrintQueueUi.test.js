@@ -45,6 +45,7 @@ const fakeContainer = () => {
   });
   const elements = {
     '[data-action="queue-print"]': make(),
+    '[data-action="queue-again"]': make(),
     '[data-action="queue-refresh"]': make(),
     '[data-view="queue-badge"]': make(),
     '[data-view="queue-jobs"]': make(),
@@ -152,7 +153,16 @@ test('AC-U5 提交：POST {mode:"batch", filters}（用她当前的筛选条件�
   assert.deepEqual(result, { success: true, job_id: 'job-1', total_labels: 3 });
   const post = api.calls.find((call) => call.method === 'POST');
   assert.equal(post.url, '/api/workbench/label-print/jobs');
-  assert.deepEqual(post.body, { mode: 'batch', filters });
+  // ⚠️ 2026-10-11 改断言（**"用她当前的筛选条件"这个本意没变**）：
+  //   改前：body === { mode: 'batch', filters }
+  //   改后：body === { mode: 'batch', filters, submit_key: <这一批的幂等键> }
+  //   理由：她真机反馈"连点几次 ⇒ 多打了好几张"⇒ 同一批结果必须带同一个幂等键，
+  //        服务端据此只建一个任务（`again` 那条"再打一份"的路在另一条 AC 里）。
+  assert.deepEqual(post.body, { mode: 'batch', filters, submit_key: '' });
+  panel.setBatchKey('batch-key-1');
+  await panel.submit();
+  assert.equal(api.calls.filter((call) => call.method === 'POST').pop().body.submit_key, 'batch-key-1',
+    '查询出一批结果后就该用那一批的键');
   assert.match(container.elements['[data-view="queue-notice"]'].textContent, /3 张/, '提交了要说打了几张（不静默）');
 });
 
@@ -206,4 +216,96 @@ test('AC-U5 提交失败（她条件超过上限）⇒ 把原因显示出来，�
   assert.deepEqual(messages, ['一次最多打 100 张'], '错误要她看得见');
   assert.equal(container.elements['[data-action="queue-print"]'].disabled, false, '失败后按钮要恢复（不然她就卡在那儿了）');
   assert.equal(container.elements['[data-view="queue-notice"]'].textContent, '');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 【2026-10-11 真机反馈·防连点】工作台这一页：同一个提交键 + 「再打一份」
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-U9 ⭐ 同一批结果带同一个幂等键 ⇒ 服务端只建一个任务；页面把"没有重复提交"说清楚', async () => {
+  const ui = await loadQueueModule();
+  // 服务端第二次会回 `reused: true`（命中去重）。
+  const api = fakeApi({ postResult: { success: true, job_id: 'job-1', total_labels: 3, reused: true } });
+  const panel = ui.createLabelQueuePanel({ api });
+  const container = fakeContainer();
+  panel.mount(container, () => ({ keyword: 'XHB8095' }));
+  panel.setBatchKey('k-1');
+  panel.setEnabled(true);
+  await panel.refresh();
+  await panel.submit();
+  const notice = container.elements['[data-view="queue-notice"]'].textContent;
+  assert.match(notice, /没有重复提交/, `命中去重必须说清楚（她上次就是不知道才连点的）：${notice}`);
+  assert.match(notice, /3 张/);
+});
+
+test('AC-U9 ⭐⭐ 「再打一份」按钮带 `again: true`（**她真想再打一份**的路没被堵死）', async () => {
+  const ui = await loadQueueModule();
+  const api = fakeApi();
+  const panel = ui.createLabelQueuePanel({ api });
+  const container = fakeContainer();
+  panel.mount(container, () => ({ keyword: 'XHB8095' }));
+  panel.setEnabled(true);
+  await panel.refresh();
+
+  const againButton = container.elements['[data-action="queue-again"]'];
+  assert.ok(againButton, '外壳里必须有「再打一份」');
+  assert.equal(againButton.textContent, '再打一份');
+  assert.equal(againButton.disabled, false, '在线 + 有条可打 ⇒ 能点');
+
+  await againButton.handlers.click();
+  const post = api.calls.filter((call) => call.method === 'POST').pop();
+  assert.equal(post.body.again, true, '「再打一份」必须显式带 again');
+  assert.deepEqual(post.body.filters, { keyword: 'XHB8095' });
+});
+
+test('AC-U9 「再打一份」在没有可打印标签 / 状态未知时也点不动（与旁边那颗同一条口径）', async () => {
+  const ui = await loadQueueModule();
+  const panel = ui.createLabelQueuePanel({ api: fakeApi() });
+  const container = fakeContainer();
+  panel.mount(container, () => ({}));
+  const againButton = container.elements['[data-action="queue-again"]'];
+  assert.equal(againButton.disabled, true, '状态还没拿到 ⇒ 不许点');
+  await panel.refresh();
+  assert.equal(againButton.disabled, true, '没有可打印的标签 ⇒ 不许点');
+  panel.setEnabled(true);
+  assert.equal(againButton.disabled, false);
+});
+
+test('AC-U9 外壳把「再打一份」写进 HTML 了（不是靠 JS 临时造按钮）', () => {
+  const html = read('features/labels/queue.js');
+  assert.ok(html.includes('data-action="queue-again"'), '按钮在服务端/静态外壳里就有');
+  assert.ok(html.includes('printBatchAgain'), '文案键要接上');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 【2026-10-11 方向口径纠正】工作台这一页的「打印方向」下拉
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-U10 ⭐ 方向下拉：默认"跟随服务器设置"（不选就什么都不变）；选了就**只对这一次**生效', async () => {
+  const ui = await loadQueueModule();
+  const api = fakeApi();
+  const panel = ui.createLabelQueuePanel({ api });
+  const container = fakeContainer();
+  container.elements['[data-view="queue-rotate"]'] = { value: '' };
+  panel.mount(container, () => ({ keyword: 'XHB8095' }));
+  panel.setEnabled(true);
+  await panel.refresh();
+
+  await panel.submit();
+  assert.equal(api.calls.filter((call) => call.method === 'POST').pop().body.rotate, undefined,
+    '默认不传 rotate ⇒ 服务端跟随配置');
+
+  container.elements['[data-view="queue-rotate"]'].value = '270';
+  await panel.submit({ again: true });
+  const post = api.calls.filter((call) => call.method === 'POST').pop();
+  assert.equal(post.body.rotate, '270', '选了方向就带上（试 90°/270° 用，不用改配置重启）');
+  assert.equal(post.body.again, true);
+});
+
+test('AC-U10 下拉外壳里就有（服务端/静态 HTML 渲染，不是 JS 临时造）', () => {
+  const code = read('features/labels/queue.js');
+  assert.ok(code.includes('data-view="queue-rotate"'), '下拉在静态外壳里');
+  assert.ok(code.includes('data-field="queue-rotate"'));
+  const css = read('features/labels/labels.css');
+  assert.match(css, /\.queue-rotate select \{ min-height: 44px/, '下拉也是 ≥44px 命中区');
 });

@@ -42,15 +42,28 @@ const createLabelPrintQueueRouter = (options = {}) => {
   /**
    * 提交打印：`{ mode: 'single', number }` 打这一款；`{ mode: 'batch', filters }` 打一批。
    * 返回里带上**当前在线状态** ⇒ 她一点就能看到"打印电脑在线"还是"未连接（任务已排队）"。
+   *
+   * ⭐⭐ 2026-10-11 真机反馈（「连点几次 ⇒ 多打了好几张」）：
+   *    · `submit_key` —— 表单带回来的幂等键（同一批结果一个 key）⇒ **同一个 key 只建一个任务**；
+   *    · `again: true` —— **她明确要再打一份** ⇒ **绕过**防连点窗口（页面上那颗【再打一份】）。
+   *    返回里的 `reused: true` = **这次没有重复提交**（页面据此说清楚，不是静默复用）。
    */
   router.post('/jobs', async (req, res) => {
     const mode = String(req.body?.mode || '').trim();
     const actor = req.workbenchUser?.open_id || '';
+    const submitKey = String(req.body?.submit_key || '').trim();
+    const again = req.body?.again === true || String(req.body?.again || '') === '1';
+    // ⭐ 打印方向：**不传 = 跟随服务器配置**（`artifact.rotate`）；
+    //    传了 = 只对这一次生效（她试"90° 还是 270° 对"时，一次部署就能试完，不用改配置重启）。
+    //    ⚠️ 只认 0/90/180/270 —— 别的值由 service 当场抛错（400），不静默按 0 印。
+    const rotate = req.body?.rotate === undefined || req.body?.rotate === null || req.body?.rotate === ''
+      ? undefined
+      : req.body.rotate;
     try {
       const queue = service();
       const result = mode === 'batch'
-        ? await queue.enqueueBatch({ filters: req.body?.filters || {}, actor })
-        : await queue.enqueueSingle({ number: req.body?.number, actor });
+        ? await queue.enqueueBatch({ filters: req.body?.filters || {}, actor, submitKey, again, rotate })
+        : await queue.enqueueSingle({ number: req.body?.number, actor, submitKey, again, rotate });
       const status = await queue.status();
       return res.json({
         success: true,

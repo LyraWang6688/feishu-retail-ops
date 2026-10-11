@@ -385,10 +385,18 @@ test('AC5 ⭐ 电脑离线 ⇒ 任务排队保留 + 手机看到「未连接（�
 test('AC6 ⭐⭐ 启动补拉：电脑关着时入队的任务，小助手一起来 listPending 立刻取回（不是等下一个周期）', async () => {
   const { store, cleanup } = tmpStore();
   try {
-    const service = serviceFor({ store });
-    // ① 电脑关着，她先在手机上点了两次打印。
+    // ⚠️ 2026-10-11 改夹具（**这条 AC 的本意"补拉按先进先出"一个字都没变**）：
+    //   改前：两次都 `enqueueSingle({ number: 'XHB8095|棕色|A' })`（同一个编号）。
+    //   改后：第二次换成**另一个编号**。
+    //   理由：同编号在**防连点窗口**内现在是**同一个任务**（那是她真机反馈"连点导致多打"之后
+    //        有意加的）⇒ 用同编号再也造不出"两条排队任务"。换个编号既保住本意，
+    //        也不去放宽防连点那条新规矩。
+    const service = serviceFor({
+      store,
+      labels: [label(), label({ number: 'XHB8095|黑色|A', key: 'XHB8095|黑色|A', color: '黑色' })],
+    });
     const first = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
-    const second = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
+    const second = await service.enqueueSingle({ number: 'XHB8095|黑色|A' });
     assert.equal((await service.status()).online, false);
     // ② 电脑开机：小助手第一件事就是补拉 —— 两条一次全拿到。
     const pending = await service.listPending({ deviceId: 'store-pc' });
@@ -665,7 +673,12 @@ test('最近一次任务（扫码页零 JS 靠它）：latestJobForNumber 找得
     const service = serviceFor({ store });
     assert.equal(await service.latestJobForNumber('XHB8095|棕色|A'), null, '还没打过 = null（不是错误）');
     const first = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
-    await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
+    // ⚠️ 2026-10-11 改夹具（**"取最近一条"这个本意没变**）：
+    //   改前：又 `enqueueSingle({ number: 'XHB8095|棕色|A' })`（同一编号、无 `again`）。
+    //   改后：第二次带 `again: true` = **她明确要再打一张**。
+    //   理由：同编号在防连点窗口内现在是同一个任务 ⇒ 第二次不会再建一条；
+    //        而"她真想再打一张"正是 `again` 那条路，用它造出第二条才是**真实场景**。
+    await service.enqueueSingle({ number: 'XHB8095|棕色|A', again: true });
     const latest = await service.latestJobForNumber('XHB8095|棕色|A');
     assert.ok(latest);
     assert.notEqual(latest.job_id, first.job_id, '取最近一条');
@@ -673,4 +686,441 @@ test('最近一次任务（扫码页零 JS 靠它）：latestJobForNumber 找得
   } finally {
     cleanup();
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 【2026-10-11 真机反馈·第一批】防连点 + 打印方向
+//
+//   她的现象（逐字）：「点完没有反馈 ⇒ 她以为没点上、连点几次 ⇒ 多打了好几张」
+//                    ＋「打印方向反了」（40×30 横版但内容整体转了 90°）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC16 ⭐⭐ 防连点：同一款连点 3 次 ⇒ **只建 1 个任务 / 只打 1 张**', async () => {
+  const { store, cleanup } = tmpStore();
+  try {
+    const service = serviceFor({ store });
+    const results = [];
+    for (let index = 0; index < 3; index += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      results.push(await service.enqueueSingle({ number: 'XHB8095|棕色|A' }));
+    }
+    assert.equal(new Set(results.map((item) => item.job_id)).size, 1, '三次连点只应有一个任务');
+    assert.equal(results[0].reused, undefined, '第一次是真建');
+    assert.equal(results[1].reused, true, '第二次复用');
+    assert.equal(results[2].reused, true, '第三次复用');
+    assert.equal(results[1].reused_reason, 'recent_same_request');
+    assert.equal((await store.listAll()).length, 1, '磁盘上只有一个任务');
+  } finally {
+    cleanup();
+  }
+});
+
+test('AC16 ⭐⭐ 防连点（**并发**）：三个一模一样的请求同时发 ⇒ 仍然只建 1 个任务', async () => {
+  const { store, cleanup } = tmpStore();
+  try {
+    const service = serviceFor({ store });
+    const results = await Promise.all([
+      service.enqueueSingle({ number: 'XHB8095|棕色|A' }),
+      service.enqueueSingle({ number: 'XHB8095|棕色|A' }),
+      service.enqueueSingle({ number: 'XHB8095|棕色|A' }),
+    ]);
+    assert.equal(new Set(results.map((item) => item.job_id)).size, 1, '并发也必须只有一个任务');
+    assert.equal((await store.listAll()).length, 1);
+  } finally {
+    cleanup();
+  }
+});
+
+test('AC16 幂等键：同一次提交同 key ⇒ 复用；换 key（新的一批）⇒ 新任务', async () => {
+  const { store, cleanup } = tmpStore();
+  try {
+    const service = serviceFor({ store });
+    const first = await service.enqueueSingle({ number: 'XHB8095|棕色|A', submitKey: 'k1' });
+    const sameKey = await service.enqueueSingle({ number: 'XHB8095|棕色|A', submitKey: 'k1' });
+    assert.equal(sameKey.job_id, first.job_id);
+    assert.equal(sameKey.reused_reason, 'same_submit_key');
+    // 换 key 且**过了窗口** ⇒ 一次全新提交（她正常的一次新打印）。
+    const later = serviceFor({ store, now: () => Date.now() + 10 * 60 * 1000 });
+    const second = await later.enqueueSingle({ number: 'XHB8095|棕色|A', submitKey: 'k2' });
+    assert.notEqual(second.job_id, first.job_id);
+    assert.equal((await store.listAll()).length, 2);
+  } finally {
+    cleanup();
+  }
+});
+
+test('AC16 ⭐ 「她真想再打一张」的路没被堵死：`again: true` **绕过**去重窗口', async () => {
+  const { store, cleanup } = tmpStore();
+  try {
+    const service = serviceFor({ store });
+    const first = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
+    const again = await service.enqueueSingle({ number: 'XHB8095|棕色|A', again: true });
+    assert.notEqual(again.job_id, first.job_id, '明确要再打一张 ⇒ 必须真的再建一个任务');
+    assert.equal(again.reused, undefined);
+    assert.equal((await store.listAll()).length, 2);
+  } finally {
+    cleanup();
+  }
+});
+
+test('AC16 去重窗口**过了**就能再打（不会把她锁死）', async () => {
+  const { store, cleanup } = tmpStore();
+  try {
+    let clock = 1_000_000;
+    const service = serviceFor({ store, now: () => clock, config: { dedupeWindowMs: 60_000 } });
+    const first = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
+    clock += 61_000;
+    const second = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
+    assert.notEqual(second.job_id, first.job_id);
+    assert.equal((await store.listAll()).length, 2);
+  } finally {
+    cleanup();
+  }
+});
+
+test('AC16 只复用**没失败过**的任务：上一次失败了 ⇒ 重新提交要真建一条（不然她就永远打不出来）', async () => {
+  const { store, cleanup } = tmpStore();
+  try {
+    const service = serviceFor({ store });
+    const failed = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
+    await service.claimNext({ deviceId: 'pc' });
+    await service.ack({ jobId: failed.job_id, status: 'failed', reason: '打印机没开', deviceId: 'pc' });
+    const retry = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
+    assert.notEqual(retry.job_id, failed.job_id, '失败过的任务不许被"复用"（那就等于她点了也没用）');
+    assert.equal((await store.listAll()).length, 2);
+  } finally {
+    cleanup();
+  }
+});
+
+test('AC16 一批（batch）：同筛选连点 ⇒ 1 个任务；换筛选 / again ⇒ 各自新任务', async () => {
+  const { store, cleanup } = tmpStore();
+  try {
+    const labels = [label(), label({ number: 'n2', key: 'n2', item_no: 'n2' })];
+    const service = serviceFor({ store, labels });
+    const first = await service.enqueueBatch({ filters: { keyword: 'XHB8095', sort: 'shelf' } });
+    const same = await service.enqueueBatch({ filters: { sort: 'shelf', keyword: 'XHB8095' } });
+    assert.equal(same.job_id, first.job_id, '同一份筛选（哪怕字段顺序不同）必须是同一个键');
+    assert.equal(same.reused, true);
+    const again = await service.enqueueBatch({ filters: { keyword: 'XHB8095', sort: 'shelf' }, again: true });
+    assert.notEqual(again.job_id, first.job_id);
+    assert.equal((await store.listAll()).length, 2);
+  } finally {
+    cleanup();
+  }
+});
+
+test('AC16 `requestKeyOf`：内容指纹固定字段顺序、单款与批次互不串', () => {
+  const { requestKeyOf } = require('../src/services/labelPrintQueueService');
+  assert.equal(requestKeyOf({ mode: 'single', number: 'A|B|C' }), 'single|A|B|C');
+  assert.equal(
+    requestKeyOf({ mode: 'batch', filters: { keyword: 'x', state: '门盒', size: '42', sort: 'recent' } }),
+    requestKeyOf({ mode: 'batch', filters: { sort: 'recent', size: '42', state: '门盒', keyword: 'x' } }),
+    '字段顺序不同 ⇒ 同一个键',
+  );
+  assert.notEqual(
+    requestKeyOf({ mode: 'batch', filters: { keyword: 'x' } }),
+    requestKeyOf({ mode: 'batch', filters: { keyword: 'y' } }),
+  );
+});
+
+test('AC17 ⭐ 打印方向：默认 0（**行为与改动前逐字节一致**），且角度只认 0/90/180/270', async () => {
+  const { LABEL_PRINT_QUEUE } = require('../src/config/labelPrintQueue');
+  assert.equal(LABEL_PRINT_QUEUE.artifact.rotate, 0, '默认必须先 0（她还没试出哪个方向对）');
+  assert.equal(LABEL_PRINT_QUEUE.artifact.rotatePageWithContent, false);
+  assert.throws(() => artifact.normalizeRotation(45), /只能是 0 \/ 90 \/ 180 \/ 270/);
+  assert.equal(artifact.normalizeRotation('90'), 90);
+
+  // rotate=0 时 SVG 里**不套 `<g>`**（输出与加旋转之前一致）。
+  const svg = artifact.labelSvg(label(), layout(), { dpi: 203, rotate: 0 });
+  assert.equal(svg.includes('<g transform='), false);
+  const out = await artifact.renderLabels({ labels: [label()], layout: layout(), config: { dpi: 203 } });
+  assert.equal(out.meta.rotate, 0);
+  assert.equal(out.meta.width_pt, 113.3858);
+  assert.equal(out.meta.height_pt, 85.0394);
+  const meta = await require('sharp')(out.pngFirst).metadata();
+  assert.equal(`${meta.width}x${meta.height}`, '320x240');
+});
+
+test('AC17 ⭐ rotate=90/270 + 页面不转 ⇒ **MediaBox 仍是 40×30**、PNG 仍 320×240、且不越界', async () => {
+  const sharp = require('sharp');
+  for (const rotate of [90, 180, 270]) {
+    // eslint-disable-next-line no-await-in-loop
+    const out = await artifact.renderLabels({
+      labels: [label()], layout: layout(), config: { dpi: 203, rotate },
+    });
+    assert.equal(out.meta.width_pt, 113.3858, `rotate=${rotate} 的 MediaBox 宽不许变`);
+    assert.equal(out.meta.height_pt, 85.0394, `rotate=${rotate} 的 MediaBox 高不许变`);
+    assert.equal((out.pdf.toString('latin1').match(/\/MediaBox \[0 0 113\.3858 85\.0394\]/g) || []).length, 1);
+    // eslint-disable-next-line no-await-in-loop
+    const meta = await sharp(out.pngFirst).metadata();
+    assert.equal(`${meta.width}x${meta.height}`, '320x240', `rotate=${rotate} 的像素尺寸不许变`);
+    // eslint-disable-next-line no-await-in-loop
+    const { data, info } = await sharp(out.pngFirst).greyscale().raw().toBuffer({ resolveWithObject: true });
+    if (rotate === 90 || rotate === 270) {
+      // ⭐ 转了 90/270 且页面不跟着转 ⇒ **等比缩小塞进来**：最外 1px 一圈必须全是白
+      //   （既没有被裁到纸边，也没有越出纸外）。
+      let borderInk = 0;
+      for (let x = 0; x < info.width; x += 1) {
+        if (data[x] < 200) borderInk += 1;
+        if (data[(info.height - 1) * info.width + x] < 200) borderInk += 1;
+      }
+      for (let y = 0; y < info.height; y += 1) {
+        if (data[y * info.width] < 200) borderInk += 1;
+        if (data[y * info.width + info.width - 1] < 200) borderInk += 1;
+      }
+      assert.equal(borderInk, 0, `rotate=${rotate}：最外一圈必须干净（内容不许贴边/被裁）`);
+    } else {
+      // 0/180：页面就是标签本身 ⇒ 内容**铺满整张纸**（没被缩小）。裁切线本来就画在纸边，
+      //   所以这里断言的是"尺寸没变"，不是"边上无墨"。
+      let minX = info.width; let maxX = -1;
+      for (let y = 0; y < info.height; y += 1) {
+        for (let x = 0; x < info.width; x += 1) {
+          if (data[y * info.width + x] < 200) { if (x < minX) minX = x; if (x > maxX) maxX = x; }
+        }
+      }
+      assert.ok((maxX - minX + 1) >= 0.98 * info.width,
+        `rotate=${rotate}：内容必须铺满整张纸（实际 ${maxX - minX + 1}/${info.width}）`);
+    }
+  }
+});
+
+test('AC17 ⭐ 内容方向真的转了（不是"设了角度却没生效"）：墨迹包围盒的宽高比按角度变化', async () => {
+  const sharp = require('sharp');
+  const inkBox = async (rotate) => {
+    const out = await artifact.renderLabels({ labels: [label()], layout: layout(), config: { dpi: 203, rotate } });
+    const { data, info } = await sharp(out.pngFirst).greyscale().raw().toBuffer({ resolveWithObject: true });
+    let minX = info.width; let maxX = -1; let minY = info.height; let maxY = -1;
+    for (let y = 0; y < info.height; y += 1) {
+      for (let x = 0; x < info.width; x += 1) {
+        if (data[y * info.width + x] < 128) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    return { w: maxX - minX + 1, h: maxY - minY + 1 };
+  };
+  const base = await inkBox(0);
+  const turned = await inkBox(90);
+  const ratioBase = base.w / base.h;
+  const ratioTurned = turned.w / turned.h;
+  // 转 90° 之后宽高必须**反过来**（同一幅图等比缩放 0.75）。
+  assert.ok(ratioBase > 1, `rotate=0 时内容应该是横的（实际 ${ratioBase.toFixed(3)}）`);
+  assert.ok(Math.abs(ratioTurned - (1 / ratioBase)) < 0.08,
+    `rotate=90 的宽高比应该是 rotate=0 的倒数（实际 ${ratioTurned.toFixed(3)} vs ${(1 / ratioBase).toFixed(3)}）`);
+  // 180° 是"上下颠倒"：宽高比不变，但图像与 0° 不同。
+  const flipped = await inkBox(180);
+  assert.ok(Math.abs((flipped.w / flipped.h) - ratioBase) < 0.05, '180° 的宽高比不变');
+});
+
+test('AC17 ⭐ rotate=90/270 + `rotatePageWithContent` ⇒ 页面尺寸跟着转（**原尺寸**，供她二选一）', async () => {
+  const sharp = require('sharp');
+  const out = await artifact.renderLabels({
+    labels: [label()], layout: layout(), config: { dpi: 203, rotate: 90, rotatePageWithContent: true },
+  });
+  assert.equal(out.meta.width_pt, 85.0394, '页面转成 30×40');
+  assert.equal(out.meta.height_pt, 113.3858);
+  assert.equal(out.meta.width_mm, 30);
+  assert.equal(out.meta.height_mm, 40);
+  assert.match(out.pdf.toString('latin1'), /\/MediaBox \[0 0 85\.0394 113\.3858\]/);
+  const meta = await sharp(out.pngFirst).metadata();
+  assert.equal(`${meta.width}x${meta.height}`, '240x320');
+  // 页面跟着转 ⇒ **保原尺寸**：墨迹包围盒的短边应该接近整张纸的短边（30mm ⇒ 240px 的大部分）。
+  const { data, info } = await sharp(out.pngFirst).greyscale().raw().toBuffer({ resolveWithObject: true });
+  let minX = info.width; let maxX = -1;
+  for (let y = 0; y < info.height; y += 1) {
+    for (let x = 0; x < info.width; x += 1) {
+      if (data[y * info.width + x] < 128) { if (x < minX) minX = x; if (x > maxX) maxX = x; }
+    }
+  }
+  assert.ok((maxX - minX + 1) > 0.8 * info.width, `保原尺寸时内容应该铺满短边（实际 ${maxX - minX + 1}/${info.width}）`);
+});
+
+test('AC17 环境变量：旋转角度与"页面跟着转"都能配（非法角度当场抛错，不静默按 0）', () => {
+  assert.equal(resolveLabelPrintQueueConfig({}).artifact.rotate, 0);
+  assert.equal(resolveLabelPrintQueueConfig({ LABEL_PRINT_ROTATE: '180' }).artifact.rotate, 180);
+  assert.throws(() => resolveLabelPrintQueueConfig({ LABEL_PRINT_ROTATE: '45' }), /只能是 0 \/ 90 \/ 180 \/ 270/);
+  assert.equal(resolveLabelPrintQueueConfig({}).artifact.rotatePageWithContent, false);
+  assert.equal(resolveLabelPrintQueueConfig({ LABEL_PRINT_ROTATE_PAGE: 'true' }).artifact.rotatePageWithContent, true);
+  assert.equal(resolveLabelPrintQueueConfig({ LABEL_PRINT_ROTATE_PAGE: '' }).artifact.rotatePageWithContent, false);
+  assert.equal(resolveLabelPrintQueueConfig({ LABEL_PRINT_DEDUPE_WINDOW_MS: '0' }).dedupeWindowMs, 0);
+  assert.throws(() => resolveLabelPrintQueueConfig({ LABEL_PRINT_DEDUPE_WINDOW_MS: 'abc' }));
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 【2026-10-11 真机反馈·第二批】方向口径纠正后的三条判据
+//   她：「实际上想要的是**邯美皮鞋，它应该是长边平行于长边的**……现在都是平行于短边的」
+//   ⇒ ① 各角度下**页面尺寸仍按配置**（40×30 或 30×40）；
+//     ② **内容方向按配置旋转**（可断言图片像素宽高 / 内容边界）；
+//     ③ 二维码**仍可识别**（旋转后**不变形**）。
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC18 ⭐ 方向①：四种角度 × 两种页面配置 ⇒ 页面尺寸**逐字按配置**（MediaBox + 像素都跟着走）', async () => {
+  const sharp = require('sharp');
+  const expect = [
+    { rotate: 0, swap: false, mm: [40, 30], px: '320x240', pt: [113.3858, 85.0394] },
+    { rotate: 90, swap: false, mm: [40, 30], px: '320x240', pt: [113.3858, 85.0394] },
+    { rotate: 180, swap: false, mm: [40, 30], px: '320x240', pt: [113.3858, 85.0394] },
+    { rotate: 270, swap: false, mm: [40, 30], px: '320x240', pt: [113.3858, 85.0394] },
+    { rotate: 90, swap: true, mm: [30, 40], px: '240x320', pt: [85.0394, 113.3858] },
+    { rotate: 270, swap: true, mm: [30, 40], px: '240x320', pt: [85.0394, 113.3858] },
+    // ⚠️ 0/180 配"页面也转"没有意义（旋转不改变宽高）⇒ 页面**保持 40×30**（不静默换纸型）。
+    { rotate: 0, swap: true, mm: [40, 30], px: '320x240', pt: [113.3858, 85.0394] },
+    { rotate: 180, swap: true, mm: [40, 30], px: '320x240', pt: [113.3858, 85.0394] },
+  ];
+  for (const item of expect) {
+    const out = await artifact.renderLabels({
+      labels: [label()],
+      layout: layout(),
+      config: { dpi: 203, rotate: item.rotate, rotatePageWithContent: item.swap },
+    });
+    assert.equal(out.meta.width_mm, item.mm[0], `rotate=${item.rotate} swap=${item.swap} 页宽`);
+    assert.equal(out.meta.height_mm, item.mm[1], `rotate=${item.rotate} swap=${item.swap} 页高`);
+    assert.equal(out.meta.width_pt, item.pt[0], `rotate=${item.rotate} swap=${item.swap} 页宽(pt)`);
+    assert.equal(out.meta.height_pt, item.pt[1], `rotate=${item.rotate} swap=${item.swap} 页高(pt)`);
+    assert.match(out.pdf.toString('latin1'),
+      new RegExp(`/MediaBox \\[0 0 ${item.pt[0]} ${item.pt[1]}\\]`),
+      `rotate=${item.rotate} swap=${item.swap} 的 /MediaBox`);
+    // eslint-disable-next-line no-await-in-loop
+    const meta = await sharp(out.pngFirst).metadata();
+    assert.equal(`${meta.width}x${meta.height}`, item.px, `rotate=${item.rotate} swap=${item.swap} 的像素`);
+    // 页面尺寸 = 送打印机那一份的真实纸张；标签自身尺寸**一个字都没变**（纸没换）。
+    assert.equal(out.meta.label_width_mm, 40);
+    assert.equal(out.meta.label_height_mm, 30);
+  }
+});
+
+test('AC18 ⭐ 方向②：内容方向按配置旋转（**不是设了角度却没生效**）', async () => {
+  const sharp = require('sharp');
+  const inkBox = async (rotate, swap = false) => {
+    const out = await artifact.renderLabels({
+      labels: [label()], layout: layout(), config: { dpi: 203, rotate, rotatePageWithContent: swap },
+    });
+    const { data, info } = await sharp(out.pngFirst).greyscale().raw().toBuffer({ resolveWithObject: true });
+    let minX = info.width; let maxX = -1; let minY = info.height; let maxY = -1;
+    let dark = 0;
+    for (let y = 0; y < info.height; y += 1) {
+      for (let x = 0; x < info.width; x += 1) {
+        if (data[y * info.width + x] < 128) {
+          dark += 1;
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    return { w: maxX - minX + 1, h: maxY - minY + 1, dark, width: info.width, height: info.height };
+  };
+
+  const base = await inkBox(0);
+  const r90 = await inkBox(90);
+  const r270 = await inkBox(270);
+  const r180 = await inkBox(180);
+  const ratio = (box) => box.w / box.h;
+
+  // 0°：内容是**横**的（宽 > 高）—— 「邯美皮鞋」沿页面的 40mm 方向排。
+  assert.ok(ratio(base) > 1.05, `0° 应该是横的（实际 ${ratio(base).toFixed(3)}）`);
+  // 90° / 270°：**转过去**（宽 < 高），而且两者互为镜像 ⇒ 都不是 0°。
+  assert.ok(ratio(r90) < 0.95, `90° 应该转成竖的（实际 ${ratio(r90).toFixed(3)}）`);
+  assert.ok(ratio(r270) < 0.95, `270° 应该转成竖的（实际 ${ratio(r270).toFixed(3)}）`);
+  // 180°：宽高比不变（只是上下颠倒）。
+  assert.ok(Math.abs(ratio(r180) - ratio(base)) < 0.03, '180° 的宽高比应与 0° 接近');
+  // 90° 与 270° 的墨迹总量相近（同一个版式，只是转了反方向）。
+  assert.ok(Math.abs(r90.dark - r270.dark) / Math.max(1, r90.dark) < 0.2, '90°/270° 的墨量应该接近');
+  // ⭐ 「长边平行于长边」的判据：页面不转时，90°/270° 的**内容长边沿页面的短边**方向
+  //   ⇒ 内容的 bbox 高度**明显大于**宽度（上面已断言）。页面跟着转（swap）时，
+  //   内容的 bbox 又回到"横向铺满"的老比例 —— 这正是"保原尺寸"那一档。
+  // ⚠️ 页面跟着转（30×40）时，**内容相对页面仍然是"被转过"的**（那是这条路的全部意义：
+  //   驱动那边会把 30×40 的页面再转回来，纸上才是正的）；差别只在**尺寸**：
+  //   不换页面 ⇒ 等比缩到 75%；换页面 ⇒ **原尺寸**。所以断言"墨量明显更多"而不是"变横了"。
+  const swapped = await inkBox(90, true);
+  assert.ok(Math.abs(ratio(swapped) - ratio(r90)) < 0.05,
+    `换页面那一档的内容方向应与不换时一致（都是转过的）：${ratio(swapped).toFixed(3)} vs ${ratio(r90).toFixed(3)}`);
+  assert.ok(swapped.dark > r90.dark * 1.5,
+    `保原尺寸时内容明显更大（墨量 ${swapped.dark} vs ${r90.dark}）—— 这正是 swap 那一档的价值`);
+});
+
+test('AC18 ⭐⭐ 方向③：二维码旋转后**不变形、仍可识别**（真二维码 → 像素必须还是正方形）', async () => {
+  const sharp = require('sharp');
+  const QRCode = require('qrcode');
+  const url = 'https://hm.bamamei.online/s/XHB8095%7C%E6%A3%95%E8%89%B2%7CA';
+  // 出**真的**二维码（真模块），再只印二维码（其它字段全关）⇒ 墨迹包围盒 = 二维码本身。
+  const qrSvg = await QRCode.toString(url, { type: 'svg', errorCorrectionLevel: 'M', margin: 0 });
+  const qrOnly = label({ qr_svg: qrSvg });
+  // ⚠️ 必须把**裁切线**也关掉（`borderMm: 0`）：那圈线画在纸边上，
+  //   留着它的话"墨迹包围盒"量到的是整张纸，根本不是二维码（第一次就这么写错了）。
+  const onlyQrLayout = layout({
+    label: { borderMm: 0 },
+    fields: {
+      qr: true, brand: false, itemNo: false, color: false, category: false,
+      size: false, price: false, state: false, footer: false,
+    },
+  });
+  for (const [rotate, swap] of [[0, false], [90, false], [180, false], [270, false], [90, true], [270, true]]) {
+    const out = await artifact.renderLabels({
+      labels: [qrOnly], layout: onlyQrLayout, config: { dpi: 203, rotate, rotatePageWithContent: swap },
+    });
+    const svg = artifact.labelSvg(qrOnly, onlyQrLayout, { dpi: 203, rotate, rotatePageWithContent: swap });
+    // ① **结构性**：变换里不许出现非等比缩放（`scale(a b)` 且 a≠b）—— 那会把二维码拉歪。
+    const scaleMatch = /scale\(([^)]+)\)/.exec(svg);
+    if (scaleMatch) {
+      const values = scaleMatch[1].trim().split(/\s+/).map(Number);
+      assert.equal(values.length === 1 || values[0] === values[1], true,
+        `rotate=${rotate} swap=${swap}：缩放必须等比（实际 scale(${scaleMatch[1]})）`);
+    }
+    // ② **像素级**：墨迹包围盒必须是正方形（二维码被拉歪就一定不是）。
+    const { data, info } = await sharp(out.pngFirst).greyscale().raw().toBuffer({ resolveWithObject: true });
+    let minX = info.width; let maxX = -1; let minY = info.height; let maxY = -1;
+    for (let y = 0; y < info.height; y += 1) {
+      for (let x = 0; x < info.width; x += 1) {
+        if (data[y * info.width + x] < 128) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    const w = maxX - minX + 1;
+    const h = maxY - minY + 1;
+    assert.ok(w > 20 && h > 20, `rotate=${rotate} swap=${swap}：二维码得真的画出来了（${w}x${h}）`);
+    assert.ok(Math.abs(w - h) <= 2, `rotate=${rotate} swap=${swap}：二维码必须是正方形（实际 ${w}x${h}）`);
+  }
+});
+
+test('AC18 方向可以**按这一次**覆盖（试 90°/270° 不用改配置重启）；非法角度 ⇒ 400', async () => {
+  const { store, cleanup } = tmpStore();
+  try {
+    const service = serviceFor({ store, config: { artifact: { ...LABEL_PRINT_QUEUE.artifact, rotate: 0 } } });
+    const a = await service.enqueueSingle({ number: 'XHB8095|棕色|A', rotate: 90 });
+    const b = await service.enqueueSingle({ number: 'XHB8095|棕色|A', rotate: 270 });
+    assert.notEqual(b.job_id, a.job_id, '试 90° 与试 270° 是**两件事**，不能被防连点窗口认成同一次');
+    assert.equal(b.reused, undefined);
+    assert.equal((await service.getJob(a.job_id)).rotate, 90, '任务上留痕：这一张是按 90° 印的');
+    assert.equal((await service.getJob(b.job_id)).rotate, 270);
+    // 不传 rotate ⇒ 跟随配置（这里配置是 0）。
+    const follow = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
+    assert.equal((await service.getJob(follow.job_id)).rotate, 0);
+    await assert.rejects(() => service.enqueueSingle({ number: 'XHB8095|棕色|A', rotate: 45 }),
+      (error) => error.statusCode === 400 && /只能是 0 \/ 90 \/ 180 \/ 270/.test(error.message));
+  } finally {
+    cleanup();
+  }
+});
+
+test('AC18 页面配置是"两组旋钮"：`rotate`（内容）与 `rotatePageWithContent`（页面尺寸）互不干扰', () => {
+  const { LABEL_PRINT_QUEUE } = require('../src/config/labelPrintQueue');
+  assert.equal(LABEL_PRINT_QUEUE.artifact.rotate, 0, '内容方向默认不动（不拍脑袋）');
+  assert.equal(LABEL_PRINT_QUEUE.artifact.rotatePageWithContent, false, '页面尺寸默认不换（不拍脑袋）');
+  // 两组都能从环境变量配（部署时给她试 90 / 270 各一张）。
+  assert.equal(resolveLabelPrintQueueConfig({ LABEL_PRINT_ROTATE: '90' }).artifact.rotate, 90);
+  assert.equal(resolveLabelPrintQueueConfig({ LABEL_PRINT_ROTATE: '270' }).artifact.rotate, 270);
+  assert.deepEqual(
+    resolveLabelPrintQueueConfig({ LABEL_PRINT_ROTATE: '270', LABEL_PRINT_ROTATE_PAGE: 'true' }).artifact,
+    { ...LABEL_PRINT_QUEUE.artifact, rotate: 270, rotatePageWithContent: true },
+  );
 });

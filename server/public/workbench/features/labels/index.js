@@ -175,6 +175,10 @@ export function createLabelPrintModule() {
       printButton().disabled = !printable;
       printButton().title = printable ? '' : TEXTS.printDisabled;
       queuePanel.setEnabled(printable);
+      // ⭐ 每次查询成功换一把**新的幂等键**（= 新的一批结果 = 一次新的提交意图）：
+      //   同一批结果上连点几次 ⇒ 同一个 key ⇒ 服务端只建一个任务（防连点，她上次就是这么多打的）；
+      //   真想再打一份 ⇒ 走那颗【再打一份】（带 `again`，**绕过**去重窗口）。
+      queuePanel.setBatchKey(`${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
     } catch (error) {
       // 空结果不是错误（service 回 200 + 空 labels）；这里只有真失败才走到。
       $(panel(), '[data-view="summary"]').innerHTML = `<p class="label-notice">${escapeHtml(describeError(error))}</p>`;

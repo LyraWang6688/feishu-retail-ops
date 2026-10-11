@@ -95,8 +95,20 @@ const fakeQueue = (options = {}) => {
     enqueueSingle: async (input) => {
       calls.enqueue.push(input);
       if (options.enqueueError) throw options.enqueueError;
-      return { job_id: 'job-1', total_labels: 1, job: { job_id: 'job-1', status: 'queued', status_label: '待打印' } };
+      return {
+        job_id: 'job-1',
+        total_labels: 1,
+        job: { job_id: 'job-1', status: 'queued', status_label: '待打印' },
+        reused: Boolean(options.reused),
+        ...(options.reused ? { reused_reason: 'recent_same_request' } : {}),
+      };
     },
+    // 真 service 有这个（把任务编成给页面看的摘要）；假队列必须有，否则上下文会退化成"不可用"。
+    summaryOf: (job) => job,
+    // 横幅上的"N 张"从**那条任务**上读（不是页面上猜的）。
+    getJob: async (jobId) => (options.jobForBanner === undefined
+      ? { job_id: jobId, status: 'queued', status_label: '待打印', total_labels: options.bannerCount ?? 1, numbers: [NUMBER] }
+      : options.jobForBanner),
   };
 };
 
@@ -142,9 +154,14 @@ const postPrint = (base, body = {}) => fetch(`${base}/s/${ENCODED}?from=product`
   redirect: 'manual',
 });
 
-/** 「货品」领域那一块（用来断言"这一块里有什么"，不受页头影响）。 */
+/**
+ * 「货品」领域那一块（用来断言"这一块里有什么"，不受页头影响）。
+ * ⚠️ 必须按 `class="realm-block realm-block--product"` 找 —— 只写 `realm-block--product` 会先命中
+ *    `<head>` 里那段**样式**（`.realm-block--product`），于是断言其实在看 CSS（踩过一次）。
+ */
 const productBlock = (html) => {
-  const start = html.indexOf('realm-block--product');
+  const marker = 'class="realm-block realm-block--product"';
+  const start = html.indexOf(marker);
   assert.ok(start >= 0, '页面上必须有「货品」那一块');
   return html.slice(start);
 };
@@ -234,7 +251,12 @@ test('AC-S4 POST print_label ⇒ 把 URL 里那个编号排进队列 + 303 回�
   await withServer(appFor({ queue }), async (base) => {
     const response = await postPrint(base);
     assert.equal(response.status, 303);
-    assert.equal(response.headers.get('location'), `/s/${ENCODED}?from=product&printed=1`);
+    // ⚠️ 2026-10-11 改断言（**"提交后 303 回本领域"这个本意没变**）：
+    //   改前：location === '/s/<enc>?from=product&printed=1'
+    //   改后：location === '/s/<enc>?from=product&printed=1&job=job-1'
+    //   理由：横幅要显示"**本次 N 张**"，N 必须从**那一条任务**上读
+    //        （凭页面猜数字就是在编数据）⇒ 回跳时把 job id 带上。
+    assert.equal(response.headers.get('location'), `/s/${ENCODED}?from=product&printed=1&job=job-1`);
     assert.equal(queue.calls.enqueue.length, 1);
     assert.equal(queue.calls.enqueue[0].number, NUMBER);
     assert.equal(queue.calls.enqueue[0].source, 'scan');
@@ -259,14 +281,44 @@ test('AC-S9 编号只认 URL：表单里没有编号字段，改表单也打不�
   });
 });
 
-test('AC-S5 303 回来那一页（printed=1）出现「已提交打印」；不带参数则不出现', async () => {
+test('AC-S5 ⭐⭐ 303 回来那一页出现**显眼横幅**「已发送给打印电脑：本次 N 张」+ 状态 + 不用重复点', async () => {
   login();
-  const queue = fakeQueue({ online: true });
+  const queue = fakeQueue({ online: true, bannerCount: 3 });
   await withServer(appFor({ queue }), async (base) => {
-    const submitted = productBlock(await (await getProduct(base, '?from=product&printed=1')).text());
-    assert.ok(submitted.includes(TEXTS.enqueuedTitle), `要出现「${TEXTS.enqueuedTitle}」`);
+    const submitted = productBlock(await (await getProduct(base, `?from=product&printed=1&job=job-1`)).text());
+    // ⚠️ 2026-10-11 改断言（**"提交后要有反馈"这个本意没变、而且是加强**）：
+    //   改前：断言页面上出现 `TEXTS.enqueuedTitle`（='已提交打印'，一句小字，她**没看到**）。
+    //   改后：断言出现**显眼横幅**：横幅标题（带上真实的 N 张）+ 在线那句 + 「已提交，不用重复点」。
+    //   理由：她的现象就是"点完没反馈 ⇒ 以为没点上 ⇒ 连点几次"⇒ 反馈必须**显眼且带张数**。
+    assert.ok(submitted.includes('label-print-banner--ok'), '必须是显眼横幅（绿条），不是小字');
+    assert.ok(submitted.includes('本次 3 张'), `横幅要说清**本次几张**（真实数字来自任务）：${submitted.slice(0, 200)}`);
+    assert.ok(submitted.includes(TEXTS.submittedBanner.split('{count}')[0].trim()), '横幅标题文案来自配置');
+    assert.ok(submitted.includes(TEXTS.submittedOnline), '在线 ⇒ 马上打');
+    assert.ok(submitted.includes(TEXTS.submittedNoRepeat), '要明确说"不用重复点"');
+
+    // 不带参数（正常打开页面）⇒ 没有横幅。
     const plain = productBlock(await (await getProduct(base)).text());
-    assert.equal(plain.includes(TEXTS.enqueuedTitle), false);
+    assert.equal(plain.includes('label-print-banner'), false);
+  });
+});
+
+test('AC-S5 ⭐ 未连接时横幅那句是"已排队，开机自动补打"（不是"马上打"）', async () => {
+  login();
+  const queue = fakeQueue({ online: false, bannerCount: 1 });
+  await withServer(appFor({ queue }), async (base) => {
+    const block = productBlock(await (await getProduct(base, '?from=product&printed=1&job=job-1')).text());
+    assert.ok(block.includes(TEXTS.submittedOffline));
+    assert.equal(block.includes(TEXTS.submittedOnline), false);
+    assert.ok(block.includes('本次 1 张'));
+  });
+});
+
+test('AC-S5 ⭐ 横幅的"本次 N 张"来自任务，**不是**页面猜的（任务读不到就不出横幅）', async () => {
+  login();
+  const queue = fakeQueue({ online: true, jobForBanner: null });
+  await withServer(appFor({ queue }), async (base) => {
+    const block = productBlock(await (await getProduct(base, '?from=product&printed=1&job=job-1')).text());
+    assert.equal(block.includes('label-print-banner'), false, '读不到任务就不给"本次 0 张"那种假话');
   });
 });
 
@@ -369,5 +421,62 @@ test('AC-S1 别的领域里不出现【打印这一款】的表单（只在「�
     }
     const product = await (await getProduct(base)).text();
     assert.ok(product.includes('<form class="label-print-form"'), '「货品」领域必须有它');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 【2026-10-11 真机反馈·防连点】零 JS 的二次确认 + 【再打一张】
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-S13 ⭐⭐ 连点去重：POST 命中去重 ⇒ 303 带 `dup=1`，页面出**黄条二次确认** + 【再打一张】', async () => {
+  login();
+  const queue = fakeQueue({ online: true, reused: true, bannerCount: 1 });
+  await withServer(appFor({ queue }), async (base) => {
+    const response = await postPrint(base);
+    assert.equal(response.status, 303);
+    assert.equal(response.headers.get('location'), `/s/${ENCODED}?from=product&dup=1&job=job-1`,
+      '命中去重 ⇒ 回跳带 dup=1（页面据此说清"没有重复提交"）');
+
+    const block = productBlock(await (await getProduct(base, '?from=product&dup=1&job=job-1')).text());
+    assert.ok(block.includes('label-print-banner--dup'), '必须是黄条二次确认');
+    assert.ok(block.includes(TEXTS.duplicatedBanner.split('{count}')[0].trim()), '横幅文案来自配置');
+    assert.ok(block.includes('本次 1 张'));
+    assert.ok(block.includes(TEXTS.duplicatedHint), '要说"确实要再打一张就点下面"');
+    // ⭐ 再打一张 = 一个**零 JS 的小表单**，带 `again=1`（服务端据此绕过窗口）。
+    assert.ok(block.includes('name="again" value="1"'), 'again 字段要在（字段名来自配置）');
+    assert.ok(block.includes(TEXTS.printAgain), '按钮文案 = 再打一张');
+    assert.equal(/<script[\s>]/i.test(block), false, '仍然零脚本');
+  });
+});
+
+test('AC-S13 ⭐ 【再打一张】带 `again=1` ⇒ 服务端收到 again=true（她真想再打的路）', async () => {
+  login();
+  const queue = fakeQueue({ online: true });
+  await withServer(appFor({ queue }), async (base) => {
+    const response = await postPrint(base, { again: '1' });
+    assert.equal(response.status, 303);
+    assert.equal(queue.calls.enqueue.length, 1);
+    assert.equal(queue.calls.enqueue[0].again, true, 'again 必须传到服务层');
+    assert.equal(queue.calls.enqueue[0].submitKey, '', '扫码页零 JS，不强依赖幂等键');
+  });
+});
+
+test('AC-S13 表单不带 again ⇒ again=false（正常点一下就是一次正常提交）', async () => {
+  login();
+  const queue = fakeQueue({ online: true });
+  await withServer(appFor({ queue }), async (base) => {
+    await postPrint(base, { submit_key: 'k1' });
+    assert.equal(queue.calls.enqueue[0].again, false);
+    assert.equal(queue.calls.enqueue[0].submitKey, 'k1', '表单带了 submit_key 就一路传给服务层');
+  });
+});
+
+test('AC-S13 没去重（新建了任务）⇒ 出**绿条**、且**不出现**黄条', async () => {
+  login();
+  const queue = fakeQueue({ online: true, bannerCount: 2 });
+  await withServer(appFor({ queue }), async (base) => {
+    const block = productBlock(await (await getProduct(base, '?from=product&printed=1&job=job-1')).text());
+    assert.ok(block.includes('label-print-banner--ok'));
+    assert.equal(block.includes('label-print-banner--dup'), false, '新提交不许出"刚发过"那条黄条');
   });
 });
