@@ -233,7 +233,7 @@ const ROTATIONS = Object.freeze([0, 90, 180, 270]);
  *     **不再**"先画好 40×30 再转、转不下就缩到 75%"。
  * 认不出的值当场抛错（不许静默按横版印出一堆方向反的标签）。
  */
-const CANVASES = Object.freeze(['landscape', 'portrait']);
+const CANVASES = Object.freeze(['landscape', 'portrait', 'fitting']);
 const normalizeCanvas = (value) => {
   const canvas = String(value ?? 'landscape').trim() || 'landscape';
   if (!CANVASES.includes(canvas)) {
@@ -277,28 +277,56 @@ const canvasGeometry = (layout, options = {}) => {
   const canvas = normalizeCanvas(options.canvas);
   const rotateOption = normalizeRotation(options.rotate);
   const portrait = canvas === 'portrait';
-  // ⭐⭐ **两档用的是同一份原构图**（40×30：品牌在上、二维码在左、信息在右、尺码在下）——
-  //    不重排行序、不把二维码挪进行流（业务负责人 2026-10-12：「左边是二维码、右边是信息的
-  //    这个已经变了」⇒ 构图必须保持原样）。
+  // ⭐⭐ `fitting`（业务负责人 2026-10-12 点名的"那一格"）——**算法如实写在这里**：
+  //   ① 逻辑画布 = **30 宽 × 40 高**，"读的方向"沿这个框的 **40mm** 那条边：
+  //      品牌沿 40mm 方向排在顶部位置、二维码在同一阅读坐标系的左侧、信息在右、尺码在下
+  //      （相对关系不变，只是**整个坐标系换向**）⇒ 这一步 = 把原构图 **在框内转 −90°**；
+  //   ② 页面 = **40×30**（不变），把这幅 30×40 的成果**整体转 +90°**放进页面
+  //      ⇒ 30×40 转 90° 正好 40×30 ⇒ `scale = 1`、铺满。
+  //   ③ ⚠️ **两步正好互相抵消**：框内 −90° 与页面 +90° 合起来 = **恒等变换**
+  //      ⇒ 页面内容 = **原构图本身** ⇒ 与 `landscape + rotate:0` **逐像素相同**。
+  //   🔴 **所以这一格在纸上 = 真机【A】那一档（品牌平行于短边）**，不是"方向对 + 铺满"。
+  //      这不是实现没做对，而是**几何上必然**（证明见 `test/labelPrintCanvas.test.js` 的 AC-C8）：
+  //      打印机对"整页内容"做的是一次**等距变换**（旋转/镜像二选一；文字没被镜像 ⇒ 只能是旋转），
+  //      真机 A/B 两档把它标定为 **±90°**；要让**纸上是原构图**，页面内容就必须是
+  //      "**原构图先转 ∓90°**"——而那幅图是 **30×40**，**根本塞不进 40×30 的页面**（只能缩到 73.5%）。
+  //      等距变换不改变宽高比：4:3 的构图转 90° 仍是同一个 3:4 的矩形 ⇒ 装不进 4:3 的纸。
+  //   ⇒ 这一档**保留只作对照/证据**（配置注释与启动日志都会大声说明），**不要上线**。
+  const fitting = canvas === 'fitting';
+
+  // ⭐⭐ **两档的"页面内容"其实是同一份：原构图（40×30）不重排、不缩放。**
+  //
+  //  `fitting` = 上面 ①②③ = 恒等 ⇒ 与 `landscape+rotate:0` 同一条路（`rotation = rotateOption` 就是它）。
+  //
+  //  `portrait`（"驱动纸型已修好"那一档）为什么等于"原构图 1:1"：
+  //    业务负责人口径 = "逻辑画布 30×40（读向沿 40mm 那条边）+ 整幅转 90° 进页面"。
+  //    这两步**正好互相抵消**：画布里那次 −90° 把原构图转进 30×40 框，
+  //    页面前那次 +90° 又把它转回 40×30 —— 于是**页面内容 = 原构图本身、页面 40×30、scale=1**。
+  //    ⚠️ 也就是说：`portrait` 与 `landscape + rotate:0` **渲染结果逐像素相同**
+  //       （`test/labelPrintCanvas.test.js` 里有一条 AC 专门证明这件事，
+  //        免得"以为换了个模式、其实没变"）。
+  //    ⇒ **真正的开关不在代码里，在那台打印机的驱动纸型**：
+  //      驱动纸型 = 40×30 ⇒ 页面按原样打印 ⇒ 原构图就是纸上看到的（方向✓ 构图✓ 铺满✓）；
+  //      驱动纸型 = 30×40（她之前的状态）⇒ 驱动会把 40×30 的页面**再转 90°** ⇒ 方向反（= 真机 A）。
   const designW = labelW;
   const designH = labelH;
-  // 内容相对页面转多少度：竖版天生带一次 90°（把 40×30 的原构图转过来）。
-  const rotation = ((((portrait ? 90 : 0) + rotateOption) % 360) + 360) % 360;
-  // ⭐ 页面声明：竖版 = **30×40**（这样"原构图转 90°"能 1:1 放进去 ⇒ **100% 铺满、scale=1**）；
-  //    横版 = 40×30（老纸型；`rotatePageWithContent` 那条老路也还留着）。
-  const allowSwap = portrait
-    || (Boolean(options.rotatePageWithContent) && (rotateOption === 90 || rotateOption === 270));
+  const rotation = rotateOption;
+  // 页面声明：`portrait` **保持 40×30**（本轮的关键 —— 上一版错在把页面改成 30×40，
+  // 于是驱动"看到页面形状与纸型不一致"又转了一次）。
+  // `rotatePageWithContent` 是历史老路（实测会被驱动再转 90°、不推荐），保留但默认关。
+  const allowSwap = !portrait
+    && Boolean(options.rotatePageWithContent)
+    && (rotateOption === 90 || rotateOption === 270);
   const pageW = allowSwap ? labelH : labelW;
   const pageH = allowSwap ? labelW : labelH;
-  // 转完之后内容占多大；**塞不下才缩**（横版 + 转 90° 那条老路 = 真机 B 就是靠这一档）。
   const needW = rotation % 180 === 0 ? designW : designH;
   const needH = rotation % 180 === 0 ? designH : designW;
   const fit = Math.min(1, pageW / needW, pageH / needH);
-  // ⚠️ 只有"要缩小"时才留那 2% 余量（刚好贴边会被打印机切到）；1:1 那一档保持原尺寸。
   const scale = fit >= 1 ? 1 : round(fit * 0.98);
   return {
     canvas,
     portrait,
+    fitting,
     labelW,
     labelH,
     designW,

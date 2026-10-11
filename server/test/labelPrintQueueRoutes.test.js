@@ -614,15 +614,16 @@ test('AC-R11 ⭐ 手机侧带 `canvas: portrait` ⇒ 这一条走"旋转画布"�
       assert.equal(response.status, 200);
       const body = await response.json();
       const job = await harness.service.getJob(body.job_id);
-      assert.equal(job.canvas, 'portrait', '任务上要留痕"这一张是竖版（换页面那档）"');
-      assert.equal(job.rotate, 90, '竖版：原构图整体转 90°');
-      // ⚠️ 2026-10-12 改断言（**"竖版 = 原尺寸铺满"这个本意没变**）：
-      //   改前：页面仍是 40×30（113.3858×85.0394）
-      //   改后：页面声明成 **30×40**（85.0394×113.3858）
-      //   理由：真机 C 组证明"页面 40×30 + 原构图转 90°"根本放不下（只能缩到 73.5%）；
-      //        要让**原构图** 1:1 铺满，页面必须声明成 30×40（`scale` 才等于 1）。
-      assert.equal(job.artifact.width_pt, 85.0394, '竖版：页面 30×40');
-      assert.equal(job.artifact.height_pt, 113.3858);
+      assert.equal(job.canvas, 'portrait', '任务上要留痕"这一张是 portrait（原构图 1:1）"');
+      assert.equal(job.rotate, 0, 'portrait：页面内容 = 原构图本身（原尺寸、不转、不换页面）');
+      // ⚠️ 2026-10-12 二次改断言（**"portrait = 原尺寸铺满 + 构图不变"这个本意没变**）：
+      //   改前（上一版）：页面声明成 30×40（85.0394×113.3858）
+      //   改后（Lead 定的正解）：**页面保持 40×30**（113.3858×85.0394）
+      //   理由：页面一旦改成 30×40，驱动"看到页面形状与纸型不一致"就会**再转 90°**、
+      //        方向又反（真机 C 组）。保持 40×30 + 内容原构图 1:1，才是"方向✓ 构图✓ 铺满✓"。
+      assert.equal(job.artifact.width_pt, 113.3858, 'portrait：页面仍是 40×30');
+      assert.equal(job.artifact.height_pt, 85.0394);
+      assert.equal(job.artifact.scale, 1, '原尺寸，不许缩');
       assert.equal(job.artifact.dpi, 203);
       // 不传 ⇒ 跟随服务器配置（默认 landshape）。
       const follow = await phone(base, '/jobs', {
@@ -665,6 +666,80 @@ test('AC-R11 试方向不会被防连点挡住：竖版 / 横版 90° / 横版�
       const ids = [a.job_id, b.job_id, c.job_id];
       assert.equal(new Set(ids).size, 3, '三个方向方案必须各建一条任务（她要挨个打一张对比）');
       assert.equal((await harness.store.listAll()).length, 3);
+    });
+  } finally {
+    harness.cleanup();
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 【2026-10-12 真机"打印要等 ~30 秒"】提速相关：心跳活着 + 长轮询被钳死
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-L1 ⭐ SSE 心跳：默认 20 秒（< Nginx proxy_read_timeout 60 秒），且真的在发 `: ping`', async () => {
+  // ① 默认值必须安全：Nginx 的 `proxy_read_timeout` 默认 60 秒，心跳超过它就会被判空闲掐断。
+  assert.equal(LABEL_PRINT_QUEUE.ssePingMs, 20000, '默认心跳 20 秒');
+  assert.ok(LABEL_PRINT_QUEUE.ssePingMs < 60000, '心跳必须小于 Nginx 的 60 秒');
+  assert.ok(LABEL_PRINT_QUEUE.ssePingMs <= 25000, '留足余量：心跳 ≤25 秒');
+
+  // ② 真连一次，把心跳调成 1 秒 ⇒ 1.5 秒内必须收到 `: ping`（不真等 20 秒）
+  const harness = buildHarness({ ssePingMs: 1000 });
+  const controller = new AbortController();
+  try {
+    await withServer(harness.app, async (base) => {
+      const response = await fetch(`${base}/api/label-print/stream`, {
+        headers: { 'x-label-print-token': DEVICE_TOKEN, signal: controller.signal },
+      });
+      assert.equal(response.headers.get('x-accel-buffering'), 'no', '心跳要能穿过 Nginx（不被缓冲）');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      const startedAt = Date.now();
+      let text = '';
+      while (Date.now() - startedAt < 1500 && !text.includes('ping')) {
+        // eslint-disable-next-line no-await-in-loop
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += decoder.decode(value, { stream: true });
+      }
+      controller.abort();
+      assert.match(text, /event: ping/, `1.5 秒内必须收到心跳（收到的是 ${JSON.stringify(text.slice(0, 80))}）`);
+    });
+  } finally {
+    controller.abort();
+    harness.cleanup();
+  }
+});
+
+test('AC-L1 ⭐ 长轮询挂起时长**被配置钳死**（客户端传多大都不许超过 longPollWaitMs）', async () => {
+  // 站到"客户端乱传 waitMs=999999"这一边：服务端必须钳到 longPollWaitMs（这里设 1000ms 好量）。
+  const harness = buildHarness({ longPollWaitMs: 1000 });
+  try {
+    await withServer(harness.app, async (base) => {
+      const startedAt = Date.now();
+      const response = await device(base, '/jobs/next', { method: 'POST', body: { waitMs: 999999 } });
+      const elapsed = Date.now() - startedAt;
+      assert.equal(response.status, 200);
+      assert.equal((await response.json()).job, null, '没有任务 ⇒ job: null（不是错误）');
+      assert.ok(elapsed >= 900, `必须**真的挂住**等任务（实测 ${elapsed}ms）`);
+      assert.ok(elapsed < 3000, `必须被 longPollWaitMs=1000 钳死（实测 ${elapsed}ms，否则会被 Nginx 掐断）`);
+    });
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test('AC-L1 ⭐ 长轮询期间任务进来 ⇒ **立刻**返回（这是"降级也不用等"的根）', async () => {
+  const harness = buildHarness({ longPollWaitMs: 25000 });
+  try {
+    await withServer(harness.app, async (base) => {
+      const startedAt = Date.now();
+      const pending = device(base, '/jobs/next', { method: 'POST', body: { waitMs: 25000 } });
+      await new Promise((resolve) => { setTimeout(resolve, 150); });
+      await phone(base, '/jobs', { method: 'POST', body: { mode: 'single', number: NUMBER } });
+      const body = await (await pending).json();
+      const elapsed = Date.now() - startedAt;
+      assert.ok(body.job, '挂在长轮询上的请求必须拿到这条任务');
+      assert.ok(elapsed < 2000, `任务一入队就要返回（实测 ${elapsed}ms，远小于 25000）`);
     });
   } finally {
     harness.cleanup();

@@ -55,15 +55,28 @@ const getLabelPrintQueue = (options = {}) => {
       claim_timeout_ms: config.claimTimeoutMs,
       max_labels_per_job: config.maxLabelsPerJob,
     });
+    if (config.artifact?.canvas === 'fitting') {
+      // 🔴 这一档是"业务负责人点名的那一格"，但**几何上就等于"不旋转"**（页面内容 = 原构图本身）。
+      //    配了它 = 真机 A 那一档（品牌平行于短边）⇒ 必须大声说明，不能被当成"方向对 + 铺满"上线。
+      logWarn('label_print.canvas.fitting_equals_no_rotation', {
+        hint: 'canvas=fitting ⇒ 逻辑画布 30×40（读向沿 40mm 边）**再整体转 90° 进 40×30 页面**：'
+          + '两步互相抵消 ⇒ 页面内容 = 原构图本身 ⇒ 与 landscape+rotate:0 **逐像素相同**。'
+          + '实测口径：这就是真机 A 那一档（**品牌平行于短边**）。'
+          + '要"方向对 + 构图对 + 铺满"三全，只能**把打印驱动的纸型/旋转改对**（纸型 40×30）'
+          + '之后用 LABEL_PRINT_CANVAS=portrait；驱动没改之前请用 '
+          + 'LABEL_PRINT_CANVAS=landscape + LABEL_PRINT_ROTATE=90（方向✓构图✓，代价 73.5%）。',
+      });
+    }
     if (config.artifact?.canvas === 'portrait') {
-      // ⚠️ **必须大声说清前提**：这一档是"原构图 1:1 铺满"，但它**同时要求打印驱动那边
-      //    不要把页面再转一次**（真机实测：页面宽高比与纸型不同时，驱动会再转 90° ⇒ 方向又反）。
-      //    所以这条日志不是噪声，是"上线前先确认这一条"的提醒。
+      // ⚠️ **这一档的前提必须大声说清**：`portrait` = "页面 40×30 + 原构图 1:1（scale=1）"，
+      //    它要求**打印驱动的纸型也是 40×30** —— 否则驱动会把 40×30 的页面再转 90°、方向又反
+      //    （真机 A 组就是这么来的）。把这条打进日志，是为了"上线前先确认这一条"。
       logWarn('label_print.canvas.portrait_prerequisite', {
-        hint: 'canvas=portrait ⇒ 页面声明成 30×40（原构图转 90°、1:1 铺满）。'
-          + '这要求**打印驱动的纸型/旋转也设置成一致**（否则驱动会把页面再转 90°、方向又反，'
-          + '真机 C 组就是这样）。驱动还没调好之前，请用 LABEL_PRINT_CANVAS=landscape + LABEL_PRINT_ROTATE=90'
-          + '（方向与构图都对，代价是 73.5% 小一圈）。',
+        hint: 'canvas=portrait ⇒ 页面 40×30 + 原构图 1:1（scale=1）。'
+          + '**前提：打印驱动的纸型必须是 40mm × 30mm** —— 驱动纸型若还是 30×40，'
+          + '它会把这张 40×30 的页面再转 90°、纸上方向又反（真机 A 组实测）。'
+          + '驱动纸型没改对之前，请用 LABEL_PRINT_CANVAS=landscape + LABEL_PRINT_ROTATE=90'
+          + '（方向与构图都对，代价是缩到 73.5%）。',
       });
     }
   }

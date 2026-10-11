@@ -18,7 +18,8 @@
  *   AC-H8  ⭐⭐ **启动补拉**：`start()` **先** `GET /pending`、**再**连 SSE（电脑关着时入队的不会漏）；
  *   AC-H9  ⭐ **端到端 drain（全注入）**：一条 queued 任务 → 下载 → 打印 → 回执 done；
  *          **再 drain 一次不会重打**（打印只调 1 次）；
- *   AC-H10 **兜底轮询绝不许是 2-3 秒**：默认 `pollFallbackMs >= 10000`；长连接连续失败到阈值才启用；
+ *   AC-H10 ⭐ **降级先长轮询**（任务一到立刻返回、延迟≈0），定时轮询只作最后兜底（默认 3 秒）；
+ *          重连退避**封顶 3 秒**（改前 30 秒 —— 真机实测"要等 ~30 秒"的根因之一）；
  *   AC-H11 **台账**：原子写（临时文件 + rename）、条数上限、读坏文件退化成空台账（不抛）；
  *   AC-H12 **本地页面**：零脚本、说清配置错误、带【测试打印】/【重新连接】/【补打】；
  *          测试打印用的是**同一条打印命令路径**；
@@ -51,7 +52,10 @@ const fakeServer = (options = {}) => {
   const state = { acked: [], reprints: [] };
   const handler = async (url, init = {}) => {
     const pathname = new URL(url).pathname;
-    calls.push({ method: init.method || 'GET', pathname });
+    // ⚠️ 连**请求体**一起记：长轮询那条 AC 要断"到底带没带 waitMs"（2026-10-12 加）。
+    let parsedBody = null;
+    try { parsedBody = init.body ? JSON.parse(init.body) : null; } catch { parsedBody = null; }
+    calls.push({ method: init.method || 'GET', pathname, body: parsedBody, at: Date.now() });
     const json = (body, status = 200) => ({
       ok: status < 400,
       status,
@@ -63,6 +67,16 @@ const fakeServer = (options = {}) => {
       return json({ success: true, jobs: jobs.map((job) => ({ ...job })), online: true });
     }
     if (pathname === '/api/label-print/jobs/next') {
+      // ⭐ 模拟服务端"长轮询"：带 waitMs 时**先 hold 一会儿**，期间任务到了就立刻给它
+      //    （服务器就是这么干的 —— `subscribe` 一被唤醒就立刻认领返回）。
+      if (parsedBody && Number(parsedBody.waitMs) > 0) {
+        const holdMs = Number(options.holdMs ?? 30);
+        const deadline = Date.now() + holdMs;
+        while (!jobs.length && Date.now() < deadline) {
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise((resolve) => { setTimeout(resolve, 5); });
+        }
+      }
       const next = jobs.shift() || null;
       return json({ success: true, job: next });
     }
@@ -95,6 +109,19 @@ const fakeServer = (options = {}) => {
     return json({ success: false, error: 'not found' }, 404);
   };
   return { calls, state, fetch: handler, jobs };
+};
+
+/** 一个**可控**的 SSE 流：用例自己往里推帧（用来量"入队→领取"的延迟）。 */
+const controllableStream = () => {
+  let controller = null;
+  const stream = new ReadableStream({
+    start(c) { controller = c; },
+  });
+  return {
+    stream,
+    push: (text) => controller.enqueue(new TextEncoder().encode(text)),
+    close: () => controller.close(),
+  };
 };
 
 const makeHelper = (overrides = {}) => {
@@ -189,10 +216,21 @@ test('AC-H3 配置缺失/写错 ⇒ 带字段名的明确错误（绝不静默�
   // ④ 参数里没有 {file}
   checked = helper.validateConfig(baseConfig({ printer: { mode: 'sumatra', args: ['-silent'] } }), { exists });
   assert.ok(checked.errors.some((error) => error.field === 'printer.args'));
-  // ⑤ 🔴 兜底轮询不许是 2-3 秒（她明令不要定时轮询）
-  checked = helper.validateConfig(baseConfig({ pollFallbackMs: 2500 }), { exists });
+  // ⑤ ⚠️ 2026-10-12 改断言（**"实时性不能靠定时轮询"这条本意没变**）：
+  //    改前：`pollFallbackMs: 2500`、`3000` 都必须**被拒**（"不许 2-3 秒定时轮询"）。
+  //    改后：下限放宽到 500ms —— `3000` **合法**（真机实测后默认就是 3 秒，
+  //          但它只是"连长轮询也失败"时的**最后兜底**）；
+  //          实时性改由「降级时优先长轮询 + 退避封顶 3 秒」保证（见 AC-H10 / AC-H14）。
+  //    仍然被拒的：低于 500ms（等于拿服务器刷请求）· 退避上限 > 3 秒 · 长轮询时长越界。
+  checked = helper.validateConfig(baseConfig({ pollFallbackMs: 400 }), { exists });
   assert.ok(checked.errors.some((error) => error.field === 'pollFallbackMs'));
-  assert.equal(helper.validateConfig(baseConfig({ pollFallbackMs: 3000 }), { exists }).ok, false);
+  assert.equal(helper.validateConfig(baseConfig({ pollFallbackMs: 3000 }), { exists }).ok, true);
+  checked = helper.validateConfig(baseConfig({ reconnectBackoffMs: [500, 10000] }), { exists });
+  assert.ok(checked.errors.some((error) => error.field === 'reconnectBackoffMs'),
+    '重连退避上限 3 秒是硬约束（上限一大 = 断连后盲等那么久）');
+  checked = helper.validateConfig(baseConfig({ longPollWaitMs: 90000 }), { exists });
+  assert.ok(checked.errors.some((error) => error.field === 'longPollWaitMs'),
+    '长轮询时长必须 < Nginx proxy_read_timeout(60s)');
   // ⑥ 全对 ⇒ ok，且 configErrorText 是一句人话
   checked = helper.validateConfig(baseConfig(), { exists });
   assert.equal(checked.ok, true);
@@ -359,9 +397,20 @@ test('AC-H9 ⭐ 端到端 drain：queued → 下载 → 打印 → 回执 done�
 
 // ── AC-H10：兜底轮询 ──────────────────────────────────────────────────────
 
-test('AC-H10 兜底轮询绝不是 2-3 秒：默认 ≥10 秒，且只在长连接连续失败到阈值才启用', async () => {
-  assert.ok(helper.DEFAULT_CONFIG.pollFallbackMs >= 10000, '默认兜底轮询间隔必须 ≥10 秒');
+test('AC-H10 ⭐ 兜底：**降级时优先长轮询**（延迟≈0），定时轮询只作最后兜底（默认 3 秒）', async () => {
+  // ⚠️ 2026-10-12 改断言（**"实时性不能靠定时轮询"这条本意没变**）：
+  //   改前：`assert.ok(DEFAULT_CONFIG.pollFallbackMs >= 10000)`，
+  //         且 `validateConfig({pollFallbackMs: 3000})` 必须是**错的**。
+  //   改后：默认 `pollFallbackMs === 3000`；`validateConfig({pollFallbackMs: 3000})` 是**对的**。
+  //   理由：真机实测"点了要等 ~30 秒"（日志：入队→领取 10.3s / 8.0s，而正常时 0.3s）。
+  //        根因是断连后退避封顶 30 秒 + 降级时只有定时轮询。
+  //        现在改成"**降级时先长轮询**（服务器 hold、任务一到立刻返回）"，实时性由**长轮询**
+  //        保证；3 秒那条只是"连长轮询都失败"时的最后兜底 ⇒ 本意由更强的机制守着（见 AC-H14）。
+  assert.equal(helper.DEFAULT_CONFIG.pollFallbackMs, 3000, '兜底定时轮询 = 3 秒（最后一道）');
+  assert.equal(helper.DEFAULT_CONFIG.longPollWaitMs, 25000, '降级首选通道 = 长轮询 25 秒');
   assert.equal(helper.DEFAULT_CONFIG.streamFailuresBeforeFallback, 3);
+  // 退避**封顶 3 秒**：上限一大，服务重启那一下就要盲等那么久
+  assert.deepEqual(helper.DEFAULT_CONFIG.reconnectBackoffMs, [500, 1000, 1000, 2000, 3000]);
 
   const server = fakeServer();
   server.fetch = async (url) => {
@@ -383,6 +432,152 @@ test('AC-H10 兜底轮询绝不是 2-3 秒：默认 ≥10 秒，且只在长连�
     assert.equal(instance.state.fallbackActive, false, '失败一次还不降级');
   } finally {
     cleanup();
+  }
+});
+
+// ── AC-H14 / AC-H15 / AC-H16：2026-10-12 "打印要等 30 秒" 的修法 ──────────
+
+test('AC-H14 ⭐⭐ 断连期间走**长轮询**：`/jobs/next` 带 `waitMs=25000`，任务一到立刻领、不等 3 秒', async () => {
+  const logs = [];
+  const server = fakeServer({ jobs: [JOB()], holdMs: 150 });
+  // SSE 永远连不上 ⇒ 触发降级
+  const originalFetch = server.fetch;
+  const fetchImpl = async (url, init) => {
+    if (String(url).includes('/api/label-print/stream')) throw new Error('SSE 连不上');
+    return originalFetch(url, init);
+  };
+  const dir = tmpDir();
+  const instance = helper.createPrintHelper({
+    config: baseConfig({
+      stateFile: path.join(dir, 'state.json'),
+      downloadDir: path.join(dir, 'downloads'),
+      streamFailuresBeforeFallback: 1,
+      pollFallbackMs: 3000,
+      longPollWaitMs: 25000,
+      reconnectBackoffMs: [500, 1000, 3000],
+    }),
+    fetch: fetchImpl,
+    print: async () => {},
+    logger: { info: (e, d) => logs.push([e, d]), warn: (e, d) => logs.push([e, d]), error: () => {} },
+    validateOptions: { exists: () => true, checkPaths: false },
+  });
+  try {
+    await instance.connectStream(); // 失败 ⇒ 降级（先长轮询）
+    // 等第一次长轮询认领到那条任务
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline) {
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => { setTimeout(resolve, 10); });
+      if (server.calls.some((call) => call.pathname === '/api/label-print/jobs/next'
+        && Number(call.body?.waitMs) > 0)) break;
+    }
+    const nextCall = server.calls.find((call) => call.pathname === '/api/label-print/jobs/next');
+    assert.equal(nextCall.body.waitMs, 25000, '降级时必须走**长轮询**（带 waitMs），不是定时轮询');
+    // ⭐ 关键：任务在 hold 期间就到了 ⇒ 必须**立刻**领走，而不是等 3 秒那一轮定时器。
+    const startedAt = server.calls.find((call) => call.pathname === '/api/label-print/jobs/next').at;
+    const ackCall = server.calls.find((call) => /\/ack$/.test(call.pathname));
+    assert.ok(ackCall, '长轮询拿到的任务要被打掉（回执 done）');
+    assert.ok(ackCall.at - startedAt < 3000,
+      `长轮询一返回就要立刻处理（实际 ${ackCall.at - startedAt}ms，必须 < 3000ms）`);
+    assert.ok(logs.some(([event]) => event === 'print_helper.fallback.long_poll'), '降级要记一条"先长轮询"的日志');
+    assert.ok(!logs.some(([event]) => event === 'print_helper.fallback.polling'),
+      '不许再走老的"纯定时轮询"那条路');
+  } finally {
+    instance.stop?.();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('AC-H15 ⭐ 长轮询**也失败** ⇒ 才退到定时兜底（默认/配置的 3 秒），两次尝试的间隔≈配置值', async () => {
+  const server = fakeServer();
+  // ⚠️ 请求在这里就抛了 ⇒ 假服务器记不到，得**自己记**尝试时刻（踩过一次）。
+  const attempts = [];
+  const fetchImpl = async (url, init) => {
+    if (String(url).includes('/api/label-print/stream')) throw new Error('SSE 连不上');
+    if (String(url).includes('/jobs/next')) {
+      attempts.push(Date.now());
+      throw new Error('长轮询也连不上');
+    }
+    return server.fetch(url, init);
+  };
+  const dir = tmpDir();
+  const instance = helper.createPrintHelper({
+    config: baseConfig({
+      stateFile: path.join(dir, 'state.json'),
+      downloadDir: path.join(dir, 'downloads'),
+      streamFailuresBeforeFallback: 1,
+      pollFallbackMs: 700, // 用例里用小值；默认是 3000（AC-H10 已断）
+      longPollWaitMs: 25000,
+      reconnectBackoffMs: [500],
+    }),
+    fetch: fetchImpl,
+    print: async () => {},
+    logger: { info: () => {}, warn: () => {}, error: () => {} },
+    validateOptions: { exists: () => true, checkPaths: false },
+  });
+  try {
+    await instance.connectStream();
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline) {
+      if (attempts.length >= 3) break;
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => { setTimeout(resolve, 20); });
+    }
+    assert.ok(attempts.length >= 3, `长轮询一直失败时要持续重试（实际 ${attempts.length} 次）`);
+    const first = attempts[1] - attempts[0];
+    const second = attempts[2] - attempts[1];
+    assert.ok(first >= 500 && first < 1500,
+      `第一次失败后要按兜底间隔重试（实测 ${first}ms，配置 700ms）`);
+    assert.ok(second >= 500 && second < 1500, `继续按兜底间隔重试（实测 ${second}ms）`);
+  } finally {
+    instance.stop?.();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('AC-H16 ⭐⭐ SSE 正常 ⇒ 入队到"领取"≤1 秒（帧一到就 drain，不依赖任何定时器）', async () => {
+  const { stream, push, close } = controllableStream();
+  const server = fakeServer({ jobs: [JOB()] });
+  const fetchImpl = async (url, init) => {
+    if (String(url).includes('/api/label-print/stream')) {
+      return { ok: true, status: 200, headers: { get: () => null }, body: stream };
+    }
+    return server.fetch(url, init);
+  };
+  const dir = tmpDir();
+  const instance = helper.createPrintHelper({
+    config: baseConfig({
+      stateFile: path.join(dir, 'state.json'),
+      downloadDir: path.join(dir, 'downloads'),
+    }),
+    fetch: fetchImpl,
+    print: async () => {},
+    logger: { info: () => {}, warn: () => {}, error: () => {} },
+    validateOptions: { exists: () => true, checkPaths: false },
+  });
+  try {
+    void instance.connectStream(); // 挂着读流（不 await：它要一直读）
+    await new Promise((resolve) => { setTimeout(resolve, 50); });
+    const before = server.calls.filter((call) => call.pathname === '/api/label-print/jobs/next').length;
+    const pushedAt = Date.now();
+    // ⭐ 服务器就是在"有任务"时推这一帧（`event: job`）
+    push('event: job\ndata: {"job_id":"job-1"}\n\n');
+    let claimedAt = null;
+    const deadline = Date.now() + 1500;
+    while (Date.now() < deadline) {
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => { setTimeout(resolve, 5); });
+      const calls = server.calls.filter((call) => call.pathname === '/api/label-print/jobs/next');
+      if (calls.length > before) { claimedAt = calls[calls.length - 1].at; break; }
+    }
+    assert.ok(claimedAt, 'SSE 帧到了就必须立刻去认领');
+    assert.ok(claimedAt - pushedAt <= 1000,
+      `入队→领取必须 ≤1 秒（实测 ${claimedAt - pushedAt}ms）`);
+    assert.equal(instance.state.fallbackActive, false, 'SSE 正常时**不该**启用降级');
+  } finally {
+    close();
+    instance.stop?.();
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 

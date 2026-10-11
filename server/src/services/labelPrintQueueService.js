@@ -302,6 +302,10 @@ const createLabelPrintQueueService = (deps = {}) => {
         dpi: rendered.meta.dpi,
         width_mm: rendered.meta.width_mm,
         height_mm: rendered.meta.height_mm,
+        // ⭐ 画布方向 / 是否被缩过 / 页面高度——排障时一眼能看出"这一张是不是小框"。
+        canvas: rendered.meta.canvas,
+        rotate: rendered.meta.rotate,
+        scale: rendered.meta.scale,
         sha256: crypto.createHash('sha256').update(rendered.pdf).digest('hex'),
       },
       requested_by: actor || '',
