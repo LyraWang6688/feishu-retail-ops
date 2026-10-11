@@ -1,5 +1,9 @@
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { InventoryService, MOVEMENT_SALE_DECREASE } = require('./inventoryService');
+// ⭐ 2026-10-11（B）：配品行要**显式识别并跳过**（它没有鞋 ⇒ 不参与交付 / 库存扣减）。
+//    判据是**可售品属性**（`tracksInventory`），不是"配品"这两个字。
+const { SELLABLE_KINDS } = require('../config/sellableKinds');
+const { itemLinkOfDetail } = require('./salesDetailItemFacts');
 const { SalesProgressService } = require('./salesProgressService');
 const { readSaleLinkedRecord } = require('./salesRecordReader');
 const { withSalesReadRetry } = require('./salesReadRetry');
@@ -77,13 +81,23 @@ class SalesDeliveryService {
       try {
         const status = textValue(detail.fields?.[fields.fulfillmentStatus]) || '未交付';
         if (!['未交付', '已交付'].includes(status)) throw new Error(`销售明细 ${id} 履约状态无效：${status}`);
+        // ⭐ 2026-10-11（B）：**配品行显式跳过** —— 它没有鞋，不参与交付、更不参与库存扣减
+        //    （业务负责人 2026-10-09：「这类"配品行"不参与待交付 / 库存扣减」）。
+        //    ⚠️ 判据是**可售品属性**（`config/sellableKinds` 的 `tracksInventory`），
+        //       不是"因为它碰巧是已交付" ⇒ 所以**先判**这一支，并**如实**标成 skipped 返回。
+        //       （放在「已交付」那一支之后的话，配品行会被当成"重复交付"混过去 ——
+        //        一旦有人把它写成未交付，它就会掉进货品校验里报错，而不是被认出来"本来就不该交付"。）
+        const link = itemLinkOfDetail(detail.fields, fields);
+        const kind = link ? SELLABLE_KINDS[link.kindKey] : null;
+        if (kind && !kind.tracksInventory) {
+          results.push({ detailRecordId: id, skipped: true, reason: 'not_tracked_kind' });
+          continue;
+        }
         if (status === '已交付') {
           const inventoryResult = await this.inventory.getSaleResult?.(id);
           results.push({ detailRecordId: id, duplicate: true, inventoryResult });
           continue;
         }
-        // 先判交付状态再解析尺码：配品不参与交付（写单时就是已交付），
-        // 也不会走到这里；万一走到，下面的货品校验会把它拦下来。
         size = (await this.getSizeReferences().resolveLinkedCell(detail.fields?.[fields.size])).size;
         if (productIds.length !== 1) throw new Error(`销售明细 ${id} 必须关联一个货品`);
         const inventoryResult = await this.inventory.applySale({
@@ -102,9 +116,12 @@ class SalesDeliveryService {
       }
     }
     // 「库存状态」：扣减这一步的结果（**逐条**看，不是看"整单成功/失败"）。
-    //   · 全成 → 已扣减   · 有的成有的败 → 部分扣减   · 一条都没成 → 扣减失败
+    //   · 全成 → 已写入   · 有的成有的败 → 部分写入   · 一条都没成 → 写入失败
+    // ⚠️ 取值就是 `config/salesStatusDimensions.SALES_STATUS_WRITE_VALUES.stock` 里那四个
+    //    （**不是**"已扣减 / 部分扣减 / 扣减失败" —— 那串说法只是描述这件事，别照着写值）。
     // ⚠️ `results` 里包含"这条明细本来就是已交付"的重复项：那一步的库存**已经扣过了**，
-    //    算成功；否则重试一次正常的交付会把状态写成"部分扣减"。
+    //    算成功；否则重试一次正常的交付会把状态写成"部分写入"。
+    // ⚠️ 配品行（skipped）既不算成功也不算失败：它本来就不该扣库存（见上面那一支）。
     const stockStatus = failures.length === 0 ? WRITE.stock.done
       : results.length > 0 ? WRITE.stock.partial : WRITE.stock.failed;
     // 补样品候选：与下面那条「正向证据」用**同一个筛选口径**，所以只在这里算一次。
@@ -139,6 +156,8 @@ class SalesDeliveryService {
       applied_detail_count: ledgerIds.length,
       // 这次跳过、但「履约状态」本来就是已交付的明细 —— 那些库存**早就扣过了**。
       already_delivered_detail_count: results.filter((item) => item.duplicate).length,
+      // ⭐ 配品行（不跟踪库存的可售品）：**识别并跳过**的条数（它们本来就不该扣库存）。
+      skipped_detail_count: results.filter((item) => item.skipped).length,
       failed_detail_count: failures.length,
       live_record_ids: results.flatMap((item) => item.inventoryResult?.liveRecordIds || []),
       sample_consumed_detail_ids: sampleReplacements.map((item) => item.salesDetailRecordId),

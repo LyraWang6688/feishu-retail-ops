@@ -246,7 +246,7 @@ const createScanPageRouter = (options = {}) => {
    *    连"新建会话"都不做 ⇒ 她只是看一眼库存、什么都没点，本地不会多出任何记录。
    *    会话的建立发生在**第一次点「加入本单」**那一刻（`addLine` 内部会 ensure）。
    */
-  const buildWriteContext = async (req, view) => {
+  const buildWriteContext = async (req, view, realm = DEFAULT_REALM) => {
     if (!writeService) return null;
     const openId = openIdOf(req);
     if (!openId) return null;
@@ -266,6 +266,12 @@ const createScanPageRouter = (options = {}) => {
     const defaultPaymentMethod = writeConfig.sale.defaultPaymentMethod;
     const paymentMethods = [...new Set([defaultPaymentMethod, ...(writeConfig.sale.paymentMethods || [])].filter(Boolean))];
     const lines = session?.sale?.lines || [];
+    // ⭐ 2026-10-11（B）：配品下拉的候选（「其他配品」的名称）——**只在销售那一块要**
+    //   （表单只在 `from=sales` 渲染），别的领域一次表都不读（她的"一次扫码 0~1 次飞书调用"）。
+    //   ⚠️ 读不到配品表**不影响卖鞋**：`listAccessories` 自己吞掉错误并记 warn，给空清单。
+    const accessories = realm === 'sales' && typeof writeService.listAccessories === 'function'
+      ? await writeService.listAccessories().catch(() => [])
+      : [];
     return {
       enabled: true,
       saleEnabled: writeConfig.sale.enabled !== false,
@@ -276,6 +282,8 @@ const createScanPageRouter = (options = {}) => {
       postAction: postActionFor(view.number),
       sizes,
       draft: { lines },
+      // ⭐ 配品行要的东西（没有配品时渲染层不画那个表单）。
+      accessories: accessories.map((item) => ({ record_id: item.record_id, name: item.name })),
       saleKey: writeService.sessions.submitKeyFor(openId, session, 'sale'),
       replenishKey: writeService.sessions.submitKeyFor(openId, session, 'replenish'),
       paymentMethods,
@@ -326,7 +334,7 @@ const createScanPageRouter = (options = {}) => {
           requestId,
         });
       }
-      const write = await buildWriteContext(req, view);
+      const write = await buildWriteContext(req, view, realm);
       const renderStartedAt = Date.now();
       const html = renderScan(view, config, write, realm);
       timing.render_ms = Math.max(0, Date.now() - renderStartedAt);
@@ -366,6 +374,8 @@ const createScanPageRouter = (options = {}) => {
     const actions = writeConfig.actions;
     const action = String(body[fields.action] || '');
     const openId = openIdOf(req);
+    // 「回跳到哪一块」= 这一页的领域（认不出来一律回落缺省；两个入口同一条口径）。
+    const realm = resolveRealm(req.query?.from);
     try {
       // ── 加入本单 ────────────────────────────────────────────────────────────
       if (action === actions.addLine) {
@@ -398,14 +408,39 @@ const createScanPageRouter = (options = {}) => {
         logInfo(writeConfig.events.lineAdded, {
           request_id: requestId, number: view.number, count: result.count,
         });
-        return res.redirect(303, `${postActionFor(view.number, resolveRealm(req.query?.from))}${resolveRealm(req.query?.from) === DEFAULT_REALM ? '?' : '&'}added=1`);
+        return res.redirect(303, `${postActionFor(view.number, realm)}${realm === DEFAULT_REALM ? '?' : '&'}added=1`);
+      }
+
+      // ── ⭐ 2026-10-11（B）：把一件配品加进本单（与「加入本单」同一形状：只写本地会话）──
+      if (action === actions.addAccessory) {
+        const view = await service.lookup({ number: req.params.number, requestId });
+        if (!view.found) {
+          return sendHuman(res, 404, {
+            title: config.texts.notFoundTitle,
+            body: config.texts.notFoundBody,
+            number: view.number,
+            requestId,
+          });
+        }
+        const result = await writeService.addSaleLine({
+          openId,
+          requestId,
+          // ⚠️ `kind` **由路由按动作给**，不取表单里的值（手改表单也换不了可售品类型）。
+          kind: 'accessory',
+          accessoryRecordId: body[fields.accessory],
+          amount: body[fields.amount],
+          gift: body[fields.gift],
+        });
+        if (!result.ok) return respondWriteFailure(res, result, requestId);
+        // 与「加入本单」同一条回跳（Post-Redirect-Get）：刷新不会重复提交、本单看得见。
+        return res.redirect(303, `${postActionFor(view.number, realm)}${realm === DEFAULT_REALM ? '?' : '&'}added=1`);
       }
 
       // ── 清空本单 ────────────────────────────────────────────────────────────
       if (action === actions.clearDraft) {
         await writeService.clearDraft({ openId, requestId });
         return res.redirect(303, postActionFor(
-          decodeURIComponent(String(req.params.number || '')), resolveRealm(req.query?.from),
+          decodeURIComponent(String(req.params.number || '')), realm,
         ));
       }
 
@@ -426,6 +461,22 @@ const createScanPageRouter = (options = {}) => {
           fillWriteText(texts.submittedOrderLine, { orderNo: result.order_no || '—' }),
           fillWriteText(texts.submittedDetailLine, { count: result.detail_count || 0 }),
         ];
+        // ⑥ ⭐ 2026-10-11（A）：现货行"提交即交付 + 扣库存"**没扣成** ⇒ 给她一张**如实**的结果页
+        //    （单子记上了 / 哪几双没扣成 / 怎么办），**不是**一句"没成功"把整件事说反。
+        //    ⚠️ 这一单**没有**被记成"提交完成"（见 `scanWriteService.submitSale`）⇒
+        //       照着重试那一句再点一次【提交这一单】，就会接着把没扣成的那几双扣掉。
+        if (Number(result.stock?.failed || 0) > 0) {
+          return sendHuman(res, 200, {
+            title: texts.stockFailedTitle,
+            body: fillWriteText(texts.stockFailedBody, {
+              failed: result.stock.failed,
+              reason: (result.stock.reasons || []).join('；'),
+            }),
+            requestId,
+            details,
+            retryHint: texts.stockFailedRetryHint,
+          });
+        }
         // ⚠️ 2026-10-10：原来钱没记时会补一句「这一单先记了货、还没记钱…」（`fundsPendingNote`）——
         //    那是**解释既有口径**的说明句，按业务负责人的口径删掉；写完的事实（单号 / 双数）照旧。
         return sendHuman(res, 200, {

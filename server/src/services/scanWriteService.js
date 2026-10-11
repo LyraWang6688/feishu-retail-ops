@@ -35,16 +35,26 @@ const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { V1ReferenceResolver } = require('./v1ReferenceResolver');
 const { SalesOrderService } = require('./salesOrderService');
 const { SalesStatusWriter } = require('./salesStatusWriter');
+// ⭐ 2026-10-11（A）：现货 ⇒ **提交即交付 + 扣库存**，走的就是这一条**既有交付链路**
+//   （`SalesDeliveryService.deliver`：写「履约状态」+ 扣「实时库存」+ 写「库存流水」+ 写「库存状态」）。
+//   ⚠️ 本文件**不写任何库存**：不 construct InventoryService、不调 applySale、
+//      不认识 liveInventory / inventoryLedger（源码哨兵钉着这一条）。
+const { SalesDeliveryService } = require('./salesDeliveryService');
 const { textValue, linkedRecordIds } = require('./v1BitableGateway');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
 const { REPORT_BEHAVIOR } = require('./purchaseBehaviorPolicy');
 // ⭐ 2026-10-09：扫码建单也要写**交易类型**（现货 / 预定），判据用既有的那一个：
 //    「实时库存里有没有这一双」→ `salesTradeTypeForStock`（**唯一**判据，本文件不写死编码）。
+// ⭐ 2026-10-11（A）：「**哪一种类型在提交这一刻就交付**」也来自既有注册表
+//    （`deliversOnSubmit`，见 `config/salesMovements.js`）—— 本文件不写 'SALE_CASH' 字面量。
 const { salesTradeTypeForStock } = require('../config/salesTradeTypePolicy');
+const { deliversOnSubmit } = require('../config/salesMovements');
+// 「这一件要不要尺码 / 要不要跟踪库存 / 要不要履约」——可售品的属性（配品：三样都不要）。
+const { SELLABLE_KINDS, sellableKindOf } = require('../config/sellableKinds');
 const { SCAN_WRITE, fillText } = require('../config/scanWrite');
 const { createScanSessionService } = require('./scanSessionService');
-const { logError, logInfo } = require('../utils/logger');
+const { logError, logInfo, logWarn } = require('../utils/logger');
 
 /**
  * 「全仓唯一创建销售主表记录」的那个函数 —— **只 require 调用，不改它一个字**。
@@ -91,6 +101,14 @@ const createScanWriteService = (options = {}) => {
   const status = () => {
     if (!statusInstance) statusInstance = new SalesStatusWriter({ gateway });
     return statusInstance;
+  };
+  // ⭐ 交付（A）：现货行"提交即交付 + 扣库存"走的是**既有** `SalesDeliveryService.deliver`。
+  //    同样延迟构造（只有真的提交了现货单才会用到它，连带它的库存引擎）。
+  //    ⚠️ 用例可以注入 `options.delivery`（本文件不认识库存引擎，注入点只在这一处）。
+  let deliveryInstance = options.delivery || null;
+  const delivery = () => {
+    if (!deliveryInstance) deliveryInstance = new SalesDeliveryService({ gateway });
+    return deliveryInstance;
   };
   let purchaseInstance = options.purchase || null;
   const purchaseStore = options.purchaseStore || new JsonTaskStore({
@@ -166,6 +184,52 @@ const createScanWriteService = (options = {}) => {
     return Number.isFinite(value) && value > 0 ? value : null;
   };
 
+  /**
+   * 「**其他配品**.单价」—— 配品行金额留空时的兜底（与鞋那一行的口径**同一条**：
+   * 取那张表自己的「单价」；取不到就让她填，**绝不写 0**）。
+   * ⚠️ 这是"现状口径的平移"，不是新规则：字段名来自 `v1BitableSchema`（`accessory.price`）。
+   */
+  const accessoryPrice = async (accessoryRecordId) => {
+    const field = fieldOf('accessory', 'price');
+    if (!field) return null;
+    const record = await gateway.get('accessory', accessoryRecordId).catch(() => null);
+    const value = Number(textValue(record?.fields?.[field]));
+    return Number.isFinite(value) && value > 0 ? value : null;
+  };
+
+  /** 「其他配品.名称」——本单里要能看出加的是哪一件（只用于展示 / 会话）。 */
+  const accessoryName = (record) => textValue(record?.fields?.[fieldOf('accessory', 'name')]).trim();
+
+  /**
+   * 「其他配品」清单（**只读 + 可缓存**）——用于页面上那个配品下拉。
+   *
+   * ⚠️ 复用**既有** `LarkMvpService.listAccessories`（它已经在做这件事：名称 / 种类、
+   *    过滤掉没名字的）—— 与 `createSalesEntryWithOrderNo` 同一个手法：
+   *    只借那**一个方法**（`.prototype.call`），不构造群聊入口那一整套依赖；
+   *    延迟 require，避免把群聊那条链路的模块树拖进扫码页。
+   * ⚠️ 缓存只影响"下拉里能选到哪几件"（`SCAN_SALE_ACCESSORY_CACHE_TTL_MS`，默认 30 秒），
+   *    **不影响任何写库判据** —— 提交时以她选中的**记录 id** 为准（存不存在当场查）。
+   * ⚠️ 读不到配品表**不该把整页拖垮**（她还能正常卖鞋）：记一条 warn、给空清单，**不缓存失败**。
+   */
+  let accessoryCache = { at: 0, value: null };
+  const listAccessories = async () => {
+    if (typeof options.listAccessories === 'function') return options.listAccessories();
+    const ttl = Number(config.sale.accessoryCacheTtlMs) || 0;
+    if (ttl > 0 && accessoryCache.value && now() - accessoryCache.at < ttl) return accessoryCache.value;
+    try {
+      // eslint-disable-next-line global-require
+      const { LarkMvpService } = require('./larkMvpService');
+      const value = await LarkMvpService.prototype.listAccessories.call({ gateway });
+      accessoryCache = { at: now(), value };
+      return value;
+    } catch (error) {
+      logWarn(config.events.failed, {
+        reason: 'accessory_list_failed', error: String(error.message || error),
+      });
+      return [];
+    }
+  };
+
   const productNumber = (record) => textValue(record?.fields?.[fieldOf('product', 'number')]).trim();
 
   const resolveProductRecord = async ({ productRecordId, number }) => {
@@ -202,26 +266,81 @@ const createScanWriteService = (options = {}) => {
    *
    * @returns {Promise<{ok:boolean, code?:string, message?:string, count?:number, limit?:number}>}
    */
-  const addSaleLine = async ({ openId, productRecordId = '', number = '', itemNo = '', color = '', size, amount = '', gift = '', inStock, requestId = '' }) => {
+  const addSaleLine = async ({
+    openId, kind = '', productRecordId = '', number = '', itemNo = '', color = '',
+    size, amount = '', gift = '', accessoryRecordId = '', inStock, requestId = '',
+  }) => {
     if (!config.sale.enabled) {
       return fail({ code: 'disabled', message: texts.writeDisabledBody, requestId });
     }
+    // ⭐ 2026-10-11（B）：这一行是**鞋**还是**配品** —— 由调用方（路由按动作）给，
+    //    **不取表单里的值**（手改表单也换不了可售品类型）。默认「鞋」= 既有调用点逐字不变。
+    const kindKey = String(kind || '').trim() || 'shoe';
+    const sellableKind = SELLABLE_KINDS[kindKey];
+    if (!sellableKind) {
+      return fail({ code: 'unknown_kind', message: texts.internalFailedBody, requestId });
+    }
+    const parsedAmount = positiveAmount(amount);
+    if (!parsedAmount.ok) {
+      const error = new Error(sellableKind.requiresSize ? texts.amountInvalidBody : texts.accessoryAmountInvalidBody);
+      error.scanUserMessage = error.message;
+      return fail({ code: 'amount_invalid', message: userMessageFor(error), requestId, error });
+    }
+    const giftText = String(gift ?? '').trim().slice(0, config.sale.giftMaxLength);
+
+    // ── 配品这一行（B）：没有尺码、没有货号，成交金额单列（编号/尺码留空由业务层保证）──
+    if (!sellableKind.requiresSize) {
+      const accessoryId = String(accessoryRecordId || '').trim();
+      if (!accessoryId) {
+        const error = new Error(texts.accessoryMissingBody);
+        error.scanUserMessage = texts.accessoryMissingBody;
+        return fail({ code: 'accessory_missing', message: userMessageFor(error), requestId, error });
+      }
+      const record = await gateway.get('accessory', accessoryId).catch(() => null);
+      if (!record) {
+        const error = new Error(texts.accessoryUnknownBody);
+        error.scanUserMessage = texts.accessoryUnknownBody;
+        return fail({ code: 'accessory_unknown', message: userMessageFor(error), requestId, error });
+      }
+      const added = await queue.run(`sale:${openId}`, () => sessions.addLine(openId, {
+        kind: kindKey,
+        accessory_record_id: accessoryId,
+        // 本单里要能看出是哪一件（**只落本地会话**；业务表那边由既有业务层按关联写）。
+        accessory_name: accessoryName(record),
+        // 金额留空就是 null（提交时按「其他配品.单价」兜底，与鞋那一行同一条口径）。
+        amount: parsedAmount.value,
+        gift: giftText,
+        added_at: new Date(now()).toISOString(),
+      }));
+      if (!added.ok) {
+        return fail({
+          code: added.code,
+          message: fillText(texts.tooManyLinesBody, { max: added.limit }),
+          requestId,
+          extra: { result: { limit: added.limit } },
+        });
+      }
+      logInfo(config.events.lineAdded, {
+        session_id: added.session.session_id,
+        kind: kindKey,
+        accessory_record_id: accessoryId,
+        count: added.count,
+        request_id: requestId,
+      });
+      return { ok: true, count: added.count, limit: config.session.maxLines, session: added.session };
+    }
+
+    // ── 鞋（既有那一段，逐字不动）────────────────────────────────────────────
     const parsedSize = positiveInteger(size);
     if (parsedSize === null) {
       const error = new Error(texts.sizeMissingBody);
       error.scanUserMessage = texts.sizeMissingBody;
       return fail({ code: 'size_missing', message: userMessageFor(error), requestId, error });
     }
-    const parsedAmount = positiveAmount(amount);
-    if (!parsedAmount.ok) {
-      const error = new Error(texts.amountInvalidBody);
-      error.scanUserMessage = texts.amountInvalidBody;
-      return fail({ code: 'amount_invalid', message: userMessageFor(error), requestId, error });
-    }
-    const giftText = String(gift ?? '').trim().slice(0, config.sale.giftMaxLength);
     // ⭐ 「现货 / 预订」：判据是**既有**的 `salesTradeTypeForStock`（有货 → 现货 / 没货 → 预订）。
     const tradeTypeCode = typeof inStock === 'boolean' ? salesTradeTypeForStock({ inStock }) : '';
     const added = await queue.run(`sale:${openId}`, () => sessions.addLine(openId, {
+      kind: kindKey,
       number: String(number || '').trim(),
       item_no: String(itemNo || '').trim(),
       color: String(color || '').trim(),
@@ -245,6 +364,7 @@ const createScanWriteService = (options = {}) => {
     }
     logInfo(config.events.lineAdded, {
       session_id: added.session.session_id,
+      kind: kindKey,
       number: String(number || ''),
       product_record_id: String(productRecordId || ''),
       size: parsedSize,
@@ -258,6 +378,65 @@ const createScanWriteService = (options = {}) => {
   const clearDraft = async ({ openId, requestId = '' }) => {
     const session = await queue.run(`sale:${openId}`, () => sessions.clearSale(openId));
     return { ok: true, count: 0, session, request_id: requestId };
+  };
+
+  /**
+   * 「这一行要不要在**提交这一刻**交付并扣库存」——A 的唯一判据处，两个判据都来自既有配置：
+   *   · 可售品属性（`config/sellableKinds`）：**配品没有鞋、不跟踪库存 ⇒ 天然不参与交付**；
+   *   · 交易类型（`config/salesMovements.deliversOnSubmit`）：**现货 ⇒ 提交即交付**，
+   *     预定 / 认不出的编码 ⇒ 不交付（预定等货到了再交付、那时才扣库存）。
+   * ⚠️ 这里**不写** `'SALE_CASH'` / `'shoe'` 这类字面量（散落出去就会与配置漂移）。
+   */
+  const lineDeliversOnSubmit = (item) => {
+    const kind = sellableKindOf(item);
+    if (!(kind.requiresFulfillment && kind.tracksInventory)) return false;
+    return deliversOnSubmit(String(item.tradeTypeCode || '').trim());
+  };
+
+  /**
+   * 现货行：提交即交付 + 扣库存 —— 走**既有** `SalesDeliveryService.deliver` 那一条**唯一**通路。
+   *
+   * ⚠️ 本函数自己不写任何一个库存字段：它只把"哪几条明细"交给既有交付服务，
+   *    把结果**如实**折成 `{ requested, delivered, failed, reasons }`。
+   * ⚠️ 失败**不吞**：逐条的失败（`invoice.failures`）与整段抛出的失败都回到 `reasons` 里，
+   *    由上层（路由 / 页面）如实说出来；明细的「履约状态」由交付服务决定（没扣成就不会写已交付）。
+   *
+   * @returns {Promise<{requested:number, delivered:number, failed:number, reasons:string[]}>}
+   */
+  const deliverStockLines = async ({ items, detailRecordIds, paymentRecordIds, salesEntryRecordId, correlation }) => {
+    const deliverable = items
+      .map((item, index) => ({ item, detailRecordId: String(detailRecordIds?.[index] || '') }))
+      .filter(({ item, detailRecordId }) => detailRecordId && lineDeliversOnSubmit(item));
+    if (!deliverable.length) return { requested: 0, delivered: 0, failed: 0, reasons: [] };
+    const detailIds = deliverable.map(({ detailRecordId }) => detailRecordId);
+    try {
+      const invoice = await delivery().deliver({
+        salesEntryRecordId,
+        detailRecordIds: detailIds,
+        paymentRecordIds,
+        occurredAt: now(),
+      }, { correlation });
+      const failures = invoice?.failures || [];
+      return {
+        requested: detailIds.length,
+        delivered: detailIds.length - failures.length,
+        failed: failures.length,
+        reasons: failures.map((failure) => String(failure?.error || '').trim()).filter(Boolean),
+      };
+    } catch (error) {
+      // 交付这一段**整体抛**（例：明细不属于这一单 / 主表还没入账 / 库存校验失败）：
+      // 同样如实报"这几双没交付"，绝不吞掉、也绝不假装成功。
+      logError(config.events.stockFailed, {
+        sales_entry_record_id: salesEntryRecordId, detail_ids: detailIds,
+        error: String(error.message || error), ...correlation,
+      });
+      return {
+        requested: detailIds.length,
+        delivered: 0,
+        failed: detailIds.length,
+        reasons: [String(error.message || error)],
+      };
+    }
   };
 
   // ── 销售：提交整单（**唯一的写库时机**）──────────────────────────────────
@@ -346,6 +525,43 @@ const createScanWriteService = (options = {}) => {
     // ③ 逐行把明细准备好（金额留空 → 用「货品信息.单价」；取不到就让她填，绝不写 0）。
     const items = [];
     for (const line of lines) {
+      // ⚠️ `SELLABLE_KINDS` 里的一行**没有 `key`**（`key` 是 `sellableKindOf` 补上去的）
+      //    —— 这里自己补上，别拿 `undefined` 当 kind 传给业务层（那会被当成"鞋"）。
+      const kindKey = String(line.kind || '').trim() || 'shoe';
+      const sellableKind = SELLABLE_KINDS[kindKey]
+        ? { key: kindKey, ...SELLABLE_KINDS[kindKey] }
+        : { key: 'shoe', ...SELLABLE_KINDS.shoe };
+      // ── 配品那一行（B）：`配品` 有值、**编号 / 尺码留空**、成交金额单列 ──────────
+      //    ⚠️ 它不参与交付 / 库存扣减（没有鞋）—— 交付那一步按可售品属性天然跳过（见 A 段）。
+      if (sellableKind && !sellableKind.requiresSize) {
+        const accessoryRecordId = String(line.accessory_record_id || '').trim();
+        if (!accessoryRecordId) {
+          const error = new Error(texts.accessoryMissingBody);
+          error.scanUserMessage = texts.accessoryMissingBody;
+          return fail({ code: 'line_accessory_missing', message: userMessageFor(error), requestId, error });
+        }
+        let accessoryAmount = line.amount === null || line.amount === undefined ? null : Number(line.amount);
+        if (!Number.isFinite(accessoryAmount) || accessoryAmount <= 0) {
+          accessoryAmount = await accessoryPrice(accessoryRecordId);
+        }
+        if (!Number.isFinite(accessoryAmount) || accessoryAmount <= 0) {
+          const message = fillText(texts.accessoryAmountMissingBody, { name: line.accessory_name || '' });
+          const error = new Error(message);
+          error.scanUserMessage = message;
+          return fail({ code: 'accessory_amount_missing', message, requestId, error });
+        }
+        items.push({
+          kind: sellableKind.key,
+          // 既有业务层按可售品配置决定落哪个字段（「销售明细.配品」）——本文件不写字段名。
+          accessoryRecordId,
+          quantity: 1,
+          actualAmount: Math.round(accessoryAmount * 100) / 100,
+          giftDescription: String(line.gift || '').trim(),
+          // 配品没有货号 / 尺码 ⇒ 没有"现货 / 预订"这回事：**不写**交易类型（空着比写错好）。
+          tradeTypeCode: '',
+        });
+        continue;
+      }
       const productRecordId = String(line.product_record_id || '').trim();
       if (!productRecordId) {
         const error = new Error(texts.sizeUnknownBody);
@@ -369,7 +585,7 @@ const createScanWriteService = (options = {}) => {
         return fail({ code: 'line_amount_missing', message, requestId, error });
       }
       items.push({
-        kind: 'shoe',
+        kind: (sellableKind && sellableKind.key) || 'shoe',
         productRecordId,
         size,
         quantity: 1,
@@ -447,12 +663,36 @@ const createScanWriteService = (options = {}) => {
         payment_count: paymentCount,
         paid_amount: paidAmount,
       };
+      // ⑥ ⭐ 2026-10-11（A）：**现货 ⇒ 提交即交付 + 扣库存**。
+      //    她 2026-10-09 的原话：「选现货 ⇒ 提交就直接当已交付并扣库存，这个肯定是的」。
+      //    ⚠️ 交付**只走既有那一条**（`SalesDeliveryService.deliver`）—— 本文件不写一个库存字段。
+      //    ⚠️ 逐行判：现货行交付、预定行不交付（`deliversOnSubmit` 读的是既有注册表）；
+      //       配品行（没有鞋、不跟踪库存）**天然被排除**在交付之外（可售品属性说了算）。
+      //    ⚠️ 明细 id 与 `items` **一一对应**（既有 `confirm` 就是按这个顺序建行的，群聊链路
+      //       的 `deliverableItemIndexes` 也是同一个约定），所以这里按下标取。
+      const stock = await deliverStockLines({
+        items, detailRecordIds: result.detailRecordIds || [], paymentRecordIds: result.paymentRecordIds || [],
+        salesEntryRecordId, correlation,
+      });
+      if (stock.failed > 0) {
+        // 🔴 **失败要如实报错**：单子写了（货 / 钱是事实），但库存没扣成这件事必须回给她，
+        //    而且**不许**把这一单记成"提交完成"—— 否则重试入口就没了，那一双永远扣不掉。
+        //    ⚠️ 这里的 ok 仍是 true（销售主表 / 明细 / 收款确实写成了）；"哪一半没成"
+        //       由 `stock` 如实表达，页面按 `stock.failed > 0` 渲染一张如实的结果页。
+        logError(config.events.stockFailed, {
+          session_id: current.session_id, submit_key: key, ...summary,
+          stock_requested: stock.requested, stock_failed: stock.failed,
+          reasons: stock.reasons.join(' | '), request_id: requestId,
+        });
+        return { ok: true, reused: false, stock, ...summary, order_no: summary.order_no };
+      }
       await sessions.completeSale(openId, { key, result: summary });
       logInfo(config.events.saleSubmitted, {
         session_id: current.session_id, submit_key: key, ...summary,
-        funds_recorded: paymentCount > 0, request_id: requestId,
+        funds_recorded: paymentCount > 0,
+        stock_requested: stock.requested, stock_delivered: stock.delivered, request_id: requestId,
       });
-      return { ok: true, reused: false, ...summary };
+      return { ok: true, reused: false, stock, ...summary };
     } catch (error) {
       const message = userMessageFor(error);
       await sessions.markSaleFailed(openId, String(error.message || error)).catch(() => undefined);
@@ -612,6 +852,8 @@ const createScanWriteService = (options = {}) => {
     clearDraft,
     submitSale,
     submitReplenish,
+    // ⭐ 页面上的配品下拉要的清单（只读；复用既有 LarkMvpService.listAccessories + 短缓存）。
+    listAccessories,
     // 给用例 / 排查用：这次提交的幂等键是怎么算出来的（与 purchaseWebhookService 的
     // `purchaseTaskId` 同一个思路：**确定性推导**，两端不必各写一份公式）。
     taskIdFor: (key) => `${config.replenish.taskIdPrefix}_${String(key || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`,

@@ -364,26 +364,48 @@ test('AC2d 订单列表的三份单子：补充信息单 / 待交割单 / 售后
     ['supplement', '补充信息单'], ['pending', '待交割单'], ['afterSales', '售后列表'],
   ], '三份单子与顺序 = 业务负责人 2026-10-09 给的那一行');
 
+  // ⭐ 2026-10-11（业务负责人 2026-10-09 的新判据）：**校验项只有两个**
+  //    ① 货品信息（明细的 货号 / 颜色 / 尺码）② 资金信息（收款方式 + 至少一笔收款记录）。
+  //    ⇒ 基准单必须**两个校验项都齐**；旧夹具缺 `color` / 没有 `payments`，按新判据是"待补充"。
   const base = {
     record_id: 'order_1',
     order_no: 'XSD-20261009-0001',
     fulfillment_status: '部分交付',
     payment_status: '部分收款',
-    details: [{ record_id: 'd1', product: 'XHB8095', size: 38, actual_amount: 89, fulfillment_status: '已交付' }],
+    details: [{
+      record_id: 'd1', product: 'XHB8095', color: '黑色', size: 38,
+      requires_size: true, actual_amount: 89, fulfillment_status: '已交付',
+    }],
+    payments: [{ record_id: 'p1', amount: 50, status: '已收款', method: '微信' }],
   };
   // 钱货两清（履约「已交付」且收款「已收款」）→ 售后列表
   assert.equal(orders.salesSectionOf({ ...base, fulfillment_status: '已交付', payment_status: '已收款' }), 'afterSales');
-  // 信息齐、但货 / 钱没结清 → 待交割单
+  // 两个校验项齐、但货 / 钱没结清 → 待交割单
   assert.equal(orders.salesSectionOf(base), 'pending');
-  // 信息还没填全（缺成交金额 / 缺尺码 / 状态读不出来）→ 补充信息单（她说的"可后续补"就落这里）
-  assert.equal(orders.salesSectionOf({ ...base, details: [{ record_id: 'd1', product: 'X', size: 38 }] }), 'supplement');
-  assert.equal(orders.salesSectionOf({ ...base, details: [{ record_id: 'd1', product: 'X', actual_amount: 1 }] }), 'supplement');
-  assert.equal(orders.salesSectionOf({ ...base, payment_status: '' }), 'supplement');
+  // 缺**货品信息**（缺颜色 / 缺编号 / 缺尺码）→ 补充信息单
+  assert.equal(orders.salesSectionOf({ ...base, details: [{ ...base.details[0], color: '' }] }), 'supplement');
+  assert.equal(orders.salesSectionOf({ ...base, details: [{ ...base.details[0], product: '' }] }), 'supplement');
+  assert.equal(orders.salesSectionOf({ ...base, details: [{ ...base.details[0], size: null }] }), 'supplement');
+  // 缺**资金信息**（一条收款记录都没有 / 只有没有收款方式的"未收款"）→ 补充信息单
+  assert.equal(orders.salesSectionOf({ ...base, payments: [] }), 'supplement');
+  assert.equal(orders.salesSectionOf({
+    ...base, payments: [{ record_id: 'p2', amount: 139, status: '未收款', method: '' }],
+  }), 'supplement');
+  // ⭐ 配品行（`requires_size === false`）**不算缺货品信息**：它的编号/颜色/尺码本来就是留空的
+  const accessoryLine = {
+    record_id: 'd_acc', requires_size: false, product: '', color: '', size: null,
+    accessory: '15元鞋油', actual_amount: 15, fulfillment_status: '已交付',
+  };
+  assert.equal(orders.salesSectionOf({ ...base, details: [accessoryLine] }), 'pending',
+    '纯配品单 + 一笔收款 ⇒ 待交割（不是待补充）');
+  assert.equal(orders.salesSectionOf({
+    ...base, details: [accessoryLine], fulfillment_status: '已交付', payment_status: '已收款',
+  }), 'afterSales', '纯配品单钱货两清 ⇒ 售后列表');
 
   // 三份单子**不重不漏**：一份一份渲染出来，条数加总 = 全部
   const list = [
     base, { ...base, record_id: 'o2', fulfillment_status: '已交付', payment_status: '已收款' },
-    { ...base, record_id: 'o3', details: [{ record_id: 'd3', product: 'X', size: 40 }] },
+    { ...base, record_id: 'o3', details: [{ ...base.details[0], color: '' }] },
   ];
   const html = orders.ordersSectionsHtml(list);
   for (const key of ['supplement', 'pending', 'afterSales']) {

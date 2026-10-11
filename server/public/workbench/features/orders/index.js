@@ -59,14 +59,28 @@ const paymentBlock = (order) => {
         </p>`;
 };
 
-/** 一条销售明细（她的第 2 项）：哪些货 / 颜色 / 尺码 / 金额 / 履约状态。 */
-const lineHtml = (line) => `
+/** 一条销售明细（她的第 2 项）：哪些货 / 颜色 / 尺码 / 金额 / 履约状态。
+ * ⭐ 2026-10-11（B/C）：**配品行**显示「其他配品」的**名称**，而且**不硬塞一个尺码**
+ *   （它的 编号 / 颜色 / 尺码 本来就是留空的 —— 显示成"未填货号 / 尺码待补"会误导她）。
+ *   ⚠️ 判据用服务端给的 `requires_size`（可售品属性），页面里**不写死 kind 名字**。
+ * ⭐ 颜色也画出来（货品信息 = 货号 / 颜色 / 尺码；服务端已给，零额外请求）。
+ */
+const lineHtml = (line) => {
+  const isAccessory = line?.requires_size === false;
+  const color = String(line?.color ?? '').trim();
+  const label = isAccessory ? (line.accessory || '配品') : (line.product || '未填货号');
+  const sizeCell = isAccessory
+    ? '<span class="line-size tag tag-info">配品</span>'
+    : `<span class="line-size">${sizeText(line.size)}</span>`;
+  return `
           <li class="order-line">
-            <span class="line-product">${escapeHtml(line.product || '未填货号')}</span>
-            <span class="line-size">${sizeText(line.size)}</span>
+            <span class="line-product">${escapeHtml(label)}</span>
+            ${!isAccessory && color ? `<span class="line-color">${escapeHtml(color)}</span>` : ''}
+            ${sizeCell}
             <span class="line-amount">${line.actual_amount == null ? '—' : amount(line.actual_amount)}</span>
             <span class="tag ${statusClass(line.fulfillment_status)}">${escapeHtml(line.fulfillment_status || '')}</span>
           </li>`;
+};
 
 const detailsBlock = (order) => {
   const lines = order.details || [];
@@ -161,24 +175,47 @@ export function ordersBoardHtml(orders = [], groupKeys = SALES_GROUPS.map((group
     </div>`;
 }
 
-// ── ⭐⭐ 2026-10-09（她定的最终结构）：订单列表内部的三份单子 ────────────────────────
+// ── ⭐⭐ 2026-10-09（她定的最终结构）+ 2026-10-11（判据按她的新口径重写）────────────
 //
 // 她逐字：「② **订单列表**（**补充信息单** ｜ **待交割单**（货没给 / 钱没付完）｜ **售后列表**（钱货两清的））」
-// ⚠️ 判据只用**既有字段与取值**（`fulfillment_status` / `payment_status` / 明细的 `size`、
-//    `actual_amount`），**不新增任何状态枚举**；分段互斥且覆盖全部单子。
+//        「**货品信息和资金信息是校验项，其余不是校验项**」
+//        「**至少一笔就算"信息全"**（它进待交割），**收齐才进"售后列表"**」
+// ⚠️ 判据只用**既有字段与取值**（点名表在 `config/orders.js` 的 `ORDER_STATE_FIELDS`），
+//    **不新增任何状态枚举**；分段互斥且覆盖全部单子。
+
+/**
+ * 两个**校验项**齐不齐（纯函数；她 2026-10-09 的口径）：
+ *   · ① **货品信息** = 明细的 `product`（编号）/ `color`（颜色）/ `size`（尺码）都有值。
+ *     ⚠️ **配品行不参与**：`requires_size === false` 的那些行（编号 / 颜色 / 尺码**本来就是留空的**，
+ *        那是她的口径，不是"缺信息"）先被排除掉；一条明细都没有 = 缺（还没卖东西）。
+ *   · ② **资金信息** = **至少一笔收款记录**且那一笔**有收款方式**（`method`）。
+ *     ⚠️ 只写了一条「未收款」（欠款）而没有真正的收款 = **还没齐**（它没有收款方式）。
+ *   ⚠️ **备注 / 配品 / 赠品都不是校验项** —— 这里一个都不读。
+ */
+export function salesInfoOf(order = {}) {
+  const lines = Array.isArray(order.details) ? order.details : [];
+  const goodsLines = lines.filter((line) => line?.requires_size !== false);
+  const goodsMissing = lines.length === 0 || goodsLines.some((line) =>
+    !String(line?.product ?? '').trim()
+    || !String(line?.color ?? '').trim()
+    || line?.size == null || String(line.size).trim() === '');
+  const payments = Array.isArray(order.payments) ? order.payments : [];
+  const fundsMissing = !payments.some((payment) => String(payment?.method ?? '').trim());
+  return { goodsMissing, fundsMissing };
+}
 
 /**
  * 一张单属于哪一份单子（**纯函数**，配置里的三段顺序就是判定的优先级）：
- *   · `supplement` —— 信息还没填全：履约 / 收款状态读不出来，或有明细缺尺码 / 缺成交金额
- *     （「资金等非必填、可后续补」建出来的单就落在这里）；
+ *   · `supplement` —— **缺任一校验项**（货品信息 / 资金信息）；
  *   · `afterSales` —— **钱货两清**（`salesCategoryOf` 判成 `settled`）；
- *   · `pending`    —— 其余（信息齐了，但货没给完 / 钱没付完）。
+ *   · `pending`    —— 其余（两个校验项齐了，但货没给完 / 钱没付完）。
  */
 export function salesSectionOf(order) {
-  const lines = order?.details || [];
-  const infoMissing = !order?.fulfillment_status || !order?.payment_status
-    || lines.some((line) => line?.size == null || line.size === '' || line.actual_amount == null);
-  if (infoMissing) return SALES_SECTIONS[0].key;
+  const info = salesInfoOf(order);
+  // ⚠️ 履约 / 收款状态读不出来（空）时不敢说"两清"：`salesCategoryOf` 会把它归到
+  //    「有二次」那一侧 —— 但那种单**往往连资金信息都还没有**（收款明细为空），
+  //    所以它会先落到"待补充"，与她的口径一致。
+  if (info.goodsMissing || info.fundsMissing) return SALES_SECTIONS[0].key;
   return salesCategoryOf(order) === 'settled'
     ? SALES_SECTIONS[SALES_SECTIONS.length - 1].key
     : 'pending';
