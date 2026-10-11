@@ -9,7 +9,6 @@ const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { PurchaseBatchLocator } = require('../src/services/purchaseBatchLocator');
 const { extractBatchNos } = require('../src/services/purchaseBatchNo');
-const { GroupPurchaseFlowService } = require('../src/services/groupPurchaseFlowService');
 const { resolvePurchaseGroupReplies } = require('../src/config/groupPurchase');
 const {
   resolvePurchaseBatchNoConfig,
@@ -388,36 +387,3 @@ test('⑬「认不出」的回复文案不再写死 BH-：跟着识别前缀走�
   assert.match(resolvePurchaseGroupReplies({ PURCHASE_GROUP_NO_BATCH_REPLY: ' ' }).noBatch, /CGD \/ BH 开头的那个/);
 });
 
-test('⑬ 定位不到时回的那句话来自配置（service 里没有第二份文案）', async () => {
-  const replied = [];
-  const service = new GroupPurchaseFlowService({
-    locator: { resolve: async () => ({ status: 'not_found', source: 'thread_id' }) },
-    replyText: async (messageId, content, options) => { replied.push({ messageId, content, options }); return 'om_r'; },
-    replies: { noBatch: '认不出-文案A', ambiguous: '说不清-文案B' },
-  });
-  await service.handleGroupPurchaseMessage({ messageId: 'om_1', text: '随便说点什么', threadId: 'omt_1' });
-  assert.equal(replied.length, 1);
-  assert.equal(replied[0].content, '认不出-文案A');
-  assert.deepEqual(replied[0].options, { threadId: 'omt_1' }, '回复要落回那条话题');
-});
-
-test('⑬ 定位：正文里说 CGD-… 能定位到那一批（没话题、没引用时才走这条）', async () => {
-  const store = new JsonTaskStore({ dir: tempDir(), idField: 'task_id' });
-  const locator = new PurchaseBatchLocator({ store });
-  await locator.rememberGroupMessage({
-    batchNo: 'CGD-20261007-0001',
-    messageId: 'om_1',
-    threadId: 'omt_1',
-    chatId: 'oc_1',
-    kind: 'purchase-request',
-  });
-  const located = await locator.resolve({ text: 'CGD-20261007-0001 这批到齐了', parentId: '', threadId: '' });
-  assert.equal(located.status, 'matched');
-  assert.equal(located.source, 'batch_no');
-  assert.equal(located.batchNo, 'CGD-20261007-0001');
-  // 说不清的两个号（**两个都在映射里**）：仍然是 ambiguous，不挑一个
-  await locator.rememberGroupMessage({
-    batchNo: 'CGD-20261007-0002', messageId: 'om_2', threadId: 'omt_2', chatId: 'oc_1',
-  });
-  assert.equal((await locator.resolve({ text: 'CGD-20261007-0001 和 CGD-20261007-0002' })).status, 'ambiguous');
-});

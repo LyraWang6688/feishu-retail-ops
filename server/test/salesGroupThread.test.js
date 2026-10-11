@@ -94,7 +94,6 @@ const saleParse = () => normalizeSalesResult({
 
 const makeHarness = ({ salesGroupThreads, gateway = makeGateway().gateway, recognizer } = {}) => {
   const { client, replies } = makeClient();
-  const purchaseCalls = [];
   const service = new LarkMvpService({
     client,
     gateway,
@@ -109,16 +108,12 @@ const makeHarness = ({ salesGroupThreads, gateway = makeGateway().gateway, recog
     //    "同一话题短时间只说一次"的节流记录写进**本地**目录（`data/sales_progress_notices/`）。
     //    测试里换成临时目录：不许往仓库的 data/ 里落文件（免得跑两遍互相影响）。
     salesProgressNoticeStore: tempStore('sales-group-notice-'),
-    // 采购那条路换成一个记录型的桩：用它证明"这条消息没走采购"。
-    groupPurchaseFlow: {
-      handleGroupPurchaseMessage: async (input) => {
-        purchaseCalls.push(input);
-        return { resolved: false, reason: 'stub', replied: false };
-      },
-    },
+    // ⚠️ 2026-10-12（清群聊入口 C2）：原先这里注的是**采购那条路的桩**。
+    //    采购入站已整体退场 ⇒ 那个端口不存在了，桩也一起删。
+    //    "有没有走采购"现在等价于"有没有入口认领"：看 `acceptMessage` 返回的 `handled`。
   });
   service.acknowledgeMessage = async () => undefined;
-  return { service, replies, purchaseCalls };
+  return { service, replies };
 };
 
 const groupEvent = (overrides = {}) => ({
@@ -149,7 +144,7 @@ const flushSalesTasks = async (service, openId = 'ou_sender') => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('A：主群里 @ 机器人说一笔销售 → 建销售任务 ＋ 卡片回复进话题（reply_in_thread）', async () => {
-  const { service, replies, purchaseCalls } = makeHarness();
+  const { service, replies } = makeHarness();
   const result = await service.acceptMessage(groupEvent({
     messageId: 'om_sale_main', text: '@_user_1 66356 黑 42 一双 230 微信',
   }));
@@ -157,7 +152,6 @@ test('A：主群里 @ 机器人说一笔销售 → 建销售任务 ＋ 卡片回
   assert.equal(result.accepted, true);
   assert.equal(result.handled, true, '主群里 @ 机器人说销售 → 由销售链路接管');
   assert.equal(result.mode, 'new');
-  assert.deepEqual(purchaseCalls, [], '这条消息不该再走采购定位');
 
   // ① 建了销售任务，且带上了群聊渠道（私聊任务没有这些字段）
   const task = await service.store.get(result.sales.taskId);
@@ -205,7 +199,7 @@ test('C：话题里的消息（thread_id 命中本地映射）→ 走销售，�
     salesEntryRecordId: 'entry_existing', taskId: 'sale_orig',
     messageId: 'om_orig_sale', threadId: 'omt_sale_9', chatId: CHAT_ID, senderOpenId: 'ou_sender',
   });
-  const { service, purchaseCalls, replies } = makeHarness({ salesGroupThreads: threads });
+  const { service, replies } = makeHarness({ salesGroupThreads: threads });
 
   const result = await service.acceptMessage(groupEvent({
     messageId: 'om_follow_up', threadId: 'omt_sale_9', mentions: [],
@@ -216,7 +210,6 @@ test('C：话题里的消息（thread_id 命中本地映射）→ 走销售，�
   assert.equal(result.handled, true);
   assert.equal(result.mode, 'thread');
   assert.equal(result.source, 'thread_id');
-  assert.deepEqual(purchaseCalls, [], '认得出是哪一笔销售 → 绝不进采购链路');
 
   // 绑定到**已定位的那一笔**：不新建销售主表记录（一条销售记录 = 一个话题）
   const task = await service.store.get(result.sales.taskId);
@@ -255,7 +248,7 @@ test('C：引用机器人那条消息（parent_id 命中）也能定位，并把
     salesEntryRecordId: 'entry_parent', taskId: 'sale_parent',
     messageId: 'om_orig_parent', chatId: CHAT_ID,
   });
-  const { service, purchaseCalls } = makeHarness({ salesGroupThreads: threads });
+  const { service } = makeHarness({ salesGroupThreads: threads });
 
   const result = await service.acceptMessage(groupEvent({
     messageId: 'om_quote_1', threadId: 'omt_bound_later', parentId: 'om_orig_parent',
@@ -264,42 +257,46 @@ test('C：引用机器人那条消息（parent_id 命中）也能定位，并把
 
   assert.equal(result.handled, true);
   assert.equal(result.source, 'parent_id');
-  assert.deepEqual(purchaseCalls, []);
   // 补记之后，这条话题下的后续消息只靠 thread_id 也能命中
   const later = await threads.resolve({ threadId: 'omt_bound_later' });
   assert.equal(later.status, 'matched');
   assert.equal(later.sale.sales_entry_record_id, 'entry_parent');
 });
 
-test('C：话题里查不到销售映射 → 原样交给采购链路（不抢答、不猜最近一笔）', async () => {
-  const { service, purchaseCalls } = makeHarness();
+test('C：话题里查不到销售映射 → **没有入口认领**（不抢答、不猜最近一笔）', async () => {
+  const { service } = makeHarness();
   const result = await service.acceptMessage(groupEvent({
     messageId: 'om_unknown_topic', threadId: 'omt_unknown', mentions: [], text: '这条你看下',
   }));
 
   assert.equal(result.accepted, true);
-  assert.notEqual(result.handled, true);
-  assert.equal(purchaseCalls.length, 1, '认不出是哪一笔销售时，交给采购那条路按它的规矩处理');
+  // ⚠️ 2026-10-12（清群聊入口 C2）：原先「认不出就交给采购那条路」。采购入站已退场
+  //    ⇒ 现在**没有任何入口认领**，只记一条 `lark.group.message.not_sales` 后静默落空。
+  assert.equal(result.handled, false, '认不出是哪一笔销售、也没有采购入口 ⇒ 静默落空');
+  assert.equal(result.reason, 'unmapped_thread', '如实回传销售分派给的原因');
 });
 
-test('C：主群里 @ 机器人 + 采购批次号 → 仍然归采购（不能被当成销售）', async () => {
-  const { service, purchaseCalls } = makeHarness();
+test('C：主群里 @ 机器人 + 采购批次号 → **不再归任何入口**（C2：采购入站已退场）', async () => {
+  const { service } = makeHarness();
   const result = await service.acceptMessage(groupEvent({
     messageId: 'om_batch_no', text: '@_user_1 BH-20261005-0009 这批的到货单你看下',
   }));
 
-  assert.notEqual(result.handled, true);
-  assert.equal(purchaseCalls.length, 1);
+  // 准入仍放行；销售分派按「带批次号 = 采购的」把它摘出去 ⇒ 没有入口认领（静默落空）。
+  assert.equal(result.accepted, true);
+  assert.equal(result.handled, false, '采购入口已退场 ⇒ 静默落空');
+  assert.equal(result.reason, 'purchase_batch_no');
 });
 
-test('C：主群里 @ 机器人但不像销售 → 仍然归采购（走它原有的"认不出"）', async () => {
-  const { service, purchaseCalls } = makeHarness();
+test('C：主群里 @ 机器人但不像销售 → **不再归任何入口**（C2：采购入站已退场）', async () => {
+  const { service } = makeHarness();
   const result = await service.acceptMessage(groupEvent({
     messageId: 'om_not_sales', text: '@_user_1 这批鞋到了',
   }));
 
-  assert.notEqual(result.handled, true);
-  assert.equal(purchaseCalls.length, 1);
+  assert.equal(result.accepted, true);
+  assert.equal(result.handled, false, '不像销售 + 采购入口已退场 ⇒ 静默落空');
+  assert.equal(result.reason, 'not_sales_text');
 });
 
 test('定位器：thread_id 优先于 parent_id；都查不到就认不出，绝不取"最近一笔"', async () => {
@@ -324,14 +321,13 @@ test('定位器：thread_id 优先于 parent_id；都查不到就认不出，绝
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('群入口：主群 @ 机器人说一笔销售 → 卡片**回到那条消息的话题**，且不绑定已定位的销售', async () => {
-  const { service, replies, purchaseCalls } = makeHarness();
+  const { service, replies } = makeHarness();
   const result = await service.acceptMessage(groupEvent({
     messageId: 'om_group_sale', text: '@_user_1 66356 黑 42 一双 230 微信',
   }));
 
   assert.equal(result.accepted, true);
   assert.equal(result.mode, 'new');
-  assert.deepEqual(purchaseCalls, [], '像销售的消息永远不走采购那条路');
 
   const task = await service.store.get(result.sales.taskId);
   assert.equal(task.chat_type, 'group', '群入口的任务必须带群上下文');
@@ -348,7 +344,7 @@ test('群入口：主群 @ 机器人说一笔销售 → 卡片**回到那条消�
 });
 
 test('群入口闸门：主群不 @ 且不像销售 → 静默忽略，一个远端调用都没有', async () => {
-  const { service, replies, purchaseCalls } = makeHarness();
+  const { service, replies } = makeHarness();
   const result = await service.acceptMessage(groupEvent({
     messageId: 'om_group_chat', text: '你好 小来财', mentions: [],
   }));
@@ -356,7 +352,6 @@ test('群入口闸门：主群不 @ 且不像销售 → 静默忽略，一个远
   assert.equal(result.accepted, false);
   assert.equal(result.reason, 'group_not_sales_text');
   assert.deepEqual(replies, []);
-  assert.deepEqual(purchaseCalls, [], '闸门挡下的消息也不许掉进采购');
 });
 
 test('群入口的「已收到」：**只有表情、不回文字**（群里回文字会刷屏）', async () => {

@@ -104,7 +104,6 @@ const { ARRIVAL_CONVERSATION_ACTIONS } = require('../config/arrivalConversation'
 //      取的是**同一份配置**（配置先行）—— 改动作名只改 env / 那一份文件，两处不会走歪。
 const { resolveVoucherSettlementConfig } = require('../config/voucherSettlement');
 const { PendingDealPushService } = require('./pendingDealPushService');
-const { GroupPurchaseFlowService } = require('./groupPurchaseFlowService');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { skipNoGroupContext } = require('../utils/privateChatSend');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
@@ -378,27 +377,18 @@ class LarkMvpService {
       //   —— 真机 23:37「日志说卡片已更新、她那边一张都没有」就是这么来的。
       getMessageMeta: (messageId) => this.getMessageMeta(messageId),
     });
-    this.groupPurchaseFlow = options.groupPurchaseFlow || new GroupPurchaseFlowService({
-      locator: this.purchaseBatchLocator,
-      // 群里的反馈一律**引用回复**那条消息：群聊没有"上一次对话"的概念，
-      // 不复用私聊的 sendText（那会发出一条没有上下文的光秃秃消息）。
-      // ⭐ ④ 同上：话题里的回复也回那个话题。
-      replyText: (messageId, content, options) => this.replyPurchaseText(messageId, content, options),
-      // ── 到货核对（D）────────────────────────────────────────────────────
-      // 定位到某一批之后，由它接管"记下来 → **收到到货反馈就直接算并出「是/否」卡片** →
-      // 点「是」才入库"。它是**独立 service**：本类只做接线，不拼卡片、不写业务规则。
-      // ⭐ 2026-10-07：**不再**等她先说一句"核对完毕"（业务负责人：「用户一般一句话
-      //   就能够说清楚这个事情」）；`complete` 只剩诊断用途。她补充/修正时说新的一句，
-      //   那边会**重算并更新同一张卡**（不发第二张）。
-      // ⚠️ 会话任务和入库能力**共用采购那套存储与队列**（PurchaseWebhookService 的
-      //   store / confirmArrival）——那边读草稿就是从那个 store 读的，共用一个才不会
-      //   出现"会话在这边、草稿在那边"的两份状态。
-      arrivalConversation: this.arrivalConversation,
-    });
+    // ⚠️⚠️ 2026-10-12（清群聊入口 C2）：这里原先 new 的**群采购入站**分派 service
+    //    （按 thread_id / parent_id / 正文批次号定位是哪一批 → 到货核对）**整块删除**。
+    //    业务负责人 2026-10-12 逐字：「到货差异的链路群聊链路不用管了；验收是在工作台页面上，
+    //    用户选报货批次里未到货状态的报货号之后点【验收】，然后扫描二维码」。
+    //    ✅ **保留 `this.purchaseBatchLocator`**（下面几行仍在建）：它的**出站**查询
+    //       `listGroupMessages` 还在给**9 点推送**的采购区拼深链
+    //       （`pendingPushCandidateService` → `purchasePendingBatchService`），
+    //       而 `PurchaseWebhookService.deliverSupplierImages` 仍会 `rememberGroupMessage` 写映射。
     // ── 群聊（销售链路）：「这条群消息归销售还是采购、是哪一笔销售」────────────
     // 它是**独立 service**：本类只做接线，定位规则一个字都不在这里。
-    // 只有它说"这条归销售"时才走销售；否则**原样**交给上面那条采购链路
-    // （所以采购的既有行为、既有的"认不出"文案都不受影响）。
+    // ⚠️ 2026-10-12（C2）：它仍然先于采购判定，但"不归销售"之后**不再有采购兜底**
+    //    （采购入站已退场）—— 见 `acceptGroupMessage` 里那条 `lark.group.message.not_sales`。
     this.groupSalesFlow = options.groupSalesFlow || new SalesGroupFlowService({
       locator: this.salesGroupThreads,
       // 闸门用**和私聊同一把尺子**（config/messageGate）：群聊不再自己写一套判据。
@@ -957,15 +947,13 @@ class LarkMvpService {
   async acceptGroupMessage({ message, senderOpenId, originalText, threadId = '' }) {
     const text = stripMentionPlaceholders(originalText, message.mentions);
     if (!text) {
-      // 只 @ 了机器人（或话题里空着一条）、一个字没说。回一句问清楚，不猜。
+      // 只 @ 了机器人（或话题里空着一条）、一个字没说。
+      // ⚠️ 2026-10-12（清群聊入口 C2）：这里原先把空消息交给**采购群**那条链路去回
+      //    「把批次号说给我」—— 采购入站已整体退场（到货验收改由工作台 + 扫码，
+      //    见 `PurchaseArrivalConversationService.confirmBatchArrival`）⇒ 不再有任何回话，
+      //    只留一条日志（排查"她 @ 了机器人却什么都没有"时看这一条）。
       logInfo('lark.group.message.empty_after_mention', { message_id: message.message_id });
-      return this.groupPurchaseFlow.handleGroupPurchaseMessage({
-        messageId: message.message_id,
-        text: '',
-        parentId: message.parent_id,
-        threadId,
-        senderOpenId,
-      });
+      return { handled: false, reason: 'empty_after_mention' };
     }
     await this.acknowledgeMessage(message.message_id, { includeTextReply: false });
     // ── 销售 or 采购？先问销售那条分派（C）────────────────────────────────
@@ -986,13 +974,14 @@ class LarkMvpService {
       });
       return sales;
     }
-    return this.groupPurchaseFlow.handleGroupPurchaseMessage({
-      messageId: message.message_id,
-      text,
-      parentId: message.parent_id,
-      threadId,
-      senderOpenId,
+    // ⚠️ 2026-10-12（清群聊入口 C2）：销售分派说"不归销售"时，原先**原样交给采购链路**
+    //    （按 `thread_id` / `parent_id` / 正文批次号定位是哪一批，再去做到货核对）。
+    //    采购入站已整体退场 ⇒ 这里**不再有兜底**：认不出就什么都不做（静默返回）。
+    //    ⚠️ 群里日常聊天本来就在准入门槛外，这条不会扩大噪音。
+    logInfo('lark.group.message.not_sales', {
+      message_id: message.message_id, reason: sales?.reason || 'not_sales', thread_id: threadId,
     });
+    return { handled: false, reason: sales?.reason || 'not_sales' };
   }
 
   /**

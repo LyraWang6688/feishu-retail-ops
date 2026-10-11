@@ -154,79 +154,17 @@ class PurchaseBatchLocator {
     return this.store.list();
   }
 
-  /**
-   * 主入口：回答「这条群消息说的是哪一批」。
-   *
-   * @param {{ text?: string, parentId?: string, threadId?: string }} input
-   * @returns {Promise<{status: 'matched'|'not_found'|'ambiguous', source?: string,
-   *   batch?: object, batchNo?: string, batchNos?: string[]}>}
-   */
-  async resolve({ text = '', parentId = '', threadId = '' } = {}) {
-    const thread = String(threadId || '').trim();
-    const parent = String(parentId || '').trim();
-
-    // ① 话题：thread_id 是**最稳**的信号。业务负责人实测：她在话题里发的消息
-    //    带同一个 thread_id，而 parent_id 只是话题根消息（= 机器人发的那条）——
-    //    一旦她回复自己/别人的消息，parent_id 就不是机器人那条了，只有 thread_id 不变。
-    if (thread) {
-      const record = await this.findByThreadId(thread);
-      if (record) {
-        logInfo('purchase.group.batch.located', {
-          source: 'thread_id', thread_id: thread, batch_no: record.batch_no,
-        });
-        return { status: 'matched', source: 'thread_id', batch: record, batchNo: record.batch_no || '' };
-      }
-    }
-
-    // ② 引用某条消息：parent_id 是次稳的信号（真机验证：她引用机器人消息时，
-    //    事件里带的就是被引用那条的 message_id）。
-    if (parent) {
-      const record = await this.findByMessageId(parent);
-      if (record) {
-        // 话题没记过映射、但引用能定位：顺手补记（普通群里 thread_id 只有这一刻拿得到）。
-        const bound = thread ? await this.bindThreadToRecord(record, thread) : record;
-        logInfo('purchase.group.batch.located', {
-          source: 'parent_id', parent_id: parent, thread_id: thread, batch_no: record.batch_no,
-        });
-        return { status: 'matched', source: 'parent_id', batch: bound, batchNo: bound.batch_no || '' };
-      }
-      // ⚠️ 引用的不是我们的采购单（或映射丢了）→ 明确"认不出"，**绝不**退回③去猜。
-      // 她引用的可能是别人的消息、甚至另一家供应商的单子，猜错就是账目错。
-      logInfo('purchase.group.batch.unmapped_parent', { parent_id: parent, thread_id: thread });
-      return { status: 'not_found', source: 'parent_id' };
-    }
-
-    // ③ 在话题里、但这条话题我们没记过，也没有引用：这是"看起来该认识、实际不认识"。
-    //    明确回"认不出"，**不拿正文里的批次号去猜**——话题里的号可能是别的意思。
-    if (thread) {
-      logInfo('purchase.group.batch.unmapped_thread', { thread_id: thread });
-      return { status: 'not_found', source: 'thread_id' };
-    }
-
-    // ④ 没话题也没引用，但正文里说了批次号。
-    const batchNos = extractBatchNos(text);
-    if (batchNos.length) {
-      const matches = [];
-      for (const batchNo of batchNos) {
-        const records = await this.findByBatchNo(batchNo);
-        for (const record of records) matches.push({ batchNo, record });
-      }
-      const distinct = new Set(matches.map((item) => item.batchNo));
-      if (matches.length === 1 && distinct.size === 1) {
-        const [{ batchNo, record }] = matches;
-        logInfo('purchase.group.batch.located', { source: 'batch_no', batch_no: batchNo });
-        return { status: 'matched', source: 'batch_no', batch: record, batchNo };
-      }
-      // 说了两个号、或者同一个号命中多条 → 说不清，交给调用方反问。
-      logWarn('purchase.group.batch.ambiguous', { batch_nos: batchNos, match_count: matches.length });
-      return { status: 'ambiguous', source: 'batch_no', batchNos };
-    }
-
-    // ⑤ 既没话题也没引用也没说号 → 反问。这里**不能**看"最近一笔"：
-    //    猜错一笔账，比多问一句的代价大得多。
-    logInfo('purchase.group.batch.unresolved', { reason: 'no_thread_no_parent_no_batch_no' });
-    return { status: 'ambiguous', source: 'none', batchNos: [] };
-  }
+  // ⚠️⚠️ 2026-10-12（清群聊入口 C2）：这里原先还有**入站定位**的主入口 `resolve`
+  //    （话题 → 引用 → 正文批次号，回答"这条群消息说的是哪一批"）。
+  //    它只被**群采购入站**（已随 C2 整体删除）调用 ⇒ 一起退场。
+  //    ⚠️ 它的三个内部读口（`findByMessageId` / `findByThreadId` / `bindThreadToRecord`）
+  //      随之**不再有生产调用方**（`findByMessageId` 只被 `resolve` 调）。
+  //      它们**先留着不删**：纯只读小函数、留着不产生行为；
+  //      要清的话归到 C5「收尾孤儿」那一步，与"9 点推送深链还要不要"一起定。
+  //    ✅ 保留下来的都是**出站**用途：
+  //      · `rememberGroupMessage` —— `PurchaseWebhookService.deliverSupplierImages` 发完图后写映射；
+  //      · `findByBatchNo` —— `PurchaseOrderBatchService` 按批次号反查；
+  //      · `listGroupMessages` —— **9 点推送**的采购区批量取深链（`purchasePendingBatchService`）。
 }
 
 module.exports = { PurchaseBatchLocator, messageKey };
