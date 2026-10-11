@@ -29,6 +29,7 @@ const {
   createTagQrCodeService,
   buildScanUrl,
   buildFileName,
+  numberFromFileName,
   attachmentsOf,
   findFieldValue,
   readableFieldText,
@@ -291,8 +292,17 @@ test('④ 事件里「编号」前后值不同 ⇒ 覆盖（generate 一次、up
   assert.equal(buildScanUrl(TAG_QR_CODE.scanUrl.urlTemplate, 'YD6693-2|黑色|B'), generated[0]);
 });
 
-test('④ 事件里「编号」前后值相同（其他字段变更）⇒ 不触发：连读表都不读', async () => {
-  const gateway = fakeGateway({ records: { rec1: recordWith({ number: NUMBER_SAMPLE }) } });
+test('④ 事件里「编号」前后值相同（其他字段变更）⇒ 不写；但**要读一次**核附件（2026-10-12 改）', async () => {
+  // ⚠️ 2026-10-12 改断言（"读一次"这一步**正是**修复本身）：
+  //   改前：`assert.deepEqual(gateway.calls.get, [])`（"其他字段变了不该读这条记录"）——
+  //         于是"附件早就是旧码、之后只改别的字段"这条路**永远**发现不了（生产 292 次跳过 / 0 次写回）。
+  //   改后：**必须读一次**记录、拿规范文件名 / 反解出的编号核附件 ⇒ 核得上才 `skipped_number_unchanged`。
+  //   代价：每次更新多一次**只读**（事件量很小）；换来"不会静默停在旧码上"。
+  const gateway = fakeGateway({
+    records: {
+      rec1: recordWith({ number: NUMBER_SAMPLE, tagQrCode: [{ file_token: 'f1', name: buildFileName(NUMBER_SAMPLE) }] }),
+    },
+  });
   const service = serviceFor(gateway);
 
   const lines = await captureLogs(async () => {
@@ -305,10 +315,12 @@ test('④ 事件里「编号」前后值相同（其他字段变更）⇒ 不触
         { field_id: 'fld_price', field_value: '199' },
       ],
     }]);
-    assert.deepEqual(result.results, [{ record_id: 'rec1', status: 'skipped', reason: 'number_unchanged' }]);
+    assert.deepEqual(result.results, [{
+      record_id: 'rec1', status: 'skipped', reason: 'number_unchanged', scan_url: URL_SAMPLE,
+    }]);
   });
 
-  assert.deepEqual(gateway.calls.get, [], '其他字段变了不该读这条记录');
+  assert.deepEqual(gateway.calls.get, [['product', 'rec1']], '要读一次记录来核附件名（这是修复本身）');
   assert.deepEqual(gateway.calls.uploads, []);
   assert.deepEqual(gateway.calls.update, []);
   assert.ok(eventsOf(lines).includes('product.tag_qr.skipped_number_unchanged'));
@@ -363,9 +375,12 @@ test('④ 新增记录（record_added）⇒ 出码写回；删除/其他动作 �
   assert.deepEqual(gateway.calls.get, [['product', 'rec1']]);
 });
 
-test('④ 快路径：事件里「编号」两边都是**可读且相同**的文本 ⇒ 跳过，且不读表（省一次读）', async () => {
-  // ⚠️ 这是一条**刻意保留**的快路径：只有"确定没变"才配省掉那次读。
-  //    这里故意把附件名放成**过期**的 —— 快路径成立时**仍然不该**去管它（判据在事件里）。
+test('④ 快路径的**边界**（2026-10-12 改）：编号两边相同、但附件名是**旧码** ⇒ 必须修，不许跳过', async () => {
+  // ⚠️ 2026-10-12 改断言（**"编号没变就不该乱写她的表"这条本意没变**）：
+  //   改前：这条用例故意把附件名放成过期的，并断言"**仍然不该管它**"（`calls.get === []`）。
+  //   改后：恰恰相反 —— 附件名与当前编号不符 ⇒ **就是**"这一列的码是旧的"这个事实，必须重写
+  //         （真机那 5 条 QPL 就是这么漏的）。真的同步过（名字 = 规范名）时仍然跳过：
+  //         见上一条用例与 AC-QR-STALE-3。
   const gateway = fakeGateway({
     records: {
       rec1: recordWith({ number: NUMBER_SAMPLE, tagQrCode: [{ file_token: 'f1', name: 'tag-qr-过期的旧名字.png' }] }),
@@ -380,13 +395,13 @@ test('④ 快路径：事件里「编号」两边都是**可读且相同**的文
       before_value: [{ field_id: NUMBER_FIELD_ID, field_value: NUMBER_SAMPLE }],
       after_value: [{ field_id: NUMBER_FIELD_ID, field_value: NUMBER_SAMPLE }],
     }]);
-    assert.deepEqual(result.results, [{ record_id: 'rec1', status: 'skipped', reason: 'number_unchanged' }]);
+    assert.equal(result.results[0].status, 'written', '旧码必须被修');
   });
 
-  assert.deepEqual(gateway.calls.get, [], '确定没变 ⇒ 连表都不读');
-  assert.deepEqual(gateway.calls.uploads, []);
-  assert.deepEqual(gateway.calls.update, []);
-  assert.ok(eventsOf(lines).includes('product.tag_qr.skipped_number_unchanged'));
+  assert.deepEqual(gateway.calls.get, [['product', 'rec1']], '要读一次记录核附件');
+  assert.equal(gateway.calls.uploads.length, 1, '要重新出码上传');
+  assert.equal(gateway.calls.update.length, 1, '要覆盖写回');
+  assert.ok(eventsOf(lines).includes('product.tag_qr.overwriting'), '覆盖前先留证据');
 });
 
 // ── ④′ 回归（2026-10-09 生产事故）：判不了 ⇒ 退化成文件名比对；**绝不许当成"没变"** ──────────
@@ -826,4 +841,160 @@ test('⑥ 巡检：单条失败不带走别的（失败进 failed + 汇总 error
 
 test('⑥ 巡检：config.sweep 的默认值（开关开、不限量、500ms 间隔、非干跑）', () => {
   assert.deepEqual(TAG_QR_CODE.sweep, { enabled: true, limit: 0, intervalMs: 500, dryRun: false });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 【2026-10-12 业务负责人真机发现】改货号后**二维码没更新**（生产 292 次跳过 / 0 次写回）
+//   只读干跑证据（5 条记录，附件名里都还带着旧前缀 `QPL`）：
+//     rec28e1FtwQIPX 当前编号 2635-1|黑|A  ←  附件名 tag-qr-QPL2635-1_黑_A.png
+//     rec28e1chI0MiM 当前编号 8809|黑|A    ←  附件名 tag-qr-QPL8809_黑_A.png
+//   ⇒ 二维码停在旧编号上；日志却是 `product.tag_qr.skipped_number_unchanged`。
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-QR-STALE-1 ⭐⭐ 真机形状：事件说"编号没变"、但附件名是**旧编号** ⇒ 必须重写（不许 skipped_number_unchanged）', async () => {
+  const current = '2635-1|黑|A';
+  const gateway = fakeGateway({
+    records: {
+      rec28e1FtwQIPX: recordWith({
+        number: current,
+        tagQrCode: [{ file_token: 'old1', name: 'tag-qr-QPL2635-1_黑_A.png' }],
+      }),
+    },
+  });
+  const service = serviceFor(gateway);
+
+  const lines = await captureLogs(async () => {
+    const result = await service.handleTableChanges([{
+      record_id: 'rec28e1FtwQIPX',
+      action: 'record_edited',
+      // ⚠️ 事件里这一列**前后值相同**（她这次改的是别的字段）——
+      //    改前：这一档走"快路径"，**连表都不读** ⇒ 永远看不见附件名是旧的。
+      before_value: [{ field_id: NUMBER_FIELD_ID, field_value: current }],
+      after_value: [
+        { field_id: NUMBER_FIELD_ID, field_value: current },
+        { field_id: 'fld_price', field_value: '269' },
+      ],
+    }]);
+    const first = result.results[0];
+    assert.notEqual(first.reason, 'number_unchanged',
+      `附件名与当前编号不符 ⇒ 不许判"没变"（实际 ${JSON.stringify(first)}）`);
+    assert.equal(first.status, 'written', '必须重写这一列的二维码');
+  });
+
+  assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-2635-1_黑_A.png', '上传的文件名按当前编号算');
+  assert.equal(gateway.calls.update.length, 1, '要覆盖写回');
+  assert.ok(eventsOf(lines).includes('product.tag_qr.overwriting'), '覆盖前先留证据');
+});
+
+test('AC-QR-STALE-1b ⭐⭐ 逐字复现 Lead 那条日志：QPL8809 ⇒ 必须 stale_by_file_name: true，覆盖日志带新旧名', async () => {
+  // Lead 2026-10-12 拿到的真写日志里每条都写着：
+  //   existing_file_names: ["tag-qr-QPL8809_黑_A.png"] / expected_file_name: "tag-qr-8809_黑_A.png"
+  //   stale_by_file_name: **false**  ← 但那次是**回填脚本 + `--overwrite`**（`numberChanged: true`），
+  //   而改前的公式要求 `numberChanged === null` ⇒ 那一档必然是 false（它只是"有没有靠文件名判出过期"）。
+  //   ⇒ 真正该 false 的地方是**事件路径**：本用例钉住"事件路径 + 旧码"必须判过期。
+  const current = '8809|黑|A';
+  const gateway = fakeGateway({
+    records: {
+      rec28e1chI0MiM: recordWith({
+        number: current,
+        tagQrCode: [{ file_token: 'f8809', name: 'tag-qr-QPL8809_黑_A.png' }],
+      }),
+    },
+  });
+  const service = serviceFor(gateway);
+
+  const lines = await captureLogs(async () => {
+    const result = await service.handleTableChanges([{
+      record_id: 'rec28e1chI0MiM',
+      action: 'record_edited',
+      before_value: [{ field_id: NUMBER_FIELD_ID, field_value: current }],
+      after_value: [{ field_id: NUMBER_FIELD_ID, field_value: current }],
+    }]);
+    assert.equal(result.results[0].status, 'written');
+  });
+
+  const overwriting = lines.map((line) => {
+    try { return JSON.parse(line); } catch { return null; }
+  }).find((entry) => entry?.event === 'product.tag_qr.overwriting');
+  assert.ok(overwriting, '覆盖前必须先记 product.tag_qr.overwriting（先留证据）');
+  assert.deepEqual(overwriting.existing_file_names, ['tag-qr-QPL8809_黑_A.png']);
+  assert.equal(overwriting.expected_file_name, 'tag-qr-8809_黑_A.png');
+  assert.equal(overwriting.stale_by_file_name, true, '⚠️ 判据必须判出过期（QPL8809 ≠ 8809）');
+  assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-8809_黑_A.png');
+});
+
+test('AC-QR-STALE-2 ⭐ "文件名里含有当前编号"**不够**：QPL 那条也**含有** 2635-1_黑_A ⇒ 判据必须是"规范名/反解编号"', () => {
+  const current = '2635-1|黑|A';
+  const expected = buildFileName(current);
+  const old = 'tag-qr-QPL2635-1_黑_A.png';
+  // 反例（必须钉住，防止以后有人把判据退化成 `includes`）：
+  assert.equal(old.includes('2635-1_黑_A'), true,
+    '旧名**确实包含**当前编号的片段 —— 所以"contains"这种判据会把它当成已经同步 ❌');
+  assert.equal(old === expected, false, '但它与规范文件名不一致 ⇒ 必须判为过期');
+  assert.equal(buildFileName(current), 'tag-qr-2635-1_黑_A.png');
+  // ⭐ 语义判据：从名字里**反解出编号**再比 —— 这才是"以编号为准"
+  assert.equal(numberFromFileName(old), 'QPL2635-1_黑_A', '反解出的是旧编号 ⇒ 过期');
+  assert.equal(numberFromFileName(expected), '2635-1_黑_A', '规范名反解出的是当前编号 ⇒ 已同步');
+  assert.equal(numberFromFileName('别人的.png'), null, '模板对不上 ⇒ 判为过期（宁严不松）');
+});
+
+test('AC-QR-STALE-3 ⭐ 名字与规范一致 ⇒ 仍然跳过（幂等不能被这次修复搞坏：不许每次事件都重传）', async () => {
+  const current = '2635-1|黑|A';
+  const gateway = fakeGateway({
+    records: {
+      rec_ok: recordWith({ number: current, tagQrCode: [{ file_token: 'ok1', name: buildFileName(current) }] }),
+    },
+  });
+  const service = serviceFor(gateway);
+  const lines = await captureLogs(async () => {
+    const result = await service.handleTableChanges([{
+      record_id: 'rec_ok',
+      action: 'record_edited',
+      before_value: [{ field_id: NUMBER_FIELD_ID, field_value: current }],
+      after_value: [{ field_id: NUMBER_FIELD_ID, field_value: current }],
+    }]);
+    assert.equal(result.results[0].status, 'skipped');
+    assert.equal(result.results[0].reason, 'number_unchanged');
+  });
+  assert.deepEqual(gateway.calls.uploads, [], '已经同步的不许重传');
+  assert.deepEqual(gateway.calls.update, []);
+  assert.ok(eventsOf(lines).includes('product.tag_qr.skipped_number_unchanged'));
+});
+
+test('AC-QR-STALE-4 ⭐ 附件是**别人的码**（名字完全不相干）⇒ 也要重写；没有附件 ⇒ 照常生成', async () => {
+  const gateway = fakeGateway({
+    records: {
+      rec_other: recordWith({ number: '2635-1|黑|A', tagQrCode: [{ file_token: 'x', name: 'tag-qr-9999_白_A.png' }] }),
+      rec_none: recordWith({ number: '2635-1|黑|A' }),
+    },
+  });
+  const service = serviceFor(gateway);
+  const changed = [{ field_id: NUMBER_FIELD_ID, field_value: '2635-1|黑|A' }];
+  const result = await service.handleTableChanges([
+    { record_id: 'rec_other', action: 'record_edited', before_value: changed, after_value: changed },
+    { record_id: 'rec_none', action: 'record_edited', before_value: changed, after_value: changed },
+  ]);
+  assert.deepEqual(result.results.map((item) => item.status), ['written', 'written']);
+  assert.deepEqual(gateway.calls.update.map((call) => call[1]).sort(), ['rec_none', 'rec_other']);
+});
+
+test('AC-QR-STALE-5 ⭐ 公式列读不出（事件里只有富文本数组 / 根本没带这一列）⇒ 落到第②层按编号判，不许静默跳过', async () => {
+  // 真机形状：编号是**公式列**，事件里可能是 `[{text:…}]`（富文本数组）、也可能整列没被推过来。
+  for (const [label, event] of [
+    ['富文本数组', {
+      before_value: [{ field_id: NUMBER_FIELD_ID, field_value: [{ text: '3357|黑|B' }] }],
+      after_value: [{ field_id: NUMBER_FIELD_ID, field_value: [{ text: '3357|黑色|B' }] }],
+    }],
+    ['整列没带', { before_value: [], after_value: [{ field_id: 'fld_price', field_value: '199' }] }],
+  ]) {
+    const gateway = fakeGateway({
+      records: {
+        rec1: recordWith({ number: '3357|黑色|B', tagQrCode: [{ file_token: 'o', name: 'tag-qr-3357_黑_B.png' }] }),
+      },
+    });
+    const service = serviceFor(gateway);
+    const result = await service.handleTableChanges([{ record_id: 'rec1', action: 'record_edited', ...event }]);
+    assert.equal(result.results[0].status, 'written', `${label}：判不了 ⇒ 必须落到第②层，且按当前编号判出旧码`);
+    assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-3357_黑色_B.png', `${label}：按当前编号出新名`);
+  }
 });

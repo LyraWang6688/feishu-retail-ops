@@ -102,6 +102,40 @@ const buildFileName = (number, config = TAG_QR_CODE) => {
 };
 
 /**
+ * ⭐⭐ 从附件名里**反解出编号**（按配置的文件名模板）——「**以编号为准**」那一层判据。
+ *
+ * 为什么需要它（业务负责人 2026-10-12 的口径）：**附件名只是辅助**，真正要问的是
+ * "这张码的编号 == 当前编号吗"。而这张码是我们自己按 `fileName.template`（`tag-qr-{number}.png`）
+ * 传上去的 —— 所以从名字里**按模板抠出编号那一段**，比"整串名字逐字相等"更贴近语义：
+ *   · `tag-qr-2635-1_黑_A.png`    ⇒ 抠出 `2635-1_黑_A` == 当前编号 ✅ 已同步；
+ *   · `tag-qr-QPL2635-1_黑_A.png` ⇒ 抠出 `QPL2635-1_黑_A` ≠ 当前编号 ⇒ **旧码**（真机那 5 条）；
+ *   · 名字被人手工改过前后缀（模板对不上）⇒ 抠不出 ⇒ **判为过期**（重写成规范名，宁严不松）。
+ * ⚠️ 反解是**有损**的（编号里的 `|` 等非法字符在上传时被换成了 `_`）⇒ 比较时两边都做同一次替换。
+ * 🔴 **不许退化成 `name.includes(number)`**：`tag-qr-QPL2635-1_黑_A.png` **确实包含**
+ *    `2635-1_黑_A` —— 那样会把旧码当成"已同步"（真机就是这么漏的）。
+ *
+ * ⚠️ 为什么不直接核"二维码 URL 里的编号"：附件格里只有 `{file_token, name}`，**没有 URL**；
+ *    要核 URL 只能**下载附件再解码二维码**（仓库里的 `qrcode` 只能编码、不能解码）⇒ 要引新依赖。
+ *    ⇒ 名字是我们上传时按模板定的，反解编号在语义上等价，且不引依赖（业务负责人已确认）。
+ */
+const numberFromFileName = (name, config = TAG_QR_CODE) => {
+  const template = String(config?.fileName?.template || '');
+  const marker = `{${SCAN_URL_PLACEHOLDER}}`;
+  const at = template.indexOf(marker);
+  if (at < 0) return null;
+  const prefix = template.slice(0, at);
+  const suffix = template.slice(at + marker.length);
+  const text = String(name ?? '');
+  if (!text.startsWith(prefix) || !text.endsWith(suffix)) return null;
+  const middle = text.slice(prefix.length, text.length - suffix.length);
+  return middle || null;
+};
+
+/** 编号 → 写进文件名时用的"安全形态"（与 `buildFileName` 同一套替换，供反解后比较）。 */
+const sanitizeNumberForFileName = (number, config = TAG_QR_CODE) => String(number ?? '')
+  .replace(config?.fileName?.invalidChars || /[\\/:*?"<>|]/g, config?.fileName?.replacement || '_');
+
+/**
  * 从附件格的原始值里取出附件清单（`[{ file_token, name, … }]`）。
  * 只认有 `file_token` 的元素 —— 别的东西（文本、空值、关联）一律当"没有附件"。
  */
@@ -287,9 +321,21 @@ const createTagQrCodeService = ({
 
     // 「现存附件的文件名 ≠ 当前编号应有的文件名」= **事实上的编号变了**（只读一次就判得出，
     // 不依赖事件带没带前后值）。这一档才是 `numberChanged === null` 时的**唯一**判据。
+    // "已同步" = 附件名与规范名**逐字一致**，**或**从名字里按模板反解出的编号 == 当前编号
+    // （后者是"以编号为准"的语义判据；见 `numberFromFileName` 的注释）。
+    //
+    // 🔴🔴 2026-10-12 修（业务负责人真机发现"改货号后二维码没更新"）：
+    //   ① 判据必须是"**与规范名一致 / 反解出的编号一致**"，**不能**退化成"名字里含有当前编号"——
+    //      反例（真机形状）：`tag-qr-QPL2635-1_黑_A.png` **确实含有** `2635-1_黑_A` ❌；
+    //   ② `numberChanged === false`（事件说这一列前后值相同）**也要核一遍附件** ——
+    //      改前这一档直接"连表都不读"就跳过了，于是"附件早就旧了、之后只改别的字段"
+    //      这条路会**永远**跳过 ⇒ 二维码一直停在旧编号上（真机 292 次跳过 / 0 次写回）。
+    const safeNumber = sanitizeNumberForFileName(number, config);
+    const namesMatch = existing.length > 0 && existing.some((item) => item.name === fileName
+      || numberFromFileName(item.name, config) === safeNumber);
     const staleByFileName = existing.length > 0
-      && numberChanged === null
-      && !existing.some((item) => item.name === fileName);
+      && (numberChanged === null || numberChanged === false)
+      && !namesMatch;
     // ⭐ 覆盖原因**如实**：靠文件名判出来的不匹配，就是 `number_changed`
     //   （而不是含混的 `number_change_unknown`）——日志/返回值里要能一眼看出是"改了"。
     const effectiveReason = staleByFileName ? 'number_changed' : reason;
@@ -297,7 +343,7 @@ const createTagQrCodeService = ({
     if (existing.length) {
       const overwrite = numberChanged === true || staleByFileName;
       if (!overwrite) {
-        if (numberChanged === null) {
+        if (numberChanged === null || numberChanged === false) {
           // `numberChanged === null` 只可能来自**事件那一路**（判不了 ⇒ 退化成比文件名）：
           // 比完一致 ⇒ 结论就是"编号没变"，**如实记成 skipped_number_unchanged**
           //（与快路径同一个事件名；`verified_by` 说明这一次是靠文件名核出来的）。
@@ -419,12 +465,11 @@ const createTagQrCodeService = ({
         }
         const detail = await resolveNumberChangeDetail(actionItem);
         const numberChanged = detail.changed;
-        if (numberChanged === false) {
-          // ⭐ 只有**确定**没变才走快路径（其他字段变更）：连读表都不读，只记一条。
-          logInfo('product.tag_qr.skipped_number_unchanged', { record_id: recordId, action });
-          results.push({ record_id: recordId, status: 'skipped', reason: 'number_unchanged' });
-          continue;
-        }
+        // ⚠️ 2026-10-12 改：**"确定没变"这一档不再短路跳过**（改前它连表都不读）。
+        //    真机证明"附件早就旧了、之后只改别的字段"会在这条路上**永远**跳过 ⇒
+        //    二维码停在旧编号上（292 次跳过 / 0 次写回）。现在一律交给 `syncRecord`：
+        //    读一次记录、拿**规范文件名 / 反解出的编号**核附件；核得上才记
+        //    `skipped_number_unchanged`（多一次只读，换来"不会静默停在旧码上"）。
         if (numberChanged === null) {
           // ⭐⭐ **判不了 ≠ 没变**（2026-10-09 就是在这里漏判的）：退化到"读一次记录、比文件名"。
           //    把事件里的原始值一并记下来 —— 这是这类漏判**唯一**的现场证据。
@@ -599,6 +644,8 @@ module.exports = {
   createTagQrCodeService,
   buildScanUrl,
   buildFileName,
+  numberFromFileName,
+  sanitizeNumberForFileName,
   attachmentsOf,
   findFieldValue,
   readableFieldText,
