@@ -42,6 +42,11 @@ const layout = (patch = {}) => {
     // 标签内部版式（品牌置顶居中 / 右栏行序 / 货号+颜色同行的超宽规则）—— 服务端 config 的镜子。
     body: {
       rows: ['brand', 'itemNoColor', 'price', 'state', 'sizes'],
+      // ⚠️ 2026-10-11 加的镜子（**同一条 AC、同一个理由：防漂移**）：
+      //   服务端 `LABEL_PRINT.body` 新增了 `portraitRows`（竖版画布的行序，二维码自己占一行）。
+      //   页面侧（浏览器打印那条横版老路）**不用它**，但这条 deepEqual 是"整份 body 逐字比对"，
+      //   所以镜像也要跟着写上 —— 不写就会红，那正是这条用例存在的意义。
+      portraitRows: ['brand', 'itemNoColor', 'price', 'state', 'sizes', 'qr'],
       brandRow: 'top',
       brandAlign: 'center',
       brandGapMm: 0.6,

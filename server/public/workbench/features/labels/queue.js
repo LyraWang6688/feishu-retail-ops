@@ -41,9 +41,9 @@ export function queueBarHtml() {
         <label class="queue-rotate">打印方向
           <select data-field="queue-rotate" data-view="queue-rotate">
             <option value="">跟随服务器设置</option>
-            <option value="90">90°</option>
-            <option value="180">180°</option>
-            <option value="270">270°</option>
+            <option value="portrait">竖版 · 铺满（推荐）</option>
+            <option value="landscape-90">横版 · 转 90°（会缩小）</option>
+            <option value="landscape-0">横版 · 原样</option>
           </select>
         </label>
         <span class="queue-badge" data-view="queue-badge"></span>
@@ -95,8 +95,8 @@ export function createLabelQueuePanel({ api, onError = () => {} } = {}) {
 
   const pick = (name) => (root ? root.querySelector(`[data-action="${name}"]`) : null);
   const view = (name) => (root ? root.querySelector(`[data-view="${name}"]`) : null);
-  /** 选中的打印方向（'' = 跟随服务器配置）。 */
-  const currentRotate = () => {
+  /** 选中的"方向方案"（'' = 跟随服务器配置）。 */
+  const currentPreset = () => {
     const select = view('queue-rotate');
     return select ? String(select.value || '') : '';
   };
@@ -152,15 +152,14 @@ export function createLabelQueuePanel({ api, onError = () => {} } = {}) {
     state.notice = '';
     render();
     try {
-      const rotate = currentRotate();
       const result = await api.post('/api/workbench/label-print/jobs', {
         mode: 'batch',
         filters: getFilters(),
         // 同一批查询结果用同一个 key ⇒ 连点只建一个任务。
         submit_key: state.batchKey,
         ...(again ? { again: true } : {}),
-        // ⭐ 打印方向：空 = 跟随服务器配置；选了就只对这一次生效（试 90°/270° 用，不用重启）。
-        ...(rotate ? { rotate } : {}),
+        // ⭐ 打印方向：空 = 跟随服务器配置；选了就**只对这一次**生效（试方向不用改配置重启）。
+        ...directionFromPreset(currentPreset()),
       });
       await refresh();
       // 提交了就说提交了几张（**不静默**）；命中去重就**说清楚没有重复提交**（她上次就是不知道才连点的）。
@@ -203,6 +202,21 @@ export function createLabelQueuePanel({ api, onError = () => {} } = {}) {
     },
     render,
   };
+}
+
+/**
+ * 「方向方案」下拉的取值 → 请求参数（**纯函数**，可直接单测）。
+ *   · `''`            —— 跟随服务器配置（**默认**，不传任何方向参数）；
+ *   · `portrait`       —— **旋转画布**：方向对（= 真机 B）**且原尺寸铺满**（推荐）；
+ *   · `landscape-90`   —— 横版 + 转 90°：方向对，但会缩到 75%（真机 B 的小框）；
+ *   · `landscape-0`    —— 横版原样（真机 A：方向是反的）。
+ */
+export function directionFromPreset(preset) {
+  const value = String(preset || '').trim();
+  if (value === 'portrait') return { canvas: 'portrait', rotate: 0 };
+  if (value === 'landscape-90') return { canvas: 'landscape', rotate: 90 };
+  if (value === 'landscape-0') return { canvas: 'landscape', rotate: 0 };
+  return {};
 }
 
 /** 文案模板填充（`{count}`）。认不出的占位符**原样留着**（不静默吞掉）。 */

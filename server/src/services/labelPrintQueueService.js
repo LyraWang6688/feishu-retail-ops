@@ -26,7 +26,7 @@ const path = require('node:path');
 const { STATES, SOURCES } = require('../config/labelPrintQueue');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { logInfo, logWarn } = require('../utils/logger');
-const { renderLabels, normalizeRotation } = require('./labelPrintArtifactService');
+const { renderLabels, normalizeRotation, normalizeCanvas } = require('./labelPrintArtifactService');
 
 /** 她填错 / 业务上做不到 ⇒ 400，原因原样回页面（与工作台其它写接口同一套口径）。 */
 const userError = (message) => Object.assign(new Error(message), { statusCode: 400 });
@@ -71,8 +71,9 @@ const normalizeRequest = (input = {}) => {
  * ⚠️ **含打印方向**（`rotate`）：试方向时"打 90°"和"打 270°"是**两件事**，
  *    不能被防连点窗口认成同一次提交（否则她试第二张会被"没有重复提交"挡住，白等）。
  */
-const requestKeyOf = (request, rotate) => {
-  const suffix = rotate === undefined || rotate === null ? '' : `|rotate=${rotate}`;
+const requestKeyOf = (request, rotate, canvas) => {
+  const suffix = `${rotate === undefined || rotate === null ? '' : `|rotate=${rotate}`}`
+    + `${canvas === undefined || canvas === null ? '' : `|canvas=${canvas}`}`;
   if (request.mode === 'single') return `single|${request.number}${suffix}`;
   const filters = request.filters || {};
   const ordered = ['keyword', 'state', 'category', 'size', 'recentDays', 'sort']
@@ -158,7 +159,9 @@ const createLabelPrintQueueService = (deps = {}) => {
    *      复用同一个任务（扫描页是零 JS，连点会发出几个一模一样的 POST，就靠这道兜住）。
    * 🔴 她**真想再打一张**时：带 `again: true`（页面上那颗【再打一张】）⇒ **两道都绕过**。
    */
-  const enqueue = async (input, { actor = '', source = SOURCES.workbench, submitKey = '', again = false, rotate } = {}) => {
+  const enqueue = async (input, {
+    actor = '', source = SOURCES.workbench, submitKey = '', again = false, rotate, canvas,
+  } = {}) => {
     if (config.enabled === false) throw Object.assign(new Error('打印队列没有启用'), { statusCode: 503 });
     const request = normalizeRequest(input);
     // ⭐ 打印方向：**默认跟随配置**（`artifact.rotate`）；页面可以**按这一次**覆盖（试 90°/270° 用）。
@@ -172,10 +175,21 @@ const createLabelPrintQueueService = (deps = {}) => {
         throw userError(error.message);
       }
     }
-    const renderConfig = rotateOverride === undefined
-      ? artifactConfig
-      : { ...artifactConfig, rotate: rotateOverride };
-    const requestKey = requestKeyOf(request, rotateOverride);
+    // ⭐ 画布方向也可以按这一次覆盖（试"竖版铺满 / 横版"不用改配置重启）。
+    let canvasOverride;
+    if (canvas !== undefined && canvas !== null && canvas !== '') {
+      try {
+        canvasOverride = normalizeCanvas(canvas);
+      } catch (error) {
+        throw userError(error.message);
+      }
+    }
+    const renderConfig = {
+      ...artifactConfig,
+      ...(rotateOverride === undefined ? {} : { rotate: rotateOverride }),
+      ...(canvasOverride === undefined ? {} : { canvas: canvasOverride }),
+    };
+    const requestKey = requestKeyOf(request, rotateOverride, canvasOverride);
     const key = String(submitKey || '').trim();
     const force = Boolean(again);
     const dedupeWindowMs = Number(config.dedupeWindowMs || 0);
@@ -294,8 +308,9 @@ const createLabelPrintQueueService = (deps = {}) => {
       // ⭐ 去重用的两个键（补打/排障时也看得见"这一条是怎么被认出来的"）。
       request_key: requestKey,
       submit_key: submitKey || '',
-      // 这一批是按哪个方向印的（试方向时一眼能看出"刚才那张是 90° 还是 270°"）。
+      // 这一批是按哪个方向印的（试方向时一眼能看出"刚才那张是竖版还是横版 90°"）。
       rotate: rotate ?? null,
+      canvas: rendered.meta?.canvas || null,
       created_at: ISO(enqueuedAtMs),
       created_at_ms: enqueuedAtMs,
     };
@@ -334,6 +349,7 @@ const createLabelPrintQueueService = (deps = {}) => {
       submitKey: input.submitKey,
       again: input.again,
       rotate: input.rotate,
+      canvas: input.canvas,
     },
   );
 
@@ -346,6 +362,7 @@ const createLabelPrintQueueService = (deps = {}) => {
       submitKey: input.submitKey,
       again: input.again,
       rotate: input.rotate,
+      canvas: input.canvas,
     },
   );
 

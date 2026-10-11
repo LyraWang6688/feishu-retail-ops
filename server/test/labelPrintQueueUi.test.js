@@ -281,7 +281,7 @@ test('AC-U9 外壳把「再打一份」写进 HTML 了（不是靠 JS 临时造�
 // 【2026-10-11 方向口径纠正】工作台这一页的「打印方向」下拉
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-U10 ⭐ 方向下拉：默认"跟随服务器设置"（不选就什么都不变）；选了就**只对这一次**生效', async () => {
+test('AC-U10 ⭐ 方向方案下拉：默认"跟随服务器设置"（不选就什么都不变）；选了就**只对这一次**生效', async () => {
   const ui = await loadQueueModule();
   const api = fakeApi();
   const panel = ui.createLabelQueuePanel({ api });
@@ -292,14 +292,34 @@ test('AC-U10 ⭐ 方向下拉：默认"跟随服务器设置"（不选就什么�
   await panel.refresh();
 
   await panel.submit();
-  assert.equal(api.calls.filter((call) => call.method === 'POST').pop().body.rotate, undefined,
-    '默认不传 rotate ⇒ 服务端跟随配置');
+  const follow = api.calls.filter((call) => call.method === 'POST').pop().body;
+  assert.equal(follow.rotate, undefined, '默认不传 rotate ⇒ 服务端跟随配置');
+  assert.equal(follow.canvas, undefined, '默认不传 canvas');
 
-  container.elements['[data-view="queue-rotate"]'].value = '270';
+  // ⚠️ 2026-10-11 改断言（**"试方向不用重启"这个本意没变**）：
+  //   改前：下拉只有 90/180/270，断言 `body.rotate === '270'`。
+  //   改后：下拉改成**方向方案**（竖版铺满 / 横版转 90° / 横版原样），断言对应的 `{canvas, rotate}`。
+  //   理由：真机三组对照之后，"旋转画布（竖版）"才是要试的那一档；光有角度是不够的。
+  container.elements['[data-view="queue-rotate"]'].value = 'portrait';
   await panel.submit({ again: true });
-  const post = api.calls.filter((call) => call.method === 'POST').pop();
-  assert.equal(post.body.rotate, '270', '选了方向就带上（试 90°/270° 用，不用改配置重启）');
-  assert.equal(post.body.again, true);
+  const portrait = api.calls.filter((call) => call.method === 'POST').pop().body;
+  assert.deepEqual({ canvas: portrait.canvas, rotate: portrait.rotate }, { canvas: 'portrait', rotate: 0 });
+  assert.equal(portrait.again, true);
+
+  container.elements['[data-view="queue-rotate"]'].value = 'landscape-90';
+  await panel.submit({ again: true });
+  const legacy = api.calls.filter((call) => call.method === 'POST').pop().body;
+  assert.deepEqual({ canvas: legacy.canvas, rotate: legacy.rotate }, { canvas: 'landscape', rotate: 90 });
+});
+
+test('AC-U10 `directionFromPreset`：四个取值的映射（认不出来 = 跟随配置，不猜）', async () => {
+  const ui = await loadQueueModule();
+  assert.deepEqual(ui.directionFromPreset(''), {});
+  assert.deepEqual(ui.directionFromPreset('portrait'), { canvas: 'portrait', rotate: 0 });
+  assert.deepEqual(ui.directionFromPreset('landscape-90'), { canvas: 'landscape', rotate: 90 });
+  assert.deepEqual(ui.directionFromPreset('landscape-0'), { canvas: 'landscape', rotate: 0 });
+  assert.deepEqual(ui.directionFromPreset('nonsense'), {});
+  assert.deepEqual(ui.directionFromPreset(null), {});
 });
 
 test('AC-U10 下拉外壳里就有（服务端/静态 HTML 渲染，不是 JS 临时造）', () => {

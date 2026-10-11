@@ -59,11 +59,19 @@ const createLabelPrintQueueRouter = (options = {}) => {
     const rotate = req.body?.rotate === undefined || req.body?.rotate === null || req.body?.rotate === ''
       ? undefined
       : req.body.rotate;
+    // ⭐⭐ 画布方向也可以按这一次覆盖：`portrait` = **旋转画布**（方向对 + 原尺寸铺满）。
+    const canvas = req.body?.canvas === undefined || req.body?.canvas === null || req.body?.canvas === ''
+      ? undefined
+      : req.body.canvas;
     try {
       const queue = service();
       const result = mode === 'batch'
-        ? await queue.enqueueBatch({ filters: req.body?.filters || {}, actor, submitKey, again, rotate })
-        : await queue.enqueueSingle({ number: req.body?.number, actor, submitKey, again, rotate });
+        ? await queue.enqueueBatch({
+          filters: req.body?.filters || {}, actor, submitKey, again, rotate, canvas,
+        })
+        : await queue.enqueueSingle({
+          number: req.body?.number, actor, submitKey, again, rotate, canvas,
+        });
       const status = await queue.status();
       return res.json({
         success: true,
