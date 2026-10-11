@@ -260,8 +260,9 @@ const SALE = Object.freeze({
     process.env, 'SCAN_SALE_ORIGINAL_TEXT', '扫码建单（{count} 双）：{products}',
   ),
   // ⚠️ 「解析状态」**刻意不在这里配**：扫码建单没有 AI 解析这一步，而主表记录由
-  //    既有的 `LarkMvpService.createSalesEntryWithOrderNo`（全仓唯一创建销售主表的地方）
-  //    创建，它把这一列写成「解析中」—— 这里不为了好看再补一次写库
+  //    共享处理层的 `services/salesEntryService.createSalesEntryWithOrderNo`
+  //    （全仓唯一创建销售主表的地方，2026-10-11 从 larkMvpService 剥出）创建，
+  //    它把这一列写成「解析中」—— 这里不为了好看再补一次写库
   //    （那正是"扫码侧另写一套写库逻辑"）。取舍与建议写在本次任务的报告里。
   // 赠品文本上限（主表「赠品」是文本列，写太长没意义、也容易被截断）。
   giftMaxLength: readInt(process.env, 'SCAN_SALE_GIFT_MAX_LENGTH', 100, { min: 1, max: 500 }),

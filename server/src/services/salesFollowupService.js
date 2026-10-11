@@ -52,7 +52,7 @@ class SalesFollowupService {
       pendingSampleTasks.map((task) => [task.sales_detail_record_id, task]),
     );
     // ⭐ 2026-10-11（C）：「其他配品」这张表是**可选配置**（没配时销售只支持鞋，见
-    //    `LarkMvpService.listAccessories` 的注释）。这里先看 tableId 再读 ——
+    //    `services/salesEntryService.listAccessories` 的注释）。这里先看 tableId 再读 ——
     //    未配置时**跳过**（配品行照样认得出来，只是没有名称），绝不把整页打成 500。
     const accessoryConfigured = Boolean(this.gateway.table?.('accessory')?.tableId);
     const [orders, details, methods, payments, products, accessories] = await Promise.all([

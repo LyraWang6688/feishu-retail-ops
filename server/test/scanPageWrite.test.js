@@ -910,7 +910,16 @@ test('源码哨兵：扫码写服务里没有一处直连写库（只调既有�
   // 复用的既有业务函数必须在（否则就是"另写一套"了）
   assert.match(source, /SalesOrderService/);
   assert.match(source, /publishPurchaseRequest/);
-  assert.match(source, /LarkMvpService\.prototype\.createSalesEntryWithOrderNo\.call/);
+  // ⚠️ 2026-10-11（清群聊入口 C0）改写：扫码建单**不再**借 `LarkMvpService.prototype`
+  //    （那会让"删群聊入口"连扫码一起删），改为 require **共享处理层**
+  //    `services/salesEntryService.js` —— 群聊入口与扫码入口共用同一份建单/单号逻辑。
+  //    断言从"借了哪个 prototype"改成"用了哪个共享件"，哨兵强度不变（仍是"必须复用既有实现"）；
+  //    并钉住"代码里不再 require 群聊入口类"（注释里的历史说明不算 —— 注释不产生依赖）。
+  assert.match(source, /require\('\.\/salesEntryService'\)/);
+  assert.equal(
+    /require\(['"]\.\/larkMvpService['"]\)/.test(source), false,
+    'scanWriteService 不许再 require 群聊入口层 larkMvpService：建单/配品都该走共享 service',
+  );
   // 会话服务只写本地 JSON（复用既有的 jsonTaskStore），不碰业务表
   const sessions = fs.readFileSync(path.join(SERVER_SRC, 'services', 'scanSessionService.js'), 'utf8');
   assert.equal(/gateway\./.test(sessions), false, '会话服务不认识网关');
