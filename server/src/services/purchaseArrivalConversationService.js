@@ -166,10 +166,9 @@ class PurchaseArrivalConversationService {
         card: {
           ...defaults.card,
           ...(config.card || {}),
-          // ⚠️ `form`（表单那块：输入框 / 提交按钮 / 降级文案）必须**嵌套合并**：
-          //    只浅合并 `card` 的话，调用方覆盖 `card.form.submitLabel` 一项就会把
-          //    `fieldName` / `required` / 降级文案…整块变成 undefined（改一项、坏一片）。
-          form: { ...defaults.card.form, ...((config.card || {}).form || {}) },
+          // ⚠️ 2026-10-12（清群聊入口 C1）：原先进来还有一层 `card.form`
+          //    （输入框 / 提交按钮 / 降级文案）的嵌套合并 —— 那张表单只有群话题链路会发，
+          //    入口已删除 ⇒ 配置项与这层合并一起退场。
         },
         replies: { ...defaults.replies, ...(config.replies || {}) },
         summary: { ...defaults.summary, ...(config.summary || {}) },
@@ -457,7 +456,8 @@ class PurchaseArrivalConversationService {
     const evidence = await this.cardEvidence(cardMessageId, threadId);
     // 旧卡（若有）**尽力作废**：把按钮收掉，免得话题里同时留着两张都能点的卡。
     // ⚠️ 2026-10-08：`callerHandledCardId` 命中时**跳过** —— 那张卡由**调用方**收成
-    //    「已提交」终态（表单提交那条路，见 `handleFormSubmitLocked`）。
+    //    「已提交」终态（表单提交那条路 —— ⚠️ 2026-10-12 C1 已随群聊入口删除；
+    //    本参数保留给将来的入口复用，不传时行为与改动前逐字相同）。
     //    否则同一张卡会被 patch 两次（先"已作废"、再"已提交"），白白多一次远端调用。
     const supersede = existingCardMessageId
       && existingCardMessageId === String(callerHandledCardId || '').trim()
@@ -522,362 +522,21 @@ class PurchaseArrivalConversationService {
   }
 
   /**
-   * 卡片动作入口。**只认这张卡片的两个动作名**，其余一律返回 null（交给别的链路）。
+   * 卡片动作入口。**只认「是」这一个动作名**，其余一律返回 null（交给别的链路）。
    *
    * @returns {Promise<{toast?: object}|null>}
    */
   async handleCardAction(value, event = {}, operatorOpenId = '') {
     const action = value?.action;
-    if (![ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, ARRIVAL_CONVERSATION_ACTIONS.REJECT].includes(action)) return null;
+    // ⚠️⚠️ 2026-10-12（清群聊入口 C1）：这里原先还认 `REJECT`（卡片上的「否」）。
+    //    那个动作只由**群话题那条对话链路**发出来的卡片提供，而那条入口已整体删除
+    //    （业务的到货验收改由**工作台发起 + 扫码录入**，见 `confirmBatchArrival`）。
+    //    ⇒ 那个分支（以及它调用的「不入库」实现）一起退场；**只留 `CONFIRM`（「是」）**。
+    if (action !== ARRIVAL_CONVERSATION_ACTIONS.CONFIRM) return null;
     const taskId = String(value?.draft_id || '').trim();
     if (!taskId) throw new Error('到货核对卡片缺少任务 ID');
-    return this.queue.run(taskId, () => (action === ARRIVAL_CONVERSATION_ACTIONS.CONFIRM
-      ? this.confirmLocked(taskId, operatorOpenId, event)
-      : this.rejectLocked(taskId, operatorOpenId, event)));
+    return this.queue.run(taskId, () => this.confirmLocked(taskId, operatorOpenId, event));
   }
-
-  /**
-   * ⭐⭐ 卡片表单的**提交入口**（业务负责人 2026-10-07 深夜定的口径，逐字）：
-   *   「等到货之后，**请在卡片里填写实际到货情况**……**用户填写内容之后，再点击提交**。
-   *    以这个来作为**触发后续的到货验收**」
-   *
-   * 分工（这里的职责边界要看清）：
-   *   · **本方法只管三件事**：取出 `form_value` 里那一项文字 → 空值兜底 → 丢进同一批的串行队列；
-   *   · **真正的"到货验收"一点都没重写**：非空时原样交给 `handleFormSubmitLocked`，
-   *     而它转手就把这句话当成"她在话题里说的那句话"喂给 `handleTopicMessageLocked`
-   *     ⇒ 解析 / 差异比对 / 出卡片**与在话题里说一模一样**（用例逐字钉住）。
-   *
-   * 🔴 空提交（`form_value` 里没有那一项 / 只有空白）：**明确提示 + 一个字都不写**
-   *   （不记原话、不调模型、不发卡片、不写任何业务表），并把表单与提醒一起留在她那张卡上。
-   *   ⚠️ 官方 `required` 只是**前端**闸门（未填则前端提示、不发起回传）⇒ 服务端必须自己兜一层。
-   *   ⚠️ **"明确提示"落在卡片上**（`card.submitMissingNote`），不是靠返回的 toast ——
-   *      卡片动作那条路由的**同步响应是固定的「已收到，正在处理」**，service 返回的 toast
-   *      只进 `lark.card.handled` 日志（这也是 `visibleFailure` 早就"patch 卡 + 回文字"的原因）。
-   *
-   * ⭐⭐ 2026-10-08：「实际金额」是**第二个必填项**（业务负责人：「**金额这个是必填的，
-   *   必须让用户填，否则点不了按钮**」）。官方 `required` 只拦前端 ⇒ 这里再拒一次：
-   *   缺失 / 非数字 / 为负 ⇒ **一个字都不写** + 把提醒留在她那张卡上
-   *   （`card.amountMissingNote` / `card.amountInvalidNote`）。
-   *   ⚠️ 校验顺序是**先"实际到货情况"、后"金额"**：两项都缺时先说哪一项都没错，
-   *      保持既有空提交的语义与文案逐字不变（既有用例钉住的就是这一条）。
-   *   ⚠️ 金额**只记在本地任务上**（`handleFormSubmitLocked`），提交这一步**一张业务表都不写**；
-   *      「实际金额」的落点仍是「报货批次」那一行，由点「是」之后的 `confirmArrival` 写。
-   *
-   * @param {object} value 提交按钮的 `value`（`{action, draft_id}`）
-   * @param {object} formValue 回调里的 `form_value`（官方：表单项 name → 值）
-   * @param {object} event 整个卡片回调事件（取被提交的那张卡 id、操作人）
-   * @param {string} operatorOpenId 操作人 open_id
-   * @returns {Promise<{toast?: object}>}
-   */
-  async handleCardFormSubmit(value, formValue, event = {}, operatorOpenId = '') {
-    const taskId = String(value?.draft_id || '').trim();
-    if (!taskId) throw new Error('到货核对卡片缺少任务 ID');
-    const fields = formValue && typeof formValue === 'object' ? formValue : {};
-    const fieldName = this.config.card.form.fieldName;
-    // ⚠️ 只在**两端**去空白（`trim`）：她填的正文原样保留（多行里的换行也保留）。
-    const text = String(fields[fieldName] ?? '').trim();
-    const cardMessageId = String(event?.context?.open_message_id || event?.open_message_id || '').trim();
-    if (!this.config.enabled) {
-      // 与"在话题里说"**同一个开关**（`PURCHASE_ARRIVAL_CONVERSATION_ENABLED`）：
-      // 关掉就是整条到货核对不处理。⚠️ 卡片动作必须回一个响应，所以如实回一句。
-      logInfo('purchase.arrival.reconcile.disabled', {
-        message_id: cardMessageId, env: 'PURCHASE_ARRIVAL_CONVERSATION_ENABLED', source: 'form_submit',
-      });
-      return { toast: { type: 'info', content: this.config.replies.disabled } };
-    }
-    if (!text) {
-      logWarn('purchase.arrival.reconcile.submit_empty', {
-        task_id: taskId, card_message_id: cardMessageId, field: fieldName,
-        note: '空提交：明确提示 + 不记原话 / 不调模型 / 不发卡片 / 不写任何业务表',
-      });
-      // ⚠️ 也走**同一批的串行队列**：这是一次"重渲染那张卡"的远端动作，
-      //    跟同一批正在跑的核对排在一起，才不会把刚发出去的新卡又叠上旧表单。
-      //    ⚠️ 它**不写任何业务表、不动本地任务**（`reopenFormAfterEmptySubmit` 只 patch 卡片）。
-      return this.queue.run(taskId, async () => {
-        await this.reopenFormAfterEmptySubmit(taskId, cardMessageId);
-        // ⚠️ 这句 toast 在她那边**看不见**（卡片动作路由的同步响应固定是「已收到，正在处理」，
-        //    见 `routes/larkEvents.js` 的 `card.action.trigger`；service 返回的 toast 只进
-        //    `lark.card.handled` 日志）。所以**她真正看得见的那句提示在卡片上**
-        //    （`card.submitMissingNote`，由 `reopenFormAfterEmptySubmit` 写进卡片）。
-        //    这里照样如实返回，是为了日志口径与既有各条链路的形状一致。
-        return { toast: { type: 'error', content: this.config.replies.submitMissing } };
-      });
-    }
-    // ⭐⭐ 2026-10-08（业务负责人亲自批准）：「实际金额」**必填** ——
-    //   她的原话：「**金额这个是必填的，必须让用户填，否则点不了按钮**」。
-    // 🔴 官方 `required` 只拦**前端**（未填则前端提示、不发起回传）⇒ 服务端**必须再拒一次**：
-    //   缺失 / 非数字 / 为负 ⇒ **一个字都不许写**（不记原话、不调模型、不发卡片、不写业务表），
-    //   并且**明确回话**要她补（沿用"可见反馈落在卡片上"的既有套路，**不静默**）。
-    const amountFieldName = this.config.card.form.amountFieldName;
-    const amount = parseActualAmount(fields[amountFieldName]);
-    if (!amount.ok) {
-      const missing = amount.reason === 'amount_missing';
-      const copy = missing ? this.config.replies.amountMissing : this.config.replies.amountInvalid;
-      logWarn('purchase.arrival.reconcile.submit_amount_rejected', {
-        task_id: taskId, card_message_id: cardMessageId, field: amountFieldName, reason: amount.reason,
-        note: '服务端金额闸门：缺失 / 非数字 / 为负 → 一个字都不写，并把提醒留在她提交的那张卡上',
-      });
-      // ⚠️ 与空提交同形：也走**同一批的串行队列**（这是一次"重渲染那张卡"的远端动作），
-      //    并且 `reopenFormAfterEmptySubmit` **不写任何业务表、不动本地任务**。
-      return this.queue.run(taskId, async () => {
-        const reopened = await this.reopenFormAfterEmptySubmit(
-          taskId, cardMessageId, missing ? this.config.card.amountMissingNote : this.config.card.amountInvalidNote,
-        );
-        if (!reopened) {
-          // 🔴 表单**没能**重新留在她那张卡上（她那张卡指向的任务已经找不到 / 没有算好的计划 /
-          //    卡片 id 都没拿到）⇒ 只返回一个她**看不见**的 toast 就是静默失败。
-          //    照既有 `visibleFailure` 的套路：把话说在那张卡上 + 往话题里回一句。
-          return this.visibleFailure({
-            tier: 'submit_amount_rejected', taskId, operator: operatorOpenId, event, task: null,
-            copy, logEvent: 'purchase.arrival.reconcile.submit_amount_rejected', toastType: 'error',
-          });
-        }
-        return { toast: { type: 'error', content: copy } };
-      });
-    }
-    logInfo('purchase.arrival.reconcile.submit_received', {
-      task_id: taskId, card_message_id: cardMessageId, field: fieldName,
-      amount_field: amountFieldName, amount: amount.value,
-      text_length: text.length, operator_open_id: operatorOpenId || '',
-    });
-    return this.queue.run(taskId, () => this.handleFormSubmitLocked({
-      taskId, text, amount: amount.value, cardMessageId, event, operatorOpenId,
-    }));
-  }
-
-  /**
-   * 提交（非空）在**队列里**的执行体：把这句话**原样**喂给话题那条锁定管道。
-   *
-   * 三个出口都对得上她的口径：
-   *   · 任务丢了 → 走既有 `visibleFailure`（patch 她那张卡 + 回一句）；
-   *   · 已经入库过 → 不重复入库、如实回执（与"在话题里又说了一句"同一句 `afterPosted`）；
-   *   · 其余 → `handleTopicMessageLocked`（**唯一**那条解析/出卡实现）。
-   *     真的算出结果并出了新卡 ⇒ **顺手把她提交的那张卡收成「已提交」终态**
-   *     （表单收掉 ⇒ 点不了第二次，这正是"避免重复提交"）。
-   *     ⚠️ 没算出结果时**不 patch**：没有到货内容 / 解析失败 / 对不上明细 —— 卡片保持可编辑，
-   *        她可以改一句再提交（或照旧在话题里说）。把没算成说成"已提交"就是谎报。
-   *
-   * ⭐ 2026-10-08：`amount` 是「实际金额」（**服务端已校验过**的数字）—— 只落到本地任务的
-   *   `actual_amount` 上；真正的写库在点「是」之后（见 `confirmLocked` / `confirmArrival`）。
-   */
-  async handleFormSubmitLocked({ taskId, text, amount, cardMessageId, event, operatorOpenId }) {
-    const { replies } = this.config;
-    const task = await this.store.get(taskId);
-    if (!task) {
-      logWarn('purchase.arrival.reconcile.submit_task_missing', { task_id: taskId, card_message_id: cardMessageId });
-      return this.visibleFailure({
-        tier: 'task_missing', taskId, operator: operatorOpenId, event, task,
-        copy: replies.taskMissing, logEvent: 'purchase.arrival.reconcile.submit_task_missing',
-      });
-    }
-    if (task.status === 'posted') {
-      // 已经入过库：**一个字都不写**，如实告诉她（与话题那条路同一句话、同一个判据）。
-      logInfo('purchase.arrival.reconcile.submit_after_posted', {
-        task_id: taskId, card_message_id: cardMessageId, operator_open_id: operatorOpenId || '',
-      });
-      await this.safeReplyText(cardMessageId, replies.afterPosted, this.threadOptions(task));
-      return { toast: { type: 'info', content: replies.afterPosted }, handled: true, reason: 'already_posted' };
-    }
-    // ⭐⭐ 2026-10-08：把她这次填的**整批金额**记在**本地任务**上（**一张业务表都不写**）。
-    //   为什么记在这里而不是当场写库：她的口径是"整批一个金额，填到实际金额里面"，
-    //   而「实际金额」的落点是**「报货批次」那一行** —— 那一行的写入口子是
-    //   点「是」之后的 `confirmArrival` → `PurchaseOrderBatchService.writeAcceptance`。
-    //   ⚠️ 2026-10-09：那次 update 现在**只再写「实际数量」「实际金额」**；
-    //      「验收原话」那一列在真表上已经被删掉（这里仍收着她那段话，因为它同时是
-    //      **解析实际到货情况的输入**，只是不再往表里落一列）。提交这一步只负责
-    //      "记住这一次她说的数"。
-    //   ⚠️ 幂等：同一个字段覆盖同一个值（整批一个数），重复提交**不会**写两遍/累加。
-    await this.store.update(taskId, { actual_amount: Number(amount) });
-    const result = await this.handleTopicMessageLocked({
-      taskId,
-      // ⭐ "是哪一批"从**本地会话任务**上还原（提交没有定位器给的 batch 对象）。
-      batch: this.batchFromTask(task),
-      batchNo: String(task.batch_no || ''),
-      // ⭐ 她填的那段文字 = "她在话题里说的那句话"。逐字一致就靠这一行。
-      text,
-      // ⭐ 身份用**被提交的那张卡片**的消息 id：飞书重投同一次提交时，
-      //    管道里那道"同一条消息只记一次"的闸门会把它挡成 `duplicate_message`（幂等）。
-      messageId: cardMessageId || `form_submit:${taskId}`,
-      // 她是在**话题**里收到这张卡的 ⇒ 回话/新卡都落回**同一条话题**。
-      threadId: String(task.thread_id || ''),
-      senderOpenId: operatorOpenId,
-      // 这张卡由**下面**收成「已提交」终态，管道别再拿它当"旧卡"作废一遍。
-      callerHandledCardId: cardMessageId,
-    });
-    if (result.reason === 'duplicate_message') {
-      // 飞书重投 / 她连点两次提交：不重复核对、不重复发卡、不重复入库。
-      logInfo('purchase.arrival.reconcile.submit_duplicate', { task_id: taskId, card_message_id: cardMessageId });
-      return { toast: { type: 'info', content: replies.submitDuplicate }, ...result };
-    }
-    logInfo('purchase.arrival.reconcile.form_submitted', {
-      task_id: taskId, card_message_id: cardMessageId,
-      outcome: result.reason || 'processed', card: Boolean(result.card),
-      text_length: String(text || '').length,
-    });
-    if (result.card === true) {
-      const patched = await this.safeUpdateCard(cardMessageId, purchaseArrivalReconcileStatusCard({
-        batchNo: task.batch_no || '',
-        message: this.config.card.submittedMessage,
-        template: 'grey',
-        title: this.config.card.submittedTitle,
-      }), { task, taskId });
-      logInfo('purchase.arrival.reconcile.submit_card_closed', {
-        task_id: taskId, card_message_id: cardMessageId, card_patched: patched,
-        note: '提交成功那一次的结果卡在话题里；她提交的这张收成「已提交」终态，避免重复提交',
-      });
-    }
-    // ⚠️ 出口形状：`toast` 给卡片点击方看（路由只读它），
-    //    其余字段（`card` / `reason` / `card_message_id`）是**排查与用例**要的证据，原样带出去。
-    // ⚠️ 回执**分两句**：真的出了新卡才说"卡片发在你下面"；没算出结果时如实说
-    //    （说错方向会让她去找一张根本不存在的卡 —— 真机 2026-10-07 23:37 就是这么被带偏的）。
-    const toastCopy = result.card === true ? replies.submitReceived : replies.submitReceivedNoCard;
-    return { toast: { type: 'info', content: toastCopy }, ...result };
-  }
-
-  /**
-   * 从**本地会话任务**上还原"是哪一批"（表单提交路径没有定位器给的 batch 对象）。
-   *
-   * ⚠️ 只还原任务上**真的记着**的东西：
-   *   · `request_ids` 优先取任务上的（发卡那一轮 `loadRequestRows` 存的）；
-   *     没有才回落到 `request_rows[].request_record_id`；
-   *   · **两个都没有就返回空数组** ⇒ `loadRequestRows` 照旧 `no_request_ids`
-   *     （**不发卡、不写表**）—— **绝不猜"最近一笔"**（AGENTS.md 那条纪律）。
-   */
-  batchFromTask(task) {
-    const rows = Array.isArray(task?.request_rows) ? task.request_rows : [];
-    const stored = Array.isArray(task?.request_ids) && task.request_ids.length
-      ? task.request_ids
-      : rows.map((row) => row.request_record_id);
-    return {
-      batch_no: textValue(task?.batch_no),
-      batch_record_id: textValue(task?.batch_record_id),
-      chat_id: textValue(task?.chat_id),
-      // 到货核对只对采购申请单开（退货批次在入口就被挡掉了，见 `handleTopicMessage`）。
-      batch_kind: ARRIVAL_BATCH_KINDS.PURCHASE_REQUEST,
-      request_ids: [...new Set(stored.map((id) => String(id || '').trim()).filter(Boolean))],
-    };
-  }
-
-  /**
-   * 空提交 / 金额不合法之后**尽力**把表单留在她那张卡上（外加一句提醒）。
-   *
-   * 🔴 它**不写任何业务表、不动本地任务**，只是重新渲染一张卡 —— 所以"零写库"这条不变。
-   * ⚠️ 任务上没有算好的计划（还没有行）就不重渲染：**宁可不做，也不渲染一张空卡**。
-   *
-   * ⭐ 2026-10-08：`note` 是那张卡上要显示的那句提醒（**不传时 = 既有的空提交文案**，
-   *   于是"实际到货情况没填"这条老路的卡片与改动前逐字一致）；
-   *   金额缺失 / 非数字走的是同一个函数、只是换一句可配的提醒。
-   */
-  async reopenFormAfterEmptySubmit(taskId, cardMessageId, note = '') {
-    if (!cardMessageId) return false;
-    let task = null;
-    try {
-      task = await this.store.get(taskId);
-    } catch (error) {
-      logWarn('purchase.arrival.reconcile.submit_empty_reopen_skipped', {
-        task_id: taskId, card_message_id: cardMessageId, reason: 'task_unreadable', error: error.message,
-      });
-      return false;
-    }
-    if (!task || !Array.isArray(task.plan) || !task.plan.length) {
-      logInfo('purchase.arrival.reconcile.submit_empty_reopen_skipped', {
-        task_id: taskId, card_message_id: cardMessageId, reason: task ? 'no_plan' : 'task_missing',
-      });
-      return false;
-    }
-    const reopened = await this.safeUpdateCard(cardMessageId, purchaseArrivalReconcileCard({
-      taskId, batchNo: task.batch_no || '', rows: task.plan, differences: task.differences || [],
-      copy: this.config.card,
-      // 不传 `note` = 既有的空提交提醒（"实际到货情况"那一条，逐字不变）。
-      formNote: note || this.config.card.submitMissingNote,
-    }), { task, taskId });
-    logInfo('purchase.arrival.reconcile.submit_empty_reopened', {
-      task_id: taskId, card_message_id: cardMessageId, card_patched: reopened,
-      note_kind: note ? 'custom' : 'submit_missing',
-    });
-    return reopened;
-  }
-
-  /**
-   * 点「否」：**零业务表写入**，把那张卡 patch 成终态，再回一句「好，那先不入库」。
-   *
-   * ⭐ 2026-10-08（业务负责人逐条批准）：**点「否」也 patch 卡面**。
-   *   改前这里只 `safeReplyText`（卡片原样不动）—— 这正是"点了没反应"的同一个根因：
-   *   她点完只看得到一句话，那张卡上还是「是 / 否」两个按钮。
-   *   ⚠️ **有意接受的行为变化**：终态卡收掉按钮 ⇒ 点过「否」之后在**这张卡上**点不了「是」了；
-   *      要改主意，在话题里再说一句实际到货（会按最新那句话重出一张新卡）。
-   *      `confirmLocked` 里那条"rejected 之后仍可按显式指令入库"的服务端语义**一个字没改**
-   *      （飞书重投 / 旧卡回调照样能走通，只是卡面上不再给按钮）。
-   *
-   * ⚠️ 顺序：**patch 在前、回话在后**（她要的是"原地更新卡片"，回话只是兜底）。
-   *   回话复用既有的 `replies.rejected`，**不重复发第二句**。
-   *
-   * 刻意**不把状态定成终态**：她没说过"否完就不能改主意"。
-   * 点了「否」之后再点「是」，仍然按"她的显式指令"入库（那时候入库点还是「是」）。
-   */
-  async rejectLocked(taskId, operatorOpenId, event = {}) {
-    const task = await this.store.get(taskId);
-    if (!task) {
-      return this.visibleFailure({
-        tier: 'task_missing', taskId, operator: operatorOpenId, event, task,
-        copy: this.config.replies.taskMissing, logEvent: 'purchase.arrival.reconcile.task_missing',
-      });
-    }
-    if (task.status === 'posted') {
-      // 已经入库了再点「否」：**不重复入库、也不改状态**，把那张卡**如实改成绿色终态**
-      // （以前这里只弹 toast，她再点一次还是"看不见任何变化"）。
-      // ⚠️ 卡片**不改内容方向**：已入库就是已入库，不因为她又点了个「否」而改成别的。
-      return this.visibleAlreadyPosted({
-        tier: 'reject_after_posted', taskId, operator: operatorOpenId, event, task,
-      });
-    }
-    await this.store.update(taskId, {
-      status: 'rejected',
-      rejected_by: String(operatorOpenId || ''),
-      rejected_at: new Date(this.now()).toISOString(),
-    });
-    logInfo('purchase.arrival.reconcile.rejected', {
-      task_id: taskId, batch_no: task.batch_no || '', operator_open_id: operatorOpenId || '',
-      // 这一处她**没有明说**"否"之后还能不能再点「是」；按最保守做：不改任何表、也不锁死。
-      tables_written: 0,
-    });
-    const cardMessageId = event?.context?.open_message_id || event?.open_message_id || task.card_message_id || '';
-    // ① patch 卡面（终态、收掉按钮）—— 她点的地方**看得见**。
-    const cardPatched = await this.safeUpdateCard(cardMessageId, purchaseArrivalReconcileStatusCard({
-      batchNo: task.batch_no || '',
-      message: this.config.replies.rejected,
-      template: 'grey',
-      title: this.config.card.rejectedTitle,
-    }), { task, taskId });
-    logInfo('purchase.arrival.reconcile.reject_notice', {
-      task_id: taskId, card_message_id: cardMessageId, card_patched: cardPatched,
-      note: '点「否」= 零业务表写入，但卡面必须原地变（改前只回一句、卡片不动）',
-    });
-    // ② 兜底回话：复用既有的 `replies.rejected` —— 只发这一句，不重复。
-    await this.safeReplyText(cardMessageId, this.config.replies.rejected, this.threadOptions(task));
-    return { toast: { type: 'info', content: this.config.replies.rejected } };
-  }
-
-  /**
-   * 点「是」：**这才是入库点**。
-   *
-   * 顺序（不能换）：
-   *   ① 把草稿写进任务（`draft.actual` 是按实际调整完的数量、`draft.requests` 是申请行）；
-   *   ② `confirmArrival` → **「验收原话」写到「报货批次」那一行** → **逐条 `inventory.applyPurchase`**
-   *      （「库存流水」+「实时库存」由它负责，这里不另写一套）
-   *      → 批次行的「确认状态」改成已确认。
-   *
-   * ⭐ 2026-10-07 晚（到货落点大改）：这里**不再建「到货验收」那一行**（表已被业务负责人删除）。
-   *    「验收原话」「确认状态」由 `confirmArrival` 写进**「报货批次」那一行**；
-   *    本类因此**不再写任何业务表**（批次行的维护归 `PurchaseOrderBatchService`）。
-   * ⭐⭐ 2026-10-07 深夜：「采购入库」表也被她**整表删除** ⇒ `confirmArrival` 里
-   *    **不再写任何入库明细行**，只更新批次行 + 逐条加库存（口径逐字见那份方法的注释）。
-   *
-   * 幂等：`task.status === 'posted'` 早退；
-   * 更里面的「加库存 / 批次行」幂等由 `confirmArrival` 自己保证
-   *（`draft.inventory_applied` 落盘 ＋ 库存自己按真实来源标识去重 ＋ 串行队列；
-   *  「验收原话」写的是同一个文本值）。
-   */
   async confirmLocked(taskId, operatorOpenId, event = {}) {
     const { replies } = this.config;
     const task = await this.store.get(taskId);

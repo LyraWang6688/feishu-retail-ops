@@ -2005,10 +2005,6 @@ class LarkMvpService {
 
   async handleCardAction(event, context = {}) {
     const value = event?.action?.value || event?.event?.action?.value || {};
-    // ⭐ 2026-10-08：**表单容器**的提交回调多带一个 `form_value`（官方：表单项 name → 值），
-    //    它与 `value` **并列**（`event.action.form_value`），不在 `value` 里面。
-    //    这里只做"取出来、原样往下传"—— 哪一项是"实际到货情况"由到货核对那边的配置说了算。
-    const formValue = event?.action?.form_value || event?.event?.action?.form_value || {};
     const draftId = value.draft_id;
     const action = value.action;
     const operatorOpenId =
@@ -2016,20 +2012,18 @@ class LarkMvpService {
     if (['choose_sample_replacement', 'refresh_sample_replacement'].includes(action)) {
       return this.sampleReplacements.handleCardAction(value, event, operatorOpenId, context);
     }
-    // ⭐⭐ 「采购到货核对」卡片的**表单提交**（业务负责人 2026-10-07 深夜：
-    //    「用户填写内容之后，再点击提交……以这个来作为触发后续的到货验收」）。
-    // ⚠️ 与下面「是 / 否」同一个位置理由：这张卡也带 draft_id（= 到货核对任务 id，
-    //    **不是**销售草稿），落到下面那套销售逻辑里一定会把别人的草稿当成自己的。
-    // ⚠️ 与「是 / 否」分派同一份常量（卡片渲染与分派不会各写一份而慢慢写歪）。
-    if (action === ARRIVAL_CONVERSATION_ACTIONS.SUBMIT) {
-      return this.arrivalConversation.handleCardFormSubmit(value, formValue, event, operatorOpenId);
-    }
-    // 「采购到货核对」卡片的「是 / 否」。
+    // ⚠️ 2026-10-12（清群聊入口 C1）：这里原先还分派两个**群聊专属**的到货核对动作 ——
+    //    · `submit_arrival_reconcile`（卡片表单提交）；
+    //    · `reject_arrival_reconcile`（卡片上的「否」）。
+    //    两者都只由**群话题那条对话链路**发出来的卡片提供，入口已整体删除
+    //    ⇒ 两条分派与 `form_value` 的读取一起退场（她的到货验收改由**工作台发起 + 扫码录入**）。
+    //    只留「是」：`confirm_arrival_reconcile` → `handleCardAction`（共享 confirm 链路）。
+    // 「采购到货核对」卡片的「是」。
     // ⚠️ 位置有意放在这里（下面那句 `if (!draftId) throw` 之前）：
     //   这张卡片也带 draft_id（= 到货核对任务 id，不是销售草稿），落到下面那套销售逻辑里
     //   一定会报「卡片缺少草稿 ID」或更糟——把别人的草稿当成自己的。
     //   动作名与卡片渲染共用 config 里的同一份常量。
-    if ([ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, ARRIVAL_CONVERSATION_ACTIONS.REJECT].includes(action)) {
+    if (action === ARRIVAL_CONVERSATION_ACTIONS.CONFIRM) {
       return this.arrivalConversation.handleCardAction(value, event, operatorOpenId);
     }
     // ⚠️ 2026-10-08：「报货确认卡」（`confirm_purchase_request` / `cancel_purchase_request`）
