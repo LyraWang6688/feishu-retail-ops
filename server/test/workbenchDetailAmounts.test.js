@@ -210,7 +210,8 @@ test('AC-DA3 有那条【未收款】⇒ 差额同步进它（差额 = 改后实
   assert.deepEqual(result.owed, { record_id: 'pay_pending', amount: 500 });
   assert.equal(gateway.records.paymentRecord[0].fields[PAYMENT.amount], 500, '待收款那条同步成新差额');
   assert.equal(gateway.records.paymentRecord[0].fields[PAYMENT.status], '未收款', '状态一个字不动');
-  // 补收款那一步用的就是它 ⇒ 两边对得上（服务端 addPayment 的"一次收清"判据）
+  // 补收款那一步用的就是它 ⇒ 两边对得上（2026-10-12 起服务端**分笔**收款，每次都会按现算
+  // 剩余重新同步这一条：收满 ⇒ 0。所以"改实收"与"补收款"两条链的口径始终一致）
   assert.deepEqual(gateway.writes.map((item) => item.table), ['salesDetail', 'paymentRecord']);
 });
 

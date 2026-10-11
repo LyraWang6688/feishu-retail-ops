@@ -176,7 +176,7 @@ test('a multi-pair line without individual prices stops before creating sale det
   assert.equal(gateway.records.get('salesDetail'), undefined);
 });
 
-test('deposit creates paid and unpaid receipts; follow-up settles the same receipt without touching stock', async () => {
+test('deposit creates paid and unpaid receipts; follow-up 记一条新收款 + 把占位行清零（不动库存）', async () => {
   const gateway = fake();
   const sales = new SalesOrderService({ gateway, references });
   // 「尾款以后付 140」＝她明说欠 140，所以 owed 由解析层给到入账层，后端才补那条未收款。
@@ -200,9 +200,22 @@ test('deposit creates paid and unpaid receipts; follow-up settles the same recei
       idField: 'task_id' }) });
   const result = await followup.addPayment({ salesEntryRecordId: 'order_1', method: '微信',
     amount: 140, operatorOpenId: 'ou_1', requestId: '00000000-0000-4000-8000-000000000001' });
-  assert.equal(result.recordId, pendingId);
-  assert.equal(gateway.records.get('paymentRecord').length, 2);
-  assert.equal((await gateway.get('paymentRecord', pendingId)).fields['收款状态'], '已收款');
+  // ⚠️ 2026-10-12 **改写**（业务负责人：「1. 可以做」= 补收款支持分笔）：
+  //    改前：补收款**复用**那条【未收款】——`result.recordId === pendingId`、
+  //          状态被改成「已收款」、收款明细仍然是 2 条；
+  //    改后：每次提交**各记一条**「已收款」行，那条【未收款】**不删、状态也不改**，
+  //          只把金额**同步成当前剩余**（这里收满 ⇒ 0）——与「逐件补实收」同一条口径。
+  assert.notEqual(result.recordId, pendingId, '新记了一条收款行（不再复用那条占位行）');
+  assert.equal(result.pendingAmount, 0, '收满了 ⇒ 剩余 0');
+  assert.equal(gateway.records.get('paymentRecord').length, 3,
+    '已收 100 + 新记的 140 + 那条占位行（金额已同步为 0）');
+  const settled = await gateway.get('paymentRecord', pendingId);
+  assert.equal(settled.fields['收款状态'], '未收款', '占位行的**状态一个字没动**（不删、也不改状态）');
+  assert.equal(settled.fields['收款金额'], 0, '金额同步成 0（收满）');
+  const fresh = await gateway.get('paymentRecord', result.recordId);
+  assert.equal(fresh.fields['收款状态'], '已收款');
+  assert.equal(fresh.fields['收款金额'], 140);
+  assert.equal(fresh.fields['收款方式'][0], 'method_微信', '方式照她说（`resolvePaymentMethod` 解析出来的记录）');
   assert.equal(gateway.records.get('inventoryLedger'), undefined);
   const inventoryCalls = [];
   const delivery = new SalesDeliveryService({ gateway, inventory: {
