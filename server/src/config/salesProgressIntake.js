@@ -34,7 +34,6 @@ const DEFAULTS = Object.freeze({
   //      · `enabled=false` → 这句话**根本不归二次处理**（判据直接 NONE）→ 会被当成新销售原话；
   //      · `textTrigger=false`（默认）→ 判据照跑、照样认出是钱 / 货 / 成交，只是**不写库**、改回提示。
   //    恢复旧行为 = **只翻这一个开关**（词表与判据代码**刻意保留**，见文件头"配置先行"）。
-  textTrigger: false,
 
   // ⭐ 提示的去重窗口（毫秒）：她是语音输入，可能把同一句话重复说两遍 ——
   //    **同一话题**在这个窗口内已经提示过一次就不再提示（不刷屏）。
@@ -188,10 +187,11 @@ const resolveSalesProgressIntakeConfig = (options = {}) => {
   };
   return {
     enabled: options.enabled ?? parseExplicitBoolean(env.SALES_PROGRESS_INTAKE_ENABLED, DEFAULTS.enabled),
-    // ⭐ 说话还触不触发写库（默认 false = 只留卡片按钮）。显式布尔，不用 `|| fallback`。
-    textTrigger: options.textTrigger ?? parseExplicitBoolean(
-      env.SALES_PROGRESS_TEXT_TRIGGER_ENABLED, DEFAULTS.textTrigger, 'SALES_PROGRESS_TEXT_TRIGGER_ENABLED',
-    ),
+    // ⚠️ 2026-10-12（清群聊入口 C3）：原先这里还有一个「说话还触不触发写库」的显式布尔
+    //    开关（`SALES_PROGRESS_TEXT_TRIGGER_ENABLED` / `textTrigger`）。群聊入口已退场，
+    //    "在话题里说话"这条路**整个不存在了** ⇒ 开关没有任何读取点，已删除
+    //    （`.env.example` 的那个键也一并删）。
+    //    恢复"说话触发"= **重新实现那条入口**，不是翻开关。
     // ⭐ 提示去重窗口（同一话题短时间内只说一次）。
     textNoticeWindowMs: options.textNoticeWindowMs ?? parseExplicitInteger(
       env.SALES_PROGRESS_TEXT_NOTICE_WINDOW_MS, DEFAULTS.textNoticeWindowMs,

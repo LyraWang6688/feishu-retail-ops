@@ -206,9 +206,15 @@ class SalesThreadProgressService {
     //    ⚠️ 她（语音输入）可能重复说同一句 ⇒ 同一话题短窗口内**只说一次**（`noticeOnce`），不刷屏。
     //    ⚠️ 判不清（上面 AMBIGUOUS 分支）与"认不出"（NONE）**一个字都不变**：
     //      那两条是"问清楚"，不是"触发"，不在本次要关的范围里。
-    //    ⚠️ **卡片那条路不受本开关影响**：`completeDealFromCard` 直接走下面的 applyComplete
-    //      （点【确认成交】照常钱货一起处理），本开关只关"说话"这个入口。
-    if (!this.config.textTrigger) {
+    //    ⚠️ **卡片那条路不受影响**：`completeDealFromCard` 直接走下面的 applyComplete
+    //      （点【确认成交】照常钱货一起处理）。
+    //    ⚠️ 2026-10-12（清群聊入口 C3）：原先这里包在 `if (!this.config.textTrigger)` 里 ——
+    //      那个开关（`SALES_PROGRESS_TEXT_TRIGGER_ENABLED`）已随**群聊入口退场**删除
+    //      （"在话题里说话"这条路整个不存在了，开关没有任何读取点）。
+    //      ⇒ 条件去掉，行为 = 与开关默认值（false = 只回提示、不写库）**逐字相同**。
+    //      ⚠️ 本方法现在是**不可达**件（只被 `processSalesTask` 调，而它也随入口不可达）；
+    //        它连同 `apply*` 保留，是因为 `completeDealFromCard`（点卡片）走的是同一套 apply*。
+    {
       const notice = await this.noticeOnce(task, decision);
       // ⭐ **状态如实**（业务负责人 2026-10-06 拍板，`AGENTS.md` 第 16 条①）：
       //    只回了提示、业务表一个字没写 ⇒ 绝不记 `progress_applied`（那正是"假成功"）。

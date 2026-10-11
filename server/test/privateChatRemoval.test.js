@@ -439,29 +439,6 @@ test('④ SampleReplacementService 里**没有** open_id 发送器（sendCard / 
 // ⑤ 群聊那条真入口不受影响
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('⑤ 话题里不 @ 也处理；任务带群上下文；采购那条路没被碰', async () => {
-  const { service, reactions, purchaseCalls } = makeHarness();
-  service.processSalesTask = async () => undefined;
-  // 先把这个话题**记成本地映射里的那一笔销售**（真实链路是先建单、再记映射）。
-  await service.salesGroupThreads.rememberSaleThread({
-    salesEntryRecordId: 'entry_existing', taskId: 'sale_orig', messageId: 'om_orig_sale',
-    threadId: 'omt_sale_1', chatId: GROUP_CHAT_ID, senderOpenId: TEST_SELLER,
-  });
-
-  const result = await service.acceptMessage(groupThreadEvent('om_group_thread', '再记一双 8088 黑 38 230 微信'));
-
-  assert.equal(result.accepted, true, '话题里的消息免 @，必须被处理');
-  assert.equal(result.mode, 'thread');
-  assert.equal(result.source, 'thread_id');
-  assert.deepEqual(purchaseCalls, [], '认得出是哪一笔销售 → 绝不进采购链路');
-
-  const task = await service.store.get(result.sales.taskId);
-  assert.equal(task.chat_type, 'group');
-  assert.equal(task.chat_id, GROUP_CHAT_ID);
-  assert.equal(task.group_thread_id, 'omt_sale_1');
-  assert.equal(task.sales_entry_record_id, 'entry_existing', '绑定到已定位的那一笔');
-  assert.deepEqual(reactions.map((item) => item.emoji), ['OneSecond'], '群聊「收到」仍然只有表情');
-});
 
 test('⑤ 群任务的两条出口 payload 不变：卡片/文字都回到那条消息的话题', async () => {
   const { service, sent, replies } = makeHarness();
@@ -484,16 +461,6 @@ test('⑤ 群任务的两条出口 payload 不变：卡片/文字都回到那条
   assert.deepEqual(sent, [], '群这条路一条主动私聊都没有');
 });
 
-test('⑤ 主群准入判据不受影响（三条判据都在）', () => {
-  const { service } = makeHarness();
-  assert.equal(service.resolveMainChatAdmission(
-    { mentions: [{ id: TEST_BOT_OPEN_ID }] }, '你好',
-  ).accepted, true);
-  assert.equal(service.resolveMainChatAdmission({ mentions: [] }, '8088 黑 38 一双 230 微信').accepted, true);
-  assert.equal(service.resolveMainChatAdmission({ mentions: [] }, 'BH-20261005-0009 这批到哪了').accepted, true);
-  assert.deepEqual(service.resolveMainChatAdmission({ mentions: [] }, '今天天气不错'),
-    { accepted: false, reason: 'group_not_sales_text' });
-});
 
 // ⭐ 那句话是**可关的**（她 2026-10-07：开关保留；关掉就纯静默）。
 test('① 那句话可关：NOTICE_ENABLED=false → 私聊一个字都不发（只留日志）', async () => {
