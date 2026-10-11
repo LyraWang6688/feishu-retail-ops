@@ -16,6 +16,10 @@ import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { describeError, setBusy, showPageError } from '../../core/ui.js';
 import { FILTER_OPTIONS, TEXTS, pageStyleText, sheetHtml, sheetStyleVars, summaryHtml } from './render.js';
+// ⭐ 2026-10-11：「**打印到店里那台电脑**」= 扫码页那条**同一条队列**（服务器出 PDF、
+//    店里那台 Windows 电脑出纸）。与旁边那颗「打印这些标签」（浏览器打印）是两条路，
+//    但"印什么"共用同一份 service/config。
+import { createLabelQueuePanel, queueBarHtml, submittedText } from './queue.js';
 
 const $ = (container, selector) => container.querySelector(selector);
 
@@ -77,6 +81,7 @@ function renderShell(container) {
         <button class="btn btn-primary" type="button" data-action="print" disabled>${escapeHtml(TEXTS.printButton)}</button>
         <span class="muted">${escapeHtml(TEXTS.printHint)}</span>
       </div>
+      ${queueBarHtml()}
       <p class="data-caption" data-view="scan-url"></p>
     </section>
     <section class="label-preview">
@@ -92,6 +97,19 @@ export function createLabelPrintModule() {
   const panel = () => $(state.container, '.panel');
   const sheet = () => $(state.container, '#label-sheet');
   const printButton = () => $(state.container, '[data-action="print"]');
+
+  /**
+   * ⭐ 「打印到店里那台电脑」这一块（打印队列）。
+   * ⚠️ **只在两种时机刷新**：进页面 / 查完标签后各一次，以及她点【刷新状态】——
+   *    **没有定时器**（她明令"不要每 2-3 秒轮询"；实时性在小助手那条长连接那一侧）。
+   */
+  const queuePanel = createLabelQueuePanel({
+    api,
+    onError: (error) => {
+      $(panel(), '[data-view="queue-jobs"]').textContent = describeError(error);
+      return null;
+    },
+  });
 
   /** 把服务端来的排版参数落到 `@page` 与 CSS 变量上（配置驱动，页面不写死 mm）。 */
   function applyLayout(layout, labels) {
@@ -156,6 +174,7 @@ export function createLabelPrintModule() {
       const printable = (data.labels || []).length > 0;
       printButton().disabled = !printable;
       printButton().title = printable ? '' : TEXTS.printDisabled;
+      queuePanel.setEnabled(printable);
     } catch (error) {
       // 空结果不是错误（service 回 200 + 空 labels）；这里只有真失败才走到。
       $(panel(), '[data-view="summary"]').innerHTML = `<p class="label-notice">${escapeHtml(describeError(error))}</p>`;
@@ -220,6 +239,10 @@ export function createLabelPrintModule() {
         if (event.key === 'Enter') $(panel(), '[data-action="query"]').click();
       });
       printButton().addEventListener('click', () => window.print());
+      // 打印队列那一块：挂上监听 + **拉一次状态**（此后只有她点【刷新状态】/ 提交后才再拉，
+      // ⚠️ 没有定时器 —— 实时性由店里那台电脑的长连接负责，这个页面只看快照）。
+      queuePanel.mount(panel(), () => currentFilters());
+      void queuePanel.refresh();
       applyLayout(fallbackLayout(), []);
       // 打开页面就先查一次（不填条件 = 全部库存，最多 config 里的张数）：
       // 免得她一进来看到一片空白、以为坏了。

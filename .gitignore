@@ -60,3 +60,7 @@ PROJECT.md
 # per-clone and invisible to future agents; declaring it here makes the
 # boundary part of the repository contract.
 .local/
+
+# 店里那台电脑的"打印小助手"本地状态（只在电脑上生成）
+print-helper/state.json
+print-helper/downloads/

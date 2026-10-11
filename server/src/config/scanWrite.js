@@ -74,6 +74,13 @@ const ACTIONS = Object.freeze({
   //    标签二维码扫开就是 `/s/{编号}` ⇒ 连续扫只能落在这一页）。
   acceptAdd: readString(process.env, 'SCAN_WRITE_ACTION_ACCEPT_ADD', 'accept_add'),
   acceptFinish: readString(process.env, 'SCAN_WRITE_ACTION_ACCEPT_FINISH', 'accept_finish'),
+  // ⭐⭐ 2026-10-11（业务负责人：「**扫码页应该是有货品的吧？你不是有六个领域吗？**」）：
+  //    「货品」领域那颗【**打印这一款**】—— **不写任何业务表**（只是把一条打印任务排进队列），
+  //    所以它**不受"扫码写入口关着"影响**（见 `routes/scanPage.js`：那一支排在
+  //    `if (!writeService) return 503` 那道闸门**之前**）。
+  //    ⚠️ 页面上仍然**零 JS**：一个原生 `<form method="post">`，提交后 303 回本领域，
+  //      由服务端重新渲染状态（在线 / 未连接（任务已排队）/ 已打印 / 失败 + 原因）。
+  printLabel: readString(process.env, 'SCAN_WRITE_ACTION_PRINT_LABEL', 'print_label'),
 });
 
 /**

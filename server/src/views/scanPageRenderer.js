@@ -227,6 +227,16 @@ summary { cursor: pointer; }
 .purchase-size { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-height); padding: var(--space-2) var(--space-3); border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--surface-soft); }
 .purchase-size__size { font-size: var(--font-size-lg); font-weight: 700; }
 .purchase-size__count { margin-left: auto; font-size: var(--font-size-amount); font-weight: 700; font-variant-numeric: tabular-nums; }
+/* ── ⭐ 2026-10-11「货品」：**打印到店里那台电脑**（表单 POST，零 JS）────────────
+   一颗主按钮（.btn 已是整行 + ≥44px 命中区）+ 一行状态徽标 + 最近一次任务那行。
+   ⚠️ 这里**没有脚本**：提交是原生表单，状态靠服务端重新渲染（她刷新 / 提交后就能看到）。
+   ⚠️ 本段在模板字符串里，注释里**不许出现反引号**（会提前结束字符串）。 */
+.label-print-form { margin: var(--space-2) 0 0; }
+.label-print-status { margin: var(--space-2) 0 0; }
+.label-print-badge { display: inline-block; padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); font-size: var(--font-size-base); font-weight: 700; }
+.label-print-badge--online { color: var(--surface); background: var(--primary); }
+.label-print-badge--offline { color: var(--text-secondary); background: var(--border-light); }
+.label-print-job { margin: var(--space-1) 0 0; font-size: var(--font-size-base); color: var(--text-secondary); }
 /* ── 领域切换（一个二维码，**六个领域**）────────────────────────────────────
    ⭐⭐ 2026-10-11（业务负责人批准）：六个领域 = 销售 · 补货 · 退货 · 验收 · 库存 · 货品。
    ⚠️ 她要的是「**紧凑两行网格**」⇒ grid 三列 × 两行（6 格正好两行）、
@@ -411,17 +421,73 @@ ${notesHtml}
 };
 
 /**
- * ⭐ 「**货品**」领域那一块：打这一款的标签（**单个**）+ 去批量打印。
- * ⚠️ 复用**既有**标签打印页（`/workbench/label-print.html`，40×30mm 那一版），
- *    这里只拼链接（货号来自这一页已经读到的视图模型）—— 不在这里重做打印。
- * ⭐ 2026-10-10：那颗按钮**下面那句"怎么打印"的说明删掉** —— 只留标题 + 两颗能点的按钮。
+ * ⭐ 「**货品**」领域那一块：**打印这一款**（送到店里那台电脑）+ 去标签打印页。
+ *
+ * ⭐⭐ 2026-10-11（业务负责人：「**扫码页应该是有货品的吧？你不是有六个领域吗？**」）：
+ *    扫到某款 ⇒「货品」领域 ⇒【**打印这一款**】—— 点一下把这一款排进**打印队列**，
+ *    由店里那台 Windows 电脑（"打印小助手"）出纸。
+ *
+ * 🔴 **零 JS**（这一页的硬约束）：提交 = 一个**原生表单** `<form method="post">`；
+ *    成功后 303 回本领域，**状态由服务端重新渲染**（在线 / 未连接（任务已排队）/
+ *    已打印 / 失败 + 原因）。这一页**永远不会**因为脚本没跑而点不动。
+ *
+ * ⚠️ **每个字都来自配置**：
+ *    · 主按钮 / 在线 / 未连接 / 已提交 / 最近一次 —— `page.print.texts`
+ *      （= `config/labelPrintQueue.js` 的 `texts`，**唯一真源**，本文件不抄第二份）；
+ *    · 动作字段名与动作值 —— `page.print.actionField` / `actionValue`（来自 `config/scanWrite.js`）；
+ *    · 回跳地址 —— `page.print.postAction`（路由拼，含 `?from=product`）。
+ * ⚠️ `print` 拿不到（队列坏了 / 没接上）**绝不留空白**：退回原来那两条链接 + 一句如实的话。
  */
-const labelBlockHtml = (view) => {
+const labelBlockHtml = (view, print = null) => {
   const urls = labelPrintUrls(view);
+  const heading = `<h2 class="stock__heading">${escapeHtml(REALM_TEXTS.labelHeading)}</h2>`;
+  const batchLink = `<a class="btn" href="${escapeHtml(urls.batch)}" rel="noopener">${escapeHtml(REALM_TEXTS.labelBatchButton)}</a>`;
+  const pageLink = `<a class="btn btn--ghost" href="${escapeHtml(urls.single)}" rel="noopener">${escapeHtml(REALM_TEXTS.labelSingleButton)}</a>`;
+
+  // `print` 没给（渲染层被单独调用 / 这条链路还没接上）⇒ **退回改动前那一块**：只有那两条链接。
+  if (!print) {
+    return `<section class="card">
+${heading}
+${batchLink}
+${pageLink}
+</section>`;
+  }
+
+  const texts = print.texts || {};
+  // 打印服务不可用（队列坏了 / 明确关掉）⇒ 如实说一句 + 仍然让她能去标签打印页，**绝不留空白**。
+  if (print.enabled === false) {
+    const notice = texts.unavailable
+      ? `<p class="hint">${escapeHtml(texts.unavailable)}</p>`
+      : '';
+    return `<section class="card">
+${heading}
+${notice}
+${batchLink}
+${pageLink}
+</section>`;
+  }
+
+  const job = print.job || null;
+  const statusText = print.online ? texts.online : texts.offline;
+  const badgeClass = print.online ? 'label-print-badge--online' : 'label-print-badge--offline';
+  const banner = print.submitted && texts.enqueuedTitle
+    ? `<p class="notice">${escapeHtml(texts.enqueuedTitle)}</p>`
+    : '';
+  // 「最近一次：<状态>」+（失败时）原因 —— 她要"失败要给原因"，所以原因**同一行看得见**。
+  const jobLine = job
+    ? `<p class="label-print-job">${escapeHtml(`${texts.lastJobPrefix || ''}${job.status_label || job.status}`)}${job.status === 'failed' && job.failure_reason ? ` — ${escapeHtml(job.failure_reason)}` : ''}</p>`
+    : '';
   return `<section class="card">
-<h2 class="stock__heading">${escapeHtml(REALM_TEXTS.labelHeading)}</h2>
-<a class="btn btn--primary" href="${escapeHtml(urls.single)}" rel="noopener">${escapeHtml(REALM_TEXTS.labelSingleButton)}</a>
-<a class="btn" href="${escapeHtml(urls.batch)}" rel="noopener">${escapeHtml(REALM_TEXTS.labelBatchButton)}</a>
+${heading}
+${banner}
+<form class="label-print-form" method="post" action="${escapeHtml(print.postAction)}">
+<input type="hidden" name="${escapeHtml(print.actionField)}" value="${escapeHtml(print.actionValue)}">
+<button class="btn btn--primary" type="submit">${escapeHtml(texts.printSingle || REALM_TEXTS.labelHeading)}</button>
+</form>
+<p class="label-print-status"><span class="label-print-badge ${badgeClass}">${escapeHtml(statusText || '')}</span></p>
+${jobLine}
+${batchLink}
+${pageLink}
 </section>`;
 };
 
@@ -894,7 +960,7 @@ const realmBlockHtml = (realm, view, config, write, page = {}) => {
       : realmEmptyHtml(ACCEPTANCE_REALM, config));
   }
   if (id === 'inventory') return wrap(stockTableHtml(view, config));
-  if (id === 'product') return wrap(labelBlockHtml(view));
+  if (id === 'product') return wrap(labelBlockHtml(view, page?.print));
   if (id === REPLENISH_REALM) {
     // ⭐ 2026-10-11：**补货**从原「采购」领域里独立成一块（内容一个字没变）。
     const form = write && write.enabled !== false && write.replenishEnabled !== false

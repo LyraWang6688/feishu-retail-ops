@@ -25,6 +25,16 @@
 .label-preview { margin-top: 18px; }
 .label-print-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 16px 0 4px; }
 .label-print-bar .muted { font-size: 12px; }
+/* ── ⭐ 2026-10-11「打印到店里那台电脑」（打印队列）那一块 ─────────────────────
+   它和上面那条「打印这些标签」（浏览器打印）是**两条路**：
+   这一条把任务排进队列、由店里那台 Windows 电脑出纸；手机上点得动（整行、≥44px）。
+   ⚠️ 状态徽标只是显示，不是按钮 —— 所以它不占 44px 命中区。 */
+.label-queue-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0 0; }
+.label-queue-bar .btn { min-height: 44px; }
+.queue-badge { font-size: 13px; font-weight: 600; padding: 4px 8px; border-radius: 6px; }
+/* ⚠️ 颜色一律走 tokens.css 的语义色令牌（本仓有哨兵：CSS 文件里不许出现写死的颜色）。 */
+.queue-badge--online { background: var(--success-soft); color: var(--success); }
+.queue-badge--offline { background: var(--warning-soft); color: var(--warning-text); }
 .label-summary { margin: 10px 0 0; font-size: 14px; }
 .label-notice { margin: 6px 0 0; font-size: 13px; color: var(--warning); }
 

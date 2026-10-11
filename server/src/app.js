@@ -78,6 +78,16 @@ app.use((req, res, next) => {
 app.use('/api/lark/events', require('./routes/larkEvents').createLarkEventsRouter());
 // Feishu web-app OAuth routes are mounted before generic /api authentication.
 app.use('/api/auth/feishu', require('./routes/feishuWebAuth').createFeishuWebAuthRouter());
+// ⭐ 2026-10-11（业务负责人：手机点打印 ⇒ 店里那台 Windows 电脑执行打印）：
+//   两条新入口，**都挂在下面 `/api` 的 API_KEY 中间件之前**（电脑侧的小助手没有那个头）：
+//     · 手机侧 `/api/workbench/label-print/*` —— 提交打印 / 看在线状态；沿用**工作台那一道**
+//       飞书身份闸门（`routes/labelPrintQueue.js` import 复用 `requireWorkbenchAccess`，没新开鉴权）；
+//     · 电脑侧 `/api/label-print/*` —— 独立**设备令牌**（`x-label-print-token`）+ **SSE 长连接**。
+//   ⚠️ 手机侧**必须先于**下面那条 `/api/workbench` 挂载（否则请求先过一遍工作台 router）；
+//   ⚠️ 两条共用**同一个队列实例**（`services/labelPrintQueueRuntime.js` 的单例）——
+//      不然手机会把任务排进一个"小助手永远看不到"的队列里。
+app.use('/api/workbench/label-print', require('./routes/labelPrintQueue').createLabelPrintQueueRouter());
+app.use('/api/label-print', require('./routes/labelPrintDevice').createLabelPrintDeviceRouter());
 // The workbench uses Feishu web sessions; its query and follow-up endpoints
 // never expose the service credentials to the browser.
 app.use('/api/workbench', require('./routes/workbench').createWorkbenchRouter());

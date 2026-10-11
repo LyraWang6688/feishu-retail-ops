@@ -57,6 +57,13 @@ const {
 } = require('./feishuWebAuth');
 const { SCAN_PAGE } = require('../config/scanPage');
 const { SCAN_WRITE, fillText: fillWriteText } = require('../config/scanWrite');
+// ⭐ 2026-10-11：「货品」领域的【打印这一款】把任务排进**打印队列**（店里那台电脑负责出纸）。
+//   ⚠️ 队列是**进程内单例**（`services/labelPrintQueueRuntime.js`）—— 与电脑侧那条 SSE 路由
+//      **共用同一个实例**，不然任务排进去了、小助手永远看不到。
+//   ⚠️ 只在**真的要打印 / 渲染「货品」领域**时才构建它（`resolveLabelPrintQueue` 延迟创建）：
+//      这一页是"扫码就能看"的入口，不能因为打印那条链路没配好就拖慢 / 打不开。
+const { getLabelPrintQueue } = require('../services/labelPrintQueueRuntime');
+const { LABEL_PRINT_QUEUE } = require('../config/labelPrintQueue');
 const { SCAN_AUTH_REDIRECT } = require('../config/scanAuthRedirect');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 
@@ -262,6 +269,55 @@ const createScanPageRouter = (options = {}) => {
   const postActionFor = (number, realm = DEFAULT_REALM) => {
     const path = `${config.route.basePath}/${encodeURIComponent(String(number || ''))}`;
     return realm && realm !== DEFAULT_REALM ? `${path}?from=${encodeURIComponent(realm)}` : path;
+  };
+
+  // ── ⭐⭐ 2026-10-11：扫码页「货品」领域 →【打印这一款】（送到店里那台电脑）────────
+  /**
+   * 打印队列（**延迟构建**，用例可注入 `options.labelPrintQueue`）。
+   * ⚠️ 与电脑侧路由共用 `labelPrintQueueRuntime` 的单例 —— 那条长连接才收得到推送。
+   */
+  let labelPrintQueue = options.labelPrintQueue || null;
+  const resolveLabelPrintQueue = () => {
+    if (!labelPrintQueue) labelPrintQueue = getLabelPrintQueue();
+    return labelPrintQueue;
+  };
+
+  /**
+   * 渲染「货品」领域要的**打印上下文**（只放事实：在线与否 + 这一款最近一次任务 + 文案 + 回跳）。
+   *
+   * ⚠️ **绝不让这一页因为打印链路坏掉而空白**：队列不可用 ⇒ `enabled: false`，
+   *    渲染层如实说一句"打印服务暂时不可用" + 保留原来那两条链接（人话，不是白屏）。
+   */
+  const buildPrintContext = async (number, realm, { requestId, submitted } = {}) => {
+    const texts = LABEL_PRINT_QUEUE.texts;
+    const base = {
+      enabled: true,
+      submitted: Boolean(submitted),
+      postAction: postActionFor(number, realm),
+      actionField: writeConfig.fields.action,
+      actionValue: writeConfig.actions.printLabel,
+      texts,
+    };
+    try {
+      const queue = resolveLabelPrintQueue();
+      if (typeof queue.isEnabled === 'function' && !queue.isEnabled()) {
+        return { ...base, enabled: false };
+      }
+      const [status, job] = await Promise.all([
+        queue.status(),
+        queue.latestJobForNumber(number),
+      ]);
+      return {
+        ...base,
+        online: Boolean(status.online),
+        last_seen_at: status.last_seen_at || '',
+        count_queued: status.counts?.queued || 0,
+        job,
+      };
+    } catch (error) {
+      logError('scan.label_print.ready_failed', { request_id: requestId, error: error.message });
+      return { ...base, enabled: false };
+    }
   };
 
   // ── ⭐⭐ 2026-10-11（方案A）：扫码验收 ──────────────────────────────────────
@@ -550,11 +606,21 @@ const createScanPageRouter = (options = {}) => {
         returnEnabled: false,
       } : null);
       const renderStartedAt = Date.now();
+      // ⭐ 2026-10-11「货品」领域：把**打印队列的真实状态**带进渲染层（在线 / 未连接 +
+      //    这一款最近一次任务）。⚠️ 只在这个领域取 —— 别的领域一次都不碰打印那条链路。
+      //    `printed=1` = 刚提交完（303 回来的），页面上给一句"已提交打印"。
+      const printContext = realm === 'product'
+        ? await buildPrintContext(view.number, realm, {
+          requestId,
+          submitted: String(req.query?.printed || '') === '1',
+        })
+        : null;
       // ⭐ 2026-10-11：把 UA 交给渲染层 —— 它只用来决定本单条上【继续扫下一个】
       //    是"飞书客户端内的扫一扫 AppLink"还是那句如实的人话（`canScanNextWithFeishu`）。
       const html = renderScan(view, config, writeForRender, realm, {
         userAgent: req.headers['user-agent'],
         acceptance,
+        print: printContext,
       });
       timing.render_ms = Math.max(0, Date.now() - renderStartedAt);
       // `total_ms` = 取数 + 渲染（整条链路的墙钟）—— 她要的是"这一页到底花了多久"。
@@ -581,13 +647,6 @@ const createScanPageRouter = (options = {}) => {
    */
   router.post(config.route.path, async (req, res) => {
     const requestId = req.requestId;
-    if (!writeService) {
-      return sendHuman(res, 503, {
-        title: writeConfig.texts.writeDisabledTitle,
-        body: writeConfig.texts.writeDisabledBody,
-        requestId,
-      });
-    }
     const body = req.body || {};
     const fields = writeConfig.fields;
     const actions = writeConfig.actions;
@@ -595,6 +654,50 @@ const createScanPageRouter = (options = {}) => {
     const openId = openIdOf(req);
     // 「回跳到哪一块」= 这一页的领域（认不出来一律回落缺省；两个入口同一条口径）。
     const realm = resolveRealm(req.query?.from);
+
+    // ── ⭐⭐ 2026-10-11：扫码页「货品」领域 →【打印这一款】──────────────────────
+    // 🔴 它**排在下面"扫码写入口关着 ⇒ 503"那道闸门之前**：打印这一款**不写任何业务表**
+    //    （只把一条任务排进打印队列），所以与"销售/采购写入口开不开"是两件事。
+    // ⚠️ 编号**只认 URL 里的那个**（表单里刻意不放编号字段）⇒ 手改表单也打不了别的款。
+    // ⚠️ 页面上**零 JS**：这里就是一个原生表单的 POST，成功后 303 回本领域（PRG，
+    //    刷新不会重复提交），状态由 GET 重新渲染。
+    if (action === actions.printLabel) {
+      const number = decodeURIComponent(String(req.params.number || '')).trim();
+      try {
+        const queue = resolveLabelPrintQueue();
+        const result = await queue.enqueueSingle({ number, actor: openId, source: 'scan' });
+        logInfo('scan.label_print.enqueued', {
+          request_id: requestId,
+          number,
+          job_id: result.job_id,
+          total_labels: result.total_labels,
+        });
+        return res.redirect(303, `${postActionFor(number, realm)}&printed=1`);
+      } catch (error) {
+        // 她这一款没库存 / 条件是打不出来 ⇒ 400（**原因原样给她**，她要能看懂为什么）；
+        // 系统这一侧坏了（产物画不出来 / 队列写不进盘）⇒ 502/503，**只给一句人话**，
+        // 内部细节只进日志（与工作台其它接口同一条口径：5xx 不回显内部细节）。
+        const status = error?.statusCode === 400 ? 400 : (error?.statusCode === 503 ? 503 : 502);
+        logError('scan.label_print.failed', {
+          request_id: requestId, number, status, error: error.message,
+        });
+        const texts = LABEL_PRINT_QUEUE.texts;
+        return sendHuman(res, status, {
+          title: status === 400 ? texts.enqueueFailedTitle : texts.unavailableTitle,
+          body: status === 400 ? error.message : texts.unavailable,
+          number,
+          requestId,
+        });
+      }
+    }
+
+    if (!writeService) {
+      return sendHuman(res, 503, {
+        title: writeConfig.texts.writeDisabledTitle,
+        body: writeConfig.texts.writeDisabledBody,
+        requestId,
+      });
+    }
     try {
       // ── 加入本单 ────────────────────────────────────────────────────────────
       if (action === actions.addLine) {
