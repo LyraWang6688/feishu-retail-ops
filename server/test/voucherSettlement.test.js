@@ -610,10 +610,17 @@ test('卡片回调：缺结算日 ⇒ 回一句"卡片上没有结算日"，**�
   assert.equal(calls.length, 0);
 });
 
-test('卡片回调：动作名不认识时**照旧**落到兜底（本功能没有改坏既有分派）', async () => {
+test('卡片回调：动作名不认识时**照旧**落到兜底 —— 现在回一句人话（不报错、不静默）', async () => {
   const { service } = dispatchService();
-  await assert.rejects(() => service.handleCardAction({
+  // ⚠️ 2026-10-12（清群聊入口 C4）改写：原先这里断言 `handleCardAction` 对未知动作
+  //    **抛**「卡片缺少草稿 ID」。业务负责人当天明确要的是"未知卡片动作要给一句兜底人话、
+  //    不报错、不静默"（线上还躺着老卡片，点了报错 = 她以为"卡住了"）。
+  //    ⇒ 断言从"必须抛"改成"必须回一句 info toast"，**强度不降**（原来钉的是"不许静默通过"，
+  //      现在钉的是"必须给出可见回执"，仍然拦住"什么都不做"）。
+  const result = await service.handleCardAction({
     operator: { operator_id: { open_id: 'ou_she' } },
     action: { value: { action: 'some_unknown_action' } },
-  }, { interactionId: 'it_3' }), /卡片缺少草稿 ID/);
+  }, { interactionId: 'it_3' });
+  assert.equal(result.toast.type, 'info', '未知动作要有可见回执，不许静默、不许报错');
+  assert.ok(String(result.toast.content).length > 0, '回执必须是一句非空的人话');
 });

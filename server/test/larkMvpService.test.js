@@ -109,15 +109,6 @@ const makeReactionService = () => {
   return { service, reactions };
 };
 
-test('群入口（主群 @ 机器人）的销售文字被受理；重复 message id 去重', async () => {
-  const { service } = makeService();
-  const event = groupSaleEvent('om_1', '@_user_1 A100 38码一双，100元微信');
-  const first = await service.acceptMessage(event);
-  const second = await service.acceptMessage(event);
-  assert.equal(first.accepted, true);
-  assert.equal(first.sales.type, 'sale');
-  assert.equal(second.sales.reason, 'duplicate', '同一条 message id 不重复建任务');
-});
 
 // 主群准入（2026-10-06 业务负责人拍板：**不再要求 @**）。三条判据任一条就理：
 // @ / 正文像销售 / 正文带采购批次号；都不满足 → 静默 + 零远端调用。
@@ -146,183 +137,14 @@ const makeAdmissionSpyService = (options = {}) => {
   return { service, calls, recognized: () => recognized };
 };
 
-test('主群不 @ + 日常聊天：完全无反应（不发消息、不加表情、不读表、不进识别）', async () => {
-  const { service, calls, recognized } = makeAdmissionSpyService();
-  const result = await service.acceptMessage({
-    sender: { sender_id: { open_id: 'ou_1' } },
-    message: {
-      message_id: 'om_group',
-      chat_id: 'oc_group',
-      chat_type: 'group',
-      message_type: 'text',
-      content: JSON.stringify({ text: '今天天气不错' }),
-      mentions: [],
-    },
-  });
-  assert.equal(result.accepted, false);
-  assert.equal(result.reason, 'group_not_sales_text');
-  assert.deepEqual(calls, [], '主群日常聊天不能有任何远端调用');
-  assert.equal(recognized(), 0, '主群日常聊天不能进 AI 识别');
-});
 
-test('主群不 @ + 正文像销售 → 处理（放宽后的新行为）', async () => {
-  const { service } = makeAdmissionSpyService();
-  const result = await service.acceptMessage({
-    sender: { sender_id: { open_id: 'ou_1' } },
-    message: {
-      message_id: 'om_group_autosale',
-      chat_id: 'oc_group',
-      chat_type: 'group',
-      message_type: 'text',
-      content: JSON.stringify({ text: 'A100 38码一双，100元微信' }),
-      mentions: [],
-    },
-  });
-  assert.equal(result.accepted, true, '不 @ 也要能识别销售');
-  assert.equal(result.mode, 'new', '主群新开一笔销售');
-});
 
-test('主群不 @ + 正文带采购批次号 → **不再交给任何采购入口**（C2：采购入站已整体退场）', async () => {
-  // ⚠️ 2026-10-12（清群聊入口 C2）：原先这里断言"带批次号的主群消息要交给采购定位"。
-  //    业务负责人当天逐字：「**采购退货的群聊链路也不用管了**」「到货差异的群聊链路不用管了；
-  //    验收是在工作台页面上……」⇒ 群里的批次号**不再有采购入口可去**。
-  //    ⚠️ 准入判据本身**一个字没动**（`resolveMainChatAdmission` 仍放行带批次号的正文）：
-  //    改的是**下游** —— 销售分派不认领之后**不再有采购兜底**，只记一条
-  //    `lark.group.message.not_sales` 并静默返回（认不出就什么都不做）。
-  const writes = [];
-  const { service } = makeService({
-    gateway: {
-      table: () => ({}),
-      listAll: async () => [],
-      get: async () => null,
-      create: async (...args) => { writes.push(['create', ...args]); throw new Error('不该写业务表'); },
-      update: async (...args) => { writes.push(['update', ...args]); throw new Error('不该写业务表'); },
-    },
-  });
-  const result = await service.acceptMessage({
-    sender: { sender_id: { open_id: 'ou_1' } },
-    message: {
-      message_id: 'om_group_batch',
-      chat_id: 'oc_group',
-      chat_type: 'group',
-      message_type: 'text',
-      content: JSON.stringify({ text: 'BH-20261005-0009 这批到哪了' }),
-      mentions: [],
-    },
-  });
-  assert.equal(result.accepted, true, '准入仍放行（判据没动）');
-  assert.equal(result.handled, false, '但销售不认领、采购也没了 ⇒ 静默落空');
-  assert.equal(result.reason, 'purchase_batch_no', '如实回传"为什么不归销售"（销售分派给的原因）');
-  assert.deepEqual(writes, [], '落空的消息零业务写');
-});
 
-test('开关打开（mainChatRequireMention=true）→ 回到改动前：主群只认 @', async () => {
-  const { service, calls, recognized } = makeAdmissionSpyService({ mainChatRequireMention: true });
-  const result = await service.acceptMessage({
-    sender: { sender_id: { open_id: 'ou_1' } },
-    message: {
-      message_id: 'om_group_strict',
-      chat_id: 'oc_group',
-      chat_type: 'group',
-      message_type: 'text',
-      // 带数字、带业务关键词 —— 真实销售；但开关要求 @，所以必须被挡掉。
-      content: JSON.stringify({ text: 'A100 38码一双，库存还有多少' }),
-      mentions: [],
-    },
-  });
-  assert.equal(result.accepted, false);
-  assert.equal(result.reason, 'group_not_mentioned');
-  assert.deepEqual(calls, [], '严格模式下不 @ 不能有任何远端调用');
-  assert.equal(recognized(), 0);
-});
 
-test('群聊没配 LARK_BOT_OPEN_ID 且要求 @：不猜 @，一律忽略', async () => {
-  const calls = [];
-  const { service } = makeService({
-    botOpenId: '',
-    mainChatRequireMention: true,
-    client: { im: { messageReaction: { create: async () => { calls.push('reaction.create'); return { code: 0 }; } } } },
-  });
-  const result = await service.acceptMessage({
-    sender: { sender_id: { open_id: 'ou_1' } },
-    message: {
-      message_id: 'om_group_nobot',
-      chat_type: 'group',
-      message_type: 'text',
-      content: JSON.stringify({ text: '@_user_1 这批到了' }),
-      mentions: [{ key: '@_user_1', id: TEST_BOT_OPEN_ID, name: '测试机器人' }],
-    },
-  });
-  // 判不出"@的是不是机器人"时**不处理**：宁可不响应，也不能把群里日常聊天当指令。
-  assert.deepEqual(result, { accepted: false, reason: 'group_bot_open_id_unconfigured' });
-  assert.deepEqual(calls, []);
-});
 
-test('主群不 @ + 不像销售的话 → 静默挡在闸门外（不建任务）', async () => {
-  const { service } = makeService();
-  const result = await service.acceptMessage(groupSaleEvent('om_chat', '好的', { mentions: [] }));
-  assert.deepEqual(result, { accepted: false, reason: 'group_not_sales_text' });
-  assert.equal(looksLikeSalesText('好的'), false);
-  assert.equal(looksLikeSalesText('8088-26棕38，230元微信'), true);
-});
 
-test('机器人不再走"采购图片"那条老链路：群里的图片消息**静默忽略**（不建任务、不回消息）', async () => {
-  const { service } = makeService();
-  const result = await service.acceptMessage(groupSaleEvent('om_image', '', {
-    messageType: 'image',
-    content: JSON.stringify({ image_key: 'img_1' }),
-    mentions: [{ key: '@_user_1', id: TEST_BOT_OPEN_ID, name: '测试机器人' }],
-  }));
-  assert.equal(result.reason, 'group_unsupported_message_type');
-  assert.deepEqual(await service.store.list(), [], '一张任务都不该建（含老的 purchase_open）');
-  assert.equal(await service.store.get(
-    require('../src/services/larkMvpService').idFor('purchase_open', 'ou_1'),
-  ), null);
-});
 
-test('群入口的富文本（有序列表）算一笔销售，四条明细都在', async () => {
-  const { service } = makeService();
-  const content = { post: { zh_cn: { title: '550元微信卖了4双鞋：', content: [
-    [{ tag: 'text', text: '1. 第一双：3287黑39的，186元' }],
-    [{ tag: 'text', text: '2. 第二双：11633黑色38的，176元' }],
-    [{ tag: 'text', text: '3. 第三双：86822黑色43的，99元' }],
-    [{ tag: 'text', text: '4. 第四双：XHB8095全黑44的，89元' }],
-  ] } } };
-  const result = await service.acceptMessage(groupSaleEvent('om_post_four', '', {
-    messageType: 'post', content: JSON.stringify(content),
-  }));
-  assert.equal(result.accepted, true);
-  const task = await service.store.get(result.sales.taskId);
-  assert.equal(task.original_text.split('\n').length, 5);
-  assert.match(task.original_text, /XHB8095全黑44/);
-  assert.match(task.original_text, /550元微信/);
-});
 
-test('同一个人的两条销售消息按顺序识别（串行队列按 sender 排队）', async () => {
-  const { service } = makeService();
-  const stages = [];
-  let finishFirst;
-  const firstPending = new Promise((resolve) => { finishFirst = resolve; });
-  let finishBoth;
-  const bothDone = new Promise((resolve) => { finishBoth = resolve; });
-  service.processSalesTask = async (taskId) => {
-    stages.push(`start:${taskId}`);
-    if (stages.length === 1) await firstPending;
-    stages.push(`end:${taskId}`);
-    if (stages.length === 4) finishBoth();
-  };
-  const first = await service.acceptMessage(groupSaleEvent('om_sale_one', '@_user_1 A100黑38 99元微信'));
-  const second = await service.acceptMessage(groupSaleEvent('om_sale_two', '@_user_1 B200棕39 109元现金'));
-  assert.notEqual(first.sales.taskId, second.sales.taskId);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(stages, [`start:${first.sales.taskId}`]);
-  finishFirst();
-  await bothDone;
-  assert.deepEqual(stages, [
-    `start:${first.sales.taskId}`, `end:${first.sales.taskId}`,
-    `start:${second.sales.taskId}`, `end:${second.sales.taskId}`,
-  ]);
-});
 
 test('recognized purchase items with same SKU and size are aggregated', () => {
   assert.deepEqual(
@@ -3059,5 +2881,123 @@ const groupEvent = (overrides = {}) => ({
     // thread_id 有值 = 话题里的消息（免 @）；不传 = 主群消息（必须 @）。
     thread_id: overrides.threadId,
   },
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 群聊入口已退场（业务负责人 2026-10-12：「清理群聊那个也得做呀」）
+//
+// 这是**整条群入口的验收哨兵**：群消息（文字 / 图片 / 话题里不 @ / 主群里 @）
+// 一律 `{accepted:false, reason:'group_chat_removed'}`，且**零远端调用、零本地副作用**。
+// 动手前先写预期（AGENTS.md 协作纪律第 2 条）；判据是"有没有任何调用"，不是"日志说了什么"。
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** 记录"有没有发生任何调用"的 service（client / gateway / store / AI / 表情全记）。 */
+const makeSpyService = () => {
+  const calls = [];
+  const spy = (label, value) => async (...args) => { calls.push(label); return value; };
+  const service = new LarkMvpService({
+    client: {
+      im: {
+        // ⚠️ 真实路径是 `client.im.message.create`（不带 `v1`）—— 见 `sendText`。
+        message: {
+          create: spy('im.message.create', { code: 0, data: { message_id: 'om_x' } }),
+          reply: spy('im.message.reply', { code: 0, data: { message_id: 'om_x' } }),
+          patch: spy('im.message.patch', { code: 0, data: {} }),
+        },
+        v1: {
+          message: {
+            create: spy('im.v1.message.create', { code: 0, data: { message_id: 'om_x' } }),
+            reply: spy('im.v1.message.reply', { code: 0, data: { message_id: 'om_x' } }),
+            patch: spy('im.v1.message.patch', { code: 0, data: {} }),
+          },
+        },
+        messageReaction: { create: spy('im.messageReaction.create', { code: 0, data: {} }) },
+      },
+    },
+    gateway: {
+      table: () => ({}),
+      listAll: spy('gateway.listAll', []),
+      get: spy('gateway.get', null),
+      create: spy('gateway.create', { recordId: 'rec_x' }),
+      update: spy('gateway.update', {}),
+    },
+    references: {},
+    recognizer: { parseSalesText: spy('recognizer.parseSalesText', { intent: 'sale', items: [] }) },
+    posting: {},
+    store: {
+      get: spy('store.get', null),
+      create: spy('store.create', { task_id: 't' }),
+      update: spy('store.update', {}),
+      list: spy('store.list', []),
+    },
+  });
+  return { service, calls };
+};
+
+test('⭐⭐ 群聊入口已退场：文字 / 图片 / 话题免 @ / 主群 @ → 一律不受理，且零调用', async () => {
+  const cases = [
+    { name: '话题里（thread_id 有值）不 @', message: { thread_id: 'omt_1', mentions: [] }, text: '你好 小来财' },
+    { name: '话题里像销售的一句', message: { thread_id: 'omt_1', mentions: [] }, text: '卖一双 XHB8095 黑 38 码 500' },
+    { name: '主群里 @ 了机器人', message: { mentions: [{ key: '@_user_1', id: TEST_BOT_OPEN_ID, name: '机器人' }] }, text: '这批到了' },
+    { name: '主群里带采购批次号', message: { mentions: [] }, text: 'BH-20261005-0009 这批到哪了' },
+    { name: '群里的图片消息', message: { thread_id: 'omt_1', mentions: [], message_type: 'image' }, text: '' },
+  ];
+  for (const item of cases) {
+    const { service, calls } = makeSpyService();
+    const result = await service.acceptMessage({
+      sender: { sender_id: { open_id: 'ou_sender' } },
+      message: {
+        message_id: 'om_group_entry', chat_id: TEST_PURCHASE_CHAT_ID,
+        chat_type: 'group', message_type: item.message.message_type || 'text',
+        content: JSON.stringify({ text: item.text }), ...item.message,
+      },
+    });
+    assert.deepEqual(result, { accepted: false, reason: 'group_chat_removed' },
+      `${item.name}：群消息必须被明确回绝（不是静默成功）`);
+    assert.deepEqual(calls, [], `${item.name}：不接受 ⇒ 一个远端/本地调用都不许有（实际：${calls.join(',')}）`);
+  }
+});
+
+test('⭐⭐ 群入口退场**不影响私聊那条路**：非群消息仍走「私聊已移除」的既有回执', async () => {
+  const { service, calls } = makeSpyService();
+  const result = await service.acceptMessage({
+    sender: { sender_id: { open_id: 'ou_sender' } },
+    message: {
+      message_id: 'om_p2p', chat_id: 'oc_p2p', chat_type: 'p2p', message_type: 'text',
+      content: JSON.stringify({ text: '卖一双 500' }),
+    },
+  });
+  assert.equal(result.accepted, false);
+  assert.equal(result.reason, 'private_chat_removed');
+  assert.deepEqual(calls, ['im.message.create'],
+    '私聊唯一保留的动作还是那一句 notice（不建任务、不进 AI、不读表、不写表）');
+});
+
+test('⭐⭐ 源码哨兵：群入口那条链路的符号**一个都不许回来**', () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, '../src/services/larkMvpService.js'), 'utf8',
+  );
+  // ⚠️ 用**代码形态**匹配，不匹配裸词：C3 的注释里会写"原先有 resolveMainChatAdmission"
+  //    这类历史说明（注释不产生行为），裸词匹配会被注释误伤（C1 踩过一次）。
+  for (const gone of [
+    /^ {2}resolveMainChatAdmission\(/m,
+    /^ {2}async acceptGroupMessage\(/m,
+    /^ {2}async handleGroupSaleMessage\(/m,
+    /require\(['"]\.\/salesGroupFlowService['"]\)/,
+    /require\(['"]\.\.\/config\/groupAdmission['"]\)/,
+    /resolveMainChatRequireMention\(/,
+    /this\.botOpenId =/,
+  ]) {
+    assert.equal(gone.test(source), false, `群入口的符号不该再出现（代码形态）: ${gone}`);
+  }
+  for (const removedFile of [
+    '../src/services/salesGroupFlowService.js', '../src/config/groupAdmission.js',
+  ]) {
+    assert.equal(fs.existsSync(path.join(__dirname, removedFile)), false,
+      `${removedFile} 应已删除（群入口专属件）`);
+  }
+  // ✅ 死保项：9 点推送三块与两个卡片回调不许被牵连
+  assert.match(source, /handleSecondDeliveryAction/, '二次交付成交必须还在');
+  assert.match(source, /confirmVoucherSettlement/, '团购券「确认到账」必须还在');
 });
 
