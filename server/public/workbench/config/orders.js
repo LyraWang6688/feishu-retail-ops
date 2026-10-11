@@ -162,6 +162,9 @@ export const ORDERS_API = {
   payments: '/api/workbench/sales/payments',
   // ⭐ 2026-10-11：逐件补「实收金额」（窄写入路径；服务端 = `SalesFollowupService.updateDetailAmounts`）
   detailAmounts: '/api/workbench/sales/detail-amounts',
+  // ⭐⭐ 2026-10-11：**补样品**（卖了样品没指定门盒的那条待办；
+  //    服务端 = `SalesFollowupService.fillSample` → `InventoryService.promoteToSample`，1 双）
+  sampleFill: '/api/workbench/sales/sample-fill',
   deliveries: '/api/workbench/sales/deliveries',
   afterSales: '/api/workbench/sales/after-sales',
   secondDelivery: '/api/workbench/sales/second-delivery',
@@ -256,6 +259,15 @@ export const ORDERS_TEXTS = {
   detailAmountTitle: '实收金额',
   detailAmountLabel: '实收金额',
   detailAmountSubmit: '保存实收金额',
+  // ⭐⭐ 2026-10-11：**补样品**（她卖掉的那双样品没有了 ⇒ 指定用哪个码的门盒挪一双变成样品）。
+  //    ⚠️ 全是不带说明书的**功能名/事实**，不写"点这里可以先…"那种腔调。
+  sampleFillTitle: '补样品',
+  sampleFillLine: '{product} · {size} 码 的样品已卖掉，选一个码的门盒补上',
+  sampleFillSizeLabel: '用哪个码的门盒',
+  sampleFillOption: '{size} 码（门盒 {count} 双）',
+  sampleFillSubmit: '补样品',
+  sampleFillNoCandidate: '这一款现在没有可用的门盒，补不了样品',
+  sampleFillDone: '已补样品：{size} 码 门盒 → 样品（库存总数不变）',
   deliveryTitle: '交付',
   deliveryEmpty: '这张单没有待交付的明细了',
   deliverySubmit: '提交交付',

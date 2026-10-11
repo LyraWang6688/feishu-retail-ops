@@ -32,6 +32,8 @@ const { SecondDeliveryService } = require('./services/secondDeliveryService');
 const { startSecondDeliveryReminder } = require('./utils/secondDeliveryReminder');
 const { PendingDealPushService } = require('./services/pendingDealPushService');
 const { resolvePendingDealPushConfig } = require('./config/pendingDealPush');
+const { resolveSamplePendingNoticeConfig } = require('./config/samplePendingNotice');
+const { createSamplePendingNoticeService } = require('./services/samplePendingNoticeService');
 const { startShanghaiDailyScheduler } = require('./utils/shanghaiDailyScheduler');
 // 扫码页的挂载点（`/s`）与它的配置：**与二维码里的 URL 同源**
 // （`config/tagQrCode.js` 的 `scanUrl.urlTemplate` = `https://hm.bamamei.online/s/{编号}`）。
@@ -153,6 +155,24 @@ if (require.main === module) {
     });
   } else {
     logInfo('sales.pending_deal_push.disabled', { env: 'PENDING_DEAL_PUSH_ENABLED' });
+  }
+  // ⭐⭐ 2026-10-11（业务负责人 20:30 确认）：「**待办还有 N 条**」——**完全单独的一条消息**，
+  //    一天 5 次（9/12/15/18/21，**时点可配**）**发采购群**（`PURCHASE_CHAT_ID`）。
+  //    ⚠️ 与上面那条 9 点推送**刻意分开**：收件群不同（那条是 `PENDING_DEAL_PUSH_CHAT_ID`、
+  //      这条是采购群）、时间表也不同 ⇒ 合成一条只会在改一边时把另一边带跑。
+  //    ⚠️ 这个调度器**过了整点之后每个 tick 都会调 `run`** ⇒ service 自己按
+  //      「上海日 + 整点」去重（`services/samplePendingNoticeService.js`）。
+  const samplePendingNotice = resolveSamplePendingNoticeConfig();
+  if (samplePendingNotice.enabled) {
+    const samplePendingNoticeService = createSamplePendingNoticeService({ settings: samplePendingNotice });
+    startShanghaiDailyScheduler({
+      run: ({ now }) => samplePendingNoticeService.send({ now }),
+      eventPrefix: 'workbench.sample_pending_notice',
+      hours: samplePendingNotice.hours,
+      intervalMs: samplePendingNotice.intervalMs,
+    });
+  } else {
+    logInfo('workbench.sample_pending_notice.disabled', { env: 'SAMPLE_PENDING_NOTICE_ENABLED' });
   }
   // 只监听回环地址：公网一律走 Nginx。
   //

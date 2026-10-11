@@ -141,6 +141,38 @@ test('AC-C2 待补充：缺货品信息（编号 / 颜色 / 尺码缺一）或�
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// AC-C2b ⭐⭐ 2026-10-11 新增的一类「待补充」：**卖了样品、没指定门盒**（后续追加，不改上面任何判据）
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * ⚠️ 2026-10-11 晚（业务负责人）新增：她卖掉样品、又没在确认卡片上说"用哪个门盒补"时，
+ *    服务端在订单上给一个**只读事实** `sample_pending: true` ⇒ 这一单进**待补充**。
+ *
+ * ⚠️ **本条是纯追加**：上面 AC-C2 / AC-C3 的判据**一条都没改**（它们造的 fixture 都不带
+ *    `sample_pending`，结论逐字不变）；这里只钉住"多了一个输入、且它优先"。
+ */
+test('AC-C2b 「待补样品」也是一种待补充：先判它；其余判据一个字不动', async () => {
+  const { orders } = loadFrontendModules();
+  const m = await orders;
+  // 基准：这份 fixture 信息齐、没两清 ⇒ 待交割（不带 sample_pending 时逐字仍是老结论）
+  assert.equal(m.salesSectionOf(ORDER), 'pending');
+  // 新增输入 ⇒ 待补充（优先）
+  assert.equal(m.salesSectionOf({ ...ORDER, sample_pending: true }), 'supplement',
+    '卖了样品没指定门盒 ⇒ 待补充');
+  // 明确 false / 不带 ⇒ 回归原判据
+  assert.equal(m.salesSectionOf({ ...ORDER, sample_pending: false }), 'pending');
+  assert.equal(m.salesSectionOf({ ...ORDER, sample_pending: true, fulfillment_status: '未交付' }), 'supplement');
+  // 卡上要多一块【补样品】（候选码来自服务端；没有候选就只给人话）
+  const html = m.orderDetailHtml({
+    ...ORDER, record_id: 'o1', order_no: 'XSD-1', sample_pending: true,
+    sample_pending_lines: [{ detail_record_id: 'd1', product_record_id: 'p1', product_number: 'YD1', size: 40,
+      candidates: [{ size: 42, doorBoxCount: 1 }] }],
+  }, { methods: ['微信'] });
+  assert.ok(html.includes('data-action-block="sample-fill"'), '卡片上要有【补样品】块');
+  assert.ok(html.includes('data-action="submit-sample-fill"'), '有一颗补样品按钮');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // AC-C3 待交割 / 售后列表（至少一笔收款 → 待交割；收齐 → 售后列表）
 // ═══════════════════════════════════════════════════════════════════════════
 

@@ -154,6 +154,37 @@ const createWorkbenchRouter = (options = {}) => {
       return res.status(502).json({ success: false, error: error.message });
     }
   });
+  /**
+   * ⭐⭐ 2026-10-11（业务负责人 20:30 确认）：**补样品**（工作台 → 销售 → 订单列表 →【待补充】）。
+   *
+   * 她卖掉的样品没指定门盒 ⇒ 订单列表里有一条待办 ⇒ 她在这里选一个码 ⇒
+   * 那一双 **门盒 → 样品**（**1 双**，库存总数不变），待办消失。
+   *
+   * ⚠️ 本路由**一行业务判断都没有**：待办/门盒/幂等全在
+   *    `services/samplePendingService.js` → `InventoryService.promoteToSample`
+   *    （**与群卡片共用同一个 `operationId`** ⇒ 跨入口绝不重复挪）；
+   *    鉴权走本文件既有的那道闸门（`requireWorkbenchAccess`），**不新开**。
+   */
+  router.post('/sales/sample-fill', async (req, res) => {
+    try {
+      const result = await followup.fillSample({
+        detailRecordId: req.body?.detailRecordId,
+        size: req.body?.size,
+        requestId: req.body?.requestId,
+        operatorOpenId: req.workbenchUser.open_id,
+      });
+      return res.json({ success: true, ...result });
+    } catch (error) {
+      // 她选错了 / 这一条不是待办 ⇒ 400（人话原样给她）；系统没做成 ⇒ 502。
+      const status = error.statusCode === 400 ? 400 : 502;
+      logError('workbench.sales.sample_fill.failed', {
+        request_id: req.requestId, detail_record_id: req.body?.detailRecordId,
+        size: req.body?.size, error: error.message,
+      });
+      return res.status(status).json({ success: false, error: error.message });
+    }
+  });
+
   router.post('/sales/payments', async (req, res) => {
     try {
       const result = await followup.addPayment({
