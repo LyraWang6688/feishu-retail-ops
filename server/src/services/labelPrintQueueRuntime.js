@@ -11,7 +11,7 @@
  *
  * ⚠️ 环境变量在**第一次 get() 时**读一次（之后固定）。改 `.env` 要重启服务才生效 —— 与仓库其它模块一致。
  */
-const { logError, logInfo } = require('../utils/logger');
+const { logError, logInfo, logWarn } = require('../utils/logger');
 const { resolveLabelPrintQueueConfig, artifactsDirOf } = require('../config/labelPrintQueue');
 const { LabelPrintJobStore } = require('../infrastructure/labelPrintJobStore');
 const { createLabelPrintService } = require('./labelPrintService');
@@ -48,10 +48,24 @@ const getLabelPrintQueue = (options = {}) => {
     logInfo('label_print.queue.ready', {
       store_dir: config.storeDir,
       transport: config.transport,
+      canvas: config.artifact?.canvas || 'landscape',
+      rotate: config.artifact?.rotate ?? 0,
+      rotate_page_with_content: Boolean(config.artifact?.rotatePageWithContent),
       online_timeout_ms: config.onlineTimeoutMs,
       claim_timeout_ms: config.claimTimeoutMs,
       max_labels_per_job: config.maxLabelsPerJob,
     });
+    if (config.artifact?.canvas === 'portrait') {
+      // ⚠️ **必须大声说清前提**：这一档是"原构图 1:1 铺满"，但它**同时要求打印驱动那边
+      //    不要把页面再转一次**（真机实测：页面宽高比与纸型不同时，驱动会再转 90° ⇒ 方向又反）。
+      //    所以这条日志不是噪声，是"上线前先确认这一条"的提醒。
+      logWarn('label_print.canvas.portrait_prerequisite', {
+        hint: 'canvas=portrait ⇒ 页面声明成 30×40（原构图转 90°、1:1 铺满）。'
+          + '这要求**打印驱动的纸型/旋转也设置成一致**（否则驱动会把页面再转 90°、方向又反，'
+          + '真机 C 组就是这样）。驱动还没调好之前，请用 LABEL_PRINT_CANVAS=landscape + LABEL_PRINT_ROTATE=90'
+          + '（方向与构图都对，代价是 73.5% 小一圈）。',
+      });
+    }
   }
   return shared;
 };

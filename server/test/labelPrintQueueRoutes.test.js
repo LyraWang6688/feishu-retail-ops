@@ -614,10 +614,16 @@ test('AC-R11 ⭐ 手机侧带 `canvas: portrait` ⇒ 这一条走"旋转画布"�
       assert.equal(response.status, 200);
       const body = await response.json();
       const job = await harness.service.getJob(body.job_id);
-      assert.equal(job.canvas, 'portrait', '任务上要留痕"这一张是竖版（旋转画布）"');
-      assert.equal(job.rotate, 90, '竖版画布的内部旋转 = 90°');
-      assert.equal(job.artifact.width_pt, 113.3858, '页面仍是 40×30（不换纸型）');
-      assert.equal(job.artifact.height_pt, 85.0394);
+      assert.equal(job.canvas, 'portrait', '任务上要留痕"这一张是竖版（换页面那档）"');
+      assert.equal(job.rotate, 90, '竖版：原构图整体转 90°');
+      // ⚠️ 2026-10-12 改断言（**"竖版 = 原尺寸铺满"这个本意没变**）：
+      //   改前：页面仍是 40×30（113.3858×85.0394）
+      //   改后：页面声明成 **30×40**（85.0394×113.3858）
+      //   理由：真机 C 组证明"页面 40×30 + 原构图转 90°"根本放不下（只能缩到 73.5%）；
+      //        要让**原构图** 1:1 铺满，页面必须声明成 30×40（`scale` 才等于 1）。
+      assert.equal(job.artifact.width_pt, 85.0394, '竖版：页面 30×40');
+      assert.equal(job.artifact.height_pt, 113.3858);
+      assert.equal(job.artifact.dpi, 203);
       // 不传 ⇒ 跟随服务器配置（默认 landshape）。
       const follow = await phone(base, '/jobs', {
         method: 'POST', body: { mode: 'single', number: NUMBER, again: true },
