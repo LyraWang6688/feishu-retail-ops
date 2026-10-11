@@ -551,13 +551,17 @@ const createScanWriteService = (options = {}) => {
     // 会话还没建（她扫开就看、什么都没加过）：页面上那把键就是**第 1 轮**的键，
     // 这里把会话建出来即可对上 —— 否则她第一次提交会被判成"页面过期"，莫名其妙。
     if (!current) current = await sessions.ensure(openId);
-    if (current.expired) {
-      return fail({ code: 'session_expired', message: texts.sessionExpiredBody, requestId });
-    }
-    const sale = current.sale || {};
     const key = String(submitKey || '').trim();
-    const completed = sale.completed || [];
-    // ① 这一把键已经提交过 ⇒ **把上一次的结果还给她**（连点第二次走的就是这里）。
+    let sale = current.sale || {};
+    let completed = sale.completed || [];
+    // 🔴🔴 2026-10-12 **真机 bug 修复**（她的现场：页面 200、一提交就 400，刷新三遍都没用）：
+    //    改前这里是 `if (current.expired) return fail('session_expired')` —— **过期就拒，从不续上**，
+    //    而页面渲染走 `sessions.get()`（只读）⇒ 页面照旧打得开 ⇒ **死循环**。
+    //    ⇒ 现在：**先认幂等**（下面 ①，已提交过的键照样把结果还给她，过期也一样），
+    //      过期则调 `sessions.revive()` **续上这一份会话**（草稿 / 已落盘的主表 record_id 全保留）
+    //      并**采纳她带来的那把键** —— 既不 400，也不丢东西、更不会重复建单。
+    //    ① 这一把键已经提交过 ⇒ **把上一次的结果还给她**（连点第二次走的就是这里）。
+    //    ⚠️ 这一步必须在"过期检查"**之前**：重放不是"新的一单"，与过不过期无关。
     const done = completed.find((item) => item.key === key);
     if (done) {
       logInfo(config.events.saleReused, {
@@ -574,6 +578,16 @@ const createScanWriteService = (options = {}) => {
         payment_count: done.payment_count,
         paid_amount: done.paid_amount,
       };
+    }
+    // ⭐ 过期 ⇒ **续上**（保留草稿与已落盘的主表 record_id），并把她的键采纳为这一轮的键
+    if (current.expired) {
+      logInfo(config.events.sessionExpired, {
+        session_id: current.session_id, open_id: String(openId || ''), reason: 'revived_on_submit',
+        request_id: requestId,
+      });
+      current = await sessions.revive(openId, { submitKey: key, flow: 'sale' });
+      sale = current.sale || {};
+      completed = sale.completed || [];
     }
     // ② 键对不上：多半是"上一单提交成功后这一页还开着"⇒ 还给她上一单的结果，**不写第二遍**。
     if (sale.key !== key) {
@@ -595,7 +609,15 @@ const createScanWriteService = (options = {}) => {
           paid_amount: last.paid_amount,
         };
       }
-      return fail({ code: 'session_expired', message: texts.sessionExpiredBody, requestId });
+      // ⭐ 2026-10-12：**没有任何已提交记录、键却对不上** ⇒ 说明她手上那一页来自更早的一轮
+      //    （会话被轮换过 / 刚续上）。这时**采纳她带来的键**继续走，而不是回"过期、请刷新"
+      //    —— 那种死循环正是这次要修的（她照着刷了三遍都没用）。
+      logInfo(config.events.saleReused, {
+        session_id: current.session_id, submit_key: key, adopted: true,
+        session_key: sale.key, request_id: requestId,
+      });
+      current = await sessions.revive(openId, { submitKey: key, flow: 'sale' });
+      sale = current.sale || {};
     }
     const lines = sale.lines || [];
     if (!lines.length) {
@@ -988,8 +1010,13 @@ const createScanWriteService = (options = {}) => {
     // ⚠️ **扫开就直接补货**是完全正常的用法（她从没点过「加入本单」）⇒ 会话还没建。
     //    这时页面上的补货键就是第 1 轮那把（`submitKeyFor` 纯函数算出来的），建出来即对上。
     if (!current) current = await sessions.ensure(openId);
+    // 🔴 2026-10-12：与销售那条链同样的坑 —— 过期不该是死路 ⇒ **续上**（草稿/键都保留）
     if (current.expired) {
-      return fail({ code: 'session_expired', message: texts.sessionExpiredBody, requestId });
+      logInfo(config.events.sessionExpired, {
+        session_id: current.session_id, open_id: String(openId || ''), reason: 'revived_on_replenish',
+        request_id: requestId,
+      });
+      current = await sessions.revive(openId, { submitKey: String(submitKey || '').trim(), flow: 'replenish' });
     }
     const replenish = current.replenish || {};
     const key = String(submitKey || '').trim();
