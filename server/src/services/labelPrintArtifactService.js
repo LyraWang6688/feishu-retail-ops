@@ -233,7 +233,7 @@ const ROTATIONS = Object.freeze([0, 90, 180, 270]);
  *     **不再**"先画好 40×30 再转、转不下就缩到 75%"。
  * 认不出的值当场抛错（不许静默按横版印出一堆方向反的标签）。
  */
-const CANVASES = Object.freeze(['landscape', 'portrait']);
+const CANVASES = Object.freeze(['landscape', 'portrait', 'fitting']);
 const normalizeCanvas = (value) => {
   const canvas = String(value ?? 'landscape').trim() || 'landscape';
   if (!CANVASES.includes(canvas)) {
@@ -277,8 +277,26 @@ const canvasGeometry = (layout, options = {}) => {
   const canvas = normalizeCanvas(options.canvas);
   const rotateOption = normalizeRotation(options.rotate);
   const portrait = canvas === 'portrait';
+  // ⭐⭐ `fitting`（业务负责人 2026-10-12 点名的"那一格"）——**算法如实写在这里**：
+  //   ① 逻辑画布 = **30 宽 × 40 高**，"读的方向"沿这个框的 **40mm** 那条边：
+  //      品牌沿 40mm 方向排在顶部位置、二维码在同一阅读坐标系的左侧、信息在右、尺码在下
+  //      （相对关系不变，只是**整个坐标系换向**）⇒ 这一步 = 把原构图 **在框内转 −90°**；
+  //   ② 页面 = **40×30**（不变），把这幅 30×40 的成果**整体转 +90°**放进页面
+  //      ⇒ 30×40 转 90° 正好 40×30 ⇒ `scale = 1`、铺满。
+  //   ③ ⚠️ **两步正好互相抵消**：框内 −90° 与页面 +90° 合起来 = **恒等变换**
+  //      ⇒ 页面内容 = **原构图本身** ⇒ 与 `landscape + rotate:0` **逐像素相同**。
+  //   🔴 **所以这一格在纸上 = 真机【A】那一档（品牌平行于短边）**，不是"方向对 + 铺满"。
+  //      这不是实现没做对，而是**几何上必然**（证明见 `test/labelPrintCanvas.test.js` 的 AC-C8）：
+  //      打印机对"整页内容"做的是一次**等距变换**（旋转/镜像二选一；文字没被镜像 ⇒ 只能是旋转），
+  //      真机 A/B 两档把它标定为 **±90°**；要让**纸上是原构图**，页面内容就必须是
+  //      "**原构图先转 ∓90°**"——而那幅图是 **30×40**，**根本塞不进 40×30 的页面**（只能缩到 73.5%）。
+  //      等距变换不改变宽高比：4:3 的构图转 90° 仍是同一个 3:4 的矩形 ⇒ 装不进 4:3 的纸。
+  //   ⇒ 这一档**保留只作对照/证据**（配置注释与启动日志都会大声说明），**不要上线**。
+  const fitting = canvas === 'fitting';
 
   // ⭐⭐ **两档的"页面内容"其实是同一份：原构图（40×30）不重排、不缩放。**
+  //
+  //  `fitting` = 上面 ①②③ = 恒等 ⇒ 与 `landscape+rotate:0` 同一条路（`rotation = rotateOption` 就是它）。
   //
   //  `portrait`（"驱动纸型已修好"那一档）为什么等于"原构图 1:1"：
   //    业务负责人口径 = "逻辑画布 30×40（读向沿 40mm 那条边）+ 整幅转 90° 进页面"。
@@ -308,6 +326,7 @@ const canvasGeometry = (layout, options = {}) => {
   return {
     canvas,
     portrait,
+    fitting,
     labelW,
     labelH,
     designW,

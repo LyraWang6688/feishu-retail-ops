@@ -125,6 +125,9 @@ const LABEL_PRINT_QUEUE = Object.freeze({
      *   + `LABEL_PRINT_ROTATE_PAGE=false`（后两个保持默认即可）。
      */
     canvas: 'landscape',
+    // 🔴 `'fitting'`（可配，但**只作对照/证据**）：逻辑画布 30×40（读向沿 40mm 边）+ 整体转 90° 进
+    //    40×30 页面 —— 两步互相抵消 ⇒ 页面内容 = 原构图本身 ⇒ **与 landscape+rotate:0 逐像素相同**
+    //    ⇒ 纸上就是真机 A 那一档（品牌平行于短边）。**不是"方向对 + 铺满"**，别上线。
     /**
      * ⚠️ **更底层的两个旋钮（保留，但别当默认）**：
      *   · `rotate` —— 把**已渲染的内容**整体转（0/90/180/270），**默认 0**。
@@ -240,8 +243,8 @@ const resolveLabelPrintQueueConfig = (env = process.env, base = LABEL_PRINT_QUEU
     ...base.artifact,
     canvas: (() => {
       const value = readString(env, 'LABEL_PRINT_CANVAS', base.artifact.canvas);
-      if (!['landscape', 'portrait'].includes(value)) {
-        throw new Error('LABEL_PRINT_CANVAS 只能是 landscape 或 portrait');
+      if (!['landscape', 'portrait', 'fitting'].includes(value)) {
+        throw new Error('LABEL_PRINT_CANVAS 只能是 landscape / portrait / fitting');
       }
       return value;
     })(),

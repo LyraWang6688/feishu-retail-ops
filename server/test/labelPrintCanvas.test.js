@@ -182,6 +182,56 @@ test('AC-C4 ⭐ 二维码仍 **15mm、正方形、可识别**（真二维码；B
 
 // ── AC-C5：等价性 + 当前驱动下的如实结论 ─────────────────────────────────
 
+test('AC-C8 ⭐⭐ `fitting`（"那一格"）：算法如实实现，且**逐像素等于** `landscape + rotate:0` —— 等价于不旋转', async () => {
+  // 业务负责人 2026-10-12 点名的那一格：
+  //   ① 逻辑画布 30 宽 × 40 高（读向沿 40mm 边：品牌沿 40mm 排在顶部、二维码在阅读坐标系左侧、
+  //      信息在右、尺码在下）；② 页面 40×30 不变；③ 把 30×40 的成果**整体转 90°** 放进页面
+  //   ⇒ 形状上 30×40 转 90° = 40×30 ⇒ `scale = 1` 铺满。
+  const fitting = await render({ canvas: 'fitting' });
+  // ③ 的"形状/铺满"部分成立：页面 40×30、scale 1、320×240
+  assert.equal(fitting.meta.width_mm, 40);
+  assert.equal(fitting.meta.height_mm, 30);
+  assert.equal(fitting.meta.scale, 1);
+  assert.equal(fitting.meta.width_pt, 113.3858);
+  const meta = await require('sharp')(fitting.pngFirst).metadata();
+  assert.equal(`${meta.width}x${meta.height}`, '320x240');
+  // ⚠️ 但**页面内容 = 原构图本身**：①的 −90° 与 ③ 的 +90° **互相抵消**（恒等变换）
+  const landscape0 = await render({ canvas: 'landscape', rotate: 0 });
+  assert.deepEqual(fitting.pngFirst, landscape0.pngFirst,
+    '`fitting` 与 `landscape+rotate:0` 必须逐像素相同 —— 这就是"框内 −90° + 页面 +90° = 恒等"的硬证据');
+  assert.deepEqual(fitting.pdf, landscape0.pdf);
+  // ⇒ 还原成纸（驱动 -90°）之后，品牌是**竖的**：与真机 A 完全一致（不是"方向 ✓"）
+  const brand = await inkStats(await simulateCurrentDriver((await render({ canvas: 'fitting' }, { fields: { brand: true } })).pngFirst));
+  assert.ok(brand.h > brand.w * 2,
+    `fitting 的还原图里品牌必须是**竖的**（实际 ${brand.w}x${brand.h}）—— 也就是说它在纸上 = 真机 A（方向反）`);
+});
+
+test('AC-C8 ⭐ 几何证明（写死在断言里）：页面内容必须先转 ∓90° 才能印正 ⇒ 必然塞不进 40×30', async () => {
+  // 证明链：① 打印机对整页做的是**等距变换**（文字没被镜像 ⇒ 是旋转）；
+  //        ② 真机 A（页面=原构图）品牌 ⟂ 长边、B（页面=原构图转 90°）品牌 ∥ 长边
+  //           ⇒ 标定出这个旋转 = **±90°**；
+  //        ③ 要让**纸上是原构图**，页面内容就必须 = 原构图先转 **∓90°**；
+  //        ④ 而"原构图转 ∓90°"在页面坐标系里是 **30 宽 × 40 高**（等距变换不改变矩形的宽高比，
+  //           只是把它转了个方向）⇒ **塞不进 40 宽 × 30 高的页面**（只能等比缩到 73.5%）。
+  const rotated = artifact.canvasGeometry(LABEL_PRINT, { canvas: 'landscape', rotate: 90 });
+  assert.equal(rotated.scale < 0.76, true, '横版转 90° 必须缩（这就是 73.5% 的来源）');
+  // 换页面那档虽然 scale=1，但驱动对"形状与纸型不一致的页面"会**再转 90°**（真机 C 实测）
+  const swapped = artifact.canvasGeometry(LABEL_PRINT, { canvas: 'landscape', rotate: 90, rotatePageWithContent: true });
+  assert.equal(swapped.scale, 1, '换页面那档确实 1:1');
+  assert.equal(swapped.pageW, 30, '但它把页面换成了 30×40 —— 真机 C 实测：方向又反');
+  // ⇒ 没有任何一档能同时做到"页面 40×30 + scale 1 + 纸上方向/构图正确"
+  const combos = [
+    artifact.canvasGeometry(LABEL_PRINT, { canvas: 'landscape', rotate: 0 }),
+    artifact.canvasGeometry(LABEL_PRINT, { canvas: 'landscape', rotate: 90 }),
+    artifact.canvasGeometry(LABEL_PRINT, { canvas: 'landscape', rotate: 90, rotatePageWithContent: true }),
+    artifact.canvasGeometry(LABEL_PRINT, { canvas: 'portrait' }),
+    artifact.canvasGeometry(LABEL_PRINT, { canvas: 'fitting' }),
+  ];
+  const triple = combos.filter((geo) => geo.pageW === 40 && geo.pageH === 30 && geo.scale === 1 && geo.rotate === 90);
+  assert.deepEqual(triple, [],
+    '不存在"页面 40×30 + scale 1 + 内容已转 90°"的组合 —— 这就是几何上做不到的证明');
+});
+
 test('AC-C5 ⭐⭐ `portrait` 与 `landscape + rotate:0` **逐像素相同**（证明"页面内容 = 原构图"）', async () => {
   const portrait = await render({ canvas: 'portrait' });
   const landscape0 = await render({ canvas: 'landscape', rotate: 0 });
