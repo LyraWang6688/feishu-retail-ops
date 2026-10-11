@@ -424,7 +424,9 @@ test('AC-B7 路由：配品按钮 → 只写本地会话（业务表一个字不
         }).toString(),
       });
       assert.equal(posted.status, 303, `加配品应当 303 回原页：${posted.status}`);
-      assert.match(String(posted.headers.get('location')), /from=sales&added=1$/);
+      // ⚠️ 只用 `/added=1$/` 收口（与既有 `scanPageWrite` 的加入本单同一条）：
+      //    缺省领域现在是**销售** ⇒ 回跳 URL 里不必再带 `?from=sales`（#311 之后的口径）。
+      assert.match(String(posted.headers.get('location')), /added=1$/);
 
       const session = await h.sessions.get(openId);
       assert.equal(session.sale.lines.length, 1);
