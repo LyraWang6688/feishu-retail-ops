@@ -277,24 +277,33 @@ const canvasGeometry = (layout, options = {}) => {
   const canvas = normalizeCanvas(options.canvas);
   const rotateOption = normalizeRotation(options.rotate);
   const portrait = canvas === 'portrait';
-  // ⭐⭐ **两档用的是同一份原构图**（40×30：品牌在上、二维码在左、信息在右、尺码在下）——
-  //    不重排行序、不把二维码挪进行流（业务负责人 2026-10-12：「左边是二维码、右边是信息的
-  //    这个已经变了」⇒ 构图必须保持原样）。
+
+  // ⭐⭐ **两档的"页面内容"其实是同一份：原构图（40×30）不重排、不缩放。**
+  //
+  //  `portrait`（"驱动纸型已修好"那一档）为什么等于"原构图 1:1"：
+  //    业务负责人口径 = "逻辑画布 30×40（读向沿 40mm 那条边）+ 整幅转 90° 进页面"。
+  //    这两步**正好互相抵消**：画布里那次 −90° 把原构图转进 30×40 框，
+  //    页面前那次 +90° 又把它转回 40×30 —— 于是**页面内容 = 原构图本身、页面 40×30、scale=1**。
+  //    ⚠️ 也就是说：`portrait` 与 `landscape + rotate:0` **渲染结果逐像素相同**
+  //       （`test/labelPrintCanvas.test.js` 里有一条 AC 专门证明这件事，
+  //        免得"以为换了个模式、其实没变"）。
+  //    ⇒ **真正的开关不在代码里，在那台打印机的驱动纸型**：
+  //      驱动纸型 = 40×30 ⇒ 页面按原样打印 ⇒ 原构图就是纸上看到的（方向✓ 构图✓ 铺满✓）；
+  //      驱动纸型 = 30×40（她之前的状态）⇒ 驱动会把 40×30 的页面**再转 90°** ⇒ 方向反（= 真机 A）。
   const designW = labelW;
   const designH = labelH;
-  // 内容相对页面转多少度：竖版天生带一次 90°（把 40×30 的原构图转过来）。
-  const rotation = ((((portrait ? 90 : 0) + rotateOption) % 360) + 360) % 360;
-  // ⭐ 页面声明：竖版 = **30×40**（这样"原构图转 90°"能 1:1 放进去 ⇒ **100% 铺满、scale=1**）；
-  //    横版 = 40×30（老纸型；`rotatePageWithContent` 那条老路也还留着）。
-  const allowSwap = portrait
-    || (Boolean(options.rotatePageWithContent) && (rotateOption === 90 || rotateOption === 270));
+  const rotation = rotateOption;
+  // 页面声明：`portrait` **保持 40×30**（本轮的关键 —— 上一版错在把页面改成 30×40，
+  // 于是驱动"看到页面形状与纸型不一致"又转了一次）。
+  // `rotatePageWithContent` 是历史老路（实测会被驱动再转 90°、不推荐），保留但默认关。
+  const allowSwap = !portrait
+    && Boolean(options.rotatePageWithContent)
+    && (rotateOption === 90 || rotateOption === 270);
   const pageW = allowSwap ? labelH : labelW;
   const pageH = allowSwap ? labelW : labelH;
-  // 转完之后内容占多大；**塞不下才缩**（横版 + 转 90° 那条老路 = 真机 B 就是靠这一档）。
   const needW = rotation % 180 === 0 ? designW : designH;
   const needH = rotation % 180 === 0 ? designH : designW;
   const fit = Math.min(1, pageW / needW, pageH / needH);
-  // ⚠️ 只有"要缩小"时才留那 2% 余量（刚好贴边会被打印机切到）；1:1 那一档保持原尺寸。
   const scale = fit >= 1 ? 1 : round(fit * 0.98);
   return {
     canvas,
