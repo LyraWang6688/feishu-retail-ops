@@ -1,5 +1,9 @@
 /**
- * 扫码页的**两个写入口**（销售建单 / 补货报单）的全部可配参数 —— **配置先行**。
+ * 扫码页的**三个写入口**（销售建单 / 补货报单 / **采购退货**）的全部可配参数 —— **配置先行**。
+ *
+ * ⭐ 2026-10-11：第三个入口是【**退货**】（业务负责人：「和"报货"逻辑一样，也走扫码」）——
+ *   它与补货**同形**（同一页面 / 同一 POST 端点 / 同一套会话与幂等风格），
+ *   配置块见下面的 `PURCHASE_RETURN`。
  *
  * 背景（业务负责人 2026-10-08 定的口径，逐字要点）：
  *   ① **销售建单**：在扫码页上**连续扫码累积多双** → 一张销售单（**一单多明细**，每行一双）；
@@ -46,7 +50,7 @@ const ROUTE = Object.freeze({
 
 /**
  * 表单动作（`POST` 的 `action` 字段取值）。
- * 一个 POST 端点 + 四个动作，而不是四个端点：路由表只有一处，加动作只改这里。
+ * 一个 POST 端点 + 若干个动作，而不是多个端点：路由表只有一处，加动作只改这里。
  */
 const ACTIONS = Object.freeze({
   // 销售：把当前这一双加进"本单"（**只写本地会话**，一个字都不落业务表）
@@ -61,6 +65,15 @@ const ACTIONS = Object.freeze({
   clearDraft: readString(process.env, 'SCAN_WRITE_ACTION_CLEAR', 'clear_draft'),
   // 补货：按勾选的尺码 + 数量生成采购申请
   replenish: readString(process.env, 'SCAN_WRITE_ACTION_REPLENISH', 'replenish'),
+  // ⭐⭐ 2026-10-11（业务负责人定）：采购领域的第二个动作 —— **退货**
+  //    「和"报货"逻辑一样，也走扫码」⇒ 与 `replenish` **同形**（同一 POST 端点、
+  //    同一套会话/幂等风格、勾尺码 + 填数量），只是落成**采购退货**。
+  purchaseReturn: readString(process.env, 'SCAN_WRITE_ACTION_RETURN', 'return_purchase'),
+  // ⭐⭐ 2026-10-11（方案A）：「**扫码验收**」两个动作 —— 扫一码加进本次验收 / 完成验收并入库。
+  //    它们挂在**扫码页**上（她的口径：「不管是扫码页还是工作台，都是在移动端完成的」；
+  //    标签二维码扫开就是 `/s/{编号}` ⇒ 连续扫只能落在这一页）。
+  acceptAdd: readString(process.env, 'SCAN_WRITE_ACTION_ACCEPT_ADD', 'accept_add'),
+  acceptFinish: readString(process.env, 'SCAN_WRITE_ACTION_ACCEPT_FINISH', 'accept_finish'),
 });
 
 /**
@@ -122,6 +135,14 @@ const FIELDS = Object.freeze({
   // 补货：多选尺码的复选框名（同一批勾选的尺码）+ 每个尺码一个数量输入框（`qty_<尺码>`）。
   replenishSizes: 'sizes',
   replenishQuantityPrefix: 'qty_',
+  // 退货：与补货**同形**，但字段名**各用各的** —— 两张表单在同一个页面（采购领域）上，
+  //   `name` 分开之后，将来谁想加"两个表单同时提交"或做断言都不会互相串。
+  returnSizes: 'return_sizes',
+  returnQuantityPrefix: 'return_qty_',
+  // 扫码验收：单选一个尺码 + 一个数量 + 最后一步的「实际金额」。
+  acceptSize: 'accept_size',
+  acceptQuantity: 'accept_quantity',
+  acceptAmount: 'accept_amount',
 });
 
 /**
@@ -140,9 +161,12 @@ const SESSION = Object.freeze({
   idField: 'session_id',
   // 会话 id 的前缀（+ 录单人 open_id 的哈希）—— 只落本地，不进业务表。
   idPrefix: readString(process.env, 'SCAN_SESSION_ID_PREFIX', 'scan_session'),
-  // 幂等键前缀：销售一单一把、补货一次一把（两把键不共用，出问题时一眼分得清是哪条链路）。
+  // 幂等键前缀：销售一单一把、补货一次一把、退货一次一把（三把键不共用，出问题时一眼分得清是哪条链路）。
   saleKeyPrefix: readString(process.env, 'SCAN_SALE_KEY_PREFIX', 'scan_sale'),
   replenishKeyPrefix: readString(process.env, 'SCAN_REPLENISH_KEY_PREFIX', 'scan_replenish'),
+  returnKeyPrefix: readString(process.env, 'SCAN_RETURN_KEY_PREFIX', 'scan_return'),
+  // 「扫码验收」的会话（**第四条链**，自己的目录，与销售 / 补货 / 退货互不覆盖）。
+  acceptKeyPrefix: readString(process.env, 'SCAN_ACCEPT_KEY_PREFIX', 'scan_accept'),
   // 「本单」留存多久：她扫一单通常几分钟内完成；留 6 小时足够，过期就当新单。
   ttlMs: readInt(process.env, 'SCAN_SESSION_TTL_MS', 6 * 60 * 60 * 1000, { min: 60_000, max: 7 * 24 * 60 * 60 * 1000 }),
   // 一单最多累积多少双（防误操作 / 防脚本刷）。
@@ -275,6 +299,84 @@ const REPLENISH = Object.freeze({
 });
 
 /**
+ * ⭐⭐ 采购**退货**（扫码入口，业务负责人 2026-10-11 定：「和"报货"逻辑一样，也走扫码」）。
+ *
+ * 与 `REPLENISH` **同形**（同一页面、同一 POST 端点、勾尺码 + 填数量、同一套会话与幂等风格），
+ * 差别只有"落成什么"：
+ *   · 明细写「报货信息」，**采购行为 = 退货行为**（按下面的编码去「行为管理」解析）；
+ *   · 「报货批次」建一行，**只写 批次号 + 幂等键**（🔴 **不写「到货状态」** —— 她的口径：
+ *     留空 ⇒ 9 点「未到货」推送与工作台待验收列表都看不见退货批次）；
+ *   · **扣库存**（走「库存行为」= 退货那条既有编码；consumes 由库存注册表声明 = 门盒+样品+仓库）；
+ *   · 出「采购退货单」PNG（与采购申请单**共用**同一条出图/发群/回填附件链路，只换标题）。
+ *
+ * ⚠️ **超库存**的既有业务口径（她认的）：**退能退的 + 把差额如实回报** ——
+ *    绝不退成负数、也绝不静默少退（`shortfall` 会一路回到页面）。
+ * ⚠️ 「采购退货」这条链路 2026-10-09 曾随「信息填写」整表删除一起退场（代码里已无入口）
+ *    ⇒ 本次是**用既有构件重新组合**（批次服务 / createOnceByKey / 库存引擎 / 出图链路），
+ *    不是新写一套写库逻辑。
+ */
+const PURCHASE_RETURN = Object.freeze({
+  enabled: readFlag(process.env, 'SCAN_RETURN_WRITE_ENABLED', true),
+  // 「采购行为」= 退货那条**既有编码**（`services/purchaseBehaviorPolicy` 记的就是它）。
+  // 解析不到 ⇒ 停下来报人话（绝不写一条没有"采购行为"的退货明细）。
+  behaviorCode: readString(process.env, 'SCAN_RETURN_BEHAVIOR_CODE', 'STOCK_PURCHASE_DECREASE'),
+  // 本地退货任务的 task id 前缀（幂等键由它 + 这一次提交的键推出）。
+  taskIdPrefix: readString(process.env, 'SCAN_RETURN_TASK_PREFIX', 'scan_return'),
+  // 本地退货任务落在哪儿：与补货那条**分开**（两条链路的进度/计划互不干扰）。
+  taskDir: readString(
+    process.env, 'SCAN_RETURN_TASK_DIR', path.join(__dirname, '../../data/scan_return_tasks'),
+  ),
+  // 单次最多勾几个尺码 / 单个尺码最多几双。
+  maxSizes: readInt(process.env, 'SCAN_RETURN_MAX_SIZES', 30, { min: 1, max: 100 }),
+  maxQuantity: readInt(process.env, 'SCAN_RETURN_MAX_QUANTITY', 99, { min: 1, max: 999 }),
+  // 勾了尺码但没填数量 ⇒ 按 1 双算。
+  defaultQuantity: readInt(process.env, 'SCAN_RETURN_DEFAULT_QUANTITY', 1, { min: 1, max: 99 }),
+  // 退货单出图：与采购申请单共用渲染器，只换标题与文件名后缀（既有出图链路支持这两个参数）。
+  imageTitle: readString(process.env, 'SCAN_RETURN_IMAGE_TITLE', '邯美皮鞋采购退货单'),
+  fileNameSuffix: readString(process.env, 'SCAN_RETURN_FILE_SUFFIX', '采购退货单'),
+});
+
+/**
+ * ⭐⭐ 2026-10-11（方案A，业务负责人选定）：「**扫码验收**」。
+ *
+ * 流程（她的原话要点）：
+ *   工作台 → 采购 → 验收到货 → 选【未到货】的报货号 → 点【验收】⇒ **进入验收模式**（连续扫）
+ *   → 每扫一个码（二维码里只有编号）⇒ 列该编号各尺码 ⇒ 选尺码 + 填数量（默认 1，可改）
+ *   → **本单条式**（已验收 N 双 / 应到 M 双 ＋【继续扫下一个】＋【完成验收】）
+ *   → 【完成验收】⇒ **入库 + 该批次改「已到货」**（实际到货数量 = **已扫合计**）。
+ *
+ * 口径（她自己补的）：
+ *   · 扫到**不属于本批**的货 ⇒ 提示"这一双不在本批"、**不记**；**重复扫** ⇒ **只记一次**；
+ *   · **不写差异说明**：「我们已经通过扫码解决了具体到货情况，所以就**不用到货说明了**」；
+ *     ⇒ 【完成验收】**只收「实际金额」（必填）**。⚠️ 「到货说明」那一步只留给**工作台既有那条
+ *     「全额验收」链路**（它的表单与载荷一个字不改）—— 这里是**加法**，不是替换。
+ *   · 本地草稿里的 `acceptance_text`（那张表上**没有**这一列，写了也不会落库）由**扫码事实**
+ *     拼出来（`acceptanceTextTemplate`）—— 是"她扫了什么"的复述，不是替她编的一句话。
+ *
+ * ⚠️ 会话**独立落盘**（`sessionDir`，与 `data/scan_sessions` 分开）：一处"验收模式"就是
+ *    这一批的连续扫，与销售本单 / 补货 / 退货那三条链互不覆盖（有用例钉住）。
+ * ⚠️ 验收**不写任何业务表**：完成的写库全部走既有
+ *    `PurchaseArrivalConversationService.confirmBatchArrival` → `confirmLocked` →
+ *    `PurchaseWebhookService.confirmArrival`（逐条 `InventoryService.applyPurchase`）。
+ */
+const ACCEPTANCE = Object.freeze({
+  enabled: readFlag(process.env, 'SCAN_ACCEPT_WRITE_ENABLED', true),
+  sessionDir: readString(
+    process.env, 'SCAN_ACCEPT_SESSION_DIR', path.join(__dirname, '../../data/scan_arrival_sessions'),
+  ),
+  sessionIdPrefix: readString(process.env, 'SCAN_ACCEPT_SESSION_PREFIX', 'scan_accept'),
+  // 「验收模式」留多久：她扫一批通常几分钟；留 30 分钟足够，过期就当没在验收（回工作台重来）。
+  ttlMs: readInt(process.env, 'SCAN_ACCEPT_TTL_MS', 30 * 60 * 1000, { min: 60_000, max: 12 * 60 * 60 * 1000 }),
+  // 一次验收最多记多少条扫码明细（防脚本刷）。
+  maxScans: readInt(process.env, 'SCAN_ACCEPT_MAX_SCANS', 200, { min: 1, max: 2000 }),
+  // 单条扫码明细的数量上限 / 默认值（页面默认 1，可改）。
+  maxQuantity: readInt(process.env, 'SCAN_ACCEPT_MAX_QUANTITY', 99, { min: 1, max: 999 }),
+  defaultQuantity: readInt(process.env, 'SCAN_ACCEPT_DEFAULT_QUANTITY', 1, { min: 1, max: 99 }),
+  // 「实际金额」必填（既有业务口径，业务负责人 2026-10-08：「金额这个是必填的」）
+  amountRequired: readFlag(process.env, 'SCAN_ACCEPT_AMOUNT_REQUIRED', true),
+});
+
+/**
  * 用户可见文案。占位符用 `{...}`，由 `fillText` 替换（**不留空段**）。
  * ⚠️ 手机上看，尽量短；页面上**不出现任何代码标识符**（在表单里给她的提示也一样）。
  *
@@ -376,6 +478,46 @@ const TEXTS = Object.freeze({
   replenishDetailLine: '采购申请：{count} 条',
   replenishAgainTitle: '这次补货已经提交过了',
   replenishAgainBody: '批次号 {batchNo}，没有重复写入。',
+  // ── 退货表单（与补货同形；只留能点、能做的事）──────────────────────────────
+  returnButton: '生成采购退货',
+  returnDoneTitle: '采购退货已生成',
+  returnDoneBody: '批次号 {batchNo}，共 {count} 条明细。',
+  returnBatchLine: '报货批次号：{batchNo}',
+  returnDetailLine: '采购退货：{count} 条',
+  returnAgainTitle: '这次退货已经提交过了',
+  returnAgainBody: '批次号 {batchNo}，没有重复写入。',
+  // ⭐ 超库存的**如实回报**（她说退 5 双、库存只有 3 双 ⇒ 退 3 双 + 把差额说清）。
+  //    这是"事实 + 为什么"，不是用法说明 ⇒ 属于保留的那一类文案。
+  returnShortfallLine: '{shortfall} 双没退成：{sizes} 现在库存不够。',
+  returnStockEmptyBody: '这些尺码现在库存里一双都没有，退不了（要退 {declared} 双）。',
+  // ⚠️ 内部错误（库存引擎抛的原文里带 record_id）**不许回显** ⇒ 命中它时给这一句。
+  returnStockChangedBody: '退的时候库存刚好被改动，这次没退成：请再点一次【生成采购退货】。',
+  returnNoneBody: '至少要勾一个要退的尺码。',
+  returnTooManyBody: '一次最多勾 {max} 个尺码，请分两次提交。',
+  // ── ⭐⭐ 扫码验收（方案A；只留能点、能做的事 + 事实）─────────────────────────
+  acceptModeTitle: '扫码验收',
+  // 本单条：**已验收 N 双 / 应到 M 双**（她点名要的那一行）。
+  acceptSummary: '已验收 {scanned} 双 / 应到 {expected} 双',
+  acceptBatchLine: '报货批次号：{batchNo}',
+  acceptAddButton: '加入本次验收',
+  acceptAddedBanner: '已加入本次验收（{scanned} 双）',
+  acceptDuplicateBanner: '这一双已经记过了',
+  acceptNotInBatchBody: '这一双不在本批，没有记。',
+  acceptFinish: '完成验收',
+  acceptFinishAmountLabel: '实际金额',
+  acceptFinishSubmit: '确认完成验收',
+  acceptNoScansBody: '还没扫到任何一双：先扫一双，再点【完成验收】。',
+  acceptDoneTitle: '这批已验收入库',
+  acceptDoneBody: '批次号 {batchNo}，实际到货 {scanned} 双。',
+  acceptAgainBody: '批次号 {batchNo}，已经验收入库过了，没有重复入库。',
+  acceptNoSessionBody: '验收模式已经结束了：请回工作台，在「采购 → 验收到货」里重新点【验收】。',
+  acceptBatchMissingBody: '这一页没带报货批次号：请回工作台点【验收】再进来。',
+  acceptRowsUnreadableBody: '这一批的采购申请明细读不到，暂时不能验收：请回工作台重试。',
+  acceptDuplicateRowsBody: '这一批里同一款同一码有两行申请，先在采购群核对一下再验收。',
+  acceptTooManyScansBody: '这一次记的扫码明细太多了，请先完成验收。',
+  acceptQuantityInvalidBody: '数量要填 1 ~ {max} 之间的整数。',
+  // 本地草稿里那句"到货说明"= **扫码事实的复述**（她不用写；表里也没有这一列）。
+  acceptanceTextTemplate: '扫码验收：{detail}（共 {scanned} 双）',
   // ── 失败（都要在**页面上**说清楚，不许只写日志）──────────────────────────
   failedTitle: '这一步没成功',
   failedRetryHint: '可以照上面那句话改一下再点一次；反复失败请把这一页截图发给运营。',
@@ -432,6 +574,25 @@ const EVENTS = Object.freeze({
   replenishSubmitting: 'scan.purchase.submitting',
   replenishSubmitted: 'scan.purchase.submitted',
   replenishReused: 'scan.purchase.reused',
+  // ⭐ 退货（与补货同形的三条 + 差额与库存侧两条正向证据）
+  returnSubmitting: 'scan.purchase_return.submitting',
+  returnSubmitted: 'scan.purchase_return.submitted',
+  returnReused: 'scan.purchase_return.reused',
+  returnShortfall: 'scan.purchase_return.shortfall',
+  returnStockApplied: 'scan.purchase_return.stock_applied',
+  // 退货链路的另外三条正向证据（计划冻结 / 批次行 / 出图失败——出图失败不阻塞主流程）
+  returnPlanFrozen: 'scan.purchase_return.plan_frozen',
+  returnBatchCreated: 'scan.purchase_return.batch_created',
+  returnImageFailed: 'scan.purchase_return.image_failed',
+  // ⭐ 扫码验收（方案A）的正向证据
+  acceptStarted: 'scan.accept.started',
+  acceptLineAdded: 'scan.accept.line_added',
+  acceptNotInBatch: 'scan.accept.not_in_batch',
+  acceptDuplicate: 'scan.accept.duplicate',
+  acceptFinishing: 'scan.accept.finishing',
+  acceptFinished: 'scan.accept.finished',
+  acceptReused: 'scan.accept.reused',
+  acceptFailed: 'scan.accept.failed',
   failed: 'scan.write.failed',
   sessionStarted: 'scan.session.started',
   sessionExpired: 'scan.session.expired',
@@ -444,6 +605,9 @@ const SCAN_WRITE = Object.freeze({
   session: SESSION,
   sale: SALE,
   replenish: REPLENISH,
+  purchaseReturn: PURCHASE_RETURN,
+  // ⭐ 扫码验收（方案A）：会话 + 数量上限 + 「实际金额」必填
+  acceptance: ACCEPTANCE,
   texts: TEXTS,
   events: EVENTS,
 });
@@ -464,6 +628,8 @@ module.exports = {
   SALE,
   PAYMENT_STATUS,
   REPLENISH,
+  PURCHASE_RETURN,
+  ACCEPTANCE,
   TEXTS,
   EVENTS,
   fillText,

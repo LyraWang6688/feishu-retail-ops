@@ -18,7 +18,9 @@ const { logInfo, logWarn } = require('../utils/logger');
 //     这两列也没有了**（报货批次真表 12 列里找不到）⇒ 按"映射 ＋ 写入点一起删"：
 //       · `writeAcceptance` **只再写**「实际数量」「实际金额」（结构化验收照写）；
 //       · `markConfirmed`（写确认状态）**整个删除**；
-//       · `createForReturnBatch`（采购退货批次建行）随采购退货入口一起删除；
+//       · `createForReturnBatch`（采购退货批次建行）随采购退货入口一起删除
+//         —— ⭐ **2026-10-11 已恢复**：退货入口改走扫码页（业务负责人当天定），
+//           批次行仍按老口径建（**只写 批次号 + 幂等键、不写「到货状态」**）；
 //       · `config/purchaseAcceptance.js` 与它的单选取值契约一并退场。
 //
 // ⚠️ 「采购行为」这一列**此刻意不读、不写、不映射**（她的原话：
@@ -35,10 +37,11 @@ const { logInfo, logWarn } = require('../utils/logger');
 //    （并由部署闸门对着真表 `property.options` 核对 —— 往单选里写不存在的取值，
 //    飞书会自动新建选项、把表污染掉，而 9 点推送按「未到货」查就静默查不到了）。
 
-// ⛔ `purchaseBatchRowKey`（按批次号算「报货批次」行的幂等键）**已删除（2026-10-09）**：
-//   它唯一的消费者是 `createForReturnBatch`（采购退货批次建行），而退货入口随
-//   「信息填写」整表删除一起退场。报货那条链路的批次键在 `ensurePostingPlan` 里
-//   （`purchase_batch:<task_id>`），不走这个函数。
+// ⛔ `purchaseBatchRowKey` 曾在 2026-10-09 随 `createForReturnBatch` 一起删除；
+//    **2026-10-11 随退货入口（改走扫码页）一起恢复** —— 报货那条链路的批次键仍在
+//    `ensurePostingPlan` 里（`purchase_batch:<task_id>`），不走这个函数。
+/** 按批次号算「报货批次」行的幂等键（同一批只建一行）。 */
+const purchaseBatchRowKey = (batchNo) => `purchase_batch:${String(batchNo || '').trim()}`;
 
 /** 附件单元格 → file_token 列表（飞书 GET 回来是 `[{ file_token, name }]`）。 */
 const attachmentTokens = (value) => (Array.isArray(value) ? value : [])
@@ -88,6 +91,64 @@ class PurchaseOrderBatchService {
     return (records || []).find(
       (record) => textValue(record?.fields?.[field]).trim() === wanted,
     ) || null;
+  }
+
+  /**
+   * ⭐ 2026-10-11：**采购退货批次**也在「报货批次」建一行（只写 批次号 + 幂等键）。
+   *
+   * 为什么必须建：退货单的 PNG 要有落点（「报货批次.单据」），否则附件回填那一步只会记一条
+   * `purchase.batch.document.no_record` 的 warn（图的落点没了）。
+   * 🔴 **刻意不写「到货状态」**（业务负责人 2026-10-07 的退货口径）：留空 ⇒ 每天 9 点那条
+   *    「未到货」推送与工作台待验收列表**都看不见退货批次**。
+   *    ⚠️ 不许"顺手写个空串"：往单选里写空串同样是往表里塞东西。
+   *
+   * 幂等（两步，缺一不可）：
+   *   ① **先按批次号回查**（`findByBatchNo`）：命中就**原样复用**那一行，且**绝不改它的
+   *      「到货状态」**（万一同一个批次号上先建过报货那半边，那个「未到货」必须原样保留）；
+   *   ② 没有才 `createOnceByKey`，键 = `purchase_batch:<批次号>`。
+   *
+   * ⚠️ 2026-10-09 这个方法曾随「信息填写」入口退场一起删除；2026-10-11 退货入口改走扫码页
+   *    ⇒ **按原实现恢复**（只写两列 + 两步幂等），报货那条链路的批次键仍在
+   *    `ensurePostingPlan`（`purchase_batch:<task_id>`），两者互不影响。
+   */
+  async createForReturnBatch(batchNo, { correlation = {} } = {}) {
+    const wanted = String(batchNo || '').trim();
+    if (!wanted) {
+      // 没有号就**不编**：调用方自己决定怎么提示。
+      return { created: false, reason: 'no_batch_no', batch_no: '' };
+    }
+    const key = purchaseBatchRowKey(wanted);
+    const existing = await this.findByBatchNo(wanted);
+    if (existing) {
+      logInfo('purchase.return.batch.record_ensured', {
+        batch_no: wanted,
+        batch_record_id: existing.record_id,
+        reused: true,
+        matched_by: 'batch_no',
+      });
+      return {
+        created: false, reused: true, recordId: existing.record_id, batch_no: wanted, idempotency_key: key,
+      };
+    }
+    const batch = await createOnceByKey({
+      gateway: this.gateway,
+      tableKey: 'purchaseOrderBatch',
+      keyField: IDEMPOTENCY_KEY_FIELD,
+      keyValue: key,
+      label: `退货批次 ${wanted}`,
+      correlation,
+      // ⚠️ 只有这两列。**没有** arrivalStatus（见上面的 🔴）。
+      values: { batchNo: wanted, idempotencyKey: key },
+    });
+    logInfo('purchase.return.batch.record_ensured', {
+      batch_no: wanted,
+      batch_record_id: batch.recordId,
+      reused: batch.reused === true,
+      idempotency_key: key,
+    });
+    return {
+      created: true, reused: batch.reused === true, recordId: batch.recordId, batch_no: wanted, idempotency_key: key,
+    };
   }
 
   /**

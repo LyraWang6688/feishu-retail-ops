@@ -1,5 +1,5 @@
 /**
- * 扫码入口的**两个写入口**：销售建单（一单多明细）与补货报单（采购申请）。
+ * 扫码入口的**三个写入口**：销售建单（一单多明细）· 补货报单（采购申请）· **采购退货**（2026-10-11 加）。
  *
  * 🔴 这个文件最要紧的一条：**本文件自己不写任何业务表**。
  *   · 销售：主表记录走**既有的**「全仓唯一创建销售主表记录」那个函数
@@ -127,6 +127,28 @@ const createScanWriteService = (options = {}) => {
       }
     }
     return purchaseInstance;
+  };
+
+  // ⭐ 2026-10-11：**采购退货**（扫码页采购领域第二个动作）—— 与补货**同一个形状的接线**：
+  //    本文件只做"会话 + 幂等 + 校验 + 说人话"，写库/扣库存/出图全在
+  //    `services/purchaseReturnService.js` 里（而它又只调既有的批次服务 / createOnceByKey /
+  //    InventoryService / 出图链路）⇒ 扫码侧**没有第二套写库**。
+  //    ⚠️ 用例可以注入 `options.purchaseReturnService`（一个真/假的服务实例）。
+  let purchaseReturnInstance = options.purchaseReturnService || null;
+  const purchaseReturn = () => {
+    if (!purchaseReturnInstance) {
+      // eslint-disable-next-line global-require
+      const { createPurchaseReturnService } = require('./purchaseReturnService');
+      purchaseReturnInstance = createPurchaseReturnService({
+        gateway,
+        config: config.purchaseReturn,
+        events: config.events,
+        references,
+        store: options.purchaseReturnStore,
+        ...(options.purchaseReturnOptions || {}),
+      });
+    }
+    return purchaseReturnInstance;
   };
 
   const fieldOf = (tableKey, semanticKey) => schema?.tables?.[tableKey]?.fields?.[semanticKey] || '';
@@ -1074,17 +1096,177 @@ const createScanWriteService = (options = {}) => {
     }
   });
 
+  // ── 采购退货：勾尺码 + 数量 → 采购退货（**与补货同形**；写库/扣库存/出图都在既有构件里）──
+  /**
+   * 生成采购退货（业务负责人 2026-10-11：「和"报货"逻辑一样，也走扫码」）。
+   *
+   * 本方法只做四件事：**会话 / 幂等 / 校验 / 说人话**；真正的写入交给
+   * `services/purchaseReturnService.js`（它又只调既有的批次服务 / `createOnceByKey` /
+   * `InventoryService.applyPurchaseReturn` / 既有出图链路）。
+   *
+   * @param {object} input
+   * @param {Array<{size:number|string, quantity:number|string}>} input.entries 勾选的尺码与退货数量
+   * @returns {Promise<object>} 成功时带 `batch_no / request_count / taken_count / shortfall / shortfalls`
+   */
+  const submitPurchaseReturn = async ({ openId, submitKey, productRecordId = '', number = '', entries = [], requestId = '' }) => queue.run(`sale:${openId}`, async () => {
+    if (!config.purchaseReturn.enabled) {
+      return fail({ code: 'disabled', message: texts.writeDisabledBody, requestId });
+    }
+    let current = await sessions.get(openId);
+    // 扫开就直接退货也是正常用法（她从没点过「加入本单」）⇒ 会话还没建。
+    if (!current) current = await sessions.ensure(openId);
+    if (current.expired) {
+      return fail({ code: 'session_expired', message: texts.sessionExpiredBody, requestId });
+    }
+    const flow = current.purchaseReturn || {};
+    const key = String(submitKey || '').trim();
+    const completed = flow.completed || [];
+    const done = completed.find((item) => item.key === key);
+    if (done) {
+      logInfo(config.events.returnReused, {
+        session_id: current.session_id, submit_key: key, batch_no: done.batch_no, request_id: requestId,
+      });
+      return {
+        ok: true,
+        reused: true,
+        batch_no: done.batch_no,
+        batch_record_id: done.batch_record_id || '',
+        request_count: done.request_count,
+        taken_count: done.taken_count || 0,
+        shortfall: done.shortfall || 0,
+        shortfalls: done.shortfalls || [],
+      };
+    }
+    if (flow.key !== key) {
+      const last = completed[completed.length - 1];
+      if (last) {
+        logInfo(config.events.returnReused, {
+          session_id: current.session_id, submit_key: key, stale: true, batch_no: last.batch_no,
+          request_id: requestId,
+        });
+        return { ok: true, reused: true, stale: true, batch_no: last.batch_no, request_count: last.request_count };
+      }
+      return fail({ code: 'session_expired', message: texts.sessionExpiredBody, requestId });
+    }
+
+    // ① 校验：勾了哪些尺码、每个退几双（勾了不填数量按配置的默认值 —— 至少一双）。
+    const picked = [];
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      const size = positiveInteger(entry?.size);
+      if (size === null) {
+        const error = new Error(texts.sizeUnknownBody);
+        error.scanUserMessage = texts.sizeUnknownBody;
+        return fail({ code: 'size_unknown', message: userMessageFor(error), requestId, error });
+      }
+      const rawQuantity = String(entry?.quantity ?? '').trim();
+      const quantity = rawQuantity ? positiveInteger(rawQuantity) : config.purchaseReturn.defaultQuantity;
+      if (quantity === null || quantity > config.purchaseReturn.maxQuantity) {
+        const message = fillText(texts.quantityInvalidBody, { max: config.purchaseReturn.maxQuantity });
+        const error = new Error(message);
+        error.scanUserMessage = message;
+        return fail({ code: 'quantity_invalid', message, requestId, error });
+      }
+      picked.push({ size, quantity });
+    }
+    if (!picked.length) {
+      const error = new Error(texts.returnNoneBody);
+      error.scanUserMessage = texts.returnNoneBody;
+      return fail({ code: 'return_empty', message: userMessageFor(error), requestId, error });
+    }
+    if (picked.length > config.purchaseReturn.maxSizes) {
+      const message = fillText(texts.returnTooManyBody, { max: config.purchaseReturn.maxSizes });
+      const error = new Error(message);
+      error.scanUserMessage = message;
+      return fail({ code: 'return_too_many', message, requestId, error });
+    }
+
+    try {
+      // ② 货品 + 供应商 + 采购行为：**全部来自既有表**（与补货那条取的是同几个字段）。
+      const product = await resolveProductRecord({ productRecordId, number });
+      if (!product) {
+        const error = new Error(texts.sizeUnknownBody);
+        error.scanUserMessage = texts.sizeUnknownBody;
+        return fail({ code: 'product_missing', message: userMessageFor(error), requestId, error });
+      }
+      const productId = product.record_id || productRecordId;
+      const productFields = schema.tables.product.fields;
+      const supplierRecordId = linkedRecordIds(product.fields?.[productFields.supplier])[0] || '';
+      // 退货那条**既有行为编码**（解析不到 ⇒ 停下来报人话：绝不写一条没有"采购行为"的退货）
+      const behavior = await references.resolveBehavior(config.purchaseReturn.behaviorCode);
+      const itemNo = textValue(product.fields?.[productFields.itemNo]).trim();
+      const color = textValue(product.fields?.[productFields.color]).trim();
+      const items = picked.map(({ size, quantity }) => ({
+        size, quantity,
+        product_record_id: productId,
+        product_number: productNumber(product),
+        item_no: itemNo,
+        color,
+        supplier_record_id: supplierRecordId,
+      }));
+      const draft = {
+        product_record_id: productId,
+        product_number: productNumber(product),
+        item_no: itemNo,
+        color,
+        supplier_record_id: supplierRecordId,
+        behavior_record_id: behavior.recordId,
+        operator_open_id: openId,
+        items,
+      };
+      // task id 由**这一次提交的幂等键**推出来 ⇒ 重放同一个键 = 同一个任务
+      // ⇒ 批次行 / 明细行 / 库存操作都命中既有幂等（只写一次）。
+      const taskId = `${config.purchaseReturn.taskIdPrefix}_${key.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+      logInfo(config.events.returnSubmitting, {
+        session_id: current.session_id, submit_key: key, task_id: taskId,
+        line_count: items.length, supplier_record_id: supplierRecordId, request_id: requestId,
+      });
+      const result = await purchaseReturn().submit(taskId, draft);
+      const summary = {
+        batch_no: result?.batch_no || '',
+        batch_record_id: result?.batch_record_id || '',
+        request_count: (result?.request_ids || []).length,
+        taken_count: result?.taken_count || 0,
+        shortfall: result?.shortfall || 0,
+        shortfalls: result?.shortfalls || [],
+      };
+      if (result?.skipped === 'no_stock') {
+        // 🔴 一双都退不成：**一个字都没写**（连批次行都没有）。不记 completed（她改一改还能再来），
+        //    照实把"要退几双、现在一双都没有"说给她。
+        const declared = (summary.shortfalls || [])
+          .reduce((sum, item) => sum + Number(item.declared || 0), 0);
+        const message = fillText(texts.returnStockEmptyBody, { declared });
+        await sessions.markPurchaseReturnFailed(openId, message).catch(() => undefined);
+        return fail({ code: 'return_stock_empty', message, requestId });
+      }
+      await sessions.completePurchaseReturn(openId, { key, result: summary });
+      logInfo(config.events.returnSubmitted, {
+        session_id: current.session_id, submit_key: key, task_id: taskId, ...summary,
+        request_id: requestId,
+      });
+      return { ok: true, reused: false, ...summary };
+    } catch (error) {
+      const message = userMessageFor(error);
+      await sessions.markPurchaseReturnFailed(openId, String(error.message || error)).catch(() => undefined);
+      return fail({ code: 'return_write_failed', message, requestId, error });
+    }
+  });
+
   return {
     sessions,
     addSaleLine,
     clearDraft,
     submitSale,
     submitReplenish,
+    // ⭐ 采购退货（与补货同形；业务负责人 2026-10-11 定的「和"报货"逻辑一样，也走扫码」）
+    submitPurchaseReturn,
+    purchaseReturn,
     // ⭐ 页面上的配品下拉要的清单（只读；复用既有 LarkMvpService.listAccessories + 短缓存）。
     listAccessories,
     // 给用例 / 排查用：这次提交的幂等键是怎么算出来的（与 purchaseWebhookService 的
     // `purchaseTaskId` 同一个思路：**确定性推导**，两端不必各写一份公式）。
     taskIdFor: (key) => `${config.replenish.taskIdPrefix}_${String(key || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+    // 退货那条链的 task id 同一个算法（前缀来自配置）。
+    returnTaskIdFor: (key) => `${config.purchaseReturn.taskIdPrefix}_${String(key || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`,
   };
 };
 

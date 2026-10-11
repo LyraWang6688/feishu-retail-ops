@@ -1110,7 +1110,7 @@ class PurchaseArrivalConversationService {
    * @returns {Promise<{ok: boolean, reason?: string, message: string, taskId?: string}>}
    *   `message` 是**给人看的一句话**（工作台直接显示它），不是内部术语。
    */
-  async confirmBatchArrival({ batch, acceptanceText = '', actualAmount, operatorOpenId = '' } = {}) {
+  async confirmBatchArrival({ batch, acceptanceText = '', actualAmount, operatorOpenId = '', scanLines = null } = {}) {
     const batchNo = String(batch?.batch_no || '').trim();
     if (!batchNo) {
       return { ok: false, reason: 'no_batch_no', message: '这一行没有报货批次号，不能验收到货' };
@@ -1133,6 +1133,13 @@ class PurchaseArrivalConversationService {
         message: '请先写一句到货说明（例如「跟单子一样，全部到货」），再点验收到货',
       };
     }
+    // ⭐⭐ 2026-10-11（方案A）：**扫码验收**走这里 —— `scanLines` = 逐码实际到货（她扫了什么）。
+    //    ⚠️ 这是**加法**：不传 `scanLines` 时下面每一行与改动前**逐字相同**（工作台既有那条
+    //    「全额验收」表单与群话题对话链路都还在用它）。
+    const scans = Array.isArray(scanLines) ? scanLines : null;
+    if (scans && !scans.length) {
+      return { ok: false, reason: 'no_scan_lines', message: this.scanRowsMessage('no_scan_lines') };
+    }
     const taskId = taskIdForBatch(batchNo);
     const existing = await this.store.get(taskId).catch(() => null);
     if (existing?.status === 'posted') {
@@ -1152,13 +1159,21 @@ class PurchaseArrivalConversationService {
         });
         return { ok: false, reason: snapshot.reason, taskId, message: this.workbenchRowsMessage(snapshot.reason) };
       }
-      // ② 全部按申请数到货（既有纯函数）
-      const plan = this.buildPlan(snapshot.rows, { same: true, differences: [] });
+      // ② 「全部按申请数到货」（既有纯函数，工作台那条路）／**逐码实际到货**（扫码验收那条路）
+      //    ⚠️ 两条路都是**同一个纯函数 `buildPlan`** —— 不为扫码再写一套"算实际到货"的算法。
+      const plan = scans
+        ? this.buildPlan(snapshot.rows, { scanLines: scans })
+        : this.buildPlan(snapshot.rows, { same: true, differences: [] });
       if (!plan.ok) {
         logWarn('purchase.arrival.reconcile.workbench_plan_failed', {
           task_id: taskId, batch_no: batchNo, reason: plan.reason,
         });
-        return { ok: false, reason: plan.reason, taskId, message: this.workbenchRowsMessage(plan.reason) };
+        return {
+          ok: false,
+          reason: plan.reason,
+          taskId,
+          message: scans ? this.scanRowsMessage(plan.reason) : this.workbenchRowsMessage(plan.reason),
+        };
       }
       // ③ 种任务（形状与"卡片核对算完之后"那一份逐字对齐；接着走既有 confirmLocked）
       const seed = {
@@ -1172,15 +1187,18 @@ class PurchaseArrivalConversationService {
         acceptance_text: text,
         actual_amount: amount.value,
         status: 'awaiting_confirmation',
-        source: 'workbench',
+        source: scans ? 'scan' : 'workbench',
         operator_open_id: String(operatorOpenId || existing?.operator_open_id || ''),
       };
       if (existing) await this.store.update(taskId, seed);
       else await this.store.create({ task_id: taskId, ...seed, transcript: [] });
-      logInfo('purchase.arrival.reconcile.workbench_seeded', {
+      logInfo(scans ? 'purchase.arrival.reconcile.scan_seeded' : 'purchase.arrival.reconcile.workbench_seeded', {
         task_id: taskId, batch_no: batchNo, row_count: plan.rows.length,
         actual_amount: amount.value,
-        note: '工作台「验收到货」：种进与群话题同一个任务，接着走既有 confirmLocked',
+        ...(scans ? { scan_count: scans.length, scanned_quantity: plan.rows.reduce((sum, row) => sum + Number(row.actual || 0), 0) } : {}),
+        note: scans
+          ? '扫码验收：逐码实际到货种进与群话题同一个任务，接着走既有 confirmLocked'
+          : '工作台「验收到货」：种进与群话题同一个任务，接着走既有 confirmLocked',
       });
       const result = await this.confirmLocked(taskId, operatorOpenId);
       const failure = result?.toast?.type === 'error';
@@ -1203,6 +1221,27 @@ class PurchaseArrivalConversationService {
       request_row_bad_quantity: '这一批有明细的申请数量不是正整数，不能验收入库',
       actual_not_positive: '这一批算出来的实际到货数不对，不能验收入库',
       difference_unmatched: '这一批的到货明细对不上单据，不能验收入库',
+    };
+    return copy[reason] || '这一批现在不能验收入库（原因已记日志，请找管理员看一眼）';
+  }
+
+  /**
+   * ⭐ 2026-10-11（方案A）：「**扫码验收**」那条路的**人话**（与工作台那条分开一份 ——
+   * 同 reason 在两边的说法不同：一边是"这一批读不到"，一边是"这一双不在本批/重复扫了"）。
+   */
+  scanRowsMessage(reason) {
+    const copy = {
+      no_scan_lines: '还没扫到任何一双：先扫一双，再点【完成验收】。',
+      scan_not_in_batch: '扫到的这一双不在本批，不能验收：请核对标签再扫。',
+      scan_duplicated: '同一双被记了两次，不能验收：请先退出验收模式再重新扫一遍。',
+      duplicate_request_rows: '这一批里同一款同一码有两行申请，先在采购群核对一下再验收。',
+      actual_not_positive: '这一批算出来的实际到货数不对，不能验收入库。',
+      no_request_ids: '这一批没有找到采购申请明细，不能验收入库。',
+      request_rows_unreadable: '这一批的采购申请明细读不到，稍后再试。',
+      request_row_without_product: '这一批有明细没挂货品，不能验收入库。',
+      request_row_without_size: '这一批有明细没有尺码，不能验收入库。',
+      request_row_bad_quantity: '这一批有明细的申请数量不是正整数，不能验收入库。',
+      too_many_request_rows: '这一批的明细太多，一次核对不了；请在采购群那个话题里说',
     };
     return copy[reason] || '这一批现在不能验收入库（原因已记日志，请找管理员看一眼）';
   }
@@ -1241,6 +1280,37 @@ class PurchaseArrivalConversationService {
    * @returns {{ok: true, rows: Array, differences: Array} | {ok: false, reason: string}}
    */
   buildPlan(rows, parsed) {
+    // ⭐⭐ 2026-10-11（方案A · 扫码验收）：**逐码实际到货**。
+    //    `parsed.scanLines = [{ product_record_id, size, quantity }]`（她扫到的那些货）。
+    //    · 按 **(货品 record_id, 尺码)** **精确**匹配申请行（不是按尺码单挑 —— 一批里
+    //      可能有两个货品都是 38 码）；
+    //    · **没扫到的行 = 0** ⇒ 调用方在入库那一步摘掉（"少发的"自然就是差异）；
+    //    · 命中多行 / 扫到本批没有的货 / 同一行被两条扫码行命中 ⇒ **拦住**（宁可不入库，
+    //      也不能把实际数记到别的行上）。
+    if (parsed.scanLines) {
+      const keyOf = (productRecordId, size) => `${productRecordId}|${Number(size)}`;
+      const byKey = new Map();
+      for (const row of rows) {
+        const key = keyOf(row.product_record_id, row.size);
+        // 同一 (货品, 尺码) 在申请里有两行 ⇒ 不确定这笔到货算哪一行 ⇒ 拦住
+        if (byKey.has(key)) return { ok: false, reason: 'duplicate_request_rows' };
+        byKey.set(key, row);
+      }
+      const actualById = new Map(rows.map((row) => [row.request_record_id, 0]));
+      const hit = new Set();
+      for (const scan of parsed.scanLines) {
+        const row = byKey.get(keyOf(scan?.product_record_id, scan?.size));
+        if (!row) return { ok: false, reason: 'scan_not_in_batch' };
+        if (hit.has(row.request_record_id)) return { ok: false, reason: 'scan_duplicated' };
+        hit.add(row.request_record_id);
+        actualById.set(row.request_record_id, Number(scan.quantity));
+      }
+      const scanned = rows.map((row) => ({ ...row, actual: actualById.get(row.request_record_id) }));
+      if (scanned.some((row) => !Number.isSafeInteger(row.actual) || row.actual < 0)) {
+        return { ok: false, reason: 'actual_not_positive' };
+      }
+      return { ok: true, rows: scanned, differences: [] };
+    }
     const actualById = new Map(rows.map((row) => [row.request_record_id, row.quantity]));
     if (parsed.same) {
       return { ok: true, rows: rows.map((row) => ({ ...row, actual: row.quantity })), differences: [] };

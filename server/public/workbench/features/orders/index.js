@@ -5,7 +5,7 @@ import {
   ORDERS_API, ORDERS_PAGE, ORDERS_TEXTS, DEFAULT_COLLECTION_METHOD, COLLECTION_METHODS,
   REFUND_METHOD_PLACEHOLDER, RESTOCK_STATES, AFTER_SALES_ACTIONS, SETTLEMENTS,
   ORDERS_SUB_TABS, SALES_GROUPS, SALES_SECTIONS, DELIVERED_FULFILLMENT, PAID_PAYMENT_STATUS,
-  ARRIVAL_CONFIRM, ARRIVAL_STATUS_PENDING, ARRIVAL_STATUS_ARRIVED,
+  ARRIVAL_CONFIRM, ARRIVAL_SCAN, ARRIVAL_STATUS_PENDING, ARRIVAL_STATUS_ARRIVED,
 } from '../../config/orders.js';
 
 // 工作台【订单列表】（业务负责人 2026-10-09）—— 一级 tab 的第三个。
@@ -295,6 +295,7 @@ const purchaseBatchCardHtml = (batch) => `
           </li>`).join('')}</ul>
         <div class="order-card-actions">
           <button class="btn btn-primary" type="button" data-action="verify-arrival" data-batch="${escapeHtml(batch.batch_no)}">${escapeHtml(T.verifyArrival)}</button>
+          <a class="btn" data-action="scan-arrival" href="${escapeHtml(`${ARRIVAL_SCAN.pagePath}?batch=${encodeURIComponent(batch.batch_no)}`)}">${escapeHtml(ARRIVAL_SCAN.buttonLabel)}</a>
         </div>
         <details class="action-form" data-action-block="verify-arrival" data-arrival-batch="${escapeHtml(batch.batch_no)}">
           <summary>${escapeHtml(T.arrivalVerifyTitle)}</summary>

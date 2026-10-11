@@ -40,10 +40,10 @@ const express = require('express');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { createScanPageService } = require('../services/scanPageService');
 const { createScanWriteService } = require('../services/scanWriteService');
-const { renderScanPage, renderScanMessagePage, renderMinimalPage, buildPaymentRows } = require('../views/scanPageRenderer');
+const { renderScanPage, renderScanMessagePage, renderMinimalPage, renderAcceptancePage, buildPaymentRows } = require('../views/scanPageRenderer');
 // ⚠️ 只借这两个**纯函数**：所选尺码在「样品 + 门盒」有没有货（= 页面上那两个分组的判据），
 //    以及 `?from=` → 领域 id（认不出来回落缺省，不报错、不白屏）。
-const { sellableSizeTexts, resolveRealm, DEFAULT_REALM } = require('../views/scanPageRealm');
+const { sellableSizeTexts, resolveRealm, DEFAULT_REALM, ACCEPTANCE_REALM } = require('../views/scanPageRealm');
 // ⭐ 写操作之后**立刻作废**「实时库存」内存快照（她：库存必须准确，不是等 30 秒）。
 const { invalidateLiveInventorySnapshot } = require('../services/liveInventorySnapshot');
 const { requireWorkbenchAccess } = require('./workbench');
@@ -92,6 +92,26 @@ const createScanPageRouter = (options = {}) => {
   const writeService = writeConfig && options.writeService !== false
     ? (options.writeService || createScanWriteService({ gateway, config: writeConfig }))
     : null;
+  // ⭐⭐ 2026-10-11（方案A）：**扫码验收**（工作台点【验收】→ 在这一页连续扫 → 完成验收）。
+  //    ⚠️ 依赖**延迟构造**（在 `services/scanArrivalService.js` 里就地构造：
+  //      `GET /s/{编号}` 那一步只用来读会话 —— **零飞书调用**，扫码页"一次扫码 0 次飞书调用"
+  //      那条硬要求不能被这个功能破坏；真正要开批次 / 入库时它才构造采购查询与到货核对）。
+  //    ⚠️ 本文件因此**只认识 `scanArrivalService` 一个名字**（不 require 任何写链路的 service）——
+  //      既有的"路由层不出现写链路服务"哨兵照旧绿。
+  //    ⚠️ 用例可以注入 `options.arrivalService`；`false` = 这一版不挂验收模式。
+  let arrivalInstance = options.arrivalService || null;
+  const arrival = () => {
+    if (arrivalInstance === null && options.arrivalService !== false) {
+      // eslint-disable-next-line global-require
+      const { createScanArrivalService } = require('../services/scanArrivalService');
+      arrivalInstance = createScanArrivalService({
+        gateway,
+        config: writeConfig.acceptance,
+        store: options.arrivalSessionStore,
+      });
+    }
+    return arrivalInstance;
+  };
   const router = express.Router();
 
   router.use((req, res, next) => {
@@ -191,7 +211,9 @@ const createScanPageRouter = (options = {}) => {
    *    换成了配置里的通用人话，原文只进日志。
    */
   const respondWriteFailure = (res, result, requestId) => {
-    const status = result.code === 'sale_write_failed' || result.code === 'replenish_write_failed' ? 500 : 400;
+    // 500 = 系统那边没处理成（写库失败）；400 = 她填错了 / 数据不满足业务（一个字节都没写）。
+    const status = ['sale_write_failed', 'replenish_write_failed', 'return_write_failed'].includes(result.code)
+      ? 500 : 400;
     return sendHuman(res, status, {
       title: writeConfig.texts.failedTitle,
       body: result.message || writeConfig.texts.internalFailedBody,
@@ -242,6 +264,121 @@ const createScanPageRouter = (options = {}) => {
     return realm && realm !== DEFAULT_REALM ? `${path}?from=${encodeURIComponent(realm)}` : path;
   };
 
+  // ── ⭐⭐ 2026-10-11（方案A）：扫码验收 ──────────────────────────────────────
+  /** 验收表单的 POST 目标：落地页（没有编号那一刻）与逐码页（有编号）各一个。 */
+  const acceptanceLandingPath = (batchNo) =>
+    `${config.route.basePath}/accept?batch=${encodeURIComponent(String(batchNo || ''))}`;
+  /** 渲染层要的验收上下文（只放"事实"：批次号 / 已扫 / 应到 / 表单目标 / 一句提示）。 */
+  const acceptanceContext = (session, extra = {}) => ({
+    batchNo: String(session?.batch_no || ''),
+    scanned: Number(session?.scanned || 0),
+    expected: Number(session?.expected || 0),
+    postAction: extra.postAction || acceptanceLandingPath(session?.batch_no),
+    notice: String(extra.notice || ''),
+    defaultQuantity: writeConfig.acceptance.defaultQuantity,
+  });
+  /** 【完成验收】：两个页面（落地页 / 逐码页）共用这一份处理 —— 校验与写库都在既有链路里。 */
+  const handleAcceptFinish = async (req, res, requestId) => {
+    const openId = openIdOf(req);
+    const body = req.body || {};
+    const fields = writeConfig.fields;
+    const texts = writeConfig.texts;
+    const result = await arrival().finish({
+      openId,
+      actualAmount: body[fields.acceptAmount],
+      submitKey: body[fields.submitKey],
+      operatorOpenId: openId,
+    });
+    if (!result.ok) {
+      return sendHuman(res, 400, {
+        title: texts.acceptModeTitle,
+        body: result.message || texts.acceptNoScansBody,
+        requestId,
+        retryHint: texts.failedRetryHint,
+      });
+    }
+    // 入库成功 ⇒ 「实时库存」快照立刻作废（她：库存必须准确）。
+    invalidateInventorySnapshot(requestId, 'scan_accept_finished');
+    const batchNo = result.batch_no || '';
+    return sendHuman(res, 200, {
+      title: texts.acceptDoneTitle,
+      body: result.reused
+        ? fillWriteText(texts.acceptAgainBody, { batchNo: batchNo || '—' })
+        : fillWriteText(texts.acceptDoneBody, { batchNo: batchNo || '—', scanned: result.scanned || 0 }),
+      requestId,
+      details: [fillWriteText(texts.acceptBatchLine, { batchNo: batchNo || '—' })],
+      retryHint: texts.submittedNextHint,
+    });
+  };
+
+  /**
+   * **验收模式落地页**（工作台点【验收】跳过来的第一屏，**没有编号**）：
+   * 开一次验收会话 → 本单条（已验收 N / 应到 M）+【继续扫下一个】+【完成验收】。
+   * ⚠️ 之后每扫一个标签，打开的是 `/s/{编号}` —— 那一页会自己认出"正处在验收模式"。
+   */
+  router.get('/accept', async (req, res) => {
+    const requestId = req.requestId;
+    if (!arrival()) {
+      return sendHuman(res, 503, {
+        title: writeConfig.texts.acceptModeTitle,
+        body: writeConfig.texts.writeDisabledBody,
+        requestId,
+      });
+    }
+    try {
+      const openId = openIdOf(req);
+      const started = await arrival().start({
+        openId,
+        batchNo: req.query?.batch,
+        batchRecordId: req.query?.batch_record_id,
+        operatorOpenId: openId,
+      });
+      if (!started.ok) {
+        logWarn(writeConfig.events.acceptFailed, {
+          request_id: requestId, reason: started.reason, message: started.message,
+        });
+        return sendHuman(res, 400, {
+          title: writeConfig.texts.acceptModeTitle,
+          body: started.message,
+          requestId,
+          retryHint: writeConfig.texts.failedRetryHint,
+        });
+      }
+      const html = renderAcceptancePage({
+        acceptance: acceptanceContext(started.session),
+        config,
+        write: {
+          texts: writeConfig.texts,
+          fields: writeConfig.fields,
+          actions: writeConfig.actions,
+        },
+        userAgent: req.headers['user-agent'],
+      });
+      return sendHtml(res, 200, html);
+    } catch (error) {
+      return respondFailure(res, error, requestId);
+    }
+  });
+
+  /** 落地页上的【完成验收】表单 POST 到这里（逐码页上那一颗 POST 到 `/s/{编号}`）。 */
+  router.post('/accept', async (req, res) => {
+    if (!arrival()) {
+      return sendHuman(res, 503, {
+        title: writeConfig.texts.acceptModeTitle,
+        body: writeConfig.texts.writeDisabledBody,
+        requestId: req.requestId,
+      });
+    }
+    if (String(req.body?.[writeConfig.fields.action] || '') !== writeConfig.actions.acceptFinish) {
+      return respondWriteFailure(res, { code: 'unknown_action', message: writeConfig.texts.unknownActionBody }, req.requestId);
+    }
+    try {
+      return await handleAcceptFinish(req, res, req.requestId);
+    } catch (error) {
+      return respondFailure(res, error, req.requestId);
+    }
+  });
+
   /**
    * 页面上的两个写入口要用的东西（尺寸清单 / 本单已加几双 / 两张表单的幂等键 / 文案）。
    *
@@ -290,6 +427,8 @@ const createScanPageRouter = (options = {}) => {
       enabled: true,
       saleEnabled: writeConfig.sale.enabled !== false,
       replenishEnabled: writeConfig.replenish.enabled !== false,
+      // ⭐ 2026-10-11：采购领域的第二个动作（退货）—— 关掉它，那一块就不渲染（与补货同一条口径）。
+      returnEnabled: writeConfig.purchaseReturn?.enabled !== false,
       texts,
       fields,
       actions: writeConfig.actions,
@@ -300,6 +439,8 @@ const createScanPageRouter = (options = {}) => {
       accessories: accessories.map((item) => ({ record_id: item.record_id, name: item.name })),
       saleKey: writeService.sessions.submitKeyFor(openId, session, 'sale'),
       replenishKey: writeService.sessions.submitKeyFor(openId, session, 'replenish'),
+      // ⭐ 退货那把键（第三条链；与销售 / 补货**互不覆盖** —— 会话语义见 scanSessionService）
+      returnKey: writeService.sessions.submitKeyFor(openId, session, 'purchase_return'),
       paymentMethods,
       defaultPaymentMethod,
       // ⭐⭐ 总单层的**「付款情况」**（整单三档）：默认档来自配置（**全付**）；
@@ -343,9 +484,12 @@ const createScanPageRouter = (options = {}) => {
   router.get(config.route.path, async (req, res) => {
     const requestId = req.requestId;
     // ⚠️ 领域来自查询串（她给的参数名就是 `from`）；认不出来一律回落缺省，**不报错**。
-    const realm = resolveRealm(req.query?.from);
+    //    ⭐ 2026-10-11：`accept` 是**验收模式**那个非 tab 的领域（她扫开标签时会被自动切进来）。
+    const asked = String(req.query?.from || '').trim().toLowerCase();
+    let realm = asked === ACCEPTANCE_REALM ? ACCEPTANCE_REALM : resolveRealm(asked);
     // ⭐ 分阶段耗时（出参）：失败 / 找不到时同样能看出卡在哪一步。
     const timing = {};
+    let acceptance = null;
     try {
       // ⚠️ Express 已经把路由参数解码过一次（`%7C` → `|`，未编码的中文也照收）；
       //    service 里再解一次是为了容忍双重编码，并且对孤立 `%` 的输入不抛。
@@ -364,11 +508,49 @@ const createScanPageRouter = (options = {}) => {
           requestId,
         });
       }
+      // ⭐⭐ 2026-10-11（方案A）：**验收模式**（她先在验收模式里，然后每扫一个码打开一页）。
+      //    规则只有一条、且**只覆盖缺省领域**：正开着一场验收（会话未完成、未过期）时，
+      //    裸扫（没有 `?from=`）或显式 `?from=accept` 这一页 = 验收那一块；
+      //    她点【销售】/【库存】/【货品】/【采购】照旧去那些领域（**随时能离开验收模式**）。
+      if (arrival() && (realm === DEFAULT_REALM || realm === ACCEPTANCE_REALM)) {
+        const session = await arrival().get(openIdOf(req)).catch(() => null);
+        if (session && session.status === 'open') {
+          realm = ACCEPTANCE_REALM;
+          acceptance = acceptanceContext(session, {
+            postAction: postActionFor(view.number, ACCEPTANCE_REALM),
+            notice: String(req.query?.duplicate || '') === '1'
+              ? writeConfig.texts.acceptDuplicateBanner
+              : (String(req.query?.accepted || '') === '1'
+                ? fillWriteText(writeConfig.texts.acceptAddedBanner, { scanned: session.scanned || 0 })
+                : ''),
+          });
+        } else if (realm === ACCEPTANCE_REALM) {
+          // 认不出/已完成的验收会话：如实说一句，**回落缺省领域**（不白屏、不假装还在验收）。
+          realm = DEFAULT_REALM;
+        }
+      }
       const write = await buildWriteContext(req, view, realm);
+      // ⚠️ 验收模式那一块**只用到文案 / 字段名 / 动作名**（它们都在配置里）——
+      //    所以即使扫码写入口整个关着（`write` 为 null），验收模式照旧可用：
+      //    这里给它一个最小的上下文（不构造销售 / 补货那两条链的任何东西）。
+      const writeForRender = write || (acceptance ? {
+        enabled: true,
+        texts: writeConfig.texts,
+        fields: writeConfig.fields,
+        actions: writeConfig.actions,
+        postAction: acceptance.postAction,
+        acceptDefaultQuantity: writeConfig.acceptance.defaultQuantity,
+        saleEnabled: false,
+        replenishEnabled: false,
+        returnEnabled: false,
+      } : null);
       const renderStartedAt = Date.now();
       // ⭐ 2026-10-11：把 UA 交给渲染层 —— 它只用来决定本单条上【继续扫下一个】
       //    是"飞书客户端内的扫一扫 AppLink"还是那句如实的人话（`canScanNextWithFeishu`）。
-      const html = renderScan(view, config, write, realm, { userAgent: req.headers['user-agent'] });
+      const html = renderScan(view, config, writeForRender, realm, {
+        userAgent: req.headers['user-agent'],
+        acceptance,
+      });
       timing.render_ms = Math.max(0, Date.now() - renderStartedAt);
       // `total_ms` = 取数 + 渲染（整条链路的墙钟）—— 她要的是"这一页到底花了多久"。
       timing.total_ms = (Number(timing.total_ms) || 0) + timing.render_ms;
@@ -592,10 +774,111 @@ const createScanPageRouter = (options = {}) => {
         });
       }
 
+      // ── ⭐ 采购退货（业务负责人 2026-10-11：「和"报货"逻辑一样，也走扫码」）────────
+      //    与补货**同形**：同一个 POST 端点、同一套会话/幂等/失败口径；
+      //    写库（批次行 + 退货明细 + 扣库存 + 出退货单图）全在既有构件里。
+      if (action === actions.purchaseReturn) {
+        const view = await service.lookup({ number: req.params.number, requestId });
+        if (!view.found) {
+          return sendHuman(res, 404, {
+            title: config.texts.notFoundTitle,
+            body: config.texts.notFoundBody,
+            number: view.number,
+            requestId,
+          });
+        }
+        const entries = parseReturnEntries(body, fields, writeConfig);
+        const result = await writeService.submitPurchaseReturn({
+          openId,
+          requestId,
+          submitKey: body[fields.submitKey],
+          productRecordId: view.product_record_id,
+          number: view.number,
+          entries,
+        });
+        if (!result.ok) return respondWriteFailure(res, result, requestId);
+        // ⭐ 退货**真的动了库存** ⇒ 立刻作废「实时库存」内存快照（她：库存必须准确）。
+        invalidateInventorySnapshot(requestId, 'scan_purchase_return_submitted');
+        const texts = writeConfig.texts;
+        const details = [
+          fillWriteText(texts.returnBatchLine, { batchNo: result.batch_no || '—' }),
+          fillWriteText(texts.returnDetailLine, { count: result.request_count || 0 }),
+        ];
+        // ⭐ 超库存 ⇒ 如实回报差额（退能退的：说清一共几双没退成、哪些尺码不够）。
+        if (Number(result.shortfall || 0) > 0) {
+          const sizes = (result.shortfalls || [])
+            .filter((item) => Number(item.shortfall || 0) > 0)
+            .map((item) => `${item.size} 码`)
+            .join('、');
+          details.push(fillWriteText(texts.returnShortfallLine, {
+            shortfall: result.shortfall, sizes: sizes || '—',
+          }));
+        }
+        return sendHuman(res, 200, {
+          title: result.reused ? texts.returnAgainTitle : texts.returnDoneTitle,
+          body: result.reused
+            ? fillWriteText(texts.returnAgainBody, { batchNo: result.batch_no || '—' })
+            : fillWriteText(texts.returnDoneBody, {
+              batchNo: result.batch_no || '—', count: result.request_count || 0,
+            }),
+          requestId,
+          details,
+          retryHint: texts.submittedNextHint,
+        });
+      }
+
+      // ── ⭐⭐ 2026-10-11（方案A）扫码验收：把这一双记进本次验收 ────────────────
+      //    与其它写入口同一形状：**只动本地会话**（业务表一字不写）＋ 303 回同一页。
+      if (action === actions.acceptAdd) {
+        if (!arrival()) {
+          return sendHuman(res, 503, {
+            title: writeConfig.texts.acceptModeTitle, body: writeConfig.texts.writeDisabledBody, requestId,
+          });
+        }
+        const view = await service.lookup({ number: req.params.number, requestId });
+        if (!view.found) {
+          return sendHuman(res, 404, {
+            title: config.texts.notFoundTitle,
+            body: config.texts.notFoundBody,
+            number: view.number,
+            requestId,
+          });
+        }
+        const result = await arrival().addScan({
+          openId,
+          productRecordId: view.product_record_id,
+          size: body[fields.acceptSize],
+          quantity: body[fields.acceptQuantity],
+        });
+        const back = postActionFor(view.number, ACCEPTANCE_REALM);
+        if (!result.ok) {
+          // 不在本批 / 没会话 / 数量不合法：**如实说一句人话**（她原地刷新就能接着扫）。
+          logWarn(writeConfig.events.acceptNotInBatch, {
+            request_id: requestId, reason: result.reason, number: view.number,
+          });
+          return sendHuman(res, 400, {
+            title: writeConfig.texts.acceptModeTitle,
+            body: result.message,
+            requestId,
+            retryHint: writeConfig.texts.failedRetryHint,
+          });
+        }
+        return res.redirect(303, `${back}${result.duplicate ? '&duplicate=1' : '&accepted=1'}`);
+      }
+
+      // 【完成验收】⇒ 入库 + 批次改「已到货」（实际到货 = 已扫合计；只收「实际金额」）
+      if (action === actions.acceptFinish) {
+        if (!arrival()) {
+          return sendHuman(res, 503, {
+            title: writeConfig.texts.acceptModeTitle, body: writeConfig.texts.writeDisabledBody, requestId,
+          });
+        }
+        return await handleAcceptFinish(req, res, requestId);
+      }
+
       // 动作名不认识（老页面 / 手改表单）：**明确回一张人话页**，不静默。
       logWarn(config.events.badNumber, { request_id: requestId, reason: 'unknown_write_action', action });
-      return respondWriteFailure(res, { code: 'unknown_action', message: writeConfig.texts.unknownActionBody }, requestId);
-    } catch (error) {
+      return respondWriteFailure(res, { code: 'unknown_action', message: writeConfig.texts.unknownActionBody }, requestId);    } catch (error) {
       // 走到这里说明是**没预料到**的异常（写服务内部已把业务失败都收敛成人话结果）。
       if (isDataNotReady(error)) {
         res.set('Retry-After', '5');
@@ -647,6 +930,20 @@ const parseReplenishEntries = (body, fields, writeConfig) => {
 };
 
 /**
+ * ⭐ 2026-10-11：**退货**表单 → `[{ size, quantity }]`（与补货那条**同一个形状**，
+ * 只是字段名换成配置里的 `return_sizes` / `return_qty_<尺码>`）。
+ * 勾了不填数量 ⇒ 交给写服务按配置的默认值算 —— 这里**不替她决定**。
+ */
+const parseReturnEntries = (body, fields, writeConfig) => {
+  const rawSizes = body[fields.returnSizes];
+  const sizes = Array.isArray(rawSizes) ? rawSizes : (rawSizes === undefined || rawSizes === '' ? [] : [rawSizes]);
+  return sizes.map((size) => ({
+    size,
+    quantity: body[`${fields.returnQuantityPrefix}${size}`] ?? writeConfig.purchaseReturn.defaultQuantity,
+  }));
+};
+
+/**
  * 表单里**同名重复**的字段（`line_amount` / `payment_method` / `payment_amount`）
  * 在 `express.urlencoded({extended:true})` 下是**数组**；只出现一次时是**字符串**。
  * 这个纯函数把两种形状统一成有序数组（顺序 = 页面上的行顺序）。
@@ -672,5 +969,5 @@ const parsePaymentRows = (body, fields) => {
 };
 
 module.exports = {
-  createScanPageRouter, isDataNotReady, parseReplenishEntries, parsePaymentRows,
+  createScanPageRouter, isDataNotReady, parseReplenishEntries, parseReturnEntries, parsePaymentRows,
 };

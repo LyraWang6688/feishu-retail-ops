@@ -1,0 +1,481 @@
+/**
+ * ⭐⭐ 2026-10-11（业务负责人**选定方案A**）：「**手机上打开工作台 → 采购 → 验收到货 →
+ * 选「报货批次」里【未到货】的那个报货号 → 点【验收】⇒ 进入"验收模式"（连续扫） →
+ * 每次扫一个码（二维码里只有【编号】）⇒ 列该编号各尺码 ⇒ 选尺码 + 填数量（默认 1，可改）
+ * → 支持【连续扫多双】（本单条式：**已验收 N 双 / 应到 M 双** + 【继续扫下一个】+【完成验收】）
+ * → 点【完成验收】⇒ **入库 + 该批次改「已到货」**（实际到货数量 = 已扫合计）」。
+ *
+ * 她的补充口径（逐字）：
+ *   · 「不管是扫码页还是工作台，都是在**移动端**完成的」；
+ *   · 「【继续扫下一个】用 **AppLink**（`https://applink.feishu.cn/client/qrcode/main`）即可
+ *     （手机飞书可用、桌面不支持 ⇒ 桌面给人话）」；
+ *   · 「扫到不属于本批的货 ⇒ 提示"**这一双不在本批**"、**不记**；**重复扫** ⇒ **只记一次**」；
+ *   · 「完成后：实际到货数量 = 已扫合计，"少发的"自然就是差异（**不额外写差异说明**）」；
+ *   · ⭐ 2026-10-11（当天追问后答）：「我们已经通过扫码解决了具体到货情况，所以**就不用到货说明了**，
+ *     其他没有问题～」⇒ **【完成验收】只收「实际金额」（必填）**，不收「到货说明」。
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * 验收标准（**先写后做**；下面每条 test 的名字 = 这条 AC）
+ *
+ *  AC-A1 工作台「采购 → 验收到货」每张未到货批次卡上多一条【扫码验收】入口（`/s/accept?batch=`），
+ *        ⚠️ **既有「验收到货」表单 / 接口 / 载荷一个字不改**（那是另一条既有链路）。
+ *  AC-A2 `GET /s/accept?batch=X` 开一次**验收会话**；落地页出现本单条
+ *        （已验收 0 双 / 应到 M 双）+【继续扫下一个】+【完成验收】+「实际金额」输入。
+ *  AC-A3 扫一个码 ⇒ 该编号的**各尺码**列出来 ⇒ 选尺码 + 填数量（默认 1、可改）⇒ 加入本次验收
+ *        ⇒ **只写本地会话**（业务表零写入）；N/M 实时更新。
+ *  AC-A4 连续扫多双：同一 (货品,尺码) **重复扫只记一次**（提示"已经记过了"，N 不变）；
+ *        不同尺码累加。
+ *  AC-A5 **不在本批**的货 ⇒ 提示"这一双不在本批"、**不记**、N/M 不变。
+ *  AC-A6 【完成验收】⇒ 实际到货数 = **已扫合计**（没扫到的行 = 0 ⇒ **不入库**）⇒ 走**既有**
+ *        `confirmBatchArrival` → `buildPlan` → `confirmLocked` → 既有入库；批次改「已到货」。
+ *  AC-A7 **幂等**：同一批再点一次【完成验收】⇒ 不重复入库（既有 already_posted / 会话回执）。
+ *  AC-A8 **会话互不覆盖**：销售本单 / 补货 / 退货 / 验收 四条链各写各的（一条提交不动另三条）。
+ *  AC-A9 【继续扫下一个】= 飞书 UA 给 AppLink（`/client/qrcode/main`）；桌面 UA 给人话（不是死按钮）。
+ *  AC-A10 **一双都还没扫**就点【完成验收】⇒ 拦住、**一个字都不写**、人话说明。
+ *  AC-A11 移动端：viewport / 单列 / 不横向滚动 / 控件 ≥44px（静态哨兵）。
+ *  AC-A12 源码哨兵：验收**没有第二套入库** —— 复用既有 `buildPlan` 与 `confirmLocked`
+ *        （不自己拼 draft.actual、不自己调 applyPurchase）。
+ */
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const express = require('express');
+
+process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_scan_accept_test';
+process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'scan_accept_test_secret';
+
+const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { SCAN_PAGE } = require('../src/config/scanPage');
+const { SCAN_WRITE } = require('../src/config/scanWrite');
+const { createScanPageRouter } = require('../src/routes/scanPage');
+const { createScanArrivalService } = require('../src/services/scanArrivalService');
+const { createScanSessionService } = require('../src/services/scanSessionService');
+const { createPurchaseQueryService } = require('../src/services/purchaseQueryService');
+const { PurchaseArrivalConversationService } = require('../src/services/purchaseArrivalConversationService');
+const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
+
+const SERVER_SRC = path.join(__dirname, '..', 'src');
+const WORKBENCH = path.join(__dirname, '../public/workbench');
+const SESSION_SECRET = 'scan-accept-test-session-secret';
+const NUMBER = 'YD6693-2|黑色|A';
+const SESSION_SECRET_ENV = 'LARK_WEB_SESSION_SECRET';
+
+// ── 夹具：一批两行申请（38 码 2 双 / 39 码 1 双），两款货品 ─────────────────────
+const BATCH = 'CGD-20261011-0001';
+const BATCH_RECORD_ID = 'batch_rec_1';
+const rowsOf = () => [
+  { record_id: 'pr_38', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: ['prod_1'], 尺码: ['size_38'], 数量: 2 } },
+  { record_id: 'pr_39', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: ['prod_1'], 尺码: ['size_39'], 数量: 1 } },
+];
+const seedTables = (overrides = {}) => ({
+  purchaseRequest: rowsOf(),
+  product: [
+    { record_id: 'prod_1', fields: { 编号: NUMBER, 货号: 'YD6693-2', 颜色: { text: '黑色' } } },
+    // 另一款：**不在本批**（AC-A5 用）
+    { record_id: 'prod_other', fields: { 编号: 'XHB1|白色|A', 货号: 'XHB1', 颜色: { text: '白色' } } },
+  ],
+  sizeManagement: [
+    { record_id: 'size_38', fields: { 尺码: 38 } },
+    { record_id: 'size_39', fields: { 尺码: 39 } },
+    { record_id: 'size_40', fields: { 尺码: 40 } },
+  ],
+  purchaseOrderBatch: [
+    { record_id: BATCH_RECORD_ID, fields: { 报货批次号: BATCH, 到货状态: '未到货' } },
+  ],
+  behavior: [],
+  ...overrides,
+});
+
+const fakeGateway = (records = seedTables()) => ({
+  writes: [],
+  _tables: records,
+  table: (key) => V1_BITABLE_SCHEMA.tables[key],
+  listAll: async (key) => [...(records[key] || [])],
+  listByFilter: async () => { throw new Error('fake gateway 不支持 filter'); },
+  get: async (key, id) => (records[key] || []).find((record) => record.record_id === id) || null,
+});
+
+const ARRIVAL_SIZE_STUB = {
+  resolveLinkedCell: async (cell) => {
+    const id = Array.isArray(cell) ? cell[0] : cell;
+    return { recordId: id, size: Number(String(id).replace('size_', '')) };
+  },
+  resolveByNumber: async (value) => ({ recordId: `size_${value}`, size: Number(value) }),
+};
+
+const tempDir = (label) => fs.mkdtempSync(path.join(os.tmpdir(), `scan-accept-${label}-`));
+const rmDir = (dir) => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) { /* 清理失败不影响结论 */ } };
+
+/** 一套"真的在跑"的验收链路：真会话 + 真核对服务（只有最外层入库用桩）。 */
+const createHarness = (options = {}) => {
+  const gateway = options.gateway || fakeGateway(seedTables(options.tables || {}));
+  const sessionDir = options.sessionDir || tempDir('session');
+  const taskDir = options.taskDir || tempDir('arrival-task');
+  const store = new JsonTaskStore({ dir: taskDir, idField: 'task_id' });
+  const scannedGate = options.scannedGate || tempDir('scan-session');
+  const purchaseQuery = createPurchaseQueryService(gateway, { sizeReferences: ARRIVAL_SIZE_STUB });
+  const confirmed = [];
+  const arrived = [];
+  const arrivalConversation = options.arrivalConversation || new PurchaseArrivalConversationService({
+    gateway,
+    store,
+    sizeReferences: () => ARRIVAL_SIZE_STUB,
+    confirmArrival: async (taskId, task, operatorOpenId) => {
+      confirmed.push({ taskId, task, operatorOpenId });
+      return { toast: { type: 'success', content: '采购已入库，库存已更新' } };
+    },
+    markBatchArrived: async (batchNo, arrivalOptions) => {
+      arrived.push({ batchNo, options: arrivalOptions });
+      return { updated: true };
+    },
+  });
+  const arrival = createScanArrivalService({
+    gateway,
+    config: SCAN_WRITE.acceptance,
+    purchaseQuery,
+    arrivalConversation,
+    store: new JsonTaskStore({ dir: sessionDir, idField: 'session_id' }),
+  });
+  // 扫码页那条链路的会话（AC-A8 用它钉"四条链互不覆盖"）
+  const scanSessions = createScanSessionService({ config: SCAN_WRITE, dir: scannedGate });
+  return {
+    gateway, arrival, arrivalConversation, purchaseQuery, confirmed, arrived, scanSessions,
+    tables: gateway._tables,
+    cleanup: () => { rmDir(sessionDir); rmDir(taskDir); rmDir(scannedGate); },
+  };
+};
+
+const startBatch = (h, openId = 'ou_accept_1', batchNo = BATCH) => h.arrival.start({
+  openId, batchNo, batchRecordId: 'batch_rec_1', operatorOpenId: openId,
+});
+
+// ── 路由夹具 ────────────────────────────────────────────────────────────────
+const sessionCookie = (openId = 'ou_accept_route') => {
+  const payload = Buffer.from(JSON.stringify({
+    open_id: openId, name: '测试用户', exp: Date.now() + 3600 * 1000,
+  })).toString('base64url');
+  const signature = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
+  return `workbench_session=${payload}.${signature}`;
+};
+const login = () => {
+  process.env.LARK_WEB_AUTH_ENABLED = 'true';
+  process.env[SESSION_SECRET_ENV] = SESSION_SECRET;
+  delete process.env.WORKBENCH_ALLOWED_OPEN_IDS;
+};
+const withServer = async (app, run) => {
+  const server = await new Promise((resolve) => { const instance = app.listen(0, () => resolve(instance)); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try { return await run(base); } finally { await new Promise((resolve) => server.close(resolve)); }
+};
+const view = (overrides = {}) => ({
+  found: true,
+  number: NUMBER,
+  item_no: 'YD6693-2',
+  color: '黑色',
+  category_name: '休闲鞋',
+  category_code: 'A',
+  price_text: '¥399',
+  total: 3,
+  columns: [{ key: '门盒', label: '门盒' }],
+  rows: [
+    { size_text: '38', cells: [{ count: 2 }], total: 2, missing: false },
+    { size_text: '39', cells: [{ count: 1 }], total: 1, missing: false },
+  ],
+  missing_count: 0,
+  sizes_degraded: false,
+  notes: [],
+  updated_at_text: '2026-10-11 17:00',
+  product_record_id: 'prod_1',
+  ...overrides,
+});
+const scanApp = (harness, lookup = async () => view()) => {
+  const app = express();
+  app.use(express.urlencoded({ extended: true }));
+  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+    service: { lookup },
+    gateway: harness.gateway,
+    writeService: false,
+    arrivalService: harness.arrival,
+    writeConfig: SCAN_WRITE,
+  }));
+  return app;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-A1 工作台入口（加法：既有全额验收链路一个字不改）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-A1 工作台批次卡出现【扫码验收】入口（/s/accept?batch=），既有验收链路一字不改', () => {
+  const config = fs.readFileSync(path.join(WORKBENCH, 'config/orders.js'), 'utf8');
+  const orders = fs.readFileSync(path.join(WORKBENCH, 'features/orders/index.js'), 'utf8');
+  // 新增：配置驱动的扫码验收入口（URL 与按钮文案都在配置里）
+  assert.match(config, /ARRIVAL_SCAN/);
+  assert.match(config, /\/s\/accept/);
+  assert.match(orders, /data-action="scan-arrival"/);
+  assert.match(orders, /ARRIVAL_SCAN\.pagePath/);
+  // 既有那条（全额验收表单 / 它的接口与载荷）**逐字还在**
+  for (const needle of [
+    'data-action="verify-arrival"', 'data-action="submit-arrival"',
+    'data-field="arrival-amount"', 'data-field="arrival-note"',
+    'api.post(ORDERS_API.arrivalConfirm, {',
+  ]) {
+    assert.ok(orders.includes(needle), `既有验收逻辑少了 ${needle}`);
+  }
+  assert.match(config, /arrivalConfirm: '\/api\/workbench\/purchase\/arrivals\/confirm'/);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-A2 开验收会话 + 落地页（本单条 / 继续扫下一个 / 完成验收 / 实际金额）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-A2 GET /s/accept?batch=X 开一次验收会话；落地页有本单条 + 继续扫下一个 + 完成验收 + 实际金额', async () => {
+  login();
+  const h = createHarness();
+  try {
+    const openId = 'ou_accept_route';
+    await withServer(scanApp(h), async (base) => {
+      const response = await fetch(`${base}/s/accept?batch=${encodeURIComponent(BATCH)}`, {
+        headers: { cookie: sessionCookie(openId), 'user-agent': 'Mozilla/5.0 (iPhone) Lark/7.0' },
+      });
+      assert.equal(response.status, 200);
+      const html = await response.text();
+      // 本单条：已验收 N 双 / 应到 M 双（M = 这一批申请数合计 = 3）
+      assert.match(html, /已验收 0 双/);
+      assert.match(html, /应到 3 双/);
+      assert.match(html, /继续扫下一个/);
+      assert.match(html, /完成验收/);
+      assert.match(html, /实际金额/);
+      // 【继续扫下一个】= 飞书 AppLink（手机飞书可用）
+      assert.match(html, /applink\.feishu\.cn\/client\/qrcode\/main/);
+      // 会话真的建了（服务端落盘，扫下一码时还认得出这一批）
+      const session = await h.arrival.get(openId);
+      assert.equal(session.batch_no, BATCH);
+      assert.equal(session.expected, 3);
+    });
+  } finally { h.cleanup(); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-A3/A4/A5 扫码 / 重复扫 / 不在本批（只写本地会话）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-A3 扫一个码 ⇒ 列该编号各尺码 ⇒ 选尺码 + 填数量（默认 1、可改）⇒ 只写本地会话', async () => {
+  login();
+  const h = createHarness();
+  try {
+    const openId = 'ou_accept_route';
+    await withServer(scanApp(h), async (base) => {
+      const cookie = { cookie: sessionCookie(openId), 'user-agent': 'Mozilla/5.0 (iPhone) Lark/7.0' };
+      await fetch(`${base}/s/accept?batch=${encodeURIComponent(BATCH)}`, { headers: cookie });
+      // 扫到一个码 = 打开这一款那一页：验收模式下给出**尺码 + 数量**（默认 1）
+      const page = await (await fetch(`${base}/s/${encodeURIComponent(NUMBER)}`, { headers: cookie })).text();
+      assert.match(page, /data-view="acceptance"/);
+      assert.match(page, /name="accept_size"/);
+      assert.match(page, /name="accept_quantity"[^>]*value="1"/);
+      // 业务表一个字节都没写
+      assert.equal(h.gateway.writes.length, 0, '选尺码这一步只动本地会话');
+    });
+    const added = await h.arrival.addScan({ openId, productRecordId: 'prod_1', size: 38, quantity: 2 });
+    assert.equal(added.ok, true, JSON.stringify(added));
+    assert.equal(added.session.scanned, 2);
+    assert.equal(h.gateway.writes.length, 0);
+  } finally { h.cleanup(); }
+});
+
+test('AC-A4 连续扫多双：同一 (货品,尺码) 重复扫只记一次；不同尺码累加（N/M 实时更新）', async () => {
+  const h = createHarness();
+  try {
+    const openId = 'ou_accept_4';
+    await startBatch(h, openId);
+    const first = await h.arrival.addScan({ openId, productRecordId: 'prod_1', size: 38, quantity: 2 });
+    assert.equal(first.ok, true);
+    assert.equal(first.session.scanned, 2);
+    // 重复扫同一双 ⇒ 不记（第二次扫描不改变任何数字）
+    const again = await h.arrival.addScan({ openId, productRecordId: 'prod_1', size: 38, quantity: 1 });
+    assert.equal(again.ok, true);
+    assert.equal(again.duplicate, true, '重复扫只记一次');
+    assert.equal(again.session.scanned, 2, 'N 不变');
+    assert.equal(again.session.scans.length, 1);
+    // 另一个尺码 ⇒ 累加
+    const second = await h.arrival.addScan({ openId, productRecordId: 'prod_1', size: 39, quantity: 1 });
+    assert.equal(second.session.scanned, 3);
+    assert.equal(second.session.expected, 3);
+  } finally { h.cleanup(); }
+});
+
+test('AC-A5 不在本批的货 ⇒ 提示"这一双不在本批"、不记（会话与 N/M 一个数字都不变）', async () => {
+  const h = createHarness();
+  try {
+    const openId = 'ou_accept_5';
+    await startBatch(h, openId);
+    const before = await h.arrival.get(openId);
+    const result = await h.arrival.addScan({
+      openId, productRecordId: 'prod_other', size: 40, quantity: 1,
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'not_in_batch');
+    assert.match(result.message, /不在本批/);
+    const after = await h.arrival.get(openId);
+    assert.equal(after.scanned, before.scanned);
+    assert.equal(after.scans.length, 0);
+    // 尺码不在本批（同一货品、别的码）同样拦住
+    const otherSize = await h.arrival.addScan({ openId, productRecordId: 'prod_1', size: 40, quantity: 1 });
+    assert.equal(otherSize.ok, false);
+    assert.equal(otherSize.reason, 'not_in_batch');
+  } finally { h.cleanup(); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-A6/A7 完成验收（实际到货 = 已扫合计；未扫到的不入库；幂等）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-A6 完成验收 ⇒ 实际到货 = 已扫合计（没扫到的行 = 0 ⇒ 不入库）⇒ 走既有入库链路', async () => {
+  const h = createHarness();
+  try {
+    const openId = 'ou_accept_6';
+    await startBatch(h, openId);
+    // 只扫到 38 码 2 双 —— 39 码（申请 1 双）没扫到 ⇒ 实际 0 ⇒ 不入库
+    await h.arrival.addScan({ openId, productRecordId: 'prod_1', size: 38, quantity: 2 });
+    const result = await h.arrival.finish({ openId, actualAmount: 1200, operatorOpenId: openId });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    // 草稿形状 = 既有 confirmArrival 一直在等的那一份：只有实际 > 0 的行
+    assert.equal(h.confirmed.length, 1);
+    assert.deepEqual(h.confirmed[0].task.draft.actual, [
+      { product_record_id: 'prod_1', item_no: 'YD6693-2', color: '黑色', size: 38, quantity: 2 },
+    ], '没扫到的行 actual = 0 ⇒ 被既有实现摘掉（不入库）');
+    assert.equal(h.confirmed[0].task.draft.actual_amount, 1200);
+    assert.equal(h.confirmed[0].task.draft.batch_no, BATCH);
+    // 到货状态仍由既有 markBatchArrived 写
+    assert.deepEqual(h.arrived.map((item) => item.batchNo), [BATCH]);
+    // 会话进入 posted（验收模式结束）
+    assert.equal((await h.arrival.get(openId)).status, 'posted');
+  } finally { h.cleanup(); }
+});
+
+test('AC-A7 幂等：同一批再点一次【完成验收】⇒ 不重复入库（既有 already_posted 口径）', async () => {
+  const h = createHarness();
+  try {
+    const openId = 'ou_accept_7';
+    await startBatch(h, openId);
+    await h.arrival.addScan({ openId, productRecordId: 'prod_1', size: 39, quantity: 1 });
+    const first = await h.arrival.finish({ openId, actualAmount: 999, operatorOpenId: openId });
+    assert.equal(first.ok, true, JSON.stringify(first));
+    assert.equal(h.confirmed.length, 1);
+    // 再点一次（会话已是 posted）⇒ 把上一次的结果还给她，不再入库
+    const again = await h.arrival.finish({ openId, actualAmount: 999, operatorOpenId: openId });
+    assert.equal(again.ok, true);
+    assert.equal(again.reused, true);
+    assert.equal(h.confirmed.length, 1, '不重复入库');
+  } finally { h.cleanup(); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-A8 四条会话互不覆盖
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-A8 会话互不覆盖：销售本单 / 补货 / 退货 / 验收 四条链各写各的', async () => {
+  const h = createHarness();
+  try {
+    const openId = 'ou_accept_8';
+    // 验收会话（独立 store + 独立键）
+    await startBatch(h, openId);
+    await h.arrival.addScan({ openId, productRecordId: 'prod_1', size: 38, quantity: 1 });
+    // 扫码页那三条链的键各是各的
+    const saleKey = h.scanSessions.submitKeyFor(openId, await h.scanSessions.get(openId), 'sale');
+    const replenishKey = h.scanSessions.submitKeyFor(openId, await h.scanSessions.get(openId), 'replenish');
+    const returnKey = h.scanSessions.submitKeyFor(openId, await h.scanSessions.get(openId), 'purchase_return');
+    const useKeys = [saleKey, replenishKey, returnKey];
+    assert.equal(new Set(useKeys).size, 3, '三条键互不相同');
+    assert.ok(useKeys.every((key) => key.startsWith('scan_')));
+    assert.ok(saleKey.startsWith('scan_sale:'));
+    assert.ok(replenishKey.startsWith('scan_replenish:'));
+    assert.ok(returnKey.startsWith('scan_return:'));
+    // 验收会话不被前三条影响（它有自己的 store）
+    const session = await h.arrival.get(openId);
+    assert.equal(session.scanned, 1);
+    assert.equal(session.scans.length, 1);
+  } finally { h.cleanup(); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-A9 AppLink：飞书给按钮，桌面给人话
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-A9 【继续扫下一个】= 飞书 UA 给 AppLink；桌面 UA 给人话（不是死按钮）', async () => {
+  login();
+  const h = createHarness();
+  try {
+    const openId = 'ou_accept_route';
+    await withServer(scanApp(h), async (base) => {
+      const pageUrl = `${base}/s/accept?batch=${encodeURIComponent(BATCH)}`;
+      const mobile = await (await fetch(pageUrl, {
+        headers: { cookie: sessionCookie(openId), 'user-agent': 'Mozilla/5.0 (iPhone) Lark/7.5' },
+      })).text();
+      assert.match(mobile, /applink\.feishu\.cn\/client\/qrcode\/main/);
+      const desktop = await (await fetch(pageUrl, {
+        headers: { cookie: sessionCookie(openId), 'user-agent': 'Mozilla/5.0 (Macintosh) Chrome/120' },
+      })).text();
+      assert.equal(/applink\.feishu\.cn\/client\/qrcode\/main/.test(desktop), false, '桌面不给死按钮');
+      assert.match(desktop, /飞书/);
+    });
+  } finally { h.cleanup(); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-A10/A11/A12 一双没扫就完成 / 移动端 / 源码哨兵
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-A10 一双都还没扫就点【完成验收】⇒ 拦住、一个字都不写', async () => {
+  const h = createHarness();
+  try {
+    const openId = 'ou_accept_10';
+    await startBatch(h, openId);
+    const result = await h.arrival.finish({ openId, actualAmount: 100, operatorOpenId: openId });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'no_scan_lines');
+    assert.match(result.message, /还没扫/);
+    assert.equal(h.confirmed.length, 0, '一次入库都没发生');
+    assert.equal(h.arrived.length, 0, '批次状态也不动');
+    assert.equal((await h.arrival.get(openId)).status, 'open', '会话还开着，她扫了还能继续');
+    // 金额缺失同样一个字都不写（既有必填口径）
+    await h.arrival.addScan({ openId, productRecordId: 'prod_1', size: 39, quantity: 1 });
+    const noAmount = await h.arrival.finish({ openId, actualAmount: '', operatorOpenId: openId });
+    assert.equal(noAmount.ok, false);
+    assert.equal(h.confirmed.length, 0);
+  } finally { h.cleanup(); }
+});
+
+test('AC-A11 移动端：viewport / 单列 / 不横向滚动 / 控件 ≥44px（静态哨兵）', () => {
+  const realm = fs.readFileSync(path.join(SERVER_SRC, 'views/scanPageRealm.js'), 'utf8');
+  const renderer = fs.readFileSync(path.join(SERVER_SRC, 'views/scanPageRenderer.js'), 'utf8');
+  assert.match(renderer, /data-view="acceptance"/);
+  // 控件高度：复用扫码页既有的 --control-height（手机 ≥44px 的既有实现）
+  assert.match(renderer, /--control-height/);
+  // 验收那一块不许用表格（手机上会横向滚动）
+  const acceptanceBlock = renderer.slice(renderer.indexOf('data-view="acceptance"'));
+  assert.equal(/<table/i.test(acceptanceBlock.slice(0, 2000)), false, '验收块不许用 <table>');
+  assert.ok(realm.length > 0);
+});
+
+test('AC-A12 源码哨兵：验收没有第二套入库（复用 buildPlan / confirmLocked，不自己拼 draft）', () => {
+  const stripComments = (source) => source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+  const service = stripComments(fs.readFileSync(path.join(SERVER_SRC, 'services/scanArrivalService.js'), 'utf8'));
+  for (const pattern of [/gateway\.(create|update|delete)\s*\(/, /\.applyPurchase\s*\(/, /\.applyChange\s*\(/, /writeAcceptance/]) {
+    assert.equal(pattern.test(service), false, `scanArrivalService 出现了不该有的东西：${pattern}`);
+  }
+  assert.match(service, /confirmBatchArrival/);
+  // ⚠️ `markArrived` 只允许出现在**注入既有能力**的那一行（`markBatchArrived: ... => webhooks.
+  //    orderBatches.markArrived(...)`，与 `routes/workbench.js` 那条接线逐字同形）——
+  //    本 service **自己不写批次行**（写状态的是既有 `confirmLocked → notifyBatchArrived`）。
+  assert.equal((service.match(/markArrived/g) || []).length, 1, 'markArrived 只作为既有能力被注入一次');
+  assert.match(service, /markBatchArrived:.*markArrived/, '注入形状与工作台那条一致');
+  const conversation = stripComments(fs.readFileSync(path.join(SERVER_SRC, 'services/purchaseArrivalConversationService.js'), 'utf8'));
+  assert.match(conversation, /buildPlan\(snapshot\.rows, \{ scanLines: scans \}\)/, '扫码验收复用同一个 buildPlan（新增输入口，不写第二套算法）');
+  assert.match(conversation, /buildPlan\(snapshot\.rows, \{ same: true, differences: \[\] \}\)/, '既有「全额验收」分支逐字还在');
+  assert.match(conversation, /this\.confirmLocked\(taskId, operatorOpenId\)/);
+});
