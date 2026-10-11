@@ -1729,7 +1729,10 @@ const groupTopicEvent = (overrides = {}) => ({
   },
 });
 
-test('接线①：话题里的消息（thread_id 有值）**不 @ 机器人**也走到货核对', async () => {
+test('接线①：话题里的消息（thread_id 有值）**不 @ 机器人**也过准入，但**不再走到货核对**（C2）', async () => {
+  // ⚠️ 2026-10-12（清群聊入口 C2）：采购入站整段退场 —— 话题里的消息仍然**先过准入**
+  //    （判据一个字没动：先判 thread_id，话题里免 @），但**不再有任何采购兜底**：
+  //    销售分派不认领之后只记一条 `lark.group.message.not_sales`，静默落空。
   const seen = [];
   const service = await makeLarkService({
     arrivalConversation: {
@@ -1740,11 +1743,8 @@ test('接线①：话题里的消息（thread_id 有值）**不 @ 机器人**也
   const result = await service.acceptMessage(groupTopicEvent());
 
   assert.equal(result.accepted, true, '话题里的消息不该因为没 @ 被丢掉（准入先判 thread_id）');
-  assert.equal(seen.length, 1, '定位到批次之后要交给到货核对');
-  assert.equal(seen[0].text, '38 码少一双，完毕');
-  assert.equal(seen[0].batch.batch_no, BATCH_NO);
-  assert.deepEqual(seen[0].batch.request_ids, ['req_38', 'req_39'], '到货核对要能拿到这批的采购申请明细');
-  assert.equal(seen[0].threadId, 'omt_thread_1');
+  assert.equal(seen.length, 0, '采购入站已退场 ⇒ 到货核对这条入口一次都不该被调到');
+  assert.equal(result.handled, false, '没有入口认领 ⇒ 静默落空');
 });
 
 test('接线②：主群里没 @ 机器人 + 不像销售的消息 → 一条都不处理（到货核对也不该被触发）', async () => {

@@ -182,15 +182,21 @@ test('主群不 @ + 正文像销售 → 处理（放宽后的新行为）', asyn
   assert.equal(result.mode, 'new', '主群新开一笔销售');
 });
 
-test('主群不 @ + 正文带采购批次号 → 处理（归采购那条路）', async () => {
-  // 采购那条路换成一个记录型的桩：用它证明"这条归采购"，不去碰真实定位/发送。
-  const purchaseCalls = [];
-  const { service } = makeAdmissionSpyService({
-    groupPurchaseFlow: {
-      handleGroupPurchaseMessage: async (input) => {
-        purchaseCalls.push(input);
-        return { resolved: true, reason: 'stub', replied: false };
-      },
+test('主群不 @ + 正文带采购批次号 → **不再交给任何采购入口**（C2：采购入站已整体退场）', async () => {
+  // ⚠️ 2026-10-12（清群聊入口 C2）：原先这里断言"带批次号的主群消息要交给采购定位"。
+  //    业务负责人当天逐字：「**采购退货的群聊链路也不用管了**」「到货差异的群聊链路不用管了；
+  //    验收是在工作台页面上……」⇒ 群里的批次号**不再有采购入口可去**。
+  //    ⚠️ 准入判据本身**一个字没动**（`resolveMainChatAdmission` 仍放行带批次号的正文）：
+  //    改的是**下游** —— 销售分派不认领之后**不再有采购兜底**，只记一条
+  //    `lark.group.message.not_sales` 并静默返回（认不出就什么都不做）。
+  const writes = [];
+  const { service } = makeService({
+    gateway: {
+      table: () => ({}),
+      listAll: async () => [],
+      get: async () => null,
+      create: async (...args) => { writes.push(['create', ...args]); throw new Error('不该写业务表'); },
+      update: async (...args) => { writes.push(['update', ...args]); throw new Error('不该写业务表'); },
     },
   });
   const result = await service.acceptMessage({
@@ -204,10 +210,10 @@ test('主群不 @ + 正文带采购批次号 → 处理（归采购那条路）'
       mentions: [],
     },
   });
-  assert.equal(result.accepted, true);
-  assert.equal(purchaseCalls.length, 1, '带批次号的主群消息要交给采购定位');
-  assert.equal(purchaseCalls[0].text, 'BH-20261005-0009 这批到哪了');
-  assert.equal(result.handled, undefined, '这条不归销售');
+  assert.equal(result.accepted, true, '准入仍放行（判据没动）');
+  assert.equal(result.handled, false, '但销售不认领、采购也没了 ⇒ 静默落空');
+  assert.equal(result.reason, 'purchase_batch_no', '如实回传"为什么不归销售"（销售分派给的原因）');
+  assert.deepEqual(writes, [], '落空的消息零业务写');
 });
 
 test('开关打开（mainChatRequireMention=true）→ 回到改动前：主群只认 @', async () => {
@@ -3055,307 +3061,3 @@ const groupEvent = (overrides = {}) => ({
   },
 });
 
-test('群聊①：话题里的消息（thread_id 有值）**不 @ 机器人**也进流程', async () => {
-  // 真机实测：她在话题里发「你好 小来财」，mentions=[]，事件照样推给我们。
-  const { locator } = await makeGroupContext({ mappingThreadId: 'omt_thread_1', batchNo: 'BH-20261005-0011' });
-  const { service } = makeService({ purchaseBatchLocator: locator });
-  const replied = [];
-  service.replyText = async (_messageId, content) => { replied.push(content); return 'om_reply'; };
-
-  const result = await service.acceptMessage(groupEvent({
-    messageId: 'om_topic_no_mention',
-    threadId: 'omt_thread_1',
-    text: '你好 小来财',
-    mentions: [],
-  }));
-
-  assert.equal(result.accepted, true, '话题里的消息不该因为没 @ 被丢掉');
-  assert.equal(result.resolved, true);
-  assert.equal(result.reason, 'thread_id');
-  assert.equal(result.batchNo, 'BH-20261005-0011');
-  assert.deepEqual(replied, [], '定位成功不该再发问句');
-});
-
-test('群聊②：主群消息（thread_id 为空）@ 机器人 → 进流程', async () => {
-  const { locator } = await makeGroupContext({ mappingMessageId: 'om_purchase_main', batchNo: 'BH-20261005-0012' });
-  const { service } = makeService({ purchaseBatchLocator: locator });
-  service.replyText = async () => { throw new Error('定位成功不该回消息'); };
-
-  const result = await service.acceptMessage(groupEvent({
-    messageId: 'om_main_mention',
-    text: '@_user_1 这批到了',
-    parentId: 'om_purchase_main',
-  }));
-
-  assert.equal(result.accepted, true);
-  assert.equal(result.resolved, true);
-  assert.equal(result.batchNo, 'BH-20261005-0012');
-});
-
-test('C：thread_id 命中 → 定位到正确批次（优先级高于 parent_id）', async () => {
-  // 话题映射指向 0011，parent_id 映射指向 0099：必须是 thread_id 赢
-  //（话题里后续消息不一定还引用着机器人那条，thread_id 才是稳的那个）。
-  const { locator } = await makeGroupContext({ mappingThreadId: 'omt_thread_prio', batchNo: 'BH-20261005-0011' });
-  await locator.rememberGroupMessage({ batchNo: 'BH-20261005-0099', messageId: 'om_other_batch' });
-  const { service } = makeService({ purchaseBatchLocator: locator });
-  service.replyText = async () => { throw new Error('定位成功不该回消息'); };
-
-  const result = await service.acceptMessage(groupEvent({
-    messageId: 'om_topic_prio',
-    threadId: 'omt_thread_prio',
-    parentId: 'om_other_batch',
-    text: '这批货到了',
-  }));
-
-  assert.equal(result.resolved, true);
-  assert.equal(result.reason, 'thread_id');
-  assert.equal(result.batchNo, 'BH-20261005-0011');
-});
-
-test('C：thread_id 查不到映射 → 明确回「认不出」，零写入，不拿正文号去猜', async () => {
-  const writes = [];
-  const { locator } = await makeGroupContext({ mappingThreadId: 'omt_known', batchNo: 'BH-20261005-0001' });
-  const { service } = makeService({
-    purchaseBatchLocator: locator,
-    gateway: {
-      table: () => ({}),
-      listAll: async () => [],
-      get: async () => null,
-      create: async (...args) => { writes.push(['create', ...args]); throw new Error('定位链路不允许写业务表'); },
-      update: async (...args) => { writes.push(['update', ...args]); throw new Error('定位链路不允许写业务表'); },
-    },
-  });
-  const replied = [];
-  service.replyText = async (_messageId, content) => { replied.push(content); return 'om_reply'; };
-  // ⭐ ④ 这条消息在**话题**里 → 「认不出」那句话走的是**回复到话题**那条出口
-  // （带 `reply_in_thread`），所以这里也要把那条出口抓下来。
-  service.replyTextInThread = async (_messageId, content) => {
-    replied.push(content);
-    return { messageId: 'om_reply', threadId: 'omt_unknown_thread' };
-  };
-
-  // 这条话题我们没记过；正文里**故意**带上一个真实批次号——也不能因此去猜。
-  const result = await service.acceptMessage(groupEvent({
-    messageId: 'om_topic_unknown',
-    threadId: 'omt_unknown_thread',
-    text: 'BH-20261005-0001 这批你看下',
-  }));
-
-  assert.equal(result.resolved, false);
-  assert.equal(result.reason, 'not_found');
-  assert.equal(replied.length, 1);
-  assert.match(replied[0], /没认出来|认不出|批次号/);
-  assert.deepEqual(writes, [], '认不出时一次业务写都不允许有');
-});
-
-test('C：普通群里第一条回复（话题没记过、但引用得到）→ 用 parent_id 命中并把 thread_id 补记', async () => {
-  const { locator, store } = await makeGroupContext({ mappingMessageId: 'om_purchase_first', batchNo: 'BH-20261005-0021' });
-  const { service } = makeService({ purchaseBatchLocator: locator });
-  service.replyText = async () => { throw new Error('定位成功不该回消息'); };
-
-  const result = await service.acceptMessage(groupEvent({
-    messageId: 'om_first_reply',
-    threadId: 'omt_new_thread',
-    parentId: 'om_purchase_first',
-    text: '这批到了',
-  }));
-
-  assert.equal(result.resolved, true);
-  assert.equal(result.reason, 'parent_id');
-  assert.equal(result.batchNo, 'BH-20261005-0021');
-  // 补记之后，这条话题下的**后续**消息（不再引用机器人那条）也能只靠 thread_id 命中。
-  const after = await new PurchaseBatchLocator({ store }).resolve({ threadId: 'omt_new_thread' });
-  assert.equal(after.status, 'matched');
-  assert.equal(after.source, 'thread_id');
-  assert.equal(after.batchNo, 'BH-20261005-0021');
-});
-
-test('C①：@ + 引用机器人发的采购单 → 用 parent_id 命中映射，定位到正确批次', async () => {
-  const { locator } = await makeGroupContext({ mappingMessageId: 'om_purchase_1', batchNo: 'BH-20261005-0007' });
-  const replied = [];
-  const { service } = makeService({ purchaseBatchLocator: locator });
-  // 定位成功时**只回一句问清楚**的那条路不该被走到：把引用回复全记下来断言它没被调用。
-  service.replyText = async (messageId, content) => { replied.push({ messageId, content }); return 'om_reply'; };
-
-  const result = await service.acceptMessage(groupEvent({
-    text: '@_user_1 这批鞋到了，帮我核对一下',
-    parentId: 'om_purchase_1',
-  }));
-
-  assert.equal(result.resolved, true);
-  assert.equal(result.reason, 'parent_id');
-  assert.equal(result.batchNo, 'BH-20261005-0007');
-  assert.equal(result.batch.message_id, 'om_purchase_1');
-  assert.deepEqual(replied, [], '定位成功不该再发问句');
-});
-
-test('C②：@ 但没引用 → 按正文里的批次号定位', async () => {
-  const { locator } = await makeGroupContext({ mappingMessageId: 'om_purchase_9', batchNo: 'BH-20261005-0009' });
-  const { service } = makeService({ purchaseBatchLocator: locator });
-  service.replyText = async () => { throw new Error('不该回消息'); };
-
-  const result = await service.acceptMessage(groupEvent({
-    text: '@_user_1 BH-20261005-0009 这批的到货单你看下',
-  }));
-
-  assert.equal(result.resolved, true);
-  assert.equal(result.reason, 'batch_no');
-  assert.equal(result.batchNo, 'BH-20261005-0009');
-});
-
-test('C③：@ 但既没引用也没说批次号 → 回一句问清楚，零写入', async () => {
-  const writes = [];
-  const { locator } = await makeGroupContext();
-  const { service } = makeService({
-    purchaseBatchLocator: locator,
-    gateway: {
-      table: () => ({}),
-      listAll: async () => [],
-      get: async () => null,
-      create: async (...args) => { writes.push(['create', ...args]); throw new Error('定位链路不允许写业务表'); },
-      update: async (...args) => { writes.push(['update', ...args]); throw new Error('定位链路不允许写业务表'); },
-    },
-  });
-  const replied = [];
-  service.replyText = async (messageId, content) => { replied.push({ messageId, content }); return 'om_reply'; };
-
-  const result = await service.acceptMessage(groupEvent({ text: '@_user_1 这批鞋到了' }));
-
-  assert.equal(result.resolved, false);
-  assert.equal(result.reason, 'ambiguous');
-  assert.equal(replied.length, 1);
-  assert.equal(replied[0].messageId, 'om_group_1');
-  assert.match(replied[0].content, /分不清|批次号/);
-  assert.deepEqual(writes, [], '定位不到时一次业务写都不允许有');
-});
-
-test('C④：parent_id 查不到映射 → 明确回「认不出哪一批」，不回退去猜，零写入', async () => {
-  const writes = [];
-  const { locator } = await makeGroupContext({ mappingMessageId: 'om_purchase_known' });
-  const { service } = makeService({
-    purchaseBatchLocator: locator,
-    gateway: {
-      table: () => ({}),
-      listAll: async () => [],
-      get: async () => null,
-      create: async (...args) => { writes.push(['create', ...args]); throw new Error('定位链路不允许写业务表'); },
-      update: async (...args) => { writes.push(['update', ...args]); throw new Error('定位链路不允许写业务表'); },
-    },
-  });
-  const replied = [];
-  service.replyText = async (_messageId, content) => { replied.push(content); return 'om_reply'; };
-
-  // 引用的是**别人的**消息（不是机器人发的采购单）。
-  const result = await service.acceptMessage(groupEvent({
-    text: '@_user_1 这条你看下',
-    parentId: 'om_someone_else',
-  }));
-
-  assert.equal(result.resolved, false);
-  assert.equal(result.reason, 'not_found');
-  assert.equal(replied.length, 1);
-  assert.match(replied[0], /没认出来|认不出|批次号/);
-  assert.deepEqual(writes, []);
-});
-
-test('C：说了两个批次号 → 判为说不清，反问，绝不挑一个', async () => {
-  const { locator } = await makeGroupContext();
-  await locator.rememberGroupMessage({ batchNo: 'BH-20261005-0001', messageId: 'om_a' });
-  await locator.rememberGroupMessage({ batchNo: 'BH-20261005-0002', messageId: 'om_b' });
-  const { service } = makeService({ purchaseBatchLocator: locator });
-  const replied = [];
-  service.replyText = async (_messageId, content) => { replied.push(content); return 'om_reply'; };
-
-  const result = await service.acceptMessage(groupEvent({
-    text: '@_user_1 BH-20261005-0001 和 BH-20261005-0002 这两批都要',
-  }));
-
-  assert.equal(result.resolved, false);
-  assert.equal(result.reason, 'ambiguous');
-  assert.equal(replied.length, 1);
-});
-
-test('B：@ 占位符被剥掉——送到定位链路的是「她真正说的那句话」', async () => {
-  const seen = [];
-  const { service } = makeService({
-    groupPurchaseFlow: {
-      handleGroupPurchaseMessage: async ({ text, messageId, parentId }) => {
-        seen.push({ text, messageId, parentId });
-        return { resolved: true, reason: 'test' };
-      },
-    },
-  });
-  // 群里 @ 了两个人：两个占位符都要剥掉，并且不能把正文吃掉。
-  // ⚠️ 正文刻意用**不像销售**的一句（不含数字、不含业务关键词）：主群里 @ 机器人
-  //    说一笔销售现在归销售链路（见 salesGroupThread.test.js），这条用例验证的是
-  //    "剥占位符"这一件事，所以走采购那条路来断言。
-  await service.acceptMessage(groupEvent({
-    text: '@_user_1 @_user_2 这批到了 你看下',
-    mentions: [
-      { key: '@_user_1', id: TEST_BOT_OPEN_ID, name: '测试机器人' },
-      { key: '@_user_2', id: 'ou_someone', name: '别人' },
-    ],
-  }));
-
-  assert.equal(seen.length, 1);
-  assert.equal(seen[0].text, '这批到了 你看下');
-  assert.ok(!seen[0].text.includes('@_user_1'));
-  assert.ok(!seen[0].text.includes('@_user_2'));
-  assert.equal(seen[0].messageId, 'om_group_1');
-});
-
-test('B：群入口只加 OneSecond 表情，**不回「已收到」文字**（群里回文字会刷屏）', async () => {
-  const { locator } = await makeGroupContext({ mappingMessageId: 'om_purchase_2' });
-  // 用真实的 acknowledgeMessage + 假 client：断言"实际发出去的表情是什么"。
-  const { service, reactions } = makeReactionService();
-  service.purchaseBatchLocator = locator;
-  service.groupPurchaseFlow.locator = locator;
-  const replies = [];
-  service.replyText = async (_messageId, content) => { replies.push(content); return 'om_reply'; };
-  service.processSalesTask = async () => undefined;
-
-  // 主群 @ 机器人：只有表情，**不回文字**（群里回文字会刷屏）——私聊那条"已收到"文字
-  // 已随私聊入口一起删除（业务负责人 2026-10-07 拍板的 ⓐ）。
-  await service.acceptMessage(groupEvent({
-    messageId: 'om_group_ack',
-    text: '@_user_1 这批到了',
-    parentId: 'om_purchase_2',
-  }));
-  assert.deepEqual(reactions, [{ messageId: 'om_group_ack', emoji: 'OneSecond' }]);
-  assert.deepEqual(replies, [], '群聊不该回「已收到」文字');
-
-  // 话题里（不 @）同样只加表情。
-  await service.acceptMessage(groupEvent({
-    messageId: 'om_group_ack_thread',
-    text: '这批到了',
-    threadId: 'omt_ack',
-  }));
-  assert.deepEqual(reactions[1], { messageId: 'om_group_ack_thread', emoji: 'OneSecond' });
-  assert.deepEqual(replies, []);
-});
-
-test('B：表情加不上（缺权限）只记日志，不影响主流程', async () => {
-  const { locator } = await makeGroupContext({ mappingMessageId: 'om_purchase_3' });
-  const { service } = makeService({
-    client: {
-      im: {
-        messageReaction: {
-          create: async () => { throw new Error('99991672 缺少 im:message.reactions:write 权限'); },
-        },
-      },
-    },
-    purchaseBatchLocator: locator,
-  });
-  // 解掉 acknowledgeMessage 的打桩：这里要验证的正是"表情失败会不会影响主流程"。
-  service.acknowledgeMessage = LarkMvpService.prototype.acknowledgeMessage;
-  service.replyText = async () => { throw new Error('不该回消息'); };
-
-  const result = await service.acceptMessage(groupEvent({
-    messageId: 'om_group_reaction_fail',
-    text: '@_user_1 这批到了',
-    parentId: 'om_purchase_3',
-  }));
-
-  assert.equal(result.resolved, true);
-  assert.equal(result.batchNo, 'BH-20261005-0001');
-});
