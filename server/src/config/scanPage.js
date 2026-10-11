@@ -120,6 +120,9 @@ const TEXTS = Object.freeze({
   realmEmptyTitle: '这一块现在没有可操作的内容',
   realmEmptySalesBody: '没能确认你的身份（或这一版还没开写入口），所以先不显示建单表单。',
   realmEmptyPurchaseBody: '这一款现在没有可补货的尺码清单。',
+  // ⭐ 2026-10-11：**验收**领域的"空态"（她还没在工作台点【验收】，或那一场已结束/过期）——
+  //    这是"下一步去哪儿"的事实，不是用法说明。
+  realmEmptyAcceptanceBody: '现在没有正在进行的验收：回工作台，在「采购 → 验收到货」里点【验收】。',
   realmEmptyAction: '看看这一款的库存 →',
   // 空编号（`/s/` 或全是空白）与解码失败都回这一页。
   badNumberTitle: '这个链接不对',

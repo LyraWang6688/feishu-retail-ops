@@ -3,6 +3,9 @@
  *
  * 她的口径（逐字）：
  *   「在扫码页的**采购领域**（`/s/{编号}?from=purchase`）加【**退货**】：扫标签码 → 列这一款各尺码
+ *   ⚠️ 2026-10-11 晚（业务负责人批准六领域）：原「采购」领域已拆成 **补货 / 退货** 两个领域
+ *     ⇒ 本文件里的路由 URL 从 `?from=purchase` 改成 **`?from=purchase_return`**（页面上的退货表单
+ *     一字未变；已退役的 `?from=purchase` 现在会回落销售）。
  *    → **选尺码 + 填退货数量** → 生成【采购退货】」；
  *   「⚠️ **与现有的「一键补货」同形**（现在那里只有补货报单）⇒ 复用同页面/同会话/同幂等风格」。
  *
@@ -299,7 +302,7 @@ const formApp = (harness, lookup = async () => view()) => {
 // AC-R1 【退货】表单：与【一键补货】同形，全部来自配置
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-R1 采购领域出现【退货】表单：与【一键补货】同形（同一 POST 端点 / 勾尺码+填数量 / 自带幂等键）', async () => {
+test('AC-R1 【退货】领域里是退货表单：与【一键补货】同形（同一 POST 端点 / 勾尺码+填数量 / 自带幂等键）', async () => {
   login();
   const h = createHarness();
   try {
@@ -312,21 +315,30 @@ test('AC-R1 采购领域出现【退货】表单：与【一键补货】同形�
     assert.ok(SCAN_WRITE.session.returnKeyPrefix.startsWith('scan_return'));
 
     await withServer(formApp(h), async (base) => {
-      const html = await (await fetch(`${base}/s/${encodeURIComponent(NUMBER)}?from=purchase`, {
-        headers: { cookie: sessionCookie() },
-      })).text();
-      // 两个表单都在（补货 + 退货），POST 到**同一个端点**
-      assert.match(html, new RegExp(`name="action" value="${SCAN_WRITE.actions.replenish}"`));
-      assert.match(html, new RegExp(`name="action" value="${SCAN_WRITE.actions.purchaseReturn}"`));
-      // 退货那半：勾尺码 + 每码一个数量输入（与补货同形）
-      assert.match(html, /name="return_sizes" value="41"/);
-      assert.match(html, /name="return_qty_41"/);
+      const pageUrl = `${base}/s/${encodeURIComponent(NUMBER)}`;
+      const cookie = { cookie: sessionCookie() };
+      // ① 退货领域（`?from=purchase_return`）：只有退货那半 —— 勾尺码 + 每码一个数量输入
+      //    ⚠️ 2026-10-11 晚（六领域）口径：原「采购」领域已拆成 补货 / 退货 两块
+      //      ⇒ 原先这一条断言"同一页上**两个表单都在**（补货 + 退货）"，现在改成
+      //      "各自在自己那一块"（下面 ② 补货那块照旧钉着）。
+      const returnHtml = await (await fetch(`${pageUrl}?from=purchase_return`, { headers: cookie })).text();
+      assert.match(returnHtml, new RegExp(`name="action" value="${SCAN_WRITE.actions.purchaseReturn}"`));
+      assert.match(returnHtml, /name="return_sizes" value="41"/);
+      assert.match(returnHtml, /name="return_qty_41"/);
       // 幂等键来自配置（连点两次只写一次的判据）
-      assert.match(html, /name="submit_key" value="scan_return:scan_session_[0-9a-f]{16}:1"/);
+      assert.match(returnHtml, /name="submit_key" value="scan_return:scan_session_[0-9a-f]{16}:1"/);
       // 退回按钮（能点的事，不是说明书）
-      assert.match(html, /生成采购退货/);
-      // 她 2026-10-10 的硬要求：界面上不许出现"说明书"式解释句
-      assert.equal(html.includes('退货说明'), false);
+      assert.match(returnHtml, /生成采购退货/);
+      assert.equal(returnHtml.includes('退货说明'), false);
+      assert.equal(returnHtml.includes(`name="action" value="${SCAN_WRITE.actions.replenish}"`), false,
+        '退货那一块里不许混进补货表单（两块已分开）');
+
+      // ② 补货领域（`?from=replenish`）：补货那半照旧（同一个 POST 端点、同形）
+      const replenishHtml = await (await fetch(`${pageUrl}?from=replenish`, { headers: cookie })).text();
+      assert.match(replenishHtml, new RegExp(`name="action" value="${SCAN_WRITE.actions.replenish}"`));
+      assert.match(replenishHtml, /name="sizes" value="41"/);
+      assert.equal(replenishHtml.includes(`name="action" value="${SCAN_WRITE.actions.purchaseReturn}"`), false,
+        '补货那一块里不许混进退货表单（两块已分开）');
     });
   } finally { h.cleanup(); }
 });
@@ -463,7 +475,7 @@ test('AC-R5 超库存：报 5 双、库存 3 双 ⇒ 明细写 3、差额 2 如�
 
     // 页面人话：说清退了几双、少了几双
     await withServer(formApp(h), async (base) => {
-      const pageUrl = `${base}/s/${encodeURIComponent(NUMBER)}?from=purchase`;
+      const pageUrl = `${base}/s/${encodeURIComponent(NUMBER)}?from=purchase_return`;
       const html = await (await fetch(pageUrl, { headers: { cookie: sessionCookie(openId) } })).text();
       const key = html.match(/name="submit_key" value="(scan_return:[^"]+)"/)[1];
       const response = await fetch(pageUrl, {
@@ -637,7 +649,7 @@ test('AC-R9 失败有人话：内部错误（表名/字段名/record_id）不回
       return originalCreate(key, values);
     };
     await withServer(formApp(h), async (base) => {
-      const pageUrl = `${base}/s/${encodeURIComponent(NUMBER)}?from=purchase`;
+      const pageUrl = `${base}/s/${encodeURIComponent(NUMBER)}?from=purchase_return`;
       const html = await (await fetch(pageUrl, { headers: { cookie: sessionCookie(openId) } })).text();
       const key = html.match(/name="submit_key" value="(scan_return:[^"]+)"/)[1];
       const response = await fetch(pageUrl, {

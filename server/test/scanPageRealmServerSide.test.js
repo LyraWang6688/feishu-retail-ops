@@ -1,4 +1,15 @@
 /**
+ * ⚠️ 2026-10-11 晚（业务负责人批准六领域）——本文件**改写**的断言（逐字）：
+ *   改前：领域清单到处写 `['sales', 'inventory', 'purchase', 'product']`；
+ *        `EXPECT.purchase`；`?from=purchase` 那一行回归表；`REALMS.map(id)` 四项。
+ *   改后：六领域 = `['sales','replenish','purchase_return','accept','inventory','product']`；
+ *        `EXPECT.replenish`（原采购领域里的补货那半，功能标记一个字没变）＋
+ *        `EXPECT.purchase_return` / `EXPECT.accept` 两块；`?from=purchase` 现在**必须回落销售**（钉住）。
+ *   理由：业务负责人把原「采购」领域拆成 补货 / 退货 / 验收 三个领域；页面上的三块内容
+ *        （补货表单 / 退货表单 / 验收那块或人话卡）都是既有实现，只是各自换到了新领域下。
+ *   ⚠️ 其余断言（只渲染一块 / 零脚本 / 缺省销售 / 切换=服务端请求…）一条都没放宽。
+ */
+/**
  * ⭐⭐ 扫码页「**手机扫码不再白屏**」的验收标准（业务负责人 **2026-10-09** 真机反馈）。
  *
  * 她的现象（逐字要点）：**手机在飞书内置 webview 里扫开是一片空白**
@@ -25,7 +36,7 @@
  *        `renderMinimalPage` 自己**不许抛**（最后一道兜底，任何输入都有正文）。
  *  AC-W6 **主题令牌读不到也不影响内容**：`readThemeTokens(不存在的文件)` 返回 `[]` 不抛；
  *        页面正文（身份区 / 领域块）一个字都不少。
- *  AC-W7 **路由按 `?from` 分派**：`?from=inventory|purchase|product|sales` 各自只出那一块，
+ *  AC-W7 **路由按 `?from` 分派**：`?from=<六个领域>` 各自只出那一块，
  *        认不出的 `from` 回落销售（不报错、不空白）。
  * ─────────────────────────────────────────────────────────────────────────
  */
@@ -93,6 +104,7 @@ const WRITE = {
   enabled: true,
   saleEnabled: true,
   replenishEnabled: true,
+  returnEnabled: true,
   texts: {
     draftHeading: '本单现在 {count} 双',
     draftEmpty: '本单还没有鞋',
@@ -108,6 +120,12 @@ const WRITE = {
     clearButton: '清空本单',
     replenishQuantityLabel: '数量',
     replenishButton: '生成采购申请',
+    // ⭐ 2026-10-11 六领域：退货块与验收块各自要的文案（配置里的键名照 `config/scanWrite.js`）
+    returnButton: '生成采购退货',
+    acceptSummary: '已验收 {scanned} 双 / 应到 {expected} 双',
+    acceptAddButton: '加入本次验收',
+    acceptFinishAmountLabel: '实际金额',
+    acceptFinishSubmit: '确认完成验收',
   },
   fields: {
     action: 'action',
@@ -119,13 +137,23 @@ const WRITE = {
     paymentAmount: 'payment_amount',
     replenishSizes: 'sizes',
     replenishQuantityPrefix: 'qty_',
+    returnSizes: 'return_sizes',
+    returnQuantityPrefix: 'return_qty_',
+    acceptSize: 'accept_size',
+    acceptQuantity: 'accept_quantity',
+    acceptAmount: 'accept_amount',
   },
-  actions: { addLine: 'add_line', submitOrder: 'submit_order', clearDraft: 'clear_draft', replenish: 'replenish' },
+  actions: {
+    addLine: 'add_line', submitOrder: 'submit_order', clearDraft: 'clear_draft',
+    replenish: 'replenish', purchaseReturn: 'return_purchase',
+    acceptAdd: 'accept_add', acceptFinish: 'accept_finish',
+  },
   postAction: `/s/${ENCODED}`,
   sizes: [{ size_text: '40', missing: false }, { size_text: '41', missing: true }],
   draft: { lines: [] },
   saleKey: 'scan_sale:scan_session_0123456789abcdef:1',
   replenishKey: 'scan_replenish:scan_session_0123456789abcdef:1',
+  returnKey: 'scan_return:scan_session_0123456789abcdef:1',
   paymentMethods: ['微信', '现金'],
   defaultPaymentMethod: '微信',
   notice: '',
@@ -134,10 +162,15 @@ const WRITE = {
 /** 每个领域的"应该出现"与"绝不该出现"的正文（不看切换条与 `<noscript>` 里的链接文字）。
  *  ⭐ 2026-10-10：采购块的识别句从「补货报单（勾选要补的尺码）」（那句说明已删）换成
  *     功能标记 `data-view="purchase-sizes"` / `一键补货`。 */
+const ALL_REALMS = ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product'];
 const EXPECT = {
-  sales: { has: ['加入本单', '提交这一单'], hasNot: ['库存（共', '一键补货', '货品标签'] },
+  sales: { has: ['加入本单', '提交这一单'], hasNot: ['库存（共', '一键补货', '货品标签', '生成采购退货'] },
+  // ⭐ 2026-10-11：原 `purchase` 那一块 = 现在的 **`replenish`（补货）**（标记与文案一个字没变）。
+  replenish: { has: ['data-view="purchase-sizes"', '一键补货'], hasNot: ['加入本单', '库存（共', '货品标签', '生成采购退货'] },
+  purchase_return: { has: ['data-view="purchase-return"', '生成采购退货'], hasNot: ['加入本单', '库存（共', '一键补货'] },
+  // 验收领域：没有活跃验收会话时 = 一张人话卡（"回工作台点【验收】"），不是白屏。
+  accept: { has: [SCAN_PAGE.texts.realmEmptyTitle], hasNot: ['加入本单', '库存（共', '一键补货', '生成采购退货'] },
   inventory: { has: ['库存（共 5 双）'], hasNot: ['加入本单', '一键补货', '货品标签'] },
-  purchase: { has: ['data-view="purchase-sizes"', '一键补货'], hasNot: ['加入本单', '库存（共', '货品标签'] },
   product: { has: ['货品标签', '/workbench/label-print.html'], hasNot: ['加入本单', '库存（共', '一键补货'] },
 };
 
@@ -146,7 +179,7 @@ const EXPECT = {
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-W1 服务端按 `?from` 只渲染那一块：另外三块连 HTML 都不进（不是 CSS 藏起来）', () => {
-  for (const realm of ['sales', 'inventory', 'purchase', 'product']) {
+  for (const realm of ALL_REALMS) {
     const html = renderScanPage(VIEW, SCAN_PAGE, WRITE, realm);
     const body = html.slice(html.indexOf('</head>'));
     for (const [id, expect] of Object.entries(EXPECT)) {
@@ -157,7 +190,7 @@ test('AC-W1 服务端按 `?from` 只渲染那一块：另外三块连 HTML 都�
       }
     }
     // 四块里只留了当前这一块的标记
-    for (const id of ['sales', 'inventory', 'purchase', 'product']) {
+    for (const id of ALL_REALMS) {
       assert.equal(body.includes(`realm-block--${id}`), id === realm,
         `realm=${realm} 时 realm-block--${id} ${id === realm ? '必须' : '绝不该'}在 HTML 里`);
     }
@@ -172,7 +205,7 @@ test('AC-W1 服务端按 `?from` 只渲染那一块：另外三块连 HTML 都�
 });
 
 test('AC-W2 页面里一行前端脚本都没有：不依赖任何前端执行（飞书 webview 也不怕）', () => {
-  for (const realm of ['sales', 'inventory', 'purchase', 'product']) {
+  for (const realm of ALL_REALMS) {
     const html = renderScanPage(VIEW, SCAN_PAGE, WRITE, realm);
     assert.equal(/<script[\s>]/i.test(html), false, '页面里不许有任何 <script>');
     assert.equal(html.includes('location.search'), false, '不许再读 location.search');
@@ -220,11 +253,11 @@ test('AC-W4 拿不到写上下文时销售领域给一张人话卡片；每页�
   assert.match(html, /<div class="realm-block realm-block--sales">[\s\S]*?<h1>/, '销售块里必须真有人话内容');
 
   // 采购领域一个尺码都没有（连 `write.sizes` 也空 —— 页面上真的没东西可填）时同样不空白
-  const noSizes = renderScanPage({ ...VIEW, rows: [] }, SCAN_PAGE, { ...WRITE, sizes: [] }, 'purchase');
+  const noSizes = renderScanPage({ ...VIEW, rows: [] }, SCAN_PAGE, { ...WRITE, sizes: [] }, 'replenish');
   assert.ok(noSizes.includes(SCAN_PAGE.texts.realmEmptyTitle), '采购领域没清单时也要有人话');
 
   // noscript 兜底：四条领域链接照旧可点
-  for (const realm of ['sales', 'inventory', 'purchase', 'product']) {
+  for (const realm of ALL_REALMS) {
     const page = renderScanPage(VIEW, SCAN_PAGE, WRITE, realm);
     assert.ok(page.includes('<noscript>'), `realm=${realm} 缺 <noscript> 兜底`);
     const noScript = page.slice(page.indexOf('<noscript>'), page.indexOf('</noscript>'));
@@ -303,7 +336,11 @@ test('AC-W7 路由按 `?from` 分派（认不出的回落**销售**，任何情�
     ['', 'sales', ['库存（共']],
     ['?from=sales', 'sales', ['库存（共']],
     ['?from=inventory', 'inventory', ['加入本单', '补货报单']],
-    ['?from=purchase', 'purchase', ['加入本单', '库存（共']],
+    ['?from=replenish', 'replenish', ['加入本单', '库存（共']],
+    ['?from=purchase_return', 'purchase_return', ['加入本单', '库存（共', '一键补货']],
+    ['?from=accept', 'accept', ['加入本单', '库存（共', '一键补货']],
+    // ⚠️ 已退役的领域名（`purchase`）⇒ **回落销售**（既有口径：认不出的值一律回落缺省）
+    ['?from=purchase', 'sales', ['库存（共']],
     ['?from=product', 'product', ['加入本单', '库存（共']],
     ['?from=这个领域不存在', 'sales', ['库存（共']],
   ];
@@ -313,11 +350,14 @@ test('AC-W7 路由按 `?from` 分派（认不出的回落**销售**，任何情�
       assert.equal(response.status, 200, `${query} 必须是 200`);
       const html = await response.text();
       assert.ok(html.includes(`realm-block--${realm}`), `${query} 必须渲染 ${realm} 那一块`);
-      for (const id of ['sales', 'inventory', 'purchase', 'product']) {
+      for (const id of ALL_REALMS) {
         if (id !== realm) assert.equal(html.includes(`realm-block--${id}`), false, `${query} 不该有 ${id} 块`);
       }
+      // ⚠️ 只查**正文**（`</head>` 之后）：内联样式表的注释里也写着「一键补货」，
+      //    那是给人看的文档，不是页面上的功能（早先这条断言用整页 html，会误报）。
+      const body = html.slice(html.indexOf('</head>'));
       for (const needle of hasNot) {
-        assert.equal(html.includes(needle), false, `${query} 不该出现「${needle}」`);
+        assert.equal(body.includes(needle), false, `${query} 不该出现「${needle}」`);
       }
       assert.ok(html.replace(/<[^>]*>/g, '').trim().length > 0, `${query} 的页面必须有可见文字`);
     }
@@ -336,8 +376,8 @@ test('AC-W7 领域切换走的是服务端：点切换条就是一次带 `?from=
     const page = await fetch(`${base}/s/${ENCODED}?from=sales`, { headers: { cookie: sessionCookie() } });
     const html = await page.text();
     // 页面上的切换链接是一个**同路径的服务端地址**（浏览器点下去就是一次新的 GET）
-    assert.match(html, /<a class="realm-tab[^"]*" data-realm-id="purchase" href="\?from=purchase"/);
-    const switched = await fetch(`${base}/s/${ENCODED}?from=purchase`, { headers: { cookie: sessionCookie() } });
+    assert.match(html, /<a class="realm-tab[^"]*" data-realm-id="replenish" href="\?from=replenish"/);
+    const switched = await fetch(`${base}/s/${ENCODED}?from=replenish`, { headers: { cookie: sessionCookie() } });
     assert.equal(switched.status, 200);
     assert.equal(requested.length, 2, '两次点击 = 两次服务端取数（没有前端缓存/路由）');
   });
@@ -354,7 +394,7 @@ test('AC-W4/W7 结果页（没找到 / 链接不对）也永远有人话（既�
 });
 
 test('领域配置是唯一真源（加减领域只改 views/scanPageRealm.js）', () => {
-  assert.deepEqual(REALMS.map((realm) => realm.id), ['sales', 'inventory', 'purchase', 'product']);
+  assert.deepEqual(REALMS.map((realm) => realm.id), ALL_REALMS);
   assert.equal(DEFAULT_REALM, 'sales');
   // 领域文案也在配置里（渲染层不写死句子）—— ⭐ 2026-10-10 之后只留**功能性的字**
   for (const key of ['barLabel', 'labelHeading', 'labelSingleButton', 'labelBatchButton',
