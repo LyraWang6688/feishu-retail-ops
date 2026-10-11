@@ -498,13 +498,17 @@ const createScanWriteService = (options = {}) => {
    *   ① **每件实收**（`lineAmounts`，按下标对应本单的明细行）→ 落**销售明细.「实收金额」**；
    *      没填（空）⇒ 读那张表的「单价」当落点；两边都取不到 ⇒ 人话拦住，**绝不写 0**。
    *      🔴 **没有第二个金额概念**（她只填「实收金额」，代码里也不再提旧列名）。
-   *   ② **「付款情况」三档**（`paymentStatus`，整单口径，默认**全付**）：
+   *   ② **「付款情况」三档**（`paymentStatus`，整单口径，**默认「未付」**，见 `config/scanWrite`）：
    *      · **全付** —— 按**收款方式**写收款明细（1 条或多条）；
    *        🔴 **收款合计必须 == 每件实收合计**；不等 ⇒ **拦住、一个字都不写** + 人话说明差额；
-   *        ⚠️ **这一条只在她填了资金时生效**（见下面「建单门槛」）—— 她一个字都没填 ⇒ 放行；
+   *        ⚠️ **只有在「她真的填了收款行」时才走到这条校验** —— 她选了全付却一笔收款都没填
+   *        ⇒ **不拦整单**（按未付落库 + 页面给一句人话：`fullWithoutPaymentsNote`）；
    *      · **部分付** —— 资金区填**实付多少**（`paidAmount`）⇒ 按方式写已收的那几条
    *        （状态 = 既有「已收款」）＋ ⭐ **差额写一条【未收款】**（金额 = 每件实收合计 − 已收合计）；
-   *      · **未付** —— 不用填 ⇒ ⭐ **写一条【未收款】**（金额 = 每件实收合计）。
+   *      · **未付**（默认）—— 不用填 ⇒ **只记货**：不写【未收款】、她填过的收款行照写。
+   *        ⚠️ 2026-10-11 晚改：原来是「未付 ⇒ 写一条【未收款】」，但她真机被「资金不齐」卡住之后
+   *        改掉了 —— 她一个字都没提欠款时替她生成一条【未收款】等于**替她记了一笔账**；
+   *        「还差多少钱」由读侧**现算**（`salesProgressService`），不需要那条占位行。
    *
    * ⭐⭐ **建单门槛 = 只要「货品信息」齐**（业务负责人 2026-10-11 晚）：
    *    **资金类（每件实收 / 收款行）不构成"不能建单"的理由**，可以全空 ⇒ 照样成单
@@ -655,7 +659,7 @@ const createScanWriteService = (options = {}) => {
     //    她 2026-10-11 的最终口径（唯一权威），三档：
     //      · **全付**（默认）：收款合计 **必须 ==** 每件实收合计；
     //      · **部分付**：只写她填的那几条（状态 = 既有「已收款」）＋差额一条【未收款】；
-    //      · **未付**：不填 ⇒ 一条【未收款】（金额 = 每件实收合计）。
+    //      · **未付（默认）**：只记货 —— **不写【未收款】**（见下面 2026-10-11 晚那段）。
     //    ⚠️ 三档都**只跟"每件实收金额加起来"比**（`itemsCents`）—— 这里没有"应收/单价"这个判据。
     //    ⚠️ 比大小用**分**（整数），不拿浮点数比：0.1 + 0.2 ≠ 0.3 那类误差会误报。
     const itemsCents = resolvedLines.reduce((sum, line) => sum
@@ -688,19 +692,24 @@ const createScanWriteService = (options = {}) => {
     //     不写「交易方向」）是既有业务层的口径，这里一个字段都不重复实现。
     let payments = usedPayments;
     let owedCents = 0;
-    // ⭐⭐ 2026-10-11 晚（业务负责人）：「**建单门槛 = 只要「货品信息」齐（选了尺码）**」——
-    //    ⇒ 资金类（每件实收 / 收款行）**不构成"不能建单"的理由**；
-    //      「**全付必须相等**」这条校验**只在她真的填了资金时才生效**（她一个字都没填 ⇒ 放行，
-    //      明细实收照旧按「单价」落 —— 这正是"先货后钱"那条既有口径）。
-    //    ⚠️ 「填了资金」的判据 = 本单里有**她显式填的每件实收**（`explicit_amount`）
-    //       **或**至少一笔收款行；**留空走「单价」兜底不算"她填了"** ——
-    //       否则默认档「全付」会把"她什么都没填"永远拦死（那正是这次要修的那条）。
-    //    ⚠️ 只放行**这一档**：显式选了「部分付」却一分钱不填 = 自相矛盾的输入，
-    //       仍按 AC-7x 请她填"实付多少"（那一条断言没动）。
-    const moneyFilled = resolvedLines.some((line) => line.explicit_amount) || usedPayments.length > 0;
-    if (payMode === statusMode.full) {
-      // ── 全付：**只有这一档必须相等**，且**只在她填了资金时**才校验 ──────────────
-      if (moneyFilled && itemsCents !== paymentsCents) {
+    // ⭐⭐ 2026-10-11（业务负责人）：「**建单门槛 = 只要「货品信息」齐（选了尺码）**」——
+    //    ⇒ 资金类（每件实收 / 收款行）**不构成"不能建单"的理由**。
+    // 🔴🔴 2026-10-11 **晚（她真机被卡住之后改的，唯一权威）**：
+    //    线上日志 `scan.sale.amount_mismatch payment_status="全付" items_cents=9900
+    //    payments_cents=0`，她「只有一笔单子，一直提交不了」。
+    //    ⇒ 两条改动（config 里默认档已改成**未付**，这里是逻辑那一半）：
+    //      ① **「全付」必须相等**这条校验，**只在她真的填了收款行时**才生效
+    //         （她选了全付却一笔收款都没填 ⇒ **不拦整单**，给一句人话提示，**按未付落库**）；
+    //      ② **「未付」不再自动写那条【未收款】** —— 只有她**明说欠多少**（部分付的差额）才写
+    //         （与既有原则一致：「她说欠才算欠」，见 `salesOrderService.js` 的 `owed` 注释）。
+    //    ⚠️ 两条都**不会写出错账**：没填收款 = 一条收款明细都不写；差额也从来不由我们猜。
+    const hasPaymentRows = usedPayments.length > 0;
+    // 「她显式选了全付、但一笔收款都没填」⇒ 按**未付**落库 + 页面给一句人话（不是失败）。
+    const fullWithoutPayments = payMode === statusMode.full && !hasPaymentRows;
+    const effectiveMode = fullWithoutPayments ? statusMode.unpaid : payMode;
+    if (effectiveMode === statusMode.full) {
+      // ── 全付：两边必须相等（走到这里说明**她填了收款行**）──────────────────────
+      if (itemsCents !== paymentsCents) {
         const message = amountMismatchMessage({ itemsCents, paymentsCents, strict: true });
         logWarn(config.events.amountMismatch, {
           session_id: current.session_id, submit_key: key, payment_status: payMode,
@@ -714,7 +723,7 @@ const createScanWriteService = (options = {}) => {
         } } } });
       }
     } else {
-      const partial = payMode === statusMode.partial;
+      const partial = effectiveMode === statusMode.partial;
       let paidCents = paymentsCents;
       if (partial) {
         // ── 部分付：资金区填的"实付多少"与收款行合计**必须一致**（都是"已经收到的钱"）──
@@ -764,15 +773,22 @@ const createScanWriteService = (options = {}) => {
           items: itemsCents, payments: paidCents, diff: paidCents - itemsCents,
         } } } });
       }
-      // ⭐ 差额 ⇒ 一条【未收款】。她 2026-10-11 原话：
-      //    · 部分付「差额在收款明细里写一条是未收款」；
-      //    · 未付  「差额在收款明细里写一条是未收款」。
-      //    ⇒ 两档**同一个落点**，只是 未付 的"已收"天然是 0。
+      // ⭐ 差额 ⇒ 一条【未收款】——**只有「部分付」会写**（她明说"先付 X、还欠 Y"）。
+      //    🔴 2026-10-11 晚改写：**「未付」不再自动写那一条** —— 她真机就是被"资金不齐"卡住的，
+      //       而"她一个字都没提欠款"时替她生成一条【未收款】等于**替她记了一笔账**；
+      //       既有原则也是"**她说欠才算欠**"（`salesOrderService.js` 的 `owed` 注释）。
+      //       ⇒ 未付只记货：`payments` 本来就空、`owed = 0`；"还差多少钱"由读侧**现算**
+      //         （`salesProgressService`），不需要那条占位行。
       //    ⚠️ 那一条**不由本文件拼**：只把差额（`owed`）交给既有业务层，它自己写
       //       「收款金额」「关联销售单」与那个**既有的**收款状态取值 —— 连那个取值的中文
       //       都不在本文件里（源码哨兵：扫码侧不许把状态取值写死，见 AC-7y）。
-      owedCents = itemsCents - paidCents;
-      if (payMode === statusMode.unpaid) payments = [];
+      if (partial) owedCents = itemsCents - paidCents;
+      // 🔴 2026-10-11 晚（默认档改成「未付」之后**必须跟着改的一处**）：
+      //    **不再把收款行丢掉**。改前 `payments = []` 是"她显式选了未付 ⇒ 资金区整个忽略"；
+      //    可现在**未付是默认档** ⇒ 她可能填了收款行却忘了把单选框从「未付」挑到「全付」——
+      //    那种情况下丢行 = **静默把真收到的钱记没了**（账少一笔、她事后对不上）。
+      //    ⇒ 「未付」这一档**只决定**要不要写那条【未收款】（= 不写，见上面），
+      //      她真填了的收款行**如实落**（如实记钱永远比替她判断更安全）。
     }
 
     // ④ 逐行把明细准备好。
@@ -900,7 +916,7 @@ const createScanWriteService = (options = {}) => {
       const detailCount = (result.detailRecordIds || []).length || items.length;
       const paymentCount = (result.paymentRecordIds || []).length;
       // ⭐ `paid_amount` = **真收到钱的那几条**（她填的收款行）之和；
-      //    `owed_amount` = 那一条【未收款】的差额（部分付 / 未付两档才有）。
+      //    `owed_amount` = 那一条【未收款】的差额（**只有「部分付」才有**，2026-10-11 晚起）。
       //    ⚠️ 两笔数**分开报**，不合成一个"收款合计"：合成之后她就分不清
       //       "这单收了多少现金"和"这单还欠多少"。
       const paidAmount = payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
@@ -911,7 +927,13 @@ const createScanWriteService = (options = {}) => {
         payment_count: paymentCount,
         paid_amount: paidAmount,
         owed_amount: owedCents / 100,
+        // ⚠️ 如实报**两件事**：她选的档（`payment_status`）+ 这一单**实际按哪一档落的**
+        //    （`effective_payment_status`）—— 她选了「全付」却没填收款时，两者不同，
+        //    页面据此给她那句人话。排查时也一眼看得出"她选了什么、我们怎么落的"。
         payment_status: payMode,
+        effective_payment_status: effectiveMode,
+        // ⭐ 她**显式选了「全付」但一笔收款都没填** ⇒ 页面给一句人话（`fullWithoutPaymentsNote`）。
+        full_without_payments: fullWithoutPayments,
       };
       // ⑥ ⭐ 2026-10-11（A）：**现货 ⇒ 提交即交付 + 扣库存**。
       //    她 2026-10-09 的原话：「选现货 ⇒ 提交就直接当已交付并扣库存，这个肯定是的」。

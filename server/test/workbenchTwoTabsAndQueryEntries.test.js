@@ -58,8 +58,14 @@ function loadFrontendModules() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-tabs-'));
   const copy = (from, to, replacements = []) => {
     let source = readWorkbench(from);
-    for (const [needle, replacement] of replacements) {
-      assert.ok(source.includes(needle), `${from} 里没有找到要改的 import：${needle}`);
+    // ⚠️ 2026-10-11：第三位 = `optional`（那条 import 可能**合法地不存在**）——
+    //    `config/home.js` 里指向 links.js 的 import 已随「报货与退货」那张卡一起清掉
+    //    （首页不再有外链入口），所以那一条替换标成可选，其余替换照旧「命不中就是源码变了」。
+    for (const [needle, replacement, optional] of replacements) {
+      if (!source.includes(needle)) {
+        assert.ok(optional, `${from} 里没有找到要改的 import：${needle}`);
+        continue;
+      }
       source = source.split(needle).join(replacement);
     }
     fs.writeFileSync(path.join(dir, to), source, 'utf8');
@@ -68,7 +74,8 @@ function loadFrontendModules() {
   copy('core/tabs.js', 'core-tabs.mjs', [["from '../config/tabs.js'", "from './tabs.mjs'"]]);
   copy('config/links.js', 'links.mjs');
   copy('config/query.js', 'query.mjs', [["from './links.js'", "from './links.mjs'"]]);
-  copy('config/home.js', 'home.mjs', [["from './links.js'", "from './links.mjs'"]]);
+  // ⚠️ 2026-10-11：首页那张"报货与退货"卡删掉之后，home.js **不再** import links.js ⇒ 这条替换可选
+  copy('config/home.js', 'home.mjs', [["from './links.js'", "from './links.mjs'", true]]);
   copy('core/formatters.js', 'formatters.mjs');
   copy('features/query/index.js', 'query-index.mjs', [
     ["from '../../config/query.js'", "from './query.mjs'"],
@@ -326,10 +333,13 @@ test('AC2 哨兵：信息录入（原「常用功能」只改名）里的两个�
 
   // ⚠️ 2026-10-08（业务负责人批准的第一个功能「鞋盒标签打印」）**末尾追加了第三张卡** ——
   //    前两条（报货与退货 / 库存手工调整）的文案 / 顺序 / 目标**逐字未动**（见下面两条断言）。
-  assert.deepEqual(home.COMMON_ENTRIES.map((entry) => entry.title), ['报货与退货', '库存手工调整', '鞋盒标签打印'],
-    '【信息录入】里的入口：前两个不动，末尾追加「鞋盒标签打印」');
-  assert.equal(home.COMMON_ENTRIES[0].href, links.PURCHASE_REQUEST_FORM_URL,
-    '「报货与退货」仍然直连报货飞书表单');
+  // ⚠️ 2026-10-11 改写（业务负责人：「那张『报货与退货』卡**直接去掉**，那是死链」）：
+  //    改前 = ['报货与退货', '库存手工调整', '鞋盒标签打印']（第一条 href = 报货飞书表单外链）；
+  //    改后 = 只剩后两条，首页**没有采购类入口**。
+  assert.deepEqual(home.COMMON_ENTRIES.map((entry) => entry.title), ['库存手工调整', '鞋盒标签打印'],
+    '【信息录入】只剩「库存手工调整」+「鞋盒标签打印」');
+  assert.equal(home.COMMON_ENTRIES.some((entry) => entry.id === 'purchase'), false,
+    '「报货与退货」那条入口已删（她：直接去掉）');
   assert.deepEqual(home.COMMON_ENTRIES.find((entry) => entry.id === 'inventory-adjustment'), {
     id: 'inventory-adjustment',
     icon: '🧮',
@@ -339,7 +349,7 @@ test('AC2 哨兵：信息录入（原「常用功能」只改名）里的两个�
     arrow: '进入 →',
     wide: true,
   }, '「库存手工调整」那条（含 wide）一个字节不动');
-  assert.equal(parseEntryBlocks(html).length, 3, '信息录入 = 报货与退货 / 库存手工调整 / 鞋盒标签打印');
+  assert.equal(parseEntryBlocks(html).length, 2, '信息录入 = 库存手工调整 / 鞋盒标签打印');
 });
 
 test('AC9/AC10 哨兵：工作台 auth 闸门与写入类接口不回退；共用的库存接口保留', () => {

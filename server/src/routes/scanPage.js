@@ -725,6 +725,10 @@ const createScanPageRouter = (options = {}) => {
         }
         // ⚠️ 2026-10-10：原来钱没记时会补一句「这一单先记了货、还没记钱…」（`fundsPendingNote`）——
         //    那是**解释既有口径**的说明句，按业务负责人的口径删掉；写完的事实（单号 / 双数）照旧。
+        // ⭐ 2026-10-11 晚：她**显式选了「全付」却一笔收款都没填** ⇒ 单子照**按未付**落
+        //    （不拦她 —— 她真机就是被"资金不齐"卡住的），但结果页给她一句**指向能做的事**的人话。
+        const submitHint = result.full_without_payments
+          ? texts.fullWithoutPaymentsNote : texts.submittedNextHint;
         return sendHuman(res, 200, {
           title: result.reused ? texts.submittedAgainTitle : texts.submittedTitle,
           body: result.reused
@@ -734,7 +738,7 @@ const createScanPageRouter = (options = {}) => {
             }),
           requestId,
           details,
-          retryHint: texts.submittedNextHint,
+          retryHint: submitHint,
         });
       }
 

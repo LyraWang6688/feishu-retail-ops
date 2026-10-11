@@ -114,7 +114,9 @@ function loadFrontendModules() {
     ["from './query.js'", "from './query.mjs'", true],
   ]);
   copy('core/tabs.js', 'core-tabs.mjs', [["from '../config/tabs.js'", "from './tabs.mjs'"]]);
-  copy('config/home.js', 'home.mjs', [["from './links.js'", "from './links.mjs'"]]);
+  // ⚠️ 2026-10-11：首页那张"报货与退货"卡删掉之后，`config/home.js` **不再** import links.js
+  //    （首页已无任何外链入口）⇒ 这条替换标成 `optional`（存在才替换）。
+  copy('config/home.js', 'home.mjs', [["from './links.js'", "from './links.mjs'", true]]);
   copy('core/formatters.js', 'formatters.mjs');
   copy('features/query/index.js', 'query-index.mjs', [
     ["from '../../config/query.js'", "from './query.mjs'"],

@@ -59,6 +59,9 @@ const { asDate, isWithinLookupWindow } = require('./saleLookupService');
 // 「报货日」在消息里的样子（上海自然日）：与渲染层**共用同一处实现**。
 const { formatReportedAtText } = require('./reportedAt');
 const { withSalesReadRetry } = require('./salesReadRetry');
+// ⭐ 2026-10-11 晚：金额口径改成**现算待收** ⇒ 直接复用工作台那一份（同一个 `progressFromRecords`，
+//    不在这儿再写一遍"实收 − 已收"的算法 —— 两处算法必然会漂）。
+const { progressFromRecords } = require('./salesProgressService');
 const { resolvePendingPushCandidateConfig } = require('../config/pendingPushCandidates');
 const { logInfo, logWarn } = require('../utils/logger');
 
@@ -107,7 +110,7 @@ class PendingPushCandidateService {
     // ⚠️ 货号尺码是**增强**：索引读挂了只记一条 warn、这一轮没有货号尺码，
     //    **绝不让整条推送失败**（与 listPendingDeliveries 的 includeItems 同一档处理）。
     //    没有销售侧候选时**一次多余的读表都不发**。
-    const hasCandidate = this.hasSalesCandidate(context, { now });
+    const hasCandidate = this.hasSalesCandidate(context, { now, warnings });
     const facts = hasCandidate ? await this.loadItemFacts(context) : new Map();
     // 交易类型是**关联 / 查表引用** ⇒ 关联形状要先读一次「行为管理」，把记录 id 换成
     // **行为编码**（判据只认编码，不认中文）。按文字就能认出来的那种形状**不读这张表**。
@@ -182,7 +185,7 @@ class PendingPushCandidateService {
    *    ⇒ 这里只能按**结构性**条件预判。宁可多读一次表，也不能因为判早了而**少读** ——
    *    那会让本该有货号尺码的行只剩占位。反过来（这里判 true、真判据判 false）只是白读一次。
    */
-  hasSalesCandidate(context, { now }) {
+  hasSalesCandidate(context, { now, warnings }) {
     const { eligible, detailFields, paymentFields } = context;
     return eligible.some((item) => {
       const undeliveredInWindow = item.details.some((detail) =>
@@ -190,6 +193,11 @@ class PendingPushCandidateService {
         && isWithinLookupWindow(asDate(detail.fields?.[detailFields.soldAt]),
           { now, days: this.windowDays }));
       if (undeliveredInWindow) return true;
+      // ⭐ 2026-10-11 晚：**"还没收清"也是一个结构性候选**（现算待收 ≠ 0）。
+      //    ⚠️ 为什么必须加这一条：未付的单**没有**那条【未收款】行、现货行又往往**已交付**
+      //       ⇒ 上面两条都不成立 ⇒ 会把"要读货品/尺码表"跳掉，那一行的文字就只剩占位。
+      //    这里仍然**不读「行为管理」**（保持"宽松上界"：宁可多读一次表，也不少读）。
+      if (this.hasOutstanding(item, context, warnings)) return true;
       return item.payments.some((payment) =>
         textValue(payment.fields?.[paymentFields.status]).trim() === this.settings.unpaidPaymentStatus
         && isWithinLookupWindow(asDate(payment.fields?.[paymentFields.createdAt]), { now, days: this.windowDays }));
@@ -354,7 +362,69 @@ class PendingPushCandidateService {
   }
 
   /**
-   * 一张销售单的「未收款」合计 —— **两块共用的唯一金额口径**。
+   * 「交易类型读不到」—— **统一从这一个口子记**（按记录 id 去重）。
+   * ⚠️ 为什么必须去重：2026-10-11 晚起【现货未收】也按**明细**判交易类型 ⇒ 同一件
+   *    可能被【预定】和【现货未收】各看一次，日志里出现两遍会让人以为"有两件读不到"。
+   */
+  noteTradeTypeUnreadable(warnings, kind, entry) {
+    const list = warnings?.tradeTypeUnreadable?.[kind] || [];
+    const idField = kind === 'details' ? 'detail_record_id' : 'payment_record_id';
+    if (list.some((item) => item[idField] === entry[idField])) return;
+    list.push(entry);
+  }
+
+  /**
+   * ⭐⭐ 2026-10-11 晚（**唯一权威口径**）：一张销售单的**现算待收**（元；`null` = 算不出来）。
+   *
+   * = `progressFromRecords(明细, 收款).pendingAmount` —— **与工作台订单列表同一个口径**
+   *   （Σ销售明细「实收金额」− 已收 − 待平台结算）。
+   *
+   * 🔴 为什么换掉 `sumUnpaidAmount`（未收款行合计）：2026-10-11 晚扫码建单的「未付」档
+   *    **不再自动写那条【未收款】** ⇒ 拿"未收款行合计"当金额，**未付的单会算成 0、
+   *    在推送里渲染成「已付清」**（`pendingDealPushService.amountValueOf`：0 ⇒ `paidUpText`）——
+   *    那是给她**错的信息**；而 9 点推送是她明确要保住的功能。
+   * ⚠️ **算不出来**（实收留空 ⇒ `pendingAmount = null`；或数据脏 ⇒ 抛）⇒ **返回 `null`**：
+   *    行照出、金额段**整段不渲染**（既不吞成 0、也不说「已付清」）——与既有"绝不静默丢单"同一档。
+   */
+  pendingAmountOf(item, context, warnings) {
+    const { detailFields, paymentFields } = context;
+    try {
+      return progressFromRecords(item.details || [], item.payments || [], detailFields, paymentFields)
+        .pendingAmount;
+    } catch (error) {
+      const recorded = (warnings?.amountFailed || []).some((entry) =>
+        entry.sales_entry_record_id === item.entry.record_id);
+      if (!recorded) {
+        (warnings?.amountFailed || []).push({
+          sales_entry_record_id: item.entry.record_id,
+          payment_record_id: '',
+          error: 'pending_amount_unreadable',
+          reason: String(error?.message || error),
+        });
+      }
+      return null;
+    }
+  }
+
+  /**
+   * ⭐ 「这一单**还没收清**吗」—— 两块销售候选共用的**唯一**判据（2026-10-11 晚起）。
+   * `null`（算不出来，例：实收还没填）**也算没清** —— 那种单更该提醒她。
+   * ⚠️ 只有**真的 `pendingAmount === 0`** 才算收清（那时才轮到「已付清」这个说法）。
+   */
+  hasOutstanding(item, context, warnings) {
+    const pending = this.pendingAmountOf(item, context, warnings);
+    if (pending === null) return true;
+    return Math.round(Number(pending) * 100) > 0;
+  }
+
+  /**
+   * 一张销售单的「未收款」合计（= 该单在「收款明细」里所有 `收款状态 = 未收款` 的「收款金额」之和）。
+   *
+   * ⛔ **2026-10-11 晚起：两块销售候选都【不再】用它当金额**（改用 `pendingAmountOf` 的现算待收）——
+   *    因为「未付」档不再自动写那条【未收款】，这个合计会变成 0 ⇒ 推送里会显示成「已付清」。
+   *    方法**刻意保留**（它的口径本身没错，是"未收款行"这一列的语义）：将来若要显示
+   *    "表里登记的欠款"，仍然该用它；**不要**再拿它当"这一单还欠多少"。
+   *
    * = 该单在「收款明细」里**所有** `收款状态 = 未收款` 的「收款金额」之和
    * （业务负责人 2026-10-08：「这笔销售单号对应的未收款金额」/「该销售单号下所有未收款的金额之和」）。
    * ⚠️ 不是"整单成交额 − 已收 − 待平台结算"，也不是"某一条收款明细自己的金额"。
@@ -409,7 +479,7 @@ class PendingPushCandidateService {
         );
         if (type.unknown) {
           // ⚠️ 读不到判据 ≠ 不符合判据 ⇒ **照进**（宁可多显示一件，也不让一件预定货消失）；汇总记 warn。
-          warnings.tradeTypeUnreadable.details.push({
+          this.noteTradeTypeUnreadable(warnings, 'details', {
             detail_record_id: detail.record_id,
             trade_type_field: detailFields.tradeType || '',
           });
@@ -432,7 +502,7 @@ class PendingPushCandidateService {
         salesEntryRecordId: item.entry.record_id,
         criterion: 'undelivered',
         facts: qualifying.map((detail) => facts.get(detail.record_id) || null).filter(Boolean),
-        pendingAmount: this.sumUnpaidAmount(item, context, warnings),
+        pendingAmount: this.pendingAmountOf(item, context, warnings),
         url: '',
       });
     }
@@ -440,49 +510,62 @@ class PendingPushCandidateService {
   }
 
   /**
-   * ② 【现货未收】= 「收款明细」里 **交易类型 = 现货（`SALE_CASH`）** 且 **收款状态 = 未收款**
-   * 且**创建时间在最近 7 天窗口内**的记录；**一张销售单一行**（同一单多条未收款 ⇒ 一行）。
-   *   · 文字：该单的 `货号 颜色 尺码`（该单的明细，取法与上一版一致：整单明细并列）；
-   *   · 金额：**该销售单号的未收款合计**（`sumUnpaidAmount`）。
+   * ② 【现货未收】= **该单在最近 7 天窗口内【有现货件】且【还有待收】** 的销售单；
+   *    **一张销售单一行**（同一单多件 / 多笔 ⇒ 一行）。
+   *   · 文字：该单的 `货号 颜色 尺码`（整单明细并列，取法与上一版一致）；
+   *   · 金额：**现算待收**（`pendingAmountOf` = Σ实收 − 已收 − 待平台结算，元 / `null`）。
+   *
+   * 🔴 **2026-10-11 晚改写**（她真机卡住之后，口径变更）：
+   *   · **改前**：判据 = 「收款明细里 **有一条** `收款状态 = 未收款`（交易类型=现货，7 天窗口）」，
+   *     金额 = 那些未收款行的合计；
+   *   · **改后**：判据 = 「窗口内**有现货件**（`SALE_CASH`）**且** 该单**现算待收 ≠ 0**」，
+   *     金额 = 现算待收。
+   *   · **理由**：扫码建单的「未付」档**不再自动写那条【未收款】**⇒ 拿旧判据，
+   *     **未付的单会整块消失**（少一条催收提醒）、或金额算成 0 被渲染成「已付清」——
+   *     9 点推送是她明确要保住的功能，**不能给她错的信息**。
+   *   ⚠️ **顺带的一个收窄**（有意）：以前"读不到交易类型 ⇒ 照进"会让**预定单也重复出现在
+   *     【现货未收】里**；现在按**明细**的交易类型判，预定单只在【预定】那一块出现（不再重复）。
+   *   ⚠️ 实收留空 / 数据脏 ⇒ 金额 `null`（**行照出、金额段不渲染**，绝不说「已付清」）。
    */
   cashRows(context, { now, facts, behaviorCodeById, warnings }) {
-    const { eligible, paymentFields } = context;
+    const { eligible, detailFields } = context;
     const rows = [];
     for (const item of eligible) {
-      let matched = null;
-      for (const payment of item.payments || []) {
-        if (textValue(payment.fields?.[paymentFields.status]).trim() !== this.settings.unpaidPaymentStatus) continue;
-        if (!isWithinLookupWindow(asDate(payment.fields?.[paymentFields.createdAt]),
-          { now, days: this.windowDays })) continue;
+      // ① 窗口内**有没有现货件**（判据只看明细；读不到交易类型 ⇒ **照进**，不静默丢单）
+      const cashDetails = (item.details || []).filter((detail) => {
+        if (!isWithinLookupWindow(asDate(detail.fields?.[detailFields.soldAt]),
+          { now, days: this.windowDays })) return false;
         const type = this.matchesTradeType(
-          payment.fields?.[paymentFields.tradeType], this.settings.cashTradeTypeCode, behaviorCodeById,
+          detail.fields?.[detailFields.tradeType], this.settings.cashTradeTypeCode, behaviorCodeById,
         );
         if (type.unknown) {
-          // ⚠️ 读不到判据 ≠ 不符合判据 ⇒ **照进**（宁可多显示一笔，也不让一笔未收款消失）；汇总记 warn。
-          warnings.tradeTypeUnreadable.payments.push({
-            payment_record_id: payment.record_id,
-            trade_type_field: paymentFields.tradeType || '',
+          this.noteTradeTypeUnreadable(warnings, 'details', {
+            detail_record_id: detail.record_id,
+            trade_type_field: detailFields.tradeType || '',
           });
-        } else if (!type.match) {
-          // 读得到、判据不匹配（例：`SALE_PREPAID` = 预定那笔）⇒ **真的**不进【现货未收】；记 info 便于对账。
-          logInfo('sales.pending_deal_push.candidate.payment_skipped', {
-            payment_record_id: payment.record_id,
+          return true;
+        }
+        if (!type.match) {
+          // 读得到、判据不匹配（例：`SALE_PREPAID` = 预定那件）⇒ **真的**不进【现货未收】；记 info 便于对账。
+          logInfo('sales.pending_deal_push.candidate.detail_skipped', {
+            detail_record_id: detail.record_id,
             sales_entry_record_id: item.entry.record_id,
             reason: 'trade_type_not_cash',
             trade_type_codes: type.codes,
           });
-          continue;
         }
-        matched = matched || payment;
-      }
-      if (!matched) continue;
-      // ⭐ 聚合单位 = **一张销售单一行**（同一单多条未收款只出一行，金额是合计）。
+        return type.match;
+      });
+      if (!cashDetails.length) continue;
+      // ② **还没收清**（现算待收 ≠ 0；算不出来 ⇒ 也算没清）—— 真的收清了才不进这块
+      if (!this.hasOutstanding(item, context, warnings)) continue;
+      // ⭐ 聚合单位 = **一张销售单一行**（同一单多件 / 多笔只出一行）。
       rows.push({
         rowId: item.entry.record_id,
         salesEntryRecordId: item.entry.record_id,
         criterion: 'delivered_unpaid',
         facts: (item.details || []).map((detail) => facts.get(detail.record_id) || null).filter(Boolean),
-        pendingAmount: this.sumUnpaidAmount(item, context, warnings),
+        pendingAmount: this.pendingAmountOf(item, context, warnings),
         url: '',
       });
     }

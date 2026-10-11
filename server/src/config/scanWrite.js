@@ -99,7 +99,8 @@ const PAYMENT_STATUS = Object.freeze({
   full: readString(process.env, 'SCAN_SALE_PAYMENT_STATUS_FULL', '全付'),
   // 部分付：填"实付多少"，差额补一条【未收款】。
   partial: readString(process.env, 'SCAN_SALE_PAYMENT_STATUS_PARTIAL', '部分付'),
-  // 未付：一个字都不用填，差额补一条【未收款】。
+  // 未付（**默认档**，2026-10-11 晚起）：一个字都不用填 —— **只记货**；
+  // ⚠️ **不再**自动补那条【未收款】（她真机被"资金不齐"卡住之后改的；口径 = "她说欠才算欠"）。
   unpaid: readString(process.env, 'SCAN_SALE_PAYMENT_STATUS_UNPAID', '未付'),
 });
 
@@ -210,13 +211,20 @@ const SALE = Object.freeze({
   //       **不再参与建单**；三档收款的比对**永远只跟"每件实收金额加起来"比**。
   //    ⚠️ **填了就必须 > 0**（0 / 负数照旧拦住）—— 放宽只针对"缺省"。
   // ⭐⭐ **「付款情况」三档**（整单口径）—— 取值定义在上面的 `PAYMENT_STATUS`。
-  //    · `default` = 表单上默认选中的那一档（她：**全付（默认）**）；
+  //    · `default` = 表单上默认选中的那一档；
   //    · `values` = 合法的三档取值（手改表单塞第四种 ⇒ 人话拦住，不静默）；
   //    · `mode`   = **语义键 → 取值**（逻辑里只认 `mode.full` / `mode.partial` / `mode.unpaid`，
   //      **不许拿 `values` 的下标或字面量去比**：改一句话不该改逻辑）。
+  //
+  // 🔴🔴 **2026-10-11 晚（她真机被卡住之后改的，唯一权威）**：默认档 = **「未付」**。
+  //    现场：线上日志 `scan.sale.amount_mismatch payment_status="全付" items_cents=9900
+  //    payments_cents=0`，她的原话「**只有一笔单子，一直提交不了**」—— 根因就是
+  //    **默认档是「全付」**：她只填了实收、没填收款 ⇒ 撞上"全付必须相等"⇒ 被拦住。
+  //    而扫码建单的**真实场景**是"钱通常还没收" ⇒ 默认档必须是 **未付**：
+  //    她不动那个单选框 ⇒ 只记货、钱进**待补充**（与「建单只要货品信息全了就放行」一致）。
   paymentStatus: Object.freeze({
     values: Object.freeze([PAYMENT_STATUS.full, PAYMENT_STATUS.partial, PAYMENT_STATUS.unpaid]),
-    default: PAYMENT_STATUS.full,
+    default: PAYMENT_STATUS.unpaid,
     mode: Object.freeze({
       full: PAYMENT_STATUS.full,
       partial: PAYMENT_STATUS.partial,
@@ -457,6 +465,11 @@ const TEXTS = Object.freeze({
   submittedOrderLine: '销售单号：{orderNo}',
   submittedDetailLine: '明细：{count} 双（每双一行）',
   submittedNextHint: '接着扫下一款就可以开新的一单。',
+  // ⭐⭐ 2026-10-11 晚：她**显式选了「全付」但一笔收款都没填**时给的一句人话。
+  //    ⚠️ **只提示、不拦整单**（按「未付」落库：只记货、钱进待补充）—— 她真机就是被
+  //       "全付必须相等"卡住的；"填了钱才算账"这条不能反过来变成"没填钱就不许记账"。
+  //    ⚠️ 这句话**必须指得出能做的事**（选未付 / 补收款），不是"校验失败"四个字。
+  fullWithoutPaymentsNote: '选「全付」要填收款金额；钱还没收就选「未付」。',
   submittedFundsBody: '收款也记上了，共 {paid} 元。',
   submittedAgainTitle: '这一单已经提交过了',
   submittedAgainBody: '销售单号 {orderNo}，没有重复写入。',
