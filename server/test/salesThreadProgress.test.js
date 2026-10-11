@@ -118,7 +118,7 @@ const threadSale = () => ({
 
 const threadDetail = () => ({
   record_id: 'detail_1',
-  fields: { 销售单号: [SALE_ID], 成交金额: 800, 履约状态: '已交付' },
+  fields: { 销售单号: [SALE_ID], 实收金额: 800, 履约状态: '已交付' },
 });
 
 const makeHarness = ({ gateway, recognizer, secondDelivery } = {}) => {
@@ -230,7 +230,7 @@ test('话题里说「收到微信 500」→ 记到那一笔上（收款明细）
   assert.equal(payments[0].fields['收款金额'], 500);
   assert.equal(payments[0].fields['收款状态'], '已收款');
   assert.deepEqual(payments[0].fields['关联销售单'], [SALE_ID], '必须挂在她说的那一笔销售上');
-  assert.deepEqual(payments[0].fields['交易方式'], ['method_wechat']);
+  assert.deepEqual(payments[0].fields['收款方式'], ['method_wechat']);
   assert.equal(payments[0].fields['交易方向'], '收入');
 
   // ③ 回复回到**同一个话题**（不是私聊、不是主群光秃秃一条）
@@ -249,7 +249,7 @@ test('话题里说「收到微信 500」→ 记到那一笔上（收款明细）
 test('话题里说「那双拿走了」→ 把还没交的明细记成已交付（交付进展）', async () => {
   const gateway = makeGateway({
     entry: threadSale(),
-    details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 成交金额: 800, 履约状态: '未交付' } }],
+    details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 实收金额: 800, 履约状态: '未交付' } }],
   });
   const delivered = [];
   const { service, threads } = makeHarness({ gateway });
@@ -345,7 +345,7 @@ test('群入口（主群、没有话题）：说「收到微信 500」**不走**
 test('话题里说「收到微信 75」→ 把那条「未收款」翻成「已收款」（不新建、有收款时间、无残留）', async () => {
   const gateway = makeGateway({
     entry: threadSale(),
-    details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 成交金额: 230, 履约状态: '已交付' } }],
+    details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 实收金额: 230, 履约状态: '已交付' } }],
     payments: [{ record_id: 'pay_pending', fields: { 关联销售单: [SALE_ID], 收款金额: 75, 收款状态: '未收款' } }],
   });
   const { service, replies, threads } = makeHarness({ gateway });
@@ -364,7 +364,7 @@ test('话题里说「收到微信 75」→ 把那条「未收款」翻成「已�
   const record = gateway.records.paymentRecord.find((row) => row.record_id === 'pay_pending');
   assert.equal(record.fields['收款状态'], '已收款');
   assert.equal(record.fields['收款金额'], 75);
-  assert.deepEqual(record.fields['交易方式'], ['method_wechat']);
+  assert.deepEqual(record.fields['收款方式'], ['method_wechat']);
   assert.ok(record.fields['收款时间'], '必须写收款时间（她的口径：未收款变为已收款，并且有收款时间）');
   assert.equal(record.fields['交易方向'], '收入');
 
@@ -379,7 +379,7 @@ test('话题里说「收到微信 75」→ 把那条「未收款」翻成「已�
 test('多笔未收款占位 / 金额对不上 → 不猜、不写（与工作台补记收款同口径）', async () => {
   const twoPending = makeGateway({
     entry: threadSale(),
-    details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 成交金额: 300, 履约状态: '已交付' } }],
+    details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 实收金额: 300, 履约状态: '已交付' } }],
     payments: [
       { record_id: 'pay_a', fields: { 关联销售单: [SALE_ID], 收款金额: 75, 收款状态: '未收款' } },
       { record_id: 'pay_b', fields: { 关联销售单: [SALE_ID], 收款金额: 75, 收款状态: '未收款' } },
@@ -397,7 +397,7 @@ test('多笔未收款占位 / 金额对不上 → 不猜、不写（与工作台
 
   const mismatch = makeGateway({
     entry: threadSale(),
-    details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 成交金额: 300, 履约状态: '已交付' } }],
+    details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 实收金额: 300, 履约状态: '已交付' } }],
     payments: [{ record_id: 'pay_p', fields: { 关联销售单: [SALE_ID], 收款金额: 155, 收款状态: '未收款' } }],
   });
   const second = makeHarness({ gateway: mismatch });
@@ -431,7 +431,7 @@ test('判据：「成交 / 已完毕 / 搞定 / 好了」是整单完成；带�
 test('话题里说「成交」→ 放行 + 交给成交链路（同时交付+收款），不再静默', async () => {
   const gateway = makeGateway({
     entry: threadSale(),
-    details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 成交金额: 230, 履约状态: '未交付' } }],
+    details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 实收金额: 230, 履约状态: '未交付' } }],
     payments: [{ record_id: 'pay_pending', fields: { 关联销售单: [SALE_ID], 收款金额: 75, 收款状态: '未收款' } }],
   });
   const calls = [];
@@ -524,7 +524,7 @@ test('⭐ 「已完毕」问不出收款方式 → 先把货做掉、再回问�
   const gateway = makeGateway({
     entry: threadSale(),
     // 货还没交（预付单的样子）+ 有一笔待收款：钱货两件都有活。
-    details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 成交金额: 800, 履约状态: '未交付' } }],
+    details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 实收金额: 800, 履约状态: '未交付' } }],
     payments: [{ record_id: 'pay_pending', fields: {
       关联销售单: [SALE_ID], 收款金额: 800, 收款状态: '未收款',
     } }],

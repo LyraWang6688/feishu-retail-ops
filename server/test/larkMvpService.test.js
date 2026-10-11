@@ -1113,7 +1113,7 @@ const accessoryService = (accessoryRows, parsedItem) => {
     references: {},
     posting: {},
     recognizer: {
-      // 整单金额跟着这一件的成交金额走，测试里不必手写两份、也不会互相打架。
+      // 整单金额跟着这一件的实收金额走，测试里不必手写两份、也不会互相打架。
       parseSalesText: async () => ({
         intent: 'sale', items: [parsedItem],
         payments: [{ method: '微信', amount: Number(parsedItem.actual_amount) || 0 }],
@@ -1165,7 +1165,7 @@ test('an accessory name that is not in the table is asked for instead of guessed
 const BELT_TIERS = [39, 49, 79, 99, 119, 128, 139, 159, 189];
 const beltRows = () => BELT_TIERS.map((price) => ({ name: `${price}元腰带`, category: '腰带' }));
 
-test('分类下唯一时直接用它，成交金额以用户说的为准（不是名称里的价）', async () => {
+test('分类下唯一时直接用它，实收金额以用户说的为准（不是名称里的价）', async () => {
   const { store, cards, service } = accessoryService(
     [{ name: '15元鞋油', category: '鞋油' }, { name: '9.9元袜子', category: '袜子' }],
     { kind: 'accessory', accessory_name: '鞋油', quantity: 1, actual_amount: 10 });
@@ -1199,7 +1199,7 @@ test('分类下有多档时，用用户说的金额对到正确那一档', async
   assert.equal(task.draft.items[0].actual_amount, 99);
 });
 
-test('腰带：她说的 119 只用来对档位，成交金额记实收 100（她的真实一单）', async () => {
+test('腰带：她说的 119 只用来对档位，实收金额记实收 100（她的真实一单）', async () => {
   // 解析层已经把「119 的腰带，是收到了 100 元微信」定成
   // actual_amount=100（她说收到的钱）+ tier_price=119（对档位用的价位）。
   const { store, cards, service } = accessoryService(beltRows(),
@@ -1214,7 +1214,7 @@ test('腰带：她说的 119 只用来对档位，成交金额记实收 100（�
   assert.equal(task.status, 'ready_to_confirm');
   // 119 那一档在 BELT_TIERS 里排第 5（索引 4）：档位靠 tier_price 对上（100 不是任何一档）。
   assert.equal(task.draft.items[0].accessory_record_id, 'acc_4');
-  // 成交金额是实收 100，不是 119。
+  // 实收金额是实收 100，不是 119。
   assert.equal(task.draft.items[0].actual_amount, 100);
   assert.deepEqual(task.draft.missing_fields, []);
   assert.equal(cards.length, 1);
@@ -1286,7 +1286,7 @@ test('分类唯一时即使用户没给金额也能定位到配品（金额另�
   const task = await store.get('sale_acc_no_amount');
   // 配品本身定位到了；缺金额是整单原本就有的追问，与配品匹配无关。
   assert.equal(task.draft.items[0].accessory_record_id, 'acc_0');
-  assert.ok(task.draft.missing_fields.some((field) => field.includes('请逐件说明成交金额')),
+  assert.ok(task.draft.missing_fields.some((field) => field.includes('请逐件说明实收金额')),
     `实际：${JSON.stringify(task.draft.missing_fields)}`);
 });
 
@@ -1346,7 +1346,7 @@ test('配品改按分类匹配后，鞋仍然按「货号+尺码」走实时库�
 // 她本人的澄清（逐字）：
 //   「其实是这笔一共成交 400 元，鞋是 260 元，腰带是 140 元，为什么理解不了呢？」
 //
-// 这一条钉的是**改前的错法**：整单实收 400 被当成鞋的成交金额、140 又被数成第二笔付款
+// 这一条钉的是**改前的错法**：整单实收 400 被当成鞋的实收金额、140 又被数成第二笔付款
 // ⇒ 各件之和 540 ≠ 总额 400。口径：**对不上就走缺项追问、不入账**，
 // 绝不许静默按错数写账（也不许按标价分摊去凑）。
 test('真机错法（鞋 400 + 腰带 140 ⇒ 合计 540 ≠ 总额 400）：只回一句"对不上"的追问，绝不出发确认卡片', async () => {
@@ -2080,7 +2080,7 @@ test('没问题能独立成句时，用完整的补充说明（缺货已不再�
     references: {}, posting: {},
     recognizer: {
       parseSalesText: async () => normalizeSalesResult({ intent: 'sale', behavior_code: 'SALE_CASH',
-        // 两件都**没写各自成交金额**（整单给了金额，但不许分摊猜测）—— 这类问题只有完整说明那一支。
+        // 两件都**没写各自实收金额**（整单给了金额，但不许分摊猜测）—— 这类问题只有完整说明那一支。
         items: [
           { item_no: '26632', color: '黑', size: 37, quantity: 1 },
           { item_no: '26632', color: '黑', size: 36, quantity: 1 },
@@ -2101,11 +2101,11 @@ test('没问题能独立成句时，用完整的补充说明（缺货已不再�
 
   await service.processSalesTask('sale_mixed');
 
-  // 2026-10-07 文案改版：原来这里匹配的是**机器清单那句**「请逐件说明成交金额」；
+  // 2026-10-07 文案改版：原来这里匹配的是**机器清单那句**「请逐件说明实收金额」；
   // 现在那件事与 `items[i].actual_amount` 合并成**一句人话**（还把两双都点出来）。
   // ⚠️ 这是**收严**不是放宽：原来只匹配 6 个字，现在逐字钉住整句（含两个货号），
   //    并额外钉住"不许漏代码标识符 / 不许用「；」串句"。
-  assert.match(messages[0], /请给每双鞋都说一个成交金额：26632 37码、26632 36码/);
+  assert.match(messages[0], /请给每双鞋都说一个实收金额：26632 37码、26632 36码/);
   assert.match(messages[0], /销售信息还缺/, '夹杂别的问题时仍用完整说明');
   assert.doesNotMatch(messages[0], /items\[\d+\]|payments\[\d+\]|_[a-z]+/, '不许漏代码标识符');
   assert.doesNotMatch(messages[0], /；/, '不许用「；」把几件事串成一段');
@@ -2619,7 +2619,7 @@ test('预定单（库里没有）：卡片三段显示「类型：预定 / 履�
   const counters = { delivered: 0 };
   const service = tradeTypeService({ store, cards, updates, counters, rows: [],
     // ⚠️ 必须把**她原话**一起给归一化层：资金口径现在只看"钱"的词
-    //    （`定金`/`尾款`…），没有原话就会把"收到的那笔钱"当成成交金额。
+    //    （`定金`/`尾款`…），没有原话就会把"收到的那笔钱"当成实收金额。
     parsed: (text) => normalizeSalesResult({
       intent: 'sale', trade_type: '预定',
       items: [{ item_no: '26632', color: '黑', size: 37, quantity: 1, actual_amount: 240 }],

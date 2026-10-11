@@ -1716,7 +1716,7 @@ class LarkMvpService {
     const items = [];
     for (const [index, item] of (parsed.items?.length ? parsed.items : [parsed]).entries()) {
       const itemQuantity = Number(item.quantity || 1);
-      const quantityIssue = `第${index + 1}件请逐双列出成交金额；每条销售明细只能记录一双`;
+      const quantityIssue = `第${index + 1}件请逐双列出实收金额；每条销售明细只能记录一双`;
       if (itemQuantity !== 1 && !missingFields.includes(quantityIssue)) missingFields.push(quantityIssue);
       // ── ⭐ 逐明细的交易类型（业务负责人 2026-10-07 口径大改）──────────────────────
       //   「【类型 = 只看库存】库存里有这双 → 现货；库存里没有 → 预定」
@@ -1728,7 +1728,7 @@ class LarkMvpService {
         // 为什么不能只按名称精确匹配：表里叫「15元鞋油」，用户说的是「鞋油」，
         // 精确匹配必然失败，于是"配品明明有，系统却说没有"。
         // 用**她说的价位**（tier_price）去对多档（腰带 9 档）里是哪一条记录：
-        // 这个价位只用于定位记录，**不是成交金额**（119 的腰带收了 100，成交就是 100）。
+        // 这个价位只用于定位记录，**不是实收金额**（119 的腰带收了 100，成交就是 100）。
         // 她说价位时模型放在 tier_price 里；只说了一个数（老形状）时退回 actual_amount，
         // 后者在解析层已被换成实收，所以优先 tier_price。
         const spoken = String(item.accessory_name || '').trim();
@@ -1893,20 +1893,20 @@ class LarkMvpService {
     const productInfoGaps = this.productInfoGapsFromIndex(items, productIndex);
 
     const actualTotal = Math.round(items.reduce((sum, item) => sum + Number(item.actual_amount || 0), 0) * 100) / 100;
-    if (!parsed.voucher_policy_blocked && items.some((item) => !Number(item.actual_amount))) missingFields.push('请逐件说明成交金额');
+    if (!parsed.voucher_policy_blocked && items.some((item) => !Number(item.actual_amount))) missingFields.push('请逐件说明实收金额');
     if (parsed.agreed_total && Math.abs(actualTotal - Number(parsed.agreed_total)) > 0.005) {
-      missingFields.push('逐件成交金额合计与整单成交金额不一致');
+      missingFields.push('逐件实收金额合计与整单实收金额不一致');
     }
     // ⭐⭐ 两件事**必须分开**（业务负责人 2026-10-07 22:59 真机）：
     //   ① **成交额没解析出来**（`actualTotal` 还是 0）⇒ **绝不许**报"已收比成交额多" ——
     //      成交额压根是空的，那句话在她那儿是**误导**（她看到会莫名其妙）；
-    //      这种情况该问的是"这单成交金额是多少"，而那句由**解析层**给
+    //      这种情况该问的是"这单实收金额是多少"，而那句由**解析层**给
     //      （`config/salesDepositTerms.SALES_DEPOSIT_TOTAL_UNKNOWN`，只说了定金、没说尾款时）/
-    //      由上面第 1799 行的「请逐件说明成交金额」给（每件都还没金额时）。
+    //      由上面第 1799 行的「请逐件说明实收金额」给（每件都还没金额时）。
     //   ② **真的已收 > 成交额**（成交额**有值**且确实小于已收）⇒ 才用现在这句（收严哨兵）。
     const coveredAmount = Number(parsed.total_covered ?? parsed.total_paid ?? 0);
     if (!parsed.voucher_policy_blocked && actualTotal > 0 && coveredAmount > actualTotal) {
-      missingFields.push('已收金额和待平台结算金额不能超过本单成交金额');
+      missingFields.push('已收金额和待平台结算金额不能超过本单实收金额');
     }
 
     // ⭐ 类型的判据是**实时库存**（上面每一条明细各查了一次），**交付状态由类型推出来**

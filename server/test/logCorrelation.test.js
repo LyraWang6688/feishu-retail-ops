@@ -522,7 +522,7 @@ test('成交链路：收款明细的写入日志带 sales_entry_record_id ＋ or
   const world = makeWorld();
   world.records.set('salesDetail', [{ record_id: 'detail_1', fields: {
     销售单号: ['rec_sale'], 编号: ['product_rec'], 尺码: ['size_40'],
-    成交金额: 220, 履约状态: '已交付', 赠品: '',
+    实收金额: 220, 履约状态: '已交付', 赠品: '',
   } }]);
   world.records.set('paymentRecord', [{ record_id: 'receipt_1', fields: {
     关联销售单: ['rec_sale'], 收款金额: 220, 收款状态: '未收款',

@@ -408,7 +408,7 @@ const saleFormHtml = (view, write) => {
   const t = write.texts;
   const fields = write.fields;
   const lines = write.draft?.lines || [];
-  // ⭐ 2026-10-11（B）：配品行**单独占一行**（`配品` 有值、编号/尺码留空、成交金额单列）——
+  // ⭐ 2026-10-11（B）：配品行**单独占一行**（`配品` 有值、编号/尺码留空、实收金额单列）——
   //    本单里那一行就按"它有没有配品关联"来画（渲染层**不写** `'accessory'` 这种 kind 字面量）。
   const draftLineText = (line) => (line.accessory_record_id
     ? fillText(t.draftAccessoryItem, { name: line.accessory_name || '' })
@@ -417,7 +417,7 @@ const saleFormHtml = (view, write) => {
     ? `<ul class="draft-list">${lines.map((line) => `<li>${escapeHtml(draftLineText(line))}</li>`).join('')}</ul>`
     : `<p class="hint">${escapeHtml(t.draftEmpty)}</p>`;
   const sizeInput = sizeGroupsHtml(view, write);
-  // ⭐ 配品表单（B）：下拉选「其他配品」的名称 + **成交金额单列** + 备注（可为空）。
+  // ⭐ 配品表单（B）：下拉选「其他配品」的名称 + **实收金额单列** + 备注（可为空）。
   //    ⚠️ 一件配品都没有时**不画这个表单**（不留一个只有"不加配品"的死下拉）。
   const accessories = Array.isArray(write.accessories) ? write.accessories : [];
   const accessoryOptions = accessories

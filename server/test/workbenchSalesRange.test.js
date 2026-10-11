@@ -17,7 +17,7 @@ const gatewayFor = (records) => ({
 });
 const sale = (id, iso, amount) => ({
   record_id: id,
-  fields: { 编号: ['p1'], 尺码: ['size_38'], 销售单号: ['o1'], 销售日: day(iso), 成交金额: amount },
+  fields: { 编号: ['p1'], 尺码: ['size_38'], 销售单号: ['o1'], 销售日: day(iso), 实收金额: amount },
 });
 const FIXTURE = {
   salesDetail: [sale('d1', '2026-09-01', 100), sale('d2', '2026-09-05', 200), sale('d3', '2026-09-10', 300)],

@@ -66,20 +66,20 @@ const seed = () => ({
   salesDetail: [
     {
       record_id: 'detail_old_1',
-      fields: { 销售单号: ['order_old'], 编号: ['product_A'], 尺码: ['size_41'], 成交金额: 250, 履约状态: '已交付' },
+      fields: { 销售单号: ['order_old'], 编号: ['product_A'], 尺码: ['size_41'], 实收金额: 250, 履约状态: '已交付' },
     },
     {
       record_id: 'detail_old_2',
-      fields: { 销售单号: ['order_old'], 配品: ['accessory_belt'], 成交金额: 30, 履约状态: '已交付' },
+      fields: { 销售单号: ['order_old'], 配品: ['accessory_belt'], 实收金额: 30, 履约状态: '已交付' },
     },
     {
       record_id: 'detail_old_3',
-      fields: { 销售单号: ['order_old'], 编号: ['product_B'], 尺码: ['size_42'], 成交金额: 300, 履约状态: '已交付' },
+      fields: { 销售单号: ['order_old'], 编号: ['product_B'], 尺码: ['size_42'], 实收金额: 300, 履约状态: '已交付' },
     },
   ],
   paymentRecord: [{
     record_id: 'pay_old_1',
-    fields: { 关联销售单: ['order_old'], 交易方式: ['method_wechat'], 收款金额: 280, 收款状态: '已收款' },
+    fields: { 关联销售单: ['order_old'], 收款方式: ['method_wechat'], 收款金额: 280, 收款状态: '已收款' },
   }],
   liveInventory: [
     { record_id: 'live_A_41', fields: { 编号: ['product_A'], 尺码: ['size_41'], 所属状态: '门盒' } },
@@ -313,13 +313,13 @@ test('退货（cash 退款）· 她的口径：原收款记录改成「已退款
   assert.equal(masters[0].fields['库存状态'], '已写入');
   assert.deepEqual(masters[0].fields['交易类型'], ['behavior_return']);
 
-  // 2) 新「销售明细」：交易类型=行为 · 销售单号=原主表 · 成交金额=正数
+  // 2) 新「销售明细」：交易类型=行为 · 销售单号=原主表 · 实收金额=正数
   const details = detailRows(gateway);
   assert.equal(details.length, 1);
   assert.deepEqual(details[0].fields['销售单号'], ['order_old']);
   assert.deepEqual(details[0].fields['编号'], ['product_A']);
   assert.deepEqual(details[0].fields['尺码'], ['size_41']);
-  assert.equal(details[0].fields['成交金额'], 250);
+  assert.equal(details[0].fields['实收金额'], 250);
   assert.deepEqual(details[0].fields['交易类型'], ['behavior_return']);
   // 退货的复制行**不写**履约状态（"退回来的那双"由**原明细行=已退货**表达）
   assert.equal(details[0].fields['履约状态'], undefined);
@@ -333,12 +333,12 @@ test('退货（cash 退款）· 她的口径：原收款记录改成「已退款
   assert.deepEqual(result.originalDetailIdsMarked, ['detail_old_1']);
 
   // 4) 钱（**她的口径**）：**一笔新收款记录都不建**；原收款行的状态 已收款 → 已退款；
-  //    金额/方向/交易方式/关联销售单**一个字节都不改**（她的口径只说"把收款改成已退款"）。
+  //    金额/方向/收款方式/关联销售单**一个字节都不改**（她的口径只说"把收款改成已退款"）。
   assert.deepEqual(paymentRows(gateway), [], '退货不许新建收款记录');
   const originalPayment = rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1');
   assert.equal(originalPayment.fields['收款状态'], '已退款');
   assert.deepEqual(originalPayment.fields, {
-    关联销售单: ['order_old'], 交易方式: ['method_wechat'], 收款金额: 280, 收款状态: '已退款',
+    关联销售单: ['order_old'], 收款方式: ['method_wechat'], 收款金额: 280, 收款状态: '已退款',
   });
   assert.equal(result.money.route, 'originalPaymentStatus');
   assert.equal(result.money.status, '已退款');
@@ -418,7 +418,7 @@ test('⭐ 退货收款旧行为保留：returnFundsMode=newReturnRow → 新建�
   // ⚠️ 回退模式下状态用**旧口径**（已收款）——不然"翻开关回退"就不是真的回退。
   assert.equal(payments[0].fields['收款状态'], '已收款');
   assert.deepEqual(payments[0].fields['关联销售单'], [masterRows(gateway)[0].record_id]);
-  assert.deepEqual(payments[0].fields['交易方式'], ['method_wechat']);
+  assert.deepEqual(payments[0].fields['收款方式'], ['method_wechat']);
   assert.equal(result.money.route, 'cash');
   // 原收款行**不动**
   assert.equal(
@@ -522,19 +522,19 @@ test('总闸门按请求指纹认人：同一次分片里塞另一笔售后 → 
 });
 
 // ⭐ 业务负责人 2026-10-06 拍板（AGENTS.md 第 16 条(2)）：
-//   「钱退现金」→ 退款记录的「交易方式」写**她实际说的方式**，不沿用原单。
+//   「钱退现金」→ 退款记录的「收款方式」写**她实际说的方式**，不沿用原单。
 //
 // ⚠️ 2026-10-08 起这条只对**新建收款行**那条腿（换货/赔货的差价、以及回退模式下的退货）成立：
-//    退货默认走"改原收款状态"，那条腿**不写交易方式**（她的口径只说改状态）——
-//    见下面「退货她的口径下不写交易方式」那条用例（**这是与 AGENTS.md 第 16 条(2) 的已知冲突**）。
-test('⭐ 她说了「退我现金」（回退模式 newReturnRow）→ 新建的收款行交易方式写**现金**', async () => {
+//    退货默认走"改原收款状态"，那条腿**不写收款方式**（她的口径只说改状态）——
+//    见下面「退货她的口径下不写收款方式」那条用例（**这是与 AGENTS.md 第 16 条(2) 的已知冲突**）。
+test('⭐ 她说了「退我现金」（回退模式 newReturnRow）→ 新建的收款行收款方式写**现金**', async () => {
   const { gateway, service } = build({ config: { returnFundsMode: 'newReturnRow' } });
   // 原单的收款方式是微信（seed 里 pay_old_1 = method_wechat），她说的是现金。
   const result = await service.execute(request({ paymentMethod: '现金', originalText: '把那双 A100 退了，退我现金' }));
 
   const payments = paymentRows(gateway);
   assert.equal(payments.length, 1);
-  assert.deepEqual(payments[0].fields['交易方式'], ['method_cash'],
+  assert.deepEqual(payments[0].fields['收款方式'], ['method_cash'],
     '写她说的现金，不是原单的微信');
   assert.equal(result.money.methodSource, 'spoken', '来源要说清是"她说的"');
   assert.equal(result.money.methodId, 'method_cash');
@@ -546,11 +546,11 @@ test('⭐ 退货（她的默认口径）：她说的收款方式**不写进任�
     paymentMethod: '现金', originalText: '把那双 A100 退了，退我现金',
   }));
 
-  // 不新建记录；原收款行的「交易方式」一个字节都不改（她的口径只说改状态）。
+  // 不新建记录；原收款行的「收款方式」一个字节都不改（她的口径只说改状态）。
   assert.deepEqual(paymentRows(gateway), []);
   const originalPayment = rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1');
-  assert.deepEqual(originalPayment.fields['交易方式'], ['method_wechat'],
-    '原收款行的交易方式是历史事实，不许被这次售后再写一遍');
+  assert.deepEqual(originalPayment.fields['收款方式'], ['method_wechat'],
+    '原收款行的收款方式是历史事实，不许被这次售后再写一遍');
   // 但她说过什么必须留痕（结果 + 日志里都有），排查"钱到底怎么退的"能看到。
   assert.equal(result.money.declaredMethodId, 'method_cash');
   assert.equal(result.money.methodSource, 'spoken');
@@ -562,7 +562,7 @@ test('⭐ 她没说收款方式（回退模式 newReturnRow）→ 沿用原单�
   const result = await service.execute(request({ paymentMethod: '', originalText: '把那双 A100 退了' }));
 
   const payments = paymentRows(gateway);
-  assert.deepEqual(payments[0].fields['交易方式'], ['method_wechat'], '她没说 → 沿用原单的微信');
+  assert.deepEqual(payments[0].fields['收款方式'], ['method_wechat'], '她没说 → 沿用原单的微信');
   assert.equal(result.money.methodSource, 'original');
   assert.equal(result.money.methodId, 'method_wechat');
 });
@@ -734,7 +734,7 @@ test('换货：旧鞋回库 + 新鞋出门盒，两条流水方向相反且数�
   assert.equal(details.length, 1);
   assert.deepEqual(details[0].fields['编号'], ['product_B']);
   assert.deepEqual(details[0].fields['尺码'], ['size_42']);
-  assert.equal(details[0].fields['成交金额'], 300);
+  assert.equal(details[0].fields['实收金额'], 300);
   assert.deepEqual(details[0].fields['交易类型'], ['behavior_exchange']);
   assert.deepEqual(details[0].fields['销售单号'], ['order_old']);
 
@@ -793,10 +793,10 @@ test('⭐ 换货「我们付差价」（退回）→ 新建的收款行状态 = 
 
 // ⭐⭐ 2026-10-08 赔付口径（业务负责人**逐字**，权威；出处 docs/goods-and-money-flows-2026-10-08.md §2）：
 //   「**赔付**：如果是赔货，我们就**直接在销售明细里面创建一个赔付对应颜色和编号、尺码**的信息，
-//    **成交金额记为 0**，**标记为赔货**」
+//    **实收金额记为 0**，**标记为赔货**」
 // ⇒ 赔出去的那双新建一条明细行：编号/尺码 = 赔的那双（颜色由「编号」关联的货品自带）、
-//    **成交金额 = 0**、**履约状态 = 已赔货**。
-test('赔货 · 她的口径：新建明细行 成交金额=0 + 履约状态=已赔货；坏鞋不回库，不动钱', async () => {
+//    **实收金额 = 0**、**履约状态 = 已赔货**。
+test('赔货 · 她的口径：新建明细行 实收金额=0 + 履约状态=已赔货；坏鞋不回库，不动钱', async () => {
   const { gateway, service } = build();
   await service.execute(request({
     action: 'compensation',
@@ -811,9 +811,9 @@ test('赔货 · 她的口径：新建明细行 成交金额=0 + 履约状态=已
   assert.equal(details.length, 1);
   assert.deepEqual(details[0].fields['编号'], ['product_B']);
   assert.deepEqual(details[0].fields['交易类型'], ['behavior_compensation']);
-  // ⭐ 赔货的成交金额 = 0（口径逐字），**不是**新鞋的挂牌价 300；
+  // ⭐ 赔货的实收金额 = 0（口径逐字），**不是**新鞋的挂牌价 300；
   //    挂牌价只在调用方算差价时用，绝不写进明细行（那会凭空多一笔销售额）。
-  assert.equal(details[0].fields['成交金额'], 0);
+  assert.equal(details[0].fields['实收金额'], 0);
   // ⭐ 赔出去的那双「履约状态」= 已赔货。
   assert.equal(details[0].fields['履约状态'], AFTER_SALES_FULFILLMENT.COMPENSATED);
   assert.equal(details[0].fields['履约状态'], '已赔货');
@@ -872,7 +872,7 @@ test('换货：新换出去的那条明细「履约状态」= 已交付（原那
   assert.deepEqual(details[0].fields['销售单号'], ['order_old']);
   assert.deepEqual(details[0].fields['编号'], ['product_B']);
   assert.deepEqual(details[0].fields['尺码'], ['size_42']);
-  assert.equal(details[0].fields['成交金额'], 300);
+  assert.equal(details[0].fields['实收金额'], 300);
 });
 
 test('哨兵：**退货**的复制行「履约状态」仍不写（"退回来的那双"由原明细行=已退货表达）', async () => {
@@ -883,7 +883,7 @@ test('哨兵：**退货**的复制行「履约状态」仍不写（"退回来的
   assert.equal(rowsOf(returned.gateway, 'salesDetail')[0].fields['履约状态'], '已退货');
 });
 
-test('配置先行：三个动作各自声明新明细行的「履约状态」与「成交金额」（不在执行器里写死）', () => {
+test('配置先行：三个动作各自声明新明细行的「履约状态」与「实收金额」（不在执行器里写死）', () => {
   assert.equal(AFTER_SALES_FULFILLMENT.DELIVERED, '已交付');
   assert.equal(AFTER_SALES_FULFILLMENT.COMPENSATED, '已赔货');
   // 换货：新换出去的那双 = 已交付；金额用调用方给的（配置里**不**声明固定金额）。
@@ -892,7 +892,7 @@ test('配置先行：三个动作各自声明新明细行的「履约状态」�
     AFTER_SALES_FULFILLMENT.DELIVERED,
   );
   assert.equal(AFTER_SALES_ACTION_SPECS.exchange.newLineAmount, undefined);
-  // 赔货：赔出去的那双 = 已赔货，且**成交金额固定 0**（她的口径逐字）。
+  // 赔货：赔出去的那双 = 已赔货，且**实收金额固定 0**（她的口径逐字）。
   assert.equal(
     AFTER_SALES_ACTION_SPECS.compensation.newLineFulfillmentStatus,
     AFTER_SALES_FULFILLMENT.COMPENSATED,
@@ -985,7 +985,7 @@ const addOriginalPayment = (gateway, { recordId, amount, status = '已收款', c
   gateway.records.get('paymentRecord').push({
     record_id: recordId,
     fields: {
-      关联销售单: ['order_old'], 交易方式: ['method_cash'], 收款金额: amount, 收款状态: status, 创建时间: createdAt,
+      关联销售单: ['order_old'], 收款方式: ['method_cash'], 收款金额: amount, 收款状态: status, 创建时间: createdAt,
     },
   });
   return recordId;
@@ -1201,7 +1201,7 @@ test('原明细是配品：只记明细行，不写库存流水 / 实时库存�
   assert.equal(details.length, 1);
   assert.deepEqual(details[0].fields['配品'], ['accessory_belt']);
   assert.equal(details[0].fields['尺码'], undefined);
-  assert.equal(details[0].fields['成交金额'], 30);
+  assert.equal(details[0].fields['实收金额'], 30);
   assert.equal(rowsOf(gateway, 'inventoryLedger').length, 0);
   assert.equal(liveRows(gateway).length, 0);
   assert.equal(inventory.calls.length, 0);

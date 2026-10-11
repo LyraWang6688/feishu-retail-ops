@@ -247,15 +247,15 @@ test('AC-C6 listOrders 明细带 kind/requires_size/color/accessory；配品行�
     salesDetail: [
       // 鞋：未交付（待交付 +1）
       { record_id: 'detail_shoe', fields: {
-        销售单号: ['order_1'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '未交付', 成交金额: 89,
+        销售单号: ['order_1'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '未交付', 实收金额: 89,
       } },
       // 配品：已交付（既有口径）—— **不许**进待交付
       { record_id: 'detail_acc', fields: {
-        销售单号: ['order_1'], 配品: ['acc_oil'], 履约状态: '已交付', 成交金额: 15,
+        销售单号: ['order_1'], 配品: ['acc_oil'], 履约状态: '已交付', 实收金额: 15,
       } },
     ],
     sizeManagement: [{ record_id: 'size_38', fields: { 尺码: 38 } }],
-    paymentRecord: [{ record_id: 'receipt_1', fields: { 关联销售单: ['order_1'], 收款金额: 50, 收款状态: '已收款', 交易方式: ['method_1'] } }],
+    paymentRecord: [{ record_id: 'receipt_1', fields: { 关联销售单: ['order_1'], 收款金额: 50, 收款状态: '已收款', 收款方式: ['method_1'] } }],
     paymentMethod: [{ record_id: 'method_1', fields: { 收款方式: '微信' } }],
     product: [{ record_id: 'product_1', fields: { 编号: 'XHB8095', 货号: 'XHB8095', 颜色: { text: '黑色' } } }],
     accessory: [{ record_id: 'acc_oil', fields: { 名称: '15元鞋油', 单价: 15 } }],
@@ -290,7 +290,7 @@ test('AC-C6b 「其他配品」表没配置 ⇒ 订单列表照常出得来（�
   const records = {
     salesEntry: [{ record_id: 'order_1', fields: { 资金状态: '已写入', 销售单号: 'XSD-NOACC' } }],
     salesDetail: [{ record_id: 'detail_acc', fields: {
-      销售单号: ['order_1'], 配品: ['acc_oil'], 履约状态: '已交付', 成交金额: 15,
+      销售单号: ['order_1'], 配品: ['acc_oil'], 履约状态: '已交付', 实收金额: 15,
     } }],
     sizeManagement: [],
     paymentRecord: [],

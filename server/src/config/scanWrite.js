@@ -22,7 +22,7 @@
  *   · 扫码入口：收款方式**默认选中「微信」**（可改）—— 她在手机页面上是"填表"，
  *     预设一个最常用的默认值能少点一次；
  *   · 群聊入口：**逐字不变** —— 那里仍然是「**用户说了才算、不预设**」
- *     （业务负责人 2026-10-06 的原话：「**不会，用户会说到交易方式的！**」，见 AGENTS.md 第 16 条）。
+ *     （业务负责人 2026-10-06 的原话：「**不会，用户会说到收款方式的！**」，见 AGENTS.md 第 16 条）。
  *   ⚠️ 这条默认值**只在扫码页的表单上**，`larkMvpService` / `salesThreadProgressService`
  *     一个字都不许因此改动 —— 两边的口径本来就是**故意不同**的。
  *
@@ -123,7 +123,7 @@ const SALE = Object.freeze({
   // 否则写收款明细时会大声报"收款方式管理中找不到：X"）。第一项 = 默认选中项。
   paymentMethods: readList(process.env, 'SCAN_SALE_PAYMENT_METHODS')
     || ['微信', '现金', '支付宝', '银行卡'],
-  // 成交金额留空时的兜底：用「货品信息.单价」（她"钱可以先不填"）。
+  // 实收金额留空时的兜底：用「货品信息.单价」（她"钱可以先不填"）。
   // 取不到单价 → 明确让她填（**不猜、不写 0**）。
   amountFallback: readString(process.env, 'SCAN_SALE_AMOUNT_FALLBACK', 'product_price'),
   // 主表「原话」那一列：扫码来的单也留一句人话（谁、扫了什么、几双）。
@@ -144,7 +144,7 @@ const SALE = Object.freeze({
   // 金额文本框允许的小数位（两位 = 分）。
   amountDecimals: readInt(process.env, 'SCAN_SALE_AMOUNT_DECIMALS', 2, { min: 0, max: 2 }),
   // 「失败原因要不要原样给她看」的闸门：业务层抛出来的中文业务话（例：
-  // 「本次收款超过本单成交金额」「尺码管理中找不到 41 码」）是**可以给她看**的 ——
+  // 「本次收款超过本单实收金额」「尺码管理中找不到 41 码」）是**可以给她看**的 ——
   // 她照着改一下就能再提交。但**内部错误**（飞书错误码 / 表名字段名 / 配置缺失）
   // 一律不许出现在页面上（第一版只读页那条规矩照旧：内部细节不回显）。
   // ⇒ 命中下面任一标记的错误 → 页面只给配置好的通用人话，原文只进日志。
@@ -206,7 +206,7 @@ const TEXTS = Object.freeze({
   draftEmpty: '还没加入任何一双：选好尺码，点「加入本单」。',
   sizeLabel: '尺码',
   sizePlaceholder: '选尺码',
-  amountLabel: '成交金额（可不填）',
+  amountLabel: '实收金额（可不填）',
   amountPlaceholder: '留空按货品单价',
   // ⭐ 2026-10-11（B）：她的口径是「**备注**」——落点是**销售主表.「赠品」**（文本列，
   //    见 docs/sales-order-states-and-gifts-2026-10-09.md 第四节）。
@@ -215,11 +215,11 @@ const TEXTS = Object.freeze({
   addButton: '加入本单',
   // ── ⭐ 2026-10-11（B）：配品（单独一行销售明细；不是校验项）────────────────
   //    「配品」选的是「其他配品」表里的**名称**；选中后它是**独立的一行销售明细**：
-  //    `配品` 有值、`编号`/`尺码` 留空、**成交金额单列**。
+  //    `配品` 有值、`编号`/`尺码` 留空、**实收金额单列**。
   accessoryLabel: '配品',
   // 不选配品时下拉里的那一项（空 value = 不加这一行）。
   accessoryPlaceholder: '不加配品',
-  accessoryAmountLabel: '配品成交金额（可不填）',
+  accessoryAmountLabel: '配品实收金额（可不填）',
   accessoryAmountPlaceholder: '留空按配品单价',
   accessoryAddedBanner: '已加入本单（{count} 项）',
   submitButton: '提交这一单',
@@ -257,7 +257,7 @@ const TEXTS = Object.freeze({
   // ── 失败（都要在**页面上**说清楚，不许只写日志）──────────────────────────
   failedTitle: '这一步没成功',
   failedRetryHint: '可以照上面那句话改一下再点一次；反复失败请把这一页截图发给运营。',
-  // 业务层抛出来的中文业务话原样给她看（例：「本次收款超过本单成交金额」）。
+  // 业务层抛出来的中文业务话原样给她看（例：「本次收款超过本单实收金额」）。
   businessFailedBody: '没提交成功：{reason}',
   // 命中 `sale.unsafeErrorMarkers` 的内部错误：只给这一句，原文只进日志。
   internalFailedBody: '刚才是系统这边没处理成功，请再点一次；反复失败请把这一页截图发给运营。',
@@ -268,14 +268,14 @@ const TEXTS = Object.freeze({
   sessionExpiredBody: '这一页放太久了，本单已经过期：请刷新这一页重新加入。',
   sizeMissingBody: '请先选一个尺码。',
   sizeUnknownBody: '这个尺码不在「尺码管理」里，请刷新这一页重新选。',
-  amountInvalidBody: '成交金额要填数字（例：399 或 399.5）。',
-  amountMissingBody: '「{itemNo}」在「货品信息」里没有单价，请填一下成交金额再提交。',
+  amountInvalidBody: '实收金额要填数字（例：399 或 399.5）。',
+  amountMissingBody: '「{itemNo}」在「货品信息」里没有单价，请填一下实收金额再提交。',
   // ── 配品（B）：三条人话 ────────────────────────────────────────────────────
   // ⚠️ 配品**不是校验项**（不选不报错）；下面两句只在"选了配品但缺东西"时才出现。
   accessoryMissingBody: '请先选一件配品。',
   accessoryUnknownBody: '这件配品不在「其他配品」里，请刷新这一页重新选。',
-  accessoryAmountInvalidBody: '配品成交金额要填数字（例：39 或 39.9）。',
-  accessoryAmountMissingBody: '「{name}」在「其他配品」里没有单价，请填一下配品成交金额再提交。',
+  accessoryAmountInvalidBody: '配品实收金额要填数字（例：39 或 39.9）。',
+  accessoryAmountMissingBody: '「{name}」在「其他配品」里没有单价，请填一下配品实收金额再提交。',
   paymentAmountInvalidBody: '这次收款金额要填数字（例：100 或 100.5）。',
   quantityInvalidBody: '数量要填 1 ~ {max} 之间的整数。',
   replenishNoneBody: '至少要勾一个要补的尺码。',

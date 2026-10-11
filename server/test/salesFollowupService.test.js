@@ -8,12 +8,12 @@ test('workbench groups pending payment and delivery by one sales order', async (
     salesEntry: [{ record_id: 'order_1', fields: { '资金状态': '已写入', 销售单号: 'XSD-001' } }],
     // 尺码已改为关联「尺码管理」：夹具用关联 ID，并让假网关能查到尺码表。
     salesDetail: [
-      { record_id: 'detail_1', fields: { 销售单号: ['order_1'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 成交金额: 89 } },
-      { record_id: 'detail_2', fields: { 销售单号: ['order_1'], 编号: ['product_2'], 尺码: ['size_39'], 履约状态: '未交付', 成交金额: 59 } },
-      { record_id: 'detail_3', fields: { 销售单号: ['order_1'], 编号: ['product_3'], 尺码: ['size_40'], 履约状态: '未交付', 成交金额: 39 } },
+      { record_id: 'detail_1', fields: { 销售单号: ['order_1'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 89 } },
+      { record_id: 'detail_2', fields: { 销售单号: ['order_1'], 编号: ['product_2'], 尺码: ['size_39'], 履约状态: '未交付', 实收金额: 59 } },
+      { record_id: 'detail_3', fields: { 销售单号: ['order_1'], 编号: ['product_3'], 尺码: ['size_40'], 履约状态: '未交付', 实收金额: 39 } },
     ],
     sizeManagement: [38, 39, 40].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } })),
-    paymentRecord: [{ record_id: 'receipt_1', fields: { 关联销售单: ['order_1'], 收款金额: 50, 交易方式: ['method_1'] } }],
+    paymentRecord: [{ record_id: 'receipt_1', fields: { 关联销售单: ['order_1'], 收款金额: 50, 收款方式: ['method_1'] } }],
     paymentMethod: [{ record_id: 'method_1', fields: { 收款方式: '微信' } }],
     product: [1, 2, 3].map((index) => ({ record_id: `product_${index}`, fields: { 编号: `P${index}` } })),
   };
@@ -41,11 +41,11 @@ test('⭐ 原单的收款被售后退货改成「已退款」后，跟进查询�
   const records = {
     salesEntry: [{ record_id: 'order_1', fields: { 资金状态: '已写入', 销售单号: 'XSD-001' } }],
     salesDetail: [
-      { record_id: 'detail_1', fields: { 销售单号: ['order_1'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 成交金额: 89 } },
+      { record_id: 'detail_1', fields: { 销售单号: ['order_1'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 89 } },
     ],
     sizeManagement: [{ record_id: 'size_38', fields: { 尺码: 38 } }],
-    // 退货口径：**原收款行**的状态被改成「已退款」（金额 / 方向 / 交易方式都不动）
-    paymentRecord: [{ record_id: 'receipt_1', fields: { 关联销售单: ['order_1'], 收款金额: 89, 收款状态: '已退款', 交易方式: ['method_1'] } }],
+    // 退货口径：**原收款行**的状态被改成「已退款」（金额 / 方向 / 收款方式都不动）
+    paymentRecord: [{ record_id: 'receipt_1', fields: { 关联销售单: ['order_1'], 收款金额: 89, 收款状态: '已退款', 收款方式: ['method_1'] } }],
     paymentMethod: [{ record_id: 'method_1', fields: { 收款方式: '微信' } }],
     product: [{ record_id: 'product_1', fields: { 编号: 'P1' } }],
   };
@@ -68,12 +68,12 @@ test('⭐ 含「已换货」明细的订单不再让整页查询失败（明细�
     salesEntry: [{ record_id: 'order_1', fields: { 资金状态: '已写入', 销售单号: 'XSD-HH' } }],
     salesDetail: [
       // 原明细行：售后把它改成了「已换货」（config/afterSales 的 originalFulfillmentStatus）
-      { record_id: 'detail_1', fields: { 销售单号: ['order_1'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已换货', 成交金额: 220 } },
+      { record_id: 'detail_1', fields: { 销售单号: ['order_1'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已换货', 实收金额: 220 } },
       // 换出去的新鞋：售后新建的明细行，「履约状态」= 已交付
-      { record_id: 'detail_2', fields: { 销售单号: ['order_1'], 编号: ['product_2'], 尺码: ['size_39'], 履约状态: '已交付', 成交金额: 220 } },
+      { record_id: 'detail_2', fields: { 销售单号: ['order_1'], 编号: ['product_2'], 尺码: ['size_39'], 履约状态: '已交付', 实收金额: 220 } },
     ],
     sizeManagement: [38, 39].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } })),
-    paymentRecord: [{ record_id: 'receipt_1', fields: { 关联销售单: ['order_1'], 收款金额: 440, 收款状态: '已收款', 交易方式: ['method_1'] } }],
+    paymentRecord: [{ record_id: 'receipt_1', fields: { 关联销售单: ['order_1'], 收款金额: 440, 收款状态: '已收款', 收款方式: ['method_1'] } }],
     paymentMethod: [{ record_id: 'method_1', fields: { 收款方式: '微信' } }],
     product: [1, 2].map((index) => ({ record_id: `product_${index}`, fields: { 编号: `P${index}` } })),
   };
@@ -99,8 +99,8 @@ test('⭐ 单条订单数据不自洽时：跳过该单 + 记 warn（含单号�
     ],
     salesDetail: [
       // 预期之外的履约状态（既不是 未交付/已交付，也不是三种售后取值）
-      { record_id: 'detail_bad', fields: { 销售单号: ['order_bad'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已撤单', 成交金额: 100 } },
-      { record_id: 'detail_ok', fields: { 销售单号: ['order_ok'], 编号: ['product_2'], 尺码: ['size_39'], 履约状态: '已交付', 成交金额: 80 } },
+      { record_id: 'detail_bad', fields: { 销售单号: ['order_bad'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已撤单', 实收金额: 100 } },
+      { record_id: 'detail_ok', fields: { 销售单号: ['order_ok'], 编号: ['product_2'], 尺码: ['size_39'], 履约状态: '已交付', 实收金额: 80 } },
     ],
     sizeManagement: [38, 39].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } })),
     paymentRecord: [],

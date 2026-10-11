@@ -108,10 +108,10 @@ const actionLabelOf = (action) => AFTER_SALES_ACTION_LABELS[action] || '售后';
 // ---------------------------------------------------------------------------
 
 // 执行器只认 cash / prepaid（config/afterSales.settlements）：
-//   cash    —— 钱真收/真退：写「收款明细」，交易方式 = **她说的那个**（她没说才沿用原单）
+//   cash    —— 钱真收/真退：写「收款明细」，收款方式 = **她说的那个**（她没说才沿用原单）
 //   prepaid —— 钱存着：写「客户往来货款」，变动类型=退货退款
 // 「微信 / 支付宝」也归 cash：它们共用"收款明细"这条腿，这一层只回答
-// "走收款明细还是走预存"；**具体写哪个交易方式**由下面的
+// "走收款明细还是走预存"；**具体写哪个收款方式**由下面的
 // `resolveAfterSalesPaymentMethod` + 执行器负责（见那一节）。
 const AFTER_SALES_SETTLEMENT_ALIASES = Object.freeze({
   cash: 'cash',
@@ -154,7 +154,7 @@ const resolveAfterSalesSettlement = (value) => {
 //
 // ⚠️ 与上面「钱怎么走」是**两件事**，别混：
 //   · 「钱怎么走」（settlement）回答"走收款明细还是走预存"（cash / prepaid）；
-//   · 「收款方式」（这里）回答"走收款明细时，「收款明细.交易方式」那一列写哪个"。
+//   · 「收款方式」（这里）回答"走收款明细时，「收款明细.收款方式」那一列写哪个"。
 // 上面那张别名表把「现金 / 微信 / 支付宝」**都**收敛成 cash —— 具体渠道在那一层被抹掉了，
 // 所以"记录里要写她实际说的方式"就必须在**原话**上再认一次（见 `resolveAfterSalesPaymentMethod`）。
 //
@@ -231,7 +231,7 @@ const resolveAfterSalesPaymentMethod = (text) => {
 //   · 三种字段（new_item_no / new_color / new_size）**全空** → `needNewItem`（她什么都没说）
 //   · 有货号/颜色、只缺尺码 → `needNewSize`（补全这个模板，逐字沿用改动前的问法）
 //   ⚠️ 一个字段都不许替她猜：`needNewAmount` 用在两种情形 ——
-//      "同款换码但原明细没有成交金额"（不许拿标价顶）与"换另一双、货品表连单价都读不到"。
+//      "同款换码但原明细没有实收金额"（不许拿标价顶）与"换另一双、货品表连单价都读不到"。
 //
 // ⚠️ 缺"要退/要换的原那双"（`no_item_info` / `action_unresolved` 那两句）**没进这张表**：
 //    它们是"整条售后还没定位到那一笔"的问法，与这次换货放宽判据无关 —— 保持原样、一个字没动。

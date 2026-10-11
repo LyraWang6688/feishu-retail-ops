@@ -9,8 +9,8 @@
 //
 // 写入（默认口径 = 业务负责人 2026-10-08 逐字给的售后口径）：
 //   1) 新「销售主表」：原话 + 原销售单号 + 交易类型=行为(SALE_RETURN/EXCHANGE/COMPENSATION)
-//   2) 新「销售明细」行：交易类型=行为 · 销售单号=**原主表**（关联）· 成交金额=正数
-//      ⭐ 赔货那一条：成交金额 **0**（口径：「成交金额记为 0」）· 履约状态 **已赔货**
+//   2) 新「销售明细」行：交易类型=行为 · 销售单号=**原主表**（关联）· 实收金额=正数
+//      ⭐ 赔货那一条：实收金额 **0**（口径：「实收金额记为 0」）· 履约状态 **已赔货**
 //   3) 原「销售明细」的「履约状态」→ 已退货 / 已换货 / 已赔货
 //   4) 钱（她的 2026-10-08 口径，出处 docs/goods-and-money-flows-2026-10-08.md §3）：
 //      · **退货**（默认 `returnFundsMode = updateStatus`）→ **不新建记录**，
@@ -95,7 +95,7 @@ const requiredText = (value, label) => {
   return text;
 };
 
-// 成交金额一律正数（业务负责人明确要求：金额都填正数，统计时按方向抵消）。
+// 实收金额一律正数（业务负责人明确要求：金额都填正数，统计时按方向抵消）。
 // 先判正负再交给 cents()（销售链路在用的同一个"两位小数"校验），
 // 这样负数得到的是"必须大于 0"而不是"必须是非负的两位小数"这种绕的说法。
 const positiveYuan = (value, label) => {
@@ -242,7 +242,7 @@ class AfterSalesService {
     const newLines = rawLines.map((line, index) => ({
       productId: requiredText(line?.productId, `第 ${index + 1} 条出货商品的货品 id`),
       sizeId: requiredText(line?.sizeId, `第 ${index + 1} 条出货商品的尺码 id`),
-      amount: positiveYuan(line?.amount, `第 ${index + 1} 条出货商品的成交金额`),
+      amount: positiveYuan(line?.amount, `第 ${index + 1} 条出货商品的实收金额`),
     }));
 
     const restockState = String(input.restockState || '').trim();
@@ -442,7 +442,7 @@ class AfterSalesService {
       detail_count: rows.length,
       original_details_marked: originalDetailIdsMarked.length,
       money_route: money.route,
-      // 钱的交易方式是哪来的（spoken = 她说的 / original = 她没说、沿用原单）——
+      // 钱的收款方式是哪来的（spoken = 她说的 / original = 她没说、沿用原单）——
       // 这是"她说现金、账上写微信"这类问题的排查入口。
       money_method_source: money.methodSource || '',
       money_method_id: money.methodId || '',
@@ -624,8 +624,8 @@ class AfterSalesService {
    *   换货  → 旧鞋**不写**明细行（契约里 newLines 才是新增明细行），只有出货商品写
    *   赔货  → 坏鞋不回库也不写行，只有出货商品写
    *
-   * ⭐ 新明细行的「成交金额」：默认用调用方给的那个价；**赔货在动作配置里把它固定成 0**
-   *    （她的 2026-10-08 口径：「**成交金额记为 0**」）—— 配置里没声明才用请求值，
+   * ⭐ 新明细行的「实收金额」：默认用调用方给的那个价；**赔货在动作配置里把它固定成 0**
+   *    （她的 2026-10-08 口径：「**实收金额记为 0**」）—— 配置里没声明才用请求值，
    *    执行器里不写死业务数字（配置先行）。
    */
   buildPlan(request, original) {
@@ -650,7 +650,7 @@ class AfterSalesService {
           sizeRecordId: sellable.requiresSize
             ? this.singleLink(fields?.[detailFields.size], `原销售明细 ${record.record_id} 的尺码`)
             : '',
-          amount: positiveYuan(cellNumber(fields?.[detailFields.actualAmount]), '原销售明细成交金额'),
+          amount: positiveYuan(cellNumber(fields?.[detailFields.actualAmount]), '原销售明细实收金额'),
           originalRecordId: record.record_id,
           recordId: '',
         });
@@ -666,7 +666,7 @@ class AfterSalesService {
         // 尺码单元格用关联 id 的形态，后面统一按关联解析成数字交给库存服务。
         sizeCell: [line.sizeId],
         sizeRecordId: line.sizeId,
-        // ⭐ 成交金额：配置声明了固定值就用固定值（赔货 = 0），否则用调用方给的价。
+        // ⭐ 实收金额：配置声明了固定值就用固定值（赔货 = 0），否则用调用方给的价。
         amount: newLineAmountOf(line),
         // ⭐ 新建明细行的「履约状态」——**取值只从动作配置来**（不在这里写中文字面量）：
         //   换货 = 已交付（新换出去的那双）；赔货 = 已赔货（赔出去的那双）；
@@ -756,7 +756,7 @@ class AfterSalesService {
     } else if (row.sizeRecordId && !linkedRecordIds(record.fields?.[detailFields.size]).includes(row.sizeRecordId)) {
       mismatch = '尺码关联不一致';
     } else if (Number(cellNumber(record.fields?.[detailFields.actualAmount])) !== Number(row.amount)) {
-      mismatch = '成交金额不一致';
+      mismatch = '实收金额不一致';
     } else if (!linkedRecordIds(record.fields?.[detailFields.tradeType]).includes(expected.tradeTypeRecordId)) {
       mismatch = '交易类型不一致';
     }
@@ -820,7 +820,7 @@ class AfterSalesService {
   }
 
   /**
-   * 这次售后的钱写「收款明细」：**交易方式 = 她实际说的那个**（业务负责人 2026-10-06 定，见 AGENTS.md 第 16 条(2)）。
+   * 这次售后的钱写「收款明细」：**收款方式 = 她实际说的那个**（业务负责人 2026-10-06 定，见 AGENTS.md 第 16 条(2)）。
    *
    * ⭐ 为什么不再无条件沿用原单：她说「钱退现金」，账上却写成微信 —— 这是记错账。
    *    「说了现金就写现金」。
@@ -905,7 +905,7 @@ class AfterSalesService {
     else if (cellText(record.fields?.[fields.tradeDirection]) !== expected.direction) mismatch = '交易方向不一致';
     else if (expected.status && cellText(record.fields?.[fields.status]) !== expected.status) mismatch = '收款状态不一致';
     else if (expected.methodId && !linkedRecordIds(record.fields?.[fields.method]).includes(expected.methodId)) {
-      mismatch = '交易方式不一致';
+      mismatch = '收款方式不一致';
     }
     if (mismatch) {
       throw new Error(`已记录的售后收款 ${recordId} 与当前请求不一致（${mismatch}），请人工核对，不能自动重试`);

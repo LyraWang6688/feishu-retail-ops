@@ -174,7 +174,7 @@ class SalesFollowupService {
       if (!isPosted(postedOf(order, fields))) throw new Error('销售订单尚未确认入账');
       amount(input.amount);
       const before = await this.progress.forOrder(input.salesEntryRecordId);
-      if (before.pendingAmount === null) throw new Error('销售明细尚未填写成交金额，不能计算待收款');
+      if (before.pendingAmount === null) throw new Error('销售明细尚未填写实收金额，不能计算待收款');
       if (cents(input.amount, '收款金额') > cents(before.pendingAmount, '待收金额')) {
         throw new Error(`本次收款超过待收金额 ￥${before.pendingAmount}`);
       }

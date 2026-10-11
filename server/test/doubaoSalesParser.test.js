@@ -144,7 +144,7 @@ test('two pairs in one AI line must be restated as two individually priced lines
   const result = normalizeWithVouchers({ intent: 'sale', items: [
     { item_no: 'A100', size: 38, quantity: 2, actual_amount: 178 },
   ], payments: [{ method: '微信', amount: 178 }] });
-  assert.ok(result.missing_fields.some((issue) => issue.includes('逐双列出成交金额')));
+  assert.ok(result.missing_fields.some((issue) => issue.includes('逐双列出实收金额')));
 });
 
 test('deposit alone cannot be mistaken for a shoe transaction price', () => {
@@ -152,7 +152,7 @@ test('deposit alone cannot be mistaken for a shoe transaction price', () => {
   //    不再看交易类型。所以这条用例把她的原话也带进来（生产上 `sourceText` 一定有）。
   const result = normalizeWithVouchers({ intent: 'sale', items: [{ item_no: '9A207-0', size: 43, quantity: 1 }],
     payments: [{ method: '微信', amount: 50 }], trade_type: '预付' }, '9A207-0 43码，定金微信 50');
-  assert.equal(result.agreed_total, '', '只说了定金，不能把定金当成成交金额');
+  assert.equal(result.agreed_total, '', '只说了定金，不能把定金当成实收金额');
   // 标签统一成规范说法（「预付」→「预定」）。
   assert.equal(result.trade_type, '预定');
   assert.equal(result.items[0].trade_type, '预定');
@@ -632,10 +632,10 @@ test('an accessory without a name is asked for by name, not by item number', () 
   assert.ok(!result.missing_fields.includes('items[0].size'));
 });
 
-// ─── 成交金额 vs 欠款：她说了"收了多少"、还是明说"欠"（业务负责人口径） ───
+// ─── 实收金额 vs 欠款：她说了"收了多少"、还是明说"欠"（业务负责人口径） ───
 // 提示词规则 9 / 9.1 写死了这条口径；下面钉住解析层的确定性结果。
 
-test('她说了"收了 100"、没说欠 → 成交金额=100，owed 留空（119 只是对档位的价位）', () => {
+test('她说了"收了 100"、没说欠 → 实收金额=100，owed 留空（119 只是对档位的价位）', () => {
   const result = normalizeWithVouchers({
     intent: 'sale',
     items: [{ kind: 'accessory', accessory_name: '腰带', quantity: 1, actual_amount: 119 }],
@@ -646,12 +646,12 @@ test('她说了"收了 100"、没说欠 → 成交金额=100，owed 留空（119
   assert.equal(result.items[0].actual_amount, 100, '她说了收到 100，成交就是 100');
   assert.equal(result.agreed_total, 100);
   assert.equal(result.owed, '', '她没说欠，owed 必须为空——后端只认它');
-  // 119 保留为"用来匹配档位的价位"：只对记录用，不落库、也不当成交金额。
+  // 119 保留为"用来匹配档位的价位"：只对记录用，不落库、也不当实收金额。
   assert.equal(result.items[0].tier_price, 119);
   assert.deepEqual(result.missing_fields, []);
 });
 
-test('模型按新口径把档位价放进 tier_price 时，成交金额仍然是她说的收款额', () => {
+test('模型按新口径把档位价放进 tier_price 时，实收金额仍然是她说的收款额', () => {
   const result = normalizeWithVouchers({
     intent: 'sale',
     items: [{ kind: 'accessory', accessory_name: '腰带', quantity: 1,
@@ -665,7 +665,7 @@ test('模型按新口径把档位价放进 tier_price 时，成交金额仍然�
   assert.equal(result.owed, '');
 });
 
-test('她明说"还欠 19" → 成交金额=119、owed=19（后端据此补未收款）', () => {
+test('她明说"还欠 19" → 实收金额=119、owed=19（后端据此补未收款）', () => {
   const result = normalizeWithVouchers({
     intent: 'sale',
     items: [{ kind: 'accessory', accessory_name: '腰带', quantity: 1, actual_amount: 119 }],
@@ -679,7 +679,7 @@ test('她明说"还欠 19" → 成交金额=119、owed=19（后端据此补未�
   assert.deepEqual(result.missing_fields, []);
 });
 
-test('模型只说收到 100、又明说欠 19 时，成交金额由两个她说的数相加得到', () => {
+test('模型只说收到 100、又明说欠 19 时，实收金额由两个她说的数相加得到', () => {
   const result = normalizeWithVouchers({
     intent: 'sale',
     items: [{ kind: 'accessory', accessory_name: '腰带', quantity: 1, actual_amount: 100 }],
@@ -693,7 +693,7 @@ test('模型只说收到 100、又明说欠 19 时，成交金额由两个她说
   assert.equal(result.owed, 19);
 });
 
-test('她只说了价格、没说收多少 → 成交金额=她说的价格（原逻辑不变），也没有欠款', () => {
+test('她只说了价格、没说收多少 → 实收金额=她说的价格（原逻辑不变），也没有欠款', () => {
   const result = normalizeWithVouchers({
     intent: 'sale',
     items: [{ kind: 'accessory', accessory_name: '腰带', quantity: 1, actual_amount: 119 }],
@@ -725,7 +725,7 @@ test('鞋也按同一口径：说了收到 200 就是 200；只给价格就是�
   assert.equal(quoted.items[0].actual_amount, 230);
 });
 
-test('原话说的是定金/欠款那类钱没给清的话时，绝不把已收的那笔当成交金额', () => {
+test('原话说的是定金/欠款那类钱没给清的话时，绝不把已收的那笔当实收金额', () => {
   // 2026-10-07：定金语序已经认得出（见上面那条改好的用例），所以这一单不再是"信息不全"。
   // 这条用例要守的东西**没变**：绝不退化成"成交 = 已收的 100"。
   // 她说清了 100 定金 + 140 余额 ⇒ 应收 240、已收只有 100、她明说的欠款 140。
@@ -736,7 +736,7 @@ test('原话说的是定金/欠款那类钱没给清的话时，绝不把已收�
     agreed_total: null,
   }, '695887B-5 43码黑，100元微信定金，还需要再付140元');
 
-  assert.notEqual(result.agreed_total, 100, '已有断言不放宽：已收的那笔不是成交金额');
+  assert.notEqual(result.agreed_total, 100, '已有断言不放宽：已收的那笔不是实收金额');
   assert.equal(result.agreed_total, 240);
   assert.equal(result.total_paid, 100);
   assert.equal(result.owed, 140);
@@ -823,7 +823,7 @@ test('真机原话：总额 + 各分项同时出现 ⇒ 每个件用它自己的
 
   assert.equal(result.items[0].actual_amount, 260, '鞋必须是它自己的分项金额 260，不许被整单实收 400 覆盖');
   assert.equal(result.items[1].actual_amount, 140, '腰带是 140');
-  assert.equal(result.items[1].tier_price, 158, '158 只是对档位的价位，不是成交金额');
+  assert.equal(result.items[1].tier_price, 158, '158 只是对档位的价位，不是实收金额');
   assert.deepEqual(result.payments, [{ method: '微信', amount: 400 }], '她说了「400 元微信」一笔，不许拆成两笔');
   assert.equal(result.agreed_total, 400, '成交总额 = 260 + 140 = 400');
   assert.equal(result.total_paid, 400);
@@ -835,7 +835,7 @@ test('真机原话：总额 + 各分项同时出现 ⇒ 每个件用它自己的
 });
 
 test('真机错法（鞋 400 + 腰带 140、两笔微信）⇒ 合计 540 ≠ 总额 400：报缺项、绝不静默算成 540', () => {
-  // 改前的错法就是这个形状：整单实收 400 被当成鞋的成交金额，140 又被数成第二笔付款。
+  // 改前的错法就是这个形状：整单实收 400 被当成鞋的实收金额，140 又被数成第二笔付款。
   // 后端**不做分摊**（她明令禁止）：谁的数原样留着，只把"对不上"报成缺项，由她重说一遍。
   const result = normalizeWithVouchers({
     intent: 'sale',
@@ -862,11 +862,11 @@ test('真机错法（鞋 400 + 腰带 140、两笔微信）⇒ 合计 540 ≠ �
   assert.ok(result.missing_fields.length > 0);
 });
 
-test('多双鞋、只给了整单实收：绝不许把整单实收覆盖成第一双的成交金额（它会顺手把账做平）', () => {
+test('多双鞋、只给了整单实收：绝不许把整单实收覆盖成第一双的实收金额（它会顺手把账做平）', () => {
   // 这就是真机错位的**算术成因**：模型没给各件金额、只给了整单实收时，
-  // 旧逻辑把"实收"当成第一件的成交金额（250），于是"各件之和 = 总额"永远成立、
+  // 旧逻辑把"实收"当成第一件的实收金额（250），于是"各件之和 = 总额"永远成立、
   // 那条"对不上"的校验永远拦不住 —— 错账被静默做平。
-  // ⇒ 多双鞋时不套用"成交金额 = 实收"那条（它只对整单确实只有一件时成立）。
+  // ⇒ 多双鞋时不套用"实收金额 = 实收"那条（它只对整单确实只有一件时成立）。
   const result = normalizeWithVouchers({
     intent: 'sale', agreed_total: 250,
     items: [{ item_no: '93827', size: 43, quantity: 1 }, { item_no: '2115', size: 37, quantity: 1 }],

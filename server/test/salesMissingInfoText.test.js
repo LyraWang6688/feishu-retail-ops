@@ -1,9 +1,9 @@
 // 「销售信息还缺…」追问文案的守卫用例（2026-10-07 真机事故的回归）。
 //
 // 事故（业务负责人 18:38 收到的，逐字；她只回了一句「**这个提醒是什么意思？**」）：
-//   「销售信息还缺：定金单暂只支持一条明细；多双请分开说明，或逐双给出成交金额、
-//     items[0].actual_amount、items[1].actual_amount、payments[0].method、请逐件说明成交金额、
-//     已收金额和待平台结算金额不能超过本单成交金额。请补充后重新发送完整销售信息。」
+//   「销售信息还缺：定金单暂只支持一条明细；多双请分开说明，或逐双给出实收金额、
+//     items[0].actual_amount、items[1].actual_amount、payments[0].method、请逐件说明实收金额、
+//     已收金额和待平台结算金额不能超过本单实收金额。请补充后重新发送完整销售信息。」
 // 她的输入（一条消息两笔）：
 //   「119 元，微信。 / 卖了 31678，40 码。 / 定制一双 6681-1，42 码，定金 50 元，下次付 39 元」
 //
@@ -78,14 +78,14 @@ const HER_PARSED_MISSING_FIELDS = [
 ];
 // 接线层再追加 1 条（`processSalesTask`：缺金额泛化句）。
 // ⚠️⭐ **2026-10-07 晚去掉了一条**：改动前这里还有
-//   「已收金额和待平台结算金额不能超过本单成交金额」——
-//   而这一单里 `items` **一件都没有成交金额**（接线层的 `actualTotal` = 0）⇒ 那句话是**误导**：
+//   「已收金额和待平台结算金额不能超过本单实收金额」——
+//   而这一单里 `items` **一件都没有实收金额**（接线层的 `actualTotal` = 0）⇒ 那句话是**误导**：
 //   成交额压根是空的，却说她"已收比成交额多"。
 //   现在接线层那句只在 `actualTotal > 0`（成交额**有值**）时才报 —— 收严哨兵见本文件 AC-⑤。
 //   她这条真实场景的回复因此从 4 行变成 **3 行**，少的正是那句误导。
 const HER_ALL_MISSING_FIELDS = [
   ...HER_PARSED_MISSING_FIELDS,
-  '请逐件说明成交金额',
+  '请逐件说明实收金额',
 ];
 const HER_ITEMS = [{ item_no: '31678', size: 40, quantity: 1 }, { item_no: '6681-1', size: 42, quantity: 1 }];
 
@@ -93,7 +93,7 @@ const HER_ITEMS = [{ item_no: '31678', size: 40, quantity: 1 }, { item_no: '6681
 const HER_EXPECTED_TEXT = [
   '销售信息还缺 3 处，请照着补一下～',
   '1. 这一单里哪一件是付了定金的那件，我有点拿不准～请对着「31678 40码、6681-1 42码」逐件说清楚哪一件付了定金、每双多少钱～',
-  '2. 请给每双鞋都说一个成交金额：31678 40码、6681-1 42码',
+  '2. 请给每双鞋都说一个实收金额：31678 40码、6681-1 42码',
   '3. 收的那笔钱没说收款方式，请补一句是微信、现金还是支付宝～',
 ].join('\n');
 
@@ -143,8 +143,8 @@ test('③ 每条缺项都给具体动作（逐字）', () => {
   const { text } = renderHer();
   // #234 新增那句：必须把"这一单到底是哪几双"点出来（两个货号都在），并问清"哪一件付了定金、每双多少钱"。
   assert.match(text, /请对着「31678 40码、6681-1 42码」逐件说清楚哪一件付了定金、每双多少钱/);
-  // 缺金额：说清"每双各一个成交金额"，并把两双都列出来。
-  assert.match(text, /请给每双鞋都说一个成交金额：31678 40码、6681-1 42码/);
+  // 缺金额：说清"每双各一个实收金额"，并把两双都列出来。
+  assert.match(text, /请给每双鞋都说一个实收金额：31678 40码、6681-1 42码/);
   // 缺收款方式：给可选值（她自己会说到方式 —— AGENTS.md 第 16 条，所以这里只是问，不设默认）。
   assert.match(text, /没说收款方式，请补一句是微信、现金还是支付宝/);
   // 改动前那句"笼统"的结尾**不该**再出现。
@@ -307,23 +307,23 @@ const KNOWN_MISSING_FIELD_SHAPES = [
   'items[1].actual_amount',
   'payments[0].amount', 'payments[0].method', 'payments[1].amount', 'payments[1].method',
   // 解析层：一条里写了多双 / 总额对不上 / 意图
-  '第1件请逐双列出成交金额；每条销售明细只能记录一双',
-  '第2件请逐双列出成交金额；每条销售明细只能记录一双',
+  '第1件请逐双列出实收金额；每条销售明细只能记录一双',
+  '第2件请逐双列出实收金额；每条销售明细只能记录一双',
   '你说的总额 210 与各件金额之和 200 对不上，请确认每件多少钱～',
   '当前只支持商品销售录单',
   // 解析层：团购券政策
-  '团购券暂只支持一单一双；多双鞋请逐双说明券后成交金额',
+  '团购券暂只支持一单一双；多双鞋请逐双说明券后实收金额',
   '团购券暂只支持一单一张，请明确券种和数量',
   '未配置 89.9 元抵 100 元的团购券结算金额',
-  '团购券与预付或未付款同时出现，请人工核对成交金额和待收款',
+  '团购券与预付或未付款同时出现，请人工核对实收金额和待收款',
   '请说明团购券之外实际收到的金额和支付方式',
   '请确认是否只用团购券、没有补现金额',
   '实际支付金额无效',
   '明确说出的成交价与实际支付及团购券抵扣不一致，请核对',
   // 接线层：金额三连
-  '请逐件说明成交金额',
-  '逐件成交金额合计与整单成交金额不一致',
-  '已收金额和待平台结算金额不能超过本单成交金额',
+  '请逐件说明实收金额',
+  '逐件实收金额合计与整单实收金额不一致',
+  '已收金额和待平台结算金额不能超过本单实收金额',
   // 接线层：配品定位 / 缺货 / 未建档 / 颜色全下架
   '第1件：其他配品里没有「袜子」这一件，请核对名称',
   '第1件：这一件没听清配品名称，请核对名称',
@@ -349,7 +349,7 @@ const KNOWN_MISSING_FIELD_SHAPES = [
 //    ⇒ 它是**历史形状兜底，成本为零**；当前的"多明细 + 定金"是**合法输入**，走不到它。
 //    见 `docs/sales-missing-info-wording-2026-10-07.md` 第 14 节（AC-S3）。
 const HISTORICAL_MISSING_FIELD_SHAPES = [
-  '定金单暂只支持一条明细；多双请分开说明，或逐双给出成交金额', // #234 删除了这个生产者
+  '定金单暂只支持一条明细；多双请分开说明，或逐双给出实收金额', // #234 删除了这个生产者
 ];
 
 // 守卫要盖住**【当前 + 历史】两者**：历史形状当前不产生，但"老任务重放"仍会渲染到它。
@@ -371,22 +371,22 @@ const MAPPED_MISSING_FIELD_SHAPES = [
   // ⭐ 2026-10-07 晚新增：只说了定金、没说尾款 ⇒ 成交额还没定（原话被翻成"人话"那一句）。
   SALES_DEPOSIT_TOTAL_UNKNOWN,
   // ⭐ **历史形状**（生产者已删）—— 它的映射是**有意保留**的兜底，所以仍属"被翻译"那一类。
-  '定金单暂只支持一条明细；多双请分开说明，或逐双给出成交金额',
+  '定金单暂只支持一条明细；多双请分开说明，或逐双给出实收金额',
   // 解析层：items / payments 的机器字段（**index 0 与 1 都在**）
   'items[0].item_no', 'items[0].size', 'items[0].quantity', 'items[0].actual_amount',
   'items[0].accessory_name',
   'items[1].item_no', 'items[1].size', 'items[1].quantity', 'items[1].actual_amount',
   'payments[0].amount', 'payments[0].method', 'payments[1].amount', 'payments[1].method',
   // 解析层：一条里写了多双（第 1 件 / 第 2 件都在）
-  '第1件请逐双列出成交金额；每条销售明细只能记录一双',
-  '第2件请逐双列出成交金额；每条销售明细只能记录一双',
+  '第1件请逐双列出实收金额；每条销售明细只能记录一双',
+  '第2件请逐双列出实收金额；每条销售明细只能记录一双',
   // 解析层：意图 / 团购券
   '当前只支持商品销售录单',
-  '团购券暂只支持一单一双；多双鞋请逐双说明券后成交金额',
+  '团购券暂只支持一单一双；多双鞋请逐双说明券后实收金额',
   // 接线层：金额三连
-  '请逐件说明成交金额',
-  '逐件成交金额合计与整单成交金额不一致',
-  '已收金额和待平台结算金额不能超过本单成交金额',
+  '请逐件说明实收金额',
+  '逐件实收金额合计与整单实收金额不一致',
+  '已收金额和待平台结算金额不能超过本单实收金额',
 ];
 
 // 其中**已经是人话**的：一律**原样透传**（不归这次改，也绝不许丢）。
@@ -394,7 +394,7 @@ const PASSTHROUGH_MISSING_FIELD_SHAPES = [
   '你说的总额 210 与各件金额之和 200 对不上，请确认每件多少钱～',
   '团购券暂只支持一单一张，请明确券种和数量',
   '未配置 89.9 元抵 100 元的团购券结算金额',
-  '团购券与预付或未付款同时出现，请人工核对成交金额和待收款',
+  '团购券与预付或未付款同时出现，请人工核对实收金额和待收款',
   '请说明团购券之外实际收到的金额和支付方式',
   '请确认是否只用团购券、没有补现金额',
   '实际支付金额无效',
@@ -529,28 +529,28 @@ test('⑤ 上游已变（增）：#234 新增那句**跟着生产者常量走**�
 
 test('⑤ 同一件事只留一条：泛化句被具体句取代（但机器清单里两条都还在）', () => {
   const specificAmount = renderSalesMissingInfo({
-    missingFields: ['items[0].actual_amount', 'items[1].actual_amount', '请逐件说明成交金额'],
+    missingFields: ['items[0].actual_amount', 'items[1].actual_amount', '请逐件说明实收金额'],
     items: HER_ITEMS,
   });
   assert.equal(specificAmount.lines.length, 1, '两边都是"每双各说一个金额" ⇒ 合成一条');
   assert.match(specificAmount.lines[0], /31678 40码、6681-1 42码/);
   // 只有泛化句时仍然要说出来（不留空）。
-  const genericOnly = renderSalesMissingInfo({ missingFields: ['请逐件说明成交金额'], items: HER_ITEMS });
+  const genericOnly = renderSalesMissingInfo({ missingFields: ['请逐件说明实收金额'], items: HER_ITEMS });
   assert.equal(genericOnly.lines.length, 1);
-  assert.match(genericOnly.lines[0], /成交金额/);
+  assert.match(genericOnly.lines[0], /实收金额/);
 });
 
 test('⑤ #231 那句带数字的「总额 vs 各件之和」原样保留，只压掉没有数字的泛化版', () => {
   const detailed = '你说的总额 210 与各件金额之和 200 对不上，请确认每件多少钱～';
   const both = renderSalesMissingInfo({
-    missingFields: ['逐件成交金额合计与整单成交金额不一致', detailed],
+    missingFields: ['逐件实收金额合计与整单实收金额不一致', detailed],
     items: HER_ITEMS,
   });
   assert.equal(both.lines.length, 1);
   assert.equal(both.lines[0], detailed, '#231 的文案一个字都不许改（含具体数字）');
   // 只有泛化版时给一句人话。
   const genericOnly = renderSalesMissingInfo({
-    missingFields: ['逐件成交金额合计与整单成交金额不一致'], items: HER_ITEMS,
+    missingFields: ['逐件实收金额合计与整单实收金额不一致'], items: HER_ITEMS,
   });
   assert.equal(genericOnly.lines.length, 1);
   assert.match(genericOnly.lines[0], /对不上，请核对一下/);
@@ -558,13 +558,13 @@ test('⑤ #231 那句带数字的「总额 vs 各件之和」原样保留，只�
 
 // ── AC-④ / AC-⑤：后端提示**必须分清两件事**（2026-10-07 22:59 真机）────────────────
 // 真机：她发「定金交了 100 元，微信，下次收120元」，成交额**压根没解析出来**（空），
-// 后端却回了「**已收的钱比这单成交金额还多**，请核对一下收了多少～」—— 那是误导。
+// 后端却回了「**已收的钱比这单实收金额还多**，请核对一下收了多少～」—— 那是误导。
 //
 // ⭐ 两件事分开：
-//   ① 成交额没解析出来（`actualTotal` = 0）→ 问「请说明这单成交金额（或定金+尾款分别是多少）」；
-//   ② 真的已收 > 成交额（成交额**有值**且确实小于已收）→ 才报「已收的钱比这单成交金额还多」。
+//   ① 成交额没解析出来（`actualTotal` = 0）→ 问「请说明这单实收金额（或定金+尾款分别是多少）」；
+//   ② 真的已收 > 成交额（成交额**有值**且确实小于已收）→ 才报「已收的钱比这单实收金额还多」。
 
-test('AC-④ 成交额没解析出来（只说了定金）→ 只剩一句「请说明这单成交金额…」+ 她的清单', () => {
+test('AC-④ 成交额没解析出来（只说了定金）→ 只剩一句「请说明这单实收金额…」+ 她的清单', () => {
   const rendered = renderSalesMissingInfo({
     // 解析层给的两条：这一件没金额 + 「成交额还没定」（生产者常量本身）。
     missingFields: ['items[0].actual_amount', SALES_DEPOSIT_TOTAL_UNKNOWN],
@@ -572,9 +572,9 @@ test('AC-④ 成交额没解析出来（只说了定金）→ 只剩一句「请
     payments: [{ amount: 100, method: '微信' }],
   });
   assert.equal(rendered.lines.length, 1, '两句话问的是同一件事（这单多少钱）⇒ 只留一行');
-  assert.equal(rendered.lines[0], '请说明这单成交金额（或定金+尾款分别是多少）：26632 37码',
+  assert.equal(rendered.lines[0], '请说明这单实收金额（或定金+尾款分别是多少）：26632 37码',
     '留下的那句要带定金口径，并且**继承她的清单**（她仍然看得见是哪一双）');
-  assert.doesNotMatch(rendered.text, /已收的钱比这单成交金额还多/,
+  assert.doesNotMatch(rendered.text, /已收的钱比这单实收金额还多/,
     '成交额是空的 ⇒ 绝不许说"已收比成交额多"');
   // 生产者的原话（机器清单里那一串）不许原样漏给她。
   assert.ok(!rendered.text.includes(SALES_DEPOSIT_TOTAL_UNKNOWN));
@@ -592,10 +592,10 @@ test('AC-④ 走**真实的 processSalesTask**：只说了定金 → 回复里�
     }, text),
   });
   assert.equal(messages.length, 1);
-  assert.doesNotMatch(messages[0], /已收的钱比这单成交金额还多/,
+  assert.doesNotMatch(messages[0], /已收的钱比这单实收金额还多/,
     `成交额没解析出来，不该说她"已收比成交额多"：\n${messages[0]}`);
-  assert.match(messages[0], /请说明这单成交金额（或定金\+尾款分别是多少）：26632 37码/);
-  // 「只有定金不能当成交金额」照旧：它仍然只是**问她**，不是把 100 当成交额。
+  assert.match(messages[0], /请说明这单实收金额（或定金\+尾款分别是多少）：26632 37码/);
+  // 「只有定金不能当实收金额」照旧：它仍然只是**问她**，不是把 100 当成交额。
   assert.match(messages[0], /^销售信息还缺 1 处，请照着补一下～/);
 });
 
@@ -624,7 +624,7 @@ test('AC-⑤ 哨兵：**真的**已收 > 成交额（成交额有值）→ 仍�
     }),
   });
   assert.equal(messages.length, 1);
-  assert.match(messages[0], /已收的钱比这单成交金额还多，请核对一下收了多少～/,
+  assert.match(messages[0], /已收的钱比这单实收金额还多，请核对一下收了多少～/,
     `成交额有值（100）且确实小于已收（150）⇒ 收严哨兵：原来那句必须还在：\n${messages[0]}`);
 });
 
@@ -635,14 +635,14 @@ test('⑥ 文案全部可配：改环境变量就改文案（含空串回落默�
   // 要空格就用默认值、或把分隔符写进模板本体（这里就换成 `1、` 这种写法）。
   const config = resolveSalesMissingInfoConfig({
     [KEYS.intro]: '还差 {count} 件事：',
-    [KEYS.itemAmount]: '成交金额还没说：{items}',
+    [KEYS.itemAmount]: '实收金额还没说：{items}',
     [KEYS.depositMultiLineExample]: '定金单一次一双，分开发～（{firstItem} / {secondItem}）',
     [KEYS.linePrefix]: '{index}、',
     [KEYS.depositAmount]: '   ', // 只有空白 → 回落默认（这是她唯一能看到的解释，不许变空）
   });
   const result = renderSalesMissingInfo({
     missingFields: [
-      '定金单暂只支持一条明细；多双请分开说明，或逐双给出成交金额',
+      '定金单暂只支持一条明细；多双请分开说明，或逐双给出实收金额',
       'items[0].actual_amount',
       '请明确已经收到的定金金额',
     ],
@@ -650,7 +650,7 @@ test('⑥ 文案全部可配：改环境变量就改文案（含空串回落默�
   }, config);
   assert.equal(result.intro, '还差 3 件事：');
   assert.match(result.text, /^还差 3 件事：\n1、定金单一次一双，分开发～（31678 40码 \/ 6681-1 42码）/);
-  assert.match(result.text, /2、成交金额还没说：31678 40码/);
+  assert.match(result.text, /2、实收金额还没说：31678 40码/);
   assert.match(result.text, new RegExp(`3、${SALES_MISSING_INFO_DEFAULTS.depositAmount}`));
   // 默认配置（不传 env）不受影响。
   assert.match(renderHer().text, /^销售信息还缺 3 处，请照着补一下～/);

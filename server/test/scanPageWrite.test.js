@@ -243,7 +243,7 @@ test('① 连续扫三双加入本单 → 提交后是**一张销售单 + 三条
     for (const detail of details) {
       assert.equal(detail.fields['销售单号'][0], entries[0].record_id, '每条明细都挂在这一张单上');
       assert.equal(detail.fields['数量'], undefined, '明细没有「数量」这一列：一单一双就是一行');
-      assert.equal(detail.fields['成交金额'] > 0, true);
+      assert.equal(detail.fields['实收金额'] > 0, true);
     }
     // 「确认状态」= 已确认（她在页面上点了【提交】——提交就是确认）
     assert.equal(entries[0].fields['确认状态'], '已确认');
@@ -291,7 +291,7 @@ test('② 同一把提交键连点两次（含并发）→ **只写一次**，�
 });
 
 // ── ③ 钱留空也能成单 + 状态如实 ─────────────────────────────────────────────
-test('③ 成交金额留空（按货品单价）+ 收款留空（先货后钱）→ 成单，状态如实', async () => {
+test('③ 实收金额留空（按货品单价）+ 收款留空（先货后钱）→ 成单，状态如实', async () => {
   const h = createHarness();
   try {
     const openId = 'ou_scan_3';
@@ -303,9 +303,9 @@ test('③ 成交金额留空（按货品单价）+ 收款留空（先货后钱�
     const entry = entriesOf(h.gateway, 'salesEntry')[0];
     assert.equal(entry.fields['销售状态'], '已写入', '货写上了');
     assert.equal(entriesOf(h.gateway, 'paymentRecord').length, 0, '钱可以不填：一条收款明细都没有');
-    assert.equal(entriesOf(h.gateway, 'salesDetail')[0].fields['成交金额'], 399, '金额留空按「货品信息.单价」');
+    assert.equal(entriesOf(h.gateway, 'salesDetail')[0].fields['实收金额'], 399, '金额留空按「货品信息.单价」');
     // 「资金状态」这一列是**既有业务层**的口径（= "收款这一步跑完了"），扫码侧一个字都没改它。
-    // 「待补资金」是**既有进度口径**推出来的：收款明细为空 ⇒ 未收款 / 欠款 = 成交金额。
+    // 「待补资金」是**既有进度口径**推出来的：收款明细为空 ⇒ 未收款 / 欠款 = 实收金额。
     const progress = await new SalesProgressService({ gateway: h.gateway })
       .forOrder(entry.record_id, { detailRecordIds: [entriesOf(h.gateway, 'salesDetail')[0].record_id] });
     assert.equal(progress.paymentStatus, '未收款', '既有口径就是「未收款」（工作台显示的待补资金）');
@@ -675,7 +675,7 @@ test('⑧ 路由：补货表单勾两个尺码 → 采购申请结果页（批�
 });
 
 // ── ⑨ 失败有人话 ────────────────────────────────────────────────────────────
-test('⑨ 失败有人话：没单价又没填金额 → 页面上说清"要填成交金额"，不是静默/只写日志', async () => {
+test('⑨ 失败有人话：没单价又没填金额 → 页面上说清"要填实收金额"，不是静默/只写日志', async () => {
   login();
   const h = createHarness({ tables: seedTables({ product: [PRODUCT, PRODUCT_NO_PRICE] }) });
   try {
@@ -695,7 +695,7 @@ test('⑨ 失败有人话：没单价又没填金额 → 页面上说清"要填�
       assert.equal(response.status, 400, '她可以改一下就再提交 → 400 而不是 500');
       const html = await response.text();
       assert.match(html, /这一步没成功/);
-      assert.match(html, /「YD1111」在「货品信息」里没有单价，请填一下成交金额再提交。/);
+      assert.match(html, /「YD1111」在「货品信息」里没有单价，请填一下实收金额再提交。/);
       assert.match(html, /可以照上面那句话改一下再点一次/);
       // 金额是在**建主表之前**算的 ⇒ 这一种失败不会留下半张空单（更好，不是更差）。
       assert.equal(entriesOf(h.gateway, 'salesEntry').length, 0);

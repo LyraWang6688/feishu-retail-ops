@@ -35,7 +35,7 @@ const detailRow = ({ id, orderId, productId, soldAt = daysAgo(0), sizeRecordId =
     销售单号: orderId ? [{ record_ids: [orderId], text: '' }] : [],
     销售日: soldAt,
     尺码: sizeRecordId ? [{ record_ids: [sizeRecordId], text: '' }] : [],
-    成交金额: amount,
+    实收金额: amount,
     ...(tradeType ? { 交易类型: [{ text: tradeType }] } : {}),
   },
 });

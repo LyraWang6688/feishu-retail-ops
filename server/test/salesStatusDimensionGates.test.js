@@ -73,7 +73,7 @@ test('闸门 1 交付/扣库存（salesDeliveryService）：只读「资金状�
     gateway: gatewayFor({
       salesEntry: [{ record_id: 'o1', fields: entryFields }],
       salesDetail: [{ record_id: 'd1', fields: {
-        销售单号: ['o1'], 编号: ['p1'], 尺码: ['size_38'], 履约状态: '未交付', 成交金额: 100,
+        销售单号: ['o1'], 编号: ['p1'], 尺码: ['size_38'], 履约状态: '未交付', 实收金额: 100,
       } }],
       sizeManagement: [{ record_id: 'size_38', fields: { 尺码: 38 } }],
       product: [{ record_id: 'p1', fields: { 编号: 'P1' } }],
@@ -97,7 +97,7 @@ test('闸门 2 订单列表（salesFollowupService.listOrders）：只读「资�
     const gateway = gatewayFor({
       salesEntry: [{ record_id: 'o1', fields: { 销售单号: 'XSD-1', ...entryFields } }],
       salesDetail: [{ record_id: 'd1', fields: {
-        销售单号: ['o1'], 编号: ['p1'], 尺码: ['size_38'], 履约状态: '未交付', 成交金额: 100,
+        销售单号: ['o1'], 编号: ['p1'], 尺码: ['size_38'], 履约状态: '未交付', 实收金额: 100,
       } }],
       sizeManagement: [{ record_id: 'size_38', fields: { 尺码: 38 } }],
       product: [{ record_id: 'p1', fields: { 编号: 'P1' } }],
@@ -157,7 +157,7 @@ test('闸门 5 提醒候选（secondDeliveryService.listPendingDeliveries）：�
       salesEntry: [{ record_id: 'o1', fields: {
         销售单号: 'XSD-1', 交易类型: ['b1'], 录单日: Date.now(), ...entryFields,
       } }],
-      salesDetail: [{ record_id: 'd1', fields: { 销售单号: ['o1'], 履约状态: '已交付', 成交金额: 100 } }],
+      salesDetail: [{ record_id: 'd1', fields: { 销售单号: ['o1'], 履约状态: '已交付', 实收金额: 100 } }],
       paymentRecord: [{ record_id: 'r1', fields: { 关联销售单: ['o1'], 收款金额: 100, 收款状态: '未收款' } }],
     });
     return new SecondDeliveryService({ gateway, store: storeStub(), client: {} })
@@ -177,7 +177,7 @@ test('闸门 6 今日销售（v1WorkbenchService.getTodaySales）：只读「资
   const todayRows = async (entryFields) => {
     const gateway = gatewayFor({
       salesDetail: [{ record_id: 'd1', fields: {
-        销售单号: ['o1'], 编号: ['p1'], 数量: 1, 销售日: day, 成交金额: 100,
+        销售单号: ['o1'], 编号: ['p1'], 数量: 1, 销售日: day, 实收金额: 100,
       } }],
       salesEntry: [{ record_id: 'o1', fields: { 销售单号: 'XSD-1', ...entryFields } }],
       product: [{ record_id: 'p1', fields: { 编号: 'P1' } }],

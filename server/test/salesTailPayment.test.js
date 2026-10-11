@@ -50,8 +50,8 @@ test('AC-1 她那句原话：「下次收 120」= 尾款 ⇒ 成交额 220、owe
   assert.equal(result.owed, 120, '「下次收 120」必须认成 owed（未收的尾款）');
   // ② 定金 + 尾款 ⇒ 成交额 = 两者之和（100 + 120 = 220）。
   assert.equal(result.agreed_total, 220, '成交额 = 定金 100 + 尾款 120');
-  assert.equal(result.items[0].actual_amount, 220, '这一件鞋的成交金额 = 220');
-  // ③ 她已经把话说全了 ⇒ 不许再报缺项（更不许问她"成交金额"）。
+  assert.equal(result.items[0].actual_amount, 220, '这一件鞋的实收金额 = 220');
+  // ③ 她已经把话说全了 ⇒ 不许再报缺项（更不许问她"实收金额"）。
   assert.deepEqual(result.missing_fields, [],
     `她已经说清了定金和尾款，不该再报缺项：${JSON.stringify(result.missing_fields)}`);
   // ④ 逐字段（她要的就是这份逐字段解析）。
@@ -104,11 +104,11 @@ test('AC-3 哨兵：只说定金、不说尾款 → 成交额仍为空（「只�
     trade_type: '预付',
   }, '9A207-0 43码，定金微信 50');
 
-  assert.equal(result.agreed_total, '', '只说了定金，**不许**把定金当成成交金额');
-  assert.equal(result.items[0].actual_amount, '', '这一件的成交金额仍然未知');
+  assert.equal(result.agreed_total, '', '只说了定金，**不许**把定金当成实收金额');
+  assert.equal(result.items[0].actual_amount, '', '这一件的实收金额仍然未知');
   assert.equal(result.owed, '', '她没说还欠多少 ⇒ 不许自己减出欠款');
   assert.ok(result.missing_fields.includes('items[0].actual_amount'),
-    `仍然要她补成交金额：${JSON.stringify(result.missing_fields)}`);
+    `仍然要她补实收金额：${JSON.stringify(result.missing_fields)}`);
 });
 
 // ── AC-9 同义说法矩阵 ────────────────────────────────────────────────────────
@@ -162,7 +162,7 @@ test('没有「定金」时：模型给了 owed 就推出 220；模型漏给则�
     payments: [{ amount: 100, method: '微信' }], agreed_total: null, owed: null,
   }, text);
   assert.notEqual(withoutOwed.agreed_total, 100,
-    '「下次收 120」是钱没结清的说法 ⇒ 不许套用"成交金额 = 实收 100"（那会把 120 算丢）');
+    '「下次收 120」是钱没结清的说法 ⇒ 不许套用"实收金额 = 实收 100"（那会把 120 算丢）');
   assert.ok(withoutOwed.missing_fields.includes('items[0].actual_amount'),
     `模型漏给欠款时要回头问她：${JSON.stringify(withoutOwed.missing_fields)}`);
 });

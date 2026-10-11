@@ -154,13 +154,13 @@ const baseSeed = ({ tradeTypeCode, fulfillmentStatus, owed, paidReceived = 0 }) 
     } }],
     salesDetail: [{ record_id: 'd_1', fields: {
       销售单号: [ENTRY_ID], 编号: ['product_1'], 尺码: ['size_40'],
-      履约状态: fulfillmentStatus, 成交金额: 260,
+      履约状态: fulfillmentStatus, 实收金额: 260,
     } }],
     paymentRecord: [],
   };
   if (paidReceived > 0) {
     seed.paymentRecord.push({ record_id: 'pay_paid', fields: {
-      关联销售单: [ENTRY_ID], 收款金额: paidReceived, 收款状态: '已收款', 交易方式: ['method_wechat'],
+      关联销售单: [ENTRY_ID], 收款金额: paidReceived, 收款状态: '已收款', 收款方式: ['method_wechat'],
     } });
   }
   if (owed > 0) {
@@ -368,7 +368,7 @@ test('点【确认成交】预定单：未交付→已交付 + 扣库存 + 待�
   const receipt = gateway.records.get('paymentRecord').find((row) => row.record_id === 'pay_pending');
   assert.equal(receipt.fields['收款状态'], '已收款');
   assert.ok(Number(receipt.fields['收款时间']) >= before, '收款时间必须是点击那一刻');
-  assert.deepEqual(receipt.fields['交易方式'], ['method_wechat']);
+  assert.deepEqual(receipt.fields['收款方式'], ['method_wechat']);
   assert.equal(receipt.fields['交易方向'], '收入');
   // ③ 回话 + toast 如实说清成交了什么。
   assert.equal(result.toast.type, 'success');
@@ -680,7 +680,7 @@ test('成交后变绿那句说明里含「仍未交付 N 双」（部分交付�
   // 两条明细：第一条交得出去，第二条没货（"部分交付"）。
   seed.salesDetail.push({ record_id: 'd_2', fields: {
     销售单号: [ENTRY_ID], 编号: ['product_1'], 尺码: ['size_40'],
-    履约状态: '未交付', 成交金额: 260,
+    履约状态: '未交付', 实收金额: 260,
   } });
   let saleCalls = 0;
   const inventory = {

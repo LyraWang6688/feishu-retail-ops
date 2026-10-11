@@ -145,7 +145,7 @@ const createScanWriteService = (options = {}) => {
   /**
    * 业务层抛出来的错误 → **给她看的人话**。
    * · 我们的校验错误（`scanUserMessage`）直接用；
-   * · 业务层自己的中文业务话（例：「本次收款超过本单成交金额」「尺码管理中找不到 41 码」）
+   * · 业务层自己的中文业务话（例：「本次收款超过本单实收金额」「尺码管理中找不到 41 码」）
    *   原样给她 —— 她照着改一下就能再提交；
    * · 命中 `sale.unsafeErrorMarkers` 的**内部错误**（飞书错误码 / 表名字段名 / 配置缺失）
    *   只给通用人话，原文只进日志（与第一版只读页"内部细节不回显"同一条规矩）。
@@ -288,7 +288,7 @@ const createScanWriteService = (options = {}) => {
     }
     const giftText = String(gift ?? '').trim().slice(0, config.sale.giftMaxLength);
 
-    // ── 配品这一行（B）：没有尺码、没有货号，成交金额单列（编号/尺码留空由业务层保证）──
+    // ── 配品这一行（B）：没有尺码、没有货号，实收金额单列（编号/尺码留空由业务层保证）──
     if (!sellableKind.requiresSize) {
       const accessoryId = String(accessoryRecordId || '').trim();
       if (!accessoryId) {
@@ -531,7 +531,7 @@ const createScanWriteService = (options = {}) => {
       const sellableKind = SELLABLE_KINDS[kindKey]
         ? { key: kindKey, ...SELLABLE_KINDS[kindKey] }
         : { key: 'shoe', ...SELLABLE_KINDS.shoe };
-      // ── 配品那一行（B）：`配品` 有值、**编号 / 尺码留空**、成交金额单列 ──────────
+      // ── 配品那一行（B）：`配品` 有值、**编号 / 尺码留空**、实收金额单列 ──────────
       //    ⚠️ 它不参与交付 / 库存扣减（没有鞋）—— 交付那一步按可售品属性天然跳过（见 A 段）。
       if (sellableKind && !sellableKind.requiresSize) {
         const accessoryRecordId = String(line.accessory_record_id || '').trim();

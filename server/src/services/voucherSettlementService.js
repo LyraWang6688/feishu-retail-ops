@@ -34,7 +34,7 @@ const { PaymentService } = require('./paymentService');
 // 券目录的**取值口径**（售价 / 面值 / 平台结算款 / 只在售）由 `config/groupBuyVouchers` 与
 // `config/v1BitableSchema` 定义；本模块不写死券种，也不猜价。
 // ⚠️ **刻意不用 `findVoucher`**：那个函数按「**售价 + 面值**」两把钥匙匹配，
-//    而这里能从「交易方式」名字里拿到的**只有售价**（名字形如 `抖音代金券（89.9）`，
+//    而这里能从「收款方式」名字里拿到的**只有售价**（名字形如 `抖音代金券（89.9）`，
 //    没有面值）。拿它去配会得到 `售价|NaN` 而恒不命中（试过，会把每一笔都退回收款金额）。
 //    所以这里按**售价**匹配 —— 真表上只有 89.9 / 49.9 两档，售价本身就能区分。
 const { toCents } = require('../config/groupBuyVouchers');
@@ -108,7 +108,7 @@ class VoucherSettlementService {
   }
 
   /**
-   * 「收款明细.交易方式」的名字里那个价 —— 售价和面值都没写在名字里，只有那个价。
+   * 「收款明细.收款方式」的名字里那个价 —— 售价和面值都没写在名字里，只有那个价。
    * 取**最后一个**数字（可配正则，默认即可；`抖音代金券（89.9）` → 89.9）。
    * 取不到 → `null`（调用方退回「收款金额」+ warn，**绝不编一个价**）。
    */
@@ -174,7 +174,7 @@ class VoucherSettlementService {
   /**
    * 一条收款明细的**结算金额**：优先取它那张券的「平台结算款」，解析不到就**退回「收款金额」**。
    *
-   * 定位链路（她的口径）：交易方式名字里的价 → 按**售价**匹配「团购券管理」→ 取该券**平台结算款**。
+   * 定位链路（她的口径）：收款方式名字里的价 → 按**售价**匹配「团购券管理」→ 取该券**平台结算款**。
    * @returns {{ amount:number|null, source:'voucher'|'receipt', reason:string }}
    *   · `source:'voucher'` —— 取到了券的平台结算款（口径正解）；
    *   · `source:'receipt'` —— 解析不到券，退回这笔的「收款金额」（**记 warn**）；
@@ -284,7 +284,7 @@ class VoucherSettlementService {
         payment_record_ids: warnings.amountFallback.map((entry) => entry.payment_record_id),
         methods: warnings.amountFallback.map((entry) => entry.method),
         reasons: warnings.amountFallback.map((entry) => entry.reason),
-        hint: '「交易方式」名字里解析不到券（没有价 / 券表里没这一档）⇒ 这一笔退回它的「收款金额」；'
+        hint: '「收款方式」名字里解析不到券（没有价 / 券表里没这一档）⇒ 这一笔退回它的「收款金额」；'
           + '**不静默、也不编一个价**。要按券的「平台结算款」算，请在「团购券管理」里配这一档券',
       });
     }

@@ -109,7 +109,7 @@ test('现货待收单点「成交」：只补收款，库存与明细履约状�
       '资金状态': '已写入', 销售单号: 'XSD-U-1', 交易类型: ['behavior_cash'],
     } }],
     salesDetail: [{ record_id: 'detail_u1', fields: {
-      销售单号: ['order_unpaid'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 成交金额: 260,
+      销售单号: ['order_unpaid'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 260,
     } }],
     paymentRecord: [{ record_id: 'receipt_u1', fields: {
       关联销售单: ['order_unpaid'], 收款金额: 260, 收款状态: '未收款',
@@ -127,7 +127,7 @@ test('现货待收单点「成交」：只补收款，库存与明细履约状�
   // ① 那条「未收款」→「已收款」：收款时间 = 点击时间，方向补「收入」。
   const receipt = gateway.records.get('paymentRecord')[0];
   assert.equal(receipt.fields['收款状态'], '已收款');
-  assert.deepEqual(receipt.fields['交易方式'], ['method_1']);
+  assert.deepEqual(receipt.fields['收款方式'], ['method_1']);
   assert.equal(receipt.fields['交易方向'], '收入');
   assert.ok(Number(receipt.fields['收款时间']) >= before, '收款时间必须是点击那一刻');
   assert.equal(result.collectedAmount, 260);
@@ -163,11 +163,11 @@ test('预定单点「成交」：补收款 + 明细未交付转已交付 + 扣�
     } }],
     // 预定：货还没到 / 没拿走（未交付），钱是定金 + 余款两条，余款那条是未收款。
     salesDetail: [{ record_id: 'detail_p1', fields: {
-      销售单号: ['order_prepaid'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '未交付', 成交金额: 400,
+      销售单号: ['order_prepaid'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '未交付', 实收金额: 400,
     } }],
     paymentRecord: [
       { record_id: 'receipt_p1', fields: {
-        关联销售单: ['order_prepaid'], 收款金额: 200, 收款状态: '已收款', 交易方式: ['method_1'],
+        关联销售单: ['order_prepaid'], 收款金额: 200, 收款状态: '已收款', 收款方式: ['method_1'],
       } },
       { record_id: 'receipt_p2', fields: {
         关联销售单: ['order_prepaid'], 收款金额: 200, 收款状态: '未收款',
@@ -186,7 +186,7 @@ test('预定单点「成交」：补收款 + 明细未交付转已交付 + 扣�
   const pending = gateway.records.get('paymentRecord').find((row) => row.record_id === 'receipt_p2');
   assert.equal(pending.fields['收款状态'], '已收款');
   assert.equal(pending.fields['交易方向'], '收入');
-  assert.deepEqual(pending.fields['交易方式'], ['method_2']);
+  assert.deepEqual(pending.fields['收款方式'], ['method_2']);
   assert.ok(Number(pending.fields['收款时间']) > 0);
   assert.equal(result.collectedAmount, 200);
   // 原来那条已收款（定金）不动，也不重复写方向。
@@ -219,7 +219,7 @@ test('同一张单连点两次「成交」：第二次只回"已成交"，不再
       '资金状态': '已写入', 销售单号: 'XSD-U-1', 交易类型: ['behavior_cash'],
     } }],
     salesDetail: [{ record_id: 'detail_u1', fields: {
-      销售单号: ['order_unpaid'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 成交金额: 260,
+      销售单号: ['order_unpaid'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 260,
     } }],
     paymentRecord: [{ record_id: 'receipt_u1', fields: {
       关联销售单: ['order_unpaid'], 收款金额: 260, 收款状态: '未收款',
@@ -383,11 +383,11 @@ const reminderSeed = () => ({
     } },
   ],
   salesDetail: [
-    { record_id: 'd_c1', fields: { 销售单号: ['order_cash_pending'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 成交金额: 260 } },
-    { record_id: 'd_p2', fields: { 销售单号: ['order_prepaid_pending'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '未交付', 成交金额: 400 } },
-    { record_id: 'd_c2', fields: { 销售单号: ['order_cash'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 成交金额: 100 } },
-    { record_id: 'd_c3', fields: { 销售单号: ['order_cash_done'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 成交金额: 100 } },
-    { record_id: 'd_c9', fields: { 销售单号: ['order_cash_old'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 成交金额: 100 } },
+    { record_id: 'd_c1', fields: { 销售单号: ['order_cash_pending'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 260 } },
+    { record_id: 'd_p2', fields: { 销售单号: ['order_prepaid_pending'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '未交付', 实收金额: 400 } },
+    { record_id: 'd_c2', fields: { 销售单号: ['order_cash'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 100 } },
+    { record_id: 'd_c3', fields: { 销售单号: ['order_cash_done'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 100 } },
+    { record_id: 'd_c9', fields: { 销售单号: ['order_cash_old'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 100 } },
   ],
   paymentRecord: [
     { record_id: 'r_c1', fields: { 关联销售单: ['order_cash_pending'], 收款金额: 260, 收款状态: '未收款' } },

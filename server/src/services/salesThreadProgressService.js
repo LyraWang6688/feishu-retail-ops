@@ -365,7 +365,7 @@ class SalesThreadProgressService {
     }
 
     const before = await this.progress.forOrder(salesEntryRecordId);
-    if (before.pendingAmount === null) throw new Error('这笔的销售明细还没有成交金额，我没法算还差多少钱');
+    if (before.pendingAmount === null) throw new Error('这笔的销售明细还没有实收金额，我没法算还差多少钱');
     if (Number(before.pendingAmount) <= 0) {
       await this.reply(task, this.config.replies.nothingPending);
       return { replied: true, reason: 'nothing_pending' };
