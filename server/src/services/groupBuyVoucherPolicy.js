@@ -26,7 +26,7 @@ const explicitCashPayments = (sourceText) => [...String(sourceText || '')
   .map((match) => ({ amount: Number(match[1] || match[4]), method: match[2] || match[3] }));
 
 const explicitSalePrices = (sourceText) => [...String(sourceText || '')
-  .matchAll(/(?:成交价|成交金额|这双鞋(?:的)?(?:卖价|售价|价格)|鞋(?:子)?(?:的)?(?:卖价|售价))\s*(?:是|为|共|合计)?\s*[:：]?\s*[¥￥]?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)?/g)]
+  .matchAll(/(?:成交价|实收金额|这双鞋(?:的)?(?:卖价|售价|价格)|鞋(?:子)?(?:的)?(?:卖价|售价))\s*(?:是|为|共|合计)?\s*[:：]?\s*[¥￥]?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)?/g)]
   .map((match) => Number(match[1]));
 
 // The model extracts facts, but this policy owns voucher economics and status.
@@ -51,13 +51,13 @@ const applyGroupBuyVoucherPolicy = ({ sourceText, items, payments, vouchers = []
     return { issues };
   }
   if (items.length !== 1 || Number(items[0].quantity) !== 1) {
-    issues.push('团购券暂只支持一单一双；多双鞋请逐双说明券后成交金额');
+    issues.push('团购券暂只支持一单一双；多双鞋请逐双说明券后实收金额');
     return { issues };
   }
   // ⚠️ 判据是"她说了钱没结清的说法"（定金 / 尾款 / 欠款…），**不是交易类型** ——
   //    「未付 / 预付」在这里都只是她的话（资金那一维），2026-10-07 起不再是一种类型。
   if (/定金|预付|预定|尾款|未付|欠款|赊账/.test(source)) {
-    issues.push('团购券与"定/尾款、欠款"这类没结清的钱同时出现，请人工核对成交金额和待收款');
+    issues.push('团购券与"定/尾款、欠款"这类没结清的钱同时出现，请人工核对实收金额和待收款');
     return { issues };
   }
 

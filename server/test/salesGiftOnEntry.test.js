@@ -200,7 +200,7 @@ test('⑥ 哨兵：赠品不参与金额，也不产生库存动作', async () =
     ],
     payments: [{ method: '微信', amount: 230 }],
   });
-  assert.deepEqual(gateway.records.get('salesDetail').map((row) => row.fields['成交金额']), [100, 130]);
+  assert.deepEqual(gateway.records.get('salesDetail').map((row) => row.fields['实收金额']), [100, 130]);
   assert.deepEqual(gateway.records.get('salesDetail').map((row) => row.fields['履约状态']),
     ['未交付', '未交付']);
   assert.equal(gateway.records.get('inventoryLedger'), undefined);

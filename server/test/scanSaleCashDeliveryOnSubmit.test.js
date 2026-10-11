@@ -43,7 +43,7 @@ process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_scan_cash_
 process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'scan_cash_test_secret';
 
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
-const { SCAN_WRITE } = require('../src/config/scanWrite');
+const { SCAN_WRITE, PAYMENT_STATUS } = require('../src/config/scanWrite');
 const { deliversOnSubmit } = require('../src/config/salesMovements');
 const { createScanWriteService } = require('../src/services/scanWriteService');
 const { createScanSessionService } = require('../src/services/scanSessionService');
@@ -268,7 +268,7 @@ test('AC-A2 预订（缺码）：只写单 —— 明细未交付、实时库存
     });
     assert.equal((await h.sessions.get(openId)).sale.lines[0].trade_type_code, 'SALE_PREPAID');
 
-    const result = await h.write.submitSale({ openId, submitKey: await currentKey(h, openId) });
+    const result = await h.write.submitSale({ openId, submitKey: await currentKey(h, openId), paymentStatus: PAYMENT_STATUS.unpaid });
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(result.detail_count, 1, '单子照写（一单一双一行）');
     assert.equal(result.stock?.requested || 0, 0, '预订行根本不该请求交付');
@@ -296,7 +296,7 @@ test('AC-A3 混合单：只有现货那一行交付并扣库存，预订那一�
     await h.write.addSaleLine({
       openId, productRecordId: 'prod_1', number: NUMBER, itemNo: 'YD6693-2', size: 41, inStock: false,
     });
-    const result = await h.write.submitSale({ openId, submitKey: await currentKey(h, openId) });
+    const result = await h.write.submitSale({ openId, submitKey: await currentKey(h, openId), paymentStatus: PAYMENT_STATUS.unpaid });
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(result.detail_count, 2);
     assert.equal(result.stock.requested, 1, '只有现货那一行进了交付');
@@ -323,8 +323,8 @@ test('AC-A4 幂等：同一把提交键连点两次（含并发）⇒ 只扣一�
       openId, productRecordId: 'prod_1', number: NUMBER, itemNo: 'YD6693-2', size: 40, inStock: true,
     });
     const key = await currentKey(h, openId);
-    const first = await h.write.submitSale({ openId, submitKey: key });
-    const second = await h.write.submitSale({ openId, submitKey: key });
+    const first = await h.write.submitSale({ openId, submitKey: key, paymentStatus: PAYMENT_STATUS.unpaid });
+    const second = await h.write.submitSale({ openId, submitKey: key, paymentStatus: PAYMENT_STATUS.unpaid });
     assert.equal(first.ok, true, JSON.stringify(first));
     assert.equal(first.reused, false);
     assert.equal(second.reused, true, '第二次认得这是同一把键');
@@ -335,8 +335,8 @@ test('AC-A4 幂等：同一把提交键连点两次（含并发）⇒ 只扣一�
     });
     const key2 = await currentKey(h, openId);
     const [a, b] = await Promise.all([
-      h.write.submitSale({ openId, submitKey: key2 }),
-      h.write.submitSale({ openId, submitKey: key2 }),
+      h.write.submitSale({ openId, submitKey: key2, paymentStatus: PAYMENT_STATUS.unpaid }),
+      h.write.submitSale({ openId, submitKey: key2, paymentStatus: PAYMENT_STATUS.unpaid }),
     ]);
     assert.equal(a.ok && b.ok, true, JSON.stringify([a, b]));
     assert.equal([a, b].filter((item) => item.reused).length, 1, '并发时恰好一次真写');
@@ -367,7 +367,7 @@ test('AC-A5 拿不到有货/没货（老页面没传 inStock）⇒ 不猜：不�
     assert.equal((await h.sessions.get(openId)).sale.lines[0].trade_type_code, '');
     const before = entriesOf(h, 'liveInventory').map((record) => record.record_id);
 
-    const result = await h.write.submitSale({ openId, submitKey: await currentKey(h, openId) });
+    const result = await h.write.submitSale({ openId, submitKey: await currentKey(h, openId), paymentStatus: PAYMENT_STATUS.unpaid });
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(detailBySize(h, 'size_40').fields['履约状态'], '未交付');
     assert.deepEqual(entriesOf(h, 'liveInventory').map((record) => record.record_id), before);
@@ -387,7 +387,7 @@ test('AC-A6 现货那一双其实没货 ⇒ 如实报"库存没扣成"+原因；
       openId, productRecordId: 'prod_1', number: NUMBER, itemNo: 'YD6693-2', size: 40, inStock: true,
     });
     const key = await currentKey(h, openId);
-    const result = await h.write.submitSale({ openId, submitKey: key });
+    const result = await h.write.submitSale({ openId, submitKey: key, paymentStatus: PAYMENT_STATUS.unpaid });
     // 单子写了（货 / 钱记为事实），但**库存没扣成**这件事必须如实回给她
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(result.stock.requested, 1);
@@ -423,7 +423,7 @@ test('AC-A7 失败后补上库存、拿同一把键再提交 ⇒ 只补扣没扣
       });
     }
     const key = await currentKey(h, openId);
-    const first = await h.write.submitSale({ openId, submitKey: key });
+    const first = await h.write.submitSale({ openId, submitKey: key, paymentStatus: PAYMENT_STATUS.unpaid });
     assert.equal(first.stock.requested, 2);
     assert.equal(first.stock.failed, 1, '一条成、一条败');
     assert.equal(detailBySize(h, 'size_40').fields['履约状态'], '已交付');
@@ -433,7 +433,7 @@ test('AC-A7 失败后补上库存、拿同一把键再提交 ⇒ 只补扣没扣
 
     // 店里补上 42 那一双 ⇒ 同一把键重试
     h.tables.liveInventory = [...h.tables.liveInventory, liveUnit('live_42_box', 42)];
-    const second = await h.write.submitSale({ openId, submitKey: key });
+    const second = await h.write.submitSale({ openId, submitKey: key, paymentStatus: PAYMENT_STATUS.unpaid });
     assert.equal(second.ok, true, JSON.stringify(second));
     assert.equal(second.stock.failed, 0, `重试必须把没扣成的那一双扣掉：${JSON.stringify(second.stock)}`);
 

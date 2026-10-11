@@ -2,10 +2,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { progressFromRecords } = require('../src/services/salesProgressService');
 
-const detailFields = { actualAmount: '成交金额', fulfillmentStatus: '履约状态' };
+const detailFields = { actualAmount: '实收金额', fulfillmentStatus: '履约状态' };
 const paymentFields = { amount: '收款金额', status: '收款状态' };
 const shoe = (amount, delivered = false) => ({ fields: {
-  成交金额: amount, 履约状态: delivered ? '已交付' : '未交付',
+  实收金额: amount, 履约状态: delivered ? '已交付' : '未交付',
 } });
 const receipt = (amount, status) => ({ fields: { 收款金额: amount, 收款状态: status } });
 
@@ -91,7 +91,7 @@ test('⭐ 售后的「已退款 / 已留存」不再是"未知收款状态"（�
 //   口径（唯一的判据来源是 config/afterSales，别新造一份中文）：
 //     **这条明细在履约这一维"已结清" ⇒ 不再计待交付**，归到既有的「已交付」档。
 test('⭐ 售后的「已退货 / 已换货 / 已赔货」不再是"未知销售明细履约状态"（按这一维已结清算）', () => {
-  const inStatus = (amount, status) => ({ fields: { 成交金额: amount, 履约状态: status } });
+  const inStatus = (amount, status) => ({ fields: { 实收金额: amount, 履约状态: status } });
   for (const status of ['已退货', '已换货', '已赔货']) {
     // 同一张单：一条已交付 + 一条售后件。与"那一条写已交付"逐字段对照 ——
     // 这就是"归到既有档位、不改待交付/待收算法"的证据。

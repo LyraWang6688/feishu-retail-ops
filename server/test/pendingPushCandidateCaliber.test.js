@@ -93,7 +93,7 @@ const detail = (recordId, entryId, productId, {
   record_id: recordId,
   fields: {
     销售单号: [entryId], 编号: [productId], 尺码: size ? [size] : [],
-    履约状态: status, 成交金额: amount,
+    履约状态: status, 实收金额: amount,
     销售日: soldAt === null ? atShanghai('2026-10-06') : soldAt,
     交易类型: tradeType === null ? undefined : (Array.isArray(tradeType) ? tradeType : [tradeType]),
   },

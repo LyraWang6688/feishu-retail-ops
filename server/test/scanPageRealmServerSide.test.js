@@ -97,7 +97,7 @@ const WRITE = {
     draftHeading: '本单现在 {count} 双',
     draftEmpty: '本单还没有鞋',
     draftItem: '{itemNo} {size} 码',
-    amountLabel: '成交金额',
+    amountLabel: '实收金额',
     amountPlaceholder: '不填按单价算',
     giftLabel: '赠品',
     addButton: '加入本单',

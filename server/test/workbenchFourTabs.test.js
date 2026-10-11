@@ -563,7 +563,7 @@ const SCAN_WRITE = {
     draftItem: '{itemNo} {size} 码',
     sizeLabel: '尺码',
     sizePlaceholder: '这一款没有可用尺码',
-    amountLabel: '成交金额',
+    amountLabel: '实收金额',
     amountPlaceholder: '不填按单价算',
     giftLabel: '赠品',
     addButton: '加入本单',

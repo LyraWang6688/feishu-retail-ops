@@ -43,7 +43,7 @@ process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKE
 const GROUP_CHAT_ID = 'oc_test_group';
 const SOURCE = '119 元，微信。\n卖了 31678，40 码。\n定制一双 6681-1，42 码，定金 50 元，下次付 39 元';
 
-// 模型对上面那条原话的**期望输出**：两件各自的成交金额与**各自的交易类型**。
+// 模型对上面那条原话的**期望输出**：两件各自的实收金额与**各自的交易类型**。
 // （119 是现货那件的钱；6681-1 只付了定金 50、下次付 39 ⇒ 成交 89、预付。）
 const SCENE_AI = {
   intent: 'sale',
@@ -240,7 +240,7 @@ test('AC-1~AC-10 她那条原话：一张单 · 2 条明细 · 3 条收款 · �
   );
 
   // ── AC-2 / AC-3 金额口径：总额 = 各分项之和，且 已收 + 欠款 对得上 ──
-  assert.equal(details.reduce((sum, row) => sum + row.fields['成交金额'], 0), 208);
+  assert.equal(details.reduce((sum, row) => sum + row.fields['实收金额'], 0), 208);
 });
 
 // ══════════════════════════════════════════════════════════════════════════════

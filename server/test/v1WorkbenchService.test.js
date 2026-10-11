@@ -14,15 +14,15 @@ const gatewayFor = (records) => ({
 test('two shoes in one order retain their own receivables and count the receipt once', async () => {
   const gateway = gatewayFor({
     salesDetail: [
-      { record_id: 'd1', fields: { 编号: ['p1'], 尺码: ['size_36'], 数量: 1, 销售单号: ['o1'], 销售日: [{ text: String(day) }], 成交金额: [{ text: '100' }], 销售单价: 120 } },
-      { record_id: 'd2', fields: { 编号: ['p2'], 尺码: ['size_37'], 数量: 1, 销售单号: ['o1'], 销售日: day, 成交金额: 150, 销售单价: 200 } },
+      { record_id: 'd1', fields: { 编号: ['p1'], 尺码: ['size_36'], 数量: 1, 销售单号: ['o1'], 销售日: [{ text: String(day) }], 实收金额: [{ text: '100' }], 销售单价: 120 } },
+      { record_id: 'd2', fields: { 编号: ['p2'], 尺码: ['size_37'], 数量: 1, 销售单号: ['o1'], 销售日: day, 实收金额: 150, 销售单价: 200 } },
       { record_id: 'undated', fields: { 编号: ['p1'], 尺码: ['size_38'], 数量: 1, 销售单号: ['o2'], 销售单价: 99 } },
     ],
     salesEntry: [
       { record_id: 'o1', fields: { 销售单号: 'XSD-001', '资金状态': '已写入' } },
       { record_id: 'o2', fields: { 销售单号: 'XSD-002', '资金状态': '已写入' } },
     ],
-    paymentRecord: [{ record_id: 'r1', fields: { 关联销售单: ['o1'], 交易方式: ['m1'], 收款金额: 250 } }],
+    paymentRecord: [{ record_id: 'r1', fields: { 关联销售单: ['o1'], 收款方式: ['m1'], 收款金额: 250 } }],
     paymentMethod: [{ record_id: 'm1', fields: { 收款方式: '现金' } }],
     product: [
       { record_id: 'p1', fields: { 编号: '93827黑' } },
@@ -42,9 +42,9 @@ test('two shoes in one order retain their own receivables and count the receipt 
 test('a row whose size link is broken does not break the whole query', async () => {
   const gateway = gatewayFor({
     salesDetail: [
-      { record_id: 'ok', fields: { 编号: ['p1'], 尺码: ['size_36'], 销售单号: ['o1'], 销售日: day, 成交金额: 100 } },
+      { record_id: 'ok', fields: { 编号: ['p1'], 尺码: ['size_36'], 销售单号: ['o1'], 销售日: day, 实收金额: 100 } },
       // 关联为空：这条明细读不出尺码，但不能让整页查询失败。
-      { record_id: 'broken', fields: { 编号: ['p1'], 尺码: [], 销售单号: ['o1'], 销售日: day, 成交金额: 100 } },
+      { record_id: 'broken', fields: { 编号: ['p1'], 尺码: [], 销售单号: ['o1'], 销售日: day, 实收金额: 100 } },
     ],
     salesEntry: [{ record_id: 'o1', fields: { 销售单号: 'XSD-001', '资金状态': '已写入' } }],
     product: [{ record_id: 'p1', fields: { 编号: '93827黑' } }],
@@ -62,8 +62,8 @@ test('a row whose size link is broken does not break the whole query', async () 
 test('赠品列读的是销售主表那一行（整单一条，同单多行显示同一串）', async () => {
   const gateway = gatewayFor({
     salesDetail: [
-      { record_id: 'd1', fields: { 编号: ['p1'], 尺码: ['size_36'], 销售单号: ['o1'], 销售日: day, 成交金额: 100 } },
-      { record_id: 'd2', fields: { 编号: ['p2'], 尺码: ['size_37'], 销售单号: ['o1'], 销售日: day, 成交金额: 150 } },
+      { record_id: 'd1', fields: { 编号: ['p1'], 尺码: ['size_36'], 销售单号: ['o1'], 销售日: day, 实收金额: 100 } },
+      { record_id: 'd2', fields: { 编号: ['p2'], 尺码: ['size_37'], 销售单号: ['o1'], 销售日: day, 实收金额: 150 } },
     ],
     salesEntry: [{ record_id: 'o1', fields: {
       销售单号: 'XSD-001', 资金状态: '已写入', 赠品: '鞋垫一双、袜子一双' } }],
@@ -110,11 +110,11 @@ test('order creation time is the fallback sale date; no date on either record is
 
 test('today sales separates platform pending vouchers from received cash', async () => {
   const gateway = gatewayFor({
-    salesDetail: [{ record_id: 'd1', fields: { 销售单号: ['o1'], 数量: 1, 销售日: day, 成交金额: 254.4 } }],
+    salesDetail: [{ record_id: 'd1', fields: { 销售单号: ['o1'], 数量: 1, 销售日: day, 实收金额: 254.4 } }],
     salesEntry: [{ record_id: 'o1', fields: { '资金状态': '已写入' } }],
     paymentRecord: [
-      { record_id: 'r1', fields: { 关联销售单: ['o1'], 收款金额: 169, 收款状态: '已收款', 交易方式: ['m1'] } },
-      { record_id: 'r2', fields: { 关联销售单: ['o1'], 收款金额: 85.4, 收款状态: '待平台结算', 交易方式: ['m2'] } },
+      { record_id: 'r1', fields: { 关联销售单: ['o1'], 收款金额: 169, 收款状态: '已收款', 收款方式: ['m1'] } },
+      { record_id: 'r2', fields: { 关联销售单: ['o1'], 收款金额: 85.4, 收款状态: '待平台结算', 收款方式: ['m2'] } },
     ],
     paymentMethod: [
       { record_id: 'm1', fields: { 收款方式: '微信' } },

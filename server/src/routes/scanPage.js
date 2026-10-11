@@ -302,6 +302,13 @@ const createScanPageRouter = (options = {}) => {
       replenishKey: writeService.sessions.submitKeyFor(openId, session, 'replenish'),
       paymentMethods,
       defaultPaymentMethod,
+      // ⭐⭐ 总单层的**「付款情况」**（整单三档）：默认档来自配置（**全付**）；
+      //     校验失败原地重渲染时，用**她刚才选的那一档**（`extra.paymentStatus`）。
+      paymentStatus: String(extra.paymentStatus || writeConfig.sale.paymentStatus?.default || ''),
+      defaultPaymentStatus: writeConfig.sale.paymentStatus?.default || '',
+      // ⭐ 「部分付」时资金区填的**实付多少**（另外两档服务端不看它）；同样原样回填。
+      paidAmount: extra.paidAmount === undefined || extra.paidAmount === null
+        ? '' : String(extra.paidAmount),
       // ⭐⭐ 总单层的多笔收款行：预置 N 行（第一行默认「微信」）；校验失败重渲染时
       //     用**她刚填的那几行**（值原样带回来，她改一改就能再提交）。
       paymentRows: buildPaymentRows({
@@ -471,28 +478,34 @@ const createScanPageRouter = (options = {}) => {
 
       // ── 提交销售单 ──────────────────────────────────────────────────────────
       if (action === actions.submitOrder) {
-        // ⭐⭐ 2026-10-11（两层结构）：总单层 = ①每件实收（同名重复 ⇒ 有序数组，下标 = 明细行）
-        //    + ②多笔收款（同名重复 ⇒ 两个数组按下标对齐）。**原样交给写服务**，
-        //    校验（含"两边必须相等"那条）在写服务里做 —— 路由不判业务。
+        // ⭐⭐ 2026-10-11（**最终口径**）：总单层 = ①每件实收（同名重复 ⇒ 有序数组，下标 = 明细行）
+        //    + ②**「付款情况」三档**（整单：全付（默认）/ 部分付 / 未付）
+        //    + ③多笔收款（同名重复 ⇒ 两个数组按下标对齐）+ 「部分付」的实付多少。
+        //    **原样交给写服务**，校验（含"全付必须相等"那条）在写服务里做 —— 路由不判业务。
         const payments = parsePaymentRows(body, fields);
         const lineAmounts = asList(body[fields.lineAmount]);
+        const paymentStatus = String(body[fields.paymentStatus] || '').trim();
+        const paidAmount = body[fields.paidAmount] ?? '';
         const result = await writeService.submitSale({
           openId,
           requestId,
           submitKey: body[fields.submitKey],
           payments,
           lineAmounts,
+          paymentStatus,
+          paidAmount,
         });
         if (!result.ok) {
-          // ⭐⭐ 校验类失败（**核心那条：每件实收合计 ≠ 收款合计**，以及收款行 / 每件实收本身的
-          //    格式问题）⇒ **原地重渲染销售那一块**：差额人话挂在表单上方，她刚填的
-          //    每件实收（在会话里）/ 多笔收款（原样带回）都还在 —— 改一下再点提交即可。
+          // ⭐⭐ 校验类失败（**核心那条：全付时每件实收合计 ≠ 收款合计**，以及付款情况 /
+          //    收款行 / 每件实收本身的格式问题）⇒ **原地重渲染销售那一块**：
+          //    差额人话挂在表单上方，她刚填的每件实收（在会话里）/ 付款情况 / 实付多少 /
+          //    多笔收款（原样带回）都还在 —— 改一下再点提交即可。
           //    🔴 这一条**不写库**（写服务里那一段在校验之后才建主表），页面上也会把差额说清。
           if ((writeConfig.sale.formFailureCodes || []).includes(result.code)) {
             const view = await service.lookup({ number: req.params.number, requestId }).catch(() => null);
             if (view?.found) {
               const write = await buildWriteContext(req, view, 'sales', {
-                paymentRows: payments, errorText: result.message,
+                paymentRows: payments, paymentStatus, paidAmount, errorText: result.message,
               });
               const html = renderScan(view, config, write, 'sales', { userAgent: req.headers['user-agent'] });
               return sendHtml(res, 400, html);

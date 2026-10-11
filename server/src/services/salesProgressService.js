@@ -34,7 +34,7 @@ const progressFromRecords = (details, receipts, detailFields, paymentFields) => 
   for (const detail of details) {
     const rawAmount = textValue(detail.fields?.[detailFields.actualAmount]).trim();
     if (!rawAmount) amountKnown = false;
-    else amountCents += cents(rawAmount, '销售明细成交金额');
+    else amountCents += cents(rawAmount, '销售明细实收金额');
     const rawStatus = textValue(detail.fields?.[detailFields.fulfillmentStatus]) || '未交付';
     // ⭐ 2026-10-08：售后件（退过 / 换过 / 赔过）在**履约这一维**按"**已结清**"算 ⇒ 归到既有的
     //   「已交付」档，**不再计待交付**（口径出处：本单据 = 业务负责人 2026-10-08 批准的"小修"，
@@ -72,7 +72,7 @@ const progressFromRecords = (details, receipts, detailFields, paymentFields) => 
     else throw new Error(`未知收款状态：${status}`);
   }
   if (amountKnown && paidCents + platformPendingCents > amountCents) {
-    throw new Error('累计收款及待平台结算金额超过成交金额，请核对销售明细或收款记录');
+    throw new Error('累计收款及待平台结算金额超过实收金额，请核对销售明细或收款记录');
   }
   const fulfillmentStatus = delivered === 0 ? '未交付' : delivered === quantity ? '已交付' : '部分交付';
   const customerPendingCents = amountCents - paidCents - platformPendingCents;

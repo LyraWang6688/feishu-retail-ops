@@ -44,7 +44,7 @@ const WORKBENCH_ORDERS_TEXTS = Object.freeze({
   needRestockState: '请选一下退回的鞋回哪儿（门盒 / 样品）',
   needNewProduct: '请选择换 / 赔出去的那双鞋（货号）',
   needNewSize: '请填新鞋的尺码',
-  needNewAmount: '请填这一双的成交金额（留空时按原成交金额 / 货品单价取，取不到就要填）',
+  needNewAmount: '请填这一双的实收金额（留空时按原实收金额 / 货品单价取，取不到就要填）',
   needRefundMethod: '请选一下这笔钱走哪个方式（现金 / 微信）',
   needSingleDetailForSameItem: '「同款换码 / 同款赔」一次只能选一条销售明细（要处理多条请分开做）',
   orderNotFound: '这张销售单不存在（可能已被删除）',

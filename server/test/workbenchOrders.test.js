@@ -342,7 +342,7 @@ const fakeGateway = (records = {}) => ({
 const ORDER_RECORD = { record_id: 'order_1', fields: { 销售单号: 'XSD-20261009-0001' } };
 const DETAIL_RECORD = {
   record_id: 'detail_1',
-  fields: { 销售单号: ['order_1'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 成交金额: 89 },
+  fields: { 销售单号: ['order_1'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 89 },
 };
 const SIZE_STUB = { resolveByNumber: async (value) => ({ recordId: `size_${value}`, size: Number(value) }) };
 
@@ -699,7 +699,7 @@ test('AC10 销售四类判定：只用既有字段与取值（履约状态 / 收
   assert.equal(module.salesCategoryOf(orderWith('已交付', '待平台结算')), 'unpaid',
     '平台还没结算 = 钱还没到我们账上，不算钱货两清');
   assert.equal(module.salesCategoryOf(orderWith('已交付', '')), 'unpaid',
-    '收款状态读不出来（成交金额缺失）时**不许硬说成两清**，归到钱那一侧');
+    '收款状态读不出来（实收金额缺失）时**不许硬说成两清**，归到钱那一侧');
   // ④ 有二次·两者都有 = 两边都没结清
   assert.equal(module.salesCategoryOf(orderWith('未交付', '未收款')), 'both');
   assert.equal(module.salesCategoryOf(orderWith('部分交付', '部分收款')), 'both');

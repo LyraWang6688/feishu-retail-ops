@@ -90,7 +90,7 @@ const WRITE = {
     draftItem: '{itemNo} {size} 码',
     sizeLabel: '尺码',
     sizePlaceholder: '这一款没有可用尺码',
-    amountLabel: '成交金额',
+    amountLabel: '实收金额',
     amountPlaceholder: '不填按单价算',
     giftLabel: '赠品',
     addButton: '加入本单',
@@ -250,7 +250,7 @@ test('AC2 `from=sales` 尺码分两组：有货（样品+门盒）⇒ 现货；�
   assert.ok(sales.includes('加入本单') && sales.includes('提交这一单'));
   // ⚠️ 2026-10-10 断言翻转（她：「删掉解释我怎么用的句子」）：
   //    原先这里钉着「资金不是必填…」那句（`fundsPendingNote`）**要在页面上写着**；
-  //    现在它必须不存在。**不放宽**：能填能点的（尺码 / 成交金额 / 收款方式 + 两颗按钮）照旧。
+  //    现在它必须不存在。**不放宽**：能填能点的（尺码 / 实收金额 / 收款方式 + 两颗按钮）照旧。
   assert.equal(/资金不是必填|这一单先记了货/.test(sales), false, '资金那句说明必须删掉');
   assert.ok(sales.includes('<option value="微信" selected>微信</option>'));
 

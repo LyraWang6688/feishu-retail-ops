@@ -178,6 +178,15 @@ body {
 .form-alert { margin: 0 0 var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); background: var(--warning-soft); color: var(--warning); font-size: var(--font-size-md); font-weight: 600; }
 .form-row--pay select { flex: 1 1 55%; }
 .form-row--pay input { flex: 1 1 45%; }
+/* ⭐⭐ 2026-10-11（最终口径）：「付款情况」（**整单**）三档 ——
+   一个 fieldset 里三个 radio，每个都是一整块（≥44px 命中区）；**零 JS**：
+   哪一档被选中由浏览器自己提交，服务端按取值分支（见 services/scanWriteService.js）。 */
+.pay-status { margin: 0 0 var(--space-2); padding: 0; border: 0; }
+.pay-status__legend { padding: 0; margin-bottom: var(--space-1); color: var(--text-secondary); font-size: var(--font-size-md); }
+.pay-status__options { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
+.pay-status__option { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-height); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer; }
+.pay-status__option input { flex: none; width: 20px; height: 20px; margin: 0; }
+.pay-status__label { font-size: var(--font-size-base); font-weight: 600; }
 .draft-lines { margin: 0 0 var(--space-2); }
 .draft-line { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
 .draft-line__text { flex: 1 1 auto; min-width: 0; font-size: var(--font-size-md); overflow-wrap: anywhere; }
@@ -416,10 +425,10 @@ const draftLineText = (t, line) => (line.accessory_record_id
 /**
  * ⭐⭐ 2026-10-11：**每件实收** —— 提交表单里**一行一双**，行尾一个数字输入框。
  *
- * 她的两层结构里这是第①层（每件）：`这一双实收了多少` 是**她唯一要填的金额**；
- * 「成交金额」是自动字段（读那张表的「单价」），页面上**不再让她填**。
+ * 她的口径里这是第①层（每件）：`这一件实际收到多少` 是**她唯一要填的金额**；
+ * 页面上**没有第二个金额输入框**（旧的「成交金额」框已整体退场）。
  * ⚠️ 这些输入框同名重复（`fields.lineAmount`）⇒ POST 上来是**有序数组**，
- *    下标与本单的明细行一一对应（服务端按同一个顺序落「销售明细.成交金额」）。
+ *    下标与本单的明细行一一对应（服务端按同一个顺序落「销售明细.实收金额」）。
  * ⚠️ 值来自会话（她加单时填过 / 上一次提交填过）—— `escapeHtml` 之后回填。
  */
 const draftLinesHtml = (write) => {
@@ -461,6 +470,37 @@ const buildPaymentRows = ({ count, defaultMethod, rows } = {}) => {
 };
 
 /**
+ * ⭐⭐ 2026-10-11（**最终口径**）：「付款情况」（**整单**）三档单选 —— 全付（默认）/ 部分付 / 未付。
+ *
+ * 她的原话：「**「付款情况」= 全付（默认）/ 部分付 / 未付 ← 这是整单的收款情况**」。
+ *   · **全付** ⇒ 收款合计**必须 == 每件实收合计** ⇒ 按收款方式写收款明细；
+ *   · **部分付** ⇒ 只写付了的那几条 ＋ 差额一条【未收款】；
+ *   · **未付** ⇒ 一条【未收款】。
+ *
+ * ⚠️ **零 JS**（她 2026-10-10 的硬要求；两条哨兵钉着"页面里不许有 `<script>`"）：
+ *    三档就是三个同名的 `radio`，默认选中配置里的那一档（**全付**），
+ *    剩下的判断全在服务端（`services/scanWriteService.js` 的 `submitSale`）。
+ * ⚠️ 取值与组名都来自 `config/scanWrite.js`（配置先行；这里一个字面量都不写死）。
+ * ⚠️ 「部分付」那个「实付多少」输入框**照常渲染**（没有 JS 就藏不起来）：
+ *    另外两档服务端**不看它**（全付必须两边相等；未付本来就不填）—— 取舍写在交付报告里。
+ */
+const paymentStatusHtml = (write) => {
+  const t = write.texts;
+  const fields = write.fields;
+  const options = Array.isArray(t.paymentStatusOptions) ? t.paymentStatusOptions : [];
+  const selected = String(write.paymentStatus || write.defaultPaymentStatus || '');
+  const chips = options.map((option) => `<label class="pay-status__option">
+<input type="radio" name="${escapeHtml(fields.paymentStatus)}" value="${escapeHtml(option.value)}"${String(option.value) === selected ? ' checked' : ''}>
+<span class="pay-status__label">${escapeHtml(option.label || option.value)}</span>
+</label>`).join('\n');
+  return `<fieldset class="pay-status">
+<legend class="pay-status__legend">${escapeHtml(t.paymentStatusLabel)}</legend>
+<div class="pay-status__options">${chips}</div>
+</fieldset>
+<div class="form-row"><label>${escapeHtml(t.paidAmountLabel)}</label><input name="${escapeHtml(fields.paidAmount)}" inputmode="decimal" placeholder="${escapeHtml(t.paidAmountPlaceholder)}" value="${escapeHtml(String(write.paidAmount || ''))}"></div>`;
+};
+
+/**
  * ⭐⭐ 总单层的**多笔收款**（收款方式 + 金额，一行一笔）。
  *
  * 她的例子：「本次共收 500 = 微信 200 + 现金 300」⇒ 一行一笔、方式来自「收款方式管理」。
@@ -483,22 +523,22 @@ const paymentRowsHtml = (write) => {
 </div>`).join('\n');
 };
 
-/** 销售表单：**每件层**（加入本单 / 加配品）+ **总单层**（每件实收 + 多笔收款 + 提交）。
+/** 销售表单：**每件层**（加入本单 / 加配品）+ **总单层**（每件实收 + 付款情况 + 收款行 + 提交）。
  *
  * ⭐ 2026-10-10：卡片的说明标题（`saleHeading`，「销售（可以连着扫，最后一起提交）」）
  *   与「资金不是必填…」那句说明（`fundsPendingNote`）**都删掉** —— 子 tab 上已经写着「销售」，
- *   剩下的只留能填能点的（本单双数 / 尺码 / 每件实收 / 多笔收款 / 按钮）。
- * ⭐⭐ 2026-10-11（两层结构，业务负责人定的）：
- *   · **删掉**「成交金额（可不填）」输入框（鞋与配品都删）—— 成交金额 = 自动读「单价」；
- *   · **每件**加「这一双实收」（shoe 表单）与「这一件实收」（配品表单）；
- *   · **总单**的收款改成**多行**（方式 + 金额，可增删行 = 预置行 + 填了才算）。
+ *   剩下的只留能填能点的（本单双数 / 尺码 / 每件实收 / 付款情况 / 收款行 / 按钮）。
+ * ⭐⭐ 2026-10-11（**最终口径**）：
+ *   · 每件**只有一个金额**：「实收金额」（旧的「成交金额」输入框整体退场）；
+ *   · 总单加**「付款情况」三档**（全付（默认）/ 部分付 / 未付）+「实付多少」；
+ *   · 收款明细**预置 1 行**（方式 + 金额，填了金额才算一笔）。
  */
 const saleFormHtml = (view, write) => {
   const t = write.texts;
   const fields = write.fields;
   const lines = write.draft?.lines || [];
   const sizeInput = sizeGroupsHtml(view, write);
-  // ⭐ 配品表单（B）：下拉选「其他配品」的名称 + **这一件实收** + 备注（可为空）。
+  // ⭐ 配品表单（B）：下拉选「其他配品」的名称 + **配品实收金额** + 备注（可为空）。
   //    ⚠️ 一件配品都没有时**不画这个表单**（不留一个只有"不加配品"的死下拉）。
   const accessories = Array.isArray(write.accessories) ? write.accessories : [];
   const accessoryOptions = accessories
@@ -533,6 +573,7 @@ ${hiddenField(fields.action, write.actions.submitOrder)}
 ${hiddenField(fields.submitKey, write.saleKey)}
 ${alert}
 ${draftLinesHtml(write)}
+${paymentStatusHtml(write)}
 ${paymentRowsHtml(write)}
 <button type="submit" class="btn btn--primary">${escapeHtml(t.submitButton)}</button>
 </form>

@@ -222,20 +222,20 @@ const AFTER_SALES_ACTION_SPECS = Object.freeze({
     originalFulfillmentStatus: AFTER_SALES_FULFILLMENT.COMPENSATED,
     // ⭐⭐ 2026-10-08 赔付口径（业务负责人逐字，权威；出处 docs/goods-and-money-flows-2026-10-08.md §2）：
     //   「**赔付**：如果是赔货，我们就**直接在销售明细里面创建一个赔付对应颜色和编号、尺码**的信息，
-    //    **成交金额记为 0**，**标记为赔货**」
+    //    **实收金额记为 0**，**标记为赔货**」
     // ⇒ 赔出去的那双**新建一条销售明细行**：
     //   · 编号 / 颜色 / 尺码 = 赔出去的那一双（颜色是「编号」那一列关联的货品自带的，
     //     销售明细契约里**没有**颜色列 —— 见报告）；
-    //   · 「成交金额」= **0**（赔货不是卖，不能记成收入）；
+    //   · 「实收金额」= **0**（赔货不是卖，不能记成收入）；
     //   · 「履约状态」= **已赔货**。
     // 赔货是直接赔一双出去（坏鞋不回库），所以只有出货这一腿，也不需要 restockState。
     requiresRestockState: false,
     acceptsNewLines: true,
     // 新明细行的「履约状态」= 已赔货（配置先行：执行器里不写中文字面量）。
     newLineFulfillmentStatus: AFTER_SALES_FULFILLMENT.COMPENSATED,
-    // ⭐ 新明细行的「成交金额」**由口径固定成 0**，不用调用方传来的那个价格。
+    // ⭐ 新明细行的「实收金额」**由口径固定成 0**，不用调用方传来的那个价格。
     //   为什么固定而不是"让调用方传 0"：调用方（afterSalesFlowService）确实会带新鞋的挂牌价
-    //   （它要用那个价算差价），执行器**不能**把挂牌价当成交金额写进赔货行 —— 那会凭空多一笔销售额。
+    //   （它要用那个价算差价），执行器**不能**把挂牌价当实收金额写进赔货行 —— 那会凭空多一笔销售额。
     newLineAmount: 0,
     movements: Object.freeze([
       Object.freeze({ source: 'new', behaviorCode: AFTER_SALES_BEHAVIORS.SALE_COMPENSATION, state: '门盒' }),

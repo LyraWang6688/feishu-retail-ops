@@ -7,7 +7,7 @@
  *   ③ 调既有服务，把结果原样返回。
  *
  * 🔴 **一次写库都不做**：这里出现的 `gateway.get` 全是**只读**（读销售单号 / 读原明细的
- *    货品与成交金额）—— 销售明细、收款、库存、售后单全部由既有服务去写：
+ *    货品与实收金额）—— 销售明细、收款、库存、售后单全部由既有服务去写：
  *      · 补收款 → `SalesFollowupService.addPayment`（路由里直接调，不在这里）
  *      · 交付   → `SalesFollowupService.delivery.deliver`（同上）
  *      · 售后   → **`AfterSalesService.execute`**（退 / 换 / 赔三种动作都走它）
@@ -117,7 +117,7 @@ class WorkbenchOrderActionService {
       throw badRequest(`退回的鞋只能回「${this.afterSalesConfig.restockStates.join(' / ')}」`);
     }
 
-    // 换 / 赔：出货商品那一行（货品 + 尺码 + 成交金额）。
+    // 换 / 赔：出货商品那一行（货品 + 尺码 + 实收金额）。
     // ⚠️ 「同款」是**她明确点的一个选项**：那一双的货品取自"她勾的原明细"，
     //    所以必须**恰好一条**明细 —— 勾了多条时"取哪一条的货品"没有唯一答案，
     //    这里当场问清楚，而不是悄悄拿第一条（那正是"猜"）。
@@ -183,17 +183,17 @@ class WorkbenchOrderActionService {
   }
 
   /**
-   * 换 / 赔出去的那一双：货品 + 尺码 + 成交金额。
+   * 换 / 赔出去的那一双：货品 + 尺码 + 实收金额。
    *
    * · **货品**：页面点了货号就用它；页面明确选了「同款」（`sameItem: true`，**她的选择**，
    *   不是我们猜的）就用**原明细那一双**的货品 —— 与群聊链路
    *   `afterSalesFlowService.resolveOutgoing` 的既有口径一致（「换尺码 = 货号/颜色/金额
    *   都从原明细上取」）。两者都没有就**问她**（不拿别的货号顶）。
    * · **尺码**：走共享的 `sizeReferenceService`（不靠关联单元格的显示文本），解析成关联 record_id。
-   * · **成交金额**：页面填了就用（执行器的 `positiveYuan` 会再校验一次两位小数）；
-   *   没填就按既有口径取**原明细的成交金额**（同款）或**货品单价**（另一双）；
+   * · **实收金额**：页面填了就用（执行器的 `positiveYuan` 会再校验一次两位小数）；
+   *   没填就按既有口径取**原明细的实收金额**（同款）或**货品单价**（另一双）；
    *   两者都取不到就**问她**，不拿别的数顶。
-   * ⚠️ 赔货的成交金额最终由**既有动作配置**固定成 0（`config/afterSales` 的
+   * ⚠️ 赔货的实收金额最终由**既有动作配置**固定成 0（`config/afterSales` 的
    *    `newLineAmount`），这里给的只是执行器要求的"大于 0 的占位"。
    */
   async resolveNewLine(raw = {}, fallbackDetailRecordId) {
@@ -204,7 +204,7 @@ class WorkbenchOrderActionService {
     const sameItem = raw.sameItem === true || String(raw.sameItem || '') === 'true';
     const askedProductId = String(raw.productRecordId || '').trim();
     const askedAmount = parseOptionalPositive(raw.amount, TEXTS.needNewAmount);
-    // 只读地取一次原明细：同款要它的货品，没填金额时要它的成交金额（两者都可能用到）。
+    // 只读地取一次原明细：同款要它的货品，没填金额时要它的实收金额（两者都可能用到）。
     const needOriginal = sameItem || !askedProductId || askedAmount == null;
     const original = needOriginal ? await this.originalDetail(fallbackDetailRecordId) : null;
 
@@ -213,7 +213,7 @@ class WorkbenchOrderActionService {
 
     let amount = askedAmount;
     if (amount == null) {
-      // 同款 → 用原明细的成交金额（同一双鞋换个码，钱不变）；
+      // 同款 → 用原明细的实收金额（同一双鞋换个码，钱不变）；
       // 另一双 → 用「货品信息.单价」当占位（与群聊链路同一条既有口径）。
       amount = sameItem ? original?.amount ?? null : await this.productPrice(productRecordId);
       if (amount == null) amount = original?.amount ?? null;
@@ -223,7 +223,7 @@ class WorkbenchOrderActionService {
     return { productId: productRecordId, sizeId: sizeEntry.recordId, amount };
   }
 
-  /** 读一条原销售明细的**只读**信息：货品 record_id + 成交金额（写库不在这里）。 */
+  /** 读一条原销售明细的**只读**信息：货品 record_id + 实收金额（写库不在这里）。 */
   async originalDetail(detailRecordId) {
     const id = String(detailRecordId || '').trim();
     if (!id) throw badRequest(TEXTS.needDetails);
