@@ -57,14 +57,24 @@ const DEFAULT_CONFIG = Object.freeze({
   // 跑数据放哪（留空 = 与本文件同目录）。
   stateFile: '',
   downloadDir: '',
-  // ⚠️ 兜底轮询间隔：**只在 SSE 长连接断了**的时候才用。
-  //    她明令"不要每 2-3 秒定时轮询" ⇒ 默认 15 秒，且**校验时会拒绝小于 10 秒的值**。
-  pollFallbackMs: 15000,
+  // ⚠️ 兜底轮询间隔（毫秒）：**只在"长连接断了、连长轮询也失败"时才用**（最后一道兜底）。
+  //    ⭐ 2026-10-12 改（真机实测"要等 ~30 秒"之后）：15000 → **3000**。
+  //    改前那条"定时轮询不许小于 10 秒"的规矩**本意是"实时性不能靠定时轮询"** ——
+  //    这个本意**没有放松**，只是换成了更强的机制来守：降级时**优先长轮询**
+  //    （`longPollWaitMs`：服务器 hold 住、任务一到立刻返回，延迟≈0），
+  //    定时轮询只是"连长轮询都不行"时的最后兜底。
+  pollFallbackMs: 3000,
   heartbeatMs: 30000,
-  // 长连接连续失败几次 ⇒ 启用兜底轮询。
+  // 长连接连续失败几次 ⇒ 启用兜底（**先长轮询**）。
   streamFailuresBeforeFallback: 3,
+  // ⭐ 降级时的**首选**通道：长轮询挂多久（毫秒）。服务器 hold 住，任务一到**立刻**返回。
+  //    ⚠️ 必须小于 Nginx 的 `proxy_read_timeout`（默认 60s），否则会被中间设备掐断 —— 默认 25 秒。
+  longPollWaitMs: 25000,
   // 重连退避（毫秒）；用完最后一档就一直按最后一档重试。
-  reconnectBackoffMs: [1000, 2000, 5000, 10000, 30000],
+  //    ⭐ 2026-10-12 改（真机实测）：[1000,2000,5000,10000,30000] → **[500,1000,1000,2000,3000]**。
+  //    理由：封顶 30 秒意味着"服务重启一次，助手最坏盲 30 秒"（她体感就是"点了没反应"）。
+  //    现在封顶 3 秒，而且 `validateConfig` 会**拒绝上限超过 3 秒**的配置（从根上不留这个坑）。
+  reconnectBackoffMs: [500, 1000, 1000, 2000, 3000],
   // 本地台账最多记多少条"已打印"（超出丢最老的）。
   maxPrintedLedger: 1000,
   printer: {
@@ -361,10 +371,33 @@ const validateConfig = (config, options = {}) => {
       push('printer.args', '打印参数里必须有 {file}（用来放这一份 PDF 的路径）');
     }
   }
+  // ⭐ 2026-10-12：下限从 10000 放宽到 500（真机实测后默认改成 3000）。
+  //    ⚠️ 但"实时性不能靠定时轮询"这条**没有放松** —— 它现在由下面几件事一起守着：
+  //      ① 降级时**优先长轮询**（`longPollWaitMs`，任务一到立刻返回，延迟≈0）；
+  //      ② 定时轮询只是"连长轮询都失败"时的最后兜底；
+  //      ③ 重连退避**封顶 3 秒**（下面那条），把"断连后的盲区"压到秒级。
   const poll = Number(config?.pollFallbackMs);
-  if (!Number.isFinite(poll) || poll < 10000) {
-    // 🔴 她明令："不要每 2-3 秒定时轮询" ⇒ 这一条是硬约束，不是建议。
-    push('pollFallbackMs', `兜底轮询间隔不能小于 10000 毫秒（现在 ${config?.pollFallbackMs}）—— 实时性靠长连接，不靠轮询`);
+  if (!Number.isFinite(poll) || poll < 500) {
+    push('pollFallbackMs', `兜底轮询间隔不能小于 500 毫秒（现在 ${config?.pollFallbackMs}）—— 那等于拿服务器刷请求`);
+  }
+  const longPoll = Number(config?.longPollWaitMs);
+  if (!Number.isFinite(longPoll) || longPoll < 1000 || longPoll > 55000) {
+    push('longPollWaitMs', `长轮询挂起时长要在 1000~55000 毫秒之间（现在 ${config?.longPollWaitMs}）`
+      + ' —— 必须小于 Nginx 的 proxy_read_timeout（默认 60 秒），否则会被中间设备掐断');
+  }
+  // ⭐ 退避上限 3 秒：上限越大，"服务重启那一下"要盲等的时间越长（实测最坏 30 秒 ⇒ 她以为没点上）。
+  const backoff = config?.reconnectBackoffMs;
+  if (!Array.isArray(backoff) || backoff.length === 0) {
+    push('reconnectBackoffMs', '重连退避必须是一个非空的毫秒数组（例如 [500, 1000, 1000, 2000, 3000]）');
+  } else {
+    const bad = backoff.find((value) => !Number.isFinite(Number(value)) || Number(value) <= 0);
+    const max = Math.max(...backoff.map((value) => Number(value)));
+    if (bad !== undefined) {
+      push('reconnectBackoffMs', `重连退避里每一项都要是正数毫秒（现在有「${bad}」）`);
+    } else if (max > 3000) {
+      push('reconnectBackoffMs', `重连退避**上限不能超过 3000 毫秒**（现在最大 ${max}）`
+        + ' —— 上限一大，服务器重启那一下助手就会盲等那么久（实测最坏 30 秒，她体感是"点了没反应"）');
+    }
   }
   const port = Number(config?.localPort);
   if (!Number.isInteger(port) || port < 1024 || port > 65535) {
@@ -719,10 +752,15 @@ const createPrintHelper = (options = {}) => {
   /** 一条一条认领并处理，直到服务器说"没有待打的了"。**串行**（打印机只有一台）。 */
   const drain = async (context = {}) => {
     if (draining) return draining;
+    // ⭐ 长轮询：`waitMs > 0` 时服务器会**hold 住**这个请求，任务一到**立刻**返回
+    //    （⇒ 断连期间延迟≈0、而且请求更少）。默认 0 = 立刻返回（SSE 正常时的路）。
+    const waitMs = Math.max(0, Number(context.waitMs) || 0);
     draining = (async () => {
       const results = [];
       for (;;) {
-        const response = await api('POST', '/api/label-print/jobs/next', { body: {} });
+        const response = await api('POST', '/api/label-print/jobs/next', {
+          body: waitMs > 0 ? { waitMs } : {},
+        });
         const body = await response.json().catch(() => null);
         const job = body?.job || null;
         if (!job) break;
@@ -787,15 +825,31 @@ const createPrintHelper = (options = {}) => {
   const startFallback = () => {
     if (state.fallbackActive || stopped) return;
     state.fallbackActive = true;
-    logger.warn('print_helper.fallback.polling', {
-      interval_ms: config.pollFallbackMs,
-      hint: '长连接连不上，先用兜底轮询（默认 15 秒一次）+ 心跳顶着；长连接一恢复就自动停',
+    const intervalMs = Math.max(500, Number(config.pollFallbackMs) || 3000);
+    const longPollMs = Math.max(1000, Number(config.longPollWaitMs) || 25000);
+    logger.warn('print_helper.fallback.long_poll', {
+      long_poll_ms: longPollMs,
+      interval_ms: intervalMs,
+      hint: '长连接断了 ⇒ **先用长轮询**（服务器 hold 住，任务一到立刻返回、延迟≈0）；'
+        + '只有连长轮询都失败时才退到定时兜底轮询（默认 3 秒）。长连接一恢复就自动停。',
     });
     const tick = async () => {
       if (stopped || !state.fallbackActive) return;
       await heartbeat();
-      if (!state.sseConnected) await drain();
-      if (state.fallbackActive && !stopped) setTimer(() => { void tick(); }, Number(config.pollFallbackMs) || 15000);
+      if (!state.sseConnected) {
+        const startedAt = now();
+        await drain({ waitMs: longPollMs });
+        const elapsed = now() - startedAt;
+        // ⚠️ 长轮询"挂满过"（服务器 hold 住了）⇒ **立刻再来一轮**：任务一入队就能马上拿到（延迟≈0）。
+        //    只有"秒回"（说明服务器没 hold，通常是长轮询这条路也失败了）才退到**最后兜底**：
+        //    定时轮询（默认 3 秒）。这条判据把"事件驱动"这条底线守住了。
+        const heldLongEnough = elapsed >= Math.min(1000, longPollMs / 2);
+        if (state.fallbackActive && !stopped) {
+          setTimer(() => { void tick(); }, heldLongEnough ? 0 : intervalMs);
+        }
+        return;
+      }
+      if (state.fallbackActive && !stopped) setTimer(() => { void tick(); }, intervalMs);
     };
     void tick();
   };

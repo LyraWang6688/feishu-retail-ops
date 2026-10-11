@@ -10,10 +10,11 @@
   "stateFile": "state.json",
   "downloadDir": "downloads",
 
-  "pollFallbackMs": 15000,
+  "pollFallbackMs": 3000,
   "heartbeatMs": 30000,
   "streamFailuresBeforeFallback": 3,
-  "reconnectBackoffMs": [1000, 2000, 5000, 10000, 30000],
+  "longPollWaitMs": 25000,
+  "reconnectBackoffMs": [500, 1000, 1000, 2000, 3000],
   "maxPrintedLedger": 1000,
 
   "printer": {
