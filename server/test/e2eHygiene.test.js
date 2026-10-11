@@ -42,10 +42,29 @@ const FAKE_OTHER = 'some_other_base_token';
  * ⚠️ 判据看 **输出**（"拒绝运行"），不看 exit code：`e2e-run.mjs` 的收尾
  * `process.exitCode` 在 `then` 链里设置，闸门抛错时命令行仍可能是 0。
  */
+/**
+ * ⚠️ 必须补上**假的应用凭证**（`LARK_AGENT_APP_ID` / `LARK_AGENT_APP_SECRET`）。
+ *
+ * 为什么：`e2e-run.mjs inspect` 的第一行是 `createClient()`，它**在 `guardEnvironment`
+ * 之前**就要求凭证齐全 —— 缺了会先抛「新飞书应用必须同时配置 LARK_AGENT_APP_ID 和
+ * LARK_AGENT_APP_SECRET」，**根本走不到我们要验的那道闸门**。
+ * ⚠️ 本机有 `.env`（CI 没有）⇒ 这一条在**本机是"假绿"**、在 CI 是红的
+ *   （2026-10-12 真实踩到：#331 CI 3 条红，本地 1862 全绿）。
+ * ⇒ 修法：**在子进程环境里显式给一对假凭证**，把"与被测闸门无关的前置条件"补齐；
+ *   **断言一个字没放宽**（仍然要求输出里出现那道闸门的原话）。
+ */
+const FAKE_APP_ID = 'cli_fake_for_gate_test';
+const FAKE_APP_SECRET = 'fake_app_secret_for_gate_test';
+
 const runInspect = (env) => {
   const result = spawnSync(process.execPath, [runner, 'inspect'], {
     cwd: serverRoot,
-    env: { ...process.env, ...env },
+    env: {
+      ...process.env,
+      LARK_AGENT_APP_ID: FAKE_APP_ID,
+      LARK_AGENT_APP_SECRET: FAKE_APP_SECRET,
+      ...env,
+    },
     encoding: 'utf8',
     timeout: 60_000,
   });
