@@ -20,7 +20,9 @@ const { createTagQrCodeService } = require('./tagQrCodeService');
 const { TAG_QR_CODE } = require('../config/tagQrCode');
 // `normalizeText`：新增的「货号有没有建档」判据必须与解析 A 用**同一套**货号归一
 // （大小写 / 空格 / 分隔符），否则会出现「A 认得出来、判据说没有」这种自相矛盾。
-const { V1ReferenceResolver, person, relation, normalizeText, normalizeColor } = require('./v1ReferenceResolver');
+// ⚠️ 2026-10-11（清群聊入口 C0）：`person` 随 `createSalesEntryWithOrderNo` 一起搬去
+//    `services/salesEntryService.js`（本文件不再直接用它）。
+const { V1ReferenceResolver, relation, normalizeText, normalizeColor } = require('./v1ReferenceResolver');
 const { LiveInventoryIndex, buildLiveInventoryIndex } = require('./liveInventoryIndex');
 const { tradeTypeLabel, deliversForTradeType } = require('../config/salesMovements');
 // 「类型的唯一判据（查完库存再定）」+「录单时要跑哪些解析」的**唯一**判据来源
@@ -49,12 +51,15 @@ const {
   resolveSalesProductRegistrationConfig,
   formatMissingProductText,
 } = require('../config/salesProductRegistration');
-const { isDataNotReady, withSalesReadRetry } = require('./salesReadRetry');
+// ⚠️ 2026-10-11（清群聊入口 C0）：`withSalesReadRetry` 随 `listSalesOrderNos` 一起搬去
+//    `services/salesEntryService.js`（本文件不再直接用它）。
+const { isDataNotReady } = require('./salesReadRetry');
 // 「销售信息还缺…」那句追问的**文案**：把 `missing_fields` 这份**机器清单**
 //（里面有 `items[0].actual_amount` 这类代码标识符）翻成**一件事一行的人话**。
 // ⚠️ 它**只翻译、不判断** —— 什么情况下报缺项、报几条，一字未动（见该文件头注释）。
 const { renderSalesMissingInfo } = require('../config/salesMissingInfoText');
-const { allocateSalesOrderNo } = require('./salesOrderNo');
+// ⚠️ 2026-10-11（清群聊入口 C0）：`allocateSalesOrderNo` 随 `createSalesEntryWithOrderNo`
+//    一起搬去 `services/salesEntryService.js`（本文件不再直接用它）。
 const { resolveAccessory } = require('./accessoryMatchPolicy');
 const { SaleLookupService } = require('./saleLookupService');
 const { AfterSalesService } = require('./afterSalesService');
@@ -1080,28 +1085,16 @@ class LarkMvpService {
    * 「其他配品」清单。没配置这张表时返回空——那种部署下销售只支持鞋，
    * 配品说法会被当成未知货号处理，而不是报配置错误。
    */
+  /**
+   * 「其他配品」清单 —— **实现已搬到共享处理层** `services/salesEntryService.listAccessories`
+   * （2026-10-11 清群聊入口 C0；扫码页也在用同一份，不再借 `LarkMvpService.prototype`）。
+   * 这里保留一个**转发**：本类内部（`processSalesTask` 的配品词表）还在调 `this.listAccessories()`。
+   * ⚠️ 等群入口那几条调用点退场后（C3/C4），这个转发与它的调用方一起删。
+   */
   async listAccessories() {
-    const table = this.gateway.table?.('accessory');
-    if (!table?.tableId) return [];
-    try {
-      const records = await this.gateway.listAll('accessory');
-      return records
-        .map((record) => ({
-          record_id: record.record_id,
-          name: textValue(record.fields?.[table.fields.name]).trim(),
-          // 「种类」是配品的品类（鞋油、腰带…），用户嘴里说的通常就是它。
-          // 单选字段读回来是数组，textValue 会归一成「鞋油」这样的字符串。
-          // 部署里没配这个字段映射（或某条没填）时留空：那种情况下只按名称匹配，
-          // 与改动前的行为完全一致，不会因为缺分类就匹配失败。
-          category: table.fields.category
-            ? textValue(record.fields?.[table.fields.category]).trim()
-            : '',
-        }))
-        .filter((item) => item.name);
-    } catch (error) {
-      logWarn('lark.sales.accessory.list_failed', { error: error.message });
-      return [];
-    }
+    // eslint-disable-next-line global-require
+    const { listAccessories } = require('./salesEntryService');
+    return listAccessories({ gateway: this.gateway });
   }
 
   /**
@@ -1532,64 +1525,30 @@ class LarkMvpService {
    * createSalesEntryWithOrderNo（唯一写入口）。三段分开，是为了让"序号怎么来的"
    * 能在单测里被穷举，而不是埋在 IO 里。
    */
+  /**
+   * 「销售主表 · 销售单号」现有取值 —— **实现已搬到共享处理层**
+   * `services/salesEntryService.listSalesOrderNos`（2026-10-11 C0）。
+   * 本类只保留转发：`createSalesEntryWithOrderNo` 的撞号复查读它。
+   */
   async listSalesOrderNos() {
-    const field = this.gateway.table?.('salesEntry')?.fields?.orderNo;
-    // 字段映射缺失时读不到号；此时返回空列表，后续写单号会因
-    //「未配置语义字段: orderNo」直接报错，而不是静默写一个空号。
-    if (!field) return [];
-    const records = await withSalesReadRetry(
-      () => this.gateway.listAll('salesEntry'), 'sales_order_no_list',
-    );
-    return records.map((record) => textValue(record.fields?.[field])).filter(Boolean);
+    // eslint-disable-next-line global-require
+    const { listSalesOrderNos } = require('./salesEntryService');
+    return listSalesOrderNos({ gateway: this.gateway });
   }
 
   /**
    * 创建销售主表记录，并在**同一处**生成 + 写入「销售单号」。
    *
-   * 为什么集中在这一处：这是全仓库唯一创建销售主表记录的地方（退货/换货不建新单，
-   * 它们沿用原销售单号）。单号只在这里生成一次，规则就不会散成两套；
-   * 以后新增入口也必须走这里，否则又会回到"飞书不生成、代码也不生成"的空号状态。
-   *
-   * 为什么拿了号才建记录、撞号时改自己这条：createSalesEntryWithOrderNo 内部
-   * 由 allocateSalesOrderNo 负责"读→算→写→写后复查"；真撞上并发时它会把号 +1 后
-   * update 回**同一条**记录，不留下第二条记录，也不给退货/换货留下两个同号的"原单"。
+   * ⚠️ 2026-10-11（清群聊入口 C0）：**实现已整体搬到共享处理层**
+   *    `services/salesEntryService.createSalesEntryWithOrderNo` —— 扫码入口（`scanWriteService`）
+   *    与群聊入口**共用同一份**建单 / 单号逻辑（"全仓唯一创建销售主表记录的地方"这条纪律不变）。
+   *    这里保留**逐字不变的转发**，是因为本类内 `processSalesTask` 还在调它；
+   *    等群入口那条链路退场后再连同转发一起删。
    */
   async createSalesEntryWithOrderNo(task) {
-    let created = null;
-    const allocation = await allocateSalesOrderNo({
-      readExistingNos: () => this.listSalesOrderNos(),
-      writeOrderNo: async (orderNo) => {
-        if (created) {
-          await this.gateway.update('salesEntry', created.recordId, { orderNo });
-          return;
-        }
-        created = await this.gateway.create('salesEntry', {
-          // ⚠️ 2026-10-09：原话（`originalText`）与解析状态（`parseStatus='解析中'`）**不再写** ——
-          //    这两列被业务负责人从生产「销售主表」里删掉了（她的口径：「我们要用扫码」、
-          //    「解析状态就是我们对于原话的解析」）。映射与写入点**一起删**，见
-          //    `config/v1BitableSchema.js` 的 `salesEntry` 段。
-          //    ⚠️ `task.original_text`（**本地**任务里她那句话）照旧留着：解析要读它、
-          //      缺项文案要读它；只是**不再落业务表**。
-          sender: person(task.sender_open_id),
-          // 建单 = 还没轮到她做任何动作 → 「确认状态」= 未确认。
-          // ⚠️ 旧「确认状态（旧）」那一列已被她 2026-10-06 整列删除，四个维度是唯一入口。
-          userAction: WRITE.userAction.pending,
-          orderNo,
-        });
-      },
-      onCollision: ({ attempt, order_no: orderNo }) =>
-        logWarn('sales.order_no.collision', { task_id: task.task_id, attempt, order_no: orderNo }),
-    });
-    logInfo('sales.order_no.generated', {
-      task_id: task.task_id,
-      sales_entry_record_id: created?.recordId,
-      order_no: allocation.orderNo,
-      sequence: allocation.sequence,
-      // 当天已有单号的条数（只数「日期段 == 今天」的）：排查"这个号从哪来"时看它。
-      today_count: allocation.todayCount,
-      attempts: allocation.attempts,
-    });
-    return created;
+    // eslint-disable-next-line global-require
+    const { createSalesEntryWithOrderNo } = require('./salesEntryService');
+    return createSalesEntryWithOrderNo({ gateway: this.gateway }, task);
   }
 
   async processSalesTask(taskId) {

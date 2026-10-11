@@ -2,8 +2,9 @@
  * 扫码入口的**三个写入口**：销售建单（一单多明细）· 补货报单（采购申请）· **采购退货**（2026-10-11 加）。
  *
  * 🔴 这个文件最要紧的一条：**本文件自己不写任何业务表**。
- *   · 销售：主表记录走**既有的**「全仓唯一创建销售主表记录」那个函数
- *     （`LarkMvpService.createSalesEntryWithOrderNo`，含单号分配与撞号复查）；
+ *   · 销售：主表记录走**共享处理层**的「全仓唯一创建销售主表记录」那个函数
+ *     （`services/salesEntryService.createSalesEntryWithOrderNo`，含单号分配与撞号复查；
+ *      2026-10-11 从 `larkMvpService` 剥出，群聊入口与扫码入口共用同一份）；
  *     明细 / 收款 / 四个状态维度 / 进度全部走**既有的** `SalesOrderService.confirm`
  *     （地址簿：`services/salesOrderService.js`）——与群聊入口、工作台入口**同一个函数**；
  *   · 采购：采购申请走**既有的** `PurchaseWebhookService.publishPurchaseRequest`
@@ -59,20 +60,19 @@ const { logError, logInfo, logWarn } = require('../utils/logger');
 /**
  * 「全仓唯一创建销售主表记录」的那个函数 —— **只 require 调用，不改它一个字**。
  *
- * ⚠️ 为什么是 `.prototype.call(...)` 而不是 `new LarkMvpService(...)`：
- *   `LarkMvpService` 的构造函数会连带构造采购 / 售后 / 样品 / 本地任务存储等一整套
- *   群聊入口的东西，而我们需要**只是**这一个方法（它是纯的：只读网关 + 写主表）。
- *   借一个最小接收者调它，既不构造群聊那一整套、也不碰 `data/lark_mvp_tasks/`。
- *   方法内部只用到 `this.gateway` 与 `this.listSalesOrderNos`（两者都在这里给它）。
+ * ⚠️ 2026-10-11（清群聊入口 C0）：它原先长在 `LarkMvpService.prototype` 上，
+ *   扫码页靠 `.prototype.call({gateway})` 借用 —— 于是"删群聊入口"会连扫码建单
+ *   一起删掉（扫码被群聊入口绑住了）。现在这个函数搬进了**共享处理层**
+ *   `services/salesEntryService.js`（群聊入口与扫码入口**共用**同一份建单/单号逻辑），
+ *   扫码页直接 require 它。
+ *   ⚠️ **不再经 `LarkMvpService`**：那个类的构造函数会连带构造采购 / 售后 / 样品 /
+ *      本地任务存储等一整套**群聊入口**的东西，扫码页一个字都不需要。
  */
 const createSalesEntryWithOrderNo = async (gateway, task) => {
-  // 延迟 require：避免把群聊入口那一整棵模块树拖进"扫码页模块加载"这条路径。
+  // 延迟 require：与原来同一个理由（把扫码页模块加载路径上的依赖树压到最小）。
   // eslint-disable-next-line global-require
-  const { LarkMvpService } = require('./larkMvpService');
-  return LarkMvpService.prototype.createSalesEntryWithOrderNo.call({
-    gateway,
-    listSalesOrderNos: LarkMvpService.prototype.listSalesOrderNos,
-  }, task);
+  const { createSalesEntryWithOrderNo: createEntry } = require('./salesEntryService');
+  return createEntry({ gateway }, task);
 };
 
 const createScanWriteService = (options = {}) => {
@@ -254,10 +254,11 @@ const createScanWriteService = (options = {}) => {
   /**
    * 「其他配品」清单（**只读 + 可缓存**）——用于页面上那个配品下拉。
    *
-   * ⚠️ 复用**既有** `LarkMvpService.listAccessories`（它已经在做这件事：名称 / 种类、
-   *    过滤掉没名字的）—— 与 `createSalesEntryWithOrderNo` 同一个手法：
-   *    只借那**一个方法**（`.prototype.call`），不构造群聊入口那一整套依赖；
-   *    延迟 require，避免把群聊那条链路的模块树拖进扫码页。
+   * ⚠️ 复用**共享处理层**的 `salesEntryService.listAccessories`（它已经在做这件事：
+   *    名称 / 种类、过滤掉没名字的）—— 与 `createSalesEntryWithOrderNo` 同一个来源。
+   *    ⚠️ 2026-10-11（清群聊入口 C0）：原先借的是 `LarkMvpService.prototype.listAccessories`
+   *       （`.prototype.call`）—— 那会把扫码页绑在群聊入口那个类上；现在改 require 共享件。
+   *    延迟 require，避免把不必要的依赖树拖进扫码页。
    * ⚠️ 缓存只影响"下拉里能选到哪几件"（`SCAN_SALE_ACCESSORY_CACHE_TTL_MS`，默认 30 秒），
    *    **不影响任何写库判据** —— 提交时以她选中的**记录 id** 为准（存不存在当场查）。
    * ⚠️ 读不到配品表**不该把整页拖垮**（她还能正常卖鞋）：记一条 warn、给空清单，**不缓存失败**。
@@ -269,8 +270,8 @@ const createScanWriteService = (options = {}) => {
     if (ttl > 0 && accessoryCache.value && now() - accessoryCache.at < ttl) return accessoryCache.value;
     try {
       // eslint-disable-next-line global-require
-      const { LarkMvpService } = require('./larkMvpService');
-      const value = await LarkMvpService.prototype.listAccessories.call({ gateway });
+      const { listAccessories: readAccessories } = require('./salesEntryService');
+      const value = await readAccessories({ gateway });
       accessoryCache = { at: now(), value };
       return value;
     } catch (error) {
@@ -1282,7 +1283,7 @@ const createScanWriteService = (options = {}) => {
     // ⭐ 采购退货（与补货同形；业务负责人 2026-10-11 定的「和"报货"逻辑一样，也走扫码」）
     submitPurchaseReturn,
     purchaseReturn,
-    // ⭐ 页面上的配品下拉要的清单（只读；复用既有 LarkMvpService.listAccessories + 短缓存）。
+    // ⭐ 页面上的配品下拉要的清单（只读；复用共享件 `salesEntryService.listAccessories` + 短缓存）。
     listAccessories,
     // 给用例 / 排查用：这次提交的幂等键是怎么算出来的（与 purchaseWebhookService 的
     // `purchaseTaskId` 同一个思路：**确定性推导**，两端不必各写一份公式）。

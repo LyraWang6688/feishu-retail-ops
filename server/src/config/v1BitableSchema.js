@@ -188,7 +188,9 @@ const V1_BITABLE_SCHEMA = {
         //      **扫码时代不要了** ✓
         //
         // 【删了哪些写入点】（每一处都必须删，只删一个会留坑 —— 见下）：
-        //    · `larkMvpService.createSalesEntryWithOrderNo` 建单：原话 + 解析状态（「解析中」）
+        //    · `services/salesEntryService.createSalesEntryWithOrderNo` 建单：
+        //      原话 + 解析状态（「解析中」）—— ⚠️ 2026-10-11 前这个方法在 `larkMvpService` 上，
+        //      清群聊入口 C0 时实现整体搬进共享处理层（**写入点本身逐字未变**，只是换了文件）
         //    · `larkMvpService.processSalesTask` 解析收尾那一次 update：
         //      解析状态 + 解析结果摘要 + 失败原因（那一次 update 现在只剩「交易类型」）
         //    · `salesOrderService._confirm`：失败原因（收尾清空 / 失败回填，共 2 处）
