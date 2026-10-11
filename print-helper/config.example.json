@@ -4,6 +4,9 @@
   "deviceId": "store-pc",
 
   "localPort": 8799,
+  "openStatusPageOnStart": true,
+  "logFile": "helper.log",
+  "maxLogBytes": 262144,
   "stateFile": "state.json",
   "downloadDir": "downloads",
 
