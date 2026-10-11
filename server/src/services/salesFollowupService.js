@@ -224,6 +224,32 @@ class SalesFollowupService {
     });
   }
 
+  /**
+   * 把那张销售单**唯一**那条【未收款】的「收款金额」同步成**当前剩余待收**（收满 ⇒ `0`）。
+   *
+   * ⭐⭐ 2026-10-12（分笔补收款）：每次提交收款之后都调一次 —— 让表里那条占位行始终等于
+   *    **现算的剩余**（`progressFromOrders` 的 `pendingAmount`，与工作台订单列表同一口径）。
+   * · **不删记录**（本链路没有删除路径）—— 与 `updateDetailAmounts` 完全一致；
+   * · **幂等**：每次都按"现算剩余"重算 ⇒ 重放写成同一个值；
+   * · 没有待收款行 ⇒ 什么都不写（只回剩余）；有多条 ⇒ 也**不写**（那要人工核对，
+   *   `addPayment` 在那之前就已经拦住）；
+   * · 实收还没填（`pendingAmount === null`）⇒ 返回 `null`，**不写**（算不出来就不猜）。
+   *
+   * @returns {Promise<number|null>} 当前剩余待收（元）／算不出来时 `null`
+   */
+  async syncPendingAmount(salesEntryRecordId) {
+    const progress = await this.progress.forOrder(salesEntryRecordId);
+    if (progress.pendingAmount === null) return null;
+    const remaining = Math.max(0, Number(progress.pendingAmount) || 0);
+    const fields = this.gateway.table('paymentRecord').fields;
+    const pending = (await this.payments.recordsForSale(salesEntryRecordId)).filter((record) =>
+      textValue(record.fields?.[fields.status]) === '未收款');
+    if (pending.length === 1 && Number(textValue(pending[0].fields?.[fields.amount])) !== remaining) {
+      await this.gateway.update('paymentRecord', pending[0].record_id, { amount: remaining });
+    }
+    return remaining;
+  }
+
   async addPayment(input) {
     const work = async () => {
       const requestId = String(input.requestId || '');
@@ -236,8 +262,13 @@ class SalesFollowupService {
         if (existing.status === 'completed') return existing.result;
         if (existing.status === 'recorded') {
           await this.progress.sync(input.salesEntryRecordId, { paymentRecordIds: [existing.result.recordId] });
-          await this.store.update(taskId, { status: 'completed' });
-          return existing.result;
+          // ⭐ 2026-10-12：重试时**也要**把那条【未收款】同步成当前剩余（幂等：按现算重算）
+          const recovered = {
+            ...existing.result,
+            pendingAmount: await this.syncPendingAmount(input.salesEntryRecordId),
+          };
+          await this.store.update(taskId, { status: 'completed', result: recovered });
+          return recovered;
         }
         throw new Error('这笔收款结果待核对，请勿重新提交');
       }
@@ -254,16 +285,23 @@ class SalesFollowupService {
       const pending = (await this.payments.recordsForSale(input.salesEntryRecordId)).filter((record) =>
         textValue(record.fields?.[this.gateway.table('paymentRecord').fields.status]) === '未收款');
       if (pending.length > 1) throw new Error('存在多条待收款记录，请先人工核对');
-      if (pending.length && cents(input.amount, '收款金额') !== cents(
-        textValue(pending[0].fields?.[this.gateway.table('paymentRecord').fields.amount]), '待收记录金额')) {
-        throw new Error('本版请一次收清这条待收款记录；分笔补款暂不支持');
-      }
+      // 🔴 2026-10-12 **改写**（业务负责人：「1. 可以做」）—— 原来这里有一条硬判据：
+      //    `pending.length && cents(amount) !== cents(那条未收款行的金额)` ⇒ 抛
+      //    「本版请一次收清这条待收款记录；分笔补款暂不支持」。
+      //    ⚠️ 它的前提（"收款只有一次性收清那一条路"）现在**不成立了**：她明确要**分笔**。
+      //    ⇒ 改成：**每次提交各记一条收款行**（方式照她说、每笔可不同），
+      //      累计到**收满待收**为止；那条【未收款】每次提交后同步成**当前剩余**（见下）。
       await this.store.create({ task_id: taskId, fingerprint, status: 'pending' });
-      const result = pending.length
-        ? { recordId: pending[0].record_id } : { recordId: (await this.payments.record(input)).recordId };
-      if (pending.length) await this.payments.collectPendingReceipt(result.recordId, input);
-      await this.store.update(taskId, { status: 'recorded', result });
-      await this.progress.sync(input.salesEntryRecordId, { paymentRecordIds: [result.recordId] });
+      const created = await this.payments.record(input);
+      const recorded = { recordId: created.recordId };
+      await this.store.update(taskId, { status: 'recorded', result: recorded });
+      await this.progress.sync(input.salesEntryRecordId, { paymentRecordIds: [recorded.recordId] });
+      // ⭐ 收满 ⇒ 那条【未收款】同步成 **0**（**不删记录**）；没满 ⇒ 同步成剩余
+      //    —— 与「逐件补实收」（`updateDetailAmounts`）**同一条口径**。
+      const result = {
+        ...recorded,
+        pendingAmount: await this.syncPendingAmount(input.salesEntryRecordId),
+      };
       await this.store.update(taskId, { status: 'completed', result });
       return result;
     };

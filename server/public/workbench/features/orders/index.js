@@ -780,11 +780,17 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     const requestId = state.pendingRequest || uuid();
     state.pendingRequest = requestId;
     await runAction(button, '正在记收款…', async () => {
-      await api.post(ORDERS_API.payments, {
+      const result = await api.post(ORDERS_API.payments, {
         salesEntryRecordId: order.record_id, method, amount: Number(raw), requestId,
       });
       state.pendingRequest = null;
-      return `已记一笔收款：${method} ${amount(raw)}。`;
+      // ⭐ 2026-10-12（分笔补收款）：这句话里顺手把**还差多少**说出来 ——
+      //    她接着记下一笔时一眼知道还剩多少（`pendingAmount` 是服务端现算的；收满 ⇒ 0）。
+      //    ⚠️ 不加任何"怎么做"的说明句（她 2026-10-10 的硬要求）。
+      const left = Number(result?.pendingAmount);
+      return Number.isFinite(left) && left > 0
+        ? `已记一笔收款：${method} ${amount(raw)}；还差 ${amount(left)}。`
+        : `已记一笔收款：${method} ${amount(raw)}。`;
     });
   }
 
