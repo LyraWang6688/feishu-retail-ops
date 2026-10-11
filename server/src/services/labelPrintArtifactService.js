@@ -202,12 +202,9 @@ function availableWidthMm(layout, options = {}) {
   const label = layout.label || {};
   const body = layout.body || {};
   const fields = layout.fields || {};
-  // ⚠️ 竖版画布下二维码**自己占一行** ⇒ 它不再从"行方向"里扣宽度（货号拿到整行）。
-  const qrInFlow = options.qrInFlow === true;
   const designWidthMm = num(options.designWidthMm, num(label.widthMm, 40));
-  const qr = (fields.qr === false || qrInFlow)
-    ? 0
-    : num(layout.typography?.qrSizeMm, 15) + num(body.qrGapMm, 1.5);
+  // 二维码**永远在左栏**（构图不变）⇒ 它永远从"行方向"里扣宽度（右栏 20.1mm）。
+  const qr = fields.qr === false ? 0 : num(layout.typography?.qrSizeMm, 15) + num(body.qrGapMm, 1.5);
   const borders = num(label.borderMm, 0.2) * 2;
   return Math.max(0, designWidthMm - num(label.paddingMm, 1.5) * 2 - borders - qr);
 }
@@ -280,22 +277,24 @@ const canvasGeometry = (layout, options = {}) => {
   const canvas = normalizeCanvas(options.canvas);
   const rotateOption = normalizeRotation(options.rotate);
   const portrait = canvas === 'portrait';
-  // 逻辑画布：竖版 = 宽高互换（"按旋转后的画布重新排版"）
-  const designW = portrait ? labelH : labelW;
-  const designH = portrait ? labelW : labelH;
-  // 内容相对页面要转多少度：竖版画布天生就带一次 90°（把 30×40 的画布转进 40×30 的页面）。
+  // ⭐⭐ **两档用的是同一份原构图**（40×30：品牌在上、二维码在左、信息在右、尺码在下）——
+  //    不重排行序、不把二维码挪进行流（业务负责人 2026-10-12：「左边是二维码、右边是信息的
+  //    这个已经变了」⇒ 构图必须保持原样）。
+  const designW = labelW;
+  const designH = labelH;
+  // 内容相对页面转多少度：竖版天生带一次 90°（把 40×30 的原构图转过来）。
   const rotation = ((((portrait ? 90 : 0) + rotateOption) % 360) + 360) % 360;
-  // ⚠️ 竖版画布下**忽略** `rotatePageWithContent`：实测换页面会让驱动**再转 90°**、方向又反。
-  const allowSwap = !portrait
-    && Boolean(options.rotatePageWithContent)
-    && (rotateOption === 90 || rotateOption === 270);
+  // ⭐ 页面声明：竖版 = **30×40**（这样"原构图转 90°"能 1:1 放进去 ⇒ **100% 铺满、scale=1**）；
+  //    横版 = 40×30（老纸型；`rotatePageWithContent` 那条老路也还留着）。
+  const allowSwap = portrait
+    || (Boolean(options.rotatePageWithContent) && (rotateOption === 90 || rotateOption === 270));
   const pageW = allowSwap ? labelH : labelW;
   const pageH = allowSwap ? labelW : labelH;
-  // 转完之后内容占多大；**塞不下才缩**（老路 B 靠这一档；竖版画布在 40×30 里正好 1:1）。
+  // 转完之后内容占多大；**塞不下才缩**（横版 + 转 90° 那条老路 = 真机 B 就是靠这一档）。
   const needW = rotation % 180 === 0 ? designW : designH;
   const needH = rotation % 180 === 0 ? designH : designW;
   const fit = Math.min(1, pageW / needW, pageH / needH);
-  // ⚠️ 只有"要缩小"时才留那 2% 余量（刚好贴边会被打印机切到）；原尺寸那一档保持 1:1。
+  // ⚠️ 只有"要缩小"时才留那 2% 余量（刚好贴边会被打印机切到）；1:1 那一档保持原尺寸。
   const scale = fit >= 1 ? 1 : round(fit * 0.98);
   return {
     canvas,
@@ -308,8 +307,6 @@ const canvasGeometry = (layout, options = {}) => {
     pageH,
     rotate: rotation,
     scale,
-    // 竖版画布：二维码**自己占一行**（见 `body.portraitRows` 的说明）。
-    qrInFlow: portrait,
     allowSwap,
   };
 };
@@ -411,13 +408,15 @@ function labelSvg(label, layout, options = {}) {
   const mainH = Math.max(0, mainBottom - mainTop);
 
   // ── 二维码（左，竖直居中）──────────────────────────────────────────────
+  // 二维码边长：**两档都用同一个 `qrSizeMm`（15mm）** —— 画布都是 40×30，右栏 20.1mm 装得下。
   const qrMm = num(typography.qrSizeMm, 15);
   const qrGapMm = num(body.qrGapMm, 1.5);
-  // ⭐ 二维码在哪：横版 = **左栏**（老版式，二维码旁边是文字）；竖版画布 = **自己占一行**
-  //   （行方向只有 30mm，二维码挤在里面会把货号压到截断 —— 见 `body.portraitRows` 的说明）。
-  const qrInFlow = geometry.qrInFlow === true && fields.qr && qrMm > 0;
+  // ⭐⭐ **构图保持原样**（业务负责人 2026-10-12 真机反馈：「左边是二维码、右边是信息的这个已经变了」）：
+  //   二维码**永远在左栏**、信息在右栏 —— 横版竖版**都是这一套构图**，只是画布尺寸不同。
+  //   ⚠️ 竖版画布的"行方向"只有 30mm（画布是 30×40）⇒ 二维码旁边只剩 ~10mm 给货号，
+  //      所以竖版把二维码**调小**（`typography.portraitQrSizeMm`，配置可改）—— 见那里的说明。
   let rightX = x0;
-  if (fields.qr && qrMm > 0 && !qrInFlow) {
+  if (fields.qr && qrMm > 0) {
     const qrY = mainTop + Math.max(0, (mainH - qrMm) / 2);
     parts.push(placeQrSvg(label.qr_svg, { x: round(x0), y: round(qrY), sizeMm: round(qrMm) }));
     rightX = x0 + qrMm + qrGapMm;
@@ -425,11 +424,11 @@ function labelSvg(label, layout, options = {}) {
   // 右栏从 `rightX` 到内容区右边（竖版画布下 = 整幅内容宽）—— 具体画多宽由下面的估算决定，
   // 排版不会越过这条界线（`planItemNoColor` 已经把字宽算进可用宽度里）。
 
-  // ── 右栏：行序与每一行的画法都来自 config（横版 `body.rows` / 竖版 `body.portraitRows`）──
-  const rowIds = geometry.portrait
-    ? (Array.isArray(body.portraitRows) && body.portraitRows.length ? body.portraitRows : ['brand', 'itemNoColor', 'price', 'sizes'])
-    : (Array.isArray(body.rows) && body.rows.length ? body.rows : ['brand', 'itemNoColor', 'price', 'state', 'sizes']);
-  const rows = rowIds;
+  // ── 右栏：行序与每一行的画法都来自 config（`body.rows`）——
+  //   ⚠️ **竖版画布不再另排行序**（她要求"保持原构图"）：两档用的是**同一份 `body.rows`**。
+  const rows = Array.isArray(body.rows) && body.rows.length
+    ? body.rows
+    : ['brand', 'itemNoColor', 'price', 'state', 'sizes'];
   const itemNoMm = num(typography.itemNoMm, 3.6);
   const fieldMm = num(typography.fieldMm, 2.8);
   const priceMm = num(typography.priceMm, 3.2);
@@ -438,7 +437,7 @@ function labelSvg(label, layout, options = {}) {
   const qtyShiftEm = num(sizesCfg.qtyBaselineShiftEm, 0.2);
   const sizeGapMm = num(sizesCfg.itemGapMm, 1);
 
-  const itemPlan = planItemNoColor(label, layout, { designWidthMm: widthMm, qrInFlow });
+  const itemPlan = planItemNoColor(label, layout, { designWidthMm: widthMm });
   const sizeLines = Array.isArray(label.size_lines) ? label.size_lines.filter((line) => Array.isArray(line) && line.length) : [];
   const overflowMark = String(texts.overflowMark ?? '…');
 
@@ -453,7 +452,6 @@ function labelSvg(label, layout, options = {}) {
     if (id === 'sizes') return Math.max(1, sizeLines.length) * sizeMm * LINE_HEIGHTS.sizes;
     if (id === 'brand') return brandMmRow();
     // ⭐ 二维码自己占一行（竖版画布）：高度 = 二维码边长 + 上面一点空隙。
-    if (id === 'qr') return qrInFlow ? qrMm + 0.8 : 0;
     return 0;
   };
 
@@ -463,7 +461,8 @@ function labelSvg(label, layout, options = {}) {
     if (id === 'price') return Boolean(fields.price && label.price_text);
     if (id === 'state') return Boolean(fields.state);
     if (id === 'sizes') return Boolean(fields.size) && sizeLines.length > 0;
-    if (id === 'qr') return qrInFlow;
+    if (id === 'qr') return false; // 二维码不在行流里（永远是左栏）
+
     return false;
   });
   const totalH = activeRows.reduce((sum, id) => sum + rowHeight(id), 0);
@@ -510,9 +509,6 @@ function labelSvg(label, layout, options = {}) {
           parts.push(`<text x="${round(x)}" y="${round(lineBaseline)}" font-family="${FONT_FAMILY}" font-size="${round(sizeMm)}">${escapeXml(overflowMark)}</text>`);
         }
       });
-    } else if (id === 'qr') {
-      // 二维码那一行：**左对齐**（与她定案的"二维码在左边"一致），自己占一行 ⇒ 15mm 原尺寸。
-      parts.push(placeQrSvg(label.qr_svg, { x: round(rightX), y: round(cursor + 0.4), sizeMm: round(qrMm) }));
     }
     cursor += h;
   }
