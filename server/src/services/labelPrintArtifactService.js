@@ -222,6 +222,66 @@ const placeQrSvg = (qrSvg, { x, y, sizeMm }) => {
   return `<svg ${placement} xmlns="http://www.w3.org/2000/svg">${raw}</svg>`;
 };
 
+const ROTATIONS = Object.freeze([0, 90, 180, 270]);
+
+/** 旋转角度归一化。认不出的值**当场抛错**（配置写错时不许静默按 0 处理 —— 那会印出一堆方向反的标签）。 */
+const normalizeRotation = (value) => {
+  const angle = Number(value ?? 0);
+  if (!ROTATIONS.includes(angle)) {
+    throw new Error(`标签旋转角度只能是 0 / 90 / 180 / 270，当前是「${value}」`);
+  }
+  return angle;
+};
+
+/**
+ * ⭐ **打印方向**（业务负责人 2026-10-11 真机反馈：「标签是 40×30 横版，但内容整体转了 90°」）。
+ *
+ * 两个旋钮（都在 `config/labelPrintQueue.js` 的 `artifact` 里，默认都是"不动"）：
+ *   · `rotate`                 —— **只转内容**（0 / 90 / 180 / 270）；
+ *   · `rotatePageWithContent`  —— **页面尺寸也跟着转**（40×30 ⇒ 30×40）。
+ *
+ * ⚠️ **为什么需要第二个旋钮**（这一段是这次真机问题的核心，别删）：
+ *    在**尺寸不变**的 40×30 页面里把一幅 40×30 的图转 90°，它占的地方变成 30×40 ——
+ *    **塞不进同一张纸**。数学上只有两条路：
+ *      ① **等比缩小**（×0.75）塞进去 ⇒ 方向对了，但**整张标签缩到 75%**（二维码 15mm ⇒ 11.25mm）；
+ *      ② **让页面也跟着转**（MediaBox 变成 30×40）⇒ 方向对了，而且**原尺寸**。
+ *    ⇒ 默认两个都关（**今天的行为一个字节都不变**）；她要哪个方向、要不要保原尺寸，
+ *      由她在真机上试出来之后改配置 —— 所以这里做成配置，不写死。
+ */
+const rotationTransform = ({ rotate, pageW, pageH, labelW, labelH }) => {
+  if (rotate === 0) return '';
+  if (rotate === 180) {
+    // 页面不动：整幅图绕页面中心转 180°。
+    return `translate(${round(pageW)} ${round(pageH)}) rotate(180)`;
+  }
+  const swapped = pageW !== labelW; // 页面已经跟着转了（pageW 变成了 labelH）
+  if (swapped) {
+    // 页面跟着转：把 labelW×labelH 的图**原尺寸**放进 pageW×pageH 的新页面里。
+    return rotate === 90
+      // 顺时针 90°：(x, y) → (pageW − y, x)
+      ? `translate(${round(pageW)} 0) rotate(90)`
+      // 逆时针 90°（= 270°）：(x, y) → (y, pageH − x)
+      : `translate(0 ${round(pageH)}) rotate(270)`;
+  }
+  // 页面不动 ⇒ 等比缩小到塞得下（长边转到短边那一侧）。
+  // ⚠️ 乘 0.98 留一丝余量：刚好贴边的话，裁切线会落在纸的最外一像素上（打印机很容易把它切掉/糊掉）。
+  const fit = Math.min(1, Math.min(labelW, labelH) / Math.max(labelW, labelH));
+  const scale = round(fit * 0.98);
+  const cx = round(labelW / 2);
+  const cy = round(labelH / 2);
+  return `translate(${cx} ${cy}) rotate(${rotate}) scale(${scale}) translate(${-cx} ${-cy})`;
+};
+
+/** 页面尺寸（mm）：`rotatePageWithContent` 且 90/270 ⇒ 宽高互换。 */
+const pageSizeMm = (layout, options = {}) => {
+  const labelCfg = layout.label || {};
+  const labelW = num(labelCfg.widthMm, 40);
+  const labelH = num(labelCfg.heightMm, 30);
+  const rotate = normalizeRotation(options.rotate);
+  const swap = Boolean(options.rotatePageWithContent) && (rotate === 90 || rotate === 270);
+  return { labelW, labelH, pageW: swap ? labelH : labelW, pageH: swap ? labelW : labelH, rotate, swapped: swap };
+};
+
 /**
  * 一张标签的 **SVG**（mm 用户单位 + 精确像素尺寸）—— 版式逐条对应她 2026-10-08 定稿的那张：
  *
@@ -233,6 +293,10 @@ const placeQrSvg = (qrSvg, { x, y, sizeMm }) => {
  * ```
  * ⚠️ **一个 mm、一个行序都不写死**：全部从 `layout`（= `config/labelPrint.js`）来。
  *    改标签纸尺寸 / 品牌位置 / 右栏行序 ⇒ 只改那份 config，本文件不用动。
+ * ⚠️ **旋转只在"最外层套一个 transform"**：整幅内容一次性转（见 `rotationTransform`），
+ *    里面一个坐标都不用改 —— 这样"改方向"永远不会把版式搞歪。
+ * ⚠️ `rotate === 0`（默认）时**输出与加旋转之前逐字节一致**（不套 `<g>`）——
+ *    既有用例与既有版式都不受影响。
  */
 function labelSvg(label, layout, options = {}) {
   const dpi = num(options.dpi, 203);
@@ -248,8 +312,10 @@ function labelSvg(label, layout, options = {}) {
   const padMm = num(labelCfg.paddingMm, 1.5);
   const borderMm = num(labelCfg.borderMm, 0.2);
 
-  const widthPx = mmToPx(widthMm, dpi);
-  const heightPx = mmToPx(heightMm, dpi);
+  // ⭐ 打印方向：页面尺寸可能与标签自身尺寸不同（`rotatePageWithContent` 且 90/270）。
+  const page = pageSizeMm(layout, options);
+  const widthPx = mmToPx(page.pageW, dpi);
+  const heightPx = mmToPx(page.pageH, dpi);
 
   // 内容区（`box-sizing: border-box` ⇒ 留白与裁切线都占尺寸）。
   const x0 = padMm + borderMm;
@@ -384,9 +450,19 @@ function labelSvg(label, layout, options = {}) {
     cursor += h;
   }
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${widthPx}" height="${heightPx}" viewBox="0 0 ${widthMm} ${heightMm}">`
-    + `<rect width="${widthMm}" height="${heightMm}" fill="#ffffff" />`
-    + parts.join('')
+  const inner = parts.join('');
+  // ⚠️ `rotate === 0`（默认）**不套 `<g>`** —— 输出与加旋转之前逐字节一致（既有版式/既有用例不受影响）。
+  const transform = rotationTransform({
+    rotate: page.rotate,
+    pageW: page.pageW,
+    pageH: page.pageH,
+    labelW: widthMm,
+    labelH: heightMm,
+  });
+  const body2 = transform ? `<g transform="${transform}">${inner}</g>` : inner;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${widthPx}" height="${heightPx}" viewBox="0 0 ${page.pageW} ${page.pageH}">`
+    + `<rect width="${page.pageW}" height="${page.pageH}" fill="#ffffff" />`
+    + body2
     + '</svg>';
 }
 
@@ -521,20 +597,24 @@ async function renderLabels({ labels, layout, config = {}, logger = null }) {
   const list = Array.isArray(labels) ? labels : [];
   if (!list.length) throw new Error('没有可打印的标签（renderLabels 收到空列表）');
   const dpi = num(config.dpi, 203);
-  const labelCfg = layout.label || {};
+  // ⭐ 打印方向：`rotate` 只转内容；`rotatePageWithContent` 让页面尺寸也跟着转（见 rotationTransform）。
+  const rotate = normalizeRotation(config.rotate);
+  const rotatePageWithContent = Boolean(config.rotatePageWithContent);
+  const page = pageSizeMm(layout, { rotate, rotatePageWithContent });
   const pages = [];
   let pngFirst = null;
   for (const label of list) {
-    const svg = labelSvg(label, layout, { dpi });
+    const svg = labelSvg(label, layout, { dpi, rotate, rotatePageWithContent });
     const png = await svgToPng(svg);
     if (!pngFirst) pngFirst = png;
     const jpeg = await pngToJpeg(png, { quality: config.jpegQuality });
     pages.push({
       jpeg,
-      widthPx: mmToPx(num(labelCfg.widthMm, 40), dpi),
-      heightPx: mmToPx(num(labelCfg.heightMm, 30), dpi),
-      widthMm: num(labelCfg.widthMm, 40),
-      heightMm: num(labelCfg.heightMm, 30),
+      // ⚠️ 这两个是**页面**尺寸（可能已经跟着转过），不是标签自身尺寸。
+      widthPx: mmToPx(page.pageW, dpi),
+      heightPx: mmToPx(page.pageH, dpi),
+      widthMm: page.pageW,
+      heightMm: page.pageH,
       number: label.number || label.key || '',
       item_no: label.item_no || '',
       color: label.color || '',
@@ -542,15 +622,18 @@ async function renderLabels({ labels, layout, config = {}, logger = null }) {
       total_qty: label.total_qty ?? null,
     });
   }
-  const pdf = buildPdf(pages.map((page) => ({
-    jpeg: page.jpeg, widthPx: page.widthPx, heightPx: page.heightPx, widthMm: page.widthMm, heightMm: page.heightMm,
+  const pdf = buildPdf(pages.map((page1) => ({
+    jpeg: page1.jpeg, widthPx: page1.widthPx, heightPx: page1.heightPx, widthMm: page1.widthMm, heightMm: page1.heightMm,
   })), { title: `labels-${pages.length}` });
   if (logger && typeof logger.info === 'function') {
     logger.info('label_print.artifact.rendered', {
       pages: pages.length,
       dpi,
+      rotate,
+      rotate_page_with_content: rotatePageWithContent || undefined,
       pdf_bytes: pdf.length,
-      page_mm: `${num(labelCfg.widthMm, 40)}x${num(labelCfg.heightMm, 30)}`,
+      page_mm: `${page.pageW}x${page.pageH}`,
+      label_mm: `${page.labelW}x${page.labelH}`,
     });
   }
   return {
@@ -559,10 +642,16 @@ async function renderLabels({ labels, layout, config = {}, logger = null }) {
     pages: pages.map(({ jpeg, ...rest }) => rest),
     meta: {
       dpi,
-      width_mm: num(labelCfg.widthMm, 40),
-      height_mm: num(labelCfg.heightMm, 30),
-      width_pt: mmToPt(num(labelCfg.widthMm, 40)),
-      height_pt: mmToPt(num(labelCfg.heightMm, 30)),
+      rotate,
+      rotate_page_with_content: rotatePageWithContent,
+      // 页面尺寸（送打印机那一份的真实 MediaBox）
+      width_mm: page.pageW,
+      height_mm: page.pageH,
+      width_pt: mmToPt(page.pageW),
+      height_pt: mmToPt(page.pageH),
+      // 标签自身尺寸（纸没换，只是方向不同 —— 页面尺寸可能与它不同）
+      label_width_mm: page.labelW,
+      label_height_mm: page.labelH,
       page_count: pages.length,
       pdf_bytes: pdf.length,
     },
@@ -573,11 +662,15 @@ module.exports = {
   FONT_FAMILY,
   LINE_HEIGHTS,
   MM_TO_PT,
+  ROTATIONS,
   escapeXml,
   textWidthMm,
   availableWidthMm,
   planItemNoColor,
   placeQrSvg,
+  normalizeRotation,
+  pageSizeMm,
+  rotationTransform,
   labelSvg,
   svgToPng,
   pngToJpeg,

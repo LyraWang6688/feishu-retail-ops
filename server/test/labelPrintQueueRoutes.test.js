@@ -331,8 +331,17 @@ test('AC-R4 ⭐⭐ 启动补拉：电脑关着时手机点了两次打印，开�
   try {
     await withServer(harness.app, async (base) => {
       // ① 电脑关着：她先在手机上点了两次。
+      // ⚠️ 2026-10-11 改夹具（**"补拉按先进先出"这个本意没变**）：
+      //   改前：两次都是 `{ mode:'single', number }`（一模一样）。
+      //   改后：第二次带 `again: true` = **她明确要再打一张**。
+      //   理由：真机反馈"连点导致多打"之后，同一份请求在窗口内现在是**同一个任务**
+      //        （防连点，见 `labelPrintQueue.test.js` 的 AC16）⇒ 用"两次一样的提交"
+      //        再也造不出两条排队任务；而 `again` 正是"她真想再打一张"那条真实的路。
       const first = await (await phone(base, '/jobs', { method: 'POST', body: { mode: 'single', number: NUMBER } })).json();
-      const second = await (await phone(base, '/jobs', { method: 'POST', body: { mode: 'single', number: NUMBER } })).json();
+      const second = await (await phone(base, '/jobs', {
+        method: 'POST', body: { mode: 'single', number: NUMBER, again: true },
+      })).json();
+      assert.notEqual(second.job_id, first.job_id);
       const statusWhileOffline = await (await phone(base, '/status')).json();
       assert.equal(statusWhileOffline.online, false, '电脑没连过 ⇒ 未连接');
       assert.equal(statusWhileOffline.status.counts.queued, 2, '任务在排队（不是丢了）');
@@ -525,6 +534,65 @@ test('AC-R5 手机侧 status / jobs 的返回形状：状态中文名 + 在线 +
       assert.deepEqual(body.states.map((state) => state.label), ['待打印', '已取走', '已打印', '失败']);
       assert.equal(body.jobs[0].status_label, '待打印');
       assert.equal(body.jobs[0].total_labels, 1);
+    });
+  } finally {
+    harness.cleanup();
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 【2026-10-11 方向口径纠正】手机侧也能**按这一次**指定方向（试 90°/270° 不用重启）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-R10 ⭐ 手机侧带 `rotate` ⇒ 这一条任务按这个方向印（并留痕在任务上）；不传 ⇒ 跟随配置', async () => {
+  const harness = buildHarness();
+  login();
+  try {
+    await withServer(harness.app, async (base) => {
+      const rotated = await (await phone(base, '/jobs', {
+        method: 'POST', body: { mode: 'single', number: NUMBER, rotate: 270 },
+      })).json();
+      assert.equal(rotated.success, true);
+      assert.equal((await harness.service.getJob(rotated.job_id)).rotate, 270,
+        '任务上要能看出"这一张是按 270° 印的"（试方向时对账全靠它）');
+      // 不传 ⇒ 跟随服务器配置（默认 0）。
+      const follow = await (await phone(base, '/jobs', {
+        method: 'POST', body: { mode: 'single', number: NUMBER, again: true },
+      })).json();
+      assert.equal((await harness.service.getJob(follow.job_id)).rotate, 0);
+    });
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test('AC-R10 手机侧非法角度 ⇒ 400（原因原样回页面，绝不静默按 0 印）', async () => {
+  const harness = buildHarness();
+  login();
+  try {
+    await withServer(harness.app, async (base) => {
+      const response = await phone(base, '/jobs', {
+        method: 'POST', body: { mode: 'single', number: NUMBER, rotate: 45 },
+      });
+      assert.equal(response.status, 400);
+      assert.match((await response.json()).error, /只能是 0 \/ 90 \/ 180 \/ 270/);
+      assert.equal((await harness.store.listAll()).length, 0, '被拒的请求不许留下任务');
+    });
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test('AC-R10 试方向不会被防连点挡住：90° 与 270° 各出一条任务', async () => {
+  const harness = buildHarness();
+  login();
+  try {
+    await withServer(harness.app, async (base) => {
+      const a = await (await phone(base, '/jobs', { method: 'POST', body: { mode: 'single', number: NUMBER, rotate: 90 } })).json();
+      const b = await (await phone(base, '/jobs', { method: 'POST', body: { mode: 'single', number: NUMBER, rotate: 270 } })).json();
+      assert.notEqual(a.job_id, b.job_id, '两个方向是两件事');
+      assert.equal(b.reused, undefined);
+      assert.equal((await harness.store.listAll()).length, 2);
     });
   } finally {
     harness.cleanup();
