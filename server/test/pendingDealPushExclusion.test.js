@@ -71,7 +71,7 @@ const seedOrder = (orderId, fulfillmentStatus, { entryExtra = {} } = {}) => ({
     record_id: `${orderId}_d1`,
     fields: {
       销售单号: [orderId], 编号: ['prod_1'], 尺码: ['size_40'], 履约状态: fulfillmentStatus,
-      成交金额: 128, 销售日: SOLD_AT,
+      实收金额: 128, 销售日: SOLD_AT,
     },
   }],
   paymentRecord: [{
@@ -143,13 +143,13 @@ test('B6 一单多件：只要有一件是售后件，整单不进（与"整单�
       {
         record_id: 'order_a_d1',
         fields: {
-          销售单号: ['order_a'], 编号: ['prod_1'], 尺码: ['size_40'], 履约状态: '已交付', 成交金额: 128, 销售日: SOLD_AT,
+          销售单号: ['order_a'], 编号: ['prod_1'], 尺码: ['size_40'], 履约状态: '已交付', 实收金额: 128, 销售日: SOLD_AT,
         },
       },
       {
         record_id: 'order_a_d2',
         fields: {
-          销售单号: ['order_a'], 编号: ['prod_1'], 尺码: ['size_40'], 履约状态: '已换货', 成交金额: 0, 销售日: SOLD_AT,
+          销售单号: ['order_a'], 编号: ['prod_1'], 尺码: ['size_40'], 履约状态: '已换货', 实收金额: 0, 销售日: SOLD_AT,
         },
       },
     ],

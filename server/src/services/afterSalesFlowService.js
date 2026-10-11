@@ -338,8 +338,8 @@ class AfterSalesFlowService {
       else diffAmount = round2((newLines[0]?.amount || 0) - (originalAmount || 0));
     }
     if (action === AFTER_SALES_ACTIONS.RETURN && diffAmount == null) {
-      // 原明细没有成交金额，又没说她退多少钱：不猜。猜错就是账目错。
-      await this.ask(task, '这一笔没有成交金额，退多少钱？');
+      // 原明细没有实收金额，又没说她退多少钱：不猜。猜错就是账目错。
+      await this.ask(task, '这一笔没有实收金额，退多少钱？');
       return { ok: false, reason: 'need_diff_amount' };
     }
 
@@ -353,9 +353,9 @@ class AfterSalesFlowService {
     const settlement = movesMoney ? (spokenSettlement || null) : null;
 
     // ⭐ 收款方式（**她实际说的那个渠道**）：业务负责人 2026-10-06 定 ——
-    //    「钱退现金」记录里的「交易方式」就要写**现金**，不沿用原单（见 AGENTS.md 第 16 条(2)）。
+    //    「钱退现金」记录里的「收款方式」就要写**现金**，不沿用原单（见 AGENTS.md 第 16 条(2)）。
     //    承认不出来（她没说）→ 留空，执行器**沿用原单的方式**（那就是"现有逻辑"）。
-    //    ⚠️ 只在 cash 这条腿上才有意义：prepaid 走「客户往来货款」，根本没有"交易方式"列。
+    //    ⚠️ 只在 cash 这条腿上才有意义：prepaid 走「客户往来货款」，根本没有"收款方式"列。
     //    ⚠️ 从 `task.original_text` 上认，不从 `parsed.settlement` 认：settlement 已经被
     //       `resolveAfterSalesSettlement` 收敛成 cash/prepaid，具体渠道在那一步就丢了。
     const paymentMethod = settlement === 'cash' ? resolveAfterSalesPaymentMethod(task.original_text) : '';
@@ -406,7 +406,7 @@ class AfterSalesFlowService {
   }
 
   /**
-   * 换货/赔货的"新的一双"：货号 + 颜色 + 尺码 + 成交金额。
+   * 换货/赔货的"新的一双"：货号 + 颜色 + 尺码 + 实收金额。
    * 货品走既有 V1ReferenceResolver（和采购/销售同一套匹配），尺码走共享的尺码解析。
    * 缺哪一项就明确问她要哪一项——不拿标价猜、不拿第一个尺码顶。
    *
@@ -460,10 +460,10 @@ class AfterSalesFlowService {
         message: AFTER_SALES_ASK_TEXTS.newProductNotFound({ itemNo, color }) };
     }
     const sizeEntry = await this.getSizeReferences().resolveByNumber(size);
-    // 成交金额：她说多少就多少（`new_amount`）；
-    //   · 同款换码（她没给新货号 / 给的就是原货号）→ 用**原明细的成交金额**：同一双鞋换个码、
-    //     钱不变（差价 0、不动钱）。⚠️ 这不是"用标价/原价**推算**"——原明细的成交金额是
-    //     **这一笔的既有事实**，取它才不会凭空造出一个差价来；原明细没有成交金额时
+    // 实收金额：她说多少就多少（`new_amount`）；
+    //   · 同款换码（她没给新货号 / 给的就是原货号）→ 用**原明细的实收金额**：同一双鞋换个码、
+    //     钱不变（差价 0、不动钱）。⚠️ 这不是"用标价/原价**推算**"——原明细的实收金额是
+    //     **这一笔的既有事实**，取它才不会凭空造出一个差价来；原明细没有实收金额时
     //     **绝不拿标价顶**，直接问她（`needNewAmount`）。
     //   · 换另一双 → 用「货品信息.单价」做建议值（卡片上她会核对，这是改动前的既有口径）。
     let amount = optionalMoney(parsed.new_amount);

@@ -34,7 +34,7 @@ const tables = (overrides = {}) => ({
     tableId: 'tbl_detail',
     fields: {
       salesEntry: '销售单号', product: '编号', accessory: '配品', size: '尺码',
-      soldAt: '销售日', fulfillmentStatus: '履约状态', actualAmount: '成交金额',
+      soldAt: '销售日', fulfillmentStatus: '履约状态', actualAmount: '实收金额',
     },
   },
   paymentRecord: {
@@ -93,11 +93,11 @@ const sizeStub = (byRecordId = { sz37: 37, sz43: 43 }) => ({
 
 const shoe = (recordId, productId, sizeCell) => ({
   record_id: recordId,
-  fields: { 销售单号: ['o1'], 编号: [productId], 尺码: sizeCell, 履约状态: '已交付', 成交金额: 228, 销售日: SOLD_AT },
+  fields: { 销售单号: ['o1'], 编号: [productId], 尺码: sizeCell, 履约状态: '已交付', 实收金额: 228, 销售日: SOLD_AT },
 });
 const accessoryRow = (recordId, accessoryId) => ({
   record_id: recordId,
-  fields: { 销售单号: ['o1'], 配品: [accessoryId], 履约状态: '已交付', 成交金额: 39, 销售日: SOLD_AT },
+  fields: { 销售单号: ['o1'], 配品: [accessoryId], 履约状态: '已交付', 实收金额: 39, 销售日: SOLD_AT },
 });
 
 const run = (records, options = {}) => new SecondDeliveryService({
@@ -173,7 +173,7 @@ test('缺货号 / 缺配品名称 / 鞋缺尺码：这些件**不产出**（展�
       accessoryRow('d2', 'a1'), // 名称缺失
       shoe('d3', 'p3', []), // 尺码缺失（关联为空，单元格也没文本）
       shoe('d4', 'p4', [{ record_ids: ['sz43'], text: '43' }]), // 正常
-      { record_id: 'd5', fields: { 销售单号: ['o1'], 履约状态: '已交付', 成交金额: 1 } }, // 既非鞋也非配品
+      { record_id: 'd5', fields: { 销售单号: ['o1'], 履约状态: '已交付', 实收金额: 1 } }, // 既非鞋也非配品
     ],
     products: [
       { record_id: 'p1', fields: { 编号: 'N-1' } },

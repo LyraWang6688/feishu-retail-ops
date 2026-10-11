@@ -37,14 +37,14 @@ const details = [
     销售单号: [{ record_ids: ['e2'], text: '' }],
     销售日: daysAgo(1),
     尺码: [{ record_ids: ['size_39'], text: '' }],
-    成交金额: 230,
+    实收金额: 230,
   } },
   { record_id: 'd_back', fields: {
     编号: [{ record_ids: ['p1'], text: '' }],
     销售单号: [{ record_ids: ['e_back'], text: '' }],
     销售日: daysAgo(2),
     尺码: [{ record_ids: ['size_38'], text: '' }],
-    成交金额: 230,
+    实收金额: 230,
   } },
 ];
 const entries = [

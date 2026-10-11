@@ -109,7 +109,7 @@ const threadSale = () => ({
 });
 const threadDetail = () => ({
   record_id: 'detail_1',
-  fields: { 销售单号: [SALE_ID], 成交金额: 800, 履约状态: '已交付' },
+  fields: { 销售单号: [SALE_ID], 实收金额: 800, 履约状态: '已交付' },
 });
 
 const makeHarness = ({ gateway, secondDelivery, config } = {}) => {
@@ -196,7 +196,7 @@ const zeroBusinessWrites = (gateway) => {
 test('AC-1/AC-2/AC-8：说「那双拿走了」→ 不交付、不扣库存、只回提示，状态是 progress_notice', async () => {
   const gateway = makeGateway({
     entry: threadSale(),
-    details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 成交金额: 800, 履约状态: '未交付' } }],
+    details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 实收金额: 800, 履约状态: '未交付' } }],
   });
   const { service, replies, threads } = makeHarness({ gateway });
   service.delivery.deliver = async () => { throw new Error('说话不该走交付（扣库存）'); };
@@ -245,7 +245,7 @@ test('AC-1/AC-2：说「成交」/「已完毕」→ 不交付、不收款、不
   for (const text of ['成交', '已完毕']) {
     const gateway = makeGateway({
       entry: threadSale(),
-      details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 成交金额: 800, 履约状态: '未交付' } }],
+      details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 实收金额: 800, 履约状态: '未交付' } }],
       payments: [{ record_id: 'pay_pending', fields: { 关联销售单: [SALE_ID], 收款金额: 800, 收款状态: '未收款' } }],
     });
     const calls = [];
@@ -363,7 +363,7 @@ test('AC-4：开关打开（textTrigger=true）→ 旧行为逐字恢复：说�
 test('AC-4：开关打开 → 说「成交」照样走成交链路（不是新造一套）', async () => {
   const gateway = makeGateway({
     entry: threadSale(),
-    details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 成交金额: 800, 履约状态: '未交付' } }],
+    details: [{ record_id: 'detail_1', fields: { 销售单号: [SALE_ID], 实收金额: 800, 履约状态: '未交付' } }],
   });
   const calls = [];
   const secondDelivery = {
@@ -439,7 +439,7 @@ const clickSeed = ({ owed = 260, fulfillmentStatus = '未交付' } = {}) => ({
   } }],
   salesDetail: [{ record_id: 'd_1', fields: {
     销售单号: [ENTRY_ID], 编号: ['product_1'], 尺码: ['size_40'],
-    履约状态: fulfillmentStatus, 成交金额: 260,
+    履约状态: fulfillmentStatus, 实收金额: 260,
   } }],
   paymentRecord: owed > 0
     ? [{ record_id: 'pay_pending', fields: { 关联销售单: [ENTRY_ID], 收款金额: owed, 收款状态: '未收款' } }]

@@ -1,29 +1,29 @@
 /**
- * ⭐⭐ B：销售建单支持 —— **配品（单独一行）+ 备注 + 成交金额**
+ * ⭐⭐ B：销售建单支持 —— **配品（单独一行）+ 备注 + 实收金额**
  *（业务负责人 2026-10-09 定，口径全文 `docs/sales-order-states-and-gifts-2026-10-09.md` 第三 / 四节）。
  *
  *   · **配品**：可选、**不是校验项**；**单独占一行「销售明细」**：`配品` 有值、
- *     **`编号` / `尺码` 留空**、**成交金额单列**；取值来自「**其他配品**」表的**名称**（关联字段）；
+ *     **`编号` / `尺码` 留空**、**实收金额单列**；取值来自「**其他配品**」表的**名称**（关联字段）；
  *   · ⚠️ **配品行不参与「待交付 / 库存扣减」**（它没有鞋）⇒ 履约与库存计算里必须识别并跳过；
  *   · **备注**：写销售主表「**赠品**」（文本）；**页面上一定要有输入框，但可以为空**（不是校验项）；
- *   · **成交金额**：扫码建单页可填（留空时的兜底口径**先按现状** = 取那张表自己的「单价」，
+ *   · **实收金额**：扫码建单页可填（留空时的兜底口径**先按现状** = 取那张表自己的「单价」，
  *     取不到就**让她填**，绝不写 0）。
  *
  * ─────────────────────────────────────────────────────────────────────────
  * 验收标准（**先写后做**；下面每条 test 的名字 = 这条 AC）
  *
  *  AC-B1 **配品行单独占一行销售明细**：`配品` 有值、`编号`/`尺码` 留空、
- *        `成交金额` 单列（鞋那一行一个字都不受影响）。
+ *        `实收金额` 单列（鞋那一行一个字都不受影响）。
  *  AC-B2 **配品行不参与库存扣减**：纯配品单提交后 —— 实时库存一条不动、库存流水一条不写、
  *        履约状态 = 已交付（它没有"待交付"这回事）。
  *  AC-B3 **交付链路显式识别并跳过配品行**：把配品明文的 id 交给既有
  *        `SalesDeliveryService.deliver` ⇒ 结果里**如实标出"跳过"**，库存一动不动
  *        （不是"碰巧因为它已交付所以没扣"）。
  *  AC-B4 **备注写销售主表「赠品」**（明细不带赠品列）；**可以为空**（不填不报错）。
- *  AC-B5 **成交金额口径**：配品金额留空 ⇒ 取「其他配品.单价」；单价也没有 ⇒
+ *  AC-B5 **实收金额口径**：配品金额留空 ⇒ 取「其他配品.单价」；单价也没有 ⇒
  *        **明确让她填**（不是静默写 0、也不是拿别的数字顶）。
  *  AC-B6 **页面上能填**：销售领域渲染出①配品下拉（选项 = 「其他配品」的**名称**）
- *        ②配品成交金额 ③**备注输入框**；没有配品可选时**不画一个空下拉**（不留死控件）。
+ *        ②配品实收金额 ③**备注输入框**；没有配品可选时**不画一个空下拉**（不留死控件）。
  *        页面里**没有说明书**（她 2026-10-10 的硬要求）。
  *  AC-B7 **路由**：POST 配品那一颗按钮 ⇒ 只写**本地会话**（业务表一个字都不写），
  *        会话里多一行 `kind = accessory`。
@@ -179,7 +179,7 @@ const addAccessory = (harness, openId, overrides = {}) => harness.write.addSaleL
 // AC-B1 配品行单独占一行销售明细
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-B1 配品单独占一行：配品有值、编号/尺码留空、成交金额单列（鞋那一行不受影响）', async () => {
+test('AC-B1 配品单独占一行：配品有值、编号/尺码留空、实收金额单列（鞋那一行不受影响）', async () => {
   const h = createHarness();
   try {
     const openId = 'ou_acc_1';
@@ -197,13 +197,13 @@ test('AC-B1 配品单独占一行：配品有值、编号/尺码留空、成交�
     assert.deepEqual(accessoryRow.fields[accessoryField], ['acc_oil'], '配品 = 「其他配品」那一条记录');
     assert.equal(accessoryRow.fields['编号'], undefined, '配品行**不写编号**');
     assert.equal(accessoryRow.fields['尺码'], undefined, '配品行**不写尺码**');
-    assert.equal(accessoryRow.fields['成交金额'], 15, '成交金额**单列**（她的口径）');
+    assert.equal(accessoryRow.fields['实收金额'], 15, '实收金额**单列**（她的口径）');
     assert.equal(accessoryRow.fields['履约状态'], '已交付', '配品当场结清（既有可售品口径）');
     // 鞋那一行不受影响
     const shoeRow = details.find((detail) => !detail.fields[accessoryField]);
     assert.deepEqual(shoeRow.fields['编号'], ['prod_1']);
     assert.deepEqual(shoeRow.fields['尺码'], ['size_40']);
-    assert.equal(shoeRow.fields['成交金额'], 399);
+    assert.equal(shoeRow.fields['实收金额'], 399);
   } finally { h.cleanup(); }
 });
 
@@ -286,7 +286,7 @@ test('AC-B4 备注写**销售主表.「赠品」**（明细不带这一列）；
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AC-B5 配品成交金额的口径（留空 → 那张表的单价；取不到 → 让她填）
+// AC-B5 配品实收金额的口径（留空 → 那张表的单价；取不到 → 让她填）
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-B5 配品金额留空 ⇒ 取「其他配品.单价」；单价也没有 ⇒ 明确让她填（绝不写 0）', async () => {
@@ -299,7 +299,7 @@ test('AC-B5 配品金额留空 ⇒ 取「其他配品.单价」；单价也没�
     assert.equal(ok.ok, true, JSON.stringify(ok));
     const accessoryField = V1_BITABLE_SCHEMA.tables.salesDetail.fields.accessory;
     const row = entriesOf(h, 'salesDetail').find((detail) => detail.fields[accessoryField]);
-    assert.equal(row.fields['成交金额'], 15, '金额留空 ⇒ 用那张表自己的「单价」');
+    assert.equal(row.fields['实收金额'], 15, '金额留空 ⇒ 用那张表自己的「单价」');
 
     // ② 没有单价（`赠品鞋垫`）又没填 → 明确报错，**不写 0**（也不建单）
     const openId2 = 'ou_acc_amount_missing';
@@ -309,7 +309,7 @@ test('AC-B5 配品金额留空 ⇒ 取「其他配品.单价」；单价也没�
     assert.equal(failed.ok, false);
     assert.equal(failed.code, 'accessory_amount_missing');
     assert.match(failed.message, /赠品鞋垫/, '人话里点名是哪一件');
-    assert.match(failed.message, /配品成交金额/, '告诉她填哪个字段');
+    assert.match(failed.message, /配品实收金额/, '告诉她填哪个字段');
     assert.equal(entriesOf(h, 'salesDetail').length, 1, '没成单：一条配品明细都不许写');
   } finally { h.cleanup(); }
 });
@@ -341,7 +341,7 @@ const WRITE = (overrides = {}) => ({
   ...overrides,
 });
 
-test('AC-B6 销售领域页面上：配品下拉（选项 = 「其他配品」名称）+ 配品成交金额 + 备注输入框', () => {
+test('AC-B6 销售领域页面上：配品下拉（选项 = 「其他配品」名称）+ 配品实收金额 + 备注输入框', () => {
   const html = renderScanPage(VIEW, SCAN_PAGE, WRITE(), 'sales');
   // ① 配品下拉：动作是配品那一个，选项来自「其他配品」的名称
   assert.match(html, new RegExp(`name="${SCAN_WRITE.fields.action}" value="${SCAN_WRITE.actions.addAccessory}"`),
@@ -353,8 +353,8 @@ test('AC-B6 销售领域页面上：配品下拉（选项 = 「其他配品」�
     assert.ok(select[1].includes(`>${name}</option>`), `下拉里少了「${name}」`);
   }
   assert.ok(select[1].includes('value="acc_oil"'), '选项的 value = 那一条配品记录的 id（不靠名字猜）');
-  // ② 配品成交金额（单列）+ ③ 备注输入框（可为空）
-  assert.match(html, /配品成交金额/);
+  // ② 配品实收金额（单列）+ ③ 备注输入框（可为空）
+  assert.match(html, /配品实收金额/);
   assert.match(html, new RegExp(`name="${SCAN_WRITE.fields.amount}"`));
   assert.match(html, new RegExp(`name="${SCAN_WRITE.fields.gift}"`));
   assert.match(html, /备注/, '页面上写「备注」（落点是主表「赠品」列）');

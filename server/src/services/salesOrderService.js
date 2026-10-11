@@ -118,11 +118,11 @@ class SalesOrderService {
       for (const item of input.items) {
         // 可售品按属性走：鞋才需要解析尺码和跟踪库存，配品只记「卖了什么、收了多少」。
         const kind = sellableKindOf(item);
-        const actualAmountCents = cents(item.actualAmount, '销售明细成交金额');
-        if (actualAmountCents <= 0) throw new Error('销售明细成交金额必须大于 0');
+        const actualAmountCents = cents(item.actualAmount, '销售明细实收金额');
+        if (actualAmountCents <= 0) throw new Error('销售明细实收金额必须大于 0');
         if (positiveInteger(item.quantity, '销售数量') !== 1) {
           throw new Error(kind.requiresSize
-            ? '一条销售明细只能记录一双鞋；请逐双说明成交金额'
+            ? '一条销售明细只能记录一双鞋；请逐双说明实收金额'
             : '一条销售明细只能记录一件配品');
         }
         const row = {
@@ -154,9 +154,9 @@ class SalesOrderService {
       if (payments.some((payment) => payment.status === '未收款')) {
         throw new Error('待收款记录由销售入账自动生成，请勿作为实际收款提交');
       }
-      const totalCents = expected.reduce((sum, item) => sum + cents(item.actualAmount, '成交金额'), 0);
+      const totalCents = expected.reduce((sum, item) => sum + cents(item.actualAmount, '实收金额'), 0);
       const paidCents = payments.reduce((sum, payment) => sum + cents(payment.amount, '收款金额'), 0);
-      if (paidCents > totalCents) throw new Error('本次收款超过本单成交金额');
+      if (paidCents > totalCents) throw new Error('本次收款超过本单实收金额');
       if ((input.knownRecordIds?.details || []).slice(expected.length).some(Boolean)) {
         throw new Error('已保存的销售明细数量超过当前草稿，已停止重试');
       }
@@ -236,7 +236,7 @@ class SalesOrderService {
       const owedCents = input.owed ? cents(input.owed, '欠款金额') : 0;
       if (owedCents > 0 && owedCents !== outstandingCents) {
         // 说出的欠款和「成交 − 已收」对不上：宁可拦下来人工核对，也不静默写一条错账。
-        throw new Error('她说的欠款与「成交金额−已收金额」不一致，请核对后再确认');
+        throw new Error('她说的欠款与「实收金额−已收金额」不一致，请核对后再确认');
       }
       const expectedPayments = owedCents > 0
         ? [...payments, { amount: outstandingCents / 100, status: '未收款' }] : payments;

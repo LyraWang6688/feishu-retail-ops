@@ -129,7 +129,7 @@ test('an accessory line rides along with a shoe in one order without a size or s
   assert.equal(details[1].fields['尺码'], undefined);
   assert.equal(details[1].fields['编号'], undefined);
   assert.equal(details[1].fields['履约状态'], '已交付');
-  assert.equal(details[1].fields['成交金额'], 39);
+  assert.equal(details[1].fields['实收金额'], 39);
   // 配品不产生任何库存动作
   assert.equal(gateway.records.get('inventoryLedger'), undefined);
   assert.equal(gateway.records.get('liveInventory'), undefined);
@@ -172,7 +172,7 @@ test('a multi-pair line without individual prices stops before creating sale det
   const service = new SalesOrderService({ gateway, references });
   await assert.rejects(service.confirm({ salesEntryRecordId: 'order_1', items: [
     { itemNo: 'A100', size: 38, quantity: 2, actualAmount: 178 },
-  ], payments: [{ method: '微信', amount: 178 }] }), /逐双说明成交金额/);
+  ], payments: [{ method: '微信', amount: 178 }] }), /逐双说明实收金额/);
   assert.equal(gateway.records.get('salesDetail'), undefined);
 });
 
@@ -190,7 +190,7 @@ test('deposit creates paid and unpaid receipts; follow-up settles the same recei
   assert.deepEqual(receipts.map((row) => [row.fields['收款金额'], row.fields['收款状态']]),
     [[100, '已收款'], [140, '未收款']]);
   assert.equal(receipts[1].fields['收款时间'], undefined);
-  assert.equal(receipts[1].fields['交易方式'], undefined);
+  assert.equal(receipts[1].fields['收款方式'], undefined);
   assert.equal((await gateway.get('salesEntry', 'order_1')).fields['履约状态'], undefined);
   assert.equal((await gateway.get('salesEntry', 'order_1')).fields['收款状态'], undefined);
   const pendingId = receipts[1].record_id;
@@ -306,7 +306,7 @@ test('unpaid sale can be delivered once, then later payment does not touch inven
   assert.equal(calls.length, 1);
 });
 
-// ─── 未收款只在「她明说欠」时才补，成交金额 = 她说的收款额（业务负责人口径） ───
+// ─── 未收款只在「她明说欠」时才补，实收金额 = 她说的收款额（业务负责人口径） ───
 
 test('她说了"收了 100"、没说欠：成交即实收，不补未收款，订单直接到已完成', async () => {
   const gateway = fake();
@@ -357,7 +357,7 @@ test('她说的欠款和「成交 − 已收」对不上时拦下来，不静默
   const sales = new SalesOrderService({ gateway, references });
   await assert.rejects(sales.confirm({ salesEntryRecordId: 'order_1',
     items: [{ kind: 'accessory', accessoryRecordId: 'acc_belt', quantity: 1, actualAmount: 100 }],
-    payments: [{ method: '微信', amount: 100 }], owed: 19 }), /欠款与「成交金额−已收金额」不一致/);
+    payments: [{ method: '微信', amount: 100 }], owed: 19 }), /欠款与「实收金额−已收金额」不一致/);
   // 拦下来了就不该写任何收款记录
   assert.equal(gateway.records.get('paymentRecord'), undefined);
 });
@@ -513,7 +513,7 @@ test('Feishu record_ids link shape reuses an existing order, receipt, and detail
     detail.fields['编号'] = linked(`product_${input.items[index].itemNo}`);
   }
   receipt.fields['关联销售单'] = linked('order_1');
-  receipt.fields['交易方式'] = linked('method_微信');
+  receipt.fields['收款方式'] = linked('method_微信');
   // 上一次尝试在「资金状态」上留了失败标记（旧「确认状态（旧）」那一列已不存在）。
   (await gateway.get('salesEntry', 'order_1')).fields['资金状态'] = '写入失败';
 

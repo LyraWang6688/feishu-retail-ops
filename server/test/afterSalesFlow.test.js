@@ -55,7 +55,7 @@ const detailRow = ({ id, orderId, productId, soldAt, sizeRecordId, amount = 230 
     销售单号: [{ record_ids: [orderId], text: '' }],
     销售日: soldAt,
     尺码: [{ record_ids: [sizeRecordId], text: '' }],
-    成交金额: amount,
+    实收金额: amount,
   },
 });
 
@@ -142,14 +142,14 @@ const executorBase = () => {
       { record_id: 'e_single', fields: { 销售单号: 'XSD-20261003-0001', 原话: '卖一双 1366-33 黑 40', 销售状态: '已写入', 资金状态: '已写入' } },
     ],
     salesDetail: [
-      { record_id: 'd_new', fields: { 销售单号: ['e2'], 编号: ['p1'], 尺码: ['size_39'], 成交金额: 230, 履约状态: '已交付' } },
-      { record_id: 'd_old', fields: { 销售单号: ['e_old'], 编号: ['p1'], 尺码: ['size_38'], 成交金额: 230, 履约状态: '已交付' } },
-      { record_id: 'd_single', fields: { 销售单号: ['e_single'], 编号: ['p2'], 尺码: ['size_40'], 成交金额: 230, 履约状态: '已交付' } },
+      { record_id: 'd_new', fields: { 销售单号: ['e2'], 编号: ['p1'], 尺码: ['size_39'], 实收金额: 230, 履约状态: '已交付' } },
+      { record_id: 'd_old', fields: { 销售单号: ['e_old'], 编号: ['p1'], 尺码: ['size_38'], 实收金额: 230, 履约状态: '已交付' } },
+      { record_id: 'd_single', fields: { 销售单号: ['e_single'], 编号: ['p2'], 尺码: ['size_40'], 实收金额: 230, 履约状态: '已交付' } },
     ],
     paymentRecord: [
-      { record_id: 'pay_new', fields: { 关联销售单: ['e2'], 交易方式: ['method_wechat'], 收款金额: 230, 收款状态: '已收款' } },
-      { record_id: 'pay_old', fields: { 关联销售单: ['e_old'], 交易方式: ['method_wechat'], 收款金额: 230, 收款状态: '已收款' } },
-      { record_id: 'pay_single', fields: { 关联销售单: ['e_single'], 交易方式: ['method_wechat'], 收款金额: 230, 收款状态: '已收款' } },
+      { record_id: 'pay_new', fields: { 关联销售单: ['e2'], 收款方式: ['method_wechat'], 收款金额: 230, 收款状态: '已收款' } },
+      { record_id: 'pay_old', fields: { 关联销售单: ['e_old'], 收款方式: ['method_wechat'], 收款金额: 230, 收款状态: '已收款' } },
+      { record_id: 'pay_single', fields: { 关联销售单: ['e_single'], 收款方式: ['method_wechat'], 收款金额: 230, 收款状态: '已收款' } },
     ],
     inventoryLedger: [],
     liveInventory: [
@@ -538,7 +538,7 @@ test('配置层：**不存在**默认资金走向；只有她明说了才解析�
 });
 
 // 配置层：她说的是**哪个渠道**（现金 / 微信 / …）—— 与"钱怎么走"是两件事。
-// 业务负责人 2026-10-06：「钱退现金」→ 记录里的「交易方式」就写现金。
+// 业务负责人 2026-10-06：「钱退现金」→ 记录里的「收款方式」就写现金。
 test('配置层：从原话里认得出她说的收款方式（认不出就返回空 = 沿用原单）', () => {
   assert.equal(resolveAfterSalesPaymentMethod('退那双 1366-33 黑，退我现金'), '现金');
   assert.equal(resolveAfterSalesPaymentMethod('退给她 230，微信退'), '微信');
@@ -599,7 +599,7 @@ test('她说了「退我现金」/「退给她 230，微信退」→ 结算 = �
 });
 
 // ⭐ 业务负责人 2026-10-06 拍板（AGENTS.md 第 16 条(2)）：
-//   「钱退现金」→ 记录里的「交易方式」要写**她实际说的方式**（不沿用原单）。
+//   「钱退现金」→ 记录里的「收款方式」要写**她实际说的方式**（不沿用原单）。
 //   方案层要先把"她说的那个方式"认出来并带上，执行器才有得写。
 test('⭐ 方案带上她说的收款方式：现金 / 微信 / 没说（空）各是什么', async () => {
   for (const [text, expected] of [
@@ -823,7 +823,7 @@ test('她点确认 → 真的调执行器，参数就是她确认过的那一笔
     newLines: [],
     diffAmount: -230,
     settlement: 'prepaid',
-    // 她没说收款方式（"钱先存着"走的是预存那条腿）→ 空：执行器不会动"交易方式"。
+    // 她没说收款方式（"钱先存着"走的是预存那条腿）→ 空：执行器不会动"收款方式"。
     paymentMethod: '',
     restockState: '门盒',
     taskId: 't_confirm',
@@ -1220,7 +1220,7 @@ test('⭐ 同款换码（业务负责人真机那句）：「6C98012-15L 换成4
   // 换的就是**原明细那一双**换了个码 ⇒ 货号/颜色取原明细，尺码取她说的 41
   assert.deepEqual(plan.new_lines.map((line) => [line.productId, line.sizeId, line.label]),
     [['p3', 'size_41', '6C98012-15L 41码']]);
-  // 同一双鞋换个码 ⇒ 成交金额 = 原明细的成交金额（230）、差价 0（不动钱）
+  // 同一双鞋换个码 ⇒ 实收金额 = 原明细的实收金额（230）、差价 0（不动钱）
   assert.deepEqual(plan.new_lines.map((line) => line.amount), [230]);
   assert.equal(plan.diff_amount, 0);
   assert.equal(plan.requires_settlement, false, '同款换码不动钱 ⇒ 不用她说钱怎么走');

@@ -235,7 +235,7 @@ const V1_BITABLE_SCHEMA = {
         soldAt: '销售日',
         salesEntry: '销售单号',
         fulfillmentStatus: '履约状态',
-        actualAmount: '成交金额',
+        actualAmount: '实收金额',
         // Formula field (unit list price), never written by the backend.
         listUnitPrice: '销售单价',
         // 「交易类型」（单选关联「行为管理」，2026-10-05 新增）是给退换货链路预留的：
@@ -250,10 +250,10 @@ const V1_BITABLE_SCHEMA = {
       tableId: getEnv('FEISHU_V1_PAYMENT_RECORD_TABLE_ID', 'tblTpLOtTLhWxXvm'),
       fields: {
         salesEntry: '关联销售单',
-        // 产品负责人 2026-10-05 把这张表的「支付方式」改名为「交易方式」（字段本身不变，
+        // 产品负责人 2026-10-05 把这张表的「支付方式」改名为「收款方式」（字段本身不变，
         // 仍是单选关联「收款方式管理」）。schema 没跟上就会用飞书里已不存在的字段名写入，
         // 收款记录静默失败——正是 deploy_build.sh 的 schema 闸门拦住的那次。
-        method: '交易方式',
+        method: '收款方式',
         // 「交易方向」（单选：收入 / 退回，2026-10-05 新增）同样为退换货链路预留：
         // 本次只建立映射、不实现逻辑，理由同上。
         tradeDirection: '交易方向',
@@ -453,7 +453,7 @@ const V1_BITABLE_SCHEMA = {
         //       「验收原话」的写入已随生产表那两列的删除一起退场）。
         //     「录入数量」在上面**只读不写**，两列不是一回事，别混。
         //   ⚠️ 真表上的列类型未在本机核实（本机 .env 指向的测试 Base 与生产**不对齐**，
-        //     那张「报货批次」只有 4 列）；按仓库既有金额列的先例（「成交金额」）写 **Number**。
+        //     那张「报货批次」只有 4 列）；按仓库既有金额列的先例（「实收金额」）写 **Number**。
         //     若真表是文本列，写数值可能被判 `*ConvFail` —— 那种情况**停下来报告**，
         //     不要改成"写字符串"了事（会与数字列冲突）。
         actualQuantity: '实际数量',
