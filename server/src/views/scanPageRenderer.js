@@ -44,6 +44,25 @@ const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => 
 }[char]));
 
 /**
+ * ⭐ 2026-10-11：**这台设备能不能"点一下直接扫下一个"**（纯函数，供用例钉住）。
+ *
+ * 为什么是 UA 判据（服务端判、不是前端判）：这一页的硬性设计是"一行前端脚本都没有"
+ * （2026-10-09 手机白屏之后定的），所以**不能用 JS 探测能力** —— 只能在服务端按 UA 认。
+ *
+ * 判据 = **飞书客户端**（`Lark/x` / `Feishu/x`）**且手机端**：
+ *   · 飞书客户端 ⇒ 页内 AppLink（`https://applink.feishu.cn/client/qrcode/main`）能调起飞书扫一扫；
+ *   · **PC 端不支持扫一扫**（飞书官方文档逐字：「PC端不支持」），飞书**桌面端**的 UA 也带
+ *     `Lark/x`，所以必须再判一次移动端关键字（Android / iPhone / HarmonyOS…）；
+ *   · 电脑浏览器与手机自带浏览器 ⇒ 不是飞书客户端，页面里**不给按钮**，只给一句
+ *     `scanNextHint` 人话（"这里不能扫码：请用飞书的「扫一扫」…"）——
+ *     她 2026-10-11 的硬要求：**绝不允许点了没反应**。
+ */
+const canScanNextWithFeishu = (userAgent) => {
+  const ua = String(userAgent || '');
+  return /(Lark|Feishu)\//i.test(ua) && /(Android|iPhone|iPad|iPod|HarmonyOS|Mobile)/i.test(ua);
+};
+
+/**
  * ⭐ **主题唯一真源** = 工作台的 `public/workbench/styles/tokens.css`。
  * 读出来只是为了把它**内联**进这一页（保持"一次请求打开"的初衷，不再引一个外链 CSS），
  * 所以改配色 / 间距 / 圆角 / 字号**只改那一个文件**，工作台与扫码页一起变。
@@ -189,6 +208,16 @@ summary { cursor: pointer; }
 /* noscript 兜底那一排（webview 禁脚本时才会出现）：朴素的文字链接，不用卡片阴影 */
 .realm-bar--plain { display: block; margin: 0; padding: 0; background: transparent; box-shadow: none; }
 .realm-bar--plain .realm-link { display: inline-block; margin: 0 var(--space-2) var(--space-1) 0; color: var(--primary); font-size: var(--font-size-base); }
+/* ── ⭐ 2026-10-11 本单条（一单多双 · 多次扫码）─────────────────────────────
+   每个扫码页（任意领域）**顶部固定一条**：本单几双 + 有草稿才出现的【提交这一单】
+   + 【继续扫下一个】。position: sticky 让她**扫到第 3 个码时**也一眼看得到"本单几双、
+   去哪提交"（原来【提交这一单】只在她扫第 1 双那一页上）。
+   ⚠️ 只有一条 1px 分隔线与一行按钮，不写任何用法说明。 */
+.draft-bar { position: sticky; top: 0; z-index: 2; margin: 0 0 var(--space-2); }
+.draft-bar__count { margin: 0 0 var(--space-2); font-size: var(--font-size-lg); font-weight: 700; font-variant-numeric: tabular-nums; }
+.draft-bar .notice { margin: 0 0 var(--space-2); }
+.draft-bar .btn { margin-top: 0; }
+.draft-bar .btn + .btn, .draft-bar .write-form + .btn { margin-top: var(--space-2); }
 `;
 
 const renderDocument = ({ title, content, requestId, config = SCAN_PAGE }) => `<!doctype html>
@@ -255,6 +284,59 @@ const noScriptHtml = () => `<noscript>
 ${REALMS.map((realm) => `<a class="realm-link" href="?from=${escapeHtml(realm.id)}">${escapeHtml(realm.label)}</a>`).join('\n')}
 </nav>
 </noscript>`;
+
+/**
+ * ⭐⭐ 2026-10-11「**本单条**」—— 每个扫码页（**任意领域**）顶部固定的一条。
+ *
+ * 她的原话（逐字）：
+ *   「因为比如说我们在**扫码页卖了多双鞋**的时候，怎么可以**一双订单多次扫码**呢？」
+ * 要解决的三个缺口（都是真机上的真麻烦）：
+ *   ① 加完本单**没有"继续扫下一个"的入口** ⇒ 要退回去再扫，容易漏扫 / 忘了提交；
+ *   ② **看不到"本单已经有几双"**；
+ *   ③ 扫到第 3 个码时，【提交这一单】在**第 1 个码那一页**上 ⇒ 得回去找。
+ * ⇒ 这一条把 ①②③ 一次解决：`本单：N 双`（从扫码会话实时读，**跨编号共用**）
+ *   ＋（**有草稿才出现**）【提交这一单】＋【继续扫下一个】。
+ *
+ * 硬约束（她 2026-10-10 / 2026-10-11）：
+ *   · **不留说明书**：只有"能点、能做的事" + 状态（几双 / 已加入本单那一句；
+ *     加单反馈见 `config/scanWrite.js` 的 `lineAddedBanner`，**极简**）；
+ *   · **没有草稿时不要显示成灰按钮** ⇒ `count > 0` 才渲染【提交这一单】那一个表单；
+ *   · 【继续扫下一个】**能调就真能调**（飞书客户端内 = AppLink 打开扫一扫），
+ *     调不了就**明说人话**（`scanNextHint`），**绝不给点了没反应的按钮**；
+ *     判据在 `canScanNextWithFeishu`（服务端看 UA，页面上依然零 JS）。
+ *
+ * ⚠️ 提交表单里只带 `action=submit_order` + 幂等键：收款方式 / 金额**都不带** ——
+ *    留空 = 既有口径的"先货后钱"（`scanWriteService.submitSale` 里
+ *    `payments = []`），首页那一颗只是想让她**不必回到第 1 双那一页**去提交。
+ *    要记钱仍然回到【销售】那一块的表单填（那里有收款方式 / 金额）。
+ */
+const draftBarHtml = (write, config, userAgent) => {
+  const texts = config.texts;
+  const count = ((write && write.draft && write.draft.lines) || []).length;
+  const saleEnabled = Boolean(write) && write.enabled !== false && write.saleEnabled !== false;
+  // 【提交这一单】：**有草稿才出现**（她：没有草稿时不要显示成灰按钮）。
+  const submitHtml = saleEnabled && count > 0
+    ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
+${hiddenField(write.fields.action, write.actions.submitOrder)}
+${hiddenField(write.fields.submitKey, write.saleKey)}
+<button type="submit" class="btn btn--primary">${escapeHtml(write.texts.submitButton)}</button>
+</form>`
+    : '';
+  // 【继续扫下一个】：飞书客户端（手机）给真链接；其余设备给一句如实的人话。
+  const scanNextHtml = canScanNextWithFeishu(userAgent)
+    ? `<a class="btn" href="${escapeHtml(config.scanNext.applink)}" rel="noopener">${escapeHtml(texts.scanNextLabel)}</a>`
+    : `<p class="hint">${escapeHtml(texts.scanNextHint)}</p>`;
+  // 「刚加入本单」那一句：文案来自配置、只有数字来自会话（**没有回显注入面**）。
+  const noticeHtml = write && write.notice
+    ? `<p class="notice">${escapeHtml(write.notice)}</p>`
+    : '';
+  return `<section class="card draft-bar" data-view="draft-bar" aria-label="${escapeHtml(texts.draftBarLabel)}">
+<p class="draft-bar__count">${escapeHtml(fillText(texts.draftBarCount, { count }))}</p>
+${noticeHtml}
+${submitHtml}
+${scanNextHtml}
+</section>`;
+};
 
 const stockTableHtml = (view, config) => {
   const head = [config.texts.columnSize, ...view.columns.map((column) => column.label)]
@@ -509,20 +591,21 @@ const realmBlockHtml = (realm, view, config, write) => {
   if (!write || write.enabled === false || write.saleEnabled === false) {
     return wrap(realmEmptyHtml('sales', config));
   }
-  // 「刚加入本单」那一句：文案来自配置、只有数字来自会话（**没有回显注入面**）。
-  const notice = write.notice
-    ? `<section class="card"><p class="notice">${escapeHtml(write.notice)}</p></section>\n`
-    : '';
-  return wrap(`${notice}${saleFormHtml(view, write)}`);
+  // ⚠️ 2026-10-11：「刚加入本单」那一句**上移到顶部的本单条**（`draftBarHtml`）——
+  //    她无论停在哪个领域（库存 / 采购 / 货品）都该立刻看见 N+1，而不只是销售那一块。
+  return wrap(saleFormHtml(view, write));
 };
 
 /**
- * 正常页：领域切换（真链接）+ 身份区 + 单价 + **当前领域那一块**。
+ * 正常页：**本单条**（顶部固定）+ 领域切换（真链接）+ 身份区 + 单价 + **当前领域那一块**。
  *
  * ⚠️ 渲染层**绝不抛**：任何一块拼装出问题都退化成一张人话卡片 ——
  *    这一页对她是"扫码就能看"，**空白页是最坏的结果**（比她看到一句"暂时打不开"还坏）。
+ *
+ * `page.userAgent`（可选，路由从请求头传）= 【继续扫下一个】那一个按钮的判据
+ * （见 `canScanNextWithFeishu`）；不传 = 认成"不是飞书客户端" ⇒ 给那句人话，不给死按钮。
  */
-const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEFAULT_REALM) => {
+const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEFAULT_REALM, page = {}) => {
   const safeRealm = resolveRealm(realm);
   let block;
   try {
@@ -533,7 +616,8 @@ const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEF
   return renderDocument({
     title: fillText(config.texts.pageTitle, { itemNo: view.item_no || view.number, number: view.number }),
     config,
-    content: `${realmBarHtml(safeRealm)}
+    content: `${draftBarHtml(write, config, page?.userAgent)}
+${realmBarHtml(safeRealm)}
 ${noScriptHtml()}
 ${identityHtml(view, config)}
 ${block}
@@ -590,4 +674,6 @@ module.exports = {
   STYLE,
   readThemeTokens,
   resolveRealm,
+  // ⭐ 2026-10-11：本单条的设备能力判据（用例直接钉它）。
+  canScanNextWithFeishu,
 };

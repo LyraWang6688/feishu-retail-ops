@@ -34,8 +34,8 @@
  *      按钮 / 输入框 **≥44px**（`--control-height`）· **无固定 `min-width`** ·
  *      长文本 `overflow-wrap: anywhere` · `html, body` 不横向滚动；桌面（≥761px）才铺多列。
  *  AC5 **扫码页领域切换**：`GET /s/:number` 不变，顶部一颗领域按钮四个值
- *      `?from=sales|inventory|purchase|product`，**缺省 = 库存**（2026-10-09 改）；切到哪个领域就**只显示**
- *      那个领域的操作；认不出的值一律回落缺省（不报错、不白屏）；没 JS 时四块全显示（兜底）。
+ *      `?from=sales|inventory|purchase|product`，**缺省 = 销售**（2026-10-11 改回；2026-10-09 曾一度是库存）；
+ *      切到哪个领域就**只显示**那个领域的操作；认不出的值一律回落缺省（不报错、不白屏）。
  *      ⚠️ 这一条**没有改 `routes/scanPage.js` / `config/scanPage.js`**：四块都渲染进 HTML，
  *      （2026-10-09 之前是"四块全渲染 + CSS 按 `<html data-realm>` 显隐"，已改）。
  *  AC6 **主题变量集中在一处**：配色 / 间距 / 圆角 / 字号全在 `styles/tokens.css`；
@@ -575,7 +575,7 @@ const SCAN_WRITE = {
   notice: '',
 };
 
-test('AC5 扫码页领域切换：?from= 四个值 + 缺省库存，切到哪个领域只显示那个领域的操作', () => {
+test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个领域只显示那个领域的操作', () => {
   const { renderScanPage, STYLE } = require('../src/views/scanPageRenderer');
   const { REALMS, DEFAULT_REALM, resolveRealm, labelPrintUrls } = require('../src/views/scanPageRealm');
   const { SCAN_PAGE } = require('../src/config/scanPage');
@@ -584,13 +584,14 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省库存，切到哪个
   assert.equal(SCAN_PAGE.route.basePath, '/s');
   assert.equal(SCAN_PAGE.route.path, '/:number');
 
-  // ② 四个领域 = 与一级 tab 同序；缺省 = **库存**（2026-10-09 她定的）；认不出的值一律回落（不报错）
+  // ② 四个领域 = 与一级 tab 同序；缺省 = **销售**（2026-10-11 她改回：「默认打开是销售页」）；
+  //    认不出的值一律回落（不报错）
   assert.deepEqual(REALMS.map((realm) => realm.id), ['sales', 'inventory', 'purchase', 'product']);
   assert.deepEqual(REALMS.map((realm) => realm.label), ['销售', '库存', '采购', '货品']);
-  assert.equal(DEFAULT_REALM, 'inventory', '缺省 = 库存（她 2026-10-09：「扫码第一眼 = 库存」）');
+  assert.equal(DEFAULT_REALM, 'sales', '缺省 = 销售（她 2026-10-11：「默认打开是销售页」）');
   for (const id of ['sales', 'inventory', 'purchase', 'product']) assert.equal(resolveRealm(id), id);
   for (const bad of [undefined, null, '', '   ', 'bogus', 'SALES2', '库存']) {
-    assert.equal(resolveRealm(bad), 'inventory', `认不出的 from「${String(bad)}」必须回落缺省（库存），不许报错`);
+    assert.equal(resolveRealm(bad), 'sales', `认不出的 from「${String(bad)}」必须回落缺省（销售），不许报错`);
   }
 
   // ③ 顶部那一排领域按钮：四个值都在，URL 就是 ?from=<id>

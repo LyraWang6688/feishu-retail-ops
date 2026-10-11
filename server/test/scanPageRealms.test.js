@@ -129,8 +129,6 @@ const WRITE = {
  * 里面**只有当前那一块**（另外三块连字符串都不拼）。
  */
 const htmlFor = (realm) => renderScanPage(VIEW, SCAN_PAGE, WRITE, realm);
-const html = htmlFor(DEFAULT_REALM);
-const body = html.slice(html.indexOf('</head>'));
 
 /** 取某一份 HTML 里领域那一块（收在页脚 `<p class="foot">` 之前，含它自己的 `</div>`）。 */
 const blockOf = (htmlText, id) => {
