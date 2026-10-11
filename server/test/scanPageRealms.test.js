@@ -21,6 +21,11 @@
  *  AC2 **销售领域尺码分两组**：有货（样品 + 门盒 ＞ 0）= 第一组（现货）、
  *      其余 = 第二组（预订）；两组各自可选中（radio 的 `name="size"`），
  *      「仓库」有货**不算**有货（她 2026-10-09：「可卖 = 样品 + 门盒」）。
+ *  AC2b ⭐ **尺码区一行 4 个码、不显示数量**（业务负责人 2026-10-11：「从"一行一码"改成
+ *      "一行 4 个"」「**你不用管数量，只要它实时库存表里面有，你显示就行**」，
+ *      目标是手机上**一屏不下滑**看全）：四列网格（`minmax(0, 1fr)` ⇒ 窄屏不横向滚动）；
+ *      3 个码排一行、5 个码排 4+1；**现货组 / 预订组的判据一个字不变**；命中区仍 ≥44px；
+ *      数量只在「库存」页看，**采购页的数量不受影响**；改版**不许引入前端脚本**。
  *  AC3 **采购领域**：先列该编号各尺码的（样品 + 门盒）数量；【一键补货】列出缺的尺码、
  *      默认各 1 双、数量可改；「仓库」有货的尺码**不预勾**（既有缺码口径不变）。
  *  AC4 **三个领域共用业务处理层、各自独立出口**（源码哨兵）：渲染层不认识业务写入；
@@ -258,6 +263,59 @@ test('AC2 `from=sales` 尺码分两组：有货（样品+门盒）⇒ 现货；�
   const degraded = saleSizeGroups({ ...VIEW, sizes_degraded: true });
   assert.deepEqual(degraded.prepaid, [], '降级时不许编造"没有的尺码"');
   assert.deepEqual(degraded.inStock.map((item) => item.size_text), ['40', '42']);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC2b ⭐ 2026-10-11（业务负责人）：销售尺码区**一行 4 个码**、**不显示数量**
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC2b 尺码区一行 4 个：3 个码排一行、5 个码排 4+1；**不显示数量**、命中区仍 ≥44px', () => {
+  // ── ① 布局：四列网格；列宽用 `minmax(0, 1fr)` ⇒ 窄屏可压缩、不横向滚动 ────────
+  assert.match(STYLE, /\.size-chips\s*\{[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/,
+    '尺码区必须是一行 4 个（四列网格；`minmax(0, 1fr)` 保证窄屏不横向滚动）');
+  // ── ② 命中区一个字不减（≥44px）——「紧凑」不等于「缩小命中区」──────────────────
+  assert.match(STYLE, /\.size-chip\s*\{[^}]*min-height:\s*var\(--control-height\)/s,
+    '尺码卡片仍是 ≥44px 的命中区（手机上好点）');
+
+  const sales = blockOf(htmlFor('sales'), 'sales');
+  const groupOf = (id) => {
+    const start = sales.indexOf(`data-stock-group="${id}"`);
+    assert.ok(start > -1, `销售块里缺 ${id} 那一组`);
+    return sales.slice(start, sales.indexOf('</fieldset>', start));
+  };
+  const chipsOf = (group) => (group.match(/class="size-chip"/g) || []).length;
+  const inStock = groupOf('in_stock');
+  const prepaid = groupOf('prepaid');
+  // ── ③ 分组与判据一个字不变：40 / 42 = 现货；41 / 43 / 44 = 预订 ─────────────────
+  assert.equal(chipsOf(inStock), 2, '现货组：40 / 42 两个码');
+  assert.equal(chipsOf(prepaid), 3, '预订组：41 / 43 / 44 三个码（3 个码就排一行 3 个）');
+  // ── ④ 不显示数量：两组里一个「双」字都没有 ────────────────────────────────────
+  for (const [name, group] of [['现货组', inStock], ['预订组', prepaid]]) {
+    assert.equal(group.includes('size-chip__meta'), false, `${name}里还留着数量那一格`);
+    assert.equal(group.includes('双'), false, `${name}里还显示着数量（她：「你不用管数量」）`);
+  }
+  // ── ⑤ 数量没有消失，只是换地方看：同一份视图模型在「库存」页照旧逐格显示 ───────
+  const inventory = blockOf(htmlFor('inventory'), 'inventory');
+  assert.match(inventory, /<td[^>]*>\d+<\/td>/, '库存页照旧有数量');
+  // ── ⑥ 采购页的数量**不许**跟着一起删（那是补货的依据）────────────────────────
+  assert.ok(blockOf(htmlFor('purchase'), 'purchase').includes('2 双'), '采购页仍按尺码显示数量');
+  // ── ⑦ 5 个码 ⇒ 排成 4+1：五个 chip 都在同一组里（换行由四列网格决定）──────────
+  const fiveInStock = {
+    ...VIEW,
+    rows: ['40', '41', '42', '43', '44'].map((size) => ({
+      size_text: size,
+      cells: [{ key: '门盒', count: 1 }, { key: '样品', count: 0 }, { key: '仓库', count: 0 }],
+      total: 1,
+      missing: false,
+    })),
+  };
+  const fiveSales = blockOf(renderScanPage(fiveInStock, SCAN_PAGE, WRITE, 'sales'), 'sales');
+  const fiveStart = fiveSales.indexOf('data-stock-group="in_stock"');
+  const fiveGroup = fiveSales.slice(fiveStart, fiveSales.indexOf('</fieldset>', fiveStart));
+  assert.equal(chipsOf(fiveGroup), 5, '5 个码全在同一组里（四列 ⇒ 4+1 两行）');
+  assert.equal(fiveGroup.includes('size-chip__meta'), false, '5 个码时也不显示数量');
+  // ── ⑧ 改版不许引入前端脚本（这一页的底线）────────────────────────────────────
+  assert.equal(/<script[\s>]/i.test(htmlFor('sales')), false, '页面里一行前端脚本都没有');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

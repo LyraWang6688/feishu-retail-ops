@@ -367,6 +367,34 @@ const paymentFormBlock = (order, methods) => `
         </div>
       </details>`;
 
+/**
+ * ⭐⭐ 2026-10-11（方案甲之后的**补充入口**）：**逐件补「实收金额」**。
+ *
+ * 她的原话：「**待补充的时候，一定要把每件的实收都留下来**」——
+ * 扫码建单时她可以一分钱都不填（那一列留空），补的地方就是这里。
+ *
+ * ⚠️ 只在**这一单有件没填实收**时才画（没得补的单调出来只是噪音）；
+ * ⚠️ 字段名与扫码页**逐字一致**（「实收金额」）；输入框预填**现有的值**（有就显示，不用重打）；
+ * ⚠️ **留空 = 这一件先不动**（服务端只写她真填了的那几件）——所以这里不写任何说明书句。
+ */
+const detailAmountBlock = (order) => {
+  const lines = (order.details || []).filter((line) => line.actual_amount == null);
+  if (!lines.length) return '';
+  return `
+      <details class="action-form" data-action-block="detail-amount">
+        <summary>${escapeHtml(T.detailAmountTitle)}</summary>
+        <div class="action-body">
+          ${(order.details || []).map((line) => `
+          <label class="form-field">${escapeHtml(line.product || '')} · ${sizeText(line.size)}
+            <input data-field="detail-amount" data-detail="${escapeHtml(line.record_id)}" type="text"
+              inputmode="decimal" value="${escapeHtml(line.actual_amount == null ? '' : line.actual_amount)}"
+              aria-label="${escapeHtml(T.detailAmountLabel)}">
+          </label>`).join('')}
+          <button class="btn btn-primary" type="button" data-action="submit-detail-amount">${escapeHtml(T.detailAmountSubmit)}</button>
+        </div>
+      </details>`;
+};
+
 const secondDeliveryBlock = (order, methods) => `
       <details class="action-form" data-action-block="second-delivery">
         <summary>${escapeHtml(T.secondDeliveryTitle)}</summary>
@@ -476,6 +504,7 @@ export function orderDetailHtml(order, { methods = [] } = {}) {
     : '<p class="muted">还没有收款记录</p>'}
       </section>
       <div class="order-actions">
+        ${detailAmountBlock(order)}
         ${paymentFormBlock(order, methods)}
         ${deliveryBlock(order)}
         ${secondDeliveryBlock(order, methods)}
@@ -712,6 +741,30 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     });
   }
 
+  // ── 逐件补「实收金额」────────────────────────────────────────────────────
+  async function submitDetailAmount(button) {
+    const order = state.order;
+    const inputs = [...state.container.querySelectorAll('[data-field="detail-amount"]')];
+    const amounts = inputs
+      .map((input) => ({ detailRecordId: input.dataset.detail, amount: input.value.trim() }))
+      .filter((item) => item.amount !== '');
+    if (!amounts.length) return renderResult('还没有填实收金额', true);
+    const invalid = amounts.find((item) => !/^\d+(\.\d{1,2})?$/.test(item.amount) || Number(item.amount) <= 0);
+    if (invalid) return renderResult('实收金额要填大于 0 的数字（最多两位小数）', true);
+    const requestId = state.pendingRequest || uuid();
+    state.pendingRequest = requestId;
+    await runAction(button, '正在保存实收金额…', async () => {
+      const result = await api.post(ORDERS_API.detailAmounts, {
+        salesEntryRecordId: order.record_id, amounts, requestId,
+      });
+      state.pendingRequest = null;
+      const saved = `已保存 ${(result.changed || []).length} 件的实收金额`;
+      return result.owed
+        ? `${saved}；还差 ${amount(result.owed.amount)}，待收款那条已经同步。`
+        : `${saved}。`;
+    });
+  }
+
   // ── 交付 ─────────────────────────────────────────────────────────────────
   async function submitDelivery(button) {
     const order = state.order;
@@ -878,6 +931,7 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       if (action === 'back') return renderList();
       if (action === 'search-product') return searchProduct();
       if (action === 'submit-payment') return submitPayment(trigger);
+      if (action === 'submit-detail-amount') return submitDetailAmount(trigger);
       if (action === 'deliver') return submitDelivery(trigger);
       if (action === 'submit-second-delivery') return submitSecondDelivery(trigger);
       if (action === 'submit-after-sales') return submitAfterSales(trigger);

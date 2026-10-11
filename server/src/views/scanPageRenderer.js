@@ -205,15 +205,22 @@ summary { cursor: pointer; }
 .disclosure[open] .disclosure__summary { margin-bottom: var(--space-2); }
 .disclosure > .hint { margin: 0 0 var(--space-2); }
 .disclosure .write-form { margin: 0; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-soft); }
-/* ── 销售：尺码两组（有货 ⇒ 现货 / 没有 ⇒ 预订）─────────────────────────── */
-.size-group { min-width: 0; margin: 0 0 var(--space-3); padding: var(--space-3); border: 1px solid var(--border-light); border-radius: var(--radius-md); background: var(--surface-soft); }
+/* ── 销售：尺码两组（有货 ⇒ 现货 / 没有 ⇒ 预订）───────────────────────────
+   ⭐⭐ 2026-10-11（业务负责人）：**从"一行一码"改成"一行 4 个"** ——
+     · 四列网格（repeat(4, minmax(0, 1fr))）：3 个码就排一行 3 个、5 个码排 4+1；
+       列宽用 minmax(0, …) ⇒ 窄屏**可压缩、不横向滚动**（她手机上要不横滑）；
+     · **不显示数量**（她：「你不用管数量，只要它实时库存表里面有，你显示就行」）
+       ⇒ 数量只在「库存」页看，这里只有"能选的码"；
+     · 命中区**不缩小**（.size-chip 仍是 ≥44px）——"紧凑"不等于"难点"。
+   目标：移动端一屏不下滑就把两组的码看全（所以外框间距也收了一档）。
+   ⚠️ 这里在模板字符串里，注释**不许出现反引号**（会提前结束字符串）。 */
+.size-group { min-width: 0; margin: 0 0 var(--space-2); padding: var(--space-2); border: 1px solid var(--border-light); border-radius: var(--radius-md); background: var(--surface-soft); }
 .size-group__legend { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: 0; font-size: var(--font-size-base); font-weight: 700; }
 .size-group .hint { display: block; margin: var(--space-1) 0 var(--space-2); }
-.size-chips { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
-.size-chip { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-height); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer; }
+.size-chips { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-1); }
+.size-chip { display: flex; align-items: center; justify-content: center; gap: var(--space-1); min-width: 0; min-height: var(--control-height); padding: var(--space-1); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer; }
 .size-chip input { flex: none; width: 20px; height: 20px; margin: 0; }
-.size-chip__size { font-size: var(--font-size-lg); font-weight: 700; }
-.size-chip__meta { margin-left: auto; color: var(--text-secondary); font-size: var(--font-size-sm); }
+.size-chip__size { font-size: var(--font-size-md); font-weight: 700; white-space: nowrap; }
 /* ── 采购：各尺码（样品 + 门盒）数量 + 一键补货 ──────────────────────────── */
 .purchase-sizes { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); margin: var(--space-3) 0; padding: 0; list-style: none; }
 .purchase-size { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-height); padding: var(--space-2) var(--space-3); border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--surface-soft); }
@@ -328,13 +335,25 @@ ${REALMS.map((realm) => `<a class="realm-link" href="?from=${escapeHtml(realm.id
  *    留空 = 既有口径的"先货后钱"（`scanWriteService.submitSale` 里
  *    `payments = []`），首页那一颗只是想让她**不必回到第 1 双那一页**去提交。
  *    要记钱仍然回到【销售】那一块的表单填（那里有收款方式 / 金额）。
+ *
+ * ⭐⭐ 2026-10-11（业务负责人定的，**改写了一条旧断言**）：「**提交这一单只在销售页显示**」
+ *    —— 本单条在**每个领域**都有（`本单：N 双` ＋【继续扫下一个】），
+ *    但那颗**提交按钮只在她点名的领域**里出现（取值在 `config/scanPage.js` 的 `draftBar.submitRealms`，
+ *    渲染层**不写死 `'sales'`**）。
+ *    ⚠️ 这一条推翻了 2026-10-11 上午那条旧断言（`scanPageDraftBar.test.js` 的 AC-DB7：
+ *       「有草稿 ⇒ **库存页上也能提交**」）—— 口径变了，断言按新口径改写，理由逐字写在报告里。
  */
-const draftBarHtml = (write, config, userAgent) => {
+const draftBarHtml = (write, config, userAgent, realm = DEFAULT_REALM) => {
   const texts = config.texts;
   const count = ((write && write.draft && write.draft.lines) || []).length;
   const saleEnabled = Boolean(write) && write.enabled !== false && write.saleEnabled !== false;
-  // 【提交这一单】：**有草稿才出现**（她：没有草稿时不要显示成灰按钮）。
-  const submitHtml = saleEnabled && count > 0
+  // 【提交这一单】出现在哪些领域：配置说了算（缺省只有「销售」；认不出的领域 = 不显示）。
+  const submitRealms = Array.isArray(config?.draftBar?.submitRealms)
+    ? config.draftBar.submitRealms.map((item) => String(item).trim())
+    : [DEFAULT_REALM];
+  const canSubmitHere = submitRealms.includes(resolveRealm(realm));
+  // 【提交这一单】：**在她点名的领域**上、且**有草稿才出现**（她：没有草稿时不要显示成灰按钮）。
+  const submitHtml = canSubmitHere && saleEnabled && count > 0
     ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
 ${hiddenField(write.fields.action, write.actions.submitOrder)}
 ${hiddenField(write.fields.submitKey, write.saleKey)}
@@ -426,7 +445,7 @@ const draftLineText = (t, line) => (line.accessory_record_id
  * ⭐⭐ 2026-10-11：**每件实收** —— 提交表单里**一行一双**，行尾一个数字输入框。
  *
  * 她的口径里这是第①层（每件）：`这一件实际收到多少` 是**她唯一要填的金额**；
- * 页面上**没有第二个金额输入框**（旧的「成交金额」框已整体退场）。
+ * 页面上**没有第二个金额输入框**（只有一个「实收金额」）。
  * ⚠️ 这些输入框同名重复（`fields.lineAmount`）⇒ POST 上来是**有序数组**，
  *    下标与本单的明细行一一对应（服务端按同一个顺序落「销售明细.实收金额」）。
  * ⚠️ 值来自会话（她加单时填过 / 上一次提交填过）—— `escapeHtml` 之后回填。
@@ -529,7 +548,7 @@ const paymentRowsHtml = (write) => {
  *   与「资金不是必填…」那句说明（`fundsPendingNote`）**都删掉** —— 子 tab 上已经写着「销售」，
  *   剩下的只留能填能点的（本单双数 / 尺码 / 每件实收 / 付款情况 / 收款行 / 按钮）。
  * ⭐⭐ 2026-10-11（**最终口径**）：
- *   · 每件**只有一个金额**：「实收金额」（旧的「成交金额」输入框整体退场）；
+ *   · 每件**只有一个金额**：「实收金额」；
  *   · 总单加**「付款情况」三档**（全付（默认）/ 部分付 / 未付）+「实付多少」；
  *   · 收款明细**预置 1 行**（方式 + 金额，填了金额才算一笔）。
  */
@@ -597,6 +616,10 @@ ${hiddenField(fields.submitKey, write.saleKey)}
  * ⚠️ 视图模型里一行尺码都没有时（老数据 / 降级）退回 `write.sizes`，**不把页面空着**。
  * ⭐ 2026-10-10：「选这一组 = 现货 / 预订…」那两句说明与「（这一组 = 男 A · 38–48）」那句备注
  *    **都删掉** —— 组名 + 状态小标签 + 能选的尺码就够了。
+ * ⭐⭐ 2026-10-11（业务负责人）：**一行 4 个码、卡上不显示数量**（四列网格见 STYLE 的
+ *    `.size-chips`）——「你不用管数量，只要它实时库存表里面有，你显示就行」。
+ *    ⇒ 这里**不再渲染 `size-chip__meta`**（原来它写着「N 双」/「预订」）：
+ *       数量只在「库存」页看；「预订」已经在**组标题**那颗小标签上了，卡上不必每张重复。
  */
 const sizeGroupHtml = ({ id, heading, tag, tone, items, empty }) => `
 <fieldset class="size-group" data-stock-group="${escapeHtml(id)}">
@@ -608,7 +631,6 @@ const sizeGroupHtml = ({ id, heading, tag, tone, items, empty }) => `
     ? items.map((item) => `<label class="size-chip">
 <input type="radio" name="size" value="${escapeHtml(item.size_text)}">
 <span class="size-chip__size">${escapeHtml(item.size_text)} 码</span>
-<span class="size-chip__meta">${escapeHtml(item.meta)}</span>
 </label>`).join('\n')
     : `<span class="hint">${escapeHtml(empty)}</span>`}</div>
 </fieldset>`;
@@ -624,22 +646,21 @@ const sizeGroupsHtml = (view, write) => {
     ? groups.prepaid
     : fallback.filter((item) => item.missing).map((item) => ({ size_text: item.size_text, count: 0 }));
   if (!inStock.length && !prepaid.length) return `<span class="hint">${escapeHtml(t.saleSizeEmpty)}</span>`;
-  const countText = (item) => (item.count === null
-    ? t.saleInStockTag
-    : fillText(t.saleCountTemplate, { count: item.count }));
+  // ⚠️ 2026-10-11 起**不再算每个码的数量文案**（`countText` 已退场）：卡上只有尺码本身，
+  //    数量只在「库存」页看；两组的分法由 `saleSizeGroups` 决定，一个字没变。
   return sizeGroupHtml({
     id: 'in_stock',
     heading: t.saleInStockHeading,
     tag: t.saleInStockTag,
     tone: 'success',
-    items: inStock.map((item) => ({ ...item, meta: countText(item) })),
+    items: inStock,
     empty: t.saleSizeEmpty,
   }) + sizeGroupHtml({
     id: 'prepaid',
     heading: t.salePrepaidHeading,
     tag: t.salePrepaidTag,
     tone: 'warning',
-    items: prepaid.map((item) => ({ ...item, meta: t.salePrepaidTag })),
+    items: prepaid,
     empty: t.saleSizeEmpty,
   });
 };
@@ -761,7 +782,7 @@ const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEF
   return renderDocument({
     title: fillText(config.texts.pageTitle, { itemNo: view.item_no || view.number, number: view.number }),
     config,
-    content: `${draftBarHtml(write, config, page?.userAgent)}
+    content: `${draftBarHtml(write, config, page?.userAgent, safeRealm)}
 ${realmBarHtml(safeRealm)}
 ${noScriptHtml()}
 ${identityHtml(view, config)}

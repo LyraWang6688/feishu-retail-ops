@@ -386,6 +386,9 @@ class AfterSalesService {
     }
 
     const original = await this.readOriginal(request);
+    // 🔴 退款金额 = 原明细「实收金额」，而它**可以是空的**（方案甲）⇒ **在写任何东西之前**拦住。
+    //    ⚠️ 必须放在 `ensureMaster` **之前**：否则会先建出一张新主表再抛错（留下半张空单）。
+    this.assertOriginalAmountsAvailable(request, original);
     const master = await this.ensureMaster(request, spec, progress);
     const plan = this.buildPlan(request, original);
     const rows = await this.ensureDetailRows(request, plan, master, progress);
@@ -609,7 +612,44 @@ class AfterSalesService {
     }
   }
 
+  /**
+   * 退款金额 = 原明细「实收金额」；它**可以是空的**（2026-10-11 方案甲）⇒
+   * **空的时候在写任何东西之前**拦住，给一句"先去工作台订单列表补实收"的人话。
+   *
+   * ⚠️ 调用点必须在 `ensureMaster` **之前**（见 `run()`）：否则会先建一张新主表再失败，
+   *    留下半张空单 —— 那正是"要么全成、要么不写"要避免的。
+   * ⚠️ **赔货不看原明细金额**（它新建行、金额由口径固定成 `newLineAmount: 0`）⇒ 不拦。
+   */
+  assertOriginalAmountsAvailable(request, original) {
+    if (request.action === AFTER_SALES_ACTIONS.COMPENSATION) return;
+    const detailFields = this.tableOf('salesDetail').fields;
+    for (const record of original.details || []) {
+      if (cellText(record?.fields?.[detailFields.actualAmount]) === '') {
+        throw new Error(this.config.missingOriginalAmountText);
+      }
+    }
+  }
+
   // --- 2) 新「销售明细」行 -----------------------------------------------------------
+
+  /**
+   * 原「销售明细」的「实收金额」—— 售后拿它当**退款金额**。
+   *
+   * 🔴 2026-10-11（她选"方案甲"之后**必须配的一处**）：这一列**可以是空的**
+   *    （扫码建单允许"先只记货"，她事后再去工作台订单列表逐件补实收）。
+   *    可退款金额**必须有数** ⇒ 空的时候给一句**明确让她去补**的人话
+   *    （文案在 `config/afterSales.missingOriginalAmountText`），
+   *    **绝不按 0 退**（退款记 0 会把一笔真退款写成"没退钱"），也**不许静默通过**。
+   *
+   * ⚠️ **「0」与「空」是两件事**：赔货那条路写的是**明确的 0**
+   *    （`config/afterSales` 的 `newLineAmount: 0`），而且它是**新建行**、不经本函数 ⇒
+   *    赔货一个字都没变；本函数只对"**空**"说话。
+   */
+  originalDetailAmount(fields, detailFields, recordId) {
+    const raw = cellText(fields?.[detailFields.actualAmount]);
+    if (raw === '') throw new Error(this.config.missingOriginalAmountText);
+    return positiveYuan(cellNumber(raw), `原销售明细 ${recordId} 的实收金额`);
+  }
 
   /**
    * 一次售后要做的事，先落成一份**计划**再执行。计划的分片顺序是确定性的
@@ -650,7 +690,7 @@ class AfterSalesService {
           sizeRecordId: sellable.requiresSize
             ? this.singleLink(fields?.[detailFields.size], `原销售明细 ${record.record_id} 的尺码`)
             : '',
-          amount: positiveYuan(cellNumber(fields?.[detailFields.actualAmount]), '原销售明细实收金额'),
+          amount: this.originalDetailAmount(fields, detailFields, record.record_id),
           originalRecordId: record.record_id,
           recordId: '',
         });

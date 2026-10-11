@@ -4,13 +4,15 @@
  * 先写"按我们的链路应该是什么效果"，再逐条对照（业务负责人 2026-10-06 定的测试流程）：
  *   ① 累积多双 → 提交后**一张单多明细**（每双一行）；
  *   ② 连点两次 / 并发两次 → **只写一次**（幂等）；
- *   ③ **钱留空也能成单** + 状态如实（销售状态=已写入、资金状态=未写入）;
+ *   ③ **钱留空也能成单** + 状态如实（销售状态=已写入；⭐ 2026-10-11 方案甲：
+ *      **没填实收 ⇒ 那一列留空**，读侧收款状态为空、待收为 null ⇒ 落在工作台「待补充」）；
  *   ④ 收款方式**默认「微信」**（页面选中）**且可改**（改成现金就写现金）；
  *   ⑤ 赠品写**销售主表**的「赠品」列（明细不带赠品）；
  *   ⑥ 补货勾尺码 + 数量 → **采购申请**（走既有采购链路；供应商取「货品信息.供应商」）；
  *   ⑦ **不读写 `data/lark_mvp_tasks/`**（哨兵：跑完整条写入流程，那个目录一个字节都没变）；
  *   ⑧ 未登录 302 / 白名单外 403 语义不变（GET 与 POST 同一道闸门）；
- *   ⑨ 失败**有人话**（页面上说清楚；内部错误不回显）。
+ *   ⑨ **没单价又没填金额照样成单**（2026-10-11 方案甲：那一列留空）；
+ *      另两条仍钉「失败**有人话**」（内部错误不回显 / 清空本单与未知动作都有页面回应）。
  *   ⭐ 2026-10-09（下半场）新增两条（"一个码、三个领域扫出来不一样"里销售与采购那两条）：
  *   ⑩ 销售：所选尺码在（样品 + 门盒）**有货 ⇒ 现货 `SALE_CASH`**，
  *      **没货 ⇒ 预订 `SALE_PREPAID`** —— 用**既有**行为编码写进**每条明细自己的**「交易类型」；
@@ -219,8 +221,8 @@ test('① 连续扫三双加入本单 → 提交后是**一张销售单 + 三条
   const h = createHarness();
   try {
     const openId = 'ou_scan_1';
-    // ⭐ 2026-10-11：金额不再是"她填的成交金额"——每件实收留空 ⇒ 成交金额自动读「货品信息.单价」；
-    //    两边都没填 = 先货后钱（金额口径见 scanSaleTwoLayerMoney.test.js）。
+    // ⭐ 2026-10-11（方案甲）：她**没填实收** ⇒ 明细那一列**留空**（不再读「单价」顶上去）；
+    //    资金区这里按【未付】走（没填钱 ⇒ 差额 0 ⇒ 一条未收款都不写，见 `scanSaleTwoLayerMoney`）。
     for (const size of [40, 41, 42]) {
       const added = await addLine(h, openId, {
         productRecordId: 'prod_1', number: NUMBER, itemNo: 'YD6693-2', color: '黑色', size,
@@ -246,7 +248,9 @@ test('① 连续扫三双加入本单 → 提交后是**一张销售单 + 三条
     for (const detail of details) {
       assert.equal(detail.fields['销售单号'][0], entries[0].record_id, '每条明细都挂在这一张单上');
       assert.equal(detail.fields['数量'], undefined, '明细没有「数量」这一列：一单一双就是一行');
-      assert.equal(detail.fields['实收金额'] > 0, true);
+      // ⚠️ 2026-10-11（方案甲）**改写**：改前断言"实收金额 > 0"（那时留空按单价 399 顶上去）；
+      //    现在**她没填 ⇒ 那一列不写**（表里干净、不出现假数字）——见 AC-2b/AC-15。
+      assert.equal('实收金额' in detail.fields, false, '没填 ⇒ 那一列留空（不写 0、也不拿单价顶）');
     }
     // 「确认状态」= 已确认（她在页面上点了【提交】——提交就是确认）
     assert.equal(entries[0].fields['确认状态'], '已确认');
@@ -294,32 +298,33 @@ test('② 同一把提交键连点两次（含并发）→ **只写一次**，�
 });
 
 // ── ③ 钱留空也能成单 + 状态如实 ─────────────────────────────────────────────
-test('③ 实收金额留空（按货品单价）+【未付】→ 成单，状态如实（差额一条未收款）', async () => {
+test('③ 实收金额留空 +【未付】→ 成单、那一列留空、差额 0 ⇒ 一条未收款都不写', async () => {
   const h = createHarness();
   try {
     const openId = 'ou_scan_3';
     await addLine(h, openId, { productRecordId: 'prod_1', number: NUMBER, size: 40 });
     // ⚠️ 2026-10-11 最终口径：资金区必须选一档「付款情况」；**什么都没填 = 未付**
-    //    ⇒ 差额写一条【未收款】（金额 = 每件实收合计）。见 scanSaleTwoLayerMoney.test.js 的 AC-6。
+    //    ⭐ 2026-10-11（方案甲）**改写**：改前"每件实收按单价定稿 399 ⇒ 写一条 399 的【未收款】"；
+    //       现在**没填就留空** ⇒ 每件实收合计 0 ⇒ 差额 0 ⇒ **一条未收款都不写**
+    //       （见 `scanSaleTwoLayerMoney.test.js` 的 AC-6 / AC-14）。
     const result = await h.write.submitSale({
       openId, submitKey: await currentKey(h, openId), paymentStatus: PAYMENT_STATUS.unpaid,
     });
     assert.equal(result.ok, true, JSON.stringify(result));
-    assert.equal(result.payment_count, 1, '未付 ⇒ 那一条【未收款】');
+    assert.equal(result.payment_count, 0, '差额 0 ⇒ 一条收款明细都不写');
 
     const entry = entriesOf(h.gateway, 'salesEntry')[0];
     assert.equal(entry.fields['销售状态'], '已写入', '货写上了');
-    const unpaid = entriesOf(h.gateway, 'paymentRecord');
-    assert.equal(unpaid.length, 1, '钱可以先不填：只挂一条【未收款】占位（不带收款方式）');
-    assert.equal(unpaid[0].fields['收款状态'], '未收款');
-    assert.equal(unpaid[0].fields['收款方式'], undefined, '未收款没有方式');
-    assert.equal(entriesOf(h.gateway, 'salesDetail')[0].fields['实收金额'], 399, '金额留空按「货品信息.单价」');
+    assert.equal(entriesOf(h.gateway, 'paymentRecord').length, 0, '钱一分没填 ⇒ 一条收款明细都没有');
+    assert.equal('实收金额' in entriesOf(h.gateway, 'salesDetail')[0].fields, false,
+      '没填 ⇒ 那一列留空（不写 0、也不拿单价顶）');
     // 「资金状态」这一列是**既有业务层**的口径（= "收款这一步跑完了"），扫码侧一个字都没改它。
-    // 「待补资金」是**既有进度口径**推出来的：收款明细为空 ⇒ 未收款 / 欠款 = 实收金额。
+    // 「待补资金」是**既有进度口径**推出来的：**实收为空** ⇒ amountKnown = false
+    // ⇒ 收款状态为空串、待收为 **null**（既有读侧对空值的口径，见 AC-15 的第③条）。
     const progress = await new SalesProgressService({ gateway: h.gateway })
       .forOrder(entry.record_id, { detailRecordIds: [entriesOf(h.gateway, 'salesDetail')[0].record_id] });
-    assert.equal(progress.paymentStatus, '未收款', '既有口径就是「未收款」（工作台显示的待补资金）');
-    assert.equal(progress.pendingAmount, 399);
+    assert.equal(progress.paymentStatus, '', '实收为空 ⇒ 收款状态为空（还不算"未收款"）');
+    assert.equal(progress.pendingAmount, null, '待收金额算不出来（她还没补实收）');
     assert.equal(progress.fulfillmentStatus, '未交付');
   } finally { h.cleanup(); }
 });
@@ -690,8 +695,8 @@ test('⑧ 路由：补货表单勾两个尺码 → 采购申请结果页（批�
   } finally { h.cleanup(); }
 });
 
-// ── ⑨ 失败有人话 ────────────────────────────────────────────────────────────
-test('⑨ 失败有人话：没单价又没填金额 → 页面上说清"要填实收金额"，不是静默/只写日志', async () => {
+// ── ⑨ 没填实收也能成单（方案甲）；失败那两条仍有人话 ────────────────────────
+test('⑨ 没单价又没填金额 ⇒ **照样成单**（那一列留空），页面给成功结果页而不是失败页', async () => {
   login();
   const h = createHarness({ tables: seedTables({ product: [PRODUCT, PRODUCT_NO_PRICE] }) });
   try {
@@ -708,25 +713,22 @@ test('⑨ 失败有人话：没单价又没填金额 → 页面上说清"要填�
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           action: SCAN_WRITE.actions.submitOrder, submit_key: key,
-          // ⚠️ 资金区必须有一档「付款情况」（没填钱 ⇒ 未付，差额挂一条未收款）。
           payment_status: PAYMENT_STATUS.unpaid,
         }).toString(),
       });
-      assert.equal(response.status, 400, '她可以改一下就再提交 → 400 而不是 500');
+      // ⚠️ 2026-10-11（方案甲）**改写**：改前这里是 400 + 一句"没有单价，请填实收"
+      //    （那时"留空 ⇒ 读单价"，读不到就只能拦）；现在**没填就留空** ⇒ 直接成单。
+      assert.equal(response.status, 200, '没填实收不再是失败 ⇒ 成功结果页（200）');
       const html = await response.text();
-      // ⭐ 2026-10-11：这一条也归"原地重渲染"那一组（她可以在本单里当场补填实收）——
-      //    所以页面上是**销售那一块** + 一句人话，而不是一张干巴巴的失败页。
-      assert.ok(html.includes('realm-block--sales'), '原地回到销售那一块（她改一下就能再提交）');
-      assert.match(html, /「YD1111」在「货品信息」里没有单价：请在本单里填上这一双实收，再提交。/);
-      assert.match(html, /class="form-alert"/, '人话挂在表单上方');
-      // 金额是在**建主表之前**算的 ⇒ 这一种失败不会留下半张空单（更好，不是更差）。
-      assert.equal(entriesOf(h.gateway, 'salesEntry').length, 0);
-      assert.equal(entriesOf(h.gateway, 'salesDetail').length, 0);
-      // 而她改完金额再提交，就能成单（同一把键、同一页）
-      const fixed = await h.write.submitSale({ openId, submitKey: key });
-      // 金额仍取不到 ⇒ 仍然是人话失败（**不许写 0**）
-      assert.equal(fixed.ok, false);
-      assert.match(fixed.message, /没有单价/);
+      assert.match(html, /这一单提交好了/, '给她的是"提交好了"那一页');
+      assert.equal(entriesOf(h.gateway, 'salesEntry').length, 1, '单子建出来了');
+      assert.equal('实收金额' in entriesOf(h.gateway, 'salesDetail')[0].fields, false,
+        '没填 ⇒ 那一列留空（不写 0，也不拿单价顶 —— 何况这一款根本没有单价）');
+      // 幂等不变：同一把键再来一次 = 把上一次的结果还给她，**不再写第二遍**
+      const again = await h.write.submitSale({ openId, submitKey: key });
+      assert.equal(again.ok, true);
+      assert.equal(again.reused, true, '同一把键 = 把上一次的结果还给她');
+      assert.equal(entriesOf(h.gateway, 'salesEntry').length, 1);
     });
   } finally { h.cleanup(); }
 });

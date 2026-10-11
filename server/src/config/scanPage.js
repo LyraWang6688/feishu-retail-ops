@@ -19,7 +19,7 @@
  *   两者唯一共享的是二维码 URL 模板，而那个模板**不在这里**（在 `tagQrCode.js`）。
  */
 
-const { readFlag, readInt, readString } = require('./envValue');
+const { readFlag, readInt, readList, readString } = require('./envValue');
 
 /**
  * 路由挂载点：`GET /s/:number`。
@@ -169,6 +169,22 @@ const TEXTS = Object.freeze({
 const SCAN_NEXT = Object.freeze({
   // 飞书官方 AppLink：打开「扫一扫」（改它只改这一处）。
   applink: readString(process.env, 'SCAN_NEXT_APPLINK', 'https://applink.feishu.cn/client/qrcode/main'),
+});
+
+/**
+ * ⭐⭐ 2026-10-11（业务负责人）：「**提交这一单只在销售页显示**」。
+ *
+ * 那条【本单：N 双】在每个领域页顶部都有（她一单跨编号累积时随时看得到几双）；
+ * 但**那颗真正的提交按钮**只在**她点名的领域**里出现 —— 其余领域页顶部只有
+ * `本单：N 双` ＋【继续扫下一个】。
+ *
+ * ⚠️ 为什么进配置而不是在渲染层写死 `'sales'`：领域是活的（加减领域、哪个领域能提交都可能变），
+ *    改它**不该动渲染层**（配置先行）。取值必须是 `views/scanPageRealm.js` 里 `REALMS[].id`；
+ *    认不出的取值 = 那个领域页上不显示（**绝不猜**）。
+ * ⚠️ 环境变量给了值就用它（逗号分隔）；**没给** = 只有 `sales`。
+ */
+const DRAFT_BAR = Object.freeze({
+  submitRealms: readList(process.env, 'SCAN_DRAFT_BAR_SUBMIT_REALMS') || ['sales'],
 });
 
 /** 价格格式（来自「货品信息.单价」）。整数不补零：`¥399`；带角分才显示小数。 */
@@ -417,6 +433,8 @@ const SCAN_PAGE = Object.freeze({
   events: EVENTS,
   // ⭐ 2026-10-11：【继续扫下一个】的手段（飞书扫一扫 AppLink，见上面的长注释）。
   scanNext: SCAN_NEXT,
+  // ⭐ 2026-10-11：【提交这一单】出现在哪些领域（她：「只在「销售」页显示」）。
+  draftBar: DRAFT_BAR,
 });
 
 /** `{name}` 占位符替换（缺的值用 `missing` 顶，**不留空段**）。 */

@@ -199,6 +199,129 @@ class SalesFollowupService {
     this.queue = next.catch(() => undefined);
     return next;
   }
+
+  /**
+   * ⭐⭐ 2026-10-11（业务负责人选"方案甲"之后的**补充入口**）：工作台【订单列表】里**逐件补实收**。
+   *
+   * 为什么必须有一条**新的窄写入路径**（先只读核过）：全仓**没有**任何函数能改已写入明细的
+   * 「实收金额」——`salesOrderService.confirm` 是"只建不改"（`:184` 要求逐行金额相等、
+   * 不等就抛「与当前草稿不一致，已停止重试」），`salesDetail` 的两处 update 只写「履约状态」。
+   *
+   * 🔴 **两条红线**（都在**写任何一个字节之前**判）：
+   *   ① **改后实收合计不许小于已收合计** —— 否则读侧 `salesProgressService.js:74-76`
+   *      的"已收 > 实收 ⇒ 抛错"会让**这一单在订单列表里整单读不出来**（她 2026-10-08 报过的形态）。
+   *      ⚠️ 只要有**任何一件**实收还是空、而已收 > 0 ⇒ 也算"算不出来" ⇒ 拦住。
+   *   ② **同步那条【未收款】的金额**（= 改后实收合计 − 已收合计）—— 否则下一步"补收款"会按
+   *      **旧差额**去"一次收清"，两边对不上 ⇒ 补款直接报错（`addPayment` 的既有判据）。
+   *
+   * ⚠️ **留空的件 = 这一件先不动**（不是"清空"）：服务端只写她真填了的那些。
+   * ⚠️ 幂等与 `addPayment` 同一套：一个 `request_id` 一把键（`JsonTaskStore`），重放不写第二遍。
+   *
+   * @param {{salesEntryRecordId:string, amounts:Array<{detailRecordId:string, amount:string|number}>,
+   *          requestId:string, operatorOpenId?:string}} input
+   */
+  async updateDetailAmounts(input) {
+    const work = async () => {
+      const requestId = String(input.requestId || '');
+      if (!/^[0-9a-f-]{36}$/i.test(requestId)) throw new Error('补实收请求缺少有效 request_id');
+      const taskId = `detail_amount_${crypto.createHash('sha256').update(requestId).digest('hex').slice(0, 24)}`;
+      const targets = (Array.isArray(input.amounts) ? input.amounts : [])
+        .map((entry) => ({
+          detailRecordId: String(entry?.detailRecordId || '').trim(),
+          raw: String(entry?.amount ?? '').trim(),
+        }))
+        .filter((entry) => entry.raw !== '');
+      const fingerprint = JSON.stringify([
+        input.salesEntryRecordId,
+        targets.map((entry) => [entry.detailRecordId, entry.raw]),
+      ]);
+      const existing = await this.store.get(taskId);
+      if (existing) {
+        if (existing.fingerprint !== fingerprint) throw new Error('request_id 对应的补实收内容不一致');
+        if (existing.status === 'completed') return existing.result;
+        throw new Error('这次补实收结果待核对，请勿重新提交');
+      }
+      if (!targets.length) throw new Error('还没有要补的实收金额');
+
+      const order = await this.gateway.get('salesEntry', input.salesEntryRecordId);
+      if (!order) throw new Error('销售订单不存在');
+      const fields = this.gateway.table('salesEntry').fields;
+      if (!isPosted(postedOf(order, fields))) throw new Error('销售订单尚未确认入账');
+
+      const detailFields = this.gateway.table('salesDetail').fields;
+      const details = (await this.gateway.listAll('salesDetail'))
+        .filter((record) => linkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(input.salesEntryRecordId));
+      if (!details.length) throw new Error('这一张销售单没有明细');
+
+      // ① 她填的那几件：必须属于这一张单、必须是大于 0 的两位小数金额。
+      const wanted = new Map();
+      for (const entry of targets) {
+        if (!details.some((record) => record.record_id === entry.detailRecordId)) {
+          throw new Error('要补的明细不属于这一张销售单');
+        }
+        if (!/^\d+(\.\d{1,2})?$/.test(entry.raw) || Number(entry.raw) <= 0) {
+          throw new Error('实收金额要填大于 0 的数字（最多两位小数）');
+        }
+        wanted.set(entry.detailRecordId, Math.round(Number(entry.raw) * 100) / 100);
+      }
+
+      // ② 改后每一件的实收：她填了的用新值；**没填的沿用原值**（原值也可能是空 ⇒ 算不出来）。
+      const amountOf = (record) => {
+        const text = textValue(record.fields?.[detailFields.actualAmount]).trim();
+        return text === '' ? null : Number(text);
+      };
+      const after = details.map((record) => ({
+        detailRecordId: record.record_id,
+        amount: wanted.has(record.record_id) ? wanted.get(record.record_id) : amountOf(record),
+      }));
+      const before = await this.progress.forOrder(input.salesEntryRecordId);
+      const paidCents = Math.round(Number(before.paidAmount || 0) * 100);
+      const unknown = after.filter((item) => item.amount === null || !Number.isFinite(item.amount));
+      const totalCents = unknown.length
+        ? null
+        : after.reduce((sum, item) => sum + Math.round(item.amount * 100), 0);
+      // 🔴 红线①
+      if (totalCents === null) {
+        if (paidCents > 0) {
+          throw new Error(`这一单还有 ${unknown.length} 件没填实收金额，算不出够不够已经收到的钱；请一起填上`);
+        }
+      } else if (totalCents < paidCents) {
+        throw new Error(`改完实收合计 ￥${totalCents / 100} 比已经收到的 ￥${paidCents / 100} 还少，请先核对`);
+      }
+
+      // ③ 那条【未收款】的现状（多条 ⇒ 人工核对；同一条要同步金额）—— 也在写之前查完。
+      const statusField = this.gateway.table('paymentRecord').fields.status;
+      const amountField = this.gateway.table('paymentRecord').fields.amount;
+      const pendingRows = (await this.payments.recordsForSale(input.salesEntryRecordId))
+        .filter((record) => textValue(record.fields?.[statusField]) === '未收款');
+      if (pendingRows.length > 1) throw new Error('存在多条待收款记录，请先人工核对');
+
+      await this.store.create({ task_id: taskId, fingerprint, status: 'pending' });
+      const changed = [];
+      for (const [detailRecordId, value] of wanted.entries()) {
+        await this.gateway.update('salesDetail', detailRecordId, { actualAmount: value });
+        changed.push({ record_id: detailRecordId, actual_amount: value });
+      }
+      // 🔴 红线②：差额（≥ 0）同步进那条【未收款】——下一步"补收款"才收得清。
+      let owed = null;
+      if (pendingRows.length === 1 && totalCents !== null) {
+        const nextOwed = Math.max(0, totalCents - paidCents) / 100;
+        await this.gateway.update('paymentRecord', pendingRows[0].record_id, { amount: nextOwed });
+        owed = { record_id: pendingRows[0].record_id, amount: nextOwed };
+      }
+      const result = {
+        changed,
+        owed,
+        total_amount: totalCents === null ? null : totalCents / 100,
+        paid_amount: paidCents / 100,
+      };
+      await this.store.update(taskId, { status: 'completed', result });
+      return result;
+    };
+    const next = this.queue.then(work, work);
+    this.queue = next.catch(() => undefined);
+    return next;
+  }
 }
 
 module.exports = { SalesFollowupService };

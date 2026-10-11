@@ -23,15 +23,16 @@
  *  AC-1  **表单只有这两层**：页面上**没有**别的金额输入框；每件只填「实收金额」；
  *        资金区有**「付款情况」三档**（全付（默认）/ 部分付 / 未付）+「实付多少」；
  *        收款明细**预置 1 行**（方式 + 金额），第一行默认「微信」。
- *  AC-2  **每件实收金额 → 销售明细.「实收金额」**：填了 ⇒ 写她填的；
- *        留空 ⇒ 读「单价」当落点（鞋 = 货品信息.单价 / 配品 = 其他配品.单价）；
- *        两边都取不到 ⇒ **人话拦住、绝不写 0**（也不建单）。
+ *  AC-2  ⭐⭐ **每件实收金额 → 销售明细.「实收金额」**（业务负责人 2026-10-11 **方案甲**）：
+ *        **填了 ⇒ 写她填的那个数**（> 0）；**没填 ⇒ 那一列就留空**（**不再读「单价」兜底**、
+ *        也**不写 0**）—— 表里因此不出现"按单价顶上去的假数字"，她事后去工作台订单列表补。
  *  AC-3  **【全付】两边相等 ⇒ 成单**：`Σ每件实收 === Σ多笔收款` ⇒ 收款明细**如实写多笔、多方式**
  *        （500 = 微信 200 + 现金 300），**一条未收款都不写**。
  *  AC-4  **【全付】不等 ⇒ 拦住 + 一个字都不写 + 人话说清差额**（收款多了 / 少了两种）。
- *  AC-5  **【全付】的边界**：只填每件实收 / 只填收款 / 部分填了但合计不等 ⇒ 都拦住。
- *  AC-6  ⭐ **【未付】⇒ 一条【未收款】**（金额 = 每件实收合计），**不写任何收款方式**；
- *        「每件实收金额」按单价落表；单子照样成立（先货后钱的口径保住了）。
+ *  AC-5  **【全付】的边界**：只填每件实收 / 只填收款 / 部分填了但合计不等 ⇒ 都拦住
+ *        （**没填的那一件计 0** —— 它不再被"单价"顶成 399）。
+ *  AC-6  ⭐ **【未付】⇒ 一条【未收款】**（金额 = 每件实收合计；**差额 0 ⇒ 不写**），
+ *        **不写任何收款方式**；她**填了**实收才写那一条（AC-6b），什么都没填就只记货（AC-6）。
  *  AC-7  ⭐ **【部分付】⇒ 已收的那几条（状态「已收款」）+ 差额一条【未收款】**：
  *        `已收款合计 == 她填的实付多少`；差额 = 每件实收合计 − 已收合计；
  *        「未收款」那一条**方式留空、不写交易方向**。
@@ -49,6 +50,17 @@
  *        `config/scanWrite.js`；页面上不出现说明句。
  *  AC-12 ⭐ **订单列表判据没被破坏**：「资金信息齐」= **有收款方式 + 至少一笔收款**
  *        ⇒ 「未付 / 部分付」的单**仍然**落在**待补充**（那条【未收款】不带方式）。
+ *
+ * ⭐⭐ **2026-10-11 晚补充口径（业务负责人）：「建单门槛 = 只要「货品信息」齐」+「方案甲」** ——
+ *    「**资金类（实收 / 收款）不拦**、可以全空」；「**全付必须相等**」这条
+ *    **只在她填了资金时才生效**；**没填实收 ⇒ 那一列留空**（不读单价、不写 0）。
+ *  AC-13 ⭐ **资金全空（默认「全付」）⇒ 成单**：明细那一列**留空**、
+ *        **一条收款明细都不写**（资金状态 = 既有「已写入」⇒ 那张单进「待补充」）。
+ *  AC-13b ⭐ 同上，但**走真路由**（销售页什么都不填 ⇒ 提交 200 + 结果页，不是 400 差额页）。
+ *  AC-14 ⭐【未付】+ 差额 0（她什么都没填）⇒ **绝不写"金额 0"的【未收款】**、单照建成。
+ *  AC-15 ⭐ **方案甲的两条边界**：她**填了 0** ⇒ 照旧拦住（放宽只针对"缺省"）；
+ *        货品**有单价也不许顶上去**（表里那一格是空，不是 399）；读侧遇空值安全
+ *        （`salesProgressService` 现算：应收 / 待收为 null、收款状态为空、**不触发"已收 > 实收"红线**）。
  * ─────────────────────────────────────────────────────────────────────────
  */
 const test = require('node:test');
@@ -302,7 +314,7 @@ test('AC-1b 收款行的预置规则（配置先行）：预置 1 行、第一�
 // AC-2 每件实收金额 → 销售明细.「实收金额」（留空 ⇒ 读单价；取不到 ⇒ 人话拦住）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-2a 每件实收 = 销售明细「实收金额」的落点；留空才读「单价」（鞋 / 配品同规则）', async () => {
+test('AC-2a 每件实收 = 销售明细「实收金额」的落点：**填了就写她填的那个数**（鞋 / 配品同规则）', async () => {
   const h = createHarness();
   try {
     const openId = 'ou_two_layer_amount';
@@ -319,47 +331,30 @@ test('AC-2a 每件实收 = 销售明细「实收金额」的落点；留空才�
     const accessory = details.find((row) => row.fields[accessoryField]);
     assert.equal(shoe.fields['实收金额'], 350, '她填的实收就是「销售明细.实收金额」');
     assert.equal(accessory.fields['实收金额'], 12, '配品行同一条规则（与鞋一致）');
-
-    // 留空 ⇒ 读那张表的「单价」当落点（鞋 = 货品信息.单价 / 配品 = 其他配品.单价）
-    const openId2 = 'ou_two_layer_fallback';
-    await addShoe(h, openId2, { size: 41, amount: '' });
-    await addAccessory(h, openId2, { accessoryRecordId: 'acc_oil', amount: '' });
-    // ⚠️ 这一单按**未付**走：两边都没填钱 ⇒ 写一条【未收款】= 每件实收合计（见 AC-6）。
-    const fallback = await h.write.submitSale({
-      openId: openId2, submitKey: await currentKey(h, openId2), paymentStatus: PAYMENT_STATUS.unpaid,
-    });
-    assert.equal(fallback.ok, true, JSON.stringify(fallback));
-    const rows = entriesOf(h, 'salesDetail').slice(2);
-    const shoe2 = rows.find((row) => !row.fields[accessoryField]);
-    const acc2 = rows.find((row) => row.fields[accessoryField]);
-    assert.equal(shoe2.fields['实收金额'], 399, '留空 ⇒ 读「货品信息.单价」');
-    assert.equal(acc2.fields['实收金额'], 15, '留空 ⇒ 读「其他配品.单价」');
   } finally { h.cleanup(); }
 });
 
-test('AC-2b 取不到单价又没填实收 ⇒ 人话拦住、**一个字都不写**（绝不写 0）', async () => {
+test('AC-2b ⭐ 方案甲：**没填 ⇒ 那一列留空**（不再读「单价」、更不写 0）—— 连"货品没有单价"也照样能建单', async () => {
   const h = createHarness();
   try {
-    // 鞋：这一款没有单价
+    // 鞋：这一款**没有单价**（`PRODUCT_NO_PRICE`）；她一分钱都没填
     const openId = 'ou_two_layer_nomoney';
     await addShoe(h, openId, { productRecordId: 'prod_2', number: 'YD1111|白色|A', itemNo: 'YD1111', size: 40, amount: '' });
-    const failed = await h.write.submitSale({ openId, submitKey: await currentKey(h, openId) });
-    assert.equal(failed.ok, false, '取不到单价 ⇒ 拦住');
-    assert.equal(failed.code, 'line_amount_missing');
-    assert.match(failed.message, /YD1111/, '人话里点名是哪一双');
-    assert.match(failed.message, /实收/, '告诉她"能做的事"：在本单里填上这一双实收');
-    assert.equal(entriesOf(h, 'salesEntry').length, 0, '一个字都不写（主表都不建）');
-    assert.equal(entriesOf(h, 'salesDetail').length, 0);
+    const ok = await h.write.submitSale({ openId, submitKey: await currentKey(h, openId) });
+    assert.equal(ok.ok, true, `没填实收不该拦住建单：${JSON.stringify(ok)}`);
+    assert.equal(entriesOf(h, 'salesEntry').length, 1, '主表建出来了');
+    const shoe = entriesOf(h, 'salesDetail')[0];
+    assert.equal('实收金额' in shoe.fields, false, '她没填 ⇒ **这一列不写**（既不拿单价顶、也不写 0）');
+    assert.equal(entriesOf(h, 'paymentRecord').length, 0, '一笔收款都不写');
 
-    // 配品：这一件没有单价
+    // 配品：这一件也没有单价
     const openId2 = 'ou_two_layer_nomoney_acc';
     await addAccessory(h, openId2, { accessoryRecordId: 'acc_insole', amount: '' });
-    const failed2 = await h.write.submitSale({ openId: openId2, submitKey: await currentKey(h, openId2) });
-    assert.equal(failed2.ok, false);
-    assert.equal(failed2.code, 'accessory_amount_missing');
-    assert.match(failed2.message, /赠品鞋垫/);
-    assert.match(failed2.message, /实收/);
-    assert.equal(entriesOf(h, 'salesDetail').length, 0, '绝不写 0');
+    const ok2 = await h.write.submitSale({ openId: openId2, submitKey: await currentKey(h, openId2) });
+    assert.equal(ok2.ok, true, JSON.stringify(ok2));
+    const accessoryField = V1_BITABLE_SCHEMA.tables.salesDetail.fields.accessory;
+    const acc = entriesOf(h, 'salesDetail').find((row) => row.fields[accessoryField]);
+    assert.equal('实收金额' in acc.fields, false, '配品行同规则：没填 ⇒ 那一列留空');
   } finally { h.cleanup(); }
 });
 
@@ -482,10 +477,11 @@ test('AC-5b 【全付】只填了收款、每件实收全空 ⇒ 拦住（说清
     });
     assert.equal(result.ok, false);
     assert.equal(result.code, 'amount_mismatch');
-    // ⚠️ 留空的每件实收**按「单价」定稿**（这张表自己的 399）—— 比对永远只对这些"每件实收金额"。
-    assert.match(result.message, new RegExp(`每件实收合计 ${MONEY}399`));
+    // ⚠️ 2026-10-11（方案甲）改写：留空的每件实收**不再按「单价」定稿** ⇒ 合计是 **¥0**
+    //    （改前：`每件实收合计 ¥399` / `收款比每件实收多 ¥101`；现在 0 / 多 ¥500）。
+    assert.match(result.message, new RegExp(`每件实收合计 ${MONEY}0`));
     assert.match(result.message, new RegExp(`收款合计 ${MONEY}500`));
-    assert.match(result.message, new RegExp(`收款比每件实收多 ${MONEY}101`));
+    assert.match(result.message, new RegExp(`收款比每件实收多 ${MONEY}500`));
     assert.equal(entriesOf(h, 'salesEntry').length, 0);
   } finally { h.cleanup(); }
 });
@@ -493,18 +489,20 @@ test('AC-5b 【全付】只填了收款、每件实收全空 ⇒ 拦住（说清
 test('AC-5c 【全付】部分填了但合计不等 ⇒ 拦住；两边相等才放行', async () => {
   const h = createHarness();
   try {
-    // ① 两双：只填了第一双（350），第二双留空（按单价落 399 ⇒ 合计 749），收款 500 ⇒ 拦住
+    // ① 两双：只填了第一双（350），第二双留空（**那一列留空 ⇒ 计 0**）⇒ 合计 350，收款 500 ⇒ 拦住
     const openId = 'ou_two_layer_partial';
     await addShoe(h, openId, { size: 40, amount: 350 });
-    await addShoe(h, openId, { size: 41, amount: '' });   // 第二双没填 ⇒ 按「单价」399
+    await addShoe(h, openId, { size: 41, amount: '' });   // 第二双没填 ⇒ 不参与合计
     const blocked = await h.write.submitSale({
       openId, submitKey: await currentKey(h, openId), paymentStatus: PAYMENT_STATUS.full,
       payments: [{ method: '微信', amount: 500 }],
     });
-    assert.equal(blocked.ok, false, '两边合计对不上（500 ≠ 350 + 399）');
+    assert.equal(blocked.ok, false, '两边合计对不上（500 ≠ 350 + 0）');
     assert.equal(blocked.code, 'amount_mismatch');
-    assert.match(blocked.message, new RegExp(`每件实收合计 ${MONEY}749`));
-    assert.match(blocked.message, new RegExp(`收款比每件实收少 ${MONEY}249`));
+    // ⚠️ 2026-10-11（方案甲）改写：改前是 ¥749（第二双按单价 399 顶上去）⇒ 少 ¥249；
+    //    现在那一列留空、计 0 ⇒ 合计 ¥350、收款**多了** ¥150。
+    assert.match(blocked.message, new RegExp(`每件实收合计 ${MONEY}350`));
+    assert.match(blocked.message, new RegExp(`收款比每件实收多 ${MONEY}150`));
     assert.equal(entriesOf(h, 'salesEntry').length, 0);
 
     // ② 两双各自的实收都填了、合计 750，收款也 750 ⇒ 放行（**这才是"合计相等"**）
@@ -541,7 +539,7 @@ test('AC-5d 小数也按**分**比：0.1 + 0.2 不误报（浮点误差不算数
 // AC-6 ⭐【未付】⇒ 一条【未收款】（金额 = 每件实收合计）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-6 【未付】什么都不填 ⇒ 成单 + 一条【未收款】= 每件实收合计（先货后钱保住了）', async () => {
+test('AC-6 ⭐【未付】什么都不填 ⇒ 成单 + **一条【未收款】都不写**（差额 0 写它没意义）', async () => {
   const h = createHarness();
   try {
     const openId = 'ou_two_layer_unpaid';
@@ -550,17 +548,33 @@ test('AC-6 【未付】什么都不填 ⇒ 成单 + 一条【未收款】= 每�
       openId, submitKey: await currentKey(h, openId), paymentStatus: PAYMENT_STATUS.unpaid,
     });
     assert.equal(ok.ok, true, `未付也要能提交：${JSON.stringify(ok)}`);
-    assert.equal(entriesOf(h, 'salesDetail')[0].fields['实收金额'], 399, '实收金额按「单价」= 应收');
-    const unpaid = unpaidRows(h);
-    assert.equal(unpaid.length, 1, '未付 ⇒ 写**一条**【未收款】');
-    assert.equal(unpaid[0].fields['收款金额'], 399, '金额 = 每件实收合计');
-    assert.equal(unpaid[0].fields['收款状态'], PAYMENT_STATUS_UNPAID, '状态用表里既有的「未收款」');
-    assert.equal(unpaid[0].fields[methodField()], undefined, '未收款**没有方式**（那一列不写）');
+    // ⚠️ 2026-10-11（方案甲）**改写**：改前"留空按单价定稿 399 ⇒ 写一条 399 的【未收款】"；
+    //    现在**没填就留空** ⇒ 每件实收合计 = 0 ⇒ 差额 0 ⇒ **不写【未收款】**（她 2 的③）。
+    assert.equal('实收金额' in entriesOf(h, 'salesDetail')[0].fields, false, '没填 ⇒ 那一列留空');
+    assert.equal(unpaidRows(h).length, 0, '差额 0 ⇒ **一条【未收款】都不写**');
     assert.equal(paidRows(h).length, 0, '一笔已收款都没有');
-    assert.equal(ok.owed_amount, 399, '差额如实回给页面');
+    assert.equal(ok.owed_amount, 0, '差额如实回给页面（0）');
     // 单子本身照旧：销售状态 / 资金状态都是既有业务层写的
     assert.equal(entriesOf(h, 'salesEntry')[0].fields['销售状态'], '已写入');
     assert.equal(entriesOf(h, 'salesEntry')[0].fields['资金状态'], '已写入');
+  } finally { h.cleanup(); }
+});
+
+test('AC-6b ⭐【未付】+ 她**填了**每件实收 ⇒ 照旧写一条【未收款】= 每件实收合计（字段形状不变）', async () => {
+  const h = createHarness();
+  try {
+    const openId = 'ou_two_layer_unpaid_filled';
+    await addShoe(h, openId, { size: 40, amount: 399 });
+    const ok = await h.write.submitSale({
+      openId, submitKey: await currentKey(h, openId), paymentStatus: PAYMENT_STATUS.unpaid,
+    });
+    assert.equal(ok.ok, true, JSON.stringify(ok));
+    const unpaid = unpaidRows(h);
+    assert.equal(unpaid.length, 1, '未付 ⇒ 写**一条**【未收款】');
+    assert.equal(unpaid[0].fields['收款金额'], 399, '金额 = 每件实收合计（她填的那个数）');
+    assert.equal(unpaid[0].fields['收款状态'], PAYMENT_STATUS_UNPAID, '状态用表里既有的「未收款」');
+    assert.equal(unpaid[0].fields[methodField()], undefined, '未收款**没有方式**（那一列不写）');
+    assert.equal(ok.owed_amount, 399, '差额如实回给页面');
   } finally { h.cleanup(); }
 });
 
@@ -878,7 +892,7 @@ test('AC-8b 路由把表单的**同名重复**字段拼成有序的多笔收款�
   assert.deepEqual(parsePaymentRows({}, fields), []);
 });
 
-test('AC-8c ⭐【未付】走真路由：页面上什么都不填 ⇒ 直接成单 + 一条未收款', async () => {
+test('AC-8c ⭐【未付】走真路由：页面上什么都不填 ⇒ 直接成单（**一条未收款都不写**，差额 0）', async () => {
   login();
   const h = createHarness();
   try {
@@ -900,9 +914,10 @@ test('AC-8c ⭐【未付】走真路由：页面上什么都不填 ⇒ 直接成
       assert.equal(done.status, 200);
       assert.match(await done.text(), /这一单提交好了/);
       assert.equal(paidRows(h).length, 0);
-      assert.equal(unpaidRows(h).length, 1, '未付 ⇒ 一条未收款');
-      assert.equal(unpaidRows(h)[0].fields['收款金额'], 399);
-      assert.equal(entriesOf(h, 'salesDetail')[0].fields['实收金额'], 399);
+      // ⚠️ 2026-10-11（方案甲）改写：改前留空按单价 399 定稿、写一条 399 的【未收款】；
+      //    现在没填 ⇒ 那一列留空、差额 0 ⇒ **一条未收款都不写**。
+      assert.equal(unpaidRows(h).length, 0, '差额 0 ⇒ 一条未收款都不写');
+      assert.equal('实收金额' in entriesOf(h, 'salesDetail')[0].fields, false, '没填 ⇒ 那一列留空');
     });
   } finally { h.cleanup(); }
 });
@@ -1190,5 +1205,129 @@ test('AC-12 订单列表判据：未付 / 部分付 的单**仍然**是"资金�
     // 判据源码哨兵：它读的就是 `method`（收款方式）—— 扫码侧没有为了对齐而改它
     const source = fs.readFileSync(path.join(WORKBENCH, 'features', 'orders', 'index.js'), 'utf8');
     assert.match(source, /payment\?\.method|payment\.method/, '判据读的仍是收款方式那一列');
+  } finally { h.cleanup(); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-11 晚补充口径：「建单门槛 = 只要「货品信息」齐」——
+//     资金类（实收 / 收款）**不拦**、可以全空；
+//     「全付必须相等」只在她**填了资金**时才生效（填了就照旧一条都不放过）。
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-13 建单门槛 = 货品信息齐：**资金全空**（默认「全付」）⇒ 成单；那一列留空、一条收款都不写', async () => {
+  const h = createHarness();
+  try {
+    const openId = 'ou_two_layer_blank_money';
+    await addShoe(h, openId, { size: 40 });            // 「实收金额」留空
+    // ⚠️ 完全按"她什么都没填"的形状提交：**不传** paymentStatus / paidAmount / payments / lineAmounts
+    //    ⇒ 服务端按默认档「全付」走，而全付的相等校验**只在她填了资金时才生效**。
+    const result = await h.write.submitSale({ openId, submitKey: await currentKey(h, openId) });
+    assert.equal(result.ok, true, `资金全空也要能建单（门槛 = 货品信息齐）：${JSON.stringify(result)}`);
+    assert.equal(entriesOf(h, 'salesEntry').length, 1, '主表一条');
+    assert.equal(entriesOf(h, 'salesDetail').length, 1, '明细一条');
+    // ⚠️ 2026-10-11（方案甲）**改写**：改前"实收按货品信息.单价自动落 399"；
+    //    现在**没填 ⇒ 那一列留空**（表里不出现按单价顶上去的假数字）。
+    assert.equal('实收金额' in entriesOf(h, 'salesDetail')[0].fields, false, '没填 ⇒ 那一列留空');
+    assert.equal(entriesOf(h, 'paymentRecord').length, 0, '资金全空 ⇒ 一条收款明细都不写');
+    assert.equal(unpaidRows(h).length, 0, '也没写【未收款】（她一个字都没说欠钱）');
+    assert.equal(h.stockCalls.length, 1, '现货行照旧"提交即交付 + 扣库存"（钱那一半不影响货）');
+  } finally { h.cleanup(); }
+});
+
+test('AC-13b ⭐ 走真路由：销售页**什么都不填** ⇒ 提交成单（200 + 结果页），不是 400 差额页', async () => {
+  login();
+  const h = createHarness();
+  try {
+    const openId = 'ou_two_layer_route_blank';
+    const cookie = sessionCookie(openId);
+    await withServer(formApp(h), async (base) => {
+      const pageUrl = `${base}/s/${encodeURIComponent(NUMBER)}?from=sales`;
+      const html = await (await fetch(pageUrl, { headers: { cookie } })).text();
+      const saleKey = html.match(/name="submit_key" value="(scan_sale:[^"]+)"/)[1];
+      await fetch(pageUrl, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ action: SCAN_WRITE.actions.addLine, submit_key: saleKey, size: '40' }).toString(),
+      });
+      // 表单**原样**提交：每件实收是空的、收款行是空的、付款情况 = 默认那一档（全付）
+      const done = await formPost(base, cookie, {
+        action: SCAN_WRITE.actions.submitOrder,
+        submit_key: saleKey,
+        payment_status: PAYMENT_STATUS.full,
+        payment_method: '',
+        payment_amount: '',
+        line_amount: '',
+      });
+      assert.equal(done.status, 200, `资金全空应该直接成单，而不是 400：${await done.text()}`);
+      assert.equal(entriesOf(h, 'salesEntry').length, 1);
+      assert.equal(entriesOf(h, 'salesDetail').length, 1);
+      assert.equal(entriesOf(h, 'paymentRecord').length, 0);
+    });
+  } finally { h.cleanup(); }
+});
+
+test('AC-14 ⭐【未付】+ 差额 0（她什么都没填）⇒ **绝不写"金额 0"的【未收款】**、单照建成', async () => {
+  const h = createHarness();
+  try {
+    const openId = 'ou_two_layer_no_price_unpaid';
+    // 这一款**连单价都没有**（`PRODUCT_NO_PRICE`）—— 2026-10-11（方案甲）之后它**不再是阻碍**：
+    // 没填实收 ⇒ 那一列留空 ⇒ 每件实收合计 = 0 ⇒ 差额 0 ⇒ **一条未收款都不写**。
+    // ⚠️ **改写**（改前：`code = 'line_amount_missing'`、一个字都不写）：
+    //    那时"留空 ⇒ 读单价"还在，读不到单价就只能拦住；现在"留空"本身是合法的。
+    await h.write.addSaleLine({
+      openId,
+      requestId: 'req_add',
+      productRecordId: 'prod_2',
+      number: 'YD1111|白色|A',
+      itemNo: 'YD1111',
+      color: '白色',
+      size: 40,
+    });
+    const result = await h.write.submitSale({
+      openId, submitKey: await currentKey(h, openId), paymentStatus: PAYMENT_STATUS.unpaid,
+    });
+    assert.equal(result.ok, true, `没填实收也能建单：${JSON.stringify(result)}`);
+    assert.equal(result.owed_amount, 0, '差额 0');
+    assert.equal(entriesOf(h, 'salesEntry').length, 1, '单子照旧建成');
+    assert.equal('实收金额' in entriesOf(h, 'salesDetail')[0].fields, false, '那一列留空');
+    assert.equal(entriesOf(h, 'paymentRecord').length, 0, '**绝不写一条金额 0 的【未收款】**');
+  } finally { h.cleanup(); }
+});
+
+test('AC-15 ⭐ 方案甲的两条边界：**填了 0 照旧拦住**；货品有单价也**不许顶上去**', async () => {
+  const h = createHarness();
+  try {
+    // ① 她**填了 0** ⇒ 照旧拦住（放宽只针对"缺省"，不放松"填了的值"）
+    const openId = 'ou_two_layer_zero_amount';
+    await addShoe(h, openId, { size: 40 });                 // 加单时不填
+    const zero = await h.write.submitSale({
+      openId, submitKey: await currentKey(h, openId), lineAmounts: ['0'],
+      payments: [{ method: '微信', amount: 0 }],
+    });
+    assert.equal(zero.ok, false, '填 0 不是"没填" ⇒ 拦住');
+    assert.equal(zero.code, 'line_amount_invalid');
+    assert.equal(entriesOf(h, 'salesEntry').length, 0, '一个字都不写');
+    assert.equal(entriesOf(h, 'paymentRecord').length, 0);
+
+    // ② 同款货品的「单价」是 399（`PRODUCT`），但她没填 ⇒ 表里那一格**也是空**，不是 399
+    const openId2 = 'ou_two_layer_no_fake_number';
+    await addShoe(h, openId2, { size: 40, amount: '' });
+    const ok = await h.write.submitSale({ openId: openId2, submitKey: await currentKey(h, openId2) });
+    assert.equal(ok.ok, true, JSON.stringify(ok));
+    const shoe = entriesOf(h, 'salesDetail')[0];
+    assert.equal('实收金额' in shoe.fields, false, '有单价也不许顶上去（表里不出现假数字）');
+    assert.equal(shoe.fields['实收金额'], undefined, '读出来就是空');
+
+    // ③ 读侧安全（`salesProgressService.progressFromRecords` 现算）：空 ⇒ 状态空、待收为 null，
+    //    **不会**触发"已收 > 实收"那条硬红线、整单照样读得出来。
+    const { SalesProgressService } = require('../src/services/salesProgressService');
+    const progress = await new SalesProgressService({ gateway: h.gateway }).forOrder(
+      ok.sales_entry_record_id,
+    );
+    assert.equal(progress.receivableAmount, null, '没填 ⇒ 应收为 null（不是 0）');
+    assert.equal(progress.pendingAmount, null, '没填 ⇒ 待收为 null');
+    assert.equal(progress.paymentStatus, '', '没填 ⇒ 收款状态为空（不是"未收款"）');
+    assert.equal(progress.fulfillmentStatus, '已交付', '货那一维照旧（现货提交即交付）');
   } finally { h.cleanup(); }
 });
