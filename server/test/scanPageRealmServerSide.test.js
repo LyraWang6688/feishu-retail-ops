@@ -162,11 +162,12 @@ test('AC-W1 服务端按 `?from` 只渲染那一块：另外三块连 HTML 都�
         `realm=${realm} 时 realm-block--${id} ${id === realm ? '必须' : '绝不该'}在 HTML 里`);
     }
   }
-  // ⭐ 2026-10-09：**缺省 = 库存**（她：「扫码第一眼 = 库存」），认不出的也回落库存。
+  // ⭐ 2026-10-11：**缺省 = 销售**（她：「默认打开是销售页」；2026-10-09 曾一度是库存），
+  //    认不出的也回落销售。
   const fallback = renderScanPage(VIEW, SCAN_PAGE, WRITE);
-  assert.ok(fallback.includes('realm-block--inventory'), '不带 realm 参数时 = 缺省库存');
-  assert.equal(fallback.includes('realm-block--sales'), false);
-  assert.equal(renderScanPage(VIEW, SCAN_PAGE, WRITE, '不存在的领域').includes('realm-block--inventory'), true,
+  assert.ok(fallback.includes('realm-block--sales'), '不带 realm 参数时 = 缺省销售');
+  assert.equal(fallback.includes('realm-block--inventory'), false);
+  assert.equal(renderScanPage(VIEW, SCAN_PAGE, WRITE, '不存在的领域').includes('realm-block--sales'), true,
     '认不出的领域回落缺省，不报错、不空白');
 });
 
@@ -290,21 +291,21 @@ test('AC-W6 主题令牌文件读不到：不抛、`:root` 为空，但正文一
 // AC-W7 路由按 `?from` 分派
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-W7 路由按 `?from` 分派（认不出的回落**库存**，任何情况都有正文）', async () => {
+test('AC-W7 路由按 `?from` 分派（认不出的回落**销售**，任何情况都有正文）', async () => {
   login();
   const app = express();
   app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
     service: { lookup: async () => ({ ...VIEW }) },
     startSnapshot: false,
   }));
-  // ⭐ 2026-10-09：不带 `?from`（以及认不出的值）⇒ 缺省是**库存**（她：「扫码第一眼 = 库存」）。
+  // ⭐ 2026-10-11：不带 `?from`（以及认不出的值）⇒ 缺省是**销售**（她：「默认打开是销售页」）。
   const cases = [
-    ['', 'inventory', ['加入本单', '补货报单']],
+    ['', 'sales', ['库存（共']],
     ['?from=sales', 'sales', ['库存（共']],
     ['?from=inventory', 'inventory', ['加入本单', '补货报单']],
     ['?from=purchase', 'purchase', ['加入本单', '库存（共']],
     ['?from=product', 'product', ['加入本单', '库存（共']],
-    ['?from=这个领域不存在', 'inventory', ['加入本单', '补货报单']],
+    ['?from=这个领域不存在', 'sales', ['库存（共']],
   ];
   await withServer(app, async (base) => {
     for (const [query, realm, hasNot] of cases) {
@@ -354,7 +355,7 @@ test('AC-W4/W7 结果页（没找到 / 链接不对）也永远有人话（既�
 
 test('领域配置是唯一真源（加减领域只改 views/scanPageRealm.js）', () => {
   assert.deepEqual(REALMS.map((realm) => realm.id), ['sales', 'inventory', 'purchase', 'product']);
-  assert.equal(DEFAULT_REALM, 'inventory');
+  assert.equal(DEFAULT_REALM, 'sales');
   // 领域文案也在配置里（渲染层不写死句子）—— ⭐ 2026-10-10 之后只留**功能性的字**
   for (const key of ['barLabel', 'labelHeading', 'labelSingleButton', 'labelBatchButton',
     'saleInStockHeading', 'salePrepaidHeading', 'saleInStockTag', 'salePrepaidTag',
