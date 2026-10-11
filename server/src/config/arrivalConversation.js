@@ -13,83 +13,18 @@
  *   本流程用自己的开关，那条链路明天再退场也影响不到这里。
  */
 
-// 卡片上的两个动作名。
+
+// 「到货核对卡片」上**唯一还在**的动作名。
 //
-// ⚠️ **刻意不复用**被删掉的 `confirm_purchase_arrival` / `cancel_purchase_arrival`：
-//   线上可能还有历史到货卡片没点过，它们的 draft_id 指向的是旧任务；沿用同名动作
-//   会让那些老卡片的点击落到这条新链路上（点一下就按旧任务入库），这是"复活残骸"。
-//   另起名字之后，老卡片点了只会找不到分派，什么都不会发生（保持退场状态）。
+// ⚠️⚠️ 2026-10-12（清群聊入口 C1）：这里原先还有 `REJECT`（「否」）与 `SUBMIT`（表单提交）
+//    两个动作名 —— 它们只由**群话题那条对话链路**发出来的卡片提供，入口已整体删除
+//    ⇒ 两个动作名一起退场（卡片上的「否」按钮与那张表单也一起删了）。
+// ✅ **保留 `CONFIRM`**：它同时被**工作台 / 扫码验收**那条路复用
+//    （`larkMvpService.handleCardAction` 认它 → `PurchaseArrivalConversationService.confirmLocked`）。
+// ⚠️ **刻意不复用**曾删掉的 `confirm_purchase_arrival`（"拍照识别"时代的动作名）：
+//    线上可能还有历史老卡片，它们点下去必须**找不到分派**（保持退场状态），不能复活残骸。
 const ARRIVAL_CONVERSATION_ACTIONS = Object.freeze({
   CONFIRM: 'confirm_arrival_reconcile',
-  REJECT: 'reject_arrival_reconcile',
-  // ⭐ 2026-10-08：卡片上那个「表单填写 + 提交」（业务负责人 2026-10-07 深夜定的口径）。
-  //    与上面两个动作名同一个道理：**卡片渲染与分派共用这一份常量**，不会各写一份而慢慢写歪。
-  //    它由表单容器里的提交按钮（`action_type: "form_submit"`）带回来，
-  //    回调里还多一个 `form_value`（表单项 name → 值）。
-  SUBMIT: 'submit_arrival_reconcile',
-});
-
-// ⭐⭐ 到货核对卡片上的「表单填写 + 提交」（业务负责人 2026-10-07 深夜定，逐字）：
-//   「我们的消息卡片是否支持**输入一段文字**？……等到货之后，**请在卡片里填写实际到货情况**。
-//    也就是给到用户卡片，**用户填写内容之后，再点击提交**。以这个来作为**触发后续的到货验收**」
-//
-// 🔴 官方硬约束（curl 实查，原文见 `docs/arrival-card-form-input-2026-10-08.md` 第 0 节）：
-//   ① 输入框**必须**与按钮**一起内嵌进「表单容器」**（`tag:"form"`）—— 官方原文；
-//   ② 表单容器**只能放在卡片根节点**下，不可被内嵌在其它组件内；
-//   ③ 表单内每个交互组件都要有 `name`，且**在卡片全局内唯一**（否则飞书报 200530、数据发不出去）。
-// ⚠️ 输入框只在飞书 **V6.8+** 有（表单容器 V6.6+）⇒ 低版本走 `fallback` 降级文案，
-//    而且**「在话题里说话」那条老路必须一直留着**（见 `handleTopicMessage`）。
-// ⚠️ 这里只放**结构参数与用户可见文案**：换文案 / 换 name / 换占位符都不用改代码。
-const ARRIVAL_FORM_DEFAULTS = Object.freeze({
-  // 表单容器的唯一标识（官方：同一张卡片内全局唯一）。
-  containerName: 'arrival_reconcile_form',
-  // 输入框：`name` 就是回调里 `form_value` 的**键**（官方示例 `"Input_lf4fmxwfrd9": "1234"`）。
-  fieldName: 'actual_arrival',
-  // 多行文本（官方 `input_type`：`multiline_text`；换行符在回调里以 `\n` 返回）。
-  inputType: 'multiline_text',
-  rows: 3,
-  autoResize: true,
-  maxRows: 6,
-  maxLength: 1000,
-  label: '实际到货情况',
-  labelPosition: 'top',
-  placeholder: '例：都到了 / XHB8095 黑 38 码少 2 双 / XHB8096 棕 39 码多 1 双',
-  // 必填：前端会拦住空提交（提示"有必填项未填写"，**不会**发起回调）；
-  // ⚠️ 服务端**仍然自己兜一层空值** —— 重放 / 模拟 / 降级都可能把空串送进来。
-  required: true,
-  // 低版本客户端（< V6.8）的降级文案。必须是**一句能指路的话**：
-  // 老客户端输入框用不了，就照旧在话题里回一句 —— 那条入口一直在。
-  fallbackText: '你的飞书版本太低（输入框需 V6.8 以上），直接在话题里回一句实际到货情况就行。',
-  // 提交按钮：官方要求绑 `action_type: "form_submit"`，且 `name` 在卡片内全局唯一。
-  submitLabel: '提交',
-  submitButtonName: 'submit_arrival_reconcile',
-
-  // ⭐⭐ 2026-10-08（业务负责人亲自批准）：「实际金额」—— 表单里**第二个**输入项。
-  //   她的原话（逐字）：「**实际金额**：到货确认卡片……现在需要增加一个**单选/填写文本框**，
-  //   让用户填写**这一次供应商的金额**，然后我们填到实际金额里面」；
-  //   「**金额这个是必填的，必须让用户填，否则点不了按钮**」。
-  //
-  // 🔴 `amountInputType` 为什么是 `text`（curl 实查，不是猜的）：
-  //   官方「输入框」组件文档的 `input_type` **只有三个取值**，**没有任何数字类型**：
-  //     「input_type | 否 | String | text | 指定输入框的输入类型。默认为 text，即文本类型。
-  //       支持以下枚举值：- text：普通文本 - multiline_text：多行文本…… - password：密码」
-  //   出处（`.md?lang=zh-CN` 拿到的纯文本，2026-10-08 实查）：
-  //     https://open.feishu.cn/document/feishu-cards/card-components/interactive-components/input.md?lang=zh-CN
-  //   ⇒ 按"拿不准就用 `text` 并做服务端数字校验"办：**数字校验在服务端**
-  //     （`PurchaseArrivalConversationService` 的金额闸门），不指望卡片能拦非数字。
-  //
-  // ⚠️ 与「实际到货情况」同一个硬约束：`name` 必填且**卡片全局唯一**（否则飞书 200530）
-  //   ⇒ 它与 `fieldName` **必须不同**（默认值 `actual_amount` ≠ `actual_arrival`）。
-  amountFieldName: 'actual_amount',
-  amountInputType: 'text',
-  amountMaxLength: 32,
-  amountLabel: '实际金额',
-  // 单位写进 placeholder：她说的"这一次供应商的金额"是**整批一个数**，不是每件一个。
-  amountPlaceholder: '例：12800 或 12800.50（这一次供应商的金额）',
-  // 必填**默认开**（她的口径："否则点不了按钮"）；
-  // ⚠️ 官方 `required` 只是**前端**闸门 ⇒ 服务端必须自己再拒一次（见下面 `replies.amount*`）。
-  amountRequired: true,
-  amountFallbackText: '你的飞书版本太低（输入框需 V6.8 以上），请直接在话题里回一句：实际到货情况 + 这一次的金额。',
 });
 
 // 「群消息映射」里的批次类型。定位器只回答"是哪一批"，
@@ -172,7 +107,6 @@ const DEFAULTS = Object.freeze({
   card: {
     title: '本次到货核对完毕，确认入库吗？',
     confirmLabel: '是',
-    rejectLabel: '否',
     summaryHeading: '按你说的实际到货',
     hint: '点「是」我就按实际数量入库；点「否」我这次什么都不写。',
     // ⭐ 2026-10-07：算出来 `实际 = 0` 的行**不是错误**（供应商漏发了一整双），
@@ -185,29 +119,14 @@ const DEFAULTS = Object.freeze({
     // ⚠️ 2026-10-07 晚：表名同步 —— 她当天在生产表把「采购到货」改名「到货验收」，
     //    所以这句话里的表名跟着改（用户可见文案里的旧表名一个都不留）。
     failedTitle: '到货验收核对没成功',
-    // ⭐ 2026-10-08（业务负责人逐条批准）：点「否」**也 patch 卡面** ——
-    //    她点完必须在那张卡上看见结果（"点击后没有任何反应"那两次投诉的同一个根因）。
-    //    标题可配；那句正文复用既有的 `replies.rejected`，不另写一份中文。
-    //    ⚠️ 终态卡收掉「是 / 否」两个按钮 ⇒ 改主意要在话题里再说一句（见 rejectLocked 的注释）。
-    rejectedTitle: '这次没有入库',
+    // ⚠️ 2026-10-12（清群聊入口 C1）：`rejectedTitle`（「否」那张终态卡的标题）
+    //    随卡片上的「否」按钮一起删除 —— 那个动作只由群话题链路提供，入口已退场。
     // ⭐⭐ 2026-10-07 晚（真机 23:37「日志说卡片已更新，她那边一张都没有」）：
     //    出口改成"每次都**在她说这句话的那个话题里重发一张新卡**"之后，
-    //    上一张卡要**尽力作废**（收掉「是 / 否」按钮），否则话题里会同时留着两张都能点的卡。
+    //    上一张卡要**尽力作废**（收掉按钮），否则话题里会同时留着两张都能点的卡。
     //    这两句就是那张作废卡上的文案（用户可见文案一律可配）。
     supersededTitle: '这张核对卡片已经作废',
     supersededMessage: '这张上的数量不要用了：我已经按你最新那句话重出一张新卡，**请用最新那张**（它就发在你刚说话的消息下面）。',
-    // ⭐⭐ 2026-10-08：「表单填写 + 提交」那块（输入框 / 提交按钮 / 降级文案）。
-    //    结构与文案全在 `ARRIVAL_FORM_DEFAULTS`（见文件上半部分的长注释）。
-    form: ARRIVAL_FORM_DEFAULTS,
-    // ⭐ 空提交时留在**她提交的那张卡上**的那句提醒（表单与它一起留着，她改一句再提交即可）。
-    //    只弹 toast 不算反馈 —— 真机已经吃过"只弹 toast = 她什么都没看见"的教训。
-    submitMissingNote: '没收到内容：请在上面的输入框里写一句实际到货情况，再点「提交」。',
-    // ⭐⭐ 2026-10-08：「实际金额」那两个失败口子留在**她提交的那张卡上**的提醒
-    //    （与 `submitMissingNote` 同一个理由：只弹 toast 她看不见）。
-    //    ⚠️ 两张卡（`card.*` 这句）与服务端回执（`replies.amount*`）**分开两份文案**，
-    //       与既有 `submitMissingNote` / `replies.submitMissing` 的写法一致。
-    amountMissingNote: '没收到「实际金额」：请在上面的金额输入框里填一个数字（必填），再点「提交」。',
-    amountInvalidNote: '「实际金额」只能填**不小于 0 的数字**（例：12800 / 12800.50）：请改一下再点「提交」。',
     // ⭐⭐ 提交**成功算出结果并出了新卡**之后，把她提交的那张卡收成的终态
     //    （表单收掉 ⇒ 点不了第二次，这正是"避免重复提交"）。
     //    ⚠️ 只在**真的算出结果**时才收：没有到货内容 / 解析失败时卡片保持可编辑
@@ -225,8 +144,6 @@ const DEFAULTS = Object.freeze({
     postedNothingArrived: '这批单子你说下来一件都没到（{zeroCount} 条明细全是 0 双），我没有入库、也没有写库存流水（报货批次号 {batchNo}）。',
   },
   replies: {
-    // 业务负责人原话：「只回一句"好，那先不入库"」——一个字不多写。
-    rejected: '好，那先不入库',
     // 重复点「是」/ 重复投递时的回执（幂等，不重复入库）。
     alreadyPosted: '这一批已经入库了，我没有重复写。',
     // 点「是」但任务里还没有算好的计划（读明细失败 / 卡片没发出去这种兜底）。
@@ -298,9 +215,10 @@ const DEFAULTS = Object.freeze({
     //      ⚠️ 只拒**负数**（0 是允许的：样品 / 赠送到货这种"这次金额为 0"是真实存在的输入形状）；
     //         她这次只说"为负 ⇒ 拒绝"。
     amountInvalid: '「实际金额」只能填**不小于 0 的数字**（例：12800 或 12800.50）—— 这次提交我没有处理，你改一下再点「提交」。',
-    //   ③ ⭐ 点「是」那条路**没有金额输入**：这一批还没有金额时**不许写空的「实际金额」**，
-    //      也不许静默跳过 —— 明确指回表单那条路（她的口径："必须让用户填"）。
-    amountMissingOnConfirm: '这批还没收到这一次的供应商金额 —— 请先在卡片表单里填上「实际金额」再点「提交」，我才会按实际到货入库（我不会写一个空的「实际金额」）。',
+    //   ③ 点「是」时这一批**还没有金额**（该值由工作台 / 扫码验收那条入口种进本地任务）。
+    //      ⚠️ 2026-10-12（清群聊入口 C1）：文案原先指回"卡片表单"，那张表单已随群聊入口删除
+    //      ⇒ 改成指回**工作台**那条唯一的入口（她当晚定的：到货验收在工作台页面发起 + 扫码录入）。
+    amountMissingOnConfirm: '这批还没收到这一次的供应商金额 —— 请到**工作台**「验收到货」那条路里填上「实际金额」再确认，我才会按实际到货入库（我不会写一个空的「实际金额」）。',
     // ② 提交**收到并真的算出结果（出了新卡）**时的回执。
     submitReceived: '已收到你填的实际到货情况，我按它核对了一遍 —— 最新那张核对卡片就发在你的消息下面。',
     // ②-补 提交收到了，但**这次没能算出可入库的结果**（没有到货内容 / 解析失败 / 对不上明细 /
@@ -363,11 +281,13 @@ const resolveArrivalConversationConfig = (options = {}) => {
 };
 
 module.exports = {
+  // ⚠️ 2026-10-12（清群聊入口 C1）：`ARRIVAL_CONVERSATION_ACTIONS` 只剩 `CONFIRM`
+  //    （卡片上唯一还在的动作，工作台/扫码验收共用）；卡片表单那套结构/文案的配置
+  //    （原 `ARRIVAL_FORM_DEFAULTS`，即那张卡片表单的默认值常量）随群聊话题入口一起删除。
   ARRIVAL_CONVERSATION_ACTIONS,
   ARRIVAL_BATCH_KINDS,
   ARRIVAL_DIFF_TYPES,
   ARRIVAL_ALL_PRESENT_PHRASES,
-  ARRIVAL_FORM_DEFAULTS,
   ARRIVAL_CONVERSATION_DEFAULTS: DEFAULTS,
   resolveArrivalConversationConfig,
   parseExplicitBoolean,

@@ -1892,8 +1892,7 @@ class PurchaseWebhookService {
    *
    * ⭐⭐ 2026-10-08：**同一次 update** 里写「实际数量」「实际金额」两列（业务负责人批准）——
    *   值来自草稿（`draft.actual_quantity` / `draft.actual_amount`），本方法**不重算**：
-   *   算/校验是到货核对那一步的职责（`PurchaseArrivalConversationService.confirmLocked`
-   *   与 `handleCardFormSubmit`）。
+   *   算/校验是到货核对那一步的职责（`PurchaseArrivalConversationService.confirmLocked`）。
    *   ⚠️ 拿不到（`undefined`）时**那一列不写**（不写空值）—— 由 `writeAcceptance` 判，
    *      这样既有的"孤儿草稿"路径行为逐字不变。
    *   ⛔ **2026-10-09**：原先还写「验收原话」——那一列在真表上已经没有了，**写入点删除**
