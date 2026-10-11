@@ -24,7 +24,9 @@
  *   ⚠️ 默认就是干跑：不显式给 `--write` 一个字都不写（连上传素材都不会发生）。
  *   ⚠️ 生产写入由 Lead 在服务器上带 `FEISHU_ALLOW_PRODUCTION_WRITE=true` 跑。
  *
- * 🔴 **幂等**：这一列**已经有值就跳过**（记 `already_present`），只有带 `--overwrite`
+ * 🔴 **幂等（2026-10-12 改）**：这一列有值 **且附件名与当前编号一致** 才跳过（记 `already_present`）；
+ *   **有值但文件名/编号对不上 ⇒ 报 `stale_file_name` 并列为"待更新"**（真机就是这么发现旧码的：
+ *   `tag-qr-QPL2635-1_黑_A.png` vs 当前 `2635-1|黑|A`）。只有带 `--overwrite`
  *   才重写（覆盖前 service 会先记一条 `product.tag_qr.overwriting`）。
  *   跑第二遍应当是 **0 条要写**。
  *
@@ -126,7 +128,11 @@ const selectTargets = (records, { only = [], limit = 0 } = {}) => {
  *      **之前**加载（`v1BitableSchema` 是 require 时求值 tableId 的），所以本文件的业务
  *      require 全部在 `main()` 里懒加载；`buildPlans` 保持纯函数，单测可以直接喂桩。
  */
-const buildPlans = (records, flags, { service, textValue, attachmentsOf, numberField, tagQrField }) =>
+const buildPlans = (records, flags, {
+  service, textValue, attachmentsOf, numberField, tagQrField,
+  // ⭐ 与 service 同源的"反解编号"判据（注入，不在模块顶层 require —— env 要先加载）
+  numberFromFileName, sanitizeNumberForFileName,
+}) =>
   selectTargets(records, flags).map((record) => {
     const recordId = record?.record_id;
     const number = textValue(record?.fields?.[numberField]).trim();
@@ -140,8 +146,18 @@ const buildPlans = (records, flags, { service, textValue, attachmentsOf, numberF
       else {
         scanUrl = service.buildScanUrl(number);
         fileName = service.buildFileName(number);
-        if (existing.length && !flags.overwrite) { action = 'skip'; reason = 'already_present'; }
-        else if (existing.length) { action = 'write'; reason = 'overwrite_requested'; }
+        // 🔴 2026-10-12 修（业务负责人真机发现"改货号后二维码没更新" + Lead 被它误导过一轮）：
+        //   改前："这一列**有值**就跳过（already_present）"—— 可她的附件名里还带着**旧货号前缀**
+        //   （`tag-qr-QPL2635-1_黑_A.png` vs 当前编号 `2635-1|黑|A`）⇒ 干跑报"已完成"，
+        //   而值其实是**旧的**。现在**默认就比对**（与 service 同源的判据）：
+        //   "已完成" = 附件名 = 当前编号该有的**规范名**，**或**从名字里反解出的编号 == 当前编号；
+        //   否则如实报 `stale_file_name`（并列出**新旧文件名**给人工核）。
+        const inSync = existing.some((item) => item.name === fileName
+          || numberFromFileName(item.name) === sanitizeNumberForFileName(number));
+        if (existing.length && !flags.overwrite) {
+          if (inSync) { action = 'skip'; reason = 'already_present'; }
+          else { action = 'write'; reason = 'stale_file_name'; }
+        } else if (existing.length) { action = 'write'; reason = 'overwrite_requested'; }
       }
     } catch (error) {
       // 配置写错（模板没有 {number} / 占位符不认识…）时**不猜**：标成 skip + config_error。
@@ -184,7 +200,9 @@ const main = async () => {
   const lark = require('@larksuiteoapi/node-sdk');
   const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
   const { V1BitableGateway, textValue } = require('../src/services/v1BitableGateway');
-  const { createTagQrCodeService, attachmentsOf } = require('../src/services/tagQrCodeService');
+  const {
+    createTagQrCodeService, attachmentsOf, numberFromFileName, sanitizeNumberForFileName,
+  } = require('../src/services/tagQrCodeService');
   const { TAG_QR_CODE } = require('../src/config/tagQrCode');
   const { assertWritableBase } = require('../src/utils/writeTargetGuard');
   const { getLarkAgentCredentials } = require('../src/config/larkAgent');
@@ -241,6 +259,7 @@ const main = async () => {
   // ── 算（干跑清单 —— 与 service 用**同一套** URL / 文件名规则，见 buildPlans）──
   const plans = buildPlans(records, { ...flags, limit }, {
     service, textValue, attachmentsOf, numberField, tagQrField,
+    numberFromFileName, sanitizeNumberForFileName,
   });
 
   const toWrite = plans.filter((item) => item.action === 'write');
@@ -254,7 +273,8 @@ const main = async () => {
   for (const [reason, count] of Object.entries(counts)) {
     const label = {
       empty: '这一列是空的（要补）',
-      already_present: '已经有值（幂等，跳过）',
+      already_present: '已经有值、且附件名与当前编号一致（幂等，跳过）',
+      stale_file_name: '⚠️ 已经有值，但**附件名与当前编号不一致**（旧码）⇒ 待更新',
       overwrite_requested: '已经有值 + --overwrite（要覆盖）',
       number_missing: '没有「编号」（生不出码，跳过）',
     }[reason] || reason;

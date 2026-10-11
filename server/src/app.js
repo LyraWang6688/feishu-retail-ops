@@ -35,6 +35,13 @@ const { resolvePendingDealPushConfig } = require('./config/pendingDealPush');
 const { resolveSamplePendingNoticeConfig } = require('./config/samplePendingNotice');
 const { createSamplePendingNoticeService } = require('./services/samplePendingNoticeService');
 const { startShanghaiDailyScheduler } = require('./utils/shanghaiDailyScheduler');
+// ⭐ 2026-10-12：标签二维码「兜底巡检」的每日调度。
+//   ⚠️ 之前 `sweepStaleTagQrCodes` **全仓没有调用方**（写了、有单测、从没在线上跑过）——
+//      事件路径判漏的那批旧码（她 5 条记录附件名还带 `QPL` 旧前缀）因此一直没人修。
+const { createTagQrSweepRunner } = require('./utils/tagQrSweepScheduler');
+const { createTagQrCodeService } = require('./services/tagQrCodeService');
+const { V1BitableGateway } = require('./services/v1BitableGateway');
+const { resolveTagQrSweepSchedule } = require('./config/tagQrCode');
 // 扫码页的挂载点（`/s`）与它的配置：**与二维码里的 URL 同源**
 // （`config/tagQrCode.js` 的 `scanUrl.urlTemplate` = `https://hm.bamamei.online/s/{编号}`）。
 const { SCAN_PAGE } = require('./config/scanPage');
@@ -184,6 +191,36 @@ if (require.main === module) {
   } else {
     logInfo('workbench.sample_pending_notice.disabled', { env: 'SAMPLE_PENDING_NOTICE_ENABLED' });
   }
+  // ── 货品信息「标签二维码」的兜底巡检（每天一次，自愈）────────────────────────
+  //    · 事件路径只管"改这一下"；这条网**不看事件、只认当前事实**：
+  //      全表扫「附件名/编号 ≠ 当前编号」的，重生成（`sweepStaleTagQrCodes`）；
+  //    · ⭐ **同一个上海日只跑一次**（`createTagQrSweepRunner` 去重）——`startShanghaiDailyScheduler`
+  //      过了整点每个 tick 都会调 `run`，不去重会一天扫几十遍全表；
+  //    · 开关/时点/上限/干跑全部走配置（`TAG_QR_SWEEP_*`，见 `config/tagQrCode.js`）。
+  const tagQrSweep = resolveTagQrSweepSchedule();
+  if (tagQrSweep.enabled) {
+    const tagQrSweepRunner = createTagQrSweepRunner({
+      service: createTagQrCodeService({ gateway: new V1BitableGateway() }),
+      dryRun: tagQrSweep.dryRun,
+      limit: tagQrSweep.limit,
+    });
+    startShanghaiDailyScheduler({
+      run: async ({ now }) => {
+        const summary = await tagQrSweepRunner.run({ now });
+        if (summary.skipped) {
+          logInfo('product.tag_qr.sweep.already_ran_today', { day: summary.day });
+          return;
+        }
+        logInfo('product.tag_qr.sweep.done', summary);
+      },
+      eventPrefix: 'product.tag_qr.sweep',
+      hours: tagQrSweep.hours,
+      intervalMs: tagQrSweep.intervalMs,
+    });
+  } else {
+    logInfo('product.tag_qr.sweep.disabled', { env: 'TAG_QR_SWEEP_ENABLED' });
+  }
+
   // 只监听回环地址：公网一律走 Nginx。
   //
   // 原来写的是 app.listen(port)，那会绑到 0.0.0.0（所有网卡）——等于把 Express

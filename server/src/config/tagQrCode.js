@@ -23,6 +23,8 @@
  */
 
 const os = require('node:os');
+// ⭐ 2026-10-12：兜底巡检的**每日调度**开关（显式布尔语义，见 `utils/envValue.js`）
+const { readFlag, readInt, readString } = require('./envValue');
 
 /**
  * 二维码内容 = **一个能扫的 URL**。**唯一真源**：域名 / 路径 / 参数名都在这一行里。
@@ -168,6 +170,50 @@ const SWEEP = Object.freeze({
   dryRun: false,
 });
 
+/**
+ * ⭐⭐ **兜底巡检的每日调度**（2026-10-12 加）—— 它回答"**谁来每天叫一次巡检**"。
+ *
+ * 为什么必须加（真机事故）：巡检函数 2026-10-09 就写好了、也有单测，
+ * 但**全仓没有任何调用方** ⇒ **从来没在线上跑过** —— 于是事件路径判漏的那批旧码
+ * （她 5 条记录附件名里还带 `QPL` 旧前缀）一直没人修。
+ *
+ * 取值：
+ *   · `enabled`     —— 显式布尔（`TAG_QR_SWEEP_ENABLED`；**没设=默认开**、空串=关）；
+ *   · `hours`       —— 上海时间几点跑（`TAG_QR_SWEEP_HOURS`，默认 `4` = 凌晨 4 点，店里没人）；
+ *   · `intervalMs`  —— 调度器 tick 间隔（默认 10 分钟；**同一个上海日只跑一次**由 runner 去重）；
+ *   · `limit`       —— 单次最多处理多少条（0 = 不限，与 `SWEEP.limit` 同义）；
+ *   · `dryRun`      —— 干跑（上线首日建议先看一眼影响面）。
+ */
+const SWEEP_SCHEDULE_DEFAULTS = Object.freeze({
+  enabled: true,
+  hours: Object.freeze([4]),
+  intervalMs: 10 * 60 * 1000,
+  limit: 0,
+  dryRun: false,
+});
+
+const parseHours = (raw, fallback) => {
+  const text = String(raw ?? '').trim();
+  if (!text) return fallback;
+  const hours = [...new Set(text.split(',').map((item) => Number(item.trim())))]
+    .filter((value) => Number.isInteger(value) && value >= 0 && value <= 23)
+    .sort((left, right) => left - right);
+  return hours.length ? hours : fallback;
+};
+
+/** 解析兜底巡检的每日调度（环境变量 → 值；非法值**当场抛**，不静默）。 */
+const resolveTagQrSweepSchedule = (env = process.env) => {
+  const hours = parseHours(readString(env, 'TAG_QR_SWEEP_HOURS', undefined), SWEEP_SCHEDULE_DEFAULTS.hours);
+  return Object.freeze({
+    enabled: readFlag(env, 'TAG_QR_SWEEP_ENABLED', SWEEP_SCHEDULE_DEFAULTS.enabled),
+    hours,
+    intervalMs: readInt(env, 'TAG_QR_SWEEP_INTERVAL_MS', SWEEP_SCHEDULE_DEFAULTS.intervalMs,
+      { min: 1000, max: 24 * 60 * 60 * 1000 }),
+    limit: readInt(env, 'TAG_QR_SWEEP_LIMIT', SWEEP_SCHEDULE_DEFAULTS.limit, { min: 0, max: 100000 }),
+    dryRun: readFlag(env, 'TAG_QR_SWEEP_DRY_RUN', SWEEP_SCHEDULE_DEFAULTS.dryRun),
+  });
+};
+
 const TAG_QR_CODE = Object.freeze({
   enabled: ENABLED,
   scanUrl: SCAN_URL,
@@ -196,4 +242,6 @@ module.exports = {
   EVENTS,
   BATCH,
   SWEEP,
+  SWEEP_SCHEDULE_DEFAULTS,
+  resolveTagQrSweepSchedule,
 };
