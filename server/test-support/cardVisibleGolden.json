@@ -305,25 +305,6 @@
                 }
               }
             ]
-          },
-          {
-            "tag": "column",
-            "width": "weighted",
-            "weight": 1,
-            "elements": [
-              {
-                "tag": "button",
-                "text": {
-                  "tag": "plain_text",
-                  "content": "否"
-                },
-                "type": "default",
-                "value": {
-                  "action": "reject_arrival_reconcile",
-                  "draft_id": "task_arrival"
-                }
-              }
-            ]
           }
         ]
       },
