@@ -46,6 +46,14 @@ const DEFAULT_CONFIG = Object.freeze({
   deviceId: 'store-pc',
   // 本地小页面（看状态 / 测试打印 / 补打）。只监听 127.0.0.1，外网访问不到。
   localPort: 8799,
+  // ⭐ 2026-10-11（业务负责人：「这个是**给我爸妈用的**，点一下就能直接操作」）：
+  //   启动后**自动打开状态页** `http://127.0.0.1:<localPort>/` —— 他们双击图标就能看见
+  //   「打印电脑在线 / 未连接」。不想要就把这一项设成 false。
+  openStatusPageOnStart: true,
+  // ⭐ 日志同时落这个文件（父母那台电脑出问题时，**把窗口拍给女儿 / 直接发这个文件**都行）。
+  //   ⚠️ **有上限**（`maxLogBytes`），超出就轮转成 `helper.log.1` —— 绝不无限增长撑爆硬盘。
+  logFile: 'helper.log',
+  maxLogBytes: 256 * 1024,
   // 跑数据放哪（留空 = 与本文件同目录）。
   stateFile: '',
   downloadDir: '',
@@ -71,10 +79,63 @@ const DEFAULT_CONFIG = Object.freeze({
   },
 });
 
+/** 本地状态页上的"这是谁"标记（单实例判据靠它：探到它才说明**我们已经在跑**）。 */
+const HELPER_APP_ID = 'label-print-helper';
+/** 桌面快捷方式的名字（要给她父母看的，所以是中文；**只出现在 UTF-8 的文件/参数里**）。 */
+const SHORTCUT_NAME = '打印小助手';
+
 // ── 日志：一行一个 JSON（与服务器日志同一风格，排障时好 grep）────────────────
-const createLogger = (sink = console) => {
+/**
+ * 日志**落文件**（父母那台电脑出问题时，拍窗口 / 发文件都行）。
+ * ⚠️ **有上限**：超过 `maxBytes` 就把当前文件挪成 `<file>.1`（老的 `.1` 覆盖掉）——
+ *    只留最近两份，**绝不无限增长**。写不进去也**绝不把程序弄崩**（日志是辅助，不是业务）。
+ */
+const createFileLog = (options = {}) => {
+  const file = options.file;
+  if (!file) return null;
+  const maxBytes = Number(options.maxBytes) > 0 ? Number(options.maxBytes) : 256 * 1024;
+  const write = (line) => {
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      try {
+        if (fs.statSync(file).size >= maxBytes) {
+          fs.rmSync(`${file}.1`, { force: true });
+          fs.renameSync(file, `${file}.1`);
+        }
+      } catch {
+        // 文件还不存在（第一次跑）—— 正常。
+      }
+      fs.appendFileSync(file, `${line}\n`, 'utf8');
+    } catch {
+      // 磁盘满 / 没权限：忽略。日志写不进去不该影响打印。
+    }
+  };
+  return {
+    file,
+    maxBytes,
+    write,
+    size: () => {
+      try {
+        return fs.statSync(file).size;
+      } catch {
+        return 0;
+      }
+    },
+  };
+};
+
+/**
+ * 建一个 logger。两种调用形状都认（老代码 `createLogger(console)` / `createLogger()`）。
+ * 每一行走 ① **stdout**（父母窗口里看得见）② **文件**（`fileLog`，给他们发出来）。
+ */
+const createLogger = (options = {}) => {
+  const sink = options && typeof options.log === 'function'
+    ? options
+    : (options?.sink || console);
+  const fileLog = options?.fileLog || null;
   const write = (level, event, fields = {}) => {
     const line = JSON.stringify({ ts: new Date().toISOString(), level, event, ...fields });
+    if (fileLog) fileLog.write(line);
     if (level === 'error') sink.error(line);
     else sink.log(line);
   };
@@ -86,12 +147,123 @@ const createLogger = (sink = console) => {
 };
 
 /** 配置里的路径：留空 = 与本文件同目录。`~` 展开（Mac 上调试时用得上）。 */
-const resolvePath = (value, fallbackName) => {
+const resolvePath = (value, fallbackName, baseDir = HERE) => {
   const raw = String(value || '').trim();
-  if (!raw) return path.join(HERE, fallbackName);
+  if (!raw) return path.join(baseDir, fallbackName);
   const expanded = raw.startsWith('~') ? path.join(os.homedir(), raw.slice(1)) : raw;
-  return path.isAbsolute(expanded) ? expanded : path.join(HERE, expanded);
+  return path.isAbsolute(expanded) ? expanded : path.join(baseDir, expanded);
 };
+
+/**
+ * **Windows 路径拼接**（`\` 分隔）。
+ * ⚠️ 刻意不用 `path.join`：那个按**当前运行平台**的分隔符走 ——
+ *    在 Mac/CI 上拼 Windows 路径会拼出 `C:\Users\hm/Desktop` 这种四不像，
+ *    而生成快捷方式的那段代码**只在 Windows 上跑**，路径必须是 Windows 形状。
+ */
+const winJoin = (...parts) => parts
+  .filter((part) => part !== undefined && part !== null && String(part) !== '')
+  .map((part, index) => {
+    const text = String(part);
+    return index === 0
+      ? text.replace(/[\\/]+$/, '')
+      : text.replace(/^[\\/]+/, '').replace(/[\\/]+$/, '');
+  })
+  .join('\\');
+
+/**
+ * ⭐⭐ **快捷方式的规格**（业务负责人 2026-10-11：父母双击桌面图标就能启动）。
+ *
+ * `kind = 'desktop'` ⇒ 桌面上一个「打印小助手」；`kind = 'autostart'` ⇒ 开机自启那个。
+ *   · `targetPath`      —— 同目录的 `start.bat`（**由 `here` 推出来**，绝不写死路径：
+ *                          她的文件夹已经从别处搬到了 `%USERPROFILE%\Documents\print-helper`）；
+ *   · `workingDirectory`—— **必须以脚本目录为工作目录**（双击时 cwd 才稳）；
+ *   · `windowStyle: 7`  —— **最小化启动**（父母不被打扰），但**任务栏上还看得见、能关**；
+ *   · `iconLocation`    —— 用 **Windows 自带**图标（`shell32.dll,167`）⇒ 不新增任何文件依赖；
+ *   · `description`     —— 中文说明（只在 UTF-8 的路径/参数里，不进 `.bat`）。
+ */
+const shortcutSpec = (kind, options = {}) => {
+  const here = String(options.here || HERE);
+  const userProfile = String(options.userProfile || process.env.USERPROFILE || os.homedir() || '');
+  const systemRoot = String(options.systemRoot || process.env.SystemRoot || 'C:\\Windows');
+  const linkDir = kind === 'autostart'
+    ? winJoin(userProfile, 'AppData', 'Roaming', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup')
+    : winJoin(userProfile, 'Desktop');
+  return {
+    kind: kind === 'autostart' ? 'autostart' : 'desktop',
+    linkPath: winJoin(linkDir, `${SHORTCUT_NAME}.lnk`),
+    targetPath: winJoin(here, 'start.bat'),
+    workingDirectory: here,
+    windowStyle: 7,
+    iconLocation: `${winJoin(systemRoot, 'System32', 'shell32.dll')},167`,
+    description: `${SHORTCUT_NAME}（这个窗口别关）`,
+  };
+};
+
+/** PowerShell 里的单引号字符串（单引号本身要写成两个 —— 不转义拼坏会报一屏乱命令）。 */
+const psQuote = (value) => `'${String(value ?? '').replace(/'/g, "''")}'`;
+
+/** 生成"创建快捷方式"的 PowerShell 脚本（**纯函数**，可断言）。 */
+const shortcutScript = (spec) => [
+  '$ws = New-Object -ComObject WScript.Shell;',
+  `$s = $ws.CreateShortcut(${psQuote(spec.linkPath)});`,
+  `$s.TargetPath = ${psQuote(spec.targetPath)};`,
+  `$s.WorkingDirectory = ${psQuote(spec.workingDirectory)};`,
+  `$s.WindowStyle = ${Number(spec.windowStyle)};`,
+  `$s.IconLocation = ${psQuote(spec.iconLocation)};`,
+  `$s.Description = ${psQuote(spec.description)};`,
+  '$s.Save();',
+].join(' ');
+
+/** 生成"删除快捷方式"的 PowerShell 脚本（**纯函数**）。 */
+const shortcutRemoveScript = (spec) => `Remove-Item -LiteralPath ${psQuote(spec.linkPath)} -Force -ErrorAction SilentlyContinue;`;
+
+/**
+ * ⭐ **单实例判据**：探测本机那个端口上的东西**是不是我们自己**。
+ * 200 + `{"app":"label-print-helper"}` ⇒ 是（小助手已经在跑）；
+ * 别人占着 / 连不上 / 超时 ⇒ **false（不猜）**。
+ */
+const probeHelperMarker = async ({ port, fetchImpl = globalThis.fetch, timeoutMs = 1500 } = {}) => {
+  if (!port || typeof fetchImpl !== 'function') return false;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(100, Number(timeoutMs) || 1500));
+  if (typeof timer.unref === 'function') timer.unref();
+  try {
+    const response = await fetchImpl(`http://127.0.0.1:${Number(port)}/__helper`, { signal: controller.signal });
+    if (!response?.ok) return false;
+    const body = await response.json().catch(() => null);
+    return body?.app === HELPER_APP_ID;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/** 用系统默认浏览器打开一个网址（父母那边：双击图标就**直接看到状态页**）。 */
+const defaultOpenUrl = (url) => {
+  const platform = process.platform;
+  const command = platform === 'win32' ? 'cmd' : (platform === 'darwin' ? 'open' : 'xdg-open');
+  // ⚠️ Windows 上必须是 `cmd /c start "" <url>`：第一个空参数是"窗口标题"占位（少了它 start 会把网址当标题）。
+  const args = platform === 'win32' ? ['/c', 'start', '', url] : [url];
+  const child = spawn(command, args, { windowsHide: true, detached: true, stdio: 'ignore' });
+  if (typeof child.unref === 'function') child.unref();
+  return true;
+};
+
+/** 跑一段 PowerShell（可注入，用例不真去动快捷方式）。 */
+const defaultRunPowerShell = (command) => new Promise((resolve) => {
+  let child;
+  try {
+    child = spawn('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command], { windowsHide: true });
+  } catch (error) {
+    resolve({ code: -1, stderr: error.message });
+    return;
+  }
+  let stderr = '';
+  child.stderr?.on('data', (chunk) => { stderr = `${stderr}${chunk}`.slice(-800); });
+  child.on('error', (error) => resolve({ code: -1, stderr: error.message }));
+  child.on('close', (code) => resolve({ code, stderr }));
+});
 
 /** 服务器地址规范化（去掉结尾斜杠；没写协议时补 https）。 */
 const normalizeBaseUrl = (value) => {
@@ -354,14 +526,29 @@ const buildTestPdf = (text = 'TEST 40x30', when = new Date().toISOString()) => {
 const createPrintHelper = (options = {}) => {
   const config = { ...DEFAULT_CONFIG, ...(options.config || {}) };
   config.printer = { ...DEFAULT_CONFIG.printer, ...(options.config?.printer || {}) };
-  const logger = options.logger || createLogger();
+  const logger = options.logger || createLogger({
+    // ⚠️ 默认就把日志**同时落文件**（父母那台电脑出问题时，让他们把 helper.log 发出来）。
+    fileLog: createFileLog({
+      // ⚠️ 相对路径以**配置文件所在目录**为基准（`--config D:\x\config.json` 时日志落在 D:\x\）。
+      file: resolvePath(config.logFile, 'helper.log', options.configDir || HERE),
+      maxBytes: config.maxLogBytes,
+    }),
+  });
   const fetchImpl = options.fetch || globalThis.fetch;
+  // ⚠️ 探"本机那个端口是不是我们自己"用的是**本机请求**，与上面那个"打服务器"的 fetch 分开
+  //    （用例可以把远程 fetch 换成桩，但单实例探测必须真的去连本机端口）。
+  const probeFetch = options.probeFetch || globalThis.fetch;
+  const openUrl = options.openUrl || defaultOpenUrl;
+  const runPowerShell = options.runPowerShell || defaultRunPowerShell;
   const now = options.now || (() => Date.now());
   const sleep = options.sleep || ((ms) => new Promise((resolve) => { setTimeout(resolve, ms); }));
   const baseUrl = normalizeBaseUrl(config.serverBaseUrl);
-  const downloadDir = resolvePath(config.downloadDir, 'downloads');
+  // ⚠️ 相对路径一律以**配置文件所在目录**为基准（`--config D:\x\config.json` 时
+  //    `state.json` / `downloads` 都落在 D:\x\ 下，不会散到脚本目录去）。
+  const configDir = options.configDir || HERE;
+  const downloadDir = resolvePath(config.downloadDir, 'downloads', configDir);
   const ledger = options.ledger || createLedger({
-    file: resolvePath(config.stateFile, 'state.json'),
+    file: resolvePath(config.stateFile, 'state.json', configDir),
     maxPrinted: config.maxPrintedLedger,
     now,
   });
@@ -375,6 +562,11 @@ const createPrintHelper = (options = {}) => {
     lastJobAt: '',
     authError: '',
     configErrors: [],
+    // ⭐ 单实例：`localPort` 上探到的是**我们自己** ⇒ 已经在跑；`portBusy` = 端口被别人占着。
+    alreadyRunning: false,
+    portBusy: false,
+    localPort: 0,
+    statusPageUrl: '',
   };
 
   const headers = () => ({
@@ -665,7 +857,7 @@ const createPrintHelper = (options = {}) => {
     '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;',
   }[char]));
 
-  const localPageHtml = async () => {
+  const localPageHtml = async (pageOptions = {}) => {
     const errors = state.configErrors;
     let jobs = [];
     let serverOnline = null;
@@ -697,8 +889,10 @@ th{width:34%;color:#646a73;font-weight:500}.bad{color:#c0392b;font-weight:700}
 form{display:inline}button{min-height:40px;padding:8px 14px;margin:4px 6px 4px 0;border:0;border-radius:8px;background:#3370ff;color:#fff;font-size:14px;cursor:pointer}
 button.mini{min-height:32px;padding:4px 10px;font-size:13px;background:#eef1f5;color:#1f2329}
 .notice{background:#fff4e5;border-left:4px solid #ff8800;padding:10px;border-radius:6px;margin-bottom:12px;font-size:13px}
+.ok{background:#e4f5ec;border-left:4px solid #157f4a;padding:10px;border-radius:6px;margin-bottom:12px;font-size:14px;font-weight:600}
 </style></head><body>
 <h1>打印小助手</h1>
+${pageOptions.already ? '<div class="ok">✅ 打印小助手已经在运行了 —— 这个窗口可以关掉</div>' : ''}
 ${errors.length ? `<div class="notice"><strong>打印程序还没配好：</strong><br>${errors.map((error) => `${escapeHtml(error.field)}：${escapeHtml(error.message)}`).join('<br>')}</div>` : ''}
 ${state.authError ? `<div class="notice"><strong>连不上服务器：</strong>${escapeHtml(state.authError)}</div>` : ''}
 <div class="card"><table>
@@ -728,6 +922,17 @@ ${jobs.length ? jobs.map(jobRow).join('') : '<tr><td colspan="5">还没有打印
         req.on('data', (chunk) => { raw += chunk; });
         req.on('end', () => done(new URLSearchParams(raw)));
       });
+      // ⭐ **单实例判据**：双击第二次时，新进程会来问一句"这个端口上是不是你自己"。
+      if (url.pathname === '/__helper') {
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({
+          app: HELPER_APP_ID,
+          pid: process.pid,
+          started_at: state.startedAt,
+          sse_connected: state.sseConnected,
+        }));
+        return;
+      }
       if (req.method === 'POST' && url.pathname === '/test-print') {
         await readBody();
         try {
@@ -775,27 +980,80 @@ ${jobs.length ? jobs.map(jobRow).join('') : '<tr><td colspan="5">还没有打印
         return res.end();
       }
       try {
-        return send(res, 200, 'text/html; charset=utf-8', await localPageHtml());
+        // ⭐ 第二次双击时带 `?already=1`（窗口是最小化的、他们看不到控制台，
+        //   所以"已经在运行了"这句必须出现在**他们会看的那个页面**上）。
+        return send(res, 200, 'text/html; charset=utf-8', await localPageHtml({ already: url.searchParams.has('already') }));
       } catch (error) {
         return send(res, 500, 'text/plain; charset=utf-8', String(error?.message || error));
       }
     });
-    server.on('error', (error) => {
+    server.once('error', async (error) => {
+      // ⭐⭐ **单实例**：端口被占 ⇒ 先问一句"是不是我们自己"。
+      if (error.code === 'EADDRINUSE') {
+        const ours = await probeHelperMarker({
+          port: Number(config.localPort),
+          fetchImpl: probeFetch,
+          timeoutMs: 2000,
+        });
+        if (ours) {
+          resolve({ alreadyRunning: true });
+          return;
+        }
+        // ⚠️ 端口被**别的程序**占着 ⇒ **不许误判成"已在运行"**：大声报错，但打印照常
+        //    （本地页面只是给人看的诊断页，不该因为它起不来就不干活）。
+        logger.error('print_helper.local_page.port_busy', {
+          port: Number(config.localPort),
+          reason: '端口被别的程序占用（探到的不是打印小助手）',
+          hint: '把 config.json 里的 "localPort" 改成别的没被占用的端口（例如 8801），再重启',
+        });
+        resolve({ portBusy: true, error });
+        return;
+      }
       state.lastError = `本地页面起不来（端口 ${config.localPort}）：${error.message}`;
       logger.error('print_helper.local_page.failed', { reason: state.lastError });
-      resolve(null);
+      resolve({ portBusy: true, error });
     });
     server.listen(Number(config.localPort), '127.0.0.1', () => {
-      logger.info('print_helper.local_page.ready', { url: `http://127.0.0.1:${config.localPort}/` });
-      resolve(server);
+      localServer = server;
+      state.localPort = server.address().port;
+      state.statusPageUrl = `http://127.0.0.1:${state.localPort}/`;
+      logger.info('print_helper.local_page.ready', { url: state.statusPageUrl });
+      resolve({ server });
     });
   });
   let localServer = null;
 
-  /** 启动：校验配置 → 启动补拉 → 连长连接 → 起本地页面。 */
-  const start = async () => {
+  /** ⭐ 把状态页弹给父母（`openStatusPageOnStart: false` 可关）。 */
+  const openStatusPage = ({ alreadyRunning = false } = {}) => {
+    if (config.openStatusPageOnStart === false) return null;
+    if (!state.localPort) return null;
+    const url = `http://127.0.0.1:${state.localPort}/${alreadyRunning ? '?already=1' : ''}`;
+    state.statusPageUrl = url;
+    try {
+      openUrl(url);
+      logger.info('print_helper.status_page.opened', { url });
+    } catch (error) {
+      logger.warn('print_helper.status_page.open_failed', { url, reason: String(error?.message || error) });
+    }
+    return url;
+  };
+
+  /**
+   * 启动：校验配置 → **先抢本地端口（单实例）** → 打开状态页 → 启动补拉 → 连长连接。
+   *
+   * ⭐⭐ **顺序是硬要求**：**先**把本地端口拿到手，**再**碰队列。
+   *    否则父母连点两下 ⇒ 两个进程都去连长连接/认领任务（虽然"同一条任务只能被认领一次"
+   *    这道保险仍在，但两个小助手抢任务是**他们一定会踩**的坑，必须在入口挡住）。
+   */
+  const start = async (startOptions = {}) => {
     stopped = false;
     ledger.load();
+    const wantLocalPage = startOptions.startLocalPage !== undefined
+      ? startOptions.startLocalPage !== false
+      : options.startLocalPage !== false;
+    const wantStream = startOptions.connectStream !== undefined
+      ? startOptions.connectStream !== false
+      : options.connectStream !== false;
     const checked = validateConfig(config, options.validateOptions || {});
     state.configErrors = checked.errors;
     if (!checked.ok) {
@@ -804,10 +1062,27 @@ ${jobs.length ? jobs.map(jobRow).join('') : '<tr><td colspan="5">还没有打印
     } else {
       logger.info('print_helper.started', { server: baseUrl, device_id: config.deviceId, mode: config.printer.mode });
     }
-    if (options.startLocalPage !== false) localServer = await startLocalPage();
+    if (wantLocalPage) {
+      const acquired = await startLocalPage();
+      if (acquired?.alreadyRunning) {
+        state.alreadyRunning = true;
+        // 她那个已经在跑的实例就挂在配置的这个端口上（我们没抢到）——状态页地址就是它。
+        state.localPort = Number(config.localPort);
+        // ⚠️ 一句人话 + **直接把她带到已经在跑的那个状态页**（不新开进程、不碰队列）。
+        logger.info('print_helper.already_running', {
+          port: Number(config.localPort),
+          reason: '打印小助手已经在运行了（这个窗口可以关掉）',
+        });
+        openStatusPage({ alreadyRunning: true });
+        return { baseUrl, configErrors: checked.errors, alreadyRunning: true };
+      }
+      if (acquired?.portBusy) state.portBusy = true;
+    }
+    // ⭐ 状态页：父母双击图标就**直接看到**「打印电脑在线 / 未连接」。
+    openStatusPage();
     // ⭐⭐ 启动补拉**先于**长连接（两道保险里的第一道）。
     await startupCatchUp();
-    if (options.connectStream !== false) void connectStream();
+    if (wantStream) void connectStream();
     // 心跳：长连接断掉时让手机仍然看得到"在线"。
     const beat = () => {
       if (stopped) return;
@@ -816,6 +1091,42 @@ ${jobs.length ? jobs.map(jobRow).join('') : '<tr><td colspan="5">还没有打印
     };
     setTimer(beat, Number(config.heartbeatMs) || 30000);
     return { baseUrl, configErrors: checked.errors };
+  };
+
+  /** ⭐ 装/卸快捷方式（桌面 / 开机自启）。**纯拼脚本 + 交给 PowerShell**，用例可注入。 */
+  const shortcutOptions = () => ({
+    here: options.shortcutHere || HERE,
+    ...(options.shortcutOptions || {}),
+  });
+  const installShortcut = async (kind = 'desktop') => {
+    const spec = shortcutSpec(kind, shortcutOptions());
+    const result = await runPowerShell(shortcutScript(spec));
+    const created = (() => {
+      try {
+        return fs.existsSync(spec.linkPath);
+      } catch {
+        return false;
+      }
+    })();
+    const ok = result?.code === 0;
+    logger[ok ? 'info' : 'error'](ok ? 'print_helper.shortcut.installed' : 'print_helper.shortcut.failed', {
+      kind: spec.kind,
+      link: spec.linkPath,
+      target: spec.targetPath,
+      created,
+      code: result?.code,
+      stderr: result?.stderr || undefined,
+    });
+    return { ok, kind: spec.kind, spec, created, code: result?.code ?? null, stderr: result?.stderr || '' };
+  };
+  const uninstallShortcut = async (kind = 'desktop') => {
+    const spec = shortcutSpec(kind, shortcutOptions());
+    const result = await runPowerShell(shortcutRemoveScript(spec));
+    const ok = result?.code === 0;
+    logger[ok ? 'info' : 'error'](ok ? 'print_helper.shortcut.removed' : 'print_helper.shortcut.remove_failed', {
+      kind: spec.kind, link: spec.linkPath, code: result?.code, stderr: result?.stderr || undefined,
+    });
+    return { ok, kind: spec.kind, spec, code: result?.code ?? null, stderr: result?.stderr || '' };
   };
 
   const stop = async () => {
@@ -848,6 +1159,10 @@ ${jobs.length ? jobs.map(jobRow).join('') : '<tr><td colspan="5">还没有打印
     localPageHtml,
     buildTestPdf,
     downloadArtifact,
+    // ⭐ 快捷方式（桌面 / 开机自启）与状态页 —— 父母那条"一键启动"的路。
+    installShortcut,
+    uninstallShortcut,
+    openStatusPage,
   };
 };
 
@@ -857,28 +1172,109 @@ const readConfigFile = (file) => {
   return JSON.parse(raw);
 };
 
+/**
+ * 命令行里的那些"装/卸快捷方式"子命令。
+ * ⚠️ **中文文案一律在这里（Node，UTF-8）** —— `.bat` 里**一个中文字都不许有**
+ *    （上一轮真踩过：换行/编码不对，她那边报了一屏乱命令）。
+ */
+const runShortcutCommand = async ({ action, kind, logger }) => {
+  const helper = createPrintHelper({ config: {} , logger });
+  const result = action === 'install'
+    ? await helper.installShortcut(kind)
+    : await helper.uninstallShortcut(kind);
+  const label = kind === 'autostart' ? '开机自启' : '桌面快捷方式';
+  if (result.ok) {
+    logger.info('print_helper.shortcut.done', { action, kind, link: result.spec.linkPath });
+    console.log(`✅ ${action === 'install' ? '已设置' : '已取消'}${label}`);
+    console.log(`   快捷方式位置：${result.spec.linkPath}`);
+    if (action === 'install') console.log('   桌面上会出现「打印小助手」，双击它就能启动。');
+  } else {
+    logger.error('print_helper.shortcut.command_failed', {
+      action, kind, code: result.code, stderr: result.stderr,
+    });
+    console.log(`❌ 没能${action === 'install' ? '创建' : '取消'}${label}（退出码 ${result.code}）`);
+    if (result.stderr) console.log(`   原因：${result.stderr.trim().split('\n').slice(-3).join(' / ')}`);
+    console.log('   请把上面这几行拍下来发给技术同事。');
+  }
+  process.exitCode = result.ok ? 0 : 1;
+};
+
 const main = async () => {
-  const logger = createLogger();
   const argIndex = process.argv.indexOf('--config');
   const configFile = argIndex >= 0 ? process.argv[argIndex + 1] : DEFAULT_CONFIG_FILE;
+  // ⚠️ 先把配置读出来（失败也**不急着退出**）：日志文件位置要**跟着 config** 走，
+  //    否则 `--config D:\x\config.json` 的日志会跑到脚本目录去（排障时找不到）。
+  let fileConfig = {};
+  let configError = null;
+  if (fs.existsSync(configFile)) {
+    try {
+      fileConfig = readConfigFile(configFile);
+    } catch (error) {
+      configError = error;
+    }
+  }
+  const logger = createLogger({
+    fileLog: createFileLog({
+      file: resolvePath(fileConfig.logFile ?? DEFAULT_CONFIG.logFile, 'helper.log', path.dirname(configFile)),
+      maxBytes: fileConfig.maxLogBytes ?? DEFAULT_CONFIG.maxLogBytes,
+    }),
+  });
+  // ⭐ 窗口标题（中文）**由 Node 设**：`.bat` 必须是纯 ASCII，所以标题不能写在 bat 里。
+  if (process.platform === 'win32') {
+    try {
+      process.title = `${SHORTCUT_NAME}（这个窗口别关）`;
+    } catch {
+      // 设不上就算了（bat 里还有一句 ASCII 的兜底标题）。
+    }
+  }
+  const argv = process.argv.slice(2);
+  // ── 子命令：装/卸快捷方式（由那几个 .bat 调用，bat 本身保持纯 ASCII）──────────
+  if (argv.includes('--install-shortcut')) {
+    await runShortcutCommand({ action: 'install', kind: 'desktop', logger });
+    return;
+  }
+  if (argv.includes('--uninstall-shortcut')) {
+    await runShortcutCommand({ action: 'uninstall', kind: 'desktop', logger });
+    return;
+  }
+  if (argv.includes('--install-autostart')) {
+    await runShortcutCommand({ action: 'install', kind: 'autostart', logger });
+    return;
+  }
+  if (argv.includes('--uninstall-autostart')) {
+    await runShortcutCommand({ action: 'uninstall', kind: 'autostart', logger });
+    return;
+  }
+
   if (!fs.existsSync(configFile)) {
     logger.error('print_helper.config.missing', {
       file: configFile,
       hint: '把 config.example.json 复制成 config.json，填上 deviceToken 与打印机路径，再运行',
     });
+    console.log('');
+    console.log('❌ 还没配置好：找不到 config.json');
+    console.log('   1) 把 config.example.json 复制一份，改名成 config.json');
+    console.log('   2) 用记事本打开它，填上 deviceToken 与 SumatraPDF 的路径');
+    console.log('   3) 保存后再双击一次 start.bat');
     process.exitCode = 2;
     return;
   }
-  let fileConfig;
-  try {
-    fileConfig = readConfigFile(configFile);
-  } catch (error) {
-    logger.error('print_helper.config.unreadable', { file: configFile, reason: error.message });
+  if (configError) {
+    logger.error('print_helper.config.unreadable', { file: configFile, reason: configError.message });
+    console.log('');
+    console.log(`❌ config.json 读不出来（${configError.message}）—— 把上面这一行拍下来发给技术同事。`);
     process.exitCode = 2;
     return;
   }
-  const helper = createPrintHelper({ config: fileConfig, logger });
-  await helper.start();
+  const helper = createPrintHelper({ config: fileConfig, logger, configDir: path.dirname(configFile) });
+  const started = await helper.start();
+  if (started.alreadyRunning) {
+    // ⭐ 单实例：已经在跑 ⇒ 已经把她带到状态页了，这个窗口直接收工（不占第二个位置）。
+    console.log('');
+    console.log('✅ 打印小助手已经在运行了（刚刚打开的页面就是它）。');
+    console.log('   这个窗口可以关掉了。');
+    return;
+  }
   const shutdown = async (signal) => {
     logger.info('print_helper.stopping', { signal });
     await helper.stop();
@@ -894,7 +1290,16 @@ if (require.main === module) {
 
 module.exports = {
   DEFAULT_CONFIG,
+  HELPER_APP_ID,
+  SHORTCUT_NAME,
   createLogger,
+  createFileLog,
+  winJoin,
+  shortcutSpec,
+  shortcutScript,
+  shortcutRemoveScript,
+  probeHelperMarker,
+  defaultOpenUrl,
   normalizeBaseUrl,
   resolvePath,
   parseSseFrames,
