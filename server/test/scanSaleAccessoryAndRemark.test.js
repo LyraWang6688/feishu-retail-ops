@@ -169,10 +169,10 @@ const entriesOf = (harness, tableKey) => harness.tables[tableKey] || [];
 const currentKey = async (harness, openId) => (await harness.sessions.get(openId)).sale.key;
 const addShoe = (harness, openId, overrides = {}) => harness.write.addSaleLine({
   openId, productRecordId: 'prod_1', number: NUMBER, itemNo: 'YD6693-2', color: '黑色',
-  size: 40, amount: 399, inStock: true, ...overrides,
+  size: 40, inStock: true, ...overrides,
 });
 const addAccessory = (harness, openId, overrides = {}) => harness.write.addSaleLine({
-  openId, kind: 'accessory', accessoryRecordId: 'acc_oil', amount: 15, ...overrides,
+  openId, kind: 'accessory', accessoryRecordId: 'acc_oil', ...overrides,
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -184,9 +184,9 @@ test('AC-B1 配品单独占一行：配品有值、编号/尺码留空、成交�
   try {
     const openId = 'ou_acc_1';
     assert.equal((await addShoe(h, openId)).ok, true);
-    assert.equal((await addAccessory(h, openId, { amount: 15 })).ok, true);
+    assert.equal((await addAccessory(h, openId, { amount: '' })).ok, true);
 
-    const result = await h.write.submitSale({ openId, submitKey: await currentKey(h, openId), paymentAmount: '' });
+    const result = await h.write.submitSale({ openId, submitKey: await currentKey(h, openId) });
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(result.detail_count, 2, '一单一双鞋 + 一件配品 = 两行明细');
 
@@ -215,9 +215,9 @@ test('AC-B2 配品行不参与库存扣减：纯配品单 → 库存一条不动
   const h = createHarness();
   try {
     const openId = 'ou_acc_only';
-    await addAccessory(h, openId, { amount: 15 });
+    await addAccessory(h, openId, { amount: '' });
     const before = entriesOf(h, 'liveInventory').map((record) => record.record_id);
-    const result = await h.write.submitSale({ openId, submitKey: await currentKey(h, openId), paymentAmount: '' });
+    const result = await h.write.submitSale({ openId, submitKey: await currentKey(h, openId) });
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(result.detail_count, 1);
     assert.deepEqual(result.stock, { requested: 0, delivered: 0, failed: 0, reasons: [] },
@@ -236,8 +236,8 @@ test('AC-B3 既有交付链路显式跳过配品行（不是"碰巧因为它已�
   const h = createHarness();
   try {
     const openId = 'ou_acc_deliver';
-    await addAccessory(h, openId, { amount: 15 });
-    await h.write.submitSale({ openId, submitKey: await currentKey(h, openId), paymentAmount: '' });
+    await addAccessory(h, openId, { amount: '' });
+    await h.write.submitSale({ openId, submitKey: await currentKey(h, openId) });
     const accessoryField = V1_BITABLE_SCHEMA.tables.salesDetail.fields.accessory;
     const accessoryRow = entriesOf(h, 'salesDetail').find((detail) => detail.fields[accessoryField]);
     const entry = entriesOf(h, 'salesEntry')[0];
@@ -268,8 +268,8 @@ test('AC-B4 备注写**销售主表.「赠品」**（明细不带这一列）；
   try {
     const openId = 'ou_acc_gift';
     await addShoe(h, openId, { gift: '送袜子一双' });
-    await addAccessory(h, openId, { amount: 15, gift: '' });
-    await h.write.submitSale({ openId, submitKey: await currentKey(h, openId), paymentAmount: '' });
+    await addAccessory(h, openId, { amount: '', gift: '' });
+    await h.write.submitSale({ openId, submitKey: await currentKey(h, openId) });
     assert.equal(entriesOf(h, 'salesEntry')[0].fields['赠品'], '送袜子一双',
       '备注的落点是销售主表「赠品」列');
     for (const detail of entriesOf(h, 'salesDetail')) {
@@ -279,7 +279,7 @@ test('AC-B4 备注写**销售主表.「赠品」**（明细不带这一列）；
     // 不填（空）也能提交 —— 备注**不是校验项**
     const openId2 = 'ou_acc_gift_empty';
     await addShoe(h, openId2, { gift: '' });
-    const second = await h.write.submitSale({ openId: openId2, submitKey: await currentKey(h, openId2), paymentAmount: '' });
+    const second = await h.write.submitSale({ openId: openId2, submitKey: await currentKey(h, openId2) });
     assert.equal(second.ok, true, JSON.stringify(second));
     assert.equal(entriesOf(h, 'salesEntry')[1].fields['赠品'], '');
   } finally { h.cleanup(); }
@@ -295,7 +295,7 @@ test('AC-B5 配品金额留空 ⇒ 取「其他配品.单价」；单价也没�
     // ① 留空 → 「其他配品.单价」= 15
     const openId = 'ou_acc_amount';
     await addAccessory(h, openId, { amount: '' });
-    const ok = await h.write.submitSale({ openId, submitKey: await currentKey(h, openId), paymentAmount: '' });
+    const ok = await h.write.submitSale({ openId, submitKey: await currentKey(h, openId) });
     assert.equal(ok.ok, true, JSON.stringify(ok));
     const accessoryField = V1_BITABLE_SCHEMA.tables.salesDetail.fields.accessory;
     const row = entriesOf(h, 'salesDetail').find((detail) => detail.fields[accessoryField]);
@@ -305,11 +305,11 @@ test('AC-B5 配品金额留空 ⇒ 取「其他配品.单价」；单价也没�
     const openId2 = 'ou_acc_amount_missing';
     const added = await addAccessory(h, openId2, { accessoryRecordId: 'acc_insole', amount: '' });
     assert.equal(added.ok, true, '加进本单不校验金额（点【提交】才校验）');
-    const failed = await h.write.submitSale({ openId: openId2, submitKey: await currentKey(h, openId2), paymentAmount: '' });
+    const failed = await h.write.submitSale({ openId: openId2, submitKey: await currentKey(h, openId2) });
     assert.equal(failed.ok, false);
     assert.equal(failed.code, 'accessory_amount_missing');
     assert.match(failed.message, /赠品鞋垫/, '人话里点名是哪一件');
-    assert.match(failed.message, /配品成交金额/, '告诉她填哪个字段');
+    assert.match(failed.message, /这一件实收/, '告诉她填哪个字段（配品与鞋同规则）');
     assert.equal(entriesOf(h, 'salesDetail').length, 1, '没成单：一条配品明细都不许写');
   } finally { h.cleanup(); }
 });
@@ -341,7 +341,7 @@ const WRITE = (overrides = {}) => ({
   ...overrides,
 });
 
-test('AC-B6 销售领域页面上：配品下拉（选项 = 「其他配品」名称）+ 配品成交金额 + 备注输入框', () => {
+test('AC-B6 销售领域页面上：配品下拉（选项 = 「其他配品」名称）+ 「这一件实收」 + 备注输入框', () => {
   const html = renderScanPage(VIEW, SCAN_PAGE, WRITE(), 'sales');
   // ① 配品下拉：动作是配品那一个，选项来自「其他配品」的名称
   assert.match(html, new RegExp(`name="${SCAN_WRITE.fields.action}" value="${SCAN_WRITE.actions.addAccessory}"`),
@@ -353,8 +353,10 @@ test('AC-B6 销售领域页面上：配品下拉（选项 = 「其他配品」�
     assert.ok(select[1].includes(`>${name}</option>`), `下拉里少了「${name}」`);
   }
   assert.ok(select[1].includes('value="acc_oil"'), '选项的 value = 那一条配品记录的 id（不靠名字猜）');
-  // ② 配品成交金额（单列）+ ③ 备注输入框（可为空）
-  assert.match(html, /配品成交金额/);
+  // ② 这一件实收（她 2026-10-11 的两层结构：每件只填实收；「成交金额」不再让她填）
+  //    + ③ 备注输入框（可为空）
+  assert.match(html, /这一件实收/);
+  assert.equal(html.includes('成交金额'), false, '「成交金额」输入框整体退场');
   assert.match(html, new RegExp(`name="${SCAN_WRITE.fields.amount}"`));
   assert.match(html, new RegExp(`name="${SCAN_WRITE.fields.gift}"`));
   assert.match(html, /备注/, '页面上写「备注」（落点是主表「赠品」列）');

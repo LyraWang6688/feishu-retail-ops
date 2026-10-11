@@ -170,6 +170,47 @@ const createScanWriteService = (options = {}) => {
     return { ok: true, value: Math.round(value * 100) / 100 };
   };
 
+  /** 金额 → 分（整数运算，**不拿浮点数比大小**：0.1 + 0.2 那类误差会误报）。 */
+  const toCents = (value) => Math.round(Number(value || 0) * 100);
+
+  /**
+   * 分 → 她看的人话金额（整数不带小数点；带角分才给两位）。
+   * 前缀（`¥`）在 `config/scanWrite.sale.moneyPrefix` —— 逻辑里不写死。
+   */
+  const moneyText = (value) => {
+    const number = Number(value || 0);
+    const text = Number.isInteger(number) ? String(number) : number.toFixed(2);
+    return `${config.sale.moneyPrefix || ''}${text}`;
+  };
+
+  /**
+   * ⭐⭐ **核心校验的人话**（业务负责人 2026-10-11：「必须相等，所以系统需要校验！」）。
+   *
+   * 说清三件事：① 每件实收合计多少 ② 收款合计多少 ③ **哪边多了 / 少了、差多少** ——
+   * 她照着改一下就能再提交（不是"校验失败"四个字）。
+   */
+  const amountMismatchMessage = ({ itemsCents, paymentsCents }) => {
+    const diffCents = Math.abs(paymentsCents - itemsCents);
+    const side = itemsCents === 0
+      ? fillText(texts.amountMismatchNoItems, { diff: moneyText(diffCents / 100) })
+      : fillText(
+        paymentsCents > itemsCents ? texts.amountMismatchOver : texts.amountMismatchShort,
+        { diff: moneyText(diffCents / 100) },
+      );
+    return fillText(texts.amountMismatchBody, {
+      items: moneyText(itemsCents / 100),
+      payments: moneyText(paymentsCents / 100),
+      side,
+    });
+  };
+
+  /** 一串原始金额（`line_amount` / `payment_amount` 同名重复 ⇒ 数组）→ 逐项原始字符串。 */
+  const amountList = (value) => {
+    if (Array.isArray(value)) return value.map((item) => (item === undefined || item === null ? '' : String(item)));
+    if (value === undefined || value === null) return [];
+    return [String(value)];
+  };
+
   const positiveInteger = (raw) => {
     const text = String(raw ?? '').trim();
     return /^[1-9]\d*$/.test(text) ? Number(text) : null;
@@ -443,13 +484,28 @@ const createScanWriteService = (options = {}) => {
   /**
    * 提交"本单"：**一张销售主表 + N 条明细（一单一双一行）**。
    *
+   * ⭐⭐ 2026-10-11（业务负责人定的**两层结构**）：这一层是"**总单层**"——
+   *   ① **每件实收**（`lineAmounts`，按下标对应本单的明细行）→ 落**销售明细.成交金额**；
+   *      没填（空）⇒ 自动读那张表的「单价」；两边都取不到 ⇒ 人话拦住，**绝不写 0**。
+   *      ⚠️ 她**不填「成交金额」**：页面上那个输入框已删，成交金额是这一位的**自动落点**。
+   *   ② **多笔收款**（`payments`，既有 `payments[]` 形状，**与群聊链路同一个**）→ 各写一条
+   *      「收款明细」；留空 = 一笔都不写（先货后钱）。
+   *   🔴 **核心校验（她 2026-10-11：「必须相等，所以系统需要校验！」）**：
+   *      整单两边都没填 ⇒ 照样能提交（= 先货后钱）；
+   *      **只要填了任何一边** ⇒ `Σ每件实收 === Σ多笔收款`，不等就**拦住**：
+   *      **一个字都不写**（这一段整段发生在建主表之前）+ 一句说清差额的人话。
+   *
    * @param {object} input
    * @param {string} input.openId   录单人（会话按他分）
    * @param {string} input.submitKey 表单带回来的幂等键（连点两次 = 同一把）
-   * @param {string} [input.paymentMethod] 收款方式（**默认「微信」由 config 给**，可改）
-   * @param {string} [input.paymentAmount] 这次收到的钱；**留空 = 先货后钱（不写收款明细）**
+   * @param {Array<{method:string, amount:string|number}>} [input.payments]
+   *        多笔收款（表单里同名重复的 `payment_method` / `payment_amount` 按行拼出来的）。
+   *        ⚠️ 某一行**金额空** ⇒ 这一行不用（方式选了也不算）；填了金额 ⇒ **方式必填**。
+   * @param {Array<string|number>} [input.lineAmounts]
+   *        **每件实收**（提交表单里那一排输入框，顺序 = 本单的明细行顺序）。
+   *        这一项没带（例：本单条上那颗快捷提交）⇒ 用会话里已经记下的值。
    */
-  const submitSale = async ({ openId, submitKey, paymentMethod = '', paymentAmount = '', requestId = '' }) => queue.run(`sale:${openId}`, async () => {
+  const submitSale = async ({ openId, submitKey, payments: paymentRows = [], lineAmounts = [], requestId = '' }) => queue.run(`sale:${openId}`, async () => {
     if (!config.sale.enabled) {
       return fail({ code: 'disabled', message: texts.writeDisabledBody, requestId });
     }
@@ -507,24 +563,81 @@ const createScanWriteService = (options = {}) => {
     if (!lines.length) {
       return fail({ code: 'session_empty', message: texts.sessionEmptyBody, requestId });
     }
-    const parsedPayment = positiveAmount(paymentAmount);
-    if (!parsedPayment.ok) {
-      const error = new Error(texts.paymentAmountInvalidBody);
-      error.scanUserMessage = texts.paymentAmountInvalidBody;
-      return fail({ code: 'payment_amount_invalid', message: userMessageFor(error), requestId, error });
-    }
-    // 「钱可以先不填」：没填收款金额 ⇒ **不写任何收款明细**，
-    // 表里那一单的「资金状态」就停在既有的「未写入」（= 她说的"待补资金"，不新造状态）。
-    const payments = parsedPayment.value === null ? [] : [{
-      amount: parsedPayment.value,
-      // 收款方式：她页面上选的（默认「微信」由 config 给）；这里只兜底"没传"那一种。
-      method: String(paymentMethod || '').trim() || config.sale.defaultPaymentMethod,
-      operatorOpenId: openId,
-    }];
 
-    // ③ 逐行把明细准备好（金额留空 → 用「货品信息.单价」；取不到就让她填，绝不写 0）。
+    // ── ① 每件实收（**总单层那一排输入框**；没带这一项就用会话里已经记下的值）────────
+    //    ⚠️ 这一项**先落回本地会话**（只动 `data/scan_sessions/` 那一份草稿，**不碰业务表**）：
+    //       · 差额页要把她刚填的数回显出来（不用重打）；
+    //       · "写了一半崩掉"的**重试**要接着同一份草稿写（与 `master_record_id` 同一个道理）。
+    const postedLineAmounts = amountList(lineAmounts);
+    const hasPostedLineAmounts = postedLineAmounts.length > 0;
+    const resolvedLines = [];
+    for (const [index, line] of lines.entries()) {
+      const raw = hasPostedLineAmounts && index < postedLineAmounts.length
+        ? postedLineAmounts[index]
+        : (line.amount === null || line.amount === undefined ? '' : String(line.amount));
+      const parsed = positiveAmount(raw);
+      if (!parsed.ok) {
+        const sellableKind = SELLABLE_KINDS[String(line.kind || '').trim() || 'shoe'];
+        const message = sellableKind && !sellableKind.requiresSize
+          ? texts.accessoryAmountInvalidBody : texts.amountInvalidBody;
+        const error = new Error(message);
+        error.scanUserMessage = message;
+        return fail({ code: 'line_amount_invalid', message, requestId, error });
+      }
+      resolvedLines.push({ ...line, amount: parsed.value });
+    }
+    if (hasPostedLineAmounts) {
+      await sessions.saveSaleProgress(openId, { lines: resolvedLines });
+    }
+
+    // ── ② 多笔收款（可增删行：**填了金额的行才算一笔**）────────────────────────────
+    const usedPayments = [];
+    for (const row of (Array.isArray(paymentRows) ? paymentRows : [])) {
+      const parsed = positiveAmount(row?.amount);
+      if (!parsed.ok) {
+        const error = new Error(texts.paymentAmountInvalidBody);
+        error.scanUserMessage = texts.paymentAmountInvalidBody;
+        return fail({ code: 'payment_amount_invalid', message: userMessageFor(error), requestId, error });
+      }
+      // 金额空 ⇒ 这一行不用（方式选了也不算）；**金额填了就必须有方式**。
+      if (parsed.value === null) continue;
+      const method = String(row?.method || '').trim();
+      if (!method) {
+        const error = new Error(texts.paymentRowIncompleteBody);
+        error.scanUserMessage = texts.paymentRowIncompleteBody;
+        return fail({ code: 'payment_row_incomplete', message: userMessageFor(error), requestId, error });
+      }
+      usedPayments.push({ amount: parsed.value, method, operatorOpenId: openId });
+    }
+
+    // ── ③ ⭐⭐ 核心校验：**Σ每件实收 === Σ多笔收款**（她 2026-10-11 的原话：
+    //    「必须相等，所以系统需要校验！」）──────────────────────────────────────────
+    //    · **整单都没填钱**（每件实收全空 + 一笔收款都没有）⇒ 仍然可提交 = **先货后钱**（保持既有口径）；
+    //    · **只要填了任何一边** ⇒ 两边合计必须相等，否则**拦住**：
+    //      这一段在**建主表之前** ⇒ 不等时**一个字节都不写库**（钱货都不动）。
+    //    ⚠️ 比大小用**分**（整数），不拿浮点数比：0.1 + 0.2 ≠ 0.3 那类误差会误报。
+    const itemsCents = resolvedLines.reduce((sum, line) => sum
+      + (line.amount === null || line.amount === undefined ? 0 : toCents(line.amount)), 0);
+    const paymentsCents = usedPayments.reduce((sum, payment) => sum + toCents(payment.amount), 0);
+    const anyItemAmount = resolvedLines.some((line) => line.amount !== null && line.amount !== undefined);
+    const payments = usedPayments;
+    if ((anyItemAmount || payments.length > 0) && itemsCents !== paymentsCents) {
+      const message = amountMismatchMessage({ itemsCents, paymentsCents });
+      logWarn(config.events.amountMismatch, {
+        session_id: current.session_id, submit_key: key,
+        items_cents: itemsCents, payments_cents: paymentsCents,
+        detail_count: resolvedLines.length, payment_count: payments.length, request_id: requestId,
+      });
+      const error = new Error(message);
+      error.scanUserMessage = message;
+      return fail({ code: 'amount_mismatch', message, requestId, error, extra: { result: { amount: {
+        items: itemsCents, payments: paymentsCents, diff: paymentsCents - itemsCents,
+      } } } });
+    }
+
+    // ④ 逐行把明细准备好（每件实收留空 → 用那张表自己的「单价」；取不到就让她填，绝不写 0）。
     const items = [];
-    for (const line of lines) {
+    for (const line of resolvedLines) {
       // ⚠️ `SELLABLE_KINDS` 里的一行**没有 `key`**（`key` 是 `sellableKindOf` 补上去的）
       //    —— 这里自己补上，别拿 `undefined` 当 kind 传给业务层（那会被当成"鞋"）。
       const kindKey = String(line.kind || '').trim() || 'shoe';

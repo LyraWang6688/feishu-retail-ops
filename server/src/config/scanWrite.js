@@ -69,11 +69,20 @@ const FIELDS = Object.freeze({
   // 幂等键（**表单里带回来的那一串**）：连点两次 = 同一个键 = 只写一次。
   submitKey: 'submit_key',
   size: 'size',
+  // ⚠️ 2026-10-11 起：`amount` = **「这一双实收」**（加单那一步填的那一个数）。
+  //    🔴 它**不再是「成交金额」** —— 成交金额是那一位的**落点**，但她不填它：
+  //      填了实收 ⇒ 成交金额 = 实收；没填 ⇒ 自动读「货品信息.单价」（见 `sale.amountFallback`）。
   amount: 'amount',
   gift: 'gift',
   // ⭐ 配品那一行的「其他配品」记录 id（下拉里选中的名称对应的记录）。
   //    ⚠️ 与 `size` 二选一：配品行没有尺码、鞋行没有配品（见 `config/sellableKinds`）。
   accessory: 'accessory_record_id',
+  // ⭐⭐ 2026-10-11：**总单层**的两个字段。
+  //    ① 每件实收（提交表单里按本单顺序**逐行一个输入框**，同名重复 ⇒ body 里是有序数组，
+  //       下标与本单的明细行**一一对应**）；
+  lineAmount: 'line_amount',
+  //    ② 收款：**多笔、多方式**（同名重复 ⇒ 两个数组按行下标对齐）；
+  //       每一行 = 收款方式（「收款方式管理」里的选项）+ 金额。
   paymentMethod: 'payment_method',
   paymentAmount: 'payment_amount',
   // 补货：多选尺码的复选框名（同一批勾选的尺码）+ 每个尺码一个数量输入框（`qty_<尺码>`）。
@@ -118,14 +127,39 @@ const SALE = Object.freeze({
   enabled: readFlag(process.env, 'SCAN_SALE_WRITE_ENABLED', true),
   // ⭐ **扫码入口专属**：收款方式默认值（业务负责人 2026-10-08：「默认微信」）。
   // 🔴 群聊那条链路**没有**这个默认值 —— 那里是"用户说了才算、不预设"（见文件头）。
+  // ⚠️ 2026-10-11 起它只落在**第一笔**收款行上（第二行起默认"不记这笔"）——
+  //    否则每一行都预选微信 ⇒ 每一行都像"已经被用了"。
   defaultPaymentMethod: readString(process.env, 'SCAN_SALE_DEFAULT_PAYMENT_METHOD', '微信'),
   // 表单上给她的收款方式选项（配置先行；取值必须能在「收款方式管理」里找到，
-  // 否则写收款明细时会大声报"收款方式管理中找不到：X"）。第一项 = 默认选中项。
+  // 否则写收款明细时会大声报"收款方式管理中找不到：X"）。
+  // ⚠️ 默认选中项 = `defaultPaymentMethod`（只落在**第一行**收款上）。
   paymentMethods: readList(process.env, 'SCAN_SALE_PAYMENT_METHODS')
     || ['微信', '现金', '支付宝', '银行卡'],
+  // ⭐⭐ 2026-10-11：**总单层可以记几笔收款**（页面预置几行；没填金额的行 = 不用）。
+  //    ⚠️ 这一页是**零 JS** 的原生表单（2026-10-09 白屏事故之后定的、有用例钉着），
+  //      所以"可增删行"落地成"预置 N 行、填几行算几行"。
+  //      业务上最常见的形状是"微信 + 现金"两笔（她 2026-10-11 的例子：500 = 200 + 300）。
+  paymentRowCount: readInt(process.env, 'SCAN_SALE_PAYMENT_ROWS', 3, { min: 1, max: 10 }),
+  // 金额文本的显示前缀（人话里报差额时用；页面上的「单价」另有 `config/scanPage` 的 `PRICE`）。
+  moneyPrefix: readString(process.env, 'SCAN_SALE_MONEY_PREFIX', '¥'),
   // 成交金额留空时的兜底：用「货品信息.单价」（她"钱可以先不填"）。
   // 取不到单价 → 明确让她填（**不猜、不写 0**）。
+  // ⚠️ 2026-10-11：页面上那个「成交金额（可不填）」输入框已删 ——
+  //    **成交金额 = 这一双实收（填了就用它）；没填才走这个兜底读「单价」**。
   amountFallback: readString(process.env, 'SCAN_SALE_AMOUNT_FALLBACK', 'product_price'),
+  // ⭐⭐ 2026-10-11：**校验失败 → 原地把差额说给她听**（不是丢一张干巴巴的失败页）。
+  //    命中这些 code 的失败：路由**重新渲染销售那一块**（她刚填的每件实收 / 收款行都在），
+  //    页面顶部一条人话横幅说明差多少、哪边多了少了 —— 她改一下再点提交即可。
+  //    ⚠️ 服务端仍然是**权威**：这些 code 一个字节都不写库（见 `services/scanWriteService.js`）。
+  formFailureCodes: readList(process.env, 'SCAN_SALE_FORM_FAILURE_CODES') || [
+    // 核心校验：每件实收合计 ≠ 收款合计
+    'amount_mismatch',
+    // 收款行：填了金额没选方式 / 金额不是数字
+    'payment_row_incomplete', 'payment_amount_invalid',
+    // 每件实收：不是数字 / 成交金额取不到（没填实收、又没有单价）
+    'line_amount_invalid', 'line_amount_missing',
+    'accessory_amount_invalid', 'accessory_amount_missing',
+  ],
   // 主表「原话」那一列：扫码来的单也留一句人话（谁、扫了什么、几双）。
   originalTextTemplate: readString(
     process.env, 'SCAN_SALE_ORIGINAL_TEXT', '扫码建单（{count} 双）：{products}',
@@ -206,8 +240,13 @@ const TEXTS = Object.freeze({
   draftEmpty: '还没加入任何一双：选好尺码，点「加入本单」。',
   sizeLabel: '尺码',
   sizePlaceholder: '选尺码',
-  amountLabel: '成交金额（可不填）',
-  amountPlaceholder: '留空按货品单价',
+  // ⭐⭐ 2026-10-11（业务负责人定的**销售建单两层结构**）：
+  //    ① **每件层**：她**唯一要填的金额** = 「这一双实收」；
+  //    ② **总单层**：多笔收款（方式 + 金额）。
+  //    🔴 「成交金额」是**自动字段**（读「货品信息.单价」）⇒ 页面上**不再让她填**：
+  //      填了实收 ⇒ 成交金额 = 实收；没填 ⇒ 自动读单价；两边都取不到 ⇒ 人话拦住（绝不写 0）。
+  amountLabel: '这一双实收（可不填）',
+  amountPlaceholder: '不填按单价',
   // ⭐ 2026-10-11（B）：她的口径是「**备注**」——落点是**销售主表.「赠品」**（文本列，
   //    见 docs/sales-order-states-and-gifts-2026-10-09.md 第四节）。
   //    ⚠️ 页面上写"备注"、表里写"赠品"，是**一列两个叫法**，不是两件事（别再拆一个字段出来）。
@@ -219,14 +258,31 @@ const TEXTS = Object.freeze({
   accessoryLabel: '配品',
   // 不选配品时下拉里的那一项（空 value = 不加这一行）。
   accessoryPlaceholder: '不加配品',
-  accessoryAmountLabel: '配品成交金额（可不填）',
-  accessoryAmountPlaceholder: '留空按配品单价',
+  // ⭐ 配品行与鞋**同一条规则**（她 2026-10-11 未单独定 → 本轮按"与鞋同规则"实现，
+  //    取舍已写在交付报告里）：它也有「这一件实收」，留空同样兜底读「其他配品.单价」。
+  accessoryAmountLabel: '这一件实收（可不填）',
+  accessoryAmountPlaceholder: '不填按配品单价',
   accessoryAddedBanner: '已加入本单（{count} 项）',
   submitButton: '提交这一单',
   clearButton: '清空本单',
+  // ── ⭐⭐ 总单层：每件实收（逐行）+ 多笔收款 ────────────────────────────────
+  // ⚠️ 提交表单里那个「每件实收」输入框是**每行一个**的（同名 `line_amount` 重复出现），
+  //    下面这两个是它的 aria-label / placeholder（手机读屏与占位，不是说明书）。
+  lineAmountLabel: '这一双实收',
+  accessoryLineAmountLabel: '这一件实收',
+  lineAmountPlaceholder: '实收',
   paymentLabel: '收款方式',
-  paymentAmountLabel: '这次收到多少钱（可不填）',
-  paymentAmountPlaceholder: '不填 = 先货后钱',
+  paymentAmountLabel: '收款金额',
+  paymentAmountPlaceholder: '金额',
+  // 预置行里那个"空"选项（不填金额 = 这一行不用）。
+  paymentNoneOption: '不记这笔',
+  // ⭐ **核心校验的人话**（她 2026-10-11：「必须相等，所以系统需要校验！」）：
+  //    说清①两边各是多少 ②哪边多了/少了、差多少 —— 她照着改一下就能再提交。
+  amountMismatchBody: '每件实收合计 {items}，收款合计 {payments}；{side}，请核对后再提交。',
+  amountMismatchShort: '收款比每件实收少 {diff}',
+  amountMismatchOver: '收款比每件实收多 {diff}',
+  amountMismatchNoItems: '每件实收还没填（差 {diff}）',
+  paymentRowIncompleteBody: '有一笔收款填了金额、还没选收款方式，请补一下。',
   submittedTitle: '这一单提交好了',
   submittedBody: '销售单号 {orderNo}，共 {count} 双。',
   // 结果页上逐行列出来的事实（单号 / 双数 / 收款）。
@@ -268,14 +324,19 @@ const TEXTS = Object.freeze({
   sessionExpiredBody: '这一页放太久了，本单已经过期：请刷新这一页重新加入。',
   sizeMissingBody: '请先选一个尺码。',
   sizeUnknownBody: '这个尺码不在「尺码管理」里，请刷新这一页重新选。',
-  amountInvalidBody: '成交金额要填数字（例：399 或 399.5）。',
-  amountMissingBody: '「{itemNo}」在「货品信息」里没有单价，请填一下成交金额再提交。',
+  amountInvalidBody: '这一双实收要填数字（例：399 或 399.5）。',
+  // ⚠️ 2026-10-11：页面上那个「成交金额」输入框已删 ⇒ 这句人话要指**能做的事**：
+  //    她可以在本单里给这一双填上实收（提交表单里就有那个输入框），或者去「货品信息」补单价。
+  amountMissingBody: '「{itemNo}」在「货品信息」里没有单价：请在本单里填上这一双实收，再提交。',
   // ── 配品（B）：三条人话 ────────────────────────────────────────────────────
   // ⚠️ 配品**不是校验项**（不选不报错）；下面两句只在"选了配品但缺东西"时才出现。
   accessoryMissingBody: '请先选一件配品。',
   accessoryUnknownBody: '这件配品不在「其他配品」里，请刷新这一页重新选。',
-  accessoryAmountInvalidBody: '配品成交金额要填数字（例：39 或 39.9）。',
-  accessoryAmountMissingBody: '「{name}」在「其他配品」里没有单价，请填一下配品成交金额再提交。',
+  accessoryAmountInvalidBody: '这一件实收要填数字（例：39 或 39.9）。',
+  accessoryAmountMissingBody: '「{name}」在「其他配品」里没有单价：请在本单里填上这一件实收，再提交。',
+  // ⭐⭐ 总单层：多笔收款的人话。
+  //    ⚠️ 「每件实收」不是数字时复用上面的 `amountInvalidBody` / `accessoryAmountInvalidBody`
+  //      （同一个字段、同一个说法；不为第二个入口再抄一句）。
   paymentAmountInvalidBody: '这次收款金额要填数字（例：100 或 100.5）。',
   quantityInvalidBody: '数量要填 1 ~ {max} 之间的整数。',
   replenishNoneBody: '至少要勾一个要补的尺码。',
@@ -297,6 +358,10 @@ const EVENTS = Object.freeze({
   saleSubmitting: 'scan.sale.submitting',
   saleSubmitted: 'scan.sale.submitted',
   saleReused: 'scan.sale.reused',
+  // ⭐⭐ 2026-10-11：**每件实收合计 ≠ 收款合计**（她：「必须相等，所以系统需要校验！」）——
+  //    这条日志带两边的合计与差额，她说"我明明填对了"时按它一眼对得出来。
+  //    ⚠️ 命中它 = **一个字都没写库**（阻拦发生在建主表之前）。
+  amountMismatch: 'scan.sale.amount_mismatch',
   // ⭐ 2026-10-11（A）：现货行"提交即交付 + 扣库存"**没扣成**的如实记录
   //    （页面上同时会告诉她一句人话；这条日志是排查口）。
   stockFailed: 'scan.sale.stock_failed',
