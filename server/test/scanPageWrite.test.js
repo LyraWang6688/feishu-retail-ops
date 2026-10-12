@@ -1001,12 +1001,20 @@ test('AC-DB5 ⭐ 一单多双·多次扫码：扫 A 加单 → 扫 B 加单 → 
       const addedB = await post(urlB, { action: SCAN_WRITE.actions.addLine, submit_key: keyB, size: '41' });
       assert.equal(addedB.status, 303);
 
-      // ④ B 页（回跳后）：本单 2 双 + 极简反馈 + 顶部**就地**能提交（不用回第 1 双那一页）
+      // ④ B 页（回跳后）：本单 2 双 + 极简反馈 + 这一页就能提交（不用回第 1 双那一页）
       const afterHtml = await (await fetch(urlB, { headers: { cookie } })).text();
       assert.match(afterHtml, /本单：2 双/);
+      // ⚠️ 2026-10-12 **改写**：改前断言"**本单条上**就有【提交这一单】"——
+      //    那颗按钮不带收款字段，真机丢钱就是它（她在销售块填了钱、按了本单条那颗）。
+      //    改后本单条只留 `本单：N 双` +【继续扫下一个】，提交按钮在**销售块那唯一的表单**里，
+      //    而且写着几双（`✅ 提交这一单（2 双）`）——"B 页上就能提交"这个语义**没变**。
       const bar = afterHtml.slice(afterHtml.indexOf('data-view="draft-bar"'));
-      assert.ok(bar.slice(0, bar.indexOf('</section>')).includes(SCAN_WRITE.texts.submitButton),
-        'B 页顶部的本单条上就有【提交这一单】');
+      assert.equal(bar.slice(0, bar.indexOf('</section>')).includes(SCAN_WRITE.actions.submitOrder), false,
+        '本单条里没有提交按钮（避免"点了提交却没记钱"）');
+      assert.equal((afterHtml.match(/value="submit_order"/g) || []).length, 1,
+        'B 页上恰好一颗提交按钮（在销售块里）');
+      assert.ok(afterHtml.includes(SCAN_WRITE.texts.submitButtonCount.replace('{count}', '2')),
+        'B 页那颗按钮写着"提交这一单（2 双）"');
 
       // ⑤ 就在 B 页提交这一单 → **一张主表 + 两行明细**
       const submitted = await post(urlB, {

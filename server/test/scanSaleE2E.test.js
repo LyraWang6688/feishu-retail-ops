@@ -56,6 +56,7 @@ const { SalesDeliveryService } = require('../src/services/salesDeliveryService')
 const { InventoryService } = require('../src/services/inventoryService');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { createScanPageRouter } = require('../src/routes/scanPage');
+const PAYMENT_FIELDS = V1_BITABLE_SCHEMA.tables.paymentRecord.fields;
 
 // ── 语义键 → 物理列名（照真 schema；写错语义键当场抛，别让夹具自己漂）─────────────
 const F = (table, key) => {
@@ -237,12 +238,21 @@ const getPage = async (url, cookie) => {
   const response = await fetch(url, { headers: { cookie } });
   return { status: response.status, html: await response.text() };
 };
-const postForm = (url, cookie, body) => fetch(url, {
-  method: 'POST',
-  redirect: 'manual',
-  headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
-  body: new URLSearchParams(body).toString(),
-});
+// ⚠️ 页面上的收款行 / 每件实收是**同名字段重复出现**（`line_amount` 一行一个）⇒
+//    这里必须发**重复的键**（`URLSearchParams` 的"数组值"会拼成 `150,130`，那是错的）。
+const postForm = (url, cookie, body) => {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(body)) {
+    if (Array.isArray(value)) value.forEach((item) => params.append(key, String(item)));
+    else params.append(key, String(value));
+  }
+  return fetch(url, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+    body: params.toString(),
+  });
+};
 
 /** 「本单条」那一段（`data-view="draft-bar"`）：她是**看这一条**知道"本单几双、能不能提交"的。 */
 const draftBarOf = (html) => {
@@ -372,11 +382,17 @@ const addTwoAndSubmit = async (e2e, cookie, base) => {
   await getPage(pageUrlOf(base, NUMBER_A), cookie);
   await addLine(base, cookie, NUMBER_A, '40');       // 现货（有门盒）
   await addLine(base, cookie, NUMBER_B, '41');       // 预订（一双都没有）
-  // 提交表单**原样**提交：每件实收留空、收款行空、付款情况 = 默认那一档（全付）
+  // 提交表单**原样**提交：每件实收留空、收款行空、付款情况 = **页面默认那一档**。
+  // ⚠️ 2026-10-12 **改写**：这里原来写 `PAYMENT_STATUS.full` ——
+  //    改前口径：选「全付」但一笔收款都不填 ⇒ 按「未付」落库（她 2026-10-11 点头的行为）；
+  //    改后口径：**全付 + 收款 0 笔 + 每件实收也全空** ⇒ **拦住**（零元全付单直接拒绝，
+  //    见 `scanWriteService` 的 `full_without_money`）。
+  //    这一批用例要钉的是"**资金全空也能建单**"，那就该用页面默认那一档（未付）——
+  //    逐条理由写在报告里。
   return postForm(pageUrlOf(base, NUMBER_A), cookie, {
     action: SCAN_WRITE.actions.submitOrder,
     submit_key: 'scan_sale:scan_session_e2e:1',
-    payment_status: PAYMENT_STATUS.full,
+    payment_status: PAYMENT_STATUS.unpaid,
     payment_method: '',
     payment_amount: '',
     line_amount: ['', ''],
@@ -410,7 +426,7 @@ test('AC-E2E-4 提交这一单（资金全空）⇒ 成功页（单号 + 双数�
       // 第2步：**资金全空**（每件实收留空 + 没有收款行）照样提交 —— 门槛只要"货品信息齐"
       const done = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKey,
-        payment_status: PAYMENT_STATUS.full, payment_method: '', payment_amount: '', line_amount: ['', ''],
+        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['', ''],
       });
       const doneHtml = await done.text();
       assert.equal(done.status, 200, `第2步：资金全空应该直接成单（不是 400）：${doneHtml.slice(0, 200)}`);
@@ -455,7 +471,7 @@ test('AC-E2E-5 ⭐ 现货行已交付 + 库存真的少 1（流水 1 条）；�
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
       const done = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
-        payment_status: PAYMENT_STATUS.full, payment_method: '', payment_amount: '', line_amount: ['', ''],
+        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['', ''],
       });
       assert.equal(done.status, 200, `第2步：提交要成功：${(await done.text()).slice(0, 200)}`);
 
@@ -509,7 +525,7 @@ test('AC-E2E-6 幂等：同一提交键连点两次（含并发）⇒ 只建一�
       const submitKey = submitKeyOf(page.html);
       const body = {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKey,
-        payment_status: PAYMENT_STATUS.full, payment_method: '', payment_amount: '', line_amount: ['', ''],
+        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['', ''],
       };
 
       // 第1步：**并发**两个一模一样的提交（她手滑连点 / 网络重发）
@@ -532,7 +548,9 @@ test('AC-E2E-6 幂等：同一提交键连点两次（含并发）⇒ 只建一�
       const third = await postForm(pageUrlOf(base, NUMBER_A), cookie, body);
       const thirdHtml = await third.text();
       assert.equal(third.status, 200, '第3步：第三次也是 200');
-      assert.match(thirdHtml, /这一单已经提交过了/, '第3步：第三次告诉她"已经提交过了"（没重复写）');
+      // ⚠️ 2026-10-12 **改写**：改前文案「这一单已经提交过了」——她把这句读成"没写进去"，
+      //    还为此报过"我提交成功的都没有"。改后是「✅ 这一单刚才已经交过了」（语气平、事实不变）。
+      assert.match(thirdHtml, /这一单刚才已经交过了/, '第3步：第三次告诉她"已经交过了"（没重复写）');
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第3步：主表仍然只有 1 条');
       assert.equal(rowsOf(e2e, 'inventoryLedger').length, 1, '第3步：库存流水仍然只有 1 条');
     });
@@ -554,12 +572,14 @@ test('AC-E2E-7 提交后本单归零：再打开 ⇒ 本单：0 双，本单条�
       await addLine(base, cookie, NUMBER_B, '41');
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
       assert.ok(draftBarOf(page.html).includes('本单：2 双'), '第1步：提交前 2 双');
-      assert.ok(draftBarOf(page.html).includes(SCAN_WRITE.texts.submitButton),
-        '第1步：有草稿 ⇒ 本单条上就有【提交这一单】');
+      // ⚠️ 2026-10-12 **改写**：改前断言"本单条上就有【提交这一单】"；改后**本单条不再放提交按钮**
+      //    （真机丢钱就是它造成的：那颗按钮不带收款字段）⇒ 改成断言"有草稿 ⇒ 页面上有且只有一颗提交按钮"。
+      assert.equal((page.html.match(/value="submit_order"/g) || []).length, 1,
+        '第1步：有草稿 ⇒ 销售块上那颗（带钱的）提交按钮在');
 
       const done = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
-        payment_status: PAYMENT_STATUS.full, payment_method: '', payment_amount: '', line_amount: ['', ''],
+        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['', ''],
       });
       assert.equal(done.status, 200, `第2步：提交要成功：${(await done.text()).slice(0, 200)}`);
 
@@ -682,7 +702,255 @@ test('AC-E2E-9 🔴 会话过期后：页面照旧打得开 ⇒ 用页面上那�
       // ⑤ 提交后本单归零（她可以接着扫下一单）
       const after = await getPage(pageUrlOf(base, NUMBER_A), cookie);
       assert.ok(draftBarOf(after.html).includes('本单：0 双'), '第5步：本单归零');
+      // ⚠️ 2026-10-12 改写：**本单条里不再有提交按钮**（真机丢钱就是它造成的）。
+      //    ⚠️ 销售块那颗**照旧一直在**：空本单时它写着"（1 双）"，正是"一单一笔 = 选尺码 + 提交"的入口。
+      assert.equal(draftBarOf(after.html).includes('value="submit_order"'), false,
+        '第5步：本单条里没有提交按钮');
+      assert.ok(after.html.includes('提交这一单（1 双）'),
+        '第5步：销售块那颗还在，文案回到"（1 双）"');
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第5步：没有再建第二张单');
+    });
+  } finally { e2e.cleanup(); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔴🔴 2026-10-12 真机丢钱（`payment_count: 0`）之后定的两条
+//   根因：**同一页上有两颗【提交这一单】**（本单条那颗不带收款字段、销售块那颗带）
+//   ⇒ 她在销售块填的「全付 + 微信 280」被本单条那颗吃了 ⇒ 钱一行没记。
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-E2E-10 🔴 销售页**只有一颗**提交按钮，而且它**带着收款字段**', async () => {
+  login();
+  const e2e = createE2E();
+  const cookie = sessionCookie('ou_e2e_10');
+  try {
+    await withServer(e2e.app, async (base) => {
+      await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      await addLine(base, cookie, NUMBER_A, '40');
+      const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      const html = page.html;
+
+      // ① 只允许存在**一颗**提交按钮（= 一个带钱字段的提交表单）
+      const submitButtons = (html.match(/value="submit_order"/g) || []).length;
+      assert.equal(submitButtons, 1,
+        `🔴 一页上只能有一颗【提交这一单】（真机丢钱就是"两颗、其中一颗不带钱"造成的）：${submitButtons}`);
+
+      // ② 那颗按钮所在表单必须带齐钱字段（付款情况 / 收款方式 / 收款金额 / 每件实收）
+      const formStart = html.lastIndexOf('<form', html.indexOf('value="submit_order"'));
+      const form = html.slice(formStart, html.indexOf('</form>', formStart));
+      for (const [name, field] of [
+        ['付款情况', SCAN_WRITE.fields.paymentStatus], ['收款方式', SCAN_WRITE.fields.paymentMethod],
+        ['收款金额', SCAN_WRITE.fields.paymentAmount], ['每件实收', SCAN_WRITE.fields.lineAmount],
+      ]) {
+        assert.ok(form.includes(`name="${field}"`),
+          `🔴 那一颗提交按钮的表单里缺「${name}」（${field}）—— 少一个就会静默丢钱`);
+      }
+      // ③ 本单条里**不再有**任何提交表单（只剩 本单：N 双 + 继续扫下一个）
+      assert.equal(draftBarOf(html).includes('value="submit_order"'), false,
+        '本单条里不许再有第二颗提交按钮（它带不了钱）');
+    });
+  } finally { e2e.cleanup(); }
+});
+
+test('AC-E2E-11 🔴 全付 + 收款 0 笔 + 每件实收也全空 ⇒ 400 + 人话；**零写入**', async () => {
+  login();
+  const e2e = createE2E();
+  const cookie = sessionCookie('ou_e2e_11');
+  try {
+    await withServer(e2e.app, async (base) => {
+      await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      await addLine(base, cookie, NUMBER_A, '40');
+      const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      const rejected = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+        action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
+        payment_status: PAYMENT_STATUS.full, payment_method: '', payment_amount: '', line_amount: [''],
+      });
+      const html = await rejected.text();
+      assert.equal(rejected.status, 400, `🔴 这种"零元全付单"必须拦住（不许静默落库）：${html.slice(0, 200)}`);
+      assert.match(html, /全付/, '人话里要指名「全付」');
+      for (const table of ['salesEntry', 'salesDetail', 'paymentRecord', 'inventoryLedger']) {
+        assert.equal(rowsOf(e2e, table).length, 0, `第2步：拦住时「${table}」不许写（零写入）`);
+      }
+      // 同一把键、改成「未付」（= 页面默认那一档）⇒ 立刻能提交成单（她不会被卡住）
+      const ok = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+        action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
+        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: [''],
+      });
+      assert.equal(ok.status, 200, `第3步：改成「未付」就能提交：${(await ok.text()).slice(0, 200)}`);
+      assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第3步：成了一张单');
+    });
+  } finally { e2e.cleanup(); }
+});
+
+test('AC-E2E-12 ⭐ 销售块提交「全付 + 微信 280 + 每件实收 280」⇒ 收款明细 1 行（方式/金额/状态都对）', async () => {
+  login();
+  const e2e = createE2E();
+  const cookie = sessionCookie('ou_e2e_12');
+  try {
+    await withServer(e2e.app, async (base) => {
+      await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      await addLine(base, cookie, NUMBER_A, '40');
+      await addLine(base, cookie, NUMBER_B, '41');
+      const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      const done = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+        action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
+        payment_status: PAYMENT_STATUS.full,
+        // ⚠️ 收款行是**重复的同名字段**（一 row 一份）⇒ 必须传数组（页面就是这么发的）
+        payment_method: ['微信'], payment_amount: ['280'],
+        line_amount: ['150', '130'],
+      });
+      const html = await done.text();
+      const mismatch = (html.match(/<p class="form-alert">([^<]*)<\/p>/) || [])[1] || '';
+      assert.equal(done.status, 200, `第1步：提交要成功（400 时页面上那句人话 = ${mismatch}）：${html.slice(0, 200)}`);
+      assert.match(html, /这一单提交好了/, '第1步：结果页说提交好了');
+
+      const rows = rowsOf(e2e, 'paymentRecord');
+      assert.equal(rows.length, 1, '🔴 收款明细必须有 **1 行**（真机那次是 0 行）');
+      assert.deepEqual(rows[0].fields[PAYMENT_FIELDS.method], ['pm_wechat'], '方式 = 微信（假网关里那条记录）');
+      assert.equal(rows[0].fields[PAYMENT_FIELDS.amount], 280, '金额 = 280');
+      assert.equal(rows[0].fields[PAYMENT_FIELDS.status], '已收款', '状态 = 已收款');
+      assert.ok(rows[0].fields[PAYMENT_FIELDS.receivedAt] > 0, '收款日照旧写');
+      assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '主表 1 行');
+      assert.equal(rowsOf(e2e, 'salesDetail').length, 2, '明细 2 行');
+    });
+  } finally { e2e.cleanup(); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐ 2026-10-12 UX：一眼看到成功 / 按钮带双数 / 重复提交不吓人
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-E2E-13 ⭐ 提交按钮文案带双数：「提交这一单（2 双）」', async () => {
+  login();
+  const e2e = createE2E();
+  const cookie = sessionCookie('ou_e2e_13');
+  try {
+    await withServer(e2e.app, async (base) => {
+      await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      await addLine(base, cookie, NUMBER_A, '40');
+      await addLine(base, cookie, NUMBER_B, '41');
+      const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      assert.match(page.html, /提交这一单（2 双）/,
+        '按钮上直接写几双（她一眼知道这一单里有几双）');
+    });
+  } finally { e2e.cleanup(); }
+});
+
+test('AC-E2E-14 ⭐ 结果页：✅ 一眼成功 + 单号 + 双数 + 下一步；**不含任何表单**', async () => {
+  login();
+  const e2e = createE2E();
+  const cookie = sessionCookie('ou_e2e_14');
+  try {
+    await withServer(e2e.app, async (base) => {
+      await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      await addLine(base, cookie, NUMBER_A, '40');
+      const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      const done = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+        action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
+        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: [''],
+      });
+      const html = await done.text();
+      assert.equal(done.status, 200);
+      assert.match(html, /✅/, '结果页要有那个一眼就看得见的 ✅');
+      assert.match(html, /这一单提交好了/, '文案：这一单提交好了');
+      assert.match(html, /销售单号：XSD-\d{8}-\d{4}/, '单号');
+      assert.match(html, /明细：1 双/, '共几双');
+      assert.match(html, /工作台/, '下一步：去工作台补实收/收款');
+      assert.equal(/<form|<button/i.test(html), false,
+        '🔴 结果页里**不许**再出现表单/按钮（刷新、误点都不会再提交一遍）');
+    });
+  } finally { e2e.cleanup(); }
+});
+
+test('AC-E2E-15 ⭐ 重复提交的文案：✅「这一单刚才已经交过了」——**不许**出现让人以为失败的话', async () => {
+  login();
+  const e2e = createE2E();
+  const cookie = sessionCookie('ou_e2e_15');
+  try {
+    await withServer(e2e.app, async (base) => {
+      await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      await addLine(base, cookie, NUMBER_A, '40');
+      const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      const body = {
+        action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
+        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: [''],
+      };
+      const first = await postForm(pageUrlOf(base, NUMBER_A), cookie, body);
+      assert.equal(first.status, 200);
+      const again = await postForm(pageUrlOf(base, NUMBER_A), cookie, body);   // 同一把键再点一次
+      const html = await again.text();
+      assert.equal(again.status, 200);
+      assert.match(html, /✅/, '重复提交那一页同样是一眼可见的 ✅');
+      assert.match(html, /这一单刚才已经交过了/, '文案：这一单刚才已经交过了');
+      assert.match(html, /XSD-\d{8}-\d{4}/, '并把单号还给她');
+      // ⚠️ 只看**她看得见的那张卡**（`state-msg`）——整页 HTML 里还有样式表，扫整页会误伤。
+      const card = (html.match(/<section class="card state-msg">[\s\S]*?<\/section>/) || [''])[0];
+      assert.ok(card.includes('这一单刚才已经交过了'), '那张卡就是要给她看的内容');
+      for (const banned of ['没有重复写入', '重复提交', '已经提交过了', '失败', '错误']) {
+        assert.equal(card.includes(banned), false,
+          `🔴 重复提交页里不许出现会让她以为失败的话：「${banned}」`);
+      }
+      assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '只写了一单（幂等照旧）');
+    });
+  } finally { e2e.cleanup(); }
+});
+
+test('AC-E2E-16 ⭐ 每件实收旁边写明「可以留空」；400 校验页把人话差额挂在**最上面**', async () => {
+  login();
+  const e2e = createE2E();
+  const cookie = sessionCookie('ou_e2e_16');
+  try {
+    await withServer(e2e.app, async (base) => {
+      await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      await addLine(base, cookie, NUMBER_A, '40');
+      const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      assert.match(page.html, /可以留空/, '每件实收旁边要写明"可以不填"（她的痛点是费劲）');
+
+      // 全付 + 收款 200、实收 150 ⇒ 差额 → 400，人话差额必须在**最上面**（H1）
+      const rejected = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+        action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
+        payment_status: PAYMENT_STATUS.full, payment_method: '微信', payment_amount: '200',
+        method: ['微信'], amount: ['200'], line_amount: ['150'],
+      });
+      const html = await rejected.text();
+      assert.equal(rejected.status, 400);
+      // 原地重渲染那一版：差额必须挂在**销售块最上面**（`.form-alert`），
+      // 而且位置要在**提交按钮之前**（她一眼就能看到，不用往下翻）。
+      const alert = (html.match(/<p class="form-alert">([\s\S]*?)<\/p>/) || [])[1] || '';
+      assert.match(alert, /差|¥/, `人话差额要挂在销售块最上面：实际 = ${alert}`);
+      assert.ok(html.indexOf('form-alert') < html.indexOf('value="submit_order"'),
+        '差额要在提交按钮**上面**');
+      assert.equal(/<p class="form-alert">[^<]*没提交成功/.test(html), false,
+        '泛泛的"没提交成功"不许占着最上面那一行');
+    });
+  } finally { e2e.cleanup(); }
+});
+
+test('AC-E2E-17 ⭐ 一单一笔 = **选尺码 + 提交**（两下）：空本单时提交按钮写着「（1 双）」，带着尺码一起提交只需一次 POST', async () => {
+  login();
+  const e2e = createE2E();
+  const cookie = sessionCookie('ou_e2e_17');
+  try {
+    await withServer(e2e.app, async (base) => {
+      const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      // ① 空本单：页面上那颗提交按钮就在**尺码同一个表单**里，文案是「（1 双）」
+      assert.match(page.html, /✅ 提交这一单（1 双）/, '空本单 ⇒ 主按钮就是"提交这一双"');
+      const formStart = page.html.lastIndexOf('<form', page.html.indexOf('value="submit_order"'));
+      const form = page.html.slice(formStart, page.html.indexOf('</form>', formStart));
+      assert.ok(form.includes('name="size"'), '尺码 radio 与提交按钮在**同一个表单**里（零 JS 也能一起提交）');
+
+      // ② 两下 = 【选尺码】+【提交】：这一次 POST 就是浏览器在她选完尺码后按那颗按钮发的
+      const done = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+        action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
+        size: '40', payment_status: PAYMENT_STATUS.unpaid,
+        payment_method: '', payment_amount: '', line_amount: [],
+      });
+      const html = await done.text();
+      assert.equal(done.status, 200, `第2步：一次 POST 就成单：${html.slice(0, 200)}`);
+      assert.match(html, /这一单提交好了/, '第2步：结果页说提交好了');
+      assert.match(html, /明细：1 双/, '第2步：这一双真的进去了');
+      assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '主表 1 行');
+      assert.equal(rowsOf(e2e, 'salesDetail').length, 1, '明细 1 行');
     });
   } finally { e2e.cleanup(); }
 });

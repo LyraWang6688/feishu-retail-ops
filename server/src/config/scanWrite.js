@@ -437,6 +437,13 @@ const TEXTS = Object.freeze({
   accessoryAmountPlaceholder: '留空按配品单价',
   accessoryAddedBanner: '已加入本单（{count} 项）',
   submitButton: '提交这一单',
+  // ⭐ 2026-10-12（她的意见：一单一笔居多）——按钮上直接写**几双**，一眼就知道这一单里有几双。
+  //    ⚠️ 主按钮那颗就是"选好尺码直接提交"（一单一笔 = 选尺码 + 提交，**两下**）；
+  //       多笔要显式点【➕ 还要加一双】。
+  submitButtonCount: '✅ 提交这一单（{count} 双）',
+  addAnotherButton: '➕ 还要加一双',
+  // 每件实收**可以留空**（她："不然太费劲"）—— 就写一句事实，不写说明书。
+  amountOptionalHint: '实收可以留空，之后到工作台补。',
   clearButton: '清空本单',
   // ── ⭐⭐ 总单层：每件实收（逐行）+ 多笔收款 ────────────────────────────────
   // ⚠️ 提交表单里那个「每件实收」输入框是**每行一个**的（同名 `line_amount` 重复出现），
@@ -471,20 +478,27 @@ const TEXTS = Object.freeze({
   partialAmountMissingBody: '「部分付」要填一下实付多少（收款行合计 {payments}）。',
   paymentStatusInvalidBody: '「付款情况」没认出来（可能放太久了）：请刷新这一页再操作。',
   paymentRowIncompleteBody: '有一笔收款填了金额、还没选收款方式，请补一下。',
-  submittedTitle: '这一单提交好了',
+  submittedTitle: '✅ 这一单提交好了',
   submittedBody: '销售单号 {orderNo}，共 {count} 双。',
   // 结果页上逐行列出来的事实（单号 / 双数 / 收款）。
   submittedOrderLine: '销售单号：{orderNo}',
   submittedDetailLine: '明细：{count} 双（每双一行）',
   submittedNextHint: '接着扫下一款就可以开新的一单。',
+  // ⭐ 2026-10-12：结果页给她"下一步能做什么"（她自己问过"那我接下来去哪补钱"）。
+  submittedNextSteps: '要补实收 / 收款：去工作台「销售」那一页。',
   // ⭐⭐ 2026-10-11 晚：她**显式选了「全付」但一笔收款都没填**时给的一句人话。
   //    ⚠️ **只提示、不拦整单**（按「未付」落库：只记货、钱进待补充）—— 她真机就是被
   //       "全付必须相等"卡住的；"填了钱才算账"这条不能反过来变成"没填钱就不许记账"。
   //    ⚠️ 这句话**必须指得出能做的事**（选未付 / 补收款），不是"校验失败"四个字。
   fullWithoutPaymentsNote: '选「全付」要填收款金额；钱还没收就选「未付」。',
+  // 🔴🔴 2026-10-12（真机丢钱之后加的兜底）：她**显式选了「全付」**，却一笔收款都没填、
+  //    每件实收也全空 ⇒ 这一单**哪儿都没钱**，与"全付"直接矛盾 ⇒ 拦住 + 人话。
+  fullWithoutMoneyBody: '选「全付」要填收款方式 + 金额；还没收钱就选「未付」，或者把每件的「实收金额」填上。',
   submittedFundsBody: '收款也记上了，共 {paid} 元。',
-  submittedAgainTitle: '这一单已经提交过了',
-  submittedAgainBody: '销售单号 {orderNo}，没有重复写入。',
+  // ⭐ 2026-10-12（她自己被这句话吓到过）：**不许**出现"没有重复写入"这种会被读成
+  //    "没写进去"的话；重复提交就是**同一件事的第二次点击**，语气要平：
+  submittedAgainTitle: '✅ 这一单刚才已经交过了',
+  submittedAgainBody: '销售单号 {orderNo}。就是这一单，不用再点。',
   // ⭐ 2026-10-11（A）：现货行"提交即交付 + 扣库存"**没扣成**时的如实结果页。
   //    她要知道的是三件事：单子已经记上了、哪几双没扣成、怎么办 —— 一句说明书都不写。
   stockFailedTitle: '这一单记上了，库存没扣成',

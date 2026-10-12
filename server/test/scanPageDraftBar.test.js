@@ -171,17 +171,24 @@ test('AC-DB2 【提交这一单】**有草稿才出现**（没有草稿时不渲
   assert.equal(empty.includes(SCAN_WRITE.actions.submitOrder), false);
   assert.equal(empty.includes('submit_key'), false);
 
-  // ② 有草稿 ⇒ 是一个**真能提交**的表单：POST 目标 + 动作 + 幂等键
-  //    ⚠️ 样例页 = **销售页**（2026-10-11 起【提交这一单】只在销售页，见 AC-DB9）
+  // ② ⚠️ 2026-10-12 **改写**（真机丢钱之后）：本单条**再也不放提交按钮** ——
+  //    改前这里断言"本单条上有真能提交的按钮（只带动作 + 幂等键、**不带收款字段**）"，
+  //    而那正是她丢钱的原因：她在销售块填了「全付 + 微信 280」，却按了本单条这颗不带钱的按钮
+  //    ⇒ `payment_count: 0`（钱一行没记）。改后：**提交按钮只在销售块那唯一的表单里**，
+  //    本单条只留 `本单：N 双` +【继续扫下一个】。
   const write = WRITE([line(40), line(41)]);
   const filled = barOf(pageFor('sales', write));
-  assert.ok(filled.includes(`action="${write.postAction}"`), '提交表单要 POST 回本单所在的领域');
-  assert.ok(filled.includes(`value="${SCAN_WRITE.actions.submitOrder}"`), '动作 = submit_order');
-  assert.ok(filled.includes(`value="${write.saleKey}"`), '表单里带着这一轮的幂等键');
-  assert.match(filled, new RegExp(`<button type="submit"[^>]*>${submitText}</button>`));
-  // ⚠️ 提交表单只带"动作 + 幂等键"：收款方式 / 金额留空 = 既有口径的"先货后钱"
-  assert.equal(filled.includes(SCAN_WRITE.fields.paymentMethod), false,
-    '本单条上的提交不带收款字段（要记钱回【销售】那一块的表单）');
+  assert.equal(filled.includes(SCAN_WRITE.actions.submitOrder), false,
+    '本单条里不许再有提交动作（一页只允许一颗提交按钮，见 AC-DB9）');
+  assert.equal(filled.includes('<button'), false, '本单条里一个提交按钮都没有（只有【继续扫下一个】那条链接）');
+  // ③ 有草稿 ⇒ 提交按钮在**销售块**那唯一的表单里，而且带着收款字段
+  const page = pageFor('sales', write);
+  assert.equal((page.match(new RegExp(`value="${SCAN_WRITE.actions.submitOrder}"`, 'g')) || []).length, 1,
+    '整页恰好一颗提交按钮');
+  assert.ok(page.includes(SCAN_WRITE.fields.paymentMethod), '那一颗按钮所在表单带着收款方式字段');
+  assert.ok(page.includes(SCAN_WRITE.fields.paymentAmount), '也带着收款金额字段');
+  assert.ok(page.includes(submitText) || page.includes(SCAN_WRITE.texts.submitButtonCount.replace('{count}', '2')),
+    '销售块那颗就是【提交这一单】（带双数）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -206,8 +213,11 @@ test('AC-DB3 【加入本单】成功后：本单条立即变成 N+1 + 一句极
     // ⚠️ 2026-10-11 起（她：「提交这一单只在销售页显示」）：四个领域**都有**【继续扫下一个】，
     //    但【提交这一单】只在销售页 —— 见 AC-DB9。
     assert.ok(bar.includes('继续扫下一个'), `realm=${realm}：反馈旁边就该是【继续扫下一个】`);
-    assert.equal(bar.includes(SCAN_WRITE.texts.submitButton), realm === 'sales',
-      `realm=${realm}：【提交这一单】只在销售页（其余领域只有【继续扫下一个】）`);
+    // ⚠️ 2026-10-12 **改写**：改前这里断言"销售页的**本单条里**有【提交这一单】"——
+    //    那颗按钮不带收款字段，真机丢钱就是它（见 AC-DB2 的注释）。改后本单条**任何领域都没有**
+    //    提交按钮；销售页那一颗在**销售块**里（AC-DB9 钉着"整页恰好一颗"）。
+    assert.equal(bar.includes(SCAN_WRITE.actions.submitOrder), false,
+      `realm=${realm}：本单条里不许有提交动作（提交按钮在销售块那唯一表单里）`);
   }
 
   // ③ 反馈句里**只有数字**来自会话（不回显编号 / 货号之外的任何输入）
@@ -424,13 +434,18 @@ test('AC-DB9 ⭐【提交这一单】只在「销售」页：其余三个领域�
   // ① 规则可配（配置先行）：缺省只有 sales；渲染层不许写死 'sales'
   assert.deepEqual([...SCAN_PAGE.draftBar.submitRealms], ['sales'],
     '缺省只有「销售」页能提交（她要的口径）——改它只改 config/scanPage.js');
-  // ② 销售页（含缺省 / 认不出的领域）：有草稿 ⇒ 真按钮；没有草稿 ⇒ 一个字都没有
+  // ② 销售页（含缺省 / 认不出的领域）：提交按钮在**销售块那唯一的表单**里
+  //    ⚠️ 2026-10-12 改写：改前它断言"本单条上有真能点的【提交这一单】"——那颗不带钱、
+  //    正是真机丢钱的元凶（见 AC-DB2 的注释）；改后本单条只留 `本单：N 双` +【继续扫下一个】。
   const write = WRITE([line(40), line(41)]);
-  const salesBar = barOf(pageFor('sales', write, FEISHU_MOBILE_UA));
-  assert.match(salesBar, new RegExp(`<button type="submit"[^>]*>${SCAN_WRITE.texts.submitButton}</button>`),
-    '销售页：有草稿 ⇒【提交这一单】是真能点的按钮');
-  assert.equal(barOf(pageFor('sales', WRITE([]), FEISHU_MOBILE_UA)).includes(SCAN_WRITE.texts.submitButton),
-    false, '销售页：没有草稿 ⇒ 不渲染（不是灰按钮）');
+  // ⚠️ 2026-10-12 改写：本单条里**再也没有**提交按钮 ⇒ 改成在**销售块**里断言那一颗（唯一的一颗）
+  const salesPage = pageFor('sales', write, FEISHU_MOBILE_UA);
+  assert.equal((salesPage.match(new RegExp(`value="${SCAN_WRITE.actions.submitOrder}"`, 'g')) || []).length, 1,
+    '销售页：有草稿 ⇒ 页面上一颗（且只有一颗）提交按钮，就在销售块那唯一的表单里');
+  assert.ok(salesPage.includes(SCAN_WRITE.texts.submitButtonCount.replace('{count}', '2')),
+    '销售页：那颗按钮写着几双（提交这一单（2 双））');
+  assert.equal(barOf(pageFor('sales', WRITE([]), FEISHU_MOBILE_UA)).includes(SCAN_WRITE.actions.submitOrder),
+    false, '销售页：本单条里没有提交动作（空本单时那颗在销售块里，写着"（1 双）"）');
   // ③ 其余三个领域：`本单：N 双` ＋【继续扫下一个】照旧，**提交相关的痕迹一个都不许有**
   // ⚠️ **验收领域不在这一条里**：验收有自己的本单条（「已验收 N 双 / 应到 M 双」），
   //    所以销售那条本单条在验收领域**刻意不渲染**（见 `renderScanPage` 的 `bar` 分支）。
@@ -442,9 +457,10 @@ test('AC-DB9 ⭐【提交这一单】只在「销售」页：其余三个领域�
     assert.equal(bar.includes(SCAN_WRITE.actions.submitOrder), false, `realm=${realm}：连那个提交表单都不该有`);
     assert.equal(bar.includes('<button'), false, `realm=${realm}：本单条里一个按钮都不该有`);
   }
-  // ④ 缺省领域与"认不出的领域"都回落销售 ⇒ 照旧能提交
-  assert.ok(barOf(pageFor(undefined, write, FEISHU_MOBILE_UA)).includes(SCAN_WRITE.texts.submitButton),
-    '缺省（销售）⇒ 能提交');
-  assert.ok(barOf(pageFor('不存在的领域', write, FEISHU_MOBILE_UA)).includes(SCAN_WRITE.texts.submitButton),
-    '认不出的领域回落销售（不报错、不空白）⇒ 也能提交');
+  // ④ 缺省领域与"认不出的领域"都回落销售 ⇒ 照旧能提交（在销售块里）
+  for (const realm of [undefined, '不存在的领域']) {
+    const page = pageFor(realm, write, FEISHU_MOBILE_UA);
+    assert.equal((page.match(new RegExp(`value="${SCAN_WRITE.actions.submitOrder}"`, 'g')) || []).length, 1,
+      `realm=${String(realm)}：回落销售 ⇒ 销售块里那颗提交按钮在（不报错、不空白）`);
+  }
 });
