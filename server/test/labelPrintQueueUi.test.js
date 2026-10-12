@@ -32,8 +32,12 @@ const read = (relative) => fs.readFileSync(path.join(WORKBENCH, relative), 'utf8
 async function loadQueueModule() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'label-queue-ui-'));
   fs.copyFileSync(path.join(WORKBENCH, 'core/formatters.js'), path.join(dir, 'formatters.mjs'));
+  // ⚠️ 2026-10-12：`queue.js` 新增 import `core/ui.js`（提交守卫：点了立刻置灰 + 防连点）⇒ 这一份也要复制。
+  fs.copyFileSync(path.join(WORKBENCH, 'core/ui.js'), path.join(dir, 'ui.mjs'));
   fs.writeFileSync(path.join(dir, 'queue.mjs'),
-    read('features/labels/queue.js').split("from '../../core/formatters.js'").join("from './formatters.mjs'"), 'utf8');
+    read('features/labels/queue.js')
+      .split("from '../../core/formatters.js'").join("from './formatters.mjs'")
+      .split("from '../../core/ui.js'").join("from './ui.mjs'"), 'utf8');
   return import(pathToFileURL(path.join(dir, 'queue.mjs')).href);
 }
 
