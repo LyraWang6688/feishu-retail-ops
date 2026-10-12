@@ -611,9 +611,9 @@ if (missing.length) {
       assert.ok(firstNames.length >= 1, `② 二维码附件没写进去：${JSON.stringify(first.value)}`);
       assert.ok(first.events.some((item) => item.event === 'product.tag_qr.written'), '② 要有 `product.tag_qr.written`');
       const numberBefore = textValue((await rowOf('product', product.record_id)).fields?.[F.number]).trim();
-      assert.equal(firstNames[0], buildFileName(numberBefore), '② 附件名 = 按「编号」算出来的文件名');
+      assert.equal(firstNames[0], buildFileName(product.record_id), '② 附件名 = 按「记录 ID」算出来的文件名');
 
-      // ③ 改**源字段**（货号）⇒ 编号跟着变 ⇒ 再跑 ⇒ **覆盖写**，内容 = 新编号
+      // ③ 改**源字段**（货号）⇒ 身份是记录 ID ⇒ 码**不变**、**不重写**
       const newItemNo = `${originalItemNo}-E2E${tag}`;
       await gateway.update('product', product.record_id, { itemNo: newItemNo });
       let numberAfter = numberBefore;
@@ -625,8 +625,8 @@ if (missing.length) {
       const second = await captureLogs(() => service.syncRecord(product.record_id, { reason: 'source_field_changed' }));
       const secondNames = namesOf(await rowOf('product', product.record_id));
       say(`③ 改货号 ⇒ 编号 ${numberBefore} → ${numberAfter} · 附件=${secondNames.join(',')}`);
-      assert.ok(secondNames.includes(buildFileName(numberAfter)), '③ 附件被**覆盖写成新编号**的名字');
-      assert.ok(second.events.some((item) => item.event === 'product.tag_qr.overwriting'), '③ 要有 `product.tag_qr.overwriting`');
+      assert.equal(secondNames.join(","), firstNames.join(","), '③ 改货号 ⇒ 码不该变（身份 = 记录 ID）');
+      assert.equal(second.events.some((item) => item.event === 'product.tag_qr.written'), false, '③ 改货号 ⇒ 不该重写');
 
       // ④ 只改**无关字段**（单价）⇒ 编号没变 ⇒ **跳过**（不许无谓重写）
       //    ⭐ 这里走**事件那一路**的判据：`numberChanged: false` =
