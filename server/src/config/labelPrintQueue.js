@@ -153,6 +153,35 @@ const LABEL_PRINT_QUEUE = Object.freeze({
      */
     contentOffsetXMm: 0,
     contentOffsetYMm: 0,
+    /**
+     * ⭐⭐ **左留白**（mm；默认 `null` = 用 `label.paddingMm`，即与右留白对称）。
+     *
+     * 为什么加它（业务负责人 2026-10-12）：「还是偏左，可以再挪 2mm」——
+     *   但**纯平移**会让最宽那一行被裁（右留白 1.75 − 3 = **−1.25mm** ✗ 超出页面）。
+     *   ⇒ 正解是**把左留白本身调大**（挪的同时腾出空间）。
+     * 与右留白的关系（恒等式，有 AC 钉着）：
+     *   `左留白 + 二维码列 + 信息栏 + 右留白 = 页宽`（信息栏吃剩下的）
+     * ⇒ **左留白 +2mm 而信息栏不变**的唯一办法是**二维码同时缩 2mm**（方案①：15 → 13mm）。
+     * ⭐ **2026-10-12 她拍板方案①：默认就是 `3.5`**（"再挪 2mm"，且靠下面的二维码缩到 13mm 腾空间）。
+     * ⚠️ 只影响**打印产物**（`artifact`），不动 `label.paddingMm` 的语义、也不动浏览器出图那条路。
+     * ⚠️ 因此**左右是有意不对称的**（左 3.5 / 右 1.5）—— 别再写"左右相等"的断言（会和设计打架）。
+     */
+    leftPaddingMm: 3.5,
+    /**
+     * ⭐ **二维码尺寸**（mm；默认 `null` = 用 `typography.qrSizeMm`）。方案①：**13**（15 → 13）。
+     * 为什么缩它：`左留白 + 二维码列 + 信息栏 + 右留白 = 页宽` —— 左留白 +2mm 而**信息栏不变**，
+     * 只能让二维码同时让出 2mm ✅（这样货号不缩字、不被裁；13mm 仍好扫）。
+     */
+    qrSizeMm: 13,
+    /**
+     * ⭐⭐ **裁切线宽度**（mm；默认 `0` = **不画**）。
+     *
+     * 她的原话（2026-10-12）：「我看到在打印的时候，**上下会有横杠**」—— 那就是这圈裁切线
+     * （成卷标签上，上下两条看起来就是横杠）⇒ 默认关掉。
+     * 保留能力：设成正数（例如 `0.2`）就画回来（要做裁切定位时用）。
+     * ⚠️ 它也参与几何：线宽 0 ⇒ 内容盒左右各多 0.2mm（信息栏 20.1 → 20.5mm）。
+     */
+    cutLineMm: 0,
   }),
 
   // ── ⭐ 防连点（业务负责人 2026-10-11 真机反馈：「点完没有反馈 ⇒ 她以为没点上、
@@ -245,6 +274,17 @@ const readMmOffset = (env, key, fallback) => {
   return mm;
 };
 
+/** 解析"左留白"（0~10mm、0.5 步进）；**没设/空串 ⇒ 用默认（null = 与右留白对称）**；非法当场抛。 */
+const readOptionalMm = (env, key, fallback, { min = 0, max = 10, step = 0.5 } = {}) => {
+  const raw = String(env?.[key] ?? '').trim();
+  if (!raw) return fallback;
+  const mm = Number(raw);
+  if (!Number.isFinite(mm) || mm < min || mm > max || Math.abs(mm / step - Math.round(mm / step)) > 1e-9) {
+    throw new Error(`${key} 只能是 ${min}~${max}mm 之间、${step} 的整数倍（当前是「${raw}」）`);
+  }
+  return mm;
+};
+
 const resolveLabelPrintQueueConfig = (env = process.env, base = LABEL_PRINT_QUEUE) => ({
   ...base,
   enabled: readFlag(env, 'LABEL_PRINT_QUEUE_ENABLED', base.enabled),
@@ -287,6 +327,11 @@ const resolveLabelPrintQueueConfig = (env = process.env, base = LABEL_PRINT_QUEU
     //   （renderLabels 里会调它 ⇒ 越界/非法当场抛，不静默）
     contentOffsetXMm: readMmOffset(env, 'LABEL_PRINT_CONTENT_OFFSET_X_MM', base.artifact.contentOffsetXMm),
     contentOffsetYMm: readMmOffset(env, 'LABEL_PRINT_CONTENT_OFFSET_Y_MM', base.artifact.contentOffsetYMm),
+    // ⭐ 左留白（0~10mm；没设/空串 ⇒ 默认值，现在是 3.5 = 方案①）
+    leftPaddingMm: readOptionalMm(env, 'LABEL_PRINT_LEFT_PADDING_MM', base.artifact.leftPaddingMm),
+    // ⭐ 二维码尺寸（5~25mm）/ 裁切线宽度（0~1mm，0 = 不画）
+    qrSizeMm: readOptionalMm(env, 'LABEL_PRINT_QR_SIZE_MM', base.artifact.qrSizeMm, { min: 5, max: 25 }),
+    cutLineMm: readOptionalMm(env, 'LABEL_PRINT_CUT_LINE_MM', base.artifact.cutLineMm, { min: 0, max: 1, step: 0.1 }),
   },
   device: {
     ...base.device,
