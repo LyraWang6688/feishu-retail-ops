@@ -282,13 +282,14 @@ summary { cursor: pointer; }
 .draft-bar .btn + .btn, .draft-bar .write-form + .btn { margin-top: var(--space-2); }
 `;
 
-const renderDocument = ({ title, content, requestId, config = SCAN_PAGE }) => `<!doctype html>
+const renderDocument = ({ title, content, requestId, config = SCAN_PAGE, head = '' }) => `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
 <title>${escapeHtml(title)}</title>
+${head}
 <style>${STYLE}</style>
 </head>
 <body>
@@ -645,6 +646,15 @@ const submitFeedbackAttrs = (writeLike = {}) => {
 
 const hiddenField = (name, value) => `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`;
 
+/**
+ * ⭐⭐ 2026-10-12：「她那次 400 是不是**旧页面**」这个问题，日志里答不了 ✗ ⇒ 让**页面自己说**：
+ * 每个**写表单**都带一个隐藏的构建标识，她提交时随 body 回来 ⇒ warn 里就能看出来 ✓
+ * ⚠️ **只加一个 hidden**（既有字段名 / 语义一个字不动 ✓）；不写死中文 ✓。
+ */
+const pageBuildField = () => hiddenField(
+  SCAN_PAGE.pageBuildField || 'page_build', SCAN_PAGE.pageBuild || '',
+);
+
 const optionsHtml = (values, selected) => values
   .map((value) => `<option value="${escapeHtml(value)}"${String(value) === String(selected) ? ' selected' : ''}>${escapeHtml(value)}</option>`)
   .join('');
@@ -777,7 +787,7 @@ const saleFormHtml = (view, write) => {
     .map((item) => `<option value="${escapeHtml(item.record_id)}">${escapeHtml(item.name)}</option>`).join('');
   const accessoryForm = accessories.length
     ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
-${hiddenField(fields.action, write.actions.addAccessory)}
+${hiddenField(fields.action, write.actions.addAccessory)}${pageBuildField()}
 ${hiddenField(fields.submitKey, write.saleKey)}
 <div class="form-row"><label>${escapeHtml(t.accessoryLabel)}</label><select name="${escapeHtml(fields.accessory)}"><option value="">${escapeHtml(t.accessoryPlaceholder)}</option>${accessoryOptions}</select></div>
 <div class="form-row"><label>${escapeHtml(t.accessoryAmountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" placeholder="${escapeHtml(t.accessoryAmountPlaceholder)}"></div>
@@ -804,7 +814,7 @@ ${hiddenField(fields.submitKey, write.saleKey)}
   return `<section class="card">
 <p class="draft-count">${escapeHtml(fillText(t.draftHeading, { count: lines.length }))}</p>
 <form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
-${hiddenField(write.fields.submitKey, write.saleKey)}
+${hiddenField(write.fields.submitKey, write.saleKey)}${pageBuildField()}
 ${sizeInput}
 <div class="form-row"><label>${escapeHtml(t.amountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" placeholder="${escapeHtml(t.amountPlaceholder)}"></div>
 <div class="form-row"><label>${escapeHtml(t.giftLabel)}</label><input name="${escapeHtml(fields.gift)}"></div>
@@ -818,7 +828,7 @@ ${paymentRowsHtml(write)}
 </form>
 ${accessoryForm}
 ${lines.length ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
-${hiddenField(fields.action, write.actions.clearDraft)}
+${hiddenField(fields.action, write.actions.clearDraft)}${pageBuildField()}
 ${hiddenField(fields.submitKey, write.saleKey)}
 <button type="submit" class="btn btn--ghost"${submitFeedbackAttrs(write)}>${escapeHtml(t.clearButton)}</button>
 </form>` : ''}
@@ -924,7 +934,7 @@ ${stockList}
 <details class="disclosure" data-view="one-tap-replenish">
 <summary class="disclosure__summary">${escapeHtml(v.oneTapReplenish)}</summary>
 <form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
-${hiddenField(fields.action, write.actions.replenish)}
+${hiddenField(fields.action, write.actions.replenish)}${pageBuildField()}
 ${hiddenField(fields.submitKey, write.replenishKey)}
 ${rows}
 <button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.replenishButton)}</button>
@@ -977,7 +987,7 @@ const returnFormHtml = (view, write) => {
 <details class="disclosure" data-view="purchase-return">
 <summary class="disclosure__summary">${escapeHtml(v.purchaseReturn)}</summary>
 <form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
-${hiddenField(fields.action, write.actions.purchaseReturn)}
+${hiddenField(fields.action, write.actions.purchaseReturn)}${pageBuildField()}
 ${hiddenField(fields.submitKey, write.returnKey)}
 ${rows}
 <button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.returnButton)}</button>
@@ -1057,7 +1067,7 @@ ${unreported.map((item) => `<button type="submit" class="btn" data-candidate-siz
 ${emptyDetail}
 <p class="hint">${escapeHtml(t.acceptRowsHint)}</p>
 <form method="post" action="${escapeHtml(acceptance.rowsPostAction || acceptance.postAction)}" class="write-form" data-view="acceptance-rows-form" data-amount-field="${escapeHtml(f.acceptAmount)}" data-amount-hint-text="${escapeHtml(t.acceptAmountRequiredHint || '')}">
-${hiddenField(f.action, write.actions.acceptFinishRows)}
+${hiddenField(f.action, write.actions.acceptFinishRows)}${pageBuildField()}
 ${acceptance.submitKey ? hiddenField(f.submitKey, acceptance.submitKey) : ''}
 ${hiddenField(f.acceptBatch, acceptance.batchNo)}
 ${reported}${already}
@@ -1079,19 +1089,26 @@ ${acceptanceScanNextHtml(userAgent)}
  * **成功页**必须把两个**真实数字**摆出来 + 一个明确的下一步（回未到货批次）——
  * 「点了没反应」里有一半就是"成功后没有交代"。
  */
-const renderAcceptanceDonePage = ({ config = SCAN_PAGE, write = null, acceptance = {}, backHref = '' } = {}) => {
-  const t = (write && write.texts) || SCAN_PAGE.texts;
+const renderAcceptanceDonePage = ({
+    config = SCAN_PAGE, write = null, acceptance = {}, backHref = '',
+    returnPath = '', returnLabel = '', returnDelaySeconds = 0, autoReturnUrl = '',
+  } = {}) => {
+    const t = (write && write.texts) || SCAN_PAGE.texts;
   const scanned = Number(acceptance.scanned || 0);
   const amount = String(acceptance.amountText ?? '');
   return renderDocument({
     title: t.acceptDoneHeading || t.acceptDoneTitle || SCAN_PAGE.texts.acceptDoneTitle,
     config,
+    head: autoReturnUrl && returnDelaySeconds > 0
+      ? `<meta http-equiv="refresh" content="${Number(returnDelaySeconds)};url=${escapeHtml(autoReturnUrl)}">`
+      : '',
     content: `<section class="card state-msg" data-view="acceptance-done">
 <h1 class="state-msg__title--success">✅ ${escapeHtml(t.acceptDoneHeading || t.acceptDoneTitle || SCAN_PAGE.texts.acceptDoneTitle)}</h1>
 <p data-view="acceptance-done-quantity">${escapeHtml(t.acceptDoneQuantityLabel || '')} ${escapeHtml(String(scanned))}</p>
 <p data-view="acceptance-done-amount">${escapeHtml(t.acceptDoneAmountLabel || '')} ${escapeHtml(amount)}</p>
 <p class="foot">${escapeHtml(fillText(t.acceptBatchLine || '', { batchNo: String(acceptance.batchNo || '—') }))}</p>
 ${backHref ? `<p><a class="btn btn--primary" href="${escapeHtml(backHref)}">${escapeHtml(t.acceptDoneBackLabel || '')}</a></p>` : ''}
+${returnPath && returnLabel ? `<p><a class="btn" data-view="success-return" href="${escapeHtml(returnPath)}">${escapeHtml(returnLabel)}</a></p>` : ''}
 </section>`,
   });
 };
@@ -1101,7 +1118,7 @@ const acceptanceFinishHtml = (write, acceptance) => {
   const t = write.texts;
   const fields = write.fields;
   return `<form method="post" action="${escapeHtml(acceptance.postAction)}" class="write-form" data-view="acceptance-finish">
-${hiddenField(fields.action, write.actions.acceptFinish)}
+${hiddenField(fields.action, write.actions.acceptFinish)}${pageBuildField()}
 <label class="size-check">${escapeHtml(t.acceptFinishAmountLabel)}
 <input class="size-qty" name="${escapeHtml(fields.acceptAmount)}" inputmode="decimal" aria-label="${escapeHtml(t.acceptFinishAmountLabel)}">
 </label>
@@ -1201,7 +1218,7 @@ const acceptanceBlockHtml = (view, write, acceptance, userAgent = '') => {
   return `<section class="card" data-view="acceptance" data-batch="${escapeHtml(acceptance.batchNo)}">
 ${acceptanceSummaryHtml(write, acceptance)}
 ${sizes.length ? `<form method="post" action="${escapeHtml(acceptance.postAction)}" class="write-form">
-${hiddenField(fields.action, write.actions.acceptAdd)}
+${hiddenField(fields.action, write.actions.acceptAdd)}${pageBuildField()}
 ${rows}
 <button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.acceptAddButton)}</button>
 </form>` : ''}
@@ -1369,10 +1386,17 @@ ${block}
 const renderScanMessagePage = ({
   title, body, number = '', requestId = '', retryHint = '', details = [],
   backPath = '', backLabel = '', backHint = '', tone = '',
+  // ⭐⭐ 2026-10-12（方案 A）：成功后**自动回首页**（`returnPath` = 服务端渲染的确定 URL ✓）
+  //    + 一颗【返回扫码】兜底（href 与自动跳转**同一个 URL** ⇒ 唯一来源 ✓）。
+  returnPath = '', returnLabel = '', returnDelaySeconds = 0, autoReturnUrl = '',
 }, config = SCAN_PAGE) => renderDocument({
   title,
   config,
   requestId,
+  // ⚠️ 用 `<meta http-equiv="refresh">`（**不是 JS**）：老手机 / 禁脚本也能跳，且 URL 是**服务端写的** ✓
+  head: autoReturnUrl && returnDelaySeconds > 0
+    ? `<meta http-equiv="refresh" content="${Number(returnDelaySeconds)};url=${escapeHtml(autoReturnUrl)}">`
+    : '',
   // ⚠️ **`<section class="card state-msg">` 这一串逐字不变**（连成功页也一样）：
   //    有断言按这串取"她看得见的那张卡"，在 section 上多加属性/class 会把它们悄悄打红。
   //    所以"成功"这个色调只挂在 **h1 的 class** 与那颗 ✅ 上。
@@ -1384,6 +1408,7 @@ ${details.length ? `<ul class="result">${details.map((item) => `<li>${escapeHtml
 ${number ? `<p>${escapeHtml(config.texts.notFoundHint)}<span class="number mono">${escapeHtml(number)}</span></p>` : ''}
 ${retryHint ? `<p class="hint">${escapeHtml(retryHint)}</p>` : ''}
 ${backPath && backLabel ? `<a class="btn btn--primary back-link" href="${escapeHtml(backPath)}">${escapeHtml(backLabel)}${backHint ? `<span>${escapeHtml(backHint)}</span>` : ''}</a>` : ''}
+${returnPath && returnLabel ? `<a class="btn" data-view="success-return" href="${escapeHtml(returnPath)}">${escapeHtml(returnLabel)}</a>` : ''}
 </section>`,
 });
 
