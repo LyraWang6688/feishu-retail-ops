@@ -1,3 +1,15 @@
+/**
+ * ⚠️ 2026-10-12 旧断言改写（**"零 JS"口径按业务负责人的要求改了**）：
+ *  改前（逐字）：`assert.equal(/<script[\\s>]/i.test(html), false, '页面里一行前端脚本都没有');`
+ *  改后（逐字）：**有提交按钮的页面**（销售提交 / 打印这一款）= 整页**只有那一段**
+ *                `<script data-view="submit-feedback">`（只做"置灰 + 换文案 + 计时"）；
+ *                **没有提交按钮的页面**（库存 / 货品无打印 / 补货 / 退货 / 验收）= **0 段**。
+ *  理由：业务负责人真机（逐字）「点完之后**没有 Toast、按键置灰**之类的提示，页面完全没有
+ *        及时的交互反馈 ⇒ 我不知道指令到底有没有到达，**就会一直狂点**」⇒ 她**明确要置灰**；
+ *        "置灰"没有零 JS 的等价物 ⇒ 这一页多了**唯一一段**内联 JS（取舍见
+ *        `scanPageRenderer.js` 的 `submitFeedbackScriptHtml`）。
+ *        ⚠️ 被保护的不变量从"零 JS"收窄成"**只有这一段、只做这件事、不做任何网络/DOM 副作用**"。
+ */
 /** ⚠️ 2026-10-12 旧断言改写（**验收领域改成"扫码页自己开工"**）：
  *  改前（逐字）：`assert.ok(blockOf(html, 'accept').includes(SCAN_PAGE.texts.realmEmptyTitle));`
  *                （以及 `accept: { has: [SCAN_PAGE.texts.realmEmptyTitle], … }` 那一处）
@@ -188,6 +200,8 @@ const EXPECT = {
 // AC-W1 / AC-W2 服务端按领域只渲染一块 + 一页零脚本
 // ═══════════════════════════════════════════════════════════════════════════
 
+const scriptCountOf = (html) => (html.match(/<script[\s>]/gi) || []).length;
+
 test('AC-W1 服务端按 `?from` 只渲染那一块：另外三块连 HTML 都不进（不是 CSS 藏起来）', () => {
   for (const realm of ALL_REALMS) {
     const html = renderScanPage(VIEW, SCAN_PAGE, WRITE, realm);
@@ -217,7 +231,12 @@ test('AC-W1 服务端按 `?from` 只渲染那一块：另外三块连 HTML 都�
 test('AC-W2 页面里一行前端脚本都没有：不依赖任何前端执行（飞书 webview 也不怕）', () => {
   for (const realm of ALL_REALMS) {
     const html = renderScanPage(VIEW, SCAN_PAGE, WRITE, realm);
-    assert.equal(/<script[\s>]/i.test(html), false, '页面里不许有任何 <script>');
+        // ⭐ 2026-10-12（她拍板：交互反馈是硬要求）：
+        //    页面上**只要有带反馈属性的写按钮** ⇒ 恰好那一段脚本；没有写按钮的页面（纯库存）仍然 0 段。
+        const feedbackScripts = scriptCountOf(html);
+        assert.ok(feedbackScripts <= 1, `最多只该有那一段反馈脚本（实际 ${feedbackScripts}）`);
+        assert.equal(feedbackScripts, html.includes('data-submit-feedback=') ? 1 : 0,
+          '有写按钮 ⇒ 1 段；没有 ⇒ 0 段');
     assert.equal(html.includes('location.search'), false, '不许再读 location.search');
     assert.equal(/\sdata-realm\s*=\s*"/.test(html), false, '不许再有 <html data-realm> 那种靠属性显隐的写法');
     assert.equal(/on(click|load|submit)\s*=/i.test(html), false, '不许有内联事件');

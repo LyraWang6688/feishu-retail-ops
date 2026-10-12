@@ -286,6 +286,7 @@ const renderDocument = ({ title, content, requestId, config = SCAN_PAGE }) => `<
 ${content}
 </main>
 ${requestId ? `<p class="foot">${escapeHtml(config.texts.requestIdLabel)} <span class="mono">${escapeHtml(requestId)}</span></p>` : ''}
+${content.includes('data-submit-feedback=') ? submitFeedbackScriptHtml() : ''}
 </body>
 </html>
 `;
@@ -507,10 +508,10 @@ ${pageLink}
     ? `<div class="label-print-banner label-print-banner--dup">
 <p class="label-print-banner__title">${escapeHtml(filled(texts.duplicatedBanner, { count }))}</p>
 <p class="label-print-banner__note">${escapeHtml(texts.duplicatedHint || '')}</p>
-<form class="label-print-form" method="post" action="${escapeHtml(print.postAction)}">
+<form class="label-print-form" method="post" action="${escapeHtml(print.postAction)}" data-submit-feedback-elapsed="${escapeHtml(texts.submitSubmittingElapsedForPrint || texts.printSubmitting || '')}">
 <input type="hidden" name="${escapeHtml(print.actionField)}" value="${escapeHtml(print.actionValue)}">
 <input type="hidden" name="${escapeHtml(print.againField || 'again')}" value="1">
-<button class="btn" type="submit">${escapeHtml(texts.printAgain || '再打一张')}</button>
+<button class="btn" type="submit" data-submit-feedback="${escapeHtml(texts.printSubmitting || '')}">${escapeHtml(texts.printAgain || '再打一张')}</button>
 </form>
 </div>`
     : (showSubmitted
@@ -520,6 +521,9 @@ ${pageLink}
         ? (texts.submittedOnline || statusText)
         : (texts.submittedOffline || statusText))}</p>
 <p class="label-print-banner__note">${escapeHtml(texts.submittedNoRepeat || '')}</p>
+${print.queue_position && texts.submittedQueueNote
+    ? `<p class="label-print-banner__note" data-view="print-queue-position">${escapeHtml(filled(texts.submittedQueueNote, { position: print.queue_position }))}</p>`
+    : ''}
 </div>`
       : '');
   // 「最近一次：<状态>」+（失败时）原因 —— 她要"失败要给原因"，所以原因**同一行看得见**。
@@ -531,7 +535,7 @@ ${heading}
 ${banner}
 <form class="label-print-form" method="post" action="${escapeHtml(print.postAction)}">
 <input type="hidden" name="${escapeHtml(print.actionField)}" value="${escapeHtml(print.actionValue)}">
-<button class="btn btn--primary" type="submit">${escapeHtml(texts.printSingle || REALM_TEXTS.labelHeading)}</button>
+<button class="btn btn--primary" type="submit" data-submit-feedback="${escapeHtml(texts.printSubmitting || '')}">${escapeHtml(texts.printSingle || REALM_TEXTS.labelHeading)}</button>
 </form>
 <p class="label-print-status"><span class="label-print-badge ${badgeClass}">${escapeHtml(statusText || '')}</span></p>
 ${jobLine}
@@ -539,6 +543,46 @@ ${batchLink}
 ${pageLink}
 </section>`;
 };
+
+/**
+ * ⭐⭐ 2026-10-12（业务负责人真机反馈，逐字）：「点完之后**没有 Toast、按键置灰**之类的提示，
+ *   页面完全没有及时的交互反馈 ⇒ 我不知道指令到底有没有到达，**就会一直狂点**」。
+ *
+ * 🔴 这是这一页**唯一**的一段 JS（她明确要"置灰"，而"置灰"没有零 JS 的等价物）：
+ *   · 只做一件事：**提交时把按钮置灰 + 换成「正在下发…」**（文案从 `data-submitting` 读，配置给的）；
+ *   · 不发任何请求、不碰 DOM 别的部分、不依赖任何框架/构建产物；
+ *   · ⚠️ 它**只在「货品」领域**（打印表单所在的那一块）出现 —— 其余五个领域**照旧一行脚本都没有**；
+ *   · 退一步：脚本没跑（webview 禁 JS）也**不影响功能** —— 表单照旧是原生提交，
+ *     只是少了"按钮立刻置灰"这一层；服务端那两道（短窗去重 + 结果横幅）仍然在。
+ */
+const submitSubmittingText = (write) => String(write?.texts?.submitSubmitting || '');
+const submitSubmittingElapsedText = (write) => String(write?.texts?.submitSubmittingElapsed || '');
+
+const submitFeedbackScriptHtml = () => `<script data-view="submit-feedback">
+(function () {
+  var forms = document.querySelectorAll('form');
+  for (var i = 0; i < forms.length; i += 1) {
+    forms[i].addEventListener('submit', function (event) {
+      var button = event.target.querySelector('button[type="submit"]');
+      if (!button || button.disabled) return;
+      var form = event.target;
+      var label = button.getAttribute('data-submit-feedback') || form.getAttribute('data-submit-feedback') || '';
+      var elapsedTemplate = button.getAttribute('data-submitting-elapsed')
+        || form.getAttribute('data-submit-feedback-elapsed') || '';
+      button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+      button.textContent = label;
+      // 服务端慢的时候**不许看起来"没反应"**：每一秒把"已 N 秒"接在后面（纯前端计时）。
+      if (!elapsedTemplate) return;
+      var seconds = 0;
+      setInterval(function () {
+        seconds += 1;
+        button.textContent = elapsedTemplate.replace('{seconds}', String(seconds));
+      }, 1000);
+    });
+  }
+})();
+</script>`;
 
 /**
  * ── 两个写入口的表单（销售建单 / 补货报单）────────────────────────────────────
@@ -550,6 +594,21 @@ ${pageLink}
  *   连点两次 = 同一个键 = 只写一次（见 `services/scanWriteService.js`）。
  * ⚠️ 所有值都 `escapeHtml`：它们从表里来（货号 / 尺码），不是可信 HTML。
  */
+/**
+ * ⭐⭐ 2026-10-12（业务负责人拍板，落进 AGENTS.md《前端交互反馈纪律》）：
+ *   「用户点击完之后**一定要有交互**：要么按钮置灰 · 要么弹出 Toast · 要么更改当前的提示文案……
+ *     **不然用户以为点了没反应，就会多次提交**。」
+ *   ⇒ 扫码页**所有会发起写操作的按钮**都挂这两个属性：
+ *     · `data-submit-feedback` —— 点下去**立刻**换成的文案（按钮也同时 disabled）；
+ *     · `data-submitting-elapsed` —— 服务端慢时每秒刷新的"处理中（已 N 秒）"模板。
+ *   ⚠️ 属性值统一从配置来（`scanWrite.texts.submitSubmitting*`），渲染层不写死中文。
+ */
+const submitFeedbackAttrs = (writeLike = {}) => {
+  const texts = writeLike?.texts || {};
+  return ` data-submit-feedback="${escapeHtml(texts.submitSubmitting || '')}"`
+    + ` data-submitting-elapsed="${escapeHtml(texts.submitSubmittingElapsed || '')}"`;
+};
+
 const hiddenField = (name, value) => `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`;
 
 const optionsHtml = (values, selected) => values
@@ -689,7 +748,7 @@ ${hiddenField(fields.submitKey, write.saleKey)}
 <div class="form-row"><label>${escapeHtml(t.accessoryLabel)}</label><select name="${escapeHtml(fields.accessory)}"><option value="">${escapeHtml(t.accessoryPlaceholder)}</option>${accessoryOptions}</select></div>
 <div class="form-row"><label>${escapeHtml(t.accessoryAmountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" placeholder="${escapeHtml(t.accessoryAmountPlaceholder)}"></div>
 <div class="form-row"><label>${escapeHtml(t.giftLabel)}</label><input name="${escapeHtml(fields.gift)}"></div>
-<button type="submit" class="btn">${escapeHtml(t.addButton)}</button>
+<button type="submit" class="btn"${submitFeedbackAttrs(write)}>${escapeHtml(t.addButton)}</button>
 </form>`
     : '';
   // 校验失败原地给她的那句话（差额）—— 没有就不渲染这一个块。
@@ -720,14 +779,14 @@ ${draftLinesHtml(write)}
 ${paymentStatusHtml(write)}
 ${paymentRowsHtml(write)}
 <p class="hint">${escapeHtml(t.amountOptionalHint || '')}</p>
-<button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}">${escapeHtml(countLabel)}</button>
-<button type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.addLine)}">${escapeHtml(t.addAnotherButton || t.addButton)}</button>
+<button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}" data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(countLabel)}</button>
+<button type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.addLine)}"${submitFeedbackAttrs(write)}>${escapeHtml(t.addAnotherButton || t.addButton)}</button>
 </form>
 ${accessoryForm}
 ${lines.length ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
 ${hiddenField(fields.action, write.actions.clearDraft)}
 ${hiddenField(fields.submitKey, write.saleKey)}
-<button type="submit" class="btn btn--ghost">${escapeHtml(t.clearButton)}</button>
+<button type="submit" class="btn btn--ghost"${submitFeedbackAttrs(write)}>${escapeHtml(t.clearButton)}</button>
 </form>` : ''}
 </section>`;
 };
@@ -834,7 +893,7 @@ ${stockList}
 ${hiddenField(fields.action, write.actions.replenish)}
 ${hiddenField(fields.submitKey, write.replenishKey)}
 ${rows}
-<button type="submit" class="btn btn--primary">${escapeHtml(t.replenishButton)}</button>
+<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.replenishButton)}</button>
 </form>
 </details>
 </section>`;
@@ -887,7 +946,7 @@ const returnFormHtml = (view, write) => {
 ${hiddenField(fields.action, write.actions.purchaseReturn)}
 ${hiddenField(fields.submitKey, write.returnKey)}
 ${rows}
-<button type="submit" class="btn btn--primary">${escapeHtml(t.returnButton)}</button>
+<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.returnButton)}</button>
 </form>
 </details>
 </section>`;
@@ -916,7 +975,7 @@ ${hiddenField(fields.action, write.actions.acceptFinish)}
 <label class="size-check">${escapeHtml(t.acceptFinishAmountLabel)}
 <input class="size-qty" name="${escapeHtml(fields.acceptAmount)}" inputmode="decimal" aria-label="${escapeHtml(t.acceptFinishAmountLabel)}">
 </label>
-<button type="submit" class="btn btn--primary">${escapeHtml(t.acceptFinishSubmit)}</button>
+<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.acceptFinishSubmit)}</button>
 </form>`;
 };
 
@@ -985,7 +1044,7 @@ ${acceptanceSummaryHtml(write, acceptance)}
 ${sizes.length ? `<form method="post" action="${escapeHtml(acceptance.postAction)}" class="write-form">
 ${hiddenField(fields.action, write.actions.acceptAdd)}
 ${rows}
-<button type="submit" class="btn btn--primary">${escapeHtml(t.acceptAddButton)}</button>
+<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.acceptAddButton)}</button>
 </form>` : ''}
 ${acceptanceScanNextHtml(userAgent)}
 ${acceptanceFinishHtml(write, acceptance)}

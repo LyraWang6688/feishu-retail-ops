@@ -330,6 +330,12 @@ const createScanPageRouter = (options = {}) => {
       const justNow = jobId ? await queue.getJob(jobId).catch(() => null) : null;
       // ⚠️ 只认"这一条任务确实是这一款"的 —— URL 里的 job 参数是手改得了的，不许拿来显示别的款。
       const mine = justNow && Array.isArray(justNow.numbers) && justNow.numbers.includes(number) ? justNow : null;
+      // ⭐⭐ 2026-10-12（她：「点完之后没有 Toast、按键置灰之类的提示，页面完全没有及时的交互反馈
+      //    ⇒ 我不知道指令到底有没有到达，就会一直狂点」）⇒ 横幅上要回答"**排在第几位**"。
+      //    ⚠️ 只读一次；**读不到就不显示这一句**（宁可不说，也不编一个数给她）。
+      const queuePosition = mine && typeof queue.queuePositionOf === 'function'
+        ? await queue.queuePositionOf(mine.job_id).catch(() => null)
+        : null;
       return {
         ...base,
         online: Boolean(status.online),
@@ -337,6 +343,7 @@ const createScanPageRouter = (options = {}) => {
         count_queued: status.counts?.queued || 0,
         // 横幅用"刚提交的那一条"（拿不到就退回最近一次 —— 至少不是空白）。
         banner_job: mine ? queue.summaryOf(mine) : null,
+        queue_position: queuePosition,
         job: mine ? queue.summaryOf(mine) : latest,
       };
     } catch (error) {
