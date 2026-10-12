@@ -55,6 +55,8 @@ const { textValue } = require('./v1BitableGateway');
 const { logInfo, logWarn, logError } = require('../utils/logger');
 // ⭐ 2026-10-09：扫码页「货品信息」内存快照的跨模块失效（写标签二维码 = 改了货品）。
 const { invalidateLiveInventorySnapshot } = require('./liveInventorySnapshot');
+// ⭐ 2026-10-12：事件判"没变/判不了"时的**延迟复核**（真机根因：公式列延迟 ⇒ 没有人再复核）
+const { createTagQrRecheckQueue } = require('../utils/tagQrRecheckQueue');
 
 const SCAN_URL_PLACEHOLDER = 'number';
 
@@ -211,6 +213,10 @@ const createTagQrCodeService = ({
   gateway,
   config = TAG_QR_CODE,
   generatePng = generateQrPng,
+  // ⭐ 延迟复核：可整体替换（测试/运维），也可只注入定时器（单测用假时钟）
+  recheck: recheckOption,
+  setTimer,
+  clearTimer,
 } = {}) => {
   const productTable = V1_BITABLE_SCHEMA.tables.product;
   const numberFieldName = productTable.fields[config.fields.number];
@@ -293,9 +299,11 @@ const createTagQrCodeService = ({
    * @param {string} [options.reason]         日志用（record_added / number_changed / backfill …）
    * @param {true|false|null} [options.numberChanged]
    *   `true`    = 已经确定编号变了 ⇒ **覆盖**；
-   *   `false` / 不传 = 走**幂等**：这一列有值就跳过（脚本 / 新增记录都用这一档）；
-   *   `null`    = **判不了**（事件没带值 / 值读不出）⇒ 只有在"现存附件的文件名与当前编号不符"
-   *               时才覆盖；名字对得上就跳过。⭐ **绝不许把"判不了"当"没变"**（2026-10-09 的教训）。
+   *   **其余（`false` / `null` / `undefined`）= 走"按编号核一遍"**：现存附件的**文件名/反解出的编号
+   *   == 当前编号** ⇒ 跳过（真的已同步）；否则 ⇒ **覆盖重写**。
+   *   ⭐ `undefined`（回填脚本 `--write` 不带 `--overwrite`、新增记录那一档）**也走这条** ——
+   *      真机 2026-10-12：这一档曾被当成"已经有值就跳过" ⇒ `--write` 也修不了旧码 ✗。
+   *   ⚠️ `null` = 事件里**判不了**（没带值 / 读不出）—— **绝不许把"判不了"当"没变"**（2026-10-09 教训）。
    * @returns {Promise<{record_id, status, reason, file_token?, file_name?, scan_url?}>}
    *   `status` ∈ written | skipped；**失败一律抛错**（由调用方记日志/计失败数）。
    *   ⚠️ 靠文件名判出过期而重写时，`reason` 一律记成 **`number_changed`**（事实如此）；
@@ -330,20 +338,30 @@ const createTagQrCodeService = ({
     //   ② `numberChanged === false`（事件说这一列前后值相同）**也要核一遍附件** ——
     //      改前这一档直接"连表都不读"就跳过了，于是"附件早就旧了、之后只改别的字段"
     //      这条路会**永远**跳过 ⇒ 二维码一直停在旧编号上（真机 292 次跳过 / 0 次写回）。
+    //   ③ ⭐ **2026-10-12 二次修（写入路径）**：`numberChanged` 只认**三种**含义 ——
+    //      `true` = 已确定编号变了（**强制覆盖**，不再看文件名）；
+    //      **其余（`false` / `null` / `undefined`）一律要核一遍附件**（按编号/文件名），核不过就覆盖。
+    //      ⚠️ 改前 `undefined`（回填脚本 `--write` **不带** `--overwrite` 就是这一档）被当成
+    //      "已经有值就跳过" ⇒ 真机现场：`--write` 那一条记 `skipped_existing`
+    //      （`existing_file_names=["tag-qr-832-372-6H_棕色_A.png"]`）而它明明是旧码 ✗。
+    //      ⇒ 现在**写入路径也按编号判过期**：干跑说"待更新"的，`--write` 就必须真的更新。
     const safeNumber = sanitizeNumberForFileName(number, config);
     const namesMatch = existing.length > 0 && existing.some((item) => item.name === fileName
       || numberFromFileName(item.name, config) === safeNumber);
-    const staleByFileName = existing.length > 0
-      && (numberChanged === null || numberChanged === false)
-      && !namesMatch;
+    const forceOverwrite = numberChanged === true;
+    const staleByFileName = existing.length > 0 && !forceOverwrite && !namesMatch;
     // ⭐ 覆盖原因**如实**：靠文件名判出来的不匹配，就是 `number_changed`
     //   （而不是含混的 `number_change_unknown`）——日志/返回值里要能一眼看出是"改了"。
     const effectiveReason = staleByFileName ? 'number_changed' : reason;
 
     if (existing.length) {
-      const overwrite = numberChanged === true || staleByFileName;
+      const overwrite = forceOverwrite || staleByFileName;
       if (!overwrite) {
-        if (numberChanged === null || numberChanged === false) {
+        // ⚠️ 跳过时的**日志口径按"来路"分**（2026-10-12）：
+        //    事件那一路（`false` = 事件说没变 / `null` = 判不了）⇒ `skipped_number_unchanged` + `number_unchanged`；
+        //    脚本/新增那一路（`undefined` = 幂等档）⇒ 仍然是 `skipped_existing` + `already_present`。
+        //    （判**过期**的口径两边已经统一：`staleByFileName` 覆盖 undefined ✅）
+        if (numberChanged === false || numberChanged === null) {
           // `numberChanged === null` 只可能来自**事件那一路**（判不了 ⇒ 退化成比文件名）：
           // 比完一致 ⇒ 结论就是"编号没变"，**如实记成 skipped_number_unchanged**
           //（与快路径同一个事件名；`verified_by` 说明这一次是靠文件名核出来的）。
@@ -438,6 +456,19 @@ const createTagQrCodeService = ({
   };
 
   /**
+   * ⭐ 延迟复核队列（2026-10-12）：事件把这次编辑判成"编号没变/判不了"时，
+   * **过一会儿再核一次**（那时公式列已经算完）—— 真机那次改货号就是这么漏的。
+   * 幂等（同一条只排一次）、失败只记日志；可注入定时器便于单测用假时钟。
+   */
+  const recheck = recheckOption || createTagQrRecheckQueue({
+    service: { syncRecord },
+    enabled: config.recheck?.enabled !== false,
+    delayMs: config.recheck?.delayMs,
+    setTimer,
+    clearTimer,
+  });
+
+  /**
    * 表变更事件入口：`routes/larkEvents.js` 把**货品信息**那张表的 `action_list` 原样交进来。
    *
    * ⚠️ **逐条 try/catch**：一条失败不能带走同一包里的其他记录（飞书一次推送常带好几条）。
@@ -481,10 +512,20 @@ const createTagQrCodeService = ({
             after_value: previewValue(detail.after),
           });
         }
-        results.push(await syncRecord(recordId, {
+        const outcome = await syncRecord(recordId, {
           reason: numberChanged === true ? 'number_changed' : 'number_change_unknown',
           numberChanged,
-        }));
+        });
+        // ⭐⭐ 2026-10-12：**判成"没变"（`number_unchanged`）或"判不了"（`number_change_unknown`）时
+        //    排一次延迟复核** —— 真机那次编辑，事件到达时公式列还是旧值 ⇒ 如实判"没变"，
+        //    而之后再没有第二次事件 ⇒ 旧码一直挂着。这一排程就是"过 60 秒再看一眼"。
+        if (outcome?.reason === 'number_unchanged' || numberChanged === null) {
+          const scheduled = recheck.schedule(recordId);
+          logInfo('product.tag_qr.recheck.scheduled', {
+            record_id: recordId, scheduled: scheduled.scheduled, why: scheduled.reason || 'pending_change',
+          });
+        }
+        results.push(outcome);
       } catch (error) {
         failed.push({ record_id: recordId, action, error: error.message });
         logError('product.tag_qr.record_failed', { record_id: recordId, action, error: error.message });
@@ -637,6 +678,8 @@ const createTagQrCodeService = ({
     syncRecord,
     handleTableChanges,
     sweepStaleTagQrCodes,
+    // ⭐ 延迟复核队列（测试 / 运维观察用：`pendingCount()` 能看到还排着几条）
+    recheck,
   };
 };
 

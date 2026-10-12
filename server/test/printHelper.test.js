@@ -23,7 +23,9 @@
  *   AC-H11 **台账**：原子写（临时文件 + rename）、条数上限、读坏文件退化成空台账（不抛）；
  *   AC-H12 **本地页面**：零脚本、说清配置错误、带【测试打印】/【重新连接】/【补打】；
  *          测试打印用的是**同一条打印命令路径**；
- *   AC-H13 **回执发不出去不等于没打**：台账已记 printed，重投时只补回执、不重打。
+ *   AC-H13 **回执发不出去不等于没打**：台账已记 printed，重投时只补回执、不重打；
+ *   AC-H17 ⭐ **打印参数可配**（默认 `disable-auto-rotation` —— SumatraPDF 的自动旋转才是
+ *          "横版被转 90°、小一圈"的真凶；排障可加 `rotate=90|180|270`）。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -43,6 +45,8 @@ const baseConfig = (patch = {}) => ({
   printer: { ...helper.DEFAULT_CONFIG.printer, ...(patch.printer || {}) },
   ...patch,
 });
+
+const withPrinter = (patch = {}) => ({ ...helper.DEFAULT_CONFIG.printer, ...patch });
 
 /** 一个"按契约回答"的假服务器（记录每一次调用）。 */
 const fakeServer = (options = {}) => {
@@ -184,7 +188,12 @@ test('AC-H1 SSE 分帧：一帧 / 一 chunk 多帧 / 半帧跨 chunk / ping 注�
 test('AC-H2 打印命令进配置：sumatra / command / dialog 三种模式 + {file} 替换', () => {
   const sumatra = helper.buildPrintCommand(baseConfig(), 'C:\\tmp\\a b.pdf');
   assert.equal(sumatra.command, 'C:\\print-helper\\SumatraPDF.exe');
-  assert.deepEqual(sumatra.args, ['-print-to-default', '-silent', 'C:\\tmp\\a b.pdf']);
+  // ⚠️ 2026-10-12 改断言（**"参数全部可配、argv 数组拼"这条本意没变**）：
+  //   改前：`['-print-to-default', '-silent', file]`
+  //   改后：中间多了 `-print-settings disable-auto-rotation`（新的默认，关掉 SumatraPDF 的自动旋转）。
+  assert.deepEqual(sumatra.args, [
+    '-print-to-default', '-silent', '-print-settings', 'disable-auto-rotation', 'C:\\tmp\\a b.pdf',
+  ]);
 
   const command = helper.buildPrintCommand(baseConfig({
     printer: { mode: 'command', command: 'C:\\tools\\print.exe', args: ['/p', '{file}'] },
@@ -579,6 +588,88 @@ test('AC-H16 ⭐⭐ SSE 正常 ⇒ 入队到"领取"≤1 秒（帧一到就 drai
     instance.stop?.();
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ── AC-H17：打印参数（SumatraPDF 的 auto-rotation 才是"横版不能铺满"的真凶）──────
+//
+// 2026-10-12 业务负责人真机 + Lead 拉官方文档定位：
+//   SumatraPDF **默认会把"宽 > 高"的页面自动转 90°** 去塞进纸（`-print-settings` 的
+//   `disable-auto-rotation` 就是关掉它，3.5+）。我们的页面是 40×30（宽>高）⇒ 被自动转了 90°
+//   ⇒「邯美皮鞋」顺着短边 ✗，而且"不转就塞不下"这件事**根本不存在**（是我们先被转了才塞不下）。
+//   ⇒ 默认给小助手加上 `disable-auto-rotation`；万一某台机器方向还是反的，就一档一档试 rotate。
+
+test('AC-H17-1 ⭐⭐ 默认含 `disable-auto-rotation`，且拼进 argv（不是拼字符串、且在文件参数之前）', () => {
+  assert.deepEqual(helper.DEFAULT_CONFIG.printer.printSettings, ['disable-auto-rotation'],
+    '默认必须关掉 SumatraPDF 的自动旋转（真凶）');
+  const built = helper.buildPrintCommand(baseConfig({ printer: withPrinter({ mode: 'sumatra', sumatraExe: 'C:/s.exe' }) }), 'D:/dl/a.pdf');
+  assert.equal(built.command, 'C:/s.exe');
+  assert.deepEqual(built.args, [
+    '-print-to-default', '-silent', '-print-settings', 'disable-auto-rotation', 'D:/dl/a.pdf',
+  ], '参数要以 argv 数组拼好：`-print-settings <值>` 落在**文件参数之前**，一个 `-print-settings` 只出现一次');
+});
+
+test('AC-H17-2 ⭐ 配置能覆盖（排障四档）：加 `rotate=180` ⇒ 一个逗号串、顺序正确、只出现一次', () => {
+  const built = helper.buildPrintCommand(baseConfig({
+    printer: withPrinter({ mode: 'sumatra', sumatraExe: 'C:/s.exe', printSettings: ['disable-auto-rotation', 'rotate=180'] }),
+  }), 'D:/dl/a.pdf');
+  assert.deepEqual(built.args, [
+    '-print-to-default', '-silent', '-print-settings', 'disable-auto-rotation,rotate=180', 'D:/dl/a.pdf',
+  ], 'SumatraPDF 的 `-print-settings` 收**一个逗号分隔**的参数');
+  assert.equal(built.args.filter((arg) => arg === '-print-settings').length, 1);
+  // 空数组 = 不加这一档（给她"回到 Sumatra 默认行为"的退路）
+  const none = helper.buildPrintCommand(baseConfig({
+    printer: withPrinter({ mode: 'sumatra', sumatraExe: 'C:/s.exe', printSettings: [] }),
+  }), 'D:/dl/a.pdf');
+  assert.deepEqual(none.args, ['-print-to-default', '-silent', 'D:/dl/a.pdf']);
+});
+
+test('AC-H17-3 ⭐ 非法值当场拒并**指出字段名**（非数组 / 空串 / 重复 / 值里带逗号 / args 里自带这一档）', () => {
+  const exists = () => true;
+  const cases = [
+    ['非数组', { printSettings: 'disable-auto-rotation' }, 'printer.printSettings'],
+    ['元素不是字符串', { printSettings: [1] }, 'printer.printSettings'],
+    ['有空串', { printSettings: ['disable-auto-rotation', '  '] }, 'printer.printSettings'],
+    ['重复', { printSettings: ['rotate=90', 'rotate=90'] }, 'printer.printSettings'],
+    ['值里带逗号（会被拼成两档）', { printSettings: ['rotate=90,noscale'] }, 'printer.printSettings'],
+  ];
+  for (const [label, printer, field] of cases) {
+    const checked = helper.validateConfig(baseConfig({ printer: withPrinter({ mode: 'sumatra', ...printer }) }), { exists });
+    assert.equal(checked.ok, false, `${label}：必须拒`);
+    assert.ok(checked.errors.some((error) => error.field === field),
+      `${label}：错误要指到 ${field}（实际 ${JSON.stringify(checked.errors.map((e) => e.field))}）`);
+  }
+  // ⚠️ args 里**已经**有 `-print-settings` ⇒ 会和新的那一段**打两份** ⇒ 明确拒绝并指路
+  const conflict = helper.validateConfig(baseConfig({
+    printer: withPrinter({ mode: 'sumatra', args: ['-print-to-default', '-print-settings', 'noscale', '{file}'] }),
+  }), { exists });
+  assert.equal(conflict.ok, false);
+  assert.ok(conflict.errors.some((error) => error.field === 'printer.args' || error.field === 'printer.printSettings'),
+    '两份 -print-settings 必须被拦住（并说清改用哪个字段）');
+  // 合法值：四档 rotate 都放行
+  for (const value of ['disable-auto-rotation', 'rotate=90', 'rotate=180', 'rotate=270', 'noscale']) {
+    const checked = helper.validateConfig(baseConfig({ printer: withPrinter({ mode: 'sumatra', printSettings: [value] }) }), { exists });
+    assert.equal(checked.ok, true, `${value} 应该放行（排障要一档一档试）`);
+  }
+});
+
+test('AC-H17-4 ⭐ 本地状态页要能看到"当前打印参数"（排障时一眼看到，不用翻配置）', async () => {
+  const { helper: instance, cleanup } = makeHelper({
+    config: { printer: withPrinter({ mode: 'sumatra', printSettings: ['disable-auto-rotation', 'rotate=180'] }) },
+  });
+  try {
+    const html = await instance.localPageHtml();
+    assert.match(html, /disable-auto-rotation,rotate=180/, '状态页要显示当前 -print-settings');
+    assert.match(html, /打印参数/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('AC-H17-5 ⭐ `mode: command` 不加这一档（那条命令的参数由她自己写）', () => {
+  const built = helper.buildPrintCommand(baseConfig({
+    printer: withPrinter({ mode: 'command', command: 'myprint.exe', args: ['/q', '{file}'] }),
+  }), 'D:/dl/a.pdf');
+  assert.deepEqual(built.args, ['/q', 'D:/dl/a.pdf'], 'command 模式原样透传，不塞 SumatraPDF 的参数');
 });
 
 // ── AC-H11：台账 ──────────────────────────────────────────────────────────

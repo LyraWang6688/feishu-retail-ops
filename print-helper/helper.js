@@ -83,6 +83,14 @@ const DEFAULT_CONFIG = Object.freeze({
     sumatraExe: 'C:\\print-helper\\SumatraPDF.exe',
     // `{file}` = 下载下来的 PDF 的路径（会被替换）。
     args: ['-print-to-default', '-silent', '{file}'],
+    // ⭐⭐ 2026-10-12：SumatraPDF 的 `-print-settings`（**逗号分隔的一段**）。
+    //    🔴 默认 `disable-auto-rotation` —— 这是"横版标签被转 90°、还缩到 73.5%"的**真凶**：
+    //      SumatraPDF 默认会把"宽 > 高"的页面**自动转 90° 去塞进纸**（官方文档 3.5+ 有这一项）。
+    //      我们的页面是 40×30（宽>高）⇒ 被自动转 ⇒ 品牌顺着短边；而"不转就塞不下"根本不存在。
+    //    ⇒ 关掉它，**原始横版就能原样打印：方向对 + 100% 铺满**。
+    //    🧰 排障（万一某台机器方向还是反的）：在这一档里加 `rotate=90` / `rotate=180` / `rotate=270`
+    //      一档一档试（它们是在自动旋转之上**再**转）。清空数组 = 回到 SumatraPDF 的默认行为。
+    printSettings: ['disable-auto-rotation'],
     // mode=command 时用这个（args 同样支持 {file}）。
     command: '',
     printTimeoutMs: 60000,
@@ -376,6 +384,33 @@ const validateConfig = (config, options = {}) => {
   //      ① 降级时**优先长轮询**（`longPollWaitMs`，任务一到立刻返回，延迟≈0）；
   //      ② 定时轮询只是"连长轮询都失败"时的最后兜底；
   //      ③ 重连退避**封顶 3 秒**（下面那条），把"断连后的盲区"压到秒级。
+  // ⭐ 打印参数（`-print-settings`）：数组、非空字符串、**不许重复**、**不许带逗号**（会被拼成两档）。
+  const settings = config?.printer?.printSettings;
+  if (!Array.isArray(settings)) {
+    push('printer.printSettings', '打印参数必须是一个字符串数组（例如 ["disable-auto-rotation"]；空数组 = 不加这一档）');
+  } else {
+    const bad = settings.find((item) => typeof item !== 'string' || !item.trim()
+      || item.includes(',') || /\s/.test(item.trim()));
+    const seen = new Set();
+    const dup = settings.find((item) => {
+      const key = String(item).trim();
+      if (seen.has(key)) return true;
+      seen.add(key);
+      return false;
+    });
+    if (bad !== undefined) {
+      push('printer.printSettings', `打印参数里每一项都要是**不含空格与逗号**的非空字符串（现在有「${bad}」）`
+        + ' —— 逗号会被当成"两档参数"，空格会被 SumatraPDF 当成另一个参数');
+    } else if (dup !== undefined) {
+      push('printer.printSettings', `打印参数里不许有重复项（「${dup}}」出现了两次）`);
+    }
+  }
+  // ⚠️ `args` 里自带 `-print-settings` ⇒ 会和上面那一档**打两份**，谁生效看顺序 ⇒ 明确拒绝。
+  if (String(config?.printer?.mode || '').trim() === 'sumatra'
+    && (config?.printer?.args || []).some((arg) => String(arg).trim() === '-print-settings')) {
+    push('printer.args', '`args` 里不要再写 `-print-settings` —— 它已经由 `printer.printSettings` 负责，'
+      + '两份会打架（改这一档请写 printSettings）');
+  }
   const poll = Number(config?.pollFallbackMs);
   if (!Number.isFinite(poll) || poll < 500) {
     push('pollFallbackMs', `兜底轮询间隔不能小于 500 毫秒（现在 ${config?.pollFallbackMs}）—— 那等于拿服务器刷请求`);
@@ -424,7 +459,19 @@ const buildPrintCommand = (config, filePath) => {
   const file = String(filePath || '');
   const fill = (arg) => String(arg).split('{file}').join(file);
   if (mode === 'sumatra') {
-    return { command: String(printer.sumatraExe || ''), args: (printer.args || []).map(fill) };
+    // ⚠️ `{file}` 是**位置参数**：`-print-settings` 必须落在它**之前**（放到文件后面会被当成文件名）。
+    // ⚠️ `-print-settings` 的值是**一个逗号分隔的参数**（SumatraPDF 的语法），不是多个 argv。
+    const rawArgs = printer.args || [];
+    const settings = Array.isArray(printer.printSettings)
+      ? printer.printSettings.map((item) => String(item).trim()).filter(Boolean)
+      : [];
+    const args = rawArgs.map(fill);
+    if (settings.length) {
+      const fileIndex = rawArgs.findIndex((arg) => String(arg).includes('{file}'));
+      const at = fileIndex >= 0 ? fileIndex : args.length;
+      args.splice(at, 0, '-print-settings', settings.join(','));
+    }
+    return { command: String(printer.sumatraExe || ''), args };
   }
   if (mode === 'command') {
     return { command: String(printer.command || ''), args: (printer.args || []).map(fill) };
@@ -954,6 +1001,9 @@ ${row('服务器', `${baseUrl}`, serverOnline === null ? false : true)}
 ${row('手机看到的状态', serverOnline ? '打印电脑在线' : '未连接（任务已排队）', serverOnline === true)}
 ${row('长连接（SSE）', state.sseConnected ? '已连接' : (state.fallbackActive ? '断开了，正在用兜底轮询' : '未连接'), state.sseConnected)}
 ${row('打印程序', errors.length ? '未配好' : `${String(config.printer.mode)} 可用`, errors.length === 0)}
+${row('打印参数', (Array.isArray(config.printer.printSettings) && config.printer.printSettings.length)
+    ? `-print-settings ${config.printer.printSettings.join(',')}`
+    : '（没设 —— 用 SumatraPDF 自己的默认行为，宽页面会被自动转 90°）', null)}
 ${row('本地台账', `已打印 ${counts.printed} 条 / 待确认 ${counts.attempting} 条`)}
 ${row('最近一次出纸', state.lastJobAt || '还没打过')}
 ${row('最近一次错误', state.lastError || '没有')}
