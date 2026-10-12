@@ -539,7 +539,7 @@ class PurchaseArrivalConversationService {
     if (!taskId) throw new Error('到货核对卡片缺少任务 ID');
     return this.queue.run(taskId, () => this.confirmLocked(taskId, operatorOpenId, event));
   }
-  async confirmLocked(taskId, operatorOpenId, event = {}) {
+  async confirmLocked(taskId, operatorOpenId, event = {}, options = {}) {
     const { replies } = this.config;
     const task = await this.store.get(taskId);
     if (!task) {
@@ -648,7 +648,10 @@ class PurchaseArrivalConversationService {
     await this.store.update(taskId, { status: 'posting', draft, confirmed_by: String(operatorOpenId || '') });
     const latest = await this.store.get(taskId);
     try {
-      await this.confirmArrival(taskId, latest, operatorOpenId);
+      // ⭐ 2026-10-13（验收提速）：把验收那一段自造的 timing **原样透传**到入库实现
+      //    （`inventory_ms` 只有库存层量得准）。不传 = 行为逐字不变。
+      await this.confirmArrival(taskId, latest, operatorOpenId,
+        options.timing ? { timing: options.timing } : {});
     } catch (error) {
       // 入库中途失败：**不改状态**（停在 posting），她再点一次「是」会从断点继续。
       // ⚠️ 错误原文**一个字都不吞**：日志（下面 `logError` 的 `error`）与**她要看到的那句话**
@@ -771,7 +774,7 @@ class PurchaseArrivalConversationService {
    * @returns {Promise<{ok: boolean, reason?: string, message: string, taskId?: string}>}
    *   `message` 是**给人看的一句话**（工作台直接显示它），不是内部术语。
    */
-  async confirmBatchArrival({ batch, acceptanceText = '', actualAmount, operatorOpenId = '', scanLines = null } = {}) {
+  async confirmBatchArrival({ batch, acceptanceText = '', actualAmount, operatorOpenId = '', scanLines = null, timing = null } = {}) {
     const batchNo = String(batch?.batch_no || '').trim();
     if (!batchNo) {
       return { ok: false, reason: 'no_batch_no', message: pageMessages.m1 };
@@ -875,7 +878,7 @@ class PurchaseArrivalConversationService {
           ? '扫码验收：逐码实际到货种进与群话题同一个任务，接着走既有 confirmLocked'
           : '工作台「验收到货」：种进与群话题同一个任务，接着走既有 confirmLocked',
       });
-      const result = await this.confirmLocked(taskId, operatorOpenId);
+      const result = await this.confirmLocked(taskId, operatorOpenId, {}, { timing });
       const failure = result?.toast?.type === 'error';
       const message = result?.toast?.content || '';
       return { ok: !failure, reason: failure ? 'inbound_failed' : 'posted', taskId, message };

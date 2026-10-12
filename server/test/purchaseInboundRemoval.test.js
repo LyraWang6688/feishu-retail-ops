@@ -134,6 +134,30 @@ const makeGateway = (records = {}, options = {}) => {
       (records[key] ||= []).push(record);
       return { recordId, record };
     },
+    // ⭐ 2026-10-13（验收提速 ①）：批量口**按真实语义**补 —— 与网关逐字同形的三件事：
+    //   语义键→物理列名映射、逐条落进 records、返回**与入参同序**的 recordId 数组。
+    //   （批量写正是走这条路，补空函数就等于把 9 条流水/9 双库存的断言变成假绿。）
+    createBatch: async (key, rows) => {
+      guard(key);
+      return (rows || []).map((semanticValues) => {
+        const fields = mapFields(key, semanticValues);
+        writes.push({ op: 'createBatch', tableKey: key, values: fields });
+        const recordId = `new_${key}_${(records[key] || []).length + 1}`;
+        const record = { record_id: recordId, fields };
+        (records[key] ||= []).push(record);
+        return { recordId, record, fields };
+      });
+    },
+    updateBatch: async (key, patches) => {
+      guard(key);
+      return (patches || []).map((patch) => {
+        const fields = mapFields(key, patch.fields || {});
+        writes.push({ op: 'updateBatch', tableKey: key, recordId: patch.recordId, values: fields });
+        const record = (records[key] || []).find((item) => item.record_id === patch.recordId);
+        if (record) record.fields = { ...record.fields, ...fields };
+        return { recordId: patch.recordId, fields };
+      });
+    },
     update: async (key, recordId, semanticValues) => {
       guard(key);
       const patch = mapFields(key, semanticValues);

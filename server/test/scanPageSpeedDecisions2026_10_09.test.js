@@ -275,12 +275,15 @@ test('A2 ⭐ 写操作立刻失效：**只作废对应那一张表**的快照（
 test('A2 失效点齐不齐（源码哨兵）：库存三处 + 货品写入口三处，一行都不许少', () => {
   const codeOf = (rel) => fs.readFileSync(path.join(SERVER_ROOT, rel), 'utf8');
   const inventory = codeOf('src/services/inventoryService.js');
-  // 三个方法各自一行（她/我们确认过：全仓真正动「实时库存」的只有这三个方法）。
+  // 三类写入路径各一行：**逐条三处**（executeOperation / transitionState / promoteToSample）
+  // ＋ ⭐ 2026-10-13 新增的**批量口**（`applyPurchaseBatch`，验收提速 ①）。
+  // 🔴 口径**不放宽**：三个逐条方法各一行照旧必须成立，批量口那一行**也**必须成立
+  //    （"写了实时库存就必须当场作废快照"这条纪律，对新的写路径同样有效）。
   for (const line of [
     "invalidateLiveInventorySnapshot('inventory_changed');",
   ]) {
-    assert.equal(inventory.split(line).length - 1, 3,
-      'inventoryService 的三处（executeOperation / transitionState / promoteToSample）各要一行');
+    assert.equal(inventory.split(line).length - 1, 4,
+      'inventoryService 的四处（executeOperation / transitionState / promoteToSample / applyPurchaseBatch）各要一行');
   }
   // 「货品信息」的写入口：新建货品 / 写成本 / 写标签二维码。
   const purchase = codeOf('src/services/purchaseWebhookService.js');

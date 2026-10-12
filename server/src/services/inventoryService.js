@@ -507,6 +507,23 @@ class InventoryService {
     return next;
   }
 
+  /**
+   * ⭐ 2026-10-13（验收提速 ①）：**一批一次写**要同时占住这一批涉及的每个 `stock_key` 的串行队列。
+   *
+   * 为什么不能只占一个：批量写会同时落多条记录，跨任务并发时"同一双鞋"的保护不能被绕过
+   * （这正是 `runForStock` 存在的理由）。
+   * ⚠️ **按 key 排序后依次占用** ⇒ 两批 key 有交集时也不会互相等待成环（有序加锁的常规做法）。
+   * 单 key 的调用方（`applyChange` 等）看到的语义与改动前**逐字相同**。
+   */
+  runForStocks(stockKeys, work) {
+    const keys = [...new Set((stockKeys || []).map((key) => String(key)))].sort();
+    const acquireNext = (index) => {
+      if (index >= keys.length) return work();
+      return this.runForStock(keys[index], () => acquireNext(index + 1));
+    };
+    return acquireNext(0);
+  }
+
   // ⚠️ 关联键走**尾部可选参数**（`options.correlation`），**不塞进 `input`**：
   //    库存引擎的业务入参形状因此一个字段都没变（既有测试对它是逐字 deepEqual 的，
   //    那条断言就是这条边界的证明）。关联键只进日志。
@@ -561,6 +578,214 @@ class InventoryService {
       sourceRecordId,
       quantity: positiveInteger(input.quantity, '采购入库数量'),
     }, options);
+  }
+
+  /**
+   * ⭐⭐ 2026-10-13（验收提速 ①）：**一批一次写**的采购加库存 —— `applyPurchase` 的批量版。
+   *
+   * 为什么要有它（真账）：每批 5 码 143.9 秒，其中**逐码"库存流水 + 实时库存" = 119.5 秒（83%）**。
+   * 逐条路径每码要敲 **6 次**飞书（`listAll('liveInventory')` ×3 + `listAll('behavior')` ×1
+   * + `create('inventoryLedger')` ×1 + `create('liveInventory')` ×1）⇒ 5 码 **31 次**（假网关实测）。
+   * 本方法把"这一批"折成 **1 次整表读 + ≤2 次批量写**：
+   *   `listAll('liveInventory')`（一批一次，同时喂：重复事实检查 + 幂等"已建过"回查 + 「库存键」标签）
+   *   + `createBatch('inventoryLedger', rows)` + `createBatch('liveInventory', rows)`
+   *
+   * 🔴 **语义一行不改**（与逐条路径逐字对齐，AC 用"字段集逐字相同"钉住）：
+   *   · 幂等键 = `purchaseIncreaseSourceId(input)`（本地 task journal）+ 每双的「库存操作键」
+   *     （`operationItemKey(operationId, 序号)`）⇒ **重跑零写**、崩溃后按同一把键续跑；
+   *   · 行为解析 / 库存方向 / 「关联采购」关联值 / 「库存键」标签 **复用逐条路径那几个 helper**；
+   *   · 串行队列：**按 `stock_key` 先过一遍**（`runForStocks`，跨任务同 key 不会被绕过）；
+   *   · 失败粒度 = **整批一次写**（任一批量写失败 ⇒ 这一批一条都不写；重试按同一把键补齐）。
+   * ⚠️ 调用方（`confirmArrival`）已按 `货品 + 尺码` 聚合过 ⇒ 同一批里 `stock_key` 不重复
+   *   （本方法不做这个聚合，与逐条路径同一条纪律：聚合是调用方的事）。
+   *
+   * @param {Array<object>} items 每项与 `applyPurchase` 的入参同形
+   *   （`productRecordId`/`size`/`quantity`/`state`/来源三元组…）
+   * @returns {Promise<Array<object>>} 与 `applyChange` 同形的结果数组（顺序 = 入参顺序）
+   */
+  async applyPurchaseBatch(items = [], options = {}) {
+    const list = (Array.isArray(items) ? items : []).filter(Boolean);
+    if (!list.length) return [];
+    const correlation = correlationFields(options.correlation);
+    // ⭐ 2026-10-13：验收那一段自造的耗时汇总（`options.timing`）——本层只**填** `inventory_ms`
+    //    （"加库存"那一段的净耗时只有这里量得准）。⚠️ 只进日志，不改任何判定、不改返回值形状。
+    const timing = options.timing || null;
+    const timingStartedAt = Date.now();
+    const movement = requireMovement(MOVEMENT_PURCHASE_INCREASE);
+    const prepared = list.map((input) => {
+      if (!input.productRecordId) throw new Error('库存变化缺少商品 record_id');
+      const sourceRecordId = purchaseIncreaseSourceId(input);
+      if (!sourceRecordId) throw new Error('库存变化缺少来源明细 record_id');
+      const size = normalizeSize(input.size);
+      const state = String(input.state || '门盒');
+      if (!LIVE_STATES.includes(state)) throw new Error('库存所属状态无效');
+      return {
+        input,
+        sourceRecordId,
+        size,
+        state,
+        quantity: positiveInteger(input.quantity, '采购入库数量'),
+        operationId: operationId(MOVEMENT_PURCHASE_INCREASE, sourceRecordId),
+        stockKey: `${input.productRecordId}|${size}|${state}`,
+      };
+    });
+    const stockKeys = [...new Set(prepared.map((item) => item.stockKey))].sort();
+    return this.runForStocks(stockKeys, async () => {
+      await this.ensureSchema();
+      for (const key of stockKeys) await this.resumePending(key);
+      const behavior = await this.resolveStockBehavior(MOVEMENT_PURCHASE_INCREASE);
+      const liveFields = this.gateway.table('liveInventory').fields;
+      const itemKeyField = liveFields?.[OPERATION_ITEM_KEY_FIELD];
+      // ⭐ 一批**一次**整表读（原来每码 3 次：调用方的状态判定 + 重复检查 + 幂等回查各 1 次）。
+      const allLive = await this.gateway.listAll('liveInventory');
+      const plans = [];
+      for (const item of prepared) {
+        const sizeReference = await this.sizeReferences.resolveByNumber(item.size);
+        const existingRows = this.findLiveInventoryIn(
+          allLive, item.input.productRecordId, sizeReference.recordId, item.state,
+        );
+        const journal = await this.store.get(item.operationId);
+        // ⭐ 与逐条路径**同一处**的"重复事实"检查（一份已读数据传进去 ⇒ 不额外读表、不新写文案）。
+        await this.assertNoDuplicateOperationItems(
+          { operation_id: item.operationId }, 1, item.quantity, allLive,
+        );
+        const liveRecordIds = [];
+        const toCreate = [];
+        for (let sequence = 1; sequence <= item.quantity; sequence += 1) {
+          const itemKey = operationItemKey(item.operationId, sequence);
+          const matches = itemKeyField
+            ? allLive.filter((record) => textValue(record.fields?.[itemKeyField]).trim() === itemKey)
+            : [];
+          // 重复事实检查**复用既有那一处**（`assertNoDuplicateOperationItems`，稍后统一跑一次，
+          // 把已经读到的那一份实时库存传进去）⇒ 判据与报文都只有一处，不新写一句文案。
+          if (matches.length === 1) {
+            logInfo('idempotency.reused', {
+              table_key: 'liveInventory', key: itemKey, record_id: matches[0].record_id,
+            });
+            liveRecordIds.push(matches[0].record_id);
+          } else toCreate.push(itemKey);
+        }
+        // 本地任务形状**逐字照抄**逐条路径的 `store.create({...})`（journal 是幂等与续跑的唯一依据）。
+        const operation = {
+          operation_id: item.operationId,
+          type: 'inventory_change',
+          schema_version: 3,
+          status: 'prepared',
+          kind: MOVEMENT_PURCHASE_INCREASE,
+          stock_key: item.stockKey,
+          ...stockKeyLabelFields({
+            record: existingRows[0],
+            fieldName: liveFields?.stockKey,
+            fallback: options.stockKeyLabel,
+          }),
+          ...correlationPatch(correlation),
+          product_record_id: item.input.productRecordId,
+          size: item.size,
+          size_record_id: sizeReference.recordId,
+          state: item.state,
+          quantity: item.quantity,
+          direction: behavior.direction,
+          behavior_record_id: behavior.recordId,
+          source_record_id: item.sourceRecordId,
+          ...movementLedgerLinkPatch(movement, item.input),
+          occurred_at: Number(item.input.occurredAt || Date.now()),
+          operator_open_id: item.input.operatorOpenId || '',
+          live_record_ids: [],
+          sample_consumed_quantity: 0,
+          removed_live_record_ids: [],
+          created_live_record_ids: liveRecordIds,
+          current_quantity: existingRows.length,
+          target_quantity: existingRows.length + item.quantity,
+        };
+        plans.push({
+          item,
+          sizeReference,
+          operation,
+          journal,
+          liveRecordIds,
+          toCreate,
+          ledgerRecordId: journal?.ledger_record_id || '',
+        });
+      }
+      // ① 流水：本地没有 `ledger_record_id` 的才建 —— **一批一次**（列与值照抄 `executeOperation`）。
+      const ledgerNeeded = plans.filter((plan) => !plan.ledgerRecordId);
+      if (ledgerNeeded.length) {
+        const rows = ledgerNeeded.map((plan) => {
+          const ledgerLinkValue = movementLedgerLinkValue(movement, plan.operation);
+          return {
+            product: relation(plan.item.input.productRecordId),
+            size: relation(plan.sizeReference.recordId),
+            quantityChange: plan.item.quantity,
+            behavior: relation(plan.operation.behavior_record_id),
+            ...(movement.ledgerSource
+              ? { [movement.ledgerSource]: relation(plan.item.sourceRecordId) }
+              : {}),
+            ...(ledgerLinkValue ? { [movement.ledgerLink.field]: relation(ledgerLinkValue) } : {}),
+          };
+        });
+        const created = await this.gateway.createBatch('inventoryLedger', rows, { correlation });
+        ledgerNeeded.forEach((plan, index) => { plan.ledgerRecordId = created[index]?.recordId || ''; });
+      }
+      // ② 实时库存：这一批里"还没有那一条"的才建 —— **一批一次**。
+      const liveNeeded = plans.flatMap((plan) => plan.toCreate.map((itemKey) => ({ plan, itemKey })));
+      if (liveNeeded.length) {
+        const rows = liveNeeded.map(({ plan, itemKey }) => ({
+          product: relation(plan.item.input.productRecordId),
+          size: relation(plan.sizeReference.recordId),
+          state: plan.item.state,
+          operationItemKey: itemKey,
+        }));
+        const created = await this.gateway.createBatch('liveInventory', rows, { correlation });
+        liveNeeded.forEach((entry, index) => { entry.plan.liveRecordIds.push(created[index]?.recordId || ''); });
+      }
+      // ③ 落本地任务 + 逐条日志（**成功之后**才落盘 ⇒ 批量失败时一条 journal 都不留，重试从同一把键补齐）。
+      const results = [];
+      for (const plan of plans) {
+        const result = {
+          stockKey: plan.item.stockKey,
+          ledgerRecordId: plan.ledgerRecordId,
+          liveRecordIds: plan.liveRecordIds,
+          movementQuantity: plan.item.quantity,
+          direction: behavior.direction,
+          quantity: plan.operation.target_quantity,
+          sampleConsumedQuantity: 0,
+          productRecordId: plan.item.input.productRecordId,
+          consumedLiveRecordIds: [],
+        };
+        const completed = {
+          ...plan.operation,
+          status: 'completed',
+          ledger_record_id: plan.ledgerRecordId,
+          created_live_record_ids: plan.liveRecordIds,
+          result,
+        };
+        if (plan.journal) await this.store.update(plan.item.operationId, completed);
+        else await this.store.create(completed);
+        logInfo('inventory.change.applied', {
+          operation_id: plan.item.operationId,
+          kind: MOVEMENT_PURCHASE_INCREASE,
+          stock_key: plan.item.stockKey,
+          // ⚠️ 与逐条路径**同形**：两种库存键都给（`stock_key_label` 抄这次已读到的实时库存，
+          //    抄不到时只给 `stock_key_label_source: 'unavailable'`，**不猜**）。
+          ...stockKeyLabelOfOperation(plan.operation),
+          movement_quantity: plan.item.quantity,
+          direction: behavior.direction,
+          target_quantity: plan.operation.target_quantity,
+          ledger_record_id: plan.ledgerRecordId,
+          live_record_ids: plan.liveRecordIds,
+          operator_open_id: plan.operation.operator_open_id || undefined,
+          ...correlation,
+        });
+        results.push(result);
+      }
+      // 库存**已经写进飞书** ⇒ 当场作废扫码页那份内存快照（与逐条路径同一条纪律）。
+      invalidateLiveInventorySnapshot('inventory_changed');
+      if (timing) {
+        timing.inventory_ms = Date.now() - timingStartedAt;
+        timing.inventory_items = prepared.length;
+      }
+      return results;
+    });
   }
 
   /**
@@ -1152,8 +1377,10 @@ class InventoryService {
       operator_open_id: operation.operator_open_id || undefined,
       ...correlation,
     });
-    // ⭐ 2026-10-09：**这里是全仓唯一真正写「实时库存」的地方**（销售入账 / 到货 /
+    // ⭐ 2026-10-09：**逐条路径里这里是唯一真正写「实时库存」的地方**（销售入账 / 到货 /
     //   库存状态变更 / 补样品最后都落到这一处）⇒ 写成功之后当场作废扫码页的内存快照。
+    //   ⚠️ 2026-10-13：`applyPurchaseBatch`（验收提速的批量口）是**第二处**，它同样在写成功后作废
+    //      （见那边结尾的那一行）—— 所以"全仓唯一"这句已经不再成立，不要照旧相信它。
     //   ⚠️ 连告警/日志都写完了才作废：作废本身只清内存 + fire-and-forget 重拉，永不抛。
     invalidateLiveInventorySnapshot('inventory_changed');
     return result;
@@ -1161,7 +1388,7 @@ class InventoryService {
 
   // 同一个键出现两条实时库存，说明这一双已经被写过两次：真实库存已经错了。
   // 这时不能继续补写，也不能挑一条继续，只能停下让人核对。
-  async assertNoDuplicateOperationItems(operation, fromSequence, toSequence) {
+  async assertNoDuplicateOperationItems(operation, fromSequence, toSequence, preFetchedRecords = null) {
     if (fromSequence > toSequence) return;
     const fieldName = this.gateway.table('liveInventory').fields?.[OPERATION_ITEM_KEY_FIELD];
     if (!fieldName) return;
@@ -1170,7 +1397,9 @@ class InventoryService {
       expected.add(operationItemKey(operation.operation_id, sequence));
     }
     const counts = new Map();
-    for (const record of await this.gateway.listAll('liveInventory')) {
+    // ⭐ 2026-10-13：批量路径把**已经读到的那一份**实时库存传进来（一批一次整表读，
+    //    不传 = 逐条路径逐字不变）。
+    for (const record of (preFetchedRecords || await this.gateway.listAll('liveInventory'))) {
       const key = textValue(record.fields?.[fieldName]).trim();
       if (expected.has(key)) counts.set(key, (counts.get(key) || 0) + 1);
     }
