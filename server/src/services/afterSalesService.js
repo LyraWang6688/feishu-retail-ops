@@ -77,6 +77,7 @@ const { withSalesReadRetry } = require('./salesReadRetry');
 const { cents } = require('./salesProgressService');
 const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
 const { SalesStatusWriter } = require('./salesStatusWriter');
+const { nextId, stateFor } = require('./salesRecordIds');
 const { logInfo, logWarn } = require('../utils/logger');
 
 // ⛔ 预存（prepaid）这条路**已下线**：它唯一的落点「客户往来货款」被业务负责人整表删除（2026-10-08）。
@@ -750,6 +751,17 @@ class AfterSalesService {
     const detailFields = this.tableOf('salesDetail').fields;
     const known = [...(progress.detail_record_ids || [])];
     const rows = [];
+    // ⭐ 2026-10-12：售后新建的明细行也带「销售明细ID」，**接着原单已有的行往后排**
+    //    （这一行关联的是**原主表** ⇒ 号按原单算；已有的行一个都不重排）。
+    const orderNo = String(request.originalSalesOrderNo || '').trim();
+    const detailIdState = orderNo
+      ? (await stateFor({
+        gateway: this.gateway,
+        tableKey: 'salesDetail',
+        entryIds: [request.originalSalesEntryRecordId],
+        idField: detailFields.detailId,
+      })).state
+      : null;
     for (const [index, row] of plan.filter((item) => item.writeDetail).entries()) {
       if (known[index]) {
         await this.verifyDetailRow(known[index], row, {
@@ -761,10 +773,12 @@ class AfterSalesService {
         rows.push(row);
         continue;
       }
+      const detailId = detailIdState ? nextId({ state: detailIdState, orderNo, kind: 'detail' }) : '';
       const created = await this.gateway.create('salesDetail', {
         // 「销售单号」关联**原主表**：查单链路（saleLookupService 判据二）就是按
         // "这条退货明细属于哪张单"把已退的单整单排除的；关联新主表会让旧单查不出来。
         salesEntry: relation(request.originalSalesEntryRecordId),
+        ...(detailId ? { detailId } : {}),
         [row.linkField]: relation(row.linkRecordId),
         actualAmount: row.amount,
         tradeType: relation(master.tradeTypeRecordId),
@@ -903,9 +917,24 @@ class AfterSalesService {
     if (!methodId) {
       throw new Error('原单没有可用的收款方式，无法登记这次售后收/退款，请先补原单的收款方式');
     }
+    // ⭐ 2026-10-12：售后的收款行也带「收款明细ID」。⚠️ 售后单与原单**共用同一个销售单号**
+    //    ⇒ 排号必须把**两张主表上的收款行一起数**，否则售后这批会从 -01 重来、与原单撞号。
+    const receiptOrderNo = String(request.originalSalesOrderNo || '').trim();
+    const receiptId = receiptOrderNo
+      ? nextId({
+        state: (await stateFor({
+          gateway: this.gateway,
+          tableKey: 'paymentRecord',
+          entryIds: [request.originalSalesEntryRecordId, master.recordId],
+          idField: this.tableOf('paymentRecord').fields.receiptId,
+        })).state,
+        orderNo: receiptOrderNo,
+        kind: 'receipt',
+      }) : '';
     const created = await this.gateway.create('paymentRecord', {
       // 关联销售单=新主表：这次收/退款属于售后这条记录，不属于原单。
       salesEntry: relation(master.recordId),
+      ...(receiptId ? { receiptId } : {}),
       method: relation(methodId),
       // 收款金额一律正数，方向由「交易方向」表达。
       tradeDirection: direction,

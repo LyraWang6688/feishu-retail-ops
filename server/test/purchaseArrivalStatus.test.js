@@ -1,3 +1,13 @@
+/**
+ * ⚠️ 2026-10-12 旧断言改写（**「采购主表.采购行为」口径反转**）：
+ *  改前（逐字）：`// ⚠️ 「采购行为」她明确说不用管 ⇒ 一个字都不许写`
+ *                `assert.equal(Object.prototype.hasOwnProperty.call(batches[0].fields, '采购行为'), false);`
+ *  改后（逐字）：`assert.deepEqual(batches[0].fields['采购行为'], ['beh_1'], '主表「采购行为」= 这一批的行为记录（报货）；明细那列由它 Lookup 带出');`
+ *  理由：她 2026-10-12（逐字）「**采购主表里面的采购行为确实是需要的，因为一个是报货，一个是退货**」
+ *        ⇒ 口径反转：主表**必须写**它（本用例 fixture 的 `behavior_record_id` = `beh_1`）。
+ *        ⚠️ 明细侧仍是"一个字都不许写"（那列是 Lookup）—— 哨兵在
+ *        `test/purchaseBehaviorLookupReadOnly.test.js` 的 AC-B1。
+ */
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -115,8 +125,11 @@ test('⑦ 新建「报货批次」记录时显式写「未到货」（值来自�
   assert.equal(batches.length, 1);
   assert.equal(batches[0].fields['到货状态'], DEFAULT_PURCHASE_ARRIVAL_STATUS_PENDING);
   assert.equal(batches[0].fields['到货状态'], '未到货');
-  // ⚠️ 「采购行为」她明确说不用管 ⇒ 一个字都不许写
-  assert.equal(Object.prototype.hasOwnProperty.call(batches[0].fields, '采购行为'), false);
+  // ⭐ 2026-10-12 口径反转（她：「采购主表里面的采购行为确实是需要的，一个是报货、一个是退货」）
+  //    ⇒ 主表**必须写**这一批的行为记录（本 fixture 的 `behavior_record_id` = `beh_1`）；
+  //    明细那列是它的 Lookup（只读）⇒ 明细侧不许写（见 AC-B1 哨兵）。
+  assert.deepEqual(batches[0].fields['采购行为'], ['beh_1'],
+    '主表「采购行为」= 这一批的行为记录（报货那一档）');
 });
 
 test('⑦ 值域来自配置：换一套字面量，写进去的就是那一套（证明没写死中文）', async () => {

@@ -1360,3 +1360,55 @@ test('⭐ 方案甲：原明细「实收金额」**为空** ⇒ 售后给人话�
   assert.equal(typeof readAfterSalesConfig().missingOriginalAmountText, 'string',
     '那句人话在配置里（配置先行）');
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐ 2026-10-12：售后新建的行也要带「明细 ID」（业务负责人的格式与用途）
+//    明细 `{销售单号}-{两位序号}` · 收款 `{销售单号}-收款-{两位序号}`
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-ID5 ⭐ 换货新建的明细行：序号接着原单已有行往后排（原单 3 行 ⇒ 新行 `-04`），原行号不变', async () => {
+  const { gateway, service } = build();
+  // ⚠️ `snapshot()` 给的是字符串数组，这里要逐字段比对 ⇒ 自己抓一份原明细行的字段快照
+  const beforeRows = Object.fromEntries(rowsOf(gateway, 'salesDetail')
+    .filter((row) => row.record_id.startsWith('detail_old'))
+    .map((row) => [row.record_id, JSON.stringify(row.fields)]));
+
+  await service.execute(request({
+    action: 'exchange',
+    originalText: '换一双 B200 42 码',
+    originalSalesDetailRecordIds: ['detail_old_1'],
+    newLines: [{ productId: 'product_B', sizeId: 'size_42', amount: 300 }],
+    diffAmount: 50,
+    settlement: 'cash',
+    restockState: '门盒',
+  }));
+
+  const created = detailRows(gateway);
+  assert.equal(created.length, 1, '换货新建了一行明细');
+  assert.equal(created[0].fields['销售明细ID'], `${ORDER_NO}-04`,
+    '原单已有 3 行（存量行没有号）⇒ 后补的这一行 = 第 4 双 = `-04`，**不从 01 重来**');
+  // 原单那 3 行：**号一个都没被回填/重排**（这是这条 AC 的要点）。
+  // ⚠️ 「履约状态」会被售后**有意**改（原明细从"已交付"变"已换货"），所以这里只钉号那一列
+  //    —— 履约状态的改动由本文件既有的那几条用例覆盖。
+  for (const recordId of ['detail_old_1', 'detail_old_2', 'detail_old_3']) {
+    const row = rowsOf(gateway, 'salesDetail').find((item) => item.record_id === recordId);
+    assert.equal(row.fields['销售明细ID'], undefined, `${recordId} 的号**没有被回填**（不重排已有行）`);
+    const withoutId = { ...JSON.parse(beforeRows[recordId]) };
+    withoutId['履约状态'] = row.fields['履约状态'];   // 售后有意改的那一列，不参与比对
+    assert.deepEqual(row.fields, withoutId, `${recordId} 除"履约状态"外逐字段未变`);
+  }
+});
+
+test('AC-ID6 ⭐ 售后新建的收款行：号跨「原单 + 售后单」一起排（原单 1 行 ⇒ `-收款-02`）', async () => {
+  const { gateway, service } = build({ config: { returnFundsMode: 'newReturnRow' } });
+
+  await service.execute(request());
+
+  const payments = paymentRows(gateway);
+  assert.equal(payments.length, 1, '回退模式：新建一条收款记录');
+  assert.equal(payments[0].fields['收款明细ID'], `${ORDER_NO}-收款-02`,
+    '原单已有 1 条收款行 ⇒ 售后这条是第 2 笔（⚠️ 售后单与原单**共用同一个销售单号**，'
+    + '号必须跨两张主表一起数，否则会与原单撞号）');
+  assert.equal(rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1')
+    .fields['收款明细ID'], undefined, '存量那行**不回填**（不重排已有行）');
+});

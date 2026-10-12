@@ -1,4 +1,14 @@
 /**
+ * ⚠️ 2026-10-12 热修改写（**「采购明细.采购行为」是 Lookup = 只读**）：
+ *  改前（逐字）：`assert.deepEqual(record.fields['采购行为'], ['bh_request'], '采购行为来自「行为管理」的既有编码');`
+ *                （另一处同形：`assert.deepEqual(record.fields['采购行为'], ['bh_request']);`）
+ *  改后（逐字）：`assert.equal('采购行为' in record.fields, false, '采购行为是 Lookup，不许写');`
+ *  理由：业务负责人 2026-10-12 把「采购明细.采购行为」改成 **Lookup**（按「报货批次号」关联采购主表），
+ *        Lookup **只读** —— 继续写轻则白写被忽略、重则**整条明细 create 失败**。
+ *        ⚠️ **只撤写入、保留读取**（工作台采购查询的分流判据还在读这一列）。
+ *        ⚠️ 其余断言（数量 / 尺码 / 批次号 / 幂等键 / 供应商）一条没放宽。
+ */
+/**
  * ⚠️ 2026-10-11 晚（业务负责人批准六领域）——本文件**改写**的断言（逐字）：
  *   改前：领域清单写 `['sales', 'inventory', 'purchase', 'product']`；补货那一块用 `?from=purchase`。
  *   改后：六领域 = `['sales','replenish','purchase_return','accept','inventory','product']`；
@@ -421,7 +431,11 @@ test('⑥ 勾选尺码 + 填数量 → 生成采购申请（走既有采购链�
     assert.deepEqual(bySize.get('size_42').fields['数量'], 1);
     for (const record of requests) {
       assert.deepEqual(record.fields['编号'], ['prod_1']);
-      assert.deepEqual(record.fields['采购行为'], ['bh_request'], '采购行为来自「行为管理」的既有编码');
+      // 🔴 2026-10-12 热修：这一列是 Lookup（只读）⇒ **建明细行不许再写它**（写了会整条 create 失败）
+      assert.equal('采购行为' in record.fields, false, '采购行为是 Lookup，不许写');
+      // ⭐⭐ 2026-10-12（她确认要写）：值改由**主表**带出来 —— 主表行上必须有「采购行为」
+      assert.deepEqual(entriesOf(h.gateway, 'purchaseOrderBatch')[0].fields['采购行为'], ['bh_request'],
+        '主表「采购行为」= 采购申请那一档（明细那列由它 Lookup 带出）');
       assert.ok(record.fields['幂等键'], '每条采购申请都有幂等键（既有 createOnceByKey 的回查依据）');
       assert.ok(record.fields['报货批次号'], '挂在同一个报货批次上');
     }
@@ -890,7 +904,10 @@ test('⑪ 一键补货：勾了不填数量按 **1 双**算（填了就按她填
     assert.equal(entriesOf(h.gateway, 'purchaseOrderBatch').length, 1);
     for (const record of requests) {
       assert.ok(record.fields['幂等键'], '既有 createOnceByKey 的判据');
-      assert.deepEqual(record.fields['采购行为'], ['bh_request']);
+      // 🔴 2026-10-12 热修：同上（Lookup 只读）
+      assert.equal('采购行为' in record.fields, false, '采购行为是 Lookup，不许写');
+      assert.deepEqual(entriesOf(h.gateway, 'purchaseOrderBatch')[0].fields['采购行为'], ['bh_request'],
+        '主表「采购行为」照旧写上（明细由它带出）');
     }
   } finally { h.cleanup(); }
 });

@@ -6,7 +6,7 @@
  *
  *   | 这一步 | 走哪个既有件 |
  *   | --- | --- |
- *   | 「报货批次」建一行（只写 批次号 + 幂等键，**不写到达状态**） | `PurchaseOrderBatchService.createForReturnBatch` |
+ *   | 「采购主表」建一行（批次号 + 幂等键 + **采购行为**；**不写到达状态**） | `PurchaseOrderBatchService.createForReturnBatch` |
  *   | 「报货信息」写退货明细（采购行为 = 退货行为） | `createOnceByKey`（远端幂等键回查，与报货同一套） |
  *   | 扣库存 | `InventoryService.applyPurchaseReturn`（内部就是既有的 `applyChange`） |
  *   | 出「采购退货单」PNG → 发群 → 回填「报货批次.单据」 | `PurchaseWebhookService.deliverSupplierImages`（只换标题/文件名后缀） |
@@ -35,6 +35,8 @@ const {
 } = require('./inventoryService');
 const { SCAN_WRITE } = require('../config/scanWrite');
 const { correlationFields } = require('../utils/correlationFields');
+// ⭐ 2026-10-12 采购明细ID（`{报货批次号}-{两位序号}`）—— 与报货那条**同一个分配器**。
+const { createPurchaseDetailIdAllocator } = require('./purchaseDetailId');
 const { logInfo, logWarn } = require('../utils/logger');
 
 /** 退货要扣哪些状态 —— **不在这里写死**，从库存注册表读（现存 = 门盒 + 样品 + 仓库）。 */
@@ -53,6 +55,8 @@ const createPurchaseReturnService = (options = {}) => {
   const resolveSize = (value) => getSizes().resolveByNumber(value);
   const inventory = options.inventory || new InventoryService({ gateway });
   const orderBatches = options.orderBatches || new PurchaseOrderBatchService({ gateway });
+  // ⭐ 2026-10-12：采购明细ID 分配器（用例可注入替身）。
+  const detailIds = options.detailIds || createPurchaseDetailIdAllocator({ gateway });
   // 只为"出退货单图"那一步（发群 / 回填附件都在它内部）；用例可以不注入（那就只记一条 warn）。
   const webhooks = options.webhooks || null;
   const batchNoGenerator = options.batchNoGenerator || new PurchaseBatchNoGenerator({ gateway });
@@ -144,7 +148,10 @@ const createPurchaseReturnService = (options = {}) => {
     }
 
     // ① 退货批次那一行（只写 批次号 + 幂等键；出退货单的图要用它当落点）
-    const batch = await orderBatches.createForReturnBatch(plan.batch_no, { correlation });
+    // ⭐ 2026-10-12：把**采购退货那一档行为记录 id** 传下去 ⇒ 主表行写上「采购行为」
+    //    （明细那一列是它的 Lookup，只读，明细侧不写）。
+    const batch = await orderBatches.createForReturnBatch(plan.batch_no,
+      { correlation, behaviorRecordId: draft.behavior_record_id });
     if (!batch.recordId) {
       throw new Error('采购退货批次那一行没建成：退货明细就没有落点，这次不写');
     }
@@ -156,6 +163,10 @@ const createPurchaseReturnService = (options = {}) => {
       task_id: taskId, batch_no: plan.batch_no, batch_record_id: batchRecordId,
       created: batch.created === true, reused: batch.reused === true,
     });
+
+    // ⭐⭐ 2026-10-12：采购明细ID = `{报货批次号}-{两位序号}`（退货这条链路同样要写；
+    //    与报货那条**同一个分配器** ⇒ 同一批次内 01/02… 不重排、不重号、重放不重复占号）。
+    const detailIdCursor = await detailIds.open({ batchRecordId, batchNo: plan.batch_no });
 
     // ② 逐尺码：写一条退货明细（采购行为 = 退货行为）→ 扣库存（走 InventoryService）
     const requestIds = [];
@@ -174,10 +185,16 @@ const createPurchaseReturnService = (options = {}) => {
         correlation,
         values: {
           batchNo: relation(batchRecordId),
-          behavior: relation(draft.behavior_record_id),
+          // 🔴 2026-10-12 热修（同一个 Lookup 列）：**不许再写「采购行为」** ——
+          //    「采购明细.采购行为」已被她改成 **Lookup（只读，按「报货批次号」关联采购主表）**，
+          //    写它轻则被忽略、重则整条退货明细 create 失败。
+          //    ⚠️ 与报货那条同一个待定项：主表的「采购行为」没有写入点（她 2026-10-07 说过不用管）
+          //    ⇒ 退货明细的这一列也会是空的，分流判据读不到就按现状=采购申请分流。
           product: relation(draft.product_record_id),
           size: relation(sizeRef.recordId),
           quantity: item.taken,
+          // ⭐ 采购明细ID（`{报货批次号}-01`、`-02`…）
+          detailId: detailIdCursor.next(),
           idempotencyKey: docKey,
         },
       });
