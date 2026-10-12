@@ -699,6 +699,8 @@ const EVENTS = Object.freeze({
   stockFailed: 'scan.sale.stock_failed',
   replenishSubmitting: 'scan.purchase.submitting',
   replenishSubmitted: 'scan.purchase.submitted',
+  // ⭐ 2026-10-12：她换了货号后用旧键提交 ⇒ **不当重放**（日志要能看出这次是新提交）
+  replenishRegenerated: 'scan.purchase.regenerated',
   replenishReused: 'scan.purchase.reused',
   // ⭐ 退货（与补货同形的三条 + 差额与库存侧两条正向证据）
   returnSubmitting: 'scan.purchase_return.submitting',

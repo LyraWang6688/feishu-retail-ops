@@ -1080,3 +1080,85 @@ test('AC-DB5 ⭐ 一单多双·多次扫码：扫 A 加单 → 扫 B 加单 → 
     });
   } finally { h.cleanup(); }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-12（她真机：扫码页补货**连续提交两个货号 ⇒ 第二个被当成"重复"吸收** ✗）
+//   根因（Lead 核过日志 + 我读到代码）：`submitReplenish` 只看**键**——
+//     `completed.find((item) => item.key === key)` 与 `if (replenish.key !== key)` ——
+//     **不看草稿变没变** ⇒ 换了货号那一次也被当成"上一单的重放"吸收掉 ✗
+//     （日志只出 `scan.purchase.reused`、没有 `purchase.batch_no.generated` ⇒ 一条批次都没建 ✗）。
+//
+//   口径（两件事必须分得清）：
+//     · **同一份草稿连点两次** ⇒ 吸收（reused ✓ 正确，连点保护不许坏）
+//     · **草稿变了**（换货号 / 加行 / 改数量）⇒ **必须是新的一次提交** ✗
+//
+//   AC-RK1 同一份草稿连点两次 ⇒ **只建 1 个批次**（连点保护 ✓）
+//   AC-RK2 ⭐ 草稿变了（换货号）后用**旧键**提交 ⇒ 建**第二个批次**（**现在是红的 = 复现**）
+//   AC-RK3 ⭐ 连续 3 个货号（都用第一把键）⇒ **3 个批次**（她真机的形状；**现在是红的**）
+// ═══════════════════════════════════════════════════════════════════════════
+
+const PRODUCT_C = {
+  record_id: 'prod_3',
+  fields: { 编号: 'XHB8095|黑色|A', 货号: 'XHB8095', 颜色: { text: '黑色' }, 类别: 'A', 单价: 299, 供应商: ['sup_1'] },
+};
+
+test('AC-RK1 同一份草稿连点两次（同一把键）⇒ 只建 1 个批次（连点保护不许回归）', async () => {
+  const h = createHarness();
+  try {
+    const openId = 'ou_rk_1';
+    // ⚠️ 会话要先存在（与既有 ⑥ 同形）——不然 `sessions.get` 是 null，键也取不到。
+    await h.write.addSaleLine({ openId, requestId: 'req_rk', productRecordId: 'prod_1', number: NUMBER, size: 40, amount: 399 });
+    const key = await currentKey(h, openId, 'replenish');
+    const body = { openId, submitKey: key, productRecordId: 'prod_1', number: NUMBER, entries: [{ size: 41, quantity: 2 }] };
+    await h.write.submitReplenish(body);
+    await h.write.submitReplenish(body);
+    assert.equal(entriesOf(h.gateway, 'purchaseOrderBatch').length, 1, '连点两次 ⇒ 只有 1 个批次');
+    assert.equal(entriesOf(h.gateway, 'purchaseRequest').length, 1, '明细也不重复');
+  } finally { h.cleanup(); }
+});
+
+test('AC-RK2 ⭐ 草稿变了（换货号）后用旧键提交 ⇒ 必须建**第二个批次**（现在红 = 复现）', async () => {
+  const h = createHarness({ tables: seedTables({ product: [PRODUCT, PRODUCT_NO_PRICE] }) });
+  try {
+    const openId = 'ou_rk_2';
+    await h.write.addSaleLine({ openId, requestId: 'req_rk', productRecordId: 'prod_1', number: NUMBER, size: 40, amount: 399 });
+    const keyA = await currentKey(h, openId, 'replenish');
+    const first = await h.write.submitReplenish({
+      openId, submitKey: keyA, productRecordId: 'prod_1', number: NUMBER, entries: [{ size: 41, quantity: 2 }],
+    });
+    assert.equal(first.ok, true);
+    assert.equal(entriesOf(h.gateway, 'purchaseOrderBatch').length, 1, '第一个货号建了 1 个批次');
+
+    // ⭐ 她的真机形状：**换了货号**（她的页面键还是上一把）再提交一次
+    const second = await h.write.submitReplenish({
+      openId, submitKey: keyA, productRecordId: 'prod_2', number: 'YD1111|白色|A', entries: [{ size: 40, quantity: 3 }],
+    });
+    assert.equal(second.ok, true, JSON.stringify(second));
+    assert.equal(entriesOf(h.gateway, 'purchaseOrderBatch').length, 2,
+      `换了货号 ⇒ 必须是**第二个批次**（实际 ${entriesOf(h.gateway, 'purchaseOrderBatch').length} 个；`
+      + `reused=${second.reused === true} ⇒ 现在被吸收 ✗）`);
+    assert.equal(entriesOf(h.gateway, 'purchaseRequest').length, 2, '第二个货号的明细也要落地');
+  } finally { h.cleanup(); }
+});
+
+test('AC-RK3 ⭐ 连续 3 个货号（都用第一把键）⇒ 3 个批次、货号各不同（现在红 = 复现）', async () => {
+  const h = createHarness({ tables: seedTables({ product: [PRODUCT, PRODUCT_NO_PRICE, PRODUCT_C] }) });
+  try {
+    const openId = 'ou_rk_3';
+    await h.write.addSaleLine({ openId, requestId: 'req_rk', productRecordId: 'prod_1', number: NUMBER, size: 40, amount: 399 });
+    const key = await currentKey(h, openId, 'replenish');
+    const orders = [
+      { productRecordId: 'prod_1', number: NUMBER, entries: [{ size: 41, quantity: 1 }] },
+      { productRecordId: 'prod_2', number: 'YD1111|白色|A', entries: [{ size: 40, quantity: 1 }] },
+      { productRecordId: 'prod_3', number: 'XHB8095|黑色|A', entries: [{ size: 42, quantity: 1 }] },
+    ];
+    for (const order of orders) {
+      const result = await h.write.submitReplenish({ openId, submitKey: key, ...order });
+      assert.equal(result.ok, true, JSON.stringify(result));
+    }
+    const batches = entriesOf(h.gateway, 'purchaseOrderBatch');
+    assert.equal(batches.length, 3, `3 个货号 ⇒ 3 个批次（实际 ${batches.length} 个 ⇒ 复现了她真机那个 bug ✗）`);
+    const numbers = new Set(entriesOf(h.gateway, 'purchaseRequest').map((row) => row.fields['编号'][0]));
+    assert.equal(numbers.size, 3, '三个货号各不相同');
+  } finally { h.cleanup(); }
+});

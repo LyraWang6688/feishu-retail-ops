@@ -1173,6 +1173,22 @@ const createScanWriteService = (options = {}) => {
    * @param {object} input
    * @param {Array<{size:number|string, quantity:number|string}>} input.entries 勾选的尺码与数量
    */
+  /**
+   * ⭐⭐ 2026-10-12（她真机：连续提交两个货号 ⇒ 第二个被"重复"吸收 ✗）：
+   * **补货草稿的指纹**——"这一次要报的到底是什么"（货号 + 逐行尺码/数量）。
+   *
+   * 🔴 为什么需要它：幂等键是**按会话轮次**发的；她连着提交两个货号时，第二张页面
+   *   可能还带着**上一把键**。只看键就会把"换了货号的这一次"当成"上一单的重放"吸收掉 ✗。
+   * 口径（两件事分得清）：**同键 + 同指纹** ⇒ 吸收（连点保护 ✓）；**指纹变了 ⇒ 新的一次提交** ✓。
+   */
+  const replenishFingerprint = ({ productRecordId = '', number = '', entries = [] } = {}) => {
+    const lines = (Array.isArray(entries) ? entries : [])
+      .map((item) => `${Number(item?.size)}x${Number(item?.quantity)}`)
+      .sort()
+      .join(',');
+    return [String(productRecordId || '').trim(), String(number || '').trim(), lines].join('|');
+  };
+
   const submitReplenish = async ({ openId, submitKey, productRecordId = '', number = '', entries = [], requestId = '' }) => queue.run(`sale:${openId}`, async () => {
     if (!config.replenish.enabled) {
       return fail({ code: 'disabled', message: texts.writeDisabledBody, requestId });
@@ -1190,10 +1206,12 @@ const createScanWriteService = (options = {}) => {
       current = await sessions.revive(openId, { submitKey: String(submitKey || '').trim(), flow: 'replenish' });
     }
     const replenish = current.replenish || {};
-    const key = String(submitKey || '').trim();
+    let key = String(submitKey || '').trim();
     const completed = replenish.completed || [];
+    const fingerprint = replenishFingerprint({ productRecordId, number, entries });
     const done = completed.find((item) => item.key === key);
-    if (done) {
+    // ⚠️ 只有**同一份草稿**才算重放（`fingerprint` 相同）；换了货号 / 加了行 / 改了数量 ⇒ 新的一次 ✓
+    if (done && (done.fingerprint === undefined || done.fingerprint === fingerprint)) {
       logInfo(config.events.replenishReused, {
         session_id: current.session_id, submit_key: key, batch_no: done.batch_no, request_id: requestId,
       });
@@ -1203,14 +1221,23 @@ const createScanWriteService = (options = {}) => {
     }
     if (replenish.key !== key) {
       const last = completed[completed.length - 1];
-      if (last) {
+      // ⚠️ 同样是"**同一份草稿**才当重放"：她换了货号 ⇒ 这一把旧键**不该吸收** ✗
+      //    ⇒ 换成会话**当前**那把键，继续走正常提交（批次照建 ✓）。
+      if (last && last.fingerprint === fingerprint) {
         logInfo(config.events.replenishReused, {
           session_id: current.session_id, submit_key: key, stale: true, batch_no: last.batch_no,
           request_id: requestId,
         });
         return { ok: true, reused: true, stale: true, batch_no: last.batch_no, request_count: last.request_count };
       }
-      return fail({ code: 'session_expired', message: texts.replenishAgainBody, requestId });
+      if (!last) {
+        return fail({ code: 'session_expired', message: texts.replenishAgainBody, requestId });
+      }
+      logInfo(config.events.replenishRegenerated, {
+        session_id: current.session_id, submit_key: key, effective_submit_key: replenish.key,
+        request_id: requestId, reason: 'draft_changed',
+      });
+      key = replenish.key;
     }
 
     // ① 校验：勾了哪些尺码、每个几双（勾了不填数量按 1 双 —— 每条明细至少一双）。
@@ -1304,7 +1331,7 @@ const createScanWriteService = (options = {}) => {
         batch_record_id: result?.batch_record_id || '',
         request_count: (result?.request_ids || []).length,
       };
-      await sessions.completeReplenish(openId, { key, result: summary });
+      await sessions.completeReplenish(openId, { key, result: summary, fingerprint });
       logInfo(config.events.replenishSubmitted, {
         session_id: current.session_id, submit_key: key, task_id: taskId, ...summary,
         request_id: requestId,
