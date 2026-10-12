@@ -1,6 +1,6 @@
 import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
-import { bindSubTabs, describeError, setBusy, showPageError } from '../../core/ui.js';
+import { bindSubTabs, describeError, runWriteAction, setBusy, showPageError } from '../../core/ui.js';
 
 // 「库存手工调整」——常用功能里的核心子页，两个子 tab：
 //   · 盘点调整：改**数量**，可增可减（盘多了加、盘少了减）→ POST .../adjustments/count
@@ -219,10 +219,11 @@ export function createInventoryAdjustmentModule() {
     state.pendingRequest = body.requestId;
     if (mode === 'counted') body.countedQuantity = Number(counted);
     else body.delta = Number(delta);
-    setBusy(button, true, '正在调整…');
-    showPageError('');
-    try {
-      const result = await api.post('/api/workbench/inventory/adjustments/count', body);
+    // ⭐⭐ 2026-10-12《前端交互反馈纪律》：点了立刻置灰 +「正在调整…（已 N 秒）」+ 防连点
+    return runWriteAction(button, async () => {
+      showPageError('');
+      try {
+        const result = await api.post('/api/workbench/inventory/adjustments/count', body);
       state.pendingRequest = null; // 成功后才换新的 requestId
       $(panel, '[data-view="count-result"]').textContent =
         `已调整：${result.product_record_id}｜${result.size}码｜${result.state} `
@@ -236,9 +237,10 @@ export function createInventoryAdjustmentModule() {
       $(panel, '[data-view="count-result"]').textContent = describeError(error);
       $(panel, '[data-view="count-result"]').classList.add('error-text');
       showPageError(describeError(error));
-    } finally {
-      setBusy(button, false);
-    }
+      } finally {
+        setBusy(button, false);
+      }
+    }, '正在调整…');
   }
 
   // ── 换季调整 ─────────────────────────────────────────────────────────
@@ -369,10 +371,10 @@ export function createInventoryAdjustmentModule() {
     };
     if (config.needsTarget) body.toState = toState;
     state.pendingRequest = body.requestId;
-    setBusy(button, true, '正在调整…');
-    showPageError('');
-    try {
-      const result = await api.post('/api/workbench/inventory/adjustments/season', body);
+    return runWriteAction(button, async () => {
+      showPageError('');
+      try {
+        const result = await api.post('/api/workbench/inventory/adjustments/season', body);
       state.pendingRequest = null;
       const failed = result.failures || [];
       $(panel, '[data-view="season-result"]').innerHTML = failed.length
@@ -385,10 +387,11 @@ export function createInventoryAdjustmentModule() {
       if (error.status === 400) state.pendingRequest = null;
       $(panel, '[data-view="season-result"]').textContent = describeError(error);
       showPageError(describeError(error));
-    } finally {
-      setBusy(button, false);
-      updateSeasonSubmit();
-    }
+      } finally {
+        setBusy(button, false);
+        updateSeasonSubmit();
+      }
+    }, '正在调整…');
   }
 
   async function loadSeasonSingleLevels() {

@@ -1,6 +1,6 @@
 import { api } from '../../core/api-client.js';
 import { escapeHtml, money, statusClass } from '../../core/formatters.js';
-import { describeError, setBusy, showPageError } from '../../core/ui.js';
+import { describeError, runWriteAction, setBusy, showPageError, SUBMIT_PENDING_TEXT } from '../../core/ui.js';
 
 /** 文案模板填充（`{name}` 占位符）—— 文案在 `config/orders.js` 里，代码只填值。 */
 const fillText = (template, values = {}) => String(template ?? '')
@@ -760,42 +760,43 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       return renderResult('请先填这次的「实际金额」（大于 0 的数字），再点验收到货', true);
     }
     if (!acceptanceText) return renderResult('请先写一句到货说明，再点验收到货', true);
-    setBusy(button, true, '正在验收入库…');
-    renderResult('');
-    try {
-      const result = await api.post(ORDERS_API.arrivalConfirm, {
-        batchNo, actualAmount: Number(rawAmount), acceptanceText,
-      });
-      // 列表数据是唯一事实来源：重新读一次（到货状态会跟着更新）
-      await loadPurchaseOrders();
-      renderResult(result.alreadyPosted
-        ? `这批（${batchNo}）已经验收入库过了，没有重复入库。`
-        : (result.message || `这批（${batchNo}）已验收入库。`));
-      return true;
-    } catch (error) {
-      renderResult(describeError(error), true);
-      return false;
-    } finally {
-      setBusy(button, false);
-    }
+    // ⭐ 同上：点一下立刻有反馈 + 防连点（校验放在守卫**之前** —— 没填完不该置灰）
+    return runWriteAction(button, async () => {
+      renderResult('');
+      try {
+        const result = await api.post(ORDERS_API.arrivalConfirm, {
+          batchNo, actualAmount: Number(rawAmount), acceptanceText,
+        });
+        // 列表数据是唯一事实来源：重新读一次（到货状态会跟着更新）
+        await loadPurchaseOrders();
+        renderResult(result.alreadyPosted
+          ? `这批（${batchNo}）已经验收入库过了，没有重复入库。`
+          : (result.message || `这批（${batchNo}）已验收入库。`));
+        return true;
+      } catch (error) {
+        renderResult(describeError(error), true);
+        return false;
+      }
+    }, '正在验收入库…');
   }
 
   async function runAction(button, busyText, work) {
-    setBusy(button, true, busyText);
-    renderResult('');
-    try {
-      const message = await work();
-      await refreshAfterAction(message);
-      return true;
-    } catch (error) {
-      // 400 = 她填错了（服务端一个字节都没写）⇒ 换一个 requestId；
-      // 其余保留，重试时复用同一个，避免"其实已经写进去一次"被记成两次。
-      if (error.status === 400) state.pendingRequest = null;
-      renderResult(describeError(error), true);
-      return false;
-    } finally {
-      setBusy(button, false);
-    }
+    // ⭐⭐ 2026-10-12《前端交互反馈纪律》：点击**立刻**置灰 + 换文案 +「（已 N 秒）」；
+    //    同一颗按钮在跑的时候**再点直接忽略**（防连点重复提交）；失败/成功后都恢复。
+    return runWriteAction(button, async () => {
+      renderResult('');
+      try {
+        const message = await work();
+        await refreshAfterAction(message);
+        return true;
+      } catch (error) {
+        // 400 = 她填错了（服务端一个字节都没写）⇒ 换一个 requestId；
+        // 其余保留，重试时复用同一个，避免"其实已经写进去一次"被记成两次。
+        if (error.status === 400) state.pendingRequest = null;
+        renderResult(describeError(error), true);
+        return false;
+      }
+    }, busyText || SUBMIT_PENDING_TEXT);
   }
 
   // ── 补收款 ────────────────────────────────────────────────────────────────
