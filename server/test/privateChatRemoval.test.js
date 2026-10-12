@@ -369,7 +369,7 @@ test('④ 私聊专属的入口与卡片都已删除：sendTodaySales / handleBo
 
 test('④ `LarkMvpService.sendCard`（open_id 口径的卡片发送器，全仓无调用方）已删除；`sendText` 留给 notice', () => {
   // 🔴 2026-10-07 收尾：清掉 5 处"缺省回落发私聊"之后，`sendCard` 的两个注入方
-  //    （`SaleLookupService` / `AfterSalesFlowService` 的 `sendCard` 选项）都不存在了，
+  //    （`SaleLookupService` / 售后编排那条链路的 `sendCard` 选项）都不存在了，
   //    它成了**孤儿** → 整段删除。要发卡片只有**群**那几条路
   //    （`replyCard` / `replyCardInThread` / `replyTaskCard`）。
   assert.equal(LarkMvpService.prototype.sendCard, undefined);
@@ -387,7 +387,6 @@ test('④ 三个 service 里再没有"发到某个 open_id"的代码（ⓐ：一
     .replace(/(^|[^:])\/\/.*$/gm, '$1');
   const serviceFiles = [
     'src/services/saleLookupService.js',
-    'src/services/afterSalesFlowService.js',
     'src/services/salesThreadProgressService.js',
   ];
   const patterns = [

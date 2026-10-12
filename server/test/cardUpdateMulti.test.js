@@ -68,11 +68,12 @@ const capturePatch = () => {
   return { client, payloads };
 };
 
-// ── ① "更新前"那份：13 张会被 patch 的卡片，builder 直出就是共享卡片 ────────────
+// ── ① "更新前"那份：9 张会被 patch 的卡片，builder 直出就是共享卡片 ────────────
 test('14 张会被 patch 的卡片：builder 直出（"更新前"那份）的 config 就是共享卡片', () => {
-  // ⚠️ 2026-10-12（3b）：原来 14 张 —— 「请确认销售订单」那张随销售草稿卡片退场 ⇒ **13 张**。
-  assert.equal(PATCHABLE_CARD_SCENARIOS.length, 13,
-    '清单是 13 张卡（12 个 builder；afterSalesRetryCard 继承 afterSalesConfirmationCard 的 config）');
+  // ⚠️ 2026-10-12（3b + 售后卡片退场）：14 → 13（销售确认卡退场）→ **9**
+  //    （售后那 4 张 —— 确认卡 / 结果卡 / 重试卡 / 状态卡 —— 随售后卡片链路整条退场）。
+  assert.equal(PATCHABLE_CARD_SCENARIOS.length, 9,
+    '清单是 10 张卡（都是一句话就能说清"为什么它要被 patch"的现行卡片）');
   for (const { name, build } of PATCHABLE_CARD_SCENARIOS) {
     assert.deepEqual(build(larkCards).config, PATCHABLE_CONFIG,
       `${name} 必须显式声明 update_multi:true，否则它的更新只有操作用户自己看得见`);

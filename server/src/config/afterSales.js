@@ -234,7 +234,7 @@ const AFTER_SALES_ACTION_SPECS = Object.freeze({
     // 新明细行的「履约状态」= 已赔货（配置先行：执行器里不写中文字面量）。
     newLineFulfillmentStatus: AFTER_SALES_FULFILLMENT.COMPENSATED,
     // ⭐ 新明细行的「实收金额」**由口径固定成 0**，不用调用方传来的那个价格。
-    //   为什么固定而不是"让调用方传 0"：调用方（afterSalesFlowService）确实会带新鞋的挂牌价
+    //   为什么固定而不是"让调用方传 0"：调用方（售后链路）确实会带新鞋的挂牌价
     //   （它要用那个价算差价），执行器**不能**把挂牌价当实收金额写进赔货行 —— 那会凭空多一笔销售额。
     newLineAmount: 0,
     movements: Object.freeze([

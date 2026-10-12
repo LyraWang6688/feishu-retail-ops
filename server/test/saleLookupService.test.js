@@ -537,7 +537,7 @@ test('② 群任务两条路都失败：如实失败（不留 card_message_id）
   assert.equal(await store.get('sale_query_1').then((row) => row.card_message_id), undefined);
 });
 
-test('退货/换货的占位入口已删除：真执行在 AfterSalesFlowService，这里不再回"还没上线"', async () => {
+test('退货/换货的占位入口已删除：真执行现在在**工作台**（`workbenchOrderActionService` → 业务层），这里不再回「还没上线」', async () => {
   // 第一期这里有一个只回"我还没上线，先给你记下了"的方法；第二期接上执行器后它必须消失。
   // 留一个没人调用的旧入口，以后很容易被误接回去、静默吞掉她的退货诉求，所以在这里锁住。
   const { service } = await makeService({});
@@ -602,7 +602,7 @@ test('保守规则不吃掉判据本体：销售状态=已退货 仍然排除', 
 
 // ─── ⭐ 群话题里的售后：只能在那**一笔**销售里找（绝不跨单去捞）─────────────────
 //
-// BUG：afterSalesFlowService 传了 `salesEntryRecordId`，但 findCandidates 的签名里
+// BUG：售后那条链路传了 `salesEntryRecordId`，但 findCandidates 的签名里
 // 没有这个参数 → 静默忽略 → 仍按「货号 + 颜色」在全表捞，可能抓到**别的单**同一双鞋。
 // 业务负责人的口径：「同一笔的售后，绝不跨单去捞」。
 test('⭐ 传了 salesEntryRecordId → 只返回那一笔的明细；不传时仍是全表（回归）', async () => {
