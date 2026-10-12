@@ -7,6 +7,8 @@ const controller = require('../controllers/workbenchController');
 // 不需要搬家。扫码路由 `routes/scanPage.js` 从这里 require 它。
 const { enabled: feishuAuthEnabled, getSessionUser, allowedOpenIds } = require('./feishuWebAuth');
 const { SalesFollowupService } = require('../services/salesFollowupService');
+const { createWorkbenchOrdersCache } = require('../services/workbenchOrdersCache');
+const { readWorkbenchOrdersConfig } = require('../config/workbenchOrders');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { createPurchaseQueryRouter } = require('./purchaseQuery');
 const { createInventoryAdjustmentRouter } = require('./workbenchInventoryAdjustment');
@@ -33,7 +35,13 @@ const requireWorkbenchAccess = (req, res, next) => {
 
 const createWorkbenchRouter = (options = {}) => {
   const router = express.Router();
-  const followup = options.followup || new SalesFollowupService();
+  // ⭐⭐ 2026-10-12（她「一直说正在读取订单」）：订单列表的 TTL 缓存 ——
+  //   ⚠️ **一个实例贯穿"读"（`followup.listOrders`）与"写"（下面四条 + 订单动作两条）**：
+  //      写成功之后由本层 `invalidate()`，她下一次读一定是新数据（不许看到旧数据）。
+  //   TTL 在 `config/workbenchOrders.js`（`WORKBENCH_ORDERS_CACHE_MS`，默认 30 秒；`0` = 关掉）。
+  const ordersConfig = options.ordersConfig || readWorkbenchOrdersConfig();
+  const ordersCache = options.ordersCache || createWorkbenchOrdersCache({ ttlMs: ordersConfig.ordersCacheMs });
+  const followup = options.followup || new SalesFollowupService({ ordersCache, ordersConfig });
   router.use((req, res, next) => {
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.set('Pragma', 'no-cache');
@@ -117,6 +125,8 @@ const createWorkbenchRouter = (options = {}) => {
   router.use(createWorkbenchOrderActionsRouter({
     gateway: options.gateway || followup.gateway,
     service: options.orderActions,
+    // ⭐ 同**一个**缓存实例：售后 / 二次交付写成功之后也作废它。
+    ordersCache,
   }));
   // 货品选择器 / 库存数量 / 品类清单 —— 都只读，供「库存手工调整」两个子页用。
   router.get('/inventory/products', controller.queryInventoryProducts);
@@ -173,6 +183,8 @@ const createWorkbenchRouter = (options = {}) => {
         requestId: req.body?.requestId,
         operatorOpenId: req.workbenchUser.open_id,
       });
+      // ⭐ 写成功了才作废订单列表缓存（她下一次读一定是新数据）。
+      ordersCache.invalidate();
       return res.json({ success: true, ...result });
     } catch (error) {
       // 她选错了 / 这一条不是待办 ⇒ 400（人话原样给她）；系统没做成 ⇒ 502。
@@ -192,6 +204,8 @@ const createWorkbenchRouter = (options = {}) => {
         method: req.body?.method, amount: req.body?.amount,
         requestId: req.body?.requestId, operatorOpenId: req.workbenchUser.open_id,
       });
+      // ⭐ 补收款成功 ⇒ 作废缓存（金额 / 状态都变了）。
+      ordersCache.invalidate();
       return res.json({ success: true, ...result });
     } catch (error) {
       logError('workbench.sales.payment.failed', { request_id: req.requestId, error: error.message });
@@ -213,6 +227,8 @@ const createWorkbenchRouter = (options = {}) => {
         requestId: req.body?.requestId,
         operatorOpenId: req.workbenchUser.open_id,
       });
+      // ⭐ 补实收金额成功 ⇒ 作废缓存。
+      ordersCache.invalidate();
       return res.json({ success: true, ...result });
     } catch (error) {
       logError('workbench.sales.detail_amount.failed', { request_id: req.requestId, error: error.message });
@@ -225,6 +241,8 @@ const createWorkbenchRouter = (options = {}) => {
         salesEntryRecordId: req.body?.salesEntryRecordId,
         detailRecordIds: req.body?.detailRecordIds,
       });
+      // ⭐ 交付（含扣库存）成功 ⇒ 作废缓存。
+      ordersCache.invalidate();
       if (result.sampleReplacements?.length) {
         const notifier = options.sampleNotifier || new SampleReplacementService({
           gateway: followup.gateway, inventory: followup.delivery.inventory,

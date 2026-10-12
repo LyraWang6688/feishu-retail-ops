@@ -226,14 +226,37 @@ class V1BitableGateway {
     return true;
   }
 
-  async listAll(tableKey) {
+  /**
+   * 整表读（翻页取完）。
+   *
+   * `options.fieldNames`（可选）：**只要这些列**（飞书 `field_names`）——
+   * ⚠️ 2026-10-12 新增（订单列表提速：562 条的「货品信息」整表全字段读一次要 7.8 秒，
+   *    而这一页只用得上「货号 / 颜色」）。不传 ⇒ 行为与以前**逐字一致**（全字段）。
+   * ⚠️ 传进来的应当是**飞书列名**（调用方按语义键从 schema 解析），本层不认识业务字段名。
+   * 🔴 **必须序列化成 JSON 字符串**：官方《列出记录》文档里 `field_names` 的类型是 **string**，
+   *    示例值就是 `["字段1","字段2"]` —— 直接传数组会被飞书拒：
+   *    `InvalidFieldNames (Code: 1254024)`（2026-10-12 在测试 Base 上实测踩到过）。
+   *
+   * ⚠️ 分页是 `page_token` 串行翻页（飞书的游标只能一路往后取）——**这一层不做并行翻页**：
+   *    一页 500 条，562 条 = 2 次请求，为它引并发只会让"哪一页丢了"更难查。
+   */
+  async listAll(tableKey, options = {}) {
     const table = this.tableWithId(tableKey);
+    const fieldNames = Array.isArray(options.fieldNames)
+      ? options.fieldNames.map((name) => String(name).trim()).filter(Boolean)
+      : [];
     const records = [];
     let pageToken;
     do {
       const response = await this.client.bitable.appTableRecord.list({
         path: { app_token: this.schema.appToken, table_id: table.tableId },
-        params: { page_size: 500, page_token: pageToken },
+        params: {
+          page_size: 500,
+          page_token: pageToken,
+          // ⚠️ 空数组要**整个不带这个参数**（带空 `field_names` 会变成"一列都不要"）；
+          //    非空必须 `JSON.stringify`（官方类型是 string，见上面的注释）。
+          ...(fieldNames.length ? { field_names: JSON.stringify(fieldNames) } : {}),
+        },
       });
       this.assertSuccess(response, `读取“${table.tableName}”记录列表`);
       records.push(...(response.data?.items || []));
