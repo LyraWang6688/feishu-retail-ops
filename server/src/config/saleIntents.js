@@ -10,7 +10,6 @@
 // 收敛规则在 config/afterSalesFlow.js（文字解析部分仍在跑）。
 const MESSAGE_INTENTS = Object.freeze({
   SALE: 'sale',
-  SALE_QUERY: 'sale_query',
   RETURN: 'return',
   EXCHANGE: 'exchange',
   UNSUPPORTED: 'unsupported',
@@ -21,11 +20,6 @@ const INTENT_ALIASES = Object.freeze({
   sale: MESSAGE_INTENTS.SALE,
   销售: MESSAGE_INTENTS.SALE,
   录单: MESSAGE_INTENTS.SALE,
-  sale_query: MESSAGE_INTENTS.SALE_QUERY,
-  salequery: MESSAGE_INTENTS.SALE_QUERY,
-  查销售记录: MESSAGE_INTENTS.SALE_QUERY,
-  查询销售记录: MESSAGE_INTENTS.SALE_QUERY,
-  查销售明细: MESSAGE_INTENTS.SALE_QUERY,
   return: MESSAGE_INTENTS.RETURN,
   退货: MESSAGE_INTENTS.RETURN,
   exchange: MESSAGE_INTENTS.EXCHANGE,
@@ -43,7 +37,6 @@ const normalizeMessageIntent = (raw) => {
   return INTENT_ALIASES[key] || MESSAGE_INTENTS.UNSUPPORTED;
 };
 
-const isLookupIntent = (intent) => intent === MESSAGE_INTENTS.SALE_QUERY;
 const isAfterSalesIntent = (intent) =>
   intent === MESSAGE_INTENTS.RETURN || intent === MESSAGE_INTENTS.EXCHANGE;
 
@@ -51,6 +44,5 @@ module.exports = {
   MESSAGE_INTENTS,
   INTENT_ALIASES,
   normalizeMessageIntent,
-  isLookupIntent,
   isAfterSalesIntent,
 };

@@ -411,52 +411,5 @@
         ]
       }
     ]
-  },
-  "saleLookupCard(0 条)": {
-    "header": {
-      "template": "orange",
-      "title": {
-        "tag": "plain_text",
-        "content": "最近 3 天的销售记录"
-      }
-    },
-    "elements": [
-      {
-        "tag": "div",
-        "text": {
-          "tag": "lark_md",
-          "content": "3 天内没查到 A100黑 的销售记录。\n你记得大概是哪天买的吗？",
-          "text_size": "heading"
-        }
-      }
-    ]
-  },
-  "saleLookupCard(N 条)": {
-    "header": {
-      "template": "blue",
-      "title": {
-        "tag": "plain_text",
-        "content": "最近 3 天的销售记录"
-      }
-    },
-    "elements": [
-      {
-        "tag": "div",
-        "text": {
-          "tag": "lark_md",
-          "content": "1. 2026-10-01 · A100黑 · 38码 · ￥99",
-          "text_size": "heading"
-        }
-      },
-      {
-        "tag": "note",
-        "elements": [
-          {
-            "tag": "plain_text",
-            "content": "只有这 1 笔。"
-          }
-        ]
-      }
-    ]
   }
 }

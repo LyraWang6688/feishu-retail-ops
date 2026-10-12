@@ -55,7 +55,7 @@ const { tradeTypeCodeFromLabel } = require('../config/salesMovements');
 const { isAfterSalesFulfillment } = require('../config/afterSales');
 const { postedOf, isPosted } = require('../config/salesStatusDimensions');
 // 「最近 7 天」的窗口口径与上海自然日工具：与「二次交付成交提醒」**同一处实现**。
-const { asDate, isWithinLookupWindow } = require('./saleLookupService');
+const { asDate, isWithinLookupWindow } = require('../utils/salesDateWindows');
 // 「报货日」在消息里的样子（上海自然日）：与渲染层**共用同一处实现**。
 const { formatReportedAtText } = require('./reportedAt');
 const { withSalesReadRetry } = require('./salesReadRetry');
