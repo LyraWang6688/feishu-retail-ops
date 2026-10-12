@@ -40,7 +40,7 @@ const express = require('express');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { createScanPageService } = require('../services/scanPageService');
 const { createScanWriteService } = require('../services/scanWriteService');
-const { renderScanPage, renderScanMessagePage, renderMinimalPage, renderAcceptancePage, renderSaleSuccessPage, buildPaymentRows } = require('../views/scanPageRenderer');
+const { renderScanPage, renderScanMessagePage, renderMinimalPage, renderAcceptancePage, renderAcceptanceSelfServe, renderSaleSuccessPage, buildPaymentRows } = require('../views/scanPageRenderer');
 // ⚠️ 只借这两个**纯函数**：所选尺码在「样品 + 门盒」有没有货（= 页面上那两个分组的判据），
 //    以及 `?from=` → 领域 id（认不出来回落缺省，不报错、不白屏）。
 const { sellableSizeTexts, resolveRealm, DEFAULT_REALM, ACCEPTANCE_REALM } = require('../views/scanPageRealm');
@@ -102,6 +102,24 @@ const createScanPageRouter = (options = {}) => {
   const writeService = writeConfig && options.writeService !== false
     ? (options.writeService || createScanWriteService({ gateway, config: writeConfig }))
     : null;
+  /**
+   * ⭐⭐ 2026-10-12：**未到货批次**（要列出来的那几条）—— **全仓只有这一处**读它。
+   *
+   * 两个调用方：① **有编号的领域页**（`?from=accept`，她扫开某款那一页）；
+   *              ② **落地页** `GET /accept`（无 batch，她点【验收】进来的第一屏）。
+   * ⚠️ **同一个 catch**：读表失败 ⇒ 只记一条 warn + 返回 `{ok:false, batches:[]}`
+   *    ⇒ 页面照旧 **200**、走手输兜底（她的"别卡住她"）。
+   */
+  const loadPendingBatches = async (requestId) => {
+    if (!arrival()) return null;
+    return arrival().pendingBatches().catch((error) => {
+      logWarn(writeConfig.events.failed, {
+        request_id: requestId, reason: 'accept_pending_batches_failed', error: error.message,
+      });
+      return { ok: false, batches: [] };
+    });
+  };
+
   // ⭐⭐ 2026-10-11（方案A）：**扫码验收**（工作台点【验收】→ 在这一页连续扫 → 完成验收）。
   //    ⚠️ 依赖**延迟构造**（在 `services/scanArrivalService.js` 里就地构造：
   //      `GET /s/{编号}` 那一步只用来读会话 —— **零飞书调用**，扫码页"一次扫码 0 次飞书调用"
@@ -520,10 +538,24 @@ const createScanPageRouter = (options = {}) => {
     }
     try {
       const openId = openIdOf(req);
+      const wantedBatch = String(req.query?.batch || '').trim();
+      const wantedBatchRecord = String(req.query?.batch_record_id || '').trim();
+      // ⭐⭐ 2026-10-12：**没带批次号 ⇒ 直接给自助块**（列未到货批次 + 手输兜底），**200**。
+      //    改前这里会 `start({batchNo: undefined})` ⇒ `no_batch_no` ⇒ **400** +
+      //    「这一页没带报货批次号：回【验收】领域…」—— 她**就是从【验收】领域进来的**，
+      //    而且那一页**没有输入框**（"或填批次号"根本做不到）⇒ 死循环。
+      if (!wantedBatch && !wantedBatchRecord) {
+        return sendHtml(res, 200, renderAcceptanceSelfServe({
+          config,
+          acceptPending: await loadPendingBatches(requestId),
+          // 链接/表单用**当前挂载前缀**（`/s` 或 `/r`），不写死 `/s/`。
+          basePath: req.baseUrl,
+        }));
+      }
       const started = await arrival().start({
         openId,
-        batchNo: req.query?.batch,
-        batchRecordId: req.query?.batch_record_id,
+        batchNo: wantedBatch,
+        batchRecordId: wantedBatchRecord,
         operatorOpenId: openId,
       });
       if (!started.ok) {
@@ -768,18 +800,15 @@ const createScanPageRouter = (options = {}) => {
       //    **自己去列未到货的批次**（点一条就进），再给手输兜底。
       //    ⚠️ 只在这个领域读一次那张表；读表失败**不把页面打红**（服务层如实返回 ok:false，
       //    这里记一条 warn，页面走手输兜底 —— 与她的"别卡住她"一致）。
-      const acceptPending = realm === ACCEPTANCE_REALM && !acceptance && arrival()
-        ? await arrival().pendingBatches().catch((error) => {
-          logWarn(writeConfig.events.failed, {
-            request_id: requestId, reason: 'accept_pending_batches_failed', error: error.message,
-          });
-          return { ok: false, batches: [] };
-        })
+      const acceptPending = realm === ACCEPTANCE_REALM && !acceptance
+        ? await loadPendingBatches(requestId)
         : null;
       const html = renderScan(view, config, writeForRender, realm, {
         userAgent: req.headers['user-agent'],
         acceptance,
         acceptPending,
+        // ⭐ 这一页挂在哪个前缀上（`/s` 或 `/r`）—— 自助块里的批次链接/手输表单必须**留在同一前缀**。
+        basePath: req.baseUrl,
         print: printContext,
       });
       timing.render_ms = Math.max(0, Date.now() - renderStartedAt);
