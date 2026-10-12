@@ -74,6 +74,12 @@ const ACTIONS = Object.freeze({
   //    标签二维码扫开就是 `/s/{编号}` ⇒ 连续扫只能落在这一页）。
   acceptAdd: readString(process.env, 'SCAN_WRITE_ACTION_ACCEPT_ADD', 'accept_add'),
   acceptFinish: readString(process.env, 'SCAN_WRITE_ACTION_ACCEPT_FINISH', 'accept_finish'),
+  // ⭐⭐ 2026-10-12：**带清单的完成**（她改完数量 + 自定义行 + 实际金额，一次提交 = 一次写库）。
+  //    ⚠️ 与 `acceptFinish`（只带金额的老路）**并存**：老页面 / 既有用例一个字都没动。
+  acceptFinishRows: readString(process.env, 'SCAN_WRITE_ACTION_ACCEPT_FINISH_ROWS', 'accept_finish_rows'),
+  // ⭐⭐ 2026-10-12（她选的方案 A）：「系统把 40、41 列出来（标注"未报货"）⇒ 你**点一下就加到货**」
+  //    点一下 = 一个 POST（带当前清单）⇒ 服务端记账 ⇒ 302 回清单；再点一下 = 取消。
+  acceptToggleSize: readString(process.env, 'SCAN_WRITE_ACTION_ACCEPT_TOGGLE_SIZE', 'accept_toggle_size'),
   // ⭐⭐ 2026-10-11（业务负责人：「**扫码页应该是有货品的吧？你不是有六个领域吗？**」）：
   //    「货品」领域那颗【**打印这一款**】—— **不写任何业务表**（只是把一条打印任务排进队列），
   //    所以它**不受"扫码写入口关着"影响**（见 `routes/scanPage.js`：那一支排在
@@ -151,6 +157,15 @@ const FIELDS = Object.freeze({
   acceptSize: 'accept_size',
   acceptQuantity: 'accept_quantity',
   acceptAmount: 'accept_amount',
+  // ⭐⭐ 2026-10-12（她的口述版）：**预填清单**用的三个字段（同名重复 ⇒ 按行序解析）。
+  //    `acceptRowQty` 一"报货行"一个（顺序 = 采购明细顺序）；后两个是自定义行（尺码 + 数量）。
+  acceptRowQty: 'accept_row_qty',
+  // 清单表单把"哪一批"也带上（URL 上也有；这条是**手改 URL 也换不了批次**的保险）。
+  acceptBatch: 'accept_batch',
+  acceptCustomSize: 'accept_custom_size',
+  acceptCustomQuantity: 'accept_custom_quantity',
+  // ⭐⭐ 2026-10-12（方案 A）："未报货尺码"那几个可点元素带的是**哪个尺码**（可重复 ⇒ 按行序解析）。
+  acceptToggleSize: 'accept_toggle_size',
 });
 
 /**
@@ -394,6 +409,14 @@ const ACCEPTANCE = Object.freeze({
   defaultQuantity: readInt(process.env, 'SCAN_ACCEPT_DEFAULT_QUANTITY', 1, { min: 1, max: 99 }),
   // 「实际金额」必填（既有业务口径，业务负责人 2026-10-08：「金额这个是必填的」）
   amountRequired: readFlag(process.env, 'SCAN_ACCEPT_AMOUNT_REQUIRED', true),
+  // ⭐⭐ 2026-10-12（业务负责人口述版）：「用户点验收的时候，**先默认带出我们采购申请里的尺码和数量**。
+  //    用户可以在给定的区域里直接修改，同时也可以自定义；自定义的时候同样支持扫码。」
+  //    ⇒ 进验收就渲染那张**可编辑清单**（默认值 = 报货数量）。
+  prefillEnabled: readFlag(process.env, 'SCAN_ACCEPT_PREFILL_ENABLED', true),
+  // ⚠️ **还没拍板的那条**（她没回）：采购明细一条都没有的批次，要不要也能开工？
+  //    业务语义没定（**款从哪来**不知道 ⇒ 加库存那一列没法填）⇒ **默认关**（= 现状：如实报"读不到明细"）；
+  //    打开时也只是"页面能开 + 手输/扫码入口在"，真加行仍需**扫码带款**（不猜 ✗）。
+  allowEmptyRows: readFlag(process.env, 'SCAN_ACCEPT_ALLOW_EMPTY_ROWS', false),
 });
 
 /**
@@ -420,10 +443,12 @@ const TEXTS = Object.freeze({
   sizePlaceholder: '选尺码',
   amountLabel: '实收金额（可不填）',
   amountPlaceholder: '留空按货品单价',
-  // ⭐ 2026-10-11（B）：她的口径是「**备注**」——落点是**销售主表.「赠品」**（文本列，
-  //    见 docs/sales-order-states-and-gifts-2026-10-09.md 第四节）。
-  //    ⚠️ 页面上写"备注"、表里写"赠品"，是**一列两个叫法**，不是两件事（别再拆一个字段出来）。
-  giftLabel: '备注（可不填）',
+  // ⭐⭐ 2026-10-12（业务负责人拍板，逐字）：「② 「备注」还是「赠品」（表列名 / 页面标签）⇒ **赠品**」
+  //    ⇒ **页面标签与表列名统一叫「赠品」**（改前页面写"备注"、表里写"赠品"，一列两个叫法）。
+  //    ⚠️ 改的**只有这一个显示串**：语义键仍是 `gift`、落点仍是**销售主表·「赠品」**那一列
+  //       （映射见 `v1BitableSchema.tables.salesEntry.fields.gift`）——读写行为一个字不动。
+  //    ⚠️ 它**不是**"备注"：这一列从 2026-10-08 起就是**赠品**（`config/salesGift.js` 的合并规则）。
+  giftLabel: '赠品（可不填）',
   addButton: '加入本单',
   // ── ⭐ 2026-10-11（B）：配品（单独一行销售明细；不是校验项）────────────────
   //    「配品」选的是「其他配品」表里的**名称**；选中后它是**独立的一行销售明细**：
@@ -569,6 +594,25 @@ const TEXTS = Object.freeze({
   acceptFinishAmountLabel: '实际金额',
   acceptFinishSubmit: '确认完成验收',
   acceptNoScansBody: '还没扫到任何一双：先扫一双，再点【完成验收】。',
+  // ⭐⭐ 2026-10-12（她的口述版）：「先默认带出我们采购申请里的尺码和数量」——
+  //    那一块就是这张清单：每个报货尺码一行、数量**默认 = 报货数量**、可改。
+  acceptRowsTitle: '这次要核对的尺码和数量',
+  acceptRowsHint: '数量填实际到货的；没到的改成 0 就行。',
+  acceptRowSizeLabel: '{size} 码',
+  acceptCustomTitle: '自定义加一行（没报但到了的）',
+  acceptCustomSizePlaceholder: '尺码',
+  acceptCustomQuantityPlaceholder: '数量',
+  acceptCustomAddLabel: '加上这一行',
+  // 扫标签那条路（码里带着是哪一款）——本批有多个款 / 一条明细都没有时，**不猜款**，让她扫码。
+  acceptCustomScanLabel: '也可以扫标签加一款',
+  acceptCustomProductNeededBody: '这一批里有多个款（或一条明细都没有）：自定义请用**扫标签**加（标签里带着是哪一款）。',
+  // ⭐⭐ 2026-10-12（方案 A）：「系统把 40、41 列出来（标注"未报货"）⇒ 你**点一下就加到货**」
+  acceptUnreportedTitle: '没报货的尺码',
+  acceptUnreportedBadge: '未报货',
+  acceptUnreportedAddLabel: '加到货',
+  acceptUnreportedRemoveLabel: '取消',
+  // 没有"款"可归时不列（列了也没用）——给她一句"先扫这一款的标签"。
+  acceptUnreportedNoProductBody: '先扫这一款的标签，就能看到它没报货的尺码。',
   acceptDoneTitle: '这批已验收入库',
   acceptDoneBody: '批次号 {batchNo}，实际到货 {scanned} 双。',
   acceptAgainBody: '批次号 {batchNo}，已经验收入库过了，没有重复入库。',
@@ -662,6 +706,8 @@ const EVENTS = Object.freeze({
   acceptLineAdded: 'scan.accept.line_added',
   acceptNotInBatch: 'scan.accept.not_in_batch',
   acceptDuplicate: 'scan.accept.duplicate',
+  // ⭐⭐ 2026-10-12：清单被整表覆盖（她改完数量 / 加了自定义行）——"实际到货几双"的可 grep 证据。
+  acceptRowsSet: 'scan.accept.rows_set',
   acceptFinishing: 'scan.accept.finishing',
   acceptFinished: 'scan.accept.finished',
   acceptReused: 'scan.accept.reused',

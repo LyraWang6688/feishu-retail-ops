@@ -975,6 +975,73 @@ const acceptanceSummaryHtml = (write, acceptance) => {
 ${acceptance.notice ? `<p class="notice">${escapeHtml(acceptance.notice)}</p>` : ''}`;
 };
 
+/**
+ * ⭐⭐ 2026-10-12（业务负责人口述版）：「点验收的时候，**先默认带出我们采购申请里的尺码和数量**。
+ *   用户可以在**给定的区域里直接修改**，同时**也可以自定义**；**自定义的时候同样支持扫码**。」
+ *
+ * 这一块就是"给定区域"：
+ *   · **报货行**：每个尺码一行，数量**默认 = 报货数量**（`acceptance.rows[i].actual`）；
+ *     **改成 0（或清空）⇒ 那一行不算到货**（服务层口径，见 `setActualRows`）；
+ *   · **已加的行**（扫进来的 / 上次加的自定义）：同款同码各一行，数量可改；
+ *   · **一行空白自定义**：她可以手输尺码 + 数量（本批只有一个款时才绑得上；多个款会让她扫码）；
+ *   · **实际金额**（既有必填口径）+【确认完成验收】——**一次提交 = 一次写库**。
+ *
+ * ⚠️ **同名重复字段**（一"行"一个）是这一页既有做法（收款行 / 每件实收都是这么带的），
+ *    服务端按**行序**解析 ⇒ **零 JS** 也做得到"整张清单一次提交"。
+ * ⚠️ 扫标签那条路是**另一颗链接**（AppLink，复用 `acceptanceScanNextHtml`）——不在表单里。
+ */
+const acceptanceRowsFormHtml = (write, acceptance, userAgent = '') => {
+  const t = write.texts;
+  const f = write.fields;
+  const rows = Array.isArray(acceptance.rows) ? acceptance.rows : [];
+  const custom = Array.isArray(acceptance.customRows) ? acceptance.customRows : [];
+  const lineHtml = (row) => `<div class="size-row" data-row-size="${escapeHtml(String(row.size))}">
+<label class="size-check">${escapeHtml(fillText(t.acceptRowSizeLabel, { size: row.size }))}</label>
+<input class="size-qty" name="${escapeHtml(f.acceptRowQty)}" value="${escapeHtml(String(row.actual))}" inputmode="numeric" aria-label="${escapeHtml(fillText(t.acceptRowSizeLabel, { size: row.size }))}">
+</div>`;
+  const reported = rows.map(lineHtml).join('');
+  // 已加的行（扫码进来的 / 上次加的自定义）：**必须一起带回表单**，否则这次提交会把它们冲掉。
+  const already = custom.map((row) => `<div class="size-row" data-row-size="${escapeHtml(String(row.size))}" data-custom-row="1">
+<label class="size-check">${escapeHtml(fillText(t.acceptRowSizeLabel, { size: row.size }))}</label>
+<input class="size-qty" name="${escapeHtml(f.acceptCustomQuantity)}" value="${escapeHtml(String(row.quantity))}" inputmode="numeric" aria-label="${escapeHtml(t.acceptCustomQuantityPlaceholder)}">
+<input type="hidden" name="${escapeHtml(f.acceptCustomSize)}" value="${escapeHtml(String(row.size))}">
+<button type="submit" class="btn" name="${escapeHtml(f.acceptToggleSize)}" value="${escapeHtml(String(row.size))}" data-toggle-size="${escapeHtml(String(row.size))}"${submitFeedbackAttrs(write)}>${escapeHtml(t.acceptUnreportedRemoveLabel)}</button>
+</div>`).join('');
+  // ⭐⭐ 2026-10-12（她选的方案 A）：「系统把 40、41 列出来（标注"未报货"）⇒ 你**点一下就加到货**」。
+  //    候选 = **这一款在该类别下应有的尺码**（与缺码判定同一份配置口径）− 已报 − 已加；
+  //    一个候选都没有 / 没有"款"可归 ⇒ 路由给 `unreported = null` ⇒ **整块不渲染**（不留空标题）。
+  const unreported = Array.isArray(acceptance.unreported) ? acceptance.unreported : [];
+  const unreportedHtml = unreported.length ? `<p class="draft-bar__count" data-view="accept-unreported-title">${escapeHtml(t.acceptUnreportedTitle)}</p>
+<div class="size-chips" data-view="accept-unreported">
+${unreported.map((item) => `<button type="submit" class="btn" data-candidate-size="${escapeHtml(String(item.size))}" name="${escapeHtml(f.acceptToggleSize)}" value="${escapeHtml(String(item.size))}"${submitFeedbackAttrs(write)}>${escapeHtml(fillText(t.acceptRowSizeLabel, { size: item.size }))} · ${escapeHtml(t.acceptUnreportedBadge)}</button>`).join('')}
+</div>` : '';
+  // 没有"款"（没扫、也没进清单）⇒ 不列候选，但给一句引导（别让她对着空白猜）。
+  const unreportedHint = acceptance.unreportedNoProduct
+    ? `<p class="hint" data-view="accept-unreported-hint">${escapeHtml(t.acceptUnreportedNoProductBody)}</p>`
+    : '';
+  const customBlank = `<div class="size-row" data-view="accept-custom-new">
+<input class="size-qty" name="${escapeHtml(f.acceptCustomSize)}" inputmode="numeric" placeholder="${escapeHtml(t.acceptCustomSizePlaceholder)}" aria-label="${escapeHtml(t.acceptCustomSizePlaceholder)}">
+<input class="size-qty" name="${escapeHtml(f.acceptCustomQuantity)}" inputmode="numeric" placeholder="${escapeHtml(t.acceptCustomQuantityPlaceholder)}" aria-label="${escapeHtml(t.acceptCustomQuantityPlaceholder)}">
+</div>`;
+  return `<section class="card" data-view="acceptance-rows">
+<h2 class="stock__heading">${escapeHtml(t.acceptRowsTitle)}</h2>
+<p class="hint">${escapeHtml(t.acceptRowsHint)}</p>
+<form method="post" action="${escapeHtml(acceptance.rowsPostAction || acceptance.postAction)}" class="write-form" data-view="acceptance-rows-form">
+${hiddenField(f.action, write.actions.acceptFinishRows)}
+${hiddenField(f.acceptBatch, acceptance.batchNo)}
+${reported}${already}
+<p class="draft-bar__count">${escapeHtml(t.acceptCustomTitle)}</p>
+${customBlank}
+${unreportedHtml}${unreportedHint}
+<label class="size-check">${escapeHtml(t.acceptFinishAmountLabel)}
+<input class="size-qty" name="${escapeHtml(f.acceptAmount)}" inputmode="decimal" aria-label="${escapeHtml(t.acceptFinishAmountLabel)}"${acceptance.amountRequired === false ? '' : ' required'}>
+</label>
+<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.acceptFinishSubmit)}</button>
+</form>
+${acceptanceScanNextHtml(userAgent)}
+</section>`;
+};
+
 /** 【完成验收】：只收「实际金额」（必填，既有业务口径）——**没有**「到货说明」那一栏。 */
 const acceptanceFinishHtml = (write, acceptance) => {
   const t = write.texts;
@@ -1091,13 +1158,21 @@ const renderAcceptancePage = ({ acceptance, config = SCAN_PAGE, write = null, us
     return renderMinimalPage({ title: config.texts.errorTitle, body: config.texts.errorBody });
   }
   const batchNo = String(acceptance?.batchNo || '');
+  // ⭐⭐ 2026-10-12：进验收就**预填那张可编辑清单**（她的口述版）；渲染器不认识"是否开启"，
+  //    由路由决定要不要给 `acceptance.rows`（不给 ⇒ 与改前逐字相同）。
+  const rowsBlock = Array.isArray(acceptance?.rows) ? acceptanceRowsFormHtml(write, acceptance, userAgent) : '';
+  // ⚠️ 这里**故意先算成变量**、不在 `${}` 里再嵌一个模板串 ——
+  //    `test/noHardcodedChinese.test.js` 的扫描器用**朴素状态机**剥注释，遇到嵌套模板串会失步，
+  //    把后面的注释当成"硬编码中文"误报（实测：本文件多出 9 条假红）。写法上绕开它，别去动那个闸门。
+  const legacyBlock = `${acceptanceScanNextHtml(userAgent)}
+${acceptanceFinishHtml(write, acceptance)}`;
   return renderDocument({
     title: fillText(config.texts.pageTitle, { itemNo: batchNo, number: batchNo }),
     config,
+    // ⚠️ 有清单时**不再渲染**那颗"只收金额"的老表单（一页只留一条路，免她点错）。
     content: `<section class="card" data-view="acceptance" data-batch="${escapeHtml(batchNo)}">
 ${acceptanceSummaryHtml(write, acceptance)}
-${acceptanceScanNextHtml(userAgent)}
-${acceptanceFinishHtml(write, acceptance)}
+${rowsBlock || legacyBlock}
 </section>
 <p class="foot">${escapeHtml(fillText(write.texts.acceptBatchLine, { batchNo }))}</p>`,
   });
