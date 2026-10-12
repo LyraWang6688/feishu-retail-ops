@@ -10,7 +10,6 @@ const { itemFactsForDetails } = require('./salesDetailItemFacts');
 const { asDate, isWithinLookupWindow, shanghaiDayKey } = require('./saleLookupService');
 const { resolvePurchaseChatId } = require('../config/groupPurchase');
 const { postedOf, isPosted } = require('../config/salesStatusDimensions');
-const { secondDeliveryCard, settleSecondDeliveryOrder } = require('../utils/larkCards');
 const { updateInteractiveCard } = require('../infrastructure/interactiveCardFeedback');
 const { logInfo, logWarn } = require('../utils/logger');
 const { mergeCorrelation } = require('../utils/correlationFields');
@@ -59,7 +58,6 @@ const REMINDER_WINDOW_DAYS = 7;
 
 // 「每日只推一次」的认领键。⚠️ 只有这一层：业务负责人明确否掉了"按单只推一次"
 // （"只要他还在 7 天范围内，你就继续发"），所以同一笔单**跨天照发**，不做任何按单标记。
-const dayMarkerId = (dayKey) => `reminder_day_${dayKey}`;
 
 class SecondDeliveryService {
   constructor(options = {}) {
@@ -74,7 +72,7 @@ class SecondDeliveryService {
     // 环境变量**（未配置返回空串，调用方据此跳过发送并记日志，绝不回落到私聊）。
     // 显式传空串 = "就是没有群"，同样跳过。
     this.chatId = options.chatId;
-    // 幂等记录只用在这一处：定时推送的**按天认领**（见 sendDailyReminder）。
+    // 幂等记录原本只服务「每日提醒卡」的按天认领；卡片已退场 ⇒ 见下方 listPendingDeliveries 的说明。
     // 「成交」本身的幂等由底层两个复用方法保证（未收款状态 + 已交付状态），不需要多一层。
     this.store = options.store || new JsonTaskStore({
       dir: path.join(__dirname, '../../data/second_delivery_reminder'), idField: 'task_id',
@@ -113,6 +111,8 @@ class SecondDeliveryService {
     return this._retrySettings;
   }
 
+
+  /** 读表：全部走瞬时小退避（读是幂等的，重试安全）。 */
   /**
    * 一次**读**或一次**发**的瞬时错误小退避（业务负责人 P0 第 3 条）。
    * 瞬时错误 → 1s / 2s 各再来一次；**确定性错误一次都不重试**（只留一条清晰日志）。
@@ -124,81 +124,11 @@ class SecondDeliveryService {
     });
   }
 
-  /** 读表：全部走瞬时小退避（读是幂等的，重试安全）。 */
   read(fn, operation) {
     return this.transientRetry(fn, operation);
   }
 
-  /** 告警发到哪儿：显式配了 `PUSH_RETRY_ALERT_CHAT_ID` 就用它，否则用这条提醒**自己的群**。 */
-  alertChatId() {
-    const configured = String(this.retrySettings?.alert?.chatId ?? '').trim();
-    if (configured !== '') return configured;
-    return this.chatId === undefined ? resolvePurchaseChatId() : this.chatId;
-  }
 
-  /**
-   * ⭐ 2026-10-08（P0·失败要可见）：**当天不会再试**时，往群里回一句人话。
-   *
-   * 文案（`{push}` / `{day}` / `{reason}` …）全在 `config/pushRetry`，这里只填值。
-   * 🔴 **幂等**：一天最多一次（读**当前**记录的 `alert_attempted`，不信任调用方手里那份旧的）。
-   * 🔴 **永不抛**：告警只是"让她知道"，绝不能反过来改变"今天不再试"这个结论。
-   */
-  async alertFailure({ dayKey, attempt, error, maxAttempts }) {
-    const alert = this.retrySettings.alert;
-    const meta = { day: dayKey, attempt, max_attempts: maxAttempts };
-    const dayTaskId = dayMarkerId(dayKey);
-    if (!alert.enabled) {
-      logWarn('sales.second_delivery.reminder.alert.skipped', { ...meta, reason: 'alert_disabled' });
-      return { sent: false, reason: 'alert_disabled' };
-    }
-    const current = await this.store.get(dayTaskId).catch(() => null);
-    if (!shouldSendFailureAlert(current, alert)) {
-      return { sent: false, reason: 'already_alerted' };
-    }
-    const fields = larkErrorFields(error);
-    const reason = pushFailureReason(error);
-    const text = formatPushAlertText(alert.template, {
-      push: alert.names.secondDelivery,
-      day: dayKey,
-      attempt,
-      maxAttempts,
-      reason,
-      code: fields.code === '' || fields.code === undefined ? '' : fields.code,
-      msg: fields.msg,
-    });
-    const chatId = this.alertChatId();
-    let sent = false;
-    let messageId = '';
-    let alertError = '';
-    if (!chatId) {
-      alertError = 'no_chat';
-      logWarn('sales.second_delivery.reminder.alert.skipped', {
-        ...meta, reason: 'no_chat', env: 'PURCHASE_CHAT_ID', hint: '没有群可发，告警发不出去',
-      });
-    } else {
-      try {
-        messageId = await this.sendTextToChat(text, chatId);
-        sent = Boolean(messageId);
-      } catch (alertSendError) {
-        alertError = alertSendError.message;
-        logWarn('sales.second_delivery.reminder.alert.failed', {
-          ...meta, error: alertSendError.message, ...larkErrorFields(alertSendError),
-        });
-      }
-    }
-    await this.store.update(dayTaskId, {
-      alert_attempted: true,
-      alert_sent: sent,
-      alert_message_id: messageId,
-      ...(alertError ? { alert_error: alertError } : {}),
-    }).catch(() => undefined);
-    if (sent) {
-      logWarn('sales.second_delivery.reminder.alert.sent', {
-        ...meta, message_id: messageId, chat_id: chatId, reason,
-      });
-    }
-    return { sent, reason: alertError || 'sent' };
-  }
 
   /**
    * 「成交」：补收款 + 交付。卡片按钮一次点击的全部后端动作都在这里。
@@ -208,7 +138,7 @@ class SecondDeliveryService {
    * 所以她照着原卡片再点一次是安全的。
    *
    * `cardMessageId` / `reminderDay` 是卡片回调带上来的（点的是哪条群消息、哪天的卡），
-   * 成交成功后用它们把那张卡的这一单变灰，见 markCardSettled。
+   * （2026-10-12 起：成交后「把卡片变灰」那一步已随卡片退场删除。）
    */
   // ⚠️ 关联键走**尾部可选参数**（`options.correlation`），不塞进 `input`：
   //    `input` 的形状被既有测试逐字 deepEqual，那就是这条边界的证明。关联键只进日志。
@@ -259,10 +189,8 @@ class SecondDeliveryService {
     if (pending.length > 1) throw new Error('存在多条待收款记录，请先人工核对');
     if (!pending.length && !undeliveredIds.length) {
       // 两次点击、或者钱和货都齐了：不重复写，回一句可判断的结果。
-      // ⚠️ 这里也要把卡片变灰：那一单**已经是成交状态**了，不该留在"能点"的样子上。
-      // （正常路径上第一次点击就变灰了，走不到这儿；能走到，说明上次 patch 失败了，
-      //   这里是那张卡唯一一次自愈的机会。）
-      await this.markCardSettled({ reminderDay, cardMessageId, salesEntryRecordId, settledAt });
+      // 🔴 2026-10-12（每日提醒卡退场）：这里原先还要「把被点的那张卡变灰」
+      //    —— 那张卡连同它的动作入口都退场了 ⇒ 这一步整体删除。
       return {
         salesEntryRecordId, alreadyCompleted: true, method,
         collectedPaymentIds: [], collectedAmount: 0, delivery: null, progress: null,
@@ -304,12 +232,9 @@ class SecondDeliveryService {
       delivery: deliveryResult,
       progress,
     };
-    // ③ 成交写完了 → 把被点的那张卡的这一单变灰（只换成一行说明，别处不动）。
-    //    ⚠️ 交付只成了一半时**绝不能变灰**：灰了她就没法再点，那几双没交出去的货
-    //    就永远卡在"看起来已经处理完"的卡片上了。钱货都齐（failedCount === 0）才变灰。
-    if (!(deliveryResult?.failures?.length)) {
-      await this.markCardSettled({ reminderDay, cardMessageId, salesEntryRecordId, settledAt });
-    }
+    // 🔴 2026-10-12（每日提醒卡退场）：这里原先在成交成功后「把被点的那张卡变灰」
+    //    （且「交付只成了一半就不变灰」）—— 卡片与入口都已退场 ⇒ 删除。
+    //    ⚠️ **交易**那一半一个字没动：钱照写、货照交，成不成交与卡片无关。
     logInfo('sales.second_delivery.completed', {
       sales_entry_record_id: salesEntryRecordId,
       operator_open_id: operatorOpenId || '',
@@ -325,60 +250,6 @@ class SecondDeliveryService {
     return result;
   }
 
-  /**
-   * 把被点的那张提醒卡片上的这一单改成「已成交」：只把那一单的按钮换成一行灰字
-   * （渲染规则见 larkCards.settleSecondDeliveryOrder），卡片其余内容原样保留。
-   *
-   * 为什么必须读"当初发出去的那张卡"来改：patch 是**整张卡替换**，只有拿原卡来改，
-   * 才能保证其他单的明细和按钮一个字都不变。所以发卡时把卡一起落在当天的认领记录里
-   * （见 _sendDailyReminder），这里按按钮带回来的 `reminder_day` 取回来。
-   *
-   * ⚠️ 这个方法**永远不会抛、也永远不改成交结果**：账这时已经写完了，卡片只是呈现层，
-   * 更新失败最多是那张卡还能点（再点会被幂等挡成"已经成交"），绝不能反过来把成交弄失败。
-   * 失败只记一条 warn，排查时能看到是"卡片没变灰"而不是"成交没成功"。
-   */
-  async markCardSettled({ reminderDay, cardMessageId, salesEntryRecordId, settledAt } = {}) {
-    const meta = {
-      day: reminderDay || '', sales_entry_record_id: salesEntryRecordId || '',
-      card_message_id: cardMessageId || '',
-    };
-    try {
-      if (!reminderDay) {
-        // 老卡片（这次改动之前发出去的）按钮里没有 reminder_day：跳过并记一条，
-        // 不猜、也不去扫全部记录找那张卡。
-        logWarn('sales.second_delivery.card_settled.skipped', { ...meta, reason: 'missing_reminder_day' });
-        return false;
-      }
-      const day = await this.store.get(dayMarkerId(reminderDay));
-      const card = settleSecondDeliveryOrder(day?.card, { salesEntryRecordId, settledAt });
-      const messageId = cardMessageId || day?.message_id || '';
-      if (!card || !messageId) {
-        logWarn('sales.second_delivery.card_settled.skipped', { ...meta,
-          reason: messageId ? 'order_not_in_card' : 'missing_message_id' });
-        return false;
-      }
-      // 复用基础设施里那个 patch 封装（larkMvpService / sampleReplacementService 都走它）：
-      // im.message.patch 的调用细节与失败日志只该有一处实现。
-      const patched = await updateInteractiveCard({
-        client: this.client,
-        task: { task_id: dayMarkerId(reminderDay), card_message_id: messageId },
-        card, stage: 'second_delivery_settled',
-        eventPrefix: 'sales.second_delivery.card.update',
-      });
-      // 把改完的卡写回当天的记录：**一张卡里可能有好几单**，先点的那单已经灰了，
-      // 再点同卡里另一单时必须基于"这张已经改过的卡"继续改；否则会拿最初那张卡整张替换，
-      // 把先灰掉的那单又变回能点（而且那条已经成交的收款不会再走一遍）。
-      if (patched) {
-        await this.store.update(dayMarkerId(reminderDay), { card }).catch((error) => {
-          logWarn('sales.second_delivery.card_settled.store_failed', { ...meta, error: error.message });
-        });
-      }
-      return patched;
-    } catch (error) {
-      logWarn('sales.second_delivery.card_settled.failed', { ...meta, error: error.message });
-      return false;
-    }
-  }
 
   /**
    * 候选单：最近 7 天里**尚未完成履约**的已入账销售单 ——
@@ -406,6 +277,9 @@ class SecondDeliveryService {
    *    `items` 根本不加，读表也一次都不多发。
    * ⚠️ 这段是**增强**：货品表读挂了只记一条 warn、这一轮没有货号尺码，**不让整条推送失败**。
    */
+  // ⚠️ 2026-10-12（每日提醒卡退场）起：**当前没有生产调用方** —— 9 点推送那条**不用它**
+  //    （`pendingDealPushService` 有自己的候选逻辑，逐字见那边的注释）。
+  //    留着是**有意的**：它是只读查询、有测试，将来 9 点推送想复用随时可以。
   async listPendingDeliveries({ now = new Date(), includeItems = false } = {}) {
     // ⭐ 2026-10-08（P0）：这一组整表读正是早上 9:00 最容易撞上瞬时错误的地方
     //   （读一次「实时库存」要 5~9 秒、1337 行分页；两条链路并发读多张表）⇒ 每张表各自小退避。
@@ -613,193 +487,9 @@ class SecondDeliveryService {
       .filter(Boolean))];
   }
 
-  /**
-   * 发一张**群卡片**。段与 purchaseWebhookService 的 sendText / sendImage 是同一段：
-   * `params: { receive_id_type: receiveIdType }` 参数化，群聊传 chat_id，不写死 open_id。
-   * 群 id 来自 PURCHASE_CHAT_ID（config/groupPurchase，未配置返回空串）。
-   */
-  async sendCardToChat(card) {
-    const chatId = this.chatId === undefined ? resolvePurchaseChatId() : this.chatId;
-    if (!chatId) {
-      // 没配群 = 不知道发哪儿。绝不回落到发给某个人（业务负责人明确说"不用再看经办人了"）。
-      logWarn('sales.second_delivery.reminder.chat_missing', {
-        env: 'PURCHASE_CHAT_ID', hint: '未配置成交提醒群 id，本次不推送',
-      });
-      return '';
-    }
-    if (!this.client?.im?.message?.create) throw new Error('成交提醒缺少飞书 client，无法发送群卡片');
-    // ⭐ 2026-10-08（P0）：发消息也走**瞬时错误小退避**（她点名的 400 / 5xx / 429 那类）。
-    //    ⚠️ `code !== 0` 那条路要**包在重试里面**，否则它不会被判成瞬时（真机那次就是它）。
-    const response = await this.transientRetry(async () => {
-      const created = await this.client.im.message.create({
-        params: { receive_id_type: 'chat_id' },
-        data: { receive_id: chatId, msg_type: 'interactive', content: JSON.stringify(card) },
-      });
-      // ⚠️ 2026-10-08：`code !== 0` 这条路也把**真实四项**挂在 error 上（不靠 message 猜）。
-      if (created.code !== 0) throw larkResponseError('发送成交提醒卡片失败', created);
-      return created;
-    }, 'second_delivery.reminder.send_card');
-    return response.data?.message_id || '';
-  }
 
-  /**
-   * 发一条**纯文本**到群 —— 只给"当天不会再试"的告警用（`alertFailure`）。
-   * ⚠️ 与 `sendCardToChat` **同一套**取值与重试：群 id 从 `PURCHASE_CHAT_ID` 现读、没有群就跳过。
-   */
-  async sendTextToChat(text, chatId) {
-    if (!chatId) return '';
-    if (!this.client?.im?.message?.create) throw new Error('成交提醒缺少飞书 client，无法发送群消息');
-    const response = await this.transientRetry(async () => {
-      const created = await this.client.im.message.create({
-        params: { receive_id_type: 'chat_id' },
-        data: { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text }) },
-      });
-      if (created.code !== 0) throw larkResponseError('发送成交提醒告警失败', created);
-      return created;
-    }, 'second_delivery.reminder.send_text');
-    return response.data?.message_id || '';
-  }
 
-  /** 每日推送。定时器每个 tick 都会调它，能不能真跑由"今天发出去没有 / 该不该重试"决定。 */
-  sendDailyReminder({ now = new Date() } = {}) {
-    // interval 可能在上一次还没跑完时又触发（比如网关变慢）：串行化，
-    // 免得同一天两次扫描并发跑，把"按天只推一次"判成都没推过。
-    const next = this.reminderRun.then(
-      () => this._sendDailyReminder({ now }),
-      () => this._sendDailyReminder({ now }),
-    );
-    this.reminderRun = next.catch(() => undefined);
-    return next;
-  }
 
-  async _sendDailyReminder({ now }) {
-    const dayKey = shanghaiDayKey(now);
-    const dayTaskId = dayMarkerId(dayKey);
-    const { retryDelaysMs = [] } = this.retrySettings.daily;
-    // 防「同一天因为重启 / 重复轮询而发两遍」的**唯一一层：按天认领**。
-    //
-    // ⚠️ 业务负责人明确否掉了"按单只推一次"：「只要他还在 7 天的时间范围内，你就继续发」。
-    // 所以**没有按单标记**：同一笔单只要还在窗口里且还没成交，**每天都会重新进候选、
-    // 每天都会再发一次**。这一层防的不是"同一笔推第二遍"，而是"同一天推第二遍"。
-    //
-    // ⭐ 2026-10-08（P0）：**失败不再等于"今天跑过了"** —— 与 9 点推送同款状态机：
-    //   · `completed` / `sent:true` → 已经发出去了（或今天本来就没东西可推）⇒ **绝不再发**；
-    //   · `failed`                  → 到点（`first_failed_at + retryDelaysMs[n]`）**再试一次**，
-    //                                 次数用完 ⇒ 当天不再试 + 往群里回一句告警；
-    //   · `running`                 → 崩在两次写之间 ⇒ 当天不发（宁可少推一天，绝不重复发）。
-    // 为什么先落记录再发、而不是发完再落：崩溃在"已认领、还没发出去"之间只会
-    // **少推一次**（这一天没有卡，第二天照常进候选，可自愈），而不会重复刷屏。
-    // 反过来的顺序在同一个崩溃点会产生第二张卡。
-    const record = await this.store.get(dayTaskId);
-    const decision = resolveDailyAttempt({ record, nowMs: now.getTime(), retryDelaysMs });
-    if (!decision.attempt) {
-      logInfo('sales.second_delivery.reminder.skipped', {
-        day: dayKey, reason: decision.reason,
-        attempts: Number(record?.attempts) || 0,
-        ...(decision.nextRetryAt ? { next_retry_at: decision.nextRetryAt } : {}),
-      });
-      // ⭐ 失败要可见：重试用完（或压根没开重试）⇒ 当天一定发不出去了，在这里补一次告警
-      //    （正好覆盖"进程崩在'写 failed'与'发告警'之间"那个窗口；一天最多一句）。
-      if (decision.reason === 'retries_exhausted' || decision.reason === 'retry_disabled') {
-        await this.alertFailure({
-          dayKey,
-          attempt: Number(record?.attempts) || 1,
-          maxAttempts: 1 + retryDelaysMs.length,
-          error: {
-            message: record?.error || 'unknown',
-            larkData: record?.lark_error || {},
-          },
-        });
-      }
-      return {
-        day: dayKey, skipped: true, pushedOrderCount: 0, reason: decision.reason,
-        attemptCount: Number(record?.attempts) || 0,
-      };
-    }
-    const attempt = decision.attemptNumber;
-    if (record) await this.store.update(dayTaskId, { status: 'running', attempts: attempt });
-    else {
-      await this.store.create({
-        task_id: dayTaskId, day: dayKey, status: 'running', attempts: attempt, sent: false,
-      });
-    }
-    try {
-      // 候选就是**全部**要推的单：没有任何"推过就跳过"的过滤（跨天照发）。
-      const candidates = await this.listPendingDeliveries({ now });
-      if (!candidates.length) {
-        await this.store.update(dayTaskId, { status: 'completed', pushed: [], reason: 'no_pending_order' });
-        logInfo('sales.second_delivery.reminder.empty', { day: dayKey, candidate_count: 0 });
-        return { day: dayKey, pushedOrderCount: 0, messageId: '', reason: 'no_pending_order' };
-      }
-      // 没有收款方式 = 卡片上的「成交」按钮没法表达"这笔钱是怎么收的"。
-      // 宁可今天不推并大声记日志，也不能替她猜一个方式写进收款明细；
-      // 配置好之后的第二天会照常推。
-      const methods = await this.paymentMethodNames();
-      if (!methods.length) {
-        await this.store.update(dayTaskId, { status: 'completed', pushed: [], reason: 'no_payment_method' });
-        logWarn('sales.second_delivery.reminder.methods_missing', {
-          day: dayKey, order_count: candidates.length, hint: '「收款方式管理」里没有可选的收款方式，未推送成交卡片',
-        });
-        return { day: dayKey, pushedOrderCount: 0, messageId: '', reason: 'no_payment_method' };
-      }
-      // 日期键写进按钮取值（见 larkCards.secondDeliveryCard）：点完之后要靠它把这张卡
-      // 取回来改成「已成交」。
-      const card = secondDeliveryCard({ orders: candidates, methods, dayKey });
-      const messageId = await this.sendCardToChat(card);
-      if (!messageId) {
-        await this.store.update(dayTaskId, { status: 'completed', pushed: [], reason: 'no_chat' });
-        return { day: dayKey, pushedOrderCount: 0, messageId: '', reason: 'no_chat' };
-      }
-      // 卡片本身也存进当天的记录：patch 是整张卡替换，点完变灰时必须拿"当初发出去的
-      // 这张卡"来改，才能保证别的单一个字都不变（见 markCardSettled）。
-      // ⭐ 2026-10-08（P0）：显式记 `sent:true` + `attempts`（与 9 点推送同一套字段形状）；
-      //    判"今天该不该发"仍然认 `status === 'completed'`，所以这两个键是**追加**、不改语义。
-      await this.store.update(dayTaskId, {
-        status: 'completed', sent: true, attempts: attempt,
-        message_id: messageId, card,
-        pushed: candidates.map((order) => order.salesEntryRecordId),
-      });
-      logInfo('sales.second_delivery.reminder.sent', {
-        day: dayKey, order_count: candidates.length,
-        order_ids: candidates.map((order) => order.salesEntryRecordId),
-        candidate_count: candidates.length, message_id: messageId, attempt,
-      });
-      return { day: dayKey, pushedOrderCount: candidates.length, messageId, attemptCount: attempt };
-    } catch (error) {
-      // 🔴 2026-10-08（P0）：**失败不再等于"今天跑过了"** —— 记下第几次、下次什么时候再试，
-      //    并把飞书返回的**真实四项**（code / msg / log_id / method_id）落进日志与记录。
-      //    次数用完（`will_retry:false`）⇒ 当天不再试 + 往群里回一句告警；第二天照常进候选。
-      const fields = larkErrorFields(error);
-      const firstFailedAt = record?.first_failed_at || now.toISOString();
-      const delay = retryDelaysMs[attempt - 1];
-      const nextRetryAt = delay === undefined
-        ? ''
-        : new Date(Date.parse(firstFailedAt) + delay).toISOString();
-      await this.store.update(dayTaskId, {
-        status: 'failed', sent: false, attempts: attempt,
-        first_failed_at: firstFailedAt, failed_at: now.toISOString(),
-        next_retry_at: nextRetryAt, retry_delays_ms: retryDelaysMs,
-        error: fields.msg || error.message, lark_error: fields,
-      }).catch(() => undefined);
-      logWarn('sales.second_delivery.reminder.failed', {
-        day: dayKey, attempt, max_attempts: 1 + retryDelaysMs.length,
-        will_retry: delay !== undefined, next_retry_at: nextRetryAt,
-        error: error.message, ...fields,
-      });
-      if (delay !== undefined) {
-        // 定时器只负责"到点叫她"；该不该发由 `resolveAttempt` 说了算（丢了也不会重发）。
-        this.scheduleRetry(delay, () => {
-          this.sendDailyReminder({ now: new Date() }).catch(() => undefined);
-        });
-      } else {
-        // ⭐ 失败要可见：**当天不会再有下一次 ⇒ 必须有人知道**（业务负责人 P0 第 2 条）。
-        await this.alertFailure({
-          dayKey, attempt, maxAttempts: 1 + retryDelaysMs.length, error,
-        });
-      }
-      throw error;
-    }
-  }
 }
 
 module.exports = { SecondDeliveryService };

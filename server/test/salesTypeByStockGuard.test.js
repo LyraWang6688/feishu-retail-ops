@@ -20,7 +20,6 @@ const larkCards = require('../src/utils/larkCards');
 const { PendingDealPushService } = require('../src/services/pendingDealPushService');
 const { resolvePendingDealPushConfig } = require('../src/config/pendingDealPush');
 const { resolveSalesColorChoiceConfig } = require('../src/config/salesColorChoice');
-const { resolveSecondDeliveryCardConfig } = require('../src/config/secondDeliveryCard');
 const { SALES_CARD_FACTS_DEFAULTS } = require('../src/config/salesCardFacts');
 const { SALES_MISSING_INFO_DEFAULTS, renderSalesMissingInfo } = require('../src/config/salesMissingInfoText');
 const { SALES_MOVEMENTS, SALES_TRADE_TYPE_CODES, tradeTypeCodeFromLabel } = require('../src/config/salesMovements');
@@ -36,11 +35,6 @@ test('① 卡片渲染 0 命中「未付 / 预付」：处理中卡 / 终态卡 
       title: '⏳ 处理中', template: 'blue', itemColor: 'grey', progressLine: '正在写入…', note: '请勿重复点击',
     }),
     larkCards.salesStatusCard({ items: ITEMS }, '销售订单已入账', '销售单号：XSD-1。', 'green'),
-    larkCards.secondDeliveryCard({
-      orders: [{ orderNo: 'XSD-1', salesEntryRecordId: 'rec_1', tradeTypeLabel: '现货',
-        quantity: 1, pendingAmount: 99, pendingDeliveryQuantity: 0 }],
-      methods: ['微信'], dayKey: '2026-10-07',
-    }),
   ];
   for (const [index, card] of cards.entries()) {
     const text = JSON.stringify(card);
@@ -97,7 +91,6 @@ test('② 配置默认值 0 命中：三段文案 / 颜色候选 / 待处理单�
     JSON.stringify(SALES_CARD_FACTS_DEFAULTS),
     JSON.stringify(resolveSalesColorChoiceConfig({})),
     JSON.stringify(resolvePendingDealPushConfig({})),
-    JSON.stringify(resolveSecondDeliveryCardConfig({})),
     JSON.stringify(SALES_MISSING_INFO_DEFAULTS),
   ];
   for (const [index, blob] of blobs.entries()) {

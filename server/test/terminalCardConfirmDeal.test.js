@@ -750,11 +750,8 @@ test('只改这张终态卡：确认卡 / 处理中卡 / 第二次交付卡上�
   assert.equal(hasDealButton(larkCards.salesProcessingCard({ items }, {
     title: 't', template: 'blue', itemColor: 'grey', progressLine: 'p', note: 'n',
   })), false);
-  assert.equal(hasDealButton(larkCards.secondDeliveryCard({
-    orders: [{ orderNo: 'XSD-1', salesEntryRecordId: ENTRY_ID, tradeTypeLabel: '预定',
-      quantity: 1, pendingAmount: 260, pendingDeliveryQuantity: 1 }],
-    methods: ['微信'], dayKey: '2026-10-07',
-  })), false);
+  // ⚠️ 2026-10-12：那张每日二次交付提醒卡已退场 ⇒ 这条"终态卡才有该按钮"的对照去掉这一张
+  //    （其余卡片照旧逐张扫 ✓）
   // 终态卡**不带**这个开关时也一个按钮都没有（默认关 ⇒ 其余分支逐字不变）。
   assert.equal(hasDealButton(larkCards.salesStatusCard({ items }, '销售订单已入账', '销售单号：XSD-1。', 'green')), false);
 });

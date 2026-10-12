@@ -65,10 +65,7 @@ const PATCHABLE_CARD_SCENARIOS = [
   { name: 'purchaseStatusCard',
     build: (c) => c.purchaseStatusCard({ items: ITEMS }, '采购申请处理中',
       '已收到确认，正在生成采购申请；请勿重复点击。', 'blue') },
-  { name: 'secondDeliveryCard',
-    build: (c) => c.secondDeliveryCard({ orders: [{ orderNo: 'XSD-001', salesEntryRecordId: 'rec_1',
-      tradeTypeLabel: '已付', quantity: 2, pendingAmount: 99, pendingDeliveryQuantity: 1 }],
-      methods: ['微信', '现金'], dayKey: '2026-10-07' }) },
+  // ⚠️ 2026-10-12：原来这里还有一张「每日二次交付提醒卡」的场景 —— 那张卡已整条退场
 ];
 
 // 刻意**不动**的卡片（只发不 patch）：它们**不该**出现 `update_multi`。

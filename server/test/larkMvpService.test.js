@@ -922,8 +922,11 @@ test('⭐⭐ 源码哨兵：群入口那条链路的符号**一个都不许回�
     assert.equal(fs.existsSync(path.join(__dirname, removedFile)), false,
       `${removedFile} 应已删除（群入口专属件）`);
   }
-  // ✅ 死保项：9 点推送三块与两个卡片回调不许被牵连
-  assert.match(source, /handleSecondDeliveryAction/, '二次交付成交必须还在');
+  // ✅ 死保项（2026-10-12 换锚）：**"成交"这个业务动作必须还在** —— 但它的锚点从
+  //    "那张卡的回调"换到了**活入口**上（卡片那条已于当天退场）：
+  assert.equal(/handleSecondDeliveryAction/.test(source), false,
+    '那张每日提醒卡的「成交」回调已随卡片退场');
+  assert.match(source, /handleCardAction/, '卡片回调入口本身照旧在（别的卡片还在用）');
   assert.match(source, /confirmVoucherSettlement/, '团购券「确认到账」必须还在');
 });
 

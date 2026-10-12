@@ -25,7 +25,7 @@ const { itemTradeTypeCode } = require('./salesTradeTypePolicy');
 const { deliversForTradeType } = require('./salesMovements');
 
 // 卡片动作名（**内部契约**，不是文案）：卡片渲染与机器人分派**共用这一个常量**，
-// 不各写一份而慢慢写歪（与 `larkCards.SECOND_DELIVERY_ACTION` 同一规矩）。
+// 不各写一份而慢慢写歪（与已退场的每日提醒卡那条同一规矩）。
 const SALES_CONFIRM_DEAL_ACTIONS = Object.freeze({
   CONFIRM: 'confirm_sale_deal',
 });
@@ -134,7 +134,7 @@ const resolveSalesConfirmDealConfig = (env = process.env) => {
 
 /** ⚠️ 文案占位符填充（`{orderNo}` / `{clock}` / `{summary}` / `{reason}`）：本模块**导出**它，
  *  因为这几段文案的填充点（卡片渲染、机器人接线）都读同一份默认文案 ——
- *  换一个词不该在两处各改一次（语义与 `config/secondDeliveryCard` 那个 `fill` 逐字相同）。 */
+ *  换一个词不该在两处各改一次（语义与已退场那张卡的 `fill` 逐字相同）。 */
 const fill = (template, values = {}) => String(template ?? '')
   .replace(/\{([^{}]*)\}/g, (whole, key) => (
     values[key] === undefined || values[key] === null ? '' : String(values[key])));

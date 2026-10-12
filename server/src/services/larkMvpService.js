@@ -67,7 +67,7 @@ const { isLookupIntent, isAfterSalesIntent, normalizeMessageIntent } = require('
 const { isSalesCandidate, UNSUPPORTED_INTENT_REPLY } = require('../config/messageGate');
 // ⭐ 未知 / 已退场卡片动作的兜底人话（2026-10-12，业务负责人明确要的）：文案可配。
 const { UNKNOWN_CARD_ACTION_TOAST } = require('../config/unknownCardAction');
-const { salesStatusCard, salesProcessingCard, keepOnlyCardButton, SECOND_DELIVERY_ACTION } = require('../utils/larkCards');
+const { salesStatusCard, salesProcessingCard, keepOnlyCardButton } = require('../utils/larkCards');
 // ⭐【确认成交】按钮（2026-10-07 业务负责人拍板的**甲**：做在「已入账」终态卡上，不新发消息）：
 //   动作名 ＋ "要不要画这个按钮"的判据 ＋ 用户可见文案，全在那一份配置里（配置先行）。
 const {
@@ -1222,9 +1222,9 @@ class LarkMvpService {
     //    这条链路绑的是销售主表 record_id，根本没有草稿，也没有草稿状态机，
     //    落在下面那套逻辑里一定抛「卡片缺少草稿 ID」。
     // 动作名用 larkCards 里那一个常量，卡片和分派不会各写一份而慢慢写歪。
-    if (action === SECOND_DELIVERY_ACTION) {
-      return this.handleSecondDeliveryAction(value, operatorOpenId, event);
-    }
+    // 🔴 2026-10-12（每日提醒卡退场）：这里原来是**那张卡的「成交」按钮**的分派
+    //    （那张卡整条链路已退场）。⇒ 落到下面的**未知动作兜底**：
+    //    群里点老卡片**回一句人话、零写入**（不报错、不静默）✓
     // ⭐【确认成交】—— 「已入账」终态卡上的那一个按钮（业务负责人 2026-10-07 拍板的**甲**）。
     // ⚠️ 位置与上面那条同源：也放在 `if (!draftId) throw` **之前**（它不依赖草稿状态机），
     //    并且与销售草稿**共用同一个串行队列**（同一张卡连点两次会被排成一前一后，
@@ -1298,42 +1298,10 @@ class LarkMvpService {
     return { toast: { type: 'info', content: UNKNOWN_CARD_ACTION_TOAST } };
   }
 
-  /**
-   * 「成交」：已入账、尚未完成履约的单收尾（补收款 + 交付）。
-   *
-   * 这里只做三件事：把按钮带上来的「销售单号 + 收款方式」转给编排服务，
-   * 把"点的是哪条群消息、哪天的卡"一起带下去（成交成功后要把那张卡的这一单变灰，
-   * 见 SecondDeliveryService.markCardSettled），以及把结果说成她能看懂的一句话。
-   * 写账、扣库存全在 SecondDeliveryService 里，本类不碰——那两件事都必须只有一处实现。
-   */
-  async handleSecondDeliveryAction(value, operatorOpenId, event = {}) {
-    const result = await this.secondDelivery.confirm({
-      salesEntryRecordId: value?.sales_entry_record_id,
-      // 收款方式由按钮带上来的，缺了会让补收款明确报错，不在这里兜一个默认值。
-      method: value?.method,
-      operatorOpenId,
-      // 卡片回调事件里的消息 id = 被点的那张卡；reminder_day 是发卡时写进按钮取值的。
-      cardMessageId: event?.context?.open_message_id || event?.open_message_id || '',
-      reminderDay: value?.reminder_day || '',
-    }, {
-      // 关联键：这条链路上没有本地任务（点的是每日提醒卡），能给的业务键就是这张销售单。
-      correlation: { sales_entry_record_id: value?.sales_entry_record_id },
-    });
-    if (result.alreadyCompleted) {
-      return { toast: { type: 'info', content: '这一单已经成交，无需重复处理' } };
-    }
-    const parts = [];
-    if (result.collectedAmount > 0) parts.push(`补收款 ￥${result.collectedAmount}`);
-    const deliveredCount = Number(result.delivery?.deliveredQuantity || 0);
-    if (result.delivery && deliveredCount > 0) parts.push(`交付 ${deliveredCount} 双`);
-    const failedCount = result.delivery?.failures?.length || 0;
-    if (failedCount) {
-      // 钱已经收下、货只交了一部分：如实说清，并指到工作台去处理，不能报成功。
-      return { toast: { type: 'warning', content:
-        `已成交：${parts.join('，')}；还有 ${failedCount} 双交付未完成，请到工作台待交付列表核对` } };
-    }
-    return { toast: { type: 'success', content: `已成交：${parts.join('，') || '无待处理项'}` } };
-  }
+  // 🔴 2026-10-12：那张每日提醒卡的「成交」按钮回调（→ 编排服务）已随卡片退场删除。
+  //    「成交」仍然从**活入口**进来：
+  //      ① 工作台 `WorkbenchOrderActionService.secondDelivery`；
+  //      ② 群里文字那条 `salesThreadProgressService`。
 
   /**
    * ⭐「这张已入账终态卡要不要带【确认成交】按钮」——**一个判据、几处渲染点共用**。
@@ -1426,7 +1394,7 @@ class LarkMvpService {
         // 成交了才把卡片改成「已成交」；只成了一半 / 货没到时**绝不能变灰**（她还要再点）。
         // ⚠️ `already_completed`（底层的钱货本来就齐了）也算"成交状态" ⇒ 同样改成已成交：
         //   正常路径上第一次点击就改了，能走到这里说明上次 patch 失败了 ——
-        //   这是那张卡**唯一一次自愈的机会**（与 `SecondDeliveryService.markCardSettled` 同一条理由）。
+        //   这是那次写入**唯一一次自愈的机会**（与已退场那张卡的「变灰」同一条理由）。
         // ⭐ 交付**只成了一半**时（部分交付 = 既有语义），卡面那句说明要把"仍未交付 N 双"
         //   写上（问题 4：以前这个信息只出现在线程回话/toast 里，绿色卡面上一个字都没有）。
         if (task) {

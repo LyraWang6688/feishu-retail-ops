@@ -18,7 +18,6 @@
 //      **真实打到飞书**的 `data.content` 里也带 —— 用假 client 抓 payload；
 //      （2026-10-08：第三条 `LarkMvpService.patchCardMessage` 已随"采购侧统一改用共享实现"删除，
 //       采购到货核对现在接的就是 `updateInteractiveCard` —— 见下面"patch 出口 ①"。）
-//   ③ `secondDeliveryCard` 经 `settleSecondDeliveryOrder` **深拷贝变换后**仍带（最易漏）；
 //   ④ 刻意不 patch 的 **2 张卡**（`saleLookupCard` ×2 分支）
 //      **不出现**该字段 —— 把"刻意不动"钉住，将来谁顺手加上会挂
 //      （2026-10-08：`purchaseRequestConfirmationCard` 已整张删除，不再是这里的场景）；
@@ -68,11 +67,12 @@ const capturePatch = () => {
   return { client, payloads };
 };
 
-// ── ① "更新前"那份：9 张会被 patch 的卡片，builder 直出就是共享卡片 ────────────
+// ── ① "更新前"那份：8 张会被 patch 的卡片，builder 直出就是共享卡片 ────────────
 test('14 张会被 patch 的卡片：builder 直出（"更新前"那份）的 config 就是共享卡片', () => {
   // ⚠️ 2026-10-12（3b + 售后卡片退场）：14 → 13（销售确认卡退场）→ **9**
-  //    （售后那 4 张 —— 确认卡 / 结果卡 / 重试卡 / 状态卡 —— 随售后卡片链路整条退场）。
-  assert.equal(PATCHABLE_CARD_SCENARIOS.length, 9,
+  //    （售后那 4 张 —— 确认卡 / 结果卡 / 重试卡 / 状态卡 —— 随售后卡片链路整条退场）
+  //    → **8**（每日二次交付提醒卡也退场了，2026-10-12）。
+  assert.equal(PATCHABLE_CARD_SCENARIOS.length, 8,
     '清单是 10 张卡（都是一句话就能说清"为什么它要被 patch"的现行卡片）');
   for (const { name, build } of PATCHABLE_CARD_SCENARIOS) {
     assert.deepEqual(build(larkCards).config, PATCHABLE_CONFIG,
@@ -160,30 +160,9 @@ test('patch 出口 ③：PurchaseWebhookService.updatePurchaseActionCard 打到�
   assert.deepEqual(JSON.parse(payloads[0].data.content).config, PATCHABLE_CONFIG);
 });
 
-// ── ③ 第二次交付：patch 打的是"深拷贝变换后"那份（最易漏）────────────────────
-test('secondDeliveryCard 经 settleSecondDeliveryOrder 变换后仍带 update_multi（含真实 payload）', async () => {
-  const issued = larkCards.secondDeliveryCard({
-    orders: [{ orderNo: 'XSD-001', salesEntryRecordId: 'rec_1', tradeTypeLabel: '已付',
-      quantity: 2, pendingAmount: 99, pendingDeliveryQuantity: 1 }],
-    methods: ['微信', '现金'], dayKey: '2026-10-07',
-  });
-  // 变换内部走 `JSON.parse(JSON.stringify(card))` 深拷贝重建 —— 字段必须被带过去。
-  const settled = larkCards.settleSecondDeliveryOrder(issued, { salesEntryRecordId: 'rec_1' });
-  assert.ok(settled, '这一单在卡里，应当能换成"已成交"');
-  assert.notEqual(settled, issued, '是重建的一份，不是原对象');
-  assert.deepEqual(settled.config, PATCHABLE_CONFIG);
-  // 变换**只动 elements**（把那一单的按钮换成灰字）：header 逐字不变。
-  assert.deepEqual(settled.header, issued.header);
-
-  // 再走一次真实出口（`secondDeliveryService.markCardSettled` 用的就是它）。
-  const { client, payloads } = capturePatch();
-  const updated = await updateInteractiveCard({
-    client, task: { task_id: 'day_2026-10-07', card_message_id: 'om_day' }, card: settled,
-    stage: 'second_delivery_settled', eventPrefix: 'sales.second_delivery.card.update',
-  });
-  assert.equal(updated, true);
-  assert.deepEqual(JSON.parse(payloads[0].data.content).config, PATCHABLE_CONFIG);
-});
+// ── ③ （2026-10-12）原来这里还有「第二次交付提醒卡：patch 打的是深拷贝变换后那份」
+//    那一条 —— 那张卡已整条退场（配置/定时器/卡片渲染/改卡全删）⇒ 用例随之删除。
+//    ⚠️ `update_multi` 这个**机制**本身没被削弱：上面 ① ② 与下面的出口用例照旧钉着 ✓
 
 // ── 现场复现：她点一次「确认」，两次真实 patch payload 都带该字段 ───────────────
 // 这条不是"再测一遍 builder"，而是走**她那条真实链路**：
@@ -201,8 +180,6 @@ test('secondDeliveryCard 经 settleSecondDeliveryOrder 变换后仍带 update_mu
 //    两张卡的可见内容**有意**变了，golden 已同步（改的是 golden，不是断言强度）：
 //      · 已退场的那张确认卡片：原来是「交易类型：…」一行，现在是
 //        「类型 / 履约状态 / 收款情况」三行（业务负责人：「【卡片 = 分开说】…」）；
-//      · `secondDeliveryCard`：标题从「待成交：未付 / 预付」改成「待成交 / 待收款」
-//        （「未付」不再是交易类型）。
 
 // ── ⑦ 只读一眼"这条消息是什么"（`im.v1.message.get`）────────────────────────────
 // 2026-10-07 晚真机：日志说 `card_updated`、她那边**一张卡都没有**。根因之一是

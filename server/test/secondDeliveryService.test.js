@@ -19,8 +19,6 @@ const { SalesOrderService } = require('../src/services/salesOrderService');
 const { PaymentService } = require('../src/services/paymentService');
 const { LarkMvpService } = require('../src/services/larkMvpService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
-const { startSecondDeliveryReminder, shanghaiHour } = require('../src/utils/secondDeliveryReminder');
-const { settleSecondDeliveryOrder } = require('../src/utils/larkCards');
 
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
 // 群聊相关配置在服务构造时会被读一次；给测试值，免得用例里刷出一条"没配"的警告
@@ -421,156 +419,12 @@ const cardButtons = (card) => card.elements
   .filter((element) => element.tag === 'column_set')
   .flatMap((element) => element.columns.flatMap((column) => column.elements));
 
-test('每日提醒：只推「尚未完成履约（预定 / 现货待收）+ 7 天内」，卡片发到采购群', async () => {
-  const sent = [];
-  const service = new SecondDeliveryService({
-    gateway: fakeGateway(reminderSeed()), store: tmpStore('second-delivery-reminder-'),
-    client: fakeClient(sent), chatId: CHAT_ID,
-  });
 
-  const result = await service.sendDailyReminder({ now: NOW });
 
-  assert.equal(result.day, '2026-10-05');
-  assert.equal(result.pushedOrderCount, 2);
-  assert.equal(sent.length, 1, '一天只发一张卡');
-  assert.equal(sent[0].params.receive_id_type, 'chat_id');
-  assert.equal(sent[0].data.receive_id, CHAT_ID);
-  assert.equal(sent[0].data.msg_type, 'interactive');
 
-  const card = cardOf(sent[0]);
-  const content = JSON.stringify(card);
-  assert.match(content, /XSD-P-2/);
-  assert.match(content, /XSD-U-2/);
-  assert.doesNotMatch(content, /XSD-C-2/, '现货不进提醒');
-  assert.doesNotMatch(content, /XSD-U-3/, '已完成履约的不进提醒');
-  assert.doesNotMatch(content, /XSD-U-9/, '7 天以外的不进提醒');
-  assert.match(content, /未收 ￥260/);
-  assert.match(content, /未交付 1\/1 双/);
 
-  // 按钮：每单每种收款方式一个「成交」，取值带销售单号 + 收款方式。
-  const buttons = cardButtons(card);
-  assert.deepEqual(buttons.map((button) => button.value.sales_entry_record_id), [
-    'order_prepaid_pending', 'order_prepaid_pending', 'order_cash_pending', 'order_cash_pending',
-  ]);
-  assert.deepEqual(buttons.map((button) => button.value.method), ['微信', '现金', '微信', '现金']);
-  assert.ok(buttons.every((button) => button.value.action === 'confirm_second_delivery'));
-  // 按钮取值里还要带「这张卡是哪天的」：点完之后要靠它把这张卡取回来改成已成交。
-  assert.deepEqual([...new Set(buttons.map((button) => button.value.reminder_day))], ['2026-10-05']);
-  assert.deepEqual(buttons.map((button) => button.text.content),
-    ['成交·微信', '成交·现金', '成交·微信', '成交·现金']);
-});
 
-test('只配了一种收款方式时按钮直接叫「成交」', async () => {
-  const sent = [];
-  const service = new SecondDeliveryService({
-    gateway: fakeGateway(reminderSeed()), store: tmpStore('second-delivery-reminder-'),
-    client: fakeClient(sent), chatId: CHAT_ID,
-  });
-  service.paymentMethodNames = async () => ['微信'];
-  await service.sendDailyReminder({ now: NOW });
-  const buttons = cardButtons(cardOf(sent[0]));
-  assert.deepEqual([...new Set(buttons.map((button) => button.text.content))], ['成交']);
-});
 
-test('每日只推一次：同一天第二次 tick 不再推；同一笔单第二天照常再推一次', async () => {
-  const sent = [];
-  const service = new SecondDeliveryService({
-    gateway: fakeGateway(reminderSeed()), store: tmpStore('second-delivery-reminder-'),
-    client: fakeClient(sent), chatId: CHAT_ID,
-  });
-
-  await service.sendDailyReminder({ now: NOW });
-  assert.equal(sent.length, 1);
-
-  // 同一天再 tick（进程重启后 interval 立刻再跑就是这种情况）：一次都不该再发。
-  const sameDay = await service.sendDailyReminder({ now: NOW });
-  assert.equal(sameDay.skipped, true);
-  assert.equal(sameDay.reason, 'already_ran_today');
-  assert.equal(sent.length, 1, '同一天只发一次');
-
-  // 第二天：那两笔**还在 7 天内、还没成交**，所以照样全发一遍。
-  // 业务负责人明确说了「不用防重复推送……只要他还在 7 天的时间范围内，你就继续发」，
-  // 所以这里断言的恰恰是"跨天会推"，不是空跑。
-  const nextDay = await service.sendDailyReminder({ now: TOMORROW });
-  assert.equal(nextDay.pushedOrderCount, 2, '同一笔在 7 天内要跨天照发');
-  assert.equal(sent.length, 2, '第二天再发一张卡');
-  const firstCard = JSON.stringify(cardOf(sent[0]));
-  const secondCard = JSON.stringify(cardOf(sent[1]));
-  for (const orderNo of ['XSD-P-2', 'XSD-U-2']) {
-    assert.match(firstCard, new RegExp(orderNo));
-    assert.match(secondCard, new RegExp(orderNo), `${orderNo} 第二天还要在卡里（跨天照发）`);
-  }
-});
-
-test('没配收款方式就不推，也不猜一个方式写账（第二天配置好了照常推）', async () => {
-  const sent = [];
-  const gateway = fakeGateway(reminderSeed());
-  gateway.records.set('paymentMethod', []);
-  const service = new SecondDeliveryService({
-    gateway, store: tmpStore('second-delivery-reminder-'), client: fakeClient(sent), chatId: CHAT_ID,
-  });
-
-  const blocked = await service.sendDailyReminder({ now: NOW });
-  assert.equal(blocked.reason, 'no_payment_method');
-  assert.equal(sent.length, 0);
-
-  // 这一天没推成（按天认领已落盘），但这不等于单被标记过：配置补上之后第二天照常推。
-  gateway.records.set('paymentMethod', METHOD_ROWS);
-  const nextDay = await service.sendDailyReminder({ now: TOMORROW });
-  assert.equal(nextDay.pushedOrderCount, 2);
-  assert.equal(sent.length, 1);
-});
-
-test('没配群 id 时不发、也不抛异常（第二天配置好之后还能推）', async () => {
-  const sent = [];
-  const gateway = fakeGateway(reminderSeed());
-  const service = new SecondDeliveryService({
-    gateway, store: tmpStore('second-delivery-reminder-'), client: fakeClient(sent), chatId: '',
-  });
-  const result = await service.sendDailyReminder({ now: NOW });
-  assert.equal(result.reason, 'no_chat');
-  assert.equal(sent.length, 0);
-  // 群 id 配好之后，第二天照样能推（按天认领只挡同一天）。
-  service.chatId = CHAT_ID;
-  assert.equal((await service.sendDailyReminder({ now: TOMORROW })).pushedOrderCount, 2);
-});
-
-test('这一单是哪天的：明细「销售日」优先、主表「录单日」兜底，两个都读不到就跳过这单', async () => {
-  const seed = reminderSeed();
-  // 现货待收那单：主表日期清掉，靠明细的「销售日」判在窗口内。
-  delete seed.salesEntry.find((row) => row.record_id === 'order_cash_pending').fields['录单日'];
-  seed.salesDetail.find((row) => row.record_id === 'd_c1').fields['销售日'] =
-    Date.parse('2026-10-02T10:00:00+08:00');
-  // 预定那单：主表和明细都没有日期 —— 不能当成"太老了"悄悄丢掉，要跳过并记警告。
-  delete seed.salesEntry.find((row) => row.record_id === 'order_prepaid_pending').fields['录单日'];
-
-  const sent = [];
-  const service = new SecondDeliveryService({
-    gateway: fakeGateway(seed), store: tmpStore('second-delivery-reminder-'),
-    client: fakeClient(sent), chatId: CHAT_ID,
-  });
-  const result = await service.sendDailyReminder({ now: NOW });
-
-  assert.equal(result.pushedOrderCount, 1);
-  assert.match(JSON.stringify(cardOf(sent[0])), /XSD-U-2/);
-  assert.doesNotMatch(JSON.stringify(cardOf(sent[0])), /XSD-P-2/);
-});
-
-test('单条数据不自洽（收款超过成交额）时跳过它，其余单照推', async () => {
-  const seed = reminderSeed();
-  seed.paymentRecord.push({ record_id: 'r_bad', fields: {
-    关联销售单: ['order_cash_pending'], 收款金额: 9999, 收款状态: '已收款',
-  } });
-  const sent = [];
-  const service = new SecondDeliveryService({
-    gateway: fakeGateway(seed), store: tmpStore('second-delivery-reminder-'),
-    client: fakeClient(sent), chatId: CHAT_ID,
-  });
-  const result = await service.sendDailyReminder({ now: NOW });
-  assert.equal(result.pushedOrderCount, 1);
-  assert.match(JSON.stringify(cardOf(sent[0])), /XSD-P-2/);
-  assert.doesNotMatch(JSON.stringify(cardOf(sent[0])), /XSD-U-2/);
-});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 六之二、点完「成交」：那张卡的这一单变灰（按钮换成一行说明）
@@ -618,287 +472,25 @@ const buttonRowsForTest = (salesEntryRecordId, count) => {
   return rows;
 };
 
-test('点完「成交」：被点那一单的按钮换成一行灰字，卡片里别的单一个字都不动', async () => {
-  const { service, gateway, sent, patched } = reminderHarness();
-  await service.sendDailyReminder({ now: NOW });
-  const original = cardOf(sent[0]);
-  // 卡里两单：预定（10-01）在前，现货待收（10-02）在后 —— 点后面那一单。
-  assert.deepEqual(original.elements.map((element) => element.tag),
-    ['div', 'column_set', 'div', 'column_set']);
 
-  await clickFirstCard(service, 'order_cash_pending');
 
-  // ① 钱真的收了（变灰是成交的结果，不是替代）。
-  assert.equal(gateway.records.get('paymentRecord').find((row) => row.record_id === 'r_c1').fields['收款状态'], '已收款');
-  // ② patch 打在**被点的那张卡**上，且只有一次。
-  assert.equal(patched.length, 1, '成交成功后更新那张卡');
-  assert.equal(patched[0].message_id, 'om_1');
 
-  const next = JSON.parse(patched[0].content);
-  // ③ 卡片头与前半段（预定那一单的明细行 + 按钮行）原样保留。
-  assert.deepEqual(next.header, original.header);
-  assert.deepEqual(next.config, original.config);
-  assert.deepEqual(next.elements.slice(0, 3), original.elements.slice(0, 3), '别的单一个字都不动');
-  // ④ 被点那一单的位置：按钮没了，换成一行 note 灰字。
-  const note = next.elements[3];
-  assert.equal(note.tag, 'div');
-  assert.deepEqual(note.text, { tag: 'lark_md', content: '✅ 已成交（10:00 点击）', text_size: 'note' });
-  assert.equal(next.elements.length, 4);
-  // ⑤ 现货待收那一单的按钮一行都不剩；预定那一单的按钮还在（不能把整张卡灰掉）。
-  const buttons = cardButtons(next);
-  assert.deepEqual([...new Set(buttons.map((button) => button.value.sales_entry_record_id))],
-    ['order_prepaid_pending']);
-  assert.match(JSON.stringify(next), /XSD-P-2/);
-});
 
-test('同一张卡再点一次（这一单已成交）：不再写账，也不再重复改那张卡', async () => {
-  const { service, gateway, patched } = reminderHarness();
-  await service.sendDailyReminder({ now: NOW });
-  await clickFirstCard(service, 'order_cash_pending');
-  const writesAfterFirstClick = gateway.writes.length;
 
-  const again = await clickFirstCard(service, 'order_cash_pending');
 
-  assert.equal(again.alreadyCompleted, true);
-  assert.equal(gateway.writes.length, writesAfterFirstClick, '第二次点击一个字都不写');
-  assert.equal(patched.length, 1, '那一单在卡上已经灰了，没有第二遍可改');
-});
 
-test('第一次 patch 失败时卡片没灰：再点一次补上变灰（补的是"已成交"，不是又写一遍账）', async () => {
-  const sent = [];
-  const patched = [];
-  const gateway = fakeGateway(reminderSeed());
-  let failFirstPatch = true;
-  const service = new SecondDeliveryService({
-    gateway, store: tmpStore('second-delivery-settle-'), chatId: CHAT_ID,
-    client: {
-      im: {
-        message: { create: async ({ params, data }) => {
-          sent.push({ params, data });
-          return { code: 0, data: { message_id: `om_${sent.length}` } };
-        } },
-        // patch 挂在 im.v1.message 上，和真实 SDK 一致（updateInteractiveCard 先找这一支）。
-        v1: { message: { patch: async ({ path, data }) => {
-          if (failFirstPatch) {
-            failFirstPatch = false;
-            return { code: 99991663, msg: '卡片更新失败' };
-          }
-          patched.push({ message_id: path.message_id, content: data.content });
-          return { code: 0 };
-        } } },
-      },
-    },
-    delivery: new SalesDeliveryService({ gateway, inventory: fakeInventory() }),
-  });
-  await service.sendDailyReminder({ now: NOW });
 
-  const first = await clickFirstCard(service, 'order_cash_pending');
-  assert.equal(first.collectedAmount, 260, 'patch 失败不影响成交');
-  assert.equal(patched.length, 0);
-
-  // patch 失败时没有把改过的卡写回记录，所以那张卡还是"有按钮"的样子：再点一次
-  // 会走到 alreadyCompleted，把这一单补成灰的。
-  const second = await clickFirstCard(service, 'order_cash_pending');
-  assert.equal(second.alreadyCompleted, true);
-  assert.equal(patched.length, 1);
-  assert.deepEqual([...new Set(cardButtons(JSON.parse(patched[0].content))
-    .map((button) => button.value.sales_entry_record_id))], ['order_prepaid_pending']);
-});
-
-test('同一张卡里的两单先后点：先灰的那单不会被后一次 patch 变回能点', async () => {
-  const { service, patched } = reminderHarness();
-  await service.sendDailyReminder({ now: NOW });
-
-  await clickFirstCard(service, 'order_cash_pending');
-  await clickFirstCard(service, 'order_prepaid_pending');
-
-  assert.equal(patched.length, 2);
-  const last = JSON.parse(patched[1].content);
-  // 两单都灰了：第二次 patch 必须基于"已经改过的那张卡"再改（见 markCardSettled）。
-  assert.deepEqual(cardButtons(last), [], '两单的按钮都该没了');
-  assert.deepEqual(last.elements.filter((element) => element.tag === 'div')
-    .map((element) => element.text.content), [
-    'XSD-P-2　·　预定\n未收 ￥200　·　未交付 1/1 双',
-    '✅ 已成交（10:00 点击）',
-    'XSD-U-2　·　现货\n未收 ￥260',
-    '✅ 已成交（10:00 点击）',
-  ]);
-});
-
-test('交付只成了一半：不变灰（那几双货还要靠这张卡再点一次）', async () => {
-  const { service, sent, patched } = reminderHarness({
-    // 故意让交付失败：钱已经收下，货一双都没交出去。
-    delivery: { deliver: async () => ({ deliveredQuantity: 0, failures: [{ detailRecordId: 'd_p2', error: '库存里没有' }] }) },
-  });
-  await service.sendDailyReminder({ now: NOW });
-
-  const result = await clickFirstCard(service, 'order_prepaid_pending');
-
-  assert.equal(result.delivery.failures.length, 1);
-  assert.equal(patched.length, 0, '成交失败（只成一半）时绝不能变灰');
-  // 卡片还是原样那一张，按钮都还在。
-  assert.deepEqual([...new Set(cardButtons(cardOf(sent[0])).map((button) => button.value.sales_entry_record_id))],
-    ['order_prepaid_pending', 'order_cash_pending']);
-});
-
-test('成交时底层直接抛错：卡片一个字都不动', async () => {
-  const { service, patched } = reminderHarness({
-    delivery: { deliver: async () => { throw new Error('库存服务连不上'); } },
-  });
-  await service.sendDailyReminder({ now: NOW });
-
-  await assert.rejects(() => clickFirstCard(service, 'order_prepaid_pending'), /库存服务连不上/);
-  assert.equal(patched.length, 0, '抛错时不能变灰，那张卡还得能重点');
-});
-
-test('patch 失败不影响成交结果（只记一条 warn，账已经写完）', async () => {
-  const sent = [];
-  const gateway = fakeGateway(reminderSeed());
-  const service = new SecondDeliveryService({
-    gateway, store: tmpStore('second-delivery-settle-'), chatId: CHAT_ID,
-    // 飞书那边更新卡片失败（网络/权限），成交本身必须照常返回成功。
-    client: { im: {
-      message: { create: async ({ params, data }) => {
-        sent.push({ params, data });
-        return { code: 0, data: { message_id: `om_${sent.length}` } };
-      } },
-      v1: { message: { patch: async () => { throw new Error('patch 挂了'); } } },
-    } },
-    delivery: new SalesDeliveryService({ gateway, inventory: fakeInventory() }),
-  });
-  await service.sendDailyReminder({ now: NOW });
-
-  const result = await clickFirstCard(service, 'order_cash_pending');
-
-  assert.equal(result.alreadyCompleted, false);
-  assert.equal(result.collectedAmount, 260);
-  assert.equal(gateway.records.get('paymentRecord').find((row) => row.record_id === 'r_c1').fields['收款状态'], '已收款');
-  assert.equal(await service.markCardSettled({ reminderDay: '2026-10-05', cardMessageId: 'om_1',
-    salesEntryRecordId: 'order_cash_pending' }), false);
-});
-
-test('老卡片（按钮里没有 reminder_day）不改灰，也不报错', async () => {
-  const { service, patched } = reminderHarness();
-  await service.sendDailyReminder({ now: NOW });
-
-  const result = await clickFirstCard(service, 'order_cash_pending', { reminderDay: '' });
-
-  assert.equal(result.collectedAmount, 260, '成交照常完成');
-  assert.equal(patched.length, 0, '取不到那张卡就不猜，宁可那次不变灰');
-});
-
-test('settleSecondDeliveryOrder：卡里没有这一单时返回 null，多行按钮只留一行灰字', async () => {
-  const card = { config: {}, header: {}, elements: [
-    { tag: 'div', text: { tag: 'lark_md', content: 'A' } },
-    ...buttonRowsForTest('order_a', 4),
-    { tag: 'div', text: { tag: 'lark_md', content: 'B' } },
-    ...buttonRowsForTest('order_b', 1),
-  ] };
-  assert.equal(settleSecondDeliveryOrder(card, { salesEntryRecordId: 'order_c' }), null);
-
-  const next = settleSecondDeliveryOrder(card, { salesEntryRecordId: 'order_a', settledAt: new Date('2026-10-05T14:57:00Z') });
-  assert.deepEqual(next.elements.map((element) => element.tag), ['div', 'div', 'div', 'column_set']);
-  assert.equal(next.elements[1].text.content, '✅ 已成交（22:57 点击）');
-  assert.equal(next.elements[1].text.text_size, 'note');
-  // 原卡没被动过（调用方拿的还是它自己那份）。
-  assert.deepEqual(card.elements.map((element) => element.tag),
-    ['div', 'column_set', 'column_set', 'div', 'column_set']);
-});
 
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 七、定时器：北京时间 9 点之前不跑
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('东八区小时换算：UTC 01:00 就是北京 9 点', () => {
-  assert.equal(shanghaiHour(new Date('2026-10-05T01:00:00Z')), 9);
-  assert.equal(shanghaiHour(new Date('2026-10-05T00:30:00Z')), 8);
-  assert.equal(shanghaiHour(new Date('2026-10-04T23:00:00Z')), 7);
-});
 
-test('定时器：9 点前不跑，过了 9 点就跑一次', async () => {
-  const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
-
-  const early = [];
-  const stopEarly = startSecondDeliveryReminder({
-    run: async () => { early.push(1); },
-    intervalMs: 60_000,
-    now: () => Date.parse('2026-10-05T00:30:00Z'), // 北京 08:30
-  });
-  await settle();
-  stopEarly();
-  assert.equal(early.length, 0, '9 点前不该推');
-
-  const late = [];
-  const stopLate = startSecondDeliveryReminder({
-    run: async () => { late.push(1); },
-    intervalMs: 60_000,
-    now: () => Date.parse('2026-10-05T02:00:00Z'), // 北京 10:00
-  });
-  await settle();
-  stopLate();
-  assert.equal(late.length, 1, '过了 9 点补推当天这一趟');
-});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 八、机器人分派：没有草稿 id 也要能走这条链路
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('卡片动作 confirm_second_delivery 按销售单号分派，不要求草稿 id（并带上卡片消息 id 与日期键）', async () => {
-  let captured = null;
-  const service = new LarkMvpService({
-    client: {}, gateway: {}, references: {}, posting: {}, recognizer: {},
-    store: tmpStore('second-delivery-mvp-'),
-    purchaseBatchLocatorStore: tmpStore('second-delivery-locator-'),
-    secondDelivery: { confirm: async (input) => {
-      captured = input;
-      return { alreadyCompleted: false, collectedAmount: 260, delivery: null };
-    } },
-  });
 
-  const result = await service.handleCardAction({
-    operator: { operator_id: { open_id: 'ou_1' } },
-    context: { open_message_id: 'om_9' },
-    action: { value: { action: 'confirm_second_delivery', draft_id: '',
-      sales_entry_record_id: 'order_1', method: '微信', reminder_day: '2026-10-05' } },
-  });
 
-  // 卡片消息 id 从回调事件里取（成交成功后要拿它把那张卡改成已成交），
-  // 日期键从按钮取值里带回来（用来取回当初发出去的那张卡）。
-  assert.deepEqual(captured, { salesEntryRecordId: 'order_1', method: '微信', operatorOpenId: 'ou_1',
-    cardMessageId: 'om_9', reminderDay: '2026-10-05' });
-  assert.equal(result.toast.type, 'success');
-  assert.match(result.toast.content, /补收款 ￥260/);
-});
-
-test('卡片动作 confirm_second_delivery 对已成交的单回 info，不报错', async () => {
-  const service = new LarkMvpService({
-    client: {}, gateway: {}, references: {}, posting: {}, recognizer: {},
-    store: tmpStore('second-delivery-mvp-'),
-    purchaseBatchLocatorStore: tmpStore('second-delivery-locator-'),
-    secondDelivery: { confirm: async () => ({ alreadyCompleted: true }) },
-  });
-  const result = await service.handleCardAction({
-    operator: { operator_id: { open_id: 'ou_1' } },
-    action: { value: { action: 'confirm_second_delivery', sales_entry_record_id: 'order_1', method: '微信' } },
-  });
-  assert.equal(result.toast.type, 'info');
-});
-
-test('交付只成了一半时如实说"还有几双没交"，不报成功', async () => {
-  const service = new LarkMvpService({
-    client: {}, gateway: {}, references: {}, posting: {}, recognizer: {},
-    store: tmpStore('second-delivery-mvp-'),
-    purchaseBatchLocatorStore: tmpStore('second-delivery-locator-'),
-    secondDelivery: { confirm: async () => ({
-      alreadyCompleted: false, collectedAmount: 200,
-      delivery: { deliveredQuantity: 1, failures: [{ detailRecordId: 'd2', error: '库存里没有' }] },
-    }) },
-  });
-  const result = await service.handleCardAction({
-    operator: { operator_id: { open_id: 'ou_1' } },
-    action: { value: { action: 'confirm_second_delivery', sales_entry_record_id: 'order_1', method: '微信' } },
-  });
-  assert.equal(result.toast.type, 'warning');
-  assert.match(result.toast.content, /1 双交付未完成/);
-});

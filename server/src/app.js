@@ -29,7 +29,6 @@ const { logError, logInfo } = require('./utils/logger');
 const { uploadDir } = require('./utils/upload');
 const { startUploadCleanup } = require('./utils/uploadCleanup');
 const { SecondDeliveryService } = require('./services/secondDeliveryService');
-const { startSecondDeliveryReminder } = require('./utils/secondDeliveryReminder');
 const { PendingDealPushService } = require('./services/pendingDealPushService');
 const { resolvePendingDealPushConfig } = require('./config/pendingDealPush');
 const { resolveSamplePendingNoticeConfig } = require('./config/samplePendingNotice');
@@ -166,10 +165,10 @@ if (require.main === module) {
     startUploadCleanup({ dir: uploadDir, ttlMs, intervalMs });
   }
   // 「第二次交付」的每日 9 点（北京时间）成交提醒：把**尚未完成履约**的单推成群卡片。
-  // 没有 cron 依赖——setInterval 轮询 + 按天认领（见 utils/secondDeliveryReminder 与服务里
-  // sendDailyReminder 的注释）。只在真正启动服务时拉起，被 require 进测试不会起定时器。
-  const secondDelivery = new SecondDeliveryService();
-  startSecondDeliveryReminder({ run: ({ now }) => secondDelivery.sendDailyReminder({ now }) });
+  // 🔴 2026-10-12（业务负责人：「2 不需要了」）：原来这里拉起**每日二次交付提醒卡**
+  //    （原来是"提醒模块的定时器 → 服务里的每日发卡方法"）。
+  //    那张卡已整条退场 ⇒ **不再有定时器、不再有群调用**；「成交」仍从**工作台**进来
+  //    （`WorkbenchOrderActionService.secondDelivery` → `SecondDeliveryService.confirm`）。
   // 「维度 1」：每天 9 点（北京时间）把最近 7 天**还没收齐**的销售单（预定 / 现货待收）推到群里
   // （每笔一行：单号 + 待收金额 + 深链）。**显式开关**，默认关：
   // 没配群 id 或开关关着时，连定时器都不起（配置在这里读一次，写错就在启动时吵）。

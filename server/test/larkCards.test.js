@@ -327,15 +327,17 @@ test('明细卡片：新品按货号级标一次（多行/多颜色不重复）�
 });
 
 
-test('AC-退场哨兵 · 销售确认卡 + 售后 5 张卡都已退场（导出里没有它们；导出数 21 → 15）', () => {
+test('AC-退场哨兵 · 销售确认卡 + 售后 5 张卡 + 每日提醒卡都已退场（导出里没有它们；导出数 21 → 12）', () => {
   const cards = require('../src/utils/larkCards');
   assert.equal('salesConfirmationCard' in cards, false, '它必须已经从导出里消失');
-  assert.equal(Object.keys(cards).length, 15, '导出数 = 15（21 → 20 删销售确认卡 → 15 再删售后 5 张）');
+  assert.equal(Object.keys(cards).length, 12,
+    '导出数 = 12（21 → 20 删销售确认卡 → 15 再删售后 5 张 → 12 再删每日提醒卡那 3 个）');
   // ⚠️ 2026-10-12（售后卡片链路退场）：原来这里断言"6 个都在" —— 售后那 5 个已随链路退场
   //    ⇒ 现在只断言**唯一还活着的那个**在；并逐个证明那 5 个**真的没了**（能力不是靠"忘了"活着）。
   assert.equal(typeof cards.salesStatusCard, 'function', '销售状态卡片有活调用方 ⇒ 必须在');
   for (const gone of ['afterSalesConfirmationCard', 'afterSalesResultCard', 'afterSalesRetryCard',
-    'afterSalesStatusCard', 'afterSalesSettlementLabel']) {
+    'afterSalesStatusCard', 'afterSalesSettlementLabel',
+    'secondDeliveryCard', 'settleSecondDeliveryOrder', 'SECOND_DELIVERY_ACTION']) {
     assert.equal(gone in cards, false, `${gone} 已随售后卡片链路退场 ⇒ 不该还在导出里`);
   }
   const wiring = require('node:fs').readFileSync(require('node:path')
