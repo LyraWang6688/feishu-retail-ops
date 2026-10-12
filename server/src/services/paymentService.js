@@ -2,6 +2,7 @@ const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { V1ReferenceResolver, relation } = require('./v1ReferenceResolver');
 const { readSaleLinkedRecord } = require('./salesRecordReader');
 const { withSalesReadRetry } = require('./salesReadRetry');
+const { nextId, orderNoOf, stateFor, createState } = require('./salesRecordIds');
 
 const amount = (value) => {
   const number = Number(value);
@@ -32,6 +33,27 @@ class PaymentService {
       linkedRecordIds(record.fields?.[field]).includes(salesEntryRecordId));
   }
 
+  /**
+   * 算「收款明细ID」的下一个号。
+   *
+   * `options.state` = 这一批的**排号状态**（`{rowCount, ids}`）：批量建单（`recordInitialBatch`）
+   * 一开始读一次已有行，之后逐行往下排 —— 既省掉逐行的整表读，又保证同一批里不撞号。
+   * 没传就现读一次（含可能的售后单，见 `salesRecordIds` 文件头）。
+   */
+  async buildReceiptId(salesEntryRecordId, options = {}) {
+    const fields = this.gateway.table('paymentRecord').fields;
+    const orderNo = String(options.orderNo || '').trim() || await orderNoOf(this.gateway, salesEntryRecordId);
+    if (!orderNo) return '';
+    if (options.state) return nextId({ state: options.state, orderNo, kind: 'receipt' });
+    const read = await stateFor({
+      gateway: this.gateway,
+      tableKey: 'paymentRecord',
+      entryIds: [salesEntryRecordId, options.afterSalesEntryRecordId],
+      idField: fields.receiptId,
+    });
+    return nextId({ state: read.state, orderNo, kind: 'receipt' });
+  }
+
   // ⚠️ 关联键走**尾部可选参数**（`options.correlation`），不塞进 `input`
   //    —— 收款这两条路的入参形状一个字段都不变（既有测试逐字 deepEqual 就是证明）。
   async record(input = {}, options = {}) {
@@ -44,9 +66,16 @@ class PaymentService {
     const paid = amount(rawAmount);
     const paymentMethod = status === '未收款' ? null : await this.references.resolvePaymentMethod(method);
     if (status !== '未收款' && !paymentMethod) throw new Error('收款缺少支付方式');
+    // ⭐ 2026-10-12：**收款明细ID** = `{销售单号}-收款-{两位序号}`（业务负责人定的格式）。
+    //    号来自"这一单已有的行"（含**售后单**，它与原单共用同一个销售单号 ⇒ 一起数，
+    //    否则售后那批会从 -01 重来、与原单撞号）；`options.usedReceiptIds` 由**批量建单**
+    //    传进来（那一批一次读出已有行，避免逐行重读整表）。
+    const receiptId = String(options.receiptId || '').trim() || (await this.buildReceiptId(salesEntryRecordId, options));
     // `options.correlation` 只进日志（收款明细是"看不见的那半"之一）：不改这条记录的任何字段。
     return this.gateway.create('paymentRecord', {
       salesEntry: relation(salesEntryRecordId),
+      // 号拿不到（主表没有销售单号那种理论形态）⇒ 这一列**不写**，也不编（见 salesRecordIds 文件头）。
+      ...(receiptId ? { receiptId } : {}),
       method: paymentMethod ? relation(paymentMethod.recordId) : undefined,
       amount: paid,
       status,
@@ -122,6 +151,9 @@ class PaymentService {
     }
     const used = new Set();
     const reserved = new Set((options.knownRecordIds || []).filter(Boolean));
+    // ⭐ 2026-10-12：这一批的「收款明细ID」从这里往下排（读一次、逐行 +1，绝不撞号）
+    const receiptState = createState(existing || [], fields.receiptId);
+    const orderNo = await orderNoOf(this.gateway, salesEntryRecordId);
     const rows = [];
     for (const [index, payment] of expected.entries()) {
       const status = payment.status;
@@ -144,8 +176,11 @@ class PaymentService {
     }
     for (const row of rows) {
       if (!row.recordId) {
-        row.recordId = (await this.record({ salesEntryRecordId, ...row.payment },
-          { correlation: options.correlation })).recordId;
+        row.recordId = (await this.record({ salesEntryRecordId, ...row.payment }, {
+          correlation: options.correlation,
+          state: receiptState, orderNo,
+          ...(options.afterSalesEntryRecordId ? { afterSalesEntryRecordId: options.afterSalesEntryRecordId } : {}),
+        })).recordId;
       }
       await options.onRecordPersisted?.(row.index, row.recordId);
     }
