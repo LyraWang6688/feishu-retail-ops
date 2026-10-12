@@ -313,16 +313,11 @@ const SALE = Object.freeze({
 const REPLENISH = Object.freeze({
   enabled: readFlag(process.env, 'SCAN_REPLENISH_WRITE_ENABLED', true),
   // 「采购行为」的**行为编码**：采购申请那条（「行为管理」表里已核实的编码）。
-  // 🔴🔴 2026-10-12 真机 bug（业务负责人的原话：「**为什么你选成了采购增加了呢？**」）：
-  //    这里原来写的是 `STOCK_PURCHASE_INCREASE`（名字「采购增加」）—— 那是**库存环节**的行为 ✗
-  //    （真表事实：「采购增加」`所属环节=库存`、`库存方向=增加`；而「**报货**」`所属环节=采购`、`库存方向=不影响`）。
-  //    「采购单.采购行为」与「库存流水.库存行为」是**两张表两列、两件事** ✗：
-  //      · 采购单的「采购行为」⇒ 走本配置（**采购环节**的行为编码：报货 / 退货）；
-  //      · 库存流水的「库存行为」⇒ 永远是 `inventoryService` 的 `STOCK_PURCHASE_INCREASE/_DECREASE`（**库存环节**）✓
-  //    ⚠️ **只能按「行为编码」解析**：行为管理里「退货」有**同名两条**
-  //      （采购 `PURCHASE_RETURN` / 销售 `SALE_RETURN`）⇒ 按名字会解析错 ✗
-  //      解析不到 ⇒ **停下来报人话**（绝不写一条没有"采购行为"的采购申请）。
-  behaviorCode: readString(process.env, 'SCAN_REPLENISH_BEHAVIOR_CODE', 'PURCHASE_ORDER'),
+  // ⚠️ 与 `services/purchaseBehaviorPolicy.js` 的口径**同源**：
+  //    那条策略写着「采购申请那条永远是 STOCK_PURCHASE_INCREASE，采购退货是 ..._DECREASE」。
+  //    扫码补货只可能是**采购申请**，所以这里固定按这个编码解析行为记录；
+  //    解析不到 ⇒ **停下来报人话**（绝不写一条没有"采购行为"的采购申请）。
+  behaviorCode: readString(process.env, 'SCAN_REPLENISH_BEHAVIOR_CODE', 'STOCK_PURCHASE_INCREASE'),
   // 本地采购任务的 task id 前缀（幂等键就是从这个 task id 推出来的，
   // 见 purchaseWebhookService.ensurePostingPlan：`purchase_request:<taskId>:<序号>`）。
   taskIdPrefix: readString(process.env, 'SCAN_REPLENISH_TASK_PREFIX', 'scan_replenish'),
@@ -357,11 +352,9 @@ const REPLENISH = Object.freeze({
  */
 const PURCHASE_RETURN = Object.freeze({
   enabled: readFlag(process.env, 'SCAN_RETURN_WRITE_ENABLED', true),
-  // 🔴🔴 2026-10-12 同上：原来写 `STOCK_PURCHASE_DECREASE`（「采购减少」）也是**库存环节**的行为 ✗
-  //    ⇒ 采购退货的「采购行为」应该是真表里**采购环节**的「**退货**」= 编码 `PURCHASE_RETURN` ✓
-  //    ⚠️ 库存流水那一边**仍然是** `STOCK_PURCHASE_DECREASE`（`inventoryService` 的口径，一行没动 ✓）
-  //    解析不到 ⇒ 停下来报人话（绝不写一条没有"采购行为"的退货明细）。
-  behaviorCode: readString(process.env, 'SCAN_RETURN_BEHAVIOR_CODE', 'PURCHASE_RETURN'),
+  // 「采购行为」= 退货那条**既有编码**（`services/purchaseBehaviorPolicy` 记的就是它）。
+  // 解析不到 ⇒ 停下来报人话（绝不写一条没有"采购行为"的退货明细）。
+  behaviorCode: readString(process.env, 'SCAN_RETURN_BEHAVIOR_CODE', 'STOCK_PURCHASE_DECREASE'),
   // 本地退货任务的 task id 前缀（幂等键由它 + 这一次提交的键推出）。
   taskIdPrefix: readString(process.env, 'SCAN_RETURN_TASK_PREFIX', 'scan_return'),
   // 本地退货任务落在哪儿：与补货那条**分开**（两条链路的进度/计划互不干扰）。
@@ -598,15 +591,12 @@ const TEXTS = Object.freeze({
   acceptDuplicateBanner: '这一双已经记过了',
   acceptNotInBatchBody: '这一双不在本批，没有记。',
   acceptFinish: '完成验收',
-  // ⭐⭐ 2026-10-12 21:20：金额**必填**要在页面上看得出来（她第一次提交被拒就是因为看不出来）。
-  acceptFinishAmountLabel: '实际金额（必填）',
+  acceptFinishAmountLabel: '实际金额',
   acceptFinishSubmit: '确认完成验收',
   acceptNoScansBody: '还没扫到任何一双：先扫一双，再点【完成验收】。',
   // ⭐⭐ 2026-10-12（她的口述版）：「先默认带出我们采购申请里的尺码和数量」——
   //    那一块就是这张清单：每个报货尺码一行、数量**默认 = 报货数量**、可改。
   acceptRowsTitle: '这次要核对的尺码和数量',
-  // ⭐⭐ 2026-10-12 21:11：有批次号、但这一批**一条明细都没有** ⇒ **明确说清**（不许留一张空白页）。
-  acceptEmptyDetailBody: '这一批没有明细：可以直接在下面手输尺码/数量，也可以扫标签加一款。',
   acceptRowsHint: '数量填实际到货的；没到的改成 0 就行。',
   acceptRowSizeLabel: '{size} 码',
   acceptCustomTitle: '自定义加一行（没报但到了的）',
@@ -625,12 +615,6 @@ const TEXTS = Object.freeze({
   acceptUnreportedNoProductBody: '先扫这一款的标签，就能看到它没报货的尺码。',
   acceptDoneTitle: '这批已验收入库',
   acceptDoneBody: '批次号 {batchNo}，实际到货 {scanned} 双。',
-  // ⭐⭐ 2026-10-12 21:20：成功后**明确成功页**（不许沉默 —— 她"一直点"就是因为点完没交代）。
-  // 她拍的成功页那句（2026-10-12）；`acceptDoneTitle` 留给别的口径用，不动。
-  acceptDoneHeading: '验收已完成',
-  acceptDoneQuantityLabel: '实际数量',
-  acceptDoneAmountLabel: '实际金额',
-  acceptDoneBackLabel: '回到未到货批次',
   acceptAgainBody: '批次号 {batchNo}，已经验收入库过了，没有重复入库。',
   acceptNoSessionBody: '这次验收已经结束了：回上面【验收】领域重新选一个批次（或填批次号）就能继续。',
   // ⭐⭐ 2026-10-12（她真机："报单之后点验收 ⇒ 就提示这个，我不知道啥意思"）：
@@ -676,9 +660,7 @@ const TEXTS = Object.freeze({
   replenishTooManyBody: '一次最多勾 {max} 个尺码，请分两次提交。',
   replenishAgainBody: '这一页已经提交过了：刷新这一页可以再补一次。',
   // 动作名不认识（老页面 / 手改表单）：也要给她一句人话，不静默。
-  unknownActionBody: '这一页上的按钮我认不出来：请刷新这一页再操作。',
-  // ⭐ 那句「可能放太久了」在她真机上**误导**（页面只渲染了 41 秒 ✗）⇒ 缺/空 action 单独一句更准的。
-  unknownActionMissingBody: '这一页没带上要做什么：请刷新这一页再操作。',
+  unknownActionBody: '这一页上的按钮我认不出来（可能放太久了）：请刷新这一页再操作。',
 });
 
 /**
@@ -695,6 +677,9 @@ const EVENTS = Object.freeze({
   // ⭐⭐ 2026-10-12：**一条**分阶段的提交耗时汇总（她真机被卡住 / 收过 504 网关超时）。
   //    与扫码取数那条 `scan.lookup.timing` 同一个形状：一查日志就知道**卡在哪一步**。
   saleTiming: 'scan.sale.timing',
+  // ⭐⭐ 2026-10-12（她实测每批 2~3 分钟）：验收**分阶段耗时**——
+  //    与 `scan.sale.timing` 同一形状（一条汇总，一眼看出"25~35 秒/码"花在哪一段）。
+  acceptTiming: 'scan.accept.timing',
   // ⭐⭐ 2026-10-12：**建单成功、后面某一步没写完**（明细 / 收款 / 进度抛错）。
   //    warn 级、**不静默**：页面上同时给她一张"半成"的如实结果页（见 texts.partialFailed*）。
   partialFailed: 'scan.sale.partial_failed',
@@ -708,8 +693,6 @@ const EVENTS = Object.freeze({
   stockFailed: 'scan.sale.stock_failed',
   replenishSubmitting: 'scan.purchase.submitting',
   replenishSubmitted: 'scan.purchase.submitted',
-  // ⭐ 2026-10-12：她换了货号后用旧键提交 ⇒ **不当重放**（日志要能看出这次是新提交）
-  replenishRegenerated: 'scan.purchase.regenerated',
   replenishReused: 'scan.purchase.reused',
   // ⭐ 退货（与补货同形的三条 + 差额与库存侧两条正向证据）
   returnSubmitting: 'scan.purchase_return.submitting',
@@ -733,9 +716,6 @@ const EVENTS = Object.freeze({
   acceptReused: 'scan.accept.reused',
   acceptFailed: 'scan.accept.failed',
   failed: 'scan.write.failed',
-  // ⭐⭐ 2026-10-12（她真机：`POST /MK31-1|咖色|B` ⇒ **400 / 1ms**、周围**一条日志都没有** ✗）：
-  //   "写操作按钮的 action 认不出来 / 没带上" —— **唯一**能定位这类 400 的日志（按它 grep ✓）。
-  unknownWriteAction: 'scan.write.unknown_action',
   sessionStarted: 'scan.session.started',
   sessionExpired: 'scan.session.expired',
 });

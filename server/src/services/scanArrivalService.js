@@ -117,14 +117,6 @@ const createScanArrivalService = (options = {}) => {
     });
   };
 
-  /**
-   * ⭐⭐ P0 2026-10-12：「完成验收」的**幂等键**（服务端算，页面只负责带回来）。
-   * `accept:<session_id>:<轮次>` —— 轮次在她每次改动清单时 +1 ⇒
-   *   · 同一屏**连点两次** = 同一把钥匙 ⇒ 第二次**直接幂等返回**（零写入）✓
-   *   · 改完数量再提交 = 新钥匙 ⇒ 正常执行 ✓
-   */
-  const submitKeyOf = (session) => `accept:${String(session?.session_id || '')}:${Number(session?.submit_round || 0)}`;
-
   const summaryOf = (session) => ({
     batch_no: session?.batch_no || '',
     scanned: Number(session?.scanned || 0),
@@ -190,11 +182,6 @@ const createScanArrivalService = (options = {}) => {
       expected: normalized.reduce((sum, row) => sum + row.quantity, 0),
       scans: [],
       scanned: 0,
-      // ⭐⭐ P0 2026-10-12（真机：5 双变 10 双）：**"完成验收"要有幂等键**，而且
-      //    **每次清单变更就换一把新钥匙**（她改完数量再提交是**新的一次**，不能被当成重放 ✗）。
-      //    钥匙由服务端算（`accept:<session_id>:<轮次>`）——不依赖页面传来什么。
-      submit_round: 0,
-      posted_keys: [],
       status: 'open',
       operator_open_id: String(operatorOpenId || openId || ''),
       last_error: '',
@@ -342,11 +329,7 @@ const createScanArrivalService = (options = {}) => {
     }
     const scanned = next.reduce((sum, line) => sum + line.quantity, 0);
     const updated = await store.update(session.session_id, touch({
-      scans: next,
-      scanned,
-      // ⭐ 清单变了 ⇒ **新一轮**（新的幂等键）——她改完再提交是"新的一次" ✓
-      submit_round: Number(session.submit_round || 0) + 1,
-      last_error: '',
+      scans: next, scanned, last_error: '',
     }));
     logInfo(events.acceptRowsSet, {
       session_id: updated.session_id, batch_no: updated.batch_no,
@@ -363,22 +346,15 @@ const createScanArrivalService = (options = {}) => {
    *    输入口 → 既有 `buildPlan` 的扫码分支 → 既有 `confirmLocked`）。
    * 🔴 一双都没扫 / 金额不合法 ⇒ 既有实现会**在写任何东西之前**拒掉（本方法原样把话带回去）。
    */
-  const finish = async ({ openId, actualAmount, submitKey = '', operatorOpenId = '' } = {}) => {
+  const finish = async ({ openId, actualAmount, submitKey = '', operatorOpenId = '', timing = null } = {}) => {
+    // ⭐ 2026-10-12：分阶段耗时（可选**出参**，与销售提交那条同一约定）——
+    //    路由拿它打**一条** `scan.accept.timing`。这里只填"读会话"这一段。
+    const finishStartedAt = Date.now();
+    const mark = (name, from) => { if (timing) timing[name] = Math.max(0, Date.now() - from); };
     const session = await get(openId);
+    mark('session_ms', finishStartedAt);
     if (!session) return { ok: false, reason: 'no_session', message: texts.acceptNoSessionBody };
     const summary = summaryOf(session);
-    // ⭐⭐ P0 2026-10-12：**同一把钥匙提交过 ⇒ 直接幂等返回**（零写入）——
-    //    她连点两次 / 网络重试，都不会再加一次库存 ✗。
-    const wantedKey = String(submitKey || '').trim();
-    if (wantedKey && (session.posted_keys || []).includes(wantedKey)) {
-      logInfo(events.acceptReused, {
-        session_id: session.session_id, batch_no: session.batch_no, submit_key: wantedKey, reason: 'duplicate_submit_key',
-      });
-      return {
-        ok: true, reused: true, ...summary,
-        message: fillText(texts.acceptAgainBody, { batchNo: session.batch_no }),
-      };
-    }
     if (session.status === 'posted') {
       logInfo(events.acceptReused, {
         session_id: session.session_id, batch_no: session.batch_no, submit_key: String(submitKey || ''),
@@ -418,7 +394,10 @@ const createScanArrivalService = (options = {}) => {
       scanLines: (session.scans || []).map((item) => ({
         product_record_id: item.product_record_id, size: item.size, quantity: item.quantity,
       })),
+      // ⭐ 2026-10-12：把分阶段计时的**出参**透下去（逐码入库是这里最贵的一段）
+      timing,
     });
+    if (timing) timing.inbound_total_ms = Math.max(0, Date.now() - finishStartedAt);
     if (!result || result.ok !== true) {
       const message = result?.message || texts.acceptRowsUnreadableBody;
       await store.update(session.session_id, { last_error: String(message) }).catch(() => undefined);
@@ -430,9 +409,7 @@ const createScanArrivalService = (options = {}) => {
     }
     const posted = await store.update(session.session_id, touch({
       status: 'posted',
-      // ⭐ P0：记住**这一把钥匙已经用掉**（下一次同钥匙 = 幂等返回）
-      posted_keys: [...new Set([...(session.posted_keys || []), wantedKey].filter(Boolean))],
-      posted_result: { message: result.message || '', taskId: result.taskId || '' },
+      posted_result: { message: result.message || '', task_id: result.taskId || '' },
       last_error: '',
     }));
     logInfo(events.acceptFinished, {
@@ -499,8 +476,6 @@ const createScanArrivalService = (options = {}) => {
 
   return {
     idOf, get, start, addScan, finish, summaryOf, pendingBatches, store,
-    // ⭐ P0：页面把"完成验收"的幂等键画进表单，提交时带回来
-    submitKeyOf,
     // ⭐ 2026-10-12：把"改完的整张清单"落进会话（预填清单那一版的入口；不写业务表）
     setActualRows,
   };
