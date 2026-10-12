@@ -1,0 +1,63 @@
+════════════════════════════════════════════════════════════════════════════════════════
+  本机环境自检 · 只读 · 零写入（env-selfcheck）
+════════════════════════════════════════════════════════════════════════════════════════
+  仓库：/Users/wangying/Documents/workplace/feishu-retail-ops/.local/e2e-verify
+  环境变量来源（后者覆盖前者）：/Users/wangying/Documents/workplace/feishu-retail-ops/.local/e2e-verify/.env（不存在，跳过） → /Users/wangying/Documents/workplace/feishu-retail-ops/.env（注入 38 项）（共注入 38 项）
+  目标 Base 里共 44 张表（appTable.list，只读）
+
+════════════════════════════════════════════════════════════════════════════════════════════════
+  自证 ①：目标 Base 是不是【授权测试 Base】
+════════════════════════════════════════════════════════════════════════════════════════════════
+  ✅ FEISHU_V1_BITABLE_APP_TOKEN 逐字等于 FEISHU_V1_E2E_TEST_APP_TOKEN：相等（GqMMbh…(len=27)）⇒ 指向授权测试 Base
+  ✅ 生产禁止清单（FEISHU_V1_FORBIDDEN_APP_TOKENS / FEISHU_V1_PROD_APP_TOKEN）：均为空 ⇒ 本机没有登记生产 token（AGENTS 第 8 条：物理够不着生产）
+  ✅ FEISHU_TARGET_ENV：test（写表类脚本要求 test）
+  ✅ 目标 Base 是否命中禁止写入清单：未命中 ✅
+  ✅ 「表 → 环境变量名」映射自检（防止新增表被静默漏检）：源码解析 17 张 = schema 17 张 ✅
+
+════════════════════════════════════════════════════════════════════════════════════════════════
+  逐表核对（table_id 存在性 / 真表名 / schema 字段缺口 —— 三者**分开**判）
+════════════════════════════════════════════════════════════════════════════════════════════════
+  环境变量                                    table_id            真表名          期望名          字段  结论              闸门
+────────────────────────────────────────────────────────────────────────────────────────────────
+  FEISHU_V1_PRODUCT_TABLE_ID                  tbl5as7poByp36c7    货品信息        货品信息        16    OK ✅              内(计)
+  FEISHU_V1_COLOR_TABLE_ID                    tblZiRWEeIADQFdb    颜色管理        颜色管理        4     OK ✅              外(计)
+  FEISHU_V1_CATEGORY_TABLE_ID                 tblGIy0VCZPxGHku    品类管理        品类管理        5     OK ✅              外(计)
+  FEISHU_V1_ACCESSORY_TABLE_ID                tblnJsLDeHXVxJls    其他配品        其他配品        7     OK ✅              内(计)
+  FEISHU_V1_BEHAVIOR_TABLE_ID                 tblk7eUhno5DutKk    行为管理        行为管理        9     OK ✅              内(计)
+  FEISHU_V1_SIZE_TABLE_ID                     tblVuUvGU4EP1Wm8    尺码管理        尺码管理        4     OK ✅              内(计)
+  FEISHU_V1_GROUP_BUY_VOUCHER_TABLE_ID        tblF7KD85JHA4hVi    团购券管理      团购券管理      11    OK ✅              外(计)
+  FEISHU_V1_PAYMENT_METHOD_TABLE_ID           tblNg7yInC6pNLJR    收款方式管理    收款方式管理    3     OK ✅              内(计)
+  FEISHU_V1_SUPPLIER_TABLE_ID                 tbl0dKjyNFCoFh9G    供应商管理      供应商管理      5     OK ✅              内(计)
+  FEISHU_V1_SALES_ENTRY_TABLE_ID              tblchUNgfH7o0ydr    销售主表        销售主表        14    OK ✅              内(计)
+  FEISHU_V1_SALES_DETAIL_TABLE_ID             tbl7jbip6y6R8J1h    销售明细        销售明细        11    OK ✅              内(计)
+  FEISHU_V1_PAYMENT_RECORD_TABLE_ID           tblM4ijWbOen0OwJ    收款明细        收款明细        10    OK ✅              内(计)
+  FEISHU_V1_PAYMENT_DETAIL_TABLE_ID           tblWaafeodl2oILI    —               付款明细        —     ✗ ID 过期/不对    外
+      └─ FEISHU_V1_PAYMENT_DETAIL_TABLE_ID｜表 ID tblWaafeodl2oILI 在目标 Base 里**不存在** ⇒ ID 过期 / 指向了别的 Base
+      └─ 💡 疑似应对应「付款明细」= tblI8cWXIYem9lsm ⇒ 设 FEISHU_V1_PAYMENT_DETAIL_TABLE_ID=tblI8cWXIYem9lsm（该 ID 取自**当前目标 Base**，别跨环境抄）
+  FEISHU_V1_PURCHASE_REQUEST_TABLE_ID         tblgO5LOW63d4hxq    采购明细        采购明细        10    OK ✅              内(计)
+  FEISHU_V1_PURCHASE_ORDER_BATCH_TABLE_ID     tblwM4qvlqeXdu6s    采购主表        采购主表        12    OK ✅              内(计)
+  FEISHU_V1_INVENTORY_LEDGER_TABLE_ID         tbl1z222k4Npvdq5    库存流水        库存流水        10    OK ✅              内(计)
+  FEISHU_V1_LIVE_INVENTORY_TABLE_ID           tblUjYoz9HAkOd5L    实时库存        实时库存        9     OK ✅              内(计)
+
+  ⚠️ 「ID 过期 / 不对」不等于「表缺字段」——先按 💡 把 ID 改对，再跑一次；
+     ⚠️ 不要拿这条报错去下"表结构不一致"的结论（2026-10-12 就是这么误判的）。
+
+════════════════════════════════════════════════════════════════════════════════════════════════
+  附：`.env` 里写着、但 schema **从不读取**的 TABLE_ID 变量（⚠️「ID 放错变量名」的温床）
+════════════════════════════════════════════════════════════════════════════════════════════════
+  ⚠️ FEISHU_V1_PURCHASE_ARRIVAL_TABLE_ID = tblkT9…(len=16)（schema 已不读取；疑似历史遗留 / 变量名改过）
+  ⚠️ FEISHU_V1_PURCHASE_BATCH_TABLE_ID = tblkT9…(len=16)（schema 已不读取；疑似历史遗留 / 变量名改过）
+  ⚠️ FEISHU_V1_PURCHASE_INBOUND_TABLE_ID = tblQ5R…(len=16)（schema 已不读取；疑似历史遗留 / 变量名改过）
+  ⚠️ FEISHU_V1_PURCHASE_REPORT_TABLE_ID = tblsYK…(len=16)（schema 已不读取；疑似历史遗留 / 变量名改过）
+  ⚠️ FEISHU_V1_CUSTOMER_CREDIT_TABLE_ID = tbln83…(len=16)（schema 已不读取；疑似历史遗留 / 变量名改过）
+  ⚠️ FEISHU_V1_SIZE_MANAGEMENT_TABLE_ID = tblVuU…(len=16)（schema 已不读取；疑似历史遗留 / 变量名改过）
+  ℹ️ 同值重复：FEISHU_V1_PURCHASE_ARRIVAL_TABLE_ID 与 FEISHU_V1_PURCHASE_BATCH_TABLE_ID 都等于 tblkT9…(len=16)
+  ℹ️ 同值重复：FEISHU_V1_SIZE_TABLE_ID 与 FEISHU_V1_SIZE_MANAGEMENT_TABLE_ID 都等于 tblVuU…(len=16)
+  ℹ️ 改这些变量**不会有任何效果**（schema 读的是别的名字）⇒ 别在这里改 ID。
+
+════════════════════════════════════════════════════════════════════════════════════════════════
+  结论
+════════════════════════════════════════════════════════════════════════════════════════════════
+  共 17 张表：OK 16 · ID 过期/不对 1 · 表名不一致 0 · 缺字段 0 · 读失败 0 · 未配置 0 · Base 读不到 0
+  计入退出码的 16 张（闸门内 / 本机显式配置过）：红 0 张
+  退出码 0（全绿）
