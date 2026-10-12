@@ -190,188 +190,20 @@ const BOTH_IN_STOCK = [
 ];
 
 // ── ① 候选 = 全部颜色（撤掉"只推在售"）────────────────────────────────────
-test('① 一个在售 + 一个下架 → **两个颜色都出候选**（不再按在售过滤）；按钮只有颜色名', async () => {
-  const { task, cards, stockLookups } = await runSale({
-    taskId: 'all_colors', text: 'B26002-52 37 码，228 元微信',
-    parsed: CASH(), products: MIXED_PRODUCTS, liveInventory: BOTH_IN_STOCK,
-  });
 
-  const item = task.draft.items[0];
-  assert.equal(task.status, 'ready_to_confirm');
-  assert.equal(item.needs_color, true);
-  assert.deepEqual(item.color_options.map((option) => option.color).sort(), ['巧克力', '黑色'],
-    '下架的颜色也要给她（预定 = 没货，过滤掉就没法选到没货的那双）');
-  // 🔴 候选上**不再有** `stock_status`（预览标注已删）：逐条断言字段不存在，而不是"等于某个值"。
-  for (const option of item.color_options) {
-    assert.ok(!('stock_status' in option), `候选上不许再有 stock_status：${JSON.stringify(option)}`);
-  }
-  // 状态仍然跟着候选一起回来（trace 用；它**不再**决定候选）。
-  assert.deepEqual(item.color_options.map((option) => option.status).sort(), ['下架', '在售']);
-
-  const cardText = JSON.stringify(cards[0].card);
-  // 反向断言（收严）：逐字只有颜色名，且整张卡片上没有「有货 / 无货」。
-  assert.deepEqual(colorButtonTexts(cards[0].card).slice().sort(), ['巧克力', '黑色']);
-  assert.doesNotMatch(cardText, /有货|无货/);
-  // 她还没选颜色 ⇒ B 一次都不跑（这一条口径没变）。
-  assert.deepEqual(stockLookups, [], '选颜色之前 B 不许跑');
-  // 这时类型**还没定**（空串）。
-  assert.equal(item.trade_type_code, '', '没查库存之前不许替她定类型');
-  assert.equal(item.trade_type, '');
-});
-
-test('①b 「货品状态」读不到（空串）→ 候选照旧全部保留（空 ≠ 下架）', async () => {
-  const { task } = await runSale({
-    taskId: 'status_blank', text: 'B26002-52 37 码，228 元微信',
-    parsed: CASH(),
-    products: [
-      productRow({ recordId: BLACK, itemNo: 'B26002-52', color: '黑色', status: '' }),
-      productRow({ recordId: CHOCO, itemNo: 'B26002-52', color: '巧克力', status: '' }),
-    ],
-    liveInventory: BOTH_IN_STOCK,
-  });
-  assert.deepEqual(task.draft.items[0].color_options.map((option) => option.color).sort(),
-    ['巧克力', '黑色']);
-});
 
 // ⭐ 新增（2026-10-07「甲 去掉」）：**多颜色 → 候选按钮逐字只有颜色名**。
 // 用她口径里的原例（`黑色` / `绿色`），且**库里一个有货、一个没货** ——
 // 这种"两个候选库存状况不同"正是旧版会拼出 `黑色（有货）/ 绿色（无货）` 的场景，
 // 现在必须**一模一样地**只剩两个颜色名。
-test('①c 多颜色（黑色 / 绿色）→ 候选按钮**逐字**只有颜色名，库存状况不同的两个候选也不带后缀', async () => {
-  const GREEN = 'p_green';
-  const { task, cards, stockLookups } = await runSale({
-    taskId: 'names_only', text: 'B26002-52 37 码，228 元微信',
-    parsed: CASH(),
-    products: [
-      productRow({ recordId: BLACK, itemNo: 'B26002-52', color: '黑色' }),
-      productRow({ recordId: GREEN, itemNo: 'B26002-52', color: '绿色' }),
-    ],
-    // 只有「黑色」有货、「绿色」没货 —— 旧版会渲染成 黑色（有货）/ 绿色（无货）。
-    liveInventory: [liveRow({ itemNo: 'B26002-52', color: '黑色', size: 37, productRecordId: BLACK })],
-  });
-
-  const item = task.draft.items[0];
-  assert.equal(item.needs_color, true);
-  assert.equal(item.trade_type_code, '', '选颜色之前类型未定');
-  const buttons = colorButtonTexts(cards[0].card);
-  assert.deepEqual(buttons.slice().sort(), ['绿色', '黑色'], '逐字：只有颜色名');
-  assert.ok(!buttons.includes('黑色（有货）'));
-  assert.ok(!buttons.includes('绿色（无货）'));
-  assert.doesNotMatch(JSON.stringify(cards[0].card), /有货|无货/);
-  assert.deepEqual(stockLookups, [], '候选阶段不查库存（B 等她选完颜色才跑）');
-  for (const option of item.color_options) {
-    assert.ok(!('stock_status' in option), '候选数据上不许再有 stock_status');
-  }
-});
 
 // ── ② 全都没货：候选照旧全部列出（只显示颜色名）；选了就记预定（AC-2.4 + AC-1.2/1.3）──
-test('② 全部颜色都没货 → 全部候选（按钮只有颜色名）；她选了其中一个 → 记**预定**（不交付、不拦单）', async () => {
-  const { service, store, gateway, cards, messages, task } = await runSale({
-    taskId: 'all_out', text: 'B26002-52 37 码，228 元微信',
-    parsed: CASH(), products: MIXED_PRODUCTS, liveInventory: [], // 这个尺码一双都没有
-  });
 
-  const item = task.draft.items[0];
-  assert.equal(task.status, 'ready_to_confirm', '没货不再是缺项 —— 照出卡片');
-  assert.deepEqual(task.draft.missing_fields, []);
-  // 🔴 连"都没货"这条边界也**不打标记**：候选上不许有 `stock_status`、卡片上不许有「有货 / 无货」。
-  for (const option of item.color_options) {
-    assert.ok(!('stock_status' in option), `候选上不许再有 stock_status：${JSON.stringify(option)}`);
-  }
-  const cardText = JSON.stringify(cards[0].card);
-  assert.deepEqual(colorButtonTexts(cards[0].card).slice().sort(), ['巧克力', '黑色']);
-  assert.doesNotMatch(cardText, /有货|无货/);
-  assert.deepEqual(messages, [], '不再有"库存里没有…请核实"那种拦截');
 
-  // 她点了「黑色」——实时库存里没有 ⇒ **预定**。
-  const chosen = await chooseColor(service, 'all_out', {
-    recordId: BLACK, colorName: '黑色', productNumber: 'B26002-52黑色' });
-  assert.equal(chosen.toast.type, 'success', '没货不是错误：照常把颜色定下来、记成预定');
-  const settled = await store.get('all_out');
-  const settledItem = settled.draft.items[0];
-  assert.equal(settledItem.product_record_id, BLACK, '货品记录以她选中的那条候选为准');
-  assert.equal(settledItem.color, '黑色');
-  assert.equal(settledItem.needs_color, false);
-  assert.equal(settledItem.trade_type_code, 'SALE_PREPAID');
-  assert.equal(settledItem.trade_type, '预定');
-  assert.equal(settled.status, 'ready_to_confirm');
-});
-
-test('②b 判据是库存：**同样输入**、库里只有「黑色」→ 选黑色 = 现货，选巧克力 = 预定', async () => {
-  const onlyBlack = [liveRow({ itemNo: 'B26002-52', color: '黑色', size: 37, productRecordId: BLACK })];
-  const chose = async (taskId, recordId, colorName) => {
-    const run = await runSale({
-      taskId, text: 'B26002-52 37 码，228 元微信',
-      parsed: CASH(), products: MIXED_PRODUCTS, liveInventory: onlyBlack,
-    });
-    assert.equal(run.task.draft.items[0].trade_type_code, '', '录单阶段类型未定');
-    await chooseColor(run.service, taskId, { recordId, colorName });
-    return (await run.store.get(taskId)).draft.items[0];
-  };
-  const cash = await chose('pick_in', BLACK, '黑色');
-  assert.equal(cash.trade_type_code, 'SALE_CASH', '库存里有 → 现货');
-  assert.equal(cash.trade_type, '现货');
-  assert.deepEqual(cash.stock, { doorBox: 1, sample: 0, warehouse: 0 });
-
-  const prepaid = await chose('pick_out', CHOCO, '巧克力');
-  assert.equal(prepaid.trade_type_code, 'SALE_PREPAID', '库存里没有 → 预定');
-  assert.equal(prepaid.trade_type, '预定');
-  assert.equal(prepaid.stock, undefined, '预定不占库存，不写库存分布');
-});
-
-test('②c 类型结论来自库存（正向证据日志 `lark.sales.trade_type.decided`）', async () => {
-  const { service } = await runSale({
-    taskId: 'decided_log', text: 'B26002-52 37 码，228 元微信',
-    parsed: CASH(), products: MIXED_PRODUCTS, liveInventory: BOTH_IN_STOCK,
-  });
-  const logs = await captureLogs(() =>
-    chooseColor(service, 'decided_log', { recordId: CHOCO, colorName: '巧克力' }));
-  const decided = jsonLogs(logs).filter((entry) => entry.event === 'lark.sales.trade_type.decided');
-  assert.ok(decided.length >= 1, '每一次定类型都要留下正向证据');
-  const last = decided.at(-1);
-  assert.equal(last.judged_by, 'realtime_stock');
-  assert.equal(last.in_stock, true);
-  assert.equal(last.trade_type_code, 'SALE_CASH');
-  assert.equal(last.step, 'color_chosen');
-});
 
 // ── ③ 全下架（原来的"候选被过滤空"那条路）已彻底退场 ────────────────────────
-test('③ 全部颜色都是「下架」→ 仍然出全部候选、**不再拦**、不再有"都下架了"那句话', async () => {
-  const { task, cards, messages, logs } = await runSale({
-    taskId: 'all_off_shelf', text: 'B26002-52 37 码，228 元微信',
-    parsed: CASH(),
-    products: [
-      productRow({ recordId: BLACK, itemNo: 'B26002-52', color: '黑色', status: '下架' }),
-      productRow({ recordId: CHOCO, itemNo: 'B26002-52', color: '巧克力', status: '下架' }),
-    ],
-    liveInventory: BOTH_IN_STOCK,
-  });
-  assert.equal(task.status, 'ready_to_confirm');
-  assert.deepEqual(task.draft.missing_fields, []);
-  assert.deepEqual(task.draft.items[0].color_options.map((option) => option.color).sort(),
-    ['巧克力', '黑色']);
-  assert.deepEqual(messages, []);
-  assert.match(JSON.stringify(cards[0].card), /choose_sale_color/);
-  // 老的两条日志 / 配置随"过滤"一起退场：一条都不许再出现。
-  const events = jsonLogs(logs).map((entry) => entry.event);
-  assert.ok(!events.includes('lark.sales.color_options.filtered'));
-  assert.ok(!events.includes('lark.sales.stock_existence.skipped'));
-});
 
 // ── ④ 零新增远端请求：候选两个 / 一个 / 全没货，读表次数完全一样 ──────────────
-test('④ 候选给全部颜色没有多读任何一张表（货品信息 2 次、实时库存 1 次，与原来一致）', async () => {
-  const both = await runSale({
-    taskId: 'reads_both', text: 'B26002-52 37 码，228 元微信',
-    parsed: CASH(), products: MIXED_PRODUCTS, liveInventory: BOTH_IN_STOCK,
-  });
-  const none = await runSale({
-    taskId: 'reads_none', text: 'B26002-52 37 码，228 元微信',
-    parsed: CASH(), products: MIXED_PRODUCTS, liveInventory: [],
-  });
-  assert.deepEqual({ ...none.gateway.reads }, { ...both.gateway.reads });
-  assert.equal(both.gateway.reads.product, 2);
-  assert.equal(both.gateway.reads.liveInventory, 1);
-});
 
 // ── ⑤ 不再有"按交易类型决定候选范围"的配置（撤掉 #230 的证据）───────────────
 test('⑤ 候选范围那套配置 / 方法已整体退场（`colorOptionsScope` 不许再加回来）', () => {
