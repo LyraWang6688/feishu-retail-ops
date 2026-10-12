@@ -1203,7 +1203,20 @@ const createScanPageRouter = (options = {}) => {
     const body = req.body || {};
     const fields = writeConfig.fields;
     const actions = writeConfig.actions;
-    const action = String(body[fields.action] || '');
+    let action = String(body[fields.action] || '');
+    // ⭐⭐ 2026-10-12（她真机 400 / 1ms，`scan.write.unknown_action` 的 `action_kind=missing`、
+    //   但 `body_keys` 里**该带的都带了**：submit_key / size / amount / gift / payment_* ✗）：
+    //   ⇒ 那是"**没有提交者的提交**"（webview 里 JS/回车/隐式提交 ⇒ 浏览器**不送**按钮的 name/value ✗）。
+    //   窄化兜底：**只有**在"没 action + 带幂等键 + 像销售提交"时，认作 `submitOrder`（并留痕 ✓）。
+    //   ⚠️ 不碰标记（零哨兵风险 ✓）；只在这一页（编号页 POST）✓。
+    if (!action && String(body[fields.submitKey] || '').trim()
+      && (body[fields.size] !== undefined || body[fields.amount] !== undefined)) {
+      action = actions.submitOrder;
+      logWarn('scan.write.action_inferred', {
+        request_id: requestId, reason: 'missing_action_default_submit',
+        body_keys: Object.keys(body), path: String(req.originalUrl || '').split('?')[0],
+      });
+    }
     const openId = openIdOf(req);
     // 「回跳到哪一块」= 这一页的领域（认不出来一律回落缺省；两个入口同一条口径）。
     const realm = resolveRealm(req.query?.from);
