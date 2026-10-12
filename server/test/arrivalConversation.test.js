@@ -1733,24 +1733,27 @@ const groupTopicEvent = (overrides = {}) => ({
 
 
 
-test('接线④：别的卡片动作不会被到货核对抢走（照旧走销售那套分派）', async () => {
+test('接线④：别的卡片动作不会被到货核对抢走（其余落到**未知动作兜底**）', async () => {
   let arrivalCalled = 0;
   const service = await makeLarkService({
     arrivalConversation: { handleCardAction: async () => { arrivalCalled += 1; return null; } },
   });
 
   // ⚠️ 2026-10-08：这里原先是 `confirm_purchase_request`（报货确认卡的动作）——
-  //    那张卡已整条删除，改用一个**明确的未知动作**来验同一条边界：
-  //    到货核对只认自己的三个动作名，其余原样落到销售那套分派（草稿找不到 → 当场抛）。
-  await assert.rejects(
-    () => service.handleCardAction({
-      operator: { operator_id: { open_id: 'ou_1' } },
-      action: { tag: 'button', value: { action: 'some_other_card_action', draft_id: 'not_a_real_task' } },
-      context: { open_message_id: 'om_card_1' },
-    }),
-    /草稿/,
-  );
-  assert.equal(arrivalCalled, 0);
+  //    那张卡已整条删除，改用一个**明确的未知动作**来验同一条边界。
+  // ⚠️ 2026-10-12（清群聊入口·第三轮）**改写**：原先断言"落到销售那套分派（草稿找不到 → 抛 `/草稿/`）"。
+  //    销售草稿分派（`handleSalesOrLegacyCardAction`）已随群入口**整体删除** ⇒ 同一个动作现在走
+  //    **未知动作兜底**（`unknownCardAction`：回一句人话、零写入、不报错）。
+  //    ⇒ **断言语义逐字保留**（"到货核对只认自己的三个动作名、其余不许被它抢走"），
+  //      只是"不被抢走之后去哪儿"随代码一起变了：从"抛错"变成"回兜底人话"。
+  const result = await service.handleCardAction({
+    operator: { operator_id: { open_id: 'ou_1' } },
+    action: { tag: 'button', value: { action: 'some_other_card_action', draft_id: 'not_a_real_task' } },
+    context: { open_message_id: 'om_card_1' },
+  });
+  assert.equal(arrivalCalled, 0, '到货核对只认自己的三个动作名 —— 别的动作不许被它抢走');
+  assert.equal(result.toast.type, 'info', '其余动作落到**兜底人话**（不是 500、也不是静默）');
+  assert.ok(String(result.toast.content).length > 0, '兜底必须是一句非空的人话');
 });
 
 

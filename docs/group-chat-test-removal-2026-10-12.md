@@ -187,7 +187,7 @@
 | **随能力退场（删）** | **1**（#5「一句原话 → 一张多明细多收款单」） |
 | **新写** | **11**（#6 全款×2 · #7 部分×2 · #8 未付×2 · #9 定金+尾款×2 · #10「下次收」并入×2 · #12 跨两态逐字对照×1） |
 | **合计** | **17** ✓ |
-⚠️ **净减少 1 条**（17 → 16：等价覆盖 5 + 新写 11）（#5 的"多收款/多选类型"部分）；理由：**"一句原话→多明细多收款"是已退场的自然语言能力**，扫码页是逐双录入 ⇒ 该语义不存在。**请 Lead 逐条核。**
+⚠️ **净减少 6 条**（17 → 11：等价覆盖 5 条删、随能力退场 1 条删、11 条新写替换掉 11 条原用例）（#5 的"多收款/多选类型"部分）；理由：**"一句原话→多明细多收款"是已退场的自然语言能力**，扫码页是逐双录入 ⇒ 该语义不存在。**请 Lead 逐条核。**
 
 ## 五条"等价覆盖"抽查结论（Lead 指定）
 
@@ -204,3 +204,30 @@
 - 清理前：**tests 1942 / pass 1942 / fail 0**（main `93a6b90`）
 - 第一轮后：**tests 1843 / pass 1843 / fail 0**（-99，全为判据 (a)）
 - 生产代码：**本轮零改动**（纯测试改动，零线上风险）
+
+## 第三轮（3a）：删不可达代码时连带退场的 3 条（判据 (a)）
+
+**背景**：3a 删了 10 个不可达方法 + 改了 `handleCardAction` 的分派（带 `draft_id` 的未知动作改走 `unknownCardAction` 兜底）。
+下列 3 条**不是**"能迁就迁"的活行为 —— 它们验的是**已整体退场的"销售草稿确认"路径**（`handleSalesOrLegacyCardAction` / `confirm_sale`）产出的那张卡，
+⇒ 按判据 (a) **随能力退场**。（当时先试过迁移，**失败并回退**，不硬凑断言 —— 见各条"为什么不能迁"。）
+
+| # | 用例（逐字） | 验的能力（逐字） | 为什么随能力退场 | ⭐ 等价覆盖落点 |
+|---|---|---|---|---|
+| 1 | `终态卡：现货 + 有欠款 → 有按钮；现货 + 已交付 + 已结清 → **没有**按钮`（`terminalCardConfirmDeal.test.js`） | 「她点确认后那张**终态卡**上：现货+有欠款 ⇒ 1 个按钮；现货+已交付+已结清 ⇒ 0 个按钮、且卡面不含『确认成交』」 | 它驱动的是 `handleCardAction({action:'confirm_sale'})` —— **销售草稿确认**那条路径（`handleSalesOrLegacyCardAction`）已随群入口**整体删除**。⚠️ **试过迁移**：改成走保留件 `handleConfirmDealAction`（现存 helper `clickConfirmDeal`）⇒ **卡上 0 个按钮**（期望 1）——因为 `settleConfirmDealCard`(`larkMvpService.js:1528`) 是从 `task.draft` 渲染、且按钮由**未交付/欠款**判定决定，**"再渲染一张带按钮的终态卡"这条路对已点过成交的 `posted` 任务并不存在** ⇒ 迁法不成立，已回退 | `terminalCardConfirmDeal.test.js` **同文件其余 18 条全绿**（含 `clickConfirmDeal` 那族：直驱 `handleConfirmDealAction` 的按钮/幂等/状态断言）；"确认成交按钮"的渲染口径由 `settleConfirmDealCard` 的**既有** 18 条覆盖 |
+| 2 | `终态卡：预订单的「已入账」卡上有且**只有**一个按钮，文案「确认成交」`（同上文件） | 「预定单『已入账』卡上**有且只有 1 个**按钮，文案 = 『确认成交』，`value.action = SALES_CONFIRM_DEAL_ACTIONS.CONFIRM`，且不含 取消/否/稍后/不成交」 | 同上（同一条被删路径出卡） | 同上文件 18 条（`clickConfirmDeal` 族已逐字断言按钮数/文案/`value.action`） |
+| 3 | `现场复现：她点「确认」后两次真实 patch 的 payload 都带 update_multi`（`cardUpdateMulti.test.js`） | 「她点一次确认 ⇒ 两次真实 patch 的 payload 里 `config` 都 === `{wide_screen_mode:true, update_multi:true}`」 | ⚠️ **"两次 patch"本身就来自 `confirm_sale` 那两步**（先 patch「处理中」、入账后再 patch「已入账」）⇒ 那条路径已删，**两次**这个形状不存在了 | ⭐ **payload 带 `update_multi` 这条语义**由**同文件 test ①/②/③ 逐字覆盖，且全是活路径**：① `arrivalConversation.updateCard`（采购到货核对）② `updateInteractiveCard`（点确认后第一次更新那张卡）③ `PurchaseWebhookService.updatePurchaseActionCard` —— 三条都断言 `assert.deepEqual(JSON.parse(payload.data.content).config, PATCHABLE_CONFIG)` |
+
+**条数账（第三轮 3a 全量）**
+| 项 | 条数 |
+|---|---|
+| 3a 开工前实测基线 | **1925** |
+| 按判据 (a) 删：17 条原用例（`salesFundTypeDecoupling` 12 整文件 + `salesMultiLineTradeType` 5） | −17 |
+| 按判据 (a) 删：本节 3 条 | −3 |
+| **3a 收口后** | **1905**（全绿 ✓） |
+⇒ **差额 20 条全部按判据删除、逐条可查**（17 条见上文"判据 (a)"两节，3 条见本节）✓
+
+## 稳定性待办（不在本轮处理，仅记录）
+
+1. `deployRunAutoEnvRefresh.test.js` 的"正确版本号"哨兵（tag 名 + commit + **当下时间**）—— 单体跑绿，**full-suite 跨分钟边界偶发红**（2026-10-12 实测 1 次）。
+2. **一次运行异常退出**：回退 `terminalCardConfirmDeal` 后的**首跑**出现 `tests 1857 / fail 8`（比正常少 51 条），**重跑立刻恢复 `1908 / 3`** ⇒ 疑似某测试文件在一次运行里异常退出（资源/时序）。
+⇒ 两者**同一类**（"拿环境相关量/运行条件当不变量"），**单独立小任务**，**第一步先复现**（找出是哪个文件、什么条件），**不猜着改**。

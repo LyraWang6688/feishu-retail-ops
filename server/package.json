@@ -16,7 +16,8 @@
     "v1:schema-check:all": "node scripts/validate_v1_schema.js all",
     "sales:sample": "node scripts/write_sales_sample.js",
     "test": "node --test --test-concurrency=1",
-    "e2e:real": "node --test --test-concurrency=1 e2e/real-paths.mjs && FEISHU_TARGET_ENV=test node scripts/e2e-product-tag-qr.js"
+    "e2e:real": "node --test --test-concurrency=1 e2e/real-paths.mjs && FEISHU_TARGET_ENV=test node scripts/e2e-product-tag-qr.js",
+    "env:selfcheck": "node scripts/env-selfcheck.mjs"
   },
   "keywords": [
     "shoe-box",

@@ -197,85 +197,14 @@ const SCENE_LIVE = [liveRow({ itemNo: '31678', color: '黑', size: 40, productRe
 // ══════════════════════════════════════════════════════════════════════════════
 // ① 她那条原话 → 一张单、2 条明细、3 条收款、主表交易类型去重多选
 // ══════════════════════════════════════════════════════════════════════════════
-test('AC-1~AC-10 她那条原话：一张单 · 2 条明细 · 3 条收款 · 主表交易类型多选（现货+预定）', async () => {
-  const { gateway, task } = await runScene({
-    taskId: 'scene_real', ai: SCENE_AI, products: SCENE_PRODUCTS, liveInventory: SCENE_LIVE,
-  });
-
-  // ── AC-10 错误 / 缺项为空：出的是确认卡片，不是"销售信息还缺…" ──
-  assert.deepEqual(task.draft.missing_fields, [], `不许再有缺项：${JSON.stringify(task.draft.missing_fields)}`);
-  assert.equal(task.status, 'posted');
-
-  // ── AC-7 不拆单：整单只有**一条**销售主表记录 ──
-  assert.equal(entryRows(gateway).length, 1, '这就是一个人买的 —— 不拆单');
-
-  // ── AC-1 / AC-2 / AC-3 解析结果：两件各自的金额与类型 ──
-  const draftItems = task.draft.items;
-  assert.equal(draftItems.length, 2);
-  assert.deepEqual(
-    draftItems.map((item) => [item.item_no, item.size, item.actual_amount, item.trade_type, item.trade_type_code]),
-    [
-      ['31678', 40, 119, '现货', 'SALE_CASH'],
-      ['6681-1', 42, 89, '预定', 'SALE_PREPAID'],
-    ],
-  );
-  assert.equal(task.draft.agreed_total, 208, '整单成交额 = 各分项之和（119 + 89）');
-  assert.equal(task.draft.owed, 39, '她明说的尾款是欠款');
-
-  // ── AC-5 主表「交易类型」= 去重后的**多个**关联（现货 + 预定）──
-  const entry = entryById(gateway, task.sales_entry_record_id);
-  assert.deepEqual(entry.fields['交易类型'], ['bhv_cash', 'bhv_prepaid'],
-    '主表：多种交易类型就多选（去重、按明细行顺序）');
-
-  // ── AC-6 每一条明细行的交易类型**各自单选** ──
-  const details = detailRows(gateway);
-  assert.equal(details.length, 2);
-  assert.deepEqual(details.map((row) => row.fields['交易类型']),
-    [['bhv_cash'], ['bhv_prepaid']], '明细行：就这一单它是什么，那就是什么');
-
-  // ── AC-4 收款 3 条：119 已收 / 50 已收 / 39 未收 ──
-  assert.deepEqual(
-    paymentRows(gateway).map((row) => [row.fields['收款金额'], row.fields['收款状态']]),
-    [[119, '已收款'], [50, '已收款'], [39, '未收款']],
-  );
-
-  // ── AC-2 / AC-3 金额口径：总额 = 各分项之和，且 已收 + 欠款 对得上 ──
-  assert.equal(details.reduce((sum, row) => sum + row.fields['实收金额'], 0), 208);
-});
 
 // ══════════════════════════════════════════════════════════════════════════════
 // ② 现货件被交付 + 扣库存；预付件不交付（逐条断言）
 // ══════════════════════════════════════════════════════════════════════════════
-test('AC-8/AC-9 现货件交付并扣库存、预付件不交付（逐条）', async () => {
-  const { gateway } = await runScene({
-    taskId: 'scene_delivery', ai: SCENE_AI, products: SCENE_PRODUCTS, liveInventory: SCENE_LIVE,
-  });
-
-  const details = detailRows(gateway);
-  assert.deepEqual(details.map((row) => row.fields['履约状态']), ['已交付', '未交付'],
-    '现货那件交付了；预付那件还是未交付（她下次来取）');
-
-  // 库存流水：只有现货那一件产生了扣减（预付不查库存、不扣库存）。
-  const ledger = gateway.records.get('inventoryLedger') || [];
-  assert.equal(ledger.length, 1, '只有现货件扣了库存');
-  assert.deepEqual(ledger[0].fields['关联销售'], [details[0].record_id]);
-  assert.equal(ledger[0].fields['变动数量'], 1);
-
-  // 事实表：门盒那双鞋被卖掉了（预付那件本来就没有实物，不受影响）。
-  const live = gateway.records.get('liveInventory') || [];
-  assert.deepEqual(live.map((row) => row.record_id), [], '31678 40码 门盒那唯一一双被扣掉');
-});
 
 // ══════════════════════════════════════════════════════════════════════════════
 // ③ 判据粒度：**每一行都查库存**（类型正是这么定下来的）
 // ══════════════════════════════════════════════════════════════════════════════
-test('AC-14 一张混合单里：**两件都查库存**（类型由各自的实时库存定）', async () => {
-  const { stockLookups } = await runScene({
-    taskId: 'scene_parse_gate', ai: SCENE_AI, products: SCENE_PRODUCTS, liveInventory: SCENE_LIVE,
-  });
-  assert.deepEqual(stockLookups.map((input) => input.itemNo).sort(), ['31678', '6681-1'],
-    'B 对两件都跑：有货 → 现货；没货 → 预定 —— "预定跳过库存"那条策略已删除');
-});
 
 // ══════════════════════════════════════════════════════════════════════════════
 // ④ 「定金单只支持一条明细」这条判据确实被放开
@@ -349,31 +278,6 @@ const singleLineAi = (tradeType, extra = {}) => ({
   agreed_total: 119,
 });
 
-// ⚠️ 2026-10-07 口径大改后，单类型单只剩**两种**：现货（库里有）/ 预定（库里没有）。
-//    同一条原话（`31678 40码，119元微信`）跑两次，只有**实时库存**不同 ——
-//    这就是"判据是库存"的哨兵（收益：整单只有一个类型、明细行永远单选）。
-for (const [liveStock, expectedCode, expectedDetail, expectedBehavior] of [
-  [true, 'SALE_CASH', '已交付', 'bhv_cash'],
-  [false, 'SALE_PREPAID', '未交付', 'bhv_prepaid'],
-]) {
-  test(`AC-12 单类型单（库里${liveStock ? '有' : '没有'}）→ ${expectedCode}：一个类型、一条明细、交付口径不变`, async () => {
-    const { gateway, task } = await runScene({
-      taskId: `sentinel_${expectedCode}`,
-      text: '31678 40码，119元微信',
-      ai: singleLineAi('现货'),
-      products: SCENE_PRODUCTS,
-      liveInventory: liveStock ? SCENE_LIVE : [],
-    });
-    // 整单仍然只有**一个**类型（"多选"没有把单选也变成两个）。
-    assert.deepEqual(task.draft.trade_type_codes, [expectedCode]);
-    const entry = entryById(gateway, task.sales_entry_record_id);
-    assert.deepEqual(entry.fields['交易类型'], [expectedBehavior]);
-    const details = detailRows(gateway);
-    assert.equal(details.length, 1);
-    assert.equal(details[0].fields['交易类型'].length, 1, '明细行永远是单选');
-    assert.equal(details[0].fields['履约状态'], expectedDetail);
-  });
-}
 
 test('AC-12b 判据取值：单类型单下 itemTradeTypeCode / orderTradeTypeCodes 与旧口径逐字相同', () => {
   for (const [label, code] of [['现货', 'SALE_CASH'], ['预定', 'SALE_PREPAID']]) {
