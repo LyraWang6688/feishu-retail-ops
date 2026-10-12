@@ -1632,3 +1632,46 @@ test('AC-UA7 渲染层：每个写表单的 action 后面**只加**一个 page_b
   assert.equal(fields, 8, `8 张写表单都加上了（实际 ${fields} 处）`);
   assert.match(renderer, /const pageBuildField = \(\) => hiddenField\(\n\s*SCAN_PAGE\.pageBuildField/, '字段名走 config ✓');
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔴 2026-10-12（她真机：`POST /s/MK31-1|咖色|B` ⇒ 400 / 1ms，`scan.write.unknown_action`
+//   且 `action_kind=missing`，而 `body_keys` 里**该带的都带了** ⇒ 唯独没有 action ✗）
+//   ⇒ 那是"**没有提交者的提交**"（webview 里 JS/回车/隐式提交 ⇒ 浏览器不送按钮 name/value ✗）
+//   AC-ACT1 真提交（**故意不带 action**）⇒ 服务端**窄化兜底**认出"提交这一单" ⇒ 建单成功（她不被卡 ✓）
+//   AC-ACT2 两处计数**故意不同**（不是 bug）：本单条数 vs "这一下要提交的那一双" ✓
+// ═══════════════════════════════════════════════════════════════════════════
+test('AC-ACT1 🔴 不带 action 的真提交 ⇒ 窄化兜底认出"提交这一单"（她不再被卡）', async () => {
+  login();
+  const e2e = createE2E();
+  try {
+    await withServer(e2e.app, async (base) => {
+      const cookie = sessionCookie('ou_act_1');
+      await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      await addLine(base, cookie, NUMBER_A, '40');
+      const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      const response = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+        submit_key: submitKeyOf(page.html),
+        payment_status: PAYMENT_STATUS.unpaid,
+        size: '40',
+        amount: '399',
+      });
+      assert.equal(response.status, 200, `要能建单（实际 ${response.status}）`);
+      const html = await response.text();
+      assert.match(html, /XSD-/, '成功页要带单号（她那次是 400 ✗）');
+      assert.equal(html.includes('按钮我认不出来'), false, '不该再出现"按钮认不出来" ✗');
+    });
+  } finally { e2e.cleanup(); }
+});
+
+test('AC-ACT2 ⭐ 两处计数**故意不同**（不是 bug）：本单条数 vs 这一下要提交的那一双', async () => {
+  login();
+  const e2e = createE2E();
+  try {
+    await withServer(e2e.app, async (base) => {
+      const cookie = sessionCookie('ou_act_2');
+      const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      assert.ok(page.html.includes(SCAN_PAGE.texts.draftBarCount.replace('{count}', '0')), '空本单：本单条写 0 双 ✓');
+      assert.match(page.html, /✅ 提交这一单（1 双）/, '空本单：按钮写"这一双" ✓（既有 AC-E2E-17 钉的设计 ✓）');
+    });
+  } finally { e2e.cleanup(); }
+});
