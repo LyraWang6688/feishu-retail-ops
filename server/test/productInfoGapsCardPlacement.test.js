@@ -3,7 +3,7 @@
 // 起因（她原话，逐字）：「我们的卡片能够实时更新，更新完之后，用户要补的链接其实就看不到了。
 //   所以我们在销售信息确认卡片里不需要放这个信息；等用户点击确认之后，卡片不是会更新吗？
 //   更新时再补这个信息。」
-// ⇒ 这一段从「请确认销售订单」卡（`salesConfirmationCard`）挪到**点确认之后更新的卡片**。
+// ⇒ 这一段从「请确认销售订单」卡挪到**点确认之后更新的卡片**（那张确认卡已于 2026-10-12 退场）。
 //
 // 🔴 她要的是**哪几张**：同一天改了两次，**本文件钉的是【最后一次】**（别再翻回去）：
 //   ① 第一版（PR #220）：**处理中卡 + 已入账终态卡都放**；
@@ -42,7 +42,7 @@ const test = require('node:test');
 
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { LarkMvpService } = require('../src/services/larkMvpService');
-const { salesConfirmationCard, salesStatusCard, salesProcessingCard, productInfoGapsElements } =
+const { salesStatusCard, salesProcessingCard, productInfoGapsElements } =
   require('../src/utils/larkCards');
 const {
   PRODUCT_INFO_GAPS_DEFAULTS,
@@ -78,8 +78,10 @@ const sectionElement = (card) => card.elements.find((element) =>
 
 // ── ① 确认卡片：这一段整个不在（含"无缺口不留空壳"）──────────────────────────
 
-test('确认卡片：有缺口也不出现「补货品信息」段落（位置已挪走）', () => {
-  const withGaps = salesConfirmationCard('draft_1', { items: ITEMS, product_info_gaps: GAPS });
+test('状态卡片：有缺口也不出现「补货品信息」段落（位置已挪走）——原确认卡退场后换这个入口', () => {
+  // ⚠️ 2026-10-12（3b）：原来钉在「请确认销售订单」那张卡上；它随销售草稿卡片退场 ⇒
+  //    换到**仍在跑**的销售状态卡片（larkMvpService 的已成交出口）钉同一条口径。
+  const withGaps = salesStatusCard({ items: ITEMS, product_info_gaps: GAPS }, '已成交', '已经写好了');
   assert.doesNotMatch(gapsCardText(withGaps), /补货品信息/);
   assert.doesNotMatch(gapsCardText(withGaps), /去补全这条记录/);
   // 链接 url 也一个字都不许出现在确认卡片上（按**字面量**比，不用 RegExp 转义 ——
@@ -87,7 +89,7 @@ test('确认卡片：有缺口也不出现「补货品信息」段落（位置�
   assert.ok(!gapsCardText(withGaps).includes(GAP_URL));
   // 有缺口 / 无缺口两张卡**逐字相同**：确认卡片对 `product_info_gaps` 完全无感，
   // 也就不会"去掉之后留一个空壳"。
-  const withoutGaps = salesConfirmationCard('draft_1', { items: ITEMS });
+  const withoutGaps = salesStatusCard({ items: ITEMS }, '已成交', '已经写好了');
   assert.deepEqual(withGaps, withoutGaps);
 });
 
@@ -178,9 +180,9 @@ test('无缺口时：确认卡 / 处理中卡 / 终态卡**三张**都不出现�
   assert.equal(posted.elements.length, 2);
 
   // 确认卡片（第一张）：无缺口时同样不留空壳 —— 与"有缺口"那张逐字相同。
-  const confirmation = salesConfirmationCard('draft_1', draft);
+  const confirmation = salesStatusCard(draft, '已成交', '已经写好了');
   assert.doesNotMatch(gapsCardText(confirmation), /补货品信息/);
-  assert.deepEqual(confirmation, salesConfirmationCard('draft_1', { items: ITEMS }));
+  assert.deepEqual(confirmation, salesStatusCard({ items: ITEMS }, '已成交', '已经写好了'));
 });
 
 // ── ⑤ 配置先行：文案与上限全部可配，默认值逐字 = 挪位置之前的文案 ─────────────

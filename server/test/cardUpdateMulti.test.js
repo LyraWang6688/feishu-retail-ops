@@ -68,10 +68,11 @@ const capturePatch = () => {
   return { client, payloads };
 };
 
-// ── ① "更新前"那份：14 张会被 patch 的卡片，builder 直出就是共享卡片 ────────────
+// ── ① "更新前"那份：13 张会被 patch 的卡片，builder 直出就是共享卡片 ────────────
 test('14 张会被 patch 的卡片：builder 直出（"更新前"那份）的 config 就是共享卡片', () => {
-  assert.equal(PATCHABLE_CARD_SCENARIOS.length, 14,
-    '清单是 14 张卡（13 个 builder；afterSalesRetryCard 继承 afterSalesConfirmationCard 的 config）');
+  // ⚠️ 2026-10-12（3b）：原来 14 张 —— 「请确认销售订单」那张随销售草稿卡片退场 ⇒ **13 张**。
+  assert.equal(PATCHABLE_CARD_SCENARIOS.length, 13,
+    '清单是 13 张卡（12 个 builder；afterSalesRetryCard 继承 afterSalesConfirmationCard 的 config）');
   for (const { name, build } of PATCHABLE_CARD_SCENARIOS) {
     assert.deepEqual(build(larkCards).config, PATCHABLE_CONFIG,
       `${name} 必须显式声明 update_multi:true，否则它的更新只有操作用户自己看得见`);
@@ -197,7 +198,7 @@ test('secondDeliveryCard 经 settleSecondDeliveryOrder 变换后仍带 update_mu
 //
 // ⭐ 2026-10-07 **口径变更**（交易类型 = 库存有没有；卡片分三段说）——
 //    两张卡的可见内容**有意**变了，golden 已同步（改的是 golden，不是断言强度）：
-//      · `salesConfirmationCard`：原来是「交易类型：…」一行，现在是
+//      · 已退场的那张确认卡片：原来是「交易类型：…」一行，现在是
 //        「类型 / 履约状态 / 收款情况」三行（业务负责人：「【卡片 = 分开说】…」）；
 //      · `secondDeliveryCard`：标题从「待成交：未付 / 预付」改成「待成交 / 待收款」
 //        （「未付」不再是交易类型）。

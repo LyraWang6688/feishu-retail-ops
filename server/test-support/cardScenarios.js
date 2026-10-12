@@ -39,8 +39,8 @@ const ARRIVAL_ROWS = [
 // 会被 `im.v1.message.patch` 更新的 14 张卡（13 个 builder；afterSalesRetryCard 继承
 // afterSalesConfirmationCard 的 config）。理由与调用方见 docs/card-update-multi-2026-10-07.md 第四节。
 const PATCHABLE_CARD_SCENARIOS = [
-  { name: 'salesConfirmationCard',
-    build: (c) => c.salesConfirmationCard('draft_1', { items: ITEMS, payments: PAYMENTS, agreed_total: 198 }) },
+  // ⚠️ 2026-10-12（清群聊入口 3b）：原来这里还有一张「请确认销售订单」的卡片场景，
+  //    它随销售草稿卡片一起退场（导出已删）⇒ 场景清单 **14 → 13**。
   { name: 'salesStatusCard',
     build: (c) => c.salesStatusCard({ items: ITEMS }, '销售订单已入账', '销售单号：XSD-001。', 'green') },
   { name: 'salesProcessingCard',

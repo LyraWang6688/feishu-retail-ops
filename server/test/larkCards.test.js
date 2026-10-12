@@ -1,7 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  salesConfirmationCard,
+  // ⚠️ 2026-10-12（3b）：原来这里 import 的那张销售确认卡片已退场；
+  //    它名下那两条业务口径迁到了**仍在跑**的卡片上 ⇒ 换成这两个入口（覆盖面不减）。
+  salesStatusCard,
+  afterSalesConfirmationCard,
   purchaseStatusCard,
   sampleReplacementCard,
   keepOnlyCardButton,
@@ -9,7 +12,7 @@ const {
 
 // 这一组测试锁的是「移动端实测确认过的排版」，不是实现细节：
 // 多按钮必须用 column_set（action 在手机上会堆成多行），销售确认卡片必须分字号层级。
-// 详见 src/utils/larkCards.js 里 buttonColumns / salesConfirmationCard 的注释。
+// 详见 src/utils/larkCards.js 里 buttonColumns 的注释（原那张确认卡的注释已随它退场）。
 
 // 卡片里所有 column_set 按钮（按出现顺序）。
 const columnSetButtons = (card) => card.elements
@@ -58,85 +61,16 @@ const sampleSizes = (sizes) => sizes.map((size) =>
 
 // —— 问题 1：多按钮一律 column_set ——
 
-test('销售确认卡片：确认/修改/取消用 column_set 一行三列，不再用 action', () => {
-  const card = salesConfirmationCard('draft_1', saleDraft());
-  assert.deepEqual(actionButtons(card), [], '多按钮不应再有 action 元素（手机端会堆成多行）');
-  assert.deepEqual(columnSetButtons(card).map((button) => button.text.content), ['确认', '修改', '取消']);
-  assert.deepEqual(buttonRowWidths(card), [3]);
-  assertButtonRowsAreEqualWeight(card);
-});
 
-test('销售确认卡片：颜色候选用 column_set（不再用 action）', () => {
-  const colorOptions = ['黑', '白', '红'].map((color, index) =>
-    ({ color, recordId: `color_${index}`, number: '66356' }));
-  const card = salesConfirmationCard('draft_1', saleDraft({
-    items: [{ item_no: '66356', size: 42, quantity: 1, actual_amount: 99,
-      needs_color: true, color_options: colorOptions }],
-  }));
-  assert.deepEqual(actionButtons(card), []);
-  assert.deepEqual(columnSetButtons(card).filter((button) => button.value.action === 'choose_sale_color')
-    .map((button) => button.text.content), ['黑', '白', '红']);
-  assert.deepEqual(buttonRowWidths(card), [3, 3]);
-  assertButtonRowsAreEqualWeight(card);
-});
 
 // 🔴 2026-10-07 口径（业务负责人逐字「甲 去掉」）：候选按钮**只显示颜色名**。
 // ⚠️ 这条是**反向断言**（不是放宽）：旧断言是"等于 `黑（有货）`/`白（无货）`"，
 //    现在①**逐字等于纯颜色名**（多一个字符就红），②再 `doesNotMatch` 显式禁止
 //    「有货」「无货」出现在卡片上，③并且**故意让候选带上 `stock_status`** ——
 //    证明渲染层已经完全不认识这个字段（加回去就会红）。
-test('⭐ 销售确认卡片：候选只显示颜色名 —— 即便候选带 stock_status，也不许出现「有货 / 无货」', () => {
-  const card = salesConfirmationCard('draft_1', saleDraft({
-    items: [{ item_no: '66356', size: 42, quantity: 1, actual_amount: 99, needs_color: true,
-      color_options: [
-        { color: '黑', recordId: 'color_0', number: '66356黑', stock_status: 'available' },
-        { color: '白', recordId: 'color_1', number: '66356白', stock_status: 'unavailable' },
-      ] }],
-  }));
-  const buttons = columnSetButtons(card).filter((button) => button.value.action === 'choose_sale_color');
-  assert.deepEqual(buttons.map((button) => button.text.content), ['黑', '白']);
-  assert.equal(buttons[0].text.content, '黑', '逐字：不能是「黑（有货）」或任何带后缀的串');
-  assert.equal(buttons[1].text.content, '白', '逐字：不能是「白（无货）」或任何带后缀的串');
-  assert.doesNotMatch(JSON.stringify(card), /有货|无货/, '整张卡片上都不许出现这两个词');
-  // ⚠️ 按钮带回去的 `color_name` 必须是**纯颜色**：后端按它落日志 / 兜底找记录。
-  assert.deepEqual(buttons.map((button) => button.value.color_name), ['黑', '白']);
-});
 
-test('销售确认卡片：候选不带库存状态时按钮也是纯颜色', () => {
-  const card = salesConfirmationCard('draft_1', saleDraft({
-    items: [{ item_no: '66356', size: 42, quantity: 1, actual_amount: 99, needs_color: true,
-      color_options: [{ color: '黑', recordId: 'color_0', number: '66356黑' }] }],
-  }));
-  const buttons = columnSetButtons(card).filter((button) => button.value.action === 'choose_sale_color');
-  assert.deepEqual(buttons.map((button) => button.text.content), ['黑']);
-  assert.doesNotMatch(JSON.stringify(card), /有货|无货/);
-});
 
-test('⭐ 销售确认卡片：多颜色候选按钮**逐字**只有颜色名（黑色 / 绿色，真实业务那种写法）', () => {
-  const card = salesConfirmationCard('draft_1', saleDraft({
-    items: [{ item_no: 'B26002-52', size: 37, quantity: 1, actual_amount: 228, needs_color: true,
-      color_options: [
-        { color: '黑色', recordId: 'p_black', number: 'B26002-52黑色' },
-        { color: '绿色', recordId: 'p_green', number: 'B26002-52绿色' },
-      ] }],
-  }));
-  const buttons = columnSetButtons(card).filter((button) => button.value.action === 'choose_sale_color');
-  assert.deepEqual(buttons.map((button) => button.text.content), ['黑色', '绿色']);
-  assert.doesNotMatch(JSON.stringify(card), /有货|无货/);
-});
 
-test('销售确认卡片：样品补门盒候选用 column_set（不再用 action）', () => {
-  const card = salesConfirmationCard('draft_1', saleDraft({
-    items: [{ item_no: '66356', size: 42, quantity: 1, actual_amount: 99, uses_sample: true,
-      sample_replacement_options: sampleSizes([40, 41]) }],
-  }));
-  assert.deepEqual(actionButtons(card), []);
-  assert.deepEqual(columnSetButtons(card)
-    .filter((button) => button.value.action === 'choose_sale_sample_replacement')
-    .map((button) => button.text.content), ['选 40码', '选 41码']);
-  assert.deepEqual(buttonRowWidths(card), [2, 3]);
-  assertButtonRowsAreEqualWeight(card);
-});
 
 test('采购状态卡片：尺码网格走 column_set（不是 action）—— 共用同一套明细渲染器', () => {
   const card = purchaseStatusCard({ items: [{ item_no: 'A100', color: '黑', size: 40, quantity: 2 }] },
@@ -162,20 +96,6 @@ test('样品补选卡片：候选尺码用 column_set；单个「刷新」保持
   assertButtonRowsAreEqualWeight(card);
 });
 
-test('按钮超过 3 个：折成多个 column_set，每行都不超过 3 个', () => {
-  const colorOptions = ['黑', '白', '红', '蓝', '绿'].map((color, index) =>
-    ({ color, recordId: `color_${index}`, number: '66356' }));
-  const card = salesConfirmationCard('draft_1', saleDraft({
-    items: [{ item_no: '66356', size: 42, quantity: 1, actual_amount: 99,
-      needs_color: true, color_options: colorOptions }],
-  }));
-  // 颜色 5 个 → 3 + 2；再加上确认/修改/取消那一行 3 个。
-  assert.deepEqual(buttonRowWidths(card), [3, 2, 3]);
-  for (const width of buttonRowWidths(card)) {
-    assert.ok(width <= 3, `手机一行最多放 3 个按钮，实际放了 ${width} 个`);
-  }
-  assertButtonRowsAreEqualWeight(card);
-});
 
 test('样品补选卡片：候选尺码超过 3 个也折成多个 column_set', () => {
   const card = sampleReplacementCard('task_1', {
@@ -189,62 +109,12 @@ test('样品补选卡片：候选尺码超过 3 个也折成多个 column_set', 
 
 // —— 问题 2：销售确认卡片的字号层级（V3） ——
 
-test('销售确认卡片：明细行是 heading 大字', () => {
-  const card = salesConfirmationCard('draft_1', saleDraft());
-  const detail = card.elements[0];
-  assert.equal(detail.tag, 'div', 'markdown 元素不能自定义字号，必须用 div + lark_md');
-  assert.equal(detail.text.tag, 'lark_md');
-  assert.equal(detail.text.text_size, 'heading');
-});
 
 // ⭐ 2026-10-07 口径大改：卡片把三件事**分开说**（业务负责人逐字：
 //   「【卡片 = 分开说】类型 · 履约状态 · 收款情况（已收多少、还欠多少）」）。
 //   ⚠️ 这条断言**不是放宽**：原来钉的是「交易类型：现货 · 已交付」**一行**，
 //      现在钉的是**三行**（类型 / 履约 / 收款），信息量变多了。
-test('销售确认卡片：成交/收款行 + 「类型 / 履约状态 / 收款情况」三段都是 heading 且不加粗', () => {
-  const card = salesConfirmationCard('draft_1', saleDraft());
-  const headings = card.elements
-    .filter((element) => element.tag === 'div' && element.text?.text_size === 'heading');
-  assert.equal(headings.length, 5, '明细、成交/收款 + 类型/履约/收款三段，共五行 heading');
-  // [0] 明细行、[1] 成交/收款行、[2..4] 三段事实
-  assert.match(headings[1].text.content, /^成交总额 ￥99/);
-  assert.match(headings[1].text.content, /本次已收 微信 ￥99/);
-  assert.doesNotMatch(headings[1].text.content, /\*\*/, '大字已经够重，再加粗在手机上会糊');
-  // ⚠️ 这个草稿里明细**没有**类型编码（`saleDraft()` 的老形状）⇒ 类型未定 = 「待定」。
-  assert.match(headings[2].text.content, /^类型：/);
-  assert.match(headings[3].text.content, /^履约状态：/);
-  assert.match(headings[4].text.content, /^收款情况：已收 微信 ￥99；/);
-  for (const heading of headings) {
-    assert.doesNotMatch(heading.text.content, /\*\*/, '大字已经够重，再加粗在手机上会糊');
-  }
-  // 「未付」不许再作为一种类型出现在卡片上（它只是"现货 + 钱没结清"的状态）。
-  assert.doesNotMatch(JSON.stringify(card), /未付/);
-});
 
-test('销售确认卡片：三段按**逐明细的类型编码**说（现货已交付 / 未交付）', () => {
-  const card = salesConfirmationCard('draft_1', saleDraft({
-    trade_type_code: 'SALE_CASH',
-    items: [{ item_no: '66356', size: 42, quantity: 1, actual_amount: 99, trade_type_code: 'SALE_CASH' }],
-  }));
-  const headings = card.elements
-    .filter((element) => element.tag === 'div' && element.text?.text_size === 'heading');
-  assert.equal(headings[2].text.content, '类型：现货');
-  assert.equal(headings[3].text.content, '履约状态：已交付');
-  assert.equal(headings[4].text.content, '收款情况：已收 微信 ￥99；已结清');
-
-  const reserved = salesConfirmationCard('draft_1', saleDraft({
-    trade_type_code: 'SALE_PREPAID',
-    items: [{ item_no: '66356', size: 42, quantity: 1, actual_amount: 228, trade_type_code: 'SALE_PREPAID' }],
-    payments: [{ method: '微信', amount: 100, status: '已收' }],
-    agreed_total: 228,
-    owed: 128,
-  }));
-  const reservedHeadings = reserved.elements
-    .filter((element) => element.tag === 'div' && element.text?.text_size === 'heading');
-  assert.equal(reservedHeadings[2].text.content, '类型：预定');
-  assert.equal(reservedHeadings[3].text.content, '履约状态：未交付');
-  assert.equal(reservedHeadings[4].text.content, '收款情况：已收 微信 ￥100；还欠 ￥128');
-});
 
 // ⚠️ 2026-10-07 改写（**只因为"位置变了"，不是放宽**）：
 //   业务负责人拍板把「补货品信息」段落从确认卡片挪到**点确认之后更新的卡片**：
@@ -256,60 +126,40 @@ test('销售确认卡片：三段按**逐明细的类型编码**说（现货已�
 //   有缺口时确认卡片上也**没有**这一段 —— 而且与"无缺口"那张卡**逐字相同**
 //   （去掉之后连空壳都不留）。段落本身的字号 / 行格式 / 链接
 //   在新增文件里按同一套标准钉着（note 小字 + 逐字行格式 + 逐字 url），覆盖面没有丢。
-test('销售确认卡片：不再出现「补货品信息」段落（已挪到点确认之后的卡片）', () => {
-  const withGaps = salesConfirmationCard('draft_1', saleDraft({
-    product_info_gaps: [{ label: '66356米', missing: ['成本'], url: 'https://example.com/product/1' }],
-  }));
-  const notes = withGaps.elements.filter((element) => element.tag === 'div' && element.text?.text_size === 'note');
-  assert.equal(notes.length, 0, '确认卡片上不该再有这一块 note 小字');
-  assert.doesNotMatch(JSON.stringify(withGaps), /补货品信息/);
-  assert.doesNotMatch(JSON.stringify(withGaps), /去补全这条记录/);
-  // 有缺口 / 无缺口两张卡逐字相同：确认卡片对 product_info_gaps 完全无感（不留空壳）。
-  assert.deepEqual(withGaps, salesConfirmationCard('draft_1', saleDraft()));
-});
 
-test('销售确认卡片：颜色选择/补样品提示也是 note 小字', () => {
-  const card = salesConfirmationCard('draft_1', saleDraft({
-    items: [{ item_no: '66356', size: 42, quantity: 1, actual_amount: 99, needs_color: true,
-      color_options: [{ color: '黑', recordId: 'color_0', number: '66356' }] }],
-  }));
-  const notes = card.elements.filter((element) => element.tag === 'div' && element.text?.text_size === 'note');
-  assert.equal(notes.length, 1);
-  assert.match(notes[0].text.content, /请选择颜色/);
-});
 
-test('销售确认卡片：单件不显示金额（下一行就是成交总额，重复）', () => {
-  const card = salesConfirmationCard('draft_1', saleDraft());
-  assert.equal(card.elements[0].text.content, '1. 66356 42码 × 1');
-});
 
-test('销售确认卡片：一单超过一件时必须逐件显示金额（否则她无法逐件核对）', () => {
-  const card = salesConfirmationCard('draft_1', saleDraft({
+test('多件时必须逐件显示金额（原销售确认卡片退场 ⇒ 改用仍在跑的销售状态卡片钉同一条口径）', () => {
+  // ⚠️ 2026-10-12（3b）：口径本身仍有效（她要逐件核对，不显示就会记错账）；
+  //    `itemLines` 是**共用渲染器**，仍在跑的销售状态卡片（`larkMvpService` 的已成交出口）就走它
+  //    ⇒ 换这个入口钉，覆盖面不减（与采购那条"卡片删了就换仍活的入口"同一套做法）。
+  const card = salesStatusCard(saleDraft({
     items: [
       { item_no: '66356', size: 42, quantity: 1, actual_amount: 99 },
       { item_no: '66357', size: 40, quantity: 1, actual_amount: 128 },
     ],
     agreed_total: 227,
-  }));
-  const content = card.elements[0].text.content;
+  }), '已成交', '已经写好了');
+  const content = card.elements[0].content;
   assert.match(content, /1\. 66356 42码 × 1 ￥99/);
   assert.match(content, /2\. 66357 40码 × 1 ￥128/);
 });
 
 // —— 重试卡片：只收窄"含目标按钮"的那一组 ——
 
-test('重试卡片：只留确认按钮，颜色/补样品选择组原样保留', () => {
-  const colorOptions = ['黑', '白'].map((color, index) =>
-    ({ color, recordId: `color_${index}`, number: '66356' }));
-  const card = salesConfirmationCard('draft_1', saleDraft({
-    items: [{ item_no: '66356', size: 42, quantity: 1, actual_amount: 99,
-      needs_color: true, color_options: colorOptions }],
-  }));
-  keepOnlyCardButton(card, 'confirm_sale');
-  assert.deepEqual(columnSetButtons(card).map((button) => button.value.action),
-    ['choose_sale_color', 'choose_sale_color', 'confirm_sale']);
-  assert.deepEqual(columnSetButtons(card).map((button) => button.text.content),
-    ['黑', '白', '确认']);
+test('只留目标按钮：其余按钮组整组收窄（原销售确认卡片退场 ⇒ 改用仍在跑的售后确认卡片钉通用行为）', () => {
+  // ⚠️ 2026-10-12（3b）：`keepOnlyCardButton` 是**通用行为**（只留目标按钮、其余原样），
+  //    原来借销售确认卡片的"颜色候选组"来验；那张卡退场后改在仍在跑的售后确认卡片上钉。
+  const card = afterSalesConfirmationCard('task_1', {
+    action: 'return', settlement: 'cash', diff_amount: -280,
+    original_line: { item_no: '66356', size: 42, quantity: 1 },
+    restock: { state: '门盒' },
+  });
+  const actionsBefore = columnSetButtons(card).map((button) => button.value.action);
+  assert.ok(actionsBefore.length >= 2, `售后确认卡片本来就带按钮：${actionsBefore.join(',')}`);
+  keepOnlyCardButton(card, 'confirm_after_sales');
+  assert.deepEqual(columnSetButtons(card).map((button) => button.value.action), ['confirm_after_sales'],
+    '只留确认按钮，其余按钮组整组收窄掉');
 });
 
 // —— 采购明细的渲染规则：尺码网格每行 6 个 + 货号 → 颜色 → 尺码 三层分组 + 🆕 ——
@@ -479,3 +329,16 @@ test('明细卡片：新品按货号级标一次（多行/多颜色不重复）�
   assert.ok(colors.every((line) => !line.includes('🆕')), '新品不细到颜色：颜色级不能标 🆕');
 });
 
+
+test('AC-3b · 那个销售确认卡片导出**已退场**（导出里没有它；导出数 21 → 20）', () => {
+  const cards = require('../src/utils/larkCards');
+  assert.equal('salesConfirmationCard' in cards, false, '它必须已经从导出里消失');
+  assert.equal(Object.keys(cards).length, 20, '导出数 = 20（删掉它之前是 21）');
+  for (const name of ['salesStatusCard', 'afterSalesConfirmationCard', 'afterSalesResultCard',
+    'afterSalesRetryCard', 'afterSalesStatusCard', 'afterSalesSettlementLabel']) {
+    assert.equal(typeof cards[name], 'function', `${name} 有活调用方 ⇒ 必须在`);
+  }
+  const wiring = require('node:fs').readFileSync(require('node:path')
+    .join(__dirname, '..', 'src', 'services', 'larkMvpService.js'), 'utf8');
+  assert.equal(/salesConfirmationCard\s*[,}]/.test(wiring), false, '那行死 import 里的名字必须摘掉');
+});
