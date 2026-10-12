@@ -37,6 +37,14 @@ const { readFlag, readInt, readString } = require('./envValue');
  *     `https://hm.bamamei.online/s/YD6693-2%7C%E9%BB%91%E8%89%B2%7CA`
  */
 const SCAN_URL = Object.freeze({
+  // ⭐ 2026-10-12：二维码标识从【编号】改为【记录 ID】（她今天亲自提的方案）。
+  //    编号 `货号|颜色|类别` 是**会变的快照**（她打印时类别还空着、事后补上 ⇒ 旧码对不上）；
+  //    `record_id` 是飞书**永不变**的身份证。
+  //    新 = /r/{recordId}；旧 = /s/{number}（**旧标签继续兼容**，靠扫码线兜底 + 逐步重打）。
+  recordIdTemplate: 'https://hm.bamamei.online/r/{recordId}',
+  numberTemplate: 'https://hm.bamamei.online/s/{number}',
+  // ⚠️ `urlTemplate` = **旧格式别名**（历史调用点与既有覆盖都还指着它，保持逐字不变）。
+  //    新生成一律走 `recordIdTemplate`（见 `resolveQrIdentity`）。
   urlTemplate: 'https://hm.bamamei.online/s/{number}',
 });
 

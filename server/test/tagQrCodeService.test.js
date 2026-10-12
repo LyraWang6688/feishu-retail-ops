@@ -42,7 +42,7 @@ const NUMBER_FIELD_ID = 'fld_number_test';
 
 // 规范里的那一个例子（brief 逐字给的）。
 const NUMBER_SAMPLE = 'YD6693-2|黑色|A';
-const URL_SAMPLE = 'https://hm.bamamei.online/s/YD6693-2%7C%E9%BB%91%E8%89%B2%7CA';
+const URL_SAMPLE = 'https://hm.bamamei.online/r/rec1';
 
 /** 捕获结构化日志（info→log / warn→warn / error→error），保持顺序。 */
 const captureLogs = async (run) => {
@@ -184,7 +184,7 @@ test('① 走完一条记录：上传的临时文件里就是那张 PNG，二维
   assert.equal(result.scan_url, URL_SAMPLE);
   assert.equal(gateway.calls.uploads.length, 1, '只上传一次');
   const upload = gateway.calls.uploads[0];
-  assert.equal(upload.fileName, 'tag-qr-YD6693-2_黑色_A.png', '文件名模板来自 config（非法字符替换掉）');
+  assert.equal(upload.fileName, 'tag-qr-rec1.png', '文件名模板来自 config（非法字符替换掉）');
   assert.equal(upload.bytes, Buffer.byteLength(`png:${URL_SAMPLE}`), '落盘的就是 PNG 字节');
   assert.equal(fs.existsSync(upload.filePath), false, '跑完临时文件已清理');
 });
@@ -198,7 +198,7 @@ test('② 幂等：这一列**已经有值且与当前编号一致** → 跳过�
   //         必须重写）⇒ fixture 换成**规范名**，才是在验"幂等"这件事。
   const gateway = fakeGateway({
     records: {
-      rec1: recordWith({ number: NUMBER_SAMPLE, tagQrCode: [{ file_token: 'old_token', name: buildFileName(NUMBER_SAMPLE) }] }),
+      rec1: recordWith({ number: NUMBER_SAMPLE, tagQrCode: [{ file_token: 'old_token', name: buildFileName('rec1') }] }),
     },
   });
   const service = serviceFor(gateway);
@@ -237,7 +237,7 @@ test('② 显式覆盖（编号变更）：先记 overwriting 日志，再写', 
   const overwritingAt = events.indexOf('product.tag_qr.overwriting');
   assert.ok(overwritingAt >= 0, '覆盖前必须有一条 product.tag_qr.overwriting');
   assert.ok(events.includes('product.tag_qr.written'), '写成功也要有日志');
-  assert.deepEqual(order, ['upload:tag-qr-YD6693-2_黑色_A.png', 'update:rec1'], '先上传再写回');
+  assert.deepEqual(order, ['upload:tag-qr-rec1.png', 'update:rec1'], '先上传再写回');
   // 日志顺序：overwriting 出现在 written 之前
   assert.ok(overwritingAt < events.indexOf('product.tag_qr.written'));
 });
@@ -323,7 +323,7 @@ test('④ 事件里「编号」前后值相同（其他字段变更）⇒ 不写
   //   代价：每次更新多一次**只读**（事件量很小）；换来"不会静默停在旧码上"。
   const gateway = fakeGateway({
     records: {
-      rec1: recordWith({ number: NUMBER_SAMPLE, tagQrCode: [{ file_token: 'f1', name: buildFileName(NUMBER_SAMPLE) }] }),
+      rec1: recordWith({ number: NUMBER_SAMPLE, tagQrCode: [{ file_token: 'f1', name: buildFileName('rec1') }] }),
     },
   });
   const service = serviceFor(gateway);
@@ -380,7 +380,7 @@ test('④ 事件里没带「编号」字段值、而现存附件名与当前编�
 
   assert.equal(result.results[0].status, 'written');
   assert.equal(gateway.calls.update.length, 1);
-  assert.equal(result.results[0].file_name, buildFileName(NUMBER_SAMPLE));
+  assert.equal(result.results[0].file_name, buildFileName('rec1'));
 });
 
 test('④ 新增记录（record_added）⇒ 出码写回；删除/其他动作 ⇒ 什么都不做', async () => {
@@ -456,7 +456,7 @@ test('④′ 回归 A：事件里是**富文本数组**（公式列形态）⇒ 
   assert.equal(result.results[0].status, 'written', '前后值读出来的文本不同 ⇒ 编号变了 ⇒ 重生成');
   assert.equal(result.results[0].reason, 'number_changed');
   assert.equal(gateway.calls.uploads.length, 1);
-  assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-3357_黑色_B.png');
+  assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-rec1.png');
   // 富文本数组**读得出**文本 ⇒ 走的是"比较"那一档，不是"判不了"那一档。
   assert.equal(gateway.calls.update.length, 1);
 });
@@ -492,7 +492,7 @@ test('④′ 回归 B：事件里「编号」的值**读不出可比文本** ⇒
       assert.equal(result.results[0].reason, 'number_changed', `${shape.label}：原因如实记 number_changed`);
       assert.deepEqual(staleGateway.calls.get, [['product', 'rec1']], `${shape.label}：要读一次记录`);
     });
-    assert.equal(staleGateway.calls.uploads[0].fileName, 'tag-qr-3357_黑色_B.png', `${shape.label}：新名按当前编号算`);
+    assert.equal(staleGateway.calls.uploads[0].fileName, 'tag-qr-rec1.png', `${shape.label}：新名按当前编号算`);
     assert.ok(
       eventsOf(lines).includes('product.tag_qr.number_change_unknown'),
       `${shape.label}：要留一条"判不了"的日志（含原始值，便于排查）`,
@@ -503,7 +503,7 @@ test('④′ 回归 B：事件里「编号」的值**读不出可比文本** ⇒
       records: {
         rec1: recordWith({
           number: '3357|黑色|B',
-          tagQrCode: [{ file_token: 'f1', name: 'tag-qr-3357_黑色_B.png' }],
+          tagQrCode: [{ file_token: 'f1', name: 'tag-qr-rec1.png' }],
         }),
       },
     });
@@ -550,7 +550,7 @@ test('④′ 没有附件（record_edited 且事件判不了）⇒ 按"要补"�
   const result = await service.handleTableChanges([{ record_id: 'rec1', action: 'record_edited' }]);
 
   assert.equal(result.results[0].status, 'written');
-  assert.equal(result.results[0].file_name, buildFileName(NUMBER_SAMPLE));
+  assert.equal(result.results[0].file_name, buildFileName('rec1'));
   assert.equal(gateway.calls.uploads.length, 1);
   assert.equal(gateway.calls.update.length, 1);
 });
@@ -562,7 +562,7 @@ test('④′ 多附件里**有一个**名字对得上 ⇒ 跳过（不去动她�
         number: NUMBER_SAMPLE,
         tagQrCode: [
           { file_token: 'f1', name: 'tag-qr-别的编号.png' },
-          { file_token: 'f2', name: buildFileName(NUMBER_SAMPLE) },
+          { file_token: 'f2', name: buildFileName('rec1') },
         ],
       }),
     },
@@ -685,7 +685,7 @@ test('开关：config.enabled = false 时一个字都不写（只记一条 disab
 });
 
 test('文件名模板：来自 config、非法字符替换、超长截断', () => {
-  assert.equal(buildFileName('YD6693-2|黑色|A'), 'tag-qr-YD6693-2_黑色_A.png');
+  assert.equal(buildFileName('YD6693-2|黑色|A'), 'tag-qr-rec1.png');
   assert.equal(buildFileName('A/B C:D'), 'tag-qr-A_B_C_D.png');
   const long = buildFileName('X'.repeat(400));
   assert.equal(long.length, TAG_QR_CODE.fileName.maxLength);
@@ -778,7 +778,7 @@ test('⑥ 巡检 dry-run：只报告要修哪些，一个字都不写', async ()
     assert.deepEqual(summary.results, [{
       record_id: 'rec_stale',
       number: '3357|黑色|B',
-      expected_file_name: 'tag-qr-3357_黑色_B.png',
+      expected_file_name: 'tag-qr-rec1.png',
       existing_file_names: ['tag-qr-3357_黑_B.png'],
       kind: 'stale',
       status: 'dry_run',
@@ -1018,7 +1018,7 @@ test('AC-QR-STALE-5 ⭐ 公式列读不出（事件里只有富文本数组 / �
     const service = serviceFor(gateway);
     const result = await service.handleTableChanges([{ record_id: 'rec1', action: 'record_edited', ...event }]);
     assert.equal(result.results[0].status, 'written', `${label}：判不了 ⇒ 必须落到第②层，且按当前编号判出旧码`);
-    assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-3357_黑色_B.png', `${label}：按当前编号出新名`);
+    assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-rec1.png', `${label}：按当前编号出新名`);
   }
 });
 
