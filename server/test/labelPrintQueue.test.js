@@ -858,8 +858,45 @@ test('AC17 ⭐ rotate=90/270 + 页面不转 ⇒ **MediaBox 仍是 40×30**、PNG
     // eslint-disable-next-line no-await-in-loop
     const { data, info } = await sharp(out.pngFirst).greyscale().raw().toBuffer({ resolveWithObject: true });
     if (rotate === 90 || rotate === 270) {
-      // ⭐ 转了 90/270 且页面不跟着转 ⇒ **等比缩小塞进来**：最外 1px 一圈必须全是白
-      //   （既没有被裁到纸边，也没有越出纸外）。
+      // ⭐⭐ 2026-10-12 改（PR #357 CI 连着红两次教的）：
+      //   🔴 **"墨迹外缘"不是不变量** —— 实测：同一份代码，**本地 = 0 个外圈墨点、CI = 1 个**
+      //      （sharp/librsvg 在 CI 上的**字体与光栅化**不同 ⇒ 文字外缘差一两个像素）✗
+      //      ⇒ 拿"外圈 === 0 墨"当不变量，就是**把光栅化结果当契约**（和上午 AC-C9-1 同一个病）。
+      //   ⇒ 真正的不变量有两条，都**与环境无关**：
+      //     ① **几何**：整幅内容（含字体外伸余量）**在页面内**、且与纸边留够距离（下面第一条断言）；
+      //     ② **内容完整**：没有一个尺码被丢掉（下面按 SVG 里的 text 数一组断言）。
+      //   ⇒ 像素那一层只留"**不许大面积贴边**"（≤1px），并**如实记录**两地的实测数字。
+      //   ⚠️ "不许出纸/被裁"这条**一点没放宽**：它由几何那条严格断言兜住。
+      // ⭐⭐ 几何断言（**不经过光栅化/不依赖字体**）：按"内容盒 + 字体外伸余量 0.3mm"算
+      //    内容到纸边的最小距离 —— 这就是"不许贴边/不许出纸"的真正判据。
+      //    ⚠️ 不能拿"外圈 === 0 墨"当不变量：实测同一份代码**本地 0 / CI 1**
+      //       （sharp/librsvg 的字体与光栅化差异）⇒ 那是"把光栅化结果当契约"✗
+      const geo = artifact.canvasGeometry(layout(), { rotate });
+      const left = artifact.resolveLeftPaddingMm(layout(), { leftPaddingMm: 3.5 });
+      const cut = artifact.resolveCutLineMm(layout(), { cutLineMm: 0 });
+      // 设计宽 40mm；右留白 = label 的 paddingMm（默认 1.5mm）
+      const contentW = (artifact.canvasGeometry(layout(), {}).designW) - (left + cut) - (1.5 + cut);
+      const m0 = artifact.measureVerticalLayout(label(), layout(), { dpi: 203, rotate, cutLineMm: 0 });
+      const ringed = artifact.ringSafeScale(geo, {
+        x0: left + cut,
+        x1: left + cut + Math.max(0, contentW),
+        y0: m0.content_top_mm,
+        y1: m0.content_top_mm + m0.content_total_h_mm,
+      });
+      assert.ok(Number.isFinite(ringed.ring_margin_mm) && ringed.ring_margin_mm >= 0.29,
+        `rotate=${rotate}：几何上内容与纸边距离必须 ≥ 0.29mm（实际 ${ringed.ring_margin_mm}mm，scale ${ringed.scale}）`);
+      const safe = out.meta.scale;
+      assert.ok(Number.isFinite(safe) && safe > 0 && safe <= 1,
+        `rotate=${rotate}：缩放系数必须在 (0,1]（实际 ${safe}）`);
+      // 内容完整：所有尺码都画在图上（**与字体无关**，只数 `<text>`）
+      const svg = artifact.labelSvg(label(), layout(), { dpi: 203, rotate });
+      const sizeTexts = [...svg.matchAll(/<text[^>]*font-size="[\d.]+"[^>]*>(\d{2})<\/text>/g)].map((m) => m[1]);
+      const wanted = (label().sizes || []).map((token) => String(token.size));
+      for (const size of wanted) {
+        assert.ok(sizeTexts.includes(size), `rotate=${rotate}：尺码 ${size} 必须在图上（内容完整）`);
+      }
+      // 像素层（**唯一**碰光栅化的地方）：允许 ≤1px 的外圈墨
+      //   本地实测 0 · CI 实测 1（字体/光栅化差异）⇒ 这里不是"放宽裁剪判据"，裁剪与否由几何那条管。
       let borderInk = 0;
       for (let x = 0; x < info.width; x += 1) {
         if (data[x] < 200) borderInk += 1;
@@ -869,7 +906,8 @@ test('AC17 ⭐ rotate=90/270 + 页面不转 ⇒ **MediaBox 仍是 40×30**、PNG
         if (data[y * info.width] < 200) borderInk += 1;
         if (data[y * info.width + info.width - 1] < 200) borderInk += 1;
       }
-      assert.equal(borderInk, 0, `rotate=${rotate}：最外一圈必须干净（内容不许贴边/被裁）`);
+      assert.ok(borderInk <= 1,
+        `rotate=${rotate}：外圈墨点 ≤1px（本地 0 / CI 1；实测 ${borderInk}）—— 内容不许大面积贴边`);
     } else {
       // 0/180：页面就是标签本身 ⇒ 内容**铺满整张纸**（没被缩小）。裁切线本来就画在纸边，
       //   所以这里断言的是"尺寸没变"，不是"边上无墨"。

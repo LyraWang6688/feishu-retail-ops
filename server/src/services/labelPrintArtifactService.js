@@ -718,7 +718,14 @@ const canvasGeometry = (layout, options = {}) => {
  */
 // ⚠️ `ringMm` 是"外圈至少留多少毫米干净"：文字有**上伸部/下伸部**（墨迹超出内容盒），
 //   所以留 0.3mm 还不够（实测仍会扫到 1 个墨点）⇒ 取 0.8mm 更稳（只影响 rotate≠0 的老路）。
-const ringSafeScale = (geometry, box, ringMm = 0.8) => {
+const ringSafeScale = (geometry, box, ringMm = 0.8, overhangMm = 0.3) => {
+  // ⚠️ `overhangMm` = **字体外伸余量**：文字的上/下伸部**会超出内容盒**（真机/CI 都实测到过），
+  //   只按内容盒算永远收不干净 ⇒ 把盒子**向外扩这么多**再反推 scale（几何，不依赖字体选谁）。
+  const b = {
+    x0: box.x0 - overhangMm, x1: box.x1 + overhangMm,
+    y0: box.y0 - overhangMm, y1: box.y1 + overhangMm,
+  };
+  box = b;
   const cx = geometry.designW / 2;
   const cy = geometry.designH / 2;
   const rad = (geometry.rotate * Math.PI) / 180;
@@ -737,9 +744,16 @@ const ringSafeScale = (geometry, box, ringMm = 0.8) => {
   const maxX = needX > 0 ? (geometry.pageW / 2 - ringMm) / needX : Infinity;
   const maxY = needY > 0 ? (geometry.pageH / 2 - ringMm) / needY : Infinity;
   const limit = Math.min(1, maxX, maxY);
-  if (!Number.isFinite(limit) || limit >= geometry.scale) return geometry;
+  const marginAt = (scale) => Math.min(
+    geometry.pageW / 2 - needX * scale,
+    geometry.pageH / 2 - needY * scale,
+  );
+  if (!Number.isFinite(limit) || limit >= geometry.scale) {
+    // 原 scale 本身就够干净 ⇒ 只是把"实测最小边距"记出来（供 AC 做几何断言）
+    return { ...geometry, ring_limited: false, ring_margin_mm: Math.round(marginAt(geometry.scale) * 1000) / 1000 };
+  }
   const scale = Math.round(limit * 1000) / 1000;
-  return { ...geometry, scale, ring_limited: true };
+  return { ...geometry, scale, ring_limited: true, ring_margin_mm: Math.round(marginAt(scale) * 1000) / 1000 };
 };
 
 /** 页面尺寸（mm）—— 兼容旧调用（竖版画布 = 画布 30×40、页面仍 40×30）。 */
@@ -1092,9 +1106,11 @@ function labelSvg(label, layout, options = {}) {
       y0: contentTopMm - pad,
       y1: contentTopMm + totalH + pad,
     });
-    if (geometryForRender.ring_limited && options.measure) {
+    if (options.measure) {
       options.measure.rotate_ring_scale = geometryForRender.scale;
-      options.measure.rotate_ring_limited = true;
+      options.measure.rotate_ring_limited = Boolean(geometryForRender.ring_limited);
+      options.measure.ring_margin_mm = geometryForRender.ring_margin_mm;
+      options.measure.rotate_ring_overhang_mm = 0.3;
     }
   }
   const transform = rotationTransform(geometryForRender);
@@ -1369,6 +1385,7 @@ module.exports = {
   resolveCutLineMm,
   normalizeRows,
   ROW_IDS,
+  ringSafeScale,
   rowWidthsMm,
   measureVerticalLayout,
   maxSafeOffsetXMm,
