@@ -114,6 +114,47 @@ test('AC-5 注释 / 日志 / throw 内部消息里的中文 ⇒ 一律不报（�
   assert.deepEqual(scanSource('services/demo.js', source), [], '注释/日志/内部错误都不该被报');
 });
 
+/** 一行是不是注释（含跨行块注释 `/* … *\/`）。 */
+function commentLineFlags(source) {
+  const lines = source.split('\n');
+  let inBlock = false;
+  return lines.map((line) => {
+    const trimmed = line.trim();
+    const wasInBlock = inBlock;
+    if (inBlock && trimmed.includes('*/')) inBlock = false;
+    else if (!inBlock && trimmed.startsWith('/*')) inBlock = !trimmed.includes('*/');
+    return wasInBlock || trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*');
+  });
+}
+
+test('AC-5b ⭐ 真文件：报出来的每一条都**不是注释**（本切片要治的"闸门说谎"）', () => {
+  const relative = 'views/scanPageRenderer.js';
+  const source = fs.readFileSync(path.join(SRC, relative), 'utf8');
+  const flags = commentLineFlags(source);
+  const found = scanSource(relative, source);
+  assert.ok(found.length > 5, `这个文件本来就是"文案大户"，应该扫出一堆（实际 ${found.length}）`);
+  const fromComments = found.filter((item) => flags[item.line - 1]);
+  assert.deepEqual(fromComments, [],
+    `这些"中文"其实来自**注释**（状态机失步了）：\n${fromComments.slice(0, 12).map((i) => `  :${i.line} ${i.text}`).join('\n')}`);
+  // 真 UI 文案必须**照报**（别把闸门修废）
+  const texts = found.map((item) => item.text).join('\n');
+  assert.ok(/打不开|请稍后再试/.test(texts), `真 UI 文案要照报（实际 ${JSON.stringify(found.slice(0, 5))}）`);
+});
+
+test('AC-5b2 给真文件**只加一行注释** ⇒ 报出来的集合**一个字都不变**（这才是"只挡新增"）', () => {
+  const relative = 'views/scanPageRenderer.js';
+  const source = fs.readFileSync(path.join(SRC, relative), 'utf8');
+  const before = scanSource(relative, source).map((item) => item.text).sort();
+  const after = scanSource(relative, `${source}\n// 她今天随手加的一行注释：门盒 / 仓库\n`).map((item) => item.text).sort();
+  assert.deepEqual(after, before, '加注释不该改变扫描结果');
+});
+
+test('AC-5c ⭐ 模板串里的 `//` 不是注释（别把 URL 里的斜杠当注释起点）', () => {
+  const source = "const url = `${base}/s/${id}`;\nconst tip = `看这里：https://x.cn/a`;\n// 真注释：不影响\n";
+  const texts = scanSource('views/demoRenderer.js', source).map((item) => item.text);
+  assert.deepEqual(texts, ['看这里：https://x.cn/a'], `只该报那一句文案（实际 ${JSON.stringify(texts)}）`);
+});
+
 test('AC-6 `src/config/**` 里的中文 ⇒ 不报（文案的家不在扫描范围内）', () => {
   assert.equal(ROOTS.some((root) => root.dir.includes(`${path.sep}config`)), false, '扫描根里不许有 config');
   const dir = tempTree({
