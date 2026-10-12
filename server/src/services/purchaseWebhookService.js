@@ -70,6 +70,8 @@ const { ARRIVAL_BATCH_KINDS } = require('../config/arrivalConversation');
 // 「这条写入属于哪一笔采购业务」—— 关联键的唯一取用口（**白名单**，非白名单键与空值
 // 一律不进日志）。与销售链路同一套：只把调用方**已经知道**的键带下去，不查表、不推导。
 const { mergeCorrelation, correlationFields } = require('../utils/correlationFields');
+// ⭐ 2026-10-12 采购明细ID（`{报货批次号}-{两位序号}`）—— 分配器只有一处实现。
+const { createPurchaseDetailIdAllocator } = require('./purchaseDetailId');
 // ⭐ 2026-10-09：扫码页「货品信息」内存快照（单价真源）的**跨模块失效** ——
 //   本文件是"新建货品"与"写成本"两个写入口之一（另一个是 `tagQrCodeService` 写标签二维码）。
 //   传 `{ tableKey: 'product' }` 只作废货品那一份（写货品不影响库存，别让库存快照白重拉）。
@@ -305,6 +307,9 @@ class PurchaseWebhookService {
       timeoutMs: this.gatewayTimeoutMs,
       prefix: 'gateway.',
     });
+    // ⭐ 2026-10-12：采购明细ID 的分配器（`{报货批次号}-{两位序号}`，同一批次内不重排/不重号）。
+    //    用例可注入一个替身。⚠️ 必须放在 `this.gateway` 赋值**之后**。
+    this.detailIds = options.detailIds || createPurchaseDetailIdAllocator({ gateway: this.gateway });
     this.references = options.references || new V1ReferenceResolver(this.gateway);
     // 「尺码」是指向「尺码管理」的关联字段，采购申请写入时通过它换算。
     this.getSizeReferences = createSizeReferenceAccess({
@@ -1616,6 +1621,12 @@ class PurchaseWebhookService {
       await this.store.update(taskId, { posting_progress: progress, posting_stage: 'batch_created' });
     }
 
+    // ⭐⭐ 2026-10-12（业务负责人）：「在同一个报货批次号里面，这是我的第几双鞋，也是需要明细 ID 的」
+    //    ⇒ 采购明细ID = `{报货批次号}-{两位序号}`（同一批次内按创建顺序；**已有行不重排**、
+    //    后补的接着排、重放不重复占号）。号取自**主表那一行的报货批次号**（= `plan.batch_no`）。
+    //    ⚠️ 逐条 `next()` 只在**真的创建**那一支调用（重放命中幂等 ⇒ 不动号）。
+    const detailIdCursor = await this.detailIds.open({ batchRecordId, batchNo: plan.batch_no });
+
     // 逐条创建采购申请
     const requestIds = [];
     for (const item of plan.items) {
@@ -1639,6 +1650,8 @@ class PurchaseWebhookService {
             product: relation(item.product_record_id),
             size: relation(sizeReference?.recordId),
             quantity: item.quantity,
+            // ⭐ 采购明细ID（`{报货批次号}-01`、`-02`…）：同一批次内唯一、不重排
+            detailId: detailIdCursor.next(),
             // 🔴 2026-10-12 热修：**不许再写「采购行为」** —— 她今天把这一列改成了
             //    **Lookup（19，按「报货批次号」关联采购主表的「采购行为」）**，Lookup 是**只读**的：
             //    轻则白写被忽略，重则**整条明细 create 失败**（那样这批报货一条明细都建不出来）。

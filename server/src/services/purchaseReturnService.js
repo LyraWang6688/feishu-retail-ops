@@ -35,6 +35,8 @@ const {
 } = require('./inventoryService');
 const { SCAN_WRITE } = require('../config/scanWrite');
 const { correlationFields } = require('../utils/correlationFields');
+// ⭐ 2026-10-12 采购明细ID（`{报货批次号}-{两位序号}`）—— 与报货那条**同一个分配器**。
+const { createPurchaseDetailIdAllocator } = require('./purchaseDetailId');
 const { logInfo, logWarn } = require('../utils/logger');
 
 /** 退货要扣哪些状态 —— **不在这里写死**，从库存注册表读（现存 = 门盒 + 样品 + 仓库）。 */
@@ -53,6 +55,8 @@ const createPurchaseReturnService = (options = {}) => {
   const resolveSize = (value) => getSizes().resolveByNumber(value);
   const inventory = options.inventory || new InventoryService({ gateway });
   const orderBatches = options.orderBatches || new PurchaseOrderBatchService({ gateway });
+  // ⭐ 2026-10-12：采购明细ID 分配器（用例可注入替身）。
+  const detailIds = options.detailIds || createPurchaseDetailIdAllocator({ gateway });
   // 只为"出退货单图"那一步（发群 / 回填附件都在它内部）；用例可以不注入（那就只记一条 warn）。
   const webhooks = options.webhooks || null;
   const batchNoGenerator = options.batchNoGenerator || new PurchaseBatchNoGenerator({ gateway });
@@ -160,6 +164,10 @@ const createPurchaseReturnService = (options = {}) => {
       created: batch.created === true, reused: batch.reused === true,
     });
 
+    // ⭐⭐ 2026-10-12：采购明细ID = `{报货批次号}-{两位序号}`（退货这条链路同样要写；
+    //    与报货那条**同一个分配器** ⇒ 同一批次内 01/02… 不重排、不重号、重放不重复占号）。
+    const detailIdCursor = await detailIds.open({ batchRecordId, batchNo: plan.batch_no });
+
     // ② 逐尺码：写一条退货明细（采购行为 = 退货行为）→ 扣库存（走 InventoryService）
     const requestIds = [];
     const drawItems = [];
@@ -185,6 +193,8 @@ const createPurchaseReturnService = (options = {}) => {
           product: relation(draft.product_record_id),
           size: relation(sizeRef.recordId),
           quantity: item.taken,
+          // ⭐ 采购明细ID（`{报货批次号}-01`、`-02`…）
+          detailId: detailIdCursor.next(),
           idempotencyKey: docKey,
         },
       });
