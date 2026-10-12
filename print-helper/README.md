@@ -49,8 +49,9 @@
 
 ### 2. 装 SumatraPDF（便携版，免安装）
 
-1. 打开 <https://www.sumatrapdfreader.org/download-free-pdf-viewer> → 下载 **64-bit portable** 版（一个 `.exe`）。
-2. 把那个 `SumatraPDF.exe` 放到本文件夹里（就是和 `helper.js` 同一个文件夹）。
+1. 打开 <https://www.sumatrapdfreader.org/download-free-pdf-viewer> → 下载 **64-bit portable** 版。
+2. 下载 portable（免安装）版 → 把里面的 exe 放进 print-helper 文件夹，并改名 SumatraPDF.exe（去掉版本号：以后换版就不用再改配置）。
+   ⚠️ 文件名**别带版本号**（例如 `SumatraPDF-3.6.1-64.exe` ✗）—— 带版本号的话，以后换版本就得改 `config.json`。
 3. 如果你放到别的地方了：打开 `config.json`，把 `printer.sumatraExe` 改成它的完整路径
    （例如 `D:\\工具\\SumatraPDF.exe` —— 注意 Windows 路径里的反斜杠要写两个）。
 
@@ -195,6 +196,41 @@
 
 **关于"要不要装成 Windows 服务"：不用装** —— 服务**也拦不住睡眠**，而且服务里**拿不到默认打印机**，
 装了反而更容易出问题。所以这里走的是"小助手自己防睡眠"这条路。
+
+## 四·六、换了文件夹 / 换了新包之后（**2026-10-12 她真机撞到的那件事**）
+
+她换文件夹以后，状态页曾经变成"只报错、看不懂"：
+
+```
+打印程序还没配好:
+  printer.sumatraExe: 找不到这个文件: ...\SumatraPDF-3.6.1-64.exe （把 SumatraPDF.exe 放过去，或把这一项改成实际路径）
+  printer.args: `args` 里不要再写 `-print-settings` —— 它已经由 `printerSettings` 负责，两份会打架（改这一档请写 printSettings）
+```
+
+现在这**两种情况都不会再卡住**：
+
+**① 老写法 `args` 里带 `-print-settings` ⇒ 自动迁移（不用你动手）**
+
+- 小助手启动时会把 `args` 里的 `-print-settings ×××` **自动搬到** `printer.printSettings`，并从 `args` 里删掉。
+- ⭐ **两边都写了 ⇒ 以 `printer.printSettings` 为准**（`args` 里那份丢掉）。
+- ⭐ **迁移是幂等的**：重复启动不会重复搬；**状态页与日志都会写「已自动迁移」**。
+- 你**不用**去改 `config.json` —— 想改打印参数，改 `printer.printSettings` 那一项就对了。
+
+**② 找不到 `SumatraPDF.exe` ⇒ 页面直接告诉你怎么办**
+
+（她那次就是路径里带版本号、或换了文件夹以后 exe 没跟过来）
+
+1. 打开 <https://www.sumatrapdfreader.org/download-free-pdf-viewer> → 下载 **64-bit portable** 版；
+2. 下载 portable（免安装）版 → 把里面的 exe 放进 print-helper 文件夹，并改名 SumatraPDF.exe（去掉版本号：以后换版就不用再改配置）；
+3. 如果你**故意**把它放在别处：把 `config.json` 里 `printer.sumatraExe` 改成完整路径
+   （例如 `D:\\工具\\SumatraPDF.exe` —— Windows 路径里的反斜杠要写两个）。
+
+**③ 防睡眠"没起来" ⇒ 页面直接写原因**
+
+- 状态页那一行会写清楚**为什么**（例：`关（PowerShell 被策略禁止（或没有权限））`），不再是"见日志"。
+- 兜底办法（一分钟）：请把 Windows 睡眠设为「从不」（设置 → 系统 → 电源和睡眠）。
+
+> ⭐ 页面上的这几句话与这份 README 是**同一份文案**（有测试钉着"两处一致"），所以看到哪一句都照做即可。
 
 ## 五、备选：没有 SumatraPDF 怎么办
 
