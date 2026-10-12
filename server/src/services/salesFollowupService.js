@@ -11,6 +11,8 @@ const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { SELLABLE_KINDS } = require('../config/sellableKinds');
 const { itemLinkOfDetail } = require('./salesDetailItemFacts');
 const { postedOf, isPosted } = require('../config/salesStatusDimensions');
+const { ORDER_FIELD_KEYS, readWorkbenchOrdersConfig } = require('../config/workbenchOrders');
+const { createWorkbenchOrdersCache } = require('./workbenchOrdersCache');
 const { logWarn } = require('../utils/logger');
 
 class SalesFollowupService {
@@ -37,9 +39,40 @@ class SalesFollowupService {
       taskDir: options.sampleTaskDir,
     });
     this.queue = Promise.resolve();
+    // ⭐⭐ 2026-10-12（她「一直说正在读取订单」）：订单列表的**读取结果 TTL 缓存**。
+    //    · TTL 在 `config/workbenchOrders.js`（`WORKBENCH_ORDERS_CACHE_MS`，默认 30 秒；`0` = 关掉）；
+    //    · **显式注入优先**（`options.ordersCache`）—— 路由层把**同一个实例**交给本 service 与
+    //      写入路由，写库之后由路由层 `invalidate()`；
+    //    · 默认**每个实例一个**（不搞进程级单例）⇒ 测试之间不会串味。
+    const ordersConfig = options.ordersConfig || readWorkbenchOrdersConfig();
+    this.ordersCache = options.ordersCache || createWorkbenchOrdersCache({ ttlMs: ordersConfig.ordersCacheMs });
   }
 
+  /**
+   * 订单列表（**带缓存的门面**）—— 页面读的就是它。
+   * ⚠️ 语义与优化前**逐字一致**：命中/未命中返回的是同一份计算结果（只有"读不读飞书"不同）。
+   */
   async listOrders() {
+    const cached = this.ordersCache.get();
+    if (cached !== undefined) return cached;
+    const result = await this.buildOrdersList();
+    this.ordersCache.set(result);
+    return result;
+  }
+
+  /** 任何一笔写库之后由路由层调它（下一次读一定是真读）。 */
+  invalidateOrders() {
+    this.ordersCache.invalidate();
+  }
+
+  /**
+   * 真读那一次的实现（优化前就是这一整段）。
+   *
+   * ⭐ 2026-10-12：六次 `listAll` 都**按需取字段**（`ORDER_FIELD_KEYS` → 飞书 `field_names`）——
+   *    562 条的「货品信息」整表全字段要 7.8 秒，而这一页只用「货号 / 颜色」。
+   *    语义键映射不到的列（比如配置里换了列名）**自动退回整表读**（宁可慢，不许少列）。
+   */
+  async buildOrdersList() {
     // ⭐⭐ 2026-10-11：待补样品待办（**一次读表**，与下面几处取数并行不了 —— 它要看明细 id，
     //    但读任务本身与明细无关 ⇒ 先并行发出）。读失败**不打挂整页**：当成"没有待办"+ 一条 warn。
     const pendingSampleTasks = await this.samplePending.listPending().catch((error) => {
@@ -55,11 +88,20 @@ class SalesFollowupService {
     //    `services/salesEntryService.listAccessories` 的注释）。这里先看 tableId 再读 ——
     //    未配置时**跳过**（配品行照样认得出来，只是没有名称），绝不把整页打成 500。
     const accessoryConfigured = Boolean(this.gateway.table?.('accessory')?.tableId);
+    // ⭐ 2026-10-12：**按需取字段** —— 语义键（`ORDER_FIELD_KEYS`，一处定义）→ 飞书列名；
+    //    一个都映射不到（例：schema 改了列名）就**不传**这个参数 ⇒ 退回整表读（宁可慢，不许少列）。
+    const fieldOptions = (tableKey) => {
+      const fields = this.gateway.table?.(tableKey)?.fields || {};
+      const names = (ORDER_FIELD_KEYS[tableKey] || []).map((key) => fields[key]).filter(Boolean);
+      return names.length ? { fieldNames: names } : {};
+    };
     const [orders, details, methods, payments, products, accessories] = await Promise.all([
-      this.gateway.listAll('salesEntry'), this.gateway.listAll('salesDetail'),
-      this.gateway.listAll('paymentMethod'), this.gateway.listAll('paymentRecord'),
-      this.gateway.listAll('product'),
-      accessoryConfigured ? this.gateway.listAll('accessory') : Promise.resolve([]),
+      this.gateway.listAll('salesEntry', fieldOptions('salesEntry')),
+      this.gateway.listAll('salesDetail', fieldOptions('salesDetail')),
+      this.gateway.listAll('paymentMethod', fieldOptions('paymentMethod')),
+      this.gateway.listAll('paymentRecord', fieldOptions('paymentRecord')),
+      this.gateway.listAll('product', fieldOptions('product')),
+      accessoryConfigured ? this.gateway.listAll('accessory', fieldOptions('accessory')) : Promise.resolve([]),
     ]);
     const orderFields = this.gateway.table('salesEntry').fields;
     const detailFields = this.gateway.table('salesDetail').fields;
@@ -215,13 +257,18 @@ class SalesFollowupService {
    *    （**与群卡片共用同一个 `operationId`** ⇒ 跨入口绝不重复挪）。
    */
   async fillSample(input = {}) {
-    return this.samplePending.fill({
+    const result = await this.samplePending.fill({
       detailRecordId: input.detailRecordId,
       size: input.size,
       operatorOpenId: input.operatorOpenId,
       requestId: input.requestId,
       correlation: { request_id: input.requestId },
     });
+    // ⭐ 2026-10-12：**本 service 自己的写成功之后立刻作废自己的缓存** ——
+    //    不依赖调用方（路由层）记得失效：直接调 service 的地方（测试 / 将来的内部调用）
+    //    也不会读到旧数据。路由层那几处失效是给"不经过本 service 的写"兜底的。
+    this.ordersCache.invalidate();
+    return result;
   }
 
   /**
@@ -307,7 +354,11 @@ class SalesFollowupService {
     };
     const next = this.queue.then(work, work);
     this.queue = next.catch(() => undefined);
-    return next;
+    // ⭐ 2026-10-12：写成功之后作废订单列表缓存（失败时不失效：那一次一个字节都没写）。
+    return next.then((result) => {
+      this.ordersCache.invalidate();
+      return result;
+    });
   }
 
   /**
@@ -430,7 +481,11 @@ class SalesFollowupService {
     };
     const next = this.queue.then(work, work);
     this.queue = next.catch(() => undefined);
-    return next;
+    // ⭐ 2026-10-12：写成功之后作废订单列表缓存（失败时不失效：那一次一个字节都没写）。
+    return next.then((result) => {
+      this.ordersCache.invalidate();
+      return result;
+    });
   }
 }
 
