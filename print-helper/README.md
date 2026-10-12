@@ -62,7 +62,7 @@
 2. 用记事本打开 `config.json`，改这几处：
    - `deviceToken`：填服务器 `.env` 里 `LABEL_PRINT_DEVICE_TOKEN` 的**同一个值**（找技术同事要）。
    - `printer.sumatraExe`：如果 SumatraPDF.exe 就在本文件夹里，这一行**不用改**。
-   - ⭐ `printer.printSettings`：**保持默认 `["disable-auto-rotation"]` 就行**（见下面「标签方向不对怎么办」）。
+   - ⭐ `printer.printSettings`：**保持默认 `["disable-auto-rotation", "center"]` 就行**（见下面「标签方向/位置不对怎么办」）。
 3. 保存。
 
 ### 4. 试一下
@@ -75,25 +75,33 @@
 - 上面一排会显示：**服务器连上了没有 / 长连接通不通 / 打印程序配好没有 / 当前打印参数**。
 - 点【**测试打印**】：如果标签机吐出一张写着 `TEST PRINT 40x30` 的小标签，就说明**这条链路通了**。
 
-### ⭐ 标签方向不对怎么办（只改 `config.json` 一行，改完**重启小助手**）
+### ⭐ 标签方向/位置不对怎么办（只改 `config.json` 一行，改完**重启小助手**）
 
 **为什么会有这一项**：SumatraPDF **默认会把"横着的页面"自动转 90°** 去塞进纸
 （官方文档里的 *auto-rotation*）。我们的标签页是 **40mm 宽 × 30mm 高**（宽 > 高）⇒ 会被它自动转，
 于是「邯美皮鞋」就顺着**短边**了 —— 而且"不转就塞不下"这件事**根本不存在**（是被转了才塞不下）。
 所以默认帮你加了 `disable-auto-rotation`（**关掉自动旋转**）。
 
+**两个毛病、两项默认值**：
+- `disable-auto-rotation` = **别自动转**（不然"横着的页面"会被转 90°，品牌就顺着短边了）；
+- `center` = **水平居中**（页面比可打印区域小的时候，SumatraPDF 默认**靠左放** ⇒ 右边一大片空白）。
+
 打开 `config.json`，找到 `printer` 这一块，改**这一行**：
 
 ```json
-"printSettings": ["disable-auto-rotation"],
+"printSettings": ["disable-auto-rotation", "center"],
 ```
 
-| 打出来的方向 | 就把这一行改成 | 说明 |
+| 打出来的样子 | 就把这一行改成 | 说明 |
 | --- | --- | --- |
-| **对**（品牌顺着长边） | `["disable-auto-rotation"]` | ⭐ 默认值，推荐 |
-| 反了 180°（上下颠倒） | `["disable-auto-rotation", "rotate=180"]` | 在"不自动转"之上再转 180° |
-| 反了 90° | `["disable-auto-rotation", "rotate=90"]` | 也试一下 `rotate=270` |
-| 想回到 SumatraPDF 的老行为 | `[]` | 空数组 = 不加这一档（不推荐，会又变小一圈） |
+| **方向和位置都对** | `["disable-auto-rotation", "center"]` | ⭐ 默认值，推荐 |
+| 方向对、但**贴左不居中** | `["disable-auto-rotation", "center"]`（就是默认） | `center` 已经管这个；还没居中就先重启 |
+| **被裁边**（内容超出可打印区域） | `["disable-auto-rotation", "center", "noscale"]` | `noscale` = 按实际尺寸、不许它再缩放 |
+| 反了 180°（上下颠倒） | `["disable-auto-rotation", "center", "rotate=180"]` | 「自动旋转」之上再转 180° |
+| 反了 90° | `["disable-auto-rotation", "center", "rotate=90"]` | 也试一下 `rotate=270` |
+| 想回到 SumatraPDF 的老行为 | `[]` | 空数组 = 不加这一档（不推荐：又会被转 90°、还不居中） |
+
+> 🧰 **排障顺序**：先 `center`（位置）→ 还偏就加 `noscale`（防缩放/裁边）→ 方向还不对再加 `rotate=180/90/270`。
 
 - ⚠️ **改完要重启**小助手（关掉那个黑窗口，再双击桌面图标）。
 - ⚠️ 里面**不能**有逗号和空格（多项用**两个引号+逗号**隔开，像上面的例子），也不能重复。

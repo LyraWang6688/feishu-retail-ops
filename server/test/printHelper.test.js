@@ -190,9 +190,10 @@ test('AC-H2 打印命令进配置：sumatra / command / dialog 三种模式 + {f
   assert.equal(sumatra.command, 'C:\\print-helper\\SumatraPDF.exe');
   // ⚠️ 2026-10-12 改断言（**"参数全部可配、argv 数组拼"这条本意没变**）：
   //   改前：`['-print-to-default', '-silent', file]`
-  //   改后：中间多了 `-print-settings disable-auto-rotation`（新的默认，关掉 SumatraPDF 的自动旋转）。
+  //   改后：中间多了 `-print-settings disable-auto-rotation,center`
+  //        （新的默认：关掉 SumatraPDF 的自动旋转 + 水平居中 —— 真机两条反馈各对应一项）。
   assert.deepEqual(sumatra.args, [
-    '-print-to-default', '-silent', '-print-settings', 'disable-auto-rotation', 'C:\\tmp\\a b.pdf',
+    '-print-to-default', '-silent', '-print-settings', 'disable-auto-rotation,center', 'C:\\tmp\\a b.pdf',
   ]);
 
   const command = helper.buildPrintCommand(baseConfig({
@@ -598,23 +599,30 @@ test('AC-H16 ⭐⭐ SSE 正常 ⇒ 入队到"领取"≤1 秒（帧一到就 drai
 //   ⇒「邯美皮鞋」顺着短边 ✗，而且"不转就塞不下"这件事**根本不存在**（是我们先被转了才塞不下）。
 //   ⇒ 默认给小助手加上 `disable-auto-rotation`；万一某台机器方向还是反的，就一档一档试 rotate。
 
-test('AC-H17-1 ⭐⭐ 默认含 `disable-auto-rotation`，且拼进 argv（不是拼字符串、且在文件参数之前）', () => {
-  assert.deepEqual(helper.DEFAULT_CONFIG.printer.printSettings, ['disable-auto-rotation'],
-    '默认必须关掉 SumatraPDF 的自动旋转（真凶）');
+test('AC-H17-1 ⭐⭐ 默认 = `disable-auto-rotation` + `center`（关自动旋转 + 水平居中），且拼进 argv', () => {
+  // `disable-auto-rotation`：SumatraPDF 默认把"宽>高"的页面自动转 90° ⇒ 品牌顺着短边（真机已验证）；
+  // `center`：页面比可打印区域小时，它**默认靠左放** ⇒ 右边一大片空白（她 2026-10-12 的原话）。
+  assert.deepEqual(helper.DEFAULT_CONFIG.printer.printSettings, ['disable-auto-rotation', 'center'],
+    '默认两项：关自动旋转 + 水平居中');
   const built = helper.buildPrintCommand(baseConfig({ printer: withPrinter({ mode: 'sumatra', sumatraExe: 'C:/s.exe' }) }), 'D:/dl/a.pdf');
   assert.equal(built.command, 'C:/s.exe');
   assert.deepEqual(built.args, [
-    '-print-to-default', '-silent', '-print-settings', 'disable-auto-rotation', 'D:/dl/a.pdf',
-  ], '参数要以 argv 数组拼好：`-print-settings <值>` 落在**文件参数之前**，一个 `-print-settings` 只出现一次');
+    '-print-to-default', '-silent', '-print-settings', 'disable-auto-rotation,center', 'D:/dl/a.pdf',
+  ], '参数要以 argv 数组拼好：`-print-settings <逗号串>` 落在**文件参数之前**，一个 `-print-settings` 只出现一次');
 });
 
 test('AC-H17-2 ⭐ 配置能覆盖（排障四档）：加 `rotate=180` ⇒ 一个逗号串、顺序正确、只出现一次', () => {
   const built = helper.buildPrintCommand(baseConfig({
-    printer: withPrinter({ mode: 'sumatra', sumatraExe: 'C:/s.exe', printSettings: ['disable-auto-rotation', 'rotate=180'] }),
+    printer: withPrinter({ mode: 'sumatra', sumatraExe: 'C:/s.exe', printSettings: ['disable-auto-rotation', 'noscale', 'center'] }),
   }), 'D:/dl/a.pdf');
   assert.deepEqual(built.args, [
-    '-print-to-default', '-silent', '-print-settings', 'disable-auto-rotation,rotate=180', 'D:/dl/a.pdf',
-  ], 'SumatraPDF 的 `-print-settings` 收**一个逗号分隔**的参数');
+    '-print-to-default', '-silent', '-print-settings', 'disable-auto-rotation,noscale,center', 'D:/dl/a.pdf',
+  ], 'SumatraPDF 的 `-print-settings` 收**一个逗号分隔**的参数，顺序按配置原样');
+  // 排障四档里的另外两种也钉一下（rotate 与 center 能共存、顺序原样）
+  const rotated = helper.buildPrintCommand(baseConfig({
+    printer: withPrinter({ mode: 'sumatra', sumatraExe: 'C:/s.exe', printSettings: ['disable-auto-rotation', 'center', 'rotate=180'] }),
+  }), 'D:/dl/a.pdf');
+  assert.equal(rotated.args[3], 'disable-auto-rotation,center,rotate=180');
   assert.equal(built.args.filter((arg) => arg === '-print-settings').length, 1);
   // 空数组 = 不加这一档（给她"回到 Sumatra 默认行为"的退路）
   const none = helper.buildPrintCommand(baseConfig({
@@ -654,11 +662,11 @@ test('AC-H17-3 ⭐ 非法值当场拒并**指出字段名**（非数组 / 空串
 
 test('AC-H17-4 ⭐ 本地状态页要能看到"当前打印参数"（排障时一眼看到，不用翻配置）', async () => {
   const { helper: instance, cleanup } = makeHelper({
-    config: { printer: withPrinter({ mode: 'sumatra', printSettings: ['disable-auto-rotation', 'rotate=180'] }) },
+    config: { printer: withPrinter({ mode: 'sumatra', printSettings: ['disable-auto-rotation', 'noscale', 'center'] }) },
   });
   try {
     const html = await instance.localPageHtml();
-    assert.match(html, /disable-auto-rotation,rotate=180/, '状态页要显示当前 -print-settings');
+    assert.match(html, /disable-auto-rotation,noscale,center/, '状态页要显示当前 -print-settings（完整、按顺序）');
     assert.match(html, /打印参数/);
   } finally {
     cleanup();
