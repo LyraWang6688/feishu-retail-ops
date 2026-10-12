@@ -1,3 +1,5 @@
+// ⭐ 用户可见文案抽到 config（2026-10-12 技术债批次：只挪位置，一个字符没改）
+const { purchaseMessage, purchaseToast, arrivalToast, inventoryToast } = require('../config/purchaseWebhookTexts');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -1708,9 +1710,9 @@ class PurchaseWebhookService {
     await this.deliverSupplierImages(taskId, task, posting);
     // 更新卡片为"已完成"状态（免确认路径没有卡片，跳过）
     if (!options.skipCardUpdate) {
-      await this.updatePurchaseActionCard(task, event, purchaseStatusCard({ ...draft, batch_no: plan.batch_no }, '采购申请已生成', `报货批次号：${plan.batch_no}；共 ${requestIds.length} 条明细已写入。`, 'green'));
+      await this.updatePurchaseActionCard(task, event, purchaseStatusCard({ ...draft, batch_no: plan.batch_no }, purchaseMessage.m1, purchaseMessage.m2({ plan, requestIds }), 'green'));
     }
-    return { toast: { type: 'success', content: `采购申请已生成：${plan.batch_no}（共${requestIds.length}条明细）` }, ...posting };
+    return { toast: { type: 'success', content: purchaseToast.m1({ plan, requestIds }) }, ...posting };
   }
 
   /**
@@ -1761,7 +1763,7 @@ class PurchaseWebhookService {
   async confirmArrivalLocked(taskId, task, operatorOpenId) {
     // ⚠️ 2026-10-07 晚：这句话原先写「到货验收已入库」，但那**张表已被业务负责人删除** ——
     //    改成按现在的落点说（批次行），她看到的就是"这一批已经入过库了"。
-    if (task.status === 'posted') return { toast: { type: 'info', content: '这一批已入库' } };
+    if (task.status === 'posted') return { toast: { type: 'info', content: arrivalToast.m1 } };
     // 她点确认时如果建档还没跑完（或上一次失败了），在这里同步补一次。
     // 建档是幂等的、并且和别的调用方走同一个 creationQueue，所以不会建出第二条。
     // 入库必须有货品记录，这一步不能省；失败就明确告诉她原因，别静默也不要"假装入库了"。
@@ -1923,7 +1925,7 @@ class PurchaseWebhookService {
       inbound_rows_written: 0,
       inventory_applied: this.enablePurchaseInventory, ...correlation,
     });
-    return { toast: { type: 'success', content: this.enablePurchaseInventory ? '采购已入库，库存已更新' : '采购入库已确认' } };
+    return { toast: { type: 'success', content: this.enablePurchaseInventory ? inventoryToast.m1 : inventoryToast.m2 } };
   }
 
   /**
