@@ -27,6 +27,19 @@
    窄屏不横向滚动；「待交割单」里再按既有的三类细分展示。 */
 .orders-sections { display: grid; gap: var(--space-6); min-width: 0; }
 .order-section { display: grid; gap: var(--space-3); min-width: 0; }
+/* ⭐【乙】「售后列表」的可折叠头：命中区走 --control-height（≥44px，移动端好点） */
+.order-section-collapsible { display: block; }
+.order-section-collapsible > summary {
+  min-height: var(--control-height);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  list-style: none;
+}
+.order-section-collapsible > summary::-webkit-details-marker { display: none; }
+.order-section-collapsible > summary::after { content: '▾'; margin-left: auto; color: var(--text-secondary); }
+.order-section-collapsible[open] > summary::after { content: '▴'; }
 .order-section .order-group-head h3 { font-size: var(--font-size-base); }
 
 /* 一单一张卡：白卡片 + 12px 圆角 + 很轻的阴影（不是表格）。
