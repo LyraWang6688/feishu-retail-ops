@@ -16,17 +16,12 @@ const crypto = require('node:crypto');
 const { AFTER_SALES_ACTIONS } = require('./afterSales');
 
 // 卡片按钮的 value.action。名字带 after_sales 前缀，与销售/采购的动作名不会撞。
-const AFTER_SALES_CARD_ACTIONS = Object.freeze({
-  CONFIRM: 'confirm_after_sales',
-  CANCEL: 'cancel_after_sales',
-  // 退回的鞋放哪儿：她话里没说时，卡片上给按钮让她点（默认原状态）。
-  RESTOCK: 'choose_after_sales_restock',
-});
-// ⚠️ 这里**没有**"选资金走向"这个卡片动作：钱怎么走不用卡片按钮（业务负责人 2026-10-05 纠正：
-//   「会说的，所以不用再有要卡片按钮的链路了」）。她没说就**回一句文字问**，她回一句我们照做。
-
-const isAfterSalesCardAction = (action) =>
-  Object.values(AFTER_SALES_CARD_ACTIONS).includes(String(action ?? '').trim());
+// 🔴 2026-10-12（售后卡片链路退场）：原来这里定义了两个**卡片动作**常量与判据
+//    （`confirm_after_sales` / `cancel_after_sales` / `choose_after_sales_restock`）。
+//    群卡片售后整条链路退场 ⇒ 它们**没有调用方了**（唯一的调用方 `larkMvpService` 那段分派已删）。
+//    ⚠️ 本文件**其余部分一律保留** —— 它们是**文字解析**口径（`resolveAfterSalesAction` /
+//      `resolveAfterSalesSettlement` / `resolveAfterSalesPaymentMethod` / `ASK_TEXTS` …），
+//      `services/doubaoService.js` 还在用 ✓
 
 // 本地任务状态（只写 data/lark_mvp_tasks，不写任何业务表）。
 //   asking     —— 信息不够（没说退哪一双 / 序号上下文过期），已回话让她补充
@@ -277,8 +272,6 @@ const afterSalesContextId = (senderOpenId) => {
 };
 
 module.exports = {
-  AFTER_SALES_CARD_ACTIONS,
-  isAfterSalesCardAction,
   AFTER_SALES_TASK_STATUS,
   ORDINAL_TEXT_PATTERN,
   AFTER_SALES_ACTION_ALIASES,

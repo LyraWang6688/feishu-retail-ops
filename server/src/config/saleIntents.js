@@ -5,9 +5,9 @@
 // 加一条别名，而不是在 doubaoService 和 larkMvpService 里各写一串 if-else。
 //
 // ⚠️ 当前：sale_query 走只读查询（SaleLookupService）；return / exchange 从第二期第二步起
-// **真执行**（AfterSalesFlowService 出确认卡片 → 她点确认 → afterSalesService 写账）。
+// **真执行**（业务层 afterSalesService 写账；**现行入口 = 工作台**，群卡片那条已退场）。
 // 意图层只判"是哪一类诉求"，具体动作（退货/换货/赔货）由模型输出的 action 字段表达，
-// 收敛规则在 config/afterSalesFlow.js。
+// 收敛规则在 config/afterSalesFlow.js（文字解析部分仍在跑）。
 const MESSAGE_INTENTS = Object.freeze({
   SALE: 'sale',
   SALE_QUERY: 'sale_query',

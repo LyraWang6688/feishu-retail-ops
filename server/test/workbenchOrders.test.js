@@ -251,7 +251,7 @@ test('AC3b 入口隔离：默认收款方式只被工作台这一页的接线层
   // ⚠️ 「只在这个页面给默认，群聊链路一个字不动」——
   //    这条哨兵钉的是**读取点**：后端读 `DEFAULT_COLLECTION_METHOD` 的只有
   //    config 定义处 + 工作台订单动作接线层；群聊链路（larkMvpService /
-  //    salesThreadProgressService / afterSalesFlowService / secondDeliveryService…）
+  //    salesThreadProgressService 等接线服务…）
   //    一个都不许读它。
   const hits = walk(SRC)
     .filter((file) => fs.readFileSync(file, 'utf8').includes('DEFAULT_COLLECTION_METHOD'))
@@ -264,7 +264,6 @@ test('AC3b 入口隔离：默认收款方式只被工作台这一页的接线层
   for (const rel of [
     'services/larkMvpService.js',
     'services/salesThreadProgressService.js',
-    'services/afterSalesFlowService.js',
     'services/secondDeliveryService.js',
     'services/salesFollowupService.js',
   ]) {

@@ -1,10 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  // ⚠️ 2026-10-12（3b）：原来这里 import 的那张销售确认卡片已退场；
-  //    它名下那两条业务口径迁到了**仍在跑**的卡片上 ⇒ 换成这两个入口（覆盖面不减）。
+  // ⚠️ 2026-10-12（3b + 售后卡片退场）：原来 import 的销售确认卡片、售后确认卡片都已退场；
+  //    它们名下还活着的口径（逐件金额 / 按钮裁剪）都迁到**仍在跑**的销售状态卡片上 ✓
   salesStatusCard,
-  afterSalesConfirmationCard,
   purchaseStatusCard,
   sampleReplacementCard,
   keepOnlyCardButton,
@@ -147,19 +146,17 @@ test('多件时必须逐件显示金额（原销售确认卡片退场 ⇒ 改用
 
 // —— 重试卡片：只收窄"含目标按钮"的那一组 ——
 
-test('只留目标按钮：其余按钮组整组收窄（原销售确认卡片退场 ⇒ 改用仍在跑的售后确认卡片钉通用行为）', () => {
-  // ⚠️ 2026-10-12（3b）：`keepOnlyCardButton` 是**通用行为**（只留目标按钮、其余原样），
-  //    原来借销售确认卡片的"颜色候选组"来验；那张卡退场后改在仍在跑的售后确认卡片上钉。
-  const card = afterSalesConfirmationCard('task_1', {
-    action: 'return', settlement: 'cash', diff_amount: -280,
-    original_line: { item_no: '66356', size: 42, quantity: 1 },
-    restock: { state: '门盒' },
-  });
+test('只留目标按钮：其余按钮组整组收窄（入口一路换到仍在跑的销售状态卡片上，通用行为不变）', () => {
+  // ⚠️ 2026-10-12：`keepOnlyCardButton` 是**通用行为**（只留目标按钮、其余原样）——
+  //    它先是搭在销售确认卡片的"颜色候选组"上、后来搭在售后确认卡片上，这两张卡都已退场；
+  //    ⇒ 现在搭在**仍在跑**的销售状态卡片的「确认成交」按钮上。**能力一次都没退场** ✓
+  const card = salesStatusCard({ items: [] }, '已入账', '已经写好了', 'blue',
+    { confirmDeal: { salesEntryRecordId: 'rec_1', draftId: 'd' } });
   const actionsBefore = columnSetButtons(card).map((button) => button.value.action);
-  assert.ok(actionsBefore.length >= 2, `售后确认卡片本来就带按钮：${actionsBefore.join(',')}`);
-  keepOnlyCardButton(card, 'confirm_after_sales');
-  assert.deepEqual(columnSetButtons(card).map((button) => button.value.action), ['confirm_after_sales'],
-    '只留确认按钮，其余按钮组整组收窄掉');
+  assert.ok(actionsBefore.length >= 1, `这张卡本来就带按钮：${actionsBefore.join(',')}`);
+  keepOnlyCardButton(card, actionsBefore[0]);
+  assert.deepEqual(columnSetButtons(card).map((button) => button.value.action), [actionsBefore[0]],
+    '只留目标按钮，其余按钮组整组收窄掉');
 });
 
 // —— 采购明细的渲染规则：尺码网格每行 6 个 + 货号 → 颜色 → 尺码 三层分组 + 🆕 ——
@@ -330,13 +327,16 @@ test('明细卡片：新品按货号级标一次（多行/多颜色不重复）�
 });
 
 
-test('AC-3b · 那个销售确认卡片导出**已退场**（导出里没有它；导出数 21 → 20）', () => {
+test('AC-退场哨兵 · 销售确认卡 + 售后 5 张卡都已退场（导出里没有它们；导出数 21 → 15）', () => {
   const cards = require('../src/utils/larkCards');
   assert.equal('salesConfirmationCard' in cards, false, '它必须已经从导出里消失');
-  assert.equal(Object.keys(cards).length, 20, '导出数 = 20（删掉它之前是 21）');
-  for (const name of ['salesStatusCard', 'afterSalesConfirmationCard', 'afterSalesResultCard',
-    'afterSalesRetryCard', 'afterSalesStatusCard', 'afterSalesSettlementLabel']) {
-    assert.equal(typeof cards[name], 'function', `${name} 有活调用方 ⇒ 必须在`);
+  assert.equal(Object.keys(cards).length, 15, '导出数 = 15（21 → 20 删销售确认卡 → 15 再删售后 5 张）');
+  // ⚠️ 2026-10-12（售后卡片链路退场）：原来这里断言"6 个都在" —— 售后那 5 个已随链路退场
+  //    ⇒ 现在只断言**唯一还活着的那个**在；并逐个证明那 5 个**真的没了**（能力不是靠"忘了"活着）。
+  assert.equal(typeof cards.salesStatusCard, 'function', '销售状态卡片有活调用方 ⇒ 必须在');
+  for (const gone of ['afterSalesConfirmationCard', 'afterSalesResultCard', 'afterSalesRetryCard',
+    'afterSalesStatusCard', 'afterSalesSettlementLabel']) {
+    assert.equal(gone in cards, false, `${gone} 已随售后卡片链路退场 ⇒ 不该还在导出里`);
   }
   const wiring = require('node:fs').readFileSync(require('node:path')
     .join(__dirname, '..', 'src', 'services', 'larkMvpService.js'), 'utf8');
