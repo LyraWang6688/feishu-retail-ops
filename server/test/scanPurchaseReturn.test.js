@@ -1,3 +1,12 @@
+/** ⚠️ 2026-10-12 旧断言改写（真机 bug：采购退货的「采购行为」原来写成了**库存**行为）：
+ *  改前（逐字）：`assert.equal(SCAN_WRITE.purchaseReturn.behaviorCode, 'STOCK_PURCHASE_DECREASE');`
+ *              ＋ `assert.deepEqual(entriesOf(h, 'purchaseOrderBatch')[0].fields['采购行为'], ['bh_return'], …);`
+ *  改后（逐字）：behaviorCode ⇒ **'PURCHASE_RETURN'**；采购行为 ⇒ **['bh_return_purchase']**
+ *                （夹具里那条 = 「退货」编码 `PURCHASE_RETURN`，真表 `所属环节=采购`）。
+ *  理由：业务负责人 2026-10-12 逐字「**为什么你选成了采购增加了呢？**」——`STOCK_*` 是**库存环节**的行为 ✗。
+ *        ⚠️ **库存那一边没动**：库存流水.库存行为仍是 `STOCK_PURCHASE_INCREASE/_DECREASE`（本文件里
+ *        `库存行为 = ['bh_return']` 那条断言照旧 ✓）。
+ */
 /**
  * ⚠️ 2026-10-12 热修改写（**「采购明细.采购行为」是 Lookup = 只读**）：
  *  改前（逐字）：`assert.deepEqual(record.fields['采购行为'], ['bh_return'], '采购行为来自「行为管理」的退货编码');`
@@ -112,7 +121,12 @@ const seedTables = (overrides = {}) => ({
   inventoryLedger: [],
   behavior: [
     { record_id: 'bh_request', fields: { 行为名称: '采购申请', 行为编码: 'STOCK_PURCHASE_INCREASE' } },
-    // 退货那条既有行为：既是「报货信息.采购行为」也是库存引擎认的「库存行为」。
+    // ⭐⭐ 2026-10-12 改（真 bug）：采购退货的「**采购行为**」= 采购环节的「**退货**」
+    //    （编码 `PURCHASE_RETURN`，真表 `所属环节=采购`）—— **不是**库存环节的「采购减少」✗。
+    { record_id: 'bh_return_purchase', fields: { 行为名称: '退货', 行为编码: 'PURCHASE_RETURN' } },
+    // 库存引擎那条**库存行为**仍然要留着（扣库存走它，一行没动 ✓）：
+    // 「退货那条既有行为：既是「报货信息.采购行为」也是库存引擎认的「库存行为」」——**前半句已不成立**，
+    //  2026-10-12 起两者是**两条不同的行为记录**（采购环节 / 库存环节）。
     {
       record_id: 'bh_return',
       fields: {
@@ -318,7 +332,9 @@ test('AC-R1 【退货】领域里是退货表单：与【一键补货】同形�
     assert.equal(SCAN_WRITE.actions.purchaseReturn, 'return_purchase');
     assert.equal(SCAN_WRITE.fields.returnSizes, 'return_sizes');
     assert.equal(SCAN_WRITE.fields.returnQuantityPrefix, 'return_qty_');
-    assert.equal(SCAN_WRITE.purchaseReturn.behaviorCode, 'STOCK_PURCHASE_DECREASE');
+    // ⭐ 2026-10-12 改（真机 bug）：采购环节的「退货」= `PURCHASE_RETURN`
+    //    （原来是库存环节的「采购减少」`STOCK_PURCHASE_DECREASE` ✗ —— 库存那条链路一行没动 ✓）
+    assert.equal(SCAN_WRITE.purchaseReturn.behaviorCode, 'PURCHASE_RETURN');
     assert.equal(SCAN_WRITE.purchaseReturn.enabled, true);
     assert.ok(SCAN_WRITE.session.returnKeyPrefix.startsWith('scan_return'));
 
@@ -384,7 +400,7 @@ test('AC-R2 提交退货 ⇒「采购明细」退货明细（行为列不写：L
       assert.equal('采购行为' in record.fields, false, '采购行为是 Lookup，不许写');
     }
     // ⭐⭐ 2026-10-12（她确认要写）：退货那一档写**主表**行（明细由它 Lookup 带出）
-    assert.deepEqual(entriesOf(h, 'purchaseOrderBatch')[0].fields['采购行为'], ['bh_return'],
+    assert.deepEqual(entriesOf(h, 'purchaseOrderBatch')[0].fields['采购行为'], ['bh_return_purchase'],
       '主表「采购行为」= 采购退货那一档');
     for (const record of requests) {
       assert.equal('采购行为' in record.fields, false, '采购行为是 Lookup，不许写');

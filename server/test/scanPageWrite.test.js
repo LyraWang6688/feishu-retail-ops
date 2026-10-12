@@ -1,4 +1,13 @@
 /**
+ * ⚠️ 2026-10-12 旧断言改写（**真机 bug 修复**：采购单的「采购行为」原来写成了**库存**行为）：
+ *  改前（逐字）：`assert.deepEqual(entriesOf(h.gateway, 'purchaseOrderBatch')[0].fields['采购行为'], ['bh_request'], '主表「采购行为」= 采购申请那一档（明细那列由它 Lookup 带出）');`
+ *  改后（逐字）：同断言，值改 **['bh_order']**（夹具里那条 = 「报货」编码 `PURCHASE_ORDER`）。
+ *  理由：业务负责人 2026-10-12 指出（逐字）「**为什么你选成了采购增加了呢？**」——
+ *        配置原来给的是 `STOCK_PURCHASE_INCREASE`（真表 `所属环节=库存`）✗；
+ *        采购单的「采购行为」该是**采购环节**的「报货」`PURCHASE_ORDER` ✓。
+ *        ⚠️ 库存流水那一边**没动**（仍然 `STOCK_PURCHASE_INCREASE/_DECREASE`）—— 见 `test/purchaseBehaviorCode.test.js` AC-BH3。
+ */
+/**
  * ⚠️ 2026-10-12 热修改写（**「采购明细.采购行为」是 Lookup = 只读**）：
  *  改前（逐字）：`assert.deepEqual(record.fields['采购行为'], ['bh_request'], '采购行为来自「行为管理」的既有编码');`
  *                （另一处同形：`assert.deepEqual(record.fields['采购行为'], ['bh_request']);`）
@@ -106,6 +115,10 @@ const seedTables = (overrides = {}) => ({
     { record_id: 'pm_cash', fields: { 收款方式: '现金' } },
   ],
   behavior: [
+    // ⭐⭐ 2026-10-12 改（业务负责人指出的真 bug）：采购单的「采购行为」= **采购环节**的「报货」
+    //    （编码 `PURCHASE_ORDER`）——**不是**库存环节的「采购增加」（`STOCK_PURCHASE_INCREASE`）✗。
+    //    ⚠️ 老的库存那条**留着**：库存流水那条链路（`inventoryService`）仍然认它 ✓（两件事 ✗ 别混）。
+    { record_id: 'bh_order', fields: { 行为名称: '报货', 行为编码: 'PURCHASE_ORDER' } },
     { record_id: 'bh_request', fields: { 行为名称: '采购申请', 行为编码: 'STOCK_PURCHASE_INCREASE' } },
     // ⭐ 2026-10-09：现货 / 预订 = 扫码页销售建单要写的**既有**交易类型编码
     //    （「行为管理」表里就这两条，见 `config/salesMovements.js`）。
@@ -434,8 +447,9 @@ test('⑥ 勾选尺码 + 填数量 → 生成采购申请（走既有采购链�
       // 🔴 2026-10-12 热修：这一列是 Lookup（只读）⇒ **建明细行不许再写它**（写了会整条 create 失败）
       assert.equal('采购行为' in record.fields, false, '采购行为是 Lookup，不许写');
       // ⭐⭐ 2026-10-12（她确认要写）：值改由**主表**带出来 —— 主表行上必须有「采购行为」
-      assert.deepEqual(entriesOf(h.gateway, 'purchaseOrderBatch')[0].fields['采购行为'], ['bh_request'],
-        '主表「采购行为」= 采购申请那一档（明细那列由它 Lookup 带出）');
+      // ⭐ 2026-10-12：值 = **采购环节**的「报货」（`PURCHASE_ORDER`）—— 原来是库存环节的「采购增加」✗
+      assert.deepEqual(entriesOf(h.gateway, 'purchaseOrderBatch')[0].fields['采购行为'], ['bh_order'],
+        '主表「采购行为」= 采购环节的「报货」那一档（明细那列由它 Lookup 带出）');
       assert.ok(record.fields['幂等键'], '每条采购申请都有幂等键（既有 createOnceByKey 的回查依据）');
       assert.ok(record.fields['报货批次号'], '挂在同一个报货批次上');
     }
@@ -945,8 +959,9 @@ test('⑪ 一键补货：勾了不填数量按 **1 双**算（填了就按她填
       assert.ok(record.fields['幂等键'], '既有 createOnceByKey 的判据');
       // 🔴 2026-10-12 热修：同上（Lookup 只读）
       assert.equal('采购行为' in record.fields, false, '采购行为是 Lookup，不许写');
-      assert.deepEqual(entriesOf(h.gateway, 'purchaseOrderBatch')[0].fields['采购行为'], ['bh_request'],
-        '主表「采购行为」照旧写上（明细由它带出）');
+      // ⭐ 2026-10-12：同上（采购环节的「报货」，不是库存环节的「采购增加」✗）
+      assert.deepEqual(entriesOf(h.gateway, 'purchaseOrderBatch')[0].fields['采购行为'], ['bh_order'],
+        '主表「采购行为」照旧写上（采购环节的「报货」，明细由它带出）');
     }
   } finally { h.cleanup(); }
 });
