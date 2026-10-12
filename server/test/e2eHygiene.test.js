@@ -184,3 +184,74 @@ test('e2e-run 走的是项目代码（require 项目自己的服务 / 网关）'
   assert.equal(fs.existsSync(path.join(scriptsDir, 'e2e-group-thread.mjs')), false,
     'e2e-group-thread.mjs 应已删除（群聊入口 2026-10-12 退场）');
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐ 2026-10-12（独立复核 agent 挑出的 F-1 / F-2 / F-3 / F-5 / F-6 / F-9）
+//    这一批钉的是"**别假绿、别误伤生产、别误发真群**"。
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-H1（F-1/F-2）报告与退出码集中在纯函数里：失败 ⇒ 非零；跳过必须落报告', async () => {
+  const report = await import(path.join(serverRoot, 'scripts', 'lib', 'e2e-report.mjs'));
+  const scenarios = [
+    { name: 'ok', checks: [{ pass: true }] },
+    { name: 'bad', checks: [{ pass: true }, { pass: false }] },
+  ];
+  const skipped = [{ name: 'no-data', reason: '测试 Base 里缺少可用数据' }];
+  const summary = report.summarize({ scenarios, skipped });
+  assert.deepEqual(summary, { ran: 2, failed: 1, passed: 1, skipped: 1, total: 3 },
+    '汇总要分别给出 跑过/通过/未达标/跳过（原来只数跑了的 ⇒ 像全覆盖）');
+  assert.equal(report.exitCodeFor({ failed: summary.failed }), 1, '有未达标 ⇒ **非零退出**（F-1）');
+  assert.equal(report.exitCodeFor({ failed: 0 }), 0);
+  assert.equal(report.exitCodeFor({ failed: 0, error: true }), 2, '脚本自身报错 ⇒ 2');
+  const payload = report.buildReport({ base: 'base_x', scenarios, skipped });
+  assert.deepEqual(payload.skipped, [{ name: 'no-data', reason: '测试 Base 里缺少可用数据' }],
+    '报告里必须有 skipped（带原因）——F-2');
+  assert.match(report.summaryLine(summary), /跑过 2 个.*未达标 1.*跳过 1 个/,
+    '汇总那一行要**分别**说清跑过/跳过/失败');
+});
+
+test('AC-H2（F-1/F-2）群场景脚本：用了那个纯函数（不能自己算一套、退出码不能丢）', async () => {
+  const source = fs.readFileSync(path.join(scriptsDir, 'e2e-sales-group-scenarios.mjs'), 'utf8');
+  assert.ok(source.includes("scripts/lib/e2e-report.mjs") || source.includes('./lib/e2e-report.mjs'),
+    '群场景脚本要 import 那个报告/退出码模块（唯一判定处）');
+  assert.ok(/process\.exitCode\s*=\s*exitCodeFor\(/.test(source),
+    '退出码必须走 `exitCodeFor(...)`（F-1：原来算了 failedCount 却 exit 0）');
+  assert.ok(/buildReport\(/.test(source) && /skipped/.test(source),
+    '报告体要走 `buildReport(...)`（含 skipped）（F-2）');
+});
+
+test('AC-H3（F-3）驱动"已退场的群入口"的两个老脚本：必须**当场说清原因**，不许超时+误导', async () => {
+  for (const name of ['e2e-sales-status.mjs', 'e2e-sales-group-scenarios.mjs']) {
+    const file = path.join(scriptsDir, name);
+    if (!fs.existsSync(file)) continue;                       // 已归档/删除 ⇒ 也算处置过
+    const source = fs.readFileSync(file, 'utf8');
+    assert.ok(/群(聊)?入口.*(已)?退场|ARCHIVED_GROUP_SCRIPTS|群入口已退场/.test(source),
+      `${name}：必须在文件顶部写清"群入口已退场"这件事`);
+    assert.ok(/FEISHU_E2E_ARCHIVED_GROUP_SCRIPTS/.test(source),
+      `${name}：要有显式开关才能继续跑（默认**当场退出**，不许跑到超时才报"解析超时"那种误导原因）`);
+  }
+});
+
+test('AC-H4（F-5）e2e-run 打印 Base 时**只打指纹**，绝不打印 app_token 明文', () => {
+  assert.equal(/say\(`\s*Base app_token：\$\{appToken\}/.test(runnerSource), false,
+    'F-5：不许 `say(`Base app_token：${appToken}`)` —— 日志/截图会漏 token');
+  assert.ok(/tokenFingerprint\(/.test(runnerSource), '要用既有的 `tokenFingerprint()`');
+});
+
+test('AC-H5（F-6）闸门必须在创建客户端**之前**（缺凭证也要先被闸门挡住）', () => {
+  const order = [...runnerSource.matchAll(/guardEnvironment\([^)]*\)|createClient\(\{[^}]*\}\)/g)]
+    .map((match) => (match[0].startsWith('guardEnvironment') ? 'guard' : 'client'));
+  assert.ok(order.length >= 4, `至少三处子命令 + 定义，实际匹配到 ${order.length} 处`);
+  // 每一处 `createClient` 之前**必须**已经出现过一次 `guard`（同一个子命令里的顺序）
+  let guards = 0;
+  for (const step of order) {
+    if (step === 'guard') { guards += 1; continue; }
+    assert.ok(guards > 0, 'F-6：`createClient()` 出现在任何 `guardEnvironment()` 之前 ⇒ 缺凭证时走不到闸门');
+  }
+});
+
+test('AC-H6（F-9）`--real-im` 必须显式开闸才生效（默认**禁止**发真群）', () => {
+  const source = fs.readFileSync(path.join(scriptsDir, 'e2e-sales-group-scenarios.mjs'), 'utf8');
+  assert.ok(/FEISHU_E2E_ALLOW_REAL_IM/.test(source),
+    'F-9：本机 .env 里有**真实**的群/机器人 id ⇒ `--real-im` 要再用一个显式环境变量开闸');
+});

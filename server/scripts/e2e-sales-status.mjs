@@ -58,6 +58,15 @@ for (let index = 0; index < argv.length; index += 1) {
 
 const line = (char = '─') => console.log(char.repeat(78));
 const head = (title) => { console.log(''); line('═'); console.log(`  ${title}`); line('═'); };
+// 🔴🔴 2026-10-12（F-3）：**群聊入口已整体退场** ⇒ 这个脚本靠 `acceptMessage({chat_type:'group'})`
+//    起链，现在**不可能通过**：只会超时并报"解析超时"这种**误导原因** ✗
+//    ⇒ 当场说清原因、立刻非零退出（场景定义保留，将来搬扫码入口时可参考）。
+if (String(process.env.FEISHU_E2E_ARCHIVED_GROUP_SCRIPTS || '').trim() !== 'true') {
+  console.error('⛔ [e2e-sales-status] 群聊入口已于 2026-10-12 **整体退场**：本脚本**不可能再通过**。');
+  console.error('   ⇒ 真写 E2E 的现行入口：cd server && FEISHU_TARGET_ENV=test pnpm run e2e:real');
+  console.error('   （要看它明知会失败的输出：FEISHU_E2E_ARCHIVED_GROUP_SCRIPTS=true node scripts/e2e-sales-status.mjs）');
+  process.exit(3);
+}
 const say = (...args) => console.log(...args);
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 

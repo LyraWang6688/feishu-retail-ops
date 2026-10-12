@@ -403,9 +403,11 @@ const getMessageDetail = async (client, messageId) => {
  * 收集证据，报告里就出现"同批其余任务状态=[batch_waiting]"这种假失败。
  */
 
-const guardEnvironment = (gateway) => {
+// ⚠️ 它**不需要客户端**（只读 schema 的 app_token + 环境变量）——
+//    正因为如此，才可以（也必须）在 `createClient()` **之前**调用（F-6）。
+const guardEnvironment = () => {
   const appToken = V1_BITABLE_SCHEMA.appToken;
-  say(`  Base app_token：${appToken}`);
+  say(`  Base app_token：${tokenFingerprint(appToken)}`);   // F-5：只打指纹，绝不打印 token 明文
   say(`  环境标记 FEISHU_TARGET_ENV：${process.env.FEISHU_TARGET_ENV || '(未设置)'}`);
   say(`  采购群 PURCHASE_CHAT_ID：${process.env.PURCHASE_CHAT_ID || '(未设置 → 出图后不会发送)'}`);
   const testBase = authorizedTestBase();
@@ -428,10 +430,12 @@ const guardEnvironment = (gateway) => {
 
 // ── setup：预置测试 Base 的前置数据（幂等）────────────────────────────────────
 const cmdSetup = async () => {
+  head('setup：检查测试 Base 的前置数据');
+  // 🔴 F-6（2026-10-12）：**闸门必须在创建客户端之前** ——
+  //    原来先 createClient（要凭证）再 guardEnvironment ⇒ 缺凭证时**走不到闸门** ✗
+  guardEnvironment();
   const { client } = createClient({ realIm: false });
   const gateway = new V1BitableGateway({ client });
-  head('setup：检查测试 Base 的前置数据');
-  guardEnvironment(gateway);
 
   const table = gateway.table('behavior');
   const existing = await resolveStockDecreaseBehavior(gateway);
@@ -463,10 +467,12 @@ const cmdSetup = async () => {
 
 // ── inspect：只读现状 ────────────────────────────────────────────────────────
 const cmdInspect = async () => {
+  head('inspect：本地指向哪个 Base、链路的前置条件如何（只读，不写任何表）');
+  // 🔴 F-6（2026-10-12）：**闸门必须在创建客户端之前** ——
+  //    原来先 createClient（要凭证）再 guardEnvironment ⇒ 缺凭证时**走不到闸门** ✗
+  guardEnvironment();
   const { client } = createClient({ realIm: false });
   const gateway = new V1BitableGateway({ client });
-  head('inspect：本地指向哪个 Base、链路的前置条件如何（只读，不写任何表）');
-  guardEnvironment(gateway);
 
   const returns = await resolveReturnBehavior(gateway);
   say(`  退货分流行为候选：${returns.map((item) => `${item.name}/${item.code}(${item.recordId})`).join('，') || '(没有！)'}`);
@@ -494,10 +500,12 @@ const cmdInspect = async () => {
 
 // ── probe-message：只读核对某几条消息的详情（唯一用途：验「是不是一个话题」）────
 const cmdProbeMessage = async () => {
+  head('probe-message：只读拿消息详情（im.message.get），不写任何表、不发任何消息');
+  // 🔴 F-6（2026-10-12）：**闸门必须在创建客户端之前** ——
+  //    原来先 createClient（要凭证）再 guardEnvironment ⇒ 缺凭证时**走不到闸门** ✗
+  guardEnvironment();
   const { client, probeClient } = createClient({ realIm: false });
   const gateway = new V1BitableGateway({ client });
-  head('probe-message：只读拿消息详情（im.message.get），不写任何表、不发任何消息');
-  guardEnvironment(gateway);
   const ids = String(flag('message-id', '')).split(',').map((value) => value.trim()).filter(Boolean);
   if (!ids.length) throw new Error('用法：node scripts/e2e-run.mjs probe-message --message-id <id1,id2,...>');
   const rows = [];
