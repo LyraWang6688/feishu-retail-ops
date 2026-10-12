@@ -29,6 +29,30 @@ const { logInfo, logWarn } = require('../utils/logger');
 /** 传进来的可以是对象，也可以是工厂（路由用工厂把重依赖推迟到真正要用的那一刻）。 */
 const resolve = (value) => (typeof value === 'function' ? value() : value);
 
+/**
+ * ⭐ 2026-10-12：**允许 0 的整数**（预填清单"没到的改成 0"）。
+ * ⚠️ 与 `positiveInteger`（要求 ≥1，扫码那条路用）**并存**：改数量那条路要收 0。
+ */
+const nonNegativeInteger = (value) => {
+  const text = String(value ?? '').trim();
+  return /^(0|[1-9]\d*)$/.test(text) ? Number(text) : null;
+};
+
+/**
+ * ⭐ 2026-10-12：这一批里**去重后的款**（`product_record_id` + 编号）——
+ * 自定义行 / "未报货尺码"候选都要能回答"归到哪一款"，而这个答案必须来自**真实读到的那几行**。
+ */
+const productsOf = (rows = []) => {
+  const out = [];
+  for (const row of rows || []) {
+    const productRecordId = String(row?.product_record_id || '').trim();
+    if (!productRecordId) continue;
+    if (out.some((item) => item.product_record_id === productRecordId)) continue;
+    out.push({ product_record_id: productRecordId, number: String(row?.product_number || '').trim() });
+  }
+  return out;
+};
+
 const positiveInteger = (value) => {
   const text = String(value ?? '').trim();
   if (!/^[1-9]\d*$/.test(text)) return null;
@@ -131,9 +155,11 @@ const createScanArrivalService = (options = {}) => {
         quantity,
       });
     }
-    if (!normalized.length) {
+    if (!normalized.length && config.allowEmptyRows !== true) {
       return { ok: false, reason: 'no_request_rows', message: texts.acceptRowsUnreadableBody };
     }
+    // ⭐ 2026-10-12：`allowEmptyRows`（**默认关**）打开时，一条明细都没有也开得起会话 ——
+    //    但"款从哪来"这件事仍然**不知道** ⇒ 加行只能靠**扫标签**（码里带款），不猜 ✗。
     // 同一批里同一 (货品, 尺码) 有两行申请 ⇒ **拦住**（与 buildPlan 的 matches.length !== 1 同一条口径）
     const seen = new Set();
     for (const row of normalized) {
@@ -150,6 +176,9 @@ const createScanArrivalService = (options = {}) => {
       batch_record_id: String(batchRecordId || '').trim(),
       request_ids: normalized.map((row) => row.request_record_id),
       rows: normalized,
+      // ⭐⭐ 2026-10-12（方案 A）：记住"这一批有哪些款 + 各自编号"——
+      //    验收页要靠**编号的第 3 段（类别）**算"没报货的尺码"候选（与缺码同一份配置口径）。
+      products: productsOf(rows),
       expected: normalized.reduce((sum, row) => sum + row.quantity, 0),
       scans: [],
       scanned: 0,
@@ -228,6 +257,86 @@ const createScanArrivalService = (options = {}) => {
       size: wantedSize, quantity: wantedQuantity, scanned: next.scanned, expected: next.expected,
     });
     return { ok: true, duplicate: false, session: next, message: '' };
+  };
+
+  /**
+   * ⭐⭐ 2026-10-12（业务负责人口述版）：「用户点验收的时候，**先默认带出我们采购申请里的尺码和数量**。
+   *   用户可以在**给定的区域里直接修改**，同时**也可以自定义**；**自定义的时候同样支持扫码**。」
+   *
+   * 把"她在给定区域里改完的**整张清单**"落进会话（**不写任何业务表**，与 `addScan` 共用同一份 `scans`）：
+   *   · **报货行**：按**下标**对应 `session.rows`（顺序 = 采购明细顺序）；
+   *     数量填 **0 / 空** ⇒ 那一行**不算到货**（从清单里去掉）—— 她「没到的改成 0」就是这一步；
+   *   · **自定义行**（手输 尺码 + 数量）：本批**只有一个款**时绑到它；**多个款 / 一条明细都没有**
+   *     ⇒ **拒**（`custom_ambiguous` / `custom_product_unknown`）⇒ 页面让她**扫标签**（码里带款）。
+   *     🔴 **不猜款**：猜错 = 库存加到别人头上，比"让她扫一下"坏得多。
+   *   · 同款同码重复 ⇒ **合并**（取最后填的那个数量）。
+   *
+   * ⚠️ 数量上限沿用既有 `config.maxQuantity`（与 `addScan` 同一个口径）。
+   */
+  const setActualRows = async ({ openId, quantities = [], customSize = [], customQuantity = [] } = {}) => {
+    const session = await get(openId);
+    if (!session) return { ok: false, reason: 'no_session', message: texts.acceptNoSessionBody };
+    if (session.status !== 'open') {
+      return {
+        ok: false, reason: 'already_posted',
+        message: fillText(texts.acceptAgainBody, { batchNo: session.batch_no }),
+      };
+    }
+    const reported = Array.isArray(session.rows) ? session.rows : [];
+    const quantityInvalid = () => ({
+      ok: false, reason: 'quantity_invalid',
+      message: fillText(texts.acceptQuantityInvalidBody, { max: config.maxQuantity }),
+    });
+    const next = [];
+    for (const [index, row] of reported.entries()) {
+      const raw = String(quantities[index] ?? '').trim();
+      // ⚠️「改成 0」是**她要的那个动作**（"没到"）⇒ 这里必须收 `0`：
+      //   空 / 0 都算"没到"（不写、不加库存），只有非数字 / 超上限才拒。
+      const quantity = raw ? nonNegativeInteger(raw) : 0;
+      if (quantity === null || quantity > config.maxQuantity) return quantityInvalid();
+      if (quantity > 0) {
+        next.push({ product_record_id: row.product_record_id, size: row.size, quantity });
+      }
+    }
+    const products = [...new Set(reported.map((row) => row.product_record_id))];
+    const customSizes = Array.isArray(customSize) ? customSize : [customSize];
+    const customQuantities = Array.isArray(customQuantity) ? customQuantity : [customQuantity];
+    let customCount = 0;
+    const total = Math.max(customSizes.length, customQuantities.length);
+    for (let index = 0; index < total; index += 1) {
+      const sizeText = String(customSizes[index] ?? '').trim();
+      const qtyText = String(customQuantities[index] ?? '').trim();
+      if (!sizeText && !qtyText) continue;                       // 空行 = 没加
+      const size = positiveInteger(sizeText);
+      const quantity = positiveInteger(qtyText);
+      if (size === null || quantity === null || quantity > config.maxQuantity) return quantityInvalid();
+      // 🔴 自定义行**必须知道是哪一款**：单个款 ⇒ 绑它；否则**拒**（页面上让她扫码）。
+      if (products.length !== 1) {
+        logInfo(events.acceptFailed, {
+          session_id: session.session_id, batch_no: session.batch_no,
+          reason: products.length ? 'custom_ambiguous' : 'custom_product_unknown', size,
+        });
+        return { ok: false, reason: 'custom_product_unknown', message: texts.acceptCustomProductNeededBody };
+      }
+      const productRecordId = products[0];
+      const same = next.find((line) => line.product_record_id === productRecordId && line.size === size);
+      if (same) same.quantity = quantity;                        // 同款同码 ⇒ 合并
+      else next.push({ product_record_id: productRecordId, size, quantity });
+      customCount += 1;
+    }
+    if (next.length > config.maxScans) {
+      return { ok: false, reason: 'too_many_scans', message: texts.acceptTooManyScansBody };
+    }
+    const scanned = next.reduce((sum, line) => sum + line.quantity, 0);
+    const updated = await store.update(session.session_id, touch({
+      scans: next, scanned, last_error: '',
+    }));
+    logInfo(events.acceptRowsSet, {
+      session_id: updated.session_id, batch_no: updated.batch_no,
+      line_count: next.length, scanned, expected: Number(updated.expected || 0),
+      custom_count: customCount, request_rows: reported.length,
+    });
+    return { ok: true, session: updated, scanned, expected: Number(updated.expected || 0), rows: next };
   };
 
   /**
@@ -357,7 +466,11 @@ const createScanArrivalService = (options = {}) => {
     return pendingBatchesInstance;
   };
 
-  return { idOf, get, start, addScan, finish, summaryOf, pendingBatches, store };
+  return {
+    idOf, get, start, addScan, finish, summaryOf, pendingBatches, store,
+    // ⭐ 2026-10-12：把"改完的整张清单"落进会话（预填清单那一版的入口；不写业务表）
+    setActualRows,
+  };
 };
 
 module.exports = { createScanArrivalService };

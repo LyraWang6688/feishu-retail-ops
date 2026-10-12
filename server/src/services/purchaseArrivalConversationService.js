@@ -946,6 +946,8 @@ class PurchaseArrivalConversationService {
     //    · **没扫到的行 = 0** ⇒ 调用方在入库那一步摘掉（"少发的"自然就是差异）；
     //    · 命中多行 / 扫到本批没有的货 / 同一行被两条扫码行命中 ⇒ **拦住**（宁可不入库，
     //      也不能把实际数记到别的行上）。
+    //    ⭐⭐ 2026-10-12（她口述版的"自定义"）：**没报过的尺码**只要是**本批的款**就允许
+    //      —— 见下面 `extra` 那一段（款不认识 ⇒ 照旧 `scan_not_in_batch`，不猜 ✗）。
     if (parsed.scanLines) {
       const keyOf = (productRecordId, size) => `${productRecordId}|${Number(size)}`;
       const byKey = new Map();
@@ -957,9 +959,46 @@ class PurchaseArrivalConversationService {
       }
       const actualById = new Map(rows.map((row) => [row.request_record_id, 0]));
       const hit = new Set();
+      // ⭐⭐ 2026-10-12（Lead 裁定 · 口径照业务负责人原话）：
+      //   「**自定义加进来的尺码，必须能归到"她扫进来的那一款"**」——
+      //   她可以在清单里"自定义加一行"（**没报过、但到了**的尺码）：
+      //     · **允许**：该行挂的**款**（`product_record_id`）**出现在这一批的申请行里**
+      //       ⇒ 它归到"她本次确认的那一款"，**计入**（下面那条 extra 行）；
+      //     · **拦住**：款根本不在这批里（不认识的款）/ 没款可归 ⇒ `scan_not_in_batch`
+      //       —— 🔴 **绝不猜款**（猜到别的款上 = 库存加错人头，比让她扫一下坏得多）。
+      //   ⚠️ 这是**加法**：没有自定义行时，下面每一行与改动前**逐字相同**（顺序 / 字段 / 长度）。
+      const knownProducts = new Set(rows.map((row) => row.product_record_id).filter(Boolean));
+      const extra = [];
+      const extraKeys = new Set();
       for (const scan of parsed.scanLines) {
         const row = byKey.get(keyOf(scan?.product_record_id, scan?.size));
-        if (!row) return { ok: false, reason: 'scan_not_in_batch' };
+        if (!row) {
+          // 不是申请行 ⇒ 只可能是"自定义加进来的那一行"：款必须是本批的款。
+          if (!knownProducts.has(scan?.product_record_id)) {
+            return { ok: false, reason: 'scan_not_in_batch' };
+          }
+          const quantity = Number(scan?.quantity);
+          // 0 / 负数 / 非整数 ⇒ 不静默写成 0 双（与"申请行"那一侧同一条口径）。
+          if (!Number.isSafeInteger(quantity) || quantity <= 0) {
+            return { ok: false, reason: 'actual_not_positive' };
+          }
+          const key = keyOf(scan?.product_record_id, scan?.size);
+          if (extraKeys.has(key)) return { ok: false, reason: 'scan_duplicated' };
+          extraKeys.add(key);
+          extra.push({
+            // ⭐ 没有申请行：`request_record_id` 留空 ⇒ 下游（写回 / 建草稿）天然不会去动"不存在的那一行"，
+            //    入库那一步只认 `product_record_id` + `size` + `actual`（见 `confirmLocked` 的 `draft.actual`）。
+            request_record_id: '',
+            product_record_id: scan.product_record_id,
+            item_no: '',
+            color: '',
+            size: Number(scan.size),
+            quantity: 0,
+            actual: quantity,
+            custom: true,
+          });
+          continue;
+        }
         if (hit.has(row.request_record_id)) return { ok: false, reason: 'scan_duplicated' };
         hit.add(row.request_record_id);
         actualById.set(row.request_record_id, Number(scan.quantity));
@@ -968,7 +1007,7 @@ class PurchaseArrivalConversationService {
       if (scanned.some((row) => !Number.isSafeInteger(row.actual) || row.actual < 0)) {
         return { ok: false, reason: 'actual_not_positive' };
       }
-      return { ok: true, rows: scanned, differences: [] };
+      return { ok: true, rows: [...scanned, ...extra], differences: [] };
     }
     const actualById = new Map(rows.map((row) => [row.request_record_id, row.quantity]));
     if (parsed.same) {

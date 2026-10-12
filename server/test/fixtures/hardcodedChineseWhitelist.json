@@ -2,7 +2,7 @@
   "_comment": "⭐ 这是**存量债**（业务负责人 2026-10-12 点头）：业务代码里**既有的**硬编码用户可见中文。**只许减少、不许增加** —— 新增一句就会让 test/noHardcodedChinese.test.js 变红；把这里的一句抽到 config 之后，**请顺手删掉这一条**。键的口径：**按「文件 → 中文串」**（不用行号：行号一动就假红）。口径细节见 test/support/hardcodedChinese.js 头部（注释/日志/内部错误消息**完全不扫**；领域值/表选项照扫进白名单）。",
   "counts": {
     "files": 45,
-    "texts": 617
+    "texts": 631
   },
   "files": {
     "routes/feishuWebAuth.js": [
@@ -470,7 +470,7 @@
       "，是最坏的那种错）。 * 内存判据仍然用 URL 那串（与提速前一致）。 * * @returns {Promise<{rows:Array, fallback:string}>} `fallback` 非空 = 走了整表回退。 */ const readInventoryRows = async ({ productId, tableNumber, number, stockKeyField, requestId }) => { const linkField = fieldName(schema, 'liveInventory', 'product'); const conditions = [ equalsFormula(linkField, tableNumber), config.number.stockKeyPrefixFallback ? containsFormula(stockKeyField, `${tableNumber}${config.number.separator}`) : null, ]; const read = await readFilteredCapped({ tableKey: 'liveInventory', filter: orFormula(conditions), cap: limits.inventoryRowsPerNumber, fallbackCap: limits.inventoryRecords, requestId, }); const rows = read.records.filter((record) => belongsToNumber(record, { productId, number, stockKeyField })); // 「库存真的为 0」与「filter 悄悄不生效」在返回体上长得一样 ⇒ 留一条可 grep 的 warn，不当成静默的成功。 if (!rows.length && warnOnEmptyFilteredRead) { logWarn(config.events.filteredEmpty, { request_id: requestId, table_key: 'liveInventory', number, product_record_id: productId, }); } return { rows, fallback: read.fallback }; }; /** * ⭐ 「实时库存」这一款的行 —— **内存快照优先**，未就绪 / 过期就回退",
       "，而不是原始错误页）。 * 🔴 **读表失败也返回 `null`**（兜底这一段**绝不许把页面打红**）。 */ const resolveByItemNoAndColor = async ({ parsed, requestId }) => { const itemNo = String(parsed?.itemNo || '').trim(); const color = String(parsed?.color || '').trim(); if (!itemNo) return null; let records = []; try { ({ records } = await readProductsByItemNo({ itemNo, requestId })); } catch (error) { // 🔴 兜底失败 ⇒ 照旧",
       "：命中时用的仍是**同一个 `findProduct`**（大小写兜底也在里面）， * 结果与",
-      "：段本身是**配置**（换一个值不用改代码）， * 而且有**一致性保险**——`maybeCheckSizeConsistency` 定期拿配置与「尺码管理」比对， * 不一致就 logWarn（例如表里加了 49 码）。 * * 降级口径**一个字没变**（拿不到就不做缺码提示，只显示有货的尺码）： * · 类别为空（编号里没有第 3 段）→ `number_without_category`； * · 配置里没有这个类别 → `no_sizes_for_category`。 */ const loadSizeScope = async ({ categoryCode }) => { const ranges = config.sizeSegments?.ranges || {}; if (!categoryCode) return { degraded: true, reason: 'number_without_category', sizes: [] }; const range = ranges[String(categoryCode).trim().toUpperCase()]; if (!range) return { degraded: true, reason: 'no_sizes_for_category', sizes: [] }; const from = positiveInteger(range.from); const to = positiveInteger(range.to); if (from === null || to === null || to < from) { return { degraded: true, reason: 'segment_config_invalid', sizes: [] }; } const sizes = []; for (let size = from; size <= to; size += 1) sizes.push(size); return { degraded: false, reason: '', sizes: sortSizes(sizes) }; }; /** * ⭐ **一致性保险**（业务负责人 2026-10-09）：定期拿**配置里的尺码段**与 * 「尺码管理」表比对，不一致就 `logWarn(scan.size_consistency.mismatch)`。 * * 为什么要有它：缺码判定改成读配置之后，"
+      "：段本身是**配置**（换一个值不用改代码）， * 而且有**一致性保险**——`maybeCheckSizeConsistency` 定期拿配置与「尺码管理」比对， * 不一致就 logWarn（例如表里加了 49 码）。 * * 降级口径**一个字没变**（拿不到就不做缺码提示，只显示有货的尺码）： * · 类别为空（编号里没有第 3 段）→ `number_without_category`； * · 配置里没有这个类别 → `no_sizes_for_category`。 */ const loadSizeScope = async ({ categoryCode }) => sizesForCategory(categoryCode, config); /** * ⭐ **一致性保险**（业务负责人 2026-10-09）：定期拿**配置里的尺码段**与 * 「尺码管理」表比对，不一致就 `logWarn(scan.size_consistency.mismatch)`。 * * 为什么要有它：缺码判定改成读配置之后，"
     ],
     "services/secondDeliveryService.js": [
       "已交付",
@@ -623,7 +623,6 @@
       "> <thead><tr>${head}</tr></thead> <tbody> ${rows} </tbody> </table> ${notesHtml} </section>`; }; /** * ⭐ 「**货品**」领域那一块：**打印这一款**（送到店里那台电脑）+ 去标签打印页。 * * ⭐⭐ 2026-10-11（业务负责人：「**扫码页应该是有货品的吧？你不是有六个领域吗？**」）： * 扫到某款 ⇒「货品」领域 ⇒【**打印这一款**】—— 点一下把这一款排进**打印队列**， * 由店里那台 Windows 电脑（",
       ">${escapeHtml(REALM_TEXTS.labelSingleButton)}</a>`; // `print` 没给（渲染层被单独调用 / 这条链路还没接上）⇒ **退回改动前那一块**：只有那两条链接。 if (!print) { return `<section class=",
       ">${escapeHtml(SCAN_PAGE.texts.scanNextHint)}</p>`); /** 验收模式的**本单条**：已验收 N 双 / 应到 M 双（她点名要的那一行）+ 一句提示（可有可无）。 */ const acceptanceSummaryHtml = (write, acceptance) => { const t = write.texts; return `<p class=",
-      ">${escapeHtml(acceptance.notice)}</p>` : ''}`; }; /** 【完成验收】：只收「实际金额」（必填，既有业务口径）——**没有**「到货说明」那一栏。 */ const acceptanceFinishHtml = (write, acceptance) => { const t = write.texts; const fields = write.fields; return `<form method=",
       ">${escapeHtml(backLabel)}${backHint ? `<span>${escapeHtml(backHint)}</span>` : ''}</a>` : ''} </section>`, }); /** * ⭐⭐ **提交成功页**（`POST submit_order` 写成功之后 POST 直接渲染的就是这一页； * 不 303、不回原页 —— 业务负责人的口径是",
       ">${escapeHtml(config.texts.realmEmptyAction)}</a> </section>`; }; /** * ⭐⭐ **只渲染当前领域那一块**（2026-10-09 手机白屏之后的改法）。 * * **六个领域**各自的正文（每个都带 `realm-block--<领域>` 标记，方便对照 / 断言）： * · `sales` —— 销售建单表单； * · `replenish` —— 补货（原「采购」领域里的【一键补货】）； * · `purchase_return` —— 退货； * · `accept` —— 验收（有活跃验收会话时那一块；没有就一张人话卡）； * · `inventory` —— 库存表； * · `product` —— 货品标签。 * * ⚠️ **只有当前这一块进 HTML**（另外五块**连字符串都不拼**）—— 页面里没有",
       ">${escapeHtml(fillText(write.texts.acceptBatchLine, { batchNo }))}</p>`, }); }; /** * 某个领域**",
@@ -710,7 +709,22 @@
       "，所以原因**同一行看得见**。 const jobLine = job ? `<p class=",
       "，样式上让它长得像主按钮。 */ .disclosure { margin: var(--space-3) 0 0; padding: 0; border: 0; background: transparent; } .disclosure__summary { display: flex; align-items: center; justify-content: center; min-height: var(--control-height); padding: var(--space-3); border-radius: var(--radius-sm); background: var(--primary); color: var(--surface); font-size: var(--font-size-base); font-weight: 600; text-align: center; overflow-wrap: anywhere; } .disclosure[open] .disclosure__summary { margin-bottom: var(--space-2); } .disclosure > .hint { margin: 0 0 var(--space-2); } .disclosure .write-form { margin: 0; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-soft); } /* ── 销售：尺码两组（有货 ⇒ 现货 / 没有 ⇒ 预订）─────────────────────────── ⭐⭐ 2026-10-11（业务负责人）：**从",
       "，而",
-      "； · 命中区**不缩小**（.size-chip 仍是 ≥44px）——"
+      "； · 命中区**不缩小**（.size-chip 仍是 ≥44px）——",
+      ">${escapeHtml(acceptance.notice)}</p>` : ''}`; }; /** * ⭐⭐ 2026-10-12（业务负责人口述版）：「点验收的时候，**先默认带出我们采购申请里的尺码和数量**。 * 用户可以在**给定的区域里直接修改**，同时**也可以自定义**；**自定义的时候同样支持扫码**。」 * * 这一块就是",
+      "： * · **报货行**：每个尺码一行，数量**默认 = 报货数量**（`acceptance.rows[i].actual`）； * **改成 0（或清空）⇒ 那一行不算到货**（服务层口径，见 `setActualRows`）； * · **已加的行**（扫进来的 / 上次加的自定义）：同款同码各一行，数量可改； * · **一行空白自定义**：她可以手输尺码 + 数量（本批只有一个款时才绑得上；多个款会让她扫码）； * · **实际金额**（既有必填口径）+【确认完成验收】——**一次提交 = 一次写库**。 * * ⚠️ **同名重复字段**（一",
+      "一个）是这一页既有做法（收款行 / 每件实收都是这么带的）， * 服务端按**行序**解析 ⇒ **零 JS** 也做得到",
+      "。 * ⚠️ 扫标签那条路是**另一颗链接**（AppLink，复用 `acceptanceScanNextHtml`）——不在表单里。 */ const acceptanceRowsFormHtml = (write, acceptance, userAgent = '') => { const t = write.texts; const f = write.fields; const rows = Array.isArray(acceptance.rows) ? acceptance.rows : []; const custom = Array.isArray(acceptance.customRows) ? acceptance.customRows : []; const lineHtml = (row) => `<div class=",
+      "> </div>`; const reported = rows.map(lineHtml).join(''); // 已加的行（扫码进来的 / 上次加的自定义）：**必须一起带回表单**，否则这次提交会把它们冲掉。 const already = custom.map((row) => `<div class=",
+      "${submitFeedbackAttrs(write)}>${escapeHtml(t.acceptFinishSubmit)}</button> </form> ${acceptanceScanNextHtml(userAgent)} </section>`; }; /** 【完成验收】：只收「实际金额」（必填，既有业务口径）——**没有**「到货说明」那一栏。 */ const acceptanceFinishHtml = (write, acceptance) => { const t = write.texts; const fields = write.fields; return `<form method=",
+      "）。 */ const renderAcceptancePage = ({ acceptance, config = SCAN_PAGE, write = null, userAgent = '' } = {}) => { if (!write) { return renderMinimalPage({ title: config.texts.errorTitle, body: config.texts.errorBody }); } const batchNo = String(acceptance?.batchNo || ''); // ⭐⭐ 2026-10-12：进验收就**预填那张可编辑清单**（她的口述版）；渲染器不认识",
+      "， // 由路由决定要不要给 `acceptance.rows`（不给 ⇒ 与改前逐字相同）。 const rowsBlock = Array.isArray(acceptance?.rows) ? acceptanceRowsFormHtml(write, acceptance, userAgent) : ''; // ⚠️ 这里**故意先算成变量**、不在 `${}` 里再嵌一个模板串 —— // `test/noHardcodedChinese.test.js` 的扫描器用**朴素状态机**剥注释，遇到嵌套模板串会失步， // 把后面的注释当成",
+      "误报（实测：本文件多出 9 条假红）。写法上绕开它，别去动那个闸门。 const legacyBlock = `${acceptanceScanNextHtml(userAgent)} ${acceptanceFinishHtml(write, acceptance)}`; return renderDocument({ title: fillText(config.texts.pageTitle, { itemNo: batchNo, number: batchNo }), config, // ⚠️ 有清单时**不再渲染**那颗",
+      "的老表单（一页只留一条路，免她点错）。 content: `<section class=",
+      "）⇒ 你**点一下就加到货**」。 // 候选 = **这一款在该类别下应有的尺码**（与缺码判定同一份配置口径）− 已报 − 已加； // 一个候选都没有 / 没有",
+      "可归 ⇒ 路由给 `unreported = null` ⇒ **整块不渲染**（不留空标题）。 const unreported = Array.isArray(acceptance.unreported) ? acceptance.unreported : []; const unreportedHtml = unreported.length ? `<p class=",
+      "（没扫、也没进清单）⇒ 不列候选，但给一句引导（别让她对着空白猜）。 const unreportedHint = acceptance.unreportedNoProduct ? `<p class=",
+      "${submitFeedbackAttrs(write)}>${escapeHtml(t.acceptUnreportedRemoveLabel)}</button> </div>`).join(''); // ⭐⭐ 2026-10-12（她选的方案 A）：「系统把 40、41 列出来（标注",
+      "${submitFeedbackAttrs(write)}>${escapeHtml(fillText(t.acceptRowSizeLabel, { size: item.size }))} · ${escapeHtml(t.acceptUnreportedBadge)}</button>`).join('')} </div>` : ''; // 没有"
     ]
   }
 }

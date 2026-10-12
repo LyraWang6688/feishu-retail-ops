@@ -38,7 +38,7 @@
  */
 const express = require('express');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
-const { createScanPageService } = require('../services/scanPageService');
+const { sizesForCategory, parseNumberSegments, createScanPageService } = require('../services/scanPageService');
 const { createScanWriteService } = require('../services/scanWriteService');
 const { renderScanPage, renderScanMessagePage, renderMinimalPage, renderAcceptancePage, renderAcceptanceSelfServe, renderSaleSuccessPage, buildPaymentRows } = require('../views/scanPageRenderer');
 // ⚠️ 只借这两个**纯函数**：所选尺码在「样品 + 门盒」有没有货（= 页面上那两个分组的判据），
@@ -480,14 +480,198 @@ const createScanPageRouter = (options = {}) => {
     `${config.route.basePath}${String(config.route.acceptanceLandingPath || '/accept?batch={batchNo}')
       .replace('{batchNo}', encodeURIComponent(String(batchNo || '')))}`;
   /** 渲染层要的验收上下文（只放"事实"：批次号 / 已扫 / 应到 / 表单目标 / 一句提示）。 */
-  const acceptanceContext = (session, extra = {}) => ({
-    batchNo: String(session?.batch_no || ''),
-    scanned: Number(session?.scanned || 0),
-    expected: Number(session?.expected || 0),
-    postAction: extra.postAction || acceptanceLandingPath(session?.batch_no),
-    notice: String(extra.notice || ''),
-    defaultQuantity: writeConfig.acceptance.defaultQuantity,
-  });
+  /**
+   * ⭐⭐ 2026-10-12（她选的方案 A：「系统把 40、41 列出来（标注"未报货"）⇒ 你点一下就加到货」）：
+   *
+   * **候选 = 这一款在该类别下应有的尺码 − 已报的尺码 − 已加的尺码。**
+   *   · "应有尺码"借**缺码判定那一份**（`sizesForCategory` = `SCAN_PAGE.sizeSegments.ranges`，
+   *     纯配置、零读表）；类别代码借**编号分段**（`parseNumberSegments`）——**都不另发明一套** ✓；
+   *   · 没有"款"可归（一个款都没扫 / 多个款说不清）⇒ 返回 `null` + 一句引导（列了也没用）；
+   *   · 一个候选都没有（该类别全报过了）⇒ 返回 `null`（**整块不渲染**，不给空标题）；
+   *   · 类别为空 / 配置里没这个类别 / 段配坏（`degraded`）⇒ 返回 `null`（**翻不出错就别列**）。
+   * 🔴 **绝不写死尺码表**：候选只从配置推出来（表里改了尺码 → 改配置，见 `sizeSegments` 的一致性 warn）。
+   */
+  const unreportedSizesFor = (session) => {
+    try {
+      const products = Array.isArray(session?.products) ? session.products : [];
+      if (products.length !== 1) return { sizes: [], noProduct: products.length === 0 };
+      const number = String(products[0].number || '').trim();
+      if (!number) return { sizes: [], noProduct: true };
+      const { categoryCode } = parseNumberSegments(number, config);
+      const scope = sizesForCategory(categoryCode, config);
+      if (scope.degraded || !scope.sizes.length) return { sizes: [], noProduct: false };
+      const productRecordId = products[0].product_record_id;
+      const taken = new Set((Array.isArray(session?.rows) ? session.rows : [])
+        .filter((row) => row.product_record_id === productRecordId)
+        .map((row) => Number(row.size)));
+      for (const line of (Array.isArray(session?.scans) ? session.scans : [])) {
+        if (line.product_record_id === productRecordId) taken.add(Number(line.size));
+      }
+      // ⚠️ 统一成 `{ size }` 对象（与清单里其它列表同形状）——渲染层不认裸数字。
+      const sizes = scope.sizes
+        .filter((size) => !taken.has(Number(size)))
+        .map((size) => ({ size: Number(size) }));
+      return { sizes, noProduct: false };
+    } catch (error) {
+      // 读/推不出来 ⇒ **不列**（页面照旧 200）；只记一条 warn，不把她打红。
+      logWarn(writeConfig.events.failed, {
+        reason: 'accept_unreported_sizes_failed', error: error.message,
+      });
+      return { sizes: [], noProduct: false };
+    }
+  };
+
+  const acceptanceContext = (session, extra = {}) => {
+    const scans = Array.isArray(session?.scans) ? session.scans : [];
+    const reported = Array.isArray(session?.rows) ? session.rows : [];
+    const findScan = (row) => scans.find((line) => (
+      line.product_record_id === row.product_record_id && Number(line.size) === Number(row.size)
+    ));
+    // ⭐⭐ 2026-10-12（她的口述版）：**报货行** —— 每个尺码一行，数量**默认 = 报货数量**；
+    //    她已经改过（会话里已有 scans）⇒ 显示**她改过的那个数**（刷新不丢她刚填的）。
+    const rows = writeConfig.acceptance.prefillEnabled === false ? null : reported.map((row) => ({
+      size: Number(row.size),
+      reported: Number(row.quantity),
+      actual: Number(findScan(row)?.quantity ?? row.quantity),
+    }));
+    // ⭐ 已经加过的"自定义行"（扫进来的 / 上次手输的）：**必须跟着表单回去**，否则一次提交就冲掉了。
+    const customRows = scans.filter((line) => !reported.some((row) => (
+      row.product_record_id === line.product_record_id && Number(row.size) === Number(line.size)
+    ))).map((line) => ({ size: Number(line.size), quantity: Number(line.quantity) }));
+    return {
+      batchNo: String(session?.batch_no || ''),
+      scanned: Number(session?.scanned || 0),
+      expected: Number(session?.expected || 0),
+      postAction: extra.postAction || acceptanceLandingPath(session?.batch_no),
+      // ⭐ 清单表单**固定回落地页**（哪一页渲染它都一样）：改数量 / 加行 / 完成都在那一处处理。
+      rowsPostAction: acceptanceLandingPath(session?.batch_no),
+      notice: String(extra.notice || ''),
+      defaultQuantity: writeConfig.acceptance.defaultQuantity,
+      // `null` = 不开预填（渲染层据此退回"只收金额"的老那一版，逐字不变）。
+      rows,
+      customRows,
+      // ⭐ "没报货的尺码"候选（点一下 = 加到货）；空 / 推不出来 ⇒ 渲染层整块不渲染。
+      ...(() => {
+        if (writeConfig.acceptance.prefillEnabled === false) return { unreported: [], unreportedNoProduct: false };
+        const found = unreportedSizesFor(session);
+        return { unreported: found.sizes, unreportedNoProduct: found.noProduct };
+      })(),
+      amountRequired: writeConfig.acceptance.amountRequired !== false,
+    };
+  };
+  /**
+   * ⭐⭐ 2026-10-12（她的口述版）：**带清单的完成**（预填清单那一版的主入口）。
+   *
+   * 一次提交做三件事（**顺序不能换**）：
+   *   ① 把清单落进会话（`setActualRows`：改后的数量 + 自定义行，**不写业务表**）；
+   *   ② 数量全 0 / 自定义不知款 ⇒ **在人话页上如实说**（既有的 `no_scan_lines` / `custom_*` 文案）；
+   *   ③ 落完再走**既有** `finish` ⇒ 写「实际数量（= 各行之和）」「实际金额」+ **逐尺码加库存**。
+   */
+  const handleAcceptFinishRows = async (req, res, requestId) => {
+    const openId = openIdOf(req);
+    const body = req.body || {};
+    const fields = writeConfig.fields;
+    const wantedBatch = String(body[fields.acceptBatch] || req.query?.batch || '').trim();
+    const saved = await arrival().setActualRows({
+      openId,
+      quantities: asList(body[fields.acceptRowQty]),
+      customSize: asList(body[fields.acceptCustomSize]),
+      customQuantity: asList(body[fields.acceptCustomQuantity]),
+    });
+    if (!saved.ok) {
+      logWarn(writeConfig.events.acceptFailed, {
+        request_id: requestId, reason: saved.reason, batch_no: wantedBatch,
+      });
+      return sendHuman(res, 400, {
+        title: writeConfig.texts.acceptModeTitle,
+        body: saved.message || writeConfig.texts.acceptNoScansBody,
+        requestId,
+        retryHint: writeConfig.texts.failedRetryHint,
+      });
+    }
+    return handleAcceptFinish(req, res, requestId);
+  };
+
+  /**
+   * ⭐⭐ 2026-10-12（方案 A）：「列出来（标注"未报货"）⇒ 你**点一下就加到货**」。
+   *
+   * 一次点击做三件事（顺序不能换）：
+   *   ① 把**当前清单**落进会话（她刚改的数量 / 自定义行**不能因为点一下就丢**）；
+   *   ② 目标尺码：**已在清单里 ⇒ 取消**（这就是"再点一下"）；不在 ⇒ **加进来、数量默认 1**
+   *      —— 与自定义行走**同一条路**（归到**这一款** ⇒ 完成验收时计入库存 ✓）；
+   *   ③ **302 回清单**（GET）⇒ 她看到的就是"刚点完"的真实状态（不会重复提交、刷新也不重复记）。
+   *
+   * 🔴 款说不清（多个款）⇒ 照旧**拒**（不猜款 ✗）；数量上限沿用既有 `maxQuantity`。
+   */
+  const handleAcceptToggleSize = async (req, res, requestId) => {
+    const openId = openIdOf(req);
+    const body = req.body || {};
+    const fields = writeConfig.fields;
+    const session = await arrival().get(openId).catch(() => null);
+    if (!session) {
+      return sendHuman(res, 400, {
+        title: writeConfig.texts.acceptModeTitle,
+        body: writeConfig.texts.acceptNoSessionBody,
+        requestId,
+        retryHint: writeConfig.texts.failedRetryHint,
+      });
+    }
+    const products = Array.isArray(session.products) ? session.products : [];
+    const toggled = asList(body[fields.acceptToggleSize]).map((value) => positiveSize(value)).filter((v) => v !== null);
+    if (products.length !== 1 || !toggled.length) {
+      return sendHuman(res, 400, {
+        title: writeConfig.texts.acceptModeTitle,
+        body: writeConfig.texts.acceptCustomProductNeededBody,
+        requestId,
+        retryHint: writeConfig.texts.failedRetryHint,
+      });
+    }
+    const productRecordId = products[0].product_record_id;
+    const rows = Array.isArray(session.rows) ? session.rows : [];
+    const reportedSizes = new Set(rows
+      .filter((row) => row.product_record_id === productRecordId).map((row) => Number(row.size)));
+    const scans = Array.isArray(session.scans) ? session.scans : [];
+    // 已加的行（自定义 / 扫进来的）原样带回 —— 其中**属于报货行**的不当自定义处理（它们有自己的输入框）。
+    const customSize = [];
+    const customQuantity = [];
+    for (const line of scans) {
+      if (line.product_record_id !== productRecordId) continue;
+      if (reportedSizes.has(Number(line.size))) continue;
+      customSize.push(Number(line.size));
+      customQuantity.push(Number(line.quantity));
+    }
+    for (const size of toggled) {
+      const index = customSize.indexOf(size);
+      if (index >= 0) {
+        customSize.splice(index, 1);
+        customQuantity.splice(index, 1);
+      } else if (!reportedSizes.has(size)) {
+        customSize.push(size);
+        customQuantity.push(writeConfig.acceptance.defaultQuantity);
+      }
+    }
+    const saved = await arrival().setActualRows({
+      openId,
+      quantities: asList(body[fields.acceptRowQty]),
+      customSize,
+      customQuantity,
+    });
+    if (!saved.ok) {
+      return sendHuman(res, 400, {
+        title: writeConfig.texts.acceptModeTitle,
+        body: saved.message || writeConfig.texts.acceptNoScansBody,
+        requestId,
+        retryHint: writeConfig.texts.failedRetryHint,
+      });
+    }
+    logInfo(writeConfig.events.acceptRowsSet, {
+      request_id: requestId, batch_no: session.batch_no,
+      toggled_sizes: toggled.join(','), action: 'toggle_size',
+    });
+    // ⭐ 302（不是 200 + 重渲染）：她看到的一定是"刚点完"的真实清单，刷新也不会重复记。
+    return res.redirect(303, acceptanceLandingPath(session.batch_no));
+  };
+
   /** 【完成验收】：两个页面（落地页 / 逐码页）共用这一份处理 —— 校验与写库都在既有链路里。 */
   const handleAcceptFinish = async (req, res, requestId) => {
     const openId = openIdOf(req);
@@ -594,10 +778,19 @@ const createScanPageRouter = (options = {}) => {
         requestId: req.requestId,
       });
     }
-    if (String(req.body?.[writeConfig.fields.action] || '') !== writeConfig.actions.acceptFinish) {
-      return respondWriteFailure(res, { code: 'unknown_action', message: writeConfig.texts.unknownActionBody }, req.requestId);
-    }
+    const acceptAction = String(req.body?.[writeConfig.fields.action] || '');
     try {
+      // ⭐⭐ 2026-10-12（她的口述版）：**带清单的完成**（改数量 + 自定义 + 实际金额，一次提交）。
+      if (acceptAction === writeConfig.actions.acceptFinishRows) {
+        return await handleAcceptFinishRows(req, res, req.requestId);
+      }
+      // ⭐ 点一下"未报货"的尺码（再点一下 = 取消）——落清单 → 加/取消 → 302 回清单。
+      if (acceptAction === writeConfig.actions.acceptToggleSize) {
+        return await handleAcceptToggleSize(req, res, req.requestId);
+      }
+      if (acceptAction !== writeConfig.actions.acceptFinish) {
+        return respondWriteFailure(res, { code: 'unknown_action', message: writeConfig.texts.unknownActionBody }, req.requestId);
+      }
       return await handleAcceptFinish(req, res, req.requestId);
     } catch (error) {
       return respondFailure(res, error, req.requestId);
@@ -1343,6 +1536,15 @@ const parseReturnEntries = (body, fields, writeConfig) => {
  * 在 `express.urlencoded({extended:true})` 下是**数组**；只出现一次时是**字符串**。
  * 这个纯函数把两种形状统一成有序数组（顺序 = 页面上的行顺序）。
  */
+/**
+ * ⭐ 2026-10-12：表单里传来的**尺码**（正整数；认不出就丢）——
+ * 与 `asList` 并排，只给"未报货候选"那几个可点元素用。
+ */
+const positiveSize = (value) => {
+  const text = String(value ?? '').trim();
+  return /^[1-9]\d*$/.test(text) ? Number(text) : null;
+};
+
 const asList = (value) => {
   if (Array.isArray(value)) return value.map((item) => (item === undefined || item === null ? '' : item));
   if (value === undefined || value === null) return [];

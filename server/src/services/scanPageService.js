@@ -92,6 +92,28 @@ const positiveInteger = (value) => {
 };
 
 /**
+ * ⭐⭐ 2026-10-12：**某一类别"应有的尺码"**（= 缺码判定的同一口径）。
+ *
+ * 取值**只来自配置**（`SCAN_PAGE.sizeSegments.ranges`：类别代码 → `{from,to}`），**零读表**；
+ * 降级口径与既有缺码判定**逐字一致**（类别为空 / 配置里没这个类别 / 段配坏 ⇒ `degraded`）。
+ * ⚠️ 单一来源：`loadSizeScope`（扫码页缺码）与验收页"未报货尺码"候选都调它。
+ */
+const sizesForCategory = (categoryCode, config = SCAN_PAGE) => {
+  const ranges = config.sizeSegments?.ranges || {};
+  if (!categoryCode) return { degraded: true, reason: 'number_without_category', sizes: [] };
+  const range = ranges[String(categoryCode).trim().toUpperCase()];
+  if (!range) return { degraded: true, reason: 'no_sizes_for_category', sizes: [] };
+  const from = positiveInteger(range.from);
+  const to = positiveInteger(range.to);
+  if (from === null || to === null || to < from) {
+    return { degraded: true, reason: 'segment_config_invalid', sizes: [] };
+  }
+  const sizes = [];
+  for (let size = from; size <= to; size += 1) sizes.push(size);
+  return { degraded: false, reason: '', sizes: sortSizes(sizes) };
+};
+
+/**
  * 「尺码管理.类别」的取值 → 一组类别。
  *
  * ⚠️ 本机测试 Base（生产同形状）只读实测：这一列是**多选**（`type=4`，选项 A/B），
@@ -619,20 +641,7 @@ const createScanPageService = (gateway, options = {}) => {
    *   · 类别为空（编号里没有第 3 段）→ `number_without_category`；
    *   · 配置里没有这个类别 → `no_sizes_for_category`。
    */
-  const loadSizeScope = async ({ categoryCode }) => {
-    const ranges = config.sizeSegments?.ranges || {};
-    if (!categoryCode) return { degraded: true, reason: 'number_without_category', sizes: [] };
-    const range = ranges[String(categoryCode).trim().toUpperCase()];
-    if (!range) return { degraded: true, reason: 'no_sizes_for_category', sizes: [] };
-    const from = positiveInteger(range.from);
-    const to = positiveInteger(range.to);
-    if (from === null || to === null || to < from) {
-      return { degraded: true, reason: 'segment_config_invalid', sizes: [] };
-    }
-    const sizes = [];
-    for (let size = from; size <= to; size += 1) sizes.push(size);
-    return { degraded: false, reason: '', sizes: sortSizes(sizes) };
-  };
+  const loadSizeScope = async ({ categoryCode }) => sizesForCategory(categoryCode, config);
 
   /**
    * ⭐ **一致性保险**（业务负责人 2026-10-09）：定期拿**配置里的尺码段**与
@@ -1098,6 +1107,9 @@ const createScanPageService = (gateway, options = {}) => {
 
 module.exports = {
   createScanPageService,
+  // ⭐⭐ 2026-10-12：**"这个类别该有哪些尺码"的唯一来源**（纯配置，零读表）——
+  //    `loadSizeScope`（缺码判定）与验收页的"未报货尺码"候选**共用这一份**，不另发明一套。
+  sizesForCategory,
   decodeScanNumber,
   parseNumberSegments,
   formatPrice,
