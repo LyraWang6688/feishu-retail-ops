@@ -646,13 +646,19 @@ test('AC-H17-3 ⭐ 非法值当场拒并**指出字段名**（非数组 / 空串
     assert.ok(checked.errors.some((error) => error.field === field),
       `${label}：错误要指到 ${field}（实际 ${JSON.stringify(checked.errors.map((e) => e.field))}）`);
   }
-  // ⚠️ args 里**已经**有 `-print-settings` ⇒ 会和新的那一段**打两份** ⇒ 明确拒绝并指路
-  const conflict = helper.validateConfig(baseConfig({
-    printer: withPrinter({ mode: 'sumatra', args: ['-print-to-default', '-print-settings', 'noscale', '{file}'] }),
-  }), { exists });
-  assert.equal(conflict.ok, false);
-  assert.ok(conflict.errors.some((error) => error.field === 'printer.args' || error.field === 'printer.printSettings'),
-    '两份 -print-settings 必须被拦住（并说清改用哪个字段）');
+  // ⭐⭐ 2026-10-12 **行为有意变化**（旧写法不再"报错卡住"，改成**自动迁移**）：
+  //    · 改之前：`args` 里自带 `-print-settings` ⇒ `validateConfig` 报错（`printer.args`）⇒ 她换包后**卡在这里**；
+  //    · 改之后：`migratePrinterConfig` 把它**自动搬到 `printSettings`**（幂等、冲突以 `printSettings` 为准），
+  //      `validateConfig` 不再拒（那份 `args` 已经被搬走了）。逐条见
+  //      `printHelperConfigMigration.test.js` 的 AC1/AC2/AC3。
+  const oldStyle = {
+    printer: withPrinter({ mode: 'sumatra', args: ['-print-to-default', '-print-settings', 'noscale', '{file}'], printSettings: [] }),
+  };
+  const migrated = helper.migratePrinterConfig(oldStyle.printer);
+  assert.equal(migrated.changed, true, '旧写法要被识别出来并迁移');
+  assert.deepEqual(migrated.printer.printSettings, ['noscale'], '值搬到 printSettings');
+  const afterMigration = helper.validateConfig(baseConfig({ printer: migrated.printer }), { exists });
+  assert.equal(afterMigration.ok, true, '迁移之后**不该再报错**（不再"报错卡住"）');
   // 合法值：四档 rotate 都放行
   for (const value of ['disable-auto-rotation', 'rotate=90', 'rotate=180', 'rotate=270', 'noscale']) {
     const checked = helper.validateConfig(baseConfig({ printer: withPrinter({ mode: 'sumatra', printSettings: [value] }) }), { exists });

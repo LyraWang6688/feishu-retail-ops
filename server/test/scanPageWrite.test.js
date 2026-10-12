@@ -675,7 +675,7 @@ test('⑧ 路由：加入本单 → 回跳带上"本单几双"；提交整单 �
       });
       assert.equal(submitted.status, 200);
       const doneHtml = await submitted.text();
-      assert.match(doneHtml, /这一单提交好了/);
+      assert.match(doneHtml, /您的提交已成功/);
       assert.match(doneHtml, /XSD-\d{8}-\d{4}/);
       assert.match(doneHtml, /明细：1 双/);
       assert.match(doneHtml, /接着扫下一款就可以开新的一单。/);
@@ -741,7 +741,7 @@ test('⑨ 没单价又没填金额 ⇒ **照样成单**（那一列留空），�
       //    （那时"留空 ⇒ 读单价"，读不到就只能拦）；现在**没填就留空** ⇒ 直接成单。
       assert.equal(response.status, 200, '没填实收不再是失败 ⇒ 成功结果页（200）');
       const html = await response.text();
-      assert.match(html, /这一单提交好了/, '给她的是"提交好了"那一页');
+      assert.match(html, /您的提交已成功/, '给她的是"提交好了"那一页');
       assert.equal(entriesOf(h.gateway, 'salesEntry').length, 1, '单子建出来了');
       assert.equal('实收金额' in entriesOf(h.gateway, 'salesDetail')[0].fields, false,
         '没填 ⇒ 那一列留空（不写 0，也不拿单价顶 —— 何况这一款根本没有单价）');
@@ -781,10 +781,49 @@ test('⑨ 失败有人话：内部错误（字段名/错误码）**不回显**�
       });
       assert.equal(response.status, 500);
       const html = await response.text();
-      assert.match(html, /这一步没成功/);
-      assert.match(html, /系统这边没处理成功/, '通用人话要在页面上');
+      // ⭐⭐ 2026-10-12（业务负责人口径）：这里抛的是【**主表已经建了、明细那一步没写成功**】——
+      //    按新口径给**如实**的"半成"页：单子记上了（带单号）+ 怎么出去（回扫码页再点一次）。
+      //    🔴 **绝不许**显示"提交已成功"（她会以为钱货都落了）；🔴 也**不许**把"一个字都没写"
+      //    当成事实（主表那条记录是真的落库了）。
+      assert.match(html, new RegExp(SCAN_WRITE.texts.partialFailedTitle));
+      assert.equal(html.includes(SCAN_WRITE.texts.submittedTitle), false,
+        '半成页上**不许**出现「您的提交已成功」');
       assert.equal(html.includes('未配置语义字段'), false, '内部细节不许回显');
       assert.equal(html.includes('gift'), false);
+    });
+  } finally { h.cleanup(); }
+});
+
+test('⑨b 建单**本身**失败（主表都没建起来）⇒ 照旧报错页（通用人话、不回显内部细节）', async () => {
+  login();
+  const h = createHarness();
+  try {
+    const openId = 'ou_scan_fail_master';
+    await addLine(h, openId, { productRecordId: 'prod_1', number: NUMBER, size: 40 });
+    const key = await currentKey(h, openId);
+    // 让**建主表**这一步就抛（真实现里长这样：字段没映射 / 飞书报错）。
+    const original = h.gateway.create;
+    h.gateway.create = async (tableKey, values) => {
+      if (tableKey === 'salesEntry') throw new Error('未配置语义字段: orderNo（内部细节，不许给她看）');
+      return original(tableKey, values);
+    };
+    await withServer(formApp(h), async (base) => {
+      const response = await fetch(`${base}/s/${encodeURIComponent(NUMBER)}`, {
+        method: 'POST',
+        headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          action: SCAN_WRITE.actions.submitOrder, submit_key: key,
+          payment_status: PAYMENT_STATUS.unpaid,
+        }).toString(),
+      });
+      // 建单失败 ⇒ 与改前**逐字一致**的报错页（`sale_write_failed` → 500 + 通用人话）。
+      assert.equal(response.status, 500);
+      const html = await response.text();
+      assert.match(html, /这一步没成功/);
+      assert.match(html, /系统这边没处理成功/, '通用人话要在页面上');
+      assert.equal(html.includes(SCAN_WRITE.texts.submittedTitle), false, '一个字都没写 ⇒ 不许说成功');
+      assert.equal(html.includes(SCAN_WRITE.texts.partialFailedTitle), false, '主表都没建 ⇒ 不是"半成"');
+      assert.equal(html.includes('未配置语义字段'), false, '内部细节不许回显');
     });
   } finally { h.cleanup(); }
 });
@@ -1022,7 +1061,7 @@ test('AC-DB5 ⭐ 一单多双·多次扫码：扫 A 加单 → 扫 B 加单 → 
       });
       assert.equal(submitted.status, 200);
       const doneHtml = await submitted.text();
-      assert.match(doneHtml, /这一单提交好了/);
+      assert.match(doneHtml, /您的提交已成功/);
       assert.match(doneHtml, /明细：2 双/);
       const entries = entriesOf(h.gateway, 'salesEntry');
       const details = entriesOf(h.gateway, 'salesDetail');

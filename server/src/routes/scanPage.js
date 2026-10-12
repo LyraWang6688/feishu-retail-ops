@@ -40,7 +40,7 @@ const express = require('express');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { createScanPageService } = require('../services/scanPageService');
 const { createScanWriteService } = require('../services/scanWriteService');
-const { renderScanPage, renderScanMessagePage, renderMinimalPage, renderAcceptancePage, buildPaymentRows } = require('../views/scanPageRenderer');
+const { renderScanPage, renderScanMessagePage, renderMinimalPage, renderAcceptancePage, renderSaleSuccessPage, buildPaymentRows } = require('../views/scanPageRenderer');
 // ⚠️ 只借这两个**纯函数**：所选尺码在「样品 + 门盒」有没有货（= 页面上那两个分组的判据），
 //    以及 `?from=` → 领域 id（认不出来回落缺省，不报错、不白屏）。
 const { sellableSizeTexts, resolveRealm, DEFAULT_REALM, ACCEPTANCE_REALM } = require('../views/scanPageRealm');
@@ -94,6 +94,9 @@ const createScanPageRouter = (options = {}) => {
   // 渲染器也留一个注入点：**只为验证"渲染抛错也必须回人话页"**（见用例 AC-W5）。
   const renderScan = options.render?.scan || renderScanPage;
   const renderMessage = options.render?.message || renderScanMessagePage;
+  // ⭐ 2026-10-12：提交成功页（逐字「您的提交已成功」+「再录一单」回扫码页）——
+  //    单独一个注入点，用例可以钉"成功页长什么样"而不用碰别的页。
+  const renderSuccess = options.render?.success || renderSaleSuccessPage;
   // ⚠️ 写服务**只为 POST 与"本单还有几双"服务**；`GET` 的库存表一个字都不依赖它。
   //    用例可以注入一个假的（`options.writeService`），`false` = 这一版不挂写入口。
   const writeService = writeConfig && options.writeService !== false
@@ -187,6 +190,52 @@ const createScanPageRouter = (options = {}) => {
     requestId,
   });
 
+  /**
+   * ⭐⭐ **提交成功页**（`POST submit_order` 写成功之后直接渲染它，不回原页）。
+   *
+   * 业务负责人真机口径（逐字）：「点击提交之后直接提示"**您的提交已成功**"就行，
+   * **页面跳转到提交成功页**。在这个页面上可以提示"**再录一单**"类似的信息，
+   * 给一个链接让我能回到扫码页。」
+   * ⇒ 与 `sendHuman` 同一套"**绝不空白**"兜底（成功页渲染抛错也还有最后一张人话页），
+   *    只是渲染器换成成功页那一个。
+   */
+  const sendSuccess = (res, status, payload) => {
+    try {
+      return sendHtml(res, status, renderSuccess(payload, config));
+    } catch (error) {
+      logError(config.events.failed, {
+        request_id: payload?.requestId, reason: 'success_render_failed', error: error.message,
+      });
+      return sendHtml(res, status, renderMinimalPage({
+        title: payload?.title || config.texts.errorTitle,
+        body: payload?.body || config.texts.errorBody,
+        requestId: payload?.requestId,
+      }));
+    }
+  };
+
+  /**
+   * ⭐⭐ 2026-10-12：**404「没找到这个编号」** 统一从这一处出 —— **人话 + 指得出下一步**。
+   *
+   * 她真机那次（二维码里编号缺「类别」⇒ 查不到 ⇒ 回 400 / 原始错误页）之后定的口径：
+   * **不许再给原始错误页**。这里三种情况各一句人话：
+   *   · 普通找不到（没试过兜底）⇒ 与改前**逐字相同**（`notFoundBody`，一个字都不多加）；
+   *   · 编号缺段、按（货号 + 颜色）**也没找到** ⇒ 说清"缺了什么、该核对什么"；
+   *   · 编号缺段、**匹配到多款** ⇒ 说清"没法确定是哪一双"（**不猜**）。
+   * 后两种都给【再扫一次】的回跳（= 这一页的地址，重新扫标签即可）。
+   */
+  const notFoundPage = (res, requestId, { number = '', fallback = null, realm = DEFAULT_REALM } = {}) => sendHuman(res, 404, {
+    title: config.texts.notFoundTitle,
+    body: config.texts.notFoundBody,
+    number,
+    requestId,
+    retryHint: fallback?.tried
+      ? (fallback.ambiguous ? config.texts.notFoundAmbiguousHint : config.texts.notFoundFallbackMissHint)
+      : '',
+    backPath: fallback?.tried ? postActionFor(number, realm) : '',
+    backLabel: fallback?.tried ? config.texts.notFoundBackLabel : '',
+  });
+
   const respondFailure = (res, error, requestId, timing = null) => {
     // ⭐ 失败也要看得出卡在哪一步（她：「一查日志就知道卡在哪一步」）——
     //    在发页面之前把已经量到的那几段打出去（`total_ms` 由 service 写、`render_ms` 为 0）。
@@ -219,7 +268,8 @@ const createScanPageRouter = (options = {}) => {
    */
   const respondWriteFailure = (res, result, requestId) => {
     // 500 = 系统那边没处理成（写库失败）；400 = 她填错了 / 数据不满足业务（一个字节都没写）。
-    const status = ['sale_write_failed', 'replenish_write_failed', 'return_write_failed'].includes(result.code)
+    // ⭐ `sale_partial_failed` 也归 500：单子记上了、后面某步没写完 —— 不是她填错。
+    const status = ['sale_write_failed', 'sale_partial_failed', 'replenish_write_failed', 'return_write_failed'].includes(result.code)
       ? 500 : 400;
     // ⭐ 2026-10-12：**钱算不对那几类**（差额 / 付款情况 / 实付多少 / 全付零元…）⇒
     //    把那句**人话差额**放到**最上面那一行（H1）**：她第一眼看到的就是"差在哪、差多少"，
@@ -330,6 +380,12 @@ const createScanPageRouter = (options = {}) => {
       const justNow = jobId ? await queue.getJob(jobId).catch(() => null) : null;
       // ⚠️ 只认"这一条任务确实是这一款"的 —— URL 里的 job 参数是手改得了的，不许拿来显示别的款。
       const mine = justNow && Array.isArray(justNow.numbers) && justNow.numbers.includes(number) ? justNow : null;
+      // ⭐⭐ 2026-10-12（她：「点完之后没有 Toast、按键置灰之类的提示，页面完全没有及时的交互反馈
+      //    ⇒ 我不知道指令到底有没有到达，就会一直狂点」）⇒ 横幅上要回答"**排在第几位**"。
+      //    ⚠️ 只读一次；**读不到就不显示这一句**（宁可不说，也不编一个数给她）。
+      const queuePosition = mine && typeof queue.queuePositionOf === 'function'
+        ? await queue.queuePositionOf(mine.job_id).catch(() => null)
+        : null;
       return {
         ...base,
         online: Boolean(status.online),
@@ -337,6 +393,7 @@ const createScanPageRouter = (options = {}) => {
         count_queued: status.counts?.queued || 0,
         // 横幅用"刚提交的那一条"（拿不到就退回最近一次 —— 至少不是空白）。
         banner_job: mine ? queue.summaryOf(mine) : null,
+        queue_position: queuePosition,
         job: mine ? queue.summaryOf(mine) : latest,
       };
     } catch (error) {
@@ -588,12 +645,7 @@ const createScanPageRouter = (options = {}) => {
           return badNumberPage(res, 400, requestId);
         }
         service.logTiming?.(timing, { requestId, found: false });
-        return sendHuman(res, 404, {
-          title: config.texts.notFoundTitle,
-          body: config.texts.notFoundBody,
-          number: view.number,
-          requestId,
-        });
+        return notFoundPage(res, requestId, { number: view.number, fallback: view.fallback, realm });
       }
       // ⭐⭐ 2026-10-11（方案A + 六领域）：**服务器记住她正在做什么** ——
       //    「每次扫码都会打开一个新页面」（标签上的码内容固定、不带参数）⇒ 新页面不知道她刚在哪个领域。
@@ -757,12 +809,7 @@ const createScanPageRouter = (options = {}) => {
       if (action === actions.addLine) {
         const view = await service.lookup({ number: req.params.number, requestId });
         if (!view.found) {
-          return sendHuman(res, 404, {
-            title: config.texts.notFoundTitle,
-            body: config.texts.notFoundBody,
-            number: view.number,
-            requestId,
-          });
+          return notFoundPage(res, requestId, { number: view.number, fallback: view.fallback, realm });
         }
         const result = await writeService.addSaleLine({
           openId,
@@ -791,12 +838,7 @@ const createScanPageRouter = (options = {}) => {
       if (action === actions.addAccessory) {
         const view = await service.lookup({ number: req.params.number, requestId });
         if (!view.found) {
-          return sendHuman(res, 404, {
-            title: config.texts.notFoundTitle,
-            body: config.texts.notFoundBody,
-            number: view.number,
-            requestId,
-          });
+          return notFoundPage(res, requestId, { number: view.number, fallback: view.fallback, realm });
         }
         const result = await writeService.addSaleLine({
           openId,
@@ -830,12 +872,19 @@ const createScanPageRouter = (options = {}) => {
         const lineAmounts = asList(body[fields.lineAmount]);
         const paymentStatus = String(body[fields.paymentStatus] || '').trim();
         const paidAmount = body[fields.paidAmount] ?? '';
+        // ⭐⭐ 2026-10-12：**提交这一步的分阶段耗时** —— 真机被卡住 / 收过 504 之后要的
+        //    "一查日志就知道卡在哪一步"。`timing` 是写服务的**可选出参**（只读时间、不进业务入参）。
+        const saleTiming = {};
         // ⭐ 2026-10-12：整页只有**一个表单** ⇒ 提交这一下**天然带着**她在尺码区选中的那一双。
         //    本单为空时 ⇒ 「选尺码 + 提交」两下就是一张单（一单一笔的默认路径）；
         //    本单已有几双 ⇒ 这一项**忽略**（多笔必须显式点【➕ 还要加一双】），
         //    判据在写服务里（`pendingLine` 只在本单为空时生效）。
+        const submitLookupStartedAt = Date.now();
         const submitView = String(body[fields.size] ?? '').trim()
           ? await service.lookup({ number: req.params.number, requestId }).catch(() => null) : null;
+        // `lookup_ms` = 提交前那一次"取商品"（缓存命中⇒很短；没命中⇒就是飞书那几读）。
+        saleTiming.lookup_ms = Math.max(0, Date.now() - submitLookupStartedAt);
+        const submitStartedAt = Date.now();
         const result = await writeService.submitSale({
           openId,
           requestId,
@@ -844,6 +893,7 @@ const createScanPageRouter = (options = {}) => {
           lineAmounts,
           paymentStatus,
           paidAmount,
+          timing: saleTiming,
           pendingLine: submitView?.found ? {
             productRecordId: submitView.product_record_id,
             number: submitView.number,
@@ -856,7 +906,49 @@ const createScanPageRouter = (options = {}) => {
             inStock: sellableSizeTexts(submitView).has(String(body[fields.size] ?? '').trim()),
           } : null,
         });
+        // ⭐⭐ **一条**汇总（与 `scan.lookup.timing` 同一形状）：她按 `scan.sale.timing` grep
+        //    就能看出"这一次提交卡在哪一段"，不必再靠猜。
+        logInfo(writeConfig.events.saleTiming, {
+          request_id: requestId,
+          ok: result.ok === true,
+          code: result.code || '',
+          order_no: result.order_no || '',
+          reused: result.reused === true,
+          partial: result.code === 'sale_partial_failed',
+          lines: lineAmounts.length,
+          // 提交这一步的墙钟（含排队等前面的那次提交 —— 她连点 14 次时这一段会明显变大）。
+          submit_ms: Math.max(0, Date.now() - submitStartedAt),
+          queue_wait_ms: Number(saleTiming.queue_wait_ms) || 0,
+          lookup_ms: Number(saleTiming.lookup_ms) || 0,
+          prepare_ms: Number(saleTiming.prepare_ms) || 0,
+          master_ms: Number(saleTiming.master_ms) || 0,
+          status_ms: Number(saleTiming.status_ms) || 0,
+          detail_ms: Number(saleTiming.detail_ms) || 0,
+          stock_ms: Number(saleTiming.stock_ms) || 0,
+        });
         if (!result.ok) {
+          // ⭐⭐ 2026-10-12：**建单成功、后面某一步（明细 / 收款 / 进度）抛错** ⇒ 如实说"半成"。
+          //    🔴 判据用的是**既有**那一条：会话里已经落了主表 record_id（= 重试接着写的那条判据，
+          //       见 `scanWriteService.submitSale` 里"建完立刻把 record_id 落进会话"那段）。
+          //    🔴 **绝不许**显示"提交已成功"（她会以为钱货都落了）；也**不许**跟"一个字都没写"
+          //       混为一谈（主表那条记录是真的落库了）⇒ 这一页给她**单号** + 怎么出去。
+          if (result.code === 'sale_partial_failed') {
+            const orderLine = fillWriteText(writeConfig.texts.submittedOrderLine, {
+              orderNo: result.order_no || '—',
+            });
+            return sendHuman(res, 500, {
+              title: writeConfig.texts.partialFailedTitle,
+              body: fillWriteText(writeConfig.texts.partialFailedBody, {
+                orderNo: result.order_no || '—',
+              }),
+              requestId,
+              details: [orderLine],
+              retryHint: writeConfig.texts.partialFailedRetryHint,
+              // 怎么出去：回扫码页再点一次提交 —— 会接着**同一张单**写（幂等键 / 主表 id 都在会话里）。
+              backPath: postActionFor(decodeURIComponent(String(req.params.number || '')), realm),
+              backLabel: writeConfig.texts.submittedRecordAnother,
+            });
+          }
           // ⭐⭐ 校验类失败（**核心那条：全付时每件实收合计 ≠ 收款合计**，以及付款情况 /
           //    收款行 / 每件实收本身的格式问题）⇒ **原地重渲染销售那一块**：
           //    差额人话挂在表单上方，她刚填的每件实收（在会话里）/ 付款情况 / 实付多少 /
@@ -905,7 +997,12 @@ const createScanPageRouter = (options = {}) => {
         //    （不拦她 —— 她真机就是被"资金不齐"卡住的），但结果页给她一句**指向能做的事**的人话。
         const submitHint = result.full_without_payments
           ? texts.fullWithoutPaymentsNote : texts.submittedNextHint;
-        return sendHuman(res, 200, {
+        // ⭐⭐ 2026-10-12（业务负责人真机口径，逐字）：「点击提交之后**直接提示"您的提交已成功"**就行，
+        //    **页面跳转到提交成功页**……给一个**链接**让我能回到扫码页。」
+        //    ⇒ 从这里出去的是**成功页**（H1 逐字「您的提交已成功」+ 一颗【再录一单】回扫码页），
+        //      **不再**渲染回原页、也不 303。⚠️ 连点的那一次（`reused`）同样给这一页 ——
+        //      她**看到了成功**，才不会再狂点（真实事故：她点了 14 次）。
+        return sendSuccess(res, 200, {
           title: result.reused ? texts.submittedAgainTitle : texts.submittedTitle,
           body: result.reused
             ? fillWriteText(texts.submittedAgainBody, { orderNo: result.order_no || '—' })
@@ -915,6 +1012,10 @@ const createScanPageRouter = (options = {}) => {
           requestId,
           details,
           retryHint: submitHint,
+          // 「再录一单」= 回到**这一款**的扫码页（编号取自 URL；非缺省领域带上 `?from=`）。
+          backPath: postActionFor(decodeURIComponent(String(req.params.number || '')), realm),
+          backLabel: texts.submittedRecordAnother,
+          backHint: texts.submittedRecordAnotherHint,
         });
       }
 
@@ -922,12 +1023,7 @@ const createScanPageRouter = (options = {}) => {
       if (action === actions.replenish) {
         const view = await service.lookup({ number: req.params.number, requestId });
         if (!view.found) {
-          return sendHuman(res, 404, {
-            title: config.texts.notFoundTitle,
-            body: config.texts.notFoundBody,
-            number: view.number,
-            requestId,
-          });
+          return notFoundPage(res, requestId, { number: view.number, fallback: view.fallback, realm });
         }
         const entries = parseReplenishEntries(body, fields, writeConfig);
         const result = await writeService.submitReplenish({
@@ -965,12 +1061,7 @@ const createScanPageRouter = (options = {}) => {
       if (action === actions.purchaseReturn) {
         const view = await service.lookup({ number: req.params.number, requestId });
         if (!view.found) {
-          return sendHuman(res, 404, {
-            title: config.texts.notFoundTitle,
-            body: config.texts.notFoundBody,
-            number: view.number,
-            requestId,
-          });
+          return notFoundPage(res, requestId, { number: view.number, fallback: view.fallback, realm });
         }
         const entries = parseReturnEntries(body, fields, writeConfig);
         const result = await writeService.submitPurchaseReturn({
@@ -1022,12 +1113,7 @@ const createScanPageRouter = (options = {}) => {
         }
         const view = await service.lookup({ number: req.params.number, requestId });
         if (!view.found) {
-          return sendHuman(res, 404, {
-            title: config.texts.notFoundTitle,
-            body: config.texts.notFoundBody,
-            number: view.number,
-            requestId,
-          });
+          return notFoundPage(res, requestId, { number: view.number, fallback: view.fallback, realm });
         }
         const result = await arrival().addScan({
           openId,

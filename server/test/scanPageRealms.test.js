@@ -1,6 +1,17 @@
+/** ⚠️ 2026-10-12 旧断言改写（"**零 JS**"口径按业务负责人的要求改了）：
+ *  改前（逐字）：`assert.equal(/<script[\s>]/i.
+test(html), false, '页面里一行前端脚本都没有');`
+ *  改后（逐字）：**有提交按钮的页面**（销售提交 / 打印这一款）= 整页**只有那一段**
+ *    `<script data-view="submit-feedback">`（只做"置灰 + 换文案 + 计时"）；其余页面仍然 **0 段**。
+ *  理由：她真机（逐字）「点完之后**没有 Toast、按键置灰**之类的提示……**我就会一直狂点**」
+ *    ⇒ 她**明确要置灰**；"置灰"没有零 JS 的等价物 ⇒ 多了**唯一一段**内联 JS。
+ *    ⚠️ 被保护的不变量收窄成：**只有这一段、只做这件事、不做网络/DOM 副作用**。
+ */
 /**
  * ⚠️ 2026-10-11 晚（业务负责人批准六领域）——本文件**改写**的断言（逐字）：
- *   改前：`blockOf(htmlFor('purchase'), 'purchase')` / `test('AC3 \`from=purchase\`：…')` /
+ *   改前：`blockOf(htmlFor('purchase'), 'purchase')`
+
+test('AC3 \`from=purchase\`：…')` /
  *        `for (const id of ['sales', 'inventory', 'purchase'])` /
  *        `['sales', 'inventory', 'purchase', 'product']`
  *   改后：领域换成 **`replenish`**（原「采购」领域里的补货那半），六领域清单
@@ -204,7 +215,7 @@ test('AC1 `from=inventory` 就是现在这个页面：库存领域那一块 + �
   assert.ok(inventoryHtml.includes('href="?from=inventory"'));
   assert.equal(STYLE.includes('data-realm'), false, 'CSS 不许再依赖 data-realm');
   assert.equal(/display:\s*none/.test(STYLE), false, '不许再出现"默认藏起来"的写法（那是白屏的形状）');
-  assert.equal(/<script[\s>]/i.test(inventoryHtml), false, '页面里一行前端脚本都没有');
+  assert.equal((inventoryHtml.match(/<script[\s>]/gi) || []).length, 0, '库存页没有提交按钮 ⇒ 仍然是零脚本');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -326,7 +337,8 @@ test('AC2b 尺码区一行 4 个：3 个码排一行、5 个码排 4+1；**不�
   assert.equal(chipsOf(fiveGroup), 5, '5 个码全在同一组里（四列 ⇒ 4+1 两行）');
   assert.equal(fiveGroup.includes('size-chip__meta'), false, '5 个码时也不显示数量');
   // ── ⑧ 改版不许引入前端脚本（这一页的底线）────────────────────────────────────
-  assert.equal(/<script[\s>]/i.test(htmlFor('sales')), false, '页面里一行前端脚本都没有');
+  // ⭐ 2026-10-12：销售页有【提交这一单】⇒ 只允许那一段反馈脚本
+  assert.equal((htmlFor('sales').match(/<script[\s>]/gi) || []).length, 1, '销售页只该有那一段提交反馈脚本');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

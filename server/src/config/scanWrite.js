@@ -478,8 +478,18 @@ const TEXTS = Object.freeze({
   partialAmountMissingBody: '「部分付」要填一下实付多少（收款行合计 {payments}）。',
   paymentStatusInvalidBody: '「付款情况」没认出来（可能放太久了）：请刷新这一页再操作。',
   paymentRowIncompleteBody: '有一笔收款填了金额、还没选收款方式，请补一下。',
-  submittedTitle: '✅ 这一单提交好了',
+  // ⭐⭐ 2026-10-12（业务负责人真机口径，逐字）：「我希望**点击提交之后直接提示"您的提交已成功"**
+  //    就行，**页面跳转到提交成功页**。在这个页面上可以提示"**再录一单**"类似的信息，
+  //    给一个链接让我能回到扫码页。」
+  //    ⇒ 这一句就是**成功页的 H1**（逐字，一个字都不许改）；
+  //      「再录一单」那颗链接的文案/回跳目标在下面 `submittedRecordAnother*`（链接地址由路由给）。
+  //    🔴 **只在真的写成功时出现**：建单失败 ⇒ 照旧报错页；建单成功但后面某步没写完 ⇒
+  //      走 `partialFailed*`（**不许显示成功**）。
+  submittedTitle: '您的提交已成功',
   submittedBody: '销售单号 {orderNo}，共 {count} 双。',
+  // ⭐ 成功页上那颗「回扫码页」的链接（业务负责人点名要的出口）。
+  submittedRecordAnother: '再录一单',
+  submittedRecordAnotherHint: '再扫一次标签，就能接着录下一单。',
   // 结果页上逐行列出来的事实（单号 / 双数 / 收款）。
   submittedOrderLine: '销售单号：{orderNo}',
   submittedDetailLine: '明细：{count} 双（每双一行）',
@@ -504,6 +514,14 @@ const TEXTS = Object.freeze({
   stockFailedTitle: '这一单记上了，库存没扣成',
   stockFailedBody: '{failed} 双没扣成：{reason}',
   stockFailedRetryHint: '照上面的原因处理一下，再点一次【提交这一单】就能接着扣（不会重复记账）。',
+  // ⭐⭐ 2026-10-12：**建单成功、后面某一步（明细 / 收款 / 进度）没写完** ⇒ 如实说"半成"。
+  //    🔴 这一页**绝不许显示"提交已成功"**（她会以为钱货都落了）；
+  //    🔴 也**不许**跟"一个字都没写"混为一谈（主表那条记录是真的落库了）。
+  //    判据用的是**既有**那一条：会话里已经落了主表 record_id（= 重试接着写的那条判据）。
+  //    怎么出去：回扫码页（链接）再点一次提交 —— 会接着**同一张单**写，不会重复记账。
+  partialFailedTitle: '单子记上了，后面还有一步没写完',
+  partialFailedBody: '销售单号 {orderNo}：明细 / 收款这一步没写成功，请回扫码页再点一次【提交这一单】——会接着同一张单写，不会重复记账。',
+  partialFailedRetryHint: '如果反复不成功，请把这一页截图发给运营（单号在上面的明细里）。',
   // 「刚加入本单」那一句：**极简**（她 2026-10-11 要的"一句极简反馈"）。它渲染在
   // **每个领域页顶部的本单条**里（见 `views/scanPageRenderer.js` 的 `draftBarHtml`），
   // 加完一双无论停在哪个领域都看得见。
@@ -534,6 +552,11 @@ const TEXTS = Object.freeze({
   returnNoneBody: '至少要勾一个要退的尺码。',
   returnTooManyBody: '一次最多勾 {max} 个尺码，请分两次提交。',
   // ── ⭐⭐ 扫码验收（方案A；只留能点、能做的事 + 事实）─────────────────────────
+  // ⭐⭐ 2026-10-12（业务负责人真机，逐字）：「提交这一单我点了好多次，因为点完之后页面
+  //    **一直没有任何反应**，我还以为没接收到……而且我现在还收到了 504 网关超时的提示」
+  //    ⇒ 提交按钮点下去**立刻置灰**并换成下面这句；服务端慢的时候还要显示"已 N 秒"（纯前端计时）。
+  submitSubmitting: '正在提交，请不要重复点…',
+  submitSubmittingElapsed: '正在提交，请不要重复点…（已 {seconds} 秒）',
   acceptModeTitle: '扫码验收',
   // 本单条：**已验收 N 双 / 应到 M 双**（她点名要的那一行）。
   acceptSummary: '已验收 {scanned} 双 / 应到 {expected} 双',
@@ -602,6 +625,12 @@ const EVENTS = Object.freeze({
   draftCleared: 'scan.sale.draft_cleared',
   saleSubmitting: 'scan.sale.submitting',
   saleSubmitted: 'scan.sale.submitted',
+  // ⭐⭐ 2026-10-12：**一条**分阶段的提交耗时汇总（她真机被卡住 / 收过 504 网关超时）。
+  //    与扫码取数那条 `scan.lookup.timing` 同一个形状：一查日志就知道**卡在哪一步**。
+  saleTiming: 'scan.sale.timing',
+  // ⭐⭐ 2026-10-12：**建单成功、后面某一步没写完**（明细 / 收款 / 进度抛错）。
+  //    warn 级、**不静默**：页面上同时给她一张"半成"的如实结果页（见 texts.partialFailed*）。
+  partialFailed: 'scan.sale.partial_failed',
   saleReused: 'scan.sale.reused',
   // ⭐⭐ 2026-10-11：**每件实收合计 ≠ 收款合计**（她：「必须相等，所以系统需要校验！」）——
   //    这条日志带两边的合计与差额，她说"我明明填对了"时按它一眼对得出来。
@@ -637,6 +666,29 @@ const EVENTS = Object.freeze({
   sessionExpired: 'scan.session.expired',
 });
 
+/**
+ * ⭐⭐ 2026-10-12：**只读引用数据的进程内短缓存**（提交链路提速 —— 她真机收过 504 网关超时）。
+ *
+ * 起因（线上量级实测）：一趟"提交这一单"会打 **47 次飞书调用**，其中相当一部分是
+ * **同一张只读引用表读了 5 遍 / 2 遍**（`尺码管理` ×5、`货品信息` ×2、`行为管理` ×2 …）——
+ * 而它们在**同一次提交里**、彼此**逐字相同**。
+ *
+ * 🔴 **白名单只放"只读引用表"**（改一次要很久才生效、且与"这一次写"无关的东西）。
+ *    名单**不许**出现任何**写入判据**的表：
+ *      · 销售主表（`salesEntry`，单号分配 / 撞号复查）—— 不缓存 ✗
+ *      · 销售明细 / 收款记录（`salesDetail` / `paymentRecord`，**幂等回查**）—— 不缓存 ✗
+ *      · 实时库存 / 库存流水（`liveInventory` / `inventoryLedger`，**扣减判据**）—— 不缓存 ✗
+ *    ⇒ 缓存**不可能**影响幂等、金额、库存判据或四个状态目标的取值。
+ * ⚠️ 写方法（create / update / delete）**一律不经过缓存**（原样透传）。
+ * ⚠️ 实现见 `services/scanWriteService.js` 的 `createReadOnlyReferenceCache`。
+ */
+const READ_CACHE = Object.freeze({
+  enabled: true,
+  // 短 TTL：宁可不命中，也不让"她刚改的配置"在页面上迟迟不生效。
+  ttlMs: 30000,
+  tables: Object.freeze(['sizeManagement', 'product', 'behavior', 'paymentMethod']),
+});
+
 const SCAN_WRITE = Object.freeze({
   route: ROUTE,
   actions: ACTIONS,
@@ -645,6 +697,8 @@ const SCAN_WRITE = Object.freeze({
   sale: SALE,
   replenish: REPLENISH,
   purchaseReturn: PURCHASE_RETURN,
+  // ⭐⭐ 只读引用缓存（白名单 + TTL；写与写入判据一律不经过它）
+  readCache: READ_CACHE,
   // ⭐ 扫码验收（方案A）：会话 + 数量上限 + 「实际金额」必填
   acceptance: ACCEPTANCE,
   texts: TEXTS,
@@ -660,6 +714,7 @@ const fillText = (template, values = {}, missing = '—') => String(template ?? 
 
 module.exports = {
   SCAN_WRITE,
+  READ_CACHE,
   ROUTE,
   ACTIONS,
   FIELDS,

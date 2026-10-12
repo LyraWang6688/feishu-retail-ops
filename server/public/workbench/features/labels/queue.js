@@ -16,6 +16,7 @@
  *    本文件不写第二份"在线 / 未连接"的句子。
  */
 import { escapeHtml } from '../../core/formatters.js';
+import { runWriteAction } from '../../core/ui.js';
 
 /** 只在这里放"接口没下来时的兜底"（真源仍是服务端 config）。 */
 export const QUEUE_FALLBACK_TEXTS = {
@@ -184,8 +185,11 @@ export function createLabelQueuePanel({ api, onError = () => {} } = {}) {
       const printButton = pick('queue-print');
       const againButton = pick('queue-again');
       const refreshButton = pick('queue-refresh');
-      if (printButton) printButton.addEventListener('click', () => { void submit(); });
-      if (againButton) againButton.addEventListener('click', () => { void submit({ again: true }); });
+      // ⭐⭐ 2026-10-12《前端交互反馈纪律》：点了立刻置灰 + 换文案 + 防连点
+      // ⚠️ 这里**返回** Promise（不是 `void`）：真实浏览器忽略返回值，用例可以 await 它等提交真正走完。
+      // 用**捕获到的那颗按钮**（不读 event.currentTarget —— 用例直接调 handlers.click() 时没有 event）
+      if (printButton) printButton.addEventListener('click', () => runWriteAction(printButton, () => submit(), '正在提交打印任务…'));
+      if (againButton) againButton.addEventListener('click', () => runWriteAction(againButton, () => submit({ again: true }), '正在提交打印任务…'));
       if (refreshButton) refreshButton.addEventListener('click', () => { void refresh(); });
       render();
     },

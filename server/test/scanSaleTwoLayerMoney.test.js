@@ -1,3 +1,11 @@
+/** ⚠️ 2026-10-12 旧断言改写（"**零 JS**"口径按业务负责人的要求改了）：
+ *  改前（逐字）：`assert.equal(/<script[\s>]/i.test(html), false, '页面里一行前端脚本都没有');`
+ *  改后（逐字）：**有提交按钮的页面**（销售提交 / 打印这一款）= 整页**只有那一段**
+ *    `<script data-view="submit-feedback">`（只做"置灰 + 换文案 + 计时"）；其余页面仍然 **0 段**。
+ *  理由：她真机（逐字）「点完之后**没有 Toast、按键置灰**之类的提示……**我就会一直狂点**」
+ *    ⇒ 她**明确要置灰**；"置灰"没有零 JS 的等价物 ⇒ 多了**唯一一段**内联 JS。
+ *    ⚠️ 被保护的不变量收窄成：**只有这一段、只做这件事、不做网络/DOM 副作用**。
+ */
 /**
  * ⭐⭐ 销售建单**两层结构 + 整单「付款情况」三档**的验收标准
  * （业务负责人 **2026-10-11** 最终口径，**唯一权威**）。
@@ -263,6 +271,8 @@ const WRITE = (overrides = {}) => ({
   ...overrides,
 });
 
+const scriptCountOf = (html) => (html.match(/<script[\s>]/gi) || []).length;
+
 test('AC-1 销售页只有两层：每件填「实收金额」；资金区有「付款情况」三档；收款行预置 1 行', () => {
   const html = renderScanPage(VIEW, SCAN_PAGE, WRITE(), 'sales');
   // ① 页面上**没有**第二个金额概念（旧名整体退场）
@@ -300,7 +310,8 @@ test('AC-1 销售页只有两层：每件填「实收金额」；资金区有「
   assert.match(STYLE, /\.pay-status__option\s*\{[^}]*min-height:\s*var\(--control-height\)/s);
   assert.match(STYLE, /\.form-row--pay/);
   // ⑦ 零 JS 的底线不许破（2026-10-09 白屏事故之后的既有约束）
-  assert.equal(/<script[\s>]/i.test(html), false, '页面里一行前端脚本都没有');
+  // ⭐ 2026-10-12：销售页只允许那一段提交反馈脚本
+  assert.equal(scriptCountOf(html), 1, '销售页只该有那一段提交反馈脚本');
   assert.equal(/on(click|load|submit)\s*=/i.test(html), false, '不许有内联事件');
 });
 
@@ -976,7 +987,7 @@ test('AC-8c ⭐【未付】走真路由：页面上什么都不填 ⇒ 直接成
         payment_status: PAYMENT_STATUS.unpaid, line_amount: '',
       });
       assert.equal(done.status, 200);
-      assert.match(await done.text(), /这一单提交好了/);
+      assert.match(await done.text(), /您的提交已成功/);
       assert.equal(paidRows(h).length, 0);
       // ⚠️ 2026-10-11（方案甲）改写：改前留空按单价 399 定稿、写一条 399 的【未收款】；
       //    现在没填 ⇒ 那一列留空、差额 0 ⇒ **一条未收款都不写**。

@@ -158,6 +158,15 @@ body {
 .state-msg p { margin: var(--space-2) 0; color: var(--text-secondary); }
 .state-msg .number { color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
 .state-msg .hint { color: var(--text-muted); font-size: var(--font-size-sm); }
+/* ⭐ 2026-10-12 提交成功页（业务负责人要让"提交成功"一眼看得出）：
+   H1 走主色；「再录一单」是一颗**真链接**（a 版的主按钮），下面挂一句轻提示。
+   ⚠️ 只有 tone=success / 传了 backPath 时才用得到这几条规则 ⇒ 其它结果页逐字不变。
+   ⚠️ "成功"挂在 h1 的 class 上（**不在 section 上加属性/class**）——
+   既有的 card state-msg 那一串逐字不变，按它取卡片的断言不受影响。 */
+.state-msg__title--success { color: var(--primary); }
+.state-msg__mark { margin: 0 0 var(--space-2); font-size: 40px; line-height: 1; }
+.state-msg .back-link { margin-top: var(--space-4); }
+.state-msg .back-link span { display: block; margin-top: var(--space-1); font-size: var(--font-size-sm); font-weight: 400; opacity: .85; }
 .result { margin: var(--space-3) 0 0; padding: 0; list-style: none; color: var(--text); font-size: var(--font-size-base); }
 .result li { margin-top: var(--space-1); }
 .draft-count { margin: 0 0 var(--space-1); font-size: var(--font-size-base); font-weight: 600; }
@@ -286,6 +295,7 @@ const renderDocument = ({ title, content, requestId, config = SCAN_PAGE }) => `<
 ${content}
 </main>
 ${requestId ? `<p class="foot">${escapeHtml(config.texts.requestIdLabel)} <span class="mono">${escapeHtml(requestId)}</span></p>` : ''}
+${content.includes('data-submit-feedback=') ? submitFeedbackScriptHtml() : ''}
 </body>
 </html>
 `;
@@ -507,10 +517,10 @@ ${pageLink}
     ? `<div class="label-print-banner label-print-banner--dup">
 <p class="label-print-banner__title">${escapeHtml(filled(texts.duplicatedBanner, { count }))}</p>
 <p class="label-print-banner__note">${escapeHtml(texts.duplicatedHint || '')}</p>
-<form class="label-print-form" method="post" action="${escapeHtml(print.postAction)}">
+<form class="label-print-form" method="post" action="${escapeHtml(print.postAction)}" data-submit-feedback-elapsed="${escapeHtml(texts.submitSubmittingElapsedForPrint || texts.printSubmitting || '')}">
 <input type="hidden" name="${escapeHtml(print.actionField)}" value="${escapeHtml(print.actionValue)}">
 <input type="hidden" name="${escapeHtml(print.againField || 'again')}" value="1">
-<button class="btn" type="submit">${escapeHtml(texts.printAgain || '再打一张')}</button>
+<button class="btn" type="submit" data-submit-feedback="${escapeHtml(texts.printSubmitting || '')}">${escapeHtml(texts.printAgain || '再打一张')}</button>
 </form>
 </div>`
     : (showSubmitted
@@ -520,6 +530,9 @@ ${pageLink}
         ? (texts.submittedOnline || statusText)
         : (texts.submittedOffline || statusText))}</p>
 <p class="label-print-banner__note">${escapeHtml(texts.submittedNoRepeat || '')}</p>
+${print.queue_position && texts.submittedQueueNote
+    ? `<p class="label-print-banner__note" data-view="print-queue-position">${escapeHtml(filled(texts.submittedQueueNote, { position: print.queue_position }))}</p>`
+    : ''}
 </div>`
       : '');
   // 「最近一次：<状态>」+（失败时）原因 —— 她要"失败要给原因"，所以原因**同一行看得见**。
@@ -531,7 +544,7 @@ ${heading}
 ${banner}
 <form class="label-print-form" method="post" action="${escapeHtml(print.postAction)}">
 <input type="hidden" name="${escapeHtml(print.actionField)}" value="${escapeHtml(print.actionValue)}">
-<button class="btn btn--primary" type="submit">${escapeHtml(texts.printSingle || REALM_TEXTS.labelHeading)}</button>
+<button class="btn btn--primary" type="submit" data-submit-feedback="${escapeHtml(texts.printSubmitting || '')}">${escapeHtml(texts.printSingle || REALM_TEXTS.labelHeading)}</button>
 </form>
 <p class="label-print-status"><span class="label-print-badge ${badgeClass}">${escapeHtml(statusText || '')}</span></p>
 ${jobLine}
@@ -539,6 +552,46 @@ ${batchLink}
 ${pageLink}
 </section>`;
 };
+
+/**
+ * ⭐⭐ 2026-10-12（业务负责人真机反馈，逐字）：「点完之后**没有 Toast、按键置灰**之类的提示，
+ *   页面完全没有及时的交互反馈 ⇒ 我不知道指令到底有没有到达，**就会一直狂点**」。
+ *
+ * 🔴 这是这一页**唯一**的一段 JS（她明确要"置灰"，而"置灰"没有零 JS 的等价物）：
+ *   · 只做一件事：**提交时把按钮置灰 + 换成「正在下发…」**（文案从 `data-submitting` 读，配置给的）；
+ *   · 不发任何请求、不碰 DOM 别的部分、不依赖任何框架/构建产物；
+ *   · ⚠️ 它**只在「货品」领域**（打印表单所在的那一块）出现 —— 其余五个领域**照旧一行脚本都没有**；
+ *   · 退一步：脚本没跑（webview 禁 JS）也**不影响功能** —— 表单照旧是原生提交，
+ *     只是少了"按钮立刻置灰"这一层；服务端那两道（短窗去重 + 结果横幅）仍然在。
+ */
+const submitSubmittingText = (write) => String(write?.texts?.submitSubmitting || '');
+const submitSubmittingElapsedText = (write) => String(write?.texts?.submitSubmittingElapsed || '');
+
+const submitFeedbackScriptHtml = () => `<script data-view="submit-feedback">
+(function () {
+  var forms = document.querySelectorAll('form');
+  for (var i = 0; i < forms.length; i += 1) {
+    forms[i].addEventListener('submit', function (event) {
+      var button = event.target.querySelector('button[type="submit"]');
+      if (!button || button.disabled) return;
+      var form = event.target;
+      var label = button.getAttribute('data-submit-feedback') || form.getAttribute('data-submit-feedback') || '';
+      var elapsedTemplate = button.getAttribute('data-submitting-elapsed')
+        || form.getAttribute('data-submit-feedback-elapsed') || '';
+      button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+      button.textContent = label;
+      // 服务端慢的时候**不许看起来"没反应"**：每一秒把"已 N 秒"接在后面（纯前端计时）。
+      if (!elapsedTemplate) return;
+      var seconds = 0;
+      setInterval(function () {
+        seconds += 1;
+        button.textContent = elapsedTemplate.replace('{seconds}', String(seconds));
+      }, 1000);
+    });
+  }
+})();
+</script>`;
 
 /**
  * ── 两个写入口的表单（销售建单 / 补货报单）────────────────────────────────────
@@ -550,6 +603,21 @@ ${pageLink}
  *   连点两次 = 同一个键 = 只写一次（见 `services/scanWriteService.js`）。
  * ⚠️ 所有值都 `escapeHtml`：它们从表里来（货号 / 尺码），不是可信 HTML。
  */
+/**
+ * ⭐⭐ 2026-10-12（业务负责人拍板，落进 AGENTS.md《前端交互反馈纪律》）：
+ *   「用户点击完之后**一定要有交互**：要么按钮置灰 · 要么弹出 Toast · 要么更改当前的提示文案……
+ *     **不然用户以为点了没反应，就会多次提交**。」
+ *   ⇒ 扫码页**所有会发起写操作的按钮**都挂这两个属性：
+ *     · `data-submit-feedback` —— 点下去**立刻**换成的文案（按钮也同时 disabled）；
+ *     · `data-submitting-elapsed` —— 服务端慢时每秒刷新的"处理中（已 N 秒）"模板。
+ *   ⚠️ 属性值统一从配置来（`scanWrite.texts.submitSubmitting*`），渲染层不写死中文。
+ */
+const submitFeedbackAttrs = (writeLike = {}) => {
+  const texts = writeLike?.texts || {};
+  return ` data-submit-feedback="${escapeHtml(texts.submitSubmitting || '')}"`
+    + ` data-submitting-elapsed="${escapeHtml(texts.submitSubmittingElapsed || '')}"`;
+};
+
 const hiddenField = (name, value) => `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`;
 
 const optionsHtml = (values, selected) => values
@@ -689,7 +757,7 @@ ${hiddenField(fields.submitKey, write.saleKey)}
 <div class="form-row"><label>${escapeHtml(t.accessoryLabel)}</label><select name="${escapeHtml(fields.accessory)}"><option value="">${escapeHtml(t.accessoryPlaceholder)}</option>${accessoryOptions}</select></div>
 <div class="form-row"><label>${escapeHtml(t.accessoryAmountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" placeholder="${escapeHtml(t.accessoryAmountPlaceholder)}"></div>
 <div class="form-row"><label>${escapeHtml(t.giftLabel)}</label><input name="${escapeHtml(fields.gift)}"></div>
-<button type="submit" class="btn">${escapeHtml(t.addButton)}</button>
+<button type="submit" class="btn"${submitFeedbackAttrs(write)}>${escapeHtml(t.addButton)}</button>
 </form>`
     : '';
   // 校验失败原地给她的那句话（差额）—— 没有就不渲染这一个块。
@@ -720,14 +788,14 @@ ${draftLinesHtml(write)}
 ${paymentStatusHtml(write)}
 ${paymentRowsHtml(write)}
 <p class="hint">${escapeHtml(t.amountOptionalHint || '')}</p>
-<button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}">${escapeHtml(countLabel)}</button>
-<button type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.addLine)}">${escapeHtml(t.addAnotherButton || t.addButton)}</button>
+<button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}" data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(countLabel)}</button>
+<button type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.addLine)}"${submitFeedbackAttrs(write)}>${escapeHtml(t.addAnotherButton || t.addButton)}</button>
 </form>
 ${accessoryForm}
 ${lines.length ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
 ${hiddenField(fields.action, write.actions.clearDraft)}
 ${hiddenField(fields.submitKey, write.saleKey)}
-<button type="submit" class="btn btn--ghost">${escapeHtml(t.clearButton)}</button>
+<button type="submit" class="btn btn--ghost"${submitFeedbackAttrs(write)}>${escapeHtml(t.clearButton)}</button>
 </form>` : ''}
 </section>`;
 };
@@ -834,7 +902,7 @@ ${stockList}
 ${hiddenField(fields.action, write.actions.replenish)}
 ${hiddenField(fields.submitKey, write.replenishKey)}
 ${rows}
-<button type="submit" class="btn btn--primary">${escapeHtml(t.replenishButton)}</button>
+<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.replenishButton)}</button>
 </form>
 </details>
 </section>`;
@@ -887,7 +955,7 @@ const returnFormHtml = (view, write) => {
 ${hiddenField(fields.action, write.actions.purchaseReturn)}
 ${hiddenField(fields.submitKey, write.returnKey)}
 ${rows}
-<button type="submit" class="btn btn--primary">${escapeHtml(t.returnButton)}</button>
+<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.returnButton)}</button>
 </form>
 </details>
 </section>`;
@@ -916,7 +984,7 @@ ${hiddenField(fields.action, write.actions.acceptFinish)}
 <label class="size-check">${escapeHtml(t.acceptFinishAmountLabel)}
 <input class="size-qty" name="${escapeHtml(fields.acceptAmount)}" inputmode="decimal" aria-label="${escapeHtml(t.acceptFinishAmountLabel)}">
 </label>
-<button type="submit" class="btn btn--primary">${escapeHtml(t.acceptFinishSubmit)}</button>
+<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.acceptFinishSubmit)}</button>
 </form>`;
 };
 
@@ -985,7 +1053,7 @@ ${acceptanceSummaryHtml(write, acceptance)}
 ${sizes.length ? `<form method="post" action="${escapeHtml(acceptance.postAction)}" class="write-form">
 ${hiddenField(fields.action, write.actions.acceptAdd)}
 ${rows}
-<button type="submit" class="btn btn--primary">${escapeHtml(t.acceptAddButton)}</button>
+<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.acceptAddButton)}</button>
 </form>` : ''}
 ${acceptanceScanNextHtml(userAgent)}
 ${acceptanceFinishHtml(write, acceptance)}
@@ -1109,6 +1177,10 @@ const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEF
       // ⭐ 2026-10-12：销售页上那颗**带钱**的提交表单就在下面 ⇒ 本单条不再放第二颗提交按钮。
       moneyFormOnPage: safeRealm === DEFAULT_REALM && Boolean(write),
     });
+  // ⭐⭐ 2026-10-12（编号兜底）：编号缺段（典型 = 缺「类别」）但按（货号 + 颜色）**唯一命中**时，
+  //    页面上出**一条轻提示**（一句话，不写说明书）——她才知道"这个标签该重打了"。
+  const fallbackHint = view.number_fallback
+    ? `<p class="notice">${escapeHtml(config.texts.numberFallbackHint)}</p>` : '';
   return renderDocument({
     title: fillText(config.texts.pageTitle, { itemNo: view.item_no || view.number, number: view.number }),
     config,
@@ -1116,6 +1188,7 @@ const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEF
 ${realmBarHtml(safeRealm)}
 ${noScriptHtml()}
 ${identityHtml(view, config)}
+${fallbackHint}
 ${block}
 <p class="foot">${escapeHtml(config.texts.footerNumberLabel)} <span class="mono">${escapeHtml(view.number)}</span>`
   + `${view.updated_at_text ? ` · ${escapeHtml(config.texts.updatedAtLabel)} ${escapeHtml(view.updated_at_text)}` : ''}</p>`,
@@ -1129,19 +1202,46 @@ ${block}
  * `details` 是**写成功/写失败**时给她看的几行事实（单号 / 双数 / 批次号…）：
  * 有就逐行列出来，没有就一个字都不多渲染（既有那几种页面**逐字不变**）。
  * ⚠️ 这些页面**不挂领域切换条**（它们是"结果页"，不是她操作的地方）。
+ *
+ * ⭐⭐ 2026-10-12（业务负责人真机口径）：「页面跳转到提交成功页……给一个**链接**让我能回到扫码页」——
+ * `backPath` + `backLabel`（+ 可选 `backHint`）就是那颗**回扫码页**的链接；
+ * `tone` 只用来加一个类（`success` ⇒ H1 走主色）。
+ * 🔴 **不传这三样时，输出与改前逐字相同**（既有那些结果页一个字都没动）。
  */
-const renderScanMessagePage = ({ title, body, number = '', requestId = '', retryHint = '', details = [] }, config = SCAN_PAGE) => renderDocument({
+const renderScanMessagePage = ({
+  title, body, number = '', requestId = '', retryHint = '', details = [],
+  backPath = '', backLabel = '', backHint = '', tone = '',
+}, config = SCAN_PAGE) => renderDocument({
   title,
   config,
   requestId,
+  // ⚠️ **`<section class="card state-msg">` 这一串逐字不变**（连成功页也一样）：
+  //    有断言按这串取"她看得见的那张卡"，在 section 上多加属性/class 会把它们悄悄打红。
+  //    所以"成功"这个色调只挂在 **h1 的 class** 与那颗 ✅ 上。
   content: `<section class="card state-msg">
-<h1>${escapeHtml(title)}</h1>
+${tone === 'success' ? '<p class="state-msg__mark" aria-hidden="true">✅</p>' : ''}
+<h1${tone === 'success' ? ' class="state-msg__title--success"' : ''}>${escapeHtml(title)}</h1>
 <p>${escapeHtml(body)}</p>
 ${details.length ? `<ul class="result">${details.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}
 ${number ? `<p>${escapeHtml(config.texts.notFoundHint)}<span class="number mono">${escapeHtml(number)}</span></p>` : ''}
 ${retryHint ? `<p class="hint">${escapeHtml(retryHint)}</p>` : ''}
+${backPath && backLabel ? `<a class="btn btn--primary back-link" href="${escapeHtml(backPath)}">${escapeHtml(backLabel)}${backHint ? `<span>${escapeHtml(backHint)}</span>` : ''}</a>` : ''}
 </section>`,
 });
+
+/**
+ * ⭐⭐ **提交成功页**（`POST submit_order` 写成功之后 POST 直接渲染的就是这一页；
+ * 不 303、不回原页 —— 业务负责人的口径是"点完**直接**告诉我成功"）。
+ *
+ * 🔴 它**不是**新的书写方式，只是"消息页 + 成功色调 + 一颗回扫码页的链接"这一组约定的**一个名字**：
+ *    `renderScanMessagePage({ tone: 'success', backPath, backLabel, ... })`。
+ *    这样"成功页长什么样"只有一处定义，将来改版不用满仓库找。
+ * 🔴 只在**真的写成功**时用：建单失败 ⇒ 照旧报错页；建单成功但后面某步没写完 ⇒
+ *    `partialFailed*`（**不许**显示成功）。
+ */
+const renderSaleSuccessPage = (input = {}, config = SCAN_PAGE) => renderScanMessagePage(
+  { ...input, tone: 'success' }, config,
+);
 
 /**
  * 🔴 **最后一道兜底页**（"绝不空白"的物理保证）。
@@ -1166,6 +1266,8 @@ module.exports = {
   renderScanPage,
   renderScanMessagePage,
   renderMinimalPage,
+  // ⭐⭐ 2026-10-12：提交成功页（逐字「您的提交已成功」+「再录一单」链接回扫码页）
+  renderSaleSuccessPage,
   // ⭐⭐ 2026-10-11（方案A）：验收模式落地页（`GET /s/accept?batch=` 那一屏）
   renderAcceptancePage,
   escapeHtml,

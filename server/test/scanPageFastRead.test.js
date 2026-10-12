@@ -401,7 +401,15 @@ test('③ 「没找到」不进缓存（新品刚建档就该立刻扫得到）'
   const gateway = fakeGateway();
   const scan = service(gateway);
   const unknown = await scan.lookup({ number: 'NOPE|黑色|A', requestId: 'req_u1' });
-  assert.deepEqual(unknown, { found: false, number: 'NOPE|黑色|A', reason: 'unknown' });
+  // ⭐⭐ 2026-10-12：形状**只加了一个字段**（`fallback`，见 `scanPageService.resolveByItemNoAndColor`）：
+  //    "编号缺段、按（货号 + 颜色）也没找到"这件事要带回路由，页面上才给得出**人话 + 再扫一次**
+  //    （她真机那次 400 / 原始错误页的口径）。`found` / `number` / `reason` 三个**逐字不变**。
+  assert.deepEqual(unknown, {
+    found: false,
+    number: 'NOPE|黑色|A',
+    reason: 'unknown',
+    fallback: { tried: true, ambiguous: false, candidates: 0, item_no: 'NOPE', color: '黑色' },
+  });
   const callsAfterFirst = gateway.calls.length;
   await scan.lookup({ number: 'NOPE|黑色|A', requestId: 'req_u2' });
   assert.ok(gateway.calls.length > callsAfterFirst, '第二次仍然真的去读（不许把否定结果缓存住）');
