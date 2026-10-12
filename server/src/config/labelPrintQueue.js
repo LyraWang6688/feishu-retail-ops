@@ -140,6 +140,19 @@ const LABEL_PRINT_QUEUE = Object.freeze({
      */
     rotate: 0,
     rotatePageWithContent: false,
+    /**
+     * ⭐⭐ **整幅内容在页面内的平移**（mm；只平移内容，**裁切线留在纸边**）。
+     *
+     * 为什么要有它（业务负责人 2026-10-12：「方向对了，但沿长边没有居中」）：
+     *   我先量了产物（横版 40×30、无裁切线）：**左右是对称的**（左 1.50mm / 右 1.63mm，差 −0.13mm），
+     *   但**上下不对称**（上 1.63mm / 下 5.88mm，差 −4.25mm）。
+     *   ⇒ 若她说的"长边"是页面的**竖轴**，用 `contentOffsetYMm = 2` 就正（上下各 3.75mm）；
+     *     是横轴的话本来就正，保持 0。
+     * ⚠️ 步进 0.5mm、范围 ±5mm，越界/非法**当场抛**（不许静默按 0 处理 —— 那等于她白调了）。
+     * ⚠️ 只平移，**不改字号与二维码尺寸**（她已确认过这两点）。
+     */
+    contentOffsetXMm: 0,
+    contentOffsetYMm: 0,
   }),
 
   // ── ⭐ 防连点（业务负责人 2026-10-11 真机反馈：「点完没有反馈 ⇒ 她以为没点上、
@@ -218,6 +231,20 @@ const LABEL_PRINT_QUEUE = Object.freeze({
  * 从环境变量解析一份**运行期**配置（默认值来自上面的 `LABEL_PRINT_QUEUE`）。
  * ⚠️ 用例直接传 env 进来（不碰全局 `process.env`），并发跑不会互相污染。
  */
+/**
+ * 解析"毫米微调"环境变量（内容平移）：**没设/空串 ⇒ 用默认**；非法/越界**当场抛**。
+ * ⚠️ 步进 0.5mm、范围 ±5mm —— 与 `artifact` service 的 `normalizeOffsetMm` 同一套口径。
+ */
+const readMmOffset = (env, key, fallback) => {
+  const raw = String(env?.[key] ?? '').trim();
+  if (!raw) return fallback;
+  const mm = Number(raw);
+  if (!Number.isFinite(mm) || Math.abs(mm) > 5 || Math.abs(mm / 0.5 - Math.round(mm / 0.5)) > 1e-9) {
+    throw new Error(`${key} 只能是 ±5mm 内、0.5 的整数倍（当前是「${raw}」）`);
+  }
+  return mm;
+};
+
 const resolveLabelPrintQueueConfig = (env = process.env, base = LABEL_PRINT_QUEUE) => ({
   ...base,
   enabled: readFlag(env, 'LABEL_PRINT_QUEUE_ENABLED', base.enabled),
@@ -256,6 +283,10 @@ const resolveLabelPrintQueueConfig = (env = process.env, base = LABEL_PRINT_QUEU
       return value;
     })(),
     rotatePageWithContent: readFlag(env, 'LABEL_PRINT_ROTATE_PAGE', base.artifact.rotatePageWithContent),
+    // ⭐ 内容平移（±5mm、0.5mm 步进）——校验在 artifact service 的 `normalizeOffsetMm`
+    //   （renderLabels 里会调它 ⇒ 越界/非法当场抛，不静默）
+    contentOffsetXMm: readMmOffset(env, 'LABEL_PRINT_CONTENT_OFFSET_X_MM', base.artifact.contentOffsetXMm),
+    contentOffsetYMm: readMmOffset(env, 'LABEL_PRINT_CONTENT_OFFSET_Y_MM', base.artifact.contentOffsetYMm),
   },
   device: {
     ...base.device,

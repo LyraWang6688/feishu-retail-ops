@@ -250,6 +250,35 @@ const ROTATIONS = Object.freeze([0, 90, 180, 270]);
  * 认不出的值当场抛错（不许静默按横版印出一堆方向反的标签）。
  */
 const CANVASES = Object.freeze(['landscape', 'portrait', 'fitting']);
+
+/**
+ * ⭐⭐ **整幅内容在页面内的平移**（`artifact.contentOffsetXMm` / `contentOffsetYMm`，单位 mm）。
+ *
+ * 为什么要有它（业务负责人 2026-10-12 真机）：「方向对了，但**沿长边没有居中**」
+ *   —— 先量：我们的产物**左右是对称的**（左 1.50mm / 右 1.63mm，差 −0.13mm ≈ 1px），
+ *   但**上下不对称**（上 1.63mm / 下 5.88mm，差 −4.25mm）。所以：
+ *     · 若她的"长边"= 页面的横轴 ⇒ 本来就正，不用动（默认 0）；
+ *     · 若她的"长边"= 页面的**竖轴**（标签进纸方向转 90°）⇒ 用 `contentOffsetYMm` 微调即可，
+ *       **不用等改代码**（`+2.0` 就能把上下也弄正）。
+ * ⚠️ 只平移**内容**：**裁切线留在纸边**（它是标签的边界，不能跟着跑）。
+ * ⚠️ 只平移、**不改字号与二维码尺寸**（她已确认过这两点）。
+ */
+const OFFSET_LIMIT_MM = 5;
+const OFFSET_STEP_MM = 0.5;
+const normalizeOffsetMm = (value, field = 'contentOffsetXMm') => {
+  if (value === undefined || value === null || value === '') return 0;
+  const mm = Number(value);
+  if (!Number.isFinite(mm)) {
+    throw new Error(`${field} 只能是数字（单位 mm，0.5 的整数倍，范围 ±${OFFSET_LIMIT_MM}），当前是「${value}」`);
+  }
+  if (Math.abs(mm) > OFFSET_LIMIT_MM) {
+    throw new Error(`${field} 超出范围：只允许 ±${OFFSET_LIMIT_MM}mm（当前 ${mm}）—— 再大就要调版式，不是微调了`);
+  }
+  if (Math.abs(mm / OFFSET_STEP_MM - Math.round(mm / OFFSET_STEP_MM)) > 1e-9) {
+    throw new Error(`${field} 只接受 ${OFFSET_STEP_MM}mm 的整数倍（当前 ${mm}）—— 排障微调不需要更细的步进`);
+  }
+  return round(mm);
+};
 const normalizeCanvas = (value) => {
   const canvas = String(value ?? 'landscape').trim() || 'landscape';
   if (!CANVASES.includes(canvas)) {
@@ -604,7 +633,13 @@ function labelSvg(label, layout, options = {}) {
     cursor += h;
   }
 
-  const inner = parts.join('');
+  // ⭐ 内容整体平移（`artifact.contentOffsetXMm/YMm`）：**只动内容，裁切线留在纸边**。
+  const offsetX = normalizeOffsetMm(options.contentOffsetXMm, 'contentOffsetXMm');
+  const offsetY = normalizeOffsetMm(options.contentOffsetYMm, 'contentOffsetYMm');
+  const [borderPart, ...contentParts] = parts;
+  const inner = (offsetX || offsetY)
+    ? `${borderPart}<g transform="translate(${round(offsetX)} ${round(offsetY)})">${contentParts.join('')}</g>`
+    : parts.join('');
   // ⚠️ 横版 + 0°（默认）⇒ `transform` 是空串 ⇒ **不套 `<g>`**，
   //    输出与"加画布之前"逐字节一致（线上/浏览器打印那条老路一个字都没变）。
   const transform = rotationTransform(geometry);
@@ -755,7 +790,11 @@ async function renderLabels({ labels, layout, config = {}, logger = null }) {
   const pages = [];
   let pngFirst = null;
   for (const label of list) {
-    const svg = labelSvg(label, layout, { dpi, canvas, rotate, rotatePageWithContent });
+    const svg = labelSvg(label, layout, {
+      dpi, canvas, rotate, rotatePageWithContent,
+      contentOffsetXMm: config.contentOffsetXMm,
+      contentOffsetYMm: config.contentOffsetYMm,
+    });
     const png = await svgToPng(svg);
     if (!pngFirst) pngFirst = png;
     const jpeg = await pngToJpeg(png, { quality: config.jpegQuality });
@@ -807,6 +846,9 @@ async function renderLabels({ labels, layout, config = {}, logger = null }) {
       height_mm: page.pageH,
       width_pt: mmToPt(page.pageW),
       height_pt: mmToPt(page.pageH),
+      // ⭐ 整幅内容在页面内的平移（mm；默认 0 = 左右对称）
+      content_offset_x_mm: normalizeOffsetMm(config.contentOffsetXMm, 'contentOffsetXMm'),
+      content_offset_y_mm: normalizeOffsetMm(config.contentOffsetYMm, 'contentOffsetYMm'),
       // 逻辑画布（"按哪个方向排版"）与标签自身尺寸
       canvas_width_mm: page.designW,
       canvas_height_mm: page.designH,
@@ -825,6 +867,8 @@ module.exports = {
   ROTATIONS,
   CANVASES,
   normalizeCanvas,
+  normalizeOffsetMm,
+  OFFSET_LIMIT_MM,
   canvasGeometry,
   escapeXml,
   textWidthMm,
