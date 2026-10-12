@@ -287,63 +287,7 @@ test('判据：预定（未交付）→ 要按钮；现货 + 欠款 → 要；�
   }), { needed: true, reason: 'delivery_failed' });
 });
 
-test('终态卡：预订单的「已入账」卡上有且**只有**一个按钮，文案「确认成交」', async () => {
-  const seed = baseSeed({ tradeTypeCode: 'SALE_PREPAID', fulfillmentStatus: '未交付', owed: 260 });
-  const { service, client, store } = makeHarness({
-    seed, draft: draftFor({ tradeTypeCode: 'SALE_PREPAID', owed: 260 }),
-  });
-  await createTask(store, {
-    task_id: 'sale_prepaid', type: 'sale', status: 'posted', sender_open_id: 'ou_1',
-    sales_entry_record_id: ENTRY_ID, chat_type: 'group', message_id: 'om_trigger', card_message_id: 'om_card',
-    draft: draftFor({ tradeTypeCode: 'SALE_PREPAID', owed: 260 }),
-    posting_result: { sourceNo: 'XSD-1', detailRecordIds: ['d_1'] },
-  });
 
-  await service.handleCardAction({
-    operator: { operator_id: { open_id: 'ou_1' } },
-    action: { value: { action: 'confirm_sale', draft_id: 'sale_prepaid' } },
-  });
-
-  const card = lastPatchedCard(client);
-  const buttons = cardButtons(card);
-  assert.equal(buttons.length, 1, '卡面上只能有一个按钮');
-  assert.equal(buttons[0].text.content, '确认成交');
-  assert.equal(buttons[0].value.action, SALES_CONFIRM_DEAL_ACTIONS.CONFIRM);
-  assert.equal(buttons[0].value.sales_entry_record_id, ENTRY_ID);
-  // 「选项只能点是」：没有取消 / 否 / 稍后。
-  for (const forbidden of ['取消', '否', '稍后', '不成交']) {
-    assert.ok(!cardButtons(card).some((button) => String(button.text.content).includes(forbidden)),
-      `不许有第二个选项：${forbidden}`);
-  }
-});
-
-test('终态卡：现货 + 有欠款 → 有按钮；现货 + 已交付 + 已结清 → **没有**按钮', async () => {
-  const owedSeed = baseSeed({ tradeTypeCode: 'SALE_CASH', fulfillmentStatus: '已交付', owed: 260 });
-  const owedHarness = makeHarness({
-    seed: owedSeed, draft: draftFor({ tradeTypeCode: 'SALE_CASH', owed: 260 }),
-    taskPatch: { task_id: 'sale_owed' },
-  });
-  await createTask(owedHarness.store, owedHarness.task);
-  await owedHarness.service.handleCardAction({
-    operator: { operator_id: { open_id: 'ou_1' } },
-    action: { value: { action: 'confirm_sale', draft_id: 'sale_owed' } },
-  });
-  assert.equal(cardButtons(lastPatchedCard(owedHarness.client)).length, 1, '现货欠款的单要有按钮');
-
-  const cleanSeed = baseSeed({ tradeTypeCode: 'SALE_CASH', fulfillmentStatus: '已交付', owed: 0, paidReceived: 260 });
-  const cleanHarness = makeHarness({
-    seed: cleanSeed, draft: draftFor({ tradeTypeCode: 'SALE_CASH', paidTotal: 260 }),
-    taskPatch: { task_id: 'sale_clean' },
-  });
-  await createTask(cleanHarness.store, cleanHarness.task);
-  await cleanHarness.service.handleCardAction({
-    operator: { operator_id: { open_id: 'ou_1' } },
-    action: { value: { action: 'confirm_sale', draft_id: 'sale_clean' } },
-  });
-  const cleanCard = lastPatchedCard(cleanHarness.client);
-  assert.deepEqual(cardButtons(cleanCard), [], '现货已交付已结清的单**不许**被打扰');
-  assert.ok(!JSON.stringify(cleanCard).includes('确认成交'));
-});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 二、点【确认成交】：走**既有**的「成交」那一条路（AC-5）

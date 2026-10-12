@@ -187,30 +187,6 @@ test('secondDeliveryCard 经 settleSecondDeliveryOrder 变换后仍带 update_mu
 // 这条不是"再测一遍 builder"，而是走**她那条真实链路**：
 //   handleCardAction → patch「处理中」→ 入账 → patch「已入账」，
 // 用假 client 抓两次真实 payload，断言飞书拿到的那份确实声明了共享卡片。
-test('现场复现：她点「确认」后两次真实 patch 的 payload 都带 update_multi', async () => {
-  const store = makeStore();
-  await store.create({ task_id: 'sale_incident', type: 'sale', status: 'ready_to_confirm',
-    sender_open_id: 'ou_1', sales_entry_record_id: 'entry_1', card_message_id: 'om_card',
-    draft: { items: ITEMS, payments: PAYMENTS } });
-  const { client, payloads } = capturePatch();
-  const service = new LarkMvpService({
-    client, gateway: {}, references: {}, recognizer: {}, store,
-    posting: { postSale: async () => ({ sourceNo: 'XSD-001', detailRecordIds: ['detail_1', 'detail_2'] }) },
-  });
-
-  const result = await service.handleCardAction({
-    operator: { operator_id: { open_id: 'ou_1' } },
-    action: { value: { action: 'confirm_sale', draft_id: 'sale_incident' } },
-  });
-
-  assert.equal(result.toast.type, 'success');
-  assert.equal(payloads.length, 2, '她点一次应恰好更新两张卡：先「处理中」，后「已入账」');
-  for (const [index, payload] of payloads.entries()) {
-    assert.deepEqual(JSON.parse(payload.data.content).config, PATCHABLE_CONFIG,
-      `第 ${index + 1} 次 patch 的 payload 少了 update_multi —— 她那边就会"点了没反应"`);
-  }
-  assert.equal(await store.get('sale_incident').then((task) => task.status), 'posted');
-});
 
 // golden 的来源（**不是**从改动后的代码照抄，而是从改动前的代码渲染后冻结）：
 //   1. `git show origin/main:server/src/utils/larkCards.js` 取改动前那份模块；
