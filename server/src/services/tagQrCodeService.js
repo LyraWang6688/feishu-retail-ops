@@ -94,6 +94,29 @@ const buildScanUrl = (template, number, config = TAG_QR_CODE) => {
 };
 
 /**
+ * ⭐⭐ 2026-10-12：**新格式**（记录 ID）的 URL 构造 —— 与旧格式**各自独立**、各有各的守卫。
+ * 为什么独立：编号版有"空编号 ⇒ 拦住"的语义；记录 ID 版同形（空 id ⇒ 拦住），
+ * 两条路的报错文案也各自准确（不要把两者混成一条函数，否则守卫语义会互相污染）。
+ */
+const buildRecordIdScanUrl = (recordId, config = TAG_QR_CODE) => {
+  const source = String(config?.scanUrl?.recordIdTemplate ?? '');
+  const marker = '{recordId}';
+  if (!source.includes(marker)) {
+    throw new Error(`二维码 URL 模板里没有 {recordId} 占位符：${source || '(空)'}`);
+  }
+  const id = String(recordId ?? '').trim();
+  if (!id) throw new Error('记录没有 record_id，无法生成标签二维码');
+  const encoded = source.split(marker).join(encodeURIComponent(id));
+  // 除 {recordId} 外不许有别的占位符（写错就当场抛，不静默出空码）
+  const rest = encoded.replace(encodeURIComponent(id), '');
+  const stray = rest.match(/\{(\w+)\}/);
+  if (stray) {
+    throw new Error(`二维码 URL 模板里的占位符不认识：{${stray[1]}}（可用：{recordId}）`);
+  }
+  return encoded;
+};
+
+/**
  * 这条记录的附件该叫什么名 —— 模板来自 config，值来自「编号」，非法字符替换掉。
  */
 const buildFileName = (number, config = TAG_QR_CODE) => {
@@ -348,6 +371,53 @@ const createTagQrCodeService = ({
    *    （分隔符已按模板编码成 `_`），所以比较前要把公式值也 `sanitizeNumberForFileName` 一下，
    *    否则"同一个编号的两种写法"永远不相等（这个坑 2026-10-12 踩过一次）。
    */
+  /**
+   * ⭐⭐ 2026-10-12：决定二维码里装哪一串「标识」——**新格式用 record_id（永不变），缺了才回退编号**。
+   * @returns {{url,identity,value,fallback,upgrade,previousNumber,previousIdentity}}
+   */
+  const resolveQrIdentity = ({ recordId, number, existingUrl = '' }) => {
+    const hasRecordId = Boolean(String(recordId ?? '').trim());
+    const url = hasRecordId
+      ? buildRecordIdScanUrl(recordId, config)
+      : buildScanUrl(config.scanUrl.numberTemplate, number, config);
+    // 旧格式（/s/ = 编号）与文件名里那串编号 ⇒ 这次是"升级"
+    const existing = String(existingUrl ?? '');
+    const existingIsNumber = existing.includes(config.scanUrl.numberTemplate.split('{')[0]);
+    return {
+      url,
+      identity: hasRecordId ? 'record_id' : 'number',
+      value: hasRecordId ? String(recordId).trim() : number,
+      fallback: !hasRecordId,
+      upgrade: hasRecordId && Boolean(existing) && existingIsNumber && existing !== url,
+      // 旧格式 ⇒ 把那串编号**从 URL 里反解回来**（事件里要的是编号本身，不是 URL）
+      previousNumber: existingIsNumber
+        ? decodeURIComponent(existing.slice(existing.indexOf('/s/') + 3))
+        : '',
+      previousIdentity: existingIsNumber ? 'number' : (existing ? 'record_id' : ''),
+    };
+  };
+
+  /**
+   * ⭐⭐ AC-X（2026-10-12）：她新加的「记录 ID」**公式字段**与**接口读到的 record_id** 做交叉校验。
+   * 🔴 **公式列有延迟** ⇒ **一律以【接口值】为准**；两者不一致 ⇒ 记 warn（带两个值）便于排查。
+   * ⚠️ 绝不反过来"以公式值为准"——那正是今天"印了旧编号"那个 bug 的成因。
+   */
+  const crossCheckRecordId = ({ apiRecordId, formulaRecordId, recordId }) => {
+    const api = String(apiRecordId ?? '').trim();
+    const fromFormula = String(formulaRecordId ?? '').trim();
+    const mismatch = Boolean(fromFormula) && fromFormula !== api;
+    if (mismatch) {
+      logWarn('product.tag_qr.record_id_mismatch', {
+        record_id: recordId || api, api_record_id: api, formula_record_id: fromFormula,
+        picked: 'api', note: '公式列有延迟 ⇒ 以接口值为准',
+      });
+    }
+    return { recordId: api, mismatch, source: 'api' };
+  };
+
+  /** 二维码矩阵边长（模块数）：N 模块 ⇒ 13mm 下每模块 13/N mm。 */
+  const qrMatrixSize = (text) => require('qrcode').create(String(text)).modules.size;
+
   const resolveQrNumber = ({ formulaNumber, assembledNumber, existingFileNameNumber, recordId, parts = [] }) => {
     // ⭐ 缺段定位：哪几段源字段读成了空（诊断 + 守卫都要用）
     const missingSegments = parts.filter((part) => !part.value).map((part) => part.key);
@@ -467,6 +537,15 @@ const createTagQrCodeService = ({
    *   ⚠️ 靠文件名判出过期而重写时，`reason` 一律记成 **`number_changed`**（事实如此）；
    *      判不了但比完**一致** ⇒ `number_unchanged`；脚本/新增那一路的幂等跳过 ⇒ `already_present`。
    */
+  /** 从现存附件名反解出**旧格式**（/s/数号）的 URL；反解不出（已是新格式）⇒ 空串。 */
+  const legacyScanUrlOf = (existing, cfg) => {
+    const name = Array.isArray(existing) ? existing[0]?.name : null;
+    const middle = numberFromFileName(name, cfg);
+    if (!middle) return '';
+    const legacy = String(cfg?.scanUrl?.numberTemplate || '');
+    return legacy ? legacy.split('{number}').join(middle) : '';
+  };
+
   const syncRecord = async (recordId, { reason = 'manual', numberChanged } = {}) => {
     if (!config.enabled) {
       logInfo('product.tag_qr.disabled', { record_id: recordId, reason });
@@ -496,8 +575,28 @@ const createTagQrCodeService = ({
       return { record_id: recordId, status: 'skipped', reason: 'number_missing' };
     }
 
-    const scanUrl = buildScanUrl(config.scanUrl.urlTemplate, number, config);
-    const fileName = buildFileName(number, config);
+    // ⭐⭐ 2026-10-12 接线：**二维码里装的是「记录 ID」（永不变），不再是编号（会变的快照）**。
+    //    她今天亲自提的方案：「如果必须得要一个完全不变的标识，那我们是不是可以用记录 ID 呀？」
+    //    · 有 record_id ⇒ 新格式 `/r/{recordId}`（接口读到的即时值 ✓）
+    //    · 没有（异常数据）⇒ **不静默**：记 warn + 回退编号格式（保证还能印出来）
+    //    · 现存附件还是旧格式 ⇒ 这次就是**升级**（是在**修复已经印错的码**，不是兼容）
+    const existingUrl = legacyScanUrlOf(existing, config);
+    const identity = resolveQrIdentity({ recordId, number, existingUrl });
+    if (identity.fallback) {
+      logWarn('product.tag_qr.record_id_missing', {
+        record_id: recordId, reason, number, fallback_identity: 'number',
+      });
+    }
+    if (identity.upgrade) {
+      logInfo('product.tag_qr.upgraded_to_record_id', {
+        record_id: recordId, reason,
+        previous_number: identity.previousNumber,
+        previous_identity: 'number',
+        new_url: identity.url,
+      });
+    }
+    const scanUrl = identity.url;
+    const fileName = buildFileName(identity.value, config);
 
     // 「现存附件的文件名 ≠ 当前编号应有的文件名」= **事实上的编号变了**（只读一次就判得出，
     // 不依赖事件带没带前后值）。这一档才是 `numberChanged === null` 时的**唯一**判据。
@@ -517,7 +616,8 @@ const createTagQrCodeService = ({
     //      "已经有值就跳过" ⇒ 真机现场：`--write` 那一条记 `skipped_existing`
     //      （`existing_file_names=["tag-qr-832-372-6H_棕色_A.png"]`）而它明明是旧码 ✗。
     //      ⇒ 现在**写入路径也按编号判过期**：干跑说"待更新"的，`--write` 就必须真的更新。
-    const safeNumber = sanitizeNumberForFileName(number, config);
+    // ⚠️ 锚是 **identity 值**（新格式 = record_id）⇒ 旧编号命名的附件**天然不匹配** ⇒ 判为过期 ⇒ 覆盖升级 ✓
+    const safeNumber = sanitizeNumberForFileName(identity.value, config);
     const namesMatch = existing.length > 0 && existing.some((item) => item.name === fileName
       || numberFromFileName(item.name, config) === safeNumber);
     const forceOverwrite = numberChanged === true;
@@ -787,7 +887,9 @@ const createTagQrCodeService = ({
       if (!recordId) continue;
       const number = textValue(record?.fields?.[numberFieldName]).trim();
       if (!number) { numberMissing += 1; continue; }
-      const expectedFileName = buildFileName(number, config);
+      // ⭐⭐ 2026-10-12 修复（真缺口）：巡检算「规范名」也必须按 **identity（record_id）**，
+      //    不能按编号 —— 否则新码下旧编号命名的附件会被判"不符"⇒ 每次都重生成 ✗。
+      const expectedFileName = buildFileName(resolveQrIdentity({ recordId, number }).value, config);
       const existing = attachmentsOf(record?.fields?.[tagQrFieldName]);
       if (existing.length && existing.some((item) => item.name === expectedFileName)) {
         consistent += 1;
@@ -874,6 +976,9 @@ const createTagQrCodeService = ({
     assembleNumber,
     assembleParts,
     resolveQrNumber,
+    resolveQrIdentity,
+    qrMatrixSize,
+    crossCheckRecordId,
     syncRecord,
     handleTableChanges,
     sweepStaleTagQrCodes,
@@ -885,6 +990,7 @@ const createTagQrCodeService = ({
 module.exports = {
   createTagQrCodeService,
   buildScanUrl,
+  buildRecordIdScanUrl,
   buildFileName,
   numberFromFileName,
   sanitizeNumberForFileName,
