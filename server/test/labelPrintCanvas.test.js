@@ -649,9 +649,12 @@ test('AC-C11-3 ⭐ 方案①的成品数字（她先看样张再打纸）：左 
 
 test('AC-C12-1 ⭐⭐ 安全上限：右移余量 = 右留白（1.5mm）、左移余量 = 左留白（3.5mm）；超过就拒', () => {
   const layout35 = layout({ label: { ...LABEL_PRINT.label, leftPaddingMm: 3.5 } });
-  const opts = { leftPaddingMm: 3.5 };
-  assert.deepEqual(artifact.maxSafeOffsetXMm(layout35, opts), { right: 1.5, left: 3.5 },
-    '⚠️ 关键数字：右移最多 1.5mm（= 右留白）—— 所以 +2.0mm 是**不安全**的');
+  // ⚠️ 2026-10-12：`maxSafeOffsetXMm` 现在把**裁切线宽度**也算进去（线占掉多少，余量就多多少）
+  //   ⇒ 这里按**产物默认**（`cutLineMm: 0` = 不画线）量，仍是 1.5mm ✓
+  const opts = { leftPaddingMm: 3.5, cutLineMm: 0 };
+  const safe = artifact.maxSafeOffsetXMm(layout35, opts);
+  assert.equal(safe.right, 1.5, '⚠️ 关键数字：右移最多 1.5mm（= 右留白）—— +2.0mm 不安全');
+  assert.equal(safe.left, 3.5, '左移余量 = 左留白 3.5mm');
   for (const value of [0, 0.5, 1, 1.5, -1, -3.5]) {
     assert.doesNotThrow(() => artifact.assertSafeOffsetXMm(value, layout35, opts), `偏移 ${value} 应放行`);
   }
@@ -665,7 +668,9 @@ test('AC-C12-1 ⭐⭐ 安全上限：右移余量 = 右留白（1.5mm）、左�
 
 test('AC-C12-2 ⭐⭐ 三档偏移下"品牌中心相对页面中心"的位移（与字体无关的几何）', () => {
   const layout35 = layout({ label: { ...LABEL_PRINT.label, leftPaddingMm: 3.5 } });
-  const opts = { leftPaddingMm: 3.5 };
+  // ⚠️ 2026-10-12：`maxSafeOffsetXMm` 现在把**裁切线宽度**也算进去（线占掉多少，余量就多多少）
+  //   ⇒ 这里按**产物默认**（`cutLineMm: 0` = 不画线）量，仍是 1.5mm ✓
+  const opts = { leftPaddingMm: 3.5, cutLineMm: 0 };
   const pageCenter = LABEL_PRINT.label.widthMm / 2; // 20
   const brandCenterOf = (offset) => {
     const svg = artifact.labelSvg(label(), layout35, { dpi: 203, contentOffsetXMm: offset });
@@ -683,4 +688,209 @@ test('AC-C12-2 ⭐⭐ 三档偏移下"品牌中心相对页面中心"的位移�
     // 最宽那一行的右边余量 = 右留白 − 偏移（≥0 才不裁边）
     assert.ok(Number((1.5 - offset).toFixed(2)) >= 0, `偏移 ${offset} 的右边余量必须 ≥0`);
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 【2026-10-12 她提的新排法】货号独占一行 · 颜色+市价同一行 · 尺码区不变
+//   为什么：老版式"最宽那一行 = 货号+颜色"把信息栏塞满 ⇒ 右移安全量只剩 1.5mm ✗
+//   ⇒ 拆开后最宽行变窄（实测变成**尺码行**）⇒ 右边腾出空间 ⇒ 可以继续右移 ✓
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** 把 SVG 里的 `<text>` 抽成结构（x/y/字号/字重/内容）—— 断言"谁和谁同一行"靠 y 相等。 */
+const textNodes = (svg) => [...svg.matchAll(
+  /<text x="([-\d.]+)" y="([-\d.]+)" font-family="[^"]*" font-size="([\d.]+)"( font-weight="(\d+)")?>([^<]*)<\/text>/g,
+)].map((m) => ({ x: Number(m[1]), y: Number(m[2]), size: Number(m[3]), weight: m[5] || '400', text: m[6] }));
+
+/** 捕获结构化日志（logger 一行一个 JSON 写 stdout）—— 断言"该记的 warn 有没有记"。 */
+const captureLogs = async (fn) => {
+  const captured = [];
+  // ⚠️ `logWarn` 走 `console.warn` ⇒ **stderr**；`logInfo` 走 stdout ⇒ 两个都要接
+  const outWrite = process.stdout.write.bind(process.stdout);
+  const errWrite = process.stderr.write.bind(process.stderr);
+  const tap = (chunk) => { captured.push(String(chunk)); return true; };
+  process.stdout.write = tap;
+  process.stderr.write = tap;
+  try {
+    await fn();
+  } finally {
+    process.stdout.write = outWrite;
+    process.stderr.write = errWrite;
+  }
+  return captured;
+};
+
+const CANDIDATE_ROWS = ['brand', 'itemNo', 'colorPrice', 'sizes'];
+const candidateConfig = (extra = {}) => ({
+  dpi: 203, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0, rows: CANDIDATE_ROWS, ...extra,
+});
+const newLayoutLabel = () => label({
+  item_no: 'XHB8095', color: '黑色', price_text: '¥139',
+  size_lines: [[{ size: 36, qty: 1 }, { size: 37, qty: 2 }, { size: 38, qty: 1 }]],
+});
+
+test('AC-C13-1 ⭐⭐ 新排法：**货号独占一行**（颜色不在它那一行）', () => {
+  const svg = artifact.labelSvg(newLayoutLabel(), layout(), candidateConfig());
+  const nodes = textNodes(svg);
+  const itemNo = nodes.find((n) => n.text === 'XHB8095');
+  const color = nodes.find((n) => n.text === '黑色');
+  assert.ok(itemNo, '找不到货号那行');
+  assert.ok(color, '找不到颜色');
+  assert.notEqual(itemNo.y, color.y, `货号与颜色必须**不同行**（都在 y=${itemNo.y} 就是老版式）`);
+  assert.equal(itemNo.weight, '800', '货号仍是加粗大字');
+  assert.equal(itemNo.size, 3.6, '货号字号**不动**（还是 3.6mm）');
+});
+
+test('AC-C13-2 ⭐⭐ 新排法：**颜色与市价同一行**，两者都在信息栏内、顺序是「颜色 → 价钱」', () => {
+  const lay = layout();
+  const svg = artifact.labelSvg(newLayoutLabel(), lay, candidateConfig());
+  const nodes = textNodes(svg);
+  const color = nodes.find((n) => n.text === '黑色');
+  const price = nodes.find((n) => n.text === '¥139');
+  assert.ok(color && price, '颜色与价钱都要在');
+  assert.equal(color.y, price.y, '颜色与市价必须**同一行**（y 相同）');
+  assert.ok(price.x > color.x, '顺序：颜色在前、价钱在后');
+  const column = artifact.availableWidthMm(lay, {
+    designWidthMm: LABEL_PRINT.label.widthMm, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0,
+  });
+  const left = 3.5 + artifact.resolveCutLineMm(lay, { cutLineMm: 0 }); // 3.5
+  assert.ok(color.x >= left - 0.01 && price.x > left, '两者都从信息栏起点开始排');
+  const width = artifact.rowWidthsMm(lay, { ...candidateConfig(), label: newLayoutLabel() }, newLayoutLabel());
+  assert.ok(width.widths.colorPrice <= width.column,
+    `「颜色+市价」这行必须放得进信息栏（${width.widths.colorPrice} ≤ ${width.column}）`);
+});
+
+test('AC-C13-3 ⭐ 新排法：**尺码区不变**（同样的字号与起点，只是行序换了）', () => {
+  const oldSvg = artifact.labelSvg(newLayoutLabel(), layout(), candidateConfig({ rows: undefined }));
+  const newSvg = artifact.labelSvg(newLayoutLabel(), layout(), candidateConfig());
+  const sizesOf = (svg) => textNodes(svg).filter((n) => ['36', '37', '38'].includes(n.text))
+    .map((n) => ({ size: n.size, dx: Number((n.x - textNodes(svg).find((m) => m.text === '36').x).toFixed(2)) }));
+  assert.deepEqual(sizesOf(newSvg), sizesOf(oldSvg), '尺码区的字号与相对位置必须逐字一致');
+});
+
+test('AC-C13-4 ⭐⭐ 新排法的**最宽那一行**与 maxSafe（逐字举例）', () => {
+  const lay = layout();
+  const options = { ...candidateConfig(), label: newLayoutLabel() };
+  const w = artifact.rowWidthsMm(lay, options, newLayoutLabel());
+  // 逐字举例：货号 16.63mm · 颜色+市价 15.65mm · **尺码 17.64mm**（最宽）· 栏宽 20.5mm
+  const fx = (v) => Number(Number(v).toFixed(3));
+  assert.equal(fx(w.widths.itemNo), 16.632, '货号那行 16.632mm');
+  assert.equal(fx(w.widths.colorPrice), 15.648, '颜色+市价那行 15.648mm');
+  assert.equal(w.widest_id, 'sizes', '⭐ 新排法里最宽的是**尺码行**（老版式是"货号+颜色"）');
+  assert.equal(fx(w.widest_mm), 17.636, '尺码行 17.636mm');
+  assert.equal(w.column, 20.5, '信息栏仍是 20.5mm（字号/二维码尺寸都没动）');
+  const safe = artifact.maxSafeOffsetXMm(lay, options);
+  assert.equal(safe.right, 4.364, '⭐ 新的右移上限 = 4.364mm（老版式只有 1.5mm）');
+  assert.equal(safe.spare_mm, 2.864, '多出来的空间 = 栏宽 − 最宽行 = 2.864mm');
+  // 超过即拒（逐档）
+  for (const offset of [0, 2, 2.5, 4]) {
+    assert.doesNotThrow(() => artifact.labelSvg(newLayoutLabel(), lay, candidateConfig({ contentOffsetXMm: offset })),
+      `新排法偏移 ${offset} 应在安全区内`);
+  }
+  assert.throws(() => artifact.labelSvg(newLayoutLabel(), lay, candidateConfig({ contentOffsetXMm: 4.5 })),
+    /contentOffsetXMm/, '4.5mm 超上限 ⇒ 当场拒');
+  // 老版式**一点没放宽**：仍旧 1.5 / 超过即拒
+  const oldSafe = artifact.maxSafeOffsetXMm(lay, { leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0, label: newLayoutLabel() });
+  assert.equal(oldSafe.right, 1.5, '老版式仍是 1.5mm（没有偷偷放宽）');
+  assert.throws(() => artifact.labelSvg(newLayoutLabel(), lay, candidateConfig({ rows: undefined, contentOffsetXMm: 2 })),
+    /contentOffsetXMm/);
+});
+
+test('AC-C13-5 ⭐⭐ 回归：**不传新键 ⇒ 老版式逐字节不变**；非法行序当场拒', () => {
+  // ① 不传 rows 与显式老行序 ⇒ 完全一样
+  const a1 = artifact.renderLabels({ labels: [newLayoutLabel()], layout: layout(), config: { dpi: 203 } });
+  const a2 = artifact.renderLabels({
+    labels: [newLayoutLabel()], layout: layout(),
+    config: { dpi: 203, rows: undefined },
+  });
+  return Promise.all([a1, a2]).then(([r1, r2]) => {
+    assert.deepEqual(r1.pdf, r2.pdf, '不传 rows 必须与原来逐字节一致');
+    const oldSvg = artifact.labelSvg(newLayoutLabel(), layout(), { dpi: 203 });
+    const sameOrder = artifact.labelSvg(newLayoutLabel(), layout(), {
+      dpi: 203, rows: ['brand', 'itemNoColor', 'price', 'state', 'sizes'],
+    });
+    assert.equal(oldSvg, sameOrder, '默认行序就是老行序（货号+颜色同一行）');
+    // ② 默认产物里"货号与颜色同一行"（这是老版式的特征）
+    const nodes = textNodes(oldSvg);
+    const itemNo = nodes.find((n) => n.text === 'XHB8095');
+    const color = nodes.find((n) => n.text === '黑色');
+    assert.equal(itemNo.y, color.y, '老版式：货号与颜色同一行');
+    // ③ 非法行序
+    assert.throws(() => artifact.normalizeRows(['brand', 'colorPrise']), /不认识的行/);
+    assert.throws(() => artifact.normalizeRows([]), /非空数组/);
+    assert.throws(() => artifact.normalizeRows(['brand', 'sizes', 'sizes']), /重复/);
+    assert.equal(artifact.normalizeRows(['brand', 'itemNo', 'colorPrice', 'sizes']).length, 4);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 【2026-10-12 她问】"垂直方向能不能随行数动态居中" —— **一直是动态居中的**（这里把证据钉成 AC）
+//   二维码 `qrY = mainTop + (mainH-qrMm)/2`；右栏 `cursor = mainTop + (mainH-totalH)/2`
+//   ⚠️ 边界：`totalH > mainH` ⇒ `Math.max(0,…)` ⇒ **顶部对齐**（不会跑到纸外）+ 记 warn
+//   ⚠️ 口径：居中是相对**"品牌下方 ~ 页脚上方"这段中段**，**不是整张纸**（品牌行/页脚不参与）
+// ═══════════════════════════════════════════════════════════════════════════
+
+const verticalLabel = ({ sizeLineCount = 1, perLine = 3, itemNoLines = 1 } = {}) => {
+  // 尺码池要够大：`sizeLineCount × perLine` 都会用到（不够就会出现"空行被过滤掉 ⇒ 没撑满"）
+  const all = Array.from({ length: 60 }, (_, i) => 36 + i);
+  const lines = [];
+  for (let i = 0; i < sizeLineCount; i += 1) {
+    lines.push(all.slice(i * perLine, i * perLine + perLine).map((size) => ({ size, qty: 1 })));
+  }
+  return label({
+    item_no: itemNoLines > 1 ? 'XHB8095-XHB8095' : 'XHB8095',
+    color: '黑色',
+    size_lines: lines.filter((line) => line.length),
+    itemNoLines,
+  });
+};
+
+test('AC-C14-1 ⭐⭐ 三档内容量下"二维码中心 == 右栏内容中心 == 中段中心"（±0.5mm）', () => {
+  const lay = layout();
+  const cfg = { dpi: 203, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0, rows: CANDIDATE_ROWS };
+  const tiers = [
+    { name: '① 尺码 1 行', options: { sizeLineCount: 1 } },
+    { name: '② 尺码 4 行', options: { sizeLineCount: 4, perLine: 3 } },
+  ];
+  const centers = [];
+  for (const tier of tiers) {
+    const m = artifact.measureVerticalLayout(verticalLabel(tier.options), lay, cfg);
+    assert.equal(m.overflows, false, `${tier.name} 不该溢出`);
+    assert.ok(Math.abs(m.qr_center_mm - m.main_center_mm) <= 0.5,
+      `${tier.name}：二维码中心 ${m.qr_center_mm} 应 ≈ 中段中心 ${m.main_center_mm}`);
+    assert.ok(Math.abs(m.content_center_mm - m.main_center_mm) <= 0.5,
+      `${tier.name}：右栏内容中心 ${m.content_center_mm} 应 ≈ 中段中心 ${m.main_center_mm}`);
+    centers.push({ name: tier.name, content: m.content_center_mm, qr: m.qr_center_mm, total: m.content_total_h_mm });
+  }
+  // ⭐ 行数变了（内容高变了）但**中心不变** ⇒ 就是"动态居中"的定义
+  assert.notEqual(centers[0].total, centers[1].total, '两档内容总高必须不同（否则证明不了"随行数变")');
+  assert.equal(centers[0].content, centers[1].content, '两档的**内容中心必须一致**（动态居中 ✓）');
+  assert.equal(centers[0].qr, centers[1].qr, '二维码中心也一致 ✓');
+});
+
+test('AC-C14-2 ⭐⭐ 放不下时：**顶部对齐**（不是跑到纸外），并且记 warn', async () => {
+  const lay = layout();
+  const huge = verticalLabel({ sizeLineCount: 10, perLine: 3 });
+  const m = artifact.measureVerticalLayout(huge, lay, { dpi: 203, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0 });
+  assert.equal(m.overflows, true, '10 行尺码必须判定为"放不下"');
+  assert.equal(m.content_top_mm, m.main_top_mm, '放不下 ⇒ 顶部对齐（content_top == main_top）');
+  assert.ok(m.content_total_h_mm > m.main_h_mm);
+  const lines = await captureLogs(async () => {
+    await artifact.renderLabels({
+      labels: [huge], layout: lay, config: { dpi: 203, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0 },
+    });
+  });
+  assert.ok(lines.some((line) => line.includes('label.print.vertical_overflow')), '要留下溢出日志');
+});
+
+test('AC-C14-3 ⭐ 口径说清楚：居中是"中段"居中（品牌行/页脚不参与），不是整张纸', () => {
+  const lay = layout();
+  const m = artifact.measureVerticalLayout(verticalLabel({ sizeLineCount: 1 }), lay, {
+    dpi: 203, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0,
+  });
+  // 中段的上下边界来自"品牌下方 ~ 页脚上方"（不含品牌行与页脚）
+  assert.ok(m.main_top_mm > 0, '中段上边界在品牌下方（>0）');
+  assert.ok(m.main_bottom_mm < LABEL_PRINT.label.heightMm, '中段下边界在页脚上方（<30mm）');
+  assert.equal(m.main_center_mm, Number(((m.main_top_mm + m.main_bottom_mm) / 2).toFixed(2)));
+  // ⚠️ 与"整张纸中心"（15mm）**不同** ⇒ 这就是两种口径的差别，供她拍
+  assert.notEqual(m.main_center_mm, LABEL_PRINT.label.heightMm / 2);
 });
