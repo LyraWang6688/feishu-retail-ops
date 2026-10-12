@@ -169,8 +169,8 @@ const makeWorld = (seed = {}, options = {}) => {
     batchLocatorStore: new JsonTaskStore({ dir: tempDir('purchase-log-correlation-locator-'), idField: 'task_id' }),
     batchReadMaxRetries: 1,
     batchReadRetryDelay: 0,
-    reportBatchWindowMs: 20,
-    purchaseReturnBatchWindowMs: 20,
+    // ⚠️ 2026-10-12 删掉了这里的两个「归批窗口」夹具键（报货 / 退货）：
+    //    两个窗口模块都随**表单入口**在 2026-10-09 退场了 ⇒ `src/` 零读取点，留着是误导。
   });
   return { records, client, gateway, store, inventory, service };
 };
