@@ -1,3 +1,12 @@
+/** ⚠️ 2026-10-12 旧断言改写（**验收领域改成"扫码页自己开工"**）：
+ *  改前（逐字）：`assert.ok(blockOf(html, 'accept').includes(SCAN_PAGE.texts.realmEmptyTitle));`
+ *                （以及 `accept: { has: [SCAN_PAGE.texts.realmEmptyTitle], … }` 那一处）
+ *  改后（逐字）：断言**新的自助块** —— `data-view="accept-pending"` + `SCAN_PAGE.texts.acceptPendingTitle`
+ *                （未到货批次列表 / 手输兜底都在它里面）。
+ *  理由：业务负责人 2026-10-12 明确「**验收还是只在扫码页**，我不需要在工作台」⇒ 验收领域
+ *        在没有活跃会话时**不再是一张"回工作台"的人话卡**，而是**自己列未到货批次 + 手输批次号**。
+ *        ⚠️ 被保护的不变量没变（仍是"验收领域要有内容、不回落销售、不白屏"），只是内容换了。
+ */
 /**
  * ⚠️ 2026-10-11 晚（业务负责人批准：采购只留「验收到货」+ 扫码页六领域）——本文件**改写**的断言（逐字）：
  *   改前：采购子 tab `['报货','验收到货','退货','采购订单列表','供应商往来款']`；报货/退货两个子页
@@ -738,7 +747,11 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
   assert.equal(blockOf('replenish', 'replenish').includes('补货报单（勾选要补的尺码）'), false, '补货那句标题必须删掉');
   assert.ok(blockOf('replenish', 'replenish').includes('data-view="one-tap-replenish"'), '补货领域 = 各尺码数量 + 一键补货');
   assert.ok(blockOf('purchase_return', 'purchase_return').includes('data-view="purchase-return"'), '退货领域 = 退货表单');
-  assert.ok(blockOf('accept', 'accept').includes(SCAN_PAGE.texts.realmEmptyTitle), '验收领域（没有活跃会话）= 人话卡');
+  // ⭐ 2026-10-12：验收领域没有活跃会话 = **自助块**（列未到货批次 + 手输批次号），不再是「回工作台」卡
+  const acceptBlock = blockOf('accept', 'accept');
+  assert.ok(acceptBlock.includes('data-view="accept-pending"'), '验收领域（没有活跃会话）= 自助块');
+  assert.ok(acceptBlock.includes(SCAN_PAGE.texts.acceptPendingTitle));
+  assert.ok(acceptBlock.includes('data-view="accept-manual"'), '手输批次号兜底在');
   assert.ok(blockOf('product', 'product').includes('货品标签'), '货品领域 = 货品标签');
 
   // ⑦ 货品标签 = 既有标签打印页（单个带货号 / 批量），没有重做打印

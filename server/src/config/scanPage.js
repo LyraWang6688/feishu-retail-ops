@@ -31,6 +31,11 @@ const ROUTE = Object.freeze({
   // `app.js` 用 basePath 挂载，router 里用 path（两边不许各写一份）。
   basePath: '/s',
   path: '/:number',
+  // ⭐ 2026-10-12：**验收落地页**的路径模板（**唯一来源**）—— 路由用它拼跳转与表单目标，
+  //    渲染层用它给「未到货批次」那几条链接（两边各写一份必然漂）。
+  //    `{batchNo}` 会被 URL 编码后填进去；手输兜底那个 GET 表单用 `acceptPath`。
+  acceptancePath: '/accept',
+  acceptanceLandingPath: '/accept?batch={batchNo}',
 });
 
 /**
@@ -122,7 +127,23 @@ const TEXTS = Object.freeze({
   realmEmptyPurchaseBody: '这一款现在没有可补货的尺码清单。',
   // ⭐ 2026-10-11：**验收**领域的"空态"（她还没在工作台点【验收】，或那一场已结束/过期）——
   //    这是"下一步去哪儿"的事实，不是用法说明。
-  realmEmptyAcceptanceBody: '现在没有正在进行的验收：回工作台，在「采购 → 验收到货」里点【验收】。',
+  // 🔴 2026-10-12（业务负责人）：「**验收还是只在扫码页**，我不需要在工作台」
+  //    ⇒ 验收领域**没带批次号**时不再把她支去工作台，而是**自己列未到货的批次**（点一条就进）。
+  //    这张人话卡只在"那两种情况"下出现：**一个未到货批次都没有**（或读表失败）——
+  //    所以它只说事实 + 给下面那个手输框，不指路去别处。
+  realmEmptyAcceptanceBody: '现在没有未到货的批次：可以直接填批次号进验收。',
+  // ⭐ 验收领域自己开工（她点【验收】时看到的那一块）：
+  //    ① 列未到货批次（每条一行、点进 `/s/accept?batch=…`）；② 手输批次号兜底。
+  //    ⚠️ 全是**功能名/事实**，没有说明书腔。
+  acceptPendingTitle: '未到货的批次',
+  acceptPendingEmptyBody: '现在没有未到货的批次：可以直接填批次号进验收。',
+  acceptPendingManualTitle: '填批次号',
+  acceptPendingManualPlaceholder: '输入批次号',
+  acceptPendingManualSubmit: '进入验收',
+  // 批次行上那个数量的前缀（她那边叫「录入数量」—— 与 9 点推送同一口径）。
+  acceptPendingQuantityLabel: '录入数量',
+  // 每一条批次行右边那句事实（供应商 / 录入数量，**读得到才显示**）。
+  acceptPendingMetaSeparator: ' · ',
   realmEmptyAction: '看看这一款的库存 →',
   // 空编号（`/s/` 或全是空白）与解码失败都回这一页。
   badNumberTitle: '这个链接不对',
