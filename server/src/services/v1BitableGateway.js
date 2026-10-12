@@ -4,8 +4,16 @@ const path = require('node:path');
 const { V1_BITABLE_SCHEMA, getV1Table } = require('../config/v1BitableSchema');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
 const { larkLogger } = require('../utils/larkLogger');
-const { logError, logInfo } = require('../utils/logger');
+const { logError, logInfo, logWarn } = require('../utils/logger');
 const { correlationFields } = require('../utils/correlationFields');
+
+/** 飞书 `records/batch_get` 官方上限：一次最多 **500** 条（超了必须分片）。 */
+// 批量读写**每次的条数**：500。依据（curl 官方文档核过，2026-10-12）：
+//   · batch_create：「单次调用最多新增 1,000 条记录」（错误码 1254104 RecordAddOnceExceedLimit）；
+//   · 接口频率限制 **50 次/秒**；
+//   ⇒ 官方上限 1000，我们取 **500**：与既有 `getBatch` 同一把尺子、且给"内容变更较大"的
+//     1254002（Fail）留出余量（官方排查建议就是"单次减少数据量"）。
+const BATCH_GET_CHUNK_SIZE = 500;
 
 const compact = (value) => {
   const result = {};
@@ -177,6 +185,147 @@ class V1BitableGateway {
   }
 
   /** 更新一条记录；`options.correlation` 同 create（只进日志，不改任何请求内容）。 */
+  /**
+   * ⭐⭐ 2026-10-12（验收提速）：**批量新增** —— 一次请求最多 500 条。
+   *
+   * 为什么要有它：她真机每批 5 码，逐码"库存 + 流水"要串行敲 10+ 次飞书（每次约 10 秒）
+   * ⇒ 单这一刀就 119.5 秒。批量之后 5 行一次 ⇒ **一次请求**。
+   *
+   * 语义与单条 `create` **逐条一致**（这是硬要求，别在这里"顺手优化"）：
+   *   · **空数组 ⇒ 零请求**（返 `[]`，一次飞书都不打）；
+   *   · 分片 ≤ `BATCH_GET_CHUNK_SIZE`（500，与 `getBatch` 同一把尺子）；
+   *   · 任何一片失败 ⇒ **抛错**（不静默、不返回半截结果）；
+   *   · 返回与入参**同序**的 `[{ recordId, record }]`（调用方按位置对账）；
+   *   · `options.correlation` **不透明**透传（只进日志，不进 payload）。
+   */
+  async createBatch(tableKey, rows = [], options = {}) {
+    const list = Array.isArray(rows) ? rows : [];
+    if (!list.length) return [];
+    const table = this.tableWithId(tableKey);
+    const correlation = correlationFields(options.correlation);
+    const created = [];
+    for (let offset = 0; offset < list.length; offset += BATCH_GET_CHUNK_SIZE) {
+      const chunk = list.slice(offset, offset + BATCH_GET_CHUNK_SIZE);
+      const startedAt = Date.now();
+      try {
+        const response = await this.client.bitable.appTableRecord.batchCreate({
+          path: { app_token: this.schema.appToken, table_id: table.tableId },
+          data: { records: chunk.map((values) => ({ fields: compact(this.fields(tableKey, values)) })) },
+        });
+        // ⚠️ 措辞与单条 create **逐字一致**（白名单里已有 `新增“{}”记录`，不新增硬编码中文）
+        this.assertSuccess(response, `新增“${table.tableName}”记录`);
+        const records = response.data?.records || [];
+        if (records.length !== chunk.length) {
+          // ⭐ 先按 `getBatch` 的口径**如实记三个数**（requested / returned / missing），**再抛**：
+          //    写库场景宁可不静默（业务负责人 2026-10-12 拍板）—— 半截成功绝不当成功。
+          //    ⚠️ 官方文档（curl 核过，2026-10-12）：batch_create 出错是**整体非 0**，
+          //      没有 batchGet 那种"部分成功 + forbidden_record_ids"的语义 ⇒ 条数对不上就是异常。
+          logWarn('bitable.record.batch_write_mismatch', {
+            table_key: tableKey,
+            table_id: table.tableId,
+            operation: 'create',
+            requested: chunk.length,
+            returned: records.length,
+            missing: Math.max(0, chunk.length - records.length),
+            chunk_offset: offset,
+            ...correlation,
+          });
+          // 内部错误（正常不可达）：用**英文键**表述 ⇒ 不引入新的硬编码中文
+          throw new Error(`batch_create_count_mismatch: expected ${chunk.length}, got ${records.length}`);
+        }
+        created.push(...records.map((record) => ({
+          recordId: record?.record_id || '', record,
+        })));
+        logInfo('bitable.record.batch_created', {
+          table_key: tableKey,
+          table_id: table.tableId,
+          count: records.length,
+          chunk_offset: offset,
+          duration_ms: Date.now() - startedAt,
+          ...correlation,
+        });
+      } catch (error) {
+        logError('bitable.record.batch_create_failed', {
+          table_key: tableKey,
+          table_id: table.tableId,
+          count: chunk.length,
+          chunk_offset: offset,
+          error: error?.message || String(error),
+          ...correlation,
+        });
+        throw error;
+      }
+    }
+    return created;
+  }
+
+  /**
+   * ⭐⭐ 2026-10-12（验收提速）：**批量更新** —— 一次请求最多 500 条。
+   * `patches` = `[{ recordId, values }]`（`values` 是**语义键**，和单条 `update` 一样）。
+   * 其余语义（空 ⇒ 零请求 / 分片 / 失败抛错 / 同序返回 / correlation 不透明）与 `createBatch` 完全一致。
+   */
+  async updateBatch(tableKey, patches = [], options = {}) {
+    const list = Array.isArray(patches) ? patches : [];
+    if (!list.length) return [];
+    const table = this.tableWithId(tableKey);
+    const correlation = correlationFields(options.correlation);
+    const updated = [];
+    for (let offset = 0; offset < list.length; offset += BATCH_GET_CHUNK_SIZE) {
+      const chunk = list.slice(offset, offset + BATCH_GET_CHUNK_SIZE);
+      const startedAt = Date.now();
+      try {
+        const response = await this.client.bitable.appTableRecord.batchUpdate({
+          path: { app_token: this.schema.appToken, table_id: table.tableId },
+          data: {
+            records: chunk.map((patch) => ({
+              record_id: String(patch?.recordId || '').trim(),
+              fields: compact(this.fields(tableKey, patch?.values || {})),
+            })),
+          },
+        });
+        // ⚠️ 同上：复用白名单里已有的 `更新“{}”记录` 措辞
+        this.assertSuccess(response, `更新“${table.tableName}”记录`);
+        const records = response.data?.records || [];
+        if (records.length !== chunk.length) {
+          // ⭐ 同 createBatch：先记 requested / returned / missing 三个数，再抛
+          logWarn('bitable.record.batch_write_mismatch', {
+            table_key: tableKey,
+            table_id: table.tableId,
+            operation: 'update',
+            requested: chunk.length,
+            returned: records.length,
+            missing: Math.max(0, chunk.length - records.length),
+            chunk_offset: offset,
+            ...correlation,
+          });
+          throw new Error(`batch_update_count_mismatch: expected ${chunk.length}, got ${records.length}`);
+        }
+        updated.push(...records.map((record) => ({
+          recordId: record?.record_id || '', record,
+        })));
+        logInfo('bitable.record.batch_updated', {
+          table_key: tableKey,
+          table_id: table.tableId,
+          count: records.length,
+          chunk_offset: offset,
+          duration_ms: Date.now() - startedAt,
+          ...correlation,
+        });
+      } catch (error) {
+        logError('bitable.record.batch_update_failed', {
+          table_key: tableKey,
+          table_id: table.tableId,
+          count: chunk.length,
+          chunk_offset: offset,
+          error: error?.message || String(error),
+          ...correlation,
+        });
+        throw error;
+      }
+    }
+    return updated;
+  }
+
   async update(tableKey, recordId, semanticValues, options = {}) {
     const table = this.tableWithId(tableKey);
     const startedAt = Date.now();
@@ -215,6 +364,56 @@ class V1BitableGateway {
     });
     this.assertSuccess(response, `读取“${table.tableName}”记录`);
     return response.data?.record;
+  }
+
+  /**
+   * ⭐⭐ 2026-10-12「**销售提交提速（第二刀）**」：按 **已知 record id** 批量读
+   * （飞书 `POST /records/batch_get`）。
+   *
+   * 为什么需要它：本网关原来只有**单条** `get` ⇒「已知 id ⇒ 精确读」= 1 次主表读 + N 次 `get`，
+   * 比"1 次整表读"**调用更多** ⇒ 有了批量才有意义（业务负责人 2026-10-12 授权新增）。
+   *
+   * 口径（逐条都是红线）：
+   *   · **`ids` 为空 / 全是空串 ⇒ 不发任何请求**，直接返回 `[]` ✓
+   *   · 官方一次最多 **500** 条 ⇒ 自动**分片**（>500 分多次请求）✓
+   *   · **部分 id 不存在** ⇒ 返回**实际存在的**那些，日志里如实报"请求 N / 回来 M / 缺 N-M"
+   *     + 官方 `forbidden_record_ids` 的条数（**不编、不补空记录**）✓
+   *   · **失败 ⇒ 抛错**（`assertSuccess` 往上抛）—— **绝不静默返回空** ✗
+   *     （空会被上层当成"这一单没有明细" ⇒ 重复建行 = 钱/货的错）
+   *   · `options.correlation` 与其它方法同一条口径：**不透明**地进日志，不改任何请求内容 ✓
+   */
+  async getBatch(tableKey, ids = [], options = {}) {
+    const table = this.tableWithId(tableKey);
+    const wanted = (Array.isArray(ids) ? ids : [])
+      .map((id) => String(id || '').trim()).filter(Boolean);
+    if (!wanted.length) return [];
+    const correlation = correlationFields(options.correlation);
+    const records = [];
+    for (let offset = 0; offset < wanted.length; offset += BATCH_GET_CHUNK_SIZE) {
+      const chunk = wanted.slice(offset, offset + BATCH_GET_CHUNK_SIZE);
+      const startedAt = Date.now();
+      const response = await this.client.bitable.appTableRecord.batchGet({
+        path: { app_token: this.schema.appToken, table_id: table.tableId },
+        data: { record_ids: chunk },
+      });
+      this.assertSuccess(response, `批量读取“${table.tableName}”记录`);
+      const got = response.data?.records || [];
+      const forbidden = response.data?.forbidden_record_ids;
+      records.push(...got);
+      logInfo('bitable.record.batch_read', {
+        table_key: tableKey,
+        table_id: table.tableId,
+        requested: chunk.length,
+        returned: got.length,
+        // ⭐「缺了几条」如实报（官方没给名字就只报数，不猜是哪条）。
+        missing: Math.max(0, chunk.length - got.length),
+        forbidden: Array.isArray(forbidden) ? forbidden.length : 0,
+        chunk_offset: offset,
+        duration_ms: Date.now() - startedAt,
+        ...correlation,
+      });
+    }
+    return records;
   }
 
   async delete(tableKey, recordId) {

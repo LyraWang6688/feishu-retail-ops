@@ -106,7 +106,8 @@ const makeService = (options = {}) => {
     images: { render: async () => Buffer.from('fake-png') },
     batchReadMaxRetries: 1,
     batchReadRetryDelay: 0,
-    reportBatchWindowMs: 20,
+    // ⚠️ 2026-10-12 删掉了这里的「归批窗口」夹具键：它属于**已退场的**报货归批窗口
+    //    （那份配置 2026-10-09 随表单入口一起删除）⇒ `src/` 里**零读取点**，留着会让人以为还能配。
     batchLocatorStore: options.batchLocatorStore,
     // ⭐ 注入固定时钟（照 ④ 的写法）：批次号的"今天"取自**真实时钟**，
     //    不钉住它，跨午夜后断言里的 `CGD-20261007-…` 会变成 `CGD-20261008-…`（②/⑥ 曾因此变红）。

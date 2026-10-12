@@ -191,11 +191,61 @@ const tempDir = (label) => fs.mkdtempSync(path.join(os.tmpdir(), `scan-sale-e2e-
 const rmDir = (dir) => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) { /* 清理失败不影响结论 */ } };
 
 /**
+ * ⭐⭐ 2026-10-12：给假网关**每一趟飞书调用**加一个"线上量级"的延时，并把**每一次调用**
+ * 记进 `calls`（起止时间戳）。用途：**逐步耗时**的量法与"哪些调用是串行的"的证据。
+ * ⚠️ 只包读/写方法，**不改任何返回值**（业务链路仍然跑的是同一份代码）。
+ */
+const withLatency = (gateway, ms) => {
+  const calls = [];
+  const t0 = Date.now();
+  const callerOf = () => {
+    const lines = String(new Error().stack || '').split('\n');
+    for (const line of lines) {
+      const match = line.match(/src\/services\/([a-zA-Z]+)\.js/);
+      if (match) return match[1];
+      const route = line.match(/src\/routes\/([a-zA-Z]+)\.js/);
+      if (route) return `routes/${route[1]}`;
+    }
+    return 'unknown';
+  };
+  const wrap = (name) => async (...args) => {
+    const start = Date.now() - t0;
+    await new Promise((resolve) => { setTimeout(resolve, ms); });
+    try {
+      return await gateway[name](...args);
+    } finally {
+      calls.push({ name, table: String(args[0] ?? ''), start, end: Date.now() - t0, caller: callerOf() });
+    }
+  };
+  return Object.assign(Object.create(null), gateway, {
+    listAll: wrap('listAll'),
+    listByFilter: wrap('listByFilter'),
+    get: wrap('get'),
+    findOneByText: wrap('findOneByText'),
+    create: wrap('create'),
+    update: wrap('update'),
+    delete: wrap('delete'),
+    calls,
+    // 同一时刻**同时在飞**的调用数（>1 = 真的并行了）。
+    maxConcurrent: () => {
+      const marks = [];
+      for (const call of calls) { marks.push([call.start, 1], [call.end, -1]); }
+      marks.sort((left, right) => left[0] - right[0] || left[1] - right[1]);
+      let current = 0; let peak = 0;
+      for (const [, delta] of marks) { current += delta; if (current > peak) peak = current; }
+      return peak;
+    },
+  });
+};
+
+/**
  * 一套"真的在跑"的 E2E：真 HTTP 路由 + 真读服务 + 真写服务 + 真建单 / 交付 / 库存引擎；
  * **只有飞书那一层**是内存替身。
+ * ⭐ 2026-10-12：`gatewayOverride`（例：`withLatency(createFakeGateway(), 120)`）供
+ *    "逐步耗时"那几条用例注入延时；不传 = 与改前逐字相同的假网关。
  */
-const createE2E = () => {
-  const gateway = createFakeGateway();
+const createE2E = (gatewayOverride = null, writeOptions = {}) => {
+  const gateway = gatewayOverride || createFakeGateway();
   const sessionDir = tempDir('session');
   const inventoryDir = tempDir('inventory');
   const replenishDir = tempDir('replenish');
@@ -211,6 +261,8 @@ const createE2E = () => {
     // 这条 E2E 不碰补货链路：给它一对不会落盘的替身，免得误写工作区。
     purchase: {},
     purchaseStore: new JsonTaskStore({ dir: replenishDir, idField: 'task_id' }),
+    // ⭐ 2026-10-12：`readCache: false` 就是"改前"那一档（同一份代码、只关只读引用缓存）。
+    ...writeOptions,
   });
   const service = createScanPageService(gateway, { config: SCAN_PAGE, startSnapshot: false });
   const app = express();
@@ -444,7 +496,7 @@ test('AC-E2E-4 提交这一单（资金全空）⇒ 成功页（单号 + 双数�
       });
       const doneHtml = await done.text();
       assert.equal(done.status, 200, `第2步：资金全空应该直接成单（不是 400）：${doneHtml.slice(0, 200)}`);
-      assert.match(doneHtml, /这一单提交好了/, '第3步：给她的是"提交好了"那一页');
+      assert.match(doneHtml, /您的提交已成功/, '第3步：给她的是"提交好了"那一页');
       assert.match(doneHtml, /销售单号：XSD-\d{8}-\d{4}/, '第3步：结果页上有**单号**');
       assert.match(doneHtml, /明细：2 双（每双一行）/, '第3步：结果页上有**双数**');
 
@@ -636,7 +688,7 @@ test('AC-E2E-8 ⭐ 只填实收（或什么都不填）⇒ **一定能提交成�
       const firstHtml = await first.text();
       assert.equal(first.status, 200,
         `第1步：**只填实收也要能提交**（她卡的就是这一步）：${firstHtml.slice(0, 300)}`);
-      assert.match(firstHtml, /这一单提交好了/, '第1步：给她"提交好了"那一页');
+      assert.match(firstHtml, /您的提交已成功/, '第1步：给她"提交好了"那一页');
       assert.match(firstHtml, /明细：1 双（每双一行）/, '第1步：结果页上有双数');
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第1步：单子建出来了');
       assert.equal(rowsOf(e2e, 'salesDetail')[0].fields[F('salesDetail', 'actualAmount')], 99,
@@ -656,7 +708,7 @@ test('AC-E2E-8 ⭐ 只填实收（或什么都不填）⇒ **一定能提交成�
       });
       const secondHtml = await second.text();
       assert.equal(second.status, 200, `第2步：什么都不填也要能提交：${secondHtml.slice(0, 300)}`);
-      assert.match(secondHtml, /这一单提交好了/, '第2步：给她"提交好了"那一页');
+      assert.match(secondHtml, /您的提交已成功/, '第2步：给她"提交好了"那一页');
       assert.equal(rowsOf(e2e, 'salesEntry').length, 2, '第2步：第二张单也建出来了');
       assert.equal(rowsOf(e2e, 'paymentRecord').length, 0, '第2步：一条收款明细都没有');
       // 第3步：两张单都**不缺货那一半**（钱可以待补充，货不能丢）
@@ -708,7 +760,7 @@ test('AC-E2E-9 🔴 会话过期后：页面照旧打得开 ⇒ 用页面上那�
       const doneHtml = await done.text();
       assert.equal(done.status, 200,
         `第4步：过期会话提交**必须成功**（她真机卡的就是这里，改前是 400）：${doneHtml.slice(0, 300)}`);
-      assert.match(doneHtml, /这一单提交好了/, '第4步：给她"提交好了"那一页');
+      assert.match(doneHtml, /您的提交已成功/, '第4步：给她"提交好了"那一页');
       assert.match(doneHtml, /明细：2 双（每双一行）/, '第4步：两双都在（草稿没被过期吃掉）');
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第4步：成了一张单');
       assert.equal(rowsOf(e2e, 'salesDetail').length, 2, '第4步：两行明细');
@@ -816,7 +868,7 @@ test('AC-E2E-12 ⭐ 销售块提交「全付 + 微信 280 + 每件实收 280」�
       const html = await done.text();
       const mismatch = (html.match(/<p class="form-alert">([^<]*)<\/p>/) || [])[1] || '';
       assert.equal(done.status, 200, `第1步：提交要成功（400 时页面上那句人话 = ${mismatch}）：${html.slice(0, 200)}`);
-      assert.match(html, /这一单提交好了/, '第1步：结果页说提交好了');
+      assert.match(html, /您的提交已成功/, '第1步：结果页说提交好了');
 
       const rows = rowsOf(e2e, 'paymentRecord');
       assert.equal(rows.length, 1, '🔴 收款明细必须有 **1 行**（真机那次是 0 行）');
@@ -866,7 +918,7 @@ test('AC-E2E-14 ⭐ 结果页：✅ 一眼成功 + 单号 + 双数 + 下一步�
       const html = await done.text();
       assert.equal(done.status, 200);
       assert.match(html, /✅/, '结果页要有那个一眼就看得见的 ✅');
-      assert.match(html, /这一单提交好了/, '文案：这一单提交好了');
+      assert.match(html, /您的提交已成功/, '文案：您的提交已成功');
       assert.match(html, /销售单号：XSD-\d{8}-\d{4}/, '单号');
       assert.match(html, /明细：1 双/, '共几双');
       assert.match(html, /工作台/, '下一步：去工作台补实收/收款');
@@ -961,7 +1013,7 @@ test('AC-E2E-17 ⭐ 一单一笔 = **选尺码 + 提交**（两下）：空本�
       });
       const html = await done.text();
       assert.equal(done.status, 200, `第2步：一次 POST 就成单：${html.slice(0, 200)}`);
-      assert.match(html, /这一单提交好了/, '第2步：结果页说提交好了');
+      assert.match(html, /您的提交已成功/, '第2步：结果页说提交好了');
       assert.match(html, /明细：1 双/, '第2步：这一双真的进去了');
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '主表 1 行');
       assert.equal(rowsOf(e2e, 'salesDetail').length, 1, '明细 1 行');
@@ -1096,4 +1148,487 @@ test('⭐⭐新写 ③ 同一份资金输入：现货 / 预定两次的收款与
     assert.equal(withStock.ledgerCount, 1);
     assert.equal(withoutStock.ledgerCount, 0);
   } finally { cash.cleanup(); prepaid.cleanup(); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-12 提交链路【分阶段耗时】（业务负责人真机被卡住 / 收过 504 网关超时）
+//    她 2026-10-09 对取数那条说过「以后**一查日志就知道卡在哪一步**」——这里是**提交**那条的同一件事。
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** 抓 info 日志（`utils/logger` 的 info 就是 `console.log`，与 `scanPageLookupTiming` 同一做法）。 */
+const captureInfo = async (run) => {
+  const lines = [];
+  const original = console.log;
+  console.log = (line) => { lines.push(String(line)); };
+  try {
+    const value = await run();
+    return { value, entries: lines.map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).filter(Boolean) };
+  } finally { console.log = original; }
+};
+
+const TIMING_KEYS = ['submit_ms', 'queue_wait_ms', 'lookup_ms', 'prepare_ms', 'master_ms',
+  'status_ms', 'detail_ms', 'stock_ms'];
+
+const submitOnceForTiming = async (base, cookie, page, extra = {}) => postForm(pageUrlOf(base, NUMBER_A), cookie, {
+  action: SCAN_WRITE.actions.submitOrder,
+  submit_key: submitKeyOf(page.html),
+  payment_status: PAYMENT_STATUS.unpaid,
+  ...extra,
+});
+
+test('AC-E2E-16 ⭐ 提交链路**逐步耗时**：一条 `scan.sale.timing` 带出每一段（含排队等待）', async () => {
+  login();
+  // 每一趟"飞书调用" 60ms（线上量级：一次 API 往返几百 ms；这里取小值只为让用例快）。
+  const gateway = withLatency(createFakeGateway(), 60);
+  const e2e = createE2E(gateway);
+  const cookie = sessionCookie('ou_e2e_timing');
+  try {
+    await withServer(e2e.app, async (base) => {
+      await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      await addLine(base, cookie, NUMBER_A, '40');
+      const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      const startedAt = Date.now();
+      const callsBefore = gateway.calls.length;
+      const { value: response, entries } = await captureInfo(
+        () => submitOnceForTiming(base, cookie, page),
+      );
+      const wallMs = Date.now() - startedAt;
+      // ⚠️ 只算**这一趟提交**打出去的飞书调用（GET 渲染那几趟不算进来）。
+      const submitCalls = gateway.calls.slice(callsBefore);
+      assert.equal(response.status, 200, `提交要成（${response.status}）`);
+      const timing = entries.filter((entry) => entry.event === SCAN_WRITE.events.saleTiming).pop();
+      assert.ok(timing, '必须打出一条 scan.sale.timing（"一查日志就知道卡在哪一步"）');
+      for (const key of TIMING_KEYS) {
+        assert.equal(typeof timing[key], 'number', `timing 里要有数字 ${key}`);
+      }
+      assert.equal(timing.ok, true);
+      assert.ok(submitCalls.length > 0, '这一趟提交至少要打一次飞书');
+      assert.ok(timing.master_ms > 0, `建主表那一段要能量出来（假网关每趟 60ms）：${timing.master_ms}`);
+      assert.ok(timing.detail_ms > 0, `明细/收款那一段要能量出来：${timing.detail_ms}`);
+      // 分段之和**不许超过**这一趟的墙钟（分段是墙钟的子集；差值 = 本文件没打点的零头 + 渲染）。
+      const parts = timing.queue_wait_ms + timing.lookup_ms + timing.prepare_ms
+        + timing.master_ms + timing.status_ms + timing.detail_ms + timing.stock_ms;
+      assert.ok(parts <= timing.submit_ms + 80,
+        `分段之和(${parts}ms) 不该超过 submit_ms(${timing.submit_ms}ms) + 打点零头`);
+      assert.ok(timing.submit_ms <= wallMs + 80, 'submit_ms 是墙钟的一部分');
+      // 打印逐步耗时（人看的报告；这也是"改前/改后"对照的原始数据）。
+      const rows = [
+        ['lookup(取商品)', timing.lookup_ms], ['queue_wait(排队)', timing.queue_wait_ms],
+        ['prepare(会话+校验)', timing.prepare_ms], ['master(建主表)', timing.master_ms],
+        ['status(确认状态)', timing.status_ms], ['detail(明细/收款)', timing.detail_ms],
+        ['stock(交付/扣库存)', timing.stock_ms],
+      ];
+      // eslint-disable-next-line no-console
+      const byTable = {};
+      for (const call of submitCalls) {
+        const key = `${call.name}:${call.table}`;
+        byTable[key] = (byTable[key] || 0) + 1;
+      }
+      const byCaller = {};
+      for (const call of submitCalls) {
+        const key = `${call.caller} → ${call.name}:${call.table}`;
+        byCaller[key] = (byCaller[key] || 0) + 1;
+      }
+      process.stdout.write('\n  ── 谁打的（按文件归因）──\n'
+        + Object.entries(byCaller).sort((a, b) => b[1] - a[1])
+          .map(([key, count]) => `  ${key}: ${count}次`).join('\n') + '\n');
+      process.stdout.write(`\n【逐步耗时】submit_ms=${timing.submit_ms}ms wall=${wallMs}ms 飞书调用=${submitCalls.length}次 峰值并发=${gateway.maxConcurrent()}\n`
+        + rows.map(([label, ms]) => `  ${label}: ${ms}ms`).join('\n')
+        + '\n  ── 每一趟飞书调用按表统计 ──\n'
+        + Object.entries(byTable).sort((a, b) => b[1] - a[1])
+          .map(([key, count]) => `  ${key}: ${count}次`).join('\n') + '\n');
+    });
+  } finally { e2e.cleanup(); }
+});
+
+test('AC-E2E-17 ⭐ 排队等待看得见：**同一把键连点两次**时第二次几乎不等（幂等短路）', async () => {
+  login();
+  const gateway = withLatency(createFakeGateway(), 40);
+  const e2e = createE2E(gateway);
+  const cookie = sessionCookie('ou_e2e_timing_replay');
+  try {
+    await withServer(e2e.app, async (base) => {
+      await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      await addLine(base, cookie, NUMBER_A, '40');
+      const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      const first = await captureInfo(() => submitOnceForTiming(base, cookie, page));
+      const firstTiming = first.entries.filter((e) => e.event === SCAN_WRITE.events.saleTiming).pop();
+      const second = await captureInfo(() => submitOnceForTiming(base, cookie, page));
+      const secondTiming = second.entries.filter((e) => e.event === SCAN_WRITE.events.saleTiming).pop();
+      assert.equal((await second.value.text()) && second.value.status, 200);
+      assert.ok(firstTiming && secondTiming, '两次都要有 scan.sale.timing');
+      assert.equal(secondTiming.reused, true, '第二次 = 重放（不许再写一遍）');
+      assert.equal(secondTiming.detail_ms, 0, '重放**一次飞书写都不该打**（detail 段为 0）');
+      assert.equal(secondTiming.master_ms, 0, '重放不该再建主表');
+      assert.ok(secondTiming.submit_ms < firstTiming.submit_ms,
+        `重放要明显快于首次（第二次 ${secondTiming.submit_ms}ms vs 首次 ${firstTiming.submit_ms}ms）`);
+      // eslint-disable-next-line no-console
+      process.stdout.write(`\n【幂等对照】首次 submit_ms=${firstTiming.submit_ms}ms / 重放 submit_ms=${secondTiming.submit_ms}ms\n`);
+    });
+  } finally { e2e.cleanup(); }
+});
+
+// ⭐⭐ 2026-10-12 (b) 提速：**改前 / 改后 逐步耗时对照**（同一份代码，只切"只读引用缓存"这一档）
+/** 一趟提交的飞书调用数 / 分阶段耗时（可指定编号与尺码）。 */
+const measureOneSubmit = async (base, gateway, cookie, number, size) => {
+  await getPage(pageUrlOf(base, number), cookie);
+  await addLine(base, cookie, number, size);
+  const page = await getPage(pageUrlOf(base, number), cookie);
+  const callsBefore = gateway.calls.length;
+  const { value: response, entries } = await captureInfo(async () => postForm(pageUrlOf(base, number), cookie, {
+    action: SCAN_WRITE.actions.submitOrder,
+    submit_key: submitKeyOf(page.html),
+    // 下单时把这一双一起带进来（选尺码 + 提交两下）。
+    size,
+    payment_status: PAYMENT_STATUS.unpaid,
+    payment_method: '', payment_amount: '', line_amount: [''],
+  }));
+  const timing = entries.filter((entry) => entry.event === SCAN_WRITE.events.saleTiming).pop();
+  assert.ok(timing, '要有一条 scan.sale.timing');
+  const calls = gateway.calls.slice(callsBefore);
+  return {
+    status: response.status,
+    calls,
+    timing,
+    byTable: calls.reduce((acc, call) => {
+      const key = `${call.name}:${call.table}`;
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {}),
+  };
+};
+
+/**
+ * ⭐ 改前 / 改后对照：**同一个进程里连着提交两单**（她连续扫码的真实用法）。
+ * 第 1 单把只读引用读一遍（冷缓存），第 2 单才是"缓存生效"的那一单 ——
+ * 拿第 2 单的飞书调用数比，才是只读缓存真正省下来的。
+ */
+const measureTwoSubmits = async (writeOptions, openId) => {
+  const gateway = withLatency(createFakeGateway(), 40);
+  const e2e = createE2E(gateway, writeOptions);
+  const cookie = sessionCookie(openId);
+  try {
+    return await withServer(e2e.app, async (base) => {
+      const first = await measureOneSubmit(base, gateway, cookie, NUMBER_A, '40');
+      const second = await measureOneSubmit(base, gateway, cookie, NUMBER_B, '41');
+      return { first, second };
+    });
+  } finally { e2e.cleanup(); }
+};
+
+test('AC-E2E-18 ⭐ 提速对照：**只读引用缓存**开 / 关（连续提交两单 ⇒ 看第 2 单）', async () => {
+  login();
+  const off = await measureTwoSubmits({ readCache: false }, 'ou_e2e_cache_off');
+  const on = await measureTwoSubmits({}, 'ou_e2e_cache_on');
+  assert.equal(off.first.status, 200);
+  assert.equal(off.second.status, 200);
+  assert.equal(on.first.status, 200);
+  assert.equal(on.second.status, 200);
+  // 对照用"第 2 单"（第 1 单是冷缓存，两边一样）。
+  const before = off.second;
+  const after = on.second;
+  // ⚠️ 这条 E2E 的"交付"是**本文件自己注入**的（用原始网关，免得测试往 server/data 落库存文件）
+  //    ⇒ 交付那一段的引用读**不经过**写服务的只读缓存。
+  //    所以这里**不**断言"E2E 调用数一定变少"（那是夹具的限制，不是产品行为）；
+  //    只读缓存的**去重效果**由单元用例 `scanWriteReadCache.test.js` 直接钉。
+  //    这里钉的是**红线**：缓存**不许**碰到任何写入判据。
+  // 🔴 写与"写入判据"那几张表**一次都不许少**（缓存碰不到它们 —— 这条就是红线哨兵）。
+  for (const key of ['update:salesEntry', 'listAll:salesDetail', 'listAll:paymentRecord',
+    'listAll:liveInventory', 'create:salesEntry', 'create:salesDetail', 'delete:liveInventory']) {
+    assert.equal(after.byTable[key] || 0, before.byTable[key] || 0,
+      `${key} 的次数必须与改前**逐字相同**（只读缓存不许影响写入判据）`);
+  }
+  const delta = before.timing.submit_ms - after.timing.submit_ms;
+  // eslint-disable-next-line no-console
+  process.stdout.write('\n【提速对照（假网关每趟 40ms；连续两单，看**第 2 单**）】\n'
+    + `  改前（冷/热）：第1单 飞书 ${off.first.calls.length} 次 / 第2单 飞书 ${before.calls.length} 次`
+    + `｜第2单 submit_ms=${before.timing.submit_ms}ms`
+    + `（master ${before.timing.master_ms} / status ${before.timing.status_ms} / detail ${before.timing.detail_ms} / stock ${before.timing.stock_ms}）\n`
+    + `  改后（冷/热）：第1单 飞书 ${on.first.calls.length} 次 / 第2单 飞书 ${after.calls.length} 次`
+    + `｜第2单 submit_ms=${after.timing.submit_ms}ms`
+    + `（master ${after.timing.master_ms} / status ${after.timing.status_ms} / detail ${after.timing.detail_ms} / stock ${after.timing.stock_ms}）\n`
+    + `  ⇒ 只读引用缓存省下：飞书 ${before.calls.length - after.calls.length} 次 / submit_ms ${delta >= 0 ? '少' : '多'} ${Math.abs(delta)}ms`
+    + '（⚠️ 本夹具自己注入了交付实例，交付那段的引用读没走缓存 ⇒ 省下的只是"写服务这一侧"的）\n');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-12（她拍板 · 方案 A，逐字）：「**提交完 ⇒ 自动回首页，而首页 = 销售页** ✓」
+//   AC-SR1 提交成功 ⇒ 成功页里**自动跳转目标 = 销售领域的扫码首页**（服务端渲染的**确定 URL**，逐字）
+//   AC-SR2 【返回扫码】的 href 与自动跳转目标**逐字相同**（唯一来源 ✓）
+//   AC-SR3 **先看到结果**：成功页首屏就有单号（不许秒跳吞掉 ✓）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-SR1/SR2/SR3 销售提交成功 ⇒ 自动回**销售**首页（URL 确定 + 按钮同 URL + 首屏有单号）', async () => {
+  login();
+  const e2e = createE2E();
+  try {
+    await withServer(e2e.app, async (base) => {
+      const cookie = sessionCookie('ou_e2e_success_return');
+      await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      await addLine(base, cookie, NUMBER_A, '40');
+      const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      const response = await submitOnceForTiming(base, cookie, page);
+      assert.equal(response.status, 200, `提交要成（${response.status}）`);
+      const html = await response.text();
+      const meta = html.match(/<meta http-equiv="refresh" content="(\d+);url=([^"]+)">/);
+      assert.ok(meta, `成功页要有"自动回首页"（服务端渲染的确定 URL）：${html.slice(0, 200)}`);
+      // ⭐ 目标 = **销售领域的扫码首页**：就是她扫的那个编号那一页——
+      //   ⚠️ 销售是**缺省领域**，`postActionFor` 对它**不写** `?from=`（所以两种写法都对 ✓）
+      const target = new URL(meta[2], 'http://x');
+      assert.equal(target.pathname, `/s/${encodeURIComponent(NUMBER_A)}`,
+        `自动跳转目标要是她扫的那一页（实际 ${meta[2]}）`);
+      const from = target.searchParams.get('from');
+      assert.ok(from === null || from === 'sales',
+        `目标是**销售**领域（缺省不写 ?from= ✓，实际 from=${from}）`);
+      assert.ok(Number(meta[1]) >= 1, `要先让她看到结果再跳（实际 ${meta[1]}s）`);
+      const link = html.match(/<a class="btn" data-view="success-return" href="([^"]+)">/);
+      assert.ok(link, '还要有一颗【返回扫码】兜底');
+      assert.equal(link[1], meta[2], '按钮 href 与自动跳转目标**必须同一个 URL**（唯一来源 ✓）');
+      // 首屏就有结果（单号）——不会被"秒跳"吞掉 ✓
+      assert.match(html, /XSD-/, '成功页里要有单号（结果先显示 ✓）');
+    });
+  } finally { e2e.cleanup?.(); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-12（她拍板，逐字）：「扫 16 ⇒ 补货 ⇒ 提交 ⇒ 继续扫 ⇒ **自动还是补货** … 中途想卖货 ⇒ 点一下【销售】」
+//   口径：**裸扫**（标签码不带 `?from=`）时用她**最近用过**的领域；显式 `?from=` 永远优先；
+//        从没记过 ⇒ 仍是缺省**销售**（既有口径不回归 ✓）；**只在写成功时记**（看一眼不算 ✓）。
+//
+//   AC-RF1 记得住：记过「补货」⇒ 裸扫落在**补货**
+//   AC-RF2 显式优先：`?from=sales` 覆盖记忆 ⇒ 落**销售**
+//   AC-RF3 没记忆 ⇒ 仍落**销售**（既有缺省 ✓）
+//   AC-RF4 只写成功才记：真提交一次销售 ⇒ 会话 `last_realm = sales`（并且成功页照旧回销售首页 ✓ AC-SR）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-RF1 记过「补货」⇒ **裸扫**（不带 ?from=）落在补货领域', async () => {
+  login();
+  const e2e = createE2E();
+  try {
+    await withServer(e2e.app, async (base) => {
+      const openId = 'ou_e2e_realm_1';
+      const cookie = sessionCookie(openId);
+      // ① 先证明"写进去了"（⚠️ 不证这一步就会把 AC 写成"没记忆却怪读不到" ✗）
+      await e2e.sessions.setLastRealm(openId, 'replenish');
+      assert.equal((await e2e.sessions.get(openId)).last_realm, 'replenish', '记忆要真写上');
+      // ② ⚠️ 必须是**真·裸扫**：`pageUrlOf` 永远带 `?from=sales` ⇒ 那条不算裸扫 ✗
+      //    （我第一版就是这么写错的：显式 from 优先 ⇒ 当然落回销售 ⇒ 假红）
+      const { html } = await getPage(`${base}/s/${encodeURIComponent(NUMBER_A)}`, cookie);
+      assert.ok(html.includes('realm-block--replenish'),
+        '她上次在补货里干过活 ⇒ 裸扫要**自动还是补货**（她的原话 ✓）');
+      assert.equal(html.includes('realm-block--sales'), false, '不该落回销售');
+    });
+  } finally { e2e.cleanup(); }
+});
+
+test('AC-RF2 显式 `?from=sales` ⇒ 以它为准（记忆不覆盖显式）', async () => {
+  login();
+  const e2e = createE2E();
+  try {
+    await withServer(e2e.app, async (base) => {
+      const openId = 'ou_e2e_realm_2';
+      const cookie = sessionCookie(openId);
+      await e2e.sessions.setLastRealm(openId, 'replenish');
+      const { html } = await getPage(`${pageUrlOf(base, NUMBER_A)}&from=sales`, cookie);
+      assert.ok(html.includes('realm-block--sales'), '她点【销售】⇒ 必须听她的（随时随地能切 ✓）');
+      assert.equal(html.includes('realm-block--replenish'), false, '显式覆盖记忆 ✓');
+    });
+  } finally { e2e.cleanup(); }
+});
+
+test('AC-RF3 从来没记过 ⇒ 仍落缺省**销售**（既有口径不回归）', async () => {
+  login();
+  const e2e = createE2E();
+  try {
+    await withServer(e2e.app, async (base) => {
+      const cookie = sessionCookie('ou_e2e_realm_3');
+      const { html } = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      assert.ok(html.includes('realm-block--sales'), '从没记过 ⇒ 销售（既有缺省 ✓）');
+    });
+  } finally { e2e.cleanup(); }
+});
+
+test('AC-RF4 只在**写成功**时记：真提交一次销售 ⇒ 会话 last_realm = sales', async () => {
+  login();
+  const e2e = createE2E();
+  try {
+    await withServer(e2e.app, async (base) => {
+      const openId = 'ou_e2e_realm_4';
+      const cookie = sessionCookie(openId);
+      await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      await addLine(base, cookie, NUMBER_A, '40');
+      const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      const response = await submitOnceForTiming(base, cookie, page);
+      assert.equal(response.status, 200, '提交要成');
+      // ⚠️ 记领域是**写完才发生**（fire-and-forget）⇒ 给事件循环一拍再读
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const session = await e2e.sessions.get(openId);
+      assert.equal(session.last_realm, 'sales', `写成功要记下领域（实际 ${session.last_realm}）`);
+    });
+  } finally { e2e.cleanup(); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-12（她拍板）：**三路成功页都自动回**——销售/补货/退货 ⇒ 【销售】扫码页；
+//   验收 ⇒ 【未到货批次列表】（选项 ① ✓）；两类都在 `SUCCESS_RETURN` 里区分（一处改 ✓）。
+//
+//   AC-SR4 接线哨兵：三路成功 payload 都走**同一个** `successReturnFields(...)`（不各写一遍 ✗）
+//   AC-SR5 验收成功页：自动跳转目标 = **未到货批次列表** · 返回按钮**同一 URL** · 首屏有实际数量/金额
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-SR4 接线哨兵：销售/补货/退货三路都走同一个 successReturnFields（唯一来源 ✓）', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/routes/scanPage.js'), 'utf8');
+  // ⚠️ 只数**调用**（定义那行是 `const successReturnFields = (req, target)` ⇒ 带空格，不被这个正则算进来 ✓）
+  const calls = source.match(/successReturnFields\(/g) || [];
+  assert.equal(calls.length, 3, `三路（销售 / 补货 / 退货）都要接上（实际 ${calls.length} 处调用）`);
+  for (const anchor of ['scan_sale_submitted', 'scan_replenish_submitted', 'scan_purchase_return_submitted']) {
+    const at = source.indexOf(anchor);
+    assert.ok(at > -1, `${anchor} 那一段要在`);
+    assert.ok(source.slice(at, at + 400).includes('markRealmUsed('), `${anchor} 之后要记住领域`);
+  }
+  const cfg = fs.readFileSync(path.join(__dirname, '../src/config/scanPage.js'), 'utf8');
+  assert.match(cfg, /homeRealm: 'sales'/, '三路回销售（她的口径）');
+  assert.match(cfg, /acceptHome: 'pendingBatches'/, '验收回未到货批次列表（她 ① ✓）');
+});
+
+test('AC-SR5 验收成功页：自动回**未到货批次列表** + 按钮同 URL + 首屏有实际数量/金额', async () => {
+  const { renderAcceptanceDonePage } = require('../src/views/scanPageRenderer');
+  const { SCAN_PAGE } = require('../src/config/scanPage');
+  const { SCAN_WRITE } = require('../src/config/scanWrite');
+  const backHref = '/s/accept';
+  const html = renderAcceptanceDonePage({
+    config: SCAN_PAGE,
+    write: { texts: SCAN_WRITE.texts },
+    acceptance: { batchNo: 'CGD-20261012-0009', scanned: 5, amountText: '10' },
+    backHref,
+    returnPath: backHref,
+    returnLabel: SCAN_PAGE.successReturn.label,
+    returnDelaySeconds: SCAN_PAGE.successReturn.delaySeconds,
+    autoReturnUrl: backHref,
+  });
+  const meta = html.match(/<meta http-equiv="refresh" content="(\d+);url=([^"]+)">/);
+  assert.ok(meta, '要自动回（服务端确定 URL）');
+  assert.equal(meta[2], '/s/accept', '验收 ⇒ 未到货批次列表（选项 ① ✓ 别"顺手统一"改掉 ✗）');
+  const link = html.match(/<a class="btn" data-view="success-return" href="([^"]+)">/);
+  assert.ok(link, '要有一颗【返回扫码】兜底');
+  assert.equal(link[1], meta[2], '按钮 href 与自动跳转**同一 URL** ✓');
+  assert.match(html, /实际数量 5/, '首屏就有实际数量（不被秒跳吞掉 ✓）');
+  assert.match(html, /实际金额 10/, '首屏就有实际金额 ✓');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-12（她真机：`POST /MK31-1|咖色|B` ⇒ **400 / 1ms**、周围**零日志** ✗
+//   页面提示「这一页上的按钮我认不出来（可能放太久了）」—— 页面才渲染 41 秒 ⇒ **不是放太久** ✗）
+//
+//   ⚠️ 写法教训（我踩过）：**日志不能靠"补 `console.log`/`process.stdout.write`"来断言** ✗
+//     —— `utils/logger` 在**模块加载时**就把 sink 绑死了：`logInfo` 走 `console.log`、`logWarn` 走
+//     另一个已绑定的 writer ⇒ 后打的补丁**收不到**（我因此得出过"日志没打"的**错误结论** ✗）。
+//     所以这几条 AC 断言**可观测的行为**（她看到的人话）+ **源码哨兵**（那条 warn 的字段）✓
+//
+//   AC-UA1 缺 action ⇒ 400 + 人话「这一页没带上要做什么」· AC-UA2 空 action ⇒ 同一句
+//   AC-UA3 认不出的 action ⇒ 原句「按钮我认不出来」（**不再说"可能放太久了"** ✗）
+//   AC-UA4 源码哨兵：那条 warn 带 `action_kind`（missing/blank/unrecognized 三分）
+//                    + **只打字段名**（`body_keys`），**不打 body 的值** ✗
+//   AC-UA5 ⭐ 页面上的 POST 表单**每一张都带 hidden action**（她那条 400 的可能根因 ⇒ 查过：没有 ✓）
+// ═══════════════════════════════════════════════════════════════════════════
+
+const htmlTextOf = async (response) => String(await response.text()).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+
+test('AC-UA1 缺 action ⇒ 400 + 人话「这一页没带上要做什么」（不是"可能放太久了"✗）', async () => {
+  login();
+  const e2e = createE2E();
+  try {
+    await withServer(e2e.app, async (base) => {
+      const response = await postForm(pageUrlOf(base, NUMBER_A), sessionCookie('ou_ua_1'), { size: '40' });
+      assert.equal(response.status, 400, '认不出来 ⇒ 400');
+      const text = await htmlTextOf(response);
+      assert.ok(text.includes(SCAN_WRITE.texts.unknownActionMissingBody),
+        `缺 action 要给"没带上要做什么"：${text.slice(0, 200)}`);
+      assert.equal(text.includes('可能放太久了'), false, '那句误导的话要删掉 ✗');
+    });
+  } finally { e2e.cleanup(); }
+});
+
+test('AC-UA2 空 action ⇒ 同一句人话（blank 与 missing 同一出口）', async () => {
+  login();
+  const e2e = createE2E();
+  try {
+    await withServer(e2e.app, async (base) => {
+      const response = await postForm(pageUrlOf(base, NUMBER_A), sessionCookie('ou_ua_2'), { action: '' });
+      assert.equal(response.status, 400);
+      assert.ok((await htmlTextOf(response)).includes(SCAN_WRITE.texts.unknownActionMissingBody));
+    });
+  } finally { e2e.cleanup(); }
+});
+
+test('AC-UA3 认不出的 action ⇒ 保留原句（且不再说"放太久了"）', async () => {
+  login();
+  const e2e = createE2E();
+  try {
+    await withServer(e2e.app, async (base) => {
+      const response = await postForm(pageUrlOf(base, NUMBER_A), sessionCookie('ou_ua_3'), { action: 'no_such_action' });
+      assert.equal(response.status, 400);
+      const text = await htmlTextOf(response);
+      assert.ok(text.includes(SCAN_WRITE.texts.unknownActionBody), '认不出 ⇒ 原句');
+      assert.equal(text.includes('可能放太久了'), false, '误导那句要删掉 ✗');
+    });
+  } finally { e2e.cleanup(); }
+});
+
+test('AC-UA4 源码哨兵：那条 warn 三分 action_kind + **只打字段名**（不打 body 的值 ✗）', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/routes/scanPage.js'), 'utf8');
+  assert.match(source, /action_kind: kind/, '要带 action_kind');
+  assert.match(source, /raw === undefined \? 'missing'/, "缺 action ⇒ 'missing'");
+  assert.match(source, /'blank'/, "空 action ⇒ 'blank'（与 missing 分开 ✓）");
+  assert.match(source, /'unrecognized'/, "认不出 ⇒ 'unrecognized'");
+  assert.match(source, /body_keys: Object\.keys\(body\)/, '只打字段名 ✓');
+  assert.equal(/body_keys[\s\S]{0,40}\.\.\.body/.test(source), false, '不许把 body 整个铺进日志 ✗');
+  const cfg = fs.readFileSync(path.join(__dirname, '../src/config/scanWrite.js'), 'utf8');
+  assert.match(cfg, /unknownWriteAction: 'scan\.write\.unknown_action'/, '事件名走配置 ✓');
+});
+
+test('AC-UA5 ⭐ 页面上的 POST 表单**每张都带 hidden action**（她那条 400 的可能根因）', async () => {
+  login();
+  const e2e = createE2E();
+  try {
+    await withServer(e2e.app, async (base) => {
+      const cookie = sessionCookie('ou_ua_5');
+      await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      await addLine(base, cookie, NUMBER_A, '40');
+      const realms = ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product'];
+      for (const realm of realms) {
+        const { html } = await getPage(pageUrlOf(base, NUMBER_A, realm), cookie);
+        const forms = html.match(/<form[\s\S]*?<\/form>/g) || [];
+        for (const form of forms) {
+          if (!/method="post"/.test(form)) continue;
+          // ⚠️ 打印那颗【打印这一款】的表单：action 挂在**按钮**上，且被打印线的哨兵**逐字钉着**
+          //    （只有一段脚本 / 隐藏字段来自配置）⇒ **不动它** ✓；它也不属于"她提交按钮的写操作"那条路 ✓
+          if (form.includes('label-print-form')) continue;
+          assert.ok(/name="action"/.test(form),
+            `${realm} 领域有一张 POST 表单**没带 action** ⇒ 点它必然 400 ✗：${form.slice(0, 160)}`);
+          // ⭐ 2026-10-12：每张**写表单**还要带"这一页是哪一版渲染的"（她那次 400 是不是旧页面 ✓）
+          assert.ok(new RegExp(`name="page_build" value="${SCAN_PAGE.pageBuild.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`).test(form),
+            `${realm} 领域的写表单要带当前构建标识（实际 pageBuild=${SCAN_PAGE.pageBuild}）：${form.slice(0, 160)}`);
+        }
+      }
+    });
+  } finally { e2e.cleanup(); }
+});
+
+test('AC-UA6 源码哨兵：warn 里带 page_build（缺失标 missing / 不一致标 stale）', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/routes/scanPage.js'), 'utf8');
+  assert.match(source, /page_build: String\(body\[config\.pageBuildField/, '要读页面带回的构建标识');
+  assert.match(source, /\|\| 'missing'/, "旧页面/手改表单（没带该字段）⇒ 标 'missing'（正是要抓的 ✓）");
+  assert.match(source, /page_build_stale:/, '与当前构建不一致 ⇒ 标 stale');
+  const cfg = fs.readFileSync(path.join(__dirname, '../src/config/scanPage.js'), 'utf8');
+  assert.match(cfg, /pageBuild: PAGE_BUILD/, '构建标识走 config（一处定义 ✓）');
+  assert.match(cfg, /APP_COMMIT/, '带 commit（发版窗口里能分辨新旧 ✓）');
+});
+
+test('AC-UA7 渲染层：每个写表单的 action 后面**只加**一个 page_build（既有语义不动 ✓）', () => {
+  const renderer = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
+  const fields = (renderer.match(/\$\{pageBuildField\(\)\}/g) || []).length;
+  // 7 处 action 隐藏字段 + 销售提交表单（它的 action 在**按钮**上 ⇒ 只加 page_build）
+  assert.equal(fields, 8, `8 张写表单都加上了（实际 ${fields} 处）`);
+  assert.match(renderer, /const pageBuildField = \(\) => hiddenField\(\n\s*SCAN_PAGE\.pageBuildField/, '字段名走 config ✓');
 });

@@ -1,0 +1,144 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "id": "fldiWIGWvy",
+        "name": "是否启用",
+        "type": "checkbox"
+      },
+      {
+        "default_value": null,
+        "id": "fld2LvYsFM",
+        "multiple": false,
+        "name": "资金方向",
+        "options": [
+          {
+            "hue": "Lime",
+            "lightness": "Lighter",
+            "name": "收入"
+          },
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "支出"
+          },
+          {
+            "hue": "Lime",
+            "lightness": "Lighter",
+            "name": "不影响"
+          },
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "按结算状态"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "default_value": null,
+        "id": "fldwCjFEjN",
+        "multiple": false,
+        "name": "所属环节",
+        "options": [
+          {
+            "hue": "Gray",
+            "lightness": "Lighter",
+            "name": "采购"
+          },
+          {
+            "hue": "Carmine",
+            "lightness": "Lighter",
+            "name": "销售"
+          },
+          {
+            "hue": "Lime",
+            "lightness": "Lighter",
+            "name": "库存"
+          },
+          {
+            "hue": "Gray",
+            "lightness": "Lighter",
+            "name": "资金"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "default_value": null,
+        "id": "fldn4YCfY2",
+        "name": "行为编码",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "default_value": null,
+        "id": "fld7THpzZY",
+        "name": "描述",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "default_value": null,
+        "id": "fld5bfugzg",
+        "name": "行为名称",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldd19aYby",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      },
+      {
+        "default_value": null,
+        "id": "fldWX7hSNS",
+        "multiple": false,
+        "name": "库存方向",
+        "options": [
+          {
+            "hue": "Purple",
+            "lightness": "Lighter",
+            "name": "增加"
+          },
+          {
+            "hue": "Carmine",
+            "lightness": "Lighter",
+            "name": "减少"
+          },
+          {
+            "hue": "Lime",
+            "lightness": "Lighter",
+            "name": "不影响"
+          },
+          {
+            "hue": "Turquoise",
+            "lightness": "Lighter",
+            "name": "按明细角色"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "id": "fld5Irbyj7",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      }
+    ],
+    "total": 9
+  }
+}

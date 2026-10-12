@@ -1,3 +1,5 @@
+// ⭐ 用户可见文案抽到 config（2026-10-12 技术债批次：只挪位置，一个字符没改）
+const { purchaseMessage, purchaseToast, arrivalToast, inventoryToast } = require('../config/purchaseWebhookTexts');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -43,6 +45,7 @@ const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { renderPurchaseRequestPng, RETURN_TITLE } = require('./purchaseRequestImageService');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { IDEMPOTENCY_KEY_FIELD, createOnceByKey } = require('../infrastructure/idempotencyKey');
+const { batchQuantityFields } = require('../config/purchaseBatchQuantity');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { withTimeout, withTimeoutProxy } = require('../utils/withTimeout');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
@@ -1604,6 +1607,14 @@ class PurchaseWebhookService {
           batchNo: plan.batch_no,
           idempotencyKey: plan.batch_key,
           arrivalStatus: this.orderBatches.pendingStatus,
+          // ⭐⭐ 2026-10-12（业务负责人测出来的缺口，逐字：「这**录入数量**里面应该是 5 啊，
+          //    但是对于我们的这个数据表里面，它是记录为空呀」）：
+          //    「录入数量」= **这一批的录入数量合计**（明细数量求和）。
+          //    · 她走的两条入口（**供应商报单 webhook** / **扫码页补货**）都汇到这一处建行点
+          //      ⇒ 一个写入点同时覆盖两条路 ✓
+          //    · **拿不到 / 0 ⇒ 不写这一列**（`batchQuantityFields` 返空对象，网关跳过）
+          //    · **幂等**：`createOnceByKey` 命中已有行时**整段 values 都不会重发** ⇒ 值不变、不累加 ✓
+          ...batchQuantityFields(plan.items),
           // ⭐⭐ 2026-10-12（业务负责人）：「**采购主表里面的采购行为确实是需要的**，因为一个是
           //    报货，一个是退货」⇒ 建主表行时写「采购行为」（**报货这一路 = 采购申请那一档**）。
           //    值 = **行为记录 id**（`ensurePostingPlan` 里已经按这一次的明细冻结好了：
@@ -1699,9 +1710,9 @@ class PurchaseWebhookService {
     await this.deliverSupplierImages(taskId, task, posting);
     // 更新卡片为"已完成"状态（免确认路径没有卡片，跳过）
     if (!options.skipCardUpdate) {
-      await this.updatePurchaseActionCard(task, event, purchaseStatusCard({ ...draft, batch_no: plan.batch_no }, '采购申请已生成', `报货批次号：${plan.batch_no}；共 ${requestIds.length} 条明细已写入。`, 'green'));
+      await this.updatePurchaseActionCard(task, event, purchaseStatusCard({ ...draft, batch_no: plan.batch_no }, purchaseMessage.m1, purchaseMessage.m2({ plan, requestIds }), 'green'));
     }
-    return { toast: { type: 'success', content: `采购申请已生成：${plan.batch_no}（共${requestIds.length}条明细）` }, ...posting };
+    return { toast: { type: 'success', content: purchaseToast.m1({ plan, requestIds }) }, ...posting };
   }
 
   /**
@@ -1752,7 +1763,7 @@ class PurchaseWebhookService {
   async confirmArrivalLocked(taskId, task, operatorOpenId) {
     // ⚠️ 2026-10-07 晚：这句话原先写「到货验收已入库」，但那**张表已被业务负责人删除** ——
     //    改成按现在的落点说（批次行），她看到的就是"这一批已经入过库了"。
-    if (task.status === 'posted') return { toast: { type: 'info', content: '这一批已入库' } };
+    if (task.status === 'posted') return { toast: { type: 'info', content: arrivalToast.m1 } };
     // 她点确认时如果建档还没跑完（或上一次失败了），在这里同步补一次。
     // 建档是幂等的、并且和别的调用方走同一个 creationQueue，所以不会建出第二条。
     // 入库必须有货品记录，这一步不能省；失败就明确告诉她原因，别静默也不要"假装入库了"。
@@ -1914,7 +1925,7 @@ class PurchaseWebhookService {
       inbound_rows_written: 0,
       inventory_applied: this.enablePurchaseInventory, ...correlation,
     });
-    return { toast: { type: 'success', content: this.enablePurchaseInventory ? '采购已入库，库存已更新' : '采购入库已确认' } };
+    return { toast: { type: 'success', content: this.enablePurchaseInventory ? inventoryToast.m1 : inventoryToast.m2 } };
   }
 
   /**

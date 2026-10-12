@@ -27,19 +27,45 @@ const REPO = path.join(__dirname, '..', '..');
 const APP_NAME = apps[0].name;
 
 /**
- * 宽容地取 git 信息 —— ⚠️ **CI 是浅克隆且不带 tag**（actions/checkout 默认 fetch-depth: 1），
- * `git describe --tags` 在那里会**直接抛**（本地有 tag，所以本地是绿的）。
- * 脚本自己就是 `|| echo untagged` 兜底的，测试必须同样兜底，
- * 否则会出现「本地绿、CI 红」的假失败 —— 2026-10-08 真踩过一次。
+ * ⭐ 2026-10-12 稳定性修复：哨兵**不再读"当下 git 状态"两次**（那次全量跑偶发红的真机制）。
+ *
+ * 老写法（跑全量偶发红，2026-10-12 实测 1 次）：
+ *   测试文件**模块加载时**读一次 `git describe --tags` / `rev-parse --short HEAD`，
+ *   而脚本**运行时**自己再读一次；两次之间仓库状态只要动一下
+ *   （别人 commit / 发版打 tag / 同一 worktree 里 `git pull`），断言里的版本号就对不上 ⇒ 红。
+ *   实测窗口 ≈ **6.5s**（哨兵是第 6 条用例，前面 5 条先跑完）。
+ *   ⚠️ 与「跨分钟 / 当下时间」**无关**：`deploy_run.sh` 里 `date` 只被读 **1 次**，
+ *     而且是拿它跟它自己（脚本 export → 假 curl 抄回来）比。
+ *     证伪实验：把 `date` 换成"每次调用都返回不同时间"的假实现，哨兵照样绿。
+ *     真正能把它弄红的是"T0→T1 之间仓库状态动一下"（加 tag / commit），已确定性复现。
+ *
+ * 现在：**注入固定的 git 状态** —— 造一个临时 git 仓库（固定 tag + 固定 commit），
+ * 把**真实的** `deploy_run.sh` 软链进去；`$0` 的目录决定脚本的 `REPO_DIR`，
+ * 于是它算的是**这个临时仓库**的版本号，跑的过程中绝不会变 ⇒ 与环境无关
+ * （CI 浅克隆、无 tag 也不受影响，因为 tag 是这里自己建的）。
  */
-const gitOut = (args, fallback = '') => {
-  const result = spawnSync('git', ['-C', REPO, ...args], { encoding: 'utf8' });
-  return result.status === 0 ? result.stdout.trim() : fallback;
-};
+const PINNED_VERSION = 'v9.9.9-pinned';
 
-/** 与脚本算 APP_VERSION 的同一条口径（没有 tag 时 = `untagged`）。 */
-const DESCRIBED_VERSION = gitOut(['describe', '--tags', '--abbrev=0'], 'untagged');
-const HEAD_SHORT = gitOut(['rev-parse', '--short', 'HEAD'], '');
+const makePinnedRepo = () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deploy-run-repo-'));
+  fs.mkdirSync(path.join(dir, 'server', 'scripts'), { recursive: true });
+  fs.copyFileSync(path.join(REPO, 'server', 'ecosystem.config.js'),
+    path.join(dir, 'server', 'ecosystem.config.js'));
+  // ⚠️ 软链**真实脚本**（不复制）：测的永远是仓库里那一份，不会漂。
+  fs.symlinkSync(SCRIPT, path.join(dir, 'server', 'scripts', 'deploy_run.sh'));
+  const git = (...args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
+  git('init', '-q');
+  git('config', 'user.email', 'pinned@local');
+  git('config', 'user.name', 'pinned');
+  git('commit', '-q', '--allow-empty', '-m', 'pinned');
+  git('tag', PINNED_VERSION);
+  return {
+    dir,
+    script: path.join(dir, 'server', 'scripts', 'deploy_run.sh'),
+    version: PINNED_VERSION,
+    commit: git('rev-parse', '--short', 'HEAD'),
+  };
+};
 const OLD_COMMIT = 'deadbee';
 
 /**
@@ -80,7 +106,7 @@ esac
   return { dir, bin, calls };
 };
 
-const runScript = (harness, args = [], extraEnv = {}) => spawnSync('bash', [SCRIPT, ...args], {
+const runScript = (harness, args = [], extraEnv = {}, scriptPath = SCRIPT) => spawnSync('bash', [scriptPath, ...args], {
   encoding: 'utf8',
   env: {
     ...process.env,
@@ -144,13 +170,18 @@ test('⑤ 显式关掉自动刷 env（DEPLOY_HEALTH_AUTO_ENV_REFRESH=0）：照�
   assert.deepEqual(callsOf(harness), ['startOrReload ecosystem.config.js --update-env']);
 });
 
-test('哨兵：脚本里的"正确版本号"是 deploy_run.sh 自己算的（tag 名 + commit + 当下时间）', () => {
-  const harness = makeHarness('always-new');
-  const result = runScript(harness);
-  // ⚠️ 版本号用**脚本同一条口径**算（CI 浅克隆没有 tag ⇒ `untagged`），不能用 execFileSync 硬取
-  assert.match(result.stdout, new RegExp(`Deploying version ${DESCRIBED_VERSION} \\(commit ${HEAD_SHORT}\\)`),
-    '部署时印出来的版本号必须来自 git（tag + commit），不是写死的');
-  if (HEAD_SHORT) {
+test('哨兵：脚本里的"正确版本号"是 deploy_run.sh 自己算的（tag 名 + commit），不是写死的', () => {
+  // ⭐ 跑在**固定的临时仓库**上：tag/commit 由这里现造 ⇒ 与"外面有没有人在 commit / 打 tag"无关。
+  const pinned = makePinnedRepo();
+  try {
+    const harness = makeHarness('always-new');
+    const result = runScript(harness, [], {}, pinned.script);
+    // 版本号必须是**这个仓库现算的**（tag + commit）——写死任何一个都会红。
+    assert.match(result.stdout,
+      new RegExp(`Deploying version ${pinned.version} \\(commit ${pinned.commit}\\)`),
+      '部署时印出来的版本号必须来自 git（tag + commit），不是写死的');
     assert.equal(result.status, 0, result.stderr + result.stdout);
+  } finally {
+    fs.rmSync(pinned.dir, { recursive: true, force: true });
   }
 });

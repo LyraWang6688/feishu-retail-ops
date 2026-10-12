@@ -38,9 +38,9 @@
  */
 const express = require('express');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
-const { createScanPageService } = require('../services/scanPageService');
+const { sizesForCategory, parseNumberSegments, createScanPageService } = require('../services/scanPageService');
 const { createScanWriteService } = require('../services/scanWriteService');
-const { renderScanPage, renderScanMessagePage, renderMinimalPage, renderAcceptancePage, buildPaymentRows } = require('../views/scanPageRenderer');
+const { renderScanPage, renderScanMessagePage, renderMinimalPage, renderAcceptancePage, renderAcceptanceDonePage, renderAcceptanceSelfServe, renderSaleSuccessPage, buildPaymentRows } = require('../views/scanPageRenderer');
 // ⚠️ 只借这两个**纯函数**：所选尺码在「样品 + 门盒」有没有货（= 页面上那两个分组的判据），
 //    以及 `?from=` → 领域 id（认不出来回落缺省，不报错、不白屏）。
 const { sellableSizeTexts, resolveRealm, DEFAULT_REALM, ACCEPTANCE_REALM } = require('../views/scanPageRealm');
@@ -94,11 +94,32 @@ const createScanPageRouter = (options = {}) => {
   // 渲染器也留一个注入点：**只为验证"渲染抛错也必须回人话页"**（见用例 AC-W5）。
   const renderScan = options.render?.scan || renderScanPage;
   const renderMessage = options.render?.message || renderScanMessagePage;
+  // ⭐ 2026-10-12：提交成功页（逐字「您的提交已成功」+「再录一单」回扫码页）——
+  //    单独一个注入点，用例可以钉"成功页长什么样"而不用碰别的页。
+  const renderSuccess = options.render?.success || renderSaleSuccessPage;
   // ⚠️ 写服务**只为 POST 与"本单还有几双"服务**；`GET` 的库存表一个字都不依赖它。
   //    用例可以注入一个假的（`options.writeService`），`false` = 这一版不挂写入口。
   const writeService = writeConfig && options.writeService !== false
     ? (options.writeService || createScanWriteService({ gateway, config: writeConfig }))
     : null;
+  /**
+   * ⭐⭐ 2026-10-12：**未到货批次**（要列出来的那几条）—— **全仓只有这一处**读它。
+   *
+   * 两个调用方：① **有编号的领域页**（`?from=accept`，她扫开某款那一页）；
+   *              ② **落地页** `GET /accept`（无 batch，她点【验收】进来的第一屏）。
+   * ⚠️ **同一个 catch**：读表失败 ⇒ 只记一条 warn + 返回 `{ok:false, batches:[]}`
+   *    ⇒ 页面照旧 **200**、走手输兜底（她的"别卡住她"）。
+   */
+  const loadPendingBatches = async (requestId) => {
+    if (!arrival()) return null;
+    return arrival().pendingBatches().catch((error) => {
+      logWarn(writeConfig.events.failed, {
+        request_id: requestId, reason: 'accept_pending_batches_failed', error: error.message,
+      });
+      return { ok: false, batches: [] };
+    });
+  };
+
   // ⭐⭐ 2026-10-11（方案A）：**扫码验收**（工作台点【验收】→ 在这一页连续扫 → 完成验收）。
   //    ⚠️ 依赖**延迟构造**（在 `services/scanArrivalService.js` 里就地构造：
   //      `GET /s/{编号}` 那一步只用来读会话 —— **零飞书调用**，扫码页"一次扫码 0 次飞书调用"
@@ -187,7 +208,109 @@ const createScanPageRouter = (options = {}) => {
     requestId,
   });
 
+  /**
+   * ⭐⭐ **提交成功页**（`POST submit_order` 写成功之后直接渲染它，不回原页）。
+   *
+   * 业务负责人真机口径（逐字）：「点击提交之后直接提示"**您的提交已成功**"就行，
+   * **页面跳转到提交成功页**。在这个页面上可以提示"**再录一单**"类似的信息，
+   * 给一个链接让我能回到扫码页。」
+   * ⇒ 与 `sendHuman` 同一套"**绝不空白**"兜底（成功页渲染抛错也还有最后一张人话页），
+   *    只是渲染器换成成功页那一个。
+   */
+  /**
+   * ⭐⭐ 2026-10-12（她拍板 · 方案 A，逐字）：「**提交完 ⇒ 自动回首页，而首页 = 销售页** ✓」
+   *
+   * 成功页要的三件事**只在这里算一次**（三路共用 ✓）：
+   *   · `returnPath` = **服务端渲染出来的确定 URL**（她扫的那个编号 + **销售领域**）；
+   *   · `autoReturnUrl` = **同一个 URL**（自动跳转与按钮**不可能不一致** ✓ 唯一来源 ✓）；
+   *   · `returnDelaySeconds` = 先让她看到结果，再跳（配置里定 ✓）。
+   * 配置：`SCAN_PAGE.successReturn`（`homeRealm` 改成别的领域即可回别处 ✓）。
+   */
+  /**
+   * ⭐⭐ 2026-10-12：**写成功之后**记住"这个领域她刚用过"（她："继续扫 ⇒ 自动还是补货"）。
+   * ⚠️ 只在**写成功**那几条路上调（看一眼 / 打开页面不算 ✗）；
+   *    失败一律吞掉（记不住领域不该影响她这一单 ✓）。
+   */
+  /** 动作 → 领域（"她刚在哪个领域干过活"）——**一处映射**，别在各 handler 里各写一遍。 */
+  const realmOfAction = (action) => {
+    const a = String(action || '');
+    if (a === writeConfig.actions.submitOrder) return 'sales';
+    if (a === writeConfig.actions.submitReplenish) return 'replenish';
+    if (a === writeConfig.actions.submitPurchaseReturn) return 'purchase_return';
+    if (a === writeConfig.actions.acceptFinish || a === writeConfig.actions.acceptFinishRows) return 'accept';
+    return '';
+  };
+
+  const markRealmUsed = (openId, realm) => {
+    if (!writeService || !openId) return;
+    const sessions = writeService.sessions;
+    if (!sessions || typeof sessions.setLastRealm !== 'function') return;
+    Promise.resolve(sessions.setLastRealm(openId, realm)).catch((error) => {
+      logWarn(config.events.failed, { reason: 'last_realm_write_failed', error: error.message });
+    });
+  };
+
+  const successReturnFields = (req, target) => {
+    const cfg = config.successReturn || {};
+    if (cfg.enabled === false) return {};
+    const homePath = postActionFor(target, cfg.homeRealm || DEFAULT_REALM);
+    return {
+      returnPath: homePath,
+      returnLabel: cfg.label || '',
+      returnDelaySeconds: Number(cfg.delaySeconds) || 0,
+      autoReturnUrl: homePath,
+    };
+  };
+
+  const sendSuccess = (res, status, payload) => {
+    try {
+      return sendHtml(res, status, renderSuccess(payload, config));
+    } catch (error) {
+      logError(config.events.failed, {
+        request_id: payload?.requestId, reason: 'success_render_failed', error: error.message,
+      });
+      return sendHtml(res, status, renderMinimalPage({
+        title: payload?.title || config.texts.errorTitle,
+        body: payload?.body || config.texts.errorBody,
+        requestId: payload?.requestId,
+      }));
+    }
+  };
+
+  /**
+   * ⭐⭐ 2026-10-12：**404「没找到这个编号」** 统一从这一处出 —— **人话 + 指得出下一步**。
+   *
+   * 她真机那次（二维码里编号缺「类别」⇒ 查不到 ⇒ 回 400 / 原始错误页）之后定的口径：
+   * **不许再给原始错误页**。这里三种情况各一句人话：
+   *   · 普通找不到（没试过兜底）⇒ 与改前**逐字相同**（`notFoundBody`，一个字都不多加）；
+   *   · 编号缺段、按（货号 + 颜色）**也没找到** ⇒ 说清"缺了什么、该核对什么"；
+   *   · 编号缺段、**匹配到多款** ⇒ 说清"没法确定是哪一双"（**不猜**）。
+   * 后两种都给【再扫一次】的回跳（= 这一页的地址，重新扫标签即可）。
+   */
+  const notFoundPage = (res, requestId, { number = '', fallback = null, realm = DEFAULT_REALM, target = null } = {}) => sendHuman(res, 404, {
+    title: config.texts.notFoundTitle,
+    body: config.texts.notFoundBody,
+    number,
+    requestId,
+    retryHint: fallback?.tried
+      ? (fallback.ambiguous ? config.texts.notFoundAmbiguousHint : config.texts.notFoundFallbackMissHint)
+      : '',
+    // ⭐ 只有"确实按兜底找过、还是没找到"时才给【再扫一次】那条回跳；
+    //   `/r` 底下回跳要带**记录 ID**（不是编号）。
+    backPath: fallback?.tried ? postActionFor(target || { mode: 'number', value: number }, realm) : '',
+    backLabel: fallback?.tried ? config.texts.notFoundBackLabel : '',
+  });
+
   const respondFailure = (res, error, requestId, timing = null) => {
+    // ⭐⭐ 2026-10-12：**第三条出口**也要留痕 —— 她真机那次 400"周围一条日志都没有" ✗，
+    //   所以**任何**没预料到的失败都带一份"这次提交带了哪些字段名 / action 是什么形态"（**只字段名** ✗）。
+    //   ⚠️ 与 `unknownActionFailure` 同一套字段（便于一起 grep）✓
+    logWarn(writeConfig.events.unknownWriteAction, {
+      request_id: requestId,
+      where: 'respondFailure',
+      error: String(error?.message || error || '').slice(0, 200),
+      method: 'n/a',
+    });
     // ⭐ 失败也要看得出卡在哪一步（她：「一查日志就知道卡在哪一步」）——
     //    在发页面之前把已经量到的那几段打出去（`total_ms` 由 service 写、`render_ms` 为 0）。
     service.logTiming?.(timing, { requestId, found: false });
@@ -217,9 +340,45 @@ const createScanPageRouter = (options = {}) => {
    * ⚠️ 内部错误（飞书错误码 / 表名字段名）**不回显**：`scanWriteService` 已经把它们
    *    换成了配置里的通用人话，原文只进日志。
    */
+  /**
+   * ⭐⭐ 2026-10-12（她真机 `POST /MK31-1|咖色|B` ⇒ **400 / 1ms**、周围**零日志** ✗）：
+   * **"按钮认不出来"必须留痕**，而且三种原因**分开**（修法完全不同 ✓）：
+   *   · `missing`      —— 表单里**根本没带** `action`（她点了某颗按钮 ⇒ 可能是**真 bug**）
+   *   · `blank`        —— 带了但是空的（老页面 / 手改表单）
+   *   · `unrecognized` —— 带了个我们认不出的值
+   * ⚠️ 只打**字段名**（`body_keys`），**不打值** ✗；`action` 是**我们的动作名**（不是她的数据）⇒ 截断后打出 ✓。
+   */
+  const unknownActionFailure = (req, res, requestId, actionRaw) => {
+    const body = req.body || {};
+    const raw = body[writeConfig.fields.action];
+    const kind = raw === undefined ? 'missing' : (String(raw).trim() === '' ? 'blank' : 'unrecognized');
+    logWarn(writeConfig.events.unknownWriteAction, {
+      request_id: requestId,
+      path: String(req.originalUrl || req.path || '').split('?')[0],
+      method: req.method,
+      action_kind: kind,
+      action_received: String(actionRaw ?? '').slice(0, 64),
+      body_keys: Object.keys(body),
+      content_type: String(req.headers['content-type'] || ''),
+      realm: resolveRealm(req.query?.from),
+      // ⭐ 2026-10-12：她点的是**哪一版页面**渲染出来的（缺失 ⇒ 旧页面 / 手改表单）
+      page_build: String(body[config.pageBuildField || 'page_build'] || '').trim() || 'missing',
+      page_build_stale: Boolean(String(body[config.pageBuildField || 'page_build'] || '').trim())
+        && String(body[config.pageBuildField || 'page_build'] || '').trim() !== String(config.pageBuild || ''),
+      target: String(scanTargetOf(req).value || '').slice(0, 120),
+    });
+    return respondWriteFailure(res, {
+      code: 'unknown_action',
+      message: kind === 'unrecognized'
+        ? writeConfig.texts.unknownActionBody
+        : writeConfig.texts.unknownActionMissingBody,
+    }, requestId);
+  };
+
   const respondWriteFailure = (res, result, requestId) => {
     // 500 = 系统那边没处理成（写库失败）；400 = 她填错了 / 数据不满足业务（一个字节都没写）。
-    const status = ['sale_write_failed', 'replenish_write_failed', 'return_write_failed'].includes(result.code)
+    // ⭐ `sale_partial_failed` 也归 500：单子记上了、后面某步没写完 —— 不是她填错。
+    const status = ['sale_write_failed', 'sale_partial_failed', 'replenish_write_failed', 'return_write_failed'].includes(result.code)
       ? 500 : 400;
     // ⭐ 2026-10-12：**钱算不对那几类**（差额 / 付款情况 / 实付多少 / 全付零元…）⇒
     //    把那句**人话差额**放到**最上面那一行（H1）**：她第一眼看到的就是"差在哪、差多少"，
@@ -274,8 +433,57 @@ const createScanPageRouter = (options = {}) => {
    *      表单 action 带上了 `?from=`，POST 里 `resolveRealm(req.query?.from)` 才读得到领域。
    *      （2026-10-11 修的一处：表单 action 原来漏传 realm，导致回跳落到缺省领域。）
    */
-  const postActionFor = (number, realm = DEFAULT_REALM) => {
-    const path = `${config.route.basePath}/${encodeURIComponent(String(number || ''))}`;
+  // ⭐⭐ 2026-10-12（治根）：**两条路共用同一个 router 实例**（`app.js` 把同一实例挂在 `/s` 与 `/r`）。
+  //    ⇒ 「这一页在取哪一样东西」**只有一个判据**：挂载点（`req.baseUrl`）。
+  //    · `/s/:number`   ⇒ `{ mode: 'number',   value: 编号 }`
+  //    · `/r/:recordId` ⇒ `{ mode: 'recordId', value: 记录 ID }`
+  //    🔴 **不许**在别处再拼一套路径（`postActionFor` 是唯一出口）—— 两边各写一份必然漂。
+  const isRecordBase = (req) => String(req.baseUrl || '') === String(config.route.recordBasePath || '');
+  const scanTargetOf = (req) => {
+    const raw = req.params?.recordId !== undefined ? req.params.recordId : req.params?.number;
+    const value = decodeURIComponent(String(raw ?? ''));
+    return { mode: isRecordBase(req) ? 'recordId' : 'number', value };
+  };
+  /**
+   * ⭐⭐ 回跳时用哪个值：`/r` 底下用**记录 ID**（URL 上那个），
+   * `/s` 底下**沿用调用方原来那个值**（`view.number` / URL 里的编号）—— **逐字不变**。
+   */
+  const backTargetFor = (req, fallbackValue) => (isRecordBase(req)
+    ? scanTargetOf(req)
+    : { mode: 'number', value: fallbackValue });
+
+  /** 这一页的"取商品"入参（`scanPageService.lookup` 的两条路共用同一份出参约定）。 */
+  const lookupInputOf = (req) => {
+    const target = scanTargetOf(req);
+    if (target.mode === 'recordId') {
+      // 「拿到 recordId 但那条货品读不到」时的**回退**：URL 上若还带着编号就按编号再试一次。
+      const fallbackNumber = String(req.query?.[config.route.recordNumberQuery] ?? '').trim();
+      return { recordId: target.value, number: fallbackNumber || undefined };
+    }
+    return { number: target.value };
+  };
+
+  /**
+   * 表单的 POST 目标（= 处理完回跳到哪一页）。
+   *
+   * ⭐ **必须带上领域**：不然她在【销售】那一块点「加入本单」，303 回来会落在
+   *   **缺省领域**、刚填的本单看不见了。
+   *   ⚠️ 缺省领域（2026-10-11 起 = **销售**）不带 `?from=`（URL 干净，且既有断言一字不变）；
+   *      另外三个领域一律带 `?from=<领域>` ⇒ **回跳停在本单所在的领域**。
+   *   ⚠️ 这个函数**同时被 `buildWriteContext`（拼表单 action）与 POST 的 303 两处用** ——
+   *      表单 action 带上了 `?from=`，POST 里 `resolveRealm(req.query?.from)` 才读得到领域。
+   *      （2026-10-11 修的一处：表单 action 原来漏传 realm，导致回跳落到缺省领域。）
+   *   ⭐⭐ 2026-10-12：第一个入参**同时接受**一个目标对象（`{mode,value}`，见 `scanTargetOf`）
+   *      **或**一个字符串（= 按编号，既有调用点逐字不变）。挂载点决定拼 `/s` 还是 `/r`。
+   */
+  const postActionFor = (target, realm = DEFAULT_REALM) => {
+    const resolved = target && typeof target === 'object'
+      ? target
+      : { mode: 'number', value: target };
+    const basePath = resolved.mode === 'recordId'
+      ? String(config.route.recordBasePath || '')
+      : config.route.basePath;
+    const path = `${basePath}/${encodeURIComponent(String(resolved.value || ''))}`;
     return realm && realm !== DEFAULT_REALM ? `${path}?from=${encodeURIComponent(realm)}` : path;
   };
 
@@ -304,13 +512,16 @@ const createScanPageRouter = (options = {}) => {
    * ⚠️ **绝不让这一页因为打印链路坏掉而空白**：队列不可用 ⇒ `enabled: false`，
    *    渲染层如实说一句"打印服务暂时不可用" + 保留原来那两条链接（人话，不是白屏）。
    */
-  const buildPrintContext = async (number, realm, { requestId, submitted, duplicated, jobId } = {}) => {
+  const buildPrintContext = async (number, realm, { requestId, submitted, duplicated, jobId, target = null } = {}) => {
     const texts = LABEL_PRINT_QUEUE.texts;
+    // ⭐ 表单 action 落在哪条路上：`/r` 底下是**记录 ID**（`target` 由调用方给），
+    //    缺省 `{mode:'number'}` = 与改前**逐字相同**。
+    //    ⚠️ `number` 这个入参仍然是**编号**（打印队列按编号找"这一款最近一次"），不要混。
     const base = {
       enabled: true,
       submitted: Boolean(submitted),
       duplicated: Boolean(duplicated),
-      postAction: postActionFor(number, realm),
+      postAction: postActionFor(target || { mode: 'number', value: number }, realm),
       actionField: writeConfig.fields.action,
       actionValue: writeConfig.actions.printLabel,
       submitKeyField: LABEL_PRINT_QUEUE.submitKeyField,
@@ -358,16 +569,235 @@ const createScanPageRouter = (options = {}) => {
     `${config.route.basePath}${String(config.route.acceptanceLandingPath || '/accept?batch={batchNo}')
       .replace('{batchNo}', encodeURIComponent(String(batchNo || '')))}`;
   /** 渲染层要的验收上下文（只放"事实"：批次号 / 已扫 / 应到 / 表单目标 / 一句提示）。 */
-  const acceptanceContext = (session, extra = {}) => ({
-    batchNo: String(session?.batch_no || ''),
-    scanned: Number(session?.scanned || 0),
-    expected: Number(session?.expected || 0),
-    postAction: extra.postAction || acceptanceLandingPath(session?.batch_no),
-    notice: String(extra.notice || ''),
-    defaultQuantity: writeConfig.acceptance.defaultQuantity,
-  });
+  /**
+   * ⭐⭐ 2026-10-12（她选的方案 A：「系统把 40、41 列出来（标注"未报货"）⇒ 你点一下就加到货」）：
+   *
+   * **候选 = 这一款在该类别下应有的尺码 − 已报的尺码 − 已加的尺码。**
+   *   · "应有尺码"借**缺码判定那一份**（`sizesForCategory` = `SCAN_PAGE.sizeSegments.ranges`，
+   *     纯配置、零读表）；类别代码借**编号分段**（`parseNumberSegments`）——**都不另发明一套** ✓；
+   *   · 没有"款"可归（一个款都没扫 / 多个款说不清）⇒ 返回 `null` + 一句引导（列了也没用）；
+   *   · 一个候选都没有（该类别全报过了）⇒ 返回 `null`（**整块不渲染**，不给空标题）；
+   *   · 类别为空 / 配置里没这个类别 / 段配坏（`degraded`）⇒ 返回 `null`（**翻不出错就别列**）。
+   * 🔴 **绝不写死尺码表**：候选只从配置推出来（表里改了尺码 → 改配置，见 `sizeSegments` 的一致性 warn）。
+   */
+  const unreportedSizesFor = (session) => {
+    try {
+      const products = Array.isArray(session?.products) ? session.products : [];
+      if (products.length !== 1) return { sizes: [], noProduct: products.length === 0 };
+      const number = String(products[0].number || '').trim();
+      if (!number) return { sizes: [], noProduct: true };
+      const { categoryCode } = parseNumberSegments(number, config);
+      const scope = sizesForCategory(categoryCode, config);
+      if (scope.degraded || !scope.sizes.length) return { sizes: [], noProduct: false };
+      const productRecordId = products[0].product_record_id;
+      const taken = new Set((Array.isArray(session?.rows) ? session.rows : [])
+        .filter((row) => row.product_record_id === productRecordId)
+        .map((row) => Number(row.size)));
+      for (const line of (Array.isArray(session?.scans) ? session.scans : [])) {
+        if (line.product_record_id === productRecordId) taken.add(Number(line.size));
+      }
+      // ⚠️ 统一成 `{ size }` 对象（与清单里其它列表同形状）——渲染层不认裸数字。
+      const sizes = scope.sizes
+        .filter((size) => !taken.has(Number(size)))
+        .map((size) => ({ size: Number(size) }));
+      return { sizes, noProduct: false };
+    } catch (error) {
+      // 读/推不出来 ⇒ **不列**（页面照旧 200）；只记一条 warn，不把她打红。
+      logWarn(writeConfig.events.failed, {
+        reason: 'accept_unreported_sizes_failed', error: error.message,
+      });
+      return { sizes: [], noProduct: false };
+    }
+  };
+
+  const acceptanceContext = (session, extra = {}) => {
+    const scans = Array.isArray(session?.scans) ? session.scans : [];
+    const reported = Array.isArray(session?.rows) ? session.rows : [];
+    const findScan = (row) => scans.find((line) => (
+      line.product_record_id === row.product_record_id && Number(line.size) === Number(row.size)
+    ));
+    // ⭐⭐ 2026-10-12（她的口述版）：**报货行** —— 每个尺码一行，数量**默认 = 报货数量**；
+    //    她已经改过（会话里已有 scans）⇒ 显示**她改过的那个数**（刷新不丢她刚填的）。
+    const rows = writeConfig.acceptance.prefillEnabled === false ? null : reported.map((row) => ({
+      size: Number(row.size),
+      reported: Number(row.quantity),
+      actual: Number(findScan(row)?.quantity ?? row.quantity),
+    }));
+    // ⭐ 已经加过的"自定义行"（扫进来的 / 上次手输的）：**必须跟着表单回去**，否则一次提交就冲掉了。
+    const customRows = scans.filter((line) => !reported.some((row) => (
+      row.product_record_id === line.product_record_id && Number(row.size) === Number(line.size)
+    ))).map((line) => ({ size: Number(line.size), quantity: Number(line.quantity) }));
+    return {
+      batchNo: String(session?.batch_no || ''),
+      scanned: Number(session?.scanned || 0),
+      expected: Number(session?.expected || 0),
+      postAction: extra.postAction || acceptanceLandingPath(session?.batch_no),
+      // ⭐ 清单表单**固定回落地页**（哪一页渲染它都一样）：改数量 / 加行 / 完成都在那一处处理。
+      rowsPostAction: acceptanceLandingPath(session?.batch_no),
+      notice: String(extra.notice || ''),
+      defaultQuantity: writeConfig.acceptance.defaultQuantity,
+      // ⭐⭐ P0：**"完成验收"的幂等键**（服务端算、画进表单、提交带回来）——
+      //    她连点两次 / 网络重试都只执行一次 ✓。
+      submitKey: arrival()?.submitKeyOf ? arrival().submitKeyOf(session) : '',
+      // `null` = 不开预填（渲染层据此退回"只收金额"的老那一版，逐字不变）。
+      rows,
+      customRows,
+      // ⭐ "没报货的尺码"候选（点一下 = 加到货）；空 / 推不出来 ⇒ 渲染层整块不渲染。
+      ...(() => {
+        if (writeConfig.acceptance.prefillEnabled === false) return { unreported: [], unreportedNoProduct: false };
+        const found = unreportedSizesFor(session);
+        return { unreported: found.sizes, unreportedNoProduct: found.noProduct };
+      })(),
+      amountRequired: writeConfig.acceptance.amountRequired !== false,
+    };
+  };
+  /**
+   * ⭐⭐ 2026-10-12（她的口述版）：**带清单的完成**（预填清单那一版的主入口）。
+   *
+   * 一次提交做三件事（**顺序不能换**）：
+   *   ① 把清单落进会话（`setActualRows`：改后的数量 + 自定义行，**不写业务表**）；
+   *   ② 数量全 0 / 自定义不知款 ⇒ **在人话页上如实说**（既有的 `no_scan_lines` / `custom_*` 文案）；
+   *   ③ 落完再走**既有** `finish` ⇒ 写「实际数量（= 各行之和）」「实际金额」+ **逐尺码加库存**。
+   */
+  /**
+   * ⭐⭐ P0 2026-10-12：「这一批**已经入库过了**」⇒ **幂等返回**（200 + 已完成的页），
+   * 不是再执行一次、也不是一张 400 的错页 ✗（她连点两次时第二次应该安静地看到"已完成"）。
+   */
+  const acceptAlreadyDonePage = (res, session, body, fields) => sendHtml(res, 200, renderAcceptanceDonePage({
+    config,
+    write: { texts: writeConfig.texts },
+    acceptance: {
+      batchNo: String(session?.batch_no || ''),
+      scanned: Number(session?.scanned || 0),
+      amountText: String(body?.[fields.acceptAmount] ?? ''),
+      reused: true,
+    },
+    backHref: `${res.req?.baseUrl || ''}${config.route?.acceptancePath || '/accept'}`,
+  }));
+
+  const handleAcceptFinishRows = async (req, res, requestId) => {
+    const openId = openIdOf(req);
+    const body = req.body || {};
+    const fields = writeConfig.fields;
+    // ⭐ P0：这一场验收**已经入库** ⇒ 幂等返回（零写入、200、给她"已完成"）✓
+    const current = await arrival().get(openId).catch(() => null);
+    if (current && current.status === 'posted') {
+      logInfo(writeConfig.events.acceptReused, {
+        request_id: requestId, batch_no: current.batch_no,
+        submit_key: String(body[fields.submitKey] || ''), reason: 'session_already_posted',
+      });
+      return acceptAlreadyDonePage(res, current, body, fields);
+    }
+    const wantedBatch = String(body[fields.acceptBatch] || req.query?.batch || '').trim();
+    const saved = await arrival().setActualRows({
+      openId,
+      quantities: asList(body[fields.acceptRowQty]),
+      customSize: asList(body[fields.acceptCustomSize]),
+      customQuantity: asList(body[fields.acceptCustomQuantity]),
+    });
+    if (!saved.ok) {
+      logWarn(writeConfig.events.acceptFailed, {
+        request_id: requestId, reason: saved.reason, batch_no: wantedBatch,
+      });
+      // ⭐ P0：并发下第二份会撞到 `already_posted` ⇒ 同样按"已完成"幂等返回（不报错）✓
+      if (saved.reason === 'already_posted') {
+        const latest = await arrival().get(openId).catch(() => null);
+        if (latest) return acceptAlreadyDonePage(res, latest, body, fields);
+      }
+      return sendHuman(res, 400, {
+        title: writeConfig.texts.acceptModeTitle,
+        body: saved.message || writeConfig.texts.acceptNoScansBody,
+        requestId,
+        retryHint: writeConfig.texts.failedRetryHint,
+      });
+    }
+    // ⭐⭐ 2026-10-12 21:20（她"一直点那个按钮"）：**失败也要把她填的东西还回去**——
+    //    数量在会话里（`setActualRows` 已经落过）✓，金额从这次提交的 body 带回 ⇒ 页面原样回来 + 一句人话。
+    return handleAcceptFinish(req, res, requestId, { amountValue: body[fields.acceptAmount] });
+  };
+
+  /**
+   * ⭐⭐ 2026-10-12（方案 A）：「列出来（标注"未报货"）⇒ 你**点一下就加到货**」。
+   *
+   * 一次点击做三件事（顺序不能换）：
+   *   ① 把**当前清单**落进会话（她刚改的数量 / 自定义行**不能因为点一下就丢**）；
+   *   ② 目标尺码：**已在清单里 ⇒ 取消**（这就是"再点一下"）；不在 ⇒ **加进来、数量默认 1**
+   *      —— 与自定义行走**同一条路**（归到**这一款** ⇒ 完成验收时计入库存 ✓）；
+   *   ③ **302 回清单**（GET）⇒ 她看到的就是"刚点完"的真实状态（不会重复提交、刷新也不重复记）。
+   *
+   * 🔴 款说不清（多个款）⇒ 照旧**拒**（不猜款 ✗）；数量上限沿用既有 `maxQuantity`。
+   */
+  const handleAcceptToggleSize = async (req, res, requestId) => {
+    const openId = openIdOf(req);
+    const body = req.body || {};
+    const fields = writeConfig.fields;
+    const session = await arrival().get(openId).catch(() => null);
+    if (!session) {
+      return sendHuman(res, 400, {
+        title: writeConfig.texts.acceptModeTitle,
+        body: writeConfig.texts.acceptNoSessionBody,
+        requestId,
+        retryHint: writeConfig.texts.failedRetryHint,
+      });
+    }
+    const products = Array.isArray(session.products) ? session.products : [];
+    const toggled = asList(body[fields.acceptToggleSize]).map((value) => positiveSize(value)).filter((v) => v !== null);
+    if (products.length !== 1 || !toggled.length) {
+      return sendHuman(res, 400, {
+        title: writeConfig.texts.acceptModeTitle,
+        body: writeConfig.texts.acceptCustomProductNeededBody,
+        requestId,
+        retryHint: writeConfig.texts.failedRetryHint,
+      });
+    }
+    const productRecordId = products[0].product_record_id;
+    const rows = Array.isArray(session.rows) ? session.rows : [];
+    const reportedSizes = new Set(rows
+      .filter((row) => row.product_record_id === productRecordId).map((row) => Number(row.size)));
+    const scans = Array.isArray(session.scans) ? session.scans : [];
+    // 已加的行（自定义 / 扫进来的）原样带回 —— 其中**属于报货行**的不当自定义处理（它们有自己的输入框）。
+    const customSize = [];
+    const customQuantity = [];
+    for (const line of scans) {
+      if (line.product_record_id !== productRecordId) continue;
+      if (reportedSizes.has(Number(line.size))) continue;
+      customSize.push(Number(line.size));
+      customQuantity.push(Number(line.quantity));
+    }
+    for (const size of toggled) {
+      const index = customSize.indexOf(size);
+      if (index >= 0) {
+        customSize.splice(index, 1);
+        customQuantity.splice(index, 1);
+      } else if (!reportedSizes.has(size)) {
+        customSize.push(size);
+        customQuantity.push(writeConfig.acceptance.defaultQuantity);
+      }
+    }
+    const saved = await arrival().setActualRows({
+      openId,
+      quantities: asList(body[fields.acceptRowQty]),
+      customSize,
+      customQuantity,
+    });
+    if (!saved.ok) {
+      return sendHuman(res, 400, {
+        title: writeConfig.texts.acceptModeTitle,
+        body: saved.message || writeConfig.texts.acceptNoScansBody,
+        requestId,
+        retryHint: writeConfig.texts.failedRetryHint,
+      });
+    }
+    logInfo(writeConfig.events.acceptRowsSet, {
+      request_id: requestId, batch_no: session.batch_no,
+      toggled_sizes: toggled.join(','), action: 'toggle_size',
+    });
+    // ⭐ 302（不是 200 + 重渲染）：她看到的一定是"刚点完"的真实清单，刷新也不会重复记。
+    return res.redirect(303, acceptanceLandingPath(session.batch_no));
+  };
+
   /** 【完成验收】：两个页面（落地页 / 逐码页）共用这一份处理 —— 校验与写库都在既有链路里。 */
-  const handleAcceptFinish = async (req, res, requestId) => {
+  const handleAcceptFinish = async (req, res, requestId, extra = {}) => {
     const openId = openIdOf(req);
     const body = req.body || {};
     const fields = writeConfig.fields;
@@ -379,6 +809,24 @@ const createScanPageRouter = (options = {}) => {
       operatorOpenId: openId,
     });
     if (!result.ok) {
+      // ⭐⭐ 2026-10-12 21:20：**回填重画**（不许罚她重填）——她那 5 行的数量在会话里，
+      //    金额从这次 body 带回来；页面顶部一句人话（`acceptance.notice`）。
+      const session = await arrival().get(openId).catch(() => null);
+      if (session && Array.isArray(session.rows) && session.rows.length) {
+        return sendHtml(res, 400, renderAcceptancePage({
+          acceptance: acceptanceContext(session, {
+            notice: result.message || texts.acceptNoScansBody,
+            amountValue: extra.amountValue !== undefined ? extra.amountValue : body[fields.acceptAmount],
+          }),
+          config,
+          write: {
+            texts: writeConfig.texts,
+            fields: writeConfig.fields,
+            actions: writeConfig.actions,
+          },
+          userAgent: req.headers['user-agent'],
+        }));
+      }
       return sendHuman(res, 400, {
         title: texts.acceptModeTitle,
         body: result.message || texts.acceptNoScansBody,
@@ -388,16 +836,29 @@ const createScanPageRouter = (options = {}) => {
     }
     // 入库成功 ⇒ 「实时库存」快照立刻作废（她：库存必须准确）。
     invalidateInventorySnapshot(requestId, 'scan_accept_finished');
+    markRealmUsed(openId, realmOfAction(writeConfig.actions.acceptFinishRows));
     const batchNo = result.batch_no || '';
-    return sendHuman(res, 200, {
-      title: texts.acceptDoneTitle,
-      body: result.reused
-        ? fillWriteText(texts.acceptAgainBody, { batchNo: batchNo || '—' })
-        : fillWriteText(texts.acceptDoneBody, { batchNo: batchNo || '—', scanned: result.scanned || 0 }),
-      requestId,
-      details: [fillWriteText(texts.acceptBatchLine, { batchNo: batchNo || '—' })],
-      retryHint: texts.submittedNextHint,
-    });
+    // ⭐⭐ 2026-10-12 21:20：**成功后给明确成功页**（实际数量 + 实际金额 + 回未到货批次）——
+    //    「点了没反应」里有一半就是"成功了却没交代"。
+    return sendHtml(res, 200, renderAcceptanceDonePage({
+      config,
+      write: { texts: writeConfig.texts },
+      // ⭐⭐ 2026-10-12（她拍板 · 选项 ①）：「验收完**自动回的是【未到货批次列表】**（= 验收自己的首页 ✓）」
+      //   ⇒ 验收这一路的目标 = **批次列表**（走配置 `SUCCESS_RETURN.acceptHome` ✓ 一处改 ✓）；
+      //     ⚠️ 服务端拼**确定 URL** ✓（不用空编号去拼 ✗）。
+      returnPath: `${req.baseUrl}${config.route?.acceptancePath || '/accept'}`,
+      returnLabel: (config.successReturn && config.successReturn.label) || '',
+      returnDelaySeconds: Number((config.successReturn && config.successReturn.delaySeconds) || 0),
+      autoReturnUrl: `${req.baseUrl}${config.route?.acceptancePath || '/accept'}`,
+      acceptance: {
+        batchNo,
+        scanned: result.scanned || 0,
+        amountText: String(body[fields.acceptAmount] ?? ''),
+        reused: result.reused === true,
+      },
+      // 【回到未到货批次】= 自助页（**不带 batch** —— 带了她又回到刚做完那一批）。
+      backHref: `${req.baseUrl}${config.route?.acceptancePath || '/accept'}`,
+    }));
   };
 
   /**
@@ -416,10 +877,29 @@ const createScanPageRouter = (options = {}) => {
     }
     try {
       const openId = openIdOf(req);
+      const wantedBatch = String(req.query?.batch || '').trim();
+      const wantedBatchRecord = String(req.query?.batch_record_id || '').trim();
+      // ⭐⭐ 2026-10-12：**没带批次号 ⇒ 直接给自助块**（列未到货批次 + 手输兜底），**200**。
+      //    改前这里会 `start({batchNo: undefined})` ⇒ `no_batch_no` ⇒ **400** +
+      //    「这一页没带报货批次号：回【验收】领域…」—— 她**就是从【验收】领域进来的**，
+      //    而且那一页**没有输入框**（"或填批次号"根本做不到）⇒ 死循环。
+      if (!wantedBatch && !wantedBatchRecord) {
+        // ⭐⭐ 2026-10-12 21:11：**区分"裸进来"与"空着点【进入验收】"** ——
+        //    后者是**表单提交**（URL 上有 `batch=`，值是空）⇒ 必须**即时反馈**（她的"任何点击都要有反应"）；
+        //    前者是她第一次进来，不该先喊一句提示。
+        const submittedEmpty = Object.prototype.hasOwnProperty.call(req.query || {}, 'batch');
+        return sendHtml(res, 200, renderAcceptanceSelfServe({
+          config,
+          acceptPending: await loadPendingBatches(requestId),
+          emptySubmitHint: submittedEmpty,
+          // 链接/表单用**当前挂载前缀**（`/s` 或 `/r`），不写死 `/s/`。
+          basePath: req.baseUrl,
+        }));
+      }
       const started = await arrival().start({
         openId,
-        batchNo: req.query?.batch,
-        batchRecordId: req.query?.batch_record_id,
+        batchNo: wantedBatch,
+        batchRecordId: wantedBatchRecord,
         operatorOpenId: openId,
       });
       if (!started.ok) {
@@ -458,10 +938,19 @@ const createScanPageRouter = (options = {}) => {
         requestId: req.requestId,
       });
     }
-    if (String(req.body?.[writeConfig.fields.action] || '') !== writeConfig.actions.acceptFinish) {
-      return respondWriteFailure(res, { code: 'unknown_action', message: writeConfig.texts.unknownActionBody }, req.requestId);
-    }
+    const acceptAction = String(req.body?.[writeConfig.fields.action] || '');
     try {
+      // ⭐⭐ 2026-10-12（她的口述版）：**带清单的完成**（改数量 + 自定义 + 实际金额，一次提交）。
+      if (acceptAction === writeConfig.actions.acceptFinishRows) {
+        return await handleAcceptFinishRows(req, res, req.requestId);
+      }
+      // ⭐ 点一下"未报货"的尺码（再点一下 = 取消）——落清单 → 加/取消 → 302 回清单。
+      if (acceptAction === writeConfig.actions.acceptToggleSize) {
+        return await handleAcceptToggleSize(req, res, req.requestId);
+      }
+      if (acceptAction !== writeConfig.actions.acceptFinish) {
+        return unknownActionFailure(req, res, req.requestId, acceptAction);
+      }
       return await handleAcceptFinish(req, res, req.requestId);
     } catch (error) {
       return respondFailure(res, error, req.requestId);
@@ -521,7 +1010,8 @@ const createScanPageRouter = (options = {}) => {
       texts,
       fields,
       actions: writeConfig.actions,
-      postAction: postActionFor(view.number, realm),
+      // ⭐⭐ `/r/{recordId}` 底下表单必须 POST 回 `/r/{recordId}`（否则提交会落到"按编号"那条路）。
+      postAction: postActionFor(backTargetFor(req, view.number), realm),
       sizes,
       draft: { lines },
       // ⭐ 配品行要的东西（没有配品时渲染层不画那个表单）。
@@ -570,7 +1060,13 @@ const createScanPageRouter = (options = {}) => {
    *   · 认不出的 `from` 回落缺省（销售），**永不报错、永不空白**。
    *   · 任何异常（取数 / 渲染）都落到 `respondFailure` → **人话页**（还有 `renderMinimalPage` 兜底）。
    */
-  router.get(config.route.path, async (req, res) => {
+  // ⭐⭐ 2026-10-12：**两条路共用这两个处理函数**（同一个 router 实例挂在 `/s` 与 `/r` 上）：
+  //    · `/s/:number`   ⇒ `req.params.number`   = 编号
+  //    · `/r/:recordId` ⇒ `req.params.recordId` = 记录 ID（**新二维码走这条**）
+  //    ⚠️ 用**路径数组**把同一个 handler 挂到两个模式上 —— **不复制一份处理逻辑**；
+  //      "这一页在取哪一样东西"由挂载点判定（`scanTargetOf`），其余一行都不分叉。
+  const ROUTE_PATTERNS = [config.route.path, config.route.recordPath].filter(Boolean);
+  router.get(ROUTE_PATTERNS, async (req, res) => {
     const requestId = req.requestId;
     // ⚠️ 领域来自查询串（她给的参数名就是 `from`）；认不出来一律回落缺省，**不报错**。
     //    ⭐ 2026-10-11：六个领域（销售 · 补货 · 退货 · 验收 · 库存 · 货品）都是**真领域**，
@@ -587,7 +1083,7 @@ const createScanPageRouter = (options = {}) => {
     try {
       // ⚠️ Express 已经把路由参数解码过一次（`%7C` → `|`，未编码的中文也照收）；
       //    service 里再解一次是为了容忍双重编码，并且对孤立 `%` 的输入不抛。
-      const view = await service.lookup({ number: req.params.number, requestId, timing });
+      const view = await service.lookup({ ...lookupInputOf(req), requestId, timing });
       if (!view.found) {
         if (view.reason === 'empty') {
           logWarn(config.events.badNumber, { request_id: requestId, reason: 'empty_number' });
@@ -595,11 +1091,9 @@ const createScanPageRouter = (options = {}) => {
           return badNumberPage(res, 400, requestId);
         }
         service.logTiming?.(timing, { requestId, found: false });
-        return sendHuman(res, 404, {
-          title: config.texts.notFoundTitle,
-          body: config.texts.notFoundBody,
-          number: view.number,
-          requestId,
+        // ⭐ `/r/{recordId}` 那条路读不到记录（记录被删 / 跨 Base）⇒ **同一条人话出口**，不是 500。
+        return notFoundPage(res, requestId, {
+          number: view.number, fallback: view.fallback, realm, target: scanTargetOf(req),
         });
       }
       // ⭐⭐ 2026-10-11（方案A + 六领域）：**服务器记住她正在做什么** ——
@@ -614,7 +1108,7 @@ const createScanPageRouter = (options = {}) => {
         if (session && session.status === 'open') {
           realm = ACCEPTANCE_REALM;
           acceptance = acceptanceContext(session, {
-            postAction: postActionFor(view.number, ACCEPTANCE_REALM),
+            postAction: postActionFor(backTargetFor(req, view.number), ACCEPTANCE_REALM),
             notice: String(req.query?.duplicate || '') === '1'
               ? writeConfig.texts.acceptDuplicateBanner
               : (String(req.query?.accepted || '') === '1'
@@ -622,6 +1116,17 @@ const createScanPageRouter = (options = {}) => {
                 : ''),
           });
         }
+      }
+      // ⭐⭐ 2026-10-12（她拍板）：「扫 16 ⇒ 补货 ⇒ 提交 ⇒ 继续扫 ⇒ **自动还是补货**」——
+      //   **裸扫**（标签码不带 `?from=`）时用**她最近用过**的那个领域；从来没记过 ⇒ 仍是缺省（销售 ✓）。
+      //   ⚠️ 显式 `?from=` 永远优先 ✓；⚠️ 上面"正开着验收 ⇒ 裸扫进验收"的接管**优先于**这条 ✓。
+      // ⚠️ 缺省领域用 `resolveRealm('')` 算（**不要**引一个新常量 —— 漏导入时这里会静默失效 ✗，
+      //    我踩过：`DEFAULT_REALM` 没导入 ⇒ `undefined === 'sales'` 恒假 ⇒ 记忆永远不生效）。
+      if (!explicitRealm && realm === resolveRealm('')) {
+        const remembered = await writeService?.sessions?.get?.(openIdOf(req))
+          .then((session) => String(session?.last_realm || '').trim())
+          .catch(() => '');
+        if (remembered) realm = resolveRealm(remembered);
       }
       const write = await buildWriteContext(req, view, realm);
       // ⚠️ 验收模式那一块**只用到文案 / 字段名 / 动作名**（它们都在配置里）——
@@ -648,6 +1153,8 @@ const createScanPageRouter = (options = {}) => {
           submitted: String(req.query?.printed || '') === '1',
           duplicated: String(req.query?.dup || '') === '1',
           jobId: String(req.query?.job || '').trim(),
+          // `/r` 底下表单要 POST 回 `/r/{recordId}`；`/s` 底下与改前逐字相同。
+          target: backTargetFor(req, view.number),
         })
         : null;
       // ⭐ 2026-10-11：把 UA 交给渲染层 —— 它只用来决定本单条上【继续扫下一个】
@@ -657,18 +1164,15 @@ const createScanPageRouter = (options = {}) => {
       //    **自己去列未到货的批次**（点一条就进），再给手输兜底。
       //    ⚠️ 只在这个领域读一次那张表；读表失败**不把页面打红**（服务层如实返回 ok:false，
       //    这里记一条 warn，页面走手输兜底 —— 与她的"别卡住她"一致）。
-      const acceptPending = realm === ACCEPTANCE_REALM && !acceptance && arrival()
-        ? await arrival().pendingBatches().catch((error) => {
-          logWarn(writeConfig.events.failed, {
-            request_id: requestId, reason: 'accept_pending_batches_failed', error: error.message,
-          });
-          return { ok: false, batches: [] };
-        })
+      const acceptPending = realm === ACCEPTANCE_REALM && !acceptance
+        ? await loadPendingBatches(requestId)
         : null;
       const html = renderScan(view, config, writeForRender, realm, {
         userAgent: req.headers['user-agent'],
         acceptance,
         acceptPending,
+        // ⭐ 这一页挂在哪个前缀上（`/s` 或 `/r`）—— 自助块里的批次链接/手输表单必须**留在同一前缀**。
+        basePath: req.baseUrl,
         print: printContext,
       });
       timing.render_ms = Math.max(0, Date.now() - renderStartedAt);
@@ -694,7 +1198,7 @@ const createScanPageRouter = (options = {}) => {
    *    刷新不会重复提交，页面上也会带上"本单现在几双"。**提交订单**直接渲染结果页。
    * ⚠️ 失败一律**渲染一张人话页**（不静默、不只写日志）。
    */
-  router.post(config.route.path, async (req, res) => {
+  router.post(ROUTE_PATTERNS, async (req, res) => {
     const requestId = req.requestId;
     const body = req.body || {};
     const fields = writeConfig.fields;
@@ -711,7 +1215,19 @@ const createScanPageRouter = (options = {}) => {
     // ⚠️ 页面上**零 JS**：这里就是一个原生表单的 POST，成功后 303 回本领域（PRG，
     //    刷新不会重复提交），状态由 GET 重新渲染。
     if (action === actions.printLabel) {
-      const number = decodeURIComponent(String(req.params.number || '')).trim();
+      let number = decodeURIComponent(String(req.params.number || '')).trim();
+      // ⭐⭐ 2026-10-12：`/r/{recordId}` 底下 URL 里是**记录 ID**，而打印队列认的是**编号**
+      //    ⇒ 先把它解出来（读不到就给"这一款现在打不了"的人话，不是 500）。
+      if (isRecordBase(req)) {
+        const printView = await service.lookup({ ...lookupInputOf(req), requestId }).catch(() => null);
+        number = String(printView?.number || '').trim();
+        if (!number) {
+          logWarn('scan.label_print.number_unresolved', {
+            request_id: requestId, product_record_id: scanTargetOf(req).value,
+          });
+          return notFoundPage(res, requestId, { target: scanTargetOf(req), realm });
+        }
+      }
       // ⭐ 连点去重 / 二次确认：
       //   · `submit_key`（表单里带回来的幂等键）—— 同一个 key 只会有一个任务；
       //   · `again=1`（横幅上那颗【再打一张】）—— **明确表达"我知道刚打过，还要再打"** ⇒ 绕过两道去重。
@@ -733,7 +1249,8 @@ const createScanPageRouter = (options = {}) => {
         // Post-Redirect-Get：刷新不会重复提交；页面上那句**显眼横幅**由 GET 重新渲染。
         // `printed=1` = 这次真的新建了任务；`dup=1` = 命中去重（没有重复提交）。
         const flag = result.reused ? 'dup=1' : 'printed=1';
-        return res.redirect(303, `${postActionFor(number, realm)}&${flag}&job=${encodeURIComponent(result.job_id)}`);
+        // ⭐ `/r` 底下回跳要带**记录 ID**（不是编号）。
+        return res.redirect(303, `${postActionFor(backTargetFor(req, number), realm)}&${flag}&job=${encodeURIComponent(result.job_id)}`);
       } catch (error) {
         // 她这一款没库存 / 条件是打不出来 ⇒ 400（**原因原样给她**，她要能看懂为什么）；
         // 系统这一侧坏了（产物画不出来 / 队列写不进盘）⇒ 502/503，**只给一句人话**，
@@ -762,13 +1279,10 @@ const createScanPageRouter = (options = {}) => {
     try {
       // ── 加入本单 ────────────────────────────────────────────────────────────
       if (action === actions.addLine) {
-        const view = await service.lookup({ number: req.params.number, requestId });
+        const view = await service.lookup({ ...lookupInputOf(req), requestId });
         if (!view.found) {
-          return sendHuman(res, 404, {
-            title: config.texts.notFoundTitle,
-            body: config.texts.notFoundBody,
-            number: view.number,
-            requestId,
+          return notFoundPage(res, requestId, {
+            number: view.number, fallback: view.fallback, realm, target: scanTargetOf(req),
           });
         }
         const result = await writeService.addSaleLine({
@@ -791,18 +1305,15 @@ const createScanPageRouter = (options = {}) => {
         logInfo(writeConfig.events.lineAdded, {
           request_id: requestId, number: view.number, count: result.count,
         });
-        return res.redirect(303, `${postActionFor(view.number, realm)}${realm === DEFAULT_REALM ? '?' : '&'}added=1`);
+        return res.redirect(303, `${postActionFor(backTargetFor(req, view.number), realm)}${realm === DEFAULT_REALM ? '?' : '&'}added=1`);
       }
 
       // ── ⭐ 2026-10-11（B）：把一件配品加进本单（与「加入本单」同一形状：只写本地会话）──
       if (action === actions.addAccessory) {
-        const view = await service.lookup({ number: req.params.number, requestId });
+        const view = await service.lookup({ ...lookupInputOf(req), requestId });
         if (!view.found) {
-          return sendHuman(res, 404, {
-            title: config.texts.notFoundTitle,
-            body: config.texts.notFoundBody,
-            number: view.number,
-            requestId,
+          return notFoundPage(res, requestId, {
+            number: view.number, fallback: view.fallback, realm, target: scanTargetOf(req),
           });
         }
         const result = await writeService.addSaleLine({
@@ -816,14 +1327,14 @@ const createScanPageRouter = (options = {}) => {
         });
         if (!result.ok) return respondWriteFailure(res, result, requestId);
         // 与「加入本单」同一条回跳（Post-Redirect-Get）：刷新不会重复提交、本单看得见。
-        return res.redirect(303, `${postActionFor(view.number, realm)}${realm === DEFAULT_REALM ? '?' : '&'}added=1`);
+        return res.redirect(303, `${postActionFor(backTargetFor(req, view.number), realm)}${realm === DEFAULT_REALM ? '?' : '&'}added=1`);
       }
 
       // ── 清空本单 ────────────────────────────────────────────────────────────
       if (action === actions.clearDraft) {
         await writeService.clearDraft({ openId, requestId });
         return res.redirect(303, postActionFor(
-          decodeURIComponent(String(req.params.number || '')), realm,
+          backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realm,
         ));
       }
 
@@ -837,12 +1348,19 @@ const createScanPageRouter = (options = {}) => {
         const lineAmounts = asList(body[fields.lineAmount]);
         const paymentStatus = String(body[fields.paymentStatus] || '').trim();
         const paidAmount = body[fields.paidAmount] ?? '';
+        // ⭐⭐ 2026-10-12：**提交这一步的分阶段耗时** —— 真机被卡住 / 收过 504 之后要的
+        //    "一查日志就知道卡在哪一步"。`timing` 是写服务的**可选出参**（只读时间、不进业务入参）。
+        const saleTiming = {};
         // ⭐ 2026-10-12：整页只有**一个表单** ⇒ 提交这一下**天然带着**她在尺码区选中的那一双。
         //    本单为空时 ⇒ 「选尺码 + 提交」两下就是一张单（一单一笔的默认路径）；
         //    本单已有几双 ⇒ 这一项**忽略**（多笔必须显式点【➕ 还要加一双】），
         //    判据在写服务里（`pendingLine` 只在本单为空时生效）。
+        const submitLookupStartedAt = Date.now();
         const submitView = String(body[fields.size] ?? '').trim()
-          ? await service.lookup({ number: req.params.number, requestId }).catch(() => null) : null;
+          ? await service.lookup({ ...lookupInputOf(req), requestId }).catch(() => null) : null;
+        // `lookup_ms` = 提交前那一次"取商品"（缓存命中⇒很短；没命中⇒就是飞书那几读）。
+        saleTiming.lookup_ms = Math.max(0, Date.now() - submitLookupStartedAt);
+        const submitStartedAt = Date.now();
         const result = await writeService.submitSale({
           openId,
           requestId,
@@ -851,6 +1369,7 @@ const createScanPageRouter = (options = {}) => {
           lineAmounts,
           paymentStatus,
           paidAmount,
+          timing: saleTiming,
           pendingLine: submitView?.found ? {
             productRecordId: submitView.product_record_id,
             number: submitView.number,
@@ -863,14 +1382,59 @@ const createScanPageRouter = (options = {}) => {
             inStock: sellableSizeTexts(submitView).has(String(body[fields.size] ?? '').trim()),
           } : null,
         });
+        // ⭐⭐ **一条**汇总（与 `scan.lookup.timing` 同一形状）：她按 `scan.sale.timing` grep
+        //    就能看出"这一次提交卡在哪一段"，不必再靠猜。
+        logInfo(writeConfig.events.saleTiming, {
+          request_id: requestId,
+          ok: result.ok === true,
+          code: result.code || '',
+          order_no: result.order_no || '',
+          reused: result.reused === true,
+          partial: result.code === 'sale_partial_failed',
+          lines: lineAmounts.length,
+          // 提交这一步的墙钟（含排队等前面的那次提交 —— 她连点 14 次时这一段会明显变大）。
+          submit_ms: Math.max(0, Date.now() - submitStartedAt),
+          queue_wait_ms: Number(saleTiming.queue_wait_ms) || 0,
+          lookup_ms: Number(saleTiming.lookup_ms) || 0,
+          prepare_ms: Number(saleTiming.prepare_ms) || 0,
+          master_ms: Number(saleTiming.master_ms) || 0,
+          status_ms: Number(saleTiming.status_ms) || 0,
+          detail_ms: Number(saleTiming.detail_ms) || 0,
+          stock_ms: Number(saleTiming.stock_ms) || 0,
+        });
         if (!result.ok) {
+          // ⭐⭐ 2026-10-12：**建单成功、后面某一步（明细 / 收款 / 进度）抛错** ⇒ 如实说"半成"。
+          //    🔴 判据用的是**既有**那一条：会话里已经落了主表 record_id（= 重试接着写的那条判据，
+          //       见 `scanWriteService.submitSale` 里"建完立刻把 record_id 落进会话"那段）。
+          //    🔴 **绝不许**显示"提交已成功"（她会以为钱货都落了）；也**不许**跟"一个字都没写"
+          //       混为一谈（主表那条记录是真的落库了）⇒ 这一页给她**单号** + 怎么出去。
+          if (result.code === 'sale_partial_failed') {
+            const orderLine = fillWriteText(writeConfig.texts.submittedOrderLine, {
+              orderNo: result.order_no || '—',
+            });
+            return sendHuman(res, 500, {
+              title: writeConfig.texts.partialFailedTitle,
+              body: fillWriteText(writeConfig.texts.partialFailedBody, {
+                orderNo: result.order_no || '—',
+              }),
+              requestId,
+              details: [orderLine],
+              retryHint: writeConfig.texts.partialFailedRetryHint,
+              // 怎么出去：回扫码页再点一次提交 —— 会接着**同一张单**写（幂等键 / 主表 id 都在会话里）。
+              // ⭐ `/r` 底下「再录一单 / 回去再提交」要回**记录 ID** 那一页。
+              backPath: postActionFor(
+                backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realm,
+              ),
+              backLabel: writeConfig.texts.submittedRecordAnother,
+            });
+          }
           // ⭐⭐ 校验类失败（**核心那条：全付时每件实收合计 ≠ 收款合计**，以及付款情况 /
           //    收款行 / 每件实收本身的格式问题）⇒ **原地重渲染销售那一块**：
           //    差额人话挂在表单上方，她刚填的每件实收（在会话里）/ 付款情况 / 实付多少 /
           //    多笔收款（原样带回）都还在 —— 改一下再点提交即可。
           //    🔴 这一条**不写库**（写服务里那一段在校验之后才建主表），页面上也会把差额说清。
           if ((writeConfig.sale.formFailureCodes || []).includes(result.code)) {
-            const view = await service.lookup({ number: req.params.number, requestId }).catch(() => null);
+            const view = await service.lookup({ ...lookupInputOf(req), requestId }).catch(() => null);
             if (view?.found) {
               const write = await buildWriteContext(req, view, 'sales', {
                 paymentRows: payments, paymentStatus, paidAmount, errorText: result.message,
@@ -883,6 +1447,8 @@ const createScanPageRouter = (options = {}) => {
         }
         // ⭐ 销售单写成功 ⇒ **立刻作废**「实时库存」快照（她：库存必须准确，不是等 30 秒）。
         invalidateInventorySnapshot(requestId, 'scan_sale_submitted');
+    // ⭐ 写成功 ⇒ 记住"她刚在销售里干过活"（下次**裸扫**默认还回这儿，除非她提交了 ⇒ 回销售 ✓）
+    markRealmUsed(openIdOf(req), realmOfAction(writeConfig.actions.submitOrder));
         const texts = writeConfig.texts;
         const details = [
           fillWriteText(texts.submittedOrderLine, { orderNo: result.order_no || '—' }),
@@ -912,7 +1478,15 @@ const createScanPageRouter = (options = {}) => {
         //    （不拦她 —— 她真机就是被"资金不齐"卡住的），但结果页给她一句**指向能做的事**的人话。
         const submitHint = result.full_without_payments
           ? texts.fullWithoutPaymentsNote : texts.submittedNextHint;
-        return sendHuman(res, 200, {
+        // ⭐⭐ 2026-10-12（业务负责人真机口径，逐字）：「点击提交之后**直接提示"您的提交已成功"**就行，
+        //    **页面跳转到提交成功页**……给一个**链接**让我能回到扫码页。」
+        //    ⇒ 从这里出去的是**成功页**（H1 逐字「您的提交已成功」+ 一颗【再录一单】回扫码页），
+        //      **不再**渲染回原页、也不 303。⚠️ 连点的那一次（`reused`）同样给这一页 ——
+        //      她**看到了成功**，才不会再狂点（真实事故：她点了 14 次）。
+        const submitTarget = backTargetFor(req, decodeURIComponent(String(req.params.number || '')));
+        return sendSuccess(res, 200, {
+          // ⭐ 提交成功 ⇒ 自动回【销售】首页（+ 一颗【返回扫码】兜底，同一个 URL ✓）；「再录一单」照旧保留 ✓
+          ...successReturnFields(req, submitTarget),
           title: result.reused ? texts.submittedAgainTitle : texts.submittedTitle,
           body: result.reused
             ? fillWriteText(texts.submittedAgainBody, { orderNo: result.order_no || '—' })
@@ -922,18 +1496,22 @@ const createScanPageRouter = (options = {}) => {
           requestId,
           details,
           retryHint: submitHint,
+          // 「再录一单」= 回到**这一款**的扫码页（编号取自 URL；非缺省领域带上 `?from=`）。
+          // ⭐ `/r` 底下「再录一单」回到**记录 ID** 那一页（不是 `/s/<记录id>`）。
+          backPath: postActionFor(
+            backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realm,
+          ),
+          backLabel: texts.submittedRecordAnother,
+          backHint: texts.submittedRecordAnotherHint,
         });
       }
 
       // ── 补货报单 ────────────────────────────────────────────────────────────
       if (action === actions.replenish) {
-        const view = await service.lookup({ number: req.params.number, requestId });
+        const view = await service.lookup({ ...lookupInputOf(req), requestId });
         if (!view.found) {
-          return sendHuman(res, 404, {
-            title: config.texts.notFoundTitle,
-            body: config.texts.notFoundBody,
-            number: view.number,
-            requestId,
+          return notFoundPage(res, requestId, {
+            number: view.number, fallback: view.fallback, realm, target: scanTargetOf(req),
           });
         }
         const entries = parseReplenishEntries(body, fields, writeConfig);
@@ -949,8 +1527,11 @@ const createScanPageRouter = (options = {}) => {
         // ⭐ 补货报单写成功 ⇒ 同样失效快照（她点名了「补货」也要；这一步不动库存，
         //    但"写完就失效"永远比"猜它动没动库存"安全）。
         invalidateInventorySnapshot(requestId, 'scan_replenish_submitted');
+        markRealmUsed(openIdOf(req), realmOfAction(writeConfig.actions.submitReplenish));
         const texts = writeConfig.texts;
         return sendHuman(res, 200, {
+          // ⭐ 补货成功 ⇒ **同样自动回首页**（销售 ✓ 方案 A 三路一致）
+          ...successReturnFields(req, backTargetFor(req, decodeURIComponent(String(req.params.number || '')))),
           title: result.reused ? texts.replenishAgainTitle : texts.replenishDoneTitle,
           body: result.reused
             ? fillWriteText(texts.replenishAgainBody, { batchNo: result.batch_no || '—' })
@@ -970,13 +1551,10 @@ const createScanPageRouter = (options = {}) => {
       //    与补货**同形**：同一个 POST 端点、同一套会话/幂等/失败口径；
       //    写库（批次行 + 退货明细 + 扣库存 + 出退货单图）全在既有构件里。
       if (action === actions.purchaseReturn) {
-        const view = await service.lookup({ number: req.params.number, requestId });
+        const view = await service.lookup({ ...lookupInputOf(req), requestId });
         if (!view.found) {
-          return sendHuman(res, 404, {
-            title: config.texts.notFoundTitle,
-            body: config.texts.notFoundBody,
-            number: view.number,
-            requestId,
+          return notFoundPage(res, requestId, {
+            number: view.number, fallback: view.fallback, realm, target: scanTargetOf(req),
           });
         }
         const entries = parseReturnEntries(body, fields, writeConfig);
@@ -991,6 +1569,7 @@ const createScanPageRouter = (options = {}) => {
         if (!result.ok) return respondWriteFailure(res, result, requestId);
         // ⭐ 退货**真的动了库存** ⇒ 立刻作废「实时库存」内存快照（她：库存必须准确）。
         invalidateInventorySnapshot(requestId, 'scan_purchase_return_submitted');
+        markRealmUsed(openIdOf(req), realmOfAction(writeConfig.actions.submitPurchaseReturn));
         const texts = writeConfig.texts;
         const details = [
           fillWriteText(texts.returnBatchLine, { batchNo: result.batch_no || '—' }),
@@ -1007,6 +1586,8 @@ const createScanPageRouter = (options = {}) => {
           }));
         }
         return sendHuman(res, 200, {
+          // ⭐ 退货成功 ⇒ **同样自动回首页**（销售 ✓ 方案 A 三路一致）
+          ...successReturnFields(req, backTargetFor(req, decodeURIComponent(String(req.params.number || '')))),
           title: result.reused ? texts.returnAgainTitle : texts.returnDoneTitle,
           body: result.reused
             ? fillWriteText(texts.returnAgainBody, { batchNo: result.batch_no || '—' })
@@ -1027,13 +1608,10 @@ const createScanPageRouter = (options = {}) => {
             title: writeConfig.texts.acceptModeTitle, body: writeConfig.texts.writeDisabledBody, requestId,
           });
         }
-        const view = await service.lookup({ number: req.params.number, requestId });
+        const view = await service.lookup({ ...lookupInputOf(req), requestId });
         if (!view.found) {
-          return sendHuman(res, 404, {
-            title: config.texts.notFoundTitle,
-            body: config.texts.notFoundBody,
-            number: view.number,
-            requestId,
+          return notFoundPage(res, requestId, {
+            number: view.number, fallback: view.fallback, realm, target: scanTargetOf(req),
           });
         }
         const result = await arrival().addScan({
@@ -1042,7 +1620,7 @@ const createScanPageRouter = (options = {}) => {
           size: body[fields.acceptSize],
           quantity: body[fields.acceptQuantity],
         });
-        const back = postActionFor(view.number, ACCEPTANCE_REALM);
+        const back = postActionFor(backTargetFor(req, view.number), ACCEPTANCE_REALM);
         if (!result.ok) {
           // 不在本批 / 没会话 / 数量不合法：**如实说一句人话**（她原地刷新就能接着扫）。
           logWarn(writeConfig.events.acceptNotInBatch, {
@@ -1069,8 +1647,8 @@ const createScanPageRouter = (options = {}) => {
       }
 
       // 动作名不认识（老页面 / 手改表单）：**明确回一张人话页**，不静默。
-      logWarn(config.events.badNumber, { request_id: requestId, reason: 'unknown_write_action', action });
-      return respondWriteFailure(res, { code: 'unknown_action', message: writeConfig.texts.unknownActionBody }, requestId);    } catch (error) {
+      return unknownActionFailure(req, res, requestId, action);
+    } catch (error) {
       // 走到这里说明是**没预料到**的异常（写服务内部已把业务失败都收敛成人话结果）。
       if (isDataNotReady(error)) {
         res.set('Retry-After', '5');
@@ -1140,6 +1718,15 @@ const parseReturnEntries = (body, fields, writeConfig) => {
  * 在 `express.urlencoded({extended:true})` 下是**数组**；只出现一次时是**字符串**。
  * 这个纯函数把两种形状统一成有序数组（顺序 = 页面上的行顺序）。
  */
+/**
+ * ⭐ 2026-10-12：表单里传来的**尺码**（正整数；认不出就丢）——
+ * 与 `asList` 并排，只给"未报货候选"那几个可点元素用。
+ */
+const positiveSize = (value) => {
+  const text = String(value ?? '').trim();
+  return /^[1-9]\d*$/.test(text) ? Number(text) : null;
+};
+
 const asList = (value) => {
   if (Array.isArray(value)) return value.map((item) => (item === undefined || item === null ? '' : item));
   if (value === undefined || value === null) return [];

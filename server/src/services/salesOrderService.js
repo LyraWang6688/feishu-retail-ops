@@ -227,6 +227,12 @@ class SalesOrderService {
       if (existingGift && existingGift !== orderGift) {
         throw new Error('销售主表已记录的赠品与当前草稿不一致，已停止重试');
       }
+      // ⚠️⚠️ 2026-10-12：这里**试过**"值没变就不写"（省掉那次空串 PATCH），**已回退**——
+      //    理由（诚实纪律，逐条）：`salesGiftOnEntry` / `scanSaleAccessoryAndRemark` 有 **3 条**
+      //    既有用例钉的正是"**这一列被写一次**（没有赠品 ⇒ 写空串）"这个行为；
+      //    在生产表上"写空串"与"压根不写"肉眼一样，但**哨兵**把"这一列被写过"当成了语义。
+      //    ⇒ 为了省 1 次 PATCH 去改别人 3 条哨兵，是**坏的交换**。要省它必须先与 Lead 对齐
+      //      "赠品列被写过的痕迹算不算语义"。
       // 写空也要写（与 2026-10-08 之前的明细语义一致：没有赠品 ⇒ 这一列是**空串**）。
       await this.gateway.update('salesEntry', salesEntryRecordId, { gift: orderGift }, { correlation });
       detailPlan = rows.length;
@@ -326,10 +332,12 @@ class SalesOrderService {
       // 闸门认的是**两代字面量**（旧「已入账」/ 新「已写入」），见 config/salesStatusDimensions。
       await this.status.write(salesEntryRecordId, { funds: WRITE.funds.done }, correlation);
       await this.progress.sync(salesEntryRecordId, { detailRecordIds, paymentRecordIds });
-      const order = await withSalesReadRetry(
-        () => this.gateway.get('salesEntry', salesEntryRecordId), 'sale_entry_by_id',
-      );
-      const sourceNo = textValue(order?.fields?.[this.gateway.table('salesEntry').fields.orderNo]) || salesEntryRecordId;
+      // ⭐⭐ 2026-10-12（提速）：**不再"写完再读一遍主表"** —— 单号在 `_confirm` 开头就已经读到
+      //    （上面那次 `get('salesEntry')` 的 `entry`），而这一段里**没有任何一步会改单号**
+      //    （只写状态维度 / 赠品 / 交易类型 / 明细 / 收款）。
+      //    ⇒ 直接用它，少打一次 `get:salesEntry`；`sourceNo`（给她的单号）的取值口径**逐字不变**
+      //      （读不到照旧回落到 `salesEntryRecordId`）。
+      const sourceNo = textValue(entry?.fields?.[entryFields.orderNo]) || salesEntryRecordId;
       // ⚠️ 这条日志只回答【落表这一步】做了什么，**不是**"整单扣没扣库存"。
       //    2026-10-07 的真实误判：有人把 `inventory_applied: false` 读成了"整单没扣库存"，
       //    其实库存在**交付那一步**（SalesDeliveryService）才扣，而且那单已经扣了。

@@ -92,6 +92,28 @@ const positiveInteger = (value) => {
 };
 
 /**
+ * ⭐⭐ 2026-10-12：**某一类别"应有的尺码"**（= 缺码判定的同一口径）。
+ *
+ * 取值**只来自配置**（`SCAN_PAGE.sizeSegments.ranges`：类别代码 → `{from,to}`），**零读表**；
+ * 降级口径与既有缺码判定**逐字一致**（类别为空 / 配置里没这个类别 / 段配坏 ⇒ `degraded`）。
+ * ⚠️ 单一来源：`loadSizeScope`（扫码页缺码）与验收页"未报货尺码"候选都调它。
+ */
+const sizesForCategory = (categoryCode, config = SCAN_PAGE) => {
+  const ranges = config.sizeSegments?.ranges || {};
+  if (!categoryCode) return { degraded: true, reason: 'number_without_category', sizes: [] };
+  const range = ranges[String(categoryCode).trim().toUpperCase()];
+  if (!range) return { degraded: true, reason: 'no_sizes_for_category', sizes: [] };
+  const from = positiveInteger(range.from);
+  const to = positiveInteger(range.to);
+  if (from === null || to === null || to < from) {
+    return { degraded: true, reason: 'segment_config_invalid', sizes: [] };
+  }
+  const sizes = [];
+  for (let size = from; size <= to; size += 1) sizes.push(size);
+  return { degraded: false, reason: '', sizes: sortSizes(sizes) };
+};
+
+/**
  * 「尺码管理.类别」的取值 → 一组类别。
  *
  * ⚠️ 本机测试 Base（生产同形状）只读实测：这一列是**多选**（`type=4`，选项 A/B），
@@ -174,37 +196,9 @@ const limitError = (tableName, actual, limit) => {
  *    宁可慢一次，也绝不让一个"颜色名里带引号"的编号把公式拼坏 ——
  *    拼坏了飞书要么报错、要么按错的条件返回（**错的数据比慢更坏**）。
  */
-const FILTER_TEXT_UNSAFE = /["\\[\]\r\n\t]/;
-// 官方：`filter` 参数长度不超过 2000 个字符。
-const MAX_FILTER_CHARS = 2000;
-// 「尺码管理」整表在它自己那份缓存里的键（只有这一张表，键就是常量）。
-
-const filterTextLiteral = (value) => {
-  const text = String(value ?? '');
-  if (!text || FILTER_TEXT_UNSAFE.test(text)) return null;
-  return `"${text}"`;
-};
-
-/** `CurrentValue.[字段]="值"`（值不安全 / 字段没配 → `null`）。 */
-const equalsFormula = (field, value) => {
-  const literal = filterTextLiteral(value);
-  return field && literal ? `CurrentValue.[${field}]=${literal}` : null;
-};
-
-/** `CurrentValue.[字段].contains("值")`（同上）。 */
-const containsFormula = (field, value) => {
-  const literal = filterTextLiteral(value);
-  return field && literal ? `CurrentValue.[${field}].contains(${literal})` : null;
-};
-
-/** `OR(条件1,条件2)`；只有一个条件时就去掉 OR（少一层解析）；拼出来太长也不拼。 */
-const orFormula = (parts) => {
-  const conditions = (parts || []).filter(Boolean);
-  if (!conditions.length) return null;
-  if (conditions.length === 1) return conditions[0];
-  const formula = `OR(${conditions.join(',')})`;
-  return formula.length <= MAX_FILTER_CHARS ? formula : null;
-};
+// ⭐⭐ 2026-10-12「提速第二刀」①：上面那套过滤公式拼装**只有一处实现** —— 已抽到
+//    `services/bitableFilterFormula.js`（本文件与将来的其它调用方共用；搬运**逐字**、行为不变）。
+const { equalsFormula, containsFormula, orFormula } = require('./bitableFilterFormula');
 
 const createScanPageService = (gateway, options = {}) => {
   if (!gateway) throw new Error('ScanPageService requires gateway');
@@ -428,6 +422,98 @@ const createScanPageService = (gateway, options = {}) => {
   };
 
   /**
+   * ⭐⭐ 2026-10-12：**颜色归一**（只做大小写 / 空白 / 尾字「色」）。
+   *
+   * 🔴 **刻意只做这三件事**：二维码是机器码，**绝不做 OCR 相似字符纠正**
+   *    （`o↔0` / `i,l↔1` / `w↔9` 那类"纠正"会把**别的款**凑成"唯一命中"——
+   *     静默进错款比"找不到"更坏）。所以这里**不引用** `V1ReferenceResolver`（它带纠正）。
+   */
+  const normalizeColor = (value) => textValue(value).trim().toLowerCase().replace(/\s+/g, '').replace(/色$/, '');
+  /** 货号归一（大小写 + 空白）：她照着标签手打一遍时大小写不一致也能对上。 */
+  const normalizeItemNo = (value) => textValue(value).trim().toLowerCase();
+
+  /**
+   * ⭐⭐ 2026-10-12：**编号兜底匹配** —— 按「货号」过滤读一次，在内存里按（归一后的）颜色比对。
+   *
+   * 口径（Lead 已批）：**唯一命中才采用**；0 条 / 多条一律**维持"找不到"**（不猜）。
+   * 🔴 只读；🔴 不引 OCR 纠正；🔴 不"新加一次整表读"（过滤读不可用时走的是既有回退）。
+   *
+   * @returns {Promise<{records:Array, itemNo:string, color:string}>}
+   */
+  const readProductsByItemNo = async ({ itemNo, requestId }) => {
+    const itemNoField = fieldName(schema, 'product', 'itemNo');
+    const filter = itemNoField ? equalsFormula(itemNoField, itemNo) : null;
+    if (!filterEnabled || !filter) return { records: [], itemNo };
+    const read = await readFilteredCapped({
+      tableKey: 'product',
+      filter,
+      cap: limits.productRowsPerNumber,
+      fallbackCap: limits.productRecords,
+      requestId,
+    });
+    return { records: read.records || [], itemNo };
+  };
+
+  /** 在"按货号读到的那几条"里按（归一后的）颜色挑 —— 颜色段为空 ⇒ 只按货号（交给唯一性判据）。 */
+  const matchByItemNoAndColor = (records, { itemNo, color }) => {
+    const itemNoField = fieldName(schema, 'product', 'itemNo');
+    const colorField = fieldName(schema, 'product', 'color');
+    const wantedItemNo = normalizeItemNo(itemNo);
+    const wantedColor = normalizeColor(color);
+    if (!itemNoField || !wantedItemNo) return [];
+    return (records || []).filter((record) => {
+      const fields = record?.fields || {};
+      if (normalizeItemNo(fields[itemNoField]) !== wantedItemNo) return false;
+      if (!wantedColor) return true;
+      return !colorField || normalizeColor(fields[colorField]) === wantedColor;
+    });
+  };
+
+  /**
+   * ⭐⭐ **编号兜底匹配的那一步**（`performLookup` 里 `!product` 分支上"追加"的那一段）。
+   *
+   * 🔴 **唯一命中 ⇒ 返回那条货品**；**0 条 / 多条 ⇒ 返回 `null`**（并把 `tried` 带回去，
+   *    让路由能给一句"人话 + 下一步"，而不是原始错误页）。
+   * 🔴 **读表失败也返回 `null`**（兜底这一段**绝不许把页面打红**）。
+   */
+  const resolveByItemNoAndColor = async ({ parsed, requestId }) => {
+    const itemNo = String(parsed?.itemNo || '').trim();
+    const color = String(parsed?.color || '').trim();
+    if (!itemNo) return null;
+    let records = [];
+    try {
+      ({ records } = await readProductsByItemNo({ itemNo, requestId }));
+    } catch (error) {
+      // 🔴 兜底失败 ⇒ 照旧"找不到"（页面上仍有一句人话），**绝不让它变成 500**。
+      logWarn(config.events.numberFallbackFailed, {
+        request_id: requestId, item_no: itemNo, error: error.message,
+      });
+      return { product: null, tried: true, ambiguous: false, item_no: itemNo, color, matched_number: '' };
+    }
+    const matches = matchByItemNoAndColor(records, { itemNo, color });
+    if (matches.length === 1) {
+      const product = matches[0];
+      const numberField = fieldName(schema, 'product', 'number');
+      return {
+        product,
+        tried: true,
+        ambiguous: false,
+        item_no: itemNo,
+        color,
+        matched_number: numberField ? textValue(product?.fields?.[numberField]).trim() : '',
+        candidates: 1,
+      };
+    }
+    if (matches.length > 1) {
+      // 多命中 ⇒ **不猜**（静默进错款比找不到更坏），只记一条可 grep 的 warn。
+      logWarn(config.events.numberFallbackAmbiguous, {
+        request_id: requestId, item_no: itemNo, color, candidates: matches.length,
+      });
+    }
+    return { product: null, tried: true, ambiguous: matches.length > 1, item_no: itemNo, color, candidates: matches.length };
+  };
+
+  /**
    * 「实时库存」：**按条件只读这一款的行**（提速的主要手段 —— 提速前这里是整表读，真机 5~9 秒）。
    *
    * filter = `OR(「编号」关联 = 这一款的编号文本, 「库存键」.contains(「编号|」))`：
@@ -527,20 +613,7 @@ const createScanPageService = (gateway, options = {}) => {
    *   · 类别为空（编号里没有第 3 段）→ `number_without_category`；
    *   · 配置里没有这个类别 → `no_sizes_for_category`。
    */
-  const loadSizeScope = async ({ categoryCode }) => {
-    const ranges = config.sizeSegments?.ranges || {};
-    if (!categoryCode) return { degraded: true, reason: 'number_without_category', sizes: [] };
-    const range = ranges[String(categoryCode).trim().toUpperCase()];
-    if (!range) return { degraded: true, reason: 'no_sizes_for_category', sizes: [] };
-    const from = positiveInteger(range.from);
-    const to = positiveInteger(range.to);
-    if (from === null || to === null || to < from) {
-      return { degraded: true, reason: 'segment_config_invalid', sizes: [] };
-    }
-    const sizes = [];
-    for (let size = from; size <= to; size += 1) sizes.push(size);
-    return { degraded: false, reason: '', sizes: sortSizes(sizes) };
-  };
+  const loadSizeScope = async ({ categoryCode }) => sizesForCategory(categoryCode, config);
 
   /**
    * ⭐ **一致性保险**（业务负责人 2026-10-09）：定期拿**配置里的尺码段**与
@@ -627,17 +700,44 @@ const createScanPageService = (gateway, options = {}) => {
    * `total_ms` 都会被写进 `timing` —— 她要的正是"**失败也看得出卡在哪一步**"。
    * 真正的取数在 `performLookup`（下面），两层的参数逐字相同。
    */
-  const lookup = async ({ number: rawNumber, requestId, timing = null } = {}) => {
+  /**
+   * ⭐⭐ 2026-10-12：**按记录 ID 直达**（新二维码那条路）—— 「取商品」换一个策略，
+   * **其余链路（库存 / 尺码 / 缺码 / 页面 / 写入）逐字复用**。
+   *
+   * 🔴 只读：一次 `gateway.get('product', recordId)`（**不整表读、不按编号筛**）。
+   * 🔴 读不到（记录被删 / 合并 / 跨 Base / 网络）**绝不许 500** ——
+   *    调用方据此**回退按编号再试一次**（带了编号的话），否则给人话。
+   */
+  const readProductByRecordId = async ({ recordId, requestId, timing }) => {
+    const startedAt = startStage();
+    try {
+      return await gateway.get('product', recordId);
+    } catch (error) {
+      logWarn(config.events.recordLookupFailed, {
+        request_id: requestId, product_record_id: recordId, error: error.message,
+      });
+      return null;
+    } finally {
+      if (timing) timing.record_ms = elapsed(startedAt);
+    }
+  };
+
+  /** 记录 ID 那一档的视图缓存键（与"按编号"那一档**各存各的**，互不冒充）。 */
+  const recordCacheKey = (recordId) => `#record:${String(recordId || '')}`;
+
+  const lookup = async ({ number: rawNumber, recordId: rawRecordId, requestId, timing = null } = {}) => {
     const totalStartedAt = startStage();
     try {
-      return await performLookup({ rawNumber, requestId, timing });
+      return await performLookup({ rawNumber, rawRecordId, requestId, timing });
     } finally {
       if (timing) timing.total_ms = elapsed(totalStartedAt);
     }
   };
 
-  const performLookup = async ({ rawNumber, requestId, timing = null } = {}) => {
-    const number = decodeScanNumber(rawNumber, config);
+  const performLookup = async ({ rawNumber, rawRecordId, requestId, timing = null } = {}) => {
+    let number = decodeScanNumber(rawNumber, config);
+    let product = null;
+    const recordId = String(rawRecordId ?? '').trim();
     if (timing) {
       timing.number = number;
       timing.cache_hit = false;
@@ -648,10 +748,56 @@ const createScanPageService = (gateway, options = {}) => {
       timing.inventory_ms = 0;
       timing.size_ms = 0;
       timing.whole_table_fallback = false;
+      // ⭐ 2026-10-12：这一趟有没有走**编号兜底匹配**（缺类别那种标签）。
+      timing.number_fallback = false;
+      // ⭐⭐ 2026-10-12：这一趟是不是**按记录 ID 直达**（新二维码那条路）。
+      timing.record_id = Boolean(recordId);
+      timing.record_id_hit = false;
+      timing.record_ms = 0;
       timing.rows = 0;
       timing.total_ms = 0;
     }
-    if (!number) return { found: false, number, reason: 'empty' };
+    // ── ⭐⭐ 记录 ID 直达（`/r/{recordId}`）────────────────────────────────────
+    //    ⚠️ 它**排在"按编号"之前**：新二维码里没有编号，只有记录 id。
+    //    ⚠️ 取不到记录时**不 return**：若 URL 上还带了编号，就继续往下走"按编号"那条路
+    //      （= 回退再试一次）；两条都没有才给人话。
+    if (recordId) {
+      const cachedById = cache.get(recordCacheKey(recordId));
+      if (cachedById) {
+        logInfo(config.events.cacheHit, {
+          request_id: requestId, number: cachedById.number, product_record_id: recordId,
+          cache_hit: true, ttl_ms: cache.ttlMs, by: 'record_id',
+        });
+        if (timing) {
+          timing.cache_hit = true;
+          timing.record_id_hit = true;
+          timing.number = cachedById.number;
+          timing.rows = cachedById.total;
+        }
+        return cachedById;
+      }
+      const found = await readProductByRecordId({ recordId, requestId, timing });
+      const numberField = fieldName(schema, 'product', 'number');
+      if (found) {
+        product = found;
+        const tableNumber = numberField ? textValue(found?.fields?.[numberField]).trim() : '';
+        number = tableNumber || number;
+        if (timing) { timing.record_id_hit = true; timing.number = number; }
+        logInfo(config.events.recordViewed, {
+          request_id: requestId, product_record_id: recordId, number,
+        });
+      } else if (!number) {
+        // 记录读不到、URL 上也没有编号可回退 ⇒ **人话**（不是 500、不是原始错误页）。
+        logInfo(config.events.recordMissing, { request_id: requestId, product_record_id: recordId });
+        return { found: false, number: '', reason: 'unknown', record_missing: true };
+      } else {
+        // 带了编号 ⇒ **回退按编号再试一次**（这条日志是"回退真的发生了"的证据）。
+        logInfo(config.events.recordFallback, {
+          request_id: requestId, product_record_id: recordId, number,
+        });
+      }
+    }
+    if (!number && !product) return { found: false, number, reason: 'empty' };
 
     const cached = cache.get(number);
     if (cached) {
@@ -677,40 +823,76 @@ const createScanPageService = (gateway, options = {}) => {
     logInfo(config.events.cacheMiss, { request_id: requestId, number, cache_hit: false });
 
     const parsed = parseNumberSegments(number, config);
-    const productStartedAt = startStage();
-    let product = null;
     let wholeTableFallback = false;
-    try {
-      // ⭐⭐ 2026-10-09：**先查「货品信息」内存快照**（按编号索引）——命中就 **0 次飞书调用**。
-      //    单价仍以「货品信息」为唯一真源（她的口径），只是从内存里取。
-      //    未就绪 / 过期 / 没这一条 ⇒ 回退下面那条**既有的过滤读**（行为逐字不变）。
-      const indexed = productSnapshot ? productSnapshot.get() : { ready: false, reason: 'disabled' };
-      if (indexed.ready) {
-        product = findProduct(indexed.records, number);
-        if (timing) timing.product_snapshot_hit = Boolean(product);
-      }
-      if (!product) {
-        const filteredProduct = await readProductsByNumber({ number, requestId });
-        product = filteredProduct.product;
-        wholeTableFallback = Boolean(filteredProduct.fallback);
-        if (!product && !filteredProduct.resolved) {
-          // 按条件读一条都没读到 ⇒ **回退整表读**再找一次：
-          // 「找不到」的判定与提速前**逐字一致**（宁可慢这一次，也不许把"有货"判成"没这条编号"）。
-          const products = await readAllCapped('product', limits.productRecords, requestId);
-          product = findProduct(products, number);
-          wholeTableFallback = true;
+    // ⭐⭐ 2026-10-12（`/r/{recordId}`）：**已经直接拿到货品了** ⇒ 这一段**整段跳过**
+    //    （不按编号筛、不查内存快照、不整表读）—— 这就是"两条路**共用同一套链路**，
+    //    只有『取商品』那一步换了策略"的落点：下面每一行（库存 / 尺码 / 缺码 / 视图 / 缓存）**逐字复用**。
+    if (!product) {
+      const productStartedAt = startStage();
+      try {
+        // ⭐⭐ 2026-10-09：**先查「货品信息」内存快照**（按编号索引）——命中就 **0 次飞书调用**。
+        //    单价仍以「货品信息」为唯一真源（她的口径），只是从内存里取。
+        //    未就绪 / 过期 / 没这一条 ⇒ 回退下面那条**既有的过滤读**（行为逐字不变）。
+        const indexed = productSnapshot ? productSnapshot.get() : { ready: false, reason: 'disabled' };
+        if (indexed.ready) {
+          product = findProduct(indexed.records, number);
+          if (timing) timing.product_snapshot_hit = Boolean(product);
+        }
+        if (!product) {
+          const filteredProduct = await readProductsByNumber({ number, requestId });
+          product = filteredProduct.product;
+          wholeTableFallback = Boolean(filteredProduct.fallback);
+          if (!product && !filteredProduct.resolved) {
+            // 按条件读一条都没读到 ⇒ **回退整表读**再找一次：
+            // 「找不到」的判定与提速前**逐字一致**（宁可慢这一次，也不许把"有货"判成"没这条编号"）。
+            const products = await readAllCapped('product', limits.productRecords, requestId);
+            product = findProduct(products, number);
+            wholeTableFallback = true;
+          }
+        }
+      } finally {
+        // ⚠️ 用 finally：这一阶段**抛错时也要**留下 product_ms（"卡在货品信息那一步"就是这么看出来的）。
+        if (timing) {
+          timing.product_ms = elapsed(productStartedAt);
+          timing.whole_table_fallback = wholeTableFallback;
         }
       }
-    } finally {
-      // ⚠️ 用 finally：这一阶段**抛错时也要**留下 product_ms（"卡在货品信息那一步"就是这么看出来的）。
-      if (timing) {
-        timing.product_ms = elapsed(productStartedAt);
-        timing.whole_table_fallback = wholeTableFallback;
+    }
+    // ⭐⭐ 2026-10-12：**编号兜底匹配**（追加在"精确匹配没找到"之后；上面那条路径**逐字不动**）。
+    //    她真机那次：二维码里编号 = `MK31-1|咖色|`（缺「类别」）⇒ 查不到 ⇒ 400 原始错误页。
+    let numberFallback = null;
+    // 🔴 **只在精确匹配没找到时**才走兜底（`!product`）—— 正常编号一次都不多查。
+    if (!product && config.number.fallbackMatch?.enabled !== false) {
+      numberFallback = await resolveByItemNoAndColor({ parsed, requestId });
+      if (numberFallback?.product) {
+        product = numberFallback.product;
+        // ⭐ 用**表里那条货品的真实段**补齐缺的那一段（典型 = 类别）—— 后面的"缺码判定"
+        //    才会按**真实类别**去筛尺码，而不是降级成"只显示有货的尺码"。
+        //    ⚠️ 只补**URL 里空着**的那一段，绝不覆盖她扫到的那两段。
+        if (!parsed.categoryCode) parsed.categoryCode = textValue(readField(schema, 'product', product, 'category')).trim();
+        if (!parsed.color) parsed.color = textValue(readField(schema, 'product', product, 'color')).trim();
+        if (!parsed.itemNo) parsed.itemNo = textValue(readField(schema, 'product', product, 'itemNo')).trim();
+        if (timing) timing.number_fallback = true;
+        logInfo(config.events.numberFallback, {
+          request_id: requestId,
+          // `number` = **她扫到的那串**（缺段）；`matched_number` = 表里那条的真实编号。
+          number, matched_number: numberFallback.matched_number,
+          item_no: numberFallback.item_no, color: numberFallback.color,
+        });
       }
     }
     if (!product) {
       logInfo(config.events.notFound, { request_id: requestId, number });
-      return { found: false, number, reason: 'unknown' };
+      // ⭐ 兜底**也**没命中（0 条 / 多条 / 读失败）时，把"试过了"这件事带回去 ——
+      //    路由据此换成人话 + 给【再扫一次】的指引（不再是原始错误页）。
+      return {
+        found: false,
+        number,
+        reason: 'unknown',
+        fallback: numberFallback
+          ? { tried: true, ambiguous: numberFallback.ambiguous === true, candidates: numberFallback.candidates || 0, item_no: numberFallback.item_no, color: numberFallback.color }
+          : null,
+      };
     }
 
     const stockKeyField = fieldName(schema, 'liveInventory', 'stockKey');
@@ -847,7 +1029,12 @@ const createScanPageService = (gateway, options = {}) => {
     const categoryNameField = config.fieldNamesPendingSchema?.productCategoryName || '';
     const view = {
       found: true,
-      number,
+      // ⭐ 兜底命中 ⇒ 用**表里那条的真实编号**（下游（加入本单 / 提交）拿到的才是对的编号），
+      //    并带上 `number_fallback` 让页面上出那条轻提示。
+      number: numberFallback?.matched_number || number,
+      number_fallback: numberFallback?.product
+        ? { scanned_number: number, matched_number: numberFallback.matched_number || number }
+        : null,
       item_no: productText('itemNo') || parsed.itemNo,
       color: productText('color') || parsed.color,
       category_code: productText('category') || parsed.categoryCode,
@@ -880,6 +1067,9 @@ const createScanPageService = (gateway, options = {}) => {
     });
     // 只缓存 `found: true`（否定结果不缓存：新品刚建档就该立刻扫得到）。
     cache.set(number, view);
+    // ⭐ 2026-10-12：按记录 ID 直查的那一趟**也**把视图挂在记录 id 上 ——
+    //    同一个码连扫两次（或她来回翻页）时第二次**0 次飞书**。
+    if (recordId) cache.set(recordCacheKey(recordId), view);
     // ⚠️ `total_ms`（取数这一段）由最外层的 `lookup` 统一写；路由渲染完再把 `render_ms` 加进来。
     return view;
   };
@@ -889,6 +1079,9 @@ const createScanPageService = (gateway, options = {}) => {
 
 module.exports = {
   createScanPageService,
+  // ⭐⭐ 2026-10-12：**"这个类别该有哪些尺码"的唯一来源**（纯配置，零读表）——
+  //    `loadSizeScope`（缺码判定）与验收页的"未报货尺码"候选**共用这一份**，不另发明一套。
+  sizesForCategory,
   decodeScanNumber,
   parseNumberSegments,
   formatPrice,

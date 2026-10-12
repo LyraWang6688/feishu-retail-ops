@@ -987,7 +987,7 @@ test('AC-8c ⭐【未付】走真路由：页面上什么都不填 ⇒ 直接成
         payment_status: PAYMENT_STATUS.unpaid, line_amount: '',
       });
       assert.equal(done.status, 200);
-      assert.match(await done.text(), /这一单提交好了/);
+      assert.match(await done.text(), /您的提交已成功/);
       assert.equal(paidRows(h).length, 0);
       // ⚠️ 2026-10-11（方案甲）改写：改前留空按单价 399 定稿、写一条 399 的【未收款】；
       //    现在没填 ⇒ 那一列留空、差额 0 ⇒ **一条未收款都不写**。

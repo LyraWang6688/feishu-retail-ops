@@ -15,6 +15,14 @@
  *    （实测 1~10 秒）。这一条也是"为什么必须有每日兜底巡检"的真实理由之一。
  */
 /* 端到端（**只写授权的测试 Base**）：新增 ⇒ 生成；改货号 ⇒ 更新；编号没变 ⇒ 不写 */
+
+// ⚠️ 2026-10-12（Lead 实测踩坑）：本脚本原来**不加载 `.env`** ⇒ 裸跑会报
+//    「没有配置目标 Base（FEISHU_V1_BITABLE_APP_TOKEN），拒绝运行」——那是**假红** ✗
+//    （任何人都以为"没配 Base"）。⇒ 自己先读 `.env`（`server/../.env`），
+//    **必须在 require 业务模块之前**（`v1BitableSchema` 的表 ID 是模块级求值）。
+const path = require('node:path');
+require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env'), quiet: true });
+
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { V1BitableGateway, textValue } = require('../src/services/v1BitableGateway');
 const { createTagQrCodeService, buildFileName, attachmentsOf } = require('../src/services/tagQrCodeService');
@@ -47,15 +55,23 @@ const namesOf = (record) => attachmentsOf(record?.fields?.[F.tagQrCode]).map((x)
     say('① 测试 Base 已有字段', F.tagQrCode);
   }
 
-  // ② 挑一条**二维码为空**的真实记录（"新增货品还没生成码"那一档）
+  // ② 挑一条**编号有值**的真实记录，用来演示"新增货品还没生成码"那一档。
+  // ⚠️ 2026-10-12（e2e-author 收口）：原来要求"测试 Base 里**恰好**有一条二维码为空的记录"——
+  //    跑过一轮之后全都有码了 ⇒ 第二次跑必红（`pnpm run e2e:real` 里它排在 `e2e/real-paths.mjs`
+  //    的 ⑦ 之后，而 ⑦ 会写码）⇒ 这是**假红**，也不是产品的问题。
+  //    ⇒ 现在**自己把这条记录的二维码清空**（只写授权的测试 Base），后面第 ⑥ 步会让它自愈回原样。
   const all = await gateway.listAll('product');
-  const target = all.find((item) => String(item.fields?.[F.number] || '').trim()
-    && attachmentsOf(item.fields?.[F.tagQrCode]).length === 0);
-  if (!target) { console.error('🔴 测试 Base 里没有"编号有值、二维码为空"的记录，无法演示新增路'); process.exit(1); }
+  const target = all.find((item) => String(item.fields?.[F.number] || '').trim());
+  if (!target) { console.error('🔴 测试 Base 里没有"编号有值"的记录，无法演示新增路'); process.exit(1); }
   const id = target.record_id;
   const number1 = textValue(target.fields[F.number]).trim();
+  await client.bitable.appTableRecord.update({
+    path: { app_token: appToken, table_id: tableId, record_id: id },
+    data: { fields: { [F.tagQrCode]: [] } },
+  });
+  const cleared = namesOf(await gateway.get('product', id));
   say('② 用这条真实记录', `${id}（编号 ${number1}｜货号 ${target.fields[F.itemNo]}）`);
-  say('   当前二维码', namesOf(target));
+  say('   已先清空二维码（造出"新增路"要的状态）', `当前附件=[${cleared.join(',')}]`);
 
   // ③ 事件路径 + 「新增」动作 ⇒ 应生成并写回
   const r1 = await service.handleTableChanges([{ record_id: id, action: 'record_added' }]);

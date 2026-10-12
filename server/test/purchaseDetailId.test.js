@@ -26,6 +26,7 @@
  *  AC-ID7 **schema 映射**仍是「采购明细ID」（她 2026-10-12 改过的列名）。
  *  AC-ID8 纯函数边界：别的批次的号 / 非数字后缀**不参与**排号（不误判、不跳号）。
  */
+const { purchaseToast } = require('../src/config/purchaseWebhookTexts.js'); // 联动断言用（上面那条）
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -255,6 +256,13 @@ test('AC-ID2 报货一次两双 ⇒ `-01` / `-02`（同一批次内递增且唯�
   });
   const result = await h.service.publishPurchaseRequest('t1', task);
   assert.ok(result.batch_no, '照常出号');
+  // ⭐⭐ 与技术债批次《文案抽 config》的**联动断言**（2026-10-12）：抽文案**不许**把这条链弄坏。
+  //    期望值取 config 的常量（不手抄字符串），参数取**真实 result**（批次号 / 明细条数）——
+  //    上次的真 bug 正是这里：填参函数的入参名和服务传的不一致 ⇒ 这条链直接 ReferenceError。
+  if (result.toast) {
+    assert.equal(result.toast.content, purchaseToast.m1({ plan: { batch_no: result.batch_no }, requestIds: result.request_ids || [] }),
+      '报货建单真的跑通后，产出的那句文案必须与 config 逐字对上');
+  }
   const ids = detailIds(h.tables).sort();
   assert.deepEqual(ids, [`${result.batch_no}-01`, `${result.batch_no}-02`]);
   assert.equal(new Set(ids).size, ids.length, '同一批次内不重号');

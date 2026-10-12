@@ -1,0 +1,345 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "tables": [
+      {
+        "id": "tbl5as7poByp36c7",
+        "name": "货品信息",
+        "records_count": 440,
+        "rev": 1
+      },
+      {
+        "id": "tblGIy0VCZPxGHku",
+        "name": "品类管理",
+        "records_count": 8,
+        "rev": 2
+      },
+      {
+        "id": "tblNg7yInC6pNLJR",
+        "name": "收款方式管理",
+        "records_count": 6,
+        "rev": 2
+      },
+      {
+        "id": "tbl0dKjyNFCoFh9G",
+        "name": "供应商管理",
+        "records_count": 6,
+        "rev": 2
+      },
+      {
+        "id": "tblVuUvGU4EP1Wm8",
+        "name": "尺码管理",
+        "records_count": 15,
+        "rev": 2
+      },
+      {
+        "id": "tblsYKKDNkMczeTz",
+        "name": "供应商报货",
+        "records_count": 29,
+        "rev": 4
+      },
+      {
+        "id": "tblxi6O0ykknUuDA",
+        "name": "采购申请",
+        "records_count": 80,
+        "rev": 6
+      },
+      {
+        "id": "tblkT9KibVvlPORE",
+        "name": "采购到货",
+        "records_count": 7,
+        "rev": 4
+      },
+      {
+        "id": "tblQ5RzzHB2DuD6X",
+        "name": "采购入库",
+        "records_count": 54,
+        "rev": 8
+      },
+      {
+        "id": "tblchUNgfH7o0ydr",
+        "name": "销售主表",
+        "records_count": 74,
+        "rev": 7
+      },
+      {
+        "id": "tbl7jbip6y6R8J1h",
+        "name": "销售明细",
+        "records_count": 81,
+        "rev": 12
+      },
+      {
+        "id": "tblM4ijWbOen0OwJ",
+        "name": "收款明细",
+        "records_count": 71,
+        "rev": 4
+      },
+      {
+        "id": "tbl068CPuO0EJc6K",
+        "name": "销售示例",
+        "records_count": 41,
+        "rev": 22
+      },
+      {
+        "id": "tblbfhMKaS2r3XXI",
+        "name": "退换赔货交易",
+        "records_count": 0,
+        "rev": 2
+      },
+      {
+        "id": "tbl1z222k4Npvdq5",
+        "name": "库存流水",
+        "records_count": 164,
+        "rev": 12
+      },
+      {
+        "id": "tblUjYoz9HAkOd5L",
+        "name": "实时库存",
+        "records_count": 1086,
+        "rev": 12
+      },
+      {
+        "id": "tblWegdTt4e0eecJ",
+        "name": "报货批次",
+        "records_count": 5,
+        "rev": 3
+      },
+      {
+        "id": "tblB1sdJA6YLehQZ",
+        "name": "采购示例",
+        "records_count": 2,
+        "rev": 2
+      },
+      {
+        "id": "tblCTvxJwH7sz4mN",
+        "name": "采购建议",
+        "records_count": 0,
+        "rev": 2
+      },
+      {
+        "id": "tblk7eUhno5DutKk",
+        "name": "行为管理",
+        "records_count": 20,
+        "rev": 25
+      },
+      {
+        "id": "tblF7KD85JHA4hVi",
+        "name": "团购券管理",
+        "records_count": 2,
+        "rev": 5
+      },
+      {
+        "id": "tbl52t4s3c8nN6Nm",
+        "name": "库存初始化",
+        "records_count": 1014,
+        "rev": 2
+      },
+      {
+        "id": "tblZrLB5lpX4S5bA",
+        "name": "客户货款初始化",
+        "records_count": 1,
+        "rev": 2
+      },
+      {
+        "id": "tblDKejk0JTQZyyA",
+        "name": "供应商货款初始化",
+        "records_count": 2,
+        "rev": 2
+      },
+      {
+        "id": "tblZiRWEeIADQFdb",
+        "name": "颜色管理",
+        "records_count": 91,
+        "rev": 2
+      },
+      {
+        "id": "tblnJsLDeHXVxJls",
+        "name": "其他配品",
+        "records_count": 15,
+        "rev": 3
+      },
+      {
+        "id": "tblpRwkDYnUZoRcj",
+        "name": "字段字典",
+        "records_count": 34,
+        "rev": 2
+      },
+      {
+        "id": "tblgQPcOqhfM4lrN",
+        "name": "数据表字典",
+        "records_count": 0,
+        "rev": 2
+      },
+      {
+        "id": "tbl7pG4MdoZ9HZ52",
+        "name": "数据表字段关系",
+        "records_count": 0,
+        "rev": 2
+      },
+      {
+        "id": "tblrNw6IBtcrrkOh",
+        "name": "核销管理",
+        "records_count": 25,
+        "rev": 2
+      },
+      {
+        "id": "tbld3HEjxZfbEI5s",
+        "name": "对账管理",
+        "records_count": 26,
+        "rev": 2
+      },
+      {
+        "id": "tblL1aWpSJgdgGO0",
+        "name": "资金流水",
+        "records_count": 0,
+        "rev": 2
+      },
+      {
+        "id": "tblupK4tPzWnLXO4",
+        "name": "供应商往来货款",
+        "records_count": 0,
+        "rev": 2
+      },
+      {
+        "id": "tbln834Z7R84axka",
+        "name": "客户往来货款",
+        "records_count": 0,
+        "rev": 2
+      },
+      {
+        "id": "tblacc1YEkDVd1AE",
+        "name": "付款记录",
+        "records_count": 5,
+        "rev": 2
+      },
+      {
+        "id": "tbl6FPhB4rzvVcdx",
+        "name": "版本记录",
+        "records_count": 1,
+        "rev": 1
+      },
+      {
+        "id": "tblGJ7t0neM60k5x",
+        "name": "skill管理",
+        "records_count": 0,
+        "rev": 4
+      },
+      {
+        "id": "tblDuc7CqWgnsHJg",
+        "name": "主推人群标签",
+        "records_count": 0,
+        "rev": 2
+      },
+      {
+        "id": "tblNi2uKgnphsSAV",
+        "name": "主推场景标签",
+        "records_count": 0,
+        "rev": 2
+      },
+      {
+        "id": "tblUmU7xbBsXXGpb",
+        "name": "任务管理",
+        "records_count": 0,
+        "rev": 5
+      },
+      {
+        "id": "tbllsMWHMeA2exqj",
+        "name": "合并A库存",
+        "records_count": 0,
+        "rev": 5
+      },
+      {
+        "id": "tbl19IwmsIZ5DEpq",
+        "name": "合并B库存",
+        "records_count": 0,
+        "rev": 5
+      },
+      {
+        "id": "tbl6iXLngTMvdMcr",
+        "name": "定时任务管理",
+        "records_count": 0,
+        "rev": 3
+      },
+      {
+        "id": "tblzEruokg9vTwvW",
+        "name": "工具管理",
+        "records_count": 0,
+        "rev": 3
+      },
+      {
+        "id": "tblXG6P2dDjaVNXa",
+        "name": "已实现功能",
+        "records_count": 0,
+        "rev": 8
+      },
+      {
+        "id": "tblmSQRphrJxUDnD",
+        "name": "抖音商品运营档案",
+        "records_count": 0,
+        "rev": 6
+      },
+      {
+        "id": "tblh4BtqguwDSJHV",
+        "name": "样例图",
+        "records_count": 0,
+        "rev": 6
+      },
+      {
+        "id": "tblYDOgGCxq6aHZc",
+        "name": "核心卖点标签",
+        "records_count": 0,
+        "rev": 2
+      },
+      {
+        "id": "tblmyadHozj7nheK",
+        "name": "每日往来款",
+        "records_count": 0,
+        "rev": 2
+      },
+      {
+        "id": "tbl9XCvPbbNAPvBc",
+        "name": "汇总表",
+        "records_count": 0,
+        "rev": 7
+      },
+      {
+        "id": "tblLsrIcWPjSkSwI",
+        "name": "考勤记录",
+        "records_count": 0,
+        "rev": 3
+      },
+      {
+        "id": "tbl2QgRAbFoS573P",
+        "name": "采购汇总",
+        "records_count": 0,
+        "rev": 2
+      },
+      {
+        "id": "tblt2eqNIBt94vnl",
+        "name": "销售汇总",
+        "records_count": 0,
+        "rev": 2
+      },
+      {
+        "id": "tblmNfe7dboGdoGM",
+        "name": "鞋盒图片",
+        "records_count": 0,
+        "rev": 4
+      },
+      {
+        "id": "tbltiOWVe0gH1ldf",
+        "name": "项目推进表",
+        "records_count": 0,
+        "rev": 8
+      },
+      {
+        "id": "tblwZKUPHk9IM6cO",
+        "name": "库存门盒初始化",
+        "records_count": 0,
+        "rev": 0
+      }
+    ],
+    "total": 56
+  }
+}

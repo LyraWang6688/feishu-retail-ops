@@ -10,7 +10,7 @@
 //    见 `services/salesOrderService.js` 与 `test/salesMvp.test.js` 里那些用例）。
 //
 // 明细行的渲染器是 `utils/larkCards.js` 的 `itemLines`，三个调用点都走它：
-//   ① 销售确认卡片 `salesConfirmationCard`（她看到的"请确认销售订单"那张）
+//   ① （2026-10-12 3b：原来还有「请确认销售订单」那张卡，它随销售草稿卡片退场 ⇒ 本文件改走 ②）
 //   ② 结果卡 `salesStatusCard`（已入账 / 取消 / 待修正）
 //   ③ 处理中卡 `salesProcessingCard`（点确认后立刻刷新那张）
 // 所以这三张卡都在这里钉一遍。
@@ -18,7 +18,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  salesConfirmationCard,
   salesStatusCard,
   salesProcessingCard,
 } = require('../src/utils/larkCards');
@@ -45,7 +44,7 @@ const ACCESSORY_ONLY_DRAFT = {
 const firstText = (card) => card.elements[0].text?.content || card.elements[0].content || '';
 
 test('配品 + 鞋混在一单：鞋照旧「43码 × 1」，配品行**不含「码」**（真机那行「腰带 码 × 1」必须消失）', () => {
-  const content = firstText(salesConfirmationCard('draft-1', MIXED_DRAFT));
+  const content = firstText(salesStatusCard(MIXED_DRAFT, '已成交', '已经写好了'));
 
   // ① 有尺码的鞋：逐字不变（既有断言钉着的写法）。
   assert.match(content, /1\. 6A637-7 43码 × 1 ￥260/);
@@ -58,7 +57,7 @@ test('配品 + 鞋混在一单：鞋照旧「43码 × 1」，配品行**不含�
 });
 
 test('纯配品单（一个尺码都没有）：渲染成「腰带 × 1」，不含「码」', () => {
-  const content = firstText(salesConfirmationCard('draft-2', ACCESSORY_ONLY_DRAFT));
+  const content = firstText(salesStatusCard(ACCESSORY_ONLY_DRAFT, '已成交', '已经写好了'));
   // 单件不显示金额（既有口径）；关键是**没有那个凭空拼出来的「码」**。
   assert.match(content, /1\. 腰带 × 1(?: |$)/, `实际：${content}`);
   assert.doesNotMatch(content, /码/, `纯配品单里一个「码」字都不该有，实际：${content}`);
@@ -77,31 +76,24 @@ test('结果卡与处理中卡的配品行同样不含「码」（三张卡共�
 });
 
 test('没有尺码的鞋（数据不齐）也不硬拼「码」——只写数量', () => {
-  const content = firstText(salesConfirmationCard('draft-3', {
+  const content = firstText(salesStatusCard({
     agreed_total: 100,
     payments: [{ method: '微信', amount: 100 }],
     trade_type: '现货',
     items: [{ item_no: '6A637-7', quantity: 1, actual_amount: 100 }],
-  }));
+  }, '已成交', '已经写好了'));
   // 单件不显示金额（既有口径），也**没有**那个凭空拼出来的「码」。
   assert.match(content, /1\. 6A637-7 × 1(?: |$)/, `实际：${content}`);
   assert.doesNotMatch(content, /码/);
 });
 
-test('有尺码的件渲染逐字不变（既有口径不放宽）', () => {
-  // 三张卡里都有这条既有断言；这里把「单件不显示金额 / 多件显示金额」的既有口径一起复核。
-  const oneItem = firstText(salesConfirmationCard('draft-4', {
-    agreed_total: 99, payments: [{ method: '微信', amount: 99 }], trade_type: '现货',
-    items: [{ item_no: '66356', size: 42, quantity: 1, actual_amount: 99 }],
-  }));
-  assert.equal(oneItem, '1. 66356 42码 × 1');
-
-  const twoItems = firstText(salesConfirmationCard('draft-5', {
-    agreed_total: 198, payments: [{ method: '微信', amount: 198 }], trade_type: '现货',
-    items: [
-      { item_no: '66356', size: 42, quantity: 1, actual_amount: 99 },
-      { item_no: '66357', size: 40, quantity: 1, actual_amount: 99 },
-    ],
-  }));
-  assert.equal(twoItems, '1. 66356 42码 × 1 ￥99\n2. 66357 40码 × 1 ￥99');
+test('有尺码的件渲染逐字不变（原确认卡「单件不显示金额」的口径已随它退场 ⇒ 活卡片照旧显示金额）', () => {
+  // ⚠️ 2026-10-12（3b）：原来这条钉的是"**单件**不显示金额"——那是**已退场那张确认卡片**
+  //    独有的做法（它给 `itemLines` 传了 `{ showAmount: items.length > 1 }`）。
+  //    仍在跑的卡片（销售状态卡片 / 处理中卡）都用 `itemLines` 的默认值（逐件都显示金额）
+  //    ⇒ 那条口径**没有活的卡片需要它**，随卡片一起退场；这里改钉"逐字不变 + 金额照旧在"。
+  const content = firstText(salesStatusCard({
+    items: [{ item_no: '66356', size: 42, quantity: 1, actual_amount: 99 }], agreed_total: 99,
+  }, '已成交', '已经写好了'));
+  assert.match(content, /1\. 66356 42码 × 1 ￥99/, `实际：${content}`);
 });

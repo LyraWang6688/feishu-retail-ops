@@ -1,4 +1,13 @@
 /**
+ * ⚠️ 2026-10-12 旧断言改写（**真机 bug 修复**：采购单的「采购行为」原来写成了**库存**行为）：
+ *  改前（逐字）：`assert.deepEqual(entriesOf(h.gateway, 'purchaseOrderBatch')[0].fields['采购行为'], ['bh_request'], '主表「采购行为」= 采购申请那一档（明细那列由它 Lookup 带出）');`
+ *  改后（逐字）：同断言，值改 **['bh_order']**（夹具里那条 = 「报货」编码 `PURCHASE_ORDER`）。
+ *  理由：业务负责人 2026-10-12 指出（逐字）「**为什么你选成了采购增加了呢？**」——
+ *        配置原来给的是 `STOCK_PURCHASE_INCREASE`（真表 `所属环节=库存`）✗；
+ *        采购单的「采购行为」该是**采购环节**的「报货」`PURCHASE_ORDER` ✓。
+ *        ⚠️ 库存流水那一边**没动**（仍然 `STOCK_PURCHASE_INCREASE/_DECREASE`）—— 见 `test/purchaseBehaviorCode.test.js` AC-BH3。
+ */
+/**
  * ⚠️ 2026-10-12 热修改写（**「采购明细.采购行为」是 Lookup = 只读**）：
  *  改前（逐字）：`assert.deepEqual(record.fields['采购行为'], ['bh_request'], '采购行为来自「行为管理」的既有编码');`
  *                （另一处同形：`assert.deepEqual(record.fields['采购行为'], ['bh_request']);`）
@@ -106,6 +115,10 @@ const seedTables = (overrides = {}) => ({
     { record_id: 'pm_cash', fields: { 收款方式: '现金' } },
   ],
   behavior: [
+    // ⭐⭐ 2026-10-12 改（业务负责人指出的真 bug）：采购单的「采购行为」= **采购环节**的「报货」
+    //    （编码 `PURCHASE_ORDER`）——**不是**库存环节的「采购增加」（`STOCK_PURCHASE_INCREASE`）✗。
+    //    ⚠️ 老的库存那条**留着**：库存流水那条链路（`inventoryService`）仍然认它 ✓（两件事 ✗ 别混）。
+    { record_id: 'bh_order', fields: { 行为名称: '报货', 行为编码: 'PURCHASE_ORDER' } },
     { record_id: 'bh_request', fields: { 行为名称: '采购申请', 行为编码: 'STOCK_PURCHASE_INCREASE' } },
     // ⭐ 2026-10-09：现货 / 预订 = 扫码页销售建单要写的**既有**交易类型编码
     //    （「行为管理」表里就这两条，见 `config/salesMovements.js`）。
@@ -434,8 +447,9 @@ test('⑥ 勾选尺码 + 填数量 → 生成采购申请（走既有采购链�
       // 🔴 2026-10-12 热修：这一列是 Lookup（只读）⇒ **建明细行不许再写它**（写了会整条 create 失败）
       assert.equal('采购行为' in record.fields, false, '采购行为是 Lookup，不许写');
       // ⭐⭐ 2026-10-12（她确认要写）：值改由**主表**带出来 —— 主表行上必须有「采购行为」
-      assert.deepEqual(entriesOf(h.gateway, 'purchaseOrderBatch')[0].fields['采购行为'], ['bh_request'],
-        '主表「采购行为」= 采购申请那一档（明细那列由它 Lookup 带出）');
+      // ⭐ 2026-10-12：值 = **采购环节**的「报货」（`PURCHASE_ORDER`）—— 原来是库存环节的「采购增加」✗
+      assert.deepEqual(entriesOf(h.gateway, 'purchaseOrderBatch')[0].fields['采购行为'], ['bh_order'],
+        '主表「采购行为」= 采购环节的「报货」那一档（明细那列由它 Lookup 带出）');
       assert.ok(record.fields['幂等键'], '每条采购申请都有幂等键（既有 createOnceByKey 的回查依据）');
       assert.ok(record.fields['报货批次号'], '挂在同一个报货批次上');
     }
@@ -675,7 +689,7 @@ test('⑧ 路由：加入本单 → 回跳带上"本单几双"；提交整单 �
       });
       assert.equal(submitted.status, 200);
       const doneHtml = await submitted.text();
-      assert.match(doneHtml, /这一单提交好了/);
+      assert.match(doneHtml, /您的提交已成功/);
       assert.match(doneHtml, /XSD-\d{8}-\d{4}/);
       assert.match(doneHtml, /明细：1 双/);
       assert.match(doneHtml, /接着扫下一款就可以开新的一单。/);
@@ -741,7 +755,7 @@ test('⑨ 没单价又没填金额 ⇒ **照样成单**（那一列留空），�
       //    （那时"留空 ⇒ 读单价"，读不到就只能拦）；现在**没填就留空** ⇒ 直接成单。
       assert.equal(response.status, 200, '没填实收不再是失败 ⇒ 成功结果页（200）');
       const html = await response.text();
-      assert.match(html, /这一单提交好了/, '给她的是"提交好了"那一页');
+      assert.match(html, /您的提交已成功/, '给她的是"提交好了"那一页');
       assert.equal(entriesOf(h.gateway, 'salesEntry').length, 1, '单子建出来了');
       assert.equal('实收金额' in entriesOf(h.gateway, 'salesDetail')[0].fields, false,
         '没填 ⇒ 那一列留空（不写 0，也不拿单价顶 —— 何况这一款根本没有单价）');
@@ -781,10 +795,49 @@ test('⑨ 失败有人话：内部错误（字段名/错误码）**不回显**�
       });
       assert.equal(response.status, 500);
       const html = await response.text();
-      assert.match(html, /这一步没成功/);
-      assert.match(html, /系统这边没处理成功/, '通用人话要在页面上');
+      // ⭐⭐ 2026-10-12（业务负责人口径）：这里抛的是【**主表已经建了、明细那一步没写成功**】——
+      //    按新口径给**如实**的"半成"页：单子记上了（带单号）+ 怎么出去（回扫码页再点一次）。
+      //    🔴 **绝不许**显示"提交已成功"（她会以为钱货都落了）；🔴 也**不许**把"一个字都没写"
+      //    当成事实（主表那条记录是真的落库了）。
+      assert.match(html, new RegExp(SCAN_WRITE.texts.partialFailedTitle));
+      assert.equal(html.includes(SCAN_WRITE.texts.submittedTitle), false,
+        '半成页上**不许**出现「您的提交已成功」');
       assert.equal(html.includes('未配置语义字段'), false, '内部细节不许回显');
       assert.equal(html.includes('gift'), false);
+    });
+  } finally { h.cleanup(); }
+});
+
+test('⑨b 建单**本身**失败（主表都没建起来）⇒ 照旧报错页（通用人话、不回显内部细节）', async () => {
+  login();
+  const h = createHarness();
+  try {
+    const openId = 'ou_scan_fail_master';
+    await addLine(h, openId, { productRecordId: 'prod_1', number: NUMBER, size: 40 });
+    const key = await currentKey(h, openId);
+    // 让**建主表**这一步就抛（真实现里长这样：字段没映射 / 飞书报错）。
+    const original = h.gateway.create;
+    h.gateway.create = async (tableKey, values) => {
+      if (tableKey === 'salesEntry') throw new Error('未配置语义字段: orderNo（内部细节，不许给她看）');
+      return original(tableKey, values);
+    };
+    await withServer(formApp(h), async (base) => {
+      const response = await fetch(`${base}/s/${encodeURIComponent(NUMBER)}`, {
+        method: 'POST',
+        headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          action: SCAN_WRITE.actions.submitOrder, submit_key: key,
+          payment_status: PAYMENT_STATUS.unpaid,
+        }).toString(),
+      });
+      // 建单失败 ⇒ 与改前**逐字一致**的报错页（`sale_write_failed` → 500 + 通用人话）。
+      assert.equal(response.status, 500);
+      const html = await response.text();
+      assert.match(html, /这一步没成功/);
+      assert.match(html, /系统这边没处理成功/, '通用人话要在页面上');
+      assert.equal(html.includes(SCAN_WRITE.texts.submittedTitle), false, '一个字都没写 ⇒ 不许说成功');
+      assert.equal(html.includes(SCAN_WRITE.texts.partialFailedTitle), false, '主表都没建 ⇒ 不是"半成"');
+      assert.equal(html.includes('未配置语义字段'), false, '内部细节不许回显');
     });
   } finally { h.cleanup(); }
 });
@@ -906,8 +959,9 @@ test('⑪ 一键补货：勾了不填数量按 **1 双**算（填了就按她填
       assert.ok(record.fields['幂等键'], '既有 createOnceByKey 的判据');
       // 🔴 2026-10-12 热修：同上（Lookup 只读）
       assert.equal('采购行为' in record.fields, false, '采购行为是 Lookup，不许写');
-      assert.deepEqual(entriesOf(h.gateway, 'purchaseOrderBatch')[0].fields['采购行为'], ['bh_request'],
-        '主表「采购行为」照旧写上（明细由它带出）');
+      // ⭐ 2026-10-12：同上（采购环节的「报货」，不是库存环节的「采购增加」✗）
+      assert.deepEqual(entriesOf(h.gateway, 'purchaseOrderBatch')[0].fields['采购行为'], ['bh_order'],
+        '主表「采购行为」照旧写上（采购环节的「报货」，明细由它带出）');
     }
   } finally { h.cleanup(); }
 });
@@ -1022,7 +1076,7 @@ test('AC-DB5 ⭐ 一单多双·多次扫码：扫 A 加单 → 扫 B 加单 → 
       });
       assert.equal(submitted.status, 200);
       const doneHtml = await submitted.text();
-      assert.match(doneHtml, /这一单提交好了/);
+      assert.match(doneHtml, /您的提交已成功/);
       assert.match(doneHtml, /明细：2 双/);
       const entries = entriesOf(h.gateway, 'salesEntry');
       const details = entriesOf(h.gateway, 'salesDetail');
@@ -1039,5 +1093,87 @@ test('AC-DB5 ⭐ 一单多双·多次扫码：扫 A 加单 → 扫 B 加单 → 
       assert.equal(barAfter.slice(0, barAfter.indexOf('</section>')).includes(SCAN_WRITE.texts.submitButton),
         false, '提交后本单条上不该还有【提交这一单】');
     });
+  } finally { h.cleanup(); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-12（她真机：扫码页补货**连续提交两个货号 ⇒ 第二个被当成"重复"吸收** ✗）
+//   根因（Lead 核过日志 + 我读到代码）：`submitReplenish` 只看**键**——
+//     `completed.find((item) => item.key === key)` 与 `if (replenish.key !== key)` ——
+//     **不看草稿变没变** ⇒ 换了货号那一次也被当成"上一单的重放"吸收掉 ✗
+//     （日志只出 `scan.purchase.reused`、没有 `purchase.batch_no.generated` ⇒ 一条批次都没建 ✗）。
+//
+//   口径（两件事必须分得清）：
+//     · **同一份草稿连点两次** ⇒ 吸收（reused ✓ 正确，连点保护不许坏）
+//     · **草稿变了**（换货号 / 加行 / 改数量）⇒ **必须是新的一次提交** ✗
+//
+//   AC-RK1 同一份草稿连点两次 ⇒ **只建 1 个批次**（连点保护 ✓）
+//   AC-RK2 ⭐ 草稿变了（换货号）后用**旧键**提交 ⇒ 建**第二个批次**（**现在是红的 = 复现**）
+//   AC-RK3 ⭐ 连续 3 个货号（都用第一把键）⇒ **3 个批次**（她真机的形状；**现在是红的**）
+// ═══════════════════════════════════════════════════════════════════════════
+
+const PRODUCT_C = {
+  record_id: 'prod_3',
+  fields: { 编号: 'XHB8095|黑色|A', 货号: 'XHB8095', 颜色: { text: '黑色' }, 类别: 'A', 单价: 299, 供应商: ['sup_1'] },
+};
+
+test('AC-RK1 同一份草稿连点两次（同一把键）⇒ 只建 1 个批次（连点保护不许回归）', async () => {
+  const h = createHarness();
+  try {
+    const openId = 'ou_rk_1';
+    // ⚠️ 会话要先存在（与既有 ⑥ 同形）——不然 `sessions.get` 是 null，键也取不到。
+    await h.write.addSaleLine({ openId, requestId: 'req_rk', productRecordId: 'prod_1', number: NUMBER, size: 40, amount: 399 });
+    const key = await currentKey(h, openId, 'replenish');
+    const body = { openId, submitKey: key, productRecordId: 'prod_1', number: NUMBER, entries: [{ size: 41, quantity: 2 }] };
+    await h.write.submitReplenish(body);
+    await h.write.submitReplenish(body);
+    assert.equal(entriesOf(h.gateway, 'purchaseOrderBatch').length, 1, '连点两次 ⇒ 只有 1 个批次');
+    assert.equal(entriesOf(h.gateway, 'purchaseRequest').length, 1, '明细也不重复');
+  } finally { h.cleanup(); }
+});
+
+test('AC-RK2 ⭐ 草稿变了（换货号）后用旧键提交 ⇒ 必须建**第二个批次**（现在红 = 复现）', async () => {
+  const h = createHarness({ tables: seedTables({ product: [PRODUCT, PRODUCT_NO_PRICE] }) });
+  try {
+    const openId = 'ou_rk_2';
+    await h.write.addSaleLine({ openId, requestId: 'req_rk', productRecordId: 'prod_1', number: NUMBER, size: 40, amount: 399 });
+    const keyA = await currentKey(h, openId, 'replenish');
+    const first = await h.write.submitReplenish({
+      openId, submitKey: keyA, productRecordId: 'prod_1', number: NUMBER, entries: [{ size: 41, quantity: 2 }],
+    });
+    assert.equal(first.ok, true);
+    assert.equal(entriesOf(h.gateway, 'purchaseOrderBatch').length, 1, '第一个货号建了 1 个批次');
+
+    // ⭐ 她的真机形状：**换了货号**（她的页面键还是上一把）再提交一次
+    const second = await h.write.submitReplenish({
+      openId, submitKey: keyA, productRecordId: 'prod_2', number: 'YD1111|白色|A', entries: [{ size: 40, quantity: 3 }],
+    });
+    assert.equal(second.ok, true, JSON.stringify(second));
+    assert.equal(entriesOf(h.gateway, 'purchaseOrderBatch').length, 2,
+      `换了货号 ⇒ 必须是**第二个批次**（实际 ${entriesOf(h.gateway, 'purchaseOrderBatch').length} 个；`
+      + `reused=${second.reused === true} ⇒ 现在被吸收 ✗）`);
+    assert.equal(entriesOf(h.gateway, 'purchaseRequest').length, 2, '第二个货号的明细也要落地');
+  } finally { h.cleanup(); }
+});
+
+test('AC-RK3 ⭐ 连续 3 个货号（都用第一把键）⇒ 3 个批次、货号各不同（现在红 = 复现）', async () => {
+  const h = createHarness({ tables: seedTables({ product: [PRODUCT, PRODUCT_NO_PRICE, PRODUCT_C] }) });
+  try {
+    const openId = 'ou_rk_3';
+    await h.write.addSaleLine({ openId, requestId: 'req_rk', productRecordId: 'prod_1', number: NUMBER, size: 40, amount: 399 });
+    const key = await currentKey(h, openId, 'replenish');
+    const orders = [
+      { productRecordId: 'prod_1', number: NUMBER, entries: [{ size: 41, quantity: 1 }] },
+      { productRecordId: 'prod_2', number: 'YD1111|白色|A', entries: [{ size: 40, quantity: 1 }] },
+      { productRecordId: 'prod_3', number: 'XHB8095|黑色|A', entries: [{ size: 42, quantity: 1 }] },
+    ];
+    for (const order of orders) {
+      const result = await h.write.submitReplenish({ openId, submitKey: key, ...order });
+      assert.equal(result.ok, true, JSON.stringify(result));
+    }
+    const batches = entriesOf(h.gateway, 'purchaseOrderBatch');
+    assert.equal(batches.length, 3, `3 个货号 ⇒ 3 个批次（实际 ${batches.length} 个 ⇒ 复现了她真机那个 bug ✗）`);
+    const numbers = new Set(entriesOf(h.gateway, 'purchaseRequest').map((row) => row.fields['编号'][0]));
+    assert.equal(numbers.size, 3, '三个货号各不相同');
   } finally { h.cleanup(); }
 });

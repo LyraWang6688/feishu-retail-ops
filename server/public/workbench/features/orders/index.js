@@ -31,6 +31,59 @@ const P = ORDERS_PAGE;
 const T = ORDERS_TEXTS;
 
 /** 收款方式候选：后端给的就用后端的（**不自己造选项**），一条都没有才用配置兜底。 */
+// ── ⭐⭐【首屏】先旧后新（stale-while-revalidate，只在前端展示层做）──────────────────────
+// ⚠️ 为什么放在**这个文件里**（而不是新开一个模块）：本文件被 13~15 个 harness「拷到临时目录 + 显式改写 import」
+//    ⇒ 一旦它多一个同目录相对 import，那批 harness 会一起挂（实测 41 红）。这里是纯函数、没有 DOM 依赖，先就地放着。
+
+/** localStorage 的键（只放"上一次拉到的订单"，够画首屏就行）。 */
+export const ORDERS_CACHE_KEY = 'workbench.orders.last';
+
+/** 读缓存：没有 / 坏 JSON / 结构不对 / storage 抛错 ⇒ 一律当"没有"（**绝不抛**，别让缓存把页面搞崩）。 */
+export const readCachedOrders = (storage) => {
+  try {
+    const raw = storage?.getItem?.(ORDERS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed?.orders) ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+/** 写缓存：配额满 / 隐私模式 ⇒ **静默失败**（写不进不该影响她看单子）。 */
+export const writeCachedOrders = (storage, orders) => {
+  try {
+    storage?.setItem?.(ORDERS_CACHE_KEY, JSON.stringify({ at: Date.now(), orders }));
+  } catch {
+    // 写不进就算了 —— 下次首屏慢一点而已。
+  }
+};
+
+/**
+ * 首屏加载器：`firstPaint` 先给旧数据、再拉新；`forceReload` **只拉新、绝不读缓存**。
+ * 🔴 写操作之后走 `forceReload`（见 `loadOrders({ freshOnly: true })`）—— 绝不能给她看旧的。
+ */
+export const createFirstPaintLoader = ({ load, storage, write = writeCachedOrders } = {}) => ({
+  async firstPaint({ onCached, onFresh, onError } = {}) {
+    const cached = readCachedOrders(storage);
+    if (cached) onCached?.(cached.orders, { at: cached.at });
+    try {
+      const rows = await load();
+      write(storage, rows);
+      onFresh?.(rows);
+      return rows;
+    } catch (error) {
+      onError?.(error, { hadCache: Boolean(cached) });
+      return cached?.orders ?? null;
+    }
+  },
+  async forceReload() {
+    const rows = await load();
+    write(storage, rows);
+    return rows;
+  },
+});
+
 export const collectionMethodsOf = (methods) => (Array.isArray(methods) && methods.length
   ? methods.map((item) => String(item)).filter(Boolean)
   : [...COLLECTION_METHODS]);
@@ -241,7 +294,7 @@ export function salesSectionOf(order) {
  * ⚠️ 「待交割单」那一段**仍按既有的三类细分展示**（有二次 · 货未交付 / 资金未收 / 两者都有）
  *    —— 她 2026-10-09 上半场定的那三类**一条信息都没丢**，只是收在"待交割单"这一段里。
  */
-export function ordersSectionsHtml(orders = []) {
+export function ordersSectionsHtml(orders = [], { openSections = [] } = {}) {
   if (!(orders || []).length) return `<p class="empty" data-view="orders-empty">${escapeHtml(P.empty)}</p>`;
   return `<div class="orders-sections" data-view="orders-sections">${SALES_SECTIONS.map((section) => {
     const list = orders.filter((order) => salesSectionOf(order) === section.key);
@@ -250,12 +303,24 @@ export function ordersSectionsHtml(orders = []) {
       : (section.key === 'pending'
         ? ordersBoardHtml(list, SALES_GROUPS.filter((group) => group.key !== 'settled').map((group) => group.key))
         : ordersListHtml(list));
-    return `
-      <section class="order-section" data-sales-section="${escapeHtml(section.key)}">
+    const head = `
         <div class="order-group-head">
           <h3>${escapeHtml(section.label)}<span class="tag tag-${escapeHtml(section.tone || 'info')}">${escapeHtml(section.tag || '')}</span></h3>
           <span class="muted">${list.length} 单</span>
-        </div>
+        </div>`;
+    // ⭐ 2026-10-12【乙】：**「售后列表」默认折叠**（售后单一多，待补充/待交割就被挤出屏外）。
+    //    ⚠️ 只折这一段；折叠状态记在 `state.openSections`（她手动展开后，重画**不会**被刷掉）。
+    if (section.key === 'afterSales') {
+      const open = openSections.includes(section.key);
+      return `
+      <details class="order-section order-section-collapsible" data-view="after-sales-section" data-sales-section="${escapeHtml(section.key)}"${open ? ' open' : ''}>
+        <summary>${head}</summary>
+        ${body}
+      </details>`;
+    }
+    return `
+      <section class="order-section" data-sales-section="${escapeHtml(section.key)}">
+        ${head}
         ${body}
       </section>`;
   }).join('')}
@@ -585,6 +650,12 @@ const uuid = () => (typeof crypto !== 'undefined' && crypto.randomUUID
 export function createOrdersModule({ mode = 'both' } = {}) {
   const singleMode = mode === 'sales' || mode === 'purchase';
   const state = {
+    // ⭐【首屏】先旧后新：只做一次 + 两个展示标记
+    firstPaintDone: false,
+    refreshing: false,
+    refreshError: '',
+    // ⭐【乙】售后列表的折叠状态（她手动展开过 ⇒ 重画时照旧展开）
+    openSections: [],
     container: null,
     orders: [],
     methods: [],
@@ -667,7 +738,7 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     state.order = null;
     const host = $('[data-view="orders-host"]');
     // 三份单子（补充信息单 ｜ 待交割单 ｜ 售后列表）—— 她的口径，见 config/orders.js 的 SALES_SECTIONS。
-    if (host) host.innerHTML = ordersSectionsHtml(state.orders);
+    if (host) host.innerHTML = `${state.refreshing ? '<p class="orders-refreshing">刷新中…</p>' : ''}${!state.refreshing && state.refreshError ? '<p class="orders-refreshing orders-refreshing--error">刷新失败，先看的是上次的结果</p>' : ''}` + ordersSectionsHtml(state.orders, { openSections: state.openSections });
   }
 
   function renderPurchaseList() {
@@ -701,13 +772,32 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     return () => clearInterval(timer);
   }
 
-  async function loadOrders() {
+  /** localStorage 拿不到（隐私模式 / 老内核）⇒ 当没有缓存，功能照旧。 */
+  const safeStorage = () => {
+    try { return globalThis.localStorage; } catch { return undefined; }
+  };
+
+  /** 只负责"拉一次最新订单"（缓存读写都在首屏那一层做）。 */
+  const fetchOrders = async () => {
+    const data = await api.get(ORDERS_API.orders);
+    state.methods = data.methods || [];
+    return data.orders || [];
+  };
+
+  /**
+   * ⭐⭐【首屏】先旧后新（业务负责人 2026-10-12）：
+   *   ① 第一次打开 ⇒ **立刻**用"上次那批"画出来（0 秒可看）+ 一行「刷新中」；
+   *   ② 后台拉最新 ⇒ 悄悄替换、标记消失；失败 ⇒ **仍显示旧数据 + 一行提示**（不白屏 ✗）。
+   * 🔴 写操作之后走 `loadOrders({ freshOnly: true })` —— **绝不读旧缓存**（不能给她看旧的 ✗）。
+   */
+  const ordersLoader = createFirstPaintLoader({ storage: safeStorage(), load: fetchOrders });
+
+  async function loadOrders({ freshOnly = false } = {}) {
     const host = $('[data-view="orders-host"]');
-    const stopTicker = host && !state.order ? startWaitingTicker(host) : () => {};
-    try {
-      const data = await api.get(ORDERS_API.orders);
-      state.orders = data.orders || [];
-      state.methods = data.methods || [];
+    const hasOrders = (state.orders || []).length > 0;
+    const stopTicker = host && !state.order && !hasOrders ? startWaitingTicker(host) : () => {};
+    const apply = (rows) => {
+      state.orders = rows;
       if (state.order) {
         const refreshed = state.orders.find((item) => item.record_id === state.order.record_id);
         if (refreshed) openOrder(refreshed);
@@ -715,8 +805,27 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       } else {
         renderList();
       }
+    };
+    try {
+      if (!freshOnly && !state.firstPaintDone) {
+        state.firstPaintDone = true;
+        const cached = readCachedOrders(safeStorage());
+        if (cached && !hasOrders) {
+          apply(cached.orders);
+          state.refreshing = true;
+          renderList();
+        }
+      }
+      const rows = await ordersLoader.forceReload();
+      state.refreshing = false;
+      state.refreshError = '';
+      apply(rows);
+      writeCachedOrders(safeStorage(), state.orders);
     } catch (error) {
-      if (host) host.innerHTML = '<p class="empty">订单读取失败</p>';
+      state.refreshing = false;
+      state.refreshError = describeError(error);
+      if ((state.orders || []).length) renderList();
+      else if (host) host.innerHTML = '<p class="empty">订单读取失败</p>';
       showPageError(describeError(error));
     } finally {
       stopTicker();
@@ -726,7 +835,7 @@ export function createOrdersModule({ mode = 'both' } = {}) {
   /** 动作成功后刷新这张单（列表数据是唯一事实来源，不在前端自己改数字）。 */
   async function refreshAfterAction(keepResult) {
     const text = keepResult;
-    await loadOrders();
+    await loadOrders({ freshOnly: true }); // ⭐ 写操作后强制拉新（绝不走旧缓存）
     if (text) renderResult(text);
   }
 
@@ -1007,6 +1116,15 @@ export function createOrdersModule({ mode = 'both' } = {}) {
   }
 
   function bind() {
+    // ⚠️ `<details>` 的 `toggle` **不冒泡** ⇒ 必须用捕获阶段监听，否则收不到
+    state.container.addEventListener('toggle', (event) => {
+      const target = event.target;
+      if (!target || target.dataset?.view !== 'after-sales-section') return;
+      const key = 'afterSales';
+      state.openSections = target.open
+        ? [...new Set([...state.openSections, key])]
+        : state.openSections.filter((item) => item !== key);
+    }, true);
     state.container.addEventListener('click', (event) => {
       // 货品选择器（换 / 赔那一块）：点中一行就记下来，再点一次换一双。
       const picker = event.target.closest('[data-product]');

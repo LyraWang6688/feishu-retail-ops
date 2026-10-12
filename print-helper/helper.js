@@ -69,6 +69,13 @@ const DEFAULT_CONFIG = Object.freeze({
   preventSleep: true,
   wakeGapMs: 15000,
   wakeWatchMs: 5000,
+  // ⭐⭐ 2026-10-12（真机"每 1~2 秒断一次再连"）：刚连上 **多久之内不许"自愿重连"**。
+  //    · 电脑真睡过一觉 ≥ `wakeGapMs`（15 秒）才可能触发唤醒重连 ⇒ 这条闸门**永远挡不住真唤醒**；
+  //    · 但"1 秒一断"那种抖动会被它直接掐掉（宁可先稳着，也不去打服务器）。
+  streamMinLifetimeMs: 5000,
+  // ⭐ 2026-10-12：**每 5 分钟重新声明一次**"不要睡"（防被系统/驱动清掉）；日志**每 30 分钟一条**（不刷屏）
+  antiSleepRefreshMs: 300000,
+  antiSleepLogEveryMs: 1800000,
   // ⭐⭐ 2026-10-12（业务负责人真机：「小助手会断线是因为我的电脑锁屏了吗？」「让它后台运行，
   //    我就不用让电脑一直亮屏了」）：**只防睡眠、不拦关屏**。
   //    · `preventSleep` —— **显式布尔**（默认 true）：调 `SetThreadExecutionState`
@@ -298,6 +305,88 @@ const defaultRunPowerShell = (command) => new Promise((resolve) => {
 });
 
 /**
+ * ⭐⭐ 2026-10-12（她换包后真机撞到"旧配置不兼容、页面只报错看不懂"）：
+ * **自助指引 / 迁移文案**都放这里 —— 页面与 README 用**同一份**，
+ * 免得"页面写的和说明书写的"两处不一致（用例会把两处一起钉住）。
+ */
+/**
+ * ⭐⭐ 2026-10-12 她真机：`anti_sleep.enabled` ✓ 但机器**真睡过 1h56m** ✗（醒来立刻补打成功 ✓）。
+ * 结论：防睡眠本身对 ✓，是**系统层面**被睡下去 ⇒ 两条加固 + 两条"她得自己设"。
+ * 下面这几句是**状态页与 README 共用**的常量（同一份，不许两处各写一遍）。
+ */
+const ANTI_SLEEP_ON_TEXT = '开（每 5 分钟重新声明；屏幕可以关）';
+/** ⚠️ 她这次就是被这两条睡掉的：合盖动作 / 睡眠时间（**接通电源 + 电池两套都要设**）。 */
+const SLEEP_SETUP_LINES = [
+  '合上盖子 = 不采取任何操作（接通电源 + 电池两套都设）',
+  '睡眠 = 从不（接通电源 + 电池两套都设）',
+];
+
+/** 兜底：让 Windows 别睡 —— **AC（接通电源）与 DC（电池）两套都要设**（她这次很可能是电池那套没设 ✗）。 */
+const POWERCFG_COMMANDS = Object.freeze({
+  ac: ['powercfg /change standby-timeout-ac 0'],
+  dc: ['powercfg /change standby-timeout-dc 0', 'powercfg /change hibernate-timeout-dc 0'],
+});
+
+const SUMATRA_PORTABLE_URL = 'https://www.sumatrapdfreader.org/download-free-pdf-viewer';
+const SUMATRA_RENAME_ADVICE = '下载 portable（免安装）版 → 把里面的 exe 放进 print-helper 文件夹，'
+  + '并改名 SumatraPDF.exe（去掉版本号：以后换版就不用再改配置）';
+const ANTI_SLEEP_FALLBACK_HINT = '请把 Windows 睡眠设为「从不」（设置 → 系统 → 电源和睡眠）';
+
+/**
+ * ⭐⭐ 旧写法**自动迁移**（幂等）：`args` 里写过 `-print-settings xxx` ⇒ 搬到 `printSettings`。
+ *   · 为什么：`-print-settings` 现在由 `printSettings` 负责，两份会打架；
+ *     以前这里**直接报错卡住**（她换包后就是这么卡住的）⇒ 现在**自动搬、不阻塞打印**；
+ *   · **冲突时以 `printSettings` 为准**（她显式配的那份更像"最新意图"），`args` 那份丢掉并**说出来**；
+ *   · **幂等**：搬完 `args` 里就没有它了，再跑一次 `changed === false`。
+ */
+const migratePrinterConfig = (printer = {}) => {
+  const rawArgs = Array.isArray(printer.args) ? printer.args : [];
+  const args = [];
+  const fromArgs = [];
+  let changed = false;
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    const value = rawArgs[index];
+    if (String(value ?? '').trim() !== '-print-settings') {
+      args.push(value);
+      continue;
+    }
+    changed = true;
+    const next = rawArgs[index + 1];
+    // ⚠️ `-print-settings` 的值是**一个逗号分隔的参数**（SumatraPDF 的语法）；缺值/下一个还是开关 ⇒ 只删它自己。
+    if (next !== undefined && !String(next).startsWith('-')) {
+      fromArgs.push(...String(next).split(',').map((item) => item.trim()).filter(Boolean));
+      index += 1;
+    }
+  }
+  const configured = (Array.isArray(printer.printSettings) ? printer.printSettings : [])
+    .map((item) => String(item).trim()).filter(Boolean);
+  const printSettings = configured.length ? configured : fromArgs;
+  return {
+    printer: { ...printer, args, printSettings },
+    changed,
+    movedFromArgs: fromArgs,
+    ignoredFromArgs: configured.length ? fromArgs : [],
+  };
+};
+
+/**
+ * ⭐ 防睡眠"为什么没起来" —— **一行人话**（她原来只看到"见日志"，看不懂也没法自己解决）。
+ * 归类按已知真机情形；认不出来就把 stderr 第一行截短照搬（不猜、也不吞）。
+ */
+const describeAntiSleepFailure = (result = {}) => {
+  const stderr = String(result?.stderr || '').trim();
+  const firstLine = stderr.split('\n')[0].trim();
+  if (/ENOENT|not recognized|not found|不是内部或外部命令/i.test(firstLine)) {
+    return '这台电脑上找不到 PowerShell';
+  }
+  if (/denied|deny|policy|策略|禁止|禁用|拒绝/i.test(firstLine)) {
+    return 'PowerShell 被策略禁止（或没有权限）';
+  }
+  if (firstLine) return firstLine.slice(0, 40);
+  return `没起来（退出码 ${result?.code ?? '未知'}）`;
+};
+
+/**
  * ⭐⭐ 2026-10-12：**主动防睡眠**（业务负责人：「让它后台运行，我就不用让电脑一直亮屏了」）。
  *
  * 为什么是 PowerShell 内联 C#：`SetThreadExecutionState` 是 Win32 API，Node 里零依赖调不到；
@@ -309,43 +398,69 @@ const defaultRunPowerShell = (command) => new Promise((resolve) => {
  *    `ES_DISPLAY_REQUIRED` —— 她的原话是"不用让电脑**一直亮屏**"，屏幕该关还得能关。
  * ⚠️ 每一条都是**独立的一次 powershell 进程**，不共享状态 ⇒ `Add-Type` 的类型名不会撞。
  */
+/**
+ * 🔴🔴 2026-10-12 **真机报错（她 Windows 日志，逐字）**：
+ *   `无法将 SetThreadExecutionState 的参数 esFlags（值为 -2147483647）转换为 System.UInt32：
+ *     无法将值 -2147483647 转换为 System.UInt32`
+ *
+ * 根因：`ES_CONTINUOUS | ES_SYSTEM_REQUIRED` = `0x80000001` = **2147483649**（UInt32 范围内）；
+ *   但在 PowerShell/C# 里 `0x80000001` 这种**位模式被当成 Int32** ⇒ 得到 **-2147483647**；
+ *   把这个负数塞进 C# 的 `uint esFlags` 参数 ⇒ 转换失败 ⇒ **防睡眠从来没成功过**。
+ *
+ * ⇒ 两条一起做才稳（**都不能省**）：
+ *   ① 常量用**十进制正数**（2147483648 / 1）—— 不产生"位模式变负数"；
+ *   ② 调用处**实参位置显式 `[uint32]` 转换** —— PowerShell 才知道要按 UInt32 传。
+ * ⚠️ 只改字符串断言不够：这套命令必须在 PowerShell 语义下真的能把 2147483649 传进 Win32。
+ */
 const ANTI_SLEEP_TYPE = 'PrintHelperKeepAwake';
 const antiSleepSignature = "$sig='[DllImport(\"kernel32.dll\")]public static extern uint SetThreadExecutionState(uint esFlags);';";
 const antiSleepAddType = `$t=Add-Type -MemberDefinition $sig -Name ${ANTI_SLEEP_TYPE} -Namespace PrintHelper -PassThru;`;
 
 /** 开启防睡眠的命令（**逐字**：含 `ES_CONTINUOUS` + `ES_SYSTEM_REQUIRED`，不含 `ES_DISPLAY_REQUIRED`）。 */
 const buildAntiSleepCommand = () => [
-  '$ES_CONTINUOUS=0x80000000; $ES_SYSTEM_REQUIRED=0x00000001;',
+  '$ES_CONTINUOUS=2147483648; $ES_SYSTEM_REQUIRED=1;',
   antiSleepSignature,
   antiSleepAddType,
-  'if ($t::SetThreadExecutionState($ES_CONTINUOUS -bor $ES_SYSTEM_REQUIRED) -eq 0) { exit 1 }',
+  // ⭐ 实参位置显式 [uint32]：0x80000001 在 Int32 下是负数 ⇒ 不转就报"无法转换为 System.UInt32"
+  'if ($t::SetThreadExecutionState([uint32]($ES_CONTINUOUS + $ES_SYSTEM_REQUIRED)) -eq 0) { exit 1 }',
 ].join(' ');
 
 /** 释放的命令：只留 `ES_CONTINUOUS` ⇒ 恢复系统默认电源行为（进程退出时 Windows 也会自动清掉）。 */
 const buildAntiSleepReleaseCommand = () => [
-  '$ES_CONTINUOUS=0x80000000;',
+  '$ES_CONTINUOUS=2147483648;',
   antiSleepSignature,
   antiSleepAddType,
-  'if ($t::SetThreadExecutionState($ES_CONTINUOUS) -eq 0) { exit 1 }',
+  'if ($t::SetThreadExecutionState([uint32]$ES_CONTINUOUS) -eq 0) { exit 1 }',
 ].join(' ');
 
 /**
  * 兜底：把"接通电源时的睡眠"关掉（`powercfg /change standby-timeout-ac 0`）。
  * ⚠️ 可能需要管理员权限（也可能不是 Windows）⇒ **失败只记一条日志**，绝不硬来、绝不影响打印。
  */
+/** 兜底：把"接通电源 / 电池"两套睡眠都关掉（失败只记日志，绝不硬来）。 */
 const disableStandbyTimeout = async ({ runPowerShell = defaultRunPowerShell, logger = createLogger() } = {}) => {
-  const result = await Promise.resolve(runPowerShell('powercfg /change standby-timeout-ac 0'))
-    .catch((error) => ({ code: -1, stderr: error.message }));
-  const ok = result?.code === 0;
-  logger[ok ? 'info' : 'warn'](ok ? 'print_helper.powercfg.applied' : 'print_helper.powercfg.skipped', ok
-    ? {}
-    : {
-      code: result?.code ?? null,
-      stderr: String(result?.stderr || '').slice(0, 200) || undefined,
-      hint: '它需要管理员权限（也可能不是 Windows）—— 不影响打印；'
-        + '也可以按 README 在「设置 → 系统 → 电源和睡眠」里手动把睡眠改成"从不"',
-    });
-  return ok;
+  const results = {};
+  for (const [group, commands] of Object.entries(POWERCFG_COMMANDS)) {
+    const failures = [];
+    for (const command of commands) {
+      // eslint-disable-next-line no-await-in-loop
+      const result = await Promise.resolve(runPowerShell(command))
+        .catch((error) => ({ code: -1, stderr: error.message }));
+      if (result?.code !== 0) failures.push({ command, code: result?.code ?? null, stderr: String(result?.stderr || '').slice(0, 200) || undefined });
+    }
+    const ok = failures.length === 0;
+    results[group] = ok;
+    // ⭐ AC 那条事件名保持不变（回归）；电池那套另给一条 `dc_applied` 便于排查
+    logger[ok ? 'info' : 'warn'](
+      ok ? (group === 'dc' ? 'print_helper.powercfg.dc_applied' : 'print_helper.powercfg.applied')
+        : (group === 'dc' ? 'print_helper.powercfg.dc_skipped' : 'print_helper.powercfg.skipped'),
+      ok ? {} : {
+        failures,
+        hint: '它需要管理员权限（也可能不是 Windows）—— 不影响打印；也可以按 README 在「设置 → 系统 → 电源和睡眠」里手动把睡眠改成"从不"（接电源 + 电池两套）',
+      },
+    );
+  }
+  return results;
 };
 
 /**
@@ -358,21 +473,35 @@ const createAntiSleep = (options = {}) => {
   // ⚠️ 显式布尔：**没传 = 默认开**（与 `DEFAULT_CONFIG.preventSleep: true` 一致）；只有显式 false 才关。
   const enabled = options.enabled === undefined ? true : options.enabled === true;
   let on = false;
+  let failureReason = '';
   return {
     isOn: () => on,
+    /** 关着的时候**为什么**关着（页面那一行直接写它，不许只说"见日志"）。 */
+    failureReason: () => (on ? '' : failureReason),
     async enable() {
       if (!enabled) return false;
       const result = await Promise.resolve(runPowerShell(buildAntiSleepCommand()))
         .catch((error) => ({ code: -1, stderr: error.message }));
       on = result?.code === 0;
+      failureReason = on ? '' : describeAntiSleepFailure(result);
       logger[on ? 'info' : 'warn'](on ? 'print_helper.anti_sleep.enabled' : 'print_helper.anti_sleep.unavailable', on
         ? { hint: '电脑进入"睡眠"已被拦住（屏幕仍然可以关）' }
         : {
           code: result?.code ?? null,
+          reason: failureReason,
           stderr: String(result?.stderr || '').slice(0, 200) || undefined,
-          hint: '防睡眠没起来（**不影响打印**）—— 可以按 README 手动把"睡眠"改成"从不"',
+          hint: `防睡眠没起来（**不影响打印**）—— ${ANTI_SLEEP_FALLBACK_HINT}`,
         });
       return on;
+    },
+    /** ⭐ 定期**重新声明**"不要睡"（有些系统/驱动会把状态清掉；她 2026-10-12 就是这么睡掉的）。 */
+    async renew() {
+      if (!on) return false;
+      const result = await Promise.resolve(runPowerShell(buildAntiSleepCommand()))
+        .catch((error) => ({ code: -1, stderr: error.message }));
+      const ok = result?.code === 0;
+      if (!ok) logger.warn('print_helper.anti_sleep.renew_failed', { reason: describeAntiSleepFailure(result) });
+      return ok;
     },
     async release() {
       if (!on) return false;
@@ -400,6 +529,49 @@ const wakeGapDetected = (lastTickAt, nowMs, gapMs = DEFAULT_WAKE_GAP_MS) => {
  *   · 唤醒 / 网络刚恢复（`wakeGap`）⇒ **0**（立刻重连，不等退避）；
  *   · 其余按失败次数取退避（`validateConfig` 保证上限 ≤ 3 秒）。
  */
+/**
+ * ⭐⭐ v5（她问"那两条 warn 是不是小助手的问题"）—— **这一条断开是谁断的**。
+ *
+ * 真相：她那两条 warn 的时刻（+8 22:23:25 / 22:57:31）与 Lead 两次发版（22:23:24 / 22:57:30）
+ * **只差 1 秒** ⇒ 是**部署重启把 SSE 关了**，不是网络、不是她电脑、不是小助手的 bug ✓。
+ * ⇒ 所以这里只做两件事：**分类**（人话）+ **分级**（别吓人）；**重连/退避/单飞/唤醒逻辑一律不动** ✓
+ * ⚠️ 判不出来就 `unknown` —— **不许编** ✗
+ */
+const classifyStreamClose = ({ streamKind, error, aborted, abortedBy } = {}) => {
+  if (aborted) {
+    if (abortedBy === 'wake') return 'wake';
+    if (abortedBy === 'stop') return 'stop';
+    // 剩下的都是"我们自己要求重连"（手动/看门狗/防抖）
+    if (abortedBy) return 'manual';
+    return 'unknown';
+  }
+  if (streamKind === 'server_closed') return 'server_closed';
+  const msg = String(error?.message || '');
+  if (/terminated|fetch failed|ECONNRESET|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|timeout|network|socket/i.test(msg)) {
+    return 'network';
+  }
+  return 'unknown';
+};
+
+/** ⭐ v5：断开分级 —— **单次、且 60 秒内恢复** ⇒ 只记 info（不吓人）；连续 ≥3 次或 ≥60 秒 ⇒ 才 warn ✓ */
+const isBriefDisconnect = ({ failures, disconnectedMs, thresholdFailures = 3, thresholdMs = 60_000 } = {}) => (
+  Number(failures) < Number(thresholdFailures) && Number(disconnectedMs) < Number(thresholdMs)
+);
+
+/** ⭐ v5：状态页那一行（**短人话**，走常量；不写说明书腔 ✗） */
+const LAST_DISCONNECT_PREFIX = '最近一次：';
+const describeLastDisconnect = (last) => {
+  if (!last || !last.at) return `${LAST_DISCONNECT_PREFIX}没断过`;
+  const hhmm = new Date(last.at).toTimeString().slice(0, 5);
+  if (last.recoveredMs !== undefined && last.recoveredMs !== null) {
+    const secs = Math.max(1, Math.round(Number(last.recoveredMs) / 1000));
+    const why = last.reason_kind === 'server_closed' ? '（服务重启会这样，正常）' : '';
+    return `${LAST_DISCONNECT_PREFIX}${hhmm} 断开 → ${secs} 秒后已恢复${why}`;
+  }
+  const mins = Math.max(1, Math.round(Number(last.gapMs || 0) / 60_000));
+  return `${LAST_DISCONNECT_PREFIX}${hhmm} 断开，已 ${mins} 分钟还没恢复`;
+};
+
 const reconnectDelayMs = ({ streamFailures = 0, backoffMs, wakeGap = false } = {}) => {
   if (wakeGap) return 0;
   const list = Array.isArray(backoffMs) && backoffMs.length ? backoffMs : DEFAULT_CONFIG.reconnectBackoffMs;
@@ -498,7 +670,9 @@ const validateConfig = (config, options = {}) => {
     if (!exe) push('printer.sumatraExe', '没填 SumatraPDF.exe 的路径');
     else if (!/\.exe$/i.test(exe)) push('printer.sumatraExe', `SumatraPDF 的路径要指向 .exe，当前是「${exe}」`);
     else if (options.checkPaths !== false && !exists(exe)) {
-      push('printer.sumatraExe', `找不到这个文件：${exe}（把 SumatraPDF.exe 放过去，或把这一项改成实际路径）`);
+      // ⭐ 2026-10-12：**只一行**（原来后面还拖一段长解释 ⇒ 她一次看到两大段看不懂）。
+      //    自助指引（下载地址 + 改名）由状态页那一行专门给，不塞进报错里。
+      push('printer.sumatraExe', `找不到这个文件：${exe}`);
     }
     if (!args || !args.some((item) => String(item).includes('{file}'))) {
       push('printer.args', '打印参数里必须有 {file}（用来放这一份 PDF 的路径）');
@@ -529,17 +703,30 @@ const validateConfig = (config, options = {}) => {
       return false;
     });
     if (bad !== undefined) {
-      push('printer.printSettings', `打印参数里每一项都要是**不含空格与逗号**的非空字符串（现在有「${bad}」）`
-        + ' —— 逗号会被当成"两档参数"，空格会被 SumatraPDF 当成另一个参数');
+      push('printer.printSettings', `打印参数每一项都不能含空格或逗号（现在有「${bad}」）`);
     } else if (dup !== undefined) {
       push('printer.printSettings', `打印参数里不许有重复项（「${dup}}」出现了两次）`);
     }
   }
-  // ⚠️ `args` 里自带 `-print-settings` ⇒ 会和上面那一档**打两份**，谁生效看顺序 ⇒ 明确拒绝。
-  if (String(config?.printer?.mode || '').trim() === 'sumatra'
-    && (config?.printer?.args || []).some((arg) => String(arg).trim() === '-print-settings')) {
-    push('printer.args', '`args` 里不要再写 `-print-settings` —— 它已经由 `printer.printSettings` 负责，'
-      + '两份会打架（改这一档请写 printSettings）');
+  // ⭐⭐ 2026-10-12：`args` 里自带 `-print-settings` **不再报错** —— 它已经在
+  //    `createPrintHelper` 里被 `migratePrinterConfig` **自动搬到 `printSettings`**（幂等）。
+  //    她的原话是"换包后直接报错卡住"⇒ 现在是"自动迁移 + 页面说一声"，不阻塞打印。
+  //    ⚠️ 但**校验单独跑**（不经过 createPrintHelper）时也按"已迁移"看待：这里不再拦。
+  // ⭐⭐ 2026-10-12（真机"每 1~2 秒断一次再连"）：把看门狗/防抖这两个旋钮也**校验**住 ——
+  //    坏配置（阈值比节拍还小、节拍为 0）会自己造出"抖/连风暴"，不能只靠默认值兜。
+  const watchMs = Number(config?.wakeWatchMs);
+  if (!Number.isFinite(watchMs) || watchMs < 1000) {
+    push('wakeWatchMs', `看门狗节拍要是 ≥1000 的毫秒数（现在 ${config?.wakeWatchMs}）`);
+  }
+  const gapMs = Number(config?.wakeGapMs);
+  if (!Number.isFinite(gapMs) || gapMs <= 0) {
+    push('wakeGapMs', `唤醒阈值要是正的毫秒数（现在 ${config?.wakeGapMs}）`);
+  } else if (Number.isFinite(watchMs) && gapMs < watchMs) {
+    push('wakeGapMs', `唤醒阈值要比看门狗节拍大（现在 ${gapMs} < ${watchMs}，会一直误判成"刚被唤醒"）`);
+  }
+  const minLifetime = Number(config?.streamMinLifetimeMs);
+  if (!Number.isFinite(minLifetime) || minLifetime < 0) {
+    push('streamMinLifetimeMs', `重连防抖窗口要是 ≥0 的毫秒数（现在 ${config?.streamMinLifetimeMs}）`);
   }
   const poll = Number(config?.pollFallbackMs);
   if (!Number.isFinite(poll) || poll < 500) {
@@ -736,6 +923,9 @@ const buildTestPdf = (text = 'TEST 40x30', when = new Date().toISOString()) => {
 const createPrintHelper = (options = {}) => {
   const config = { ...DEFAULT_CONFIG, ...(options.config || {}) };
   config.printer = { ...DEFAULT_CONFIG.printer, ...(options.config?.printer || {}) };
+  // ⭐⭐ 2026-10-12：**旧写法自动迁移**（幂等、不阻塞）—— 她换包后就是被旧 `args` 卡住的。
+  const configMigration = migratePrinterConfig(config.printer);
+  config.printer = configMigration.printer;
   const logger = options.logger || createLogger({
     // ⚠️ 默认就把日志**同时落文件**（父母那台电脑出问题时，让他们把 helper.log 发出来）。
     fileLog: createFileLog({
@@ -756,6 +946,13 @@ const createPrintHelper = (options = {}) => {
   const antiSleep = options.antiSleep || createAntiSleep({
     runPowerShell, logger, enabled: config.preventSleep === true, now,
   });
+  if (configMigration.changed) {
+    logger.info('print_helper.config.migrated', {
+      moved: configMigration.movedFromArgs,
+      ignored: configMigration.ignoredFromArgs.length ? configMigration.ignoredFromArgs : undefined,
+      hint: '旧写法 `args` 里的 -print-settings 已自动搬到 printSettings（以 printSettings 为准），不影响打印',
+    });
+  }
   const baseUrl = normalizeBaseUrl(config.serverBaseUrl);
   // ⚠️ 相对路径一律以**配置文件所在目录**为基准（`--config D:\x\config.json` 时
   //    `state.json` / `downloads` 都落在 D:\x\ 下，不会散到脚本目录去）。
@@ -783,8 +980,18 @@ const createPrintHelper = (options = {}) => {
     statusPageUrl: '',
     // ⭐ 2026-10-12：防睡眠状态 + 断线自愈用的两个时间戳（`lastTickAt` 由看门狗刷新）。
     antiSleepEnabled: false,
+    // ⭐ 2026-10-12：**谁要求断开这条长连接的**（''/wake/manual/stop）—— 日志里直接带出来
+    streamAbortReason: '',
+    // ⭐ 配置迁移留痕（状态页要写"已自动迁移"，用例也钉它）
+    configMigration: {
+      changed: configMigration.changed,
+      settings: configMigration.printer.printSettings,
+      ignoredFromArgs: configMigration.ignoredFromArgs,
+    },
     lastTickAt: now(),
     disconnectedSince: 0,
+    // ⭐ v5：最近一次断开（状态页那一行用它）
+    lastDisconnect: null,
   };
 
   const headers = () => ({
@@ -986,10 +1193,14 @@ const createPrintHelper = (options = {}) => {
 
   // ── SSE 长连接 ──────────────────────────────────────────────────────────
   let streamAbort = null;
+  let streamRunning = false;
+  let pendingReconnect = false;
+  let streamStartedAt = 0;
   let stopped = false;
   const timers = new Set();
 
-  const setTimer = (fn, ms) => {
+  // ⚠️ `options.setTimer` 只为**用例注入假定时器**（默认就是 setTimeout，行为一字不变）
+  const setTimer = options.setTimer || ((fn, ms) => {
     const timer = setTimeout(() => {
       timers.delete(timer);
       fn();
@@ -997,7 +1208,7 @@ const createPrintHelper = (options = {}) => {
     if (typeof timer.unref === 'function') timer.unref();
     timers.add(timer);
     return timer;
-  };
+  });
 
   const scheduleReconnect = () => {
     if (stopped) return;
@@ -1016,6 +1227,53 @@ const createPrintHelper = (options = {}) => {
     setTimer(() => { void connectStream(); }, waitMs);
   };
 
+  /** 看门狗的节拍（给个 1 秒下限：别让配置写成 0 变成忙等）。 */
+  const watchMs = () => Math.max(1000, Number(config.wakeWatchMs) || 5000);
+  /**
+   * "时钟跳变"的判据阈值。
+   * ⚠️ 2026-10-12：取 `max(wakeGapMs, 3 × 节拍)` —— **必须比节拍大好几倍**，
+   *    否则节拍一抖（事件循环忙一下）就会被误判成"刚被唤醒"⇒ abort ⇒ 重连 ⇒ 又抖…
+   *    电脑真睡一觉至少几分钟，这条阈值**不会挡住真唤醒**。
+   */
+  const wakeGapThresholdMs = () => Math.max(
+    Number(config.wakeGapMs) || DEFAULT_WAKE_GAP_MS,
+    3 * watchMs(),
+  );
+
+  /**
+   * ⭐⭐ 2026-10-12：**自愿重连的唯一入口**（唤醒 / 手动点「重新连接」都走它）。
+   *   · 刚连上 `streamMinLifetimeMs`（默认 5 秒）之内**不自发重连**（防"1 秒一断"风暴）；
+   *   · 手动（`force: true`，她在状态页点的）**照样立刻执行**；
+   *   · 每次都会在日志里点明**是谁要求的** —— 下次一眼定位。
+   */
+  const reconnectNow = async (reason = 'voluntary', options = {}) => {
+    if (stopped) return { skipped: 'stopped' };
+    const force = options.force === true;
+    const aliveFor = streamStartedAt ? now() - streamStartedAt : -1;
+    if (!force && state.sseConnected && aliveFor >= 0 && aliveFor < Number(config.streamMinLifetimeMs || 5000)) {
+      logger.warn('print_helper.sse.reconnect_skipped', {
+        why: reason,
+        alive_ms: aliveFor,
+        hint: '刚连上就要求重连 ⇒ 先不抖（防"1 秒一断"风暴）；真断了它会自己重连',
+      });
+      return { skipped: 'too_soon' };
+    }
+    state.streamAbortReason = reason;
+    logger.info('print_helper.sse.reconnect_requested', {
+      why: reason, alive_ms: aliveFor, forced: force || undefined,
+    });
+    state.streamFailures = 0;
+    state.lastTickAt = now();
+    if (streamAbort) {
+      try { streamAbort.abort(); } catch { /* 已经断了 */ }
+    }
+    stopFallback();
+    // ⚠️ 单飞：这条连接还没收尾时 `connectStream()` 会被挡下 ⇒ 让它的 finally 接着连（见下面）。
+    pendingReconnect = true;
+    void connectStream();
+    return { skipped: null };
+  };
+
   /**
    * 看门狗：每 `wakeWatchMs`（默认 5 秒）看一眼时钟。
    * ⚠️ 定时器是 `unref` 的 ⇒ **不占进程、也不拦睡眠**（防睡眠只由 `SetThreadExecutionState` 负责）。
@@ -1023,22 +1281,16 @@ const createPrintHelper = (options = {}) => {
   const watchWake = () => {
     if (stopped) return;
     const nowMs = now();
-    if (wakeGapDetected(state.lastTickAt, nowMs, config.wakeGapMs)) {
+    if (wakeGapDetected(state.lastTickAt, nowMs, wakeGapThresholdMs())) {
       logger.info('print_helper.wake.detected', {
         gap_ms: nowMs - state.lastTickAt,
         hint: '电脑刚被唤醒 / 网络刚恢复 ⇒ 立刻重连（不等退避）',
       });
-      state.streamFailures = 0;
-      state.lastTickAt = nowMs;
-      if (streamAbort) {
-        try { streamAbort.abort(); } catch { /* 已经断了 */ }
-      }
-      stopFallback();
-      void connectStream();
+      void reconnectNow('wake');
     } else {
       state.lastTickAt = nowMs;
     }
-    setTimer(watchWake, Math.max(1000, Number(config.wakeWatchMs) || 5000));
+    setTimer(watchWake, watchMs());
   };
 
   const startFallback = () => {
@@ -1079,7 +1331,15 @@ const createPrintHelper = (options = {}) => {
 
   const connectStream = async () => {
     if (stopped) return;
-    streamAbort = new AbortController();
+    // ⭐⭐ 2026-10-12：**单飞** —— 同一时刻只许一条长连接（原来可能开出"孤儿连接"，
+    //    服务端那侧就表现为"同一秒里连着两条 / 断一条又来一条"）。
+    if (streamRunning) {
+      logger.info('print_helper.sse.connect_skipped', { hint: '已经有一条长连接在跑 ⇒ 不再开第二条' });
+      return;
+    }
+    streamRunning = true;
+    const myController = new AbortController();
+    streamAbort = myController;
     try {
       const response = await fetchImpl(`${baseUrl}/api/label-print/stream`, {
         headers: headers(),
@@ -1090,7 +1350,20 @@ const createPrintHelper = (options = {}) => {
       state.streamFailures = 0;
       state.disconnectedSince = 0;
       state.lastTickAt = now();
+      streamStartedAt = now();
+      pendingReconnect = false;
+      state.streamAbortReason = '';
       stopFallback();
+      if (state.lastDisconnect && state.lastDisconnect.recoveredMs === undefined) {
+        const recoveredMs = now() - state.lastDisconnect.at;
+        state.lastDisconnect.recoveredMs = recoveredMs;
+        if (recoveredMs < 60_000 && Number(state.lastDisconnect.failures) < Number(config.streamFailuresBeforeFallback || 3)) {
+          logger.info('print_helper.sse.reconnected_quickly', {
+            gap_ms: recoveredMs,
+            reason_kind: state.lastDisconnect.reason_kind,
+          });
+        }
+      }
       logger.info('print_helper.sse.connected', {});
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -1111,20 +1384,56 @@ const createPrintHelper = (options = {}) => {
           }
         }
       }
-      throw new Error('长连接被服务器/网络关掉了');
+      // ⭐ v5：流被**服务端正常收尾**（不是异常）⇒ 打个标记，便于把 reason 分成 server_closed
+      const closedByServer = new Error('长连接被服务器/网络关掉了');
+      closedByServer.streamKind = 'server_closed';
+      throw closedByServer;
     } catch (error) {
       if (stopped) return;
       state.sseConnected = false;
       state.streamFailures += 1;
       if (!state.disconnectedSince) state.disconnectedSince = now();
-      logger.warn('print_helper.sse.disconnected', {
+      const disconnectedMs = now() - state.disconnectedSince;
+      const reasonKind = classifyStreamClose({
+        streamKind: error?.streamKind,
+        error,
+        aborted: myController.signal.aborted === true,
+        abortedBy: state.streamAbortReason,
+      });
+      const brief = isBriefDisconnect({
         failures: state.streamFailures,
-        // ⭐ 人话：**断了多久**（她那次空了约 15 分钟）——日志里直接写出来，省得再换算。
-        since_disconnected: formatDisconnectedFor(now() - state.disconnectedSince),
+        disconnectedMs,
+        thresholdFailures: Number(config.streamFailuresBeforeFallback || 3),
+      });
+      // ⭐ v5：状态页要显示"最近一次断开"（含是否已恢复）
+      state.lastDisconnect = {
+        at: now(),
+        gapMs: disconnectedMs,
+        reason_kind: reasonKind,
+        failures: state.streamFailures,
+      };
+      const logFn = brief ? logger.info.bind(logger) : logger.warn.bind(logger);
+      logFn(brief ? 'print_helper.sse.disconnected_briefly' : 'print_helper.sse.disconnected', {
+        reason_kind: reasonKind,
+        failures: state.streamFailures,
+        // ⭐ 人话：**断了多久**（她那次空了约 15 分钟）—— 超过 1 分钟才写"断线已 N 分钟"，
+        //    秒级抖动就写毫秒（原来是"刚断 1 秒也报断线已 1 分钟"，对不上账）。
+        ...(disconnectedMs >= 60_000 ? { since_disconnected: formatDisconnectedFor(disconnectedMs) } : {}),
+        disconnected_ms: disconnectedMs,
         reason: String(error?.message || error),
+        // ⭐⭐ 2026-10-12：**这条连接是谁断的**（''/wake/manual/stop；服务端关的没有这个字段）
+        aborted: myController.signal.aborted === true || undefined,
+        aborted_by: myController.signal.aborted ? (state.streamAbortReason || 'unknown') : undefined,
       });
       if (state.streamFailures >= Number(config.streamFailuresBeforeFallback || 3)) startFallback();
       scheduleReconnect();
+    } finally {
+      streamRunning = false;
+      // ⭐ 刚才有人要求重连（唤醒/手动），但这条连接还没收尾 ⇒ 现在接着连上（不然白断一次）
+      if (pendingReconnect && !stopped) {
+        pendingReconnect = false;
+        setTimer(() => { void connectStream(); }, 0);
+      }
     }
   };
 
@@ -1174,13 +1483,23 @@ button.mini{min-height:32px;padding:4px 10px;font-size:13px;background:#eef1f5;c
 </style></head><body>
 <h1>打印小助手</h1>
 ${pageOptions.already ? '<div class="ok">✅ 打印小助手已经在运行了 —— 这个窗口可以关掉</div>' : ''}
+${state.configMigration?.changed ? `<div class="notice">✅ <strong>已自动迁移</strong>：旧配置 \`printer.args\` 里的 \`-print-settings\` 已搬到「打印参数」（${
+  state.configMigration.ignoredFromArgs.length ? '以 printSettings 为准，args 里的那份已忽略' : '值照旧，打印不受影响'}）。</div>` : ''}
 ${errors.length ? `<div class="notice"><strong>打印程序还没配好：</strong><br>${errors.map((error) => `${escapeHtml(error.field)}：${escapeHtml(error.message)}`).join('<br>')}</div>` : ''}
+${errors.some((error) => error.field === 'printer.sumatraExe') ? `<div class="notice">📥 下载：<a href="${escapeHtml(SUMATRA_PORTABLE_URL)}">${escapeHtml(SUMATRA_PORTABLE_URL)}</a><br>${escapeHtml(SUMATRA_RENAME_ADVICE)}</div>` : ''}
 ${state.authError ? `<div class="notice"><strong>连不上服务器：</strong>${escapeHtml(state.authError)}</div>` : ''}
 <div class="card"><table>
 ${row('服务器', `${baseUrl}`, serverOnline === null ? false : true)}
 ${row('手机看到的状态', serverOnline ? '打印电脑在线' : '未连接（任务已排队）', serverOnline === true)}
 ${row('长连接（SSE）', state.sseConnected ? '已连接' : (state.fallbackActive ? '断开了，正在用兜底轮询' : '未连接'), state.sseConnected)}
-${row('防睡眠', state.antiSleepEnabled ? '开（电脑不会睡；屏幕可以关）' : (config.preventSleep === true ? '关（没起来 —— 见日志，或按 README 把睡眠改成"从不"）' : '关（配置里关掉了）'), state.antiSleepEnabled)}
+${row('最近一次断开', describeLastDisconnect(state.lastDisconnect), null)}
+${row('防睡眠', state.antiSleepEnabled
+  ? `${ANTI_SLEEP_ON_TEXT} —— ${SLEEP_SETUP_LINES.join('；')}`
+  : (config.preventSleep === true
+    // ⭐ 2026-10-12：**直接写原因**（她原来只看到"见日志"，看不懂也没法自己弄）+ 兜底怎么手动解决
+    // ⚠️ 防睡眠**没起来**时更要显示那两条（她 2026-10-12 就是合盖/电池那套没设而睡了 1h56m ✗）
+    ? `关（${antiSleep.failureReason?.() || '没起来'}）—— ${ANTI_SLEEP_FALLBACK_HINT}；${SLEEP_SETUP_LINES.join('；')}`
+    : `关（配置里关掉了）—— ${SLEEP_SETUP_LINES.join('；')}`), state.antiSleepEnabled)}
 ${row('打印程序', errors.length ? '未配好' : `${String(config.printer.mode)} 可用`, errors.length === 0)}
 ${row('打印参数', (Array.isArray(config.printer.printSettings) && config.printer.printSettings.length)
     ? `-print-settings ${config.printer.printSettings.join(',')}`
@@ -1237,16 +1556,8 @@ ${jobs.length ? jobs.map(jobRow).join('') : '<tr><td colspan="5">还没有打印
       }
       if (req.method === 'POST' && url.pathname === '/reconnect') {
         await readBody();
-        state.streamFailures = 0;
-        stopFallback();
-        if (streamAbort) {
-          try {
-            streamAbort.abort();
-          } catch {
-            // 已经断了。
-          }
-        }
-        void connectStream();
+        // ⭐ 她是**主动**点的 ⇒ force（防抖闸门不挡手动）
+        await reconnectNow('manual', { force: true });
         res.writeHead(303, { location: '/' });
         return res.end();
       }
@@ -1372,6 +1683,30 @@ ${jobs.length ? jobs.map(jobRow).join('') : '<tr><td colspan="5">还没有打印
       state.antiSleepEnabled = await antiSleep.enable();
       void disableStandbyTimeout({ runPowerShell, logger });
     }
+    // ⭐⭐ 2026-10-12：**定期重新声明"不要睡"**（启动时那一次不够 —— 有些系统/驱动会清掉）
+    const refreshMs = Math.max(1000, Number(config.antiSleepRefreshMs) || 300000);
+    const logEveryMs = Math.max(refreshMs, Number(config.antiSleepLogEveryMs) || 1800000);
+    let renewCount = 0;
+    const renewAntiSleep = () => {
+      if (stopped) return;
+      if (state.antiSleepEnabled) {
+        void (async () => {
+          try {
+            const ok = await antiSleep.renew?.();
+            if (ok === true) {
+              renewCount += 1;
+              if (renewCount === 1 || (renewCount * refreshMs) % logEveryMs < refreshMs) {
+                logger.info('print_helper.anti_sleep.renewed', { times: renewCount, every_ms: refreshMs });
+              }
+            }
+          } catch (error) {
+            logger.warn('print_helper.anti_sleep.renew_failed', { reason: String(error?.message || error) });
+          }
+        })();
+      }
+      setTimer(renewAntiSleep, refreshMs);
+    };
+    setTimer(renewAntiSleep, refreshMs);
     // ⭐ 唤醒自愈：看门狗盯着时钟（睡眠回来立刻重连）。
     state.lastTickAt = now();
     setTimer(watchWake, Math.max(1000, Number(config.wakeWatchMs) || 5000));
@@ -1429,6 +1764,7 @@ ${jobs.length ? jobs.map(jobRow).join('') : '<tr><td colspan="5">还没有打印
     state.antiSleepEnabled = false;
     for (const timer of timers) clearTimeout(timer);
     timers.clear();
+    state.streamAbortReason = 'stop';
     if (streamAbort) {
       try {
         streamAbort.abort();
@@ -1453,6 +1789,7 @@ ${jobs.length ? jobs.map(jobRow).join('') : '<tr><td colspan="5">还没有打印
     startupCatchUp,
     heartbeat,
     connectStream,
+    reconnectNow,
     localPageHtml,
     buildTestPdf,
     downloadArtifact,
@@ -1589,6 +1926,10 @@ if (require.main === module) {
 
 module.exports = {
   DEFAULT_CONFIG,
+  // ⭐ v5（断开分级/分类）—— 导出便于单测**跨环境确定**地断言
+  classifyStreamClose,
+  isBriefDisconnect,
+  describeLastDisconnect,
   HELPER_APP_ID,
   SHORTCUT_NAME,
   createLogger,
@@ -1607,6 +1948,14 @@ module.exports = {
   buildPrintCommand,
   buildAntiSleepCommand,
   buildAntiSleepReleaseCommand,
+  migratePrinterConfig,
+  describeAntiSleepFailure,
+  POWERCFG_COMMANDS,
+  ANTI_SLEEP_ON_TEXT,
+  SLEEP_SETUP_LINES,
+  SUMATRA_PORTABLE_URL,
+  SUMATRA_RENAME_ADVICE,
+  ANTI_SLEEP_FALLBACK_HINT,
   createAntiSleep,
   disableStandbyTimeout,
   reconnectDelayMs,

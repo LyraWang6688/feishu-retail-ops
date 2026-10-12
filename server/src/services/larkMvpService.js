@@ -61,15 +61,12 @@ const { renderSalesMissingInfo } = require('../config/salesMissingInfoText');
 // ⚠️ 2026-10-11（清群聊入口 C0）：`allocateSalesOrderNo` 随 `createSalesEntryWithOrderNo`
 //    一起搬去 `services/salesEntryService.js`（本文件不再直接用它）。
 const { resolveAccessory } = require('./accessoryMatchPolicy');
-const { SaleLookupService } = require('./saleLookupService');
 const { AfterSalesService } = require('./afterSalesService');
-const { AfterSalesFlowService } = require('./afterSalesFlowService');
-const { isLookupIntent, isAfterSalesIntent, normalizeMessageIntent } = require('../config/saleIntents');
-const { isAfterSalesCardAction } = require('../config/afterSalesFlow');
+const { isAfterSalesIntent, normalizeMessageIntent } = require('../config/saleIntents');
 const { isSalesCandidate, UNSUPPORTED_INTENT_REPLY } = require('../config/messageGate');
 // ⭐ 未知 / 已退场卡片动作的兜底人话（2026-10-12，业务负责人明确要的）：文案可配。
 const { UNKNOWN_CARD_ACTION_TOAST } = require('../config/unknownCardAction');
-const { salesConfirmationCard, salesStatusCard, salesProcessingCard, keepOnlyCardButton, SECOND_DELIVERY_ACTION } = require('../utils/larkCards');
+const { salesStatusCard, salesProcessingCard, keepOnlyCardButton, SECOND_DELIVERY_ACTION } = require('../utils/larkCards');
 // ⭐【确认成交】按钮（2026-10-07 业务负责人拍板的**甲**：做在「已入账」终态卡上，不新发消息）：
 //   动作名 ＋ "要不要画这个按钮"的判据 ＋ 用户可见文案，全在那一份配置里（配置先行）。
 const {
@@ -246,18 +243,6 @@ class LarkMvpService {
     this.store =
       options.store ||
       new JsonTaskStore({ dir: path.join(__dirname, '../../data/lark_mvp_tasks'), idField: 'task_id' });
-    // 退换货第一期：查销售记录是**独立 service**，不把候选查询/卡片/上下文塞进本类。
-    // 这里只注入"读网关 + 任务状态 + 发消息"三样依赖；网关会被 SaleLookupService
-    // 再收窄成只读视图，从结构上保证这条链路写不了业务表。
-    this.saleLookup = options.saleLookup || new SaleLookupService({
-      gateway: this.gateway,
-      store: this.store,
-      replyCard: (messageId, card) => this.replyCard(messageId, card),
-      // ⭐ 渠道感知的出口：群任务回复失败时回到**那个话题**，不回落私聊。
-      // 🔴 2026-10-07「私聊链路移除」：**没有群上下文**的任务（`chat_type !== 'group'`）
-      //   在 `sendTaskCard` 里只记一条 `lark.private_chat.send_skipped`、返 `null`。
-      sendCardToTask: (task, card) => this.sendTaskCard(task, card),
-    });
     // 退换货第二期：售后**编排**（定位 → 组装方案 → 确认卡片 → 调执行器）也是独立 service。
     // 本类只留"意图 → 分派"的接线：
     //   · 定位复用第一期的只读 SaleLookupService（同上一个实例，共享任务状态）；
@@ -265,29 +250,10 @@ class LarkMvpService {
     //   · 卡片渲染在 utils/larkCards，本类不拼卡片内容。
     // 执行器用自己的任务存储（data/after_sales_operations），所以这里不能把销售的任务存储传给它。
     this.afterSales = options.afterSales || new AfterSalesService({ gateway: this.gateway });
-    this.afterSalesFlow = options.afterSalesFlow || new AfterSalesFlowService({
-      gateway: this.gateway,
-      store: this.store,
-      lookup: this.saleLookup,
-      executor: this.afterSales,
-      references: this.references,
-      sizeReferences: options.sizeReferences,
-      replyCard: (messageId, card) => this.replyCard(messageId, card),
-      // ⭐ ③ 渠道感知的三个出口（售后回话题）：
-      //   群话题里的售后任务 → 回复/卡片都回到**那个话题**；
-      //   🔴 2026-10-07「私聊链路移除」：**没有群上下文**的任务 = **没有去处** ——
-      //     `sendTaskCard` / `sendTaskText` 只记一条 `lark.private_chat.send_skipped`
-      //     并返 `null`（**不再**回落到 `sendCard/sendText(open_id)`，那两个发送器已整体删除）。
-      //     见 docs/private-chat-removal-decision-2026-10-07.md。
-      replyCardToTask: (task, card) => this.replyTaskCard(task, card),
-      sendCardToTask: (task, card) => this.sendTaskCard(task, card),
-      sendTextToTask: (task, message) => this.sendTaskText(task, message),
-      updateCard: (task, event, card, metadata) => this.updateAfterSalesCard(task, event, card, metadata),
-    });
     this.sampleReplacements = options.sampleReplacements || new SampleReplacementService({
       gateway: this.gateway, inventory: this.delivery.inventory, store: this.store, client: this.client,
       updateCard: (task, event, card, metadata) => this.updateSalesActionCard(task, event, card, metadata),
-      // ⭐ 渠道感知的两个出口（接线方式与上面 afterSalesFlowService 那一组**完全一致**，见 PR #148）：
+      // ⭐ 渠道感知的两个出口（接线方式与补样品那条**完全一致**，见 PR #148）：
       //   群话题里的补样品任务 → 卡片/文字回到**那个话题**（`reply_in_thread`）。
       //   ⚠️ 2026-10-07 私聊链路移除后，**没有群上下文的任务没有去处**：
       //     这两个出口里 `chat_type !== 'group'` 会在本类直接记日志 + 返 `null`，
@@ -1285,12 +1251,10 @@ class LarkMvpService {
     //      （例如刚被删掉的到货核对「否」、采购确认卡），
     //      落到下面那句 throw 就变成"点击报错"，正是她投诉过的"点了没反应"的另一种样子。
     if (!draftId) return this.unknownCardAction(action);
-    // 售后卡片：确认 / 取消 / 选回库状态。和销售草稿共用同一个串行队列
-    // （同一张卡片连点两次会被排成一前一后），执行器那一层再兜一次幂等。
-    if (isAfterSalesCardAction(action)) {
-      return this.cardActionQueue.run(draftId, () =>
-        this.afterSalesFlow.handleCardAction(value, event, operatorOpenId, context));
-    }
+    // 🔴 2026-10-12（售后卡片链路退场）：原来这里是**售后卡片动作**的分派
+    //    （确认 / 取消 / 选回库状态 → 那个已退场的售后卡片编排服务）。
+    //    业务负责人拍板「售后已经搬到工作台了」＋生产日志实测 5 天 0 次 ⇒ **整条链路删除**：
+    //    落到下面的**未知动作兜底** ⇒ 群里再点老卡片**回一句人话、零写入**（不报错、不静默）✓
     // 🔴🔴 2026-10-12（清群聊入口·第三轮）：**带 `draft_id` 的未知动作也走兜底人话**。
     //    原先这一行是 `...handleSalesOrLegacyCardAction(event, context)` —— 销售草稿卡片的分派。
     //    群入口退场后**它已整体删除** ⇒ 带 draft_id 的未知/已退场动作会当场 TypeError → 500，

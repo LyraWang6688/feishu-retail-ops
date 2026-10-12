@@ -1,0 +1,66 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "id": "fld4GE22ZX",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      },
+      {
+        "id": "fldabrh36l",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      },
+      {
+        "bidirectional": false,
+        "id": "fld7bBdm0V",
+        "link_table": "tblsqR83PySHsIZU",
+        "name": "主推场景",
+        "type": "link"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldQqzVFgw",
+        "link_table": "tbl9z4Oi8Vc57Kin",
+        "name": "关联货品",
+        "type": "link"
+      },
+      {
+        "id": "fldn6GsbOd",
+        "name": "自编号",
+        "style": {
+          "rules": [
+            {
+              "length": 3,
+              "type": "incremental_number"
+            }
+          ]
+        },
+        "type": "auto_number"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldxlaZIRD",
+        "link_table": "tbloFxwZa5q504t2",
+        "name": "主推人群",
+        "type": "link"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldB9mK0s1",
+        "link_table": "tblEqYe3j5a5Nc9R",
+        "name": "核心卖点",
+        "type": "link"
+      }
+    ],
+    "total": 7
+  }
+}

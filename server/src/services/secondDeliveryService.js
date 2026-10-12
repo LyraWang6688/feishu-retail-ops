@@ -7,7 +7,7 @@ const { SalesDeliveryService } = require('./salesDeliveryService');
 const { SalesProgressService, progressFromRecords } = require('./salesProgressService');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { itemFactsForDetails } = require('./salesDetailItemFacts');
-const { asDate, isWithinLookupWindow, shanghaiDayKey } = require('./saleLookupService');
+const { asDate, isWithinLookupWindow, shanghaiDayKey } = require('../utils/salesDateWindows');
 const { resolvePurchaseChatId } = require('../config/groupPurchase');
 const { postedOf, isPosted } = require('../config/salesStatusDimensions');
 const { secondDeliveryCard, settleSecondDeliveryOrder } = require('../utils/larkCards');
@@ -455,7 +455,7 @@ class SecondDeliveryService {
       const orderPayments = allPayments.filter((record) =>
         linkedRecordIds(record.fields?.[paymentFields.salesEntry]).includes(entry.record_id));
       // 「这一单是哪天的」：明细「销售日」优先，退回主表「录单日」——和查单链路
-      // （saleLookupService）用同一条口径，两边不能对同一张单给出两个日期。
+      // （`utils/salesDateWindows` + 销售状态判据）用同一条口径，两边不能对同一张单给出两个日期。
       // ⚠️ 两个都读不到时必须**大声跳过**：悄悄按"太老了"处理会让这张单永远收不到提醒，
       // 属于最难查的静默失效。
       const detailDates = orderDetails

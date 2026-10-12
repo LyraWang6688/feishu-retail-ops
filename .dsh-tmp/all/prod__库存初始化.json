@@ -1,0 +1,78 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "default_value": null,
+        "id": "fldtBuYAF2",
+        "name": "基准日期",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "datetime"
+      },
+      {
+        "default_value": null,
+        "id": "fldKA13Pzg",
+        "name": "数量",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": true,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "id": "fldwWFWt01",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldJNvWKcI",
+        "link_table": "tblrHyfMNiPLQkv9",
+        "name": "尺码",
+        "type": "link"
+      },
+      {
+        "expression": "[编号]\u0026\"|\"\u0026[尺码]",
+        "id": "fldLvAsdT3",
+        "name": "库存键",
+        "type": "formula"
+      },
+      {
+        "expression": "FIRST([编号].[类别])",
+        "id": "fldOZq9QYh",
+        "name": "类别",
+        "type": "formula"
+      },
+      {
+        "id": "fld39hzm0t",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldng7KQUg",
+        "link_table": "tbl9z4Oi8Vc57Kin",
+        "name": "编号",
+        "type": "link"
+      },
+      {
+        "expression": "FIRST([编号].[品类].[无效引用])",
+        "id": "fldWW4CqBA",
+        "name": "品类",
+        "type": "formula"
+      }
+    ],
+    "total": 9
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "default_value": null,
+        "id": "fldusr8CAo",
+        "name": "核销日",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "datetime"
+      },
+      {
+        "bidirectional": false,
+        "id": "fld78yBG9e",
+        "link_table": "tblF7KD85JHA4hVi",
+        "name": "商品名称",
+        "type": "link"
+      },
+      {
+        "expression": "[商品名称].[平台结算款]",
+        "id": "fldh35vO6b",
+        "name": "预计收入",
+        "type": "formula"
+      },
+      {
+        "id": "fldcw63H27",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      },
+      {
+        "id": "fldDfpW7yl",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      },
+      {
+        "default_value": {
+          "$slot": "record_created_time"
+        },
+        "id": "flduaCFijF",
+        "name": "同步日",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "datetime"
+      }
+    ],
+    "total": 6
+  }
+}

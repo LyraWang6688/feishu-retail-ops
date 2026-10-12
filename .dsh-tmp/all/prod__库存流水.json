@@ -1,0 +1,103 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "bidirectional": false,
+        "id": "fldFpNILqF",
+        "link_table": "tbl9z4Oi8Vc57Kin",
+        "name": "编号",
+        "type": "link"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldnlN7IaF",
+        "link_table": "tblrHyfMNiPLQkv9",
+        "name": "尺码",
+        "type": "link"
+      },
+      {
+        "expression": "[编号]\u0026\"|\"\u0026[尺码]",
+        "id": "fldzcg0c2Z",
+        "name": "库存键",
+        "type": "formula"
+      },
+      {
+        "id": "fldFUZqD3D",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd HH:mm"
+        },
+        "type": "created_at"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldsPSdlkk",
+        "link_table": "tblbTvUT4AFsCK4K",
+        "name": "库存行为",
+        "type": "link"
+      },
+      {
+        "id": "fldFsdyw0t",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd HH:mm"
+        },
+        "type": "updated_at"
+      },
+      {
+        "default_value": null,
+        "id": "fldAT0fsjd",
+        "name": "变动数量",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "id": "fldzgkpnqY",
+        "name": "库存流水号",
+        "style": {
+          "rules": [
+            {
+              "text": "KC-",
+              "type": "text"
+            },
+            {
+              "date_format": "yyyyMMdd",
+              "type": "created_time"
+            },
+            {
+              "text": "-",
+              "type": "text"
+            },
+            {
+              "length": 4,
+              "type": "incremental_number"
+            }
+          ]
+        },
+        "type": "auto_number"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldan1mUUB",
+        "link_table": "tblK3Uzd0nN1GJrr",
+        "name": "关联采购",
+        "type": "link"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldNNNEspT",
+        "link_table": "tblxW5WMKDULyolA",
+        "name": "关联销售",
+        "type": "link"
+      }
+    ],
+    "total": 10
+  }
+}

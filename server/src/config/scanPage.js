@@ -36,6 +36,19 @@ const ROUTE = Object.freeze({
   //    `{batchNo}` 会被 URL 编码后填进去；手输兜底那个 GET 表单用 `acceptPath`。
   acceptancePath: '/accept',
   acceptanceLandingPath: '/accept?batch={batchNo}',
+  // ⭐⭐ 2026-10-12（治根）：**新二维码 = 记录 ID 直达** —— `GET/POST /r/{recordId}`。
+  //
+  // 起因（她今天的口径，逐字）：「如果必须得要一个完全不变的标识，那我们是不是可以用
+  //   【记录 ID】呀？……虽然它的这些信息可能会变，但我还是用它**不变的记录 ID**」。
+  // 根因：二维码里存的**编号**（`货号|颜色|类别`）是**会变的快照** —— 她打印时类别为空、
+  //   之后补上 ⇒ 旧码对不上（今天的 400 事故就是这么来的）。
+  // ⇒ **新二维码一律 `/r/{recordId}`**；**旧 `/s/{编号}` 照旧可用**（旧贴纸不重打也能扫）。
+  // 🔴 `/r` 与 `/s` **必须是同一个 router 实例**（`app.js` 双挂载）——
+  //    各建一个实例就会有两套写服务 / 两条按人串行队列 ⇒ **幂等可靠性直接破**。
+  recordBasePath: '/r',
+  recordPath: '/:recordId',
+  // 「拿到 recordId 但那条货品读不到」时的**回退**：URL 上若还带着编号（`?number=`）就按编号再试。
+  recordNumberQuery: 'number',
 });
 
 /**
@@ -55,6 +68,20 @@ const NUMBER = Object.freeze({
   // 关联单元格（「实时库存.编号」）为空时，用「库存键」公式的前三段兜底认行。
   // 公式 = `货号|颜色|类别|尺码`，前三段就是「编号」+ 一个分隔符。
   stockKeyPrefixFallback: true,
+  // ⭐⭐ 2026-10-12：**编号兜底匹配**（业务负责人真机事故：二维码里编号 = `MK31-1|咖色|`
+  //    —— **缺「类别」段** ⇒ 精确匹配查不到 ⇒ 页面回 400 / 原始错误页）。
+  //    二维码那条已另行修复；**这一条是扫码页侧的兜底**（旧标签、以及任何"编号缺段"的扫码）。
+  //
+  //    口径（Lead 已批，逐条）：
+  //      · **按分隔符拆段**，用（**货号 + 颜色**）再查一次（**类别为空就忽略它**）；
+  //      · **唯一命中才采用**；**0 条 / 多条一律维持"找不到"**（不猜 ✗）；
+  //      · 🔴 **不做任何 OCR 相似字符纠正**（二维码是机器码 —— "静默进错款"比"找不到"更坏）；
+  //      · 🔴 **不整表读**（按「货号」过滤读一次；过滤读不可用时才走既有整表回退，
+  //        与 `readProductsByNumber` 同一套兜底，不是"新加一次整表读"）；
+  //      · 命中时给**一条轻提示**（不写说明书，见 texts.numberFallbackHint）。
+  fallbackMatch: Object.freeze({
+    enabled: true,
+  }),
 });
 
 /**
@@ -117,6 +144,12 @@ const TEXTS = Object.freeze({
   unknownStateNote: '有 {count} 双的「所属状态」不在预期取值里，已按原值另列。',
   unknownSizeNote: '有 {count} 双读不出尺码，单独列在最后一行。',
   truncatedSizesNote: '该类别尺码过多，缺码判定只看前 {count} 个。',
+  // ⭐⭐ 2026-10-12：**编号兜底**（(c)）命中时的轻提示 —— 一句话，不写说明书。
+  numberFallbackHint: '二维码里的编号少了类别，建议重打标签（已按货号 + 颜色找到这一款）。',
+  // ⭐⭐ 2026-10-12：兜底**也没找到**时的两句人话（0 条 / 多条）+ 下一步（回扫码页 / 再扫一次）。
+  notFoundFallbackMissHint: '这个编号少了类别，按货号 + 颜色也没找到这一款 —— 请核对标签上的货号 / 颜色，或重打标签。',
+  notFoundAmbiguousHint: '这个编号少了类别，按货号 + 颜色匹配到多款，没法确定是哪一双 —— 请核对标签，或重打标签。',
+  notFoundBackLabel: '再扫一次',
   notFoundTitle: '没找到这个编号',
   notFoundBody: '可能已删除、或编号变了。',
   notFoundHint: '扫到的编号：',
@@ -136,6 +169,14 @@ const TEXTS = Object.freeze({
   //    ① 列未到货批次（每条一行、点进 `/s/accept?batch=…`）；② 手输批次号兜底。
   //    ⚠️ 全是**功能名/事实**，没有说明书腔。
   acceptPendingTitle: '未到货的批次',
+  // ⭐⭐ 2026-10-12 21:11（她真机）：输入框空着点【进入验收】⇒ 表单 GET 不带 batch ⇒ **原地重画同一页**
+  //    ⇒ 她的感受是"点了之后里面啥也没有" ✗ ⇒ 空提交必须**即时给一句人话**（就在那颗按钮上方）。
+  acceptPendingEmptySubmitHint: '请先点上面那一条批次，或在下面输入批次号。',
+  // ⭐⭐ 2026-10-12 21:20（她"一直点那个按钮"）：反馈脚本的**兜底文案**（属性为空时用它，**绝不许把按钮变空白**）。
+  submitSubmittingFallback: '正在提交，请不要重复点…',
+  // ⭐ 金额是必填（>0）：前端**即时**就能感知（点按钮就有提示，**不发请求**）。
+  acceptAmountRequiredLabel: '实际金额（必填）',
+  acceptAmountRequiredHint: '请填一个大于 0 的实际金额。',
   acceptPendingEmptyBody: '现在没有未到货的批次：可以直接填批次号进验收。',
   acceptPendingManualTitle: '填批次号',
   acceptPendingManualPlaceholder: '输入批次号',
@@ -373,6 +414,32 @@ const SNAPSHOT = Object.freeze({
  *    ⚠️ 它是**定期**的（TTL 内一次都不读那张表），不是每次扫码都读 ——
  *    否则这次提速就白做了（真机一次往返 1.5~2.5 秒）。
  */
+/**
+ * ⭐⭐ 2026-10-12（她拍板 · 方案 A）：「**提交完 ⇒ 自动回首页，而首页 = 销售页** ✓」
+ * 成功页的"回哪儿 / 停多久 / 按钮叫什么"**只在这里定义**（三路共用 ✓）。
+ */
+/**
+ * ⭐⭐ 2026-10-12（她真机 `POST …` ⇒ 400 / 1ms、无法判断"她手上是不是旧页面" ✗）：
+ * **页面的构建标识**——由**渲染那一页的进程**写进每个写表单的隐藏字段，
+ * 她提交时随 body 带回来 ⇒ 日志里就能回答"她点的是**旧构建渲染的页面**吗" ✓
+ */
+const PAGE_BUILD = [
+  String(process.env.APP_VERSION || (() => { try { return require('../../package.json').version; } catch (_) { return ''; } })() || 'unknown'),
+  String(process.env.APP_COMMIT || '').slice(0, 7),
+].filter(Boolean).join('@');
+
+const SUCCESS_RETURN = Object.freeze({
+  enabled: true,
+  // 先让她**看到结果**，约 2 秒后再跳（不许秒跳 ✗）
+  delaySeconds: 2,
+  // ⭐ 三路（销售 / 补货 / 退货）成功后回哪个领域：**销售**（"把扫码页的首页当作销售页"）
+  homeRealm: 'sales',
+  // ⭐⭐ 她 2026-10-12 又拍：**验收成功 ⇒ 回【未到货批次列表】**（= 验收自己的首页 ✓，别"顺手统一"改掉 ✗）
+  //    ⚠️ 两类都在**这一处**区分（别散在各 handler 里 ✗）。
+  acceptHome: 'pendingBatches',
+  label: '返回扫码',
+});
+
 const SIZE_SEGMENTS = Object.freeze({
   ranges: Object.freeze({
     A: Object.freeze({ label: '男', from: 38, to: 48 }),
@@ -415,6 +482,16 @@ const PRODUCT_SNAPSHOT = Object.freeze({
 const EVENTS = Object.freeze({
   viewed: 'scan.page.viewed',
   notFound: 'scan.page.not_found',
+  // ⭐⭐ 2026-10-12：`/r/{recordId}` 这条路的正向证据 / 失败证据。
+  recordViewed: 'scan.page.record_viewed',
+  recordMissing: 'scan.page.record_missing',
+  recordLookupFailed: 'scan.page.record_lookup_failed',
+  // ⭐⭐ 2026-10-12：编号兜底匹配（唯一命中 / 多命中 / 读失败）各一条。
+  numberFallback: 'scan.page.number_fallback',
+  // ⭐⭐ 2026-10-12：`/r/{recordId}` 取商品那一段（记录 id 直查）失败 —— **回退按编号**，不 500。
+  recordFallback: 'scan.page.record_fallback',
+  numberFallbackAmbiguous: 'scan.page.number_fallback_ambiguous',
+  numberFallbackFailed: 'scan.page.number_fallback_failed',
   badNumber: 'scan.page.bad_number',
   sizesDegraded: 'scan.sizes.scope_unavailable',
   unknownState: 'scan.state.unexpected',
@@ -453,6 +530,16 @@ const SCAN_PAGE = Object.freeze({
   snapshot: SNAPSHOT,
   // ⭐ 2026-10-09 新增两块（都由她在 2026-10-09 拍板）：
   sizeSegments: SIZE_SEGMENTS,
+  // ⭐ 2026-10-12：页面构建标识（渲染层写进写表单的隐藏字段；日志用它判断"旧页面"）
+  pageBuild: PAGE_BUILD,
+  pageBuildField: 'page_build',
+  // ⭐⭐ 2026-10-12（业务负责人拍板 · 方案 A，逐字）：「**提交完 ⇒ 自动回首页，而首页 = 销售页**」
+  //   ⇒ 三路（销售 / 补货 / 验收）**写成功之后**都回【销售】领域的扫码首页：
+  //     · 成功页**先显示结果**（单号 / 实际数量 / 实际金额）⇒ 约 2 秒后**自动跳**；
+  //     · 再留一颗【返回扫码】兜底（href 与自动跳转**同一个 URL** ✓ 唯一来源就是这里）；
+  //     · **"还没提交、点【继续扫下一个】"不在此列** ⇒ 那种情况仍按她上次用的领域走 ✓（不冲突）。
+  //   ⚠️ 唯一来源：她哪天要改回"回补货"，**只改这一处**（别散在两处 ✗）。
+  successReturn: SUCCESS_RETURN,
   productSnapshot: PRODUCT_SNAPSHOT,
   events: EVENTS,
   // ⭐ 2026-10-11：【继续扫下一个】的手段（飞书扫一扫 AppLink，见上面的长注释）。

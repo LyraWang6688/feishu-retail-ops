@@ -1,0 +1,189 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "default_value": null,
+        "id": "fldZT9WRr1",
+        "name": "发生时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "datetime"
+      },
+      {
+        "default_value": null,
+        "id": "fldvzDhD91",
+        "multiple": false,
+        "name": "入账状态",
+        "options": [
+          {
+            "hue": "Purple",
+            "lightness": "Lighter",
+            "name": "待处理"
+          },
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "已入账"
+          },
+          {
+            "hue": "Orange",
+            "lightness": "Lighter",
+            "name": "失败"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "id": "fldBwAjRxC",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      },
+      {
+        "default_value": null,
+        "id": "fldzJusHlc",
+        "name": "客户",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "default_value": null,
+        "id": "fldvlHU24F",
+        "name": "来源单号",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldM0ja0JJ",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      },
+      {
+        "default_value": null,
+        "id": "fldkyI9yW4",
+        "multiple": false,
+        "name": "变动类型",
+        "options": [
+          {
+            "hue": "Wathet",
+            "lightness": "Lighter",
+            "name": "销售欠款"
+          },
+          {
+            "hue": "Turquoise",
+            "lightness": "Lighter",
+            "name": "退货退款"
+          },
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "客户还款"
+          },
+          {
+            "hue": "Turquoise",
+            "lightness": "Lighter",
+            "name": "冲销"
+          },
+          {
+            "hue": "Purple",
+            "lightness": "Lighter",
+            "name": "团购券待结算"
+          },
+          {
+            "hue": "Carmine",
+            "lightness": "Lighter",
+            "name": "平台结算"
+          },
+          {
+            "hue": "Yellow",
+            "lightness": "Lighter",
+            "name": "结算差额"
+          },
+          {
+            "hue": "Purple",
+            "lightness": "Lighter",
+            "name": "平台退款"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "id": "fldYEt2al6",
+        "name": "客户往来流水ID",
+        "style": {
+          "rules": [
+            {
+              "text": "KHWL-",
+              "type": "text"
+            },
+            {
+              "date_format": "yyyyMMdd",
+              "type": "created_time"
+            },
+            {
+              "text": "-",
+              "type": "text"
+            },
+            {
+              "length": 4,
+              "type": "incremental_number"
+            }
+          ]
+        },
+        "type": "auto_number"
+      },
+      {
+        "default_value": null,
+        "id": "fldeAewiXT",
+        "name": "业务事件ID",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "default_value": null,
+        "id": "fldMx934Ta",
+        "name": "明细序号",
+        "style": {
+          "percentage": false,
+          "precision": 2,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "default_value": null,
+        "id": "fldry9Vcdg",
+        "multiple": false,
+        "name": "经办人",
+        "type": "user"
+      },
+      {
+        "default_value": null,
+        "id": "fldNzrnmtV",
+        "name": "应收变化",
+        "style": {
+          "currency_code": "CNY",
+          "precision": 2,
+          "type": "currency"
+        },
+        "type": "number"
+      }
+    ],
+    "total": 12
+  }
+}

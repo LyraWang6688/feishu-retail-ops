@@ -1,0 +1,17 @@
+docs/sync-main-before-selftest
+docs/test-discipline
+docs/test-input-data-source-rule
+docs/time-field-contract
+docs/time-field-scope
+docs/todo-delete-original-status-write
+docs/workbench-requirements
+feat/after-sales-wiring
+feat/arrival-card-grouping-cost
+feat/arrival-conversation-reconcile
+feat/arrival-intake-switch
+feat/arrival-reconcile-merged
+feat/arrival-simple-matching
+feat/e2e-report-qty
+feat/group-sales-autodetect
+feat/inventory-adjustment-registry
+feat/inventory-ledger-operator

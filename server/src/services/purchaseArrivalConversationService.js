@@ -1,3 +1,5 @@
+// ⭐ 用户可见文案抽到 config（2026-10-12 技术债批次：只挪位置，一个字符没改）
+const { pageMessages, landingMessages, scanMessages } = require('../config/purchaseArrivalTexts');
 const crypto = require('node:crypto');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
@@ -772,7 +774,7 @@ class PurchaseArrivalConversationService {
   async confirmBatchArrival({ batch, acceptanceText = '', actualAmount, operatorOpenId = '', scanLines = null } = {}) {
     const batchNo = String(batch?.batch_no || '').trim();
     if (!batchNo) {
-      return { ok: false, reason: 'no_batch_no', message: '这一行没有报货批次号，不能验收到货' };
+      return { ok: false, reason: 'no_batch_no', message: pageMessages.m1 };
     }
     const amount = parseActualAmount(actualAmount);
     if (!amount.ok) {
@@ -780,8 +782,8 @@ class PurchaseArrivalConversationService {
         ok: false,
         reason: amount.reason,
         message: amount.reason === 'amount_missing'
-          ? '请先填这次的「实际金额」，再点验收到货'
-          : '「实际金额」要填一个大于 0 的数字（不能是 0 或负数）',
+          ? pageMessages.m2
+          : pageMessages.m3,
       };
     }
     const text = String(acceptanceText == null ? '' : acceptanceText).trim();
@@ -789,7 +791,7 @@ class PurchaseArrivalConversationService {
       return {
         ok: false,
         reason: 'acceptance_text_missing',
-        message: '请先写一句到货说明（例如「跟单子一样，全部到货」），再点验收到货',
+        message: pageMessages.m4,
       };
     }
     // ⭐⭐ 2026-10-11（方案A）：**扫码验收**走这里 —— `scanLines` = 逐码实际到货（她扫了什么）。
@@ -806,10 +808,24 @@ class PurchaseArrivalConversationService {
       logInfo('purchase.arrival.reconcile.workbench_already_posted', { task_id: taskId, batch_no: batchNo });
       return {
         ok: true, reason: 'already_posted', taskId,
-        message: `这批（${batchNo}）已经验收入库过了，没有重复入库`,
+        message: pageMessages.m5({ batchNo }),
       };
     }
     return this.queue.run(taskId, async () => {
+      // ⭐⭐ P0 2026-10-12（真机：同一批两次提交 ⇒ 每个尺码各 +2 ⇒ 5 双变 10 双）：
+      //    **队列是按 taskId 串行的**（`KeyedSerialQueue`）⇒ 第二次进来时必须**在锁内**再看一眼状态。
+      //    外面那次 `existing?.status === 'posted'` 是**顺序**检查 —— 拦得住"上一次已完成"，
+      //    **拦不住两个请求同时进来**（两份都通过了外面的检查，再各自跑完 ✗）。
+      const locked = await this.store.get(taskId).catch(() => null);
+      if (locked?.status === 'posted') {
+        logInfo('purchase.arrival.reconcile.workbench_already_posted', {
+          task_id: taskId, batch_no: batchNo, where: 'locked',
+        });
+        return {
+          ok: true, reason: 'already_posted', taskId,
+          message: `这批（${batchNo}）已经验收入库过了，没有重复入库`,
+        };
+      }
       // ① 读申请行（既有只读实现；退货行没有尺码会在这里被挡住）
       const snapshot = await this.loadRequestRows(batch);
       if (!snapshot.ok) {
@@ -872,16 +888,16 @@ class PurchaseArrivalConversationService {
    */
   workbenchRowsMessage(reason) {
     const copy = {
-      no_request_ids: '这一批没有找到采购申请明细，不能验收到货',
-      too_many_request_rows: '这一批的明细太多，一次核对不了；请在采购群那个话题里说',
-      request_rows_unreadable: '这一批的采购申请明细读不到，稍后再试',
-      request_row_without_product: '这一批有明细没挂货品，不能验收入库',
-      request_row_without_size: '这一批有明细没有尺码（采购退货单不能验收到货）',
-      request_row_bad_quantity: '这一批有明细的申请数量不是正整数，不能验收入库',
-      actual_not_positive: '这一批算出来的实际到货数不对，不能验收入库',
-      difference_unmatched: '这一批的到货明细对不上单据，不能验收入库',
+      no_request_ids: landingMessages.m1,
+      too_many_request_rows: landingMessages.m2,
+      request_rows_unreadable: landingMessages.m3,
+      request_row_without_product: landingMessages.m4,
+      request_row_without_size: landingMessages.m5,
+      request_row_bad_quantity: landingMessages.m6,
+      actual_not_positive: landingMessages.m7,
+      difference_unmatched: landingMessages.m8,
     };
-    return copy[reason] || '这一批现在不能验收入库（原因已记日志，请找管理员看一眼）';
+    return copy[reason] || landingMessages.m9;
   }
 
   /**
@@ -890,19 +906,19 @@ class PurchaseArrivalConversationService {
    */
   scanRowsMessage(reason) {
     const copy = {
-      no_scan_lines: '还没扫到任何一双：先扫一双，再点【完成验收】。',
-      scan_not_in_batch: '扫到的这一双不在本批，不能验收：请核对标签再扫。',
-      scan_duplicated: '同一双被记了两次，不能验收：请先退出验收模式再重新扫一遍。',
-      duplicate_request_rows: '这一批里同一款同一码有两行申请，先在采购群核对一下再验收。',
-      actual_not_positive: '这一批算出来的实际到货数不对，不能验收入库。',
-      no_request_ids: '这一批没有找到采购申请明细，不能验收入库。',
-      request_rows_unreadable: '这一批的采购申请明细读不到，稍后再试。',
-      request_row_without_product: '这一批有明细没挂货品，不能验收入库。',
-      request_row_without_size: '这一批有明细没有尺码，不能验收入库。',
-      request_row_bad_quantity: '这一批有明细的申请数量不是正整数，不能验收入库。',
-      too_many_request_rows: '这一批的明细太多，一次核对不了；请在采购群那个话题里说',
+      no_scan_lines: scanMessages.m1,
+      scan_not_in_batch: scanMessages.m2,
+      scan_duplicated: scanMessages.m3,
+      duplicate_request_rows: scanMessages.m4,
+      actual_not_positive: scanMessages.m5,
+      no_request_ids: scanMessages.m6,
+      request_rows_unreadable: scanMessages.m7,
+      request_row_without_product: scanMessages.m8,
+      request_row_without_size: scanMessages.m9,
+      request_row_bad_quantity: scanMessages.m10,
+      too_many_request_rows: scanMessages.m11,
     };
-    return copy[reason] || '这一批现在不能验收入库（原因已记日志，请找管理员看一眼）';
+    return copy[reason] || scanMessages.m12;
   }
 
   // ── 已删除（2026-10-07 晚）：`createArrivalRecord` / `findExistingArrival` ──────────
@@ -946,6 +962,8 @@ class PurchaseArrivalConversationService {
     //    · **没扫到的行 = 0** ⇒ 调用方在入库那一步摘掉（"少发的"自然就是差异）；
     //    · 命中多行 / 扫到本批没有的货 / 同一行被两条扫码行命中 ⇒ **拦住**（宁可不入库，
     //      也不能把实际数记到别的行上）。
+    //    ⭐⭐ 2026-10-12（她口述版的"自定义"）：**没报过的尺码**只要是**本批的款**就允许
+    //      —— 见下面 `extra` 那一段（款不认识 ⇒ 照旧 `scan_not_in_batch`，不猜 ✗）。
     if (parsed.scanLines) {
       const keyOf = (productRecordId, size) => `${productRecordId}|${Number(size)}`;
       const byKey = new Map();
@@ -957,9 +975,46 @@ class PurchaseArrivalConversationService {
       }
       const actualById = new Map(rows.map((row) => [row.request_record_id, 0]));
       const hit = new Set();
+      // ⭐⭐ 2026-10-12（Lead 裁定 · 口径照业务负责人原话）：
+      //   「**自定义加进来的尺码，必须能归到"她扫进来的那一款"**」——
+      //   她可以在清单里"自定义加一行"（**没报过、但到了**的尺码）：
+      //     · **允许**：该行挂的**款**（`product_record_id`）**出现在这一批的申请行里**
+      //       ⇒ 它归到"她本次确认的那一款"，**计入**（下面那条 extra 行）；
+      //     · **拦住**：款根本不在这批里（不认识的款）/ 没款可归 ⇒ `scan_not_in_batch`
+      //       —— 🔴 **绝不猜款**（猜到别的款上 = 库存加错人头，比让她扫一下坏得多）。
+      //   ⚠️ 这是**加法**：没有自定义行时，下面每一行与改动前**逐字相同**（顺序 / 字段 / 长度）。
+      const knownProducts = new Set(rows.map((row) => row.product_record_id).filter(Boolean));
+      const extra = [];
+      const extraKeys = new Set();
       for (const scan of parsed.scanLines) {
         const row = byKey.get(keyOf(scan?.product_record_id, scan?.size));
-        if (!row) return { ok: false, reason: 'scan_not_in_batch' };
+        if (!row) {
+          // 不是申请行 ⇒ 只可能是"自定义加进来的那一行"：款必须是本批的款。
+          if (!knownProducts.has(scan?.product_record_id)) {
+            return { ok: false, reason: 'scan_not_in_batch' };
+          }
+          const quantity = Number(scan?.quantity);
+          // 0 / 负数 / 非整数 ⇒ 不静默写成 0 双（与"申请行"那一侧同一条口径）。
+          if (!Number.isSafeInteger(quantity) || quantity <= 0) {
+            return { ok: false, reason: 'actual_not_positive' };
+          }
+          const key = keyOf(scan?.product_record_id, scan?.size);
+          if (extraKeys.has(key)) return { ok: false, reason: 'scan_duplicated' };
+          extraKeys.add(key);
+          extra.push({
+            // ⭐ 没有申请行：`request_record_id` 留空 ⇒ 下游（写回 / 建草稿）天然不会去动"不存在的那一行"，
+            //    入库那一步只认 `product_record_id` + `size` + `actual`（见 `confirmLocked` 的 `draft.actual`）。
+            request_record_id: '',
+            product_record_id: scan.product_record_id,
+            item_no: '',
+            color: '',
+            size: Number(scan.size),
+            quantity: 0,
+            actual: quantity,
+            custom: true,
+          });
+          continue;
+        }
         if (hit.has(row.request_record_id)) return { ok: false, reason: 'scan_duplicated' };
         hit.add(row.request_record_id);
         actualById.set(row.request_record_id, Number(scan.quantity));
@@ -968,7 +1023,7 @@ class PurchaseArrivalConversationService {
       if (scanned.some((row) => !Number.isSafeInteger(row.actual) || row.actual < 0)) {
         return { ok: false, reason: 'actual_not_positive' };
       }
-      return { ok: true, rows: scanned, differences: [] };
+      return { ok: true, rows: [...scanned, ...extra], differences: [] };
     }
     const actualById = new Map(rows.map((row) => [row.request_record_id, row.quantity]));
     if (parsed.same) {

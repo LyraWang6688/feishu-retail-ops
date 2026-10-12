@@ -150,8 +150,10 @@ const createPurchaseReturnService = (options = {}) => {
     // ① 退货批次那一行（只写 批次号 + 幂等键；出退货单的图要用它当落点）
     // ⭐ 2026-10-12：把**采购退货那一档行为记录 id** 传下去 ⇒ 主表行写上「采购行为」
     //    （明细那一列是它的 Lookup，只读，明细侧不写）。
+    // ⭐ 2026-10-12：把这一批的**录入数量合计**（= 每码 `taken` 之和，上面已经算好）传给建行，
+    //    写上「报货批次.录入数量」—— 她报货时填的数量，就是这一列。
     const batch = await orderBatches.createForReturnBatch(plan.batch_no,
-      { correlation, behaviorRecordId: draft.behavior_record_id });
+      { correlation, behaviorRecordId: draft.behavior_record_id, quantity: takenCount });
     if (!batch.recordId) {
       throw new Error('采购退货批次那一行没建成：退货明细就没有落点，这次不写');
     }

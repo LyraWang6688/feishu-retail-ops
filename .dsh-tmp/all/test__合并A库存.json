@@ -1,0 +1,75 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "bidirectional": false,
+        "id": "fld4SMfhXL",
+        "link_table": "tbl5as7poByp36c7",
+        "name": "编号",
+        "type": "link"
+      },
+      {
+        "default_value": null,
+        "id": "fld8huQbQ8",
+        "multiple": false,
+        "name": "数据来源",
+        "options": [
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "样品"
+          },
+          {
+            "hue": "Orange",
+            "lightness": "Lighter",
+            "name": "门盒"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "default_value": null,
+        "id": "fldtBRDQUC",
+        "name": "数量",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "default_value": null,
+        "id": "fldw8OyTrf",
+        "name": "尺码",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "id": "fld4KSbQaa",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd HH:mm"
+        },
+        "type": "created_at"
+      },
+      {
+        "id": "flda0PsRq3",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd HH:mm"
+        },
+        "type": "updated_at"
+      }
+    ],
+    "total": 6
+  }
+}

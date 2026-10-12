@@ -325,7 +325,7 @@ test('AC-B5 配品金额留空 ⇒ **那一列留空**（不再取「其他配�
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AC-B6 页面：配品下拉 + 配品金额 + 备注输入框（且没有说明书）
+// AC-B6 页面：配品下拉 + 配品金额 + 赠品输入框（且没有说明书）
 // ═══════════════════════════════════════════════════════════════════════════
 
 const VIEW = {
@@ -351,7 +351,7 @@ const WRITE = (overrides = {}) => ({
   ...overrides,
 });
 
-test('AC-B6 销售领域页面上：配品下拉（选项 = 「其他配品」名称）+ 配品实收金额 + 备注输入框', () => {
+test('AC-B6 销售领域页面上：配品下拉（选项 = 「其他配品」名称）+ 配品实收金额 + 赠品输入框', () => {
   const html = renderScanPage(VIEW, SCAN_PAGE, WRITE(), 'sales');
   // ① 配品下拉：动作是配品那一个，选项来自「其他配品」的名称
   assert.match(html, new RegExp(`name="${SCAN_WRITE.fields.action}" value="${SCAN_WRITE.actions.addAccessory}"`),
@@ -364,11 +364,13 @@ test('AC-B6 销售领域页面上：配品下拉（选项 = 「其他配品」�
   }
   assert.ok(select[1].includes('value="acc_oil"'), '选项的 value = 那一条配品记录的 id（不靠名字猜）');
   // ② 配品实收金额（她 2026-10-11 的两层结构：每件只填实收；页面上不再有别的金额框）
-  //    + ③ 备注输入框（可为空）
+  //    + ③ 赠品输入框（可为空；标签写「赠品」——表列名与页面标签统一）
   assert.match(html, /配品实收金额/);
   assert.match(html, new RegExp(`name="${SCAN_WRITE.fields.amount}"`));
   assert.match(html, new RegExp(`name="${SCAN_WRITE.fields.gift}"`));
-  assert.match(html, /备注/, '页面上写「备注」（落点是主表「赠品」列）');
+  // ⭐⭐ 2026-10-12（业务负责人拍板）：「『备注』还是『赠品』⇒ **赠品**」⇒ 页面标签与表列名统一。
+  assert.match(html, /赠品（可不填）/, '页面上写「赠品（可不填）」（= 主表那一列的名字）');
+  assert.equal(/备注（可不填）/.test(html), false, '页面上**不许**再出现「备注（可不填）」');
   // ④ 页面里没有说明书（她 2026-10-10 的硬要求）：只有标签 / 占位 / 按钮
   for (const gone of ['怎么用', '使用说明', '你可以', '说明：']) {
     assert.equal(html.includes(gone), false, `页面上不该出现说明句：「${gone}」`);
