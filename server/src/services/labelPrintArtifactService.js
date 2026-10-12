@@ -180,10 +180,26 @@ const planItemNoColor = (label, layout, options = {}) => {
     colorTruncated = true;
   }
 
+  // ⭐ 竖版 3:4 样张探针（2026-10-12）：那种画布的"行方向"只有 30mm ⇒ 货号**单独占一行**时
+  //    拿到的是**整栏宽度**（不被颜色占掉），所以这里多算一份 `solo`（`body.rows` 里用 'itemNo' 时用）。
+  //    ⚠️ 只用配置触发；默认行序里没有 'itemNo'，横版老版式一个字节不变。
+  const solo = fitItem(available);
+  // ⭐ 两行版：先断行，再按**最长那半**反推能用的字号（这样 7 个字符的货号在 13mm 栏里
+  //    能保住**原字号**，而不是被缩到 2.8mm）—— 竖版 3:4 样张的变体 B 就是靠它。
+  const soloWrapLines = splitItemNoLines(solo.text, body);
+  const longestEm = soloWrapLines.reduce((max, line) => Math.max(max, textWidthMm(line, 1, em)), 0);
+  const soloWrapSizeMm = soloWrapLines.length > 1 && longestEm > 0
+    ? Math.max(minItemNoMm, Math.min(itemNoMm, available / longestEm))
+    : solo.sizeMm;
   return {
     itemNoText: plan.text,
     itemNoSizeMm: plan.sizeMm,
     itemNoTruncated: plan.truncated,
+    soloItemNoText: solo.text,
+    soloItemNoSizeMm: solo.sizeMm,
+    soloItemNoTruncated: solo.truncated,
+    soloItemNoLines: soloWrapLines,
+    soloItemNoWrapSizeMm: soloWrapSizeMm,
     colorText,
     colorTruncated,
     categoryIncluded,
@@ -240,6 +256,30 @@ const normalizeCanvas = (value) => {
     throw new Error(`标签画布方向（canvas）只能是 landscape / portrait（横版 / 竖版），当前是「${value}」`);
   }
   return canvas;
+};
+
+/**
+ * ⭐ 把货号断成 N 行（竖版 3:4 的样张用；`body.itemNoLines = 2` 时生效）。
+ * 断点优先落在"非字母数字"的分界（如 `-` `|` 空格），否则按长度对半断。
+ * ⚠️ 默认 1 行 ⇒ **横版老版式一个字节都不变**。
+ */
+const splitItemNoLines = (text, body = {}) => {
+  const raw = String(text ?? '');
+  const wanted = Math.max(1, Math.min(3, Math.round(Number(body?.itemNoLines) || 1)));
+  if (wanted < 2 || raw.length < 3) return raw ? [raw] : [];
+  const target = Math.ceil(raw.length / wanted);
+  const lines = [];
+  let rest = raw;
+  while (rest.length > target && lines.length < wanted - 1) {
+    let cut = target;
+    for (let i = target; i >= Math.max(1, target - 2); i -= 1) {
+      if (/[^0-9A-Za-z]/.test(rest[i - 1] || '')) { cut = i; break; }
+    }
+    lines.push(rest.slice(0, cut));
+    rest = rest.slice(cut);
+  }
+  if (rest) lines.push(rest);
+  return lines;
 };
 
 /** 旋转角度归一化。认不出的值**当场抛错**（配置写错时不许静默按 0 处理 —— 那会印出一堆方向反的标签）。 */
@@ -475,6 +515,13 @@ function labelSvg(label, layout, options = {}) {
   /** 每一行占多高（mm）—— 行高系数见 LINE_HEIGHTS（与 labels.css 一致，有防漂移用例）。 */
   const rowHeight = (id) => {
     if (id === 'itemNoColor') return itemNoMm * LINE_HEIGHTS.itemNo;
+    // ⭐ 竖版 3:4 用：货号 / 颜色各自单独一行（`body.rows` 里配 'itemNo' / 'color'）
+    if (id === 'itemNo') {
+      const lines = itemPlan.soloItemNoLines || [itemPlan.soloItemNoText];
+      const size = lines.length > 1 ? itemPlan.soloItemNoWrapSizeMm : itemPlan.soloItemNoSizeMm;
+      return Math.max(1, lines.length) * num(size, itemNoMm) * LINE_HEIGHTS.itemNo;
+    }
+    if (id === 'color') return fieldMm * LINE_HEIGHTS.color;
     if (id === 'price') return priceMm * LINE_HEIGHTS.price;
     if (id === 'state') return fieldMm * LINE_HEIGHTS.state;
     if (id === 'sizes') return Math.max(1, sizeLines.length) * sizeMm * LINE_HEIGHTS.sizes;
@@ -486,6 +533,8 @@ function labelSvg(label, layout, options = {}) {
   const activeRows = rows.filter((id) => {
     if (id === 'brand') return Boolean(brandText) && !brandOnTop;
     if (id === 'itemNoColor') return Boolean(itemPlan.itemNoText || itemPlan.colorText);
+    if (id === 'itemNo') return Boolean(fields.itemNo) && Boolean(itemPlan.soloItemNoText);
+    if (id === 'color') return Boolean(fields.color) && Boolean(itemPlan.colorText);
     if (id === 'price') return Boolean(fields.price && label.price_text);
     if (id === 'state') return Boolean(fields.state);
     if (id === 'sizes') return Boolean(fields.size) && sizeLines.length > 0;
@@ -501,6 +550,20 @@ function labelSvg(label, layout, options = {}) {
     const baseline = cursor + h * 0.82;
     if (id === 'brand') {
       parts.push(`<text x="${round(rightX)}" y="${round(baseline)}" font-family="${FONT_FAMILY}" font-size="${round(num(typography.brandMm, 2.4))}">${escapeXml(brandText)}</text>`);
+    } else if (id === 'itemNo') {
+      // 货号单独占一行（整栏宽度）；`body.itemNoLines: 2` ⇒ 断成两半画两行（保住原字号）
+      const lines = itemPlan.soloItemNoLines || [itemPlan.soloItemNoText];
+      const sizeMm = num(lines.length > 1 ? itemPlan.soloItemNoWrapSizeMm : itemPlan.soloItemNoSizeMm, itemNoMm);
+      // ⚠️ 多行时**基线要按"一行的高度"算**（`baseline` 是按整行高度 h 算的 ⇒ 两行会压到下一行上，
+      //    样张上实测到过：第二行「095」与「棕色」叠在一起）。
+      const lineH = sizeMm * LINE_HEIGHTS.itemNo;
+      lines.forEach((line, index) => {
+        parts.push(`<text x="${round(rightX)}" y="${round(cursor + lineH * 0.82 + index * lineH)}" `
+          + `font-family="${FONT_FAMILY}" font-size="${round(sizeMm)}">${escapeXml(line)}</text>`);
+      });
+    } else if (id === 'color') {
+      parts.push(`<text x="${round(rightX)}" y="${round(baseline)}" font-family="${FONT_FAMILY}" `
+        + `font-size="${round(fieldMm)}">${escapeXml(itemPlan.colorText)}</text>`);
     } else if (id === 'itemNoColor') {
       let x = rightX;
       if (itemPlan.itemNoText) {
