@@ -20,7 +20,7 @@ const test = require('node:test');
 
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { LarkMvpService } = require('../src/services/larkMvpService');
-const { salesConfirmationCard, salesStatusCard, salesProcessingCard } = require('../src/utils/larkCards');
+const { salesStatusCard, salesProcessingCard } = require('../src/utils/larkCards');
 const {
   SALES_PROCESSING_CARD_DEFAULTS,
   resolveSalesProcessingCardConfig,
@@ -95,7 +95,8 @@ test('处理中卡片：明细整段变灰、多一行"正在写入"、note 与�
   assert.ok(detail.includes('2. A100 39码 × 1 ￥99'));
   // 去掉颜色标记之后，这两张卡片的明细文字**本来就一样** ⇒ 差别确实来自"变灰"。
   const plainDetail = detail.replace(/^<font color='[^']*'>/, '').replace(/<\/font>$/, '');
-  const confirmationTexts = elementTexts(salesConfirmationCard('sale_x', { items: TWO_ITEMS }));
+  // ⚠️ 2026-10-12（3b）：原来拿「确认卡」做对照，它随销售草稿卡片退场 ⇒ 换成**仍在跑**的状态卡片
+  const confirmationTexts = elementTexts(salesStatusCard({ items: TWO_ITEMS }, '已成交', '已经写好了'));
   assert.ok(confirmationTexts.includes(plainDetail), '两边明细文字应当相同，差别只在颜色');
   assert.notEqual(detail, plainDetail);
   // 多出来的一行"正在写入"提示（在明细之前，第一眼就看到）。

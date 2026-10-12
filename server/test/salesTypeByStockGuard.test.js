@@ -30,15 +30,8 @@ const FORBIDDEN_IN_TEXT = ['未付', '预付'];
 
 const ITEMS = [{ item_no: 'A100', size: 38, quantity: 1, actual_amount: 99, trade_type_code: 'SALE_CASH' }];
 
-test('① 卡片渲染 0 命中「未付 / 预付」：确认卡（两种类型）/ 处理中卡 / 终态卡 / 成交提醒卡', () => {
+test('① 卡片渲染 0 命中「未付 / 预付」：处理中卡 / 终态卡 / 成交提醒卡（原确认卡已退场，红线口径照旧）', () => {
   const cards = [
-    larkCards.salesConfirmationCard('d1', {
-      items: ITEMS, payments: [{ method: '微信', amount: 99, status: '已收' }], agreed_total: 99,
-    }),
-    larkCards.salesConfirmationCard('d2', {
-      items: [{ item_no: 'A100', size: 38, quantity: 1, actual_amount: 228, trade_type_code: 'SALE_PREPAID' }],
-      payments: [{ method: '微信', amount: 100, status: '已收' }], agreed_total: 228, owed: 128,
-    }),
     larkCards.salesProcessingCard({ items: ITEMS }, {
       title: '⏳ 处理中', template: 'blue', itemColor: 'grey', progressLine: '正在写入…', note: '请勿重复点击',
     }),
@@ -55,11 +48,10 @@ test('① 卡片渲染 0 命中「未付 / 预付」：确认卡（两种类型�
       assert.ok(!text.includes(word), `第 ${index + 1} 张卡片里出现了「${word}」：${text}`);
     }
   }
-  // 正例：三段说清了类型 / 履约 / 收款。
-  const confirm = JSON.stringify(cards[0]);
-  assert.match(confirm, /类型：现货/);
-  assert.match(confirm, /履约状态：已交付/);
-  assert.match(confirm, /收款情况：/);
+  // ⚠️ 2026-10-12（3b）：原来这里还有一条正例 —— 「三段（类型 / 履约 / 收款）说清了」，
+  //    它钉的是**已退场那张确认卡片**的 `salesCardFactElements`（那三段只有它一个调用方
+  //    ⇒ 没有活的卡片需要它）⇒ 正例随卡片一起退场。**红线那一半（0 命中「未付 / 预付」）照旧**：
+  //    仍在跑的处理中卡 / 终态卡 / 成交提醒卡都在上面那个循环里逐张扫过。
 });
 
 test('① 待处理单推送渲染 0 命中「未付 / 预付」（分区标题就是【预定】/【现货待收】）', () => {

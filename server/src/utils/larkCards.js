@@ -52,7 +52,7 @@ const patchableCardConfig = () => ({ wide_screen_mode: true, update_multi: true 
 // 销售确认卡片传 false：产品负责人用真实卡片在手机上实测确认的 V3 排版里，
 // **一单只有一件时不显示这一件的金额**——它和下一行的「成交总额」完全重复，写两遍反而看不清重点。
 // ⚠️ 例外（业务决定，不要"顺手统一"）：**一单超过一件时必须逐件显示金额**。
-// 多件时她要在确认前逐件核对金额，不显示就会记错账。这个判断在 salesConfirmationCard 里。
+// 多件时她要在确认前逐件核对金额，不显示就会记错账。这个判断原先在那个销售确认卡片里（已退场）。
 //
 // ⭐ 尺码只在**真的有尺码**时才写（业务负责人 2026-10-07 真机案例）：
 //   配品（`kind: 'accessory'`：腰带 / 鞋油 / 袜子…）没有尺码，可这张卡原先无条件拼了一个
@@ -383,7 +383,7 @@ const salesCardFactElements = (draft) => salesCardFactsFor(draft).lines
 // ⭐ 2026-10-07（业务负责人拍板，逐字）：「我们的卡片能够实时更新，更新完之后，
 //   用户要补的链接其实就看不到了。所以我们在销售信息确认卡片里不需要放这个信息；
 //   等用户点击确认之后，卡片不是会更新吗？更新时再补这个信息。」
-//   ⇒ 这一段**不在**确认卡片上（`salesConfirmationCard`），而在**点确认之后**更新的
+//   ⇒ 这一段**不在**那张已退场的确认卡片上，而在**点确认之后**更新的
 //     `salesProcessingCard`（处理中卡）与 `salesStatusCard` 的**已入账终态卡**上。
 //   ⚠️ 位置变了，**文案与行格式一个字不改**；文案在 `config/productInfoGaps`，本函数只排布。
 //
@@ -436,68 +436,18 @@ const productInfoGapsElements = (draft, config = resolveProductInfoGapsConfig())
 //    见 `productInfoGapsElements` 的注释）——它仍是 note 小字，只是不在这一张上了。
 // 成交/收款行与交易类型行**不加粗**（内容里不写 `**`）——大字本身已经是重点，
 // 再加粗在手机上会糊成一团。
-const salesConfirmationCard = (draftId, draft) => {
-  const items = draft.items || [];
-  const payments = draft.payments || [];
-  const received = payments.filter((payment) => payment.status !== '待平台结算');
-  const pendingSettlement = payments.filter((payment) => payment.status === '待平台结算');
-
-  const moneyLines = [
-    // V3：成交总额和本次已收并成一行，中间用「·」分隔，都是 heading 大字、都不加粗。
-    `成交总额 ￥${text(draft.agreed_total)}　·　本次已收 ${received.length
-      ? received.map((payment) => `${text(payment.method)} ￥${text(payment.amount)}`).join('；')
-      : '尚未收款'}`,
-  ];
-  if (draft.voucher) {
-    moneyLines.push(`团购券：￥${text(draft.voucher.purchase_price)} 抵 ￥${text(draft.voucher.face_value)}；平台预计结算 ￥${text(draft.voucher.settlement_amount)}`);
-  }
-  if (pendingSettlement.length) {
-    moneyLines.push(`待平台结算：${pendingSettlement.map((payment) => `${text(payment.method)} ￥${text(payment.amount)}`).join('；')}`);
-  }
-
-  return {
-    config: patchableCardConfig(),
-    header: { template: 'blue', title: { tag: 'plain_text', content: '请确认销售订单' } },
-    elements: [
-      {
-        tag: 'div',
-        // 单件不显示金额、多件必须逐件显示金额（业务决定，理由见 itemLines 的注释）。
-        text: { tag: 'lark_md', content: itemLines(items, 'actual_amount', { showAmount: items.length > 1 }),
-          text_size: 'heading' },
-      },
-      { tag: 'div', text: { tag: 'lark_md', content: moneyLines.join('\n'), text_size: 'heading' } },
-      // ⭐ 三段：类型 · 履约状态 · 收款情况（文案在 `config/salesCardFacts`）。
-      ...salesCardFactElements(draft),
-      ...salesColorPickers(draftId, draft),
-      ...salesSampleReplacementPicker(draftId, draft),
-      // ⚠️ 这里**刻意没有** `productInfoGapsElements(draft)`：
-      //   这张卡会被点确认后的 patch 覆盖，放这里等于"她永远看不到补资料的链接"。
-      //   2026-10-07 起该段落在处理中卡与已入账终态卡上（见 `productInfoGapsElements`）。
-      //   三个按钮走 column_set：移动端实测一行三列（见 buttonColumns 的注释）。
-      buttonColumns([
-        actionButton('确认', 'confirm_sale', draftId, 'primary'),
-        actionButton('修改', 'modify_sale', draftId),
-        actionButton('取消', 'cancel', draftId, 'danger'),
-      ]),
-    ],
-  };
-};
-
-// ⭐ 2026-10-07【确认成交】按钮（业务负责人拍板的**甲**：做在**已经在她手里的那张终态卡**上，
-//   **不新发消息**）。口径（逐字）：
-//   「一旦判定这一单是**预订或者现货未收**，入账之后就会给用户发一个消息卡片，
-//    确认该笔交易是否成交。**只有当用户点击"是"的时候，才会触发我们后续的流程**。」
-//
-// 三个刻意的设计决定：
-//   ① **只有一个按钮**，文案来自 `config/salesConfirmDeal`（默认「确认成交」）——
-//      她明确「选项只能点"是"」，所以这里**不放**取消 / 否 / 稍后；
-//   ② 按钮**上方一行小字**说清"点了才会继续"，免得她以为不点也会走（空串 = 不出这行）；
-//   ③ `settledAt` 有值 = 这一单**已经成交**：同一个位置换成一行说明，**按钮不再出现**。
-//      飞书卡片按钮**没有 disabled 参数**，唯一能表达"这里点不了了"的办法就是让那个位置
-//      不再有按钮、只剩一句说明（与 `secondDeliverySettledElement` 同一套路）。
-//
-// ⚠️ 判据不在这里：`needsConfirmDeal`（`config/salesConfirmDeal`）决定**要不要**画这个按钮，
-//    调用点只把结论传进来（`options.confirmDeal`）。渲染器不判断业务。
+// 🔴 2026-10-12（清群聊入口 3b）：原来的**销售草稿确认卡片**（本轮删掉的那个导出，名字见 PR 说明）
+//    **已随销售草稿卡片一起退场** —— 依据：它的分派 `handleSalesOrLegacyCardAction` 已在
+//    2026-10-12 那轮删除，全仓只剩 `larkMvpService.js` 一行**死 import**（本轮一并摘掉），
+//    全仓 grep 那个导出名 = **0**（判据见 PR 说明）。
+//    ⇒ 它名下的渲染能力**随它一起退场**（逐条去向见 `docs/` 或 PR 说明）：
+//      · 颜色候选（`salesColorPickers`）· 三段（类型/履约/收款，`salesCardFactElements`）
+//        · 单件不显示金额（`itemLines(..., { showAmount: items.length > 1 })`）
+//        —— 这几样**只有它一个调用方** ⇒ 没有活的卡片需要它们。
+//    ⚠️ 顺带产生的**模块内孤儿**（不导出，本轮**刻意不删**，留给下一刀）：
+//      `salesColorPickers` · `salesSampleReplacementPicker` · `salesCardFactElements`。
+//    ⚠️ **售后那 5 张卡片不受影响**：`afterSalesFlowService` 仍有活调用方
+//      （`larkMvpService` 的售后卡动作，2026-10-12 明确保留）。
 const confirmDealSettledElement = ({ settledAt, config = resolveSalesConfirmDealConfig() } = {}) => {
   // 卡片上写给门店看的时间必须是上海时间（服务器是 UTC，直接取 ISO 会差 8 小时）。
   const clock = shanghaiClock(settledAt || Date.now());
@@ -639,7 +589,7 @@ const sampleReplacementProcessingCard = (productNumber, message) => ({
  * 她要用自然语言回「第 2 笔」。所以这里不引入 buttonColumns / actionButton；
  * 谁"顺手加个按钮"都违背需求（也违背本期"只读"的边界）。
  *
- * 字号：飞书的 `markdown` 元素不能自定义字号（详见 salesConfirmationCard 的注释），
+ * 字号：飞书的 `markdown` 元素不能自定义字号（详见本文件里那张确认卡片的注释），
  * 所以候选行用 `div` + `lark_md` + `text_size: 'heading'`——手机上这是正文大字。
  * 每行带序号（1/2/3），她说「第 2 笔」才对得上 task.pending_candidates 的下标。
  *
@@ -811,7 +761,7 @@ const purchaseStatusCard = (draft, title, message, template = 'blue', options = 
 // 退换货第二期：确认卡片 / 结果卡片 / 状态卡片
 // ---------------------------------------------------------------------------
 //
-// ⚠️ 两张已踩过的坑（与 salesConfirmationCard 同一套结论，别"顺手统一"掉）：
+// ⚠️ 两张已踩过的坑（与那张已退场的确认卡片同一套结论，别"顺手统一"掉）：
 //   ① 飞书的 `markdown` 元素**不能设字号**：要字号只能用
 //      `{tag:'div', text:{tag:'lark_md', content, text_size:'heading'|'normal'|'note'}}`；
 //   ② 一行多个按钮必须用 `column_set`（见 buttonColumns 的注释），
@@ -1123,7 +1073,6 @@ module.exports = {
   // 「采购到货：群话题对话式核对」的确认卡片（是 / 否）与终态卡片。
   purchaseArrivalReconcileCard,
   purchaseArrivalReconcileStatusCard,
-  salesConfirmationCard,
   salesStatusCard,
   // 「补货品信息」那一段（2026-10-07 从确认卡片挪到点确认之后的卡片；导出是为了单独测配置）。
   // ⚠️ 生产调用点有**两处**：`salesProcessingCard`（处理中卡）与 `salesStatusCard`

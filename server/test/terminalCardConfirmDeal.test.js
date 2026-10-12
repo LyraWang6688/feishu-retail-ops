@@ -747,7 +747,6 @@ test('只改这张终态卡：确认卡 / 处理中卡 / 第二次交付卡上�
   const action = SALES_CONFIRM_DEAL_ACTIONS.CONFIRM;
   const hasDealButton = (card) => cardButtons(card).some((button) => button.value?.action === action);
 
-  assert.equal(hasDealButton(larkCards.salesConfirmationCard('d', { items, payments: [], agreed_total: 260 })), false);
   assert.equal(hasDealButton(larkCards.salesProcessingCard({ items }, {
     title: 't', template: 'blue', itemColor: 'grey', progressLine: 'p', note: 'n',
   })), false);
