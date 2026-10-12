@@ -29,11 +29,15 @@
 .order-section { display: grid; gap: var(--space-3); min-width: 0; }
 .order-section .order-group-head h3 { font-size: var(--font-size-base); }
 
-/* 一单一张卡：白卡片 + 12px 圆角 + 很轻的阴影（不是表格）。 */
+/* 一单一张卡：白卡片 + 12px 圆角 + 很轻的阴影（不是表格）。
+   ⭐⭐ 2026-10-12（她：「一屏下来只能展示一个半订单……争取一屏里呈现更多信息」）：
+   **紧凑版** —— 一张卡只占**两行**（① 单号 + 状态 + 打开 ② 金额摘要 + 展开），
+   默认高度 ≈ 12+44+6+44+12 = **118px**（375px 宽）⇒ 667px 高的屏上 ≥3 单。
+   ⚠️ 可点区域仍是 44px（`summary` / 按钮都走 `--control-height`，一个字没破）。 */
 .order-card {
   display: grid;
-  gap: var(--space-3);
-  padding: var(--space-4);
+  gap: var(--space-2);
+  padding: var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
@@ -43,7 +47,9 @@
 .order-card-head,
 .order-detail-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .order-card-head { justify-content: space-between; }
-.order-no { margin: 0; font-size: var(--font-size-lg); overflow-wrap: anywhere; word-break: break-word; }
+.order-no { margin: 0; font-size: var(--font-size-base); overflow-wrap: anywhere; word-break: break-word; }
+/* 「打开 ›」不再独占一行（省 ~56px/单）：挪进第一行，视觉更小但**命中区仍是 44px**。 */
+.order-open { flex: none; min-height: var(--control-height); padding: 0 var(--space-2); }
 .order-tags { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .order-money { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
 .order-payment-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0; }
@@ -53,12 +59,17 @@
 .order-details-toggle summary {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
   min-height: var(--control-height);
   cursor: pointer;
   color: var(--primary);
   font-weight: var(--weight-bold);
   overflow-wrap: anywhere;
 }
+/* 折叠行上的一行摘要（金额 / 待交付）——次要色小字，展开后才看明细。 */
+.order-summary-line { color: var(--text-secondary); font-size: var(--font-size-sm); font-weight: var(--weight-normal); overflow-wrap: anywhere; }
+.order-more { flex: none; font-size: var(--font-size-sm); white-space: nowrap; }
 
 .order-lines { display: grid; gap: var(--space-2); margin: var(--space-2) 0 0; padding: 0; list-style: none; }
 .order-line {

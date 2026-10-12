@@ -86,11 +86,21 @@ const lineHtml = (line) => {
           </li>`;
 };
 
+/**
+ * ⭐⭐ 2026-10-12（她：「一屏下来只能展示一个半订单……争取在一屏里呈现更多信息」）：
+ * 一张卡的**第二行 = 折叠行**：金额 / 待交付都压在这一行里（她一眼看完），
+ * 收款明细与销售明细**点开才展开**（信息一个都不删，只是不默认占屏）。
+ * ⚠️ 这一行本身就是 ≥44px 的命中区（`summary` 在 `base.css` / `orders.css` 里都是 `--control-height`）。
+ */
 const detailsBlock = (order) => {
   const lines = order.details || [];
   return `
         <details class="order-details-toggle">
-          <summary>${escapeHtml(T.details)}（${lines.length} 项 · 待交付 ${Number(order.pending_delivery_quantity || 0)}）</summary>
+          <summary>
+            <span class="order-summary-line">${escapeHtml(T.receivable)} ${amount(order.receivable_amount)} · ${escapeHtml(T.paid)} ${amount(order.paid_amount)} · ${escapeHtml(T.pending)} ${amount(order.pending_amount)} · 待交付 ${Number(order.pending_delivery_quantity || 0)}</span>
+            <span class="order-more">${escapeHtml(T.details)} ${lines.length} 项 ›</span>
+          </summary>
+          ${paymentBlock(order)}
           <ul class="order-lines">${lines.map(lineHtml).join('') || '<li class="order-line muted">这张单没有明细</li>'}</ul>
         </details>`;
 };
@@ -108,12 +118,9 @@ export function ordersListHtml(orders = []) {
           <div class="order-tags">
             <span class="tag ${statusClass(order.fulfillment_status)}">${escapeHtml(order.fulfillment_status || '')}</span>
           </div>
+          <button class="btn btn-ghost order-open" type="button" data-action="open-order" data-order="${escapeHtml(order.record_id)}">${escapeHtml(P.open)} ›</button>
         </div>
-        ${paymentBlock(order)}
         ${detailsBlock(order)}
-        <div class="order-card-actions">
-          <button class="btn btn-primary" type="button" data-action="open-order" data-order="${escapeHtml(order.record_id)}">${escapeHtml(P.open)}</button>
-        </div>
       </article>`).join('')}
     </div>`;
 }
@@ -675,9 +682,28 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     toggleAfterSalesBlocks();
   }
 
+  /**
+   * ⭐⭐ 2026-10-12（她：「它**一直说正在读取订单**」）：等待时给一个**在动**的指示 ——
+   * 「正在读取订单…（已 N 秒）」。纯前端计时，**不发任何请求**；读回来/失败都会停。
+   * ⚠️ 不写"说明书"式文字，只是把那句已经在的提示补上秒数（后端慢的时候她知道系统还活着）。
+   */
+  function startWaitingTicker(host) {
+    if (!host) return () => {};
+    const started = Date.now();
+    const render = () => {
+      const seconds = Math.floor((Date.now() - started) / 1000);
+      host.querySelector('[data-view="orders-waiting"]')?.replaceChildren(
+        document.createTextNode(`正在读取订单…（已 ${seconds} 秒）`),
+      );
+    };
+    host.innerHTML = '<p class="section-loading" data-view="orders-waiting">正在读取订单…（已 0 秒）</p>';
+    const timer = setInterval(render, 1000);
+    return () => clearInterval(timer);
+  }
+
   async function loadOrders() {
     const host = $('[data-view="orders-host"]');
-    if (host && !state.order) host.innerHTML = '<p class="section-loading">正在读取订单…</p>';
+    const stopTicker = host && !state.order ? startWaitingTicker(host) : () => {};
     try {
       const data = await api.get(ORDERS_API.orders);
       state.orders = data.orders || [];
@@ -692,6 +718,8 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     } catch (error) {
       if (host) host.innerHTML = '<p class="empty">订单读取失败</p>';
       showPageError(describeError(error));
+    } finally {
+      stopTicker();
     }
   }
 
