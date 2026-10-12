@@ -2,46 +2,10 @@
   "_comment": "⭐ 这是**存量债**（业务负责人 2026-10-12 点头）：业务代码里**既有的**硬编码用户可见中文。**只许减少、不许增加** —— 新增一句就会让 test/noHardcodedChinese.test.js 变红；把这里的一句抽到 config 之后，**请顺手删掉这一条**。键的口径：**按「文件 → 中文串」**（不用行号：行号一动就假红）。口径细节见 test/support/hardcodedChinese.js 头部（注释/日志/内部错误消息**完全不扫**；领域值/表选项照扫进白名单）。",
   "counts": {
     "files": 45,
-    "texts": 349
+    "texts": 350,
+    "total": 350
   },
   "files": {
-    "routes/feishuWebAuth.js": [
-      "当前飞书账号未被授权使用工作台",
-      "飞书登录未完成，请重新打开工作台重试",
-      "飞书登录状态已过期，请重新打开工作台",
-      "飞书网页身份认证配置不完整",
-      "飞书身份认证失败，请稍后重试"
-    ],
-    "routes/labelPrintDevice.js": [
-      "打印小助手的令牌不对（请核对 config.json 里的 deviceToken）",
-      "打印小助手的令牌没有配置（${}）—— 请在服务器 .env 里配上，再重启服务",
-      "打印文件已过期（超过保留期），请重新提交打印",
-      "没有这条打印任务",
-      "这条任务没有 ${} 产物"
-    ],
-    "routes/labelPrintQueue.js": [
-      "没有这条打印任务"
-    ],
-    "routes/larkEvents.js": [
-      "已收到，正在处理"
-    ],
-    "routes/scanPage.js": [
-      "${} 码"
-    ],
-    "routes/workbench.js": [
-      "当前飞书账号未被授权使用工作台",
-      "标签数据读取失败",
-      "请先通过飞书身份登录工作台",
-      "飞书身份认证尚未启用"
-    ],
-    "routes/workbenchInventoryAdjustment.js": [
-      "换季调整失败",
-      "盘点调整失败"
-    ],
-    "routes/workbenchOrderActions.js": [
-      "二次交付没做成",
-      "售后没做成"
-    ],
     "services/accessoryMatchPolicy.js": [
       "${} 元",
       "${}有 ${} 这几档，你卖的是哪一档？",
@@ -382,6 +346,7 @@
     "services/v1BitableGateway.js": [
       "上传采购原始图片",
       "删除“${}”记录",
+      "批量读取“${}”记录",
       "按条件读取“${}”记录",
       "新增“${}”记录",
       "更新“${}”记录",
@@ -409,6 +374,43 @@
     ],
     "services/workbenchPurchaseArrivalService.js": [
       "这批（${}）已验收入库"
+    ],
+    "routes/feishuWebAuth.js": [
+      "当前飞书账号未被授权使用工作台",
+      "飞书登录未完成，请重新打开工作台重试",
+      "飞书登录状态已过期，请重新打开工作台",
+      "飞书网页身份认证配置不完整",
+      "飞书身份认证失败，请稍后重试"
+    ],
+    "routes/labelPrintDevice.js": [
+      "打印小助手的令牌不对（请核对 config.json 里的 deviceToken）",
+      "打印小助手的令牌没有配置（${}）—— 请在服务器 .env 里配上，再重启服务",
+      "打印文件已过期（超过保留期），请重新提交打印",
+      "没有这条打印任务",
+      "这条任务没有 ${} 产物"
+    ],
+    "routes/labelPrintQueue.js": [
+      "没有这条打印任务"
+    ],
+    "routes/larkEvents.js": [
+      "已收到，正在处理"
+    ],
+    "routes/scanPage.js": [
+      "${} 码"
+    ],
+    "routes/workbench.js": [
+      "当前飞书账号未被授权使用工作台",
+      "标签数据读取失败",
+      "请先通过飞书身份登录工作台",
+      "飞书身份认证尚未启用"
+    ],
+    "routes/workbenchInventoryAdjustment.js": [
+      "换季调整失败",
+      "盘点调整失败"
+    ],
+    "routes/workbenchOrderActions.js": [
+      "二次交付没做成",
+      "售后没做成"
     ],
     "views/scanPageRealm.js": [
       "{count} 双",
