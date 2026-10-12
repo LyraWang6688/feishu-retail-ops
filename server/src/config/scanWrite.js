@@ -695,6 +695,13 @@ const EVENTS = Object.freeze({
   // ⭐⭐ 2026-10-12：**一条**分阶段的提交耗时汇总（她真机被卡住 / 收过 504 网关超时）。
   //    与扫码取数那条 `scan.lookup.timing` 同一个形状：一查日志就知道**卡在哪一步**。
   saleTiming: 'scan.sale.timing',
+  // ⭐⭐ 2026-10-13（验收提速）：**一条**验收的分阶段耗时汇总（与销售那条同形状）。
+  //    为什么要有它：真账量出「每批 5 码 = 143.9 秒，其中逐码"库存+流水" = 119.5 秒（83%）」——
+  //    没有分段就打不出"卡在哪一步"，也就证不了批量写到底省了多少。
+  //    分段：`session_ms`（读会话）/ `inbound_total_ms`（confirmArrival 整段）/
+  //          `inventory_ms`（其中"加库存"那一段）/ `batches_ms`（② 待验收列表那次读）。
+  //    ⚠️ 由**服务层**自造 timing 并透传（见 `scanArrivalService.finish`）；本层只放事件名。
+  acceptTiming: 'scan.accept.timing',
   // ⭐⭐ 2026-10-12：**建单成功、后面某一步没写完**（明细 / 收款 / 进度抛错）。
   //    warn 级、**不静默**：页面上同时给她一张"半成"的如实结果页（见 texts.partialFailed*）。
   partialFailed: 'scan.sale.partial_failed',

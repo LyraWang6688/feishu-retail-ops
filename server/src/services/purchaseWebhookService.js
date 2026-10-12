@@ -1755,12 +1755,16 @@ class PurchaseWebhookService {
    * `handleCardActionLocked`（到货卡片那个入口，2026-10-08 已删）提供，卡片删除后原样挪进来——
    * 否则两个调用方同时确认时，两边都会在对方落盘之前读到"还没加过"，各加一次库存。
    */
-  async confirmArrival(taskId, task, operatorOpenId) {
-    return this.confirmationQueue.run(taskId, () => this.confirmArrivalLocked(taskId, task, operatorOpenId));
+  async confirmArrival(taskId, task, operatorOpenId, options = {}) {
+    // ⭐ 2026-10-13（验收提速）：尾部可选 `options.timing` —— 验收那一段自造的耗时汇总
+    //    由这里**透传**到库存批量口（`inventory_ms` 只有写库那一层量得准），
+    //    ⚠️ 只进日志、不改任何判定；不传 = 行为逐字不变。
+    return this.confirmationQueue.run(taskId,
+      () => this.confirmArrivalLocked(taskId, task, operatorOpenId, options));
   }
 
   /** 真正的入库实现：只由 confirmArrival 串行调用，不要直接调（会丢掉串行保证）。 */
-  async confirmArrivalLocked(taskId, task, operatorOpenId) {
+  async confirmArrivalLocked(taskId, task, operatorOpenId, options = {}) {
     // ⚠️ 2026-10-07 晚：这句话原先写「到货验收已入库」，但那**张表已被业务负责人删除** ——
     //    改成按现在的落点说（批次行），她看到的就是"这一批已经入过库了"。
     if (task.status === 'posted') return { toast: { type: 'info', content: arrivalToast.m1 } };
@@ -1861,10 +1865,19 @@ class PurchaseWebhookService {
       purchaseBatchNo: batchNo,
       arrivalTaskId: taskId,
     };
+    // ⭐⭐ 2026-10-13（验收提速 ①）：这一段从"**逐条**读状态 + 逐条 `applyPurchase`"改成
+    //   "**先把这一批算清**（状态每款只算一次）⇒ `applyPurchaseBatch` **一批一次写**"。
+    //   真账：逐条 5 码 = **31 次**飞书（≈119.5 秒，占整批 83%）⇒ 批量后 = **1 次整表读 + 2 次批量写**。
+    //   🔴 **语义一行不改**：
+    //     · 幂等仍由 `appliedByKey`（本地草稿 `inventory_applied`）+ InventoryService 那两把键负责；
+    //     · 顺序仍是"「报货批次」先写实（上面的 `writeArrivalAcceptance`）⇒ 再加库存"；
+    //     · 库存串行队列改由 `applyPurchaseBatch` 内部的 `runForStocks` 按 `stock_key` 占住
+    //       （跨任务同 key 不会被绕过，语义与逐条路径一致）。
+    //   ⚠️ 注入的库存端口只有 `applyPurchase`（既有用例的替身）时**回落逐条** —— 真实用的
+    //      `InventoryService` 一定有批量口；回落的唯一目的就是不让既有替身用例失真。
+    const inboundEntries = [];
     for (const item of aggregateArrivalItems(arrival.actual || [])) {
       const key = `${item.product_record_id}|${item.size}`;
-      // 决定入库状态：没有样品则入样品库，有样品则入门盒库（口径与改动前逐字一致）。
-      const inboundState = await this.resolvePurchaseInboundState(item.product_record_id);
       const existing = appliedByKey.get(key);
       if (existing?.inventoryApplied) {
         inventoryAppliedKeys.push(key);
@@ -1875,17 +1888,63 @@ class PurchaseWebhookService {
         await persistEntry(key, { ...(existing || {}), inventoryApplied: false });
         continue;
       }
-      await this.inventory.applyPurchase({
+      inboundEntries.push({ item, key });
+    }
+    if (inboundEntries.length) {
+      // 决定入库状态：没有样品则入样品库，有样品则入门盒库（口径与改动前逐字一致）。
+      // ⚠️ 原来这条整表读在循环里**每条一次**（5 码 = 5 次）；同一款只算一次。
+      // ⚠️ 口径与逐条路径**逐字一致**：`resolvePurchaseInboundState` = "这一款已有「样品」行 ⇒ 门盒，
+      //    否则 ⇒ 样品"。逐条路径是**边写边判** ⇒ 同一款的第一双入样品之后，**后面几双看到那条样品行
+      //    就都入门盒**。批量把写入挪到了后面 ⇒ 必须**本地推演**出同一串状态，否则同一款的第 2 双会被
+      //    错判成样品（既有用例「每个货号第一双先入样品」抓到的就是这个）。
+      //    ⇒ 每款仍只读一次（原来每码一次），第 2 双起按"已经有一双样品"推。
+      const sampleSeenOf = new Map();
+      const stateOfEntry = new Map();
+      for (const entry of inboundEntries) {
+        const productRecordId = entry.item.product_record_id;
+        if (!sampleSeenOf.has(productRecordId)) {
+          // eslint-disable-next-line no-await-in-loop
+          const first = await this.resolvePurchaseInboundState(productRecordId);
+          sampleSeenOf.set(productRecordId, first === '门盒');
+        }
+        const state = sampleSeenOf.get(productRecordId) ? '门盒' : '样品';
+        stateOfEntry.set(entry, state);
+        // 这一双落库之后，这一款就有「样品」行了 ⇒ 后面的都走门盒（与逐条路径的读写顺序等价）。
+        sampleSeenOf.set(productRecordId, true);
+      }
+      const inboundPayload = inboundEntries.map((entry) => ({
         ...batchIdentity,
-        productRecordId: item.product_record_id,
-        size: item.size,
-        quantity: item.quantity,
+        productRecordId: entry.item.product_record_id,
+        size: entry.item.size,
+        quantity: entry.item.quantity,
         // ⚠️ 2026-10-06：不再传 occurredAt（只进本地任务记录、无人读）；
         // 时间交给飞书自动的「创建时间」。
-        state: inboundState,
-      }, { correlation });
-      await persistEntry(key, { ...(existing || {}), inventoryApplied: true });
-      inventoryAppliedKeys.push(key);
+        state: stateOfEntry.get(entry),
+      }));
+      if (typeof this.inventory.applyPurchaseBatch === 'function') {
+        // ⭐ 批量路径：**整批一次写**（失败粒度 A）⇒ 这一批写成功后，才逐条落进度。
+        await this.inventory.applyPurchaseBatch(inboundPayload, {
+          correlation,
+          // ⭐ 验收那一段自造的 timing（`finish()` 传下来）⇒ 由库存层填 `inventory_ms`。
+          ...(options.timing ? { timing: options.timing } : {}),
+        });
+        for (const entry of inboundEntries) {
+          // eslint-disable-next-line no-await-in-loop
+          await persistEntry(entry.key, { ...(appliedByKey.get(entry.key) || {}), inventoryApplied: true });
+          inventoryAppliedKeys.push(entry.key);
+        }
+      } else {
+        // ⚠️ 回落路径（注入的替身只有 `applyPurchase`）：**每条写成功后立刻落进度** ——
+        //    与改动前逐字一致（第 2 条失败时，第 1 条"已加过"必须已经落盘，重试才不重复加）。
+        for (const [index, payload] of inboundPayload.entries()) {
+          // eslint-disable-next-line no-await-in-loop
+          await this.inventory.applyPurchase(payload, { correlation });
+          const entry = inboundEntries[index];
+          // eslint-disable-next-line no-await-in-loop
+          await persistEntry(entry.key, { ...(appliedByKey.get(entry.key) || {}), inventoryApplied: true });
+          inventoryAppliedKeys.push(entry.key);
+        }
+      }
     }
     // ⚠️ 2026-10-06：这里原先有一段**回写「报货信息」（采购申请表）**的代码——
     //   for (const request of arrival.requests) { … gateway.update('purchaseRequest', request.record_id,
