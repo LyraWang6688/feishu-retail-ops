@@ -346,8 +346,13 @@ const createScanArrivalService = (options = {}) => {
    *    输入口 → 既有 `buildPlan` 的扫码分支 → 既有 `confirmLocked`）。
    * 🔴 一双都没扫 / 金额不合法 ⇒ 既有实现会**在写任何东西之前**拒掉（本方法原样把话带回去）。
    */
-  const finish = async ({ openId, actualAmount, submitKey = '', operatorOpenId = '' } = {}) => {
+  const finish = async ({ openId, actualAmount, submitKey = '', operatorOpenId = '', timing = null } = {}) => {
+    // ⭐ 2026-10-12：分阶段耗时（可选**出参**，与销售提交那条同一约定）——
+    //    路由拿它打**一条** `scan.accept.timing`。这里只填"读会话"这一段。
+    const finishStartedAt = Date.now();
+    const mark = (name, from) => { if (timing) timing[name] = Math.max(0, Date.now() - from); };
     const session = await get(openId);
+    mark('session_ms', finishStartedAt);
     if (!session) return { ok: false, reason: 'no_session', message: texts.acceptNoSessionBody };
     const summary = summaryOf(session);
     if (session.status === 'posted') {
@@ -389,7 +394,10 @@ const createScanArrivalService = (options = {}) => {
       scanLines: (session.scans || []).map((item) => ({
         product_record_id: item.product_record_id, size: item.size, quantity: item.quantity,
       })),
+      // ⭐ 2026-10-12：把分阶段计时的**出参**透下去（逐码入库是这里最贵的一段）
+      timing,
     });
+    if (timing) timing.inbound_total_ms = Math.max(0, Date.now() - finishStartedAt);
     if (!result || result.ok !== true) {
       const message = result?.message || texts.acceptRowsUnreadableBody;
       await store.update(session.session_id, { last_error: String(message) }).catch(() => undefined);

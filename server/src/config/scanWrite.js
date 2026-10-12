@@ -677,6 +677,9 @@ const EVENTS = Object.freeze({
   // ⭐⭐ 2026-10-12：**一条**分阶段的提交耗时汇总（她真机被卡住 / 收过 504 网关超时）。
   //    与扫码取数那条 `scan.lookup.timing` 同一个形状：一查日志就知道**卡在哪一步**。
   saleTiming: 'scan.sale.timing',
+  // ⭐⭐ 2026-10-12（她实测每批 2~3 分钟）：验收**分阶段耗时**——
+  //    与 `scan.sale.timing` 同一形状（一条汇总，一眼看出"25~35 秒/码"花在哪一段）。
+  acceptTiming: 'scan.accept.timing',
   // ⭐⭐ 2026-10-12：**建单成功、后面某一步没写完**（明细 / 收款 / 进度抛错）。
   //    warn 级、**不静默**：页面上同时给她一张"半成"的如实结果页（见 texts.partialFailed*）。
   partialFailed: 'scan.sale.partial_failed',

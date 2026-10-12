@@ -180,6 +180,10 @@ class PurchaseArrivalConversationService {
     // 同一批的核对串行：同一条话题里两条消息几乎同时到达时，
     // 不能让两边各读到旧 transcript 再互相覆盖（会把她说的话丢掉）。
     this.queue = new KeyedSerialQueue();
+    // ⭐ 2026-10-12：验收分阶段计时——`timing` 是可选**出参**，但 `confirmLocked` 的调用行
+    //    被既有哨兵钉着字面量（`this.confirmLocked(taskId, operatorOpenId)`）⇒ 不能加参数 ✗。
+    //    改用**按 taskId** 的临时挂靠：队列是按 taskId 串行的 ⇒ 没有竞态 ✓，用完即删 ✓。
+    this.timingByTask = new Map();
   }
 
   /** 这一批的报货批次号（任务上冻结的那个；没有就空串 —— 空串时不去改任何批次行）。 */
@@ -540,6 +544,7 @@ class PurchaseArrivalConversationService {
     return this.queue.run(taskId, () => this.confirmLocked(taskId, operatorOpenId, event));
   }
   async confirmLocked(taskId, operatorOpenId, event = {}) {
+    const timing = this.timingByTask.get(taskId) || null;
     const { replies } = this.config;
     const task = await this.store.get(taskId);
     if (!task) {
@@ -647,8 +652,10 @@ class PurchaseArrivalConversationService {
     };
     await this.store.update(taskId, { status: 'posting', draft, confirmed_by: String(operatorOpenId || '') });
     const latest = await this.store.get(taskId);
+    const inventoryAt = Date.now();
     try {
       await this.confirmArrival(taskId, latest, operatorOpenId);
+      if (timing) timing.inventory_ms = Math.max(0, Date.now() - inventoryAt);
     } catch (error) {
       // 入库中途失败：**不改状态**（停在 posting），她再点一次「是」会从断点继续。
       // ⚠️ 错误原文**一个字都不吞**：日志（下面 `logError` 的 `error`）与**她要看到的那句话**
@@ -669,7 +676,11 @@ class PurchaseArrivalConversationService {
     //    写状态成功、入库失败，她会看到"已到货"而库存里没有这批货。
     // ⚠️ 它是**增强**：失败只记 warn，**绝不**把已经入库成功的一单判成失败
     //    （与"附件写回失败不阻塞主流程"同一条纪律）。
+    const statusAt = Date.now();
     await this.notifyBatchArrived(this.taskBatchNo(task, draft), { correlation: { task_id: taskId } });
+    // ⚠️ 这里是 `confirmLocked` 的**词法作用域**：`mark()` 在外层 `confirmBatchArrival` 里，
+    //    这个函数看不到它 ⇒ 只能直接写（写错就是 500，用例抓过两次 ✗）。
+    if (timing) timing.status_ms = Math.max(0, Date.now() - statusAt);
     const total = draft.actual.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
     // 回话模板（可配）：没有 0 行 → 与改动前逐字相同；有 0 行 → 说清"这些行没入库"；
     // 全是 0 行 → 不能写成"已入库 0 条"含糊过去，用专门那句。
@@ -771,7 +782,14 @@ class PurchaseArrivalConversationService {
    * @returns {Promise<{ok: boolean, reason?: string, message: string, taskId?: string}>}
    *   `message` 是**给人看的一句话**（工作台直接显示它），不是内部术语。
    */
-  async confirmBatchArrival({ batch, acceptanceText = '', actualAmount, operatorOpenId = '', scanLines = null } = {}) {
+  async confirmBatchArrival({
+    batch, acceptanceText = '', actualAmount, operatorOpenId = '', scanLines = null, timing = null,
+  } = {}) {
+    // ⭐ 2026-10-12（她实测 2~3 分钟/批）：**先量再改** —— 分阶段耗时（可选**出参**）：
+    //  `queue_wait_ms`（排队）/ `rows_ms`（读明细）/ `plan_ms` / `seed_ms`（种任务）/
+    //  `inventory_ms`（逐码库存+流水，最贵的那一段）/ `status_ms`（写到货状态）。
+    //  路由拿它打**一条** `scan.accept.timing`。
+    const mark = (name, from) => { if (timing) timing[name] = Math.max(0, Date.now() - from); };
     const batchNo = String(batch?.batch_no || '').trim();
     if (!batchNo) {
       return { ok: false, reason: 'no_batch_no', message: pageMessages.m1 };
@@ -811,9 +829,13 @@ class PurchaseArrivalConversationService {
         message: pageMessages.m5({ batchNo }),
       };
     }
+    const enqueuedAt = Date.now();
     return this.queue.run(taskId, async () => {
+      mark('queue_wait_ms', enqueuedAt);
+      const rowsAt = Date.now();
       // ① 读申请行（既有只读实现；退货行没有尺码会在这里被挡住）
       const snapshot = await this.loadRequestRows(batch);
+      mark('rows_ms', rowsAt);
       if (!snapshot.ok) {
         logWarn('purchase.arrival.reconcile.workbench_rows_unavailable', {
           task_id: taskId, batch_no: batchNo, reason: snapshot.reason,
@@ -822,9 +844,11 @@ class PurchaseArrivalConversationService {
       }
       // ② 「全部按申请数到货」（既有纯函数，工作台那条路）／**逐码实际到货**（扫码验收那条路）
       //    ⚠️ 两条路都是**同一个纯函数 `buildPlan`** —— 不为扫码再写一套"算实际到货"的算法。
+      const planAt = Date.now();
       const plan = scans
         ? this.buildPlan(snapshot.rows, { scanLines: scans })
         : this.buildPlan(snapshot.rows, { same: true, differences: [] });
+      mark('plan_ms', planAt);
       if (!plan.ok) {
         logWarn('purchase.arrival.reconcile.workbench_plan_failed', {
           task_id: taskId, batch_no: batchNo, reason: plan.reason,
@@ -851,8 +875,10 @@ class PurchaseArrivalConversationService {
         source: scans ? 'scan' : 'workbench',
         operator_open_id: String(operatorOpenId || existing?.operator_open_id || ''),
       };
+      const seedAt = Date.now();
       if (existing) await this.store.update(taskId, seed);
       else await this.store.create({ task_id: taskId, ...seed, transcript: [] });
+      mark('seed_ms', seedAt);
       logInfo(scans ? 'purchase.arrival.reconcile.scan_seeded' : 'purchase.arrival.reconcile.workbench_seeded', {
         task_id: taskId, batch_no: batchNo, row_count: plan.rows.length,
         actual_amount: amount.value,
@@ -861,7 +887,17 @@ class PurchaseArrivalConversationService {
           ? '扫码验收：逐码实际到货种进与群话题同一个任务，接着走既有 confirmLocked'
           : '工作台「验收到货」：种进与群话题同一个任务，接着走既有 confirmLocked',
       });
-      const result = await this.confirmLocked(taskId, operatorOpenId);
+      const inboundAt = Date.now();
+      // ⚠️ 这两行**别改**：`this.confirmLocked(taskId, operatorOpenId)` 是既有哨兵钉住的字面量
+      //    （`scanAcceptance` AC-A12 / `workbenchOrders` AC12）⇒ timing 走上面的挂靠 ✓
+      if (timing) this.timingByTask.set(taskId, timing);
+      let result;
+      try {
+        result = await this.confirmLocked(taskId, operatorOpenId);
+      } finally {
+        this.timingByTask.delete(taskId);
+      }
+      mark('inbound_ms', inboundAt);
       const failure = result?.toast?.type === 'error';
       const message = result?.toast?.content || '';
       return { ok: !failure, reason: failure ? 'inbound_failed' : 'posted', taskId, message };

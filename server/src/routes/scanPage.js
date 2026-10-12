@@ -678,11 +678,30 @@ const createScanPageRouter = (options = {}) => {
     const body = req.body || {};
     const fields = writeConfig.fields;
     const texts = writeConfig.texts;
+    // ⭐⭐ 2026-10-12（她实测每批 2~3 分钟 ⇒ 要治"慢"这件事）：**分阶段耗时**——
+    //    与 `scan.sale.timing` 同一形状：一条汇总，按 `scan.accept.timing` grep 就能看出
+    //    "每码那 25~35 秒"到底花在哪一段（读明细 / 逐码入库 / 批次写回 / 状态写入）。
+    const timing = {};
+    const finishStartedAt = Date.now();
     const result = await arrival().finish({
       openId,
       actualAmount: body[fields.acceptAmount],
       submitKey: body[fields.submitKey],
       operatorOpenId: openId,
+      timing,
+    });
+    const totalMs = Math.max(0, Date.now() - finishStartedAt);
+    logInfo(writeConfig.events.acceptTiming, {
+      request_id: requestId,
+      batch_no: result.batch_no || '',
+      submit_key: String(body[fields.submitKey] || ''),
+      ok: result.ok === true,
+      reused: result.reused === true,
+      lines: (result.scanned || 0) > 0 ? undefined : undefined,
+      scanned: Number(result.scanned || 0),
+      actual_amount: String(body[fields.acceptAmount] ?? ''),
+      total_ms: totalMs,
+      ...timing,
     });
     if (!result.ok) {
       return sendHuman(res, 400, {
