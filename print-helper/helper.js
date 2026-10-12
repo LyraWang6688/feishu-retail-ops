@@ -88,9 +88,13 @@ const DEFAULT_CONFIG = Object.freeze({
     //      SumatraPDF 默认会把"宽 > 高"的页面**自动转 90° 去塞进纸**（官方文档 3.5+ 有这一项）。
     //      我们的页面是 40×30（宽>高）⇒ 被自动转 ⇒ 品牌顺着短边；而"不转就塞不下"根本不存在。
     //    ⇒ 关掉它，**原始横版就能原样打印：方向对 + 100% 铺满**。
-    //    🧰 排障（万一某台机器方向还是反的）：在这一档里加 `rotate=90` / `rotate=180` / `rotate=270`
-    //      一档一档试（它们是在自动旋转之上**再**转）。清空数组 = 回到 SumatraPDF 的默认行为。
-    printSettings: ['disable-auto-rotation'],
+    //    ⭐ 2026-10-12 追加 `center`（业务负责人真机：「方向对了，但**没有居中** —— 二维码紧贴边、
+    //      货号那边一大片空白」）：页面比"可打印区域"小的时候，SumatraPDF **默认靠左放** ⇒
+    //      `center` = 水平居中（官方文档明确写着它正是给"页面比纸小"用的）。
+    //      ⇒ 默认这两项一起给：`disable-auto-rotation` + `center`。
+    //    🧰 排障（万一某台机器方向还是反的/被裁边）：在这一档里加 `rotate=90|180|270`（方向）
+    //      或 `noscale`（不许它二次缩放、避免裁边）一档一档试。清空数组 = 回到 SumatraPDF 的默认行为。
+    printSettings: ['disable-auto-rotation', 'center'],
     // mode=command 时用这个（args 同样支持 {file}）。
     command: '',
     printTimeoutMs: 60000,
