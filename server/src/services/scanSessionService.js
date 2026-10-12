@@ -62,6 +62,10 @@ const createScanSessionService = (options = {}) => {
       open_id: String(openId || ''),
       status: sessionConfig.statuses.draft,
       expires_at: new Date(now() + sessionConfig.ttlMs).toISOString(),
+      // ⭐⭐ 2026-10-12（她拍板）：「扫 16 ⇒ 补货 ⇒ 提交 ⇒ **继续扫 ⇒ 自动还是补货**」——
+      //   记住**最近一次做过写操作**的领域（只是"看一眼"不记 ✗ 免得看错一眼就把默认改了）。
+      //   ⚠️ 与"提交完 ⇒ 回销售首页"**不冲突**：提交 = 回销售 ✓ / 未提交、接着扫 = 保持 ✓。
+      last_realm: '',
       sale: {
         key: keyFor(sessionConfig.saleKeyPrefix, sessionId, 1),
         seq: 1,
@@ -140,6 +144,17 @@ const createScanSessionService = (options = {}) => {
   };
 
   const touch = (patch) => ({ ...patch, expires_at: new Date(now() + sessionConfig.ttlMs).toISOString() });
+
+  /**
+   * ⭐⭐ 2026-10-12：**记住她最近用过（做过写操作）的领域**——她："继续扫 ⇒ 自动还是补货"。
+   * 与既有会话**同生命周期**（`touch` 续期 ✓）；只在她**写成功**时调用（看一眼不算 ✓）。
+   */
+  const setLastRealm = async (openId, realm) => {
+    const wanted = String(realm || '').trim();
+    if (!wanted) return null;
+    const session = await ensure(openId);
+    return store.update(session[sessionConfig.idField], touch({ last_realm: wanted }));
+  };
 
   /**
    * ⭐⭐ 2026-10-12（**真机 bug**：页面 200、一提交就 400，刷新三遍都没用）：
@@ -358,6 +373,8 @@ const createScanSessionService = (options = {}) => {
     revive,
     isExpired,
     submitKeyFor,
+    // ⭐ 2026-10-12：记住"最近用过的领域"（继续扫下一个时用它）
+    setLastRealm,
     addLine,
     clearSale,
     saveSaleProgress,

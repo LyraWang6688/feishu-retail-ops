@@ -669,7 +669,9 @@ const TEXTS = Object.freeze({
   replenishTooManyBody: '一次最多勾 {max} 个尺码，请分两次提交。',
   replenishAgainBody: '这一页已经提交过了：刷新这一页可以再补一次。',
   // 动作名不认识（老页面 / 手改表单）：也要给她一句人话，不静默。
-  unknownActionBody: '这一页上的按钮我认不出来（可能放太久了）：请刷新这一页再操作。',
+  unknownActionBody: '这一页上的按钮我认不出来：请刷新这一页再操作。',
+  // ⭐ 那句「可能放太久了」在她真机上**误导**（页面只渲染了 41 秒 ✗）⇒ 缺/空 action 单独一句更准的。
+  unknownActionMissingBody: '这一页没带上要做什么：请刷新这一页再操作。',
 });
 
 /**
@@ -722,6 +724,9 @@ const EVENTS = Object.freeze({
   acceptReused: 'scan.accept.reused',
   acceptFailed: 'scan.accept.failed',
   failed: 'scan.write.failed',
+  // ⭐⭐ 2026-10-12（她真机：`POST /MK31-1|咖色|B` ⇒ **400 / 1ms**、周围**一条日志都没有** ✗）：
+  //   "写操作按钮的 action 认不出来 / 没带上" —— **唯一**能定位这类 400 的日志（按它 grep ✓）。
+  unknownWriteAction: 'scan.write.unknown_action',
   sessionStarted: 'scan.session.started',
   sessionExpired: 'scan.session.expired',
 });

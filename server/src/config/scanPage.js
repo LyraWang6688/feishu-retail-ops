@@ -414,6 +414,32 @@ const SNAPSHOT = Object.freeze({
  *    ⚠️ 它是**定期**的（TTL 内一次都不读那张表），不是每次扫码都读 ——
  *    否则这次提速就白做了（真机一次往返 1.5~2.5 秒）。
  */
+/**
+ * ⭐⭐ 2026-10-12（她拍板 · 方案 A）：「**提交完 ⇒ 自动回首页，而首页 = 销售页** ✓」
+ * 成功页的"回哪儿 / 停多久 / 按钮叫什么"**只在这里定义**（三路共用 ✓）。
+ */
+/**
+ * ⭐⭐ 2026-10-12（她真机 `POST …` ⇒ 400 / 1ms、无法判断"她手上是不是旧页面" ✗）：
+ * **页面的构建标识**——由**渲染那一页的进程**写进每个写表单的隐藏字段，
+ * 她提交时随 body 带回来 ⇒ 日志里就能回答"她点的是**旧构建渲染的页面**吗" ✓
+ */
+const PAGE_BUILD = [
+  String(process.env.APP_VERSION || (() => { try { return require('../../package.json').version; } catch (_) { return ''; } })() || 'unknown'),
+  String(process.env.APP_COMMIT || '').slice(0, 7),
+].filter(Boolean).join('@');
+
+const SUCCESS_RETURN = Object.freeze({
+  enabled: true,
+  // 先让她**看到结果**，约 2 秒后再跳（不许秒跳 ✗）
+  delaySeconds: 2,
+  // ⭐ 三路（销售 / 补货 / 退货）成功后回哪个领域：**销售**（"把扫码页的首页当作销售页"）
+  homeRealm: 'sales',
+  // ⭐⭐ 她 2026-10-12 又拍：**验收成功 ⇒ 回【未到货批次列表】**（= 验收自己的首页 ✓，别"顺手统一"改掉 ✗）
+  //    ⚠️ 两类都在**这一处**区分（别散在各 handler 里 ✗）。
+  acceptHome: 'pendingBatches',
+  label: '返回扫码',
+});
+
 const SIZE_SEGMENTS = Object.freeze({
   ranges: Object.freeze({
     A: Object.freeze({ label: '男', from: 38, to: 48 }),
@@ -504,6 +530,16 @@ const SCAN_PAGE = Object.freeze({
   snapshot: SNAPSHOT,
   // ⭐ 2026-10-09 新增两块（都由她在 2026-10-09 拍板）：
   sizeSegments: SIZE_SEGMENTS,
+  // ⭐ 2026-10-12：页面构建标识（渲染层写进写表单的隐藏字段；日志用它判断"旧页面"）
+  pageBuild: PAGE_BUILD,
+  pageBuildField: 'page_build',
+  // ⭐⭐ 2026-10-12（业务负责人拍板 · 方案 A，逐字）：「**提交完 ⇒ 自动回首页，而首页 = 销售页**」
+  //   ⇒ 三路（销售 / 补货 / 验收）**写成功之后**都回【销售】领域的扫码首页：
+  //     · 成功页**先显示结果**（单号 / 实际数量 / 实际金额）⇒ 约 2 秒后**自动跳**；
+  //     · 再留一颗【返回扫码】兜底（href 与自动跳转**同一个 URL** ✓ 唯一来源就是这里）；
+  //     · **"还没提交、点【继续扫下一个】"不在此列** ⇒ 那种情况仍按她上次用的领域走 ✓（不冲突）。
+  //   ⚠️ 唯一来源：她哪天要改回"回补货"，**只改这一处**（别散在两处 ✗）。
+  successReturn: SUCCESS_RETURN,
   productSnapshot: PRODUCT_SNAPSHOT,
   events: EVENTS,
   // ⭐ 2026-10-11：【继续扫下一个】的手段（飞书扫一扫 AppLink，见上面的长注释）。
