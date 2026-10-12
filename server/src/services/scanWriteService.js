@@ -75,6 +75,59 @@ const createSalesEntryWithOrderNo = async (gateway, task) => {
   return createEntry({ gateway }, task);
 };
 
+/**
+ * ⭐⭐ 2026-10-12：**只读引用数据的进程内短缓存**（提交链路提速；她真机收过 504 网关超时）。
+ *
+ * 线上量级实测（假网关 + 每趟 60ms）：一趟"提交这一单"打 **47 次飞书调用**，其中
+ * `尺码管理` 被 `listAll` **5 次**、`货品信息` 2 次、`行为管理` 2 次 —— 而这几次
+ * **同在一次提交里、结果逐字相同**。缓存之后这些重复读只打一次。
+ *
+ * 🔴 **三条硬边界**（与 `config/scanWrite.js` 的 `READ_CACHE` 注释同一份口径）：
+ *   ① **只用白名单**：名单里只有只读引用表（尺码管理 / 货品信息 / 行为管理 / 收款方式管理）；
+ *      **销售主表 / 销售明细 / 收款记录 / 实时库存 / 库存流水一律不在名单里**
+ *      ⇒ 幂等回查、单号分配、库存判据**碰不到这个缓存**；
+ *   ② **写方法原样透传**（`create` / `update` / `delete` 连包都不包）；
+ *   ③ **同键在飞去重**（她连点 14 次 / 并发请求打同一张表 ⇒ 只有一趟真的去读）。
+ *
+ * ⚠️ 返回的数组**浅拷贝一份**给调用方：缓存里那份不被调用方 `sort` / `splice` 弄脏。
+ * ⚠️ 关掉它的办法：`config.readCache.enabled = false` 或 `createScanWriteService({readCache:false})`
+ *    —— 两条都是显式的（不靠 `||` 兜底，清空变量不会"关不掉"）。
+ */
+const createReadOnlyReferenceCache = (gateway, policy, now = () => Date.now()) => {
+  const settings = policy || {};
+  const tables = new Set(Array.isArray(settings.tables) ? settings.tables : []);
+  const ttlMs = Number(settings.ttlMs);
+  if (settings.enabled !== true || !tables.size || !(ttlMs > 0)) return gateway;
+  const found = new Map();
+  const inflight = new Map();
+  const readThroughCache = (key, run) => {
+    const hit = found.get(key);
+    if (hit && now() - hit.at < ttlMs) return Promise.resolve(hit.value);
+    if (inflight.has(key)) return inflight.get(key);
+    const pending = Promise.resolve().then(run).then((value) => {
+      found.set(key, { at: now(), value });
+      return value;
+    }).finally(() => { inflight.delete(key); });
+    inflight.set(key, pending);
+    return pending;
+  };
+  const cachedRead = (name) => async (tableKey, ...rest) => {
+    if (!tables.has(tableKey)) return gateway[name](tableKey, ...rest);
+    const value = await readThroughCache(`${name}:${tableKey}:${JSON.stringify(rest)}`,
+      () => gateway[name](tableKey, ...rest));
+    // 浅拷贝数组：调用方 `find` / `filter` / 偶尔 `sort` 都弄不脏缓存那一份。
+    return Array.isArray(value) ? value.slice() : value;
+  };
+  // `Object.create(gateway)`：继承它的其余属性/方法（`this` 仍然指得对），
+  // 只在**自己这一层**替换那四个**只读**方法。写方法连覆盖都不做。
+  const facade = Object.create(gateway);
+  facade.listAll = cachedRead('listAll');
+  facade.get = cachedRead('get');
+  facade.listByFilter = cachedRead('listByFilter');
+  facade.findOneByText = cachedRead('findOneByText');
+  return facade;
+};
+
 const createScanWriteService = (options = {}) => {
   if (!options.gateway) throw new Error('ScanWriteService requires gateway');
   const gateway = options.gateway;
@@ -82,10 +135,17 @@ const createScanWriteService = (options = {}) => {
   const config = options.config || SCAN_WRITE;
   const texts = config.texts;
   const now = options.now || (() => Date.now());
+  // ⭐⭐ 2026-10-12：**只读引用缓存**只喂给"会读引用表"的那几个**延迟构造**的业务服务。
+  //    🔴 不做全局替换：写判据那几张表（主表 / 明细 / 收款 / 实时库存 / 库存流水）
+  //       本来就不在白名单里，进不进这条网关都是直通。
+  //    ⚠️ `options.readCache === false` = 显式关掉（用例可以关；`config.readCache.enabled` 也可以）。
+  const readGateway = options.readCache === false
+    ? gateway
+    : createReadOnlyReferenceCache(gateway, options.readCache || config.readCache, now);
   const sessions = options.sessions || createScanSessionService({
     config, dir: options.sessionDir, store: options.sessionStore, now,
   });
-  const references = options.references || new V1ReferenceResolver(gateway);
+  const references = options.references || new V1ReferenceResolver(readGateway);
   const createEntry = options.createSalesEntry || createSalesEntryWithOrderNo;
   // 按录单人串行（同一部手机连点 / 重放会落在同一个 key 上）。
   const queue = options.queue || new KeyedSerialQueue();
@@ -94,12 +154,12 @@ const createScanWriteService = (options = {}) => {
   // 构造销售 / 采购那一整套依赖而变慢。用到才建。
   let salesInstance = options.sales || null;
   const sales = () => {
-    if (!salesInstance) salesInstance = new SalesOrderService({ gateway });
+    if (!salesInstance) salesInstance = new SalesOrderService({ gateway: readGateway });
     return salesInstance;
   };
   let statusInstance = options.status || null;
   const status = () => {
-    if (!statusInstance) statusInstance = new SalesStatusWriter({ gateway });
+    if (!statusInstance) statusInstance = new SalesStatusWriter({ gateway: readGateway });
     return statusInstance;
   };
   // ⭐ 交付（A）：现货行"提交即交付 + 扣库存"走的是**既有** `SalesDeliveryService.deliver`。
@@ -107,7 +167,7 @@ const createScanWriteService = (options = {}) => {
   //    ⚠️ 用例可以注入 `options.delivery`（本文件不认识库存引擎，注入点只在这一处）。
   let deliveryInstance = options.delivery || null;
   const delivery = () => {
-    if (!deliveryInstance) deliveryInstance = new SalesDeliveryService({ gateway });
+    if (!deliveryInstance) deliveryInstance = new SalesDeliveryService({ gateway: readGateway });
     return deliveryInstance;
   };
   let purchaseInstance = options.purchase || null;
@@ -542,8 +602,19 @@ const createScanWriteService = (options = {}) => {
    */
   const submitSale = async ({
     openId, submitKey, payments: paymentRows = [], lineAmounts = [],
-    paymentStatus = '', paidAmount = '', requestId = '', pendingLine = null,
-  }) => queue.run(`sale:${openId}`, async () => {
+    paymentStatus = '', paidAmount = '', requestId = '', pendingLine = null, timing = null,
+  }) => {
+    // ⭐⭐ 2026-10-12：**分阶段耗时**（业务负责人真机被卡住 / 收过 504 网关超时）——
+    //    `timing` 是一个**可选出参**（与 `scanPageService.lookup` 那条 `timing` 同一套约定）：
+    //    路由拿它去打**一条** `scan.sale.timing` 汇总日志，"卡在哪一步"一眼看得出。
+    //    🔴 它**只读时间**：不进 `input`、不影响任何判据与写入。
+    const enqueuedAt = Date.now();
+    return queue.run(`sale:${openId}`, async () => {
+    const startedAt = Date.now();
+    if (timing) timing.queue_wait_ms = Math.max(0, startedAt - enqueuedAt);
+    const markStage = (field, from) => {
+      if (timing) timing[field] = Math.max(0, Date.now() - from);
+    };
     if (!config.sale.enabled) {
       return fail({ code: 'disabled', message: texts.writeDisabledBody, requestId });
     }
@@ -944,11 +1015,19 @@ const createScanWriteService = (options = {}) => {
       request_id: requestId,
     });
 
+    // ⭐ 「准备」这一段：会话读取 / 续期 + 校验 + 每件实收与收款行的解析（**本文件自己**，
+    //    一次飞书都不打）；单独计一段，慢在会话文件还是慢在飞书一眼分得开。
+    markStage('prepare_ms', startedAt);
+
+    // ⚠️ 主表 record_id 与单号**提到 try 外面**声明：catch 里要按"主表落没落"分类失败
+    //    （见下面 `sale_partial_failed`）——**判据与重试协议同一条**，不是新发明的判据。
+    let salesEntryRecordId = String(sale.master_record_id || '').trim();
+    let orderNo = String(sale.order_no || '').trim();
+
     try {
       // ④ 主表记录：走既有函数（单号生成 + 撞号复查都在里面），**只在第一次建**。
       //    建完立刻把 record_id 落进会话 —— 后面任何一步失败，重试都接着**同一张**单写。
-      let salesEntryRecordId = String(sale.master_record_id || '').trim();
-      let orderNo = String(sale.order_no || '').trim();
+      const masterStartedAt = Date.now();
       if (!salesEntryRecordId) {
         const created = await createEntry(gateway, {
           // 主表「原话」那一列：扫码来的单也留一句人话（模板在 config）。
@@ -966,18 +1045,22 @@ const createScanWriteService = (options = {}) => {
           master_record_id: salesEntryRecordId, order_no: orderNo,
         });
       }
+      markStage('master_ms', masterStartedAt);
       const correlation = { task_id: key, sales_entry_record_id: salesEntryRecordId, order_no: orderNo };
       // 「点【提交】才写」= 她**在页面上确认过**了 ⇒ 「确认状态」记「已确认」
       //（走四个状态维度的**唯一写入口** SalesStatusWriter；值来自 config/salesStatusDimensions）。
       // ⚠️ 只有第一次建单时才补这一下（重试时不必重复写）。
+      const statusStartedAt = Date.now();
       if (!sale.master_record_id) {
         await status().write(salesEntryRecordId, { userAction: WRITE.userAction.confirmed }, correlation);
       }
+      markStage('status_ms', statusStartedAt);
       // ⑤ 明细 / 收款 / 进度：**既有业务函数**（与群聊、工作台是同一条路）。
       //    `knownRecordIds` + `onRecordPersisted` = 既有链路那套"写到一半崩了也能接着写"的协议。
       //    ⭐ `owed`（元）= 上面算出来的差额 ⇒ 既有业务层**按既有协议**补那一条【未收款】
       //       （状态「未收款」、**方式留空**、关联既有销售单、**不写交易方向**）。
       //       为 0 ⇒ 不传（`0` 与"没说欠"在业务层是同一个意思，见 salesOrderService 的 owed 段）。
+      const detailStartedAt = Date.now();
       const result = await sales().confirm({
         salesEntryRecordId,
         items,
@@ -996,6 +1079,7 @@ const createScanWriteService = (options = {}) => {
           await sessions.saveSaleProgress(openId, { [key2]: ids });
         },
       }, { correlation });
+      markStage('detail_ms', detailStartedAt);
       const detailCount = (result.detailRecordIds || []).length || items.length;
       const paymentCount = (result.paymentRecordIds || []).length;
       // ⭐ `paid_amount` = **真收到钱的那几条**（她填的收款行）之和；
@@ -1025,10 +1109,12 @@ const createScanWriteService = (options = {}) => {
       //       配品行（没有鞋、不跟踪库存）**天然被排除**在交付之外（可售品属性说了算）。
       //    ⚠️ 明细 id 与 `items` **一一对应**（既有 `confirm` 就是按这个顺序建行的，群聊链路
       //       的 `deliverableItemIndexes` 也是同一个约定），所以这里按下标取。
+      const stockStartedAt = Date.now();
       const stock = await deliverStockLines({
         items, detailRecordIds: result.detailRecordIds || [], paymentRecordIds: result.paymentRecordIds || [],
         salesEntryRecordId, correlation,
       });
+      markStage('stock_ms', stockStartedAt);
       if (stock.failed > 0) {
         // 🔴 **失败要如实报错**：单子写了（货 / 钱是事实），但库存没扣成这件事必须回给她，
         //    而且**不许**把这一单记成"提交完成"—— 否则重试入口就没了，那一双永远扣不掉。
@@ -1051,9 +1137,34 @@ const createScanWriteService = (options = {}) => {
     } catch (error) {
       const message = userMessageFor(error);
       await sessions.markSaleFailed(openId, String(error.message || error)).catch(() => undefined);
+      // ⭐⭐ 2026-10-12：**建单成功、后面某一步（明细 / 收款 / 进度）抛错** ⇒ 分类成
+      //    `sale_partial_failed`，路由据此给她一张**如实**的"半成"页（**不许显示成功**）。
+      //    🔴 判据用的是**既有**那一条：会话 / 本次调用里**已经落了主表 record_id** ——
+      //       与"重试接着同一张单写"用的是同一个字段，**没有新判据**。
+      //    🔴 主表都没建起来（`createEntry` 抛错）⇒ 照旧 `sale_write_failed`（= 一个字都没写）。
+      if (salesEntryRecordId) {
+        logWarn(config.events.partialFailed, {
+          session_id: current.session_id, submit_key: key,
+          sales_entry_record_id: salesEntryRecordId, order_no: orderNo,
+          // 哪一段抛的：`status_ms` / `detail_ms` / `stock_ms` 是**已经跑完**的那几段的耗时，
+          // 最后一段（没写 `markStage` 的那个）就是抛错的那一段 —— 排查时不必猜。
+          stages: timing ? {
+            prepare_ms: Number(timing.prepare_ms) || 0,
+            master_ms: Number(timing.master_ms) || 0,
+            status_ms: Number(timing.status_ms) || 0,
+            detail_ms: Number(timing.detail_ms) || 0,
+          } : undefined,
+          error: String(error.message || error), request_id: requestId,
+        });
+        return {
+          ok: false, code: 'sale_partial_failed', message, requestId, error,
+          order_no: orderNo, sales_entry_record_id: salesEntryRecordId,
+        };
+      }
       return fail({ code: 'sale_write_failed', message, requestId, error });
     }
-  });
+    });
+  };
 
   // ── 补货报单：勾尺码 + 数量 → 采购申请 ────────────────────────────────────
   /**
@@ -1380,4 +1491,10 @@ const createScanWriteService = (options = {}) => {
   };
 };
 
-module.exports = { createScanWriteService, createSalesEntryWithOrderNo };
+module.exports = {
+  createScanWriteService,
+  createSalesEntryWithOrderNo,
+  // ⭐ 2026-10-12：只读引用缓存（白名单 + TTL）。**导出只为用例能直接钉它**：
+  //    去重 / 白名单外一律直通 / 写方法原样透传 —— 这三条是"绝不影响写入判据"的证据。
+  createReadOnlyReferenceCache,
+};

@@ -295,7 +295,7 @@ test('AC-DB6 提交之后：本单条归零（提交按钮跟着消失）；成�
     ],
     retryHint: SCAN_WRITE.texts.submittedNextHint,
   }, SCAN_PAGE);
-  assert.ok(done.includes('这一单提交好了'));
+  assert.ok(done.includes('您的提交已成功'));
   assert.ok(done.includes('XSD-20261011-0001'), '成功页照旧显示单号');
   assert.ok(done.includes('明细：2 双（每双一行）'), '成功页照旧显示双数');
   assert.equal(done.includes('data-view="draft-bar"'), false, '成功页是结果页，不挂本单条（既有形状不变）');

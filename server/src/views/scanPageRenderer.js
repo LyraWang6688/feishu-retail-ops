@@ -158,6 +158,15 @@ body {
 .state-msg p { margin: var(--space-2) 0; color: var(--text-secondary); }
 .state-msg .number { color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
 .state-msg .hint { color: var(--text-muted); font-size: var(--font-size-sm); }
+/* ⭐ 2026-10-12 提交成功页（业务负责人要让"提交成功"一眼看得出）：
+   H1 走主色；「再录一单」是一颗**真链接**（a 版的主按钮），下面挂一句轻提示。
+   ⚠️ 只有 tone=success / 传了 backPath 时才用得到这几条规则 ⇒ 其它结果页逐字不变。
+   ⚠️ "成功"挂在 h1 的 class 上（**不在 section 上加属性/class**）——
+   既有的 card state-msg 那一串逐字不变，按它取卡片的断言不受影响。 */
+.state-msg__title--success { color: var(--primary); }
+.state-msg__mark { margin: 0 0 var(--space-2); font-size: 40px; line-height: 1; }
+.state-msg .back-link { margin-top: var(--space-4); }
+.state-msg .back-link span { display: block; margin-top: var(--space-1); font-size: var(--font-size-sm); font-weight: 400; opacity: .85; }
 .result { margin: var(--space-3) 0 0; padding: 0; list-style: none; color: var(--text); font-size: var(--font-size-base); }
 .result li { margin-top: var(--space-1); }
 .draft-count { margin: 0 0 var(--space-1); font-size: var(--font-size-base); font-weight: 600; }
@@ -1168,6 +1177,10 @@ const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEF
       // ⭐ 2026-10-12：销售页上那颗**带钱**的提交表单就在下面 ⇒ 本单条不再放第二颗提交按钮。
       moneyFormOnPage: safeRealm === DEFAULT_REALM && Boolean(write),
     });
+  // ⭐⭐ 2026-10-12（编号兜底）：编号缺段（典型 = 缺「类别」）但按（货号 + 颜色）**唯一命中**时，
+  //    页面上出**一条轻提示**（一句话，不写说明书）——她才知道"这个标签该重打了"。
+  const fallbackHint = view.number_fallback
+    ? `<p class="notice">${escapeHtml(config.texts.numberFallbackHint)}</p>` : '';
   return renderDocument({
     title: fillText(config.texts.pageTitle, { itemNo: view.item_no || view.number, number: view.number }),
     config,
@@ -1175,6 +1188,7 @@ const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEF
 ${realmBarHtml(safeRealm)}
 ${noScriptHtml()}
 ${identityHtml(view, config)}
+${fallbackHint}
 ${block}
 <p class="foot">${escapeHtml(config.texts.footerNumberLabel)} <span class="mono">${escapeHtml(view.number)}</span>`
   + `${view.updated_at_text ? ` · ${escapeHtml(config.texts.updatedAtLabel)} ${escapeHtml(view.updated_at_text)}` : ''}</p>`,
@@ -1188,19 +1202,46 @@ ${block}
  * `details` 是**写成功/写失败**时给她看的几行事实（单号 / 双数 / 批次号…）：
  * 有就逐行列出来，没有就一个字都不多渲染（既有那几种页面**逐字不变**）。
  * ⚠️ 这些页面**不挂领域切换条**（它们是"结果页"，不是她操作的地方）。
+ *
+ * ⭐⭐ 2026-10-12（业务负责人真机口径）：「页面跳转到提交成功页……给一个**链接**让我能回到扫码页」——
+ * `backPath` + `backLabel`（+ 可选 `backHint`）就是那颗**回扫码页**的链接；
+ * `tone` 只用来加一个类（`success` ⇒ H1 走主色）。
+ * 🔴 **不传这三样时，输出与改前逐字相同**（既有那些结果页一个字都没动）。
  */
-const renderScanMessagePage = ({ title, body, number = '', requestId = '', retryHint = '', details = [] }, config = SCAN_PAGE) => renderDocument({
+const renderScanMessagePage = ({
+  title, body, number = '', requestId = '', retryHint = '', details = [],
+  backPath = '', backLabel = '', backHint = '', tone = '',
+}, config = SCAN_PAGE) => renderDocument({
   title,
   config,
   requestId,
+  // ⚠️ **`<section class="card state-msg">` 这一串逐字不变**（连成功页也一样）：
+  //    有断言按这串取"她看得见的那张卡"，在 section 上多加属性/class 会把它们悄悄打红。
+  //    所以"成功"这个色调只挂在 **h1 的 class** 与那颗 ✅ 上。
   content: `<section class="card state-msg">
-<h1>${escapeHtml(title)}</h1>
+${tone === 'success' ? '<p class="state-msg__mark" aria-hidden="true">✅</p>' : ''}
+<h1${tone === 'success' ? ' class="state-msg__title--success"' : ''}>${escapeHtml(title)}</h1>
 <p>${escapeHtml(body)}</p>
 ${details.length ? `<ul class="result">${details.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}
 ${number ? `<p>${escapeHtml(config.texts.notFoundHint)}<span class="number mono">${escapeHtml(number)}</span></p>` : ''}
 ${retryHint ? `<p class="hint">${escapeHtml(retryHint)}</p>` : ''}
+${backPath && backLabel ? `<a class="btn btn--primary back-link" href="${escapeHtml(backPath)}">${escapeHtml(backLabel)}${backHint ? `<span>${escapeHtml(backHint)}</span>` : ''}</a>` : ''}
 </section>`,
 });
+
+/**
+ * ⭐⭐ **提交成功页**（`POST submit_order` 写成功之后 POST 直接渲染的就是这一页；
+ * 不 303、不回原页 —— 业务负责人的口径是"点完**直接**告诉我成功"）。
+ *
+ * 🔴 它**不是**新的书写方式，只是"消息页 + 成功色调 + 一颗回扫码页的链接"这一组约定的**一个名字**：
+ *    `renderScanMessagePage({ tone: 'success', backPath, backLabel, ... })`。
+ *    这样"成功页长什么样"只有一处定义，将来改版不用满仓库找。
+ * 🔴 只在**真的写成功**时用：建单失败 ⇒ 照旧报错页；建单成功但后面某步没写完 ⇒
+ *    `partialFailed*`（**不许**显示成功）。
+ */
+const renderSaleSuccessPage = (input = {}, config = SCAN_PAGE) => renderScanMessagePage(
+  { ...input, tone: 'success' }, config,
+);
 
 /**
  * 🔴 **最后一道兜底页**（"绝不空白"的物理保证）。
@@ -1225,6 +1266,8 @@ module.exports = {
   renderScanPage,
   renderScanMessagePage,
   renderMinimalPage,
+  // ⭐⭐ 2026-10-12：提交成功页（逐字「您的提交已成功」+「再录一单」链接回扫码页）
+  renderSaleSuccessPage,
   // ⭐⭐ 2026-10-11（方案A）：验收模式落地页（`GET /s/accept?batch=` 那一屏）
   renderAcceptancePage,
   escapeHtml,
