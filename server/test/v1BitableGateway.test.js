@@ -60,7 +60,7 @@ test('sales schema matches the live three-table field snapshot', () => {
     //（她的口径：「未收款且**交易类型是现货**」）⇒ 映射加上这一列；
     // 同时那个 7 天窗口按**收款明细的创建时间**算 ⇒ 映射也加上「创建时间」
     //（飞书**自动**时间列，type=1001 —— 代码只读、一行都不写）。
-    paymentRecord: ['收款方式', '关联销售单', '收款金额', '收款时间', '收款状态', '交易方向',
+    paymentRecord: ['收款方式', '关联销售单', '收款金额', '收款日', '收款状态', '交易方向',
       '交易类型', '创建时间'],
   };
   for (const [tableKey, actual] of Object.entries(fields)) {

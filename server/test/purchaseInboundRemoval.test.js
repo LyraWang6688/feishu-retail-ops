@@ -432,9 +432,10 @@ test('④-补 来源标识由**真实三元组**（批次记录 id | 货品 | �
 // G 单选「确认状态」纳入部署闸门契约
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('F 「具体信息」已改名「报货信息」：tableName 同步、tableId 与语义键一个都没动', () => {
+test('F 「具体信息」→「报货信息」→（2026-10-12）「采购明细」：tableName 同步、tableId 与语义键一个都没动', () => {
   const request = V1_BITABLE_SCHEMA.tables.purchaseRequest;
-  assert.equal(request.tableName, '报货信息', '她的口径：这张表现在叫「报货信息」');
+  // ⚠️ 2026-10-12 她又改了一次名：「报货信息」→「采购明细」（tableId `tbli1ygPtss5CWCH` 不变）
+  assert.equal(request.tableName, '采购明细', '她的口径：这张表现在叫「采购明细」');
   assert.equal(request.tableId, 'tbli1ygPtss5CWCH', 'tableId 不变（闸门按 tableId 校验，改了就全红）');
   // ⚠️ 语义键名 `purchaseRequest` **可以不动**（brief 明确）——只改 tableName 与用户可见文案。
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseRequest, request);

@@ -189,7 +189,7 @@ test('deposit creates paid and unpaid receipts; follow-up 记一条新收款 + �
   const receipts = gateway.records.get('paymentRecord');
   assert.deepEqual(receipts.map((row) => [row.fields['收款金额'], row.fields['收款状态']]),
     [[100, '已收款'], [140, '未收款']]);
-  assert.equal(receipts[1].fields['收款时间'], undefined);
+  assert.equal(receipts[1].fields['收款日'], undefined);
   assert.equal(receipts[1].fields['收款方式'], undefined);
   assert.equal((await gateway.get('salesEntry', 'order_1')).fields['履约状态'], undefined);
   assert.equal((await gateway.get('salesEntry', 'order_1')).fields['收款状态'], undefined);
@@ -235,12 +235,12 @@ test('platform voucher has no receipt time until verified settlement', async () 
   const voucher = await payments.record({ salesEntryRecordId: 'order_1', method: '抖音团购券',
     amount: 85.4, status: '待平台结算' });
   assert.equal((await gateway.get('paymentRecord', cash.recordId)).fields['收款状态'], '已收款');
-  assert.ok((await gateway.get('paymentRecord', cash.recordId)).fields['收款时间'] > 0);
+  assert.ok((await gateway.get('paymentRecord', cash.recordId)).fields['收款日'] > 0);
   assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['收款状态'], '待平台结算');
-  assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['收款时间'], undefined);
+  assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['收款日'], undefined);
   await payments.settlePlatformReceipt(voucher.recordId, 1234567890000);
   assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['收款状态'], '已收款');
-  assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['收款时间'], 1234567890000);
+  assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['收款日'], 1234567890000);
 });
 
 test('sale records cash and pending voucher on one order without treating voucher as received', async () => {
@@ -252,8 +252,8 @@ test('sale records cash and pending voucher on one order without treating vouche
       { method: '抖音团购券', amount: 85.4, status: '待平台结算' }] });
   const receipts = gateway.records.get('paymentRecord');
   assert.equal(receipts.length, 2);
-  assert.equal(receipts[0].fields['收款时间'] > 0, true);
-  assert.equal(receipts[1].fields['收款时间'], undefined);
+  assert.equal(receipts[0].fields['收款日'] > 0, true);
+  assert.equal(receipts[1].fields['收款日'], undefined);
   assert.equal(gateway.records.get('salesEntry')[0].fields['收款状态'], undefined);
   await sale.confirm({ salesEntryRecordId: 'order_1',
     items: [{ itemNo: '2A831-18', size: 44, quantity: 1, actualAmount: 254.4 }],
@@ -272,7 +272,7 @@ test('voucher-only sale creates one pending receipt and no zero-value cash recei
   const payments = gateway.records.get('paymentRecord');
   assert.equal(payments.length, 1);
   assert.equal(payments[0].fields['收款状态'], '待平台结算');
-  assert.equal(payments[0].fields['收款时间'], undefined);
+  assert.equal(payments[0].fields['收款日'], undefined);
   // ⭐ 2026-10-08：赠品在**销售主表**；明细行不带它（`posted.detailRecordIds[0]` 那一行）。
   assert.equal((await gateway.get('salesEntry', 'order_1')).fields['赠品'], '袜子两双');
   assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['赠品'], undefined);
@@ -357,7 +357,7 @@ test('她明说"还欠 19"：补一条未收款 19，订单停在已确认', asy
   const receipts = gateway.records.get('paymentRecord');
   assert.deepEqual(receipts.map((row) => [row.fields['收款金额'], row.fields['收款状态']]),
     [[100, '已收款'], [19, '未收款']]);
-  assert.equal(receipts[1].fields['收款时间'], undefined);
+  assert.equal(receipts[1].fields['收款日'], undefined);
   const progress = await new SalesProgressService({ gateway }).forOrder('order_1',
     { detailRecordIds: posted.detailRecordIds, paymentRecordIds: posted.paymentRecordIds });
   assert.equal(progress.pendingAmount, 19);
