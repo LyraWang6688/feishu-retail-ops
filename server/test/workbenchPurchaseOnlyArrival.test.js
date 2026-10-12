@@ -1,4 +1,12 @@
 /**
+ * ⚠️ **2026-10-12 口径又变了**（业务负责人逐字）：「**采购里面的验收到货也不需要了**，因为
+ *    **验收到货我们在扫码页也做了**，所以目前我们的采购页就先保持『**订单列表**』和『**供应商往来款**』」
+ *    ＋「麻烦把『**采购订单列表**』这个子 tab 页**改为『订单列表』**」
+ *    ＋ 销售删「销售建单」· 库存删「单款查询」。
+ *    ⇒ 本文件 AC-W1 / W2 / W6 三条**改写**（逐字对照见各条注释）；AC-W3（两个占位页）/
+ *      W4（死链清掉）/ W5（不再指 `?from=purchase`）**一条都没放宽**。
+ *    ⚠️ 文件名里的 "PurchaseOnlyArrival" 是**历史名**（2026-10-11 那版口径），保留不改名。
+ *
  * ⭐⭐ 2026-10-11（业务负责人批准）：工作台「采购」= **只留「验收到货」**。
  *
  * 她的口径（逐字要点）：
@@ -61,38 +69,42 @@ async function loadFrontendModules() {
 // AC-W1 采购子 tab 只留「验收到货」
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-W1 采购子 tab 逐字 = 验收到货 · 采购订单列表 · 供应商往来款（报货/退货已隐藏）', async () => {
+test('AC-W1 采购子 tab 逐字 = 订单列表 · 供应商往来款（验收入口已删 + 改名）', async () => {
   const { domains } = await loadFrontendModules();
   const byId = new Map(domains.DOMAIN_TABS.map((domain) => [domain.id, domain]));
+  // ⚠️ 2026-10-12 改写：改前 = ['验收到货','采购订单列表','供应商往来款'] / 对应 id。
   assert.deepEqual(byId.get('purchase').pages.map((page) => page.label),
-    ['验收到货', '采购订单列表', '供应商往来款']);
+    ['订单列表', '供应商往来款']);
   assert.deepEqual(byId.get('purchase').pages.map((page) => page.id),
-    ['purchase-arrival', 'purchase-orders', 'purchase-supplier-money']);
-  // 报货 / 退货两个子页**不再出现**（它们现在在扫码页）
-  for (const gone of ['purchase-report', 'purchase-return']) {
+    ['purchase-orders', 'purchase-supplier-money']);
+  // 报货 / 退货 / 验收到货三个子页**都不在清单里**（前两个在扫码页；验收也在扫码页）
+  for (const gone of ['purchase-report', 'purchase-return', 'purchase-arrival']) {
     assert.equal(byId.get('purchase').pages.some((page) => page.id === gone), false, `${gone} 应已隐藏`);
   }
-  for (const gone of ['报货', '退货']) {
-    assert.equal(byId.get('purchase').pages.some((page) => page.label === gone), false, `${gone} 子 tab 应已隐藏`);
+  for (const gone of ['报货', '退货', '验收到货']) {
+    assert.equal(byId.get('purchase').pages.some((page) => page.label === gone), false, `${gone} 子 tab 应已不在`);
   }
-  // 其余三个领域的子 tab 清单**一条不变**
+  // 其余三个领域：销售 / 库存各少一个入口（2026-10-12），货品不变
   assert.deepEqual(byId.get('sales').pages.map((page) => page.label),
-    ['销售建单', '订单列表', '销售查询', '客户往来款']);
+    ['订单列表', '销售查询', '客户往来款']);
   assert.deepEqual(byId.get('inventory').pages.map((page) => page.label),
-    ['单款查询', '全仓查询', '手工调整']);
+    ['全仓查询', '手工调整']);
   assert.deepEqual(byId.get('product').pages.map((page) => page.label),
     ['货品上新', '标签打印']);
 });
 
-test('AC-W2 「验收到货」仍是独立子页；采购不再有入口页', async () => {
+test('AC-W2 「验收到货」入口已删（链路保留）；采购不再有入口页 / 订单模块页', async () => {
   const { domains } = await loadFrontendModules();
   const purchase = domains.domainById('purchase');
+  // ⚠️ 2026-10-12 改写：改前 = `arrival.kind === 'orders'` / `arrival.mode === 'purchase'`。
   const arrival = purchase.pages.find((page) => page.id === 'purchase-arrival');
-  assert.equal(arrival.kind, 'orders');
-  assert.equal(arrival.mode, 'purchase');
-  assert.equal(arrival.embed, undefined);
-  assert.equal(arrival.anchor, undefined);
-  assert.equal(purchase.pages.some((page) => page.kind === 'entry'), false, '采购不再有"填编号"的入口页');
+  assert.equal(arrival, undefined, '「验收到货」入口已删（扫码页已做验收）');
+  assert.equal(purchase.pages.some((page) => page.kind === 'orders'), false, '采购 tab 下不再挂订单模块');
+  assert.equal(purchase.pages.some((page) => page.kind === 'entry'), false, '采购没有"填编号"的入口页');
+  // 链路保留：既有验收台代码 / 接口地址配置 / 接口本身都还在（扫码验收、群话题核对共用）
+  assert.ok(readWorkbench('features/orders/index.js').includes('verify-arrival'), '验收台代码保留');
+  assert.ok(readWorkbench('config/orders.js').includes('/api/workbench/purchase/arrivals/confirm'),
+    '验收接口地址配置保留');
 });
 
 test('AC-W3 两个占位页保留（待建设）', async () => {
@@ -139,13 +151,14 @@ test('AC-W5 采购子页上不再有指向已退役领域（?from=purchase）的
 // AC-W6 其它领域入口一个没丢
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-W6 其它领域的入口一个没丢（销售建单 / 单款查询 / 全仓查询 / 标签打印 / 手工调整）', async () => {
+test('AC-W6 其它领域的入口一个没丢（全仓查询 / 标签打印 / 手工调整 / 订单列表）', async () => {
   const { domains } = await loadFrontendModules();
   const byId = new Map(domains.DOMAIN_TABS.map((domain) => [domain.id, domain]));
-  assert.equal(byId.get('sales').pages.find((page) => page.id === 'sales-create').targetTemplate,
-    '/s/{number}?from=sales');
-  assert.equal(byId.get('inventory').pages.find((page) => page.id === 'inventory-single').targetTemplate,
-    '/s/{number}?from=inventory');
+  // ⚠️ 2026-10-12 改写：改前还钉着 `sales-create`（`?from=sales`）与 `inventory-single`（`?from=inventory`）
+  //    两个入口的 targetTemplate —— 那两个入口已按她的口径删除 ⇒ 改成"清单里没有它们"；
+  //    其余功能（全仓查询 / 手工调整 / 标签打印 / 订单列表）**一条没少**。
+  assert.equal(byId.get('sales').pages.some((page) => page.id === 'sales-create'), false, '销售建单入口已删');
+  assert.equal(byId.get('inventory').pages.some((page) => page.id === 'inventory-single'), false, '单款查询入口已删');
   assert.equal(byId.get('inventory').pages.find((page) => page.id === 'inventory-all').kind, 'query');
   assert.equal(byId.get('inventory').pages.find((page) => page.id === 'inventory-adjust').kind, 'inventory-adjustment');
   assert.equal(byId.get('product').pages.find((page) => page.id === 'product-labels').targetTemplate,

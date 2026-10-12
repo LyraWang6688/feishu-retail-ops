@@ -78,6 +78,9 @@ function loadFrontendModules() {
   copy('config/home.js', 'home.mjs', [["from './links.js'", "from './links.mjs'", true]]);
   copy('core/formatters.js', 'formatters.mjs');
   copy('features/query/index.js', 'query-index.mjs', [
+    // ⚠️ 2026-10-12：`features/query/index.js` 新增 import `config/links.js`
+    //    （跳转装配读 `LINK_*` 三个开关）⇒ 这一条替换必须跟着加。
+    ["from '../../config/links.js'", "from './links.mjs'"],
     ["from '../../config/query.js'", "from './query.mjs'"],
     ["from '../../core/formatters.js'", "from './formatters.mjs'"],
   ]);

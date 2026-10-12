@@ -112,3 +112,45 @@ export const SALES_QUERY_PAGE_URL =
  */
 export const INVENTORY_QUERY_PAGE_URL =
   'https://scnzoiwpgxik.feishu.cn/share/base/webpage/shrcnaSFKbJAci7YxvC1AXpweBc';
+
+/**
+ * 飞书 **AppLink：在端内打开一个 web-view** 的基址 —— AGENTS §13 实查过的那条官方格式
+ * （2026-10-12 又 `curl` 核过官方文档：`mode` 是**PC 端**容器模式）。
+ *
+ * `https://applink.feishu.cn/client/web_url/open?mode=<mode>&url=<encodeURIComponent 后的网址>`
+ *
+ * ⚠️ **URL 字面量只在本文件出现一次** —— `config/query.js` / `features/query/index.js` 里
+ *    **不许再写 `feishu.cn`**（那条规矩有测试钉着，见 `test/workbenchTwoTabsAndQueryEntries.test.js` AC4）。
+ */
+export const FEISHU_APPLINK_WEB_URL_OPEN = 'https://applink.feishu.cn/client/web_url/open';
+
+/**
+ * ⭐⭐ **外链怎么"到达"** —— 配置先行（业务负责人 **2026-10-12**）。三个值都是**显式**的
+ * （**不写 `||` 兜底**：清空 / 改错一个值必须能真的改变行为）。
+ *
+ * 她的原话（逐字）：
+ *   「关于**销售查询**，我希望在点击了『销售查询』这个按钮之后，**系统可以直接自动跳转到我们的
+ *    多维表格页面**，而**不需要让我再去点一下那个消息查询的卡片**。」
+ *   「同理来说，**库存的全仓查询**也是……」
+ *   「同理，我们『**货品**』的 tab 页里面不是有一个『**货品上新**』的子页面吗？也希望点击
+ *    『货品上新』之后，**它能直接跳转到我的表单链接**，**不用我再去点击那个消息卡片了**」
+ *   「『销售查询』和『全仓查询』**(乙) 飞书【端内】打开（AppLink，手机体验更好）**」
+ *
+ *   `LINK_DIRECT_JUMP_ENABLED` —— 显式布尔：`true`（当前）= 点子 tab **一次就跳**、**不渲染**
+ *       中间那张卡；`false` = 回到老路（渲染卡片，她自己点）。
+ *
+ *   `LINK_APPLINK_ENABLED` —— 显式布尔：`true`（当前）= 走**飞书端内 AppLink**（乙）；
+ *       ⭐ **`false` 就是"一键回落"**：立刻改成**普通跳转**（同窗口，与现有卡片同一条导航，
+ *       手机上真机已在用）—— 万一某些机型 / 容器打不开 AppLink，改这一个值即可。
+ *
+ *   `LINK_APPLINK_MODE` —— 只在走 AppLink 时生效，取值同官方文档：
+ *       `sidebar-semi`（侧边栏，当前）/ `window`（独立窗口）/ `appCenter`（导航栏标签页，需飞书 7.5+）。
+ *       ⭐ 为什么当前选 **`sidebar-semi`**：官方文档写明 `mode` 是 **PC 端**的容器模式
+ *       （手机端不生效 ⇒ 对她主要在手机上用的场景**无差别**）；PC 上侧边栏最贴合
+ *       "在飞书里看一眼数据就回来"，也是 AppLink 工具最常用的那一个。
+ *       若她想要 PC 端独立大窗口：只改这一个值为 `'window'`（文档还支持 `width`/`height`，
+ *       我们**不设**，用客户端默认）。
+ */
+export const LINK_DIRECT_JUMP_ENABLED = true;
+export const LINK_APPLINK_ENABLED = true;
+export const LINK_APPLINK_MODE = 'sidebar-semi';

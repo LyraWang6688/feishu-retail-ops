@@ -119,6 +119,9 @@ function loadFrontendModules() {
   copy('config/home.js', 'home.mjs', [["from './links.js'", "from './links.mjs'", true]]);
   copy('core/formatters.js', 'formatters.mjs');
   copy('features/query/index.js', 'query-index.mjs', [
+    // ⚠️ 2026-10-12：`features/query/index.js` 新增 import `config/links.js`
+    //    （跳转装配读 `LINK_*` 三个开关）⇒ 这一条替换必须跟着加。
+    ["from '../../config/links.js'", "from './links.mjs'"],
     ["from '../../config/query.js'", "from './query.mjs'"],
     ["from '../../core/formatters.js'", "from './formatters.mjs'"],
   ]);
@@ -237,18 +240,26 @@ test('AC2 四个 tab 的子页面清单与她要的映射逐条对上（config/d
 
   // ② 子页面清单逐字（她 2026-10-09 最新口径：销售多一个客户往来款、采购改成三段）
   const byId = new Map(DOMAIN_TABS.map((domain) => [domain.id, domain]));
-  assert.deepEqual(pageLabels(byId.get('sales')), ['销售建单', '订单列表', '销售查询', '客户往来款']);
-  assert.deepEqual(pageLabels(byId.get('inventory')), ['单款查询', '全仓查询', '手工调整']);
-  // ⚠️ 2026-10-11：采购只留「验收到货」＋两个占位页（报货 / 退货已隐藏，它们现在在扫码页）
-  assert.deepEqual(pageLabels(byId.get('purchase')), ['验收到货', '采购订单列表', '供应商往来款']);
+  // ⚠️ 2026-10-12 断言**改写**（她的新口径：销售无「销售建单」· 库存无「单款查询」·
+  //    采购无「验收到货」，且「采购订单列表」改名「订单列表」）：
+  //    改前（逐字）：sales ['销售建单','订单列表','销售查询','客户往来款']
+  //                 / inventory ['单款查询','全仓查询','手工调整']
+  //                 / purchase ['验收到货','采购订单列表','供应商往来款']
+  //    改后（逐字）：下面三条。理由：她的原话「销售它就没有『销售建单』」「单款查询不需要了」
+  //      「验收到货也不需要了」「把『采购订单列表』这个子 tab 页改为『订单列表』」——
+  //      **只删/改工作台入口**，后端链路（扫码建单 / 验收接口）一条没删。
+  assert.deepEqual(pageLabels(byId.get('sales')), ['订单列表', '销售查询', '客户往来款']);
+  assert.deepEqual(pageLabels(byId.get('inventory')), ['全仓查询', '手工调整']);
+  assert.deepEqual(pageLabels(byId.get('purchase')), ['订单列表', '供应商往来款']);
   assert.deepEqual(pageLabels(byId.get('product')), ['货品上新', '标签打印']);
 
   // ③ 销售：建单 → 扫码页的**销售领域**（共用同一套业务处理层）；订单列表 = 既有模块的销售模式；
   //    销售查询 = 她配的那条多维表格外链（URL 从 config/links.js 来，没换）
   const sales = byId.get('sales');
-  const salesCreate = sales.pages.find((page) => page.id === 'sales-create');
-  assert.equal(salesCreate.kind, 'entry');
-  assert.equal(salesCreate.targetTemplate, '/s/{number}?from=sales', '销售建单 = 扫码页的销售领域');
+  // ⚠️ 2026-10-12：改前断言的是 `sales-create`（kind:'entry' / `?from=sales`）。
+  //    现在**入口已删**（录入统一走扫码页）⇒ 改成"清单里没有它 + 不再指扫码页"。
+  assert.equal(sales.pages.some((page) => page.id === 'sales-create'), false, '「销售建单」入口已删');
+  assert.equal(JSON.stringify(sales).includes('from=sales'), false, '工作台不再有指向扫码页销售领域的入口');
   assert.equal(sales.pages.find((page) => page.id === 'sales-orders').mode, 'sales', '订单列表只看销售（领域已分好）');
   const salesQuery = sales.pages.find((page) => page.id === 'sales-query');
   assert.equal(salesQuery.kind, 'query');
@@ -261,8 +272,10 @@ test('AC2 四个 tab 的子页面清单与她要的映射逐条对上（config/d
   // ④ 库存：单款查询 → 扫码页的**库存领域**；全仓查询 = 同一条多维表格外链（改的是名字，不是 URL）；
   //    手工调整 = 既有「库存手工调整」模块（内嵌）
   const inventory = byId.get('inventory');
-  const single = inventory.pages.find((page) => page.id === 'inventory-single');
-  assert.equal(single.targetTemplate, '/s/{number}?from=inventory', '单款查询 = 扫码页的库存领域');
+  // ⚠️ 2026-10-12：改前断言的是 `inventory-single`（`?from=inventory`）。
+  //    现在**入口已删**（她用扫一扫）⇒ 改成"清单里没有它 + 不再指扫码页"。
+  assert.equal(inventory.pages.some((page) => page.id === 'inventory-single'), false, '「单款查询」入口已删');
+  assert.equal(JSON.stringify(inventory).includes('from=inventory'), false, '工作台不再有指向扫码页库存领域的入口');
   const warehouse = inventory.pages.find((page) => page.id === 'inventory-all');
   assert.equal(warehouse.kind, 'query');
   assert.equal(warehouse.sectionId, 'inventory-query');
@@ -284,15 +297,17 @@ test('AC2 四个 tab 的子页面清单与她要的映射逐条对上（config/d
   const purchase = byId.get('purchase');
   // ⚠️ 2026-10-11：报货 / 退货两个子页**已隐藏**（不在清单里）—— 原先这里断言"两个子页都是
   //    `kind:'entry'` 的扫码入口（`?from=purchase`）"，现在改成"清单里没有它们 + 没有 entry 页"。
+  // ⚠️ 2026-10-12：改前 = ['purchase-arrival','purchase-orders','purchase-supplier-money']，
+  //    且钉着「验收到货」是独立子页（kind:'orders'）。现在**入口已删**（扫码页已做验收）
+  //    ⇒ 只剩两个占位页；「采购订单列表」同时改名「订单列表」。
   assert.deepEqual(purchase.pages.map((page) => page.id),
-    ['purchase-arrival', 'purchase-orders', 'purchase-supplier-money']);
-  assert.equal(purchase.pages.some((page) => page.kind === 'entry'), false, '采购不再有"填编号"的入口页');
+    ['purchase-orders', 'purchase-supplier-money']);
+  assert.deepEqual(purchase.pages.map((page) => page.label), ['订单列表', '供应商往来款']);
+  assert.equal(purchase.pages.some((page) => page.kind === 'entry'), false, '采购没有"填编号"的入口页');
+  assert.equal(purchase.pages.some((page) => page.kind === 'orders'), false, '「验收到货」入口已删（扫码页已做）');
   // 采购子页上不再挂任何飞书表单外链（那两张卡写的表已被删除 ⇒ 死链，已清掉）
   const purchaseCardHrefs = purchase.pages.flatMap((page) => (page.cards || []).map((card) => card.href));
   assert.deepEqual(purchaseCardHrefs, [], '采购子页上没有外链卡');
-  const arrival = purchase.pages.find((page) => page.id === 'purchase-arrival');
-  assert.equal(arrival.kind, 'orders', '「验收到货」= 独立子页（既有订单模块）');
-  assert.equal(arrival.mode, 'purchase', '独立页用 purchase 模式（一张报货批次一张卡 + 验收到货）');
   // ⚠️ 2026-10-11：报货子页已隐藏 ⇒ 原先对 `report.embed/anchor` 的两句改成"整份采购配置里都不许有"。
   for (const page of purchase.pages) {
     assert.equal(page.embed, undefined, `${page.id} 不许有内嵌宿主`);
@@ -322,10 +337,11 @@ test('AC2b 领域子 tab 是渲染出来的（不是写死的 HTML）：按钮 /
 
   const subTabs = nav.domainSubTabsHtml(sales, 'sales-orders');
   const buttons = [...subTabs.matchAll(/<button class="([^"]*)" type="button"\s*data-domain-page="([^"]*)"[^>]*>([^<]*)</g)];
-  assert.deepEqual(buttons.map((button) => button[3]), ['销售建单', '订单列表', '销售查询', '客户往来款']);
-  assert.deepEqual(buttons.map((button) => button[2]), ['sales-create', 'sales-orders', 'sales-query', 'sales-customer-money']);
-  assert.ok(buttons[1][1].includes('active'), '传进来的那个子页 = 选中态');
-  assert.ok(!buttons[0][1].includes('active'), '没选中的子页不许带 active');
+  // ⚠️ 2026-10-12 改写：销售少一个「销售建单」子 tab（见 AC2 的沿革注释）。
+  assert.deepEqual(buttons.map((button) => button[3]), ['订单列表', '销售查询', '客户往来款']);
+  assert.deepEqual(buttons.map((button) => button[2]), ['sales-orders', 'sales-query', 'sales-customer-money']);
+  assert.ok(buttons[0][1].includes('active'), '传进来的那个子页 = 选中态');
+  assert.ok(!buttons[1][1].includes('active'), '没选中的子页不许带 active');
   // ⚠️ 用 `data-domain-page`（不是 data-subtab）：内嵌的既有模块自己也在用 data-subtab
   assert.ok(subTabs.includes('data-domain-page='));
   assert.ok(!subTabs.includes('data-subtab='), '领域子 tab 不许用 data-subtab（会和内嵌模块的内部子 tab 打架）');
@@ -338,8 +354,11 @@ test('AC2b 领域子 tab 是渲染出来的（不是写死的 HTML）：按钮 /
   assert.equal(pagesModule.entryTarget('/s/{number}?from=sales', '   '), '', '空编号不拼 URL（页面会提示先填）');
 
   // 三种静态子页都能渲染；入口页里有表单、外链页里有卡片 + 内嵌验收宿主、外链 URL 逐字来自配置
-  const create = pagesModule.entryPageHtml(sales.pages[0]);
-  assert.ok(create.includes('data-entry-form') && create.includes('name="number"'), '销售建单页必须有编号输入 + 打开表单');
+  // ⚠️ 2026-10-12 改写：销售已无 entry 页（销售建单删了）⇒ 这一条改用「货品 · 标签打印」。
+  //    「输入编号 → 打开既有页面」这条**能力仍在**，只是现在只剩它一个消费者。
+  const labelsEntry = domains.domainById('product').pages.find((page) => page.id === 'product-labels');
+  const create = pagesModule.entryPageHtml(labelsEntry);
+  assert.ok(create.includes('data-entry-form') && create.includes('name="number"'), '入口页必须有编号输入 + 打开按钮');
   // ⚠️ 2026-10-11 改写：报货页（原 `pages[0]` 那个 `entry`）**已隐藏** ⇒ 原先这一段的
   //    "扫码入口 / 目标模板"断言不再适用；改成"采购页都是能渲染的静态子页（没有 entry）"。
   const purchasePages = domains.domainById('purchase').pages;
@@ -350,9 +369,13 @@ test('AC2b 领域子 tab 是渲染出来的（不是写死的 HTML）：按钮 /
     assert.equal(html.includes('#purchase-arrival'), false);
     assert.equal(html.includes('data-embed-host'), false, '内嵌宿主整层退场');
   }
-  const queryPage = nav.domainPageHtml(domains.domainById('inventory').pages[1]);
-  assert.ok(queryPage.includes('全仓查询'), '库存的外链子页标题 = 全仓查询');
-  assert.ok(!queryPage.includes('销售查询'), '销售查询只在销售 tab 里（各回各的领域）');
+  // ⚠️ 2026-10-12 改写：库存「单款查询」入口已删（`pages[1]` 不再是查询页），且查询子页现在
+  //    **点一次就到、不渲染中间卡片** ⇒ 改成按 id 找全仓查询那一页，钉"直跳 + 不再画卡"。
+  const warehousePage = domains.domainById('inventory').pages.find((page) => page.id === 'inventory-all');
+  assert.equal(nav.directJumpUrlForPage(warehousePage).includes('applink.feishu.cn'), true,
+    '库存「全仓查询」= 直跳页（AppLink 端内打开）');
+  assert.equal(nav.domainPageHtml(warehousePage), '', '直跳页不再渲染中间卡片');
+  assert.ok(!nav.domainPageHtml(warehousePage).includes('销售查询'), '销售查询只在销售 tab 里（各回各的领域）');
   assert.ok(queryIndex.renderQueryEntries([{ id: 'inventory-query', icon: '📦', title: '全仓查询', desc: 'd', href: 'https://example.com/x' }])
     .includes('https://example.com/x'), '外链卡的 href 就是配置值（渲染层不加工）');
 });
@@ -495,8 +518,10 @@ test('AC3 四个老页面已按她的口令删掉（代码从仓库里删）—�
   //    ⚠️ 2026-10-11 改写（见文件头）：原先钉的是"采购 tab 上仍有报货 / 退货两个扫码入口"。
   const [domains, links] = await Promise.all([modules.domains, modules.links]);
   const purchase = domains.domainById('purchase');
+  // ⚠️ 2026-10-12 改写：改前 = ['purchase-arrival','purchase-orders','purchase-supplier-money']。
+  //    「验收到货」入口已按她口径删除（扫码页已做）⇒ 只剩两个占位页；验收链路一行没删。
   assert.deepEqual(purchase.pages.map((page) => page.id),
-    ['purchase-arrival', 'purchase-orders', 'purchase-supplier-money'], '采购只剩验收到货 + 两个占位页');
+    ['purchase-orders', 'purchase-supplier-money'], '采购入口只剩两个占位页（验收入口已删）');
   const purchaseFormHrefs = purchase.pages.flatMap((page) => (page.cards || []).map((card) => card.href));
   assert.equal(purchaseFormHrefs.includes(links.PURCHASE_REQUEST_FORM_URL), false, '死链的报货表单不再是入口');
   assert.equal(purchaseFormHrefs.includes(links.PURCHASE_RETURN_FORM_URL), false, '死链的退货表单不再是入口');
@@ -859,7 +884,7 @@ test('AC7 既有扫码页 / 标签打印的用例文件都在，且它们钉住�
 // AC8 三个占位页统一「待建设」
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC8 三个占位页统一写「待建设」：客户往来款 / 采购订单列表 / 供应商往来款', async () => {
+test('AC8 三个占位页统一写「待建设」：客户往来款 / 订单列表 / 供应商往来款', async () => {
   const modules = loadFrontendModules();
   const [domains, nav, placeholder] = await Promise.all([
     modules.domains, modules.domainNav, modules.placeholder,
@@ -871,7 +896,8 @@ test('AC8 三个占位页统一写「待建设」：客户往来款 / 采购订�
     byId.get('purchase').pages.find((page) => page.id === 'purchase-supplier-money'),
   ];
   assert.equal(placeholder.PLACEHOLDER_STATUS, '待建设', '占位页统一那一句 = 「待建设」');
-  assert.deepEqual(pages.map((page) => page.label), ['客户往来款', '采购订单列表', '供应商往来款']);
+  // ⚠️ 2026-10-12 改写：中间那个占位页按她口径改名「订单列表」（原名「采购订单列表」）。
+  assert.deepEqual(pages.map((page) => page.label), ['客户往来款', '订单列表', '供应商往来款']);
 
   for (const page of pages) {
     const html = nav.domainPageHtml(page);
@@ -888,13 +914,13 @@ test('AC8 三个占位页统一写「待建设」：客户往来款 / 采购订�
     assert.ok(!/<table/i.test(html), `${page.label} 不许用表格`);
     assert.ok(!/min-width:\s*\d{3,}px/.test(html), `${page.label} 不许内联超宽固定宽度`);
   }
-  // 采购订单列表 = 她说的"占位页"：连「将来放 AI 页面」那句也删掉了（口径 2026-10-10 收紧）
+  // 那个占位页（现名「订单列表」，原名「采购订单列表」）：连「将来放 AI 页面」那句也删掉了（口径 2026-10-10 收紧）
   assert.ok(!/AI 页面/.test(nav.domainPageHtml(pages[1])), '占位页只留「待建设」，不再写将来放什么');
   // 子 tab 上也能点得到这三个占位页
   const salesTabs = nav.domainSubTabsHtml(byId.get('sales'));
   assert.ok(salesTabs.includes('>客户往来款</button>'));
   const purchaseTabs = nav.domainSubTabsHtml(byId.get('purchase'));
-  assert.ok(purchaseTabs.includes('>采购订单列表</button>') && purchaseTabs.includes('>供应商往来款</button>'));
+  assert.ok(purchaseTabs.includes('>订单列表</button>') && purchaseTabs.includes('>供应商往来款</button>'));
   // 占位页的 kind 是配置驱动的（渲染层认不出来时不留白屏）
   assert.equal(nav.domainPageHtml({ id: 'x', kind: 'unknown-kind', label: 'x' }), '');
 
@@ -908,15 +934,23 @@ test('AC8 三个占位页统一写「待建设」：客户往来款 / 采购订�
 // AC9 「验收到货」= **独立子页**（不再是本页锚点 / 内嵌）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC9 「验收到货」是独立子页（既有 orders 的 purchase 模式挂在它自己的 host 上）', async () => {
+test('AC9 「验收到货」入口已删（2026-10-12）；但验收链路与 kind:orders 机制保留', async () => {
   const modules = loadFrontendModules();
   const [domains, nav] = await Promise.all([modules.domains, modules.domainNav]);
   const purchase = domains.domainById('purchase');
-  const arrival = purchase.pages.find((page) => page.id === 'purchase-arrival');
 
-  // ① 配置：验收**自己就是一页**（模块 / 模式写在它自己的配置里）
-  assert.equal(arrival.kind, 'orders', '验收 = 独立子页（kind: orders）');
-  assert.equal(arrival.mode, 'purchase', '用既有订单模块的 purchase 模式（配置先行）');
+  // ⚠️ 2026-10-12 断言**改写**（她的原话：「采购里面的验收到货也不需要了，因为验收到货我们在扫码页也做了」）：
+  //    改前（逐字）：`const arrival = purchase.pages.find(p => p.id === 'purchase-arrival');`
+  //      ＋ `assert.equal(arrival.kind,'orders')` / `assert.equal(arrival.mode,'purchase')`。
+  //    改后（逐字）：下面这几条 —— **入口不在配置里**，但验收台代码与接口**保留**
+  //      （`features/orders` 的 purchase 模式 ＋ `POST /api/workbench/purchase/arrivals/confirm`；
+  //       扫码验收 / 群话题核对共用 ⇒ **删入口不删链路**）。
+  //    理由：她把工作台那个入口撤了（扫码页已做验收），链路本身是共用的、一条不删。
+  const arrival = purchase.pages.find((page) => page.id === 'purchase-arrival');
+  assert.equal(arrival, undefined, '「验收到货」入口已删（扫码页已做验收）');
+  assert.ok(readWorkbench('features/orders/index.js').includes('verify-arrival'), '验收台代码保留（既有模块）');
+  assert.ok(readWorkbench('config/orders.js').includes('/api/workbench/purchase/arrivals/confirm'),
+    '验收接口的地址配置保留（删入口不删链路）');
   // ⚠️ 2026-10-10 断言翻转（业务负责人真机反馈：「不应该是一点完之后在同一个 tab 页里下面出现」）：
   //    原先这里钉着"报货页里有锚点卡 + 内嵌验收块"；现在两者**都必须不存在**。
   // ⚠️ 2026-10-11 断言**改写**（同 ⑤：报货页从飞书表单外链改成扫码入口）：
@@ -931,9 +965,11 @@ test('AC9 「验收到货」是独立子页（既有 orders 的 purchase 模式�
     assert.equal(page.anchor, undefined, `${page.id} 不许有本页锚点`);
     assert.equal((page.cards || []).some((card) => card.anchor), false, `${page.id} 不许有锚点卡`);
   }
-  assert.equal(nav.domainPageHtml(arrival).includes('id="purchase-arrival"'), false,
-    '锚点目标不该再存在（验收已经是另一个子页）');
-  assert.equal(nav.domainPageHtml(arrival).includes('data-embed-host'), false, '内嵌宿主不该再存在');
+  for (const page of purchase.pages) {
+    assert.equal(nav.domainPageHtml(page).includes('id="purchase-arrival"'), false,
+      '锚点目标不该再存在（验收入口已撤）');
+    assert.equal(nav.domainPageHtml(page).includes('data-embed-host'), false, '内嵌宿主不该再存在');
+  }
 
   // ② 渲染层：`kind: 'orders'` 走既有的"独立页"分支，把既有模块挂进它自己的 host
   //    （**一行新验收逻辑都没有**）
@@ -950,8 +986,12 @@ test('AC9 「验收到货」是独立子页（既有 orders 的 purchase 模式�
   }
   assert.match(readWorkbench('config/orders.js'), /arrivalConfirm: '\/api\/workbench\/purchase\/arrivals\/confirm'/);
 
-  // ④ 采购订单列表那一页**不挂**订单模块（她说的"占位页"）；挂订单模块的只有验收那一页
+  // ⚠️ 2026-10-12 改写：改前断言"采购里只有「验收到货」是独立订单页"。
+  //    那个入口已按她口径删除 ⇒ 现在**采购 tab 下一个 orders 页都没有**；
+  //    但 `kind:'orders'` 这条机制与既有模块**都保留**（销售「订单列表」还在用它）。
   assert.equal(purchase.pages.find((page) => page.id === 'purchase-orders').kind, 'placeholder');
-  assert.deepEqual(purchase.pages.filter((page) => page.kind === 'orders').map((page) => page.id),
-    ['purchase-arrival'], '采购里只有「验收到货」是独立订单页');
+  assert.deepEqual(purchase.pages.filter((page) => page.kind === 'orders').map((page) => page.id), [],
+    '采购里已没有订单模块页（验收入口删了；模块与 kind:orders 机制保留）');
+  assert.equal(domains.domainById('sales').pages.filter((page) => page.kind === 'orders').length, 1,
+    'kind:orders 机制仍在用（销售 · 订单列表）');
 });
