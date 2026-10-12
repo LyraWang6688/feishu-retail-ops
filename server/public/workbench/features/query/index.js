@@ -1,3 +1,9 @@
+import {
+  FEISHU_APPLINK_WEB_URL_OPEN,
+  LINK_APPLINK_ENABLED,
+  LINK_APPLINK_MODE,
+  LINK_DIRECT_JUMP_ENABLED,
+} from '../../config/links.js';
 import { QUERY_SECTIONS } from '../../config/query.js';
 import { escapeHtml } from '../../core/formatters.js';
 
@@ -19,12 +25,49 @@ import { escapeHtml } from '../../core/formatters.js';
 // ⚠️ 外链**同窗口跳转**（与「报货与退货」那张卡同一个风格，故意不加 `target="_blank"`）：
 //    她实际是在手机上、多半是飞书内置浏览器里打开工作台，新窗口体验差、还可能被拦。
 //    `rel="noopener"` 保底。
+//
+// ⭐⭐ 2026-10-12（业务负责人）：「点击了『销售查询』这个按钮之后，**系统可以直接自动跳转**……
+//    **不需要让我再去点一下那个消息查询的卡片**」⇒ 两个查询子 tab 改成**点一次就到**：
+//    跳转目标由 `buildQueryJumpUrl()` 拼（`config/query.js` 的 `QUERY_DIRECT_JUMP_ENABLED` /
+//    `QUERY_JUMP_TARGET` 决定"直跳 or 老路卡片"、以及走普通跳转还是飞书端内 AppLink）；
+//    **直跳时这一页不渲染卡片**（见 `features/domains/nav.js` 的 `domainPageHtml`）。
+//    本文件仍**没有任何网络调用**，跳转只是 `window.location.assign` 一次。
 
 /** 还没配 URL 时卡面显示的文案（配置为空值时**明确**告诉用户，而不是点了没反应）。 */
 export const LINK_PENDING_TEXT = '链接待配置';
 
 /** 这个板块配了可用的外链吗？—— 空串 / 空值一律算「没配」。 */
-const hasLink = (href) => typeof href === 'string' && href.trim() !== '';
+export const hasLink = (href) => typeof href === 'string' && href.trim() !== '';
+
+/**
+ * ⭐ 2026-10-12：**点一次就到**（业务负责人：「不需要让我再去点一下那个消息查询的卡片」）。
+ * 三个子页面共用这一套装配（销售查询 / 全仓查询 / 货品上新），值都在 `config/links.js`。
+ *
+ * 直跳开着吗？—— 只看**显式 `true`**（不认 truthy 兜底：`0` / `'true'` / 没配一律算关）。
+ * `options` 是显式覆盖（测试 / 将来注入用），不传就用配置。
+ */
+export const directJumpEnabled = (options = {}) => (options.enabled ?? LINK_DIRECT_JUMP_ENABLED) === true;
+
+/** 走飞书**端内 AppLink** 吗？—— 同样只看显式 `true`；`false` = **一键回落**普通跳转（乙 → 甲）。 */
+export const applinkEnabled = (options = {}) => (options.applinkEnabled ?? LINK_APPLINK_ENABLED) === true;
+
+/**
+ * 一次点击该去哪个 URL —— **纯函数**（配置可注入，便于测试两条路）。
+ *
+ * ⚠️ **空 href 一律返回 `''`**（`''` / 纯空白 / 非字符串都算没配）⇒ 调用方**不跳**、
+ *    回落到"不可点的卡 + 「链接待配置」"那条路 ⇒ **绝不产生空 href / 死链**。
+ *
+ * ⚠️ **URL 一个字都不加工**：回落路（`LINK_APPLINK_ENABLED = false`）原样返回她配的那条
+ *    （与现有卡片同一条导航，同窗口）；走 AppLink 时按 AGENTS §13 组装 ——
+ *    `url` 必须 `encodeURIComponent`（官方文档明确要求）。
+ */
+export function buildDirectJumpUrl(href, options = {}) {
+  const url = hasLink(href) ? String(href).trim() : '';
+  if (!url) return '';
+  if (!applinkEnabled(options)) return url;
+  const mode = options.appLinkMode ?? LINK_APPLINK_MODE;
+  return `${FEISHU_APPLINK_WEB_URL_OPEN}?mode=${encodeURIComponent(mode)}&url=${encodeURIComponent(url)}`;
+}
 
 /**
  * 一张卡的卡体（与 `features/common/index.js` 的卡长得一样，复用 `styles/base.css` 的类）。

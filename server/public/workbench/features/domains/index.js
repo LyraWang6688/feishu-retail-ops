@@ -4,17 +4,21 @@ import { showPageError } from '../../core/ui.js';
 import { createInventoryAdjustmentModule } from '../inventory/adjustment.js';
 import { createOrdersModule } from '../orders/index.js';
 import { entryTarget } from './pages.js';
-import { domainPageHtml, domainSubTabsHtml } from './nav.js';
+import { domainPageHtml, domainSubTabsHtml, resolveTabClick } from './nav.js';
 
 /**
  * ⭐⭐ 工作台**领域 tab** 的骨架（业务负责人 2026-10-09 定的最终结构）。
  *
  * 一个领域 = 一个一级 tab = **若干子页面**（清单在 `config/domains.js`，本文件只负责画与切换）：
  *   | Tab  | 子页面                                                        |
- *   | 销售 | 销售建单 · 订单列表 · 销售查询                                 |
- *   | 库存 | 单款查询 · 全仓查询 · 手工调整                                 |
- *   | 采购 | 报货 · 验收到货（独立页）· 退货 · 采购订单列表                 |
- *   | 货品 | 货品上新 · 标签打印（单个 / 批量）                             |
+ *   | 销售 | 订单列表 · 销售查询（直跳）· 客户往来款（占位）                  |
+ *   | 库存 | 全仓查询（直跳）· 手工调整                                     |
+ *   | 采购 | 订单列表（占位）· 供应商往来款（占位）                            |
+ *   | 货品 | 货品上新（直跳）· 标签打印                                     |
+ *   ⚠️ **2026-10-12**（业务负责人）：① 销售不再有「销售建单」、库存不再有「单款查询」、
+ *      采购不再有「验收到货」——**都是只删工作台入口**，后端链路一条没删
+ *      （见 `config/domains.js` 里各自的注释）；② 「销售查询 / 全仓查询 / 货品上新」
+ *      **点一次就到**她配的外链（下面的点击处理 + `nav.js` 的 `resolveTabClick`）。
  *
  * ⚠️ **一个字节的业务逻辑都不在这里**：每个子页面要么是**既有模块**（订单列表 / 库存手工调整 /
  *    查询外链卡），要么是一个"把编号交给既有页面"的小入口（见 `pages.js`）——
@@ -72,8 +76,16 @@ export function createDomainModule(domainId) {
 
       container.addEventListener('click', (event) => {
         const tab = event.target.closest('[data-domain-page]');
-        if (tab) return activate(tab.dataset.domainPage);
-        // 「跳到本 tab 里的另一个子页」（例：采购 → 验收 → 采购订单列表）
+        if (tab) {
+          const page = domain.pages.find((item) => item.id === tab.dataset.domainPage) || domain.pages[0];
+          // ⭐ 2026-10-12（业务负责人）：「点击了『销售查询』这个按钮之后，**系统可以直接自动跳转**……
+          //    **不需要让我再去点一下那个消息查询的卡片**」⇒ 配了 `directJump` 的子 tab **一次点击就跳走**
+          //    （目标 URL 全部来自配置；空 href 不产生目标 ⇒ 回落到切页 + 不可点卡片，没有死链）。
+          const action = resolveTabClick(page);
+          if (action.jump) return void window.location.assign(action.jump);
+          return activate(action.activate);
+        }
+        // 「跳到本 tab 里的另一个子页」（由 `data-jump` 卡片触发的老路，机制保留）
         const jump = event.target.closest('[data-jump]');
         if (jump) return activate(jump.dataset.jump);
         return undefined;

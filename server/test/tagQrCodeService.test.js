@@ -68,7 +68,8 @@ const eventsOf = (lines) => lines.map((line) => {
  * `uploadAttachment` 会**在临时文件还在的时候**把字节数读出来（顺便证明"真出了图"），
  * 并把路径留档，供用例断言"跑完临时目录被清掉了"。
  */
-const fakeGateway = ({ records = {}, fieldId = NUMBER_FIELD_ID } = {}) => {
+const SOURCE_FIELD_IDS = Object.freeze({ itemNo: 'fld_item_no', color: 'fld_color', category: 'fld_category' });
+const fakeGateway = ({ records = {}, fieldId = NUMBER_FIELD_ID, sourceIds = SOURCE_FIELD_IDS } = {}) => {
   const calls = { get: [], update: [], uploads: [], listFields: 0, listAll: 0 };
   const timeline = [];
   return {
@@ -76,7 +77,12 @@ const fakeGateway = ({ records = {}, fieldId = NUMBER_FIELD_ID } = {}) => {
     timeline,
     async listFields(tableKey) {
       calls.listFields += 1;
-      return [{ field_id: fieldId, field_name: F.number, type: 1 }];
+      return [
+        { field_id: fieldId, field_name: F.number, type: 20 },
+        { field_id: sourceIds.itemNo, field_name: F.itemNo, type: 1 },
+        { field_id: sourceIds.color, field_name: F.color, type: 18 },
+        { field_id: sourceIds.category, field_name: F.category, type: 3 },
+      ];
     },
     // 整表读（**只读**）：巡调用。返回形状与 `V1BitableGateway.listAll` 一致（`{record_id, fields}`）。
     async listAll(tableKey) {
@@ -107,11 +113,16 @@ const fakeGateway = ({ records = {}, fieldId = NUMBER_FIELD_ID } = {}) => {
   };
 };
 
-const recordWith = ({ number, tagQrCode }) => ({
+const recordWith = ({ number, tagQrCode, itemNo, color, category, ...rest }) => ({
   record_id: 'rec',
   fields: {
     ...(number === undefined ? {} : { [F.number]: number }),
     ...(tagQrCode === undefined ? {} : { [F.tagQrCode]: tagQrCode }),
+    // ⭐ 2026-10-12：源字段（判据改成"看货号/颜色/类别"之后，夹具要能造它们）
+    ...(itemNo === undefined ? {} : { [F.itemNo]: itemNo }),
+    ...(color === undefined ? {} : { [F.color]: color }),
+    ...(category === undefined ? {} : { [F.category]: category }),
+    ...rest,
   },
 });
 
@@ -1147,4 +1158,190 @@ test('AC-QR-RECHECK-3 ⭐ 配置先行：延迟复核可配（显式布尔 + 数
     '延迟小于 5 秒 ⇒ 当场抛（公式列都还没算完，等于白核）');
   assert.ok(RECHECK_DEFAULTS.delayMs >= 30000 && RECHECK_DEFAULTS.delayMs <= 90000,
     '默认延迟落在实测合适的 30~90 秒');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 【2026-10-12 业务负责人提的判据】别只盯公式列的「编号」—— 直接看**货号/颜色/类别**
+//   为什么对：「编号」是**公式列 ⇒ 有延迟**（实测几秒~十几秒）；
+//             货号/颜色/类别是**源字段**，事件里拿到就是新值 ⇒ 更快更准 ✓
+//   她表里「编号」公式（2026-10-12 只读核过）：货号 & "|" & 颜色 & "|" & 类别
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** 造一条"事件里改了某个源字段"的 action（公式列的值**故意留旧值**，模拟延迟）。 */
+const sourceEditAction = ({ action = 'record_edited', itemNo, color, category, formulaOld, formulaNew }) => ({
+  record_id: 'rec1',
+  action,
+  before_value: [
+    { field_id: SOURCE_FIELD_IDS.itemNo, field_value: itemNo.before },
+    { field_id: SOURCE_FIELD_IDS.color, field_value: color.before },
+    { field_id: SOURCE_FIELD_IDS.category, field_value: category.before },
+    { field_id: NUMBER_FIELD_ID, field_value: formulaOld },
+  ],
+  after_value: [
+    { field_id: SOURCE_FIELD_IDS.itemNo, field_value: itemNo.after },
+    { field_id: SOURCE_FIELD_IDS.color, field_value: color.after },
+    { field_id: SOURCE_FIELD_IDS.category, field_value: category.after },
+    { field_id: NUMBER_FIELD_ID, field_value: formulaNew },
+  ],
+});
+
+test('AC-QR-SRC-1 ⭐⭐ 改**货号** ⇒ 事件那一刻就判"变了"并写回**新码**（公式列还停在旧值也要写）', async () => {
+  // 真机形状：她 12:13 改了货号；事件到达时公式列还是旧编号（`832-372-6H`
+  // 记录里的编号列在**读记录那一刻**也还是旧值（公式延迟）—— 但货号已经是新的 ✓
+  const gateway = fakeGateway({
+    records: {
+      rec1: recordWith({
+        number: '832-372-6H|棕色|A', // ⚠️ 公式列**旧值**（延迟）
+        itemNo: '832-372-6', color: '棕色', category: 'A',
+        tagQrCode: [{ file_token: 'old', name: 'tag-qr-832-372-6H_棕色_A.png' }],
+      }),
+    },
+  });
+  const service = serviceFor(gateway);
+  let outcome = null;
+  const lines = await captureLogs(async () => {
+    const result = await service.handleTableChanges([sourceEditAction({
+      itemNo: { before: '832-372-6H', after: '832-372-6' },
+      color: { before: '棕色', after: '棕色' },
+      category: { before: 'A', after: 'A' },
+      formulaOld: '832-372-6H|棕色|A',
+      formulaNew: '832-372-6H|棕色|A', // 公式列**没变**（还没算完）
+    })]);
+    outcome = result.results[0];
+    assert.equal(outcome.status, 'written',
+      `改货号必须立刻写回（实际 ${JSON.stringify(outcome)}）—— 公式列延迟不该拖住我们`);
+  });
+  // ⭐ 写回的必须是**新编号**的码（拼装值兜底，因为公式列还停在旧值）
+  assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-832-372-6_棕色_A.png');
+  assert.equal(outcome.scan_url, 'https://hm.bamamei.online/s/832-372-6%7C%E6%A3%95%E8%89%B2%7CA');
+  assert.equal(outcome.number_source, 'assembled_formula_stale');
+  const events = lines.map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
+  assert.equal(events.find((e) => e.event === 'product.tag_qr.change_criteria')?.used, 'source_fields',
+    '判据要走**源字段**那一路（不是公式列）');
+  assert.equal(outcome.number_source, 'assembled_formula_stale', '公式列明显滞后 ⇒ 用拼装值');
+  assert.ok(events.some((e) => e.event === 'product.tag_qr.number_mismatch'), '两份值不一致要记 warn');
+});
+
+test('AC-QR-SRC-2 ⭐ 改**颜色** ⇒ 同样立刻更新（源字段判据）', async () => {
+  const gateway = fakeGateway({
+    records: {
+      rec1: recordWith({
+        number: 'XHB8095|棕色|A',
+        itemNo: 'XHB8095', color: '黑色', category: 'A',
+        tagQrCode: [{ file_token: 'o', name: 'tag-qr-XHB8095_棕色_A.png' }],
+      }),
+    },
+  });
+  const result = await serviceFor(gateway).handleTableChanges([sourceEditAction({
+    itemNo: { before: 'XHB8095', after: 'XHB8095' },
+    color: { before: '棕色', after: '黑色' },
+    category: { before: 'A', after: 'A' },
+    formulaOld: 'XHB8095|棕色|A',
+    formulaNew: 'XHB8095|棕色|A',
+  })]);
+  assert.equal(result.results[0].status, 'written');
+  assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-XHB8095_黑色_A.png');
+});
+
+test('AC-QR-SRC-3 ⭐ 改**类别** ⇒ 同样立刻更新', async () => {
+  const gateway = fakeGateway({
+    records: {
+      rec1: recordWith({
+        number: 'XHB8095|棕色|A',
+        itemNo: 'XHB8095', color: '棕色', category: 'B',
+        tagQrCode: [{ file_token: 'o', name: 'tag-qr-XHB8095_棕色_A.png' }],
+      }),
+    },
+  });
+  const result = await serviceFor(gateway).handleTableChanges([sourceEditAction({
+    itemNo: { before: 'XHB8095', after: 'XHB8095' },
+    color: { before: '棕色', after: '棕色' },
+    category: { before: 'A', after: 'B' },
+    formulaOld: 'XHB8095|棕色|A',
+    formulaNew: 'XHB8095|棕色|A',
+  })]);
+  assert.equal(result.results[0].status, 'written');
+  assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-XHB8095_棕色_B.png');
+});
+
+test('AC-QR-SRC-4 ⭐ 公式列**读不出/为空** ⇒ 用源字段拼装兜底，码仍然正确', async () => {
+  const gateway = fakeGateway({
+    records: { rec1: recordWith({ number: '', itemNo: 'XHB8095', color: '棕色', category: 'A', tagQrCode: [] }) },
+  });
+  const service = serviceFor(gateway);
+  assert.equal(service.assembleNumber({ [F.itemNo]: 'XHB8095', [F.color]: '棕色', [F.category]: 'A' }),
+    'XHB8095|棕色|A', '拼装规则必须与她公式逐字一致（货号|颜色|类别）');
+  assert.equal(service.assembleNumber({ [F.itemNo]: 'XHB8095', [F.color]: '', [F.category]: 'A' }), '',
+    '任一源字段为空 ⇒ 拼不出（不硬凑 `a||c` 这种公式不会产出的串）');
+  const result = await service.handleTableChanges([sourceEditAction({
+    itemNo: { before: 'XHB8095', after: 'XHB8095' },
+    color: { before: '棕色', after: '棕色' },
+    category: { before: 'A', after: 'A' },
+    formulaOld: '', formulaNew: '',
+  })]);
+  assert.equal(result.results[0].number_source, 'assembled_fallback');
+  const written = await service.syncRecord('rec1', { reason: 'manual' });
+  assert.equal(written.file_name, 'tag-qr-XHB8095_棕色_A.png');
+});
+
+test('AC-QR-SRC-5 ⭐ 公式值 ≠ 拼装值 ⇒ 记 warn；公式**不滞后**时以**公式值**为准', async () => {
+  const gateway = fakeGateway({
+    records: {
+      rec1: recordWith({
+        // 公式值（`…|B`）与源字段拼装值（`…|A`）不一致，且**不等于现存附件的编号** ⇒ 不算滞后
+        number: 'XHB8095|棕色|B',
+        itemNo: 'XHB8095', color: '棕色', category: 'A',
+        tagQrCode: [{ file_token: 'o', name: 'tag-qr-XHB8095_棕色_C.png' }],
+      }),
+    },
+  });
+  const service = serviceFor(gateway);
+  const lines = await captureLogs(async () => {
+    await service.syncRecord('rec1', { reason: 'manual' });
+  });
+  const events = lines.map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
+  const warn = events.find((e) => e.event === 'product.tag_qr.number_mismatch');
+  assert.ok(warn, '不一致必须记 warn');
+  assert.equal(warn.formula_number, 'XHB8095|棕色|B');
+  assert.equal(warn.assembled_number, 'XHB8095|棕色|A');
+  assert.equal(warn.formula_looks_stale, false);
+  assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-XHB8095_棕色_B.png',
+    '⚠️ 不滞后时以**公式值**为准（保证与扫码页的键一致）');
+  // 纯函数层面也钉一下四种取舍
+  // ⚠️ `existingFileNameNumber` 是**文件名形态**（`numberFromFileName` 的结果：`|` → `_`）
+  const pick = (formulaNumber, assembledNumber, existingFileNameNumber) =>
+    service.resolveQrNumber({ formulaNumber, assembledNumber, existingFileNameNumber, recordId: 'r' }).source;
+  assert.equal(pick('a|b|c', 'a|b|c', ''), 'both_agree');
+  assert.equal(pick('', 'a|b|c', ''), 'assembled_fallback');
+  assert.equal(pick('a|b|c', '', ''), 'formula_only');
+  assert.equal(pick('old|x|y', 'new|x|y', 'old_x_y'), 'assembled_formula_stale');
+  assert.equal(pick('other|x|y', 'new|x|y', 'again_x_y'), 'formula_mismatch');
+});
+
+test('AC-QR-SRC-6 ⭐ 幂等：三个源字段都没变 ⇒ 不写（且判据走源字段那一路）', async () => {
+  const current = 'XHB8095|棕色|A';
+  const gateway = fakeGateway({
+    records: {
+      rec1: recordWith({
+        number: current, itemNo: 'XHB8095', color: '棕色', category: 'A',
+        tagQrCode: [{ file_token: 'ok', name: buildFileName(current) }],
+      }),
+    },
+  });
+  const lines = await captureLogs(async () => {
+    const result = await serviceFor(gateway).handleTableChanges([sourceEditAction({
+      itemNo: { before: 'XHB8095', after: 'XHB8095' },
+      color: { before: '棕色', after: '棕色' },
+      category: { before: 'A', after: 'A' },
+      formulaOld: current, formulaNew: current,
+    })]);
+    // ⚠️ 事件那一路（源字段明确判"没变"）记的是 `number_unchanged`；
+    //    `already_present` 是"脚本/新增"那一路的幂等档（见 `syncRecord` 的注释）。
+    assert.deepEqual([result.results[0].status, result.results[0].reason], ['skipped', 'number_unchanged']);
+  });
+  assert.deepEqual(gateway.calls.uploads, [], '没变就不许重传');
+  const events = lines.map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
+  const criteria = events.find((e) => e.event === 'product.tag_qr.change_criteria');
+  assert.equal(criteria.source_changed, false, '源字段那一路要明确判"没变"');
+  assert.equal(criteria.used, 'source_fields');
 });

@@ -44,6 +44,7 @@ const sharp = require('sharp');
 const QRCode = require('qrcode');
 
 const { textValue } = require('./v1BitableGateway');
+const { logWarn } = require('../utils/logger');
 
 /** CJK 字体候选链（与 `purchaseRequestImageService.js` 同一套；顺序即优先级）。 */
 const FONT_FAMILY = 'Noto Sans CJK SC, Noto Sans SC, WenQuanYi Zen Hei, PingFang SC, sans-serif';
@@ -225,6 +226,31 @@ const planItemNoColor = (label, layout, options = {}) => {
  *    没设 `leftPaddingMm` 时行为**一个字节都不变**。
  * ⚠️ 恒等式必须成立：`左留白 + 二维码列 + 信息栏 + 右留白 = 页宽`（信息栏吃剩下的）。
  */
+/**
+ * ⭐ **行序可配**（`artifact.rows`）：只认已知的行 id；**不传 = 用默认行序**；非法/重复当场抛。
+ *
+ * 为什么加它（业务负责人 2026-10-12 提的新排法）：
+ *   现在"最宽那一行"是 **货号+颜色**——它把信息栏塞满 ⇒ **右移安全量只剩右留白 1.5mm** ✗。
+ *   拆成 **货号独占一行 · 颜色+市价同一行** ⇒ 最宽那行变窄 ⇒ 右边腾出空间 ⇒ 能继续右移 ✓。
+ * ⚠️ 这是"候选版式"的入口：**默认 null ⇒ 老版式逐字节不变**（有回归 AC 钉着）。
+ */
+const ROW_IDS = Object.freeze(['brand', 'itemNoColor', 'itemNo', 'color', 'colorPrice', 'price', 'state', 'sizes']);
+const normalizeRows = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  if (!Array.isArray(value) || !value.length) {
+    throw new Error('行序（rows）必须是非空数组，例如 ["brand","itemNo","colorPrice","sizes"]（不传 = 用默认行序）');
+  }
+  const seen = new Set();
+  for (const id of value) {
+    if (!ROW_IDS.includes(id)) {
+      throw new Error(`行序（rows）里有不认识的行「${id}」—— 可选：${ROW_IDS.join(' / ')}`);
+    }
+    if (seen.has(id)) throw new Error(`行序（rows）里「${id}」重复了（同一行只能出现一次）`);
+    seen.add(id);
+  }
+  return [...value];
+};
+
 const resolveLeftPaddingMm = (layout, options = {}) => {
   const label = layout?.label || {};
   const fallback = num(label.paddingMm, 1.5);
@@ -242,6 +268,68 @@ const resolveLeftPaddingMm = (layout, options = {}) => {
 };
 
 /**
+ * ⭐⭐ **量一条标签的"垂直布局"**（她问的那件事：能不能随行数动态居中）。
+ * 返回 `{main_top_mm, main_bottom_mm, main_h_mm, content_total_h_mm, content_top_mm,
+ *       content_center_mm, qr_center_mm, main_center_mm, overflows, rows}`。
+ * ⚠️ 走的就是 `labelSvg` 自己那条路（回填 `options.measure`）—— **不另写一套公式**，不会漂移。
+ */
+const measureVerticalLayout = (label, layout, options = {}) => {
+  const measure = {};
+  labelSvg(label, layout, { ...options, measure });
+  return measure;
+};
+
+/**
+ * ⭐ **信息栏每一行的"设计宽度"**（mm）—— 用我们自己的字宽表算，**不经过字体度量/光栅化**
+ * ⇒ 可以拿来做"会不会被裁"的判据（跨环境一致）。
+ * ⚠️ `itemNoColor`（老版式那行）**会被压到栏宽以内**（规划器会把字号缩到刚好放得下）
+ *    ⇒ 它的有效宽度 = `min(算出宽度, 栏宽)`。
+ */
+const rowWidthsMm = (layout, options = {}, label = {}) => {
+  const body = layout.body || {};
+  const typography = layout.typography || {};
+  const column = availableWidthMm(layout, options);
+  const plan = planItemNoColor(label, layout, options);
+  const em = body.itemNoColor?.widthEm || {};
+  const emW = (text, sizeMm) => (text ? textWidthMm(String(text), sizeMm, em) : 0);
+  const itemNoW = plan.soloItemNoLines?.length > 1
+    ? Math.max(...plan.soloItemNoLines.map((line) => emW(line, plan.soloItemNoWrapSizeMm)))
+    : emW(plan.soloItemNoText, plan.soloItemNoSizeMm);
+  const colorW = emW(plan.colorText, num(typography.fieldMm, 2.8));
+  const priceW = emW(label.price_text, num(typography.priceMm, 3.2));
+  const cpGap = num(body.colorPrice?.gapMm, 1.6);
+  const gapMm = plan.gapMm;
+  // 尺码行：取"最宽那一行"的宽度（含角标与小间距）
+  const sizeMm = num(typography.sizeMm, 2.8);
+  const qtyRatio = num(layout.sizes?.qtyFontRatio, 0.64);
+  const sizeGapMm = num(layout.sizes?.itemGapMm, 1);
+  const sizeLineW = (line) => line.reduce((sum, token) => {
+    const qtyText = String(token?.qty ?? '');
+    return sum + emW(String(token?.size ?? ''), sizeMm)
+      + (qtyText ? emW(qtyText, sizeMm * qtyRatio) : 0) + sizeGapMm;
+  }, 0);
+  const lines = Array.isArray(label.size_lines) ? label.size_lines.filter((line) => line?.length) : [];
+  const sizesW = lines.length ? Math.max(...lines.map(sizeLineW)) : 0;
+  const raw = {
+    itemNo: itemNoW,
+    color: colorW,
+    price: priceW,
+    colorPrice: colorW + (colorW && priceW ? cpGap : 0) + priceW,
+    sizes: sizesW,
+    state: emW(label.state_text, num(typography.fieldMm, 2.8)),
+    itemNoColor: Math.min(emW(plan.itemNoText, plan.itemNoSizeMm) + (plan.colorText ? gapMm : 0) + colorW, column),
+  };
+  const rows = normalizeRows(options.rows) || body.rows || ['brand', 'itemNoColor', 'price', 'state', 'sizes'];
+  const active = rows.filter((id) => raw[id] !== undefined);
+  const widestId = active.reduce((best, id) => (best === null || raw[id] > raw[best] ? id : best), null);
+  return {
+    column, rows: active, widths: raw,
+    widest_id: widestId,
+    widest_mm: widestId ? round(Math.min(raw[widestId], column)) : 0,
+  };
+};
+
+/**
  * ⭐⭐ **整幅右移的安全上限**（`contentOffsetXMm` 最多能设多少不裁边）。
  *
  * 原理（业务负责人 2026-10-12 点透的，一句话记在这里）：
@@ -251,12 +339,28 @@ const resolveLeftPaddingMm = (layout, options = {}) => {
  * ⚠️ 判据用**设计值**（信息栏的右端 = 页宽 − 右留白），不是"文字量出来的宽度" ⇒ 与字体无关。
  * 反向（左移）的余量 = **左留白**（二维码块左边缘 = 左留白）。
  */
-const maxSafeOffsetXMm = (layout, options = {}) => ({
-  // 右移最多这么多毫米（再把最宽那行推到纸边就算裁边）
-  right: num(layout?.label?.paddingMm, 1.5),
-  // 左移最多这么多毫米（再把二维码推到纸边）
-  left: resolveLeftPaddingMm(layout, options),
-});
+const maxSafeOffsetXMm = (layout, options = {}) => {
+  const cut = resolveCutLineMm(layout, options);
+  const right = num(layout?.label?.paddingMm, 1.5);
+  const pageW = num(layout?.label?.widthMm, 40);
+  // ⭐ 2026-10-12：余量 = 右留白 + **最宽那一行没用掉的空间**
+  //   （老版式"货号+颜色"塞满整栏 ⇒ 多出来的空间 = 0 ⇒ 还是 1.5mm；
+  //     新排法把货号拆出来 ⇒ 最宽那行变窄 ⇒ 多出来的空间就变成可右移的余量 ✓）
+  const info = options.label ? rowWidthsMm(layout, options, options.label) : null;
+  const spare = info ? Math.max(0, info.column - info.widest_mm) : 0;
+  return {
+    // 右移最多这么多毫米（再把最宽那行推到纸边就算裁边）
+    right: round(right + cut + spare),
+    // 左移最多这么多毫米（再把二维码推到纸边）
+    left: round(resolveLeftPaddingMm(layout, options) + cut),
+    // 排查用：哪一行最宽、多宽
+    widest_row: info?.widest_id || null,
+    widest_mm: info?.widest_mm ?? null,
+    column_mm: info ? round(info.column) : null,
+    spare_mm: round(spare),
+    page_width_mm: pageW,
+  };
+};
 
 /** 校验内容平移是否在"不裁边"的安全范围内（越界 ⇒ 抛，指字段名 + 给上限）。 */
 const assertSafeOffsetXMm = (offsetMm, layout, options = {}) => {
@@ -625,9 +729,15 @@ function labelSvg(label, layout, options = {}) {
 
   // ── 右栏：行序与每一行的画法都来自 config（`body.rows`）——
   //   ⚠️ **竖版画布不再另排行序**（她要求"保持原构图"）：两档用的是**同一份 `body.rows`**。
-  const rows = Array.isArray(body.rows) && body.rows.length
+  // ⭐⭐ 2026-10-12 候选版式（业务负责人提的）：`artifact.rows` 可以覆盖行序，
+  //   例如 `['brand','itemNo','colorPrice','sizes']` = **货号独占一行 · 颜色+市价同一行 · 尺码区不变**。
+  //   为什么：现在"最宽那一行"是**货号+颜色**（它把信息栏塞满 ⇒ 右移安全量只剩右留白 1.5mm）；
+  //   把它拆开后最宽那行变窄 ⇒ **右边腾出空间** ⇒ 能继续右移（她要的 +2mm 以上）。
+  //   ⚠️ **默认（不传 `artifact.rows`）⇒ 走 `body.rows`，老版式逐字节不变**（有回归 AC 钉着）。
+  //   ⚠️ 只换行序，**不动品牌行/二维码位置/裁切线/外边距/字号**。
+  const rows = normalizeRows(options.rows) || (Array.isArray(body.rows) && body.rows.length
     ? body.rows
-    : ['brand', 'itemNoColor', 'price', 'state', 'sizes'];
+    : ['brand', 'itemNoColor', 'price', 'state', 'sizes']);
   const itemNoMm = num(typography.itemNoMm, 3.6);
   const fieldMm = num(typography.fieldMm, 2.8);
   const priceMm = num(typography.priceMm, 3.2);
@@ -658,6 +768,11 @@ function labelSvg(label, layout, options = {}) {
       return Math.max(1, lines.length) * num(size, itemNoMm) * LINE_HEIGHTS.itemNo;
     }
     if (id === 'color') return fieldMm * LINE_HEIGHTS.color;
+    // ⭐ 颜色 + 市价同一行：行高取两者较大（价钱通常更高一点，视觉上就按它撑行）
+    if (id === 'colorPrice') {
+      return Math.max(fieldMm * LINE_HEIGHTS.color, priceMm * LINE_HEIGHTS.price)
+        * num(body.colorPrice?.rowScale, 1);
+    }
     if (id === 'price') return priceMm * LINE_HEIGHTS.price;
     if (id === 'state') return fieldMm * LINE_HEIGHTS.state;
     if (id === 'sizes') return Math.max(1, sizeLines.length) * sizeMm * LINE_HEIGHTS.sizes;
@@ -671,6 +786,10 @@ function labelSvg(label, layout, options = {}) {
     if (id === 'itemNoColor') return Boolean(itemPlan.itemNoText || itemPlan.colorText);
     if (id === 'itemNo') return Boolean(fields.itemNo) && Boolean(itemPlan.soloItemNoText);
     if (id === 'color') return Boolean(fields.color) && Boolean(itemPlan.colorText);
+    if (id === 'colorPrice') {
+      return (Boolean(fields.color) && Boolean(itemPlan.colorText))
+        || Boolean(fields.price && label.price_text);
+    }
     if (id === 'price') return Boolean(fields.price && label.price_text);
     if (id === 'state') return Boolean(fields.state);
     if (id === 'sizes') return Boolean(fields.size) && sizeLines.length > 0;
@@ -680,6 +799,27 @@ function labelSvg(label, layout, options = {}) {
   });
   const totalH = activeRows.reduce((sum, id) => sum + rowHeight(id), 0);
   let cursor = mainTop + Math.max(0, (mainH - totalH) / 2);
+  // ⭐⭐ 2026-10-12 她问"垂直方向能不能随行数动态居中" —— **一直是动态居中的**：
+  //   二维码 `qrY = mainTop + (mainH - qrMm)/2`；右栏 `cursor = mainTop + (mainH - totalH)/2`
+  //   ⇒ `totalH` 随**货号几行 / 尺码几行**变 ⇒ 行数一变就**重新居中**（中心仍是中段中心）。
+  //   ⚠️ 边界：`totalH > mainH` 时 `Math.max(0, …)` ⇒ **顶部对齐**（放不下时不会跑到纸外面去）。
+  //   这里把量到的数字**回填**给调用方（`options.measure`）—— AC 与样张都读它，避免另写一套公式。
+  if (options.measure) {
+    Object.assign(options.measure, {
+      main_top_mm: round(mainTop),
+      main_bottom_mm: round(mainBottom),
+      main_h_mm: round(mainH),
+      content_total_h_mm: round(totalH),
+      content_top_mm: round(cursor),
+      content_center_mm: round(cursor + totalH / 2),
+      qr_size_mm: round(qrMm),
+      qr_top_mm: round(mainTop + Math.max(0, (mainH - qrMm) / 2)),
+      qr_center_mm: round(mainTop + Math.max(0, (mainH - qrMm) / 2) + qrMm / 2),
+      main_center_mm: round(mainTop + mainH / 2),
+      overflows: totalH > mainH + 1e-9,
+      rows: activeRows,
+    });
+  }
 
   for (const id of activeRows) {
     const h = rowHeight(id);
@@ -695,11 +835,26 @@ function labelSvg(label, layout, options = {}) {
       const lineH = sizeMm * LINE_HEIGHTS.itemNo;
       lines.forEach((line, index) => {
         parts.push(`<text x="${round(rightX)}" y="${round(cursor + lineH * 0.82 + index * lineH)}" `
-          + `font-family="${FONT_FAMILY}" font-size="${round(sizeMm)}">${escapeXml(line)}</text>`);
+          + `font-family="${FONT_FAMILY}" font-size="${round(sizeMm)}" font-weight="800">${escapeXml(line)}</text>`);
       });
     } else if (id === 'color') {
       parts.push(`<text x="${round(rightX)}" y="${round(baseline)}" font-family="${FONT_FAMILY}" `
         + `font-size="${round(fieldMm)}">${escapeXml(itemPlan.colorText)}</text>`);
+    } else if (id === 'colorPrice') {
+      // 颜色 + 市价同一行：颜色在前（普通字重），价钱在后（加粗）；两者之间的间距可配
+      // （`body.colorPrice.gapMm`，默认 1.6mm）—— 价钱**紧跟在颜色后面**，不是右对齐，
+      // 这样"信息栏里从左到右"读起来是一条：颜色 → 价钱 ✓（她口径：「颜色和市价放到同一行」）
+      const cpGap = num(body.colorPrice?.gapMm, 1.6);
+      let x = rightX;
+      if (itemPlan.colorText) {
+        parts.push(`<text x="${round(x)}" y="${round(baseline)}" font-family="${FONT_FAMILY}" `
+          + `font-size="${round(fieldMm)}">${escapeXml(itemPlan.colorText)}</text>`);
+        x += textWidthMm(itemPlan.colorText, fieldMm, body.itemNoColor?.widthEm || {}) + cpGap;
+      }
+      if (label.price_text) {
+        parts.push(`<text x="${round(x)}" y="${round(baseline)}" font-family="${FONT_FAMILY}" `
+          + `font-size="${round(priceMm)}" font-weight="700">${escapeXml(String(label.price_text))}</text>`);
+      }
     } else if (id === 'itemNoColor') {
       let x = rightX;
       if (itemPlan.itemNoText) {
@@ -741,8 +896,9 @@ function labelSvg(label, layout, options = {}) {
   }
 
   // ⭐ 内容整体平移（`artifact.contentOffsetXMm/YMm`）：**只动内容，裁切线留在纸边**。
+  // ⚠️ 安全上限**要按这条记录自己的行宽算**（尺码行宽随尺码个数变）⇒ 把 label 一起传进去
   const offsetX = assertSafeOffsetXMm(
-    normalizeOffsetMm(options.contentOffsetXMm, 'contentOffsetXMm'), layout, options,
+    normalizeOffsetMm(options.contentOffsetXMm, 'contentOffsetXMm'), layout, { ...options, label },
   );
   const offsetY = normalizeOffsetMm(options.contentOffsetYMm, 'contentOffsetYMm');
   const hasCutLine = borderMm > 0;
@@ -901,14 +1057,26 @@ async function renderLabels({ labels, layout, config = {}, logger = null }) {
   const pages = [];
   let pngFirst = null;
   for (const label of list) {
+    // ⚠️ 内容比中段还高 ⇒ 顶部对齐（不会跑到纸外），但要**留下日志**（她那条 AC 要求）
+    const verticalMeasure = {};
     const svg = labelSvg(label, layout, {
+      measure: verticalMeasure,
       dpi, canvas, rotate, rotatePageWithContent,
       contentOffsetXMm: config.contentOffsetXMm,
       contentOffsetYMm: config.contentOffsetYMm,
       leftPaddingMm: config.leftPaddingMm,
       qrSizeMm: config.qrSizeMm,
       cutLineMm: config.cutLineMm,
+      rows: config.rows,
     });
+    if (verticalMeasure.overflows) {
+      logWarn('label.print.vertical_overflow', {
+        label_key: label?.key,
+        content_h_mm: verticalMeasure.content_total_h_mm,
+        main_h_mm: verticalMeasure.main_h_mm,
+        rows: verticalMeasure.rows,
+      });
+    }
     const png = await svgToPng(svg);
     if (!pngFirst) pngFirst = png;
     const jpeg = await pngToJpeg(png, { quality: config.jpegQuality });
@@ -962,6 +1130,7 @@ async function renderLabels({ labels, layout, config = {}, logger = null }) {
       height_pt: mmToPt(page.pageH),
       // ⭐ 左留白（mm；默认 = label.paddingMm ⇒ 对称。可配成"左宽右窄"给她更大的左空档）
       left_padding_mm: resolveLeftPaddingMm(layout, { leftPaddingMm: config.leftPaddingMm }),
+      // ⭐ 垂直居中的证据（她问"能不能随行数动态居中"—— 一直是动态居中的，数字见 `measureVerticalLayout`）
       qr_size_mm: resolveQrSizeMm(layout, { qrSizeMm: config.qrSizeMm }),
       cut_line_mm: resolveCutLineMm(layout, { cutLineMm: config.cutLineMm }),
       // ⭐ 整幅内容在页面内的平移（mm；默认 0 = 左右对称）
@@ -990,6 +1159,10 @@ module.exports = {
   resolveLeftPaddingMm,
   resolveQrSizeMm,
   resolveCutLineMm,
+  normalizeRows,
+  ROW_IDS,
+  rowWidthsMm,
+  measureVerticalLayout,
   maxSafeOffsetXMm,
   assertSafeOffsetXMm,
   canvasGeometry,

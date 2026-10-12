@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>邯美数智经营工作台</title>
+  <title>邯美工作台</title>
   <!-- ⭐ 主题唯一真源 = styles/tokens.css（配色 / 间距 / 圆角 / 字号都在那一个文件里）。 -->
   <link rel="stylesheet" href="/workbench/styles/tokens.css">
   <link rel="stylesheet" href="/workbench/styles/base.css">
@@ -17,10 +17,14 @@
 <body>
   <main class="shell">
     <header class="header">
-      <div>
-        <div class="eyebrow">邯美数智经营工作台</div>
-        <h1>经营管理中心</h1>
-      </div>
+      <!--
+        ⭐ 2026-10-12（业务负责人）：「移动端屏幕本来就小，**去掉后能省出不少空间**」
+        ⇒ 原先这里的**页面主标题块**（品牌小字 ＋ 页面大标题两行）**整块删除**；
+          浏览器 `<title>` 同步缩成「邯美工作台」（手机标签 / 飞书容器标题栏更省空间）。
+        ⚠️ 登录行（登录状态 ＋「退出登录」）与下面四个大 tab **一个字都没动**。
+        ⚠️ 这里**没有**为标题预留的 padding / 固定 height ⇒ 页面其余部分**自然上移**：
+          省下 = 那两行文字的行高 ＋ 标题块与登录行之间那一个 flex gap（移动端 ≈68px）。
+      -->
       <div class="auth">
         <span id="auth-status" class="muted">正在检查飞书登录状态…</span>
         <button id="logout" class="btn btn-ghost hidden" type="button">退出登录</button>
