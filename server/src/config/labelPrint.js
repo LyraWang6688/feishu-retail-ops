@@ -131,6 +131,15 @@ const TYPOGRAPHY = Object.freeze({
  *     ⚠️ **不用 Unicode 下标字符**（`₁` `₂`）——预览里试过，部分字体显示成方框；
  *        角标是**真的 `<span>`**，由 `public/workbench/features/labels/render.js` 画。
  */
+/**
+ * ⭐⭐ **右栏行序的白名单**（唯一真源；`artifact.rows` / `LABEL_PRINT_ROWS` 都按它校验）。
+ * 可选行：见下 —— 「货号+颜色同行」是**老版式**；`itemNo` / `colorPrice` 是**新排法**的拆行。
+ * 默认行序（`body.rows`）**不动** ⇒ 老版式逐字节不变 ✓
+ */
+const ROW_IDS = Object.freeze([
+  'brand', 'itemNoColor', 'itemNo', 'color', 'colorPrice', 'price', 'state', 'sizes',
+]);
+
 const SIZES = Object.freeze({
   perLine: 3,
   // ⭐ 安全上限（不是固定行数）：行数按"内容 + 可用高度"算，上限只兜底。
@@ -389,6 +398,7 @@ const resolveGrid = (config = LABEL_PRINT) => {
 
 module.exports = {
   LABEL_PRINT,
+  ROW_IDS,
   resolveGrid,
   LABEL,
   PAGE,

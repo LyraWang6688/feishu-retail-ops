@@ -1100,3 +1100,54 @@ test('AC-C16-2 ⭐ 回归：11 个尺码 + `rotate=0`（线上那条）⇒ 与�
   assert.equal(plain.meta.scale, 1, 'rotate=0 时 scale 仍是 1（不缩）');
   assert.equal(plain.meta.rotate_ring_limited, undefined, 'rotate=0 不该触发"外圈缩放"');
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 【2026-10-12 她问"颜色和市价放一行，你改了吗？"】新排法**做完了但默认没切** ⇒ 加一个 env 开关：
+//   `LABEL_PRINT_ROWS=brand,itemNo,colorPrice,sizes` ⇒ 一条 env 启用、一条 env 回退 ✓
+//   ⚠️ **未设 = 老版式（逐字节不变）**，白名单唯一真源 = `config/labelPrint.js` 的 `ROW_IDS`
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-C17-1 ⭐⭐ `LABEL_PRINT_ROWS` 解析：未设/空 ⇒ null（老版式）；合法逐字生效；非法/重复当场拒', () => {
+  const { resolveLabelPrintQueueConfig, LABEL_PRINT_QUEUE } = require('../src/config/labelPrintQueue');
+  assert.equal(resolveLabelPrintQueueConfig({}).artifact.rows, null, '未设 ⇒ null（用 body.rows）');
+  assert.equal(resolveLabelPrintQueueConfig({ LABEL_PRINT_ROWS: '' }).artifact.rows, null, '空串 ⇒ null');
+  assert.equal(LABEL_PRINT_QUEUE.artifact.rows, null, '默认值本身必须是 null（不许偷偷切版式）');
+  assert.deepEqual(
+    resolveLabelPrintQueueConfig({ LABEL_PRINT_ROWS: 'brand,itemNo,colorPrice,sizes' }).artifact.rows,
+    ['brand', 'itemNo', 'colorPrice', 'sizes'],
+  );
+  assert.deepEqual(resolveLabelPrintQueueConfig({ LABEL_PRINT_ROWS: 'brand，itemNo；colorPrice sizes' }).artifact.rows,
+    ['brand', 'itemNo', 'colorPrice', 'sizes'], '中英文逗号/分号/空白都算分隔符');
+  assert.throws(() => resolveLabelPrintQueueConfig({ LABEL_PRINT_ROWS: 'brand,nope' }), /LABEL_PRINT_ROWS/,
+    '不在白名单 ⇒ 拒并指出字段名');
+  assert.throws(() => resolveLabelPrintQueueConfig({ LABEL_PRINT_ROWS: 'brand,brand' }), /重复/,
+    '重复 ⇒ 拒（不是静默去重）');
+});
+
+test('AC-C17-2 ⭐⭐ 未设 ⇒ 与现状**逐字节一致**；设了 ⇒ 行序与 maxSafe(4.364mm) 逐字生效', async () => {
+  const { resolveLabelPrintQueueConfig } = require('../src/config/labelPrintQueue');
+  const lab = newLayoutLabel();
+  const baseCfg = { dpi: 203, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0 };
+  // ① 未设：拿 env 解析结果（rows: null）渲染 ⇒ 与"不传 rows"完全一样（老版式）
+  const unset = await artifact.renderLabels({
+    labels: [lab], layout: layout(),
+    config: { ...baseCfg, ...resolveLabelPrintQueueConfig({}).artifact },
+  });
+  const old = await artifact.renderLabels({ labels: [lab], layout: layout(), config: { ...baseCfg, rows: undefined } });
+  assert.deepEqual(unset.pdf, old.pdf, '未设 env ⇒ 老版式逐字节一致');
+  const unsetNodes = textNodes(unset.svgFirst || artifact.labelSvg(lab, layout(), { ...baseCfg }));
+  // 老版式特征：货号与颜色同一行
+  assert.equal(unsetNodes.find((n) => n.text === 'XHB8095').y, unsetNodes.find((n) => n.text === '黑色').y);
+  // ② 设了：行序生效（货号独占一行、颜色与价钱同一行）+ maxSafe 4.364mm
+  const on = resolveLabelPrintQueueConfig({ LABEL_PRINT_ROWS: 'brand,itemNo,colorPrice,sizes' }).artifact;
+  const svg = artifact.labelSvg(lab, layout(), { ...baseCfg, ...on });
+  const nodes = textNodes(svg);
+  const itemNo = nodes.find((n) => n.text === 'XHB8095');
+  const color = nodes.find((n) => n.text === '黑色');
+  const price = nodes.find((n) => n.text === '¥139');
+  assert.notEqual(itemNo.y, color.y, '设了开关 ⇒ 货号独占一行');
+  assert.equal(color.y, price.y, '设了开关 ⇒ 颜色与市价同一行');
+  const safe = artifact.maxSafeOffsetXMm(layout({ label: { ...LABEL_PRINT.label, leftPaddingMm: 3.5 } }),
+    { ...baseCfg, rows: on.rows, label: lab });
+  assert.equal(safe.right, 4.364, '⭐ 切到新排法后右移上限 = 4.364mm（老版式只有 1.5mm）');
+});

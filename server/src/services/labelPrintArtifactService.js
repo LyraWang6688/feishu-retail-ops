@@ -45,6 +45,8 @@ const QRCode = require('qrcode');
 
 const { textValue } = require('./v1BitableGateway');
 const { logInfo, logWarn } = require('../utils/logger');
+// ⭐ 行序白名单**唯一真源在 config**（`artifact.rows` 与 `LABEL_PRINT_ROWS` 同一份口径，防漂移）
+const { ROW_IDS } = require('../config/labelPrint');
 
 /** CJK 字体候选链（与 `purchaseRequestImageService.js` 同一套；顺序即优先级）。 */
 const FONT_FAMILY = 'Noto Sans CJK SC, Noto Sans SC, WenQuanYi Zen Hei, PingFang SC, sans-serif';
@@ -234,7 +236,6 @@ const planItemNoColor = (label, layout, options = {}) => {
  *   拆成 **货号独占一行 · 颜色+市价同一行** ⇒ 最宽那行变窄 ⇒ 右边腾出空间 ⇒ 能继续右移 ✓。
  * ⚠️ 这是"候选版式"的入口：**默认 null ⇒ 老版式逐字节不变**（有回归 AC 钉着）。
  */
-const ROW_IDS = Object.freeze(['brand', 'itemNoColor', 'itemNo', 'color', 'colorPrice', 'price', 'state', 'sizes']);
 const normalizeRows = (value) => {
   if (value === undefined || value === null || value === '') return null;
   if (!Array.isArray(value) || !value.length) {

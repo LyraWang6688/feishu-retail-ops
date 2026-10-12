@@ -22,6 +22,7 @@
 const os = require('node:os');
 const path = require('node:path');
 const { readFlag, readInt, readString } = require('./envValue');
+const { ROW_IDS } = require('./labelPrint');
 
 /**
  * 任务数据（每个任务一个 JSON 文件）与**可打印产物**（PDF）放哪。
@@ -182,6 +183,13 @@ const LABEL_PRINT_QUEUE = Object.freeze({
      * ⚠️ 它也参与几何：线宽 0 ⇒ 内容盒左右各多 0.2mm（信息栏 20.1 → 20.5mm）。
      */
     cutLineMm: 0,
+    /**
+     * ⭐⭐ **右栏行序**（默认 `null` = 用 `body.rows`，也就是**老版式**）。
+     * 想切"货号一行 · 颜色+市价一行 · 尺码区"（新排法）⇒ 用 env `LABEL_PRINT_ROWS`
+     * （例如 `brand,itemNo,colorPrice,sizes`）—— **不用改代码、一条 env 启用/回退** ✓
+     * ⚠️ 只认 `config/labelPrint.js` 的 `ROW_IDS` 白名单；非法/重复 ⇒ 启动就抛 ✓
+     */
+    rows: null,
   }),
 
   // ── ⭐ 防连点（业务负责人 2026-10-11 真机反馈：「点完没有反馈 ⇒ 她以为没点上、
@@ -266,7 +274,7 @@ const LABEL_PRINT_QUEUE = Object.freeze({
  */
 const readMmOffset = (env, key, fallback) => {
   const raw = String(env?.[key] ?? '').trim();
-  if (!raw) return fallback;
+  if (!raw) return fallback ?? null; // 未设/空 ⇒ null（= 用 body.rows 老版式）
   const mm = Number(raw);
   if (!Number.isFinite(mm) || Math.abs(mm) > 5 || Math.abs(mm / 0.5 - Math.round(mm / 0.5)) > 1e-9) {
     throw new Error(`${key} 只能是 ±5mm 内、0.5 的整数倍（当前是「${raw}」）`);
@@ -277,12 +285,34 @@ const readMmOffset = (env, key, fallback) => {
 /** 解析"左留白"（0~10mm、0.5 步进）；**没设/空串 ⇒ 用默认（null = 与右留白对称）**；非法当场抛。 */
 const readOptionalMm = (env, key, fallback, { min = 0, max = 10, step = 0.5 } = {}) => {
   const raw = String(env?.[key] ?? '').trim();
-  if (!raw) return fallback;
+  if (!raw) return fallback ?? null; // 未设/空 ⇒ null（= 用 body.rows 老版式）
   const mm = Number(raw);
   if (!Number.isFinite(mm) || mm < min || mm > max || Math.abs(mm / step - Math.round(mm / step)) > 1e-9) {
     throw new Error(`${key} 只能是 ${min}~${max}mm 之间、${step} 的整数倍（当前是「${raw}」）`);
   }
   return mm;
+};
+
+/**
+ * ⭐⭐ 解析**行序开关**（`LABEL_PRINT_ROWS`）：逗号/分号/空白分隔。
+ *   · 未设 / 空串 ⇒ **回退默认**（`artifact.rows`，默认 null = 用 `body.rows` 老版式）；
+ *   · 非法（不在白名单）/ 重复 ⇒ **当场抛并指出字段名**（部署时就炸，不要静默切成别的版式）。
+ * ⚠️ 白名单唯一真源 = `config/labelPrint.js` 的 `ROW_IDS`（与 `artifact.rows` 同一份）。
+ */
+const readRows = (env, key, fallback) => {
+  const raw = String(env?.[key] ?? '').trim();
+  if (!raw) return fallback ?? null; // 未设/空 ⇒ null（= 用 body.rows 老版式）
+  const items = raw.split(/[,，;；\s]+/).map((item) => item.trim()).filter(Boolean);
+  if (!items.length) return fallback ?? null;
+  const seen = new Set();
+  for (const id of items) {
+    if (!ROW_IDS.includes(id)) {
+      throw new Error(`${key} 里有不认识的行「${id}」—— 可选：${ROW_IDS.join(',')}`);
+    }
+    if (seen.has(id)) throw new Error(`${key} 里「${id}」重复了（同一行只能出现一次）`);
+    seen.add(id);
+  }
+  return items;
 };
 
 const resolveLabelPrintQueueConfig = (env = process.env, base = LABEL_PRINT_QUEUE) => ({
@@ -332,6 +362,9 @@ const resolveLabelPrintQueueConfig = (env = process.env, base = LABEL_PRINT_QUEU
     // ⭐ 二维码尺寸（5~25mm）/ 裁切线宽度（0~1mm，0 = 不画）
     qrSizeMm: readOptionalMm(env, 'LABEL_PRINT_QR_SIZE_MM', base.artifact.qrSizeMm, { min: 5, max: 25 }),
     cutLineMm: readOptionalMm(env, 'LABEL_PRINT_CUT_LINE_MM', base.artifact.cutLineMm, { min: 0, max: 1, step: 0.1 }),
+    // ⭐⭐ 行序开关（`LABEL_PRINT_ROWS`，逗号分隔，例如 `brand,itemNo,colorPrice,sizes`）：
+    //   **未设/空串 ⇒ 用默认（`body.rows` = 老版式）** ⇒ 行为一字不变、一条 env 可回退 ✓
+    rows: readRows(env, 'LABEL_PRINT_ROWS', base.artifact.rows),
   },
   device: {
     ...base.device,
