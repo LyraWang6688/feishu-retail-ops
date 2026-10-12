@@ -477,5 +477,5 @@ test('AC-A12 源码哨兵：验收没有第二套入库（复用 buildPlan / con
   const conversation = stripComments(fs.readFileSync(path.join(SERVER_SRC, 'services/purchaseArrivalConversationService.js'), 'utf8'));
   assert.match(conversation, /buildPlan\(snapshot\.rows, \{ scanLines: scans \}\)/, '扫码验收复用同一个 buildPlan（新增输入口，不写第二套算法）');
   assert.match(conversation, /buildPlan\(snapshot\.rows, \{ same: true, differences: \[\] \}\)/, '既有「全额验收」分支逐字还在');
-  assert.match(conversation, /this\.confirmLocked\(taskId, operatorOpenId\)/);
+  assert.match(conversation, /this\.confirmLocked\(taskId, operatorOpenId/);
 });

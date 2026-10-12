@@ -506,7 +506,17 @@ class V1BitableGateway {
     do {
       const response = await this.client.bitable.appTableRecord.list({
         path: { app_token: this.schema.appToken, table_id: table.tableId },
-        params: { page_size: pageSize, page_token: pageToken, filter: expression },
+        params: {
+          page_size: pageSize,
+          page_token: pageToken,
+          filter: expression,
+          // ⭐ 2026-10-13（验收提速 ②）：与 `listAll` **同一把尺子** —— 只要这些列
+          //    （`field_names` 官方类型是 string ⇒ 必须 JSON.stringify；空数组整个不带）。
+          ...(Array.isArray(options.fieldNames)
+            && options.fieldNames.map((name) => String(name).trim()).filter(Boolean).length
+            ? { field_names: JSON.stringify(options.fieldNames.map((name) => String(name).trim()).filter(Boolean)) }
+            : {}),
+        },
       });
       this.assertSuccess(response, `按条件读取“${table.tableName}”记录`);
       records.push(...(response.data?.items || []));

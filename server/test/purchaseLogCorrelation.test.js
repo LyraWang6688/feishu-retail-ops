@@ -98,6 +98,24 @@ const fakeLarkClient = (records) => {
           listOf(path.table_id, { create: true }).push(record);
           return { code: 0, data: { record } };
         },
+        // ⭐ 2026-10-13（验收提速 ①）：批量口**按真实语义**补（逐条落库、与入参同序返回）。
+        //    补空函数 = 让"入库写了什么"的断言变成假绿，所以这里与上面 `create` 逐字同语义。
+        batchCreate: async ({ path, data }) => {
+          const records = (data.records || []).map((row) => {
+            const record = { record_id: `rec_${++seq}`, fields: { ...row.fields } };
+            listOf(path.table_id, { create: true }).push(record);
+            return record;
+          });
+          return { code: 0, data: { records } };
+        },
+        batchUpdate: async ({ path, data }) => {
+          const records = (data.records || []).map((row) => {
+            const record = find(path.table_id, row.record_id);
+            if (record) Object.assign(record.fields, row.fields);
+            return record || row;
+          });
+          return { code: 0, data: { records } };
+        },
         update: async ({ path, data }) => {
           const record = find(path.table_id, path.record_id);
           if (!record) return { code: 1254043, msg: 'RecordIdNotFound' };
@@ -192,7 +210,14 @@ const SIZE_36_37 = [
 const assertGatewayCommon = (row, tableKey) => {
   assert.equal(row.table_key, tableKey, `${row.event}.table_key`);
   assert.equal(row.table_id, SCHEMA.tables[tableKey].tableId, `${row.event}.table_id`);
-  assert.equal(typeof row.record_id, 'string');
+  // ⭐ 2026-10-13（验收提速 ①）：加库存改批量写 ⇒ 网关打的是 `bitable.record.batch_created`
+  //    （**一条事件带 count 条**，没有单条 record_id ✗）。哨兵本意"日志字段一个都不许少"不变，
+  //    只是**形状分两种**：单条核 `record_id`，批量核 `count`。
+  if (String(row.event || '').startsWith('bitable.record.batch_')) {
+    assert.equal(typeof row.count, 'number', `${row.event}.count`);
+  } else {
+    assert.equal(typeof row.record_id, 'string');
+  }
   assert.equal(typeof row.duration_ms, 'number');
 };
 
@@ -253,7 +278,19 @@ test('到货确认：写「报货批次.到货信息」/加库存的日志带 ta
   // a. ⭐ 新建的记录**只有**「库存流水」+「实时库存」：到货链路再也不新建任何入库明细行
   //    （「采购入库」表已被业务负责人整表删除 —— 全仓连那个表键都不许再出现，
   //      见 purchaseInboundRemoval.test.js 的 ①）。
-  const createdTables = [...new Set(logs.logs('bitable.record.created').map((row) => row.table_key))].sort();
+  // ⭐ 2026-10-13（验收提速 ①）：加库存改走**批量写** ⇒ 网关打的是 `bitable.record.batch_created`
+  //    （一条事件带 `count`）而不是 N 条 `bitable.record.created`。断言口径**不放宽**：
+  //    下面按"**新建了几条记录**"来数（单条事件算 1，批量事件算 `count`），表名集合一个都不许变。
+  const newRecordEvents = (tableKey) => [
+    ...logs.logs('bitable.record.created').filter((row) => row.table_key === tableKey)
+      .map((row) => ({ ...row, records: 1 })),
+    ...logs.logs('bitable.record.batch_created').filter((row) => row.table_key === tableKey)
+      .map((row) => ({ ...row, records: Number(row.count || 0) })),
+  ];
+  const createdTables = [...new Set([
+    ...logs.logs('bitable.record.created').map((row) => row.table_key),
+    ...logs.logs('bitable.record.batch_created').map((row) => row.table_key),
+  ])].sort();
   assert.deepEqual(createdTables, ['inventoryLedger', 'liveInventory'],
     '这次确认只新建「库存流水」一条 +「实时库存」两条；入库明细行一条都没有');
 
@@ -276,8 +313,8 @@ test('到货确认：写「报货批次.到货信息」/加库存的日志带 ta
   assert.equal(applied[0].stock_key_label_source, 'unavailable');
 
   // c. 「实时库存」那两个新建：来自库存引擎，同样带键
-  const liveRows = logs.logs('bitable.record.created').filter((row) => row.table_key === 'liveInventory');
-  assert.equal(liveRows.length, 2, '入 2 双 = 新建 2 条实时库存');
+  const liveRows = newRecordEvents('liveInventory');
+  assert.equal(liveRows.reduce((sum, row) => sum + row.records, 0), 2, '入 2 双 = 新建 2 条实时库存');
   for (const row of liveRows) {
     assert.equal(row.task_id, TASK);
     assert.equal(row.batch_no, BATCH);

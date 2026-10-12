@@ -112,7 +112,11 @@ const createScanArrivalService = (options = {}) => {
       // ⚠️ 与工作台那条路**共用同一个任务存储**（`confirmArrival` 要读的草稿就在那里）。
       store: webhooks.store,
       sizeReferences: webhooks.getSizeReferences,
-      confirmArrival: (taskId, task, operatorOpenId) => webhooks.confirmArrival(taskId, task, operatorOpenId),
+      // ⭐ 2026-10-13（验收提速）：第 4 个参数是**尾部可选** `options`（验收自造的 timing）——
+      //    不传 = 与改动前逐字同形。
+      confirmArrival: (taskId, task, operatorOpenId, options) => webhooks.confirmArrival(
+        taskId, task, operatorOpenId, options,
+      ),
       markBatchArrived: (batchNo, arrivalOptions) => webhooks.orderBatches.markArrived(batchNo, arrivalOptions),
     });
   };
@@ -364,9 +368,15 @@ const createScanArrivalService = (options = {}) => {
    * 🔴 一双都没扫 / 金额不合法 ⇒ 既有实现会**在写任何东西之前**拒掉（本方法原样把话带回去）。
    */
   const finish = async ({ openId, actualAmount, submitKey = '', operatorOpenId = '' } = {}) => {
+    // ⭐⭐ 2026-10-13（验收提速）：**一条**分阶段耗时汇总（`scan.accept.timing`）。
+    //    为什么：真账量出"每批 5 码 143.9 秒、其中逐码库存 119.5 秒（83%）"——
+    //    没有分段就只能靠感觉。分段：`session_ms`（读会话）/ `inbound_total_ms`（入库整段，
+    //    含"报货批次"写实 + 加库存）/ `inventory_ms`（其中**加库存**那一段，由库存层填）。
+    const finishStartedAt = Date.now();
     const session = await get(openId);
     if (!session) return { ok: false, reason: 'no_session', message: texts.acceptNoSessionBody };
     const summary = summaryOf(session);
+    const sessionMs = Date.now() - finishStartedAt;
     // ⭐⭐ P0 2026-10-12：**同一把钥匙提交过 ⇒ 直接幂等返回**（零写入）——
     //    她连点两次 / 网络重试，都不会再加一次库存 ✗。
     const wantedKey = String(submitKey || '').trim();
@@ -405,6 +415,9 @@ const createScanArrivalService = (options = {}) => {
       session_id: session.session_id, batch_no: session.batch_no,
       scanned: summary.scanned, expected: summary.expected, submit_key: String(submitKey || ''),
     });
+    const inboundStartedAt = Date.now();
+    // 服务层**自造** timing，逐层透传到库存那一层（`inventory_ms` 只有那里量得准）。
+    const timing = {};
     const result = await conversation.confirmBatchArrival({
       batch: {
         batch_no: session.batch_no,
@@ -418,6 +431,16 @@ const createScanArrivalService = (options = {}) => {
       scanLines: (session.scans || []).map((item) => ({
         product_record_id: item.product_record_id, size: item.size, quantity: item.quantity,
       })),
+      timing,
+    });
+    // ⚠️ 成功与失败**都**打这一条（她的现场就是"慢/卡"，失败原因也要能按分段定位）。
+    logInfo(events.acceptTiming, {
+      session_id: session.session_id,
+      batch_no: session.batch_no,
+      session_ms: sessionMs,
+      inbound_total_ms: Date.now() - inboundStartedAt,
+      scanned: summary.scanned,
+      ...timing,
     });
     if (!result || result.ok !== true) {
       const message = result?.message || texts.acceptRowsUnreadableBody;
@@ -427,6 +450,15 @@ const createScanArrivalService = (options = {}) => {
         reason: result?.reason || 'failed', message,
       });
       return { ok: false, reason: result?.reason || 'failed', ...summary, message };
+    }
+    // ⭐⭐ 2026-10-13（验收提速 ②）：她**刚验收完** ⇒ 主动失效「待验收批次」列表的短缓存。
+    //    为什么必须做：否则那一批还会在列表里挂到 TTL 结束 —— 她会以为"验收没生效"（现场最容易误判的一种）。
+    //    ⚠️ 只失效这一份内存缓存，不写任何表；注入的替身没有 `invalidate` 时静默跳过。
+    try {
+      const pendingService = pendingBatchesService();
+      if (pendingService && typeof pendingService.invalidate === 'function') pendingService.invalidate();
+    } catch (error) {
+      logWarn('scan.accept.pending_cache.invalidate_failed', { error: error.message });
     }
     const posted = await store.update(session.session_id, touch({
       status: 'posted',

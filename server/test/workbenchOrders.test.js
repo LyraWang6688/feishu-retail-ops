@@ -843,7 +843,10 @@ test('AC12 「验收到货」：接线层只把这一批交给既有核对链路
   assert.ok(conversation.includes('this.loadRequestRows(batch)'), '复用既有只读读行（loadRequestRows）');
   assert.ok(conversation.includes("buildPlan(snapshot.rows, { same: true, differences: [] })"),
     '「全部按申请数到货」复用既有 buildPlan 的 same 分支，不新增第二条算法');
-  assert.ok(conversation.includes('this.confirmLocked(taskId, operatorOpenId)'),
+  // ⚠️ 2026-10-13（验收提速 ①）：`confirmLocked` 多了**尾部可选**第 4 参（timing 的透传口）
+  //    ⇒ 这里只钉"仍然走既有 confirmLocked(taskId, operatorOpenId…)"这个形状，
+  //    **不放宽**"必须复用既有入库链路"这条语义。
+  assert.ok(/this\.confirmLocked\(taskId, operatorOpenId/.test(conversation),
     '建草稿 + 入库仍然走既有 confirmLocked（→ PurchaseWebhookService.confirmArrival）');
 });
 
