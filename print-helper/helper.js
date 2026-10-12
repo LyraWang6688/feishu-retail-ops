@@ -73,6 +73,9 @@ const DEFAULT_CONFIG = Object.freeze({
   //    · 电脑真睡过一觉 ≥ `wakeGapMs`（15 秒）才可能触发唤醒重连 ⇒ 这条闸门**永远挡不住真唤醒**；
   //    · 但"1 秒一断"那种抖动会被它直接掐掉（宁可先稳着，也不去打服务器）。
   streamMinLifetimeMs: 5000,
+  // ⭐ 2026-10-12：**每 5 分钟重新声明一次**"不要睡"（防被系统/驱动清掉）；日志**每 30 分钟一条**（不刷屏）
+  antiSleepRefreshMs: 300000,
+  antiSleepLogEveryMs: 1800000,
   // ⭐⭐ 2026-10-12（业务负责人真机：「小助手会断线是因为我的电脑锁屏了吗？」「让它后台运行，
   //    我就不用让电脑一直亮屏了」）：**只防睡眠、不拦关屏**。
   //    · `preventSleep` —— **显式布尔**（默认 true）：调 `SetThreadExecutionState`
@@ -306,6 +309,24 @@ const defaultRunPowerShell = (command) => new Promise((resolve) => {
  * **自助指引 / 迁移文案**都放这里 —— 页面与 README 用**同一份**，
  * 免得"页面写的和说明书写的"两处不一致（用例会把两处一起钉住）。
  */
+/**
+ * ⭐⭐ 2026-10-12 她真机：`anti_sleep.enabled` ✓ 但机器**真睡过 1h56m** ✗（醒来立刻补打成功 ✓）。
+ * 结论：防睡眠本身对 ✓，是**系统层面**被睡下去 ⇒ 两条加固 + 两条"她得自己设"。
+ * 下面这几句是**状态页与 README 共用**的常量（同一份，不许两处各写一遍）。
+ */
+const ANTI_SLEEP_ON_TEXT = '开（每 5 分钟重新声明；屏幕可以关）';
+/** ⚠️ 她这次就是被这两条睡掉的：合盖动作 / 睡眠时间（**接通电源 + 电池两套都要设**）。 */
+const SLEEP_SETUP_LINES = [
+  '合上盖子 = 不采取任何操作（接通电源 + 电池两套都设）',
+  '睡眠 = 从不（接通电源 + 电池两套都设）',
+];
+
+/** 兜底：让 Windows 别睡 —— **AC（接通电源）与 DC（电池）两套都要设**（她这次很可能是电池那套没设 ✗）。 */
+const POWERCFG_COMMANDS = Object.freeze({
+  ac: ['powercfg /change standby-timeout-ac 0'],
+  dc: ['powercfg /change standby-timeout-dc 0', 'powercfg /change hibernate-timeout-dc 0'],
+});
+
 const SUMATRA_PORTABLE_URL = 'https://www.sumatrapdfreader.org/download-free-pdf-viewer';
 const SUMATRA_RENAME_ADVICE = '下载 portable（免安装）版 → 把里面的 exe 放进 print-helper 文件夹，'
   + '并改名 SumatraPDF.exe（去掉版本号：以后换版就不用再改配置）';
@@ -416,19 +437,30 @@ const buildAntiSleepReleaseCommand = () => [
  * 兜底：把"接通电源时的睡眠"关掉（`powercfg /change standby-timeout-ac 0`）。
  * ⚠️ 可能需要管理员权限（也可能不是 Windows）⇒ **失败只记一条日志**，绝不硬来、绝不影响打印。
  */
+/** 兜底：把"接通电源 / 电池"两套睡眠都关掉（失败只记日志，绝不硬来）。 */
 const disableStandbyTimeout = async ({ runPowerShell = defaultRunPowerShell, logger = createLogger() } = {}) => {
-  const result = await Promise.resolve(runPowerShell('powercfg /change standby-timeout-ac 0'))
-    .catch((error) => ({ code: -1, stderr: error.message }));
-  const ok = result?.code === 0;
-  logger[ok ? 'info' : 'warn'](ok ? 'print_helper.powercfg.applied' : 'print_helper.powercfg.skipped', ok
-    ? {}
-    : {
-      code: result?.code ?? null,
-      stderr: String(result?.stderr || '').slice(0, 200) || undefined,
-      hint: '它需要管理员权限（也可能不是 Windows）—— 不影响打印；'
-        + '也可以按 README 在「设置 → 系统 → 电源和睡眠」里手动把睡眠改成"从不"',
-    });
-  return ok;
+  const results = {};
+  for (const [group, commands] of Object.entries(POWERCFG_COMMANDS)) {
+    const failures = [];
+    for (const command of commands) {
+      // eslint-disable-next-line no-await-in-loop
+      const result = await Promise.resolve(runPowerShell(command))
+        .catch((error) => ({ code: -1, stderr: error.message }));
+      if (result?.code !== 0) failures.push({ command, code: result?.code ?? null, stderr: String(result?.stderr || '').slice(0, 200) || undefined });
+    }
+    const ok = failures.length === 0;
+    results[group] = ok;
+    // ⭐ AC 那条事件名保持不变（回归）；电池那套另给一条 `dc_applied` 便于排查
+    logger[ok ? 'info' : 'warn'](
+      ok ? (group === 'dc' ? 'print_helper.powercfg.dc_applied' : 'print_helper.powercfg.applied')
+        : (group === 'dc' ? 'print_helper.powercfg.dc_skipped' : 'print_helper.powercfg.skipped'),
+      ok ? {} : {
+        failures,
+        hint: '它需要管理员权限（也可能不是 Windows）—— 不影响打印；也可以按 README 在「设置 → 系统 → 电源和睡眠」里手动把睡眠改成"从不"（接电源 + 电池两套）',
+      },
+    );
+  }
+  return results;
 };
 
 /**
@@ -461,6 +493,15 @@ const createAntiSleep = (options = {}) => {
           hint: `防睡眠没起来（**不影响打印**）—— ${ANTI_SLEEP_FALLBACK_HINT}`,
         });
       return on;
+    },
+    /** ⭐ 定期**重新声明**"不要睡"（有些系统/驱动会把状态清掉；她 2026-10-12 就是这么睡掉的）。 */
+    async renew() {
+      if (!on) return false;
+      const result = await Promise.resolve(runPowerShell(buildAntiSleepCommand()))
+        .catch((error) => ({ code: -1, stderr: error.message }));
+      const ok = result?.code === 0;
+      if (!ok) logger.warn('print_helper.anti_sleep.renew_failed', { reason: describeAntiSleepFailure(result) });
+      return ok;
     },
     async release() {
       if (!on) return false;
@@ -1113,7 +1154,8 @@ const createPrintHelper = (options = {}) => {
   let stopped = false;
   const timers = new Set();
 
-  const setTimer = (fn, ms) => {
+  // ⚠️ `options.setTimer` 只为**用例注入假定时器**（默认就是 setTimeout，行为一字不变）
+  const setTimer = options.setTimer || ((fn, ms) => {
     const timer = setTimeout(() => {
       timers.delete(timer);
       fn();
@@ -1121,7 +1163,7 @@ const createPrintHelper = (options = {}) => {
     if (typeof timer.unref === 'function') timer.unref();
     timers.add(timer);
     return timer;
-  };
+  });
 
   const scheduleReconnect = () => {
     if (stopped) return;
@@ -1373,11 +1415,12 @@ ${row('服务器', `${baseUrl}`, serverOnline === null ? false : true)}
 ${row('手机看到的状态', serverOnline ? '打印电脑在线' : '未连接（任务已排队）', serverOnline === true)}
 ${row('长连接（SSE）', state.sseConnected ? '已连接' : (state.fallbackActive ? '断开了，正在用兜底轮询' : '未连接'), state.sseConnected)}
 ${row('防睡眠', state.antiSleepEnabled
-  ? '开（电脑不会睡；屏幕可以关）'
+  ? `${ANTI_SLEEP_ON_TEXT} —— ${SLEEP_SETUP_LINES.join('；')}`
   : (config.preventSleep === true
     // ⭐ 2026-10-12：**直接写原因**（她原来只看到"见日志"，看不懂也没法自己弄）+ 兜底怎么手动解决
-    ? `关（${antiSleep.failureReason?.() || '没起来'}）—— ${ANTI_SLEEP_FALLBACK_HINT}`
-    : '关（配置里关掉了）'), state.antiSleepEnabled)}
+    // ⚠️ 防睡眠**没起来**时更要显示那两条（她 2026-10-12 就是合盖/电池那套没设而睡了 1h56m ✗）
+    ? `关（${antiSleep.failureReason?.() || '没起来'}）—— ${ANTI_SLEEP_FALLBACK_HINT}；${SLEEP_SETUP_LINES.join('；')}`
+    : `关（配置里关掉了）—— ${SLEEP_SETUP_LINES.join('；')}`), state.antiSleepEnabled)}
 ${row('打印程序', errors.length ? '未配好' : `${String(config.printer.mode)} 可用`, errors.length === 0)}
 ${row('打印参数', (Array.isArray(config.printer.printSettings) && config.printer.printSettings.length)
     ? `-print-settings ${config.printer.printSettings.join(',')}`
@@ -1561,6 +1604,30 @@ ${jobs.length ? jobs.map(jobRow).join('') : '<tr><td colspan="5">还没有打印
       state.antiSleepEnabled = await antiSleep.enable();
       void disableStandbyTimeout({ runPowerShell, logger });
     }
+    // ⭐⭐ 2026-10-12：**定期重新声明"不要睡"**（启动时那一次不够 —— 有些系统/驱动会清掉）
+    const refreshMs = Math.max(1000, Number(config.antiSleepRefreshMs) || 300000);
+    const logEveryMs = Math.max(refreshMs, Number(config.antiSleepLogEveryMs) || 1800000);
+    let renewCount = 0;
+    const renewAntiSleep = () => {
+      if (stopped) return;
+      if (state.antiSleepEnabled) {
+        void (async () => {
+          try {
+            const ok = await antiSleep.renew?.();
+            if (ok === true) {
+              renewCount += 1;
+              if (renewCount === 1 || (renewCount * refreshMs) % logEveryMs < refreshMs) {
+                logger.info('print_helper.anti_sleep.renewed', { times: renewCount, every_ms: refreshMs });
+              }
+            }
+          } catch (error) {
+            logger.warn('print_helper.anti_sleep.renew_failed', { reason: String(error?.message || error) });
+          }
+        })();
+      }
+      setTimer(renewAntiSleep, refreshMs);
+    };
+    setTimer(renewAntiSleep, refreshMs);
     // ⭐ 唤醒自愈：看门狗盯着时钟（睡眠回来立刻重连）。
     state.lastTickAt = now();
     setTimer(watchWake, Math.max(1000, Number(config.wakeWatchMs) || 5000));
@@ -1800,6 +1867,9 @@ module.exports = {
   buildAntiSleepReleaseCommand,
   migratePrinterConfig,
   describeAntiSleepFailure,
+  POWERCFG_COMMANDS,
+  ANTI_SLEEP_ON_TEXT,
+  SLEEP_SETUP_LINES,
   SUMATRA_PORTABLE_URL,
   SUMATRA_RENAME_ADVICE,
   ANTI_SLEEP_FALLBACK_HINT,
