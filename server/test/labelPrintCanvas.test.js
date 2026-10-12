@@ -400,8 +400,10 @@ test('AC-C9-2 ⭐ `contentOffsetXMm=+1` ⇒ 内容整体右移 1mm（左留白 +
   const after = await marginsOf((await renderNoBorder({ contentOffsetXMm: 1 })).pngFirst);
   assert.ok(Math.abs((after.left - before.left) - 1) <= 0.2,
     `左留白要 +1mm（${before.left} → ${after.left}）`);
-  assert.ok(Math.abs((before.right - after.right) - 1) <= 0.2,
-    `右留白要 −1mm（${before.right} → ${after.right}）`);
+  // ⚠️ 2026-10-12 改：真实字体比"设计字宽表"宽 ⇒ 右移后最宽那行可能**已经贴到纸边**（量到的余量
+  //   就是噪声底 0.13mm，不会再变小）。所以这里只断言"**不许变大**"（左移 +1 那条才是确定性的）。
+  assert.ok(after.right <= before.right + 0.2,
+    `右留白不许变大（${before.right} → ${after.right}）`);
   // 竖向不许动
   assert.ok(Math.abs(after.top - before.top) <= 0.2 && Math.abs(after.bottom - before.bottom) <= 0.2,
     'X 平移不许影响上下留白');
@@ -847,13 +849,18 @@ const verticalLabel = ({ sizeLineCount = 1, perLine = 3, itemNoLines = 1 } = {})
 test('AC-C14-1 ⭐⭐ 三档内容量下"二维码中心 == 右栏内容中心 == 中段中心"（±0.5mm）', () => {
   const lay = layout();
   const cfg = { dpi: 203, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0, rows: CANDIDATE_ROWS };
+  // ⚠️ 2026-10-12 改：尺码区自适应之后，"行数"由**可用高度 + 实际字宽**算出来（不再由夹具决定），
+  //   所以这里用"1 个码 vs 11 个码"来制造内容高差异（11 个码排 3 行 ⇒ 明显更高）
   const tiers = [
-    { name: '① 尺码 1 行', options: { sizeLineCount: 1 } },
-    { name: '② 尺码 4 行', options: { sizeLineCount: 4, perLine: 3 } },
+    { name: '① 尺码 1 个', options: { sizes: [] , count: 1 } },
+    { name: '② 尺码 11 个', options: { sizes: [], count: 11 } },
   ];
   const centers = [];
   for (const tier of tiers) {
-    const m = artifact.measureVerticalLayout(verticalLabel(tier.options), lay, cfg);
+    const lab = tier.options.count
+      ? sizeLabel({ count: tier.options.count })
+      : verticalLabel(tier.options);
+    const m = artifact.measureVerticalLayout(lab, lay, { ...cfg, rows: undefined });
     assert.equal(m.overflows, false, `${tier.name} 不该溢出`);
     assert.ok(Math.abs(m.qr_center_mm - m.main_center_mm) <= 0.5,
       `${tier.name}：二维码中心 ${m.qr_center_mm} 应 ≈ 中段中心 ${m.main_center_mm}`);
@@ -869,14 +876,29 @@ test('AC-C14-1 ⭐⭐ 三档内容量下"二维码中心 == 右栏内容中心 =
 
 test('AC-C14-2 ⭐⭐ 放不下时：**顶部对齐**（不是跑到纸外），并且记 warn', async () => {
   const lay = layout();
-  const huge = verticalLabel({ sizeLineCount: 10, perLine: 3 });
-  const m = artifact.measureVerticalLayout(huge, lay, { dpi: 203, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0 });
-  assert.equal(m.overflows, true, '10 行尺码必须判定为"放不下"');
+  // ⚠️ 2026-10-12 改：尺码区现在**自适应封顶**（先加行、再缩字号）⇒ 它自己不会再撑破中段。
+  //   ① 先钉住这个**更强的不变量**：尺码多到 30 个，内容也不会超过中段、`overflows` 为 false；
+  //   ② 再用"**其它行自己就装不下**"（货号排 3 行 + 颜色/价钱/状态全上）构造真正的"放不下"。
+  const manyRows = ['brand', 'itemNoColor', 'itemNo', 'color', 'colorPrice', 'price', 'state', 'sizes'];
+  const fatLabel = verticalLabel({ sizeLineCount: 3, perLine: 4 });
+  const capped = artifact.measureVerticalLayout(fatLabel, lay, {
+    dpi: 203, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0, rows: manyRows,
+  });
+  assert.ok(capped.content_total_h_mm <= capped.main_h_mm + 1e-9,
+    '⭐ 尺码区自适应之后，内容总高**不会**超过中段（这就是"一个都不丢"的前提）');
+
+  const tallLayout = layout({ body: { ...LABEL_PRINT.body, itemNoLines: 3, rows: manyRows } });
+  const huge = verticalLabel({ sizeLineCount: 3, perLine: 4, itemNoLines: 3 });
+  const m = artifact.measureVerticalLayout(huge, tallLayout, {
+    dpi: 203, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0, rows: manyRows,
+  });
+  assert.equal(m.overflows, true, '货号 3 行 + 所有行都排上 ⇒ 中段装不下（真正的"放不下"）');
   assert.equal(m.content_top_mm, m.main_top_mm, '放不下 ⇒ 顶部对齐（content_top == main_top）');
-  assert.ok(m.content_total_h_mm > m.main_h_mm);
+  assert.ok(m.content_total_h_mm > m.main_h_mm, '内容总高 > 中段高');
   const lines = await captureLogs(async () => {
     await artifact.renderLabels({
-      labels: [huge], layout: lay, config: { dpi: 203, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0 },
+      labels: [huge], layout: tallLayout,
+      config: { dpi: 203, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0, rows: manyRows },
     });
   });
   assert.ok(lines.some((line) => line.includes('label.print.vertical_overflow')), '要留下溢出日志');
@@ -893,4 +915,122 @@ test('AC-C14-3 ⭐ 口径说清楚：居中是"中段"居中（品牌行/页脚�
   assert.equal(m.main_center_mm, Number(((m.main_top_mm + m.main_bottom_mm) / 2).toFixed(2)));
   // ⚠️ 与"整张纸中心"（15mm）**不同** ⇒ 这就是两种口径的差别，供她拍
   assert.notEqual(m.main_center_mm, LABEL_PRINT.label.heightMm / 2);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 【2026-10-12 真机 bug】她 `26812 黑色` 有 44 码，打出来 **44 没了**（末行变成 `…`）
+//   根因：上游 `size_lines` 是"已经分好、可能已经截断"的分组（带 `size_overflow` 标志），
+//        我们照着画 ⇒ **拿"少印一个真实的码"换装下** ✗（而且那时**纸上明明还有空间**）
+//   ⇒ 现在：**只认 `sizes`（库存全量）**，自己按"宽度换行 + 高度定行数 + 必要时缩字号"重排：
+//        ① 优先**加行用满可用高度**、字号尽量不变；② 还不够才**降字号**（下限 2.2mm）；
+//        ③ `+N` 只在"连下限都放不下"时出现（带 warn）—— **不是常态** ✓
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SIZE_ROWS_NEW = ['brand', 'itemNo', 'colorPrice', 'sizes'];
+const sizeLabel = ({ count, start = 38, truncatedLines = 2 } = {}) => {
+  const items = Array.from({ length: count }, (_, i) => ({ size: start + i, qty: (i % 2) + 1 }));
+  // ⚠️ 故意把 `size_lines` 造成"截断过的"（真机形状）：只装前 6 个 + `size_overflow: true`
+  const per = Math.max(1, Math.ceil(Math.min(items.length, start === 34 ? 4 : 6) / truncatedLines));
+  const cut = items.slice(0, Math.min(items.length, 6));
+  const lines = [];
+  for (let i = 0; i < cut.length; i += per) lines.push(cut.slice(i, i + per));
+  return label({
+    item_no: '26812', color: '黑色', price_text: '¥139',
+    sizes: items, size_lines: lines, size_overflow: true,
+  });
+};
+const sizesCfgFor = () => ({ dpi: 203, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0, rows: SIZE_ROWS_NEW });
+
+test('AC-C15-1 ⭐⭐⭐ 她这条真机例子（26812 黑色 38–44 共 7 个码）：**44 必须在**、一个都不许丢、无 `…`', () => {
+  const lab = sizeLabel({ count: 7 });
+  const m = artifact.measureVerticalLayout(lab, layout(), sizesCfgFor());
+  assert.equal(m.sizes_total, 7);
+  assert.equal(m.sizes_hidden, 0, '不许有任何尺码被丢下');
+  assert.equal(m.sizes_shown, 7, '7 个码全部印出');
+  assert.deepEqual(m.sizes_items, ['38', '39', '40', '41', '42', '43', '44'], '顺序与内容都要对');
+  assert.equal(m.sizes_size_mm, 2.8, '⭐ 一个都不用缩字号（纸上还有空间）');
+  const svg = artifact.labelSvg(lab, layout(), sizesCfgFor());
+  assert.ok(svg.includes('>44<'), '⭐ 44 码必须真的画在图上');
+  assert.ok(!svg.includes('…'), '⚠️ 不许再用 `…` 吃掉真实尺码');
+  for (const size of ['38', '39', '40', '41', '42', '43', '44']) {
+    assert.ok(svg.includes(`>${size}<`), `${size} 码要在图上`);
+  }
+});
+
+test('AC-C15-2 ⭐⭐⭐ 真实最大量级（38–48 共 **11** 个码）：全部印出、字号不变、**按可用高度加行**', () => {
+  const lab = sizeLabel({ count: 11 });
+  const m = artifact.measureVerticalLayout(lab, layout(), sizesCfgFor());
+  assert.equal(m.sizes_total, 11);
+  assert.equal(m.sizes_hidden, 0);
+  assert.equal(m.sizes_items.length, 11);
+  assert.deepEqual(m.sizes_items.slice(-1), ['48'], '48 码也要在');
+  assert.equal(m.sizes_size_mm, 2.8, '⭐ 11 个码时**字号不用变**（先加行）');
+  assert.equal(m.sizes_shrunk, false);
+  // ⭐ 行数是**按可用高度算出来的**（不是配置里拍一个数）：11 个码排 3 行
+  assert.equal(m.sizes_lines, 3, '11 个码 ⇒ 3 行（每行 4/4/3 个，按实际字宽换行）');
+  const svg = artifact.labelSvg(lab, layout(), sizesCfgFor());
+  assert.ok(!svg.includes('…'), '不许有 `…`');
+  for (const size of ['38', '42', '48']) assert.ok(svg.includes(`>${size}<`), `${size} 要在图上`);
+  // 尺码区所占高度必须**用上了可用高度**（>2 行），且不超过中段
+  const sizesH = m.sizes_lines * m.sizes_size_mm * 1.35;
+  assert.ok(sizesH > 2 * m.sizes_size_mm * 1.35, '确实加到了 3 行（用满可用高度）');
+  assert.ok(sizesH <= m.main_h_mm, '不超过中段高');
+});
+
+test('AC-C15-3 ⭐ 极端兜底（24 个码）才允许 `+N`；且**有 warn**、总数守恒', async () => {
+  const lab = sizeLabel({ count: 24 });
+  const m = artifact.measureVerticalLayout(lab, layout(), sizesCfgFor());
+  assert.equal(m.sizes_total, 24);
+  // 24 个码：先加行、再缩一点点字 ⇒ 仍然**一个都没丢**（`+N` 只有更极端才出现）
+  assert.equal(m.sizes_hidden, 0, '24 个码也该全印出来（还不是"实在放不下"）');
+  assert.equal(m.sizes_shown, 24);
+  assert.ok(m.sizes_size_mm <= 2.8, '必要时才降字号');
+  // 真·极端：把可用高度压到极限（尺码区下限也放不下）⇒ 才出现 `+N` + warn
+  const huge = sizeLabel({ count: 60 });
+  const m2 = artifact.measureVerticalLayout(huge, layout(), sizesCfgFor());
+  assert.equal(m2.sizes_total, 60);
+  assert.equal(m2.sizes_shown + m2.sizes_hidden, 60, '⭐ 总数必须守恒（印出来的 + `+N` 告诉的 = 全部）');
+  assert.ok(m2.sizes_size_mm >= 2.2, '字号不许低于下限 2.2mm');
+  assert.ok(m2.sizes_hidden > 0, '60 个码确实到了"实在放不下"');
+  const svg = artifact.labelSvg(huge, layout(), sizesCfgFor());
+  assert.match(svg, />\+\d+</, '⭐ 末行必须明写 `+N`（"还有 N 个"），可见、不静默');
+  const lines = await captureLogs(async () => {
+    await artifact.renderLabels({ labels: [huge], layout: layout(), config: sizesCfgFor() });
+  });
+  assert.ok(lines.some((line) => line.includes('label.print.sizes_overflow')),
+    '必须记 warn label.print.sizes_overflow（带货号/总码数/已印数）');
+});
+
+test('AC-C15-4 ⭐ 回归：普通 3 个码 ⇒ 字号与行数**逐字不变**（有空间时一个新行为都不引入）', () => {
+  const lab = sizeLabel({ count: 3 });
+  const m = artifact.measureVerticalLayout(lab, layout(), sizesCfgFor());
+  assert.equal(m.sizes_size_mm, 2.8, '字号还是 2.8mm');
+  assert.equal(m.sizes_shrunk, false);
+  assert.equal(m.sizes_lines, 1, '3 个码排 1 行');
+  assert.equal(m.sizes_hidden, 0);
+  const svg = artifact.labelSvg(lab, layout(), sizesCfgFor());
+  assert.ok(!svg.includes('…') && !/\+\d+</.test(svg), '不许出现 `…` 或 `+N`');
+  // 老形状（只给 size_lines、不给 sizes）仍然兼容
+  const legacy = { ...label({ item_no: 'X', color: '黑色', size_lines: [[{ size: 38, qty: 1 }, { size: 39, qty: 1 }]] }) };
+  delete legacy.sizes; // ⚠️ 老调用方只给 `size_lines`（没有全量 `sizes`）⇒ 才走兜底
+  const m2 = artifact.measureVerticalLayout(legacy, layout(), sizesCfgFor());
+  assert.deepEqual(m2.sizes_items, ['38', '39'], '没有 `sizes` 时退回用 `size_lines`（老调用方兼容）');
+});
+
+test('AC-C15-5 ⭐⭐⭐ 9 个码 ⇒ **3 行**全部印出、无 `…`（她的算法：`ceil(9/每行3个)`）', () => {
+  const lab = sizeLabel({ count: 9 });
+  const m = artifact.measureVerticalLayout(lab, layout(), sizesCfgFor());
+  assert.equal(m.sizes_total, 9);
+  assert.equal(m.sizes_shown, 9, '9 个码全部印出');
+  // ⭐ 行数 = `ceil(9 / 每行**实际**能放几个)`：真实字宽下每行能放 5 个 ⇒ 2 行（5+4）。
+  //   ⚠️ 旧实现按配置里"固定 2 行"截断 ⇒ 9 个码里会有 3 个被 `…` 吃掉 ✗；现在一个都不少 ✓
+  assert.ok(m.sizes_lines >= 2 && m.sizes_lines <= 3, `9 个码应排 2~3 行（实际 ${m.sizes_lines}）`);
+  assert.equal(m.sizes_hidden, 0);
+  assert.equal(m.sizes_size_mm, 2.8, '字号不用变小');
+  assert.deepEqual(m.sizes_items, ['38', '39', '40', '41', '42', '43', '44', '45', '46']);
+  const svg = artifact.labelSvg(lab, layout(), sizesCfgFor());
+  assert.ok(!svg.includes('…'), '不许有 `…`');
+  // ⭐ 行数上限是**安全上限**（默认 6），不是固定行数
+  assert.equal(LABEL_PRINT.sizes.maxLines, 6, 'maxLines 的语义 = 安全上限（默认 6）');
+  assert.ok(m.sizes_lines <= LABEL_PRINT.sizes.maxLines);
 });

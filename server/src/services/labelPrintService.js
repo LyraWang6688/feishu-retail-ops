@@ -8,7 +8,9 @@
  *     （数量是角标：小号字下沉；**不用 Unicode 下标字符**，见 config 的 `SIZES`）；
  *   · **只印有库存（数量>0）的尺码**（0 的不印，缺号扫码看）；
  *   · **尺码按数值从小到大**（`38` < `40` < `100`，不是字符串序）⇒ config 的 `sizes.order` / `sizes.compare`；
- *     一行放不下**自动换行**（最多 `maxLines` 行；再超出省略并留 `…`）—— `perLine` / `maxLines` 来自 config；
+ *     一行放不下**自动换行**（`maxLines` 是**安全上限**，默认 6 —— **不是固定行数**；
+ *     真正装不下才省略并留 `…`）—— `perLine` / `maxLines` 来自 config；
+ *     ⚠️ 2026-10-12 真机 bug：她 `26812 黑色` 有 44 码，就是被"固定两行"截成 `…` 的 ⇒ 上限改成 6；
  *   · 价格印**单价**（「货品信息.单价」，按编号取）；读不到**照发标签、不印价格**并计数（不静默丢）。
  *
  * ⭐ **2026-10-08 她看了实物标签后的第二次定案**（「品牌顶部居中 / 货号+颜色第一行 / 价格第二行 /
@@ -139,12 +141,13 @@ const compareSizes = (left, right, sizesConfig = {}) => {
 
 /**
  * 尺码 + 数量 → **按每行几个自动分行**（她定案的规则 ③）。
- * 返回 `{ lines, overflow }`：`lines` 最多 `maxLines` 行（每行至多 `perLine` 个），
+ * 返回 `{ lines, overflow }`：`lines` 最多 `maxLines` 行（**安全上限**；每行至多 `perLine` 个），
  * `overflow = true` 表示还有尺码没排上（页面在最后一行尾上补 `…`，**不静默吞掉**）。
  */
 const buildSizeLines = (sizes, sizesConfig = {}) => {
   const perLine = Number.isInteger(sizesConfig.perLine) && sizesConfig.perLine > 0 ? sizesConfig.perLine : 3;
-  const maxLines = Number.isInteger(sizesConfig.maxLines) && sizesConfig.maxLines > 0 ? sizesConfig.maxLines : 2;
+  // 安全上限（默认 6）：**它不是"固定行数"** —— 打印产物那边还会按"可用高度 + 实际字宽"再自适应
+  const maxLines = Number.isInteger(sizesConfig.maxLines) && sizesConfig.maxLines > 0 ? sizesConfig.maxLines : 6;
   const visible = sizes.slice(0, perLine * maxLines);
   const lines = [];
   for (let index = 0; index < visible.length; index += perLine) {

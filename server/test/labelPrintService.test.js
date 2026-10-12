@@ -283,14 +283,19 @@ test('版式参数随响应下发：品牌**顶部居中** + 右栏行序「货�
 
 // ── ③ 换行（最多两行，超出留 …）────────────────────────────────────────────
 
-test('换行：一行 3 个、最多两行 ⇒ 7 个尺码排成 3 + 3，剩下 1 个被省略（size_overflow）', async () => {
+test('换行：一行 3 个、上限 6 行 ⇒ **7 个尺码全部排上**（不再"最多两行"就省略）', async () => {
+  // ⚠️ 2026-10-12 改（**这就是真机 bug 的根因**）：`sizes.maxLines` 从 2 改成 6、语义改成"安全上限"。
+  //   改前：7 个码只排 3 + 3，剩 1 个记 `size_overflow: true` ⇒ 真机上她的 **44 码就这么没了** ✗
+  //         （她原话：「它是有 44 码的。但是我发现我用标签机打出来的时候，我的 44 码就自动没有了」）
+  //   改后：**一个都不省略**，7 个码排成 3 + 3 + 1（页面/产物那边还会按可用高度与字宽再自适应）✓
   const liveInventory = [38, 39, 40, 41, 42, 43, 44].map((size, index) => record(`r${index}`, { stockKey: `YD6693-2|黑色|A|${size}` }));
   const { service } = serviceFor({ liveInventory });
   const data = await service.listLabels({});
   const label = data.labels[0];
-  assert.equal(label.sizes.length, 7, '数据里 7 个尺码一个不少（省略只发生在"怎么排"上）');
-  assert.deepEqual(label.size_lines.map((line) => line.map((token) => token.size)), [[38, 39, 40], [41, 42, 43]]);
-  assert.equal(label.size_overflow, true, '还有尺码没排上 ⇒ 页面在最后一行尾上补 …');
+  assert.equal(label.sizes.length, 7, '数据里 7 个尺码一个不少');
+  assert.deepEqual(label.size_lines.map((line) => line.map((token) => token.size)),
+    [[38, 39, 40], [41, 42, 43], [44]], '⭐ 7 个码全部排上（44 在第三行）');
+  assert.equal(label.size_overflow, false, '⭐ 不再有省略 —— 44 码必须在');
 });
 
 test('换行：正好两行排满（6 个）⇒ 不省略；一行放得下（3 个）⇒ 只有一行', async () => {

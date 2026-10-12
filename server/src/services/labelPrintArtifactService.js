@@ -44,7 +44,7 @@ const sharp = require('sharp');
 const QRCode = require('qrcode');
 
 const { textValue } = require('./v1BitableGateway');
-const { logWarn } = require('../utils/logger');
+const { logInfo, logWarn } = require('../utils/logger');
 
 /** CJK 字体候选链（与 `purchaseRequestImageService.js` 同一套；顺序即优先级）。 */
 const FONT_FAMILY = 'Noto Sans CJK SC, Noto Sans SC, WenQuanYi Zen Hei, PingFang SC, sans-serif';
@@ -277,6 +277,103 @@ const measureVerticalLayout = (label, layout, options = {}) => {
   const measure = {};
   labelSvg(label, layout, { ...options, measure });
   return measure;
+};
+
+/**
+ * ⭐⭐⭐ **尺码区自适应**（2026-10-12 真机 bug：她 `26812 黑色` 有 44 码，打出来 44 没了）。
+ *
+ * 她的原话：「我有一个货号叫 **26812 黑色**的，它**是有 44 码的**。但是我发现我用标签机打出来的时候，
+ *            我的 **44 码就自动没有了**。所以为什么它会出现截断呢？」
+ * ⇒ 改前的做法是"放不下就在末行补一个 `…`"（`overflowMark`）—— **那是拿"少印一个真实的码"换装下** ✗。
+ * ⇒ 现在的顺序（**每一步都不许丢码**）：
+ *   ① **按可用高度决定行数**（可用高 = 中段高 − 其它行占掉的高）；
+ *   ② **行内按实际字宽换行**（每行能放几个就放几个）；
+ *   ③ 仍放不下 ⇒ **自动缩字号**（从 `typography.sizeMm` 往下降，下限 `floorSizeMm`，默认 2.2mm）；
+ *   ④ 连下限都放不下（极端，例如 15+ 个码）⇒ 末行写 **`+N`**（明确"还有 N 个"）
+ *      并记 `label.print.sizes_overflow`（带货号 / 总码数 / 已印数）—— **可见，不静默** ✓。
+ * ⚠️ 只在**尺码区**内自适应：二维码尺寸、货号/颜色/价钱字号、品牌行、裁切线、外边距**都不动** ✓。
+ * ⚠️ 有空间时**一个字都不变**（字号仍是 `typography.sizeMm`，行数仍按上游给的分组）—— 有回归 AC 钉着。
+ *
+ * @returns {{size_mm:number, lines:Array, shown:number, total:number, hidden:number, shrunk:boolean, plus_mark:string}}
+ */
+const layoutSizesFit = ({
+  items, maxWidthMm, maxHeightMm, baseSizeMm, floorSizeMm = 2.2, capLines = 6,
+  qtyRatio = 0.64, gapMm = 1, widthEm = {}, lineFactor = LINE_HEIGHTS.sizes,
+}) => {
+  const list = Array.isArray(items) ? items.filter((token) => token && token.size !== undefined) : [];
+  const total = list.length;
+  const itemWidth = (token, sizeMm) => {
+    const sizeText = String(token.size ?? '');
+    const qtyText = String(token.qty ?? '');
+    const qtyMm = sizeMm * qtyRatio;
+    return textWidthMm(sizeText, sizeMm, widthEm)
+      + (qtyText ? textWidthMm(qtyText, qtyMm, widthEm) : 0) + gapMm;
+  };
+  const wrap = (sizeMm) => {
+    const out = [];
+    let line = [];
+    let used = 0;
+    for (const token of list) {
+      const w = itemWidth(token, sizeMm);
+      if (line.length && used + w > maxWidthMm + 1e-9) {
+        out.push(line);
+        line = [];
+        used = 0;
+      }
+      line.push(token);
+      used += w;
+    }
+    if (line.length) out.push(line);
+    return out;
+  };
+  // ⚠️ 行数**按可用高度算**，`capLines`（配置 `sizes.maxLines`，默认 6）只是**安全上限** ——
+  //    它不是"固定行数"（2026-10-12 前那个 2 就是被当成固定行数用，才有"9 个码只排两行 + `…`" ✗）
+  const fitsHeight = (lines, sizeMm) => lines.length <= Math.max(1, capLines)
+    && lines.length * sizeMm * lineFactor <= maxHeightMm + 1e-9;
+  const candidates = [];
+  for (let size = Number(baseSizeMm); size >= floorSizeMm - 1e-9; size = Number((size - 0.1).toFixed(2))) {
+    candidates.push(Number(size.toFixed(2)));
+  }
+  if (!candidates.length) candidates.push(Number(floorSizeMm));
+  for (const sizeMm of candidates) {
+    const lines = wrap(sizeMm);
+    if (fitsHeight(lines, sizeMm)) {
+      return {
+        size_mm: sizeMm, lines, shown: total, total, hidden: 0,
+        shrunk: sizeMm < Number(baseSizeMm) - 1e-9, plus_mark: '',
+      };
+    }
+  }
+  // ④ 连下限都放不下 ⇒ 在下限字号下**尽可能多印**，剩下的用 `+N` 明说（可见，不静默）
+  const sizeMm = Number(floorSizeMm);
+  const maxLines = Math.max(1, Math.min(Math.max(1, capLines),
+    Math.floor(maxHeightMm / (sizeMm * lineFactor) + 1e-9)));
+  const allLines = wrap(sizeMm);
+  const kept = allLines.slice(0, maxLines);
+  const shown = kept.reduce((sum, line) => sum + line.length, 0);
+  const hidden = Math.max(0, total - shown);
+  return {
+    size_mm: sizeMm, lines: kept, shown, total, hidden,
+    shrunk: sizeMm < Number(baseSizeMm) - 1e-9,
+    plus_mark: `+${hidden}`,
+  };
+};
+
+/**
+ * ⭐⭐⭐ 取**全量**尺码（按原顺序）—— **以 `sizes` 为准**，`size_lines` 只作兜底。
+ *
+ * 🔴 为什么必须这样（2026-10-12 真机 bug 的**真正根因**）：
+ *   上游给过来的 `size_lines` 是**已经按行分好、可能已经截断**的分组（它还带一个
+ *   `size_overflow` 标志）。真机现场：`26812 黑色` 有 38~**44** 共 7 个码，但 `size_lines`
+ *   只装了前 6 个 + 标志 ⇒ 我们照着画 ⇒ **44 码就"自动没有了"**（末行那个 `…` 就是它的位置）✗。
+ *   ⇒ 现在**只认 `sizes`（库存里有的全量码）**，自己按"宽度换行 + 高度定行数 + 必要时缩字号" 重排，
+ *      **一个都不许丢**；`size_lines` 只在没有 `sizes` 时才拿来兜底（老调用方兼容）。
+ */
+const flattenSizeItems = (label) => {
+  const all = Array.isArray(label?.sizes) ? label.sizes.filter((token) => token && token.size !== undefined) : [];
+  if (all.length) return all;
+  const lines = Array.isArray(label?.size_lines) ? label.size_lines.filter((line) => Array.isArray(line)) : [];
+  return lines.flat().filter((token) => token && token.size !== undefined);
 };
 
 /**
@@ -775,7 +872,12 @@ function labelSvg(label, layout, options = {}) {
     }
     if (id === 'price') return priceMm * LINE_HEIGHTS.price;
     if (id === 'state') return fieldMm * LINE_HEIGHTS.state;
-    if (id === 'sizes') return Math.max(1, sizeLines.length) * sizeMm * LINE_HEIGHTS.sizes;
+    if (id === 'sizes') {
+      // ⭐ 用**自适应之后**的字号与行数（没放不下时 = 老行为，逐字不变）
+      const fit = sizesFit;
+      if (fit) return Math.max(1, fit.lines.length) * fit.size_mm * LINE_HEIGHTS.sizes;
+      return Math.max(1, sizeLines.length) * sizeMm * LINE_HEIGHTS.sizes;
+    }
     if (id === 'brand') return brandMmRow();
     // ⭐ 二维码自己占一行（竖版画布）：高度 = 二维码边长 + 上面一点空隙。
     return 0;
@@ -797,6 +899,26 @@ function labelSvg(label, layout, options = {}) {
 
     return false;
   });
+  // ⭐⭐ 尺码区自适应（2026-10-12 真机 bug：44 码被 `…` 取代）：先算"尺码区能用多高"，
+  //   再换行 →（必要时）缩字号 →（极端时）可见 `+N`。**绝不静默少印一个码** ✓
+  const sizeItemsAll = flattenSizeItems(label);
+  const sizesFloorMm = num(sizesCfg.minFontMm, 2.2);
+  let sizesFit = null;
+  if (activeRows.includes('sizes')) {
+    const othersH = activeRows.filter((id) => id !== 'sizes').reduce((sum, id) => sum + rowHeight(id), 0);
+    const availableH = Math.max(0, mainH - othersH);
+    sizesFit = layoutSizesFit({
+      items: sizeItemsAll,
+      maxWidthMm: Math.max(0, contentW - num(body.sizes?.insetMm, 0)),
+      maxHeightMm: availableH,
+      baseSizeMm: sizeMm,
+      floorSizeMm: sizesFloorMm,
+      capLines: num(sizesCfg.maxLines, 6),
+      qtyRatio,
+      gapMm: sizeGapMm,
+      widthEm: body.itemNoColor?.widthEm || {},
+    });
+  }
   const totalH = activeRows.reduce((sum, id) => sum + rowHeight(id), 0);
   let cursor = mainTop + Math.max(0, (mainH - totalH) / 2);
   // ⭐⭐ 2026-10-12 她问"垂直方向能不能随行数动态居中" —— **一直是动态居中的**：
@@ -818,6 +940,15 @@ function labelSvg(label, layout, options = {}) {
       main_center_mm: round(mainTop + mainH / 2),
       overflows: totalH > mainH + 1e-9,
       rows: activeRows,
+      // ⭐ 尺码区自适应的证据（她要的"一个都不许丢"就靠这几项）
+      sizes_total: sizesFit ? sizesFit.total : sizeItemsAll.length,
+      sizes_shown: sizesFit ? sizesFit.shown : sizeItemsAll.length,
+      sizes_hidden: sizesFit ? sizesFit.hidden : 0,
+      sizes_size_mm: sizesFit ? sizesFit.size_mm : sizeMm,
+      sizes_lines: sizesFit ? sizesFit.lines.length : sizeLines.length,
+      sizes_shrunk: sizesFit ? sizesFit.shrunk : false,
+      sizes_cap_lines: num(sizesCfg.maxLines, 6),
+      sizes_items: sizesFit ? sizesFit.lines.flat().map((token) => String(token.size)) : sizeItemsAll.map((token) => String(token.size)),
     });
   }
 
@@ -869,16 +1000,19 @@ function labelSvg(label, layout, options = {}) {
     } else if (id === 'state') {
       parts.push(`<text x="${round(rightX)}" y="${round(baseline)}" font-family="${FONT_FAMILY}" font-size="${round(fieldMm)}">${escapeXml(String(label.state_text || texts.missingValue || ''))}</text>`);
     } else if (id === 'sizes') {
-      sizeLines.forEach((tokens, lineIndex) => {
-        const lineBaseline = cursor + (lineIndex + 0.82) * sizeMm * LINE_HEIGHTS.sizes;
+      // ⭐⭐ 用**自适应之后**的字号与换行结果（有空间时 = 上游给的分组，逐字不变）
+      const drawSizeMm = sizesFit ? sizesFit.size_mm : sizeMm;
+      const drawLines = sizesFit ? sizesFit.lines : sizeLines;
+      drawLines.forEach((tokens, lineIndex) => {
+        const lineBaseline = cursor + (lineIndex + 0.82) * drawSizeMm * LINE_HEIGHTS.sizes;
         let x = rightX;
         for (const token of tokens) {
           const sizeText = String(token?.size ?? '');
-          parts.push(`<text x="${round(x)}" y="${round(lineBaseline)}" font-family="${FONT_FAMILY}" font-size="${round(sizeMm)}">${escapeXml(sizeText)}</text>`);
-          const sizeTextW = textWidthMm(sizeText, sizeMm, body.itemNoColor?.widthEm || {});
+          parts.push(`<text x="${round(x)}" y="${round(lineBaseline)}" font-family="${FONT_FAMILY}" font-size="${round(drawSizeMm)}">${escapeXml(sizeText)}</text>`);
+          const sizeTextW = textWidthMm(sizeText, drawSizeMm, body.itemNoColor?.widthEm || {});
           const qtyText = String(token?.qty ?? '');
           if (qtyText) {
-            const qtyMm = sizeMm * qtyRatio;
+            const qtyMm = drawSizeMm * qtyRatio;
             // CSS 的 `vertical-align: -Xem` 是**相对角标自己的字号**下沉 ⇒ y 加 X × 角标字号。
             parts.push(`<text x="${round(x + sizeTextW)}" y="${round(lineBaseline + qtyMm * qtyShiftEm)}" font-family="${FONT_FAMILY}" font-size="${round(qtyMm)}">${escapeXml(qtyText)}</text>`);
             x += sizeTextW + textWidthMm(qtyText, qtyMm, body.itemNoColor?.widthEm || {}) + sizeGapMm;
@@ -886,9 +1020,11 @@ function labelSvg(label, layout, options = {}) {
             x += sizeTextW + sizeGapMm;
           }
         }
-        // 两行都放不下时最后一行补 `…`（**省略是看得见的**，与页面同一条口径）。
-        if (lineIndex === sizeLines.length - 1 && label.size_overflow) {
-          parts.push(`<text x="${round(x)}" y="${round(lineBaseline)}" font-family="${FONT_FAMILY}" font-size="${round(sizeMm)}">${escapeXml(overflowMark)}</text>`);
+        // 极端兜底：连下限字号都放不下 ⇒ 末行明写 **`+N`**（"还有 N 个"）—— **可见，绝不静默** ✓
+        // ⚠️ 2026-10-12 改：原来这里补的是 `…` —— 那等于**拿"少印一个真实的码"换装下** ✗
+        //    （她的 44 码就是这么没的）。现在只在"连下限都放不下"时才用 `+N`，且必带 warn。
+        if (sizesFit && sizesFit.hidden > 0 && lineIndex === drawLines.length - 1) {
+          parts.push(`<text x="${round(x)}" y="${round(lineBaseline)}" font-family="${FONT_FAMILY}" font-size="${round(drawSizeMm)}" font-weight="700">${escapeXml(sizesFit.plus_mark)}</text>`);
         }
       });
     }
@@ -1069,6 +1205,26 @@ async function renderLabels({ labels, layout, config = {}, logger = null }) {
       cutLineMm: config.cutLineMm,
       rows: config.rows,
     });
+    if (verticalMeasure.sizes_hidden > 0) {
+      // ⭐⭐ 极端兜底**必须留痕**：哪个货号、总共几个码、印了几个、字号缩到多少
+      logWarn('label.print.sizes_overflow', {
+        label_key: label?.key,
+        item_no: label?.item_no,
+        sizes_total: verticalMeasure.sizes_total,
+        sizes_shown: verticalMeasure.sizes_shown,
+        sizes_hidden: verticalMeasure.sizes_hidden,
+        sizes_size_mm: verticalMeasure.sizes_size_mm,
+        sizes_lines: verticalMeasure.sizes_lines,
+      });
+    } else if (verticalMeasure.sizes_shrunk) {
+      // 缩了字号但**一个都没丢** ⇒ 记 info（不是故障，但要知道行高变了）
+      logInfo('label.print.sizes_shrunk', {
+        label_key: label?.key,
+        sizes_total: verticalMeasure.sizes_total,
+        sizes_size_mm: verticalMeasure.sizes_size_mm,
+        sizes_lines: verticalMeasure.sizes_lines,
+      });
+    }
     if (verticalMeasure.overflows) {
       logWarn('label.print.vertical_overflow', {
         label_key: label?.key,
