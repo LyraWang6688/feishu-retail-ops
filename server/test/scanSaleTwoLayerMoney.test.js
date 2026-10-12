@@ -736,8 +736,15 @@ test('AC-7y ⭐【未收款】那一条的真实字段形状：只有 关联销�
     assert.equal(ok.ok, true, JSON.stringify(ok));
     const row = unpaidRows(h)[0];
     const table = V1_BITABLE_SCHEMA.tables.paymentRecord.fields;
-    assert.deepEqual(Object.keys(row.fields).sort(), [table.amount, table.salesEntry, table.status].sort(),
-      '只写这三列：关联销售单 / 收款金额 / 收款状态');
+    // ⚠️ 2026-10-12 **改写**（业务负责人定了「收款明细ID」这个格式）：
+    //    改前 = 只有 3 列（关联销售单 / 收款金额 / 收款状态）；
+    //    改后 = 多一列 **「收款明细ID」**（`{销售单号}-收款-{两位序号}`，占位行**也占号**）。
+    //    理由：她也明说「收款明细里那条【未收款】占位行**也算一个号**」⇒ 占位行从建单那一刻
+    //    就带号（它被"收清"时是**同一条记录**改状态 ⇒ 号必须一开始就有）。
+    //    ⚠️ 其余三列与三条"不写"的判据**一个字没动**（下面照旧钉着）。
+    assert.deepEqual(Object.keys(row.fields).sort(),
+      [table.amount, table.receiptId, table.salesEntry, table.status].sort(),
+      '写这四列：关联销售单 / 收款金额 / 收款状态 / **收款明细ID**');
     assert.equal(row.fields[table.status], PAYMENT_STATUS_UNPAID, '状态取值来自配置（表里既有选项）');
     assert.deepEqual(row.fields[table.salesEntry], [ok.sales_entry_record_id], '关联 = 既有「关联销售单」');
     assert.equal(row.fields[table.receivedAt], undefined, '未到账 ⇒ 不写收款时间（既有口径）');

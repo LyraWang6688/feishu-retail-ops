@@ -1,6 +1,7 @@
 const { linkedRecordIds, singleLinked, textValue } = require('./v1BitableGateway');
 const { V1ReferenceResolver, relation } = require('./v1ReferenceResolver');
 const { readSaleLinkedRecord } = require('./salesRecordReader');
+const { nextId, createState } = require('./salesRecordIds');
 const { withSalesReadRetry } = require('./salesReadRetry');
 const { PaymentService } = require('./paymentService');
 const { SalesProgressService, cents } = require('./salesProgressService');
@@ -229,10 +230,24 @@ class SalesOrderService {
       // 写空也要写（与 2026-10-08 之前的明细语义一致：没有赠品 ⇒ 这一列是**空串**）。
       await this.gateway.update('salesEntry', salesEntryRecordId, { gift: orderGift }, { correlation });
       detailPlan = rows.length;
+      // ⭐ 2026-10-12：**销售明细ID** = `{销售单号}-{两位序号}`（业务负责人定的格式）。
+      //    序号的来源 = **这一单已有的行**（`existing` 上面刚读过，零额外请求）⇒
+      //    **按创建顺序往下排、绝不重排已有行**（后补的行接着排；那张单是售后单时，
+      //    它的明细行关联的是**原主表** ⇒ 排号也接着原单来，不会从 -01 重来）。
+      const saleOrderNo = textValue(entry?.fields?.[entryFields.orderNo]).trim();
+      const detailIdState = createState(existing, table.detailId);
+      if (!saleOrderNo) {
+        logWarn('sales.detail_id.skipped', {
+          sales_entry_record_id: salesEntryRecordId, reason: 'order_no_missing', ...correlation,
+        });
+      }
       for (const row of rows) {
         if (!row.recordId) {
+          const detailId = saleOrderNo
+            ? nextId({ state: detailIdState, orderNo: saleOrderNo, kind: 'detail' }) : '';
           const created = await this.gateway.create('salesDetail', {
             salesEntry: relation(salesEntryRecordId),
+            ...(detailId ? { detailId } : {}),
             // 鞋写「编号」，配品写「配品」——字段由可售品配置声明。
             [row.item.linkField]: relation(row.item.linkRecordId),
             ...(row.item.sizeRecordId ? { size: relation(row.item.sizeRecordId) } : {}),
@@ -248,6 +263,36 @@ class SalesOrderService {
         }
         detailsPersisted += 1;
         await input.onRecordPersisted?.('details', row.index, row.recordId);
+      }
+      // ⭐ 2026-10-12：主表「交易类型」= 这一单**明细的交易类型**（她：「看实时库存里有没有」）。
+      //    🔴 这一列是**多选**关联（只读核过生产真表：`type=18 / ui_type=SingleLink`，
+      //       但 `property = {"multiple":true,"table_id":"tblbTvUT4AFsCK4K"}` ⇒ **允许多选**）——
+      //       所以**混合单写多个值**（她：「我们之前是可以多选的，所以混合单它可以多选」）。
+      //    · 去重（多行都是现货 ⇒ 只写一个现货记录）；
+      //    · 顺序 = **明细里首次出现的顺序**（她看表时与明细顺序一致，不用记"现货一定在前"）；
+      //    · 写入形状走既有 `relation()`：它**本来就认数组**（多选关联 = 记录 id 数组）。
+      //    幂等：已有值且与本次**同一集合** ⇒ 不重复写；不一致 ⇒ 判草稿变了、停止重试（与赠品同一套）。
+      const tradeTypeIds = [...new Set(expected
+        .map((item) => String(item.tradeTypeRecordId || '').trim())
+        .filter(Boolean))];
+      if (tradeTypeIds.length) {
+        const existingTradeType = linkedRecordIds(entry?.fields?.[entryFields.tradeType]);
+        const sameSet = existingTradeType.length === tradeTypeIds.length
+          && existingTradeType.every((id) => tradeTypeIds.includes(id));
+        if (existingTradeType.length && !sameSet) {
+          throw new Error('销售主表已记录的交易类型与当前草稿不一致，已停止重试');
+        }
+        if (!existingTradeType.length) {
+          await this.gateway.update('salesEntry', salesEntryRecordId,
+            { tradeType: relation(tradeTypeIds) }, { correlation });
+          logInfo('sales.trade_type.resolved', {
+            sales_entry_record_id: salesEntryRecordId,
+            order_no: textValue(entry?.fields?.[entryFields.orderNo]),
+            trade_type_count: tradeTypeIds.length,
+            multiple: tradeTypeIds.length > 1,
+            ...correlation,
+          });
+        }
       }
       // 「货」这一维写完了（收款还没开始）：先落「已写入」，这样后面收款失败时
       // 她也能从表里一眼看出"明细是好的、坏在钱那一列"。
