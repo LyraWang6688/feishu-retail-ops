@@ -356,49 +356,43 @@ const renderNoBorder = (config) => artifact.renderLabels({
   labels: [label()], layout: noBorderLayout(), config: { dpi: 203, ...config },
 });
 
-test('AC-C9-1 ⭐⭐ 默认产物：内容盒**左右对称**（设计值），且品牌锚在页宽中点 —— **与字体/光栅化无关**', async () => {
-  // 🔴🔴 为什么这条**不能**断言"墨迹 bbox 左右对称"（2026-10-12 PR #346 CI 红教的）：
-  //   墨迹的**右边缘**由"最宽的那一行"决定，而那一行是**文字** —— 文字宽度随**环境字体/字体文件**
-  //   而变（我们只写了字体链，最终用哪个字体由系统决定）：
-  //     · 我本地（macOS）：左 1.50mm ／ 右 **1.63mm**（差 −0.13mm）
-  //     · CI（Linux 容器）：左 1.50mm ／ 右 **3.25mm**（差 −1.75mm）❌ 同一条用例就红了
-  //   ⭐ **机制已自证**（在本地就能复现同一现象）：只把内容改窄一点（颜色「棕色」→「浅棕色」），
-  //     右边距就从 1.63mm 变成 **3.13mm**（≈ CI 的 3.25）—— 因为"最宽那一行"的右边缘是**文字**
-  //     量出来的，换字体/换文案都会动 ⇒ 它**本来就不该被当成不变量**。
-  //   ⇒ 所以这里改成断言**布局几何**（渲染器自己算出来的坐标，**不经过任何字体度量**）：
-  //     ① 左留白 == 右留白（设计值）；② 左栏 + 右栏 + 两侧留白**正好等于页宽**（没有一边多留）。
-  //   ⚠️ 不许把容差放大成"随便都过" —— 要的是**确定性**，不是放宽。
+test('AC-C9-1 ⭐⭐ 默认产物：内容盒**有意不对称**（左 3.5 / 右 1.5，她拍板方案①）—— 几何断言，与字体无关', () => {
+  // 🔴🔴 **为什么不能断言"墨迹 bbox 左右对称"**（2026-10-12 PR #346 CI 红教的）：
+  //   墨迹**右边缘**由"最宽的那一行"决定，而那是**文字** ⇒ 宽度随**环境字体**变：
+  //     · 我本地（macOS）：左 1.50mm ／ 右 **1.63mm**；CI（Linux）：左 1.50mm ／ 右 **3.25mm** ❌
+  //     · 机制自证：只把颜色「棕色」→「浅棕色」，右边距就从 1.63 → **3.13mm**（≈ CI 的 3.25）
+  //   ⇒ 所以这里断言**布局几何**（渲染器算出来的设计值，**不经过任何字体度量/光栅化**）。
+  //   ⚠️ 2026-10-12 她拍板方案①：**左留白 3.5 / 右留白 1.5 是有意的不对称**（要让二维码那边有空档），
+  //      所以本用例**不再**断言"左右相等"——那条会和设计打架。恒等式才是真正的不变量。
   const geo = artifact.canvasGeometry(LABEL_PRINT, { canvas: 'landscape' });
-  const pad = LABEL_PRINT.label.paddingMm;              // 1.5
-  const border = LABEL_PRINT.label.borderMm;            // 0.2
-  const leftGutter = pad + border;                      // 1.7 = 内容盒左边
-  const rightGutter = leftGutter;                       // 右边**同值**（对称是设计约束，不是巧合）
-  const qrCol = LABEL_PRINT.typography.qrSizeMm + LABEL_PRINT.body.qrGapMm;  // 二维码列 15 + 1.5
-  const infoCol = artifact.availableWidthMm(LABEL_PRINT, { designWidthMm: geo.designW });
-  // ① 左留白 == 右留白
-  assert.equal(leftGutter, rightGutter, '左右留白同为 paddingMm + borderMm（设计值相等）');
-  // ② 两侧留白 + 左栏 + 右栏 = 页宽（**精确相等**，没有一边多留）
-  assert.equal(Number((leftGutter + qrCol + infoCol + rightGutter).toFixed(6)), geo.designW,
-    `内容盒必须正好填满页宽：${leftGutter} + ${qrCol} + ${infoCol} + ${rightGutter} = ${geo.designW}mm`);
-  assert.equal(infoCol, Number((geo.designW - leftGutter - qrCol - rightGutter).toFixed(6)),
-    '右栏 = 页宽 − 左留白 − 二维码列 − 右留白（右栏是"剩下的全部"⇒ 不会有第三种留白）');
-  // ③ 品牌行锚在**页宽中点**（`text-anchor="middle"`）—— 同样是几何，不经过字体度量
-  const svg = artifact.labelSvg(label(), layout(), { dpi: 203 });
-  const brand = /<text x="([\d.]+)" y="[\d.]+" font-family="[^"]*" font-size="[\d.]+" text-anchor="middle">邯美皮鞋</.exec(svg);
-  assert.ok(brand, '品牌行要居中锚定（找不到 text-anchor="middle" 的品牌行）');
-  assert.equal(Number(brand[1]), geo.designW / 2, '品牌锚点必须在页宽中点');
-  // ④ 与字体无关的那一条墨迹不变量：**最左边的墨**来自固定尺寸的二维码块 ⇒ 它 = 内容盒左边（±0.2mm）
-  const qrOnly = await artifact.renderLabels({
-    labels: [label()],
-    layout: layout({
-      label: { borderMm: 0 },
-      fields: { qr: true, brand: false, itemNo: false, color: false, category: false, size: false, price: false, state: false, footer: false },
-    }),
-    config: { dpi: 203 },
+  const left = artifact.resolveLeftPaddingMm(layout(), { leftPaddingMm: LABEL_PRINT_QUEUE.artifact.leftPaddingMm });
+  const right = LABEL_PRINT.label.paddingMm;
+  const cut = artifact.resolveCutLineMm(layout(), { cutLineMm: LABEL_PRINT_QUEUE.artifact.cutLineMm });
+  const qrCol = artifact.resolveQrSizeMm(layout(), { qrSizeMm: LABEL_PRINT_QUEUE.artifact.qrSizeMm })
+    + LABEL_PRINT.body.qrGapMm;
+  const infoCol = artifact.availableWidthMm(layout(), {
+    designWidthMm: geo.designW,
+    leftPaddingMm: LABEL_PRINT_QUEUE.artifact.leftPaddingMm,
+    qrSizeMm: LABEL_PRINT_QUEUE.artifact.qrSizeMm,
+    cutLineMm: LABEL_PRINT_QUEUE.artifact.cutLineMm,
   });
-  const m = await marginsOf(qrOnly.pngFirst);
-  assert.ok(Math.abs(m.left - (pad + border)) <= 0.2,
-    `二维码块最左边 = 设计留白 ${pad + border}mm（实际 ${m.left}mm）—— 二维码是固定尺寸的块，不看字体`);
+  assert.equal(left, 3.5, '方案①：左留白 3.5mm（她拍板）');
+  assert.equal(right, 1.5, '右留白仍是 paddingMm 1.5mm ⇒ **有意不对称**（不是 bug）');
+  assert.equal(cut, 0, '裁切线默认 0（不画 —— 她说"上下有横杠"）');
+  assert.equal(Number((left + cut + qrCol + infoCol + right + cut).toFixed(6)), geo.designW,
+    `恒等式：左${left} + 线${cut} + 二维码列${qrCol} + 信息栏${infoCol} + 右${right} + 线${cut} = 页宽${geo.designW}`);
+  assert.equal(infoCol, 20.5, '方案① 的信息栏 20.5mm（比现状 20.1mm 还宽 0.4mm —— 因为不画线又多让出 0.4）');
+  // 品牌行：居中锚在**内容盒**中点（内容盒现在左边更宽 ⇒ 中点相对页面右移）
+  const svg = artifact.labelSvg(label(), layout(), {
+    dpi: 203,
+    leftPaddingMm: LABEL_PRINT_QUEUE.artifact.leftPaddingMm,
+    qrSizeMm: LABEL_PRINT_QUEUE.artifact.qrSizeMm,
+    cutLineMm: LABEL_PRINT_QUEUE.artifact.cutLineMm,
+  });
+  const brand = /<text x="([\d.]+)" y="[\d.]+" font-family="[^"]*" font-size="[\d.]+" text-anchor="middle">邯美皮鞋</.exec(svg);
+  assert.ok(brand, '品牌行要居中锚定');
+  assert.equal(Number(brand[1]), Number((left + cut + (geo.designW - left - right - cut * 2) / 2).toFixed(2)),
+    '品牌锚点 = 内容盒中点（内容盒左 3.7 / 右 1.5 ⇒ 中点 22.15，比页宽中点 20 右移 2.15mm）');
 });
 
 test('AC-C9-2 ⭐ `contentOffsetXMm=+1` ⇒ 内容整体右移 1mm（左留白 +1、右留白 −1）', async () => {
@@ -449,6 +443,244 @@ test('AC-C9-4 ⭐ 回归：默认偏移 0 ⇒ 产物与之前**逐字节一致**
   });
   assert.equal(c.meta.width_pt, 85.0394);
   // 裁切线**不跟着内容走**（它是标签边界）
-  const moved = artifact.labelSvg(label(), layout(), { dpi: 203, contentOffsetXMm: 2 });
+  // ⚠️ 2026-10-12 改：这里原来用 `contentOffsetXMm: 2`，现在 +2 已超过"不裁边的安全上限"
+  //    （右移余量 = 右留白 1.5mm，见 AC-C12-1）⇒ 换成安全上限 1.5，意图（线不跟着走）不变。
+  const moved = artifact.labelSvg(label(), layout(), { dpi: 203, contentOffsetXMm: 1.5 });
   assert.match(moved, /<rect x="0\.1" y="0\.1"/, '裁切线仍在纸边');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 【2026-10-12 她「再挪 2mm」】纯平移会裁到最宽那行 ⇒ 加"左留白可配"（左右独立）
+//   恒等式（有 AC 钉着）：`左留白 + 二维码列 + 信息栏 + 右留白 = 页宽`（信息栏吃剩下的）
+//   ⭐ 方案①：左留白 1.5→3.5 + 二维码 15→13 ⇒ **信息栏仍是 20.1mm、货号字号一点没变** ✓
+// ═══════════════════════════════════════════════════════════════════════════
+
+const infoColOf = (leftPaddingMm, qrSizeMm) => artifact.availableWidthMm(
+  layout({ label: { ...LABEL_PRINT.label, leftPaddingMm }, typography: { ...LABEL_PRINT.typography, qrSizeMm } }),
+  { designWidthMm: LABEL_PRINT.label.widthMm, leftPaddingMm },
+);
+const identityOf = (leftPaddingMm, qrSizeMm) => {
+  const info = infoColOf(leftPaddingMm, qrSizeMm);
+  const border = LABEL_PRINT.label.borderMm;
+  return Number((leftPaddingMm + border + qrSizeMm + LABEL_PRINT.body.qrGapMm + info
+    + LABEL_PRINT.label.paddingMm + border).toFixed(6));
+};
+
+test('AC-C10-1 ⭐⭐ 恒等式：`左留白 + 二维码列 + 信息栏 + 右留白 = 页宽`（精确，任何组合都成立）', () => {
+  const pageW = LABEL_PRINT.label.widthMm;
+  for (const [left, qr] of [[1.5, 15], [3.5, 13], [3.5, 15], [3.5, 12], [0, 15], [4, 14]]) {
+    assert.equal(identityOf(left, qr), pageW, `左${left}/二维码${qr} 时恒等式必须精确成立`);
+  }
+});
+
+test('AC-C10-2 ⭐⭐ 方案①（左留白 3.5 + 二维码 13）：**信息栏不变、货号字号不变**——"再挪 2mm"零代价', () => {
+  const beforeInfo = infoColOf(1.5, 15);
+  const afterInfo = infoColOf(3.5, 13);
+  assert.equal(beforeInfo, 20.1, '现状信息栏 20.1mm');
+  assert.equal(afterInfo, beforeInfo, '⭐ 方案① 的信息栏必须**与现状完全相同**（20.1mm）');
+  // 货号那行（现在是"货号+颜色同行"）的规划字号也必须一样 ⇒ 她看到的字号不变
+  const planOf = (left, qr) => artifact.planItemNoColor(label(), layout({
+    label: { ...LABEL_PRINT.label, leftPaddingMm: left },
+    typography: { ...LABEL_PRINT.typography, qrSizeMm: qr },
+  }), { designWidthMm: LABEL_PRINT.label.widthMm, leftPaddingMm: left });
+  const before = planOf(1.5, 15);
+  const after = planOf(3.5, 13);
+  assert.equal(after.itemNoSizeMm, before.itemNoSizeMm, '货号字号必须一点不变（不是"放宽"，是"没变"）');
+  assert.equal(after.itemNoTruncated, false, '不许截断');
+  assert.equal(after.soloItemNoSizeMm, before.soloItemNoSizeMm, '货号单独一行时的字号也不变');
+});
+
+test('AC-C10-3 ⭐ 方案②（左留白 3.5 + 二维码仍 15）的**代价如实**：信息栏窄 2mm ⇒ 同行字号变小', () => {
+  const before = infoColOf(1.5, 15);
+  const after = infoColOf(3.5, 15);
+  assert.equal(Number((before - after).toFixed(6)), 2, '方案② 的信息栏正好窄 2mm');
+  const planOf = (left, qr) => artifact.planItemNoColor(label(), layout({
+    label: { ...LABEL_PRINT.label, leftPaddingMm: left },
+    typography: { ...LABEL_PRINT.typography, qrSizeMm: qr },
+  }), { designWidthMm: LABEL_PRINT.label.widthMm, leftPaddingMm: left });
+  const a = planOf(1.5, 15);
+  const b = planOf(3.5, 15);
+  assert.ok(b.itemNoSizeMm < a.itemNoSizeMm,
+    `方案② 的"货号+颜色同行"字号必须变小（${a.itemNoSizeMm} → ${b.itemNoSizeMm}）`);
+  assert.equal(b.itemNoTruncated, false, '变小但不许截断');
+  // 方案③（二维码缩到 12）：信息栏反而更宽 ⇒ 同行字号更大
+  assert.ok(infoColOf(3.5, 12) > before);
+});
+
+test('AC-C10-4 ⭐ 左留白：默认 = 方案① 的 3.5（可显式设回 1.5 对称）；越界/非法当场拒；env 同口径', async () => {
+  const base = await artifact.renderLabels({ labels: [label()], layout: layout(), config: { dpi: 203 } });
+  const same = await artifact.renderLabels({
+    labels: [label()], layout: layout({ label: { ...LABEL_PRINT.label, leftPaddingMm: LABEL_PRINT.label.paddingMm } }),
+    config: { dpi: 203 },
+  });
+  // ⚠️ 2026-10-12 改断言（**默认值从"对称"改成方案①的 3.5**）：
+  //   改前：默认左留白 = paddingMm（左右相等）
+  //   改后：默认左留白 = 3.5（她拍板方案①）；**显式**写 `leftPaddingMm: paddingMm` 时仍能与
+  //         "对称"那条老口径逐字节对齐 —— 所以这里改成拿"显式 1.5"当基准来比。
+  const symmetric = await artifact.renderLabels({
+    labels: [label()], layout: layout(), config: { dpi: 203, leftPaddingMm: LABEL_PRINT.label.paddingMm },
+  });
+  assert.deepEqual(symmetric.pdf, same.pdf, '显式 1.5 与"layout 里写 1.5"必须逐字节一致');
+  assert.equal(symmetric.meta.left_padding_mm, LABEL_PRINT.label.paddingMm, '显式 1.5 ⇒ 左右相等（老口径仍可用）');
+  const wider = await artifact.renderLabels({
+    labels: [label()], layout: layout(), config: { dpi: 203, leftPaddingMm: 3.5 },
+  });
+  assert.equal(wider.meta.left_padding_mm, 3.5);
+  for (const value of [11, -1, 'x', 0.3]) {
+    assert.throws(() => artifact.resolveLeftPaddingMm(layout(), { leftPaddingMm: value }), /左留白/,
+      `${value} 必须被拒并指字段名`);
+  }
+  const { resolveLabelPrintQueueConfig } = require('../src/config/labelPrintQueue');
+  // ⚠️ 2026-10-12 改：默认值从 `null`（对称）改成 **3.5**（她拍板方案①）
+  assert.equal(resolveLabelPrintQueueConfig({}).artifact.leftPaddingMm, 3.5, '默认 3.5（方案①）');
+  assert.equal(LABEL_PRINT_QUEUE.artifact.qrSizeMm, 13, '方案①：二维码默认 13mm（腾 2mm 给左留白）');
+  assert.equal(LABEL_PRINT_QUEUE.artifact.cutLineMm, 0, '裁切线默认 0（不画）');
+  assert.equal(resolveLabelPrintQueueConfig({ LABEL_PRINT_LEFT_PADDING_MM: '3.5' }).artifact.leftPaddingMm, 3.5);
+  assert.throws(() => resolveLabelPrintQueueConfig({ LABEL_PRINT_LEFT_PADDING_MM: '11' }), /LEFT_PADDING/);
+  assert.throws(() => resolveLabelPrintQueueConfig({ LABEL_PRINT_LEFT_PADDING_MM: '0.3' }), /LEFT_PADDING/);
+});
+
+test('AC-C10-5 ⭐ 左留白 + 内容平移**同时用**也成立：几何恒等式 + 裁切线仍在纸边 + B/C 档回归', async () => {
+  const out = await artifact.renderLabels({
+    labels: [label()], layout: layout({ label: { ...LABEL_PRINT.label, leftPaddingMm: 3.5 } }),
+    config: { dpi: 203, qrSizeMm: 13, leftPaddingMm: 3.5, contentOffsetXMm: 0.5 },
+  });
+  assert.equal(out.meta.left_padding_mm, 3.5);
+  assert.equal(identityOf(3.5, 13), LABEL_PRINT.label.widthMm, '左留白 + 平移同时用，恒等式照样成立');
+  const svg = artifact.labelSvg(label(), layout({ label: { ...LABEL_PRINT.label, leftPaddingMm: 3.5 } }),
+    { dpi: 203, contentOffsetXMm: 0.5 });
+  assert.match(svg, /<rect x="0\.1" y="0\.1"/, '裁切线仍在纸边（不跟着内容走）');
+  const b = await artifact.renderLabels({ labels: [label()], layout: layout(), config: { dpi: 203, rotate: 90 } });
+  assert.ok(b.meta.scale > 0.72 && b.meta.scale < 0.76, 'B 档缩放不变');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 【2026-10-12 她："打印时上下会有横杠"】= 我们画的那圈裁切线（成卷标签上像横杠）
+//   ⇒ 默认 `cutLineMm: 0`（不画）；能力保留（设成正数画回来）
+//   ⚠️ 断言用**像素扫描**（页边 1mm 带里有没有"横贯整页的实线"），不是只看配置值 ✓
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** 页边 1mm 带里"横贯整页的实线"统计（行 = 横杠，列 = 竖杠）。 */
+const edgeLineScan = async (png) => {
+  const sharp = require('sharp');
+  const { data, info } = await sharp(png).greyscale().raw().toBuffer({ resolveWithObject: true });
+  const band = Math.max(1, Math.round(info.width / 40)); // 1mm ≈ 8px
+  const rowDark = (y) => { let n = 0; for (let x = 0; x < info.width; x += 1) if (data[y * info.width + x] < 128) n += 1; return n; };
+  const colDark = (x) => { let n = 0; for (let y = 0; y < info.height; y += 1) if (data[y * info.width + x] < 128) n += 1; return n; };
+  const horizontalLines = [];
+  for (let y = 0; y < band; y += 1) if (rowDark(y) >= info.width * 0.8) horizontalLines.push({ y, side: 'top' });
+  for (let y = info.height - band; y < info.height; y += 1) if (rowDark(y) >= info.width * 0.8) horizontalLines.push({ y, side: 'bottom' });
+  const verticalLines = [];
+  for (let x = 0; x < band; x += 1) if (colDark(x) >= info.height * 0.8) verticalLines.push({ x, side: 'left' });
+  for (let x = info.width - band; x < info.width; x += 1) if (colDark(x) >= info.height * 0.8) verticalLines.push({ x, side: 'right' });
+  return { horizontalLines, verticalLines, widthPx: info.width, heightPx: info.height };
+};
+
+test('AC-C11-1 ⭐⭐ 默认产物在**页边 1mm 带里没有横杠/竖杠**（像素扫描，不是看配置）', async () => {
+  // ⚠️ 必须带上**队列 artifact 的默认值**（生产就是这条路：`queueService` 拿 `LABEL_PRINT_QUEUE.artifact` 渲染）
+  const out = await artifact.renderLabels({
+    labels: [label()], layout: layout(), config: { dpi: 203, ...LABEL_PRINT_QUEUE.artifact },
+  });
+  const scan = await edgeLineScan(out.pngFirst);
+  assert.deepEqual(scan.horizontalLines, [], `上下 1mm 带里不许有横贯整页的实线（扫到 ${JSON.stringify(scan.horizontalLines)}）`);
+  assert.deepEqual(scan.verticalLines, [], `左右 1mm 带里也不许有竖线（扫到 ${JSON.stringify(scan.verticalLines)}）`);
+  // A4 表那两条老路（转 90 / 换页面）也扫一遍
+  for (const cfg of [{ rotate: 90 }, { rotate: 90, rotatePageWithContent: true }]) {
+    const b = await artifact.renderLabels({
+      labels: [label()], layout: layout(), config: { dpi: 203, ...LABEL_PRINT_QUEUE.artifact, ...cfg },
+    });
+    const s2 = await edgeLineScan(b.pngFirst);
+    assert.deepEqual(s2.horizontalLines, [], `${JSON.stringify(cfg)} 也不许有横杠`);
+  }
+});
+
+test('AC-C11-2 ⭐ 能力保留：显式 `cutLineMm: 0.2` ⇒ 那条线**回来了**（有人要用它做裁切定位）', async () => {
+  const on = await artifact.renderLabels({
+    labels: [label()], layout: layout(), config: { dpi: 203, ...LABEL_PRINT_QUEUE.artifact, cutLineMm: 0.2 },
+  });
+  const scan = await edgeLineScan(on.pngFirst);
+  assert.ok(scan.horizontalLines.length >= 1, '显式开线时要扫得到横线（否则这个开关就是假的）');
+  assert.ok(scan.verticalLines.length >= 1, '竖线同理');
+  assert.equal(on.meta.cut_line_mm, 0.2);
+  // 非法/越界 ⇒ 拒
+  assert.throws(() => artifact.resolveCutLineMm(layout(), { cutLineMm: 2 }), /裁切线/);
+  assert.throws(() => artifact.resolveCutLineMm(layout(), { cutLineMm: 'x' }), /裁切线/);
+  assert.equal(artifact.resolveCutLineMm(layout(), { cutLineMm: 0 }), 0, '0 = 明确不画');
+  assert.equal(artifact.resolveCutLineMm(layout(), {}), LABEL_PRINT.label.borderMm, '不传 = 用 layout 的老值（兼容）');
+});
+
+test('AC-C11-3 ⭐ 方案①的成品数字（她先看样张再打纸）：左 3.5 / 二维码 13 / 信息栏 20.5 / 无线', async () => {
+  const out = await artifact.renderLabels({
+    labels: [label()], layout: layout(), config: { dpi: 203, ...LABEL_PRINT_QUEUE.artifact },
+  });
+  assert.equal(out.meta.left_padding_mm, 3.5);
+  assert.equal(out.meta.qr_size_mm, 13);
+  assert.equal(out.meta.cut_line_mm, 0);
+  assert.equal(out.meta.width_mm, 40, '页面仍是 40×30（驱动纸型不变）');
+  assert.equal(out.meta.width_pt, 113.3858);
+  // 二维码仍然是**正方形、13mm**（真二维码那条 AC 覆盖 15mm，这里补 13mm 的尺寸）
+  const sharp = require('sharp');
+  const qrOnly = await artifact.renderLabels({
+    labels: [label()],
+    layout: layout({ label: { borderMm: 0 },
+      fields: { qr: true, brand: false, itemNo: false, color: false, category: false, size: false, price: false, state: false, footer: false } }),
+    config: { dpi: 203, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0 },
+  });
+  assert.equal(out.meta.height_mm, 30);
+  const meta = await sharp(qrOnly.pngFirst).metadata();
+  assert.equal(meta.width, 320);
+  const stats = await (async () => {
+    const { data, info } = await sharp(qrOnly.pngFirst).greyscale().raw().toBuffer({ resolveWithObject: true });
+    let minX = info.width; let maxX = -1; let minY = info.height; let maxY = -1;
+    for (let y = 0; y < info.height; y += 1) for (let x = 0; x < info.width; x += 1) if (data[y * info.width + x] < 128) {
+      if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y;
+    }
+    return { w: maxX - minX + 1, h: maxY - minY + 1, left: +(minX * 25.4 / 203).toFixed(2) };
+  })();
+  assert.ok(Math.abs(stats.w - stats.h) <= 2, `二维码仍是正方形（${stats.w}x${stats.h}）`);
+  assert.ok(Math.abs(stats.w - Math.round((13 / 25.4) * 203)) <= 3, `二维码 13mm ≈ 104px（实际 ${stats.w}px）`);
+  assert.ok(Math.abs(stats.left - 3.5) <= 0.2, `二维码左边距 = 左留白 3.5mm（实际 ${stats.left}mm）`);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 【2026-10-12 她/Lead 点透的原理】缩二维码 = 腾空间；**整幅右移 = 把品牌挪到纸中间**
+//   ⇒ 右移的安全余量 = **右留白**（最宽那行的右边缘 = 页宽 − 右留白）；左移 = 左留白
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-C12-1 ⭐⭐ 安全上限：右移余量 = 右留白（1.5mm）、左移余量 = 左留白（3.5mm）；超过就拒', () => {
+  const layout35 = layout({ label: { ...LABEL_PRINT.label, leftPaddingMm: 3.5 } });
+  const opts = { leftPaddingMm: 3.5 };
+  assert.deepEqual(artifact.maxSafeOffsetXMm(layout35, opts), { right: 1.5, left: 3.5 },
+    '⚠️ 关键数字：右移最多 1.5mm（= 右留白）—— 所以 +2.0mm 是**不安全**的');
+  for (const value of [0, 0.5, 1, 1.5, -1, -3.5]) {
+    assert.doesNotThrow(() => artifact.assertSafeOffsetXMm(value, layout35, opts), `偏移 ${value} 应放行`);
+  }
+  assert.throws(() => artifact.assertSafeOffsetXMm(2, layout35, opts), /contentOffsetXMm.*1\.5/,
+    '+2.0 必须被拒（会把最宽的货号行裁到纸外）并指出上限');
+  assert.throws(() => artifact.assertSafeOffsetXMm(-4, layout35, opts), /contentOffsetXMm.*3\.5/,
+    '-4.0 必须被拒（二维码会贴到纸边）');
+  // 渲染入口也要拦住（不只是 helper）
+  assert.throws(() => artifact.labelSvg(label(), layout35, { dpi: 203, contentOffsetXMm: 2 }), /contentOffsetXMm/);
+});
+
+test('AC-C12-2 ⭐⭐ 三档偏移下"品牌中心相对页面中心"的位移（与字体无关的几何）', () => {
+  const layout35 = layout({ label: { ...LABEL_PRINT.label, leftPaddingMm: 3.5 } });
+  const opts = { leftPaddingMm: 3.5 };
+  const pageCenter = LABEL_PRINT.label.widthMm / 2; // 20
+  const brandCenterOf = (offset) => {
+    const svg = artifact.labelSvg(label(), layout35, { dpi: 203, contentOffsetXMm: offset });
+    const hit = /<text x="([\d.]+)" y="[\d.]+" font-family="[^"]*" font-size="[\d.]+" text-anchor="middle">邯美皮鞋</.exec(svg);
+    // 整体平移组里带着 `translate(<offset> 0)` ⇒ 品牌锚点本身不变、实际位置 = 锚点 + 偏移
+    const shifted = /translate\(([-\d.]+) 0\)/.exec(svg);
+    return Number(hit[1]) + (shifted ? Number(shifted[1]) : 0);
+  };
+  assert.equal(brandCenterOf(0), 21, '偏移 0：品牌中心 21mm（内容盒中点）= 比页面中心右 1.0mm');
+  assert.equal(brandCenterOf(1), 22, '偏移 +1：品牌中心 22mm = 比页面中心右 2.0mm');
+  assert.equal(brandCenterOf(1.5), 22.5, '偏移 +1.5（安全上限）：品牌中心 22.5mm = 右 2.5mm');
+  for (const [offset, expected] of [[0, 1], [1, 2], [1.5, 2.5]]) {
+    assert.equal(Number((brandCenterOf(offset) - pageCenter).toFixed(2)), expected,
+      `偏移 ${offset} ⇒ 品牌中心相对页面中心右移 ${expected}mm`);
+    // 最宽那一行的右边余量 = 右留白 − 偏移（≥0 才不裁边）
+    assert.ok(Number((1.5 - offset).toFixed(2)) >= 0, `偏移 ${offset} 的右边余量必须 ≥0`);
+  }
 });

@@ -117,6 +117,7 @@ const planItemNoColor = (label, layout, options = {}) => {
   const separator = String(config.categorySeparator ?? ' · ');
   const preferColor = config.preferColorOverCategory !== false;
   const available = availableWidthMm(layout, options);
+  void 0;
 
   const missing = String(layout.texts?.missingValue ?? '—');
   const value = (raw) => String(raw ?? '').trim() || missing;
@@ -214,15 +215,111 @@ const planItemNoColor = (label, layout, options = {}) => {
  * 标签宽 − 左右留白 − 裁切线 × 2 − （二维码宽 + 二维码与右栏的空隙）。
  * 40×30 + 15mm 二维码 + 1.5mm 留白 + 0.2mm 裁切线 ⇒ **20.1mm**。
  */
+/**
+ * ⭐⭐ **左留白**（`label.leftPaddingMm`，可被 `artifact.leftPaddingMm` 覆盖）—— 2026-10-12 加。
+ *
+ * 为什么要**左右独立**：她要"二维码这边留出更大的空档"（左留白 1.5 → 3.5mm），
+ * 而纯靠 `contentOffsetXMm` 平移会让**最宽那一行**超出页面被裁（1.75 − 3 = −1.25mm ✗）。
+ * ⇒ 正解是把**左留白本身**调大（右边留白保持 `label.paddingMm`）。
+ * ⚠️ **不改 `label.paddingMm` 的语义**（它仍是"右边留白"、也是默认的左留白）——
+ *    没设 `leftPaddingMm` 时行为**一个字节都不变**。
+ * ⚠️ 恒等式必须成立：`左留白 + 二维码列 + 信息栏 + 右留白 = 页宽`（信息栏吃剩下的）。
+ */
+const resolveLeftPaddingMm = (layout, options = {}) => {
+  const label = layout?.label || {};
+  const fallback = num(label.paddingMm, 1.5);
+  const raw = options.leftPaddingMm ?? label.leftPaddingMm;
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  const mm = Number(raw);
+  if (!Number.isFinite(mm) || mm < 0 || mm > 10) {
+    throw new Error(`左留白（leftPaddingMm）只能是 0~10mm 之间的数字，当前是「${raw}」`);
+  }
+  // 与内容偏移同一套口径：0.5mm 的整数倍（排障微调不需要更细；也免得两侧写法不一）
+  if (Math.abs(mm / OFFSET_STEP_MM - Math.round(mm / OFFSET_STEP_MM)) > 1e-9) {
+    throw new Error(`左留白（leftPaddingMm）只接受 ${OFFSET_STEP_MM}mm 的整数倍，当前是「${raw}」`);
+  }
+  return round(mm);
+};
+
+/**
+ * ⭐⭐ **整幅右移的安全上限**（`contentOffsetXMm` 最多能设多少不裁边）。
+ *
+ * 原理（业务负责人 2026-10-12 点透的，一句话记在这里）：
+ *   **缩二维码 = 腾空间；整幅右移 = 把品牌挪到纸的中间；页面本身左右是对称的，
+ *   纸上偏左来自打印机的落点** —— 所以我们只能"整幅右移"，而右移的余量
+ *   = **右留白**（最宽那一行的墨迹右边缘 = 页宽 − 右留白 ⇒ 右移到"贴着纸边"为止）。
+ * ⚠️ 判据用**设计值**（信息栏的右端 = 页宽 − 右留白），不是"文字量出来的宽度" ⇒ 与字体无关。
+ * 反向（左移）的余量 = **左留白**（二维码块左边缘 = 左留白）。
+ */
+const maxSafeOffsetXMm = (layout, options = {}) => ({
+  // 右移最多这么多毫米（再把最宽那行推到纸边就算裁边）
+  right: num(layout?.label?.paddingMm, 1.5),
+  // 左移最多这么多毫米（再把二维码推到纸边）
+  left: resolveLeftPaddingMm(layout, options),
+});
+
+/** 校验内容平移是否在"不裁边"的安全范围内（越界 ⇒ 抛，指字段名 + 给上限）。 */
+const assertSafeOffsetXMm = (offsetMm, layout, options = {}) => {
+  const limit = maxSafeOffsetXMm(layout, options);
+  if (offsetMm > limit.right + 1e-9) {
+    throw new Error(`contentOffsetXMm 右移 ${offsetMm}mm 超过安全余量 ${limit.right}mm`
+      + ' —— 再移会把最宽那一行裁到纸外；要给更多空间就改版式（左留白 / 二维码尺寸）');
+  }
+  if (-offsetMm > limit.left + 1e-9) {
+    throw new Error(`contentOffsetXMm 左移 ${Math.abs(offsetMm)}mm 超过左留白 ${limit.left}mm`
+      + ' —— 再移二维码会贴到纸边');
+  }
+  return offsetMm;
+};
+
+/**
+ * ⭐ **二维码尺寸**（`artifact.qrSizeMm`，默认 = `typography.qrSizeMm`）。
+ * 方案①（她 2026-10-12 拍板）：二维码 15 → **13mm**，腾出 2mm 给"左留白 +2mm"，
+ * 这样**信息栏宽度不变**（货号不缩字、不被裁）。
+ * ⚠️ 只在**打印产物**这一路生效；浏览器出 A4 那条路仍用 `typography.qrSizeMm`。
+ */
+const resolveQrSizeMm = (layout, options = {}) => {
+  const fallback = num(layout?.typography?.qrSizeMm, 15);
+  const raw = options.qrSizeMm;
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  const mm = Number(raw);
+  if (!Number.isFinite(mm) || mm < 5 || mm > 25) {
+    throw new Error(`二维码尺寸（qrSizeMm）只能是 5~25mm 之间的数字，当前是「${raw}」`);
+  }
+  return round(mm);
+};
+
+/**
+ * ⭐⭐ **裁切线**（`artifact.cutLineMm`，默认 **0 = 不画**）。
+ *
+ * 她的原话（2026-10-12）：「**我看到在打印的时候，上下会有横杠**」—— 那就是我们画的这圈裁切线
+ * （成卷标签上，上下两条看起来就是横杠）⇒ **默认关掉**。
+ * 保留能力：设成正数（例如 0.2）就会画回来（有人要用它做裁切定位时）。
+ * ⚠️ 它同时参与几何：留白/内容盒按"有没有线"算（线宽 0 ⇒ 内容盒左右各多 0.2mm）。
+ */
+const resolveCutLineMm = (layout, options = {}) => {
+  const fallback = num(layout?.label?.borderMm, 0.2);
+  const raw = options.cutLineMm;
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  const mm = Number(raw);
+  if (!Number.isFinite(mm) || mm < 0 || mm > 1) {
+    throw new Error(`裁切线宽度（cutLineMm）只能是 0~1mm 之间的数字（0 = 不画），当前是「${raw}」`);
+  }
+  return round(mm);
+};
+
 function availableWidthMm(layout, options = {}) {
   const label = layout.label || {};
   const body = layout.body || {};
   const fields = layout.fields || {};
   const designWidthMm = num(options.designWidthMm, num(label.widthMm, 40));
   // 二维码**永远在左栏**（构图不变）⇒ 它永远从"行方向"里扣宽度（右栏 20.1mm）。
-  const qr = fields.qr === false ? 0 : num(layout.typography?.qrSizeMm, 15) + num(body.qrGapMm, 1.5);
-  const borders = num(label.borderMm, 0.2) * 2;
-  return Math.max(0, designWidthMm - num(label.paddingMm, 1.5) * 2 - borders - qr);
+  const qr = fields.qr === false ? 0 : resolveQrSizeMm(layout, options) + num(body.qrGapMm, 1.5);
+  const border = resolveCutLineMm(layout, options);
+  // ⚠️ 左留白可配（`leftPaddingMm`），右留白仍是 `paddingMm` ⇒ 信息栏 = 页宽 − 左 − 二维码列 − 右
+  const left = resolveLeftPaddingMm(layout, options);
+  const right = num(label.paddingMm, 1.5);
+  return Math.max(0, designWidthMm - left - right - border * 2 - qr);
 }
 
 /**
@@ -463,20 +560,25 @@ function labelSvg(label, layout, options = {}) {
   const widthMm = geometry.designW;
   const heightMm = geometry.designH;
   const padMm = num(labelCfg.paddingMm, 1.5);
-  const borderMm = num(labelCfg.borderMm, 0.2);
+  // ⭐ 裁切线可配（`artifact.cutLineMm`，默认 0 = 不画）；`borderMm` 同时参与几何
+  const borderMm = resolveCutLineMm(layout, options);
 
   const widthPx = mmToPx(geometry.pageW, dpi);
   const heightPx = mmToPx(geometry.pageH, dpi);
 
   // 内容区（`box-sizing: border-box` ⇒ 留白与裁切线都占尺寸）。
-  const x0 = padMm + borderMm;
+  // ⭐ 左留白可配（`label.leftPaddingMm` / `artifact.leftPaddingMm`）：右边仍是 `padMm`
+  const leftPadMm = resolveLeftPaddingMm(layout, options);
+  const x0 = leftPadMm + borderMm;
   const y0 = padMm + borderMm;
-  const contentW = Math.max(0, widthMm - x0 * 2);
+  const contentW = Math.max(0, widthMm - x0 - (padMm + borderMm));
   const contentBottom = heightMm - y0;
 
   const parts = [];
   // 裁切线：屏幕上虚线、纸上细实线；这里画细实线。
-  parts.push(`<rect x="${borderMm / 2}" y="${borderMm / 2}" width="${widthMm - borderMm}" height="${heightMm - borderMm}" fill="none" stroke="#000" stroke-width="${borderMm}" />`);
+  if (borderMm > 0) {
+    parts.push(`<rect x="${borderMm / 2}" y="${borderMm / 2}" width="${widthMm - borderMm}" height="${heightMm - borderMm}" fill="none" stroke="#000" stroke-width="${borderMm}" />`);
+  }
 
   // ── 品牌行（`brandRow: 'top'`，她定案：顶部居中、跨整张）────────────────
   const brandText = fields.brand && label.brand_text ? String(label.brand_text) : '';
@@ -506,7 +608,7 @@ function labelSvg(label, layout, options = {}) {
 
   // ── 二维码（左，竖直居中）──────────────────────────────────────────────
   // 二维码边长：**两档都用同一个 `qrSizeMm`（15mm）** —— 画布都是 40×30，右栏 20.1mm 装得下。
-  const qrMm = num(typography.qrSizeMm, 15);
+  const qrMm = resolveQrSizeMm(layout, options);
   const qrGapMm = num(body.qrGapMm, 1.5);
   // ⭐⭐ **构图保持原样**（业务负责人 2026-10-12 真机反馈：「左边是二维码、右边是信息的这个已经变了」）：
   //   二维码**永远在左栏**、信息在右栏 —— 横版竖版**都是这一套构图**，只是画布尺寸不同。
@@ -534,7 +636,12 @@ function labelSvg(label, layout, options = {}) {
   const qtyShiftEm = num(sizesCfg.qtyBaselineShiftEm, 0.2);
   const sizeGapMm = num(sizesCfg.itemGapMm, 1);
 
-  const itemPlan = planItemNoColor(label, layout, { designWidthMm: widthMm });
+  const itemPlan = planItemNoColor(label, layout, {
+    designWidthMm: widthMm,
+    leftPaddingMm: options.leftPaddingMm,
+    qrSizeMm: options.qrSizeMm,
+    cutLineMm: options.cutLineMm,
+  });
   const sizeLines = Array.isArray(label.size_lines) ? label.size_lines.filter((line) => Array.isArray(line) && line.length) : [];
   const overflowMark = String(texts.overflowMark ?? '…');
 
@@ -634,9 +741,13 @@ function labelSvg(label, layout, options = {}) {
   }
 
   // ⭐ 内容整体平移（`artifact.contentOffsetXMm/YMm`）：**只动内容，裁切线留在纸边**。
-  const offsetX = normalizeOffsetMm(options.contentOffsetXMm, 'contentOffsetXMm');
+  const offsetX = assertSafeOffsetXMm(
+    normalizeOffsetMm(options.contentOffsetXMm, 'contentOffsetXMm'), layout, options,
+  );
   const offsetY = normalizeOffsetMm(options.contentOffsetYMm, 'contentOffsetYMm');
-  const [borderPart, ...contentParts] = parts;
+  const hasCutLine = borderMm > 0;
+  const borderPart = hasCutLine ? parts[0] : '';
+  const contentParts = hasCutLine ? parts.slice(1) : parts;
   const inner = (offsetX || offsetY)
     ? `${borderPart}<g transform="translate(${round(offsetX)} ${round(offsetY)})">${contentParts.join('')}</g>`
     : parts.join('');
@@ -794,6 +905,9 @@ async function renderLabels({ labels, layout, config = {}, logger = null }) {
       dpi, canvas, rotate, rotatePageWithContent,
       contentOffsetXMm: config.contentOffsetXMm,
       contentOffsetYMm: config.contentOffsetYMm,
+      leftPaddingMm: config.leftPaddingMm,
+      qrSizeMm: config.qrSizeMm,
+      cutLineMm: config.cutLineMm,
     });
     const png = await svgToPng(svg);
     if (!pngFirst) pngFirst = png;
@@ -846,6 +960,10 @@ async function renderLabels({ labels, layout, config = {}, logger = null }) {
       height_mm: page.pageH,
       width_pt: mmToPt(page.pageW),
       height_pt: mmToPt(page.pageH),
+      // ⭐ 左留白（mm；默认 = label.paddingMm ⇒ 对称。可配成"左宽右窄"给她更大的左空档）
+      left_padding_mm: resolveLeftPaddingMm(layout, { leftPaddingMm: config.leftPaddingMm }),
+      qr_size_mm: resolveQrSizeMm(layout, { qrSizeMm: config.qrSizeMm }),
+      cut_line_mm: resolveCutLineMm(layout, { cutLineMm: config.cutLineMm }),
       // ⭐ 整幅内容在页面内的平移（mm；默认 0 = 左右对称）
       content_offset_x_mm: normalizeOffsetMm(config.contentOffsetXMm, 'contentOffsetXMm'),
       content_offset_y_mm: normalizeOffsetMm(config.contentOffsetYMm, 'contentOffsetYMm'),
@@ -869,6 +987,11 @@ module.exports = {
   normalizeCanvas,
   normalizeOffsetMm,
   OFFSET_LIMIT_MM,
+  resolveLeftPaddingMm,
+  resolveQrSizeMm,
+  resolveCutLineMm,
+  maxSafeOffsetXMm,
+  assertSafeOffsetXMm,
   canvasGeometry,
   escapeXml,
   textWidthMm,
