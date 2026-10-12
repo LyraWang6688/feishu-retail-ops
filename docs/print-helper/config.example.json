@@ -1,0 +1,28 @@
+{
+  "serverBaseUrl": "https://hm.bamamei.online",
+  "deviceToken": "把服务器 .env 里 LABEL_PRINT_DEVICE_TOKEN 的值抄到这里",
+  "deviceId": "store-pc",
+
+  "localPort": 8799,
+  "openStatusPageOnStart": true,
+  "logFile": "helper.log",
+  "maxLogBytes": 262144,
+  "stateFile": "state.json",
+  "downloadDir": "downloads",
+
+  "pollFallbackMs": 3000,
+  "heartbeatMs": 30000,
+  "streamFailuresBeforeFallback": 3,
+  "longPollWaitMs": 25000,
+  "reconnectBackoffMs": [500, 1000, 1000, 2000, 3000],
+  "maxPrintedLedger": 1000,
+
+  "printer": {
+    "mode": "sumatra",
+    "sumatraExe": "C:\\print-helper\\SumatraPDF.exe",
+    "args": ["-print-to-default", "-silent", "{file}"],
+    "printSettings": ["disable-auto-rotation", "center"],
+    "command": "",
+    "printTimeoutMs": 60000
+  }
+}
