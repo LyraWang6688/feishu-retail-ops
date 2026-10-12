@@ -1320,11 +1320,16 @@ test('AC-13b ⭐ 走真路由：销售页**什么都不填** ⇒ 提交成单（
         headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ action: SCAN_WRITE.actions.addLine, submit_key: saleKey, size: '40' }).toString(),
       });
-      // 表单**原样**提交：每件实收是空的、收款行是空的、付款情况 = 默认那一档（全付）
+      // 表单**原样**提交：每件实收是空的、收款行是空的、付款情况 = **页面默认那一档**。
+      // ⚠️ 2026-10-12 **改写**：这里原来写 `PAYMENT_STATUS.full` ——
+      //    改前口径：「全付」+ 一笔收款都不填 ⇒ 按「未付」落库（她 2026-10-11 点头过）；
+      //    改后口径：**全付 + 收款 0 笔 + 每件实收也全空** ⇒ **拦住**（零元全付单，
+      //    见 `scanWriteService` 的 `full_without_money`；起因是她真机丢钱那次）。
+      //    这一条要钉的是"**什么都不填也能建单**"⇒ 用页面默认那一档（未付）才对应真实页面。
       const done = await formPost(base, cookie, {
         action: SCAN_WRITE.actions.submitOrder,
         submit_key: saleKey,
-        payment_status: PAYMENT_STATUS.full,
+        payment_status: PAYMENT_STATUS.unpaid,
         payment_method: '',
         payment_amount: '',
         line_amount: '',

@@ -365,7 +365,7 @@ ${REALMS.map((realm) => `<a class="realm-link" href="?from=${escapeHtml(realm.id
  *    ⚠️ 这一条推翻了 2026-10-11 上午那条旧断言（`scanPageDraftBar.test.js` 的 AC-DB7：
  *       「有草稿 ⇒ **库存页上也能提交**」）—— 口径变了，断言按新口径改写，理由逐字写在报告里。
  */
-const draftBarHtml = (write, config, userAgent, realm = DEFAULT_REALM) => {
+const draftBarHtml = (write, config, userAgent, realm = DEFAULT_REALM, page = {}) => {
   const texts = config.texts;
   const count = ((write && write.draft && write.draft.lines) || []).length;
   const saleEnabled = Boolean(write) && write.enabled !== false && write.saleEnabled !== false;
@@ -374,13 +374,16 @@ const draftBarHtml = (write, config, userAgent, realm = DEFAULT_REALM) => {
     ? config.draftBar.submitRealms.map((item) => String(item).trim())
     : [DEFAULT_REALM];
   const canSubmitHere = submitRealms.includes(resolveRealm(realm));
-  // 【提交这一单】：**在她点名的领域**上、且**有草稿才出现**（她：没有草稿时不要显示成灰按钮）。
-  const submitHtml = canSubmitHere && saleEnabled && count > 0
-    ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
-${hiddenField(write.fields.action, write.actions.submitOrder)}
-${hiddenField(write.fields.submitKey, write.saleKey)}
-<button type="submit" class="btn btn--primary">${escapeHtml(write.texts.submitButton)}</button>
-</form>`
+  // 🔴🔴 2026-10-12（真机丢钱之后**删掉**的那颗按钮）：本单条原来**自带一颗【提交这一单】**，
+  //    它的表单里**只有 action + 幂等键**（收款方式 / 金额一个都不带）。
+  //    真机现场：她在**销售块**填了「全付 + 微信 280」，却按了本单条这颗 ⇒
+  //    `payment_count: 0` —— 钱一行都没记（她：「我明确写了收款是微信 280，为什么收款明细没有」）。
+  //    ⇒ **一页只允许一颗提交按钮**，而且必须是**带钱的那一颗**（销售块那一个表单）。
+  //      这里只在"这一页没有带钱的提交表单"时给一条**指路链接**（GET，不带钱、也丢不了钱）：
+  //      没有链接、也没有第二颗按钮 ⇒ 不可能再"点了提交却没记钱"。
+  const moneyFormOnPage = page.moneyFormOnPage === true;
+  const submitHtml = canSubmitHere && saleEnabled && count > 0 && !moneyFormOnPage
+    ? `<a class="btn btn--primary" href="?from=${escapeHtml(REALM_TEXTS.defaultRealmId || 'sales')}" rel="noopener">${escapeHtml(texts.submitOnSalesRealmLabel || texts.submitButton)}</a>`
     : '';
   // 【继续扫下一个】：飞书客户端（手机）给真链接；其余设备给一句如实的人话。
   const scanNextHtml = canScanNextWithFeishu(userAgent)
@@ -689,26 +692,34 @@ ${hiddenField(fields.submitKey, write.saleKey)}
   const alert = String(write.errorText || '').trim()
     ? `<p class="form-alert">${escapeHtml(write.errorText)}</p>`
     : '';
+  // 🔴🔴 2026-10-12（真机丢钱之后**合并**的）：原来这里是**两个 form** ——
+  //    上面那个（尺码 + 加入本单）和下面那个（每件实收 + 付款情况 + 收款行 + 提交）。
+  //    本单条还有**第三颗**不带钱的提交按钮 ⇒ 她在销售块填的钱被别的按钮吃掉 ⇒ `payment_count: 0`。
+  //    ⇒ 现在**整页只有一个 form**：尺码 / 每件实收 / 付款情况 / 收款行 **都在里面**，
+  //      两个按钮各自带 `action` 值（HTML 原生：提交按钮的 name=value 会进 POST）——
+  //      **任何一颗按钮提交，钱字段都在**，结构上不可能再丢钱；而且零 JS。
+  //    ⭐ 一单一笔 = 【选尺码】+【✅ 提交这一单（1 双）】**两下**；
+  //      要多笔就点【➕ 还要加一双】（本单计数 +1，主按钮文案跟着变）。
+  // ⚠️ 新文案缺省回落旧文案：渲染层**绝不因为少配一个 key 就把整块弄没了**
+  //    （仓库里好几个用例自带最小 config —— 2026-10-12 实测：缺 `submitButtonCount`
+  //      会让 `fillText(undefined)` 抛 ⇒ 整个销售块退化成一张空卡片）。
+  const countLabel = fillText(t.submitButtonCount || t.submitButton, { count: Math.max(lines.length, 1) });
   return `<section class="card">
 <p class="draft-count">${escapeHtml(fillText(t.draftHeading, { count: lines.length }))}</p>
 <form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
-${hiddenField(fields.action, write.actions.addLine)}
-${hiddenField(fields.submitKey, write.saleKey)}
+${hiddenField(write.fields.submitKey, write.saleKey)}
 ${sizeInput}
 <div class="form-row"><label>${escapeHtml(t.amountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" placeholder="${escapeHtml(t.amountPlaceholder)}"></div>
 <div class="form-row"><label>${escapeHtml(t.giftLabel)}</label><input name="${escapeHtml(fields.gift)}"></div>
-<button type="submit" class="btn">${escapeHtml(t.addButton)}</button>
-</form>
-${accessoryForm}
-<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
-${hiddenField(fields.action, write.actions.submitOrder)}
-${hiddenField(fields.submitKey, write.saleKey)}
 ${alert}
 ${draftLinesHtml(write)}
 ${paymentStatusHtml(write)}
 ${paymentRowsHtml(write)}
-<button type="submit" class="btn btn--primary">${escapeHtml(t.submitButton)}</button>
+<p class="hint">${escapeHtml(t.amountOptionalHint || '')}</p>
+<button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}">${escapeHtml(countLabel)}</button>
+<button type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.addLine)}">${escapeHtml(t.addAnotherButton || t.addButton)}</button>
 </form>
+${accessoryForm}
 ${lines.length ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
 ${hiddenField(fields.action, write.actions.clearDraft)}
 ${hiddenField(fields.submitKey, write.saleKey)}
@@ -1045,7 +1056,11 @@ const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEF
   }
   // ⚠️ 验收模式下**不挂销售本单条**：那一条讲的是"销售本单几双"，与"这次验收扫了几双"
   //    是两件事，同屏出现只会让她看错数（验收自己的本单条在验收块里）。
-  const bar = safeRealm === ACCEPTANCE_REALM ? '' : draftBarHtml(write, config, page?.userAgent, safeRealm);
+  const bar = safeRealm === ACCEPTANCE_REALM ? ''
+    : draftBarHtml(write, config, page?.userAgent, safeRealm, {
+      // ⭐ 2026-10-12：销售页上那颗**带钱**的提交表单就在下面 ⇒ 本单条不再放第二颗提交按钮。
+      moneyFormOnPage: safeRealm === DEFAULT_REALM && Boolean(write),
+    });
   return renderDocument({
     title: fillText(config.texts.pageTitle, { itemNo: view.item_no || view.number, number: view.number }),
     config,
