@@ -169,6 +169,14 @@ const TEXTS = Object.freeze({
   //    ① 列未到货批次（每条一行、点进 `/s/accept?batch=…`）；② 手输批次号兜底。
   //    ⚠️ 全是**功能名/事实**，没有说明书腔。
   acceptPendingTitle: '未到货的批次',
+  // ⭐⭐ 2026-10-12 21:11（她真机）：输入框空着点【进入验收】⇒ 表单 GET 不带 batch ⇒ **原地重画同一页**
+  //    ⇒ 她的感受是"点了之后里面啥也没有" ✗ ⇒ 空提交必须**即时给一句人话**（就在那颗按钮上方）。
+  acceptPendingEmptySubmitHint: '请先点上面那一条批次，或在下面输入批次号。',
+  // ⭐⭐ 2026-10-12 21:20（她"一直点那个按钮"）：反馈脚本的**兜底文案**（属性为空时用它，**绝不许把按钮变空白**）。
+  submitSubmittingFallback: '正在提交，请不要重复点…',
+  // ⭐ 金额是必填（>0）：前端**即时**就能感知（点按钮就有提示，**不发请求**）。
+  acceptAmountRequiredLabel: '实际金额（必填）',
+  acceptAmountRequiredHint: '请填一个大于 0 的实际金额。',
   acceptPendingEmptyBody: '现在没有未到货的批次：可以直接填批次号进验收。',
   acceptPendingManualTitle: '填批次号',
   acceptPendingManualPlaceholder: '输入批次号',

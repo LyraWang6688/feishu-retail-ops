@@ -591,12 +591,15 @@ const TEXTS = Object.freeze({
   acceptDuplicateBanner: '这一双已经记过了',
   acceptNotInBatchBody: '这一双不在本批，没有记。',
   acceptFinish: '完成验收',
-  acceptFinishAmountLabel: '实际金额',
+  // ⭐⭐ 2026-10-12 21:20：金额**必填**要在页面上看得出来（她第一次提交被拒就是因为看不出来）。
+  acceptFinishAmountLabel: '实际金额（必填）',
   acceptFinishSubmit: '确认完成验收',
   acceptNoScansBody: '还没扫到任何一双：先扫一双，再点【完成验收】。',
   // ⭐⭐ 2026-10-12（她的口述版）：「先默认带出我们采购申请里的尺码和数量」——
   //    那一块就是这张清单：每个报货尺码一行、数量**默认 = 报货数量**、可改。
   acceptRowsTitle: '这次要核对的尺码和数量',
+  // ⭐⭐ 2026-10-12 21:11：有批次号、但这一批**一条明细都没有** ⇒ **明确说清**（不许留一张空白页）。
+  acceptEmptyDetailBody: '这一批没有明细：可以直接在下面手输尺码/数量，也可以扫标签加一款。',
   acceptRowsHint: '数量填实际到货的；没到的改成 0 就行。',
   acceptRowSizeLabel: '{size} 码',
   acceptCustomTitle: '自定义加一行（没报但到了的）',
@@ -615,6 +618,12 @@ const TEXTS = Object.freeze({
   acceptUnreportedNoProductBody: '先扫这一款的标签，就能看到它没报货的尺码。',
   acceptDoneTitle: '这批已验收入库',
   acceptDoneBody: '批次号 {batchNo}，实际到货 {scanned} 双。',
+  // ⭐⭐ 2026-10-12 21:20：成功后**明确成功页**（不许沉默 —— 她"一直点"就是因为点完没交代）。
+  // 她拍的成功页那句（2026-10-12）；`acceptDoneTitle` 留给别的口径用，不动。
+  acceptDoneHeading: '验收已完成',
+  acceptDoneQuantityLabel: '实际数量',
+  acceptDoneAmountLabel: '实际金额',
+  acceptDoneBackLabel: '回到未到货批次',
   acceptAgainBody: '批次号 {batchNo}，已经验收入库过了，没有重复入库。',
   acceptNoSessionBody: '这次验收已经结束了：回上面【验收】领域重新选一个批次（或填批次号）就能继续。',
   // ⭐⭐ 2026-10-12（她真机："报单之后点验收 ⇒ 就提示这个，我不知道啥意思"）：
