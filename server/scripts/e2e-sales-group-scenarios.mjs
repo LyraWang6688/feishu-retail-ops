@@ -32,6 +32,7 @@
  */
 
 import fs from 'node:fs';
+import { buildReport, exitCodeFor, summarize, summaryLine } from './lib/e2e-report.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -56,6 +57,29 @@ for (let index = mode === argv[0] ? 1 : 0; index < argv.length; index += 1) {
 }
 const flag = (name, fallback) => (flags[name] === undefined ? fallback : flags[name]);
 const only = String(flag('only', '') || '').split(',').map((item) => item.trim()).filter(Boolean);
+// 🔴🔴 2026-10-12（独立复核 agent 的 F-3）：**群聊入口已经整体退场**
+//    （`larkMvpService.js` 在任何远端调用之前就 return）⇒ 这个脚本按原来的路子跑，
+//    **不可能通过**，只会**超时**然后报一句"解析超时"那种**误导原因** ✗
+//    而且它被 `NODE_TEST_CONTEXT` 挡在 CI 之外 ⇒ 没人会发现它已经死了 ✗
+//    ⇒ 处置：**当场说清原因、立刻非零退出**（保留场景定义，将来若要搬到扫码入口可以直接改）。
+//      真要在本地再看它一眼（明知不可能通过）：`FEISHU_E2E_ARCHIVED_GROUP_SCRIPTS=true`。
+if (String(process.env.FEISHU_E2E_ARCHIVED_GROUP_SCRIPTS || '').trim() !== 'true') {
+  console.error('⛔ [e2e-sales-group] 群聊入口已于 2026-10-12 **整体退场**：本脚本**不可能再通过**。');
+  console.error('   ⇒ 真写 E2E 的现行入口是：cd server && FEISHU_TARGET_ENV=test pnpm run e2e:real');
+  console.error('   （本脚本保留只为将来把场景搬到扫码入口时参考；要看它明知会失败的输出：');
+  console.error('     FEISHU_E2E_ARCHIVED_GROUP_SCRIPTS=true node scripts/e2e-sales-group-scenarios.mjs）');
+  process.exit(3);
+}
+// 🔴 2026-10-12（F-9）：本机 `.env` 里配着**真实**的 `PURCHASE_CHAT_ID` / `LARK_BOT_OPEN_ID`
+//    ⇒ `--real-im` 存在**误发真群**的可能 ⇒ 必须再有一个**显式**环境变量才生效（默认禁止）。
+const realImRequested = Boolean(flags['real-im']);
+const realImAllowed = String(process.env.FEISHU_E2E_ALLOW_REAL_IM || '').trim() === 'true';
+if (realImRequested && !realImAllowed) {
+  console.error('⛔ `--real-im` 被拒绝：要真发飞书消息必须同时设 `FEISHU_E2E_ALLOW_REAL_IM=true`');
+  console.error('   （默认禁止 —— 本机 .env 里有真实群/机器人 id，误发就是打扰她）');
+  process.exit(4);
+}
+
 const showLogs = Boolean(flags['show-logs']);
 
 // ── 日志：拦住项目代码的结构化日志（它们是"项目代码跑过了"的证据）──────────────
@@ -1204,8 +1228,14 @@ const cmdRun = async () => {
     s3: s3Pick, s4: s4Pick, s5: s5Pick, s6: s6Pick && exchangeTarget,
   };
   const wanted = (key) => (!only.length || only.includes(key)) && Boolean(required[key]);
-  const skipped = Object.keys(required).filter((key) => (!only.length || only.includes(key)) && !required[key]);
-  if (skipped.length) say(`  ⚠️ 测试 Base 里缺少可用数据（门盒有货 + 有单价），这些场景不跑：${skipped.join(' / ')}`);
+  const notRunnable = Object.keys(required).filter((key) => (!only.length || only.includes(key)) && !required[key]);
+  // ⭐ F-2：跳过要**带原因落报告**（不是只在控制台滚一句）
+  const skippedScenarios = notRunnable.map((key) => ({
+    name: key, reason: '测试 Base 里缺少可用数据（门盒有货 + 有单价）',
+  }));
+  if (skippedScenarios.length) {
+    say(`  ⚠️ 跳过 ${skippedScenarios.length} 个（测试 Base 里缺少可用数据）：${notRunnable.join(' / ')}`);
+  }
 
   if (wanted('s1')) {
     say('\n  ▶ s1 话题形式回复 …');
@@ -1395,8 +1425,11 @@ const cmdRun = async () => {
   const reportDir = path.join(serverRoot, 'data', 'selftest', 'sales-group-e2e');
   fs.mkdirSync(reportDir, { recursive: true });
   const reportPath = path.join(reportDir, 'report.json');
+  // ⭐ F-1 + F-2：报告体与**退出码**都走 `scripts/lib/e2e-report.mjs` 那一个纯函数（唯一判定处）
+  const summary = summarize({ scenarios, skipped: skippedScenarios });
   fs.writeFileSync(reportPath, JSON.stringify({
-    generated_at: new Date().toISOString(),
+    ...buildReport({ base: String(appToken || ''), scenarios, skipped: skippedScenarios }),
+    generated_at_shanghai: new Date(Date.now() + 8 * 3600 * 1000).toISOString().replace('Z', '+08:00'),
     generated_at_shanghai: new Date(Date.now() + 8 * 3600 * 1000).toISOString().replace('Z', '+08:00'),
     repo_root: repoRoot,
     base_fingerprint: fingerprint(guard.target),
@@ -1407,9 +1440,12 @@ const cmdRun = async () => {
   }, null, 2));
   head('完成');
   say(`  report.json：${reportPath}`);
-  const failedCount = scenarios.filter((scenario) => scenario.checks.some((row) => !row.pass)).length;
-  say(`  场景：${scenarios.length} 个，未达标 ${failedCount} 个`);
-  return { scenarios, reportPath };
+  const failedCount = summary.failed;
+  say(`  ${summaryLine(summary)}`);                       // 跑过（通过/未达标）+ 跳过，分别说清
+  if (skippedScenarios.length) {
+    for (const item of skippedScenarios) say(`    · 跳过「${item.name}」：${item.reason}`);
+  }
+  return { scenarios, skipped: skippedScenarios, summary, failedCount, reportPath };
 };
 
 const main = async () => {
@@ -1426,8 +1462,11 @@ const main = async () => {
 if (process.env.NODE_TEST_CONTEXT) {
   originalConsole.log('[e2e-sales-group] 端到端脚本（会真写测试 Base），不在 node --test 里执行。');
 } else {
-main().then(() => { process.exitCode = process.exitCode || 0; }).catch((error) => {
+main().then((out) => {
+  // 🔴 F-1：**未达标也 exit 0** 是这次要修的假绿 ⇒ 退出码由 `exitCodeFor` 一处说了算
+  process.exitCode = exitCodeFor({ failed: Number(out?.failedCount || out?.summary?.failed || 0) });
+}).catch((error) => {
   originalConsole.error(`[e2e-sales-group] 失败：${error.stack || error.message}`);
-  process.exitCode = 1;
+  process.exitCode = exitCodeFor({ error: true });
 });
 }
