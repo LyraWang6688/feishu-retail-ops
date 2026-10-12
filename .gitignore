@@ -64,3 +64,4 @@ PROJECT.md
 # 店里那台电脑的"打印小助手"本地状态（只在电脑上生成）
 print-helper/state.json
 print-helper/downloads/
+.env.bak-*
