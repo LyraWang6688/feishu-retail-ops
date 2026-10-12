@@ -53,6 +53,8 @@ const { createScanPageService } = require('../src/services/scanPageService');
 const { createScanWriteService } = require('../src/services/scanWriteService');
 const { createScanSessionService } = require('../src/services/scanSessionService');
 const { SalesDeliveryService } = require('../src/services/salesDeliveryService');
+// ⭐ 2026-10-12 新写用例回读"欠款"用（既有服务，只读）
+const { SalesProgressService } = require('../src/services/salesProgressService');
 const { InventoryService } = require('../src/services/inventoryService');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { createScanPageRouter } = require('../src/routes/scanPage');
@@ -953,4 +955,133 @@ test('AC-E2E-17 ⭐ 一单一笔 = **选尺码 + 提交**（两下）：空本�
       assert.equal(rowsOf(e2e, 'salesDetail').length, 1, '明细 1 行');
     });
   } finally { e2e.cleanup(); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-12 新写：把"群聊链路验过、但扫码链路没验过"的核心语义补上
+//
+// 来历（见 `docs/group-chat-test-removal-2026-10-12.md`「判据 (b) 等价覆盖核对」）：
+//   群聊自然语言录入退场后，原 `salesFundTypeDecoupling.test.js`(12) 与
+//   `salesMultiLineTradeType.test.js`(5) 那 17 条要处置。逐条核对后：
+//     · 5 条**已有等价覆盖**（类型由库存定 / 混合单逐行交付 / 预定不被钱卡住）
+//     · 1 条**随能力退场**（"一句原话 → 一单多明细多收款" = 解析层能力）
+//     · **11 条对不上 ⇒ 在这里新写**（断言逐字保留）
+//
+// ⚠️ **走的是项目代码**：`createScanWriteService.addSaleLine` → `submitSale`
+//   —— **不是**在用例里手拼 `V1PostingService.postSale` + `SalesDeliveryService.deliver`
+//   （那是"自己拼链"，测不到项目代码；项目纪律明令禁止）。
+//
+// 语料（照抄 `config/scanWrite.js:92-107` 的口径）：
+//   · 全付   ⇒ 写 1 条【已收款】
+//   · 部分付 ⇒ 已收那几条 + **差额一条【未收款】**
+//   · 未付   ⇒ **一条【未收款】**（= 每件实收合计）
+// ═══════════════════════════════════════════════════════════════════════════
+
+const AMOUNT_KEY = F('paymentRecord', 'amount');
+const STATUS_KEY = F('paymentRecord', 'status');
+
+/** 提交一笔扫码销售：`size` 决定类型（40 = A 的门盒有货 ⇒ 现货；41 = 没货 ⇒ 预定）。 */
+const submitSaleAt = async (e2e, openId, { size, amount, payments, paymentStatus, paidAmount }) => {
+  const added = await e2e.writeService.addSaleLine({
+    openId, requestId: `req_${size}`, productRecordId: 'prod_a',
+    number: NUMBER_A, itemNo: ITEM_A, color: '黑色', size, amount,
+    // ⭐ 类型由**库存分组**定（扫码页渲染时就分成有货/没有两组）⇒ 显式传给她。
+    //    判据仍是既有那一份 `salesTradeTypeForStock`（`scanWriteService.js:393`）。
+    inStock: size === 40,
+  });
+  assert.equal(added.ok, true, JSON.stringify(added));
+  const session = await e2e.sessions.get(openId);
+  const result = await e2e.writeService.submitSale({
+    openId, submitKey: session.sale.key, payments, paymentStatus, paidAmount,
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  return result;
+};
+
+/** 回读：收款行（金额 + 状态，按写入顺序）、欠款、类型、履约状态、库存流水条数。 */
+const readBack = async (e2e) => {
+  const receipts = rowsOf(e2e, 'paymentRecord')
+    .map((row) => [row.fields[AMOUNT_KEY], row.fields[STATUS_KEY]]);
+  const entry = rowsOf(e2e, 'salesEntry')[0];
+  const progress = await new SalesProgressService({ gateway: e2e.gateway })
+    .forOrder(entry.record_id);
+  return {
+    receipts,
+    pendingAmount: progress.pendingAmount,
+    tradeType: rowsOf(e2e, 'salesDetail')[0].fields[F('salesDetail', 'tradeType')],
+    fulfillment: rowsOf(e2e, 'salesDetail')[0].fields[F('salesDetail', 'fulfillmentStatus')],
+    ledgerCount: rowsOf(e2e, 'inventoryLedger').length,
+  };
+};
+
+const FUND_SHAPES = [
+  { key: 'full', label: '全款 228 微信', amount: '228',
+    payments: [{ method: '微信', amount: '228' }], paidAmount: '228', paymentStatus: PAYMENT_STATUS.full,
+    receipts: [[228, '已收款']], pendingAmount: 0 },
+  { key: 'partial', label: '部分：先给 100、还欠 128', amount: '228',
+    payments: [{ method: '微信', amount: '100' }], paidAmount: '100', paymentStatus: PAYMENT_STATUS.partial,
+    receipts: [[100, '已收款'], [128, '未收款']], pendingAmount: 128 },
+  { key: 'unpaid', label: '没付：整单未付', amount: '228', payments: [],
+    paymentStatus: PAYMENT_STATUS.unpaid, receipts: [], pendingAmount: 228,
+    note: '2026-10-11 晚口径：未付 ⇒ **不替她记【未收款】**（欠款由读侧现算）' },
+  { key: 'deposit', label: '定金 100 + 尾款 128', amount: '228',
+    payments: [{ method: '微信', amount: '100' }], paidAmount: '100', paymentStatus: PAYMENT_STATUS.partial,
+    receipts: [[100, '已收款'], [128, '未收款']], pendingAmount: 128 },
+  { key: 'tail_collect', label: '定金 100 + 下次收 120', amount: '220',
+    payments: [{ method: '微信', amount: '100' }], paidAmount: '100', paymentStatus: PAYMENT_STATUS.partial,
+    receipts: [[100, '已收款'], [120, '未收款']], pendingAmount: 120 },
+];
+
+for (const shape of FUND_SHAPES) {
+  test(`⭐新写 ③ ${shape.label}：**现货**（扫码 40 码有货）→ 收款 ${JSON.stringify(shape.receipts)}、欠款 ${shape.pendingAmount}`, async () => {
+    const e2e = createE2E();
+    try {
+      await submitSaleAt(e2e, `ou_fund_cash_${shape.key}`, { size: 40, ...shape });
+      const back = await readBack(e2e);
+      // ⚠️ 「交易类型」是**关联到「行为管理」的记录数组**（不是编码字符串）⇒ 按记录 id 断言。
+      assert.deepEqual(back.tradeType, ['bh_cash'], '门盒有货 ⇒ 现货（行为=SALE_CASH 那条）');
+      assert.deepEqual(back.receipts, shape.receipts, '收款条数与状态逐字');
+      assert.equal(back.pendingAmount, shape.pendingAmount, '欠款逐字');
+      assert.equal(back.fulfillment, '已交付');
+      assert.ok(back.ledgerCount >= 1, '现货必须写库存流水');
+    } finally { e2e.cleanup(); }
+  });
+
+  test(`⭐新写 ③ ${shape.label}：**预定**（扫码 41 码没货）→ 收款与欠款**逐字相同**；不交付、不扣库存`, async () => {
+    const e2e = createE2E();
+    try {
+      await submitSaleAt(e2e, `ou_fund_prepaid_${shape.key}`, { size: 41, ...shape });
+      const back = await readBack(e2e);
+      assert.deepEqual(back.tradeType, ['bh_prepaid'], '没货 ⇒ 预定（行为=SALE_PREPAID 那条）');
+      // ⭐ 这就是"资金与类型无关"：**同样一串收款，一字不差**。
+      assert.deepEqual(back.receipts, shape.receipts, '收款条数与状态**与现货逐字相同**');
+      assert.equal(back.pendingAmount, shape.pendingAmount, '欠款**与现货逐字相同**');
+      assert.equal(back.fulfillment, '未交付');
+      assert.equal(back.ledgerCount, 0, '预定不许写库存流水');
+    } finally { e2e.cleanup(); }
+  });
+}
+
+// ── ⭐⭐ 跨两态逐字对照（原 `salesFundTypeDecoupling` 最后一条的强断言）────────
+test('⭐⭐新写 ③ 同一份资金输入：现货 / 预定两次的收款与欠款**逐字相同**（类型不影响钱）', async () => {
+  const shape = FUND_SHAPES.find((row) => row.key === 'partial');
+  const cash = createE2E();
+  const prepaid = createE2E();
+  try {
+    await submitSaleAt(cash, 'ou_same_money_in', { size: 40, ...shape });
+    await submitSaleAt(prepaid, 'ou_same_money_out', { size: 41, ...shape });
+    const withStock = await readBack(cash);
+    const withoutStock = await readBack(prepaid);
+
+    assert.deepEqual(withStock.receipts, withoutStock.receipts,
+      '同一串收款在现货/预定下必须逐字相同');
+    assert.equal(withStock.pendingAmount, withoutStock.pendingAmount, '欠款也必须逐字相同');
+    // 类型确实不同（否则上面那条对照就成了"两边同一态"的假证）。
+    assert.deepEqual(withStock.tradeType, ['bh_cash']);
+    assert.deepEqual(withoutStock.tradeType, ['bh_prepaid']);
+    assert.equal(withStock.fulfillment, '已交付');
+    assert.equal(withoutStock.fulfillment, '未交付');
+    assert.equal(withStock.ledgerCount, 1);
+    assert.equal(withoutStock.ledgerCount, 0);
+  } finally { cash.cleanup(); prepaid.cleanup(); }
 });
