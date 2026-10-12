@@ -1,4 +1,12 @@
 /**
+ * ⚠️ 2026-10-12 热修改写（**「采购明细.采购行为」是 Lookup = 只读**）：
+ *  改前（逐字）：`assert.deepEqual(record.fields['采购行为'], ['bh_return'], '采购行为来自「行为管理」的退货编码');`
+ *  改后（逐字）：`assert.equal('采购行为' in record.fields, false, '采购行为是 Lookup，不许写');`
+ *  理由：她 2026-10-12 把这一列改成 **Lookup**（按「报货批次号」关联采购主表）⇒ 写入无效/可能整条失败；
+ *        **读取照旧保留**（工作台采购查询靠它分流报货 / 退货）。⚠️ 退货明细的其余断言（数量=实退数 /
+ *        批次号 / 幂等键 / 库存扣减）一条没放宽。
+ */
+/**
  * 扫码页「采购领域 ·【退货】」的验收用例（业务负责人 2026-10-11 定：**和"报货"逻辑一样，也走扫码**）。
  *
  * 她的口径（逐字）：
@@ -14,7 +22,7 @@
  *
  *  AC-R1 采购领域出现【退货】表单：与【一键补货】**同形**（同一 POST 端点 / 勾尺码 + 填数量 /
  *        零 JS / 带自己的幂等键），动作名、字段名、幂等键前缀**全部来自配置**。
- *  AC-R2 提交退货 ⇒ ①「报货信息」写退货明细（**采购行为 = 退货行为**、数量 = 实退数、
+ *  AC-R2 提交退货 ⇒ ①「采购明细」写退货明细（数量 = 实退数；**「采购行为」是 Lookup，不写**、
  *        带「报货批次号」关联）；②「报货批次」建一行，**只写 批次号 + 幂等键**——
  *        🔴 **不写「到货状态」**（她自己 2026-10-07 的退货口径：留空 ⇒ 9 点推送看不见它）。
  *  AC-R3 退货批次**不进**「到货验收情况」面板（`PurchaseQueryService.listPurchaseArrivals`
@@ -347,7 +355,7 @@ test('AC-R1 【退货】领域里是退货表单：与【一键补货】同形�
 // AC-R2 明细 + 批次行（只写批次号 + 幂等键，不写「到货状态」）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-R2 提交退货 ⇒「报货信息」退货明细（行为=退货行为）+「报货批次」只写批次号+幂等键', async () => {
+test('AC-R2 提交退货 ⇒「采购明细」退货明细（行为列不写：Lookup 只读）+「报货批次」只写批次号+幂等键', async () => {
   const h = createHarness();
   try {
     const openId = 'ou_return_2';
@@ -364,7 +372,7 @@ test('AC-R2 提交退货 ⇒「报货信息」退货明细（行为=退货行为
     assert.equal(result.request_count, 2);
     assert.equal(result.batch_no, 'CGD-20261011-0001');
 
-    // ① 明细行：采购行为 = 退货行为、数量 = 实退数、挂在同一个报货批次上
+    // ① 明细行：数量 = 实退数、挂在同一个报货批次上（⚠️ 「采购行为」列**不再写**：它是 Lookup）
     const requests = entriesOf(h, 'purchaseRequest');
     assert.equal(requests.length, 2);
     const bySize = new Map(requests.map((record) => [String(record.fields['尺码']), record]));
@@ -372,7 +380,14 @@ test('AC-R2 提交退货 ⇒「报货信息」退货明细（行为=退货行为
     assert.equal(bySize.get('size_42').fields['数量'], 1);
     for (const record of requests) {
       assert.deepEqual(record.fields['编号'], ['prod_1']);
-      assert.deepEqual(record.fields['采购行为'], ['bh_return'], '采购行为来自「行为管理」的退货编码');
+      // 🔴 2026-10-12 热修：Lookup（只读）⇒ 退货明细也不许写这一列
+      assert.equal('采购行为' in record.fields, false, '采购行为是 Lookup，不许写');
+    }
+    // ⭐⭐ 2026-10-12（她确认要写）：退货那一档写**主表**行（明细由它 Lookup 带出）
+    assert.deepEqual(entriesOf(h, 'purchaseOrderBatch')[0].fields['采购行为'], ['bh_return'],
+      '主表「采购行为」= 采购退货那一档');
+    for (const record of requests) {
+      assert.equal('采购行为' in record.fields, false, '采购行为是 Lookup，不许写');
       assert.ok(record.fields['幂等键'], '每条退货明细都有幂等键（既有 createOnceByKey 的判据）');
       assert.deepEqual(record.fields['报货批次号'], [entriesOf(h, 'purchaseOrderBatch')[0].record_id],
         '退货明细必须挂「报货批次号」（退货单 PNG 才有落点）');

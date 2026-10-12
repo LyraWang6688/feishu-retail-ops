@@ -3,6 +3,7 @@ const {
   resolvePurchaseArrivalStatusConfig,
 } = require('../config/purchaseArrivalStatus');
 const { IDEMPOTENCY_KEY_FIELD, createOnceByKey } = require('../infrastructure/idempotencyKey');
+const { relation } = require('./v1ReferenceResolver');
 const { logInfo, logWarn } = require('../utils/logger');
 
 // 「报货批次」**那一行**的读写（业务负责人 2026-10-07 把它定为"控制到货情况"的表）。
@@ -23,8 +24,12 @@ const { logInfo, logWarn } = require('../utils/logger');
 //           批次行仍按老口径建（**只写 批次号 + 幂等键、不写「到货状态」**）；
 //       · `config/purchaseAcceptance.js` 与它的单选取值契约一并退场。
 //
-// ⚠️ 「采购行为」这一列**此刻意不读、不写、不映射**（她的原话：
-//    「报货批次里面的采购行为你不用管」）—— 不碰它就不可能"顺手"写坏它。
+// 🔄 「采购行为」这一列的**口径 2026-10-12 反转**（业务负责人新原话（逐字）：
+//    「**采购主表里面的采购行为确实是需要的，因为一个是报货，一个是退货**」）：
+//    · **建行时写**（值 = 行为记录 id；报货走 `purchaseWebhookService` 那条，
+//      退货走本文件的 `createForReturnBatch(batchNo, { behaviorRecordId })`）；
+//    · **「采购明细.采购行为」是它的 Lookup（只读）** ⇒ 明细侧**一律不写**（2026-10-12 热修已撤两处写入）。
+//    （旧口径「不用管」写在 2026-10-07，已作废 —— 她今天明确要它。）
 //
 // ⚠️ 「到货日」「验收人」**不在这个 service 的读写范围里**：它们在真表上是飞书
 //    **自动字段**（更新时间 / 创建人），代码一律不写（写了会被自动覆盖或直接报错）。
@@ -111,7 +116,7 @@ class PurchaseOrderBatchService {
    *    ⇒ **按原实现恢复**（只写两列 + 两步幂等），报货那条链路的批次键仍在
    *    `ensurePostingPlan`（`purchase_batch:<task_id>`），两者互不影响。
    */
-  async createForReturnBatch(batchNo, { correlation = {} } = {}) {
+  async createForReturnBatch(batchNo, { correlation = {}, behaviorRecordId = '' } = {}) {
     const wanted = String(batchNo || '').trim();
     if (!wanted) {
       // 没有号就**不编**：调用方自己决定怎么提示。
@@ -137,8 +142,13 @@ class PurchaseOrderBatchService {
       keyValue: key,
       label: `退货批次 ${wanted}`,
       correlation,
-      // ⚠️ 只有这两列。**没有** arrivalStatus（见上面的 🔴）。
-      values: { batchNo: wanted, idempotencyKey: key },
+      // ⚠️ **没有** arrivalStatus（见上面的 🔴：退货批次行不写「到货状态」）。
+      // ⭐⭐ 2026-10-12（业务负责人）：「采购主表里面的采购行为确实是需要的，一个是报货、一个是退货」
+      //    ⇒ 建主表行时写「**采购行为**」（**退货这一路 = 采购退货那一档**）。
+      //    值 = 调用方从 `draft.behavior_record_id` 传进来的**行为记录 id**；
+      //    空值 ⇒ `relation` 返 `undefined` ⇒ 网关跳过，不会写空。
+      //    ⚠️ 「采购明细.采购行为」是这一列的 **Lookup（只读）** ⇒ 明细侧不许写（已撤）。
+      values: { batchNo: wanted, idempotencyKey: key, behavior: relation(behaviorRecordId) },
     });
     logInfo('purchase.return.batch.record_ensured', {
       batch_no: wanted,
