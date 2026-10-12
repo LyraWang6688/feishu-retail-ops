@@ -40,7 +40,7 @@ const express = require('express');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { sizesForCategory, parseNumberSegments, createScanPageService } = require('../services/scanPageService');
 const { createScanWriteService } = require('../services/scanWriteService');
-const { renderScanPage, renderScanMessagePage, renderMinimalPage, renderAcceptancePage, renderAcceptanceSelfServe, renderSaleSuccessPage, buildPaymentRows } = require('../views/scanPageRenderer');
+const { renderScanPage, renderScanMessagePage, renderMinimalPage, renderAcceptancePage, renderAcceptanceDonePage, renderAcceptanceSelfServe, renderSaleSuccessPage, buildPaymentRows } = require('../views/scanPageRenderer');
 // ⚠️ 只借这两个**纯函数**：所选尺码在「样品 + 门盒」有没有货（= 页面上那两个分组的判据），
 //    以及 `?from=` → 领域 id（认不出来回落缺省，不报错、不白屏）。
 const { sellableSizeTexts, resolveRealm, DEFAULT_REALM, ACCEPTANCE_REALM } = require('../views/scanPageRealm');
@@ -547,6 +547,9 @@ const createScanPageRouter = (options = {}) => {
       rowsPostAction: acceptanceLandingPath(session?.batch_no),
       notice: String(extra.notice || ''),
       defaultQuantity: writeConfig.acceptance.defaultQuantity,
+      // ⭐⭐ P0：**"完成验收"的幂等键**（服务端算、画进表单、提交带回来）——
+      //    她连点两次 / 网络重试都只执行一次 ✓。
+      submitKey: arrival()?.submitKeyOf ? arrival().submitKeyOf(session) : '',
       // `null` = 不开预填（渲染层据此退回"只收金额"的老那一版，逐字不变）。
       rows,
       customRows,
@@ -567,10 +570,35 @@ const createScanPageRouter = (options = {}) => {
    *   ② 数量全 0 / 自定义不知款 ⇒ **在人话页上如实说**（既有的 `no_scan_lines` / `custom_*` 文案）；
    *   ③ 落完再走**既有** `finish` ⇒ 写「实际数量（= 各行之和）」「实际金额」+ **逐尺码加库存**。
    */
+  /**
+   * ⭐⭐ P0 2026-10-12：「这一批**已经入库过了**」⇒ **幂等返回**（200 + 已完成的页），
+   * 不是再执行一次、也不是一张 400 的错页 ✗（她连点两次时第二次应该安静地看到"已完成"）。
+   */
+  const acceptAlreadyDonePage = (res, session, body, fields) => sendHtml(res, 200, renderAcceptanceDonePage({
+    config,
+    write: { texts: writeConfig.texts },
+    acceptance: {
+      batchNo: String(session?.batch_no || ''),
+      scanned: Number(session?.scanned || 0),
+      amountText: String(body?.[fields.acceptAmount] ?? ''),
+      reused: true,
+    },
+    backHref: `${res.req?.baseUrl || ''}${config.route?.acceptancePath || '/accept'}`,
+  }));
+
   const handleAcceptFinishRows = async (req, res, requestId) => {
     const openId = openIdOf(req);
     const body = req.body || {};
     const fields = writeConfig.fields;
+    // ⭐ P0：这一场验收**已经入库** ⇒ 幂等返回（零写入、200、给她"已完成"）✓
+    const current = await arrival().get(openId).catch(() => null);
+    if (current && current.status === 'posted') {
+      logInfo(writeConfig.events.acceptReused, {
+        request_id: requestId, batch_no: current.batch_no,
+        submit_key: String(body[fields.submitKey] || ''), reason: 'session_already_posted',
+      });
+      return acceptAlreadyDonePage(res, current, body, fields);
+    }
     const wantedBatch = String(body[fields.acceptBatch] || req.query?.batch || '').trim();
     const saved = await arrival().setActualRows({
       openId,
@@ -582,6 +610,11 @@ const createScanPageRouter = (options = {}) => {
       logWarn(writeConfig.events.acceptFailed, {
         request_id: requestId, reason: saved.reason, batch_no: wantedBatch,
       });
+      // ⭐ P0：并发下第二份会撞到 `already_posted` ⇒ 同样按"已完成"幂等返回（不报错）✓
+      if (saved.reason === 'already_posted') {
+        const latest = await arrival().get(openId).catch(() => null);
+        if (latest) return acceptAlreadyDonePage(res, latest, body, fields);
+      }
       return sendHuman(res, 400, {
         title: writeConfig.texts.acceptModeTitle,
         body: saved.message || writeConfig.texts.acceptNoScansBody,
@@ -589,7 +622,9 @@ const createScanPageRouter = (options = {}) => {
         retryHint: writeConfig.texts.failedRetryHint,
       });
     }
-    return handleAcceptFinish(req, res, requestId);
+    // ⭐⭐ 2026-10-12 21:20（她"一直点那个按钮"）：**失败也要把她填的东西还回去**——
+    //    数量在会话里（`setActualRows` 已经落过）✓，金额从这次提交的 body 带回 ⇒ 页面原样回来 + 一句人话。
+    return handleAcceptFinish(req, res, requestId, { amountValue: body[fields.acceptAmount] });
   };
 
   /**
@@ -673,7 +708,7 @@ const createScanPageRouter = (options = {}) => {
   };
 
   /** 【完成验收】：两个页面（落地页 / 逐码页）共用这一份处理 —— 校验与写库都在既有链路里。 */
-  const handleAcceptFinish = async (req, res, requestId) => {
+  const handleAcceptFinish = async (req, res, requestId, extra = {}) => {
     const openId = openIdOf(req);
     const body = req.body || {};
     const fields = writeConfig.fields;
@@ -685,6 +720,24 @@ const createScanPageRouter = (options = {}) => {
       operatorOpenId: openId,
     });
     if (!result.ok) {
+      // ⭐⭐ 2026-10-12 21:20：**回填重画**（不许罚她重填）——她那 5 行的数量在会话里，
+      //    金额从这次 body 带回来；页面顶部一句人话（`acceptance.notice`）。
+      const session = await arrival().get(openId).catch(() => null);
+      if (session && Array.isArray(session.rows) && session.rows.length) {
+        return sendHtml(res, 400, renderAcceptancePage({
+          acceptance: acceptanceContext(session, {
+            notice: result.message || texts.acceptNoScansBody,
+            amountValue: extra.amountValue !== undefined ? extra.amountValue : body[fields.acceptAmount],
+          }),
+          config,
+          write: {
+            texts: writeConfig.texts,
+            fields: writeConfig.fields,
+            actions: writeConfig.actions,
+          },
+          userAgent: req.headers['user-agent'],
+        }));
+      }
       return sendHuman(res, 400, {
         title: texts.acceptModeTitle,
         body: result.message || texts.acceptNoScansBody,
@@ -695,15 +748,20 @@ const createScanPageRouter = (options = {}) => {
     // 入库成功 ⇒ 「实时库存」快照立刻作废（她：库存必须准确）。
     invalidateInventorySnapshot(requestId, 'scan_accept_finished');
     const batchNo = result.batch_no || '';
-    return sendHuman(res, 200, {
-      title: texts.acceptDoneTitle,
-      body: result.reused
-        ? fillWriteText(texts.acceptAgainBody, { batchNo: batchNo || '—' })
-        : fillWriteText(texts.acceptDoneBody, { batchNo: batchNo || '—', scanned: result.scanned || 0 }),
-      requestId,
-      details: [fillWriteText(texts.acceptBatchLine, { batchNo: batchNo || '—' })],
-      retryHint: texts.submittedNextHint,
-    });
+    // ⭐⭐ 2026-10-12 21:20：**成功后给明确成功页**（实际数量 + 实际金额 + 回未到货批次）——
+    //    「点了没反应」里有一半就是"成功了却没交代"。
+    return sendHtml(res, 200, renderAcceptanceDonePage({
+      config,
+      write: { texts: writeConfig.texts },
+      acceptance: {
+        batchNo,
+        scanned: result.scanned || 0,
+        amountText: String(body[fields.acceptAmount] ?? ''),
+        reused: result.reused === true,
+      },
+      // 【回到未到货批次】= 自助页（**不带 batch** —— 带了她又回到刚做完那一批）。
+      backHref: `${req.baseUrl}${config.route?.acceptancePath || '/accept'}`,
+    }));
   };
 
   /**
@@ -729,9 +787,14 @@ const createScanPageRouter = (options = {}) => {
       //    「这一页没带报货批次号：回【验收】领域…」—— 她**就是从【验收】领域进来的**，
       //    而且那一页**没有输入框**（"或填批次号"根本做不到）⇒ 死循环。
       if (!wantedBatch && !wantedBatchRecord) {
+        // ⭐⭐ 2026-10-12 21:11：**区分"裸进来"与"空着点【进入验收】"** ——
+        //    后者是**表单提交**（URL 上有 `batch=`，值是空）⇒ 必须**即时反馈**（她的"任何点击都要有反应"）；
+        //    前者是她第一次进来，不该先喊一句提示。
+        const submittedEmpty = Object.prototype.hasOwnProperty.call(req.query || {}, 'batch');
         return sendHtml(res, 200, renderAcceptanceSelfServe({
           config,
           acceptPending: await loadPendingBatches(requestId),
+          emptySubmitHint: submittedEmpty,
           // 链接/表单用**当前挂载前缀**（`/s` 或 `/r`），不写死 `/s/`。
           basePath: req.baseUrl,
         }));
