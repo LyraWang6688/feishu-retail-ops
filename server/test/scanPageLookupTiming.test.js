@@ -142,8 +142,11 @@ const withServer = async (app, run) => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-T1 `lookup` 把各阶段毫秒写进 timing 出参：三个阶段分别真的计时', async () => {
+  // ⚠️ 2026-10-12：延时与下限原来**逐字相等**（30/30、45/45、20/20）—— 和 AC-T3 同一个坑：
+  //    `Date.now()` 毫秒截断 + 定时器粒度会让实测值偶尔比注入值小 1ms。
+  //    ⇒ 延时抬到 60/100/50、下限给 55/95/45（同一套覆盖率、留 5ms 余量）。
   const service = serviceOf({
-    delays: { 'filter:product': 30, 'filter:liveInventory': 45, sizeManagement: 20 },
+    delays: { 'filter:product': 60, 'filter:liveInventory': 100, sizeManagement: 50 },
   });
   const timing = {};
   const view = await service.lookup({ number: NUMBER, requestId: 'req_t1', timing });
@@ -154,9 +157,9 @@ test('AC-T1 `lookup` 把各阶段毫秒写进 timing 出参：三个阶段分别
   assert.equal(timing.rows, INVENTORY.length, 'rows = 本次读到的「实时库存」行数');
   assert.equal(timing.whole_table_fallback, false, '这个网关有 filter ⇒ 没走整表回退');
 
-  assert.ok(timing.product_ms >= 30, `product_ms 必须覆盖「货品信息」那一次读：${timing.product_ms}`);
-  assert.ok(timing.inventory_ms >= 45, `inventory_ms 必须覆盖「实时库存」那一次读：${timing.inventory_ms}`);
-  assert.ok(timing.size_ms >= 20, `size_ms 必须覆盖「尺码管理」那一次读：${timing.size_ms}`);
+  assert.ok(timing.product_ms >= 55, `product_ms 必须覆盖「货品信息」那一次读：${timing.product_ms}`);
+  assert.ok(timing.inventory_ms >= 95, `inventory_ms 必须覆盖「实时库存」那一次读：${timing.inventory_ms}`);
+  assert.ok(timing.size_ms >= 45, `size_ms 必须覆盖「尺码管理」那一次读：${timing.size_ms}`);
   assert.ok(timing.total_ms >= timing.product_ms + timing.inventory_ms + timing.size_ms,
     'total_ms 是整条链路的墙钟（不小于三段之和）');
 
@@ -175,7 +178,9 @@ test('AC-T1 `lookup` 把各阶段毫秒写进 timing 出参：三个阶段分别
 
 test('AC-T2 走完一次扫码只打一条 `scan.lookup.timing`（含 render_ms）', async () => {
   login();
-  const gateway = fakeGateway({ delays: { 'filter:product': 10, 'filter:liveInventory': 10, sizeManagement: 10 } });
+  // ⚠️ 2026-10-12：三段各 10ms、断言 `total_ms >= 30` —— 同样是"总和正好等于下限"的边界写法。
+  //    抬到各 15ms、下限 40（留 5ms 余量），语义不变：三段读都算进了总时长。
+  const gateway = fakeGateway({ delays: { 'filter:product': 15, 'filter:liveInventory': 15, sizeManagement: 15 } });
   const app = express();
   // 与 `app.js` 同一套：请求号由最外层中间件给（耗时日志靠它把一次扫码串起来）。
   app.use((req, res, next) => { req.requestId = 'req_timing_demo'; next(); });
@@ -207,7 +212,7 @@ test('AC-T2 走完一次扫码只打一条 `scan.lookup.timing`（含 render_ms�
   assert.equal(line.whole_table_fallback, false);
   assert.equal(typeof line.render_ms, 'number');
   assert.ok(line.render_ms >= 0);
-  assert.ok(line.total_ms >= 30, '总时长把三段读都算进去了');
+  assert.ok(line.total_ms >= 40, '总时长把三段读都算进去了');
   assert.ok(line.rows === INVENTORY.length);
   assert.ok(typeof line.request_id === 'string' && line.request_id.length > 0, '带 request_id 才追得下去');
 });
@@ -236,8 +241,14 @@ test('AC-T3 没找到 / 取数抛错：照样一条 timing（found:false、rows:
   assert.ok(lines[0].product_ms >= 0);
 
   // 取数抛错（网关整个炸了）→ 500 人话页 + 仍然一条 timing
+  // ⚠️ 2026-10-12（**CI 红过一次**，PR #342 的 run 38202938785）：这里的注入延时原来写 15ms、
+  //    断言写 `product_ms >= 15` —— **正好压在定时器粒度上**，会偶发红：
+  //    本机实测 3000 次 `sleep(15)` 的 `Date.now()` 差值里有 **5 次是 14ms**（`setTimeout` 不保证
+  //    不早于 ms 毫秒 + `Date.now()` 只到毫秒）⇒ 断言 `>= 15` 天然会漏。
+  //    ⇒ 改成"慢得更明显"：延时 60ms、下限 55ms（留 5ms 余量）。**断言语义没放宽**：
+  //      它仍然要求 `product_ms` 覆盖住那段慢读（覆盖率 55/60 ≈ 92%，改前是 15/15 —— 只是不再骑在边界上）。
   const broken = fakeGateway({});
-  broken.listAll = async (key) => { if (key === 'product') await sleep(15); throw new Error('飞书 500'); };
+  broken.listAll = async (key) => { if (key === 'product') await sleep(60); throw new Error('飞书 500'); };
   broken.listByFilter = async () => { throw new Error('飞书 500'); };
   const appBroken = express();
   appBroken.use((req, res, next) => { req.requestId = 'req_timing_broken'; next(); });
@@ -252,7 +263,7 @@ test('AC-T3 没找到 / 取数抛错：照样一条 timing（found:false、rows:
   const failedLines = failed.filter((entry) => entry.event === 'scan.lookup.timing');
   assert.equal(failedLines.length, 1, '抛错时也要有一条耗时');
   assert.equal(failedLines[0].found, false);
-  assert.ok(failedLines[0].product_ms >= 15, '要能看出是卡在「货品信息」那一步');
+  assert.ok(failedLines[0].product_ms >= 55, '要能看出是卡在「货品信息」那一步');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

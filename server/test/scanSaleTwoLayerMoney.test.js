@@ -403,7 +403,7 @@ test('AC-3 【全付】Σ每件实收 === Σ多笔收款 ⇒ 成单；收款明�
     assert.deepEqual(rows.map((row) => [row.fields[paymentField][0], row.fields['收款金额']]),
       [['pm_wechat', 200], ['pm_cash', 300]], '方式按她说的写（微信 200 + 现金 300）');
     assert.equal(rows[0].fields['收款状态'], '已收款');
-    for (const row of rows) assert.ok(row.fields['收款时间'], '收款时间照旧写（既有口径）');
+    for (const row of rows) assert.ok(row.fields['收款日'], '收款时间照旧写（既有口径）');
     assert.equal(unpaidRows(h).length, 0, '全付：**一条未收款都不写**');
   } finally { h.cleanup(); }
 });
@@ -653,7 +653,7 @@ test('AC-7a 【部分付】只写付了的那几条（已收款）+ 差额一条
     assert.equal(paid.length, 1);
     assert.deepEqual(paid[0].fields[methodField()], ['pm_wechat'], '已收的那条按收款方式写');
     assert.equal(paid[0].fields['收款金额'], 200);
-    assert.ok(paid[0].fields['收款时间'], '已收款照旧有收款时间');
+    assert.ok(paid[0].fields['收款日'], '已收款照旧有收款时间');
     const unpaid = unpaidRows(h);
     assert.equal(unpaid.length, 1);
     assert.equal(unpaid[0].fields['收款金额'], 300, '差额写在【未收款】那一条上');

@@ -632,3 +632,57 @@ test('AC-E2E-8 ⭐ 只填实收（或什么都不填）⇒ **一定能提交成�
     });
   } finally { e2e.cleanup(); }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-E2E-9 🔴🔴 真机 bug 的 HTTP 回归：**会话过期 ≠ 死路**
+//   她的现场：页面 200、`POST` 一提交就 **400（本单已过期）**，刷新 / 重扫三遍都一样
+//   （日志 17:48-17:52Z）。这一条把"她那一整套动作"在真路由上跑一遍。
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-E2E-9 🔴 会话过期后：页面照旧打得开 ⇒ 用页面上那把 key 提交**必须成单**（不再 400）', async () => {
+  login();
+  const e2e = createE2E();
+  const openId = 'ou_e2e_9';
+  const cookie = sessionCookie(openId);
+  try {
+    await withServer(e2e.app, async (base) => {
+      // ① 正常扫两双（现货 40 + 预订 41），本单 2 双
+      await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      await addLine(base, cookie, NUMBER_A, '40');
+      await addLine(base, cookie, NUMBER_B, '41');
+      const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      assert.ok(draftBarOf(page.html).includes('本单：2 双'), '第1步：本单 2 双');
+
+      // ② 把这一份会话的 `expires_at` 拨到**过去**（= 她挂了 8 小时那种形态）
+      await e2e.sessions.store.update(e2e.sessions.idOf(openId), {
+        expires_at: new Date(Date.now() - 60_000).toISOString(),
+      });
+      const expired = await e2e.sessions.get(openId);
+      assert.equal(expired.expired, true, '第2步：夹具前提 —— 会话现在**是过期的**');
+
+      // ③ 她刷新那一页：**照旧 200**（页面渲染走只读的 `sessions.get`）—— 这正是"页面能打开"的现场
+      const refreshed = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      assert.equal(refreshed.status, 200, '第3步：过期后页面**照样打得开**（现场就是这样）');
+      assert.ok(draftBarOf(refreshed.html).includes('本单：2 双'), '第3步：过期会话里那 2 双照旧显示');
+
+      // ④ 她拿这一页上的那把 key 点【提交这一单】⇒ **必须成功**（改前这里 400，反复刷都没用）
+      const done = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+        action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(refreshed.html),
+        payment_status: PAYMENT_STATUS.unpaid,
+        payment_method: '', payment_amount: '', line_amount: ['', ''],
+      });
+      const doneHtml = await done.text();
+      assert.equal(done.status, 200,
+        `第4步：过期会话提交**必须成功**（她真机卡的就是这里，改前是 400）：${doneHtml.slice(0, 300)}`);
+      assert.match(doneHtml, /这一单提交好了/, '第4步：给她"提交好了"那一页');
+      assert.match(doneHtml, /明细：2 双（每双一行）/, '第4步：两双都在（草稿没被过期吃掉）');
+      assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第4步：成了一张单');
+      assert.equal(rowsOf(e2e, 'salesDetail').length, 2, '第4步：两行明细');
+
+      // ⑤ 提交后本单归零（她可以接着扫下一单）
+      const after = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      assert.ok(draftBarOf(after.html).includes('本单：0 双'), '第5步：本单归零');
+      assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第5步：没有再建第二张单');
+    });
+  } finally { e2e.cleanup(); }
+});

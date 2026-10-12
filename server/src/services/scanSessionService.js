@@ -125,7 +125,69 @@ const createScanSessionService = (options = {}) => {
     return { ...created, expired: false };
   };
 
+  const FLOW_KEY_PREFIX = Object.freeze({
+    sale: sessionConfig.saleKeyPrefix,
+    replenish: sessionConfig.replenishKeyPrefix,
+    purchase_return: sessionConfig.returnKeyPrefix,
+  });
+  const submitKeyFor = (openId, session, flow = 'sale') => {
+    const name = Object.prototype.hasOwnProperty.call(FLOW_KEY_PREFIX, flow) ? flow : 'sale';
+    const block = name === 'replenish'
+      ? session?.replenish
+      : (name === 'purchase_return' ? session?.purchaseReturn : session?.sale);
+    if (block?.key) return block.key;
+    return keyFor(FLOW_KEY_PREFIX[name], idOf(openId), 1);
+  };
+
   const touch = (patch) => ({ ...patch, expires_at: new Date(now() + sessionConfig.ttlMs).toISOString() });
+
+  /**
+   * ⭐⭐ 2026-10-12（**真机 bug**：页面 200、一提交就 400，刷新三遍都没用）：
+   * **把过期的会话"续上"** —— 而不是判她过期、也不是新建一份空的。
+   *
+   * 为什么是"续上"而不是"新开一份"（我核过两条都试过）：
+   *   · **草稿不能丢**：她那一页上写着 `本单：N 双`，点【提交这一单】就是要把这 N 双提交掉；
+   *     新建一份空的会变成"没有明细"，她照旧成不了单（换了个错而已）；
+   *   · 🔴 **更危险的是重复建单**：提交写到一半失败时，会话里已经落了
+   *     `master_record_id`（主表那条记录）。一旦丢掉这份进度再提交，就会**再建一张主表**
+   *     —— 一笔货两条单。续上则继续写同一张。
+   *   · 具体做法：读原始记录 → 原样保留它的 `sale`（草稿 / 主表 id / detail_ids / completed）
+   *     → 只把 `expires_at` 续到 now+TTL；若调用方带来了**属于这一条链**的幂等键，
+   *     就把它**采纳**为当前那一轮的键（她手上那一页不用换 key 也能提交成功）。
+   *
+   * ⚠️ 与 `ensure()` 的分工：`ensure()` 用于**「加入本单 / 清空本单」**这类"要开一笔新的操作"——
+   *    过期就按 TTL 语义**新开一单**（本单归零）；`revive()` 只用于**「提交」**——
+   *    她明确在提交她眼前那一单，绝不能把草稿丢掉。
+   */
+  const revive = async (openId, { submitKey = '', flow = 'sale' } = {}) => {
+    const raw = await store.get(idOf(openId));
+    // 没有记录（真的一无所有）⇒ 走原来的"新建一份"
+    if (!raw) return ensure(openId);
+    // 只有属于这一条链的键才采纳（别把销售的键塞进补货那一块）
+    const prefix = FLOW_KEY_PREFIX[flow] || FLOW_KEY_PREFIX.sale;
+    const adopted = String(submitKey || '').trim();
+    const adoptable = adopted.startsWith(`${prefix}:`);
+    const blockName = flow === 'replenish' ? 'replenish' : (flow === 'purchase_return' ? 'purchaseReturn' : 'sale');
+    const block = raw[blockName] || {};
+    const keepKey = adoptable ? adopted : block.key;
+    const parsedSeq = Number(String(keepKey || '').split(':').pop());
+    const next = await store.update(raw[sessionConfig.idField], touch({
+      status: sessionConfig.statuses.draft,
+      [blockName]: {
+        ...block,
+        key: keepKey,
+        seq: Number.isInteger(parsedSeq) && parsedSeq > 0 ? parsedSeq : (block.seq || 1),
+      },
+    }));
+    logInfo(config.events.sessionExpired, {
+      session_id: raw[sessionConfig.idField], open_id: String(openId || ''),
+      reason: 'revived', flow, adopted_key: adoptable ? adopted : '',
+    });
+    logInfo(config.events.sessionStarted, {
+      session_id: raw[sessionConfig.idField], open_id: String(openId || ''), resumed: true,
+    });
+    return { ...next, expired: false };
+  };
 
   /** 把当前这一双加进"本单"（**只动本地会话**，业务表一个字都不写）。 */
   const addLine = async (openId, line) => {
@@ -288,24 +350,12 @@ const createScanSessionService = (options = {}) => {
    *   前缀与所在块都由**配置**给；认不出的 flow 一律回落到销售（与改动前逐字一致），
    *   绝不"猜成某一条新链"。
    */
-  const FLOW_KEY_PREFIX = Object.freeze({
-    sale: sessionConfig.saleKeyPrefix,
-    replenish: sessionConfig.replenishKeyPrefix,
-    purchase_return: sessionConfig.returnKeyPrefix,
-  });
-  const submitKeyFor = (openId, session, flow = 'sale') => {
-    const name = Object.prototype.hasOwnProperty.call(FLOW_KEY_PREFIX, flow) ? flow : 'sale';
-    const block = name === 'replenish'
-      ? session?.replenish
-      : (name === 'purchase_return' ? session?.purchaseReturn : session?.sale);
-    if (block?.key) return block.key;
-    return keyFor(FLOW_KEY_PREFIX[name], idOf(openId), 1);
-  };
 
   return {
     idOf,
     get,
     ensure,
+    revive,
     isExpired,
     submitKeyFor,
     addLine,

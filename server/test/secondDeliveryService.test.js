@@ -129,7 +129,7 @@ test('现货待收单点「成交」：只补收款，库存与明细履约状�
   assert.equal(receipt.fields['收款状态'], '已收款');
   assert.deepEqual(receipt.fields['收款方式'], ['method_1']);
   assert.equal(receipt.fields['交易方向'], '收入');
-  assert.ok(Number(receipt.fields['收款时间']) >= before, '收款时间必须是点击那一刻');
+  assert.ok(Number(receipt.fields['收款日']) >= before, '收款时间必须是点击那一刻');
   assert.equal(result.collectedAmount, 260);
   assert.deepEqual(result.collectedPaymentIds, ['receipt_u1']);
 
@@ -187,7 +187,7 @@ test('预定单点「成交」：补收款 + 明细未交付转已交付 + 扣�
   assert.equal(pending.fields['收款状态'], '已收款');
   assert.equal(pending.fields['交易方向'], '收入');
   assert.deepEqual(pending.fields['收款方式'], ['method_2']);
-  assert.ok(Number(pending.fields['收款时间']) > 0);
+  assert.ok(Number(pending.fields['收款日']) > 0);
   assert.equal(result.collectedAmount, 200);
   // 原来那条已收款（定金）不动，也不重复写方向。
   const deposit = gateway.records.get('paymentRecord').find((row) => row.record_id === 'receipt_p1');

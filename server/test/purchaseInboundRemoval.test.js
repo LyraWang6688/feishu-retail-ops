@@ -432,9 +432,10 @@ test('④-补 来源标识由**真实三元组**（批次记录 id | 货品 | �
 // G 单选「确认状态」纳入部署闸门契约
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('F 「具体信息」已改名「报货信息」：tableName 同步、tableId 与语义键一个都没动', () => {
+test('F 「具体信息」→「报货信息」→（2026-10-12）「采购明细」：tableName 同步、tableId 与语义键一个都没动', () => {
   const request = V1_BITABLE_SCHEMA.tables.purchaseRequest;
-  assert.equal(request.tableName, '报货信息', '她的口径：这张表现在叫「报货信息」');
+  // ⚠️ 2026-10-12 她又改了一次名：「报货信息」→「采购明细」（tableId `tbli1ygPtss5CWCH` 不变）
+  assert.equal(request.tableName, '采购明细', '她的口径：这张表现在叫「采购明细」');
   assert.equal(request.tableId, 'tbli1ygPtss5CWCH', 'tableId 不变（闸门按 tableId 校验，改了就全红）');
   // ⚠️ 语义键名 `purchaseRequest` **可以不动**（brief 明确）——只改 tableName 与用户可见文案。
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseRequest, request);
@@ -444,11 +445,19 @@ test('F 「具体信息」已改名「报货信息」：tableName 同步、table
 });
 
 test('F-补 工作台采购页的用户可见文案里没有「具体信息」了', () => {
+  // ⚠️ 2026-10-12 旧断言改写（她改表名 + Lead 定口径 + 死页文案清理）：
+  //   改前（逐字）：`assert.ok(codeOnly.includes('报货信息'), `${rel} 要改成「报货信息」`);`
+  //   改后（逐字）：`assert.ok(codeOnly.includes('采购明细'), `${rel} 要改成「采购明细」（表名的新叫法）`);`
+  //                ＋ 新增 `assert.equal(codeOnly.includes('报货信息'), false, …)`
+  //   理由：这条断言的本意是"那一页必须用**当下**的表名，不许停在更早的旧名"
+  //        （它当年正是在改写「具体信息」）；2026-10-12 她把这表改名成「采购明细」⇒ 断言跟着表名走，
+  //        **保护的语义一个字没变**（不许停在旧名），只是把"当下"从「报货信息」换成「采购明细」。
   const rel = 'public/workbench/features/purchase/index.js';
   const source = fs.readFileSync(path.join(SERVER_ROOT, rel), 'utf8');
   const codeOnly = stripComments(source);
   assert.equal(codeOnly.includes('具体信息'), false, `${rel} 里还有「具体信息」文案`);
-  assert.ok(codeOnly.includes('报货信息'), `${rel} 要改成「报货信息」`);
+  assert.ok(codeOnly.includes('采购明细'), `${rel} 要改成「采购明细」（表名的新叫法）`);
+  assert.equal(codeOnly.includes('报货信息'), false, `${rel} 里不该再出现上一版的表名「报货信息」`);
 });
 
 test('G ⛔ 「报货批次.确认状态」整条退场 ⇒ 它的单选取值契约也删掉（契约只剩到货状态）', () => {

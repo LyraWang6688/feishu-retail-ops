@@ -367,7 +367,7 @@ test('点【确认成交】预定单：未交付→已交付 + 扣库存 + 待�
   // ② 钱那一半：那条「未收款」→「已收款」＋「收款时间」＝ 点击时刻 ＋ 补交易方向。
   const receipt = gateway.records.get('paymentRecord').find((row) => row.record_id === 'pay_pending');
   assert.equal(receipt.fields['收款状态'], '已收款');
-  assert.ok(Number(receipt.fields['收款时间']) >= before, '收款时间必须是点击那一刻');
+  assert.ok(Number(receipt.fields['收款日']) >= before, '收款时间必须是点击那一刻');
   assert.deepEqual(receipt.fields['收款方式'], ['method_wechat']);
   assert.equal(receipt.fields['交易方向'], '收入');
   // ③ 回话 + toast 如实说清成交了什么。
@@ -465,7 +465,7 @@ test('预定单货还没到（库存不足）：明确提示、不写收款、�
   // ② **不写半成品账**：收款一个字节没动、明细还是未交付。
   const receipt = gateway.records.get('paymentRecord').find((row) => row.record_id === 'pay_pending');
   assert.equal(receipt.fields['收款状态'], '未收款', '货还没到就不许先把钱记成已收');
-  assert.equal(receipt.fields['收款时间'], undefined);
+  assert.equal(receipt.fields['收款日'], undefined);
   assert.equal(gateway.records.get('salesDetail')[0].fields['履约状态'], '未交付');
   // ③ 卡片**不变灰**（她还能再点）：不 patch 成"已成交"。
   assert.ok(!client.patched.some((item) => JSON.parse(item.data.content)

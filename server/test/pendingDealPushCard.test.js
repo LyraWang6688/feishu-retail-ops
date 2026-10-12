@@ -1,3 +1,9 @@
+/** ⚠️ 2026-10-12 旧断言改写（业务负责人改表名，Lead 定口径）：
+ *  改前（逐字）：`'【采购】未到货的报货批次：{count} 批'`（以及渲染出来的同名文本）
+ *  改后（逐字）：`'【采购】未到货的采购单：{count} 批'`
+ *  理由：她把「报货批次」这张表改名成了「采购主表」；**用户可见文案**按 Lead 的口径用业务说法
+ *        「采购单」（短、她看得懂）。⚠️ 只换了这一个词，其余断言（格式/深链/数量/顺序）一条没放宽。
+ */
 // 「9 点待处理单推送 = **消息卡片**」的验收用例（业务负责人 2026-10-08 口径）。
 //
 // 逐字口径：
@@ -214,7 +220,7 @@ test('⑨ 采购区：为空时整块（含它前面那条分割线）都不出�
   // 只有采购候选 ⇒ 没有销售表头（表头那句写的是"待处理的销售单"），块标题就是抬头。
   assert.equal(card.header, undefined);
   assert.deepEqual(card.elements.map((element) => element.tag), ['div', 'column_set', 'note']);
-  assert.equal(card.elements[0].text.content, '**【采购】未到货的报货批次：1 批**');
+  assert.equal(card.elements[0].text.content, '**【采购】未到货的采购单：1 批**');
   // 这一批没有本地映射 ⇒ **只有文字栏**（不给一个点不动的按钮、也不留空壳），并且计入脚注。
   const row = card.elements[1];
   assert.equal(row.tag, 'column_set');

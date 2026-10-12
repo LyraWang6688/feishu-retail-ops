@@ -175,8 +175,12 @@ const SESSION = Object.freeze({
   returnKeyPrefix: readString(process.env, 'SCAN_RETURN_KEY_PREFIX', 'scan_return'),
   // 「扫码验收」的会话（**第四条链**，自己的目录，与销售 / 补货 / 退货互不覆盖）。
   acceptKeyPrefix: readString(process.env, 'SCAN_ACCEPT_KEY_PREFIX', 'scan_accept'),
-  // 「本单」留存多久：她扫一单通常几分钟内完成；留 6 小时足够，过期就当新单。
-  ttlMs: readInt(process.env, 'SCAN_SESSION_TTL_MS', 6 * 60 * 60 * 1000, { min: 60_000, max: 7 * 24 * 60 * 60 * 1000 }),
+  // 「本单」留存多久（**配置先行**：`SCAN_SESSION_TTL_MS`，显式数值，没有 `||` 兜底那种关不掉的写法）。
+  // 🔴 2026-10-12 真机改：**默认 12 小时**（改前 6 小时）—— 她实测「会挂 8 小时」，
+  //    6 小时就过期了；而当时过期后**每一次提交都 400**（见 `scanWriteService` 的 `revive` 那条注释）。
+  // ⚠️ 过期**不再是死路**：提交时会**续上**这一份会话（草稿 / 已落盘的主表 id 都保留），
+  //    只有「加入本单 / 清空本单」这类"要开一笔新操作"才按 TTL 语义新开一单。
+  ttlMs: readInt(process.env, 'SCAN_SESSION_TTL_MS', 12 * 60 * 60 * 1000, { min: 60_000, max: 7 * 24 * 60 * 60 * 1000 }),
   // 一单最多累积多少双（防误操作 / 防脚本刷）。
   maxLines: readInt(process.env, 'SCAN_SALE_MAX_LINES', 50, { min: 1, max: 500 }),
   statuses: Object.freeze({ draft: 'draft', submitted: 'submitted' }),
@@ -550,7 +554,7 @@ const TEXTS = Object.freeze({
   writeDisabledTitle: '这个功能现在关着',
   writeDisabledBody: '扫码下单 / 补货报单暂时没有开启，请联系运营。',
   sessionEmptyBody: '本单还没有明细：先选尺码点「加入本单」，再点「提交这一单」。',
-  sessionExpiredBody: '这一页放太久了，本单已经过期：请刷新这一页重新加入。',
+  sessionExpiredBody: '这一页放太久了：请点【清空本单】重新开始这一单。',
   sizeMissingBody: '请先选一个尺码。',
   sizeUnknownBody: '这个尺码不在「尺码管理」里，请刷新这一页重新选。',
   amountInvalidBody: '实收金额要填数字（例：399 或 399.5）。',

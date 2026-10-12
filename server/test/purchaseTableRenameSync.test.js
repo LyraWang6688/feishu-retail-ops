@@ -29,15 +29,18 @@ const walk = (dir, out = []) => {
   return out;
 };
 
-test('A1 schema 表名 = 报货信息（「信息填写」整段已随入口退场）', () => {
+test('A1 schema 表名 = 采购明细（「信息填写」整段已随入口退场）', () => {
   // ⛔ 2026-10-09：「信息填写」表（`purchaseReport`）被业务负责人**整个从 Base 删除**，
   //   口径是「自然语言 ＋ AI 录入」整套退场 ⇒ schema 里那一段与它的表名一起删掉了
   //   （守门见 `purchaseIntakeRetired.test.js`）。
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseReport, undefined);
-  // ⚠️ 2026-10-07 深夜她第三次改名：「具体信息」→「**报货信息**」（tableId `tbli1ygPtss5CWCH` 不变）。
-  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseRequest.tableName, '报货信息');
-  // 别的表名不受影响
-  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.tableName, '报货批次');
+  // ⚠️ 2026-10-07 深夜她第三次改名：「具体信息」→「报货信息」。
+  // ⚠️ **2026-10-12 第四次改名**：「报货信息」→「**采购明细**」；
+  //    同一轮她把 `purchaseOrderBatch`（旧名「报货批次」）改成了「**采购主表**」。
+  //    （两张表的 tableId / 语义键 / 字段名一个都没动，只读核过生产真表。）
+  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseRequest.tableName, '采购明细');
+  // 同一轮一起改的那张
+  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.tableName, '采购主表');
 });
 
 test('B1/B3 字段映射同步：具体信息删两列、报货批次加两列、采购行为不映射', () => {
@@ -148,8 +151,8 @@ test('A3 schema 里**不再有**「到货验收」表；到货落点 = 「报货
   // ⑤ 其余各张：**没漂的不许动**（这一节只断言这一批改名/改列的结论）。
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseReport, undefined, '「信息填写」整段已删除');
   // ⚠️ 2026-10-07 深夜她**又**把这张表从「具体信息」改名为「**报货信息**」（tableId 不变）。
-  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseRequest.tableName, '报货信息');
-  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.tableName, '报货批次');
+  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseRequest.tableName, '采购明细');
+  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.tableName, '采购主表');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
