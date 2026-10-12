@@ -3,7 +3,12 @@
  *
  * 她的话（要点）：**一天 5 次**（9/12/15/18/21，可配）· **完全单独一条消息**
  * （**不并进**现有 9 点推送那条）· 发给**采购群**（`PURCHASE_CHAT_ID`）·
- * 文案：`待办还有 N 条：待补充 X 条 · 待补样品 Y 条 · 待交割 Z 条 → 去工作台处理`。
+ * 文案：`待办还有 N 条：待补充 X 条 · 其中待补样品 Y 条 · 待交割 Z 条 → 去工作台处理`。
+ *   🔴 **2026-10-12 现场事故修正**：原先 `total` 数的是"**全部已入账单**"（含已两清），
+ *      现场那条成了 `supplement 10 · sample 8 · pending 5 · total 76` ⇒ 与文案自相矛盾。
+ *      现在 **`total = supplement + pending`**（三段待办之和；`sample` 是 `supplement` 的子集、
+ *      **不重复加**；已两清不是待办），文案里加「其中」把子集关系说清 —— 见
+ *      `services/workbenchOrderSections.js` 的 `workbenchCountsOf` 与 AC-PN5。
  *
  * 落点：
  *   · 计数 = **工作台订单列表的同一份取数**（`SalesFollowupService.listOrders`）＋

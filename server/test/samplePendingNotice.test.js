@@ -74,9 +74,13 @@ test('AC-PN2 文案逐字 + 发给采购群；没配群 ⇒ 跳过（不回落�
   try {
     const result = await service.send({ now: new Date('2026-10-11T09:05:00+08:00') });
     assert.equal(result.sent, true, JSON.stringify(result));
-    assert.deepEqual(result.counts, { supplement: 1, sample: 1, pending: 0, total: 2 });
-    // 文案逐字（她给的那句）
-    assert.equal(sentTexts[0], '待办还有 2 条：待补充 1 条 · 待补样品 1 条 · 待交割 0 条 → 去工作台处理');
+    // ⚠️ 2026-10-12 修正口径（现场 9 点那条通知 `total=76` 与 `10+8+5` 打架）：
+    //    `total` = **三段待办之和**（待补充 + 待交割）——**已两清那一类不算待办**；
+    //    `sample`（待补样品）是 `supplement`（待补充）的**子集**，不重复加。
+    //    这里的 fixture = 1 单两清 + 1 单待补样品 ⇒ 待办只有 1 条。
+    assert.deepEqual(result.counts, { supplement: 1, sample: 1, pending: 0, afterSales: 1, total: 1 });
+    // 文案逐字（她给的那句 + 「其中」把子集关系说清）
+    assert.equal(sentTexts[0], '待办还有 1 条：待补充 1 条 · 其中待补样品 1 条 · 待交割 0 条 → 去工作台处理');
 
     // ⚠️ 没配群 ⇒ **大声跳过**、绝不回落私聊：走**真的** sendPurchaseGroupNotice 那条路
     const { PurchaseWebhookService } = require('../src/services/purchaseWebhookService');
@@ -139,6 +143,7 @@ test('AC-PN3 同一个时点只发一次（调度器每 tick 都会调）；共 
     assert.equal((await service.send({ now: new Date('2026-10-11T12:01:00+08:00') })).sent, true);
     assert.equal(sent.length, 2);
     // 共 0 条 ⇒ **不发**（不是"发一条 0 条的"）
+    //    ⚠️ 2026-10-12：`total` 只数**待办**（待补充 + 待交割）——已两清不算待办。
     orders = [];
     assert.equal((await service.send({ now: new Date('2026-10-11T15:01:00+08:00') })).sent, false);
     assert.equal(sent.length, 2);
@@ -197,12 +202,72 @@ test('AC-PN4 通知的计数口径 ≡ 工作台订单列表的判据（同一�
     assert.equal(workbenchSectionOf(fixture.order), fixture.section, `后端：${fixture.name}`);
   }
   const counts = workbenchCountsOf(fixtures.map((fixture) => fixture.order));
-  assert.deepEqual(counts, { supplement: 4, sample: 2, pending: 1, total: 6 });
+  // ⚠️ 2026-10-12 修正：`total` = 待补充 + 待交割 = 4 + 1 = 5（**已两清那 1 条不算待办**；
+  //    待补样品 2 条是"待补充 4 条"里的子集，**不重复加**）。
+  assert.deepEqual(counts, { supplement: 4, sample: 2, pending: 1, afterSales: 1, total: 5 });
   // 前端同一份判据（真跑那个 ES 模块）
   const front = await loadFrontendOrders();
   for (const fixture of fixtures) {
     assert.equal(front.salesSectionOf(fixture.order), fixture.section, `前端：${fixture.name}`);
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-PN5 🔴 2026-10-12 现场事故：`total` 与文案三段打架（`total=76` / `10+8+5=23`）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-PN5 `total` = 待补充 + 待交割（恒等式）；文案里的数字与 counts 逐字一致；与工作台三段对得上', async () => {
+  const base = {
+    fulfillment_status: '已交付', payment_status: '已收款',
+    details: [{ product: 'X', color: '黑', size: 40, requires_size: true }],
+    payments: [{ method: '微信' }],
+  };
+  // ① 现场那一组数字（真机日志）：10 条待补充（其中 8 条是待补样品）· 5 条待交割 · 61 条已两清
+  const orders = [
+    ...Array.from({ length: 2 }, () => ({ ...base, payments: [] })),                    // 待补充（缺资金），不含待补样品
+    ...Array.from({ length: 8 }, () => ({ ...base, sample_pending: true })),            // 待补充（待补样品）
+    ...Array.from({ length: 5 }, () => ({ ...base, fulfillment_status: '未交付' })),    // 待交割
+    ...Array.from({ length: 61 }, () => ({ ...base })),                                 // 已两清（**不是待办**）
+  ];
+  const counts = workbenchCountsOf(orders);
+  assert.equal(orders.length, 76, '取数口径不变：工作台列表里就是这 76 单');
+  assert.deepEqual(counts, { supplement: 10, sample: 8, pending: 5, afterSales: 61, total: 15 });
+  // ② 🔴 恒等式：**列出来的三段之和 = total**（她一眼就能对上）
+  assert.equal(counts.total, counts.supplement + counts.pending,
+    'total 必须等于"待补充 + 待交割"（待补样品是待补充的子集，不重复加；已两清不是待办）');
+  for (const [label, value, section] of [
+    ['待补充', counts.supplement, 'supplement'],
+    ['待补样品', counts.sample, 'supplement'],
+    ['待交割', counts.pending, 'pending'],
+  ]) {
+    assert.ok(value <= counts.total, `${label} 不该超过 total`);
+    if (section === 'supplement') assert.ok(counts.sample <= counts.supplement, '待补样品 ⊆ 待补充');
+  }
+  // ③ 文案里的每个数字 = counts 里那个数（**逐字**，不是"大概对"）
+  const dir = tempDir('invariant');
+  const sent = [];
+  const service = createSamplePendingNoticeService({
+    settings: resolveSamplePendingNoticeConfig({}),
+    store: new JsonTaskStore({ dir, idField: 'task_id' }),
+    listOrders: async () => ({ orders }),
+    send: async (text) => { sent.push(text); return true; },
+  });
+  try {
+    await service.send({ now: new Date('2026-10-12T09:00:00+08:00') });
+  } finally { rmDir(dir); }
+  assert.equal(sent[0],
+    '待办还有 15 条：待补充 10 条 · 其中待补样品 8 条 · 待交割 5 条 → 去工作台处理');
+  const numbers = sent[0].match(/\d+/g).map(Number);
+  assert.deepEqual(numbers, [counts.total, counts.supplement, counts.sample, counts.pending],
+    '文案里出现的 4 个数字必须依次 = total / 待补充 / 待补样品 / 待交割');
+  // ④ 与**工作台页面**同一口径：前端 `salesSectionOf` 分出来的段数 = 通知里的段数
+  const front = await loadFrontendOrders();
+  const sections = orders.map((order) => front.salesSectionOf(order));
+  assert.equal(sections.filter((section) => section === 'supplement').length, counts.supplement,
+    '待补充：通知与工作台页面必须一致');
+  assert.equal(sections.filter((section) => section === 'pending').length, counts.pending,
+    '待交割：通知与工作台页面必须一致');
+  assert.equal(orders.filter((order) => order.sample_pending).length, counts.sample, '待补样品一致');
 });
 
 // ── 前端模块（与既有工作台用例同一套复制做法）──────────────────────────────
