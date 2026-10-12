@@ -1,37 +1,26 @@
-// 端到端：新建销售主表记录时**写入**了销售单号，并且确认后的消息里显示的就是它。
+// 端到端：新建销售主表记录时**写入**了销售单号。
 //
 // 为什么这个测试必须存在：单号原来是飞书「自动编号」字段生成的，产品负责人把该字段
 // 改成文本字段后飞书不再生成。只测纯函数（salesOrderNo.test.js）证明不了
-// "号真的落到了销售主表上、并且消息里显示的不是空" —— 这两件事都要走完整链路。
+// "号真的落到了销售主表上" —— 这件事要走完整建单链路。
+//
+// ⚠️⚠️ 2026-10-12（清群聊入口 C4·"先迁移覆盖"）改写：
+//   原先这两条是**经 `LarkMvpService.processSalesTask`**（群聊自然语言录入）走完整链路的；
+//   群入口退场后那条管线已删除。但**单号写入的实现本身还在、还活着** ——
+//   它早在 C0 就被剥到 **`services/salesEntryService.createSalesEntryWithOrderNo`**，
+//   而且**扫码页正在用它**（`scanWriteService.js:71-77`）。
+//   ⇒ 按"实现还活着就必须迁移、不许删"的判据，这里改成**直接驱动那份实现**
+//     （与扫码页走的是同一个函数、同一份单号规则），**断言语义逐字保留**：
+//     ① 建单时就写号（不是入账才补）② 日期段按东八区 ③ 历史号不参与计算 ④ 第二单 +1。
+//   ⚠️ 原用例里还有"消息卡片上显示的单号"（④）——那条验的是**已退场的销售卡片**，
+//     卡片路径随群入口一起删除 ⇒ 该断言并入"随能力退场"清单（本文件不再覆盖）。
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
-const { LarkMvpService } = require('../src/services/larkMvpService');
-const { V1PostingService } = require('../src/services/v1PostingService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { createSalesEntryWithOrderNo } = require('../src/services/salesEntryService');
 const { shanghaiDateStamp } = require('../src/services/salesOrderNo');
-const { normalizeSalesResult } = require('../src/services/doubaoService');
 
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
-
-// 群聊链路要读 LARK_BOT_OPEN_ID 判 @（config/groupPurchase）。这些用例都不碰群聊，
-// 但服务构造时会解析一次配置；给个测试值，免得每个用例都打一条
-// lark.group.bot_open_id_missing 警告把真正的失败淹掉。
-process.env.LARK_BOT_OPEN_ID = process.env.LARK_BOT_OPEN_ID || 'ou_test_bot_open_id';
-// 实时库存里的一双（与 larkMvpService.test.js 的 liveRow 同形）：
-// 单号生成需要走完"解析 → 有货 → 出确认卡片 → 确认入账"整条链路，缺一行库存就到不了入账。
-const liveRow = ({ itemNo, color = '黑', size, productRecordId }) => ({
-  record_id: `live_${itemNo}_${color}_${size}`,
-  fields: {
-    库存键: `${itemNo}|${color}|女鞋|${size}`,
-    所属状态: '门盒',
-    编号: [{ id: productRecordId }],
-    尺码: [{ id: `size_${size}` }],
-  },
-});
 
 // 内存假 Base：语义字段名 → 真实字段名的映射与线上 schema 完全一致，
 // 所以"写进去的到底是哪个字段"是被真正验证的，而不是被假实现糊过去。
@@ -40,13 +29,10 @@ const fakeGateway = () => {
   const records = new Map([
     // 改字段类型之前的历史单：旧日期 + 旧全局号，本用例断言它一个字都不动。
     ['salesEntry', [{ record_id: 'legacy_1', fields: { 销售单号: 'XSD-20261004-0168', 确认状态: '已入账' } }]],
-    ['sizeManagement', [{ record_id: 'size_38', fields: { 尺码: 38 } }]],
-    ['liveInventory', [liveRow({ itemNo: '8088-26', color: '棕', size: 38, productRecordId: 'prod_1' })]],
   ]);
   const gateway = {
     records,
     table: (key) => V1_BITABLE_SCHEMA.tables[key],
-    validateTables: async () => [],
     listAll: async (key) => records.get(key) || [],
     get: async (key, id) => (records.get(key) || []).find((row) => row.record_id === id),
     create: async (key, values) => {
@@ -75,54 +61,14 @@ const fakeGateway = () => {
   return gateway;
 };
 
-const makeStore = () =>
-  new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'lark-order-no-')), idField: 'task_id' });
-
-const parsedSale = () => normalizeSalesResult({
-  intent: 'sale',
-  behavior_code: 'SALE_CASH',
-  sales_behavior: '现货销售',
-  trade_type: '现货',
-  items: [{ item_no: '8088-26', color: '棕', size: 38, quantity: 1, actual_amount: 230 }],
-  payments: [{ amount: 230, method: '微信', status: '已收款' }],
-  agreed_total: 230,
-});
-
-test('端到端：创建销售主表时写入单号，消息里的「销售单号」就是它', async () => {
+test('端到端：创建销售主表时写入单号（扫码建单走的就是这一个函数）', async () => {
   const gateway = fakeGateway();
-  const store = makeStore();
-  const openId = 'ou_1';
-  const cards = [];
-  // 真实入账链路：LarkMvpService → V1PostingService → SalesOrderService（含真实收款/进度写入）。
-  const service = new LarkMvpService({
-    client: {},
-    gateway,
-    references: { resolveSalesTradeType: async (code) => ({ recordId: `behavior_${code}` }) },
-    posting: new V1PostingService({
-      gateway,
-      references: {
-        resolveProduct: async (item) => ({ recordId: `product_${item.itemNo}` }),
-        resolvePaymentMethod: async (method) => ({ recordId: `method_${method}` }),
-      },
-    }),
-    // 交付/库存不是本用例的对象，桩掉；这里只关心单号。
-    delivery: { deliver: async () => ({ failures: [], deliveredQuantity: 1, totalQuantity: 1 }) },
-    recognizer: { parseSalesText: async () => parsedSale() },
-    store,
+  const created = await createSalesEntryWithOrderNo({ gateway }, {
+    task_id: 'sale_order_no', sender_open_id: 'ou_1',
   });
-  service.replyCard = async () => 'card_1';
-  service.sendText = async () => undefined;
-  service.updateSalesActionCard = async () => true;
-  service.publishSalesResultCard = async (_task, _event, card) => { cards.push(card); return true; };
+  const row = gateway.records.get('salesEntry').find((item) => item.record_id === created.recordId);
+  const writtenNo = row?.fields['销售单号'];
 
-  await store.create({ task_id: 'sale_order_no', type: 'sale', status: 'received', message_id: 'om_1',
-    sender_open_id: openId, sent_at: Date.now(), original_text: '8088-26棕38，230元微信' });
-
-  await service.processSalesTask('sale_order_no');
-
-  const task = await store.get('sale_order_no');
-  const created = gateway.records.get('salesEntry').find((row) => row.record_id === task.sales_entry_record_id);
-  const writtenNo = created?.fields['销售单号'];
   // ① 创建记录时就写进去了（不是等到入账才补），字段名必须是「销售单号」
   assert.match(String(writtenNo), /^XSD-\d{8}-\d{4}$/, '创建销售主表记录时必须写入销售单号');
   // ② 日期段按东八区当天算
@@ -131,44 +77,19 @@ test('端到端：创建销售主表时写入单号，消息里的「销售单�
   assert.equal(gateway.records.get('salesEntry')[0].fields['销售单号'], 'XSD-20261004-0168',
     '已有记录一个字不动');
   assert.notEqual(writtenNo, 'XSD-20261004-0168');
-
-  // ④ 确认入账：sourceNo 由 SalesOrderService 从销售主表读回，必须是刚写的那个号
-  await service.handleCardAction({
-    operator: { operator_id: { open_id: openId } },
-    action: { value: { action: 'confirm_sale', draft_id: 'sale_order_no' } },
-  });
-
-  const posted = await store.get('sale_order_no');
-  assert.equal(posted.status, 'posted');
-  assert.equal(posted.posting_result.sourceNo, writtenNo, 'result.sourceNo 必须是真实单号，不能回退成 record_id');
-  const finalCard = JSON.stringify(cards.at(-1));
-  assert.match(finalCard, new RegExp(`销售单号：${writtenNo}`), '消息里显示的必须是刚写入的单号');
-  assert.doesNotMatch(finalCard, /销售单号：；/, '销售单号不能是空的');
-  assert.doesNotMatch(finalCard, /请在销售主表核对/);
 });
 
 test('第二单接在当天已有单号之后（最大值 + 1），不会重发 0001', async () => {
   const gateway = fakeGateway();
-  const store = makeStore();
-  const openId = 'ou_1';
-  const service = new LarkMvpService({
-    client: {}, gateway,
-    references: { resolveSalesTradeType: async () => ({ recordId: 'behavior_1' }) },
-    posting: { postSale: async () => ({ sourceNo: 'unused', detailRecordIds: [], paymentRecordIds: [] }) },
-    recognizer: { parseSalesText: async () => parsedSale() },
-    store,
-  });
-  service.replyCard = async () => 'card_1';
-  service.sendText = async () => undefined;
   // 今天已经有一单（0001）——第二单必须是 0002
-  gateway.records.get('salesEntry').push({ record_id: 'today_1',
-    fields: { 销售单号: `XSD-${shanghaiDateStamp(new Date())}-0001`, 确认状态: '已入账' } });
+  gateway.records.get('salesEntry').push({
+    record_id: 'today_1',
+    fields: { 销售单号: `XSD-${shanghaiDateStamp(new Date())}-0001`, 确认状态: '已入账' },
+  });
 
-  await store.create({ task_id: 'sale_second', type: 'sale', status: 'received', message_id: 'om_2',
-    sender_open_id: openId, sent_at: Date.now(), original_text: '8088-26棕38，230元微信' });
-  await service.processSalesTask('sale_second');
-
-  const task = await store.get('sale_second');
-  const created = gateway.records.get('salesEntry').find((row) => row.record_id === task.sales_entry_record_id);
-  assert.equal(created.fields['销售单号'], `XSD-${shanghaiDateStamp(new Date())}-0002`);
+  const created = await createSalesEntryWithOrderNo({ gateway }, {
+    task_id: 'sale_second', sender_open_id: 'ou_1',
+  });
+  const row = gateway.records.get('salesEntry').find((item) => item.record_id === created.recordId);
+  assert.equal(row.fields['销售单号'], `XSD-${shanghaiDateStamp(new Date())}-0002`);
 });
