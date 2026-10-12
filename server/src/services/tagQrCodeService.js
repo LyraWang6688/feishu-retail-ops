@@ -397,6 +397,24 @@ const createTagQrCodeService = ({
     };
   };
 
+  /**
+   * ⭐⭐ AC-X（2026-10-12）：她新加的「记录 ID」**公式字段**与**接口读到的 record_id** 做交叉校验。
+   * 🔴 **公式列有延迟** ⇒ **一律以【接口值】为准**；两者不一致 ⇒ 记 warn（带两个值）便于排查。
+   * ⚠️ 绝不反过来"以公式值为准"——那正是今天"印了旧编号"那个 bug 的成因。
+   */
+  const crossCheckRecordId = ({ apiRecordId, formulaRecordId, recordId }) => {
+    const api = String(apiRecordId ?? '').trim();
+    const fromFormula = String(formulaRecordId ?? '').trim();
+    const mismatch = Boolean(fromFormula) && fromFormula !== api;
+    if (mismatch) {
+      logWarn('product.tag_qr.record_id_mismatch', {
+        record_id: recordId || api, api_record_id: api, formula_record_id: fromFormula,
+        picked: 'api', note: '公式列有延迟 ⇒ 以接口值为准',
+      });
+    }
+    return { recordId: api, mismatch, source: 'api' };
+  };
+
   /** 二维码矩阵边长（模块数）：N 模块 ⇒ 13mm 下每模块 13/N mm。 */
   const qrMatrixSize = (text) => require('qrcode').create(String(text)).modules.size;
 
@@ -557,11 +575,6 @@ const createTagQrCodeService = ({
       return { record_id: recordId, status: 'skipped', reason: 'number_missing' };
     }
 
-    // ⏸️ 2026-10-12 **接线暂缓**：二维码标识改「记录 ID」的地基（配置 + `resolveQrIdentity` +
-    //    `buildRecordIdScanUrl`）已就位，但 `syncRecord` 仍走**旧格式**（`urlTemplate` = `/s/{编号}`）。
-    //    原因：接上之后有 **26 条既有用例**（按**编号**判过期 / 断言 `/s/` URL）会红 ——
-    //    它们要逐条改成"按 **记录 ID** 判过期"，那是另一批工作量。
-    //    ⚠️ **安全**：在接线完成前保持旧格式 ⇒ 产物里**不会**出现没被替换的 `{recordId}` 占位符 ✓
     // ⭐⭐ 2026-10-12 接线：**二维码里装的是「记录 ID」（永不变），不再是编号（会变的快照）**。
     //    她今天亲自提的方案：「如果必须得要一个完全不变的标识，那我们是不是可以用记录 ID 呀？」
     //    · 有 record_id ⇒ 新格式 `/r/{recordId}`（接口读到的即时值 ✓）
@@ -874,7 +887,9 @@ const createTagQrCodeService = ({
       if (!recordId) continue;
       const number = textValue(record?.fields?.[numberFieldName]).trim();
       if (!number) { numberMissing += 1; continue; }
-      const expectedFileName = buildFileName(number, config);
+      // ⭐⭐ 2026-10-12 修复（真缺口）：巡检算「规范名」也必须按 **identity（record_id）**，
+      //    不能按编号 —— 否则新码下旧编号命名的附件会被判"不符"⇒ 每次都重生成 ✗。
+      const expectedFileName = buildFileName(resolveQrIdentity({ recordId, number }).value, config);
       const existing = attachmentsOf(record?.fields?.[tagQrFieldName]);
       if (existing.length && existing.some((item) => item.name === expectedFileName)) {
         consistent += 1;
@@ -963,6 +978,7 @@ const createTagQrCodeService = ({
     resolveQrNumber,
     resolveQrIdentity,
     qrMatrixSize,
+    crossCheckRecordId,
     syncRecord,
     handleTableChanges,
     sweepStaleTagQrCodes,

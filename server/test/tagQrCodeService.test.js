@@ -34,6 +34,7 @@ const {
   findFieldValue,
   readableFieldText,
   generateQrPng,
+  buildRecordIdScanUrl,
 } = require('../src/services/tagQrCodeService');
 
 const F = V1_BITABLE_SCHEMA.tables.product.fields;
@@ -42,7 +43,11 @@ const NUMBER_FIELD_ID = 'fld_number_test';
 
 // 规范里的那一个例子（brief 逐字给的）。
 const NUMBER_SAMPLE = 'YD6693-2|黑色|A';
-const URL_SAMPLE = 'https://hm.bamamei.online/r/rec1';
+// ⚠️ 旧格式（/s/{编号}）——给 `buildScanUrl` 的**单元用例**用（它测「按模板拼」，与新旧格式无关）
+const URL_SAMPLE = 'https://hm.bamamei.online/s/YD6693-2%7C%E9%BB%91%E8%89%B2%7CA';
+// ⭐ 2026-10-12：**新格式**（记录 ID）—— `syncRecord` 那批用例的期望（走 `resolveQrIdentity`）。
+//    ⚠️ `URL_SAMPLE` 保持旧格式：它给 `buildScanUrl` 的单元用例用（测"按模板拼"这个能力，与新旧无关）。
+const URL_SAMPLE_RECORD_ID = 'https://hm.bamamei.online/r/rec1';
 
 /** 捕获结构化日志（info→log / warn→warn / error→error），保持顺序。 */
 const captureLogs = async (run) => {
@@ -179,13 +184,13 @@ test('① 走完一条记录：上传的临时文件里就是那张 PNG，二维
 
   const result = await service.syncRecord('rec1', { reason: 'record_added' });
 
-  assert.deepEqual(generated, [[URL_SAMPLE, TAG_QR_CODE.qr]], '出图用的就是规范里的 URL + config 的尺寸/容错');
+  assert.deepEqual(generated, [[URL_SAMPLE_RECORD_ID, TAG_QR_CODE.qr]], '出图用的就是规范里的 URL + config 的尺寸/容错');
   assert.equal(result.status, 'written');
-  assert.equal(result.scan_url, URL_SAMPLE);
+  assert.equal(result.scan_url, URL_SAMPLE_RECORD_ID);
   assert.equal(gateway.calls.uploads.length, 1, '只上传一次');
   const upload = gateway.calls.uploads[0];
   assert.equal(upload.fileName, 'tag-qr-rec1.png', '文件名模板来自 config（非法字符替换掉）');
-  assert.equal(upload.bytes, Buffer.byteLength(`png:${URL_SAMPLE}`), '落盘的就是 PNG 字节');
+  assert.equal(upload.bytes, Buffer.byteLength(`png:${URL_SAMPLE_RECORD_ID}`), '落盘的就是 PNG 字节');
   assert.equal(fs.existsSync(upload.filePath), false, '跑完临时文件已清理');
 });
 
@@ -312,7 +317,8 @@ test('④ 事件里「编号」前后值不同 ⇒ 覆盖（generate 一次、up
   assert.equal(gateway.calls.update.length, 1, '并且覆盖写回');
   assert.equal(generated.length, 1);
   assert.equal(result.failed.length, 0);
-  assert.equal(buildScanUrl(TAG_QR_CODE.scanUrl.urlTemplate, 'YD6693-2|黑色|B'), generated[0]);
+  // ⭐ 2026-10-12：出图内容已按 **record_id**（新规则）⇒ 断言跟着换锚（不再是编号 URL）
+  assert.equal(buildRecordIdScanUrl('rec1'), generated[0]);
 });
 
 test('④ 事件里「编号」前后值相同（其他字段变更）⇒ 不写；但**要读一次**核附件（2026-10-12 改）', async () => {
@@ -339,7 +345,7 @@ test('④ 事件里「编号」前后值相同（其他字段变更）⇒ 不写
       ],
     }]);
     assert.deepEqual(result.results, [{
-      record_id: 'rec1', status: 'skipped', reason: 'number_unchanged', scan_url: URL_SAMPLE,
+      record_id: 'rec1', status: 'skipped', reason: 'number_unchanged', scan_url: URL_SAMPLE_RECORD_ID,
     }]);
   });
 
@@ -350,7 +356,8 @@ test('④ 事件里「编号」前后值相同（其他字段变更）⇒ 不写
 });
 
 test('④ 事件里没带「编号」字段值 ⇒ 退回文件名判据：名字对得上就不写', async () => {
-  const expectedName = buildFileName(NUMBER_SAMPLE);
+  // ⚠️ 新锚：附件名按 **record_id** 算（否则在新判据下天然判过期 ⇒ 就不再是名字对得上那条了）
+  const expectedName = buildFileName('rec1');
   const gateway = fakeGateway({
     records: { rec1: recordWith({ number: NUMBER_SAMPLE, tagQrCode: [{ file_token: 'f1', name: expectedName }] }) },
   });
@@ -361,7 +368,7 @@ test('④ 事件里没带「编号」字段值 ⇒ 退回文件名判据：名�
     // ⭐ 判不了 ⇒ 读一次记录、比文件名；比完**一致** ⇒ 结论就是"编号没变"
     //   （与快路径同一个事件名 `skipped_number_unchanged`，`verified_by: 'file_name'` 说明来路）。
     assert.deepEqual(result.results, [{
-      record_id: 'rec1', status: 'skipped', reason: 'number_unchanged', scan_url: URL_SAMPLE,
+      record_id: 'rec1', status: 'skipped', reason: 'number_unchanged', scan_url: URL_SAMPLE_RECORD_ID,
     }]);
   });
 
@@ -685,7 +692,7 @@ test('开关：config.enabled = false 时一个字都不写（只记一条 disab
 });
 
 test('文件名模板：来自 config、非法字符替换、超长截断', () => {
-  assert.equal(buildFileName('YD6693-2|黑色|A'), 'tag-qr-rec1.png');
+  assert.equal(buildFileName('YD6693-2|黑色|A'), 'tag-qr-YD6693-2_黑色_A.png');
   assert.equal(buildFileName('A/B C:D'), 'tag-qr-A_B_C_D.png');
   const long = buildFileName('X'.repeat(400));
   assert.equal(long.length, TAG_QR_CODE.fileName.maxLength);
@@ -722,12 +729,12 @@ test('契约缺失时当场抛（schema 里没有 tagQrCode 映射 ⇒ 不许静
 test('⑥ 巡检：只挑「文件名 ≠ 当前编号」的重生成，其余一条都不动', async () => {
   const gateway = fakeGateway({
     records: {
-      rec_ok1: recordWith({ number: 'A|黑|B', tagQrCode: [{ file_token: 'f1', name: buildFileName('A|黑|B') }] }),
+      rec_ok1: recordWith({ number: 'A|黑|B', tagQrCode: [{ file_token: 'f1', name: buildFileName('rec_ok1') }] }),
       rec_ok2: recordWith({
         number: 'C|黑|B',
         tagQrCode: [
           { file_token: 'f2', name: 'tag-qr-别的编号.png' },
-          { file_token: 'f3', name: buildFileName('C|黑|B') },
+          { file_token: 'f3', name: buildFileName('rec_ok2') },
         ],
       }),
       rec_stale: recordWith({ number: '3357|黑色|B', tagQrCode: [{ file_token: 'f4', name: 'tag-qr-3357_黑_B.png' }] }),
@@ -754,7 +761,7 @@ test('⑥ 巡检：只挑「文件名 ≠ 当前编号」的重生成，其余�
   assert.deepEqual(gateway.calls.update.map((call) => call[1]).sort(), ['rec_missing', 'rec_stale']);
   assert.deepEqual(
     gateway.calls.uploads.map((upload) => upload.fileName).sort(),
-    [buildFileName('D|黑色|A'), buildFileName('3357|黑色|B')].sort(),
+    [buildFileName('rec_missing'), buildFileName('rec_stale')].sort(),
   );
   const events = eventsOf(lines);
   assert.ok(events.includes('product.tag_qr.sweep_done'), '跑完要有汇总日志');
@@ -778,7 +785,7 @@ test('⑥ 巡检 dry-run：只报告要修哪些，一个字都不写', async ()
     assert.deepEqual(summary.results, [{
       record_id: 'rec_stale',
       number: '3357|黑色|B',
-      expected_file_name: 'tag-qr-rec1.png',
+      expected_file_name: 'tag-qr-rec_stale.png',
       existing_file_names: ['tag-qr-3357_黑_B.png'],
       kind: 'stale',
       status: 'dry_run',
@@ -904,7 +911,7 @@ test('AC-QR-STALE-1 ⭐⭐ 真机形状：事件说"编号没变"、但附件名
     assert.equal(first.status, 'written', '必须重写这一列的二维码');
   });
 
-  assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-2635-1_黑_A.png', '上传的文件名按当前编号算');
+  assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-rec28e1FtwQIPX.png', '上传的文件名按当前编号算');
   assert.equal(gateway.calls.update.length, 1, '要覆盖写回');
   assert.ok(eventsOf(lines).includes('product.tag_qr.overwriting'), '覆盖前先留证据');
 });
@@ -941,31 +948,20 @@ test('AC-QR-STALE-1b ⭐⭐ 逐字复现 Lead 那条日志：QPL8809 ⇒ 必须 
   }).find((entry) => entry?.event === 'product.tag_qr.overwriting');
   assert.ok(overwriting, '覆盖前必须先记 product.tag_qr.overwriting（先留证据）');
   assert.deepEqual(overwriting.existing_file_names, ['tag-qr-QPL8809_黑_A.png']);
-  assert.equal(overwriting.expected_file_name, 'tag-qr-8809_黑_A.png');
+  assert.equal(overwriting.expected_file_name, 'tag-qr-rec28e1chI0MiM.png');
   assert.equal(overwriting.stale_by_file_name, true, '⚠️ 判据必须判出过期（QPL8809 ≠ 8809）');
-  assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-8809_黑_A.png');
+  assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-rec28e1chI0MiM.png');
 });
+// ⏹️ AC-QR-STALE-2 —— **随旧规则退场**（2026-10-12 二维码标识改 record_id）。
+//    为什么它不再是保证：「文件名里含有编号」不够：新码**根本不看文件名里的编号**（看的是 record_id 形态的规范名）⇒ 迁到新增 AC-⑤
+//    ⚠️ 不是"删掉不管"：等价保证见本文件新增的 AC-①/②/③/④/⑤。
 
-test('AC-QR-STALE-2 ⭐ "文件名里含有当前编号"**不够**：QPL 那条也**含有** 2635-1_黑_A ⇒ 判据必须是"规范名/反解编号"', () => {
-  const current = '2635-1|黑|A';
-  const expected = buildFileName(current);
-  const old = 'tag-qr-QPL2635-1_黑_A.png';
-  // 反例（必须钉住，防止以后有人把判据退化成 `includes`）：
-  assert.equal(old.includes('2635-1_黑_A'), true,
-    '旧名**确实包含**当前编号的片段 —— 所以"contains"这种判据会把它当成已经同步 ❌');
-  assert.equal(old === expected, false, '但它与规范文件名不一致 ⇒ 必须判为过期');
-  assert.equal(buildFileName(current), 'tag-qr-2635-1_黑_A.png');
-  // ⭐ 语义判据：从名字里**反解出编号**再比 —— 这才是"以编号为准"
-  assert.equal(numberFromFileName(old), 'QPL2635-1_黑_A', '反解出的是旧编号 ⇒ 过期');
-  assert.equal(numberFromFileName(expected), '2635-1_黑_A', '规范名反解出的是当前编号 ⇒ 已同步');
-  assert.equal(numberFromFileName('别人的.png'), null, '模板对不上 ⇒ 判为过期（宁严不松）');
-});
 
 test('AC-QR-STALE-3 ⭐ 名字与规范一致 ⇒ 仍然跳过（幂等不能被这次修复搞坏：不许每次事件都重传）', async () => {
   const current = '2635-1|黑|A';
   const gateway = fakeGateway({
     records: {
-      rec_ok: recordWith({ number: current, tagQrCode: [{ file_token: 'ok1', name: buildFileName(current) }] }),
+      rec_ok: recordWith({ number: current, tagQrCode: [{ file_token: 'ok1', name: buildFileName('rec_ok') }] }),
     },
   });
   const service = serviceFor(gateway);
@@ -1049,7 +1045,7 @@ test('AC-QR-STALE-6 ⭐⭐ 写入路径也必须按编号判过期：旧名 `…
       `旧码必须被写回（实际 ${JSON.stringify(result)}）—— 改前这里记的是 skipped_existing ✗`);
     assert.equal(result.reason, 'number_changed');
   });
-  assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-832-372-6_棕色_A.png');
+  assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-rec28e1ut0rRrC.png');
   assert.equal(gateway.calls.update.length, 1, '要覆盖写回');
   // ⭐ 口径统一：日志里的 `stale_by_file_name` 必须与干跑"待更新"一致（都判过期）
   const overwriting = lines.map((line) => { try { return JSON.parse(line); } catch { return null; } })
@@ -1057,14 +1053,14 @@ test('AC-QR-STALE-6 ⭐⭐ 写入路径也必须按编号判过期：旧名 `…
   assert.ok(overwriting, '覆盖前先记 overwriting');
   assert.equal(overwriting.stale_by_file_name, true, '832-372-6H ≠ 832-372-6 ⇒ 必须 true（别和干跑打架）');
   assert.deepEqual(overwriting.existing_file_names, ['tag-qr-832-372-6H_棕色_A.png']);
-  assert.equal(overwriting.expected_file_name, 'tag-qr-832-372-6_棕色_A.png');
+  assert.equal(overwriting.expected_file_name, 'tag-qr-rec28e1ut0rRrC.png');
 });
 
 test('AC-QR-STALE-6b ⭐ 真的已同步时，写入路径仍然跳过（幂等不能被修坏）', async () => {
   const current = '832-372-6|棕色|A';
   const gateway = fakeGateway({
     records: {
-      r_ok: recordWith({ number: current, tagQrCode: [{ file_token: 'ok', name: buildFileName(current) }] }),
+      r_ok: recordWith({ number: current, tagQrCode: [{ file_token: 'ok', name: buildFileName('r_ok') }] }),
     },
   });
   const service = serviceFor(gateway);
@@ -1073,81 +1069,15 @@ test('AC-QR-STALE-6b ⭐ 真的已同步时，写入路径仍然跳过（幂等�
   assert.deepEqual(gateway.calls.uploads, [], '已同步的不许重传');
 });
 
-test('AC-QR-RECHECK-1 ⭐⭐ 公式列延迟：事件判"没变" ⇒ **延迟复核**（假时钟）后必须补写', async () => {
-  // 真机现场：编辑那一刻记录里的「编号」还是**旧值**（`…6H`）⇒ 事件如实判"没变"、附件"看着是对的就跳过"。
-  const OLD = '832-372-6H|棕色|A';
-  const NEW = '832-372-6|棕色|A';
-  const records = {
-    rec1: recordWith({ number: OLD, tagQrCode: [{ file_token: 'old', name: 'tag-qr-832-372-6H_棕色_A.png' }] }),
-  };
-  const gateway = fakeGateway({ records });
-  const timers = [];
-  const service = serviceFor(gateway, {
-    setTimer: (fn, ms) => { const t = { fn, ms, cleared: false }; timers.push(t); return t; },
-    clearTimer: (t) => { if (t) t.cleared = true; },
-    config: { ...TAG_QR_CODE, recheck: { enabled: true, delayMs: 60000 } },
-  });
+// ⏹️ AC-QR-RECHECK-1 —— **随旧规则退场**（2026-10-12 二维码标识改 record_id）。
+//    为什么它不再是保证：公式列延迟 ⇒ 延迟复核：新码不看公式列 ⇒ 该触发理由消失（复核**机制**保留 ⇒ 迁到新增 AC-④「判不了才复核」）
+//    ⚠️ 不是"删掉不管"：等价保证见本文件新增的 AC-①/②/③/④/⑤。
 
-  const lines = await captureLogs(async () => {
-    const result = await service.handleTableChanges([{
-      record_id: 'rec1',
-      action: 'record_edited',
-      // 事件里前后值**相同**（都是编辑那一刻的旧编号）
-      before_value: [{ field_id: NUMBER_FIELD_ID, field_value: OLD }],
-      after_value: [{ field_id: NUMBER_FIELD_ID, field_value: OLD }],
-    }]);
-    assert.equal(result.results[0].reason, 'number_unchanged', '那一刻它**没判错**（编号确实还没算出来）');
-  });
-  assert.equal(service.recheck.pendingCount(), 1, '必须排一次延迟复核');
-  assert.equal(timers.length, 1);
-  assert.ok(timers[0].ms >= 30000 && timers[0].ms <= 90000, `延迟应在 30~90 秒（实际 ${timers[0].ms}）`);
-  assert.ok(eventsOf(lines).includes('product.tag_qr.recheck.scheduled'));
 
-  // 过一会儿：飞书把公式列算完了（记录里的编号变成新值）—— 这时复核应该发现过期并补写
-  records.rec1.fields[F.number] = NEW;
-  await timers[0].fn();
-  await new Promise((resolve) => { setTimeout(resolve, 20); });
+// ⏹️ AC-QR-RECHECK-2 —— **随旧规则退场**（2026-10-12 二维码标识改 record_id）。
+//    为什么它不再是保证：复核的排重/幂等/失败不抛：机制保留 ⇒ 迁到新增 AC-④
+//    ⚠️ 不是"删掉不管"：等价保证见本文件新增的 AC-①/②/③/④/⑤。
 
-  assert.equal(gateway.calls.uploads.length, 1, '延迟复核必须把旧码补写掉');
-  assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-832-372-6_棕色_A.png');
-  assert.equal(service.recheck.pendingCount(), 0, '跑完就摘掉');
-  assert.equal(gateway.calls.update.length, 1, '复核要真的写回（假网关只记调用、不改记录内容）');
-  assert.equal(gateway.calls.update[0][1], 'rec1');
-});
-
-test('AC-QR-RECHECK-2 ⭐ 复核：同一条只排一次 / 已同步不重复写 / 失败只记日志（不抛）', async () => {
-  const records = {};
-  const gateway = fakeGateway({ records });
-  const timers = [];
-  const service = serviceFor(gateway, {
-    setTimer: (fn, ms) => { const t = { fn, ms }; timers.push(t); return t; },
-    clearTimer: () => {},
-    config: { ...TAG_QR_CODE, recheck: { enabled: true, delayMs: 60000 } },
-  });
-
-  // ① 关掉：不排
-  const off = serviceFor(gateway, { config: { ...TAG_QR_CODE, recheck: { enabled: false, delayMs: 60000 } } });
-  assert.deepEqual(off.recheck.schedule('r1'), { scheduled: false, reason: 'disabled' });
-
-  // ② 同一条记录重复排 ⇒ 只排一次
-  assert.equal(service.recheck.schedule('r1').scheduled, true);
-  const again = service.recheck.schedule('r1');
-  assert.equal(again.scheduled, false);
-  assert.equal(again.reason, 'already_scheduled');
-  assert.equal(service.recheck.pendingCount(), 1);
-  assert.equal(timers.length, 1, '只应有一个定时器（排多了会重复读表）');
-
-  // ③ 复核时记录已被别人修好（附件名与编号一致）⇒ 只记 done、不写
-  records.r1 = recordWith({ number: '832-372-6|棕色|A', tagQrCode: [{ file_token: 'x', name: 'tag-qr-832-372-6_棕色_A.png' }] });
-  const done = await service.recheck.runNow('r1');
-  assert.equal(done.status, 'skipped');
-  assert.deepEqual(gateway.calls.uploads, [], '已同步 ⇒ 不重复写');
-  assert.equal(service.recheck.pendingCount(), 0);
-
-  // ④ 复核失败（读表炸了）⇒ 只记日志、**不抛**
-  gateway.get = async () => { throw new Error('飞书 500'); };
-  await assert.doesNotReject(() => service.recheck.runNow('r2'), '复核失败绝不抛给事件路径');
-});
 
 test('AC-QR-RECHECK-3 ⭐ 配置先行：延迟复核可配（显式布尔 + 数值边界）', () => {
   const { resolveTagQrRecheckConfig, RECHECK_DEFAULTS } = require('../src/config/tagQrCode');
@@ -1185,163 +1115,32 @@ const sourceEditAction = ({ action = 'record_edited', itemNo, color, category, f
   ],
 });
 
-test('AC-QR-SRC-1 ⭐⭐ 改**货号** ⇒ 事件那一刻就判"变了"并写回**新码**（公式列还停在旧值也要写）', async () => {
-  // 真机形状：她 12:13 改了货号；事件到达时公式列还是旧编号（`832-372-6H`
-  // 记录里的编号列在**读记录那一刻**也还是旧值（公式延迟）—— 但货号已经是新的 ✓
-  const gateway = fakeGateway({
-    records: {
-      rec1: recordWith({
-        number: '832-372-6H|棕色|A', // ⚠️ 公式列**旧值**（延迟）
-        itemNo: '832-372-6', color: '棕色', category: 'A',
-        tagQrCode: [{ file_token: 'old', name: 'tag-qr-832-372-6H_棕色_A.png' }],
-      }),
-    },
-  });
-  const service = serviceFor(gateway);
-  let outcome = null;
-  const lines = await captureLogs(async () => {
-    const result = await service.handleTableChanges([sourceEditAction({
-      itemNo: { before: '832-372-6H', after: '832-372-6' },
-      color: { before: '棕色', after: '棕色' },
-      category: { before: 'A', after: 'A' },
-      formulaOld: '832-372-6H|棕色|A',
-      formulaNew: '832-372-6H|棕色|A', // 公式列**没变**（还没算完）
-    })]);
-    outcome = result.results[0];
-    assert.equal(outcome.status, 'written',
-      `改货号必须立刻写回（实际 ${JSON.stringify(outcome)}）—— 公式列延迟不该拖住我们`);
-  });
-  // ⭐ 写回的必须是**新编号**的码（拼装值兜底，因为公式列还停在旧值）
-  assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-832-372-6_棕色_A.png');
-  assert.equal(outcome.scan_url, 'https://hm.bamamei.online/s/832-372-6%7C%E6%A3%95%E8%89%B2%7CA');
-  assert.equal(outcome.number_source, 'assembled_formula_stale');
-  const events = lines.map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
-  assert.equal(events.find((e) => e.event === 'product.tag_qr.change_criteria')?.used, 'source_fields',
-    '判据要走**源字段**那一路（不是公式列）');
-  assert.equal(outcome.number_source, 'assembled_formula_stale', '公式列明显滞后 ⇒ 用拼装值');
-  assert.ok(events.some((e) => e.event === 'product.tag_qr.number_mismatch'), '两份值不一致要记 warn');
-});
+// ⏹️ AC-QR-SRC-1 —— **随旧规则退场**（2026-10-12 二维码标识改 record_id）。
+//    为什么它不再是保证：改货号 ⇒ 必须重写：新码标识是 record_id，货号变化**不该**影响二维码 ⇒ 这条保证不该存在（能力迁到新增 AC-①「改源字段 ⇒ 码逐字不变」）
+//    ⚠️ 不是"删掉不管"：等价保证见本文件新增的 AC-①/②/③/④/⑤。
 
-test('AC-QR-SRC-2 ⭐ 改**颜色** ⇒ 同样立刻更新（源字段判据）', async () => {
-  const gateway = fakeGateway({
-    records: {
-      rec1: recordWith({
-        number: 'XHB8095|棕色|A',
-        itemNo: 'XHB8095', color: '黑色', category: 'A',
-        tagQrCode: [{ file_token: 'o', name: 'tag-qr-XHB8095_棕色_A.png' }],
-      }),
-    },
-  });
-  const result = await serviceFor(gateway).handleTableChanges([sourceEditAction({
-    itemNo: { before: 'XHB8095', after: 'XHB8095' },
-    color: { before: '棕色', after: '黑色' },
-    category: { before: 'A', after: 'A' },
-    formulaOld: 'XHB8095|棕色|A',
-    formulaNew: 'XHB8095|棕色|A',
-  })]);
-  assert.equal(result.results[0].status, 'written');
-  assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-XHB8095_黑色_A.png');
-});
 
-test('AC-QR-SRC-3 ⭐ 改**类别** ⇒ 同样立刻更新', async () => {
-  const gateway = fakeGateway({
-    records: {
-      rec1: recordWith({
-        number: 'XHB8095|棕色|A',
-        itemNo: 'XHB8095', color: '棕色', category: 'B',
-        tagQrCode: [{ file_token: 'o', name: 'tag-qr-XHB8095_棕色_A.png' }],
-      }),
-    },
-  });
-  const result = await serviceFor(gateway).handleTableChanges([sourceEditAction({
-    itemNo: { before: 'XHB8095', after: 'XHB8095' },
-    color: { before: '棕色', after: '棕色' },
-    category: { before: 'A', after: 'B' },
-    formulaOld: 'XHB8095|棕色|A',
-    formulaNew: 'XHB8095|棕色|A',
-  })]);
-  assert.equal(result.results[0].status, 'written');
-  assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-XHB8095_棕色_B.png');
-});
+// ⏹️ AC-QR-SRC-2 —— **随旧规则退场**（2026-10-12 二维码标识改 record_id）。
+//    为什么它不再是保证：改颜色 ⇒ 必须重写：同上（迁到新增 AC-①）
+//    ⚠️ 不是"删掉不管"：等价保证见本文件新增的 AC-①/②/③/④/⑤。
 
-test('AC-QR-SRC-4 ⭐ 公式列**读不出/为空** ⇒ 用源字段拼装兜底，码仍然正确', async () => {
-  const gateway = fakeGateway({
-    records: { rec1: recordWith({ number: '', itemNo: 'XHB8095', color: '棕色', category: 'A', tagQrCode: [] }) },
-  });
-  const service = serviceFor(gateway);
-  assert.equal(service.assembleNumber({ [F.itemNo]: 'XHB8095', [F.color]: '棕色', [F.category]: 'A' }),
-    'XHB8095|棕色|A', '拼装规则必须与她公式逐字一致（货号|颜色|类别）');
-  assert.equal(service.assembleNumber({ [F.itemNo]: 'XHB8095', [F.color]: '', [F.category]: 'A' }), '',
-    '任一源字段为空 ⇒ 拼不出（不硬凑 `a||c` 这种公式不会产出的串）');
-  const result = await service.handleTableChanges([sourceEditAction({
-    itemNo: { before: 'XHB8095', after: 'XHB8095' },
-    color: { before: '棕色', after: '棕色' },
-    category: { before: 'A', after: 'A' },
-    formulaOld: '', formulaNew: '',
-  })]);
-  assert.equal(result.results[0].number_source, 'assembled_fallback');
-  const written = await service.syncRecord('rec1', { reason: 'manual' });
-  assert.equal(written.file_name, 'tag-qr-XHB8095_棕色_A.png');
-});
 
-test('AC-QR-SRC-5 ⭐ 公式值 ≠ 拼装值 ⇒ 记 warn；公式**不滞后**时以**公式值**为准', async () => {
-  const gateway = fakeGateway({
-    records: {
-      rec1: recordWith({
-        // 公式值（`…|B`）与源字段拼装值（`…|A`）不一致，且**不等于现存附件的编号** ⇒ 不算滞后
-        number: 'XHB8095|棕色|B',
-        itemNo: 'XHB8095', color: '棕色', category: 'A',
-        tagQrCode: [{ file_token: 'o', name: 'tag-qr-XHB8095_棕色_C.png' }],
-      }),
-    },
-  });
-  const service = serviceFor(gateway);
-  const lines = await captureLogs(async () => {
-    await service.syncRecord('rec1', { reason: 'manual' });
-  });
-  const events = lines.map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
-  const warn = events.find((e) => e.event === 'product.tag_qr.number_mismatch');
-  assert.ok(warn, '不一致必须记 warn');
-  assert.equal(warn.formula_number, 'XHB8095|棕色|B');
-  assert.equal(warn.assembled_number, 'XHB8095|棕色|A');
-  assert.equal(warn.formula_looks_stale, false);
-  assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-XHB8095_棕色_B.png',
-    '⚠️ 不滞后时以**公式值**为准（保证与扫码页的键一致）');
-  // 纯函数层面也钉一下四种取舍
-  // ⚠️ `existingFileNameNumber` 是**文件名形态**（`numberFromFileName` 的结果：`|` → `_`）
-  const pick = (formulaNumber, assembledNumber, existingFileNameNumber) =>
-    service.resolveQrNumber({ formulaNumber, assembledNumber, existingFileNameNumber, recordId: 'r' }).source;
-  assert.equal(pick('a|b|c', 'a|b|c', ''), 'both_agree');
-  assert.equal(pick('', 'a|b|c', ''), 'assembled_fallback');
-  assert.equal(pick('a|b|c', '', ''), 'formula_only');
-  assert.equal(pick('old|x|y', 'new|x|y', 'old_x_y'), 'assembled_formula_stale');
-  assert.equal(pick('other|x|y', 'new|x|y', 'again_x_y'), 'formula_mismatch');
-});
+// ⏹️ AC-QR-SRC-3 —— **随旧规则退场**（2026-10-12 二维码标识改 record_id）。
+//    为什么它不再是保证：改类别 ⇒ 必须重写：同上（这条正是她今天的真机场景 ⇒ 迁到新增 AC-①）
+//    ⚠️ 不是"删掉不管"：等价保证见本文件新增的 AC-①/②/③/④/⑤。
 
-test('AC-QR-SRC-6 ⭐ 幂等：三个源字段都没变 ⇒ 不写（且判据走源字段那一路）', async () => {
-  const current = 'XHB8095|棕色|A';
-  const gateway = fakeGateway({
-    records: {
-      rec1: recordWith({
-        number: current, itemNo: 'XHB8095', color: '棕色', category: 'A',
-        tagQrCode: [{ file_token: 'ok', name: buildFileName(current) }],
-      }),
-    },
-  });
-  const lines = await captureLogs(async () => {
-    const result = await serviceFor(gateway).handleTableChanges([sourceEditAction({
-      itemNo: { before: 'XHB8095', after: 'XHB8095' },
-      color: { before: '棕色', after: '棕色' },
-      category: { before: 'A', after: 'A' },
-      formulaOld: current, formulaNew: current,
-    })]);
-    // ⚠️ 事件那一路（源字段明确判"没变"）记的是 `number_unchanged`；
-    //    `already_present` 是"脚本/新增"那一路的幂等档（见 `syncRecord` 的注释）。
-    assert.deepEqual([result.results[0].status, result.results[0].reason], ['skipped', 'number_unchanged']);
-  });
-  assert.deepEqual(gateway.calls.uploads, [], '没变就不许重传');
-  const events = lines.map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
-  const criteria = events.find((e) => e.event === 'product.tag_qr.change_criteria');
-  assert.equal(criteria.source_changed, false, '源字段那一路要明确判"没变"');
-  assert.equal(criteria.used, 'source_fields');
-});
+
+// ⏹️ AC-QR-SRC-4 —— **随旧规则退场**（2026-10-12 二维码标识改 record_id）。
+//    为什么它不再是保证：公式列读不出 ⇒ 源字段拼装兜底：新码不看「编号」公式列 ⇒ 迁到新增 AC-③「公式「记录 ID」只作交叉校验、以接口值为准」
+//    ⚠️ 不是"删掉不管"：等价保证见本文件新增的 AC-①/②/③/④/⑤。
+
+
+// ⏹️ AC-QR-SRC-5 —— **随旧规则退场**（2026-10-12 二维码标识改 record_id）。
+//    为什么它不再是保证：公式值 ≠ 拼装值 ⇒ 以公式值为准：**口径反转**（改为以**接口 record_id** 为准）⇒ 迁到新增 AC-③
+//    ⚠️ 不是"删掉不管"：等价保证见本文件新增的 AC-①/②/③/④/⑤。
+
+
+// ⏹️ AC-QR-SRC-6 —— **随旧规则退场**（2026-10-12 二维码标识改 record_id）。
+//    为什么它不再是保证：三源字段都没变 ⇒ 不写：幂等判据从「编号维度」扩到「全部源字段」⇒ 迁到新增 AC-②
+//    ⚠️ 不是"删掉不管"：等价保证见本文件新增的 AC-①/②/③/④/⑤。
+
