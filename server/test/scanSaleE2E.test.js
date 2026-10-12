@@ -198,13 +198,23 @@ const rmDir = (dir) => { try { fs.rmSync(dir, { recursive: true, force: true });
 const withLatency = (gateway, ms) => {
   const calls = [];
   const t0 = Date.now();
+  const callerOf = () => {
+    const lines = String(new Error().stack || '').split('\n');
+    for (const line of lines) {
+      const match = line.match(/src\/services\/([a-zA-Z]+)\.js/);
+      if (match) return match[1];
+      const route = line.match(/src\/routes\/([a-zA-Z]+)\.js/);
+      if (route) return `routes/${route[1]}`;
+    }
+    return 'unknown';
+  };
   const wrap = (name) => async (...args) => {
     const start = Date.now() - t0;
     await new Promise((resolve) => { setTimeout(resolve, ms); });
     try {
       return await gateway[name](...args);
     } finally {
-      calls.push({ name, table: String(args[0] ?? ''), start, end: Date.now() - t0 });
+      calls.push({ name, table: String(args[0] ?? ''), start, end: Date.now() - t0, caller: callerOf() });
     }
   };
   return Object.assign(Object.create(null), gateway, {
@@ -1214,6 +1224,14 @@ test('AC-E2E-16 ⭐ 提交链路**逐步耗时**：一条 `scan.sale.timing` 带
         const key = `${call.name}:${call.table}`;
         byTable[key] = (byTable[key] || 0) + 1;
       }
+      const byCaller = {};
+      for (const call of submitCalls) {
+        const key = `${call.caller} → ${call.name}:${call.table}`;
+        byCaller[key] = (byCaller[key] || 0) + 1;
+      }
+      process.stdout.write('\n  ── 谁打的（按文件归因）──\n'
+        + Object.entries(byCaller).sort((a, b) => b[1] - a[1])
+          .map(([key, count]) => `  ${key}: ${count}次`).join('\n') + '\n');
       process.stdout.write(`\n【逐步耗时】submit_ms=${timing.submit_ms}ms wall=${wallMs}ms 飞书调用=${submitCalls.length}次 峰值并发=${gateway.maxConcurrent()}\n`
         + rows.map(([label, ms]) => `  ${label}: ${ms}ms`).join('\n')
         + '\n  ── 每一趟飞书调用按表统计 ──\n'

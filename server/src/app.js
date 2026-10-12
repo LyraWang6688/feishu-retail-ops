@@ -112,7 +112,19 @@ app.get('/', (req, res) => res.sendFile(path.join(workbenchPath, 'index.html')))
 // ⭐ 2026-10-08：`GET` 仍然**只读**（第一版：查库存）；**写入口**是同一条路径上的 `POST`
 //    （销售建单 / 补货报单），实现全在 `services/scanWriteService.js` ——
 //    它只调**既有业务层**（销售入账 / 采购申请发布），入口参数在 `config/scanWrite.js`。
-app.use(SCAN_PAGE.route.basePath, require('./routes/scanPage').createScanPageRouter());
+// ⭐⭐ 2026-10-12（治根）：**同一个 router 实例**挂到两个前缀上。
+//
+//   `/s/{编号}`  = 旧标签（编号是**会变的快照**：她打印时类别为空、之后补上 ⇒ 旧码对不上）。
+//   `/r/{记录ID}` = **新二维码**（她：「用它**不变的记录 ID**」）—— 改颜色/类别/任何字段都不影响。
+//
+//   🔴 **必须共用同一个实例**：`createScanPageRouter()` 每次调用都会新建一套
+//      写服务（`scanWriteService`）与它内部**按录单人串行的队列**；建两个实例 =
+//      **两条串行队列** ⇒ 她连点两次就可能在两条队列上各跑一遍 ⇒ **幂等可靠性直接破**。
+//   ⚠️ 两个前缀用**同一份准入闸门 / 同一套渲染 / 同一套写入**（只是"取商品"那一步的策略不同，
+//      判定点在 `routes/scanPage.js` 的 `scanTargetOf`，唯一判据是 `req.baseUrl`）。
+const scanPageRouter = require('./routes/scanPage').createScanPageRouter();
+app.use(SCAN_PAGE.route.basePath, scanPageRouter);
+app.use(SCAN_PAGE.route.recordBasePath, scanPageRouter);
 
 // Health check route. Also answers "服务器上跑的是哪一版"——部署时由 deploy_run.sh
 // 写入版本号与 commit，否则回落到 package.json 的版本。

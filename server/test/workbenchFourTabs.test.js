@@ -902,7 +902,12 @@ test('AC7 既有扫码页 / 标签打印的用例文件都在，且它们钉住�
     assert.equal(workbenchHas(gone), false, `${gone} 必须仍然不存在`);
   }
   const routes = stripComments(readSrc('routes/scanPage.js'));
-  assert.ok(routes.includes('router.get(config.route.path'), '扫码路由仍是既有那一条');
+  // ⭐ 2026-10-12：`/s/{编号}`（既有那条）与新增的 `/r/{记录ID}`（新二维码）**共用同一个 handler**
+  //    —— 所以源码里那一句从 `router.get(config.route.path, …)` 变成了
+  //    `router.get(ROUTE_PATTERNS, …)`（`ROUTE_PATTERNS = [config.route.path, config.route.recordPath]`）。
+  //    这条哨兵守的性质没变：**扫码页没有另起一套路由/渲染/写入**（那两条路共用同一份实现）。
+  assert.ok(routes.includes('router.get(ROUTE_PATTERNS')
+    || routes.includes('router.get(config.route.path'), '扫码路由仍是既有那一条（+ 记录 ID 那条共用 handler）');
   // ⭐ 2026-10-09（手机白屏之后）：领域切换**改到路由/渲染这一层** ——
   //    服务端读 `?from` 只渲染那一块（页面里一行前端脚本都没有）。
   assert.match(routes, /resolveRealm\(req\.query\?\.from\)/, '领域在路由层从 `?from` 解析（认不出回落缺省）');
