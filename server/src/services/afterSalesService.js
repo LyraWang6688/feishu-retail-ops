@@ -775,7 +775,7 @@ class AfterSalesService {
       }
       const detailId = detailIdState ? nextId({ state: detailIdState, orderNo, kind: 'detail' }) : '';
       const created = await this.gateway.create('salesDetail', {
-        // 「销售单号」关联**原主表**：查单链路（saleLookupService 判据二）就是按
+        // 「销售单号」关联**原主表**：退货判据（原群查单链路的判据二）就是按
         // "这条退货明细属于哪张单"把已退的单整单排除的；关联新主表会让旧单查不出来。
         salesEntry: relation(request.originalSalesEntryRecordId),
         ...(detailId ? { detailId } : {}),

@@ -386,7 +386,7 @@ test('④ 三个 service 里再没有"发到某个 open_id"的代码（ⓐ：一
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|[^:])\/\/.*$/gm, '$1');
   const serviceFiles = [
-    'src/services/saleLookupService.js',
+    'src/services/salesThreadProgressService.js',
     'src/services/salesThreadProgressService.js',
   ];
   const patterns = [

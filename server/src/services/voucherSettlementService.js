@@ -41,7 +41,7 @@ const { toCents } = require('../config/groupBuyVouchers');
 const {
   resolveVoucherSettlementConfig, paymentFieldNames, voucherFieldNames,
 } = require('../config/voucherSettlement');
-const { shanghaiDayKey, asDate } = require('./saleLookupService');
+const { shanghaiDayKey, asDate } = require('../utils/salesDateWindows');
 const { logInfo, logWarn } = require('../utils/logger');
 
 const DAY_MS = 24 * 60 * 60 * 1000;

@@ -61,9 +61,8 @@ const { renderSalesMissingInfo } = require('../config/salesMissingInfoText');
 // ⚠️ 2026-10-11（清群聊入口 C0）：`allocateSalesOrderNo` 随 `createSalesEntryWithOrderNo`
 //    一起搬去 `services/salesEntryService.js`（本文件不再直接用它）。
 const { resolveAccessory } = require('./accessoryMatchPolicy');
-const { SaleLookupService } = require('./saleLookupService');
 const { AfterSalesService } = require('./afterSalesService');
-const { isLookupIntent, isAfterSalesIntent, normalizeMessageIntent } = require('../config/saleIntents');
+const { isAfterSalesIntent, normalizeMessageIntent } = require('../config/saleIntents');
 const { isSalesCandidate, UNSUPPORTED_INTENT_REPLY } = require('../config/messageGate');
 // ⭐ 未知 / 已退场卡片动作的兜底人话（2026-10-12，业务负责人明确要的）：文案可配。
 const { UNKNOWN_CARD_ACTION_TOAST } = require('../config/unknownCardAction');
@@ -244,18 +243,6 @@ class LarkMvpService {
     this.store =
       options.store ||
       new JsonTaskStore({ dir: path.join(__dirname, '../../data/lark_mvp_tasks'), idField: 'task_id' });
-    // 退换货第一期：查销售记录是**独立 service**，不把候选查询/卡片/上下文塞进本类。
-    // 这里只注入"读网关 + 任务状态 + 发消息"三样依赖；网关会被 SaleLookupService
-    // 再收窄成只读视图，从结构上保证这条链路写不了业务表。
-    this.saleLookup = options.saleLookup || new SaleLookupService({
-      gateway: this.gateway,
-      store: this.store,
-      replyCard: (messageId, card) => this.replyCard(messageId, card),
-      // ⭐ 渠道感知的出口：群任务回复失败时回到**那个话题**，不回落私聊。
-      // 🔴 2026-10-07「私聊链路移除」：**没有群上下文**的任务（`chat_type !== 'group'`）
-      //   在 `sendTaskCard` 里只记一条 `lark.private_chat.send_skipped`、返 `null`。
-      sendCardToTask: (task, card) => this.sendTaskCard(task, card),
-    });
     // 退换货第二期：售后**编排**（定位 → 组装方案 → 确认卡片 → 调执行器）也是独立 service。
     // 本类只留"意图 → 分派"的接线：
     //   · 定位复用第一期的只读 SaleLookupService（同上一个实例，共享任务状态）；

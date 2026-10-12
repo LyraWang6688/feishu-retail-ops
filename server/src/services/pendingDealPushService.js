@@ -18,7 +18,7 @@ const { PendingPushCandidateService } = require('./pendingPushCandidateService')
 const { VoucherSettlementService } = require('./voucherSettlementService');
 // 卡片点击之后的卡面更新（**唯一**的实现：优先用回调带回的 `open_message_id`）。
 const { updateInteractiveCard } = require('../infrastructure/interactiveCardFeedback');
-const { shanghaiDayKey } = require('./saleLookupService');
+const { shanghaiDayKey } = require('../utils/salesDateWindows');
 // ⭐ 2026-10-08 晚：采购那行的「报货日」怎么显示（上海自然日）—— 与取数那边**同一处实现**。
 const { formatReportedAtText } = require('./reportedAt');
 const { resolvePendingDealPushConfig } = require('../config/pendingDealPush');
