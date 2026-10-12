@@ -201,7 +201,9 @@ export function createLabelPrintModule() {
     typography: {
       itemNoMm: 3.6, brandMm: 2.4, fieldMm: 2.8, sizeMm: 2.8, priceMm: 3.2, footerMm: 1.7, qrSizeMm: 15,
     },
-    sizes: { perLine: 3, maxLines: 2, itemGapMm: 1, qtyFontRatio: 0.64, qtyBaselineShiftEm: 0.2, order: 'asc', compare: 'numeric' },
+    // ⭐ `maxLines` = **安全上限**（不是固定行数；行数按可用高度 + 实际字宽算）
+    //   ⚠️ 2026-10-12 从 2 改成 6 —— 与 `config/labelPrint.js` 的默认值**逐字一致**（防漂移用例在盯）
+    sizes: { perLine: 3, maxLines: 6, itemGapMm: 1, qtyFontRatio: 0.64, qtyBaselineShiftEm: 0.2, order: 'asc', compare: 'numeric' },
     // 标签内部版式（品牌**顶部居中**、右栏行序、货号+颜色同行的超宽规则）—— 服务端 config 的镜子。
     body: {
       rows: ['brand', 'itemNoColor', 'price', 'state', 'sizes'],

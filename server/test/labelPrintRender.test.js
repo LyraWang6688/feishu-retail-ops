@@ -36,7 +36,8 @@ const layout = (patch = {}) => {
       ...(patch.typography || {}),
     },
     sizes: {
-      perLine: 3, maxLines: 2, itemGapMm: 1, qtyFontRatio: 0.64, qtyBaselineShiftEm: 0.2,
+      perLine: 3, // ⭐ 2026-10-12：`maxLines` 语义改成"安全上限"（默认 6）—— 与 config 逐字一致
+    maxLines: 6, itemGapMm: 1, qtyFontRatio: 0.64, qtyBaselineShiftEm: 0.2,
       order: 'asc', compare: 'numeric', ...(patch.sizes || {}),
     },
     // 标签内部版式（品牌置顶居中 / 右栏行序 / 货号+颜色同行的超宽规则）—— 服务端 config 的镜子。
