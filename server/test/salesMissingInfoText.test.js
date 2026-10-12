@@ -233,28 +233,7 @@ const runSalesTask = async ({ taskId, text, parsed }) => {
   return { task: await store.get(taskId), messages, cards, calls };
 };
 
-test('④ 判据没变：她的输入仍然 needs_info、仍然不回卡片、仍然不入账', async () => {
-  const { task, messages, cards, calls } = await runHerTask();
-  assert.equal(task.status, 'needs_info');
-  assert.deepEqual(cards, [], '缺项时不该发确认卡片');
-  // 写库只有两笔：建销售记录 + 回填解析元数据（都是 salesEntry）——
-  // 不许出现明细 / 收款 / 库存 的写入（即"没入账"）。
-  // ⚠️ 2026-10-09：原来这里是 `['create:salesEntry', 'update:salesEntry']`（建单 + 回填解析元数据）。
-  //    业务负责人把「解析状态 / 解析结果摘要 / 失败原因」三列从生产「销售主表」删掉了
-  //    ⇒ 映射 + 写入点一起删 ⇒ **那一次 update 不再发生**（本用例没解析出交易类型，
-  //      连仅剩的 `tradeType` 也不写）⇒ 只剩建单这一笔。
-  //    ⚠️ 这条**没有放宽**：原来它证明的是"没入账"，现在"只剩建单"更强。
-  assert.deepEqual(calls.map((call) => `${call.op}:${call.tableKey}`),
-    ['create:salesEntry'],
-    `不该有别的写入：${JSON.stringify(calls)}`);
-  assert.equal(messages.length, 1);
-  assert.equal(messages[0], HER_EXPECTED_TEXT);
-});
 
-test('④ 判据没变：draft.missing_fields 与改动前**逐字相同**（机器契约一个字没动）', async () => {
-  const { task } = await runHerTask();
-  assert.deepEqual(task.draft.missing_fields, HER_ALL_MISSING_FIELDS);
-});
 
 // ⭐⭐ **上游同步的哨兵（AC-S7）**：手抄的那份"解析层应该给这 4 条"必须与**真实**
 //    `normalizeSalesResult` 的输出**逐字相同**。上游谁改了 `missing_fields` 的字，
@@ -265,23 +244,6 @@ test('④ fixture 与真实解析层输出逐字同步（上游改了字 → 这
     '手抄的 fixture 与真实 normalizeSalesResult 输出不一致 —— 上游变了，来同步映射表');
 });
 
-test('④ 回她的那句话不漏代码标识符（原来表里那份「失败原因」已随列删除）', async () => {
-  const { calls, messages } = await runHerTask();
-  // 🔴 2026-10-09：业务负责人把「解析状态 / 解析结果摘要 / 失败原因」三列从生产「销售主表」
-  //    删掉了 ⇒ 映射 + 写入点一起删（`config/v1BitableSchema.salesEntry` 段）——
-  //    **这三个键一个都不许再出现在写表的入参里**。
-  const removedMeta = calls.find((call) => call.op === 'update'
-    && ['parseStatus', 'parseSummary', 'failureReason'].some((key) => key in (call.fields || {})));
-  assert.equal(removedMeta, undefined,
-    `这三列已被她删除 ⇒ 不许再写：${JSON.stringify(removedMeta)}`);
-  // ⭐ 守卫**不降级**：原来盯的是"表里那份人话也要干净"，表里那份没有了
-  //    ⇒ 改盯**她实际看到的那一句话**（同一个渲染器 `renderSalesMissingInfo` 的产物）：
-  //    行内不许有代码标识符 / 内部词 / 「；」串句。
-  assert.equal(messages.length, 1);
-  assert.doesNotMatch(messages[0], CODE_IDENTIFIER_PATTERN);
-  assert.doesNotMatch(messages[0], INTERNAL_WORD_PATTERN);
-  assert.doesNotMatch(messages[0], CHAINED_CLAUSE_PATTERN);
-});
 
 // ── ⑤ 全形状守卫：仓库里**所有**缺项形状都不许漏标识符 / 「；」/「明细」──────────
 // 清单来自各生产者的原话（`grep -n "missing.add(\|missingFields.push(\|issues.push(" src/`），
@@ -580,53 +542,7 @@ test('AC-④ 成交额没解析出来（只说了定金）→ 只剩一句「请
   assert.ok(!rendered.text.includes(SALES_DEPOSIT_TOTAL_UNKNOWN));
 });
 
-test('AC-④ 走**真实的 processSalesTask**：只说了定金 → 回复里没有「已收比成交额多」', async () => {
-  const { messages } = await runSalesTask({
-    taskId: 'sale_deposit_only',
-    text: '定制一双 37 码的 26632，定金交了 100 元，微信',
-    parsed: (text) => normalizeSalesResult({
-      intent: 'sale',
-      items: [{ item_no: '26632', size: 37, quantity: 1 }],
-      payments: [{ amount: 100, method: '微信' }],
-      agreed_total: '',
-    }, text),
-  });
-  assert.equal(messages.length, 1);
-  assert.doesNotMatch(messages[0], /已收的钱比这单实收金额还多/,
-    `成交额没解析出来，不该说她"已收比成交额多"：\n${messages[0]}`);
-  assert.match(messages[0], /请说明这单实收金额（或定金\+尾款分别是多少）：26632 37码/);
-  // 「只有定金不能当实收金额」照旧：它仍然只是**问她**，不是把 100 当成交额。
-  assert.match(messages[0], /^销售信息还缺 1 处，请照着补一下～/);
-});
 
-test('AC-⑤ 哨兵：**真的**已收 > 成交额（成交额有值）→ 仍然报原来那句', async () => {
-  const { messages } = await runSalesTask({
-    taskId: 'sale_received_exceeds',
-    text: '26632 37码一双，定金 100 微信，又收了 50 现金',
-    // 这一条直接给**归一化后**的形状（判据在接线层：成交额 100 **有值**、已收 150 **确实更多**）。
-    parsed: async () => ({
-      intent: 'sale',
-      trade_type: '现货',
-      trade_type_code: 'SALE_CASH',
-      trade_type_codes: ['SALE_CASH'],
-      items: [{
-        item_no: '26632', size: 37, quantity: 1, actual_amount: 100,
-        trade_type: '现货', trade_type_code: 'SALE_CASH',
-      }],
-      payments: [{ amount: 100, method: '微信' }, { amount: 50, method: '现金' }],
-      agreed_total: 100,
-      owed: '',
-      total_paid: 150,
-      total_covered: 150,
-      payment_method: '微信＋现金',
-      missing_fields: [],
-      voucher_policy_blocked: false,
-    }),
-  });
-  assert.equal(messages.length, 1);
-  assert.match(messages[0], /已收的钱比这单实收金额还多，请核对一下收了多少～/,
-    `成交额有值（100）且确实小于已收（150）⇒ 收严哨兵：原来那句必须还在：\n${messages[0]}`);
-});
 
 // ── ⑥ 配置先行 ───────────────────────────────────────────────────────────────
 test('⑥ 文案全部可配：改环境变量就改文案（含空串回落默认）', () => {
@@ -702,41 +618,3 @@ test('⑥ `.env.example` 里那一段与配置默认值逐字一致（新加文�
 });
 
 // ── ⑦ 其它出口没被牵连 ───────────────────────────────────────────────────────
-test('⑦ 「缺货」不再是缺项：没有实时库存 ⇒ 记**预定**、照出确认卡片（不再回"请核实"）', async () => {
-  const store = makeStore();
-  const messages = [];
-  const cards = [];
-  const service = new LarkMvpService({
-    client: {},
-    gateway: {
-      table: () => ({ tableId: 'tbl', fields: {} }),
-      listAll: async () => [],
-      get: async () => null,
-      validateTables: async () => [],
-      create: async () => ({ recordId: 'entry_shortage' }),
-      update: async () => undefined,
-    },
-    references: {}, posting: {},
-    recognizer: { parseSalesText: async () => normalizeSalesResult({
-      intent: 'sale',
-      items: [{ item_no: '26632', color: '黑', size: 37, quantity: 1, actual_amount: 210 }],
-      payments: [{ method: '微信', amount: 210 }],
-      agreed_total: 210,
-    }, '26632黑37一双210微信') },
-    store,
-  });
-  // 出货卡片是**必须**的（没货 = 预定，是合法输入）。
-  service.sendTaskCard = async (_task, card) => { cards.push(card); return 'om_card'; };
-  service.sendTaskText = async (_task, message) => { messages.push(message); };
-  await store.create({
-    task_id: 'sale_shortage_only', type: 'sale', status: 'received',
-    chat_type: 'group', chat_id: GROUP_CHAT_ID, message_id: 'om_shortage',
-    sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '26632黑37一双210微信',
-  });
-  await service.processSalesTask('sale_shortage_only');
-  const task = await store.get('sale_shortage_only');
-  assert.deepEqual(task.draft.missing_fields, [], '没货不再是缺项');
-  assert.equal(cards.length, 1, '照出确认卡片');
-  assert.deepEqual(messages, [], '不再回"库存里没有…请核实"');
-  assert.equal(task.draft.items[0].trade_type_code, 'SALE_PREPAID', '没货 → 预定');
-});

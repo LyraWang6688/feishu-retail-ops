@@ -542,7 +542,7 @@ const createScanWriteService = (options = {}) => {
    */
   const submitSale = async ({
     openId, submitKey, payments: paymentRows = [], lineAmounts = [],
-    paymentStatus = '', paidAmount = '', requestId = '',
+    paymentStatus = '', paidAmount = '', requestId = '', pendingLine = null,
   }) => queue.run(`sale:${openId}`, async () => {
     if (!config.sale.enabled) {
       return fail({ code: 'disabled', message: texts.writeDisabledBody, requestId });
@@ -618,6 +618,48 @@ const createScanWriteService = (options = {}) => {
       });
       current = await sessions.revive(openId, { submitKey: key, flow: 'sale' });
       sale = current.sale || {};
+    }
+    // ⭐⭐ 2026-10-12（她的意见：**一单一笔居多**）：「选尺码 + 提交」= **两下**就是一张单。
+    //    她在尺码区选中的那一双**跟着这次提交一起加进本单**（`pendingLine`）。
+    //    ⚠️ 三个约束，缺一不可：
+    //      ① **只在本单还是空的时候**生效 —— 多笔必须显式点【➕ 还要加一双】
+    //         （否则"选中的那一双"和"本单已有的几双"会算成什么，她和我都说不清）；
+    //      ② **放在幂等/键的分支之后** —— 重放（已经提交过的那把键）在上面就 return 了，
+    //         绝不会往**新一轮**的草稿里塞一行幽灵（本单条会显示多一双，那是真 bug）；
+    //      ③ 校验与加单走**同一个** `sessions.addLine`（只动本地会话、不碰业务表）。
+    if (pendingLine && String(pendingLine.size || '').trim() && !(sale.lines || []).length) {
+      const size = positiveInteger(pendingLine.size);
+      if (size === null) {
+        const error = new Error(texts.sizeMissingBody);
+        error.scanUserMessage = texts.sizeMissingBody;
+        return fail({ code: 'size_missing', message: userMessageFor(error), requestId, error });
+      }
+      const added = await sessions.addLine(openId, {
+        kind: 'shoe',
+        number: String(pendingLine.number || '').trim(),
+        item_no: String(pendingLine.itemNo || '').trim(),
+        color: String(pendingLine.color || '').trim(),
+        product_record_id: String(pendingLine.productRecordId || '').trim(),
+        size,
+        trade_type_code: typeof pendingLine.inStock === 'boolean'
+          ? salesTradeTypeForStock({ inStock: pendingLine.inStock }) : '',
+        amount: pendingLine.amount === undefined || pendingLine.amount === null || pendingLine.amount === ''
+          ? null : Number(pendingLine.amount),
+        gift: String(pendingLine.gift || ''),
+        added_at: new Date(now()).toISOString(),
+      });
+      if (!added.ok) {
+        return fail({
+          code: added.code,
+          message: fillText(texts.tooManyLinesBody, { max: added.limit }),
+          requestId,
+          extra: { result: { limit: added.limit } },
+        });
+      }
+      sale.lines = added.session.sale.lines;
+      logInfo(config.events.lineAdded, {
+        request_id: requestId, size, count: added.count, via: 'submit_single_line',
+      });
     }
     const lines = sale.lines || [];
     if (!lines.length) {
@@ -727,6 +769,24 @@ const createScanWriteService = (options = {}) => {
     //         （与既有原则一致：「她说欠才算欠」，见 `salesOrderService.js` 的 `owed` 注释）。
     //    ⚠️ 两条都**不会写出错账**：没填收款 = 一条收款明细都不写；差额也从来不由我们猜。
     const hasPaymentRows = usedPayments.length > 0;
+    // 🔴🔴 2026-10-12（真机丢钱之后加的兜底）：她**显式选了「全付」**，却
+    //    ① 一笔收款都没填 **且** ② 每件实收也全空 ⇒ 这一单**哪儿都没有钱**，与"全付"直接矛盾。
+    //    真机现场（`scan.sale.submitted payment_count: 0`）：页面写着全付、收款明细一行没有，
+    //    她自己都看出来"钱没进去"。⇒ 这里**拦住 + 人话**，绝不再静默落一张"零元全付单"。
+    //    ⚠️ 只拦这一种组合：全付 + 没收款但**实收有值** ⇒ 仍走既有口径（按未付落库 + 提示），
+    //       那是 2026-10-11 她点头过的行为，一个字不改。
+    const anyLineAmount = resolvedLines.some((line) => line.explicit_amount);
+    if (payMode === statusMode.full && !hasPaymentRows && !anyLineAmount) {
+      logWarn(config.events.failed, {
+        session_id: current.session_id, submit_key: key, reason: 'full_without_money',
+        detail_count: resolvedLines.length, payment_count: 0, request_id: requestId,
+      });
+      const error = new Error(texts.fullWithoutMoneyBody);
+      error.scanUserMessage = texts.fullWithoutMoneyBody;
+      return fail({
+        code: 'full_without_money', message: texts.fullWithoutMoneyBody, requestId, error,
+      });
+    }
     // 「她显式选了全付、但一笔收款都没填」⇒ 按**未付**落库 + 页面给一句人话（不是失败）。
     const fullWithoutPayments = payMode === statusMode.full && !hasPaymentRows;
     const effectiveMode = fullWithoutPayments ? statusMode.unpaid : payMode;

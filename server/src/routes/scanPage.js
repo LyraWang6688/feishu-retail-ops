@@ -221,9 +221,17 @@ const createScanPageRouter = (options = {}) => {
     // 500 = 系统那边没处理成（写库失败）；400 = 她填错了 / 数据不满足业务（一个字节都没写）。
     const status = ['sale_write_failed', 'replenish_write_failed', 'return_write_failed'].includes(result.code)
       ? 500 : 400;
+    // ⭐ 2026-10-12：**钱算不对那几类**（差额 / 付款情况 / 实付多少 / 全付零元…）⇒
+    //    把那句**人话差额**放到**最上面那一行（H1）**：她第一眼看到的就是"差在哪、差多少"，
+    //    而不是一句泛泛的「没提交成功」。
+    const moneyCodes = ['amount_mismatch', 'payment_amount_invalid', 'payment_status_invalid',
+      'payment_amount_missing', 'partial_amount_missing', 'full_without_money'];
+    const human = String(result.error?.scanUserMessage || result.message || '').trim();
+    const moneyFailure = Boolean(human) && moneyCodes.includes(result.code);
     return sendHuman(res, status, {
-      title: writeConfig.texts.failedTitle,
-      body: result.message || writeConfig.texts.internalFailedBody,
+      title: moneyFailure ? human : writeConfig.texts.failedTitle,
+      body: moneyFailure ? writeConfig.texts.failedTitle
+        : (result.message || writeConfig.texts.internalFailedBody),
       requestId,
       retryHint: writeConfig.texts.failedRetryHint,
     });
@@ -807,6 +815,12 @@ const createScanPageRouter = (options = {}) => {
         const lineAmounts = asList(body[fields.lineAmount]);
         const paymentStatus = String(body[fields.paymentStatus] || '').trim();
         const paidAmount = body[fields.paidAmount] ?? '';
+        // ⭐ 2026-10-12：整页只有**一个表单** ⇒ 提交这一下**天然带着**她在尺码区选中的那一双。
+        //    本单为空时 ⇒ 「选尺码 + 提交」两下就是一张单（一单一笔的默认路径）；
+        //    本单已有几双 ⇒ 这一项**忽略**（多笔必须显式点【➕ 还要加一双】），
+        //    判据在写服务里（`pendingLine` 只在本单为空时生效）。
+        const submitView = String(body[fields.size] ?? '').trim()
+          ? await service.lookup({ number: req.params.number, requestId }).catch(() => null) : null;
         const result = await writeService.submitSale({
           openId,
           requestId,
@@ -815,6 +829,17 @@ const createScanPageRouter = (options = {}) => {
           lineAmounts,
           paymentStatus,
           paidAmount,
+          pendingLine: submitView?.found ? {
+            productRecordId: submitView.product_record_id,
+            number: submitView.number,
+            itemNo: submitView.item_no,
+            color: submitView.color,
+            size: body[fields.size],
+            amount: body[fields.amount],
+            gift: body[fields.gift],
+            // 「现货 / 预订」的判据与页面上那两个分组**同一份**（写服务按既有判据推编码）。
+            inStock: sellableSizeTexts(submitView).has(String(body[fields.size] ?? '').trim()),
+          } : null,
         });
         if (!result.ok) {
           // ⭐⭐ 校验类失败（**核心那条：全付时每件实收合计 ≠ 收款合计**，以及付款情况 /
@@ -840,6 +865,8 @@ const createScanPageRouter = (options = {}) => {
         const details = [
           fillWriteText(texts.submittedOrderLine, { orderNo: result.order_no || '—' }),
           fillWriteText(texts.submittedDetailLine, { count: result.detail_count || 0 }),
+          // ⭐ 2026-10-12：下一步（她自己问过"那我接下来去哪补钱"）
+          ...(texts.submittedNextSteps ? [texts.submittedNextSteps] : []),
         ];
         // ⑥ ⭐ 2026-10-11（A）：现货行"提交即交付 + 扣库存"**没扣成** ⇒ 给她一张**如实**的结果页
         //    （单子记上了 / 哪几双没扣成 / 怎么办），**不是**一句"没成功"把整件事说反。

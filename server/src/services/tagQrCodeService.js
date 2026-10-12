@@ -219,6 +219,9 @@ const createTagQrCodeService = ({
   clearTimer,
 } = {}) => {
   const productTable = V1_BITABLE_SCHEMA.tables.product;
+  /** 源字段的语义键 → 物理列名（配置里 `numberAssembly.fields` 用的是这些键） */
+  const fieldNames = productTable.fields;
+  let fieldIdsPromise = null;
   const numberFieldName = productTable.fields[config.fields.number];
   const tagQrFieldName = productTable.fields[config.fields.tagQrCode];
 
@@ -251,6 +254,109 @@ const createTagQrCodeService = ({
         });
     }
     return numberFieldIdPromise;
+  };
+
+  /**
+   * ⭐⭐ **源字段判据**（2026-10-12 业务负责人提的：别只盯公式列的「编号」）。
+   *
+   * 她的原话：「那为什么你要去校验货品信息里面的编号呢？**不直接校验货号或者颜色有没有变化呢**？
+   *            是不是更快一些？因为一般就是货号和颜色呀」
+   * ⇒ 工程理由：**「编号」是飞书公式列 ⇒ 有延迟**（实测量到几秒~十几秒），而**货号/颜色/类别是源字段**，
+   *    事件里拿到的就是新值 ⇒ **没有延迟**、判得更准也更快。公式列只留作"兜底判据"。
+   *
+   * @returns {Promise<{changed: true|false|null, why: string, changed_fields: string[],
+   *   compared: object, unreadable: string[]}>}
+   */
+  const resolveSourceChangeDetail = async (actionItem) => {
+    const keys = (config.numberAssembly?.fields || []).filter((key) => fieldNames[key]);
+    const ids = await resolveFieldIds(keys);
+    const changedFields = [];
+    const compared = {};
+    const unreadable = [];
+    for (const key of keys) {
+      const fieldId = ids[key];
+      if (!fieldId) { unreadable.push(key); continue; }
+      const before = readableFieldText(findFieldValue(actionItem?.before_value, fieldId));
+      const after = readableFieldText(findFieldValue(actionItem?.after_value, fieldId));
+      compared[key] = { before: previewValue(before), after: previewValue(after) };
+      if (before === null || after === null || !before.trim() || !after.trim()) { unreadable.push(key); continue; }
+      if (before !== after) changedFields.push(key);
+    }
+    if (changedFields.length) {
+      return { changed: true, why: 'source_field_changed', changed_fields: changedFields, compared, unreadable };
+    }
+    if (unreadable.length) {
+      // 有字段判不了 ⇒ 整体"判不了"（**绝不当成"没变"**，2026-10-09 的教训）
+      return { changed: null, why: 'source_field_unreadable', changed_fields: [], compared, unreadable };
+    }
+    return { changed: false, why: 'source_fields_unchanged', changed_fields: [], compared, unreadable };
+  };
+
+  /** 三个源字段的 field_id（懒加载一次，和「编号」那条一样）。 */
+  const resolveFieldIds = async (keys) => {
+    if (typeof gateway?.listFields !== 'function') return {};
+    if (!fieldIdsPromise) {
+      fieldIdsPromise = gateway.listFields('product')
+        .then((fields) => {
+          const byName = new Map((fields || []).map((field) => [field?.field_name, field?.field_id]));
+          const map = {};
+          for (const [key, name] of Object.entries(fieldNames)) if (byName.get(name)) map[key] = byName.get(name);
+          return map;
+        })
+        .catch((error) => {
+          logWarn('product.tag_qr.field_id_unavailable', { keys: keys.join(','), error: error.message });
+          return {};
+        });
+    }
+    return fieldIdsPromise;
+  };
+
+  /**
+   * ⭐ 按**她公式的规则**（`货号|颜色|类别`，分隔符/顺序见 `config/tagQrCode.js` 的 `numberAssembly`）
+   * 从记录字段里拼出「编号」——公式列读不出/为空时的**兜底**。
+   * ⚠️ 任一源字段为空 ⇒ 返回 `''`（**不硬拼出 `a||c` 这种公式不会产出的串**）。
+   */
+  const assembleNumber = (fields) => {
+    const assembly = config.numberAssembly || {};
+    const parts = (assembly.fields || []).map((key) => textValue(fields[fieldNames[key]]).trim());
+    if (!parts.length || parts.some((part) => !part)) return '';
+    return parts.join(assembly.separator || '|');
+  };
+
+  /**
+   * ⭐⭐ 决定二维码 URL 用哪一串「编号」。
+   *   · 两边一致 ⇒ 用它；
+   *   · 只有一边有 ⇒ 用那一边；
+   *   · 不一致 ⇒ 记 `number_mismatch`（带两个值），然后：
+   *       - 若公式值 == **现存附件里那个编号**（说明公式还没算完、停在旧值）⇒ 用**拼装值**
+   *         （否则她"改完货号"永远写回旧码，正是今天的真机反馈）；
+   *       - 否则以**公式值**为准（保证与扫码页的键一致）。
+   * ⚠️ `existingFileNameNumber` 传的是 `numberFromFileName()` 的结果 —— 那是**文件名形态**
+   *    （分隔符已按模板编码成 `_`），所以比较前要把公式值也 `sanitizeNumberForFileName` 一下，
+   *    否则"同一个编号的两种写法"永远不相等（这个坑 2026-10-12 踩过一次）。
+   */
+  const resolveQrNumber = ({ formulaNumber, assembledNumber, existingFileNameNumber, recordId }) => {
+    if (!formulaNumber && !assembledNumber) return { number: '', source: 'none', mismatch: false };
+    if (!formulaNumber) return { number: assembledNumber, source: 'assembled_fallback', mismatch: false };
+    if (!assembledNumber) return { number: formulaNumber, source: 'formula_only', mismatch: false };
+    if (formulaNumber === assembledNumber) return { number: formulaNumber, source: 'both_agree', mismatch: false };
+    const formulaLooksStale = Boolean(existingFileNameNumber)
+      && existingFileNameNumber === sanitizeNumberForFileName(formulaNumber, config);
+    if (config.numberAssembly?.crossCheck !== false) {
+      logWarn('product.tag_qr.number_mismatch', {
+        record_id: recordId,
+        formula_number: formulaNumber,
+        assembled_number: assembledNumber,
+        existing_file_name_number: existingFileNameNumber || '',
+        formula_looks_stale: formulaLooksStale,
+      });
+    }
+    return {
+      number: formulaLooksStale ? assembledNumber : formulaNumber,
+      source: formulaLooksStale ? 'assembled_formula_stale' : 'formula_mismatch',
+      mismatch: true,
+      formulaLooksStale,
+    };
   };
 
   /**
@@ -316,16 +422,28 @@ const createTagQrCodeService = ({
     }
     const record = await gateway.get('product', recordId);
     const fields = record?.fields || {};
-    const number = textValue(fields[numberFieldName]).trim();
+    const existing = attachmentsOf(fields[tagQrFieldName]);
+    // ⭐⭐ 2026-10-12：二维码 URL 那串「编号」= **公式列优先**（扫码页认它）+ **源字段拼装兜底**
+    //    （她改完货号那一刻公式列还没算完 ⇒ 拼装值才是"新码"；见 `resolveQrNumber` 的注释）
+    const formulaNumber = textValue(fields[numberFieldName]).trim();
+    const assembledNumber = assembleNumber(fields);
+    const numberPick = resolveQrNumber({
+      formulaNumber,
+      assembledNumber,
+      existingFileNameNumber: numberFromFileName(existing[0]?.name, config),
+      recordId,
+    });
+    const number = numberPick.number;
     if (!number) {
       // 「还没填编号」不是故障：记一条 warn 就跳过（重试也不会变）。
-      logWarn('product.tag_qr.number_missing', { record_id: recordId, reason });
+      logWarn('product.tag_qr.number_missing', {
+        record_id: recordId, reason, formula_number: formulaNumber, assembled_number: assembledNumber,
+      });
       return { record_id: recordId, status: 'skipped', reason: 'number_missing' };
     }
 
     const scanUrl = buildScanUrl(config.scanUrl.urlTemplate, number, config);
     const fileName = buildFileName(number, config);
-    const existing = attachmentsOf(fields[tagQrFieldName]);
 
     // 「现存附件的文件名 ≠ 当前编号应有的文件名」= **事实上的编号变了**（只读一次就判得出，
     // 不依赖事件带没带前后值）。这一档才是 `numberChanged === null` 时的**唯一**判据。
@@ -446,6 +564,11 @@ const createTagQrCodeService = ({
         record_id: recordId,
         status: 'written',
         reason: effectiveReason,
+        // ⭐ 这串「编号」是哪来的：formula_only / assembled_fallback / assembled_formula_stale /
+        //   formula_mismatch / both_agree（排查"为什么写的是这个码"看它）
+        number_source: numberPick.source,
+        number_mismatch: numberPick.mismatch,
+        formula_looks_stale: Boolean(numberPick.formulaLooksStale),
         file_token: fileToken,
         file_name: fileName,
         scan_url: scanUrl,
@@ -494,20 +617,34 @@ const createTagQrCodeService = ({
           results.push(await syncRecord(recordId, { reason: 'record_added' }));
           continue;
         }
+        // ⭐⭐ 2026-10-12：**先用源字段判**（货号/颜色/类别 —— 事件里没有延迟）；
+        //    源字段判不了（事件没带/读不出）才退回公式列的「编号」判据。
+        const sourceDetail = await resolveSourceChangeDetail(actionItem);
         const detail = await resolveNumberChangeDetail(actionItem);
-        const numberChanged = detail.changed;
+        const numberChanged = sourceDetail.changed !== null ? sourceDetail.changed : detail.changed;
         // ⚠️ 2026-10-12 改：**"确定没变"这一档不再短路跳过**（改前它连表都不读）。
         //    真机证明"附件早就旧了、之后只改别的字段"会在这条路上**永远**跳过 ⇒
         //    二维码停在旧编号上（292 次跳过 / 0 次写回）。现在一律交给 `syncRecord`：
         //    读一次记录、拿**规范文件名 / 反解出的编号**核附件；核得上才记
         //    `skipped_number_unchanged`（多一次只读，换来"不会静默停在旧码上"）。
+        // 判据来源记一条（哪一路判的、改了哪几个字段）—— 排查"为什么没触发/为什么触发"靠它
+        logInfo('product.tag_qr.change_criteria', {
+          record_id: recordId,
+          action,
+          source_changed: sourceDetail.changed,
+          source_fields_changed: sourceDetail.changed_fields,
+          source_why: sourceDetail.why,
+          formula_changed: detail.changed,
+          formula_why: detail.why,
+          used: sourceDetail.changed !== null ? 'source_fields' : 'formula_number',
+        });
         if (numberChanged === null) {
           // ⭐⭐ **判不了 ≠ 没变**（2026-10-09 就是在这里漏判的）：退化到"读一次记录、比文件名"。
           //    把事件里的原始值一并记下来 —— 这是这类漏判**唯一**的现场证据。
           logInfo('product.tag_qr.number_change_unknown', {
             record_id: recordId,
             action,
-            why: detail.why,
+            why: sourceDetail.changed !== null ? sourceDetail.why : detail.why,
             before_value: previewValue(detail.before),
             after_value: previewValue(detail.after),
           });
@@ -675,6 +812,10 @@ const createTagQrCodeService = ({
     buildFileName: (number) => buildFileName(number, config),
     resolveNumberChange,
     resolveNumberChangeDetail,
+    // ⭐ 源字段判据 / 拼装 / URL 编号取舍（测试与排查都要用）
+    resolveSourceChangeDetail,
+    assembleNumber,
+    resolveQrNumber,
     syncRecord,
     handleTableChanges,
     sweepStaleTagQrCodes,
