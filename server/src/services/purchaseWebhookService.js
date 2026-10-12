@@ -1599,6 +1599,16 @@ class PurchaseWebhookService {
           batchNo: plan.batch_no,
           idempotencyKey: plan.batch_key,
           arrivalStatus: this.orderBatches.pendingStatus,
+          // ⭐⭐ 2026-10-12（业务负责人）：「**采购主表里面的采购行为确实是需要的**，因为一个是
+          //    报货，一个是退货」⇒ 建主表行时写「采购行为」（**报货这一路 = 采购申请那一档**）。
+          //    值 = **行为记录 id**（`ensurePostingPlan` 里已经按这一次的明细冻结好了：
+          //    `item.behavior_record_id`，明细没带才退回批次级的 `draft.behavior_record_id`），
+          //    写成 `relation(...)`（关联字段的形状只有 `v1ReferenceResolver` 一处定义；
+          //    空 id ⇒ `undefined` ⇒ 网关跳过该字段，不会写空值）。
+          //    ⚠️ 「采购明细.采购行为」是这一列按「报货批次号」关联的 **Lookup（只读）**
+          //    ⇒ 明细侧**不许再写**（2026-10-12 热修已撤，见本文件 `request_created` 那一段的注释）。
+          behavior: relation(plan.items.map((item) => item.behavior_record_id).find(Boolean)
+            || draft.behavior_record_id),
         },
       });
       batchRecordId = batch.recordId;
@@ -1629,7 +1639,14 @@ class PurchaseWebhookService {
             product: relation(item.product_record_id),
             size: relation(sizeReference?.recordId),
             quantity: item.quantity,
-            behavior: relation(item.behavior_record_id),
+            // 🔴 2026-10-12 热修：**不许再写「采购行为」** —— 她今天把这一列改成了
+            //    **Lookup（19，按「报货批次号」关联采购主表的「采购行为」）**，Lookup 是**只读**的：
+            //    轻则白写被忽略，重则**整条明细 create 失败**（那样这批报货一条明细都建不出来）。
+            //    ⚠️ **只撤写入、保留读取**：`v1BitableSchema` 的映射留着，
+            //    工作台采购查询的分流判据（`purchaseQueryService.classifyReportBehavior`）还在读它。
+            //    ⚠️ 待定：主表的「采购行为」目前**没有写入点**（业务负责人 2026-10-07 说过
+            //    「报货批次里面的采购行为你不用管」）⇒ 这一列在明细上会是空的，
+            //    `classifyReportBehavior` 读不到就按现状=采购申请分流（口径待她确认）。
             idempotencyKey: item.request_key,
           },
         });

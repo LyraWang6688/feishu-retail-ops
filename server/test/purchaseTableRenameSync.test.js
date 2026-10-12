@@ -1,3 +1,17 @@
+/**
+ * ⚠️ 2026-10-12 旧断言改写（**「采购主表.采购行为」口径反转**）：
+ *  改前（逐字）：
+ *    // 🔴 她说「报货批次里面的采购行为你不用管」⇒ 不映射（不映射就自然读不到、写不了）
+ *    assert.equal(Object.prototype.hasOwnProperty.call(batch, 'behavior'), false, '「报货批次.采购行为」不读不写不映射');
+ *  改后（逐字）：
+ *    // ⭐ 她 2026-10-12（逐字）：「采购主表里面的采购行为确实是需要的，因为一个是报货，一个是退货」
+ *    assert.equal(batch.behavior, '采购行为', '建主表行要写这一列（报货/退货分流）⇒ 必须映射');
+ *  理由：**她的口径反转了**（2026-10-07 说"不用管"，2026-10-12 说要），而"不映射"这条断言的
+ *        本意是"别碰她不想让代码碰的列"；现在她要代码写它 ⇒ 断言跟着反转，**不是放宽**：
+ *        从"必须有 0 个映射"变成"必须有这 1 个映射"。
+ *  ⚠️ 同一轮新增：**明细那列是 Lookup（只读）⇒ 明细侧不许写**（哨兵在
+ *     `test/purchaseBehaviorLookupReadOnly.test.js` 的 AC-B1，那才是"别碰"的落点）。
+ */
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -55,9 +69,10 @@ test('B1/B3 字段映射同步：具体信息删两列、报货批次加两列�
   assert.equal(batch.arrivalStatus, '到货状态');
   assert.equal(batch[PURCHASE_ARRIVAL_STATUS_FIELD_KEY], '到货状态', '到货状态的语义键与配置里声明的一致');
   assert.equal(batch.document, '单据');
-  // 🔴 她说「报货批次里面的采购行为你不用管」⇒ 不映射（不映射就自然读不到、写不了）
-  assert.equal(Object.prototype.hasOwnProperty.call(batch, 'behavior'), false,
-    '「报货批次.采购行为」不读不写不映射');
+  // ⭐ 她 2026-10-12（逐字）：「采购主表里面的采购行为确实是需要的，因为一个是报货，一个是退货」
+  //    ⇒ 建主表行要写它（报货 = 采购申请 / 退货 = 采购退货）⇒ **必须映射**，否则写入抛"未配置语义字段"。
+  assert.equal(batch.behavior, '采购行为', '建主表行要写这一列 ⇒ 必须映射');
+  assert.equal(Object.prototype.hasOwnProperty.call(batch, 'behavior'), true);
 
   // ⭐ 2026-10-09：9 点推送【采购】区要显示的供应商**改读「报货批次.供应商」这一列**
   //   （她新加的那一列就是为这件事加的）—— 只读投影，代码不写。
