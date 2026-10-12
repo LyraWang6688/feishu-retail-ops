@@ -1,4 +1,11 @@
 /**
+ * ⚠️ 2026-10-12 旧断言改写（业务负责人改表名，Lead 定口径）：
+ *  改前（逐字）：`await assert.rejects(() => refused.confirmArrival({ batchNo: 'B9', actualAmount: 1 }), /没找到报货批次/);`
+ *  改后（逐字）：`… /没找到采购单/);`
+ *  理由：工作台验收那条报错文案改成了「没找到采购单 X 的采购明细」（表名 → 业务说法）；
+ *        ⚠️ 只换了匹配词，`assert.rejects` 的语义（必须拒、不能静默）一个字没放宽。
+ */
+/**
  * 工作台【订单列表】的验收标准（业务负责人 2026-10-09 明确要的东西）。
  *
  * 她的原话（逐字）：
@@ -816,7 +823,7 @@ test('AC12 「验收到货」：接线层只把这一批交给既有核对链路
     purchaseQuery: { listPurchaseRequests: async () => [] },
     arrivalConversation: { confirmBatchArrival: async () => { throw new Error('不该被调用'); } },
   });
-  await assert.rejects(() => refused.confirmArrival({ batchNo: 'B9', actualAmount: 1 }), /没找到报货批次/);
+  await assert.rejects(() => refused.confirmArrival({ batchNo: 'B9', actualAmount: 1 }), /没找到采购单/);
   await assert.rejects(() => refused.confirmArrival({ batchNo: '' }), /批次/);
 
   // ── 源码哨兵：接线层没有任何新写库实现 ─────────────────────────────────────

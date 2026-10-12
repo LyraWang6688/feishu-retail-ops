@@ -19,7 +19,7 @@ export const ORDERS_PAGE = {
   //    `title` / `subtitle` / `purchaseSubtitle` **整字段退场** —— 那是一级领域页里
   //    与子 tab 重复的大标题和它下面那行说明（订单列表在「销售」/「采购」两个领域里都是子 tab）。
   empty: '还没有已入账的销售单',
-  purchaseEmpty: '还没有采购申请（报货批次）记录',
+  purchaseEmpty: '还没有采购单记录',
   // ⭐ 2026-10-10：「验收到货」独立子页里，**已到货的批次折叠**在下面 —— 折叠头就写这一句
   //    （后面跟条数；不写"我为什么这么排"那种说明句）。
   purchaseArrivedSummary: '已到货',

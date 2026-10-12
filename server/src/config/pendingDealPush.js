@@ -227,7 +227,7 @@ const PENDING_DEAL_PUSH_DEFAULTS = Object.freeze({
   // ⚠️ 销售区标题**默认空串** = 不渲染那一行。
   salesAreaTitle: '',
   // ⭐ 采购区的大区标题（`{count}` = 这一区几批）。
-  purchaseAreaTitle: '【采购】未到货的报货批次：{count} 批',
+  purchaseAreaTitle: '【采购】未到货的采购单：{count} 批',
   // 采购区一行 = 逐段拼（与销售区同一套"空的段整段不要"的规矩）。
   //   `{batchNo}` 批次号 · `{supplier}` 供应商（取不到就没有这一段，**不编**）
   //   ⭐ 2026-10-08 晚（业务负责人逐字）：「这里的文字说明，包括**供应商和创建时间以及报货数量**」，

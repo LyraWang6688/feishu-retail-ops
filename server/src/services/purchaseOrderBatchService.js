@@ -320,7 +320,7 @@ class PurchaseOrderBatchService {
   }) {
     const table = this.gateway.table('purchaseOrderBatch');
     const field = table?.fields?.document;
-    if (!field) throw new Error('「报货批次」未配置「单据」字段映射');
+    if (!field) throw new Error('「采购主表」未配置「单据」字段映射');
     const record = await this.findByBatchNo(batchNo);
     if (!record) {
       logWarn('purchase.batch.document.no_record', { batch_no: batchNo, file_name: fileName });
