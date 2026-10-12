@@ -1,0 +1,139 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "id": "fldN3GNxCq",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      },
+      {
+        "expression": "FIRST([销售单号].[销售单号])\u0026\"-\"\u0026COUNTIF([销售明细],CurrentValue.[销售单号].[销售单号].CONTAIN(FIRST([销售单号].[销售单号]))\u0026\u0026VALUE(CurrentValue.[明细ID])\u003c=VALUE([明细ID]))",
+        "id": "fldpynj1nc",
+        "name": "销售明细ID",
+        "type": "formula"
+      },
+      {
+        "default_value": null,
+        "id": "flddjzHoTY",
+        "name": "成交金额",
+        "style": {
+          "currency_code": "CNY",
+          "precision": 2,
+          "type": "currency"
+        },
+        "type": "number"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldC3C5ab7",
+        "link_table": "tblk7eUhno5DutKk",
+        "name": "交易类型",
+        "type": "link"
+      },
+      {
+        "expression": "[编号].[单价]",
+        "id": "fldiw1DWJQ",
+        "name": "销售单价",
+        "type": "formula"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldbnW023t",
+        "link_table": "tblVuUvGU4EP1Wm8",
+        "name": "尺码",
+        "type": "link"
+      },
+      {
+        "default_value": null,
+        "id": "fldOjs58Zh",
+        "multiple": false,
+        "name": "履约状态",
+        "options": [
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "未交付"
+          },
+          {
+            "hue": "Orange",
+            "lightness": "Lighter",
+            "name": "已交付"
+          },
+          {
+            "hue": "Wathet",
+            "lightness": "Lighter",
+            "name": "已退货"
+          },
+          {
+            "hue": "Yellow",
+            "lightness": "Lighter",
+            "name": "已换货"
+          },
+          {
+            "hue": "Turquoise",
+            "lightness": "Lighter",
+            "name": "已赔货"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldRS20wQL",
+        "link_table": "tblnJsLDeHXVxJls",
+        "name": "配品",
+        "type": "link"
+      },
+      {
+        "id": "fldT94uGer",
+        "name": "销售日",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      },
+      {
+        "id": "fldwUxz2RI",
+        "name": "明细ID",
+        "style": {
+          "rules": [
+            {
+              "length": 3,
+              "type": "incremental_number"
+            }
+          ]
+        },
+        "type": "auto_number"
+      },
+      {
+        "default_value": null,
+        "id": "fldOKEWYuu",
+        "name": "赠品",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldy3dswNb",
+        "link_table": "tbl5as7poByp36c7",
+        "name": "编号",
+        "type": "link"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldseQ9NAF",
+        "link_table": "tblchUNgfH7o0ydr",
+        "name": "销售单号",
+        "type": "link"
+      }
+    ],
+    "total": 13
+  }
+}

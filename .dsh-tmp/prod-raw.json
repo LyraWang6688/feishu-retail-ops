@@ -1,0 +1,180 @@
+{
+  "readOnly": true,
+  "gate": "raw",
+  "tables": [
+    {
+      "key": "salesEntry",
+      "tableName": "销售主表",
+      "tableId": "tblLjFe3NjU61xKB",
+      "schemaMappedNames": [
+        "销售单号",
+        "原话",
+        "录单人",
+        "录单日",
+        "解析状态",
+        "确认状态",
+        "解析结果摘要",
+        "失败原因",
+        "订单状态",
+        "交易类型"
+      ],
+      "fields": [
+        {
+          "field_name": "销售单号",
+          "typeName": "多行文本",
+          "options": null
+        },
+        {
+          "field_name": "交易类型",
+          "typeName": "单向关联",
+          "options": null
+        },
+        {
+          "field_name": "原话",
+          "typeName": "多行文本",
+          "options": null
+        },
+        {
+          "field_name": "录单人",
+          "typeName": "人员",
+          "options": null
+        },
+        {
+          "field_name": "解析状态",
+          "typeName": "单选",
+          "options": [
+            "待解析",
+            "解析中",
+            "待补充",
+            "已解析",
+            "解析失败",
+            "需补充",
+            "解析成功"
+          ]
+        },
+        {
+          "field_name": "确认状态",
+          "typeName": "单选",
+          "options": [
+            "待确认",
+            "已确认",
+            "已取消",
+            "入账中",
+            "已入账",
+            "入账失败",
+            "待修改"
+          ]
+        },
+        {
+          "field_name": "订单状态",
+          "typeName": "单选",
+          "options": [
+            "草稿",
+            "已确认",
+            "已完成",
+            "已取消",
+            "已退货",
+            "部分退货"
+          ]
+        },
+        {
+          "field_name": "收款状态",
+          "typeName": "公式",
+          "options": null
+        },
+        {
+          "field_name": "交付数量",
+          "typeName": "公式",
+          "options": null
+        },
+        {
+          "field_name": "待交付数量",
+          "typeName": "公式",
+          "options": null
+        },
+        {
+          "field_name": "录单日",
+          "typeName": "创建时间",
+          "options": null
+        },
+        {
+          "field_name": "解析结果摘要",
+          "typeName": "多行文本",
+          "options": null
+        },
+        {
+          "field_name": "失败原因",
+          "typeName": "多行文本",
+          "options": null
+        },
+        {
+          "field_name": "更新时间",
+          "typeName": "最后更新时间",
+          "options": null
+        }
+      ]
+    },
+    {
+      "key": "purchaseArrival",
+      "tableName": "采购到货",
+      "tableId": "tblvLOXKESNTbZ7v",
+      "schemaMappedNames": [
+        "到货日",
+        "图片",
+        "报货批次号",
+        "验收人",
+        "确认状态",
+        "验收原话"
+      ],
+      "fields": [
+        {
+          "field_name": "到货日",
+          "typeName": "日期",
+          "options": null
+        },
+        {
+          "field_name": "图片",
+          "typeName": "附件",
+          "options": null
+        },
+        {
+          "field_name": "验收原话",
+          "typeName": "多行文本",
+          "options": null
+        },
+        {
+          "field_name": "报货批次号",
+          "typeName": "单向关联",
+          "options": null
+        },
+        {
+          "field_name": "验收人",
+          "typeName": "人员",
+          "options": null
+        },
+        {
+          "field_name": "确认状态",
+          "typeName": "单选",
+          "options": [
+            "待确认",
+            "已确认",
+            "已取消",
+            "已入库",
+            "入库失败",
+            "待识别"
+          ]
+        },
+        {
+          "field_name": "更新时间",
+          "typeName": "最后更新时间",
+          "options": null
+        },
+        {
+          "field_name": "创建时间",
+          "typeName": "创建时间",
+          "options": null
+        }
+      ]
+    }
+  ]
+}

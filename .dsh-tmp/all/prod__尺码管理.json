@@ -1,0 +1,56 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "id": "fldXd0Yca5",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      },
+      {
+        "id": "fldG8LG0Tt",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      },
+      {
+        "default_value": null,
+        "id": "fldtXl1JOX",
+        "name": "尺码",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "default_value": null,
+        "id": "fldMADN31S",
+        "multiple": true,
+        "name": "类别",
+        "options": [
+          {
+            "hue": "Gray",
+            "lightness": "Lighter",
+            "name": "A"
+          },
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "B"
+          }
+        ],
+        "type": "select"
+      }
+    ],
+    "total": 4
+  }
+}

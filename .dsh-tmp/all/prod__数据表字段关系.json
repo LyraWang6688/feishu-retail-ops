@@ -1,0 +1,173 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "bidirectional": false,
+        "id": "fldAWCC3B2",
+        "link_table": "tbl7P8QHU58hqRdZ",
+        "name": "关联目标表",
+        "type": "link"
+      },
+      {
+        "default_value": null,
+        "id": "fldKJJ5ANn",
+        "multiple": false,
+        "name": "使用状态",
+        "options": [
+          {
+            "hue": "Green",
+            "lightness": "Lighter",
+            "name": "草稿"
+          },
+          {
+            "hue": "Green",
+            "lightness": "Lighter",
+            "name": "测试中"
+          },
+          {
+            "hue": "Gray",
+            "lightness": "Lighter",
+            "name": "使用中"
+          },
+          {
+            "hue": "Carmine",
+            "lightness": "Lighter",
+            "name": "已停用"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "id": "fldMTCJNcJ",
+        "name": "是否允许写入",
+        "type": "checkbox"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldCGBp2Bc",
+        "link_table": "tbl7P8QHU58hqRdZ",
+        "name": "数据表",
+        "type": "link"
+      },
+      {
+        "default_value": null,
+        "id": "fldpu4i9wn",
+        "name": "Schema版本",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldOR5ZuJ8",
+        "link_table": "tbl55WqeVfTyZF8d",
+        "name": "标准字段",
+        "type": "link"
+      },
+      {
+        "id": "fldj07MDi8",
+        "name": "Schema关系ID",
+        "style": {
+          "rules": [
+            {
+              "text": "GX-",
+              "type": "text"
+            },
+            {
+              "date_format": "yyyyMM",
+              "type": "created_time"
+            },
+            {
+              "text": "-",
+              "type": "text"
+            },
+            {
+              "length": 4,
+              "type": "incremental_number"
+            }
+          ]
+        },
+        "type": "auto_number"
+      },
+      {
+        "default_value": null,
+        "id": "fldg9fTbPG",
+        "name": "飞书字段ID",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldNmULPDu",
+        "name": "是否索引列",
+        "type": "checkbox"
+      },
+      {
+        "default_value": null,
+        "id": "fldSMQ84rq",
+        "name": "显示顺序",
+        "style": {
+          "percentage": false,
+          "precision": 2,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "id": "fldNdETW8j",
+        "name": "是否业务快照",
+        "type": "checkbox"
+      },
+      {
+        "id": "fld77jmWj3",
+        "name": "是否只读",
+        "type": "checkbox"
+      },
+      {
+        "default_value": null,
+        "id": "fldE0LJIbX",
+        "name": "默认值",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldoHG97GQ",
+        "name": "是否必填",
+        "type": "checkbox"
+      },
+      {
+        "id": "fld5yHtMGI",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      },
+      {
+        "id": "fldYdpNvcY",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      },
+      {
+        "default_value": null,
+        "id": "fldlKjBKTD",
+        "name": "校验规则",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      }
+    ],
+    "total": 17
+  }
+}

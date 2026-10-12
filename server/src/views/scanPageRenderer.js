@@ -262,6 +262,7 @@ summary { cursor: pointer; }
 .realm-tab { display: flex; align-items: center; justify-content: center; min-height: var(--control-height); padding: 0 var(--space-2); border-radius: var(--radius-md); color: var(--text-secondary); font-size: var(--font-size-base); font-weight: 600; text-decoration: none; white-space: nowrap; }
 /* ── ⭐⭐ 2026-10-12 验收领域「未到货批次」那一块：单列堆叠、不横滑、每行 ≥44px ── */
 .batch-list { list-style: none; margin: 0; padding: 0; }
+.realm-tab:active, .batch-row:active { opacity: .55; }
 .batch-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); text-align: left; font-weight: 600; border: 1px solid var(--primary); }
 .batch-row__cta { color: var(--primary); font-weight: var(--weight-bold); font-size: var(--font-size-lg); }
 .batch-row__meta { color: var(--text-muted); font-weight: 500; font-size: var(--font-size-sm); }
@@ -330,8 +331,8 @@ ${meta ? `<p class="identity__meta">${escapeHtml(meta)}</p>` : ''}
  */
 const realmBarHtml = (realm = DEFAULT_REALM) => `<nav class="realm-bar" aria-label="${escapeHtml(REALM_TEXTS.barLabel)}">
 ${REALMS.map((item) => (item.id === realm
-    ? `<a class="realm-tab realm-tab--active" data-realm-id="${escapeHtml(item.id)}" href="?from=${escapeHtml(item.id)}" aria-current="page">${escapeHtml(item.label)}</a>`
-    : `<a class="realm-tab" data-realm-id="${escapeHtml(item.id)}" href="?from=${escapeHtml(item.id)}">${escapeHtml(item.label)}</a>`)).join('\n')}
+    ? `<a class="realm-tab realm-tab--active" data-realm-id="${escapeHtml(item.id)}" href="?from=${escapeHtml(item.id)}" aria-current="page" data-open-label="${escapeHtml(SCAN_PAGE.tapFeedback && SCAN_PAGE.tapFeedback.label || '')}">${escapeHtml(item.label)}</a>`
+    : `<a class="realm-tab" data-realm-id="${escapeHtml(item.id)}" href="?from=${escapeHtml(item.id)}" data-open-label="${escapeHtml(SCAN_PAGE.tapFeedback && SCAN_PAGE.tapFeedback.label || '')}">${escapeHtml(item.label)}</a>`)).join('\n')}
 </nav>`;
 
 /**
@@ -1155,7 +1156,7 @@ const acceptPendingBlockHtml = (config, page = {}) => {
     ].filter(Boolean).join(t.acceptPendingMetaSeparator || ' · ');
     // ⭐⭐ 2026-10-12 21:11（她真机）：这一行原来是"浅灰信息条"的样子 ⇒ 她**没看出来能点**（去点了下面的空输入）。
     //    ⇒ 描边 + 右侧一个「›」（`batch-row__cta`，样式只走 tokens）——"能点"要在**一眼**里看得出来。
-    return `<li><a class="btn batch-row" data-batch="${escapeHtml(batchNo)}" href="${escapeHtml(href)}">${escapeHtml(batchNo)}${meta ? `<span class="batch-row__meta">${escapeHtml(meta)}</span>` : ''}<span class="batch-row__cta" aria-hidden="true">›</span></a></li>`;
+    return `<li><a class="btn batch-row" data-batch="${escapeHtml(batchNo)}" href="${escapeHtml(href)}" data-open-label="${escapeHtml(SCAN_PAGE.tapFeedback && SCAN_PAGE.tapFeedback.label || '')}">${escapeHtml(batchNo)}${meta ? `<span class="batch-row__meta">${escapeHtml(meta)}</span>` : ''}<span class="batch-row__cta" aria-hidden="true">›</span></a></li>`;
   }).join('');
   // ⭐ 空着点【进入验收】⇒ 一句人话（就在那颗按钮上方），别让她以为卡住。
   const emptySubmitHint = page?.emptySubmitHint

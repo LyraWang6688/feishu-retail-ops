@@ -405,10 +405,98 @@ test('AC-B7 每次自愿 abort 都要点明「谁要求的」（下次一眼定�
     const requested = h.logs.find((entry) => entry[1] === 'print_helper.sse.reconnect_requested');
     assert.ok(requested, '要有 print_helper.sse.reconnect_requested');
     assert.equal(requested[2]?.why, 'wake', '要写清是"唤醒"要求的');
-    const disconnected = h.logs.find((entry) => entry[1] === 'print_helper.sse.disconnected');
+    // ⚠️ 2026-10-12 v5 改：单次、60 秒内恢复的断开**降级成 info**，事件名变成
+    //    `print_helper.sse.disconnected_briefly`（原因见文件末尾 v5 说明）。
+    //    这一条的**意图没变**：不论记 info 还是 warn，**都要点明"谁断的"** ✓
+    const disconnected = h.logs.find((entry) => entry[1] === 'print_helper.sse.disconnected_briefly'
+      || entry[1] === 'print_helper.sse.disconnected');
     assert.equal(disconnected?.[2]?.aborted_by, 'wake', '断开那条日志也要带上一句"谁断的"');
+    assert.equal(disconnected?.[2]?.reason_kind, 'wake', 'v5：还要有可读的 reason_kind');
   } finally {
     await h.instance.stop();
     h.cleanup();
   }
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 【2026-10-12 v5】她问"那两条 warn 是不是小助手的问题" ⇒ 真相是 **Lead 发版重启**（差 1 秒）✗
+//   ⇒ 只**降噪**：单次、60 秒内恢复 ⇒ **info**；连续 ≥3 次 或 ≥60 秒 ⇒ 才 **warn** ✓
+//   ⚠️ 重连/退避/单飞/唤醒逻辑**一律没动**（既有用例全绿 = 回归 ✓）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-V5-1 ⭐⭐ 分级：单次且 60 秒内恢复 ⇒ 只记 info（**不许 warn**）；连续 ≥3 次或 ≥60 秒 ⇒ warn', () => {
+  const h = require('../../print-helper/helper.js');
+  // ① 单次、刚断 1 秒 ⇒ 算"短暂"
+  assert.equal(h.isBriefDisconnect({ failures: 1, disconnectedMs: 1000 }), true);
+  assert.equal(h.isBriefDisconnect({ failures: 2, disconnectedMs: 59_000 }), true, '两次、59 秒内仍算短暂');
+  // ② 连上 3 次都失败 ⇒ 不再是"短暂"（该报 warn）
+  assert.equal(h.isBriefDisconnect({ failures: 3, disconnectedMs: 1000 }), false);
+  // ③ 断了 60 秒以上 ⇒ 也不是"短暂"
+  assert.equal(h.isBriefDisconnect({ failures: 1, disconnectedMs: 60_000 }), false);
+});
+
+test('AC-V5-2 ⭐⭐ 分类：四类各一条 + 判不出来 = unknown（**不许编**）', () => {
+  const h = require('../../print-helper/helper.js');
+  assert.equal(h.classifyStreamClose({ streamKind: 'server_closed' }), 'server_closed', '服务端把流正常收尾');
+  assert.equal(h.classifyStreamClose({ error: new Error('fetch failed') }), 'network', '网络类');
+  assert.equal(h.classifyStreamClose({ error: new Error('terminated') }), 'network');
+  assert.equal(h.classifyStreamClose({ aborted: true, abortedBy: 'manual' }), 'manual', '我们自己要求重连');
+  assert.equal(h.classifyStreamClose({ aborted: true, abortedBy: 'wake' }), 'wake', '唤醒');
+  assert.equal(h.classifyStreamClose({ aborted: true, abortedBy: 'stop' }), 'stop');
+  assert.equal(h.classifyStreamClose({ error: new Error('莫名其妙的错') }), 'unknown', '判不出来就 unknown');
+  assert.equal(h.classifyStreamClose({}), 'unknown', '什么都没给 ⇒ unknown');
+});
+
+test('AC-V5-3 ⭐⭐ 真跑：单次断开 ⇒ 只有 info（disconnected_briefly + reconnected_quickly），**没有 warn**', async () => {
+  const server = fakeStreamServer();
+  const h = makeHelper({ fetch: server.fetchImpl });
+  const waitUntil = async (fn, tries = 60) => {
+    for (let i = 0; i < tries; i += 1) {
+      if (fn()) return true;
+      // eslint-disable-next-line no-await-in-loop
+      await tick(20);
+    }
+    return fn();
+  };
+  await h.instance.start();
+  // ⚠️ harness 的 helper **不自动连**（注释里写明）⇒ 用例自己发起
+  void h.instance.connectStream();
+  await waitUntil(() => server.state.controllers.length >= 1);
+  // 服务端**正常收尾**这条流（模拟"部署重启把连接关了"）⇒ 客户端应立刻重连
+  server.state.controllers[0].close();
+  await waitUntil(() => h.logs.filter((x) => x[1] === 'print_helper.sse.connected').length >= 2);
+  const brief = h.logs.find((entry) => entry[1] === 'print_helper.sse.disconnected_briefly');
+  assert.ok(brief, '要记一条 info：disconnected_briefly');
+  assert.equal(brief[0], 'info', '单次断开必须是 info（不是 warn）');
+  assert.equal(brief[2].reason_kind, 'server_closed', 'reason_kind 要标成 server_closed');
+  assert.equal(h.logs.filter((entry) => entry[0] === 'warn' && entry[1] === 'print_helper.sse.disconnected').length, 0,
+    '⭐ 单次断开**不许**再报 warn');
+  const quick = h.logs.find((entry) => entry[1] === 'print_helper.sse.reconnected_quickly');
+  assert.ok(quick, '重连成功要记 reconnected_quickly');
+  assert.equal(quick[0], 'info');
+  await h.instance.stop();
+});
+
+test('AC-V5-4 ⭐ 状态页那一行：没断过 / 已恢复 / 还没恢复 三种都对（走常量，短人话）', async () => {
+  const h = require('../../print-helper/helper.js');
+  const none = h.describeLastDisconnect(null);
+  assert.match(none, /最近一次：/);
+  const recovered = h.describeLastDisconnect({ at: Date.now() - 60_000, recoveredMs: 1000, reason_kind: 'server_closed' });
+  assert.match(recovered, /断开 → 1 秒后已恢复/);
+  assert.match(recovered, /服务重启会这样，正常/, '服务端关的要带一句"正常"，让她一眼放心');
+  const pending = h.describeLastDisconnect({ at: Date.now() - 180_000, gapMs: 180_000, reason_kind: 'network' });
+  assert.match(pending, /还没恢复/);
+  assert.ok(!/请|应该|必须/.test(recovered + pending), '别写说明书腔');
+  // 页面里真的渲染出来
+  const server = fakeStreamServer();
+  const inst = makeHelper({ fetch: server.fetchImpl });
+  inst.instance.state.lastDisconnect = { at: Date.now() - 60_000, recoveredMs: 1000, reason_kind: 'server_closed' };
+  const html = await inst.instance.localPageHtml();
+  assert.match(html, /最近一次断开/);
+  assert.match(html, /已恢复/);
+  inst.instance.state.lastDisconnect = null;
+  const html2 = await inst.instance.localPageHtml();
+  assert.match(html2, /没断过/);
+  await inst.instance.stop();
 });

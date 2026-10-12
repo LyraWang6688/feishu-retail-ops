@@ -1,0 +1,84 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "id": "fld6TQol7Q",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      },
+      {
+        "aggregate": "sum",
+        "from": "核销管理",
+        "id": "fldxY0GPL9",
+        "name": "核对金额",
+        "select": "预计收入",
+        "type": "lookup",
+        "where": {
+          "conditions": [
+            [
+              "核销日",
+              "==",
+              {
+                "field": "核销日",
+                "type": "field_ref"
+              }
+            ]
+          ],
+          "logic": "and"
+        }
+      },
+      {
+        "default_value": {
+          "$slot": "record_created_time"
+        },
+        "id": "fld0Z3jTIa",
+        "name": "同步日",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "datetime"
+      },
+      {
+        "default_value": null,
+        "id": "fldJ4spGo4",
+        "name": "结算日",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "datetime"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldbUP9Ra8",
+        "link_table": "tblDCTNj6fO2sW9R",
+        "name": "核销日",
+        "type": "link"
+      },
+      {
+        "default_value": null,
+        "id": "fldFLlRaCs",
+        "name": "结算金额",
+        "style": {
+          "currency_code": "CNY",
+          "precision": 2,
+          "type": "currency"
+        },
+        "type": "number"
+      },
+      {
+        "id": "fldcCemi7f",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      }
+    ],
+    "total": 7
+  }
+}

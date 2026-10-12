@@ -1,0 +1,93 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "default_value": null,
+        "id": "fld8nrs29g",
+        "name": "本次修复",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "default_value": null,
+        "id": "fldvUmURKr",
+        "multiple": false,
+        "name": "状态",
+        "options": [
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "开发中"
+          },
+          {
+            "hue": "Orange",
+            "lightness": "Lighter",
+            "name": "待部署"
+          },
+          {
+            "hue": "Wathet",
+            "lightness": "Lighter",
+            "name": "试运行"
+          },
+          {
+            "hue": "Yellow",
+            "lightness": "Lighter",
+            "name": "已上线"
+          },
+          {
+            "hue": "Turquoise",
+            "lightness": "Lighter",
+            "name": "已冻结"
+          },
+          {
+            "hue": "Red",
+            "lightness": "Lighter",
+            "name": "已退役"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "default_value": null,
+        "id": "fld0h6wcei",
+        "name": "服务器版本标识",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "default_value": null,
+        "id": "flda4iKTvV",
+        "name": "版本号",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "default_value": null,
+        "id": "fld34XYdw4",
+        "name": "发布日期",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "datetime"
+      },
+      {
+        "default_value": null,
+        "id": "fld1jGk0Wb",
+        "name": "本次新增",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      }
+    ],
+    "total": 6
+  }
+}

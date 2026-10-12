@@ -1,0 +1,136 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "bidirectional": false,
+        "id": "flduUyRXuM",
+        "link_table": "tbl9z4Oi8Vc57Kin",
+        "name": "编号",
+        "type": "link"
+      },
+      {
+        "default_value": 1,
+        "id": "fldZ3WkW9x",
+        "name": "数量",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "default_value": null,
+        "id": "fldqo0JQ7N",
+        "multiple": false,
+        "name": "到货状态",
+        "options": [
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "未到货"
+          },
+          {
+            "hue": "Orange",
+            "lightness": "Lighter",
+            "name": "部分到货"
+          },
+          {
+            "hue": "Wathet",
+            "lightness": "Lighter",
+            "name": "全部到货"
+          },
+          {
+            "hue": "Yellow",
+            "lightness": "Lighter",
+            "name": "超额到货"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "default_value": null,
+        "id": "fldGDWTwdP",
+        "name": "幂等键",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fld7ylS8UA",
+        "name": "明细ID",
+        "style": {
+          "rules": [
+            {
+              "length": 3,
+              "type": "incremental_number"
+            }
+          ]
+        },
+        "type": "auto_number"
+      },
+      {
+        "id": "fldEWnE9FX",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      },
+      {
+        "id": "fldIqMnklP",
+        "name": "采购申请单",
+        "style": {
+          "type": "plain"
+        },
+        "type": "attachment"
+      },
+      {
+        "bidirectional": false,
+        "id": "fld7GHgkKU",
+        "link_table": "tblrHyfMNiPLQkv9",
+        "name": "尺码",
+        "type": "link"
+      },
+      {
+        "id": "fldQ1tr3oZ",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      },
+      {
+        "expression": "[编号].[供应商].[无效引用]",
+        "id": "fld7RO5tWx",
+        "name": "供应商",
+        "type": "formula"
+      },
+      {
+        "expression": "[报货批次号].[报货批次号]\u0026[明细ID]",
+        "id": "fldQ3wzrg7",
+        "name": "采购申请ID",
+        "type": "formula"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldiRQdFB4",
+        "link_table": "tblwezby9wRea9qi",
+        "name": "报货批次号",
+        "type": "link"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldClAx5xd",
+        "link_table": "tblbTvUT4AFsCK4K",
+        "name": "采购行为",
+        "type": "link"
+      }
+    ],
+    "total": 13
+  }
+}

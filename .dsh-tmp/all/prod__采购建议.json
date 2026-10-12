@@ -1,0 +1,218 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "bidirectional": false,
+        "id": "fldBVgvMDG",
+        "link_table": "tblFfXkLct2ZIGGq",
+        "name": "供应商",
+        "type": "link"
+      },
+      {
+        "id": "fldUyDlNfx",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      },
+      {
+        "default_value": null,
+        "id": "fldr11sInf",
+        "name": "实际采纳数量",
+        "style": {
+          "percentage": false,
+          "precision": 2,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "default_value": null,
+        "id": "fldaaW0u3l",
+        "name": "在途数量",
+        "style": {
+          "percentage": false,
+          "precision": 2,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "default_value": null,
+        "id": "fldLgCeg2n",
+        "name": "预测批次ID",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldw5TwT0D",
+        "link_table": "tbl9z4Oi8Vc57Kin",
+        "name": "编号",
+        "type": "link"
+      },
+      {
+        "id": "fldqqHP4WX",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldgmqGtev",
+        "link_table": "tblo0ffzFt7vyQw2",
+        "name": "关联采购单号",
+        "type": "link"
+      },
+      {
+        "default_value": null,
+        "id": "fld92WWmoR",
+        "name": "当前库存",
+        "style": {
+          "percentage": false,
+          "precision": 2,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "default_value": null,
+        "id": "fldBHqmtCu",
+        "name": "建议采购数量",
+        "style": {
+          "percentage": false,
+          "precision": 2,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "default_value": null,
+        "id": "fld5cedBjg",
+        "name": "尺码",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "default_value": null,
+        "id": "fldgggrR7x",
+        "name": "近30天销量",
+        "style": {
+          "percentage": false,
+          "precision": 2,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "default_value": null,
+        "id": "fldRt2QtV2",
+        "multiple": false,
+        "name": "处理人",
+        "type": "user"
+      },
+      {
+        "default_value": null,
+        "id": "fldcCxrEvU",
+        "name": "建议原因",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "default_value": null,
+        "id": "fldix1U98f",
+        "name": "安全库存",
+        "style": {
+          "percentage": false,
+          "precision": 2,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "default_value": null,
+        "id": "fldfIFPUpf",
+        "name": "生成时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "datetime"
+      },
+      {
+        "default_value": null,
+        "id": "fldBrTuym4",
+        "multiple": false,
+        "name": "处理状态",
+        "options": [
+          {
+            "hue": "Purple",
+            "lightness": "Lighter",
+            "name": "待处理"
+          },
+          {
+            "hue": "Turquoise",
+            "lightness": "Lighter",
+            "name": "已采纳"
+          },
+          {
+            "hue": "Purple",
+            "lightness": "Lighter",
+            "name": "已忽略"
+          },
+          {
+            "hue": "Red",
+            "lightness": "Lighter",
+            "name": "已下单"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "id": "fldNQBQeEm",
+        "name": "建议编号",
+        "style": {
+          "rules": [
+            {
+              "text": "CGJY-",
+              "type": "text"
+            },
+            {
+              "date_format": "yyyyMMdd",
+              "type": "created_time"
+            },
+            {
+              "text": "-",
+              "type": "text"
+            },
+            {
+              "length": 4,
+              "type": "incremental_number"
+            }
+          ]
+        },
+        "type": "auto_number"
+      }
+    ],
+    "total": 18
+  }
+}
