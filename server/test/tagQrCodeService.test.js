@@ -23,7 +23,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { TAG_QR_CODE } = require('../src/config/tagQrCode');
+const { TAG_QR_CODE, resolveTagQrRecheckConfig } = require('../src/config/tagQrCode');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const {
   createTagQrCodeService,
@@ -180,9 +180,15 @@ test('① 走完一条记录：上传的临时文件里就是那张 PNG，二维
 
 // ── ② 幂等：已经有值就跳过 ────────────────────────────────────────────────
 
-test('② 幂等：这一列已经有值 → 跳过（不上传、不写库）', async () => {
+test('② 幂等：这一列**已经有值且与当前编号一致** → 跳过（不上传、不写库）', async () => {
+  // ⚠️ 2026-10-12 改断言（**"真的同步过就不重复写"这条本意没变**）：
+  //   改前：fixture 的附件名是随便写的 `x.png`，只要"有值"就断言跳过。
+  //   改后：判据是"**附件名/反解出的编号 == 当前编号**才叫已同步"（真机 832-372-6H 那种旧名
+  //         必须重写）⇒ fixture 换成**规范名**，才是在验"幂等"这件事。
   const gateway = fakeGateway({
-    records: { rec1: recordWith({ number: NUMBER_SAMPLE, tagQrCode: [{ file_token: 'old_token', name: 'x.png' }] }) },
+    records: {
+      rec1: recordWith({ number: NUMBER_SAMPLE, tagQrCode: [{ file_token: 'old_token', name: buildFileName(NUMBER_SAMPLE) }] }),
+    },
   });
   const service = serviceFor(gateway);
 
@@ -195,6 +201,12 @@ test('② 幂等：这一列已经有值 → 跳过（不上传、不写库）',
   assert.deepEqual(gateway.calls.uploads, [], '跳过 = 连素材都不上传');
   assert.deepEqual(gateway.calls.update, [], '跳过 = 不写库');
   assert.ok(eventsOf(lines).includes('product.tag_qr.skipped_existing'), '要留下"跳过了、为什么"的日志');
+  // ⭐ 顺带钉住：随便一个名字（旧码）**不再**算"已同步"
+  const staleGateway = fakeGateway({
+    records: { rec2: recordWith({ number: NUMBER_SAMPLE, tagQrCode: [{ file_token: 'x', name: 'x.png' }] }) },
+  });
+  const staleResult = await serviceFor(staleGateway).syncRecord('rec2', { reason: 'record_added' });
+  assert.equal(staleResult.status, 'written', '名字与当前编号对不上 ⇒ 那是旧码，必须重写');
 });
 
 test('② 显式覆盖（编号变更）：先记 overwriting 日志，再写', async () => {
@@ -997,4 +1009,142 @@ test('AC-QR-STALE-5 ⭐ 公式列读不出（事件里只有富文本数组 / �
     assert.equal(result.results[0].status, 'written', `${label}：判不了 ⇒ 必须落到第②层，且按当前编号判出旧码`);
     assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-3357_黑色_B.png', `${label}：按当前编号出新名`);
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 【2026-10-12 真机第二轮】她 12:13 改货号 `832-372-6` ⇒ 二维码没更新
+//   ① 写入路径（脚本 --write **不带** --overwrite / syncRecord 不带 numberChanged）
+//      走的还是"已经有值就跳过" ⇒ `skipped_existing` ✗
+//   ② 根因：**公式列延迟** —— 编辑那一刻记录里的「编号」还是旧值 `832-372-6H`，
+//      事件**如实**判成"没变"，而那次之后再没有第二次事件 ⇒ 没人复核 ⇒ 旧码一直挂着
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-QR-STALE-6 ⭐⭐ 写入路径也必须按编号判过期：旧名 `…-6H…` + 期望 `…-6…` ⇒ **必须 written**', async () => {
+  // 真机逐字形状（她那条 rec28e1ut0rRrC）：
+  //   编号=832-372-6|棕色|A ／ 附件名=tag-qr-832-372-6H_棕色_A.png ／ 应有名=tag-qr-832-372-6_棕色_A.png
+  // ⚠️ 这一档**不带 numberChanged**（= 回填脚本 `--write` 不带 `--overwrite` 传的就是 `undefined`）。
+  const gateway = fakeGateway({
+    records: {
+      rec28e1ut0rRrC: recordWith({
+        number: '832-372-6|棕色|A',
+        tagQrCode: [{ file_token: 'oldH', name: 'tag-qr-832-372-6H_棕色_A.png' }],
+      }),
+    },
+  });
+  const service = serviceFor(gateway);
+  const lines = await captureLogs(async () => {
+    const result = await service.syncRecord('rec28e1ut0rRrC', { reason: 'backfill' });
+    assert.equal(result.status, 'written',
+      `旧码必须被写回（实际 ${JSON.stringify(result)}）—— 改前这里记的是 skipped_existing ✗`);
+    assert.equal(result.reason, 'number_changed');
+  });
+  assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-832-372-6_棕色_A.png');
+  assert.equal(gateway.calls.update.length, 1, '要覆盖写回');
+  // ⭐ 口径统一：日志里的 `stale_by_file_name` 必须与干跑"待更新"一致（都判过期）
+  const overwriting = lines.map((line) => { try { return JSON.parse(line); } catch { return null; } })
+    .find((entry) => entry?.event === 'product.tag_qr.overwriting');
+  assert.ok(overwriting, '覆盖前先记 overwriting');
+  assert.equal(overwriting.stale_by_file_name, true, '832-372-6H ≠ 832-372-6 ⇒ 必须 true（别和干跑打架）');
+  assert.deepEqual(overwriting.existing_file_names, ['tag-qr-832-372-6H_棕色_A.png']);
+  assert.equal(overwriting.expected_file_name, 'tag-qr-832-372-6_棕色_A.png');
+});
+
+test('AC-QR-STALE-6b ⭐ 真的已同步时，写入路径仍然跳过（幂等不能被修坏）', async () => {
+  const current = '832-372-6|棕色|A';
+  const gateway = fakeGateway({
+    records: {
+      r_ok: recordWith({ number: current, tagQrCode: [{ file_token: 'ok', name: buildFileName(current) }] }),
+    },
+  });
+  const service = serviceFor(gateway);
+  const result = await service.syncRecord('r_ok', { reason: 'backfill' });
+  assert.deepEqual([result.status, result.reason], ['skipped', 'already_present']);
+  assert.deepEqual(gateway.calls.uploads, [], '已同步的不许重传');
+});
+
+test('AC-QR-RECHECK-1 ⭐⭐ 公式列延迟：事件判"没变" ⇒ **延迟复核**（假时钟）后必须补写', async () => {
+  // 真机现场：编辑那一刻记录里的「编号」还是**旧值**（`…6H`）⇒ 事件如实判"没变"、附件"看着是对的就跳过"。
+  const OLD = '832-372-6H|棕色|A';
+  const NEW = '832-372-6|棕色|A';
+  const records = {
+    rec1: recordWith({ number: OLD, tagQrCode: [{ file_token: 'old', name: 'tag-qr-832-372-6H_棕色_A.png' }] }),
+  };
+  const gateway = fakeGateway({ records });
+  const timers = [];
+  const service = serviceFor(gateway, {
+    setTimer: (fn, ms) => { const t = { fn, ms, cleared: false }; timers.push(t); return t; },
+    clearTimer: (t) => { if (t) t.cleared = true; },
+    config: { ...TAG_QR_CODE, recheck: { enabled: true, delayMs: 60000 } },
+  });
+
+  const lines = await captureLogs(async () => {
+    const result = await service.handleTableChanges([{
+      record_id: 'rec1',
+      action: 'record_edited',
+      // 事件里前后值**相同**（都是编辑那一刻的旧编号）
+      before_value: [{ field_id: NUMBER_FIELD_ID, field_value: OLD }],
+      after_value: [{ field_id: NUMBER_FIELD_ID, field_value: OLD }],
+    }]);
+    assert.equal(result.results[0].reason, 'number_unchanged', '那一刻它**没判错**（编号确实还没算出来）');
+  });
+  assert.equal(service.recheck.pendingCount(), 1, '必须排一次延迟复核');
+  assert.equal(timers.length, 1);
+  assert.ok(timers[0].ms >= 30000 && timers[0].ms <= 90000, `延迟应在 30~90 秒（实际 ${timers[0].ms}）`);
+  assert.ok(eventsOf(lines).includes('product.tag_qr.recheck.scheduled'));
+
+  // 过一会儿：飞书把公式列算完了（记录里的编号变成新值）—— 这时复核应该发现过期并补写
+  records.rec1.fields[F.number] = NEW;
+  await timers[0].fn();
+  await new Promise((resolve) => { setTimeout(resolve, 20); });
+
+  assert.equal(gateway.calls.uploads.length, 1, '延迟复核必须把旧码补写掉');
+  assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-832-372-6_棕色_A.png');
+  assert.equal(service.recheck.pendingCount(), 0, '跑完就摘掉');
+  assert.equal(gateway.calls.update.length, 1, '复核要真的写回（假网关只记调用、不改记录内容）');
+  assert.equal(gateway.calls.update[0][1], 'rec1');
+});
+
+test('AC-QR-RECHECK-2 ⭐ 复核：同一条只排一次 / 已同步不重复写 / 失败只记日志（不抛）', async () => {
+  const records = {};
+  const gateway = fakeGateway({ records });
+  const timers = [];
+  const service = serviceFor(gateway, {
+    setTimer: (fn, ms) => { const t = { fn, ms }; timers.push(t); return t; },
+    clearTimer: () => {},
+    config: { ...TAG_QR_CODE, recheck: { enabled: true, delayMs: 60000 } },
+  });
+
+  // ① 关掉：不排
+  const off = serviceFor(gateway, { config: { ...TAG_QR_CODE, recheck: { enabled: false, delayMs: 60000 } } });
+  assert.deepEqual(off.recheck.schedule('r1'), { scheduled: false, reason: 'disabled' });
+
+  // ② 同一条记录重复排 ⇒ 只排一次
+  assert.equal(service.recheck.schedule('r1').scheduled, true);
+  const again = service.recheck.schedule('r1');
+  assert.equal(again.scheduled, false);
+  assert.equal(again.reason, 'already_scheduled');
+  assert.equal(service.recheck.pendingCount(), 1);
+  assert.equal(timers.length, 1, '只应有一个定时器（排多了会重复读表）');
+
+  // ③ 复核时记录已被别人修好（附件名与编号一致）⇒ 只记 done、不写
+  records.r1 = recordWith({ number: '832-372-6|棕色|A', tagQrCode: [{ file_token: 'x', name: 'tag-qr-832-372-6_棕色_A.png' }] });
+  const done = await service.recheck.runNow('r1');
+  assert.equal(done.status, 'skipped');
+  assert.deepEqual(gateway.calls.uploads, [], '已同步 ⇒ 不重复写');
+  assert.equal(service.recheck.pendingCount(), 0);
+
+  // ④ 复核失败（读表炸了）⇒ 只记日志、**不抛**
+  gateway.get = async () => { throw new Error('飞书 500'); };
+  await assert.doesNotReject(() => service.recheck.runNow('r2'), '复核失败绝不抛给事件路径');
+});
+
+test('AC-QR-RECHECK-3 ⭐ 配置先行：延迟复核可配（显式布尔 + 数值边界）', () => {
+  const { resolveTagQrRecheckConfig, RECHECK_DEFAULTS } = require('../src/config/tagQrCode');
+  assert.deepEqual(resolveTagQrRecheckConfig({}), { enabled: true, delayMs: 60000 });
+  assert.equal(resolveTagQrRecheckConfig({ TAG_QR_RECHECK_ENABLED: '' }).enabled, false, '空串 = 关');
+  assert.equal(resolveTagQrRecheckConfig({ TAG_QR_RECHECK_DELAY_MS: '30000' }).delayMs, 30000);
+  assert.throws(() => resolveTagQrRecheckConfig({ TAG_QR_RECHECK_DELAY_MS: '100' }),
+    '延迟小于 5 秒 ⇒ 当场抛（公式列都还没算完，等于白核）');
+  assert.ok(RECHECK_DEFAULTS.delayMs >= 30000 && RECHECK_DEFAULTS.delayMs <= 90000,
+    '默认延迟落在实测合适的 30~90 秒');
 });

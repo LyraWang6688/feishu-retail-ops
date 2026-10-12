@@ -21,6 +21,7 @@
     "mode": "sumatra",
     "sumatraExe": "C:\\print-helper\\SumatraPDF.exe",
     "args": ["-print-to-default", "-silent", "{file}"],
+    "printSettings": ["disable-auto-rotation"],
     "command": "",
     "printTimeoutMs": 60000
   }

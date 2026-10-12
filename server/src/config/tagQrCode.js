@@ -184,10 +184,34 @@ const SWEEP = Object.freeze({
  *   · `limit`       —— 单次最多处理多少条（0 = 不限，与 `SWEEP.limit` 同义）；
  *   · `dryRun`      —— 干跑（上线首日建议先看一眼影响面）。
  */
+/**
+ * ⭐⭐ **延迟复核**（2026-10-12 真机根因）：事件判成"编号没变 / 判不了"时，过一会儿**再核一次**。
+ *
+ * 为什么必须有它：真机 12:13 那次改货号，事件到达时记录里的「编号」（**公式列**）还是旧值 ⇒
+ * 事件路径**如实**判成"没变" ⇒ 而那次编辑之后**再没有第二次事件** ⇒ 没人复核 ⇒ 旧码一直挂着。
+ * 复核会重新读记录（这时公式列已经算好了）⇒ 按编号判出过期 ⇒ 补写。
+ *
+ * `enabled` —— 显式布尔（`TAG_QR_RECHECK_ENABLED`；没设=开、空串=关）。
+ * `delayMs` —— 延迟多久复核（`TAG_QR_RECHECK_DELAY_MS`，默认 60 秒；
+ *              ⚠️ 太短可能公式列还没算完，太长她等得久；30~90 秒是实测合适的区间）。
+ * 🔴 兜底不止这一层：每小时一次的巡检（`SWEEP_SCHEDULE_DEFAULTS.minIntervalMs`）还会再兜一次。
+ */
+const RECHECK_DEFAULTS = Object.freeze({ enabled: true, delayMs: 60 * 1000 });
+
+const resolveTagQrRecheckConfig = (env = process.env) => Object.freeze({
+  enabled: readFlag(env, 'TAG_QR_RECHECK_ENABLED', RECHECK_DEFAULTS.enabled),
+  delayMs: readInt(env, 'TAG_QR_RECHECK_DELAY_MS', RECHECK_DEFAULTS.delayMs, { min: 5000, max: 30 * 60 * 1000 }),
+});
+
 const SWEEP_SCHEDULE_DEFAULTS = Object.freeze({
   enabled: true,
-  hours: Object.freeze([4]),
+  // ⚠️ 2026-10-12 改：从"每天凌晨 4 点一次"改成**每小时一次**（562 条只读、成本极低）。
+  //    `hours` 只表示"从几点起允许跑"（0 = 全天）；**真正的频率**看下面的 `minIntervalMs`。
+  hours: Object.freeze([0]),
+  // 调度器 tick 间隔（10 分钟调一次 run，由 runner 按 minIntervalMs 决定要不要真跑）
   intervalMs: 10 * 60 * 1000,
+  // ⭐ 两次巡检之间的**最短间隔**（默认 1 小时 ⇒ 每小时自愈一次；设成 24h 就退回"每天一次"）
+  minIntervalMs: 60 * 60 * 1000,
   limit: 0,
   dryRun: false,
 });
@@ -209,6 +233,8 @@ const resolveTagQrSweepSchedule = (env = process.env) => {
     hours,
     intervalMs: readInt(env, 'TAG_QR_SWEEP_INTERVAL_MS', SWEEP_SCHEDULE_DEFAULTS.intervalMs,
       { min: 1000, max: 24 * 60 * 60 * 1000 }),
+    minIntervalMs: readInt(env, 'TAG_QR_SWEEP_MIN_INTERVAL_MS', SWEEP_SCHEDULE_DEFAULTS.minIntervalMs,
+      { min: 60 * 1000, max: 7 * 24 * 60 * 60 * 1000 }),
     limit: readInt(env, 'TAG_QR_SWEEP_LIMIT', SWEEP_SCHEDULE_DEFAULTS.limit, { min: 0, max: 100000 }),
     dryRun: readFlag(env, 'TAG_QR_SWEEP_DRY_RUN', SWEEP_SCHEDULE_DEFAULTS.dryRun),
   });
@@ -224,6 +250,8 @@ const TAG_QR_CODE = Object.freeze({
   events: EVENTS,
   batch: BATCH,
   sweep: SWEEP,
+  // ⭐ 延迟复核（事件判"没变/判不了"时兜一次；见 `utils/tagQrRecheckQueue.js`）
+  recheck: resolveTagQrRecheckConfig(),
   // 物理列名只有一个去处：`config/v1BitableSchema.js` 的 `product.fields`。
   // 这里只放**语义键**（网关 update 收的就是它），避免同一个列名有两份真源。
   fields: Object.freeze({
@@ -243,5 +271,7 @@ module.exports = {
   BATCH,
   SWEEP,
   SWEEP_SCHEDULE_DEFAULTS,
+  RECHECK_DEFAULTS,
+  resolveTagQrRecheckConfig,
   resolveTagQrSweepSchedule,
 };

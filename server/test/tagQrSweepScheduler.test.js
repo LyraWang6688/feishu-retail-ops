@@ -5,8 +5,8 @@
  * 也有单测，但**全仓没有任何调用方** ⇒ 从来没在线上跑过 —— 事件路径判漏的那批旧码
  * （她 5 条记录附件名里还带 `QPL` 旧前缀）因此一直没人修。
  *
- *   AC-QR-SWEEP-1 ⭐⭐ **同一个上海日只跑一次**（调度器过了整点每个 tick 都会调 run）；
- *   AC-QR-SWEEP-2 ⭐⭐ 按**上海日**去重，不是 UTC 日（否则她下午会被当成"新的一天"）；
+ *   AC-QR-SWEEP-1 ⭐⭐ 按**最短间隔**去重（默认 1 小时一次；调度器每 10 分钟就会调 run）；
+ *   AC-QR-SWEEP-2 ⭐⭐ 默认**每小时**（2026-10-12 从"每天一次"改的）；想退回每天一次把间隔设 24h；
  *   AC-QR-SWEEP-3 ⭐ dryRun / limit 透传；**失败要抛**且当天允许重试（一次抖动不白等 24 小时）；
  *   AC-QR-SWEEP-4 ⭐ 配置先行：开关是显式布尔（空串=关）、时点可配、越界当场抛。
  */
@@ -29,41 +29,40 @@ const fakeService = () => {
 
 const at = (iso) => new Date(iso);
 
-test('AC-QR-SWEEP-1 ⭐⭐ 同一个上海日只跑一次（第二次直接 skipped，不碰 service）', async () => {
+test('AC-QR-SWEEP-1 ⭐⭐ 按**最短间隔**去重（默认 1 小时一次）：不足间隔直接 skipped，不碰 service', async () => {
   const service = fakeService();
-  const runner = createTagQrSweepRunner({ service });
+  const runner = createTagQrSweepRunner({ service, minIntervalMs: 60 * 60 * 1000 });
   const first = await runner.run({ now: at('2026-10-11T20:00:00Z') }); // 上海 10-12 04:00
-  const second = await runner.run({ now: at('2026-10-11T22:30:00Z') }); // 上海 10-12 06:30
   assert.equal(first.skipped, false);
   assert.equal(first.rewritten, 1);
-  assert.equal(second.skipped, true, '同一天第二次必须跳过（调度器每 10 分钟就会调一次 run）');
-  assert.equal(second.reason, 'already_ran_today');
-  assert.equal(service.calls.length, 1, 'service 只能被调一次 —— 不然一天扫几十遍全表');
+  // 过了 10 分钟（调度器每 10 分钟就会调一次 run）⇒ 必须跳过
+  const tooSoon = await runner.run({ now: at('2026-10-11T20:10:00Z') });
+  assert.equal(tooSoon.skipped, true, '不足最短间隔必须跳过（否则一天扫几十遍全表）');
+  assert.equal(tooSoon.reason, 'too_soon');
+  assert.ok(tooSoon.next_in_ms > 0 && tooSoon.next_in_ms <= 60 * 60 * 1000);
+  // 过了 70 分钟 ⇒ 要跑（每小时自愈）
+  const hourly = await runner.run({ now: at('2026-10-11T21:10:00Z') });
+  assert.equal(hourly.skipped, false);
+  assert.equal(service.calls.length, 2);
 });
 
-test('AC-QR-SWEEP-2 ⭐⭐ 按**上海日**去重（不是 UTC 日）：UTC 换天了但上海还是同一天 ⇒ 不重复跑', async () => {
-  const service = fakeService();
-  const runner = createTagQrSweepRunner({ service });
-  // 上海 2026-10-12 04:00（UTC 还是 10-11）与 上海 2026-10-12 09:00（UTC 已到 10-12）
-  await runner.run({ now: at('2026-10-11T20:00:00Z') });
-  const sameDay = await runner.run({ now: at('2026-10-12T01:00:00Z') });
-  assert.equal(sameDay.skipped, true, 'UTC 换天不代表上海换天');
-  assert.equal(shanghaiDay(at('2026-10-11T20:00:00Z')), '2026-10-12');
-  assert.equal(shanghaiDay(at('2026-10-12T01:00:00Z')), '2026-10-12');
-  assert.equal(shanghaiDay(at('2026-10-12T17:00:00Z')), '2026-10-13');
-  // 真的到了上海的下一天 ⇒ 要跑
-  const nextDay = await runner.run({ now: at('2026-10-12T20:00:00Z') });
-  assert.equal(nextDay.skipped, false);
-  assert.equal(nextDay.day, '2026-10-13');
-  assert.equal(service.calls.length, 2);
+test('AC-QR-SWEEP-2 ⭐⭐ 默认就是**每小时**（不是每天一次 —— 真机那次漏判最坏要等第二天 ✗）', () => {
+  const d = resolveTagQrSweepSchedule({});
+  assert.equal(d.minIntervalMs, 60 * 60 * 1000, '默认两次巡检最短间隔 = 1 小时');
+  assert.deepEqual(d.hours, [0], 'hours 只表示"从 0 点起允许跑"（全天）');
+  // 想退回"每天一次"：把最短间隔设成 24h（配置项在，值由人给）
+  assert.equal(resolveTagQrSweepSchedule({ TAG_QR_SWEEP_MIN_INTERVAL_MS: String(24 * 60 * 60 * 1000) })
+    .minIntervalMs, 24 * 60 * 60 * 1000);
+  assert.throws(() => resolveTagQrSweepSchedule({ TAG_QR_SWEEP_MIN_INTERVAL_MS: '1000' }),
+    '最短间隔小于 1 分钟 ⇒ 当场抛（不许把它配成高频轮询）');
 });
 
 test('AC-QR-SWEEP-3 ⭐ dryRun / limit 透传；失败**抛出去**且当天允许重试', async () => {
   const service = fakeService();
-  const runner = createTagQrSweepRunner({ service, dryRun: true, limit: 50 });
+  const runner = createTagQrSweepRunner({ service, dryRun: true, limit: 50, minIntervalMs: 24 * 60 * 60 * 1000 });
   await runner.run({ now: at('2026-10-11T20:00:00Z') });
   assert.deepEqual(service.calls[0], { dryRun: true, limit: 50 }, '干跑与上限要原样透传给巡检');
-  assert.equal((await runner.run({ now: at('2026-10-11T21:00:00Z') })).skipped, true);
+  assert.equal((await runner.run({ now: at('2026-10-11T21:00:00Z') })).skipped, true, '不足间隔 ⇒ 跳过');
 
   // 失败：必须抛（调度器据此记 tick_failed），且**当天还能再来一次**
   let fail = true;
@@ -79,14 +78,14 @@ test('AC-QR-SWEEP-3 ⭐ dryRun / limit 透传；失败**抛出去**且当天允�
   await assert.rejects(() => runner2.run({ now: at('2026-10-11T20:00:00Z') }), /飞书上传失败/);
   fail = false;
   const retry = await runner2.run({ now: at('2026-10-11T20:30:00Z') });
-  assert.equal(retry.skipped, false, '失败了要允许当天重试（一次网络抖动不该白等 24 小时）');
+  assert.equal(retry.skipped, false, '失败了要允许立刻重试（节流被清掉，不白等一小时）');
   assert.equal(flaky.calls, 2);
 });
 
 test('AC-QR-SWEEP-4 ⭐ 配置先行：开关是显式布尔（空串=关）、时点可配、越界当场抛', () => {
   const d = resolveTagQrSweepSchedule({});
   assert.equal(d.enabled, true, '默认开（"自愈兜底"这件事不该默认关着）');
-  assert.deepEqual(d.hours, [4], '默认凌晨 4 点（店里没人）');
+  assert.deepEqual(d.hours, [0], '默认从 0 点起都可以跑（真正的频率看 minIntervalMs = 每小时）');
   assert.equal(resolveTagQrSweepSchedule({ TAG_QR_SWEEP_ENABLED: '' }).enabled, false, '空串 = 关掉');
   assert.equal(resolveTagQrSweepSchedule({ TAG_QR_SWEEP_ENABLED: 'false' }).enabled, false);
   assert.deepEqual(resolveTagQrSweepSchedule({ TAG_QR_SWEEP_HOURS: '3,5' }).hours, [3, 5]);

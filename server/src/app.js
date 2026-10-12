@@ -194,8 +194,9 @@ if (require.main === module) {
   // ── 货品信息「标签二维码」的兜底巡检（每天一次，自愈）────────────────────────
   //    · 事件路径只管"改这一下"；这条网**不看事件、只认当前事实**：
   //      全表扫「附件名/编号 ≠ 当前编号」的，重生成（`sweepStaleTagQrCodes`）；
-  //    · ⭐ **同一个上海日只跑一次**（`createTagQrSweepRunner` 去重）——`startShanghaiDailyScheduler`
-  //      过了整点每个 tick 都会调 `run`，不去重会一天扫几十遍全表；
+  //    · ⭐ **按最短间隔去重**（`createTagQrSweepRunner`，默认 **1 小时**一次）——
+  //      `startShanghaiDailyScheduler` 过了起点每个 tick 都会调 `run`，不节流会一天扫几十遍全表；
+  //      2026-10-12 从"每天一次"改成"每小时一次"（真机那次"公式列延迟"的漏判最坏要等到第二天 ✗）；
   //    · 开关/时点/上限/干跑全部走配置（`TAG_QR_SWEEP_*`，见 `config/tagQrCode.js`）。
   const tagQrSweep = resolveTagQrSweepSchedule();
   if (tagQrSweep.enabled) {
@@ -203,12 +204,13 @@ if (require.main === module) {
       service: createTagQrCodeService({ gateway: new V1BitableGateway() }),
       dryRun: tagQrSweep.dryRun,
       limit: tagQrSweep.limit,
+      minIntervalMs: tagQrSweep.minIntervalMs,
     });
     startShanghaiDailyScheduler({
       run: async ({ now }) => {
         const summary = await tagQrSweepRunner.run({ now });
         if (summary.skipped) {
-          logInfo('product.tag_qr.sweep.already_ran_today', { day: summary.day });
+          logInfo('product.tag_qr.sweep.too_soon', { day: summary.day, next_in_ms: summary.next_in_ms });
           return;
         }
         logInfo('product.tag_qr.sweep.done', summary);
