@@ -972,7 +972,7 @@ class PurchaseWebhookService {
         // 只记这条 warn —— 图已经发到群里了。
         logWarn('purchase.batch.document.no_record', {
           task_id: taskId, batch_no: batchNo, file_name: fileName,
-          hint: '这一批在「报货批次」里没有行（建行失败 / 没有批次号）→ 单据图暂时没有落点',
+          hint: '这一批在「采购主表」里没有行（建行失败 / 没有批次号）→ 单据图暂时没有落点',
         });
         return {
           written: false, reason: 'no_batch_record', batch_no: batchNo, file_name: fileName,
@@ -1588,7 +1588,7 @@ class PurchaseWebhookService {
         tableKey: 'purchaseOrderBatch',
         keyField: IDEMPOTENCY_KEY_FIELD,
         keyValue: plan.batch_key,
-        label: '报货批次',
+        label: '采购主表',
         correlation: baseCorrelation,
         // ⭐ 到货状态：**新建记录时显式写「未到货」**（业务负责人 2026-10-07 的原话：
         // 「每创建一条新记录时，默认值是「未到货」」）。取值来自 config/purchaseArrivalStatus
@@ -1923,7 +1923,7 @@ class PurchaseWebhookService {
       correlation,
     });
     if (!result.updated) {
-      throw new Error(`「报货批次」里找不到这一批（${batchNo || batchRecordId}），到货信息没地方落，先不入库`);
+      throw new Error(`这一批在采购单里找不到（${batchNo || batchRecordId}），到货信息没地方落，先不入库`);
     }
     return result;
   }
@@ -1942,7 +1942,7 @@ class PurchaseWebhookService {
    */
   async nextBatchNo() {
     const table = this.gateway.table('purchaseOrderBatch');
-    if (!table.tableId) throw new Error('未配置报货批次表ID：FEISHU_V1_PURCHASE_ORDER_BATCH_TABLE_ID');
+    if (!table.tableId) throw new Error('未配置「采购主表」的表 ID：FEISHU_V1_PURCHASE_ORDER_BATCH_TABLE_ID');
     return this.batchNoGenerator.runExclusive(async () => {
       const generated = await this.batchNoGenerator.next({ source: 'fallback' });
       return generated.batchNo;

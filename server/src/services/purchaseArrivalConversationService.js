@@ -205,7 +205,7 @@ class PurchaseArrivalConversationService {
     } catch (error) {
       logWarn('purchase.arrival.reconcile.batch_arrival_failed', {
         batch_no: wanted, error: error.message,
-        hint: '入库已经成功；只是「报货批次」的到货状态没改成已到货（不影响库存与单据）',
+        hint: '入库已经成功；只是「采购主表」的到货状态没改成已到货（不影响库存与单据）',
       });
       return { updated: false, reason: 'failed', error: error.message };
     }

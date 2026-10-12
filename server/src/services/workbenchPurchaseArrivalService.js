@@ -56,7 +56,7 @@ class WorkbenchPurchaseArrivalService {
     const requestIds = [...new Set((rows || []).map((row) => String(row?.record_id || '').trim()).filter(Boolean))];
     if (!requestIds.length) {
       throw Object.assign(
-        new Error(`没找到报货批次 ${wanted} 的采购申请明细（${WORKBENCH_ARRIVAL_TEXTS.noRequestRows}）`),
+        new Error(`没找到采购单 ${wanted} 的采购明细（${WORKBENCH_ARRIVAL_TEXTS.noRequestRows}）`),
         { statusCode: 400, reason: 'no_request_rows' },
       );
     }
