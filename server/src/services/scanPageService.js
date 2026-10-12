@@ -428,6 +428,98 @@ const createScanPageService = (gateway, options = {}) => {
   };
 
   /**
+   * ⭐⭐ 2026-10-12：**颜色归一**（只做大小写 / 空白 / 尾字「色」）。
+   *
+   * 🔴 **刻意只做这三件事**：二维码是机器码，**绝不做 OCR 相似字符纠正**
+   *    （`o↔0` / `i,l↔1` / `w↔9` 那类"纠正"会把**别的款**凑成"唯一命中"——
+   *     静默进错款比"找不到"更坏）。所以这里**不引用** `V1ReferenceResolver`（它带纠正）。
+   */
+  const normalizeColor = (value) => textValue(value).trim().toLowerCase().replace(/\s+/g, '').replace(/色$/, '');
+  /** 货号归一（大小写 + 空白）：她照着标签手打一遍时大小写不一致也能对上。 */
+  const normalizeItemNo = (value) => textValue(value).trim().toLowerCase();
+
+  /**
+   * ⭐⭐ 2026-10-12：**编号兜底匹配** —— 按「货号」过滤读一次，在内存里按（归一后的）颜色比对。
+   *
+   * 口径（Lead 已批）：**唯一命中才采用**；0 条 / 多条一律**维持"找不到"**（不猜）。
+   * 🔴 只读；🔴 不引 OCR 纠正；🔴 不"新加一次整表读"（过滤读不可用时走的是既有回退）。
+   *
+   * @returns {Promise<{records:Array, itemNo:string, color:string}>}
+   */
+  const readProductsByItemNo = async ({ itemNo, requestId }) => {
+    const itemNoField = fieldName(schema, 'product', 'itemNo');
+    const filter = itemNoField ? equalsFormula(itemNoField, itemNo) : null;
+    if (!filterEnabled || !filter) return { records: [], itemNo };
+    const read = await readFilteredCapped({
+      tableKey: 'product',
+      filter,
+      cap: limits.productRowsPerNumber,
+      fallbackCap: limits.productRecords,
+      requestId,
+    });
+    return { records: read.records || [], itemNo };
+  };
+
+  /** 在"按货号读到的那几条"里按（归一后的）颜色挑 —— 颜色段为空 ⇒ 只按货号（交给唯一性判据）。 */
+  const matchByItemNoAndColor = (records, { itemNo, color }) => {
+    const itemNoField = fieldName(schema, 'product', 'itemNo');
+    const colorField = fieldName(schema, 'product', 'color');
+    const wantedItemNo = normalizeItemNo(itemNo);
+    const wantedColor = normalizeColor(color);
+    if (!itemNoField || !wantedItemNo) return [];
+    return (records || []).filter((record) => {
+      const fields = record?.fields || {};
+      if (normalizeItemNo(fields[itemNoField]) !== wantedItemNo) return false;
+      if (!wantedColor) return true;
+      return !colorField || normalizeColor(fields[colorField]) === wantedColor;
+    });
+  };
+
+  /**
+   * ⭐⭐ **编号兜底匹配的那一步**（`performLookup` 里 `!product` 分支上"追加"的那一段）。
+   *
+   * 🔴 **唯一命中 ⇒ 返回那条货品**；**0 条 / 多条 ⇒ 返回 `null`**（并把 `tried` 带回去，
+   *    让路由能给一句"人话 + 下一步"，而不是原始错误页）。
+   * 🔴 **读表失败也返回 `null`**（兜底这一段**绝不许把页面打红**）。
+   */
+  const resolveByItemNoAndColor = async ({ parsed, requestId }) => {
+    const itemNo = String(parsed?.itemNo || '').trim();
+    const color = String(parsed?.color || '').trim();
+    if (!itemNo) return null;
+    let records = [];
+    try {
+      ({ records } = await readProductsByItemNo({ itemNo, requestId }));
+    } catch (error) {
+      // 🔴 兜底失败 ⇒ 照旧"找不到"（页面上仍有一句人话），**绝不让它变成 500**。
+      logWarn(config.events.numberFallbackFailed, {
+        request_id: requestId, item_no: itemNo, error: error.message,
+      });
+      return { product: null, tried: true, ambiguous: false, item_no: itemNo, color, matched_number: '' };
+    }
+    const matches = matchByItemNoAndColor(records, { itemNo, color });
+    if (matches.length === 1) {
+      const product = matches[0];
+      const numberField = fieldName(schema, 'product', 'number');
+      return {
+        product,
+        tried: true,
+        ambiguous: false,
+        item_no: itemNo,
+        color,
+        matched_number: numberField ? textValue(product?.fields?.[numberField]).trim() : '',
+        candidates: 1,
+      };
+    }
+    if (matches.length > 1) {
+      // 多命中 ⇒ **不猜**（静默进错款比找不到更坏），只记一条可 grep 的 warn。
+      logWarn(config.events.numberFallbackAmbiguous, {
+        request_id: requestId, item_no: itemNo, color, candidates: matches.length,
+      });
+    }
+    return { product: null, tried: true, ambiguous: matches.length > 1, item_no: itemNo, color, candidates: matches.length };
+  };
+
+  /**
    * 「实时库存」：**按条件只读这一款的行**（提速的主要手段 —— 提速前这里是整表读，真机 5~9 秒）。
    *
    * filter = `OR(「编号」关联 = 这一款的编号文本, 「库存键」.contains(「编号|」))`：
@@ -648,6 +740,8 @@ const createScanPageService = (gateway, options = {}) => {
       timing.inventory_ms = 0;
       timing.size_ms = 0;
       timing.whole_table_fallback = false;
+      // ⭐ 2026-10-12：这一趟有没有走**编号兜底匹配**（缺类别那种标签）。
+      timing.number_fallback = false;
       timing.rows = 0;
       timing.total_ms = 0;
     }
@@ -708,9 +802,41 @@ const createScanPageService = (gateway, options = {}) => {
         timing.whole_table_fallback = wholeTableFallback;
       }
     }
+    // ⭐⭐ 2026-10-12：**编号兜底匹配**（追加在"精确匹配没找到"之后；上面那条路径**逐字不动**）。
+    //    她真机那次：二维码里编号 = `MK31-1|咖色|`（缺「类别」）⇒ 查不到 ⇒ 400 原始错误页。
+    let numberFallback = null;
+    // 🔴 **只在精确匹配没找到时**才走兜底（`!product`）—— 正常编号一次都不多查。
+    if (!product && config.number.fallbackMatch?.enabled !== false) {
+      numberFallback = await resolveByItemNoAndColor({ parsed, requestId });
+      if (numberFallback?.product) {
+        product = numberFallback.product;
+        // ⭐ 用**表里那条货品的真实段**补齐缺的那一段（典型 = 类别）—— 后面的"缺码判定"
+        //    才会按**真实类别**去筛尺码，而不是降级成"只显示有货的尺码"。
+        //    ⚠️ 只补**URL 里空着**的那一段，绝不覆盖她扫到的那两段。
+        if (!parsed.categoryCode) parsed.categoryCode = textValue(readField(schema, 'product', product, 'category')).trim();
+        if (!parsed.color) parsed.color = textValue(readField(schema, 'product', product, 'color')).trim();
+        if (!parsed.itemNo) parsed.itemNo = textValue(readField(schema, 'product', product, 'itemNo')).trim();
+        if (timing) timing.number_fallback = true;
+        logInfo(config.events.numberFallback, {
+          request_id: requestId,
+          // `number` = **她扫到的那串**（缺段）；`matched_number` = 表里那条的真实编号。
+          number, matched_number: numberFallback.matched_number,
+          item_no: numberFallback.item_no, color: numberFallback.color,
+        });
+      }
+    }
     if (!product) {
       logInfo(config.events.notFound, { request_id: requestId, number });
-      return { found: false, number, reason: 'unknown' };
+      // ⭐ 兜底**也**没命中（0 条 / 多条 / 读失败）时，把"试过了"这件事带回去 ——
+      //    路由据此换成人话 + 给【再扫一次】的指引（不再是原始错误页）。
+      return {
+        found: false,
+        number,
+        reason: 'unknown',
+        fallback: numberFallback
+          ? { tried: true, ambiguous: numberFallback.ambiguous === true, candidates: numberFallback.candidates || 0, item_no: numberFallback.item_no, color: numberFallback.color }
+          : null,
+      };
     }
 
     const stockKeyField = fieldName(schema, 'liveInventory', 'stockKey');
@@ -847,7 +973,12 @@ const createScanPageService = (gateway, options = {}) => {
     const categoryNameField = config.fieldNamesPendingSchema?.productCategoryName || '';
     const view = {
       found: true,
-      number,
+      // ⭐ 兜底命中 ⇒ 用**表里那条的真实编号**（下游（加入本单 / 提交）拿到的才是对的编号），
+      //    并带上 `number_fallback` 让页面上出那条轻提示。
+      number: numberFallback?.matched_number || number,
+      number_fallback: numberFallback?.product
+        ? { scanned_number: number, matched_number: numberFallback.matched_number || number }
+        : null,
       item_no: productText('itemNo') || parsed.itemNo,
       color: productText('color') || parsed.color,
       category_code: productText('category') || parsed.categoryCode,

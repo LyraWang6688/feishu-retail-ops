@@ -55,6 +55,20 @@ const NUMBER = Object.freeze({
   // 关联单元格（「实时库存.编号」）为空时，用「库存键」公式的前三段兜底认行。
   // 公式 = `货号|颜色|类别|尺码`，前三段就是「编号」+ 一个分隔符。
   stockKeyPrefixFallback: true,
+  // ⭐⭐ 2026-10-12：**编号兜底匹配**（业务负责人真机事故：二维码里编号 = `MK31-1|咖色|`
+  //    —— **缺「类别」段** ⇒ 精确匹配查不到 ⇒ 页面回 400 / 原始错误页）。
+  //    二维码那条已另行修复；**这一条是扫码页侧的兜底**（旧标签、以及任何"编号缺段"的扫码）。
+  //
+  //    口径（Lead 已批，逐条）：
+  //      · **按分隔符拆段**，用（**货号 + 颜色**）再查一次（**类别为空就忽略它**）；
+  //      · **唯一命中才采用**；**0 条 / 多条一律维持"找不到"**（不猜 ✗）；
+  //      · 🔴 **不做任何 OCR 相似字符纠正**（二维码是机器码 —— "静默进错款"比"找不到"更坏）；
+  //      · 🔴 **不整表读**（按「货号」过滤读一次；过滤读不可用时才走既有整表回退，
+  //        与 `readProductsByNumber` 同一套兜底，不是"新加一次整表读"）；
+  //      · 命中时给**一条轻提示**（不写说明书，见 texts.numberFallbackHint）。
+  fallbackMatch: Object.freeze({
+    enabled: true,
+  }),
 });
 
 /**
@@ -117,6 +131,12 @@ const TEXTS = Object.freeze({
   unknownStateNote: '有 {count} 双的「所属状态」不在预期取值里，已按原值另列。',
   unknownSizeNote: '有 {count} 双读不出尺码，单独列在最后一行。',
   truncatedSizesNote: '该类别尺码过多，缺码判定只看前 {count} 个。',
+  // ⭐⭐ 2026-10-12：**编号兜底**（(c)）命中时的轻提示 —— 一句话，不写说明书。
+  numberFallbackHint: '二维码里的编号少了类别，建议重打标签（已按货号 + 颜色找到这一款）。',
+  // ⭐⭐ 2026-10-12：兜底**也没找到**时的两句人话（0 条 / 多条）+ 下一步（回扫码页 / 再扫一次）。
+  notFoundFallbackMissHint: '这个编号少了类别，按货号 + 颜色也没找到这一款 —— 请核对标签上的货号 / 颜色，或重打标签。',
+  notFoundAmbiguousHint: '这个编号少了类别，按货号 + 颜色匹配到多款，没法确定是哪一双 —— 请核对标签，或重打标签。',
+  notFoundBackLabel: '再扫一次',
   notFoundTitle: '没找到这个编号',
   notFoundBody: '可能已删除、或编号变了。',
   notFoundHint: '扫到的编号：',
@@ -415,6 +435,10 @@ const PRODUCT_SNAPSHOT = Object.freeze({
 const EVENTS = Object.freeze({
   viewed: 'scan.page.viewed',
   notFound: 'scan.page.not_found',
+  // ⭐⭐ 2026-10-12：编号兜底匹配（唯一命中 / 多命中 / 读失败）各一条。
+  numberFallback: 'scan.page.number_fallback',
+  numberFallbackAmbiguous: 'scan.page.number_fallback_ambiguous',
+  numberFallbackFailed: 'scan.page.number_fallback_failed',
   badNumber: 'scan.page.bad_number',
   sizesDegraded: 'scan.sizes.scope_unavailable',
   unknownState: 'scan.state.unexpected',
