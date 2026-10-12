@@ -1,0 +1,70 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "default_value": null,
+        "id": "fldvnd3xkD",
+        "name": "品类",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "default_value": null,
+        "id": "fld8s0jSC4",
+        "multiple": true,
+        "name": "类别",
+        "options": [
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "A"
+          },
+          {
+            "hue": "Orange",
+            "lightness": "Lighter",
+            "name": "B"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "id": "fldGx9BWw0",
+        "name": "品类ID",
+        "style": {
+          "rules": [
+            {
+              "text": "PL-",
+              "type": "text"
+            },
+            {
+              "length": 4,
+              "type": "incremental_number"
+            }
+          ]
+        },
+        "type": "auto_number"
+      },
+      {
+        "id": "fld7kztAB1",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      },
+      {
+        "id": "fldKyzPPJf",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      }
+    ],
+    "total": 5
+  }
+}

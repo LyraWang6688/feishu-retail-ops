@@ -1,0 +1,123 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "id": "fld6zxqQGC",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      },
+      {
+        "id": "fld3AnqDx6",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      },
+      {
+        "default_value": null,
+        "id": "fldvJ5tk5W",
+        "name": "单价",
+        "style": {
+          "currency_code": "CNY",
+          "precision": 0,
+          "type": "currency"
+        },
+        "type": "number"
+      },
+      {
+        "default_value": null,
+        "id": "fldVb3isZ4",
+        "name": "成本",
+        "style": {
+          "currency_code": "CNY",
+          "precision": 0,
+          "type": "currency"
+        },
+        "type": "number"
+      },
+      {
+        "id": "fldKOB9Rua",
+        "name": "示例图",
+        "style": {
+          "type": "plain"
+        },
+        "type": "attachment"
+      },
+      {
+        "default_value": null,
+        "id": "fldzHRcIrS",
+        "name": "名称",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "default_value": null,
+        "id": "fldCH4P40j",
+        "multiple": false,
+        "name": "种类",
+        "options": [
+          {
+            "hue": "Carmine",
+            "lightness": "Lighter",
+            "name": "腰带"
+          },
+          {
+            "hue": "Red",
+            "lightness": "Lighter",
+            "name": "鞋油"
+          },
+          {
+            "hue": "Red",
+            "lightness": "Lighter",
+            "name": "鞋盒"
+          },
+          {
+            "hue": "Red",
+            "lightness": "Lighter",
+            "name": "鞋垫"
+          },
+          {
+            "hue": "Lime",
+            "lightness": "Lighter",
+            "name": "袜子"
+          },
+          {
+            "hue": "Red",
+            "lightness": "Lighter",
+            "name": "女士包"
+          },
+          {
+            "hue": "Green",
+            "lightness": "Lighter",
+            "name": "男士包"
+          },
+          {
+            "hue": "Red",
+            "lightness": "Lighter",
+            "name": "芦荟胶"
+          },
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "腰带头"
+          },
+          {
+            "hue": "Orange",
+            "lightness": "Lighter",
+            "name": "足愈宝"
+          }
+        ],
+        "type": "select"
+      }
+    ],
+    "total": 7
+  }
+}

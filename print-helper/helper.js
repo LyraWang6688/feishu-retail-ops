@@ -529,6 +529,49 @@ const wakeGapDetected = (lastTickAt, nowMs, gapMs = DEFAULT_WAKE_GAP_MS) => {
  *   · 唤醒 / 网络刚恢复（`wakeGap`）⇒ **0**（立刻重连，不等退避）；
  *   · 其余按失败次数取退避（`validateConfig` 保证上限 ≤ 3 秒）。
  */
+/**
+ * ⭐⭐ v5（她问"那两条 warn 是不是小助手的问题"）—— **这一条断开是谁断的**。
+ *
+ * 真相：她那两条 warn 的时刻（+8 22:23:25 / 22:57:31）与 Lead 两次发版（22:23:24 / 22:57:30）
+ * **只差 1 秒** ⇒ 是**部署重启把 SSE 关了**，不是网络、不是她电脑、不是小助手的 bug ✓。
+ * ⇒ 所以这里只做两件事：**分类**（人话）+ **分级**（别吓人）；**重连/退避/单飞/唤醒逻辑一律不动** ✓
+ * ⚠️ 判不出来就 `unknown` —— **不许编** ✗
+ */
+const classifyStreamClose = ({ streamKind, error, aborted, abortedBy } = {}) => {
+  if (aborted) {
+    if (abortedBy === 'wake') return 'wake';
+    if (abortedBy === 'stop') return 'stop';
+    // 剩下的都是"我们自己要求重连"（手动/看门狗/防抖）
+    if (abortedBy) return 'manual';
+    return 'unknown';
+  }
+  if (streamKind === 'server_closed') return 'server_closed';
+  const msg = String(error?.message || '');
+  if (/terminated|fetch failed|ECONNRESET|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|timeout|network|socket/i.test(msg)) {
+    return 'network';
+  }
+  return 'unknown';
+};
+
+/** ⭐ v5：断开分级 —— **单次、且 60 秒内恢复** ⇒ 只记 info（不吓人）；连续 ≥3 次或 ≥60 秒 ⇒ 才 warn ✓ */
+const isBriefDisconnect = ({ failures, disconnectedMs, thresholdFailures = 3, thresholdMs = 60_000 } = {}) => (
+  Number(failures) < Number(thresholdFailures) && Number(disconnectedMs) < Number(thresholdMs)
+);
+
+/** ⭐ v5：状态页那一行（**短人话**，走常量；不写说明书腔 ✗） */
+const LAST_DISCONNECT_PREFIX = '最近一次：';
+const describeLastDisconnect = (last) => {
+  if (!last || !last.at) return `${LAST_DISCONNECT_PREFIX}没断过`;
+  const hhmm = new Date(last.at).toTimeString().slice(0, 5);
+  if (last.recoveredMs !== undefined && last.recoveredMs !== null) {
+    const secs = Math.max(1, Math.round(Number(last.recoveredMs) / 1000));
+    const why = last.reason_kind === 'server_closed' ? '（服务重启会这样，正常）' : '';
+    return `${LAST_DISCONNECT_PREFIX}${hhmm} 断开 → ${secs} 秒后已恢复${why}`;
+  }
+  const mins = Math.max(1, Math.round(Number(last.gapMs || 0) / 60_000));
+  return `${LAST_DISCONNECT_PREFIX}${hhmm} 断开，已 ${mins} 分钟还没恢复`;
+};
+
 const reconnectDelayMs = ({ streamFailures = 0, backoffMs, wakeGap = false } = {}) => {
   if (wakeGap) return 0;
   const list = Array.isArray(backoffMs) && backoffMs.length ? backoffMs : DEFAULT_CONFIG.reconnectBackoffMs;
@@ -947,6 +990,8 @@ const createPrintHelper = (options = {}) => {
     },
     lastTickAt: now(),
     disconnectedSince: 0,
+    // ⭐ v5：最近一次断开（状态页那一行用它）
+    lastDisconnect: null,
   };
 
   const headers = () => ({
@@ -1309,6 +1354,16 @@ const createPrintHelper = (options = {}) => {
       pendingReconnect = false;
       state.streamAbortReason = '';
       stopFallback();
+      if (state.lastDisconnect && state.lastDisconnect.recoveredMs === undefined) {
+        const recoveredMs = now() - state.lastDisconnect.at;
+        state.lastDisconnect.recoveredMs = recoveredMs;
+        if (recoveredMs < 60_000 && Number(state.lastDisconnect.failures) < Number(config.streamFailuresBeforeFallback || 3)) {
+          logger.info('print_helper.sse.reconnected_quickly', {
+            gap_ms: recoveredMs,
+            reason_kind: state.lastDisconnect.reason_kind,
+          });
+        }
+      }
       logger.info('print_helper.sse.connected', {});
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -1329,14 +1384,37 @@ const createPrintHelper = (options = {}) => {
           }
         }
       }
-      throw new Error('长连接被服务器/网络关掉了');
+      // ⭐ v5：流被**服务端正常收尾**（不是异常）⇒ 打个标记，便于把 reason 分成 server_closed
+      const closedByServer = new Error('长连接被服务器/网络关掉了');
+      closedByServer.streamKind = 'server_closed';
+      throw closedByServer;
     } catch (error) {
       if (stopped) return;
       state.sseConnected = false;
       state.streamFailures += 1;
       if (!state.disconnectedSince) state.disconnectedSince = now();
       const disconnectedMs = now() - state.disconnectedSince;
-      logger.warn('print_helper.sse.disconnected', {
+      const reasonKind = classifyStreamClose({
+        streamKind: error?.streamKind,
+        error,
+        aborted: myController.signal.aborted === true,
+        abortedBy: state.streamAbortReason,
+      });
+      const brief = isBriefDisconnect({
+        failures: state.streamFailures,
+        disconnectedMs,
+        thresholdFailures: Number(config.streamFailuresBeforeFallback || 3),
+      });
+      // ⭐ v5：状态页要显示"最近一次断开"（含是否已恢复）
+      state.lastDisconnect = {
+        at: now(),
+        gapMs: disconnectedMs,
+        reason_kind: reasonKind,
+        failures: state.streamFailures,
+      };
+      const logFn = brief ? logger.info.bind(logger) : logger.warn.bind(logger);
+      logFn(brief ? 'print_helper.sse.disconnected_briefly' : 'print_helper.sse.disconnected', {
+        reason_kind: reasonKind,
         failures: state.streamFailures,
         // ⭐ 人话：**断了多久**（她那次空了约 15 分钟）—— 超过 1 分钟才写"断线已 N 分钟"，
         //    秒级抖动就写毫秒（原来是"刚断 1 秒也报断线已 1 分钟"，对不上账）。
@@ -1414,6 +1492,7 @@ ${state.authError ? `<div class="notice"><strong>连不上服务器：</strong>$
 ${row('服务器', `${baseUrl}`, serverOnline === null ? false : true)}
 ${row('手机看到的状态', serverOnline ? '打印电脑在线' : '未连接（任务已排队）', serverOnline === true)}
 ${row('长连接（SSE）', state.sseConnected ? '已连接' : (state.fallbackActive ? '断开了，正在用兜底轮询' : '未连接'), state.sseConnected)}
+${row('最近一次断开', describeLastDisconnect(state.lastDisconnect), null)}
 ${row('防睡眠', state.antiSleepEnabled
   ? `${ANTI_SLEEP_ON_TEXT} —— ${SLEEP_SETUP_LINES.join('；')}`
   : (config.preventSleep === true
@@ -1847,6 +1926,10 @@ if (require.main === module) {
 
 module.exports = {
   DEFAULT_CONFIG,
+  // ⭐ v5（断开分级/分类）—— 导出便于单测**跨环境确定**地断言
+  classifyStreamClose,
+  isBriefDisconnect,
+  describeLastDisconnect,
   HELPER_APP_ID,
   SHORTCUT_NAME,
   createLogger,

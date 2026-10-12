@@ -1,0 +1,114 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "default_value": null,
+        "id": "fldAT0fsjd",
+        "name": "变动数量",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "expression": "[编号]\u0026\"|\"\u0026[尺码]",
+        "id": "fldzcg0c2Z",
+        "name": "库存键",
+        "type": "formula"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldsPSdlkk",
+        "link_table": "tblk7eUhno5DutKk",
+        "name": "库存行为",
+        "type": "link"
+      },
+      {
+        "id": "fldzgkpnqY",
+        "name": "库存流水号",
+        "style": {
+          "rules": [
+            {
+              "text": "KC-",
+              "type": "text"
+            },
+            {
+              "date_format": "yyyyMMdd",
+              "type": "created_time"
+            },
+            {
+              "text": "-",
+              "type": "text"
+            },
+            {
+              "length": 4,
+              "type": "incremental_number"
+            }
+          ]
+        },
+        "type": "auto_number"
+      },
+      {
+        "id": "fldp2nKCXp",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldNNNEspT",
+        "link_table": "tbl7jbip6y6R8J1h",
+        "name": "关联销售",
+        "type": "link"
+      },
+      {
+        "default_value": {
+          "$slot": "record_created_time"
+        },
+        "id": "fldCm8TT78",
+        "name": "发生时间",
+        "style": {
+          "format": "yyyy/MM/dd HH:mm"
+        },
+        "type": "datetime"
+      },
+      {
+        "id": "fldeE1MkKU",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldnlN7IaF",
+        "link_table": "tblVuUvGU4EP1Wm8",
+        "name": "尺码",
+        "type": "link"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldan1mUUB",
+        "link_table": "tblQ5RzzHB2DuD6X",
+        "name": "关联采购",
+        "type": "link"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldFpNILqF",
+        "link_table": "tbl5as7poByp36c7",
+        "name": "编号",
+        "type": "link"
+      }
+    ],
+    "total": 11
+  }
+}

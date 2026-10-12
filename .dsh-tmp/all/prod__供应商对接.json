@@ -1,0 +1,189 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "id": "fld5vUnH5G",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldo2W6mNZ",
+        "link_table": "tbli1ygPtss5CWCH",
+        "name": "关联采购申请",
+        "type": "link"
+      },
+      {
+        "default_value": null,
+        "description": "这里只说明报货数量不为1的具体尺码",
+        "id": "fldnWebf4A",
+        "name": "数量说明",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "default_value": null,
+        "description": "报单时间+批次（示例202609271）",
+        "id": "fldQ3wzrg7",
+        "name": "报货批次号",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "default_value": [
+          {
+            "$slot": "current_user"
+          }
+        ],
+        "id": "fldl08NJTw",
+        "multiple": false,
+        "name": "经办人",
+        "type": "user"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldE3oTl4B",
+        "link_table": "tblrHyfMNiPLQkv9",
+        "name": "尺码",
+        "type": "link"
+      },
+      {
+        "default_value": null,
+        "id": "fldjvkXOGU",
+        "name": "数量",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldClAx5xd",
+        "link_table": "tblbTvUT4AFsCK4K",
+        "name": "采购行为",
+        "type": "link"
+      },
+      {
+        "aggregate": "raw_value",
+        "from": "货品信息",
+        "id": "fldzJIHCA0",
+        "name": "供应商",
+        "select": "供应商",
+        "type": "lookup",
+        "where": {
+          "conditions": [
+            [
+              "编号",
+              "==",
+              {
+                "field": "编号",
+                "type": "field_ref"
+              }
+            ]
+          ],
+          "logic": "and"
+        }
+      },
+      {
+        "id": "fldxCYKNHa",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      },
+      {
+        "default_value": null,
+        "id": "fldifvIboP",
+        "name": "解析失败原因",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "bidirectional": false,
+        "id": "flduUyRXuM",
+        "link_table": "tbl9z4Oi8Vc57Kin",
+        "name": "编号",
+        "type": "link"
+      },
+      {
+        "default_value": {
+          "$slot": "record_created_time"
+        },
+        "id": "fld579yHjX",
+        "name": "报单时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "datetime"
+      },
+      {
+        "id": "fldJFlxPql",
+        "name": "明细ID",
+        "style": {
+          "rules": [
+            {
+              "length": 3,
+              "type": "incremental_number"
+            }
+          ]
+        },
+        "type": "auto_number"
+      },
+      {
+        "default_value": null,
+        "id": "fldNPUQ4eo",
+        "multiple": false,
+        "name": "处理状态",
+        "options": [
+          {
+            "hue": "Gray",
+            "lightness": "Light",
+            "name": "待解析"
+          },
+          {
+            "hue": "Blue",
+            "lightness": "Light",
+            "name": "解析中"
+          },
+          {
+            "hue": "Orange",
+            "lightness": "Light",
+            "name": "待确认"
+          },
+          {
+            "hue": "Green",
+            "lightness": "Light",
+            "name": "已生成申请"
+          },
+          {
+            "hue": "Red",
+            "lightness": "Light",
+            "name": "解析失败"
+          },
+          {
+            "hue": "Purple",
+            "lightness": "Light",
+            "name": "已取消"
+          }
+        ],
+        "type": "select"
+      }
+    ],
+    "total": 15
+  }
+}

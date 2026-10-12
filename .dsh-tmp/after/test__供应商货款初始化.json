@@ -1,0 +1,77 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "id": "fldDGRLdU1",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      },
+      {
+        "id": "flddoNcR67",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      },
+      {
+        "default_value": null,
+        "id": "fldT1QlcqQ",
+        "name": "基准日期",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "datetime"
+      },
+      {
+        "id": "fldeibKyUl",
+        "name": "供应商期初ID",
+        "style": {
+          "rules": [
+            {
+              "text": "GYQC-",
+              "type": "text"
+            },
+            {
+              "date_format": "yyyyMMdd",
+              "type": "created_time"
+            },
+            {
+              "text": "-",
+              "type": "text"
+            },
+            {
+              "length": 4,
+              "type": "incremental_number"
+            }
+          ]
+        },
+        "type": "auto_number"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldKGHoAbv",
+        "link_table": "tbl0dKjyNFCoFh9G",
+        "name": "供应商",
+        "type": "link"
+      },
+      {
+        "default_value": null,
+        "id": "fldH8hG0hN",
+        "name": "期初余额",
+        "style": {
+          "currency_code": "CNY",
+          "precision": 2,
+          "type": "currency"
+        },
+        "type": "number"
+      }
+    ],
+    "total": 6
+  }
+}

@@ -1,0 +1,175 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "default_value": null,
+        "id": "fldkZZLzpK",
+        "name": "金额",
+        "style": {
+          "currency_code": "CNY",
+          "precision": 2,
+          "type": "currency"
+        },
+        "type": "number"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldpwEbArl",
+        "link_table": "tblFfXkLct2ZIGGq",
+        "name": "供应商",
+        "type": "link"
+      },
+      {
+        "default_value": null,
+        "id": "fldPogoP9q",
+        "name": "来源单号",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldyjw5Zwd",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldzcY5xYv",
+        "link_table": "tblbTvUT4AFsCK4K",
+        "name": "资金行为",
+        "type": "link"
+      },
+      {
+        "default_value": null,
+        "id": "fldpc86Mpp",
+        "name": "其他对方名称",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldwDR5iWu",
+        "link_table": "tblH7YzA1v5vJzEi",
+        "name": "收款方式",
+        "type": "link"
+      },
+      {
+        "default_value": null,
+        "id": "fldohS0giV",
+        "multiple": false,
+        "name": "入账状态",
+        "options": [
+          {
+            "hue": "Purple",
+            "lightness": "Lighter",
+            "name": "待处理"
+          },
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "已入账"
+          },
+          {
+            "hue": "Orange",
+            "lightness": "Lighter",
+            "name": "失败"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "default_value": null,
+        "id": "fldAIwnwbv",
+        "multiple": false,
+        "name": "经办人",
+        "type": "user"
+      },
+      {
+        "id": "fldVt4voiS",
+        "name": "资金流水ID",
+        "style": {
+          "rules": [
+            {
+              "text": "ZJLS-",
+              "type": "text"
+            },
+            {
+              "date_format": "yyyyMMdd",
+              "type": "created_time"
+            },
+            {
+              "text": "-",
+              "type": "text"
+            },
+            {
+              "length": 4,
+              "type": "incremental_number"
+            }
+          ]
+        },
+        "type": "auto_number"
+      },
+      {
+        "id": "fldEfdbG66",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      },
+      {
+        "default_value": null,
+        "id": "fld8JO8CgC",
+        "multiple": false,
+        "name": "收支方向",
+        "options": [
+          {
+            "hue": "Lime",
+            "lightness": "Lighter",
+            "name": "收入"
+          },
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "支出"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "default_value": null,
+        "id": "fld4zfd6L0",
+        "name": "发生时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "datetime"
+      },
+      {
+        "default_value": null,
+        "id": "fld7mJR5LB",
+        "name": "备注",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldsjS3tMC",
+        "link_table": "tblnaGV5zKruqUJI",
+        "name": "冲销原资金流水",
+        "type": "link"
+      }
+    ],
+    "total": 15
+  }
+}

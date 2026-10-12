@@ -1,0 +1,229 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "id": "fldGPUqoBz",
+        "name": "创建人",
+        "type": "created_by"
+      },
+      {
+        "default_value": null,
+        "description": "该推进动作所属的功能板块",
+        "id": "fldvQu5vF8",
+        "multiple": false,
+        "name": "功能板块",
+        "options": [
+          {
+            "hue": "Carmine",
+            "lightness": "Lighter",
+            "name": "销售"
+          },
+          {
+            "hue": "Gray",
+            "lightness": "Lighter",
+            "name": "采购"
+          },
+          {
+            "hue": "Lime",
+            "lightness": "Lighter",
+            "name": "库存"
+          },
+          {
+            "hue": "Gray",
+            "lightness": "Lighter",
+            "name": "资金"
+          },
+          {
+            "hue": "Red",
+            "lightness": "Lighter",
+            "name": "货品"
+          },
+          {
+            "hue": "Purple",
+            "lightness": "Lighter",
+            "name": "文档"
+          },
+          {
+            "hue": "Green",
+            "lightness": "Lighter",
+            "name": "运维"
+          },
+          {
+            "hue": "Gray",
+            "lightness": "Lighter",
+            "name": "其他"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "default_value": null,
+        "description": "关联的业务模块",
+        "id": "fldrAPhW9L",
+        "multiple": true,
+        "name": "关联模块",
+        "options": [
+          {
+            "hue": "Carmine",
+            "lightness": "Lighter",
+            "name": "团购券"
+          },
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "库存"
+          },
+          {
+            "hue": "Green",
+            "lightness": "Lighter",
+            "name": "销售"
+          },
+          {
+            "hue": "Orange",
+            "lightness": "Lighter",
+            "name": "对账"
+          },
+          {
+            "hue": "Purple",
+            "lightness": "Lighter",
+            "name": "核销"
+          },
+          {
+            "hue": "Yellow",
+            "lightness": "Lighter",
+            "name": "货品"
+          },
+          {
+            "hue": "Turquoise",
+            "lightness": "Lighter",
+            "name": "定时任务"
+          },
+          {
+            "hue": "Wathet",
+            "lightness": "Lighter",
+            "name": "权限配置"
+          },
+          {
+            "hue": "Gray",
+            "lightness": "Lighter",
+            "name": "其他"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "default_value": null,
+        "description": "推进动作的类型",
+        "id": "fldRnKiag1",
+        "multiple": false,
+        "name": "动作类别",
+        "options": [
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "数据同步"
+          },
+          {
+            "hue": "Wathet",
+            "lightness": "Lighter",
+            "name": "表配置"
+          },
+          {
+            "hue": "Turquoise",
+            "lightness": "Lighter",
+            "name": "自动化"
+          },
+          {
+            "hue": "Green",
+            "lightness": "Lighter",
+            "name": "功能开发"
+          },
+          {
+            "hue": "Yellow",
+            "lightness": "Lighter",
+            "name": "数据录入"
+          },
+          {
+            "hue": "Orange",
+            "lightness": "Lighter",
+            "name": "问题修复"
+          },
+          {
+            "hue": "Gray",
+            "lightness": "Lighter",
+            "name": "其他"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "default_value": {
+          "$slot": "record_created_time"
+        },
+        "description": "记录推进动作发生的日期",
+        "id": "fldVYNiG4N",
+        "name": "推进日期",
+        "style": {
+          "format": "yyyy-MM-dd"
+        },
+        "type": "datetime"
+      },
+      {
+        "id": "flduRxEYBv",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      },
+      {
+        "default_value": [
+          "已完成"
+        ],
+        "description": "推进动作的完成状态",
+        "id": "fldS8o4c1q",
+        "multiple": false,
+        "name": "状态",
+        "options": [
+          {
+            "hue": "Green",
+            "lightness": "Light",
+            "name": "已完成"
+          },
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "进行中"
+          },
+          {
+            "hue": "Orange",
+            "lightness": "Lighter",
+            "name": "待跟进"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "default_value": null,
+        "description": "记录具体做了什么推进动作",
+        "id": "fldz0MFXBc",
+        "name": "推进内容",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fld2wL9QKr",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      }
+    ],
+    "total": 9
+  }
+}
