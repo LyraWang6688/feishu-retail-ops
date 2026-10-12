@@ -706,6 +706,42 @@ const canvasGeometry = (layout, options = {}) => {
   };
 };
 
+/**
+ * ⭐⭐ **旋转老路（`rotate≠0`）的"外圈干净"保证**（2026-10-12 CI AC17 红教的）。
+ *
+ * 背景：`rotate=90/270` 时页面装不下 40×30 的设计 ⇒ 整幅等比缩小（`scale ≈ 0.735`）。
+ *   ⚠️ 原来只按**设计框**算 scale ⇒ 页面上/下只剩 ~0.3mm；尺码一变成 3 行、内容变高，
+ *      **真实墨迹**就进一步逼近纸边 ⇒ 最外一圈出现墨点（CI: `borderInk: 1`）✗。
+ * ⇒ 现在按**内容盒**（设计空间里的 `[x0, x0+contentW] × [contentTop, contentTop+totalH]`，
+ *   再把 `contentOffset` 的平移算进去）算出旋转后的极值，反推一个"**外圈至少留 `ringMm`**"的 scale，
+ *   取 `min(原 scale, 这个上限)` —— **只缩不放、内容一个不丢**，并把结果回填 `measure` 便于排查。
+ */
+// ⚠️ `ringMm` 是"外圈至少留多少毫米干净"：文字有**上伸部/下伸部**（墨迹超出内容盒），
+//   所以留 0.3mm 还不够（实测仍会扫到 1 个墨点）⇒ 取 0.8mm 更稳（只影响 rotate≠0 的老路）。
+const ringSafeScale = (geometry, box, ringMm = 0.8) => {
+  const cx = geometry.designW / 2;
+  const cy = geometry.designH / 2;
+  const rad = (geometry.rotate * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  let needX = 0;
+  let needY = 0;
+  for (const x of [box.x0, box.x1]) {
+    for (const y of [box.y0, box.y1]) {
+      const dx = x - cx;
+      const dy = y - cy;
+      needX = Math.max(needX, Math.abs(dx * cos - dy * sin));
+      needY = Math.max(needY, Math.abs(dx * sin + dy * cos));
+    }
+  }
+  const maxX = needX > 0 ? (geometry.pageW / 2 - ringMm) / needX : Infinity;
+  const maxY = needY > 0 ? (geometry.pageH / 2 - ringMm) / needY : Infinity;
+  const limit = Math.min(1, maxX, maxY);
+  if (!Number.isFinite(limit) || limit >= geometry.scale) return geometry;
+  const scale = Math.round(limit * 1000) / 1000;
+  return { ...geometry, scale, ring_limited: true };
+};
+
 /** 页面尺寸（mm）—— 兼容旧调用（竖版画布 = 画布 30×40、页面仍 40×30）。 */
 const pageSizeMm = (layout, options = {}) => {
   const geo = canvasGeometry(layout, options);
@@ -952,6 +988,7 @@ function labelSvg(label, layout, options = {}) {
     });
   }
 
+  const contentTopMm = cursor; // ⭐ 内容块的顶（下面算"旋转后外圈是否干净"要用）
   for (const id of activeRows) {
     const h = rowHeight(id);
     const baseline = cursor + h * 0.82;
@@ -1045,7 +1082,22 @@ function labelSvg(label, layout, options = {}) {
     : parts.join('');
   // ⚠️ 横版 + 0°（默认）⇒ `transform` 是空串 ⇒ **不套 `<g>`**，
   //    输出与"加画布之前"逐字节一致（线上/浏览器打印那条老路一个字都没变）。
-  const transform = rotationTransform(geometry);
+  // ⭐⭐ 2026-10-12：`rotate≠0` 的老路再按**真实墨迹**核一遍，保证"最外一圈干净"（CI AC17）
+  let geometryForRender = geometry;
+  if (geometry.rotate !== 0 || geometry.scale !== 1) {
+    const pad = Math.max(Math.abs(offsetX), Math.abs(offsetY), 0);
+    geometryForRender = ringSafeScale(geometry, {
+      x0: x0 - pad,
+      x1: x0 + contentW + pad,
+      y0: contentTopMm - pad,
+      y1: contentTopMm + totalH + pad,
+    });
+    if (geometryForRender.ring_limited && options.measure) {
+      options.measure.rotate_ring_scale = geometryForRender.scale;
+      options.measure.rotate_ring_limited = true;
+    }
+  }
+  const transform = rotationTransform(geometryForRender);
   const body2 = transform ? `<g transform="${transform}">${inner}</g>` : inner;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${widthPx}" height="${heightPx}" viewBox="0 0 ${geometry.pageW} ${geometry.pageH}">`
     + `<rect width="${geometry.pageW}" height="${geometry.pageH}" fill="#ffffff" />`

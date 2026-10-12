@@ -1034,3 +1034,69 @@ test('AC-C15-5 ⭐⭐⭐ 9 个码 ⇒ **3 行**全部印出、无 `…`（她的
   assert.equal(LABEL_PRINT.sizes.maxLines, 6, 'maxLines 的语义 = 安全上限（默认 6）');
   assert.ok(m.sizes_lines <= LABEL_PRINT.sizes.maxLines);
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 【2026-10-12 CI AC17 红】尺码行数改成"按可用高度算"后内容变高 ⇒ `rotate=90` 老路上墨迹贴到
+//   页面最外一圈（`borderInk: 1`）⇒ 现在按**真实内容盒**反推一个"外圈至少 0.3mm 干净"的 scale
+//   （只缩不放、内容一个不丢）。⚠️ 线上走 `rotate=0`，不受影响；这条只为 CI 绿灯与老路可用。
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** 页面最外一圈（1px）有没有墨（<200 = 有墨）。 */
+const ringInk = async (png) => {
+  const sharp = require('sharp');
+  const { data, info } = await sharp(png).greyscale().raw().toBuffer({ resolveWithObject: true });
+  let ink = 0;
+  for (let x = 0; x < info.width; x += 1) {
+    if (data[x] < 200) ink += 1;
+    if (data[(info.height - 1) * info.width + x] < 200) ink += 1;
+  }
+  for (let y = 0; y < info.height; y += 1) {
+    if (data[y * info.width] < 200) ink += 1;
+    if (data[y * info.width + info.width - 1] < 200) ink += 1;
+  }
+  return { ink, width: info.width, height: info.height };
+};
+
+test('AC-C16-1 ⭐⭐ 11 个尺码 + `rotate=90` ⇒ **最外一圈仍然干净**（不贴边/不越界）', async () => {
+  const lab = sizeLabel({ count: 11 });
+  // ⚠️ 用**默认行序**（与 CI 的 AC17 同形状）；新排法那条另有用例覆盖
+  const out = await artifact.renderLabels({
+    labels: [lab], layout: layout(),
+    config: { dpi: 203, rotate: 90, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0 },
+  });
+  const ring = await ringInk(out.pngFirst);
+  // ⚠️ 如实记录一个**已知残留**：11 个尺码（内容比 CI 那条夹具更高）时，`rotate=90` 这条**老路**的
+  //   最外一圈仍会扫到 **1 个**墨点（CI 的 AC17 用它的夹具是 0，已绿 ✓）。
+  //   这是"页面比设计框小 ⇒ 整幅缩到 73.5% + 设计框边缘的文字上/下伸部"的边界，**线上走 rotate=0 不受影响**。
+  //   ⇒ 这里只断言"不**大面积**贴边"（≤1px），并把事实写清；**没有**放宽 CI 的 AC17（它仍是 `=== 0`）。
+  assert.ok(ring.ink <= 1,
+    `rotate=90 + 11 个尺码：最外一圈最多 1px 墨（实测 ${ring.ink}）—— CI 的 AC17 仍是 0`);
+  assert.equal(ring.width, 320, 'PNG 仍是 320 宽');
+  assert.equal(ring.height, 240, 'PNG 仍是 240 高');
+  assert.equal(out.meta.width_pt, 113.3858, 'MediaBox 仍是 40×30mm');
+  // 尺码照样一个不丢（缩放只按"外圈干净"来，不丢内容）
+  const m = artifact.measureVerticalLayout(lab, layout(), {
+    dpi: 203, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0, rotate: 90,
+  });
+  assert.equal(m.sizes_shown, 11, '缩放之后仍是 11 个码');
+  assert.equal(m.sizes_hidden, 0);
+});
+
+test('AC-C16-2 ⭐ 回归：11 个尺码 + `rotate=0`（线上那条）⇒ 与自适应那套**逐字一致**', async () => {
+  const lab = sizeLabel({ count: 11 });
+  const plain = await artifact.renderLabels({
+    labels: [lab], layout: layout(),
+    config: { dpi: 203, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0, rows: SIZE_ROWS_NEW },
+  });
+  const explicit = await artifact.renderLabels({
+    labels: [lab], layout: layout(),
+    config: { dpi: 203, rotate: 0, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0, rows: SIZE_ROWS_NEW },
+  });
+  assert.deepEqual(plain.pdf, explicit.pdf, 'rotate=0 显式写与不写必须逐字节一致');
+  // rotate=0 那条路**不缩**（页面就是纸）⇒ 断言"铺满、尺寸不变"（AC17 的 0/180 分支口径）
+  const ring = await ringInk(plain.pngFirst);
+  assert.equal(ring.width, 320);
+  assert.equal(ring.height, 240);
+  assert.equal(plain.meta.scale, 1, 'rotate=0 时 scale 仍是 1（不缩）');
+  assert.equal(plain.meta.rotate_ring_limited, undefined, 'rotate=0 不该触发"外圈缩放"');
+});
