@@ -1,3 +1,11 @@
+/** ⚠️ 2026-10-12 旧断言改写（"**零 JS**"口径按业务负责人的要求改了）：
+ *  改前（逐字）：`assert.equal(/<script[\s>]/i.test(page.html), false, '第7步：页面里一行 `<script>` 都不许有');`
+ *  改后（逐字）：销售页有【提交这一单】⇒ **整页只有那一段**
+ *    `<script data-view="submit-feedback">`（只做"置灰 + 换文案 + 计时"）。
+ *  理由：业务负责人真机（逐字）「点完之后**没有 Toast、按键置灰**……**我就会一直狂点**」
+ *    ⇒ 她**明确要置灰**；"置灰"没有零 JS 的等价物 ⇒ 多了**唯一一段**内联 JS。
+ *    ⚠️ 其余断言（一行 4 个、不显示数量、业务表零写入…）一条没放宽。
+ */
 /**
  * ⭐⭐ 扫码销售 **端到端（E2E）主干链路** —— 一条"**能复现定位**"的测试。
  *
@@ -277,6 +285,8 @@ const addLine = (base, cookie, number, size) => postForm(pageUrlOf(base, number)
 // AC-E2E-1 扫第一个码 ⇒ 销售页（一行 4 个 / 不显示数量 / 零脚本）
 // ═══════════════════════════════════════════════════════════════════════════
 
+const scriptCountOf = (html) => (html.match(/<script[\s>]/gi) || []).length;
+
 test('AC-E2E-1 扫第一个码 ⇒ /s/{编号}?from=sales 是销售页：尺码一行 4 个、不显示数量、零 <script>', async () => {
   login();
   const e2e = createE2E();
@@ -305,7 +315,9 @@ test('AC-E2E-1 扫第一个码 ⇒ /s/{编号}?from=sales 是销售页：尺码�
       }
 
       // 第7步：页面**零前端脚本**（手机白屏事故之后定的底线）
-      assert.equal(/<script[\s>]/i.test(page.html), false, '第7步：页面里一行 `<script>` 都不许有');
+      // ⭐ 2026-10-12：销售页有提交按钮 ⇒ 只允许那一段反馈脚本
+      assert.equal(scriptCountOf(page.html), 1, '第7步：整页只该有那一段提交反馈脚本');
+      assert.ok(page.html.includes('<script data-view="submit-feedback">'));
     });
   } finally { e2e.cleanup(); }
 });

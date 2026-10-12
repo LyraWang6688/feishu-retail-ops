@@ -1,3 +1,11 @@
+/** ⚠️ 2026-10-12 旧断言改写（"**零 JS**"口径按业务负责人的要求改了）：
+ *  改前（逐字）：`assert.equal(/<script[\s>]/i.test(html), false, '页面里一行前端脚本都没有');`
+ *  改后（逐字）：**有提交按钮的页面**（销售提交 / 打印这一款）= 整页**只有那一段**
+ *    `<script data-view="submit-feedback">`（只做"置灰 + 换文案 + 计时"）；其余页面仍然 **0 段**。
+ *  理由：她真机（逐字）「点完之后**没有 Toast、按键置灰**之类的提示……**我就会一直狂点**」
+ *    ⇒ 她**明确要置灰**；"置灰"没有零 JS 的等价物 ⇒ 多了**唯一一段**内联 JS。
+ *    ⚠️ 被保护的不变量收窄成：**只有这一段、只做这件事、不做网络/DOM 副作用**。
+ */
 /** ⚠️ 2026-10-12 旧断言改写（**验收领域改成"扫码页自己开工"**）：
  *  改前（逐字）：`assert.ok(blockOf(html, 'accept').includes(SCAN_PAGE.texts.realmEmptyTitle));`
  *                （以及 `accept: { has: [SCAN_PAGE.texts.realmEmptyTitle], … }` 那一处）
@@ -192,6 +200,8 @@ const sixRealmApp = (arrival) => {
 // AC-6R1 领域清单
 // ═══════════════════════════════════════════════════════════════════════════
 
+const scriptCountOf = (html) => (html.match(/<script[\s>]/gi) || []).length;
+
 test('AC-6R1 六个领域逐字 = 销售 · 补货 · 退货 · 验收 · 库存 · 货品（purchase 不在清单里）', () => {
   assert.deepEqual(REALMS.map((realm) => realm.id),
     ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product']);
@@ -278,7 +288,12 @@ test('AC-6R4 补货 / 退货 / 验收 三块各自独立；每页**只有当前�
 test('AC-6R5 零 JS：六个领域渲染出来的 HTML 里都没有 <script', () => {
   for (const realm of REALMS.map((item) => item.id)) {
     const html = htmlFor(realm);
-    assert.equal(/<script/i.test(html), false, `${realm} 页不许有脚本`);
+        // ⭐ 2026-10-12（她拍板：交互反馈是硬要求）：
+        //    页面上**只要有带反馈属性的写按钮** ⇒ 恰好那一段脚本；没有写按钮的页面（纯库存）仍然 0 段。
+        const feedbackScripts = scriptCountOf(html);
+        assert.ok(feedbackScripts <= 1, `最多只该有那一段反馈脚本（实际 ${feedbackScripts}）`);
+        assert.equal(feedbackScripts, html.includes('data-submit-feedback=') ? 1 : 0,
+          '有写按钮 ⇒ 1 段；没有 ⇒ 0 段');
   }
 });
 

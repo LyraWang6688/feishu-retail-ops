@@ -1,3 +1,11 @@
+/** ⚠️ 2026-10-12 旧断言改写（"**零 JS**"口径按业务负责人的要求改了）：
+ *  改前（逐字）：`assert.equal(/<script[\s>]/i.test(html), false, '页面里一行前端脚本都没有');`
+ *  改后（逐字）：**有提交按钮的页面**（销售提交 / 打印这一款）= 整页**只有那一段**
+ *    `<script data-view="submit-feedback">`（只做"置灰 + 换文案 + 计时"）；其余页面仍然 **0 段**。
+ *  理由：她真机（逐字）「点完之后**没有 Toast、按键置灰**之类的提示……**我就会一直狂点**」
+ *    ⇒ 她**明确要置灰**；"置灰"没有零 JS 的等价物 ⇒ 多了**唯一一段**内联 JS。
+ *    ⚠️ 被保护的不变量收窄成：**只有这一段、只做这件事、不做网络/DOM 副作用**。
+ */
 /** ⚠️ 2026-10-12 旧断言改写（**验收领域改成"扫码页自己开工"**）：
  *  改前（逐字）：`assert.ok(blockOf(html, 'accept').includes(SCAN_PAGE.texts.realmEmptyTitle));`
  *                （以及 `accept: { has: [SCAN_PAGE.texts.realmEmptyTitle], … }` 那一处）
@@ -194,6 +202,8 @@ const pageLabels = (domain) => domain.pages.map((page) => page.label);
 // ═══════════════════════════════════════════════════════════════════════════
 // AC1 一级 tab：恰好 4 个，顺序 = 销售 / 库存 / 采购 / 货品
 // ═══════════════════════════════════════════════════════════════════════════
+
+const scriptCountOf = (html) => (html.match(/<script[\s>]/gi) || []).length;
 
 test('AC1 一级 tab 恰好 4 个，顺序逐字 = 销售 · 库存 · 采购 · 货品（配置先行）', async () => {
   const modules = loadFrontendModules();
@@ -710,7 +720,12 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
     }
     assert.ok(pageBody.includes(needle), `${id} 领域该有「${needle}」`);
     assert.equal(pageBody.includes(hasNot), false, `${id} 领域不该有「${hasNot}」`);
-    assert.equal(/<script[\s>]/i.test(page), false, '页面里一行前端脚本都没有');
+        // ⭐ 2026-10-12（她拍板：交互反馈是硬要求）：
+        //    页面上**只要有带反馈属性的写按钮** ⇒ 恰好那一段脚本；没有写按钮的页面（纯库存）仍然 0 段。
+        const feedbackScripts = scriptCountOf(page);
+        assert.ok(feedbackScripts <= 1, `最多只该有那一段反馈脚本（实际 ${feedbackScripts}）`);
+        assert.equal(feedbackScripts, page.includes('data-submit-feedback=') ? 1 : 0,
+          '有写按钮 ⇒ 1 段；没有 ⇒ 0 段');
   }
   // CSS 里也不再有按 data-realm 显隐的规则（更不会有"未设 realm 时全隐藏"那种白屏写法）
   assert.equal(STYLE.includes('data-realm'), false, 'CSS 不许再依赖 data-realm');

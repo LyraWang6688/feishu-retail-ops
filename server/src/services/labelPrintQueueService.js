@@ -220,7 +220,19 @@ const createLabelPrintQueueService = (deps = {}) => {
     }
 
     // ── 挑出要打的标签（**只读**「实时库存」+「货品信息」，与页面预览同一条 service）──────
+    // ⚠️ 整段（挑标签 + 画产物）包进 `renderOnce`：同一份内容并发时**只画一次**（见它的注释）。
     let data;
+    let rendered;
+    let labels;
+    const built = await (force
+      ? (async () => {
+        const value = await buildArtifact();
+        return value;
+      })()
+      : renderOnce(requestKey, buildArtifact));
+    ({ data, rendered, labels } = built);
+
+    async function buildArtifact() {
     if (request.mode === 'single') {
       const itemNo = request.number.split('|')[0];
       data = await labelPrint.listLabels({ keyword: itemNo || request.number });
@@ -249,10 +261,19 @@ const createLabelPrintQueueService = (deps = {}) => {
     } catch (error) {
       throw systemError(`打印文件生成失败：${error.message}`);
     }
+    return { data, rendered, labels };
+    }
 
     // ⚠️ **并发兜底**：两个一模一样的请求可能同时越过上面的快路（真·连点），
     //    所以"再查一次 + 建任务"这一段按 `request_key`/`submit_key` **串行**。
-    return enqueueLock.run(`enqueue:${key || requestKey}`, async () => {
+    // 🔴🔴 2026-10-12 真机事故（**同一秒 4 个 job**）的根因就在这一行：
+    //      锁原来按 `submitKey || requestKey` 取 —— 而扫码页**每次 303 回来都会重新渲染出一个新的
+    //      `submit_key`**（表单里的隐藏键），于是 4 次连点各自拿到**一把不同的锁**、谁也没挡住谁；
+    //      4 次都在"第二次 findReusable"之前（画产物很慢）⇒ 4 条任务。
+    //      ⇒ 锁必须按 **request_key（页面 + 内容指纹）**：同一页面同一内容串行执行，
+    //        第 1 个建任务、第 2~N 个在锁里"再查一次"就命中短窗去重（`recent_same_request`）✓
+    //      ⚠️ 用户明确要再打一张时走 `again=1`（`force`）⇒ 照旧**跳过**去重、建新任务（只是排队等锁）。
+    return enqueueLock.run(`enqueue:${requestKey}`, async () => {
       const second = await findReusable();
       if (second) {
         logInfo('label_print.job.reused', {
@@ -371,6 +392,49 @@ const createLabelPrintQueueService = (deps = {}) => {
   );
 
   const getJob = (jobId) => store.get(jobId);
+
+  /**
+   * ⭐ 2026-10-12（同一秒 4 个 job 那件事的另一半）：**同一份内容的"挑标签 + 画产物"只跑一次**。
+   *
+   *   已经有一把按 `request_key` 的锁把"查重 + 建任务"串起来了（job 只会有一条 ✓），
+   *   但**画产物在锁外**：5 次连点会各自画一遍（白画 4 次、还各占几十上百毫秒 CPU）。
+   *   这里用一张"在途表"把同一个 `request_key` 的渲染**合并成同一个 Promise**：
+   *     · 第 1 个真去画；第 2~N 个 `await` 同一个 Promise（拿到同一份产物）；
+   *     · 画完（成功或失败）立刻从表里删掉 ⇒ **不会把"她已经打完又点一次"也合并掉**。
+   *   ⚠️ `again=1`（她明确要重打）**不合并** —— 它走的是"再渲染一次"的老路（force 语义）。
+   */
+  const rendersInFlight = new Map();
+  const renderOnce = (requestKey, work) => {
+    const running = rendersInFlight.get(requestKey);
+    if (running) return running;
+    const promise = (async () => work())().finally(() => rendersInFlight.delete(requestKey));
+    rendersInFlight.set(requestKey, promise);
+    return promise;
+  };
+
+  /**
+   * ⭐⭐ 2026-10-12：她在扫码页点完【打印这一款】要看到「**已下发到电脑（队列第 N 位）**」。
+   *   N = 1 表示"下一条就轮到这一张"。
+   *   口径 = **排在我前面、还没打完的任务条数 + 1**：
+   *     · 前面 = `created_at` 更早（同一毫秒按 job_id 兜底，与 `listClaimable` 的排序一致）；
+   *     · 只数**还在队列里**的（`queued` / `claimed` / `rendering`）—— `done` / `failed` 不算前面。
+   *   ⚠️ 纯只读；读不到那一条任务 ⇒ 返回 `null`（页面就不显示这一句，**不编一个数**）。
+   */
+  const queuePositionOf = async (jobId) => {
+    const target = await store.get(jobId);
+    if (!target) return null;
+    const active = [states.queued.id, states.claimed.id];
+    const jobs = await store.listAll();
+    const ahead = jobs.filter((job) => {
+      if (!job || job.job_id === jobId) return false;
+      if (!active.includes(job.status)) return false;
+      const left = String(job.created_at || '');
+      const right = String(target.created_at || '');
+      if (left !== right) return left < right;
+      return String(job.job_id) < String(jobId);
+    }).length;
+    return ahead + 1;
+  };
 
   const listJobs = async ({ limit, status } = {}) => {
     const records = await store.listAll();
@@ -648,6 +712,7 @@ const createLabelPrintQueueService = (deps = {}) => {
   };
 
   return {
+    queuePositionOf,
     enqueue,
     enqueueSingle,
     enqueueBatch,

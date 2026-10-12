@@ -235,6 +235,12 @@ const LABEL_PRINT_QUEUE = Object.freeze({
     //   （她的现象：点完没反馈 ⇒ 以为没点上 ⇒ 连点几次 ⇒ 多打了好几张）。
     //   `{count}` = 本次几张。
     submittedBanner: '✅ 已发送给打印电脑：本次 {count} 张',
+    // ⭐⭐ 2026-10-12（真机反馈「点完没有反馈 ⇒ 我会一直狂点」）：
+    //    · `printSubmitting` —— 点下去**立刻**把按钮置灰并换成这句（前端那一小段 JS 用；
+    //      文案放配置、由 `data-submitting` 传下去，JS 里不写死中文）；
+    //    · `submittedQueueNote` —— 收到响应后横幅上那句「已下发到电脑（队列第 N 位）」。
+    printSubmitting: '正在下发…',
+    submittedQueueNote: '已下发到电脑 · 队列第 {position} 位',
     submittedOnline: '打印电脑在线 —— 马上打',
     submittedOffline: '未连接 —— 已排队，开机自动补打',
     submittedNoRepeat: '已提交，不用重复点',
