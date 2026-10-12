@@ -573,7 +573,12 @@ const TEXTS = Object.freeze({
   acceptDoneBody: '批次号 {batchNo}，实际到货 {scanned} 双。',
   acceptAgainBody: '批次号 {batchNo}，已经验收入库过了，没有重复入库。',
   acceptNoSessionBody: '这次验收已经结束了：回上面【验收】领域重新选一个批次（或填批次号）就能继续。',
-  acceptBatchMissingBody: '这一页没带报货批次号：回【验收】领域选一个批次（或填批次号）再进来。',
+  // ⭐⭐ 2026-10-12（她真机："报单之后点验收 ⇒ 就提示这个，我不知道啥意思"）：
+  //    改前这句是「…**回【验收】领域**选一个批次（或填批次号）再进来。」—— 而她**就是**从
+  //    【验收】领域进来的；落地页上又**没有输入框**（"或填批次号"做不到）⇒ **自相矛盾** ✗。
+  //    现在：`GET /accept`（无 batch）**直接给自助块**（列未到货批次 + 手输兜底），
+  //    这句只剩"内部兜底"用（真走到这里说明连 form 都没渲染出来）⇒ 改成**指得出眼前能做的事**。
+  acceptBatchMissingBody: '这一页没带报货批次号：请在下面选一个未到货的批次，或直接输入批次号。',
   acceptRowsUnreadableBody: '这一批的采购明细读不到，暂时不能验收：稍后再进【验收】重试。',
   acceptDuplicateRowsBody: '这一批里同一款同一码有两行申请，先在采购群核对一下再验收。',
   acceptTooManyScansBody: '这一次记的扫码明细太多了，请先完成验收。',

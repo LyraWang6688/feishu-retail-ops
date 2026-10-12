@@ -1003,7 +1003,11 @@ const acceptPendingBlockHtml = (config, page = {}) => {
   const pending = page?.acceptPending || null;
   const batches = Array.isArray(pending?.batches) ? pending.batches : [];
   // ⚠️ 路径模板来自配置（**唯一来源**），basePath 在这里补 —— 与路由拼出来的 URL 一致。
-  const landingTemplate = `${config.route?.basePath || ''}${config.route?.acceptanceLandingPath || '/accept?batch={batchNo}'}`;
+  // ⭐⭐ 2026-10-12：`page.basePath` = **这一页的实际挂载前缀**（`/s` 或 `/r`）——
+  //    `/r` 那条路（记录 ID 直达）下她点的每一条链接都必须**留在 `/r` 上**（不许被踢回 `/s`）。
+  //    不传 ⇒ 用 `config.route.basePath`（= 改前的行为，**逐字不变**）。
+  const basePath = String(page?.basePath ?? config.route?.basePath ?? '');
+  const landingTemplate = `${basePath}${config.route?.acceptanceLandingPath || '/accept?batch={batchNo}'}`;
   const rows = batches.map((batch) => {
     const batchNo = String(batch?.batchNo || '');
     const href = landingTemplate.replace('{batchNo}', encodeURIComponent(batchNo));
@@ -1014,7 +1018,7 @@ const acceptPendingBlockHtml = (config, page = {}) => {
     return `<li><a class="btn batch-row" data-batch="${escapeHtml(batchNo)}" href="${escapeHtml(href)}">${escapeHtml(batchNo)}${meta ? `<span class="batch-row__meta">${escapeHtml(meta)}</span>` : ''}</a></li>`;
   }).join('');
   const manual = `
-<form method="get" action="${escapeHtml(`${config.route?.basePath || ''}${config.route?.acceptancePath || '/accept'}`)}" class="write-form" data-view="accept-manual">
+<form method="get" action="${escapeHtml(`${basePath}${config.route?.acceptancePath || '/accept'}`)}" class="write-form" data-view="accept-manual">
 <div class="form-row">
 <input type="text" name="batch" inputmode="text" autocomplete="off" aria-label="${escapeHtml(t.acceptPendingManualPlaceholder)}" placeholder="${escapeHtml(t.acceptPendingManualPlaceholder)}">
 <button type="submit" class="btn btn--primary">${escapeHtml(t.acceptPendingManualSubmit)}</button>
@@ -1028,6 +1032,24 @@ ${batches.length
 ${manual}
 </section>`;
 };
+
+/**
+ * ⭐⭐ 2026-10-12（业务负责人真机 + Lead 追到的日志）：
+ * **`GET /accept`（没带 `batch`）那一页的自助块** —— 她点【验收】进来的**第一屏**。
+ *
+ * 起因（逐字）：「报单之后点验收 ⇒ 就提示这个，我不知道啥意思」——
+ *   那是一句 `acceptBatchMissingBody`「这一页没带报货批次号：回【验收】领域…」，
+ *   可她**就是从【验收】领域进来的**（自相矛盾 ✗），而且那一页**没有输入框**（"或填批次号"做不到 ✗）。
+ *
+ * 🔴 这一页**复用** `acceptPendingBlockHtml`（列未到货批次 + 手输兜底），
+ *    **不复制第二份列表/表单**；`basePath` 由路由给（`/s` 或 `/r`）。
+ * ⚠️ 这一页**不挂领域切换条**（她是"进来干活"的），也没有"回工作台"这类把她支走的句子。
+ */
+const renderAcceptanceSelfServe = ({ config = SCAN_PAGE, acceptPending = null, basePath = '' } = {}) => renderDocument({
+  title: config.texts.acceptModeTitle,
+  config,
+  content: acceptPendingBlockHtml(config, { acceptPending, basePath }),
+});
 
 /**
  * ⭐⭐ 2026-10-11（方案A）：「**验收模式**」那一块（她扫开某款那一页时看到的东西）。
@@ -1270,6 +1292,8 @@ module.exports = {
   renderSaleSuccessPage,
   // ⭐⭐ 2026-10-11（方案A）：验收模式落地页（`GET /s/accept?batch=` 那一屏）
   renderAcceptancePage,
+  // ⭐⭐ 2026-10-12：`GET /accept`（无 batch）的自助落地页（复用「未到货批次 + 手输」那一块）
+  renderAcceptanceSelfServe,
   escapeHtml,
   STYLE,
   readThemeTokens,
