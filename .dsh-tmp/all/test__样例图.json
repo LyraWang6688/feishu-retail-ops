@@ -1,0 +1,81 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "id": "fld9IBb9OE",
+        "name": "是否写入货品信息",
+        "type": "checkbox"
+      },
+      {
+        "default_value": null,
+        "id": "fldggkZSz8",
+        "name": "货号",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldD0mCNAT",
+        "name": "写入时间",
+        "style": {
+          "format": "yyyy/MM/dd HH:mm"
+        },
+        "type": "updated_at"
+      },
+      {
+        "id": "fld8oPri0j",
+        "name": "样例图",
+        "style": {
+          "type": "plain"
+        },
+        "type": "attachment"
+      },
+      {
+        "aggregate": "raw_value",
+        "from": "货品信息",
+        "id": "fldc7bt6T5",
+        "name": "文本 3",
+        "select": "货号",
+        "type": "lookup",
+        "where": {
+          "conditions": [
+            [
+              "货号",
+              "==",
+              {
+                "field": "货号",
+                "type": "field_ref"
+              }
+            ]
+          ],
+          "logic": "and"
+        }
+      },
+      {
+        "id": "fldQNRu5Fl",
+        "name": "自编号",
+        "style": {
+          "rules": [
+            {
+              "length": 3,
+              "type": "incremental_number"
+            }
+          ]
+        },
+        "type": "auto_number"
+      },
+      {
+        "id": "fldgOW4Y1e",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      }
+    ],
+    "total": 7
+  }
+}

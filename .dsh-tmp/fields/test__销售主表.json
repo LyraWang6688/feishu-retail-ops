@@ -1,0 +1,230 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "default_value": [
+          {
+            "$slot": "current_user"
+          }
+        ],
+        "id": "fldnZAS9e6",
+        "multiple": false,
+        "name": "录单人",
+        "type": "user"
+      },
+      {
+        "expression": "COUNTA([销售明细].FILTER(CurrentValue.[销售单号].[销售单号]=[销售单号]))",
+        "id": "fldreD7cTu",
+        "name": "交付数量",
+        "type": "formula"
+      },
+      {
+        "default_value": null,
+        "id": "fldSaQmSY2",
+        "name": "原话",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "default_value": null,
+        "id": "fldhxekksb",
+        "multiple": false,
+        "name": "订单状态",
+        "options": [
+          {
+            "hue": "Green",
+            "lightness": "Lighter",
+            "name": "草稿"
+          },
+          {
+            "hue": "Red",
+            "lightness": "Lighter",
+            "name": "已确认"
+          },
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "已完成"
+          },
+          {
+            "hue": "Turquoise",
+            "lightness": "Lighter",
+            "name": "已取消"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "expression": "IF(COUNTA([收款明细].FILTER(CurrentValue.[关联销售单].[销售单号]=[销售单号]\u0026\u0026CurrentValue.[收款状态]=\"待平台结算\"))\u003e0,\"待平台结算\",IF(COUNTA([收款明细].FILTER(CurrentValue.[关联销售单].[销售单号]=[销售单号]))=COUNTA([收款明细].FILTER(CurrentValue.[关联销售单].[销售单号]=[销售单号]\u0026\u0026CurrentValue.[收款状态]=\"已收款\"))\u0026\u0026COUNTA([收款明细].FILTER(CurrentValue.[关联销售单].[销售单号]=[销售单号]))\u003e0,\"已收清\",\"未收款\"))",
+        "id": "fldn1DTjL9",
+        "name": "收款状态",
+        "type": "formula"
+      },
+      {
+        "id": "fldBbSb7Uh",
+        "name": "录单日",
+        "style": {
+          "format": "yyyy/MM/dd HH:mm"
+        },
+        "type": "created_at"
+      },
+      {
+        "id": "fldPVlXz6P",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      },
+      {
+        "bidirectional": false,
+        "id": "fld4eyHG6P",
+        "link_table": "tblk7eUhno5DutKk",
+        "name": "交易类型",
+        "type": "link"
+      },
+      {
+        "default_value": null,
+        "id": "fldFWr3zKB",
+        "multiple": false,
+        "name": "解析状态",
+        "options": [
+          {
+            "hue": "Wathet",
+            "lightness": "Lighter",
+            "name": "待解析"
+          },
+          {
+            "hue": "Wathet",
+            "lightness": "Lighter",
+            "name": "解析中"
+          },
+          {
+            "hue": "Orange",
+            "lightness": "Lighter",
+            "name": "待补充"
+          },
+          {
+            "hue": "Purple",
+            "lightness": "Lighter",
+            "name": "已解析"
+          },
+          {
+            "hue": "Carmine",
+            "lightness": "Lighter",
+            "name": "解析失败"
+          },
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "需补充"
+          },
+          {
+            "hue": "Yellow",
+            "lightness": "Lighter",
+            "name": "解析成功"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "expression": "COUNTA([销售明细].FILTER(CurrentValue.[销售单号].[销售单号]=[销售单号]\u0026\u0026CurrentValue.[履约状态]=\"未交付\"))",
+        "id": "fldOv19SqJ",
+        "name": "待交付数量",
+        "type": "formula"
+      },
+      {
+        "default_value": null,
+        "id": "fld9TP5Xt1",
+        "multiple": false,
+        "name": "确认状态",
+        "options": [
+          {
+            "hue": "Orange",
+            "lightness": "Lighter",
+            "name": "待确认"
+          },
+          {
+            "hue": "Red",
+            "lightness": "Lighter",
+            "name": "已确认"
+          },
+          {
+            "hue": "Turquoise",
+            "lightness": "Lighter",
+            "name": "已取消"
+          },
+          {
+            "hue": "Carmine",
+            "lightness": "Lighter",
+            "name": "入账中"
+          },
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "已入账"
+          },
+          {
+            "hue": "Carmine",
+            "lightness": "Lighter",
+            "name": "入账失败"
+          },
+          {
+            "hue": "Wathet",
+            "lightness": "Lighter",
+            "name": "待修改"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "id": "fldgTRwCZW",
+        "name": "销售单号",
+        "style": {
+          "rules": [
+            {
+              "text": "XSD-",
+              "type": "text"
+            },
+            {
+              "date_format": "yyyyMMdd",
+              "type": "created_time"
+            },
+            {
+              "text": "-",
+              "type": "text"
+            },
+            {
+              "length": 4,
+              "type": "incremental_number"
+            }
+          ]
+        },
+        "type": "auto_number"
+      },
+      {
+        "default_value": null,
+        "id": "fld0Yh9OuC",
+        "name": "解析结果摘要",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "default_value": null,
+        "id": "fldKtCPadn",
+        "name": "失败原因",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      }
+    ],
+    "total": 14
+  }
+}

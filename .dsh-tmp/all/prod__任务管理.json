@@ -1,0 +1,55 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "default_value": null,
+        "id": "fldukL6YUt",
+        "name": "任务内容",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "default_value": null,
+        "id": "fldXO89UuC",
+        "multiple": true,
+        "name": "负责人",
+        "type": "user"
+      },
+      {
+        "default_value": null,
+        "id": "fldSoTMEUm",
+        "name": "任务日",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "datetime"
+      },
+      {
+        "id": "fldbiXKkLY",
+        "name": "是否完成",
+        "type": "checkbox"
+      },
+      {
+        "id": "fldcfGRpHp",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      },
+      {
+        "id": "fldlyR2Qud",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      }
+    ],
+    "total": 6
+  }
+}

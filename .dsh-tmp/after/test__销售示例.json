@@ -1,0 +1,67 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "id": "fldC405cdR",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      },
+      {
+        "id": "fldgigmdsc",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      },
+      {
+        "default_value": null,
+        "id": "fldgTRwCZW",
+        "name": "原话",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "default_value": null,
+        "id": "fldcJBqQ2t",
+        "multiple": false,
+        "name": "示例分类",
+        "options": [
+          {
+            "hue": "Green",
+            "lightness": "Lighter",
+            "name": "good case"
+          },
+          {
+            "hue": "Green",
+            "lightness": "Lighter",
+            "name": "bad case"
+          },
+          {
+            "hue": "Wathet",
+            "lightness": "Lighter",
+            "name": "edge case"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "default_value": null,
+        "id": "fldhmE04vi",
+        "name": "说明",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      }
+    ],
+    "total": 5
+  }
+}

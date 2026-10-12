@@ -1,0 +1,185 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "id": "fldLKKdp9T",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      },
+      {
+        "default_value": {
+          "$slot": "record_created_time"
+        },
+        "id": "fldjAvgO33",
+        "name": "到货日",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "datetime"
+      },
+      {
+        "default_value": null,
+        "id": "fldMMPiDb8",
+        "multiple": false,
+        "name": "识别状态",
+        "options": [
+          {
+            "hue": "Turquoise",
+            "lightness": "Lighter",
+            "name": "待识别"
+          },
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "识别中"
+          },
+          {
+            "hue": "Carmine",
+            "lightness": "Lighter",
+            "name": "已识别"
+          },
+          {
+            "hue": "Gray",
+            "lightness": "Lighter",
+            "name": "识别失败"
+          },
+          {
+            "hue": "Orange",
+            "lightness": "Lighter",
+            "name": "邯美皮鞋2号"
+          },
+          {
+            "hue": "Wathet",
+            "lightness": "Lighter",
+            "name": "识别成功"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "id": "fldrDw5CgV",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      },
+      {
+        "default_value": [
+          {
+            "$slot": "current_user"
+          }
+        ],
+        "id": "fld6CD0AQu",
+        "multiple": false,
+        "name": "验收人",
+        "type": "user"
+      },
+      {
+        "id": "fldFJp1VK3",
+        "name": "图片",
+        "style": {
+          "type": "plain"
+        },
+        "type": "attachment"
+      },
+      {
+        "default_value": null,
+        "id": "fldKGPHrFH",
+        "name": "识别失败原因",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldJQaeRwr",
+        "name": "鞋盒图片",
+        "style": {
+          "type": "plain"
+        },
+        "type": "attachment"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldDKVK13H",
+        "link_table": "tblWegdTt4e0eecJ",
+        "name": "报货批次号",
+        "type": "link"
+      },
+      {
+        "default_value": null,
+        "id": "fld7fnKcPc",
+        "name": "验收原话",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "default_value": null,
+        "id": "fldOKjbYxo",
+        "multiple": false,
+        "name": "类型",
+        "options": [
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "鞋盒"
+          },
+          {
+            "hue": "Orange",
+            "lightness": "Lighter",
+            "name": "到货单"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "default_value": null,
+        "id": "fld25TLRot",
+        "multiple": false,
+        "name": "确认状态",
+        "options": [
+          {
+            "hue": "Orange",
+            "lightness": "Lighter",
+            "name": "待确认"
+          },
+          {
+            "hue": "Red",
+            "lightness": "Lighter",
+            "name": "已确认"
+          },
+          {
+            "hue": "Turquoise",
+            "lightness": "Lighter",
+            "name": "已取消"
+          },
+          {
+            "hue": "Orange",
+            "lightness": "Lighter",
+            "name": "已入库"
+          },
+          {
+            "hue": "Lime",
+            "lightness": "Lighter",
+            "name": "入库失败"
+          },
+          {
+            "hue": "Turquoise",
+            "lightness": "Lighter",
+            "name": "待识别"
+          }
+        ],
+        "type": "select"
+      }
+    ],
+    "total": 12
+  }
+}

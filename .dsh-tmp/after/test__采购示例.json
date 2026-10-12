@@ -1,0 +1,65 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "id": "fldJQaeRwr",
+        "name": "原始图片",
+        "style": {
+          "type": "plain"
+        },
+        "type": "attachment"
+      },
+      {
+        "default_value": null,
+        "id": "fldWV9aIef",
+        "multiple": false,
+        "name": "示例分类",
+        "options": [
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "good case"
+          },
+          {
+            "hue": "Orange",
+            "lightness": "Lighter",
+            "name": "bad case"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "id": "fldRObfTc4",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      },
+      {
+        "id": "fld651s20X",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      },
+      {
+        "id": "fldjAvgO33",
+        "name": "到货批次号",
+        "style": {
+          "rules": [
+            {
+              "length": 1,
+              "type": "incremental_number"
+            }
+          ]
+        },
+        "type": "auto_number"
+      }
+    ],
+    "total": 5
+  }
+}

@@ -1,0 +1,102 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "default_value": null,
+        "id": "fldnZyeXyv",
+        "name": "收款金额",
+        "style": {
+          "currency_code": "CNY",
+          "precision": 2,
+          "type": "currency"
+        },
+        "type": "number"
+      },
+      {
+        "default_value": null,
+        "id": "flduFI0aVa",
+        "name": "收款时间",
+        "style": {
+          "format": "yyyy/MM/dd HH:mm"
+        },
+        "type": "datetime"
+      },
+      {
+        "id": "fldgaYMIQF",
+        "name": "更新时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "updated_at"
+      },
+      {
+        "id": "fldWAOzQXm",
+        "name": "创建时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "created_at"
+      },
+      {
+        "bidirectional": false,
+        "id": "fldx4Y4nq4",
+        "link_table": "tblLjFe3NjU61xKB",
+        "name": "关联销售单",
+        "type": "link"
+      },
+      {
+        "default_value": null,
+        "id": "fldbKmgai3",
+        "multiple": false,
+        "name": "交易方向",
+        "options": [
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "收入"
+          },
+          {
+            "hue": "Orange",
+            "lightness": "Lighter",
+            "name": "退回"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "bidirectional": false,
+        "id": "fld7fRVmrg",
+        "link_table": "tblH7YzA1v5vJzEi",
+        "name": "交易方式",
+        "type": "link"
+      },
+      {
+        "default_value": null,
+        "id": "fldqlYoDCQ",
+        "multiple": false,
+        "name": "收款状态",
+        "options": [
+          {
+            "hue": "Blue",
+            "lightness": "Lighter",
+            "name": "待平台结算"
+          },
+          {
+            "hue": "Orange",
+            "lightness": "Lighter",
+            "name": "已收款"
+          },
+          {
+            "hue": "Wathet",
+            "lightness": "Lighter",
+            "name": "未收款"
+          }
+        ],
+        "type": "select"
+      }
+    ],
+    "total": 8
+  }
+}
