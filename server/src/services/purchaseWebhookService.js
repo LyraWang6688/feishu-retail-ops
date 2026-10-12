@@ -43,6 +43,7 @@ const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { renderPurchaseRequestPng, RETURN_TITLE } = require('./purchaseRequestImageService');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { IDEMPOTENCY_KEY_FIELD, createOnceByKey } = require('../infrastructure/idempotencyKey');
+const { batchQuantityFields } = require('../config/purchaseBatchQuantity');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { withTimeout, withTimeoutProxy } = require('../utils/withTimeout');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
@@ -1604,6 +1605,14 @@ class PurchaseWebhookService {
           batchNo: plan.batch_no,
           idempotencyKey: plan.batch_key,
           arrivalStatus: this.orderBatches.pendingStatus,
+          // ⭐⭐ 2026-10-12（业务负责人测出来的缺口，逐字：「这**录入数量**里面应该是 5 啊，
+          //    但是对于我们的这个数据表里面，它是记录为空呀」）：
+          //    「录入数量」= **这一批的录入数量合计**（明细数量求和）。
+          //    · 她走的两条入口（**供应商报单 webhook** / **扫码页补货**）都汇到这一处建行点
+          //      ⇒ 一个写入点同时覆盖两条路 ✓
+          //    · **拿不到 / 0 ⇒ 不写这一列**（`batchQuantityFields` 返空对象，网关跳过）
+          //    · **幂等**：`createOnceByKey` 命中已有行时**整段 values 都不会重发** ⇒ 值不变、不累加 ✓
+          ...batchQuantityFields(plan.items),
           // ⭐⭐ 2026-10-12（业务负责人）：「**采购主表里面的采购行为确实是需要的**，因为一个是
           //    报货，一个是退货」⇒ 建主表行时写「采购行为」（**报货这一路 = 采购申请那一档**）。
           //    值 = **行为记录 id**（`ensurePostingPlan` 里已经按这一次的明细冻结好了：

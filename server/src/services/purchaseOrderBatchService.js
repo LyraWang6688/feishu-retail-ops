@@ -4,6 +4,7 @@ const {
 } = require('../config/purchaseArrivalStatus');
 const { IDEMPOTENCY_KEY_FIELD, createOnceByKey } = require('../infrastructure/idempotencyKey');
 const { relation } = require('./v1ReferenceResolver');
+const { batchQuantityFields } = require('../config/purchaseBatchQuantity');
 const { logInfo, logWarn } = require('../utils/logger');
 
 // 「报货批次」**那一行**的读写（业务负责人 2026-10-07 把它定为"控制到货情况"的表）。
@@ -116,7 +117,7 @@ class PurchaseOrderBatchService {
    *    ⇒ **按原实现恢复**（只写两列 + 两步幂等），报货那条链路的批次键仍在
    *    `ensurePostingPlan`（`purchase_batch:<task_id>`），两者互不影响。
    */
-  async createForReturnBatch(batchNo, { correlation = {}, behaviorRecordId = '' } = {}) {
+  async createForReturnBatch(batchNo, { correlation = {}, behaviorRecordId = '', quantity = 0 } = {}) {
     const wanted = String(batchNo || '').trim();
     if (!wanted) {
       // 没有号就**不编**：调用方自己决定怎么提示。
@@ -148,7 +149,14 @@ class PurchaseOrderBatchService {
       //    值 = 调用方从 `draft.behavior_record_id` 传进来的**行为记录 id**；
       //    空值 ⇒ `relation` 返 `undefined` ⇒ 网关跳过，不会写空。
       //    ⚠️ 「采购明细.采购行为」是这一列的 **Lookup（只读）** ⇒ 明细侧不许写（已撤）。
-      values: { batchNo: wanted, idempotencyKey: key, behavior: relation(behaviorRecordId) },
+      values: {
+        batchNo: wanted,
+        idempotencyKey: key,
+        behavior: relation(behaviorRecordId),
+        // ⭐⭐ 2026-10-12（她测出来的缺口）：「录入数量」= 这一批的**录入数量合计**。
+        //    ⚠️ 拿不到 / 0 ⇒ `batchQuantityFields` 返空对象 ⇒ **这一列不写**（不写空、也不写 0）。
+        ...batchQuantityFields([{ quantity }]),
+      },
     });
     logInfo('purchase.return.batch.record_ensured', {
       batch_no: wanted,
