@@ -298,6 +298,70 @@ const defaultRunPowerShell = (command) => new Promise((resolve) => {
 });
 
 /**
+ * ⭐⭐ 2026-10-12（她换包后真机撞到"旧配置不兼容、页面只报错看不懂"）：
+ * **自助指引 / 迁移文案**都放这里 —— 页面与 README 用**同一份**，
+ * 免得"页面写的和说明书写的"两处不一致（用例会把两处一起钉住）。
+ */
+const SUMATRA_PORTABLE_URL = 'https://www.sumatrapdfreader.org/download-free-pdf-viewer';
+const SUMATRA_RENAME_ADVICE = '下载 portable（免安装）版 → 把里面的 exe 放进 print-helper 文件夹，'
+  + '并改名 SumatraPDF.exe（去掉版本号：以后换版就不用再改配置）';
+const ANTI_SLEEP_FALLBACK_HINT = '请把 Windows 睡眠设为「从不」（设置 → 系统 → 电源和睡眠）';
+
+/**
+ * ⭐⭐ 旧写法**自动迁移**（幂等）：`args` 里写过 `-print-settings xxx` ⇒ 搬到 `printSettings`。
+ *   · 为什么：`-print-settings` 现在由 `printSettings` 负责，两份会打架；
+ *     以前这里**直接报错卡住**（她换包后就是这么卡住的）⇒ 现在**自动搬、不阻塞打印**；
+ *   · **冲突时以 `printSettings` 为准**（她显式配的那份更像"最新意图"），`args` 那份丢掉并**说出来**；
+ *   · **幂等**：搬完 `args` 里就没有它了，再跑一次 `changed === false`。
+ */
+const migratePrinterConfig = (printer = {}) => {
+  const rawArgs = Array.isArray(printer.args) ? printer.args : [];
+  const args = [];
+  const fromArgs = [];
+  let changed = false;
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    const value = rawArgs[index];
+    if (String(value ?? '').trim() !== '-print-settings') {
+      args.push(value);
+      continue;
+    }
+    changed = true;
+    const next = rawArgs[index + 1];
+    // ⚠️ `-print-settings` 的值是**一个逗号分隔的参数**（SumatraPDF 的语法）；缺值/下一个还是开关 ⇒ 只删它自己。
+    if (next !== undefined && !String(next).startsWith('-')) {
+      fromArgs.push(...String(next).split(',').map((item) => item.trim()).filter(Boolean));
+      index += 1;
+    }
+  }
+  const configured = (Array.isArray(printer.printSettings) ? printer.printSettings : [])
+    .map((item) => String(item).trim()).filter(Boolean);
+  const printSettings = configured.length ? configured : fromArgs;
+  return {
+    printer: { ...printer, args, printSettings },
+    changed,
+    movedFromArgs: fromArgs,
+    ignoredFromArgs: configured.length ? fromArgs : [],
+  };
+};
+
+/**
+ * ⭐ 防睡眠"为什么没起来" —— **一行人话**（她原来只看到"见日志"，看不懂也没法自己解决）。
+ * 归类按已知真机情形；认不出来就把 stderr 第一行截短照搬（不猜、也不吞）。
+ */
+const describeAntiSleepFailure = (result = {}) => {
+  const stderr = String(result?.stderr || '').trim();
+  const firstLine = stderr.split('\n')[0].trim();
+  if (/ENOENT|not recognized|not found|不是内部或外部命令/i.test(firstLine)) {
+    return '这台电脑上找不到 PowerShell';
+  }
+  if (/denied|deny|policy|策略|禁止|禁用|拒绝/i.test(firstLine)) {
+    return 'PowerShell 被策略禁止（或没有权限）';
+  }
+  if (firstLine) return firstLine.slice(0, 40);
+  return `没起来（退出码 ${result?.code ?? '未知'}）`;
+};
+
+/**
  * ⭐⭐ 2026-10-12：**主动防睡眠**（业务负责人：「让它后台运行，我就不用让电脑一直亮屏了」）。
  *
  * 为什么是 PowerShell 内联 C#：`SetThreadExecutionState` 是 Win32 API，Node 里零依赖调不到；
@@ -358,19 +422,24 @@ const createAntiSleep = (options = {}) => {
   // ⚠️ 显式布尔：**没传 = 默认开**（与 `DEFAULT_CONFIG.preventSleep: true` 一致）；只有显式 false 才关。
   const enabled = options.enabled === undefined ? true : options.enabled === true;
   let on = false;
+  let failureReason = '';
   return {
     isOn: () => on,
+    /** 关着的时候**为什么**关着（页面那一行直接写它，不许只说"见日志"）。 */
+    failureReason: () => (on ? '' : failureReason),
     async enable() {
       if (!enabled) return false;
       const result = await Promise.resolve(runPowerShell(buildAntiSleepCommand()))
         .catch((error) => ({ code: -1, stderr: error.message }));
       on = result?.code === 0;
+      failureReason = on ? '' : describeAntiSleepFailure(result);
       logger[on ? 'info' : 'warn'](on ? 'print_helper.anti_sleep.enabled' : 'print_helper.anti_sleep.unavailable', on
         ? { hint: '电脑进入"睡眠"已被拦住（屏幕仍然可以关）' }
         : {
           code: result?.code ?? null,
+          reason: failureReason,
           stderr: String(result?.stderr || '').slice(0, 200) || undefined,
-          hint: '防睡眠没起来（**不影响打印**）—— 可以按 README 手动把"睡眠"改成"从不"',
+          hint: `防睡眠没起来（**不影响打印**）—— ${ANTI_SLEEP_FALLBACK_HINT}`,
         });
       return on;
     },
@@ -498,7 +567,9 @@ const validateConfig = (config, options = {}) => {
     if (!exe) push('printer.sumatraExe', '没填 SumatraPDF.exe 的路径');
     else if (!/\.exe$/i.test(exe)) push('printer.sumatraExe', `SumatraPDF 的路径要指向 .exe，当前是「${exe}」`);
     else if (options.checkPaths !== false && !exists(exe)) {
-      push('printer.sumatraExe', `找不到这个文件：${exe}（把 SumatraPDF.exe 放过去，或把这一项改成实际路径）`);
+      // ⭐ 2026-10-12：**只一行**（原来后面还拖一段长解释 ⇒ 她一次看到两大段看不懂）。
+      //    自助指引（下载地址 + 改名）由状态页那一行专门给，不塞进报错里。
+      push('printer.sumatraExe', `找不到这个文件：${exe}`);
     }
     if (!args || !args.some((item) => String(item).includes('{file}'))) {
       push('printer.args', '打印参数里必须有 {file}（用来放这一份 PDF 的路径）');
@@ -529,18 +600,15 @@ const validateConfig = (config, options = {}) => {
       return false;
     });
     if (bad !== undefined) {
-      push('printer.printSettings', `打印参数里每一项都要是**不含空格与逗号**的非空字符串（现在有「${bad}」）`
-        + ' —— 逗号会被当成"两档参数"，空格会被 SumatraPDF 当成另一个参数');
+      push('printer.printSettings', `打印参数每一项都不能含空格或逗号（现在有「${bad}」）`);
     } else if (dup !== undefined) {
       push('printer.printSettings', `打印参数里不许有重复项（「${dup}}」出现了两次）`);
     }
   }
-  // ⚠️ `args` 里自带 `-print-settings` ⇒ 会和上面那一档**打两份**，谁生效看顺序 ⇒ 明确拒绝。
-  if (String(config?.printer?.mode || '').trim() === 'sumatra'
-    && (config?.printer?.args || []).some((arg) => String(arg).trim() === '-print-settings')) {
-    push('printer.args', '`args` 里不要再写 `-print-settings` —— 它已经由 `printer.printSettings` 负责，'
-      + '两份会打架（改这一档请写 printSettings）');
-  }
+  // ⭐⭐ 2026-10-12：`args` 里自带 `-print-settings` **不再报错** —— 它已经在
+  //    `createPrintHelper` 里被 `migratePrinterConfig` **自动搬到 `printSettings`**（幂等）。
+  //    她的原话是"换包后直接报错卡住"⇒ 现在是"自动迁移 + 页面说一声"，不阻塞打印。
+  //    ⚠️ 但**校验单独跑**（不经过 createPrintHelper）时也按"已迁移"看待：这里不再拦。
   const poll = Number(config?.pollFallbackMs);
   if (!Number.isFinite(poll) || poll < 500) {
     push('pollFallbackMs', `兜底轮询间隔不能小于 500 毫秒（现在 ${config?.pollFallbackMs}）—— 那等于拿服务器刷请求`);
@@ -736,6 +804,9 @@ const buildTestPdf = (text = 'TEST 40x30', when = new Date().toISOString()) => {
 const createPrintHelper = (options = {}) => {
   const config = { ...DEFAULT_CONFIG, ...(options.config || {}) };
   config.printer = { ...DEFAULT_CONFIG.printer, ...(options.config?.printer || {}) };
+  // ⭐⭐ 2026-10-12：**旧写法自动迁移**（幂等、不阻塞）—— 她换包后就是被旧 `args` 卡住的。
+  const configMigration = migratePrinterConfig(config.printer);
+  config.printer = configMigration.printer;
   const logger = options.logger || createLogger({
     // ⚠️ 默认就把日志**同时落文件**（父母那台电脑出问题时，让他们把 helper.log 发出来）。
     fileLog: createFileLog({
@@ -756,6 +827,13 @@ const createPrintHelper = (options = {}) => {
   const antiSleep = options.antiSleep || createAntiSleep({
     runPowerShell, logger, enabled: config.preventSleep === true, now,
   });
+  if (configMigration.changed) {
+    logger.info('print_helper.config.migrated', {
+      moved: configMigration.movedFromArgs,
+      ignored: configMigration.ignoredFromArgs.length ? configMigration.ignoredFromArgs : undefined,
+      hint: '旧写法 `args` 里的 -print-settings 已自动搬到 printSettings（以 printSettings 为准），不影响打印',
+    });
+  }
   const baseUrl = normalizeBaseUrl(config.serverBaseUrl);
   // ⚠️ 相对路径一律以**配置文件所在目录**为基准（`--config D:\x\config.json` 时
   //    `state.json` / `downloads` 都落在 D:\x\ 下，不会散到脚本目录去）。
@@ -783,6 +861,12 @@ const createPrintHelper = (options = {}) => {
     statusPageUrl: '',
     // ⭐ 2026-10-12：防睡眠状态 + 断线自愈用的两个时间戳（`lastTickAt` 由看门狗刷新）。
     antiSleepEnabled: false,
+    // ⭐ 配置迁移留痕（状态页要写"已自动迁移"，用例也钉它）
+    configMigration: {
+      changed: configMigration.changed,
+      settings: configMigration.printer.printSettings,
+      ignoredFromArgs: configMigration.ignoredFromArgs,
+    },
     lastTickAt: now(),
     disconnectedSince: 0,
   };
@@ -1174,13 +1258,21 @@ button.mini{min-height:32px;padding:4px 10px;font-size:13px;background:#eef1f5;c
 </style></head><body>
 <h1>打印小助手</h1>
 ${pageOptions.already ? '<div class="ok">✅ 打印小助手已经在运行了 —— 这个窗口可以关掉</div>' : ''}
+${state.configMigration?.changed ? `<div class="notice">✅ <strong>已自动迁移</strong>：旧配置 \`printer.args\` 里的 \`-print-settings\` 已搬到「打印参数」（${
+  state.configMigration.ignoredFromArgs.length ? '以 printSettings 为准，args 里的那份已忽略' : '值照旧，打印不受影响'}）。</div>` : ''}
 ${errors.length ? `<div class="notice"><strong>打印程序还没配好：</strong><br>${errors.map((error) => `${escapeHtml(error.field)}：${escapeHtml(error.message)}`).join('<br>')}</div>` : ''}
+${errors.some((error) => error.field === 'printer.sumatraExe') ? `<div class="notice">📥 下载：<a href="${escapeHtml(SUMATRA_PORTABLE_URL)}">${escapeHtml(SUMATRA_PORTABLE_URL)}</a><br>${escapeHtml(SUMATRA_RENAME_ADVICE)}</div>` : ''}
 ${state.authError ? `<div class="notice"><strong>连不上服务器：</strong>${escapeHtml(state.authError)}</div>` : ''}
 <div class="card"><table>
 ${row('服务器', `${baseUrl}`, serverOnline === null ? false : true)}
 ${row('手机看到的状态', serverOnline ? '打印电脑在线' : '未连接（任务已排队）', serverOnline === true)}
 ${row('长连接（SSE）', state.sseConnected ? '已连接' : (state.fallbackActive ? '断开了，正在用兜底轮询' : '未连接'), state.sseConnected)}
-${row('防睡眠', state.antiSleepEnabled ? '开（电脑不会睡；屏幕可以关）' : (config.preventSleep === true ? '关（没起来 —— 见日志，或按 README 把睡眠改成"从不"）' : '关（配置里关掉了）'), state.antiSleepEnabled)}
+${row('防睡眠', state.antiSleepEnabled
+  ? '开（电脑不会睡；屏幕可以关）'
+  : (config.preventSleep === true
+    // ⭐ 2026-10-12：**直接写原因**（她原来只看到"见日志"，看不懂也没法自己弄）+ 兜底怎么手动解决
+    ? `关（${antiSleep.failureReason?.() || '没起来'}）—— ${ANTI_SLEEP_FALLBACK_HINT}`
+    : '关（配置里关掉了）'), state.antiSleepEnabled)}
 ${row('打印程序', errors.length ? '未配好' : `${String(config.printer.mode)} 可用`, errors.length === 0)}
 ${row('打印参数', (Array.isArray(config.printer.printSettings) && config.printer.printSettings.length)
     ? `-print-settings ${config.printer.printSettings.join(',')}`
@@ -1607,6 +1699,11 @@ module.exports = {
   buildPrintCommand,
   buildAntiSleepCommand,
   buildAntiSleepReleaseCommand,
+  migratePrinterConfig,
+  describeAntiSleepFailure,
+  SUMATRA_PORTABLE_URL,
+  SUMATRA_RENAME_ADVICE,
+  ANTI_SLEEP_FALLBACK_HINT,
   createAntiSleep,
   disableStandbyTimeout,
   reconnectDelayMs,
