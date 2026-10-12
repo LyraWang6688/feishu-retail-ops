@@ -18,6 +18,11 @@ const express = require('express');
 const { WorkbenchOrderActionService } = require('../services/workbenchOrderActionService');
 const { logError } = require('../utils/logger');
 
+/**
+ * ⭐ 2026-10-12：**写库成功之后要作废订单列表的缓存**（TTL 缓存见 `services/workbenchOrdersCache.js`）。
+ * ⚠️ 缓存层不认业务，**路由层才认**"这是一笔写" ⇒ 失效动作放在这里。
+ *    `options.ordersCache` 由 `routes/workbench.js` 传同一个实例进来（不新开一份）。
+ */
 const createWorkbenchOrderActionsRouter = (options = {}) => {
   const router = express.Router();
   // 默认依赖**延迟构建**：只想注入一个桩的调用方（测试）不必先配好飞书凭证。
@@ -29,7 +34,10 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
 
   const handle = (event, fallback, work) => async (req, res) => {
     try {
-      return res.json({ success: true, ...await work(req) });
+      const result = await work(req);
+      // ⭐ 写成功了才作废缓存（失败 / 被拒的那几次一个字节都没写，不该影响缓存）。
+      options.ordersCache?.invalidate();
+      return res.json({ success: true, ...result });
     } catch (error) {
       logError(event, { request_id: req.requestId, error: error.message });
       // 503 只给"整条动作被开关关掉"这一种（她在页面上会看见那句人话）。

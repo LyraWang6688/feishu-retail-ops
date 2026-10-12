@@ -19,7 +19,7 @@
  *      有一条源码哨兵钉着它（`test/workbenchOrders.test.js` 的 AC3b）。
  */
 
-const { readFlag } = require('./envValue');
+const { readFlag, readInt } = require('./envValue');
 
 /**
  * 工作台【订单列表】**补收款 / 二次交付**的默认收款方式。
@@ -106,6 +106,45 @@ const WORKBENCH_ARRIVAL_INPUT_REASONS = Object.freeze([
 ]);
 
 /**
+ * ⭐⭐ 2026-10-12：**订单列表的读取优化**（业务负责人：「它一直说正在读取订单」）。
+ *
+ * 她在服务器上实测：`/api/workbench/sales/orders` 真实耗时 **3.6s ~ 26s**；逐张表整表读 ——
+ * `salesEntry 188 条 3243ms` · `salesDetail 173 条 2629ms` · `paymentMethod **6 条** 1851ms` ·
+ * `paymentRecord 158 条 5527ms` · `product 562 条 7805ms` · `accessory 21 条 1517ms`（合计 ≈22.6s）。
+ * ⇒ **瓶颈不是"数据多"，是飞书 API 每张表 1.5~7.8 秒的固定开销**（6 条的小表也要 1.9s）。
+ *
+ * 对策两条，都在这里配置化：
+ *   ① **缓存**（`WORKBENCH_ORDERS_CACHE_MS`）—— 连着点几下 / 页面来回切 ⇒ 命中缓存 ≈0 秒；
+ *      写库之后由路由层**主动失效**（六条写入路径，见 `test/workbenchOrdersPerformance.test.js`）；
+ *   ② **只取需要的字段**（`ORDER_FIELD_KEYS`）—— 交给飞书 `field_names`，payload 更小。
+ */
+
+/** 默认 TTL：30 秒（业务负责人给的区间是 30~60 秒）。 */
+const DEFAULT_ORDERS_CACHE_MS = 30000;
+
+/**
+ * 「订单列表」页面**真正用到的列**（语义键，**一处定义**）——
+ * 依据是逐条核过 `services/salesFollowupService.js` 与它调用的三个纯函数：
+ *   · `salesEntry`    ：`orderNo`（单号）+ `funds`（「资金状态」，`postedOf` 判"已入账"）；
+ *   · `salesDetail`   ：`salesEntry`（关联销售单）· `size` · `fulfillmentStatus` · `actualAmount`
+ *                       · `product` / `accessory`（两种可售品的关联列，取值 = `config/sellableKinds`
+ *                       的 `detailLinkField`）；
+ *   · `paymentRecord` ：`salesEntry` · `amount` · `status` · `method` · `receivedAt`；
+ *   · `paymentMethod` ：`name`； · `product`：`number` · `color`； · `accessory`：`name`。
+ *
+ * ⚠️ **多一个都不许**（验收标准③）：这张清单就是"页面上真正用到的列"——加列必须有消费点。
+ * ⚠️ 只写**语义键**，飞书列名由 schema（`gateway.table(key).fields`）解析。
+ */
+const ORDER_FIELD_KEYS = Object.freeze({
+  salesEntry: Object.freeze(['orderNo', 'funds']),
+  salesDetail: Object.freeze(['salesEntry', 'size', 'fulfillmentStatus', 'actualAmount', 'product', 'accessory']),
+  paymentRecord: Object.freeze(['salesEntry', 'amount', 'status', 'method', 'receivedAt']),
+  paymentMethod: Object.freeze(['name']),
+  product: Object.freeze(['number', 'color']),
+  accessory: Object.freeze(['name']),
+});
+
+/**
  * 开关（**显式布尔**，见 `config/envValue.readFlag`：没设 = 默认；设成空串 = 关掉）。
  * ⚠️ 开关只放后端这一处 —— 页面不复制一份，免得两边漂移（关了之后页面会照实显示原因）。
  */
@@ -115,6 +154,9 @@ const readWorkbenchOrdersConfig = (env = process.env) => ({
   settlementLabels: WORKBENCH_SETTLEMENT_LABELS,
   afterSalesEnabled: readFlag(env, 'WORKBENCH_ORDERS_AFTER_SALES_ENABLED', true),
   secondDeliveryEnabled: readFlag(env, 'WORKBENCH_ORDERS_SECOND_DELIVERY_ENABLED', true),
+  // ⭐ 订单列表缓存 TTL（毫秒）：**显式整数**（`readInt`：空串 = 默认；非法 / 越界**当场抛错**）。
+  //   `0` 是**合法值** = 显式关掉缓存（每次真读）—— 线上排查数据时用得上。
+  ordersCacheMs: readInt(env, 'WORKBENCH_ORDERS_CACHE_MS', DEFAULT_ORDERS_CACHE_MS, { min: 0, max: 600000 }),
 });
 
 module.exports = {
@@ -125,5 +167,7 @@ module.exports = {
   WORKBENCH_SETTLEMENT_LABELS,
   WORKBENCH_ARRIVAL_TEXTS,
   WORKBENCH_ARRIVAL_INPUT_REASONS,
+  DEFAULT_ORDERS_CACHE_MS,
+  ORDER_FIELD_KEYS,
   readWorkbenchOrdersConfig,
 };
