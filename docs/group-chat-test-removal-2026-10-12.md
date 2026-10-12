@@ -145,16 +145,49 @@
 
 - `点确认后的第一次卡片更新：标题=处理中、明细变灰、note 不变、无按钮、stage 仍是 processing`
 
-## 判据 (b)：迁移（不删）
+## 判据 (b)：等价覆盖核对（第三轮，17 条）
 
-| 文件 | 条数 | 验的"活实现" | 迁移目标 |
-|---|---|---|---|
-| `salesOrderNoIntake.test.js` | 2 | 单号分配 —— `services/salesEntryService.createSalesEntryWithOrderNo`（扫码页在用） | ✅ **已迁移**：直驱该函数，断言逐字保留 |
-| `salesFundTypeDecoupling.test.js` | 12 | 收款行/欠款与交易类型无关 —— `PaymentService` 仍活 | 扫码提交的收款行 |
-| `salesMultiLineTradeType.test.js` | 5 | 逐行"库存定类型" —— `config/salesTradeTypePolicy.salesTradeTypeForStock` 仍活（扫码侧在用） | 扫码提交的逐行类型 |
-| `terminalCardConfirmDeal.test.js` | 2 | 【确认成交】按钮 —— `handleConfirmDealAction`/`completeDealFromCard` 是保留件 | 直驱保留件（**需与第三轮 `handleCardAction` 分派改动同批**） |
-| `cardUpdateMulti.test.js` | 1 | 卡片 patch payload 带 `update_multi` | 同上；另有等价覆盖（同文件 test ①/②） |
-| `arrivalConversation.test.js` | 1 | 卡片动作分派不抢走 | 同上（**需分派改动**） |
+⭐ 判据 (b) 的实现**还活着**（共享层/保留件）⇒ **不许删**。逐条核对"现成覆盖在哪"，
+对不上的**新写**用例挂在**现行入口**上（扫码 `submitSale`——**不手拼 `postSale`+`deliver`**，
+那是"自己拼链"，违反"测试必须走项目代码"的纪律）。
+
+### 核对结论（17 条）
+
+| # | 原用例 | 核心断言（逐字） | 等价覆盖在哪（文件:用例名:断言） | 处置 | 理由 |
+|---|---|---|---|---|---|
+| 1 | AC-12 单类型单（库里有）→ SALE_CASH | `item.trade_type_code === "SALE_CASH"` | `test/scanPageWrite.test.js:837`「⑩ 现货/预订：所选尺码在（样品+门盒）有货 ⇒ SALE_CASH，没货 ⇒ SALE_PREPAID」 | **等价覆盖** | 判据逐字同源 `salesTradeTypeForStock`；扫码侧已按"有货/没货"两态各断言一次 |
+| 2 | AC-12 单类型单（库里没有）→ SALE_PREPAID | `item.trade_type_code === "SALE_PREPAID"` | 同上（同一条用例的第二态） | **等价覆盖** | 同上 |
+| 3 | AC-14 一张混合单里两件都查库存 | 两件各自按实时库存定类型 | `test/scanSaleE2E.test.js:461`「AC-E2E-5 ⭐ 现货行已交付+库存真的少 1；预订行未交付、库存不动」 | **等价覆盖** | 该用例的输入**就是现货行+预订行的混合单**，逐行验类型/交付/库存 ⇒ 覆盖更强 |
+| 4 | AC-8/AC-9 现货件交付并扣库存、预付件不交付（逐条） | 现货：`履约状态=已交付`+`inventoryLedger`≥1；预定：`未交付`+`inventoryLedger` 不存在 | 同上（`scanSaleE2E.test.js:461`） | **等价覆盖** | 逐行断言与这里逐字同形 |
+| 5 | AC-1~AC-10 她那条原话：一张单·2 明细·3 收款·主表交易类型多选 | 一单多明细 + 多收款 + 主表「交易类型」多选 | ⚠️ **部分**：一单多明细 = `scanPageWrite.test.js:239`「① 连续扫三双 → 一张单+三条明细」；**多收款/多选类型** = 无 | **随能力退场（部分）** | 该断言验的是**自然语言里"卖了两件、收了三次钱"被解析成一张多明细单**；扫码页是**逐双扫码 + 资金区按行填**，没有"一句原话→多明细"这个能力 ⇒ 该语义不存在 |
+| 6 | ③ 全款（现货 / 预定）2 条 | `receipts === [[228,"已收款"]]`+`pendingAmount=0` | 无（扫码侧只覆盖"未付不写未收款"） | **新写** | 扫码侧"全款"路径未被断言过 |
+| 7 | ③ 部分：先给 100、还欠 128（现货 / 预定）2 条 | `receipts === [[100,"已收款"],[128,"未收款"]]`+`pendingAmount=128` | 无 | **新写** | ⚠️ 扫码侧**没有**"部分收款 ⇒ 两条收款行"的断言（`scanPageWrite.test.js:318` 只覆盖"未付 ⇒ 一条都不写"，语义不同） |
+| 8 | ③ 没付：整单未付（现货 / 预定）2 条 | `receipts === [[228,"未收款"]]`+`pendingAmount=228` | ⚠️ **不同语义**：`scanPageWrite.test.js:318`「实收留空+未付 → 差额 0 ⇒ 一条未收款都不写」 | **新写** | 群聊口径是"她**说了**未付 ⇒ 写一条未收款"；扫码口径是"**没填**就留空 ⇒ 不写" ⇒ **不是等价覆盖**（这条最容易被误判成"已有覆盖"，特意标出） |
+| 9 | ③ 定金 100 + 尾款 128（现货 / 预定）2 条 | `receipts === [[100,"已收款"],[128,"未收款"]]` | 无 | **新写** | 同上 |
+| 10 | ③ 定金 100 + **下次收** 120（现货 / 预定）2 条 | 同上（成交额由后端推） | 无 | **新写** | ⚠️ 这条还在**解析层**（"下次收"=尾款）——解析层已退场；扫码页直接填两笔金额 ⇒ 只保留"两笔 ⇒ 已收+未收"这一条通用语义（并入上一条新用例） |
+| 11 | ③ 预定+全款 / 预定+没付都能入账 | 预定也能全款收清 / 一分没付 | `scanSaleE2E.test.js:604`「AC-E2E-8 只填实收（或什么都不填）⇒ 一定能提交成单」 | **等价覆盖** | "预定单不被钱卡住"这条边界在扫码侧已断言 |
+| 12 | ③ 同一份资金原话：库里有/没有 → 收款**逐字相同** | `deepEqual(withStock.receipts, withoutStock.receipts)` + `notEqual(trade_type_code)` | **无** | **新写 ⭐** | ⭐ 这正是 Lead 预判的"**跨两态对照**强断言"——扫码侧是两条独立用例，**没有"同一输入跑两态再做逐字对照"** |
+
+### 新写用例的落点（设计已定，供第三轮实施）
+
+- **文件**：`test/scanPageWrite.test.js`（**复用其现成 `createHarness`**，不另搭 harness ⇒ 仍走项目代码）
+- **入口**：`createHarness({ tables: … })` → `addSaleLine(...)` → `submitSale({ openId, submitKey, payments: [{ method, amount }], paymentStatus })`
+  （范式照抄 `scanPageWrite.test.js:230/254/364`；API 已核实：`payments` 为 `[{method, amount}]`，`PAYMENT_STATUS = { full:"全付", partial:"部分付", unpaid:"未付" }`）
+- **断言（逐字保留）**：
+  1. `deepEqual(receipts(withStock), receipts(withoutStock))`、`equal(pendingAmount, …)` ⇒ **钱与类型无关**
+  2. `receipts` 四态矩阵：全付 → `[[228,"已收款"]]`；部分 → `[[100,"已收款"],[128,"未收款"]]`；未付 → `[[228,"未收款"]]`
+  3. 类型：`assert.notEqual(tradeTypeCode(withStock), tradeTypeCode(withoutStock))`（**从建出来的记录回读**，不读解析产物）
+  4. 交付：现货 → `履约状态=已交付` + `inventoryLedger`≥1；预定 → `未交付` + 无流水
+- **⚠️ 未完成**：本条**尚未写出/未跑**（本轮余量用尽）。**处置=新写（待第三轮）**。
+
+### 条数账（防"变相删覆盖"）
+| 处置 | 条数 |
+|---|---|
+| **等价覆盖（删）** | **5**（#1 单类型单现货 · #2 单类型单预定 · #3 混合单逐行 · #4 逐条交付/库存 · #11 预定不被钱卡住） |
+| **随能力退场（删）** | **1**（#5「一句原话 → 一张多明细多收款单」） |
+| **新写** | **11**（#6 全款×2 · #7 部分×2 · #8 未付×2 · #9 定金+尾款×2 · #10「下次收」并入×2 · #12 跨两态逐字对照×1） |
+| **合计** | **17** ✓ |
+⚠️ **净减少 1 条**（17 → 16：等价覆盖 5 + 新写 11）（#5 的"多收款/多选类型"部分）；理由：**"一句原话→多明细多收款"是已退场的自然语言能力**，扫码页是逐双录入 ⇒ 该语义不存在。**请 Lead 逐条核。**
 
 ## 五条"等价覆盖"抽查结论（Lead 指定）
 
