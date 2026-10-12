@@ -22,64 +22,100 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const CJK = /[\u4e00-\u9fff]/;
+/** 正则字面量前面允许出现的字符（`= /…/`、`(/…/)`、`return /…/`…）—— 用来把正则和除号区分开。 */
+const REGEX_PRECEDES = /(^|[=(,:;[!&|?{};]|\breturn|\btypeof)\s*$/;
 /** 这三类语句的中文**不算**用户可见文案（注释另外用状态机剥掉）。 */
 const EXEMPT_STATEMENT = /(^|[\s(])throw[\s(]|new Error\(|\blog(?:Info|Warn|Error)\b|\blogger\.|\bconsole\./;
 
-/** 把注释换成等量空白（保留换行与偏移）—— 这样"注释里的中文"天然不参与扫描。 */
-function stripComments(source) {
-  let out = '';
-  let state = 'code'; // code | line | block | single | double | template
+/**
+ * ⭐⭐ 一次遍历的状态机（注释 / 字符串 / 模板串 / **模板串里的 `${}` 嵌套**）。
+ *
+ * 🔴 2026-10-12 修的真 bug（另一位同事在扫码线撞到）：朴素机器**不认识模板串里的 `${}` 嵌套**，
+ *   而且模板串里的**撇号**（如 `` `<span>it's</span>` ``）会让它错当成"单引号字符串"开始 ⇒
+ *   **永久失步** ⇒ 后面整段代码被当成串内容 ⇒ **连注释里的中文都被报成"新增硬编码文案"** ✗
+ *   （后果：别人哪怕只加一行注释，闸门都会红 —— 那是**闸门在说谎**。）
+ * ⇒ 现在用**上下文栈**：`${` 压栈、与之匹配的 `}` 弹栈；模板串只在**栈顶是 template** 时才闭合；
+ *   注释只在**代码上下文**里才算注释（模板串里的 `//` 是普通文本 ✓）。
+ *
+ * 返回：`blanked`（注释换成等量空白、其余原样，保留换行与偏移）+ `literals`（顶层字面量，模板串含其 `${}` 内部原文）。
+ */
+function walk(source) {
+  let blanked = '';
+  const literals = [];
+  const stack = []; // 'template' | 'interp'
+  let state = 'code'; // code | single | double | template | line | block
+  let literalStart = -1;
+  let literalText = '';
   for (let index = 0; index < source.length; index += 1) {
     const char = source[index];
     const next = source[index + 1];
-    if (state === 'code') {
-      if (char === '/' && next === '/') { state = 'line'; out += '  '; index += 1; continue; }
-      if (char === '/' && next === '*') { state = 'block'; out += '  '; index += 1; continue; }
-      if (char === "'") state = 'single';
-      else if (char === '"') state = 'double';
-      else if (char === '`') state = 'template';
-      out += char;
-      continue;
-    }
     if (state === 'line') {
-      if (char === '\n') { state = 'code'; out += '\n'; continue; }
-      out += ' ';
-      continue;
+      if (char === '\n') { state = 'code'; blanked += '\n'; continue; }
+      blanked += ' '; continue;
     }
     if (state === 'block') {
-      if (char === '*' && next === '/') { state = 'code'; out += '  '; index += 1; continue; }
-      out += char === '\n' ? '\n' : ' ';
-      continue;
+      if (char === '*' && next === '/') { state = 'code'; blanked += '  '; index += 1; continue; }
+      blanked += char === '\n' ? '\n' : ' '; continue;
     }
-    // 字符串/模板里：只处理转义与结束符（**内容原样保留**）
-    if (char === '\\') { out += char + (next ?? ''); index += 1; continue; }
-    if ((state === 'single' && char === "'") || (state === 'double' && char === '"') || (state === 'template' && char === '`')) {
-      state = 'code';
+    if (state === 'single' || state === 'double') {
+      literalText += char;
+      if (char === '\\') { literalText += next ?? ''; blanked += char + (next ?? ''); index += 1; continue; }
+      if ((state === 'single' && char === "'") || (state === 'double' && char === '"')) {
+        state = 'code';
+        literals.push({ start: literalStart, end: index, text: literalText.slice(1, -1) });
+      }
+      blanked += char; continue;
     }
-    out += char;
+    if (state === 'template') {
+      if (char === '\\') { literalText += char + (next ?? ''); blanked += char + (next ?? ''); index += 1; continue; }
+      if (char === '$' && next === '{') { stack.push('interp'); state = 'code'; literalText += '${'; blanked += '${'; index += 1; continue; }
+      if (char === '`') {
+        stack.pop(); state = 'code';
+        literalText += char; blanked += char;
+        literals.push({ start: literalStart, end: index, text: literalText.slice(1, -1) });
+        continue;
+      }
+      literalText += char; blanked += char; continue;
+    }
+    // ── code 上下文 ──
+    if (char === '/' && next === '/') { state = 'line'; blanked += '  '; index += 1; continue; }
+    if (char === '/' && next === '*') { state = 'block'; blanked += '  '; index += 1; continue; }
+    // ⚠️ **正则字面量**（`/[\'"]/`、`/(Lark|Feishu)\//i`…）：里面的引号/斜杠**不是**字符串或注释。
+    //    上一版漏了它 ⇒ 在引号处误入字符串状态 ⇒ 一整段代码（含注释）被当成"字符串",注释中文被报 ✗。
+    if (char === '/' && REGEX_PRECEDES.test(blanked)) {
+      let scan = index + 1;
+      let inClass = false;
+      let closed = false;
+      for (; scan < source.length; scan += 1) {
+        const inner = source[scan];
+        if (inner === '\\') { scan += 1; continue; }
+        if (inner === '\n') break; // 没找到结尾 ⇒ 是除号，不是正则
+        if (inner === '[') inClass = true;
+        else if (inner === ']') inClass = false;
+        else if (inner === '/' && !inClass) { closed = true; break; }
+      }
+      if (closed) {
+        blanked += source.slice(index, scan + 1);
+        index = scan;
+        continue;
+      }
+    }
+    if (char === '`') { stack.push('template'); state = 'template'; literalStart = index; literalText = '`'; blanked += char; continue; }
+    if (char === '}' && stack[stack.length - 1] === 'interp') { stack.pop(); state = 'template'; literalText += char; blanked += char; continue; }
+    if (char === "'" || char === '"') {
+      state = char === "'" ? 'single' : 'double';
+      literalStart = index; literalText = char; blanked += char; continue;
+    }
+    blanked += char;
   }
-  return out;
+  return { blanked, literals };
 }
 
-/** 找出所有字符串字面量（含模板串）：返回 `{ start, end, text }`（text = 引号内的**原文**）。 */
-function findLiterals(code) {
-  const literals = [];
-  for (let index = 0; index < code.length; index += 1) {
-    const quote = code[index];
-    if (quote !== "'" && quote !== '"' && quote !== '`') continue;
-    const start = index;
-    let text = '';
-    index += 1;
-    for (; index < code.length; index += 1) {
-      const char = code[index];
-      if (char === '\\') { text += char + (code[index + 1] ?? ''); index += 1; continue; }
-      if (char === quote) break;
-      text += char;
-    }
-    literals.push({ start, end: index, text });
-  }
-  return literals;
-}
+/** 把注释换成等量空白（保留换行与偏移）—— 这样"注释里的中文"天然不参与扫描。 */
+const stripComments = (source) => walk(source).blanked;
+
+/** 找出所有**顶层**字面量（含模板串；模板串里的 `${}` 嵌套算同一条原文）。 */
+const findLiterals = (code) => walk(code).literals;
 
 /**
  * 这条字面量所在的"语句"（从最近的 `;` / `}` 到字面量）—— 用来判断是不是日志/内部错误。
