@@ -29,6 +29,11 @@ const { spawnSync } = require('node:child_process');
 
 const serverRoot = path.resolve(__dirname, '..');
 const scriptsDir = path.join(serverRoot, 'scripts');
+// ⭐ 2026-10-12（e2e-author 收口）：真写 E2E 也住 `server/e2e/**`（新套件 `e2e/real-paths.mjs`）——
+//    只扫 `server/scripts/` 的话，它**整份逃出**「禁硬编码凭证 / 禁 CLI」两条静态闸门。
+//    ⇒ 两个 walk 一起扫这两个根目录。
+const e2eDir = path.join(serverRoot, 'e2e');
+const SCAN_ROOTS = [scriptsDir, e2eDir].filter((dir) => fs.existsSync(dir));
 const runner = path.join(scriptsDir, 'e2e-run.mjs');
 const runnerSource = fs.readFileSync(runner, 'utf8');
 
@@ -116,7 +121,7 @@ const KNOWN_CREDENTIAL_EXCEPTIONS = Object.freeze({
   'ws-selftest.mjs': 'AGENTS.md 第 7 条已登记的"已知违规·待改"：长连接自测的 ALLOWED_CHAT_ID 白名单群 id',
 });
 
-test('server/scripts 下不许硬编码飞书 token / app_id / open_id 等凭证（已登记例外除外）', () => {
+test('server/scripts 与 server/e2e 下不许硬编码飞书 token / app_id / open_id 等凭证（已登记例外除外）', () => {
   const offenders = [];
   const patterns = [
     { re: /cli_[a-z0-9]{12,}/i, what: '飞书应用 app_id（cli_…）' },
@@ -136,13 +141,13 @@ test('server/scripts 下不许硬编码飞书 token / app_id / open_id 等凭证
       }
     }
   };
-  walk(scriptsDir);
+  for (const dir of SCAN_ROOTS) walk(dir);
   assert.deepEqual(offenders, [],
-    `scripts/ 下出现了硬编码凭证（应从 .env / 环境变量读）：\n${offenders.join('\n')}`);
+    `scripts/ 与 e2e/ 下出现了硬编码凭证（应从 .env / 环境变量读）：\n${offenders.join('\n')}`);
 });
 
 // ── ⑤ 不许用飞书 CLI ────────────────────────────────────────────────────────
-test('server/scripts 下不许调用飞书 CLI（含"读表验证"）', () => {
+test('server/scripts 与 server/e2e 下不许调用飞书 CLI（含"读表验证"）', () => {
   const offenders = [];
   const patterns = [
     /\blark-cli\b/, /\blark_cli\b/, /['"`]lark['"`]\s+(?:base|im|doc|sheet)\b/,
@@ -156,9 +161,9 @@ test('server/scripts 下不许调用飞书 CLI（含"读表验证"）', () => {
       if (patterns.some((re) => re.test(source))) offenders.push(path.relative(serverRoot, full));
     }
   };
-  walk(scriptsDir);
+  for (const dir of SCAN_ROOTS) walk(dir);
   assert.deepEqual(offenders, [],
-    `scripts/ 下出现了飞书 CLI 调用（业务负责人明确禁止）：${offenders.join(', ')}`);
+    `scripts/ 与 e2e/ 下出现了飞书 CLI 调用（业务负责人明确禁止）：${offenders.join(', ')}`);
 });
 
 // ── ⑥ 走项目代码：require 项目自己的模块，不自己拼 SDK ─────────────────────
@@ -254,4 +259,34 @@ test('AC-H6（F-9）`--real-im` 必须显式开闸才生效（默认**禁止**�
   const source = fs.readFileSync(path.join(scriptsDir, 'e2e-sales-group-scenarios.mjs'), 'utf8');
   assert.ok(/FEISHU_E2E_ALLOW_REAL_IM/.test(source),
     'F-9：本机 .env 里有**真实**的群/机器人 id ⇒ `--real-im` 要再用一个显式环境变量开闸');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐ 2026-10-12（e2e-author 收口）：**新套件** `server/e2e/real-paths.mjs` 的防假绿闸门。
+//    为什么单列一条：它住在 `server/e2e/`（不在上面两条静态扫描的旧范围里，现已并入），
+//    而且是**唯一一条真写真飞书的销售/售后/采购 E2E** ⇒ 它假绿 = 发版证据假绿。
+// ═══════════════════════════════════════════════════════════════════════════
+test('AC-H7（F-1/F-2）新套件：退出码走 exitCodeFor、跳过落报告、不许 t.todo', () => {
+  const realPaths = path.join(e2eDir, 'real-paths.mjs');
+  assert.ok(fs.existsSync(realPaths), 'server/e2e/real-paths.mjs 应存在（真写 E2E 套件）');
+  const source = fs.readFileSync(realPaths, 'utf8');
+  // ① 报告体与汇总走**共用纯函数**（与 `e2e-sales-group-scenarios.mjs` 同一处判定）
+  assert.ok(/from '\.\.\/scripts\/lib\/e2e-report\.mjs'/.test(source),
+    'AC-H7①：要 import `scripts/lib/e2e-report.mjs`（唯一判定处），别自己再算一套');
+  assert.ok(/buildReport\(/.test(source) && /summaryLine\(/.test(source),
+    'AC-H7①：报告体与汇总行要走 `buildReport` / `summaryLine`');
+  // ② 退出码必须由 `exitCodeFor` 决定（F-1：算了未达标数却 exit 0 是最典型的假绿）
+  assert.ok(/process\.exitCode\s*=\s*[^;]*exitCodeFor\(/.test(source),
+    'AC-H7②：退出码必须走 `exitCodeFor(...)`（未达标 ⇒ 非 0）');
+  // ③ 跳过必须进 `skipped`（`report.json` 里有 skipped:[{name,reason}]）——只打控制台不算
+  assert.ok(/skipped\.push\(\s*\{\s*name/.test(source),
+    'AC-H7③：跳过项要 `skipped.push({ name, reason })`（只打一句控制台 ⚠️ 不算证据）');
+  assert.ok(/buildReport\(\{[^}]*skipped/s.test(source) && /summarize\(\{[^}]*skipped/s.test(source),
+    'AC-H7③：`skipped` 必须真的传进 `buildReport` / `summarize`（否则报告里没有它）');
+  // ④ 🔴 **不许 `t.todo`**：本轮口径是"未覆盖就诚实跳过 + 落报告"，`todo` 既不计失败也不进报告
+  assert.equal(/\.todo\(/.test(source), false,
+    'AC-H7④：`node:test` 的 `t.todo` 不影响退出码、也不进报告 ⇒ 一律用 `t.skip` + `skipped.push`');
+  // ⑤ 报告里不许出现明文 token：base 只放指纹
+  assert.ok(/base:\s*fingerprint\(/.test(source),
+    'AC-H7⑤：报告的 `base` 只放指纹（报告会被当证据存档，明文 token 不许进文件）');
 });
