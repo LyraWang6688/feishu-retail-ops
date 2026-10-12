@@ -254,6 +254,30 @@ const TAG_QR_CODE = Object.freeze({
   recheck: resolveTagQrRecheckConfig(),
   // 物理列名只有一个去处：`config/v1BitableSchema.js` 的 `product.fields`。
   // 这里只放**语义键**（网关 update 收的就是它），避免同一个列名有两份真源。
+  /**
+   * ⭐⭐ **二维码 URL 里那串「编号」怎么来**（2026-10-12 业务负责人提的：别只盯公式列）。
+   *
+   * 她表里「编号」列的**公式表达式**（2026-10-12 只读核过；`appTableField.list` → `property.formula_expression`）：
+   * ```text
+   * bitable::$table[tbl5as7poByp36c7].$field[fldJHVi1Pz]                       // 货号（文本）
+   *   & "|" &
+   * bitable::$table[tbl5as7poByp36c7].$field[fldEz0zrsG].$column[fldo2CIis2]  // 颜色（关联列的显示列）
+   *   & "|" &
+   * bitable::$table[tbl5as7poByp36c7].$field[fldOU1H0bt]                      // 类别（单选）
+   * ```
+   * ⇒ 规则就是 **`货号 | 颜色 | 类别`**（分隔符 `|`、顺序如此、**没有空值特判**）。
+   * ⚠️ 公式列**有延迟**（实测几秒~十几秒）⇒ 她刚改完货号那一刻，记录上的「编号」还是旧值。
+   *    ⇒ 判「有没有变」用**源字段**（`货号/颜色/类别`，事件里没有延迟）；
+   *      二维码 URL 那串**优先用公式列读到的值**（它才是扫码页认识的键），**读不出/为空 ⇒ 用这条规则自己拼**。
+   */
+  numberAssembly: Object.freeze({
+    separator: '|',
+    // 顺序 = 她公式的顺序；键取自 `v1BitableSchema.tables.product.fields`
+    fields: Object.freeze(['itemNo', 'color', 'category']),
+    // 交叉核对（公式值 vs 拼装值不一致时记 warn）；显式布尔
+    crossCheck: true,
+  }),
+
   fields: Object.freeze({
     number: 'number',
     tagQrCode: 'tagQrCode',
