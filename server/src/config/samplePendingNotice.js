@@ -24,8 +24,15 @@ const TEXT_ENV_KEY = 'SAMPLE_PENDING_NOTICE_TEXT';
 /** 她定的五个时点（上海时间整点）。 */
 const DEFAULT_HOURS = Object.freeze([9, 12, 15, 18, 21]);
 
-/** 文案（占位符 `{total}` / `{supplement}` / `{sample}` / `{pending}`）—— 逐字是她给的。 */
-const DEFAULT_TEXT = '待办还有 {total} 条：待补充 {supplement} 条 · 待补样品 {sample} 条 · 待交割 {pending} 条 → 去工作台处理';
+/**
+ * 文案（占位符 `{total}` / `{supplement}` / `{sample}` / `{pending}`）—— 她给的那句，
+ * ⚠️ 只在「待补样品」前面加了**两个字「其中」**（2026-10-12 现场事故后）：
+ *    `{total}` = `{supplement}` + `{pending}`（**待补样品是待补充的子集、不重复加**；
+ *    已两清不是待办）⇒ 加「其中」才能让"10 条待补充里有 8 条是待补样品"这个关系一眼看懂，
+ *    否则她又会去把三个数加起来（现场那条 `total=76` 与 `10+8+5=23` 就是这么暴露的）。
+ *    （口径与算法见 `services/workbenchOrderSections.js` 的 `workbenchCountsOf`。）
+ */
+const DEFAULT_TEXT = '待办还有 {total} 条：待补充 {supplement} 条 · 其中待补样品 {sample} 条 · 待交割 {pending} 条 → 去工作台处理';
 
 /** `9,12,15,18,21` → `[9,12,15,18,21]`；非法值**当场抛**（绝不安静地一天不推）。 */
 const parseHours = (raw) => {
