@@ -38,3 +38,12 @@ export const QUERY_SECTIONS = [
     href: INVENTORY_QUERY_PAGE_URL,
   },
 ];
+
+/**
+ * ⭐⭐ 2026-10-12：「**点一次就到**」（业务负责人：「不需要让我再去点一下那个消息查询的卡片」）。
+ *
+ * ⚠️ **跳转行为的配置不在本文件** —— 它已提到**链接层** `config/links.js`
+ *    （`LINK_DIRECT_JUMP_ENABLED` / `LINK_APPLINK_ENABLED` / `LINK_APPLINK_MODE`），
+ *    因为**三个子页面共用同一套**：销售查询 · 全仓查询 · **货品上新**（最后这个是飞书表单）。
+ *    本文件只管"哪两个板块、各自的 URL"（URL 单一来源仍是 `config/links.js`）。
+ */
