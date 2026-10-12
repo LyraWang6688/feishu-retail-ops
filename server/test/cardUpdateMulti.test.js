@@ -19,7 +19,7 @@
 //      （2026-10-08：第三条 `LarkMvpService.patchCardMessage` 已随"采购侧统一改用共享实现"删除，
 //       采购到货核对现在接的就是 `updateInteractiveCard` —— 见下面"patch 出口 ①"。）
 //   ③ `secondDeliveryCard` 经 `settleSecondDeliveryOrder` **深拷贝变换后**仍带（最易漏）；
-//   ④ 刻意不 patch 的 **2 张卡**（`saleLookupCard` ×2 分支）
+//   ④ 刻意不 patch 的 **2 张卡**（原 `saleLookupCard` 已随群查单链路退场 ⇒ 现在只剩别的卡）
 //      **不出现**该字段 —— 把"刻意不动"钉住，将来谁顺手加上会挂
 //      （2026-10-08：`purchaseRequestConfirmationCard` 已整张删除，不再是这里的场景）；
 //   ⑤ 卡片**可见内容零变化**：`header` / `elements` 与改动前（`origin/main`）逐字相同
@@ -47,7 +47,7 @@ const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { LarkMvpService } = require('../src/services/larkMvpService');
 const { PurchaseWebhookService } = require('../src/services/purchaseWebhookService');
 const {
-  ITEMS, PAYMENTS, PATCHABLE_CARD_SCENARIOS, UNPATCHABLE_CARD_SCENARIOS,
+  ITEMS, PAYMENTS, PATCHABLE_CARD_SCENARIOS,
 } = require('../test-support/cardScenarios');
 const VISIBLE_GOLDEN = require('../test-support/cardVisibleGolden.json');
 
@@ -68,11 +68,12 @@ const capturePatch = () => {
   return { client, payloads };
 };
 
-// ── ① "更新前"那份：13 张会被 patch 的卡片，builder 直出就是共享卡片 ────────────
+// ── ① "更新前"那份：9 张会被 patch 的卡片，builder 直出就是共享卡片 ────────────
 test('14 张会被 patch 的卡片：builder 直出（"更新前"那份）的 config 就是共享卡片', () => {
-  // ⚠️ 2026-10-12（3b）：原来 14 张 —— 「请确认销售订单」那张随销售草稿卡片退场 ⇒ **13 张**。
-  assert.equal(PATCHABLE_CARD_SCENARIOS.length, 13,
-    '清单是 13 张卡（12 个 builder；afterSalesRetryCard 继承 afterSalesConfirmationCard 的 config）');
+  // ⚠️ 2026-10-12（3b + 售后卡片退场）：14 → 13（销售确认卡退场）→ **9**
+  //    （售后那 4 张 —— 确认卡 / 结果卡 / 重试卡 / 状态卡 —— 随售后卡片链路整条退场）。
+  assert.equal(PATCHABLE_CARD_SCENARIOS.length, 9,
+    '清单是 10 张卡（都是一句话就能说清"为什么它要被 patch"的现行卡片）');
   for (const { name, build } of PATCHABLE_CARD_SCENARIOS) {
     assert.deepEqual(build(larkCards).config, PATCHABLE_CONFIG,
       `${name} 必须显式声明 update_multi:true，否则它的更新只有操作用户自己看得见`);
@@ -80,18 +81,11 @@ test('14 张会被 patch 的卡片：builder 直出（"更新前"那份）的 co
 });
 
 // ── ④ 刻意不动的卡片：不该出现该字段（"刻意不动"钉住，不是忘了）──────────────
-test('刻意不 patch 的卡片：不出现 update_multi（只发不改）', () => {
-  assert.equal(UNPATCHABLE_CARD_SCENARIOS.length, 2);
-  for (const { name, build } of UNPATCHABLE_CARD_SCENARIOS) {
-    const config = build(larkCards).config;
-    assert.deepEqual(config, { wide_screen_mode: true }, `${name} 的 config 应当与改动前逐字相同`);
-    assert.ok(!('update_multi' in config), `${name} 不被 patch，不该带 update_multi`);
-  }
-});
-
-// ── ⑤ 可见内容零变化：header / elements 与改动前逐字相同 ──────────────────────
+// ⚠️ 2026-10-12：「刻意不 patch 的 2 张卡」那条用例**随群查单链路退场**（那 2 张就是 `saleLookupCard` ✓）。
+//    其余卡片的 patch 护栏（下面那条）**逐字不动** ✗ —— 那是别的轮的护栏 ✓
 test('卡片可见内容零变化：header / elements 与改动前（origin/main）逐字相同', () => {
-  const scenarios = [...PATCHABLE_CARD_SCENARIOS, ...UNPATCHABLE_CARD_SCENARIOS];
+  // ⚠️ 群查单那 2 张卡退场后，'刻意不 patch' 那份清单已归零 ⇒ 这里只剩可 patch 的 9 张 ✓
+  const scenarios = [...PATCHABLE_CARD_SCENARIOS];
   assert.equal(Object.keys(VISIBLE_GOLDEN).length, scenarios.length, 'golden 与场景清单必须一一对应');
   for (const { name, build } of scenarios) {
     const card = build(larkCards);

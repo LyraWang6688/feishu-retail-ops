@@ -65,14 +65,6 @@ const PATCHABLE_CARD_SCENARIOS = [
   { name: 'purchaseStatusCard',
     build: (c) => c.purchaseStatusCard({ items: ITEMS }, '采购申请处理中',
       '已收到确认，正在生成采购申请；请勿重复点击。', 'blue') },
-  { name: 'afterSalesConfirmationCard',
-    build: (c) => c.afterSalesConfirmationCard('task_as', AFTER_SALES_PLAN) },
-  { name: 'afterSalesResultCard',
-    build: (c) => c.afterSalesResultCard(AFTER_SALES_PLAN, AFTER_SALES_RESULT) },
-  { name: 'afterSalesRetryCard',
-    build: (c) => c.afterSalesRetryCard('task_as', AFTER_SALES_PLAN, '库存流水写入失败') },
-  { name: 'afterSalesStatusCard',
-    build: (c) => c.afterSalesStatusCard({ title: '售后', message: '已受理。', template: 'blue' }) },
   { name: 'secondDeliveryCard',
     build: (c) => c.secondDeliveryCard({ orders: [{ orderNo: 'XSD-001', salesEntryRecordId: 'rec_1',
       tradeTypeLabel: '已付', quantity: 2, pendingAmount: 99, pendingDeliveryQuantity: 1 }],
@@ -81,12 +73,8 @@ const PATCHABLE_CARD_SCENARIOS = [
 
 // 刻意**不动**的卡片（只发不 patch）：它们**不该**出现 `update_multi`。
 // ⚠️ 2026-10-08：原第三张 `purchaseRequestConfirmationCard` 已随「报货确认卡」整张删除。
-const UNPATCHABLE_CARD_SCENARIOS = [
-  { name: 'saleLookupCard(0 条)',
-    build: (c) => c.saleLookupCard({ days: 3, itemNo: 'A100', color: '黑', candidates: [] }) },
-  { name: 'saleLookupCard(N 条)',
-    build: (c) => c.saleLookupCard({ days: 3, itemNo: 'A100', color: '黑',
-      candidates: [{ date: '2026-10-01', item_no: 'A100', color: '黑', size: 38, actual_amount: 99 }] }) },
-];
-
+// ⭐⭐ 2026-10-12：原先这 2 个场景就是 `saleLookupCard` 的两个分支；
+//    群查单链路整条退场（业务负责人："整条下掉！"）⇒ 卡片与场景一起退场 ✓
+//    （去向见 `docs/group-sale-lookup-retirement-2026-10-12.md`）
+const UNPATCHABLE_CARD_SCENARIOS = [];
 module.exports = { ITEMS, PAYMENTS, AFTER_SALES_PLAN, PATCHABLE_CARD_SCENARIOS, UNPATCHABLE_CARD_SCENARIOS };

@@ -446,8 +446,7 @@ const productInfoGapsElements = (draft, config = resolveProductInfoGapsConfig())
 //        —— 这几样**只有它一个调用方** ⇒ 没有活的卡片需要它们。
 //    ⚠️ 顺带产生的**模块内孤儿**（不导出，本轮**刻意不删**，留给下一刀）：
 //      `salesColorPickers` · `salesSampleReplacementPicker` · `salesCardFactElements`。
-//    ⚠️ **售后那 5 张卡片不受影响**：`afterSalesFlowService` 仍有活调用方
-//      （`larkMvpService` 的售后卡动作，2026-10-12 明确保留）。
+//    ⚠️ 售后那 5 张卡片**后来也退场了**（2026-10-12 业务负责人：「不用了啊，售后不是在工作台了嘛」）。
 const confirmDealSettledElement = ({ settledAt, config = resolveSalesConfirmDealConfig() } = {}) => {
   // 卡片上写给门店看的时间必须是上海时间（服务器是 UTC，直接取 ISO 会差 8 小时）。
   const clock = shanghaiClock(settledAt || Date.now());
@@ -581,55 +580,6 @@ const sampleReplacementProcessingCard = (productNumber, message) => ({
 //    它只有**私聊**一个入口（`larkMvpService.sendTodaySales` ← `application.bot.menu_v6` 菜单事件），
 //    两者都已随私聊入口一起删掉；全仓再无调用方。
 //    要看今日销售 → 飞书网页工作台「销售查询」。要用回来：`git log -S 'todaySalesCard'`。
-
-/**
- * 「最近 N 天的销售记录」候选卡片（退换货第一期：只查 + 只展示）。
- *
- * ⚠️ 这张卡片**刻意没有任何按钮**：产品负责人明确要求本期卡片只展示、不做交互，
- * 她要用自然语言回「第 2 笔」。所以这里不引入 buttonColumns / actionButton；
- * 谁"顺手加个按钮"都违背需求（也违背本期"只读"的边界）。
- *
- * 字号：飞书的 `markdown` 元素不能自定义字号（详见本文件里那张确认卡片的注释），
- * 所以候选行用 `div` + `lark_md` + `text_size: 'heading'`——手机上这是正文大字。
- * 每行带序号（1/2/3），她说「第 2 笔」才对得上 task.pending_candidates 的下标。
- *
- * 0 条时不给"再试一次"的按钮，只把话说明白：没查到 + 给一条出路（问她大概哪天买的）。
- */
-const saleLookupCard = ({ days, itemNo = '', color = '', candidates = [] } = {}) => {
-  const label = `${text(itemNo)}${text(color)}`;
-  const title = `最近 ${text(days)} 天的销售记录`;
-  if (!candidates.length) {
-    return {
-      config: { wide_screen_mode: true },
-      header: { template: 'orange', title: { tag: 'plain_text', content: title } },
-      elements: [{
-        tag: 'div',
-        text: {
-          tag: 'lark_md',
-          content: `${text(days)} 天内没查到 ${label} 的销售记录。\n你记得大概是哪天买的吗？`,
-          text_size: 'heading',
-        },
-      }],
-    };
-  }
-  const lines = candidates.map((candidate, index) => {
-    const amount = candidate.actual_amount == null || candidate.actual_amount === ''
-      ? '金额待录入'
-      : `￥${text(candidate.actual_amount)}`;
-    return `${index + 1}. ${text(candidate.date)} · ${text(candidate.item_no)}${text(candidate.color)}`
-      + ` · ${text(candidate.size)}码 · ${amount}`;
-  });
-  return {
-    config: { wide_screen_mode: true },
-    header: { template: 'blue', title: { tag: 'plain_text', content: title } },
-    elements: [
-      { tag: 'div', text: { tag: 'lark_md', content: lines.join('\n'), text_size: 'heading' } },
-      { tag: 'note', elements: [{ tag: 'plain_text', content: candidates.length > 1
-        ? `共 ${candidates.length} 笔。回我「第 2 笔」就能指到具体某一笔。`
-        : '只有这 1 笔。' }] },
-    ],
-  };
-};
 
 // 原「采购申请确认卡片」（purchaseRequestConfirmationCard）已于 2026-10-08 **整张删除**
 //（业务负责人逐条批准）：报单链路 2026-10-07 起就是免确认，那张卡没有任何发送方；
@@ -771,183 +721,17 @@ const purchaseStatusCard = (draft, title, message, template = 'blue', options = 
 const yuanText = (value) => (value == null || value === '' ? '待录入' : `￥${text(value)}`);
 
 // 她这一眼要核对的"处理的是哪一笔"：日期 · 货号颜色 · 尺码 · 金额。
-const afterSalesOriginalLine = (candidate = {}) => [
-  text(candidate.date) || '日期未知',
-  `${text(candidate.item_no)}${text(candidate.color)}`.trim() || '货号未识别',
-  candidate.size ? `${text(candidate.size)}码` : '尺码未识别',
-  candidate.actual_amount == null || candidate.actual_amount === ''
-    ? '金额待录入'
-    : `￥${text(candidate.actual_amount)}`,
-].join(' · ');
+// 🔴 2026-10-12（售后卡片链路退场）：原来这一段是**群卡片售后**的 5 张卡片
+//    （确认卡 / 结果卡 / 重试卡 / 状态卡 / 结算说法）＋ 它们专用的私有拼装 helper。
+//    业务负责人口径：「**不用了啊，售后不是在工作台了嘛**」＋生产日志实测
+//    「最后一次群卡片售后动作 = 2026-10-07 16:03，之后 5 天 0 次」
+//    ⇒ **整条链路退场**（那个**售后卡片编排服务**整个文件也已删除）。
+//    ⚠️ **售后业务层（`services/afterSalesService.js`）一行没动** —— 工作台订单列表的
+//      `submit-after-sales`（`workbenchOrderActionService`）照旧调它写账；
+//      **售后的现行入口 = 工作台**（扫码页那个「退货」是**采购退货**，不是一回事）。
+//    ⚠️ 群里再去点老售后卡片：落到 `larkMvpService` 的未知动作兜底 ⇒ **回一句人话**
+//      （「这张卡片已经不适用了哦～现在录入请用扫码页，查询和售后请到工作台～」）。
 
-// 「钱怎么走」的两种走法在卡片上的说法（金额行 / 接线层追问的提示语都引用它，
-// 同一件事不要在两处写成两种字）。执行器的编码契约在 config/afterSales.js。
-const afterSalesSettlementLabels = Object.freeze({ cash: '退现金', prepaid: '存为预存额度' });
-const afterSalesSettlementLabel = (settlement) =>
-  afterSalesSettlementLabels[String(settlement ?? '').trim()] || '';
-
-// 「钱怎么走」与「差价多少」分两行写：她说的是"钱先存着"（走哪条腿），
-// 差价是金额事实；合成一行时金额容易被看漏，而这张卡片是要她核对金额的。
-//
-// ⚠️ 差价 ≠ 0 而没有 settlement 时**不能**写「不动钱」：钱确实要动，只是走向没解析出来。
-// 写成"不动钱"会让她以为这一笔不动账，点确认后账上真的少一笔（静默的账目错）。
-// 正常流程下这种卡片根本发不出去（接线层会直接抛错拦住这一笔，见 afterSalesFlowService），
-// 这里只是"万一还有一张在途卡片"时的如实兜底。
-const afterSalesMoneyLine = ({ settlement, diff_amount: diffAmount } = {}) => {
-  const diff = Number(diffAmount);
-  if (!Number.isFinite(diff) || diff === 0) return '不动钱';
-  if (!settlement) return '还没定（回我一句：退现金 / 或先存着）';
-  if (settlement === 'prepaid') {
-    return diff < 0 ? afterSalesSettlementLabels.prepaid : '记入预存（她还欠）';
-  }
-  return diff < 0 ? afterSalesSettlementLabels.cash : '收现金';
-};
-
-const afterSalesDiffLine = ({ diff_amount: diffAmount } = {}) => {
-  const diff = Number(diffAmount);
-  if (!Number.isFinite(diff) || diff === 0) return '￥0';
-  return `${yuanText(Math.abs(diff))}（${diff < 0 ? '退给她' : '她补'}）`;
-};
-
-// 退回的鞋放哪儿：她说了就按她说的写；没说就写默认值并注明可在下面改。
-const afterSalesRestockLine = (plan = {}) => {
-  if (!plan.requires_restock_state) return '不回库';
-  const state = text(plan.restock_state) || '门盒';
-  return plan.restock_state_explicit ? state : `${state}（默认，可在下面改）`;
-};
-
-const afterSalesActionLine = (plan = {}) => {
-  const label = text(plan.action_label) || '售后';
-  const lines = (plan.new_lines || []).map((line) => text(line.label)).filter(Boolean);
-  return lines.length ? `${label}（换成 ${lines.join('、')}）` : label;
-};
-
-/**
- * 售后确认卡片。内容分四行大字（处理哪一笔 / 动作 / 钱 / 退回的鞋）+ 可选的回库状态按钮
- * + 确认/取消按钮。
- *
- * 回库状态只在动作需要时出现（退货、换货需要；赔货不回库，不给按钮）；
- * 她话里没说时默认值已经填好（默认原状态=门盒），所以**不点也能直接确认**，
- * 按钮只是给她一个"改一下"的出口。
- *
- * ⚠️ 钱怎么走与回库状态**规则相反**：钱没有默认值（业务红线），而且**不用卡片按钮**
- * （业务负责人 2026-10-05 纠正：「会说的，所以不用再有要卡片按钮的链路了」）。
- *   · 她说了 → 卡片上直接写她说的走向；
- *   · 差价 = 0（不动钱）→ 写「不动钱」；
- *   · **没有**"她没说钱"这条交互：她每句话都会说清钱怎么走，真没解析出来时接线层直接
- *     抛错拦住（不发这张卡片）。
- *   ⇒ 这张卡片上**没有资金选择按钮**，也不要再为它加任何"追问/选择"的入口。
- */
-const afterSalesConfirmationCard = (taskId, plan = {}) => {
-  const elements = [
-    { tag: 'div', text: { tag: 'lark_md',
-      content: `处理这一笔\n${afterSalesOriginalLine(plan.candidate)}`, text_size: 'heading' } },
-    { tag: 'div', text: { tag: 'lark_md',
-      content: `动作：${afterSalesActionLine(plan)}\n`
-        + `钱：${afterSalesMoneyLine(plan)}\n`
-        + `差价：${afterSalesDiffLine(plan)}\n`
-        + `退回的鞋放：${afterSalesRestockLine(plan)}`, text_size: 'heading' } },
-  ];
-  if (plan.requires_restock_state) {
-    elements.push({ tag: 'div', text: { tag: 'lark_md', content: '退回的鞋放哪儿？', text_size: 'note' } });
-    elements.push(buttonColumns(['门盒', '样品'].map((state) => actionButton(
-      plan.restock_state === state ? `${state}（已选）` : state,
-      'choose_after_sales_restock', taskId,
-      plan.restock_state === state ? 'primary' : 'default', { state },
-    ))));
-  }
-  // 出货货品在货品表里命中多条（男/女鞋常共用同一货号+颜色）：执行器取第一条继续，
-  // 但这件事要**看得见**——不能悄悄替她决定换的是哪一条。
-  if ((plan.new_lines || []).some((line) => Number(line.ambiguous_count || 0) > 1)) {
-    elements.push({ tag: 'div', text: { tag: 'lark_md',
-      content: '⚠️ 换的那双在货品表里匹配到多条，已取第一条，请核对', text_size: 'note' } });
-  }
-  elements.push(buttonColumns([
-    actionButton('确认', 'confirm_after_sales', taskId, 'primary'),
-    actionButton('取消', 'cancel_after_sales', taskId, 'danger'),
-  ]));
-  return { config: patchableCardConfig(),
-    header: { template: 'orange', title: { tag: 'plain_text', content: '请确认售后' } }, elements };
-};
-
-// 库存流水的行为编码 → 人话（编码契约在 config/afterSales.js；这里只是展示文案）。
-const AFTER_SALES_STOCK_LABELS = Object.freeze({
-  SALE_RETURN: '退回入库',
-  SALE_CASH: '新鞋出库',
-  SALE_COMPENSATION: '赔货出库',
-});
-
-const afterSalesStockLines = (stock = []) => stock.map((row) => {
-  const label = AFTER_SALES_STOCK_LABELS[row.behaviorCode] || text(row.behaviorCode);
-  return `${label} ${text(row.state)} ×${text(row.quantity || 1)}`;
-});
-
-// 「已经写进去了什么」——她做完之后要能一眼核对：明细 / 钱 / 库存。
-// 只写真写进去的：不动钱时不写"收款 0 笔"。
-const afterSalesWrittenLines = (result = {}) => {
-  const lines = [];
-  const detailCount = (result.detailRecordIds || []).length;
-  lines.push(`明细 ${detailCount} 条`);
-  const money = result.money || {};
-  if (money.route === 'cash') lines.push(`收款明细 1 笔（${text(money.direction)} ${yuanText(money.amount)}）`);
-  else if (money.route === 'prepaid') lines.push(`客户往来货款 1 笔（${text(money.changeType)} ${yuanText(money.amount)}）`);
-  // ⭐ 2026-10-08 退货口径：钱**不新建记录**，而是把**原收款记录**改成 已退款 / 已留存。
-  //   卡片要如实说"改了哪几笔、改成什么"，不能显示成"没动钱"（那是记错账的展示）。
-  else if (money.route === 'originalPaymentStatus') {
-    const count = (money.recordIds || []).length;
-    lines.push(count
-      ? `原收款 ${count} 笔改为「${text(money.status)}」（${yuanText(money.amount)}）`
-      : `原收款没有可改的行（应有 ${yuanText(money.amount)} 要退/留存，请人工核对）`);
-  } else lines.push('没动钱');
-  const stockLines = afterSalesStockLines(result.stock);
-  lines.push(stockLines.length ? `库存：${stockLines.join('、')}` : '库存未变（配品不跟踪库存）');
-  return lines;
-};
-
-const afterSalesResultCard = (plan = {}, result = {}) => ({
-  config: patchableCardConfig(),
-  header: { template: 'green', title: { tag: 'plain_text',
-    content: `${text(plan.action_label) || '售后'}已完成` } },
-  elements: [
-    { tag: 'div', text: { tag: 'lark_md',
-      content: `处理这一笔\n${afterSalesOriginalLine(plan.candidate)}`, text_size: 'heading' } },
-    { tag: 'div', text: { tag: 'lark_md',
-      content: `动作：${afterSalesActionLine(plan)}\n`
-        + `钱：${afterSalesMoneyLine(plan)}\n`
-        + `差价：${afterSalesDiffLine(plan)}\n`
-        + `退回的鞋放：${afterSalesRestockLine(plan)}`, text_size: 'heading' } },
-    { tag: 'div', text: { tag: 'lark_md',
-      content: `已写入\n${afterSalesWrittenLines(result).join('\n')}`, text_size: 'normal' } },
-  ],
-});
-
-// 失败卡片必须**明确说原因**（别静默），而且必须**保留可重试的按钮**：
-// 如果失败后把卡片换成一张没有按钮的说明卡，我们让她"在原卡片重试"就成了空话——
-// 按钮已经被自己换掉了。所以这里是"确认卡片 + 原因"：原因在最上面，确认/取消还在。
-// 只承诺"同一笔不会重复写"，不承诺"什么都没写"（执行器可能已经写了部分记录）。
-const afterSalesRetryCard = (taskId, plan = {}, reason) => {
-  const card = afterSalesConfirmationCard(taskId, plan);
-  card.header = { template: 'red', title: { tag: 'plain_text',
-    content: `${text(plan.action_label) || '售后'}没做成` } };
-  card.elements.splice(0, 0, { tag: 'div', text: { tag: 'lark_md',
-    content: `原因：${text(reason) || '未知错误'}`, text_size: 'heading' } });
-  card.elements.push({ tag: 'note', elements: [{ tag: 'plain_text',
-    content: '核对后点「确认」重试；同一笔不会重复写。' }] });
-  return card;
-};
-
-const afterSalesStatusCard = ({ title, message, template = 'blue' } = {}) => ({
-  config: patchableCardConfig(),
-  header: { template, title: { tag: 'plain_text', content: text(title) || '售后' } },
-  elements: [{ tag: 'div', text: { tag: 'lark_md', content: text(message), text_size: 'heading' } }],
-});
-
-// ---------------------------------------------------------------------------
-// 第二次交付：每日「成交」提醒卡片
-// ---------------------------------------------------------------------------
-
-// 这条链路的动作名。机器人侧按**销售单号 + 这个动作**分派
-// （见 LarkMvpService.handleCardAction），不走"草稿"那条路。
 const SECOND_DELIVERY_ACTION = 'confirm_second_delivery';
 
 // 卡片上写给门店看的时间必须是上海时间（线上服务器是 UTC，直接取 ISO 会差 8 小时）。
@@ -1087,13 +871,7 @@ module.exports = {
   sampleReplacementCard,
   sampleReplacementStatusCard,
   sampleReplacementProcessingCard,
-  saleLookupCard,
-  afterSalesConfirmationCard,
-  afterSalesResultCard,
-  afterSalesRetryCard,
-  afterSalesStatusCard,
   // 「退现金 / 存为预存额度」这两个说法只有一处定义（接线层回的那句追问也用它）。
-  afterSalesSettlementLabel,
   secondDeliveryCard,
   // 「成交」点完之后把那一单的按钮换成灰字说明（只在成交成功后调，见 secondDeliveryService）。
   settleSecondDeliveryOrder,

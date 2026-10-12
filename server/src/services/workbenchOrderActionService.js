@@ -187,7 +187,7 @@ class WorkbenchOrderActionService {
    *
    * · **货品**：页面点了货号就用它；页面明确选了「同款」（`sameItem: true`，**她的选择**，
    *   不是我们猜的）就用**原明细那一双**的货品 —— 与群聊链路
-   *   `afterSalesFlowService.resolveOutgoing` 的既有口径一致（「换尺码 = 货号/颜色/金额
+   *   售后那条旧链路（已退场）的既有口径一致（「换尺码 = 货号/颜色/金额
    *   都从原明细上取」）。两者都没有就**问她**（不拿别的货号顶）。
    * · **尺码**：走共享的 `sizeReferenceService`（不靠关联单元格的显示文本），解析成关联 record_id。
    * · **实收金额**：页面填了就用（执行器的 `positiveYuan` 会再校验一次两位小数）；

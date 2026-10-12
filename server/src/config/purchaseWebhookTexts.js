@@ -28,4 +28,14 @@ const inventoryToast = {
   m2: '采购入库已确认',
 };
 
+
+/**
+ * 采购退货**告知**（群里/卡片上给她看的人话）—— 文案**逐字**从服务里搬来。
+ * 本组目前只有两处（兜底称谓 + 尺码碎片）；`:244-256` 那两段多行拼接在下一轮再搬。
+ */
+const returnNotice = {
+  unknownItem: '这个货品',
+  sizeText: ({ size }) => `（${size} 码）`,
+};
+
 module.exports = { purchaseMessage, purchaseToast, arrivalToast, inventoryToast };
