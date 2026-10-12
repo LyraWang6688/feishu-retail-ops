@@ -967,13 +967,15 @@ test('AC-C15-2 ⭐⭐⭐ 真实最大量级（38–48 共 **11** 个码）：全
   assert.equal(m.sizes_size_mm, 2.8, '⭐ 11 个码时**字号不用变**（先加行）');
   assert.equal(m.sizes_shrunk, false);
   // ⭐ 行数是**按可用高度算出来的**（不是配置里拍一个数）：11 个码排 3 行
-  assert.equal(m.sizes_lines, 3, '11 个码 ⇒ 3 行（每行 4/4/3 个，按实际字宽换行）');
+  // ⚠️ 2026-10-12 改：恢复"每行 ≤ `sizes.perLine`(3)"之后，11 个码 = **4 行（3+3+3+2）**
+  //   （改前自适应只按宽度打包 ⇒ 一行 5 个、3 行；她真机发现"一行变 5 个了" ✗）
+  assert.equal(m.sizes_lines, 4, '11 个码 ⇒ 4 行（3+3+3+2）');
   const svg = artifact.labelSvg(lab, layout(), sizesCfgFor());
   assert.ok(!svg.includes('…'), '不许有 `…`');
   for (const size of ['38', '42', '48']) assert.ok(svg.includes(`>${size}<`), `${size} 要在图上`);
   // 尺码区所占高度必须**用上了可用高度**（>2 行），且不超过中段
   const sizesH = m.sizes_lines * m.sizes_size_mm * 1.35;
-  assert.ok(sizesH > 2 * m.sizes_size_mm * 1.35, '确实加到了 3 行（用满可用高度）');
+  assert.ok(sizesH > 2 * m.sizes_size_mm * 1.35, '确实加到了 4 行（用满可用高度）');
   assert.ok(sizesH <= m.main_h_mm, '不超过中段高');
 });
 
@@ -981,10 +983,11 @@ test('AC-C15-3 ⭐ 极端兜底（24 个码）才允许 `+N`；且**有 warn**�
   const lab = sizeLabel({ count: 24 });
   const m = artifact.measureVerticalLayout(lab, layout(), sizesCfgFor());
   assert.equal(m.sizes_total, 24);
-  // 24 个码：先加行、再缩一点点字 ⇒ 仍然**一个都没丢**（`+N` 只有更极端才出现）
-  assert.equal(m.sizes_hidden, 0, '24 个码也该全印出来（还不是"实在放不下"）');
-  assert.equal(m.sizes_shown, 24);
-  assert.ok(m.sizes_size_mm <= 2.8, '必要时才降字号');
+  // ⚠️ 2026-10-12 改：恢复"每行 ≤3 个"之后，一行 3 个 × 行数上限 6 = **最多 18 个**；
+  //   24 个码 ⇒ 先加行（6 行）→ 再降到字号下限 2.2mm（高度只装得下 5 行）→ **可见 `+N` + warn** ✓
+  //   （她的真实量级是 7~11 个 ⇒ 远在上限内、一个不丢 ✓）
+  assert.equal(m.sizes_shown + m.sizes_hidden, 24, '总数守恒');
+  assert.ok(m.sizes_size_mm <= 2.8, '必要时才降字号（这里降到下限 2.2）');
   // 真·极端：把可用高度压到极限（尺码区下限也放不下）⇒ 才出现 `+N` + warn
   const huge = sizeLabel({ count: 60 });
   const m2 = artifact.measureVerticalLayout(huge, layout(), sizesCfgFor());
@@ -1150,4 +1153,118 @@ test('AC-C17-2 ⭐⭐ 未设 ⇒ 与现状**逐字节一致**；设了 ⇒ 行�
   const safe = artifact.maxSafeOffsetXMm(layout({ label: { ...LABEL_PRINT.label, leftPaddingMm: 3.5 } }),
     { ...baseCfg, rows: on.rows, label: lab });
   assert.equal(safe.right, 4.364, '⭐ 切到新排法后右移上限 = 4.364mm（老版式只有 1.5mm）');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 【2026-10-12 真机 bug】她：「不是说尺码区一行三个吗？现在好像一行变 5 个了。」
+//   根因：我修"44 码被截断"时加的自适应**只按宽度打包**，把配置里的 `sizes.perLine = 3` 当空气 ✗
+//   ⇒ 现在每行个数**同时**受 `perLine` 与宽度约束；装不下时**先加行（≤ maxLines）→ 再缩字号 → 最后 +N** ✓
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-C18-1 ⭐⭐⭐ 真机量级：7 码 ⇒ **每行 ≤3**、3 行（3+3+1）、无 `…`、字号不变', () => {
+  const lab = sizeLabel({ count: 7 });
+  const m = artifact.measureVerticalLayout(lab, layout(), sizesCfgFor());
+  assert.deepEqual(m.sizes_line_items, [['38', '39', '40'], ['41', '42', '43'], ['44']],
+    '⭐ 一行 3 个（3+3+1）—— 不是"一行 5 个"');
+  assert.equal(m.sizes_lines, 3);
+  assert.equal(m.sizes_shown, 7);
+  assert.equal(m.sizes_hidden, 0, '44 码仍在');
+  assert.equal(m.sizes_size_mm, 2.8, '字号不变');
+  const svg = artifact.labelSvg(lab, layout(), sizesCfgFor());
+  assert.ok(!svg.includes('…'), '不许有 `…`');
+});
+
+test('AC-C18-2 ⭐⭐ 11 码（真实最大 38–48）⇒ **每行 ≤3**、4 行（3+3+3+2）、不丢码', () => {
+  const m = artifact.measureVerticalLayout(sizeLabel({ count: 11 }), layout(), sizesCfgFor());
+  assert.deepEqual(m.sizes_line_items, [['38', '39', '40'], ['41', '42', '43'], ['44', '45', '46'], ['47', '48']]);
+  assert.equal(m.sizes_hidden, 0);
+  assert.equal(m.sizes_shown, 11);
+  assert.equal(m.sizes_size_mm, 2.8, '11 个码也不用缩字号（先加行）');
+});
+
+test('AC-C18-3 ⭐⭐ 任何档位：**每行个数 ≤ `sizes.perLine`**（用设计字宽算，跨环境确定）', () => {
+  for (const count of [1, 2, 3, 4, 5, 7, 9, 11, 15, 18, 24, 40]) {
+    const m = artifact.measureVerticalLayout(sizeLabel({ count }), layout(), sizesCfgFor());
+    assert.ok(m.sizes_per_line <= 3, 'perLine 上限就是配置里的 3');
+    for (const line of m.sizes_line_items) {
+      assert.ok(line.length <= m.sizes_per_line,
+        `${count} 码时有一行放了 ${line.length} 个（上限 ${m.sizes_per_line}）—— 「一行 3 个」是配置约定`);
+    }
+    assert.ok(m.sizes_line_items.flat().length + m.sizes_hidden === count, `${count} 码：印出 + 省略 = 总数（守恒）`);
+  }
+});
+
+test('AC-C18-4 ⭐ 3 码 ⇒ 一行 3 个；4 码 ⇒ 3+1；`perLine` 缺失/非法 ⇒ 回落 3', () => {
+  assert.deepEqual(artifact.measureVerticalLayout(sizeLabel({ count: 3 }), layout(), sizesCfgFor()).sizes_line_items,
+    [['38', '39', '40']], '3 个码一行放满');
+  assert.deepEqual(artifact.measureVerticalLayout(sizeLabel({ count: 4 }), layout(), sizesCfgFor()).sizes_line_items,
+    [['38', '39', '40'], ['41']], '4 个码 ⇒ 3+1（宁可加行，不加密）');
+  const noPerLine = layout({ sizes: { ...LABEL_PRINT.sizes, perLine: undefined } });
+  const m = artifact.measureVerticalLayout(sizeLabel({ count: 7 }), noPerLine, sizesCfgFor());
+  assert.ok(m.sizes_line_items.every((line) => line.length <= 3), 'perLine 缺失 ⇒ 回落 3');
+  const badPerLine = layout({ sizes: { ...LABEL_PRINT.sizes, perLine: 0 } });
+  assert.ok(artifact.measureVerticalLayout(sizeLabel({ count: 7 }), badPerLine, sizesCfgFor())
+    .sizes_line_items.every((line) => line.length <= 3), 'perLine 非法（0）⇒ 回落 3');
+});
+
+test('AC-C18-5 ⭐ 优先级逐条钉住：**先加行 → 再缩字号 → 最后才 +N**（+ warn）', async () => {
+  const cfg = sizesCfgFor();
+  // ① 先加行：7 码 3 行、字号不变（不是"缩字号挤成 2 行"）
+  const seven = artifact.measureVerticalLayout(sizeLabel({ count: 7 }), layout(), cfg);
+  assert.equal(seven.sizes_lines, 3);
+  assert.equal(seven.sizes_size_mm, 2.8, '优先加行、**不**缩字号');
+  // ② 行数顶到上限/高度不够 ⇒ 才缩字号（11 码仍是 2.8；更多才降）
+  const many = artifact.measureVerticalLayout(sizeLabel({ count: 15 }), layout(), cfg);
+  assert.ok(many.sizes_size_mm <= 2.8 && many.sizes_hidden === 0, '15 码：先加行，仍一个不丢');
+  // ③ 连字号下限都放不下 ⇒ 才 `+N` + warn
+  const huge = artifact.measureVerticalLayout(sizeLabel({ count: 40 }), layout(), cfg);
+  assert.equal(huge.sizes_size_mm, 2.2, '降到字号下限 2.2mm');
+  assert.ok(huge.sizes_hidden > 0, '40 码确实到了"实在放不下"');
+  const svg = artifact.labelSvg(sizeLabel({ count: 40 }), layout(), cfg);
+  assert.match(svg, />\+\d+</, '末行明写 `+N`');
+  const lines = await captureLogs(async () => {
+    await artifact.renderLabels({ labels: [sizeLabel({ count: 40 })], layout: layout(), config: cfg });
+  });
+  assert.ok(lines.some((line) => line.includes('label.print.sizes_overflow')), '要记 warn');
+});
+
+test('AC-C19-1 ⭐⭐⭐ 她那款 7 码：3+3+1，且她点名的 **41 / 42 / 44 三个码逐字都在图上**', () => {
+  const lab = sizeLabel({ count: 7 });
+  const cfg = sizesCfgFor();
+  const m = artifact.measureVerticalLayout(lab, layout(), cfg);
+  assert.deepEqual(m.sizes_line_items, [['38', '39', '40'], ['41', '42', '43'], ['44']]);
+  const svg = artifact.labelSvg(lab, layout(), cfg);
+  for (const size of ['41', '42', '44']) {
+    assert.ok(svg.includes(`>${size}<`), `⭐ ${size} 码必须在图上（她今天点名丢的就是这几个）`);
+  }
+  assert.ok(!svg.includes('>41</text>') === false || true); // 占位（真正断言在上面）
+});
+
+test('AC-C19-2 ⭐⭐ 几何硬断言：每个尺码 + 角标的右边界 **≤ 信息栏右边界**（跨环境确定）', () => {
+  const cfg = sizesCfgFor();
+  const lay = layout();
+  for (const count of [3, 4, 7, 11, 15]) {
+    const lab = sizeLabel({ count });
+    const m = artifact.measureVerticalLayout(lab, lay, cfg);
+    const svg = artifact.labelSvg(lab, lay, cfg);
+    // 解析渲染出来的尺码 <text>（x + 内容），用**同一个字宽表**算右边界
+    // ⚠️ 尺码区在**信息栏**里 ⇒ 起点 = 左留白 + 二维码列（13 + 间距 1.5）= 18mm，不是 3.5
+    const rightX = 3.5 + (13 + 1.5);
+    const column = artifact.availableWidthMm(lay, {
+      designWidthMm: 40, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0,
+    });
+    const columnRight = rightX + column;
+    const nodes = textNodes(svg).filter((n) => /^\d{2}$/.test(n.text));
+    assert.ok(nodes.length > 0, `${count} 码：要能解析出尺码 text`);
+    for (const node of nodes) {
+      const w = artifact.sizeTokenWidthMm({ size: node.text, qty: '' }, node.size, { gapMm: 1 });
+      assert.ok(node.x + w - 1 <= columnRight + 1e-6,
+        `${count} 码：尺码 ${node.text} 右边界 ${(node.x + w - 1).toFixed(2)} 越过了信息栏 ${columnRight.toFixed(2)} ✗`);
+    }
+    // ⚠️ 如实记录：**没有**断言"渲染的行分组 == fit 的分组" —— 我尝试加的"渲染端硬保险"会把换行后的
+    //   尺码画回上一行的基线（y 不跟着走），y 分组会失真；为了不把带 bug 的保险留在产物里，**已回退**。
+    //   现在保证靠两条（都已实测）：① 每行个数被 `sizes.perLine` 夹住（AC-C18-*）；
+    //   ② fit 与渲染**共用同一个 `sizeTokenWidthMm` 字宽表**（不再各算一套）+ 这里的右边界几何断言 ✓
+    void m;
+  }
 });

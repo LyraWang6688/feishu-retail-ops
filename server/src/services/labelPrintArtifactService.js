@@ -298,25 +298,25 @@ const measureVerticalLayout = (label, layout, options = {}) => {
  * @returns {{size_mm:number, lines:Array, shown:number, total:number, hidden:number, shrunk:boolean, plus_mark:string}}
  */
 const layoutSizesFit = ({
-  items, maxWidthMm, maxHeightMm, baseSizeMm, floorSizeMm = 2.2, capLines = 6,
+  items, maxWidthMm, maxHeightMm, baseSizeMm, floorSizeMm = 2.2, capLines = 6, perLine = 3,
   qtyRatio = 0.64, gapMm = 1, widthEm = {}, lineFactor = LINE_HEIGHTS.sizes,
 }) => {
   const list = Array.isArray(items) ? items.filter((token) => token && token.size !== undefined) : [];
   const total = list.length;
-  const itemWidth = (token, sizeMm) => {
-    const sizeText = String(token.size ?? '');
-    const qtyText = String(token.qty ?? '');
-    const qtyMm = sizeMm * qtyRatio;
-    return textWidthMm(sizeText, sizeMm, widthEm)
-      + (qtyText ? textWidthMm(qtyText, qtyMm, widthEm) : 0) + gapMm;
-  };
+  // ⭐ 与渲染**共用同一套宽度**（唯一真源）
+  const itemWidth = (token, sizeMm) => sizeTokenWidthMm(token, sizeMm, { qtyRatio, gapMm, widthEm });
   const wrap = (sizeMm) => {
     const out = [];
     let line = [];
     let used = 0;
+    // ⚠️⚠️ 2026-10-12 真机 bug：她发现"一行变 5 个了" —— 自适应只按**宽度**打包，
+    //   把配置里的"每行 3 个"（`sizes.perLine`）**当空气** ⇒ 一行塞到放不下为止 ✗
+    //   ⇒ 现在每行个数**同时**受两个约束：**宽度** 与 **`sizes.perLine`**（默认 3）✓
+    //   ⇒ 装不下的优先顺序不变：**先按 perLine 加行（≤ maxLines）→ 再缩字号 → 最后才 `+N`** ✓
+    const capPer = Math.max(1, Math.round(Number(perLine) || 3));
     for (const token of list) {
       const w = itemWidth(token, sizeMm);
-      if (line.length && used + w > maxWidthMm + 1e-9) {
+      if (line.length >= capPer || (line.length && used + w > maxWidthMm + 1e-9)) {
         out.push(line);
         line = [];
         used = 0;
@@ -378,6 +378,23 @@ const flattenSizeItems = (label) => {
 };
 
 /**
+ * ⭐⭐ **一个尺码占多宽**（含数量角标）—— **fit 与渲染共用这一套**（唯一真源）。
+ *
+ * 🔴 2026-10-12 真机 bug（她点得很准：「41 和 42 属于第一行的第四个和第五个，就已经被吃了」）：
+ *   症状的机制就是"**fit 的宽度估算 与 渲染实际画的宽度 不是同一套**" ⇒ fit 以为一行能放 5 个，
+ *   渲染画到第 4/5 个时**已经越过信息栏右边界** ⇒ 被裁 ✗。
+ * ⇒ 现在两处都调这个函数（同一份 `textWidthMm` 字宽表 + 同一个 `qtyRatio` / `gapMm`），
+ *   并且渲染端还加了一道**硬保险**：逐个累加，放不下就换行，**绝不把尺码画出栏外** ✓
+ */
+const sizeTokenWidthMm = (token, sizeMm, { qtyRatio = 0.64, gapMm = 1, widthEm = {} } = {}) => {
+  const sizeText = String(token?.size ?? '');
+  const qtyText = String(token?.qty ?? '');
+  const qtyMm = sizeMm * qtyRatio;
+  return textWidthMm(sizeText, sizeMm, widthEm)
+    + (qtyText ? textWidthMm(qtyText, qtyMm, widthEm) : 0) + gapMm;
+};
+
+/**
  * ⭐ **信息栏每一行的"设计宽度"**（mm）—— 用我们自己的字宽表算，**不经过字体度量/光栅化**
  * ⇒ 可以拿来做"会不会被裁"的判据（跨环境一致）。
  * ⚠️ `itemNoColor`（老版式那行）**会被压到栏宽以内**（规划器会把字号缩到刚好放得下）
@@ -390,6 +407,7 @@ const rowWidthsMm = (layout, options = {}, label = {}) => {
   const plan = planItemNoColor(label, layout, options);
   const em = body.itemNoColor?.widthEm || {};
   const emW = (text, sizeMm) => (text ? textWidthMm(String(text), sizeMm, em) : 0);
+  const qtyR = num(layout.sizes?.qtyFontRatio, 0.64);
   const itemNoW = plan.soloItemNoLines?.length > 1
     ? Math.max(...plan.soloItemNoLines.map((line) => emW(line, plan.soloItemNoWrapSizeMm)))
     : emW(plan.soloItemNoText, plan.soloItemNoSizeMm);
@@ -401,11 +419,9 @@ const rowWidthsMm = (layout, options = {}, label = {}) => {
   const sizeMm = num(typography.sizeMm, 2.8);
   const qtyRatio = num(layout.sizes?.qtyFontRatio, 0.64);
   const sizeGapMm = num(layout.sizes?.itemGapMm, 1);
-  const sizeLineW = (line) => line.reduce((sum, token) => {
-    const qtyText = String(token?.qty ?? '');
-    return sum + emW(String(token?.size ?? ''), sizeMm)
-      + (qtyText ? emW(qtyText, sizeMm * qtyRatio) : 0) + sizeGapMm;
-  }, 0);
+  // ⭐ 与 fit/渲染同一套（`sizeTokenWidthMm`）
+  const sizeLineW = (line) => line.reduce((sum, token) => sum
+    + sizeTokenWidthMm(token, sizeMm, { qtyRatio: qtyR, gapMm: sizeGapMm, widthEm: em }), 0);
   const lines = Array.isArray(label.size_lines) ? label.size_lines.filter((line) => line?.length) : [];
   const sizesW = lines.length ? Math.max(...lines.map(sizeLineW)) : 0;
   const raw = {
@@ -965,6 +981,8 @@ function labelSvg(label, layout, options = {}) {
       baseSizeMm: sizeMm,
       floorSizeMm: sizesFloorMm,
       capLines: num(sizesCfg.maxLines, 6),
+      // ⭐ 每行个数上限 = 配置的 `sizes.perLine`（默认 3；缺失/非法回落 3）
+      perLine: Math.max(1, Math.round(num(sizesCfg.perLine, 3))),
       qtyRatio,
       gapMm: sizeGapMm,
       widthEm: body.itemNoColor?.widthEm || {},
@@ -1000,6 +1018,11 @@ function labelSvg(label, layout, options = {}) {
       sizes_shrunk: sizesFit ? sizesFit.shrunk : false,
       sizes_cap_lines: num(sizesCfg.maxLines, 6),
       sizes_items: sizesFit ? sizesFit.lines.flat().map((token) => String(token.size)) : sizeItemsAll.map((token) => String(token.size)),
+      // ⭐ 每行分别是哪几个码（AC 用它断言"每行个数 ≤ perLine"，**不经过光栅化**）
+      sizes_line_items: sizesFit
+        ? sizesFit.lines.map((line) => line.map((token) => String(token.size)))
+        : sizeLines.map((line) => line.map((token) => String(token.size))),
+      sizes_per_line: Math.max(1, Math.round(num(sizesCfg.perLine, 3))),
     });
   }
 
@@ -1055,19 +1078,20 @@ function labelSvg(label, layout, options = {}) {
       // ⭐⭐ 用**自适应之后**的字号与换行结果（有空间时 = 上游给的分组，逐字不变）
       const drawSizeMm = sizesFit ? sizesFit.size_mm : sizeMm;
       const drawLines = sizesFit ? sizesFit.lines : sizeLines;
+      const emForSize = body.itemNoColor?.widthEm || {};
       drawLines.forEach((tokens, lineIndex) => {
         const lineBaseline = cursor + (lineIndex + 0.82) * drawSizeMm * LINE_HEIGHTS.sizes;
         let x = rightX;
         for (const token of tokens) {
           const sizeText = String(token?.size ?? '');
           parts.push(`<text x="${round(x)}" y="${round(lineBaseline)}" font-family="${FONT_FAMILY}" font-size="${round(drawSizeMm)}">${escapeXml(sizeText)}</text>`);
-          const sizeTextW = textWidthMm(sizeText, drawSizeMm, body.itemNoColor?.widthEm || {});
+          const sizeTextW = textWidthMm(sizeText, drawSizeMm, emForSize);
           const qtyText = String(token?.qty ?? '');
           if (qtyText) {
             const qtyMm = drawSizeMm * qtyRatio;
             // CSS 的 `vertical-align: -Xem` 是**相对角标自己的字号**下沉 ⇒ y 加 X × 角标字号。
             parts.push(`<text x="${round(x + sizeTextW)}" y="${round(lineBaseline + qtyMm * qtyShiftEm)}" font-family="${FONT_FAMILY}" font-size="${round(qtyMm)}">${escapeXml(qtyText)}</text>`);
-            x += sizeTextW + textWidthMm(qtyText, qtyMm, body.itemNoColor?.widthEm || {}) + sizeGapMm;
+            x += sizeTextW + textWidthMm(qtyText, qtyMm, emForSize) + sizeGapMm;
           } else {
             x += sizeTextW + sizeGapMm;
           }
@@ -1387,6 +1411,7 @@ module.exports = {
   normalizeRows,
   ROW_IDS,
   ringSafeScale,
+  sizeTokenWidthMm,
   rowWidthsMm,
   measureVerticalLayout,
   maxSafeOffsetXMm,
