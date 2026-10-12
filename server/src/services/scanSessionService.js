@@ -294,10 +294,12 @@ const createScanSessionService = (options = {}) => {
   };
 
   /** 补货提交成功：同样**只轮换补货那一把键** + 留档结果。 */
-  const completeReplenish = async (openId, { key, result }) => {
+  const completeReplenish = async (openId, { key, result, fingerprint = '' }) => {
     const session = await ensure(openId);
     const replenish = session.replenish || {};
-    const completed = [...(replenish.completed || []), { key, ...result }].slice(-5);
+    // ⭐ 2026-10-12：连"这一单的草稿指纹"一起留档 —— 下一次只看键会把"换了货号的那一次"吸收掉 ✗，
+    //    有指纹才能分清"同一份草稿连点"与"草稿变了的新一次" ✓。
+    const completed = [...(replenish.completed || []), { key, fingerprint: String(fingerprint || ''), ...result }].slice(-5);
     const next = await store.update(session[sessionConfig.idField], touch({
       replenish: {
         ...replenish,

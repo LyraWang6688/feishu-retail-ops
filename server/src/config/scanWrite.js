@@ -313,11 +313,16 @@ const SALE = Object.freeze({
 const REPLENISH = Object.freeze({
   enabled: readFlag(process.env, 'SCAN_REPLENISH_WRITE_ENABLED', true),
   // 「采购行为」的**行为编码**：采购申请那条（「行为管理」表里已核实的编码）。
-  // ⚠️ 与 `services/purchaseBehaviorPolicy.js` 的口径**同源**：
-  //    那条策略写着「采购申请那条永远是 STOCK_PURCHASE_INCREASE，采购退货是 ..._DECREASE」。
-  //    扫码补货只可能是**采购申请**，所以这里固定按这个编码解析行为记录；
-  //    解析不到 ⇒ **停下来报人话**（绝不写一条没有"采购行为"的采购申请）。
-  behaviorCode: readString(process.env, 'SCAN_REPLENISH_BEHAVIOR_CODE', 'STOCK_PURCHASE_INCREASE'),
+  // 🔴🔴 2026-10-12 真机 bug（业务负责人的原话：「**为什么你选成了采购增加了呢？**」）：
+  //    这里原来写的是 `STOCK_PURCHASE_INCREASE`（名字「采购增加」）—— 那是**库存环节**的行为 ✗
+  //    （真表事实：「采购增加」`所属环节=库存`、`库存方向=增加`；而「**报货**」`所属环节=采购`、`库存方向=不影响`）。
+  //    「采购单.采购行为」与「库存流水.库存行为」是**两张表两列、两件事** ✗：
+  //      · 采购单的「采购行为」⇒ 走本配置（**采购环节**的行为编码：报货 / 退货）；
+  //      · 库存流水的「库存行为」⇒ 永远是 `inventoryService` 的 `STOCK_PURCHASE_INCREASE/_DECREASE`（**库存环节**）✓
+  //    ⚠️ **只能按「行为编码」解析**：行为管理里「退货」有**同名两条**
+  //      （采购 `PURCHASE_RETURN` / 销售 `SALE_RETURN`）⇒ 按名字会解析错 ✗
+  //      解析不到 ⇒ **停下来报人话**（绝不写一条没有"采购行为"的采购申请）。
+  behaviorCode: readString(process.env, 'SCAN_REPLENISH_BEHAVIOR_CODE', 'PURCHASE_ORDER'),
   // 本地采购任务的 task id 前缀（幂等键就是从这个 task id 推出来的，
   // 见 purchaseWebhookService.ensurePostingPlan：`purchase_request:<taskId>:<序号>`）。
   taskIdPrefix: readString(process.env, 'SCAN_REPLENISH_TASK_PREFIX', 'scan_replenish'),
@@ -352,9 +357,11 @@ const REPLENISH = Object.freeze({
  */
 const PURCHASE_RETURN = Object.freeze({
   enabled: readFlag(process.env, 'SCAN_RETURN_WRITE_ENABLED', true),
-  // 「采购行为」= 退货那条**既有编码**（`services/purchaseBehaviorPolicy` 记的就是它）。
-  // 解析不到 ⇒ 停下来报人话（绝不写一条没有"采购行为"的退货明细）。
-  behaviorCode: readString(process.env, 'SCAN_RETURN_BEHAVIOR_CODE', 'STOCK_PURCHASE_DECREASE'),
+  // 🔴🔴 2026-10-12 同上：原来写 `STOCK_PURCHASE_DECREASE`（「采购减少」）也是**库存环节**的行为 ✗
+  //    ⇒ 采购退货的「采购行为」应该是真表里**采购环节**的「**退货**」= 编码 `PURCHASE_RETURN` ✓
+  //    ⚠️ 库存流水那一边**仍然是** `STOCK_PURCHASE_DECREASE`（`inventoryService` 的口径，一行没动 ✓）
+  //    解析不到 ⇒ 停下来报人话（绝不写一条没有"采购行为"的退货明细）。
+  behaviorCode: readString(process.env, 'SCAN_RETURN_BEHAVIOR_CODE', 'PURCHASE_RETURN'),
   // 本地退货任务的 task id 前缀（幂等键由它 + 这一次提交的键推出）。
   taskIdPrefix: readString(process.env, 'SCAN_RETURN_TASK_PREFIX', 'scan_return'),
   // 本地退货任务落在哪儿：与补货那条**分开**（两条链路的进度/计划互不干扰）。
@@ -701,6 +708,8 @@ const EVENTS = Object.freeze({
   stockFailed: 'scan.sale.stock_failed',
   replenishSubmitting: 'scan.purchase.submitting',
   replenishSubmitted: 'scan.purchase.submitted',
+  // ⭐ 2026-10-12：她换了货号后用旧键提交 ⇒ **不当重放**（日志要能看出这次是新提交）
+  replenishRegenerated: 'scan.purchase.regenerated',
   replenishReused: 'scan.purchase.reused',
   // ⭐ 退货（与补货同形的三条 + 差额与库存侧两条正向证据）
   returnSubmitting: 'scan.purchase_return.submitting',
