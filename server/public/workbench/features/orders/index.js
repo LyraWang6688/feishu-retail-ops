@@ -241,7 +241,7 @@ export function salesSectionOf(order) {
  * ⚠️ 「待交割单」那一段**仍按既有的三类细分展示**（有二次 · 货未交付 / 资金未收 / 两者都有）
  *    —— 她 2026-10-09 上半场定的那三类**一条信息都没丢**，只是收在"待交割单"这一段里。
  */
-export function ordersSectionsHtml(orders = []) {
+export function ordersSectionsHtml(orders = [], { openSections = [] } = {}) {
   if (!(orders || []).length) return `<p class="empty" data-view="orders-empty">${escapeHtml(P.empty)}</p>`;
   return `<div class="orders-sections" data-view="orders-sections">${SALES_SECTIONS.map((section) => {
     const list = orders.filter((order) => salesSectionOf(order) === section.key);
@@ -250,12 +250,24 @@ export function ordersSectionsHtml(orders = []) {
       : (section.key === 'pending'
         ? ordersBoardHtml(list, SALES_GROUPS.filter((group) => group.key !== 'settled').map((group) => group.key))
         : ordersListHtml(list));
-    return `
-      <section class="order-section" data-sales-section="${escapeHtml(section.key)}">
+    const head = `
         <div class="order-group-head">
           <h3>${escapeHtml(section.label)}<span class="tag tag-${escapeHtml(section.tone || 'info')}">${escapeHtml(section.tag || '')}</span></h3>
           <span class="muted">${list.length} 单</span>
-        </div>
+        </div>`;
+    // ⭐ 2026-10-12【乙】：**「售后列表」默认折叠**（售后单一多，待补充/待交割就被挤出屏外）。
+    //    ⚠️ 只折这一段；折叠状态记在 `state.openSections`（她手动展开后，重画**不会**被刷掉）。
+    if (section.key === 'afterSales') {
+      const open = openSections.includes(section.key);
+      return `
+      <details class="order-section order-section-collapsible" data-view="after-sales-section" data-sales-section="${escapeHtml(section.key)}"${open ? ' open' : ''}>
+        <summary>${head}</summary>
+        ${body}
+      </details>`;
+    }
+    return `
+      <section class="order-section" data-sales-section="${escapeHtml(section.key)}">
+        ${head}
         ${body}
       </section>`;
   }).join('')}
@@ -585,6 +597,8 @@ const uuid = () => (typeof crypto !== 'undefined' && crypto.randomUUID
 export function createOrdersModule({ mode = 'both' } = {}) {
   const singleMode = mode === 'sales' || mode === 'purchase';
   const state = {
+    // ⭐【乙】售后列表的折叠状态（她手动展开过 ⇒ 重画时照旧展开）
+    openSections: [],
     container: null,
     orders: [],
     methods: [],
@@ -667,7 +681,7 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     state.order = null;
     const host = $('[data-view="orders-host"]');
     // 三份单子（补充信息单 ｜ 待交割单 ｜ 售后列表）—— 她的口径，见 config/orders.js 的 SALES_SECTIONS。
-    if (host) host.innerHTML = ordersSectionsHtml(state.orders);
+    if (host) host.innerHTML = ordersSectionsHtml(state.orders, { openSections: state.openSections });
   }
 
   function renderPurchaseList() {
@@ -1007,6 +1021,15 @@ export function createOrdersModule({ mode = 'both' } = {}) {
   }
 
   function bind() {
+    // ⚠️ `<details>` 的 `toggle` **不冒泡** ⇒ 必须用捕获阶段监听，否则收不到
+    state.container.addEventListener('toggle', (event) => {
+      const target = event.target;
+      if (!target || target.dataset?.view !== 'after-sales-section') return;
+      const key = 'afterSales';
+      state.openSections = target.open
+        ? [...new Set([...state.openSections, key])]
+        : state.openSections.filter((item) => item !== key);
+    }, true);
     state.container.addEventListener('click', (event) => {
       // 货品选择器（换 / 赔那一块）：点中一行就记下来，再点一次换一双。
       const picker = event.target.closest('[data-product]');
