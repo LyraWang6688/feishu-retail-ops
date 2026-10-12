@@ -69,6 +69,10 @@ const DEFAULT_CONFIG = Object.freeze({
   preventSleep: true,
   wakeGapMs: 15000,
   wakeWatchMs: 5000,
+  // ⭐⭐ 2026-10-12（真机"每 1~2 秒断一次再连"）：刚连上 **多久之内不许"自愿重连"**。
+  //    · 电脑真睡过一觉 ≥ `wakeGapMs`（15 秒）才可能触发唤醒重连 ⇒ 这条闸门**永远挡不住真唤醒**；
+  //    · 但"1 秒一断"那种抖动会被它直接掐掉（宁可先稳着，也不去打服务器）。
+  streamMinLifetimeMs: 5000,
   // ⭐⭐ 2026-10-12（业务负责人真机：「小助手会断线是因为我的电脑锁屏了吗？」「让它后台运行，
   //    我就不用让电脑一直亮屏了」）：**只防睡眠、不拦关屏**。
   //    · `preventSleep` —— **显式布尔**（默认 true）：调 `SetThreadExecutionState`
@@ -373,24 +377,39 @@ const describeAntiSleepFailure = (result = {}) => {
  *    `ES_DISPLAY_REQUIRED` —— 她的原话是"不用让电脑**一直亮屏**"，屏幕该关还得能关。
  * ⚠️ 每一条都是**独立的一次 powershell 进程**，不共享状态 ⇒ `Add-Type` 的类型名不会撞。
  */
+/**
+ * 🔴🔴 2026-10-12 **真机报错（她 Windows 日志，逐字）**：
+ *   `无法将 SetThreadExecutionState 的参数 esFlags（值为 -2147483647）转换为 System.UInt32：
+ *     无法将值 -2147483647 转换为 System.UInt32`
+ *
+ * 根因：`ES_CONTINUOUS | ES_SYSTEM_REQUIRED` = `0x80000001` = **2147483649**（UInt32 范围内）；
+ *   但在 PowerShell/C# 里 `0x80000001` 这种**位模式被当成 Int32** ⇒ 得到 **-2147483647**；
+ *   把这个负数塞进 C# 的 `uint esFlags` 参数 ⇒ 转换失败 ⇒ **防睡眠从来没成功过**。
+ *
+ * ⇒ 两条一起做才稳（**都不能省**）：
+ *   ① 常量用**十进制正数**（2147483648 / 1）—— 不产生"位模式变负数"；
+ *   ② 调用处**实参位置显式 `[uint32]` 转换** —— PowerShell 才知道要按 UInt32 传。
+ * ⚠️ 只改字符串断言不够：这套命令必须在 PowerShell 语义下真的能把 2147483649 传进 Win32。
+ */
 const ANTI_SLEEP_TYPE = 'PrintHelperKeepAwake';
 const antiSleepSignature = "$sig='[DllImport(\"kernel32.dll\")]public static extern uint SetThreadExecutionState(uint esFlags);';";
 const antiSleepAddType = `$t=Add-Type -MemberDefinition $sig -Name ${ANTI_SLEEP_TYPE} -Namespace PrintHelper -PassThru;`;
 
 /** 开启防睡眠的命令（**逐字**：含 `ES_CONTINUOUS` + `ES_SYSTEM_REQUIRED`，不含 `ES_DISPLAY_REQUIRED`）。 */
 const buildAntiSleepCommand = () => [
-  '$ES_CONTINUOUS=0x80000000; $ES_SYSTEM_REQUIRED=0x00000001;',
+  '$ES_CONTINUOUS=2147483648; $ES_SYSTEM_REQUIRED=1;',
   antiSleepSignature,
   antiSleepAddType,
-  'if ($t::SetThreadExecutionState($ES_CONTINUOUS -bor $ES_SYSTEM_REQUIRED) -eq 0) { exit 1 }',
+  // ⭐ 实参位置显式 [uint32]：0x80000001 在 Int32 下是负数 ⇒ 不转就报"无法转换为 System.UInt32"
+  'if ($t::SetThreadExecutionState([uint32]($ES_CONTINUOUS + $ES_SYSTEM_REQUIRED)) -eq 0) { exit 1 }',
 ].join(' ');
 
 /** 释放的命令：只留 `ES_CONTINUOUS` ⇒ 恢复系统默认电源行为（进程退出时 Windows 也会自动清掉）。 */
 const buildAntiSleepReleaseCommand = () => [
-  '$ES_CONTINUOUS=0x80000000;',
+  '$ES_CONTINUOUS=2147483648;',
   antiSleepSignature,
   antiSleepAddType,
-  'if ($t::SetThreadExecutionState($ES_CONTINUOUS) -eq 0) { exit 1 }',
+  'if ($t::SetThreadExecutionState([uint32]$ES_CONTINUOUS) -eq 0) { exit 1 }',
 ].join(' ');
 
 /**
@@ -609,6 +628,22 @@ const validateConfig = (config, options = {}) => {
   //    `createPrintHelper` 里被 `migratePrinterConfig` **自动搬到 `printSettings`**（幂等）。
   //    她的原话是"换包后直接报错卡住"⇒ 现在是"自动迁移 + 页面说一声"，不阻塞打印。
   //    ⚠️ 但**校验单独跑**（不经过 createPrintHelper）时也按"已迁移"看待：这里不再拦。
+  // ⭐⭐ 2026-10-12（真机"每 1~2 秒断一次再连"）：把看门狗/防抖这两个旋钮也**校验**住 ——
+  //    坏配置（阈值比节拍还小、节拍为 0）会自己造出"抖/连风暴"，不能只靠默认值兜。
+  const watchMs = Number(config?.wakeWatchMs);
+  if (!Number.isFinite(watchMs) || watchMs < 1000) {
+    push('wakeWatchMs', `看门狗节拍要是 ≥1000 的毫秒数（现在 ${config?.wakeWatchMs}）`);
+  }
+  const gapMs = Number(config?.wakeGapMs);
+  if (!Number.isFinite(gapMs) || gapMs <= 0) {
+    push('wakeGapMs', `唤醒阈值要是正的毫秒数（现在 ${config?.wakeGapMs}）`);
+  } else if (Number.isFinite(watchMs) && gapMs < watchMs) {
+    push('wakeGapMs', `唤醒阈值要比看门狗节拍大（现在 ${gapMs} < ${watchMs}，会一直误判成"刚被唤醒"）`);
+  }
+  const minLifetime = Number(config?.streamMinLifetimeMs);
+  if (!Number.isFinite(minLifetime) || minLifetime < 0) {
+    push('streamMinLifetimeMs', `重连防抖窗口要是 ≥0 的毫秒数（现在 ${config?.streamMinLifetimeMs}）`);
+  }
   const poll = Number(config?.pollFallbackMs);
   if (!Number.isFinite(poll) || poll < 500) {
     push('pollFallbackMs', `兜底轮询间隔不能小于 500 毫秒（现在 ${config?.pollFallbackMs}）—— 那等于拿服务器刷请求`);
@@ -861,6 +896,8 @@ const createPrintHelper = (options = {}) => {
     statusPageUrl: '',
     // ⭐ 2026-10-12：防睡眠状态 + 断线自愈用的两个时间戳（`lastTickAt` 由看门狗刷新）。
     antiSleepEnabled: false,
+    // ⭐ 2026-10-12：**谁要求断开这条长连接的**（''/wake/manual/stop）—— 日志里直接带出来
+    streamAbortReason: '',
     // ⭐ 配置迁移留痕（状态页要写"已自动迁移"，用例也钉它）
     configMigration: {
       changed: configMigration.changed,
@@ -1070,6 +1107,9 @@ const createPrintHelper = (options = {}) => {
 
   // ── SSE 长连接 ──────────────────────────────────────────────────────────
   let streamAbort = null;
+  let streamRunning = false;
+  let pendingReconnect = false;
+  let streamStartedAt = 0;
   let stopped = false;
   const timers = new Set();
 
@@ -1100,6 +1140,53 @@ const createPrintHelper = (options = {}) => {
     setTimer(() => { void connectStream(); }, waitMs);
   };
 
+  /** 看门狗的节拍（给个 1 秒下限：别让配置写成 0 变成忙等）。 */
+  const watchMs = () => Math.max(1000, Number(config.wakeWatchMs) || 5000);
+  /**
+   * "时钟跳变"的判据阈值。
+   * ⚠️ 2026-10-12：取 `max(wakeGapMs, 3 × 节拍)` —— **必须比节拍大好几倍**，
+   *    否则节拍一抖（事件循环忙一下）就会被误判成"刚被唤醒"⇒ abort ⇒ 重连 ⇒ 又抖…
+   *    电脑真睡一觉至少几分钟，这条阈值**不会挡住真唤醒**。
+   */
+  const wakeGapThresholdMs = () => Math.max(
+    Number(config.wakeGapMs) || DEFAULT_WAKE_GAP_MS,
+    3 * watchMs(),
+  );
+
+  /**
+   * ⭐⭐ 2026-10-12：**自愿重连的唯一入口**（唤醒 / 手动点「重新连接」都走它）。
+   *   · 刚连上 `streamMinLifetimeMs`（默认 5 秒）之内**不自发重连**（防"1 秒一断"风暴）；
+   *   · 手动（`force: true`，她在状态页点的）**照样立刻执行**；
+   *   · 每次都会在日志里点明**是谁要求的** —— 下次一眼定位。
+   */
+  const reconnectNow = async (reason = 'voluntary', options = {}) => {
+    if (stopped) return { skipped: 'stopped' };
+    const force = options.force === true;
+    const aliveFor = streamStartedAt ? now() - streamStartedAt : -1;
+    if (!force && state.sseConnected && aliveFor >= 0 && aliveFor < Number(config.streamMinLifetimeMs || 5000)) {
+      logger.warn('print_helper.sse.reconnect_skipped', {
+        why: reason,
+        alive_ms: aliveFor,
+        hint: '刚连上就要求重连 ⇒ 先不抖（防"1 秒一断"风暴）；真断了它会自己重连',
+      });
+      return { skipped: 'too_soon' };
+    }
+    state.streamAbortReason = reason;
+    logger.info('print_helper.sse.reconnect_requested', {
+      why: reason, alive_ms: aliveFor, forced: force || undefined,
+    });
+    state.streamFailures = 0;
+    state.lastTickAt = now();
+    if (streamAbort) {
+      try { streamAbort.abort(); } catch { /* 已经断了 */ }
+    }
+    stopFallback();
+    // ⚠️ 单飞：这条连接还没收尾时 `connectStream()` 会被挡下 ⇒ 让它的 finally 接着连（见下面）。
+    pendingReconnect = true;
+    void connectStream();
+    return { skipped: null };
+  };
+
   /**
    * 看门狗：每 `wakeWatchMs`（默认 5 秒）看一眼时钟。
    * ⚠️ 定时器是 `unref` 的 ⇒ **不占进程、也不拦睡眠**（防睡眠只由 `SetThreadExecutionState` 负责）。
@@ -1107,22 +1194,16 @@ const createPrintHelper = (options = {}) => {
   const watchWake = () => {
     if (stopped) return;
     const nowMs = now();
-    if (wakeGapDetected(state.lastTickAt, nowMs, config.wakeGapMs)) {
+    if (wakeGapDetected(state.lastTickAt, nowMs, wakeGapThresholdMs())) {
       logger.info('print_helper.wake.detected', {
         gap_ms: nowMs - state.lastTickAt,
         hint: '电脑刚被唤醒 / 网络刚恢复 ⇒ 立刻重连（不等退避）',
       });
-      state.streamFailures = 0;
-      state.lastTickAt = nowMs;
-      if (streamAbort) {
-        try { streamAbort.abort(); } catch { /* 已经断了 */ }
-      }
-      stopFallback();
-      void connectStream();
+      void reconnectNow('wake');
     } else {
       state.lastTickAt = nowMs;
     }
-    setTimer(watchWake, Math.max(1000, Number(config.wakeWatchMs) || 5000));
+    setTimer(watchWake, watchMs());
   };
 
   const startFallback = () => {
@@ -1163,7 +1244,15 @@ const createPrintHelper = (options = {}) => {
 
   const connectStream = async () => {
     if (stopped) return;
-    streamAbort = new AbortController();
+    // ⭐⭐ 2026-10-12：**单飞** —— 同一时刻只许一条长连接（原来可能开出"孤儿连接"，
+    //    服务端那侧就表现为"同一秒里连着两条 / 断一条又来一条"）。
+    if (streamRunning) {
+      logger.info('print_helper.sse.connect_skipped', { hint: '已经有一条长连接在跑 ⇒ 不再开第二条' });
+      return;
+    }
+    streamRunning = true;
+    const myController = new AbortController();
+    streamAbort = myController;
     try {
       const response = await fetchImpl(`${baseUrl}/api/label-print/stream`, {
         headers: headers(),
@@ -1174,6 +1263,9 @@ const createPrintHelper = (options = {}) => {
       state.streamFailures = 0;
       state.disconnectedSince = 0;
       state.lastTickAt = now();
+      streamStartedAt = now();
+      pendingReconnect = false;
+      state.streamAbortReason = '';
       stopFallback();
       logger.info('print_helper.sse.connected', {});
       const reader = response.body.getReader();
@@ -1201,14 +1293,27 @@ const createPrintHelper = (options = {}) => {
       state.sseConnected = false;
       state.streamFailures += 1;
       if (!state.disconnectedSince) state.disconnectedSince = now();
+      const disconnectedMs = now() - state.disconnectedSince;
       logger.warn('print_helper.sse.disconnected', {
         failures: state.streamFailures,
-        // ⭐ 人话：**断了多久**（她那次空了约 15 分钟）——日志里直接写出来，省得再换算。
-        since_disconnected: formatDisconnectedFor(now() - state.disconnectedSince),
+        // ⭐ 人话：**断了多久**（她那次空了约 15 分钟）—— 超过 1 分钟才写"断线已 N 分钟"，
+        //    秒级抖动就写毫秒（原来是"刚断 1 秒也报断线已 1 分钟"，对不上账）。
+        ...(disconnectedMs >= 60_000 ? { since_disconnected: formatDisconnectedFor(disconnectedMs) } : {}),
+        disconnected_ms: disconnectedMs,
         reason: String(error?.message || error),
+        // ⭐⭐ 2026-10-12：**这条连接是谁断的**（''/wake/manual/stop；服务端关的没有这个字段）
+        aborted: myController.signal.aborted === true || undefined,
+        aborted_by: myController.signal.aborted ? (state.streamAbortReason || 'unknown') : undefined,
       });
       if (state.streamFailures >= Number(config.streamFailuresBeforeFallback || 3)) startFallback();
       scheduleReconnect();
+    } finally {
+      streamRunning = false;
+      // ⭐ 刚才有人要求重连（唤醒/手动），但这条连接还没收尾 ⇒ 现在接着连上（不然白断一次）
+      if (pendingReconnect && !stopped) {
+        pendingReconnect = false;
+        setTimer(() => { void connectStream(); }, 0);
+      }
     }
   };
 
@@ -1329,16 +1434,8 @@ ${jobs.length ? jobs.map(jobRow).join('') : '<tr><td colspan="5">还没有打印
       }
       if (req.method === 'POST' && url.pathname === '/reconnect') {
         await readBody();
-        state.streamFailures = 0;
-        stopFallback();
-        if (streamAbort) {
-          try {
-            streamAbort.abort();
-          } catch {
-            // 已经断了。
-          }
-        }
-        void connectStream();
+        // ⭐ 她是**主动**点的 ⇒ force（防抖闸门不挡手动）
+        await reconnectNow('manual', { force: true });
         res.writeHead(303, { location: '/' });
         return res.end();
       }
@@ -1521,6 +1618,7 @@ ${jobs.length ? jobs.map(jobRow).join('') : '<tr><td colspan="5">还没有打印
     state.antiSleepEnabled = false;
     for (const timer of timers) clearTimeout(timer);
     timers.clear();
+    state.streamAbortReason = 'stop';
     if (streamAbort) {
       try {
         streamAbort.abort();
@@ -1545,6 +1643,7 @@ ${jobs.length ? jobs.map(jobRow).join('') : '<tr><td colspan="5">还没有打印
     startupCatchUp,
     heartbeat,
     connectStream,
+    reconnectNow,
     localPageHtml,
     buildTestPdf,
     downloadArtifact,
