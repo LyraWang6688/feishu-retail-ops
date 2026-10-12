@@ -65,6 +65,16 @@ const DEFAULT_CONFIG = Object.freeze({
   //    定时轮询只是"连长轮询都不行"时的最后兜底。
   pollFallbackMs: 3000,
   heartbeatMs: 30000,
+  //    看门狗多久看一眼时钟（默认 5 秒，`unref` 不占进程）。
+  preventSleep: true,
+  wakeGapMs: 15000,
+  wakeWatchMs: 5000,
+  // ⭐⭐ 2026-10-12（业务负责人真机：「小助手会断线是因为我的电脑锁屏了吗？」「让它后台运行，
+  //    我就不用让电脑一直亮屏了」）：**只防睡眠、不拦关屏**。
+  //    · `preventSleep` —— **显式布尔**（默认 true）：调 `SetThreadExecutionState`
+  //      （`ES_CONTINUOUS | ES_SYSTEM_REQUIRED`，**不带** `ES_DISPLAY_REQUIRED` ⇒ 屏幕该关就关）；
+  //      ⚠️ 调不通**只记一条日志**，绝不影响打印；
+  //    · `wakeGapMs` —— 时钟"跳变"多少毫秒以上就判定"电脑刚被唤醒/网络刚恢复"（默认 15 秒）；
   // 长连接连续失败几次 ⇒ 启用兜底（**先长轮询**）。
   streamFailuresBeforeFallback: 3,
   // ⭐ 降级时的**首选**通道：长轮询挂多久（毫秒）。服务器 hold 住，任务一到**立刻**返回。
@@ -286,6 +296,122 @@ const defaultRunPowerShell = (command) => new Promise((resolve) => {
   child.on('error', (error) => resolve({ code: -1, stderr: error.message }));
   child.on('close', (code) => resolve({ code, stderr }));
 });
+
+/**
+ * ⭐⭐ 2026-10-12：**主动防睡眠**（业务负责人：「让它后台运行，我就不用让电脑一直亮屏了」）。
+ *
+ * 为什么是 PowerShell 内联 C#：`SetThreadExecutionState` 是 Win32 API，Node 里零依赖调不到；
+ * 而这个助手是**零依赖**应用（只有一个 helper.js）⇒ 用系统自带的 PowerShell `Add-Type`
+ * 现场编译一个三行的 C# 声明，**不引入任何 npm 包、也不装服务**
+ * （她问过"Windows 服务"—— 服务既拦不住睡眠、又拿不到默认打印机 ⇒ 不装服务）。
+ *
+ * 🔴 **只防睡眠、不拦关屏**：`ES_CONTINUOUS | ES_SYSTEM_REQUIRED`，**刻意不带**
+ *    `ES_DISPLAY_REQUIRED` —— 她的原话是"不用让电脑**一直亮屏**"，屏幕该关还得能关。
+ * ⚠️ 每一条都是**独立的一次 powershell 进程**，不共享状态 ⇒ `Add-Type` 的类型名不会撞。
+ */
+const ANTI_SLEEP_TYPE = 'PrintHelperKeepAwake';
+const antiSleepSignature = "$sig='[DllImport(\"kernel32.dll\")]public static extern uint SetThreadExecutionState(uint esFlags);';";
+const antiSleepAddType = `$t=Add-Type -MemberDefinition $sig -Name ${ANTI_SLEEP_TYPE} -Namespace PrintHelper -PassThru;`;
+
+/** 开启防睡眠的命令（**逐字**：含 `ES_CONTINUOUS` + `ES_SYSTEM_REQUIRED`，不含 `ES_DISPLAY_REQUIRED`）。 */
+const buildAntiSleepCommand = () => [
+  '$ES_CONTINUOUS=0x80000000; $ES_SYSTEM_REQUIRED=0x00000001;',
+  antiSleepSignature,
+  antiSleepAddType,
+  'if ($t::SetThreadExecutionState($ES_CONTINUOUS -bor $ES_SYSTEM_REQUIRED) -eq 0) { exit 1 }',
+].join(' ');
+
+/** 释放的命令：只留 `ES_CONTINUOUS` ⇒ 恢复系统默认电源行为（进程退出时 Windows 也会自动清掉）。 */
+const buildAntiSleepReleaseCommand = () => [
+  '$ES_CONTINUOUS=0x80000000;',
+  antiSleepSignature,
+  antiSleepAddType,
+  'if ($t::SetThreadExecutionState($ES_CONTINUOUS) -eq 0) { exit 1 }',
+].join(' ');
+
+/**
+ * 兜底：把"接通电源时的睡眠"关掉（`powercfg /change standby-timeout-ac 0`）。
+ * ⚠️ 可能需要管理员权限（也可能不是 Windows）⇒ **失败只记一条日志**，绝不硬来、绝不影响打印。
+ */
+const disableStandbyTimeout = async ({ runPowerShell = defaultRunPowerShell, logger = createLogger() } = {}) => {
+  const result = await Promise.resolve(runPowerShell('powercfg /change standby-timeout-ac 0'))
+    .catch((error) => ({ code: -1, stderr: error.message }));
+  const ok = result?.code === 0;
+  logger[ok ? 'info' : 'warn'](ok ? 'print_helper.powercfg.applied' : 'print_helper.powercfg.skipped', ok
+    ? {}
+    : {
+      code: result?.code ?? null,
+      stderr: String(result?.stderr || '').slice(0, 200) || undefined,
+      hint: '它需要管理员权限（也可能不是 Windows）—— 不影响打印；'
+        + '也可以按 README 在「设置 → 系统 → 电源和睡眠」里手动把睡眠改成"从不"',
+    });
+  return ok;
+};
+
+/**
+ * 防睡眠的**状态机**（可注入 runner，用例不真去动系统电源）。
+ * `enabled !== true` ⇒ 什么都不做（配置里显式关掉）。
+ */
+const createAntiSleep = (options = {}) => {
+  const logger = options.logger || createLogger();
+  const runPowerShell = options.runPowerShell || defaultRunPowerShell;
+  // ⚠️ 显式布尔：**没传 = 默认开**（与 `DEFAULT_CONFIG.preventSleep: true` 一致）；只有显式 false 才关。
+  const enabled = options.enabled === undefined ? true : options.enabled === true;
+  let on = false;
+  return {
+    isOn: () => on,
+    async enable() {
+      if (!enabled) return false;
+      const result = await Promise.resolve(runPowerShell(buildAntiSleepCommand()))
+        .catch((error) => ({ code: -1, stderr: error.message }));
+      on = result?.code === 0;
+      logger[on ? 'info' : 'warn'](on ? 'print_helper.anti_sleep.enabled' : 'print_helper.anti_sleep.unavailable', on
+        ? { hint: '电脑进入"睡眠"已被拦住（屏幕仍然可以关）' }
+        : {
+          code: result?.code ?? null,
+          stderr: String(result?.stderr || '').slice(0, 200) || undefined,
+          hint: '防睡眠没起来（**不影响打印**）—— 可以按 README 手动把"睡眠"改成"从不"',
+        });
+      return on;
+    },
+    async release() {
+      if (!on) return false;
+      try {
+        await runPowerShell(buildAntiSleepReleaseCommand());
+      } catch (error) {
+        logger.warn('print_helper.anti_sleep.release_failed', { reason: error.message });
+      }
+      on = false;
+      return true;
+    },
+  };
+};
+
+/** 时钟"跳变"多少毫秒以上 ⇒ 判定"电脑刚被唤醒 / 网络刚恢复"（默认 15 秒）。 */
+const DEFAULT_WAKE_GAP_MS = 15000;
+const wakeGapDetected = (lastTickAt, nowMs, gapMs = DEFAULT_WAKE_GAP_MS) => {
+  const last = Number(lastTickAt);
+  if (!Number.isFinite(last) || last <= 0) return false; // 不知道上次什么时候 ⇒ 不猜
+  return Number(nowMs) - last >= Number(gapMs);
+};
+
+/**
+ * ⭐ 这一轮重连**等多久**（毫秒）—— 纯函数，用例用假时钟直接钉。
+ *   · 唤醒 / 网络刚恢复（`wakeGap`）⇒ **0**（立刻重连，不等退避）；
+ *   · 其余按失败次数取退避（`validateConfig` 保证上限 ≤ 3 秒）。
+ */
+const reconnectDelayMs = ({ streamFailures = 0, backoffMs, wakeGap = false } = {}) => {
+  if (wakeGap) return 0;
+  const list = Array.isArray(backoffMs) && backoffMs.length ? backoffMs : DEFAULT_CONFIG.reconnectBackoffMs;
+  const index = Math.min(Math.max(0, Number(streamFailures) || 0), list.length - 1);
+  return Number(list[index]) || 1000;
+};
+
+/** 「断线已 N 分钟」——日志里给一个人话（不足 1 分钟也算 1 分钟，不写 0.05 分钟）。 */
+const formatDisconnectedFor = (ms) => {
+  const minutes = Math.max(1, Math.floor(Math.max(0, Number(ms) || 0) / 60000));
+  return `断线已 ${minutes} 分钟`;
+};
 
 /** 服务器地址规范化（去掉结尾斜杠；没写协议时补 https）。 */
 const normalizeBaseUrl = (value) => {
@@ -626,6 +752,10 @@ const createPrintHelper = (options = {}) => {
   const runPowerShell = options.runPowerShell || defaultRunPowerShell;
   const now = options.now || (() => Date.now());
   const sleep = options.sleep || ((ms) => new Promise((resolve) => { setTimeout(resolve, ms); }));
+  // ⭐ 防睡眠（显式布尔：只有配置里 `preventSleep: true` 才开；用例可注入 `options.antiSleep`）。
+  const antiSleep = options.antiSleep || createAntiSleep({
+    runPowerShell, logger, enabled: config.preventSleep === true, now,
+  });
   const baseUrl = normalizeBaseUrl(config.serverBaseUrl);
   // ⚠️ 相对路径一律以**配置文件所在目录**为基准（`--config D:\x\config.json` 时
   //    `state.json` / `downloads` 都落在 D:\x\ 下，不会散到脚本目录去）。
@@ -651,6 +781,10 @@ const createPrintHelper = (options = {}) => {
     portBusy: false,
     localPort: 0,
     statusPageUrl: '',
+    // ⭐ 2026-10-12：防睡眠状态 + 断线自愈用的两个时间戳（`lastTickAt` 由看门狗刷新）。
+    antiSleepEnabled: false,
+    lastTickAt: now(),
+    disconnectedSince: 0,
   };
 
   const headers = () => ({
@@ -867,10 +1001,44 @@ const createPrintHelper = (options = {}) => {
 
   const scheduleReconnect = () => {
     if (stopped) return;
-    const backoff = config.reconnectBackoffMs || [1000, 2000, 5000, 10000, 30000];
-    const index = Math.min(state.streamFailures, backoff.length - 1);
-    const waitMs = Number(backoff[index]) || 1000;
+    // ⭐ 2026-10-12（断线自愈）：电脑睡眠/休眠回来、或网络刚恢复时，时钟会跳一大截 ⇒
+    //    **立刻重连**（不等退避），并把失败计数清零 —— 这正是"空了 15 分钟"的那一下。
+    const wakeGap = wakeGapDetected(state.lastTickAt, now(), config.wakeGapMs);
+    const waitMs = reconnectDelayMs({ streamFailures: state.streamFailures, backoffMs: config.reconnectBackoffMs, wakeGap });
+    if (wakeGap) {
+      state.streamFailures = 0;
+      logger.info('print_helper.sse.reconnect_immediately', {
+        reason: '电脑刚被唤醒 / 网络刚恢复（时钟跳变）',
+        gap_ms: now() - state.lastTickAt,
+      });
+    }
+    state.lastTickAt = now();
     setTimer(() => { void connectStream(); }, waitMs);
+  };
+
+  /**
+   * 看门狗：每 `wakeWatchMs`（默认 5 秒）看一眼时钟。
+   * ⚠️ 定时器是 `unref` 的 ⇒ **不占进程、也不拦睡眠**（防睡眠只由 `SetThreadExecutionState` 负责）。
+   */
+  const watchWake = () => {
+    if (stopped) return;
+    const nowMs = now();
+    if (wakeGapDetected(state.lastTickAt, nowMs, config.wakeGapMs)) {
+      logger.info('print_helper.wake.detected', {
+        gap_ms: nowMs - state.lastTickAt,
+        hint: '电脑刚被唤醒 / 网络刚恢复 ⇒ 立刻重连（不等退避）',
+      });
+      state.streamFailures = 0;
+      state.lastTickAt = nowMs;
+      if (streamAbort) {
+        try { streamAbort.abort(); } catch { /* 已经断了 */ }
+      }
+      stopFallback();
+      void connectStream();
+    } else {
+      state.lastTickAt = nowMs;
+    }
+    setTimer(watchWake, Math.max(1000, Number(config.wakeWatchMs) || 5000));
   };
 
   const startFallback = () => {
@@ -920,6 +1088,8 @@ const createPrintHelper = (options = {}) => {
       if (!response.ok) throw new Error(`stream HTTP ${response.status}`);
       state.sseConnected = true;
       state.streamFailures = 0;
+      state.disconnectedSince = 0;
+      state.lastTickAt = now();
       stopFallback();
       logger.info('print_helper.sse.connected', {});
       const reader = response.body.getReader();
@@ -946,7 +1116,13 @@ const createPrintHelper = (options = {}) => {
       if (stopped) return;
       state.sseConnected = false;
       state.streamFailures += 1;
-      logger.warn('print_helper.sse.disconnected', { failures: state.streamFailures, reason: String(error?.message || error) });
+      if (!state.disconnectedSince) state.disconnectedSince = now();
+      logger.warn('print_helper.sse.disconnected', {
+        failures: state.streamFailures,
+        // ⭐ 人话：**断了多久**（她那次空了约 15 分钟）——日志里直接写出来，省得再换算。
+        since_disconnected: formatDisconnectedFor(now() - state.disconnectedSince),
+        reason: String(error?.message || error),
+      });
       if (state.streamFailures >= Number(config.streamFailuresBeforeFallback || 3)) startFallback();
       scheduleReconnect();
     }
@@ -1004,6 +1180,7 @@ ${state.authError ? `<div class="notice"><strong>连不上服务器：</strong>$
 ${row('服务器', `${baseUrl}`, serverOnline === null ? false : true)}
 ${row('手机看到的状态', serverOnline ? '打印电脑在线' : '未连接（任务已排队）', serverOnline === true)}
 ${row('长连接（SSE）', state.sseConnected ? '已连接' : (state.fallbackActive ? '断开了，正在用兜底轮询' : '未连接'), state.sseConnected)}
+${row('防睡眠', state.antiSleepEnabled ? '开（电脑不会睡；屏幕可以关）' : (config.preventSleep === true ? '关（没起来 —— 见日志，或按 README 把睡眠改成"从不"）' : '关（配置里关掉了）'), state.antiSleepEnabled)}
 ${row('打印程序', errors.length ? '未配好' : `${String(config.printer.mode)} 可用`, errors.length === 0)}
 ${row('打印参数', (Array.isArray(config.printer.printSettings) && config.printer.printSettings.length)
     ? `-print-settings ${config.printer.printSettings.join(',')}`
@@ -1190,6 +1367,14 @@ ${jobs.length ? jobs.map(jobRow).join('') : '<tr><td colspan="5">还没有打印
     openStatusPage();
     // ⭐⭐ 启动补拉**先于**长连接（两道保险里的第一道）。
     await startupCatchUp();
+    // ⭐⭐ 2026-10-12：**开机就防睡眠**（只防睡眠、不拦关屏）；调不通只记日志，绝不影响打印。
+    if (config.preventSleep === true) {
+      state.antiSleepEnabled = await antiSleep.enable();
+      void disableStandbyTimeout({ runPowerShell, logger });
+    }
+    // ⭐ 唤醒自愈：看门狗盯着时钟（睡眠回来立刻重连）。
+    state.lastTickAt = now();
+    setTimer(watchWake, Math.max(1000, Number(config.wakeWatchMs) || 5000));
     if (wantStream) void connectStream();
     // 心跳：长连接断掉时让手机仍然看得到"在线"。
     const beat = () => {
@@ -1239,6 +1424,9 @@ ${jobs.length ? jobs.map(jobRow).join('') : '<tr><td colspan="5">还没有打印
 
   const stop = async () => {
     stopped = true;
+    // ⭐ 退出释放（`ES_CONTINUOUS`）——进程退出时 Windows 也会自动清，这里是显式的第二道。
+    state.antiSleepEnabled = await antiSleep.release();
+    state.antiSleepEnabled = false;
     for (const timer of timers) clearTimeout(timer);
     timers.clear();
     if (streamAbort) {
@@ -1257,6 +1445,7 @@ ${jobs.length ? jobs.map(jobRow).join('') : '<tr><td colspan="5">还没有打印
     baseUrl,
     state,
     ledger,
+    antiSleep,
     start,
     stop,
     drain,
@@ -1390,6 +1579,8 @@ const main = async () => {
   };
   process.on('SIGINT', () => { void shutdown('SIGINT'); });
   process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
+  // ⚠️ 兜底：不管是哪种方式退出（含窗口被关掉），都别把"防睡眠"留在那儿。
+  process.on('exit', () => { void helper.antiSleep.release(); });
 };
 
 if (require.main === module) {
@@ -1414,6 +1605,14 @@ module.exports = {
   validateConfig,
   configErrorText,
   buildPrintCommand,
+  buildAntiSleepCommand,
+  buildAntiSleepReleaseCommand,
+  createAntiSleep,
+  disableStandbyTimeout,
+  reconnectDelayMs,
+  wakeGapDetected,
+  formatDisconnectedFor,
+  DEFAULT_WAKE_GAP_MS,
   createLedger,
   buildTestPdf,
   createPrintHelper,
