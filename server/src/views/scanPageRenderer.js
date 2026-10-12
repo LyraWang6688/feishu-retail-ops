@@ -262,7 +262,8 @@ summary { cursor: pointer; }
 .realm-tab { display: flex; align-items: center; justify-content: center; min-height: var(--control-height); padding: 0 var(--space-2); border-radius: var(--radius-md); color: var(--text-secondary); font-size: var(--font-size-base); font-weight: 600; text-decoration: none; white-space: nowrap; }
 /* ── ⭐⭐ 2026-10-12 验收领域「未到货批次」那一块：单列堆叠、不横滑、每行 ≥44px ── */
 .batch-list { list-style: none; margin: 0; padding: 0; }
-.batch-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); text-align: left; font-weight: 600; }
+.batch-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); text-align: left; font-weight: 600; border: 1px solid var(--primary); }
+.batch-row__cta { color: var(--primary); font-weight: var(--weight-bold); font-size: var(--font-size-lg); }
 .batch-row__meta { color: var(--text-muted); font-weight: 500; font-size: var(--font-size-sm); }
 /* 当前领域那一颗 = 主色（**服务端**决定，不是脚本切 class） */
 .realm-tab--active { color: var(--surface); background: var(--primary); }
@@ -575,12 +576,36 @@ const submitFeedbackScriptHtml = () => `<script data-view="submit-feedback">
       var button = event.target.querySelector('button[type="submit"]');
       if (!button || button.disabled) return;
       var form = event.target;
-      var label = button.getAttribute('data-submit-feedback') || form.getAttribute('data-submit-feedback') || '';
+      // ⭐⭐ 2026-10-12（她「点完好像没反应 ⇒ 我一直点那个按钮」）：
+      //    **按钮文案永不为空** —— 属性没配就用**按钮原文案**兜底（原来用空串兜底、按钮会变空白 ✗）。
+      var label = button.getAttribute('data-submit-feedback') || form.getAttribute('data-submit-feedback') || button.textContent;
       var elapsedTemplate = button.getAttribute('data-submitting-elapsed')
         || form.getAttribute('data-submit-feedback-elapsed') || '';
+      // ⭐⭐ 金额是必填（>0）：**点按钮就有反应**——空/0 时直接给一句提示，**不发请求**。
+      //    字段名与提示文案都写在**这一张表单**上（零硬编码中文进脚本）。
+      var amountName = form.getAttribute('data-amount-field') || '';
+      var amountInput = amountName ? form.querySelector('[name="' + amountName + '"]') : null;
+      if (amountInput) {
+        var amountValue = parseFloat(String(amountInput.value || '').replace(/[^0-9.]/g, ''));
+        if (!(amountValue > 0)) {
+          event.preventDefault();
+          var hintView = 'accept-amount-required';
+          var hintText = form.getAttribute('data-amount-hint-text') || '';
+          var hint = hintView ? form.querySelector('[data-view="' + hintView + '"]') : null;
+          if (!hint && hintView) {
+            hint = document.createElement('p');
+            hint.className = 'hint';
+            hint.setAttribute('data-view', hintView);
+            form.insertBefore(hint, form.firstChild);
+          }
+          if (hint) { hint.textContent = hintText; hint.removeAttribute('hidden'); }
+          amountInput.focus();
+          return;
+        }
+      }
       button.disabled = true;
       button.setAttribute('aria-busy', 'true');
-      button.textContent = label;
+      button.textContent = label || button.textContent;
       // 服务端慢的时候**不许看起来"没反应"**：每一秒把"已 N 秒"接在后面（纯前端计时）。
       if (!elapsedTemplate) return;
       var seconds = 0;
@@ -1010,6 +1035,10 @@ const acceptanceRowsFormHtml = (write, acceptance, userAgent = '') => {
   // ⭐⭐ 2026-10-12（她选的方案 A）：「系统把 40、41 列出来（标注"未报货"）⇒ 你**点一下就加到货**」。
   //    候选 = **这一款在该类别下应有的尺码**（与缺码判定同一份配置口径）− 已报 − 已加；
   //    一个候选都没有 / 没有"款"可归 ⇒ 路由给 `unreported = null` ⇒ **整块不渲染**（不留空标题）。
+  // ⭐⭐ 2026-10-12 21:11：有批次号、但这一批**一条明细都没有** ⇒ **明确说清**（她的"啥也没有"里这一档也要堵住）。
+  const emptyDetail = rows.length === 0
+    ? `<p class="empty" data-view="accept-empty-detail">${escapeHtml(t.acceptEmptyDetailBody)}</p>`
+    : '';
   const unreported = Array.isArray(acceptance.unreported) ? acceptance.unreported : [];
   const unreportedHtml = unreported.length ? `<p class="draft-bar__count" data-view="accept-unreported-title">${escapeHtml(t.acceptUnreportedTitle)}</p>
 <div class="size-chips" data-view="accept-unreported">
@@ -1025,21 +1054,46 @@ ${unreported.map((item) => `<button type="submit" class="btn" data-candidate-siz
 </div>`;
   return `<section class="card" data-view="acceptance-rows">
 <h2 class="stock__heading">${escapeHtml(t.acceptRowsTitle)}</h2>
+${emptyDetail}
 <p class="hint">${escapeHtml(t.acceptRowsHint)}</p>
-<form method="post" action="${escapeHtml(acceptance.rowsPostAction || acceptance.postAction)}" class="write-form" data-view="acceptance-rows-form">
+<form method="post" action="${escapeHtml(acceptance.rowsPostAction || acceptance.postAction)}" class="write-form" data-view="acceptance-rows-form" data-amount-field="${escapeHtml(f.acceptAmount)}" data-amount-hint-text="${escapeHtml(t.acceptAmountRequiredHint || '')}">
 ${hiddenField(f.action, write.actions.acceptFinishRows)}
+${acceptance.submitKey ? hiddenField(f.submitKey, acceptance.submitKey) : ''}
 ${hiddenField(f.acceptBatch, acceptance.batchNo)}
 ${reported}${already}
 <p class="draft-bar__count">${escapeHtml(t.acceptCustomTitle)}</p>
 ${customBlank}
 ${unreportedHtml}${unreportedHint}
+<p class="hint" data-view="accept-amount-required" hidden>${escapeHtml(t.acceptAmountRequiredHint || (SCAN_PAGE.texts && SCAN_PAGE.texts.acceptAmountRequiredHint) || '')}</p>
 <label class="size-check">${escapeHtml(t.acceptFinishAmountLabel)}
-<input class="size-qty" name="${escapeHtml(f.acceptAmount)}" inputmode="decimal" aria-label="${escapeHtml(t.acceptFinishAmountLabel)}"${acceptance.amountRequired === false ? '' : ' required'}>
+<input class="size-qty" name="${escapeHtml(f.acceptAmount)}"${acceptance.amountValue ? ` value="${escapeHtml(String(acceptance.amountValue))}"` : ''} inputmode="decimal" aria-label="${escapeHtml(t.acceptFinishAmountLabel)}"${acceptance.amountRequired === false ? '' : ' required'}>
 </label>
 <button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.acceptFinishSubmit)}</button>
 </form>
 ${acceptanceScanNextHtml(userAgent)}
 </section>`;
+};
+
+/**
+ * ⭐⭐ 2026-10-12 21:20（她「点完确认完成验收好像没反应 ⇒ 我一直点那个按钮」）：
+ * **成功页**必须把两个**真实数字**摆出来 + 一个明确的下一步（回未到货批次）——
+ * 「点了没反应」里有一半就是"成功后没有交代"。
+ */
+const renderAcceptanceDonePage = ({ config = SCAN_PAGE, write = null, acceptance = {}, backHref = '' } = {}) => {
+  const t = (write && write.texts) || SCAN_PAGE.texts;
+  const scanned = Number(acceptance.scanned || 0);
+  const amount = String(acceptance.amountText ?? '');
+  return renderDocument({
+    title: t.acceptDoneHeading || t.acceptDoneTitle || SCAN_PAGE.texts.acceptDoneTitle,
+    config,
+    content: `<section class="card state-msg" data-view="acceptance-done">
+<h1 class="state-msg__title--success">✅ ${escapeHtml(t.acceptDoneHeading || t.acceptDoneTitle || SCAN_PAGE.texts.acceptDoneTitle)}</h1>
+<p data-view="acceptance-done-quantity">${escapeHtml(t.acceptDoneQuantityLabel || '')} ${escapeHtml(String(scanned))}</p>
+<p data-view="acceptance-done-amount">${escapeHtml(t.acceptDoneAmountLabel || '')} ${escapeHtml(amount)}</p>
+<p class="foot">${escapeHtml(fillText(t.acceptBatchLine || '', { batchNo: String(acceptance.batchNo || '—') }))}</p>
+${backHref ? `<p><a class="btn btn--primary" href="${escapeHtml(backHref)}">${escapeHtml(t.acceptDoneBackLabel || '')}</a></p>` : ''}
+</section>`,
+  });
 };
 
 /** 【完成验收】：只收「实际金额」（必填，既有业务口径）——**没有**「到货说明」那一栏。 */
@@ -1082,9 +1136,16 @@ const acceptPendingBlockHtml = (config, page = {}) => {
       (batch?.suppliers || []).filter(Boolean).join('、'),
       batch?.quantity ? `${t.acceptPendingQuantityLabel} ${batch.quantity}` : '',
     ].filter(Boolean).join(t.acceptPendingMetaSeparator || ' · ');
-    return `<li><a class="btn batch-row" data-batch="${escapeHtml(batchNo)}" href="${escapeHtml(href)}">${escapeHtml(batchNo)}${meta ? `<span class="batch-row__meta">${escapeHtml(meta)}</span>` : ''}</a></li>`;
+    // ⭐⭐ 2026-10-12 21:11（她真机）：这一行原来是"浅灰信息条"的样子 ⇒ 她**没看出来能点**（去点了下面的空输入）。
+    //    ⇒ 描边 + 右侧一个「›」（`batch-row__cta`，样式只走 tokens）——"能点"要在**一眼**里看得出来。
+    return `<li><a class="btn batch-row" data-batch="${escapeHtml(batchNo)}" href="${escapeHtml(href)}">${escapeHtml(batchNo)}${meta ? `<span class="batch-row__meta">${escapeHtml(meta)}</span>` : ''}<span class="batch-row__cta" aria-hidden="true">›</span></a></li>`;
   }).join('');
+  // ⭐ 空着点【进入验收】⇒ 一句人话（就在那颗按钮上方），别让她以为卡住。
+  const emptySubmitHint = page?.emptySubmitHint
+    ? `<p class="hint" data-view="accept-manual-hint">${escapeHtml(t.acceptPendingEmptySubmitHint)}</p>`
+    : '';
   const manual = `
+${emptySubmitHint}
 <form method="get" action="${escapeHtml(`${basePath}${config.route?.acceptancePath || '/accept'}`)}" class="write-form" data-view="accept-manual">
 <div class="form-row">
 <input type="text" name="batch" inputmode="text" autocomplete="off" aria-label="${escapeHtml(t.acceptPendingManualPlaceholder)}" placeholder="${escapeHtml(t.acceptPendingManualPlaceholder)}">
@@ -1112,10 +1173,10 @@ ${manual}
  *    **不复制第二份列表/表单**；`basePath` 由路由给（`/s` 或 `/r`）。
  * ⚠️ 这一页**不挂领域切换条**（她是"进来干活"的），也没有"回工作台"这类把她支走的句子。
  */
-const renderAcceptanceSelfServe = ({ config = SCAN_PAGE, acceptPending = null, basePath = '' } = {}) => renderDocument({
+const renderAcceptanceSelfServe = ({ config = SCAN_PAGE, acceptPending = null, basePath = '', emptySubmitHint = false } = {}) => renderDocument({
   title: config.texts.acceptModeTitle,
   config,
-  content: acceptPendingBlockHtml(config, { acceptPending, basePath }),
+  content: acceptPendingBlockHtml(config, { acceptPending, basePath, emptySubmitHint }),
 });
 
 /**
@@ -1367,6 +1428,8 @@ module.exports = {
   renderSaleSuccessPage,
   // ⭐⭐ 2026-10-11（方案A）：验收模式落地页（`GET /s/accept?batch=` 那一屏）
   renderAcceptancePage,
+  // ⭐ 2026-10-12：验收成功页（两个真实数字 + 回列表）
+  renderAcceptanceDonePage,
   // ⭐⭐ 2026-10-12：`GET /accept`（无 batch）的自助落地页（复用「未到货批次 + 手输」那一块）
   renderAcceptanceSelfServe,
   escapeHtml,

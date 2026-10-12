@@ -812,6 +812,20 @@ class PurchaseArrivalConversationService {
       };
     }
     return this.queue.run(taskId, async () => {
+      // ⭐⭐ P0 2026-10-12（真机：同一批两次提交 ⇒ 每个尺码各 +2 ⇒ 5 双变 10 双）：
+      //    **队列是按 taskId 串行的**（`KeyedSerialQueue`）⇒ 第二次进来时必须**在锁内**再看一眼状态。
+      //    外面那次 `existing?.status === 'posted'` 是**顺序**检查 —— 拦得住"上一次已完成"，
+      //    **拦不住两个请求同时进来**（两份都通过了外面的检查，再各自跑完 ✗）。
+      const locked = await this.store.get(taskId).catch(() => null);
+      if (locked?.status === 'posted') {
+        logInfo('purchase.arrival.reconcile.workbench_already_posted', {
+          task_id: taskId, batch_no: batchNo, where: 'locked',
+        });
+        return {
+          ok: true, reason: 'already_posted', taskId,
+          message: `这批（${batchNo}）已经验收入库过了，没有重复入库`,
+        };
+      }
       // ① 读申请行（既有只读实现；退货行没有尺码会在这里被挡住）
       const snapshot = await this.loadRequestRows(batch);
       if (!snapshot.ok) {
