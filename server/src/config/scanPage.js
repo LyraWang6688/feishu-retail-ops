@@ -36,6 +36,19 @@ const ROUTE = Object.freeze({
   //    `{batchNo}` 会被 URL 编码后填进去；手输兜底那个 GET 表单用 `acceptPath`。
   acceptancePath: '/accept',
   acceptanceLandingPath: '/accept?batch={batchNo}',
+  // ⭐⭐ 2026-10-12（治根）：**新二维码 = 记录 ID 直达** —— `GET/POST /r/{recordId}`。
+  //
+  // 起因（她今天的口径，逐字）：「如果必须得要一个完全不变的标识，那我们是不是可以用
+  //   【记录 ID】呀？……虽然它的这些信息可能会变，但我还是用它**不变的记录 ID**」。
+  // 根因：二维码里存的**编号**（`货号|颜色|类别`）是**会变的快照** —— 她打印时类别为空、
+  //   之后补上 ⇒ 旧码对不上（今天的 400 事故就是这么来的）。
+  // ⇒ **新二维码一律 `/r/{recordId}`**；**旧 `/s/{编号}` 照旧可用**（旧贴纸不重打也能扫）。
+  // 🔴 `/r` 与 `/s` **必须是同一个 router 实例**（`app.js` 双挂载）——
+  //    各建一个实例就会有两套写服务 / 两条按人串行队列 ⇒ **幂等可靠性直接破**。
+  recordBasePath: '/r',
+  recordPath: '/:recordId',
+  // 「拿到 recordId 但那条货品读不到」时的**回退**：URL 上若还带着编号（`?number=`）就按编号再试。
+  recordNumberQuery: 'number',
 });
 
 /**
@@ -435,8 +448,14 @@ const PRODUCT_SNAPSHOT = Object.freeze({
 const EVENTS = Object.freeze({
   viewed: 'scan.page.viewed',
   notFound: 'scan.page.not_found',
+  // ⭐⭐ 2026-10-12：`/r/{recordId}` 这条路的正向证据 / 失败证据。
+  recordViewed: 'scan.page.record_viewed',
+  recordMissing: 'scan.page.record_missing',
+  recordLookupFailed: 'scan.page.record_lookup_failed',
   // ⭐⭐ 2026-10-12：编号兜底匹配（唯一命中 / 多命中 / 读失败）各一条。
   numberFallback: 'scan.page.number_fallback',
+  // ⭐⭐ 2026-10-12：`/r/{recordId}` 取商品那一段（记录 id 直查）失败 —— **回退按编号**，不 500。
+  recordFallback: 'scan.page.record_fallback',
   numberFallbackAmbiguous: 'scan.page.number_fallback_ambiguous',
   numberFallbackFailed: 'scan.page.number_fallback_failed',
   badNumber: 'scan.page.bad_number',

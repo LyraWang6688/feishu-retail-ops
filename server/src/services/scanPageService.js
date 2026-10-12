@@ -719,17 +719,44 @@ const createScanPageService = (gateway, options = {}) => {
    * `total_ms` 都会被写进 `timing` —— 她要的正是"**失败也看得出卡在哪一步**"。
    * 真正的取数在 `performLookup`（下面），两层的参数逐字相同。
    */
-  const lookup = async ({ number: rawNumber, requestId, timing = null } = {}) => {
+  /**
+   * ⭐⭐ 2026-10-12：**按记录 ID 直达**（新二维码那条路）—— 「取商品」换一个策略，
+   * **其余链路（库存 / 尺码 / 缺码 / 页面 / 写入）逐字复用**。
+   *
+   * 🔴 只读：一次 `gateway.get('product', recordId)`（**不整表读、不按编号筛**）。
+   * 🔴 读不到（记录被删 / 合并 / 跨 Base / 网络）**绝不许 500** ——
+   *    调用方据此**回退按编号再试一次**（带了编号的话），否则给人话。
+   */
+  const readProductByRecordId = async ({ recordId, requestId, timing }) => {
+    const startedAt = startStage();
+    try {
+      return await gateway.get('product', recordId);
+    } catch (error) {
+      logWarn(config.events.recordLookupFailed, {
+        request_id: requestId, product_record_id: recordId, error: error.message,
+      });
+      return null;
+    } finally {
+      if (timing) timing.record_ms = elapsed(startedAt);
+    }
+  };
+
+  /** 记录 ID 那一档的视图缓存键（与"按编号"那一档**各存各的**，互不冒充）。 */
+  const recordCacheKey = (recordId) => `#record:${String(recordId || '')}`;
+
+  const lookup = async ({ number: rawNumber, recordId: rawRecordId, requestId, timing = null } = {}) => {
     const totalStartedAt = startStage();
     try {
-      return await performLookup({ rawNumber, requestId, timing });
+      return await performLookup({ rawNumber, rawRecordId, requestId, timing });
     } finally {
       if (timing) timing.total_ms = elapsed(totalStartedAt);
     }
   };
 
-  const performLookup = async ({ rawNumber, requestId, timing = null } = {}) => {
-    const number = decodeScanNumber(rawNumber, config);
+  const performLookup = async ({ rawNumber, rawRecordId, requestId, timing = null } = {}) => {
+    let number = decodeScanNumber(rawNumber, config);
+    let product = null;
+    const recordId = String(rawRecordId ?? '').trim();
     if (timing) {
       timing.number = number;
       timing.cache_hit = false;
@@ -742,10 +769,54 @@ const createScanPageService = (gateway, options = {}) => {
       timing.whole_table_fallback = false;
       // ⭐ 2026-10-12：这一趟有没有走**编号兜底匹配**（缺类别那种标签）。
       timing.number_fallback = false;
+      // ⭐⭐ 2026-10-12：这一趟是不是**按记录 ID 直达**（新二维码那条路）。
+      timing.record_id = Boolean(recordId);
+      timing.record_id_hit = false;
+      timing.record_ms = 0;
       timing.rows = 0;
       timing.total_ms = 0;
     }
-    if (!number) return { found: false, number, reason: 'empty' };
+    // ── ⭐⭐ 记录 ID 直达（`/r/{recordId}`）────────────────────────────────────
+    //    ⚠️ 它**排在"按编号"之前**：新二维码里没有编号，只有记录 id。
+    //    ⚠️ 取不到记录时**不 return**：若 URL 上还带了编号，就继续往下走"按编号"那条路
+    //      （= 回退再试一次）；两条都没有才给人话。
+    if (recordId) {
+      const cachedById = cache.get(recordCacheKey(recordId));
+      if (cachedById) {
+        logInfo(config.events.cacheHit, {
+          request_id: requestId, number: cachedById.number, product_record_id: recordId,
+          cache_hit: true, ttl_ms: cache.ttlMs, by: 'record_id',
+        });
+        if (timing) {
+          timing.cache_hit = true;
+          timing.record_id_hit = true;
+          timing.number = cachedById.number;
+          timing.rows = cachedById.total;
+        }
+        return cachedById;
+      }
+      const found = await readProductByRecordId({ recordId, requestId, timing });
+      const numberField = fieldName(schema, 'product', 'number');
+      if (found) {
+        product = found;
+        const tableNumber = numberField ? textValue(found?.fields?.[numberField]).trim() : '';
+        number = tableNumber || number;
+        if (timing) { timing.record_id_hit = true; timing.number = number; }
+        logInfo(config.events.recordViewed, {
+          request_id: requestId, product_record_id: recordId, number,
+        });
+      } else if (!number) {
+        // 记录读不到、URL 上也没有编号可回退 ⇒ **人话**（不是 500、不是原始错误页）。
+        logInfo(config.events.recordMissing, { request_id: requestId, product_record_id: recordId });
+        return { found: false, number: '', reason: 'unknown', record_missing: true };
+      } else {
+        // 带了编号 ⇒ **回退按编号再试一次**（这条日志是"回退真的发生了"的证据）。
+        logInfo(config.events.recordFallback, {
+          request_id: requestId, product_record_id: recordId, number,
+        });
+      }
+    }
+    if (!number && !product) return { found: false, number, reason: 'empty' };
 
     const cached = cache.get(number);
     if (cached) {
@@ -771,35 +842,39 @@ const createScanPageService = (gateway, options = {}) => {
     logInfo(config.events.cacheMiss, { request_id: requestId, number, cache_hit: false });
 
     const parsed = parseNumberSegments(number, config);
-    const productStartedAt = startStage();
-    let product = null;
     let wholeTableFallback = false;
-    try {
-      // ⭐⭐ 2026-10-09：**先查「货品信息」内存快照**（按编号索引）——命中就 **0 次飞书调用**。
-      //    单价仍以「货品信息」为唯一真源（她的口径），只是从内存里取。
-      //    未就绪 / 过期 / 没这一条 ⇒ 回退下面那条**既有的过滤读**（行为逐字不变）。
-      const indexed = productSnapshot ? productSnapshot.get() : { ready: false, reason: 'disabled' };
-      if (indexed.ready) {
-        product = findProduct(indexed.records, number);
-        if (timing) timing.product_snapshot_hit = Boolean(product);
-      }
-      if (!product) {
-        const filteredProduct = await readProductsByNumber({ number, requestId });
-        product = filteredProduct.product;
-        wholeTableFallback = Boolean(filteredProduct.fallback);
-        if (!product && !filteredProduct.resolved) {
-          // 按条件读一条都没读到 ⇒ **回退整表读**再找一次：
-          // 「找不到」的判定与提速前**逐字一致**（宁可慢这一次，也不许把"有货"判成"没这条编号"）。
-          const products = await readAllCapped('product', limits.productRecords, requestId);
-          product = findProduct(products, number);
-          wholeTableFallback = true;
+    // ⭐⭐ 2026-10-12（`/r/{recordId}`）：**已经直接拿到货品了** ⇒ 这一段**整段跳过**
+    //    （不按编号筛、不查内存快照、不整表读）—— 这就是"两条路**共用同一套链路**，
+    //    只有『取商品』那一步换了策略"的落点：下面每一行（库存 / 尺码 / 缺码 / 视图 / 缓存）**逐字复用**。
+    if (!product) {
+      const productStartedAt = startStage();
+      try {
+        // ⭐⭐ 2026-10-09：**先查「货品信息」内存快照**（按编号索引）——命中就 **0 次飞书调用**。
+        //    单价仍以「货品信息」为唯一真源（她的口径），只是从内存里取。
+        //    未就绪 / 过期 / 没这一条 ⇒ 回退下面那条**既有的过滤读**（行为逐字不变）。
+        const indexed = productSnapshot ? productSnapshot.get() : { ready: false, reason: 'disabled' };
+        if (indexed.ready) {
+          product = findProduct(indexed.records, number);
+          if (timing) timing.product_snapshot_hit = Boolean(product);
         }
-      }
-    } finally {
-      // ⚠️ 用 finally：这一阶段**抛错时也要**留下 product_ms（"卡在货品信息那一步"就是这么看出来的）。
-      if (timing) {
-        timing.product_ms = elapsed(productStartedAt);
-        timing.whole_table_fallback = wholeTableFallback;
+        if (!product) {
+          const filteredProduct = await readProductsByNumber({ number, requestId });
+          product = filteredProduct.product;
+          wholeTableFallback = Boolean(filteredProduct.fallback);
+          if (!product && !filteredProduct.resolved) {
+            // 按条件读一条都没读到 ⇒ **回退整表读**再找一次：
+            // 「找不到」的判定与提速前**逐字一致**（宁可慢这一次，也不许把"有货"判成"没这条编号"）。
+            const products = await readAllCapped('product', limits.productRecords, requestId);
+            product = findProduct(products, number);
+            wholeTableFallback = true;
+          }
+        }
+      } finally {
+        // ⚠️ 用 finally：这一阶段**抛错时也要**留下 product_ms（"卡在货品信息那一步"就是这么看出来的）。
+        if (timing) {
+          timing.product_ms = elapsed(productStartedAt);
+          timing.whole_table_fallback = wholeTableFallback;
+        }
       }
     }
     // ⭐⭐ 2026-10-12：**编号兜底匹配**（追加在"精确匹配没找到"之后；上面那条路径**逐字不动**）。
@@ -1011,6 +1086,9 @@ const createScanPageService = (gateway, options = {}) => {
     });
     // 只缓存 `found: true`（否定结果不缓存：新品刚建档就该立刻扫得到）。
     cache.set(number, view);
+    // ⭐ 2026-10-12：按记录 ID 直查的那一趟**也**把视图挂在记录 id 上 ——
+    //    同一个码连扫两次（或她来回翻页）时第二次**0 次飞书**。
+    if (recordId) cache.set(recordCacheKey(recordId), view);
     // ⚠️ `total_ms`（取数这一段）由最外层的 `lookup` 统一写；路由渲染完再把 `render_ms` 加进来。
     return view;
   };

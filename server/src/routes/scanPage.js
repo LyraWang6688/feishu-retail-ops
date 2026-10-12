@@ -224,7 +224,7 @@ const createScanPageRouter = (options = {}) => {
    *   · 编号缺段、**匹配到多款** ⇒ 说清"没法确定是哪一双"（**不猜**）。
    * 后两种都给【再扫一次】的回跳（= 这一页的地址，重新扫标签即可）。
    */
-  const notFoundPage = (res, requestId, { number = '', fallback = null, realm = DEFAULT_REALM } = {}) => sendHuman(res, 404, {
+  const notFoundPage = (res, requestId, { number = '', fallback = null, realm = DEFAULT_REALM, target = null } = {}) => sendHuman(res, 404, {
     title: config.texts.notFoundTitle,
     body: config.texts.notFoundBody,
     number,
@@ -232,7 +232,9 @@ const createScanPageRouter = (options = {}) => {
     retryHint: fallback?.tried
       ? (fallback.ambiguous ? config.texts.notFoundAmbiguousHint : config.texts.notFoundFallbackMissHint)
       : '',
-    backPath: fallback?.tried ? postActionFor(number, realm) : '',
+    // ⭐ 只有"确实按兜底找过、还是没找到"时才给【再扫一次】那条回跳；
+    //   `/r` 底下回跳要带**记录 ID**（不是编号）。
+    backPath: fallback?.tried ? postActionFor(target || { mode: 'number', value: number }, realm) : '',
     backLabel: fallback?.tried ? config.texts.notFoundBackLabel : '',
   });
 
@@ -324,8 +326,57 @@ const createScanPageRouter = (options = {}) => {
    *      表单 action 带上了 `?from=`，POST 里 `resolveRealm(req.query?.from)` 才读得到领域。
    *      （2026-10-11 修的一处：表单 action 原来漏传 realm，导致回跳落到缺省领域。）
    */
-  const postActionFor = (number, realm = DEFAULT_REALM) => {
-    const path = `${config.route.basePath}/${encodeURIComponent(String(number || ''))}`;
+  // ⭐⭐ 2026-10-12（治根）：**两条路共用同一个 router 实例**（`app.js` 把同一实例挂在 `/s` 与 `/r`）。
+  //    ⇒ 「这一页在取哪一样东西」**只有一个判据**：挂载点（`req.baseUrl`）。
+  //    · `/s/:number`   ⇒ `{ mode: 'number',   value: 编号 }`
+  //    · `/r/:recordId` ⇒ `{ mode: 'recordId', value: 记录 ID }`
+  //    🔴 **不许**在别处再拼一套路径（`postActionFor` 是唯一出口）—— 两边各写一份必然漂。
+  const isRecordBase = (req) => String(req.baseUrl || '') === String(config.route.recordBasePath || '');
+  const scanTargetOf = (req) => {
+    const raw = req.params?.recordId !== undefined ? req.params.recordId : req.params?.number;
+    const value = decodeURIComponent(String(raw ?? ''));
+    return { mode: isRecordBase(req) ? 'recordId' : 'number', value };
+  };
+  /**
+   * ⭐⭐ 回跳时用哪个值：`/r` 底下用**记录 ID**（URL 上那个），
+   * `/s` 底下**沿用调用方原来那个值**（`view.number` / URL 里的编号）—— **逐字不变**。
+   */
+  const backTargetFor = (req, fallbackValue) => (isRecordBase(req)
+    ? scanTargetOf(req)
+    : { mode: 'number', value: fallbackValue });
+
+  /** 这一页的"取商品"入参（`scanPageService.lookup` 的两条路共用同一份出参约定）。 */
+  const lookupInputOf = (req) => {
+    const target = scanTargetOf(req);
+    if (target.mode === 'recordId') {
+      // 「拿到 recordId 但那条货品读不到」时的**回退**：URL 上若还带着编号就按编号再试一次。
+      const fallbackNumber = String(req.query?.[config.route.recordNumberQuery] ?? '').trim();
+      return { recordId: target.value, number: fallbackNumber || undefined };
+    }
+    return { number: target.value };
+  };
+
+  /**
+   * 表单的 POST 目标（= 处理完回跳到哪一页）。
+   *
+   * ⭐ **必须带上领域**：不然她在【销售】那一块点「加入本单」，303 回来会落在
+   *   **缺省领域**、刚填的本单看不见了。
+   *   ⚠️ 缺省领域（2026-10-11 起 = **销售**）不带 `?from=`（URL 干净，且既有断言一字不变）；
+   *      另外三个领域一律带 `?from=<领域>` ⇒ **回跳停在本单所在的领域**。
+   *   ⚠️ 这个函数**同时被 `buildWriteContext`（拼表单 action）与 POST 的 303 两处用** ——
+   *      表单 action 带上了 `?from=`，POST 里 `resolveRealm(req.query?.from)` 才读得到领域。
+   *      （2026-10-11 修的一处：表单 action 原来漏传 realm，导致回跳落到缺省领域。）
+   *   ⭐⭐ 2026-10-12：第一个入参**同时接受**一个目标对象（`{mode,value}`，见 `scanTargetOf`）
+   *      **或**一个字符串（= 按编号，既有调用点逐字不变）。挂载点决定拼 `/s` 还是 `/r`。
+   */
+  const postActionFor = (target, realm = DEFAULT_REALM) => {
+    const resolved = target && typeof target === 'object'
+      ? target
+      : { mode: 'number', value: target };
+    const basePath = resolved.mode === 'recordId'
+      ? String(config.route.recordBasePath || '')
+      : config.route.basePath;
+    const path = `${basePath}/${encodeURIComponent(String(resolved.value || ''))}`;
     return realm && realm !== DEFAULT_REALM ? `${path}?from=${encodeURIComponent(realm)}` : path;
   };
 
@@ -354,13 +405,16 @@ const createScanPageRouter = (options = {}) => {
    * ⚠️ **绝不让这一页因为打印链路坏掉而空白**：队列不可用 ⇒ `enabled: false`，
    *    渲染层如实说一句"打印服务暂时不可用" + 保留原来那两条链接（人话，不是白屏）。
    */
-  const buildPrintContext = async (number, realm, { requestId, submitted, duplicated, jobId } = {}) => {
+  const buildPrintContext = async (number, realm, { requestId, submitted, duplicated, jobId, target = null } = {}) => {
     const texts = LABEL_PRINT_QUEUE.texts;
+    // ⭐ 表单 action 落在哪条路上：`/r` 底下是**记录 ID**（`target` 由调用方给），
+    //    缺省 `{mode:'number'}` = 与改前**逐字相同**。
+    //    ⚠️ `number` 这个入参仍然是**编号**（打印队列按编号找"这一款最近一次"），不要混。
     const base = {
       enabled: true,
       submitted: Boolean(submitted),
       duplicated: Boolean(duplicated),
-      postAction: postActionFor(number, realm),
+      postAction: postActionFor(target || { mode: 'number', value: number }, realm),
       actionField: writeConfig.fields.action,
       actionValue: writeConfig.actions.printLabel,
       submitKeyField: LABEL_PRINT_QUEUE.submitKeyField,
@@ -571,7 +625,8 @@ const createScanPageRouter = (options = {}) => {
       texts,
       fields,
       actions: writeConfig.actions,
-      postAction: postActionFor(view.number, realm),
+      // ⭐⭐ `/r/{recordId}` 底下表单必须 POST 回 `/r/{recordId}`（否则提交会落到"按编号"那条路）。
+      postAction: postActionFor(backTargetFor(req, view.number), realm),
       sizes,
       draft: { lines },
       // ⭐ 配品行要的东西（没有配品时渲染层不画那个表单）。
@@ -620,7 +675,13 @@ const createScanPageRouter = (options = {}) => {
    *   · 认不出的 `from` 回落缺省（销售），**永不报错、永不空白**。
    *   · 任何异常（取数 / 渲染）都落到 `respondFailure` → **人话页**（还有 `renderMinimalPage` 兜底）。
    */
-  router.get(config.route.path, async (req, res) => {
+  // ⭐⭐ 2026-10-12：**两条路共用这两个处理函数**（同一个 router 实例挂在 `/s` 与 `/r` 上）：
+  //    · `/s/:number`   ⇒ `req.params.number`   = 编号
+  //    · `/r/:recordId` ⇒ `req.params.recordId` = 记录 ID（**新二维码走这条**）
+  //    ⚠️ 用**路径数组**把同一个 handler 挂到两个模式上 —— **不复制一份处理逻辑**；
+  //      "这一页在取哪一样东西"由挂载点判定（`scanTargetOf`），其余一行都不分叉。
+  const ROUTE_PATTERNS = [config.route.path, config.route.recordPath].filter(Boolean);
+  router.get(ROUTE_PATTERNS, async (req, res) => {
     const requestId = req.requestId;
     // ⚠️ 领域来自查询串（她给的参数名就是 `from`）；认不出来一律回落缺省，**不报错**。
     //    ⭐ 2026-10-11：六个领域（销售 · 补货 · 退货 · 验收 · 库存 · 货品）都是**真领域**，
@@ -637,7 +698,7 @@ const createScanPageRouter = (options = {}) => {
     try {
       // ⚠️ Express 已经把路由参数解码过一次（`%7C` → `|`，未编码的中文也照收）；
       //    service 里再解一次是为了容忍双重编码，并且对孤立 `%` 的输入不抛。
-      const view = await service.lookup({ number: req.params.number, requestId, timing });
+      const view = await service.lookup({ ...lookupInputOf(req), requestId, timing });
       if (!view.found) {
         if (view.reason === 'empty') {
           logWarn(config.events.badNumber, { request_id: requestId, reason: 'empty_number' });
@@ -645,7 +706,10 @@ const createScanPageRouter = (options = {}) => {
           return badNumberPage(res, 400, requestId);
         }
         service.logTiming?.(timing, { requestId, found: false });
-        return notFoundPage(res, requestId, { number: view.number, fallback: view.fallback, realm });
+        // ⭐ `/r/{recordId}` 那条路读不到记录（记录被删 / 跨 Base）⇒ **同一条人话出口**，不是 500。
+        return notFoundPage(res, requestId, {
+          number: view.number, fallback: view.fallback, realm, target: scanTargetOf(req),
+        });
       }
       // ⭐⭐ 2026-10-11（方案A + 六领域）：**服务器记住她正在做什么** ——
       //    「每次扫码都会打开一个新页面」（标签上的码内容固定、不带参数）⇒ 新页面不知道她刚在哪个领域。
@@ -659,7 +723,7 @@ const createScanPageRouter = (options = {}) => {
         if (session && session.status === 'open') {
           realm = ACCEPTANCE_REALM;
           acceptance = acceptanceContext(session, {
-            postAction: postActionFor(view.number, ACCEPTANCE_REALM),
+            postAction: postActionFor(backTargetFor(req, view.number), ACCEPTANCE_REALM),
             notice: String(req.query?.duplicate || '') === '1'
               ? writeConfig.texts.acceptDuplicateBanner
               : (String(req.query?.accepted || '') === '1'
@@ -693,6 +757,8 @@ const createScanPageRouter = (options = {}) => {
           submitted: String(req.query?.printed || '') === '1',
           duplicated: String(req.query?.dup || '') === '1',
           jobId: String(req.query?.job || '').trim(),
+          // `/r` 底下表单要 POST 回 `/r/{recordId}`；`/s` 底下与改前逐字相同。
+          target: backTargetFor(req, view.number),
         })
         : null;
       // ⭐ 2026-10-11：把 UA 交给渲染层 —— 它只用来决定本单条上【继续扫下一个】
@@ -739,7 +805,7 @@ const createScanPageRouter = (options = {}) => {
    *    刷新不会重复提交，页面上也会带上"本单现在几双"。**提交订单**直接渲染结果页。
    * ⚠️ 失败一律**渲染一张人话页**（不静默、不只写日志）。
    */
-  router.post(config.route.path, async (req, res) => {
+  router.post(ROUTE_PATTERNS, async (req, res) => {
     const requestId = req.requestId;
     const body = req.body || {};
     const fields = writeConfig.fields;
@@ -756,7 +822,19 @@ const createScanPageRouter = (options = {}) => {
     // ⚠️ 页面上**零 JS**：这里就是一个原生表单的 POST，成功后 303 回本领域（PRG，
     //    刷新不会重复提交），状态由 GET 重新渲染。
     if (action === actions.printLabel) {
-      const number = decodeURIComponent(String(req.params.number || '')).trim();
+      let number = decodeURIComponent(String(req.params.number || '')).trim();
+      // ⭐⭐ 2026-10-12：`/r/{recordId}` 底下 URL 里是**记录 ID**，而打印队列认的是**编号**
+      //    ⇒ 先把它解出来（读不到就给"这一款现在打不了"的人话，不是 500）。
+      if (isRecordBase(req)) {
+        const printView = await service.lookup({ ...lookupInputOf(req), requestId }).catch(() => null);
+        number = String(printView?.number || '').trim();
+        if (!number) {
+          logWarn('scan.label_print.number_unresolved', {
+            request_id: requestId, product_record_id: scanTargetOf(req).value,
+          });
+          return notFoundPage(res, requestId, { target: scanTargetOf(req), realm });
+        }
+      }
       // ⭐ 连点去重 / 二次确认：
       //   · `submit_key`（表单里带回来的幂等键）—— 同一个 key 只会有一个任务；
       //   · `again=1`（横幅上那颗【再打一张】）—— **明确表达"我知道刚打过，还要再打"** ⇒ 绕过两道去重。
@@ -778,7 +856,8 @@ const createScanPageRouter = (options = {}) => {
         // Post-Redirect-Get：刷新不会重复提交；页面上那句**显眼横幅**由 GET 重新渲染。
         // `printed=1` = 这次真的新建了任务；`dup=1` = 命中去重（没有重复提交）。
         const flag = result.reused ? 'dup=1' : 'printed=1';
-        return res.redirect(303, `${postActionFor(number, realm)}&${flag}&job=${encodeURIComponent(result.job_id)}`);
+        // ⭐ `/r` 底下回跳要带**记录 ID**（不是编号）。
+        return res.redirect(303, `${postActionFor(backTargetFor(req, number), realm)}&${flag}&job=${encodeURIComponent(result.job_id)}`);
       } catch (error) {
         // 她这一款没库存 / 条件是打不出来 ⇒ 400（**原因原样给她**，她要能看懂为什么）；
         // 系统这一侧坏了（产物画不出来 / 队列写不进盘）⇒ 502/503，**只给一句人话**，
@@ -807,9 +886,11 @@ const createScanPageRouter = (options = {}) => {
     try {
       // ── 加入本单 ────────────────────────────────────────────────────────────
       if (action === actions.addLine) {
-        const view = await service.lookup({ number: req.params.number, requestId });
+        const view = await service.lookup({ ...lookupInputOf(req), requestId });
         if (!view.found) {
-          return notFoundPage(res, requestId, { number: view.number, fallback: view.fallback, realm });
+          return notFoundPage(res, requestId, {
+            number: view.number, fallback: view.fallback, realm, target: scanTargetOf(req),
+          });
         }
         const result = await writeService.addSaleLine({
           openId,
@@ -831,14 +912,16 @@ const createScanPageRouter = (options = {}) => {
         logInfo(writeConfig.events.lineAdded, {
           request_id: requestId, number: view.number, count: result.count,
         });
-        return res.redirect(303, `${postActionFor(view.number, realm)}${realm === DEFAULT_REALM ? '?' : '&'}added=1`);
+        return res.redirect(303, `${postActionFor(backTargetFor(req, view.number), realm)}${realm === DEFAULT_REALM ? '?' : '&'}added=1`);
       }
 
       // ── ⭐ 2026-10-11（B）：把一件配品加进本单（与「加入本单」同一形状：只写本地会话）──
       if (action === actions.addAccessory) {
-        const view = await service.lookup({ number: req.params.number, requestId });
+        const view = await service.lookup({ ...lookupInputOf(req), requestId });
         if (!view.found) {
-          return notFoundPage(res, requestId, { number: view.number, fallback: view.fallback, realm });
+          return notFoundPage(res, requestId, {
+            number: view.number, fallback: view.fallback, realm, target: scanTargetOf(req),
+          });
         }
         const result = await writeService.addSaleLine({
           openId,
@@ -851,14 +934,14 @@ const createScanPageRouter = (options = {}) => {
         });
         if (!result.ok) return respondWriteFailure(res, result, requestId);
         // 与「加入本单」同一条回跳（Post-Redirect-Get）：刷新不会重复提交、本单看得见。
-        return res.redirect(303, `${postActionFor(view.number, realm)}${realm === DEFAULT_REALM ? '?' : '&'}added=1`);
+        return res.redirect(303, `${postActionFor(backTargetFor(req, view.number), realm)}${realm === DEFAULT_REALM ? '?' : '&'}added=1`);
       }
 
       // ── 清空本单 ────────────────────────────────────────────────────────────
       if (action === actions.clearDraft) {
         await writeService.clearDraft({ openId, requestId });
         return res.redirect(303, postActionFor(
-          decodeURIComponent(String(req.params.number || '')), realm,
+          backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realm,
         ));
       }
 
@@ -881,7 +964,7 @@ const createScanPageRouter = (options = {}) => {
         //    判据在写服务里（`pendingLine` 只在本单为空时生效）。
         const submitLookupStartedAt = Date.now();
         const submitView = String(body[fields.size] ?? '').trim()
-          ? await service.lookup({ number: req.params.number, requestId }).catch(() => null) : null;
+          ? await service.lookup({ ...lookupInputOf(req), requestId }).catch(() => null) : null;
         // `lookup_ms` = 提交前那一次"取商品"（缓存命中⇒很短；没命中⇒就是飞书那几读）。
         saleTiming.lookup_ms = Math.max(0, Date.now() - submitLookupStartedAt);
         const submitStartedAt = Date.now();
@@ -945,7 +1028,10 @@ const createScanPageRouter = (options = {}) => {
               details: [orderLine],
               retryHint: writeConfig.texts.partialFailedRetryHint,
               // 怎么出去：回扫码页再点一次提交 —— 会接着**同一张单**写（幂等键 / 主表 id 都在会话里）。
-              backPath: postActionFor(decodeURIComponent(String(req.params.number || '')), realm),
+              // ⭐ `/r` 底下「再录一单 / 回去再提交」要回**记录 ID** 那一页。
+              backPath: postActionFor(
+                backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realm,
+              ),
               backLabel: writeConfig.texts.submittedRecordAnother,
             });
           }
@@ -955,7 +1041,7 @@ const createScanPageRouter = (options = {}) => {
           //    多笔收款（原样带回）都还在 —— 改一下再点提交即可。
           //    🔴 这一条**不写库**（写服务里那一段在校验之后才建主表），页面上也会把差额说清。
           if ((writeConfig.sale.formFailureCodes || []).includes(result.code)) {
-            const view = await service.lookup({ number: req.params.number, requestId }).catch(() => null);
+            const view = await service.lookup({ ...lookupInputOf(req), requestId }).catch(() => null);
             if (view?.found) {
               const write = await buildWriteContext(req, view, 'sales', {
                 paymentRows: payments, paymentStatus, paidAmount, errorText: result.message,
@@ -1013,7 +1099,10 @@ const createScanPageRouter = (options = {}) => {
           details,
           retryHint: submitHint,
           // 「再录一单」= 回到**这一款**的扫码页（编号取自 URL；非缺省领域带上 `?from=`）。
-          backPath: postActionFor(decodeURIComponent(String(req.params.number || '')), realm),
+          // ⭐ `/r` 底下「再录一单」回到**记录 ID** 那一页（不是 `/s/<记录id>`）。
+          backPath: postActionFor(
+            backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realm,
+          ),
           backLabel: texts.submittedRecordAnother,
           backHint: texts.submittedRecordAnotherHint,
         });
@@ -1021,9 +1110,11 @@ const createScanPageRouter = (options = {}) => {
 
       // ── 补货报单 ────────────────────────────────────────────────────────────
       if (action === actions.replenish) {
-        const view = await service.lookup({ number: req.params.number, requestId });
+        const view = await service.lookup({ ...lookupInputOf(req), requestId });
         if (!view.found) {
-          return notFoundPage(res, requestId, { number: view.number, fallback: view.fallback, realm });
+          return notFoundPage(res, requestId, {
+            number: view.number, fallback: view.fallback, realm, target: scanTargetOf(req),
+          });
         }
         const entries = parseReplenishEntries(body, fields, writeConfig);
         const result = await writeService.submitReplenish({
@@ -1059,9 +1150,11 @@ const createScanPageRouter = (options = {}) => {
       //    与补货**同形**：同一个 POST 端点、同一套会话/幂等/失败口径；
       //    写库（批次行 + 退货明细 + 扣库存 + 出退货单图）全在既有构件里。
       if (action === actions.purchaseReturn) {
-        const view = await service.lookup({ number: req.params.number, requestId });
+        const view = await service.lookup({ ...lookupInputOf(req), requestId });
         if (!view.found) {
-          return notFoundPage(res, requestId, { number: view.number, fallback: view.fallback, realm });
+          return notFoundPage(res, requestId, {
+            number: view.number, fallback: view.fallback, realm, target: scanTargetOf(req),
+          });
         }
         const entries = parseReturnEntries(body, fields, writeConfig);
         const result = await writeService.submitPurchaseReturn({
@@ -1111,9 +1204,11 @@ const createScanPageRouter = (options = {}) => {
             title: writeConfig.texts.acceptModeTitle, body: writeConfig.texts.writeDisabledBody, requestId,
           });
         }
-        const view = await service.lookup({ number: req.params.number, requestId });
+        const view = await service.lookup({ ...lookupInputOf(req), requestId });
         if (!view.found) {
-          return notFoundPage(res, requestId, { number: view.number, fallback: view.fallback, realm });
+          return notFoundPage(res, requestId, {
+            number: view.number, fallback: view.fallback, realm, target: scanTargetOf(req),
+          });
         }
         const result = await arrival().addScan({
           openId,
@@ -1121,7 +1216,7 @@ const createScanPageRouter = (options = {}) => {
           size: body[fields.acceptSize],
           quantity: body[fields.acceptQuantity],
         });
-        const back = postActionFor(view.number, ACCEPTANCE_REALM);
+        const back = postActionFor(backTargetFor(req, view.number), ACCEPTANCE_REALM);
         if (!result.ok) {
           // 不在本批 / 没会话 / 数量不合法：**如实说一句人话**（她原地刷新就能接着扫）。
           logWarn(writeConfig.events.acceptNotInBatch, {
