@@ -183,3 +183,13 @@
   .order-detail-head { align-items: stretch; flex-direction: column; }
   .order-detail-head .btn { width: 100%; text-align: center; }
 }
+
+/* ⭐【首屏】「刷新中 / 刷新失败」那一行：**固定高度** ⇒ 出现/消失都不顶动列表（不抖布局） */
+.orders-refreshing {
+  min-height: 24px;
+  margin: 0 0 var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+/* ⚠️ 「刷新失败」不新造颜色：配色/字号一律走 tokens.css（既有闸门 AC1/AC6 钉着） */
+.orders-refreshing--error { color: var(--text-secondary); }
