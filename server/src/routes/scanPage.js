@@ -348,7 +348,8 @@ const createScanPageRouter = (options = {}) => {
   // ── ⭐⭐ 2026-10-11（方案A）：扫码验收 ──────────────────────────────────────
   /** 验收表单的 POST 目标：落地页（没有编号那一刻）与逐码页（有编号）各一个。 */
   const acceptanceLandingPath = (batchNo) =>
-    `${config.route.basePath}/accept?batch=${encodeURIComponent(String(batchNo || ''))}`;
+    `${config.route.basePath}${String(config.route.acceptanceLandingPath || '/accept?batch={batchNo}')
+      .replace('{batchNo}', encodeURIComponent(String(batchNo || '')))}`;
   /** 渲染层要的验收上下文（只放"事实"：批次号 / 已扫 / 应到 / 表单目标 / 一句提示）。 */
   const acceptanceContext = (session, extra = {}) => ({
     batchNo: String(session?.batch_no || ''),
@@ -644,9 +645,23 @@ const createScanPageRouter = (options = {}) => {
         : null;
       // ⭐ 2026-10-11：把 UA 交给渲染层 —— 它只用来决定本单条上【继续扫下一个】
       //    是"飞书客户端内的扫一扫 AppLink"还是那句如实的人话（`canScanNextWithFeishu`）。
+      // ⭐⭐ 2026-10-12（业务负责人）：「**验收还是只在扫码页**，我不需要在工作台」
+      //    ⇒ 验收领域**没有正在进行的验收**时，不给她"回工作台"那张卡：
+      //    **自己去列未到货的批次**（点一条就进），再给手输兜底。
+      //    ⚠️ 只在这个领域读一次那张表；读表失败**不把页面打红**（服务层如实返回 ok:false，
+      //    这里记一条 warn，页面走手输兜底 —— 与她的"别卡住她"一致）。
+      const acceptPending = realm === ACCEPTANCE_REALM && !acceptance && arrival()
+        ? await arrival().pendingBatches().catch((error) => {
+          logWarn(writeConfig.events.failed, {
+            request_id: requestId, reason: 'accept_pending_batches_failed', error: error.message,
+          });
+          return { ok: false, batches: [] };
+        })
+        : null;
       const html = renderScan(view, config, writeForRender, realm, {
         userAgent: req.headers['user-agent'],
         acceptance,
+        acceptPending,
         print: printContext,
       });
       timing.render_ms = Math.max(0, Date.now() - renderStartedAt);

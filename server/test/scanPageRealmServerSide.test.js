@@ -1,3 +1,12 @@
+/** ⚠️ 2026-10-12 旧断言改写（**验收领域改成"扫码页自己开工"**）：
+ *  改前（逐字）：`assert.ok(blockOf(html, 'accept').includes(SCAN_PAGE.texts.realmEmptyTitle));`
+ *                （以及 `accept: { has: [SCAN_PAGE.texts.realmEmptyTitle], … }` 那一处）
+ *  改后（逐字）：断言**新的自助块** —— `data-view="accept-pending"` + `SCAN_PAGE.texts.acceptPendingTitle`
+ *                （未到货批次列表 / 手输兜底都在它里面）。
+ *  理由：业务负责人 2026-10-12 明确「**验收还是只在扫码页**，我不需要在工作台」⇒ 验收领域
+ *        在没有活跃会话时**不再是一张"回工作台"的人话卡**，而是**自己列未到货批次 + 手输批次号**。
+ *        ⚠️ 被保护的不变量没变（仍是"验收领域要有内容、不回落销售、不白屏"），只是内容换了。
+ */
 /**
  * ⚠️ 2026-10-11 晚（业务负责人批准六领域）——本文件**改写**的断言（逐字）：
  *   改前：领域清单到处写 `['sales', 'inventory', 'purchase', 'product']`；
@@ -168,8 +177,9 @@ const EXPECT = {
   // ⭐ 2026-10-11：原 `purchase` 那一块 = 现在的 **`replenish`（补货）**（标记与文案一个字没变）。
   replenish: { has: ['data-view="purchase-sizes"', '一键补货'], hasNot: ['加入本单', '库存（共', '货品标签', '生成采购退货'] },
   purchase_return: { has: ['data-view="purchase-return"', '生成采购退货'], hasNot: ['加入本单', '库存（共', '一键补货'] },
-  // 验收领域：没有活跃验收会话时 = 一张人话卡（"回工作台点【验收】"），不是白屏。
-  accept: { has: [SCAN_PAGE.texts.realmEmptyTitle], hasNot: ['加入本单', '库存（共', '一键补货', '生成采购退货'] },
+  // ⭐ 2026-10-12：验收领域没有活跃会话时 = **她自己开工那一块**（列未到货批次 + 手输兜底），
+  //    不是白屏、也不再是「回工作台」那张卡（她不去工作台）。
+  accept: { has: ['data-view="accept-pending"', SCAN_PAGE.texts.acceptPendingTitle], hasNot: ['加入本单', '库存（共', '一键补货', '生成采购退货'] },
   inventory: { has: ['库存（共 5 双）'], hasNot: ['加入本单', '一键补货', '货品标签'] },
   product: { has: ['货品标签', '/workbench/label-print.html'], hasNot: ['加入本单', '库存（共', '一键补货'] },
 };

@@ -24,7 +24,7 @@
 const crypto = require('node:crypto');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { SCAN_WRITE, fillText } = require('../config/scanWrite');
-const { logInfo } = require('../utils/logger');
+const { logInfo, logWarn } = require('../utils/logger');
 
 /** 传进来的可以是对象，也可以是工厂（路由用工厂把重依赖推迟到真正要用的那一刻）。 */
 const resolve = (value) => (typeof value === 'function' ? value() : value);
@@ -310,7 +310,54 @@ const createScanArrivalService = (options = {}) => {
     };
   };
 
-  return { idOf, get, start, addScan, finish, summaryOf, store };
+  /**
+   * ⭐⭐ 2026-10-12（业务负责人）：「**验收还是只在扫码页**，我不需要在工作台」
+   *   ⇒ 验收领域**没带批次号**时要能**自己开工**：把**未到货的批次**列出来给她点。
+   *
+   * 取数**复用既有那一份**（`PurchasePendingBatchService` = 9 点推送【采购】区用的同一个
+   * 「到货状态 = 未到货」候选；取值来自 `config/purchaseArrivalStatus`，**不写死中文**）。
+   *
+   * ⚠️ **读表失败不抛**：如实返回 `{ ok: false, batches: [] }` —— 页面照旧能开（走手输兜底），
+   *    由路由记一条 warn。**绝不**因为一次读表失败把她挡在门外。
+   *
+   * @returns {Promise<{ok: boolean, batches: Array<{batchNo: string, suppliers: string[], quantity: string}>}>}
+   */
+  const pendingBatches = async () => {
+    try {
+      const service_ = pendingBatchesService();
+      if (!service_) return { ok: false, batches: [] };
+      const batches = await service_.listPendingBatches();
+      return {
+        ok: true,
+        batches: (batches || [])
+          .filter((batch) => batch?.batchNo)
+          .map((batch) => ({
+            batchNo: String(batch.batchNo),
+            suppliers: Array.isArray(batch.suppliers) ? batch.suppliers : [],
+            quantity: String(batch.quantity || ''),
+          })),
+      };
+    } catch (error) {
+      logWarn('scan.accept.pending_batches_failed', { error: error.message });
+      return { ok: false, batches: [] };
+    }
+  };
+
+  // ⚠️ 惰性构造：只有**验收领域没带批次号**那一次才会用到它（一次读表）；用例可注入替身。
+  let pendingBatchesInstance = null;
+  const pendingBatchesService = () => {
+    const provided = resolve(options.pendingBatches);
+    if (provided) return provided;
+    if (!options.gateway) return null;
+    if (!pendingBatchesInstance) {
+      // eslint-disable-next-line global-require
+      const { PurchasePendingBatchService } = require('./purchasePendingBatchService');
+      pendingBatchesInstance = new PurchasePendingBatchService({ gateway: options.gateway });
+    }
+    return pendingBatchesInstance;
+  };
+
+  return { idOf, get, start, addScan, finish, summaryOf, pendingBatches, store };
 };
 
 module.exports = { createScanArrivalService };

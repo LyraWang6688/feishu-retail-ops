@@ -251,6 +251,10 @@ summary { cursor: pointer; }
       每格 min-height: var(--control-height)（既有 ≥44px 的可点高度）。 */
 .realm-bar { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-1); margin: 0 0 var(--space-2); padding: var(--space-1); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); }
 .realm-tab { display: flex; align-items: center; justify-content: center; min-height: var(--control-height); padding: 0 var(--space-2); border-radius: var(--radius-md); color: var(--text-secondary); font-size: var(--font-size-base); font-weight: 600; text-decoration: none; white-space: nowrap; }
+/* ── ⭐⭐ 2026-10-12 验收领域「未到货批次」那一块：单列堆叠、不横滑、每行 ≥44px ── */
+.batch-list { list-style: none; margin: 0; padding: 0; }
+.batch-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); text-align: left; font-weight: 600; }
+.batch-row__meta { color: var(--text-muted); font-weight: 500; font-size: var(--font-size-sm); }
 /* 当前领域那一颗 = 主色（**服务端**决定，不是脚本切 class） */
 .realm-tab--active { color: var(--surface); background: var(--primary); }
 /* noscript 兜底那一排（webview 禁脚本时才会出现）：朴素的文字链接，不用卡片阴影 */
@@ -917,6 +921,47 @@ ${hiddenField(fields.action, write.actions.acceptFinish)}
 };
 
 /**
+ * ⭐⭐ 2026-10-12（业务负责人）：「**验收还是只在扫码页**呀，**我不需要在工作台**」
+ *   ⇒ 验收领域**没带批次号 / 没有正在进行的验收**时，**她自己能开工**：
+ *     ① **列未到货的批次**（每条一行 = 一批，点一下进 `/s/accept?batch=<批次号>`）；
+ *     ② **手输批次号**兜底（一个 GET 表单，零 JS）。
+ *
+ * ⚠️ 全是**功能名 + 事实**，没有说明书腔；**不出现"工作台"**（她不去工作台）。
+ * ⚠️ 一个未到货批次都没有（或读表失败）⇒ 只给一句人话 + 手输框，**不把她支去别处**。
+ * 行高沿用既有 `.btn`（`min-height: var(--control-height)` ⇒ ≥44px），单列堆叠、不横滑。
+ */
+const acceptPendingBlockHtml = (config, page = {}) => {
+  const t = config.texts;
+  const pending = page?.acceptPending || null;
+  const batches = Array.isArray(pending?.batches) ? pending.batches : [];
+  // ⚠️ 路径模板来自配置（**唯一来源**），basePath 在这里补 —— 与路由拼出来的 URL 一致。
+  const landingTemplate = `${config.route?.basePath || ''}${config.route?.acceptanceLandingPath || '/accept?batch={batchNo}'}`;
+  const rows = batches.map((batch) => {
+    const batchNo = String(batch?.batchNo || '');
+    const href = landingTemplate.replace('{batchNo}', encodeURIComponent(batchNo));
+    const meta = [
+      (batch?.suppliers || []).filter(Boolean).join('、'),
+      batch?.quantity ? `${t.acceptPendingQuantityLabel} ${batch.quantity}` : '',
+    ].filter(Boolean).join(t.acceptPendingMetaSeparator || ' · ');
+    return `<li><a class="btn batch-row" data-batch="${escapeHtml(batchNo)}" href="${escapeHtml(href)}">${escapeHtml(batchNo)}${meta ? `<span class="batch-row__meta">${escapeHtml(meta)}</span>` : ''}</a></li>`;
+  }).join('');
+  const manual = `
+<form method="get" action="${escapeHtml(`${config.route?.basePath || ''}${config.route?.acceptancePath || '/accept'}`)}" class="write-form" data-view="accept-manual">
+<div class="form-row">
+<input type="text" name="batch" inputmode="text" autocomplete="off" aria-label="${escapeHtml(t.acceptPendingManualPlaceholder)}" placeholder="${escapeHtml(t.acceptPendingManualPlaceholder)}">
+<button type="submit" class="btn btn--primary">${escapeHtml(t.acceptPendingManualSubmit)}</button>
+</div>
+</form>`;
+  return `<section class="card" data-view="accept-pending">
+<h2 class="stock__heading">${escapeHtml(t.acceptPendingTitle)}</h2>
+${batches.length
+    ? `<ul class="batch-list" data-view="accept-pending-list">${rows}</ul>`
+    : `<p class="empty" data-view="accept-empty">${escapeHtml(t.acceptPendingEmptyBody)}</p>`}
+${manual}
+</section>`;
+};
+
+/**
  * ⭐⭐ 2026-10-11（方案A）：「**验收模式**」那一块（她扫开某款那一页时看到的东西）。
  *
  * 一屏三件事（**只有能点、能做的事**）：
@@ -1006,6 +1051,9 @@ const realmBlockHtml = (realm, view, config, write, page = {}) => {
   // ⭐⭐ 2026-10-11（方案A）：**验收模式**（非 tab 的领域）—— 上下文来自 `page.acceptance`
   //    （由路由按"正开着一场验收"给）；拿不到就什么都不猜，回落缺省领域那张卡。
   if (id === ACCEPTANCE_REALM) {
+    // ⭐ 2026-10-12：没有正在进行的验收 ⇒ **她自己开工**（列未到货批次 + 手输兜底），
+    //    不再给"回工作台"那张卡（她不去工作台）。
+    if (!page?.acceptance) return wrap(acceptPendingBlockHtml(config, page));
     return wrap(page?.acceptance
       ? acceptanceBlockHtml(view, write, page.acceptance, page?.userAgent)
       // 没有正在进行的验收（她还没在工作台点【验收】，或那一场已结束/过期）⇒ 一张人话卡

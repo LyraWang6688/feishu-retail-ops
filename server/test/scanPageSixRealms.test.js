@@ -1,3 +1,12 @@
+/** ⚠️ 2026-10-12 旧断言改写（**验收领域改成"扫码页自己开工"**）：
+ *  改前（逐字）：`assert.ok(blockOf(html, 'accept').includes(SCAN_PAGE.texts.realmEmptyTitle));`
+ *                （以及 `accept: { has: [SCAN_PAGE.texts.realmEmptyTitle], … }` 那一处）
+ *  改后（逐字）：断言**新的自助块** —— `data-view="accept-pending"` + `SCAN_PAGE.texts.acceptPendingTitle`
+ *                （未到货批次列表 / 手输兜底都在它里面）。
+ *  理由：业务负责人 2026-10-12 明确「**验收还是只在扫码页**，我不需要在工作台」⇒ 验收领域
+ *        在没有活跃会话时**不再是一张"回工作台"的人话卡**，而是**自己列未到货批次 + 手输批次号**。
+ *        ⚠️ 被保护的不变量没变（仍是"验收领域要有内容、不回落销售、不白屏"），只是内容换了。
+ */
 /**
  * ⭐⭐ 2026-10-11（业务负责人批准）：扫码页**六个领域** + "服务器记住她正在做什么"。
  *
@@ -247,8 +256,12 @@ test('AC-6R4 补货 / 退货 / 验收 三块各自独立；每页**只有当前�
   // 验收：没有活跃会话 ⇒ 一张人话卡（标题 + 下一步），不是白屏
   const accept = htmlFor('accept');
   const acceptBlock = blockOf(accept, 'accept');
-  assert.ok(acceptBlock.includes(SCAN_PAGE.texts.realmEmptyTitle), '验收空态有人话卡');
-  assert.ok(acceptBlock.includes('工作台'), '告诉她回工作台点【验收】');
+  // ⭐ 2026-10-12：没有活跃会话时 = **她自己开工那一块**（列未到货批次 + 手输兜底）
+  assert.ok(acceptBlock.includes('data-view="accept-pending"'), '验收领域自己有内容');
+  assert.ok(acceptBlock.includes(SCAN_PAGE.texts.acceptPendingTitle));
+  assert.ok(acceptBlock.includes('data-view="accept-manual"'), '手输批次号兜底在');
+  // 🔴 她 2026-10-12：「验收还是只在扫码页呀，我不需要在工作台」⇒ 这一块里**不许**出现「工作台」
+  assert.equal(acceptBlock.includes('工作台'), false, '不许把她支去工作台');
 
   // 每页只有当前那一块（另外五块连字符串都不拼）
   for (const [realm, html] of [['replenish', replenish], ['purchase_return', purchaseReturn], ['accept', accept]]) {
@@ -332,7 +345,8 @@ test('AC-6R8 ?from=accept 没有活跃会话时仍是验收领域（人话卡）
       headers: { cookie: sessionCookie('ou_six_realms_8') },
     })).text();
     assert.ok(html.includes('realm-block--accept"'), 'URL 说什么就是什么');
-    assert.ok(blockOf(html, 'accept').includes(SCAN_PAGE.texts.realmEmptyTitle));
+    // ⭐ 2026-10-12：仍是验收领域，内容是**自助块**（列未到货批次 / 手输兜底）
+    assert.ok(blockOf(html, 'accept').includes('data-view="accept-pending"'));
     assert.equal(html.includes('realm-block--sales"'), false);
   });
 });
