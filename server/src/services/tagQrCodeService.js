@@ -316,9 +316,22 @@ const createTagQrCodeService = ({
    * 从记录字段里拼出「编号」——公式列读不出/为空时的**兜底**。
    * ⚠️ 任一源字段为空 ⇒ 返回 `''`（**不硬拼出 `a||c` 这种公式不会产出的串**）。
    */
+  /**
+   * ⭐ 逐段读源字段（诊断用）：返回 [{ key, value }] —— 顺序 = 她公式的顺序。
+   * ⚠️ 2026-10-12 真机「印了过期公式值」复盘：原先只有"拼出来的整串"，
+   *    **看不出是哪一段读空了**（类别是单选、颜色是关联字段 type 18 ⇒ 读成数组/对象时
+   *    `textValue().trim()` 会得空串）⇒ 现在把**每段各自的值**也带出来，一条日志自证。
+   */
+  const assembleParts = (fields) => {
+    const assembly = config.numberAssembly || {};
+    return (assembly.fields || []).map((key) => ({
+      key, value: textValue(fields[fieldNames[key]]).trim(),
+    }));
+  };
+
   const assembleNumber = (fields) => {
     const assembly = config.numberAssembly || {};
-    const parts = (assembly.fields || []).map((key) => textValue(fields[fieldNames[key]]).trim());
+    const parts = assembleParts(fields).map((part) => part.value);
     if (!parts.length || parts.some((part) => !part)) return '';
     return parts.join(assembly.separator || '|');
   };
@@ -335,13 +348,44 @@ const createTagQrCodeService = ({
    *    （分隔符已按模板编码成 `_`），所以比较前要把公式值也 `sanitizeNumberForFileName` 一下，
    *    否则"同一个编号的两种写法"永远不相等（这个坑 2026-10-12 踩过一次）。
    */
-  const resolveQrNumber = ({ formulaNumber, assembledNumber, existingFileNameNumber, recordId }) => {
-    if (!formulaNumber && !assembledNumber) return { number: '', source: 'none', mismatch: false };
-    if (!formulaNumber) return { number: assembledNumber, source: 'assembled_fallback', mismatch: false };
-    if (!assembledNumber) return { number: formulaNumber, source: 'formula_only', mismatch: false };
-    if (formulaNumber === assembledNumber) return { number: formulaNumber, source: 'both_agree', mismatch: false };
+  const resolveQrNumber = ({ formulaNumber, assembledNumber, existingFileNameNumber, recordId, parts = [] }) => {
+    // ⭐ 缺段定位：哪几段源字段读成了空（诊断 + 守卫都要用）
+    const missingSegments = parts.filter((part) => !part.value).map((part) => part.key);
+    const sourceFields = Object.fromEntries(parts.map((part) => [part.key, part.value]));
+    if (!formulaNumber && !assembledNumber) {
+      return { number: '', source: 'none', mismatch: false, missingSegments, sourceFields };
+    }
+    if (!formulaNumber) {
+      if (!assembledNumber) {
+        logWarn('product.tag_qr.assemble_incomplete', { record_id: recordId, missing_segments: missingSegments.join(','), source_fields: sourceFields });
+      }
+      return { number: assembledNumber, source: 'assembled_fallback', mismatch: false, missingSegments, sourceFields };
+    }
+    // ⭐⭐ 2026-10-12 真机修复：`formulaLooksStale` **先算**（原来它在这两行**之后**才算）
     const formulaLooksStale = Boolean(existingFileNameNumber)
       && existingFileNameNumber === sanitizeNumberForFileName(formulaNumber, config);
+    // ⚠️ 拼装为空 ⇒ 原先**无条件**回落公式。若此时公式**还停在旧值**（= 现存附件里那一串），
+    //    那就是「**要把过期公式值印出去**」——本轮的病根 ⇒ 不许静默：记 warn 并在产物上打可见标记。
+    if (!assembledNumber) {
+      if (formulaLooksStale) {
+        logWarn('product.tag_qr.assemble_incomplete', {
+          record_id: recordId, formula_number: formulaNumber,
+          missing_segments: missingSegments.join(','), source_fields: sourceFields,
+          formula_looks_stale: true,
+        });
+        return {
+          number: formulaNumber, source: 'formula_stale_incomplete', mismatch: true,
+          formulaLooksStale: true, missingSegments, sourceFields, incomplete: true,
+        };
+      }
+      if (missingSegments.length) {
+        logWarn('product.tag_qr.assemble_incomplete', { record_id: recordId, missing_segments: missingSegments.join(','), source_fields: sourceFields });
+      }
+      return { number: formulaNumber, source: 'formula_only', mismatch: false, missingSegments, sourceFields };
+    }
+    if (formulaNumber === assembledNumber) {
+      return { number: formulaNumber, source: 'both_agree', mismatch: false, missingSegments, sourceFields };
+    }
     if (config.numberAssembly?.crossCheck !== false) {
       logWarn('product.tag_qr.number_mismatch', {
         record_id: recordId,
@@ -351,11 +395,19 @@ const createTagQrCodeService = ({
         formula_looks_stale: formulaLooksStale,
       });
     }
+    const useAssembled = formulaLooksStale;
+    if (useAssembled) {
+      // ⭐ 2026-10-12：**用了拼装值**就记一条带两个值 + 三段源字段的日志 ⇒ 下次一发生即可自证。
+      logInfo('product.tag_qr.used_assembled', {
+        record_id: recordId, formula_number: formulaNumber, assembled_number: assembledNumber,
+        existing_file_name_number: existingFileNameNumber || '', source_fields: sourceFields,
+      });
+    }
     return {
-      number: formulaLooksStale ? assembledNumber : formulaNumber,
-      source: formulaLooksStale ? 'assembled_formula_stale' : 'formula_mismatch',
+      number: useAssembled ? assembledNumber : formulaNumber,
+      source: useAssembled ? 'assembled_formula_stale' : 'formula_mismatch',
       mismatch: true,
-      formulaLooksStale,
+      formulaLooksStale, missingSegments, sourceFields,
     };
   };
 
@@ -432,6 +484,8 @@ const createTagQrCodeService = ({
       assembledNumber,
       existingFileNameNumber: numberFromFileName(existing[0]?.name, config),
       recordId,
+      // ⭐ 逐段源字段值：诊断 + 缺段守卫（见 `assembleParts`）
+      parts: assembleParts(fields),
     });
     const number = numberPick.number;
     if (!number) {
@@ -569,6 +623,9 @@ const createTagQrCodeService = ({
         number_source: numberPick.source,
         number_mismatch: numberPick.mismatch,
         formula_looks_stale: Boolean(numberPick.formulaLooksStale),
+        // ⭐ 2026-10-12：缺段就**在作业日志里可见**（不静默印一枚扫不出来的码）
+        assemble_incomplete: Boolean(numberPick.incomplete || (numberPick.missingSegments || []).length),
+        missing_segments: (numberPick.missingSegments || []).join(','),
         file_token: fileToken,
         file_name: fileName,
         scan_url: scanUrl,
@@ -815,6 +872,7 @@ const createTagQrCodeService = ({
     // ⭐ 源字段判据 / 拼装 / URL 编号取舍（测试与排查都要用）
     resolveSourceChangeDetail,
     assembleNumber,
+    assembleParts,
     resolveQrNumber,
     syncRecord,
     handleTableChanges,
