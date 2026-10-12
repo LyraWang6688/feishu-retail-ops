@@ -445,11 +445,19 @@ test('F 「具体信息」→「报货信息」→（2026-10-12）「采购明�
 });
 
 test('F-补 工作台采购页的用户可见文案里没有「具体信息」了', () => {
+  // ⚠️ 2026-10-12 旧断言改写（她改表名 + Lead 定口径 + 死页文案清理）：
+  //   改前（逐字）：`assert.ok(codeOnly.includes('报货信息'), `${rel} 要改成「报货信息」`);`
+  //   改后（逐字）：`assert.ok(codeOnly.includes('采购明细'), `${rel} 要改成「采购明细」（表名的新叫法）`);`
+  //                ＋ 新增 `assert.equal(codeOnly.includes('报货信息'), false, …)`
+  //   理由：这条断言的本意是"那一页必须用**当下**的表名，不许停在更早的旧名"
+  //        （它当年正是在改写「具体信息」）；2026-10-12 她把这表改名成「采购明细」⇒ 断言跟着表名走，
+  //        **保护的语义一个字没变**（不许停在旧名），只是把"当下"从「报货信息」换成「采购明细」。
   const rel = 'public/workbench/features/purchase/index.js';
   const source = fs.readFileSync(path.join(SERVER_ROOT, rel), 'utf8');
   const codeOnly = stripComments(source);
   assert.equal(codeOnly.includes('具体信息'), false, `${rel} 里还有「具体信息」文案`);
-  assert.ok(codeOnly.includes('报货信息'), `${rel} 要改成「报货信息」`);
+  assert.ok(codeOnly.includes('采购明细'), `${rel} 要改成「采购明细」（表名的新叫法）`);
+  assert.equal(codeOnly.includes('报货信息'), false, `${rel} 里不该再出现上一版的表名「报货信息」`);
 });
 
 test('G ⛔ 「报货批次.确认状态」整条退场 ⇒ 它的单选取值契约也删掉（契约只剩到货状态）', () => {

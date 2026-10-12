@@ -29,6 +29,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const SRC = path.join(__dirname, '..', 'src');
+/** 工作台前端（含那个**没有挂载点**的老「采购管理」页）——2026-10-12 起也纳入哨兵。 */
+const WORKBENCH = path.join(__dirname, '..', 'public', 'workbench');
 const OLD_TABLE_BATCH = '报货批次';
 const OLD_TABLE_REQUEST = '报货信息';
 /** 字段名（生产真列名，**不许动**）：它出现在文案里是"这一列的名字"，不是表名。 */
@@ -159,18 +161,24 @@ test('AC-R2 扫描器可信度：正则里的引号 / 字符串里的 `//` / 注
 // AC-R1 源码哨兵（`src/**`）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-R1 源码哨兵：`src/**` 的字符串字面量里不再出现旧表名（`报货批次号` 字段名放行；注释跳过）', () => {
+test('AC-R1 源码哨兵：`src/**` ＋ `public/workbench/**` 的字符串字面量里不再出现旧表名（`报货批次号` 字段名放行；注释跳过）', () => {
   const offenders = [];
-  for (const file of walkJs(SRC)) {
+  // ⚠️ 2026-10-12：范围从 `src/**` 扩到**也扫工作台前端** —— 那个**没有挂载点**的老「采购管理」页
+  //    （`public/workbench/features/purchase/index.js`）里的旧文案这一轮也清了，
+  //    不扫它 = 清完就会回潮（那页将来若被 C5 删掉，这条也只是少一个文件）。
+  for (const [root, file] of [
+    ...walkJs(SRC).map((file) => [SRC, file]),
+    ...walkJs(WORKBENCH).map((file) => [WORKBENCH, file]),
+  ]) {
     const src = fs.readFileSync(file, 'utf8');
     for (const hit of literalHits(src, [OLD_TABLE_BATCH, OLD_TABLE_REQUEST])) {
       // 字段名「报货批次号」放行：她改名改的是**表名**，这一列在生产真表里没改名。
       if (hit.word === OLD_TABLE_BATCH && src.slice(hit.index, hit.index + FIELD_NAME.length) === FIELD_NAME) continue;
-      offenders.push(`${path.relative(SRC, file)}:${hit.line}: ${hit.word}`);
+      offenders.push(`${path.relative(root, file)}:${hit.line}: ${hit.word}`);
     }
   }
   assert.deepEqual(offenders, [],
-    'src 的**用户可见字符串**里不许再出现旧表名（注释按 Lead 口径不动；字段名「报货批次号」放行）');
+    '用户可见字符串里不许再出现旧表名（注释按 Lead 口径不动；字段名「报货批次号」放行）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -204,6 +212,17 @@ test('AC-R3 新叫法逐字：给她看的用「采购单」/「采购明细」�
   );
   assert.ok(ordersCopy.includes("purchaseEmpty: '还没有采购单记录'"), '采购子页空态用「采购单」');
   assert.equal(ordersCopy.includes('（报货批次）'), false);
+  // ⑧ 那个**没有挂载点**的老「采购管理」页：这一轮也清了旧文案（Lead 2026-10-12 批准），
+  //    ⚠️ 顺带发现它调的两个接口在路由里**已不存在**（`GET /purchase/{requests,arrivals}`）
+  //      —— 那是**逻辑**问题，按"只清文案不改逻辑"留给 C5，这里只钉文案。
+  const deadPage = fs.readFileSync(
+    path.join(WORKBENCH, 'features', 'purchase', 'index.js'), 'utf8',
+  );
+  for (const needle of ['采购明细与到货核对情况', '>采购明细情况</button>', '正在加载采购明细…', '没有匹配的采购明细。']) {
+    assert.ok(deadPage.includes(needle), `老采购管理页要用新表名：${needle}`);
+  }
+  assert.equal(deadPage.includes('报货信息'), false, '老采购管理页里不该再有「报货信息」');
+  assert.ok(deadPage.includes('已无挂载点'), '文件头要写明"已无挂载点"（别删文件，留给 C5 评估）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -1,3 +1,11 @@
+/**
+ * ⚠️⚠️ **已无挂载点（2026-10-12 核实）**：本文件（老「采购管理」页）**没有任何 import 它** ——
+ *   全仓 `grep` 只在 `public/workbench/config/links.js` / `home.js` 的**注释**里被提到过；
+ *   `standalone.js` 也不 import 它（有专门用例钉住）。⇒ 这是**死代码**，删不删由 C5 统一评估。
+ *   本文件 2026-10-12 只清了**用户可见文案**（旧表名 → 新叫法）与一条 HTML 注释，
+ *   **逻辑一行没动**；且它调的两个接口 `GET /api/workbench/purchase/{requests,arrivals}`
+ *   **在路由里已不存在**（只剩 `POST /purchase/arrivals/confirm`）—— 一并留给 C5 评估。
+ */
 import { api } from '../../core/api-client.js';
 import { dateTime, escapeHtml, statusClass } from '../../core/formatters.js';
 import { bindSubTabs, describeError, showPageError } from '../../core/ui.js';
@@ -23,22 +31,22 @@ const $ = (container, selector) => container.querySelector(selector);
 function renderShell(container) {
   container.innerHTML = `
     <section class="panel">
-      <div class="panel-header"><div><h2>采购管理</h2><p class="subtitle">报货信息与到货核对情况</p></div><button class="btn" type="button" data-action="refresh">刷新数据</button></div>
+      <div class="panel-header"><div><h2>采购管理</h2><p class="subtitle">采购明细与到货核对情况</p></div><button class="btn" type="button" data-action="refresh">刷新数据</button></div>
       <h3 class="section-title">快捷录入入口</h3>
       <div class="quick-entries">${FORMS.map((form) => `
         <a class="entry-card" href="${form.url}" target="_blank" rel="noopener noreferrer">
           <div class="icon">${form.icon}</div><h3>${form.label}</h3><p>${form.desc}</p><div class="arrow">去填写 →</div>
         </a>`).join('')}</div>
       <div class="sub-tabs">
-        <button class="sub-tab active" type="button" data-subtab="purchase-request">报货信息情况</button>
+        <button class="sub-tab active" type="button" data-subtab="purchase-request">采购明细情况</button>
         <button class="sub-tab" type="button" data-subtab="purchase-arrival">到货验收情况</button>
       </div>
-      <div id="purchase-request-subpanel" class="sub-panel"><div class="section-loading">正在加载报货信息…</div></div>
+      <div id="purchase-request-subpanel" class="sub-panel"><div class="section-loading">正在加载采购明细…</div></div>
       <div id="purchase-arrival-subpanel" class="sub-panel hidden"><div class="section-loading">打开后加载到货记录…</div></div>
       <!-- ⚠️ 2026-10-07 深夜：「采购入库」表已被业务负责人**整表删除** ⇒ 原「采购入库记录」
            这个子页**整个摘掉**。它本来就是一张"规划中"的占位卡（原文案：当前后端尚未提供
            采购入库查询接口），表没了以后它永远不会有用；留着只会让人以为还有这张表。
-           到货信息现在看「到货验收情况」那一页（数据来自「报货批次」）。 -->
+           到货信息现在看「到货验收情况」那一页（数据来自「采购主表」）。 -->
     </section>`;
 }
 
@@ -47,7 +55,7 @@ function renderRequests(container, rows) {
     <div class="summary"><div class="metric"><span>当前查询记录</span><strong>${rows.length}</strong></div><div class="metric"><span>待到货</span><strong>${rows.filter((row) => row.arrival_status === '未到货').length}</strong></div></div>
     <div class="filters"><input data-filter="request-batch" placeholder="输入报货批次号"><select data-filter="request-status"><option value="">全部到货状态</option><option>未到货</option><option>部分到货</option><option>已全部到货</option></select><button class="btn btn-primary" type="button" data-search="requests">查询</button></div>
     <div class="table-wrap mobile-card-table"><table><thead><tr><th>报货批次号</th><th>货品编号</th><th>尺码</th><th>数量</th><th>到货状态</th><th>报单时间</th></tr></thead><tbody>${rows.map((row) => `<tr><td data-label="报货批次号"><span class="cell-value">${escapeHtml(row.batch_no || '-')}</span></td><td data-label="货品编号"><span class="cell-value">${escapeHtml(row.product_number || '-')}</span></td><td data-label="尺码"><span class="cell-value">${escapeHtml(row.size || '-')}</span></td><td data-label="数量"><span class="cell-value">${escapeHtml(row.quantity || 0)}</span></td><td data-label="到货状态"><span class="cell-value tag ${statusClass(row.arrival_status)}">${escapeHtml(row.arrival_status || '-')}</span></td><td data-label="报单时间"><span class="cell-value">${escapeHtml(dateTime(row.reported_at))}</span></td></tr>`).join('')}</tbody></table></div>
-    ${rows.length ? '' : '<p class="empty">没有匹配的报货信息。</p>'}`;
+    ${rows.length ? '' : '<p class="empty">没有匹配的采购明细。</p>'}`;
 }
 
 function renderArrivals(container, rows) {

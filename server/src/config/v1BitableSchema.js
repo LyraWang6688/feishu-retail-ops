@@ -352,6 +352,11 @@ const V1_BITABLE_SCHEMA = {
       tableName: '采购明细',
       tableId: getEnv('FEISHU_V1_PURCHASE_REQUEST_TABLE_ID', 'tbli1ygPtss5CWCH'),
       fields: {
+        // ⛔ **字段名「报货批次号」刻意不改**（2026-10-12 业务负责人把**表名**改成了「采购明细」，
+        //    但这一**列**在生产真表里没改名，值域照旧 `CGD-…`）。
+        //    理由：schema 与部署闸门（`v1:schema-check:*`）都按**列名**核 —— 改成「采购单号」会
+        //    ① 让闸门去问一列不存在、直接判红；② 界面上显示的名字与她在 Base 里看到的列名对不上。
+        //    ⇒ 留待她**连列名一起改**时再同步；在此之前**别"顺手统一"**。
         batchNo: '报货批次号', behavior: '采购行为', product: '编号', size: '尺码', quantity: '数量',
         // ⚠️ 「到货状态」(arrivalStatus) 与「采购申请单」(attachment) 两行映射**已删除**：
         // 业务负责人 2026-10-07 把这两列从生产表**删掉了**（到货状态改挂「报货批次」，
@@ -402,6 +407,9 @@ const V1_BITABLE_SCHEMA = {
       // ⚠️ 2026-10-12 她同样把这张表改了名：「报货批次」→「**采购主表**」
       //    （只读核过生产真表：`tblwezby9wRea9qi` 现在的名字就是「采购主表」，tableId 不变）。
       //    ⚠️ 注意与**字段**「报货批次号」区分：那个字段名**没变**（值域照旧 `CGD-…`）。
+      //    ⛔ 字段名**不许**改成「采购单号」（业务负责人 2026-10-12 定的）：
+      //      闸门与 schema 按**列名**核（改了闸门直接判红），而且界面上会与她 Base 的列名对不上
+      //      ⇒ 留待她**连列名一起改**时再同步。
       tableName: '采购主表',
       // Current V1 tenant default; forks can override it with the environment variable.
       tableId: getEnv('FEISHU_V1_PURCHASE_ORDER_BATCH_TABLE_ID', 'tblwezby9wRea9qi'),
