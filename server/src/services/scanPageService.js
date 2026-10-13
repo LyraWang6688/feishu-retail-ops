@@ -200,6 +200,39 @@ const limitError = (tableName, actual, limit) => {
 //    `services/bitableFilterFormula.js`（本文件与将来的其它调用方共用；搬运**逐字**、行为不变）。
 const { equalsFormula, containsFormula, orFormula } = require('./bitableFilterFormula');
 
+/**
+ * ⭐⭐ 2026-10-14（她 02:31 那次扫码 `total_ms=7451`、`feishu_reads=2` 的根因）：
+ *   快照实例是在**扫码服务被创建时**才建的 ⇒ **服务重启后到第一次扫码之间它是冷的** ✗。
+ *   这里登记"本进程建过的**实时库存**快照"，供启动时**预热**（见 `warmLiveInventorySnapshot`）。
+ *   🔴 **不新建实例**（新建 = 两份缓存 / 双份读表 / 互相作废 ✗）；TTL、写库即作废、
+ *      `productSnapshot` 一律**不动** ✓（她逐字：「两个快照都留」✓）。
+ */
+const liveInventorySnapshots = [];
+
+/**
+ * 启动时**预热**「实时库存」快照：用**已经建好的那个实例**刷新一次
+ *（`refresh({reason:'warm'})` ✓ 不重复起定时器 ✓）。
+ * ⚠️ **失败只记一条 warn 后照常返回**（用**既有**事件名 `scan.snapshot.refresh_failed` ✓
+ *    不新造事件名 ✗）—— 预热是锦上添花，**绝不许把服务启动搞挂** ✗。
+ * @returns {Promise<number>} 预热成功的实例数（0 = 还没有实例/都失败）
+ */
+const warmLiveInventorySnapshot = async ({ reason = 'warm', snapshots } = {}) => {
+  // ⚠️ `snapshots` 只是为了**可测**（用例注入假快照 ⇒ 能真红 ✓）；缺省 = 本进程登记的那个
+  //    真实例表 ⇒ 生产路径**不会**被这个参数改变 ✓（也绝不新建第二个实例 ✗）
+  const targets = Array.isArray(snapshots) ? snapshots : liveInventorySnapshots;
+  let warmed = 0;
+  for (const instance of targets) {
+    if (!instance || typeof instance.refresh !== 'function') continue;
+    try {
+      await instance.refresh({ reason });
+      warmed += 1;
+    } catch (error) {
+      logWarn(SCAN_PAGE.events.snapshotFailed, { reason, phase: 'warm', error: error.message });
+    }
+  }
+  return warmed;
+};
+
 const createScanPageService = (rawGateway, options = {}) => {
   if (!rawGateway) throw new Error('ScanPageService requires gateway');
 
@@ -288,6 +321,7 @@ const createScanPageService = (rawGateway, options = {}) => {
       limits,
       now: options.now,
     }));
+  if (snapshot) liveInventorySnapshots.push(snapshot);
   if (snapshot && options.startSnapshot === true) snapshot.start();
 
   /**
@@ -1244,6 +1278,8 @@ const createScanPageService = (rawGateway, options = {}) => {
 };
 
 module.exports = {
+  // ⭐ 2026-10-14：启动预热（`app.js` 启动处调一次；见上面的函数头）
+  warmLiveInventorySnapshot,
   createScanPageService,
   // ⭐⭐ 2026-10-12：**"这个类别该有哪些尺码"的唯一来源**（纯配置，零读表）——
   //    `loadSizeScope`（缺码判定）与验收页的"未报货尺码"候选**共用这一份**，不另发明一套。

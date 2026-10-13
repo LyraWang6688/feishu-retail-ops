@@ -125,6 +125,8 @@ app.get('/', (req, res) => res.sendFile(path.join(workbenchPath, 'index.html')))
 //      **两条串行队列** ⇒ 她连点两次就可能在两条队列上各跑一遍 ⇒ **幂等可靠性直接破**。
 //   ⚠️ 两个前缀用**同一份准入闸门 / 同一套渲染 / 同一套写入**（只是"取商品"那一步的策略不同，
 //      判定点在 `routes/scanPage.js` 的 `scanTargetOf`，唯一判据是 `req.baseUrl`）。
+// ⭐ 2026-10-14：启动时预热「实时库存」快照（用**已有实例**，不新建 ✓ 见 services/scanPageService.js）
+const { warmLiveInventorySnapshot } = require('./services/scanPageService');
 const scanPageRouter = require('./routes/scanPage').createScanPageRouter();
 app.use(SCAN_PAGE.route.basePath, scanPageRouter);
 app.use(SCAN_PAGE.route.recordBasePath, scanPageRouter);
@@ -246,6 +248,15 @@ if (require.main === module) {
   const host = String(process.env.HOST || '127.0.0.1').trim() || '127.0.0.1';
   app.listen(port, host, () => {
     logInfo('server.started', { port, host });
+    // ⭐⭐ 2026-10-14（她 02:31 扫码 7.4 秒那次）：**启动就预热一次**「实时库存」快照 ——
+    //   否则"服务重启 ⇒ 到第一次扫码之间快照是冷的"⇒ 那次会退回真读（`feishu_reads=2` ✗）。
+    //   ⚠️ 用**已有实例**（`warmLiveInventorySnapshot` 内部登记表 ✓ 绝不新建第二个快照 ✗）；
+    //   ⚠️ **失败只记 warn，服务照常**（helper 里 try/catch ✓ 这里再兜一层 `.catch` ✓）——
+    //   预热是锦上添花，**不许把启动搞挂、不许白屏** ✗。
+    warmLiveInventorySnapshot({ reason: 'warm' })
+      .then((count) => logInfo('scan.snapshot.warm.done', { warmed: count }))
+      // helper 内部已对"刷新失败"记过既有事件名的 warn ✓；这里只兜"意料之外的异常"，不许挡启动 ✗
+      .catch((error) => logInfo('scan.snapshot.warm.skipped', { phase: 'warm', error: error.message }));
   });
 }
 
