@@ -70,9 +70,95 @@ const SCAN_AUTH_REDIRECT = Object.freeze({
   events: EVENTS,
 });
 
+/**
+ * ⭐⭐ 2026-10-13（她真机两轮实测之后的**唯一正解**）：**登录后用一次性 URL 票据带回会话**。
+ *
+ * 为什么非要它：飞书 WebView 里"扫完新开的那个窗口"**完全不共享也不保存 cookie** ✗
+ *   ⇒ `SameSite=None` 也救不了（v0.4.30 上线后她仍然打转 ✓ 实测）
+ *   ⇒ **任何靠 cookie 带会话的做法都无效** ⇒ 只能把"会话"放进 **URL** 带回来 ✓
+ *
+ * 安全约束（一条都不许松 ✗）：
+ *   · **一次性**：用掉即作废（内存里记 nonce ✓ 重启即全失效 ✓）
+ *   · **≤60 秒**过期（够一跳 ✓ 放进签名里，服务端再核）
+ *   · **HMAC 签**（复用 `LARK_WEB_SESSION_SECRET` ✓ **不新造密钥** ✓）· 篡改/伪造一律拒 ✗
+ *   · **绑定 open_id + 目标 path（含查询串）** ⇒ 换个 path / 换个人用同一票 ⇒ 拒 ✓
+ *   · 校验目标 path 走**既有** `resolveScanNext`（白名单**不放宽** ✓）
+ *   · 票据**只出现在这一跳的地址栏**：兑换后**立刻 302 到去掉 `t` 的同一路径**（不进历史 ✗）
+ *   · 默认**开启**（她真机要立刻能用 ✓）；`SCAN_SESSION_TICKET_ENABLED=false` 可关 ✓
+ */
+const readFlagDefaultTrue = (env, key) => {
+  const raw = env ? env[key] : undefined;
+  if (raw === undefined || raw === null) return true;      // ⚠️ 缺省 = 开（她真机等不起 ✗）
+  return !['0', 'false', 'off', 'no'].includes(String(raw).trim().toLowerCase());
+};
+const TICKET = Object.freeze({
+  paramName: 't',
+  ttlMs: 60 * 1000,
+  enabled: readFlagDefaultTrue(process.env, 'SCAN_SESSION_TICKET_ENABLED'),
+});
+
+const ticketSecret = (env = process.env) => String((env.LARK_WEB_SESSION_SECRET || '').trim());
+const usedNonces = new Set();
+const b64u = (value) => Buffer.from(value, 'utf8').toString('base64url');
+const sign = (payload, secret) => require('node:crypto').createHmac('sha256', secret).update(payload).digest('base64url');
+
+/** 签一张票（`{ open_id, name, path }` ⇒ 一次性短串）。 */
+const issueSessionTicket = ({ openId = '', name = '', path: targetPath = '' } = {}, { env = process.env, now = Date.now() } = {}) => {
+  const secret = ticketSecret(env);
+  if (!secret || !openId || !targetPath) return null;
+  const payload = b64u(JSON.stringify({
+    o: String(openId), n: String(name || ''), p: String(targetPath), e: now + TICKET.ttlMs,
+    k: require('node:crypto').randomBytes(9).toString('base64url'),
+  }));
+  return `${payload}.${sign(payload, secret)}`;
+};
+
+/**
+ * 兑换一张票。**成功才返回 `{ ok: true, openId, name, path }`**；任何异常都返 `{ ok: false, reason }`
+ *   ⇒ 调用方**回落"再走一次登录"**（**绝不出现半登录态** ✗）。
+ */
+const redeemSessionTicket = (token, { targetPath = '', env = process.env, now = Date.now() } = {}) => {
+  const raw = String(token || '').trim();
+  const secret = ticketSecret(env);
+  if (!raw || !secret || !raw.includes('.')) return { ok: false, reason: 'malformed' };
+  const [payload, signature] = raw.split('.');
+  if (sign(payload, secret) !== signature) return { ok: false, reason: 'bad_signature' };
+  let data;
+  try { data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')); } catch { return { ok: false, reason: 'bad_payload' }; }
+  if (!data || !data.o || !data.p) return { ok: false, reason: 'incomplete' };
+  if (!(Number(data.e) > now)) return { ok: false, reason: 'expired' };
+  if (usedNonces.has(data.k)) return { ok: false, reason: 'used' };
+  // ⭐ 绑定：**目标 path 必须与签发时那个逐字相同**（含查询串）✓
+  if (String(data.p) !== String(targetPath)) return { ok: false, reason: 'path_mismatch' };
+  // ⭐ 目标 path 还必须过**既有**白名单（不复用第二套判据 ✗）
+  const p0 = String(data.p);
+  const pathname0 = p0.split('?')[0];
+  const allowed0 = RETURN_PATH.allowedExactPaths.includes(pathname0)
+    || RETURN_PATH.allowedPrefixes.some((prefix) => pathname0.startsWith(prefix));
+  if (!allowed0) return { ok: false, reason: 'not_whitelisted' };
+  usedNonces.add(data.k);
+  if (usedNonces.size > 5000) usedNonces.clear();   // 简单的内存上限（重启/清空 ⇒ 旧票全失效 ✓ 安全方向 ✓）
+  return { ok: true, openId: String(data.o), name: String(data.n || ''), path: String(data.p) };
+};
+
+/** `?t=` 之后的"原路径 + 原查询串"（**去掉 t 本身** ⇒ 用于兑换后 302 回去 ✓）。 */
+const pathWithoutTicket = (originalUrl = '', paramName = TICKET.paramName) => {
+  const raw = String(originalUrl || '');
+  const [path, query = ''] = raw.split('?');
+  const params = new URLSearchParams(query);
+  params.delete(paramName);
+  const rest = params.toString();
+  return rest ? `${path}?${rest}` : path;
+};
+
 module.exports = {
+  TICKET,
+  issueSessionTicket,
+  redeemSessionTicket,
+  pathWithoutTicket,
   SCAN_AUTH_REDIRECT,
   RETURN_PATH,
   LOGIN,
   EVENTS,
 };
+

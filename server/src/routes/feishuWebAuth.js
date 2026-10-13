@@ -1,7 +1,7 @@
 const express = require('express');
 const crypto = require('node:crypto');
 const { logInfo, logWarn } = require('../utils/logger');
-const { SCAN_AUTH_REDIRECT } = require('../config/scanAuthRedirect');
+const {SCAN_AUTH_REDIRECT, TICKET, issueSessionTicket } = require('../config/scanAuthRedirect');
 
 const COOKIE_NAME = 'workbench_session';
 const STATE_TTL_MS = 10 * 60 * 1000;
@@ -180,7 +180,26 @@ const createFeishuWebAuthRouter = () => {
       logInfo('workbench.auth.success', { request_id: req.requestId, operator_open_id: user.open_id });
       // 回跳目标：`next`（扫码页，走白名单）/ `return_to`（工作台前端，既有语义）——
       // 两者都没有时就是工作台首页（与改动前逐字一致）。
-      return res.redirect(resolveCallbackTarget(req.query, record));
+      // 2026-10-13: carry the session back as a one-time URL ticket (WebView keeps no cookie).
+      const callbackTarget = resolveCallbackTarget(req.query, record);
+      // 2026-10-13: only the whitelisted scan paths (/s, /r) get a ticket - the workbench
+      //   return_to flow must stay byte-identical, and a ticket must never travel to a
+      //   target that is not on the whitelist (open-redirect guard).
+      // 2026-10-13: membership must be checked AGAINST THE WHITELIST, not by comparing
+      //   resolveScanNext(target) to target - the default path is '/' and that comparison
+      //   wrongly marks '/' as eligible (found by test 4/5).
+      const targetPathOnly = String(callbackTarget).split('?')[0];
+      const { allowedExactPaths, allowedPrefixes } = SCAN_AUTH_REDIRECT.returnPath;
+      const ticketEligible = allowedExactPaths.includes(targetPathOnly)
+        || allowedPrefixes.some((prefix) => targetPathOnly.startsWith(prefix));
+      if (TICKET.enabled && ticketEligible) {
+        const ticket = issueSessionTicket({ openId: user?.open_id || '', name: user?.name || '', path: callbackTarget });
+        if (ticket) {
+          const sep = callbackTarget.includes('?') ? '&' : '?';
+          return res.redirect(`${callbackTarget}${sep}${TICKET.paramName}=${ticket}`);
+        }
+      }
+      return res.redirect(callbackTarget);
     } catch (error) {
       logWarn('workbench.auth.failed', { request_id: req.requestId, error: error.message });
       return res.status(502).send('飞书身份认证失败，请稍后重试');
@@ -197,6 +216,8 @@ const getSessionUser = (req) => {
 };
 
 module.exports = {
+  COOKIE_NAME,
+  encodeSession,
   createFeishuWebAuthRouter,
   enabled,
   getSessionUser,

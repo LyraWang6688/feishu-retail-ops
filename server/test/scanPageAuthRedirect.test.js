@@ -124,6 +124,19 @@ const callback = (base, state, extra = '') => fetch(
   { redirect: 'manual' },
 );
 
+
+/** 2026-10-13: the callback target is the SAME next, now with exactly one extra non-empty `t`. */
+const assertLocationWithTicket = (location, target, label) => {
+  const separator = target.includes('?') ? '&' : '?';
+  assert.ok(location.startsWith(`${target}${separator}t=`),
+    `${label}：Location 必须是那个 next 后面**恰好**多一个票据参数（实际 ${location}）`);
+  const url = new URL(location, 'http://127.0.0.1');
+  const extra = [...url.searchParams.keys()].filter((key) => key !== 't'
+    && !new URLSearchParams(target.split('?')[1] || '').has(key));
+  assert.deepEqual(extra, [], `${label}：除 t 之外**不许**多挂任何参数（实际 ${location}）`);
+  assert.ok(String(url.searchParams.get('t') || '').length > 0, `${label}：票据不许为空`);
+};
+
 test('① 未登录 GET /s/:编号 → 302 去登录，Location 带 next（原 path + 原 query，编码正确）', async () => {
   login();
   const app = scanApp();
@@ -158,7 +171,8 @@ test('② 登录回跳：/start?next=... 存下的 state，callback 成功后 30
       const state = await startState(base, `?${NEXT_PARAM}=${encodeURIComponent(target)}`);
       const response = await callback(base, state, '&code=test_code');
       assert.equal(response.status, 302);
-      assert.equal(response.headers.get('location'), target, '登录完要回到刚才那一页');
+      // 能力去哪：回跳目标**仍是同一个 next** ✓ —— 今天起**多一张一次性票据**（跨 WebView 换会话 ✓）
+      assertLocationWithTicket(response.headers.get('location'), target, '② 登录回跳');
       assert.match(String(response.headers.get('set-cookie')), /workbench_session=/, '回跳时已经种上会话');
 
       // state 一次性：同一个 state 再用一次必须被拒（CSRF 语义没动）
@@ -177,7 +191,8 @@ test('③ callback 直连带合法 next → 302 到 next（仍先验 state）', 
       const target = `${PAGE}?a=b`;
       const response = await callback(base, state, `&${NEXT_PARAM}=${encodeURIComponent(target)}`);
       assert.equal(response.status, 302);
-      assert.equal(response.headers.get('location'), target);
+      // 能力去哪：同上（目标不变，只多一张一次性票据 ✓）
+      assertLocationWithTicket(response.headers.get('location'), target, '③ 直连带 next');
     });
   });
 });
@@ -205,10 +220,14 @@ test('④ 防开放重定向：非法 / 白名单外的 next 一律回落工作�
         const viaCallback = await callback(base, stateB, `&${NEXT_PARAM}=${encodeURIComponent(value)}&code=c`);
         assert.equal(viaCallback.status, 302, `应当 302：${JSON.stringify(value)}`);
         assert.equal(viaCallback.headers.get('location'), HOME, `必须回落工作台首页：${JSON.stringify(value)}`);
+        // 新哨兵（2026-10-13）：**非法 next 时一个字都不许挂票据**（挂了等于把票送去不该去的地方 ✗）
+        assert.equal(viaCallback.headers.get('location').includes('t='), false,
+          `非法 next 不许挂票据：${JSON.stringify(value)}`);
       }
       // 合法的那一份照常放行（对照，证明上面的断言不是"永远回落"）
       const ok = await startState(base, `?${NEXT_PARAM}=${encodeURIComponent(`${PAGE}?x=1`)}`);
-      assert.equal((await callback(base, ok, '&code=c')).headers.get('location'), `${PAGE}?x=1`);
+      // 能力去哪：白名单内的那个 next **原样保留** ✓ —— 今天起**多一张一次性票据**（跨 WebView 换会话 ✓）
+      assertLocationWithTicket((await callback(base, ok, '&code=c')).headers.get('location'), `${PAGE}?x=1`, '④ 白名单内');
     });
   });
 });
