@@ -1,5 +1,11 @@
 import { MAIN_TABS } from '../config/tabs.js';
 
+// ⚠️ 2026-10-13 真事故：main.js 从本文件 import { MAIN_TABS }，
+//   而本文件只是 import 了它、没有 re-export ⇒ 浏览器报
+//   "does not provide an export named 'MAIN_TABS'" ⇒ 整个 main.js 不执行 ⇒ 工作台空白。
+//   修法：在这里显式 re-export（保持单一来源仍是 config/tabs.js）。
+export { MAIN_TABS };
+
 /**
  * 一级 tab 的按钮 HTML —— **文案 / 顺序 / `data-module` 全部来自 `config/tabs.js`**（配置先行）。
  *
