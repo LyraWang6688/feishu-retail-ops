@@ -117,10 +117,14 @@ test('AC-6（退役→哨兵）扫码页**不再引用**采购明细读取器 / 
   const fs = require('node:fs');
   const path = require('node:path');
   const root = path.join(__dirname, '..');
+  // ⚠️ 2026-10-14 修正假红：**必须先剥注释**再 match —— 我在注释里解释历史用词（`purchaseSizeReader`）
+  //   会被当成引用 ✗（能力判断只看**代码** ✓ 严格性不变 ✗）
+  const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   for (const rel of ['src/routes/scanPage.js', 'src/services/scanPageService.js', 'src/views/scanPageRealm.js']) {
     const src = fs.readFileSync(path.join(root, rel), 'utf8');
-    assert.equal(/purchaseSizeReader/.test(src), false, `${rel} 不许再 require/调用采购明细读取器 ✗`);
-    assert.equal(/present_special_sizes/.test(src), false, `${rel} 不许再往视图模型挂那个字段 ✗`);
+    const code = strip(src);
+    assert.equal(/purchaseSizeReader/.test(code), false, `${rel} 的**代码**里不许再 require/调用采购明细读取器 ✗`);
+    assert.equal(/present_special_sizes/.test(code), false, `${rel} 的**代码**里不许再往视图模型挂那个字段 ✗`);
   }
   // 配置里那两套码仍然清楚（普通码判缺码 / 特殊码只展示 ✓），且**不依赖任何读表**
   assert.deepEqual(expandRange(R.A.normal), [38, 39, 40, 41, 42, 43, 44, 45], '男普通码 38–45 ✓');
