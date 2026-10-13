@@ -1741,17 +1741,41 @@ const renderScanSkeleton = (view = {}, config = SCAN_PAGE) => {
     card.appendChild(message);
     card.appendChild(retry);
   }
+  var slowMs = ${JSON.stringify(texts.skeletonSlowMs)};
+  var slowText = ${JSON.stringify(texts.skeletonSlowText || '')};
+  var attempt = 0;
+  function showSlow() {
+    var card = document.querySelector('[data-view="scan-skeleton-loading"]');
+    if (!card || card.getAttribute('data-problem') === '1') return;
+    var line = card.querySelector('[data-view="scan-skeleton-slow"]');
+    if (line) { line.textContent = slowText; return; }
+    line = document.createElement('p');
+    line.setAttribute('data-view', 'scan-skeleton-slow');
+    line.textContent = slowText;
+    card.appendChild(line);
+  }
+  // first failure/timeout -> one automatic retry; the second one -> human line + manual retry
+  function retryOrProblem() {
+    if (attempt === 1) { showSlow(); load(); return; }
+    showProblem();
+  }
   function load() {
+    attempt += 1;
+    var slowTimer = window.setTimeout(function () {
+      showSlow();
+      if (attempt === 1) { load(); }
+    }, slowMs);
     fetch(window.location.pathname + '?' + dataQuery.join('&'), { credentials: 'same-origin' })
       .then(function (response) { return response.ok ? response.text() : ''; })
       .then(function (html) {
-        if (!html) { showProblem(); return; }                       // empty body -> human line
+        window.clearTimeout(slowTimer);
+        if (!html) { retryOrProblem(); return; }                     // empty body
         if (html.indexOf('data-view="scan-skeleton"') !== -1) {      // still skeleton -> do NOT write it back
-          showProblem(); return;
+          retryOrProblem(); return;
         }
         document.open(); document.write(html); document.close();
       })
-      .catch(function () { showProblem(); });                        // no more silent swallow
+      .catch(function () { window.clearTimeout(slowTimer); retryOrProblem(); });   // no silent swallow
   }
   load();
 })();
