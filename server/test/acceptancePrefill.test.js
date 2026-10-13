@@ -71,7 +71,8 @@ const SIZE_STUB = {
 const tempDir = (label) => fs.mkdtempSync(path.join(os.tmpdir(), `accept-prefill-${label}-`));
 
 /** ⭐ 抓 `confirmBatchArrival` 的入参（= 写库那一刻的"实际数量 / 逐尺码清单 / 实际金额"）。 */
-const createHarness = ({ rows = SIZES.map((size) => ({ size, quantity: 1 })), allowEmptyRows = false, twoProducts = false } = {}) => {
+// ⚠️ 2026-10-13 加了 `successReturn`：`AC-AH1` 要**换一个配置值**看成功页跳转目标变不变（行为断言 ✓）
+const createHarness = ({ rows = SIZES.map((size) => ({ size, quantity: 1 })), allowEmptyRows = false, twoProducts = false, successReturn = null } = {}) => {
   const records = {
     purchaseOrderBatch: [{ record_id: BATCH_ID, fields: { 报货批次号: BATCH, 到货状态: '未到货', 供应商: [{ text: '大发鞋厂' }] } }],
     purchaseRequest: [
@@ -126,6 +127,8 @@ const createHarness = ({ rows = SIZES.map((size) => ({ size, quantity: 1 })), al
   const app = express();
   app.use(express.urlencoded({ extended: true }));
   app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+    // ⚠️ 只在 AC-AH1 里覆盖 `successReturn`（其余用例走真实配置 ✓）
+    ...(successReturn ? { config: { ...SCAN_PAGE, successReturn: { ...SCAN_PAGE.successReturn, ...successReturn } } } : {}),
     service: { lookup: async () => VIEW },
     gateway: { table: () => ({ fields: {} }), listAll: async () => [], get: async () => null },
     // ⚠️ 逐码页的 POST 走的是"写入口"那道闸门 ⇒ 没它一律 503（与线上同一道闸门）。
@@ -490,4 +493,56 @@ test('AC-AP16 候选口径**只来自配置**（与缺码同一份；不另发�
     '验收候选必须调那一个共用件（不许自己拼尺码段）');
   assert.equal(/sizeManagement/.test(route.slice(route.indexOf('unreportedSizesFor'), route.indexOf('const acceptanceContext'))), false,
     '候选**零读表**（纯配置）⇒ "读表失败"这条路天然不存在');
+});
+
+// ── AC-AH1 ⭐⭐ 2026-10-13（独立复核：`acceptHome` 原来是**假配置** —— 有定义、有注释、**零读取点** ✗）
+//    行为断言：**换一个配置值 ⇒ 验收成功页的跳转目标必须随之变**（改配置零变化 ⇒ 这条就红 ✗）
+test('AC-AH1 ⭐ acceptHome 是**真配置**：pendingBatches ⇒ 批次列表；lastBatch ⇒ 刚验完那一批', async () => {
+  login();
+  // 默认（`pendingBatches`）：回**未到货批次列表**（她 2026-10-12 选的 ① ✓）
+  const h1 = createHarness();
+  await withServer(h1.app, async (base) => {
+    // ⚠️ 先 GET 一下：这一场验收要**开着**（预填就是那一步落下的 ✓ 漏了会 400 ✗ 我踩过）
+    await get(base, `/s/accept?batch=${encodeURIComponent(BATCH)}`);
+    const done = await post(base, '/s/accept', {
+      [F.action]: A.acceptFinishRows, batch: BATCH,
+      [F.acceptRowQty]: SIZES.map(() => '1'), [F.acceptAmount]: '200',
+    });
+    assert.equal(done.status, 200, `要出成功页（实际 ${done.status}）`);
+    const html = await done.text();
+    const meta = (html.match(/http-equiv="refresh"[^>]*url=([^">]+)/) || [])[1] || '';
+    assert.ok(meta.endsWith('/s/accept'), `默认落点 = 批次列表（实际 ${meta}）`);
+    assert.equal(meta.includes('?batch='), false, '默认**不带** batch（带了她又回到刚做完那一批 ✗）');
+  });
+  // 换成 `lastBatch`：落点**必须变**（这条就是"能不能抓到假配置"的判据 ✓）
+  const h2 = createHarness({ successReturn: { acceptHome: 'lastBatch' } });
+  await withServer(h2.app, async (base) => {
+    // ⚠️ 先 GET 一下：这一场验收要**开着**（预填就是那一步落下的 ✓ 漏了会 400 ✗ 我踩过）
+    await get(base, `/s/accept?batch=${encodeURIComponent(BATCH)}`);
+    const done = await post(base, '/s/accept', {
+      [F.action]: A.acceptFinishRows, batch: BATCH,
+      [F.acceptRowQty]: SIZES.map(() => '1'), [F.acceptAmount]: '200',
+    });
+    assert.equal(done.status, 200);
+    const html = await done.text();
+    const meta = (html.match(/http-equiv="refresh"[^>]*url=([^">]+)/) || [])[1] || '';
+    assert.ok(meta.includes(`?batch=${encodeURIComponent(BATCH)}`),
+      `换成 lastBatch ⇒ 落点要变成"刚验完那一批"（实际 ${meta}）—— 假配置下这里会是 /s/accept ✗`);
+    // 返回按钮与自动跳转**同一个 URL**（唯一来源 ✓）
+    assert.ok(html.includes(`href="${meta}"`) || html.includes(`href="${meta.replace(/&/g, '&amp;')}"`),
+      '返回按钮与自动跳转要一致（一处改 ✓）');
+  });
+});
+
+// ── AC-AH2 源码哨兵：路由**真读**配置 + 那句不实注释已删 ──────────────────
+test('AC-AH2 源码哨兵：验收成功页真读 `successReturn.acceptHome`（不再写死）+ 注释不再骗人', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const route = fs.readFileSync(path.join(__dirname, '../src/routes/scanPage.js'), 'utf8');
+  assert.match(route, /resolveAcceptHomePath\(/, '要走映射表（一处改 ✓）');
+  assert.match(route, /config\.successReturn && config\.successReturn\.acceptHome/, '要真读配置值');
+  assert.equal(/走配置 `SUCCESS_RETURN\.acceptHome`/.test(route), false, '那句"走配置"的不实注释要改掉 ✗');
+  const cfg = fs.readFileSync(path.join(__dirname, '../src/config/scanPage.js'), 'utf8');
+  assert.match(cfg, /function resolveAcceptHomePath/, '⚠️ 必须用**函数声明**（const 箭头会撞 TDZ ✗）');
+  assert.match(cfg, /lastBatch:/, '映射表至少两个**不同且有效**的值（否则抓不到假配置 ✗）');
 });

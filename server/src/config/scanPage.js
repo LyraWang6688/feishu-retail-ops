@@ -428,6 +428,26 @@ const PAGE_BUILD = [
   String(process.env.APP_COMMIT || '').slice(0, 7),
 ].filter(Boolean).join('@');
 
+/**
+ * ⭐⭐ 2026-10-13（独立复核挖出）：`SUCCESS_RETURN.acceptHome` 原来是**假配置** ✗
+ * —— 有定义、有注释，**零读取点**；验收成功页的落点写死在路由里 ✗（注释还谎称"走配置"✗）。
+ * 现在**真接上**：配置值 ⇒ 确定 URL（**一处改** ✓ 别写死 ✗）。
+ *  · `pendingBatches` ⇒ **未到货批次列表**（她 2026-10-12 选的 ① ✓ 默认）
+ *  · `lastBatch`      ⇒ **刚验完那一批**的验收页（另一个**真实可用**的落点）
+ * ⚠️ 用**函数声明**（会提升）：config 对象字面量在上面就把它导出去了 ⇒ `const` 箭头会撞 TDZ ✗（踩过）
+ * ⚠️ 认不出的值 ⇒ **回落默认**（不炸 ✓）
+ */
+const ACCEPT_HOME_PATHS = Object.freeze({
+  pendingBatches: ({ baseUrl, acceptancePath }) => `${baseUrl}${acceptancePath}`,
+  lastBatch: ({ baseUrl, acceptancePath, batchNo }) =>
+    `${baseUrl}${acceptancePath}?batch=${encodeURIComponent(String(batchNo || ''))}`,
+});
+
+function resolveAcceptHomePath(acceptHome, ctx = {}) {
+  const pick = ACCEPT_HOME_PATHS[String(acceptHome || '').trim()];
+  return (pick || ACCEPT_HOME_PATHS.pendingBatches)(ctx);
+}
+
 const SUCCESS_RETURN = Object.freeze({
   enabled: true,
   // 先让她**看到结果**，约 2 秒后再跳（不许秒跳 ✗）
@@ -540,6 +560,8 @@ const SCAN_PAGE = Object.freeze({
   //     · **"还没提交、点【继续扫下一个】"不在此列** ⇒ 那种情况仍按她上次用的领域走 ✓（不冲突）。
   //   ⚠️ 唯一来源：她哪天要改回"回补货"，**只改这一处**（别散在两处 ✗）。
   successReturn: SUCCESS_RETURN,
+  // ⭐ 2026-10-13：验收成功页的落点映射（**函数声明** ⇒ 提升 ✓ 不会 TDZ）
+  resolveAcceptHomePath,
   productSnapshot: PRODUCT_SNAPSHOT,
   events: EVENTS,
   // ⭐ 2026-10-11：【继续扫下一个】的手段（飞书扫一扫 AppLink，见上面的长注释）。
