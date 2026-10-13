@@ -277,7 +277,7 @@ test('AC2 四个 tab 的子页面清单与她要的映射逐条对上（config/d
   //      **只删/改工作台入口**，后端链路（扫码建单 / 验收接口）一条没删。
   assert.deepEqual(pageLabels(byId.get('sales')), ['订单列表', '销售查询', '客户往来款']);
   assert.deepEqual(pageLabels(byId.get('inventory')), ['全仓查询', '手工调整']);
-  assert.deepEqual(pageLabels(byId.get('purchase')), ['订单列表', '供应商往来款']);
+  assert.deepEqual(pageLabels(byId.get('purchase')), ['验收', '订单列表', '供应商往来款']);
   assert.deepEqual(pageLabels(byId.get('product')), ['货品上新', '标签打印']);
 
   // ③ 销售：建单 → 扫码页的**销售领域**（共用同一套业务处理层）；订单列表 = 既有模块的销售模式；
@@ -328,8 +328,8 @@ test('AC2 四个 tab 的子页面清单与她要的映射逐条对上（config/d
   //    且钉着「验收到货」是独立子页（kind:'orders'）。现在**入口已删**（扫码页已做验收）
   //    ⇒ 只剩两个占位页；「采购订单列表」同时改名「订单列表」。
   assert.deepEqual(purchase.pages.map((page) => page.id),
-    ['purchase-orders', 'purchase-supplier-money']);
-  assert.deepEqual(purchase.pages.map((page) => page.label), ['订单列表', '供应商往来款']);
+    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money']);
+  assert.deepEqual(purchase.pages.map((page) => page.label), ['验收', '订单列表', '供应商往来款']);
   assert.equal(purchase.pages.some((page) => page.kind === 'entry'), false, '采购没有"填编号"的入口页');
   assert.equal(purchase.pages.some((page) => page.kind === 'orders'), false, '「验收到货」入口已删（扫码页已做）');
   // 采购子页上不再挂任何飞书表单外链（那两张卡写的表已被删除 ⇒ 死链，已清掉）
@@ -548,7 +548,7 @@ test('AC3 四个老页面已按她的口令删掉（代码从仓库里删）—�
   // ⚠️ 2026-10-12 改写：改前 = ['purchase-arrival','purchase-orders','purchase-supplier-money']。
   //    「验收到货」入口已按她口径删除（扫码页已做）⇒ 只剩两个占位页；验收链路一行没删。
   assert.deepEqual(purchase.pages.map((page) => page.id),
-    ['purchase-orders', 'purchase-supplier-money'], '采购入口只剩两个占位页（验收入口已删）');
+    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money'], '采购入口只剩两个占位页（验收入口已删）');
   const purchaseFormHrefs = purchase.pages.flatMap((page) => (page.cards || []).map((card) => card.href));
   assert.equal(purchaseFormHrefs.includes(links.PURCHASE_REQUEST_FORM_URL), false, '死链的报货表单不再是入口');
   assert.equal(purchaseFormHrefs.includes(links.PURCHASE_RETURN_FORM_URL), false, '死链的退货表单不再是入口');

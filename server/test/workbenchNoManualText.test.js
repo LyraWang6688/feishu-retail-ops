@@ -442,7 +442,7 @@ test('AC8 功能性内容一个都不能少：子 tab / 卡片标题与动作 / 
   assert.deepEqual(byId.get('inventory').pages.map((page) => page.label),
     ['全仓查询', '手工调整']);
   assert.deepEqual(byId.get('purchase').pages.map((page) => page.label),
-    ['订单列表', '供应商往来款']);
+    ['验收', '订单列表', '供应商往来款']);
   assert.deepEqual(byId.get('product').pages.map((page) => page.label),
     ['货品上新', '标签打印']);
 
@@ -459,7 +459,7 @@ test('AC8 功能性内容一个都不能少：子 tab / 卡片标题与动作 / 
   //    ＋ `arrivalPage.kind === 'orders'`。她把「验收到货」入口删了（扫码页已做验收）
   //    ⇒ 采购只剩两个占位页；验收台代码 / 接口保留（另钉在 AC3 ② 与 AC5）。
   assert.deepEqual(purchase.pages.map((page) => page.id),
-    ['purchase-orders', 'purchase-supplier-money']);
+    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money']);
   for (const gone of ['purchase-report', 'purchase-return', 'purchase-arrival']) {
     assert.equal(purchase.pages.some((page) => page.id === gone), false, `${gone} 子页不在清单里`);
   }
