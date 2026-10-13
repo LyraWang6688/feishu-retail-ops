@@ -23,12 +23,22 @@ const { SCAN_PAGE } = require('../src/config/scanPage');
 
 const VIEW = { number: 'X7303|绿色|A' };
 
-test('AC-SK1 骨架屏绝不空白：货号 / 颜色 / 尺码区 + 「正在读取…」都在', () => {
+test('AC-SK1 ⭐ 骨架屏绝不空白：**一张水平垂直居中的卡 + 唯一一句「数据加载中」**（2026-10-14 她改版 ✓）', () => {
+  // ⚠️ 2026-10-14 **改指向**（她：「骨架页改成水平垂直居中的卡片，显示：数据加载中」✓）——
+  //   改前逐字：`assert.match(html, /尺码/, '尺码区要有占位')` + `'要有那句"正在读取…"（不许空白 ✗）'`
+  //   改后：**只剩那一句主文案**（她点名要的）；"绝不空白"这条要求**不变** ✓（仍断言这一屏有可见文字 ✓）
   const html = renderScanSkeleton(VIEW);
-  assert.match(html, /X7303/, '货号要看得见');
-  assert.match(html, /绿色/, '颜色要看得见');
-  assert.match(html, /尺码/, '尺码区要有占位');
-  assert.ok(html.includes(SCAN_PAGE.texts.skeletonLoading), '要有那句"正在读取…"（不许空白 ✗）');
+  // ⚠️ 2026-10-14 再改指向：她要把骨架改成"**一张居中的卡 + 数据加载中**"⇒
+  //   旧屏里的"货号 / 颜色 / 尺码区"占位**按新设计去掉** ✓（**"绝不空白"这条要求不变** ✓：
+  //   仍要求这一屏有那句主文案 + 那张卡在 ✓）
+  assert.match(html, /class="card skeleton-card"/, '那一张卡要在（不许空白 ✗）');
+  assert.ok(html.includes(SCAN_PAGE.texts.skeletonLoading), '要有那句主文案（不许空白 ✗）');
+  assert.equal(SCAN_PAGE.texts.skeletonLoading, '数据加载中', '文案**逐字** = 数据加载中 ✓（走配置 ✓ 不写死 ✗）');
+  assert.equal((html.match(/数据加载中/g) || []).length, 1, '这一屏**有且只有**这一句主文案 ✓');
+  assert.equal(html.includes('正在读取'), false, '「正在读取」不许再出现（改指向 ✓ 不是放宽 ✗）');
+  assert.equal(/stock__heading/.test(html.slice(html.indexOf('<body>'), html.indexOf('<script'))), false, '旧的「尺码」标题块已不在这一屏 ✓');
+  assert.match(html, /class="skeleton-stage"/, '水平垂直居中那一层 ✓');
+  assert.match(html, /class="card skeleton-card"/, '就是一张卡 ✓');
   assert.match(html, /data-view="scan-skeleton"/, '留一个可被脚本填充的容器');
   assert.match(html, /aria-busy="true"/, '无障碍：这一屏还在读');
   assert.equal(html.includes('undefined'), false, '不许把 undefined 画到页面上');
