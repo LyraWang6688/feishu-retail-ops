@@ -182,7 +182,17 @@ const createFeishuWebAuthRouter = () => {
       // 两者都没有时就是工作台首页（与改动前逐字一致）。
       // 2026-10-13: carry the session back as a one-time URL ticket (WebView keeps no cookie).
       const callbackTarget = resolveCallbackTarget(req.query, record);
-      if (TICKET.enabled) {
+      // 2026-10-13: only the whitelisted scan paths (/s, /r) get a ticket - the workbench
+      //   return_to flow must stay byte-identical, and a ticket must never travel to a
+      //   target that is not on the whitelist (open-redirect guard).
+      // 2026-10-13: membership must be checked AGAINST THE WHITELIST, not by comparing
+      //   resolveScanNext(target) to target - the default path is '/' and that comparison
+      //   wrongly marks '/' as eligible (found by test 4/5).
+      const targetPathOnly = String(callbackTarget).split('?')[0];
+      const { allowedExactPaths, allowedPrefixes } = SCAN_AUTH_REDIRECT.returnPath;
+      const ticketEligible = allowedExactPaths.includes(targetPathOnly)
+        || allowedPrefixes.some((prefix) => targetPathOnly.startsWith(prefix));
+      if (TICKET.enabled && ticketEligible) {
         const ticket = issueSessionTicket({ openId: user?.open_id || '', name: user?.name || '', path: callbackTarget });
         if (ticket) {
           const sep = callbackTarget.includes('?') ? '&' : '?';
