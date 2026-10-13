@@ -120,7 +120,7 @@ test('AC1b 库存子 tab 逐字 = 全仓查询 · 手工调整（不再有「单
     '工作台配置里不再有指向扫码页库存领域的入口');
 });
 
-test('AC1c 采购子 tab 逐字 = 订单列表 · 供应商往来款（不再有「验收到货」）', async () => {
+test('AC1c ⭐ 采购子 tab 逐字 = 验收 · 订单列表 · 供应商往来款（2026-10-13：验收挂回、放第一个）', async () => {
   const modules = loadFrontendModules();
   const domains = await modules.domains;
   const purchase = domains.domainById('purchase');
@@ -130,8 +130,9 @@ test('AC1c 采购子 tab 逐字 = 订单列表 · 供应商往来款（不再有
   assert.deepEqual(idsOf(purchase), ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money']);
   assert.equal(pageById(purchase, 'purchase-arrival'), undefined,
     '「验收到货」入口退场（扫码页已做验收）');
-  assert.equal(purchase.pages.some((page) => page.kind === 'orders'), false,
-    '采购 tab 下不再挂既有订单模块');
+  // ⭐ 2026-10-13 翻转（她要求「验收」挂回第一个子 tab）：
+  assert.equal(purchase.pages.some((page) => page.kind === 'orders' && page.mode === 'purchase'), true,
+    '验收挂的是既有 orders/purchase 模块（机制一字未改 ✓）');
 });
 
 test('AC1d 子 tab 是按配置渲染的：少一条就真的少一颗按钮（三处都核）', async () => {

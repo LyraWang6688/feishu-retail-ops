@@ -255,7 +255,7 @@ test('AC1b index.html：nav 留空（文案不在这里再写一遍）+ 页脚�
 // AC2 每个 tab 的子页面清单与映射
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC2 四个 tab 的子页面清单与她要的映射逐条对上（config/domains.js 是唯一来源）', async () => {
+test('AC2 四个 tab 的子页面清单与她要的映射逐条对上（含 2026-10-13：采购第一个 = 验收）', async () => {
   const modules = loadFrontendModules();
   const [domains, links] = await Promise.all([modules.domains, modules.links]);
   const { DOMAIN_TABS } = domains;
@@ -331,7 +331,12 @@ test('AC2 四个 tab 的子页面清单与她要的映射逐条对上（config/d
     ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money']);
   assert.deepEqual(purchase.pages.map((page) => page.label), ['验收', '订单列表', '供应商往来款']);
   assert.equal(purchase.pages.some((page) => page.kind === 'entry'), false, '采购没有"填编号"的入口页');
-  assert.equal(purchase.pages.some((page) => page.kind === 'orders'), false, '「验收到货」入口已删（扫码页已做）');
+  // ⭐ 2026-10-13 翻转（她要求「验收」挂回第一个子 tab）—— 改前逐字：
+  //    `assert.equal(purchase.pages.some((page) => page.kind === 'orders'), false, '「验收到货」入口已删（扫码页已做）');`
+  assert.equal(purchase.pages[0].id, 'purchase-acceptance', '验收 = 第一个子 tab');
+  assert.equal(purchase.pages[0].label, '验收', '名字逐字两个字');
+  assert.equal(purchase.pages.some((page) => page.kind === 'orders' && page.mode === 'purchase'), true,
+    '验收挂的是既有 orders/purchase 模块（不新造页面 ✓）');
   // 采购子页上不再挂任何飞书表单外链（那两张卡写的表已被删除 ⇒ 死链，已清掉）
   const purchaseCardHrefs = purchase.pages.flatMap((page) => (page.cards || []).map((card) => card.href));
   assert.deepEqual(purchaseCardHrefs, [], '采购子页上没有外链卡');
@@ -975,7 +980,7 @@ test('AC8 三个占位页统一写「待建设」：客户往来款 / 订单列�
 // AC9 「验收到货」= **独立子页**（不再是本页锚点 / 内嵌）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC9 「验收到货」入口已删（2026-10-12）；但验收链路与 kind:orders 机制保留', async () => {
+test('AC9 ⭐ 「验收」按 2026-10-13 裁定挂回（orders/purchase · 第一个）；验收链路与 kind:orders 机制一字未改', async () => {
   const modules = loadFrontendModules();
   const [domains, nav] = await Promise.all([modules.domains, modules.domainNav]);
   const purchase = domains.domainById('purchase');
@@ -1031,8 +1036,9 @@ test('AC9 「验收到货」入口已删（2026-10-12）；但验收链路与 ki
   //    那个入口已按她口径删除 ⇒ 现在**采购 tab 下一个 orders 页都没有**；
   //    但 `kind:'orders'` 这条机制与既有模块**都保留**（销售「订单列表」还在用它）。
   assert.equal(purchase.pages.find((page) => page.id === 'purchase-orders').kind, 'placeholder');
-  assert.deepEqual(purchase.pages.filter((page) => page.kind === 'orders').map((page) => page.id), [],
-    '采购里已没有订单模块页（验收入口删了；模块与 kind:orders 机制保留）');
+  // ⭐ 2026-10-13 翻转：采购里**有**一个订单模块页了 —— 就是新的「验收」✓
+  assert.deepEqual(purchase.pages.filter((page) => page.kind === 'orders').map((page) => page.id), ['purchase-acceptance'],
+    '采购里只有「验收」挂 orders 模块（机制一字未改 ✓）');
   assert.equal(domains.domainById('sales').pages.filter((page) => page.kind === 'orders').length, 1,
     'kind:orders 机制仍在用（销售 · 订单列表）');
 });
