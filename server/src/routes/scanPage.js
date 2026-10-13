@@ -1455,7 +1455,9 @@ const createScanPageRouter = (options = {}) => {
           requestId,
           retryHint,
         });
-        const rowsToPay = parsePaymentRows(body, fields);
+        // 🔴 只认**填了金额**的行（PAY2 抓到的真 bug：空金额行也曾被当成「要记一笔」⇒ 会写出空账 ✗）
+        const rowsToPay = parsePaymentRows(body, fields)
+          .filter((row) => String(row.amount ?? '').trim());
         // ⭐ 没填金额（或行数为 0）⇒ **待补充**：**一个字都不写**、成功页照给、**不报错** ✓
         if (!rowsToPay.length) {
           return sendSuccess(res, 200, paidPayload(config.paymentStep?.payPendingNote));
@@ -1481,7 +1483,8 @@ const createScanPageRouter = (options = {}) => {
             request_id: requestId, reason: 'payment_add_failed', error: error.message,
           });
           return sendHuman(res, 200, {
-            title: writeConfig.texts.errorTitle,
+            // ⚠️ `writeConfig.texts.errorTitle` 可能是空串 ⇒ 退回页级标题（失败页**不许**没有标题 ✗）
+            title: writeConfig.texts.errorTitle || config.texts.errorTitle,
             body: config.paymentStep?.payFailedNote,
             requestId,
             retryHint: writeConfig.texts.submittedNextHint,
