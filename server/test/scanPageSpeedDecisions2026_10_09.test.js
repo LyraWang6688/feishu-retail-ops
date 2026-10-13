@@ -141,9 +141,12 @@ const configWith = (patch = {}) => ({
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('A1 尺码段在**配置**里（A 男 38–48 · B 女 34–43 —— 不是散在逻辑里的硬编码）', () => {
-  assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.A, { label: '男', from: 38, to: 48, enterable: [38, 48], default: [38, 45], special: [46, 47, 48] });
-  // ⚠️ 2026-10-14 改指向（她明确「按照 **36-42**」覆盖早先的 35–42 ✓）—— 改前逐字：`default: [35, 42]`
-  assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.B, { label: '女', from: 34, to: 43, enterable: [34, 43], default: [36, 41], special: [34, 43] });
+  // 2026-10-14 改指向（她拍板：**普通码 normal** 判缺码/定预订；**特殊码 special** 有就显示）：
+  //   改前逐字：{ label:'男', from:38, to:48, enterable:[38,48], default:[38,45], special:[46,47,48] }
+  assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.A, { label: '男', from: 38, to: 48, enterable: [38, 48], normal: [38, 45], default: [38, 45], special: [46, 47, 48] });
+  // 女：普通码 **36–41**（她 2026-10-14 晚定 ✓）· 特殊码 **34/35/42/43**（她当日最后一条 ✓）
+  //   改前逐字：{ label:'女', from:34, to:43, enterable:[34,43], default:[36,42], special:[34,43] }
+  assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.B, { label: '女', from: 34, to: 43, enterable: [34, 43], normal: [36, 41], default: [36, 41], special: [34, 35, 42, 43] });
   // 一致性保险的旋钮也在配置里（开关 + 间隔），不是写死的定时器。
   assert.equal(typeof SCAN_PAGE.sizeSegments.consistencyCheck.enabled, 'boolean');
   assert.ok(SCAN_PAGE.sizeSegments.consistencyCheck.ttlMs >= 0);
@@ -158,13 +161,14 @@ test('A1 缺码判定 = **配置段里库存为 0 的码**（不再看「尺码�
     .lookup({ number: NUMBER, requestId: 'req_a1' });
   assert.equal(view.found, true);
   assert.equal(view.sizes_degraded, false);
-  // 2026-10-14 改指向（她拍板：**去掉"特殊码"** ⇒ 段内不再并入 46/47/48）：
-  //   能力不变 —— 缺码仍是"配置段里库存为 0 的码" ✓，只是段内不再含特殊码 ⇒ 11−2−3 = 6 ✓。
+  // 2026-10-14 改指向（她拍板：缺码只按**普通码**判，特殊码不计缺码 ✗）：
+  //   能力不变 —— 缺码仍是"配置段里库存为 0 的码" ✓；只是"段"由 38–48 收窄成 **38–45（普通码）**
+  //   ⇒ 8 个码 − 有货的 40/42 = **6** ✓（46/47/48 是特殊码：有库存才显示，不出现也不算缺 ✗）。
   //   改前逐字：assert.equal(view.missing_count, 9, 'A 段 11 个码 − 有货的 40/42 = 9');
-  assert.equal(view.missing_count, 9, 'A 段 11 个码 - 有货的 40/42 = 9（判据未变；我上轮改成 6 是错的，已恢复）');
+  assert.equal(view.missing_count, 6, '普通码 38–45 共 8 个 − 有货的 40/42 = 6（她 2026-10-14）');
   const bySize = new Map(view.rows.map((row) => [row.size_text, row]));
   assert.equal(bySize.get('40').missing, false);
-  assert.equal(bySize.get('46').missing, true, '46 在配置段里（表里没标）⇒ 仍算缺码（判据未变）');
+  assert.equal(bySize.get('46'), undefined, '46 是特殊码：库存里没有 ⇒ 一行都不出、也不算缺 ✓');
   // 「尺码管理」里那两个记录**没有**决定行的清单（38/39/41 表里都没有，但都在页面上）。
   assert.deepEqual(view.rows.map((row) => row.size_text).slice(0, 3), ['38', '39', '40']);
 });
@@ -194,7 +198,8 @@ test('A1 ⭐ 一致性保险：配置与「尺码管理」不一致（表里多�
   assert.equal(/^[ \t]*await maybeCheckSizeConsistency\(/m.test(svcSrc), false,
     '请求期不许再调用它（否则又多一次整表读 ✗）');
   // ⚠️ 只 warn：配置与表都**不许被改**（配置先行）。
-  assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.A, { label: '男', from: 38, to: 48, enterable: [38, 48], default: [38, 45], special: [46, 47, 48] });
+  //   2026-10-14：配置形状加了 `normal`（普通码）⇒ 逐字跟着更新 ✓
+  assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.A, { label: '男', from: 38, to: 48, enterable: [38, 48], normal: [38, 45], default: [38, 45], special: [46, 47, 48] });
   assert.equal(
     (await gateway.listAll('sizeManagement')).some((row) => row.fields.尺码 === 49),
     true,
