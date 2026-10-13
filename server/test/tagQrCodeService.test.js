@@ -233,7 +233,7 @@ test('② 显式覆盖（编号变更）：先记 overwriting 日志，再写', 
   const order = [];
 
   const lines = await captureLogs(async () => {
-    const result = await service.syncRecord('rec1', { reason: 'number_changed', numberChanged: true });
+    const result = await service.syncRecord('rec1', { reason: 'stale_file_name', numberChanged: true });
     order.push(...gateway.timeline);
     assert.equal(result.status, 'written');
   });
@@ -496,7 +496,7 @@ test('④′ 回归 B：事件里「编号」的值**读不出可比文本** ⇒
         after_value: shape.after === undefined ? undefined : [{ field_id: NUMBER_FIELD_ID, field_value: shape.after }],
       }]);
       assert.equal(result.results[0].status, 'written', `${shape.label}：判不了 + 文件名过期 ⇒ 必须重生成`);
-      assert.equal(result.results[0].reason, 'number_changed', `${shape.label}：原因如实记 number_changed`);
+      assert.equal(result.results[0].reason, 'stale_file_name', `${shape.label}：原因如实记 number_changed`);
       assert.deepEqual(staleGateway.calls.get, [['product', 'rec1']], `${shape.label}：要读一次记录`);
     });
     assert.equal(staleGateway.calls.uploads[0].fileName, 'tag-qr-rec1.png', `${shape.label}：新名按当前编号算`);
@@ -1043,7 +1043,7 @@ test('AC-QR-STALE-6 ⭐⭐ 写入路径也必须按编号判过期：旧名 `…
     const result = await service.syncRecord('rec28e1ut0rRrC', { reason: 'backfill' });
     assert.equal(result.status, 'written',
       `旧码必须被写回（实际 ${JSON.stringify(result)}）—— 改前这里记的是 skipped_existing ✗`);
-    assert.equal(result.reason, 'number_changed');
+    assert.equal(result.reason, 'stale_file_name');
   });
   assert.equal(gateway.calls.uploads[0].fileName, 'tag-qr-rec28e1ut0rRrC.png');
   assert.equal(gateway.calls.update.length, 1, '要覆盖写回');
@@ -1079,16 +1079,10 @@ test('AC-QR-STALE-6b ⭐ 真的已同步时，写入路径仍然跳过（幂等�
 //    ⚠️ 不是"删掉不管"：等价保证见本文件新增的 AC-①/②/③/④/⑤。
 
 
-test('AC-QR-RECHECK-3 ⭐ 配置先行：延迟复核可配（显式布尔 + 数值边界）', () => {
-  const { resolveTagQrRecheckConfig, RECHECK_DEFAULTS } = require('../src/config/tagQrCode');
-  assert.deepEqual(resolveTagQrRecheckConfig({}), { enabled: true, delayMs: 60000 });
-  assert.equal(resolveTagQrRecheckConfig({ TAG_QR_RECHECK_ENABLED: '' }).enabled, false, '空串 = 关');
-  assert.equal(resolveTagQrRecheckConfig({ TAG_QR_RECHECK_DELAY_MS: '30000' }).delayMs, 30000);
-  assert.throws(() => resolveTagQrRecheckConfig({ TAG_QR_RECHECK_DELAY_MS: '100' }),
-    '延迟小于 5 秒 ⇒ 当场抛（公式列都还没算完，等于白核）');
-  assert.ok(RECHECK_DEFAULTS.delayMs >= 30000 && RECHECK_DEFAULTS.delayMs <= 90000,
-    '默认延迟落在实测合适的 30~90 秒');
-});
+// ⏹️ AC-QR-RECHECK-3（延迟复核可配）—— **随 2026-10-13 裁定整条退场**（她原话「好的，可以关掉～」）。
+//    能力去向：延迟复核链路（config + utils/tagQrRecheckQueue + service 排程）**已整体删除**；
+//    兜底只剩「每小时巡检」那一层（见 sweep 的用例）。
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 【2026-10-12 业务负责人提的判据】别只盯公式列的「编号」—— 直接看**货号/颜色/类别**
@@ -1144,3 +1138,40 @@ const sourceEditAction = ({ action = 'record_edited', itemNo, color, category, f
 //    为什么它不再是保证：三源字段都没变 ⇒ 不写：幂等判据从「编号维度」扩到「全部源字段」⇒ 迁到新增 AC-②
 //    ⚠️ 不是"删掉不管"：等价保证见本文件新增的 AC-①/②/③/④/⑤。
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-13 昨晚事故的**回归锁**：全表刷成记录ID 后被 sweep **反复重写**
+//   根因：sweep 调 syncRecord 时硬传 `numberChanged: true` = forceOverwrite（无条件覆盖、跳过核对）✗
+//   现在：**该不该写由身份判定决定**，不由调用方强推 ✓
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-QR-SWEEP-1 ⭐⭐ 已是【记录ID 形态】的记录 ⇒ sweep **零写入**（昨晚事故的回归锁）', async () => {
+  const gateway = fakeGateway({
+    records: {
+      rec_new1: recordWith({ number: 'A|黑|B', tagQrCode: [{ file_token: 'f1', name: buildFileName('rec_new1') }] }),
+      rec_new2: recordWith({ number: 'C|黑|B', tagQrCode: [{ file_token: 'f2', name: buildFileName('rec_new2') }] }),
+    },
+  });
+  const service = serviceFor(gateway);
+  const summary = await service.sweepStaleTagQrCodes({ intervalMs: 0 });
+  assert.equal(summary.written, 0, '🔴 全是新码 ⇒ **一次都不许写**（这就是昨晚 1021 次重写的那条路）');
+  assert.deepEqual(gateway.calls.update, [], '一个字都不许写回');
+  assert.deepEqual(gateway.calls.uploads, [], '连素材都不许上传');
+  assert.equal(summary.consistent, 2, '两条都判成"已同步"');
+});
+
+test('AC-QR-SWEEP-2 缺码 ⇒ **补一张**；旧码（编号形态）⇒ **升级**（两种都要能生效）', async () => {
+  const gateway = fakeGateway({
+    records: {
+      rec_missing: recordWith({ number: 'D|黑色|A' }),
+      rec_old: recordWith({ number: '3357|黑色|B', tagQrCode: [{ file_token: 'f4', name: 'tag-qr-3357_黑_B.png' }] }),
+    },
+  });
+  const service = serviceFor(gateway);
+  const summary = await service.sweepStaleTagQrCodes({ intervalMs: 0 });
+  assert.equal(summary.written, 2, '缺码补一张 + 旧码升级一张');
+  assert.deepEqual(gateway.calls.update.map((call) => call[1]).sort(), ['rec_missing', 'rec_old']);
+  for (const call of gateway.calls.uploads) {
+    assert.ok(call.fileName.startsWith('tag-qr-rec_'), '新码文件名按 record_id：' + call.fileName);
+  }
+});

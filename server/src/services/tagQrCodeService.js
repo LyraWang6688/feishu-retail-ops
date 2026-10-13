@@ -56,7 +56,6 @@ const { logInfo, logWarn, logError } = require('../utils/logger');
 // ⭐ 2026-10-09：扫码页「货品信息」内存快照的跨模块失效（写标签二维码 = 改了货品）。
 const { invalidateLiveInventorySnapshot } = require('./liveInventorySnapshot');
 // ⭐ 2026-10-12：事件判"没变/判不了"时的**延迟复核**（真机根因：公式列延迟 ⇒ 没有人再复核）
-const { createTagQrRecheckQueue } = require('../utils/tagQrRecheckQueue');
 
 const SCAN_URL_PLACEHOLDER = 'number';
 
@@ -236,8 +235,6 @@ const createTagQrCodeService = ({
   gateway,
   config = TAG_QR_CODE,
   generatePng = generateQrPng,
-  // ⭐ 延迟复核：可整体替换（测试/运维），也可只注入定时器（单测用假时钟）
-  recheck: recheckOption,
   setTimer,
   clearTimer,
 } = {}) => {
@@ -624,7 +621,7 @@ const createTagQrCodeService = ({
     const staleByFileName = existing.length > 0 && !forceOverwrite && !namesMatch;
     // ⭐ 覆盖原因**如实**：靠文件名判出来的不匹配，就是 `number_changed`
     //   （而不是含混的 `number_change_unknown`）——日志/返回值里要能一眼看出是"改了"。
-    const effectiveReason = staleByFileName ? 'number_changed' : reason;
+    const effectiveReason = staleByFileName ? 'stale_file_name' : reason;
 
     if (existing.length) {
       const overwrite = forceOverwrite || staleByFileName;
@@ -740,14 +737,6 @@ const createTagQrCodeService = ({
    * **过一会儿再核一次**（那时公式列已经算完）—— 真机那次改货号就是这么漏的。
    * 幂等（同一条只排一次）、失败只记日志；可注入定时器便于单测用假时钟。
    */
-  const recheck = recheckOption || createTagQrRecheckQueue({
-    service: { syncRecord },
-    enabled: config.recheck?.enabled !== false,
-    delayMs: config.recheck?.delayMs,
-    setTimer,
-    clearTimer,
-  });
-
   /**
    * 表变更事件入口：`routes/larkEvents.js` 把**货品信息**那张表的 `action_list` 原样交进来。
    *
@@ -813,12 +802,6 @@ const createTagQrCodeService = ({
         // ⭐⭐ 2026-10-12：**判成"没变"（`number_unchanged`）或"判不了"（`number_change_unknown`）时
         //    排一次延迟复核** —— 真机那次编辑，事件到达时公式列还是旧值 ⇒ 如实判"没变"，
         //    而之后再没有第二次事件 ⇒ 旧码一直挂着。这一排程就是"过 60 秒再看一眼"。
-        if (outcome?.reason === 'number_unchanged' || numberChanged === null) {
-          const scheduled = recheck.schedule(recordId);
-          logInfo('product.tag_qr.recheck.scheduled', {
-            record_id: recordId, scheduled: scheduled.scheduled, why: scheduled.reason || 'pending_change',
-          });
-        }
         results.push(outcome);
       } catch (error) {
         failed.push({ record_id: recordId, action, error: error.message });
@@ -939,7 +922,7 @@ const createTagQrCodeService = ({
       }
       try {
         // 巡检已经按**同一个** `buildFileName` 判过期 ⇒ 直接要求覆盖（reason 标明来源是巡检）。
-        const result = await syncRecord(item.record_id, { reason: 'sweep_stale', numberChanged: true });
+        const result = await syncRecord(item.record_id, { reason: 'sweep_stale' });
         summary.results.push(result);
         if (result.status === 'written') summary.written += 1;
         else summary.skipped += 1;
@@ -982,8 +965,6 @@ const createTagQrCodeService = ({
     syncRecord,
     handleTableChanges,
     sweepStaleTagQrCodes,
-    // ⭐ 延迟复核队列（测试 / 运维观察用：`pendingCount()` 能看到还排着几条）
-    recheck,
   };
 };
 

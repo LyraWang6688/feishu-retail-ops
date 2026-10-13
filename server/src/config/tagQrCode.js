@@ -192,24 +192,8 @@ const SWEEP = Object.freeze({
  *   · `limit`       —— 单次最多处理多少条（0 = 不限，与 `SWEEP.limit` 同义）；
  *   · `dryRun`      —— 干跑（上线首日建议先看一眼影响面）。
  */
-/**
- * ⭐⭐ **延迟复核**（2026-10-12 真机根因）：事件判成"编号没变 / 判不了"时，过一会儿**再核一次**。
- *
- * 为什么必须有它：真机 12:13 那次改货号，事件到达时记录里的「编号」（**公式列**）还是旧值 ⇒
- * 事件路径**如实**判成"没变" ⇒ 而那次编辑之后**再没有第二次事件** ⇒ 没人复核 ⇒ 旧码一直挂着。
- * 复核会重新读记录（这时公式列已经算好了）⇒ 按编号判出过期 ⇒ 补写。
- *
- * `enabled` —— 显式布尔（`TAG_QR_RECHECK_ENABLED`；没设=开、空串=关）。
- * `delayMs` —— 延迟多久复核（`TAG_QR_RECHECK_DELAY_MS`，默认 60 秒；
- *              ⚠️ 太短可能公式列还没算完，太长她等得久；30~90 秒是实测合适的区间）。
- * 🔴 兜底不止这一层：每小时一次的巡检（`SWEEP_SCHEDULE_DEFAULTS.minIntervalMs`）还会再兜一次。
- */
-const RECHECK_DEFAULTS = Object.freeze({ enabled: true, delayMs: 60 * 1000 });
-
-const resolveTagQrRecheckConfig = (env = process.env) => Object.freeze({
-  enabled: readFlag(env, 'TAG_QR_RECHECK_ENABLED', RECHECK_DEFAULTS.enabled),
-  delayMs: readInt(env, 'TAG_QR_RECHECK_DELAY_MS', RECHECK_DEFAULTS.delayMs, { min: 5000, max: 30 * 60 * 1000 }),
-});
+// ⏹️ 延迟复核（recheck）已随业务负责人 2026-10-13 裁定**整条退场**（原话「好的，可以关掉～」）。
+//    能力去向：随裁定退场 —— 事件路径照旧按身份判定；兜底留「每小时巡检」那一层（见下方 sweep）。
 
 const SWEEP_SCHEDULE_DEFAULTS = Object.freeze({
   enabled: true,
@@ -258,8 +242,6 @@ const TAG_QR_CODE = Object.freeze({
   events: EVENTS,
   batch: BATCH,
   sweep: SWEEP,
-  // ⭐ 延迟复核（事件判"没变/判不了"时兜一次；见 `utils/tagQrRecheckQueue.js`）
-  recheck: resolveTagQrRecheckConfig(),
   // 物理列名只有一个去处：`config/v1BitableSchema.js` 的 `product.fields`。
   // 这里只放**语义键**（网关 update 收的就是它），避免同一个列名有两份真源。
   /**
@@ -303,7 +285,5 @@ module.exports = {
   BATCH,
   SWEEP,
   SWEEP_SCHEDULE_DEFAULTS,
-  RECHECK_DEFAULTS,
-  resolveTagQrRecheckConfig,
   resolveTagQrSweepSchedule,
 };

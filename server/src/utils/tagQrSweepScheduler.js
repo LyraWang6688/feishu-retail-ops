@@ -13,7 +13,7 @@
  *   · ⭐ 2026-10-12 改：原来是"**每个上海日只跑一次**"；真机又发现"公式列延迟"那类漏判
  *     最坏要等到第二天凌晨 4 点 ⇒ 改成**每小时一次**（562 条只读，成本极低）。
  *     想退回"每天一次"就把 `minIntervalMs` 设成 24 小时（配置项 `TAG_QR_SWEEP_MIN_INTERVAL_MS`）。
- *   · 这一层是**兜底**，不是主路径：主路径是事件 + 延迟复核（`utils/tagQrRecheckQueue.js`）。
+ *   · 这一层是**兜底**，不是主路径：主路径是**表变更事件**（延迟复核已随她裁定退场 ✓）。
  */
 const { shanghaiHour } = require('./shanghaiDailyScheduler');
 
