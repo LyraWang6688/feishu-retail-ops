@@ -1649,7 +1649,12 @@ const renderScanSkeleton = (view = {}, config = SCAN_PAGE) => {
   var host = document.getElementById('scan-skeleton');
   if (!host || !window.fetch) return;
   var number = host.getAttribute('data-number') || '';
-  fetch('/s/' + encodeURIComponent(number) + '?data=1', { credentials: 'same-origin' })
+  // 2026-10-13: fetch THIS page's own data fragment - not a hardcoded /s/.
+  //   The skeleton is served for both mounts (/s/<number> and /r/<recordId>); hardcoding
+  //   /s/ made the record page pull the home fragment and replace itself with it
+  //   (she saw the home page after scanning a label). location.pathname keeps whichever
+  //   mount we were served from, and ?data=1 still goes through the same service.lookup.
+  fetch(window.location.pathname + '?data=1', { credentials: 'same-origin' })
     .then(function (response) { return response.ok ? response.text() : ''; })
     .then(function (html) {
       if (!html) return;
