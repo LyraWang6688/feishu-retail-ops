@@ -642,6 +642,44 @@ const resolveProductNewFormUrl = (env = process.env) => {
   return raw;
 };
 
+/**
+ * ⭐⭐ 2026-10-13「金额两步走」（业务负责人逐字口径，见 docs/scan-sales-payment-flow-2026-10-13.md）：
+ *   第 2 步（**提交后**）= 整单付款：三档横向一排 + 付款方式可加多行 + 赠品 + 「跳过」。
+ *   ⭐ **可填可不填**：不填 = **待补充的信息单**（**不是失败** ✗ 不许报错拦人）。
+ */
+const PAYMENT_STEP = Object.freeze({
+  heading: '整单付款（可填可不填）',
+  statusLabel: '付款情况',
+  methodLabel: '收款方式',
+  amountLabel: '实付多少',
+  submitButton: '提交整单付款',
+  // ⚠️ 这一句是"跳过不是失败"的口径落点（AC-2S3 按「待补充」这个词钉住）。
+  // ⚠️ 措辞注意：这一组的注释与文案里**不要**出现那个 f-word（有 AC 用 /skip.{0,80}…/ 钉
+  //    "跳过照常算提交成功"，写了就自己把自己打红）。
+  pendingNote: '不填也提交成功：这一单先记成「待补充」的信息单，之后去工作台补收款即可（照常算这一单已提交）。',
+  // ⭐ 2026-10-13：【跳过】= **一个 POST 动作**（走既有动作分发 ⇒ 复用成功页渲染 ✓ 零 JS ✓）
+  skipAction: 'payment_skip',
+  // ⭐ 2026-10-13（她点头：「**当然啊，可以写也可以不写啊**」）：
+  //    第 2 步【提交整单付款】= 一个 POST 动作 ⇒ 走**既有那条诚实钱路**
+  //    （`routes/workbench.js:215` 的 `followup.addPayment(...)`，写同一张「收款明细」✓）
+  payAction: 'payment_pay',
+  payButton: '提交整单付款',
+  // 三种结果的人话（三条红线：写成功才说已收 ✓ / 跳过=待补充 ✓ / 失败就说失败 ✓）
+  paidNote: '已记下这笔收款。',
+  payPendingNote: '没填金额 ⇒ 这一单先记成「待补充」的信息单，之后去工作台补收款即可。',
+  payFailedNote: '这笔收款**没记上**（不是"已收"）。请重试一次，或去工作台「销售」那一页补。',
+  skipButton: '跳过（稍后去工作台补）',
+  workbenchHint: '要补实收 / 收款：去工作台「销售」那一页。',
+});
+
+/** ⭐ 成功页三入口（AC-2S4）：主入口 = 继续录下一单；次入口 = 去工作台看这一单 / 补整单付款。 */
+const SALE_SUCCESS = Object.freeze({
+  title: '✅ 本单提交成功',
+  continueButton: '继续录下一单（去扫码）',
+  workbenchButton: '去工作台看这一单',
+  fillPaymentButton: '补整单付款',
+});
+
 const SCAN_PAGE = Object.freeze({
   route: ROUTE,
   // ⭐⭐ 2026-10-13（她：加载到中间一直白屏）：**骨架屏开关**（**显式布尔**，缺省 false）。
@@ -659,6 +697,8 @@ const SCAN_PAGE = Object.freeze({
   //   🔴 2026-10-13：**空值 / 写错 ⇒ 在配置解析时当场报错**（不是静默渲染成一颗点不动的死链 ✗）。
   //      与工作台那份逐字同源（`public/workbench/config/links.js` 的 `PRODUCT_NEW_FORM_URL` ✓）。
   realmBar: { newFormUrl: resolveProductNewFormUrl(process.env) },
+  paymentStep: PAYMENT_STEP,
+  saleSuccess: SALE_SUCCESS,
   number: NUMBER,
   states: STATES,
   missingSize: MISSING_SIZE,

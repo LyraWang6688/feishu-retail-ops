@@ -274,7 +274,8 @@ const WRITE = (overrides = {}) => ({
 const scriptCountOf = (html) => (html.match(/<script[\s>]/gi) || []).length;
 
 test('AC-1 销售页只有两层：每件填「实收金额」；资金区有「付款情况」三档；收款行预置 1 行', () => {
-  const html = renderScanPage(VIEW, SCAN_PAGE, WRITE(), 'sales');
+  const write0 = WRITE();
+  const html = renderScanPage(VIEW, SCAN_PAGE, write0, 'sales');
   // ① 页面上**没有**第二个金额概念（旧名整体退场）
   assert.equal(html.includes('成交金额'), false, '「成交金额」整体退场（鞋与配品都不许再让用户填）');
   // ② 每件层：鞋表单 + 配品表单各有一个「实收金额」输入框
@@ -285,24 +286,32 @@ test('AC-1 销售页只有两层：每件填「实收金额」；资金区有「
   assert.equal(html.includes(SCAN_WRITE.texts.accessoryAmountLabel), false,
     '配品实收金额不再出现在扫码页（能力改到工作台 ✓）');
   assert.ok(html.includes(`name="${SCAN_WRITE.fields.amount}"`), '加单表单里的金额位就是「实收金额」');
-  // ③ ⭐ 资金区：「付款情况」三档（全付 / 部分付 / **未付（默认）**）+「实付多少」
-  assert.match(html, new RegExp(`name="${SCAN_WRITE.fields.paymentStatus}"`), '要有「付款情况」这个控件');
-  assert.ok(html.includes(SCAN_WRITE.texts.paymentStatusLabel), '组名来自配置');
+  // ③④ ⭐⭐ 2026-10-13 **改指向**（她定的「金额两步走」）：整单那一组（付款情况三档 / 实付多少 /
+  //    收款行）**从录入页整块挪到第 2 步的「整单付款」屏** ⇒ 能力去哪：`renderSalePaymentStepPage`
+  //    （**不是删掉、也不是放宽** —— 下面每一条断言都还在，只是换了它该在的那一页 ✓）。
+  assert.equal(html.includes(`name="${SCAN_WRITE.fields.paymentStatus}"`), false,
+    '录入页（第 1 步）不许再有整单付款控件（AC-2S1 同口径）');
+  const { renderSalePaymentStepPage } = require('../src/views/scanPageRenderer');
+  const stepHtml = renderSalePaymentStepPage({ write: write0, config: SCAN_PAGE });
+  assert.match(stepHtml, new RegExp(`name="${SCAN_WRITE.fields.paymentStatus}"`), '第 2 步要有「付款情况」这个控件');
+  assert.ok(stepHtml.includes(SCAN_WRITE.texts.paymentStatusLabel), '组名来自配置');
   for (const option of SCAN_WRITE.texts.paymentStatusOptions) {
-    assert.ok(html.includes(`value="${option.value}"`), `三档里少了「${option.value}」`);
+    assert.ok(stepHtml.includes(`value="${option.value}"`), `三档里少了「${option.value}」`);
   }
-  // ⚠️ 2026-10-11 晚改写：默认档从「全付」改成**「未付」**（她真机被"全付必须相等"卡住）
-  assert.match(html, new RegExp(`value="${PAYMENT_STATUS.unpaid}" checked`), '默认选中「未付」');
-  assert.equal(html.includes(`value="${PAYMENT_STATUS.full}" checked`), false,
-    '「全付」不再是默认那一档');
-  assert.match(html, new RegExp(`name="${SCAN_WRITE.fields.paidAmount}"`), '要有「实付多少」输入框');
-  // ④ 总单层：收款明细**预置 1 行** + 第一行默认「微信」
-  const methods = html.match(new RegExp(`name="${SCAN_WRITE.fields.paymentMethod}"`, 'g')) || [];
-  const amounts = html.match(new RegExp(`name="${SCAN_WRITE.fields.paymentAmount}"`, 'g')) || [];
+  // ⚠️ 默认档「未付」的契约**原样保留**（她真机被"全付必须相等"卡住过）
+  assert.match(stepHtml, new RegExp(`value="${PAYMENT_STATUS.unpaid}" checked`), '默认选中「未付」');
+  assert.match(stepHtml, new RegExp(`name="${SCAN_WRITE.fields.paidAmount}"`), '要有「实付多少」输入框');
+  const methods = stepHtml.match(new RegExp(`name="${SCAN_WRITE.fields.paymentMethod}"`, 'g')) || [];
+  const amounts = stepHtml.match(new RegExp(`name="${SCAN_WRITE.fields.paymentAmount}"`, 'g')) || [];
   assert.equal(methods.length, SCAN_WRITE.sale.paymentRowCount, '收款行数 = 配置的预置行数');
   assert.equal(SCAN_WRITE.sale.paymentRowCount, 1, '她 2026-10-11：**收款行预置 1 行**');
   assert.equal(amounts.length, SCAN_WRITE.sale.paymentRowCount);
-  assert.ok(html.includes('<option value="微信" selected>微信</option>'), '第一行默认选中「微信」');
+  assert.ok(stepHtml.includes('<option value="微信" selected>微信</option>'), '第一行默认选中「微信」');
+  // ⭐ 出错要改时，那一组**回到录入页**（她填的值原样在 ⇒ 能原地改，不用重打）
+  const withError = WRITE({ errorText: '每件实收合计 ¥500，收款合计 ¥200；收款比每件实收少 ¥300' });
+  const errorHtml = renderScanPage(VIEW, SCAN_PAGE, withError, 'sales');
+  assert.match(errorHtml, new RegExp(`name="${SCAN_WRITE.fields.paymentStatus}"`),
+    '校验失败原地重渲染时，整单那一组要带回来（否则她改不了）');
   // ⑤ 提交表单里**逐行**一个「每件实收」（同名重复 ⇒ POST 上来是有序数组）
   const withLines = WRITE({ draft: { lines: [{ item_no: 'YD6693-2', size: 40, amount: 350 }] } });
   const lineHtml = renderScanPage(VIEW, SCAN_PAGE, withLines, 'sales');
@@ -921,12 +930,12 @@ test('AC-8a 【全付】不等 ⇒ 400 + **还是销售那一块** + 差额人�
         assert.equal(added.status, 303);
       }
       // 全付 + 总单只记了 200（少 300）⇒ 拦住
-      const failed = await formPost(base, cookie, {
+      const failed = await followPaymentStep(base, cookie, await formPost(base, cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: saleKey,
         payment_status: PAYMENT_STATUS.full,
         payment_method: '现金', payment_amount: '200',
         line_amount: ['200', '300'],
-      });
+      }));
       assert.equal(failed.status, 400, '校验失败是"她能改"的那一类 ⇒ 400 而不是 500');
       const failedHtml = await failed.text();
       assert.ok(failedHtml.includes('realm-block--sales'), '原地回到销售那一块（不是一张干巴巴的失败页）');
@@ -944,12 +953,12 @@ test('AC-8a 【全付】不等 ⇒ 400 + **还是销售那一块** + 差额人�
       assert.equal(entriesOf(h, 'salesDetail').length, 0);
       assert.equal(entriesOf(h, 'paymentRecord').length, 0);
       // 照着上面那句话改对 ⇒ 同一把键再提交 ⇒ 成单（只写一次，见 AC-9）
-      const fixed = await formPost(base, cookie, {
+      const fixed = await followPaymentStep(base, cookie, await formPost(base, cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: saleKey,
         payment_status: PAYMENT_STATUS.full,
         payment_method: ['微信', '现金'], payment_amount: ['200', '300'],
         line_amount: ['200', '300'],
-      });
+      }));
       assert.equal(fixed.status, 200, await fixed.text());
       assert.equal(entriesOf(h, 'salesEntry').length, 1);
       assert.equal(entriesOf(h, 'salesDetail').length, 2);
@@ -986,10 +995,10 @@ test('AC-8c ⭐【未付】走真路由：页面上什么都不填 ⇒ 直接成
         headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ action: SCAN_WRITE.actions.addLine, submit_key: saleKey, size: '40' }).toString(),
       });
-      const done = await formPost(base, cookie, {
+      const done = await followPaymentStep(base, cookie, await formPost(base, cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: saleKey,
         payment_status: PAYMENT_STATUS.unpaid, line_amount: '',
-      });
+      }));
       assert.equal(done.status, 200);
       assert.match(await done.text(), /您的提交已成功/);
       assert.equal(paidRows(h).length, 0);
@@ -1018,12 +1027,12 @@ test('AC-8d ⭐【部分付】走真路由：实付 200 + 差额 300 落在收�
           body: new URLSearchParams({ action: SCAN_WRITE.actions.addLine, submit_key: saleKey, size, amount }).toString(),
         });
       }
-      const done = await formPost(base, cookie, {
+      const done = await followPaymentStep(base, cookie, await formPost(base, cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: saleKey,
         payment_status: PAYMENT_STATUS.partial, paid_amount: '200',
         payment_method: '微信', payment_amount: '200',
         line_amount: ['200', '300'],
-      });
+      }));
       assert.equal(done.status, 200, await done.text());
       assert.deepEqual(paidRows(h).map((row) => row.fields['收款金额']), [200]);
       assert.deepEqual(unpaidRows(h).map((row) => row.fields['收款金额']), [300]);
@@ -1232,6 +1241,35 @@ return { salesInfoOf };`;
   // eslint-disable-next-line no-new-func
   return new Function(body)();
 };
+/**
+ * ⭐ 2026-10-13「金额两步走」：提交成功后**先落到第 2 步「整单付款」页**
+ * （能力去哪：`renderSalePaymentStepPage`），她点【跳过（稍后去工作台补）】才到**成功页**。
+ * ⇒ 原本"提交后看到成功页"的用例，顺着这一步再走一次 ✓（**成功页的内容断言一条没放宽** ✓）。
+ * 🔴 第 2 步页**没有**"提交整单付款"按钮（没有诚实落库出口）⇒ 这里只可能点【跳过】✓
+ */
+const followPaymentStep = async (base, cookie, response) => {
+  const html = await response.clone().text().catch(() => '');
+  if (!html.includes('data-view="payment-step"')) return response;
+  // ⭐ 2026-10-13：「跳过」= **一个 POST 动作**（`payment_skip` ⇒ 走既有动作分发 ⇒ 成功页）✓
+  //    ⇒ 这里把那一颗按钮所在的表单**原样提交一次**（模拟她点【跳过】✓ 零 JS ✓）
+  const form = (html.match(/<form[^>]*>[\s\S]*?<\/form>/g) || [])
+    .find((item) => item.includes('payment_skip'));
+  if (!form) return new Response(html, { status: response.status, headers: { 'content-type': 'text/html' } });
+  const actionUrl = (form.match(/action="([^"]*)"/) || [])[1] || '';
+  const params = new URLSearchParams();
+  for (const input of form.match(/<input[^>]*>/g) || []) {
+    const name = (input.match(/name="([^"]*)"/) || [])[1];
+    const value = (input.match(/value="([^"]*)"/) || [])[1] || '';
+    if (name) params.append(name.replace(/&amp;/g, '&'), value.replace(/&amp;/g, '&'));
+  }
+  const url = actionUrl.startsWith('http') ? actionUrl : `${base}${actionUrl.replace(/&amp;/g, '&')}`;
+  return fetch(url, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+    body: params.toString(),
+  });
+};
 
 test('AC-12 订单列表判据：未付 / 部分付 的单**仍然**是"资金信息不齐"⇒ 待补充（不会跑进售后列表）', async () => {
   const { salesInfoOf } = loadOrdersLogic();
@@ -1341,14 +1379,14 @@ test('AC-13b ⭐ 走真路由：销售页**什么都不填** ⇒ 提交成单（
       //    改后口径：**全付 + 收款 0 笔 + 每件实收也全空** ⇒ **拦住**（零元全付单，
       //    见 `scanWriteService` 的 `full_without_money`；起因是她真机丢钱那次）。
       //    这一条要钉的是"**什么都不填也能建单**"⇒ 用页面默认那一档（未付）才对应真实页面。
-      const done = await formPost(base, cookie, {
+      const done = await followPaymentStep(base, cookie, await formPost(base, cookie, {
         action: SCAN_WRITE.actions.submitOrder,
         submit_key: saleKey,
         payment_status: PAYMENT_STATUS.unpaid,
         payment_method: '',
         payment_amount: '',
         line_amount: '',
-      });
+      }));
       assert.equal(done.status, 200, `资金全空应该直接成单，而不是 400：${await done.text()}`);
       assert.equal(entriesOf(h, 'salesEntry').length, 1);
       assert.equal(entriesOf(h, 'salesDetail').length, 1);

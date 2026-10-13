@@ -40,7 +40,8 @@ const express = require('express');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { sizesForCategory, parseNumberSegments, createScanPageService } = require('../services/scanPageService');
 const { createScanWriteService } = require('../services/scanWriteService');
-const { renderSalesHome, renderScanSkeleton, renderScanPage, renderScanMessagePage, renderMinimalPage, renderAcceptancePage, renderAcceptanceDonePage, renderAcceptanceSelfServe, renderSaleSuccessPage, buildPaymentRows } = require('../views/scanPageRenderer');
+const { SalesFollowupService } = require('../services/salesFollowupService');
+const { renderSalesHome, renderScanSkeleton, renderScanPage, renderScanMessagePage, renderMinimalPage, renderAcceptancePage, renderAcceptanceDonePage, renderAcceptanceSelfServe, renderSaleSuccessPage, renderSalePaymentStepPage, buildPaymentRows } = require('../views/scanPageRenderer');
 // ⚠️ 只借这两个**纯函数**：所选尺码在「样品 + 门盒」有没有货（= 页面上那两个分组的判据），
 //    以及 `?from=` → 领域 id（认不出来回落缺省，不报错、不白屏）。
 const { sellableSizeTexts, resolveRealm, DEFAULT_REALM, ACCEPTANCE_REALM } = require('../views/scanPageRealm');
@@ -1430,6 +1431,103 @@ const createScanPageRouter = (options = {}) => {
         ));
       }
 
+      // ── 第 2 步【提交整单付款】⇒ **走既有那条诚实钱路**（不做第二套账 ✗）─────────────
+      //    `followup.addPayment(...)` = 工作台「补记收款」用的同一条链路（`routes/workbench.js:215` ✓）
+      //    🔴 三条红线：① 只有**写成功**才说"已收" ✓ ② 没填 ⇒ 待补充（不是失败）✓
+      //                ③ 幂等沿既有 `requestId`（**不自造** ✓）
+      if (action === (config.paymentStep?.payAction || 'payment_pay')) {
+        const payTarget = backTargetFor(req, decodeURIComponent(String(req.params.number || '')));
+        const paidOrderNo = String(body.order_no || '').trim().slice(0, 40);
+        const paidCount = Number(String(body.count || '').trim() || 0) || 0;
+        const paidReused = String(body.reused || '') === '1';
+        const paidDetails = [
+          fillWriteText(writeConfig.texts.submittedOrderLine, { orderNo: paidOrderNo || '—' }),
+          fillWriteText(writeConfig.texts.submittedDetailLine, { count: paidCount }),
+        ];
+        const paidPayload = (retryHint) => ({
+          ...successReturnFields(req, payTarget, paidOrderNo),
+          title: paidReused ? writeConfig.texts.submittedAgainTitle : writeConfig.texts.submittedTitle,
+          body: paidReused
+            ? fillWriteText(writeConfig.texts.submittedAgainBody, { orderNo: paidOrderNo || '—' })
+            : fillWriteText(writeConfig.texts.submittedBody, { orderNo: paidOrderNo || '—', count: paidCount }),
+          order_no: paidOrderNo,
+          details: paidDetails,
+          requestId,
+          retryHint,
+        });
+        const rowsToPay = parsePaymentRows(body, fields);
+        // ⭐ 没填金额（或行数为 0）⇒ **待补充**：**一个字都不写**、成功页照给、**不报错** ✓
+        if (!rowsToPay.length) {
+          return sendSuccess(res, 200, paidPayload(config.paymentStep?.payPendingNote));
+        }
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const followup = options.followup
+            || new SalesFollowupService(options.gateway ? { gateway: options.gateway } : {});
+          for (const row of rowsToPay) {
+            // eslint-disable-next-line no-await-in-loop
+            const paid = await followup.addPayment({
+              salesEntryRecordId: String(body.sales_entry_record_id || '').trim(),
+              method: row.method,
+              amount: row.amount,
+              requestId,
+              operatorOpenId: openId,
+            });
+            if (!paid || paid.ok !== true) throw new Error(paid?.message || 'addPayment 未成功');
+          }
+        } catch (error) {
+          // 🔴 写失败 ⇒ **明说失败 + 人话**，**绝不显示"已收"** ✗（她口径：状态不许撒谎 ✓）
+          logError(config.events.failed, {
+            request_id: requestId, reason: 'payment_add_failed', error: error.message,
+          });
+          return sendHuman(res, 200, {
+            title: writeConfig.texts.errorTitle,
+            body: config.paymentStep?.payFailedNote,
+            requestId,
+            retryHint: writeConfig.texts.submittedNextHint,
+          });
+        }
+        // ✅ 写成功 ⇒ 这**才**能说"已收" ✓
+        return sendSuccess(res, 200, paidPayload(config.paymentStep?.paidNote));
+      }
+
+      // ── 第 2 步【跳过（稍后去工作台补）】⇒ 成功页 ──────────────────────────────
+      //    ⭐ 走**既有 POST 动作分发**（不是我原先那条 GET 分支 —— 那条落错函数、已删 ✗）
+      //    🔴 跳过**不是失败**：不写任何收款、不说"已收"、也不报错 ✓（她口径：「可写可不写」✓）
+      if (action === (config.paymentStep?.skipAction || 'payment_skip')) {
+        const skippedOrderNo = String(body.order_no || '').trim().slice(0, 40);
+        const skippedCount = Number(String(body.count || '').trim() || 0) || 0;
+        const skippedReused = String(body.reused || '') === '1';
+        const skipTarget = backTargetFor(req, decodeURIComponent(String(req.params.number || '')));
+        // ⚠️ 成功页那两行（单号 / 双数）在**提交成功**那条路里是由 `details` 拼的 —— 跳过这条路
+        //    也必须给她**同样的两行**（否则页面只剩标题 ⇒ 她看不到单号/双数 ✗）
+        const skippedDetails = [
+          fillWriteText(writeConfig.texts.submittedOrderLine, { orderNo: skippedOrderNo || '—' }),
+          fillWriteText(writeConfig.texts.submittedDetailLine, { count: skippedCount }),
+          ...(writeConfig.texts.submittedNextSteps ? [writeConfig.texts.submittedNextSteps] : []),
+        ];
+        return sendSuccess(res, 200, {
+          // ⭐ 与「提交成功」那条**逐字同形**：自动回销售首页那几个字段也必须有
+          //    （否则成功页没有「回首页」的确定 URL ⇒ AC-SR/AC-H 那一族红 ✗）
+          ...successReturnFields(req, skipTarget, skippedOrderNo || ''),
+          title: skippedReused ? writeConfig.texts.submittedAgainTitle : writeConfig.texts.submittedTitle,
+          body: skippedReused
+            ? fillWriteText(writeConfig.texts.submittedAgainBody, { orderNo: skippedOrderNo || '—' })
+            : fillWriteText(writeConfig.texts.submittedBody, { orderNo: skippedOrderNo || '—', count: skippedCount }),
+          order_no: skippedOrderNo,
+          details: skippedDetails,
+          // ⭐ 与提交成功那条**逐字同形**：下一句人话（«接着扫下一款就可以开新的一单。» 那一句）
+          retryHint: writeConfig.texts.submittedNextHint,
+          requestId,
+          backPath: postActionFor(
+            backTargetFor(req, decodeURIComponent(String(req.params.number || ''))),
+            String(body.from || realm),
+          ),
+          backLabel: writeConfig.texts.submittedRecordAnother,
+          backHint: writeConfig.texts.submittedRecordAnotherHint,
+        });
+      }
+
       // ── 提交销售单 ──────────────────────────────────────────────────────────
       if (action === actions.submitOrder) {
         // ⭐⭐ 2026-10-11（**最终口径**）：总单层 = ①每件实收（同名重复 ⇒ 有序数组，下标 = 明细行）
@@ -1576,6 +1674,38 @@ const createScanPageRouter = (options = {}) => {
         //      **不再**渲染回原页、也不 303。⚠️ 连点的那一次（`reused`）同样给这一页 ——
         //      她**看到了成功**，才不会再狂点（真实事故：她点了 14 次）。
         const submitTarget = backTargetFor(req, decodeURIComponent(String(req.params.number || '')));
+        // ⭐⭐ 2026-10-13「金额两步走」第 2 步（业务负责人：**可写可不写** ✓）：
+        //    提交成功 ⇒ **先落「整单付款」页**（三档横向 + 收款多行 + 赠品，可填可不填）
+        //    ⇒ 她点【跳过（稍后去工作台补）】⇒ 走 `payment_skip` 动作 ⇒ 成功页 ✓
+        //    🔴 跳过 = 记成「待补充的信息单」：**不写收款 / 不说已收 / 也不报失败** ✓
+        //    ⚠️ 落点用**既有 POST 动作分发**（不新造取数路径 ✓ 也不依赖 GET 分支 ✓）。
+        const step2Write = {
+          texts: writeConfig.texts, fields: writeConfig.fields, actions: writeConfig.actions,
+          paymentMethods: writeConfig.sale.paymentMethods,
+          defaultPaymentMethod: writeConfig.sale.defaultPaymentMethod,
+          paymentRowCount: writeConfig.sale.paymentRowCount,
+          paymentStatus: writeConfig.sale.paymentStatus.default,
+          defaultPaymentStatus: writeConfig.sale.paymentStatus.default,
+          paidAmount: '', draft: { lines: [] },
+        };
+        try {
+          return sendHtml(res, 200, renderSalePaymentStepPage({
+            write: step2Write,
+            orderNo: result.order_no || '',
+            config,
+            basePath: req.baseUrl,
+            postAction: postActionFor(submitTarget, realm),
+            submitKey: String(body[fields.submitKey] || ''),
+            count: result.detail_count || 0,
+            reused: Boolean(result.reused),
+            // ⭐ 第 2 步的付款要写「收款明细」⇒ 用**这次提交就有**的主表 record_id（不反查 ✓）
+            salesEntryRecordId: result.sales_entry_record_id || '',
+          }));
+        } catch (error) {
+          logError(config.events.failed, {
+            request_id: requestId, reason: 'payment_step_render_failed', error: error.message,
+          });
+        }
         return sendSuccess(res, 200, {
           // ⭐ 提交成功 ⇒ 自动回【销售】首页（+ 一颗【返回扫码】兜底，同一个 URL ✓）；「再录一单」照旧保留 ✓
           // ⭐ 提交这一单 ⇒ 回跳带它的单号（ⓑ 顶部指引的数据来源 ✓）

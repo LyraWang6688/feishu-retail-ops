@@ -279,6 +279,17 @@ summary { cursor: pointer; }
 .draft-bar .btn + .btn, .draft-bar .write-form + .btn { margin-top: var(--space-2); }
 `;
 
+/**
+ * 2026-10-13 (whole-order payment step): the step-2 block's own styles.
+ * Kept as a **separate** literal on purpose: the big `STYLE` template above must stay
+ * byte-identical (the hardcoded-Chinese gate extracts that whole literal as one string,
+ * so touching it - even with ASCII - reads as a "new" entry). ASCII-only here.
+ */
+const PAYMENT_STEP_STYLE = `.pay-status__options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.pay-status__option { display: flex; align-items: center; justify-content: center; gap: 4px;
+  border: 1px solid #d9d9d9; border-radius: 8px; padding: 8px 4px; font-size: 14px; }
+.payment-step { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }`;
+
 const renderDocument = ({ title, content, requestId, config = SCAN_PAGE, head = '' }) => `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -287,7 +298,7 @@ const renderDocument = ({ title, content, requestId, config = SCAN_PAGE, head = 
 <meta name="robots" content="noindex">
 <title>${escapeHtml(title)}</title>
 ${head}
-<style>${STYLE}</style>
+<style>${STYLE}${PAYMENT_STEP_STYLE}</style>
 </head>
 <body>
 <main class="page">
@@ -860,11 +871,11 @@ const saleFormHtml = (view, write) => {
 ${hiddenField(write.fields.submitKey, write.saleKey)}${pageBuildField()}
 ${sizeInput}
 <div class="form-row"><label>${escapeHtml(t.amountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" placeholder="${escapeHtml(t.amountPlaceholder)}"></div>
-<div class="form-row"><label>${escapeHtml(t.giftLabel)}</label><input name="${escapeHtml(fields.gift)}"></div>
 ${alert}
 ${draftLinesHtml(write)}
-${paymentStatusHtml(write)}
-${paymentRowsHtml(write)}
+${String(write.errorText || '').trim() ? `${paymentStatusHtml(write)}${paymentRowsHtml(write)}` : ''}
+<!-- ⭐⭐ 2026-10-13（金额两步走）：整单那一组（档位 / 收款行 / 备注）**整块挪到第 2 步页**
+     ⇒ 录入页只留：每双 颜色 · 尺码 · 这一双的金额 ✓（那一组的字段名与标签字面量一个都不许留，否则 AC-2S1/AC-1 会打红） -->
 <p class="hint">${escapeHtml(t.amountOptionalHint || '')}</p>
 <button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}" data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(countLabel)}</button>
 <button type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.addLine)}"${submitFeedbackAttrs(write)}>${escapeHtml(t.addAnotherButton || t.addButton)}</button>
@@ -1480,6 +1491,8 @@ const renderScanMessagePage = ({
   // ⭐⭐ 2026-10-12（方案 A）：成功后**自动回首页**（`returnPath` = 服务端渲染的确定 URL ✓）
   //    + 一颗【返回扫码】兜底（href 与自动跳转**同一个 URL** ⇒ 唯一来源 ✓）。
   returnPath = '', returnLabel = '', returnDelaySeconds = 0, autoReturnUrl = '',
+  // ⭐ 2026-10-13（成功页三入口）：透明的"追加动作块"—— 不传 = 既有页面逐字不变 ✓
+  extraActionsHtml = '',
 }, config = SCAN_PAGE) => renderDocument({
   title,
   config,
@@ -1500,6 +1513,7 @@ ${number ? `<p>${escapeHtml(config.texts.notFoundHint)}<span class="number mono"
 ${retryHint ? `<p class="hint">${escapeHtml(retryHint)}</p>` : ''}
 ${backPath && backLabel ? `<a class="btn btn--primary back-link" href="${escapeHtml(backPath)}">${escapeHtml(backLabel)}${backHint ? `<span>${escapeHtml(backHint)}</span>` : ''}</a>` : ''}
 ${returnPath && returnLabel ? `<a class="btn" data-view="success-return" href="${escapeHtml(returnPath)}">${escapeHtml(returnLabel)}</a>` : ''}
+${extraActionsHtml}
 </section>`,
 });
 
@@ -1513,9 +1527,100 @@ ${returnPath && returnLabel ? `<a class="btn" data-view="success-return" href="$
  * 🔴 只在**真的写成功**时用：建单失败 ⇒ 照旧报错页；建单成功但后面某步没写完 ⇒
  *    `partialFailed*`（**不许**显示成功）。
  */
-const renderSaleSuccessPage = (input = {}, config = SCAN_PAGE) => renderScanMessagePage(
-  { ...input, tone: 'success' }, config,
-);
+/**
+ * ⭐⭐ 2026-10-13「金额两步走」第 2 步：**整单付款屏**（提交成功之后落到这里）。
+ *
+ * 口径（业务负责人逐字）：三档「全付 / 部分付 / 未付」**横向一排**（垂直占屏太高 ✗）
+ *   + 付款方式**可加多行** + **赠品** + 「**跳过**」。
+ * ⭐ **可填可不填** ⇒ 不填 = 这一单先记成**待补充**的信息单（**不是失败** ✗ 不许报错拦人）。
+ *
+ * ⚠️ 本轮只落**页面与入口**（文案/结构/横向布局由 AC 钉住）；
+ *    "填进去的钱怎么落库"要走**既有**的唯一收款入口 —— 那一支还没接（见 PR 说明），
+ *    所以这一屏的按钮**不假装已经记了钱** ✗：只给「跳过」与「去工作台补收款」两条真路径。
+ */
+const renderSalePaymentStepPage = ({
+  write = null, orderNo = '', config = SCAN_PAGE, basePath = '',
+  // ⭐ 2026-10-13（ⓒ 落点）：`successPath` = 成功页（【跳过】就去那里）；
+  //    `workbenchPath` = 既有「补记收款」入口（默认 `/workbench`）。
+  successPath = '', workbenchPath = '',
+  // ⭐ 跳过 = POST 动作（`paymentStep.skipAction`）；这三个隐藏字段把"成功页要显示的事实"带过去 ✓
+  postAction = '', submitKey = '', count = 0, reused = false,
+  // ⭐ 第 2 步付款要写进「收款明细」⇒ 需要刚提交那张销售主表的 record_id（`submitSale` 返回里有 ✓）
+  salesEntryRecordId = '',
+} = {}) => {
+  const step = { ...(config.paymentStep || {}) };
+  const t = (write && write.texts) || {};
+  const fields = (write && write.fields) || {};
+  // ⚠️ 没有 `successPath`（单测直接渲染这一页时）就退回销售首页 —— 绝不给出一个点不动的链接 ✗
+  const salesHome = successPath || `${basePath || ''}/s?from=sales`;
+  const workbench = workbenchPath || `${basePath || ''}/workbench`;
+  // ⭐ 复用**既有**那两块（`paymentStatusHtml` / `paymentRowsHtml`）—— 默认档、预置行数、
+  //    44px 命中区、零 JS 的约定都只有一处定义（不在这里重写第二份 ✗）。
+  const statusBlock = paymentStatusHtml(write);
+  const rowsBlock = paymentRowsHtml(write);
+  const giftFieldHtml = `<div class="form-row"><label>${escapeHtml(t.giftLabel || '')}</label><input name="${escapeHtml(fields.gift || 'gift')}"></div>`;
+  // ⭐⭐ 2026-10-13 结构重排（**行为不变**）：三件套（三档 / 收款行 / 赠品）先攒成一块，
+  //    由 `payForm` 统一放进"提交整单付款"那张表单里（**在表单外就是"提交上去什么都没有"** ✗）。
+  //    ⚠️ 还没配 `payAction` 时 ⇒ 退化成原来那个 `<div class="payment-step">`（逐字同形 ✓ 不吃亏 ✓）
+  const paymentFieldsHtml = `${statusBlock}${rowsBlock}${giftFieldHtml}`;
+  const payForm = (postAction && step.payAction)
+    ? `<form method="post" action="${escapeHtml(postAction)}" data-view="payment-pay">
+<input type="hidden" name="${escapeHtml(fields.action || 'action')}" value="${escapeHtml(step.payAction)}">
+${submitKey ? `<input type="hidden" name="${escapeHtml(fields.submitKey || 'submit_key')}" value="${escapeHtml(submitKey)}">` : ''}
+<input type="hidden" name="order_no" value="${escapeHtml(orderNo)}">
+<input type="hidden" name="count" value="${escapeHtml(String(count))}">
+${salesEntryRecordId ? `<input type="hidden" name="sales_entry_record_id" value="${escapeHtml(salesEntryRecordId)}">` : ''}
+${reused ? '<input type="hidden" name="reused" value="1">' : ''}
+${paymentFieldsHtml}
+<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)} data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(step.payButton || '')}</button>
+</form>`
+    : `<div class="payment-step">${paymentFieldsHtml}</div>`;
+  return renderDocument({
+    title: step.heading,
+    config,
+    // ⭐ `data-view="payment-step"` = 第 2 步页的**稳定标记**（测试顺着它决定"要不要再走一步"✓）
+    content: `<section class="card state-msg" data-view="payment-step">
+<h1>${escapeHtml(step.heading)}</h1>
+${orderNo ? `<p class="foot">${escapeHtml(orderNo)}</p>` : ''}
+<p class="hint">${escapeHtml(step.pendingNote || '')}</p>
+${payForm}
+<p class="hint">${escapeHtml(step.workbenchHint || '')}</p>
+<p><a class="btn btn--primary" href="${escapeHtml(workbench)}">${escapeHtml(config.saleSuccess?.fillPaymentButton)}</a></p>
+${postAction ? `<form method="post" action="${escapeHtml(postAction)}">
+<input type="hidden" name="${escapeHtml(fields.action || 'action')}" value="${escapeHtml(step.skipAction)}">
+${submitKey ? `<input type="hidden" name="${escapeHtml(fields.submitKey || 'submit_key')}" value="${escapeHtml(submitKey)}">` : ''}
+<input type="hidden" name="order_no" value="${escapeHtml(orderNo)}">
+<input type="hidden" name="count" value="${escapeHtml(String(count))}">
+${reused ? '<input type="hidden" name="reused" value="1">' : ''}
+<button type="submit" class="btn"${submitFeedbackAttrs(write)} data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(step.skipButton)}</button>
+</form>` : `<p><a class="btn" href="${escapeHtml(salesHome)}">${escapeHtml(step.skipButton)}</a></p>`}
+</section>`,
+  });
+};
+
+const renderSaleSuccessPage = (input = {}, config = SCAN_PAGE) => {
+  const success = { ...(config.saleSuccess || {}) };
+  const orderNo = String(input.order_no || input.orderNo || '').trim();
+  const number = String(input.number || '').trim();
+  const basePath = String(input.basePath || '').trim();
+  // ⚠️ 单号按 `order_no` 原样显示（形如 `XSD-…`）；没有就不编一个 ✗。
+  const orderLine = orderNo ? `<p class="foot">${escapeHtml(orderNo)}</p>` : '';
+  const salesHome = `${basePath}/s?from=sales`;
+  const workbench = `${basePath}/workbench`;
+  return renderScanMessagePage({
+    ...input,
+    tone: 'success',
+    // 主文案「本单提交成功」+ **单号**（她的口径：成功页要能一眼看到单号）
+    title: input.title || success.title,
+    details: [...(input.details || []), orderLine].filter(Boolean),
+    // ⭐ 三入口：主 = 继续录下一单；次 = 去工作台看这一单 / 补整单付款
+    extraActionsHtml: `<p class="success-actions">
+<a class="btn btn--primary" href="${escapeHtml(salesHome)}">${escapeHtml(success.continueButton)}</a>
+<a class="btn" href="${escapeHtml(`${workbench}?order=${encodeURIComponent(orderNo)}`)}">${escapeHtml(success.workbenchButton)}</a>
+<a class="btn" href="${escapeHtml(workbench)}">${escapeHtml(success.fillPaymentButton)}</a></p>`,
+    ...(number ? { number } : {}),
+  }, config);
+};
 
 /**
  * 🔴 **最后一道兜底页**（"绝不空白"的物理保证）。
@@ -1594,6 +1699,7 @@ const renderMinimalPage = (input = {}) => {
 };
 
 module.exports = {
+  renderSalePaymentStepPage,
   renderScanPage,
   // 2026-10-13 骨架屏（先出页面，治白屏）—— 与下面的 `renderSalesHome`（不带编号首页 ✓）**都要** ✓
   renderScanSkeleton,

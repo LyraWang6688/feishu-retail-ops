@@ -291,10 +291,23 @@ test('AC-R9 成功页那条【再录一单】**回跳 /r/{recordId}**', async ()
     assert.ok(submit, '要真的走到提交那一步');
     assert.equal(submit.pendingLine.productRecordId, RECORD_ID, '提交也拿得到那条记录');
     // 成功页要能出来（用同一个 writeService 替身）。
-    const html = (await (await postR(base, RECORD_ID, sessionCookie('ou_r_submit'), {
+    // ⭐ 2026-10-13 改指向：提交成功**先落第 2 步「整单付款」页**（能力去哪：`renderSalePaymentStepPage`），
+    //    她点【跳过】才到成功页 ⇒ 这里跟着那一跳（`payment_skip` 那个 POST）再取一次 ✓ 断言一条没放宽 ✓
+    let html = (await (await postR(base, RECORD_ID, sessionCookie('ou_r_submit'), {
       action: SCAN_WRITE.actions.submitOrder, submit_key: 'k2', size: '37',
       payment_status: '', payment_method: '', payment_amount: '', line_amount: '',
     })).text());
+    if (html.includes('data-view="payment-step"')) {
+      const skipForm = (html.match(/<form[^>]*>[\s\S]*?<\/form>/g) || [])
+        .find((item) => item.includes('payment_skip')) || '';
+      const skipBody = {};
+      for (const input of skipForm.match(/<input[^>]*>/g) || []) {
+        const name = (input.match(/name="([^"]*)"/) || [])[1];
+        const value = (input.match(/value="([^"]*)"/) || [])[1] || '';
+        if (name) skipBody[name.replace(/&amp;/g, '&')] = value.replace(/&amp;/g, '&');
+      }
+      html = await (await postR(base, RECORD_ID, sessionCookie('ou_r_submit'), skipBody)).text();
+    }
     assert.ok(html.includes(SCAN_WRITE.texts.submittedTitle), '成功页逐字「您的提交已成功」');
     assert.ok(html.includes(`${SCAN_PAGE.route.recordBasePath}/${RECORD_ID}`),
       `成功页的【再录一单】必须回 /r/${RECORD_ID}（不是 /s/<记录id>）`);

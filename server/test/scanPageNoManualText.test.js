@@ -36,7 +36,26 @@ const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { renderScanPage, STYLE } = require('../src/views/scanPageRenderer');
+/** ⭐ 2026-10-13「金额两步走」：这一组能力**整块挪到第 2 步页** ⇒ 断言在它该在的那一页做
+ *  （能力去哪：`renderSalePaymentStepPage`）。🔴 口径未放宽：字段名 / 标签 / 默认档一个字都没变 ✓
+ *  ⚠️ 这里**自带 require**，不依赖各文件顶部的局部名（各文件的导入风格不一样）。 */
+const step2Of = () => {
+  const { SCAN_WRITE: SW } = require('../src/config/scanWrite');
+  const { renderSalePaymentStepPage: renderStep2 } = require('../src/views/scanPageRenderer');
+  return renderStep2({
+    write: {
+      texts: SW.texts, fields: SW.fields, actions: SW.actions,
+      paymentMethods: SW.sale.paymentMethods,
+      defaultPaymentMethod: SW.sale.defaultPaymentMethod,
+      paymentRowCount: SW.sale.paymentRowCount,
+      paymentStatus: SW.sale.paymentStatus.default,
+      defaultPaymentStatus: SW.sale.paymentStatus.default,
+      paidAmount: '', draft: { lines: [] },
+    },
+  });
+};
+
+const { renderScanPage, STYLE, renderSalePaymentStepPage } = require('../src/views/scanPageRenderer');
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
 const { REALM_TEXTS, REALMS, REALM_TABS } = require('../src/views/scanPageRealm');
@@ -184,10 +203,13 @@ test('AC-S3 功能性的东西一个都不能少：⚠️ 缺 / 状态小标签 
   }
   assert.ok(purchase.includes('data-view="purchase-sizes"'), '各尺码数量清单照旧');
 
-  // ④ 销售表单：尺码两组 + 加入本单 + 提交这一单 + 默认微信
+  // ④ 销售表单：尺码两组 + 加入本单 + 提交这一单
+  // ⭐ 2026-10-13 改指向：「默认微信」那一行**挪到第 2 步页**（能力去哪：renderSalePaymentStepPage）⇒
+  //    单独在这里钉它 ✓（原来那条断言没删，只是换了页面）
+  assert.ok(step2Of().includes('<option value="微信" selected>微信</option>'), '默认微信在第 2 步页');
   const sales = pageFor('sales');
   for (const needle of ['data-stock-group="in_stock"', 'data-stock-group="prepaid"',
-    '加入本单', '提交这一单', '<option value="微信" selected>微信</option>']) {
+    '加入本单', '提交这一单']) {
     assert.ok(sales.includes(needle), `销售表单少了 ${needle}`);
   }
   // ⑤ 货品标签页照旧（只是不再解释这一页怎么用）

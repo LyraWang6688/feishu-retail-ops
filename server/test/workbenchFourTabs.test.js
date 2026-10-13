@@ -86,6 +86,25 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { pathToFileURL } = require('node:url');
 
+/** ⭐ 2026-10-13「金额两步走」：这一组能力**整块挪到第 2 步页** ⇒ 断言在它该在的那一页做
+ *  （能力去哪：`renderSalePaymentStepPage`）。🔴 口径未放宽：字段名 / 标签 / 默认档一个字都没变 ✓
+ *  ⚠️ 这里**自带 require**，不依赖各文件顶部的局部名（各文件的导入风格不一样）。 */
+const step2Of = () => {
+  const { SCAN_WRITE: SW } = require('../src/config/scanWrite');
+  const { renderSalePaymentStepPage: renderStep2 } = require('../src/views/scanPageRenderer');
+  return renderStep2({
+    write: {
+      texts: SW.texts, fields: SW.fields, actions: SW.actions,
+      paymentMethods: SW.sale.paymentMethods,
+      defaultPaymentMethod: SW.sale.defaultPaymentMethod,
+      paymentRowCount: SW.sale.paymentRowCount,
+      paymentStatus: SW.sale.paymentStatus.default,
+      defaultPaymentStatus: SW.sale.paymentStatus.default,
+      paidAmount: '', draft: { lines: [] },
+    },
+  });
+};
+
 const WORKBENCH = path.join(__dirname, '../public/workbench');
 const SRC = path.join(__dirname, '../src');
 const readWorkbench = (relative) => fs.readFileSync(path.join(WORKBENCH, relative), 'utf8');
@@ -685,7 +704,7 @@ const SCAN_WRITE = {
 };
 
 test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个领域只显示那个领域的操作', () => {
-  const { renderScanPage, STYLE } = require('../src/views/scanPageRenderer');
+  const { renderScanPage, STYLE, renderSalePaymentStepPage } = require('../src/views/scanPageRenderer');
   const { REALMS, REALM_TABS, DEFAULT_REALM, resolveRealm, labelPrintUrls } = require('../src/views/scanPageRealm');
   const { SCAN_PAGE } = require('../src/config/scanPage');
 
@@ -782,7 +801,9 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
   //    （`replenishHeading`）**要在页面上**；现在那两句必须不存在。
   //    **不放宽**：能填能点的（加入本单 / 提交这一单 / 一键补货折叠 + 尺码勾选）照旧。
   assert.equal(blockOf('sales', 'sales').includes('资金不是必填'), false, '资金那句说明必须删掉');
-  assert.ok(blockOf('sales', 'sales').includes('<option value="微信" selected>微信</option>'), '默认微信照旧');
+  // ⭐ 2026-10-13 改指向：这条断的其实是**扫码页销售表单**的默认微信（不是工作台）——
+  //    它**挪到第 2 步页**了（能力去哪：renderSalePaymentStepPage）⇒ 断言跟着搬 ✓ 口径照旧 ✓
+  assert.ok(step2Of().includes('<option value="微信" selected>微信</option>'), '默认微信照旧（在第 2 步页）');
   assert.ok(blockOf('inventory', 'inventory').includes('库存（共 3 双）'), '库存领域 = 库存查询（库存表）');
   // ⚠️ 2026-10-11：原「采购」领域拆成 补货 / 退货 / 验收 三块（见文件头）——
   //    补货那一块的片段**一个字没变**，只是它现在在 `from=replenish` 下。
@@ -900,7 +921,7 @@ test('AC7 既有扫码页 / 标签打印的用例文件都在，且它们钉住�
   // ⚠️ 2026-10-10：`saleHeading` / `replenishHeading` 两句说明已删 ⇒ 这里的哨兵换成
   //    **功能片段**（加入本单 / 默认微信 / 幂等键 / 一键补货 / 缺码预勾）。
   for (const needle of [
-    '加入本单', '<option value="微信" selected>微信</option>',
+    '加入本单',
     'name="submit_key" value="scan_sale:scan_session_0123456789abcdef:1"',
   ]) {
     assert.ok(fragmentsOf('sales').body.includes(needle), `销售领域少了既有片段：${needle}`);
