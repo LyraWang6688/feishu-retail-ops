@@ -219,7 +219,12 @@ test('A1 ⚠️ 类别为空 ⇒ **降级**：只显示有货尺码、不做缺�
   }
   assert.equal(view.found, true);
   assert.equal(view.sizes_degraded, true);
-  assert.equal(view.scope_reason, 'number_without_category');
+  // ⚠️ 2026-10-14 改指向（**降级行为一个字没变** ✓，只是 `reason` 字符串换了名字）：
+  //   原来：编号里没有类别 ⇒ `'number_without_category'`；现在：落成 `'unknown_category'` ✓
+  //   降级的**行为**仍逐字一致 —— 只显示有货尺码 ✓ 不标缺码（`missing_count === 0`）✓ 记一条 warn ✓
+  //   （下面三条断言就是这三件；本行只钉"哪条 reason 被记下来"）
+  //   改前逐字：assert.equal(view.scope_reason, 'number_without_category');
+  assert.equal(view.scope_reason, 'unknown_category');
   assert.deepEqual(view.rows.map((row) => row.size_text), ['40', '42'], '只显示有货的尺码');
   assert.equal(view.missing_count, 0, '降级时一个缺码都不许标');
   assert.equal(logs.events(SCAN_PAGE.events.sizesDegraded).length, 1, '降级要留一条 warn（可 grep）');
@@ -359,7 +364,11 @@ test('A4 ⭐ 一次扫码 **0~1 次飞书调用**：库存走快照 + 单价走�
   assert.equal(view.found, true);
   assert.equal(view.total, 3, '库存来自快照（3 双，一双不少）');
   assert.equal(view.price_text, '¥399', '单价来自「货品信息」内存索引');
-  assert.equal(view.missing_count, 9, '缺码来自配置段');
+  // 2026-10-14 改指向（她：缺码只按**普通码**判）：
+  //   能力不变 —— 缺码来自**配置**、这一趟 0 次飞书调用 ✓；只是"段"由 38–48 收窄成 **38–45**：
+  //   8 个码 − 有货的 40/42 = **6** ✓（特殊码 46/47/48 不计缺码 ✗）
+  //   改前逐字：assert.equal(view.missing_count, 9, '缺码来自配置段');
+  assert.equal(view.missing_count, 6, '缺码来自配置（普通码 38–45 − 有货 = 6）');
   assert.deepEqual(calls, [], '这一趟**一次飞书调用都没有**（0 次）');
 
   // ⭐ 用 `scan.lookup.timing` 的字段证明（报告里给的就是这一条的形状）。
