@@ -193,6 +193,47 @@ function listSources(dir) {
  * `roots`：`[{ dir, prefix }]`（prefix = 白名单里的键前缀，如 `services/`）。
  * `whitelist.files`：`{ "services/x.js": ["中文串", …] }`。
  */
+
+/**
+ * ⭐⭐ 2026-10-13 改造（业务负责人批准）：**只拦「新增」，不拦「存量」**。
+ * · `added`（代码里有、清单里没有）⇒ **红** ✓（这条是我们要的：新写的用户可见文案必须进配置）
+ * · `stale`（清单里有、代码里没有）⇒ **只记一条 info，不红** ✗
+ *   ⇒ 原因：改前两者都红 ⇒ 搬走一句存量文案、或两条分支合并顺序不同，就会红
+ *     （2026-10-13 一天拦了三次 ✗）⇒ 每次都要手工重生成清单 ⇒ 总有人忘 ⇒ CI 红。
+ *   ⇒ 改后「清单不同步」这件事**不再阻塞任何 PR** ✓
+ */
+function evaluateGuard({ roots, whitelist }) {
+  const { added, stale } = scanTree({ roots, whitelist });
+  const preview = stale.slice(0, 20).map((item) => `  ${item.file}  ${item.text}`).join('\n');
+  return {
+    ok: added.length === 0,
+    added,
+    stale,
+    info: stale.length
+      ? `[info] 白名单里有 ${stale.length} 条已不在代码里（可以删掉，**不影响 CI**）：\n${preview}`
+      : '',
+  };
+}
+
+/**
+ * 生成清单（**有意**新增存量文案时才用；日常 PR **不再需要**同步它 ✓）。
+ * 用法（在 server/ 下）：node -e "…buildWhitelist({roots})…" 见 noHardcodedChinese.test.js 的 AC-2c。
+ */
+function buildWhitelist({ roots, comment }) {
+  const files = {};
+  for (const { dir, prefix } of roots) {
+    for (const file of listSources(dir)) {
+      const key = `${prefix}${path.relative(dir, file).split(path.sep).join('/')}`;
+      const texts = [...new Set(scanSource(key, fs.readFileSync(file, 'utf8')).map((item) => item.text))].sort();
+      if (texts.length) files[key] = texts;
+    }
+  }
+  const sorted = {};
+  for (const key of Object.keys(files).sort()) sorted[key] = files[key];
+  const texts = Object.values(sorted).reduce((n, list) => n + list.length, 0);
+  return { ...(comment ? { _comment: comment } : {}), counts: { files: Object.keys(sorted).length, texts }, files: sorted };
+}
+
 function scanTree({ roots, whitelist = {} }) {
   const known = whitelist.files || {};
   const added = [];
@@ -217,4 +258,4 @@ function scanTree({ roots, whitelist = {} }) {
   return { added, stale };
 }
 
-module.exports = { scanSource, scanTree, stripComments, normalizeText, CJK };
+module.exports = { scanSource, scanTree, evaluateGuard, buildWhitelist, stripComments, normalizeText, CJK };
