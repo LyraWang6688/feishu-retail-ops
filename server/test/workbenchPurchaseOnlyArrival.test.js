@@ -74,9 +74,9 @@ test('AC-W1 采购子 tab 逐字 = 订单列表 · 供应商往来款（验收�
   const byId = new Map(domains.DOMAIN_TABS.map((domain) => [domain.id, domain]));
   // ⚠️ 2026-10-12 改写：改前 = ['验收到货','采购订单列表','供应商往来款'] / 对应 id。
   assert.deepEqual(byId.get('purchase').pages.map((page) => page.label),
-    ['订单列表', '供应商往来款']);
+    ['验收', '订单列表', '供应商往来款']);
   assert.deepEqual(byId.get('purchase').pages.map((page) => page.id),
-    ['purchase-orders', 'purchase-supplier-money']);
+    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money']);
   // 报货 / 退货 / 验收到货三个子页**都不在清单里**（前两个在扫码页；验收也在扫码页）
   for (const gone of ['purchase-report', 'purchase-return', 'purchase-arrival']) {
     assert.equal(byId.get('purchase').pages.some((page) => page.id === gone), false, `${gone} 应已隐藏`);
@@ -110,7 +110,7 @@ test('AC-W2 「验收到货」入口已删（链路保留）；采购不再有�
 test('AC-W3 两个占位页保留（待建设）', async () => {
   const { domains } = await loadFrontendModules();
   const purchase = domains.domainById('purchase');
-  for (const id of ['purchase-orders', 'purchase-supplier-money']) {
+  for (const id of ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money']) {
     const page = purchase.pages.find((item) => item.id === id);
     assert.equal(page?.kind, 'placeholder', `${id} 仍是占位页`);
     assert.ok(page.label, `${id} 仍有子 tab 名`);

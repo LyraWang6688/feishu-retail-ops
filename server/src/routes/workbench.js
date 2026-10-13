@@ -20,8 +20,11 @@ const { PurchaseArrivalConversationService } = require('../services/purchaseArri
 const { createLabelPrintService } = require('../services/labelPrintService');
 const { SampleReplacementService } = require('../services/sampleReplacementService');
 const { logError, logWarn } = require('../utils/logger');
-const { createLarkJsapiSignatureService } = require('../services/larkJsapiSignatureService');
-const { isAllowedSignatureUrl, JSSDK_SIGNATURE_PATH, SIGNATURE_MESSAGES } = require('../config/jsapiSignature');
+// ⭐⭐ 2026-10-13 Lead 更正：**工作台「扫一扫」照抄扫码页那套 AppLink**（AppLink **不需要签名** ✗）——
+//    AppLink 目标与 UA 判据**都取既有唯一来源**（`config/scanPage.js` 的 `SCAN_NEXT` +
+//    `views/scanPageRenderer.js` 导出的 `canScanNextWithFeishu`）⇒ **不抄第二份** ✓
+const { SCAN_NEXT } = require('../config/scanPage');
+const { canScanNextWithFeishu } = require('../views/scanPageRenderer');
 
 // ⚠️ 准入闸门只有这一份实现：语义与文案**逐字不变**（2026-10-08 的《工作台准入口径》沿用它）。
 // 扫码页（`GET /s/:number`）require 的也是它 —— 不新开鉴权、也不抄第二份判断。
@@ -44,24 +47,13 @@ const createWorkbenchRouter = (options = {}) => {
   const ordersConfig = options.ordersConfig || readWorkbenchOrdersConfig();
   const ordersCache = options.ordersCache || createWorkbenchOrdersCache({ ttlMs: ordersConfig.ordersCacheMs });
   const followup = options.followup || new SalesFollowupService({ ordersCache, ordersConfig });
-  // ⭐⭐ 飞书 JSAPI 签名（扫码用）—— 只服务「扫一扫」这一屏；可注入（测试用假票据 ✓）
-  const jsapiSignature = options.jsapiSignature || createLarkJsapiSignatureService();
-  // ⭐⭐ 2026-10-13：飞书 JSAPI 签名（「扫一扫」用原生扫码需要它）。
-  //    ⚠️ 挂在**工作台准入闸门内** ⇒ 未登录 401 ✓；**url 只能是本站**（否则 400 ✓，不当签名机 ✗）；
-  //    ⚠️ 响应只有四项（appId/timestamp/nonceStr/signature）⇒ **不回显 secret/ticket** ✗
-  router.get(JSSDK_SIGNATURE_PATH.replace('/api/workbench', ''), requireWorkbenchAccess, async (req, res) => {
-    const url = String(req.query.url || '');
-    if (!isAllowedSignatureUrl(url, req.get('host'))) {
-      return res.status(400).json({ success: false, error: SIGNATURE_MESSAGES.badUrl });
-    }
-    try {
-      const payload = await jsapiSignature.getSignature(url);
-      return res.json({ success: true, ...payload });
-    } catch (error) {
-      logWarn('workbench.jsapi_signature.failed', { reason: String(error?.message || error).slice(0, 200) });
-      return res.status(502).json({ success: false, error: SIGNATURE_MESSAGES.unavailable });
-    }
-  });
+  // ⭐ 工作台「扫一扫」这一屏要的两样：**AppLink 目标** + **本设备能不能调起飞书扫一扫**
+  //    （服务端看 UA —— 与扫码页同一个判据 ✓ 电脑/手机自带浏览器 ⇒ canScan:false ⇒ 前端给人话+手输 ✗ 死按钮）
+  router.get('/scan-entry', requireWorkbenchAccess, (req, res) => res.json({
+    success: true,
+    appLink: SCAN_NEXT.applink,
+    canScan: canScanNextWithFeishu(req.get('user-agent')),
+  }));
 
   router.use((req, res, next) => {
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
