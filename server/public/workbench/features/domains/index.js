@@ -3,6 +3,7 @@ import { escapeHtml } from '../../core/formatters.js';
 import { showPageError } from '../../core/ui.js';
 import { createInventoryAdjustmentModule } from '../inventory/adjustment.js';
 import { createOrdersModule } from '../orders/index.js';
+import { createScanModule } from '../scan/index.js';
 import { entryTarget } from './pages.js';
 import { domainPageHtml, domainSubTabsHtml, resolveTabClick } from './nav.js';
 
@@ -55,6 +56,8 @@ export function createDomainModule(domainId) {
     // ⭐ 2026-10-10：「验收到货」走的就是下面这条 —— 它是**独立子页**（`kind: 'orders'` /
     //    `mode: 'purchase'`），点一下子 tab 换一屏；**不是**在报货那一页下面展开
     //    （她真机反馈：「不应该是一点完之后在同一个 tab 页里下面出现」）。
+    // ⭐「扫一扫」是一屏独立页面（kind: 'scan'）—— 复用既有机制，不动别的 kind ✓
+    if (page.kind === 'scan') return void createScanModule().mount(host);
     if (page.kind === 'orders') return void createOrdersModule({ mode: page.mode }).mount(host);
     if (page.kind === 'inventory-adjustment') return void createInventoryAdjustmentModule().mount(host);
     host.innerHTML = domainPageHtml(page);

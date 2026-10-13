@@ -150,7 +150,9 @@ test('AC1 一级 tab = 四个业务领域，顺序逐字「销售 · 库存 · �
   const modules = loadFrontendModules();
   const [tabs, coreTabs] = await Promise.all([modules.tabs, modules.coreTabs]);
 
+  // ⭐ 2026-10-13 她裁定：**扫一扫**加为一级 tab 且放最前 ⇒ 只加这一条 ✓
   assert.deepEqual(tabs.MAIN_TABS, [
+    { module: 'scan', label: '扫一扫' },
     { module: 'sales', label: '销售' },
     { module: 'inventory', label: '库存' },
     { module: 'purchase', label: '采购' },
@@ -159,11 +161,11 @@ test('AC1 一级 tab = 四个业务领域，顺序逐字「销售 · 库存 · �
 
   const html = coreTabs.mainTabsHtml();
   const buttons = [...html.matchAll(/<button class="([^"]*)" type="button" data-module="([^"]*)">([^<]*)<\/button>/g)];
-  assert.equal(buttons.length, 4, 'nav 里 4 个 tab 按钮（销售 / 库存 / 采购 / 货品）');
-  assert.deepEqual(buttons.map((button) => button[3]), ['销售', '库存', '采购', '货品']);
-  assert.deepEqual(buttons.map((button) => button[2]), ['sales', 'inventory', 'purchase', 'product'], 'data-module 仍是既有机制');
-  assert.ok(buttons[0][1].includes('active'), '默认打开的 tab = 第一个（销售）');
-  assert.ok(!buttons[1][1].includes('active') && !buttons[2][1].includes('active') && !buttons[3][1].includes('active'),
+  assert.equal(buttons.length, 5, '⭐ nav 里 5 个 tab 按钮（**扫一扫** + 销售 / 库存 / 采购 / 货品）');
+  assert.deepEqual(buttons.map((button) => button[3]), ['扫一扫', '销售', '库存', '采购', '货品']);
+  assert.deepEqual(buttons.map((button) => button[2]), ['scan', 'sales', 'inventory', 'purchase', 'product'], 'data-module 仍是既有机制');
+  assert.ok(buttons[0][1].includes('active'), '默认打开的 tab = 第一个（**扫一扫**，她要求放最前）');
+  assert.ok(!buttons[1][1].includes('active') && !buttons[2][1].includes('active') && !buttons[3][1].includes('active') && !buttons[4][1].includes('active'),
     '只有第一个带 active');
 });
 

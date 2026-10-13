@@ -103,17 +103,18 @@ test('AC3 登录状态行与「退出登录」按钮逐字保留（只删标题�
 // AC4 四个大 tab + 子 tab 结构逐字不变
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC4a 四个大 tab 逐字不变：销售 · 库存 · 采购 · 货品（顺序 = config/tabs.js）', async () => {
+test('AC4a ⭐ 扫一扫（最前）+ 四个业务领域逐字不变：扫一扫 · 销售 · 库存 · 采购 · 货品（顺序 = config/tabs.js）', async () => {
   const modules = loadFrontendModules();
   const [tabs, coreTabs] = await Promise.all([modules.tabs, modules.coreTabs]);
-  assert.deepEqual(tabs.MAIN_TABS.map((tab) => tab.label), ['销售', '库存', '采购', '货品'],
-    '四个大 tab 文案逐字、顺序逐字');
-  assert.deepEqual(tabs.MAIN_TABS.map((tab) => tab.module), ['sales', 'inventory', 'purchase', 'product']);
+  // ⭐ 2026-10-13 她裁定：**扫一扫**与四个业务领域同级、放最前 ⇒ 只加这一条，**其余 4 个逐字不变** ✓
+  assert.deepEqual(tabs.MAIN_TABS.map((tab) => tab.label), ['扫一扫', '销售', '库存', '采购', '货品'],
+    '扫一扫最前；四个大 tab 文案与顺序逐字不变');
+  assert.deepEqual(tabs.MAIN_TABS.map((tab) => tab.module), ['scan', 'sales', 'inventory', 'purchase', 'product']);
 
   const html = coreTabs.mainTabsHtml();
   const buttons = [...html.matchAll(/<button class="([^"]*)" type="button" data-module="([^"]*)">([^<]*)<\/button>/g)];
-  assert.equal(buttons.length, 4, '正好 4 个 tab 按钮');
-  assert.deepEqual(buttons.map((button) => button[3]), ['销售', '库存', '采购', '货品'], '渲染出来的文案与顺序逐字一致');
+  assert.equal(buttons.length, 5, '⭐ 扫一扫 + 四个业务领域 = 5 个 tab 按钮（2026-10-13 新增扫一扫）');
+  assert.deepEqual(buttons.map((button) => button[3]), ['扫一扫', '销售', '库存', '采购', '货品'], '渲染出来的文案与顺序逐字一致');
 });
 
 test('AC4b 每个大 tab 的子 tab 清单逐字不变（唯一来源 config/domains.js）', async () => {

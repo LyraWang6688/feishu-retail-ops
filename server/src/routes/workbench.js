@@ -20,6 +20,8 @@ const { PurchaseArrivalConversationService } = require('../services/purchaseArri
 const { createLabelPrintService } = require('../services/labelPrintService');
 const { SampleReplacementService } = require('../services/sampleReplacementService');
 const { logError, logWarn } = require('../utils/logger');
+const { createLarkJsapiSignatureService } = require('../services/larkJsapiSignatureService');
+const { isAllowedSignatureUrl, JSSDK_SIGNATURE_PATH, SIGNATURE_MESSAGES } = require('../config/jsapiSignature');
 
 // ⚠️ 准入闸门只有这一份实现：语义与文案**逐字不变**（2026-10-08 的《工作台准入口径》沿用它）。
 // 扫码页（`GET /s/:number`）require 的也是它 —— 不新开鉴权、也不抄第二份判断。
@@ -42,6 +44,25 @@ const createWorkbenchRouter = (options = {}) => {
   const ordersConfig = options.ordersConfig || readWorkbenchOrdersConfig();
   const ordersCache = options.ordersCache || createWorkbenchOrdersCache({ ttlMs: ordersConfig.ordersCacheMs });
   const followup = options.followup || new SalesFollowupService({ ordersCache, ordersConfig });
+  // ⭐⭐ 飞书 JSAPI 签名（扫码用）—— 只服务「扫一扫」这一屏；可注入（测试用假票据 ✓）
+  const jsapiSignature = options.jsapiSignature || createLarkJsapiSignatureService();
+  // ⭐⭐ 2026-10-13：飞书 JSAPI 签名（「扫一扫」用原生扫码需要它）。
+  //    ⚠️ 挂在**工作台准入闸门内** ⇒ 未登录 401 ✓；**url 只能是本站**（否则 400 ✓，不当签名机 ✗）；
+  //    ⚠️ 响应只有四项（appId/timestamp/nonceStr/signature）⇒ **不回显 secret/ticket** ✗
+  router.get(JSSDK_SIGNATURE_PATH.replace('/api/workbench', ''), requireWorkbenchAccess, async (req, res) => {
+    const url = String(req.query.url || '');
+    if (!isAllowedSignatureUrl(url, req.get('host'))) {
+      return res.status(400).json({ success: false, error: SIGNATURE_MESSAGES.badUrl });
+    }
+    try {
+      const payload = await jsapiSignature.getSignature(url);
+      return res.json({ success: true, ...payload });
+    } catch (error) {
+      logWarn('workbench.jsapi_signature.failed', { reason: String(error?.message || error).slice(0, 200) });
+      return res.status(502).json({ success: false, error: SIGNATURE_MESSAGES.unavailable });
+    }
+  });
+
   router.use((req, res, next) => {
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.set('Pragma', 'no-cache');
