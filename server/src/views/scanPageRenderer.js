@@ -295,7 +295,8 @@ summary { cursor: pointer; }
  *   Layout stays the three-by-three she asked for; wrapping is allowed so a label
  *   is always fully readable, and the 44px touch height is untouched.
  */
-const REALM_BAR_STYLE = `.realm-tab { white-space: normal; overflow-wrap: anywhere; line-height: 1.15; text-align: center; }
+const REALM_BAR_STYLE = `.realm-tab { white-space: nowrap; font-size: var(--font-size-sm); padding: 0 2px;
+  overflow: hidden; text-overflow: clip; letter-spacing: 0; min-width: 0; text-align: center; }
 .realm-bar { grid-auto-rows: minmax(var(--control-height), auto); }`;
 
 const PAYMENT_STEP_STYLE = `.pay-status__options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
