@@ -223,7 +223,7 @@ test('AC-6R1 六个领域逐字 = 销售 · 补货 · 退货 · 验收 · 库存
   assert.equal(DEFAULT_REALM, 'sales', '缺省领域仍 = 销售');
 });
 
-test('AC-6R2 切换条：6 条真链接 + 紧凑两行网格（不横滑、每格 ≥44px、零 JS）', () => {
+test('AC-6R2 ⭐ 切换条：6 条真链接 + **一行六格铺满整宽**（窄屏可横滑、每格 ≥44px、零 JS）', () => {
   const html = htmlFor('sales');
   const bar = html.slice(html.indexOf('<nav class="realm-bar"'), html.indexOf('</nav>'));
   // ⚠️ 2026-10-13 **改写**（逐字）：
@@ -249,8 +249,13 @@ test('AC-6R2 切换条：6 条真链接 + 紧凑两行网格（不横滑、每�
   const style = fs.readFileSync(RENDERER_SRC, 'utf8');
   const barRule = style.match(/\.realm-bar \{[^}]*\}/)[0];
   assert.match(barRule, /display:\s*grid/, '紧凑两行网格 = grid');
-  assert.match(barRule, /grid-template-columns:\s*repeat\(3,/, '三列 × 两行');
-  assert.equal(/overflow-x/.test(barRule), false, '切换条不许横滑');
+  // ⚠️ 2026-10-14 改写（她：「没有铺满屏幕的水平方向」✗）—— 改前逐字：
+  //     `assert.match(barRule, /repeat\(3,/, '三列 × 两行')` + `assert.equal(/overflow-x/.test(barRule), false, '切换条不许横滑')`
+  assert.match(barRule, /grid-template-columns:\s*1fr;/, '容器一整列（每行占满整宽 ✓）');
+  assert.match(barRule, /width:\s*100%/, '容器整宽 ✓');
+  assert.match(barRule, /overflow-x:\s*auto/, '⭐ 窄屏允许横向滚动（不裁切 ✗）');
+  assert.ok(style.includes('repeat(6,minmax(0,1fr))') && style.includes('width:100%'),
+    '行 = 六列等分整宽 ✓（一格都不许被挤出容器）');
   const tabRule = style.match(/\n\.realm-tab \{[^}]*\}/)[0];
   assert.match(tabRule, /min-height:\s*var\(--control-height\)/, '每格 ≥44px（复用既有可点高度）');
 });

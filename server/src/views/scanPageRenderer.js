@@ -254,8 +254,8 @@ summary { cursor: pointer; }
    ⚠️ 她要的是「**紧凑两行网格**」⇒ grid 三列 × 两行（6 格正好两行）、
       **不横滑**（去掉原先的 overflow-x: auto + flex: 1 0 auto）、
       每格 min-height: var(--control-height)（既有 ≥44px 的可点高度）。 */
-.realm-bar { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-1); margin: 0 0 var(--space-2); padding: var(--space-1); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); }
-.realm-tab { display: flex; align-items: center; justify-content: center; min-height: var(--control-height); padding: 0 var(--space-2); border-radius: var(--radius-md); color: var(--text-secondary); font-size: var(--font-size-base); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.realm-bar { display: grid; grid-template-columns: 1fr; width: 100%; max-width: 100%; overflow-x: auto; gap: var(--space-1); margin: 0 0 var(--space-2); padding: var(--space-1); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); }
+.realm-tab { display: flex; align-items: center; justify-content: center; min-height: var(--control-height); min-width: 0; padding: 0 var(--space-2); border-radius: var(--radius-md); color: var(--text-secondary); font-size: var(--font-size-base); font-weight: 600; text-decoration: none; white-space: nowrap; }
 /* ── ⭐⭐ 2026-10-12 验收领域「未到货批次」那一块：单列堆叠、不横滑、每行 ≥44px ── */
 .batch-list { list-style: none; margin: 0; padding: 0; }
 .realm-tab:active, .batch-row:active { opacity: .55; }
@@ -361,11 +361,15 @@ const realmBarHtml = (realm = DEFAULT_REALM) => {
     const active = item.id === realm;
     return `<a class="realm-tab${active ? ' realm-tab--active' : ''}" data-realm-id="${escapeHtml(item.id)}" href="?from=${escapeHtml(item.id)}"${active ? ' aria-current="page"' : ''} data-tap-target="realm:${escapeHtml(item.id)}" data-open-label="${escapeHtml(SCAN_PAGE.tapFeedback && SCAN_PAGE.tapFeedback.label || '')}">${escapeHtml(item.label)}</a>`;
   };
-  const row = (items) => `<div class="realm-row" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">${items.map(tabHtml).join('')}</div>`;
+  // ⭐⭐ 2026-10-14（她：「6 个领域……**没有铺满屏幕的水平方向**……最后一格被截」）：
+  //   真因：**容器 `.realm-bar` 自己是 3 列网格**，里面却塞了**两个** `.realm-row`
+  //   ⇒ 每个 row 只占容器宽的 1/3，右边那一列空着 ✗（看起来就是"没铺满 + 最后一格像被截"）
+  //   ⇒ 现在：容器**一整列**（每个 row 占满整宽 ✓）＋ **一行六格**、六列等分（`minmax(0,1fr)` ✓）
+  //     每格 `min-width: 0`（长文案不会撑宽自己 ⇒ 不会把最后一格挤出去 ✗）；窄屏交给 `overflow-x: auto` ✓
+  const row = (items) => `<div class="realm-row" style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));width:100%;gap:8px">${items.map(tabHtml).join('')}</div>`;
   const items = REALM_TABS;
   return `<nav class="realm-bar" aria-label="${escapeHtml(REALM_TEXTS.barLabel)}">
-${row(items.slice(0, 3))}
-${row(items.slice(3, 6))}
+${row(items)}
 </nav>`;
 };
 
