@@ -1181,8 +1181,15 @@ const createScanPageRouter = (options = {}) => {
       //    ⚠️ 绝不因此少给常规码（不静默少码 ✗）；事件名用**既有那条** `config.events.failed`（不新造 ✓）
       let presentSpecialSizes = [];
       try {
-        // eslint-disable-next-line global-require
-        const reader = options.purchaseSizeReader || require('../services/purchaseSizeReader');
+        // 2026-10-13: the module exports a FACTORY ({ createPurchaseSizeReader }); build an
+        //   instance with the gateway already resolved above. Falling back to the module and
+        //   calling listSizes on it threw "reader.listSizes is not a function" on every page,
+        //   so the special sizes never showed and the warn log filled up.
+        const purchaseSizeModule = require('../services/purchaseSizeReader');
+        const reader = options.purchaseSizeReader
+          || (typeof purchaseSizeModule.createPurchaseSizeReader === 'function'
+            ? purchaseSizeModule.createPurchaseSizeReader({ gateway })
+            : purchaseSizeModule);
         presentSpecialSizes = (await reader.listSizes()) || [];
       } catch (error) {
         logWarn(config.events.failed, {
