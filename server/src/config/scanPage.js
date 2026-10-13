@@ -714,7 +714,13 @@ const SCAN_PAGE = Object.freeze({
   //     ⚠️ `?data=1` 走的还是**同一个 `service.lookup`**（不新增取数路径 ✗）
   //   ⚠️ 必须放在**这个**对象里 —— 上一版我插到了子配置对象里 ⇒ `SCAN_PAGE.skeleton` 是 undefined
   //      ⇒ 真进程开关**根本没生效**（真墙钟那次因此作废 ✗）。这条教训由下面那条"真配置"AC 钉住 ✓
-  skeleton: { enabled: readFlag(process.env, 'SCAN_PAGE_SKELETON_ENABLED', false) },
+  // ⭐ 2026-10-14（她：「六格没问题、不要改动」+「增加了一个新毛病…有中间态数据加载中」✗）：
+  //   骨架**只服务"首次进入"**（不带 `?from=`）；**点六格（带 `?from=`）直接出整页** ✗ 不再有中间态 ✓
+  //   **显式布尔**（缺省 true = 我们要的行为 ✓），不写 `||` 兜底 ✗
+  skeleton: {
+    enabled: readFlag(process.env, 'SCAN_PAGE_SKELETON_ENABLED', false),
+    firstEntryOnly: readFlag(process.env, 'SCAN_PAGE_SKELETON_FIRST_ENTRY_ONLY', true),
+  },
   // ⭐⭐ 2026-10-13（她最终顺序）：「上新」tab = **直达外链**（不是一个页面领域）。
   //   ⚠️ 工作台那份在 `public/workbench/config/links.js`（**我不碰那个文件** ✗ 只读它 ✓）——
   //      这里**另存一份**，并有**"不许漂移"测试**（两边逐字一致 ✓ 见

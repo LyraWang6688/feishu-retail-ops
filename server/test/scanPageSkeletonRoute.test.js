@@ -120,9 +120,12 @@ test('AC-R5 真配置哨兵：`SCAN_PAGE.skeleton.enabled` 真的导出，且随
     ], { cwd: path.join(__dirname, '..'), encoding: 'utf8' });
     return JSON.parse(out);
   };
-  assert.deepEqual(read(undefined), { enabled: false }, '缺省必须是 false（默认关 ⇒ 既有整页 AC 不受影响）');
-  assert.deepEqual(read('true'), { enabled: true }, '打开开关必须真的读到 true（不是 undefined ✗）');
-  assert.deepEqual(read('false'), { enabled: false });
+  // ⚠️ 2026-10-14：`skeleton` 多了 `firstEntryOnly`（骨架只服务"首次进入" ✓ 六格切换不出中间态 ✗）
+  assert.deepEqual(read(undefined), { enabled: false, firstEntryOnly: true },
+    '缺省：开关关 + 只首次进入 ✓（显式布尔 ✓）');
+  assert.deepEqual(read('true'), { enabled: true, firstEntryOnly: true },
+    '打开开关必须真的读到 true（不是 undefined ✗）');
+  assert.deepEqual(read('false'), { enabled: false, firstEntryOnly: true });
   // 真的导出了吗（不是"在某个子对象里"）
   assert.ok(Object.prototype.hasOwnProperty.call(SCAN_PAGE, 'skeleton'), 'SCAN_PAGE 顶层必须有 skeleton');
 });

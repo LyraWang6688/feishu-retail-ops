@@ -342,6 +342,10 @@ const createScanPageService = (rawGateway, options = {}) => {
       tableKey: 'product',
       now: options.now,
     }));
+  // ⭐⭐ 2026-10-14（她 02:47~02:48 的日志：`snapshot_hit:true` 但 **`product_snapshot_hit:false`** ✗
+  //   ⇒ 每次切换都要真读「货品信息」1.4~3.5 秒 ⇒ 她感觉"变慢了"）——
+  //   **两个快照都登记、都预热** ✓（她逐字「两个快照都留」✓）；⚠️ 只登记**已有实例**，绝不新建 ✗
+  if (productSnapshot) liveInventorySnapshots.push(productSnapshot);
   if (productSnapshot && options.startSnapshot === true) productSnapshot.start();
 
   /** 时钟：与 TTL 缓存共用（用例可以注入一个假时钟，两个窗口一起被推进）。 */

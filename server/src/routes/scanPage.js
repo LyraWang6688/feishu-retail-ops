@@ -1160,7 +1160,13 @@ const createScanPageRouter = (options = {}) => {
     //   再 `fetch('?data=1')` 拿回来 —— ⚠️ `data=1` 一路落到下面**原有的整页渲染**（同一个
     //   `service.lookup` ✓ 不新增取数路径 ✓），所以两条路径的数据必然一致 ✓。
     //   ⚠️ 只覆盖**编号页/记录 ID 页**这一条；`GET /`（新首页）与所有写入口一个字不动 ✓
+    // ⭐ 2026-10-14：骨架**只服务"首次进入"**（不带 `?from=`）——
+    //   她「六格没问题、不要改动」+「中间态数据加载中」✗ ⇒ 点六格（带 `?from=`）**直接出整页** ✓
+    //   判据在配置里（`config.skeleton.firstEntryOnly` ✓ 显式布尔 ✓ 不写 `||` 兜底 ✗）
+    const skeletonFirstEntryOnly = config.skeleton?.firstEntryOnly === true;
+    const hasRealmQuery = String(req.query?.from || '') !== '';
     if (config.skeleton?.enabled === true && String(req.query?.data || '') !== '1'
+      && !(skeletonFirstEntryOnly && hasRealmQuery)
       && (lookupInputOf(req).number || lookupInputOf(req).recordId)) {
       logInfo(SCAN_PAGE.events?.skeletonServed || 'scan.page.skeleton', { request_id: requestId });
       return sendHtml(res, 200, renderScanSkeleton(lookupInputOf(req), config));
