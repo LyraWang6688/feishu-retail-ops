@@ -24,7 +24,8 @@ import { createPlaceholderModule } from './features/shared/placeholder.js';
 //    （原先列它们的「其它 / 历史功能」页已删）。要恢复某个入口：在 `config/tabs.js` 的
 //    `MAIN_TABS` 里加回一条即可，逻辑不用改。
 const modules = new Map([
-  // ── 四个业务领域（唯一的一级 tab 来源）────────────────────────────────────
+  // ── 一级 tab 的来源（顺序 = `config/tabs.js` 的 MAIN_TABS；第一条 = 她 2026-10-13 定的「扫一扫」）──
+  ['scan', createDomainModule('scan')],
   ['sales', createDomainModule('sales')],
   ['inventory', createDomainModule('inventory')],
   ['purchase', createDomainModule('purchase')],

@@ -205,24 +205,32 @@ const pageLabels = (domain) => domain.pages.map((page) => page.label);
 
 const scriptCountOf = (html) => (html.match(/<script[\s>]/gi) || []).length;
 
-test('AC1 一级 tab 恰好 4 个，顺序逐字 = 销售 · 库存 · 采购 · 货品（配置先行）', async () => {
+test('AC1 一级 tab = 扫一扫 · 销售 · 库存 · 采购 · 货品（2026-10-13 她裁定：扫一扫同级、放最前）', async () => {
   const modules = loadFrontendModules();
   const [tabs, coreTabs] = await Promise.all([modules.tabs, modules.coreTabs]);
 
   assert.deepEqual(tabs.MAIN_TABS, [
+    { module: 'scan', label: '扫一扫' },
     { module: 'sales', label: '销售' },
     { module: 'inventory', label: '库存' },
     { module: 'purchase', label: '采购' },
     { module: 'product', label: '货品' },
-  ], '正好四个 tab，顺序 = 她念的顺序（销售 · 库存 · 采购 · 货品）——唯一来源 config/tabs.js');
+  ], '⭐ 扫一扫**同级且放最前**（她 2026-10-13 逐字裁定）——唯一来源 config/tabs.js');
+  // ⭐ 回归：**其余 4 个与改前逐字相同**（名字 + 顺序都不许动）
+  assert.deepEqual(tabs.MAIN_TABS.slice(1), [
+    { module: 'sales', label: '销售' },
+    { module: 'inventory', label: '库存' },
+    { module: 'purchase', label: '采购' },
+    { module: 'product', label: '货品' },
+  ], '⭐ 其余 4 个 tab 必须与改前**逐字相同**（回归哨兵）');
 
   const html = coreTabs.mainTabsHtml();
   const buttons = [...html.matchAll(/<button class="([^"]*)" type="button" data-module="([^"]*)">([^<]*)<\/button>/g)];
-  assert.equal(buttons.length, 4, 'nav 里正好 4 个 tab 按钮（不多不少）');
-  assert.deepEqual(buttons.map((button) => button[3]), ['销售', '库存', '采购', '货品'], '文案逐字、顺序逐字');
-  assert.deepEqual(buttons.map((button) => button[2]), ['sales', 'inventory', 'purchase', 'product'], 'data-module 与领域 id 一致');
-  assert.ok(buttons[0][1].includes('active'), '默认打开的 tab = 第一个 = 销售');
-  assert.deepEqual(buttons.slice(1).map((button) => button[1].includes('active')), [false, false, false], '只有第一个带 active');
+  assert.equal(buttons.length, 5, 'nav 里正好 5 个 tab 按钮（不多不少）');
+  assert.deepEqual(buttons.map((button) => button[3]), ['扫一扫', '销售', '库存', '采购', '货品'], '文案逐字、顺序逐字');
+  assert.deepEqual(buttons.map((button) => button[2]), ['scan', 'sales', 'inventory', 'purchase', 'product'], 'data-module 与领域 id 一致');
+  assert.ok(buttons[0][1].includes('active'), '默认打开的 tab = 第一个 = **扫一扫**（她要求放最前）');
+  assert.deepEqual(buttons.slice(1).map((button) => button[1].includes('active')), [false, false, false, false], '只有第一个带 active');
   // 旧文案一个新 tab 里都不许再出现（它们去了「其它 / 历史功能」页）
   for (const gone of ['信息录入', '信息查询', '订单列表']) {
     assert.ok(!tabs.MAIN_TABS.some((tab) => tab.label === gone), `一级 tab 上不许再有旧文案「${gone}」`);

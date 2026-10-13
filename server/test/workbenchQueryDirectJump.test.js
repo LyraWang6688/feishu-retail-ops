@@ -301,15 +301,15 @@ test('AC4b 空 href 的卡是「不可点 + 人话」，且整条面里没有 hr
 // AC5 回归：其余结构 / 功能一条不少（含"删入口不删共用链路"）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC5a 四个大 tab 逐字不变；货品子 tab 逐字不变', async () => {
+test('AC5a 扫一扫（最前）+ 四个大 tab 逐字不变；货品子 tab 逐字不变', async () => {
   const modules = loadFrontendModules();
   const [domains, tabs, coreTabs] = await Promise.all([modules.domains, modules.tabs, modules.coreTabs]);
   const byId = new Map(domains.DOMAIN_TABS.map((domain) => [domain.id, domain]));
 
   assert.deepEqual(labelsOf(byId.get('product')), ['货品上新', '标签打印']);
-  assert.deepEqual(tabs.MAIN_TABS.map((tab) => tab.label), ['销售', '库存', '采购', '货品']);
+  assert.deepEqual(tabs.MAIN_TABS.map((tab) => tab.label), ['扫一扫', '销售', '库存', '采购', '货品']);
   const buttons = [...coreTabs.mainTabsHtml().matchAll(/data-module="([^"]*)">([^<]*)</g)];
-  assert.deepEqual(buttons.map((match) => match[2]), ['销售', '库存', '采购', '货品']);
+  assert.deepEqual(buttons.map((match) => match[2]), ['扫一扫', '销售', '库存', '采购', '货品']);
 });
 
 test('AC5b 「输入编号 → 打开既有页面」这条能力还在（只剩标签打印用它）', async () => {
