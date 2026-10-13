@@ -37,8 +37,11 @@ test('AC-SR1 ⭐⭐ 不再静默吞错：失败 ⇒ 页面上有**人话 + 重�
 });
 
 test('AC-SR2 ⭐⭐ 拿回**还是骨架** ⇒ 不 document.write（保住"不循环" ✓ 且给人话 ✓）', () => {
-  const guardAt = SCRIPT.indexOf("html.indexOf('data-view=\"scan-skeleton\"') !== -1");
-  const writeAt = SCRIPT.indexOf('document.write');
+  // ⚠️ 必须**剥注释**再判顺序 —— 脚本里 2026-10-13 的注释里也含 `document.write` 字样 ✗
+  //   （我第一版就被它绊了 ⇒ 判出"write 在前"✗ 实际是注释在前 ✓）
+  const code = SCRIPT.replace(/^\s*\/\/.*$/gm, '');
+  const guardAt = code.indexOf("html.indexOf('data-view=\"scan-skeleton\"') !== -1");
+  const writeAt = code.indexOf('document.write');
   assert.ok(guardAt > 0, '要有"拿回骨架"的判据 ✓（按源码逐字 ✓）');
   assert.ok(writeAt > guardAt, '判据必须在 document.write **之前**（否则又会写回骨架 ✗）');
   assert.match(SCRIPT, /catch\(function \(\) \{ showProblem\(\); \}\)/, '请求异常也要走人话（不再吞 ✗）');
