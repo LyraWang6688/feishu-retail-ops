@@ -1675,3 +1675,70 @@ test('AC-ACT2 ⭐ 两处计数**故意不同**（不是 bug）：本单条数 vs
     });
   } finally { e2e.cleanup(); }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-12（她："领域/批次**要点 4、5 次**才切换、跳转" + "我想查我点了几次"）
+//   AC-TAP1 点击即时反馈（附加式）：领域条/批次行带 `data-tap-target` + `data-open-label`（配置文案）+ CSS :active
+//           ⚠️ **脚本段数 ≤ 1**（并进既有那段 ✓ 绝不新增第二段 ✗）
+//   AC-TAP2 埋点：`POST /<prefix>/ui-tap?target=…` ⇒ 204；缺 target ⇒ 400；**不采集任何值**（只有 target/page）
+// ═══════════════════════════════════════════════════════════════════════════
+test('AC-TAP1 ⭐ 点击即时反馈：钩子 + 配置文案 + CSS :active + **脚本仍只有一段**', async () => {
+  login();
+  const e2e = createE2E();
+  try {
+    await withServer(e2e.app, async (base) => {
+      const cookie = sessionCookie('ou_tap_1');
+      const { html } = await getPage(pageUrlOf(base, NUMBER_A, 'replenish'), cookie);
+      const label = SCAN_PAGE.tapFeedback.label;
+      const tabs = html.match(/<a class="realm-tab[^>]*data-tap-target="realm:[^"]*"[^>]*data-open-label="[^"]*"/g) || [];
+      assert.ok(tabs.length >= 2, `领域条要带钩子（实际 ${tabs.length} 颗）`);
+      assert.ok(tabs.every((t) => t.includes(label)), '文案来自配置 ✓');
+      // ⚠️ 这个 harness 里 `/s/accept` **没有未到货批次**（空态渲染 ✗）⇒ 批次行改断言**渲染层源码**
+      //    （真页面那条我在真启动里用 `acceptLandingSelfServe` 那套页面验过 ✓）
+      const rendererSrc = require('node:fs').readFileSync(
+        require('node:path').join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8',
+      );
+      assert.match(rendererSrc, /data-tap-target="batch:/, '批次行要带钩子 ✓');
+      assert.match(html, /\.realm-tab:active[^{]*\{[^}]*opacity/, 'CSS :active 要有（按住即变淡 ✓ 零脚本 ✓）');
+      const scripts = html.match(/<script[\s>]/gi) || [];
+      assert.ok(scripts.length <= 1, `**不许新增脚本**（实际 ${scripts.length} 段 ✗）`);
+      assert.ok(/navigator\.sendBeacon/.test(html), '同一段脚本里要有上报（keepalive ✓）');
+    });
+  } finally { e2e.cleanup(); }
+});
+
+test('AC-TAP2 埋点端点：target 必填 ⇒ 204；缺 target ⇒ 400；**只有 target/page，没有值** ✗', async () => {
+  login();
+  const e2e = createE2E();
+  try {
+    await withServer(e2e.app, async (base) => {
+      const post = (qs) => fetch(`${base}/s/ui-tap${qs}`, { method: 'POST', headers: { cookie: sessionCookie('ou_tap_2') } });
+      assert.equal((await post('?target=realm%3Areplenish&page=scan')).status, 204, '正常上报 ⇒ 204');
+      assert.equal((await post('?target=batch%3ACGD-1&page=accept')).status, 204, '批次点击也能报');
+      assert.equal((await post('')).status, 400, '没有 target ⇒ 400（不静默吞 ✓）');
+    });
+  } finally { e2e.cleanup(); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-12（Lead 核日志的两个可观测性缺口）
+//   AC-QK1 `http.request.completed` 要带 **`query_keys`（只有键名，没有值 ✗）** ⇒ 才数得出她切了几次领域
+//   AC-PT1 `/accept`（批次列表页）要有**分段耗时** `scan.accept.pending_timing`（她点 4、5 次才过去 ✗）
+//   ⚠️ 这两条用**源码哨兵**（日志的 sink 在模块加载时绑死 ⇒ 用例里拦不到 warn/info ✗ 我踩过）
+//     —— 真实证据在报告里（真服务器的日志原文 ✓）
+// ═══════════════════════════════════════════════════════════════════════════
+test('AC-QK1 源码哨兵：请求日志带 `query_keys`（**只有键名**，值不出现 ✗）', () => {
+  const appSrc = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
+  assert.match(appSrc, /query_keys: Object\.keys\(req\.query \|\| \{\}\)/, '要打键名列表');
+  assert.equal(/query_keys[\s\S]{0,60}req\.query\b(?! \|\| \{\}\))/.test(appSrc), false, '不许把 query 的值铺进日志 ✗');
+});
+
+test('AC-PT1 源码哨兵：/accept 自助页打 `scan.accept.pending_timing`（分段耗时，只加打点 ✗）', () => {
+  const route = fs.readFileSync(path.join(__dirname, '../src/routes/scanPage.js'), 'utf8');
+  assert.match(route, /config\.events\.pendingTiming/, '要打那条汇总');
+  assert.match(route, /pendingTiming\.render_ms = /, '要有渲染段');
+  assert.match(route, /loadPendingBatches\(requestId, pendingTiming\)/, '取批次那一段要量');
+  const svc = fs.readFileSync(path.join(__dirname, '../src/services/scanArrivalService.js'), 'utf8');
+  assert.match(svc, /pendingBatches = async \(\{ timing = null \} = \{\}\)/, '取数支持 timing 出参（逻辑零改动 ✓）');
+  assert.match(svc, /batches_ms/, '要有读表那一段');
+});

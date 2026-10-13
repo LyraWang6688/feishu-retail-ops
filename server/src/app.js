@@ -75,6 +75,9 @@ app.use((req, res, next) => {
       path: req.path,
       status_code: res.statusCode,
       duration_ms: Date.now() - startedAt,
+      // ⭐⭐ 2026-10-13（Lead 核日志时发现）：原来**查询参数整个丢了** ✗ ⇒ 数不出"她切了几次领域/点了哪个批次"。
+      // 🔴 **只有键名、没有值** ✗（`?from=` / `?batch=` 的值可能含编号/批次号，不进日志 ✓）。
+      query_keys: Object.keys(req.query || {}),
     });
   });
   next();

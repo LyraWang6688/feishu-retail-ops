@@ -110,9 +110,9 @@ const createScanPageRouter = (options = {}) => {
    * ⚠️ **同一个 catch**：读表失败 ⇒ 只记一条 warn + 返回 `{ok:false, batches:[]}`
    *    ⇒ 页面照旧 **200**、走手输兜底（她的"别卡住她"）。
    */
-  const loadPendingBatches = async (requestId) => {
+  const loadPendingBatches = async (requestId, timing = null) => {
     if (!arrival()) return null;
-    return arrival().pendingBatches().catch((error) => {
+    return arrival().pendingBatches({ timing }).catch((error) => {
       logWarn(writeConfig.events.failed, {
         request_id: requestId, reason: 'accept_pending_batches_failed', error: error.message,
       });
@@ -889,17 +889,27 @@ const createScanPageRouter = (options = {}) => {
       //    「这一页没带报货批次号：回【验收】领域…」—— 她**就是从【验收】领域进来的**，
       //    而且那一页**没有输入框**（"或填批次号"根本做不到）⇒ 死循环。
       if (!wantedBatch && !wantedBatchRecord) {
+        // ⭐ 2026-10-13：`/accept`（**批次列表**那一页）也要有分段耗时（她点了 4、5 次才过去 ✗）
+        const pendingTiming = {};
+        const pendingStartedAt = Date.now();
         // ⭐⭐ 2026-10-12 21:11：**区分"裸进来"与"空着点【进入验收】"** ——
         //    后者是**表单提交**（URL 上有 `batch=`，值是空）⇒ 必须**即时反馈**（她的"任何点击都要有反应"）；
         //    前者是她第一次进来，不该先喊一句提示。
         const submittedEmpty = Object.prototype.hasOwnProperty.call(req.query || {}, 'batch');
-        return sendHtml(res, 200, renderAcceptanceSelfServe({
+        const acceptPending = await loadPendingBatches(requestId, pendingTiming);
+        const renderStartedAt = Date.now();
+        const html = renderAcceptanceSelfServe({
           config,
-          acceptPending: await loadPendingBatches(requestId),
+          acceptPending,
           emptySubmitHint: submittedEmpty,
           // 链接/表单用**当前挂载前缀**（`/s` 或 `/r`），不写死 `/s/`。
           basePath: req.baseUrl,
-        }));
+        });
+        pendingTiming.render_ms = Math.max(0, Date.now() - renderStartedAt);
+        pendingTiming.total_ms = Math.max(0, Date.now() - pendingStartedAt);
+        pendingTiming.batch_count = Array.isArray(acceptPending?.batches) ? acceptPending.batches.length : 0;
+        logInfo(config.events.pendingTiming, { request_id: requestId, ...pendingTiming });
+        return sendHtml(res, 200, html);
       }
       const started = await arrival().start({
         openId,
@@ -1071,6 +1081,25 @@ const createScanPageRouter = (options = {}) => {
   //    ⚠️ 用**路径数组**把同一个 handler 挂到两个模式上 —— **不复制一份处理逻辑**；
   //      "这一页在取哪一样东西"由挂载点判定（`scanTargetOf`），其余一行都不分叉。
   const ROUTE_PATTERNS = [config.route.path, config.route.recordPath].filter(Boolean);
+  /**
+   * ⭐⭐ 2026-10-13（她问"我点了几次"）：**前端点击埋点** `ui.tap`。
+   *
+   * · 通道：`navigator.sendBeacon('/<prefix>/ui-tap?target=…&page=…')`（**不阻塞跳转** ✓ 失败静默 ✓）
+   * · 🔴 **只记 target（我们的标识）**：`realm:replenish` / `batch:CGD-…` / `submit:submit_order`
+   *   —— **不采集任何表单值 / 个人信息** ✗；用 query 传（零 body 解析 ✓）
+   * · 挂在扫码路由下（`/s` `/r` 都有 ✓）⇒ **不动 `app.js`** ✓
+   */
+  router.post('/ui-tap', (req, res) => {
+    const target = String(req.query?.target || '').trim().slice(0, 120);
+    const page = String(req.query?.page || '').trim().slice(0, 16);
+    if (!target) return res.status(400).type('text').send('missing target');
+    logInfo('ui.tap', {
+      request_id: req.requestId, target, page, realm: resolveRealm(req.query?.from),
+      path: String(req.originalUrl || '').split('?')[0],
+    });
+    return res.status(204).end();
+  });
+
   router.get(ROUTE_PATTERNS, async (req, res) => {
     const requestId = req.requestId;
     // ⚠️ 领域来自查询串（她给的参数名就是 `from`）；认不出来一律回落缺省，**不报错**。

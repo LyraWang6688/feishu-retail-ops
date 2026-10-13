@@ -500,6 +500,8 @@ const PRODUCT_SNAPSHOT = Object.freeze({
  * `lookupTiming` / `snapshot*` 是 2026-10-09 加的（她：「以后一查日志就知道卡在哪一步」）。
  */
 const EVENTS = Object.freeze({
+    // ⭐ 2026-10-13：`/accept`（批次列表页）的分段耗时（她点 4、5 次才过去 ✗）
+    pendingTiming: 'scan.accept.pending_timing',
   viewed: 'scan.page.viewed',
   notFound: 'scan.page.not_found',
   // ⭐⭐ 2026-10-12：`/r/{recordId}` 这条路的正向证据 / 失败证据。
@@ -553,6 +555,16 @@ const SCAN_PAGE = Object.freeze({
   // ⭐ 2026-10-12：页面构建标识（渲染层写进写表单的隐藏字段；日志用它判断"旧页面"）
   pageBuild: PAGE_BUILD,
   pageBuildField: 'page_build',
+  // ⭐⭐ 2026-10-13（她："领域/批次**要点 4、5 次**才切换、跳转" + "我想查我点了几次"）：
+  //   · `label`      = 点下去**立刻**显示的文案（"正在打开…"）
+  //   · `reportPath` = 埋点上报路径（挂在**扫码路由**下 ⇒ 不动全局中间件 ✓ 见注释）
+  tapFeedback: Object.freeze({
+    enabled: true,
+    label: process.env.SCAN_TAP_FEEDBACK_LABEL || '正在打开…',
+    // ⚠️ 为什么是 `/<prefix>/ui-tap` 而**不是** `/api/ui-tap`：扫码路由自带前缀（`/s` `/r`）且
+    //    **不动 `app.js` 的鉴权/挂载** ⇒ 埋点跟着扫码页走最省事、风险最小 ✓
+    reportPath: '/ui-tap',
+  }),
   // ⭐⭐ 2026-10-12（业务负责人拍板 · 方案 A，逐字）：「**提交完 ⇒ 自动回首页，而首页 = 销售页**」
   //   ⇒ 三路（销售 / 补货 / 验收）**写成功之后**都回【销售】领域的扫码首页：
   //     · 成功页**先显示结果**（单号 / 实际数量 / 实际金额）⇒ 约 2 秒后**自动跳**；

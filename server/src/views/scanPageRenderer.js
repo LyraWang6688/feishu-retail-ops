@@ -331,8 +331,8 @@ ${meta ? `<p class="identity__meta">${escapeHtml(meta)}</p>` : ''}
  */
 const realmBarHtml = (realm = DEFAULT_REALM) => `<nav class="realm-bar" aria-label="${escapeHtml(REALM_TEXTS.barLabel)}">
 ${REALMS.map((item) => (item.id === realm
-    ? `<a class="realm-tab realm-tab--active" data-realm-id="${escapeHtml(item.id)}" href="?from=${escapeHtml(item.id)}" aria-current="page" data-open-label="${escapeHtml(SCAN_PAGE.tapFeedback && SCAN_PAGE.tapFeedback.label || '')}">${escapeHtml(item.label)}</a>`
-    : `<a class="realm-tab" data-realm-id="${escapeHtml(item.id)}" href="?from=${escapeHtml(item.id)}" data-open-label="${escapeHtml(SCAN_PAGE.tapFeedback && SCAN_PAGE.tapFeedback.label || '')}">${escapeHtml(item.label)}</a>`)).join('\n')}
+    ? `<a class="realm-tab realm-tab--active" data-realm-id="${escapeHtml(item.id)}" href="?from=${escapeHtml(item.id)}" aria-current="page" data-tap-target="realm:${escapeHtml(item.id)}" data-open-label="${escapeHtml(SCAN_PAGE.tapFeedback && SCAN_PAGE.tapFeedback.label || '')}">${escapeHtml(item.label)}</a>`
+    : `<a class="realm-tab" data-realm-id="${escapeHtml(item.id)}" href="?from=${escapeHtml(item.id)}" data-tap-target="realm:${escapeHtml(item.id)}" data-open-label="${escapeHtml(SCAN_PAGE.tapFeedback && SCAN_PAGE.tapFeedback.label || '')}">${escapeHtml(item.label)}</a>`)).join('\n')}
 </nav>`;
 
 /**
@@ -570,6 +570,13 @@ ${pageLink}
 const submitSubmittingText = (write) => String(write?.texts?.submitSubmitting || '');
 const submitSubmittingElapsedText = (write) => String(write?.texts?.submitSubmittingElapsed || '');
 
+/**
+ * ⭐⭐ 2026-10-13（她：「领域/批次**要点 4、5 次**才切换、跳转」+「我想查我点了几次」）：
+ *  点**会跳转 / 会写数据**的东西 ⇒ 立刻给反应（换文案 + 置灰 + 防重复点 ✓）并上报一条 `ui.tap`。
+ *  ⚠️ 全在**同一段脚本**里（别新增第二段 ✗ —— 有哨兵钉着"整页只有一段脚本"）；
+ *  ⚠️ 脚本**模板串内只写 ASCII 注释**（写中文会让硬编码中文闸门多一条假增量 ✗ 我踩过）；
+ *  ⚠️ 上报用 `navigator.sendBeacon`（不阻塞跳转 ✓ 失败静默 ✓），**只带 target/page**（不采集表单值 ✗）。
+ */
 const submitFeedbackScriptHtml = () => `<script data-view="submit-feedback">
 (function () {
   var forms = document.querySelectorAll('form');
@@ -616,6 +623,39 @@ const submitFeedbackScriptHtml = () => `<script data-view="submit-feedback">
         button.textContent = elapsedTemplate.replace('{seconds}', String(seconds));
       }, 1000);
     });
+  }
+  // 2026-10-13: instant feedback on navigation links + one ui.tap report.
+  // ASCII-only inside this template (a Chinese comment here would trip the hardcoded-Chinese gate).
+  var tapLinks = document.querySelectorAll('a[data-tap-target]');
+  for (var t = 0; t < tapLinks.length; t += 1) {
+    tapLinks[t].addEventListener('click', function (event) {
+      if (event.defaultPrevented || event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      var link = event.currentTarget;
+      tapReport(link.getAttribute('data-tap-target') || '');
+      if (link.getAttribute('data-opening') === '1') { event.preventDefault(); return; }
+      link.setAttribute('data-opening', '1');
+      link.setAttribute('aria-disabled', 'true');
+      link.style.opacity = '0.55';
+      var openLabel = link.getAttribute('data-open-label');
+      if (openLabel) link.textContent = openLabel;
+    });
+  }
+  var tapForms = document.querySelectorAll('form');
+  for (var f2 = 0; f2 < tapForms.length; f2 += 1) {
+    tapForms[f2].addEventListener('submit', function (event) {
+      var form = event.target;
+      var btn = form.querySelector('button[type="submit"][name="action"]');
+      tapReport('submit:' + (btn && btn.value ? btn.value : ''));
+    });
+  }
+  function tapReport(target) {
+    try {
+      if (!target || !navigator.sendBeacon) return;
+      var seg = location.pathname.split('/')[1] || 's';
+      var page = location.pathname.indexOf('accept') > -1 ? 'accept' : 'scan';
+      navigator.sendBeacon('/' + seg + '/ui-tap?target=' + encodeURIComponent(target) + '&page=' + encodeURIComponent(page));
+    } catch (error) { /* silent: a failed report must never block navigation */ }
   }
 })();
 </script>`;
@@ -1156,7 +1196,7 @@ const acceptPendingBlockHtml = (config, page = {}) => {
     ].filter(Boolean).join(t.acceptPendingMetaSeparator || ' · ');
     // ⭐⭐ 2026-10-12 21:11（她真机）：这一行原来是"浅灰信息条"的样子 ⇒ 她**没看出来能点**（去点了下面的空输入）。
     //    ⇒ 描边 + 右侧一个「›」（`batch-row__cta`，样式只走 tokens）——"能点"要在**一眼**里看得出来。
-    return `<li><a class="btn batch-row" data-batch="${escapeHtml(batchNo)}" href="${escapeHtml(href)}" data-open-label="${escapeHtml(SCAN_PAGE.tapFeedback && SCAN_PAGE.tapFeedback.label || '')}">${escapeHtml(batchNo)}${meta ? `<span class="batch-row__meta">${escapeHtml(meta)}</span>` : ''}<span class="batch-row__cta" aria-hidden="true">›</span></a></li>`;
+    return `<li><a class="btn batch-row" data-batch="${escapeHtml(batchNo)}" href="${escapeHtml(href)}" data-tap-target="batch:${escapeHtml(batchNo)}" data-open-label="${escapeHtml(SCAN_PAGE.tapFeedback && SCAN_PAGE.tapFeedback.label || '')}">${escapeHtml(batchNo)}${meta ? `<span class="batch-row__meta">${escapeHtml(meta)}</span>` : ''}<span class="batch-row__cta" aria-hidden="true">›</span></a></li>`;
   }).join('');
   // ⭐ 空着点【进入验收】⇒ 一句人话（就在那颗按钮上方），别让她以为卡住。
   const emptySubmitHint = page?.emptySubmitHint
