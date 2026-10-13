@@ -258,10 +258,14 @@ test('AC2 `from=sales` 尺码分两组：有货（样品+门盒）⇒ 现货；�
   };
   assert.deepEqual(saleSizeGroups(legacyShape).inStock.map((item) => item.size_text), ['40'],
     '没有 key 时按列序取（仓库那 2 双不算有货）');
+  // ⭐ 2026-10-14 改指向：`saleSizeGroups` 多返回一组 `folded`（**缺货 ∩ 特殊码** ⇒ 「特殊码」折叠块 ✓）
+  //   本例的 VIEW 是男鞋 A 段、缺货的是 41/43/44（**都在可录范围内、且都不是特殊码 46/47/48**）
+  //   ⇒ `folded` 为空 ✓（"第一组/第二组"的语义一个字没变 ✓）
   assert.deepEqual(saleSizeGroups(VIEW), {
     inStock: [{ size_text: '40', count: 1 }, { size_text: '42', count: 2 }],
     prepaid: [{ size_text: '41', count: 0 }, { size_text: '43', count: 0 }, { size_text: '44', count: 0 }],
-  }, '第一组 = 有货（现货）40 / 42；第二组 = 其余 41 / 43 / 44（预订）');
+    folded: [],
+  }, '第一组 = 有货（现货）40 / 42；第二组 = 其余 41 / 43 / 44（预订）；第三组 = 缺货的特殊码（本例为空 ✓）');
 
   // ② 男女两组（A = 男 38–48 / B = 女 34–43）——她去 2026-10-09 给的范围
   assert.deepEqual(SIZE_GROUP_RANGES.A, { label: '男', from: 38, to: 48, enterable: [38, 48], normal: [38, 45], default: [38, 45], special: [46, 47, 48] });

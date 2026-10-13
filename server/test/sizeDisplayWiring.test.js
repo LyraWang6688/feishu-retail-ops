@@ -29,18 +29,21 @@ test('AC-SW-1 ⭐⭐ 越界哨兵：`sizesForCategory` 必须**继续**是"可�
     'B 可录范围 34–43');
 });
 
-test('AC-SW-2 ⭐⭐ 展示侧读的是配置的 `normal`（A 38–45 · B 36–41），不是 `enterable`', () => {
+test('AC-SW-2 ⭐⭐ 展示侧的**缺货基准**读的是配置的 `enterable`（可录范围 A 38–48 · B 34–43）', () => {
   const ranges = SCAN_PAGE.sizeSegments.ranges;
   assert.deepEqual(ranges.A.normal, [38, 45], '男普通码 38–45');
   assert.deepEqual(ranges.B.normal, [36, 41], '女普通码 36–41');
   assert.deepEqual(ranges.A.special, [46, 47, 48], '男特殊码 46/47/48（**只在有货时才显示** ✓）');
   assert.deepEqual(ranges.B.special, [34, 35, 42, 43], '女特殊码 34/35/42/43（同上 ✓）');
-  // ⭐ 展示范围 ≡ normal（不是 enterable 的两端）
+  // ⭐⭐ 2026-10-14 **改指向**（她最终口径：缺货基准 = **可录范围** —— 依据
+  //   docs/special-size-fold-and-enterable-base-2026-10-14.md 她的原话：「都是按照它的**可录范围**来，
+  //   只不过把缺码或者预订里包含**特殊码的归集到一个折叠的区域**」）
+  //   改前逐字：`assert.match(code, /scope = normalScopeOf\(parsed\.categoryCode\)/ …)`
   const code = fs.readFileSync(path.join(__dirname, '../src/services/scanPageService.js'), 'utf8');
-  assert.match(code, /scope = normalScopeOf\(parsed\.categoryCode\)/,
-    '销售/库存那条链必须用 `normalScopeOf`（读 normal ⇒ 零飞书读 ✓）');
-  assert.match(code, /const normalScopeOf = \(categoryCode\) => \{[\s\S]{0,400}?range\?\.normal \|\| range\?\.default/,
-    '`normalScopeOf` 必须读 `normal`（兼容 `default`）');
+  assert.match(code, /scope = enterableScopeOf\(parsed\.categoryCode\)/,
+    '销售/库存那条链必须用 `enterableScopeOf`（可录范围 ⇒ 零飞书读 ✓）');
+  assert.match(code, /const enterableScopeOf = \(categoryCode, config = SCAN_PAGE\) => \{[\s\S]{0,400}?range\?\.enterable/,
+    '`enterableScopeOf` 必须读 `enterable`；且定义在**模块作用域**（能导出 ⇒ 用例直接调 ✓）');
 });
 
 test('AC-SW-3 ⭐⭐ 有货的特殊码**照旧出现**（靠 `buckets` 带进来）；没货的特殊码**不进展示集合**', () => {
@@ -48,10 +51,16 @@ test('AC-SW-3 ⭐⭐ 有货的特殊码**照旧出现**（靠 `buckets` 带进�
   // 展示集合 = 有货的 ∪ 配置范围 ⇒ 有货的特殊码天然在里面 ✓
   assert.match(code, /const renderSizes = sortSizes\(\[\.\.\.new Set\(\[\.\.\.buckets\.keys\(\), \.\.\.scope\.sizes\]\)\]\)/,
     '展示集合 = 有货 ∪ 配置范围（有货的特殊码 ⇒ 现货里照旧出现 ✓）');
-  // 缺码只在"配置范围之内"的尺码上判 ⇒ 没货的特殊码（不在 normal 里）既不显示也不算缺码 ✓
+  // ⭐⭐ 2026-10-14 改指向：缺码仍在"配置范围之内"判，但那个范围 = **可录范围**（含特殊码 ✓）
+  //   ⇒ 缺货的特殊码**有行、算缺**，展示层再把它收进「特殊码」折叠块 ✓
+  //   （改前逐字：同一条断言，但注释写的是"没货的特殊码既不显示也不算缺码 ✗"）
   assert.match(code, /missing: Boolean\(config\.missingSize\.enabled && !scope\.degraded && scopeSet\.has\(size\) && rowTotal === 0\)/,
     '缺码 = 在配置范围里 && 三状态都没货');
-  assert.match(code, /const scopeSet = new Set\(scope\.sizes\)/, '`scopeSet` 来自 `scope.sizes`（= normal ✓）');
+  assert.match(code, /const scopeSet = new Set\(scope\.sizes\)/, '`scopeSet` 来自 `scope.sizes`（= **可录范围** ✓）');
+  // ⭐ 折叠落点：缺货的特殊码归到 `folded`（一处逻辑，展示层共用 ✓）
+  const realm = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRealm.js'), 'utf8');
+  assert.match(realm, /if \(specialSet\.has\(item\.size_text\)\) folded\.push\(item\)/,
+    '缺货 ∩ 特殊码 ⇒ 归到 `folded`（折叠块 ✓）');
 });
 
 test('AC-SW-4 ⭐ 验收页口径未被牵连（`loadSizeScope` 仍在，且只给验收用）', () => {
