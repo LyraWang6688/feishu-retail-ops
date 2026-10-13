@@ -58,3 +58,21 @@
 - `「上新」是可点击链接；目标 = 配置里的表单 URL（逐字 ✓）`
 - `配置缺失 ⇒ 明确人话 + 不渲染空链接（不许 href="#" ✗）`
 - `其余 5 个 tab 的落点与改前逐字相同（回归 ✓）`
+
+---
+
+## 五、⭐ 「货品上新」表单链接（Lead 2026-10-13 自查找到，不用她贴）
+
+### 唯一来源（仓库里本来就有）
+```
+📍 server/public/workbench/config/links.js
+export const PRODUCT_NEW_FORM_URL =
+  'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnX0GlNcSOujePgWOLTTWr4m';
+```
+- 现在被「工作台 → 货品 tab → 子页面『货品上新』」用（`directJump: true` ✓ 她 2026-10-12 要的"点一次就到" ✓）
+- ⚠️ 本仓库有「URL 单一来源」规矩 ⇒ 扫码页「上新」tab **不许再抄字面量** ✗
+
+### 落法（扫码页是服务端渲染，工作台那份是前端配置 ⇒ 不共享模块）
+1. 服务端 `config/scanPage.js` 加配置项（如 `newProductFormUrl` ✓）值 = 上面那个 URL ✓
+2. ⭐ **加"不许漂移"测试**：断言服务端那份与 `links.js` 的 `PRODUCT_NEW_FORM_URL` **逐字相同** ✓
+3. 「上新」tab ⇒ 普通链接直达 ✓（不中转 ✗）· 配置缺失 ⇒ 明确人话 + **不渲染空链接**（不许 `href="#"` ✗）
