@@ -497,6 +497,14 @@ const createScanPageService = (rawGateway, options = {}) => {
   };
 
   /**
+   * ⭐⭐ 2026-10-14：按 **记录 ID** 在货品快照里找。
+   *   快照存的就是 `listAll('product')` 的**原始记录**（每条都带 `record_id` ✓）
+   *   ⇒ 命中 = **零额外飞书读**；没这一条 ⇒ 调用方照旧真读（不猜 ✗）。
+   */
+  const findProductByRecordId = (products, recordId) => (products || [])
+    .find((record) => String(record?.record_id || '') === String(recordId || '')) || null;
+
+  /**
    * 一条「实时库存」属于不属于这个编号？
    *   ① 首选**关联记录 id**（「实时库存.编号」→「货品信息」）—— 这是权威判据；
    *   ② 关联单元格为空时，用「库存键」公式（`货号|颜色|类别|尺码`）的**前缀**兜底
@@ -959,7 +967,15 @@ const createScanPageService = (rawGateway, options = {}) => {
         }
         return cachedById;
       }
-      const found = await readProductByRecordId({ recordId, requestId, timing });
+      // ⭐⭐ 2026-10-14 真机 bug（她「还是慢」的真根，比 400 更根本）：
+      //    **记录 ID 这条路原来压根不看货品快照** ✗ —— 她二维码就是 `/r/{recordId}`
+      //    ⇒ `product_snapshot_hit` 永远 false + 每次真读货品表（1.5~3.6 秒）⇒ 切换卡 ✗
+      //    快照里就是原始记录（含 `record_id`）⇒ 按 record_id 命中 = **零额外读** ✓
+      //    未就绪 / 没这一条 ⇒ **照旧真读**（`readProductByRecordId`，行为逐字不变 ✓ 不许猜 ✗）
+      const indexedById = productSnapshot ? productSnapshot.get() : { ready: false, reason: 'disabled' };
+      const snapshotProduct = indexedById.ready ? findProductByRecordId(indexedById.records, recordId) : null;
+      if (timing) timing.product_snapshot_hit = Boolean(snapshotProduct);
+      const found = snapshotProduct || await readProductByRecordId({ recordId, requestId, timing });
       const numberField = fieldName(schema, 'product', 'number');
       if (found) {
         product = found;
