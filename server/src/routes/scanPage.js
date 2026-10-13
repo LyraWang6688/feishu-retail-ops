@@ -40,7 +40,7 @@ const express = require('express');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { sizesForCategory, parseNumberSegments, createScanPageService } = require('../services/scanPageService');
 const { createScanWriteService } = require('../services/scanWriteService');
-const { renderScanPage, renderScanMessagePage, renderMinimalPage, renderAcceptancePage, renderAcceptanceDonePage, renderAcceptanceSelfServe, renderSaleSuccessPage, buildPaymentRows } = require('../views/scanPageRenderer');
+const { renderSalesHome, renderScanPage, renderScanMessagePage, renderMinimalPage, renderAcceptancePage, renderAcceptanceDonePage, renderAcceptanceSelfServe, renderSaleSuccessPage, buildPaymentRows } = require('../views/scanPageRenderer');
 // ⚠️ 只借这两个**纯函数**：所选尺码在「样品 + 门盒」有没有货（= 页面上那两个分组的判据），
 //    以及 `?from=` → 领域 id（认不出来回落缺省，不报错、不白屏）。
 const { sellableSizeTexts, resolveRealm, DEFAULT_REALM, ACCEPTANCE_REALM } = require('../views/scanPageRealm');
@@ -250,10 +250,22 @@ const createScanPageRouter = (options = {}) => {
     });
   };
 
-  const successReturnFields = (req, target) => {
+  const successReturnFields = (req, target, noticeNo = '') => {
     const cfg = config.successReturn || {};
     if (cfg.enabled === false) return {};
-    const homePath = postActionFor(target, cfg.homeRealm || DEFAULT_REALM);
+    // ⭐⭐ 2026-10-13：回跳 URL 带**刚提交那一单的单号**（无状态 ✓）⇒ 编号页顶部据此给指引 ✓
+    //   ⚠️ 只加键名与单号（单号不是敏感数据 ✓）；不带任何表单值 ✗
+    // ⭐⭐ 2026-10-13（她的口径："提交这一单"⇒ 与这一单无关 ✓）：
+    //   销售领域的"首页"= **不带编号的入口页**（`config.successReturn.homePath` ✓ 一处改 ✓）
+    const homeRealm = cfg.homeRealm || DEFAULT_REALM;
+    const landing = cfg.homePath && homeRealm === DEFAULT_REALM
+      ? `${req.baseUrl}${cfg.homePath}`.replace(/\/+$/, '') + '/'
+      : '';
+    const base = landing || postActionFor(target, homeRealm);
+    const noticeKey = cfg.noticeKey || 'done';
+    const homePath = String(noticeNo || '').trim()
+      ? `${base}${base.includes('?') ? '&' : '?'}${encodeURIComponent(noticeKey)}=${encodeURIComponent(String(noticeNo).trim())}`
+      : base;
     return {
       returnPath: homePath,
       returnLabel: cfg.label || '',
@@ -1060,10 +1072,26 @@ const createScanPageRouter = (options = {}) => {
     };
   };
 
-  // 只有 `/s` 或 `/s/`（没有编号）：不是 500、也不是白屏，回一张"这个链接不对"。
-  router.get('/', (req, res) => {
-    logWarn(config.events.badNumber, { request_id: req.requestId, reason: 'missing_number' });
-    return badNumberPage(res, 400, req.requestId);
+  /**
+   * ⭐⭐ 2026-10-13 **口径变更**（她的原话，逐字）：
+   *   「"提交这一单"就说明**这一单已经结了**呀，如果我再操作的话，**应该就跟这一单没关系了**，
+   *     除非我是选"**再加一双**"呀」
+   *  ⇒ `/s`（**不带编号**）= **销售领域入口页**（= 她说的"销售首页" ✓）：
+   *    · 提交成功后回跳这里（回跳 URL 带 `?done=<单号>` ⇒ 顶部"上一单已提交（单号）" ✓ 无状态）
+   *    · 手输编号 ⇒ **302 到 `/s/<编号>`**（兜底 ✓）
+   *  ⚠️ 改前这里是"缺编号 ⇒ 400 这个链接不对" ✗；**改后 `GET /s` 是有意义的入口** ✓
+   *     （**认不出的编号**仍走原来的 400 人话页 ✓ 那条没动 ✗）
+   */
+  router.get('/', async (req, res) => {
+    const requestId = req.requestId;
+    const number = String(req.query?.number || '').trim();
+    if (number) {
+      logInfo(config.events.salesHomeOpened, { request_id: requestId, by: 'manual' });
+      return res.redirect(302, `${req.baseUrl}/${encodeURIComponent(number)}`);
+    }
+    const noticeKey = config.successReturn?.noticeKey || 'done';
+    const orderNo = String(req.query?.[noticeKey] || '').trim().slice(0, 40);
+    return sendHtml(res, 200, renderSalesHome({ config, orderNo, basePath: req.baseUrl }));
   });
 
   /**
@@ -1205,6 +1233,8 @@ const createScanPageRouter = (options = {}) => {
         userAgent: req.headers['user-agent'],
         acceptance,
         acceptPending,
+        // ⭐⭐ 2026-10-13：提交后回跳带过来的单号 ⇒ 顶部那条"上一单已提交"的指引（没有就不显示 ✓）
+        justSubmittedOrderNo: String(req.query?.[config.successReturn?.noticeKey || 'done'] || '').slice(0, 40),
         // ⭐ 这一页挂在哪个前缀上（`/s` 或 `/r`）—— 自助块里的批次链接/手输表单必须**留在同一前缀**。
         basePath: req.baseUrl,
         print: printContext,
@@ -1533,7 +1563,8 @@ const createScanPageRouter = (options = {}) => {
         const submitTarget = backTargetFor(req, decodeURIComponent(String(req.params.number || '')));
         return sendSuccess(res, 200, {
           // ⭐ 提交成功 ⇒ 自动回【销售】首页（+ 一颗【返回扫码】兜底，同一个 URL ✓）；「再录一单」照旧保留 ✓
-          ...successReturnFields(req, submitTarget),
+          // ⭐ 提交这一单 ⇒ 回跳带它的单号（ⓑ 顶部指引的数据来源 ✓）
+          ...successReturnFields(req, submitTarget, result.order_no || ''),
           title: result.reused ? texts.submittedAgainTitle : texts.submittedTitle,
           body: result.reused
             ? fillWriteText(texts.submittedAgainBody, { orderNo: result.order_no || '—' })

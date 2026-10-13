@@ -1372,14 +1372,14 @@ test('AC-SR1/SR2/SR3 销售提交成功 ⇒ 自动回**销售**首页（URL 确�
       const html = await response.text();
       const meta = html.match(/<meta http-equiv="refresh" content="(\d+);url=([^"]+)">/);
       assert.ok(meta, `成功页要有"自动回首页"（服务端渲染的确定 URL）：${html.slice(0, 200)}`);
-      // ⭐ 目标 = **销售领域的扫码首页**：就是她扫的那个编号那一页——
-      //   ⚠️ 销售是**缺省领域**，`postActionFor` 对它**不写** `?from=`（所以两种写法都对 ✓）
+      // ⭐⭐ 2026-10-13 **口径变更**（她的原话：「"提交这一单"就说明**这一单已经结了**呀，如果我再操作的话，
+      //   **应该就跟这一单没关系了**，除非我是选"**再加一双**"呀」）：
+      //   目标从"她扫的那一页（`/s/<编号>` ✗ 还带着这一单）"改成 **不带编号的销售首页**（`/s/` ✓）+
+      //   带 `?done=<单号>`（首页据此显示"上一单已提交" ✓ 无状态）
       const target = new URL(meta[2], 'http://x');
-      assert.equal(target.pathname, `/s/${encodeURIComponent(NUMBER_A)}`,
-        `自动跳转目标要是她扫的那一页（实际 ${meta[2]}）`);
-      const from = target.searchParams.get('from');
-      assert.ok(from === null || from === 'sales',
-        `目标是**销售**领域（缺省不写 ?from= ✓，实际 from=${from}）`);
+      assert.equal(target.pathname.replace(/\/$/, ''), '/s',
+        `自动跳转目标要落在**不带编号的销售首页**（实际 ${meta[2]}）`);
+      assert.equal(target.searchParams.get('from'), null, '销售首页不带 ?from=（与这一单无关 ✓）');
       assert.ok(Number(meta[1]) >= 1, `要先让她看到结果再跳（实际 ${meta[1]}s）`);
       const link = html.match(/<a class="btn" data-view="success-return" href="([^"]+)">/);
       assert.ok(link, '还要有一颗【返回扫码】兜底');
@@ -1742,3 +1742,165 @@ test('AC-PT1 源码哨兵：/accept 自助页打 `scan.accept.pending_timing`（
   assert.match(svc, /pendingBatches = async \(\{ timing = null \} = \{\}\)/, '取数支持 timing 出参（逻辑零改动 ✓）');
   assert.match(svc, /batches_ms/, '要有读表那一段');
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-13（她真机："我开新单子的时候，系统会挂一个 86900" ✗）
+//   只读复现结论：**草稿确实清了**（0 双 ✓）、`no-store` 在 ✓、"未交付"零逻辑命中 ✓
+//   ⇒ 最贴症状的机制：提交成功后自动回跳 = **`/s/<她刚提交的那个编号>`** ⇒ 页面标题/上下文
+//     仍是上一单那个产品（86900）✗ ⇒ 她要的 ⓑ：**顶部给一条明确指引**（上一单已提交 + 单号 + 请扫下一个标签）
+//   AC-B1（行为）真提交 ⇒ 成功页回跳 URL 带 `?done=<单号>` ⇒ 打开它 ⇒ 顶部指引**逐字**含那个单号 + 本单 0 双
+//   AC-B2（回归）没有 `done` 的普通访问 ⇒ **不出现**那条指引 ✓
+// ═══════════════════════════════════════════════════════════════════════════
+
+
+test('AC-B2 回归：没有 `done` 的普通访问 ⇒ **不出现**那条指引', async () => {
+  login();
+  const e2e = createE2E();
+  try {
+    await withServer(e2e.app, async (base) => {
+      const cookie = sessionCookie('ou_notice_2');
+      const fresh = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      assert.equal(fresh.html.includes('data-view="just-submitted"'), false, '新会话/新编号页不该有指引 ✗');
+      // ⭐ 2026-10-13：提示已搬到**销售首页**（ⓑ 并入 ⓐ ✓）⇒ 没有 `done` 的首页也不该有它 ✓
+      const home = await getPage(`${base}/s`, cookie);
+      assert.equal(home.html.includes('data-view="sales-home-submitted"'), false, '首页没有 done ⇒ 不显示提示 ✗');
+    });
+  } finally { e2e.cleanup(); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-13（她的口径，逐字）：「"提交这一单"就说明**这一单已经结了**呀，如果我再操作的话，
+//   **应该就跟这一单没关系了**，除非我是选"**再加一双**"呀」
+//   ⇒ **两条必须严格分开**：提交 ⇒ 与这一单无关（页面**不带任何货号** ✗）；
+//     「继续再加一双」⇒ 同一单里继续加行 ✓（这才是唯一"与这一单有关"的入口）
+//   ⇒ ⓐ：**新建"不带编号的销售首页"**（`GET /s` = 领域入口页 ✓），提交后回跳它 ✓
+//   AC-H1 提交 ⇒ 落到**不带任何货号/编号**的销售首页 ✓
+//   AC-H2 该页显示「上一单已提交（刚提交那一单的单号）」+「请扫下一个标签」✓（单号逐字 ✓）
+//   AC-H3 ⭐ **回归（最关键）**：「继续再加一双」⇒ 仍在本单（同一 session / 同一单号 ✓）
+//   AC-H4 直接访问编号页 ⇒ **不显示**"上一单已提交"（回归 ✓ 别把提示挂到所有页 ✗）
+//   AC-H5 开新单 ⇒ 清单只有新扫的那一双（不含上一单任何行 ✓）
+// ═══════════════════════════════════════════════════════════════════════════
+const homeText = () => require('../src/config/scanPage').SCAN_PAGE.texts;
+
+test('AC-H1/H2 ⭐ 「提交这一单」⇒ 落到**不带编号**的销售首页（含"上一单已提交（单号）"+请扫下一个标签）', async () => {
+  login();
+  const e2e = createE2E();
+  const text = (s) => String(s).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  try {
+    await withServer(e2e.app, async (base) => {
+      const cookie = sessionCookie('ou_home_1');
+      await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      await addLine(base, cookie, NUMBER_A, '40');
+      const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      const submitted = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+        action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
+        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: [''],
+      });
+      const sHtml = await submitted.text();
+      const orderNo = (/XSD-[0-9-]+/.exec(sHtml) || [''])[0];
+      assert.ok(orderNo, '成功页要有单号');
+      const meta = (sHtml.match(/http-equiv="refresh"[^>]*url=([^">]+)/) || [])[1] || '';
+      const noticeKey = require('../src/config/scanPage').SCAN_PAGE.successReturn.noticeKey || 'done';
+      assert.ok(meta.includes(`${noticeKey}=${encodeURIComponent(orderNo)}`), `回跳要带单号标记（实际 ${meta}）`);
+      const metaPath = meta.startsWith('http') ? new URL(meta).pathname + new URL(meta).search : meta;
+      // ⭐ ① 落点是**不带编号**的销售首页（路径就是挂载前缀本身 ✓）
+      assert.equal(new URL(`${base}${metaPath}`).pathname.replace(/\/$/, ''),
+        new URL(`${base}/s`).pathname.replace(/\/$/, ''), '提交后要落在不带编号的销售首页 ✗');
+      const home = await getPage(`${base}${metaPath}`, cookie);
+      const body = text(home.html);
+      // ⭐ ② 页面上**不出现任何编号/货号**（与上一单无关 ✓）
+      assert.equal(home.html.includes(NUMBER_A), false, `销售首页不许带上一单的编号 ✗（${NUMBER_A}）`);
+      assert.equal(home.html.includes(ITEM_A), false, `销售首页不许带任何货号 ✗（${ITEM_A}）`);
+      assert.equal(home.html.includes('data-view="draft-bar"'), false, '销售首页不该有本单清单 ✗');
+      // ⭐ ③ 单号逐字 + 请扫下一个标签
+      assert.ok(body.includes(orderNo), `要显示刚提交那一单的单号 ${orderNo}`);
+      assert.ok(body.includes(homeText().salesHomeTitle), `要有"${homeText().salesHomeTitle}"`);
+      assert.ok(home.html.includes('data-view="sales-home"'), '要有明确的数据视图标记 ✓');
+    });
+  } finally { e2e.cleanup(); }
+});
+
+test('AC-H3 ⭐⭐ 回归（最关键）：「继续再加一双」⇒ **仍在本单**（同一 session / 同一单号）', async () => {
+  login();
+  const e2e = createE2E();
+  try {
+    await withServer(e2e.app, async (base) => {
+      const cookie = sessionCookie('ou_home_3');
+      await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      await addLine(base, cookie, NUMBER_A, '40');
+      // 「继续再加一双」= 页面上的 addLine 动作（**同一单** ✓ 不换 session、不换单号 ✓）
+      await addLine(base, cookie, NUMBER_A, '41');
+      const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      const bar = require('node:assert');
+      assert.ok(/本单：2 双/.test(page.html), '再加一双要留在本单（2 双 ✓）');
+      // 提交后**同一个 session** 里那一单只落一次、单号唯一 ✓
+      const submitted = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+        action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
+        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['', ''],
+      });
+      const sHtml = await submitted.text();
+      // ⚠️ 单号在成功页会出现多次（标题/正文/回跳标记 ✓）⇒ 断言**去重后只有一个** ✓
+      const orders = new Set(sHtml.match(/XSD-[0-9-]+/g) || []);
+      assert.equal(orders.size, 1, `同一单只允许一个单号（实际 ${[...orders].join(',')}）`);
+    });
+  } finally { e2e.cleanup(); }
+});
+
+test('AC-H4/H5 回归：编号页**不显示**"上一单已提交"；提交后开新单 ⇒ 清单只有新那一双', async () => {
+  login();
+  const e2e = createE2E();
+  try {
+    await withServer(e2e.app, async (base) => {
+      const cookie = sessionCookie('ou_home_5');
+      const fresh = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      assert.equal(fresh.html.includes(homeText().salesHomeTitle), false, '编号页不该显示"请扫下一个标签" ✗');
+      assert.equal(fresh.html.includes(homeText().salesHomeJustSubmitted.replace('{orderNo}', '')), false,
+        '编号页不该显示"上一单已提交" ✗（除非回跳带了标记 ✓）');
+      // 提交一单
+      await addLine(base, cookie, NUMBER_A, '40');
+      let page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      const subRes = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+        action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
+        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: [''],
+      });
+      const subHtml = await subRes.text();
+      // ⭐⭐ **强化断言**（原来这里**忽略了提交结果** ✗ ⇒ 提交一旦没成，后面那条"新单只有 1 双"会**莫名其妙地红** ✗）：
+      //   提交必须成功、并且**这一单已经结束**（草稿清空由上一条成功的提交保证 ✓）。
+      assert.equal(subRes.status, 200, `提交必须成功（实际 ${subRes.status}）`);
+      assert.match(subHtml, /XSD-[0-9-]+/, '成功页要有单号 ✓');
+      // 开新单：扫另一个编号 ⇒ 清单**只有**新扫的那一双
+      // ⚠️ 用**页面上的真 key**（真实页面就是这么发的 ✓）——
+      //   原来用 helper 里的伪造 key `'unused-on-add'`：服务端会**接受并回 303 `?added=1`**，
+      //   但会话**没落上**（2026-10-13 抓到的现场：`sale_status=submitted / lines=0` ✗）⇒ 偶发红 ✓
+      const nbPage = await getPage(pageUrlOf(base, NUMBER_B), cookie);
+      const addRes = await postForm(pageUrlOf(base, NUMBER_B), cookie, {
+        action: SCAN_WRITE.actions.addLine, submit_key: submitKeyOf(nbPage.html), size: '41',
+      });
+      page = await getPage(pageUrlOf(base, NUMBER_B), cookie);
+      // ⭐⭐ 失败现场打印（**不是 retry、也没有放宽断言** ✗）：
+      //   2026-10-13 这条在全量里偶发红过一次（同一提交连跑 10 次全绿、整文件 6 次全绿 ✗ 未复现），
+      //   所以先把"失败那一刻的现场"打出来 ⇒ 下次一红就能直接定位根因（提交被 reuse？被限流？草稿没清？）。
+      if (!/本单：1 双/.test(page.html)) {
+        const bars = page.html.match(/本单：[0-9]+ 双/g) || [];
+        const snap = await e2e.sessions.get('ou_home_5').catch(() => null);
+        console.log('FLAKE-EVIDENCE 会话=', JSON.stringify(snap && {
+          sale_status: snap.sale?.status, sale_lines: (snap.sale?.lines || []).length,
+          sale_seq: snap.sale?.seq, sale_key: snap.sale?.key, completed: (snap.sale?.completed || []).length,
+          session_status: snap.status,
+        }));
+        console.log('FLAKE-EVIDENCE 提交状态=', subRes.status,
+          '| 单号=', (/XSD-[0-9-]+/.exec(subHtml) || [''])[0],
+          '| addLine 状态=', addRes.status,
+          '| addLine Location=', String(addRes.headers?.get?.('location') || ''),
+          '| 本单条=', JSON.stringify(bars),
+          '| 提交页有失败文案=', /没成功|认不出|没带上/.test(subHtml));
+      }
+      assert.ok(/本单：1 双/.test(page.html), '新单只有新扫的那一双（1 双 ✓）');
+      assert.equal(page.html.includes(NUMBER_A), false, '新单里不许出现上一单的编号 ✗');
+      assert.equal(page.html.includes(homeText().salesHomeJustSubmitted.replace('{orderNo}', '')), false,
+        '新单页也不该有那条提示 ✗');
+    });
+  } finally { e2e.cleanup(); }
+});
+
+
