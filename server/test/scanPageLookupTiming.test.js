@@ -223,7 +223,7 @@ test('AC-T2 走完一次扫码只打一条 `scan.lookup.timing`（含 render_ms�
   assert.equal(line.whole_table_fallback, false);
   assert.equal(typeof line.render_ms, 'number');
   assert.ok(line.render_ms >= 0);
-  assert.ok(line.total_ms >= 40, '总时长把三段读都算进去了');
+  assert.ok(line.total_ms >= 30, '两段真的读了，就该都算进总时长（读「尺码管理」那次已按她拍板删除）');
   assert.ok(line.rows === INVENTORY.length);
   assert.ok(typeof line.request_id === 'string' && line.request_id.length > 0, '带 request_id 才追得下去');
 });
