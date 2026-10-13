@@ -711,6 +711,22 @@ const createScanPageService = (rawGateway, options = {}) => {
    *   · 类别为空（编号里没有第 3 段）→ `number_without_category`；
    *   · 配置里没有这个类别 → `no_sizes_for_category`。
    */
+  /**
+   * ⭐ 2026-10-14：**普通码（normal）**展开成尺码清单 —— 零飞书读 ✓（她的最终配置设计 ✓）
+   *   A（男）= 38–45 · B（女）= **36–41** ✓；special 不在此列（不参与缺码 ✓）
+   *   认不出类别 / 段配坏 ⇒ `degraded`（沿用既有降级：只显示有货尺码 ✓ 一字不变 ✗）
+   */
+  const normalScopeOf = (categoryCode) => {
+    const range = config.sizeSegments?.ranges?.[String(categoryCode || '').trim().toUpperCase()];
+    const segment = range?.normal || range?.default;
+    if (!Array.isArray(segment) || segment.length !== 2) {
+      return { sizes: [], degraded: true, reason: 'unknown_category' };
+    }
+    const sizes = [];
+    for (let size = Number(segment[0]); size <= Number(segment[1]); size += 1) sizes.push(size);
+    return { sizes, degraded: false, reason: '', source: 'config' };
+  };
+
   const loadSizeScope = async ({ categoryCode }) => sizesForCategory(categoryCode, config);
 
   /**
@@ -1084,7 +1100,10 @@ const createScanPageService = (rawGateway, options = {}) => {
       // ⭐ 2026-10-09：缺码判定**读配置段**（不再每次读「尺码管理」）。
       // ⚠️ 2026-10-14：**这次读先保留**（我试过换成"只按配置默认段"，但撞坏 4 条既有 spec ✗
       //   ⇒ 按 Lead 的规则"若口径真的变了 ⇒ 停手报我"⇒ 已回退 ✓；要不要动它由 Lead 定 ✓）
-      scope = await loadSizeScope({ categoryCode: parsed.categoryCode });
+      // ⭐⭐ 2026-10-14（她逐字：「你在代码里做完配置，就不用读尺码管理和采购明细了」）：
+      //   范围**只按配置的 normal**（A 38–45 · B 36–41 ✓ 零飞书读 ✓）
+      //   ⇒ 缺码 = normal − 有货 ✓（special 不参与缺码 ✗）；`loadSizeScope` 本体留给验收页 ✓
+      scope = normalScopeOf(parsed.categoryCode);
       // ⭐ 缺码这一段是**读配置**还是**降级**（`scan.lookup.timing` 里就靠它看"有没有回退"）。
       if (timing) timing.size_source = scope.degraded ? `degraded:${scope.reason}` : 'config';
       // ⭐ 缺码这一段：读**配置**时是 0 次飞书；只有降级（读「尺码管理」）才算 1 次 ✓

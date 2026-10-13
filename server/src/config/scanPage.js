@@ -543,6 +543,9 @@ const SIZE_SEGMENTS = Object.freeze({
     A: Object.freeze({
       label: '男', from: 38, to: 48,
       enterable: Object.freeze([38, 48]),
+      // ⭐ 2026-10-14 她的命名：`normal`（普通码）= ①库存缺码判据 ②销售页预订范围 ✓
+      //   `default` 保留为**兼容别名**（同一个数组 ✓ 一份真源 ✗ 不是第二份）
+      normal: Object.freeze([38, 45]),
       default: Object.freeze([38, 45]),
       special: Object.freeze([46, 47, 48]),
     }),
@@ -556,6 +559,8 @@ const SIZE_SEGMENTS = Object.freeze({
       //   ⇒ 默认段 = 缺码判据 = 销售页「预订」的候选（预订 = 段内 − 有货）。
       //   ⇒ 特殊码**不参与缺码**（有就显示 ✓ 没有不显示、也不算缺 ✓）。
       //   ⇒ 见 docs/scan-size-scope-ruling-2026-10-14.md（改前：36-42 / 更早 35-42）
+      // ⭐ 2026-10-14 她的最终口径：「女鞋就是 **36-41**」⇒ normal = 缺码判据 + 预订范围 ✓
+      normal: Object.freeze([36, 41]),
       default: Object.freeze([36, 41]),
       special: Object.freeze([34, 43]),
     }),
