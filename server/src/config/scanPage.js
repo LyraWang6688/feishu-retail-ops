@@ -209,6 +209,10 @@ const TEXTS = Object.freeze({
   errorTitle: '暂时打不开，请稍后再试',
   // 2026-10-13 骨架屏的两句文案（她：加载到中间一直白屏）—— 见 renderScanSkeleton
   skeletonLoading: '数据加载中',
+  // ⭐ 2026-10-14（她真机：「页面已经打开、但内容迟迟不出来」⇒ 骨架停住 ✗）：
+  //   取数失败 / 拿回的还是骨架 ⇒ 给**一句人话 + 重试入口**（不再静默吞错 ✗ 也不自动死磕 ✗）
+  skeletonErrorText: '这次没读到，点「重试」再来一次',
+  skeletonRetryLabel: '重试',
   errorBody: '读库存时出错了。',
   busyTitle: '库存数据正在准备中',
   busyBody: '飞书那边还没准备好，请过几秒刷新这一页。',
