@@ -186,6 +186,12 @@ test('AC-T2 走完一次扫码只打一条 `scan.lookup.timing`（含 render_ms�
   app.use((req, res, next) => { req.requestId = 'req_timing_demo'; next(); });
   app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
     gateway, config: SCAN_PAGE, startSnapshot: false,
+    writeService: Object.assign(
+      require('../src/services/scanWriteService').createScanWriteService({
+        gateway, config: require('../src/config/scanWrite').SCAN_WRITE,
+      }),
+      { listPaymentMethods: async () => require('../src/config/scanWrite').SCAN_WRITE.sale.paymentMethods },
+    ),
   }));
 
   const { entries } = await captureInfo(() => withServer(app, async (base) => {

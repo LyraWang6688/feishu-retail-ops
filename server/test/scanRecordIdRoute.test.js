@@ -121,6 +121,7 @@ const appWith = (gateway, writes = [], submitResult = null) => {
       scan: (...args) => { scannedRenders.push(args[1]?.route?.basePath || '?'); return renderScanPage(...args); },
     },
     writeService: {
+      listPaymentMethods: async () => require('../src/config/scanWrite').SCAN_WRITE.sale.paymentMethods,
       sessions: { get: async () => null, submitKeyFor: (openId, session, flow = 'sale') => `scan_${flow}:test:1` },
       addSaleLine: async (input) => { writes.push(input); return { ok: true, count: writes.length }; },
       submitSale: async (input) => {

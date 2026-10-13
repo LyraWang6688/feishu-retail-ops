@@ -105,6 +105,7 @@ const line = (size, itemNo = 'YD6693-2') => ({
 
 /** 写上下文：形状照路由给渲染层的那一份（文案直接用**真配置**，才测得到"没有说明书"）。 */
 const WRITE = (lines = [], overrides = {}) => ({
+  listPaymentMethods: async () => require('../src/config/scanWrite').SCAN_WRITE.sale.paymentMethods,
   enabled: true,
   saleEnabled: true,
   replenishEnabled: true,

@@ -342,6 +342,42 @@ const createScanWriteService = (options = {}) => {
     }
   };
 
+  /**
+   * ⭐⭐ **收款方式清单**（「收款方式管理」表 = **唯一真源**）。
+   *
+   * 业务负责人 2026-10-13 的原话：
+   *   「你当前页面上这笔可选择的支付方式，**也不是我交易行为管理里面的那些可选项**，
+   *    比如说**抖音团购券就没有**啊」
+   * ⇒ 下拉的选项**必须**来自这张表（`v1BitableSchema.tables.paymentMethod` · 字段「收款方式」），
+   *   **不再**来自环境变量清单（`SCAN_SALE_PAYMENT_METHODS` 只留给单测注入 ✓）。
+   * 🔴 与 `listAccessories` 的**唯一不同**：读不到 ⇒ **抛**（不吞 ✗）——
+   *   她的口径是"**不许静默回落**"：宁可不渲染这一页，也不给她一个**少了几项**的下拉。
+   * 形状照抄 `listAccessories`：`options.listPaymentMethods` 可注入（单测）· 短 TTL 缓存 · 记 warn ✓
+   */
+  let paymentMethodCache = { at: 0, value: null };
+  const listPaymentMethods = async () => {
+    if (typeof options.listPaymentMethods === 'function') return options.listPaymentMethods();
+    // 复用页面级短 TTL（与配品下拉同一只旋钮，默认 30 秒）：只影响"下拉里有哪几项"
+    const ttl = Number(config.sale.accessoryCacheTtlMs) || 0;
+    if (ttl > 0 && paymentMethodCache.value && now() - paymentMethodCache.at < ttl) {
+      return paymentMethodCache.value;
+    }
+    try {
+      const records = await gateway.listAll('paymentMethod');
+      const field = fieldOf('paymentMethod', 'name');
+      const value = [...new Set((records || [])
+        .map((record) => textValue(record?.fields?.[field]).trim())
+        .filter(Boolean))];
+      paymentMethodCache = { at: now(), value };
+      return value;
+    } catch (error) {
+      logWarn(config.events.failed, {
+        reason: 'payment_method_list_failed', error: String(error.message || error),
+      });
+      throw error; // ⭐ **明确失败**：调用方负责给人话，绝不回落 env
+    }
+  };
+
   const productNumber = (record) => textValue(record?.fields?.[fieldOf('product', 'number')]).trim();
 
   const resolveProductRecord = async ({ productRecordId, number }) => {
@@ -1510,6 +1546,8 @@ const createScanWriteService = (options = {}) => {
     purchaseReturn,
     // ⭐ 页面上的配品下拉要的清单（只读；复用共享件 `salesEntryService.listAccessories` + 短缓存）。
     listAccessories,
+    // 收款方式下拉的来源（表 = 唯一真源；读不到会抛，调用方要给人话）
+    listPaymentMethods,
     // 给用例 / 排查用：这次提交的幂等键是怎么算出来的（与 purchaseWebhookService 的
     // `purchaseTaskId` 同一个思路：**确定性推导**，两端不必各写一份公式）。
     taskIdFor: (key) => `${config.replenish.taskIdPrefix}_${String(key || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`,
