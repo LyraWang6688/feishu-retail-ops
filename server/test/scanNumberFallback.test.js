@@ -134,6 +134,7 @@ const pageApp = (gateway, writes = []) => {
     service,
     gateway,
     writeService: {
+      listPaymentMethods: async () => require('../src/config/scanWrite').SCAN_WRITE.sale.paymentMethods,
       // GET 渲染"本单条"要读一次自己的会话（**只读**；这里给一个空会话）。
       sessions: {
         get: async () => null,

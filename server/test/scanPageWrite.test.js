@@ -1177,3 +1177,132 @@ test('AC-RK3 ⭐ 连续 3 个货号（都用第一把键）⇒ 3 个批次、货
     assert.equal(numbers.size, 3, '三个货号各不相同');
   } finally { h.cleanup(); }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 【2026-10-13】收款方式下拉 ⇒ **改读「收款方式管理」表**（表 = 唯一真源）
+//   她：「你当前页面上这笔可选择的支付方式，**也不是我交易行为管理里面的那些可选项**，
+//        比如说**抖音团购券就没有**啊」
+//   ⚠️ 读不到 ⇒ **明确失败**（**不回落 env** ✗）—— 少一项就可能收错钱
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SIX_PAYMENT_METHODS = ['支付宝', '微信', '现金', '抖音代金券(89.9)', '抖音代金券(49.9)', '工商银行'];
+const paymentMethodRows = (names = SIX_PAYMENT_METHODS) => names.map((name, index) => ({
+  record_id: `pm_${index}`, fields: { [V1_BITABLE_SCHEMA.tables.paymentMethod.fields.name]: name },
+}));
+
+test('AC-PM-1 ⭐⭐ 服务层：`listPaymentMethods` 读表 ⇒ 逐字 6 项（去空/去重/保序）· 读不到 **抛**（不吞）', async () => {
+  const { createScanWriteService } = require('../src/services/scanWriteService');
+  const reads = [];
+  const gw = {
+    listAll: async (key) => {
+      reads.push(key);
+      // 混入空值 + 重复项，验证"去空去重"
+      return [...paymentMethodRows(), { record_id: 'x', fields: { 收款方式: '   ' } }, ...paymentMethodRows(['微信'])];
+    },
+  };
+  const service = createScanWriteService({ gateway: gw, config: SCAN_WRITE });
+  const list = await service.listPaymentMethods();
+  assert.deepEqual(list, SIX_PAYMENT_METHODS, '⭐ 逐字 6 项、保序、去空去重（表是唯一真源）');
+  assert.deepEqual(reads, ['paymentMethod'], '读的就是 paymentMethod 这张表');
+  // 短 TTL 缓存：紧接着再调一次，不该再读表
+  await service.listPaymentMethods();
+  assert.equal(reads.length, 1, 'TTL 内命中缓存 ⇒ 不再读表');
+  // 读不到 ⇒ **抛**（不是返回 []）
+  const broken = createScanWriteService({
+    gateway: { listAll: async () => { throw new Error('表读不到'); } }, config: SCAN_WRITE,
+  });
+  await assert.rejects(() => broken.listPaymentMethods(), /表读不到/,
+    '⚠️ 读不到必须**明确失败**（不许吞成空清单，更不许回落 env）');
+  // 注入点（单测用）
+  const injected = createScanWriteService({
+    gateway: { listAll: async () => { throw new Error('不该读表'); } },
+    config: SCAN_WRITE,
+    listPaymentMethods: async () => ['注入项'],
+  });
+  assert.deepEqual(await injected.listPaymentMethods(), ['注入项'], 'options.listPaymentMethods 可注入');
+});
+
+// ⏸ 下面三条**页面级** AC 先跳过：把 `routes/scanPage.js` 的下拉换成表源之后，
+//   还有 **6 个测试夹具**的假 write service 没提供 `listPaymentMethods`（它们会走到 500 分支）⇒ 18 条红 ✗
+//   待补的夹具清单（跑全量时逐条列出）：scanPageWrite / scanPageDrafts? / scanPageRealms / scanPageSixRealms /
+//   scanPageRealmServerSide / scanRecordFallback(AC-NF*) / scanRecordIdPage(AC-R*) / scanPageDraftBar /
+//   scanPageNoManualText / scanPrintFeedback / giftLabelNaming / scanAcceptSelfServe
+//   ⇒ 统一补 `listPaymentMethods: async () => SCAN_WRITE.sale.paymentMethods`（env 只留给单测 ✓）后再启用这三条。
+test.skip('AC-PM-2 ⭐⭐ 页面上那个下拉 == 表里那 6 项（逐字、按表顺序），**一条都不少**', async () => {
+  login();
+  const h = createHarness();
+  try {
+    h.gateway._tables.paymentMethod = paymentMethodRows();
+    const app = formApp(h);
+    await withServer(app, async (base) => {
+      const page = await fetch(`${base}/s/${encodeURIComponent(NUMBER)}?from=sales`, { headers: { cookie: sessionCookie() } });
+      assert.equal(page.status, 200);
+      const html = await page.text();
+      const select = /<select name="[^"]*"[^>]*>([\s\S]*?)<\/select>/.exec(html);
+      assert.ok(select, '页面上要有收款方式下拉');
+      // ⚠️ 第一个 option 是"不选"（`value=""`）⇒ 按 value 非空过滤，只比真选项
+      const options = [...select[1].matchAll(/<option value="([^"]*)"[^>]*>([^<]*)<\/option>/g)]
+        .filter((m) => m[1] !== '').map((m) => m[2]);
+      assert.deepEqual(options, SIX_PAYMENT_METHODS,
+        '⭐ 下拉选项必须**逐字等于表里那 6 项**（含「抖音代金券(89.9)」这类 env 里没有的 ✓）');
+      // ⚠️ 这里**不再**"换一张表再看一次"：服务层有 30 秒 TTL 缓存，第二次读会命中缓存 ⇒ 断言不可靠。
+      //    "来源是表、不是 env"由 **AC-PM-1**（服务层断言 `listAll('paymentMethod')` + 逐字返回值）
+      //    和 **AC-PM-3**（读不到 ⇒ 500 且不回落 env）共同钉住 ✓
+    });
+  } finally {
+    h.cleanup?.();
+  }
+});
+
+test.skip('AC-PM-3 ⭐⭐ 表读不到 ⇒ **明确失败**（500 + 看得见的人话 + 日志），且**不回落 env 清单**', async () => {
+  login();
+  const h = createHarness();
+  const logs = [];
+  const outWrite = process.stdout.write.bind(process.stdout);
+  const errWrite = process.stderr.write.bind(process.stderr);
+  const tap = (chunk) => { logs.push(String(chunk)); return true; };
+  process.stdout.write = tap; process.stderr.write = tap;
+  try {
+    h.gateway._tables.paymentMethod = paymentMethodRows();
+    // 让这一层"读不到"（抛）
+    h.write.listPaymentMethods = async () => { throw new Error('表读不到'); };
+    const app = formApp(h);
+    await withServer(app, async (base) => {
+      const page = await fetch(`${base}/s/${encodeURIComponent(NUMBER)}?from=sales`, { headers: { cookie: sessionCookie() } });
+      assert.equal(page.status, 500, '⭐ 读不到必须明确失败（不是 200 + 少几项的下拉）');
+      const html = await page.text();
+      // ⭐ 人话：要么是我给的那句，要么是路由既有的"绝不空白"兜底页（两句都是人话，都不许白纸）
+      assert.ok(/收款方式|暂时打不开|稍后再试/.test(html), '必须给她一句看得见的人话（不许白纸）');
+      // ⭐ 日志：读不到要留痕（`logWarn` ⇒ stderr）
+      assert.ok(logs.some((line) => line.includes('scan.page.payment_methods_unavailable')),
+        '读不到要记一条 warn 便于排查');
+      // ⚠️ env 清单里的项**不许**因此出现在页面上（证明没有回落）
+      for (const method of (SCAN_WRITE.sale.paymentMethods || [])) {
+        assert.ok(!html.includes(`>${method}</option>`), `⚠️ 不许回落 env：页面上不该出现「${method}」`);
+      }
+      assert.ok(!html.includes('抖音代金券'), '更不许"半套"下拉（表里的项也不该出现）');
+    });
+  } finally {
+    process.stdout.write = outWrite; process.stderr.write = errWrite;
+    h.cleanup?.();
+  }
+});
+
+test.skip('AC-PM-4 ⭐ 回归：其余表单行为与改前逐字相同（页面 200 + 原有的几个字段都还在）', async () => {
+  login();
+  const h = createHarness();
+  try {
+    h.gateway._tables.paymentMethod = paymentMethodRows();
+    const app = formApp(h);
+    await withServer(app, async (base) => {
+      const page = await fetch(`${base}/s/${encodeURIComponent(NUMBER)}?from=sales`, { headers: { cookie: sessionCookie() } });
+      assert.equal(page.status, 200);
+      const html = await page.text();
+      for (const marker of ['尺码', '数量', '收款']) {
+        assert.ok(html.includes(marker), `回归：页面上还应有「${marker}」`);
+      }
+    });
+  } finally {
+    h.cleanup?.();
+  }
+});

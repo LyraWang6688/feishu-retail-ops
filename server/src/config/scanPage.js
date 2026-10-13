@@ -203,6 +203,9 @@ const TEXTS = Object.freeze({
   // 空编号（`/s/` 或全是空白）与解码失败都回这一页。
   badNumberTitle: '这个链接不对',
   badNumberBody: '链接里的编号读不出来，请重新扫一次标签上的二维码。',
+  // 2026-10-13：收款方式读表后，读不到时给她的人话（只加，不动既有键）
+  paymentMethodsUnavailableTitle: '收款方式读不到',
+  paymentMethodsUnavailableBody: '收款方式那张表现在读不到，这一单先别录；过一会儿再试，或找技术同事。',
   errorTitle: '暂时打不开，请稍后再试',
   // 2026-10-13 骨架屏的两句文案（她：加载到中间一直白屏）—— 见 renderScanSkeleton
   skeletonLoading: '正在读取…',
