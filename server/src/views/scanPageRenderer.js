@@ -1697,9 +1697,15 @@ const renderScanSkeleton = (view = {}, config = SCAN_PAGE) => {
   //   DEFAULT realm; document.write then replaced the page with look-alike content and
   //   every realm tap looked like "nothing happened" (her report: 5 of 6 tabs dead).
   //   Keep every existing parameter and only force data=1. ASCII only in this template.
-  var dataQuery = (window.location.search || '').replace(/^\?/, '')
-    .split('&')
-    .filter(function (part) { return part && part.indexOf('data=') !== 0; });
+  // 2026-10-14: NO regex here. This whole script lives inside a template literal, so an
+  //   escaped question mark in a regex came out as /^?/ in the browser -- an invalid regex
+  //   that made the WHOLE script throw, so the data fragment was never even fetched.
+  //   Plain string ops instead: leading '?' stripped by hand, then force data=1.
+  var dataSearch = window.location.search || '';
+  if (dataSearch.charAt(0) === '?') { dataSearch = dataSearch.slice(1); }
+  var dataQuery = dataSearch.split('&').filter(function (part) {
+    return part && part.indexOf('data=') !== 0;
+  });
   dataQuery.push('data=1');
   fetch(window.location.pathname + '?' + dataQuery.join('&'), { credentials: 'same-origin' })
     .then(function (response) { return response.ok ? response.text() : ''; })
