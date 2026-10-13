@@ -279,8 +279,13 @@ test('② 回退：飞书不认这个公式（抛错）→ 整表读，页面照
   const wholeTables = gateway.listAllCalls().map((call) => call.tableKey);
   assert.ok(wholeTables.includes('product') && wholeTables.includes('liveInventory'),
     '回退到整表读：货品信息与实时库存都要整表读一遍');
-  assert.ok(wholeTables.filter((key) => key === 'sizeManagement').length >= 1,
-    '「尺码管理」照旧会被行尺码解析读到（共享的 SizeReferenceService，带缓存）');
+  // 2026-10-14 改指向（她拍板：扫一扫只读「货品信息 + 实时库存」）：
+  //   能力不变 —— 行尺码解析**仍走共享那份**（`SizeReferenceService`，带 30 秒缓存），
+  //   只是**常规路径不再需要它**：尺码先取同一行「库存键」的最后一段（零读表），
+  //   关联解析降级为**兜底**（库存键缺失/异常才走）⇒ 本夹具下**不该**再读「尺码管理」。
+  //   改前逐字：assert.ok(wholeTables.filter((key) => key === 'sizeManagement').length >= 1, '「尺码管理」照旧会被行尺码解析读到（共享的 SizeReferenceService，带缓存）');
+  assert.equal(wholeTables.includes('sizeManagement'), false,
+    '常规路径不再读「尺码管理」（尺码先取同行「库存键」最后一段；她 2026-10-14 拍板）');
   assert.equal(logs.events(SCAN_PAGE.events.filterFallback).length, 2, '每次回退都记一条 warn');
   assert.match(logs.events(SCAN_PAGE.events.filterFallback)[0], /"reason":"failed"/);
 });
