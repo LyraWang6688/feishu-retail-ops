@@ -235,7 +235,7 @@ test('① 按条件读 vs 整表读：视图**逐字一致**（少读 ≠ 少算
   assert.equal(filteredView.total, 3);
   // ⭐ 2026-10-09：缺码 = **配置段（A 男 38–48）里库存为 0 的码** ⇒ 11 个码里 40/42 有货，
   //    其余 9 个（38/39/41/43/44/45/46/47/48）都算缺码。
-  assert.equal(filteredView.missing_count, 9, 'A 段里库存为 0 的码都算缺码（配置先行）');
+  assert.equal(filteredView.missing_count, 6, '缺码 = 普通码(38-45) - 有货 = 6（她 2026-10-14：普通码 38-45，特殊码不计缺码）');
   assert.deepEqual(
     filteredView.rows.map((row) => row.size_text),
     ['38', '39', '40', '41', '42', '43', '44', '45', '46', '47', '48'],
