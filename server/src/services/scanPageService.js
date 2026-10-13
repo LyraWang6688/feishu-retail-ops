@@ -1018,6 +1018,19 @@ const createScanPageService = (rawGateway, options = {}) => {
         //    单价仍以「货品信息」为唯一真源（她的口径），只是从内存里取。
         //    未就绪 / 过期 / 没这一条 ⇒ 回退下面那条**既有的过滤读**（行为逐字不变）。
         const indexed = productSnapshot ? productSnapshot.get() : { ready: false, reason: 'disabled' };
+          // ⭐⭐ 2026-10-14（她今晚第三次说"慢"：product_snapshot_hit 一直 false ⇒ 每次真读 1.2~8.5s ✗）
+          //   只加一行诊断、不动任何判断 ✗：把"货品快照为什么没命中"的 reason 打出来
+          //   （get() 只可能给 disabled / not_ready(上次 refresh 失败) / stale(TTL 过期) / limit_exceeded）
+          //   ⇒ 抓到哪一个就**有依据地**修哪一种，不盲改 TTL / 上限 ✗
+          //   用既有事件名 scan.snapshot.miss（不新造 ✗）；命中 / 没有快照时不打（不刷屏 ✓）
+          if (!indexed.ready && productSnapshot) {
+            logInfo(config.events.snapshotMiss, {
+              table_key: 'product',
+              reason: indexed.reason || '',
+              age_ms: Number.isFinite(indexed.ageMs) ? indexed.ageMs : -1,
+              request_id: requestId,
+            });
+          }
         if (indexed.ready) {
           product = findProduct(indexed.records, number);
           if (timing) timing.product_snapshot_hit = Boolean(product);
