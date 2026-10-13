@@ -143,14 +143,14 @@ test('AC-P1 采购子 tab 顺序逐字 = 订单列表 · 供应商往来款（�
   // ⚠️ 2026-10-12 改写：改前 = ['验收到货','采购订单列表','供应商往来款'] / 对应 id。
   //    现在「验收到货」入口删了、「采购订单列表」改名「订单列表」（见文件头）。
   assert.deepEqual(purchase.pages.map((page) => page.label),
-    ['验收', '订单列表', '供应商往来款']);
+    ['验收', '退货', '订单列表', '供应商往来款']);
   assert.deepEqual(purchase.pages.map((page) => page.id),
-    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money']);
+    ['purchase-acceptance', 'purchase-return', 'purchase-orders', 'purchase-supplier-money']);
   assert.equal(purchase.pages.some((page) => page.id === 'purchase-arrival'), false, '验收入口已删');
 
   // 子 tab 上真的点得到（渲染层不写死）
   const tabs = nav.domainSubTabsHtml(purchase);
-  for (const label of ['验收', '订单列表', '供应商往来款']) {
+  for (const label of ['验收', '退货', '订单列表', '供应商往来款']) {
     assert.ok(tabs.includes(`>${label}</button>`), `子 tab 上少了「${label}」`);
   }
   assert.equal(tabs.includes('>验收到货</button>'), false, '子 tab 上不该再有「验收到货」');
@@ -185,20 +185,24 @@ test('AC-P2 ⭐ 验收入口**已按 2026-10-13 裁定挂回**（名字逐字「
     '验收接口地址配置保留');
 
   // ② 报货 / 退货两个子页已隐藏（配置里没有它们 ⇒ 更不可能有验收卡 / 锚点卡 / 内嵌宿主）
-  for (const id of ['purchase-report', 'purchase-return']) {
-    assert.equal(purchase.pages.some((page) => page.id === id), false, `${id} 子页已隐藏`);
-  }
+  // ⚠️ 2026-10-13 更正：**「退货」不再是隐藏项** —— 她点名要它作为采购的子 tab（第二个）✓
+  //    「报货」仍隐藏（补货/报货在扫码页 ✓）
+  assert.equal(purchase.pages.some((page) => page.id === 'purchase-report'), false, 'purchase-report 子页仍隐藏');
+  assert.equal(purchase.pages.some((page) => page.id === 'purchase-return'), true, '⭐「退货」子 tab 已按她 2026-10-13 的要求加上');
   for (const page of purchase.pages) {
     assert.equal(page.embed, undefined, `${page.id} 不许有内嵌宿主`);
     assert.equal(page.anchor, undefined, `${page.id} 不许有本页锚点`);
     assert.equal((page.cards || []).some((card) => card.anchor), false, `${page.id} 不许有锚点卡`);
   }
 
-  // ③ 子 tab 上真的只剩三个（渲染层不写死清单）
+  // ③ 子 tab（渲染层不写死清单）
+  // ⚠️ 2026-10-13：**只翻"退货"这一件事** —— 她点名「把退货放在工作台采购单独一个子 tab，是退货！」
+  //    改前逐字：`for (const gone of ['报货', '退货']) { assert.equal(tabs.includes(...), false, ...) }`
   const tabs = nav.domainSubTabsHtml(purchase);
-  for (const gone of ['报货', '退货']) {
+  for (const gone of ['报货']) {
     assert.equal(tabs.includes(`>${gone}</button>`), false, `子 tab 上不该再有「${gone}」`);
   }
+  assert.equal(tabs.includes('>退货</button>'), true, '⭐「退货」子 tab 已按她 2026-10-13 的要求加上');
   assert.equal(pages, pages); // （保留 await 的引用，避免 lint 误判未用）
 
   // ④ 渲染层 / 配置里也不许再留着"内嵌本页"的措辞（去注释后再判）
@@ -237,7 +241,7 @@ test('AC-P3 报货 / 退货两个子页已隐藏：采购子页上没有任何�
   // ⚠️ 2026-10-12 改写：改前 = ['purchase-arrival','purchase-orders','purchase-supplier-money']
   //    ⇒ 去掉已删的验收入口。
   assert.deepEqual(purchase.pages.map((page) => page.id),
-    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money']);
+    ['purchase-acceptance', 'purchase-return', 'purchase-orders', 'purchase-supplier-money']);
   // 采购子页上**一条飞书表单外链都没有**（那两张卡写的表已被删除 ⇒ 死链，已清掉）
   const html = purchase.pages.map((page) => nav.domainPageHtml(page)).join('\n');
   assert.equal(html.includes(links.PURCHASE_REQUEST_FORM_URL), false);
