@@ -53,8 +53,13 @@ test('AC-SR2 ⭐⭐ 拿回**还是骨架** ⇒ 不 document.write（保住"不�
 test('AC-SR3 ⭐ 点「重试」⇒ **再发一次取数请求**（不自动死磕 ✓）', () => {
   assert.match(SCRIPT, /addEventListener\('click', function \(\) \{[\s\S]{0,200}load\(\);/,
     '重试按钮必须再调一次 load() ✓');
-  // ② 之后 `load();` 共 3 处：**首次** ✓ · **超时自动那一次** ✓ · **失败分流那一次** ✓（都不是循环 ✗）
-  assert.equal((CODE.match(/load\(\);/g) || []).length, 3, '只许这 3 处调用（不许自动死磕 ✗）');
+  // 2026-10-14 改指向（**不许依赖"脚本长度/出现次数"** ✗ —— 脚本一演进就断 ✓ 我本人就踩过）：
+  //   能力判断换成**结构**两条：① 不许有定时轮询（`setInterval` ✗）② 不许有"死磕循环"式自动重试 ✗
+  //   改前逐字：assert.equal((CODE.match(/load\(\);/g) || []).length, 3, '只许这 3 处调用（不许自动死磕 ✗）');
+  assert.equal(/setInterval/.test(CODE), false, '不许用 setInterval 轮询 ✗');
+  assert.ok(CODE.includes("retry.addEventListener('click'"), '重试必须是**点击**触发（人点才重来 ✓）');
+  // 自动重试**只许一次**（超时那条）—— 结构判据：`attempt === 1` 的分流只允许两处（超时 + 失败分流）
+  assert.equal((CODE.match(/attempt === 1/g) || []).length, 2, '自动重试只许"超时"与"失败分流"两处 ✓');
 });
 
 test('AC-SR4 ⭐ 回归：成功路径照旧（document.write ✓ URL 含 data=1 ✓ 整页只有一段脚本 ✓）', () => {
@@ -101,5 +106,9 @@ test('AC-SR8 ⭐⭐ 反向哨兵：**没有超时/没有自动重试**的旧写�
   assert.equal(oldCode.includes('window.setTimeout'), false, '旧写法没有超时 ⇒ AC-SR6 会红 ✓');
   assert.equal(oldCode.includes('if (attempt === 1) { load(); }'), false, '旧写法没有自动重试 ⇒ AC-SR6 会红 ✓');
   // 旧写法正是"静默吞错"（保留这条对照 ✓）
-  assert.ok(oldCode.includes('catch(function () {})'), '旧写法是静默吞错 ✗');
+  // 2026-10-14 改指向：**判"静默吞错"要归一化空白** ✓（夹具里写的是 `catch(function(){})` 没有空格 ✗
+  //   原来拿带空格的字符串去 includes ⇒ 必然 false ⇒ 假红 ✓）
+  //   改前逐字：assert.ok(oldCode.includes('catch(function () {})'), '旧写法是静默吞错 ✗');
+  const compact = oldCode.replace(/\s+/g, '');
+  assert.ok(compact.includes('catch(function(){})'), '旧写法是静默吞错 ✗（归一化空白后判 ✓）');
 });
