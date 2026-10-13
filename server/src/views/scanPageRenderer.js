@@ -295,6 +295,12 @@ summary { cursor: pointer; }
  *   Layout stays the three-by-three she asked for; wrapping is allowed so a label
  *   is always fully readable, and the 44px touch height is untouched.
  */
+// 2026-10-14: the skeleton screen is ONE centered card with a single line --
+//   her words: a card centered horizontally and vertically, showing the loading copy.
+//   Copy comes from config (`texts.skeletonLoading`), nothing hardcoded here.
+const SKELETON_STYLE = `
+.skeleton-stage { display: flex; align-items: center; justify-content: center; min-height: 70vh; padding: var(--space-4); }
+.skeleton-card { width: 100%; max-width: 320px; text-align: center; font-size: var(--font-size-lg); font-weight: 600; color: var(--text-secondary); }`;
 const REALM_BAR_STYLE = `.realm-tab { white-space: nowrap; font-size: var(--font-size-sm); padding: 0 2px;
   overflow: hidden; text-overflow: clip; letter-spacing: 0; min-width: 0; text-align: center; }
 .realm-bar { grid-auto-rows: minmax(var(--control-height), auto); }`;
@@ -312,7 +318,7 @@ const renderDocument = ({ title, content, requestId, config = SCAN_PAGE, head = 
 <meta name="robots" content="noindex">
 <title>${escapeHtml(title)}</title>
 ${head}
-<style>${STYLE}${PAYMENT_STEP_STYLE}${REALM_BAR_STYLE}</style>
+<style>${STYLE}${PAYMENT_STEP_STYLE}${REALM_BAR_STYLE}${SKELETON_STYLE}</style>
 </head>
 <body>
 <main class="page">
@@ -1725,20 +1731,13 @@ const renderScanSkeleton = (view = {}, config = SCAN_PAGE) => {
 <title>${escapeHtml(itemNo || number || '')}</title>
 <!-- 2026-10-13: STYLE must be wrapped - emitted bare it is foster-parented into
      the body and painted as visible text (she saw the raw style rules first). -->
-<style>${STYLE}${PAYMENT_STEP_STYLE}${REALM_BAR_STYLE}</style>
+<style>${STYLE}${PAYMENT_STEP_STYLE}${REALM_BAR_STYLE}${SKELETON_STYLE}</style>
 </head>
 <body>
 <div class="page">
-<section class="card identity" id="scan-skeleton" data-number="${escapeHtml(number)}"
+<section id="scan-skeleton" class="skeleton-stage" data-number="${escapeHtml(number)}"
   data-view="scan-skeleton" aria-busy="true">
-<div class="identity__main">
-<h1 class="identity__item">${escapeHtml(itemNo || number || '')}</h1>
-${meta ? `<p class="identity__meta">${escapeHtml(meta)}</p>` : ''}
-</div>
-</section>
-<section class="card">
-<h2 class="stock__heading">${escapeHtml(texts.skeletonSizesLabel || '')}</h2>
-<p class="identity__meta" data-view="scan-skeleton-loading">${escapeHtml(texts.skeletonLoading || '')}</p>
+<div class="card skeleton-card" data-view="scan-skeleton-loading">${escapeHtml(texts.skeletonLoading || '')}</div>
 </section>
 </div>
 ${script}
