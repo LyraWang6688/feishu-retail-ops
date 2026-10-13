@@ -1,5 +1,5 @@
 // ⭐ 用户可见文案抽到 config（2026-10-12 技术债批次：只挪位置，一个字符没改）
-const { purchaseMessage, purchaseToast, arrivalToast, inventoryToast } = require('../config/purchaseWebhookTexts');
+const { purchaseMessage, purchaseToast, arrivalToast, inventoryToast, returnNotice } = require('../config/purchaseWebhookTexts');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -221,8 +221,8 @@ const genderToCategory = (value) => {
  * 与新的 `declared / available / taken / shortfall / surplus` 逐项字段都能读。
  */
 const buildPurchaseReturnNotice = ({ itemNo, color, plan }) => {
-  const label = `${itemNo || ''}${color || ''}`.trim() || '这个货品';
-  const sizeText = (size) => (size ? `（${size} 码）` : '');
+  const label = `${itemNo || ''}${color || ''}`.trim() || returnNotice.unknownItem;
+  const sizeText = (size) => (size ? returnNotice.sizeText({ size }) : '');
   // 逐尺码归一化：新计划每一项都带全字段；旧形状（只有 size/quantity）用计划级总数兜底
   //（旧计划永远只有一个尺码，所以"计划级总数"就是"这一项的数"）。
   const entries = (plan?.sizes || []).map((entry) => {
@@ -244,19 +244,11 @@ const buildPurchaseReturnNotice = ({ itemNo, color, plan }) => {
   // 而不是逐尺码刷一串"差 N 双"。
   if (entries.every((entry) => entry.taken === 0)) {
     const sizeNames = entries.map((entry) => `${entry.size} 码`).join('、');
-    return `采购退货没处理：${label}${sizeNames ? `（${sizeNames}）` : ''}在实时库存里一双都没有，` +
-      '我没有扣库存，也没有把这条记录标成已处理。库存补上之后再提交一条退货记录就好～';
+    return returnNotice.zeroTaken({ label, sizeNames });
   }
   const parts = [
-    ...shortfalls.map((entry) => (
-      `${label}${sizeText(entry.size)} 你说要退 ${entry.declared} 双，实时库存里只有 ${entry.available} 双 —— ` +
-      `我先按能对上的 ${entry.taken} 双处理了，差的 ${entry.shortfall} 双对不上。` +
-      '要我一起退的话，把数量改成能对上的数再提交一条～'
-    )),
-    ...surpluses.map((entry) => (
-      `⚠️ ${label}${sizeText(entry.size)} 在实时库存里还剩 ${entry.surplus} 双没退（总数是 ${entry.available} 双）——` +
-      '要一起退就把数量改成总数再提交一条～'
-    )),
+    ...shortfalls.map((entry) => (returnNotice.shortfallLine({ entry, label, sizeText }))),
+    ...surpluses.map((entry) => (returnNotice.surplusLine({ entry, label, sizeText }))),
   ];
   return `采购退货：${parts.join('')}`;
 };
@@ -2050,4 +2042,4 @@ class PurchaseWebhookService {
   }
 }
 
-module.exports = { PurchaseWebhookService, attachmentTokens };
+module.exports = { PurchaseWebhookService, attachmentTokens, buildPurchaseReturnNotice };

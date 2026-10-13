@@ -28,4 +28,21 @@ const inventoryToast = {
   m2: '采购入库已确认',
 };
 
-module.exports = { purchaseMessage, purchaseToast, arrivalToast, inventoryToast };
+
+/**
+ * 采购退货**告知**（群里/卡片上给她看的人话）—— ⚠️ 整段表达式**原样照搬**，`+` 拼接结构保持不动。
+ * 参数只取 `${}` 的**根标识符**（`sizeText` 是服务里的局部函数 ⇒ 当参数传进来）。
+ */
+const returnNotice = {
+  unknownItem: '这个货品',
+  sizeText: ({ size }) => `（${size} 码）`,
+  zeroTaken: ({ label, sizeNames }) => `采购退货没处理：${label}${sizeNames ? `（${sizeNames}）` : ''}在实时库存里一双都没有，` +
+      '我没有扣库存，也没有把这条记录标成已处理。库存补上之后再提交一条退货记录就好～',
+  shortfallLine: ({ entry, label, sizeText }) => `${label}${sizeText(entry.size)} 你说要退 ${entry.declared} 双，实时库存里只有 ${entry.available} 双 —— ` +
+      `我先按能对上的 ${entry.taken} 双处理了，差的 ${entry.shortfall} 双对不上。` +
+      '要我一起退的话，把数量改成能对上的数再提交一条～',
+  surplusLine: ({ entry, label, sizeText }) => `⚠️ ${label}${sizeText(entry.size)} 在实时库存里还剩 ${entry.surplus} 双没退（总数是 ${entry.available} 双）——` +
+      '要一起退就把数量改成总数再提交一条～',
+};
+
+module.exports = { returnNotice, purchaseMessage, purchaseToast, arrivalToast, inventoryToast };
