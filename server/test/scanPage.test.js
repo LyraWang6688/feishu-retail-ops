@@ -128,10 +128,14 @@ test('② 按编号聚合：每个尺码一行 × 门盒/样品/仓库，0 显�
 
   // ⭐ 2026-10-09：缺码判定改读**配置里的尺码段**（A 男 38–48）⇒ 行的清单就是这一整段
   //   （不再是「尺码管理」里那个类别勾了哪几个码）。
+  // ⭐ 2026-10-14 改指向（她拍板：缺口只按**普通码**判 ⇒ A 段由 38–48 收窄成 **38–45**）：
+  //   能力不变 —— 行的清单仍 = **配置里的普通码段**（不再看「尺码管理」勾了哪几个 ✓）；
+  //   46/47/48 现在是**特殊码**：只有实时库存里出现才显示，没有就不出、也不算缺 ✓
+  //   改前逐字：['38','39','40','41','42','43','44','45','46','47','48']（A 男 38–48）
   assert.deepEqual(
     view.rows.map((row) => row.size_text),
-    ['38', '39', '40', '41', '42', '43', '44', '45', '46', '47', '48'],
-    '尺码按数字升序，且 = 配置段（A 男 38–48）',
+    ['38', '39', '40', '41', '42', '43', '44', '45'],
+    '尺码按数字升序，且 = 普通码段（A 男 38–45）',
   );
   const bySize = new Map(view.rows.map((row) => [row.size_text, row]));
   assert.deepEqual(bySize.get('40').cells.map((cell) => cell.count), [1, 0, 0]);
@@ -141,8 +145,11 @@ test('② 按编号聚合：每个尺码一行 × 门盒/样品/仓库，0 显�
   assert.deepEqual(bySize.get('41').cells.map((cell) => cell.count), [0, 0, 0]);
   assert.equal(bySize.get('40').missing, false);
   assert.equal(bySize.get('42').missing, false);
-  assert.equal(bySize.get('38').missing, true, '38 也在 A 段（38–48）里、且库存为 0 ⇒ 缺码');
-  assert.equal(view.missing_count, 9, 'A 段 11 个码 − 有货的 40/42 = 9 个缺码');
+  assert.equal(bySize.get('38').missing, true, '38 也在普通码段（38–45）里、且库存为 0 ⇒ 缺码');
+  // 2026-10-14 改指向（普通码 38–45 共 8 个 − 有货的 40/42 = **6**）：
+  //   能力不变 —— 缺码 = 普通码段里库存为 0 的每一个 ✓；只是段不再含特殊码 46/47/48 ✓
+  //   改前逐字：assert.equal(view.missing_count, 9, 'A 段 11 个码 − 有货的 40/42 = 9 个缺码');
+  assert.equal(view.missing_count, 6, '普通码 38–45 共 8 个 − 有货的 40/42 = 6 个缺码（她 2026-10-14）');
   assert.equal(view.sizes_degraded, false);
 
   // 每一行的合计与"共 N 双"必须自洽（本页最不能出的错）
@@ -172,7 +179,11 @@ test('② 降级：**配置里没有这个类别**时只显示有库存的尺码
 
   assert.equal(view.found, true);
   assert.equal(view.sizes_degraded, true);
-  assert.equal(view.scope_reason, 'no_sizes_for_category');
+  // 2026-10-14 改指向（**降级行为一字未变**，只是 `reason` 字符串换了名字）：
+  //   原来：编号里带的类别在配置里没有段 ⇒ 'no_sizes_for_category'；现在落成 **'unknown_category'** ✓
+  //   降级行为仍逐字一致 —— 只显示有库存的尺码 ✓ 不标缺码（missing_count === 0）✓ 页面写明 ✓
+  //   改前逐字：assert.equal(view.scope_reason, 'no_sizes_for_category');
+  assert.equal(view.scope_reason, 'unknown_category');
   assert.deepEqual(view.rows.map((row) => row.size_text), ['40', '42'], '只显示有库存的尺码');
   assert.equal(view.missing_count, 0, '降级时一个缺码都不许标');
   assert.equal(view.total, 3);
@@ -186,7 +197,9 @@ test('② 降级：编号里没有类别（`货号|颜色`）→ 同样退回"�
   }).lookup({ number: 'YD6693-2|黑色', requestId: 'req_3' });
   assert.equal(view.found, true);
   assert.equal(view.sizes_degraded, true);
-  assert.equal(view.scope_reason, 'number_without_category');
+  // 2026-10-14 改指向（同上：**降级行为未变**，只是 reason 名字换了）
+  //   改前逐字：assert.equal(view.scope_reason, 'number_without_category');
+  assert.equal(view.scope_reason, 'unknown_category');
   assert.equal(view.missing_count, 0);
 });
 
@@ -210,7 +223,10 @@ test('② 缺码**只看配置段**，不再看「尺码管理.类别」（多�
   assert.equal(bySize.get('40').missing, false, '有货 ⇒ 不缺');
   assert.equal(bySize.get('41').missing, true, '41 在**配置的 A 段**里且无货 ⇒ 缺码（表里标 B 不算数）');
   assert.equal(bySize.get('42').missing, true, '42 在 A 段里且无货 ⇒ 缺码');
-  assert.equal(view.missing_count, 10, 'A 段 11 个码里只有 40 有货');
+  // 2026-10-14 改指向（普通码 38–45 共 8 个，只有 40 有货 ⇒ **7**）：
+  //   能力不变 —— 缺码 = 普通码段里库存为 0 的每一个 ✓（表里标 B 也不算数 ✓）
+  //   改前逐字：assert.equal(view.missing_count, 10, 'A 段 11 个码里只有 40 有货');
+  assert.equal(view.missing_count, 7, '普通码 38–45 共 8 个里只有 40 有货 ⇒ 缺 7（她 2026-10-14）');
 });
 
 test('② 状态里出现配置外的取值 / 读不出尺码：**不丢**、另列，且"共 N 双"仍然对得上', async () => {

@@ -543,14 +543,27 @@ const SIZE_SEGMENTS = Object.freeze({
     A: Object.freeze({
       label: '男', from: 38, to: 48,
       enterable: Object.freeze([38, 48]),
+      // ⭐ 2026-10-14 她的命名：`normal`（普通码）= ①库存缺码判据 ②销售页预订范围 ✓
+      //   `default` 保留为**兼容别名**（同一个数组 ✓ 一份真源 ✗ 不是第二份）
+      normal: Object.freeze([38, 45]),
       default: Object.freeze([38, 45]),
       special: Object.freeze([46, 47, 48]),
     }),
     B: Object.freeze({
       label: '女', from: 34, to: 43,
       enterable: Object.freeze([34, 43]),
-      default: Object.freeze([35, 42]),
-      special: Object.freeze([34, 43]),
+      // ⭐ 2026-10-14 她**两次**改口径，以**最后一次**为准（逐字）：
+      //   「男鞋的范围就是 38-45，女鞋就是 36-41 …… 如果这些没有就是缺码，
+      //    以及在销售页的预定逻辑，就是让这个范围**扣减已有的库存**，
+      //    其余的特殊码，如果有就显示，没有不会做缺码显示」
+      //   ⇒ 默认段 = 缺码判据 = 销售页「预订」的候选（预订 = 段内 − 有货）。
+      //   ⇒ 特殊码**不参与缺码**（有就显示 ✓ 没有不显示、也不算缺 ✓）。
+      //   ⇒ 见 docs/scan-size-scope-ruling-2026-10-14.md（改前：36-42 / 更早 35-42）
+      // ⭐ 2026-10-14 她的最终口径：「女鞋就是 **36-41**」⇒ normal = 缺码判据 + 预订范围 ✓
+      normal: Object.freeze([36, 41]),
+      default: Object.freeze([36, 41]),
+      // ⭐ 2026-10-14 她逐字：女码特殊码 = **34 · 42 · 43**（42 现在也算特殊码 ✓ 普通码是 36–41 ✓）
+      special: Object.freeze([34, 35, 42, 43]),
     }),
   }),
   consistencyCheck: Object.freeze({

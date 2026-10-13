@@ -212,27 +212,19 @@ const categoryCodeOf = (view) => String(view?.number ?? '').split('|')[2] || '';
  *   ⇒ 并集会把男装的 43 **误伤掉**（真机回归哨兵抓到过 ✓）。
  *   认不出类别 ⇒ **一个都不过滤**（宁可多显示，也不把能录的码藏掉 ✓）。
  */
-const specialSizeSetOf = (view) => {
-  const range = SIZE_GROUP_RANGES[categoryCodeOf(view).trim().toUpperCase()];
-  return new Set((range?.special || []).map(Number));
-};
-
-const presentSpecialSizeSet = (view) => new Set(
-  (Array.isArray(view?.present_special_sizes) ? view.present_special_sizes : []).map(Number),
-);
-
-/** 视图模型里"这一款的尺码行"：读不出尺码的那一行不算（它不是一个能选的码）。 */
-const sizeRowsOf = (view) => {
-  const present = presentSpecialSizeSet(view);
-  const specials = specialSizeSetOf(view);
-  return (Array.isArray(view?.rows) ? view.rows : [])
-    .filter((row) => !row?.unknown_size && String(row?.size_text ?? '').trim())
-    .filter((row) => {
-      const size = Number(String(row.size_text).trim());
-      if (!Number.isFinite(size) || !specials.has(size)) return true; // 非特殊码 ⇒ 照常
-      return present.has(size);                                               // 特殊码 ⇒ 出现过才显示
-    });
-};
+/**
+ * 视图模型里"这一款的尺码行"：读不出尺码的那一行不算（它不是一个能选的码）。
+ *
+ * ⭐⭐ 2026-10-14 她拍板：「**我们把采购明细给删除了，我们把特殊码给去掉吧**」＋
+ *   「**其他码如果有，就写，没有不做缺码范围**」⇒ 本函数**不再有任何特殊码过滤** ✗：
+ *   · `view.rows` 本来就来**实时库存**（内存快照 ✓ `scanPageService.readInventoryRows`）
+ *     ⇒ **库存里有 ⇒ 就显示** ✓；**没有 ⇒ 就不显示、也不计缺码** ✓（**零新增读** ✓）
+ *   · 于是"特殊码只在采购明细出现过才显示"这套接线（`present_special_sizes` /
+ *     `services/purchaseSizeReader`）在**扫码页这条链上整块删除** ✓（不留孤儿 ✓）
+ *   ⚠️ 缺码判据**不变**：仍是「默认范围（A 38–45 / B 36–42）− 已有」✓（special 从不参与缺码 ✓）
+ */
+const sizeRowsOf = (view) => (Array.isArray(view?.rows) ? view.rows : [])
+  .filter((row) => !row?.unknown_size && String(row?.size_text ?? '').trim());
 
 /**
  * ⭐ 销售建单的**两个分组**（她 2026-10-09）：
