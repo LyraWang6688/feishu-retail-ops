@@ -285,6 +285,19 @@ summary { cursor: pointer; }
  * byte-identical (the hardcoded-Chinese gate extracts that whole literal as one string,
  * so touching it - even with ASCII - reads as a "new" entry). ASCII-only here.
  */
+/**
+ * 2026-10-13: realm tab bar must never overlap its labels.
+ *   The base `.realm-tab` rule above sets `white-space: nowrap` inside a 3-column
+ *   equal-width grid; on a narrow phone the columns get squeezed and two labels
+ *   ("inventory" + "label") render on top of each other.
+ *   Fix by overriding here (ASCII only, and the big STYLE literal above stays
+ *   byte-identical - the hardcoded-Chinese gate reads that whole literal).
+ *   Layout stays the three-by-three she asked for; wrapping is allowed so a label
+ *   is always fully readable, and the 44px touch height is untouched.
+ */
+const REALM_BAR_STYLE = `.realm-tab { white-space: normal; overflow-wrap: anywhere; line-height: 1.15; text-align: center; }
+.realm-bar { grid-auto-rows: minmax(var(--control-height), auto); }`;
+
 const PAYMENT_STEP_STYLE = `.pay-status__options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .pay-status__option { display: flex; align-items: center; justify-content: center; gap: 4px;
   border: 1px solid #d9d9d9; border-radius: 8px; padding: 8px 4px; font-size: 14px; }
@@ -298,7 +311,7 @@ const renderDocument = ({ title, content, requestId, config = SCAN_PAGE, head = 
 <meta name="robots" content="noindex">
 <title>${escapeHtml(title)}</title>
 ${head}
-<style>${STYLE}${PAYMENT_STEP_STYLE}</style>
+<style>${STYLE}${PAYMENT_STEP_STYLE}${REALM_BAR_STYLE}</style>
 </head>
 <body>
 <main class="page">
