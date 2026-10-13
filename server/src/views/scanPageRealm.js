@@ -237,13 +237,16 @@ const sizeRowsOf = (view) => (Array.isArray(view?.rows) ? view.rows : [])
  * ⚠️ 降级（拿不到该类别在「尺码管理」里的清单）时**第二组为空**：
  *    只显示有库存的尺码，**绝不编造**"没有的尺码"（与既有缺码判定的降级口径一致）。
  */
-const saleSizeGroups = (view) => {
+const saleSizeGroups = (view, behavior = SCAN_PAGE.REALM_SIZE_BEHAVIOR.sales) => {
+  // 分组口径来自配置（`group` 不是配置里的枚举值 ⇒ 平表、不分组）；
+  // ⚠️ 库存页的 0 占位是**渲染层**的事（真源在 `views/scanPageRenderer.js`），这里不管。
+  const grouped = behavior.group === SCAN_PAGE.SIZE_ROW_GROUPS.GROUPED;
   const inStock = [];
   const prepaid = [];
   for (const row of sizeRowsOf(view)) {
     const item = { size_text: String(row.size_text), count: sellableCountOf(row, view?.columns) };
-    if (item.count > 0) inStock.push(item);
-    else if (!view?.sizes_degraded) prepaid.push(item);
+    if (item.count > 0 || !grouped) inStock.push(item);
+    else if (!view?.sizes_degraded || behavior.groupWhenDegraded) prepaid.push(item);
   }
   return { inStock, prepaid };
 };
@@ -256,11 +259,12 @@ const sellableSizeTexts = (view) => new Set(saleSizeGroups(view).inStock.map((it
  * 是不是"缺码"（既有口径：该类别在「尺码管理」里有、但**三种状态都没有** ⇒ 默认勾上要补）。
  * 「仓库」里有货的尺码**不预勾**（仓库能出，不必补）—— 与既有缺码口径一致。
  */
-const purchaseSizeLines = (view) => sizeRowsOf(view).map((row) => ({
+const purchaseSizeLines = (view, behavior = SCAN_PAGE.REALM_SIZE_BEHAVIOR.replenish) => sizeRowsOf(view).map((row) => ({
   size_text: String(row.size_text),
   sellable: sellableCountOf(row, view?.columns),
-  missing: Boolean(row.missing),
-  checked: Boolean(row.missing),
+  // 两个领域差别（要不要标缺码 / 缺码要不要默认勾）**全部来自配置** ✓
+  missing: behavior.missing ? Boolean(row.missing) : false,
+  checked: behavior.checkMissingByDefault ? Boolean(row.missing) : false,
 }));
 
 

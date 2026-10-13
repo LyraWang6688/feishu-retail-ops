@@ -721,6 +721,15 @@ const SCAN_PAGE = Object.freeze({
   //      `test/scanPageRealmTabs.test.js` 的 AC-RB5）。
   //   🔴 2026-10-13：**空值 / 写错 ⇒ 在配置解析时当场报错**（不是静默渲染成一颗点不动的死链 ✗）。
   //      与工作台那份逐字同源（`public/workbench/config/links.js` 的 `PRODUCT_NEW_FORM_URL` ✓）。
+  // 2026-10-14：**三个领域"怎么列尺码"的唯一来源**（业务负责人：「需要做配置～」）。
+  //   只收代码里**真实存在**的轴：`sizeRowsOf` 的 special 规则已经是一份真源 ⇒ 不动 ✗；
+  //   库存 0 占位的真源在 `views/scanPageRenderer.js` ⇒ 不入表 ✗；`product` 真源未定位 ⇒ 不入表 ✓。
+  SIZE_ROW_GROUPS: Object.freeze({ GROUPED: 'instock+reserve' }),
+  REALM_SIZE_BEHAVIOR: Object.freeze({
+    sales: Object.freeze({ group: 'instock+reserve', groupWhenDegraded: false, missing: false, checkMissingByDefault: false }),
+    inventory: Object.freeze({ group: null, groupWhenDegraded: false, missing: false, checkMissingByDefault: false }),
+    replenish: Object.freeze({ group: null, groupWhenDegraded: false, missing: true, checkMissingByDefault: true }),
+  }),
   realmBar: { newFormUrl: resolveProductNewFormUrl(process.env) },
   paymentStep: PAYMENT_STEP,
   saleSuccess: SALE_SUCCESS,
