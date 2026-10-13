@@ -336,7 +336,7 @@ const createScanPageService = (rawGateway, options = {}) => {
   };
   /** 分段之和（只累加"真的打了点"的那几段）。 */
   const stagesSumOf = (timing) => ['session_ms', 'product_ms', 'product_fallback_ms', 'snapshot_ms',
-    'size_ms', 'inventory_ms', 'record_ms']
+    'size_ms', 'inventory_ms', 'record_ms', 'item_fallback_ms', 'row_size_ms']
     .map((key) => msOrNull(timing[key])).filter((value) => value >= 0)
     .reduce((sum, value) => sum + value, 0);
 
@@ -874,6 +874,8 @@ const createScanPageService = (rawGateway, options = {}) => {
       timing.session_ms = Number.isFinite(timing.session_ms) ? timing.session_ms : -1;
       timing.snapshot_ms = -1;
       timing.product_fallback_ms = -1;
+      timing.item_fallback_ms = -1;   // 2026-10-14 只加打点（量 gap ✓ 不改行为 ✓）
+      timing.row_size_ms = -1;        // 2026-10-14 只加打点（逐行累加 ✓）
       timing.inventory_source = '';
       timing.feishu_reads = 0;
       timing.feishu_read_ms = 0;
@@ -987,7 +989,9 @@ const createScanPageService = (rawGateway, options = {}) => {
     let numberFallback = null;
     // 🔴 **只在精确匹配没找到时**才走兜底（`!product`）—— 正常编号一次都不多查。
     if (!product && config.number.fallbackMatch?.enabled !== false) {
+      const itemFallbackStartedAt = startStage();
       numberFallback = await resolveByItemNoAndColor({ parsed, requestId });
+      if (timing) timing.item_fallback_ms = elapsed(itemFallbackStartedAt);
       if (numberFallback?.product) {
         product = numberFallback.product;
         // ⭐ 用**表里那条货品的真实段**补齐缺的那一段（典型 = 类别）—— 后面的"缺码判定"
@@ -1053,7 +1057,9 @@ const createScanPageService = (rawGateway, options = {}) => {
     let updatedAt = 0;
 
     for (const record of rows) {
+      const rowSizeStartedAt = startStage();
       const size = await resolveRowSize(record, stockKeyField);
+      if (timing) timing.row_size_ms = (Number(timing.row_size_ms) || 0) + elapsed(rowSizeStartedAt);
       const state = stateField ? textValue(record?.fields?.[stateField]).trim() : '';
       stateCounts.set(state, (stateCounts.get(state) || 0) + 1);
       const timestamp = updatedAtField ? asTimestamp(record?.fields?.[updatedAtField]) : 0;
