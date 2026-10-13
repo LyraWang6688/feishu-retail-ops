@@ -289,8 +289,12 @@ test('② 回退：网关没有"按条件读"这个能力（旧注入实现 / �
   const gateway = fakeGateway({ filtered: false });
   const view = await service(gateway).lookup({ number: NUMBER, requestId: 'req_no_cap' });
   assert.equal(view.total, 3);
+  // 2026-10-14 改指向（她：「不用读尺码管理和采购明细了，扫一扫只需要读货品信息和实时库存」）：
+  //   能力不变 —— 没有"按条件读"能力时**仍然回退整表读「实时库存」** ✓（这条正是它）；
+  //   只是**请求期不再读「尺码管理」**（那两处读已按她拍板删除 ✓）。
+  //   改前逐字：['liveInventory', 'product', 'sizeManagement', 'sizeManagement']
   assert.deepEqual(gateway.listAllCalls().map((call) => call.tableKey).sort(),
-    ['liveInventory', 'product', 'sizeManagement', 'sizeManagement']);
+    ['liveInventory', 'product']);
 });
 
 test('② 开关（config 先行）：reads.filterEnabled=false → 一次"按条件读"都不发', async () => {
@@ -415,36 +419,18 @@ test('③ 「没找到」不进缓存（新品刚建档就该立刻扫得到）'
   assert.ok(gateway.calls.length > callsAfterFirst, '第二次仍然真的去读（不许把否定结果缓存住）');
 });
 
-test('③ ⭐ 缺码判定不再读「尺码管理」：一致性保险只在 TTL 到点那一趟比对一次', async () => {
-  // ⭐ 2026-10-09：这一条的性质**整个变了**（业务负责人定的提速项之一）：
-  //   提速前：缺码判定**每次扫码**都要整表读「尺码管理」；
-  //   现在：缺码 = 配置段（`sizeSegments`）里库存为 0 的码 ⇒ 判定本身 **0 次读**；
-  //         那张表只被**一致性保险**读（定期，默认 10 分钟；这里压到 1000ms 便于验证）。
+test('③ ⭐ 缺码判定不再读「尺码管理」：且**请求期一次都不读**那张表（2026-10-14 她拍板）', async () => {
+  // ⚠️ 2026-10-14 改指向（能力去哪）：原来这张表被"一致性保险"每 10 分钟读一次；
+  //   她拍板「不用读尺码管理和采购明细了」⇒ **请求期一次都不读** ✓
+  //   护栏本体（`maybeCheckSizeConsistency`）**仍保留**在 service 里，供**独立自检脚本**调用 ✓。
   const gateway = fakeGateway();
-  let clock = 0;
-  const config = {
-    ...SCAN_PAGE,
-    // ⚠️ 视图缓存 TTL 压到 1ms：第三次扫码才会真的走到取数那一段
-    //   （否则会命中视图缓存 —— 那条路**一次飞书都不打**，也就到不了保险那一步）。
-    cache: { ...SCAN_PAGE.cache, ttlMs: 1 },
-    sizeSegments: {
-      ...SCAN_PAGE.sizeSegments,
-      consistencyCheck: { enabled: true, ttlMs: 1000 },
-    },
-  };
-  const scan = service(gateway, config, { now: () => clock });
-  const sizeReads = () => gateway.listAllCalls().filter((call) => call.tableKey === 'sizeManagement').length;
-
-  await scan.lookup({ number: NUMBER, requestId: 'req_s1' });
-  const afterFirst = sizeReads();
-
-  // 换一个编号（视图缓存不命中）：缺码判定读配置 ⇒ 不再读尺码表；TTL 内连保险也不读。
-  await scan.lookup({ number: 'X7601|蓝|A', requestId: 'req_s2' });
-  assert.equal(sizeReads(), afterFirst, '缺码判定读配置、保险在 TTL 内 ⇒ 不重复读尺码表');
-
-  clock += 1001;
-  await scan.lookup({ number: 'X7601|蓝|A', requestId: 'req_s3' });
-  assert.ok(sizeReads() > afterFirst, 'TTL 一过，一致性保险会比对一次（这是唯一会读它的地方）');
+  await service(gateway).lookup({ number: NUMBER, requestId: 'req_u3' });
+  assert.equal(gateway.listAllCalls().filter((call) => call.tableKey === 'sizeManagement').length, 0,
+    '请求期一次都不许读「尺码管理」（她 2026-10-14 拍板）');
+  const fsLocal = require('node:fs');
+  const src = fsLocal.readFileSync(require('node:path').join(__dirname, '..', 'src', 'services', 'scanPageService.js'), 'utf8');
+  assert.match(src, /const maybeCheckSizeConsistency = async/, '护栏本体仍在（供独立自检用 ✓）');
+  assert.equal(/^[ \t]*await maybeCheckSizeConsistency\(/m.test(src), false, '请求期不许再调用它 ✗');
 });
 
 test('③ 缓存有上限（不无界增长）：塞满以后仍然只留 maxEntries 条', async () => {
