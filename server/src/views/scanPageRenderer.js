@@ -621,13 +621,13 @@ const submitFeedbackScriptHtml = () => `<script data-view="submit-feedback">
       var button = event.target.querySelector('button[type="submit"]');
       if (!button || button.disabled) return;
       var form = event.target;
-      // ⭐⭐ 2026-10-12（她「点完好像没反应 ⇒ 我一直点那个按钮」）：
-      //    **按钮文案永不为空** —— 属性没配就用**按钮原文案**兜底（原来用空串兜底、按钮会变空白 ✗）。
+      // 2026-10-12: her words -- "tapping seems to do nothing, so I keep tapping".
+      //    The button label must never become empty: with no attribute configured, fall back to the button's own text.
       var label = button.getAttribute('data-submit-feedback') || form.getAttribute('data-submit-feedback') || button.textContent;
       var elapsedTemplate = button.getAttribute('data-submitting-elapsed')
         || form.getAttribute('data-submit-feedback-elapsed') || '';
-      // ⭐⭐ 金额是必填（>0）：**点按钮就有反应**——空/0 时直接给一句提示，**不发请求**。
-      //    字段名与提示文案都写在**这一张表单**上（零硬编码中文进脚本）。
+      // Amount is required (>0): tapping always gives feedback -- empty/zero shows a hint and sends no request.
+      //    Field name and hint text live on THIS form (no hardcoded Chinese into the script).
       var amountName = form.getAttribute('data-amount-field') || '';
       var amountInput = amountName ? form.querySelector('[name="' + amountName + '"]') : null;
       if (amountInput) {
@@ -651,7 +651,7 @@ const submitFeedbackScriptHtml = () => `<script data-view="submit-feedback">
       button.disabled = true;
       button.setAttribute('aria-busy', 'true');
       button.textContent = label || button.textContent;
-      // 服务端慢的时候**不许看起来"没反应"**：每一秒把"已 N 秒"接在后面（纯前端计时）。
+      // While the server is slow it must never look like "nothing happened": append elapsed seconds.
       if (!elapsedTemplate) return;
       var seconds = 0;
       setInterval(function () {
@@ -669,12 +669,19 @@ const submitFeedbackScriptHtml = () => `<script data-view="submit-feedback">
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       var link = event.currentTarget;
       tapReport(link.getAttribute('data-tap-target') || '');
-      if (link.getAttribute('data-opening') === '1') { event.preventDefault(); return; }
-      link.setAttribute('data-opening', '1');
-      link.setAttribute('aria-disabled', 'true');
+      // 2026-10-13 late: this block used to be
+      //   if (data-opening === '1') { event.preventDefault(); return; }
+      // which set data-opening=1 on the FIRST tap; if that navigation did not
+      // actually go through (same path, only the query changed), EVERY later tap
+      // was swallowed by preventDefault -- exactly the "taps do nothing" report.
+      // The external tab (xin shang) has no data-tap-target, so it was never bound
+      // and kept working. Never swallow a tap: show feedback, always navigate.
+      if (link.getAttribute('data-opening') !== '1') {
+        link.setAttribute('data-opening', '1');
+      }
       link.style.opacity = '0.55';
       var openLabel = link.getAttribute('data-open-label');
-      if (openLabel) link.textContent = openLabel;
+      if (openLabel && link.textContent !== openLabel) link.textContent = openLabel;
     });
   }
   var tapForms = document.querySelectorAll('form');
