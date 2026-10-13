@@ -54,7 +54,12 @@ test('AC-NS4 ⭐ 现货/预订分组**照旧**（仍按可售状态分组、仍�
   // ⚠️ 我第一版用自造夹具去断言分组，夹具形状不对 ⇒ 改成**源码级**回归（分组的实现没动 ✓）
   const code = stripped('src/views/scanPageRealm.js');
   assert.match(code, /const SELLABLE_STATES = Object\.freeze\(\['门盒', '样品'\]\)/, '可售状态定义没动 ✓');
-  assert.match(code, /const saleSizeGroups = \(view\) => \{/, '分组函数还在 ✓');
+  // 2026-10-14：分组口径搬进 `config/scanPage.js`（配置先行）⇒ 签名多了可注入的 `behavior`；
+  //   这条**不放宽**：既钉"函数还在 + 签名形状"，也钉"仍按可售数量分组、仍分两组" ✓
+  assert.match(code, /const saleSizeGroups = \(view, behavior = SCAN_PAGE\.REALM_SIZE_BEHAVIOR\.sales\) => \{/,
+    '分组函数还在（口径来自配置 ✓）');
+  assert.match(code, /if \(item\.count > 0 \|\| !grouped\) inStock\.push\(item\)/, '仍按可售数量分"现货" ✓');
+  assert.match(code, /prepaid\.push\(item\)/, '仍分出"预订"那一组 ✓');
   assert.match(code, /const sellableCountOf = |sellableCountOf\(row/, '仍按可售数量判"有货" ✓');
   assert.match(code, /const sizeRowsOf = \(view\) => \(Array\.isArray\(view\?\.rows\)/, '尺码行仍只吃 `view.rows`（实时库存 ✓ 不再读采购明细 ✓）');
 });
