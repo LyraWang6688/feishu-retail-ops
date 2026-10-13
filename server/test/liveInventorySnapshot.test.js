@@ -180,7 +180,7 @@ test('AC-S2 快照未就绪 / 过期 ⇒ 回退"按编号过滤读"，并记一�
   );
   assert.equal(coldView.found, true, '快照没就绪也必须照常出结果（回退过滤读）');
   assert.ok(coldGateway.readsOf('liveInventory').length > 0, '回退就是真的去读');
-  const coldMiss = coldLogs.find((entry) => entry.event === 'scan.snapshot.miss');
+  const coldMiss = coldLogs.find((entry) => entry.event === 'scan.snapshot.miss' && entry.table_key !== 'product');
   assert.ok(coldMiss, '未就绪必须记一条 scan.snapshot.miss（不静默）');
   assert.equal(coldMiss.reason, 'not_ready');
 
@@ -202,7 +202,7 @@ test('AC-S2 快照未就绪 / 过期 ⇒ 回退"按编号过滤读"，并记一�
     config: CONFIG_NO_VIEW_CACHE, snapshot, startSnapshot: false,
   });
   const { entries: staleLogs } = await captureLogs(() => stale.lookup({ number: NUMBER, requestId: 'req_s2b' }));
-  const staleMiss = staleLogs.find((entry) => entry.event === 'scan.snapshot.miss');
+  const staleMiss = staleLogs.find((entry) => entry.event === 'scan.snapshot.miss' && entry.table_key !== 'product');
   assert.ok(staleMiss && staleMiss.reason === 'stale', '过期要记 stale（看得出为什么没用快照）');
 });
 
@@ -254,7 +254,7 @@ test('AC-S3 失效之后若还没重拉完：这一趟回退"按编号过滤读"
   );
   assert.equal(view.found, true);
   assert.ok(gateway.readsOf('liveInventory').length > before, '没快照就真的去读');
-  const miss = entries.find((entry) => entry.event === 'scan.snapshot.miss');
+  const miss = entries.find((entry) => entry.event === 'scan.snapshot.miss' && entry.table_key !== 'product');
   assert.ok(miss, '这一趟要记 miss（看得出为什么没用快照）');
   assert.equal(miss.reason, 'not_ready');
 });
