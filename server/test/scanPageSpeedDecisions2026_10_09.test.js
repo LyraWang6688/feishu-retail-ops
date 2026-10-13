@@ -178,9 +178,16 @@ test('A1 ⭐ 一致性保险：配置与「尺码管理」不一致（表里多�
     logs.restore();
   }
   const lines = logs.events(SCAN_PAGE.events.sizeConsistencyMismatch);
-  assert.equal(lines.length, 1, '不一致必须留一条 warn（可 grep）');
-  assert.match(lines[0], /49/, '日志里要看得出是哪个码（表里有、配置里没有）');
-  assert.match(lines[0], /A/);
+  // 2026-10-14 改指向（她：销售页只要「货品 + 实时库存」）：
+  //   能力不变 —— 一致性护栏**本体还在**（`maybeCheckSizeConsistency` ✓ 见下面的源码哨兵 ✓），
+  //   只是**请求期不再调用它** ⇒ 请求里**不该**出现那条 warn（这正是"少一次整表读"的判据 ✓）。
+  //   改前逐字：assert.equal(lines.length, 1, '不一致必须留一条 warn（可 grep）');
+  assert.equal(lines.length, 0, '请求期不再做那次核对 ⇒ 不该有 warn ✓');
+  const svcSrc = fs.readFileSync(path.join(SERVER, 'src/services/scanPageService.js'), 'utf8');
+  assert.match(svcSrc, /const maybeCheckSizeConsistency = async/,
+    '护栏本体必须保留（供独立自检脚本调用 ✓ 不许顺手删掉 ✗）');
+  assert.equal(/^\s*await maybeCheckSizeConsistency\(/m.test(svcSrc), false,
+    '请求期不许再调用它（否则又多一次整表读 ✗）');
   // ⚠️ 只 warn：配置与表都**不许被改**（配置先行）。
   assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.A, { label: '男', from: 38, to: 48, enterable: [38, 48], default: [38, 45], special: [46, 47, 48] });
   assert.equal(
