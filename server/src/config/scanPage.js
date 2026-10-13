@@ -562,7 +562,8 @@ const SIZE_SEGMENTS = Object.freeze({
       // ⭐ 2026-10-14 她的最终口径：「女鞋就是 **36-41**」⇒ normal = 缺码判据 + 预订范围 ✓
       normal: Object.freeze([36, 41]),
       default: Object.freeze([36, 41]),
-      special: Object.freeze([34, 43]),
+      // ⭐ 2026-10-14 她逐字：女码特殊码 = **34 · 42 · 43**（42 现在也算特殊码 ✓ 普通码是 36–41 ✓）
+      special: Object.freeze([34, 42, 43]),
     }),
   }),
   consistencyCheck: Object.freeze({

@@ -685,16 +685,22 @@ const createScanPageService = (rawGateway, options = {}) => {
 
   /** 一行的尺码：关联记录（共享解析，带 30 秒缓存）→ 「库存键」最后一段 → 读不出。 */
   const resolveRowSize = async (record, stockKeyField) => {
+    // ⭐⭐ 2026-10-14（她拍板：扫一扫只读「货品信息 + 实时库存」✓）：
+    //   **先读同一行上的「库存键」最后一段**（`货号|尺码|状态` ⇒ 尺码 ✓ **零飞书读** ✓）
+    //   ⇒ 这才是常规路径（`scan.sale` 那条链一直这么取尺码 ✓）
+    //   ⇒ **关联解析留作兜底**（库存键缺失 / 取不出正整数时才走 ✓ 那时才可能整表读「尺码管理」✗）
+    if (stockKeyField) {
+      const key = textValue(record?.fields?.[stockKeyField]).trim();
+      const parts = key ? key.split(config.number.separator) : [];
+      const fromKey = parts.length ? positiveInteger(parts[parts.length - 1]) : null;
+      if (fromKey) return fromKey;
+    }
     const cell = readField(schema, 'liveInventory', record, 'size');
     try {
       const entry = await getSizeReferences().resolveLinkedCell(cell);
       return entry.size;
     } catch (_) {
-      if (!stockKeyField) return null;
-      const key = textValue(record?.fields?.[stockKeyField]).trim();
-      if (!key) return null;
-      const parts = key.split(config.number.separator);
-      return positiveInteger(parts[parts.length - 1]);
+      return null;
     }
   };
 
