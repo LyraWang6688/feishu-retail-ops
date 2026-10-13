@@ -1496,6 +1496,63 @@ const renderSaleSuccessPage = (input = {}, config = SCAN_PAGE) => renderScanMess
  * 只有三行字符串拼接 + `escapeHtml`，不需要任何配置、不读文件、不解析任何东西。
  * ⚠️ 任何输入（`undefined` / `null` / 对象 / 带标签的字符串）都**必须**返回一段有正文的 HTML。
  */
+/**
+ * 2026-10-13（她：加载到中间一直白屏）—— 骨架屏：先出页面，绝不空白。
+ * 取数要 4~6 秒（真测 product 1969 + sizes 768 + inventory 1410），这段是服务端整页渲染
+ * ⇒ 读数据回来之前整页是白的。这一屏不读任何表、纯字符串拼接：她扫到的那串 / 货号 / 颜色
+ * + 尺码区占位 + 正在读取…，然后由同一段脚本 fetch ?data=1 填进来。
+ * 整页仍然只有一段脚本（哨兵 scanAcceptSelfServe / labelPrintScanEntry / scanPrintFeedback）。
+ * 路由那一半（先发骨架再取数）还没接，本函数只负责渲染。
+ */
+const renderScanSkeleton = (view = {}, config = SCAN_PAGE) => {
+  const texts = { ...SCAN_PAGE.texts, ...(config?.texts || {}) };
+  const number = String(view?.number || '').trim();
+  const itemNo = String(view?.item_no || (number.split('|')[0] || '')).trim();
+  const color = String(view?.color || (number.split('|')[1] || '')).trim();
+  const meta = [color].filter(Boolean).join(' · ');
+  const script = `<script>
+(function(){
+  var host = document.getElementById('scan-skeleton');
+  if (!host || !window.fetch) return;
+  var number = host.getAttribute('data-number') || '';
+  fetch('/s/' + encodeURIComponent(number) + '?data=1', { credentials: 'same-origin' })
+    .then(function (response) { return response.ok ? response.text() : ''; })
+    .then(function (html) {
+      if (!html) return;
+      document.open(); document.write(html); document.close();
+    })
+    .catch(function () {});
+})();
+</script>`;
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>${escapeHtml(itemNo || number || '')}</title>
+${STYLE}
+</head>
+<body>
+<div class="page">
+<section class="card identity" id="scan-skeleton" data-number="${escapeHtml(number)}"
+  data-view="scan-skeleton" aria-busy="true">
+<div class="identity__main">
+<h1 class="identity__item">${escapeHtml(itemNo || number || '')}</h1>
+${meta ? `<p class="identity__meta">${escapeHtml(meta)}</p>` : ''}
+</div>
+</section>
+<section class="card">
+<h2 class="stock__heading">${escapeHtml(texts.skeletonSizesLabel || '')}</h2>
+<p class="identity__meta" data-view="scan-skeleton-loading">${escapeHtml(texts.skeletonLoading || '')}</p>
+</section>
+</div>
+${script}
+</body>
+</html>
+`;
+};
+
 const renderMinimalPage = (input = {}) => {
   const title = escapeHtml(input?.title || SCAN_PAGE.texts.errorTitle) || '打不开';
   const body = escapeHtml(input?.body || SCAN_PAGE.texts.errorBody) || '请稍后再试。';
@@ -1509,6 +1566,8 @@ const renderMinimalPage = (input = {}) => {
 
 module.exports = {
   renderScanPage,
+  // 2026-10-13 骨架屏（先出页面，治白屏）—— 与下面的 `renderSalesHome`（不带编号首页 ✓）**都要** ✓
+  renderScanSkeleton,
   renderSalesHome,
   renderScanMessagePage,
   renderMinimalPage,

@@ -200,6 +200,9 @@ const TEXTS = Object.freeze({
   badNumberTitle: '这个链接不对',
   badNumberBody: '链接里的编号读不出来，请重新扫一次标签上的二维码。',
   errorTitle: '暂时打不开，请稍后再试',
+  // 2026-10-13 骨架屏的两句文案（她：加载到中间一直白屏）—— 见 renderScanSkeleton
+  skeletonLoading: '正在读取…',
+  skeletonSizesLabel: '尺码',
   errorBody: '读库存时出错了。',
   busyTitle: '库存数据正在准备中',
   busyBody: '飞书那边还没准备好，请过几秒刷新这一页。',
@@ -351,6 +354,13 @@ const READS = Object.freeze({
   // 总开关（**显式布尔**：空串 = 关掉，见 config/envValue 的规矩）。
   // 关掉 = 回到提速前的"整表读"，用于线上出问题时一键退回。
   filterEnabled: readFlag(process.env, 'SCAN_PAGE_FILTER_READ_ENABLED', true),
+  // ⭐ 2026-10-13（她：加载到中间一直白屏）：**骨架屏开关**。
+  //   · **默认 false** ⇒ `/s/<编号>` 与改动前**逐字相同**（既有整页 AC 一条都不动 ✓ 不假绿 ✓）；
+  //   · 打开（线上 `.env` 由 Lead 拿到她授权后设 `SCAN_PAGE_SKELETON_ENABLED=true`）⇒
+  //     首屏立刻回骨架（占位 + 正在读取…），数据由**同一段脚本** `fetch('?data=1')` 拿回来；
+  //     ⚠️ `?data=1` **走的还是同一个 `service.lookup`**（不新增取数路径 ✗）。
+  //   ⚠️ **显式布尔**（`readFlag` 给缺省值），不写 `||` 兜底 —— 否则"清空变量"关不掉 ✗
+
   // ⚠️ 按条件读的结果**一条都没有**时记一条 warn（见 events.filteredEmpty）：
   //    "库存真的为 0" 与 "filter 悄悄不生效" 在返回体上长得一样，
   //    所以这里留一条可 grep 的日志，不当成静默的成功。
@@ -561,6 +571,14 @@ const EVENTS = Object.freeze({
 
 const SCAN_PAGE = Object.freeze({
   route: ROUTE,
+  // ⭐⭐ 2026-10-13（她：加载到中间一直白屏）：**骨架屏开关**（**显式布尔**，缺省 false）。
+  //   · false（默认）⇒ `/s/<编号>` 与改动前**逐字相同** ⇒ 既有整页 AC 一条不用改 ✓（不假绿）
+  //   · true（线上 `.env`：`SCAN_PAGE_SKELETON_ENABLED=true`，由 Lead 拿到她授权后打开）⇒
+  //     首屏立刻回骨架（占位 + 正在读取…），数据由骨架里**同一段脚本** `fetch('?data=1')` 拿回来；
+  //     ⚠️ `?data=1` 走的还是**同一个 `service.lookup`**（不新增取数路径 ✗）
+  //   ⚠️ 必须放在**这个**对象里 —— 上一版我插到了子配置对象里 ⇒ `SCAN_PAGE.skeleton` 是 undefined
+  //      ⇒ 真进程开关**根本没生效**（真墙钟那次因此作废 ✗）。这条教训由下面那条"真配置"AC 钉住 ✓
+  skeleton: { enabled: readFlag(process.env, 'SCAN_PAGE_SKELETON_ENABLED', false) },
   number: NUMBER,
   states: STATES,
   missingSize: MISSING_SIZE,
