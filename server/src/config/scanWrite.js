@@ -690,6 +690,9 @@ const EVENTS = Object.freeze({
   disabled: 'scan.write.disabled',
   lineAdded: 'scan.sale.line_added',
   draftCleared: 'scan.sale.draft_cleared',
+  // 2026-10-13 interrupted (account written, draft not cleared): detect + clear each logs one line
+  interruptedDetected: 'scan.sale.interrupted_detected',
+  interruptedCleared: 'scan.sale.interrupted_cleared',
   saleSubmitting: 'scan.sale.submitting',
   saleSubmitted: 'scan.sale.submitted',
   // ⭐⭐ 2026-10-12：**一条**分阶段的提交耗时汇总（她真机被卡住 / 收过 504 网关超时）。

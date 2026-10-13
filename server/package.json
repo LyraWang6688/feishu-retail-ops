@@ -17,7 +17,8 @@
     "sales:sample": "node scripts/write_sales_sample.js",
     "test": "node --test --test-concurrency=1",
     "e2e:real": "node --test --test-concurrency=1 e2e/real-paths.mjs && FEISHU_TARGET_ENV=test node scripts/e2e-product-tag-qr.js",
-    "env:selfcheck": "node scripts/env-selfcheck.mjs"
+    "env:selfcheck": "node scripts/env-selfcheck.mjs",
+    "scan:repair-interrupted": "node scripts/scan-repair-interrupted.js"
   },
   "keywords": [
     "shoe-box",

@@ -22,7 +22,7 @@
 const crypto = require('node:crypto');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { SCAN_WRITE } = require('../config/scanWrite');
-const { logInfo } = require('../utils/logger');
+const { logInfo, logWarn } = require('../utils/logger');
 
 const asTime = (value) => {
   const time = Date.parse(String(value || ''));
@@ -251,6 +251,76 @@ const createScanSessionService = (options = {}) => {
   };
 
   /**
+   * ⭐⭐ 2026-10-13（事故尾巴 · 她要求查清）：**半截提交** —— 账写了、草稿没清 ✗
+   *
+   * 现场（会话 `…44bd9863896a41e8`）：`status=draft` + `order_no=XSD-20261013-0003` + `lines=1`，
+   * **而 `completed[]` 里已经登记了这一笔** ⇒ 12:44:16 的服务重启把"清草稿"那半打断了 ✓
+   * ⇒ 之后她每次扫码都看到"本单已加 1 双"✗ 且**再提交有重复下单风险** ✗
+   *
+   * 判据（**保守优先** ✗）：`status=draft` **且** 草稿里那个 `order_no` **能在 `completed[]` 里找到**
+   * ⇒ 只清**草稿那一半**（`clearSale` ✓ 绝不碰账 ✗）。
+   * ⚠️ **拿不准**（草稿有单号、completed 里查不到 ⇒ 可能只是"正在提交中" ✓）⇒ **不动数据** ✓
+   *    只由 `findUncertainInFlightSales()` 报出来（调用方**只记日志** ✓）。
+   * ⚠️ 事件名先写字面量（提到 config 需要放行 `config/scanWrite.js` 一行 ✗ 已报 Lead ✓）。
+   */
+  const completedOrderNos = (sale) => new Set(
+    (sale.completed || []).map((item) => String(item?.order_no || '').trim()).filter(Boolean),
+  );
+
+  const sessionRows = async () => {
+    const rows = await store.list();
+    return Array.isArray(rows) ? rows : [];
+  };
+
+  /** 半截提交：**可以安全清草稿**的那些（判据保守 ✓）。 */
+  const findInterruptedSales = async () => {
+    const rows = await sessionRows();
+    const found = [];
+    for (const session of rows) {
+      const sale = session?.sale || {};
+      const orderNo = String(sale.order_no || '').trim();
+      if (String(sale.status || '') !== sessionConfig.statuses.draft) continue;
+      if (!orderNo) continue;
+      if (!(sale.lines || []).length) continue;
+      if (!completedOrderNos(sale).has(orderNo)) continue;
+      found.push({
+        openId: session.open_id || '',
+        sessionId: session[sessionConfig.idField],
+        orderNo,
+        seq: sale.seq || 1,
+        reason: 'draft_with_completed_order',
+      });
+    }
+    return found;
+  };
+
+  /** ⚠️ **不确定**的那些：草稿带单号但账里查不到（可能正在提交中 ✓）⇒ **只记日志、不动数据** ✗。 */
+  const findUncertainInFlightSales = async () => {
+    const rows = await sessionRows();
+    const found = [];
+    for (const session of rows) {
+      const sale = session?.sale || {};
+      const orderNo = String(sale.order_no || '').trim();
+      if (String(sale.status || '') !== sessionConfig.statuses.draft) continue;
+      if (!orderNo || !(sale.lines || []).length) continue;
+      if (completedOrderNos(sale).has(orderNo)) continue;
+      found.push({ sessionId: session[sessionConfig.idField], orderNo, seq: sale.seq || 1,
+        reason: 'draft_order_no_not_in_completed' });
+    }
+    return found;
+  };
+
+  /** 只清**草稿那一半**（复用 `clearSale` ✓ 账一条不动 ✗）+ 留痕 ✓。 */
+  const clearInterruptedSale = async (openId) => {
+    const next = await clearSale(openId);
+    logWarn('scan.sale.interrupted_detected', {
+      session_id: next?.[sessionConfig.idField], open_id: String(openId || ''),
+      reason: 'draft_cleared_after_interrupted_submit',
+    });
+    return next;
+  };
+
+  /**
    * 记一次部分进度：**主表 record_id 一建出来就落盘**。
    * 为什么重要：明细 / 收款写了一半就失败时，重试必须接着**同一张**主表写，
    * 而不是再建一张（那就是两个业务事实）。与群聊链路 `AfterSalesService.ensureMaster`
@@ -375,6 +445,9 @@ const createScanSessionService = (options = {}) => {
     revive,
     isExpired,
     submitKeyFor,
+    findInterruptedSales,
+    findUncertainInFlightSales,
+    clearInterruptedSale,
     // ⭐ 2026-10-12：记住"最近用过的领域"（继续扫下一个时用它）
     setLastRealm,
     addLine,
