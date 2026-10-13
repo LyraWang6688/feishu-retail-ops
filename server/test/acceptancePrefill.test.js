@@ -488,8 +488,12 @@ test('AC-AP16 候选口径**只来自配置**（与缺码同一份；不另发�
   //     ② 既有的"配置与尺码管理一致性" warn（2026-10-09 就在 ✓ 现已移出请求期 ✓ 本体保留 ✓）
   //     ③ ⭐ 新增：普通码/特殊码区分（`normal` 判缺码与预订 ✓ `special` 只展示 ✓）
   //   改前逐字：assert.equal((service.match(/sizeSegments\?\.ranges/g) || []).length, 2, '…');
-  assert.equal((service.match(/sizeSegments\?\.ranges/g) || []).length, 3,
-    '"应有尺码"仍只有**一处实现**（`sizesForCategory`）—— 另外两处都只是**读配置**（缺码/预订 + 一致性 warn）');
+  // ⭐ 2026-10-14 改指向（3 → 4）：新增了 `enterableScopeOf`（缺货基准 = **可录范围** ✓ 只读配置 ✓）
+  //   ⇒ 现在**四处读配置**：① `sizesForCategory` ② 一致性 warn ③ `normalScopeOf`（展示用保留）
+  //      ④ ⭐ `enterableScopeOf`（展示链路的缺货基准 ✓ 零飞书读 ✓）
+  //   **能力判断不变**：只有一个"应有尺码"实现（`sizesForCategory`）✓ 其余都只是**读配置** ✓
+  assert.equal((service.match(/sizeSegments\?\.ranges/g) || []).length, 4,
+    '"应有尺码"仍只有**一处实现**（`sizesForCategory`）—— 另外三处都只是**读配置**（缺码/预订 + 一致性 warn + 可录范围）');
   // ⭐ 更硬的一条：`sizesForCategory` 只许有一个定义（防止"另发明一套"✗）
   assert.equal((service.match(/const sizesForCategory = /g) || []).length, 1,
     '`sizesForCategory` 只许有一个定义 ✓');

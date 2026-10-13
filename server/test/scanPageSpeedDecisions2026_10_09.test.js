@@ -161,14 +161,16 @@ test('A1 缺码判定 = **配置段里库存为 0 的码**（不再看「尺码�
     .lookup({ number: NUMBER, requestId: 'req_a1' });
   assert.equal(view.found, true);
   assert.equal(view.sizes_degraded, false);
-  // 2026-10-14 改指向（她拍板：缺码只按**普通码**判，特殊码不计缺码 ✗）：
-  //   能力不变 —— 缺码仍是"配置段里库存为 0 的码" ✓；只是"段"由 38–48 收窄成 **38–45（普通码）**
-  //   ⇒ 8 个码 − 有货的 40/42 = **6** ✓（46/47/48 是特殊码：有库存才显示，不出现也不算缺 ✗）。
-  //   改前逐字：assert.equal(view.missing_count, 9, 'A 段 11 个码 − 有货的 40/42 = 9');
-  assert.equal(view.missing_count, 6, '普通码 38–45 共 8 个 − 有货的 40/42 = 6（她 2026-10-14）');
+  // ⭐⭐ 2026-10-14 **二次改指向**（她的最终口径：缺货基准 = **可录范围** 38–48 ✓
+  //   依据 docs/special-size-fold-and-enterable-base-2026-10-14.md 原话：「都是按照它的**可录范围**来，
+  //     只不过把缺码或者预订里包含**特殊码的归集到一个折叠的区域**」）
+  //   ⇒ 11 个码 − 有货的 40/42 = **9** ✓（缺货的特殊码 46/47/48 有行 ⇒ 展示层收进折叠块 ✓）
+  //   改前逐字（上一版，已被她作废）：assert.equal(view.missing_count, 6, '普通码 38–45 …');
+  assert.equal(view.missing_count, 9, '可录范围 38–48 共 11 个 − 有货的 40/42 = 9（她 2026-10-14 最终口径）');
   const bySize = new Map(view.rows.map((row) => [row.size_text, row]));
   assert.equal(bySize.get('40').missing, false);
-  assert.equal(bySize.get('46'), undefined, '46 是特殊码：库存里没有 ⇒ 一行都不出、也不算缺 ✓');
+  // ⭐ 2026-10-14 改指向：46（缺货的特殊码）**现在有一行且算缺** ✓（它会被收进「特殊码」折叠块 ✓）
+  assert.equal(bySize.get('46').missing, true, '46 是缺货的特殊码 ⇒ 有行 + 算缺（收进折叠块 ✓）');
   // 「尺码管理」里那两个记录**没有**决定行的清单（38/39/41 表里都没有，但都在页面上）。
   assert.deepEqual(view.rows.map((row) => row.size_text).slice(0, 3), ['38', '39', '40']);
 });
@@ -364,11 +366,9 @@ test('A4 ⭐ 一次扫码 **0~1 次飞书调用**：库存走快照 + 单价走�
   assert.equal(view.found, true);
   assert.equal(view.total, 3, '库存来自快照（3 双，一双不少）');
   assert.equal(view.price_text, '¥399', '单价来自「货品信息」内存索引');
-  // 2026-10-14 改指向（她：缺码只按**普通码**判）：
-  //   能力不变 —— 缺码来自**配置**、这一趟 0 次飞书调用 ✓；只是"段"由 38–48 收窄成 **38–45**：
-  //   8 个码 − 有货的 40/42 = **6** ✓（特殊码 46/47/48 不计缺码 ✗）
-  //   改前逐字：assert.equal(view.missing_count, 9, '缺码来自配置段');
-  assert.equal(view.missing_count, 6, '缺码来自配置（普通码 38–45 − 有货 = 6）');
+  // ⭐⭐ 2026-10-14 **二次改指向**：能力不变 —— 缺码来自**配置**、这一趟 0 次飞书调用 ✓；
+  //   段 = **可录范围 38–48** ⇒ 11 − 2 = **9** ✓
+  assert.equal(view.missing_count, 9, '缺码来自配置（可录范围 38–48 − 有货 = 9）');
   assert.deepEqual(calls, [], '这一趟**一次飞书调用都没有**（0 次）');
 
   // ⭐ 用 `scan.lookup.timing` 的字段证明（报告里给的就是这一条的形状）。

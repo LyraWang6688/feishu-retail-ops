@@ -237,18 +237,38 @@ const sizeRowsOf = (view) => (Array.isArray(view?.rows) ? view.rows : [])
  * ⚠️ 降级（拿不到该类别在「尺码管理」里的清单）时**第二组为空**：
  *    只显示有库存的尺码，**绝不编造**"没有的尺码"（与既有缺码判定的降级口径一致）。
  */
+/**
+ * ⭐ 2026-10-14（她的最终口径）：这一款的**特殊码集合**（按编号第 3 段的类别取 `ranges[code].special`）
+ *   —— 只读配置 ⇒ 零飞书读 ✓；认不出类别 / 关掉折叠 ⇒ 空集合（一条都不折 ✓ 不猜 ✗）
+ */
+const specialSizesOfView = (view) => {
+  const cfg = SCAN_PAGE.specialSizes || {};
+  if (cfg.foldable === false) return new Set();
+  const separator = SCAN_PAGE.number?.separator || '|';
+  const parts = String(view?.number || '').split(separator);
+  const categoryCode = String(parts[2] || '').trim().toUpperCase();
+  const range = SCAN_PAGE.sizeSegments?.ranges?.[categoryCode];
+  return new Set((range?.special || []).map((size) => String(size)));
+};
+
 const saleSizeGroups = (view, behavior = SCAN_PAGE.REALM_SIZE_BEHAVIOR.sales) => {
   // 分组口径来自配置（`group` 不是配置里的枚举值 ⇒ 平表、不分组）；
   // ⚠️ 库存页的 0 占位是**渲染层**的事（真源在 `views/scanPageRenderer.js`），这里不管。
   const grouped = behavior.group === SCAN_PAGE.SIZE_ROW_GROUPS.GROUPED;
   const inStock = [];
   const prepaid = [];
+  // ⭐ 2026-10-14：缺货的**特殊码**单独归到 `folded`（**按男女各自一块**：类别取自编号第 3 段 ✓）
+  const folded = [];
+  const specialSet = specialSizesOfView(view);
   for (const row of sizeRowsOf(view)) {
     const item = { size_text: String(row.size_text), count: sellableCountOf(row, view?.columns) };
     if (item.count > 0 || !grouped) inStock.push(item);
-    else if (!view?.sizes_degraded || behavior.groupWhenDegraded) prepaid.push(item);
+    else if (!view?.sizes_degraded || behavior.groupWhenDegraded) {
+      if (specialSet.has(item.size_text)) folded.push(item);
+      else prepaid.push(item);
+    }
   }
-  return { inStock, prepaid };
+  return { inStock, prepaid, folded };
 };
 
 /** 「有货」的那些尺码（写入口要按它判"这一双是现货还是预订"）。 */

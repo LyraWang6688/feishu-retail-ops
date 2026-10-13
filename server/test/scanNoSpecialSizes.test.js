@@ -44,7 +44,9 @@ test('AC-NS3 ⭐⭐ 其他码：**库存里有的就显示**（不算特殊码 �
     ],
   };
   const groups = saleSizeGroups(VIEW);
-  const texts = [...groups.inStock, ...groups.prepaid].map((item) => String(item.size_text));
+  // ⭐ 2026-10-14 改指向：**缺货的特殊码**已归到 `folded`（折叠块）⇒ 判"显示不显示"要把三组都算上 ✓
+  //   （本夹具没给 `columns` ⇒ 有货数算成 0 ⇒ 43 落到折叠块；真页面会传 columns ⇒ 它就在现货区 ✓ 见 AC-SF2）
+  const texts = [...groups.inStock, ...groups.prepaid, ...(groups.folded || [])].map((item) => String(item.size_text));
   assert.ok(texts.includes('43'), '⭐ 库存里有的 43 必须显示（特殊码不再是"要采购明细出现过"✗）');
   assert.ok(texts.includes('36'), '有货的 36 显示在现货组 ✓');
   assert.ok(!texts.includes('38'), '库存里**没有**的码不显示 ✓（也不计缺码 ✓）');

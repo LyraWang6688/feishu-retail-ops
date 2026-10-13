@@ -236,12 +236,12 @@ test('① 按条件读 vs 整表读：视图**逐字一致**（少读 ≠ 少算
   const wholeView = await service(fakeGateway({ filtered: false })).lookup({ number: NUMBER, requestId: 'req_w' });
   assert.deepEqual(filteredView, wholeView);
   assert.equal(filteredView.total, 3);
-  // ⭐ 2026-10-09：缺码 = **普通码（A 男 38–45）里库存为 0 的码** ⇒ 8 个码里 40/42 有货（她 2026-10-14：普通码 38-45；46/47/48 是特殊码，只有库存里出现才显示，不算缺码）
-  //    其余 6 个（38/39/41/43/44/45）都算缺码。
-  assert.equal(filteredView.missing_count, 6, '缺码 = 普通码(38-45) - 有货 = 6（她 2026-10-14：普通码 38-45，特殊码不计缺码）');
+  // ⭐⭐ 2026-10-14 **二次改指向**（她的最终口径：缺货基准 = **可录范围** 38–48）
+  //   ⇒ 11 个码里 40/42 有货 ⇒ **9** 个缺码（含缺货的特殊码 46/47/48 ⇒ 展示层收进折叠块 ✓）
+  assert.equal(filteredView.missing_count, 9, '缺码 = 可录范围(38-48) − 有货 = 9（她 2026-10-14 最终口径）');
   assert.deepEqual(
     filteredView.rows.map((row) => row.size_text),
-    ['38', '39', '40', '41', '42', '43', '44', '45'],
+    ['38', '39', '40', '41', '42', '43', '44', '45', '46', '47', '48'],
   );
   assert.equal(filteredView.color, '黑色', '关联列的**显示文本**要读得出来（这是不用 search 接口的原因）');
   assert.equal(filteredView.category_name, '休闲鞋');
@@ -277,7 +277,8 @@ test('② 回退：飞书不认这个公式（抛错）→ 整表读，页面照
   assert.equal(view.found, true);
   assert.equal(view.total, 3);
   // ⭐ 2026-10-09：缺码按配置段算 ⇒ A 段 11 个码里有 9 个库存为 0。
-  assert.equal(view.missing_count, 6, '缺码 = 普通码(38-45) - 有货（她 2026-10-14）');
+  // ⭐⭐ 2026-10-14 **二次改指向**：段 = **可录范围 38–48** ⇒ 11 − 2（40/42 有货）= **9** ✓
+  assert.equal(view.missing_count, 9, '缺码 = 可录范围(38-48) − 有货 = 9（她 2026-10-14 最终口径）');
   assert.equal(gateway.filterCalls().length, 2, '两次都试过了');
   const wholeTables = gateway.listAllCalls().map((call) => call.tableKey);
   assert.ok(wholeTables.includes('product') && wholeTables.includes('liveInventory'),

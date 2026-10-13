@@ -114,6 +114,24 @@ const sizesForCategory = (categoryCode, config = SCAN_PAGE) => {
 };
 
 /**
+ * ⭐⭐ 2026-10-14（她的最终口径）：**可录范围**（女 34–43 / 男 38–48）= 一切"缺货/预订"的判定基准 ✓
+ *   · **只读配置**（`ranges[code].enterable`）⇒ **零飞书读** ✓
+ *   · ⚠️ 定义在**模块作用域**（与 `sizesForCategory` 并排）⇒ 工厂内直接用、也能导出给用例 ✓
+ *     （`normalScopeOf` 当年放在工厂里 ⇒ 导不出去；别照它放 ✗）
+ *   · 🔴 `sizesForCategory` / `loadSizeScope` **一字不动**（验收页仍按可录范围取候选 ✓）
+ */
+const enterableScopeOf = (categoryCode, config = SCAN_PAGE) => {
+  const range = config.sizeSegments?.ranges?.[String(categoryCode || '').trim().toUpperCase()];
+  const segment = range?.enterable;
+  if (!Array.isArray(segment) || segment.length !== 2) {
+    return { sizes: [], degraded: true, reason: 'unknown_category' };
+  }
+  const sizes = [];
+  for (let size = Number(segment[0]); size <= Number(segment[1]); size += 1) sizes.push(size);
+  return { sizes: sortSizes(sizes), degraded: false, reason: '', source: 'config' };
+};
+
+/**
  * 「尺码管理.类别」的取值 → 一组类别。
  *
  * ⚠️ 本机测试 Base（生产同形状）只读实测：这一列是**多选**（`type=4`，选项 A/B），
@@ -1176,7 +1194,10 @@ const createScanPageService = (rawGateway, options = {}) => {
       // ⭐⭐ 2026-10-14（她逐字：「你在代码里做完配置，就不用读尺码管理和采购明细了」）：
       //   范围**只按配置的 normal**（A 38–45 · B 36–41 ✓ 零飞书读 ✓）
       //   ⇒ 缺码 = normal − 有货 ✓（special 不参与缺码 ✗）；`loadSizeScope` 本体留给验收页 ✓
-      scope = normalScopeOf(parsed.categoryCode);
+      // ⭐⭐ 2026-10-14（她的最终口径）：缺货基准 = **可录范围**（女 34–43 / 男 38–48）
+      //    ⇒ 缺货 = 可录范围 − 有货（含特殊码 ✓）；缺货的**特殊码**由展示层收进折叠块 ✓
+      //    （改前：`normalScopeOf` = 只算普通码 ⇒ 没货的特殊码既不显示也不算缺 ✗）
+      scope = enterableScopeOf(parsed.categoryCode);
       // ⭐ 缺码这一段是**读配置**还是**降级**（`scan.lookup.timing` 里就靠它看"有没有回退"）。
       if (timing) timing.size_source = scope.degraded ? `degraded:${scope.reason}` : 'config';
       // ⭐ 缺码这一段：读**配置**时是 0 次飞书；只有降级（读「尺码管理」）才算 1 次 ✓
@@ -1317,6 +1338,7 @@ module.exports = {
   // ⭐⭐ 2026-10-12：**"这个类别该有哪些尺码"的唯一来源**（纯配置，零读表）——
   //    `loadSizeScope`（缺码判定）与验收页的"未报货尺码"候选**共用这一份**，不另发明一套。
   sizesForCategory,
+  enterableScopeOf,
   decodeScanNumber,
   parseNumberSegments,
   formatPrice,

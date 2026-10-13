@@ -223,6 +223,13 @@ summary { cursor: pointer; }
 .size-group { min-width: 0; margin: 0 0 var(--space-2); padding: var(--space-2); border: 1px solid var(--border-light); border-radius: var(--radius-md); background: var(--surface-soft); }
 .size-group__legend { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: 0; font-size: var(--font-size-base); font-weight: 700; }
 .size-group .hint { display: block; margin: var(--space-1) 0 var(--space-2); }
+/* ⭐ 2026-10-14：特殊码折叠块的**折叠头** —— 与尺码卡同一条命中区口径（≥44px ⇒ 手机上点得到 ✓）。
+   收起时"不可见 + 不占布局高度"由浏览器原生 details 保证（**不自己写"藏起来"的规则** ✗）。
+   ⚠️ 本段在模板字符串里 ⇒ 注释里**不许出现反引号**（会提前结束字符串）。 */
+.size-fold__summary { min-height: var(--control-height); cursor: pointer; list-style: none; }
+.size-fold__summary::after { content: '▾'; margin-left: auto; font-size: var(--font-size-lg); color: var(--text-secondary); }
+.size-fold[open] .size-fold__summary::after { content: '▴'; }
+.size-fold .size-chips { margin-top: var(--space-2); }
 .size-chips { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-1); }
 .size-chip { display: flex; align-items: center; justify-content: center; gap: var(--space-1); min-width: 0; min-height: var(--control-height); padding: var(--space-1); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer; }
 .size-chip input { flex: none; width: 20px; height: 20px; margin: 0; }
@@ -964,6 +971,30 @@ const sizeGroupHtml = ({ id, heading, tag, tone, items, empty }) => `
     : `<span class="hint">${escapeHtml(empty)}</span>`}</div>
 </fieldset>`;
 
+/**
+ * ⭐ 2026-10-14（她的最终口径）：「特殊码」折叠块 —— 原生 `<details>`（**零 JS** ✓）
+ *   · **默认收起** ⇒ 浏览器原生：内容**不可见 + 不占布局高度** ✓（不用自己写 display:none ✗）
+ *   · `<summary>` ≥44px（`--control-height`）⇒ 手机上点得到 ✓
+ *   · 文案全走 `config.specialSizes.toggleLabel`（**渲染层不写死中文** ✗）
+ *   ⚠️ 里面那张卡与外面**同规则**（`name="size"` 的 radio、`.size-chip` ⇒ 命中区一样 ✓）
+ */
+const specialFoldHtml = (items) => {
+  const cfg = SCAN_PAGE.specialSizes || {};
+  if (cfg.foldable === false || !items.length) return '';
+  const open = cfg.collapsedByDefault === false ? ' open' : '';
+  return `
+<details class="size-group size-fold" data-special-fold="1"${open}>
+<summary class="size-group__legend size-fold__summary">
+<span class="size-group__title">${escapeHtml(cfg.toggleLabel || '')}</span>
+<span class="tag tag--warning">${escapeHtml(String(items.length))}</span>
+</summary>
+<div class="size-chips">${items.map((item) => `<label class="size-chip">
+<input type="radio" name="size" value="${escapeHtml(item.size_text)}">
+<span class="size-chip__size">${escapeHtml(item.size_text)} 码</span>
+</label>`).join('\n')}</div>
+</details>`;
+};
+
 const sizeGroupsHtml = (view, write) => {
   const t = REALM_TEXTS;
   const groups = saleSizeGroups(view);
@@ -991,7 +1022,7 @@ const sizeGroupsHtml = (view, write) => {
     tone: 'warning',
     items: prepaid,
     empty: t.saleSizeEmpty,
-  });
+  }) + specialFoldHtml(groups.folded || []);
 };
 
 /**
