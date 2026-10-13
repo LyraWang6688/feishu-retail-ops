@@ -403,6 +403,11 @@ const createScanPageRouter = (options = {}) => {
   };
 
   const respondWriteFailure = (res, result, requestId) => {
+    // 2026-10-14 (real gap): a write failure used to log NOTHING. Only-add, existing event name.
+    logError(writeConfig.events.failed, {
+      request_id: requestId, reason: 'write_failed', code: String(result?.code || ''),
+      where: 'respondWriteFailure',
+    });
     // 500 = 系统那边没处理成（写库失败）；400 = 她填错了 / 数据不满足业务（一个字节都没写）。
     // ⭐ `sale_partial_failed` 也归 500：单子记上了、后面某步没写完 —— 不是她填错。
     const status = ['sale_write_failed', 'sale_partial_failed', 'replenish_write_failed', 'return_write_failed'].includes(result.code)
