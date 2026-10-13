@@ -142,7 +142,8 @@ const configWith = (patch = {}) => ({
 
 test('A1 尺码段在**配置**里（A 男 38–48 · B 女 34–43 —— 不是散在逻辑里的硬编码）', () => {
   assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.A, { label: '男', from: 38, to: 48, enterable: [38, 48], default: [38, 45], special: [46, 47, 48] });
-  assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.B, { label: '女', from: 34, to: 43, enterable: [34, 43], default: [35, 42], special: [34, 43] });
+  // ⚠️ 2026-10-14 改指向（她明确「按照 **36-42**」覆盖早先的 35–42 ✓）—— 改前逐字：`default: [35, 42]`
+  assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.B, { label: '女', from: 34, to: 43, enterable: [34, 43], default: [36, 42], special: [34, 43] });
   // 一致性保险的旋钮也在配置里（开关 + 间隔），不是写死的定时器。
   assert.equal(typeof SCAN_PAGE.sizeSegments.consistencyCheck.enabled, 'boolean');
   assert.ok(SCAN_PAGE.sizeSegments.consistencyCheck.ttlMs >= 0);

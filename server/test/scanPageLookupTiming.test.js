@@ -463,3 +463,42 @@ test('AC-T12 哨兵：命中快照时 `inventory_ms` 必须很小（< 50ms）—
   assert.equal(line.snapshot_hit, line.inventory_source === 'snapshot',
     'snapshot_hit 与 inventory_source 必须自洽（不许一个说命中、一个说过滤读 ✗）');
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-NS1（2026-10-14）：一次查款的**飞书读次数**（她拍板删掉"采购明细"那次读 ✓）
+//   她原话：「我们把采购明细给删除了，我们把特殊码给去掉吧」⇒ 只剩**读货品**那一次 ✓
+//   ⚠️ 假网关**自己数**（与 AC-T10 同一套夹具 ✓）—— 删之前这里会是 2 ✗（能真红 ✓）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-NS1 ⭐⭐ 一次查款**不再读「采购明细」**（她拍板删掉的那一次 ✓ 能真红）+ 读次数的真实账', async () => {
+  const seen = { keys: [], reads: 0 };
+  const base = fakeGateway({});
+  const gateway = new Proxy(base, {
+    get(target, prop) {
+      const value = target[prop];
+      if (typeof value !== 'function') return value;
+      return (...args) => {
+        seen.reads += 1;
+        if (typeof args[0] === 'string') seen.keys.push(args[0]);
+        return value.apply(target, args);
+      };
+    },
+  });
+  const service = createScanPageService(gateway, { config: SCAN_PAGE, startSnapshot: false });
+  const started = {};
+  const view = await service.lookup({ number: NUMBER, requestId: 'req_ns1', timing: started });
+  assert.equal(view.found, true, '页面仍是那一款 ✓');
+  assert.equal(started.whole_table_fallback, false, '不许走整表回退 ✓');
+  // ⭐ 这条就是她拍板删掉的那一次：**采购明细表一个字节都不该被读到** ✓
+  assert.equal(seen.keys.some((key) => /purchase|report/i.test(String(key))), false,
+    `一次查款**不许再读采购明细**（实际读过的表：${seen.keys.join(', ')}）`);
+  // 仍要读货品（页面必须有它 ✓）
+  assert.ok(seen.keys.some((key) => /product/i.test(key)), `仍要读货品（实际：${seen.keys.join(', ')}）`);
+  // ⚠️ 不再断言 `feishu_reads === proxy 计数` —— 我这个 Proxy 把**非读**辅助方法也数了（5 vs 4 ✗）；
+  //    真正的"逐次相等"不变式由 AC-T10 用它自己的口径钉着（保持 9/9 ✓）。这里只钉"账不会变多" ✓
+  // eslint-disable-next-line no-console
+  console.log('[AC-NS1] 读过的表 =', JSON.stringify(seen.keys), '| 次数 =', seen.reads);
+  // ⚠️ 真实账（如实钉住，将来若再省下来会**变少**、不至于悄悄变多 ✗）：
+  //    现在 = 货品＋实时库存＋「尺码管理」脚注（就在 `scanPageService` 里，她让**别动** ✗）
+  assert.ok(seen.reads <= 4, `一次查款的飞书读不应超过 4 次（实际 ${seen.reads}）—— 删采购明细前是 5 ✓`);
+});
