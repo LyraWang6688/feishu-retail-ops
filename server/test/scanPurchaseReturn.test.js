@@ -346,13 +346,16 @@ test('AC-R1 【退货】领域里是退货表单：与【一键补货】同形�
       //      ⇒ 原先这一条断言"同一页上**两个表单都在**（补货 + 退货）"，现在改成
       //      "各自在自己那一块"（下面 ② 补货那块照旧钉着）。
       const returnHtml = await (await fetch(`${pageUrl}?from=purchase_return`, { headers: cookie })).text();
-      assert.match(returnHtml, new RegExp(`name="action" value="${SCAN_WRITE.actions.purchaseReturn}"`));
-      assert.match(returnHtml, /name="return_sizes" value="41"/);
-      assert.match(returnHtml, /name="return_qty_41"/);
-      // 幂等键来自配置（连点两次只写一次的判据）
-      assert.match(returnHtml, /name="submit_key" value="scan_return:scan_session_[0-9a-f]{16}:1"/);
-      // 退回按钮（能点的事，不是说明书）
-      assert.match(returnHtml, /生成采购退货/);
+      // ⚠️ 2026-10-13 **改写**（逐字）：她把这一块从「退货表单」换成了「**配品页**」
+      //    改前：这里断言页面上有 `action=return_purchase` / `return_sizes` / `return_qty_41` / `生成采购退货`
+      //    改后：断言这一页 = **配品页**（没有可选配品 ⇒ 人话空态卡）；
+      //         退货**能力没删**：`returnFormHtml` 仍在渲染层里（下面的源码哨兵）✓
+      //    去向：退货链路的行为断言在本文件 **AC-R2…R10**（直接调 `submitPurchaseReturn`，6 条均绿）✓
+      assert.ok(returnHtml.includes('<section class="card state-msg">'), '这一页现在 = 配品页（没配品 ⇒ 人话空态卡）');
+      assert.equal(returnHtml.includes('生成采购退货'), false, '退货表单不再渲染在这一页（她改成配品了）');
+      const rendererSrc = require('node:fs').readFileSync(
+        require('node:path').join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
+      assert.ok(rendererSrc.includes('returnFormHtml'), '退货表单的**能力保留**（returnFormHtml 仍在）✓');
       assert.equal(returnHtml.includes('退货说明'), false);
       assert.equal(returnHtml.includes(`name="action" value="${SCAN_WRITE.actions.replenish}"`), false,
         '退货那一块里不许混进补货表单（两块已分开）');
@@ -508,7 +511,9 @@ test('AC-R5 超库存：报 5 双、库存 3 双 ⇒ 明细写 3、差额 2 如�
     await withServer(formApp(h), async (base) => {
       const pageUrl = `${base}/s/${encodeURIComponent(NUMBER)}?from=purchase_return`;
       const html = await (await fetch(pageUrl, { headers: { cookie: sessionCookie(openId) } })).text();
-      const key = html.match(/name="submit_key" value="(scan_return:[^"]+)"/)[1];
+      // ⚠️ 2026-10-13：页面已换成配品页 ⇒ **不再从页面抠 submit_key**（抠不到会 TypeError）
+      void html;
+      const key = await returnKey(h, openId);
       const response = await fetch(pageUrl, {
         method: 'POST',
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
@@ -682,7 +687,9 @@ test('AC-R9 失败有人话：内部错误（表名/字段名/record_id）不回
     await withServer(formApp(h), async (base) => {
       const pageUrl = `${base}/s/${encodeURIComponent(NUMBER)}?from=purchase_return`;
       const html = await (await fetch(pageUrl, { headers: { cookie: sessionCookie(openId) } })).text();
-      const key = html.match(/name="submit_key" value="(scan_return:[^"]+)"/)[1];
+      // ⚠️ 2026-10-13：页面已换成配品页 ⇒ **不再从页面抠 submit_key**（抠不到会 TypeError）
+      void html;
+      const key = await returnKey(h, openId);
       const response = await fetch(pageUrl, {
         method: 'POST',
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },

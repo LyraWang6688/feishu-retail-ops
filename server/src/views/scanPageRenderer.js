@@ -34,11 +34,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { SCAN_PAGE, fillText } = require('../config/scanPage');
-const {
-  REALMS, DEFAULT_REALM, REALM_TEXTS, REALM_EMPTY_TEXT_KEYS,
-  REPLENISH_REALM, PURCHASE_RETURN_REALM, ACCEPTANCE_REALM, resolveRealm, labelPrintUrls,
-  saleSizeGroups, purchaseSizeLines,
-} = require('./scanPageRealm');
+const { NEW_REALM, REALMS, REALM_TABS, DEFAULT_REALM, REALM_TEXTS, REALM_EMPTY_TEXT_KEYS, REPLENISH_REALM, PURCHASE_RETURN_REALM, ACCEPTANCE_REALM, resolveRealm, labelPrintUrls, saleSizeGroups, purchaseSizeLines } = require('./scanPageRealm');
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -329,11 +325,24 @@ ${meta ? `<p class="identity__meta">${escapeHtml(meta)}</p>` : ''}
  *    不是脚本在浏览器里切 class —— 没 JS 也完全正确。
  * 领域顺序 / 名字全部来自 `views/scanPageRealm.js`（加减领域只改那个文件）。
  */
-const realmBarHtml = (realm = DEFAULT_REALM) => `<nav class="realm-bar" aria-label="${escapeHtml(REALM_TEXTS.barLabel)}">
-${REALMS.map((item) => (item.id === realm
-    ? `<a class="realm-tab realm-tab--active" data-realm-id="${escapeHtml(item.id)}" href="?from=${escapeHtml(item.id)}" aria-current="page" data-tap-target="realm:${escapeHtml(item.id)}" data-open-label="${escapeHtml(SCAN_PAGE.tapFeedback && SCAN_PAGE.tapFeedback.label || '')}">${escapeHtml(item.label)}</a>`
-    : `<a class="realm-tab" data-realm-id="${escapeHtml(item.id)}" href="?from=${escapeHtml(item.id)}" data-tap-target="realm:${escapeHtml(item.id)}" data-open-label="${escapeHtml(SCAN_PAGE.tapFeedback && SCAN_PAGE.tapFeedback.label || '')}">${escapeHtml(item.label)}</a>`)).join('\n')}
+const realmBarHtml = (realm = DEFAULT_REALM) => {
+  // ⭐⭐ 2026-10-13（她最终顺序）：**两行三列** —— 第一行 销售·补货·库存；第二行 标签·上新·配品。
+  //   · 每一行一个 `grid` 三列（不靠 CSS 文件也能成形 ⇒ 服务端渲染立即生效 ✓）
+  //   · `上新` 不是页面领域 ⇒ 渲染成**直达外链**（`realmBar.newFormUrl`，服务端配置 ✓）
+  const tabHtml = (item) => {
+    if (item.external === true) {
+      return `<a class="realm-tab" data-realm-id="${escapeHtml(item.id)}" href="${escapeHtml(SCAN_PAGE.realmBar.newFormUrl)}" target="_blank" rel="noopener">${escapeHtml(item.label)}</a>`;
+    }
+    const active = item.id === realm;
+    return `<a class="realm-tab${active ? ' realm-tab--active' : ''}" data-realm-id="${escapeHtml(item.id)}" href="?from=${escapeHtml(item.id)}"${active ? ' aria-current="page"' : ''} data-tap-target="realm:${escapeHtml(item.id)}" data-open-label="${escapeHtml(SCAN_PAGE.tapFeedback && SCAN_PAGE.tapFeedback.label || '')}">${escapeHtml(item.label)}</a>`;
+  };
+  const row = (items) => `<div class="realm-row" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">${items.map(tabHtml).join('')}</div>`;
+  const items = REALM_TABS;
+  return `<nav class="realm-bar" aria-label="${escapeHtml(REALM_TEXTS.barLabel)}">
+${row(items.slice(0, 3))}
+${row(items.slice(3, 6))}
 </nav>`;
+};
 
 /**
  * `<noscript>` 兜底：把四条领域链接**再给一遍**（**只给能点的，不解释怎么用**）。
@@ -346,7 +355,9 @@ ${REALMS.map((item) => (item.id === realm
  */
 const noScriptHtml = () => `<noscript>
 <nav class="realm-bar realm-bar--plain" aria-label="${escapeHtml(REALM_TEXTS.barLabel)}">
-${REALMS.map((realm) => `<a class="realm-link" href="?from=${escapeHtml(realm.id)}">${escapeHtml(realm.label)}</a>`).join('\n')}
+${REALM_TABS.map((realm) => (realm.external === true
+  ? `<a class="realm-link" href="${escapeHtml(SCAN_PAGE.realmBar.newFormUrl)}" target="_blank" rel="noopener">${escapeHtml(realm.label)}</a>`
+  : `<a class="realm-link" href="?from=${escapeHtml(realm.id)}">${escapeHtml(realm.label)}</a>`)).join('\n')}
 </nav>
 </noscript>`;
 
@@ -1322,6 +1333,11 @@ const realmEmptyHtml = (realm, config) => {
 const realmBlockHtml = (realm, view, config, write, page = {}) => {
   const id = REALMS.some((item) => item.id === realm) ? realm : DEFAULT_REALM;
   const wrap = (inner) => `<div class="realm-block realm-block--${escapeHtml(id)}">\n${inner}\n</div>`;
+  // ⭐ 2026-10-13：「上新」是**外链 tab**（`external: true`），**不是页面领域** ⇒
+  //   它没有自己的块内容（也没有 `?from=new` 入口）。
+  //   ⚠️ 不接这一支的话，`id` 会落到**销售**那一块（它会出现「加入本单」✗——一颗外链 tab 不该渲染成建单表单）。
+  if (id === NEW_REALM) return wrap(realmEmptyHtml(NEW_REALM, config));
+
   // ⭐⭐ 2026-10-11（方案A）：**验收模式**（非 tab 的领域）—— 上下文来自 `page.acceptance`
   //    （由路由按"正开着一场验收"给）；拿不到就什么都不猜，回落缺省领域那张卡。
   if (id === ACCEPTANCE_REALM) {
@@ -1344,12 +1360,25 @@ const realmBlockHtml = (realm, view, config, write, page = {}) => {
     return wrap(form || realmEmptyHtml(REPLENISH_REALM, config));
   }
   if (id === PURCHASE_RETURN_REALM) {
-    // ⭐ 2026-10-11：**退货**同样独立成一块（内容一个字没变）。
-    const form = write && write.enabled !== false && write.returnEnabled !== false
-      ? returnFormHtml(view, write)
+    // ⭐⭐ 2026-10-13（她：「你先把扫码页的退货改成配品页面」）—— 最小可用配品页：
+    //   能进 ✓ · 能看到「其他配品」里有哪些、能选一件加进本单 ✓（服务层能力一直都在 ✓）
+    //   ⚠️ 不自己发明复杂流程 ✗（她后面会给这一页要什么）；`returnFormHtml` 保留（没删能力 ✗）
+    const accessories = Array.isArray(write?.accessories) ? write.accessories : [];
+    const t = write?.texts || {};
+    const fields = write?.fields || {};
+    const body = (write && write.enabled !== false && accessories.length)
+      ? `<h2 class="stock__heading">${escapeHtml(t.accessoryLabel || '')}</h2>
+<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
+${hiddenField(fields.action, write.actions.addAccessory)}
+${hiddenField(fields.submitKey, write.saleKey)}
+<div class="form-row"><label>${escapeHtml(t.accessoryLabel || '')}</label><select name="${escapeHtml(fields.accessory)}"><option value="">${escapeHtml(t.accessoryPlaceholder || '')}</option>${accessories.map((item) => `<option value="${escapeHtml(item.record_id)}">${escapeHtml(item.name)}</option>`).join('')}</select></div>
+<div class="form-row"><label>${escapeHtml(t.accessoryAmountLabel || '')}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" placeholder="${escapeHtml(t.accessoryAmountPlaceholder || '')}"></div>
+<button type="submit" class="btn"${submitFeedbackAttrs(write)}>${escapeHtml(t.addButton || '')}</button>
+</form>`
       : '';
-    return wrap(form || realmEmptyHtml(PURCHASE_RETURN_REALM, config));
+    return wrap(body || realmEmptyHtml(PURCHASE_RETURN_REALM, config));
   }
+
   // sales（缺省）
   if (!write || write.enabled === false || write.saleEnabled === false) {
     return wrap(realmEmptyHtml('sales', config));

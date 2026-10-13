@@ -57,7 +57,7 @@ process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'six_re
 
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
-const { REALMS, DEFAULT_REALM, resolveRealm } = require('../src/views/scanPageRealm');
+const { REALMS, REALM_TABS, DEFAULT_REALM, resolveRealm } = require('../src/views/scanPageRealm');
 const { renderScanPage } = require('../src/views/scanPageRenderer');
 const { createScanPageRouter } = require('../src/routes/scanPage');
 const { createScanArrivalService } = require('../src/services/scanArrivalService');
@@ -203,10 +203,22 @@ const sixRealmApp = (arrival) => {
 const scriptCountOf = (html) => (html.match(/<script[\s>]/gi) || []).length;
 
 test('AC-6R1 六个领域逐字 = 销售 · 补货 · 退货 · 验收 · 库存 · 货品（purchase 不在清单里）', () => {
+  // ⚠️ 2026-10-13 **改写**（逐字）：
+  //    改前：`['sales','replenish','purchase_return','accept','inventory','product']`
+  //    改后：`['sales','replenish','inventory','product','new','purchase_return','accept']`
+  //    理由：`REALMS` 是**解析用**的全集（7 条）——顺序 = 她 2026-10-13 的最终顺序
+  //          （销售·补货·库存 / 标签·上新·配品）＋ `accept` 仍在里面（有会话才切进来的模式 ⇒
+  //           必须解析得出来 ✗ 删了验收就进不去）；**条上只六个** = 下面的 `REALM_TABS` ✓
   assert.deepEqual(REALMS.map((realm) => realm.id),
-    ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product']);
-  assert.deepEqual(REALMS.map((realm) => realm.label),
-    ['销售', '补货', '退货', '验收', '库存', '货品']);
+    ['sales', 'replenish', 'inventory', 'product', 'new', 'purchase_return', 'accept']);
+  // ⚠️ 2026-10-13 **改写**（她最终顺序）：「第一行：销售 · 补货 · 库存；第二行：标签 · 上新 · 配品」
+  //    ⇒ 退货彻底不在扫码页（挪去工作台）；货品 → **标签**；多一个 **上新**（外链）✓
+  // ⚠️ 2026-10-13：**条上六个** = REALM_TABS（验收**不在条上** ✓ 它是有会话才切进来的模式）；
+  //    真实解析用的 REALMS 里**仍然有** `accept`（否则验收领域会解析不出来 ✗）
+  assert.deepEqual(REALM_TABS.map((realm) => realm.label),
+    ['销售', '补货', '库存', '标签', '上新', '配品']);
+  assert.equal(REALM_TABS.some((realm) => realm.id === 'accept'), false, '验收不在条上 ✓');
+  assert.equal(REALMS.some((realm) => realm.id === 'accept'), true, '验收领域必须还能解析 ✓');
   assert.equal(REALMS.some((realm) => realm.id === 'purchase'), false, '原「采购」领域已去掉');
   assert.equal(DEFAULT_REALM, 'sales', '缺省领域仍 = 销售');
 });
@@ -214,12 +226,21 @@ test('AC-6R1 六个领域逐字 = 销售 · 补货 · 退货 · 验收 · 库存
 test('AC-6R2 切换条：6 条真链接 + 紧凑两行网格（不横滑、每格 ≥44px、零 JS）', () => {
   const html = htmlFor('sales');
   const bar = html.slice(html.indexOf('<nav class="realm-bar"'), html.indexOf('</nav>'));
-  // 6 条真链接，顺序与 id 都对
-  const links = [...bar.matchAll(/<a class="realm-tab[^"]*" data-realm-id="([^"]+)" href="\?from=([^"]+)"/g)]
-    .map((match) => ({ id: match[1], from: match[2] }));
-  assert.deepEqual(links.map((item) => item.id),
-    ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product']);
-  assert.deepEqual(links.map((item) => item.from), links.map((item) => item.id), 'href = ?from=<id>');
+  // ⚠️ 2026-10-13 **改写**（逐字）：
+  //   改前：条上 6 条全是 `?from=<id>`，id 顺序 `['sales','replenish','purchase_return','accept','inventory','product']`
+  //   改后：条上六个 = `REALM_TABS`（**验收不在条上**）；其中「上新」(`new`) 是**直达外链**
+  //         （`realmBar.newFormUrl` + `target="_blank" rel="noopener"`）⇒ 它**没有** `?from=` ✓
+  //   理由：她 2026-10-13 的最终版 —— 第一行 销售·补货·库存；第二行 标签·上新·配品 ✓
+  const links = [...bar.matchAll(/<a class="realm-tab[^"]*" data-realm-id="([^"]+)" href="([^"]+)"[^>]*>/g)]
+    .map((match) => ({ id: match[1], href: match[2], tag: match[0] }));
+  assert.deepEqual(links.map((item) => item.id), REALM_TABS.map((realm) => realm.id), '条上六个 = REALM_TABS');
+  for (const link of links.filter((item) => item.id !== 'new')) {
+    assert.equal(link.href, `?from=${link.id}`, `内部领域的 href 仍 = ?from=<id>`);
+  }
+  const external = links.find((item) => item.id === 'new');
+  assert.equal(external.href, SCAN_PAGE.realmBar.newFormUrl, '「上新」= 外链（与工作台同源）');
+  assert.match(external.tag, /target="_blank"/, '外链开新窗口');
+  assert.match(external.tag, /rel="noopener"/, '外链带 noopener');
   // 选中态由**服务端**给（零 JS）
   assert.match(bar, /class="realm-tab realm-tab--active" data-realm-id="sales"[^>]*aria-current="page"/);
   assert.equal((bar.match(/realm-tab--active/g) || []).length, 1, '只有当前领域高亮');
@@ -260,8 +281,21 @@ test('AC-6R4 补货 / 退货 / 验收 三块各自独立；每页**只有当前�
   assert.ok(blockOf(replenish, 'replenish').includes('生成采购申请'));
 
   const purchaseReturn = htmlFor('purchase_return');
-  assert.ok(blockOf(purchaseReturn, 'purchase_return').includes('data-view="purchase-return"'), '退货 = 退货表单');
-  assert.ok(blockOf(purchaseReturn, 'purchase_return').includes('生成采购退货'));
+  // ⚠️ 2026-10-13 **改写**：这一块原来是**退货表单**（`data-view="purchase-return"`）；
+  //    她改成**配品页**（最小可用：能看到/能选一件配品 ✓）⇒ 改钉配品下拉 + 加进本单按钮 ✓
+  const accessoryBlock = blockOf(renderScanPage(VIEW, SCAN_PAGE,
+    { ...WRITE, accessories: [{ record_id: 'acc_1', name: '腰带' }] }, 'purchase_return'), 'purchase_return');
+  assert.ok(accessoryBlock.includes(`name="${SCAN_WRITE.fields.accessory}"`), '配品 = 能看到/能选配品 ✓');
+  assert.ok(accessoryBlock.includes(SCAN_WRITE.actions.addAccessory), '配品 = 有加进本单那颗按钮 ✓');
+  // ⚠️ 2026-10-13 **改写**（逐字）：
+  //   改前：`assert.ok(blockOf(purchaseReturn, 'purchase_return').includes('生成采购退货'));`
+  //   改后：**不再断言它**（这一块现在是**配品页**）；改钉「空态不留空 div + 是人话卡」。
+  //   去向：`returnFormHtml`（含「生成采购退货」那颗）**能力没删** ⇒ 它的回归断言在
+  //         `test/scanPurchaseReturn.test.js`（那条链路仍在）✓；她后面会给这一页新的口径 ✓
+  const returnBlock = blockOf(purchaseReturn, 'purchase_return');
+  assert.ok(returnBlock.includes('<section class="card state-msg">'), '配品页空态 = **人话卡**（不留空 div）');
+  assert.ok(returnBlock.includes(SCAN_PAGE.texts.realmEmptyPurchaseReturnBody), '空态那句是**配品**的人话 ✓');
+  assert.equal(returnBlock.includes('<form'), false, '没有可选配品时不渲染空表单 ✗');
 
   // 验收：没有活跃会话 ⇒ 一张人话卡（标题 + 下一步），不是白屏
   const accept = htmlFor('accept');
@@ -299,11 +333,18 @@ test('AC-6R5 零 JS：六个领域渲染出来的 HTML 里都没有 <script', ()
 
 test('AC-6R6 noscript 兜底：六条领域链接一条不少', () => {
   const html = htmlFor('sales');
+  // ⚠️ 2026-10-13 **改写**（逐字）：
+  //   改前：`for (const realm of REALMS) assert.ok(noscript.includes(\`href="?from=${realm.id}"\`))`
+  //         ⇒ 迭代的是**解析全集 7 条**（含验收）⇒ 与"条上六个"矛盾 ✗
+  //   改后：迭代 `REALM_TABS`（六个）；内部 5 条 = `?from=<id>`，「上新」= **外链**（同上）✓
+  //   理由：兜底那一排与切换条**同一口径**（她没有脚本时也要能点到那六个 ✓）；验收不在条上 ✓
   const noscript = html.slice(html.indexOf('<noscript>'), html.indexOf('</noscript>'));
-  for (const realm of REALMS) {
+  assert.equal((noscript.match(/realm-link/g) || []).length, 6, '兜底那一排正好 6 条（= 条上六个）');
+  for (const realm of REALM_TABS.filter((item) => item.external !== true)) {
     assert.ok(noscript.includes(`href="?from=${realm.id}"`), `noscript 里缺 ${realm.id}`);
   }
-  assert.equal((noscript.match(/realm-link/g) || []).length, 6, '兜底那一排正好 6 条');
+  assert.ok(noscript.includes(SCAN_PAGE.realmBar.newFormUrl), 'noscript 里「上新」也是那条外链');
+  assert.equal(noscript.includes('?from=accept'), false, '验收不在兜底那一排（它不是 tab）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
