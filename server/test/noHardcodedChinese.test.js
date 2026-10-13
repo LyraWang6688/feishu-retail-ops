@@ -185,3 +185,18 @@ test('AC-8 扫描规模合理（三个根目录都被扫到，且不是 0 文件
     assert.ok(files.has(prefix), `扫描结果里应该有 ${prefix}/ 下的文件`);
   }
 });
+
+test('AC-9 ⭐ 跨行 `throw new Error(...)` 里的中文 ⇒ 不扫（本次修的缺口）', () => {
+  const source = [
+    'function f(items) {',
+    "  if (items.length) throw new Error(`有 ${items.length} 条没对应货品（${items",
+    "    .map((i) => `${i.no || ''}${i.color || ''}`).join('、')}）。请再点一次「确认入库」`);",
+    '}',
+  ].join('\n');
+  assert.deepEqual(scanSource('services/demo.js', source), [], '跨行 throw 的内部消息不许被扫进来');
+});
+
+test('AC-10 单行 `throw` ⇒ 不扫（回归）· 真·人话仍要扫到（回归，别扫漏）', () => {
+  const source = ["throw new Error('内部错误：表里没这行');", "const tip = '真的会给她看的一句人话';"].join('\n');
+  assert.deepEqual(scanSource('services/demo.js', source).map((i) => i.text), ['真的会给她看的一句人话']);
+});

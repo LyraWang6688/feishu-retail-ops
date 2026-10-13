@@ -134,12 +134,37 @@ function statementBefore(code, start) {
 const normalizeText = (text) => text.replace(/\s+/g, ' ').trim();
 
 /** 扫一个文件 ⇒ `[{ text, line }]`（只回"用户可见"的中文串，已归一化）。 */
+
+/**
+ * ⭐⭐ 2026-10-12 修的缺口（**只这一处**）：跨行 `throw new Error(...)` 里的中文原来会被扫进来 ✗
+ * 判据：字面量**落在最近一个 `new Error(` 的括号内**（括号配对；模板 `${}` 里的 `}` 不算边界 ✓）
+ * ⚠️ 不用"前 400 字里有 throw"那种粗暴兜底 —— 实测会把真文案一起豁免（闸门变瞎 ✗）
+ */
+function insideThrow(code, start) {
+  const at = code.lastIndexOf('new Error(', start);
+  if (at < 0) return false;
+  let depth = 0;
+  let i = at + 'new Error'.length;
+  let state = 'code';
+  while (i < code.length) {
+    const char = code[i];
+    if (state === 'code') {
+      if (char === '\\') { i += 2; continue; }
+      if (char === "'" || char === '"' || char === '`') state = char;
+      else if (char === '(') depth += 1;
+      else if (char === ')') { depth -= 1; if (depth === 0) return start < i; }
+    } else if (char === state) state = 'code';
+    i += 1;
+  }
+  return false;
+}
+
 function scanSource(file, source) {
   const code = stripComments(source);
   const found = [];
   for (const literal of findLiterals(code)) {
     if (!CJK.test(literal.text)) continue;
-    if (EXEMPT_STATEMENT.test(statementBefore(code, literal.start))) continue;
+    if (EXEMPT_STATEMENT.test(statementBefore(code, literal.start)) || insideThrow(code, literal.start)) continue;
     const text = normalizeText(literal.text);
     if (!text) continue;
     const line = code.slice(0, literal.start).split('\n').length;
