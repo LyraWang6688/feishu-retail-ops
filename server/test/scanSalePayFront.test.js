@@ -123,7 +123,7 @@ const get = async (base, path) => {
   return { status: response.status, html: await response.text() };
 };
 
-test('AC-PF1 🔴 点「提交这一单」⇒ **不写任何表**（主表/明细/收款/库存都不动）', { skip: '必须与第二小步**同批**落：只做前置会让「提交」不再建单 ⇒ 实测 31 条既有用例红 ✗（见 PR 描述）' }, async () => {
+test('AC-PF1 🔴 点「提交这一单」⇒ **不写任何表**（主表/明细/收款/库存都不动）', async () => {
   await withServer(async ({ base, calls }) => {
     const r = await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: SCAN_WRITE.actions.submitOrder });
     assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 0,
@@ -132,7 +132,7 @@ test('AC-PF1 🔴 点「提交这一单」⇒ **不写任何表**（主表/明�
   });
 });
 
-test('AC-PF2 🔴 点资金页按钮 ⇒ **才**建单（拿单号）', { skip: '第二小步（点资金页按钮才建单）：本小步只做资金页前置 ⇒ PF1/PF4 绿即验收 ✓' }, async () => {
+test('AC-PF2 🔴 点资金页按钮 ⇒ **才**建单（拿单号）', async () => {
   await withServer(async ({ base, calls }) => {
     await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: SCAN_WRITE.actions.submitOrder });
     await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: 'payment_pay', payment_status: '未付' });
@@ -140,7 +140,7 @@ test('AC-PF2 🔴 点资金页按钮 ⇒ **才**建单（拿单号）', { skip: 
   });
 });
 
-test('AC-PF3 🔴 同一 `submitKey` 两跑 ⇒ 两次都用**同一把键**（幂等不许拆 ✗）', { skip: '第二小步（点资金页按钮才建单）：本小步只做资金页前置 ⇒ PF1/PF4 绿即验收 ✓' }, async () => {
+test('AC-PF3 🔴 同一 `submitKey` 两跑 ⇒ 两次都用**同一把键**（幂等不许拆 ✗）', async () => {
   await withServer(async ({ base, calls }) => {
     await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: SCAN_WRITE.actions.submitOrder });
     await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: 'payment_pay', payment_status: '未付' });
@@ -151,7 +151,7 @@ test('AC-PF3 🔴 同一 `submitKey` 两跑 ⇒ 两次都用**同一把键**（�
   });
 });
 
-test('AC-PF4 🔴 未点按钮前刷新 ⇒ **仍是资金页**（不是成功页/首页 ✗）', { skip: '必须与第二小步**同批**落：只做前置会让「提交」不再建单 ⇒ 实测 31 条既有用例红 ✗（见 PR 描述）' }, async () => {
+test('AC-PF4 🔴 未点按钮前刷新 ⇒ **仍是资金页**（不是成功页/首页 ✗）', async () => {
   await withServer(async ({ base, calls }) => {
     await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: SCAN_WRITE.actions.submitOrder });
     const again = await get(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`);
@@ -160,7 +160,7 @@ test('AC-PF4 🔴 未点按钮前刷新 ⇒ **仍是资金页**（不是成功�
   });
 });
 
-test('AC-PF5 🔴 金额填错 ⇒ 点按钮时**原地重渲染资金页** + 同一 code/文案', { skip: '第二小步（点资金页按钮才建单）：本小步只做资金页前置 ⇒ PF1/PF4 绿即验收 ✓' }, async () => {
+test('AC-PF5 🔴 金额填错 ⇒ 点按钮时**原地重渲染资金页** + 同一 code/文案', async () => {
   await withServer(async ({ base, calls }) => {
     await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: SCAN_WRITE.actions.submitOrder });
     const bad = await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, {
