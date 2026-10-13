@@ -74,16 +74,21 @@ test('AC-W1 采购子 tab 逐字 = 订单列表 · 供应商往来款（验收�
   const byId = new Map(domains.DOMAIN_TABS.map((domain) => [domain.id, domain]));
   // ⚠️ 2026-10-12 改写：改前 = ['验收到货','采购订单列表','供应商往来款'] / 对应 id。
   assert.deepEqual(byId.get('purchase').pages.map((page) => page.label),
-    ['验收', '订单列表', '供应商往来款']);
+    ['验收', '退货', '订单列表', '供应商往来款']);
   assert.deepEqual(byId.get('purchase').pages.map((page) => page.id),
-    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money']);
-  // 报货 / 退货 / 验收到货三个子页**都不在清单里**（前两个在扫码页；验收也在扫码页）
-  for (const gone of ['purchase-report', 'purchase-return', 'purchase-arrival']) {
+    ['purchase-acceptance', 'purchase-return', 'purchase-orders', 'purchase-supplier-money']);
+  // ⚠️ 2026-10-13：**只翻"退货"这一件事** —— 她点名要它作为采购子 tab（第二个）✓
+  //    改前逐字：`for (const gone of ['purchase-report', 'purchase-return', 'purchase-arrival'])` +
+  //              `for (const gone of ['报货', '退货', '验收到货'])`
+  // 报货 / 验收到货**仍不在**清单里（报货在扫码页；验收是「验收」这条新子 tab ✓）
+  for (const gone of ['purchase-report', 'purchase-arrival']) {
     assert.equal(byId.get('purchase').pages.some((page) => page.id === gone), false, `${gone} 应已隐藏`);
   }
-  for (const gone of ['报货', '退货', '验收到货']) {
+  for (const gone of ['报货', '验收到货']) {
     assert.equal(byId.get('purchase').pages.some((page) => page.label === gone), false, `${gone} 子 tab 应已不在`);
   }
+  assert.equal(byId.get('purchase').pages.some((page) => page.id === 'purchase-return'), true,
+    '⭐「退货」子 tab 已按她 2026-10-13 的要求加回（采购第二个）');
   // 其余三个领域：销售 / 库存各少一个入口（2026-10-12），货品不变
   assert.deepEqual(byId.get('sales').pages.map((page) => page.label),
     ['订单列表', '销售查询', '客户往来款']);

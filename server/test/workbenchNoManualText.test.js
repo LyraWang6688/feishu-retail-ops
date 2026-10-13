@@ -442,7 +442,7 @@ test('AC8 功能性内容一个都不能少：子 tab / 卡片标题与动作 / 
   assert.deepEqual(byId.get('inventory').pages.map((page) => page.label),
     ['全仓查询', '手工调整']);
   assert.deepEqual(byId.get('purchase').pages.map((page) => page.label),
-    ['验收', '订单列表', '供应商往来款']);
+    ['验收', '退货', '订单列表', '供应商往来款']);
   assert.deepEqual(byId.get('product').pages.map((page) => page.label),
     ['货品上新', '标签打印']);
 
@@ -459,10 +459,14 @@ test('AC8 功能性内容一个都不能少：子 tab / 卡片标题与动作 / 
   //    ＋ `arrivalPage.kind === 'orders'`。她把「验收到货」入口删了（扫码页已做验收）
   //    ⇒ 采购只剩两个占位页；验收台代码 / 接口保留（另钉在 AC3 ② 与 AC5）。
   assert.deepEqual(purchase.pages.map((page) => page.id),
-    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money']);
-  for (const gone of ['purchase-report', 'purchase-return', 'purchase-arrival']) {
+    ['purchase-acceptance', 'purchase-return', 'purchase-orders', 'purchase-supplier-money']);
+  // ⚠️ 2026-10-13：**只翻"退货"这一件事**（她：「把退货放在工作台采购单独一个子 tab」✗）
+  //    改前逐字：`for (const gone of ['purchase-report', 'purchase-return', 'purchase-arrival']) { ... }`
+  for (const gone of ['purchase-report', 'purchase-arrival']) {
     assert.equal(purchase.pages.some((page) => page.id === gone), false, `${gone} 子页不在清单里`);
   }
+  assert.equal(purchase.pages.some((page) => page.id === 'purchase-return'), true,
+    '⭐「退货」子页已在清单里（第二个）');
   const purchaseCardHrefs = purchase.pages.flatMap((page) => (page.cards || []).map((card) => card.href));
   assert.deepEqual(purchaseCardHrefs, [], '采购子页上没有外链卡（死链已清）');
   for (const page of purchase.pages.filter((item) => item.kind !== 'orders')) {

@@ -133,7 +133,7 @@ test('AC4b 每个大 tab 的子 tab 清单逐字不变（唯一来源 config/dom
   //      `workbenchFourTabs.test.js` 共同保证（列出的子 tab 数没少，只是按她口径换了成员）。
   assert.deepEqual(labels('sales'), ['订单列表', '销售查询', '客户往来款']);
   assert.deepEqual(labels('inventory'), ['全仓查询', '手工调整']);
-  assert.deepEqual(labels('purchase'), ['验收', '订单列表', '供应商往来款']);
+  assert.deepEqual(labels('purchase'), ['验收', '退货', '订单列表', '供应商往来款']);
   assert.deepEqual(labels('product'), ['货品上新', '标签打印']);
 });
 
