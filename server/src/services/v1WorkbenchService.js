@@ -1,5 +1,7 @@
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
-const { postedOf, isPosted } = require('../config/salesStatusDimensions');
+const {
+  postedOf, isPosted, SALES_STATUS_VALUE_DOMAINS, SALES_STATUS_WRITE_VALUES,
+} = require('../config/salesStatusDimensions');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { LIVE_STATES } = require('./inventoryService');
@@ -50,6 +52,40 @@ const todayKey = (now = new Date()) => shanghaiDayKey(now);
 
 // 入参错误（她日期填错 / 范围太大）与系统错误分开：前者回 400 并原样告诉她，
 // 后者回 502/500 且不回显内部细节。与 InventoryAdjustmentService 用同一个约定。
+
+/**
+ * ⭐⭐ 2026-10-14（业务负责人裁定 2）：工作台那一行**算不算"未完成"**。
+ *
+ *   incomplete = 销售状态 ∈ {未写入, 部分写入, 写入失败}
+ *            或 库存状态 ∈ {未写入, 部分写入, 写入失败}
+ *            或 资金状态 === 写入失败
+ *
+ * ⚠️ 资金"未写入"是**正常待补**（工作台本来就有"补记收款"）⇒ **不算**未完成 ✓；
+ *    只有资金**写入失败**才是真失败 ✓。
+ * 🔴 值域只从 `config/salesStatusDimensions.js` 取（**不写死中文** ✗）；拿不到 ⇒ **不猜**（返 false）✓。
+ * ⚠️ 这只是**界面判据**：它**不**在表里新增"未完成"这个选项 ✗（"未完成，可点重试"是页面上的话 ✓）。
+ */
+const WRITE_VALUES = SALES_STATUS_WRITE_VALUES || {};
+/** 语义键 → 取值：兼容"扁平"与"按维度嵌套"两种形状（值域真源在 config ✓）。 */
+const writeValueOf = (dimension, key) => {
+  const nested = WRITE_VALUES[dimension];
+  if (nested && typeof nested === 'object' && nested[key]) return nested[key];
+  return WRITE_VALUES[key];
+};
+const notDoneValues = (dimension) => {
+  const done = writeValueOf(dimension, 'done');
+  return new Set(((SALES_STATUS_VALUE_DOMAINS || {})[dimension] || []).filter((value) => value !== done));
+};
+
+const isOrderIncomplete = (row) => {
+  if (!row || typeof row !== 'object') return false;
+  const salesNotDone = notDoneValues('sales');
+  const stockNotDone = notDoneValues('stock');
+  if (typeof row.salesStatus === 'string' && salesNotDone.has(row.salesStatus)) return true;
+  if (typeof row.stockStatus === 'string' && stockNotDone.has(row.stockStatus)) return true;
+  return row.fundsStatus === writeValueOf('funds', 'failed');
+};
+
 const userError = (message) => Object.assign(new Error(message), { statusCode: 400 });
 
 const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -365,4 +401,5 @@ module.exports = {
   resolveSalesRange,
   todayKey,
   shanghaiDayKey,
+  isOrderIncomplete,
 };
