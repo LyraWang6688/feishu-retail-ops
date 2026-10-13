@@ -362,3 +362,14 @@ fi
 - `--check-only` 只比 `commit`。如果将来想让它也能"对某一次具体部署"做对账，
   需要把那次部署的 `deployed_at` 传进来（例如 `DEPLOY_EXPECTED_DEPLOYED_AT`）—— 这次没做，避免加变量。
 - 线上 pm2 版本（见 5.4 第 1 条）是唯一"结论可能随环境变"的地方。
+
+## 部署后必跑（2026-10-13 加，一条命令）
+
+```bash
+cd server && node scripts/deploy-selfcheck-routes.mjs
+```
+
+只读自检三件：① 未登录 `/r/<记录ID>` ⇒ 302 且 `Location` 含 `next=%2Fr%2F<记录ID>`；
+② 未登录 `/s/<编号>?from=sales` ⇒ 302 且 `next` 含编码后的 `/s/…?from=sales`（回归）；
+③ `/workbench/` 引用的**每个 JS/CSS 都 200**（防「页面 200 但脚本 404 ⇒ 整页空白」）。
+打印**逐字实际值**，任一条不过 ⇒ 退出码 1。
