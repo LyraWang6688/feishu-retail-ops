@@ -1378,6 +1378,37 @@ const realmBlockHtml = (realm, view, config, write, page = {}) => {
  * `page.userAgent`（可选，路由从请求头传）= 【继续扫下一个】那一个按钮的判据
  * （见 `canScanNextWithFeishu`）；不传 = 认成"不是飞书客户端" ⇒ 给那句人话，不给死按钮。
  */
+/**
+ * ⭐⭐ 2026-10-13（她的口径，逐字）：「"提交这一单"就说明**这一单已经结了**呀，如果我再操作的话，
+ *   **应该就跟这一单没关系了**，除非我是选"**再加一双**"呀」
+ *  ⇒ **销售领域入口页**（= 她说的"销售首页"）：**不带任何编号/货号** ✗，只有
+ *     ①（可选）「上一单已提交（单号）」（来自回跳 URL 的 `?done=` ✓ 无状态）
+ *     ②「请扫下一个标签」+ ③ 手输编号兜底框
+ *  ⚠️ 文案全走 config（模板里不写中文 ✓）；**不含本单清单**（那是"同一单"才有的东西 ✗）。
+ */
+const renderSalesHome = ({ config = SCAN_PAGE, orderNo = '', basePath = '' } = {}) => {
+  const texts = config.texts || {};
+  const prefix = String(basePath || '');
+  const notice = String(orderNo || '').trim()
+    ? `<p class="notice notice--ok" data-view="sales-home-submitted">`
+      + `${escapeHtml(fillText(texts.salesHomeJustSubmitted || '', { orderNo: String(orderNo).trim() }))}</p>`
+    : '';
+  return renderDocument({
+    title: texts.salesHomeTitle || texts.pageTitle,
+    config,
+    content: `<main class="page" data-view="sales-home">
+${notice}
+<h1 class="title">${escapeHtml(texts.salesHomeTitle || '')}</h1>
+<p class="notice">${escapeHtml(texts.salesHomeHint || '')}</p>
+<form method="get" action="${escapeHtml(prefix)}/" class="write-form" data-view="sales-home-manual">
+<label class="field"><span>${escapeHtml(texts.salesHomeManualLabel || '')}</span>
+<input type="text" name="number" value="" autocomplete="off" inputmode="text"></label>
+<button type="submit" class="btn btn--primary">${escapeHtml(texts.salesHomeManualSubmit || '')}</button>
+</form>
+</main>`,
+  });
+};
+
 const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEFAULT_REALM, page = {}) => {
   const safeRealm = realm === ACCEPTANCE_REALM ? ACCEPTANCE_REALM : resolveRealm(realm);
   let block;
@@ -1488,6 +1519,7 @@ const renderMinimalPage = (input = {}) => {
 
 module.exports = {
   renderScanPage,
+  renderSalesHome,
   renderScanMessagePage,
   renderMinimalPage,
   // ⭐⭐ 2026-10-12：提交成功页（逐字「您的提交已成功」+「再录一单」链接回扫码页）

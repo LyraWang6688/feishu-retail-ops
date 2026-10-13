@@ -176,8 +176,18 @@ test('AC-NF2 ⭐ POST 侧同一份兜底：缺类别时「加入本单」仍拿�
   const gateway = fakeGateway();
   const writes = [];
   await withServer(pageApp(gateway, writes), async (base) => {
-    const response = await postForm(base, SCANNED, sessionCookie('ou_nf_post'), {
-      action: SCAN_WRITE.actions.addLine, submit_key: 'k', size: '37',
+    // ⚠️ 2026-10-13 修抖动（**不是 retry、也没放宽断言** ✗）：
+    //   原来直接发 `submit_key: 'k'`（**伪造 key ✗**）—— 服务端**有时**会"回 303 `?added=1` 但会话没落上"
+    //   （同族现场已抓到：`sale_status=submitted / lines=0` ✗）⇒ 全量偶红 ✓。
+    //   真实页面发的是**页面上那把真 key** ✓ ⇒ 先 GET 拿页（顺带建会话 ✓），再取页里的 key 发。
+    const cookie = sessionCookie('ou_nf_post');
+    const opened = await getPage(base, SCANNED, cookie);
+    assert.equal(opened.status, 200, '先要能打开录入页（GET 侧兜底 ✓）');
+    const openedHtml = await opened.text();
+    const realKey = (openedHtml.match(/name="submit_key" value="(scan_sale:[^"]+)"/) || [])[1];
+    assert.ok(realKey, '页面上要有真 submit_key（真实页面就是这么发的 ✓）');
+    const response = await postForm(base, SCANNED, cookie, {
+      action: SCAN_WRITE.actions.addLine, submit_key: realKey, size: '37',
     });
     assert.equal(response.status, 303, '加入本单成功 ⇒ 303 回原页');
     assert.equal(writes.length, 1, '必须真的加了一双');

@@ -139,6 +139,16 @@ const TEXTS = Object.freeze({
   updatedAtLabel: '库存更新时间',
   updatedAtUnknown: '—',
   footerNumberLabel: '编号',
+
+  // ⭐ 2026-10-13（她："开新单子系统挂一个 86900" ✗）：提交后回跳页顶部那条指引（配置先行 ✓）
+  justSubmittedPrefix: '✅ 上一单已提交',
+  justSubmitted: '✅ 上一单已提交（{orderNo}）· 请扫下一个标签',
+  // ⭐ 2026-10-13：**销售领域入口页**（不带编号 ✓ = 她说的"销售首页"）的文案
+  salesHomeTitle: '请扫下一个标签',
+  salesHomeHint: '用飞书「扫一扫」扫下一个标签；也可以在手输框里填编号。',
+  salesHomeJustSubmitted: '✅ 上一单已提交（{orderNo}）',
+  salesHomeManualLabel: '编号（货号|颜色|尺码）',
+  salesHomeManualSubmit: '打开这一款',
   // 降级与截断都**写在页面上**，不只在日志里（她看不到日志）。
   degradedSizesNote: '暂时读不到该类别在「尺码管理」里的全部尺码，本页只显示有库存的尺码。',
   unknownStateNote: '有 {count} 双的「所属状态」不在预期取值里，已按原值另列。',
@@ -457,6 +467,15 @@ const SUCCESS_RETURN = Object.freeze({
   // ⭐⭐ 她 2026-10-12 又拍：**验收成功 ⇒ 回【未到货批次列表】**（= 验收自己的首页 ✓，别"顺手统一"改掉 ✗）
   //    ⚠️ 两类都在**这一处**区分（别散在各 handler 里 ✗）。
   acceptHome: 'pendingBatches',
+  // ⭐⭐ 2026-10-13（她："我开新单子的时候，系统会挂一个 86900" ✗）：
+  //   提交成功后自动回跳的目标是 **`/s/<她刚提交的那个编号>`** ⇒ 页面上下文仍是上一单那个产品 ✗
+  //   ⇒ 回跳 URL 上带一个**无状态**的标记（`?done=<单号>`），编号页据此在顶部给一条明确指引 ✓
+  noticeKey: 'done',
+  // ⭐⭐ 2026-10-13（她的口径：「"提交这一单"就说明**这一单已经结了**呀，如果我再操作的话，
+  //   **应该就跟这一单没关系了**，除非我是选"**再加一双**"呀」）：
+  //   ⇒ 销售领域的"首页"必须是**产品无关**的页（`/s` 空编号无效 ✗ ⇒ 用挂载前缀本身 ✓）
+  //   ⇒ 提交成功后回跳**这里**（不再回 `/s/<刚提交的编号>` ✗）
+  homePath: '/',
   label: '返回扫码',
 });
 
@@ -501,6 +520,8 @@ const PRODUCT_SNAPSHOT = Object.freeze({
  */
 const EVENTS = Object.freeze({
     // ⭐ 2026-10-13：`/accept`（批次列表页）的分段耗时（她点 4、5 次才过去 ✗）
+    // ⭐ 2026-10-13：销售首页（不带编号）被打开过（手输编号那条也记一条 ✓）
+    salesHomeOpened: 'scan.sales_home.opened',
     pendingTiming: 'scan.accept.pending_timing',
   viewed: 'scan.page.viewed',
   notFound: 'scan.page.not_found',

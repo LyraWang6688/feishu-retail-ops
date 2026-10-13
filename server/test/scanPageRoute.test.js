@@ -123,11 +123,20 @@ test('没找到这个编号 → 404 + 一张说清楚的页面（不白屏、不
   });
 });
 
-test('编号读不出来（空 / 只有空格 / 解码失败）→ 400 + 人话页，不是 Express 那行 Bad Request', async () => {
+test('编号读不出来（只有空格 / 解码失败）→ 400 + 人话页；★ 不带编号的 `/s` 现在是**销售首页**（2026-10-13 口径）', async () => {
   login();
   const app = appFor(async () => ({ found: false, number: '', reason: 'empty' }));
   await withServer(app, async (base) => {
-    for (const path of ['/s/', '/s/%20']) {
+    // ⭐⭐ 2026-10-13 **口径变更**（她的原话：「"提交这一单"就说明**这一单已经结了**呀，
+    //  如果我再操作的话，**应该就跟这一单没关系了**，除非我是选"**再加一双**"呀」）：
+    //  `/s`（**不带编号**）现在 = **销售领域入口页**（她的"销售首页" ✓ 200 ✓），
+    //  不再是"缺编号 ⇒ 400 这个链接不对" ✗。**认不出的编号**（空白 / 解不开）仍然 400 ✓。
+    const home = await fetch(`${base}/s/`, { headers: { cookie: sessionCookie() } });
+    assert.equal(home.status, 200, '不带编号的 /s 现在是销售首页 ✓');
+    const homeHtml = await home.text();
+    assert.match(homeHtml, /data-view="sales-home"/);
+    assert.equal(homeHtml.includes('data-view="draft-bar"'), false, '销售首页不带本单清单 ✗');
+    for (const path of ['/s/%20']) {
       const response = await fetch(`${base}${path}`, { headers: { cookie: sessionCookie() } });
       assert.equal(response.status, 400, path);
       assert.match(await response.text(), /这个链接不对/);
