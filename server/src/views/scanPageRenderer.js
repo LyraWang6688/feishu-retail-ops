@@ -255,11 +255,11 @@ summary { cursor: pointer; }
       **不横滑**（去掉原先的 overflow-x: auto + flex: 1 0 auto）、
       每格 min-height: var(--control-height)（既有 ≥44px 的可点高度）。 */
 .realm-bar { display: grid; grid-template-columns: 1fr; width: 100%; max-width: 100%; overflow-x: auto; gap: var(--space-1); margin: 0 0 var(--space-2); padding: var(--space-1); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); }
-.realm-tab { display: flex; align-items: center; justify-content: center; min-height: var(--control-height); min-width: 0; padding: 0 var(--space-2); border-radius: var(--radius-md); color: var(--text-secondary); font-size: var(--font-size-base); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.realm-tab { -webkit-tap-highlight-color: rgba(0,0,0,.12); display: flex; align-items: center; justify-content: center; min-height: var(--control-height); min-width: 0; padding: 0 var(--space-2); border-radius: var(--radius-md); color: var(--text-secondary); font-size: var(--font-size-base); font-weight: 600; text-decoration: none; white-space: nowrap; }
 /* ── ⭐⭐ 2026-10-12 验收领域「未到货批次」那一块：单列堆叠、不横滑、每行 ≥44px ── */
 .batch-list { list-style: none; margin: 0; padding: 0; }
 .realm-tab:active, .batch-row:active { opacity: .55; }
-.batch-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); text-align: left; font-weight: 600; border: 1px solid var(--primary); }
+.batch-row { -webkit-tap-highlight-color: rgba(0,0,0,.12); display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); text-align: left; font-weight: 600; border: 1px solid var(--primary); }
 .batch-row__cta { color: var(--primary); font-weight: var(--weight-bold); font-size: var(--font-size-lg); }
 .batch-row__meta { color: var(--text-muted); font-weight: 500; font-size: var(--font-size-sm); }
 /* 当前领域那一颗 = 主色（**服务端**决定，不是脚本切 class） */
