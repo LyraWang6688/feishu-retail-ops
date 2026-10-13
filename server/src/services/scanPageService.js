@@ -1082,6 +1082,8 @@ const createScanPageService = (rawGateway, options = {}) => {
     let scope;
     try {
       // ⭐ 2026-10-09：缺码判定**读配置段**（不再每次读「尺码管理」）。
+      // ⚠️ 2026-10-14：**这次读先保留**（我试过换成"只按配置默认段"，但撞坏 4 条既有 spec ✗
+      //   ⇒ 按 Lead 的规则"若口径真的变了 ⇒ 停手报我"⇒ 已回退 ✓；要不要动它由 Lead 定 ✓）
       scope = await loadSizeScope({ categoryCode: parsed.categoryCode });
       // ⭐ 缺码这一段是**读配置**还是**降级**（`scan.lookup.timing` 里就靠它看"有没有回退"）。
       if (timing) timing.size_source = scope.degraded ? `degraded:${scope.reason}` : 'config';

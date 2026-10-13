@@ -508,5 +508,10 @@ test('AC-NS1 ⭐⭐ 一次查款**不再读「采购明细」**（她拍板删�
   //    实测这条链现在读的是：`product` ＋ `liveInventory` ＋ **`sizeManagement` ×3**（后两者在
   //    `scanPageService` 里，她让**别动** ✗）⇒ 所以「reads == 1」**当前做不到** ✗
   //    ⇒ 本 AC 只钉"**采购明细那次确实没了** + 账不会变多" ✓（要再省 ⇒ 需动那个 service ⇒ 先报她 ✓）
-  assert.ok(started.feishu_reads <= 4, `一次查款的飞书读不应超过 4 次（实际 ${started.feishu_reads}）—— 删采购明细前更多 ✓`);
+  // ⭐ 判据（**不放松** ✗）：这次查款读过的表里**不许出现采购明细**（她删掉的就是那一次 ✓）
+  // ⚠️ `reads == 1` 我试过：删掉 `loadSizeScope` 那次读确实能少一次，但**撞坏 4 条既有 spec** ✗
+  //    （`scanPageSpeedDecisions2026_10_09` 10/10 ⇒ 6/4）⇒ 按"口径真变了就停手报 Lead"**已回退** ✓
+  //    ⇒ 这里如实钉**当前实测**（货品 + 实时库存 + 尺码管理，后者来自货品的关联读/缺码范围 ✓），
+  //      并要求**不许超过实测值**（将来再省下来会变少 ✓、绝不悄悄变多 ✗）
+  assert.ok(started.feishu_reads <= 3, `一次查款的飞书读不应超过实测值（实际 ${started.feishu_reads}）`);
 });
