@@ -8,7 +8,7 @@
  *   · **默认关**（`SCAN_PAGE_SKELETON_ENABLED` 缺省 false）⇒ 与改动前**逐字相同** ✓（不假绿）
  *   · **打开** ⇒ 首屏立刻回骨架（不读表）+ 同一段脚本 `fetch('?data=1')` 拿数据
  *   · `?data=1` **落到原有的整页渲染**（同一个 `service.lookup` ✓ 不新增取数路径 ✓）
- * AC：AC-R1 关 = 整页（无骨架痕迹）· AC-R2 开 = 首屏骨架（占位 + 正在读取…、**不含**数据）
+ * AC：AC-R1 关 = 整页（无骨架痕迹）· AC-R2 开 = 首屏骨架（居中卡片 + 数据加载中、**不含**数据）
  *     · AC-R3 `?data=1` = 与整页一致（数据等价）· AC-R4 `GET /`（新首页）不受骨架影响
  */
 const test = require('node:test');
@@ -57,16 +57,21 @@ test('AC-R1 开关**关** ⇒ `/s/<编号>` 还是整页（不带任何骨架痕
   await withServer(configWith(false), async (base) => {
     const html = await get(base, `/s/${encodeURIComponent(NUMBER)}`);
     assert.equal(html.includes('scan-skeleton'), false, '关着就不该出现骨架');
-    assert.equal(html.includes('正在读取…'), false);
+    // 2026-10-14 改指向（她：骨架改成居中卡片「数据加载中」）：**开关关**时仍是整页 ⇒
+    //   页面里不许出现骨架那句主文案（能力不变 ✓ 不是放宽 ✗）。
+    //   改前逐字：assert.equal(html.includes('正在读取…'), false);
+    assert.equal(html.includes('数据加载中'), false);
     assert.match(html, /^<!doctype html>/, '还是整页');
   });
 });
 
-test('AC-R2 开关**开** ⇒ 首屏就是骨架（占位 + 正在读取…、**不含**数据卡片）', async () => {
+test('AC-R2 开关**开** ⇒ 首屏就是骨架（居中卡片 + 数据加载中、**不含**数据卡片）', async () => {
   await withServer(configWith(true), async (base) => {
     const html = await get(base, `/s/${encodeURIComponent(NUMBER)}`);
     assert.match(html, /data-view="scan-skeleton"/, '首屏是骨架');
-    assert.match(html, /正在读取…/, '要有那句人话（不许空白 ✗）');
+    // ⚠️ 2026-10-14 改指向（她：「显示：数据加载中」✓）—— 改前逐字：`assert.match(html, /数据加载中/)`
+  assert.match(html, /数据加载中/, '要有那句主文案（不许空白 ✗）');
+  assert.equal(/正在读取/.test(html), false, '「正在读取」不许再出现 ✓');
     assert.match(html, /尺码/, '尺码区占位');
     assert.equal((html.match(/<script/g) || []).length, 1, '整页只有一段脚本');
     assert.equal(html.includes('data-view="draft-bar"'), false, '首屏**不该**含数据卡片（那正是它慢的原因）');
