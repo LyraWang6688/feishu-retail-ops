@@ -494,11 +494,16 @@ const createScanArrivalService = (options = {}) => {
    *
    * @returns {Promise<{ok: boolean, batches: Array<{batchNo: string, suppliers: string[], quantity: string}>}>}
    */
-  const pendingBatches = async () => {
+  const pendingBatches = async ({ timing = null } = {}) => {
+    // ⭐ 2026-10-13（她："`/accept` 要点 4、5 次才跳过去" 4.8~7.4s ✗）：**先量** ——
+    //   读「报货批次」未到货那批是这一页的主成本 ⇒ 可选出参 timing（只加打点 ✓ 逻辑零改动）
+    const startedAt = Date.now();
+    const mark = (name, from) => { if (timing) timing[name] = Math.max(0, Date.now() - from); };
     try {
       const service_ = pendingBatchesService();
-      if (!service_) return { ok: false, batches: [] };
+      if (!service_) { mark('batches_ms', startedAt); return { ok: false, batches: [] }; }
       const batches = await service_.listPendingBatches();
+      mark('batches_ms', startedAt);
       return {
         ok: true,
         batches: (batches || [])
