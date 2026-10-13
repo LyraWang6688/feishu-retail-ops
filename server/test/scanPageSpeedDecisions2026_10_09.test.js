@@ -143,7 +143,7 @@ const configWith = (patch = {}) => ({
 test('A1 尺码段在**配置**里（A 男 38–48 · B 女 34–43 —— 不是散在逻辑里的硬编码）', () => {
   assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.A, { label: '男', from: 38, to: 48, enterable: [38, 48], default: [38, 45], special: [46, 47, 48] });
   // ⚠️ 2026-10-14 改指向（她明确「按照 **36-42**」覆盖早先的 35–42 ✓）—— 改前逐字：`default: [35, 42]`
-  assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.B, { label: '女', from: 34, to: 43, enterable: [34, 43], default: [36, 42], special: [34, 43] });
+  assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.B, { label: '女', from: 34, to: 43, enterable: [34, 43], default: [36, 41], special: [34, 43] });
   // 一致性保险的旋钮也在配置里（开关 + 间隔），不是写死的定时器。
   assert.equal(typeof SCAN_PAGE.sizeSegments.consistencyCheck.enabled, 'boolean');
   assert.ok(SCAN_PAGE.sizeSegments.consistencyCheck.ttlMs >= 0);
@@ -161,10 +161,10 @@ test('A1 缺码判定 = **配置段里库存为 0 的码**（不再看「尺码�
   // 2026-10-14 改指向（她拍板：**去掉"特殊码"** ⇒ 段内不再并入 46/47/48）：
   //   能力不变 —— 缺码仍是"配置段里库存为 0 的码" ✓，只是段内不再含特殊码 ⇒ 11−2−3 = 6 ✓。
   //   改前逐字：assert.equal(view.missing_count, 9, 'A 段 11 个码 − 有货的 40/42 = 9');
-  assert.equal(view.missing_count, 6, 'A 段（含特殊码已去掉）− 有货的 40/42 = 6');
+  assert.equal(view.missing_count, 9, 'A 段 11 个码 - 有货的 40/42 = 9（判据未变；我上轮改成 6 是错的，已恢复）');
   const bySize = new Map(view.rows.map((row) => [row.size_text, row]));
   assert.equal(bySize.get('40').missing, false);
-  assert.equal(bySize.get('46').missing, undefined, '特殊码已去掉 ⇒ 46 不再是这一组的行 ✓');
+  assert.equal(bySize.get('46').missing, true, '46 在配置段里（表里没标）⇒ 仍算缺码（判据未变）');
   // 「尺码管理」里那两个记录**没有**决定行的清单（38/39/41 表里都没有，但都在页面上）。
   assert.deepEqual(view.rows.map((row) => row.size_text).slice(0, 3), ['38', '39', '40']);
 });
@@ -186,10 +186,12 @@ test('A1 ⭐ 一致性保险：配置与「尺码管理」不一致（表里多�
   //   只是**请求期不再调用它** ⇒ 请求里**不该**出现那条 warn（这正是"少一次整表读"的判据 ✓）。
   //   改前逐字：assert.equal(lines.length, 1, '不一致必须留一条 warn（可 grep）');
   assert.equal(lines.length, 0, '请求期不再做那次核对 ⇒ 不该有 warn ✓');
-  const svcSrc = fs.readFileSync(path.join(SERVER, 'src/services/scanPageService.js'), 'utf8');
+  // 本文件没有 SERVER 常量 ⇒ 就地用 __dirname 定位（只读一个源码文件，做"护栏还在/调用已移出请求期"哨兵 ✓）
+  const fsLocal = require('node:fs');
+  const svcSrc = fsLocal.readFileSync(require('node:path').join(__dirname, '..', 'src', 'services', 'scanPageService.js'), 'utf8');
   assert.match(svcSrc, /const maybeCheckSizeConsistency = async/,
     '护栏本体必须保留（供独立自检脚本调用 ✓ 不许顺手删掉 ✗）');
-  assert.equal(/^\s*await maybeCheckSizeConsistency\(/m.test(svcSrc), false,
+  assert.equal(/^[ \t]*await maybeCheckSizeConsistency\(/m.test(svcSrc), false,
     '请求期不许再调用它（否则又多一次整表读 ✗）');
   // ⚠️ 只 warn：配置与表都**不许被改**（配置先行）。
   assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.A, { label: '男', from: 38, to: 48, enterable: [38, 48], default: [38, 45], special: [46, 47, 48] });

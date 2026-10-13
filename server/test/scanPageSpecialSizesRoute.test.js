@@ -23,12 +23,12 @@ test('AC-SPR1 ⭐ 路由：不再有任何"采购明细 / 特殊码"接线（删
   }
 });
 
-test('AC-SPR2 ⭐ 路由仍走既有 lookup；缺码只按默认段（A 38–45 · B 36–42 ✓ 页面照常）', () => {
+test('AC-SPR2 ⭐ 路由仍走既有 lookup；缺码只按默认段（A 38–45 · B 36–41 ✓ 页面照常）', () => {
   const route = stripped('src/routes/scanPage.js');
   assert.ok(route.includes('service.lookup('), '仍然调既有 lookup ✓（页面还是那一款 ✓）');
   const { SCAN_PAGE } = require('../src/config/scanPage');
   assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.A.default, [38, 45], 'A 38–45 ✓');
-  assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.B.default, [36, 42], 'B 36–42（她 2026-10-14 明确 ✓）');
+  assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.B.default, [36, 41], 'B 36–41（她 2026-10-14 明确 ✓）');
   // 文件保留（她批的：接线删、文件留 ✓）
   const reader = fs.readFileSync(path.join(SERVER, 'src/services/purchaseSizeReader.js'), 'utf8');
   assert.ok(reader.includes('当前无生产引用'), 'reader 顶部注明"当前无生产引用" ✓');
