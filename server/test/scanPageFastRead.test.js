@@ -1,3 +1,6 @@
+// 2026-10-14：本文件测的是**按款缓存这个能力本身** ⇒ **显式打开** ✓
+//   （默认已按她拍板改成**关** ✗：「那份按款缓存：去掉（永远最新 ✓ 每次真读 ✓）」）
+process.env.SCAN_PAGE_CACHE_ENABLED = 'true';
 /**
  * 扫码页**提速**的用例（2026-10-08：业务负责人「扫码页打开有点慢」）。
  *
@@ -593,4 +596,27 @@ test('⑤ listAll 一个字没改：仍然 GET 列出记录、不带 filter（�
   assert.equal(records.length, 1);
   assert.equal(payloads[0].params.page_size, 500);
   assert.equal(payloads[0].params.filter, undefined, 'listAll 不带任何 filter');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ③-b ⭐ 2026-10-14（她逐字：「那份**按款缓存**：**去掉**（永远最新 ✓ 每次真读 ✓）」）
+//   默认行为 = **关**：同一个编号连扫两次 ⇒ 两次都真的去飞书 ✓（本文件顶部只是为本文件的
+//   "缓存能力"用例显式打开 ✓ ⇒ 这里用**干净的默认配置**再断言一次 ✓ 能真红 ✓）
+// ═══════════════════════════════════════════════════════════════════════════
+test('③-b ⭐ 默认（未显式打开）⇒ 按款视图缓存是**关**的：同款连扫两次都真读', async () => {
+  // ⚠️ 本文件顶部为"缓存能力用例"显式设了 SCAN_PAGE_CACHE_ENABLED=true ⇒ 这里不能靠"读默认值"✗
+  //   ⇒ 改钉**源码里的默认**（sentinel ✓ 能真红 ✓）：默认必须是 false
+  const fsLocal = require('node:fs');
+  const pathLocal = require('node:path');
+  const cfgSrc = fsLocal.readFileSync(pathLocal.join(__dirname, '..', 'src', 'config', 'scanPage.js'), 'utf8');
+  assert.match(cfgSrc, /SCAN_PAGE_CACHE_ENABLED',\s*false\)/, '默认必须是关（她 2026-10-14：「按款缓存：去掉」）');
+  const { SCAN_PAGE: FRESH } = require('../src/config/scanPage');
+  const gateway = fakeGateway();
+  const service = createScanPageService(gateway, { config: { ...FRESH, cache: { ...FRESH.cache, enabled: false } } });
+  const before = gateway.calls.length;
+  await service.lookup({ number: NUMBER, requestId: 'req_nocache_1' });
+  const afterFirst = gateway.calls.length;
+  await service.lookup({ number: NUMBER, requestId: 'req_nocache_2' });
+  assert.ok(afterFirst > before, '第一次要真读');
+  assert.ok(gateway.calls.length > afterFirst, '第二次**仍要真读**（不许命中按款缓存 ✗）');
 });
