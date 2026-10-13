@@ -208,8 +208,7 @@ const TEXTS = Object.freeze({
   paymentMethodsUnavailableBody: '收款方式那张表现在读不到，这一单先别录；过一会儿再试，或找技术同事。',
   errorTitle: '暂时打不开，请稍后再试',
   // 2026-10-13 骨架屏的两句文案（她：加载到中间一直白屏）—— 见 renderScanSkeleton
-  skeletonLoading: '正在读取…',
-  skeletonSizesLabel: '尺码',
+  skeletonLoading: '数据加载中',
   errorBody: '读库存时出错了。',
   busyTitle: '库存数据正在准备中',
   busyBody: '飞书那边还没准备好，请过几秒刷新这一页。',
