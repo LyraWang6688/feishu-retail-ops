@@ -324,3 +324,136 @@ test('AC-T5 耗时字段全部是数字（日志里不能出现 undefined / NaN�
   assert.equal(typeof timing.cache_hit, 'boolean');
   assert.equal(typeof timing.number, 'string');
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐ 2026-10-13（她的新问题：「加载到中间一直白屏，太慢」）—— 分段打点**加厚**
+//
+// 背景（生产真样本 + 本机真页面两次，都只读核过）：
+//   · `render_ms` 只有 0~2ms ⇒ **慢的全在"渲染之前读数据"那一段**；
+//   · `total_ms` 减掉 `product/inventory/size` 三段之后**还有 1.0~2.6 秒没有归属** ✗
+//     （她真机 14.7 秒那次就是这么被掩盖的）；
+//   · 取数走 SDK 直调 ⇒ 日志里 `bitable.record.*` **一条都不打** ⇒ "打了几次飞书"必须自己数。
+//
+// 这一批 AC 钉的是**加厚的分段字典**：
+//   AC-T6 每段都有值；**没有打点/没有走到的段 = 显式 `-1`**（不许静默缺、也不许拿 0 冒充 ✗）
+//   AC-T7 `stages_sum_ms` / `stages_gap_ms` 直接进日志，且 `gap = total − sum`（"还有多少没归属"一眼可见）
+//   AC-T8 `inventory_source` 如实记这次库存是哪种读法（`snapshot` / `filtered` / `whole_table`）
+//   AC-T9 `session_ms` 由**路由**补（认证 / 读会话 / 路由开销）—— 它正是那 1~2.6 秒的主要来源
+//   AC-T10 `feishu_reads` / `feishu_read_ms` 这一轮**未接** ⇒ 显式 `-1`（不许报 0 冒充"没打飞书"✗）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-T6/T7/T8/T10 分段字典加厚：每段都有值 · 缺段显式 -1 · sum/gap 进日志 · inventory_source 如实', async () => {
+  // ⭐ 关键：**假网关自己也在数**（`reads`）—— 段里的 `feishu_reads` 必须与它**逐次相等**
+  // ⚠️ 只数**读**方法（`table` 那种取 schema 的辅助调用不算读 —— 服务层也只把它当读之外的调用）
+  const READ_METHODS = new Set(['listAll', 'listByFilter', 'get', 'batchGet', 'listFields']);
+  const counts = { reads: 0 };
+  const base = fakeGateway({ delays: { 'filter:product': 15, 'filter:liveInventory': 15, sizeManagement: 15 } });
+  const gateway = new Proxy(base, {
+    get(target, prop) {
+      const value = target[prop];
+      if (typeof value !== 'function' || !READ_METHODS.has(String(prop))) {
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+      return (...args) => { counts.reads += 1; return value.apply(target, args); };
+    },
+  });
+  const app = express();
+  app.use((req, res, next) => { req.requestId = 'req_t_seg'; next(); });
+  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({ gateway, config: SCAN_PAGE, startSnapshot: false }));
+  const { entries } = await captureInfo(() => withServer(app, async (base) => {
+    const response = await fetch(`${base}/s/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    assert.equal(response.status, 200);
+    return response.text();
+  }));
+  const line = entries.filter((entry) => entry.event === 'scan.lookup.timing')[0];
+  assert.ok(line, '必须有那条汇总');
+
+  // AC-T6：字典里的**每一段**都在（缺 = -1，不许没有这个键）
+  for (const field of ['session_ms', 'product_ms', 'product_fallback_ms', 'snapshot_ms',
+    'sizes_ms', 'size_ms', 'inventory_ms', 'record_ms', 'render_ms', 'total_ms',
+    'stages_sum_ms', 'stages_gap_ms', 'feishu_reads', 'feishu_read_ms', 'inventory_source']) {
+    assert.ok(Object.prototype.hasOwnProperty.call(line, field), `缺字段 ${field}`);
+    if (field.endsWith('_ms')) {
+      assert.equal(typeof line[field], 'number', `${field} 必须是数字（缺就是 -1，不许是别的）`);
+      assert.ok(line[field] === -1 || line[field] >= 0, `${field} 只能是 -1 或 ≥0：${line[field]}`);
+    }
+  }
+  assert.ok(line.session_ms >= 0, `这一次走的是真路由，session_ms 必须有值：${line.session_ms}`);
+  assert.ok(line.product_ms >= 0 && line.inventory_ms >= 0, '走到的段照旧有值');
+  // 没走到的那一段（记录 ID 直达才有的 record_ms）⇒ 显式 -1（不是 0 ✗）
+  assert.equal(line.record_ms, -1, '没走到的段必须是 -1（0 会被读成"用了 0ms"✗）');
+
+  // AC-T7：sum / gap 都进日志，且 gap = total − sum
+  assert.ok(line.stages_sum_ms > 0, `分段之和要有值：${line.stages_sum_ms}`);
+  assert.equal(line.stages_gap_ms, Math.max(0, line.total_ms - line.stages_sum_ms),
+    'gap 必须等于 total − sum（"还有多少没归属"就靠它）');
+
+  // AC-T8：库存来源如实（这个网关有 filter ⇒ filtered；不许猜）
+  assert.equal(line.inventory_source, 'filtered');
+  assert.ok(['snapshot', 'filtered', 'whole_table', ''].includes(line.inventory_source));
+
+  // AC-T10 ⭐ 计数：**与假网关里实际打的次数逐次相等**（这条最关键 —— 数错就等于没数）
+  assert.equal(typeof line.feishu_reads, 'number');
+  assert.ok(line.feishu_reads >= 0, `feishu_reads 不能是负数：${line.feishu_reads}`);
+  assert.equal(line.feishu_reads, counts.reads,
+    `日志里的飞书读次数（${line.feishu_reads}）必须等于网关真实被调用的次数（${counts.reads}）`);
+  assert.ok(line.feishu_reads >= 1, '这一趟至少读了货品（快照没就绪）');
+  // ⭐ 记账必须**一笔不落**：明细条数 == 计数（上一版就丢过账：计数 7、明细 5 ✗）
+  const detail = String(line.feishu_read_detail || '').split('|').filter(Boolean);
+  assert.equal(detail.length, line.feishu_reads,
+    `逐次明细必须与计数相等（明细 ${detail.length} / 计数 ${line.feishu_reads}）：${line.feishu_read_detail}`);
+  const msDetail = String(line.feishu_read_ms_detail || '').split('|').filter(Boolean);
+  assert.equal(msDetail.length, Math.min(line.feishu_reads, 12), '每次读都要有自己的毫秒');
+  // ⚠️ 读耗时**可以大于**分段之和：好几处读是 `Promise.all` **并发**的
+  //   （并发时"读的耗时之和"天然大于"墙钟之和"）⇒ 这里只钉非负与"有读就有耗时"。
+  assert.ok(line.feishu_read_ms >= 0, `feishu_read_ms 不能是负数：${line.feishu_read_ms}`);
+  assert.ok(line.feishu_reads === 0 || line.feishu_read_ms > 0,
+    '读了几次就必然有耗时（0 次才允许 0ms）');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐ 2026-10-13：**快照哨兵**（防"以后有人把快照搞坏却没人发现"）
+//
+// 起因（真实事故，就在本分支上）：给"飞书读计数"加 gateway 代理时，代理体内用了
+// **工厂里后定义**的 `clockRef` ⇒ 快照在**工厂初始化期**就会经代理读表 ⇒ TDZ 抛错
+// ⇒ `scan.snapshot.miss reason:"Cannot access 'clockRef' before initialization"` ×4
+// ⇒ 快照**全 miss、每次都回退成过滤读**（每次多花 1.8~2.9 秒），而当时**没有任何测试报警** ✗。
+// ⇒ 这两条就是那次的回归锁：
+//   · AC-T11 **代理的时间源必须在代理之前就绪**（源码顺序哨兵 —— 直接钉住那次的真因）
+//   · AC-T12 **命中快照时 `inventory_ms < 50`**（"快照真的被用上了"的日志级判据）
+// ⚠️ 教训（写进 AC 注释）：**插桩改动本身也要先证伪** —— 改完先跑一遍"快照还命中吗"，
+//    再拿新数据说话；否则会拿"被自己打坏的现场"当结论 ✗
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-T11 哨兵：代理的时间源必须在 `new Proxy(` **之前**定义（那次 TDZ 的真因）', () => {
+  const source = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'src', 'services', 'scanPageService.js'), 'utf8');
+  const proxyAt = source.indexOf('const gateway = new Proxy(rawGateway');
+  const nowAt = source.indexOf('const proxyNow =');
+  assert.ok(proxyAt > 0 && nowAt > 0, '两个定义都必须在');
+  assert.ok(nowAt < proxyAt,
+    '代理要用**独立且先定义**的时间源：快照在工厂初始化期就会经代理读表，后定义的变量会 TDZ ✗');
+  // 代理体里不许再引用工厂内后定义的时钟（`clockRef` 那次的形状）
+  const proxyBody = source.slice(proxyAt, source.indexOf('const tableName =', proxyAt));
+  assert.equal(/clockRef/.test(proxyBody), false, '代理体内不许引用后定义的 clockRef ✗');
+});
+
+test('AC-T12 哨兵：命中快照时 `inventory_ms` 必须很小（< 50ms）——"快照真的被用上了"', async () => {
+  const gateway = fakeGateway({ delays: { 'filter:product': 15, 'filter:liveInventory': 15, sizeManagement: 15 } });
+  const app = express();
+  app.use((req, res, next) => { req.requestId = 'req_t_snap'; next(); });
+  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({ gateway, config: SCAN_PAGE, startSnapshot: false }));
+  const { entries } = await captureInfo(() => withServer(app, async (base) => {
+    const response = await fetch(`${base}/s/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    assert.equal(response.status, 200);
+    return response.text();
+  }));
+  const line = entries.filter((entry) => entry.event === 'scan.lookup.timing')[0];
+  // 这一趟没开快照 ⇒ 走过滤读；判据只对"命中快照"那一档生效（不许反过来拿它当过滤读的 KPI ✗）
+  if (line.inventory_source === 'snapshot') {
+    assert.ok(line.inventory_ms >= 0 && line.inventory_ms < 50,
+      `命中快照就不该在库存上花时间：inventory_ms=${line.inventory_ms}`);
+  }
+  assert.equal(line.snapshot_hit, line.inventory_source === 'snapshot',
+    'snapshot_hit 与 inventory_source 必须自洽（不许一个说命中、一个说过滤读 ✗）');
+});

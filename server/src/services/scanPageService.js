@@ -200,8 +200,56 @@ const limitError = (tableName, actual, limit) => {
 //    `services/bitableFilterFormula.js`（本文件与将来的其它调用方共用；搬运**逐字**、行为不变）。
 const { equalsFormula, containsFormula, orFormula } = require('./bitableFilterFormula');
 
-const createScanPageService = (gateway, options = {}) => {
-  if (!gateway) throw new Error('ScanPageService requires gateway');
+const createScanPageService = (rawGateway, options = {}) => {
+  if (!rawGateway) throw new Error('ScanPageService requires gateway');
+
+  /**
+   * ⭐⭐ 2026-10-13：「**这一次扫码打了几次飞书**」。
+   *
+   * 做法：把 gateway 包一层代理，读调用按"当前这一趟"归属到它的 `timing` 上。
+   *   · 只数**读**（`listAll` / `listByFilter` / `get` / `batchGet` …）—— 这一条链路本来就是只读；
+   *   · `activeTiming` 只在一趟 lookup 期间有效 ⇒ 别处（写路径）调用**不计数** ✓；
+   *   · ⚠️ **并发保护**：两趟 lookup 撞在一起时**不归属**（标 `feishu_reads_contended:true`），
+   *     宁可不数也不数错 —— 计错会把"卡在哪一步"带偏 ✗（单进程下这种并发很少见）。
+   *   · 为什么不在日志里数：取数走 SDK 直调，`bitable.record.*` **一条都不打**（实测核过）。
+   */
+  // ⚠️ 时间源必须在**代理之前**就绪：快照/尺码解析在**工厂初始化期**就会经代理读表，
+  //    那时 `clock`/`clockRef` 还没初始化 ⇒ 代理一调用就 TDZ 抛错
+  //    （真机症状：`scan.snapshot.miss reason:"Cannot access 'clockRef' before initialization"`
+  //     ⇒ 快照命中率恒 0、每次都回退成过滤读 ✗）。所以这里用**独立**的时间源。
+  const proxyNow = () => (options.now || Date.now)();
+  let activeTiming = null;
+  let activeDepth = 0;
+  const READ_METHODS = new Set(['listAll', 'listByFilter', 'get', 'batchGet', 'listFields']);
+  const gateway = new Proxy(rawGateway, {
+    get(target, prop) {
+      const value = target[prop];
+      if (typeof value !== 'function') return value;
+      if (!READ_METHODS.has(String(prop))) return value.bind(target);
+      return (...args) => {
+        const startedAt = proxyNow();
+        const promise = value.apply(target, args);
+        // ⚠️ **把这一趟的 timing 抓成局部量**：`.finally` 可能在 lookup 收尾之后才跑，
+        //    那时 `activeTiming` 已经清空 ⇒ 直接读变量会丢账（上一版实测：计数 7、明细只 5 ✗）
+        const owner = activeTiming;
+        if (owner) {
+          owner.feishu_reads = (Number(owner.feishu_reads) || 0) + 1;
+          // ⭐ 逐次记账：`方法:表` + 这次多少毫秒 —— 「7 次读读在哪、哪次最贵、有没有重复」靠它说话
+          const raw = args[0];
+          const table = typeof raw === 'string' ? raw : String(raw?.tableKey || raw?.table || '');
+          const detail = owner.feishu_read_detail || (owner.feishu_read_detail = []);
+          if (detail.length < 12) detail.push(`${String(prop)}:${table}`);
+          return Promise.resolve(promise).finally(() => {
+            const cost = proxyNow() - startedAt;
+            owner.feishu_read_ms = (Number(owner.feishu_read_ms) || 0) + cost;
+            const times = owner.feishu_read_ms_detail || (owner.feishu_read_ms_detail = []);
+            if (times.length < 12) times.push(cost);
+          });
+        }
+        return promise;
+      };
+    },
+  });
   const schema = options.schema || V1_BITABLE_SCHEMA;
   const config = options.config || SCAN_PAGE;
   const getSizeReferences = createSizeReferenceAccess({ gateway, sizeReferences: options.sizeReferences });
@@ -278,8 +326,23 @@ const createScanPageService = (gateway, options = {}) => {
    * 只在这里打一次（不是每个阶段一条）—— 由路由在**渲染完之后**调用，
    * 于是 `render_ms` 也能进同一行；失败路径（没找到 / 抛错）同样调用。
    */
+
+  /** 缺段显式 `-1`；有值就是非负整数毫秒。 */
+  const msOrNull = (value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return -1;
+    // ⚠️ `-1` 要**原样保留**：它就是"这一段没打点/没走到"的显式标记（`Math.max(0, …)` 会把它抹成 0 ✗）
+    return numeric < 0 ? -1 : numeric;
+  };
+  /** 分段之和（只累加"真的打了点"的那几段）。 */
+  const stagesSumOf = (timing) => ['session_ms', 'product_ms', 'product_fallback_ms', 'snapshot_ms',
+    'size_ms', 'inventory_ms', 'record_ms']
+    .map((key) => msOrNull(timing[key])).filter((value) => value >= 0)
+    .reduce((sum, value) => sum + value, 0);
+
   const logTiming = (timing, { requestId = '', found = false } = {}) => {
     if (!timing || typeof timing !== 'object') return;
+    const stagesSum = stagesSumOf(timing);
     logInfo(config.events.lookupTiming, {
       request_id: requestId,
       found: found === true,
@@ -291,17 +354,44 @@ const createScanPageService = (gateway, options = {}) => {
       //   任一为 false / `size_source != 'config'` 就说明那一段回退去读了飞书。
       product_snapshot_hit: timing.product_snapshot_hit === true,
       size_source: timing.size_source || '',
-      product_ms: Number(timing.product_ms) || 0,
-      inventory_ms: Number(timing.inventory_ms) || 0,
-      size_ms: Number(timing.size_ms) || 0,
+      // ⭐⭐ 2026-10-13：**每段都有值** —— 缺段一律显式 `-1`（不许静默缺 ✗）。
+      //    为什么这么严：原来 `|| 0` 把"没打点"和"真的用了 0ms"混成一样，
+      //    于是"1.0~2.6 秒没有归属"看不出来（她真机 14.7 秒那次就是这么被掩盖的）。
+      product_snapshot_hit: timing.product_snapshot_hit === true,
+      size_source: timing.size_source || '',
+      // 分段（毫秒）：-1 = 这一段这次**没有打点/没有走到**
+      session_ms: msOrNull(timing.session_ms),
+      product_ms: msOrNull(timing.product_ms),
+      product_fallback_ms: msOrNull(timing.product_fallback_ms),
+      snapshot_ms: msOrNull(timing.snapshot_ms),
+      sizes_ms: msOrNull(timing.size_ms),
+      size_ms: msOrNull(timing.size_ms),
+      inventory_ms: msOrNull(timing.inventory_ms),
+      record_ms: msOrNull(timing.record_ms),
+      render_ms: msOrNull(timing.render_ms),
+      total_ms: msOrNull(timing.total_ms),
+      // ⭐ 分段之和 vs total：差值直接写进日志 ⇒ "还有多少毫秒没归属"一眼看得见 ✓
+      stages_sum_ms: stagesSum,
+      stages_gap_ms: Number.isFinite(Number(timing.total_ms)) ? Math.max(0, Number(timing.total_ms) - stagesSum) : -1,
+      // ⭐ 「打了几次飞书」：服务层自己数（不依赖 `bitable.record.*` 事件 —— 取数走 SDK 直调，一条都不打）
+      feishu_reads: Number.isFinite(Number(timing.feishu_reads)) ? Number(timing.feishu_reads) : -1,
+      feishu_read_ms: Number.isFinite(Number(timing.feishu_read_ms)) ? Number(timing.feishu_read_ms) : -1,
+      // ⭐ 逐次记账：`方法:表` 清单 + 每次毫秒 ⇒ 「7 次读读在哪、哪次最贵」一眼看得见
+      feishu_read_detail: Array.isArray(timing.feishu_read_detail) ? timing.feishu_read_detail.join('|') : '',
+      feishu_read_ms_detail: Array.isArray(timing.feishu_read_ms_detail) ? timing.feishu_read_ms_detail.join('|') : '',
+      feishu_reads_contended: timing.feishu_reads_contended === true,
+      // ⭐ 这次库存是哪种读法：`snapshot` / `filtered` / `whole_table`（空 = 没走到）
+      inventory_source: timing.inventory_source || '',
       whole_table_fallback: timing.whole_table_fallback === true,
-      render_ms: Number(timing.render_ms) || 0,
-      total_ms: Number(timing.total_ms) || 0,
+      number_fallback: timing.number_fallback === true,
+      record_id: timing.record_id === true,
+      record_id_hit: timing.record_id_hit === true,
       rows: Number(timing.rows) || 0,
     });
   };
 
   const tableName = (tableKey) => schema?.tables?.[tableKey]?.tableName || tableKey;
+
 
   const readAllCapped = async (tableKey, cap, requestId) => {
     const records = await gateway.listAll(tableKey);
@@ -572,6 +662,8 @@ const createScanPageService = (gateway, options = {}) => {
           rows: current.records.filter((record) => belongsToNumber(record, { productId, number, stockKeyField })),
           snapshotHit: true,
           fallback: '',
+          // ⭐ 如实记来源：快照命中 ⇒ `snapshot`（**一次飞书都没打**）
+          source: 'snapshot',
         };
       }
       logInfo(config.events.snapshotMiss, {
@@ -582,7 +674,13 @@ const createScanPageService = (gateway, options = {}) => {
       });
     }
     const read = await readInventoryRows({ productId, tableNumber, number, stockKeyField, requestId });
-    return { rows: read.rows, snapshotHit: false, fallback: read.fallback };
+    return {
+      rows: read.rows,
+      snapshotHit: false,
+      fallback: read.fallback,
+      // ⭐ 如实记来源：`fallback` 非空 = **整表读**，否则 = **按编号过滤读**
+      source: read.fallback ? 'whole_table' : 'filtered',
+    };
   };
 
   /** 一行的尺码：关联记录（共享解析，带 30 秒缓存）→ 「库存键」最后一段 → 读不出。 */
@@ -727,9 +825,22 @@ const createScanPageService = (gateway, options = {}) => {
 
   const lookup = async ({ number: rawNumber, recordId: rawRecordId, requestId, timing = null } = {}) => {
     const totalStartedAt = startStage();
+    // ⭐ 认领"当前这一趟"：只有认领到的那一趟才把飞书读算进自己的 timing（见上面代理的说明）
+    const claimed = Boolean(timing) && activeTiming === null && activeDepth === 0;
+    if (timing) {
+      timing.feishu_reads = 0;
+      timing.feishu_read_ms = 0;
+      timing.feishu_read_detail = [];
+      timing.feishu_read_ms_detail = [];
+      timing.feishu_reads_contended = !claimed;
+    }
+    if (claimed) activeTiming = timing;
+    activeDepth += 1;
     try {
       return await performLookup({ rawNumber, rawRecordId, requestId, timing });
     } finally {
+      activeDepth -= 1;
+      if (claimed) activeTiming = null;
       if (timing) timing.total_ms = elapsed(totalStartedAt);
     }
   };
@@ -753,9 +864,19 @@ const createScanPageService = (gateway, options = {}) => {
       // ⭐⭐ 2026-10-12：这一趟是不是**按记录 ID 直达**（新二维码那条路）。
       timing.record_id = Boolean(recordId);
       timing.record_id_hit = false;
-      timing.record_ms = 0;
+      // ⭐ 2026-10-13：**没走到的段一律 -1**（原来初始化成 0 ⇒ "没用"和"用了 0ms"分不开 ✗）
+      timing.record_ms = -1;
       timing.rows = 0;
       timing.total_ms = 0;
+      // ⭐ 2026-10-13 新增分段（缺则**显式 -1**，不许静默缺 —— 见 logTiming）：
+      //    `session_ms` 由路由补（认证/读会话）、`snapshot_ms` 商品快照那一步、
+      //    `product_fallback_ms` 整表回退那一次读、`feishu_reads` / `feishu_read_ms` 飞书读的计数与总耗时。
+      timing.session_ms = Number.isFinite(timing.session_ms) ? timing.session_ms : -1;
+      timing.snapshot_ms = -1;
+      timing.product_fallback_ms = -1;
+      timing.inventory_source = '';
+      timing.feishu_reads = 0;
+      timing.feishu_read_ms = 0;
     }
     // ── ⭐⭐ 记录 ID 直达（`/r/{recordId}`）────────────────────────────────────
     //    ⚠️ 它**排在"按编号"之前**：新二维码里没有编号，只有记录 id。
@@ -829,6 +950,7 @@ const createScanPageService = (gateway, options = {}) => {
     //    只有『取商品』那一步换了策略"的落点：下面每一行（库存 / 尺码 / 缺码 / 视图 / 缓存）**逐字复用**。
     if (!product) {
       const productStartedAt = startStage();
+      // 这一段可能有 1~2 次真实飞书读（过滤读；没读到再整表读一次）⇒ 每次都在**调用点**计数 ✓
       try {
         // ⭐⭐ 2026-10-09：**先查「货品信息」内存快照**（按编号索引）——命中就 **0 次飞书调用**。
         //    单价仍以「货品信息」为唯一真源（她的口径），只是从内存里取。
@@ -839,15 +961,17 @@ const createScanPageService = (gateway, options = {}) => {
           if (timing) timing.product_snapshot_hit = Boolean(product);
         }
         if (!product) {
-          const filteredProduct = await readProductsByNumber({ number, requestId });
+              const filteredProduct = await readProductsByNumber({ number, requestId });
           product = filteredProduct.product;
           wholeTableFallback = Boolean(filteredProduct.fallback);
           if (!product && !filteredProduct.resolved) {
             // 按条件读一条都没读到 ⇒ **回退整表读**再找一次：
             // 「找不到」的判定与提速前**逐字一致**（宁可慢这一次，也不许把"有货"判成"没这条编号"）。
+            const fallbackStartedAt = startStage();
             const products = await readAllCapped('product', limits.productRecords, requestId);
             product = findProduct(products, number);
             wholeTableFallback = true;
+            if (timing) timing.product_fallback_ms = elapsed(fallbackStartedAt);
           }
         }
       } finally {
@@ -903,13 +1027,17 @@ const createScanPageService = (gateway, options = {}) => {
     const inventoryStartedAt = startStage();
     let inventory;
     try {
+      const inventoryReadStartedAt = startStage();
       inventory = await readInventoryRecords({ productId, tableNumber, number, stockKeyField, requestId });
+      // ⭐ 快照命中 ⇒ **一次飞书都没打** ⇒ 这一段的计数保持 0（如实 ✓）
     } finally {
       if (timing) timing.inventory_ms = elapsed(inventoryStartedAt);
     }
     const rows = inventory.rows;
     if (timing) {
       timing.snapshot_hit = inventory.snapshotHit === true;
+      // ⭐ 如实记：`snapshot`（快照命中、0 次读）/ `filtered`（按编号过滤读）/ `whole_table`（整表读）
+      timing.inventory_source = inventory.source || (inventory.snapshotHit === true ? 'snapshot' : '');
       timing.whole_table_fallback = timing.whole_table_fallback || Boolean(inventory.fallback);
       timing.rows = rows.length;
     }
@@ -951,6 +1079,7 @@ const createScanPageService = (gateway, options = {}) => {
       scope = await loadSizeScope({ categoryCode: parsed.categoryCode });
       // ⭐ 缺码这一段是**读配置**还是**降级**（`scan.lookup.timing` 里就靠它看"有没有回退"）。
       if (timing) timing.size_source = scope.degraded ? `degraded:${scope.reason}` : 'config';
+      // ⭐ 缺码这一段：读**配置**时是 0 次飞书；只有降级（读「尺码管理」）才算 1 次 ✓
       // ⭐ 一致性保险（**定期**，默认 10 分钟一次）：拿配置与「尺码管理」比对，不一致就 warn。
       //    它只在 TTL 到点那一趟真的读一次那张表 —— 平时这一趟是 **0 次调用**。
       await maybeCheckSizeConsistency({ requestId });
