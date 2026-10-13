@@ -1088,7 +1088,11 @@ const createScanPageService = (rawGateway, options = {}) => {
       // ⭐ 缺码这一段：读**配置**时是 0 次飞书；只有降级（读「尺码管理」）才算 1 次 ✓
       // ⭐ 一致性保险（**定期**，默认 10 分钟一次）：拿配置与「尺码管理」比对，不一致就 warn。
       //    它只在 TTL 到点那一趟真的读一次那张表 —— 平时这一趟是 **0 次调用**。
-      await maybeCheckSizeConsistency({ requestId });
+        // ⭐ 2026-10-14（她：扫完码进的是**销售页**，销售页只要「货品 + 实时库存」）：
+        //    **请求期不再做这次一致性核对** —— 它会在 TTL 到点那一趟多读一次「尺码管理」整表
+        //    （冷读 3~6 秒 ✗）＝她遇到的"偶尔特别慢"。函数本体保留，供独立自检脚本调用（不占她的请求 ✓）。
+        //    影响面：少一次护栏核对 + 一条 warn；缺码判据仍只走**配置**（`loadSizeScope` ✓ 一字不改）。
+        //        await maybeCheckSizeConsistency({ requestId });   // ← 2026-10-14 移出请求期
     } finally {
       if (timing) timing.size_ms = elapsed(sizeStartedAt);
     }
