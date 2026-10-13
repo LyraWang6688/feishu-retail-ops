@@ -1,6 +1,6 @@
 import { requireFeishuAuth, showLoginButton } from './core/auth.js';
 import { describeError, showPageError } from './core/ui.js';
-import { mainTabsHtml } from './core/tabs.js';
+import { mainTabsHtml, MAIN_TABS } from './core/tabs.js';
 import { createDomainModule } from './features/domains/index.js';
 import { createPlaceholderModule } from './features/shared/placeholder.js';
 
@@ -55,10 +55,39 @@ const host = document.getElementById('module-host');
 let initialModule = 'sales';
 
 // 把一级 tab 渲染进 nav —— 文案 / 顺序 / data-module 全部来自 `config/tabs.js`（配置先行）。
+// ⭐⭐ 2026-10-13 晚（她真机：「**就是点那个 tab 上的扫一扫**」）：
+//    「扫一扫」那一格**本身**是 `<a href="<AppLink>">` ⇒ 点它 = **用户手势** ⇒ 飞书放行 ⇒ 弹摄像头 ✓
+//    ⚠️ **没有**任何 JS 导航（`location.assign` 那种在她飞书里不生效 ✗ 已删）；
+//    ⚠️ 也**不**在进工作台时自动弹 ✗（她踩到的正是这个 ✗）。点一次弹一次（原生链接、无状态 ✓）。
+let scanAppLink = '';
 function renderMainTabs() {
   const nav = document.getElementById('main-tabs');
-  nav.innerHTML = mainTabsHtml();
-  initialModule = nav.querySelector('.main-tab')?.dataset.module || 'sales';
+  nav.innerHTML = mainTabsHtml(MAIN_TABS, { hrefs: scanAppLink ? { scan: scanAppLink } : {} });
+  initialModule = nav.querySelector('.main-tab:not([href])')?.dataset.module || 'sales';
+}
+
+/** 取一次「扫一扫」入口信息（只读；失败 ⇒ 那一格仍是按钮 ⇒ 进面板给人话 + 手输，不白屏 ✓） */
+async function loadScanEntry() {
+  try {
+    const response = await fetch('/api/workbench/scan-entry');
+    const payload = await response.json();
+    if (payload?.success === true && payload.canScan === true && payload.appLink) {
+      scanAppLink = payload.appLink;
+      renderMainTabs();
+      bindMainTabClicks();
+    }
+  } catch {
+    // 取不到 ⇒ 什么都不做 ✓
+  }
+}
+
+/** 只给"不是链接"的格子绑面板切换（链接格交给浏览器 ✓ 不要拦它的默认行为 ✗） */
+function bindMainTabClicks() {
+  document.querySelectorAll('.main-tab:not([href])').forEach((tab) => {
+    if (tab.dataset.bound === '1') return;
+    tab.dataset.bound = '1';
+    tab.addEventListener('click', () => activateModule(tab.dataset.module));
+  });
 }
 
 function activateModule(moduleId) {
@@ -81,9 +110,9 @@ async function start() {
   //    「工作台启动失败：请求失败（401）」＋ tab 点了没反应。
   //    绑在这里之后，鉴权失败时页面仍然是可交互的（各模块自己会提示取不到数据）。
   renderMainTabs();
-  document.querySelectorAll('.main-tab').forEach((tab) => {
-    tab.addEventListener('click', () => activateModule(tab.dataset.module));
-  });
+  bindMainTabClicks();
+  // ⚠️ **不 await**：它只决定"那一格是链接还是按钮"，不阻塞鉴权与首屏 ✓
+  void loadScanEntry();
   try {
     const ready = await requireFeishuAuth({
       statusElement: document.getElementById('auth-status'),

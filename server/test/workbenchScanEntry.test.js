@@ -1,7 +1,10 @@
 /**
- * 「扫一扫」= 工作台一级 tab（放最前）· 她 2026-10-13 真机口径：**点 tab 就直达飞书扫一扫**
- * （「不用在我点了扫一扫之后，再去弹提示说'去飞书扫一扫'，而是**直接点扫一扫就能调出摄像头**」）。
- * 一级 tab 的顺序/文案由 `test/workbenchFourTabs.test.js` 的 AC1 钉着 ✓
+ * 「扫一扫」= 工作台一级 tab（放最前）· **2026-10-13 晚按她真机口径重做**：
+ *   她（逐字）：「**就是点那个 tab 上的扫一扫**」（⇒ 那一格本身 = `<a href="<AppLink>">`，用户手势 ⇒ 弹 ✓）
+ *             「点击了还是没有弹出来，反而是**点击工作台之后就出现了扫描框**。需要的是，**每点一次掉一次**」
+ *             「若飞书依旧不弹 ⇒ 那一格里必须有一颗真能点的按钮 ✓，**不需要，就是点那个 tab 上的扫一扫**」
+ * ⇒ 本文件钉的新口径：① 那一格是链接（点一次弹一次 ✓）② 进工作台**不**自动弹 ✗
+ *                    ③ 面板里**没有**"打开扫一扫"按钮 ✗（她明确说不需要 ✓）
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -12,82 +15,84 @@ const path = require('node:path');
 const WORKBENCH = path.join(__dirname, '..', 'public', 'workbench');
 const read = (relative) => fs.readFileSync(path.join(WORKBENCH, relative), 'utf8');
 
+/** 把 core/tabs.js（只 import config/tabs.js）拷成 .mjs 再 import ✓ */
+
+/** 只取 `main.js` 里**扫一扫相关**的两段（renderMainTabs / loadScanEntry / bindMainTabClicks）
+ *  —— 登录那条链路本来就有 `location.assign`，与扫一扫无关，不能一起判 ✗ */
+function scanRelatedSource() {
+  const source = read('main.js');
+  const from = source.indexOf('let scanAppLink');
+  const to = source.indexOf('function activateModule(');
+  return source.slice(from, to > from ? to : undefined);
+}
+
+async function loadTabs() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-tabs-'));
+  fs.writeFileSync(path.join(dir, 'tabs.mjs'), read('core/tabs.js').replace("'../config/tabs.js'", "'./config.mjs'"));
+  fs.writeFileSync(path.join(dir, 'config.mjs'), read('config/tabs.js'));
+  return import(path.join(dir, 'tabs.mjs'));
+}
 async function loadScanModule() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-scan-'));
   fs.copyFileSync(path.join(WORKBENCH, 'features/scan/index.js'), path.join(dir, 'scan.mjs'));
   return import(path.join(dir, 'scan.mjs'));
 }
 
-/** 假的 sessionStorage（防循环那条 AC 要用） */
-const fakeStorage = () => {
-  const bag = new Map();
-  return { getItem: (k) => (bag.has(k) ? bag.get(k) : null), setItem: (k, v) => bag.set(k, String(v)), bag };
-};
-
-test('AC1 这一屏只有**兜底**形态：按钮 + 人话位子 + **手输编号兜底**（缺一不可）', async () => {
-  const { scanPageHtml } = await loadScanModule();
-  const html = scanPageHtml();
-  assert.match(html, /data-scan-start[^>]*>打开飞书扫一扫</, '兜底时给的那颗按钮（能自动跳时她看不到它 ✓）');
-  assert.match(html, /data-scan-unavailable/, '要有"打不开时"那条人话的位子（**不白屏** ❌）');
-  assert.match(html, /data-entry-form[^>]*data-target-template="\/s\/\{number\}"/, '手输编号兜底（复用既有机制）');
-  assert.match(html, /name="number"/, '要真的有一个编号输入框');
-});
-
-test('AC2 ⭐⭐ 点 tab ⇒ **直接弹摄像头**（`auto` 模式：不用她再点一次）', async () => {
-  const { scanEntryPlan } = await loadScanModule();
+test('AC1 ⭐⭐ 点「扫一扫」那一格 ⇒ 触发 AppLink（那一格**本身**是 `<a href>` ⇒ 用户手势 ✓）', async () => {
+  const { mainTabsHtml, MAIN_TABS } = await loadTabs();
   const { SCAN_NEXT } = require('../src/config/scanPage');
   assert.equal(SCAN_NEXT.applink, 'https://applink.feishu.cn/client/qrcode/main', '飞书官方"打开扫一扫"AppLink');
-  const plan = scanEntryPlan({ canScan: true, appLink: SCAN_NEXT.applink, alreadyTriggered: false });
-  assert.deepEqual(plan, { mode: 'auto', href: SCAN_NEXT.applink },
-    '⭐ 飞书里进这一屏 ⇒ **立刻跳**（等价于"点了 tab 就弹摄像头" ✓ 不再有中间那一屏 ✓）');
-  // AppLink 与扫码页**同一来源**（不抄第二份 ✓）；UA 判据也同源 ✓
+  const html = mainTabsHtml(MAIN_TABS, { hrefs: { scan: SCAN_NEXT.applink } });
+  // ① 扫一扫那一格 = 原生链接，href **逐字** = SCAN_NEXT.applink（同源 ✓）
+  assert.match(html, new RegExp(`<a class="main-tab[^"]*" data-module="scan" href="${SCAN_NEXT.applink.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`),
+    '⭐ 那一格必须**本身**是链接（点它 = 用户手势 ⇒ 飞书才放行 ✓）');
+  assert.match(html, />扫一扫<\/a>/, '文案逐字');
+  // ② 其余四格仍是 button（既有面板机制不动 ✓）且顺序不变
+  const order = [...html.matchAll(/data-module="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(order, ['scan', 'sales', 'inventory', 'purchase', 'product'], '顺序回归 ✓');
+  assert.equal((html.match(/<button class="main-tab/g) || []).length, 4, '其余四格仍是面板按钮 ✓');
+  // ③ 点一次弹一次：**没有**任何一次性记号 / JS 导航（原生链接天然按次 ✓）
+  // ⚠️ 只能查**扫一扫这两个函数体内** —— `main.js` 里登录那条本来就有 `location.assign`（与我们无关 ✗）
+  const scanPath = scanRelatedSource();
+  for (const bad of ['location.assign', 'location.replace', 'window.open', 'sessionStorage']) {
+    assert.equal(scanPath.includes(bad), false, `扫一扫这条路上不许有 JS 导航 / 一次性记号：${bad}`);
+  }
+  assert.match(scanPath, /appLink/, 'AppLink 来自服务端 /scan-entry（同源 ✓）');
+});
+
+test('AC2 ⭐⭐ 进入工作台 ⇒ **不触发任何导航**（她踩到的就是"一进就弹" ✗）', async () => {
+  const { mainTabsHtml, MAIN_TABS } = await loadTabs();
+  // 默认渲染（入口信息还没到 / 取不到）⇒ 仍是 5 颗按钮 ⇒ **点它只会切面板**，不会跳走 ✓
+  const html = mainTabsHtml(MAIN_TABS);
+  assert.equal((html.match(/<button class="main-tab/g) || []).length, 5, '默认 5 颗按钮（行为与改前逐字相同 ✓）');
+  assert.equal(/<a\b/.test(html), false, '默认渲染里没有任何链接 ⇒ 进工作台不会自动跳 ✓');
+  const scanPath = scanRelatedSource();
+  assert.equal(/location\.assign|location\.replace|window\.open/.test(scanPath), false, '扫一扫这条路上没有 JS 导航 ✓');
+  assert.match(scanPath, /loadScanEntry/, '只"取一次入口信息" ✓');
+  assert.equal(/\.click\(\)/.test(scanPath), false, '不许自己点自己 ✗');
+});
+
+test('AC3 ✗ 面板里**不再有**"打开扫一扫"按钮 / 链接（她明确说不需要 ✓）', async () => {
+  const { scanPanelHtml } = await loadScanModule();
+  const html = scanPanelHtml();
+  assert.equal(/data-scan-open/.test(html), false, '✗ 面板里不许再有那颗按钮');
+  assert.equal(/<a\b/.test(html), false, '✗ 面板里也不许有链接');
+  assert.equal(html.includes('打开飞书扫一扫'), false, '✗ 面板里不该出现这句按钮文案');
+  // 但兜底必须在：人话 + 手输编号（**不白屏** ❌）
+  assert.match(html, /data-scan-unavailable/, '要有那句人话');
+  assert.match(html, /data-entry-form[^>]*data-target-template="\/s\/\{number\}"/, '手输编号兜底 ✓');
+  assert.match(html, /name="number"/, '真的有一个输入框');
+});
+
+test('AC4 ⭐ AppLink 与 `config/scanPage.js` 的 `SCAN_NEXT.applink` **逐字同源**（路由侧不抄第二份 ✓）', () => {
   const route = fs.readFileSync(path.join(__dirname, '../src/routes/workbench.js'), 'utf8');
-  assert.match(route, /appLink: SCAN_NEXT\.applink/, 'AppLink 取自 config/scanPage.js 的 SCAN_NEXT');
-  assert.match(route, /canScan: canScanNextWithFeishu\(req\.get\('user-agent'\)\)/, 'UA 判据取自既有导出');
+  assert.match(route, /appLink: SCAN_NEXT\.applink/, 'AppLink 取自既有 SCAN_NEXT ✓');
+  assert.match(route, /canScan: canScanNextWithFeishu\(req\.get\('user-agent'\)\)/, 'UA 判据取自既有导出 ✓');
+  const entry = fs.readdirSync(path.join(WORKBENCH, 'features/scan'));
+  assert.ok(entry.includes('index.js'), '那一格的链接目标由 /scan-entry 提供（单一来源 ✓）');
 });
 
-test('AC3 ⭐ 非飞书 UA ⇒ **不自动跳**，给一屏人话 + 手输（**不白屏** ❌）', async () => {
-  const { scanEntryPlan, MANUAL_FALLBACK_MESSAGE } = await loadScanModule();
-  const { canScanNextWithFeishu } = require('../src/views/scanPageRenderer');
-  assert.equal(canScanNextWithFeishu('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'), false, '电脑 ⇒ 不能调');
-  assert.equal(canScanNextWithFeishu('Mozilla/5.0 (iPhone) Feishu/7.0'), true, '飞书 iPhone ⇒ 能调');
-  const plan = scanEntryPlan({ canScan: false, appLink: 'https://applink.feishu.cn/client/qrcode/main' });
-  assert.deepEqual(plan, { mode: 'fallback', message: MANUAL_FALLBACK_MESSAGE });
-  assert.equal('href' in plan, false, '⭐ 不自动跳、也**不许**给一个点了没反应的 href ✗');
-  assert.deepEqual(scanEntryPlan({}), { mode: 'fallback', message: MANUAL_FALLBACK_MESSAGE }, '取不到入口 ⇒ 也走兜底');
-});
-
-test('AC4 ⭐⭐ 护栏：**只自动跳一次、不循环**（她回到这一屏 ⇒ 不再被弹走 ✗）', async () => {
-  const { scanEntryPlan, SCAN_AUTO_FLAG_KEY } = await loadScanModule();
-  const plan = scanEntryPlan({ canScan: true, appLink: 'https://applink.feishu.cn/client/qrcode/main', alreadyTriggered: true });
-  assert.deepEqual(plan, { mode: 'manual', appLink: 'https://applink.feishu.cn/client/qrcode/main' },
-    '已经自动跳过 ⇒ 改给一颗**手动**按钮（否则她会被弹出去出不来 ✗）');
-  assert.equal(SCAN_AUTO_FLAG_KEY, 'workbench.scan.autoTriggered');
-  // 真挂载一次：能自动跳 ⇒ 只 navigate 一次 + 打了记号；再挂一次 ⇒ 不再 navigate ✓
-  const { createScanModule } = await loadScanModule();
-  const storage = fakeStorage();
-  const navigations = [];
-  const html = read('features/scan/index.js');
-  const source = { innerHTML: '' };
-  const node = () => ({ classList: { add() {}, remove() {} }, dataset: {}, addEventListener() {}, querySelector: () => null });
-  const container = { set innerHTML(v) { source.innerHTML = v; }, querySelector: () => node() };
-  const service = createScanModule({
-    storage,
-    navigate: (url) => navigations.push(url),
-    fetchImpl: async () => ({ json: async () => ({ success: true, canScan: true, appLink: 'https://applink.feishu.cn/client/qrcode/main' }) }),
-  });
-  service.mount(container);
-  await new Promise((r) => setImmediate(r));
-  assert.deepEqual(navigations, ['https://applink.feishu.cn/client/qrcode/main'], '第一次进 ⇒ 自动跳一次');
-  service.mount(container);
-  await new Promise((r) => setImmediate(r));
-  assert.equal(navigations.length, 1, '⭐ 第二次进 ⇒ **不再自动跳**（防循环 ✓）');
-  assert.ok(html.includes('SCAN_AUTO_FLAG_KEY'), '记号键来自模块常量（不是散落字面量）');
-});
-
-test('AC5 ⭐ 文案单一来源 + 一级 tab 顺序回归：扫一扫 ▸ 销售 ▸ 库存 ▸ 采购 ▸ 货品', () => {
-  assert.ok(!read('index.html').includes('打开飞书扫一扫'), 'index.html 不许硬编码文案');
-  assert.ok(read('features/scan/index.js').includes('打开飞书扫一扫'), '文案单一来源 = features/scan/index.js');
+test('AC5 一级 tab 顺序回归：扫一扫 ▸ 销售 ▸ 库存 ▸ 采购 ▸ 货品', () => {
   const order = [...read('config/tabs.js').matchAll(/\{ module: '([^']+)', label: '([^']+)' \}/g)].map((m) => `${m[1]}:${m[2]}`);
   assert.deepEqual(order, ['scan:扫一扫', 'sales:销售', 'inventory:库存', 'purchase:采购', 'product:货品']);
 });
