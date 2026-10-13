@@ -151,6 +151,11 @@ const createFeishuWebAuthRouter = () => {
     return res.redirect(`https://open.feishu.cn/open-apis/authen/v1/authorize?${params.toString()}`);
   });
 
+  // 2026-10-13: the session cookie went None during tonight's investigation because we
+  //   believed a cross-site WebView was dropping it. That was the WRONG direction - the
+  //   real cause was elsewhere (the record page fetched the home fragment). Reverted to
+  //   Lax: the one-time URL ticket carries the session across the WebView, so the cookie
+  //   never needs to travel cross-site. Keep HttpOnly + Secure + Path=/.
   router.get('/callback', async (req, res) => {
     const record = states.get(req.query.state);
     states.delete(req.query.state);
@@ -176,7 +181,7 @@ const createFeishuWebAuthRouter = () => {
       const user = info;
       const allowed = allowedOpenIds();
       if (allowed.size && !allowed.has(user.open_id)) return res.status(403).send('当前飞书账号未被授权使用工作台');
-      res.setHeader('Set-Cookie', `${COOKIE_NAME}=${encodeSession(user)}; Path=/; Max-Age=28800; HttpOnly; Secure; SameSite=None`);
+      res.setHeader('Set-Cookie', `${COOKIE_NAME}=${encodeSession(user)}; Path=/; Max-Age=28800; HttpOnly; Secure; SameSite=Lax`);
       logInfo('workbench.auth.success', { request_id: req.requestId, operator_open_id: user.open_id });
       // 回跳目标：`next`（扫码页，走白名单）/ `return_to`（工作台前端，既有语义）——
       // 两者都没有时就是工作台首页（与改动前逐字一致）。
@@ -206,7 +211,7 @@ const createFeishuWebAuthRouter = () => {
     }
   });
 
-  router.post('/logout', (req, res) => res.setHeader('Set-Cookie', `${COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None`).json({ success: true }));
+  router.post('/logout', (req, res) => res.setHeader('Set-Cookie', `${COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`).json({ success: true }));
   return router;
 };
 
