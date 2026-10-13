@@ -244,8 +244,8 @@ test('AC2 `from=sales` 尺码分两组：有货（样品+门盒）⇒ 现货；�
   }, '第一组 = 有货（现货）40 / 42；第二组 = 其余 41 / 43 / 44（预订）');
 
   // ② 男女两组（A = 男 38–48 / B = 女 34–43）——她去 2026-10-09 给的范围
-  assert.deepEqual(SIZE_GROUP_RANGES.A, { label: '男', from: 38, to: 48 });
-  assert.deepEqual(SIZE_GROUP_RANGES.B, { label: '女', from: 34, to: 43 });
+  assert.deepEqual(SIZE_GROUP_RANGES.A, { label: '男', from: 38, to: 48, enterable: [38, 48], default: [38, 45], special: [46, 47, 48] });
+  assert.deepEqual(SIZE_GROUP_RANGES.B, { label: '女', from: 34, to: 43, enterable: [34, 43], default: [35, 42], special: [34, 43] });
 
   // ③ 页面上真的分了两组：两组各自的可选项 / 组标题 / 状态标签
   const sales = blockOf(htmlFor('sales'), 'sales');
