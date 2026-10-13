@@ -106,14 +106,24 @@ test('AC-5 ⭐ 配置单一来源：改配置即改行为（纯函数不含硬�
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
-// AC-6 采购明细读取失败 ⇒ **明确降级**（只给 default）+ warn（**不静默少码**）
-//   ⚠️ 它要 `services/purchaseSizeReader.js`（(甲) 已批准新增，下一轮交）
-//      ⇒ 本轮**先钉住调用方的降级口径**：读不到 ⇒ `displaySizes(category, [])` = 只给 default ✓
+// AC-6（**2026-10-14 退役原能力，改成源码哨兵**）
+//   ⚠️ 原 AC 钉的是"采购明细读不到 ⇒ 降级成只给 default" ——
+//      业务负责人 2026-10-14 拍板：「**不用读尺码管理和采购明细了**，扫一扫只需要读货品信息和实时库存」
+//      ⇒ 那次读**整块删除** ⇒ 原来这条 AC **没有对象了** ✓
+//   能力去哪：降级仍然存在（`missingSizes`/`displaySizes` 只按**普通码**算 ⇒ 不依赖任何读表 ✓），
+//      只是**不再有"采购明细那次读"** ⇒ 用源码哨兵钉住"扫码页不再引用它" ✓（能真红 ✓）
 // ══════════════════════════════════════════════════════════════════════════════
-test('AC-6 采购明细读不到 ⇒ 明确降级成"只给 default"（等价于一个特殊码都没出现过）', () => {
-  for (const [key, base] of [['A', [38, 39, 40, 41, 42, 43, 44, 45]], ['B', [36, 37, 38, 39, 40, 41, 42]]]) {
-    const degraded = displaySizes(key, []); // 降级 = 空清单（**不是**"装作读过"）
-    assert.deepEqual(degraded.base, base, `${key}：降级后仍给完整 default（不漏常规码 ✓）`);
-    assert.deepEqual(degraded.extra, [], `${key}：降级后不给任何特殊码（宁可少、不猜 ✓）`);
+test('AC-6（退役→哨兵）扫码页**不再引用**采购明细读取器 / 特殊码字段；缺码仍只按普通码算', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const root = path.join(__dirname, '..');
+  for (const rel of ['src/routes/scanPage.js', 'src/services/scanPageService.js', 'src/views/scanPageRealm.js']) {
+    const src = fs.readFileSync(path.join(root, rel), 'utf8');
+    assert.equal(/purchaseSizeReader/.test(src), false, `${rel} 不许再 require/调用采购明细读取器 ✗`);
+    assert.equal(/present_special_sizes/.test(src), false, `${rel} 不许再往视图模型挂那个字段 ✗`);
   }
+  // 配置里那两套码仍然清楚（普通码判缺码 / 特殊码只展示 ✓），且**不依赖任何读表**
+  assert.deepEqual(expandRange(R.A.normal), [38, 39, 40, 41, 42, 43, 44, 45], '男普通码 38–45 ✓');
+  assert.deepEqual(expandRange(R.B.normal), [36, 37, 38, 39, 40, 41], '女普通码 36–41 ✓');
+  assert.deepEqual(missingSizes('B', [36]), [37, 38, 39, 40, 41], '缺码仍只按普通码算（0 次读表 ✓）');
 });
