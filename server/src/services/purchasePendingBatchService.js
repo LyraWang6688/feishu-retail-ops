@@ -30,6 +30,19 @@ const { logInfo, logWarn } = require('../utils/logger');
 //                → 拼话题深链（`config/salesThreadLink` 那条**销售侧现役**的格式）。
 //                ⚠️ **不是** `client/message/link?message_id=` 那一种（实测拿不到）。
 //                拿不到就留空 —— 由渲染层决定"照发 + 脚注"，**绝不因此漏掉候选**。
+/**
+ * ⭐ 2026-10-13（验收提速 ②）：**在册的实例**（只用来"一处失效、处处失效"）。
+ *
+ * 为什么要它：待验收列表的短缓存是**每个实例一份**（测试友好），但"这一批到货了"这件事
+ * 可能由**任何**入库路径发生（扫码验收 / 工作台 / 群话题核对）——写完库存的那一方必须能
+ * 把列表缓存失效掉，否则她会看到"刚验收完还在列表里"（最容易误判成"没生效"）。
+ * ⚠️ 只存 WeakRef 级别的引用会漏失效，所以这里存实例；实例数在进程内是常数级的小。
+ */
+const registeredInstances = new Set();
+const invalidatePendingBatchesCache = () => {
+  for (const instance of registeredInstances) instance.invalidate();
+};
+
 class PurchasePendingBatchService {
   constructor({ gateway, batchLocator, settings, cacheTtlMs, now } = {}) {
     if (!gateway) throw new Error('PurchasePendingBatchService 需要 gateway');
@@ -40,6 +53,7 @@ class PurchasePendingBatchService {
     this.cacheTtlMs = Number.isFinite(cacheTtlMs) && cacheTtlMs >= 0 ? cacheTtlMs : resolvePendingCacheTtlMs();
     this.now = typeof now === 'function' ? now : () => Date.now();
     this.cache = null;
+    registeredInstances.add(this);
   }
 
   /** ⭐ 验收成功后**主动失效**（由 `scanArrivalService.finish` 调）⇒ 下一次列表立刻反映"刚验完那一批"。 */
@@ -123,7 +137,15 @@ class PurchasePendingBatchService {
       .map((key) => table?.fields?.[key])
       .filter(Boolean);
     if (filter && typeof this.gateway.listByFilter === 'function') {
-      return this.gateway.listByFilter('purchaseOrderBatch', filter, { fieldNames });
+      try {
+        return await this.gateway.listByFilter('purchaseOrderBatch', filter, { fieldNames });
+      } catch (error) {
+        // ⚠️ 过滤读失败**不许把候选批次弄丢**（她那条"绝不静默丢单"的纪律）：
+        //    回落整表读，并**记一条 warn**（不是静默 —— 过滤这条路坏了要能查出来）。
+        logWarn('scan.accept.pending_filter_failed', {
+          filter, fallback: 'listAll', error: error.message,
+        });
+      }
     }
     return this.gateway.listAll('purchaseOrderBatch', { fieldNames });
   }
@@ -188,4 +210,4 @@ class PurchasePendingBatchService {
   }
 }
 
-module.exports = { PurchasePendingBatchService };
+module.exports = { PurchasePendingBatchService, invalidatePendingBatchesCache };

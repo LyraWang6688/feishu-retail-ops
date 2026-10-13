@@ -28,4 +28,11 @@ const inventoryToast = {
   m2: '采购入库已确认',
 };
 
-module.exports = { purchaseMessage, purchaseToast, arrivalToast, inventoryToast };
+// ⭐ 2026-10-13（合并调和）：文案那条线的「退货通知」组 —— 从它的分支逐字取来
+//    （`refactor/texts-purchase-webhook-2`）。合并时这一组连同导出一起丢了 ⇒ AC3 红。
+const returnNotice = {
+  unknownItem: '这个货品',
+  sizeText: ({ size }) => `（${size} 码）`,
+};
+
+module.exports = { returnNotice, purchaseMessage, purchaseToast, arrivalToast, inventoryToast };
