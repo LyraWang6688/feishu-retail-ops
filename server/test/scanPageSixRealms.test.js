@@ -411,3 +411,27 @@ test('AC-6R8 ?from=accept 没有活跃会话时仍是验收领域（人话卡）
     assert.equal(html.includes('realm-block--sales"'), false);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-6R9（2026-10-14）：**带 ?from= 进来 ⇒ 片段必须真的不一样 + 那一格选中**
+//   线上日志显示：客户端取数据时把 from 丢了（`?data=1`）⇒ 片段永远是默认领域 ⇒ "点了没反应" ✗
+//   这条从**服务端渲染**侧钉住：同一份视图，`from` 不同 ⇒ 片段不同、选中格不同 ✓
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-6R9 ⭐ `from` 不同 ⇒ 片段真的不同，且那一格呈选中态（她"看得见的变化"✓）', () => {
+  const sales = htmlFor('sales');
+  const inventory = htmlFor('inventory');
+  // ① 片段不同（证明"渲染真的按领域走" ✓ —— 若哪天又变成同一份，这条会红 ✓）
+  assert.notEqual(sales, inventory, '带 from=inventory 的片段必须 ≠ 带 from=sales 的片段 ✓');
+  assert.ok(sales.length !== inventory.length || sales !== inventory, '长度或内容至少一处不同 ✓');
+  // ② 选中态在**对的那一格**（服务端定 ✓ 零 JS）
+  assert.match(inventory, /class="realm-tab realm-tab--active" data-realm-id="inventory"[^>]*aria-current="page"/,
+    '库存这一格必须高亮 ✓');
+  assert.match(sales, /class="realm-tab realm-tab--active" data-realm-id="sales"[^>]*aria-current="page"/,
+    '销售这一格必须高亮 ✓');
+  // ⚠️ 只数 **class 属性里**的高亮（页内 CSS 里也有 `realm-tab--active` 字样 ⇒ 直接 match 会数成 2 ✗）
+  assert.equal((inventory.match(/class="realm-tab[^"]*realm-tab--active/g) || []).length, 1, '只能有一个高亮 ✓');
+  // ③ 认不出的 from ⇒ 回落销售（不报错、不白屏 ✓ 回归）
+  const unknown = htmlFor('purchase');
+  assert.match(unknown, /class="realm-tab realm-tab--active" data-realm-id="sales"/, '认不出 ⇒ 回落销售 ✓');
+});

@@ -1679,7 +1679,16 @@ const renderScanSkeleton = (view = {}, config = SCAN_PAGE) => {
   //   /s/ made the record page pull the home fragment and replace itself with it
   //   (she saw the home page after scanning a label). location.pathname keeps whichever
   //   mount we were served from, and ?data=1 still goes through the same service.lookup.
-  fetch(window.location.pathname + '?data=1', { credentials: 'same-origin' })
+  // 2026-10-14: KEEP the current query (the realm is ?from=...) when pulling the data
+  //   fragment. The old line dropped it, so the fragment was always rendered for the
+  //   DEFAULT realm; document.write then replaced the page with look-alike content and
+  //   every realm tap looked like "nothing happened" (her report: 5 of 6 tabs dead).
+  //   Keep every existing parameter and only force data=1. ASCII only in this template.
+  var dataQuery = (window.location.search || '').replace(/^\?/, '')
+    .split('&')
+    .filter(function (part) { return part && part.indexOf('data=') !== 0; });
+  dataQuery.push('data=1');
+  fetch(window.location.pathname + '?' + dataQuery.join('&'), { credentials: 'same-origin' })
     .then(function (response) { return response.ok ? response.text() : ''; })
     .then(function (html) {
       if (!html) return;
