@@ -739,7 +739,12 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
   }
   assert.equal(body.includes('?from=accept'), false, '验收不在切换条上');
   assert.ok(body.includes(`data-realm-id="new" href="${SCAN_PAGE.realmBar.newFormUrl}"`), '「上新」= 直达外链');
-  assert.equal((body.match(/realm-tab--active/g) || []).length, 1, '当前领域那一颗高亮（服务端决定）');
+  // ⚠️ 2026-10-14 改写（同一能力、改了指向；**没有放宽** ✗）：
+  //   改前逐字：`assert.equal((X.match(/realm-tab--active/g) || []).length, 1, '当前领域那一颗高亮（服务端决定）')`
+  //   今天起渲染层里多了一处**脚本**里的同名字符串（点下去**立刻预标**那一格 = 她要的即时反馈 ✓）
+  //   ⇒ 只数**真的渲染出来的 class 属性**（仍然必须**恰好一颗**高亮 ✓ 强度不减 ✗）
+  assert.equal((body.match(/class="realm-tab[^"]*realm-tab--active/g) || []).length, 1,
+    '当前领域那一颗高亮（服务端决定；脚本只在点下去的一瞬预标，下一屏仍以服务端为准）');
 
   // ④ ⭐ 2026-10-09（手机白屏之后）起：**服务端按 `?from` 只渲染那一块** ——
   //    另外三块**连 HTML 都不进**，页面里**一行前端脚本都没有**（没 JS 也 100% 正确）。

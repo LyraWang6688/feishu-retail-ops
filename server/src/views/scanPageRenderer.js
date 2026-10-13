@@ -673,6 +673,19 @@ const submitFeedbackScriptHtml = () => `<script data-view="submit-feedback">
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       var link = event.currentTarget;
       tapReport(link.getAttribute('data-tap-target') || '');
+      // 2026-10-14: highlight the tapped realm cell IMMEDIATELY (her rule: feedback must not
+      //   wait for the data). The server stays authoritative on the next load -- this only
+      //   pre-marks the cell so a tap is visibly acknowledged. ASCII only in this template.
+      var realmId = link.getAttribute('data-realm-id');
+      if (realmId) {
+        var bar = link.closest ? link.closest('.realm-bar') : null;
+        if (bar) {
+          var cells = bar.querySelectorAll('.realm-tab');
+          for (var c = 0; c < cells.length; c += 1) {
+            cells[c].classList.toggle('realm-tab--active', cells[c] === link);
+          }
+        }
+      }
       // 2026-10-13 late: this block used to be
       //   if (data-opening === '1') { event.preventDefault(); return; }
       // which set data-opening=1 on the FIRST tap; if that navigation did not

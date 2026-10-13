@@ -30,8 +30,13 @@ const RECORD_ID = 'rec28dZKS5qr58';
 
 test('AC-RD1 ⭐ 骨架的取数请求 = **当前页面自己的路径**（不再写死 /s/）', () => {
   const html = renderScanSkeleton({ number: 'MK31-1|咖色|B' }, SCAN_PAGE);
-  assert.ok(html.includes("window.location.pathname + '?data=1'"),
-    `骨架必须按当前路径取数（实际片段：${html.slice(html.indexOf('fetch('), html.indexOf('fetch(') + 80)}）`);
+  // ⚠️ 2026-10-14 改写（她的真机：取数把 from 丢了 ⇒ 六格点了看着都没反应 ✗）—— 改前逐字：
+  //     `assert.ok(html.includes("window.location.pathname + '?data=1'"), ...)`
+  //   改后：仍是"按当前路径取数" ✓，但**把当前 query（含 ?from=）一起带上**、只强制 data=1 ✓
+  assert.ok(html.includes("window.location.pathname + '?' + dataQuery.join('&')"),
+    `骨架必须按当前路径取数，并保留当前 query（实际片段：${html.slice(html.indexOf('fetch('), html.indexOf('fetch(') + 110)}）`);
+  assert.ok(html.includes('window.location.search'), '要读当前 query（from= 不许丢 ✓）');
+  assert.ok(html.includes("dataQuery.push('data=1')"), '仍强制 data=1 ✓');
   assert.equal(html.includes("'/s/' + encodeURIComponent"), false,
     '🔴 不许再写死 /s/（写死 ⇒ /r/ 页面会去拉首页数据 ✗）');
 });
@@ -47,8 +52,9 @@ test('AC-RD2 ⭐ `/r/<记录ID>` 上取到的是**这一款**的数据（不是 
 test('AC-RD3 回归：不带编号的首页 `/s/` 那条**仍然照旧**（`/s/?data=1` ✓）', () => {
   // `location.pathname` 在首页就是 `/s/`（或 `/s`）⇒ 拼出来还是 `/s/?data=1` ✓ 语义没变 ✓
   const html = renderScanSkeleton({ number: '' }, SCAN_PAGE);
-  assert.ok(html.includes("window.location.pathname + '?data=1'"),
-    '首页场景走同一条相对路径 ⇒ `/s/?data=1` 原样 ✓（不是"删掉了那条" ✗）');
+  // ⚠️ 2026-10-14 改写（同上）：首页场景仍是同一条相对路径 ✓，只是把当前 query 也带上 ✓
+  assert.ok(html.includes("window.location.pathname + '?' + dataQuery.join('&')"),
+    '首页场景走同一条相对路径 ⇒ `/s/?data=1`（`search` 为空 ⇒ 只多一个 data=1 ✓）');
 });
 
 test('AC-RD4 回归：`/s/<编号>` 页面照旧（骨架 + 整页都能渲染，且取数仍是同一处）', () => {
@@ -66,6 +72,7 @@ test('AC-RD4 回归：`/s/<编号>` 页面照旧（骨架 + 整页都能渲染�
 test('AC-RD5 只此一处取数（源码哨兵）：渲染层里没有第二处写死 `/s/` 的取数点', () => {
   const hardcoded = [...RENDERER_SRC.matchAll(/fetch\('\/s\//g)].length;
   assert.equal(hardcoded, 0, `渲染层里写死 /s/ 的 fetch 必须为 0（实际 ${hardcoded}）`);
-  assert.equal((RENDERER_SRC.match(/window\.location\.pathname \+ '\?data=1'/g) || []).length, 1,
+  // ⚠️ 2026-10-14 改写：写法从 `+ '?data=1'` 变成 `+ '?' + dataQuery.join('&')`（保留 query ✓）
+  assert.equal((RENDERER_SRC.match(/window\.location\.pathname \+ '\?' \+ dataQuery\.join\('&'\)/g) || []).length, 1,
     '这条取数写法只许有**一处**（唯一来源 ✓）');
 });
