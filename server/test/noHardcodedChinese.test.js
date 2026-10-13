@@ -19,7 +19,7 @@ const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { scanTree, scanSource } = require('./support/hardcodedChinese.js');
+const { scanTree, scanSource, evaluateGuard, buildWhitelist } = require('./support/hardcodedChinese.js');
 
 const SRC = path.join(__dirname, '../src');
 const WHITELIST_PATH = path.join(__dirname, 'fixtures/hardcodedChineseWhitelist.json');
@@ -54,12 +54,35 @@ test('AC-1 白名单文件写明「存量债，只许减少、不许增加」', 
   assert.match(whitelist._comment || '', /按「文件 → 中文串」/, '并写清键的口径（不用行号）');
 });
 
-test('AC-2 ⭐ 业务代码里没有"新增"的硬编码用户可见中文（存量都在白名单里）', () => {
-  const { added, stale } = scanTree({ roots: ROOTS, whitelist });
-  const detail = added.slice(0, 20).map((item) => `  ${item.file}:${item.line}  ${item.text}`).join('\n');
-  assert.equal(added.length, 0, `发现 ${added.length} 处**新增**的硬编码中文（抽到 config 里去）：\n${detail}`);
-  assert.equal(stale.length, 0, `白名单里有 ${stale.length} 条已经不在代码里了（可以删掉，白名单只许减少）：`
-    + `\n${stale.slice(0, 20).map((item) => `  ${item.file}  ${item.text}`).join('\n')}`);
+test('AC-2 ⭐ 只拦「新增」：代码里有、清单里没有 ⇒ 红；**清单不同步 ⇒ 不红**（2026-10-13 改造）', () => {
+  const verdict = evaluateGuard({ roots: ROOTS, whitelist });
+  const detail = verdict.added.slice(0, 20).map((item) => `  ${item.file}:${item.line}  ${item.text}`).join('\n');
+  assert.equal(verdict.added.length, 0, `发现 ${verdict.added.length} 处**新增**的硬编码中文（抽到 config 里去）：\n${detail}`);
+  assert.equal(verdict.ok, true, '守卫必须绿（清单里已不在代码里的那些只是 info ⇒ 不红）');
+  // ⚠️ **语义变化（改前 / 改后，写清免得后人看不懂）**：
+  //    · 改前：`added.length !== 0` **或** `stale.length !== 0` 都红 ⇒ 搬走一句存量文案、或两条分支合并顺序不同，就会红 ✗
+  //      （2026-10-13 一天之内因此拦了三次 ✗ ⇒ 每次都得手工重生成清单 ⇒ 总有人忘 ⇒ CI 红）
+  //    · 改后：**只拦 `added`**；`stale` 降级成一条 info ⇒ 「清单不同步」这件事从此不阻塞任何 PR ✓
+  //    · 🔴 目标不变：**新写的用户可见文案必须进配置**（新增照样红 ✓ 见 AC-3 / AC-4）
+});
+
+test('AC-2b ⭐ 搬走一句存量文案 ⇒ **仍绿**（清单里有、代码里没有）', () => {
+  const dir = tempTree({ 'services/demoService.js': 'module.exports = {};\n' });
+  const verdict = evaluateGuard({
+    roots: [{ dir: path.join(dir, 'services'), prefix: 'services/' }],
+    whitelist: { files: { 'services/demoService.js': ['这句已经搬走了'] } },
+  });
+  assert.equal(verdict.ok, true, '存量不同步**不许**红（这正是今天拦了三次的那条）');
+  assert.deepEqual(verdict.stale, [{ file: 'services/demoService.js', text: '这句已经搬走了' }], '要如实报出来');
+  assert.match(verdict.info, /已经不在代码里|可以删/, '降级成一条 info（不红）');
+});
+
+test('AC-2c 生成清单的能力**仍在**（有意新增存量时才用）', () => {
+  assert.equal(typeof buildWhitelist, 'function', '生成清单的函数要保留');
+  const dir = tempTree({ 'services/demo.js': "const a = '她能看到的一句话';\n" });
+  const built = buildWhitelist({ roots: [{ dir: path.join(dir, 'services'), prefix: 'services/' }] });
+  assert.deepEqual(built.files['services/demo.js'], ['她能看到的一句话']);
+  assert.deepEqual(built.counts, { files: 1, texts: 1 }, '要带 counts');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
