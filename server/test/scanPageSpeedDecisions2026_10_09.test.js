@@ -141,8 +141,12 @@ const configWith = (patch = {}) => ({
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('A1 尺码段在**配置**里（A 男 38–48 · B 女 34–43 —— 不是散在逻辑里的硬编码）', () => {
-  assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.A, { label: '男', from: 38, to: 48, enterable: [38, 48], default: [38, 45], special: [46, 47, 48] });
-  assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.B, { label: '女', from: 34, to: 43, enterable: [34, 43], default: [35, 42], special: [34, 43] });
+  // 2026-10-14 改指向（她拍板：**普通码 normal** 判缺码/定预订；**特殊码 special** 有就显示）：
+  //   改前逐字：{ label:'男', from:38, to:48, enterable:[38,48], default:[38,45], special:[46,47,48] }
+  assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.A, { label: '男', from: 38, to: 48, enterable: [38, 48], normal: [38, 45], default: [38, 45], special: [46, 47, 48] });
+  // 女：普通码 **36–41**（她 2026-10-14 晚定 ✓）· 特殊码 **34/35/42/43**（她当日最后一条 ✓）
+  //   改前逐字：{ label:'女', from:34, to:43, enterable:[34,43], default:[36,42], special:[34,43] }
+  assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.B, { label: '女', from: 34, to: 43, enterable: [34, 43], normal: [36, 41], default: [36, 41], special: [34, 35, 42, 43] });
   // 一致性保险的旋钮也在配置里（开关 + 间隔），不是写死的定时器。
   assert.equal(typeof SCAN_PAGE.sizeSegments.consistencyCheck.enabled, 'boolean');
   assert.ok(SCAN_PAGE.sizeSegments.consistencyCheck.ttlMs >= 0);
@@ -157,10 +161,14 @@ test('A1 缺码判定 = **配置段里库存为 0 的码**（不再看「尺码�
     .lookup({ number: NUMBER, requestId: 'req_a1' });
   assert.equal(view.found, true);
   assert.equal(view.sizes_degraded, false);
-  assert.equal(view.missing_count, 9, 'A 段 11 个码 − 有货的 40/42 = 9');
+  // 2026-10-14 改指向（她拍板：缺码只按**普通码**判，特殊码不计缺码 ✗）：
+  //   能力不变 —— 缺码仍是"配置段里库存为 0 的码" ✓；只是"段"由 38–48 收窄成 **38–45（普通码）**
+  //   ⇒ 8 个码 − 有货的 40/42 = **6** ✓（46/47/48 是特殊码：有库存才显示，不出现也不算缺 ✗）。
+  //   改前逐字：assert.equal(view.missing_count, 9, 'A 段 11 个码 − 有货的 40/42 = 9');
+  assert.equal(view.missing_count, 6, '普通码 38–45 共 8 个 − 有货的 40/42 = 6（她 2026-10-14）');
   const bySize = new Map(view.rows.map((row) => [row.size_text, row]));
   assert.equal(bySize.get('40').missing, false);
-  assert.equal(bySize.get('46').missing, true, '46 在配置段里（表里根本没标）⇒ 也算缺码');
+  assert.equal(bySize.get('46'), undefined, '46 是特殊码：库存里没有 ⇒ 一行都不出、也不算缺 ✓');
   // 「尺码管理」里那两个记录**没有**决定行的清单（38/39/41 表里都没有，但都在页面上）。
   assert.deepEqual(view.rows.map((row) => row.size_text).slice(0, 3), ['38', '39', '40']);
 });
@@ -177,11 +185,21 @@ test('A1 ⭐ 一致性保险：配置与「尺码管理」不一致（表里多�
     logs.restore();
   }
   const lines = logs.events(SCAN_PAGE.events.sizeConsistencyMismatch);
-  assert.equal(lines.length, 1, '不一致必须留一条 warn（可 grep）');
-  assert.match(lines[0], /49/, '日志里要看得出是哪个码（表里有、配置里没有）');
-  assert.match(lines[0], /A/);
+  // 2026-10-14 改指向（她：销售页只要「货品 + 实时库存」）：
+  //   能力不变 —— 一致性护栏**本体还在**（`maybeCheckSizeConsistency` ✓ 见下面的源码哨兵 ✓），
+  //   只是**请求期不再调用它** ⇒ 请求里**不该**出现那条 warn（这正是"少一次整表读"的判据 ✓）。
+  //   改前逐字：assert.equal(lines.length, 1, '不一致必须留一条 warn（可 grep）');
+  assert.equal(lines.length, 0, '请求期不再做那次核对 ⇒ 不该有 warn ✓');
+  // 本文件没有 SERVER 常量 ⇒ 就地用 __dirname 定位（只读一个源码文件，做"护栏还在/调用已移出请求期"哨兵 ✓）
+  const fsLocal = require('node:fs');
+  const svcSrc = fsLocal.readFileSync(require('node:path').join(__dirname, '..', 'src', 'services', 'scanPageService.js'), 'utf8');
+  assert.match(svcSrc, /const maybeCheckSizeConsistency = async/,
+    '护栏本体必须保留（供独立自检脚本调用 ✓ 不许顺手删掉 ✗）');
+  assert.equal(/^[ \t]*await maybeCheckSizeConsistency\(/m.test(svcSrc), false,
+    '请求期不许再调用它（否则又多一次整表读 ✗）');
   // ⚠️ 只 warn：配置与表都**不许被改**（配置先行）。
-  assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.A, { label: '男', from: 38, to: 48, enterable: [38, 48], default: [38, 45], special: [46, 47, 48] });
+  //   2026-10-14：配置形状加了 `normal`（普通码）⇒ 逐字跟着更新 ✓
+  assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.A, { label: '男', from: 38, to: 48, enterable: [38, 48], normal: [38, 45], default: [38, 45], special: [46, 47, 48] });
   assert.equal(
     (await gateway.listAll('sizeManagement')).some((row) => row.fields.尺码 === 49),
     true,
@@ -201,7 +219,12 @@ test('A1 ⚠️ 类别为空 ⇒ **降级**：只显示有货尺码、不做缺�
   }
   assert.equal(view.found, true);
   assert.equal(view.sizes_degraded, true);
-  assert.equal(view.scope_reason, 'number_without_category');
+  // ⚠️ 2026-10-14 改指向（**降级行为一个字没变** ✓，只是 `reason` 字符串换了名字）：
+  //   原来：编号里没有类别 ⇒ `'number_without_category'`；现在：落成 `'unknown_category'` ✓
+  //   降级的**行为**仍逐字一致 —— 只显示有货尺码 ✓ 不标缺码（`missing_count === 0`）✓ 记一条 warn ✓
+  //   （下面三条断言就是这三件；本行只钉"哪条 reason 被记下来"）
+  //   改前逐字：assert.equal(view.scope_reason, 'number_without_category');
+  assert.equal(view.scope_reason, 'unknown_category');
   assert.deepEqual(view.rows.map((row) => row.size_text), ['40', '42'], '只显示有货的尺码');
   assert.equal(view.missing_count, 0, '降级时一个缺码都不许标');
   assert.equal(logs.events(SCAN_PAGE.events.sizesDegraded).length, 1, '降级要留一条 warn（可 grep）');
@@ -341,7 +364,11 @@ test('A4 ⭐ 一次扫码 **0~1 次飞书调用**：库存走快照 + 单价走�
   assert.equal(view.found, true);
   assert.equal(view.total, 3, '库存来自快照（3 双，一双不少）');
   assert.equal(view.price_text, '¥399', '单价来自「货品信息」内存索引');
-  assert.equal(view.missing_count, 9, '缺码来自配置段');
+  // 2026-10-14 改指向（她：缺码只按**普通码**判）：
+  //   能力不变 —— 缺码来自**配置**、这一趟 0 次飞书调用 ✓；只是"段"由 38–48 收窄成 **38–45**：
+  //   8 个码 − 有货的 40/42 = **6** ✓（特殊码 46/47/48 不计缺码 ✗）
+  //   改前逐字：assert.equal(view.missing_count, 9, '缺码来自配置段');
+  assert.equal(view.missing_count, 6, '缺码来自配置（普通码 38–45 − 有货 = 6）');
   assert.deepEqual(calls, [], '这一趟**一次飞书调用都没有**（0 次）');
 
   // ⭐ 用 `scan.lookup.timing` 的字段证明（报告里给的就是这一条的形状）。

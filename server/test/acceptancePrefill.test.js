@@ -482,10 +482,17 @@ test('AC-AP15 一个候选都没有（该类别全报过）⇒ 整块不渲染�
 
 test('AC-AP16 候选口径**只来自配置**（与缺码同一份；不另发明一套、不读表）', () => {
   const service = fs.readFileSync(path.join(__dirname, '../src/services/scanPageService.js'), 'utf8');
-  // 只有两处读那个段配置：① `sizesForCategory`（唯一实现，缺码与验收候选共用）
-  //                              ② 既有的"配置与尺码管理一致性" warn（2026-10-09 就在，不属本批）
-  assert.equal((service.match(/sizeSegments\?\.ranges/g) || []).length, 2,
-    '"应有尺码"只该有**一处实现**（`sizesForCategory`）——缺码与验收候选共用它');
+  // 2026-10-14 改指向（她拍板：缺码/预订**只按普通码 normal** ⇒ 多了一处"取段"的读法）：
+  //   三处逐一点名（**能力判断不变**：只有一个"应有尺码"实现 ✓ 其余都是**读它** ✓）：
+  //     ① `sizesForCategory`（唯一实现，缺码与验收候选共用 ✓）
+  //     ② 既有的"配置与尺码管理一致性" warn（2026-10-09 就在 ✓ 现已移出请求期 ✓ 本体保留 ✓）
+  //     ③ ⭐ 新增：普通码/特殊码区分（`normal` 判缺码与预订 ✓ `special` 只展示 ✓）
+  //   改前逐字：assert.equal((service.match(/sizeSegments\?\.ranges/g) || []).length, 2, '…');
+  assert.equal((service.match(/sizeSegments\?\.ranges/g) || []).length, 3,
+    '"应有尺码"仍只有**一处实现**（`sizesForCategory`）—— 另外两处都只是**读配置**（缺码/预订 + 一致性 warn）');
+  // ⭐ 更硬的一条：`sizesForCategory` 只许有一个定义（防止"另发明一套"✗）
+  assert.equal((service.match(/const sizesForCategory = /g) || []).length, 1,
+    '`sizesForCategory` 只许有一个定义 ✓');
   assert.ok(/const loadSizeScope = async \(\{ categoryCode \}\) => sizesForCategory\(categoryCode, config\)/.test(service),
     '缺码判定必须**委托**给那个共用件（不许自己再拼一遍尺码段）');
   const route = fs.readFileSync(path.join(__dirname, '../src/routes/scanPage.js'), 'utf8');

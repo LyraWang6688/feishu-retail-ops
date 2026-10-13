@@ -209,6 +209,15 @@ const TEXTS = Object.freeze({
   errorTitle: '暂时打不开，请稍后再试',
   // 2026-10-13 骨架屏的两句文案（她：加载到中间一直白屏）—— 见 renderScanSkeleton
   skeletonLoading: '数据加载中',
+  // ⭐ 2026-10-14（她真机：「页面已经打开、但内容迟迟不出来」⇒ 骨架停住 ✗）：
+  //   取数失败 / 拿回的还是骨架 ⇒ 给**一句人话 + 重试入口**（不再静默吞错 ✗ 也不自动死磕 ✗）
+  skeletonErrorText: '这次没读到，点「重试」再来一次',
+  skeletonRetryLabel: '重试',
+  // ⭐ 2026-10-14（她："停留在「数据加载中」的时间太长"）：超时阈值 + 提示语
+  //   · 到点还没回来 ⇒ 先给「还在读…」✓ 并**自动再取一次** ✓（只自动一次 ✓ 不自动死磕 ✗）
+  //   · 阈值**显式数字**（缺变量时用 readInt 的默认值 ✓ 不写 `|| 兜底` ✗）
+  skeletonSlowMs: readInt(process.env, 'SCAN_PAGE_SKELETON_SLOW_MS', 2500, { min: 0, max: 60000 }),
+  skeletonSlowText: '还在读…',
   errorBody: '读库存时出错了。',
   busyTitle: '库存数据正在准备中',
   busyBody: '飞书那边还没准备好，请过几秒刷新这一页。',
@@ -385,7 +394,11 @@ const READS = Object.freeze({
  * ⚠️ 只缓存 `found: true` 的视图，**不缓存"没找到"**（新品刚建档就该立刻扫得到）。
  */
 const CACHE = Object.freeze({
-  enabled: readFlag(process.env, 'SCAN_PAGE_CACHE_ENABLED', true),
+  // ⭐ 2026-10-14（她逐字：「那份**按款缓存**：**去掉**（永远最新 ✓ 每次真读 ✓）」）：
+  //   ⇒ **默认关闭**——同一个编号连扫两次也**真的重新读**（不再拿 45 秒前的视图 ✗）
+  //   ⚠️ 两个**快照**（实时库存 / 货品信息）**都保留** ✗（她同日明确：「两个快照都留」✓）
+  //   ⇒ 想开回来是**显式**开（`SCAN_PAGE_CACHE_ENABLED=true` ✓ 不是靠默认值兜底 ✓）
+  enabled: readFlag(process.env, 'SCAN_PAGE_CACHE_ENABLED', false),
   // 30~60 秒是业务侧认可的窗口：短到"库存变了肉眼几乎撞不上"，
   // 长到"她连着扫同一款几次"不再打飞书。
   ttlMs: readInt(process.env, 'SCAN_PAGE_CACHE_TTL_MS', 45000, { min: 1000, max: 600000 }),
@@ -543,14 +556,27 @@ const SIZE_SEGMENTS = Object.freeze({
     A: Object.freeze({
       label: '男', from: 38, to: 48,
       enterable: Object.freeze([38, 48]),
+      // ⭐ 2026-10-14 她的命名：`normal`（普通码）= ①库存缺码判据 ②销售页预订范围 ✓
+      //   `default` 保留为**兼容别名**（同一个数组 ✓ 一份真源 ✗ 不是第二份）
+      normal: Object.freeze([38, 45]),
       default: Object.freeze([38, 45]),
       special: Object.freeze([46, 47, 48]),
     }),
     B: Object.freeze({
       label: '女', from: 34, to: 43,
       enterable: Object.freeze([34, 43]),
-      default: Object.freeze([35, 42]),
-      special: Object.freeze([34, 43]),
+      // ⭐ 2026-10-14 她**两次**改口径，以**最后一次**为准（逐字）：
+      //   「男鞋的范围就是 38-45，女鞋就是 36-41 …… 如果这些没有就是缺码，
+      //    以及在销售页的预定逻辑，就是让这个范围**扣减已有的库存**，
+      //    其余的特殊码，如果有就显示，没有不会做缺码显示」
+      //   ⇒ 默认段 = 缺码判据 = 销售页「预订」的候选（预订 = 段内 − 有货）。
+      //   ⇒ 特殊码**不参与缺码**（有就显示 ✓ 没有不显示、也不算缺 ✓）。
+      //   ⇒ 见 docs/scan-size-scope-ruling-2026-10-14.md（改前：36-42 / 更早 35-42）
+      // ⭐ 2026-10-14 她的最终口径：「女鞋就是 **36-41**」⇒ normal = 缺码判据 + 预订范围 ✓
+      normal: Object.freeze([36, 41]),
+      default: Object.freeze([36, 41]),
+      // ⭐ 2026-10-14 她逐字：女码特殊码 = **34 · 42 · 43**（42 现在也算特殊码 ✓ 普通码是 36–41 ✓）
+      special: Object.freeze([34, 35, 42, 43]),
     }),
   }),
   consistencyCheck: Object.freeze({

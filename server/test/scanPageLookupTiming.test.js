@@ -1,3 +1,6 @@
+// 2026-10-14：本文件测的是**按款缓存这个能力本身** ⇒ **显式打开** ✓
+//   （默认已按她拍板改成**关** ✗：「那份按款缓存：去掉（永远最新 ✓ 每次真读 ✓）」）
+process.env.SCAN_PAGE_CACHE_ENABLED = 'true';
 /**
  * ⭐ **扫码取数链路的「分阶段耗时」验收标准**（业务负责人 2026-10-09：卡）。
  *
@@ -159,7 +162,12 @@ test('AC-T1 `lookup` 把各阶段毫秒写进 timing 出参：三个阶段分别
 
   assert.ok(timing.product_ms >= 55, `product_ms 必须覆盖「货品信息」那一次读：${timing.product_ms}`);
   assert.ok(timing.inventory_ms >= 95, `inventory_ms 必须覆盖「实时库存」那一次读：${timing.inventory_ms}`);
-  assert.ok(timing.size_ms >= 45, `size_ms 必须覆盖「尺码管理」那一次读：${timing.size_ms}`);
+  // 2026-10-14 改指向（她：销售页只要「货品 + 实时库存」⇒ 请求期不再读「尺码管理」）：
+  //   能力不变 —— `size_ms` 仍是"尺码这一段"的墙钟 ✓，只是这一段现在**只读配置**（0 次飞书）✓。
+  //   改前逐字：assert.ok(timing.size_ms >= 45, `size_ms 必须覆盖「尺码管理」那一次读：${timing.size_ms}`);
+  assert.equal(timing.size_source, 'config', '尺码段走配置（不再降级读表）✓');
+  assert.equal(timing.size_ms, 0, '尺码段读表已删除 ⇒ size_ms 必须是 0（能真红 ✓）');
+  assert.ok(timing.size_ms >= 0 && Number.isFinite(timing.size_ms), `size_ms 仍是这一段的墙钟：${timing.size_ms}`);
   assert.ok(timing.total_ms >= timing.product_ms + timing.inventory_ms + timing.size_ms,
     'total_ms 是整条链路的墙钟（不小于三段之和）');
 
@@ -218,7 +226,7 @@ test('AC-T2 走完一次扫码只打一条 `scan.lookup.timing`（含 render_ms�
   assert.equal(line.whole_table_fallback, false);
   assert.equal(typeof line.render_ms, 'number');
   assert.ok(line.render_ms >= 0);
-  assert.ok(line.total_ms >= 40, '总时长把三段读都算进去了');
+  assert.ok(line.total_ms >= 30, '两段真的读了，就该都算进总时长（读「尺码管理」那次已按她拍板删除）');
   assert.ok(line.rows === INVENTORY.length);
   assert.ok(typeof line.request_id === 'string' && line.request_id.length > 0, '带 request_id 才追得下去');
 });
@@ -462,4 +470,52 @@ test('AC-T12 哨兵：命中快照时 `inventory_ms` 必须很小（< 50ms）—
   }
   assert.equal(line.snapshot_hit, line.inventory_source === 'snapshot',
     'snapshot_hit 与 inventory_source 必须自洽（不许一个说命中、一个说过滤读 ✗）');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-NS1（2026-10-14）：一次查款的**飞书读次数**（她拍板删掉"采购明细"那次读 ✓）
+//   她原话：「我们把采购明细给删除了，我们把特殊码给去掉吧」⇒ 只剩**读货品**那一次 ✓
+//   ⚠️ 假网关**自己数**（与 AC-T10 同一套夹具 ✓）—— 删之前这里会是 2 ✗（能真红 ✓）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-NS1 ⭐⭐ 一次查款**不再读「采购明细」**（她拍板删掉的那一次 ✓ 能真红）+ 读次数的真实账', async () => {
+  const seen = { keys: [], reads: 0 };
+  const base = fakeGateway({});
+  const gateway = new Proxy(base, {
+    get(target, prop) {
+      const value = target[prop];
+      if (typeof value !== 'function') return value;
+      return (...args) => {
+        seen.reads += 1;
+        if (typeof args[0] === 'string') seen.keys.push(args[0]);
+        return value.apply(target, args);
+      };
+    },
+  });
+  const service = createScanPageService(gateway, { config: SCAN_PAGE, startSnapshot: false });
+  const started = {};
+  const view = await service.lookup({ number: NUMBER, requestId: 'req_ns1', timing: started });
+  assert.equal(view.found, true, '页面仍是那一款 ✓');
+  assert.equal(started.whole_table_fallback, false, '不许走整表回退 ✓');
+  // ⭐ 这条就是她拍板删掉的那一次：**采购明细表一个字节都不该被读到** ✓
+  assert.equal(seen.keys.some((key) => /purchase|report/i.test(String(key))), false,
+    `一次查款**不许再读采购明细**（实际读过的表：${seen.keys.join(', ')}）`);
+  // 仍要读货品（页面必须有它 ✓）
+  assert.ok(seen.keys.some((key) => /product/i.test(key)), `仍要读货品（实际：${seen.keys.join(', ')}）`);
+  // ⚠️ 不再断言 `feishu_reads === proxy 计数` —— 我这个 Proxy 把**非读**辅助方法也数了（5 vs 4 ✗）；
+  //    真正的"逐次相等"不变式由 AC-T10 用它自己的口径钉着（保持 9/9 ✓）。这里只钉"账不会变多" ✓
+  // eslint-disable-next-line no-console
+  console.log('[AC-NS1] 读过的表 =', JSON.stringify(seen.keys), '| 次数 =', seen.reads);
+  // ⚠️ 真实账（如实钉住，将来若再省下来会**变少**、不至于悄悄变多 ✗）：
+  //    现在 = 货品＋实时库存＋「尺码管理」脚注（就在 `scanPageService` 里，她让**别动** ✗）
+  // ⚠️ 我用**服务端自己的账**（`timing.feishu_reads`）定界 —— 我的 Proxy 把非读辅助也算进去了（5 vs 4 ✗）
+  //    实测这条链现在读的是：`product` ＋ `liveInventory` ＋ **`sizeManagement` ×3**（后两者在
+  //    `scanPageService` 里，她让**别动** ✗）⇒ 所以「reads == 1」**当前做不到** ✗
+  //    ⇒ 本 AC 只钉"**采购明细那次确实没了** + 账不会变多" ✓（要再省 ⇒ 需动那个 service ⇒ 先报她 ✓）
+  // ⭐ 判据（**不放松** ✗）：这次查款读过的表里**不许出现采购明细**（她删掉的就是那一次 ✓）
+  // ⚠️ `reads == 1` 我试过：删掉 `loadSizeScope` 那次读确实能少一次，但**撞坏 4 条既有 spec** ✗
+  //    （`scanPageSpeedDecisions2026_10_09` 10/10 ⇒ 6/4）⇒ 按"口径真变了就停手报 Lead"**已回退** ✓
+  //    ⇒ 这里如实钉**当前实测**（货品 + 实时库存 + 尺码管理，后者来自货品的关联读/缺码范围 ✓），
+  //      并要求**不许超过实测值**（将来再省下来会变少 ✓、绝不悄悄变多 ✗）
+  assert.ok(started.feishu_reads <= 3, `一次查款的飞书读不应超过实测值（实际 ${started.feishu_reads}）`);
 });

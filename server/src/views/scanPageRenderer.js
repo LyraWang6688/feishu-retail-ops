@@ -300,7 +300,8 @@ summary { cursor: pointer; }
 //   Copy comes from config (`texts.skeletonLoading`), nothing hardcoded here.
 const SKELETON_STYLE = `
 .skeleton-stage { display: flex; align-items: center; justify-content: center; min-height: 70vh; padding: var(--space-4); }
-.skeleton-card { width: 100%; max-width: 320px; text-align: center; font-size: var(--font-size-lg); font-weight: 600; color: var(--text-secondary); }`;
+.skeleton-card { width: 100%; max-width: 320px; text-align: center; font-size: var(--font-size-lg); font-weight: 600; color: var(--text-secondary); }
+.skeleton-retry { margin-top: var(--space-3); min-height: var(--control-height); padding: 0 var(--space-4); border: 1px solid var(--control-border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-primary); font-size: var(--font-size-base); font-weight: 600; }`;
 const REALM_BAR_STYLE = `.realm-tab { white-space: nowrap; font-size: var(--font-size-sm); padding: 0 2px;
   overflow: hidden; text-overflow: clip; letter-spacing: 0; min-width: 0; text-align: center; }
 .realm-bar { grid-auto-rows: minmax(var(--control-height), auto); }`;
@@ -1713,13 +1714,70 @@ const renderScanSkeleton = (view = {}, config = SCAN_PAGE) => {
     return part && part.indexOf('data=') !== 0;
   });
   dataQuery.push('data=1');
-  fetch(window.location.pathname + '?' + dataQuery.join('&'), { credentials: 'same-origin' })
-    .then(function (response) { return response.ok ? response.text() : ''; })
-    .then(function (html) {
-      if (!html) return;
-      document.open(); document.write(html); document.close();
-    })
-    .catch(function () {});
+  // 2026-10-14: never swallow the error again (her report: the page opens and then just sits
+  //   on the skeleton forever). Any failure -- request error, non-ok response, empty body, or a
+  //   response that is STILL the skeleton -- shows a human line plus a retry button. No auto loop.
+  var retryText = ${JSON.stringify(texts.skeletonErrorText || '')};
+  var retryLabel = ${JSON.stringify(texts.skeletonRetryLabel || '')};
+  function showProblem() {
+    var card = document.querySelector('[data-view="scan-skeleton-loading"]');
+    if (!card || card.getAttribute('data-problem') === '1') return;
+    card.setAttribute('data-problem', '1');
+    while (card.firstChild) { card.removeChild(card.firstChild); }
+    var message = document.createElement('p');
+    message.setAttribute('data-view', 'scan-skeleton-error');
+    message.textContent = retryText;
+    var retry = document.createElement('button');
+    retry.type = 'button';
+    retry.setAttribute('data-view', 'scan-skeleton-retry');
+    retry.className = 'skeleton-retry';
+    retry.textContent = retryLabel;
+    retry.addEventListener('click', function () {
+      card.removeAttribute('data-problem');
+      retry.disabled = true;
+      retry.setAttribute('aria-busy', 'true');
+      load();
+    });
+    card.appendChild(message);
+    card.appendChild(retry);
+  }
+  var slowMs = ${JSON.stringify(texts.skeletonSlowMs)};
+  var slowText = ${JSON.stringify(texts.skeletonSlowText || '')};
+  var attempt = 0;
+  function showSlow() {
+    var card = document.querySelector('[data-view="scan-skeleton-loading"]');
+    if (!card || card.getAttribute('data-problem') === '1') return;
+    var line = card.querySelector('[data-view="scan-skeleton-slow"]');
+    if (line) { line.textContent = slowText; return; }
+    line = document.createElement('p');
+    line.setAttribute('data-view', 'scan-skeleton-slow');
+    line.textContent = slowText;
+    card.appendChild(line);
+  }
+  // first failure/timeout -> one automatic retry; the second one -> human line + manual retry
+  function retryOrProblem() {
+    if (attempt === 1) { showSlow(); load(); return; }
+    showProblem();
+  }
+  function load() {
+    attempt += 1;
+    var slowTimer = window.setTimeout(function () {
+      showSlow();
+      if (attempt === 1) { load(); }
+    }, slowMs);
+    fetch(window.location.pathname + '?' + dataQuery.join('&'), { credentials: 'same-origin' })
+      .then(function (response) { return response.ok ? response.text() : ''; })
+      .then(function (html) {
+        window.clearTimeout(slowTimer);
+        if (!html) { retryOrProblem(); return; }                     // empty body
+        if (html.indexOf('data-view="scan-skeleton"') !== -1) {      // still skeleton -> do NOT write it back
+          retryOrProblem(); return;
+        }
+        document.open(); document.write(html); document.close();
+      })
+      .catch(function () { window.clearTimeout(slowTimer); retryOrProblem(); });   // no silent swallow
+  }
+  load();
 })();
 </script>`;
   return `<!doctype html>

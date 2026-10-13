@@ -19,14 +19,19 @@ process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'data_f
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { renderScanSkeleton } = require('../src/views/scanPageRenderer');
 
-/** 从骨架 HTML 里抽出「构造取数 URL」那几行（`var dataQuery …` 到 `fetch(` 之前） */
+/** 从骨架 HTML 里抽出「构造取数 URL」那几行（`var dataSearch` … `dataQuery.push('data=1');`） */
 function extractUrlBuilder(html) {
-  // ⚠️ 起点跟着实现走：现在第一句是 `var dataSearch`（原来叫 `var dataQuery` ✗）
+  // ⚠️ 2026-10-14 改指向（本支新增了 `showProblem()` / `load()` ⇒ 脚本变长 ✗）：
+  //   原来切到 `fetch(` 为止 ✗ —— 而 `fetch(` 现在**在 `function load() {` 里面** ⇒
+  //   抽出来的是"半截函数体 + 我们自己接的 `return`" ⇒ `new Function` 里那句 return
+  //   落在函数内部 ⇒ **永远返回 undefined** ⇒ 三条 AC 才红 ✗（不是"data=1 丢了" ✓ 我核过 ✓）
+  //   ⇒ 改成**只抽"拼 URL 的那三句"**（起点 `var dataSearch`，终点**含** `dataQuery.push('data=1');`）✓
   const start = html.indexOf('var dataSearch');
   assert.ok(start > 0, '骨架里必须有构造取数 URL 的那段（`var dataSearch`）');
-  const end = html.indexOf('fetch(', start);
-  assert.ok(end > start, '这段后面应跟着 fetch(');
-  return html.slice(start, end);
+  const marker = "dataQuery.push('data=1');";
+  const markAt = html.indexOf(marker, start);
+  assert.ok(markAt > start, '这段里必须有兜底的那一句 `dataQuery.push(\'data=1\');`（死循环的闸 ✗）');
+  return html.slice(start, markAt + marker.length);
 }
 
 /** 用给定的 `location` **真跑一遍**那段逻辑 ⇒ 返回它最终拼出来的 URL */
