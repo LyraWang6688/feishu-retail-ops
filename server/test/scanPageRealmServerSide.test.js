@@ -73,7 +73,7 @@ const {
   renderScanPage, renderScanMessagePage, renderMinimalPage, readThemeTokens, STYLE,
 } = require('../src/views/scanPageRenderer');
 const { SCAN_PAGE } = require('../src/config/scanPage');
-const { REALMS, DEFAULT_REALM, REALM_TEXTS } = require('../src/views/scanPageRealm');
+const { REALMS, REALM_TABS, DEFAULT_REALM, REALM_TEXTS } = require('../src/views/scanPageRealm');
 const { createScanPageRouter } = require('../src/routes/scanPage');
 
 const SESSION_SECRET = 'scan_realm_ssr_session_secret';
@@ -183,17 +183,27 @@ const WRITE = {
 /** 每个领域的"应该出现"与"绝不该出现"的正文（不看切换条与 `<noscript>` 里的链接文字）。
  *  ⭐ 2026-10-10：采购块的识别句从「补货报单（勾选要补的尺码）」（那句说明已删）换成
  *     功能标记 `data-view="purchase-sizes"` / `一键补货`。 */
-const ALL_REALMS = ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product'];
+// ⚠️ 2026-10-13 改写：领域清单换成她的最终版（销售·补货·库存 / 标签·上新·配品），验收仍在解析集里；
+//    改前：['sales','replenish','purchase_return','accept','inventory','product']
+//    改后：['sales', 'replenish', 'inventory', 'product', 'new', 'purchase_return', 'accept']
+const ALL_REALMS = ['sales', 'replenish', 'inventory', 'product', 'new', 'purchase_return', 'accept'];
 const EXPECT = {
   sales: { has: ['加入本单', '提交这一单'], hasNot: ['库存（共', '一键补货', '货品标签', '生成采购退货'] },
   // ⭐ 2026-10-11：原 `purchase` 那一块 = 现在的 **`replenish`（补货）**（标记与文案一个字没变）。
   replenish: { has: ['data-view="purchase-sizes"', '一键补货'], hasNot: ['加入本单', '库存（共', '货品标签', '生成采购退货'] },
-  purchase_return: { has: ['data-view="purchase-return"', '生成采购退货'], hasNot: ['加入本单', '库存（共', '一键补货'] },
+  // ⚠️ 2026-10-13 改写：这一块从「退货表单」变成「**配品页**」
+  //    改前：has 里是 `data-view="purchase-return"` + 「生成采购退货」
+  //    改后：本用例的写上下文里**没有配品** ⇒ 渲染的是**人话空态卡**（配品那句）
+  //    去向：退货表单那些断言在 `test/scanPurchaseReturn.test.js`（能力没删）
+  purchase_return: { has: [SCAN_PAGE.texts.realmEmptyPurchaseReturnBody], hasNot: ['加入本单', '库存（共', '一键补货'] },
   // ⭐ 2026-10-12：验收领域没有活跃会话时 = **她自己开工那一块**（列未到货批次 + 手输兜底），
   //    不是白屏、也不再是「回工作台」那张卡（她不去工作台）。
   accept: { has: ['data-view="accept-pending"', SCAN_PAGE.texts.acceptPendingTitle], hasNot: ['加入本单', '库存（共', '一键补货', '生成采购退货'] },
   inventory: { has: ['库存（共 5 双）'], hasNot: ['加入本单', '一键补货', '货品标签'] },
-  product: { has: ['货品标签', '/workbench/label-print.html'], hasNot: ['加入本单', '库存（共', '一键补货'] },
+  // ⚠️ 2026-10-13 改写：块里的标题已从「货品标签」改成「**标签**」（真渲染字面量：`<h2 class="stock__heading">标签</h2>`）
+  product: { has: ['<h2 class="stock__heading">标签</h2>', '/workbench/label-print.html'], hasNot: ['加入本单', '库存（共', '一键补货'] },
+  // ⚠️ 2026-10-13 新增：「上新」是**外链 tab**（不是页面领域），但它仍在解析集里 ⇒ 渲染出自己那一块
+  new: { has: ['realm-block--new'], hasNot: ['加入本单', '库存（共', '一键补货'] },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -255,10 +265,13 @@ test('AC-W3 领域切换是真链接 `?from=<id>`，当前那一颗高亮（没�
   const html = renderScanPage(VIEW, SCAN_PAGE, WRITE, 'inventory');
   // ⚠️ 只看 <body>：`<style>` 里也有 `.realm-tab--active` 这个选择器，别数到 CSS 上
   const body = html.slice(html.indexOf('</head>'));
-  for (const realm of REALMS) {
+  // ⚠️ 2026-10-13 改写：条上只有**六个**（\\`REALM_TABS\\`）；「上新」是**外链** ⇒ 它没有 `?from=`（改前这里迭代的是全集 7 条 ✗）
+  for (const realm of REALM_TABS.filter((item) => item.external !== true)) {
     assert.ok(body.includes(`href="?from=${realm.id}"`), `缺 ${realm.id} 的真链接`);
     assert.ok(body.includes(`data-realm-id="${realm.id}"`), `缺 ${realm.id} 的标记`);
   }
+  assert.ok(body.includes(`data-realm-id="new" href="${SCAN_PAGE.realmBar.newFormUrl}" target="_blank"`),
+    '「上新」= 直达外链（与工作台同一份 URL）');
   // 只有当前领域那一颗是 active（数一遍，别数错）
   const active = body.match(/realm-tab--active/g) || [];
   assert.equal(active.length, 1, '有且只有一颗按钮高亮');
@@ -290,9 +303,11 @@ test('AC-W4 拿不到写上下文时销售领域给一张人话卡片；每页�
     const page = renderScanPage(VIEW, SCAN_PAGE, WRITE, realm);
     assert.ok(page.includes('<noscript>'), `realm=${realm} 缺 <noscript> 兜底`);
     const noScript = page.slice(page.indexOf('<noscript>'), page.indexOf('</noscript>'));
-    for (const other of REALMS) {
+    // ⚠️ 2026-10-13 改写：改前迭代全集 7 条；现在只有条上六个里的**内部五个** `?from=`（「上新」是外链 ✗）
+    for (const other of REALM_TABS.filter((item) => item.external !== true)) {
       assert.ok(noScript.includes(`href="?from=${other.id}"`), `<noscript> 里缺 ${other.id} 的链接`);
     }
+    assert.ok(noScript.includes(SCAN_PAGE.realmBar.newFormUrl), '<noscript> 里「上新」也是那条外链');
     // ⚠️ 2026-10-10 断言翻转（她：「删掉解释我怎么用的句子」）：原先这里钉着
     //    `<noscript>` 里要有一句解释（`noScriptHint`）；现在那句必须不存在，
     //    而**四条领域链接**（能点的）照旧 —— 上面那段已经逐条断言。
