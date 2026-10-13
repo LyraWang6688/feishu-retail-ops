@@ -233,12 +233,12 @@ test('① 按条件读 vs 整表读：视图**逐字一致**（少读 ≠ 少算
   const wholeView = await service(fakeGateway({ filtered: false })).lookup({ number: NUMBER, requestId: 'req_w' });
   assert.deepEqual(filteredView, wholeView);
   assert.equal(filteredView.total, 3);
-  // ⭐ 2026-10-09：缺码 = **配置段（A 男 38–48）里库存为 0 的码** ⇒ 11 个码里 40/42 有货，
-  //    其余 9 个（38/39/41/43/44/45/46/47/48）都算缺码。
+  // ⭐ 2026-10-09：缺码 = **普通码（A 男 38–45）里库存为 0 的码** ⇒ 8 个码里 40/42 有货（她 2026-10-14：普通码 38-45；46/47/48 是特殊码，只有库存里出现才显示，不算缺码）
+  //    其余 6 个（38/39/41/43/44/45）都算缺码。
   assert.equal(filteredView.missing_count, 6, '缺码 = 普通码(38-45) - 有货 = 6（她 2026-10-14：普通码 38-45，特殊码不计缺码）');
   assert.deepEqual(
     filteredView.rows.map((row) => row.size_text),
-    ['38', '39', '40', '41', '42', '43', '44', '45', '46', '47', '48'],
+    ['38', '39', '40', '41', '42', '43', '44', '45'],
   );
   assert.equal(filteredView.color, '黑色', '关联列的**显示文本**要读得出来（这是不用 search 接口的原因）');
   assert.equal(filteredView.category_name, '休闲鞋');
@@ -252,7 +252,7 @@ test('① 关联单元格为空（数据残缺）时：按条件读的「库存�
   const gateway = fakeGateway({ fixtures: { ...FIXTURES, liveInventory: orphans } });
   const view = await service(gateway).lookup({ number: NUMBER, requestId: 'req_orphan' });
   assert.equal(view.total, 1, '既有用例「关联为空时用库存键前缀认行」的行为一个字都不许变');
-  // ⚠️ 行的清单现在按**配置段**补全（38–48），所以 40 那一行不一定是第一行。
+  // ⚠️ 行的清单现在按**普通码段**补全（38–45），所以 40 那一行不一定是第一行。
   const row40 = view.rows.find((row) => row.size_text === '40');
   assert.ok(row40, '40 码那一行必须在（按库存键前缀认回来的）');
   assert.equal(row40.total, 1);
