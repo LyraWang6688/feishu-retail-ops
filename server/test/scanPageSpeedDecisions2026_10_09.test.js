@@ -158,10 +158,13 @@ test('A1 缺码判定 = **配置段里库存为 0 的码**（不再看「尺码�
     .lookup({ number: NUMBER, requestId: 'req_a1' });
   assert.equal(view.found, true);
   assert.equal(view.sizes_degraded, false);
-  assert.equal(view.missing_count, 9, 'A 段 11 个码 − 有货的 40/42 = 9');
+  // 2026-10-14 改指向（她拍板：**去掉"特殊码"** ⇒ 段内不再并入 46/47/48）：
+  //   能力不变 —— 缺码仍是"配置段里库存为 0 的码" ✓，只是段内不再含特殊码 ⇒ 11−2−3 = 6 ✓。
+  //   改前逐字：assert.equal(view.missing_count, 9, 'A 段 11 个码 − 有货的 40/42 = 9');
+  assert.equal(view.missing_count, 6, 'A 段（含特殊码已去掉）− 有货的 40/42 = 6');
   const bySize = new Map(view.rows.map((row) => [row.size_text, row]));
   assert.equal(bySize.get('40').missing, false);
-  assert.equal(bySize.get('46').missing, true, '46 在配置段里（表里根本没标）⇒ 也算缺码');
+  assert.equal(bySize.get('46').missing, undefined, '特殊码已去掉 ⇒ 46 不再是这一组的行 ✓');
   // 「尺码管理」里那两个记录**没有**决定行的清单（38/39/41 表里都没有，但都在页面上）。
   assert.deepEqual(view.rows.map((row) => row.size_text).slice(0, 3), ['38', '39', '40']);
 });
