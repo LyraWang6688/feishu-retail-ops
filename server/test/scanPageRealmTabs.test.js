@@ -56,15 +56,21 @@ test('AC-RB1 六 tab 名称与顺序逐字（条上**没有**验收）', () => {
   assert.equal(REALMS.some((realm) => realm.id === 'accept'), true, '但验收必须仍能解析 ✓');
 });
 
-test('AC-RB2 两行三列：第一行 销售·补货·库存 / 第二行 标签·上新·配品', () => {
+test('AC-RB2 ⭐ 一行六格（2026-10-14 她：「没有铺满屏幕的水平方向……最后一格被截」——改成铺满整宽）', () => {
   const bar = barOf(htmlFor('sales'));
   const ids = [...bar.matchAll(/data-realm-id="([^"]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(ids.slice(0, 3), ['sales', 'replenish', 'inventory'], '第一行 3 个');
-  assert.deepEqual(ids.slice(3), ['product', 'new', 'purchase_return'], '第二行 3 个');
+  // ⚠️ 2026-10-14 **改写**（她：「没有铺满屏幕的水平方向」✗）——
+  //   改前逐字：`assert.deepEqual(ids.slice(0,3), [...'第一行 3 个'])` + `ids.slice(3)` 第二行 +
+  //              `assert.match(barRule, /repeat\(3,/, '三列（六个 = 两行）')` + `不许横滑`
+  //   改后：**一行六格、等分铺满**（顺序不变 ✓）；窄屏允许横向滚动（不裁切 ✗）
+  assert.deepEqual(ids, ['sales', 'replenish', 'inventory', 'product', 'new', 'purchase_return'], '一行六个、顺序逐字 ✓');
   const style = fs.readFileSync(RENDERER_SRC, 'utf8');
   const barRule = style.match(/\.realm-bar \{[^}]*\}/)[0];
-  assert.match(barRule, /grid-template-columns:\s*repeat\(3,/, '三列（六个 = 两行）');
-  assert.equal(/overflow-x/.test(barRule), false, '不横滑');
+  assert.match(barRule, /grid-template-columns:\s*1fr;/, '容器一整列（每行占满整宽 ✓）');
+  assert.match(barRule, /width:\s*100%/, '容器整宽 ✓');
+  assert.match(barRule, /overflow-x:\s*auto/, '⭐ 窄屏**横向滚动**（不是裁切 ✗）');
+  assert.ok(style.includes('repeat(6,minmax(0,1fr))') && style.includes('width:100%'),
+    '行 = 六列等分整宽 ✓（一格都不许被挤出容器）');
 });
 
 test('AC-RB3 扫码页**不出现**「退货」「货品」显示名（源码 + 渲染双哨兵）', () => {
