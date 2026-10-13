@@ -40,7 +40,7 @@ const express = require('express');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { sizesForCategory, parseNumberSegments, createScanPageService } = require('../services/scanPageService');
 const { createScanWriteService } = require('../services/scanWriteService');
-const { renderScanPage, renderScanMessagePage, renderMinimalPage, renderAcceptancePage, renderAcceptanceDonePage, renderAcceptanceSelfServe, renderSaleSuccessPage, buildPaymentRows } = require('../views/scanPageRenderer');
+const { renderScanPage, renderScanMessagePage, renderMinimalPage, renderAcceptancePage, renderAcceptanceDonePage, renderAcceptanceSelfServe, renderSaleSuccessPage, buildPaymentRows, renderScanSkeleton } = require('../views/scanPageRenderer');
 // ⚠️ 只借这两个**纯函数**：所选尺码在「样品 + 门盒」有没有货（= 页面上那两个分组的判据），
 //    以及 `?from=` → 领域 id（认不出来回落缺省，不报错、不白屏）。
 const { sellableSizeTexts, resolveRealm, DEFAULT_REALM, ACCEPTANCE_REALM } = require('../views/scanPageRealm');
@@ -1083,11 +1083,26 @@ const createScanPageRouter = (options = {}) => {
     const explicitRealm = askedRaw !== '';
     let realm = resolveRealm(askedRaw);
     // ⭐ 分阶段耗时（出参）：失败 / 找不到时同样能看出卡在哪一步。
+    // ⭐⭐ 2026-10-13（她：加载到中间一直白屏）：**骨架屏开关**（默认关 ⇒ 这一页与改动前逐字相同）。
+    //   打开时：**先回骨架**（不读任何表）⇒ 她立刻有东西看；数据由骨架里那**同一段脚本**
+    //   再 `fetch('?data=1')` 拿回来 —— ⚠️ `data=1` 一路落到下面**原有的整页渲染**（同一个
+    //   `service.lookup` ✓ 不新增取数路径 ✓），所以两条路径的数据必然一致 ✓。
+    //   ⚠️ 只覆盖**编号页/记录 ID 页**这一条；`GET /`（新首页）与所有写入口一个字不动 ✓
+    if (config.skeleton?.enabled === true && String(req.query?.data || '') !== '1'
+      && (lookupInputOf(req).number || lookupInputOf(req).recordId)) {
+      logInfo(SCAN_PAGE.events?.skeletonServed || 'scan.page.skeleton', { request_id: requestId });
+      return sendHtml(res, 200, renderScanSkeleton(lookupInputOf(req), config));
+    }
     const timing = {};
+    // ⭐ 2026-10-13：`session_ms` = **从进这个处理函数到真正开始取数**这一段（认证 / 读会话 /
+    //    路由开销）。实测它正是"total 减去各分段之后那 1.0~2.6 秒"的主要来源 ✗ ——
+    //    现在把它也归到一段里，`stages_gap_ms` 才说明得了问题。
+    const handlerStartedAt = Date.now();
     let acceptance = null;
     try {
       // ⚠️ Express 已经把路由参数解码过一次（`%7C` → `|`，未编码的中文也照收）；
       //    service 里再解一次是为了容忍双重编码，并且对孤立 `%` 的输入不抛。
+      timing.session_ms = Math.max(0, Date.now() - handlerStartedAt);
       const view = await service.lookup({ ...lookupInputOf(req), requestId, timing });
       if (!view.found) {
         if (view.reason === 'empty') {
