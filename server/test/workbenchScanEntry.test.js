@@ -72,16 +72,19 @@ test('AC2 ⭐⭐ 进入工作台 ⇒ **不触发任何导航**（她踩到的就
   assert.equal(/\.click\(\)/.test(scanPath), false, '不许自己点自己 ✗');
 });
 
-test('AC3 ✗ 面板里**不再有**"打开扫一扫"按钮 / 链接（她明确说不需要 ✓）', async () => {
+test('AC3 panel keeps nothing: no manual number input, no form, no button, no hint text', async () => {
   const { scanPanelHtml } = await loadScanModule();
   const html = scanPanelHtml();
-  assert.equal(/data-scan-open/.test(html), false, '✗ 面板里不许再有那颗按钮');
-  assert.equal(/<a\b/.test(html), false, '✗ 面板里也不许有链接');
-  assert.equal(html.includes('打开飞书扫一扫'), false, '✗ 面板里不该出现这句按钮文案');
-  // 但兜底必须在：人话 + 手输编号（**不白屏** ❌）
-  assert.match(html, /data-scan-unavailable/, '要有那句人话');
-  assert.match(html, /data-entry-form[^>]*data-target-template="\/s\/\{number\}"/, '手输编号兜底 ✓');
-  assert.match(html, /name="number"/, '真的有一个输入框');
+  assert.match(html, /data-view="scan-panel"/, 'keep the container the shell needs');
+  assert.equal(html.replace(/<[^>]+>/g, '').trim(), '', 'panel renders ZERO visible text (hint text removed too)');
+  for (const gone of ['<input', 'data-entry-form', 'name="number"', 'data-scan-unavailable', '扫描', '手输', '编号']) {
+    assert.equal(html.includes(gone), false, `panel must not contain: ${gone}`);
+  }
+  assert.equal(/<button\b/.test(html), false, 'no button in the panel');
+  assert.equal(/<a\b/.test(html), false, 'no link in the panel (the tab cell itself is the link)');
+  // clearing the panel must NOT turn the tab cell back into a button
+  assert.match(read('core/tabs.js'), /if \(href\) \{[\s\S]*?<a class="main-tab/, 'tab-as-link branch still in core/tabs.js');
+  assert.match(read('main.js'), /hrefs: scanAppLink \? \{ scan: scanAppLink \} : \{\}/, 'main.js still swaps that cell to a link');
 });
 
 test('AC4 ⭐ AppLink 与 `config/scanPage.js` 的 `SCAN_NEXT.applink` **逐字同源**（路由侧不抄第二份 ✓）', () => {
