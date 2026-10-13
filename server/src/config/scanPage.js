@@ -563,7 +563,7 @@ const SIZE_SEGMENTS = Object.freeze({
       normal: Object.freeze([36, 41]),
       default: Object.freeze([36, 41]),
       // ⭐ 2026-10-14 她逐字：女码特殊码 = **34 · 42 · 43**（42 现在也算特殊码 ✓ 普通码是 36–41 ✓）
-      special: Object.freeze([34, 42, 43]),
+      special: Object.freeze([34, 35, 42, 43]),
     }),
   }),
   consistencyCheck: Object.freeze({
