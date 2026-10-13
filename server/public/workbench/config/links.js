@@ -12,6 +12,17 @@
 
 // ⭐ 表单名 2026-10-06 由业务负责人改名：「采购申请」→「采购报货」。
 // 原话：「我说的是采购申请改为了采购报货，然后采购退单改成了采购退货」
+/**
+ * ⭐⭐ 「打开飞书扫一扫」的 AppLink（她 2026-10-13：「**扫码页的『继续扫下一个』在手机上就是能弹**」⇒ 照抄形状）。
+ * 形状来源（真机验证过 ✓）：`views/scanPageRenderer.js:429` 的
+ *   `<a class="btn" href="https://applink.feishu.cn/client/qrcode/main" rel="noopener">继续扫下一个</a>`
+ *   ⇒ **纯 `<a href>`** · **无 target** · **无 JS** ✓
+ * ⚠️ 这里与服务端 `config/scanPage.js` 的 `SCAN_NEXT.applink` 是**同一把链接**：
+ *    两端**逐字相同**，有 AC 钉着（`test/workbenchScanEntry.test.js`）
+ *    ⇒ 客户端这一份是**给首屏就能渲染 `<a>` 用的**（不必等 `/scan-entry` 回来 ✗ 免得又出现"点了没反应"）
+ */
+export const SCAN_APPLINK = 'https://applink.feishu.cn/client/qrcode/main';
+
 export const PURCHASE_REQUEST_FORM_URL =
   'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnn4f9ZJzpm7JbT2rCH247xc';
 

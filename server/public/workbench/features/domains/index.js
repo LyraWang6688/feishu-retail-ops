@@ -71,9 +71,16 @@ export function createDomainModule(domainId) {
       //    下面的这些文字解释就不用了」）⇒ **一级领域的大标题与它下面那行描述整行删掉**：
       //    一级 tab 上已经写了领域名，页内再写一遍就是"说明书"。
       //    她要留的只有**子 tab + 卡片 + 按钮**（下面那些）。见 `test/workbenchNoManualText.test.js` AC1。
+      // ⭐⭐ 2026-10-13 晚（她：「面板里那个「扫一扫」小标题 + 空框也要去掉」✗）：
+      //    **只有一个子页的领域**（= 「扫一扫」）不再画子 tab 条 —— 那条「扫一扫」小标题
+      //    在一级 tab 上已经写了（她要的是**面板真空** ✓）。
+      //    ⚠️ 其余领域（销售 / 库存 / 采购 / 货品，都是多子页）**一个字不变** ✓
+      const subTabsHtml = domain.pages.length > 1
+        ? `<div class="sub-tabs" data-view="domain-subtabs">${domainSubTabsHtml(domain, state.active)}</div>`
+        : '';
       container.innerHTML = `
         <section class="panel">
-          <div class="sub-tabs" data-view="domain-subtabs">${domainSubTabsHtml(domain, state.active)}</div>
+          ${subTabsHtml}
           ${domain.pages.map((page) => `<div class="sub-panel${page.id === state.active ? '' : ' hidden'}" data-domain-host="${escapeHtml(page.id)}"></div>`).join('\n          ')}
         </section>`;
 
