@@ -44,8 +44,14 @@ const RETURN_PATH = Object.freeze({
   // `app.js` 里 `GET /` 就是工作台 `index.html`，所以 `/` 既是站内根、也是工作台首页。
   defaultPath: '/',
   // 白名单（前缀 / 精确值）：直接取自扫码页路由的挂载点，不抄第二份 `/s`。
-  allowedPrefixes: Object.freeze([`${SCAN_PAGE.route.basePath}/`]),
-  allowedExactPaths: Object.freeze([SCAN_PAGE.route.basePath]),
+  // ⭐⭐ 2026-10-13（她真机 + 服务器实测双重证据的**真因**）：
+  //    货品标签的二维码打的是 `/r/<记录ID>` —— 未登录时也**必须带上"它本来要去的那一页"** ✓
+  //    原来白名单只放行 `/s/` ⇒ `/r/…` 被拒 ⇒ `next` 回落成 `/` ⇒ 登录回来落在**扫码页首页**
+  //    （标题「请扫下一个标签」✗ 她截图那一页）⇒ "扫了码却没进到那一款" ✗
+  //    ⇒ 白名单**加第二类**：扫码页的**记录 ID 路径**（取自 `SCAN_PAGE.route.recordBasePath`，
+  //      不写死 `/r` ✓ 不抄第二份 ✓）· 判据仍是**归一化后**的 pathname（`/r/../api/…` 照样被挡 ✓）
+  allowedPrefixes: Object.freeze([`${SCAN_PAGE.route.basePath}/`, `${SCAN_PAGE.route.recordBasePath}/`]),
+  allowedExactPaths: Object.freeze([SCAN_PAGE.route.basePath, SCAN_PAGE.route.recordBasePath]),
 });
 
 /** 未登录时 302 的登录入口（`app.js` 挂在 `/api/auth/feishu`，**在 `API_KEY` 之前**，手机能直接打开）。 */
