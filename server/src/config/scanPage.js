@@ -385,7 +385,11 @@ const READS = Object.freeze({
  * ⚠️ 只缓存 `found: true` 的视图，**不缓存"没找到"**（新品刚建档就该立刻扫得到）。
  */
 const CACHE = Object.freeze({
-  enabled: readFlag(process.env, 'SCAN_PAGE_CACHE_ENABLED', true),
+  // ⭐ 2026-10-14（她逐字：「那份**按款缓存**：**去掉**（永远最新 ✓ 每次真读 ✓）」）：
+  //   ⇒ **默认关闭**——同一个编号连扫两次也**真的重新读**（不再拿 45 秒前的视图 ✗）
+  //   ⚠️ 两个**快照**（实时库存 / 货品信息）**都保留** ✗（她同日明确：「两个快照都留」✓）
+  //   ⇒ 想开回来是**显式**开（`SCAN_PAGE_CACHE_ENABLED=true` ✓ 不是靠默认值兜底 ✓）
+  enabled: readFlag(process.env, 'SCAN_PAGE_CACHE_ENABLED', false),
   // 30~60 秒是业务侧认可的窗口：短到"库存变了肉眼几乎撞不上"，
   // 长到"她连着扫同一款几次"不再打飞书。
   ttlMs: readInt(process.env, 'SCAN_PAGE_CACHE_TTL_MS', 45000, { min: 1000, max: 600000 }),
