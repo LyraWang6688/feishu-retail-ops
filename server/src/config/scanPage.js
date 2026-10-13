@@ -209,6 +209,15 @@ const TEXTS = Object.freeze({
   errorTitle: '暂时打不开，请稍后再试',
   // 2026-10-13 骨架屏的两句文案（她：加载到中间一直白屏）—— 见 renderScanSkeleton
   skeletonLoading: '数据加载中',
+  // ⭐ 2026-10-14（她真机：「页面已经打开、但内容迟迟不出来」⇒ 骨架停住 ✗）：
+  //   取数失败 / 拿回的还是骨架 ⇒ 给**一句人话 + 重试入口**（不再静默吞错 ✗ 也不自动死磕 ✗）
+  skeletonErrorText: '这次没读到，点「重试」再来一次',
+  skeletonRetryLabel: '重试',
+  // ⭐ 2026-10-14（她："停留在「数据加载中」的时间太长"）：超时阈值 + 提示语
+  //   · 到点还没回来 ⇒ 先给「还在读…」✓ 并**自动再取一次** ✓（只自动一次 ✓ 不自动死磕 ✗）
+  //   · 阈值**显式数字**（缺变量时用 readInt 的默认值 ✓ 不写 `|| 兜底` ✗）
+  skeletonSlowMs: readInt(process.env, 'SCAN_PAGE_SKELETON_SLOW_MS', 2500, { min: 0, max: 60000 }),
+  skeletonSlowText: '还在读…',
   errorBody: '读库存时出错了。',
   busyTitle: '库存数据正在准备中',
   busyBody: '飞书那边还没准备好，请过几秒刷新这一页。',
