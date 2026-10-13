@@ -73,6 +73,55 @@ const createLiveInventorySnapshot = (options = {}) => {
     && maxAgeMs > 0
     && maxRecords > 0;
 
+  // ⭐⭐ 2026-10-14 真机 bug（她今晚第三次说"慢"）：**一次临时 400 把货品快照废掉** ✗
+  //    线上：`scan.snapshot.miss {reason:"Request failed with status code 400"}` ⇒ 此后每次查款都真读货品表
+  //    （1.5~4.3 秒）⇒ 六格切换卡 ⇒ 成片 499 ✗
+  //    ⇒ 读路径**允许重试一次 + 退避**（一次 `1254607 Data not ready` 是临时的 ✓）
+  //    🔴 **写操作绝不许重试** ✗ —— 本文件里**只有读**（`listAll`）；写库之后的作废走 `invalidate`
+  //       （它自己不重试，只把快照作废 + 重新拉一次**读**）✓
+  const readRetryTimes = Number.isFinite(Number(config.readRetryTimes))
+    ? Math.max(0, Number(config.readRetryTimes)) : 1;
+  const readRetryDelayMs = Number.isFinite(Number(config.readRetryDelayMs))
+    ? Math.max(0, Number(config.readRetryDelayMs)) : 300;
+  const sleep = (ms) => (ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve());
+
+  /**
+   * 把飞书返回里的 **code / msg** 捞出来（axios 只会给一句
+   * `Request failed with status code 400` ⇒ 排障时**看不到飞书为什么拒** ✗）。
+   * ⚠️ 拿不到就如实给 null，**不猜** ✓
+   */
+  const describeGatewayError = (error) => {
+    const data = error?.response?.data;
+    const code = data?.code ?? data?.error?.code;
+    const msg = data?.msg ?? data?.message ?? data?.error?.message;
+    return {
+      error: error?.message || 'refresh_failed',
+      status: error?.response?.status ?? null,
+      feishu_code: code ?? null,
+      feishu_msg: msg ?? null,
+    };
+  };
+
+  /** ⚠️ **只给读用**：失败重试 `readRetryTimes` 次（默认 1 次），线性退避；最后仍失败 ⇒ 抛出原错 ✓ */
+  const listAllWithRetry = async () => {
+    let lastFailure = null;
+    for (let attempt = 0; attempt <= readRetryTimes; attempt += 1) {
+      try {
+        return await gateway.listAll(tableKey);
+      } catch (error) {
+        lastFailure = error;
+        if (attempt < readRetryTimes) {
+          logWarn(events.snapshotFailed, {
+            reason: 'read_retry', table_key: tableKey, attempt: attempt + 1,
+            of: readRetryTimes + 1, ...describeGatewayError(error),
+          });
+          await sleep(readRetryDelayMs * (attempt + 1));
+        }
+      }
+    }
+    throw lastFailure;
+  };
+
   let records = null;
   let loadedAt = 0;
   let lastError = null;
@@ -93,7 +142,8 @@ const createLiveInventorySnapshot = (options = {}) => {
     if (loading) return { ok: false, records: 0, reason: 'in_flight', error: '' };
     loading = true;
     try {
-      const all = await gateway.listAll(tableKey);
+      // ⭐ 读路径带重试（写操作绝不重试 ✗ —— 见上面 `listAllWithRetry` 的注释）
+      const all = await listAllWithRetry();
       const list = Array.isArray(all) ? all : [];
       if (maxRecords > 0 && list.length > maxRecords) {
         // 🔴 超上限**不作快照**（回退老路径 + 记 warn）：截断出来的库存表是错的，
@@ -118,10 +168,12 @@ const createLiveInventorySnapshot = (options = {}) => {
     } catch (error) {
       // 刷新失败 ⇒ **当场作废**：宁可这一趟慢（走回退真读），也不给可能过期的库存。
       drop();
-      lastError = error?.message || 'refresh_failed';
-      logWarn(events.snapshotFailed, {
-        reason: 'refresh_failed', table_key: tableKey, error: lastError,
-      });
+      const failure = describeGatewayError(error);
+      lastError = failure.error;
+      // ⭐ 失败日志要把**飞书的 code/msg** 一起打出来（否则只知道"400"，不知道为什么 ✗）
+      logWarn(events.snapshotFailed, { reason: 'refresh_failed', table_key: tableKey, ...failure });
+      // ⭐⭐ `lastError` 只用于"这一次**如实报原因**"，**不是**"以后再也不试了" ✗：
+      //    下一次 `refresh()`（预热 / 定时 tick / 写库后的作废重拉）**照样会去读** ✓
       return { ok: false, records: 0, reason: 'refresh_failed', error: lastError };
     } finally {
       loading = false;
