@@ -191,9 +191,48 @@ const sellableCountOf = (row, columns = []) => {
   ), 0);
 };
 
+/**
+ * ⭐⭐ 2026-10-13「特殊尺码」（业务负责人逐字确认 · docs/size-range-special-sizes-2026-10-13.md）：
+ *   **特殊码（女 34/43 · 男 46/47/48）只在「采购明细」里出现过才展示** ——
+ *   没出现过 ⇒ **不显示、也不算缺码** ✓（不天天提示她"缺 43 / 缺 48"）。
+ *
+ * 判据来源：`view.present_special_sizes`（由路由用 services/purchaseSizeReader.listSizes() 填 ✓）。
+ *   ⚠️ **它缺失 / 为空 ⇒ 特殊码一个都不显示** —— 这**就是**"读表失败 ⇒ 只给 default"的降级语义 ✓
+ *      （⇒ 即便路由那 3 行还没接上，本处行为 = 安全降级，**不会静默多显示码** ✓）
+ *   ⚠️ 用**并集**判断"是不是特殊码"：`A.special=[46,47,48]` 与 `B.special=[34,43]` **互不相交**
+ *      ⇒ 无需先知道这一行属于哪个类别（少一次推导、少一处出错可能 ✓）。
+ *   ⚠️ 常规码（女 35–42 / 男 38–45）**一个都不许误伤** ✗ —— 见回归哨兵 AC。
+ */
+/** 这一款的类别码（编号第 3 段）——「编号|颜色|类别」。认不出 ⇒ 空串。 */
+const categoryCodeOf = (view) => String(view?.number ?? '').split('|')[2] || '';
+
+/**
+ * ⚠️⚠️ **必须按类别判**，不能用并集 ✗ ——
+ *   `43` 对**女**是特殊码（B.special），对**男**却是**常规码**（A.default = 38–45 含 43）
+ *   ⇒ 并集会把男装的 43 **误伤掉**（真机回归哨兵抓到过 ✓）。
+ *   认不出类别 ⇒ **一个都不过滤**（宁可多显示，也不把能录的码藏掉 ✓）。
+ */
+const specialSizeSetOf = (view) => {
+  const range = SIZE_GROUP_RANGES[categoryCodeOf(view).trim().toUpperCase()];
+  return new Set((range?.special || []).map(Number));
+};
+
+const presentSpecialSizeSet = (view) => new Set(
+  (Array.isArray(view?.present_special_sizes) ? view.present_special_sizes : []).map(Number),
+);
+
 /** 视图模型里"这一款的尺码行"：读不出尺码的那一行不算（它不是一个能选的码）。 */
-const sizeRowsOf = (view) => (Array.isArray(view?.rows) ? view.rows : [])
-  .filter((row) => !row?.unknown_size && String(row?.size_text ?? '').trim());
+const sizeRowsOf = (view) => {
+  const present = presentSpecialSizeSet(view);
+  const specials = specialSizeSetOf(view);
+  return (Array.isArray(view?.rows) ? view.rows : [])
+    .filter((row) => !row?.unknown_size && String(row?.size_text ?? '').trim())
+    .filter((row) => {
+      const size = Number(String(row.size_text).trim());
+      if (!Number.isFinite(size) || !specials.has(size)) return true; // 非特殊码 ⇒ 照常
+      return present.has(size);                                               // 特殊码 ⇒ 出现过才显示
+    });
+};
 
 /**
  * ⭐ 销售建单的**两个分组**（她 2026-10-09）：
