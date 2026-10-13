@@ -1628,8 +1628,10 @@ test('AC-UA6 源码哨兵：warn 里带 page_build（缺失标 missing / 不一�
 test('AC-UA7 渲染层：每个写表单的 action 后面**只加**一个 page_build（既有语义不动 ✓）', () => {
   const renderer = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
   const fields = (renderer.match(/\$\{pageBuildField\(\)\}/g) || []).length;
-  // 7 处 action 隐藏字段 + 销售提交表单（它的 action 在**按钮**上 ⇒ 只加 page_build）
-  assert.equal(fields, 8, `8 张写表单都加上了（实际 ${fields} 处）`);
+  // ⚠️ 2026-10-13 **改写**（能力退场）：原来是 8 处（含**配品表单**那一处）——
+  //    她的口径是「扫码页里的**配品逻辑拿掉**」（配品改到工作台）⇒ 配品表单整块退场
+  //    ⇒ 现在 **7 处**（鞋表单 + 提交表单 + 其余写入口 ✓）。口径没变：**每个写表单只加一个** ✓
+  assert.equal(fields, 7, `配品表单退场后是 7 处（实际 ${fields} 处）`);
   assert.match(renderer, /const pageBuildField = \(\) => hiddenField\(\n\s*SCAN_PAGE\.pageBuildField/, '字段名走 config ✓');
 });
 

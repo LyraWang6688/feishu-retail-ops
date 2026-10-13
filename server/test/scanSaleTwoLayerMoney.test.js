@@ -279,7 +279,11 @@ test('AC-1 销售页只有两层：每件填「实收金额」；资金区有「
   assert.equal(html.includes('成交金额'), false, '「成交金额」整体退场（鞋与配品都不许再让用户填）');
   // ② 每件层：鞋表单 + 配品表单各有一个「实收金额」输入框
   assert.ok(html.includes(SCAN_WRITE.texts.amountLabel), `鞋那一行要有「${SCAN_WRITE.texts.amountLabel}」`);
-  assert.ok(html.includes(SCAN_WRITE.texts.accessoryAmountLabel), `配品那一行要有「${SCAN_WRITE.texts.accessoryAmountLabel}」`);
+  // ⚠️ 2026-10-13 **改写**（能力退场）：原来这里断言"配品那一行要有配品实收金额"——
+  //    她的口径是「扫码页里的**配品逻辑拿掉**」（配品改到工作台）⇒ 那一块整块退场
+  //    ⇒ 改成断言**页面上不再有**它（能力仍在服务层 ✓ 见 AC-B6）
+  assert.equal(html.includes(SCAN_WRITE.texts.accessoryAmountLabel), false,
+    '配品实收金额不再出现在扫码页（能力改到工作台 ✓）');
   assert.ok(html.includes(`name="${SCAN_WRITE.fields.amount}"`), '加单表单里的金额位就是「实收金额」');
   // ③ ⭐ 资金区：「付款情况」三档（全付 / 部分付 / **未付（默认）**）+「实付多少」
   assert.match(html, new RegExp(`name="${SCAN_WRITE.fields.paymentStatus}"`), '要有「付款情况」这个控件');

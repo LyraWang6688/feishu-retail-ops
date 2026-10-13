@@ -351,35 +351,33 @@ const WRITE = (overrides = {}) => ({
   ...overrides,
 });
 
-test('AC-B6 销售领域页面上：配品下拉（选项 = 「其他配品」名称）+ 配品实收金额 + 赠品输入框', () => {
-  const html = renderScanPage(VIEW, SCAN_PAGE, WRITE(), 'sales');
-  // ① 配品下拉：动作是配品那一个，选项来自「其他配品」的名称
-  assert.match(html, new RegExp(`name="${SCAN_WRITE.fields.action}" value="${SCAN_WRITE.actions.addAccessory}"`),
-    '配品那一颗按钮必须有**自己的动作**');
-  const select = html.match(new RegExp(`<select name="${SCAN_WRITE.fields.accessory}">([\\s\\S]*?)</select>`));
-  assert.ok(select, '配品必须是一个下拉（选「其他配品」里的一件）');
-  assert.match(select[1], /<option value="">[^<]*<\/option>/, '第一项是"不加配品"（配品不是校验项）');
-  for (const name of ['15元鞋油', '赠品鞋垫']) {
-    assert.ok(select[1].includes(`>${name}</option>`), `下拉里少了「${name}」`);
-  }
-  assert.ok(select[1].includes('value="acc_oil"'), '选项的 value = 那一条配品记录的 id（不靠名字猜）');
-  // ② 配品实收金额（她 2026-10-11 的两层结构：每件只填实收；页面上不再有别的金额框）
-  //    + ③ 赠品输入框（可为空；标签写「赠品」——表列名与页面标签统一）
-  assert.match(html, /配品实收金额/);
-  assert.match(html, new RegExp(`name="${SCAN_WRITE.fields.amount}"`));
-  assert.match(html, new RegExp(`name="${SCAN_WRITE.fields.gift}"`));
-  // ⭐⭐ 2026-10-12（业务负责人拍板）：「『备注』还是『赠品』⇒ **赠品**」⇒ 页面标签与表列名统一。
-  assert.match(html, /赠品（可不填）/, '页面上写「赠品（可不填）」（= 主表那一列的名字）');
-  assert.equal(/备注（可不填）/.test(html), false, '页面上**不许**再出现「备注（可不填）」');
-  // ④ 页面里没有说明书（她 2026-10-10 的硬要求）：只有标签 / 占位 / 按钮
-  for (const gone of ['怎么用', '使用说明', '你可以', '说明：']) {
-    assert.equal(html.includes(gone), false, `页面上不该出现说明句：「${gone}」`);
-  }
-  // ⑤ 没有配品可选时**不画一个空下拉**（不留死控件）
-  const noAccessory = renderScanPage(VIEW, SCAN_PAGE, WRITE({ accessories: [] }), 'sales');
-  assert.equal(noAccessory.includes(`name="${SCAN_WRITE.fields.accessory}"`), false,
-    '「其他配品」一件都没有时不画配品表单');
-  assert.ok(noAccessory.includes(`name="${SCAN_WRITE.fields.gift}"`), '备注输入框照旧在（不是靠配品表单带出来的）');
+test('AC-B6 录入页**不再有配品块**（能力改到工作台 ✓）· 服务层配品能力**仍在** · 赠品输入框仍在', async () => {
+  // ⚠️ 2026-10-13 **改写**（能力退场，不是放宽断言）：
+  //    改前：断言页面上有「配品下拉（选项 = 其他配品名称）+ 配品实收金额 + 赠品输入框」。
+  //    她的口径（`docs/scan-sales-payment-flow-2026-10-13.md` 第六节逐字）：
+  //    「先把**扫码页里的配品逻辑拿掉**，配品**改放在工作台里面**」⇒ 那一块**整块退场** ✓
+  //    ⇒ 这条现在钉**两端**：
+  //      ① 录入页**没有**配品块（下拉 / 配品实收 / 那一颗【加入本单】都不在 ✗）
+  //      ② **服务层配品能力仍在**（直接调仍能加配品行 ✓ 表结构与能力一个字没动 ✓）
+  const html = renderScanPage(VIEW, SCAN_PAGE, WRITE({ accessories: [{ record_id: 'acc_1', name: '腰带' }] }), 'sales');
+  assert.equal(html.includes(`name="${SCAN_WRITE.fields.accessory}"`), false, '配品下拉必须没了');
+  assert.equal(html.includes(SCAN_WRITE.actions.addAccessory), false, '配品那颗按钮必须没了');
+  assert.equal(html.includes(SCAN_WRITE.texts.accessoryLabel), false, '配品标签必须没了');
+  // ⚠️ 别删错：备注（写「赠品」）与鞋的加单入口必须还在 ✓
+  assert.match(html, new RegExp(`name="${SCAN_WRITE.fields.gift}"`), '「备注（可不填）」仍在（②里还要用）');
+  assert.match(html, new RegExp(`name="${SCAN_WRITE.fields.action}" value="${SCAN_WRITE.actions.addLine}"`),
+    '鞋的【加入本单】/【还要加一双】必须还在（别删错 ✗）');
+
+  // ② 服务层：配品能力仍在（这条是"服务层一行没动"的实证 ✓）
+  const harness = createHarness();
+  try {
+    // ⚠️ 配品记录要取**夹具里真实存在的那件**（`acc_oil`），否则服务层会如实报
+    //    「这件配品不在「其他配品」里」（那不是能力没了，是喂错了数据 ✗）
+    const added = await addAccessory(harness, 'ou_acc_b6');
+    assert.equal(added.ok, true, `服务层仍能加配品行：${JSON.stringify(added)}`);
+    const lines = (await harness.sessions.get('ou_acc_b6')).sale.lines;
+    assert.equal(lines.some((line) => line.kind === 'accessory'), true, '会话里真的多了一行配品');
+  } finally { harness.cleanup(); }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -50,11 +50,13 @@ test('AC-GL1 销售页这一列的标签 = 「赠品（可不填）」；不再�
   const html = renderScanPage(VIEW, SCAN_PAGE, WRITE, 'sales', {});
   assert.ok(html.includes('赠品（可不填）'), '标签要写「赠品（可不填）」（她这次拍的）');
   assert.equal(html.includes('备注（可不填）'), false, '页面上**不许**再出现「备注（可不填）」');
-  // ⚠️ 这一页渲染出几次取决于夹具里有没有配品（`accessories`）⇒ 不断言次数；
-  //    **"两处都改到"用源码哨兵钉**（渲染层那两处 label 都取 `t.giftLabel`，只有一个真源）。
+  // ⚠️ 2026-10-13 **改写**（能力退场，不是放宽断言）：改前渲染层有**两处**读 `t.giftLabel`
+  //    （鞋表单 + **配品表单**）；她的口径是「扫码页里的**配品逻辑拿掉**」（配品改到工作台）
+  //    ⇒ 配品表单整块退场 ⇒ 现在**只剩下鞋表单那一处** ✓。口径本身没变：
+  //    仍然只有**一个真源** `t.giftLabel`，渲染层**不许**写死「备注」✓
   const renderer = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
   const labels = (renderer.match(/t\.giftLabel/g) || []).length;
-  assert.equal(labels, 2, `鞋表单 + 配品表单两处都要读同一个 \`t.giftLabel\`（实际 ${labels} 处）`);
+  assert.equal(labels, 1, `配品表单退场后只剩鞋表单那一处（实际 ${labels} 处）`);
   assert.equal(/<label>[^<]*备注/.test(renderer), false, '渲染层不许有写死的「备注」标签');
 });
 

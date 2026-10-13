@@ -821,21 +821,12 @@ const saleFormHtml = (view, write) => {
   const fields = write.fields;
   const lines = write.draft?.lines || [];
   const sizeInput = sizeGroupsHtml(view, write);
-  // ⭐ 配品表单（B）：下拉选「其他配品」的名称 + **配品实收金额** + 备注（可为空）。
-  //    ⚠️ 一件配品都没有时**不画这个表单**（不留一个只有"不加配品"的死下拉）。
-  const accessories = Array.isArray(write.accessories) ? write.accessories : [];
-  const accessoryOptions = accessories
-    .map((item) => `<option value="${escapeHtml(item.record_id)}">${escapeHtml(item.name)}</option>`).join('');
-  const accessoryForm = accessories.length
-    ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
-${hiddenField(fields.action, write.actions.addAccessory)}${pageBuildField()}
-${hiddenField(fields.submitKey, write.saleKey)}
-<div class="form-row"><label>${escapeHtml(t.accessoryLabel)}</label><select name="${escapeHtml(fields.accessory)}"><option value="">${escapeHtml(t.accessoryPlaceholder)}</option>${accessoryOptions}</select></div>
-<div class="form-row"><label>${escapeHtml(t.accessoryAmountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" placeholder="${escapeHtml(t.accessoryAmountPlaceholder)}"></div>
-<div class="form-row"><label>${escapeHtml(t.giftLabel)}</label><input name="${escapeHtml(fields.gift)}"></div>
-<button type="submit" class="btn"${submitFeedbackAttrs(write)}>${escapeHtml(t.addButton)}</button>
-</form>`
-    : '';
+  // 🔴🔴 2026-10-13（业务负责人：「我们先把**扫码页里的配品逻辑拿掉**，配品**改放在工作台里面**。
+  //   也就是说，**扫码的时候就不用考虑配品信息了**」）—— 这一块（配品下拉 + 配品实收金额 + 那一颗
+  //   【加入本单】）**已整块退场**，改到工作台去录（见 `docs/scan-sales-payment-flow-2026-10-13.md` 第六节）。
+  //   ⚠️ **只是不再渲染**：`config/scanPage.js` 的那几条文案、`scanWriteService` 的配品能力、
+  //      表的字段与历史数据**一个字都没动** ✓（AC-B1..B5/B7 那些**服务层**能力用例照旧全绿 ✓）
+  //   ⚠️ 「备注（可不填）」（写进销售主表「赠品」）**仍在** —— 它在②里还要用 ✓ 见下面那个输入框。
   // 校验失败原地给她的那句话（差额）—— 没有就不渲染这一个块。
   const alert = String(write.errorText || '').trim()
     ? `<p class="form-alert">${escapeHtml(write.errorText)}</p>`
@@ -867,7 +858,6 @@ ${paymentRowsHtml(write)}
 <button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}" data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(countLabel)}</button>
 <button type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.addLine)}"${submitFeedbackAttrs(write)}>${escapeHtml(t.addAnotherButton || t.addButton)}</button>
 </form>
-${accessoryForm}
 ${lines.length ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
 ${hiddenField(fields.action, write.actions.clearDraft)}${pageBuildField()}
 ${hiddenField(fields.submitKey, write.saleKey)}
