@@ -38,7 +38,10 @@ test('AC-FF1 🔴 骨架首屏：样式原文**不许**作为可见文本出现�
 test('AC-FF2 骨架首屏也要带上两个覆盖块（首屏那一刻切换条就不许叠 ✗）', () => {
   const html = renderScanSkeleton({ number: 'MK31-1|咖色|B' }, SCAN_PAGE);
   const style = (html.match(/<style>([\s\S]*?)<\/style>/) || ['', ''])[1];
-  assert.ok(style.includes('white-space: normal'), '切换条覆盖（white-space: normal）要在首屏样式里 ✓');
+  // 2026-10-13 改指向：切换条覆盖从 `normal` 换成 `nowrap`（竖拆那次的修法 ✓）——
+  //   本意不变：**首屏那一刻就必须已经带上这个覆盖块** ✓（否则首屏切换条会叠/会竖拆 ✗）
+  assert.ok(style.includes('white-space: nowrap') && style.includes('realm-tab'),
+    '切换条覆盖（.realm-tab { white-space: nowrap }）要在首屏样式里 ✓');
   assert.ok(/--font-family/.test(style), '基础变量也要在（否则首屏没样式 ✗）');
 });
 
