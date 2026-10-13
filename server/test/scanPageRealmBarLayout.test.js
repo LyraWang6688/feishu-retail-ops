@@ -48,16 +48,20 @@ test('AC-BAR2 🔴 每个标签各在自己那一格（**不许**出现「库存
     '「库存标签」连在一起 = 重叠/挤在一格 ✗（她的原话：不许重叠）');
 });
 
-test('AC-BAR3 🔴 级联上必须真的**覆盖掉** `nowrap`（只写不生效 = 假绿 ✗）', () => {
-  const page = pageHtml();
-  const style = (page.match(/<style>([\s\S]*?)<\/style>/) || ['', ''])[1];
-  const baseAt = style.indexOf('white-space: nowrap');
-  const overrideAt = style.indexOf('white-space: normal');
-  assert.ok(baseAt > -1, '基础规则（.realm-tab 的 nowrap）应当还在（不动别人的那段 ✓）');
-  assert.ok(overrideAt > -1, '必须有一层追加覆盖把 nowrap 改掉 ✓');
-  assert.ok(overrideAt > baseAt, '覆盖必须排在**后面**（否则级联不生效 ⇒ 重叠照旧 ✗）');
-  assert.equal((style.match(/white-space:\s*normal/g) || []).length >= 1, true);
-  assert.ok(/\.realm-tab\s*\{[^}]*white-space:\s*normal/.test(style), '覆盖要**正好打在 `.realm-tab` 上** ✓');
+test('AC-BAR3 🔴 覆盖层必须**恢复 `nowrap`**（文字不许被竖拆成两行 ✗）', () => {
+  // ⚠️ 2026-10-13 第二次修：上一版用 `white-space: normal` 消重叠 ⇒ 两个字被**竖拆** ✗（她截图：销/售 各一行 ✗）
+  //    正解 = **nowrap（一行）+ 缩小字号/内边距** ⇒ 三格放得下（不重叠 ✓）且都完整（不竖拆 ✓）
+  // 判据分两层（都在**覆盖层自己**上，不受基础 STYLE 里别的规则的 overflow-wrap 影响 ✓）：
+  const override = (SRC.match(/const REALM_BAR_STYLE = `([\s\S]*?)`;/) || ['', ''])[1];
+  assert.ok(override.length > 0, '覆盖层必须存在 ✓');
+  assert.match(override, /\.realm-tab\s*\{[^}]*white-space:\s*nowrap/, '覆盖层必须把 `.realm-tab` 设回 nowrap ✓');
+  assert.equal(/white-space:\s*normal/.test(override), false, '覆盖层里不许有 normal（竖拆元凶 ✗）');
+  assert.equal(/overflow-wrap/.test(override), false, '覆盖层里不许允许任意断词（竖拆元凶 ✗）');
+  // 且它**真的进了页面**、排在基础之后（级联生效 ✓ 不是写了没用 ✗）
+  const style = (pageHtml().match(/<style>([\s\S]*?)<\/style>/) || ['', ''])[1];
+  const hits = [...style.matchAll(/white-space:\s*nowrap/g)].map((m) => m.index);
+  assert.ok(hits.length >= 2, `基础 + 覆盖都要在（实际 ${hits.length} 处 nowrap）`);
+  assert.equal(/white-space:\s*normal/.test(style), false, '🔴 页面上不许再出现 normal（那会把销/售竖拆 ✗）');
 });
 
 test('AC-BAR4 每格可点高度 ≥ 44px（她的老规矩，回归）', () => {
@@ -69,6 +73,6 @@ test('AC-BAR4 每格可点高度 ≥ 44px（她的老规矩，回归）', () => 
 
 test('AC-BAR5 源码哨兵：修法**不许**动那段大 STYLE 字面量里的 tab 规则（避免门禁假红）', () => {
   // 基础那一段仍是 main 的样子（nowrap 在位 ✓），修法是**追加**覆盖 ✓
-  assert.match(SRC, /const REALM_BAR_STYLE = `\.realm-tab \{ white-space: normal/, '追加覆盖必须在 ✓');
+  assert.match(SRC, /const REALM_BAR_STYLE = `\.realm-tab \{ white-space: nowrap/, '追加覆盖必须在（且是 nowrap ⇒ 不竖拆 ✓）');
   assert.equal((SRC.match(/const STYLE = `/) || []).length, 1, 'STYLE 只许一处定义 ✓');
 });
