@@ -493,10 +493,63 @@ const SUCCESS_RETURN = Object.freeze({
   label: '返回扫码',
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ⭐⭐ 2026-10-13 纯函数（**无 IO**）—— 判据单一来源，谁接 scanPageRealm.js 都能直接调
+//   ⚠️ 缺码判据**只算 default**：special（女 34/43 · 男 46/47/48）**不参与** ✓
+// ─────────────────────────────────────────────────────────────────────────────
+const expandRange = (segment) => {
+  const [a, b] = Array.isArray(segment) ? segment : [segment?.from, segment?.to];
+  const from = Number(a);
+  const to = Number(b);
+  if (!Number.isFinite(from) || !Number.isFinite(to) || to < from) return [];
+  return Array.from({ length: to - from + 1 }, (_, i) => from + i);
+};
+
+/** 缺码判断 = **default − 已有**（special 不参与 ✓）。返回缺的那些码（升序）。 */
+const missingSizes = (category, existingSizes = []) => {
+  const range = SIZE_SEGMENTS.ranges[category] || SIZE_SEGMENTS.ranges[
+    Object.keys(SIZE_SEGMENTS.ranges).find((k) => SIZE_SEGMENTS.ranges[k].label === category) || ''
+  ];
+  if (!range) return [];
+  const have = new Set((existingSizes || []).map((s) => Number(s)));
+  return expandRange(range.default).filter((size) => !have.has(size));
+};
+
+/** 展示清单 = **default ∪ 采购明细里出现过的 special**（没出现过 ⇒ 不展示 ✓）。 */
+const displaySizes = (category, presentSpecialSizes = []) => {
+  const range = SIZE_SEGMENTS.ranges[category];
+  if (!range) return { base: [], extra: [] };
+  const present = new Set((presentSpecialSizes || []).map((s) => Number(s)));
+  return {
+    base: expandRange(range.default),
+    extra: Array.from(range.special).filter((size) => present.has(size)),
+  };
+};
+
 const SIZE_SEGMENTS = Object.freeze({
+  // ⭐⭐ 2026-10-13（业务负责人逐字确认 · 见 docs/size-range-special-sizes-2026-10-13.md）
+  //   每个类别**显式三段**，一处定义（渲染层与缺码判断**都读它** ✗ 不许各写一份）：
+  //   · enterable = **可录范围**（女 34–43 / 男 38–48）—— 都能录 ✓
+  //   · default   = **默认展示 + 缺码判断**（女 35–42 / 男 38–45）✓
+  //   · special   = **特殊码**（女 34,43 / 男 46,47,48）——
+  //                 ⚠️ **只在「采购明细」里出现过才展示**（不看实时库存 ✗），
+  //                 没出现 ⇒ 不显示、**也不算缺码** ✓（不天天提示她"缺 43 / 缺 48"）
+  //   ⚠️ from/to **保留作兼容**（= enterable 的两端）：
+  //      既有渲染层（views/scanPageRealm.js:151）按 from/to 取值 ⇒ **语义不变** ✓
+  //      **新代码请读 enterable / default / special** ✓
   ranges: Object.freeze({
-    A: Object.freeze({ label: '男', from: 38, to: 48 }),
-    B: Object.freeze({ label: '女', from: 34, to: 43 }),
+    A: Object.freeze({
+      label: '男', from: 38, to: 48,
+      enterable: Object.freeze([38, 48]),
+      default: Object.freeze([38, 45]),
+      special: Object.freeze([46, 47, 48]),
+    }),
+    B: Object.freeze({
+      label: '女', from: 34, to: 43,
+      enterable: Object.freeze([34, 43]),
+      default: Object.freeze([35, 42]),
+      special: Object.freeze([34, 43]),
+    }),
   }),
   consistencyCheck: Object.freeze({
     enabled: readFlag(process.env, 'SCAN_PAGE_SIZE_CONSISTENCY_CHECK_ENABLED', true),
@@ -653,6 +706,10 @@ const fillText = (template, values = {}, missing = TEXTS.missingValue) => String
   });
 
 module.exports = {
+  SIZE_SEGMENTS,
+  expandRange,
+  missingSizes,
+  displaySizes,
   SCAN_PAGE,
   ROUTE,
   NUMBER,
