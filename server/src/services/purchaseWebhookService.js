@@ -68,6 +68,8 @@ const { PurchaseBatchNoGenerator } = require('./purchaseBatchNoGenerator');
 // 「报货批次」那一行的读写（到货状态 / 单据附件 / 按批次号定位）。
 // 抽成独立 service：本类只管"报货 → 出单"，批次行怎么维护不属于它（模块化）。
 const { PurchaseOrderBatchService } = require('./purchaseOrderBatchService');
+// ⭐ 2026-10-13（验收提速 ②）：这一批到货了 ⇒ 立刻失效「待验收批次」列表的短缓存。
+const { invalidatePendingBatchesCache } = require('./purchasePendingBatchService');
 // 「这批发到群里的是采购申请单还是采购退货单」的批次类型标记（到货核对靠它区分话题）。
 const { ARRIVAL_BATCH_KINDS } = require('../config/arrivalConversation');
 // 「这条写入属于哪一笔采购业务」—— 关联键的唯一取用口（**白名单**，非白名单键与空值
@@ -1810,6 +1812,14 @@ class PurchaseWebhookService {
     //      · `draft.actual_quantity` = 代码算出的实际到货数合计（与库存口径一致）；
     //      · `draft.actual_amount`   = 她在卡片表单里填的整批金额（提交时已校验必填/数字/非负）。
     await this.writeArrivalAcceptance({ taskId, batchNo, batchRecordId, draft, correlation });
+    //    放在这里（而不是只在扫码页那一层）是因为**任何**确认路径都经过这个方法
+    //    （扫码验收 / 工作台 / 群话题核对）—— 否则她会看到"刚验收完还在列表里"。
+    //    ⚠️ 纯内存失效，不写任何表；失败也不许影响入库（所以吞掉异常只记 warn）。
+    try {
+      invalidatePendingBatchesCache();
+    } catch (error) {
+      logWarn('scan.accept.pending_cache.invalidate_failed', { task_id: taskId, error: error.message });
+    }
     // ⭐ 2026-10-07 深夜：这里原本是"查「采购行为」→ `listAll('purchaseInbound')` 回查已写过的
     //    入库行 → 逐条 `create('purchaseInbound')`"，**整段随那张表一起删除**（她整表删了它）。
     //    现在这个循环只做一件事：把**实际数**逐条交给库存（`inventory.applyPurchase`），
