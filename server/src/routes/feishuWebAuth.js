@@ -1,7 +1,7 @@
 const express = require('express');
 const crypto = require('node:crypto');
 const { logInfo, logWarn } = require('../utils/logger');
-const { SCAN_AUTH_REDIRECT } = require('../config/scanAuthRedirect');
+const {SCAN_AUTH_REDIRECT, TICKET, issueSessionTicket } = require('../config/scanAuthRedirect');
 
 const COOKIE_NAME = 'workbench_session';
 const STATE_TTL_MS = 10 * 60 * 1000;
@@ -180,7 +180,16 @@ const createFeishuWebAuthRouter = () => {
       logInfo('workbench.auth.success', { request_id: req.requestId, operator_open_id: user.open_id });
       // 回跳目标：`next`（扫码页，走白名单）/ `return_to`（工作台前端，既有语义）——
       // 两者都没有时就是工作台首页（与改动前逐字一致）。
-      return res.redirect(resolveCallbackTarget(req.query, record));
+      // 2026-10-13: carry the session back as a one-time URL ticket (WebView keeps no cookie).
+      const callbackTarget = resolveCallbackTarget(req.query, record);
+      if (TICKET.enabled) {
+        const ticket = issueSessionTicket({ openId: user?.open_id || '', name: user?.name || '', path: callbackTarget });
+        if (ticket) {
+          const sep = callbackTarget.includes('?') ? '&' : '?';
+          return res.redirect(`${callbackTarget}${sep}${TICKET.paramName}=${ticket}`);
+        }
+      }
+      return res.redirect(callbackTarget);
     } catch (error) {
       logWarn('workbench.auth.failed', { request_id: req.requestId, error: error.message });
       return res.status(502).send('飞书身份认证失败，请稍后重试');
@@ -197,6 +206,8 @@ const getSessionUser = (req) => {
 };
 
 module.exports = {
+  COOKIE_NAME,
+  encodeSession,
   createFeishuWebAuthRouter,
   enabled,
   getSessionUser,

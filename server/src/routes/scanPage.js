@@ -50,12 +50,10 @@ const { invalidateLiveInventorySnapshot } = require('../services/liveInventorySn
 const { requireWorkbenchAccess } = require('./workbench');
 // ⚠️ 会话读取/解码与回跳校验**复用 feishuWebAuth 里那一份**（`getSessionUser` =
 //    `requireWorkbenchAccess` 判 401 用的同一个函数），**不重写第二份**。
-const {
-  enabled: feishuAuthEnabled,
+const {enabled: feishuAuthEnabled,
   getSessionUser,
   buildLoginStartUrl,
-  resolveScanNext,
-} = require('./feishuWebAuth');
+  resolveScanNext, COOKIE_NAME, encodeSession } = require('./feishuWebAuth');
 const { SCAN_PAGE } = require('../config/scanPage');
 const { SCAN_WRITE, fillText: fillWriteText } = require('../config/scanWrite');
 // ⭐ 2026-10-11：「货品」领域的【打印这一款】把任务排进**打印队列**（店里那台电脑负责出纸）。
@@ -65,7 +63,7 @@ const { SCAN_WRITE, fillText: fillWriteText } = require('../config/scanWrite');
 //      这一页是"扫码就能看"的入口，不能因为打印那条链路没配好就拖慢 / 打不开。
 const { getLabelPrintQueue } = require('../services/labelPrintQueueRuntime');
 const { LABEL_PRINT_QUEUE } = require('../config/labelPrintQueue');
-const { SCAN_AUTH_REDIRECT } = require('../config/scanAuthRedirect');
+const {SCAN_AUTH_REDIRECT, TICKET, redeemSessionTicket, pathWithoutTicket } = require('../config/scanAuthRedirect');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 
 // 飞书偶发「数据未准备好」(1254607)：回 503 + Retry-After，让她"过几秒刷新"，
@@ -164,7 +162,23 @@ const createScanPageRouter = (options = {}) => {
    */
   router.use((req, res, next) => {
     if (!feishuAuthEnabled()) return next();
-    if (getSessionUser(req)) return next();
+    // 2026-10-13: try the one-time URL ticket first (WebView keeps no cookie).
+    //   ok -> set the session cookie here and 302 to the same path WITHOUT the ticket.
+    //   expired/used/forged/other-path -> fall through to a fresh login (never half-logged-in).
+    const ticketToken = TICKET.enabled ? req.query?.[TICKET.paramName] : '';
+    if (ticketToken) {
+      const targetPath = pathWithoutTicket(req.originalUrl || req.url || '');
+      const redeemed = redeemSessionTicket(String(ticketToken), { targetPath });
+      if (redeemed.ok) {
+        const sessionCookie = encodeSession({ open_id: redeemed.openId, name: redeemed.name });
+        res.setHeader('Set-Cookie', `${COOKIE_NAME}=${sessionCookie}; Path=/; Max-Age=28800; HttpOnly; Secure; SameSite=None`);
+        return res.redirect(302, targetPath);
+      }
+      logWarn(SCAN_AUTH_REDIRECT.events.loginRedirect, {
+        reason: `ticket_${redeemed.reason}`,
+      });
+    }
+        if (getSessionUser(req)) return next();
     // 「刚才那一页」= 原 path + 原 query（本 router 挂在 `SCAN_PAGE.route.basePath` 上，
     // `req.originalUrl` 已经含挂载点）。再过一次回跳白名单：只放行扫码页自己，
     // 别的（`//host`、协议、绝对 URL、`/s/../api/...`）一律回落工作台首页。
