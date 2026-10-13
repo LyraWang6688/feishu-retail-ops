@@ -39,7 +39,7 @@ const assert = require('node:assert/strict');
 const { renderScanPage, STYLE } = require('../src/views/scanPageRenderer');
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
-const { REALM_TEXTS, REALMS } = require('../src/views/scanPageRealm');
+const { REALM_TEXTS, REALMS, REALM_TABS } = require('../src/views/scanPageRealm');
 
 const SRC = path.join(__dirname, '..', 'src');
 const readSrc = (relative) => fs.readFileSync(path.join(SRC, relative), 'utf8');
@@ -129,7 +129,7 @@ test('AC-S1 那些"解释我怎么用"的文案字段整体退场（配置里连
   assert.equal(SCAN_PAGE.missingSize.icon, '⚠️');
 
   // ⑤ 四个领域渲染出来的 HTML 里，一句说明都不许有
-  for (const realm of ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product']) {
+  for (const realm of REALMS.map((item) => item.id)) {
     const html = pageFor(realm);
     for (const gone of REMOVED_SENTENCES) {
       assert.equal(html.includes(gone), false, `realm=${realm} 的页面里还有说明句：「${gone}」`);
@@ -162,7 +162,8 @@ test('AC-S2 `views/**` 与两个 config 去注释后一句都不许留', () => {
 test('AC-S3 功能性的东西一个都不能少：⚠️ 缺 / 状态小标签 / 一键补货 / 表单 / noscript 兜底', () => {
   // ① 领域切换条照旧是四条真链接
   const inventory = pageFor('inventory');
-  for (const realm of REALMS) {
+  // ⚠️ 2026-10-13 改写：条上只有**六个**（REALM_TABS）；「上新」是**外链** ⇒ 它没有 `?from=` ✗
+  for (const realm of REALM_TABS.filter((item) => item.external !== true)) {
     assert.ok(inventory.includes(`href="?from=${realm.id}"`), `领域条缺 ${realm.id}`);
     assert.ok(inventory.includes(`data-realm-id="${realm.id}"`));
   }
@@ -190,19 +191,24 @@ test('AC-S3 功能性的东西一个都不能少：⚠️ 缺 / 状态小标签 
     assert.ok(sales.includes(needle), `销售表单少了 ${needle}`);
   }
   // ⑤ 货品标签页照旧（只是不再解释这一页怎么用）
-  assert.ok(pageFor('product').includes('货品标签') && pageFor('product').includes('/workbench/label-print.html'));
+  // ⚠️ 2026-10-13 改写：标题已从「货品标签」改成「**标签**」（真字面量）
+  assert.ok(pageFor('product').includes('<h2 class="stock__heading">标签</h2>') && pageFor('product').includes('/workbench/label-print.html'));
 
   // ⑥ `<noscript>` 兜底链接照旧（没有脚本时四条领域链接可点；只是不再有解释句）
-  for (const realm of ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product']) {
+  for (const realm of REALMS.map((item) => item.id)) {
     const page = pageFor(realm);
     const start = page.indexOf('<noscript>');
     assert.ok(start > -1, `realm=${realm} 缺 noscript 兜底`);
     const noScript = page.slice(start, page.indexOf('</noscript>'));
-    for (const other of REALMS) {
+    // ⚠️ 2026-10-13 改写：改前这里迭代的是**全集 7 条**（含验收 ✗，它不在条上）；
+    //    现在迭代条上六个里的**内部五个**（「上新」是外链 ⇒ 它没有 `?from=` ✗）
+    for (const other of REALM_TABS.filter((item) => item.external !== true)) {
       assert.ok(noScript.includes(`href="?from=${other.id}"`), `noscript 里缺 ${other.id} 的链接`);
     }
+    assert.ok(noScript.includes(SCAN_PAGE.realmBar.newFormUrl), 'noscript 里「上新」也是那条外链');
     // 兜底链接是**能点的字**（不是空块）：四条领域名逐字在里面
-    for (const other of REALMS) assert.ok(noScript.includes(other.label), `noscript 里缺「${other.label}」这几个字`);
+    // ⚠️ 2026-10-13 改写：noscript 那一排与切换条**同一口径** = REALM_TABS（验收不在）
+    for (const other of REALM_TABS) assert.ok(noScript.includes(other.label), `noscript 里缺「${other.label}」这几个字`);
   }
 
   // ⑦ 拿不到写上下文时仍然是**人话卡片**（绝不白屏），不是说明句被删就跟着没了

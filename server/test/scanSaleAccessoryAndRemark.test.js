@@ -362,7 +362,10 @@ test('AC-B6 录入页**不再有配品块**（能力改到工作台 ✓）· 服
   const html = renderScanPage(VIEW, SCAN_PAGE, WRITE({ accessories: [{ record_id: 'acc_1', name: '腰带' }] }), 'sales');
   assert.equal(html.includes(`name="${SCAN_WRITE.fields.accessory}"`), false, '配品下拉必须没了');
   assert.equal(html.includes(SCAN_WRITE.actions.addAccessory), false, '配品那颗按钮必须没了');
-  assert.equal(html.includes(SCAN_WRITE.texts.accessoryLabel), false, '配品标签必须没了');
+  // ⚠️ 2026-10-13 改写：**切换条上现在本来就有「配品」两个字**（那是一个 tab 名 ✗）
+  //    ⇒ 判据收窄到**销售那一块里**（她的本意："录入页不再有配品块" ✓）
+  const salesBlock = html.slice(html.indexOf('realm-block--sales'));
+  assert.equal(salesBlock.includes(SCAN_WRITE.texts.accessoryLabel), false, '录入页（销售块）里配品标签必须没了');
   // ⚠️ 别删错：备注（写「赠品」）与鞋的加单入口必须还在 ✓
   assert.match(html, new RegExp(`name="${SCAN_WRITE.fields.gift}"`), '「备注（可不填）」仍在（②里还要用）');
   assert.match(html, new RegExp(`name="${SCAN_WRITE.fields.action}" value="${SCAN_WRITE.actions.addLine}"`),

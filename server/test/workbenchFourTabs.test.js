@@ -681,7 +681,7 @@ const SCAN_WRITE = {
 
 test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个领域只显示那个领域的操作', () => {
   const { renderScanPage, STYLE } = require('../src/views/scanPageRenderer');
-  const { REALMS, DEFAULT_REALM, resolveRealm, labelPrintUrls } = require('../src/views/scanPageRealm');
+  const { REALMS, REALM_TABS, DEFAULT_REALM, resolveRealm, labelPrintUrls } = require('../src/views/scanPageRealm');
   const { SCAN_PAGE } = require('../src/config/scanPage');
 
   // ① 路由没变：GET /s/:number
@@ -690,11 +690,16 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
 
   // ② 四个领域 = 与一级 tab 同序；缺省 = **销售**（2026-10-11 她改回：「默认打开是销售页」）；
   //    认不出的值一律回落（不报错）
+  // ⚠️ 2026-10-13 改写：领域清单换成她的最终版
+  //    改前：['sales','replenish','purchase_return','accept','inventory','product'] / ['销售','补货','退货','验收','库存','货品']
+  //    改后：销售·补货·库存 / 标签·上新·配品，验收仍在（有会话才切进来）
   assert.deepEqual(REALMS.map((realm) => realm.id),
-    ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product']);
-  assert.deepEqual(REALMS.map((realm) => realm.label), ['销售', '补货', '退货', '验收', '库存', '货品']);
+    ['sales', 'replenish', 'inventory', 'product', 'new', 'purchase_return', 'accept']);
+  assert.deepEqual(REALMS.map((realm) => realm.label),
+    ['销售', '补货', '库存', '标签', '上新', '配品', '验收']);
   assert.equal(DEFAULT_REALM, 'sales', '缺省 = 销售（她 2026-10-11：「默认打开是销售页」）');
-  for (const id of ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product']) assert.equal(resolveRealm(id), id);
+  // ⚠️ 2026-10-13：解析集 = 7 条（含验收与上新）；条上只六个
+  for (const realm of REALMS) assert.equal(resolveRealm(realm.id), realm.id);
   for (const bad of [undefined, null, '', '   ', 'bogus', 'SALES2', '库存']) {
     assert.equal(resolveRealm(bad), 'sales', `认不出的 from「${String(bad)}」必须回落缺省（销售），不许报错`);
   }
@@ -702,10 +707,14 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
   // ③ 顶部那一排领域按钮：六个值都在，URL 就是 ?from=<id>（**真链接**，服务端跳转）
   const html = renderScanPage(SCAN_VIEW, SCAN_PAGE, SCAN_WRITE, 'sales');
   const body = html.slice(html.indexOf('</head>'));
-  for (const id of ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product']) {
-    assert.ok(body.includes(`href="?from=${id}"`), `顶部必须有 ?from=${id} 的领域按钮`);
-    assert.ok(body.includes(`data-realm-id="${id}"`), '领域按钮的标记');
+  // ⚠️ 2026-10-13 改写：条上**六个**（`REALM_TABS`）——验收**不在条上**（它是有会话才切进来的模式）；
+  //    「上新」是**外链** ⇒ 它没有 `?from=`（真链接那一边另行断言）
+  for (const realm of REALM_TABS.filter((item) => item.external !== true)) {
+    assert.ok(body.includes(`href="?from=${realm.id}"`), `顶部必须有 ?from=${realm.id} 的领域按钮`);
+    assert.ok(body.includes(`data-realm-id="${realm.id}"`), '领域按钮的标记');
   }
+  assert.equal(body.includes('?from=accept'), false, '验收不在切换条上');
+  assert.ok(body.includes(`data-realm-id="new" href="${SCAN_PAGE.realmBar.newFormUrl}"`), '「上新」= 直达外链');
   assert.equal((body.match(/realm-tab--active/g) || []).length, 1, '当前领域那一颗高亮（服务端决定）');
 
   // ④ ⭐ 2026-10-09（手机白屏之后）起：**服务端按 `?from` 只渲染那一块** ——
@@ -717,8 +726,10 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
     //    换成功能标记 —— 一条断言翻成"必须不存在"，见下面那句 `补货报单`。
     // ⚠️ 2026-10-11：原「采购」那一块 = 现在的 **`replenish`（补货）**（识别句一个字没变）
     ['replenish', 'data-view="one-tap-replenish"', '加入本单'],
-    ['purchase_return', 'data-view="purchase-return"', '加入本单'],
-    ['product', '货品标签', '加入本单'],
+    // ⚠️ 2026-10-13 改写：「退货」那一块现在是**配品页**（本用例没配品 ⇒ 人话空态卡）
+    ['purchase_return', '<section class="card state-msg">', '加入本单'],
+    // ⚠️ 2026-10-13 改写：块里标题已从「货品标签」改成「标签」（真字面量）
+    ['product', '<h2 class="stock__heading">标签</h2>', '加入本单'],
   ]) {
     const page = renderScanPage(SCAN_VIEW, SCAN_PAGE, SCAN_WRITE, id);
     const pageBody = page.slice(page.indexOf('</head>'));
@@ -743,9 +754,12 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
   for (const id of REALMS.map((realm) => realm.id)) {
     const page = renderScanPage(SCAN_VIEW, SCAN_PAGE, SCAN_WRITE, id);
     const noScript = page.slice(page.indexOf('<noscript>'), page.indexOf('</noscript>'));
-    for (const other of REALMS.map((realm) => realm.id)) {
-      assert.ok(noScript.includes(`href="?from=${other}"`), `<noscript> 里缺 ${other} 的链接`);
+    // ⚠️ 2026-10-13 改写：改前迭代全集 7 条；现在 = 条上六个里的**内部五个** `?from=`（「上新」是外链 ✗）
+    for (const other of REALM_TABS.filter((item) => item.external !== true)) {
+      assert.ok(noScript.includes(`href="?from=${other.id}"`), `<noscript> 里缺 ${other.id} 的链接`);
     }
+    assert.ok(noScript.includes(SCAN_PAGE.realmBar.newFormUrl), '<noscript> 里「上新」也是那条外链');
+    assert.equal(noScript.includes('?from=accept'), false, '验收不在 noscript 那一排');
   }
 
   // ⑥ 各领域的操作确实按领域分开：销售 = 建单表单；库存 = 库存表；采购 = 补货报单；货品 = 标签
@@ -769,13 +783,19 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
   //    补货那一块的片段**一个字没变**，只是它现在在 `from=replenish` 下。
   assert.equal(blockOf('replenish', 'replenish').includes('补货报单（勾选要补的尺码）'), false, '补货那句标题必须删掉');
   assert.ok(blockOf('replenish', 'replenish').includes('data-view="one-tap-replenish"'), '补货领域 = 各尺码数量 + 一键补货');
-  assert.ok(blockOf('purchase_return', 'purchase_return').includes('data-view="purchase-return"'), '退货领域 = 退货表单');
+  // ⚠️ 2026-10-13 改写（逐字）：
+  //    改前：`assert.ok(blockOf('purchase_return','purchase_return').includes('data-view="purchase-return"'), '退货领域 = 退货表单')`
+  //    改后：这一块现在 = **配品页**（本用例没配品 ⇒ 人话空态卡）
+  //    理由：她 2026-10-13 明确「你先把扫码页的退货改成配品页面」；退货**能力保留**
+  //         （`returnFormHtml` 仍在渲染层，行为断言在 `test/scanPurchaseReturn.test.js`）
+  assert.ok(blockOf('purchase_return', 'purchase_return').includes('<section class="card state-msg">'), '配品页 = 人话空态卡（没配品时）');
   // ⭐ 2026-10-12：验收领域没有活跃会话 = **自助块**（列未到货批次 + 手输批次号），不再是「回工作台」卡
   const acceptBlock = blockOf('accept', 'accept');
   assert.ok(acceptBlock.includes('data-view="accept-pending"'), '验收领域（没有活跃会话）= 自助块');
   assert.ok(acceptBlock.includes(SCAN_PAGE.texts.acceptPendingTitle));
   assert.ok(acceptBlock.includes('data-view="accept-manual"'), '手输批次号兜底在');
-  assert.ok(blockOf('product', 'product').includes('货品标签'), '货品领域 = 货品标签');
+  // ⚠️ 2026-10-13：标题已从「货品标签」改成「标签」（真字面量）
+  assert.ok(blockOf('product', 'product').includes('<h2 class="stock__heading">标签</h2>'), '货品领域 = 标签');
 
   // ⑦ 货品标签 = 既有标签打印页（单个带货号 / 批量），没有重做打印
   assert.deepEqual(labelPrintUrls(SCAN_VIEW), {
