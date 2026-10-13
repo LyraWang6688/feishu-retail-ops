@@ -838,26 +838,31 @@ const createScanPageRouter = (options = {}) => {
     invalidateInventorySnapshot(requestId, 'scan_accept_finished');
     markRealmUsed(openId, realmOfAction(writeConfig.actions.acceptFinishRows));
     const batchNo = result.batch_no || '';
+    // ⭐ 2026-10-13：落点**真读配置**（`pendingBatches` ⇒ 批次列表 / `lastBatch` ⇒ 刚验完那一批 ✓）
+    const acceptHomePath = SCAN_PAGE.resolveAcceptHomePath(
+      (config.successReturn && config.successReturn.acceptHome) || 'pendingBatches',
+      { baseUrl: req.baseUrl, acceptancePath: config.route?.acceptancePath || '/accept', batchNo },
+    );
     // ⭐⭐ 2026-10-12 21:20：**成功后给明确成功页**（实际数量 + 实际金额 + 回未到货批次）——
     //    「点了没反应」里有一半就是"成功了却没交代"。
     return sendHtml(res, 200, renderAcceptanceDonePage({
       config,
       write: { texts: writeConfig.texts },
-      // ⭐⭐ 2026-10-12（她拍板 · 选项 ①）：「验收完**自动回的是【未到货批次列表】**（= 验收自己的首页 ✓）」
-      //   ⇒ 验收这一路的目标 = **批次列表**（走配置 `SUCCESS_RETURN.acceptHome` ✓ 一处改 ✓）；
-      //     ⚠️ 服务端拼**确定 URL** ✓（不用空编号去拼 ✗）。
-      returnPath: `${req.baseUrl}${config.route?.acceptancePath || '/accept'}`,
+      // ⭐⭐ 2026-10-13：**真读配置** `SUCCESS_RETURN.acceptHome`（映射表在 `config/scanPage.js` ✓）——
+      //   复核发现原来是**假配置**（零读取点 + 注释谎称"走配置" ✗）⇒ 现在一处改即可 ✓
+      //   ⚠️ 服务端拼**确定 URL** ✓（不用空编号去拼 ✗）。
+      returnPath: acceptHomePath,
       returnLabel: (config.successReturn && config.successReturn.label) || '',
       returnDelaySeconds: Number((config.successReturn && config.successReturn.delaySeconds) || 0),
-      autoReturnUrl: `${req.baseUrl}${config.route?.acceptancePath || '/accept'}`,
+      autoReturnUrl: acceptHomePath,
       acceptance: {
         batchNo,
         scanned: result.scanned || 0,
         amountText: String(body[fields.acceptAmount] ?? ''),
         reused: result.reused === true,
       },
-      // 【回到未到货批次】= 自助页（**不带 batch** —— 带了她又回到刚做完那一批）。
-      backHref: `${req.baseUrl}${config.route?.acceptancePath || '/accept'}`,
+      // 【返回扫码】/ 【回到未到货批次】与自动跳转**同一个 URL**（唯一来源 ✓ 随 `acceptHome` 变 ✓）
+      backHref: acceptHomePath,
     }));
   };
 
