@@ -99,7 +99,11 @@ test('AC-W2 「验收到货」入口已删（链路保留）；采购不再有�
   // ⚠️ 2026-10-12 改写：改前 = `arrival.kind === 'orders'` / `arrival.mode === 'purchase'`。
   const arrival = purchase.pages.find((page) => page.id === 'purchase-arrival');
   assert.equal(arrival, undefined, '「验收到货」入口已删（扫码页已做验收）');
-  assert.equal(purchase.pages.some((page) => page.kind === 'orders'), false, '采购 tab 下不再挂订单模块');
+  // ⭐ 2026-10-13 翻回来（她要求「验收」挂回第一个子 tab）：
+  assert.equal(purchase.pages[0].id, 'purchase-acceptance', '验收 = 第一个子 tab');
+  assert.equal(purchase.pages[0].label, '验收', '名字逐字两个字');
+  assert.equal(purchase.pages.some((page) => page.kind === 'orders' && page.mode === 'purchase'), true,
+    '⭐ 又挂上了**既有** orders/purchase 模块（不新造页面 ✓）');
   assert.equal(purchase.pages.some((page) => page.kind === 'entry'), false, '采购没有"填编号"的入口页');
   // 链路保留：既有验收台代码 / 接口地址配置 / 接口本身都还在（扫码验收、群话题核对共用）
   assert.ok(readWorkbench('features/orders/index.js').includes('verify-arrival'), '验收台代码保留');
@@ -107,14 +111,17 @@ test('AC-W2 「验收到货」入口已删（链路保留）；采购不再有�
     '验收接口地址配置保留');
 });
 
-test('AC-W3 两个占位页保留（待建设）', async () => {
+test('AC-W3 ⭐ 两个占位页保留（待建设）；「验收」那条**不是**占位（2026-10-13 已接上既有模块）', async () => {
   const { domains } = await loadFrontendModules();
   const purchase = domains.domainById('purchase');
-  for (const id of ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money']) {
+  for (const id of ['purchase-orders', 'purchase-supplier-money']) {
     const page = purchase.pages.find((item) => item.id === id);
     assert.equal(page?.kind, 'placeholder', `${id} 仍是占位页`);
     assert.ok(page.label, `${id} 仍有子 tab 名`);
   }
+  const acceptance = purchase.pages.find((item) => item.id === 'purchase-acceptance');
+  assert.equal(acceptance?.kind, 'orders', '验收走既有订单模块');
+  assert.equal(acceptance?.mode, 'purchase', '采购模式');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

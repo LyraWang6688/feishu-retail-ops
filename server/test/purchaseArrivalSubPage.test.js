@@ -162,7 +162,7 @@ test('AC-P1 采购子 tab 顺序逐字 = 订单列表 · 供应商往来款（�
 // AC-P2 「验收到货」= 独立子页（不再有锚点卡 / 内嵌宿主 / "去下面"措辞）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-P2 「验收到货」入口已删（链路保留）；报货/退货也不在清单里，且没有锚点/内嵌措辞', async () => {
+test('AC-P2 ⭐ 验收入口**已按 2026-10-13 裁定挂回**（名字逐字「验收」· 第一个 · 走既有 orders/purchase）；报货/退货仍不在清单里', async () => {
   // ⚠️ 2026-10-12 改写（见文件头）：改前钉的是"「验收到货」= 独立子页（`kind:'orders'`/`mode:'purchase'`）"。
   //    她把那个入口删了（扫码页已做验收）⇒ 改成：
   //    ① **入口不在配置里**；② **验收台代码与接口保留**（共用 ⇒ 删入口不删链路）。
@@ -170,10 +170,14 @@ test('AC-P2 「验收到货」入口已删（链路保留）；报货/退货也�
   const [domains, pages, nav] = await Promise.all([modules.domains, modules.domainPages, modules.domainNav]);
   const purchase = domains.domainById('purchase');
 
-  // ① 入口已删：清单里没有它（工作台不再挂既有订单模块的 purchase 模式）
-  const arrival = purchase.pages.find((page) => page.id === 'purchase-arrival');
-  assert.equal(arrival, undefined, '「验收到货」入口已删');
-  assert.equal(purchase.pages.some((page) => page.kind === 'orders'), false, '采购 tab 下不再挂订单模块');
+  // ① ⭐ 2026-10-13 翻转（口径变了）：她要求「**验收**」作为采购**第一个**子 tab 挂回来 ⇒
+  //    改前逐字：`assert.equal(arrival, undefined, '「验收到货」入口已删')` +
+  //    `assert.equal(purchase.pages.some((page) => page.kind === 'orders'), false, ...)`
+  const arrival = purchase.pages[0];
+  assert.equal(arrival.id, 'purchase-acceptance', '验收必须是**第一个**子 tab');
+  assert.equal(arrival.label, '验收', '名字**逐字**两个字');
+  assert.equal(purchase.pages.some((page) => page.kind === 'orders' && page.mode === 'purchase'), true,
+    '挂的是**既有** orders/purchase 模块（不新造页面 ✓）');
 
   // ①b 链路保留：既有模块 + 接口 + 地址配置都还在（扫码验收 / 群话题核对共用）
   assert.ok(readWorkbench('features/orders/index.js').includes('verify-arrival'), '验收台代码保留');
