@@ -1683,7 +1683,9 @@ const renderScanSkeleton = (view = {}, config = SCAN_PAGE) => {
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
 <title>${escapeHtml(itemNo || number || '')}</title>
-${STYLE}
+<!-- 2026-10-13: STYLE must be wrapped - emitted bare it is foster-parented into
+     the body and painted as visible text (she saw the raw style rules first). -->
+<style>${STYLE}${PAYMENT_STEP_STYLE}${REALM_BAR_STYLE}</style>
 </head>
 <body>
 <div class="page">
