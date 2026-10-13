@@ -549,7 +549,8 @@ const SIZE_SEGMENTS = Object.freeze({
     B: Object.freeze({
       label: '女', from: 34, to: 43,
       enterable: Object.freeze([34, 43]),
-      default: Object.freeze([35, 42]),
+      // ⭐ 2026-10-14 她明确：「按照 **36-42**」（覆盖早先的 35–42 ✓）——缺码判据只按默认段 ✓
+      default: Object.freeze([36, 42]),
       special: Object.freeze([34, 43]),
     }),
   }),
