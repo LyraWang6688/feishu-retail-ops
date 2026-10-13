@@ -70,11 +70,24 @@ const SIZE_GROUP_RANGES = SCAN_PAGE.sizeSegments.ranges;
 const REALMS = Object.freeze([
   Object.freeze({ id: 'sales', label: '销售' }),
   Object.freeze({ id: 'replenish', label: '补货' }),
-  Object.freeze({ id: 'purchase_return', label: '退货' }),
-  Object.freeze({ id: 'accept', label: '验收' }),
   Object.freeze({ id: 'inventory', label: '库存' }),
-  Object.freeze({ id: 'product', label: '货品' }),
+  // ⭐ 2026-10-13：**货品 → 标签**（改名 ✓ 内部 id `product` 保留 ✓）
+  Object.freeze({ id: 'product', label: '标签' }),
+  // ⭐⭐ 2026-10-13（她最终顺序）：「第一行 销售·补货·库存；第二行 标签·上新·配品」
+  //    · `new`   = **上新**：不是页面领域，是**直达外链**（服务端配置 `realmBar.newFormUrl` ✓）
+  //    · `purchase_return` = **配品**（原"退货"那一位换成配品；退货挪去工作台 ✓）
+  Object.freeze({ id: 'new', label: '上新', external: true }),
+  Object.freeze({ id: 'purchase_return', label: '配品' }),
+  // ⚠️ **验收仍在 REALMS 里**（它是"有活跃会话就切进来"的模式 ⇒ 必须能解析 ✓ 只是**不上条**✗）
+  Object.freeze({ id: 'accept', label: '验收' }),
 ]);
+
+/** ⭐ 切换条上的**六个 tab**（两行三列 3+3）——「验收」**不在**条上 ✓（见上面那条注释）。 */
+const REALM_TABS = Object.freeze(REALMS.filter((realm) => realm.id !== 'accept'));
+
+
+/** ⭐ 切换条上的**六个 tab**（两行三列：3 + 3）——`验收` **不在**条上（它是"有活跃会话才切进来"的模式 ✓）。 */
+
 
 /** 缺省领域 = **销售**（她 2026-10-11：「默认打开是销售页」；2026-10-09 曾一度是库存）。 */
 const DEFAULT_REALM = 'sales';
@@ -82,14 +95,16 @@ const DEFAULT_REALM = 'sales';
 /** 补货 / 退货 / 验收 三个领域的 id（渲染层与路由**不写字符串字面量**）。 */
 const REPLENISH_REALM = 'replenish';
 const PURCHASE_RETURN_REALM = 'purchase_return';
+const NEW_REALM = 'new'; // ⭐ 2026-10-13：「上新」= **外链 tab**（不是页面领域）
 const ACCEPTANCE_REALM = 'accept';
 
 /** 领域 id → 它"空态"时那句人话的配置键（`config/scanPage.js` 的文案）。 */
 const REALM_EMPTY_TEXT_KEYS = Object.freeze({
   sales: 'realmEmptySalesBody',
   replenish: 'realmEmptyPurchaseBody',
-  purchase_return: 'realmEmptyPurchaseBody',
+  purchase_return: 'realmEmptyPurchaseReturnBody', // ⭐ 2026-10-13 配品页自己的人话（原借用补货那句 ✗）
   accept: 'realmEmptyAcceptanceBody',
+  new: 'realmEmptyNewBody', // ⭐ 2026-10-13 上新（外链 tab）的人话
 });
 
 /** 切换条与「货品标签」那一块的文案（页面上的每一个字都在这里，渲染层不写死句子）。
@@ -107,7 +122,8 @@ const REALM_EMPTY_TEXT_KEYS = Object.freeze({
  */
 const REALM_TEXTS = Object.freeze({
   barLabel: '这一页要做什么',
-  labelHeading: '货品标签',
+  // ⭐ 2026-10-13：**货品 → 标签**（她改名 ✓ 内部 id `product` 保留）；标题跟着改，页面上不再出现「货品」✗
+  labelHeading: '标签',
   // ⚠️ 2026-10-11 改文案（业务负责人：「扫到某款 ⇒ 货品领域 ⇒【打印这一款】」）：
   //    改前 = '打印这一款的标签 →'，改后 = '打开标签打印页 →'。
   //    理由：「打印这一款」这五个字现在归**新的队列按钮**（`printSingle`，来自
@@ -132,7 +148,7 @@ const REALM_TEXTS = Object.freeze({
   oneTapReplenish: '一键补货',
   // ⭐ 2026-10-11：采购领域的第二个动作 —— 【退货】（业务负责人：「和"报货"逻辑一样，也走扫码」）。
   //    这里只放**功能名**（折叠头那两个字），不是一个句子。
-  purchaseReturn: '退货',
+  purchaseReturn: '配品',
 });
 
 /**
@@ -243,6 +259,8 @@ module.exports = {
   DEFAULT_REALM,
   REPLENISH_REALM,
   PURCHASE_RETURN_REALM,
+  REALM_TABS,
+  NEW_REALM,
   ACCEPTANCE_REALM,
   REALM_EMPTY_TEXT_KEYS,
   REALM_TEXTS,

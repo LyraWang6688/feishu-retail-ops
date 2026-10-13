@@ -66,6 +66,7 @@ const { SCAN_PAGE } = require('../src/config/scanPage');
 const {
   SELLABLE_STATES, SIZE_GROUP_RANGES, REALM_TEXTS, DEFAULT_REALM,
   sellableCountOf, saleSizeGroups, purchaseSizeLines,
+  REALMS,
 } = require('../src/views/scanPageRealm');
 
 const SRC = path.join(__dirname, '..', 'src');
@@ -389,10 +390,10 @@ test('AC4 三个领域共用业务处理层、各自独立出口（渲染层不�
     assert.equal(pattern.test(renderer), false, `scanPageRenderer.js 出现了业务写入：${pattern}`);
   }
   // 三块各自带领域标记，而且是**服务端按领域单独渲染**的（一份 HTML 里只有当前那一块）
-  for (const id of ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product']) {
+  for (const id of REALMS.map((realm) => realm.id)) {
     const htmlText = htmlFor(id);
     assert.ok(blockOf(htmlText, id).length > 0, `缺 ${id} 领域块`);
-    for (const other of ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product'].filter((item) => item !== id)) {
+    for (const other of REALMS.map((realm) => realm.id).filter((item) => item !== id)) {
       assert.equal(htmlText.includes(`realm-block--${other}"`), false,
         `渲染 ${id} 时不该把 ${other} 块也拼进来`);
     }

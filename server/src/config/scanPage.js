@@ -175,6 +175,10 @@ const TEXTS = Object.freeze({
   //    这张人话卡只在"那两种情况"下出现：**一个未到货批次都没有**（或读表失败）——
   //    所以它只说事实 + 给下面那个手输框，不指路去别处。
   realmEmptyAcceptanceBody: '现在没有未到货的批次：可以直接填批次号进验收。',
+  // ⭐ 2026-10-13（配品页）：这一块原来借用了「补货」那句（说的是尺码清单✗ 与配品无关）⇒ 单独一句 ✓
+  realmEmptyPurchaseReturnBody: '现在没有可以加进本单的配品。',
+  // ⭐ 2026-10-13：「上新」那一块（外链 tab的兵底）—— 不迷路、不冒充建单表单
+  realmEmptyNewBody: '「上新」是一张飞书表单：点切换条上那一颗就直接去填。',
   // ⭐ 验收领域自己开工（她点【验收】时看到的那一块）：
   //    ① 列未到货批次（每条一行、点进 `/s/accept?batch=…`）；② 手输批次号兜底。
   //    ⚠️ 全是**功能名/事实**，没有说明书腔。
@@ -622,6 +626,19 @@ const EVENTS = Object.freeze({
   sizeConsistencyMismatch: 'scan.size_consistency.mismatch',
 });
 
+/** 「货品上新」飞书表单（**与工作台同一份 URL** —— 那边在 `public/workbench/config/links.js`）。
+ *  ⚠️ 它只做一件事：把用户送过去 ⇒ **空值 / 非 http(s) 一律当场报错**（静默的话那一颗点不动 ✗）。 */
+const PRODUCT_NEW_FORM_URL_DEFAULT =
+  'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnX0GlNcSOujePgWOLTTWr4m';
+const resolveProductNewFormUrl = (env = process.env) => {
+  const raw = readString(env, 'PRODUCT_NEW_FORM_URL', PRODUCT_NEW_FORM_URL_DEFAULT).trim();
+  if (!/^https?:\/\/\S+$/.test(raw)) {
+    throw new Error('「上新」外链（PRODUCT_NEW_FORM_URL）必须是 http(s) 链接：'
+      + '留空或写错会让扫码页那颗「上新」点不动（不静默）');
+  }
+  return raw;
+};
+
 const SCAN_PAGE = Object.freeze({
   route: ROUTE,
   // ⭐⭐ 2026-10-13（她：加载到中间一直白屏）：**骨架屏开关**（**显式布尔**，缺省 false）。
@@ -632,6 +649,13 @@ const SCAN_PAGE = Object.freeze({
   //   ⚠️ 必须放在**这个**对象里 —— 上一版我插到了子配置对象里 ⇒ `SCAN_PAGE.skeleton` 是 undefined
   //      ⇒ 真进程开关**根本没生效**（真墙钟那次因此作废 ✗）。这条教训由下面那条"真配置"AC 钉住 ✓
   skeleton: { enabled: readFlag(process.env, 'SCAN_PAGE_SKELETON_ENABLED', false) },
+  // ⭐⭐ 2026-10-13（她最终顺序）：「上新」tab = **直达外链**（不是一个页面领域）。
+  //   ⚠️ 工作台那份在 `public/workbench/config/links.js`（**我不碰那个文件** ✗ 只读它 ✓）——
+  //      这里**另存一份**，并有**"不许漂移"测试**（两边逐字一致 ✓ 见
+  //      `test/scanPageRealmTabs.test.js` 的 AC-RB5）。
+  //   🔴 2026-10-13：**空值 / 写错 ⇒ 在配置解析时当场报错**（不是静默渲染成一颗点不动的死链 ✗）。
+  //      与工作台那份逐字同源（`public/workbench/config/links.js` 的 `PRODUCT_NEW_FORM_URL` ✓）。
+  realmBar: { newFormUrl: resolveProductNewFormUrl(process.env) },
   number: NUMBER,
   states: STATES,
   missingSize: MISSING_SIZE,

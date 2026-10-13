@@ -306,7 +306,8 @@ test('A3 扫码缺省领域 = **sales**（她：「默认打开是销售页」�
   assert.match(source, /默认打开是销售页/);
   // 领域本身没变（还是那四个、顺序也一样）。
   const { REALMS } = require('../src/views/scanPageRealm');
-  assert.deepEqual(REALMS.map((realm) => realm.id), ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product']);
+  // ⚠️ 2026-10-13 改写：领域清单换成她的最终版（['sales', 'replenish', 'inventory', 'product', 'new', 'purchase_return', 'accept']）
+  assert.deepEqual(REALMS.map((realm) => realm.id), ['sales', 'replenish', 'inventory', 'product', 'new', 'purchase_return', 'accept']);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
