@@ -28,17 +28,18 @@ const SCRIPT = scriptOf(HTML);
 test('AC-SR1 ⭐⭐ 不再静默吞错：失败 ⇒ 页面上有**人话 + 重试入口**（文案走配置 ✓）', () => {
   // ⚠️ 反向哨兵：改前那种写法必须被判红（见 AC-SR5 ✓）
   assert.equal(/catch\(function \(\) \{\}\)/.test(HTML), false, '空 catch（静默吞错）不许再有 ✗');
-  assert.ok(HTML.includes('data-view="scan-skeleton-error"'), '要有"人话"容器 ✓');
-  assert.ok(HTML.includes('data-view="scan-skeleton-retry"'), '要有「重试」按钮 ✓');
+  // ⚠️ 脚本里 setAttribute 用的是**单引号** ⇒ 断言按**源码逐字**（我第一版引号假设错了 ✗）
+  assert.ok(SCRIPT.includes("'scan-skeleton-error'"), '要有"人话"容器 ✓');
+  assert.ok(SCRIPT.includes("'scan-skeleton-retry'"), '要有「重试」按钮 ✓');
   assert.ok(HTML.includes(SCAN_PAGE.texts.skeletonErrorText), '人话文案**来自配置** ✓（不写死 ✗）');
   assert.ok(HTML.includes(SCAN_PAGE.texts.skeletonRetryLabel), '按钮文案**来自配置** ✓');
   assert.match(HTML, /\.skeleton-retry \{[^}]*min-height: var\(--control-height\)/, '重试按钮 ≥44px（她的老规矩 ✓）');
 });
 
 test('AC-SR2 ⭐⭐ 拿回**还是骨架** ⇒ 不 document.write（保住"不循环" ✓ 且给人话 ✓）', () => {
-  const guardAt = SCRIPT.indexOf("data-view=\"scan-skeleton\"");
+  const guardAt = SCRIPT.indexOf("html.indexOf('data-view=\"scan-skeleton\"') !== -1");
   const writeAt = SCRIPT.indexOf('document.write');
-  assert.ok(guardAt > 0, '要有"拿回骨架"的判据 ✓');
+  assert.ok(guardAt > 0, '要有"拿回骨架"的判据 ✓（按源码逐字 ✓）');
   assert.ok(writeAt > guardAt, '判据必须在 document.write **之前**（否则又会写回骨架 ✗）');
   assert.match(SCRIPT, /catch\(function \(\) \{ showProblem\(\); \}\)/, '请求异常也要走人话（不再吞 ✗）');
   assert.match(SCRIPT, /if \(!html\) \{ showProblem\(\); return; \}/, '空响应 ⇒ 人话 ✓');
