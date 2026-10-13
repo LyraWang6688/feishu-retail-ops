@@ -274,7 +274,7 @@ test('② 回退：飞书不认这个公式（抛错）→ 整表读，页面照
   assert.equal(view.found, true);
   assert.equal(view.total, 3);
   // ⭐ 2026-10-09：缺码按配置段算 ⇒ A 段 11 个码里有 9 个库存为 0。
-  assert.equal(view.missing_count, 9);
+  assert.equal(view.missing_count, 6, '缺码 = 普通码(38-45) - 有货（她 2026-10-14）');
   assert.equal(gateway.filterCalls().length, 2, '两次都试过了');
   const wholeTables = gateway.listAllCalls().map((call) => call.tableKey);
   assert.ok(wholeTables.includes('product') && wholeTables.includes('liveInventory'),
