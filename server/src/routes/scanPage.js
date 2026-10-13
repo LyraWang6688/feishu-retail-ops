@@ -1162,6 +1162,22 @@ const createScanPageRouter = (options = {}) => {
       //    service 里再解一次是为了容忍双重编码，并且对孤立 `%` 的输入不抛。
       timing.session_ms = Math.max(0, Date.now() - handlerStartedAt);
       const view = await service.lookup({ ...lookupInputOf(req), requestId, timing });
+      // ⭐ 2026-10-13 特殊尺码接线（**只读**；那位同事的 reader 还没落地 ⇒ **缺失即降级** ✓）：
+      //    读不到 / 读失败 ⇒ 只给默认范围（特殊码一个都不显示）+ **一条可 grep 的 warn** ✓
+      //    ⚠️ 绝不因此少给常规码（不静默少码 ✗）；事件名用**既有那条** `config.events.failed`（不新造 ✓）
+      let presentSpecialSizes = [];
+      try {
+        // eslint-disable-next-line global-require
+        const reader = options.purchaseSizeReader || require('../services/purchaseSizeReader');
+        presentSpecialSizes = (await reader.listSizes()) || [];
+      } catch (error) {
+        logWarn(config.events.failed, {
+          request_id: requestId, reason: 'purchase_size_list_failed', error: String(error?.message || error),
+        });
+        presentSpecialSizes = [];
+      }
+      // 只有真读到才挂字段（字段缺失 = 那位同事那边的"全不显示"降级语义 ✓）
+      if (presentSpecialSizes.length) view.present_special_sizes = presentSpecialSizes;
       if (!view.found) {
         if (view.reason === 'empty') {
           logWarn(config.events.badNumber, { request_id: requestId, reason: 'empty_number' });
