@@ -61,7 +61,26 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { renderScanPage, STYLE } = require('../src/views/scanPageRenderer');
+/** ⭐ 2026-10-13「金额两步走」：这一组能力**整块挪到第 2 步页** ⇒ 断言在它该在的那一页做
+ *  （能力去哪：`renderSalePaymentStepPage`）。🔴 口径未放宽：字段名 / 标签 / 默认档一个字都没变 ✓
+ *  ⚠️ 这里**自带 require**，不依赖各文件顶部的局部名（各文件的导入风格不一样）。 */
+const step2Of = () => {
+  const { SCAN_WRITE: SW } = require('../src/config/scanWrite');
+  const { renderSalePaymentStepPage: renderStep2 } = require('../src/views/scanPageRenderer');
+  return renderStep2({
+    write: {
+      texts: SW.texts, fields: SW.fields, actions: SW.actions,
+      paymentMethods: SW.sale.paymentMethods,
+      defaultPaymentMethod: SW.sale.defaultPaymentMethod,
+      paymentRowCount: SW.sale.paymentRowCount,
+      paymentStatus: SW.sale.paymentStatus.default,
+      defaultPaymentStatus: SW.sale.paymentStatus.default,
+      paidAmount: '', draft: { lines: [] },
+    },
+  });
+};
+
+const { renderScanPage, STYLE, renderSalePaymentStepPage } = require('../src/views/scanPageRenderer');
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const {
   SELLABLE_STATES, SIZE_GROUP_RANGES, REALM_TEXTS, DEFAULT_REALM,
@@ -280,7 +299,8 @@ test('AC2 `from=sales` 尺码分两组：有货（样品+门盒）⇒ 现货；�
   //    原先这里钉着「资金不是必填…」那句（`fundsPendingNote`）**要在页面上写着**；
   //    现在它必须不存在。**不放宽**：能填能点的（尺码 / 实收金额 / 收款方式 + 两颗按钮）照旧。
   assert.equal(/资金不是必填|这一单先记了货/.test(sales), false, '资金那句说明必须删掉');
-  assert.ok(sales.includes('<option value="微信" selected>微信</option>'));
+  // ⭐ 2026-10-13 改指向：默认微信那一行**挪到第 2 步页**（能力去哪：renderSalePaymentStepPage）✓
+  assert.ok(step2Of().includes('<option value="微信" selected>微信</option>'));
 
   // ④ 降级（拿不到该类别尺码）时：第二组为空、页面上说明只显示有库存的尺码
   const degraded = saleSizeGroups({ ...VIEW, sizes_degraded: true });

@@ -24,10 +24,29 @@ const path = require('node:path');
 process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_gift_label';
 process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'gift_label_secret';
 
+/** ⭐ 2026-10-13「金额两步走」：这一组能力**整块挪到第 2 步页** ⇒ 断言在它该在的那一页做
+ *  （能力去哪：`renderSalePaymentStepPage`）。🔴 口径未放宽：字段名 / 标签 / 默认档一个字都没变 ✓
+ *  ⚠️ 这里**自带 require**，不依赖各文件顶部的局部名（各文件的导入风格不一样）。 */
+const step2Of = () => {
+  const { SCAN_WRITE: SW } = require('../src/config/scanWrite');
+  const { renderSalePaymentStepPage: renderStep2 } = require('../src/views/scanPageRenderer');
+  return renderStep2({
+    write: {
+      texts: SW.texts, fields: SW.fields, actions: SW.actions,
+      paymentMethods: SW.sale.paymentMethods,
+      defaultPaymentMethod: SW.sale.defaultPaymentMethod,
+      paymentRowCount: SW.sale.paymentRowCount,
+      paymentStatus: SW.sale.paymentStatus.default,
+      defaultPaymentStatus: SW.sale.paymentStatus.default,
+      paidAmount: '', draft: { lines: [] },
+    },
+  });
+};
+
 const { SCAN_WRITE } = require('../src/config/scanWrite');
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
-const { renderScanPage } = require('../src/views/scanPageRenderer');
+const { renderScanPage, renderSalePaymentStepPage } = require('../src/views/scanPageRenderer');
 
 const VIEW = {
   found: true, number: 'YD6693-2|黑色|A', item_no: 'YD6693-2', color: '黑色',
@@ -48,7 +67,9 @@ const WRITE = {
 test('AC-GL1 销售页这一列的标签 = 「赠品（可不填）」；不再出现「备注（可不填）」', () => {
   // 真渲染器 + 真配置：鞋表单与配品表单都在销售领域里 ⇒ 一次渲染覆盖两处 label。
   const html = renderScanPage(VIEW, SCAN_PAGE, WRITE, 'sales', {});
-  assert.ok(html.includes('赠品（可不填）'), '标签要写「赠品（可不填）」（她这次拍的）');
+  // ⭐ 2026-10-13 改指向：赠品那一行**整块挪到第 2 步页**（能力去哪：renderSalePaymentStepPage）
+  assert.ok(step2Of().includes('赠品（可不填）'), '第 2 步页的标签要写「赠品（可不填）」（她这次拍的）');
+  assert.equal(html.includes('赠品（可不填）'), false, '录入页（第 1 步）不再有它');
   assert.equal(html.includes('备注（可不填）'), false, '页面上**不许**再出现「备注（可不填）」');
   // ⚠️ 2026-10-13 **改写**（能力退场，不是放宽断言）：改前渲染层有**两处**读 `t.giftLabel`
   //    （鞋表单 + **配品表单**）；她的口径是「扫码页里的**配品逻辑拿掉**」（配品改到工作台）
@@ -64,8 +85,8 @@ test('AC-GL2 映射与读写逐字不变：语义键 gift · 表列名「赠品�
   assert.equal(SCAN_WRITE.fields.gift, 'gift', '语义键不许动（会话 / 写入链路都按它走）');
   assert.equal(V1_BITABLE_SCHEMA.tables.salesEntry.fields.gift, '赠品',
     '落点仍是「销售主表·赠品」那一列（表列名一个字都不动）');
-  const html = renderScanPage(VIEW, SCAN_PAGE, WRITE, 'sales', {});
-  assert.ok(html.includes(`name="${SCAN_WRITE.fields.gift}"`), '表单字段名不变（POST 的键还是 gift）');
+  // ⭐ 2026-10-13 改指向：`gift` 字段本身**一个字没变**，只是现在渲染在**第 2 步页** ✓
+  assert.ok(step2Of().includes(`name="${SCAN_WRITE.fields.gift}"`), '表单字段名不变（POST 的键还是 gift）');
 });
 
 test('AC-GL3 源码哨兵：`giftLabel` 的值里不许出现「备注」', () => {

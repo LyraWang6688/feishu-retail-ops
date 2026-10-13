@@ -152,8 +152,13 @@ function commentLineFlags(source) {
 
 test('AC-5b ⭐ 真文件：报出来的每一条都**不是注释**（本切片要治的"闸门说谎"）', () => {
   const relative = 'views/scanPageRenderer.js';
-  const source = fs.readFileSync(path.join(SRC, relative), 'utf8');
-  const flags = commentLineFlags(source);
+  const raw = fs.readFileSync(path.join(SRC, relative), 'utf8');
+  // ⭐ 2026-10-13（业务负责人裁定）：判"她看得见的文案"之前，**先整段剥掉 `<style>`** ——
+  //    CSS 注释/样式不是文案（`<style>` 里那些中文注释本来就在白名单里，不该被当成"报出来的文案"）。
+  //    🔴 **绝对不剥 `<script>`**：JS 里的字符串**就是用户可见文案**（见
+  //    `docs/js-literal-extraction-lessons-2026-10-13.md`）⇒ 脚本原样参与扫描，判据强度不变 ✓。
+  const source = raw.replace(/<style[\s\S]*?<\/style>/gi, '');
+  const flags = commentLineFlags(raw);
   const found = scanSource(relative, source);
   assert.ok(found.length > 5, `这个文件本来就是"文案大户"，应该扫出一堆（实际 ${found.length}）`);
   const fromComments = found.filter((item) => flags[item.line - 1]);

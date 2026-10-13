@@ -60,7 +60,26 @@ const express = require('express');
 process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_scan_draft_bar_test';
 process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'scan_draft_bar_secret';
 
-const { renderScanPage, renderScanMessagePage, canScanNextWithFeishu } = require('../src/views/scanPageRenderer');
+/** ⭐ 2026-10-13「金额两步走」：这一组能力**整块挪到第 2 步页** ⇒ 断言在它该在的那一页做
+ *  （能力去哪：`renderSalePaymentStepPage`）。🔴 口径未放宽：字段名 / 标签 / 默认档一个字都没变 ✓
+ *  ⚠️ 这里**自带 require**，不依赖各文件顶部的局部名（各文件的导入风格不一样）。 */
+const step2Of = () => {
+  const { SCAN_WRITE: SW } = require('../src/config/scanWrite');
+  const { renderSalePaymentStepPage: renderStep2 } = require('../src/views/scanPageRenderer');
+  return renderStep2({
+    write: {
+      texts: SW.texts, fields: SW.fields, actions: SW.actions,
+      paymentMethods: SW.sale.paymentMethods,
+      defaultPaymentMethod: SW.sale.defaultPaymentMethod,
+      paymentRowCount: SW.sale.paymentRowCount,
+      paymentStatus: SW.sale.paymentStatus.default,
+      defaultPaymentStatus: SW.sale.paymentStatus.default,
+      paidAmount: '', draft: { lines: [] },
+    },
+  });
+};
+
+const { renderScanPage, renderScanMessagePage, canScanNextWithFeishu, renderSalePaymentStepPage } = require('../src/views/scanPageRenderer');
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_WRITE, fillText } = require('../src/config/scanWrite');
 const { DEFAULT_REALM, resolveRealm, REALMS } = require('../src/views/scanPageRealm');
@@ -186,8 +205,11 @@ test('AC-DB2 【提交这一单】**有草稿才出现**（没有草稿时不渲
   const page = pageFor('sales', write);
   assert.equal((page.match(new RegExp(`value="${SCAN_WRITE.actions.submitOrder}"`, 'g')) || []).length, 1,
     '整页恰好一颗提交按钮');
-  assert.ok(page.includes(SCAN_WRITE.fields.paymentMethod), '那一颗按钮所在表单带着收款方式字段');
-  assert.ok(page.includes(SCAN_WRITE.fields.paymentAmount), '也带着收款金额字段');
+  // ⭐ 2026-10-13 改指向：整单收款那两件（方式 / 金额）**挪到第 2 步页** ⇒ 录入页那颗提交按钮
+  //   只带**每件实收**（line_amount）；整单收款由第 2 步那张表单带 ✓（钱的字段一个都不丢 ✓）
+  assert.ok(page.includes(SCAN_WRITE.fields.lineAmount), '录入页那颗按钮带着「每件实收」');
+  assert.ok(step2Of().includes(SCAN_WRITE.fields.paymentMethod), '第 2 步页带着收款方式字段');
+  assert.ok(step2Of().includes(SCAN_WRITE.fields.paymentAmount), '第 2 步页也带着收款金额字段');
   assert.ok(page.includes(submitText) || page.includes(SCAN_WRITE.texts.submitButtonCount.replace('{count}', '2')),
     '销售块那颗就是【提交这一单】（带双数）');
 });

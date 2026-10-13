@@ -40,6 +40,25 @@ const express = require('express');
 process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_scan_accessory_test';
 process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'scan_accessory_test_secret';
 
+/** ⭐ 2026-10-13「金额两步走」：这一组能力**整块挪到第 2 步页** ⇒ 断言在它该在的那一页做
+ *  （能力去哪：`renderSalePaymentStepPage`）。🔴 口径未放宽：字段名 / 标签 / 默认档一个字都没变 ✓
+ *  ⚠️ 这里**自带 require**，不依赖各文件顶部的局部名（各文件的导入风格不一样）。 */
+const step2Of = () => {
+  const { SCAN_WRITE: SW } = require('../src/config/scanWrite');
+  const { renderSalePaymentStepPage: renderStep2 } = require('../src/views/scanPageRenderer');
+  return renderStep2({
+    write: {
+      texts: SW.texts, fields: SW.fields, actions: SW.actions,
+      paymentMethods: SW.sale.paymentMethods,
+      defaultPaymentMethod: SW.sale.defaultPaymentMethod,
+      paymentRowCount: SW.sale.paymentRowCount,
+      paymentStatus: SW.sale.paymentStatus.default,
+      defaultPaymentStatus: SW.sale.paymentStatus.default,
+      paidAmount: '', draft: { lines: [] },
+    },
+  });
+};
+
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_WRITE, PAYMENT_STATUS } = require('../src/config/scanWrite');
@@ -48,7 +67,7 @@ const { createScanSessionService } = require('../src/services/scanSessionService
 const { SalesDeliveryService } = require('../src/services/salesDeliveryService');
 const { SalesOrderService } = require('../src/services/salesOrderService');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
-const { renderScanPage } = require('../src/views/scanPageRenderer');
+const { renderScanPage, renderSalePaymentStepPage } = require('../src/views/scanPageRenderer');
 const { createScanPageRouter } = require('../src/routes/scanPage');
 
 const NUMBER = 'YD6693-2|黑色|A';
@@ -367,7 +386,8 @@ test('AC-B6 录入页**不再有配品块**（能力改到工作台 ✓）· 服
   const salesBlock = html.slice(html.indexOf('realm-block--sales'));
   assert.equal(salesBlock.includes(SCAN_WRITE.texts.accessoryLabel), false, '录入页（销售块）里配品标签必须没了');
   // ⚠️ 别删错：备注（写「赠品」）与鞋的加单入口必须还在 ✓
-  assert.match(html, new RegExp(`name="${SCAN_WRITE.fields.gift}"`), '「备注（可不填）」仍在（②里还要用）');
+  // ⭐ 2026-10-13 改指向：赠品输入框**仍在**（能力没退场），但渲染在**第 2 步页** ✓
+  assert.match(step2Of(), new RegExp(`name="${SCAN_WRITE.fields.gift}"`), '赠品输入框仍在（在第 2 步页）');
   assert.match(html, new RegExp(`name="${SCAN_WRITE.fields.action}" value="${SCAN_WRITE.actions.addLine}"`),
     '鞋的【加入本单】/【还要加一双】必须还在（别删错 ✗）');
 

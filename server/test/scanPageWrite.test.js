@@ -60,6 +60,25 @@ const express = require('express');
 process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_scan_write_test';
 process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'scan_write_test_secret';
 
+/** ⭐ 2026-10-13「金额两步走」：这一组能力**整块挪到第 2 步页** ⇒ 断言在它该在的那一页做
+ *  （能力去哪：`renderSalePaymentStepPage`）。🔴 口径未放宽：字段名 / 标签 / 默认档一个字都没变 ✓
+ *  ⚠️ 这里**自带 require**，不依赖各文件顶部的局部名（各文件的导入风格不一样）。 */
+const step2Of = () => {
+  const { SCAN_WRITE: SW } = require('../src/config/scanWrite');
+  const { renderSalePaymentStepPage: renderStep2 } = require('../src/views/scanPageRenderer');
+  return renderStep2({
+    write: {
+      texts: SW.texts, fields: SW.fields, actions: SW.actions,
+      paymentMethods: SW.sale.paymentMethods,
+      defaultPaymentMethod: SW.sale.defaultPaymentMethod,
+      paymentRowCount: SW.sale.paymentRowCount,
+      paymentStatus: SW.sale.paymentStatus.default,
+      defaultPaymentStatus: SW.sale.paymentStatus.default,
+      paidAmount: '', draft: { lines: [] },
+    },
+  });
+};
+
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_WRITE, PAYMENT_STATUS } = require('../src/config/scanWrite');
@@ -532,6 +551,35 @@ const login = () => {
   delete process.env.WORKBENCH_ALLOWED_OPEN_IDS;
 };
 
+
+/**
+ * ⭐ 2026-10-13「金额两步走」：提交成功后**先落到第 2 步「整单付款」页**
+ * （能力去哪：`renderSalePaymentStepPage`），她点【跳过（稍后去工作台补）】才到**成功页**。
+ * ⇒ 原本「提交后看到成功页」的用例，跟着这一跳再取一次页面 ✓（成功页的断言**一条没放宽** ✓）。
+ * ⚠️ 形状与 `scanSaleE2E.test.js` 那份**逐字同形**（同一个动作 `payment_skip` ✓ 零 JS ✓）。
+ */
+const followPaymentStep = async (base, cookie, response) => {
+  const html = await response.clone().text().catch(() => '');
+  if (!html.includes('data-view="payment-step"')) return response;
+  const form = (html.match(/<form[^>]*>[\s\S]*?<\/form>/g) || [])
+    .find((item) => item.includes('payment_skip'));
+  if (!form) return new Response(html, { status: response.status, headers: { 'content-type': 'text/html' } });
+  const actionUrl = (form.match(/action="([^"]*)"/) || [])[1] || '';
+  const params = new URLSearchParams();
+  for (const input of form.match(/<input[^>]*>/g) || []) {
+    const name = (input.match(/name="([^"]*)"/) || [])[1];
+    const value = (input.match(/value="([^"]*)"/) || [])[1] || '';
+    if (name) params.append(name.replace(/&amp;/g, '&'), value.replace(/&amp;/g, '&'));
+  }
+  const url = (actionUrl.startsWith('http') ? actionUrl : `${base}${actionUrl}`).replace(/&amp;/g, '&');
+  return fetch(url, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+    body: params.toString(),
+  });
+};
+
 const withServer = async (app, run) => {
   const server = await new Promise((resolve) => { const instance = app.listen(0, () => resolve(instance)); });
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -600,7 +648,8 @@ test('⑧ 页面上的两个写入口：默认收款方式「微信」+ 缺码�
       assert.equal(saleHtml.includes('销售（可以连着扫，最后一起提交）'), false, '销售那句说明必须删掉');
       assert.match(saleHtml, /加入本单/);
       // 默认选中「微信」
-      assert.match(saleHtml, new RegExp(`<option value="微信" selected>微信</option>`));
+      // ⭐ 2026-10-13 改指向：默认微信那一行**挪到第 2 步页**（能力去哪：renderSalePaymentStepPage）
+      assert.match(step2Of(), new RegExp(`<option value="微信" selected>微信</option>`));
       // 幂等键在表单里（这一把就是"连点两次只写一次"的判据）
       assert.match(saleHtml, /name="submit_key" value="scan_sale:scan_session_[0-9a-f]{16}:1"/);
 
@@ -679,14 +728,16 @@ test('⑧ 路由：加入本单 → 回跳带上"本单几双"；提交整单 �
       assert.match(afterHtml, /YD6693-2 · 40 码/);
 
       // 提交整单（带收款）：结果页给她单号 + 明细分行 + 收款那句
-      const submitted = await fetch(pageUrl, {
+      // ⭐ 2026-10-13 改指向：提交成功先落第 2 步「整单付款」页 ⇒ 跟着【跳过】那一跳再取页面 ✓
+      //    （能力去哪：renderSalePaymentStepPage → payment_skip 动作）
+      const submitted = await followPaymentStep(base, sessionCookie(openId), await fetch(pageUrl, {
         method: 'POST',
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           action: SCAN_WRITE.actions.submitOrder, submit_key: saleKey,
           payment_method: '现金', payment_amount: '100', [SCAN_WRITE.fields.lineAmount]: '100',
         }).toString(),
-      });
+      }));
       assert.equal(submitted.status, 200);
       const doneHtml = await submitted.text();
       assert.match(doneHtml, /您的提交已成功/);
@@ -710,7 +761,9 @@ test('⑧ 路由：补货表单勾两个尺码 → 采购申请结果页（批�
       // ⚠️ 补货表单在 `from=replenish` 那一块（服务端只渲染当前领域）
       const html = await (await fetch(`${pageUrl}?from=replenish`, { headers: { cookie: sessionCookie(openId) } })).text();
       const replenishKey = html.match(/name="submit_key" value="(scan_replenish:[^"]+)"/)[1];
-      const response = await fetch(pageUrl, {
+      // ⭐ 2026-10-13 改指向：提交成功先落第 2 步「整单付款」页 ⇒ 跟着【跳过】那一跳再取页面 ✓
+      //    （能力去哪：renderSalePaymentStepPage → payment_skip 动作）
+      const response = await followPaymentStep(base, sessionCookie(openId), await fetch(pageUrl, {
         method: 'POST',
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
@@ -719,7 +772,7 @@ test('⑧ 路由：补货表单勾两个尺码 → 采购申请结果页（批�
           sizes: '40',
           qty_40: '3',
         }).toString(),
-      });
+      }));
       assert.equal(response.status, 200);
       const doneHtml = await response.text();
       assert.match(doneHtml, /采购申请已生成/);
@@ -743,14 +796,16 @@ test('⑨ 没单价又没填金额 ⇒ **照样成单**（那一列留空），�
     await withServer(formApp(h, async () => view({
       number: 'YD1111|白色|A', item_no: 'YD1111', product_record_id: 'prod_2',
     })), async (base) => {
-      const response = await fetch(`${base}/s/${encodeURIComponent('YD1111|白色|A')}`, {
+      // ⭐ 2026-10-13 改指向：提交成功先落第 2 步「整单付款」页 ⇒ 跟着【跳过】那一跳再取页面 ✓
+      //    （能力去哪：renderSalePaymentStepPage → payment_skip 动作）
+      const response = await followPaymentStep(base, sessionCookie(openId), await fetch(`${base}/s/${encodeURIComponent('YD1111|白色|A')}`, {
         method: 'POST',
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           action: SCAN_WRITE.actions.submitOrder, submit_key: key,
           payment_status: PAYMENT_STATUS.unpaid,
         }).toString(),
-      });
+      }));
       // ⚠️ 2026-10-11（方案甲）**改写**：改前这里是 400 + 一句"没有单价，请填实收"
       //    （那时"留空 ⇒ 读单价"，读不到就只能拦）；现在**没填就留空** ⇒ 直接成单。
       assert.equal(response.status, 200, '没填实收不再是失败 ⇒ 成功结果页（200）');
@@ -1071,9 +1126,10 @@ test('AC-DB5 ⭐ 一单多双·多次扫码：扫 A 加单 → 扫 B 加单 → 
         'B 页那颗按钮写着"提交这一单（2 双）"');
 
       // ⑤ 就在 B 页提交这一单 → **一张主表 + 两行明细**
-      const submitted = await post(urlB, {
+      // ⭐ 2026-10-13 改指向：提交成功先落第 2 步页 ⇒ 跟完【跳过】那一跳再断言 ✓
+      const submitted = await followPaymentStep(base, cookie, await post(urlB, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: keyB, payment_status: PAYMENT_STATUS.unpaid,
-      });
+      }));
       assert.equal(submitted.status, 200);
       const doneHtml = await submitted.text();
       assert.match(doneHtml, /您的提交已成功/);
