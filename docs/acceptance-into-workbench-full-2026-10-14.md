@@ -51,3 +51,16 @@
 - 拆验收 cut A/B 删的是**扫码页那一屏**（`/s/accept` 路由 + 渲染 + 路由分支 ✓）
 - ⭐ **本件删的是"入口"，不是"能力"** ⇒ `scanArrivalService` 与 `applyPurchase` **必须留着** ✓（工作台在用 ✓）
 - ⇒ 顺序：**cut A 合完** ⇒ 我做本件 ✓（同一片 `routes/workbench.js` ＋ `features/orders/index.js` 不并行 ✗）
+
+---
+
+## 六、实现踩坑（2026-10-14 · 落文件备查 ✓）
+
+⭐ **测试装载前端 feature 的方式**：`test/order-states*.test.js` 那几套会把
+`public/workbench/features/orders/index.js` **拷到临时目录**再动态 `import`（临时目录里 `orders-index.mjs`）。
+⇒ 该 feature **新增的 import 必须在那个上下文里也能解析**：
+**同一屏的新前端配置优先并入既有 `config/orders.js`**（它本来就被这个 feature import ✓），
+**不要**为同一屏再开一个独立的 `config/*.js` ✗ —— 临时目录里解析不到 ⇒ **一次打红 ~40 条** ✗
+（2026-10-14 实测踩过 ✓；修法 = 把常量并进 `config/orders.js` ✓ 见 9 个文件里那条 diff ✓）。
+⚠️ 反向提示：若将来确实要独立配置文件 ⇒ **同时**改那几套测试的临时目录装载方式（把新配置一起拷过去 ✓），
+否则"本地单跑绿、全量红"会反复出现 ✗。
