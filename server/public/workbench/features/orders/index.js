@@ -11,6 +11,7 @@ import {
   ORDERS_SUB_TABS, SALES_GROUPS, SALES_SECTIONS, DELIVERED_FULFILLMENT, PAID_PAYMENT_STATUS,
   ARRIVAL_CONFIRM, ARRIVAL_STATUS_PENDING, ARRIVAL_STATUS_ARRIVED,
 } from '../../config/orders.js';
+import { ARRIVAL_FULL_API, ARRIVAL_FULL_FIELDS, ARRIVAL_FULL_TEXTS } from '../../config/orders.js';
 
 // 工作台【订单列表】（业务负责人 2026-10-09）—— 一级 tab 的第三个。
 //
@@ -385,6 +386,18 @@ const purchaseBatchCardHtml = (batch) => `
         <details class="action-form" data-action-block="verify-arrival" data-arrival-batch="${escapeHtml(batch.batch_no)}">
           <summary>${escapeHtml(T.arrivalVerifyTitle)}</summary>
           <div class="action-body">
+            <div data-view="arrival-detail" data-batch="${escapeHtml(batch.batch_no)}"></div>
+            <div class="form-field" data-view="arrival-custom-size">
+              <span>${escapeHtml(ARRIVAL_FULL_TEXTS.customSizeLabel)}</span>
+              <input data-field="custom-size" type="text" inputmode="numeric" placeholder="${escapeHtml(ARRIVAL_FULL_TEXTS.customSizePlaceholder)}">
+              <input data-field="custom-quantity" type="text" inputmode="numeric" placeholder="${escapeHtml(ARRIVAL_FULL_TEXTS.customQuantityPlaceholder)}">
+            </div>
+            <div class="form-field" data-view="arrival-custom-item">
+              <span>${escapeHtml(ARRIVAL_FULL_TEXTS.customItemNoLabel)}</span>
+              <input data-field="custom-item-no" type="text" placeholder="${escapeHtml(ARRIVAL_FULL_TEXTS.customItemNoPlaceholder)}">
+              <input data-field="custom-item-size" type="text" inputmode="numeric" placeholder="${escapeHtml(ARRIVAL_FULL_TEXTS.customSizePlaceholder)}">
+              <input data-field="custom-item-quantity" type="text" inputmode="numeric" placeholder="${escapeHtml(ARRIVAL_FULL_TEXTS.customQuantityPlaceholder)}">
+            </div>
             <label class="form-field">${escapeHtml(T.arrivalAmount)}
               <input data-field="arrival-amount" type="text" inputmode="decimal" placeholder="${escapeHtml(ARRIVAL_CONFIRM.amountPlaceholder)}">
             </label>
@@ -863,6 +876,42 @@ export function createOrdersModule({ mode = 'both' } = {}) {
    * 「验收到货」：把这张卡上的批次 + 实际金额 + 到货说明交给后端既有入库链路。
    * ⚠️ 金额必填（既有口径）；校验放在提交前，后端还会再判一次（两道）。
    */
+  /** 明细（只读）：展开时拉一次 `GET /purchase/arrivals/detail` ✓ 失败给人话 ✗ */
+  async function loadArrivalDetail(host) {
+    const box = host.querySelector('[data-view="arrival-detail"]');
+    const batchNo = box?.dataset?.batch || '';
+    if (!box || !batchNo || box.dataset.loaded === '1') return;
+    box.dataset.loaded = '1';
+    try {
+      const res = await api.get(`${ARRIVAL_FULL_API.detail}?${ARRIVAL_FULL_FIELDS.batchNo}=${encodeURIComponent(batchNo)}`);
+      const rows = Array.isArray(res?.rows) ? res.rows : [];
+      state.arrivalRows = rows;
+      box.innerHTML = rows.length
+        ? `<ul class="order-lines">${rows.map((row) => `<li class="order-line"><span class="line-product">${escapeHtml(row.item_no || '')}</span><span class="line-size">${escapeHtml(String(row.size ?? ''))}</span><span class="line-amount">×${escapeHtml(String(row.quantity ?? 0))}</span></li>`).join('')}</ul>`
+        : `<p>${escapeHtml(ARRIVAL_FULL_TEXTS.detailEmpty)}</p>`;
+    } catch (error) {
+      box.innerHTML = `<p>${escapeHtml(ARRIVAL_FULL_TEXTS.detailFailed)}</p>`;
+    }
+  }
+
+  /** 自定义货号 ⇒ `record_id`（走**既有**货品读取口 ✓ 不打新接口 ✗） */
+  async function resolveItemNo(itemNo) {
+    const wanted = String(itemNo || '').trim().toLowerCase();
+    if (!wanted) return '';
+    try {
+      const res = await api.get(`${ARRIVAL_FULL_API.products}?keyword=${encodeURIComponent(itemNo)}`);
+      const rows = Array.isArray(res?.rows) ? res.rows : [];
+      const exact = rows.find((row) => String(row.item_no || '').trim().toLowerCase() === wanted)
+        || rows.find((row) => String(row.product_number || '').trim().toLowerCase() === wanted);
+      return (exact || rows[0])?.record_id || '';
+    } catch (error) {
+      return '';
+    }
+  }
+
+  /** 这一批的第一条明细（自定义尺码要挂在某个款上 ⇒ 用刚读到的明细 ✓ 不猜 ✗） */
+  const firstArrivalRow = () => (Array.isArray(state.arrivalRows) ? state.arrivalRows[0] : null);
+
   async function submitArrival(button) {
     const batchNo = button.dataset.batch || '';
     const form = state.container.querySelector(`[data-arrival-batch="${batchNo}"]`);
@@ -878,12 +927,42 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     return runWriteAction(button, async () => {
       renderResult('');
       try {
-        const result = await api.post(ORDERS_API.arrivalConfirm, {
-          batchNo, actualAmount: Number(rawAmount), acceptanceText,
+        // 2026-10-14: custom size + custom item-no lines go through the NEW accept endpoint
+        //   (it reuses the same arrival session service; the session's own submitKey keeps it idempotent)
+        const lines = [];
+        const customSize = read('custom-size');
+        const customQuantity = read('custom-quantity');
+        if (customSize || customQuantity) {
+          const row = firstArrivalRow() || {};
+          if (!row.product_record_id) return renderResult(ARRIVAL_FULL_TEXTS.detailFailed, true);
+          lines.push({
+            [ARRIVAL_FULL_FIELDS.productRecordId]: row.product_record_id,
+            [ARRIVAL_FULL_FIELDS.size]: Number(customSize),
+            [ARRIVAL_FULL_FIELDS.quantity]: Number(customQuantity || 1),
+          });
+        }
+        const itemNo = read('custom-item-no');
+        if (itemNo) {
+          const found = await resolveItemNo(itemNo);
+          if (!found) return renderResult(ARRIVAL_FULL_TEXTS.itemNoNotFound, true);
+          lines.push({
+            [ARRIVAL_FULL_FIELDS.productRecordId]: found,
+            [ARRIVAL_FULL_FIELDS.size]: Number(read('custom-item-size')),
+            [ARRIVAL_FULL_FIELDS.quantity]: Number(read('custom-item-quantity') || 1),
+          });
+        }
+        const result = lines.length === 0
+          // 没有自定义行 ⇒ 仍走**既有**整批一键（口径一字不变 ✓）
+          ? await api.post(ORDERS_API.arrivalConfirm, { batchNo, actualAmount: Number(rawAmount), acceptanceText })
+          : await api.post(ARRIVAL_FULL_API.accept, {
+          [ARRIVAL_FULL_FIELDS.batchNo]: batchNo,
+          [ARRIVAL_FULL_FIELDS.actualAmount]: Number(rawAmount),
+          [ARRIVAL_FULL_FIELDS.acceptanceText]: acceptanceText,
+          [ARRIVAL_FULL_FIELDS.lines]: lines,
         });
         // 列表数据是唯一事实来源：重新读一次（到货状态会跟着更新）
         await loadPurchaseOrders();
-        renderResult(result.alreadyPosted
+        renderResult((result.notice ? result.notice : '') || result.alreadyPosted
           ? `这批（${batchNo}）已经验收入库过了，没有重复入库。`
           : (result.message || `这批（${batchNo}）已验收入库。`));
         return true;
@@ -1170,6 +1249,10 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       if (action === 'submit-arrival') return submitArrival(trigger);
       return undefined;
     });
+    state.container.addEventListener('toggle', (event) => {
+      const node = event.target;
+      if (node?.matches?.('details[data-action-block="verify-arrival"]') && node.open) loadArrivalDetail(node);
+    }, true);
     state.container.addEventListener('change', (event) => {
       const target = event.target;
       if (target.matches('[data-field="after-sales-action"], input[name="new-line-mode"]')) {
