@@ -402,12 +402,16 @@ test('AC-W7 路由按 `?from` 分派（认不出的回落**销售**，任何情�
     ['?from=inventory', 'inventory', ['加入本单', '补货报单']],
     ['?from=replenish', 'replenish', ['加入本单', '库存（共']],
     ['?from=purchase_return', 'purchase_return', ['加入本单', '库存（共', '一键补货']],
-    // ⭐⭐ 2026-10-14 晚 **改指向**（依据：她「`/s/accept` 这条路要彻底拆掉」）
-    //   改前逐字：`['?from=accept', 'accept', ['加入本单', '库存（共', '一键补货']]`
-    //     （那时这一页是**验收自助块** ⇒ 那句"不该出现 加入本单"成立 ✗）
-    //   改后：这一页**回落成建单那块的正文**（`accept` 仍能解析 ⇒ 标记还是 `realm-block--accept` ✓）
-    //     ⇒ 「加入本单」**现在应当出现** ✓（它不再是验收页 ✗）
-    ['?from=accept', 'accept', ['库存（共', '一键补货']],
+    // ⭐⭐ 2026-10-14 晚 **cut B 改指向**（依据：她「`/s/accept` 这条路要彻底拆掉」＋ Lead 的 cut B 清单）：
+    //   改前逐字：`['?from=accept', 'accept', ['库存（共', '一键补货']]`
+    //     （cut A 之后这一页已经回落成"建单正文"，但 `accept` **当时仍在 REALMS** ⇒ 标记还是
+    //      `realm-block--accept`、`accept` 仍能解析 ✓ —— 那句注释说的就是这件事）
+    //   改后逐字：`['?from=accept', 'sales', ['库存（共']]`
+    //     （`accept` 已退出 REALMS ⇒ 与 `?from=purchase` / `?from=这个领域不存在` **同一条口径**：
+    //      认不出 ⇒ 回落缺省（销售）⇒ 标记 `realm-block--sales`、正文 = 销售那块 ✓）
+    //   依据：`resolveRealm('accept') === 'sales'`（本 PR 的 `acceptLanding*` AC-OFF3 也翻成这条 ✓）；
+    //     判据**没放宽**：下面那个 `id !== realm` 的循环照旧逐块钉「页面里只有当前那一块」✓
+    ['?from=accept', 'sales', ['库存（共']],
     // ⚠️ 已退役的领域名（`purchase`）⇒ **回落销售**（既有口径：认不出的值一律回落缺省）
     ['?from=purchase', 'sales', ['库存（共']],
     ['?from=product', 'product', ['加入本单', '库存（共']],
@@ -463,13 +467,18 @@ test('AC-W4/W7 结果页（没找到 / 链接不对）也永远有人话（既�
 });
 
 test('领域配置是唯一真源（加减领域只改 views/scanPageRealm.js）', () => {
-  // ⭐⭐ 2026-10-14 晚 **改指向**（依据：她「`/s/accept` 这条路要彻底拆掉」）：
-  //   改前逐字：`assert.deepEqual(REALMS.map((realm) => realm.id), ALL_REALMS)`
-  //   改后：`accept` 在 REALMS 里**还能解析**（旧链接回落销售 ✓）但**不再是页面领域** ⇒ 它不在本文件的清单里 ✓
-  assert.deepEqual(REALMS.map((realm) => realm.id).filter((id) => id !== 'accept'), ALL_REALMS,
-    '页面领域 = 清单（`accept` 已退场 ⇒ 不再算页面领域 ✓）');
-  assert.equal(REALMS.some((realm) => realm.id === 'accept'), true,
-    'cut A：`accept` 仍在 REALMS（能解析 ⇒ 旧链接不报错 ✓）；cut B 删它时这条会翻成 false ✓');
+  // ⭐⭐ 2026-10-14 晚 **cut B 成对翻新**（依据：业务负责人逐字「**`/s/accept` 这条路要彻底拆掉**」
+  //    ＋ Lead 的 cut B 清单「REALMS 删 `accept`」）：
+  //   改前逐字：`assert.deepEqual(REALMS.map((realm) => realm.id).filter((id) => id !== 'accept'), ALL_REALMS, …)`
+  //             ＋ `assert.equal(REALMS.some((realm) => realm.id === 'accept'), true, 'cut A：…cut B 删它时这条会翻成 false ✓');`
+  //   改后逐字：`assert.deepEqual(REALMS.map((realm) => realm.id), ALL_REALMS, …)`（**去掉那个 filter** ——
+  //             `accept` 已经不在了）+ `assert.equal(REALMS.some((realm) => realm.id === 'accept'), false, 'cut B：…')`
+  //   依据：cut B 就是"领域本身退场"这一步（cut A 拆路、cut B 拆领域）⇒ 这两条正是那时该翻的哨兵 ✓
+  //   判据没放宽：`REALMS` 与 `ALL_REALMS` **逐字相等**（比原来那个"先过滤再比"更严 ✓）
+  assert.deepEqual(REALMS.map((realm) => realm.id), ALL_REALMS,
+    '页面领域 = 清单（`accept` 已在 cut B 从 REALMS 删掉 ✓）');
+  assert.equal(REALMS.some((realm) => realm.id === 'accept'), false,
+    'cut B：`accept` 已退出 REALMS（旧 `?from=accept` 回落销售 ✓ 不报错、不白屏 ✓）');
   assert.equal(DEFAULT_REALM, 'sales');
   // 领域文案也在配置里（渲染层不写死句子）—— ⭐ 2026-10-10 之后只留**功能性的字**
   for (const key of ['barLabel', 'labelHeading', 'labelSingleButton', 'labelBatchButton',

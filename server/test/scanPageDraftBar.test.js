@@ -447,7 +447,14 @@ test('AC-DB7 【加入本单】的 303 回跳**停在本单所在的领域**（�
 
 test('AC-DB8 默认领域 = **销售**；`?from=` 四个值照旧可用（认不出的回落销售）', () => {
   assert.equal(DEFAULT_REALM, 'sales', '她 2026-10-11：「默认打开是销售页」');
-  for (const id of ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product']) assert.equal(resolveRealm(id), id);
+  // ⭐⭐ 2026-10-14 晚 **cut B 成对翻新**（依据：业务负责人逐字「**`/s/accept` 这条路要彻底拆掉**」
+  //    ＋ Lead 的 cut B 清单「REALMS 删 `accept`」）：
+  //    改前逐字：`for (const id of ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product']) assert.equal(resolveRealm(id), id);`
+  //    改后逐字：列表**去掉 `'accept'`**（它已退出 REALMS）＋ 单独一条把它钉成**回落销售** ✓
+  //    依据：`accept` 现在与 `?from=purchase` / `?from=accessory` / `?from=new` 同一条口径；
+  //      判据没放宽：其余五个领域的"能解析到自己"逐字不变 ✓
+  for (const id of ['sales', 'replenish', 'purchase_return', 'inventory', 'product']) assert.equal(resolveRealm(id), id);
+  assert.equal(resolveRealm('accept'), 'sales', 'cut B：accept 已退出 REALMS ⇒ 旧链接回落销售 ✓');
   for (const bad of [undefined, null, '', '   ', 'bogus', '库存']) {
     assert.equal(resolveRealm(bad), 'sales', `认不出的 from「${String(bad)}」必须回落缺省（销售）`);
   }

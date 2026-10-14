@@ -64,8 +64,17 @@ test('AC-RB1 ⭐ 六 tab 名称与顺序逐字 = 销售·补货·库存·退货�
   assert.equal(REALM_TABS.length, 4, '条上就四个');
   assert.equal(REALM_TABS.some((realm) => realm.id === 'accessory'), false, '配品不在扫码页 ✓');
   assert.equal(REALM_TABS.some((realm) => realm.id === 'new'), false, '上新不在扫码页 ✓');
-  assert.equal(REALM_TABS.some((realm) => realm.id === 'accept'), false, '验收不上条（有会话才切进来）');
-  assert.equal(REALMS.some((realm) => realm.id === 'accept'), true, '但验收必须仍能解析 ✓');
+  // ⭐⭐ 2026-10-14 晚 **cut B 成对翻新**（依据：业务负责人逐字「**`/s/accept` 这条路要彻底拆掉**」
+  //    ＋ Lead 的 cut B 清单「REALMS 删 `accept`」）：
+  //    改前逐字：`assert.equal(REALM_TABS.some((realm) => realm.id === 'accept'), false, '验收不上条（有会话才切进来）');`
+  //             ＋ `assert.equal(REALMS.some((realm) => realm.id === 'accept'), true, '但验收必须仍能解析 ✓');`
+  //    改后逐字：第一条**照旧**（它本来就要求"不在条上" ✓）；第二条翻成 **false**
+  //      （`accept` 连 REALMS 都不在了 ⇒ 旧 `?from=accept` 回落销售，与 `product` 的区别正在这里：
+  //       `product` 仍在 REALMS（只是不上条）⇒ 下面那三条 product 的断言逐字不变 ✓）
+  //    判据没放宽：条上**4 格**（上面那条 deepEqual 逐字不变）· `accept` 不许能解析 ✓
+  assert.equal(REALM_TABS.some((realm) => realm.id === 'accept'), false, '验收不上条（已整格退场）');
+  assert.equal(REALMS.some((realm) => realm.id === 'accept'), false, 'cut B：验收**已退出 REALMS** ⇒ 旧链接回落销售 ✓');
+  assert.equal(resolveRealm('accept'), 'sales', '旧 ?from=accept ⇒ 认不出 ⇒ 回落缺省（销售）✓');
   // ⭐ 标签：**不在条上**，但**必须仍能解析**（旧 `?from=product` 链接不能死 ✗）
   assert.equal(REALM_TABS.some((realm) => realm.id === 'product'), false, '标签整格撤下条 ✓');
   assert.equal(REALMS.some((realm) => realm.id === 'product'), true, '但标签必须仍能解析 ✓');
