@@ -151,8 +151,14 @@ export const ARRIVAL_CONFIRM = {
  *    这是唯一**不用换标签**的做法（校验扫码也必须走那一页）。
  * ⚠️ URL 只在这里写一次（渲染层 import 它，不复制字面量）。
  */
+// ⭐⭐ 2026-10-14 晚 cut B（改前逐字 → 改后逐字 → 依据）：
+//   改前逐字：`export const ARRIVAL_SCAN = { pagePath: '/s/accept', buttonLabel: '扫码验收' };`
+//   改后逐字：**`pagePath` 那一行删掉**（常量本身保留 ——
+//     `test/scanAcceptance.test.js` 钉着「`ARRIVAL_SCAN` 常量保留 ✓」，且它确实**没有活引用**：
+//     工作台入口早已改成工作台内的 confirm 表单，见
+//     `test/workbenchAcceptanceInPlace.test.js` AC-AW1/AW4 ✓）
+//   依据：业务负责人逐字「**`/s/accept` 这条路要彻底拆掉**」⇒ 这条指向它的 URL 是死的 ✗。
 export const ARRIVAL_SCAN = {
-  pagePath: '/s/accept',
   buttonLabel: '扫码验收',
 };
 

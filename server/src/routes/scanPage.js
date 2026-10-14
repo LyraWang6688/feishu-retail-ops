@@ -392,7 +392,13 @@ const createScanPageRouter = (options = {}) => {
     if (a === writeConfig.actions.submitOrder) return 'sales';
     if (a === writeConfig.actions.submitReplenish) return 'replenish';
     if (a === writeConfig.actions.submitPurchaseReturn) return 'purchase_return';
-    if (a === writeConfig.actions.acceptFinish || a === writeConfig.actions.acceptFinishRows) return 'accept';
+    // ⭐⭐ 2026-10-14 晚 cut B（改前逐字 → 改后逐字 → 依据）：
+    //   改前逐字：`if (a === writeConfig.actions.acceptFinish || a === writeConfig.actions.acceptFinishRows) return 'accept';`
+    //   改后逐字：**这一行删掉**
+    //   依据：扫码页「完成验收」那两个动作的 handler 已在 cut A 退场（`POST /s/accept` 那条路
+    //     也拆了 ⇒ 它们**到不了这里**）；而 `accept` 又在 cut B 从 `REALMS` 退场 ⇒
+    //     留着它就是「记下一个**已不存在的领域 id**」
+    //     （`resolveRealm` 会把它回落成销售 ⇒ 语义上骗人 ✗）。
     return '';
   };
 

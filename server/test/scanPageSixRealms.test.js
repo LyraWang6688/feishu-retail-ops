@@ -206,27 +206,36 @@ const sixRealmApp = (arrival) => {
 
 const scriptCountOf = (html) => (html.match(/<script[\s>]/gi) || []).length;
 
-test('AC-6R1 六个领域逐字 = 销售 · 补货 · 退货 · 验收 · 库存 · 货品（purchase 不在清单里）', () => {
+test('AC-6R1 五个领域逐字 = 销售 · 补货 · 库存 · 退货 · 标签（`purchase` / `accept` 都不在清单里）', () => {
   // ⚠️ 2026-10-13 **改写**（逐字）：
   //    改前：`['sales','replenish','purchase_return','accept','inventory','product']`
   //    改后：`['sales','replenish','inventory','product','new','purchase_return','accept']`
-  //    理由：`REALMS` 是**解析用**的全集（7 条）——顺序 = 她 2026-10-13 的最终顺序
+  //    理由：`REALMS` 是**解析用**的全集 ——顺序 = 她 2026-10-13 的最终顺序
   //          （销售·补货·库存 / 标签·上新·配品）＋ `accept` 仍在里面（有会话才切进来的模式 ⇒
   //           必须解析得出来 ✗ 删了验收就进不去）；**条上只六个** = 下面的 `REALM_TABS` ✓
+  // ⭐⭐ 2026-10-14 晚 **cut B 成对翻新**（依据：业务负责人逐字「**`/s/accept` 这条路要彻底拆掉**」
+  //    ＋ Lead 的 cut B 清单「REALMS 删 `accept`」）：
+  //    改前逐字：期望列表尾部还有 `'accept'`（`… 'purchase_return', 'product', 'accept'`）
+  //              ＋ 下面 `assert.equal(REALMS.some((realm) => realm.id === 'accept'), true, '验收领域必须还能解析 ✓');`
+  //    改后逐字：列表去掉 `'accept'`（**REALMS 与期望逐字相等**）
+  //              ＋ 那条翻成 **false**（`accept` 已退出 REALMS ⇒ 旧 `?from=accept` 回落销售 ✓）
+  //    判据没放宽：这是一条 `deepEqual`（多一个少一个都红 ✓）
   assert.deepEqual(REALMS.map((realm) => realm.id),
     // ⚠️ 2026-10-14 改指向（业务负责人最终口径：销售·补货·库存·退货·配品·上新 ✓
 //   见 docs/scan-page-tabs-2026-10-14.md）；改前逐字：['sales', 'replenish', 'inventory', 'product', 'new', 'purchase_return', 'accept']
-['sales', 'replenish', 'inventory', 'purchase_return', 'product', 'accept']);
+['sales', 'replenish', 'inventory', 'purchase_return', 'product']);
   // ⚠️ 2026-10-13 **改写**（她最终顺序）：「第一行：销售 · 补货 · 库存；第二行：标签 · 上新 · 配品」
   //    ⇒ 退货彻底不在扫码页（挪去工作台）；货品 → **标签**；多一个 **上新**（外链）✓
   // ⚠️ 2026-10-13：**条上六个** = REALM_TABS（验收**不在条上** ✓ 它是有会话才切进来的模式）；
-  //    真实解析用的 REALMS 里**仍然有** `accept`（否则验收领域会解析不出来 ✗）
+  //    ⭐ 2026-10-14 cut B：`accept` **连 REALMS 都不在了** ⇒ 这一句注释里"验收有会话才切进来"那半句
+  //      随之作废（旧 `?from=accept` 现在与 `?from=purchase` 同一条口径：回落销售 ✓）
   assert.deepEqual(REALM_TABS.map((realm) => realm.label), ['销售', '补货', '库存', '退货']);
   assert.equal(REALM_TABS.length, 4, '条上就四个 ✓');
   assert.equal(REALM_TABS.some((r) => r.id === 'accessory'), false, '配品已搬去工作台 ✓');
   assert.equal(REALM_TABS.some((r) => r.id === 'new'), false, '上新已去掉 ✓');
   assert.equal(REALM_TABS.some((realm) => realm.id === 'accept'), false, '验收不在条上 ✓');
-  assert.equal(REALMS.some((realm) => realm.id === 'accept'), true, '验收领域必须还能解析 ✓');
+  assert.equal(REALMS.some((realm) => realm.id === 'accept'), false,
+    'cut B：验收**已退出 REALMS**（旧 `?from=accept` 回落销售 ✓ 不报错、不白屏 ✓）');
   assert.equal(REALMS.some((realm) => realm.id === 'purchase'), false, '原「采购」领域已去掉');
   assert.equal(DEFAULT_REALM, 'sales', '缺省领域仍 = 销售');
 });
@@ -289,7 +298,7 @@ test('AC-6R3 认不出的 ?from=（含已退役的 purchase）⇒ 回落销售�
 
 // ⚠️ 2026-10-14 改指向：配品**独立成领域 `accessory`** ✓（原来挤在 `purchase_return` 里 ✗）
   //   能力一个字没删 ✗（能看到/能选配品 = 名称下拉 + 加进本单那颗 ✓）
-  test('AC-6R4 补货 / 退货 / 验收 三块各自独立；每页**只有当前那一块**', () => {
+  test('AC-6R4 补货 / 退货 两块各自独立；每页**只有当前那一块**（验收已整格退场 ⇒ 回落销售 ✓）', () => {
   const replenish = htmlFor('replenish');
   assert.ok(blockOf(replenish, 'replenish').includes('data-view="one-tap-replenish"'), '补货 = 一键补货表单');
   // 2026-10-14 晚（她逐字）：「**生成采购申请的文字变为生成报货订单**」⇒ 这条哨兵**改指向**（不放宽）
@@ -322,10 +331,19 @@ test('AC-6R3 认不出的 ?from=（含已退役的 purchase）⇒ 回落销售�
   // ⭐⭐ 2026-10-14 晚（业务负责人逐字）：「/s/accept 这条路要彻底拆掉」
   //   改前逐字：断言「验收领域自己有内容」（accept-pending / accept-manual）
   //   改后逐字：那一屏已退场 ⇒ 改钉「入口没了 ＋ 能力仍在工作台那条路」（不放宽）
-  const accept = htmlFor('accept');
-  const acceptBlock = blockOf(accept, 'accept');
-  assert.equal(acceptBlock.includes('accept-pending'), false, '未到货批次那一块已退场');
-  assert.equal(acceptBlock.includes('accept-manual'), false, '手输批次号兜底已退场');
+  // ⭐⭐ 2026-10-14 晚 **cut B 再翻一次**（依据：她「`/s/accept` 这条路要彻底拆掉」＋ Lead 的 cut B 清单）：
+  //   改前逐字（cut A 之后那版）：
+  //     `const accept = htmlFor('accept'); const acceptBlock = blockOf(accept, 'accept');`
+  //     `assert.equal(acceptBlock.includes('accept-pending'), false, …)` ＋ 同一句 accept-manual
+  //   改后逐字：`accept` 已退出 REALMS ⇒ `?from=accept` **回落销售**（`blockOf(…, 'accept')` 会当场红 ✗）
+  //     ⇒ 改钉：① 那一页 = **销售那一块**（`realm-block--sales` ✓）；
+  //            ② **全页**不许再有任何验收屏标记（比原来"只看 accept 那一块"**更严** ✓）
+  const acceptFallback = htmlFor('accept');
+  assert.ok(acceptFallback.includes('realm-block--sales'),
+    'cut B：`?from=accept` 已回落缺省（销售）—— 与 `?from=purchase` 同一条口径 ✓');
+  assert.equal(acceptFallback.includes('realm-block--accept'), false, '`accept` 那一块不再存在 ✓');
+  assert.equal(acceptFallback.includes('accept-pending'), false, '未到货批次那一块已退场 ✓');
+  assert.equal(acceptFallback.includes('accept-manual'), false, '手输批次号兜底已退场 ✓');
   const wbSrc = require('node:fs').readFileSync(
     require('node:path').join(__dirname, '../src/routes/workbench.js'), 'utf8');
   assert.match(wbSrc, /purchase\/arrivals\/detail/, '工作台那条只读明细在');
@@ -334,9 +352,11 @@ test('AC-6R3 认不出的 ?from=（含已退役的 purchase）⇒ 回落销售�
     require('node:path').join(__dirname, '../src/services/scanArrivalService.js'), 'utf8');
   assert.match(arrivalSrc, /applyPurchase/, '加库存仍走既有服务（能力没搬走）');
 
-  // 每页只有当前那一块（另外五块连字符串都不拼）
+  // 每页只有当前那一块（别的块连字符串都不拼）
   // ⭐ 2026-10-14 晚：配品已搬去工作台 ⇒ 这一对改成**退货那一页**（`purchase_return` ✓）
-  for (const [realm, html] of [['replenish', replenish], ['purchase_return', purchaseReturn], ['accept', accept]]) {
+  // ⭐ 2026-10-14 cut B：第三对从 `accept` 换成 `acceptFallback` —— 它就是"**销售那一页**"
+  //   （`?from=accept` 回落来的 ✓）⇒ 顺手把"回落之后也只有销售那一块"也钉上了 ✓
+  for (const [realm, html] of [['replenish', replenish], ['purchase_return', purchaseReturn], ['sales', acceptFallback]]) {
     for (const other of REALMS.map((item) => item.id).filter((id) => id !== realm)) {
       assert.equal(html.includes(`realm-block--${other}"`), false, `${realm} 页上不该有 ${other} 块`);
     }
@@ -401,19 +421,27 @@ test('AC-6R7 有活跃验收会话时：不再接管（她：那条路彻底拆�
   } finally { rmDir(path.join(os.tmpdir(), 'scan-accept-arrival')); }
 });
 
-test('AC-6R8 ?from=accept：那一格仍可选，但里面没内容了（旧屏退场）', () => {
+test('AC-6R8 ?from=accept：那一格已**整格退场** ⇒ 回落销售（旧屏早已退场）', () => {
   // 2026-10-14 晚改指向（不放宽）：
   //   改前逐字：?from=accept 没有活跃会话 ⇒ 仍是验收领域 + 自助块（accept-pending）
-  //   改后逐字：自助块已退场（她：那条路彻底拆掉）⇒ 只保留「URL 说哪一格就选哪一格」
+  //   改后逐字（cut A）：自助块已退场（她：那条路彻底拆掉）⇒ 只保留「URL 说哪一格就选哪一格」
+  // ⭐⭐ 2026-10-14 晚 **cut B 再翻一次**（依据：她「`/s/accept` 这条路要彻底拆掉」＋ Lead 的 cut B 清单）：
+  //   改前逐字：`assert.ok(html.includes('realm-block--accept'), 'URL 说哪一格就选哪一格（照旧）');`
+  //             ＋ `blockOf(html, 'accept')` 那两条
+  //   改后逐字：`assert.ok(html.includes('realm-block--sales'), 'accept 已退出 REALMS ⇒ 回落缺省（销售）');`
+  //             ＋ 全页不许有验收屏标记（`blockOf(…, 'accept')` 会当场红 ✗ ⇒ 换成全页断言 ✓）
+  //   依据：cut A 拆路、cut B 拆领域 ⇒ 旧 `?from=accept` 与 `?from=purchase` **同一条口径** ✓；
+  //     判据没放宽：原来只查 accept 那一块，现在查**整页**都不许有那些标记（更严 ✓）
   login();
   const arrival = createArrivalHarness();
   return withServer(sixRealmApp(arrival), async (base) => {
     const html = await (await fetch(`${base}/s/${ENCODED}?from=accept`, {
       headers: { cookie: sessionCookie('ou_six_realms_8') },
     })).text();
-    assert.ok(html.includes('realm-block--accept'), 'URL 说哪一格就选哪一格（照旧）');
-    assert.equal(blockOf(html, 'accept').includes('accept-pending'), false, '自助块已退场');
-    assert.equal(blockOf(html, 'accept').includes('accept-manual'), false, '手输兜底已退场');
+    assert.ok(html.includes('realm-block--sales'), 'accept 已退出 REALMS ⇒ 回落缺省（销售）✓');
+    assert.equal(html.includes('realm-block--accept'), false, '`accept` 那一块不存在了 ✓');
+    assert.equal(html.includes('accept-pending'), false, '自助块已退场 ✓');
+    assert.equal(html.includes('accept-manual'), false, '手输兜底已退场 ✓');
   });
 });
 

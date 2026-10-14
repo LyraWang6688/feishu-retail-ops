@@ -246,8 +246,11 @@ test('AC-AR2 🔴 扫码页那条"完成验收"的写入入口已退场（**源�
   //   改前逐字：`await post(base, '/s/accept', { [F.action]: A.acceptFinishRows, … })` ⇒ 断言写「已到货」✗
   //   改后：**源码哨兵**（那条分支与人话入口都没有了 ✓）＋ 仍成立的能力在工作台那条路上验 ✓
   const routes = readSrc('routes/scanPage.js');
-  // ⚠️ `writeConfig.actions.acceptFinishRows` 这个名字还出现在 `realmOfAction` 的**映射表**里
-  //    （认动作 → 领域，配置键本身在 `config/scanWrite.js` ⇒ 不属本刀的文件面 ✓）⇒ 只钉**分支与 handler** 没了 ✓
+  // ⭐⭐ 2026-10-14 晚 cut B **改指向**（依据：她「`/s/accept` 这条路要彻底拆掉」＋ Lead 的 cut B 清单）：
+  //   改前逐字：`// ⚠️ writeConfig.actions.acceptFinishRows 这个名字还出现在 realmOfAction 的**映射表**里`
+  //   改后逐字：**那句话不再成立** —— `realmOfAction` 里那一行已经删掉（`accept` 也退出了 `REALMS`）
+  //   依据：cut A 已把「完成验收」的 handler 摘掉（下面两条断言就是钉它没了的 ✓）、cut B 收掉领域本身
+  //     ⇒ 再留一个「动作 → 已不存在的领域 id」的映射只会骗人 ✗。**断言一条没动、判据没放宽** ✓
   assert.equal(/handleAcceptFinishRows|acceptanceContext/.test(routes), false, '完成验收那个分支/handler 必须已退场 ✗');
   assert.equal(/acceptanceLandingPath/.test(routes), false, '验收落地页的跳转路径也必须已退场 ✗');
   assert.equal(/handleAcceptFinishRows/.test(routes), false, '它的 handler 也必须已退场 ✗');

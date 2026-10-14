@@ -775,7 +775,9 @@ ${UI_TAP_SHARED_SOURCE}
     try {
       if (!target || !dshUiTap) return '';
       var seg = location.pathname.split('/')[1] || 's';
-      var page = location.pathname.indexOf('accept') > -1 ? 'accept' : 'scan';
+      // 2026-10-14 cut B: the /s/accept page is gone, so the page value here is
+      //   always 'scan' now (that branch could never hit again). ASCII only in this block.
+      var page = 'scan';
       // Shared implementation (inlined at the top of this block):
       //   it reports target/tap_id/since_ms; the SERVER decides tap vs tap.repeated.
       return dshUiTap.track(target, { path: '/' + seg + '/ui-tap', page: page });
@@ -1227,9 +1229,14 @@ ${purchaseAmountRowHtml(write)}
  *   · `sales`            —— 销售建单表单；
  *   · `replenish`        —— 补货（原「采购」领域里的【一键补货】）；
  *   · `purchase_return`  —— 退货；
- *   · `accept`           —— 验收（有活跃验收会话时那一块；没有就一张人话卡）；
  *   · `inventory`        —— 库存表；
- *   · `product`          —— 货品标签。
+ *   · `product`          —— 货品标签（**不上条**，旧 `?from=product` 照旧能开 ✓）。
+ *
+ * ⭐⭐ 2026-10-14 晚 cut B（改前逐字 → 改后逐字 → 依据）：
+ *   改前逐字：上面还列着「`accept` —— 验收（有活跃验收会话时那一块；没有就一张人话卡）；」
+ *   改后逐字：**那一行删掉**（`accept` 已从 `REALMS` 退场）
+ *   依据：业务负责人逐字「**`/s/accept` 这条路要彻底拆掉**」；旧 `?from=accept` 现在按
+ *        既有口径回落缺省（销售）✓（不报错、不白屏 ✓）。
  *
  * ⚠️ **只有当前这一块进 HTML**（另外五块**连字符串都不拼**）—— 页面里没有"靠 CSS 藏起来"
  *    的东西，也就没有"脚本没跑 ⇒ 什么都没显示"的可能。
@@ -1253,9 +1260,14 @@ const realmEmptyHtml = (realm, config) => {
  *   · `sales`            —— 销售建单表单；
  *   · `replenish`        —— 补货（原「采购」领域里的【一键补货】）；
  *   · `purchase_return`  —— 退货；
- *   · `accept`           —— 验收（有活跃验收会话时那一块；没有就一张人话卡）；
  *   · `inventory`        —— 库存表；
- *   · `product`          —— 货品标签。
+ *   · `product`          —— 货品标签（**不上条**，旧 `?from=product` 照旧能开 ✓）。
+ *
+ * ⭐⭐ 2026-10-14 晚 cut B（改前逐字 → 改后逐字 → 依据）：
+ *   改前逐字：上面还列着「`accept` —— 验收（有活跃验收会话时那一块；没有就一张人话卡）；」
+ *   改后逐字：**那一行删掉**（`accept` 已从 `REALMS` 退场）
+ *   依据：业务负责人逐字「**`/s/accept` 这条路要彻底拆掉**」；旧 `?from=accept` 现在按
+ *        既有口径回落缺省（销售）✓（不报错、不白屏 ✓）。
  *
  * ⚠️ **只有当前这一块进 HTML**（另外五块**连字符串都不拼**）—— 页面里没有"靠 CSS 藏起来"
  *    的东西，也就没有"脚本没跑 ⇒ 什么都没显示"的可能。

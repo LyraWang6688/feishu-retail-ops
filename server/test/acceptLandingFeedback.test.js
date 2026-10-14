@@ -216,10 +216,14 @@ test('AC-OFF2 🔴 渲染层里**没有**验收那一块的标记（`data-view="
 
 test('AC-OFF3 🔴 旧 `?from=accept` **回落销售**（不报错、不白屏）', () => {
   const { resolveRealm } = require('../src/views/scanPageRealm');
-  // ⭐ 2026-10-14 晚（cut A）：**拆的是"路"**（`/s/accept` 不再有路由 ✓）；`accept` 这个领域
-  //    按 Lead 的切法**先留在 REALMS**（cut B 才删 ⇒ 那一步才变成 `'sales'` ✓）
-  //    ⇒ 本刀如实断言：解析结果**仍是 'accept'**（不谎报 ✓）＋ 认不出的照旧回落销售 ✓
-  assert.equal(resolveRealm('accept'), 'accept', 'cut A：领域还在（cut B 删它时才变 sales ✓ 不提前谎报 ✗）');
+  // ⭐⭐ 2026-10-14 晚 **cut B 成对翻新**（依据：业务负责人逐字「**`/s/accept` 这条路要彻底拆掉**」
+  //    ＋ Lead 的 cut B 清单「REALMS 删 `accept`」）：
+  //   改前逐字：`assert.equal(resolveRealm('accept'), 'accept', 'cut A：领域还在（cut B 删它时才变 sales ✓ 不提前谎报 ✗）');`
+  //   改后逐字：`assert.equal(resolveRealm('accept'), 'sales', 'cut B：accept 已退出 REALMS ⇒ 按既有口径回落缺省 ✓');`
+  //   依据：cut A 拆的是"路"（`/s/accept` 不再有路由），cut B 拆的是**领域本身** ⇒
+  //     `accept` 现在与 `?from=purchase` / `?from=accessory` / `?from=new` **同一条口径**：
+  //     认不出的值一律回落缺省（销售），**不报错、不白屏** ✓（判据没放宽：另一条断言逐字不变 ✓）
+  assert.equal(resolveRealm('accept'), 'sales', 'cut B：accept 已退出 REALMS ⇒ 按既有口径回落缺省 ✓');
   assert.equal(resolveRealm('bogus'), 'sales', '认不出的一律回落缺省（既有口径一字不动 ✓）');
 });
 

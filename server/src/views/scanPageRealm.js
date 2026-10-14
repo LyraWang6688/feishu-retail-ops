@@ -83,25 +83,39 @@ const REALMS = Object.freeze([
   // ⚠️ 「标签」**整格撤下条**（只不上条 ✓ **功能不删** ✗ —— 与验收同样处理：
   //    留在 REALMS 里 ⇒ 旧 `?from=product` 链接照旧能开 ✓）
   Object.freeze({ id: 'product', label: '标签' }),
-  // ⚠️ 「验收」仍在 REALMS（有活跃会话就切进来）⇒ 必须能解析 ✓ 只是**不上条** ✗
-  Object.freeze({ id: 'accept', label: '验收' }),
+  // ⭐⭐ 2026-10-14 晚 **cut B：`accept`（验收）从 REALMS 退场** ——
+  //   改前逐字：`Object.freeze({ id: 'accept', label: '验收' }),`
+  //     ＋ 上面那句注释「⚠️ 「验收」仍在 REALMS（有活跃会话就切进来）⇒ 必须能解析 ✓ 只是**不上条** ✗」
+  //   改后逐字：**这一格删掉**（REALMS 里没有 `accept`）
+  //   依据：业务负责人 2026-10-14 晚逐字「**`/s/accept` 这条路要彻底拆掉**」
+  //     ＋ Lead 切的 cut A（路由 / 渲染 / 会话入口先退场 ⇒ 已进 main）／cut B（**领域本身**退场，本刀）
+  //   ⚠️ 旧 `?from=accept` ⇒ 按既有口径「**认不出的值一律回落缺省（销售）**」✓（与已退役的
+  //      `?from=purchase` / `?from=accessory` / `?from=new` 同一条，不报错、不白屏 ✓）
+  //   ⚠️ 能力**不是删功能** ✗：验收仍在**工作台**那条路上（`/api/workbench/purchase/arrivals/confirm` ✓）。
 ]);
 
-/** ⭐ 切换条上的**六个 tab**（两行三列 3+3）——「验收」**不在**条上 ✓（见上面那条注释）。 */
-const REALM_TABS = Object.freeze(REALMS.filter((realm) => realm.id !== 'accept' && realm.id !== 'product'));
-
-
-/** ⭐ 切换条上的**六个 tab**（两行三列：3 + 3）——`验收` **不在**条上（它是"有活跃会话才切进来"的模式 ✓）。 */
-
+/** ⭐ 切换条上的 tab —— 「标签」(`product`) **不在**条上 ✓（见上面那条注释）。 */
+// ⭐⭐ 2026-10-14 晚 **cut B**（改前逐字 → 改后逐字 → 依据）：
+//   改前逐字：`REALMS.filter((realm) => realm.id !== 'accept' && realm.id !== 'product')`
+//   改后逐字：`REALMS.filter((realm) => realm.id !== 'product')`
+//   依据：`accept` 已**从 REALMS 退场**（见上面那一段）⇒ 这个 `!== 'accept'` 不再可能命中，
+//        留着一个"永远为真"的条件只会让人以为 accept 还在（她自己那句话：「要彻底拆掉」）。
+//   🔴 **`!== 'product'` 留着** ✗ —— 「标签」**仍在 REALMS**（旧 `?from=product` 照旧能开 ✓），
+//      它只是**不上条**；把它一起删掉 = 条上多一格（判据：条上仍 **4 格**）。
+const REALM_TABS = Object.freeze(REALMS.filter((realm) => realm.id !== 'product'));
 
 /** 缺省领域 = **销售**（她 2026-10-11：「默认打开是销售页」；2026-10-09 曾一度是库存）。 */
 const DEFAULT_REALM = 'sales';
 
-/** 补货 / 退货 / 验收 三个领域的 id（渲染层与路由**不写字符串字面量**）。 */
+/** 补货 / 退货 两个领域的 id（渲染层与路由**不写字符串字面量**）。 */
+// ⭐⭐ 2026-10-14 晚 cut B（改前逐字 → 改后逐字 → 依据）：
+//   改前逐字：`const ACCEPTANCE_REALM = 'accept';`（上面那句注释写的是"补货 / 退货 / 验收 **三个**领域的 id"）
+//   改后逐字：**这一行删掉**（注释同步改成"两个"）
+//   依据：`accept` 已从 REALMS 退场（她：「`/s/accept` 这条路要彻底拆掉」）⇒ 这个常量**没有活引用**
+//        （只在这句注释与一句测试注释里出现过）⇒ 留着就是"指向一个不存在的领域"✗。
 const REPLENISH_REALM = 'replenish';
 const PURCHASE_RETURN_REALM = 'purchase_return';
 const NEW_REALM = 'new'; // ⭐ 2026-10-13：「上新」= **外链 tab**（不是页面领域）
-const ACCEPTANCE_REALM = 'accept';
 
 /** 领域 id → 它"空态"时那句人话的配置键（`config/scanPage.js` 的文案）。 */
 const REALM_EMPTY_TEXT_KEYS = Object.freeze({
@@ -111,7 +125,10 @@ const REALM_EMPTY_TEXT_KEYS = Object.freeze({
   purchase_return: 'realmEmptyReturnBody',
   // ⭐ 2026-10-14：配品独立成领域 `accessory` ⇒ 复用上面那句**配品的人话**（零新增文案 ✓）
   accessory: 'realmEmptyPurchaseReturnBody',
-  accept: 'realmEmptyAcceptanceBody',
+  // ⭐⭐ 2026-10-14 晚 cut B：`accept: 'realmEmptyAcceptanceBody'` **删掉**（改前逐字即这一行）
+  //   依据：`accept` 已从 REALMS 退场 ⇒ 这两个键都不可能再被取到（`realmEmptyHtml` 查不到键时
+  //        走它自己的兜底 ✓）；留着 = 一条指向已退场领域的死映射 ✗。对应的文案
+  //        （`config/scanPage.js` 的 `realmEmptyAcceptanceBody`）也一起删 ✓。
   new: 'realmEmptyNewBody', // ⭐ 2026-10-13 上新（外链 tab）的人话
 });
 
@@ -358,7 +375,6 @@ module.exports = {
   PURCHASE_RETURN_REALM,
   REALM_TABS,
   NEW_REALM,
-  ACCEPTANCE_REALM,
   REALM_EMPTY_TEXT_KEYS,
   REALM_TEXTS,
   LABEL_PRINT_PATH,

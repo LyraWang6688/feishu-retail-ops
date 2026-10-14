@@ -753,16 +753,25 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
   // ⚠️ 2026-10-13 改写：领域清单换成她的最终版
   //    改前：['sales','replenish','purchase_return','accept','inventory','product'] / ['销售','补货','退货','验收','库存','货品']
   //    改后：销售·补货·库存 / 标签·上新·配品，验收仍在（有会话才切进来）
+  // ⭐⭐ 2026-10-14 晚 **cut B 成对翻新**（依据：业务负责人逐字「**`/s/accept` 这条路要彻底拆掉**」
+  //    ＋ Lead 的 cut B 清单「REALMS 删 `accept`」）：
+  //    改前逐字：id 列表尾部 `… 'product', 'accept'` ＋ label 列表尾部 `… '\u6807\u7b7e', '\u9a8c\u6536'`
+  //    改后逐字：**两个列表都去掉 `accept` / `验收`**（`REALMS` 现在就是这 5 个）
+  //    依据：cut A 拆"路"、cut B 拆"领域" ⇒ `accept` 与 `?from=purchase` 同口径（回落销售 ✓）；
+  //      判据没放宽：仍是两条 `deepEqual`（多一个少一个都红 ✓）＋ 下面那条"每个领域都能解析到自己"照旧 ✓
   assert.deepEqual(REALMS.map((realm) => realm.id),
     // ⚠️ 2026-10-14 改指向（业务负责人最终口径：销售·补货·库存·退货·配品·上新 ✓
 //   见 docs/scan-page-tabs-2026-10-14.md）；改前逐字：['sales', 'replenish', 'inventory', 'product', 'new', 'purchase_return', 'accept']
-['sales', 'replenish', 'inventory', 'purchase_return', 'product', 'accept']);
+['sales', 'replenish', 'inventory', 'purchase_return', 'product']);
   // ⭐ 2026-10-14 晚：配品搬去工作台「销售 → 配品」+ 上新去掉 ⇒ 扫码页只剩 4 领域
-  //   （`product` 已撤下条、`accept` 有会话才切进来 ⇒ 仍在 REALMS 里能解析 ✓）
+  //   （`product` 已撤下条但仍能解析 ✓；`accept` 已在 **cut B** 整格退场 ⇒ 不再在 REALMS 里 ✓）
   assert.deepEqual(REALMS.map((realm) => realm.label),
-    ['\u9500\u552e', '\u8865\u8d27', '\u5e93\u5b58', '\u9000\u8d27', '\u6807\u7b7e', '\u9a8c\u6536']);
+    ['\u9500\u552e', '\u8865\u8d27', '\u5e93\u5b58', '\u9000\u8d27', '\u6807\u7b7e']);
+  assert.equal(REALMS.some((realm) => realm.id === 'accept'), false,
+    'cut B：`accept` 已退出 REALMS ⇒ 旧 `?from=accept` 回落销售（不报错、不白屏 ✓）');
   assert.equal(DEFAULT_REALM, 'sales', '缺省 = 销售（她 2026-10-11：「默认打开是销售页」）');
   // ⚠️ 2026-10-13：解析集 = 7 条（含验收与上新）；条上只六个
+  // ⭐ 2026-10-14 cut B：解析集**只剩 5 条**（验收退场 ✓、上新早已不在 REALMS ✓）
   for (const realm of REALMS) assert.equal(resolveRealm(realm.id), realm.id);
   for (const bad of [undefined, null, '', '   ', 'bogus', 'SALES2', '库存']) {
     assert.equal(resolveRealm(bad), 'sales', `认不出的 from「${String(bad)}」必须回落缺省（销售），不许报错`);
@@ -870,10 +879,22 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
   //   改前逐字：`const acceptBlock = blockOf('accept','accept');` ＋ 断言它是"自助块"
   //     （`data-view="accept-pending"` + `acceptPendingTitle` + `data-view="accept-manual"` ✗）
   //   改后：那一屏退场 ⇒ `?from=accept` **回落成建单那块**（`accept` 仍能解析 ⇒ 标记还是它的 ✓）
-  const acceptBody = blockOf('accept', 'accept');
-  assert.equal(acceptBody.includes('data-view="accept-pending"'), false, '自助块必须已退场 ✗');
-  assert.equal(acceptBody.includes('data-view="accept-manual"'), false, '手输批次号那块也必须已退场 ✗');
-  assert.ok(acceptBody.includes('加入本单'), '回落销售 ⇒ 建单那块在（旧链接不白屏 ✓）');
+  // ⭐⭐ 2026-10-14 晚 **cut B 再翻一次**（依据同上 ＋ Lead 的 cut B 清单「REALMS 删 `accept`」）：
+  //   改前逐字：`const acceptBody = blockOf('accept', 'accept');`
+  //             ＋ `assert.equal(acceptBody.includes('data-view="accept-pending"'), false, …)`
+  //             ＋ `assert.equal(acceptBody.includes('data-view="accept-manual"'), false, …)`
+  //             ＋ `assert.ok(acceptBody.includes('加入本单'), '回落销售 ⇒ 建单那块在（旧链接不白屏 ✓）');`
+  //   改后逐字：`accept` 已退出 REALMS ⇒ `?from=accept` **回落销售**（标记 `realm-block--sales`）
+  //     ⇒ ① 那一页就是**销售那一块**（`加入本单` 在 ✓，与 `product` 那种"仍在 REALMS"不同 ✗）；
+  //        ② **整页**不许有 `realm-block--accept` ✗；③ 验收屏那两个标记**整页**都不许有 ✓
+  //   判据没放宽：原来只查 accept 那一块，现在查**整页** + 多钉一条"回落销售"（更严 ✓）
+  const acceptFallback = blockOf('accept', 'sales');
+  assert.ok(acceptFallback.includes('加入本单'), 'cut B：`?from=accept` 回落销售 ⇒ 建单那块在（旧链接不白屏 ✓）');
+  const acceptFallbackPage = renderScanPage(SCAN_VIEW, SCAN_PAGE, SCAN_WRITE, 'accept').slice(
+    renderScanPage(SCAN_VIEW, SCAN_PAGE, SCAN_WRITE, 'accept').indexOf('</head>'));
+  assert.equal(acceptFallbackPage.includes('realm-block--accept'), false, '`accept` 那一块不存在了 ✓');
+  assert.equal(acceptFallbackPage.includes('data-view="accept-pending"'), false, '自助块必须已退场 ✗');
+  assert.equal(acceptFallbackPage.includes('data-view="accept-manual"'), false, '手输批次号那块也必须已退场 ✗');
   // ⚠️ 2026-10-13：标题已从「货品标签」改成「标签」（真字面量）
   assert.ok(blockOf('product', 'product').includes('<h2 class="stock__heading">标签</h2>'), '货品领域 = 标签');
 
