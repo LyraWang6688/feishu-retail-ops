@@ -1067,6 +1067,23 @@ const sizeGroupsHtml = (view, write) => {
 };
 
 /**
+ * ⭐⭐ 2026-10-14 晚（业务负责人**逐字**）：「**只写一个整单金额**（一次填一个总额，**和补货一样**～）」
+ *   ⇒ **补货 / 退货共用这一个渲染片段**（一个输入、一个总额 ✓ 不按行分填 ✗）：
+ *     · 字段名来自 `fields.purchaseAmount`（= 配置 `PURCHASE_AMOUNT.field` 的唯一来源 ✓）；
+ *     · 标签 / 占位来自 `texts.purchaseAmount*`（改文案只改配置 ✓ 不写死 ✗）。
+ *   ⚠️ 这里是**唯一**一处画这个输入的地方 —— 将来改版式/加输入属性只改这一个函数
+ *     （两个表单各抄一份 = 迟早改漏一个 ✗）。
+ */
+const purchaseAmountRowHtml = (write) => {
+  const texts = write?.texts || {};
+  const fields = write?.fields || {};
+  return `<div class="form-row"><label>${escapeHtml(texts.purchaseAmountLabel || '')}</label>`
+    + `<input name="${escapeHtml(fields.purchaseAmount)}" inputmode="decimal"`
+    + ` placeholder="${escapeHtml(texts.purchaseAmountPlaceholder || '')}"`
+    + ` aria-label="${escapeHtml(texts.purchaseAmountLabel || '')}"></div>`;
+};
+
+/**
  * 补货表单：勾选缺的尺码 + 填数量 → 生成采购申请。
  *
  * ⭐ 2026-10-09（下半场）采购领域 = **先列各尺码（样品 + 门盒）数量** + 【**一键补货**】：
@@ -1119,6 +1136,7 @@ ${stockList}
 ${hiddenField(fields.action, write.actions.replenish)}${pageBuildField()}
 ${hiddenField(fields.submitKey, write.replenishKey)}
 ${rows}
+${purchaseAmountRowHtml(write)}
 <button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.replenishButton)}</button>
 </form>
 </details>
@@ -1172,6 +1190,7 @@ const returnFormHtml = (view, write) => {
 ${hiddenField(fields.action, write.actions.purchaseReturn)}${pageBuildField()}
 ${hiddenField(fields.submitKey, write.returnKey)}
 ${rows}
+${purchaseAmountRowHtml(write)}
 <button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.returnButton)}</button>
 </form>
 </details>

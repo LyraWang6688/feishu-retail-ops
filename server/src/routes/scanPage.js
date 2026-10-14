@@ -537,6 +537,52 @@ const createScanPageRouter = (options = {}) => {
     }, requestId);
   };
 
+  /**
+   * ⭐⭐ 2026-10-14 晚（业务负责人**逐字**）：「**退货整单金额（必填），与补货同一套配置**」
+   *   ＋同一晚另一句：「**只写一个整单金额**（一次填一个总额，**和补货一样**～）」。
+   *
+   * ⇒ **补货 / 退货共用这一个闸门**（一套配置 ✓ 不写两套 ✗）：整单金额**空** ⇒
+   *   **400 + 人话 + 一个字都不写**（不建批次 / 不写明细 / 不动库存）——
+   *   校验发生在**任何写之前** ⇒「零写入」是**结构性**的，不靠写服务配合 ✓；
+   *   **非空 ⇒ 照旧提交** ✓。
+   *
+   * ⚠️ 与销售那条「每件实收必填」**同一形状**（判据只在**页面这条路由**上；服务层一行不动）——
+   *    差别只有出口：销售那条回**资金页**（她还得在那一页点按钮），采购这两条回
+   *    **一张人话页 + 一颗「回上一页」的链接**（那一页的表单还在，她补一个数字再提交 ✓）。
+   * ⚠️ 这张页面**不写任何业务表**（`sendHuman` 只把 HTML 发出去 ✓）。
+   * 🔴 本版**只判"填没填"**（她的原话就是「必填」）：数字格式不做额外校验、金额也**不落表**
+   *    （落哪一列待她裁决 ⇒ 见补货 / 退货两处的 `TODO(purchase-amount)`）。
+   */
+  const purchaseAmountMissingPage = (req, res, requestId, realm) => {
+    logWarn(writeConfig.events.purchaseAmountRequired, {
+      request_id: requestId,
+      realm,
+      reason: 'amount_empty',
+      target: String(scanTargetOf(req).value || '').slice(0, 120),
+    });
+    return sendHuman(res, 400, {
+      title: writeConfig.texts.purchaseAmountMissingTitle,
+      body: writeConfig.texts.purchaseAmountMissingBody,
+      requestId,
+      retryHint: writeConfig.texts.failedRetryHint,
+      // 回"她刚才那一块"（编号 + 同一个领域）—— 不然她只能靠浏览器的返回键。
+      backPath: postActionFor(
+        backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realm,
+      ),
+      backLabel: writeConfig.texts.purchaseAmountBackLabel,
+    });
+  };
+
+  /**
+   * 「整单金额**填了没有**」（补货 / 退货共用，只判空）——
+   * 空 ⇒ `true`（调用方立刻回 400，**一步都不往下走**）；非空 ⇒ `false`（照旧提交 ✓）。
+   * ⚠️ 关掉闸门 = 配置 `SCAN_PURCHASE_AMOUNT_REQUIRED`（**显式布尔**，`readFlag` ✓）。
+   */
+  const purchaseAmountMissing = (body) => {
+    if (writeConfig.purchaseAmount?.required === false) return false;
+    return String(body?.[writeConfig.fields.purchaseAmount] ?? '').trim() === '';
+  };
+
   const respondWriteFailure = (res, result, requestId) => {
     // 2026-10-14 (real gap): a write failure used to log NOTHING. Only-add, existing event name.
     logError(writeConfig.events.failed, {
@@ -1711,6 +1757,14 @@ const createScanPageRouter = (options = {}) => {
           });
         }
         const entries = parseReplenishEntries(body, fields, writeConfig);
+        // ⭐⭐ 2026-10-14 晚：**整单金额必填**（补货 / 退货**同一个**闸门 —— 见
+        //   `purchaseAmountMissingPage`）。空 ⇒ 400 + 人话 + **一个字都不写** ✓；
+        //   非空 ⇒ 照旧往下走 ✓。
+        // TODO(purchase-amount): 金额**还没落表** —— 落哪一列**待她裁决**
+        //   （采购明细 `purchaseRequest` 没有任何金额列；采购主表 `purchaseOrderBatch` 唯一的
+        //    金额列「实际金额」已被"到货核对"占用）⇒ 裁决后在这里把它交给写服务 / 计划。
+        //   🔴 **绝不自己挑一列写**（挑错会污染到货那条链路的钱）。
+        if (purchaseAmountMissing(body)) return purchaseAmountMissingPage(req, res, requestId, realm);
         const result = await writeService.submitReplenish({
           openId,
           requestId,
@@ -1754,6 +1808,11 @@ const createScanPageRouter = (options = {}) => {
           });
         }
         const entries = parseReturnEntries(body, fields, writeConfig);
+        // ⭐⭐ 2026-10-14 晚（她逐字）：「**退货整单金额（必填），与补货同一套配置**」
+        //   ⇒ 与补货**同一个**闸门（一套配置 ✓ 不写两套 ✗）：空 ⇒ 400 + 人话 + **零写入** ✓。
+        // TODO(purchase-amount): 金额**还没落表** —— 落哪一列**待她裁决**（同上，
+        //   采购明细没有金额列、「实际金额」已被"到货核对"占用）⇒ 不自己挑列写 ✗。
+        if (purchaseAmountMissing(body)) return purchaseAmountMissingPage(req, res, requestId, realm);
         const result = await writeService.submitPurchaseReturn({
           openId,
           requestId,
