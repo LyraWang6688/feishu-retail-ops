@@ -1621,6 +1621,10 @@ const createScanPageRouter = (options = {}) => {
           //      而她要的是「**这一单刚才已经交过了**」✓（幂等不许拆 ✓ 只写一次但要如实说 ✓）
           await writeService.saveDraftLines?.(openIdOf(req), { paymentStep: 'created' });
         }
+        // ⭐ 建单成功 ⇒ 记下"她刚在销售里干过活" ✓（下次**裸扫**默认还回销售 ✓）
+        //   ⚠️ 旧流程在"点提交"那一段记 ✓ —— 新流程改成"**点按钮才建单**"⇒ 这一句也要跟着挪过来 ✗
+        //      （实测 `AC-RF4`：写成功要记 `last_realm = sales` ✓ 不挪就丢了 ✓）
+        if (createdResult) markRealmUsed(openIdOf(req), realmOfAction(writeConfig.actions.submitOrder));
         const payTarget = backTargetFor(req, decodeURIComponent(String(req.params.number || '')));
         // ⭐ 单号/双数：**优先用刚建单的返回值** ✓（没建单时退回表单里的那两个 ✓ 一律**不编** ✗）
         const paidOrderNo = String(createdResult?.order_no || body.order_no || '').trim().slice(0, 40);
@@ -1762,6 +1766,8 @@ const createScanPageRouter = (options = {}) => {
           // ⭐ 建单成功 ⇒ 标记改成「**这一单已经建过**」✓（**不清成空串** ✗ —— 见 `payment_pay` 那段注释）
           await writeService.saveDraftLines?.(openIdOf(req), { paymentStep: 'created' });
         }
+        // ⭐ 同上：跳过那颗按钮建单成功也要记"她刚在销售里干过活" ✓（否则裸扫默认领域会丢 ✓）
+        if (skipCreated) markRealmUsed(openIdOf(req), realmOfAction(writeConfig.actions.submitOrder));
         // ⭐ 单号/双数：**优先用刚建单的返回值** ✓（没建单时退回表单里的那两个 ✓ 一律**不编** ✗）
         const skippedOrderNo = String(skipCreated?.order_no || body.order_no || '').trim().slice(0, 40);
         const skippedCount = Number(String(skipCreated?.detail_count ?? body.count ?? '').trim() || 0) || 0;

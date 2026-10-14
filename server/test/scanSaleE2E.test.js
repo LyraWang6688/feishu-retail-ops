@@ -1551,7 +1551,9 @@ test('AC-RF4 只在**写成功**时记：真提交一次销售 ⇒ 会话 last_r
       await getPage(pageUrlOf(base, NUMBER_A), cookie);
       await addLine(base, cookie, NUMBER_A, '40');
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
-      const response = await submitOnceForTiming(base, cookie, page);
+      // ⭐⭐ 2026-10-14（新流程**两步**）：① 点提交 ⇒ 资金页；② 点资金页那颗【跳过】⇒ **才建单** ✓
+      //   ⇒ "记领域"发生在**建单成功**那一刻 ✓（所以必须走完第二步 ✓）
+      const response = await followPaymentStep(base, cookie, await submitOnceForTiming(base, cookie, page));
       assert.equal(response.status, 200, '提交要成');
       // ⚠️ 记领域是**写完才发生**（fire-and-forget）⇒ 给事件循环一拍再读
       await new Promise((resolve) => setTimeout(resolve, 50));
