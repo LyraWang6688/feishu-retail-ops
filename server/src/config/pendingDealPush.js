@@ -1,5 +1,5 @@
 // 「维度 1：每天 9 点把**最近 7 天还没收齐**的销售单推到群里」的配置
-// （配置先行——群 id / 时间点 / 开关 / 深链策略 / **分区与文案** / **卡片标记** / **失败重试**
+// （配置先行——群 id / 时间点 / 开关 / **分区与文案** / **卡片标记** / **失败重试**
 //   都是**会改的口径**，改的时候只动这一个文件，不去翻 pendingDealPushService）。
 //
 // 🔴 2026-10-07 口径大改：交易类型 = 库存有没有（现货 / 预定），「未付」不再是类型。
@@ -18,6 +18,14 @@
 //     下面这套**文本模板保留改造**成**降级**（客户端/租户不支持卡片、或卡片发不出去时用它）；
 //     行内容去掉单号、补「查看原话」文字链接；待收为 0 写「已付清」；金额拿不到**整段不渲染**。
 //
+// 🔴 2026-10-14 口径（业务负责人逐字）：「**现在深链已经没有了，把之前的清除掉**」
+//   ⇒ 这条推送里**一个链接都不再有**（`{link}` / 「查看话题」按钮 / 「（N 笔的深链暂不可用…）」脚注
+//     全部退场）；⭐ **每一行的文字内容一字不变**（还是 货号 颜色 尺码 · 待收金额），
+//     少的只是"点不动的链接"。`services/larkMessageLinkResolver.js` 随之**整个文件删除**
+//     （它当时唯一的调用方就是这条推送）。
+//   ⚠️ 上面 2026-10-08 那几句里的"文字链接 / URL 藏起来"是**当时**的口径，现已被本条覆盖；
+//     留着是为了让"为什么有这些模板"可追溯，**不要再照它把链接加回来**。
+//
 // ⚠️ 取值规则（"空串算不算关"那一套）在 `config/envValue`，本文件与销售卡片那几处共用同一套，
 //   规则只有一处实现，不会两处慢慢走歪。
 //
@@ -28,9 +36,10 @@
 // 同一天口径大改（交易类型 = 库存有没有，「未付」不再是类型）⇒ 分区判据跟着换：
 // 新目标形状（`{title}` 由配置给）：
 //   ⏰ 2026-10-07 最近 7 天待处理的销售单（预定 / 现货待收）：2 笔
-//      1. ·【预定】B26002-52 37码 · 待收 ¥128 · [深链]
-//      2. ·【现货待收】6A637-7 43码 · 待收 ¥228 · [深链]
-// ⇒ 她只要「【预定/现货待收】 + 货号+尺码 + 待收金额 + 深链」，**不要售出时间**、**不要单号**。
+//      1. ·【预定】B26002-52 37码 · 待收 ¥128
+//      2. ·【现货待收】6A637-7 43码 · 待收 ¥228
+// ⇒ 她只要「【预定/现货待收】 + 货号+尺码 + 待收金额」，**不要售出时间**、**不要单号**
+//   （后两行当时的 `[深链]` 段已于 2026-10-14 按她的口径**去掉**，见上面的口径）。
 // ⚠️ 她给的那张形状里"分区"与"行内标签"是**并存**的（她两处都写了），所以这里也是两处都有：
 //    区块标题用 `sectionTemplate`，每行里的 `{tag}` 还是同一个区块标题。
 // ⚠️ 下面这些**全是显示文案**（改文案不碰逻辑）：本文件之外的 service 里
@@ -51,8 +60,6 @@ const PENDING_DEAL_PUSH_ENABLED_ENV_KEY = 'PENDING_DEAL_PUSH_ENABLED';
 const PENDING_DEAL_PUSH_CHAT_ID_ENV_KEY = 'PENDING_DEAL_PUSH_CHAT_ID';
 const PENDING_DEAL_PUSH_HOUR_ENV_KEY = 'PENDING_DEAL_PUSH_HOUR';
 const PENDING_DEAL_PUSH_INTERVAL_MS_ENV_KEY = 'PENDING_DEAL_PUSH_INTERVAL_MS';
-const PENDING_DEAL_PUSH_LINK_LOOKUP_ENABLED_ENV_KEY = 'PENDING_DEAL_PUSH_LINK_LOOKUP_ENABLED';
-const PENDING_DEAL_PUSH_LINK_REQUIRED_ENV_KEY = 'PENDING_DEAL_PUSH_LINK_REQUIRED';
 // 发完之后**把那条消息置顶（飞书 Pin）**。业务负责人 2026-10-07 单独提的那个动作。
 const PENDING_DEAL_PUSH_PIN_ENABLED_ENV_KEY = 'PENDING_DEAL_PUSH_PIN_ENABLED';
 
@@ -68,15 +75,13 @@ const PENDING_DEAL_PUSH_LINE_SEPARATOR_ENV_KEY = 'PENDING_DEAL_PUSH_LINE_SEPARAT
 const PENDING_DEAL_PUSH_ITEM_TEMPLATE_ENV_KEY = 'PENDING_DEAL_PUSH_ITEM_TEMPLATE';
 const PENDING_DEAL_PUSH_ITEM_SEPARATOR_ENV_KEY = 'PENDING_DEAL_PUSH_ITEM_SEPARATOR';
 const PENDING_DEAL_PUSH_SIZE_TEMPLATE_ENV_KEY = 'PENDING_DEAL_PUSH_SIZE_TEMPLATE';
-const PENDING_DEAL_PUSH_FOOTER_TEMPLATE_ENV_KEY = 'PENDING_DEAL_PUSH_FOOTER_TEMPLATE';
 
 // ── 2026-10-08 新增的旋钮 ─────────────────────────────────────────────────────
 // 发送形态：`card`（默认，消息卡片）/ `text`（纯文本，客户端不支持卡片时的降级出口）。
 const PENDING_DEAL_PUSH_MESSAGE_FORMAT_ENV_KEY = 'PENDING_DEAL_PUSH_MESSAGE_FORMAT';
 // 失败重试的时刻（**相对首次失败**的毫秒偏移，逗号分隔）；空串 = 不重试。
 const PENDING_DEAL_PUSH_RETRY_DELAYS_MS_ENV_KEY = 'PENDING_DEAL_PUSH_RETRY_DELAYS_MS';
-// 文字链接的可见文案（URL 藏在它后面）、纯文本降级里的金额段、待收为 0 时的文案。
-const PENDING_DEAL_PUSH_LINK_TEXT_ENV_KEY = 'PENDING_DEAL_PUSH_LINK_TEXT';
+// 纯文本降级里的金额段、待收为 0 时的文案。
 const PENDING_DEAL_PUSH_AMOUNT_TEMPLATE_ENV_KEY = 'PENDING_DEAL_PUSH_AMOUNT_TEMPLATE';
 const PENDING_DEAL_PUSH_PAID_UP_TEXT_ENV_KEY = 'PENDING_DEAL_PUSH_PAID_UP_TEXT';
 // 卡片的配色（标题 / 金额高亮 / 两个区块的类型标签）。
@@ -94,7 +99,6 @@ const PENDING_DEAL_PUSH_PURCHASE_TITLE_ENV_KEY = 'PENDING_DEAL_PUSH_PURCHASE_TIT
 const PENDING_DEAL_PUSH_PURCHASE_LINE_PARTS_ENV_KEY = 'PENDING_DEAL_PUSH_PURCHASE_LINE_PARTS';
 const PENDING_DEAL_PUSH_PURCHASE_LINE_SEPARATOR_ENV_KEY = 'PENDING_DEAL_PUSH_PURCHASE_LINE_SEPARATOR';
 const PENDING_DEAL_PUSH_PURCHASE_SUPPLIER_SEPARATOR_ENV_KEY = 'PENDING_DEAL_PUSH_PURCHASE_SUPPLIER_SEPARATOR';
-const PENDING_DEAL_PUSH_PURCHASE_FOOTER_TEMPLATE_ENV_KEY = 'PENDING_DEAL_PUSH_PURCHASE_FOOTER_TEMPLATE';
 
 // 三个**大区**的身份（内部键；顺序由 `PENDING_DEAL_PUSH_AREA_ORDER` 决定）。
 // ⭐ 2026-10-08（第二步）：加 `voucher` = 【团购券待结算】块 + 「确认到账」按钮。
@@ -195,14 +199,15 @@ const PENDING_DEAL_PUSH_DEFAULTS = Object.freeze({
   blockCountSeparator: ' / ',
   // 区块 = 标题行 + 该区块每单一行。
   sectionTemplate: '{title}{count} 笔\n{lines}',
-  // 行 = 逐段拼，**空的那一段整段不要**（缺深链 / 金额读不出来时不会留下 ` · ` 或空壳）。
+  // 行 = 逐段拼，**空的那一段整段不要**（金额读不出来时不会留下 ` · ` 或空壳）。
   // ⚠️ 2026-10-08：**去掉 `{orderNo}`**（她明确说不需要单号），把类型标签提到最前，
-  //    金额与链接段各自可整段消失。
+  //    金额段可整段消失。
+  // 🔴 2026-10-14：**`{link}` 段已按她的口径去掉**（「现在深链已经没有了，把之前的清除掉」）
+  //    —— 行里不再有任何链接段；其余几段的文字一字未动。
   // ⚠️ `{amount}` 给的是**整段**（按下面的 `amountTemplate` 渲染好，或者「已付清」）——
   //    所以自定义行模板时**不要再写「待收」**，写 `{amount}` 就够了。
-  // ⚠️ 段序与卡片那条**保持一致**（货号尺码在前、类型标签在后）——
-  //    这样"降级纯文本"读起来就是卡片上那套字样（只差 URL 藏不藏得住）。
-  lineParts: ['{index}. {item}', '{tag}', '{amount}', '{link}'],
+  // ⚠️ 段序与卡片那条**保持一致**（货号尺码在前、类型标签在后）。
+  lineParts: ['{index}. {item}', '{tag}', '{amount}'],
   lineSeparator: ' · ',
   // 一件商品：`货号 [颜色] 尺码码`。
   // ⭐ 2026-10-08 晚她加的口径：「**还需要在货号和尺码中间加上颜色**」⇒ 默认模板里加 `{color}`
@@ -216,13 +221,9 @@ const PENDING_DEAL_PUSH_DEFAULTS = Object.freeze({
   //（**绝不**渲染 `¥—`，更不会变成 `¥0.00` —— 那是在说"这单不用收钱"）。
   amountTemplate: '待收 {amount}',
   paidUpText: '已付清',
-  // 文字链接：卡片上是 `[查看原话](url)`，纯文本降级里是 `查看原话 https://…`
-  //（纯文本藏不住 URL，但至少不再是一行裸链接）。
-  // ⭐ 2026-10-08 晚她的口径：「**应该都是查看话题**」⇒ 统一成「查看话题」
-  //（卡片上那颗按钮的文案也是它，见 `card.buttonText`）。
-  linkText: '查看话题',
-  linkTextTemplate: '{text} {url}',
-  footerTemplate: '（{count} 笔的深链暂不可用：飞书接口未返回 message_app_link，见日志 sales.pending_deal_push.link.missing）',
+  // 🔴 2026-10-14：文字链接（`linkText` / `linkTextTemplate`）与
+  // 「（N 笔的深链暂不可用…）」脚注（`footerTemplate`）**已随深链一起删除** ——
+  // 她：「现在深链已经没有了，把之前的清除掉」。不要再加回来。
   // ── 大区（2026-10-07）：销售区 + 采购区 ────────────────────────────────────
   // ⚠️ 销售区标题**默认空串** = 不渲染那一行。
   salesAreaTitle: '',
@@ -238,23 +239,21 @@ const PENDING_DEAL_PUSH_DEFAULTS = Object.freeze({
   //         （例：`报货时间：{reportedAt}`）只改配置，不去翻代码。
   //      ⚠️ 两个段各自**取不到就整段不要**（不编 `—`），要占位就填下面卡片配置里的
   //         `missingReportedAtText` / `missingQuantityText`。
-  //   · `{link}` 深链
+  //   🔴 2026-10-14：原来的 `{link}` 段已按她的口径去掉（同销售区）。
   purchaseLineParts: [
-    '{index}. {batchNo}', '{supplier}', '报货日 {reportedAt}', '录入数量 {quantity}', '{link}',
+    '{index}. {batchNo}', '{supplier}', '报货日 {reportedAt}', '录入数量 {quantity}',
   ],
   purchaseLineSeparator: ' · ',
   // 一批多供应商时的连接符。
   purchaseSupplierSeparator: '、',
-  purchaseFooterTemplate: '（{count} 批的深链暂不可用，见日志 sales.pending_deal_push.purchase_link.missing）',
+  // 🔴 2026-10-14：原来的 `purchaseFooterTemplate`（「（N 批的深链暂不可用…）」）已删除。
 
   // ── 卡片（2026-10-08）──────────────────────────────────────────────────────
   // 卡片上每一处的**标记骨架**（与 `blockCountsTemplate` 同一档：改文案 / 改标记只动这里）。
-  // ⚠️ 卡片元素里**没有** `{"tag":"a"}` 这种独立超链接组件（飞书 1.0 / 2.0 组件总览里都没有），
-  //    官方支持的等价物是富文本里的文字链接 `[查看原话](url)` —— URL 一样藏在文字后面。
   card: Object.freeze({
     headerColor: 'blue',
     sectionTitleTemplate: '**{title}**',
-    lineParts: ['{index}. {item}', '{tag}', '{amount}', '{link}'],
+    lineParts: ['{index}. {item}', '{tag}', '{amount}'],
     lineSeparator: ' · ',
     // 她最看重的两样：**货号 + 尺码**（加粗）与类型彩色标签。
     itemTemplate: '**{item}**',
@@ -262,7 +261,8 @@ const PENDING_DEAL_PUSH_DEFAULTS = Object.freeze({
     // 金额突出显示（配色可配）。
     amountTemplate: "<font color='{color}'>待收 {amount}</font>",
     amountColor: 'red',
-    linkTemplate: '[{text}]({url})',
+    // 🔴 2026-10-14：`linkTemplate`（`[{text}]({url})` 文字链接）与第 2 栏的
+    // `buttonText: '查看话题'`（跳深链那颗按钮的文案）**已随深链一起删除**。
 
     // ── ⭐ 2026-10-08 晚：每行**两栏**（她拍板，替换掉先前"三列含分类列"的方案）─────────
     // 她的原话：「可以按照**预定、现货待收和采购分为 3 个区域**，并且按照区域进行分块，
@@ -270,6 +270,9 @@ const PENDING_DEAL_PUSH_DEFAULTS = Object.freeze({
     // ⇒ 区域 = 各块标题（【预定】/【现货待收】/【采购…】，配置给的 title）；
     //    每行 = 一个 `column_set`：第 1 栏文字说明、第 2 栏按钮。
     // ⚠️ 先前那版"第 1 列再放一个分类名（销售-预定）"**已按她这次的口径去掉**。
+    // 🔴 2026-10-14 起：**第 2 栏（跳深链的按钮）在销售区 / 采购区不再出现** ——
+    //    传给渲染层的行**不再带 `url`**，`columnWeights` 只剩第 1 栏在用
+    //    （【团购券待结算】那块的「确认到账」回调按钮仍走同一个两栏形状）。
     rowTextParts: ['{item}', '{amount}'],
     rowTextSeparator: ' · ',
     // 货号/尺码读不出来时的占位（**绝不静默丢这一行**）。
@@ -285,9 +288,8 @@ const PENDING_DEAL_PUSH_DEFAULTS = Object.freeze({
     //   ⚠️ 想要"读不到就什么都不显示"（与金额同一形状）就把这两个键设成空串。
     missingReportedAtText: '（未读到）',
     missingQuantityText: '（未读到）',
-    // 按钮文案（两栏里的第 2 栏）；没有深链时**整栏不出现**（不留空壳）。
-    buttonText: '查看话题',
-    // 两栏宽度权重（文字 : 按钮）。
+    // 两栏宽度权重（文字 : 按钮）—— ⚠️ 销售区 / 采购区现在只有第 1 栏；
+    // 【团购券待结算】那块的两栏（第 1 栏文字 + 第 2 栏「确认到账」回调按钮）仍用它。
     columnWeights: Object.freeze([4, 1]),
     // ── ⭐ 2026-10-08（第二步）：【团购券待结算】块的两栏 ─────────────────────────
     // 与上面那行**同一形状**（第 1 栏文字说明、第 2 栏按钮），只是：
@@ -306,27 +308,26 @@ const TEMPLATE_PLACEHOLDERS = Object.freeze({
   blockCountsTemplate: Object.freeze(['counts']),
   blockCountTemplate: Object.freeze(['title', 'count']),
   sectionTemplate: Object.freeze(['title', 'count', 'lines']),
-  linePart: Object.freeze(['index', 'orderNo', 'tag', 'item', 'amount', 'link']),
+  // 🔴 2026-10-14：`link` 占位符、`footerTemplate` / `purchaseFooterTemplate` /
+  // `linkTextTemplate` / `cardLinkTemplate` 这几项**已随深链删除** ——
+  // 行模板 / 采购行模板 / 卡片行模板里都不再有链接段。
+  linePart: Object.freeze(['index', 'orderNo', 'tag', 'item', 'amount']),
   itemTemplate: Object.freeze(['itemNo', 'color', 'size']),
   sizeTemplate: Object.freeze(['size']),
-  footerTemplate: Object.freeze(['count']),
   amountTemplate: Object.freeze(['amount']),
   paidUpText: Object.freeze([]),
-  linkTextTemplate: Object.freeze(['text', 'url']),
   // ── 卡片 ──────────────────────────────────────────────────────────────────
   cardSectionTitleTemplate: Object.freeze(['title']),
-  cardLinePart: Object.freeze(['index', 'tag', 'item', 'amount', 'link']),
+  cardLinePart: Object.freeze(['index', 'tag', 'item', 'amount']),
   cardItemTemplate: Object.freeze(['item']),
   cardTagTemplate: Object.freeze(['color', 'text']),
   cardAmountTemplate: Object.freeze(['color', 'amount']),
-  cardLinkTemplate: Object.freeze(['text', 'url']),
   cardRowTextPart: Object.freeze(['index', 'tag', 'item', 'amount']),
   cardPurchaseRowTextPart: Object.freeze(['index', 'batchNo', 'supplier', 'reportedAt', 'quantity']),
   // ── 大区 ──────────────────────────────────────────────────────────────────
   salesAreaTitle: Object.freeze(['count']),
   purchaseAreaTitle: Object.freeze(['count']),
-  purchaseLinePart: Object.freeze(['index', 'batchNo', 'supplier', 'reportedAt', 'quantity', 'link']),
-  purchaseFooterTemplate: Object.freeze(['count']),
+  purchaseLinePart: Object.freeze(['index', 'batchNo', 'supplier', 'reportedAt', 'quantity']),
 });
 
 const assertTemplate = (label, template, allowed) => {
@@ -464,8 +465,7 @@ const resolveCardConfig = (env) => {
     amountTemplate: assertTemplate('card.amountTemplate', defaults.amountTemplate,
       TEMPLATE_PLACEHOLDERS.cardAmountTemplate),
     amountColor: readString(env, PENDING_DEAL_PUSH_CARD_AMOUNT_COLOR_ENV_KEY, defaults.amountColor),
-    linkTemplate: assertTemplate('card.linkTemplate', defaults.linkTemplate,
-      TEMPLATE_PLACEHOLDERS.cardLinkTemplate),
+    // 🔴 2026-10-14：`linkTemplate` / `buttonText`（跳深链那颗按钮）已随深链删除。
     // ⭐ 两栏那一版（2026-10-08 晚）
     rowTextParts: [...defaults.rowTextParts].map((part) => assertTemplate(
       'card.rowTextParts', part, TEMPLATE_PLACEHOLDERS.cardRowTextPart,
@@ -479,7 +479,6 @@ const resolveCardConfig = (env) => {
     //    要一起补上它们；不想要占位就在那里把它们设成空串。
     missingReportedAtText: defaults.missingReportedAtText,
     missingQuantityText: defaults.missingQuantityText,
-    buttonText: defaults.buttonText,
     columnWeights: [...defaults.columnWeights],
     // 【团购券待结算】的「确认到账」按钮类型（回调按钮；配色可配）。
     voucherButtonType: readString(env, 'PENDING_DEAL_PUSH_VOUCHER_BUTTON_TYPE', defaults.voucherButtonType),
@@ -496,12 +495,8 @@ const resolvePendingDealPushConfig = (env = process.env) => ({
   chatId: readString(env, PENDING_DEAL_PUSH_CHAT_ID_ENV_KEY, ''),
   hour: readInt(env, PENDING_DEAL_PUSH_HOUR_ENV_KEY, DEFAULT_PUSH_HOUR, { min: 0, max: 23 }),
   intervalMs: readInt(env, PENDING_DEAL_PUSH_INTERVAL_MS_ENV_KEY, DEFAULT_INTERVAL_MS, { min: 1000, max: 24 * 60 * 60 * 1000 }),
-  // 深链**现查**开关：拿不到本地存的 `message_app_link` 时，要不要每次去问一次飞书。
-  // 默认开——那是官方声明过的字段，将来飞书开始返回就自动生效，不用改代码。
-  // 实测（2026-10-06）当前**不返回**，见 services/larkMessageLinkResolver 的注释。
-  linkLookupEnabled: readFlag(env, PENDING_DEAL_PUSH_LINK_LOOKUP_ENABLED_ENV_KEY, true),
-  // 拿不到深链时要不要**干脆不推**。默认 false = 照推货号 + 尺码 + 金额（深链是增强，不是前提）。
-  linkRequired: readFlag(env, PENDING_DEAL_PUSH_LINK_REQUIRED_ENV_KEY, false),
+  // 🔴 2026-10-14：`linkLookupEnabled` / `linkRequired` 两个深链开关**已删除**
+  //   （她：「现在深链已经没有了，把之前的清除掉」）—— 这条推送里不再有链接相关行为。
   // 发出后要不要**把那条消息置顶**（飞书 im/v1/pins）。**默认 false**，理由：
   //   · 置顶是**群里每个人都看得见**的副作用，而且飞书那边有额外门槛——
   //     应用要有 `im:message.pins:write_only`（或 `im:message`）权限、机器人必须在群里、
@@ -537,19 +532,14 @@ const resolvePendingDealPushConfig = (env = process.env) => ({
   sizeTemplate: assertTemplate(PENDING_DEAL_PUSH_SIZE_TEMPLATE_ENV_KEY,
     readString(env, PENDING_DEAL_PUSH_SIZE_TEMPLATE_ENV_KEY, PENDING_DEAL_PUSH_DEFAULTS.sizeTemplate),
     TEMPLATE_PLACEHOLDERS.sizeTemplate),
-  // ── 金额 / 链接（2026-10-08）──────────────────────────────────────────────
+  // ── 金额（2026-10-08）─────────────────────────────────────────────────────
   amountTemplate: assertTemplate(PENDING_DEAL_PUSH_AMOUNT_TEMPLATE_ENV_KEY,
     readString(env, PENDING_DEAL_PUSH_AMOUNT_TEMPLATE_ENV_KEY, PENDING_DEAL_PUSH_DEFAULTS.amountTemplate),
     TEMPLATE_PLACEHOLDERS.amountTemplate),
   paidUpText: assertTemplate(PENDING_DEAL_PUSH_PAID_UP_TEXT_ENV_KEY,
     readString(env, PENDING_DEAL_PUSH_PAID_UP_TEXT_ENV_KEY, PENDING_DEAL_PUSH_DEFAULTS.paidUpText),
     TEMPLATE_PLACEHOLDERS.paidUpText),
-  linkText: readString(env, PENDING_DEAL_PUSH_LINK_TEXT_ENV_KEY, PENDING_DEAL_PUSH_DEFAULTS.linkText),
-  linkTextTemplate: assertTemplate('linkTextTemplate', PENDING_DEAL_PUSH_DEFAULTS.linkTextTemplate,
-    TEMPLATE_PLACEHOLDERS.linkTextTemplate),
-  footerTemplate: assertTemplate(PENDING_DEAL_PUSH_FOOTER_TEMPLATE_ENV_KEY,
-    readString(env, PENDING_DEAL_PUSH_FOOTER_TEMPLATE_ENV_KEY, PENDING_DEAL_PUSH_DEFAULTS.footerTemplate),
-    TEMPLATE_PLACEHOLDERS.footerTemplate),
+  // 🔴 2026-10-14：`linkText` / `linkTextTemplate` / `footerTemplate` 已随深链删除。
 
   // ── 大区：销售区 + 采购区（2026-10-07）───────────────────────────────────────
   // `areas` 已按配置排好序（默认 销售 → 采购）；渲染只认这个数组，服务里没有第二处顺序。
@@ -564,9 +554,7 @@ const resolvePendingDealPushConfig = (env = process.env) => ({
     PENDING_DEAL_PUSH_DEFAULTS.purchaseLineSeparator),
   purchaseSupplierSeparator: readString(env, PENDING_DEAL_PUSH_PURCHASE_SUPPLIER_SEPARATOR_ENV_KEY,
     PENDING_DEAL_PUSH_DEFAULTS.purchaseSupplierSeparator),
-  purchaseFooterTemplate: assertTemplate(PENDING_DEAL_PUSH_PURCHASE_FOOTER_TEMPLATE_ENV_KEY,
-    readString(env, PENDING_DEAL_PUSH_PURCHASE_FOOTER_TEMPLATE_ENV_KEY, PENDING_DEAL_PUSH_DEFAULTS.purchaseFooterTemplate),
-    TEMPLATE_PLACEHOLDERS.purchaseFooterTemplate),
+  // 🔴 2026-10-14：`purchaseFooterTemplate` 已随深链删除。
   // ── 卡片标记骨架（2026-10-08）──────────────────────────────────────────────
   card: resolveCardConfig(env),
   // ── ⭐ 2026-10-08（第二步）：【团购券待结算】块 ────────────────────────────────
@@ -581,8 +569,6 @@ module.exports = {
   PENDING_DEAL_PUSH_CHAT_ID_ENV_KEY,
   PENDING_DEAL_PUSH_HOUR_ENV_KEY,
   PENDING_DEAL_PUSH_INTERVAL_MS_ENV_KEY,
-  PENDING_DEAL_PUSH_LINK_LOOKUP_ENABLED_ENV_KEY,
-  PENDING_DEAL_PUSH_LINK_REQUIRED_ENV_KEY,
   PENDING_DEAL_PUSH_PIN_ENABLED_ENV_KEY,
   PENDING_DEAL_PUSH_BLOCK_ORDER_ENV_KEY,
   PENDING_DEAL_PUSH_PREPAID_TITLE_ENV_KEY,
@@ -595,10 +581,8 @@ module.exports = {
   PENDING_DEAL_PUSH_ITEM_TEMPLATE_ENV_KEY,
   PENDING_DEAL_PUSH_ITEM_SEPARATOR_ENV_KEY,
   PENDING_DEAL_PUSH_SIZE_TEMPLATE_ENV_KEY,
-  PENDING_DEAL_PUSH_FOOTER_TEMPLATE_ENV_KEY,
   PENDING_DEAL_PUSH_MESSAGE_FORMAT_ENV_KEY,
   PENDING_DEAL_PUSH_RETRY_DELAYS_MS_ENV_KEY,
-  PENDING_DEAL_PUSH_LINK_TEXT_ENV_KEY,
   PENDING_DEAL_PUSH_AMOUNT_TEMPLATE_ENV_KEY,
   PENDING_DEAL_PUSH_PAID_UP_TEXT_ENV_KEY,
   PENDING_DEAL_PUSH_CARD_HEADER_COLOR_ENV_KEY,
@@ -611,7 +595,6 @@ module.exports = {
   PENDING_DEAL_PUSH_PURCHASE_LINE_PARTS_ENV_KEY,
   PENDING_DEAL_PUSH_PURCHASE_LINE_SEPARATOR_ENV_KEY,
   PENDING_DEAL_PUSH_PURCHASE_SUPPLIER_SEPARATOR_ENV_KEY,
-  PENDING_DEAL_PUSH_PURCHASE_FOOTER_TEMPLATE_ENV_KEY,
   PENDING_DEAL_PUSH_AREA_KEYS,
   DEFAULT_AREA_ORDER,
   DEFAULT_RETRY_DELAYS_MS,

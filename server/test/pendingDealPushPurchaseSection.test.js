@@ -2,22 +2,31 @@
  *  改前（逐字）：采购区那一行的标题 `'【采购】未到货的报货批次：{count} 批'`（含渲染文本与正则）
  *  改后（逐字）：`'【采购】未到货的采购单：{count} 批'`
  *  理由：她把「报货批次」改名成了「采购主表」；**用户可见文案**用业务说法「采购单」。
- *        ⚠️ 只换这一个词；格式 / 深链 / 脚注 / 大区顺序 / 供应商拼接 这些断言一条没放宽。
+ *        ⚠️ 只换这一个词；格式 / 大区顺序 / 供应商拼接 这些断言一条没放宽。
  *  ⚠️ 测试**标题**里还留着「报货批次.供应商」那种旧表名（`F2` 那条）—— 测试名不是用户可见文案，
  *     按 Lead 的口径（注释/内部描述不动）保留。
+ *
+ * ⚠️ 2026-10-14 第二次改写（**深链整体退场**，业务负责人逐字：「**现在深链已经没有了，
+ *    把之前的清除掉**」）——购买区那几条的「改前 → 改后 → 依据」：
+ *  ① 采购行改前：末尾 ` · 查看话题 <话题深链 URL>` / 卡片里 `| 查看话题` 那一栏；
+ *     改后：只剩文字段（批次号 · 供应商 · 报货日 · 录入数量）。
+ *  ② 两个脚注（`（N 笔的深链暂不可用…）` / `（N 批的深链暂不可用…）`）改后：**整块删除**。
+ *  ③ `PENDING_DEAL_PUSH_PURCHASE_FOOTER_TEMPLATE` 与 `{link}` 占位符改后：**配置键 / 占位符都删**。
+ *  依据：她「现在深链已经没有了，把之前的清除掉」。
  */
 // ⭐ 2026-10-07：9 点推送加【采购】区（与【销售】区并存；销售在前、采购在后，顺序可配）。
 //
 // 业务负责人的口径（逐字）：
 //   「你每天 9 点发通知的时候，**看未到货的情况就直接去那个表里查**，
 //    然后再把消息**深链**发到用户群里」
+//   ⚠️ 后半句"发深链"是 **2026-10-07 当时**的口径，已被 2026-10-14 那句覆盖（见上）。
 // ⇒ 采购候选 = 「报货批次」表里 **到货状态 = 未到货**（直接查这张表）。
 //
 // 这个文件盯的是**这条消息的形状与候选口径**：
-//   ⑩ 两个大区**逐字**（含空区行为、深链缺失的脚注）
+//   ⑩ 两个大区**逐字**（含空区行为；🔴 深链脚注已退场）
 //   ⑪ **销售区逐字不变**（哨兵：同一批候选，加不加采购区，销售那半逐字节相同）
-//   F2 供应商从**「信息填写」关联**取；取不到就不显示、**不编**
-//   F3 深链走本地映射（chat_id + thread_id）→ 话题深链；拿不到 → 照发 + 脚注，候选一条都不丢
+//   F2 供应商从**「报货批次.供应商」**那一列取；取不到就不显示、**不编**
+//   F3 本地映射里有深链也**不渲染**（深链已退场），候选一条都不丢
 //   F4 顺序可配；空区连标题都不出现；两区都空 → **不发**
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
 
@@ -31,7 +40,6 @@ const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { SalesGroupThreadLocator } = require('../src/services/salesGroupThreadLocator');
 const { PurchaseBatchLocator } = require('../src/services/purchaseBatchLocator');
 const { PurchasePendingBatchService } = require('../src/services/purchasePendingBatchService');
-const { LarkMessageLinkResolver } = require('../src/services/larkMessageLinkResolver');
 const { PendingDealPushService } = require('../src/services/pendingDealPushService');
 const { resolvePendingDealPushConfig } = require('../src/config/pendingDealPush');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
@@ -54,8 +62,7 @@ const settings = (overrides = {}) => ({
   ...resolvePendingDealPushConfig({}),
   enabled: true,
   chatId: CHAT_ID,
-  linkLookupEnabled: false,
-  linkRequired: false,
+  // 🔴 2026-10-14：`linkLookupEnabled` / `linkRequired` 已随深链从配置删除，不再注入。
   ...overrides,
 });
 
@@ -122,8 +129,8 @@ const newService = ({
       }),
       formatReportedAt: () => '',
     },
-    locator: new SalesGroupThreadLocator({ store: tmpStore('pending-push-sales-mapping-') }),
-    resolver: new LarkMessageLinkResolver({ client, lookupEnabled: false }),
+    // ⚠️ 2026-10-14：`locator` / `resolver` 两个注入**已随深链删除**（本类不再认识它们）——
+    //    采购侧的本地映射仍然种在 `purchaseBatchLocator` 里（证明"映射里有深链也不渲染"）。
     client,
     chatId: CHAT_ID,
     store: tmpStore('pending-push-day-'),
@@ -138,7 +145,7 @@ const remember = async (locator, batchNo, { messageId, threadId, chatId = CHAT_I
   });
 };
 
-// 卡片里"她看得见的字"（去掉 ** / text_tag / font 壳，文字链接摊成「文案 URL」）。
+// 卡片里"她看得见的字"（去掉 ** / text_tag / font 壳）。
 const visibleOf = (create) => visibleCardText(JSON.parse(create.data.content));
 
 // ── ⑩ 两个大区逐字 ─────────────────────────────────────────────────────────────
@@ -160,40 +167,47 @@ test('⑩ 一条消息两个大区：销售区在上、采购区在下，逐字�
     ],
   };
   const { service, creates, purchaseBatchLocator } = newService({ orders: [ORDER_A], records });
-  // 第 1 批有话题映射（→ 话题深链）；第 2 批没有 → 缺深链
+  // ⚠️ 2026-10-14：采购那批**故意记上话题映射**（原来用来造"有深链"）——
+  //    现在它证明的是"映射里有链接，推送里也不出现"。
   await remember(purchaseBatchLocator, 'CGD-20261007-0001', { messageId: 'om_1', threadId: 'omt_1' });
 
   const result = await service.sendDailyPush({ now: NOW });
   assert.equal(result.purchaseBatchCount, 2);
-  assert.equal(result.purchaseMissingLinkCount, 1);
+  assert.equal(result.purchaseMissingLinkCount, undefined, '深链计数已随深链删除');
   assert.equal(creates.length, 1);
 
   const text = visibleOf(creates[0]);
+  // 🔴 2026-10-14 改（「必须有链接」⇒「**必须没有**」）：
+  //   改前逐字：第 1 批那行末尾 ` | 查看话题`，最后还有两行脚注
+  //            `（1 笔的深链暂不可用：飞书接口未返回 message_app_link，见日志 …link.missing）`
+  //            `（1 批的深链暂不可用，见日志 …purchase_link.missing）`
+  //   改后逐字：见下面这一份（**行文字逐字不变**，只少了链接栏与两行脚注）。
+  //   依据：她「现在深链已经没有了，把之前的清除掉」。
   assert.equal(text, [
-    // ⚠️ 2026-10-08 晚：每行**两栏**（文字说明 | 查看话题）—— 没有序号、没有类型标签；
-    //    类型由**区域标题**表达；两个缺失脚注合并到卡片最下面那一条 note。
+    // 每行只有文字说明 —— 没有序号、没有类型标签；类型由**区域标题**表达。
     '⏰ 2026-10-07 最近 7 天待处理的销售单（预定 / 现货待收）：1 笔',
     '【预定】1 笔',
     'B26002-52 37码 · 待收 ¥128.00',
     '【采购】未到货的采购单：2 批',
-    'CGD-20261007-0001 · 金猴 · 报货日 2026-10-05 · 录入数量 12 | 查看话题',
+    'CGD-20261007-0001 · 金猴 · 报货日 2026-10-05 · 录入数量 12',
     'CGD-20261007-0002 · 报货日 （未读到） · 录入数量 （未读到）',
-    '（1 笔的深链暂不可用：飞书接口未返回 message_app_link，见日志 sales.pending_deal_push.link.missing）',
-    '（1 批的深链暂不可用，见日志 sales.pending_deal_push.purchase_link.missing）',
   ].join('\n'));
-  // 两个区块之间**一条分割线**（采购区之前那条）。
+  assert.doesNotMatch(text, /深链暂不可用/, '两句脚注一起退了');
+  assert.doesNotMatch(text, /查看话题/);
+  assert.doesNotMatch(text, /https?:\/\//);
+  // 两个区块之间**一条分割线**（采购区之前那条）；🔴 没有 note（脚注）元素了。
   const card = JSON.parse(creates[0].data.content);
   assert.deepEqual(card.elements.map((element) => element.tag),
-    ['div', 'column_set', 'hr', 'div', 'column_set', 'column_set', 'note']);
+    ['div', 'column_set', 'hr', 'div', 'column_set', 'column_set']);
 });
 
 test('⑪ 销售区哨兵：同一批销售候选，加不加采购区，**销售那半逐字节相同**（销售区没有大区标题）', async () => {
   // 销售候选的**行**（本文件不关心销售侧取数，只关心"销售那半的渲染"）。
   const rows = [{ rowId: 'sale_a', salesEntryRecordId: 'sale_a', criterion: 'undelivered',
-    facts: ORDER_A.items, pendingAmount: ORDER_A.pendingAmount, url: '' }];
+    facts: ORDER_A.items, pendingAmount: ORDER_A.pendingAmount }];
   const salesOnly = newService({ orders: [ORDER_A], records: { purchaseOrderBatch: [] } });
   const salesText = salesOnly.service.buildText({
-    sections: salesOnly.service.buildSections(rows), rows, missingLinkCount: 0, dayKey: DAY_KEY,
+    sections: salesOnly.service.buildSections(rows), rows, dayKey: DAY_KEY,
   });
 
   const withPurchase = newService({
@@ -205,26 +219,29 @@ test('⑪ 销售区哨兵：同一批销售候选，加不加采购区，**销�
       })],
     },
   });
-  // 这一批当初发进群的那条消息（本地映射 → 话题深链）。
+  // 这一批当初发进群的那条消息（本地映射里有链接）—— ⚠️ 2026-10-14 起它**不再被渲染**。
   await remember(withPurchase.purchaseBatchLocator, 'CGD-20261007-0001', { messageId: 'om_1', threadId: 'omt_1' });
-  // 采购那半走**真实链路**（候选 → 深链素材），报货日/录入数量与线上一致。
-  const purchase = await withPurchase.service.purchasePending.listPendingBatches();
-  const { batches } = await withPurchase.service.attachPurchaseLinks(purchase);
+  // 采购那半走**真实链路**（候选 → 渲染），报货日/录入数量与线上一致。
+  // 🔴 2026-10-14：原来这里是 `attachPurchaseLinks(purchase)`（逐批解析深链）——
+  //    那个方法已随深链删除 ⇒ 候选**原样**进渲染（与 `_sendDailyPush` 里现在的做法一致）。
+  const batches = await withPurchase.service.purchasePending.listPendingBatches();
   const combined = withPurchase.service.buildText({
     sections: withPurchase.service.buildSections(rows),
     rows,
-    missingLinkCount: 0,
     dayKey: DAY_KEY,
     purchaseBatches: batches,
-    purchaseMissingLinkCount: 0,
   });
   // 销售那半（采购区之前的那一段）**逐字节相同**
   assert.equal(combined.slice(0, salesText.length), salesText);
   assert.equal(batches[0].reportedAt, Date.parse('2026-10-05T03:00:00+08:00'));
-  // 深链是**真解析出来的**（本地映射 → 话题深链），所以这里只钉前缀与那三段事实。
   assert.equal(combined.slice(salesText.length, salesText.length + 3), '\n【采');
+  // 🔴 2026-10-14 改（「必须有链接」⇒「**必须没有**」）：
+  //   改前逐字：（正则）`… 录入数量 12 · 查看话题 https://applink.feishu.cn/client/thread/open?…`
+  //   改后逐字：（正则）`^\n【采购】未到货的采购单：1 批\n1\. CGD-20261007-0001 · 金猴 · 报货日 2026-10-05 · 录入数量 12$`
+  //   依据：她「现在深链已经没有了，把之前的清除掉」——前面那三段事实逐字不变。
   assert.match(combined.slice(salesText.length),
-    /^\n【采购】未到货的采购单：1 批\n1\. CGD-20261007-0001 · 金猴 · 报货日 2026-10-05 · 录入数量 12 · 查看话题 https:\/\/applink\.feishu\.cn\/client\/thread\/open\?/);
+    /^\n【采购】未到货的采购单：1 批\n1\. CGD-20261007-0001 · 金猴 · 报货日 2026-10-05 · 录入数量 12$/);
+  assert.doesNotMatch(combined.slice(salesText.length), /查看话题|https?:\/\//, '采购区也不再有链接');
   // 而且销售区的大区标题是**空串**（默认不给销售区多加一行）
   assert.equal(withPurchase.settings.salesAreaTitle, '');
 });
@@ -241,27 +258,29 @@ test('F4 空区连标题都不出现：只有采购候选时，**没有**销售�
   const text = service.buildText({
     sections: [],
     rows: [],
-    missingLinkCount: 0,
     dayKey: DAY_KEY,
-    purchaseBatches: [{ batchNo: 'CGD-20261007-0001', suppliers: ['金猴'], url: '' }],
-    purchaseMissingLinkCount: 1,
+    purchaseBatches: [{ batchNo: 'CGD-20261007-0001', suppliers: ['金猴'] }],
   });
+  // 🔴 2026-10-14 改（「必须有链接」⇒「**必须没有**」）：末行脚注
+  //   `（1 批的深链暂不可用，见日志 …purchase_link.missing）` 已整行删除。
+  //   改前逐字：（上面那行脚注）／改后逐字：（没有这一行）。
+  //   依据：她「现在深链已经没有了，把之前的清除掉」。
   assert.equal(text, [
     '【采购】未到货的采购单：1 批',
     // ⭐ 2026-10-08 晚：这一行也带她点名的两样（报货日 + 录入数量）；这里没给值 ⇒ 占位。
     '1. CGD-20261007-0001 · 金猴 · 报货日 （未读到） · 录入数量 （未读到）',
-    '（1 批的深链暂不可用，见日志 sales.pending_deal_push.purchase_link.missing）',
   ].join('\n'));
   assert.ok(!text.includes('销售单'), '销售区整块不出现（连表头都没有）');
+  assert.ok(!text.includes('深链暂不可用'));
 });
 
 test('F4 只有销售候选时：**没有**采购区的任何痕迹', async () => {
   const { service } = newService({ orders: [ORDER_A], records: {} });
   const rows = [{ rowId: 'sale_a', salesEntryRecordId: 'sale_a', criterion: 'undelivered',
-    facts: ORDER_A.items, pendingAmount: ORDER_A.pendingAmount, url: '' }];
+    facts: ORDER_A.items, pendingAmount: ORDER_A.pendingAmount }];
   const text = service.buildText({
-    sections: service.buildSections(rows), rows, missingLinkCount: 0, dayKey: DAY_KEY,
-    purchaseBatches: [], purchaseMissingLinkCount: 0,
+    sections: service.buildSections(rows), rows, dayKey: DAY_KEY,
+    purchaseBatches: [],
   });
   assert.equal(text, [
     '⏰ 2026-10-07 最近 7 天待处理的销售单（预定 / 现货待收）：1 笔',
@@ -318,10 +337,9 @@ test('F2 供应商从**「报货批次.供应商」**那一列取：多个去重
     rows: [],
     dayKey: DAY_KEY,
     purchaseBatches: [
-      { batchNo: 'CGD-20261007-0001', suppliers: ['金猴', '奥康'], url: '' },
-      { batchNo: 'CGD-20261007-0002', suppliers: [], url: '' },
+      { batchNo: 'CGD-20261007-0001', suppliers: ['金猴', '奥康'] },
+      { batchNo: 'CGD-20261007-0002', suppliers: [] },
     ],
-    purchaseMissingLinkCount: 0,
   });
   assert.equal(text, [
     '【采购】未到货的采购单：2 批',
@@ -331,7 +349,15 @@ test('F2 供应商从**「报货批次.供应商」**那一列取：多个去重
   assert.ok(!/ · $/.test(text), '供应商取不到时不许留下一段空壳');
 });
 
-test('F3 深链走本地映射（chat_id + thread_id）→ 话题深链；拿不到就照发 + 脚注，候选一条不丢', async () => {
+test('F3 本地映射里**有**话题深链也不再渲染；候选一条都不丢（深链已整体退场）', async () => {
+  // 「改前」逐字（旧名字与旧断言）：`test('F3 深链走本地映射（chat_id + thread_id）→ 话题深链；拿不到就照发 + 脚注，候选一条不丢', …)`
+  //   `assert.equal(result.purchaseMissingLinkCount, 1);`
+  //   `assert.match(text, /CGD-20261007-0001 · 金猴 · 报货日 （未读到） · 录入数量 （未读到） \| 查看话题/);`
+  //   `assert.match(text, /（1 批的深链暂不可用，见日志 sales\.pending_deal_push\.purchase_link\.missing）/);`
+  //   `const urls = … .map((element) => element.behaviors[0].default_url); assert.equal(urls.length, 1);`
+  // 「改后」：这一批**照旧记着话题映射**（两个 id 都全的那条），但推送里**一个链接都不出现**、
+  //   没有按钮、没有脚注；候选两条都还在（`purchaseBatchCount === 2`）。
+  // 「依据」：业务负责人 2026-10-14 逐字「现在深链已经没有了，把之前的清除掉」。
   const records = {
     purchaseOrderBatch: [
       batchRow('bat_1', 'CGD-20261007-0001', '未到货', { 供应商: [{ text: '金猴' }] }),
@@ -339,25 +365,26 @@ test('F3 深链走本地映射（chat_id + thread_id）→ 话题深链；拿不
     ],
   };
   const { service, creates, purchaseBatchLocator } = newService({ orders: [], records });
-  // 只有第 1 批记过映射；映射里同批次两条（图 + 文字）→ 取第一个"两个 id 都全"的
+  // 映射里同批次两条（图 + 文字）—— 其中一条两个 id 都全（原来正是用它拼出话题深链的）。
   await remember(purchaseBatchLocator, 'CGD-20261007-0001', { messageId: 'om_1', threadId: '' });
   await remember(purchaseBatchLocator, 'CGD-20261007-0001', { messageId: 'om_2', threadId: 'omt_2' });
 
   const result = await service.sendDailyPush({ now: NOW });
-  assert.equal(result.purchaseBatchCount, 2, '拿不到深链也不能漏掉候选');
-  assert.equal(result.purchaseMissingLinkCount, 1);
+  assert.equal(result.purchaseBatchCount, 2, '候选一条都不丢');
+  assert.equal(result.purchaseMissingLinkCount, undefined, '深链计数已随深链删除');
   const text = visibleOf(creates[0]);
-  assert.match(text, /CGD-20261007-0001 · 金猴 · 报货日 （未读到） · 录入数量 （未读到） \| 查看话题/);
-  assert.match(text, /CGD-20261007-0002 · 报货日 （未读到） · 录入数量 （未读到）$/m,
-    '第 2 批照发（那一行只有文字栏）');
-  assert.match(text, /（1 批的深链暂不可用，见日志 sales\.pending_deal_push\.purchase_link\.missing）/);
-  // 深链在按钮的 default_url 里（不再是正文里的文字链接）。
-  const urls = JSON.parse(creates[0].data.content).elements
+  // 行文字逐字保留（与"有链接"那版**同一串字**，只少了后面的链接栏）。
+  assert.match(text, /CGD-20261007-0001 · 金猴 · 报货日 （未读到） · 录入数量 （未读到）$/m);
+  assert.match(text, /CGD-20261007-0002 · 报货日 （未读到） · 录入数量 （未读到）$/m);
+  assert.doesNotMatch(text, /查看话题/);
+  assert.doesNotMatch(text, /深链暂不可用/);
+  assert.doesNotMatch(text, /https?:\/\//);
+  // 🔴 「必须没有」：卡片里一个按钮都没有（原来这里恰好有 1 个 `open_url` 按钮）。
+  const buttons = JSON.parse(creates[0].data.content).elements
     .flatMap((element) => (element.columns || []).flatMap((column) => column.elements))
-    .filter((element) => element.tag === 'button')
-    .map((element) => element.behaviors[0].default_url);
-  assert.equal(urls.length, 1);
-  assert.match(urls[0], /https:\/\/applink\.feishu\.cn\/client\/thread\/open\?/);
+    .filter((element) => element.tag === 'button');
+  assert.equal(buttons.length, 0, '深链已退场：一个按钮都不该有');
+  assert.equal(JSON.parse(creates[0].data.content).elements.find((e) => e.tag === 'note'), undefined);
 });
 
 test('F1 候选直接查「报货批次」：只有 到货状态 = 未到货 的进候选（其余状态一律不进）', async () => {
@@ -380,7 +407,6 @@ test('F1 候选直接查「报货批次」：只有 到货状态 = 未到货 的
     rows: [],
     dayKey: DAY_KEY,
     purchaseBatches: pending,
-    purchaseMissingLinkCount: 0,
   });
   assert.match(text, /：1 批/);
 });
@@ -411,32 +437,45 @@ test('F3 采购候选读表失败：**不拖垮销售那半边**（照常推销�
 
 // ── 配置：全部可配且写错当场抛 ────────────────────────────────────────────────
 
-test('D1 大区/采购区的标题、行格式、分隔符、脚注都可配；写错在**解析配置时**就抛', () => {
+test('D1 大区/采购区的标题、行格式、分隔符都可配；写错在**解析配置时**就抛', () => {
+  // 🔴 2026-10-14 改（「必须有链接」⇒「**必须没有**」）：
+  //   改前逐字：`PENDING_DEAL_PUSH_PURCHASE_LINE_PARTS: '{index}、{batchNo}|{supplier}|{link}'`
+  //             `PENDING_DEAL_PUSH_PURCHASE_FOOTER_TEMPLATE: '（{count} 批没有深链）'`
+  //             `assert.deepEqual(custom.purchaseLineParts, ['{index}、{batchNo}', '{supplier}', '{link}']);`
+  //             `assert.equal(custom.purchaseFooterTemplate, '（{count} 批没有深链）');`
+  //   改后逐字：行模板去掉 `|{link}`；`PENDING_DEAL_PUSH_PURCHASE_FOOTER_TEMPLATE`
+  //             **整键删除**（那个 env 现在没有任何读取点）。
+  //   依据：她「现在深链已经没有了，把之前的清除掉」。
   const custom = resolvePendingDealPushConfig({
     PENDING_DEAL_PUSH_AREA_ORDER: 'purchase,sales',
     PENDING_DEAL_PUSH_SALES_TITLE: '【销售】{count} 笔',
     PENDING_DEAL_PUSH_PURCHASE_TITLE: '【采购】{count} 批待收货',
-    PENDING_DEAL_PUSH_PURCHASE_LINE_PARTS: '{index}、{batchNo}|{supplier}|{link}',
+    PENDING_DEAL_PUSH_PURCHASE_LINE_PARTS: '{index}、{batchNo}|{supplier}|{reportedAt}',
     PENDING_DEAL_PUSH_PURCHASE_LINE_SEPARATOR: ' -- ',
     PENDING_DEAL_PUSH_PURCHASE_SUPPLIER_SEPARATOR: ' / ',
-    PENDING_DEAL_PUSH_PURCHASE_FOOTER_TEMPLATE: '（{count} 批没有深链）',
   });
   assert.deepEqual(custom.areas, ['purchase', 'sales', 'voucher']);
   assert.equal(custom.salesAreaTitle, '【销售】{count} 笔');
   assert.equal(custom.purchaseAreaTitle, '【采购】{count} 批待收货');
-  assert.deepEqual(custom.purchaseLineParts, ['{index}、{batchNo}', '{supplier}', '{link}']);
+  assert.deepEqual(custom.purchaseLineParts, ['{index}、{batchNo}', '{supplier}', '{reportedAt}']);
   // ⚠️ 环境变量的首尾空白会被 `readString` 去掉（` -- ` 读进来是 `--`）——与销售区那条
   //    行分隔符同一个规矩；要真带空格就把它写进**段模板**里。
   assert.equal(custom.purchaseLineSeparator, '--');
   assert.equal(custom.purchaseSupplierSeparator, '/');
-  assert.equal(custom.purchaseFooterTemplate, '（{count} 批没有深链）');
+  // 🔴 「必须没有」：脚注那个配置键**整个不存在了**（不只是默认值为空）。
+  assert.equal('purchaseFooterTemplate' in custom, false, '深链脚注配置键已随深链删除');
 
   // 写错的名字 / 没闭合的括号 / 空的段列表 → 启动时就吵
   assert.throws(() => resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_AREA_ORDER: 'sales,unknown' }), /没声明的大区/);
   assert.throws(() => resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_PURCHASE_TITLE: '【采购】{cnt}' }), /无法识别的占位符/);
   assert.throws(() => resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_PURCHASE_TITLE: '【采购】{count' }), /没有闭合/);
   assert.throws(() => resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_PURCHASE_LINE_PARTS: '  ' }), /至少要有一段/);
-  assert.throws(() => resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_PURCHASE_FOOTER_TEMPLATE: '{nope}' }), /无法识别的占位符/);
+  // 🔴 2026-10-14 新增的**回归锁**：`{link}` 现在是不认识的占位符（深链已退场）；
+  //    谁把链接段加回来，**启动时**就会在这里抛错，而不是悄悄渲染。
+  assert.throws(
+    () => resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_PURCHASE_LINE_PARTS: '{batchNo}|{link}' }),
+    /无法识别的占位符 \{link\}/,
+  );
   // 漏写一个大区不会让它消失（宁可多显示，也不静默少推一整个区）
   // ⚠️ 2026-10-08（第二步）：多了一个 `voucher`（【团购券待结算】）⇒ 漏写时也按声明顺序补上。
   assert.deepEqual(resolvePendingDealPushConfig({ PENDING_DEAL_PUSH_AREA_ORDER: 'purchase' }).areas,
