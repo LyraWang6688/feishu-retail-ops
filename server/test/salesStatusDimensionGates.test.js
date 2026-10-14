@@ -151,17 +151,23 @@ test('闸门 4 成交（secondDeliveryService.confirm）：只读「资金状态
 
 // ── 闸门 5：secondDeliveryService.listPendingDeliveries —— 待成交提醒候选 ─────
 test('闸门 5 提醒候选（secondDeliveryService.listPendingDeliveries）：只读「资金状态」', async () => {
+  // ⚠️ 2026-10-14：这条原先用**真实时钟**（`录单日: Date.now()` + `now: new Date()`）——
+  //   数据起点（2026-10-15）接进这份每日提醒之后，真实时钟一旦落在起点**之前**就一条都挑不出来
+  //   （改动当天真实日期正是 2026-10-14）⇒ 夹具改成**固定的一天**（2026-10-20），
+  //   这样这条用例只钉它本来要钉的东西（「资金状态」那一维），不再依赖"今天几号"。
+  //   依据：她 2026-10-14 逐字「**数据从 20261015 开始**」＋「**存量行不用管，就看增量**」。
+  const DAY = Date.parse('2026-10-20T10:00:00+08:00');
   const candidates = async (entryFields) => {
     const gateway = gatewayFor({
       behavior: [{ record_id: 'b1', fields: { 行为编码: 'SALE_UNPAID', 行为名称: '未付' } }],
       salesEntry: [{ record_id: 'o1', fields: {
-        销售单号: 'XSD-1', 交易类型: ['b1'], 录单日: Date.now(), ...entryFields,
+        销售单号: 'XSD-1', 交易类型: ['b1'], 录单日: DAY, ...entryFields,
       } }],
       salesDetail: [{ record_id: 'd1', fields: { 销售单号: ['o1'], 履约状态: '已交付', 实收金额: 100 } }],
       paymentRecord: [{ record_id: 'r1', fields: { 关联销售单: ['o1'], 收款金额: 100, 收款状态: '未收款' } }],
     });
     return new SecondDeliveryService({ gateway, store: storeStub(), client: {} })
-      .listPendingDeliveries({ now: new Date() });
+      .listPendingDeliveries({ now: new Date(DAY) });
   };
 
   assert.equal((await candidates({ 资金状态: '已入账' })).length, 1);

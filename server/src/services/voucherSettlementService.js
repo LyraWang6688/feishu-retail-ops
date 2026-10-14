@@ -31,6 +31,17 @@
 
 const { textValue } = require('./v1BitableGateway');
 const { PaymentService } = require('./paymentService');
+// ⭐⭐ 2026-10-14（业务负责人逐字）：「**数据从 20261015 开始**」＋「**存量行不用管，就看增量**」
+//   ⇒ 这块**自动挑**（【团购券待结算】的候选）只挑**核销日（= 收款明细.创建时间）在
+//      `DATA_SINCE`（含）之后**的那些笔；更早的存量**一律不管** ✗。
+//   🔴 判据只有一处实现（`config/dataSince` 的 `isOnOrAfterSince`，上海时区）——
+//      本文件**不自己比日期字符串、也不另写时区折算** ✗。
+//   ⚠️ **「创建时间」读不出来**时**不动**（照旧按"今天"当结算日照进 + 已有 warn）：
+//      与上面第 28-29 行那条既有口径一致，也与全仓"**读不到 ≠ 不符合判据**"同一档 ——
+//      拿一个读不到的日期去判"是不是存量"，等于**静默丢一笔待结算**（她可能永远点不到那笔钱）。
+//   ⚠️ **故意不受它约束**：她**手动点**「确认到账」那一刻（`confirmSettlementDay` 按**结算日**
+//      重新查库并整批写）**不看这个起点** —— 她点了就办 ✓（那是月牙边上的钱，不是"自动挑"）。
+const { isOnOrAfterSince } = require('../config/dataSince');
 // 券目录的**取值口径**（售价 / 面值 / 平台结算款 / 只在售）由 `config/groupBuyVouchers` 与
 // `config/v1BitableSchema` 定义；本模块不写死券种，也不猜价。
 // ⚠️ **刻意不用 `findVoucher`**：那个函数按「**售价 + 面值**」两把钥匙匹配，
@@ -232,6 +243,11 @@ class VoucherSettlementService {
     const groups = new Map();
     const warnings = { amountFallback: [], createdAtUnreadable: [] };
     for (const record of records) {
+      // ⭐⭐ 2026-10-14 数据起点：「数据从 20261015 开始」＋「存量行不用管，就看增量」
+      //   ⇒ 核销日（= 「创建时间」）**读得到**且在 `DATA_SINCE` 之前 ⇒ 存量，**不挑** ✓。
+      //   ⚠️ 读不到 ⇒ **不动**（照进 + 下面的 `createdAtUnreadable` warn）——判定理由见文件头。
+      const createdAtDate = asDate(record.fields?.[payment.createdAt]);
+      if (createdAtDate && !isOnOrAfterSince(createdAtDate)) continue;
       const { settleDay, unreadable } = this.settlementDayOf(record, payment, now);
       if (unreadable) {
         warnings.createdAtUnreadable.push({

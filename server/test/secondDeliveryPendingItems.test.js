@@ -17,8 +17,14 @@ const assert = require('node:assert/strict');
 
 const { SecondDeliveryService } = require('../src/services/secondDeliveryService');
 
-const DAY = new Date('2026-10-07T02:00:00.000Z'); // 北京 10:00
-const SOLD_AT = Date.parse('2026-10-06T10:00:00+08:00');
+// ⚠️ 2026-10-14 夹具整体**后移 14 天**（相对关系不变）——改前逐字 `DAY = 2026-10-07` / `SOLD_AT = 2026-10-06`；
+//   改后逐字 `DAY = 2026-10-21` / `SOLD_AT = 2026-10-20`。
+//   依据：她 2026-10-14 逐字「**数据从 20261015 开始**」＋「**存量行不用管，就看增量**」
+//     ⇒ 判据已接进这份每日提醒（`isWithinLookupWindow` **且** `isOnOrAfterSince`），
+//       原来 10-06 的夹具落在起点之前、被**正确**过滤 ⇒ **把夹具日期移到 2026-10-15 之后**
+//       （不是改判据、不是 skip）；`SOLD_AT` 仍落在 `DAY` 往前 7 天窗口内（窗口起点 10-15）。
+const DAY = new Date('2026-10-21T02:00:00.000Z'); // 北京 10:00
+const SOLD_AT = Date.parse('2026-10-20T10:00:00+08:00');
 
 // 表定义：语义键与真实 `v1BitableSchema` 一致，只是 tableId 由用例自己给。
 const tables = (overrides = {}) => ({

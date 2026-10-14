@@ -38,7 +38,16 @@ const { resolvePendingPushCandidateConfig } = require('../src/config/pendingPush
 const { resolvePendingDealPushConfig } = require('../src/config/pendingDealPush');
 const { SALES_MOVEMENTS } = require('../src/config/salesMovements');
 
-const NOW = new Date('2026-10-08T02:00:00.000Z'); // 北京 10:00
+// ⚠️ 2026-10-14 夹具整体**后移 14 天**（本文件所有"日期世界"一起移，相对关系一字不变）：
+//   改前逐字：`const NOW = new Date('2026-10-08T02:00:00.000Z');`
+//   改后逐字：`const NOW = new Date('2026-10-22T02:00:00.000Z');`
+//   依据：她 2026-10-14 逐字「**数据从 20261015 开始**」＋「**存量行不用管，就看增量**」
+//     ⇒ 判据已接进候选取数（`withinLookupWindowSince` = 既有 7 天窗口 && `isOnOrAfterSince`），
+//       原来那些 10-01 ~ 10-08 的夹具**全部落在起点之前**、被**正确**过滤掉 ⇒
+//       **把夹具日期移到 2026-10-15 之后**（不是改判据、不是 skip）。
+//   ⭐ 为什么整体移 14 天：让「窗口外」那一条（`outOfWindow`，见下）也落在 10-15 **当天**，
+//     这样它被排除的**唯一**理由仍是"7 天窗口" ✓（判别据没被新起点顶掉）、而窗口内那条 = 10-16。
+const NOW = new Date('2026-10-22T02:00:00.000Z'); // 北京 10:00
 // 一律用**上海自然日**表达（与生产同一套口径：服务器是 UTC）。
 const atShanghai = (day) => Date.parse(`${day}T10:00:00+08:00`);
 
@@ -87,6 +96,7 @@ const entry = (recordId, extra = {}) => ({
   fields: { 销售单号: `XSD-${recordId}`, 资金状态: '已写入', ...extra },
 });
 // 「交易类型」= **关联「行为管理」**（格里是行为记录 id；`null` = 这一格没值）。
+// ⚠️ 2026-10-14：默认销售日也跟着整体后移 14 天（改前逐字 `atShanghai('2026-10-06')`）。
 const detail = (recordId, entryId, productId, {
   status = '未交付', amount = 128, soldAt = null, size = 'sz_37', tradeType = 'bhv_prepaid',
 } = {}) => ({
@@ -94,7 +104,7 @@ const detail = (recordId, entryId, productId, {
   fields: {
     销售单号: [entryId], 编号: [productId], 尺码: size ? [size] : [],
     履约状态: status, 实收金额: amount,
-    销售日: soldAt === null ? atShanghai('2026-10-06') : soldAt,
+    销售日: soldAt === null ? atShanghai('2026-10-20') : soldAt,
     交易类型: tradeType === null ? undefined : (Array.isArray(tradeType) ? tradeType : [tradeType]),
   },
 });
@@ -107,7 +117,7 @@ const payment = (recordId, entryId, {
   fields: {
     关联销售单: [entryId], 收款金额: amount, 收款状态: status,
     交易类型: tradeType === null ? undefined : (Array.isArray(tradeType) ? tradeType : [tradeType]),
-    创建时间: createdAt === null ? atShanghai('2026-10-06') : createdAt,
+    创建时间: createdAt === null ? atShanghai('2026-10-20') : createdAt,
   },
 });
 const product = (recordId, itemNo, color = '黑色') => ({
@@ -398,8 +408,12 @@ test('③ 采购读表失败：**不拖垮**销售那半边（记 warn + 采购�
 // ═════════════════════════════════════════════════════════════════════════════
 
 test('④【预定】按**销售明细的销售日**判 7 天窗口：第 7 天在、第 8 天不在', async () => {
-  const inWindow = atShanghai('2026-10-02'); // 10-08 往前数第 7 个自然日（含今天）
-  const outOfWindow = atShanghai('2026-10-01');
+  // ⚠️ 2026-10-14：两个夹具各后移 14 天（改前逐字 `atShanghai('2026-10-02')` / `atShanghai('2026-10-01')`）
+  // —— `NOW` 也在同一天后移了 14 天，所以「第 7 天 / 第 8 天」这层关系**一个字没变**；
+  // 而且窗口外那条（10-15）**恰好是数据起点当天**（`isOnOrAfterSince` = true）
+  // ⇒ 它被排除的**唯一**理由仍是"7 天窗口" ✓（判别据没有被新起点顶掉）。
+  const inWindow = atShanghai('2026-10-16'); // 10-22 往前数第 7 个自然日（含今天）
+  const outOfWindow = atShanghai('2026-10-15');
   assert.equal(REMINDER_WINDOW_DAYS, 7, '窗口口径与「二次交付成交提醒」同一个数（7 天）');
   const { sales } = await listCandidates({
     salesEntry: [entry('o1'), entry('o2')],
@@ -421,16 +435,47 @@ test('④【现货未收】按**销售明细的销售日**判 7 天窗口（与�
     salesEntry: [entry('o1'), entry('o2')],
     salesDetail: [
       detail('d1', 'o1', 'prod_a', {
-        tradeType: 'bhv_cash', status: '已交付', amount: 10, soldAt: atShanghai('2026-10-02'),
+        tradeType: 'bhv_cash', status: '已交付', amount: 10, soldAt: atShanghai('2026-10-16'),
       }),
       detail('d2', 'o2', 'prod_b', {
-        tradeType: 'bhv_cash', status: '已交付', amount: 20, soldAt: atShanghai('2026-10-01'),
+        tradeType: 'bhv_cash', status: '已交付', amount: 20, soldAt: atShanghai('2026-10-15'),
       }),
     ],
     paymentRecord: [],
     product: PRODUCTS,
   });
   assert.deepEqual(cash.map((row) => row.rowId), ['o1'], '第 7 天在、第 8 天不在（销售日判窗口）');
+});
+
+// ⭐⭐ 2026-10-14 她的数据口径：「**数据从 20261015 开始**」＋「**存量行不用管，就看增量**」
+//   判据 = 既有的 7 天窗口 **且** `config/dataSince` 的 `isOnOrAfterSince`（合成在
+//   `PendingPushCandidateService.withinLookupWindowSince` 一处）。
+//   ⭐ 本用例就是那句话的验收判据：**注入 10-14 与 10-15 两行 ⇒ 只有 10-15 被挑出来**。
+test('⭐⭐ 数据起点：注入 10-14 与 10-15 两行 ⇒ **只有 10-15 被挑出来**（两块共用同一处判据）', async () => {
+  // "今天"取 10-20：它既在起点之后、又让 10-15 落在 7 天窗口内 ⇒ 差异**只**来自数据起点。
+  const DAY = new Date(atShanghai('2026-10-20'));
+  const run = (soldAt, over = {}) => new PendingPushCandidateService({
+    gateway: fakeGateway({
+      salesEntry: [entry('o1')],
+      salesDetail: [detail('d1', 'o1', 'prod_a', { soldAt, ...over })],
+      paymentRecord: [],
+      product: PRODUCTS,
+    }),
+    secondDelivery: secondDeliveryStub(ITEM_INDEX),
+  }).listCandidates({ now: DAY });
+
+  // ── 【预定】（判据读「销售明细.销售日」）──
+  const reserving = await run(atShanghai('2026-10-14'));
+  assert.deepEqual(reserving.sales, [], '10-14（起点之前）= 存量 ⇒ **不挑**');
+  const onSince = await run(atShanghai('2026-10-15'));
+  assert.deepEqual(onSince.sales.map((row) => row.rowId), ['o1'], '10-15（起点当天，含）= **挑出来**');
+
+  // ── 【现货未收】（与【预定】同一列、同一处合成判据）──
+  const cashOf = async (soldAt) => (await run(soldAt, {
+    tradeType: 'bhv_cash', status: '已交付', amount: 10,
+  })).cash.map((row) => row.rowId);
+  assert.deepEqual(await cashOf(atShanghai('2026-10-14')), [], '10-14 是存量 ⇒ 不进【现货未收】');
+  assert.deepEqual(await cashOf(atShanghai('2026-10-15')), ['o1'], '10-15 起 ⇒ 进【现货未收】');
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
