@@ -1636,6 +1636,17 @@ const createScanPageRouter = (options = {}) => {
         // 🔴 只认**填了金额**的行（PAY2 抓到的真 bug：空金额行也曾被当成「要记一笔」⇒ 会写出空账 ✗）
         const rowsToPay = parsePaymentRows(body, fields)
           .filter((row) => String(row.amount ?? '').trim());
+        // ⭐⭐ 2026-10-14（她：**点资金页按钮 = 确认 ⇒ 才建单**）：
+        //   · 刚建单那一次（`createdResult` 有值 ✓）⇒ **这一单的收款已经由 `submitSale` 按同一份入参写好了** ✓
+        //     ⇒ 🔴 **不能再走下面那条 `addPayment`** ✗（否则就是**第二遍写收款**✗ ——
+        //       写库时会被如实拦住"本次收款超过待收金额 ￥0"✓ 这正是它该有的样子 ✓）
+        //   · 而"**补记收款**"（工作台那条既有用法 / 老流程的 order_no 路径）⇒ 照旧走 `addPayment` ✓ **一字不改** ✗
+        if (createdResult) {
+          invalidateInventorySnapshot(requestId, 'scan_sale_paid');
+          // ⭐ 成功页那句人话：与"提交成功"那条**逐字同形**（她 2026-10-12 定的那一句 ✓）
+          //   ⚠️ `paidPayload(retryHint)` 的参数就是**那句提示** ✓ 不是 note 文本 ✗
+          return sendSuccess(res, 200, paidPayload(writeConfig.texts.submittedNextHint));
+        }
         // ⭐ 没填金额（或行数为 0）⇒ **待补充**：**一个字都不写**、成功页照给、**不报错** ✓
         if (!rowsToPay.length) {
           return sendSuccess(res, 200, paidPayload(config.paymentStep?.payPendingNote));
@@ -1647,7 +1658,9 @@ const createScanPageRouter = (options = {}) => {
           for (const row of rowsToPay) {
             // eslint-disable-next-line no-await-in-loop
             const paid = await followup.addPayment({
-              salesEntryRecordId: String(body.sales_entry_record_id || '').trim(),
+              // ⭐ 主表 record_id：**优先用刚建单的返回值** ✓（资金页那份表单里它是空的 —— 那时还没建单 ✗
+              //   用空串去写收款 ⇒ 会撞"销售订单尚未确认入账"✗ 这正是新流程多出来的一处 ✓）
+              salesEntryRecordId: String(createdResult?.sales_entry_record_id || body.sales_entry_record_id || '').trim(),
               method: row.method,
               amount: row.amount,
               requestId,

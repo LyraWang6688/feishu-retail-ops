@@ -611,6 +611,12 @@ const view = (overrides = {}) => ({
 const formApp = (harness, lookup = async () => view()) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
+  // ⭐⭐ 2026-10-14：**照生产中间件补上请求号** ✓
+  //   · 生产里每个请求都有 `req.requestId`（UUID ✓ 幂等键的真源 ✓ 见 `app.js` 的中间件）
+  //   · 这个夹具以前**没有**它 ✗ ⇒ 一旦"写收款"落到**另一次请求**（新流程：点提交 ⇒ 点按钮才建单 ✓）
+  //     就会撞 `salesFollowupService` 的 UUID 校验 ✗（"收款请求缺少有效 request_id"）
+  //   🔴 这里只是**补上环境**（与生产一致 ✓）——**没有**放宽任何断言 ✗
+  app.use((req, _res, next) => { req.requestId = req.requestId || crypto.randomUUID(); next(); });
   app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
     service: { lookup },
     gateway: harness.gateway,
@@ -746,8 +752,10 @@ test('⑧ 路由：加入本单 → 回跳带上"本单几双"；提交整单 �
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           action: SCAN_PAGE.paymentStep.payAction, submit_key: saleKey,
-          // ⚠️ 资金页的表单本来就带一档「付款情况」（默认未付 ✓）⇒ 这里照表单原样带上 ✓
-          payment_status: PAYMENT_STATUS.unpaid,
+          // ⭐ 这一步**收了钱** ⇒ 档位必须是**全付**（她填的收款合计 = 每件实收合计 ✓）
+          //   ⚠️ **不能**用「未付」✗ —— 未付按她的口径**不写欠款行**（"她说欠才算欠"✓）
+          //      所以对一个"未付"的单子写收款 = 超过待收金额 0 ⇒ 会被如实拦住 ✓（这是**对的** ✓）
+          payment_status: PAYMENT_STATUS.full,
           payment_method: '现金', payment_amount: '100', [SCAN_WRITE.fields.lineAmount]: '100',
         }).toString(),
       });
