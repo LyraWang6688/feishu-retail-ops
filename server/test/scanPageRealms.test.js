@@ -193,11 +193,14 @@ const blockOf = (htmlText, id) => {
 test('AC1 `from=inventory` 就是现在这个页面：库存领域那一块 + 身份区**逐字不变**', () => {
   const inventoryHtml = htmlFor('inventory');
   const inventoryBody = inventoryHtml.slice(inventoryHtml.indexOf('</head>'));
-  // 身份区（在领域块之外，四个领域共用）逐字不变
+  // ⭐⭐ 2026-10-14 晚（业务负责人逐字）：「`category_name` ⇒ 品类 · `category_code` ⇒ 类别，**两个都显示**，
+  //   有就显示，没有就不显示」＋「需要做个映射，**A 等于男，B 等于女**」
+  //   ⚠️ 改前逐字：`黑色 · 休闲鞋`（`品类 || 类别` **二选一** ✗）；改后逐字：`黑色 · 休闲鞋 · 男`（三段 ✓）
+  //   ⇒ 这条 AC 的**库存领域那一块**仍逐字不变 ✓，只有**身份区**按她的新口径改 ✓（不是放宽 ✗）
   assert.ok(inventoryBody.includes(`<header class="card identity">
 <div class="identity__main">
 <h1 class="identity__item">YD6693-2</h1>
-<p class="identity__meta">黑色 · 休闲鞋</p>
+<p class="identity__meta">黑色 · 休闲鞋 · 男</p>
 </div>
 <div class="price">
 <span class="price__label">单价</span>
