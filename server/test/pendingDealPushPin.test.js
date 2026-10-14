@@ -17,8 +17,6 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
-const { SalesGroupThreadLocator } = require('../src/services/salesGroupThreadLocator');
-const { LarkMessageLinkResolver } = require('../src/services/larkMessageLinkResolver');
 const { PendingDealPushService } = require('../src/services/pendingDealPushService');
 const { LarkMessagePinService, PIN_STATE_TASK_ID } = require('../src/services/larkMessagePinService');
 const { resolvePendingDealPushConfig, readFlag } = require('../src/config/pendingDealPush');
@@ -43,8 +41,7 @@ const settings = (overrides = {}) => ({
   chatId: CHAT_ID,
   hour: 9,
   intervalMs: 600000,
-  linkLookupEnabled: false,
-  linkRequired: false,
+  // 🔴 2026-10-14：`linkLookupEnabled` / `linkRequired` 已随深链从配置删除，不再注入。
   pinEnabled: true,
   ...overrides,
 });
@@ -92,8 +89,8 @@ const newService = ({ orders = [ORDER_A], client, store, settings: overrides = {
   const service = new PendingDealPushService({
     settings: resolvedSettings,
     candidates: fakeCandidates({ orders }),
-    locator: locator || new SalesGroupThreadLocator({ store: tmpStore('pending-pin-mapping-') }),
-    resolver: new LarkMessageLinkResolver({ client: {}, lookupEnabled: false }),
+    // ⚠️ 2026-10-14：`locator` / `resolver` 两个注入**已随深链删除**（本类不再认识它们）；
+    //    上面的 `locator` 形参留着只是不改调用点。
     client,
     chatId: CHAT_ID,
     store: store || tmpStore('pending-pin-day-'),

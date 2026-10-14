@@ -245,15 +245,19 @@ test('飞书给了发送响应链接就用飞书的（她给的格式当第二�
   assert.ok(record.thread_link, '话题格式那条也留着（排查时能看到两条来源）');
 });
 
-test('解析器：本地存着话题深链就直接用它（不需要任何远端调用）', async () => {
-  const { LarkMessageLinkResolver } = require('../src/services/larkMessageLinkResolver');
-  const url = buildSalesThreadLink({ chatId: 'oc_1', threadId: 'omt_1' });
-  const resolver = new LarkMessageLinkResolver({
-    client: { im: { message: { get: async () => { throw new Error('不该被调用'); } } } },
-    lookupEnabled: true,
-  });
-  assert.deepEqual(await resolver.resolve({ storedThreadLink: url, messageId: 'om_1' }), { url, source: 'thread_link' });
-  assert.deepEqual(await resolver.resolve({ messageId: 'om_1' }), { url: '', source: 'unavailable' });
+test('深链解析器整个文件已删除（她：「现在深链已经没有了，把之前的清除掉」）', () => {
+  // 改前逐字：本文件这里原来有一条 `test('解析器：本地存着话题深链就直接用它（不需要任何远端调用）', …)`，
+  //   它 `require('../src/services/larkMessageLinkResolver')` 并断言存的优先 / 都没有就返回空。
+  // 改后：`services/larkMessageLinkResolver.js` 已**整个文件删除**（它当时**唯一**的调用方
+  //   就是「每天 9 点的待处理单推送」）⇒ 这条用例改成钉住"模块本体没了"，
+  //   与私聊退场 / `writeToSalesEntry` 退场同一套写法（以后有人加回来就红）。
+  // 依据：业务负责人 2026-10-14 逐字「现在深链已经没有了，把之前的清除掉」。
+  assert.throws(
+    () => require('../src/services/larkMessageLinkResolver'),
+    { code: 'MODULE_NOT_FOUND' },
+  );
+  // ⚠️ `SalesMessageLinkService` 本身**保持原样**：它仍被 `larkMvpService.bindGroupSaleThread`
+  //    调用（本地路由映射照记），清它要连带改 `larkMvpService.js` ⇒ 归 C5「收尾孤儿」那一步。
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

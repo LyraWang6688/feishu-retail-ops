@@ -25,8 +25,6 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
-const { SalesGroupThreadLocator } = require('../src/services/salesGroupThreadLocator');
-const { LarkMessageLinkResolver } = require('../src/services/larkMessageLinkResolver');
 const { PendingDealPushService } = require('../src/services/pendingDealPushService');
 const {
   resolvePendingDealPushConfig, resolveRetryDelaysMs, DEFAULT_RETRY_DELAYS_MS,
@@ -142,14 +140,10 @@ const newService = ({
       ...resolvePendingDealPushConfig({}),
       enabled: true,
       chatId: CHAT_ID,
-      linkLookupEnabled: false,
-      linkRequired: false,
       messageFormat: 'text',
       ...overrides,
     },
     candidates: fakeCandidates({ orders: [ORDER] }),
-    locator: new SalesGroupThreadLocator({ store: tmpStore('pending-retry-mapping-') }),
-    resolver: new LarkMessageLinkResolver({ client: {}, lookupEnabled: false }),
     client,
     chatId: CHAT_ID,
     store: store || tmpStore('pending-retry-day-'),
@@ -324,11 +318,9 @@ test('D8 没有候选单（非失败）与改动前一致：当天不再试，�
   const { client, creates } = fakeClient({});
   const service = new PendingDealPushService({
     settings: {
-      ...resolvePendingDealPushConfig({}), enabled: true, chatId: CHAT_ID, linkLookupEnabled: false, linkRequired: false,
+      ...resolvePendingDealPushConfig({}), enabled: true, chatId: CHAT_ID,
     },
     candidates: fakeCandidates({ orders: [] }),
-    locator: new SalesGroupThreadLocator({ store: tmpStore('pending-retry-empty-map-') }),
-    resolver: new LarkMessageLinkResolver({ client: {}, lookupEnabled: false }),
     client,
     chatId: CHAT_ID,
     store,

@@ -2,8 +2,6 @@ const path = require('node:path');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { V1BitableGateway } = require('./v1BitableGateway');
 const { SecondDeliveryService } = require('./secondDeliveryService');
-const { SalesGroupThreadLocator } = require('./salesGroupThreadLocator');
-const { LarkMessageLinkResolver } = require('./larkMessageLinkResolver');
 const { LarkMessagePinService } = require('./larkMessagePinService');
 // ⭐ 2026-10-07：【采购】区的候选（「报货批次」里 到货状态 = 未到货）与它的深链。
 // 抽成独立 service：本类只管"这条推送长什么样"，"哪些批次该推"是另一件事。
@@ -40,14 +38,24 @@ const { logInfo, logWarn } = require('../utils/logger');
 
 // 「维度 1」：每天 9 点（北京时间）把**最近 7 天还没收齐**的销售单推到群里，
 // **按【预定 / 现货待收】分区**，**一张销售单一行**：类型标签 + 货号 尺码 + 待收金额
-// + 「查看原话」文字链接（业务负责人 2026-10-07 / 2026-10-08 两次拍板；
+// （业务负责人 2026-10-07 / 2026-10-08 两次拍板；
 //   目标形状与卡片骨架见 config/pendingDealPush 与 utils/pendingDealPushCard）。
+//
+// 🔴 2026-10-14（业务负责人逐字）：「**现在深链已经没有了，把之前的清除掉**」
+//   ⇒ 这条推送**一个链接都不再有**：行里没有链接段、卡片上没有「查看话题」按钮、
+//     也没有「（N 笔的深链暂不可用…）」脚注。⭐ **每行的文字内容一字不变**
+//     （还是 货号 颜色 尺码 + 待收金额）；少的只是"点不动的链接"。
+//   ⇒ 随之删除：`services/larkMessageLinkResolver.js`（整个文件；它当时**唯一**的调用方就是这里）、
+//     `attachLinks` / `resolveLinkForOrder` / `attachPurchaseLinks` / `textLinkOf`、
+//     `missingLinkCount` 计数与 `linkRequired` 闸门、以及 `missing_link_count` /
+//     `link_sources` / `purchase_missing_link_count` / `purchase_link_sources` 四个落盘键。
+//   ⚠️ 下面 2026-10-07 / 2026-10-08 那几段里的"深链 / 文字链接"是**当时**的口径，
+//     现已被本条覆盖；留着是为了可追溯，**不要再照它把链接加回来**。
 //
 // ⭐ 2026-10-07 下半场：同一条消息里**加【采购】区**（业务负责人逐字：
 //   「你每天 9 点发通知的时候，**看未到货的情况就直接去那个表里查**，然后再把消息**深链**发到用户群里」）：
 //   · 候选 = 「报货批次」里 **到货状态 = 未到货**（`PurchasePendingBatchService`，直接查那张表）；
-//   · 每行 = 批次号 + 供应商（⭐ 2026-10-09 起直接取「报货批次.供应商」那一列，
-//     取不到就不显示）+ 深链（本地映射 → 话题深链）；
+//   · 每行 = 批次号 + 供应商（⭐ 2026-10-09 起直接取「报货批次.供应商」那一列，取不到就不显示）；
 //   · **顺序可配**（默认 销售在前、采购在后）；**空区连标题都不出现**（卡片里连它前面那条分割线也不出现）；
 //   · 两区都空 → 不发。
 //
@@ -91,12 +99,9 @@ const { logInfo, logWarn } = require('../utils/logger');
 //     ⚠️ 两块的**判据**（明细是否预定且未交付 / 收款是否现货且未收款 / 金额怎么算）只在
 //     `PendingPushCandidateService` + `config/pendingPushCandidates` 那一处；
 //     这里只按行自己的 `criterion` **分组**，不重新判一遍。
-//   · 「这笔单当初是哪条群消息」= `SalesGroupThreadLocator`（本地映射，不写业务表）。
-//   · 「深链怎么来」= `LarkMessageLinkResolver`（**只认真链接**：本地存的 → 现查；
-//     拿不到就返回空，**绝不自己拼 URL**——运营兜底模板那个口子 2026-10-06 已删）。
-//     ⚠️ 深链今天**基本拿不到**，原因与后续方案见
-//     `docs/reports/group-message-deep-link-2026-10-06.md`。
-//     ⚠️ **一行一个链接**：同一单的多行共用同一条（按销售单 record id 去重解析）。
+//   · 「深链 / 它当初是哪条群消息」= 🔴 2026-10-14 **整体退场**（见文件头：
+//     她「现在深链已经没有了，把之前的清除掉」）—— 本类不再认识
+//     `LarkMessageLinkResolver` / `SalesGroupThreadLocator`，行里也不再有 `url`。
 //
 // 与「第二次交付」提醒（`secondDeliveryService.sendDailyReminder`）是**两条独立的推送**：
 // 那一条发**群卡片**、带「成交」按钮、点了会写库；这一条只发**一条提醒**、点进去
@@ -106,7 +111,7 @@ const { logInfo, logWarn } = require('../utils/logger');
 //    两层策略与状态机共用 `config/pushRetry`）。
 //
 // ⚠️ **本文件里不写用户可见的中文**：表头 / 区块标题 / 行格式 / 分隔符 / 尺码后缀 / 金额段 /
-//    链接文案 / 脚注 / 卡片标记全在 `config/pendingDealPush`（配置先行）——
+//    卡片标记全在 `config/pendingDealPush`（配置先行）——
 //    她换说法、换顺序、换分隔符都不用碰这里。
 //
 // ⭐ 分区顺序为什么是「预定在前、现货待收在后」（不是随手排的）：
@@ -193,11 +198,8 @@ class PendingDealPushService {
     this._batchLocator = options.batchLocator || null;
     this._arrivalStatus = options.arrivalStatus;
     this._candidateSettings = options.candidateSettings;
-    this.locator = options.locator || new SalesGroupThreadLocator();
-    this.resolver = options.resolver || new LarkMessageLinkResolver({
-      client: this.client,
-      lookupEnabled: this.settings.linkLookupEnabled,
-    });
+    // 🔴 2026-10-14：`this.locator`（SalesGroupThreadLocator）与 `this.resolver`
+    //   （LarkMessageLinkResolver）两个成员**已随深链整体删除** —— 它们当时只服务"每行一个链接"。
     // 群 id：显式传了就用它（测试注入）；传 `undefined` = 按配置每次现读。
     this.chatId = options.chatId;
     this.store = options.store || new JsonTaskStore({
@@ -504,89 +506,6 @@ class PendingDealPushService {
   }
 
   /**
-   * 每笔单 → 它当初那条群消息 → 深链。
-   *
-   * ⚠️ **一行一个链接**：同一单可能**在两块里各有一行**（预定 / 现货未收）⇒ 那两行
-   *    **共用同一条**深链 —— 查映射、解析都按**销售单 record id** 去重（一张单只查一次），行只拿结果。
-   *
-   * 映射查不到 / 深链拿不到都**不抛**：这两种都不是致命错误（业务负责人要的是"货号颜色尺码 + 金额"
-   * 先看得见），但要**留下可排查的计数**，见 `missingLinkCount` 与那两条日志。
-   */
-  async attachLinks(rows = []) {
-    const linked = [];
-    const cache = new Map();
-    let missingLinkCount = 0;
-    for (const row of rows) {
-      const salesEntryRecordId = row.salesEntryRecordId || '';
-      if (!cache.has(salesEntryRecordId)) {
-        cache.set(salesEntryRecordId, await this.resolveLinkForOrder(salesEntryRecordId));
-      }
-      const resolved = cache.get(salesEntryRecordId);
-      if (!resolved.url) missingLinkCount += 1;
-      linked.push({ ...row, ...resolved, url: resolved.url });
-    }
-    return { rows: linked, missingLinkCount };
-  }
-
-  /** 一笔销售单的深链素材（同一条单只解析一次；`attachLinks` 负责去重）。 */
-  async resolveLinkForOrder(salesEntryRecordId) {
-    const record = await this.locator.findBySalesEntryRecordId(salesEntryRecordId)
-      .catch((error) => {
-        logWarn('sales.pending_deal_push.mapping.lookup_failed', {
-          sales_entry_record_id: salesEntryRecordId, error: error.message,
-        });
-        return null;
-      });
-    const { url, source } = await this.resolver.resolve({
-      // 飞书深链优先；没有就用**按她给的话题格式拼的那条**（今天真正管用的一条）。
-      storedAppLink: record?.app_link,
-      storedThreadLink: record?.thread_link,
-      messageId: record?.message_id,
-      threadId: record?.thread_id,
-      chatId: record?.chat_id,
-    });
-    return {
-      messageId: record?.message_id || '',
-      threadId: record?.thread_id || '',
-      url,
-      linkSource: source,
-    };
-  }
-
-  /**
-   * ⭐【采购】区：每批 → 它当初发进群的那条消息 → 深链。
-   *
-   * 与 `attachLinks` **同一套**取值链（`LarkMessageLinkResolver`）：
-   *   · 本地映射里存着的飞书深链（采购映射里没有这个字段 → 空）；
-   *   · 按她给的话题格式拼的**话题深链**（`chat_id` + `thread_id`，见 config/salesThreadLink）
-   *     —— **今天真正管用**的那一条；
-   *   · 现查 `im.message.get` 的 `message_app_link`（飞书哪天开始返回就自动生效）。
-   *
-   * ⚠️ 拿不到就留空 URL：渲染层会"照发 + 脚注"，**绝不因此漏掉候选**（她的口径）。
-   */
-  async attachPurchaseLinks(batches = []) {
-    const linkIndex = await this.purchasePending.loadLinkIndex();
-    const linked = [];
-    let missingLinkCount = 0;
-    for (const batch of batches) {
-      const materials = this.purchasePending.resolveThreadLinkFrom(linkIndex, batch.batchNo);
-      const { url, source } = await this.resolver.resolve({
-        storedAppLink: '',
-        storedThreadLink: materials.threadLink,
-        messageId: materials.messageId,
-      });
-      if (!url) missingLinkCount += 1;
-      linked.push({
-        ...batch,
-        messageId: materials.messageId,
-        threadId: materials.threadId,
-        url,
-        linkSource: source,
-      });
-    }
-    return { batches: linked, missingLinkCount };
-  }
-  /**
    * 一件商品：`货号 [颜色] 尺码码`。
    * ⭐ 2026-10-08 晚（业务负责人：「还需要在**货号和尺码中间**加上**颜色**」）⇒ `{color}` 进模板。
    * ⚠️ 颜色取不到（配品没有颜色列、或货品信息那一列为空）时 `{color}` 是空串，
@@ -608,12 +527,6 @@ class PendingDealPushService {
   /** 一行（销售侧）的待收金额（三态：已付清 / 有数 / 读不出来）。 */
   amountOf(row = {}) {
     return amountValueOf(row.pendingAmount, this.settings.paidUpText);
-  }
-
-  /** 纯文本降级里的**链接段**：`查看原话 https://…`（纯文本藏不住 URL，但至少不再是一行裸链接）。 */
-  textLinkOf(url) {
-    if (!url) return '';
-    return fillLinePart(this.settings.linkTextTemplate, { text: this.settings.linkText, url });
   }
 
   /** 这一行的事实 → `货号 颜色 尺码`（配品没有尺码 ⇒ 不拼「码」；取不到 ⇒ 空串）。 */
@@ -692,9 +605,11 @@ class PendingDealPushService {
   }
 
   /**
-   * **一行**（纯文本降级版）：序号 + 【预定/现货待收】 + 货号 颜色 尺码 + 待收金额 + 查看话题。
-   * 逐段拼、**空的段整段不要** —— 没货号尺码 / 没深链 / 金额读不出来时不会留下 ` · ` 或空壳。
+   * **一行**（纯文本降级版）：序号 + 【预定/现货待收】 + 货号 颜色 尺码 + 待收金额。
+   * 逐段拼、**空的段整段不要** —— 没货号尺码 / 金额读不出来时不会留下 ` · ` 或空壳。
    * ⚠️ 2026-10-08：**不再出现单号**（她明确说不需要）。
+   * 🔴 2026-10-14：**也不再出现链接段**（她「现在深链已经没有了，把之前的清除掉」）；
+   *    其余各段的文字一字未动。
    * ⚠️ 一行 = **一张销售单**（【预定】/【现货未收】各按行的 `criterion` 分组），多行**各自**一行。
    */
   buildLine(row, index, tag) {
@@ -708,7 +623,6 @@ class PendingDealPushService {
       amount: amount.known
         ? (amount.paidUp ? amount.text : fillTemplate(amountTemplate, { amount: amount.text }))
         : '',
-      link: this.textLinkOf(row.url),
     };
     return joinLineSegments(
       lineParts.map((part) => fillLinePart(part, values)),
@@ -717,12 +631,15 @@ class PendingDealPushService {
   }
 
   /**
-   * **一行**（卡片·两栏版，2026-10-08 晚她的口径）：
-   *   第 1 栏 = **文字说明**（加粗货号颜色尺码 · 待收金额 / 已付清）；第 2 栏 = 「查看话题」按钮。
-   * ⚠️ 与上一版（div 平铺：序号 + 标签 + 金额 + 文字链接）相比：
-   *   · **去掉了序号、类型彩色标签、文字链接** —— 类型由**区域标题**（【预定】…）表达，
-   *     链接由**按钮**表达（`utils/pendingDealPushCard` 渲染 open_url）；
+   * **一行**（卡片，2026-10-08 晚她的口径）：
+   *   第 1 栏 = **文字说明**（加粗货号颜色尺码 · 待收金额 / 已付清）。
+   * ⚠️ 与更早那版（div 平铺：序号 + 标签 + 金额 + 文字链接）相比：
+   *   · **去掉了序号、类型彩色标签、文字链接** —— 类型由**区域标题**（【预定】…）表达；
    *   · 货号/尺码读不出来时给 `card.missingItemText` 占位，**绝不静默丢掉这一行**。
+   * 🔴 2026-10-14：原来**第 2 栏**那颗跳深链的「查看话题」按钮（`utils/pendingDealPushCard`
+   *    按 `row.url` 渲成 `open_url`）**已随深链整体删除** ⇒ 本方法**不再返回 `url`**，
+   *    渲染层于是只出第 1 栏（这正是"只去掉点不动的链接、文字一字不变"）。
+   *    ⚠️ 不要以任何形式把 `url` 加回来。
    */
   buildCardRow(row = {}) {
     const { card = {} } = this.settings;
@@ -744,15 +661,15 @@ class PendingDealPushService {
     if (!item && card.missingItemText) segments.unshift(String(card.missingItemText));
     return {
       text: segments.join(card.rowTextSeparator ?? ' · '),
-      url: row.url || '',
     };
   }
 
   /**
-   * 采购区一行（**同一套两栏**）：第 1 栏 = 批次号 · 供应商 · 报货日 · 录入数量；第 2 栏 = 「查看话题」。
+   * 采购区一行：批次号 · 供应商 · 报货日 · 录入数量。
    * ⭐ 2026-10-08 晚：加了她点名的两样（「供应商和**创建时间**以及**报货数量**」；
    *    数量取「录入数量」）。两个字段**读不到就给占位**（`card.missingXxxText`），
    *    占位设成空串则整段不出现 —— 两种都**不会**让这一批消失。
+   * 🔴 2026-10-14：第 2 栏那颗「查看话题」按钮已随深链删除 ⇒ **不再返回 `url`**（同销售侧）。
    */
   buildCardPurchaseRow(batch = {}, index = 0) {
     const { card = {}, purchaseSupplierSeparator = '、' } = this.settings;
@@ -768,7 +685,7 @@ class PendingDealPushService {
       .map((part) => fillLinePart(part, values))
       .filter(Boolean)
       .join(card.rowTextSeparator ?? ' · ');
-    return { text, url: batch.url || '' };
+    return { text };
   }
 
   /**
@@ -793,13 +710,14 @@ class PendingDealPushService {
   }
 
   /**
-   * **销售区**（纯文本降级版）：表头（总数 + 分区计数）→ 每个有行的区块（标题 + 每行一行）
-   * → 深链缺失脚注。文案形状全在 `config/pendingDealPush`，这里只做拼装。
+   * **销售区**（纯文本降级版）：表头（总数 + 分区计数）→ 每个有行的区块（标题 + 每行一行）。
+   * 文案形状全在 `config/pendingDealPush`，这里只做拼装。
    *
    * ⚠️ `salesAreaTitle` 默认**空串**（不渲染）—— 她哪天要给它加大区标题，只改配置。
+   * 🔴 2026-10-14：原来的**深链缺失脚注**已随深链删除（脚注模板本身也从配置里删了）。
    */
-  buildSalesArea({ sections = [], rows = [], missingLinkCount = 0, dayKey = '' } = {}) {
-    const { sectionTemplate, footerTemplate, salesAreaTitle = '' } = this.settings;
+  buildSalesArea({ sections = [], rows = [], dayKey = '' } = {}) {
+    const { sectionTemplate, salesAreaTitle = '' } = this.settings;
     const resolved = sections || this.buildSections(rows);
     const header = this.buildHeader({ dayKey, rows, sections: resolved });
     const body = resolved.map((section) => fillTemplate(sectionTemplate, {
@@ -807,29 +725,27 @@ class PendingDealPushService {
       count: section.rows.length,
       lines: section.rows.map((row, index) => this.buildLine(row, index, section.title)).join('\n'),
     }));
-    // 深链缺失是**已知的**（见 larkMessageLinkResolver 的实测结论），
-    // 在消息里说一句，免得她以为是漏发了。
-    const footer = missingLinkCount ? fillTemplate(footerTemplate, { count: missingLinkCount }) : '';
     // 大区标题：空串 = **整行都不出现**。
     const title = salesAreaTitle ? fillTemplate(salesAreaTitle, { count: rows.length }) : '';
-    return [title, header, ...body, footer]
+    return [title, header, ...body]
       .map((part) => String(part ?? ''))
       .filter((part) => part.trim() !== '')
       .join('\n');
   }
 
   /**
-   * **采购区**（纯文本降级版）：大区标题（含几批）+ 每批一行 + 深链缺失脚注。
+   * **采购区**（纯文本降级版）：大区标题（含几批）+ 每批一行。
    *
-   * 一行 = 批次号 + 供应商（**取不到就没有这一段，不编**）+ 报货日 + 录入数量
-   * + 深链（拿不到就没有这一段）。逐段拼、空的段整段不要 —— 与销售区同一套规矩。
+   * 一行 = 批次号 + 供应商（**取不到就没有这一段，不编**）+ 报货日 + 录入数量。
+   * 逐段拼、空的段整段不要 —— 与销售区同一套规矩。
    * ⚠️ 报货日 / 录入数量读不到时给 `card.missingXxxText` 占位（**这一批照出**）；
    *    占位设成空串则整段不出现（与卡片那半**同一套取值**，不两处各写一遍）。
+   * 🔴 2026-10-14：原来的 `{link}` 段与**深链缺失脚注**已随深链删除。
    */
-  buildPurchaseArea({ batches = [], missingLinkCount = 0 } = {}) {
+  buildPurchaseArea({ batches = [] } = {}) {
     const {
       purchaseAreaTitle = '', purchaseLineParts = [], purchaseLineSeparator = ' ',
-      purchaseFooterTemplate = '', purchaseSupplierSeparator = '、', card = {},
+      purchaseSupplierSeparator = '、', card = {},
     } = this.settings;
     if (!batches.length) return '';
     const lines = batches.map((batch, index) => {
@@ -839,7 +755,6 @@ class PendingDealPushService {
         supplier: (batch.suppliers || []).join(purchaseSupplierSeparator),
         reportedAt: formatReportedAtText(batch.reportedAt) || card.missingReportedAtText || '',
         quantity: String(batch.quantity ?? '').trim() || card.missingQuantityText || '',
-        link: this.textLinkOf(batch.url),
       };
       return joinLineSegments(
         purchaseLineParts.map((part) => fillLinePart(part, values)),
@@ -849,10 +764,7 @@ class PendingDealPushService {
     const title = purchaseAreaTitle
       ? fillTemplate(purchaseAreaTitle, { count: batches.length })
       : '';
-    const footer = missingLinkCount
-      ? fillTemplate(purchaseFooterTemplate, { count: missingLinkCount })
-      : '';
-    return [title, ...lines, footer]
+    return [title, ...lines]
       .map((part) => String(part ?? ''))
       .filter((part) => part.trim() !== '')
       .join('\n');
@@ -864,23 +776,21 @@ class PendingDealPushService {
    * ⚠️ **空区连标题都不出现**（`buildXxxArea` 在候选为空时返回空串）。
    * ⚠️ 两个区都空时**不发** —— 但那时根本走不到这里（`_sendDailyPush` 会早退）。
    * ⚠️ 它现在是**降级出口**（`PENDING_DEAL_PUSH_MESSAGE_FORMAT=text`，或卡片发送失败时兜底）：
-   *    **内容与卡片同口径**（分区 / 货号尺码 / 类型 / 待收或已付清 / 查看原话），只是没有卡片样式。
+   *    **内容与卡片同口径**（分区 / 货号尺码 / 类型 / 待收或已付清），只是没有卡片样式。
    */
   buildText({
-    sections = [], rows = [], missingLinkCount = 0, dayKey = '',
-    purchaseBatches = [], purchaseMissingLinkCount = 0, settlements = [],
+    sections = [], rows = [], dayKey = '',
+    purchaseBatches = [], settlements = [],
   } = {}) {
     const { areas = ['sales', 'voucher', 'purchase'] } = this.settings;
     const renderers = {
       // 空区返回空串 ⇒ 连标题都不出现。
       sales: () => (rows.length
-        ? this.buildSalesArea({ sections, rows, missingLinkCount, dayKey })
+        ? this.buildSalesArea({ sections, rows, dayKey })
         : ''),
       // ⭐【团购券待结算】（2026-10-08 第二步）：排在销售之后、采购之前（`areas` 给的顺序）。
       voucher: () => this.buildSettlementText(settlements),
-      purchase: () => this.buildPurchaseArea({
-        batches: purchaseBatches, missingLinkCount: purchaseMissingLinkCount,
-      }),
+      purchase: () => this.buildPurchaseArea({ batches: purchaseBatches }),
     };
     return areas
       .map((key) => (renderers[key] ? renderers[key]() : ''))
@@ -896,15 +806,15 @@ class PendingDealPushService {
    * ⚠️ 空块整块不出现（连它前面那条分割线也不出现）。
    * ⚠️ 只有采购候选时**没有卡片标题**：表头那句写的是"待处理的**销售单**"，
    *    销售一笔都没有时套用它是在说假话；采购区自己的块标题就是那一屏的抬头。
+   * 🔴 2026-10-14：`footerLines`（深链缺失脚注）已随深链删除 —— 卡片上不再有脚注元素。
    */
   buildCard({
-    sections, rows = [], missingLinkCount = 0, dayKey = '',
-    purchaseBatches = [], purchaseMissingLinkCount = 0, settlements = [],
+    sections, rows = [], dayKey = '',
+    purchaseBatches = [], settlements = [],
   } = {}) {
     const {
       areas = ['sales', 'voucher', 'purchase'], card = {},
       blockCountTemplate = '', purchaseAreaTitle = '', salesAreaTitle = '',
-      footerTemplate = '', purchaseFooterTemplate = '',
     } = this.settings;
     const resolvedSections = sections || this.buildSections(rows);
     const parts = [];
@@ -914,7 +824,7 @@ class PendingDealPushService {
         for (const section of resolvedSections) {
           parts.push({
             title: fillTemplate(blockCountTemplate, { title: section.title, count: section.rows.length }),
-            // ⭐ 每行 = 两栏（文字说明 | 查看话题）；区域标题就是它的"块标题"。
+            // ⭐ 每行 = 文字说明（原来第 2 栏那颗「查看话题」按钮已随深链删除）。
             rows: section.rows.map((row) => this.buildCardRow(row)),
           });
         }
@@ -932,11 +842,6 @@ class PendingDealPushService {
         });
       }
     }
-    const footerLines = [
-      missingLinkCount ? fillTemplate(footerTemplate, { count: missingLinkCount }) : '',
-      purchaseMissingLinkCount
-        ? fillTemplate(purchaseFooterTemplate, { count: purchaseMissingLinkCount }) : '',
-    ].filter(Boolean);
     return pendingDealPushCard({
       // ⚠️ 卡片标题 = 销售表头，**只在销售区排在最前面时才给**：
       //    表头那句写的是"待处理的**销售单**"，销售区排在采购区后面（`areas` 可配）时
@@ -947,7 +852,6 @@ class PendingDealPushService {
         : '',
       card,
       parts,
-      footerLines,
     });
   }
 
@@ -1145,7 +1049,7 @@ class PendingDealPushService {
   }
 
   async _sendDailyPush({ now }) {
-    const { enabled, linkRequired, retryDelaysMs = [] } = this.settings;
+    const { enabled, retryDelaysMs = [] } = this.settings;
     if (!enabled) {
       // 兜底闸门：app.js 不开定时器时其实走不到这里，但显式写出来，
       // 免得将来有人别的地方直接调它、把开关绕过。
@@ -1211,55 +1115,19 @@ class PendingDealPushService {
         return { day: dayKey, pushedOrderCount: 0, messageId: '', reason: 'no_pending_order' };
       }
 
-      // ⚠️ 销售侧与采购侧的深链**各自算各自的计数**（口径不同、脚注也不同）。
-      // ⭐ 这两段也会读远端（`im.message.get` 现查深链 / 采购映射），一起走瞬时小退避。
-      const { rows, missingLinkCount } = await this.transientRetry(
-        () => this.attachLinks(candidateRows), 'pending_deal_push.attach_links',
-      );
-      if (missingLinkCount) {
-        // 一次推送只记**一条**汇总（不是每行一条），否则日志会被刷满。
-        logWarn('sales.pending_deal_push.link.missing', {
-          day: dayKey, row_count: rows.length, missing_link_count: missingLinkCount,
-          hint: 'im.message.get 未返回 message_app_link；深链只能靠发消息时存进 sales_group_threads 的 app_link',
-        });
-      }
-      // 采购区的深链：本地映射（`data/purchase_group_messages` 的 chat_id + thread_id）→
-      // 话题深链（与销售侧**同一个** `buildSalesThreadLink`）。
-      // ⚠️ 拿不到就留空 —— 由渲染层"照发 + 脚注"，**绝不因此漏掉候选**。
-      const { batches: purchaseBatches, missingLinkCount: purchaseMissingLinkCount } =
-        await this.transientRetry(
-          () => this.attachPurchaseLinks(purchaseCandidates), 'pending_deal_push.attach_purchase_links',
-        );
-      if (purchaseMissingLinkCount) {
-        logWarn('sales.pending_deal_push.purchase_link.missing', {
-          day: dayKey, batch_count: purchaseBatches.length, missing_link_count: purchaseMissingLinkCount,
-          hint: '本地映射（data/purchase_group_messages）里这一批没有 chat_id + thread_id；深链只能靠发采购单时记下的那条映射',
-        });
-      }
-      // 「没有深链就不推」是配置项（默认**不**这样）：深链是增强，货号颜色尺码 + 金额本身就该看得见。
-      // ⚠️ 这条闸门**只管销售区**：采购区拿不到深链时**照推**（她的口径是"不许因此漏掉候选"）。
-      if (linkRequired && missingLinkCount && rows.length) {
-        await this.store.update(dayTaskId, {
-          status: 'completed', sent: false, attempts: attempt, pushed: [], reason: 'link_unavailable',
-          missing_link_count: missingLinkCount,
-        });
-        logWarn('sales.pending_deal_push.skipped', {
-          day: dayKey, reason: 'link_unavailable', missing_link_count: missingLinkCount, attempt,
-        });
-        return { day: dayKey, pushedOrderCount: 0, messageId: '', reason: 'link_unavailable', missingLinkCount };
-      }
+      // 🔴 2026-10-14：原来这里有两段"逐行取深链"（`attachLinks` / `attachPurchaseLinks`，
+      //   各自算 `missingLinkCount` 并写 `missing_link_count` / `purchase_missing_link_count` 日志），
+      //   以及 `linkRequired`（拿不到深链就不推）那道闸门 —— **全部随深链删除**。
+      //   ⇒ 候选行**原样**进渲染（它们本来就不带 `url`），一个远端调用都不再发。
+      const rows = candidateRows;
+      const purchaseBatches = purchaseCandidates;
 
       const chatId = this.chatId === undefined ? this.settings.chatId : this.chatId;
-      // ⚠️ 区块要**带着深链**重建（`attachLinks` 之后的行才有 `url`）：
-      //    `listPendingOrders` 那一份是**没有深链**的候选形状，不能拿来渲染。
-      const linkedSections = this.buildSections(rows);
       const card = this.buildCard({
-        sections: linkedSections, rows, missingLinkCount, dayKey, purchaseBatches,
-        purchaseMissingLinkCount, settlements,
+        sections, rows, dayKey, purchaseBatches, settlements,
       });
       const text = this.buildText({
-        sections: linkedSections, rows, missingLinkCount, dayKey, purchaseBatches,
-        purchaseMissingLinkCount, settlements,
+        sections, rows, dayKey, purchaseBatches, settlements,
       });
       const delivery = await this.deliver({ chatId, dayKey, card, text });
       const messageId = delivery.messageId;
@@ -1267,7 +1135,7 @@ class PendingDealPushService {
         await this.store.update(dayTaskId, {
           status: 'completed', sent: false, attempts: attempt, pushed: [], reason: 'no_chat',
         });
-        return { day: dayKey, pushedOrderCount: 0, messageId: '', reason: 'no_chat', missingLinkCount };
+        return { day: dayKey, pushedOrderCount: 0, messageId: '', reason: 'no_chat' };
       }
       // ⭐ 发出去了 → 顺手把**这一条**置顶（业务负责人 2026-10-07）。
       // 🔴 置顶在**推送记录落盘之前**执行，但它永不抛、永不改推送结果（见 pinMessage）：
@@ -1280,16 +1148,16 @@ class PendingDealPushService {
         // ⚠️ 落盘的"推了哪些"仍然是**销售单 record id**（跨天/跨轮的既有排查口径；
         //    同一单的多行会重复出现 —— 那是"这一单推了几行"，不是笔数）。
         pushed: rows.map((row) => row.salesEntryRecordId),
-        missing_link_count: missingLinkCount,
-        link_sources: rows.map((row) => row.linkSource),
+        // 🔴 2026-10-14：`missing_link_count` / `link_sources` 两个深链键**已删除**
+        //   （她「现在深链已经没有了，把之前的清除掉」）——落盘记录里不再有链接相关字段。
         // ⭐ 2026-10-08（第一步）：新增两块的**行身份**（明细记录 id / 收款明细 id），
         //   排查"这一行到底推没推"时不必再去猜。（追加键，不改上面那些既有键的含义。）
         pushed_rows: rows.map((row) => row.rowId),
         pushed_row_count: rows.length,
         // 采购区的落盘字段（新增键，不改既有键的含义/形状）。
         purchase_pushed: purchaseBatches.map((batch) => batch.batchNo),
-        purchase_missing_link_count: purchaseMissingLinkCount,
-        purchase_link_sources: purchaseBatches.map((batch) => batch.linkSource),
+        // 🔴 2026-10-14：`purchase_missing_link_count` / `purchase_link_sources` 两个深链键
+        //   **已删除**（同销售侧）。
         // ⭐ 2026-10-08（第二步）：券那块推了哪些**结算日**（追加键，不改既有键的含义）。
         //   排查"她点的那行到底是今天推的还是昨天推的"时看这几个键。
         settlement_days: settlements.map((row) => row.settleDay),
@@ -1299,11 +1167,10 @@ class PendingDealPushService {
         pin_reason: pin.reason,
       });
       logInfo('sales.pending_deal_push.sent', {
-        day: dayKey, order_count: rows.length, missing_link_count: missingLinkCount,
+        day: dayKey, order_count: rows.length,
         order_ids: [...new Set(rows.map((row) => row.salesEntryRecordId))],
         row_ids: rows.map((row) => row.rowId),
         purchase_batch_count: purchaseBatches.length,
-        purchase_missing_link_count: purchaseMissingLinkCount,
         purchase_batch_nos: purchaseBatches.map((batch) => batch.batchNo),
         settlement_days: settlements.map((row) => row.settleDay),
         settlement_amounts: settlements.map((row) => row.totalAmount),
@@ -1313,9 +1180,8 @@ class PendingDealPushService {
         pinned: pin.pinned, pin_reason: pin.reason,
       });
       return {
-        day: dayKey, pushedOrderCount: rows.length, messageId, missingLinkCount, reason: '',
+        day: dayKey, pushedOrderCount: rows.length, messageId, reason: '',
         purchaseBatchCount: purchaseBatches.length,
-        purchaseMissingLinkCount,
         settlements: settlements.map((row) => row.settleDay),
         settlementCount: settlements.reduce((sum, row) => sum + (row.count || 0), 0),
         messageFormat: delivery.format, degraded: delivery.degraded, attemptCount: attempt,

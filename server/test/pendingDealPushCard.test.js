@@ -2,7 +2,16 @@
  *  改前（逐字）：`'【采购】未到货的报货批次：{count} 批'`（以及渲染出来的同名文本）
  *  改后（逐字）：`'【采购】未到货的采购单：{count} 批'`
  *  理由：她把「报货批次」这张表改名成了「采购主表」；**用户可见文案**按 Lead 的口径用业务说法
- *        「采购单」（短、她看得懂）。⚠️ 只换了这一个词，其余断言（格式/深链/数量/顺序）一条没放宽。
+ *        「采购单」（短、她看得懂）。⚠️ 只换了这一个词，其余断言（格式/数量/顺序）一条没放宽。
+ *
+ * ⚠️ 2026-10-14 第二次改写（**深链整体退场**，业务负责人逐字：「**现在深链已经没有了，
+ *    把之前的清除掉**」）——本文件里逐条的「改前 → 改后 → 依据」：
+ *  ① 行（`column_set`）改前：**两栏**（文字说明 | 「查看话题」按钮，`open_url` 跳 `APP_LINK`）；
+ *     改后：**只有第 1 栏文字**（不给点不动的按钮）。
+ *  ② 脚注（`note` 元素）改前：`（N 笔的深链暂不可用…）` / `（N 批的…）`；改后：**整块不再出现**。
+ *  ③ 纯文本降级行末段改前：` · 查看话题 <URL>`；改后：（该段删除）。
+ *  ④ 「必须有链接」⇒「**必须没有**」的哨兵：见 ② ②/⑤/A5 三条 + ⑧ 的逐字文本。
+ *  依据：她「现在深链已经没有了，把之前的清除掉」；**行的文字一字不变**，只去链接与那句脚注。
  */
 // 「9 点待处理单推送 = **消息卡片**」的验收用例（业务负责人 2026-10-08 口径）。
 //
@@ -11,13 +20,15 @@
 //    长链接改成「**查看原话**」这样的**文字链接**（URL 藏起来，不再占一行）· 分区块加分割线、
 //    采购区单独一块 · 客户端不支持时降级成纯文本（可用飞书的 fallback）」
 //   「其实**不需要单号**，需要的是那个**编号和尺码信息**～……然后销售按照**预定和现货待收**分区」
+//   ⚠️ 上面那句"长链接"是 **2026-10-08 当时**的口径；2026-10-14 她已改口
+//      「现在深链已经没有了，把之前的清除掉」⇒ 本文件里凡涉及链接的断言都按**没有链接**钉住。
 //
 // 本文件盯的是**这条消息长什么样**（验收标准 A1–A13；文本降级模板的逐字哨兵仍在
 // pendingDealPush / pendingDealPushSections / pendingDealPushPurchaseSection 三个文件里）：
-//   ① 卡片 JSON 结构（分区 / 分割线 / 文字链接 / 无裸 URL）
-//   ② 行内容 = 货号 + 尺码 + 类型标签 + 待收金额 + 「查看原话」
+//   ① 卡片 JSON 结构（分区 / 分割线 / 无裸 URL / 无链接按钮）
+//   ② 行内容 = 货号 + 颜色 + 尺码 + 待收金额（🔴 不再有类型标签、不再有链接）
 //   ④ 待收 0 → 「已付清」；金额读不出来 → 整段不渲染
-//   ⑤ 深链缺失 → 无链接段 + 脚注计数
+//   ⑤ 本地映射里有深链也**不渲染**（深链已退场）
 //   ⑧ 降级：`format=text` 仍可读；卡片发不出去 → 自动改发纯文本（日志带真实 code/msg）
 //   ⑨ 采购区为空不出现、有则一块
 // 逐条对照见 docs/pending-push-card-and-retry-2026-10-08.md 第 4 节。
@@ -31,7 +42,6 @@ const path = require('node:path');
 
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { SalesGroupThreadLocator, messageKey } = require('../src/services/salesGroupThreadLocator');
-const { LarkMessageLinkResolver } = require('../src/services/larkMessageLinkResolver');
 const { PurchasePendingBatchService } = require('../src/services/purchasePendingBatchService');
 const { PurchaseBatchLocator } = require('../src/services/purchaseBatchLocator');
 const { PendingDealPushService } = require('../src/services/pendingDealPushService');
@@ -71,8 +81,7 @@ const settings = (overrides = {}) => ({
   ...resolvePendingDealPushConfig({}),
   enabled: true,
   chatId: CHAT_ID,
-  linkLookupEnabled: false,
-  linkRequired: false,
+  // 🔴 2026-10-14：`linkLookupEnabled` / `linkRequired` 已随深链从配置删除，不再注入。
   ...overrides,
 });
 
@@ -115,8 +124,9 @@ const newService = ({
     // ⚠️ 2026-10-08（第一步）：候选**不再**从 `secondDelivery.listPendingDeliveries` 来
     //（那个方法被成交提醒共用、一个字都不许改）⇒ 注入候选取数的替身。
     candidates: candidates || fakeCandidates({ orders }),
-    locator: locator || new SalesGroupThreadLocator({ store: tmpStore('pending-card-mapping-') }),
-    resolver: new LarkMessageLinkResolver({ client: {}, lookupEnabled: false }),
+    // ⚠️ 2026-10-14：`locator` / `resolver` 两个注入**已随深链删除**（本类不再认识它们）。
+    //    上面的 `locator` 形参留着只是不改调用点 —— 传了也没用；它的用途只剩
+    //    "把本地映射种进去，证明**映射里有深链、推送里也不出现**"（见 ② ⑤ 两条）。
     client,
     chatId: CHAT_ID,
     store: store || tmpStore('pending-card-day-'),
@@ -199,7 +209,8 @@ test('⑨ 采购区：为空时整块（含它前面那条分割线）都不出�
   const emptyCard = cardOf(empty.creates[0]);
   assert.deepEqual(emptyCard.elements.map((element) => element.tag), ['div', 'column_set']);
   assert.ok(!emptyCard.elements.some((element) => element.tag === 'hr'), '采购区为空 → 一条分割线都不该有');
-  assert.ok(!emptyCard.elements.some((element) => element.tag === 'note'), '没有缺链接就不该有脚注');
+  // 🔴 2026-10-14：脚注（深链缺失提示）已随深链删除 ⇒ 这张卡**任何情况下**都不该有 note 元素。
+  assert.ok(!emptyCard.elements.some((element) => element.tag === 'note'), '深链脚注已退场：不该有 note');
 
   const records = {
     // ⭐ 2026-10-09：供应商改从**批次行自己那一列**取（「信息填写」整表已删除）。
@@ -219,55 +230,64 @@ test('⑨ 采购区：为空时整块（含它前面那条分割线）都不出�
   const card = cardOf(filled.creates[0]);
   // 只有采购候选 ⇒ 没有销售表头（表头那句写的是"待处理的销售单"），块标题就是抬头。
   assert.equal(card.header, undefined);
-  assert.deepEqual(card.elements.map((element) => element.tag), ['div', 'column_set', 'note']);
+  // 🔴 2026-10-14 改（「必须有链接」⇒「**必须没有**」）：
+  //   改前逐字：`assert.deepEqual(card.elements.map((element) => element.tag), ['div', 'column_set', 'note']);`
+  //   改后逐字：`assert.deepEqual(card.elements.map((element) => element.tag), ['div', 'column_set']);`
+  //   依据：她「现在深链已经没有了，把之前的清除掉」⇒ 那条（N 批的深链暂不可用…）脚注没了。
+  assert.deepEqual(card.elements.map((element) => element.tag), ['div', 'column_set']);
   assert.equal(card.elements[0].text.content, '**【采购】未到货的采购单：1 批**');
-  // 这一批没有本地映射 ⇒ **只有文字栏**（不给一个点不动的按钮、也不留空壳），并且计入脚注。
+  // 采购行：**只出第 1 栏**（原来的「查看话题」按钮已随深链删除），行文字照旧。
   const row = card.elements[1];
   assert.equal(row.tag, 'column_set');
-  assert.equal(row.columns.length, 1, '没有深链 ⇒ 只出第 1 栏');
+  assert.equal(row.columns.length, 1, '深链已退场 ⇒ 只有第 1 栏文字');
   // ⭐ 2026-10-08 晚：采购那行末尾加了她点名的两样（报货日 + 录入数量）；
   //    这一批没填过那两列 ⇒ 给占位（**不编值**、也不让这一行消失）。
   assert.equal(row.columns[0].elements[0].text.content,
     'CGD-20261008-0001 · 金猴 · 报货日 （未读到） · 录入数量 （未读到）');
-  assert.match(card.elements[2].elements[0].content, /^（1 批的深链暂不可用/);
+  // 🔴 「必须没有」：整张卡里一个 URL / 一个按钮 / 一句脚注都不许有。
+  assert.ok(!JSON.stringify(card).includes('http'), '一个 URL 都不许出现');
+  assert.ok(!card.elements.some((element) => element.tag === 'note'), '脚注已退场');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ② 行内容：货号 + 尺码（加粗）+ 彩色类型标签 + 突出显示的待收金额 + 「查看原话」
+// ② 行内容：货号 + 颜色 + 尺码（加粗）+ 突出显示的待收金额（🔴 不再有链接）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('② 行内容逐字：**两栏**（加粗货号+尺码 · 高亮待收 | 「查看话题」按钮跳深链）；**没有单号**、正文没有裸 URL', async () => {
+test('② 行内容逐字：**只有文字栏**（加粗货号+尺码 · 高亮待收）；**没有单号**、**没有链接按钮**、没有裸 URL', async () => {
+  // 「改前」逐字（这条用例的旧名字与旧断言）：
+  //   `test('② 行内容逐字：**两栏**（加粗货号+尺码 · 高亮待收 | 「查看话题」按钮跳深链）；**没有单号**、正文没有裸 URL', …)`
+  //   `assert.equal(row.columns.length, 2, '第 1 栏文字说明 + 第 2 栏「查看话题」按钮');`
+  //   `assert.equal(button.text.content, '查看话题');`
+  //   `assert.deepEqual(button.behaviors, [{ type: 'open_url', default_url: APP_LINK }]);`
+  //   `assert.deepEqual(buttonUrls, [APP_LINK], '深链只在按钮上出现一次');`
+  //   `assert.equal(visibleOf(creates[0]).split('\n')[2], 'JC002 40码 · 待收 ¥128.00 | 查看话题');`
+  // 「改后」：**第 2 栏（跳深链的按钮）整栏消失** —— 本地映射里明明种了 APP_LINK，
+  //   渲染层也不再出按钮；行文字**一字不变**（`JC002 40码 · 待收 ¥128.00`）。
+  // 「依据」：业务负责人 2026-10-14 逐字「现在深链已经没有了，把之前的清除掉」。
   const { service, creates } = newService({ orders: [RESERVED], locator: await withLinks([RESERVED]) });
   await service.sendDailyPush({ now: DAY });
 
   const elements = elementsOf(creates[0]);
   const row = elements[1];
-  assert.equal(row.tag, 'column_set', '每行 = 一个两栏 column_set');
-  assert.equal(row.columns.length, 2, '第 1 栏文字说明 + 第 2 栏「查看话题」按钮');
+  assert.equal(row.tag, 'column_set', '每行仍是一个 column_set（只是只剩一栏）');
+  assert.equal(row.columns.length, 1, '🔴 只有第 1 栏文字说明（第 2 栏那颗跳深链的按钮已删）');
   assert.equal(row.columns[0].elements[0].text.content,
     "**JC002 40码** · <font color='red'>待收 ¥128.00</font>");
-  const button = row.columns[1].elements[0];
-  assert.equal(button.tag, 'button');
-  assert.equal(button.text.content, '查看话题');
-  assert.deepEqual(button.behaviors, [{ type: 'open_url', default_url: APP_LINK }]);
   // 类型由**区域标题**表达（行里不再有彩色标签）；区域标题仍在第一行。
   assert.equal(elements[0].text.content, '**【预定】1 笔**');
   assert.ok(!JSON.stringify(cardOf(creates[0])).includes('<text_tag'), '行里不再放类型彩色标签');
 
   // 🔴 她明确说不需要单号。
   assert.ok(!JSON.stringify(cardOf(creates[0])).includes('XSD-P-1'), '卡片里不许出现单号');
-  // URL **只**放按钮的 `default_url`，正文（div / 文字栏）一个裸 URL 都没有。
-  const plainContents = elements
-    .filter((element) => element.tag === 'div')
-    .map((element) => element.text.content);
-  assert.ok(!plainContents.some((content) => /https?:\/\//.test(content)), '正文里不许有裸 URL');
-  const buttonUrls = elements
+  // 🔴 「必须没有」：整张卡里一个按钮都没有，更没有 URL（`APP_LINK` 种在映射里也不许出现）。
+  const buttons = elements
     .flatMap((element) => (element.columns || []).flatMap((column) => column.elements))
-    .filter((element) => element.tag === 'button')
-    .map((element) => element.behaviors[0].default_url);
-  assert.deepEqual(buttonUrls, [APP_LINK], '深链只在按钮上出现一次');
-  // 她看得见的字（降级文本与卡片在这套字样上对齐：文字栏 · 按钮文案）。
-  assert.equal(visibleOf(creates[0]).split('\n')[2], 'JC002 40码 · 待收 ¥128.00 | 查看话题');
+    .filter((element) => element.tag === 'button');
+  assert.deepEqual(buttons, [], '深链已退场：一个按钮都不许有');
+  assert.ok(!JSON.stringify(cardOf(creates[0])).includes('http'), '一个 URL 都不许出现');
+  assert.ok(!JSON.stringify(cardOf(creates[0])).includes(APP_LINK.split('?')[0]), '连 applink 前缀都不许有');
+  // 她看得见的字：行文字**逐字不变**，只是后面不再跟 ` | 查看话题`。
+  assert.equal(visibleOf(creates[0]).split('\n')[2], 'JC002 40码 · 待收 ¥128.00');
 });
 
 test('② 一单多件逐件列出；配品没有尺码 → 不拼「码」，整件都在加粗段里', async () => {
@@ -291,7 +311,7 @@ test('② 一单多件逐件列出；配品没有尺码 → 不拼「码」，�
 
 test('④ 待收 0 → 「已付清」；金额读不出来 → **整段不渲染**（不出现 ¥— / ¥0.00 / NaN）', () => {
   const { service } = newService({ orders: [] });
-  // ⚠️ 2026-10-08（第一步）：`buildCardRow` 的入参是**行**（`{ facts, pendingAmount, url }`）。
+  // ⚠️ 2026-10-08（第一步）：`buildCardRow` 的入参是**行**（`{ facts, pendingAmount }`）。
   const rowOf = (order) => saleRowsFromOrders([order])[0];
   const paidUp = service.buildCardRow({ ...rowOf(CASH_PENDING), pendingAmount: 0 });
   assert.ok(paidUp.text.includes('已付清'), paidUp.text);
@@ -302,9 +322,13 @@ test('④ 待收 0 → 「已付清」；金额读不出来 → **整段不渲�
   assert.ok(!unknown.text.includes('NaN'));
   assert.equal(unknown.text, '**6A637-7 43码**',
     '空的金额段整段不要，也不留空的 · ');
-  // 有深链时按钮那栏照旧在（金额缺席不影响它）。
+  // 🔴 2026-10-14 改（「必须有链接」⇒「**必须没有**」）：
+  //   改前逐字：`assert.equal(service.buildCardRow({ ...rowOf(CASH_PENDING), pendingAmount: null, url: APP_LINK }).url, APP_LINK);`
+  //   改后逐字：`assert.equal(service.buildCardRow({ ...rowOf(CASH_PENDING), pendingAmount: null, url: APP_LINK }).url, undefined);`
+  //   依据：她「现在深链已经没有了，把之前的清除掉」⇒ 行上再带 `url` 也不会被渲染。
   assert.equal(
-    service.buildCardRow({ ...rowOf(CASH_PENDING), pendingAmount: null, url: APP_LINK }).url, APP_LINK,
+    service.buildCardRow({ ...rowOf(CASH_PENDING), pendingAmount: null, url: APP_LINK }).url, undefined,
+    '行里不再返回 url（深链退场）—— 渲染层因此不会出按钮',
   );
   // 货号/尺码读不出来 → 给占位，**绝不静默丢掉这一行**。
   const noItem = service.buildCardRow({ ...rowOf(CASH_PENDING), facts: [], pendingAmount: null });
@@ -318,34 +342,44 @@ test('④ 待收 0 → 「已付清」；金额读不出来 → **整段不渲�
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ⑤ 深链缺失 → 无链接段 + 脚注计数
+// ⑤ 本地映射里存着深链 ⇒ 推送里**一个链接都不出现**（深链已整体退场）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('⑤ 缺深链：那一行**只出文字栏**（不给点不动的按钮、也不留空壳），脚注 + missingLinkCount 照旧', async () => {
-  const locator = await withLinks([RESERVED, CASH_PENDING], { appLink: '' });
+test('⑤ 映射里存着深链也**不渲染**：只出文字栏、没有按钮、没有脚注；行文字一字不变', async () => {
+  // 「改前」逐字（这条用例的旧名字与旧断言）：
+  //   `test('⑤ 缺深链：那一行**只出文字栏**（不给点不动的按钮、也不留空壳），脚注 + missingLinkCount 照旧', …)`
+  //   `assert.equal(result.missingLinkCount, 2);`
+  //   `const note = card.elements.find((element) => element.tag === 'note');`
+  //   `assert.match(note.elements[0].content, /^（2 笔的深链暂不可用/);`
+  // 「改后」：这几条**整体反过来** —— 本文件原来用"本地映射里没有 app_link"造"缺深链"，
+  //   现在改成"映射里**有** app_link"（`APP_LINK`）：链接数据在，渲染层也不再出按钮、不出脚注；
+  //   `missingLinkCount` 这个返回键已随深链删除。
+  // 「依据」：业务负责人 2026-10-14 逐字「现在深链已经没有了，把之前的清除掉」。
+  const locator = await withLinks([RESERVED, CASH_PENDING]); // ⚠️ 这次给的是**有** app_link
   const { service, creates } = newService({ orders: [RESERVED, CASH_PENDING], locator });
   const result = await service.sendDailyPush({ now: DAY });
 
-  assert.equal(result.missingLinkCount, 2);
-  assert.equal(result.pushedOrderCount, 2, '缺深链不影响"照推"（默认 linkRequired=false）');
+  assert.equal(result.missingLinkCount, undefined, '深链计数已随深链删除');
+  assert.equal(result.pushedOrderCount, 2, '照推');
   const card = cardOf(creates[0]);
   const rows = card.elements.filter((element) => element.tag === 'column_set');
   assert.equal(rows.length, 2);
   for (const row of rows) {
-    assert.equal(row.columns.length, 1, '没有深链 ⇒ 只出第 1 栏文字说明');
+    assert.equal(row.columns.length, 1, '深链已退场 ⇒ 只出第 1 栏文字说明');
   }
   assert.equal(rows[0].columns[0].elements[0].text.content,
     "**JC002 40码** · <font color='red'>待收 ¥128.00</font>");
-  assert.ok(!JSON.stringify(card).includes('http'), '拿不到深链就一个 URL 都不许出现');
-  const note = card.elements.find((element) => element.tag === 'note');
-  assert.match(note.elements[0].content, /^（2 笔的深链暂不可用/);
+  assert.ok(!JSON.stringify(card).includes('http'), '映射里有深链也一个 URL 都不许出现');
+  assert.ok(!JSON.stringify(card).includes('button'), '一个按钮都不许有');
+  assert.equal(card.elements.find((element) => element.tag === 'note'), undefined, '脚注已退场');
+  assert.ok(!visibleOf(creates[0]).includes('查看话题'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ⑧ 降级：format=text（纯文本仍可读）；卡片发不出去 → 自动改发纯文本
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('⑧ 降级：PENDING_DEAL_PUSH_MESSAGE_FORMAT=text → 发纯文本，内容仍可读（无单号、有「查看话题 + URL」）', async () => {
+test('⑧ 降级：PENDING_DEAL_PUSH_MESSAGE_FORMAT=text → 发纯文本，内容仍可读（无单号、**无链接**）', async () => {
   const { service, creates } = newService({
     orders: [RESERVED], locator: await withLinks([RESERVED]), settings: { messageFormat: 'text' },
   });
@@ -353,12 +387,18 @@ test('⑧ 降级：PENDING_DEAL_PUSH_MESSAGE_FORMAT=text → 发纯文本，内�
   assert.equal(creates[0].data.msg_type, 'text');
   assert.equal(result.messageFormat, 'text');
   const text = textOf(creates[0]);
+  // 🔴 2026-10-14 改（「必须有链接」⇒「**必须没有**」）：
+  //   改前逐字：末行 `'1. JC002 40码 · 【预定】 · 待收 ¥128.00 · 查看话题 ' + APP_LINK`
+  //   改后逐字：末行 `'1. JC002 40码 · 【预定】 · 待收 ¥128.00'`
+  //   依据：她「现在深链已经没有了，把之前的清除掉」—— 前面那三段文字一字不变。
   assert.equal(text, [
     '⏰ 2026-10-08 最近 7 天待处理的销售单（预定 / 现货待收）：1 笔',
     '【预定】1 笔',
-    `1. JC002 40码 · 【预定】 · 待收 ¥128.00 · 查看话题 ${APP_LINK}`,
+    '1. JC002 40码 · 【预定】 · 待收 ¥128.00',
   ].join('\n'));
   assert.ok(!text.includes('XSD-P-1'), '纯文本降级里也不出现单号');
+  assert.ok(!text.includes('查看话题'), '纯文本降级里也不出现链接文案');
+  assert.ok(!text.includes('http'), '纯文本降级里也不出现 URL');
 });
 
 test('⑧ 自动降级：卡片发不出去 ⇒ 用同一份纯文本兜底发一次，记 sent + degraded，日志带真实 code/msg', async () => {
@@ -421,11 +461,17 @@ test('A2 只有一个区块时标题不再补分区计数（她真机看到的�
   assert.match(cardOf(both.creates[0]).header.title.content, /（【预定】1 笔 \/ 【现货待收】1 笔）$/);
 });
 
-test('A5 深链缺失脚注仍然进卡片（note 元素），销售 / 采购各一行', async () => {
+test('A5 深链脚注**已退场**：销售 / 采购都在推，卡片里也一个 note 元素都没有', async () => {
+  // 「改前」逐字（旧名字与旧断言）：`test('A5 深链缺失脚注仍然进卡片（note 元素），销售 / 采购各一行', …)`
+  //   `const lines = note.elements[0].content.split('\n');`
+  //   `assert.match(lines[0], /^（1 笔的深链暂不可用/);`
+  //   `assert.match(lines[1], /^（1 批的深链暂不可用/);`
+  // 「改后」：两句脚注随深链一起删掉 ⇒ **没有 note 元素**（销售 / 采购两个区都在，照样没有）。
+  // 「依据」：业务负责人 2026-10-14 逐字「现在深链已经没有了，把之前的清除掉」。
   const records = {
     purchaseOrderBatch: [{ record_id: 'bat_1', fields: { 报货批次号: 'CGD-20261008-0001', 到货状态: '未到货' } }],
   };
-  const locator = await withLinks([RESERVED], { appLink: '' });
+  const locator = await withLinks([RESERVED]);
   const { service, creates } = newService({
     orders: [RESERVED],
     records,
@@ -436,9 +482,11 @@ test('A5 深链缺失脚注仍然进卡片（note 元素），销售 / 采购各
     }),
   });
   await service.sendDailyPush({ now: DAY });
-  const note = elementsOf(creates[0]).find((element) => element.tag === 'note');
-  const lines = note.elements[0].content.split('\n');
-  assert.equal(lines.length, 2);
-  assert.match(lines[0], /^（1 笔的深链暂不可用/);
-  assert.match(lines[1], /^（1 批的深链暂不可用/);
+  const card = cardOf(creates[0]);
+  assert.equal(card.elements.find((element) => element.tag === 'note'), undefined, '脚注整块退场');
+  // 两个区都还在（销售 + 采购）—— 退场的是脚注，不是区。
+  const titles = card.elements.filter((element) => element.tag === 'div').map((element) => element.text.content);
+  assert.ok(titles.some((title) => title.includes('【预定】')), '销售区照旧');
+  assert.ok(titles.some((title) => title.includes('【采购】')), '采购区照旧');
+  assert.ok(!JSON.stringify(card).includes('深链暂不可用'));
 });
