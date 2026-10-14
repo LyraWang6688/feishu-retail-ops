@@ -230,3 +230,69 @@ test('AC-AC8 ⭐⭐ UI 硬规矩：文案**全部走配置** ✓ · 控件 ≥44
   // ⑤ 空清单 ⇒ 人话空态卡（不留空下拉 ✗）
   assert.ok(FEATURE.includes('data-view="accessory-empty"'), '空清单要有人话卡 ✓');
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2026-10-14 晚（她逐字）：「**并且配品都是默认的现货**」＋「配品收款方式读『收款方式管理』表」
+// ═══════════════════════════════════════════════════════════════════════════
+const { SELLABLE_KINDS, sellableKindOf } = require('../src/config/sellableKinds');
+const { salesTradeTypeForStock } = require('../src/config/salesTradeTypePolicy');
+
+test('AC-A1 ⭐⭐ 配品（新行）默认**现货**：状态字段真值 = 现货编码（逐字 ✓ 能真红 ✓）', () => {
+  // ⭐ 真值来源：可售品配置里声明的默认 ⇒ 走**既有**判据 `salesTradeTypeForStock`
+  assert.equal(sellableKindOf({ kind: 'accessory' }).defaultInStock, true, '配品默认现货（配置 ✓）');
+  assert.equal(salesTradeTypeForStock({ inStock: true }), 'SALE_CASH', '现货 ⇒ 既有编码 SALE_CASH ✓');
+  // 路由必须把这条默认**真的传下去**（不是只写在配置里 ✗）
+  const spy = spyOf();
+  return withServer(appFor(spy), async (base) => {
+    await post(base, `/api/workbench${accessoryTab.api.submit}`, {
+      accessoryRecordId: 'acc_1', amount: '99', submitKey: 'k-default-instock', requestId: 'r-di',
+    });
+    const add = spy.calls.find((c) => c.method === 'addSaleLine');
+    assert.equal(add.input.inStock, true, '配品行必须带 inStock:true（⇒ 落表状态 = 现货 ✓）');
+    assert.equal(add.input.kind, 'accessory');
+  });
+});
+
+test('AC-A2 🔴 「配品不扣库存」**一个字没变**：交付/扣库存闸门对配品永远不放行 ✓', () => {
+  const kind = SELLABLE_KINDS.accessory;
+  assert.equal(kind.tracksInventory, false, '配品不跟踪库存 ✓');
+  assert.equal(kind.requiresFulfillment, false, '配品不需要履约（当场结清 ✓）');
+  // 源码哨兵：那道闸门就是这两个属性一起判（所以"默认现货"**不会**带来任何库存动作 ✗）
+  const svc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'scanWriteService.js'), 'utf8');
+  assert.ok(svc.includes('if (!(kind.requiresFulfillment && kind.tracksInventory)) return false;'),
+    '既有闸门逐字还在（配品 ⇒ false ⇒ 不交付、不扣库存 ✓）');
+  // 路由侧：配品这条路**只**调那两个既有写方法 ✓（复用 AC-AC4 的探针口径）
+  const spy = spyOf();
+  return withServer(appFor(spy), async (base) => {
+    await post(base, `/api/workbench${accessoryTab.api.submit}`, {
+      accessoryRecordId: 'acc_1', amount: '50', submitKey: 'k-no-stock', requestId: 'r-ns',
+    });
+    const methods = [...new Set(spy.calls.map((c) => c.method))].sort();
+    assert.deepEqual(methods, ['addSaleLine', 'submitSale'], `只许这两个既有写方法（实际 ${JSON.stringify(methods)}）`);
+  });
+});
+
+test('AC-A4 ⭐⭐ 收款方式 = **她选的那条**（原样落「收款明细」✓ 不被默认值顶掉 ✗）', () => {
+  const spy = spyOf();
+  const chosen = '抖音代金券（49.9）';
+  return withServer(appFor(spy), async (base) => {
+    await post(base, `/api/workbench${accessoryTab.api.submit}`, {
+      accessoryRecordId: 'acc_1', amount: '49.9', method: chosen, submitKey: 'k-method', requestId: 'r-m',
+    });
+    const sub = spy.calls.find((c) => c.method === 'submitSale');
+    assert.equal(sub.input.payments.length, 1, '仍只落一行收款 ✓');
+    assert.equal(sub.input.payments[0].method, chosen, '落表的就是她选的那条 ✓');
+    assert.equal(sub.input.payments[0].amount, '49.9');
+  });
+});
+
+test('AC-A4b ⭐ 没传方式时沿用**配置默认**（不猜、也不静默写空 ✗）', () => {
+  const spy = spyOf();
+  return withServer(appFor(spy), async (base) => {
+    await post(base, `/api/workbench${accessoryTab.api.submit}`, {
+      accessoryRecordId: 'acc_1', amount: '20', submitKey: 'k-defmethod', requestId: 'r-dm',
+    });
+    const sub = spy.calls.find((c) => c.method === 'submitSale');
+    assert.equal(sub.input.payments[0].method, SCAN_WRITE.sale.defaultPaymentMethod, '沿用配置默认 ✓');
+  });
+});

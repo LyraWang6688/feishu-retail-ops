@@ -23,6 +23,8 @@ module.exports = {
     quantity: 'quantity',
     amount: 'amount',
     submitKey: 'submitKey',
+    // 收款方式（她选的那条 ⇒ 落「收款明细.收款方式」✓ 选项来自「收款方式管理」表 ✓）
+    method: 'method',
   }),
   // 数量：**默认 1**（她 2026-10-14：「数量可填、默认 1」✓ 不填也能提交 ✓）
   defaultQuantity: 1,
