@@ -321,9 +321,15 @@ test('AC-P6 既有验收链路一字未改（按钮 / 表单 / 接口 / 载荷�
   assert.equal(ordersConfig.ORDERS_API.arrivalConfirm, '/api/workbench/purchase/arrivals/confirm');
   const apiSource = readWorkbench('config/orders.js');
   const endpoints = new Set([...apiSource.matchAll(/\/api\/workbench\/purchase\/[a-z/]+/g)].map((m) => m[0]));
+  // ⚠️ 2026-10-14 **改指向**（不动强度：仍是**精确清单** ✓）——
+  //   她当次拍板「**把老验收整块搬进工作台**」⇒ 新增 `arrivals/detail`（只读明细）与
+  //   `arrivals/accept`（走既有验收会话）两条 ✓ 依据
+  //   `docs/acceptance-into-workbench-full-2026-10-14.md`（AC-AW10…AW17）✓
+  //   改前逐字：`['/api/workbench/purchase/arrivals/confirm', '/api/workbench/purchase/requests']`
   assert.deepEqual([...endpoints].sort(),
-    ['/api/workbench/purchase/arrivals/confirm', '/api/workbench/purchase/requests'],
-    '采购只许有既有的那两个接口（不许新增验收接口）');
+    ['/api/workbench/purchase/arrivals/accept', '/api/workbench/purchase/arrivals/confirm',
+      '/api/workbench/purchase/arrivals/detail', '/api/workbench/purchase/requests'],
+    '采购的接口清单（2026-10-14 起 = 既有两条 + 老验收搬进工作台的两条 ✓）');
 
   // ② 前端验收逻辑的四个哨兵逐字还在，且提交载荷形状没变
   const source = readWorkbench('features/orders/index.js');

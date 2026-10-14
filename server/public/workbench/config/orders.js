@@ -301,3 +301,29 @@ export const ORDERS_TEXTS = {
   arrivalSubmit: '确认到货并入库',
   groupEmpty: '这一类现在没有单',
 };
+
+// ⭐⭐ 2026-10-14 晚：「老验收整块搬进工作台」的前端真源（配置先行 ✓ 不散写中文 ✗）
+//   真源文档：docs/acceptance-into-workbench-full-2026-10-14.md（AC-AW10…AW17）
+//   ⚠️ 接口/字段名必须与服务端 src/config/workbenchArrival.js 逐字一致 ✓
+export const ARRIVAL_FULL_API = {
+  detail: '/api/workbench/purchase/arrivals/detail',
+  accept: '/api/workbench/purchase/arrivals/accept',
+  products: '/api/workbench/inventory/products',
+};
+export const ARRIVAL_FULL_FIELDS = {
+  batchNo: 'batchNo', actualAmount: 'actualAmount', acceptanceText: 'acceptanceText', lines: 'lines',
+  productRecordId: 'productRecordId', size: 'size', quantity: 'quantity',
+};
+export const ARRIVAL_FULL_TEXTS = {
+  detailTitle: '这一批的采购明细',
+  detailEmpty: '这一批没有可验收的采购明细',
+  detailFailed: '这一批的采购明细没读到，请稍后再试',
+  customSizeLabel: '自定义尺码',
+  customSizePlaceholder: '尺码',
+  customQuantityPlaceholder: '数量',
+  customItemNoLabel: '自定义货号',
+  customItemNoPlaceholder: '货号',
+  itemNoNotFound: '这个货号没找到，请核对后再填',
+  submitting: '正在确认到货…',
+  accepted: '已确认到货',
+};

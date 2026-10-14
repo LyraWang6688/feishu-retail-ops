@@ -208,3 +208,48 @@ test('AC-AW17 ⭐ 失败如实：开会话失败（明细读不到 / 没明细�
     assert.equal(arrival2.calls.filter((c) => c.m === 'addScan').length, 0, '不合法 ⇒ 不写 ✗');
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-AW16（前端那一刀）：卡展开里的明细/自定义行 ⇒ 走**新接口** · 文案走配置 · ≥44px · 即时反馈
+// ═══════════════════════════════════════════════════════════════════════════
+const FEATURE = fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench', 'features', 'orders', 'index.js'), 'utf8');
+const FE_CONFIG = fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench', 'config', 'orders.js'), 'utf8');
+
+test('AC-AW16a ⭐ 明细与提交打的是**新接口**（配置常量 ✓ 不写死 URL ✗）', () => {
+  assert.ok(FEATURE.includes('ARRIVAL_FULL_API.detail'), '明细读 /purchase/arrivals/detail ✓');
+  assert.ok(FEATURE.includes('ARRIVAL_FULL_API.accept'), '提交打 /purchase/arrivals/accept ✓');
+  assert.ok(FEATURE.includes('arrival-detail'), '有只读明细容器 ✓');
+  assert.ok(FEATURE.includes('data-field="custom-size"') && FEATURE.includes('data-field="custom-quantity"'), '自定义尺码（尺码+数量）✓');
+  assert.ok(FEATURE.includes('data-field="custom-item-no"'), '自定义货号 ✓');
+  // 服务端两条接口的路径逐字在配置里 ✓（前后端同一份口径）
+  assert.match(FE_CONFIG, /detail: '\/api\/workbench\/purchase\/arrivals\/detail'/, '明细接口路径 ✓');
+  assert.match(FE_CONFIG, /accept: '\/api\/workbench\/purchase\/arrivals\/accept'/, '验收接口路径 ✓');
+});
+
+test('AC-AW16b ⭐ 自定义货号：认不出 ⇒ **人话**（不静默 ✗）；解析走**既有**货品读取口 ✓', () => {
+  assert.ok(FEATURE.includes('ARRIVAL_FULL_API.products'), '货号 ⇒ record_id 走既有 /inventory/products ✓');
+  assert.ok(FEATURE.includes('ARRIVAL_FULL_TEXTS.itemNoNotFound'), '认不出就显示人话 ✓');
+  assert.ok(FEATURE.includes('renderResult(ARRIVAL_FULL_TEXTS.itemNoNotFound, true)'), '人话以**错误**形式显示（不静默 ✗）');
+});
+
+test('AC-AW16c ⭐ 交互硬规矩：文案走配置 ✓ · 无内联高度 ✗（沿用 ≥44px 的既有控件样式）· 提交有**即时反馈** ✓', () => {
+  // 新块用配置文案（不硬编码中文 ✓）
+  assert.ok(FEATURE.includes('ARRIVAL_FULL_TEXTS.customSizeLabel'), '标签走配置 ✓');
+  assert.ok(FE_CONFIG.includes('customSizeLabel'), '配置里确实有这些文案 ✓');
+  // ≥44px：沿用既有控件样式（base.css 给 --control-height）✓ 且**不写内联高度** ✗
+  const base = fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench', 'styles', 'base.css'), 'utf8');
+  assert.match(base, /\.btn,\s*input,\s*select\s*\{[^}]*min-height:\s*var\(--control-height\)/, '既有控件 ≥44px ✓');
+  const block = FEATURE.slice(FEATURE.indexOf('data-view="arrival-detail"'), FEATURE.indexOf('data-view="arrival-custom-item"'));
+  assert.equal(/style="height/.test(block), false, '新块不许写内联高度（走既有令牌 ✓）');
+  // 即时反馈：提交仍走既有的 runWriteAction（点击立刻置灰 + 换文案 ✓）
+  const submitSlice = FEATURE.slice(FEATURE.indexOf('async function submitArrival'), FEATURE.indexOf('async function runAction'));
+  assert.ok(submitSlice.includes('runWriteAction('), '提交必须走既有即时反馈封装 ✓');
+  assert.ok(submitSlice.includes('ARRIVAL_FULL_API.accept'), '而且打的是新接口 ✓');
+});
+
+test('AC-AW16d ⭐ 幂等键不来自表单：前端**不传** submitKey（由服务端会话决定 ✓）', () => {
+  // ⚠️ 先剥注释再判（注释里解释幂等会提到 submitKey ✗）
+  const submitSlice = FEATURE.slice(FEATURE.indexOf('async function submitArrival'), FEATURE.indexOf('async function runAction'))
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.equal(/submitKey/.test(submitSlice), false, 'frontend must not invent or send the idempotency key');
+});
