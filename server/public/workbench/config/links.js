@@ -37,6 +37,11 @@ export const PURCHASE_RETURN_FORM_URL =
  * 现在它同时被「货品 · 货品上新」那张卡用 ⇒ 按本仓库「URL 单一来源」的规矩**提到这里**，
  * 两处都只 `import`（那份旧页面也改成从这里取，不再各写一份字面量）。
  */
+// ⭐ 2026-10-14（业务负责人逐字）：「在工作台的**采购**页面加一个子 tab 是**供应商名录**，
+//   我会给一个链接，也是**点击了之后直接跳转**」⇒ 她给的那条网址（**只此一处** ✓ 别处不复制字面量 ✗）
+export const SUPPLIER_DIRECTORY_URL =
+  'https://scnzoiwpgxik.feishu.cn/share/base/webpage/shrcnpZB0eX27B773hsrsyYf3gb';
+
 export const PRODUCT_NEW_FORM_URL =
   'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnX0GlNcSOujePgWOLTTWr4m';
 

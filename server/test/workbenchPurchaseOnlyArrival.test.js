@@ -73,14 +73,14 @@ async function loadFrontendModules() {
 // AC-W1 采购子 tab 只留「验收到货」
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-W1 采购子 tab 逐字 = 订单列表 · 供应商往来款（验收入口已删 + 改名）', async () => {
+test('AC-W1 采购子 tab 逐字 = 订单列表 · 供应商往来款（验收入口已删 + 改名 + 2026-10-14 供应商名录）', async () => {
   const { domains } = await loadFrontendModules();
   const byId = new Map(domains.DOMAIN_TABS.map((domain) => [domain.id, domain]));
   // ⚠️ 2026-10-12 改写：改前 = ['验收到货','采购订单列表','供应商往来款'] / 对应 id。
   assert.deepEqual(byId.get('purchase').pages.map((page) => page.label),
-    ['验收', '订单列表', '供应商往来款']);
+    ['验收', '订单列表', '供应商往来款', '供应商名录']);
   assert.deepEqual(byId.get('purchase').pages.map((page) => page.id),
-    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money']);
+    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money', 'purchase-suppliers']);
   // ⚠️ 2026-10-13：**只翻"退货"这一件事** —— 她点名要它作为采购子 tab（第二个）✓
   //    改前逐字：`for (const gone of ['purchase-report', 'purchase-return', 'purchase-arrival'])` +
   //              `for (const gone of ['报货', '退货', '验收到货'])`

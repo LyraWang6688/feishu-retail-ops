@@ -129,8 +129,11 @@ test('AC1c ⭐ 采购子 tab 逐字 = 验收 · 订单列表 · 供应商往来�
   const purchase = domains.domainById('purchase');
 
   // ⚠️ 2026-10-12 她逐字：「把『采购订单列表』这个子 tab 页改为『订单列表』，把『采购』两个字去掉」
-  assert.deepEqual(labelsOf(purchase), ['验收', '订单列表', '供应商往来款']);
-  assert.deepEqual(idsOf(purchase), ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money']);
+    // 2026-10-14（她逐字）：「在工作台的采购页面加一个子 tab 是供应商名录，我会给一个链接，
+  //   也是点击了之后直接跳转」⇒ 采购子页多这一格（逐字列，只是多它，没放宽）
+  assert.deepEqual(labelsOf(purchase), ['验收', '订单列表', '供应商往来款', '供应商名录']);
+    assert.deepEqual(idsOf(purchase),
+    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money', 'purchase-suppliers']);
   assert.equal(pageById(purchase, 'purchase-arrival'), undefined,
     '「验收到货」入口退场（扫码页已做验收）');
   // ⭐ 2026-10-13 翻转（她要求「验收」挂回第一个子 tab）：
@@ -146,7 +149,7 @@ test('AC1d 子 tab 是按配置渲染的：少一条就真的少一颗按钮（�
 
   assert.deepEqual(buttonsOf('sales'), ['订单列表', '销售查询', '客户往来款', '配品']);
   assert.deepEqual(buttonsOf('inventory'), ['全仓查询', '手工调整']);
-  assert.deepEqual(buttonsOf('purchase'), ['验收', '订单列表', '供应商往来款']);
+  assert.deepEqual(buttonsOf('purchase'), ['验收', '订单列表', '供应商往来款', '供应商名录']);
   assert.deepEqual(buttonsOf('product'), ['货品上新', '标签打印']);
 });
 

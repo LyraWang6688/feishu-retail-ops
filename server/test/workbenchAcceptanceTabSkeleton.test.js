@@ -25,8 +25,9 @@ const purchaseSlice = () => {
 test('AC1 ⭐ 采购子 tab 第一个 = 「验收」（逐字）；其余子 tab 顺序不变', () => {
   const source = read('config/domains.js');
   const pages = [...purchaseSlice().matchAll(/\n        id: '([^']+)',\n        label: '([^']+)',/g)].map((m) => `${m[1]}:${m[2]}`);
-  assert.deepEqual(pages, ['purchase-acceptance:验收', 'purchase-orders:订单列表', 'purchase-supplier-money:供应商往来款'],
-    '⭐ 验收第一个、退货第二个（2026-10-13）；订单列表 · 供应商往来款 顺序与名字不变 ✓');
+  assert.deepEqual(pages, ['purchase-acceptance:验收', 'purchase-orders:订单列表', 'purchase-supplier-money:供应商往来款',
+    'purchase-suppliers:供应商名录'],
+    '⭐ 验收第一个（2026-10-13）；订单列表 · 供应商往来款 · 供应商名录（2026-10-14 加）逐字 ✓');
   assert.equal(source.includes("label: '验收到货'") || source.includes("label: '到货验收'"), false, '名字必须是「验收」两个字');
 });
 
