@@ -60,6 +60,9 @@
       （原先那半句「（页面顶部可切换 销售 / 库存 / 采购 / 货品）」已删）。
     -->
   </main>
+  <!-- tap telemetry: the ONE shared client implementation (also inlined by the scan page).
+       It must load BEFORE the module script: the modules read window.dshUiTap. -->
+  <script src="/workbench/shared/ui-tap.js"></script>
   <script type="module" src="/workbench/main.js"></script>
 </body>
 </html>

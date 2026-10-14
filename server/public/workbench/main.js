@@ -2,8 +2,35 @@ import { requireFeishuAuth, showLoginButton } from './core/auth.js';
 import { describeError, showPageError } from './core/ui.js';
 import { mainTabsHtml, MAIN_TABS } from './core/tabs.js';
 import { SCAN_APPLINK } from './config/links.js';
+import { TAP_TELEMETRY } from './config/telemetry.js';
 import { createDomainModule } from './features/domains/index.js';
 import { createPlaceholderModule } from './features/shared/placeholder.js';
+
+/**
+ * ⭐⭐ 2026-10-14 晚（埋点 P0 ⑤「工作台接同一套上报」）：
+ *   工作台与**扫码页**用的是**同一份**客户端实现（`shared/ui-tap.js`，由各 html 先用
+ *   `<script src>` 加载 ⇒ 这里只有 `window.dshUiTap`）—— 本函数只做**一次委托绑定**：
+ *     · 带 `[data-tap-target]` 的元素（留给以后按需加）⇒ 记一条 `ui.tap`；
+ *     · 表单提交 ⇒ 把 `tap_id` 塞进表单（写请求随后带上它 ⇒ 服务端记 `ui.tap.result`）。
+ *   ⭐ 一级 tab 那几格**不加属性**（它们的 HTML 形状被好几条哨兵逐字钉着）⇒ 由下面
+ *      `bindMainTabClicks` 的**既有**监听调 `trackTap`，走的是**同一个**上报实现 ✓。
+ *   ⚠️ 绑在**鉴权之前**（与 tab 渲染同一条理由）：未登录时页面也点得动，埋点照样有据；
+ *   🔴 埋点**绝不**影响她的操作：脚本没加载 / 报错 ⇒ 静默返回（`try` 包住）；
+ *      也**绝不**取消浏览器默认行为（那一格是 AppLink，拦了就"点了没反应" ✗）。
+ */
+function bindTapTelemetry() {
+  try {
+    const reporter = typeof window === 'undefined' ? null : window.dshUiTap;
+    if (!reporter || typeof reporter.bind !== 'function') return;
+    reporter.bind({
+      path: TAP_TELEMETRY.path,
+      page: TAP_TELEMETRY.page,
+      formField: TAP_TELEMETRY.formField,
+    });
+  } catch {
+    // 埋点失败从不影响她操作 ✓
+  }
+}
 
 // ⭐⭐ 一级 tab（业务负责人 2026-10-09 定的**最终结构**）：
 //   ① 销售 · ② 库存 · ③ 采购 · ④ 货品 —— **按业务领域分**（不再按动作分）。
@@ -102,8 +129,24 @@ function bindMainTabClicks() {
   document.querySelectorAll('.main-tab:not([href])').forEach((tab) => {
     if (tab.dataset.bound === '1') return;
     tab.dataset.bound = '1';
-    tab.addEventListener('click', () => activateModule(tab.dataset.module));
+    tab.addEventListener('click', () => {
+      // ⭐⭐ 2026-10-14 晚（埋点 P0 ⑤）：她点 tab ⇒ 走**同一份**上报实现（`shared/ui-tap.js`）。
+      //    ⚠️ 在这里上报（而不是给 tab 加属性）：tab 的 HTML 形状被好几条哨兵**逐字钉着**
+      //      （`workbenchScanEntry` / `workbenchMainTitle` 等）⇒ 一个属性都不加 ✓ 判据不放宽 ✓
+      //    ⚠️ 一次**点击**记一条（服务端按窗口判 `ui.tap.repeated`）—— 埋点失败静默 ✓
+      trackTap(`tab:${tab.dataset.module}`);
+      activateModule(tab.dataset.module);
+    });
   });
+}
+
+/** 埋点上报的**唯一入口**（埋点失败 / 脚本没加载 ⇒ 静默，绝不影响她要做的操作 ✓）。 */
+function trackTap(target) {
+  try {
+    const reporter = typeof window === 'undefined' ? null : window.dshUiTap;
+    if (!reporter || typeof reporter.track !== 'function') return;
+    reporter.track(target, { path: TAP_TELEMETRY.path, page: TAP_TELEMETRY.page });
+  } catch { /* 埋点失败从不影响她操作 ✓ */ }
 }
 
 function activateModule(moduleId) {
@@ -121,6 +164,8 @@ function activateModule(moduleId) {
 }
 
 async function start() {
+  // ⭐⭐ 2026-10-14 晚（埋点 P0 ⑤）：先绑埋点委托（与 tab 渲染同一条理由 —— 鉴权之前就可交互）。
+  bindTapTelemetry();
   // ⚠️ 先把 tab 渲染出来、再把监听**绑上**（都放在鉴权之前）。原来监听绑在 `requireFeishuAuth`
   //    之后，而 `/me` 一返回 401 就在那里面抛了错，这一句永远走不到 —— 现象正是她遇到的
   //    「工作台启动失败：请求失败（401）」＋ tab 点了没反应。

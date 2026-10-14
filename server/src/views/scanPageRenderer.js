@@ -661,7 +661,22 @@ const submitSubmittingElapsedText = (write) => String(write?.texts?.submitSubmit
  *  ⚠️ 脚本**模板串内只写 ASCII 注释**（写中文会让硬编码中文闸门多一条假增量 ✗ 我踩过）；
  *  ⚠️ 上报用 `navigator.sendBeacon`（不阻塞跳转 ✓ 失败静默 ✓），**只带 target/page**（不采集表单值 ✗）。
  */
+/**
+ * ⭐⭐ 2026-10-14 晚（埋点 P0 ⑤「工作台接同一套上报」）：**同一份客户端实现**。
+ *
+ * 扫码页这一页的硬约束是**只有一段脚本**（`<script data-view="submit-feedback">`，有哨兵钉着；
+ * 她 2026-10-09 白屏之后定的）⇒ 不能 `src=` 引外部文件 ✗。
+ * ⇒ 做法：把 `public/workbench/shared/ui-tap.js`（工作台用 `<script src>` 加载的**同一个文件**）
+ *   在渲染时**内联**进这一段里 —— **一份实现、两种装载方式**（绝不各抄一份 ✗）。
+ * ⚠️ 文件读不到 ⇒ **当场抛**（不静默降级：页面里的脚本会引用一个不存在的全局，
+ *   那比启动就报错难查得多）；⚠️ 那个文件必须是 **ASCII**（本段模板有硬编码中文闸门）。
+ */
+const UI_TAP_SHARED_SOURCE = fs.readFileSync(
+  path.join(__dirname, '..', '..', 'public', 'workbench', 'shared', 'ui-tap.js'), 'utf8',
+);
+
 const submitFeedbackScriptHtml = () => `<script data-view="submit-feedback">
+${UI_TAP_SHARED_SOURCE}
 (function () {
   var forms = document.querySelectorAll('form');
   for (var i = 0; i < forms.length; i += 1) {
@@ -750,16 +765,24 @@ const submitFeedbackScriptHtml = () => `<script data-view="submit-feedback">
     tapForms[f2].addEventListener('submit', function (event) {
       var form = event.target;
       var btn = form.querySelector('button[type="submit"][name="action"]');
-      tapReport('submit:' + (btn && btn.value ? btn.value : ''));
+      // 2026-10-14: one tap -> BEACON + a hidden tap_id on THIS form, so the write request
+      //   that follows can be correlated with the tap (the server logs ui.tap.result for it).
+      var tapId = tapReport('submit:' + (btn && btn.value ? btn.value : ''));
+      try { dshUiTap.stampForm(form, { tapId: tapId }); } catch (error) { /* never block submit */ }
     });
   }
   function tapReport(target) {
     try {
-      if (!target || !navigator.sendBeacon) return;
+      if (!target || !dshUiTap) return '';
       var seg = location.pathname.split('/')[1] || 's';
       var page = location.pathname.indexOf('accept') > -1 ? 'accept' : 'scan';
-      navigator.sendBeacon('/' + seg + '/ui-tap?target=' + encodeURIComponent(target) + '&page=' + encodeURIComponent(page));
-    } catch (error) { /* silent: a failed report must never block navigation */ }
+      // Shared implementation (inlined at the top of this block):
+      //   it reports target/tap_id/since_ms; the SERVER decides tap vs tap.repeated.
+      return dshUiTap.track(target, { path: '/' + seg + '/ui-tap', page: page });
+    } catch (error) {
+      // silent: a failed report must never block navigation
+      return '';
+    }
   }
 })();
 </script>`;

@@ -65,6 +65,11 @@ const { getLabelPrintQueue } = require('../services/labelPrintQueueRuntime');
 const { LABEL_PRINT_QUEUE } = require('../config/labelPrintQueue');
 const {SCAN_AUTH_REDIRECT, TICKET, redeemSessionTicket, pathWithoutTicket } = require('../config/scanAuthRedirect');
 const { logError, logInfo, logWarn } = require('../utils/logger');
+// ⭐⭐ 2026-10-14 晚（埋点 P0 ②④⑤）：点击埋点的**同一份实现**（与工作台共用；
+//   本文件只负责"挂在扫码路由上、写 POST 上带结果事件"）。
+const {
+  handleUiTap, uiTapResultMiddleware, markTapCode,
+} = require('../utils/uiTapReport');
 
 // 飞书偶发「数据未准备好」(1254607)：回 503 + Retry-After，让她"过几秒刷新"，
 // 这与工作台查询接口的口径一致（`controllers/workbenchController.js`）。
@@ -560,6 +565,8 @@ const createScanPageRouter = (options = {}) => {
       reason: 'amount_empty',
       target: String(scanTargetOf(req).value || '').slice(0, 120),
     });
+    // ⭐ 埋点 P0 ②：这次点击的结果原因码（`ui.tap.result` 用它 ⇒ 一眼看出"她填漏了"）
+    markTapCode(res, 'purchase_amount_required');
     return sendHuman(res, 400, {
       title: writeConfig.texts.purchaseAmountMissingTitle,
       body: writeConfig.texts.purchaseAmountMissingBody,
@@ -600,6 +607,9 @@ const createScanPageRouter = (options = {}) => {
       'payment_amount_missing', 'partial_amount_missing', 'full_without_money'];
     const human = String(result.error?.scanUserMessage || result.message || '').trim();
     const moneyFailure = Boolean(human) && moneyCodes.includes(result.code);
+    // ⭐ 埋点 P0 ②：把**业务原因码**留给结果事件（`ui.tap.result.code`）——
+    //   与 ③ 那条「失败日志带人话原因码」同一个口径（`scan.write.settlement_blocked` 那类）。
+    markTapCode(res, result.code || `http_${status}`);
     return sendHuman(res, status, {
       title: moneyFailure ? human : writeConfig.texts.failedTitle,
       body: moneyFailure ? writeConfig.texts.failedTitle
@@ -807,22 +817,21 @@ const createScanPageRouter = (options = {}) => {
   const ROUTE_PATTERNS = [config.route.path, config.route.recordPath].filter(Boolean);
   /**
    * ⭐⭐ 2026-10-13（她问"我点了几次"）：**前端点击埋点** `ui.tap`。
+   * ⭐⭐ 2026-10-14 晚（埋点 P0 ②④⑤）：处理体**上移到 `utils/uiTapReport.js`** ——
+   *   与**工作台**共用同一份实现（`handleUiTap`：事件名 / 字段 / ④ 判据 / 204-400 契约），
+   *   本文件只保留"挂在哪个路径上"（路径的唯一真源仍是 `SCAN_PAGE.tapFeedback.reportPath`，
+   *   渲染层写 URL 也读它 ✓）。
    *
-   * · 通道：`navigator.sendBeacon('/<prefix>/ui-tap?target=…&page=…')`（**不阻塞跳转** ✓ 失败静默 ✓）
-   * · 🔴 **只记 target（我们的标识）**：`realm:replenish` / `batch:CGD-…` / `submit:submit_order`
+   * · 通道：`navigator.sendBeacon('/<prefix>/ui-tap?target=…&tap_id=…&since_ms=…&page=…')`
+   *   （**不阻塞跳转** ✓ 失败静默 ✓）
+   * · 🔴 **只记 target（我们的标识）**：`realm:replenish` / `submit:submit_order`
    *   —— **不采集任何表单值 / 个人信息** ✗；用 query 传（零 body 解析 ✓）
    * · 挂在扫码路由下（`/s` `/r` 都有 ✓）⇒ **不动 `app.js`** ✓
+   * · 同一个 target 在配置窗口内又被点 ⇒ **独立事件** `ui.tap.repeated`（④，服务端判 ✓）
    */
-  router.post('/ui-tap', (req, res) => {
-    const target = String(req.query?.target || '').trim().slice(0, 120);
-    const page = String(req.query?.page || '').trim().slice(0, 16);
-    if (!target) return res.status(400).type('text').send('missing target');
-    logInfo('ui.tap', {
-      request_id: req.requestId, target, page, realm: resolveRealm(req.query?.from),
-      path: String(req.originalUrl || '').split('?')[0],
-    });
-    return res.status(204).end();
-  });
+  router.post(config.tapFeedback?.reportPath || '/ui-tap', (req, res) => handleUiTap({
+    req, res, scope: 'scan', realm: resolveRealm(req.query?.from),
+  }));
 
 
   router.get(ROUTE_PATTERNS, async (req, res) => {
@@ -969,7 +978,7 @@ const createScanPageRouter = (options = {}) => {
    *    刷新不会重复提交，页面上也会带上"本单现在几双"。**提交订单**直接渲染结果页。
    * ⚠️ 失败一律**渲染一张人话页**（不静默、不只写日志）。
    */
-  router.post(ROUTE_PATTERNS, async (req, res) => {
+  router.post(ROUTE_PATTERNS, uiTapResultMiddleware('scan'), async (req, res) => {
     const requestId = req.requestId;
     const body = req.body || {};
     const fields = writeConfig.fields;
@@ -1054,6 +1063,8 @@ const createScanPageRouter = (options = {}) => {
     }
 
     if (!writeService) {
+      // ⭐ 埋点 P0 ②：原因码（写入口关着 —— 与"她填错了"分开，修法完全不同）
+      markTapCode(res, 'write_disabled');
       return sendHuman(res, 503, {
         title: writeConfig.texts.writeDisabledTitle,
         body: writeConfig.texts.writeDisabledBody,
