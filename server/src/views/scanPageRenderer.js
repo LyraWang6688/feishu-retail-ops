@@ -476,7 +476,6 @@ const draftBarHtml = (write, config, userAgent, realm = DEFAULT_REALM, page = {}
     ? `<p class="notice">${escapeHtml(write.notice)}</p>`
     : '';
   return `<section class="card draft-bar" data-view="draft-bar" aria-label="${escapeHtml(texts.draftBarLabel)}">
-<p class="draft-bar__count">${escapeHtml(fillText(texts.draftBarCount, { count }))}</p>
 ${noticeHtml}
 ${submitHtml}
 ${scanNextHtml}
