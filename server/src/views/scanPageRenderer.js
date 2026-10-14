@@ -354,8 +354,28 @@ const cellHtml = (count, config) => (count > 0
   ? `<td>${escapeHtml(count)}</td>`
   : `<td class="zero">${escapeHtml(config.texts.zero)}</td>`);
 
+/**
+ * ⭐⭐ 2026-10-14 晚（业务负责人逐字）：
+ *   「`category_name` ⇒ **品类**（类别表名字）· `category_code` ⇒ **类别**（货品表原值），
+ *    **两个都显示**，**有就显示，没有就不显示**」＋「需要做个映射，**A 等于男，B 等于女**」
+ *
+ * ⭐ 映射**复用既有那一份配置**（`sizeSegments.ranges[code].label` ✓ 那里本来就是 A⇒男 / B⇒女 ✓）——
+ *   **不新造映射表** ✗ · **不散写 if** ✗（她定了"配置先行"✓）
+ * ⚠️ 认不出的类别码 ⇒ **原样显示那个码**（**不猜** ✗ 不吞 ✗）
+ */
+const categoryLabelOf = (code, config) => {
+  const key = String(code || '').trim().toUpperCase();
+  if (!key) return '';
+  const ranges = (config && config.sizeSegments && config.sizeSegments.ranges) || {};
+  return String(ranges[key] && ranges[key].label ? ranges[key].label : '').trim();
+};
+
 const identityHtml = (view, config) => {
-  const meta = [view.color, view.category_name || view.category_code].filter(Boolean).join(config.texts.identitySeparator);
+  // ⭐ 三段：颜色 · **品类**（category_name）· **类别**（category_code ⇒ 映射成 男/女，认不出就原样）
+  const categoryLabel = categoryLabelOf(view.category_code, config) || view.category_code;
+  const meta = [view.color, view.category_name, categoryLabel]
+    .filter(Boolean)
+    .join(config.texts.identitySeparator);
   return `<header class="card identity">
 <div class="identity__main">
 <h1 class="identity__item">${escapeHtml(view.item_no || view.number)}</h1>
