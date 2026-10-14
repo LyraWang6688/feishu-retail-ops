@@ -1025,8 +1025,14 @@ test('AC-E2E-15 ⭐ 重复提交的文案：✅「这一单刚才已经交过了
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
         payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: [''],
       };
+      // ⭐⭐ 2026-10-14（她：「确认状态是资金那页点击了按钮之后，才算是用户确认了」）⇒ **两步**：
+      //   ① 点提交 ⇒ 资金页；② 点资金页那颗【跳过】⇒ **才建单** ✓
+      //   ⇒ 之后**再点一次**（同一把键）⇒ 页面要如实说「这一单刚才已经交过了」✓
       const first = await postForm(pageUrlOf(base, NUMBER_A), cookie, body);
       assert.equal(first.status, 200);
+      const created = await followPaymentStep(base, cookie, first);
+      assert.equal(created.status, 200, '第一次：点按钮才建单 ✓');
+      assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第一次建单：主表 1 条');
       // ⭐ 2026-10-13 改指向：多了一跳（第 2 步页 ⇒ 跳过 ⇒ 成功页）⇒ 跟着走完再断言 ✓
       const again = await followPaymentStep(base, cookie, await postForm(pageUrlOf(base, NUMBER_A), cookie, body));   // 同一把键再点一次
       const html = await again.text();
