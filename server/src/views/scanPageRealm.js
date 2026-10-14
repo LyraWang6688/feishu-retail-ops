@@ -107,7 +107,8 @@ const ACCEPTANCE_REALM = 'accept';
 const REALM_EMPTY_TEXT_KEYS = Object.freeze({
   sales: 'realmEmptySalesBody',
   replenish: 'realmEmptyPurchaseBody',
-  purchase_return: 'realmEmptyPurchaseReturnBody', // ⭐ 2026-10-13 配品页自己的人话（原借用补货那句 ✗）
+  // ⭐ 2026-10-14 晚：退货用自己的人话 ✓（配品那句随配品一起搬去工作台 ✓）
+  purchase_return: 'realmEmptyReturnBody',
   // ⭐ 2026-10-14：配品独立成领域 `accessory` ⇒ 复用上面那句**配品的人话**（零新增文案 ✓）
   accessory: 'realmEmptyPurchaseReturnBody',
   accept: 'realmEmptyAcceptanceBody',
@@ -155,7 +156,8 @@ const REALM_TEXTS = Object.freeze({
   oneTapReplenish: '一键补货',
   // ⭐ 2026-10-11：采购领域的第二个动作 —— 【退货】（业务负责人：「和"报货"逻辑一样，也走扫码」）。
   //    这里只放**功能名**（折叠头那两个字），不是一个句子。
-  purchaseReturn: '配品',
+  // ⭐ 2026-10-14 晚（她：配品搬去工作台）⇒ 这一格回到「退货」✓（10-13 临时叫配品那版退场 ✗）
+  purchaseReturn: '退货',
 });
 
 /**
