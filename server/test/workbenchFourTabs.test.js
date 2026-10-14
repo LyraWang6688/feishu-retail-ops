@@ -382,7 +382,12 @@ test('AC2 四个 tab 的子页面清单与她要的映射逐条对上（含 2026
   assert.deepEqual(newProduct.cards.map((card) => card.href), [links.PRODUCT_NEW_FORM_URL]);
   const labels = product.pages.find((page) => page.id === 'product-labels');
   assert.equal(labels.targetTemplate, '/workbench/label-print.html?keyword={itemNo}', '单个 = 把货号带进既有标签打印页');
-  assert.deepEqual(labels.links.map((link) => link.href), ['/workbench/label-print.html'], '批量 = 打开既有标签打印页');
+// 2026-10-14（她逐字）：「打印标签支持两类：单个打印（扫码打印 / 选择编号打印）与批量打印」
+//   ⇒ 单个打印的「选编号」那颗改名；并新增「扫码打印」那颗（复用同一把扫一扫 AppLink）
+//   不是放宽：判据加强了（多了一条「扫码打印必须在」）
+  assert.deepEqual(labels.links.map((link) => link.href), [links.SCAN_APPLINK, '/workbench/label-print.html'],
+    '扫码打印 = 复用同一把扫一扫 AppLink；批量打印 = 打开既有标签打印页 ✓');
+  assert.deepEqual(labels.links.map((link) => link.title), ['扫码打印', '批量打印'], '两颗的标题逐字 ✓');
 });
 
 test('AC2b 领域子 tab 是渲染出来的（不是写死的 HTML）：按钮 / 选中态 / 三种静态子页', async () => {
