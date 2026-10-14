@@ -435,7 +435,7 @@ const ACCEPTANCE = Object.freeze({
  *     · `saleHeading`（「销售（可以连着扫，最后一起提交）」）—— 子 tab 上已经写着「销售」；
  *     · `replenishHeading`（「补货报单（勾选要补的尺码）」）—— 同上；
  *     · `fundsPendingNote`（「这一单先记了货、还没记钱…」）—— 解释既有口径，不是能点的事；
- *     · `replenishHint`（「打勾的尺码会生成采购申请；不填数量按 1 双算。」）—— 用法说明。
+ *     · `replenishHint`（「打勾的尺码会生成报货订单；不填数量按 1 双算。」）—— 用法说明。
  *   ⚠️ **保留**的都是功能性的：字段标签 / 按钮 / 成功失败页的事实与**失败原因** /
  *     空本单与过期那两句（不填就会懵）—— 见下面每一条。
  */
@@ -560,7 +560,9 @@ const TEXTS = Object.freeze({
   lineAddedBanner: '已加入本单（{count} 双）',
   // ── 补货表单 ──────────────────────────────────────────────────────────────
   replenishQuantityLabel: '数量',
-  replenishButton: '生成采购申请',
+  // ⭐ 2026-10-14 晚（她逐字）：「**生成采购申请的文字变为生成报货订单**」⇒ **只改文案** ✓
+  //   🔴 行为/接口/幂等/落表**一字不动** ✗
+  replenishButton: '生成报货订单',
   replenishDoneTitle: '采购申请已生成',
   replenishDoneBody: '批次号 {batchNo}，共 {count} 条明细。',
   replenishBatchLine: '报货批次号：{batchNo}',

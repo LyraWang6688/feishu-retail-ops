@@ -288,13 +288,24 @@ const sellableSizeTexts = (view) => new Set(saleSizeGroups(view).inStock.map((it
  * 是不是"缺码"（既有口径：该类别在「尺码管理」里有、但**三种状态都没有** ⇒ 默认勾上要补）。
  * 「仓库」里有货的尺码**不预勾**（仓库能出，不必补）—— 与既有缺码口径一致。
  */
-const purchaseSizeLines = (view, behavior = SCAN_PAGE.REALM_SIZE_BEHAVIOR.replenish) => sizeRowsOf(view).map((row) => ({
-  size_text: String(row.size_text),
-  sellable: sellableCountOf(row, view?.columns),
-  // 两个领域差别（要不要标缺码 / 缺码要不要默认勾）**全部来自配置** ✓
-  missing: behavior.missing ? Boolean(row.missing) : false,
-  checked: behavior.checkMissingByDefault ? Boolean(row.missing) : false,
-}));
+const purchaseSizeLines = (view, behavior = SCAN_PAGE.REALM_SIZE_BEHAVIOR.replenish) => {
+  // ⭐⭐ 2026-10-14 晚（业务负责人逐字）：「一键补货的时候，**特殊码不能默认勾选，但是可录尺码还是显示**」
+  //   ⇒ ⭐ **特殊码照样列出**（可手动勾 ✓）**只是默认不勾** ✗
+  //   ⇒ 判定复用**既有那一处** helper（`specialSizesOfView` ✓ 三处共用 ✓ **不在这里再写一遍 if** ✗）
+  const specialSet = specialSizesOfView(view);
+  return sizeRowsOf(view).map((row) => {
+    const isSpecial = specialSet.has(String(row.size_text));
+    return {
+      size_text: String(row.size_text),
+      sellable: sellableCountOf(row, view?.columns),
+      // 两个领域差别（要不要标缺码 / 缺码要不要默认勾）**全部来自配置** ✓
+      missing: behavior.missing ? Boolean(row.missing) : false,
+      // ⭐ 缺码才默认勾；**特殊码再缺也不默认勾**（但仍在这一行里 ✓ 她能自己勾 ✓）
+      checked: behavior.checkMissingByDefault ? (Boolean(row.missing) && !isSpecial) : false,
+      special: isSpecial,
+    };
+  });
+};
 
 /**
  * ⭐⭐ 2026-10-14：**缺货 ∩ 特殊码** —— 销售 / 库存 / 补货**三处共用这一处判据** ✓

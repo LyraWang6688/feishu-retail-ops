@@ -373,13 +373,15 @@ test('AC2b 尺码区一行 4 个：3 个码排一行、5 个码排 4+1；**不�
 
 test('AC3 `from=replenish`：列出各尺码（样品+门盒）数量 + 【一键补货】列出缺的尺码、默认各 1 双', () => {
   // ① 取数：每个尺码的（样品 + 门盒）数量 + 是不是"三种状态都没有"（既有缺码口径）
+  // 2026-10-14 晚（她逐字）：「一键补货的时候，特殊码不能默认勾选，但是可录尺码还是显示」
+  //   ⇒ 这里多一个 `special` 字段（**判据加强**：缺码默认勾只对**非特殊码**成立 ✓ 没放宽 ✗）
   assert.deepEqual(purchaseSizeLines(VIEW), [
-    { size_text: '40', sellable: 1, missing: false, checked: false },
-    { size_text: '41', sellable: 0, missing: true, checked: true },
-    { size_text: '42', sellable: 2, missing: false, checked: false },
-    { size_text: '43', sellable: 0, missing: false, checked: false },
-    { size_text: '44', sellable: 0, missing: true, checked: true },
-  ], '缺码（三种状态都没有）默认勾上；43 只有仓库 → 不预勾');
+    { size_text: '40', sellable: 1, missing: false, checked: false, special: false },
+    { size_text: '41', sellable: 0, missing: true, checked: true, special: false },
+    { size_text: '42', sellable: 2, missing: false, checked: false, special: false },
+    { size_text: '43', sellable: 0, missing: false, checked: false, special: false },
+    { size_text: '44', sellable: 0, missing: true, checked: true, special: false },
+  ], '缺码（三种状态都没有）默认勾上；43 只有仓库 → 不预勾；这个夹具的类别没有特殊码 ⇒ special 全 false ✓');
 
   const purchase = blockOf(htmlFor('replenish'), 'replenish');
   // ② 先给她看"各尺码现在有多少"
