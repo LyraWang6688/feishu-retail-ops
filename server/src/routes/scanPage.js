@@ -1375,14 +1375,21 @@ const createScanPageRouter = (options = {}) => {
           fillWriteText(writeConfig.texts.submittedOrderLine, { orderNo: paidOrderNo || '—' }),
           fillWriteText(writeConfig.texts.submittedDetailLine, { count: paidCount }),
         ];
-        const paidPayload = (retryHint) => ({
+        // ⭐⭐ 2026-10-15（⑨ B 异步）：成功页 payload **仍然只有一个来源**
+        //   （成功页的自动回跳来源只在这一处调 `successReturnFields` —— `AC-SR4` 那条接线哨兵
+        //     **一个字没动** ✓；⚠️ 注释里也**不写那个调用形状**，免得被源码计数哨兵当第 6 处 ✗）
+        //   传了 `asyncSentence`（异步那一条）⇒ **只给她那一句**：
+        //   她逐字「**统一文字改成：本单已创建成功（单号），其余文字不需要**，**销售和配品都这样**」
+        //   ⇒ `title` = 那一句（含真单号 ✓）、`body` 空、`details` 空；其余照旧 ✓
+        const paidPayload = (retryHint, asyncSentence = '') => ({
           ...successReturnFields(req, payTarget, paidOrderNo),
-          title: paidReused ? writeConfig.texts.submittedAgainTitle : writeConfig.texts.submittedTitle,
-          body: paidReused
+          title: asyncSentence || (paidReused
+            ? writeConfig.texts.submittedAgainTitle : writeConfig.texts.submittedTitle),
+          body: asyncSentence ? '' : (paidReused
             ? fillWriteText(writeConfig.texts.submittedAgainBody, { orderNo: paidOrderNo || '—' })
-            : fillWriteText(writeConfig.texts.submittedBody, { orderNo: paidOrderNo || '—', count: paidCount }),
+            : fillWriteText(writeConfig.texts.submittedBody, { orderNo: paidOrderNo || '—', count: paidCount })),
           order_no: paidOrderNo,
-          details: paidDetails,
+          details: asyncSentence ? [] : paidDetails,
           requestId,
           retryHint,
         });
@@ -1396,6 +1403,19 @@ const createScanPageRouter = (options = {}) => {
         //   · 而"**补记收款**"（工作台那条既有用法 / 老流程的 order_no 路径）⇒ 照旧走 `addPayment` ✓ **一字不改** ✗
         if (createdResult) {
           invalidateInventorySnapshot(requestId, 'scan_sale_paid');
+          // ⭐⭐ 2026-10-15（⑰ B 异步）：**单号一出就回** ——
+          //   她逐字：「**统一文字改成：本单已创建成功（单号），其余文字不需要**，
+          //   **销售和配品都这样**」⇒ 页面只给**那一句**（含真单号 ✓），
+          //   **不给**"明细/收款/进度"那些行 ✗（文案走配置 ✓ 不写死 ✗）。
+          //   ⚠️ "再录一单 / 回扫码页"那些**能点的东西照旧** ✓（她说的"其余文字"指的是那句话之外的**描述性文字** ✗）。
+          if (createdResult.deferred) {
+            const asyncSentence = fillWriteText(
+              writeConfig.sale.asyncWrite?.doneBodyTemplate || '',
+              { orderNo: paidOrderNo || '—' },
+            );
+            // ⚠️ 走**同一个** `paidPayload`（不另起一份 payload ✗）⇒ 成功页来源仍只有一处 ✓
+            return sendSuccess(res, 200, paidPayload('', asyncSentence));
+          }
           // ⭐ 成功页那句人话：与"提交成功"那条**逐字同形**（她 2026-10-12 定的那一句 ✓）
           //   ⚠️ `paidPayload(retryHint)` 的参数就是**那句提示** ✓ 不是 note 文本 ✗
           return sendSuccess(res, 200, paidPayload(writeConfig.texts.submittedNextHint));

@@ -317,6 +317,28 @@ const SALE = Object.freeze({
     { min: 0, max: 10 * 60 * 1000 }),
   // 金额文本框允许的小数位（两位 = 分）。
   amountDecimals: readInt(process.env, 'SCAN_SALE_AMOUNT_DECIMALS', 2, { min: 0, max: 2 }),
+  // ⭐⭐ 2026-10-15（⑰ B 异步 · 她逐字）：
+  //   「**单号一出立刻回**…**明细/库存/交付转后台**；失败落「**写入失败**」、
+  //    工作台显示「**未完成，可点重试**」；重试**只走 `submitSale` 同一把 `submitKey`**」
+  //   ＋她晚间那句：「**统一文字改成：本单已创建成功（单号），其余文字不需要**，
+  //    **销售和配品都这样**」
+  //   ⇒ 配置先行：开关 / 那句话 / 后台看门狗超时 **全部可配** ✓（不散写 if-else ✗）。
+  //   ⚠️ 那句话**销售与配品共用**（一处配置 ✓）；`{orderNo}` 占位用**真单号**填 ✓（拿不到就不编 ✗）。
+  asyncWrite: Object.freeze({
+    // 🔴 **默认 `false`**（有意的！—— Lead 2026-10-15 的硬约束）：
+    //   异步一旦默认开着，后台写失败会让她看到「**未完成，可点重试**」，
+    //   而**重试入口还没做**（那是第二刀）⇒ 她会**卡在"点不了的重试"**，
+    //   比现在（同步报错、能重交）**更坏** ✗。
+    //   ⇒ 本刀（⑰a）**行为零变化**（默认走老同步路径 ✓）；
+    //     **第二刀（⑰b）才把它翻成 `true`**（那时重试入口已就位 ✓）。
+    //   ⚠️ 写成 `=== true` 才算"开"（显式布尔；空串 / 未设 ⇒ 关 ✓）。
+    enabled: readFlag(process.env, 'SCAN_SALE_ASYNC_WRITE_ENABLED', false),
+    doneBodyTemplate: readString(
+      process.env, 'SCAN_SALE_ASYNC_DONE_BODY', '本单已创建成功（{orderNo}）',
+    ),
+    // 后台那一跑的看门狗阈值（毫秒）—— **只用于记一条 warn**（不取消写入）✗
+    backgroundTimeoutMs: readInt(process.env, 'SCAN_SALE_ASYNC_TIMEOUT_MS', 180000, { min: 1000, max: 1800000 }),
+  }),
   // 「失败原因要不要原样给她看」的闸门：业务层抛出来的中文业务话（例：
   // 「本次收款超过本单实收金额」「尺码管理中找不到 41 码」）是**可以给她看**的 ——
   // 她照着改一下就能再提交。但**内部错误**（飞书错误码 / 表名字段名 / 配置缺失）
@@ -761,6 +783,11 @@ const EVENTS = Object.freeze({
   // ⭐⭐ 2026-10-12：**一条**分阶段的提交耗时汇总（她真机被卡住 / 收过 504 网关超时）。
   //    与扫码取数那条 `scan.lookup.timing` 同一个形状：一查日志就知道**卡在哪一步**。
   saleTiming: 'scan.sale.timing',
+  // ⭐⭐ 2026-10-15（⑰ 异步）：后台那一跑的**正面/负面证据**（她问"写完了吗"时按它 grep ✓）
+  // 排队那一下（"单号已经出了、余下转后台"）
+  saleBackgroundQueued: 'scan.sale.background_queued',
+  saleBackgroundDone: 'scan.sale.background_done',
+  saleBackgroundFailed: 'scan.sale.background_failed',
   // ⭐⭐ 2026-10-13（验收提速）：**一条**验收的分阶段耗时汇总（与销售那条同形状）。
   //    为什么要有它：真账量出「每批 5 码 = 143.9 秒，其中逐码"库存+流水" = 119.5 秒（83%）」——
   //    没有分段就打不出"卡在哪一步"，也就证不了批量写到底省了多少。

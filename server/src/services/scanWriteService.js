@@ -134,6 +134,10 @@ const createScanWriteService = (options = {}) => {
   const schema = options.schema || V1_BITABLE_SCHEMA;
   const config = options.config || SCAN_WRITE;
   const texts = config.texts;
+  // ⭐⭐ 2026-10-15（⑰ 异步）：异步开关的取值口（默认 = 配置 `config.sale.asyncWrite`）——
+  //   ⚠️ 可注入（`options.saleAsyncWrite`）**为的是用例**：同一个文件里要同时验"开着（异步）"
+  //   与"关着（老路径逐字同形）"两种行为 ✓（配置对象是 frozen 的，改不了 ✗）。
+  const saleAsync = options.saleAsyncWrite || config.sale.asyncWrite || {};
   const now = options.now || (() => Date.now());
   // ⭐⭐ 2026-10-12：**只读引用缓存**只喂给"会读引用表"的那几个**延迟构造**的业务服务。
   //    🔴 不做全局替换：写判据那几张表（主表 / 明细 / 收款 / 实时库存 / 库存流水）
@@ -161,6 +165,62 @@ const createScanWriteService = (options = {}) => {
   const status = () => {
     if (!statusInstance) statusInstance = new SalesStatusWriter({ gateway: readGateway });
     return statusInstance;
+  };
+
+  /**
+   * ⭐⭐ 2026-10-15（⑰ 异步）：**后台那一跑**（明细/收款/库存）。
+   *
+   * 做法：**拿同一把 `submitKey` 再调一次 `submitSale`**（`noDefer: true`）——
+   *   主表已在会话里 ⇒ 它走**既有续写路径**（`knownRecordIds` + `onRecordPersisted` 那套）
+   *   ⇒ 写入语义 / 幂等 / 状态维度 **一个字都没变** ✗（她的硬要求：不许拆幂等）。
+   * 失败 ⇒ **不报错给她**（她那次请求早已回了 ✓），但必须：① 记一条 warn；
+   *   ② 把主表那一列落成「**写入失败**」（既有状态维度的值 + 既有写入器 ✓）
+   *   ⇒ 工作台那一单会显示「**未完成，可点重试**」（`isOrderIncomplete` 判的就是这个值 ✓）。
+   * ⚠️ **fire-and-forget**：不 `await`（否则又把她拖住了 ✗）；任何异常都被 `catch` 吞掉并记录 ✓。
+   */
+  const scheduleSaleRest = ({ openId, requestId, salesEntryRecordId, orderNo, correlation, restInput }) => {
+    const startedAt = Date.now();
+    const timeoutMs = Number(saleAsync.backgroundTimeoutMs) || 0;
+    Promise.resolve()
+      .then(() => submitSale({ ...restInput, noDefer: true, requestId }))
+      .then(async (result) => {
+        const durationMs = Date.now() - startedAt;
+        if (result?.ok) {
+          logInfo(config.events.saleBackgroundDone, {
+            sales_entry_record_id: salesEntryRecordId, order_no: orderNo,
+            detail_count: result.detail_count, payment_count: result.payment_count,
+            duration_ms: durationMs, request_id: requestId,
+            ...(timeoutMs && durationMs > timeoutMs ? { over_timeout_ms: timeoutMs } : {}),
+          });
+          return;
+        }
+        logWarn(config.events.saleBackgroundFailed, {
+          sales_entry_record_id: salesEntryRecordId, order_no: orderNo,
+          code: result?.code || '', reason: result?.message || '',
+          duration_ms: durationMs, request_id: requestId,
+        });
+        await markSaleWriteFailed({ salesEntryRecordId, correlation, requestId });
+      })
+      .catch(async (error) => {
+        logWarn(config.events.saleBackgroundFailed, {
+          sales_entry_record_id: salesEntryRecordId, order_no: orderNo,
+          error: String(error?.message || error), duration_ms: Date.now() - startedAt, request_id: requestId,
+        });
+        await markSaleWriteFailed({ salesEntryRecordId, correlation, requestId });
+      });
+  };
+
+  /** 后台那一跑没写成 ⇒ 主表那一列如实落「写入失败」（**不许假成功** ✗）。 */
+  const markSaleWriteFailed = async ({ salesEntryRecordId, correlation, requestId }) => {
+    if (!salesEntryRecordId) return;
+    try {
+      await status().write(salesEntryRecordId, { sales: WRITE.sales.failed }, correlation);
+    } catch (error) {
+      logWarn(config.events.failed, {
+        request_id: requestId, reason: 'sale_background_mark_failed',
+        sales_entry_record_id: salesEntryRecordId, error: String(error?.message || error),
+      });
+    }
   };
   // ⭐ 交付（A）：现货行"提交即交付 + 扣库存"走的是**既有** `SalesDeliveryService.deliver`。
   //    同样延迟构造（只有真的提交了现货单才会用到它，连带它的库存引擎）。
@@ -639,7 +699,17 @@ const createScanWriteService = (options = {}) => {
   const submitSale = async ({
     openId, submitKey, payments: paymentRows = [], lineAmounts = [],
     paymentStatus = '', paidAmount = '', requestId = '', pendingLine = null, timing = null,
+    // ⭐⭐ 2026-10-15（⑰ 异步）：`noDefer` = "这一跑就是**后台那一跑**"（不再往后丢 ✗）
+    noDefer = false,
   }) => {
+    // ⭐⭐ 2026-10-15（⑨ 异步）：**先把"后台那一跑"的入参固化在这里** ——
+    //   ⚠️ 必须在函数**最顶上**取：函数体后面有同名局部（`paidAmount` / `payments` …），
+    //     在 try 里引用它们会撞 **TDZ**（`Cannot access 'paidAmount' before initialization` ✗
+    //     —— 我在用例里真撞到过一次，所以固化点放在这里 ✓ 不在闸门那一行现取 ✗）。
+    //   🔴 入参形状与"她点按钮那一次"**逐字相同**（同一把 `submitKey` ⇒ 走既有续写路径 ✓）
+    const saleRestInput = {
+      openId, submitKey, payments: paymentRows, lineAmounts, paymentStatus, paidAmount,
+    };
     // ⭐⭐ 2026-10-12：**分阶段耗时**（业务负责人真机被卡住 / 收过 504 网关超时）——
     //    `timing` 是一个**可选出参**（与 `scanPageService.lookup` 那条 `timing` 同一套约定）：
     //    路由拿它去打**一条** `scan.sale.timing` 汇总日志，"卡在哪一步"一眼看得出。
@@ -1065,6 +1135,9 @@ const createScanWriteService = (options = {}) => {
     //    （见下面 `sale_partial_failed`）——**判据与重试协议同一条**，不是新发明的判据。
     let salesEntryRecordId = String(sale.master_record_id || '').trim();
     let orderNo = String(sale.order_no || '').trim();
+    // ⭐ 2026-10-15（⑰）：**这一次是不是续写**（主表已经在会话里）——
+    //   下面那道异步闸门**只在第一次**（主表刚建）生效；后台那一跑 / 她重试 ⇒ 走**既有续写路径** ✓。
+    const wasResume = Boolean(salesEntryRecordId);
 
     try {
       // ④ 主表记录：走既有函数（单号生成 + 撞号复查都在里面），**只在第一次建**。
@@ -1097,6 +1170,34 @@ const createScanWriteService = (options = {}) => {
         await status().write(salesEntryRecordId, { userAction: WRITE.userAction.confirmed }, correlation);
       }
       markStage('status_ms', statusStartedAt);
+
+      // ⭐⭐ 2026-10-15（⑰ B 异步 · 她逐字「**单号一出立刻回**…明细/库存/交付转后台」）：
+      //   主表 + 单号**已经有了** ⇒ **立刻回**；余下的（明细/收款/库存）交给**后台的同一次 `submitSale`**
+      //   （**同一把 `submitKey`** ⇒ 走下面那条**既有续写路径** ⇒ 幂等一字没拆 ✗）。
+      //   🔴 不新开写库路径、不改写入语义："余下那几步"就是**入参相同的第二跑** ✓
+      //   🔴 **不许假成功**：后台那一跑失败 ⇒ 主表落「**写入失败**」（既有状态维度 + 既有写入器 ✓）。
+      //   ⚠️ 只在**第一次**（`wasResume === false`）且配置开着时生效 ✓；旧调用方（群聊等）一步都不变 ✗。
+      if (saleAsync.enabled === true && !wasResume && !noDefer) {
+        scheduleSaleRest({
+          openId,
+          requestId,
+          salesEntryRecordId,
+          orderNo,
+          correlation,
+          restInput: saleRestInput,
+        });
+        logInfo(config.events.saleBackgroundQueued, {
+          session_id: current.session_id, submit_key: key,
+          sales_entry_record_id: salesEntryRecordId, order_no: orderNo,
+          detail_count: items.length, request_id: requestId,
+        });
+        return {
+          ok: true, reused: false, deferred: true,
+          order_no: orderNo, sales_entry_record_id: salesEntryRecordId,
+          detail_count: items.length, payment_count: payments.length,
+        };
+      }
+
       // ⑤ 明细 / 收款 / 进度：**既有业务函数**（与群聊、工作台是同一条路）。
       //    `knownRecordIds` + `onRecordPersisted` = 既有链路那套"写到一半崩了也能接着写"的协议。
       //    ⭐ `owed`（元）= 上面算出来的差额 ⇒ 既有业务层**按既有协议**补那一条【未收款】
