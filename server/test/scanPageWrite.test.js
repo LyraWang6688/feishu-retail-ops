@@ -785,6 +785,15 @@ test('⑧ 路由：补货表单勾两个尺码 → 采购申请结果页（批�
       const replenishKey = html.match(/name="submit_key" value="(scan_replenish:[^"]+)"/)[1];
       // ⭐ 2026-10-13 改指向：提交成功先落第 2 步「整单付款」页 ⇒ 跟着【跳过】那一跳再取页面 ✓
       //    （能力去哪：renderSalePaymentStepPage → payment_skip 动作）
+      // ⭐⭐ 2026-10-14 晚**成对翻新**（业务负责人**逐字**）：
+      //   「**退货整单金额（必填），与补货同一套配置**」＋「**只写一个整单金额**
+      //   （一次填一个总额，**和补货一样**～）」
+      //   改前（逐字）：`body` 里只有 `action` / `submit_key` / `sizes` / `qty_40`
+      //                ⇒ **没有** `purchase_amount`
+      //   改后（逐字）：加一行 `purchase_amount: '399'`（补货也要填整单金额）
+      //   依据：她 2026-10-14 晚那两句 ⇒ 补货与退货**同一套必填**；
+      //        ⚠️ 判据**一个字都没放宽**（这一条测的是"非空 ⇒ 照旧生成采购申请"，
+      //        空金额那条在新用例 `scanPurchaseAmountRequired.test.js` 里单独钉 ✓）。
       const response = await followPaymentStep(base, sessionCookie(openId), await fetch(pageUrl, {
         method: 'POST',
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
@@ -793,6 +802,7 @@ test('⑧ 路由：补货表单勾两个尺码 → 采购申请结果页（批�
           submit_key: replenishKey,
           sizes: '40',
           qty_40: '3',
+          purchase_amount: '399',
         }).toString(),
       }));
       assert.equal(response.status, 200);

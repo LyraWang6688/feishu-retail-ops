@@ -515,11 +515,20 @@ test('AC-R5 超库存：报 5 双、库存 3 双 ⇒ 明细写 3、差额 2 如�
       // ⚠️ 2026-10-13：页面已换成配品页 ⇒ **不再从页面抠 submit_key**（抠不到会 TypeError）
       void html;
       const key = await returnKey(h, openId);
+      // ⭐⭐ 2026-10-14 晚**成对翻新**（业务负责人**逐字**）：「**退货整单金额（必填），
+      //   与补货同一套配置**」＋「**只写一个整单金额**（一次填一个总额，**和补货一样**～）」
+      //   改前（逐字）：`body` 里只有 `action` / `submit_key` / `return_sizes` / `return_qty_42`
+      //                ⇒ **没有** `purchase_amount`
+      //   改后（逐字）：加一行 `purchase_amount: '399'`（退货这一单的整单总额）
+      //   依据：她 2026-10-14 晚那两句（整单金额必填）⇒ 空金额会被 400 拦住（那一条在新用例
+      //        `scanPurchaseAmountRequired.test.js` 里单独钉 ✓）；这一条测的是
+      //        **非空 ⇒ 照旧能提交**，所以**判据一个字都没放宽** ✓。
       const response = await fetch(pageUrl, {
         method: 'POST',
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           action: SCAN_WRITE.actions.purchaseReturn, submit_key: key, return_sizes: '42', return_qty_42: '1',
+          purchase_amount: '399',
         }).toString(),
       });
       assert.equal(response.status, 200);
@@ -691,11 +700,20 @@ test('AC-R9 失败有人话：内部错误（表名/字段名/record_id）不回
       // ⚠️ 2026-10-13：页面已换成配品页 ⇒ **不再从页面抠 submit_key**（抠不到会 TypeError）
       void html;
       const key = await returnKey(h, openId);
+      // ⭐⭐ 2026-10-14 晚**成对翻新**（同 AC-R5 那一条依据，业务负责人**逐字**）：
+      //   「**退货整单金额（必填），与补货同一套配置**」
+      //   改前（逐字）：`body` 里只有 `action` / `submit_key` / `return_sizes` / `return_qty_41`
+      //                ⇒ **没有** `purchase_amount`
+      //   改后（逐字）：加一行 `purchase_amount: '399'`（**先过整单金额那道必填闸门**，
+      //                才能走到"写库失败 ⇒ 500 + 人话"这一段 —— 它测的是**内部错误不回显**）
+      //   依据：她 2026-10-14 晚那两句 ⇒ 补货 / 退货同一套必填；**判据一个字都没放宽** ✓
+      //        （"内部细节不回显"那两条断言逐字照旧 ✓）。
       const response = await fetch(pageUrl, {
         method: 'POST',
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           action: SCAN_WRITE.actions.purchaseReturn, submit_key: key, return_sizes: '41', return_qty_41: '1',
+          purchase_amount: '399',
         }).toString(),
       });
       assert.equal(response.status, 500, '写库失败 → 500 + 人话页（不是静默、也不是 200 假成功）');

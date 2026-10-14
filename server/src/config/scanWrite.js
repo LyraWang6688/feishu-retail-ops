@@ -117,6 +117,28 @@ const PAYMENT_STATUS = Object.freeze({
   unpaid: readString(process.env, 'SCAN_SALE_PAYMENT_STATUS_UNPAID', '未付'),
 });
 
+/**
+ * ⭐⭐ 2026-10-14 晚（业务负责人**逐字**）：「**退货整单金额（必填），与补货同一套配置**」
+ *   ＋同一晚另一句：「**只写一个整单金额**（一次填一个总额，**和补货一样**～）」
+ *   ⇒ **补货 / 退货共用这一套**（一个字段名 + 一个必填开关 ✓ **不写两套** ✗）：
+ *     · 两个表单各加**一个「整单金额」输入**（**一次一个总额** ✓ **不按行分填** ✗）；
+ *     · 提交时：**空 ⇒ 400 + 人话 + 一个字都不写** ✓；**非空 ⇒ 照旧提交** ✓。
+ *   ⚠️ 本套只管"**填没填**"（判据就是她说的「必填」）——**数字格式不做额外校验** ✗
+ *     （与销售那条「每件实收必填」同一个形状：非空照旧能提交 ✓）。
+ *   🔴 **本版不落表**：金额落**哪一列**待她裁决 —— 采购明细 `purchaseRequest` 没有任何金额列；
+ *     采购主表 `purchaseOrderBatch` 唯一的金额列「实际金额」**已被"到货核对"占用**（见
+ *     `v1BitableSchema.js:487-493`）⇒ 见 `routes/scanPage.js` 的 `TODO(purchase-amount)`。
+ *     **绝不自己挑一列写** ✗（挑错会污染到货那条链路的钱）。
+ *   ⚠️ 开关是**显式布尔**（`readFlag`）：**不用** `process.env.X || fallback`（那种"清空关不掉"✗）。
+ *   ⚠️ 字段名见 `FIELDS.purchaseAmount`、人话见 `TEXTS.purchaseAmount*`（三处互相引用 ✓）。
+ */
+const PURCHASE_AMOUNT = Object.freeze({
+  // **一个开关同时管**退货与补货（她：「与补货同一套配置」）。
+  required: readFlag(process.env, 'SCAN_PURCHASE_AMOUNT_REQUIRED', true),
+  // 表单字段名（HTML 的 `name`）—— 两个表单**用同一个**（一套配置管两边 ✓）。
+  field: readString(process.env, 'SCAN_PURCHASE_AMOUNT_FIELD', 'purchase_amount'),
+});
+
 /** 表单字段名（HTML 的 `name`）。改名只改这里，路由与渲染层两边都不许写死。 */
 const FIELDS = Object.freeze({
   action: 'action',
@@ -153,6 +175,9 @@ const FIELDS = Object.freeze({
   //   `name` 分开之后，将来谁想加"两个表单同时提交"或做断言都不会互相串。
   returnSizes: 'return_sizes',
   returnQuantityPrefix: 'return_qty_',
+  // ⭐⭐ 2026-10-14 晚：**整单金额**（她：「**只写一个整单金额**（一次填一个总额，和补货一样～）」）
+  //   —— 补货 / 退货**共用同一个 `name`**（唯一来源 = `PURCHASE_AMOUNT.field` ✓ 不抄两份 ✗）。
+  purchaseAmount: PURCHASE_AMOUNT.field,
   // 扫码验收：单选一个尺码 + 一个数量 + 最后一步的「实际金额」。
   acceptSize: 'accept_size',
   acceptQuantity: 'accept_quantity',
@@ -596,6 +621,20 @@ const TEXTS = Object.freeze({
   returnStockChangedBody: '退的时候库存刚好被改动，这次没退成：请再点一次【生成采购退货】。',
   returnNoneBody: '至少要勾一个要退的尺码。',
   returnTooManyBody: '一次最多勾 {max} 个尺码，请分两次提交。',
+  // ── ⭐⭐ 2026-10-14 晚：**整单金额**（补货 / 退货**共用这一份**）─────────────────
+  //   她的原话（逐字）：「**退货整单金额（必填），与补货同一套配置**」
+  //   ＋「**只写一个整单金额**（一次填一个总额，**和补货一样**～）」。
+  //   ⇒ 一个标签 / 一个占位 / 一句人话**管两边**（改文案只改这里 ✓ 不写两套 ✗）。
+  //   ⚠️ 标签里直接写「（必填）」—— 与验收那条「实际金额（必填）」同一条规矩：
+  //      必填要在页面上**看得出来**（她第一次被拒就是因为看不出来）。
+  purchaseAmountLabel: '整单金额（必填）',
+  purchaseAmountPlaceholder: '这一单的总额',
+  // 空 ⇒ **400** 时那张页面的 H1：先让她一眼看到**差什么**（不是一句泛泛的"没提交成功"）。
+  purchaseAmountMissingTitle: '整单金额还没填',
+  // 一行说清"填什么 / 怎么填"（一次一个总额，不按行分填）——**指得出能做的事**。
+  purchaseAmountMissingBody: '这一单要填「整单金额」——填一个总额就行，不用按行分填；填好再提交。',
+  // 那张页面上的"回上一页"链接（不然她只能靠浏览器的返回键）。
+  purchaseAmountBackLabel: '回上一页填整单金额',
   // ── ⭐⭐ 扫码验收（方案A；只留能点、能做的事 + 事实）─────────────────────────
   // ⭐⭐ 2026-10-12（业务负责人真机，逐字）：「提交这一单我点了好多次，因为点完之后页面
   //    **一直没有任何反应**，我还以为没接收到……而且我现在还收到了 504 网关超时的提示」
@@ -744,6 +783,11 @@ const EVENTS = Object.freeze({
   returnPlanFrozen: 'scan.purchase_return.plan_frozen',
   returnBatchCreated: 'scan.purchase_return.batch_created',
   returnImageFailed: 'scan.purchase_return.image_failed',
+  // ⭐⭐ 2026-10-14 晚：**整单金额没填**（补货 / 退货**共用这一条**）—— 命中它 =
+  //   **她填漏了**（不是系统写失败 ✗）且**一个字都没写**（不建批次 / 不写明细 / 不动库存 ✓）。
+  //   ⚠️ 与 `failed`（写失败）**分开**：原因不同、修法也不同（她补一个数字 vs 我们去查库），
+  //      一 grep 就分得清 —— 与 `unknownWriteAction` 那条同一个理由。
+  purchaseAmountRequired: 'scan.write.purchase_amount_required',
   // ⭐ 扫码验收（方案A）的正向证据
   acceptStarted: 'scan.accept.started',
   acceptLineAdded: 'scan.accept.line_added',
@@ -792,6 +836,8 @@ const SCAN_WRITE = Object.freeze({
   fields: FIELDS,
   session: SESSION,
   sale: SALE,
+  // ⭐⭐ 2026-10-14 晚：**整单金额**（补货 / 退货**共用一套**：一个字段名 + 一个必填开关）。
+  purchaseAmount: PURCHASE_AMOUNT,
   replenish: REPLENISH,
   purchaseReturn: PURCHASE_RETURN,
   // ⭐⭐ 只读引用缓存（白名单 + TTL；写与写入判据一律不经过它）
@@ -818,6 +864,7 @@ module.exports = {
   SESSION,
   SALE,
   PAYMENT_STATUS,
+  PURCHASE_AMOUNT,
   REPLENISH,
   PURCHASE_RETURN,
   ACCEPTANCE,
