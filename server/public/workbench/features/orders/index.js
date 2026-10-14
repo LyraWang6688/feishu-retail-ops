@@ -9,7 +9,7 @@ import {
   ORDERS_API, ORDERS_PAGE, ORDERS_TEXTS, DEFAULT_COLLECTION_METHOD, COLLECTION_METHODS,
   REFUND_METHOD_PLACEHOLDER, RESTOCK_STATES, AFTER_SALES_ACTIONS, SETTLEMENTS,
   ORDERS_SUB_TABS, SALES_GROUPS, SALES_SECTIONS, DELIVERED_FULFILLMENT, PAID_PAYMENT_STATUS,
-  ARRIVAL_CONFIRM, ARRIVAL_SCAN, ARRIVAL_STATUS_PENDING, ARRIVAL_STATUS_ARRIVED,
+  ARRIVAL_CONFIRM, ARRIVAL_STATUS_PENDING, ARRIVAL_STATUS_ARRIVED,
 } from '../../config/orders.js';
 
 // 工作台【订单列表】（业务负责人 2026-10-09）—— 一级 tab 的第三个。
@@ -374,8 +374,13 @@ const purchaseBatchCardHtml = (batch) => `
             <span class="line-amount">×${escapeHtml(Number(row.quantity || 0))}</span>
           </li>`).join('')}</ul>
         <div class="order-card-actions">
+          <!-- ⭐ 2026-10-14（业务负责人逐字：「**连它一起改造进工作台（变成工作台自己的页面）**」）：
+               这里原来还有一颗【扫码验收】= 一颗指向 /s/accept?batch=… 的链接（**跳到扫码页** ✗）
+               ⇒ **已退出工作台**：本屏的确认路径就是下面那张**工作台内**的【验收到货】表单 ✓
+               ⚠️ 「逐双扫码录入」那半**物理上仍在扫码页**（标签二维码印的就是 /s/{编号} ✓ 不换标签绕不开 ✗）
+                  ⇒ /s/accept 那条路**保留、仍能用**，只是**工作台不再从它进** ✓（不许删 ✗）
+                  ⇒ 依据：docs/acceptance-into-workbench-2026-10-14.md §二/§三 -->
           <button class="btn btn-primary" type="button" data-action="verify-arrival" data-batch="${escapeHtml(batch.batch_no)}">${escapeHtml(T.verifyArrival)}</button>
-          <a class="btn" data-action="scan-arrival" href="${escapeHtml(`${ARRIVAL_SCAN.pagePath}?batch=${encodeURIComponent(batch.batch_no)}`)}">${escapeHtml(ARRIVAL_SCAN.buttonLabel)}</a>
         </div>
         <details class="action-form" data-action-block="verify-arrival" data-arrival-batch="${escapeHtml(batch.batch_no)}">
           <summary>${escapeHtml(T.arrivalVerifyTitle)}</summary>

@@ -208,14 +208,21 @@ const scanApp = (harness, lookup = async () => view()) => {
 // AC-A1 工作台入口（加法：既有全额验收链路一个字不改）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-A1 工作台批次卡出现【扫码验收】入口（/s/accept?batch=），既有验收链路一字不改', () => {
+test('AC-A1 工作台的扫码验收入口**已改造进工作台**（不再跳 /s/accept）；既有验收链路一字不改', () => {
   const config = fs.readFileSync(path.join(WORKBENCH, 'config/orders.js'), 'utf8');
   const orders = fs.readFileSync(path.join(WORKBENCH, 'features/orders/index.js'), 'utf8');
-  // 新增：配置驱动的扫码验收入口（URL 与按钮文案都在配置里）
-  assert.match(config, /ARRIVAL_SCAN/);
-  assert.match(config, /\/s\/accept/);
-  assert.match(orders, /data-action="scan-arrival"/);
-  assert.match(orders, /ARRIVAL_SCAN\.pagePath/);
+  // ⭐⭐ 2026-10-14 **改指向**（口径 (a) · 依据：业务负责人逐字
+  //   「**连它一起改造进工作台（变成工作台自己的页面）**」· 详见
+  //   `docs/acceptance-into-workbench-2026-10-14.md` §二/§三）：
+  //   改前逐字：`assert.match(orders, /data-action="scan-arrival"/);`
+  //             `assert.match(orders, /ARRIVAL_SCAN\.pagePath/);`
+  //   改后：工作台**不再从 /s/accept 进**（那颗入口退场 ✗）——
+  //   但 ⚠️ **「扫码」那一步物理上仍在扫码页**（标签二维码印的就是 /s/{编号} ✓ 不换标签绕不开）
+  //     ⇒ `/s/accept` 那条路 **保留、仍能用，不许删** ✓（配置常量与路由都还在）
+  assert.equal(/data-action="scan-arrival"/.test(orders), false, '工作台不该再有"扫码验收"那颗跳转入口 ✗');
+  assert.equal(/ARRIVAL_SCAN\.pagePath/.test(orders), false, '也不该再用它当入口 ✗');
+  assert.match(config, /ARRIVAL_SCAN/);      // ⭐ 常量**保留**（别的调用方/老链接仍可能用 ✓）
+  assert.match(config, /\/s\/accept/);        // ⭐ 扫码页那条路**保留** ✓
   // 既有那条（全额验收表单 / 它的接口与载荷）**逐字还在**
   for (const needle of [
     'data-action="verify-arrival"', 'data-action="submit-arrival"',
