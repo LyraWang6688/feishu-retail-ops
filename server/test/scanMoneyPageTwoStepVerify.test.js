@@ -35,15 +35,31 @@ const express = require('express');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { V1BitableGateway, textValue, linkedRecordIds } = require('../src/services/v1BitableGateway');
 
+/** ⚠️ 在**注入假凭证之前**判定"本机有没有真凭证" —— 否则 CI 里判不出来（见下）。 */
+const HAS_REAL_APP_CREDS = Boolean(process.env.LARK_AGENT_APP_ID && process.env.LARK_AGENT_APP_SECRET);
+
 const SKIP = (() => {
   if (!process.env.FEISHU_V1_E2E_TEST_APP_TOKEN) return '缺 FEISHU_V1_E2E_TEST_APP_TOKEN（测试 Base）⇒ 明确跳过，不算通过';
   if (!process.env.FEISHU_V1_BITABLE_APP_TOKEN) return '缺 FEISHU_V1_BITABLE_APP_TOKEN ⇒ 明确跳过';
   if (process.env.FEISHU_V1_BITABLE_APP_TOKEN !== process.env.FEISHU_V1_E2E_TEST_APP_TOKEN) {
     return '目标 Base ≠ 授权测试 Base ⇒ 拒绝跑（安全闸门）';
   }
-  if (!process.env.LARK_AGENT_APP_ID || !process.env.LARK_AGENT_APP_SECRET) return '缺应用凭证 ⇒ 明确跳过';
+  if (!HAS_REAL_APP_CREDS) return '缺真实应用凭证（CI 没有 .env）⇒ 明确跳过，不算通过';
   return '';
 })();
+
+/**
+ * 🔴 **CI 假绿/假红的分界线（2026-10-14 真实事故 · PR #520 CI 红）**：
+ *   CI **没有** `.env` ⇒ `routes/scanPage.js` 的 require 链里会在**模块加载期**构造
+ *   `V1BitableGateway`（`controllers/workbenchController.js:5` 就是模块级 `new`）
+ *   ⇒ 缺 `LARK_AGENT_*` 会**顶层抛** `新飞书应用必须同时配置 LARK_AGENT_APP_ID 和 LARK_AGENT_APP_SECRET`
+ *   ⇒ **整份文件失败**（`tests 1 / fail 1`），"没凭证就 skip"**根本轮不到** ✗。
+ *   ⇒ 所以在 require 之前先补一对**假**凭证（只为让 require 通过）；**有没有真凭证**由上面的
+ *     `HAS_REAL_APP_CREDS` 判、无则**显式 skip**（原因可见 ✓，不是静默 ✗）。
+ *   ⚠️ `||` 保证：本机有真凭证时**绝不覆盖**（真跑真表，一条断言都不松 ✓）。
+ */
+process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_verify_money_fake';
+process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'verify_money_fake_secret';
 
 process.env.LARK_WEB_AUTH_ENABLED = 'true';
 process.env.LARK_WEB_SESSION_SECRET = process.env.LARK_WEB_SESSION_SECRET || 'verify_ship_session_secret';
@@ -52,6 +68,9 @@ delete process.env.WORKBENCH_ALLOWED_OPEN_IDS;
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
 const { createScanPageRouter } = require('../src/routes/scanPage');
+
+// ⭐ 跳过必须**看得见**（在输出里明说一次，别让人以为"跑了 0 条 = 绿"）
+if (SKIP) console.log(`[verify] 跳过：${SKIP}（有凭证时这条会真跑真表）`);
 
 const TAG = `v${Date.now().toString(36)}${crypto.randomBytes(2).toString('hex')}`;
 const SAY = (...args) => console.log(`[verify ${TAG}]`, ...args);
