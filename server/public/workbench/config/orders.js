@@ -27,6 +27,16 @@ export const ORDERS_PAGE = {
   back: '← 返回订单列表',
   open: '查看 / 操作 →',
   reload: '刷新',
+  // ⭐⭐ 2026-10-15（⑨b-1 UI · 业务负责人逐字）：
+  //   「失败落「**写入失败**」、工作台显示「**未完成，可点重试**」」
+  //   ⇒ 那一句话与那颗按钮的文案都在这里（配置先行 ✓ 代码里不写死 ✗）。
+  //   ⚠️ `incomplete` 是她**逐字**那一句，别改写。
+  incomplete: '未完成，可点重试',
+  retry: '重试',
+  retrying: '正在续写…',
+  // 成功 / 已写完两种回执（服务端也会回 `message`，这里只作兜底；都用既有口径的词，不新造状态 ✗）
+  retryDone: '已续写完成。',
+  retryAlreadyDone: '这一单已经写完了，没有要接着写的东西。',
 };
 
 /**
@@ -179,6 +189,10 @@ export const ORDERS_API = {
   // ⭐ 采购子 tab：读 + 验收（都复用既有路由，不新开鉴权）
   purchaseRequests: '/api/workbench/purchase/requests',
   arrivalConfirm: '/api/workbench/purchase/arrivals/confirm',
+  // ⭐⭐ 2026-10-15（⑨b-1 UI）：工作台「续写 / 重试」—— **复用既有服务端路由**
+  //    （`routes/workbench.js` 的 `POST /sales/retry`，挂在既有 `requireWorkbenchAccess` 之后；
+  //     同一把 `submitKey` 续写 ⇒ 幂等不拆 ✓ 绝不直调 `_confirm` ✓，**不新开写库** ✗）
+  retry: '/api/workbench/sales/retry',
 };
 
 /**
