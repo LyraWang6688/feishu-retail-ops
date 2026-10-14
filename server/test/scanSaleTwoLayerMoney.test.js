@@ -502,7 +502,10 @@ test('AC-5a ⭐ 只填了每件实收、收款一行都没填 ⇒ **不拦**（�
     assert.equal(entriesOf(h, 'salesEntry').length, 1, '单子建出来了');
     assert.equal(entriesOf(h, 'salesDetail')[0].fields['实收金额'], 350, '实收照旧落表');
     assert.equal(entriesOf(h, 'paymentRecord').length, 1, '未付 ⇒ 差额>0 ⇒ **恰写一条**【未收款】（含本次付款为 0）');
-    assert.equal(result.owed_amount, 0);
+    // 改前逐字：`assert.equal(result.owed_amount, 0)`（她 2026-10-11 老口径：未付不记欠款）
+    // 改后逐字：`350`（= 累计 350 − 本次已收 0）· 依据 = 她 2026-10-14
+    //   「**只要本次付的金额小于累计的，那么差额都是未收款，包括本次付款为 0**」· 单位 = 元
+    assert.equal(result.owed_amount, 350, '欠款 = 累计 − 本次已收 = 350');
   } finally { h.cleanup(); }
 });
 
@@ -537,7 +540,13 @@ test('AC-16 ⭐ 付款情况**默认档 = 未付**（她不动它 ⇒ 建单放�
     const result = await h.write.submitSale({ openId, submitKey: await currentKey(h, openId), lineAmounts: ['99'] });
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(entriesOf(h, 'salesEntry').length, 1);
-    assert.equal(entriesOf(h, 'paymentRecord').length, 0);
+    // 改前逐字：`assert.equal(entriesOf(h, 'paymentRecord').length, 0)`
+    //   （她 2026-10-11 老口径「未付 ⇒ 不替她记【未收款】」）
+    // 改后逐字：`1` ＋ 金额逐字 99（= 累计 99 − 本次已收 0）· 依据 = 她 2026-10-14 裁决②
+    const owedRows = entriesOf(h, 'paymentRecord');
+    assert.equal(owedRows.length, 1, '差额>0 ⇒ **恰写一条**【未收款】（含本次付款为 0）');
+    assert.equal(owedRows[0].fields['收款金额'], 99, '那一条的金额 = 差额 99');
+    assert.equal(owedRows[0].fields['收款状态'], '未收款', '状态逐字「未收款」');
   } finally { h.cleanup(); }
 });
 
@@ -635,7 +644,7 @@ test('AC-6 ⭐【未付】什么都不填 ⇒ 成单 + **一条【未收款】�
   } finally { h.cleanup(); }
 });
 
-test('AC-6b ⭐ 2026-10-11 晚改写：「未付」**不再自动写那条【未收款】**（她没说欠钱）', async () => {
+test('AC-6b ⭐ 2026-10-14 改写：「未付」（本次付 0）**照写那条【未收款】**（差额 = 累计）', async () => {
   const h = createHarness();
   try {
     const openId = 'ou_two_layer_unpaid_filled';
@@ -644,12 +653,15 @@ test('AC-6b ⭐ 2026-10-11 晚改写：「未付」**不再自动写那条【未
       openId, submitKey: await currentKey(h, openId), paymentStatus: PAYMENT_STATUS.unpaid,
     });
     assert.equal(ok.ok, true, JSON.stringify(ok));
-    // ⚠️ **改写**：改前"未付 ⇒ 写一条 399 的【未收款】（= 每件实收合计）"；
-    //    改后 **不写** —— 只有她**明说欠多少**（部分付的差额）才写那一条
-    //    （与既有原则一致：「她说欠才算欠」，见 `salesOrderService.js` 的 `owed` 注释）。
+    // 改前逐字（她 2026-10-11 老口径，本条当时逐字这么写）：
+    //   「改后 **不写** —— 只有她**明说欠多少**（部分付的差额）才写那一条」
+    //   ＋ `assert.equal(ok.owed_amount, 0)`、`unpaidRows(h).length === 0`
+    // 改后逐字（她 2026-10-14 最新权威 · 覆盖 10-11 那句）：
+    //   「**只要本次付的金额小于累计的，那么差额都是未收款，包括本次付款为 0**」
+    //   ⇒ 本次付 0 < 累计 399 ⇒ **恰写一条**【未收款】，金额 = 差额 399；`owed_amount` = 399
     assert.equal(unpaidRows(h).length, 1, '未付 ⇒ **差额自动生成一条**【未收款】');
-    assert.equal(ok.owed_amount, 0, '差额也如实回 0');
-    // 但"这一单还没收钱"这个事实**照旧看得见**（读侧现算，不靠那条占位行）
+    assert.equal(ok.owed_amount, 399, '差额如实回给页面 = 累计 399 − 本次已收 0');
+    // 这一单还没收钱 —— 那条【未收款】落表之后，读侧算出来的仍然是同一个数
     const { SalesProgressService } = require('../src/services/salesProgressService');
     const progress = await new SalesProgressService({ gateway: h.gateway })
       .forOrder(ok.sales_entry_record_id);
@@ -1096,7 +1108,7 @@ test('AC-9a 【全付】拦住不轮换幂等键；改对后同一把键提交 �
   } finally { h.cleanup(); }
 });
 
-test('AC-9b ⭐【未付】连点两次 / 重放 ⇒ 只建一张单（且**不会**自动写【未收款】）', async () => {
+test('AC-9b ⭐【未付】连点两次 / 重放 ⇒ 只建一张单，且【未收款】**只写一条**', async () => {
   const h = createHarness();
   try {
     const openId = 'ou_two_layer_idem_unpaid';
@@ -1111,9 +1123,14 @@ test('AC-9b ⭐【未付】连点两次 / 重放 ⇒ 只建一张单（且**不�
     });
     assert.equal(again.reused, true);
     assert.equal(entriesOf(h, 'salesEntry').length, 1, '只有一张单');
-    // ⚠️ 2026-10-11 晚改写：未付**不再**自动写【未收款】⇒ 这里钉"一条都没有"（改前钉的是"只写一次"）
-    assert.equal(unpaidRows(h).length, 1, '未付 ⇒ **有一条**【未收款】（重放也不会多出第二条）');
-    assert.equal(entriesOf(h, 'paymentRecord').length, 0);
+    // 改前逐字（她 2026-10-11 老口径）：`未付**不再**自动写【未收款】⇒ 这里钉"一条都没有"`
+    //   ＋ `assert.equal(entriesOf(h, 'paymentRecord').length, 0)`
+    // 改后逐字（她 2026-10-14 最新权威）：未付（本次付 0）**照写一条**【未收款】
+    //   ⇒ `unpaidRows === 1`；`paymentRecord` 总数 **1**（**重放不许多出第二条** —— 幂等这条判据不变 ✓）
+    //   依据 = 她 2026-10-14「差额都是未收款，包括本次付款为 0」
+    assert.equal(unpaidRows(h).length, 1, '未付 ⇒ **恰一条**【未收款】');
+    assert.equal(entriesOf(h, 'paymentRecord').length, 1,
+      '重放（同一把 submitKey）⇒【未收款】**仍然只有一条**（幂等没被破坏）');
   } finally { h.cleanup(); }
 });
 
@@ -1297,7 +1314,8 @@ test('AC-12 订单列表判据：未付 / 部分付 的单**仍然**是"资金�
   const { salesInfoOf } = loadOrdersLogic();
   const h = createHarness();
   try {
-    // ① 未付：只写了主表 + 明细（**一条收款都没有** —— 2026-10-11 晚起未付不再自动写【未收款】）
+    // ① 未付：主表 + 明细 + **恰一条**【未收款】（= 差额 399 · 方式留空）
+    //    （她 2026-10-14 裁决②：差额一律补一条，含本次付款为 0）
     const openId = 'ou_two_layer_list_unpaid';
     await addShoe(h, openId, { size: 40, amount: 399 });
     const unpaidOrder = await h.write.submitSale({
@@ -1334,9 +1352,13 @@ test('AC-12 订单列表判据：未付 / 部分付 的单**仍然**是"资金�
         };
       });
     const unpaidList = asListPayments(unpaidOrder.sales_entry_record_id);
-    // ⚠️ 2026-10-11 晚**改写**：未付不再自动写【未收款】⇒ 这里断言"一条收款都没有"，
-    //    而"资金信息不齐 ⇒ 待补充"的结论**一个字没变**（判据是"有没有带方式的收款行"）。
-    assert.deepEqual(unpaidList, [], '未付 ⇒ **有一条**【未收款】（方式留空 · 金额=差额）');
+    // 改前逐字（她 2026-10-11 老口径）：`assert.deepEqual(unpaidList, [], '一条收款都没有')`
+    //   ＋ 注释「未付不再自动写【未收款】」
+    // 改后逐字（她 2026-10-14 裁决②）：**恰一条**【未收款】（方式留空 · 金额 = 差额 399）
+    //   ⚠️ 而"资金信息不齐 ⇒ 待补充"这个**结论一个字没变** ✓
+    //      —— 判据是"有没有**带方式**的收款行"（那条【未收款】本来就不带方式）。
+    assert.deepEqual(unpaidList, [{ method: '', amount: 399, status: PAYMENT_STATUS_UNPAID }],
+      '未付 ⇒ **恰一条**【未收款】（方式留空 · 金额 = 差额）');
     assert.equal(salesInfoOf({ payments: unpaidList }).fundsMissing, true,
       '未付 ⇒ 资金信息不齐 ⇒ 落在**待补充**（不会跑进售后列表）');
     const partialList = asListPayments(partialOrder.sales_entry_record_id);
@@ -1379,7 +1401,7 @@ test('AC-13 建单门槛 = 货品信息齐：**资金全空**（默认「全付�
   } finally { h.cleanup(); }
 });
 
-test('AC-13b ⭐ 走真路由：销售页**什么都不填** ⇒ 提交成单（200 + 结果页），不是 400 差额页', async () => {
+test('AC-13b ⭐ 走真路由：**只填每件实收、收款行全空** ⇒ 提交成单（200 + 结果页），不是 400 差额页', async () => {
   login();
   const h = createHarness();
   try {
@@ -1395,12 +1417,15 @@ test('AC-13b ⭐ 走真路由：销售页**什么都不填** ⇒ 提交成单（
         headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ action: SCAN_WRITE.actions.addLine, submit_key: saleKey, size: '40' }).toString(),
       });
-      // 表单**原样**提交：每件实收是空的、收款行是空的、付款情况 = **页面默认那一档**。
+      // 表单**原样**提交：**每件实收填了 399**、收款行是空的、付款情况 = **页面默认那一档**。
       // ⚠️ 2026-10-12 **改写**：这里原来写 `PAYMENT_STATUS.full` ——
       //    改前口径：「全付」+ 一笔收款都不填 ⇒ 按「未付」落库（她 2026-10-11 点头过）；
       //    改后口径：**全付 + 收款 0 笔 + 每件实收也全空** ⇒ **拦住**（零元全付单，
       //    见 `scanWriteService` 的 `full_without_money`；起因是她真机丢钱那次）。
-      //    这一条要钉的是"**什么都不填也能建单**"⇒ 用页面默认那一档（未付）才对应真实页面。
+      //    这一条要钉的是"**收款全空也能建单**"⇒ 用页面默认那一档（未付）才对应真实页面。
+      // ⭐⭐ 2026-10-14 再改（她裁决①「销售货品页的每件金额必须填，只有资金页可以不填」）：
+      //    ⇒ **每件实收必须填**（本用例名字随之从"什么都不填"改成"只填每件实收、收款行全空"）；
+      //      整单收款那一层**仍然可以全空** —— 这就是本用例要钉的那条边界 ✓
       const done = await followPaymentStep(base, cookie, await formPost(base, cookie, {
         action: SCAN_WRITE.actions.submitOrder,
         submit_key: saleKey,
@@ -1409,10 +1434,16 @@ test('AC-13b ⭐ 走真路由：销售页**什么都不填** ⇒ 提交成单（
         payment_amount: '',
         line_amount: ['399'],
       }));
-      assert.equal(done.status, 200, `资金全空应该直接成单，而不是 400：${await done.text()}`);
+      assert.equal(done.status, 200, `收款全空应该直接成单，而不是 400：${await done.text()}`);
       assert.equal(entriesOf(h, 'salesEntry').length, 1);
       assert.equal(entriesOf(h, 'salesDetail').length, 1);
-      assert.equal(entriesOf(h, 'paymentRecord').length, 0);
+      // 改前逐字：`assert.equal(entriesOf(h, 'paymentRecord').length, 0)`
+      //   （她 2026-10-11 老口径：未付不替她记【未收款】）
+      // 改后逐字：`1` ＋ 金额/状态逐字（= 累计 399 − 本次已收 0）· 依据 = 她 2026-10-14 裁决②
+      const owedRows = entriesOf(h, 'paymentRecord');
+      assert.equal(owedRows.length, 1, '差额>0 ⇒ **恰写一条**【未收款】');
+      assert.equal(owedRows[0].fields['收款金额'], 399, '那一条的金额 = 差额 399');
+      assert.equal(owedRows[0].fields['收款状态'], '未收款', '状态逐字「未收款」');
     });
   } finally { h.cleanup(); }
 });

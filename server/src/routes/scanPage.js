@@ -1163,7 +1163,18 @@ const createScanPageRouter = (options = {}) => {
                   items: money(itemsCents), payments: money(paymentsCents), side,
                 });
               }
-              return t[`${settlement.code}Body`] || t[settlement.code] || '';
+              // 🔴🔴 2026-10-14 修（真 bug）：`settlement.code` 是 **snake_case**
+              //    （`full_without_money` / `partial_amount_missing` / `partial_amount_mismatch`），
+              //    而 `config/scanWrite.js` 的文案 key 是 **camelCase**（`fullWithoutMoneyBody` …）
+              //    ⇒ 原来直接拼 `${settlement.code}Body` **永远查不到** ⇒ 那三条 block 的人话
+              //    渲染成**空串**（页面只剩一个干巴巴的 400 + 满页表单）。
+              //    ⚠️ 这就是她 2026-10-14 真机"点了 6 次「提交整单付款」都只看到 400"的现场之一：
+              //      日志里当时**连原因都没有**（那条 `scan.write.settlement_blocked` 是后来才补的），
+              //      页面上也没有一句话 —— 两处都静默。
+              //    ⇒ 按 snake_case → camelCase 取真源文案（**不新编中文** ✓ 仍只用既有模板 ✓）。
+              const codeCamel = String(settlement.code || '')
+                .replace(/_([a-z])/g, (_, char) => char.toUpperCase());
+              return t[`${codeCamel}Body`] || t[settlement.code] || '';
             })();
             return sendPaymentStep(res, req, {
               realm,

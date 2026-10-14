@@ -1125,7 +1125,10 @@ const createScanWriteService = (options = {}) => {
       const detailCount = (result.detailRecordIds || []).length || items.length;
       const paymentCount = (result.paymentRecordIds || []).length;
       // ⭐ `paid_amount` = **真收到钱的那几条**（她填的收款行）之和；
-      //    `owed_amount` = 那一条【未收款】的差额（**只有「部分付」才有**，2026-10-11 晚起）。
+      //    `owed_amount` = 那一条【未收款】的差额 = `累计 − 本次已收`（**> 0 就有**）。
+      //    ⚠️ 改前逐字：「（**只有「部分付」才有**，2026-10-11 晚起）」——她 2026-10-14 覆盖了那句：
+      //       「只要本次付的金额小于累计的，那么差额都是未收款，**包括本次付款为 0**」
+      //       ⇒ 未付（本次付 0）也有差额、也补那一条 ⇒ `owed_amount` = 累计（不再是 0）。
       //    ⚠️ 两笔数**分开报**，不合成一个"收款合计"：合成之后她就分不清
       //       "这单收了多少现金"和"这单还欠多少"。
       const paidAmount = payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
