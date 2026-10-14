@@ -166,7 +166,11 @@ test('AC-T1 `lookup` 把各阶段毫秒写进 timing 出参：三个阶段分别
   //   能力不变 —— `size_ms` 仍是"尺码这一段"的墙钟 ✓，只是这一段现在**只读配置**（0 次飞书）✓。
   //   改前逐字：assert.ok(timing.size_ms >= 45, `size_ms 必须覆盖「尺码管理」那一次读：${timing.size_ms}`);
   assert.equal(timing.size_source, 'config', '尺码段走配置（不再降级读表）✓');
-  assert.equal(timing.size_ms, 0, '尺码段读表已删除 ⇒ size_ms 必须是 0（能真红 ✓）');
+  // 2026-10-14：原来是 assert.equal(size_ms, 0) ⇒ 在 CI 上**偶发红** ✗
+  //   真因（确定的）：size_ms 是那一段的**墙钟**（Date.now 毫秒粒度）⇒ 读配置偶尔跨 1 个刻度 ⇒ 变成 1 ✗
+  //   ⇒ 改成 **必须 < 5ms**（读一次配置的正常量级）
+  //   🔴 能力没减：真去读「尺码管理」那张表是**几十~几百毫秒** ⇒ 这条照样**能真红** ✓
+  assert.ok(timing.size_ms < 5, `尺码段读表已删除 ⇒ size_ms 必须是配置量级（<5ms；实测 ${timing.size_ms}）`);
   assert.ok(timing.size_ms >= 0 && Number.isFinite(timing.size_ms), `size_ms 仍是这一段的墙钟：${timing.size_ms}`);
   // 2026-10-14：这条原来要求 total_ms **>= 三段之和** ⇒ 在 CI（负载抖动）下会**偶发红** ✗
   //   根因（确定的）：每段的 ms 各自用 `Date.now()` 毫秒截断（各自可能**向上**取整一点），
