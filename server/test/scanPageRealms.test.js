@@ -433,7 +433,10 @@ test('AC4 三个领域共用业务处理层、各自独立出口（渲染层不�
   assert.match(source, /require\('\.\/scanPageRealm'\)/, '分组 / 补货清单来自视图层的同一份配置');
   assert.ok(source.includes('saleSizeGroups(view)') && source.includes('purchaseSizeLines(view)'),
     '销售与采购两块都拿同一份视图模型算（没有各领域自己再查一次表）');
-  assert.ok(source.includes('stockTableHtml(view, config)'), '库存那一块也是同一份视图模型');
+  // 2026-10-14 晚（她：「库存的表格里还是没有排除特殊码」）⇒ 库存表改成**排除缺货的特殊码**后
+  //   调用的**形状**变了（`{ ...view, rows: tableRows }`）—— 仍是**同一份视图模型** ✓（只是少了几行 ✓）
+  assert.ok(source.includes('stockTableHtml({ ...view, rows: tableRows }, config)'),
+    '库存那一块也是同一份视图模型（行 = 视图行 − 缺货的特殊码 ✓）');
   // 交易类型 / 缺码判据都在**既有配置**里，视图层不写死编码
   const realm = stripComments(readSrc('views/scanPageRealm.js'));
   assert.equal(/SALE_CASH|SALE_PREPAID/.test(realm), false, '视图层不许写死交易类型编码（用既有判据）');

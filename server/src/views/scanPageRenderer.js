@@ -1230,11 +1230,20 @@ const realmBlockHtml = (realm, view, config, write, page = {}) => {
   if (id === NEW_REALM) return wrap(realmEmptyHtml(NEW_REALM, config));
 
   if (id === 'inventory') {
-    // ⭐ 2026-10-14：缺货的**特殊码**在库存页也要看得到 ⇒ 折叠块放在**库存表之外**（表本体逐字不变 ✓ AC1 ✓）
-    const foldedInventory = foldedSpecialRowsOf(view).map((row) => ({
+    // ⭐⭐ 2026-10-14 晚（业务负责人逐字）：「**库存的表格里还是没有排除特殊码**」＋她纠正过的口径：
+    //   「特殊码**有货就正常显示**，**没货就显示在折叠区**」（销售 / 补货 / 库存**同一套** ✓）
+    //   ⇒ 改前：缺货的特殊码**既在表里、又在折叠区**（重复 ✗）
+    //   ⇒ 改后：**表里排除"缺货的特殊码"** ✓（它们在折叠区 ✓）；
+    //           ⭐ **有货的特殊码照旧在表里** ✓（一条都不许少 ✗）；普通码**一条不少** ✓
+    //   ⭐ 判定复用**既有那一处** helper（`foldedSpecialRowsOf` = 缺货 ∩ 特殊码 ✓ 三处共用 ✓ 不新写 if ✗）
+    const foldedRows = foldedSpecialRowsOf(view);
+    const foldedSizes = new Set(foldedRows.map((row) => String(row.size_text)));
+    const foldedInventory = foldedRows.map((row) => ({
       size_text: String(row.size_text), sellable: sellableCountOf(row, view?.columns),
     }));
-    return wrap(stockTableHtml(view, config) + specialFactsHtml(foldedInventory, REALM_TEXTS));
+    const tableRows = (Array.isArray(view?.rows) ? view.rows : [])
+      .filter((row) => !foldedSizes.has(String(row.size_text)));
+    return wrap(stockTableHtml({ ...view, rows: tableRows }, config) + specialFactsHtml(foldedInventory, REALM_TEXTS));
   }
   if (id === 'product') return wrap(labelBlockHtml(view, page?.print));
   if (id === REPLENISH_REALM) {
