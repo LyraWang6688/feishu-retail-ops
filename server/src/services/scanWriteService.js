@@ -181,7 +181,11 @@ const createScanWriteService = (options = {}) => {
   const scheduleSaleRest = ({ openId, requestId, salesEntryRecordId, orderNo, correlation, restInput }) => {
     const startedAt = Date.now();
     const timeoutMs = Number(saleAsync.backgroundTimeoutMs) || 0;
-    Promise.resolve()
+    // ⭐⭐ 2026-10-15（⑰b-1）：这一跑的句柄**当作返回值交出去**（见下面 `background`）——
+    //   它的用途只有一个：**让调用方"等后台那一跑跑完"** ✓（用例回读端状态前先 await 它）；
+    //   ⚠️ 它**不是页面字段** ✗：路由渲染只取它本来就认识的那几个（`paidPayload` 里那一批），
+    //     所以句柄**不会**进 HTML（有用例钉住 ✓）。
+    return Promise.resolve()
       .then(() => submitSale({ ...restInput, noDefer: true, requestId }))
       .then(async (result) => {
         const durationMs = Date.now() - startedAt;
@@ -1178,7 +1182,11 @@ const createScanWriteService = (options = {}) => {
       //   🔴 **不许假成功**：后台那一跑失败 ⇒ 主表落「**写入失败**」（既有状态维度 + 既有写入器 ✓）。
       //   ⚠️ 只在**第一次**（`wasResume === false`）且配置开着时生效 ✓；旧调用方（群聊等）一步都不变 ✗。
       if (saleAsync.enabled === true && !wasResume && !noDefer) {
-        scheduleSaleRest({
+        // ⭐⭐ 2026-10-15（⑰b-1）：`background` = **后台那一跑的句柄**（内部用："等它跑完"）。
+        //   🔴 **页面的公开形状一个字段都没变**：路由只取 `ok / deferred / order_no /
+        //     sales_entry_record_id / detail_count / payment_count`（它本来就认识的那几个）⇒ 句柄**不进 HTML** ✗
+        //   🔴 **不放宽任何判据**：用例仍然是"端状态逐字比"，只是**先等后台**再读 ✓。
+        const background = scheduleSaleRest({
           openId,
           requestId,
           salesEntryRecordId,
@@ -1195,6 +1203,8 @@ const createScanWriteService = (options = {}) => {
           ok: true, reused: false, deferred: true,
           order_no: orderNo, sales_entry_record_id: salesEntryRecordId,
           detail_count: items.length, payment_count: payments.length,
+          // ⚠️ 句柄（不是页面字段）—— 只给"等它跑完"的人（用例）✓
+          background,
         };
       }
 
