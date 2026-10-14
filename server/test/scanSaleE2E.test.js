@@ -1260,12 +1260,22 @@ const captureInfo = async (run) => {
 const TIMING_KEYS = ['submit_ms', 'queue_wait_ms', 'lookup_ms', 'prepare_ms', 'master_ms',
   'status_ms', 'detail_ms', 'stock_ms'];
 
-const submitOnceForTiming = async (base, cookie, page, extra = {}) => postForm(pageUrlOf(base, NUMBER_A), cookie, {
-  action: SCAN_WRITE.actions.submitOrder,
-  submit_key: submitKeyOf(page.html),
-  payment_status: PAYMENT_STATUS.unpaid,
-  ...extra,
-});
+/**
+ * ⭐⭐ 2026-10-14（她：「确认状态是资金那页点击了按钮之后，才算是用户确认了」）⇒ **两步**：
+ *   ① 点提交 ⇒ 资金页（零写入 ✓ 还不打"建单耗时"那条点 ✓）
+ *   ② 点资金页那颗【跳过】⇒ **才建单** ⇒ 这时才打 `scan.sale.timing` ✓
+ *   ⇒ 所以"量一次提交"必须走完两步 ✓（判据一条不放宽 ✗ 只是把"发生在哪一步"改对 ✓）
+ */
+const submitOnceForTiming = async (base, cookie, page, extra = {}) => followPaymentStep(
+  base,
+  cookie,
+  await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+    action: SCAN_WRITE.actions.submitOrder,
+    submit_key: submitKeyOf(page.html),
+    payment_status: PAYMENT_STATUS.unpaid,
+    ...extra,
+  }),
+);
 
 test('AC-E2E-16 ⭐ 提交链路**逐步耗时**：一条 `scan.sale.timing` 带出每一段（含排队等待）', async () => {
   login();
@@ -1366,14 +1376,19 @@ const measureOneSubmit = async (base, gateway, cookie, number, size) => {
   await addLine(base, cookie, number, size);
   const page = await getPage(pageUrlOf(base, number), cookie);
   const callsBefore = gateway.calls.length;
-  const { value: response, entries } = await captureInfo(async () => postForm(pageUrlOf(base, number), cookie, {
-    action: SCAN_WRITE.actions.submitOrder,
-    submit_key: submitKeyOf(page.html),
-    // 下单时把这一双一起带进来（选尺码 + 提交两下）。
-    size,
-    payment_status: PAYMENT_STATUS.unpaid,
-    payment_method: '', payment_amount: '', line_amount: [''],
-  }));
+  // ⭐⭐ 2026-10-14（新流程**两步**）：① 点提交 ⇒ 资金页；② 点【跳过】⇒ **才建单**（打点在建单那一刻 ✓）
+  const { value: response, entries } = await captureInfo(async () => followPaymentStep(
+    base,
+    cookie,
+    await postForm(pageUrlOf(base, number), cookie, {
+      action: SCAN_WRITE.actions.submitOrder,
+      submit_key: submitKeyOf(page.html),
+      // 下单时把这一双一起带进来（选尺码 + 提交两下）。
+      size,
+      payment_status: PAYMENT_STATUS.unpaid,
+      payment_method: '', payment_amount: '', line_amount: [''],
+    }),
+  ));
   const timing = entries.filter((entry) => entry.event === SCAN_WRITE.events.saleTiming).pop();
   assert.ok(timing, '要有一条 scan.sale.timing');
   const calls = gateway.calls.slice(callsBefore);

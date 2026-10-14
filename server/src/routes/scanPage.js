@@ -1736,6 +1736,9 @@ const createScanPageRouter = (options = {}) => {
         //    🔴 **幂等不许拆** ✗ 绝不直调 `_confirm` ✓）
         const skipPending = skipMark === 'pending' || skipMark === 'created';
         let skipCreated = null;
+        // ⭐ 这一步的墙钟起点 + **打点载体**（服务端把各分段**写进这个对象** ✓ 与旧流程同一个形状 ✓）
+        const skipStepStartedAt = Date.now();
+        const skipStepTiming = {};
         if (skipPending) {
           const skipInfo = skipSession?.sale?.submitPending || skipSession?.submitPending || {};
           const skipSize = String(skipInfo.size || '').trim();
@@ -1754,7 +1757,7 @@ const createScanPageRouter = (options = {}) => {
               : (Array.isArray(skipInfo.lineAmounts) ? skipInfo.lineAmounts : []),
             paymentStatus: writeConfig.sale.paymentStatus.default,
             paidAmount: '',
-            timing: {},
+            timing: skipStepTiming,
             pendingLine: skipView?.found ? {
               productRecordId: skipView.product_record_id,
               number: skipView.number,
@@ -1793,6 +1796,26 @@ const createScanPageRouter = (options = {}) => {
         }
         // ⭐ 同上：跳过那颗按钮建单成功也要记"她刚在销售里干过活" ✓（否则裸扫默认领域会丢 ✓）
         if (skipCreated) markRealmUsed(openIdOf(req), realmOfAction(writeConfig.actions.submitOrder));
+        // ⭐⭐ 同上：**建单那一步的打点**（事件名/形状照旧 ✓ 她"一查日志就知道卡在哪段"✓）
+        if (skipCreated) {
+          logInfo(writeConfig.events.saleTiming, {
+            request_id: requestId,
+            ok: skipCreated.ok === true,
+            code: skipCreated.code || '',
+            order_no: skipCreated.order_no || '',
+            reused: skipCreated.reused === true,
+            partial: skipCreated.code === 'sale_partial_failed',
+            lines: Number(skipCreated.detail_count) || 0,
+            submit_ms: Math.max(0, Date.now() - skipStepStartedAt),
+            queue_wait_ms: Number(skipStepTiming.queue_wait_ms) || 0,
+            lookup_ms: Number(skipStepTiming.lookup_ms) || 0,
+            prepare_ms: Number(skipStepTiming.prepare_ms) || 0,
+            master_ms: Number(skipStepTiming.master_ms) || 0,
+            status_ms: Number(skipStepTiming.status_ms) || 0,
+            detail_ms: Number(skipStepTiming.detail_ms) || 0,
+            stock_ms: Number(skipStepTiming.stock_ms) || 0,
+          });
+        }
         // ⭐ 单号/双数：**优先用刚建单的返回值** ✓（没建单时退回表单里的那两个 ✓ 一律**不编** ✗）
         const skippedOrderNo = String(skipCreated?.order_no || body.order_no || '').trim().slice(0, 40);
         const skippedCount = Number(String(skipCreated?.detail_count ?? body.count ?? '').trim() || 0) || 0;
