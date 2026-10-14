@@ -1,3 +1,6 @@
+// ⭐⭐ 2026-10-14 晚（业务负责人逐字）：配品搬到工作台「销售 → 配品」+ 上新去掉
+//   ⇒ 扫码页**只剩 4 个领域**：销售 · 补货 · 库存 · 退货 ✓
+//   🔴 不是放宽 ✗：判据从"六个都在"翻成"**四个在 + 配品/上新不在**" ✓
 'use strict';
 
 /**
@@ -24,7 +27,8 @@ const { renderScanPage, STYLE } = require('../src/views/scanPageRenderer');
 
 const SRC = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
 // 2026-10-14 re-pointed: sales, replenish, inventory, purchase_return(returns), accessory(add-ons), new
-const NAMES = ['\u9500\u552e', '\u8865\u8d27', '\u5e93\u5b58', '\u9000\u8d27', '\u914d\u54c1', '\u4e0a\u65b0'];
+// ⭐ 2026-10-14 晚：配品搬去工作台 + 上新去掉 ⇒ 条上**四个**（销售·补货·库存·退货 ✓）
+const NAMES = ['\u9500\u552e', '\u8865\u8d27', '\u5e93\u5b58', '\u9000\u8d27'];
 
 const pageHtml = () => renderScanPage({
   found: false, number: 'X', rows: [], columns: [],
@@ -33,7 +37,7 @@ const pageHtml = () => renderScanPage({
 test('AC-BAR1 ⭐ 六个 tab 名称与顺序逐字 = 销售·补货·库存·标签·上新·配品（回归）', () => {
   const html = pageHtml();
   const labels = [...html.matchAll(/<a[^>]*class="[^"]*realm-tab[^"]*"[^>]*>([^<]*)<\/a>/g)].map((m) => m[1].trim());
-  assert.deepEqual(labels.slice(0, 6), NAMES, `六个 tab 的名称/顺序必须逐字（实际 ${JSON.stringify(labels)}）`);
+  assert.deepEqual(labels.slice(0, 4), NAMES, `四个 tab 的名称/顺序必须逐字（实际 ${JSON.stringify(labels)}）`);
 });
 
 test('AC-BAR2 🔴 每个标签各在自己那一格（**不许**出现「库存标签」连在一起 ✗）', () => {

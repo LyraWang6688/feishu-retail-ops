@@ -1,3 +1,7 @@
+// ⭐⭐ 2026-10-14 晚（业务负责人逐字，**覆盖 10-13 的六领域口径**）：
+//   「配品给迁移到工作台销售里…整体都迁移过去」＋「把上新 tab 也给去掉」
+//   ⇒ 扫码页**只剩 4 个领域**：销售 · 补货 · 库存 · 退货 ✓
+//   🔴 不是放宽 ✗：判据从"六个都在"翻成"**四个在 + 配品/上新必须不在**" ✓
 /** ⚠️ 2026-10-12 旧断言改写（"**零 JS**"口径按业务负责人的要求改了）：
  *  改前（逐字）：`assert.equal(/<script[\s>]/i.test(html), false, '页面里一行前端脚本都没有');`
  *  改后（逐字）：**有提交按钮的页面**（销售提交 / 打印这一款）= 整页**只有那一段**
@@ -212,12 +216,15 @@ test('AC-6R1 六个领域逐字 = 销售 · 补货 · 退货 · 验收 · 库存
   assert.deepEqual(REALMS.map((realm) => realm.id),
     // ⚠️ 2026-10-14 改指向（业务负责人最终口径：销售·补货·库存·退货·配品·上新 ✓
 //   见 docs/scan-page-tabs-2026-10-14.md）；改前逐字：['sales', 'replenish', 'inventory', 'product', 'new', 'purchase_return', 'accept']
-['sales', 'replenish', 'inventory', 'purchase_return', 'accessory', 'new', 'product', 'accept']);
+['sales', 'replenish', 'inventory', 'purchase_return', 'product', 'accept']);
   // ⚠️ 2026-10-13 **改写**（她最终顺序）：「第一行：销售 · 补货 · 库存；第二行：标签 · 上新 · 配品」
   //    ⇒ 退货彻底不在扫码页（挪去工作台）；货品 → **标签**；多一个 **上新**（外链）✓
   // ⚠️ 2026-10-13：**条上六个** = REALM_TABS（验收**不在条上** ✓ 它是有会话才切进来的模式）；
   //    真实解析用的 REALMS 里**仍然有** `accept`（否则验收领域会解析不出来 ✗）
-  assert.deepEqual(REALM_TABS.map((realm) => realm.label),['销售', '补货', '库存', '退货', '配品', '上新']);
+  assert.deepEqual(REALM_TABS.map((realm) => realm.label), ['销售', '补货', '库存', '退货']);
+  assert.equal(REALM_TABS.length, 4, '条上就四个 ✓');
+  assert.equal(REALM_TABS.some((r) => r.id === 'accessory'), false, '配品已搬去工作台 ✓');
+  assert.equal(REALM_TABS.some((r) => r.id === 'new'), false, '上新已去掉 ✓');
   assert.equal(REALM_TABS.some((realm) => realm.id === 'accept'), false, '验收不在条上 ✓');
   assert.equal(REALMS.some((realm) => realm.id === 'accept'), true, '验收领域必须还能解析 ✓');
   assert.equal(REALMS.some((realm) => realm.id === 'purchase'), false, '原「采购」领域已去掉');
@@ -234,14 +241,13 @@ test('AC-6R2 ⭐ 切换条：6 条真链接 + **一行六格铺满整宽**（窄
   //   理由：她 2026-10-13 的最终版 —— 第一行 销售·补货·库存；第二行 标签·上新·配品 ✓
   const links = [...bar.matchAll(/<a class="realm-tab[^"]*" data-realm-id="([^"]+)" href="([^"]+)"[^>]*>/g)]
     .map((match) => ({ id: match[1], href: match[2], tag: match[0] }));
-  assert.deepEqual(links.map((item) => item.id), REALM_TABS.map((realm) => realm.id), '条上六个 = REALM_TABS');
+  assert.deepEqual(links.map((item) => item.id), REALM_TABS.map((realm) => realm.id), '条上四个 = REALM_TABS');
   for (const link of links.filter((item) => item.id !== 'new')) {
     assert.equal(link.href, `?from=${link.id}`, `内部领域的 href 仍 = ?from=<id>`);
   }
-  const external = links.find((item) => item.id === 'new');
-  assert.equal(external.href, SCAN_PAGE.realmBar.newFormUrl, '「上新」= 外链（与工作台同源）');
-  assert.match(external.tag, /target="_blank"/, '外链开新窗口');
-  assert.match(external.tag, /rel="noopener"/, '外链带 noopener');
+  // ⭐ 2026-10-14 晚（她：「把**上新 tab** 也给**去掉吧**」）：
+  //   ⇒ 条上**不再有任何外链** ✓（原"上新 = 外链 + target/rel"那三条随它一起退场 ✓ 判据未放宽 ✗）
+  assert.equal(links.some((item) => item.tag.includes('target="_blank"')), false, '条上不再有外链 ✓');
   // 选中态由**服务端**给（零 JS）
   assert.match(bar, /class="realm-tab realm-tab--active" data-realm-id="sales"[^>]*aria-current="page"/);
   assert.equal((bar.match(/realm-tab--active/g) || []).length, 1, '只有当前领域高亮');
@@ -256,7 +262,7 @@ test('AC-6R2 ⭐ 切换条：6 条真链接 + **一行六格铺满整宽**（窄
   assert.match(barRule, /width:\s*100%/, '容器整宽 ✓');
   assert.match(barRule, /overflow-x:\s*auto/, '⭐ 窄屏允许横向滚动（不裁切 ✗）');
   assert.ok(style.includes('repeat(6,minmax(0,1fr))') && style.includes('width:100%'),
-    '行 = 六列等分整宽 ✓（一格都不许被挤出容器）');
+    '行 = 四列等分整宽 ✓（一格都不许被挤出容器）');
   const tabRule = style.match(/\n\.realm-tab \{[^}]*\}/)[0];
   assert.match(tabRule, /min-height:\s*var\(--control-height\)/, '每格 ≥44px（复用既有可点高度）');
 });
@@ -288,22 +294,29 @@ test('AC-6R3 认不出的 ?from=（含已退役的 purchase）⇒ 回落销售�
   assert.ok(blockOf(replenish, 'replenish').includes('data-view="one-tap-replenish"'), '补货 = 一键补货表单');
   assert.ok(blockOf(replenish, 'replenish').includes('生成采购申请'));
 
-  const purchaseReturn = htmlFor('accessory');
+  // ⭐ 2026-10-14 晚：配品已搬去工作台 ⇒ 这里改判**退货那一块**（原配品空态口径随领域一起搬走 ✓）
+  const purchaseReturn = htmlFor('purchase_return');
   // ⚠️ 2026-10-13 **改写**：这一块原来是**退货表单**（`data-view="purchase-return"`）；
   //    她改成**配品页**（最小可用：能看到/能选一件配品 ✓）⇒ 改钉配品下拉 + 加进本单按钮 ✓
-  const accessoryBlock = blockOf(renderScanPage(VIEW, SCAN_PAGE,
-    { ...WRITE, accessories: [{ record_id: 'acc_1', name: '腰带' }] }, 'accessory'), 'accessory');
-  assert.ok(accessoryBlock.includes(`name="${SCAN_WRITE.fields.accessory}"`), '配品 = 能看到/能选配品 ✓');
-  assert.ok(accessoryBlock.includes(SCAN_WRITE.actions.addAccessory), '配品 = 有加进本单那颗按钮 ✓');
+  // ⭐⭐ 2026-10-14 晚（她逐字）：「配品给**迁移到工作台销售里**…**整体都迁移过去**」
+  //   ⇒ 扫码页**不再有配品块** ✓ ⇒ 判据从"必须有配品下拉/按钮"翻成"**必须没有**" ✓（不放宽 ✗）
+  //   ⭐ 配品的验收（选名称 + 数量默认 1 + 成交金额必填 + 一步成单 + 不扣库存）
+  //      改在**工作台「销售 → 配品」那一页的测试**里判 ✓（本文件不再判 ✗）
+  const accessoryPage = renderScanPage(VIEW, SCAN_PAGE,
+    { ...WRITE, accessories: [{ record_id: 'acc_1', name: '腰带' }] }, 'accessory');
+  assert.equal(accessoryPage.includes('realm-block--accessory'), false, '扫码页不再有配品块 ✓（已搬去工作台 ✓）');
+  assert.equal(blockOf(purchaseReturn, 'purchase_return').includes('data-view="purchase-return"'), true,
+    '退货那一块照旧在（她从一开始就要的退货表单 ✓）');
   // ⚠️ 2026-10-13 **改写**（逐字）：
   //   改前：`assert.ok(blockOf(purchaseReturn, 'purchase_return').includes('生成采购退货'));`
   //   改后：**不再断言它**（这一块现在是**配品页**）；改钉「空态不留空 div + 是人话卡」。
   //   去向：`returnFormHtml`（含「生成采购退货」那颗）**能力没删** ⇒ 它的回归断言在
   //         `test/scanPurchaseReturn.test.js`（那条链路仍在）✓；她后面会给这一页新的口径 ✓
-  const returnBlock = blockOf(purchaseReturn, 'accessory');
-  assert.ok(returnBlock.includes('<section class="card state-msg">'), '配品页空态 = **人话卡**（不留空 div）');
-  assert.ok(returnBlock.includes(SCAN_PAGE.texts.realmEmptyPurchaseReturnBody), '空态那句是**配品**的人话 ✓');
-  assert.equal(returnBlock.includes('<form'), false, '没有可选配品时不渲染空表单 ✗');
+  // ⭐ 2026-10-14 晚：配品块已从扫码页搬走 ⇒ 这里改判**退货那一块**（`purchase_return` ✓）
+  //   🔴 原"配品空态 = 人话卡"那三条随配品一起**搬去工作台那一页的测试**（判据不删不松 ✗ 只是换位置 ✓）
+  const returnBlock = blockOf(purchaseReturn, 'purchase_return');
+  assert.ok(returnBlock.includes('data-view="purchase-return"') || returnBlock.includes('生成采购退货')
+    || returnBlock.includes('<form'), '退货那一块照旧在（表单/动作至少有一个 ✓）');
 
   // 验收：没有活跃会话 ⇒ 一张人话卡（标题 + 下一步），不是白屏
   const accept = htmlFor('accept');
@@ -316,7 +329,8 @@ test('AC-6R3 认不出的 ?from=（含已退役的 purchase）⇒ 回落销售�
   assert.equal(acceptBlock.includes('工作台'), false, '不许把她支去工作台');
 
   // 每页只有当前那一块（另外五块连字符串都不拼）
-  for (const [realm, html] of [['replenish', replenish], ['accessory', purchaseReturn], ['accept', accept]]) {
+  // ⭐ 2026-10-14 晚：配品已搬去工作台 ⇒ 这一对改成**退货那一页**（`purchase_return` ✓）
+  for (const [realm, html] of [['replenish', replenish], ['purchase_return', purchaseReturn], ['accept', accept]]) {
     for (const other of REALMS.map((item) => item.id).filter((id) => id !== realm)) {
       assert.equal(html.includes(`realm-block--${other}"`), false, `${realm} 页上不该有 ${other} 块`);
     }
@@ -347,11 +361,12 @@ test('AC-6R6 noscript 兜底：六条领域链接一条不少', () => {
   //   改后：迭代 `REALM_TABS`（六个）；内部 5 条 = `?from=<id>`，「上新」= **外链**（同上）✓
   //   理由：兜底那一排与切换条**同一口径**（她没有脚本时也要能点到那六个 ✓）；验收不在条上 ✓
   const noscript = html.slice(html.indexOf('<noscript>'), html.indexOf('</noscript>'));
-  assert.equal((noscript.match(/realm-link/g) || []).length, 6, '兜底那一排正好 6 条（= 条上六个）');
+  assert.equal((noscript.match(/realm-link/g) || []).length, 4, '兜底那一排正好 4 条（= 条上四个）✓');
   for (const realm of REALM_TABS.filter((item) => item.external !== true)) {
     assert.ok(noscript.includes(`href="?from=${realm.id}"`), `noscript 里缺 ${realm.id}`);
   }
-  assert.ok(noscript.includes(SCAN_PAGE.realmBar.newFormUrl), 'noscript 里「上新」也是那条外链');
+  // ⭐ 2026-10-14 晚：上新已去掉 ⇒ noscript 里也**不该再有**那条外链 ✓（判据翻向、未放宽 ✗）
+  assert.equal(noscript.includes(SCAN_PAGE.realmBar.newFormUrl), false, 'noscript 里不再有「上新」外链 ✓');
   assert.equal(noscript.includes('?from=accept'), false, '验收不在兜底那一排（它不是 tab）');
 });
 

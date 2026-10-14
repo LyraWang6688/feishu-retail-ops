@@ -227,7 +227,8 @@ test('AC-S3 功能性的东西一个都不能少：⚠️ 缺 / 状态小标签 
     for (const other of REALM_TABS.filter((item) => item.external !== true)) {
       assert.ok(noScript.includes(`href="?from=${other.id}"`), `noscript 里缺 ${other.id} 的链接`);
     }
-    assert.ok(noScript.includes(SCAN_PAGE.realmBar.newFormUrl), 'noscript 里「上新」也是那条外链');
+    // ⭐ 2026-10-14 晚：上新已从扫码页去掉 ⇒ noscript 里**也不该再有**那条外链 ✓（判据翻向、不放宽 ✗）
+    assert.equal(noScript.includes(SCAN_PAGE.realmBar.newFormUrl), false, 'noscript 里不再有「上新」外链 ✓');
     // 兜底链接是**能点的字**（不是空块）：四条领域名逐字在里面
     // ⚠️ 2026-10-13 改写：noscript 那一排与切换条**同一口径** = REALM_TABS（验收不在）
     for (const other of REALM_TABS) assert.ok(noScript.includes(other.label), `noscript 里缺「${other.label}」这几个字`);
