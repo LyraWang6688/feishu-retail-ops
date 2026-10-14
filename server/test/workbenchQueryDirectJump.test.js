@@ -1,3 +1,6 @@
+// 2026-10-14（业务负责人逐字）：工作台的采购 tab 里的退货不需要了
+//   ⇒ 采购下的退货子页整个拿掉（退货功能不删 —— 它在扫码页的【退货】领域）
+//   不是放宽：判据从「必须有退货」翻成「必须没有」
 /**
  * ⭐⭐ 工作台「入口精简 + 点一次就到」的验收标准（业务负责人 **2026-10-12**，**先写后做**）。
  *
@@ -126,8 +129,8 @@ test('AC1c ⭐ 采购子 tab 逐字 = 验收 · 订单列表 · 供应商往来�
   const purchase = domains.domainById('purchase');
 
   // ⚠️ 2026-10-12 她逐字：「把『采购订单列表』这个子 tab 页改为『订单列表』，把『采购』两个字去掉」
-  assert.deepEqual(labelsOf(purchase), ['验收', '退货', '订单列表', '供应商往来款']);
-  assert.deepEqual(idsOf(purchase), ['purchase-acceptance', 'purchase-return', 'purchase-orders', 'purchase-supplier-money']);
+  assert.deepEqual(labelsOf(purchase), ['验收', '订单列表', '供应商往来款']);
+  assert.deepEqual(idsOf(purchase), ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money']);
   assert.equal(pageById(purchase, 'purchase-arrival'), undefined,
     '「验收到货」入口退场（扫码页已做验收）');
   // ⭐ 2026-10-13 翻转（她要求「验收」挂回第一个子 tab）：
@@ -143,7 +146,7 @@ test('AC1d 子 tab 是按配置渲染的：少一条就真的少一颗按钮（�
 
   assert.deepEqual(buttonsOf('sales'), ['订单列表', '销售查询', '客户往来款', '配品']);
   assert.deepEqual(buttonsOf('inventory'), ['全仓查询', '手工调整']);
-  assert.deepEqual(buttonsOf('purchase'), ['验收', '退货', '订单列表', '供应商往来款']);
+  assert.deepEqual(buttonsOf('purchase'), ['验收', '订单列表', '供应商往来款']);
   assert.deepEqual(buttonsOf('product'), ['货品上新', '标签打印']);
 });
 

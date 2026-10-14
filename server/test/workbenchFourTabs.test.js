@@ -1,3 +1,6 @@
+// 2026-10-14（业务负责人逐字）：工作台的采购 tab 里的退货不需要了
+//   ⇒ 采购下的退货子页整个拿掉（退货功能不删 —— 它在扫码页的【退货】领域）
+//   不是放宽：判据从「必须有退货」翻成「必须没有」
 // ⭐⭐ 2026-10-14 晚（业务负责人逐字）：配品搬到工作台「销售 → 配品」+ 上新去掉
 //   ⇒ 扫码页**只剩 4 个领域**：销售 · 补货 · 库存 · 退货 ✓
 //   🔴 不是放宽 ✗：判据从"六个都在"翻成"**四个在 + 配品/上新不在**" ✓
@@ -299,7 +302,7 @@ test('AC2 四个 tab 的子页面清单与她要的映射逐条对上（含 2026
   //      **只删/改工作台入口**，后端链路（扫码建单 / 验收接口）一条没删。
   assert.deepEqual(pageLabels(byId.get('sales')), ['订单列表', '销售查询', '客户往来款', '配品']);
   assert.deepEqual(pageLabels(byId.get('inventory')), ['全仓查询', '手工调整']);
-  assert.deepEqual(pageLabels(byId.get('purchase')), ['验收', '退货', '订单列表', '供应商往来款']);
+  assert.deepEqual(pageLabels(byId.get('purchase')), ['验收', '订单列表', '供应商往来款']);
   assert.deepEqual(pageLabels(byId.get('product')), ['货品上新', '标签打印']);
 
   // ③ 销售：建单 → 扫码页的**销售领域**（共用同一套业务处理层）；订单列表 = 既有模块的销售模式；
@@ -350,8 +353,8 @@ test('AC2 四个 tab 的子页面清单与她要的映射逐条对上（含 2026
   //    且钉着「验收到货」是独立子页（kind:'orders'）。现在**入口已删**（扫码页已做验收）
   //    ⇒ 只剩两个占位页；「采购订单列表」同时改名「订单列表」。
   assert.deepEqual(purchase.pages.map((page) => page.id),
-    ['purchase-acceptance', 'purchase-return', 'purchase-orders', 'purchase-supplier-money']);
-  assert.deepEqual(purchase.pages.map((page) => page.label), ['验收', '退货', '订单列表', '供应商往来款']);
+    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money']);
+  assert.deepEqual(purchase.pages.map((page) => page.label), ['验收', '订单列表', '供应商往来款']);
   assert.equal(purchase.pages.some((page) => page.kind === 'entry'), false, '采购没有"填编号"的入口页');
   // ⭐ 2026-10-13 翻转（她要求「验收」挂回第一个子 tab）—— 改前逐字：
   //    `assert.equal(purchase.pages.some((page) => page.kind === 'orders'), false, '「验收到货」入口已删（扫码页已做）');`
@@ -575,7 +578,7 @@ test('AC3 四个老页面已按她的口令删掉（代码从仓库里删）—�
   // ⚠️ 2026-10-12 改写：改前 = ['purchase-arrival','purchase-orders','purchase-supplier-money']。
   //    「验收到货」入口已按她口径删除（扫码页已做）⇒ 只剩两个占位页；验收链路一行没删。
   assert.deepEqual(purchase.pages.map((page) => page.id),
-    ['purchase-acceptance', 'purchase-return', 'purchase-orders', 'purchase-supplier-money'], '采购入口只剩两个占位页（验收入口已删）');
+    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money'], '采购入口只剩两个占位页（验收入口已删）');
   const purchaseFormHrefs = purchase.pages.flatMap((page) => (page.cards || []).map((card) => card.href));
   assert.equal(purchaseFormHrefs.includes(links.PURCHASE_REQUEST_FORM_URL), false, '死链的报货表单不再是入口');
   assert.equal(purchaseFormHrefs.includes(links.PURCHASE_RETURN_FORM_URL), false, '死链的退货表单不再是入口');
