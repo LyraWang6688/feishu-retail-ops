@@ -26,22 +26,50 @@ const asNumber = (value) => {
 
 const indexByRecordId = (records) => new Map(records.map((r) => [r.record_id, r]));
 
+/**
+ * ⭐⭐ 2026-10-14（她真机：工作台「采购 → 验收」显示"采购申请读取失败"，且那一屏很慢）：
+ *   实测（服务器上只读复现）：`listPurchaseRequests` 一次要 **8~11 秒** ✗ —— 因为它**并发整表读 4 张表**
+ *   （采购申请 / 货品 / 报货批次 / 行为管理 ✓）。偶发 400（像限流/超时 ✗）。
+ *
+ * ⇒ 这里给"整表读"加一层**短时缓存**（TTL **可配** ✓ 配置先行 ✓ 不写死 ✗）：
+ *   · 🔴 **只影响读** ✗：写入路径一个字都不碰 ✓
+ *   · 🔴 **不许改变查询结果**：缓存的就是 `gateway.listAll` 的原样返回 ✓（既有断言逐字不变 ✓）
+ *   · ⭐ 键里**带 tableKey**（同一进程内不串表 ✓）；`ttl<=0` = 关掉缓存（测试/排查用 ✓）
+ */
+const createTableReadCache = ({ ttlMs, now }) => {
+  const store = new Map();
+  const enabled = Number(ttlMs) > 0;
+  return async (tableKey, read) => {
+    if (!enabled) return read();
+    const hit = store.get(tableKey);
+    const stamp = now();
+    if (hit && stamp - hit.at < Number(ttlMs)) return hit.value;
+    const value = await read();
+    store.set(tableKey, { value, at: stamp });
+    return value;
+  };
+};
+
 const createPurchaseQueryService = (gateway, options = {}) => {
   if (!gateway) throw new Error('PurchaseQueryService requires gateway');
   // 查询结果里的尺码要还原成整数，仍走共享的尺码服务。
   const getSizeReferences = createSizeReferenceAccess({
     gateway, sizeReferences: options.sizeReferences,
   });
+  // ⭐ 整表读的短时缓存（TTL 可配；`<=0` = 关 ✓）
+  const tableTtlMs = options.tableCacheTtlMs === undefined ? 60_000 : options.tableCacheTtlMs;
+  const cachedListAll = createTableReadCache({ ttlMs: tableTtlMs, now: options.now || (() => Date.now()) });
 
   const listPurchaseRequests = async (filters = {}) => {
     const [requests, products, batches, behaviors] = await Promise.all([
-      gateway.listAll('purchaseRequest'),
-      gateway.listAll('product'),
-      gateway.listAll('purchaseOrderBatch'),
+      cachedListAll('purchaseRequest', () => gateway.listAll('purchaseRequest')),
+      cachedListAll('product', () => gateway.listAll('product')),
+      cachedListAll('purchaseOrderBatch', () => gateway.listAll('purchaseOrderBatch')),
+      // ⚠️ 第 4 张（行为管理）也要缓存 ⇒ 否则"第二次快"不成立 ✗（4 张里漏 1 张 = 白等 ✗）
+      cachedListAll('behavior', () => gateway.listAll('behavior')),
       // 「报货信息」的「采购行为」是关联「行为管理」：采购申请与采购退货写在同一张表里，
       // 靠这一列分流。分流口径复用采购链路的同一份策略（purchaseBehaviorPolicy），
       // 不在查询里另写一套判断——两套判断迟早在"什么算退货"上分家。
-      gateway.listAll('behavior'),
     ]);
     const productMap = indexByRecordId(products);
     const batchMap = indexByRecordId(batches);
