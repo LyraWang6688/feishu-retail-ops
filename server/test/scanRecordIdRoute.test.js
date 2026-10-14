@@ -297,9 +297,14 @@ test('AC-R9 成功页那条【再录一单】**回跳 /r/{recordId}**', async ()
   login();
   const writes = [];
   await withServer(appWith(fakeGateway(), writes), async (base) => {
+    // ⭐⭐ 2026-10-14（她裁决①「销售货品页的每件金额必须填，只有资金页可以不填」）：
+    //    `line_amount` 从 `''` 改成 `'399'` —— 空串现在会被路由的「每件实收必填」闸门
+    //    拦成 400（那条的哨兵在 `AC-E2E-11` / `AC-13*`），**走不到资金页/成功页**。
+    //    本用例钉的是**成功页那条【再录一单】的跳转**（与金额无关）⇒ 夹具补一个正常价即可。
+    //    改前逐字：`line_amount: ''` ×2（第 1 步、第 3 步）· 判据一个字没放宽 ✓
     await postR(base, RECORD_ID, sessionCookie('ou_r_submit'), {
       action: SCAN_WRITE.actions.submitOrder, submit_key: 'k', size: '37',
-      payment_status: '', payment_method: '', payment_amount: '', line_amount: '',
+      payment_status: '', payment_method: '', payment_amount: '', line_amount: '399',
     });
     // ⭐⭐ 2026-10-14（新流程**两步**：她：「确认状态是资金那页点击了按钮之后，才算是用户确认了」）：
     //   ① 点提交 ⇒ **只到资金页**（还不建单 ✓）② 点资金页那颗【跳过】⇒ **才建单** ✓
@@ -314,7 +319,7 @@ test('AC-R9 成功页那条【再录一单】**回跳 /r/{recordId}**', async ()
     //    她点【跳过】才到成功页 ⇒ 这里跟着那一跳（`payment_skip` 那个 POST）再取一次 ✓ 断言一条没放宽 ✓
     let html = (await (await postR(base, RECORD_ID, sessionCookie('ou_r_submit'), {
       action: SCAN_WRITE.actions.submitOrder, submit_key: 'k2', size: '37',
-      payment_status: '', payment_method: '', payment_amount: '', line_amount: '',
+      payment_status: '', payment_method: '', payment_amount: '', line_amount: '399',
     })).text());
     if (html.includes('data-view="payment-step"')) {
       const skipForm = (html.match(/<form[^>]*>[\s\S]*?<\/form>/g) || [])
