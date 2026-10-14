@@ -20,6 +20,11 @@ const { PurchaseArrivalConversationService } = require('../services/purchaseArri
 const { createLabelPrintService } = require('../services/labelPrintService');
 const { SampleReplacementService } = require('../services/sampleReplacementService');
 const { logError, logInfo, logWarn } = require('../utils/logger');
+// ⭐⭐ 2026-10-14 晚（埋点 P0 ⑤「**工作台接同一套上报**」）：端点处理与结果事件都来自
+//   `utils/uiTapReport.js` —— 与**扫码页共用同一份实现**（事件名 / 字段 / ④ 判据 / ② 结果事件
+//   全是同一套 ✓ 不抄第二份 ✗）；本文件只负责"挂在工作台这道闸门之后"。
+const { UI_TAP } = require('../config/uiTap');
+const { handleUiTap, uiTapResultMiddleware } = require('../utils/uiTapReport');
 // ⭐⭐ 2026-10-13 Lead 更正：**工作台「扫一扫」照抄扫码页那套 AppLink**（AppLink **不需要签名** ✗）——
 //    AppLink 目标与 UA 判据**都取既有唯一来源**（`config/scanPage.js` 的 `SCAN_NEXT` +
 //    `views/scanPageRenderer.js` 导出的 `canScanNextWithFeishu`）⇒ **不抄第二份** ✓
@@ -74,6 +79,23 @@ const createWorkbenchRouter = (options = {}) => {
     next();
   });
   router.use(requireWorkbenchAccess);
+
+  /**
+   * ⭐⭐ 2026-10-14 晚（埋点 P0 ⑤）：**工作台接同一套上报**。
+   *   · 端点：`POST /api/workbench/ui-tap`（挂在**既有** `requireWorkbenchAccess` 之后 ⇒
+   *     未启用认证 503 / 未登录 401 / 白名单外 403 —— 与别的接口**同一个函数**，不新开鉴权 ✗）；
+   *     ⚠️ 未登录时浏览器那一下 `sendBeacon` 就静默丢弃 ✓（埋点失败**从不**影响她操作 ✓）。
+   *   · 处理体 = `handleUiTap`（扫码页用的**同一个**函数）⇒ 事件名 / 字段 / ④ 重复判据 /
+   *     204-400 契约**逐字一致** ✓。
+   */
+  router.post(UI_TAP.paths.workbench, (req, res) => handleUiTap({ req, res, scope: 'workbench' }));
+
+  /**
+   * ⭐⭐ ② 结果事件：工作台的写接口很多，**一个 `router.use` 全覆盖** ——
+   *   凡带了 `tap_id` 的请求（= 页面上点出来的那些）都在响应 `finish` 时记一条 `ui.tap.result`
+   *   （状态 + 原因码 + 耗时）；GET / 别的调用方**不带 tap_id ⇒ 完全不进这条链**（零开销 ✓）。
+   */
+  router.use(uiTapResultMiddleware('workbench'));
 
   // ── ⭐⭐ 2026-10-14：飞书 **JSAPI 签名**（给「扫码打印」调起飞书扫一扫用）────────────
   /**

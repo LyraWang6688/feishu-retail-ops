@@ -2,6 +2,7 @@ import { requireFeishuAuth, showLoginButton } from './core/auth.js';
 import { describeError, showPageError } from './core/ui.js';
 import { createInventoryAdjustmentModule } from './features/inventory/adjustment.js';
 import { createLabelPrintModule } from './features/labels/index.js';
+import { TAP_TELEMETRY } from './config/telemetry.js';
 
 // 独立页面注册表：key = 页面的 <body data-view="...">，value = 该页面的模块工厂。
 //   inventory-adjustment.html → 库存 tab → 手工调整（盘点调整 / 换季调整）
@@ -25,6 +26,19 @@ const factories = {
 };
 
 async function start() {
+  // ⭐⭐ 2026-10-14 晚（埋点 P0 ⑤）：两个独立页（手工调整 / 标签打印）也接**同一套**上报 ——
+  //   同一份客户端实现（`shared/ui-tap.js` 由 html 先加载）+ 同一份配置（`config/telemetry.js`）。
+  //   🔴 埋点失败从不影响她操作（`try` 包住、静默）✓
+  try {
+    const reporter = typeof window === 'undefined' ? null : window.dshUiTap;
+    if (reporter && typeof reporter.bind === 'function') {
+      reporter.bind({
+        path: TAP_TELEMETRY.path,
+        page: TAP_TELEMETRY.page,
+        formField: TAP_TELEMETRY.formField,
+      });
+    }
+  } catch { /* 埋点失败静默 ✓ */ }
   try {
     const ready = await requireFeishuAuth({
       statusElement: document.getElementById('auth-status'),

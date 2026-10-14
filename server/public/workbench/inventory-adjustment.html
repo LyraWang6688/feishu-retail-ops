@@ -24,6 +24,9 @@
     <section id="standalone-host"></section>
     <p id="page-error" class="error hidden" role="alert"></p>
   </main>
+  <!-- tap telemetry: the ONE shared client implementation (also inlined by the scan page).
+       It must load BEFORE the module script: the modules read window.dshUiTap. -->
+  <script src="/workbench/shared/ui-tap.js"></script>
   <script type="module" src="/workbench/standalone.js"></script>
 </body>
 </html>
