@@ -1222,7 +1222,15 @@ const createScanPageRouter = (options = {}) => {
       && (lookupInputOf(req).number || lookupInputOf(req).recordId)) {
       const pendingSession = await writeService?.sessions?.get?.(openIdOf(req)).catch(() => null);
       const pendingMark = pendingSession?.sale?.paymentStep || pendingSession?.paymentStep;
-      if (pendingMark === 'pending') {
+      // 🔴 2026-10-14 晚（她真机：扫了码之后点「库存 / 补货 / 退货」**全都变成资金页**）：
+      //   ⭐ 根因 = 上面这段"刷新仍给资金页"**没按领域限制** ✗ ⇒ 只要会话里还有 `pending`，
+      //     她点**任何**领域都被资金页接管 ✗。
+      //   ⇒ 修法（**只收紧、不改别的** ✓）：只在**销售**这一块才允许接管 ——
+      //     · `from=sales`（她刷新销售页 ⇒ 仍给资金页 ✓ 不丢她刚填的 ✓）
+      //     · 或**没带 `from`**（裸扫通常就是销售入口 ✓ 保持原有体验 ✓）
+      //     · **其它领域**（库存/补货/退货/…）⇒ ⭐ **一律不接管**（照旧给那一块 ✓）
+      const salesContext = String(req.query?.from || '') === '' || String(req.query?.from) === 'sales';
+      if (pendingMark === 'pending' && salesContext) {
         const pendingView = await service.lookup({ ...lookupInputOf(req), requestId }).catch(() => null);
         if (pendingView?.found) {
           const pendingLines = Array.isArray(pendingSession?.sale?.lines) ? pendingSession.sale.lines : [];
