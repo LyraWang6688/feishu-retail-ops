@@ -23,7 +23,8 @@ const { SCAN_PAGE } = require('../src/config/scanPage');
 const { renderScanPage, STYLE } = require('../src/views/scanPageRenderer');
 
 const SRC = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
-const NAMES = ['销售', '补货', '库存', '标签', '上新', '配品'];
+// 2026-10-14 re-pointed: sales, replenish, inventory, purchase_return(returns), accessory(add-ons), new
+const NAMES = ['\u9500\u552e', '\u8865\u8d27', '\u5e93\u5b58', '\u9000\u8d27', '\u914d\u54c1', '\u4e0a\u65b0'];
 
 const pageHtml = () => renderScanPage({
   found: false, number: 'X', rows: [], columns: [],

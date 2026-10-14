@@ -1487,15 +1487,29 @@ const realmBlockHtml = (realm, view, config, write, page = {}) => {
     return wrap(form || realmEmptyHtml(REPLENISH_REALM, config));
   }
   if (id === PURCHASE_RETURN_REALM) {
-    // ⭐⭐ 2026-10-13（她：「你先把扫码页的退货改成配品页面」）—— 最小可用配品页：
-    //   能进 ✓ · 能看到「其他配品」里有哪些、能选一件加进本单 ✓（服务层能力一直都在 ✓）
-    //   ⚠️ 不自己发明复杂流程 ✗（她后面会给这一页要什么）；`returnFormHtml` 保留（没删能力 ✗）
+    // ⭐⭐ 2026-10-14（业务负责人最终口径 · 见 `docs/scan-page-tabs-2026-10-14.md`）：
+    //   「退货」**回到条上** ✓ ⇒ 本块 = **退货表单**（`returnFormHtml` 一直在 ✓
+    //   只是 2026-10-13 那版被"配品页"占着 ✗）· 能力一个字没删 ✗
+    //   ⇒ 「配品」另开新领域 `accessory`（任务 B ✓ 待接路由/动作配置 ✓）
+    const form = write && write.enabled !== false ? returnFormHtml(view, write) : '';
+    return wrap(form || realmEmptyHtml(PURCHASE_RETURN_REALM, config));
+  }
+
+  if (id === 'accessory') {
+    // ⭐⭐ 2026-10-14（业务负责人：「配品的单独销售」· 见 `docs/scan-page-tabs-2026-10-14.md` 任务 B）：
+    //   本页 = 配品单独销售：**选「其他配品」的名称 ＋ 成交金额**（都是现货 ✓）
+    //   🔴 **不扣库存** —— 依据 `docs/sales-total-and-accessory-render-2026-10-07.md:75` C5 逐字：
+    //      「**配品不写尺码、不产生库存动作**」✓ ⇒ 落销售主表 + 销售明细 + 收款明细 ✓（走既有能力 ✓）
+    //   ⚠️ 现状：提交用**既有** `actions.addAccessory`（把配品加进本单 ✓ 能力一直都在 ✓）；
+    //      ⭐「**一步到位**（不经资金页 / 数量可填 / 付款情况=全付）」需要**路由 + 动作配置**各加一处，
+    //      而那两处**当前归 Lead**（他在做"异步建单"那件 ✗）⇒ **等他收完再接** ✓（不并行改同一文件 ✗）
     const accessories = Array.isArray(write?.accessories) ? write.accessories : [];
     const t = write?.texts || {};
     const fields = write?.fields || {};
-    const body = (write && write.enabled !== false && accessories.length)
+    const usable = Boolean(write && write.enabled !== false && accessories.length);
+    const body = usable
       ? `<h2 class="stock__heading">${escapeHtml(t.accessoryLabel || '')}</h2>
-<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
+<form method="post" action="${escapeHtml(write.postAction)}" class="write-form" data-view="accessory-sell">
 ${hiddenField(fields.action, write.actions.addAccessory)}
 ${hiddenField(fields.submitKey, write.saleKey)}
 <div class="form-row"><label>${escapeHtml(t.accessoryLabel || '')}</label><select name="${escapeHtml(fields.accessory)}"><option value="">${escapeHtml(t.accessoryPlaceholder || '')}</option>${accessories.map((item) => `<option value="${escapeHtml(item.record_id)}">${escapeHtml(item.name)}</option>`).join('')}</select></div>
@@ -1503,7 +1517,7 @@ ${hiddenField(fields.submitKey, write.saleKey)}
 <button type="submit" class="btn"${submitFeedbackAttrs(write)}>${escapeHtml(t.addButton || '')}</button>
 </form>`
       : '';
-    return wrap(body || realmEmptyHtml(PURCHASE_RETURN_REALM, config));
+    return wrap(body || realmEmptyHtml('accessory', config));
   }
 
   // sales（缺省）
