@@ -22,6 +22,12 @@ const SELLABLE_KINDS = Object.freeze({
   }),
   accessory: Object.freeze({
     label: '配品',
+    // ⭐⭐ 2026-10-14（业务负责人逐字）：「**并且配品都是默认的现货**」——
+    //   ⇒ 配品行默认按**现货**走（`salesTradeTypeForStock({ inStock:true })` ⇒ `SALE_CASH` ✓）。
+    //   🔴 **不扣库存** 这条一个字不变 ✗：配品 `tracksInventory=false` ＋ `requiresFulfillment=false`
+    //      ⇒ `scanWriteService` 的"提交即交付 + 扣库存"闸门（`requiresFulfillment && tracksInventory`）
+    //      **永远不会为配品放行** ✓（依据 `docs/sales-total-and-accessory-render-2026-10-07.md:75` C5 ✓）
+    defaultInStock: true,
     detailLinkField: 'accessory',
     detailTableKey: 'accessory',
     detailLabelField: 'name',

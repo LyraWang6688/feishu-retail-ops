@@ -31,6 +31,7 @@ const { SCAN_WRITE } = require('../config/scanWrite');
 const arrivalTab = require('../config/workbenchArrival');
 const { createScanArrivalService } = require('../services/scanArrivalService');
 const accessoryTab = require('../config/workbenchAccessory');
+const { sellableKindOf } = require('../config/sellableKinds');
 const { canScanNextWithFeishu } = require('../views/scanPageRenderer');
 
 // ⚠️ 准入闸门只有这一份实现：语义与文案**逐字不变**（2026-10-08 的《工作台准入口径》沿用它）。
@@ -351,13 +352,20 @@ const createWorkbenchRouter = (options = {}) => {
         openId, requestId, kind: 'accessory',
         accessoryRecordId: req.body?.[accessoryTab.fields.accessoryId],
         amount: amountText,
+        // ⭐ 2026-10-14 她：「并且配品都是默认的现货」⇒ 默认现货来自**可售品配置**（不散写 if ✗）
+        inStock: sellableKindOf({ kind: 'accessory' }).defaultInStock === true,
       });
       if (!line?.ok) return res.status(400).json({ success: false, error: line?.message || accessoryTab.texts.submitFailed });
       const result = await scanWrite.submitSale({
         openId, requestId,
         // 🔴 **同一把 `submitKey`**（幂等不许拆 ✗）：连点两次 / 重试都走这一个键 ✓
         submitKey: req.body?.[accessoryTab.fields.submitKey],
-        payments: [{ method: SCAN_WRITE.sale.defaultPaymentMethod, amount: amountText }],
+        // ⭐ 2026-10-14 她：「配品收款方式读『收款方式管理』表」⇒ 那一行的收款方式 = **她选的那条** ✓
+        //   （选项清单由 `paymentMethodsService`（PR #538）供；未合前若没传 ⇒ 沿用配置默认 ✓ 不猜 ✗）
+        payments: [{
+          method: String(req.body?.[accessoryTab.fields.method] || '').trim() || SCAN_WRITE.sale.defaultPaymentMethod,
+          amount: amountText,
+        }],
         paymentStatus: SCAN_WRITE.sale.paymentStatus.full,
         paidAmount: amountText,
       });
