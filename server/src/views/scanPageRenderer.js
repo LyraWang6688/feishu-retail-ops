@@ -1473,7 +1473,7 @@ ${submitKey ? `<input type="hidden" name="${escapeHtml(fields.submitKey || 'subm
 ${salesEntryRecordId ? `<input type="hidden" name="sales_entry_record_id" value="${escapeHtml(salesEntryRecordId)}">` : ''}
 ${reused ? '<input type="hidden" name="reused" value="1">' : ''}
 ${paymentFieldsHtml}
-<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)} data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(step.payButton || '')}</button>
+<button type="submit" class="btn btn--primary" data-tap-target="${escapeHtml(step.payAction || '')}"${submitFeedbackAttrs(write)} data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(step.payButton || '')}</button>
 </form>`
     : `<div class="payment-step">${paymentFieldsHtml}</div>`;
   return renderDocument({
