@@ -152,11 +152,24 @@ test('AC-MF7 ⭐ 回归：**缺码默认勾**语义不变（补货要补的就�
   const lines = purchaseSizeLines(femaleView());
   const missing = lines.filter((item) => item.missing).map((item) => item.size_text);
   assert.ok(missing.includes('37'), '缺货的普通码仍标缺码 ✓');
-  assert.equal(lines.filter((item) => item.checked).map((item) => item.size_text).sort().join(','),
-    missing.slice().sort().join(','), '`checked` 仍跟着 `missing` 走（语义不变 ✓）');
-  // 渲染上：缺码那一格仍默认勾着（checked 属性在表单里）
+  // ⭐ 2026-10-14 晚（她逐字）：「一键补货的时候，**特殊码不能默认勾选，但是可录尺码还是显示**」
+  //   ⇒ 改指向：缺码默认勾**只对非特殊码**成立 ✓（特殊码照旧**列出** ✓ 只是默认不勾 ✗）
+  //   改前逐字：checked == missing（逐字相等）
+  //   改后逐字：checked == (missing 且 非特殊码)
+  const checked = lines.filter((item) => item.checked).map((item) => item.size_text).sort();
+  const expected = lines.filter((item) => item.missing && !item.special).map((item) => item.size_text).sort();
+  assert.ok(expected.length > 0, '这个夹具里要有"非特殊码的缺码"（否则这条断言没意义 ✗）');
+  assert.deepEqual(checked, expected, '缺码默认勾 = 缺码 且 **不是特殊码** ✓');
+  // ⭐ 特殊码**仍在清单里**（可录尺码还是显示 ✓）
+  const specials = lines.filter((item) => item.special).map((item) => item.size_text);
+  assert.ok(specials.length > 0, '夹具里要有特殊码');
+  for (const size of specials) {
+    assert.ok(lines.some((item) => item.size_text === size), `特殊码 ${size} 仍在清单里（要显示 ✓）`);
+    assert.equal(lines.find((item) => item.size_text === size).checked, false, `特殊码 ${size} 默认不勾 ✓`);
+  }
+  // 渲染上：**非特殊码的缺码**那一格仍默认勾着
   const html = pageOf('replenish');
-  assert.match(html, /value="37"[^>]*checked|checked[^>]*value="37"/, '缺码 37 那一格仍默认勾 ✓');
+  assert.match(html, /value="37"[^>]*checked|checked[^>]*value="37"/, '缺码 37（非特殊码）仍默认勾 ✓');
 });
 
 test('AC-MF8 ⭐ 哨兵：可录范围本体 + 销售页（#515）**一字不动**', () => {
