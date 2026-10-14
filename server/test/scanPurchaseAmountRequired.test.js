@@ -20,13 +20,15 @@
  *         那两句**（人话走配置 ✓），且**写入口一次都没被调用**（= 结构性零写入：
  *         拦在**任何写之前**，不靠写服务配合 ✓）。
  *  AC-PA4 **非空 ⇒ 照旧提交**：闸门放行、写入口被调用、页面 200；
- *         ⚠️ 而且**入参形状一个字没变**（**没有**把金额塞给写服务 —— 落哪一列她还没裁 ✓）。
+ *         ⭐ 2026-10-15（③）**翻新**：退货**必须**逐字带上 `orderAmount`（要落「实际金额」）；
+ *            补货**先不带**（那一列待她裁 ⇒ 见 AC-PA6）✓
  *  AC-PA5 源码哨兵：两条动作**共用同一个闸门函数**（一处实现 ✓ 不复制 ✗）；
  *         开关读配置（`required === false` 可关）；配置用 `readFlag` 且**没有**
  *         `process.env... || fallback` 那种"清空关不掉"的写法；
  *         渲染层「整单金额」**只有一处定义**、两个表单都用它。
- *  AC-PA6 落表**还没做**（她没裁"落到哪一列"）⇒ 源码里那两处 `TODO(purchase-amount)` 必须在
- *         （显眼 ✓），**不许**自己挑一列写 ✗（挑错会污染"到货核对"那条链路的钱）。
+ *  AC-PA6 ⭐ 2026-10-15（③）**翻新**：**退货已落表**（那处 TODO 删掉了）；
+ *         **补货那一处 `TODO(purchase-amount)` 必须留着**，而且必须写清"**为什么先不写**"
+ *         （补货批次带「到货状态=未到货」⇒ 会被到货核对写同一行同一列 ⇒ 待她裁 ✓）
  *
  * ⚠️ 两个"零写入"断言用的是**替身写服务**：它不是"表里没数据就算零写入"，
  *    而是"**连写入口都没进**"——比数表更强（数表会被别人写脏）。
@@ -254,7 +256,7 @@ test('AC-PA3 整单金额为空 ⇒ 400 + 配置人话 + **零写入**（补货 
 // AC-PA4 非空 ⇒ 照旧提交（判据不许被新闸门收窄），且**入参形状一个字没变**
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-PA4 整单金额非空 ⇒ 照旧提交（200），且**没有**把金额塞进写服务入参（落表待她裁）', async () => {
+test('AC-PA4 整单金额非空 ⇒ 照旧提交（200）：退货**逐字带上**金额 · 补货**先不带**（待她裁）', async () => {
   login();
   const cases = [
     ['purchase_return', SCAN_WRITE.actions.purchaseReturn, '采购退货已生成'],
@@ -271,8 +273,22 @@ test('AC-PA4 整单金额非空 ⇒ 照旧提交（200），且**没有**把金�
       assert.equal(write.calls[0].flow, realm === 'replenish' ? 'replenish' : 'purchase_return');
       // ⚠️ **入参形状一个字没变**：金额**不在**传给写服务的那个对象里
       //    （她还没裁"落到哪一列" ⇒ 本版**不落表** ✓，见 AC-PA6 的 TODO）
-      const keys = Object.keys(write.calls[0].args).join(',');
-      assert.equal(keys.includes('amount'), false, `${realm}：本版不许把金额塞给写服务（不入参：${keys}）`);
+      const args = write.calls[0].args;
+      // ⭐⭐ 2026-10-15（③ 写入 · 她裁决 ⓐ「复用「实际金额」」）**成对翻新**：
+      //   改前逐字：`assert.equal(keys.includes('amount'), false, `…不许把金额塞给写服务…`);`
+      //     ⚠️ 那条**本来就虚**（`'orderAmount'.includes('amount')` 是 **false** —— 大写 A ⇒
+      //       大小写敏感 ⇒ 它从来没真正判过"有没有把金额给写服务" ✗ 我今晚抓到的）
+      //   改后逐字：把两件事**分开钉死** ——
+      //     · **退货**：金额**必须**逐字传给写服务（`orderAmount === '399'`）⇒ 它要落「实际金额」✓
+      //     · **补货**：**不许**带任何金额入参（`orderAmount` 缺席）⇒ 这一列先不写（待她裁）✓
+      //   依据：她 2026-10-14 晚「退货整单金额（必填），与补货同一套配置」＋ 2026-10-15 裁决 ⓐ
+      //     ＋ Lead 的 ⓐ+ⓓ（退货现在写、补货那一列先不写、`TODO` 留着）。
+      //   判据**没放宽**：而是把一个假绿换成两条能真红的（`assert.equal` 逐字值 + `in` 判缺席）✓
+      if (realm === 'purchase_return') {
+        assert.equal(args.orderAmount, '399', '退货：整单金额必须逐字透传给写服务（要落「实际金额」✓）');
+      } else {
+        assert.equal('orderAmount' in args, false, '补货：这一列**先不写** ⇒ 不许带金额入参（待她裁 ✓）');
+      }
     });
   }
 });
@@ -308,11 +324,22 @@ test('AC-PA5 源码哨兵：补货 / 退货共用同一个闸门；开关读配�
 // AC-PA6 落表**还没做**：TODO 必须在，且不许自己挑一列写
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-PA6 落表待她裁决：两处 `TODO(purchase-amount)` 必须在（不自己挑一列写）', () => {
+test('AC-PA6 落表：**退货已落（③）**；补货那一处 TODO **必须留着并写清"为什么先不写"**', () => {
   const routeSrc = fs.readFileSync(path.join(SERVER_DIR, 'src', 'routes', 'scanPage.js'), 'utf8');
-  // ⚠️ 只数**真正的 TODO 标记**（`TODO(purchase-amount):`）—— 注释里引用它不算数。
-  assert.equal((routeSrc.match(/TODO\(purchase-amount\):/g) || []).length, 2,
-    '补货 / 退货两侧各留一处显眼的 TODO（落哪一列待她裁决）');
+  // ⭐⭐ 2026-10-15（③ 写入）**成对翻新**（依据：Lead 的裁决 ⓐ+ⓓ：退货现在写 · 补货先不写、TODO 留着而且要说明原因）：
+  //   改前逐字：`assert.equal((routeSrc.match(/TODO\(purchase-amount\):/g) || []).length, 2,
+  //               '补货 / 退货两侧各留一处显眼的 TODO（落哪一列待她裁决）');`
+  //   改后逐字：只数**行首的**真 TODO 标记 `^\s*// TODO\(purchase-amount\):` ⇒ 恰 **1** 处（补货那处）——
+  //     退货那处已随 ③ 落地删掉；退货分支里那句「改前逐字」**引用**不在行首 ⇒ 不会被数进来 ✓
+  //     （判据是**更精确**，不是放宽 ✓）
+  assert.equal((routeSrc.match(/^\s*\/\/ TODO\(purchase-amount\):/gm) || []).length, 1,
+    '只剩补货那一处真 TODO（那一列先不写 —— 待她裁 ✓）');
+  // 干 TODO 不行 ✗：必须写清"为什么先不写"（附只读核出来的代码点 + "待她裁"）
+  const todoAt = routeSrc.indexOf('TODO(purchase-amount):');
+  const todoBlock = routeSrc.slice(todoAt, todoAt + 2000);
+  for (const needle of ['confirmPurchaseRequest', '未到货', 'writeAcceptance', '待她裁']) {
+    assert.ok(todoBlock.includes(needle), `补货那处 TODO 要写清为什么（缺「${needle}」）`);
+  }
   // 老链路那笔账**不许被碰**：核实过的两个事实要能在注释里看到（下一个接棒的人不用再核一遍）
-  assert.ok(routeSrc.includes('实际金额'), '要写清"唯一那个金额列已被到货核对占用"这个事实');
+  assert.ok(routeSrc.includes('实际金额'), '要写清"唯一那个金额列"是哪一个（实际金额）');
 });

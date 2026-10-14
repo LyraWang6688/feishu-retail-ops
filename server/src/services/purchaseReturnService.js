@@ -166,6 +166,33 @@ const createPurchaseReturnService = (options = {}) => {
       created: batch.created === true, reused: batch.reused === true,
     });
 
+    // ⭐⭐ 2026-10-15（业务负责人裁决ⓐ）：**退货这一批的「整单金额」**
+    //   写到这一行的「实际金额」（`purchaseOrderBatch.actualAmount`）。
+    //   依据：她 2026-10-14 晚逐字「退货整单金额（必填），与补货同一套配置」
+    //     （必填 + 配置已在 PR #561）＋她 **2026-10-15 裁决ⓐ**：列名 = 复用「实际金额」。
+    //   🔴 **只有退货走这里**：补货（报货）那条的批次行带「到货状态 = 未到货」
+    //     （`purchaseWebhookService` 的 `confirmPurchaseRequest`）⇒ 她之后的到货核对会写同一行同一列
+    //     （本仓库已只读核实、Lead 已在问她）⇒ **先不写**（见 `routes/scanPage.js` 里保留的 TODO）。
+    //   ⚠️ 位置：**批次行建好之后、明细/库存之前** —— 这样它失败时只留下一行
+    //     可重试的批次行（`posting_stage: batch_created`），不会出现"明细写了、金额没写"的半截账。
+    //   ⚠️ 空值 ⇒ **不写也不报错**（向后兼容：服务层的老调用方不带这个字段；
+    //     页面那道闸门已保证从页面来的提交一定非空 ✓）。
+    //   🔴 **不许假成功**：金额没落表 ⇒ 这一次不算成功（如实抛出 ⇒ 上层报「写入失败」；
+    //     同一把 `submitKey` 重试会接着这一批写 ✓）。
+    const orderAmount = draft.order_amount;
+    if (orderAmount !== undefined && orderAmount !== null && String(orderAmount).trim() !== '') {
+      const amountWrite = await orderBatches.writeOrderAmount({
+        batchNo: plan.batch_no, batchRecordId, actualAmount: orderAmount, correlation,
+      });
+      if (!amountWrite.updated) {
+        const error = new Error('purchase return order amount not written: '
+          + String(amountWrite.reason || 'unknown'));
+        error.scanUserMessage = SCAN_WRITE.texts.purchaseReturnAmountWriteFailedBody;
+        throw error;
+      }
+      await store.update(taskId, { order_amount_written: amountWrite.actual_amount });
+    }
+
     // ⭐⭐ 2026-10-12：采购明细ID = `{报货批次号}-{两位序号}`（退货这条链路同样要写；
     //    与报货那条**同一个分配器** ⇒ 同一批次内 01/02… 不重排、不重号、重放不重复占号）。
     const detailIdCursor = await detailIds.open({ batchRecordId, batchNo: plan.batch_no });

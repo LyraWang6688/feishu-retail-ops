@@ -7,6 +7,18 @@ const { relation } = require('./v1ReferenceResolver');
 const { batchQuantityFields } = require('../config/purchaseBatchQuantity');
 const { logInfo, logWarn } = require('../utils/logger');
 
+/**
+ * 数字列的唯一判据（`undefined` / `null` / 空串 ⇒ `null` = **这一列不写**；
+ * 认不出数字 ⇒ `null`）。
+ *
+ * ⚠️ **绝不往数字列写空值**（"往表里塞东西"，而且让"谁写的"变得看不出来）；
+ *   原来的写法是 `writeAcceptance` 里的一个局部 lambda（2026-10-15 上移到模块级，
+ *   因为退货整单金额那条路也要用**同一个**判据 ⇒ 不抄第二份 ✗）。
+ */
+const numericOrNull = (value) => (value === undefined || value === null || value === ''
+  ? null
+  : (Number.isFinite(Number(value)) ? Number(value) : null));
+
 // 「报货批次」**那一行**的读写（业务负责人 2026-10-07 把它定为"控制到货情况"的表）。
 //
 // 它只管这几件事，一件都不多：
@@ -218,6 +230,87 @@ class PurchaseOrderBatchService {
   }
 
   /**
+   * ⭐⭐ 2026-10-15（业务负责人裁决）：**退货这一批的「整单金额」**
+   *   写到这一行的「**实际金额**」（`actualAmount`）。
+   *
+   * 依据（**都在文件里**）：
+   *   · 她 2026-10-14 晚逐字：「**退货整单金额（必填），与补货同一套配置**」
+   *     （落地在 `config/scanWrite.js` 的 `PURCHASE_AMOUNT` + PR #561）；
+   *   · 她 **2026-10-15 裁决ⓐ**：列名 = **复用「实际金额」**
+   *     （`config/v1BitableSchema.js` 的 `purchaseOrderBatch.fields.actualAmount`，**不用改 schema**）。
+   *
+   * 🔴 **只有退货走这里——补货（报货）那条不写这一列**：
+   *   我在 2026-10-15 只读核出的事实（不凭印象 ✗）：
+   *   · 补货那条：`services/purchaseWebhookService.js` 的 `confirmPurchaseRequest`
+   *     建行时**显式写 `arrivalStatus = 未到货`**（那里的 `:1603`；注释逐字：
+   *     「她走的两条入口（供应商报单 webhook / 扫码页补货）都汇到这一处建行点」）
+   *     ⇒ 这条批次**会**进到货验收清单（`services/purchasePendingBatchService.js`
+   *     按 `到货状态 = 未到货` 过滤）⇒ 她之后**到货核对**填的「实际金额」
+   *     会经本文件的 `writeAcceptance`（下面那个方法）**写同一行的同一列**，
+   *     而且**没有「已有值不覆盖」的保护** ⇒ 两边都写 = **同一个单元格两个写入者** ✗；
+   *   · 退货那条：`createForReturnBatch`（上面）建行时**不写「到货状态」** ⇒
+   *     不进到货清单、不会被到货核对写到 ⇒ **独占这一列** ✓。
+   *   ⇒ 补货那半**待她裁**（Lead 已在问：「报货时填的那个金额，和到货时填的
+   *     「实际金额」是同一个数吗？」）；本方法**只给退货用** ✗。
+   *
+   * ⚠️ 语义提醒：「实际金额」在她 2026-10-08 的口径里是「**这一次供应商的金额**」
+   *   （见 `writeAcceptance` 的方法头）；退货这一批**没有「到货」那一步** ⇒
+   *   这里写的就是她**提交退货时填的那个整单金额** ✓（不是"到货金额"）。
+   *
+   * 🔴 **只写这一列** ✗：不动「实际数量」、不动「到货状态」（后者是到货核对那条链路的事）。
+   * ⚠️ 幂等：写的是**同一个值**（整批一个数）⇒ 重复执行结果一致（**不新建行、不累加**）✓。
+   *
+   * @returns {Promise<{updated: boolean, reason?: string, record_id?: string, actual_amount?: number}>}
+   *   找不到行 / 值不是数字 ⇒ `updated:false` + `reason`（**不抛**）——
+   *   调用方（`purchaseReturnService`）据此**如实报失败**（**不许假成功** ✗）。
+   */
+  async writeOrderAmount({ batchNo = '', batchRecordId = '', actualAmount, correlation = {} } = {}) {
+    // 没有批次身份（两个都空）= "孤儿调用"（与 `writeAcceptance` 同一条口径）。
+    if (!String(batchNo || '').trim() && !String(batchRecordId || '').trim()) {
+      return { updated: false, reason: 'no_batch_identity', batch_no: '' };
+    }
+    const target = await this.locate({ batchNo, batchRecordId });
+    if (!target) {
+      logWarn('purchase.batch.order_amount.no_record', { batch_no: batchNo, batch_record_id: batchRecordId });
+      return { updated: false, reason: 'no_batch_record', batch_no: batchNo };
+    }
+    const amount = numericOrNull(actualAmount);
+    if (amount === null) {
+      // ↙️ 这里**不是"没填就不写"**：调用方只在**非空**时才会进来（页面那道闸门已经拦了空与非数字）
+      //   ⇒ 走到这里说明值认不出 ⇒ **如实报失败**（不能当"没填"滑过去 ✗）。
+      logWarn('purchase.batch.order_amount.not_a_number', {
+        batch_no: batchNo, batch_record_id: target.record_id,
+      });
+      return { updated: false, reason: 'not_a_number', record_id: target.record_id, batch_no: batchNo };
+    }
+    // ⚠️ **写失败一律不抛**：返回 `updated:false` + `reason`，由调用方（退货那条路）**如实报失败** ——
+    //    "落表失败 ⇒ 如实报写入失败、**不许假成功**"是业务负责人的硬要求 ✗；
+    //    原始错误只进日志（不进她看得见的页面）。
+    try {
+      await this.gateway.update('purchaseOrderBatch', target.record_id, { actualAmount: amount }, { correlation });
+    } catch (error) {
+      logWarn('purchase.batch.order_amount.update_failed', {
+        batch_no: batchNo, batch_record_id: target.record_id, error: error?.message,
+      });
+      return { updated: false, reason: 'update_failed', record_id: target.record_id, batch_no: batchNo };
+    }
+    logInfo('purchase.batch.order_amount.written', {
+      batch_no: batchNo,
+      batch_record_id: target.record_id,
+      matched_by: target.matched_by,
+      actual_amount: amount,
+      source: 'scan_return_submit',
+      // 明写"没动别的列"：这是口径，也是将来别人改这段代码时的绊线。
+      wrote_actual_quantity: false,
+      wrote_arrival_status: false,
+    });
+    return {
+      updated: true, record_id: target.record_id, matched_by: target.matched_by,
+      batch_no: batchNo, actual_amount: amount,
+    };
+  }
+
+  /**
    * ⭐ 把**结构化验收结果**写到这一批的批次行上（**到货确认的第一步**，在入库之前）。
    *
    * ⭐⭐ 2026-10-08（业务负责人亲自批准）：「**实际数量**」「**实际金额**」两个值
@@ -258,11 +351,11 @@ class PurchaseOrderBatchService {
       return { updated: false, reason: 'no_batch_record', batch_no: batchNo };
     }
     // ⚠️ 「实际数量」「实际金额」**只在拿得到有效数字时才进 values**（见方法头的 ⚠️）。
-    const numeric = (value) => (value === undefined || value === null || value === ''
-      ? null
-      : (Number.isFinite(Number(value)) ? Number(value) : null));
-    const quantityValue = numeric(actualQuantity);
-    const amountValue = numeric(actualAmount);
+    // ⭐ 2026-10-15：那个数值判据**上移到模块级**（`numericOrNull`）—— 本文件现在有两处
+    //    写数字列的地方（到货核对的 `writeAcceptance` / 退货整单金额的 `writeOrderAmount`），
+    //    **判据只有一处** ✓（行为一个字没变：同一个 lambda 原样搬走）。
+    const quantityValue = numericOrNull(actualQuantity);
+    const amountValue = numericOrNull(actualAmount);
     const values = {};
     if (quantityValue !== null) values.actualQuantity = quantityValue;
     if (amountValue !== null) values.actualAmount = amountValue;

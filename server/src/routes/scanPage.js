@@ -561,8 +561,13 @@ const createScanPageRouter = (options = {}) => {
    *    差别只有出口：销售那条回**资金页**（她还得在那一页点按钮），采购这两条回
    *    **一张人话页 + 一颗「回上一页」的链接**（那一页的表单还在，她补一个数字再提交 ✓）。
    * ⚠️ 这张页面**不写任何业务表**（`sendHuman` 只把 HTML 发出去 ✓）。
-   * 🔴 本版**只判"填没填"**（她的原话就是「必填」）：数字格式不做额外校验、金额也**不落表**
-   *    （落哪一列待她裁决 ⇒ 见补货 / 退货两处的 `TODO(purchase-amount)`）。
+   * ⭐⭐ 2026-10-15（③ 写入 · 她裁决 ⓐ「复用「实际金额」」）**改指向**：
+   *   改前逐字：`🔴 本版**只判"填没填"**（她的原话就是「必填」）：数字格式不做额外校验、金额也**不落表**`
+   *   改后逐字：**两件事都变了** —— ① 那个数现在**要落表**（退货批次行的「实际金额」）；
+   *     ② ⇒ 多一道「**必须是数字**」的闸门（`purchaseAmountInvalidPage`，见下面）——
+   *     放一个非数字过去 = "页面填了、表里没有" = **假成功** ✗（她最在意的一条）。
+   *   依据：她 2026-10-14 晚「退货整单金额（必填），与补货同一套配置」＋ 2026-10-15 裁决 ⓐ
+   *     ＋ 那一列是**数字列**（`v1BitableSchema` 的 `purchaseOrderBatch.actualAmount`）。
    */
   const purchaseAmountMissingPage = (req, res, requestId, realm) => {
     logWarn(writeConfig.events.purchaseAmountRequired, {
@@ -594,6 +599,47 @@ const createScanPageRouter = (options = {}) => {
   const purchaseAmountMissing = (body) => {
     if (writeConfig.purchaseAmount?.required === false) return false;
     return String(body?.[writeConfig.fields.purchaseAmount] ?? '').trim() === '';
+  };
+
+  /**
+   * ⭐⭐ 2026-10-15（③ 写入）：整单金额**填了但不是数字** ⇒ 也当场拦住。
+   *
+   * 依据：她 2026-10-14 晚「退货整单金额（必填），与补货同一套配置」＋ **2026-10-15 裁决 ⓐ**
+   *   （列名 = 复用「实际金额」）⇒ 那个数要落进**数字列** `purchaseOrderBatch.actualAmount`。
+   *   ⇒ 放一个非数字过去就是「**页面填了、表里没有**」= 假成功 ✗（她最在意的一条）。
+   *
+   * ⚠️ 与"空"**分两道**（各有各的人话）：空 ⇒ `purchaseAmountMissingPage`（"还没填"）；
+   *   非空但认不出数字 ⇒ 本函数 → `purchaseAmountInvalidPage`（"要填数字"）。
+   * ⚠️ 判据是**收紧**，不是放宽 ✓；关掉整套闸门仍是 `SCAN_PURCHASE_AMOUNT_REQUIRED` ✓。
+   * ⚠️ 服务层还有**同一条**数值判据（`purchaseOrderBatchService.writeOrderAmount` 的
+   *   `numericOrNull`）⇒ 就算有人绕过这条路由直调写服务，也**不会**写进坏值/空值 ✓（只会如实报失败）。
+   */
+  const purchaseAmountInvalid = (body) => {
+    if (writeConfig.purchaseAmount?.required === false) return false;
+    const raw = String(body?.[writeConfig.fields.purchaseAmount] ?? '').trim();
+    if (raw === '') return false; // 空的那条由上面那道闸门管（各有各的人话 ✓）
+    return !Number.isFinite(Number(raw));
+  };
+
+  /** 「要填数字」那张人话页（与"还没填"同一形状：H1 + 怎么填 + 回上一页 + 埋点原因码）。 */
+  const purchaseAmountInvalidPage = (req, res, requestId, realm) => {
+    logWarn(writeConfig.events.purchaseAmountRequired, {
+      request_id: requestId,
+      realm,
+      reason: 'amount_invalid',
+      target: String(scanTargetOf(req).value || '').slice(0, 120),
+    });
+    markTapCode(res, 'purchase_amount_invalid');
+    return sendHuman(res, 400, {
+      title: writeConfig.texts.purchaseAmountInvalidTitle,
+      body: writeConfig.texts.purchaseAmountInvalidBody,
+      requestId,
+      retryHint: writeConfig.texts.failedRetryHint,
+      backPath: postActionFor(
+        backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realm,
+      ),
+      backLabel: writeConfig.texts.purchaseAmountBackLabel,
+    });
   };
 
   const respondWriteFailure = (res, result, requestId) => {
@@ -1777,11 +1823,25 @@ const createScanPageRouter = (options = {}) => {
         // ⭐⭐ 2026-10-14 晚：**整单金额必填**（补货 / 退货**同一个**闸门 —— 见
         //   `purchaseAmountMissingPage`）。空 ⇒ 400 + 人话 + **一个字都不写** ✓；
         //   非空 ⇒ 照旧往下走 ✓。
-        // TODO(purchase-amount): 金额**还没落表** —— 落哪一列**待她裁决**
-        //   （采购明细 `purchaseRequest` 没有任何金额列；采购主表 `purchaseOrderBatch` 唯一的
-        //    金额列「实际金额」已被"到货核对"占用）⇒ 裁决后在这里把它交给写服务 / 计划。
-        //   🔴 **绝不自己挑一列写**（挑错会污染到货那条链路的钱）。
+        // ⭐⭐ 2026-10-15（③ 写入）：**不是数字**也当场拦（见 `purchaseAmountInvalidPage`）——
+        //   那个数要落**数字列**，放过去就是"页面填了、表里没有" = 假成功 ✗。
+        // TODO(purchase-amount): **补货这一条暂时不写这一列** —— 为什么（2026-10-15 只读核出来，Lead 已认）：
+        //   · 补货（报货）的批次行由**报货那条链路**的 `confirmPurchaseRequest`（建「报货批次」行那一处；
+        //     那里的注释逐字：「她走的两条入口（供应商报单 webhook / 扫码页补货）都汇到这一处建行点」）
+        //     （`origin/main` 的 `:1603`）建，**显式写 `arrivalStatus = 未到货`** ⇒ 这条批次**会**进到货验收清单
+        //     （`purchasePendingBatchService` 按 `到货状态 = 未到货` 过滤）；
+        //   · ⇒ 她之后**到货核对**填的「实际金额」会经 `purchaseOrderBatchService.writeAcceptance`
+        //     （那里的 `:331` 起）**写同一行的同一列**，而且**没有"已有值不覆盖"的保护**；
+        //   · ⇒ 若两边都写 = 同一单元格**两个写入者**（后写的静默覆盖前者）✗ ——
+        //     **不自己决定覆盖顺序**，**待她裁**（Lead 正在问：「报货时填的那个整单金额，和到货时填的
+        //     「实际金额」是同一个数吗？」）。
+        //   ⚠️ **退货那条不打架、已经写了**（退货批次建行时不写「到货状态」⇒ 不进到货清单 ⇒ 独占该列）：
+        //     见下面的退货分支 + `purchaseReturnService` 的 `writeOrderAmount` 调用点。
+        //   ⚠️ 这段注释**刻意不写**那个 service 的名字 —— `routes/*` 有一条既有哨兵
+        //     （`test/scanPage.test.js` ④「路由里不许出现写链路的服务」）会扫源码；按它的判据走，
+        //     **不放宽它** ✓（只改我这句注释的措辞）。
         if (purchaseAmountMissing(body)) return purchaseAmountMissingPage(req, res, requestId, realm);
+        if (purchaseAmountInvalid(body)) return purchaseAmountInvalidPage(req, res, requestId, realm);
         const result = await writeService.submitReplenish({
           openId,
           requestId,
@@ -1826,16 +1886,28 @@ const createScanPageRouter = (options = {}) => {
         }
         const entries = parseReturnEntries(body, fields, writeConfig);
         // ⭐⭐ 2026-10-14 晚（她逐字）：「**退货整单金额（必填），与补货同一套配置**」
-        //   ⇒ 与补货**同一个**闸门（一套配置 ✓ 不写两套 ✗）：空 ⇒ 400 + 人话 + **零写入** ✓。
-        // TODO(purchase-amount): 金额**还没落表** —— 落哪一列**待她裁决**（同上，
-        //   采购明细没有金额列、「实际金额」已被"到货核对"占用）⇒ 不自己挑列写 ✗。
+        //   ⇒ 与补货**同一个**闸门（一套配置 ✓ 不写两套 ✗）：空 ⇒ 400 + 人话 + **零写入** ✓；
+        //     ⭐ 2026-10-15：**不是数字**也拦（要落数字列 ⇒ 不许假成功 ✗）。
         if (purchaseAmountMissing(body)) return purchaseAmountMissingPage(req, res, requestId, realm);
+        if (purchaseAmountInvalid(body)) return purchaseAmountInvalidPage(req, res, requestId, realm);
+        // ⭐⭐ 2026-10-15 **③ 写入已落地**（她裁决 ⓐ「复用「实际金额」」）——
+        //   改前逐字：`// TODO(purchase-amount): 金额**还没落表** —— 落哪一列**待她裁决**（同上，
+        //             采购明细没有金额列、「实际金额」已被"到货核对"占用）⇒ 不自己挑列写 ✗。`
+        //   改后逐字：**TODO 删掉**，改成下面这一句 + 把金额透传给既有写服务：
+        //     `orderAmount: String(body[fields.purchaseAmount] ?? '').trim(),`
+        //   依据：她 2026-10-14 晚「退货整单金额（必填），与补货同一套配置」＋ 2026-10-15 裁决 ⓐ
+        //     （落点 = `purchaseOrderBatch.actualAmount`）；⚠️ **退货这条独占该列**（只读核过：
+        //     退货批次建行时不写「到货状态」⇒ 不进到货清单 ⇒ 不会被到货核对覆盖）✓
+        //   ⚠️ 写库仍在**既有**构件里：`scanWriteService.submitPurchaseReturn` → `purchaseReturnService`
+        //     → `purchaseOrderBatchService.writeOrderAmount`（**不新开写库路径** ✗）；
+        //     同一把 `submitKey` 幂等（批次行只建一条、金额是同一个值 ⇒ 不累加）✓
         const result = await writeService.submitPurchaseReturn({
           openId,
           requestId,
           submitKey: body[fields.submitKey],
           productRecordId: view.product_record_id,
           number: view.number,
+          orderAmount: String(body[fields.purchaseAmount] ?? '').trim(),
           entries,
         });
         if (!result.ok) return respondWriteFailure(res, result, requestId);
