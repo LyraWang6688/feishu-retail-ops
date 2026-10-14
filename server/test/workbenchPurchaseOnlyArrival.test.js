@@ -1,3 +1,7 @@
+// ⭐⭐ 2026-10-14 改指向（业务负责人逐字：「**工作台的采购 tab 里的退货不需要了**」）：
+//   采购子 tab 从「验收·退货·订单列表·供应商往来款」⇒「验收·订单列表·供应商往来款」✓
+//   🔴 **不是放宽** ✗：判据从"必须有退货"翻成"**必须没有退货**"，其余三项逐字不变 ✓
+//   ⚠️ 退货**功能没删** ✓ —— 它一直在**扫码页**的【退货】领域（`?from=purchase_return` ✓）
 /**
  * ⚠️ **2026-10-12 口径又变了**（业务负责人逐字）：「**采购里面的验收到货也不需要了**，因为
  *    **验收到货我们在扫码页也做了**，所以目前我们的采购页就先保持『**订单列表**』和『**供应商往来款**』」
@@ -74,9 +78,9 @@ test('AC-W1 采购子 tab 逐字 = 订单列表 · 供应商往来款（验收�
   const byId = new Map(domains.DOMAIN_TABS.map((domain) => [domain.id, domain]));
   // ⚠️ 2026-10-12 改写：改前 = ['验收到货','采购订单列表','供应商往来款'] / 对应 id。
   assert.deepEqual(byId.get('purchase').pages.map((page) => page.label),
-    ['验收', '退货', '订单列表', '供应商往来款']);
+    ['验收', '订单列表', '供应商往来款']);
   assert.deepEqual(byId.get('purchase').pages.map((page) => page.id),
-    ['purchase-acceptance', 'purchase-return', 'purchase-orders', 'purchase-supplier-money']);
+    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money']);
   // ⚠️ 2026-10-13：**只翻"退货"这一件事** —— 她点名要它作为采购子 tab（第二个）✓
   //    改前逐字：`for (const gone of ['purchase-report', 'purchase-return', 'purchase-arrival'])` +
   //              `for (const gone of ['报货', '退货', '验收到货'])`
@@ -87,8 +91,9 @@ test('AC-W1 采购子 tab 逐字 = 订单列表 · 供应商往来款（验收�
   for (const gone of ['报货', '验收到货']) {
     assert.equal(byId.get('purchase').pages.some((page) => page.label === gone), false, `${gone} 子 tab 应已不在`);
   }
-  assert.equal(byId.get('purchase').pages.some((page) => page.id === 'purchase-return'), true,
-    '⭐「退货」子 tab 已按她 2026-10-13 的要求加回（采购第二个）');
+// 2026-10-14（她逐字）：「工作台的采购 tab 里的退货不需要了」⇒ 翻成「必须没有」（不放宽）
+  assert.equal(byId.get('purchase').pages.some((page) => page.id === 'purchase-return'), false,
+    '⭐「退货」子 tab 已按她 2026-10-14 的话退场（采购里不再重复开这个入口）');
   // 其余三个领域：销售 / 库存各少一个入口（2026-10-12），货品不变
   assert.deepEqual(byId.get('sales').pages.map((page) => page.label),
     ['订单列表', '销售查询', '客户往来款', '配品']);

@@ -1,3 +1,7 @@
+// ⭐⭐ 2026-10-14 改指向（业务负责人逐字：「**工作台的采购 tab 里的退货不需要了**」）：
+//   采购子 tab 从「验收·退货·订单列表·供应商往来款」⇒「验收·订单列表·供应商往来款」✓
+//   🔴 **不是放宽** ✗：判据从"必须有退货"翻成"**必须没有退货**"，其余三项逐字不变 ✓
+//   ⚠️ 退货**功能没删** ✓ —— 它一直在**扫码页**的【退货】领域（`?from=purchase_return` ✓）
 /**
  * 她 2026-10-13 逐字：「把**退货放在工作台采购单独一个子 tab，是退货！**」
  * ⚠️ 退货**本来就在扫码页**（`/s/{number}?from=purchase_return`，领域 id `purchase_return` ✓）⇒
@@ -35,16 +39,18 @@ async function loadDomainPages() {
 
 test('AC1 ⭐ 采购子 tab 顺序逐字 = 验收 · **退货** · 订单列表 · 供应商往来款', () => {
   const pages = [...purchaseSlice().matchAll(/\n        id: '([^']+)',\n        label: '([^']+)',/g)].map((m) => `${m[1]}:${m[2]}`);
-  assert.deepEqual(pages, ['purchase-acceptance:验收', 'purchase-return:退货', 'purchase-orders:订单列表', 'purchase-supplier-money:供应商往来款'],
+  assert.deepEqual(pages, ['purchase-acceptance:验收', 'purchase-orders:订单列表', 'purchase-supplier-money:供应商往来款'],
     '⭐ 退货**紧跟验收**；订单列表 / 供应商往来款 与改前逐字相同 ✓');
 });
 
 test('AC2 ⭐ 退货这一页**先保底**：占位页 ⇒ **进得去、不白屏**（真正录入与验收同构，下一轮做）', () => {
   const slice = purchaseSlice();
-  const block = slice.slice(slice.indexOf("id: 'purchase-return'"), slice.indexOf("id: 'purchase-orders'"));
-  assert.match(block, /kind: 'placeholder'/, '先占位保底（她：**先只定位置** ✓）');
-  assert.equal(/kind: 'entry'/.test(block), false, '⚠️ **别按"表单外链"做**（她更正过：退货都是扫码 ✗）');
-  assert.equal(/PURCHASE_RETURN_FORM_URL/.test(block), false, '不放飞书表单外链（那是供应商报退货用的，不是她的扫码退货 ✗）');
+  // 2026-10-14（她：工作台采购 tab 里的退货不需要了）⇒ 整个子页退场：
+  //   判据从“这一页长什么样”翻成“**它已经不存在**”（不放宽 ✗）
+  assert.equal(slice.includes("id: 'purchase-return'"), false, '采购下的退货子页已退场 ✓');
+  assert.equal(/PURCHASE_RETURN_FORM_URL/.test(slice), false, '整份配置里都不放“供应商报退货”的飞书表单外链 ✓');
+  assert.equal(slice.includes('purchase-return'), false, '退货那一格在配置里彻底没有了 ✓');
+
   // 占位页由既有机制渲染 ⇒ 点得进、不白屏 ✓（渲染那句在领域骨架里，一行没改）
   const renderer = read('features/domains/index.js');
   assert.match(renderer, /host\.innerHTML = domainPageHtml\(page\)/, '占位页走既有渲染（不白屏 ✓）');

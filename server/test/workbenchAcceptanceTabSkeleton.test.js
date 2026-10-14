@@ -1,3 +1,7 @@
+// ⭐⭐ 2026-10-14 改指向（业务负责人逐字：「**工作台的采购 tab 里的退货不需要了**」）：
+//   采购子 tab 从「验收·退货·订单列表·供应商往来款」⇒「验收·订单列表·供应商往来款」✓
+//   🔴 **不是放宽** ✗：判据从"必须有退货"翻成"**必须没有退货**"，其余三项逐字不变 ✓
+//   ⚠️ 退货**功能没删** ✓ —— 它一直在**扫码页**的【退货】领域（`?from=purchase_return` ✓）
 /**
  * 骨架第 1 步（她 2026-10-13：「**先把骨架搭好**」）：
  * 采购子 tab 第一个 = **验收**（名字逐字 ✓），**其余子 tab 顺序一个字不动** ✓；
@@ -21,15 +25,16 @@ const purchaseSlice = () => {
 test('AC1 ⭐ 采购子 tab 第一个 = 「验收」（逐字）；其余子 tab 顺序不变', () => {
   const source = read('config/domains.js');
   const pages = [...purchaseSlice().matchAll(/\n        id: '([^']+)',\n        label: '([^']+)',/g)].map((m) => `${m[1]}:${m[2]}`);
-  assert.deepEqual(pages, ['purchase-acceptance:验收', 'purchase-return:退货', 'purchase-orders:订单列表', 'purchase-supplier-money:供应商往来款'],
+  assert.deepEqual(pages, ['purchase-acceptance:验收', 'purchase-orders:订单列表', 'purchase-supplier-money:供应商往来款'],
     '⭐ 验收第一个、退货第二个（2026-10-13）；订单列表 · 供应商往来款 顺序与名字不变 ✓');
   assert.equal(source.includes("label: '验收到货'") || source.includes("label: '到货验收'"), false, '名字必须是「验收」两个字');
 });
 
 test('AC2 ⭐⭐ 「验收」挂的是**既有验收模块**（orders/purchase）—— 不新造页面、不新开接口 ✓', () => {
   const purchase = purchaseSlice();
-  // ⚠️ 切片止于**下一个子页**（现在是「退货」；原来止于订单列表 ⇒ 会把退货的 placeholder 也算进来 ✗）
-  const first = purchase.slice(purchase.indexOf("id: 'purchase-acceptance'"), purchase.indexOf("id: 'purchase-return'"));
+  // 2026-10-14（她逐字）：「工作台的采购 tab 里的退货不需要了」⇒ 退货子页退场
+  //   切片改为止于**下一个真实存在的子页**「订单列表」（原来止于退货；它没了 ✗）
+  const first = purchase.slice(purchase.indexOf("id: 'purchase-acceptance'"), purchase.indexOf("id: 'purchase-orders'"));
   assert.match(first, /kind: 'orders'/, '走既有 orders 模块');
   assert.match(first, /mode: 'purchase'/, '采购模式的验收页（未到货优先 + 折叠已到货 + 验收到货表单）');
   assert.equal(/kind: 'placeholder'/.test(first), false, '已经不是占位骨架了（第 2 步把它接上了 ✓）');
