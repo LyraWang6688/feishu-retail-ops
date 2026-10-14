@@ -24,6 +24,10 @@ const { logError, logWarn } = require('../utils/logger');
 //    AppLink 目标与 UA 判据**都取既有唯一来源**（`config/scanPage.js` 的 `SCAN_NEXT` +
 //    `views/scanPageRenderer.js` 导出的 `canScanNextWithFeishu`）⇒ **不抄第二份** ✓
 const { SCAN_NEXT } = require('../config/scanPage');
+// ⭐⭐ 2026-10-14：工作台「销售 → 配品」子 tab（业务负责人：「整体都迁移过去」✓）
+const { createScanWriteService } = require('../services/scanWriteService');
+const { SCAN_WRITE } = require('../config/scanWrite');
+const accessoryTab = require('../config/workbenchAccessory');
 const { canScanNextWithFeishu } = require('../views/scanPageRenderer');
 
 // ⚠️ 准入闸门只有这一份实现：语义与文案**逐字不变**（2026-10-08 的《工作台准入口径》沿用它）。
@@ -222,6 +226,58 @@ const createWorkbenchRouter = (options = {}) => {
       return res.json({ success: true, ...result });
     } catch (error) {
       logError('workbench.sales.payment.failed', { request_id: req.requestId, error: error.message });
+      return res.status(400).json({ success: false, error: error.message });
+    }
+  });
+  /**
+   * ⭐⭐ 2026-10-14（业务负责人：「把配品迁移到工作台销售里，新建一个子 tab」✓ 入口变了、逻辑没变 ✗）
+   *   · `GET /sales/accessories`  —— **只读**：名称清单复用既有 `listAccessories()`（30 秒短缓存 ✓
+   *     与扫码页**同一个**读取口 ✓ 不另造 ✗）
+   *   · `POST /sales/accessory-sales` —— **一步成单**：数量默认 1 · 成交金额**必填** ✓ · 付款方式 **全付** ✓
+   *     ⇒ 复用既有 `addSaleLine(kind:'accessory')` + `submitSale`（**同一把** `submitKey` ✓ 幂等 ✓）
+   *     🔴 **零库存动作**（配品没有鞋 ✓）· 失败**如实 400 + 人话** ✗ 绝不返回"成功" ✗
+   */
+  const scanWrite = options.scanWrite || createScanWriteService({
+    gateway: options.gateway || new V1BitableGateway(), config: SCAN_WRITE,
+  });
+  router.get(accessoryTab.api.list, async (req, res) => {
+    try {
+      const accessories = (await scanWrite.listAccessories()) || [];
+      return res.json({ success: true, accessories });
+    } catch (error) {
+      logError('workbench.sales.accessories.failed', { request_id: req.requestId, error: error.message });
+      return res.status(400).json({ success: false, error: accessoryTab.texts.listFailed });
+    }
+  });
+  router.post(accessoryTab.api.submit, async (req, res) => {
+    try {
+      const openId = req.workbenchUser?.open_id;
+      const requestId = req.body?.requestId || req.requestId;
+      const amountText = String(req.body?.[accessoryTab.fields.amount] ?? '').trim();
+      const amount = Number(amountText);
+      // ⭐ 成交金额**必填**（她 2026-10-14）⇒ 空 / 非正数 ⇒ 当场 400 + 人话，**一行都不写** ✗
+      if (!amountText || !Number.isFinite(amount) || amount <= 0) {
+        return res.status(400).json({ success: false, error: accessoryTab.texts.amountRequired });
+      }
+      const line = await scanWrite.addSaleLine({
+        openId, requestId, kind: 'accessory',
+        accessoryRecordId: req.body?.[accessoryTab.fields.accessoryId],
+        amount: amountText,
+      });
+      if (!line?.ok) return res.status(400).json({ success: false, error: line?.message || accessoryTab.texts.submitFailed });
+      const result = await scanWrite.submitSale({
+        openId, requestId,
+        // 🔴 **同一把 `submitKey`**（幂等不许拆 ✗）：连点两次 / 重试都走这一个键 ✓
+        submitKey: req.body?.[accessoryTab.fields.submitKey],
+        payments: [{ method: SCAN_WRITE.sale.defaultPaymentMethod, amount: amountText }],
+        paymentStatus: SCAN_WRITE.sale.paymentStatus.full,
+        paidAmount: amountText,
+      });
+      if (!result?.ok) return res.status(400).json({ success: false, error: result?.message || accessoryTab.texts.submitFailed });
+      ordersCache.invalidate();
+      return res.json({ success: true, order_no: result.order_no || '', reused: result.reused === true });
+    } catch (error) {
+      logError('workbench.sales.accessory.failed', { request_id: req.requestId, error: error.message });
       return res.status(400).json({ success: false, error: error.message });
     }
   });

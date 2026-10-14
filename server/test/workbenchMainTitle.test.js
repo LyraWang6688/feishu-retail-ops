@@ -125,13 +125,13 @@ test('AC4b 每个大 tab 的子 tab 清单逐字不变（唯一来源 config/dom
 
   // ⚠️ 2026-10-12 断言**同步**（她的新口径：销售无「销售建单」· 库存无「单款查询」·
   //    采购无「验收到货」，「采购订单列表」改名「订单列表」）：
-  //    改前（逐字）：sales ['销售建单','订单列表','销售查询','客户往来款']
+  //    改前（逐字）：sales ['销售建单','订单列表','销售查询','客户往来款', '配品']
   //                 / inventory ['单款查询','全仓查询','手工调整']
   //                 / purchase ['验收到货','采购订单列表','供应商往来款']
   //    理由：本文件（batch① 删主标题）的这几条是**结构哨兵**，口径变了就要逐字跟上；
   //      "四个大 tab 与子 tab 一条不少"这条不变量由 `workbenchQueryDirectJump.test.js` 与
   //      `workbenchFourTabs.test.js` 共同保证（列出的子 tab 数没少，只是按她口径换了成员）。
-  assert.deepEqual(labels('sales'), ['订单列表', '销售查询', '客户往来款']);
+  assert.deepEqual(labels('sales'), ['订单列表', '销售查询', '客户往来款', '配品']);
   assert.deepEqual(labels('inventory'), ['全仓查询', '手工调整']);
   assert.deepEqual(labels('purchase'), ['验收', '退货', '订单列表', '供应商往来款']);
   assert.deepEqual(labels('product'), ['货品上新', '标签打印']);

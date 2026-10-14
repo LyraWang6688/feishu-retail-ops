@@ -91,7 +91,7 @@ test('AC-W1 采购子 tab 逐字 = 订单列表 · 供应商往来款（验收�
     '⭐「退货」子 tab 已按她 2026-10-13 的要求加回（采购第二个）');
   // 其余三个领域：销售 / 库存各少一个入口（2026-10-12），货品不变
   assert.deepEqual(byId.get('sales').pages.map((page) => page.label),
-    ['订单列表', '销售查询', '客户往来款']);
+    ['订单列表', '销售查询', '客户往来款', '配品']);
   assert.deepEqual(byId.get('inventory').pages.map((page) => page.label),
     ['全仓查询', '手工调整']);
   assert.deepEqual(byId.get('product').pages.map((page) => page.label),

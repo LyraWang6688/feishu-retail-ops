@@ -258,7 +258,8 @@ test('AC7 六条写入路径（补收款/补实收/交付/售后/二次交付/�
   const orderActions = readSrc('src/routes/workbenchOrderActions.js');
 
   // ① `routes/workbench.js` 里四条：sample-fill / payments / detail-amounts / deliveries
-  assert.equal((workbench.match(/ordersCache\.invalidate\(\)/g) || []).length, 4,
+  // 2026-10-14: +1 = the accessory-sale write entry (a new sale must invalidate the orders cache)
+  assert.equal((workbench.match(/ordersCache\.invalidate\(\)/g) || []).length, 5,
     'workbench.js 里四条写入口各作废一次');
   for (const route of ["'/sales/sample-fill'", "'/sales/payments'", "'/sales/detail-amounts'", "'/sales/deliveries'"]) {
     const at = workbench.indexOf(`router.post(${route}`);

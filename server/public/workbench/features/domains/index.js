@@ -4,6 +4,7 @@ import { showPageError } from '../../core/ui.js';
 import { createInventoryAdjustmentModule } from '../inventory/adjustment.js';
 import { createOrdersModule } from '../orders/index.js';
 import { createScanModule } from '../scan/index.js';
+import { createAccessoryModule } from '../accessory/index.js';
 import { entryTarget } from './pages.js';
 import { domainPageHtml, domainSubTabsHtml, resolveTabClick } from './nav.js';
 
@@ -60,6 +61,8 @@ export function createDomainModule(domainId) {
     if (page.kind === 'scan') return void createScanModule().mount(host);
     if (page.kind === 'orders') return void createOrdersModule({ mode: page.mode }).mount(host);
     if (page.kind === 'inventory-adjustment') return void createInventoryAdjustmentModule().mount(host);
+    // 2026-10-14: accessory sales has its own sub-page (kind 'accessory')
+    if (page.kind === 'accessory') return void createAccessoryModule().mount(host);
     host.innerHTML = domainPageHtml(page);
     return undefined;
   }

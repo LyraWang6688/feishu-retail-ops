@@ -291,13 +291,13 @@ test('AC2 四个 tab 的子页面清单与她要的映射逐条对上（含 2026
   const byId = new Map(DOMAIN_TABS.map((domain) => [domain.id, domain]));
   // ⚠️ 2026-10-12 断言**改写**（她的新口径：销售无「销售建单」· 库存无「单款查询」·
   //    采购无「验收到货」，且「采购订单列表」改名「订单列表」）：
-  //    改前（逐字）：sales ['销售建单','订单列表','销售查询','客户往来款']
+  //    改前（逐字）：sales ['销售建单','订单列表','销售查询','客户往来款', '配品']
   //                 / inventory ['单款查询','全仓查询','手工调整']
   //                 / purchase ['验收到货','采购订单列表','供应商往来款']
   //    改后（逐字）：下面三条。理由：她的原话「销售它就没有『销售建单』」「单款查询不需要了」
   //      「验收到货也不需要了」「把『采购订单列表』这个子 tab 页改为『订单列表』」——
   //      **只删/改工作台入口**，后端链路（扫码建单 / 验收接口）一条没删。
-  assert.deepEqual(pageLabels(byId.get('sales')), ['订单列表', '销售查询', '客户往来款']);
+  assert.deepEqual(pageLabels(byId.get('sales')), ['订单列表', '销售查询', '客户往来款', '配品']);
   assert.deepEqual(pageLabels(byId.get('inventory')), ['全仓查询', '手工调整']);
   assert.deepEqual(pageLabels(byId.get('purchase')), ['验收', '退货', '订单列表', '供应商往来款']);
   assert.deepEqual(pageLabels(byId.get('product')), ['货品上新', '标签打印']);
@@ -392,8 +392,8 @@ test('AC2b 领域子 tab 是渲染出来的（不是写死的 HTML）：按钮 /
   const subTabs = nav.domainSubTabsHtml(sales, 'sales-orders');
   const buttons = [...subTabs.matchAll(/<button class="([^"]*)" type="button"\s*data-domain-page="([^"]*)"[^>]*>([^<]*)</g)];
   // ⚠️ 2026-10-12 改写：销售少一个「销售建单」子 tab（见 AC2 的沿革注释）。
-  assert.deepEqual(buttons.map((button) => button[3]), ['订单列表', '销售查询', '客户往来款']);
-  assert.deepEqual(buttons.map((button) => button[2]), ['sales-orders', 'sales-query', 'sales-customer-money']);
+  assert.deepEqual(buttons.map((button) => button[3]), ['订单列表', '销售查询', '客户往来款', '配品']);
+  assert.deepEqual(buttons.map((button) => button[2]), ['sales-orders', 'sales-query', 'sales-customer-money', 'sales-accessory']);
   assert.ok(buttons[0][1].includes('active'), '传进来的那个子页 = 选中态');
   assert.ok(!buttons[1][1].includes('active'), '没选中的子页不许带 active');
   // ⚠️ 用 `data-domain-page`（不是 data-subtab）：内嵌的既有模块自己也在用 data-subtab

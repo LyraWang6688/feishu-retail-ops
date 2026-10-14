@@ -93,7 +93,9 @@ export const DOMAIN_TABS = [
         kind: 'orders',
         mode: 'sales',
       },
-      {
+      // ⭐⭐ 2026-10-14 晚（业务负责人：「新建一个子 tab，整体都迁移过去」✓）：
+      //   位置 = 订单列表 / 销售查询 / 客户往来款 **之后** ✓（`kind:'accessory'` 由 features/domains 挂载 ✓）
+            {
         id: 'sales-query',
         label: '销售查询',
         kind: 'query',
@@ -108,6 +110,13 @@ export const DOMAIN_TABS = [
         label: '客户往来款',
         kind: 'placeholder',
       },
+      // 2026-10-14: accessory sub-tab sits AFTER the last sales page
+      {
+        id: 'sales-accessory',
+        label: '配品',
+        kind: 'accessory',
+      },
+
     ],
   },
 
