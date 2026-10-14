@@ -319,15 +319,20 @@ test('AC-6R3 认不出的 ?from=（含已退役的 purchase）⇒ 回落销售�
   assert.ok(returnBlock.includes('data-view="purchase-return"') || returnBlock.includes('生成采购退货')
     || returnBlock.includes('<form'), '退货那一块照旧在（表单/动作至少有一个 ✓）');
 
-  // 验收：没有活跃会话 ⇒ 一张人话卡（标题 + 下一步），不是白屏
+  // ⭐⭐ 2026-10-14 晚（业务负责人逐字）：「/s/accept 这条路要彻底拆掉」
+  //   改前逐字：断言「验收领域自己有内容」（accept-pending / accept-manual）
+  //   改后逐字：那一屏已退场 ⇒ 改钉「入口没了 ＋ 能力仍在工作台那条路」（不放宽）
   const accept = htmlFor('accept');
   const acceptBlock = blockOf(accept, 'accept');
-  // ⭐ 2026-10-12：没有活跃会话时 = **她自己开工那一块**（列未到货批次 + 手输兜底）
-  assert.ok(acceptBlock.includes('data-view="accept-pending"'), '验收领域自己有内容');
-  assert.ok(acceptBlock.includes(SCAN_PAGE.texts.acceptPendingTitle));
-  assert.ok(acceptBlock.includes('data-view="accept-manual"'), '手输批次号兜底在');
-  // 🔴 她 2026-10-12：「验收还是只在扫码页呀，我不需要在工作台」⇒ 这一块里**不许**出现「工作台」
-  assert.equal(acceptBlock.includes('工作台'), false, '不许把她支去工作台');
+  assert.equal(acceptBlock.includes('accept-pending'), false, '未到货批次那一块已退场');
+  assert.equal(acceptBlock.includes('accept-manual'), false, '手输批次号兜底已退场');
+  const wbSrc = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '../src/routes/workbench.js'), 'utf8');
+  assert.match(wbSrc, /purchase\/arrivals\/detail/, '工作台那条只读明细在');
+  assert.match(wbSrc, /purchase\/arrivals\/accept/, '工作台那条完成验收在');
+  const arrivalSrc = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '../src/services/scanArrivalService.js'), 'utf8');
+  assert.match(arrivalSrc, /applyPurchase/, '加库存仍走既有服务（能力没搬走）');
 
   // 每页只有当前那一块（另外五块连字符串都不拼）
   // ⭐ 2026-10-14 晚：配品已搬去工作台 ⇒ 这一对改成**退货那一页**（`purchase_return` ✓）
@@ -375,7 +380,10 @@ test('AC-6R6 noscript 兜底：六条领域链接一条不少', () => {
 // AC-6R7 / AC-6R8 服务器记住她正在做什么（只接管验收）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-6R7 有活跃验收会话时：裸扫 ⇒ 验收领域；显式点其它领域 ⇒ 不被接管；完成后 ⇒ 回到销售', async () => {
+test('AC-6R7 有活跃验收会话时：不再接管（她：那条路彻底拆掉）', async () => {
+  // 2026-10-14 晚改指向（不放宽）：
+  //   改前逐字：有活跃验收会话 ⇒ 裸扫落到验收领域、其它领域不被接管、完成后回销售
+  //   改后逐字：那一屏与接管整套都退场 ⇒ 裸扫照旧是销售；开会话也不再改判领域
   login();
   const arrival = createArrivalHarness();
   const openId = 'ou_six_realms';
@@ -383,51 +391,29 @@ test('AC-6R7 有活跃验收会话时：裸扫 ⇒ 验收领域；显式点其�
   try {
     await withServer(sixRealmApp(arrival), async (base) => {
       const pageUrl = `${base}/s/${ENCODED}`;
-      // 还没有验收会话：裸扫 = 销售
       const before = await (await fetch(pageUrl, { headers: cookie })).text();
-      assert.ok(before.includes('realm-block--sales"'), '没在验收时裸扫 = 销售');
-
-      // 工作台那一步：开会话
-      const started = await arrival.start({
-        openId, batchNo: BATCH, batchRecordId: BATCH_RECORD_ID, operatorOpenId: openId,
-      });
-      assert.equal(started.ok, true, JSON.stringify(started));
-
-      // 裸扫 ⇒ **验收领域**（服务器记得她正在验收）
-      const during = await (await fetch(pageUrl, { headers: cookie })).text();
-      assert.ok(during.includes('realm-block--accept"'), '验收期间裸扫 ⇒ 验收领域');
-      assert.ok(during.includes('已验收 0 双 / 应到 2 双'), '本单条照旧');
-      // 她显式点别的领域 ⇒ 不被接管
-      for (const realm of ['sales', 'replenish', 'purchase_return', 'inventory', 'product']) {
-        const html = await (await fetch(`${pageUrl}?from=${realm}`, { headers: cookie })).text();
-        assert.ok(html.includes(`realm-block--${realm}"`), `?from=${realm} 不许被验收接管`);
-        assert.equal(html.includes('realm-block--accept"'), false);
-      }
-      // 点【验收】tab 自己 ⇒ 验收领域（会话还在）
-      const acceptTab = await (await fetch(`${pageUrl}?from=accept`, { headers: cookie })).text();
-      assert.ok(acceptTab.includes('realm-block--accept"'));
-
-      // 完成验收（用扫描行 + 金额走既有链路）⇒ 会话结束 ⇒ 裸扫回到销售
-      await arrival.addScan({ openId, productRecordId: 'prod_1', size: 40, quantity: 2 });
-      const finished = await arrival.finish({ openId, actualAmount: 999, operatorOpenId: openId });
-      assert.equal(finished.ok, true, JSON.stringify(finished));
+      assert.ok(before.includes('realm-block--sales'), '裸扫 = 销售（没在验收时）');
+      await arrival.start({ openId, batchNo: BATCH, batchRecordId: BATCH_RECORD_ID, operatorOpenId: openId });
       const after = await (await fetch(pageUrl, { headers: cookie })).text();
-      assert.ok(after.includes('realm-block--sales"'), '验收完成后裸扫 ⇒ 回到销售');
+      assert.ok(after.includes('realm-block--sales'), '开了会话也不再接管 ⇒ 照旧销售');
+      assert.equal(after.includes('accept-pending'), false, '旧那一屏内容不许再出现');
     });
-  } finally { rmDir(path.join(os.tmpdir(), 'six-realms-noop')); }
+  } finally { rmDir(path.join(os.tmpdir(), 'scan-accept-arrival')); }
 });
 
-test('AC-6R8 ?from=accept 没有活跃会话时仍是验收领域（人话卡），不回落销售', () => {
+test('AC-6R8 ?from=accept：那一格仍可选，但里面没内容了（旧屏退场）', () => {
+  // 2026-10-14 晚改指向（不放宽）：
+  //   改前逐字：?from=accept 没有活跃会话 ⇒ 仍是验收领域 + 自助块（accept-pending）
+  //   改后逐字：自助块已退场（她：那条路彻底拆掉）⇒ 只保留「URL 说哪一格就选哪一格」
   login();
   const arrival = createArrivalHarness();
   return withServer(sixRealmApp(arrival), async (base) => {
     const html = await (await fetch(`${base}/s/${ENCODED}?from=accept`, {
       headers: { cookie: sessionCookie('ou_six_realms_8') },
     })).text();
-    assert.ok(html.includes('realm-block--accept"'), 'URL 说什么就是什么');
-    // ⭐ 2026-10-12：仍是验收领域，内容是**自助块**（列未到货批次 / 手输兜底）
-    assert.ok(blockOf(html, 'accept').includes('data-view="accept-pending"'));
-    assert.equal(html.includes('realm-block--sales"'), false);
+    assert.ok(html.includes('realm-block--accept'), 'URL 说哪一格就选哪一格（照旧）');
+    assert.equal(blockOf(html, 'accept').includes('accept-pending'), false, '自助块已退场');
+    assert.equal(blockOf(html, 'accept').includes('accept-manual'), false, '手输兜底已退场');
   });
 });
 

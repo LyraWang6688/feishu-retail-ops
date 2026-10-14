@@ -153,125 +153,47 @@ const get = async (base, target) => {
 };
 
 // ── AC-AL1 / AC-AL2 ───────────────────────────────────────────────────────
-test('AC-AL1/AL2 GET /accept（无 batch）⇒ 200 + 列出未到货批次（可点）+ 手输兜底表单', async () => {
-  login();
-  const h = createHarness();
-  await withServer(h.app, async (base) => {
-    const { response, html } = await get(base, '/s/accept');
-    assert.equal(response.status, 200, '她点【验收】进来必须是 200（改前是 400 + 一句"回验收领域"）');
-    // ① 列出未到货批次：批次号逐字 + 可点链接（URL 编码）
-    assert.ok(html.includes(BATCH_A), `要列出未到货批次 ${BATCH_A}`);
-    assert.ok(html.includes(`href="/s/accept?batch=${encodeURIComponent(BATCH_A)}"`),
-      '那一条必须是可点的链接，指向 /s/accept?batch=<批次号>');
-    assert.ok(html.includes('data-view="accept-pending"'), '用的就是既有那块"未到货批次"');
-    assert.ok(html.includes('已到货') === false || html.includes('CGD-20261012-0003') === false,
-      '已到货的批次不许列进来');
-    // ② 手输兜底：真的有一个输入框（她截图那页**没有输入框**）
-    assert.ok(html.includes('data-view="accept-manual"'), '必须有手输兜底那一块');
-    assert.ok(/<form method="get" action="\/s\/accept"[^>]*>/.test(html), '手输表单 = GET /s/accept');
-    assert.ok(html.includes('name="batch"'), '输入框的字段名必须是 batch');
-  });
+/**
+ * ⭐⭐ 2026-10-14 晚（业务负责人口径）：**「`/s/accept` 这条路要彻底拆掉」**
+ *
+ * ⚠️ **本文件原样保留夹具，只把"验收落地页必须存在"那一族断言**（改前逐字：GET /s/accept ⇒ 200 +
+ *    列未到货批次 + 手输兜底 + 进验收模式 …）**改成"必须不存在"** ✓（**不是整份删覆盖** ✗）：
+ *    · 路由里**没有** `/accept` 注册 ✓
+ *    · 渲染层里**没有**验收那一块的标记（`data-view="acceptance"` / `accept-pending`）✓
+ *    · 旧 `?from=accept` **回落销售**（`resolveRealm` 既有口径 ✓ 不报错 ✓）
+ *    · **仍成立、照旧不许动**的：加库存走 `InventoryService.applyPurchase` ✓ ·
+ *      工作台 `POST /api/workbench/purchase/arrivals/confirm` ✓ · 工作台「采购 → 验收」那屏 ✓
+ */
+const SRC_DIR = path.join(__dirname, '../src');
+const readSrc = (rel) => fs.readFileSync(path.join(SRC_DIR, rel), 'utf8');
+
+test('AC-OFF1 🔴 路由里**没有** `/accept` 注册（扫码页那条路已彻底拆掉）', () => {
+  const routes = readSrc('routes/scanPage.js');
+  assert.equal(/router\.(get|post)\('\/accept'/.test(routes), false,
+    '改前逐字：router.get(\'/accept\'…) 存在 ✓ ⇒ 改后：**必须没有** ✓（依据：她 2026-10-14 晚「这条路要彻底拆掉」）');
 });
 
-// ── AC-AL3 哨兵 ───────────────────────────────────────────────────────────
-test('AC-AL3 哨兵：落地页里**不出现**「回【验收】领域」（那句自相矛盾的话）', async () => {
-  login();
-  const h = createHarness();
-  await withServer(h.app, async (base) => {
-    const { html } = await get(base, '/s/accept');
-    assert.equal(html.includes('回【验收】领域'), false, '她就是从【验收】进来的，不许再让她"回【验收】"');
-    assert.equal(html.includes(SCAN_WRITE.texts.acceptBatchMissingBody), false,
-      '那句"没带批次号…回验收领域"不许出现在落地页上');
-    // 也不许把她支去工作台（既有 AC-AS7 的口径）
-    assert.equal(html.includes('工作台'), false);
-  });
+test('AC-OFF2 🔴 渲染层里**没有**验收那一块的标记（`data-view="acceptance"` / `accept-pending`）', () => {
+  const renderer = readSrc('views/scanPageRenderer.js');
+  assert.equal(renderer.includes('data-view="acceptance"'), false, '改前逐字：必须有 data-view="acceptance" ✗ ⇒ 改后：必须没有 ✓');
+  assert.equal(renderer.includes('accept-pending'), false, '改前逐字：自助块 data-view="accept-pending" ✗ ⇒ 改后：必须没有 ✓');
+  assert.equal(/renderAcceptance(Page|DonePage|SelfServe)/.test(renderer), false, '三个验收渲染函数随验收一起退场 ✓');
 });
 
-// ── AC-AL4 ────────────────────────────────────────────────────────────────
-test('AC-AL4 点一条 ⇒ 进验收模式（200 + data-view="acceptance" + 那一批的批次号）', async () => {
-  login();
-  const h = createHarness();
-  await withServer(h.app, async (base) => {
-    const { response, html } = await get(base, `/s/accept?batch=${encodeURIComponent(BATCH_A)}`);
-    assert.equal(response.status, 200, `点一条要能进验收（${response.status}）`);
-    assert.ok(html.includes('data-view="acceptance"'), '进的是验收模式那一块');
-    assert.ok(html.includes(`data-batch="${BATCH_A}"`), '身上要带这一批的批次号');
-  });
+test('AC-OFF3 🔴 旧 `?from=accept` **回落销售**（不报错、不白屏）', () => {
+  const { resolveRealm } = require('../src/views/scanPageRealm');
+  // ⭐ 2026-10-14 晚（cut A）：**拆的是"路"**（`/s/accept` 不再有路由 ✓）；`accept` 这个领域
+  //    按 Lead 的切法**先留在 REALMS**（cut B 才删 ⇒ 那一步才变成 `'sales'` ✓）
+  //    ⇒ 本刀如实断言：解析结果**仍是 'accept'**（不谎报 ✓）＋ 认不出的照旧回落销售 ✓
+  assert.equal(resolveRealm('accept'), 'accept', 'cut A：领域还在（cut B 删它时才变 sales ✓ 不提前谎报 ✗）');
+  assert.equal(resolveRealm('bogus'), 'sales', '认不出的一律回落缺省（既有口径一字不动 ✓）');
 });
 
-// ── AC-AL5 / AC-AL6 ───────────────────────────────────────────────────────
-test('AC-AL5 一个未到货都没有 ⇒ 200 + 一句人话 + 手输兜底仍在', async () => {
-  login();
-  const h = createHarness({ noPending: true });
-  await withServer(h.app, async (base) => {
-    const { response, html } = await get(base, '/s/accept');
-    assert.equal(response.status, 200);
-    assert.ok(html.includes(SCAN_PAGE.texts.acceptPendingEmptyBody), '一句人话（一个未到货都没有）');
-    assert.ok(html.includes('data-view="accept-manual"'), '手输兜底仍在（照样能开工）');
-  });
-});
-
-test('AC-AL6 读表失败 ⇒ 页面仍 200 + 手输兜底在（不把页面打红）', async () => {
-  login();
-  const h = createHarness({ failBatches: true });
-  await withServer(h.app, async (base) => {
-    const { response, html } = await get(base, '/s/accept');
-    assert.equal(response.status, 200, '读表失败也只是"没列出来"，不许 500');
-    assert.ok(html.includes('data-view="accept-manual"'), '兜底输入框必须在');
-    assert.equal(html.includes(SCAN_PAGE.texts.errorTitle), false, '不许变成"系统出错"页');
-  });
-});
-
-// ── AC-AL7 ────────────────────────────────────────────────────────────────
-test('AC-AL7 手输一个不对的批次号 ⇒ 仍是人话（4xx 不是 500）', async () => {
-  login();
-  const h = createHarness();
-  await withServer(h.app, async (base) => {
-    const { response, html } = await get(base, '/s/accept?batch=NOPE-9999');
-    assert.ok(response.status >= 400 && response.status < 500,
-      `不该 500（实际 ${response.status}）`);
-    // 契约：**4xx + 一张看得懂的人话卡**（不白屏、不 5xx、不回显内部细节）。
-    assert.ok(/<section class="card state-msg">/.test(html), '必须是一张人话卡（不是白屏）');
-    assert.match(html, /<h1>[^<]+<\/h1>/, '要有标题');
-    assert.match(html, /<p>[^<]+<\/p>/, '要有正文（"这个批次找不到"这类）');
-    assert.equal(/未配置语义字段|TypeError|at .*\.js:\d+/.test(html), false, '不许把内部错误甩给她');
-  });
-});
-
-// ── AC-AL8 回归 ───────────────────────────────────────────────────────────
-test('AC-AL8 回归：**有编号的领域页**（/s/{编号}?from=accept）那块自助块逐字不变', async () => {
-  login();
-  const h = createHarness();
-  await withServer(h.app, async (base) => {
-    const { response, html } = await get(base, `/s/${encodeURIComponent(NUMBER)}?from=accept`);
-    assert.equal(response.status, 200);
-    assert.ok(html.includes('realm-block--accept'), '仍渲染验收领域那一块');
-    assert.ok(html.includes(`href="/s/accept?batch=${encodeURIComponent(BATCH_A)}"`), '批次链接逐字不变');
-    assert.ok(html.includes('data-view="accept-manual"'), '手输兜底逐字不变');
-  });
-});
-
-// ── AC-AL9 两条前缀 ───────────────────────────────────────────────────────
-test('AC-AL9 /r/accept（无 batch）⇒ 200，且链接与表单都指向 /r/accept（不写死 /s/）', async () => {
-  login();
-  const h = createHarness();
-  await withServer(h.app, async (base) => {
-    const { response, html } = await get(base, '/r/accept');
-    assert.equal(response.status, 200, '记录 ID 那条前缀下也要成立');
-    assert.ok(html.includes(BATCH_A), '同样列出未到货批次');
-    assert.ok(html.includes(`href="/r/accept?batch=${encodeURIComponent(BATCH_A)}"`),
-      '链接必须走**当前挂载前缀**（/r），不许写死 /s/');
-    assert.ok(/<form method="get" action="\/r\/accept"[^>]*>/.test(html), '手输表单也要 POST/GET 回 /r/accept');
-    assert.equal(html.includes('href="/s/accept?batch='), false, '不许把 /r 上的她踢回 /s');
-  });
-});
-
-// ── AC-AL10 结构哨兵 ──────────────────────────────────────────────────────
-test('AC-AL10 结构性：落地页**复用**同一块（同一渲染函数；路由里 pendingBatches 只有一处）', () => {
-  const renderer = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
-  assert.ok(/const renderAcceptanceSelfServe[\s\S]{0,600}acceptPendingBlockHtml\(/.test(renderer),
-    '自助落地页必须**复用** `acceptPendingBlockHtml`（不许复制一份列表/表单实现）');
-  const route = fs.readFileSync(path.join(__dirname, '../src/routes/scanPage.js'), 'utf8');
-  assert.equal((route.match(/pendingBatches\(/g) || []).length, 1,
-    '`pendingBatches()` 只该有**一处**（领域页与落地页共用）');
+test('AC-OFF4 ✅ 仍成立、照旧不许动的（共享能力没跟着删）', () => {
+  const routes = readSrc('routes/workbench.js');
+  assert.match(routes, /router\.post\('\/purchase\/arrivals\/confirm'/, '工作台"确认到货"接口照旧 ✓');
+  const renderer = readSrc('views/scanPageRenderer.js');
+  assert.ok(renderer.length > 0);
+  const inventory = readSrc('services/inventoryService.js');
+  assert.match(inventory, /applyPurchase/, '加库存仍只走 `InventoryService.applyPurchase` ✓');
 });

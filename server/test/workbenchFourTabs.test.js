@@ -859,11 +859,14 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
   // ⭐ 2026-10-14 晚：配品已从扫码页搬去工作台 ⇒ 用**领域清单**判它不在 ✓（不用本文件没有的 helper ✗）
   assert.equal(REALMS.map((realm) => realm.id).includes('accessory'), false, '扫码页领域清单里不再有配品（已搬到工作台 ✓）');
   assert.equal(resolveRealm('accessory'), 'sales', '旧 ?from=accessory 回落销售 ✓');
-  // ⭐ 2026-10-12：验收领域没有活跃会话 = **自助块**（列未到货批次 + 手输批次号），不再是「回工作台」卡
-  const acceptBlock = blockOf('accept', 'accept');
-  assert.ok(acceptBlock.includes('data-view="accept-pending"'), '验收领域（没有活跃会话）= 自助块');
-  assert.ok(acceptBlock.includes(SCAN_PAGE.texts.acceptPendingTitle));
-  assert.ok(acceptBlock.includes('data-view="accept-manual"'), '手输批次号兜底在');
+  // ⭐⭐ 2026-10-14 晚 **改指向**（依据：她「`/s/accept` 这条路要彻底拆掉」）：
+  //   改前逐字：`const acceptBlock = blockOf('accept','accept');` ＋ 断言它是"自助块"
+  //     （`data-view="accept-pending"` + `acceptPendingTitle` + `data-view="accept-manual"` ✗）
+  //   改后：那一屏退场 ⇒ `?from=accept` **回落成建单那块**（`accept` 仍能解析 ⇒ 标记还是它的 ✓）
+  const acceptBody = blockOf('accept', 'accept');
+  assert.equal(acceptBody.includes('data-view="accept-pending"'), false, '自助块必须已退场 ✗');
+  assert.equal(acceptBody.includes('data-view="accept-manual"'), false, '手输批次号那块也必须已退场 ✗');
+  assert.ok(acceptBody.includes('加入本单'), '回落销售 ⇒ 建单那块在（旧链接不白屏 ✓）');
   // ⚠️ 2026-10-13：标题已从「货品标签」改成「标签」（真字面量）
   assert.ok(blockOf('product', 'product').includes('<h2 class="stock__heading">标签</h2>'), '货品领域 = 标签');
 

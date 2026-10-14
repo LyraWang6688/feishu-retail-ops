@@ -1645,47 +1645,19 @@ test('AC-SR4 接线哨兵：**五路**成功页都走同一个 successReturnFiel
   assert.match(cfg, /acceptHome: 'pendingBatches'/, '验收回未到货批次列表（她 ① ✓）');
 });
 
-test('AC-SR5 验收成功页：自动回**未到货批次列表** + 按钮同 URL + 首屏有实际数量/金额', async () => {
-  const { renderAcceptanceDonePage } = require('../src/views/scanPageRenderer');
-  const { SCAN_PAGE } = require('../src/config/scanPage');
-  const { SCAN_WRITE } = require('../src/config/scanWrite');
-  const backHref = '/s/accept';
-  const html = renderAcceptanceDonePage({
-    config: SCAN_PAGE,
-    write: { texts: SCAN_WRITE.texts },
-    acceptance: { batchNo: 'CGD-20261012-0009', scanned: 5, amountText: '10' },
-    backHref,
-    returnPath: backHref,
-    returnLabel: SCAN_PAGE.successReturn.label,
-    returnDelaySeconds: SCAN_PAGE.successReturn.delaySeconds,
-    autoReturnUrl: backHref,
-  });
-  const meta = html.match(/<meta http-equiv="refresh" content="(\d+);url=([^"]+)">/);
-  assert.ok(meta, '要自动回（服务端确定 URL）');
-  assert.equal(meta[2], '/s/accept', '验收 ⇒ 未到货批次列表（选项 ① ✓ 别"顺手统一"改掉 ✗）');
-  const link = html.match(/<a class="btn" data-view="success-return" href="([^"]+)">/);
-  assert.ok(link, '要有一颗【返回扫码】兜底');
-  assert.equal(link[1], meta[2], '按钮 href 与自动跳转**同一 URL** ✓');
-  assert.match(html, /实际数量 5/, '首屏就有实际数量（不被秒跳吞掉 ✓）');
-  assert.match(html, /实际金额 10/, '首屏就有实际金额 ✓');
+test('AC-SR5 🔴 验收成功页（`renderAcceptanceDonePage`）已随验收页退场 —— 能力仍在工作台那条路上', () => {
+  // ⭐⭐ 2026-10-14 晚 **改指向**（依据：她「`/s/accept` 这条路要彻底拆掉」）
+  //   改前逐字：`const { renderAcceptanceDonePage } = require('../src/views/scanPageRenderer');`
+  //             + 断言它渲染出「自动回未到货批次列表 + 按钮同 URL + 首屏实际数量/金额」✗
+  //   改后：那个渲染函数**必须没有了** ✓；而**完成验收**这件事仍在**工作台**那条路上 ✓
+  const renderer = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
+  assert.equal(/renderAcceptanceDonePage/.test(renderer), false, '扫码页那个验收成功页已退场 ✗');
+  assert.equal(/data-view="acceptance"/.test(renderer), false, '验收块也一并退场 ✗');
+  const workbench = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/routes/workbench.js'), 'utf8');
+  assert.match(workbench, /purchase\/arrivals\/accept/, '仍成立：工作台那条完成验收入口照旧 ✓');
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// ⭐⭐ 2026-10-12（她真机：`POST /MK31-1|咖色|B` ⇒ **400 / 1ms**、周围**零日志** ✗
-//   页面提示「这一页上的按钮我认不出来（可能放太久了）」—— 页面才渲染 41 秒 ⇒ **不是放太久** ✗）
-//
-//   ⚠️ 写法教训（我踩过）：**日志不能靠"补 `console.log`/`process.stdout.write`"来断言** ✗
-//     —— `utils/logger` 在**模块加载时**就把 sink 绑死了：`logInfo` 走 `console.log`、`logWarn` 走
-//     另一个已绑定的 writer ⇒ 后打的补丁**收不到**（我因此得出过"日志没打"的**错误结论** ✗）。
-//     所以这几条 AC 断言**可观测的行为**（她看到的人话）+ **源码哨兵**（那条 warn 的字段）✓
-//
-//   AC-UA1 缺 action ⇒ 400 + 人话「这一页没带上要做什么」· AC-UA2 空 action ⇒ 同一句
-//   AC-UA3 认不出的 action ⇒ 原句「按钮我认不出来」（**不再说"可能放太久了"** ✗）
-//   AC-UA4 源码哨兵：那条 warn 带 `action_kind`（missing/blank/unrecognized 三分）
-//                    + **只打字段名**（`body_keys`），**不打 body 的值** ✗
-//   AC-UA5 ⭐ 页面上的 POST 表单**每一张都带 hidden action**（她那条 400 的可能根因 ⇒ 查过：没有 ✓）
-// ═══════════════════════════════════════════════════════════════════════════
-
+// ⚠️ 2026-10-14 晚：这个 helper 在我“改指向 AC-SR5”那次替换里被连带删掉过 ✗ ⇒ 按 HEAD 原样补回 ✓
 const htmlTextOf = async (response) => String(await response.text()).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
 
 test('AC-UA1 缺 action ⇒ 400 + 人话「这一页没带上要做什么」（不是"可能放太久了"✗）', async () => {
@@ -1785,7 +1757,10 @@ test('AC-UA7 渲染层：每个写表单的 action 后面**只加**一个 page_b
   // ⚠️ 2026-10-13 **改写**（能力退场）：原来是 8 处（含**配品表单**那一处）——
   //    她的口径是「扫码页里的**配品逻辑拿掉**」（配品改到工作台）⇒ 配品表单整块退场
   //    ⇒ 现在 **7 处**（鞋表单 + 提交表单 + 其余写入口 ✓）。口径没变：**每个写表单只加一个** ✓
-  assert.equal(fields, 7, `配品表单退场后是 7 处（实际 ${fields} 处）`);
+  // ⭐⭐ 2026-10-14 晚 **改指向**（依据：她「`/s/accept` 这条路要彻底拆掉」）：
+  //   改前逐字：`assert.equal(fields, 7, '配品表单退场后是 7 处')`（含**验收页那几张**写表单 ✗）
+  //   改后：验收页退场 ⇒ 只剩 **4 处** ✓ 口径不变：**每个写表单只加一个 `pageBuildField`** ✓
+  assert.equal(fields, 4, `验收页退场后是 4 处（实际 ${fields} 处）`);
   assert.match(renderer, /const pageBuildField = \(\) => hiddenField\(\n\s*SCAN_PAGE\.pageBuildField/, '字段名走 config ✓');
 });
 
@@ -1862,7 +1837,11 @@ test('AC-TAP1 ⭐ 点击即时反馈：钩子 + 配置文案 + CSS :active + **�
       const rendererSrc = require('node:fs').readFileSync(
         require('node:path').join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8',
       );
-      assert.match(rendererSrc, /data-tap-target="batch:/, '批次行要带钩子 ✓');
+      // ⭐⭐ 2026-10-14 晚 **改指向**（依据：她「`/s/accept` 这条路要彻底拆掉」）：
+      //   改前逐字：`assert.match(rendererSrc, /data-tap-target="batch:/, '批次行要带钩子 ✓')`
+      //     （那个"批次行"是**验收自助块**里的未到货批次行 ✗）
+      //   改后：那块退场 ⇒ 这个钩子**必须没有** ✓（其余"点击即时反馈"判据一个字没动 ✓）
+      assert.equal(/data-tap-target="batch:/.test(rendererSrc), false, '验收自助块那排批次行已退场 ⇒ 钩子也没了 ✓');
       assert.match(html, /\.realm-tab:active[^{]*\{[^}]*opacity/, 'CSS :active 要有（按住即变淡 ✓ 零脚本 ✓）');
       const scripts = html.match(/<script[\s>]/gi) || [];
       assert.ok(scripts.length <= 1, `**不许新增脚本**（实际 ${scripts.length} 段 ✗）`);
@@ -1897,14 +1876,16 @@ test('AC-QK1 源码哨兵：请求日志带 `query_keys`（**只有键名**，�
   assert.equal(/query_keys[\s\S]{0,60}req\.query\b(?! \|\| \{\}\))/.test(appSrc), false, '不许把 query 的值铺进日志 ✗');
 });
 
-test('AC-PT1 源码哨兵：/accept 自助页打 `scan.accept.pending_timing`（分段耗时，只加打点 ✗）', () => {
+test('AC-PT1 🔴 `/accept` 自助页那条分段耗时打点**随它退场**（服务层仍支持 timing ✓ 没删 ✗）', () => {
+  // ⭐⭐ 2026-10-14 晚 **改指向**（依据：她「`/s/accept` 这条路要彻底拆掉」）
+  //   改前逐字：断言路由里 `config.events.pendingTiming` / `pendingTiming.render_ms` /
+  //             `loadPendingBatches(requestId, pendingTiming)` 都在 ✗
+  //   改后：那条路退场 ⇒ 路由里**必须没有**这些 ✓；而**服务层**的 timing 出参照旧保留 ✓（能力不删 ✗）
   const route = fs.readFileSync(path.join(__dirname, '../src/routes/scanPage.js'), 'utf8');
-  assert.match(route, /config\.events\.pendingTiming/, '要打那条汇总');
-  assert.match(route, /pendingTiming\.render_ms = /, '要有渲染段');
-  assert.match(route, /loadPendingBatches\(requestId, pendingTiming\)/, '取批次那一段要量');
+  assert.equal(/pendingTiming/.test(route), false, '路由里那条打点必须已退场 ✗');
   const svc = fs.readFileSync(path.join(__dirname, '../src/services/scanArrivalService.js'), 'utf8');
-  assert.match(svc, /pendingBatches = async \(\{ timing = null \} = \{\}\)/, '取数支持 timing 出参（逻辑零改动 ✓）');
-  assert.match(svc, /batches_ms/, '要有读表那一段');
+  assert.match(svc, /pendingBatches = async \({ timing = null } = \{\}\)/, '服务层仍支持 timing 出参（逻辑零改动 ✓）');
+  assert.match(svc, /batches_ms/, '读表那一段的计时仍在 ✓');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

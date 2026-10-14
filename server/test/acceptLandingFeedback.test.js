@@ -187,98 +187,47 @@ const post = (base, target, body, openId = 'ou_accept_ux') => {
 //  AC-UX5 回归：无 batch 自助块 / 有 batch 清单页 / 三条路（改数量 · 自定义 · 扫码加）逐字不回归。
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-UX1 空输入点【进入验收】⇒ 一句人话 + 仍 200（不再原地重画同一页）', async () => {
-  login();
-  const h = createHarness({ noPending: true });
-  await withServer(h.app, async (base) => {
-    const bare = await get(base, '/s/accept');
-    assert.equal(bare.response.status, 200);
-    assert.equal(bare.html.includes('请先点上面那一条批次'), false, '没提交过就不该先喊这句话');
-    // ⭐ 她真机上做的事：输入框空着直接点【进入验收】⇒ 表单 GET `?batch=`（值为空）
-    const submitted = await get(base, '/s/accept?batch=');
-    assert.equal(submitted.response.status, 200, '仍是 200（不是 400 / 不炸）');
-    assert.ok(submitted.html.includes(SCAN_PAGE.texts.acceptPendingEmptySubmitHint),
-      `空提交要给她一句人话：${SCAN_PAGE.texts.acceptPendingEmptySubmitHint}`);
-    assert.ok(submitted.html.includes('data-view="accept-manual"'), '手输框照旧在（她还能改）');
-    // 反例：**不许**变成"什么也没发生"（页面必须和裸进来那一次不同）
-    assert.notEqual(submitted.html, bare.html, '空提交必须有即时反馈（页面内容要变）');
-  });
+/**
+ * ⭐⭐ 2026-10-14 晚（业务负责人口径）：**「`/s/accept` 这条路要彻底拆掉」**
+ *
+ * ⚠️ **本文件原样保留夹具，只把"验收落地页必须存在"那一族断言**（改前逐字：GET /s/accept ⇒ 200 +
+ *    列未到货批次 + 手输兜底 + 进验收模式 …）**改成"必须不存在"** ✓（**不是整份删覆盖** ✗）：
+ *    · 路由里**没有** `/accept` 注册 ✓
+ *    · 渲染层里**没有**验收那一块的标记（`data-view="acceptance"` / `accept-pending`）✓
+ *    · 旧 `?from=accept` **回落销售**（`resolveRealm` 既有口径 ✓ 不报错 ✓）
+ *    · **仍成立、照旧不许动**的：加库存走 `InventoryService.applyPurchase` ✓ ·
+ *      工作台 `POST /api/workbench/purchase/arrivals/confirm` ✓ · 工作台「采购 → 验收」那屏 ✓
+ */
+const SRC_DIR = path.join(__dirname, '../src');
+const readSrc = (rel) => fs.readFileSync(path.join(SRC_DIR, rel), 'utf8');
+
+test('AC-OFF1 🔴 路由里**没有** `/accept` 注册（扫码页那条路已彻底拆掉）', () => {
+  const routes = readSrc('routes/scanPage.js');
+  assert.equal(/router\.(get|post)\('\/accept'/.test(routes), false,
+    '改前逐字：router.get(\'/accept\'…) 存在 ✓ ⇒ 改后：**必须没有** ✓（依据：她 2026-10-14 晚「这条路要彻底拆掉」）');
 });
 
-test('AC-UX2 点中批次行 ⇒ 真的开始验收（清单页 + 那一批的批次号）', async () => {
-  login();
-  const h = createHarness();
-  await withServer(h.app, async (base) => {
-    const list = await get(base, `/s/accept?batch=${encodeURIComponent(BATCH)}`);
-    assert.equal(list.response.status, 200);
-    assert.ok(list.html.includes('data-view="acceptance-rows"'), '点中批次行后是那张清单页');
-    assert.ok(list.html.includes(`data-batch="${BATCH}"`), '页面上带着那一批的批次号');
-    // 真链接点下去走的就是这一条（同一个 URL）——她点得到、不是死链
-    const self = await get(base, '/s/accept');
-    assert.equal(self.response.status, 200);
-    const link = self.html.match(new RegExp(`<a class="btn batch-row"[^>]*data-batch="${BATCH}"[^>]*href="([^"]+)"`))
-      || self.html.match(new RegExp(`<a class="btn batch-row"[^>]*href="([^"]+)"[^>]*data-batch="${BATCH}"`));
-    assert.ok(link, '批次行必须是真链接（a[href]）');
-    const clicked = await get(base, link[1].replace(/&amp;/g, '&'));
-    assert.equal(clicked.response.status, 200, '点下去要 200');
-    assert.ok(clicked.html.includes('data-view="acceptance-rows"'), '点下去就进验收清单');
-  });
+test('AC-OFF2 🔴 渲染层里**没有**验收那一块的标记（`data-view="acceptance"` / `accept-pending`）', () => {
+  const renderer = readSrc('views/scanPageRenderer.js');
+  assert.equal(renderer.includes('data-view="acceptance"'), false, '改前逐字：必须有 data-view="acceptance" ✗ ⇒ 改后：必须没有 ✓');
+  assert.equal(renderer.includes('accept-pending'), false, '改前逐字：自助块 data-view="accept-pending" ✗ ⇒ 改后：必须没有 ✓');
+  assert.equal(/renderAcceptance(Page|DonePage|SelfServe)/.test(renderer), false, '三个验收渲染函数随验收一起退场 ✓');
 });
 
-test('AC-UX3 ?batch= 有值但明细为空 ⇒ 明确说清 + 手输/扫码入口仍在', async () => {
-  login();
-  const h = createHarness({ rows: [], allowEmptyRows: true });
-  await withServer(h.app, async (base) => {
-    const { response, html } = await get(base, `/s/accept?batch=${encodeURIComponent(BATCH)}`);
-    assert.equal(response.status, 200);
-    assert.ok(html.includes(SCAN_WRITE.texts.acceptEmptyDetailBody),
-      `这一批没明细时要明确说清（不许是空白页）：${SCAN_WRITE.texts.acceptEmptyDetailBody}`);
-    assert.ok(html.includes(`name="${SCAN_WRITE.fields.acceptCustomSize}"`), '手输加行仍在');
-    assert.ok(html.includes(SCAN_PAGE.texts.scanNextHint) || html.includes(SCAN_PAGE.texts.scanNextLabel),
-      '扫码加一款的入口仍在');
-  });
+test('AC-OFF3 🔴 旧 `?from=accept` **回落销售**（不报错、不白屏）', () => {
+  const { resolveRealm } = require('../src/views/scanPageRealm');
+  // ⭐ 2026-10-14 晚（cut A）：**拆的是"路"**（`/s/accept` 不再有路由 ✓）；`accept` 这个领域
+  //    按 Lead 的切法**先留在 REALMS**（cut B 才删 ⇒ 那一步才变成 `'sales'` ✓）
+  //    ⇒ 本刀如实断言：解析结果**仍是 'accept'**（不谎报 ✓）＋ 认不出的照旧回落销售 ✓
+  assert.equal(resolveRealm('accept'), 'accept', 'cut A：领域还在（cut B 删它时才变 sales ✓ 不提前谎报 ✗）');
+  assert.equal(resolveRealm('bogus'), 'sales', '认不出的一律回落缺省（既有口径一字不动 ✓）');
 });
 
-test('AC-UX4 批次行看得出来能点：真链接 + ≥44px 命中区 + 一个明确的可点外观', async () => {
-  login();
-  const h = createHarness();
-  await withServer(h.app, async (base) => {
-    const { html } = await get(base, '/s/accept');
-    const row = html.match(/<a class="btn batch-row"[^>]*>[\s\S]*?<\/a>/);
-    assert.ok(row, '批次行必须在');
-    assert.ok(row[0].includes(`data-batch="${BATCH}"`), 'data-batch 在');
-    assert.ok(row[0].includes(`href="/s/accept?batch=${BATCH}"`), 'href 指向这一批');
-    assert.ok(row[0].includes('batch-row__cta'), '右边要有一个明确的"能点"外观（› / 进入）');
-    // 命中区 ≥44px：沿用既有 `.btn` 的 min-height（token），这里钉住那条规则还在
-    const style = html.match(/\.btn \{[^}]*\}/);
-    assert.ok(style && /min-height: var\(--control-height\)/.test(style[0]),
-      '命中区沿用 .btn 的 min-height（≥44px）');
-  });
-});
-
-test('AC-UX5 回归：三条既有路（改数量 / 自定义 / 扫码加）与两张页逐字不回归', async () => {
-  login();
-  const h = createHarness();
-  await withServer(h.app, async (base) => {
-    // ① 无 batch 的自助块
-    const self = await get(base, '/s/accept');
-    assert.ok(self.html.includes('data-view="accept-pending"') && self.html.includes('data-view="accept-manual"'));
-    // ② 有 batch 的清单页：预填 + 可改 + 自定义 + 候选
-    const list = await get(base, `/s/accept?batch=${encodeURIComponent(BATCH)}`);
-    assert.ok(list.html.includes('data-view="acceptance-rows"'));
-    for (const size of SIZES) {
-      assert.ok(new RegExp(`data-row-size="${size}"`).test(list.html), `预填少了 ${size} 码`);
-    }
-    assert.ok(list.html.includes(`name="${F.acceptRowQty}" value="1"`), '默认值 = 报货数量');
-    assert.ok(list.html.includes(`name="${F.acceptCustomSize}"`), '自定义加行仍在');
-    assert.ok(list.html.includes('data-view="accept-unreported"'), '未报货候选区仍在');
-    // ③ 改数量照旧能完成（既有口径）
-    const done = await post(base, '/s/accept', {
-      [F.action]: A.acceptFinishRows, batch: BATCH,
-      [F.acceptRowQty]: ['1', '1', '2', '1', '1'], [F.acceptAmount]: '500',
-    });
-    assert.equal(done.status, 200, `改数量仍能完成验收（${done.status}）`);
-    assert.ok(h.confirmCalls[0].scanLines.some((line) => line.size === 37 && line.quantity === 2),
-      '改后的数量要照旧传下去');
-  });
+test('AC-OFF4 ✅ 仍成立、照旧不许动的（共享能力没跟着删）', () => {
+  const routes = readSrc('routes/workbench.js');
+  assert.match(routes, /router\.post\('\/purchase\/arrivals\/confirm'/, '工作台"确认到货"接口照旧 ✓');
+  const renderer = readSrc('views/scanPageRenderer.js');
+  assert.ok(renderer.length > 0);
+  const inventory = readSrc('services/inventoryService.js');
+  assert.match(inventory, /applyPurchase/, '加库存仍只走 `InventoryService.applyPurchase` ✓');
 });

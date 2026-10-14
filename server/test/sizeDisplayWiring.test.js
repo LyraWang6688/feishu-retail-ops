@@ -67,7 +67,13 @@ test('AC-SW-4 ⭐ 验收页口径未被牵连（`loadSizeScope` 仍在，且只�
   const code = fs.readFileSync(path.join(__dirname, '../src/services/scanPageService.js'), 'utf8');
   assert.match(code, /const loadSizeScope = async \(\{ categoryCode \}\) => sizesForCategory\(categoryCode, config\)/,
     '`loadSizeScope`（可录范围）保留 ✓');
-  const acceptance = fs.readFileSync(path.join(__dirname, '../src/routes/scanPage.js'), 'utf8');
-  assert.match(acceptance, /sizesForCategory\(categoryCode, config\)/,
-    '验收页仍在用 `sizesForCategory`（候选 = 应有尺码 − 已报 ⇒ 含特殊码 ✓）');
+  // ⭐⭐ 2026-10-14 晚 **改指向**（依据：她「`/s/accept` 这条路要彻底拆掉」）：
+  //   改前逐字：`assert.match(acceptance, /sizesForCategory\(categoryCode, config\)/, '验收页仍在用 …')`
+  //   改后：验收那一屏退场 ⇒ 扫码页路由里**不再有**这个调用点 ✓；
+  //        而**「可录范围」本体与它的一致性核对照旧**（`sizesForCategory` / `loadSizeScope` 都在 ✓ 没删 ✗）
+  const route = fs.readFileSync(path.join(__dirname, '../src/routes/scanPage.js'), 'utf8');
+  assert.equal(/sizesForCategory\(categoryCode, config\)/.test(route), false,
+    '扫码页路由里不再有验收页那个调用点（它随验收退场 ✓）');
+  assert.match(code, /const sizesForCategory = \(categoryCode, config = SCAN_PAGE\) => \{/,
+    '「可录范围」本体仍在（验收退场 ≠ 能力删 ✗）');
 });

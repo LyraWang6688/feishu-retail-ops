@@ -34,7 +34,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { SCAN_PAGE, fillText } = require('../config/scanPage');
-const { NEW_REALM, REALMS, REALM_TABS, DEFAULT_REALM, REALM_TEXTS, REALM_EMPTY_TEXT_KEYS, REPLENISH_REALM, PURCHASE_RETURN_REALM, ACCEPTANCE_REALM, resolveRealm, labelPrintUrls, saleSizeGroups, purchaseSizeLines, purchaseSizeGroups, foldedSpecialRowsOf, sellableCountOf } = require('./scanPageRealm');
+const { NEW_REALM, REALMS, REALM_TABS, DEFAULT_REALM, REALM_TEXTS, REALM_EMPTY_TEXT_KEYS, REPLENISH_REALM, PURCHASE_RETURN_REALM, resolveRealm, labelPrintUrls, saleSizeGroups, purchaseSizeLines, purchaseSizeGroups, foldedSpecialRowsOf, sellableCountOf } = require('./scanPageRealm');
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -246,7 +246,7 @@ summary { cursor: pointer; }
 .size-fold__list { display: grid; grid-template-columns: repeat(var(--size-cols, 3), minmax(0, 1fr)); gap: var(--space-2); margin: var(--space-2) 0 0; padding: 0; list-style: none; }
 .size-fold__item { min-height: var(--control-height); display: flex; align-items: center; justify-content: space-between; gap: var(--space-1); padding: var(--space-1) var(--space-2); border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--surface-soft); }
 .size-fold__times { color: var(--text-muted); }
-.purchase-sizes { display: grid; grid-template-columns: repeat(var(--size-cols, 3), minmax(0, 1fr)); gap: var(--space-2); margin: var(--space-3) 0; padding: 0; list-style: none; }
+.purchase-sizes { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); margin: var(--space-3) 0; padding: 0; list-style: none; }
 .purchase-size { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-height); padding: var(--space-2) var(--space-3); border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--surface-soft); }
 .purchase-size__size { font-size: var(--font-size-lg); font-weight: 700; }
 .purchase-size__count { margin-left: auto; font-size: var(--font-size-amount); font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -1178,271 +1178,21 @@ ${rows}
 </section>`;
 };
 
-/** 【继续扫下一个】：飞书客户端（手机）给 AppLink；桌面/自带浏览器给那句人话（绝不给死按钮）。 */
-const acceptanceScanNextHtml = (userAgent) => (canScanNextWithFeishu(userAgent)
-  ? `<a class="btn" href="${escapeHtml(SCAN_PAGE.scanNext.applink)}" rel="noopener">${escapeHtml(SCAN_PAGE.texts.scanNextLabel)}</a>`
-  : `<p class="hint">${escapeHtml(SCAN_PAGE.texts.scanNextHint)}</p>`);
-
-/** 验收模式的**本单条**：已验收 N 双 / 应到 M 双（她点名要的那一行）+ 一句提示（可有可无）。 */
-const acceptanceSummaryHtml = (write, acceptance) => {
-  const t = write.texts;
-  return `<p class="draft-bar__count" data-view="acceptance-summary">${escapeHtml(fillText(t.acceptSummary, {
-    scanned: Number(acceptance.scanned || 0), expected: Number(acceptance.expected || 0),
-  }))}</p>
-${acceptance.notice ? `<p class="notice">${escapeHtml(acceptance.notice)}</p>` : ''}`;
-};
-
 /**
- * ⭐⭐ 2026-10-12（业务负责人口述版）：「点验收的时候，**先默认带出我们采购申请里的尺码和数量**。
- *   用户可以在**给定的区域里直接修改**，同时**也可以自定义**；**自定义的时候同样支持扫码**。」
+ * ⭐⭐ **只渲染当前领域那一块**（2026-10-09 手机白屏之后的改法）。
  *
- * 这一块就是"给定区域"：
- *   · **报货行**：每个尺码一行，数量**默认 = 报货数量**（`acceptance.rows[i].actual`）；
- *     **改成 0（或清空）⇒ 那一行不算到货**（服务层口径，见 `setActualRows`）；
- *   · **已加的行**（扫进来的 / 上次加的自定义）：同款同码各一行，数量可改；
- *   · **一行空白自定义**：她可以手输尺码 + 数量（本批只有一个款时才绑得上；多个款会让她扫码）；
- *   · **实际金额**（既有必填口径）+【确认完成验收】——**一次提交 = 一次写库**。
+ * **六个领域**各自的正文（每个都带 `realm-block--<领域>` 标记，方便对照 / 断言）：
+ *   · `sales`            —— 销售建单表单；
+ *   · `replenish`        —— 补货（原「采购」领域里的【一键补货】）；
+ *   · `purchase_return`  —— 退货；
+ *   · `accept`           —— 验收（有活跃验收会话时那一块；没有就一张人话卡）；
+ *   · `inventory`        —— 库存表；
+ *   · `product`          —— 货品标签。
  *
- * ⚠️ **同名重复字段**（一"行"一个）是这一页既有做法（收款行 / 每件实收都是这么带的），
- *    服务端按**行序**解析 ⇒ **零 JS** 也做得到"整张清单一次提交"。
- * ⚠️ 扫标签那条路是**另一颗链接**（AppLink，复用 `acceptanceScanNextHtml`）——不在表单里。
- */
-const acceptanceRowsFormHtml = (write, acceptance, userAgent = '') => {
-  const t = write.texts;
-  const f = write.fields;
-  const rows = Array.isArray(acceptance.rows) ? acceptance.rows : [];
-  const custom = Array.isArray(acceptance.customRows) ? acceptance.customRows : [];
-  const lineHtml = (row) => `<div class="size-row" data-row-size="${escapeHtml(String(row.size))}">
-<label class="size-check">${escapeHtml(fillText(t.acceptRowSizeLabel, { size: row.size }))}</label>
-<input class="size-qty" name="${escapeHtml(f.acceptRowQty)}" value="${escapeHtml(String(row.actual))}" inputmode="numeric" aria-label="${escapeHtml(fillText(t.acceptRowSizeLabel, { size: row.size }))}">
-</div>`;
-  const reported = rows.map(lineHtml).join('');
-  // 已加的行（扫码进来的 / 上次加的自定义）：**必须一起带回表单**，否则这次提交会把它们冲掉。
-  const already = custom.map((row) => `<div class="size-row" data-row-size="${escapeHtml(String(row.size))}" data-custom-row="1">
-<label class="size-check">${escapeHtml(fillText(t.acceptRowSizeLabel, { size: row.size }))}</label>
-<input class="size-qty" name="${escapeHtml(f.acceptCustomQuantity)}" value="${escapeHtml(String(row.quantity))}" inputmode="numeric" aria-label="${escapeHtml(t.acceptCustomQuantityPlaceholder)}">
-<input type="hidden" name="${escapeHtml(f.acceptCustomSize)}" value="${escapeHtml(String(row.size))}">
-<button type="submit" class="btn" name="${escapeHtml(f.acceptToggleSize)}" value="${escapeHtml(String(row.size))}" data-toggle-size="${escapeHtml(String(row.size))}"${submitFeedbackAttrs(write)}>${escapeHtml(t.acceptUnreportedRemoveLabel)}</button>
-</div>`).join('');
-  // ⭐⭐ 2026-10-12（她选的方案 A）：「系统把 40、41 列出来（标注"未报货"）⇒ 你**点一下就加到货**」。
-  //    候选 = **这一款在该类别下应有的尺码**（与缺码判定同一份配置口径）− 已报 − 已加；
-  //    一个候选都没有 / 没有"款"可归 ⇒ 路由给 `unreported = null` ⇒ **整块不渲染**（不留空标题）。
-  // ⭐⭐ 2026-10-12 21:11：有批次号、但这一批**一条明细都没有** ⇒ **明确说清**（她的"啥也没有"里这一档也要堵住）。
-  const emptyDetail = rows.length === 0
-    ? `<p class="empty" data-view="accept-empty-detail">${escapeHtml(t.acceptEmptyDetailBody)}</p>`
-    : '';
-  const unreported = Array.isArray(acceptance.unreported) ? acceptance.unreported : [];
-  const unreportedHtml = unreported.length ? `<p class="draft-bar__count" data-view="accept-unreported-title">${escapeHtml(t.acceptUnreportedTitle)}</p>
-<div class="size-chips" data-view="accept-unreported">
-${unreported.map((item) => `<button type="submit" class="btn" data-candidate-size="${escapeHtml(String(item.size))}" name="${escapeHtml(f.acceptToggleSize)}" value="${escapeHtml(String(item.size))}"${submitFeedbackAttrs(write)}>${escapeHtml(fillText(t.acceptRowSizeLabel, { size: item.size }))} · ${escapeHtml(t.acceptUnreportedBadge)}</button>`).join('')}
-</div>` : '';
-  // 没有"款"（没扫、也没进清单）⇒ 不列候选，但给一句引导（别让她对着空白猜）。
-  const unreportedHint = acceptance.unreportedNoProduct
-    ? `<p class="hint" data-view="accept-unreported-hint">${escapeHtml(t.acceptUnreportedNoProductBody)}</p>`
-    : '';
-  const customBlank = `<div class="size-row" data-view="accept-custom-new">
-<input class="size-qty" name="${escapeHtml(f.acceptCustomSize)}" inputmode="numeric" placeholder="${escapeHtml(t.acceptCustomSizePlaceholder)}" aria-label="${escapeHtml(t.acceptCustomSizePlaceholder)}">
-<input class="size-qty" name="${escapeHtml(f.acceptCustomQuantity)}" inputmode="numeric" placeholder="${escapeHtml(t.acceptCustomQuantityPlaceholder)}" aria-label="${escapeHtml(t.acceptCustomQuantityPlaceholder)}">
-</div>`;
-  return `<section class="card" data-view="acceptance-rows">
-<h2 class="stock__heading">${escapeHtml(t.acceptRowsTitle)}</h2>
-${emptyDetail}
-<p class="hint">${escapeHtml(t.acceptRowsHint)}</p>
-<form method="post" action="${escapeHtml(acceptance.rowsPostAction || acceptance.postAction)}" class="write-form" data-view="acceptance-rows-form" data-amount-field="${escapeHtml(f.acceptAmount)}" data-amount-hint-text="${escapeHtml(t.acceptAmountRequiredHint || '')}">
-${hiddenField(f.action, write.actions.acceptFinishRows)}${pageBuildField()}
-${acceptance.submitKey ? hiddenField(f.submitKey, acceptance.submitKey) : ''}
-${hiddenField(f.acceptBatch, acceptance.batchNo)}
-${reported}${already}
-<p class="draft-bar__count">${escapeHtml(t.acceptCustomTitle)}</p>
-${customBlank}
-${unreportedHtml}${unreportedHint}
-<p class="hint" data-view="accept-amount-required" hidden>${escapeHtml(t.acceptAmountRequiredHint || (SCAN_PAGE.texts && SCAN_PAGE.texts.acceptAmountRequiredHint) || '')}</p>
-<label class="size-check">${escapeHtml(t.acceptFinishAmountLabel)}
-<input class="size-qty" name="${escapeHtml(f.acceptAmount)}"${acceptance.amountValue ? ` value="${escapeHtml(String(acceptance.amountValue))}"` : ''} inputmode="decimal" aria-label="${escapeHtml(t.acceptFinishAmountLabel)}"${acceptance.amountRequired === false ? '' : ' required'}>
-</label>
-<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.acceptFinishSubmit)}</button>
-</form>
-${acceptanceScanNextHtml(userAgent)}
-</section>`;
-};
-
-/**
- * ⭐⭐ 2026-10-12 21:20（她「点完确认完成验收好像没反应 ⇒ 我一直点那个按钮」）：
- * **成功页**必须把两个**真实数字**摆出来 + 一个明确的下一步（回未到货批次）——
- * 「点了没反应」里有一半就是"成功后没有交代"。
- */
-const renderAcceptanceDonePage = ({
-    config = SCAN_PAGE, write = null, acceptance = {}, backHref = '',
-    returnPath = '', returnLabel = '', returnDelaySeconds = 0, autoReturnUrl = '',
-  } = {}) => {
-    const t = (write && write.texts) || SCAN_PAGE.texts;
-  const scanned = Number(acceptance.scanned || 0);
-  const amount = String(acceptance.amountText ?? '');
-  return renderDocument({
-    title: t.acceptDoneHeading || t.acceptDoneTitle || SCAN_PAGE.texts.acceptDoneTitle,
-    config,
-    head: autoReturnUrl && returnDelaySeconds > 0
-      ? `<meta http-equiv="refresh" content="${Number(returnDelaySeconds)};url=${escapeHtml(autoReturnUrl)}">`
-      : '',
-    content: `<section class="card state-msg" data-view="acceptance-done">
-<h1 class="state-msg__title--success">✅ ${escapeHtml(t.acceptDoneHeading || t.acceptDoneTitle || SCAN_PAGE.texts.acceptDoneTitle)}</h1>
-<p data-view="acceptance-done-quantity">${escapeHtml(t.acceptDoneQuantityLabel || '')} ${escapeHtml(String(scanned))}</p>
-<p data-view="acceptance-done-amount">${escapeHtml(t.acceptDoneAmountLabel || '')} ${escapeHtml(amount)}</p>
-<p class="foot">${escapeHtml(fillText(t.acceptBatchLine || '', { batchNo: String(acceptance.batchNo || '—') }))}</p>
-${backHref ? `<p><a class="btn btn--primary" href="${escapeHtml(backHref)}">${escapeHtml(t.acceptDoneBackLabel || '')}</a></p>` : ''}
-${returnPath && returnLabel ? `<p><a class="btn" data-view="success-return" href="${escapeHtml(returnPath)}">${escapeHtml(returnLabel)}</a></p>` : ''}
-</section>`,
-  });
-};
-
-/** 【完成验收】：只收「实际金额」（必填，既有业务口径）——**没有**「到货说明」那一栏。 */
-const acceptanceFinishHtml = (write, acceptance) => {
-  const t = write.texts;
-  const fields = write.fields;
-  return `<form method="post" action="${escapeHtml(acceptance.postAction)}" class="write-form" data-view="acceptance-finish">
-${hiddenField(fields.action, write.actions.acceptFinish)}${pageBuildField()}
-<label class="size-check">${escapeHtml(t.acceptFinishAmountLabel)}
-<input class="size-qty" name="${escapeHtml(fields.acceptAmount)}" inputmode="decimal" aria-label="${escapeHtml(t.acceptFinishAmountLabel)}">
-</label>
-<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.acceptFinishSubmit)}</button>
-</form>`;
-};
-
-/**
- * ⭐⭐ 2026-10-12（业务负责人）：「**验收还是只在扫码页**呀，**我不需要在工作台**」
- *   ⇒ 验收领域**没带批次号 / 没有正在进行的验收**时，**她自己能开工**：
- *     ① **列未到货的批次**（每条一行 = 一批，点一下进 `/s/accept?batch=<批次号>`）；
- *     ② **手输批次号**兜底（一个 GET 表单，零 JS）。
- *
- * ⚠️ 全是**功能名 + 事实**，没有说明书腔；**不出现"工作台"**（她不去工作台）。
- * ⚠️ 一个未到货批次都没有（或读表失败）⇒ 只给一句人话 + 手输框，**不把她支去别处**。
- * 行高沿用既有 `.btn`（`min-height: var(--control-height)` ⇒ ≥44px），单列堆叠、不横滑。
- */
-const acceptPendingBlockHtml = (config, page = {}) => {
-  const t = config.texts;
-  const pending = page?.acceptPending || null;
-  const batches = Array.isArray(pending?.batches) ? pending.batches : [];
-  // ⚠️ 路径模板来自配置（**唯一来源**），basePath 在这里补 —— 与路由拼出来的 URL 一致。
-  // ⭐⭐ 2026-10-12：`page.basePath` = **这一页的实际挂载前缀**（`/s` 或 `/r`）——
-  //    `/r` 那条路（记录 ID 直达）下她点的每一条链接都必须**留在 `/r` 上**（不许被踢回 `/s`）。
-  //    不传 ⇒ 用 `config.route.basePath`（= 改前的行为，**逐字不变**）。
-  const basePath = String(page?.basePath ?? config.route?.basePath ?? '');
-  const landingTemplate = `${basePath}${config.route?.acceptanceLandingPath || '/accept?batch={batchNo}'}`;
-  const rows = batches.map((batch) => {
-    const batchNo = String(batch?.batchNo || '');
-    const href = landingTemplate.replace('{batchNo}', encodeURIComponent(batchNo));
-    const meta = [
-      (batch?.suppliers || []).filter(Boolean).join('、'),
-      batch?.quantity ? `${t.acceptPendingQuantityLabel} ${batch.quantity}` : '',
-    ].filter(Boolean).join(t.acceptPendingMetaSeparator || ' · ');
-    // ⭐⭐ 2026-10-12 21:11（她真机）：这一行原来是"浅灰信息条"的样子 ⇒ 她**没看出来能点**（去点了下面的空输入）。
-    //    ⇒ 描边 + 右侧一个「›」（`batch-row__cta`，样式只走 tokens）——"能点"要在**一眼**里看得出来。
-    return `<li><a class="btn batch-row" data-batch="${escapeHtml(batchNo)}" href="${escapeHtml(href)}" data-tap-target="batch:${escapeHtml(batchNo)}" data-open-label="${escapeHtml(SCAN_PAGE.tapFeedback && SCAN_PAGE.tapFeedback.label || '')}">${escapeHtml(batchNo)}${meta ? `<span class="batch-row__meta">${escapeHtml(meta)}</span>` : ''}<span class="batch-row__cta" aria-hidden="true">›</span></a></li>`;
-  }).join('');
-  // ⭐ 空着点【进入验收】⇒ 一句人话（就在那颗按钮上方），别让她以为卡住。
-  const emptySubmitHint = page?.emptySubmitHint
-    ? `<p class="hint" data-view="accept-manual-hint">${escapeHtml(t.acceptPendingEmptySubmitHint)}</p>`
-    : '';
-  const manual = `
-${emptySubmitHint}
-<form method="get" action="${escapeHtml(`${basePath}${config.route?.acceptancePath || '/accept'}`)}" class="write-form" data-view="accept-manual">
-<div class="form-row">
-<input type="text" name="batch" inputmode="text" autocomplete="off" aria-label="${escapeHtml(t.acceptPendingManualPlaceholder)}" placeholder="${escapeHtml(t.acceptPendingManualPlaceholder)}">
-<button type="submit" class="btn btn--primary">${escapeHtml(t.acceptPendingManualSubmit)}</button>
-</div>
-</form>`;
-  return `<section class="card" data-view="accept-pending">
-<h2 class="stock__heading">${escapeHtml(t.acceptPendingTitle)}</h2>
-${batches.length
-    ? `<ul class="batch-list" data-view="accept-pending-list">${rows}</ul>`
-    : `<p class="empty" data-view="accept-empty">${escapeHtml(t.acceptPendingEmptyBody)}</p>`}
-${manual}
-</section>`;
-};
-
-/**
- * ⭐⭐ 2026-10-12（业务负责人真机 + Lead 追到的日志）：
- * **`GET /accept`（没带 `batch`）那一页的自助块** —— 她点【验收】进来的**第一屏**。
- *
- * 起因（逐字）：「报单之后点验收 ⇒ 就提示这个，我不知道啥意思」——
- *   那是一句 `acceptBatchMissingBody`「这一页没带报货批次号：回【验收】领域…」，
- *   可她**就是从【验收】领域进来的**（自相矛盾 ✗），而且那一页**没有输入框**（"或填批次号"做不到 ✗）。
- *
- * 🔴 这一页**复用** `acceptPendingBlockHtml`（列未到货批次 + 手输兜底），
- *    **不复制第二份列表/表单**；`basePath` 由路由给（`/s` 或 `/r`）。
- * ⚠️ 这一页**不挂领域切换条**（她是"进来干活"的），也没有"回工作台"这类把她支走的句子。
- */
-const renderAcceptanceSelfServe = ({ config = SCAN_PAGE, acceptPending = null, basePath = '', emptySubmitHint = false } = {}) => renderDocument({
-  title: config.texts.acceptModeTitle,
-  config,
-  content: acceptPendingBlockHtml(config, { acceptPending, basePath, emptySubmitHint }),
-});
-
-/**
- * ⭐⭐ 2026-10-11（方案A）：「**验收模式**」那一块（她扫开某款那一页时看到的东西）。
- *
- * 一屏三件事（**只有能点、能做的事**）：
- *   ① 本单条：**已验收 N 双 / 应到 M 双**；
- *   ② 这一款**各尺码** + 数量（默认 1、可改）⇒【加入本次验收】（**只写本地会话**）；
- *   ③ 【继续扫下一个】+【完成验收】（实际金额必填）。
- * 一行前端脚本都没有（与这一页的既有设计同一条硬要求）。
- */
-const acceptanceBlockHtml = (view, write, acceptance, userAgent = '') => {
-  const t = write.texts;
-  const fields = write.fields;
-  const sizes = (view?.rows || [])
-    .filter((row) => !row.unknown_size && String(row.size_text ?? '').trim())
-    .map((row) => String(row.size_text));
-  const rows = sizes.map((size, index) => `<div class="size-row">
-<label class="size-check"><input type="radio" name="${escapeHtml(fields.acceptSize)}" value="${escapeHtml(size)}"${index === 0 ? ' checked' : ''}> ${escapeHtml(size)} 码</label>
-<input class="size-qty" name="${escapeHtml(fields.acceptQuantity)}" value="${escapeHtml(String(acceptance.defaultQuantity ?? 1))}" inputmode="numeric" aria-label="${escapeHtml(`${size} ${t.replenishQuantityLabel}`)}" placeholder="${escapeHtml(t.replenishQuantityLabel)}">
-</div>`).join('');
-  return `<section class="card" data-view="acceptance" data-batch="${escapeHtml(acceptance.batchNo)}">
-${acceptanceSummaryHtml(write, acceptance)}
-${sizes.length ? `<form method="post" action="${escapeHtml(acceptance.postAction)}" class="write-form">
-${hiddenField(fields.action, write.actions.acceptAdd)}${pageBuildField()}
-${rows}
-<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.acceptAddButton)}</button>
-</form>` : ''}
-${acceptanceScanNextHtml(userAgent)}
-${acceptanceFinishHtml(write, acceptance)}
-</section>`;
-};
-
-/**
- * **验收模式落地页**（`GET /s/accept?batch=<批次号>`，工作台点【验收】跳过来）：没有编号、
- * 只给本单条 +【继续扫下一个】+【完成验收】。这一页**不挂领域切换条**（它是"模式页"）。
- */
-const renderAcceptancePage = ({ acceptance, config = SCAN_PAGE, write = null, userAgent = '' } = {}) => {
-  if (!write) {
-    return renderMinimalPage({ title: config.texts.errorTitle, body: config.texts.errorBody });
-  }
-  const batchNo = String(acceptance?.batchNo || '');
-  // ⭐⭐ 2026-10-12：进验收就**预填那张可编辑清单**（她的口述版）；渲染器不认识"是否开启"，
-  //    由路由决定要不要给 `acceptance.rows`（不给 ⇒ 与改前逐字相同）。
-  const rowsBlock = Array.isArray(acceptance?.rows) ? acceptanceRowsFormHtml(write, acceptance, userAgent) : '';
-  // ⚠️ 这里**故意先算成变量**、不在 `${}` 里再嵌一个模板串 ——
-  //    `test/noHardcodedChinese.test.js` 的扫描器用**朴素状态机**剥注释，遇到嵌套模板串会失步，
-  //    把后面的注释当成"硬编码中文"误报（实测：本文件多出 9 条假红）。写法上绕开它，别去动那个闸门。
-  const legacyBlock = `${acceptanceScanNextHtml(userAgent)}
-${acceptanceFinishHtml(write, acceptance)}`;
-  return renderDocument({
-    title: fillText(config.texts.pageTitle, { itemNo: batchNo, number: batchNo }),
-    config,
-    // ⚠️ 有清单时**不再渲染**那颗"只收金额"的老表单（一页只留一条路，免她点错）。
-    content: `<section class="card" data-view="acceptance" data-batch="${escapeHtml(batchNo)}">
-${acceptanceSummaryHtml(write, acceptance)}
-${rowsBlock || legacyBlock}
-</section>
-<p class="foot">${escapeHtml(fillText(write.texts.acceptBatchLine, { batchNo }))}</p>`,
-  });
-};
-
-/**
- * 某个领域**"没内容"**时的那张人话卡片（标题 + 为什么 + 一个下一步）。 *
- * 🔴 为什么必须有它：这是"**手机上无论如何都要有看得见的东西**"的最后一道体验兜底 ——
- *    没有写上下文（拿不到飞书身份 / 写入口没开）时，旧版会**什么块都不渲染**，
- *    屏幕上只剩身份区那一行；现在给一张说清楚的卡片，她至少知道"为什么没有表单、下一步去哪"。
+ * ⚠️ **只有当前这一块进 HTML**（另外五块**连字符串都不拼**）—— 页面里没有"靠 CSS 藏起来"
+ *    的东西，也就没有"脚本没跑 ⇒ 什么都没显示"的可能。
+ * ⚠️ 认不出的领域一律回落缺省（`resolveRealm` 在路由那一层已经做过一次；这里再兜一次，
+ *    **渲染层永远不抛、永远有正文**）。
  */
 const realmEmptyHtml = (realm, config) => {
   const textKey = REALM_EMPTY_TEXT_KEYS[realm] || REALM_EMPTY_TEXT_KEYS[DEFAULT_REALM];
@@ -1470,6 +1220,7 @@ const realmEmptyHtml = (realm, config) => {
  * ⚠️ 认不出的领域一律回落缺省（`resolveRealm` 在路由那一层已经做过一次；这里再兜一次，
  *    **渲染层永远不抛、永远有正文**）。
  */
+
 const realmBlockHtml = (realm, view, config, write, page = {}) => {
   const id = REALMS.some((item) => item.id === realm) ? realm : DEFAULT_REALM;
   const wrap = (inner) => `<div class="realm-block realm-block--${escapeHtml(id)}">\n${inner}\n</div>`;
@@ -1478,18 +1229,6 @@ const realmBlockHtml = (realm, view, config, write, page = {}) => {
   //   ⚠️ 不接这一支的话，`id` 会落到**销售**那一块（它会出现「加入本单」✗——一颗外链 tab 不该渲染成建单表单）。
   if (id === NEW_REALM) return wrap(realmEmptyHtml(NEW_REALM, config));
 
-  // ⭐⭐ 2026-10-11（方案A）：**验收模式**（非 tab 的领域）—— 上下文来自 `page.acceptance`
-  //    （由路由按"正开着一场验收"给）；拿不到就什么都不猜，回落缺省领域那张卡。
-  if (id === ACCEPTANCE_REALM) {
-    // ⭐ 2026-10-12：没有正在进行的验收 ⇒ **她自己开工**（列未到货批次 + 手输兜底），
-    //    不再给"回工作台"那张卡（她不去工作台）。
-    if (!page?.acceptance) return wrap(acceptPendingBlockHtml(config, page));
-    return wrap(page?.acceptance
-      ? acceptanceBlockHtml(view, write, page.acceptance, page?.userAgent)
-      // 没有正在进行的验收（她还没在工作台点【验收】，或那一场已结束/过期）⇒ 一张人话卡
-      // （标题 + 为什么 + 一个下一步），绝不留空 div。
-      : realmEmptyHtml(ACCEPTANCE_REALM, config));
-  }
   if (id === 'inventory') {
     // ⭐ 2026-10-14：缺货的**特殊码**在库存页也要看得到 ⇒ 折叠块放在**库存表之外**（表本体逐字不变 ✓ AC1 ✓）
     const foldedInventory = foldedSpecialRowsOf(view).map((row) => ({
@@ -1589,7 +1328,7 @@ ${notice}
 };
 
 const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEFAULT_REALM, page = {}) => {
-  const safeRealm = realm === ACCEPTANCE_REALM ? ACCEPTANCE_REALM : resolveRealm(realm);
+  const safeRealm = resolveRealm(realm);
   let block;
   try {
     block = realmBlockHtml(safeRealm, view, config, write, page);
@@ -1598,8 +1337,7 @@ const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEF
   }
   // ⚠️ 验收模式下**不挂销售本单条**：那一条讲的是"销售本单几双"，与"这次验收扫了几双"
   //    是两件事，同屏出现只会让她看错数（验收自己的本单条在验收块里）。
-  const bar = safeRealm === ACCEPTANCE_REALM ? ''
-    : draftBarHtml(write, config, page?.userAgent, safeRealm, {
+  const bar = draftBarHtml(write, config, page?.userAgent, safeRealm, {
       // ⭐ 2026-10-12：销售页上那颗**带钱**的提交表单就在下面 ⇒ 本单条不再放第二颗提交按钮。
       moneyFormOnPage: safeRealm === DEFAULT_REALM && Boolean(write),
     });
@@ -1937,12 +1675,6 @@ module.exports = {
   renderMinimalPage,
   // ⭐⭐ 2026-10-12：提交成功页（逐字「您的提交已成功」+「再录一单」链接回扫码页）
   renderSaleSuccessPage,
-  // ⭐⭐ 2026-10-11（方案A）：验收模式落地页（`GET /s/accept?batch=` 那一屏）
-  renderAcceptancePage,
-  // ⭐ 2026-10-12：验收成功页（两个真实数字 + 回列表）
-  renderAcceptanceDonePage,
-  // ⭐⭐ 2026-10-12：`GET /accept`（无 batch）的自助落地页（复用「未到货批次 + 手输」那一块）
-  renderAcceptanceSelfServe,
   escapeHtml,
   STYLE,
   readThemeTokens,

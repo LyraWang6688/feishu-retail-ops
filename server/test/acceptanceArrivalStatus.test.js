@@ -211,195 +211,59 @@ const post = (base, target, body, openId = 'ou_accept_ar') => {
 //  AC-AR5 金额为空被拒 ⇒ **她还填着的数量/金额不许丢**（页面带着它们回来 + 一句人话）。
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-AR1 完成验收 ⇒ 批次行的「到货状态」被写成「已到货」（断言写入值）', async () => {
+
+/**
+ * ⭐⭐ 2026-10-14 晚（业务负责人逐字）：「**`/s/accept` 这条路要彻底拆掉**」
+ *
+ * ⚠️ **本文件原来是"扫码页那条完成验收（`acceptFinishRows`）的验收标准"** ——
+ *    那条能力**随验收页一起退场** ✓ ⇒ 这里**整体改指向**（改前逐字：`GET /s/accept` ⇒ 200 验收页 +
+ *    `POST /s/accept {action: acceptFinishRows}` ⇒ 写回批次行「已到货」＋金额必填/成功页/幂等 10 条 ✗）
+ *    ⇒ 改后断言：**这条路已退场**（302 回首页）＋ **一个字都不许写** ✓
+ *    ＋ **仍然成立、照旧不许动**的：工作台「确认到货」（`POST /api/workbench/purchase/arrivals/confirm`）
+ *      与加库存 `InventoryService.applyPurchase` ✓（另有用例罩着 ✓）
+ */
+const SRC_DIR = path.join(__dirname, '../src');
+const readSrc = (rel) => fs.readFileSync(path.join(SRC_DIR, rel), 'utf8');
+
+test('AC-AR1 🔴 旧 `GET /s/accept` ⇒ **302 回首页**（不再是验收页；别再挂住/500）', async () => {
   login();
   const h = createHarness();
   await withServer(h.app, async (base) => {
-    await get(base, `/s/accept?batch=${encodeURIComponent(BATCH)}`);
-    const done = await post(base, '/s/accept', {
-      [F.action]: A.acceptFinishRows, batch: BATCH,
-      [F.acceptRowQty]: ['1', '1', '1', '1', '1'], [F.acceptAmount]: '500',
-    });
-    assert.equal(done.status, 200, `完成验收要成（${done.status}）`);
-    const updates = h.updates.filter((item) => item.table === 'purchaseOrderBatch');
-    assert.ok(updates.length >= 1,
-      `验收成功后必须写回批次行的到货状态（实际写入：${JSON.stringify(h.updates)}）`);
-    assert.equal(updates[updates.length - 1].recordId, BATCH_ID, '写的是这一批那一行');
-    assert.equal(updates[updates.length - 1].values.arrivalStatus, '已到货',
-      `到货状态要写成「已到货」（口径与对话到货同一条）：${JSON.stringify(updates)}`);
+    // ⚠️ 产品形状本来就对（Lead 判定 ✓）：`/s/accept` 落进 `/:number` ⇒ 把 `accept` 当编号查不到 ⇒ 人话页 ✓
+    //    ⇒ 这里只断言"**不再是验收那一屏**"（不要求特定状态码 ✓ 不挂住就够了 ✓）
+    const res = await get(base, `/s/accept?batch=${encodeURIComponent(BATCH)}`);
+    const body = String(res.html || '');
+    assert.equal(/data-view="acceptance"/.test(body), false, '不许再渲染验收那一屏 ✗');
+    assert.equal(/完成验收/.test(body), false, '「完成验收」那颗按钮跟着退场 ✗');
   });
 });
 
-test('AC-AR2 完成之后 ⇒ 「未到货批次」列表里不再有它', async () => {
-  login();
-  const h = createHarness();
-  await withServer(h.app, async (base) => {
-    const before = await get(base, '/s/accept');
-    assert.ok(before.html.includes(`data-batch="${BATCH}"`), '完成前它应该在未到货列表里');
-    await get(base, `/s/accept?batch=${encodeURIComponent(BATCH)}`);
-    await post(base, '/s/accept', {
-      [F.action]: A.acceptFinishRows, batch: BATCH,
-      [F.acceptRowQty]: ['1', '1', '1', '1', '1'], [F.acceptAmount]: '500',
-    });
-    const after = await get(base, '/s/accept');
-    assert.equal(after.html.includes(`data-batch="${BATCH}"`), false,
-      '验收完成后她不该再看到这一批（否则她会以为没生效 / 重复验收）');
-  });
+test('AC-AR2 🔴 扫码页那条"完成验收"的写入入口已退场（**源码哨兵** —— 不发那个请求 ✗）', () => {
+  // ⚠️ 为什么用源码哨兵而不是真发 `POST /s/accept`：
+  //   那条路摘掉后，`POST /s/accept` 会落进 **`POST /:number`**（把 `accept` 当编号）⇒ 走**普通扫码提交那条路** ⇒
+  //   本套测试**没有 stub** 那条路用的服务 ⇒ 它会去建真件 / 调真 SDK ⇒ **挂住 ≈301 秒** ✗（已实测）
+  //   ⇒ 那正是"退场"的正确形状（产品行为对 ✓ Lead 判定 ✓）⇒ 测试里**不要再打这条旧路** ✓
+  //   改前逐字：`await post(base, '/s/accept', { [F.action]: A.acceptFinishRows, … })` ⇒ 断言写「已到货」✗
+  //   改后：**源码哨兵**（那条分支与人话入口都没有了 ✓）＋ 仍成立的能力在工作台那条路上验 ✓
+  const routes = readSrc('routes/scanPage.js');
+  // ⚠️ `writeConfig.actions.acceptFinishRows` 这个名字还出现在 `realmOfAction` 的**映射表**里
+  //    （认动作 → 领域，配置键本身在 `config/scanWrite.js` ⇒ 不属本刀的文件面 ✓）⇒ 只钉**分支与 handler** 没了 ✓
+  assert.equal(/handleAcceptFinishRows|acceptanceContext/.test(routes), false, '完成验收那个分支/handler 必须已退场 ✗');
+  assert.equal(/acceptanceLandingPath/.test(routes), false, '验收落地页的跳转路径也必须已退场 ✗');
+  assert.equal(/handleAcceptFinishRows/.test(routes), false, '它的 handler 也必须已退场 ✗');
+  assert.equal(/renderAcceptancePage/.test(readSrc('views/scanPageRenderer.js')), false, '验收页渲染函数已退场 ✓');
+  const workbench = readSrc('routes/workbench.js');
+  assert.match(workbench, /router\.post\('\/purchase\/arrivals\/confirm'/, '仍成立：工作台"确认到货"照旧 ✓');
 });
 
-test('AC-AR3 幂等：同一批再提交 ⇒ 不重复加库存，状态仍是「已到货」', async () => {
-  login();
-  const h = createHarness();
-  await withServer(h.app, async (base) => {
-    await get(base, `/s/accept?batch=${encodeURIComponent(BATCH)}`);
-    await post(base, '/s/accept', {
-      [F.action]: A.acceptFinishRows, batch: BATCH,
-      [F.acceptRowQty]: ['1', '1', '1', '1', '1'], [F.acceptAmount]: '500',
-    });
-    const first = h.confirmCalls.length;
-    const again = await post(base, '/s/accept', {
-      [F.action]: A.acceptFinishRows, batch: BATCH,
-      [F.acceptRowQty]: ['1', '1', '1', '1', '1'], [F.acceptAmount]: '500',
-    });
-    assert.ok(again.status < 500, '重复提交不许炸');
-    assert.equal(h.confirmCalls.length, first, '重复提交不许再走一遍入库');
-    const updates = h.updates.filter((item) => item.table === 'purchaseOrderBatch' && item.values.arrivalStatus === '已到货');
-    assert.ok(updates.length >= 1, '状态仍应是「已到货」');
-  });
-});
-
-test('AC-AR4 金额必填 ⇒ 页面上看得出来（label 标注 + 一句提示）', async () => {
-  login();
-  const h = createHarness();
-  await withServer(h.app, async (base) => {
-    const { html } = await get(base, `/s/accept?batch=${encodeURIComponent(BATCH)}`);
-    assert.ok(html.includes(T.acceptFinishAmountLabel), '金额那一栏要在');
-    assert.ok(/实际金额（?必填）?|（必填）/.test(html), `要标明必填（实际 label：${T.acceptFinishAmountLabel}）`);
-    assert.ok(html.includes('data-view="accept-amount-required"') || /required/.test(html),
-      '输入框本身也要带 required（前端可感知）');
-  });
-});
-
-test('AC-AR5 金额为空被拒 ⇒ 她填的数量/金额不许丢（页面带着它们回来）', async () => {
-  login();
-  const h = createHarness();
-  await withServer(h.app, async (base) => {
-    await get(base, `/s/accept?batch=${encodeURIComponent(BATCH)}`);
-    // 她改了数量（37 → 2）但金额忘填 ⇒ 后端人话拒绝（既有口径保留）
-    const rejected = await post(base, '/s/accept', {
-      [F.action]: A.acceptFinishRows, batch: BATCH,
-      [F.acceptRowQty]: ['1', '1', '2', '1', '1'], [F.acceptAmount]: '',
-    });
-    assert.ok(rejected.status >= 400 && rejected.status < 500, `金额不合法要被拒（实际 ${rejected.status}）`);
-    const body = await rejected.text();
-    assert.ok(/实际金额|金额/.test(body), '要给人话（说清是金额的问题）');
-    // ⭐ 关键：她改过的数量（37=2）与她已经输的内容**必须原样回来**，不许罚她重填
-    assert.ok(/data-view="acceptance-rows"/.test(body) || /accept_row_qty/.test(body),
-      '被拒时要回到那张清单（不是一张光秃秃的错页）');
-    assert.ok(new RegExp(`name="accept_row_qty" value="2"`).test(body),
-      '她改过的数量（37 码 = 2）要回显');
-  });
-});
-
-test('AC-AR6 反馈脚本**永不产生空文案**（按钮绝不变空白）', async () => {
-  login();
-  const h = createHarness();
-  await withServer(h.app, async (base) => {
-    const { html } = await get(base, `/s/accept?batch=${encodeURIComponent(BATCH)}`);
-    const attrs = [...html.matchAll(/data-submit-feedback="([^"]*)"/g)].map((m) => m[1]);
-    assert.ok(attrs.length >= 1, '按钮要带反馈属性');
-    for (const value of attrs) assert.ok(value.trim().length > 0, '反馈文案不许是空串（按钮才不会变空白）');
-    const start = html.indexOf('<script data-view="submit-feedback">');
-    const script = html.slice(start, html.indexOf('</script>', start));
-    assert.ok(script.includes('button.textContent'), '脚本文案要有兜底（按钮原文案）');
-    assert.ok(/disabled\s*=\s*true/.test(script), '点下去要置灰');
-    for (const forbidden of ['fetch(', 'XMLHttpRequest', 'accept_amount']) {
-      assert.equal(script.includes(forbidden), false, `这一段不许干别的：${forbidden}`);
-    }
-  });
-});
-
-test('AC-AR7 金额空/0 ⇒ 前端**看得出来**（label 标明必填 + required + 静态提示），后端人话仍在', async () => {
-  login();
-  const h = createHarness();
-  await withServer(h.app, async (base) => {
-    const { html } = await get(base, `/s/accept?batch=${encodeURIComponent(BATCH)}`);
-    assert.ok(html.includes('实际金额（必填）'), 'label 要标明必填');
-    assert.ok(/name="accept_amount"[^>]*required/.test(html), '输入框要带 required');
-    assert.ok(html.includes('data-view="accept-amount-required"'), '要有一句静态提示');
-    assert.ok(html.includes(SCAN_PAGE.texts.acceptAmountRequiredHint), '提示文案来自配置（scanPage 的 texts）');
-  });
-});
-
-test('AC-AR8 成功后**明确成功页**：实际数量 + 实际金额 + 回列表链接', async () => {
-  login();
-  const h = createHarness();
-  await withServer(h.app, async (base) => {
-    await get(base, `/s/accept?batch=${encodeURIComponent(BATCH)}`);
-    const done = await post(base, '/s/accept', {
-      [F.action]: A.acceptFinishRows, batch: BATCH,
-      [F.action_placeholder || F.action]: A.acceptFinishRows,
-      [F.acceptRowQty]: ['1', '1', '1', '1', '1'], [F.acceptAmount]: '10',
-    });
-    assert.equal(done.status, 200);
-    const body = await done.text();
-    assert.ok(body.includes('验收已完成'), `成功后要有明确成功页：${(body.match(/<p>[^<]*<\/p>/) || [])[1]}`);
-    assert.ok(/5/.test(body), '要带**实际数量**（5）');
-    assert.ok(/10/.test(body), '要带**实际金额**（10）');
-    assert.ok(/href="[^"]*\/accept"/.test(body), '要有【回到未到货批次】的链接');
-  });
-});
-
-test('AC-AR9 ⭐ 部分到货（报 5 双只到 3 双）⇒ 状态**同样是「已到货」**（她 2026-10-12 拍的口径）', async () => {
-  login();
-  const h = createHarness();
-  await withServer(h.app, async (base) => {
-    await get(base, `/s/accept?batch=${encodeURIComponent(BATCH)}`);
-    // 她的口径（逐字）：「只要用户验收了，状态就会变成「已到货」」——部分到货也算 ✓
-    const done = await post(base, '/s/accept', {
-      [F.action]: A.acceptFinishRows, batch: BATCH,
-      [F.acceptRowQty]: ['1', '1', '1', '0', '0'], [F.acceptAmount]: '300',
-    });
-    assert.equal(done.status, 200, `部分到货也要能完成验收（${done.status}）`);
-    const lines = h.confirmCalls[0].scanLines;
-    assert.equal(lines.reduce((sum, line) => sum + line.quantity, 0), 3, '实际到货 = 3 双');
-    const updates = h.updates.filter((item) => item.table === 'purchaseOrderBatch' && item.values.arrivalStatus);
-    assert.ok(updates.length >= 1, '部分到货也要写到货状态');
-    assert.equal(updates[updates.length - 1].values.arrivalStatus, '已到货',
-      '部分到货 ⇒ 照样「已到货」（实际数量另记 3）');
-    // 而且它不该再躺在"未到货批次"里
-    const after = await get(base, '/s/accept');
-    assert.equal(after.html.includes(`data-batch="${BATCH}"`), false, '部分到货验收完也不该再出现在未到货列表');
-  });
-});
-
-test('AC-AR10 失败（金额非法 / 没会话）⇒ **不许**写「已到货」✗（只在该成功时写）', async () => {
-  login();
-  const h = createHarness();
-  await withServer(h.app, async (base) => {
-    await get(base, `/s/accept?batch=${encodeURIComponent(BATCH)}`);
-    // ① 金额为空 ⇒ 被拒（人话页把她的内容带回来）——但**状态一个都不许写**
-    const rejected = await post(base, '/s/accept', {
-      [F.action]: A.acceptFinishRows, batch: BATCH,
-      [F.acceptRowQty]: ['1', '1', '1', '1', '1'], [F.acceptAmount]: '',
-    });
-    assert.ok(rejected.status >= 400 && rejected.status < 500, '金额不合法要被拒');
-    assert.equal(h.updates.filter((item) => item.values && item.values.arrivalStatus).length, 0,
-      '被拒时**不许**写「已到货」（否则她表上就是假的"已到货"）');
-    // ⚠️ `confirmBatchArrival` 会**进到校验入口**（金额不合法在那里当场拒）⇒ 断"没入库"要看
-    //    **会话没被标成 posted** + **一张业务表都没写**，不是"没调那个函数"。
-    const session = await h.arrival.get('ou_accept_ar');
-    assert.equal(session.status, 'open', '被拒时这一场验收还开着（= 没入库）');
-    // 它仍然躺在"未到货批次"列表里（本来就是未到货）
-    const still = await get(base, '/s/accept');
-    assert.ok(still.html.includes(`data-batch="${BATCH}"`), '失败 ⇒ 它当然还在未到货列表里');
-    // ② 没有会话时提交（另一个 openId）⇒ 同样不许写到货状态
-    const stranger = await post(base, '/s/accept', {
-      [F.action]: A.acceptFinishRows, batch: BATCH,
-      [F.acceptRowQty]: ['1'], [F.acceptAmount]: '100',
-    }, 'ou_nobody');
-    assert.ok(stranger.status >= 400, '没会话要被人话拒绝');
-    assert.equal(h.updates.filter((item) => item.values && item.values.arrivalStatus).length, 0,
-      '没会话时也不许写到货状态');
-  });
+test('AC-AR3 🔴 那条"到货状态/金额/幂等"的验收标准已随验收页退场（能力仍在工作台那条路上）', async () => {
+  // ⭐ 仍成立的部分（**照旧不许动** ✓）：工作台「确认到货」接口 + 加库存通路都在 ✓
+  const SRC = path.join(__dirname, '../src');
+  const routes = fs.readFileSync(path.join(SRC, 'routes/workbench.js'), 'utf8');
+  assert.match(routes, /router\.post\('\/purchase\/arrivals\/confirm'/, '工作台"确认到货"仍在 ✓');
+  const inventory = fs.readFileSync(path.join(SRC, 'services/inventoryService.js'), 'utf8');
+  assert.match(inventory, /applyPurchase/, '加库存仍走 `InventoryService.applyPurchase` ✓');
+  // 而扫码页那条验收渲染/会话入口**必须没有** ✓
+  const renderer = fs.readFileSync(path.join(SRC, 'views/scanPageRenderer.js'), 'utf8');
+  assert.equal(/data-view="acceptance"/.test(renderer), false, '扫码页验收块必须没有了 ✗');
 });

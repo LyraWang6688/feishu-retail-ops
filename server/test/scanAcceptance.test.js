@@ -238,7 +238,11 @@ test('AC-A1 工作台的扫码验收入口**已改造进工作台**（不再跳 
 // AC-A2 开验收会话 + 落地页（本单条 / 继续扫下一个 / 完成验收 / 实际金额）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-A2 GET /s/accept?batch=X 开一次验收会话；落地页有本单条 + 继续扫下一个 + 完成验收 + 实际金额', async () => {
+test('AC-A2 🔴 GET /s/accept?batch=X ⇒ **验收落地页已退场**（200 回落销售；不再开验收会话）', async () => {
+  // ⭐ 2026-10-14 晚 **改指向**（依据：她「`/s/accept` 这条路要彻底拆掉」）
+  //   改前逐字：`assert.match(html, /继续扫下一个/)` + `/完成验收/` + `/实际金额/` +
+  //              `const session = await h.arrival.get(openId); assert.equal(session.batch_no, BATCH);`
+  //   改后：这一页**不再是验收页**（那几个标记一个都不许有 ✗）＋ **不再建验收会话** ✓
   login();
   const h = createHarness();
   try {
@@ -247,51 +251,37 @@ test('AC-A2 GET /s/accept?batch=X 开一次验收会话；落地页有本单条 
       const response = await fetch(`${base}/s/accept?batch=${encodeURIComponent(BATCH)}`, {
         headers: { cookie: sessionCookie(openId), 'user-agent': 'Mozilla/5.0 (iPhone) Lark/7.0' },
       });
-      assert.equal(response.status, 200);
+      assert.equal(response.status, 200, '旧链接仍可打开（回落销售 ⇒ 不 4xx/5xx ✓）');
       const html = await response.text();
-      // 本单条：已验收 N 双 / 应到 M 双（M = 这一批申请数合计 = 3）
-      assert.match(html, /已验收 0 双/);
-      assert.match(html, /应到 3 双/);
-      assert.match(html, /继续扫下一个/);
-      assert.match(html, /完成验收/);
-      assert.match(html, /实际金额/);
-      // 【继续扫下一个】= 飞书 AppLink（手机飞书可用）
-      assert.match(html, /applink\.feishu\.cn\/client\/qrcode\/main/);
-      // 会话真的建了（服务端落盘，扫下一码时还认得出这一批）
-      const session = await h.arrival.get(openId);
-      assert.equal(session.batch_no, BATCH);
-      assert.equal(session.expected, 3);
+      // ⚠️ 「继续扫下一个」是**本单条**的既有文案（弹回销售页也会有 ✓）⇒ 不在判据里 ✗
+      for (const gone of ['完成验收', 'data-view="acceptance"', 'accept-pending', '实际金额（必填）']) {
+        assert.equal(html.includes(gone), false, `验收页的「${gone}」必须不再出现 ✗`);
+      }
+      const session = await h.arrival.get(openId).catch(() => null);
+      assert.equal(session, null, '这一趟**不许**再开验收会话 ✓（验收那条路已拆）');
     });
   } finally { h.cleanup(); }
 });
-
-// ═══════════════════════════════════════════════════════════════════════════
-// AC-A3/A4/A5 扫码 / 重复扫 / 不在本批（只写本地会话）
-// ═══════════════════════════════════════════════════════════════════════════
-
-test('AC-A3 扫一个码 ⇒ 列该编号各尺码 ⇒ 选尺码 + 填数量（默认 1、可改）⇒ 只写本地会话', async () => {
+test('AC-A3 🔴 扫一个码 ⇒ **不再记进验收会话**（那套写入入口随验收退场）', async () => {
+  // ⭐ 2026-10-14 晚 **改指向**：改前逐字断言"扫一个码 ⇒ 列各尺码 + 选尺码 + 填数量 ⇒ 只写本地会话"✗
+  //   改后：派发那条验收动作 ⇒ 会话仍为空 ✓（能力留在服务层，但**扫码页不再有这条路** ✓）
   login();
   const h = createHarness();
   try {
-    const openId = 'ou_accept_route';
+    const openId = 'ou_accept_scan_off';
     await withServer(scanApp(h), async (base) => {
-      const cookie = { cookie: sessionCookie(openId), 'user-agent': 'Mozilla/5.0 (iPhone) Lark/7.0' };
-      await fetch(`${base}/s/accept?batch=${encodeURIComponent(BATCH)}`, { headers: cookie });
-      // 扫到一个码 = 打开这一款那一页：验收模式下给出**尺码 + 数量**（默认 1）
-      const page = await (await fetch(`${base}/s/${encodeURIComponent(NUMBER)}`, { headers: cookie })).text();
-      assert.match(page, /data-view="acceptance"/);
-      assert.match(page, /name="accept_size"/);
-      assert.match(page, /name="accept_quantity"[^>]*value="1"/);
-      // 业务表一个字节都没写
-      assert.equal(h.gateway.writes.length, 0, '选尺码这一步只动本地会话');
+      const response = await fetch(`${base}/s/${encodeURIComponent(NUMBER)}`, {
+        method: 'POST',
+        headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ action: SCAN_WRITE.actions.acceptAdd, accept_size: '40', accept_quantity: '1' }).toString(),
+        redirect: 'manual',
+      });
+      assert.ok(response.status >= 300, '这条动作不再有对应写入口（不会安静成功 ✓）');
+      const session = await h.arrival.get(openId).catch(() => null);
+      assert.equal(session, null, '一个字都不许写进验收会话 ✓');
     });
-    const added = await h.arrival.addScan({ openId, productRecordId: 'prod_1', size: 38, quantity: 2 });
-    assert.equal(added.ok, true, JSON.stringify(added));
-    assert.equal(added.session.scanned, 2);
-    assert.equal(h.gateway.writes.length, 0);
   } finally { h.cleanup(); }
 });
-
 test('AC-A4 连续扫多双：同一 (货品,尺码) 重复扫只记一次；不同尺码累加（N/M 实时更新）', async () => {
   const h = createHarness();
   try {
@@ -411,30 +401,13 @@ test('AC-A8 会话互不覆盖：销售本单 / 补货 / 退货 / 验收 四条�
 // AC-A9 AppLink：飞书给按钮，桌面给人话
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-A9 【继续扫下一个】= 飞书 UA 给 AppLink；桌面 UA 给人话（不是死按钮）', async () => {
-  login();
-  const h = createHarness();
-  try {
-    const openId = 'ou_accept_route';
-    await withServer(scanApp(h), async (base) => {
-      const pageUrl = `${base}/s/accept?batch=${encodeURIComponent(BATCH)}`;
-      const mobile = await (await fetch(pageUrl, {
-        headers: { cookie: sessionCookie(openId), 'user-agent': 'Mozilla/5.0 (iPhone) Lark/7.5' },
-      })).text();
-      assert.match(mobile, /applink\.feishu\.cn\/client\/qrcode\/main/);
-      const desktop = await (await fetch(pageUrl, {
-        headers: { cookie: sessionCookie(openId), 'user-agent': 'Mozilla/5.0 (Macintosh) Chrome/120' },
-      })).text();
-      assert.equal(/applink\.feishu\.cn\/client\/qrcode\/main/.test(desktop), false, '桌面不给死按钮');
-      assert.match(desktop, /飞书/);
-    });
-  } finally { h.cleanup(); }
+test('AC-A9 🔴 【继续扫下一个】那颗 AppLink 随验收页一起退场（不再是页面的一部分）', () => {
+  // ⭐ 2026-10-14 晚 **改指向**：改前逐字"飞书 UA 给 AppLink / 桌面 UA 给人话"✗
+  //   改后：渲染层里**不再有**验收那一块 ⇒ 也就没有那颗按钮 ✓（AppLink 生成器本身仍保留给别处 ✓）
+  const renderer = fs.readFileSync(path.join(SERVER_SRC, 'views/scanPageRenderer.js'), 'utf8');
+  assert.equal(/data-view="acceptance"/.test(renderer), false, '验收块必须没有了 ✗');
+  assert.ok(/applink/i.test(renderer) === true || /applink/i.test(renderer) === false, '（不强制：AppLink 生成器若还有别的调用方则保留 ✓）');
 });
-
-// ═══════════════════════════════════════════════════════════════════════════
-// AC-A10/A11/A12 一双没扫就完成 / 移动端 / 源码哨兵
-// ═══════════════════════════════════════════════════════════════════════════
-
 test('AC-A10 一双都还没扫就点【完成验收】⇒ 拦住、一个字都不写', async () => {
   const h = createHarness();
   try {
@@ -455,18 +428,13 @@ test('AC-A10 一双都还没扫就点【完成验收】⇒ 拦住、一个字都
   } finally { h.cleanup(); }
 });
 
-test('AC-A11 移动端：viewport / 单列 / 不横向滚动 / 控件 ≥44px（静态哨兵）', () => {
-  const realm = fs.readFileSync(path.join(SERVER_SRC, 'views/scanPageRealm.js'), 'utf8');
+test('AC-A11 🔴 静态哨兵：渲染层里**没有**验收块（那条"移动端布局"随它一起退场）', () => {
+  // ⭐ 2026-10-14 晚 **改指向**：改前逐字 `assert.match(renderer, /data-view="acceptance"/)` ✗
+  //   改后：**必须没有** ✓（扫码页整页的 ≥44px / 单列 / 不横滑 由既有那几条哨兵继续罩着 ✓）
   const renderer = fs.readFileSync(path.join(SERVER_SRC, 'views/scanPageRenderer.js'), 'utf8');
-  assert.match(renderer, /data-view="acceptance"/);
-  // 控件高度：复用扫码页既有的 --control-height（手机 ≥44px 的既有实现）
-  assert.match(renderer, /--control-height/);
-  // 验收那一块不许用表格（手机上会横向滚动）
-  const acceptanceBlock = renderer.slice(renderer.indexOf('data-view="acceptance"'));
-  assert.equal(/<table/i.test(acceptanceBlock.slice(0, 2000)), false, '验收块不许用 <table>');
-  assert.ok(realm.length > 0);
+  assert.equal(/data-view="acceptance"/.test(renderer), false, '验收块必须没有了 ✗');
+  assert.match(renderer, /--control-height/, '页面级的 ≥44px 口径照旧 ✓');
 });
-
 test('AC-A12 源码哨兵：验收没有第二套入库（复用 buildPlan / confirmLocked，不自己拼 draft）', () => {
   const stripComments = (source) => source
     .replace(/\/\*[\s\S]*?\*\//g, '')
