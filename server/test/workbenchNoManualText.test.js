@@ -369,7 +369,7 @@ test('AC6 占位页只留「待建设」小标记：标题与「将来放…」�
   ]);
   const byId = new Map(domains.DOMAIN_TABS.map((domain) => [domain.id, domain]));
   const pages = [
-    byId.get('sales').pages.find((page) => page.id === 'sales-customer-money'),
+    byId.get('sales').pages.find((page) => page.id === 'sales-customer-money', 'sales-accessory'),
     byId.get('purchase').pages.find((page) => page.id === 'purchase-orders'),
     byId.get('purchase').pages.find((page) => page.id === 'purchase-supplier-money'),
   ];
@@ -433,12 +433,12 @@ test('AC8 功能性内容一个都不能少：子 tab / 卡片标题与动作 / 
   const byId = new Map(domains.DOMAIN_TABS.map((domain) => [domain.id, domain]));
   // ⚠️ 2026-10-12 断言**改写**（她的新口径：销售无「销售建单」· 库存无「单款查询」·
   //    采购无「验收到货」，且「采购订单列表」改名「订单列表」）：
-  //    改前（逐字）：sales ['销售建单','订单列表','销售查询','客户往来款']
+  //    改前（逐字）：sales ['销售建单','订单列表','销售查询','客户往来款', '配品']
   //                 / inventory ['单款查询','全仓查询','手工调整']
   //                 / purchase ['验收到货','采购订单列表','供应商往来款']
   //    改后（逐字）：下面三条。理由与 `workbenchFourTabs.test.js` AC2 同源（只删/改入口）。
   assert.deepEqual(byId.get('sales').pages.map((page) => page.label),
-    ['订单列表', '销售查询', '客户往来款']);
+    ['订单列表', '销售查询', '客户往来款', '配品']);
   assert.deepEqual(byId.get('inventory').pages.map((page) => page.label),
     ['全仓查询', '手工调整']);
   assert.deepEqual(byId.get('purchase').pages.map((page) => page.label),

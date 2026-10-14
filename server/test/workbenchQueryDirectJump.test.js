@@ -101,8 +101,8 @@ test('AC1a 销售子 tab 逐字 = 订单列表 · 销售查询 · 客户往来�
   const domains = await modules.domains;
   const sales = domains.domainById('sales');
 
-  assert.deepEqual(labelsOf(sales), ['订单列表', '销售查询', '客户往来款']);
-  assert.deepEqual(idsOf(sales), ['sales-orders', 'sales-query', 'sales-customer-money']);
+  assert.deepEqual(labelsOf(sales), ['订单列表', '销售查询', '客户往来款', '配品']);
+  assert.deepEqual(idsOf(sales), ['sales-orders', 'sales-query', 'sales-customer-money', 'sales-accessory']);
   assert.equal(pageById(sales, 'sales-create'), undefined, '「销售建单」入口整个退场');
   assert.equal(JSON.stringify(sales).includes('from=sales'), false,
     '工作台配置里不再有指向扫码页销售领域的入口（录入走扫码页）');
@@ -141,7 +141,7 @@ test('AC1d 子 tab 是按配置渲染的：少一条就真的少一颗按钮（�
   const buttonsOf = (id) => [...nav.domainSubTabsHtml(domains.domainById(id))
     .matchAll(/>([^<]+)<\/button>/g)].map((match) => match[1]);
 
-  assert.deepEqual(buttonsOf('sales'), ['订单列表', '销售查询', '客户往来款']);
+  assert.deepEqual(buttonsOf('sales'), ['订单列表', '销售查询', '客户往来款', '配品']);
   assert.deepEqual(buttonsOf('inventory'), ['全仓查询', '手工调整']);
   assert.deepEqual(buttonsOf('purchase'), ['验收', '退货', '订单列表', '供应商往来款']);
   assert.deepEqual(buttonsOf('product'), ['货品上新', '标签打印']);
