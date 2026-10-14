@@ -10,7 +10,8 @@
  *      的 `sizes.compare` / `sizes.order`）；
  *   ④ 一行放不下自动换行（最多 `maxLines` 行；再超出省略 —— `size_overflow` 让页面补 `…`）；
  *   ⑤ **单价**来自「货品信息.单价」（按编号取）；**读不到照发标签、不印价格并计数**（不许静默丢）；
- *   ⑥ **二维码 URL 来自 `tagQrCode` 的单一真源**：`https://hm.bamamei.online/s/{编号}`，
+ *   ⑥ **二维码 URL 来自 `tagQrCode` 的单一真源**：⭐ 2026-10-14 起主路径 = `https://hm.bamamei.online/r/{记录 ID}`
+ *      （她 2026-10-12 定案；拿不到记录 ID 才退回 `/s/{编号}` 并计数），
  *      模板与替换实现都 import 复用，`config/labelPrint.js` 里**一个 URL 都不许有**；
  *   ⑦ **40×30 的每页行列数**由 `resolveGrid()` 算（A4 + 6mm 边距 ⇒ 4 列 × 9 行 = 36 张）；
  *   ⑧ **版式参数（品牌置顶居中 / 右栏行序 / 价格位置 / 货号+颜色同行的超宽规则）随 `layout.body`
@@ -94,18 +95,43 @@ const sourceOf = (relative) => fs.readFileSync(path.join(SOURCE_DIR, relative), 
 
 // ── ⑤ 二维码 URL：单一真源（config/tagQrCode.js + tagQrCodeService.js）────────
 
-test('二维码内容 = hm 的 /s/{编号}（编号 = 货号|颜色|类别，中文 URL 编码）', async () => {
+// ⚠️ 2026-10-14 改写（**成对翻新，判据不放宽** ✗）：
+//   改前逐字：`test('二维码内容 = hm 的 /s/{编号}（编号 = 货号|颜色|类别，中文 URL 编码）')`
+//             ＋ `assert.equal(data.labels[0].scan_url, 'https://hm.bamamei.online/s/YD6693-2%7C%E9%BB%91%E8%89%B2%7CA')`
+//             ＋ `assert.ok(data.labels[0].scan_url.startsWith('https://hm.bamamei.online/s/'))`
+//             ＋ `assert.equal(data.qr.url_template, SCAN_URL.urlTemplate)`
+//   改后逐字：主路径 = **`/r/{记录 ID}`**（`SCAN_URL.recordIdTemplate`）；夹具里补一条「货品信息」
+//             （`rec_p1`）⇒ 码里装的是**接口读到的 record_id**；并**新增**一条
+//             「拿不到记录 ID ⇒ 退回 `/s/{编号}`」的用例（旧行为**没丢**，只是降级 ＋ 计数 ＋ warn）。
+//   依据（她的原话，逐字）：「**新二维码一律 `https://hm.bamamei.online/r/{recordId}`**（旧贴纸**重打**；
+//             `/s/{编号}` 路径保留但不再加功能）」（2026-10-12）＋「**不需要保持兼容**」
+//             ⇒ `docs/qr-record-id-and-js-2026-10-12.md` / `AGENTS.md`；
+//             本次落点/判据 ⇒ `docs/scan-to-print-jsapi-2026-10-14.md` 第 8 行 · AC-SP4。
+test('二维码内容 = hm 的 /r/{记录 ID}（记录 ID 来自接口读到的那条货品信息）', async () => {
+  const { service } = serviceFor({
+    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|A|38' })],
+    product: [productRecord('rec_p1', { number: 'YD6693-2|黑色|A', price: 399 })],
+  });
+  const data = await service.listLabels({});
+  assert.equal(data.labels[0].scan_url, 'https://hm.bamamei.online/r/rec_p1');
+  // 只编码值、不编码模板：域名与 `/r/` 必须原样在（整体 encodeURIComponent 会把 `://` 编掉）。
+  assert.ok(data.labels[0].scan_url.startsWith('https://hm.bamamei.online/r/'));
+  assert.equal(data.qr.url_template, SCAN_URL.recordIdTemplate, '模板来自 tagQrCode 的 SCAN_URL（不是本链路自己抄的）');
+  assert.equal(data.missing_qr_record_id, 0, '这一条拿到了记录 ID ⇒ 不算降级');
+  assert.match(data.labels[0].qr_svg, /^<svg /);
+  assert.ok(data.labels[0].qr_svg.includes('</svg>'));
+});
+
+// ⭐ 降级路径（旧行为**没丢**）：那条编号在「货品信息」里没有对应记录 ⇒ 二维码退回编号版 ＋ 计数。
+test('拿不到记录 ID ⇒ 二维码退回 /s/{编号}（不静默丢码，并计入 missing_qr_record_id）', async () => {
   const { service } = serviceFor({
     liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|A|38' })],
   });
   const data = await service.listLabels({});
   assert.equal(data.labels[0].scan_url,
     'https://hm.bamamei.online/s/YD6693-2%7C%E9%BB%91%E8%89%B2%7CA');
-  // 只编码值、不编码模板：域名与 `/s/` 必须原样在（整体 encodeURIComponent 会把 `://` 编掉）。
-  assert.ok(data.labels[0].scan_url.startsWith('https://hm.bamamei.online/s/'));
-  assert.equal(data.qr.url_template, SCAN_URL.urlTemplate, '模板来自 tagQrCode 的 SCAN_URL（不是本链路自己抄的）');
-  assert.match(data.labels[0].qr_svg, /^<svg /);
-  assert.ok(data.labels[0].qr_svg.includes('</svg>'));
+  assert.equal(data.missing_qr_record_id, 1, '拿不到记录 ID 的张数要如实计数（有 warn 日志）');
+  assert.equal(data.qr.fallback_url_template, SCAN_URL.numberTemplate);
 });
 
 test('二维码 URL 的单一真源：labelPrint.js 里不许有第二份 URL 模板，service 里只 import 复用', () => {
@@ -116,32 +142,48 @@ test('二维码 URL 的单一真源：labelPrint.js 里不许有第二份 URL �
     'config/labelPrint.js 的代码里不许出现任何 http(s) URL（旧的那条 workbench…/scan?no= 已删，模板唯一真源在 config/tagQrCode.js）');
   assert.ok(!/urlTemplate/.test(code), 'config/labelPrint.js 里不许再放 urlTemplate');
 
+  // ⚠️ 2026-10-14 改写（**成对翻新**）：
+  //   改前逐字：`assert.match(service, /SCAN_URL\.urlTemplate/, 'service 用的是 SCAN_URL.urlTemplate');`
+  //             ＋ `assert.match(service, /buildScanUrl\(SCAN_URL\.urlTemplate/, '替换实现是 tagQrCodeService 导出的 buildScanUrl');`
+  //   改后逐字：`SCAN_URL.recordIdTemplate` ＋ `buildRecordIdScanUrl(… SCAN_URL …)`
+  //   依据：她 2026-10-12「新二维码一律 `/r/{recordId}`」（`docs/qr-record-id-and-js-2026-10-12.md`）；
+  //        **判据没放宽**：仍然是"URL 模板唯一真源 = config/tagQrCode.js，service 只 import 复用"。
   const service = sourceOf('services/labelPrintService.js');
   assert.match(service, /require\('\.\.\/config\/tagQrCode'\)/, 'service 必须从 config/tagQrCode 取模板');
-  assert.match(service, /SCAN_URL\.urlTemplate/, 'service 用的是 SCAN_URL.urlTemplate');
+  assert.match(service, /SCAN_URL\.recordIdTemplate/, 'service 用的是 SCAN_URL.recordIdTemplate');
   assert.match(service, /require\('\.\/tagQrCodeService'\)/, 'service 必须复用 tagQrCodeService');
-  assert.match(service, /buildScanUrl\(SCAN_URL\.urlTemplate/, '替换实现是 tagQrCodeService 导出的 buildScanUrl');
+  assert.match(service, /buildRecordIdScanUrl\([^)]*SCAN_URL/,
+    '替换实现是 tagQrCodeService 导出的 buildRecordIdScanUrl，模板仍来自 SCAN_URL');
   // 旧的那条 URL 只许留在"已删除"的说明注释里，**代码里一个字都不许有**。
   const serviceCode = service
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
   assert.ok(!/workbench\.bamamei\.online/.test(serviceCode), '旧的 workbench 扫码 URL 必须删干净');
 });
 
-test('复用 tagQrCode 的 buildScanUrl：空编号 / 模板没有 {number} → 当场抛错（不静默出空码）', () => {
-  assert.equal(buildLabelScanUrl('XHB8095|黑色|A'),
-    'https://hm.bamamei.online/s/XHB8095%7C%E9%BB%91%E8%89%B2%7CA');
-  assert.throws(() => buildLabelScanUrl(''), /编号/);
-  assert.throws(() => buildLabelScanUrl('   '), /编号/);
+// ⚠️ 2026-10-14 改写（**成对翻新**）：
+//   改前逐字：`test('复用 tagQrCode 的 buildScanUrl：空编号 / 模板没有 {number} → 当场抛错（不静默出空码）')`
+//             ＋ `assert.equal(buildLabelScanUrl('XHB8095|黑色|A'), 'https://hm.bamamei.online/s/XHB8095%7C%E9%BB%91%E8%89%B2%7CA')`
+//             ＋ `assert.throws(() => buildLabelScanUrl(''), /编号/)`
+//   改后逐字：入参换成**记录 ID**，期望 `/r/{记录 ID}`；空记录 ID 的报错逐字 = 「记录没有 record_id」。
+//   依据：她 2026-10-12「新二维码一律 `/r/{recordId}`」＋「不需要保持兼容」；
+//        **判据没放宽**：仍然是"空值 ⇒ 当场抛，不静默出空码"。
+test('复用 tagQrCode 的 buildRecordIdScanUrl：空记录 ID → 当场抛错（不静默出空码）', () => {
+  assert.equal(buildLabelScanUrl('recABC123'), 'https://hm.bamamei.online/r/recABC123');
+  assert.throws(() => buildLabelScanUrl(''), /record_id/);
+  assert.throws(() => buildLabelScanUrl('   '), /record_id/);
 });
 
 test('二维码出图参数可配：fields.qr = false → 不出 SVG，但 URL 照样回给她看', async () => {
+  // ⚠️ 2026-10-14：夹具补一条「货品信息」⇒ 这一条的 `scan_url` 是**主路径 `/r/{记录 ID}`**
+  //    （改前这里断的是 `includes('/s/')` —— 形状随她 2026-10-12 的定案翻新，判据没放宽）。
   const { service } = serviceFor({
     liveInventory: [record('r1', { stockKey: 'XHB8095|黑色|A|42' })],
+    product: [productRecord('rec_p2', { number: 'XHB8095|黑色|A', price: 198 })],
   }, { fields: { qr: false } });
   const data = await service.listLabels({});
   assert.equal(data.labels[0].qr_svg, '');
   assert.equal(data.layout.fields.qr, false);
-  assert.ok(data.labels[0].scan_url.includes('/s/'));
+  assert.ok(data.labels[0].scan_url.includes('/r/'));
 });
 
 // ── ① 尺码按「编号」聚合 + 数量角标 ────────────────────────────────────────

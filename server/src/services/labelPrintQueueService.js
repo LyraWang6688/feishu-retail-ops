@@ -38,11 +38,18 @@ const ISO = (ms) => new Date(ms).toISOString();
 /**
  * 编成一个能写进任务记录的"输入规格"——**补打与排障都靠它**。
  *   · `single`：按**编号**（`货号|颜色|类别`）打一款；
+ *   · `single` + `recordId`：⭐ 2026-10-14「**扫码打印**」—— 按**记录 ID 精确一张**
+ *     （`labelPrintService.labelForRecord` 把记录 ID 解成恰好那一张标签）；
  *   · `batch` ：按筛选条件（与标签打印页同一个 `listLabels` 的入参）打一批。
+ * ⚠️ 新增的 `recordId` 是**并列的一种 single**（不是新 mode、不是新接口 ✗）——
+ *    既有 `number` 那条请求的形状与语义**一个字都没改**。
  */
 const normalizeRequest = (input = {}) => {
   const mode = String(input.mode || '').trim();
   if (mode === 'single') {
+    // ⭐ 「扫码打印」：记录 ID 优先（它比编号更准 —— 编号是会变的快照）。
+    const recordId = String(input.recordId || '').trim();
+    if (recordId) return { mode: 'single', recordId };
     const number = String(input.number || '').trim();
     if (!number) throw userError('缺少「编号」（货号|颜色|类别）');
     return { mode: 'single', number };
@@ -74,7 +81,12 @@ const normalizeRequest = (input = {}) => {
 const requestKeyOf = (request, rotate, canvas) => {
   const suffix = `${rotate === undefined || rotate === null ? '' : `|rotate=${rotate}`}`
     + `${canvas === undefined || canvas === null ? '' : `|canvas=${canvas}`}`;
-  if (request.mode === 'single') return `single|${request.number}${suffix}`;
+  if (request.mode === 'single') {
+    // ⭐ 「扫码打印」按记录 ID：`single|record:<id>`（与按编号的键**互不串** ⇒ 两张不同的纸）。
+    return request.recordId
+      ? `single|record:${request.recordId}${suffix}`
+      : `single|${request.number}${suffix}`;
+  }
   const filters = request.filters || {};
   const ordered = ['keyword', 'state', 'category', 'size', 'recentDays', 'sort']
     .map((name) => `${name}=${String(filters[name] ?? '').trim()}`)
@@ -233,7 +245,18 @@ const createLabelPrintQueueService = (deps = {}) => {
     ({ data, rendered, labels } = built);
 
     async function buildArtifact() {
-    if (request.mode === 'single') {
+    if (request.mode === 'single' && request.recordId) {
+      // ⭐ 「扫码打印」：**按记录 ID 精确一张** —— 解编号那件事归 `labelPrintService`
+      //   （本文件"不懂标签长什么样"那条边界不破 ✓）；解不出来/没库存 ⇒ 它抛 400 的人话。
+      if (typeof labelPrint.labelForRecord !== 'function') {
+        throw systemError('打印服务不支持「按记录 ID 打印」（部署的版本太旧）');
+      }
+      data = await labelPrint.labelForRecord(request.recordId);
+      // 一张 = 一个编号；`labelForRecord` 已经筛到**恰好这一张**（多一张都算多打 ✗）。
+      if ((data.labels || []).length !== 1) {
+        throw systemError(`按记录 ID 应该恰好找到 1 张标签，实际 ${(data.labels || []).length} 张`);
+      }
+    } else if (request.mode === 'single') {
       const itemNo = request.number.split('|')[0];
       data = await labelPrint.listLabels({ keyword: itemNo || request.number });
       const exact = (data.labels || []).filter((label) => label.number === request.number);
@@ -352,6 +375,8 @@ const createLabelPrintQueueService = (deps = {}) => {
       job_id: jobId,
       source,
       mode: request.mode,
+      // ⭐ 「扫码打印」按记录 ID 入队时留痕（排障时看得出"这一张是从哪个码来的"）。
+      record_id: request.recordId || undefined,
       total_labels: labels.length,
       page_count: rendered.meta.page_count,
       pdf_bytes: rendered.meta.pdf_bytes,
@@ -367,7 +392,10 @@ const createLabelPrintQueueService = (deps = {}) => {
 
   /** 手机侧：按**编号**打这一款（扫码页「货品」领域那颗【打印这一款】）。 */
   const enqueueSingle = (input = {}) => enqueue(
-    { mode: 'single', number: input.number },
+    // ⭐ 2026-10-14：「扫码打印」传 `recordId`（按记录 ID 精确一张）；不带就还是按编号（逐字照旧 ✓）。
+    input.recordId
+      ? { mode: 'single', recordId: input.recordId }
+      : { mode: 'single', number: input.number },
     {
       actor: input.actor,
       source: input.source || SOURCES.scan,

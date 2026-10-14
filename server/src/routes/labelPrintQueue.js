@@ -1,26 +1,30 @@
 /**
  * **手机侧**的打印接口（`/api/workbench/label-print/*`）—— 她在手机上点"打印"走的就是这里。
  *
- * 两件事：① **提交**一个打印任务（`POST /jobs`）；② **看状态**（`GET /status`，含
- * "打印电脑在线 / 未连接（任务已排队）"，以及最近几条任务的 `已打印` / `失败 + 原因`）。
+ * 三件事：① **提交**一个打印任务（`POST /jobs`，`single` 支持
+ *   **按编号** / ⭐ 2026-10-14「**扫码打印**」按记录 ID（`scan` = 扫到的字符串，服务端解析）；
+ *   ② **看状态**（`GET /status`，含 "打印电脑在线 / 未连接（任务已排队）"，以及最近几条任务的
+ *   `已打印` / `失败 + 原因`）；③ 补打（`POST /jobs/:jobId/reprint`）。
  *
  * 🔴 **不新开鉴权**：`requireWorkbenchAccess` 是从 `routes/workbench.js` **import 复用**的那一个
  *    （与扫码页 `GET /s/:number` 同一条闸门：认证没启用 503 / 未登录 401 / 白名单外 403）。
- *    本文件**一个字都没有改** `routes/workbench.js` —— 只 import 它已经导出的那个函数。
+ *    本文件**一个字都没有改** `routes/workbench.js` 的闸门 —— 只 import 它已经导出的那个函数。
+ * 🔴 **不新开打印接口**：扫码打印走的仍是**这一条** `POST /jobs`（解析在服务端做，
+ *    `parseLabelScanUrl` 与 `buildLabelScanUrl` 是一对反函数）。
  *
  * ⚠️ **与电脑侧共用同一个队列实例**（见 `services/labelPrintQueueRuntime.js`）：
  *    不然手机会把任务排进一个"小助手永远看不到"的队列里。
  *
- * ⚠️ **手机端保持零 JS** 那条约束落在**扫码页**（见 `views/scanPageRenderer.js`）：
- *    那个页面是**表单 POST + 服务端重渲染**，不碰这个 JSON 接口。
- *    本文件服务的是**工作台里的标签打印页**（那一页本来就有 JS）。
+ * ⚠️ **扫码页**那条【打印这一款】是**另一条路**（原生表单 POST + 服务端重渲染，不碰这个 JSON 接口）；
+ *    本文件服务的是**工作台里的标签打印页**（那一页本来就有 JS，允许动态交互 ✓ 她 2026-10-12 口径）。
  */
 const express = require('express');
 
 const { requireWorkbenchAccess } = require('./workbench');
 const { getLabelPrintQueue } = require('../services/labelPrintQueueRuntime');
-const { logError } = require('../utils/logger');
-const { STATES } = require('../config/labelPrintQueue');
+const { parseLabelScanUrl } = require('../services/labelPrintService');
+const { logError, logWarn } = require('../utils/logger');
+const { STATES, SOURCES } = require('../config/labelPrintQueue');
 
 const createLabelPrintQueueRouter = (options = {}) => {
   const router = express.Router();
@@ -53,6 +57,13 @@ const createLabelPrintQueueRouter = (options = {}) => {
     const actor = req.workbenchUser?.open_id || '';
     const submitKey = String(req.body?.submit_key || '').trim();
     const again = req.body?.again === true || String(req.body?.again || '') === '1';
+    // ⭐⭐ 2026-10-14「**扫码打印**」（她选了 ⓐ「扫完直接打印这一张」）：
+    //   页面把**扫到的字符串原样**交上来（`scan`），由**服务端**按 `config/tagQrCode.js` 的
+    //   URL 形状解析（`parseLabelScanUrl` 与 `buildLabelScanUrl` 是**一对反函数**，
+    //   全仓只有这一份形状 ✗ 页面不抄第二份）⇒ 拿到**记录 ID** ⇒ 交给下面的 `enqueueSingle`。
+    //   🔴 **不新开打印接口**：走的仍是这一条 `POST /jobs` 与同一个队列实例。
+    //   ⚠️ 认不出来 ⇒ **400 + 可操作的人话**（不是 500、不静默、不猜 ✗）。
+    const scan = String(req.body?.scan || '').trim();
     // ⭐ 打印方向：**不传 = 跟随服务器配置**（`artifact.rotate`）；
     //    传了 = 只对这一次生效（她试"90° 还是 270° 对"时，一次部署就能试完，不用改配置重启）。
     //    ⚠️ 只认 0/90/180/270 —— 别的值由 service 当场抛错（400），不静默按 0 印。
@@ -65,13 +76,36 @@ const createLabelPrintQueueRouter = (options = {}) => {
       : req.body.canvas;
     try {
       const queue = service();
-      const result = mode === 'batch'
-        ? await queue.enqueueBatch({
+      let result;
+      if (mode === 'batch') {
+        result = await queue.enqueueBatch({
           filters: req.body?.filters || {}, actor, submitKey, again, rotate, canvas,
-        })
-        : await queue.enqueueSingle({
+        });
+      } else if (scan) {
+        // ⭐ 「扫码打印」：先按形状解析（**服务端唯一一份**，与 `buildLabelScanUrl` 反函数）。
+        const parsed = parseLabelScanUrl(scan);
+        if (!parsed.ok) {
+          // **人话拒绝**：400 + 原因码进日志（她要的是"这是什么、该怎么办"，不是"格式不对"）。
+          logWarn('workbench.label_print.scan.rejected', {
+            request_id: req.requestId, reason: parsed.reason,
+          });
+          return res.status(400).json({ success: false, error: parsed.message, reason: parsed.reason });
+        }
+        result = await queue.enqueueSingle({
+          recordId: parsed.value,
+          actor,
+          submitKey,
+          again,
+          rotate,
+          canvas,
+          // 从工作台页面扫的 ⇒ 来源如实记 `workbench`（排障时与扫码页那条区分得开）。
+          source: SOURCES.workbench,
+        });
+      } else {
+        result = await queue.enqueueSingle({
           number: req.body?.number, actor, submitKey, again, rotate, canvas,
         });
+      }
       const status = await queue.status();
       return res.json({
         success: true,

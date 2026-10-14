@@ -108,7 +108,17 @@ test('AC5 一级 tab 顺序回归：扫一扫 ▸ 销售 ▸ 库存 ▸ 采购 �
   assert.deepEqual(order, ['scan:扫一扫', 'sales:销售', 'inventory:库存', 'purchase:采购', 'product:货品']);
 });
 
-test('AC6 🔴 源码里不再有签名相关符号（她 2026-10-13：统一走 AppLink，签名不需要）', () => {
+// ⚠️ 2026-10-14 晚**成对翻新**（业务负责人当天选了 ⓐ「扫完**直接打印这一张**」）：
+//   改前逐字：`test('AC6 🔴 源码里不再有签名相关符号（她 2026-10-13：统一走 AppLink，签名不需要）')`
+//             ＋ `assert.deepEqual(hits, [], '不许留签名相关符号：…')`
+//   改后逐字：签名符号**只许出现在「扫码打印」那一条链的两个文件**里（闭集白名单 ✓），
+//             并**新增**一条"扫一扫那一格那条路（main.js / tabs / features/scan）仍然不许有签名符号"。
+//   依据：她 2026-10-14 晚的 ⓐ ⇒ 必须调飞书 **JSAPI 扫一扫** ⇒ 必须要有签名
+//         （`docs/scan-to-print-jsapi-2026-10-14.md` AC-SP1/SP7；签名服务本身早已在 main）。
+//         她 2026-10-13 那句「统一走 AppLink，签名不需要」是**当时**的口径，被 10-14 的 ⓐ 覆盖。
+//   ⭐ **判据没放宽**：扫描面不变、判定从"一个都不许有"收窄成"**只能有这两个文件、多一个就红**"，
+//     而且"扫一扫那一格不许有签名"这条**仍在**（她 10-13 真正要保的那件事）。
+test('AC6 🔴 签名只许出现在「扫码打印」那两个文件里；扫一扫那一格仍走 AppLink（不用签名）', () => {
   const roots = [path.join(__dirname, '..', 'src'), path.join(__dirname, '..', 'public', 'workbench')];
   const hits = [];
   const walk = (dir) => {
@@ -122,7 +132,22 @@ test('AC6 🔴 源码里不再有签名相关符号（她 2026-10-13：统一走
     }
   };
   roots.forEach(walk);
-  assert.deepEqual(hits, [], `不许留签名相关符号：\n${hits.join('\n')}`);
+  // ⭐ **闭集**：只有这两处（工作台那条签名接口 + 扫码打印那一块页面）。多一个文件就红 ✗。
+  assert.deepEqual(hits.sort(), [
+    'public/workbench/features/labels/scan-print.js',
+    'src/routes/workbench.js',
+  ], `签名符号只许出现在「扫码打印」这一条链上：\n${hits.join('\n')}`);
+
+  // ⭐ 她 10-13 真正要保的那件事**一个字没松**：扫一扫那一格那条路（首屏/面板/取入口）不许有签名符号。
+  const scanPathFiles = ['main.js', 'config/tabs.js', 'core/tabs.js', 'features/scan/index.js'];
+  for (const relative of scanPathFiles) {
+    const text = read(relative);
+    assert.equal(
+      /jsapi[-_]?signature|jsapiSignature|h5sdk|scanCode|jssdk/i.test(text),
+      false,
+      `${relative} 是「扫一扫」那一格那条路 ⇒ 不许出现任何签名 / JSAPI 符号（那一格仍走 AppLink ✗）`,
+    );
+  }
 });
 
 test('AC7 ⭐⭐ mobile UA ⇒ that cell is <a href=AppLink>; PC UA ⇒ cell hidden (no dead tap)', async () => {

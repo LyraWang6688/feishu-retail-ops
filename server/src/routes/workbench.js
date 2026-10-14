@@ -19,7 +19,7 @@ const { PurchaseWebhookService } = require('../services/purchaseWebhookService')
 const { PurchaseArrivalConversationService } = require('../services/purchaseArrivalConversationService');
 const { createLabelPrintService } = require('../services/labelPrintService');
 const { SampleReplacementService } = require('../services/sampleReplacementService');
-const { logError, logWarn } = require('../utils/logger');
+const { logError, logInfo, logWarn } = require('../utils/logger');
 // ⭐⭐ 2026-10-13 Lead 更正：**工作台「扫一扫」照抄扫码页那套 AppLink**（AppLink **不需要签名** ✗）——
 //    AppLink 目标与 UA 判据**都取既有唯一来源**（`config/scanPage.js` 的 `SCAN_NEXT` +
 //    `views/scanPageRenderer.js` 导出的 `canScanNextWithFeishu`）⇒ **不抄第二份** ✓
@@ -34,6 +34,9 @@ const accessoryTab = require('../config/workbenchAccessory');
 const { sellableKindOf } = require('../config/sellableKinds');
 const { createPaymentMethodsService } = require('../services/paymentMethodsService');
 const { canScanNextWithFeishu } = require('../views/scanPageRenderer');
+// ⭐⭐ 2026-10-14：「扫码打印」要的飞书 JSAPI 签名（服务在 `services/larkJsapiService.js`，
+//    密钥只从 env 读；本文件只把它挂到**既有**工作台闸门之后 —— 不新开鉴权 ✗）。
+const { createLarkJsapiService } = require('../services/larkJsapiService');
 
 // ⚠️ 准入闸门只有这一份实现：语义与文案**逐字不变**（2026-10-08 的《工作台准入口径》沿用它）。
 // 扫码页（`GET /s/:number`）require 的也是它 —— 不新开鉴权、也不抄第二份判断。
@@ -71,6 +74,68 @@ const createWorkbenchRouter = (options = {}) => {
     next();
   });
   router.use(requireWorkbenchAccess);
+
+  // ── ⭐⭐ 2026-10-14：飞书 **JSAPI 签名**（给「扫码打印」调起飞书扫一扫用）────────────
+  /**
+   * `GET /api/workbench/lark/jsapi-signature?url=<页面地址>`
+   *
+   * 依据（**都在文件里**）：业务负责人 2026-10-14 晚选了 ⓐ「扫完直接打印这一张」
+   *   ⇒ `docs/scan-to-print-jsapi-2026-10-14.md` AC-SP1/SP2/SP3。
+   *
+   * 🔴 **不新开鉴权**：它就挂在本文件既有那道 `requireWorkbenchAccess` 之后
+   *    （未启用认证 503 / 未登录 401 / 白名单外 403 —— 与其它工作台接口**同一个函数**）。
+   * 🔴 **响应里不含任何密钥** ✗：只有 `h5sdk.config` 要的 `appId/timestamp/nonceStr/signature`
+   *    （外加页面引入 JSSDK 用的公开地址 `jssdkUrl`）；**app secret / jsapi_ticket / token
+   *    一个字符都不回** ✓（也不进日志 ✗）。
+   * ⚠️ 单例复用：`createLarkJsapiService()` 内部缓存 `tenant_access_token` / `jsapi_ticket`
+   *    ⇒ **必须复用同一个实例**，否则每次请求都去飞书换一次票（AC-SP3 就白做了）。
+   * ⚠️ 用例可以注入 `options.larkJsapi`（假 fetch）来真红真绿。
+   */
+  let larkJsapi = options.larkJsapi || null;
+  const resolveLarkJsapi = () => {
+    if (!larkJsapi) larkJsapi = createLarkJsapiService();
+    return larkJsapi;
+  };
+  router.get('/lark/jsapi-signature', async (req, res) => {
+    const pageUrl = String(req.query?.url || '').trim();
+    try {
+      const result = await resolveLarkJsapi().signatureFor(pageUrl);
+      if (!result.ok) {
+        // 认得出错在哪 ⇒ 400（她/页面填错）；没配凭证 ⇒ 503（服务端缺配置）；其余 ⇒ 502（上游）。
+        const status = result.reason === 'host_not_allowed' || result.reason === 'url_invalid'
+          ? 400
+          : (result.reason === 'not_configured' ? 503 : 502);
+        logWarn('workbench.lark.jsapi_signature.failed', {
+          request_id: req.requestId, reason: result.reason,
+        });
+        return res.status(status).json({ success: false, error: result.message, reason: result.reason });
+      }
+      logInfo('workbench.lark.jsapi_signature.ok', {
+        request_id: req.requestId,
+        // ⚠️ 只记域名（排障够用）；**签名 / 票 / 密钥一个字都不进日志** ✗。
+        host: (() => { try { return new URL(result.url).host; } catch { return ''; } })(),
+      });
+      return res.json({
+        success: true,
+        appId: result.appId,
+        timestamp: result.timestamp,
+        nonceStr: result.nonceStr,
+        signature: result.signature,
+        url: result.url,
+        // 页面要引入的 JSSDK（公开地址，来自 `config/larkJsapi.js` ⇒ 页面不抄第二份 ✓）。
+        jssdkUrl: resolveLarkJsapi().config?.jssdkUrl || '',
+        jsApiList: ['scanCode'],
+      });
+    } catch (error) {
+      logError('workbench.lark.jsapi_signature.error', {
+        request_id: req.requestId, error: error.message,
+      });
+      // 文案仍走配置（`config/larkJsapi.js` 的 `texts.upstreamFailed`）—— 路由里不写死中文。
+      const texts = resolveLarkJsapi().config?.texts || {};
+      return res.status(502).json({ success: false, error: texts.upstreamFailed });
+    }
+  });
+
   // ⭐ 2026-10-09（业务负责人当天 15:07：「**采购**，按照**采购订单**，有**验收到货**的按钮」）：
   //   订单列表 · **采购**子 tab 那一行上的「验收到货」。
   //   🔴 **不新开鉴权**：它就挂在这条 `requireWorkbenchAccess` 之后（与其它工作台接口同一道闸门）。

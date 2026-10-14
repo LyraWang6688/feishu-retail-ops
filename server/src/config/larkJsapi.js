@@ -12,6 +12,8 @@
  *    它俩与机器人同源 ✓ **不许把任何密钥硬编码进源码** ✗（本文件只读 env 的名字 ✓）。
  */
 
+const { readString } = require('./envValue');
+
 const readInt = (env, key, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) => {
   const raw = String(env[key] ?? '').trim();
   if (raw === '') return fallback;
@@ -20,12 +22,26 @@ const readInt = (env, key, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER } 
   return Math.trunc(value);
 };
 
+/**
+ * ⭐ 2026-10-14：**页面要引入的飞书 JSSDK 地址**（`h5sdk` 与 `tt.scanCode` 都由它提供）。
+ *
+ * 为什么要进配置：那是一个**外部 CDN 的带版本号文件名**（`h5-js-sdk-1.5.22.js`）——
+ *   飞书升版本时只改这一个值（或一条 env），页面代码一个字都不用动（配置先行 ✓）。
+ * ⚠️ 它**不是密钥**（公开 CDN 地址）⇒ 可以随签名响应一起下发（页面不必抄第二份 ✓）。
+ * ⚠️ 实测：`https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk-1.5.22.js`
+ *    （1.5.20 / 1.5.21 / 1.5.22 都在；取 1.5.22）。拿不到 / 被拦 ⇒ 页面给一句人话，
+ *    **绝不留一个点了没反应的按钮** ✗。
+ */
+const DEFAULT_JSSDK_URL = 'https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk-1.5.22.js';
+
 const createLarkJsapiConfig = (env = process.env) => Object.freeze({
   // 飞书 JSAPI 签名接口（v1）
   endpoints: Object.freeze({
     tenantAccessToken: 'https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal',
     jsapiTicket: 'https://open.feishu.cn/open-apis/jssdk/ticket/get',
   }),
+  // ⭐ 页面里要 `<script src=...>` 引入的那一份（可配 ✓；空串 = 显式"不要下发"）。
+  jssdkUrl: readString(env, 'LARK_JSAPI_JSSDK_URL', DEFAULT_JSSDK_URL),
   // ⭐ ticket 官方有效期 2h ⇒ 缓存留 5 分钟余量（可配 ✓）
   ticketTtlMs: readInt(env, 'LARK_JSAPI_TICKET_TTL_MS', 110 * 60 * 1000, { min: 1000 }),
   tokenTtlMs: readInt(env, 'LARK_JSAPI_TOKEN_TTL_MS', 110 * 60 * 1000, { min: 1000 }),

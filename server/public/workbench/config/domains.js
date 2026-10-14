@@ -62,7 +62,7 @@
 //   ⚠️ `config/links.js` 里的 `PURCHASE_REQUEST_FORM_URL` / `PURCHASE_RETURN_FORM_URL` /
 //      `PURCHASE_FORMS` **一个都没删**（删 or 留由业务负责人定；隐藏的老「采购管理」页面里
 //      已经没有任何地方再引用它们了）。
-import { SUPPLIER_DIRECTORY_URL, PRODUCT_NEW_FORM_URL, SCAN_APPLINK } from './links.js';
+import { SUPPLIER_DIRECTORY_URL, PRODUCT_NEW_FORM_URL } from './links.js';
 
 export const DOMAIN_TABS = [
   // ── ⓿ 扫一扫（2026-10-13 她裁定：与销售/采购/库存**同级**、**放最前** ✓）──────────
@@ -263,11 +263,16 @@ export const DOMAIN_TABS = [
         links: [
           {
             icon: '📷',
-            // ⭐「扫码打印」：**复用**工作台最前面那颗「扫一扫」的**同一把** AppLink（飞书原生扫码 ✓
-            //   与 `config/links.js` 的 `SCAN_APPLINK` 同源 ✓ 不新造 ✗）；扫到的编号填进上面那个框即可打 ✓
+            // ⭐⭐ 2026-10-14 晚（业务负责人选了 **ⓐ**「**扫完直接打印这一张**」）：
+            //   这一格从"跳 AppLink 打开飞书扫一扫"改成 **JSAPI 扫一扫 ⇒ 直接排进既有打印队列**。
+            //   ⚠️ 仍然**只有一个落点**：标签打印页（`scan=1` ⇒ 进页面就弹扫一扫，见
+            //      `features/labels/scan-print.js`）——**不另建页面、不新开打印接口** ✗。
+            //   ⚠️ 技术取舍标注来源：**JSAPI 扫一扫**是 spec `docs/scan-to-print-jsapi-2026-10-14.md`
+            //      （AC-SP7「JSAPI ✓ 不是跳外链 ✗」）＋ 她 2026-10-12「我们是能够进行动态交互的」；
+            //      **不是**她点名 AppLink ✗。
             title: '扫码打印',
-            href: SCAN_APPLINK,
-            arrow: '打开扫一扫 →',
+            href: '/workbench/label-print.html?scan=1',
+            arrow: '去扫码打印 →',
           },
           {
             icon: '🖨️',
