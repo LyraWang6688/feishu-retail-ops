@@ -728,16 +728,29 @@ test('⑧ 路由：加入本单 → 回跳带上"本单几双"；提交整单 �
       assert.match(afterHtml, /YD6693-2 · 40 码/);
 
       // 提交整单（带收款）：结果页给她单号 + 明细分行 + 收款那句
-      // ⭐ 2026-10-13 改指向：提交成功先落第 2 步「整单付款」页 ⇒ 跟着【跳过】那一跳再取页面 ✓
-      //    （能力去哪：renderSalePaymentStepPage → payment_skip 动作）
-      const submitted = await followPaymentStep(base, sessionCookie(openId), await fetch(pageUrl, {
+      // ⭐ 2026-10-14 改指向（她逐字：「确认状态是资金那页点击了按钮之后，才算是用户确认了」）：
+      //    ⇒ **两步**：① 点提交 ⇒ **只到资金页、零写入** ✓
+      //       ② 点资金页那颗【提交整单付款】（带钱）⇒ **才建单 + 写收款 + 成功页** ✓
+      const moneyPage = await fetch(pageUrl, {
         method: 'POST',
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           action: SCAN_WRITE.actions.submitOrder, submit_key: saleKey,
+        }).toString(),
+      });
+      assert.equal(moneyPage.status, 200);
+      assert.ok((await moneyPage.clone().text()).includes('data-view="payment-step"'), '第一步到资金页');
+      assert.equal(entriesOf(h.gateway, 'salesEntry').length, 0, '第一步零写入');
+      const submitted = await fetch(pageUrl, {
+        method: 'POST',
+        headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          action: SCAN_PAGE.paymentStep.payAction, submit_key: saleKey,
+          // ⚠️ 资金页的表单本来就带一档「付款情况」（默认未付 ✓）⇒ 这里照表单原样带上 ✓
+          payment_status: PAYMENT_STATUS.unpaid,
           payment_method: '现金', payment_amount: '100', [SCAN_WRITE.fields.lineAmount]: '100',
         }).toString(),
-      }));
+      });
       assert.equal(submitted.status, 200);
       const doneHtml = await submitted.text();
       assert.match(doneHtml, /您的提交已成功/);
@@ -839,7 +852,10 @@ test('⑨ 失败有人话：内部错误（字段名/错误码）**不回显**�
       return original(tableKey, id, values);
     };
     await withServer(formApp(h), async (base) => {
-      const response = await fetch(`${base}/s/${encodeURIComponent(NUMBER)}`, {
+      // ⭐⭐ 2026-10-14（她逐字：「**确认状态是资金那页点击了按钮之后，才算是用户确认了**」）：
+      //    ⇒ 新流程是**两步**：① 点提交 ⇒ **只到资金页**（此时还没建单 ✓）
+      //       ② 点资金页那颗【跳过】⇒ **才建单**（建单/明细那一步才会抛 ✓）
+      const response = await followPaymentStep(base, sessionCookie(openId), await fetch(`${base}/s/${encodeURIComponent(NUMBER)}`, {
         method: 'POST',
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
@@ -847,7 +863,7 @@ test('⑨ 失败有人话：内部错误（字段名/错误码）**不回显**�
           // ⚠️ 资金区必须有一档「付款情况」（没填钱 ⇒ 未付，差额挂一条未收款）。
           payment_status: PAYMENT_STATUS.unpaid,
         }).toString(),
-      });
+      }));
       assert.equal(response.status, 500);
       const html = await response.text();
       // ⭐⭐ 2026-10-12（业务负责人口径）：这里抛的是【**主表已经建了、明细那一步没写成功**】——
@@ -877,14 +893,16 @@ test('⑨b 建单**本身**失败（主表都没建起来）⇒ 照旧报错页�
       return original(tableKey, values);
     };
     await withServer(formApp(h), async (base) => {
-      const response = await fetch(`${base}/s/${encodeURIComponent(NUMBER)}`, {
+      // ⭐⭐ 2026-10-14（她逐字：「**确认状态是资金那页点击了按钮之后，才算是用户确认了**」）：
+      //    ⇒ 两步：① 点提交 ⇒ 只到资金页（不建单 ✓）② 点资金页那颗【跳过】⇒ **才建单** ⇒ 这里才抛 ✓
+      const response = await followPaymentStep(base, sessionCookie(openId), await fetch(`${base}/s/${encodeURIComponent(NUMBER)}`, {
         method: 'POST',
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           action: SCAN_WRITE.actions.submitOrder, submit_key: key,
           payment_status: PAYMENT_STATUS.unpaid,
         }).toString(),
-      });
+      }));
       // 建单失败 ⇒ 与改前**逐字一致**的报错页（`sale_write_failed` → 500 + 通用人话）。
       assert.equal(response.status, 500);
       const html = await response.text();

@@ -103,19 +103,24 @@ const createScanPageRouter = (options = {}) => {
    *   ⇒ ⭐ GET 看不到它（真机 `ReferenceError` ✗）⇒ 现在放在**工厂作用域** ✓
    *   ⚠️ **逐字**：`step2Write` 的字段与渲染入参一个都没改 ✗（不许顺手改口径 ✓）
    */
-  const step2WriteOf = () => ({
+  const step2WriteOf = (opts = {}) => ({
     texts: writeConfig.texts, fields: writeConfig.fields, actions: writeConfig.actions,
     paymentMethods: writeConfig.sale.paymentMethods,
     defaultPaymentMethod: writeConfig.sale.defaultPaymentMethod,
     paymentRowCount: writeConfig.sale.paymentRowCount,
-    paymentStatus: writeConfig.sale.paymentStatus.default,
+    // ⭐ 她刚填的那一档 / 实付多少 / 收款行 ⇒ **原样带回**（她不用重打 ✓ 她明确要过这条 ✓）
+    paymentStatus: String(opts.paymentStatus || writeConfig.sale.paymentStatus.default),
     defaultPaymentStatus: writeConfig.sale.paymentStatus.default,
-    paidAmount: '', draft: { lines: [] },
+    paidAmount: String(opts.paidAmount || ''),
+    ...(Array.isArray(opts.paymentRows) ? { paymentRows: opts.paymentRows } : {}),
+    draft: { lines: [] },
   });
   const sendPaymentStep = (res, req, opts = {}) => {
     const target = backTargetFor(req, decodeURIComponent(String(req.params.number || '')));
-    return sendHtml(res, 200, renderSalePaymentStepPage({
-      write: step2WriteOf(),
+    // ⚠️ 默认 200 ✓；⭐ 结算没过那一次要 **400**（"她能改"的那一类 ⇒ 与既有口径一致 ✓ 旧行为也是 400 ✓）
+    const status = Number(opts.status) === 400 ? 400 : 200;
+    return sendHtml(res, status, renderSalePaymentStepPage({
+      write: step2WriteOf(opts),
       // ⚠️ **不编**：还没建单时它是空串 ✓（她在资金页阶段本来就没有单号 ✓）
       orderNo: String(opts.orderNo || ''),
       config,
@@ -1549,6 +1554,9 @@ const createScanPageRouter = (options = {}) => {
             paymentsCents: pendingPayments.reduce((sum, row) => sum + toCents(row.amount), 0),
             hasPaymentRows: pendingPayments.filter((row) => String(row.amount ?? '').trim()).length > 0,
             anyLineAmount: pendingLineAmounts.some((value) => String(value ?? '').trim()),
+            // ⭐ 「部分付」还要"实付多少"（她填的那个 ✓）—— 纯函数按 `paidCents` 判 ✓
+            //   ⚠️ 空串 ⇒ 传 `null`（= "没填"✓ 会被判 `partial_amount_missing`），**不许传 0** ✗
+            paidCents: String(pendingPaidAmount ?? '').trim() === '' ? null : toCents(pendingPaidAmount),
           });
           if (settlement.action === 'block') {
             // ⚠️ 文案：只从**既有配置**取（`texts[code]` 有就用 ✓ 没有就留空 —— **不编中文** ✗）
@@ -1558,6 +1566,12 @@ const createScanPageRouter = (options = {}) => {
               submitKey: body[fields.submitKey],
               count: pendingLines.length,
               notice: blockText,
+              // ⭐ 她刚填的钱**原样带回**（她改一下就能再点 ✓ 这就是旧流程那条"值还在"的要求 ✓）
+              paymentStatus: pendingPaymentStatus,
+              paidAmount: pendingPaidAmount,
+              paymentRows: pendingPayments,
+              // ⭐ 400 = "她能改"的那一类（与既有口径一致 ✓ 旧流程这条也是 400 ✓ 不放宽 ✗）
+              status: 400,
             });
           }
           const pendingView = pendingSize
@@ -1695,7 +1709,28 @@ const createScanPageRouter = (options = {}) => {
               inStock: sellableSizeTexts(skipView).has(skipSize),
             } : null,
           });
-          if (!skipCreated?.ok) return respondWriteFailure(res, skipCreated, requestId);
+          if (!skipCreated?.ok) {
+            // ⭐⭐ 2026-10-12（她口径）：**主表已建、明细那一步没写成功** ⇒ 给她**如实**的"半成"页
+            //   （单子记上了 + 单号 + 怎么出去）🔴 **绝不许**说"提交已成功"✗、也**不许**说"一个字都没写"✗
+            if (skipCreated?.code === 'sale_partial_failed') {
+              return sendHuman(res, 500, {
+                title: writeConfig.texts.partialFailedTitle,
+                body: fillWriteText(writeConfig.texts.partialFailedBody, {
+                  orderNo: skipCreated.order_no || '—',
+                }),
+                requestId,
+                details: [fillWriteText(writeConfig.texts.submittedOrderLine, {
+                  orderNo: skipCreated.order_no || '—',
+                })],
+                retryHint: writeConfig.texts.partialFailedRetryHint,
+                backPath: postActionFor(
+                  backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realm,
+                ),
+                backLabel: writeConfig.texts.submittedRecordAnother,
+              });
+            }
+            return respondWriteFailure(res, skipCreated, requestId);
+          }
           // ⭐ 建单成功 ⇒ **清掉标记** ✓（否则她刷新会一直停在资金页 ✗）
           await writeService.saveDraftLines?.(openIdOf(req), { paymentStep: '' });
         }
