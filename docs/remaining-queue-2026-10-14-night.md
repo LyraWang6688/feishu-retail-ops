@@ -44,3 +44,13 @@ cut A（/s/accept 彻底退场）· 库存表排除缺货特殊码 · 资金页 
   ⓑ 按 2026-10-11 那句 ⇒ **不补**（她明确说过才算欠 ✓）；2026-10-14 那句只当"UI 上把差额显示给她看" ✓
   ⓒ 折中：**合计 < 累计 且 她至少填了一笔收款时**才补差额（"她动过钱"就算她说过了 ✓）；零收款 ⇒ 不补（同 ⓑ）
 ```
+
+## 📈 线上实测观察（2026-10-14 20:2x · 只读体检）
+```
+✅ /health = ok · commit a34e527 · deployed_at 2026-10-14T20:05:26+08:00
+✅ product.tag_qr.sweep_done scanned=561 consistent=561 number_missing=0 candidates=0（二维码巡检全一致）
+⚠️ 19:04:57(+08) 有一条 lark.sdk.error（飞书 400 / code 1254607），紧跟一条
+   scan.snapshot.refresh_failed reason=read_retry table_key=liveInventory（**有自动重试兜底** ✓）
+   ⇒ 与"采购申请读取失败 400"同族；**不是 20:05 那次发布带的**（时间在它之前）
+   ⇒ 跟进方式（不盲改 ✗）：给"重试后是否成功"补一条结果日志 ⇒ 能区分"偶发但自愈"vs"一直失败"
+```
