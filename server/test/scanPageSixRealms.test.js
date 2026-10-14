@@ -292,7 +292,8 @@ test('AC-6R3 认不出的 ?from=（含已退役的 purchase）⇒ 回落销售�
   test('AC-6R4 补货 / 退货 / 验收 三块各自独立；每页**只有当前那一块**', () => {
   const replenish = htmlFor('replenish');
   assert.ok(blockOf(replenish, 'replenish').includes('data-view="one-tap-replenish"'), '补货 = 一键补货表单');
-  assert.ok(blockOf(replenish, 'replenish').includes('生成采购申请'));
+  // 2026-10-14 晚（她逐字）：「**生成采购申请的文字变为生成报货订单**」⇒ 这条哨兵**改指向**（不放宽）
+  assert.ok(blockOf(replenish, 'replenish').includes('生成报货订单'), '补货那一块的按钮文案 = 生成报货订单 ✓');
 
   // ⭐ 2026-10-14 晚：配品已搬去工作台 ⇒ 这里改判**退货那一块**（原配品空态口径随领域一起搬走 ✓）
   const purchaseReturn = htmlFor('purchase_return');
