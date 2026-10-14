@@ -144,7 +144,10 @@ test('AC4c index.html 的 <nav id="main-tabs"> 仍留空 + 模块宿主与页脚
   assert.ok(!/<button/.test(nav[0]) && !/data-module=/.test(nav[0]),
     'nav 里不许硬编码 tab 按钮（文案唯一来源 = config/tabs.js）');
   assert.ok(html.includes('<section id="module-host"'), '模块宿主仍在');
-  assert.ok(stripComments(html).includes('扫码入口'), '页脚扫码入口那半句仍在');
+  // ⭐⭐ 2026-10-14 改指向（业务负责人逐字：「**删除页脚**」）：
+  //   ⇒ 页脚那半句**应该不存在** ✓ 🔴 **不是放宽** ✗（判据从"必须在"翻成"**必须不在**"✓）
+  assert.equal(stripComments(html).includes('扫码入口'), false, '页脚那半句**已被删掉**（她 2026-10-14 ✓）');
+  assert.equal(stripComments(html).includes('foot-links'), false, '页脚整段也**不在**了 ✓');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -1591,10 +1591,12 @@ const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEF
   return renderDocument({
     title: fillText(config.texts.pageTitle, { itemNo: view.item_no || view.number, number: view.number }),
     config,
+    // ⭐⭐ 2026-10-14（业务负责人逐字）：「**② 和 ③ 换一下位置，即先 3 后 2**」
+    //   ⇒ **货品卡在上、6 格 tab 条在下** ✓（原来是反的 ✗）· 只改顺序 ✓ 内容一字不动 ✗
     content: `${bar}
+${identityHtml(view, config)}
 ${realmBarHtml(safeRealm)}
 ${noScriptHtml()}
-${identityHtml(view, config)}
 ${fallbackHint}
 ${block}
 <p class="foot">${escapeHtml(config.texts.footerNumberLabel)} <span class="mono">${escapeHtml(view.number)}</span>`
