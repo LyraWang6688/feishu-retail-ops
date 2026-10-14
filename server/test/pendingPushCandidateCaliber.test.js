@@ -370,7 +370,12 @@ test('③【采购】候选来自 `PurchasePendingBatchService`（未到货）�
         batchNo: 'CGD-20261007-0001',
         recordId: 'bat_1',
         suppliers: ['金猴'],
-        reportedAt: atShanghai('2026-10-05'),
+        // ⚠️ 2026-10-14：报货日从 `2026-10-05` 移到 `2026-10-19`（+14 天，其余一字不变）——
+        //   依据：她 2026-10-14 夜追加的裁决「**采购「未到货」那半也按 2026-10-15 切**」
+        //   ⇒ 判据已接进本 service 的采购半（`keepPurchaseBatchSince`），
+        //     10-05 那种夹具**落在起点之前**、被**正确**过滤 ⇒ **把夹具日期移到起点之后**
+        //     （不是改判据、不是 skip）。
+        reportedAt: atShanghai('2026-10-19'),
         quantity: '12',
       }];
     },
@@ -380,7 +385,63 @@ test('③【采购】候选来自 `PurchasePendingBatchService`（未到货）�
   assert.equal(purchase.length, 1);
   assert.equal(purchase[0].suppliers[0], '金猴');
   assert.equal(purchase[0].quantity, '12');
-  assert.equal(purchase[0].reportedAt, atShanghai('2026-10-05'));
+  // 改前逐字：`assert.equal(purchase[0].reportedAt, atShanghai('2026-10-05'));`
+  assert.equal(purchase[0].reportedAt, atShanghai('2026-10-19'));
+});
+
+// ⭐⭐ 2026-10-14 **夜**（业务负责人**追加**的裁决，覆盖 Lead 先前那条保守口径 ⓑ）：
+//   【采购】未到货那半**也**按数据起点「2026-10-15」切。
+//   她的原话（转述自王颖对"待裁口径"的答复）：「**采购「未到货」那半也按 2026-10-15 切**」。
+//   🔴 **硬边界**：`报货日`**读不到** ⇒ **仍然出**（本文件/那个 service 都写着
+//      「读不到 ≠ 不符合判据 ⇒ 照出 + 占位」）—— 否则她会**静默看不到还在等处理的待办**。
+test('⭐⭐ 数据起点（采购）：注入 10-14 与 10-15 两批 ⇒ **只有 10-15 被挑出来**', async () => {
+  const listWith = async (rows) => (await listCandidates(
+    { salesEntry: [], salesDetail: [], paymentRecord: [] },
+    { purchasePending: { listPendingBatches: async () => rows } },
+  )).purchase;
+
+  const before = await listWith([
+    { batchNo: 'CGD-B', recordId: 'b_before', suppliers: [], reportedAt: atShanghai('2026-10-14'), quantity: '1' },
+  ]);
+  assert.deepEqual(before, [], '10-14（起点之前）= 存量 ⇒ **不挑**');
+
+  const onSince = await listWith([
+    { batchNo: 'CGD-S', recordId: 'b_since', suppliers: [], reportedAt: atShanghai('2026-10-15'), quantity: '1' },
+  ]);
+  assert.deepEqual(onSince.map((batch) => batch.batchNo), ['CGD-S'], '10-15（起点当天，含）⇒ **挑**');
+
+  // 两批同时注入：只留下起点那批（原样保留其余字段 —— 筛选**只**按报货日）。
+  const both = await listWith([
+    { batchNo: 'CGD-B', recordId: 'b_before', suppliers: ['金猴'], reportedAt: atShanghai('2026-10-14'), quantity: '1' },
+    { batchNo: 'CGD-S', recordId: 'b_since', suppliers: ['奥康'], reportedAt: atShanghai('2026-10-15'), quantity: '2' },
+  ]);
+  assert.deepEqual(both.map((batch) => batch.batchNo), ['CGD-S']);
+  assert.deepEqual(both[0].suppliers, ['奥康']);
+  assert.equal(both[0].quantity, '2');
+});
+
+test('⭐⭐ 数据起点（采购）：**报货日读不到的批次仍然被挑出来**（不许"读不到就切"）', async () => {
+  const listWith = async (rows) => (await listCandidates(
+    { salesEntry: [], salesDetail: [], paymentRecord: [] },
+    { purchasePending: { listPendingBatches: async () => rows } },
+  )).purchase;
+
+  // 真表形状：那一格为空 → `PurchasePendingBatchService` 给 `''`；没映射时给 `null` 也可能。
+  for (const unreadable of ['', null, undefined]) {
+    const kept = await listWith([
+      { batchNo: 'CGD-X', recordId: 'b_x', suppliers: ['金猴'], reportedAt: unreadable, quantity: '' },
+    ]);
+    assert.deepEqual(kept.map((batch) => batch.batchNo), ['CGD-X'],
+      `报货日 = ${JSON.stringify(unreadable)}（读不到）⇒ **照出**：那是"还在等他处理的待办"，不许静默丢`);
+  }
+
+  // 同一次里既有"读不到"又有"存量" ⇒ 读不到的留下、存量的切掉。
+  const mixed = await listWith([
+    { batchNo: 'CGD-NO-DATE', recordId: 'b_1', suppliers: [], reportedAt: '', quantity: '' },
+    { batchNo: 'CGD-STALE', recordId: 'b_2', suppliers: [], reportedAt: atShanghai('2026-10-01'), quantity: '' },
+    { batchNo: 'CGD-SINCE', recordId: 'b_3', suppliers: [], reportedAt: atShanghai('2026-10-15'), quantity: '' },
+  ]);
+  assert.deepEqual(mixed.map((batch) => batch.batchNo), ['CGD-NO-DATE', 'CGD-SINCE']);
 });
 
 test('③ 采购读表失败：**不拖垮**销售那半边（记 warn + 采购当空）', async () => {
