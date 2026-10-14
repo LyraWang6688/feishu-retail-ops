@@ -67,6 +67,18 @@ const post = (base, p, body) => fetch(`${base}${p}`, {
   method: 'POST', headers: { cookie: COOKIE, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
 });
 
+test('AC-AC10 ⭐ 面板里**不再重复写「配品」**＋ 名称/数量/金额**各占一行**（2026-10-14 真机）', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../public/workbench/features/accessory/index.js'), 'utf8');
+  // ① 子 tab 已叫「配品」⇒ 面板里不许再重复渲染一次那个标题（她：「面板你用再写配品里」）
+  assert.equal(/<h3>/.test(src), false, '面板里不许再有重复的标题元素（子 tab 已经叫配品）');
+  // ② 三个字段各占一行：复用工作台既有 .form-field（一字段一行）⇒ 三个都要有，且**不许**把它们塞进同一行容器
+  const fields = (src.match(/<label class="form-field">/g) || []).length;
+  assert.equal(fields, 3, `名称/数量/金额三个字段都要用 .form-field 各占一行（实际 ${fields}）`);
+  for (const needle of ['data-field="accessory-name"', 'data-field="accessory-quantity"', 'data-field="accessory-amount"']) {
+    assert.ok(src.includes(needle), `字段要在：${needle}`);
+  }
+});
+
 test('AC-AC1 ⭐ 工作台「销售」下出现子 tab「配品」（位置 = 订单列表/销售查询/客户往来款之后 ✓）', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench', 'config', 'domains.js'), 'utf8');
   const sales = src.slice(src.indexOf("id: 'sales'"));

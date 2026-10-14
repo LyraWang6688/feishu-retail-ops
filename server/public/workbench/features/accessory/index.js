@@ -27,15 +27,17 @@ export const createAccessoryModule = () => {
     if (!state.items.length) {
       return `<div class="card" data-view="accessory-empty"><p>${escapeHtml(T.empty)}</p></div>`;
     }
+    // 2026-10-14（她真机：「面板你**用再写配品**里，然后**数量、金额各在一行**」）：
+    //   · 子 tab 已经叫「配品」⇒ 面板里**不再重复写一次标题**（她原话：用再写配品里 = 又在配品里写了 XX）
+    //   · 每个字段**各占一行**（复用工作台既有 .form-field = 一字段一行 ✓ 不新造样式 ✗）
     return `<div class="card" data-view="accessory-form">
-  <h3>${escapeHtml(T.title)}</h3>
-  <label>${escapeHtml(T.nameLabel)}
+  <label class="form-field">${escapeHtml(T.nameLabel)}
     <select data-field="accessory-name">${state.items.map(optionHtml).join('')}</select>
   </label>
-  <label>${escapeHtml(T.quantityLabel)}
+  <label class="form-field">${escapeHtml(T.quantityLabel)}
     <input data-field="accessory-quantity" type="number" min="1" inputmode="numeric" value="${ACCESSORY_DEFAULT_QUANTITY}">
   </label>
-  <label>${escapeHtml(T.amountLabel)}
+  <label class="form-field">${escapeHtml(T.amountLabel)}
     <input data-field="accessory-amount" type="text" inputmode="decimal" placeholder="${escapeHtml(T.amountLabel)}">
   </label>
   <p data-view="accessory-notice" hidden></p>
