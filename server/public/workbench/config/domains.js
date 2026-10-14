@@ -62,7 +62,7 @@
 //   ⚠️ `config/links.js` 里的 `PURCHASE_REQUEST_FORM_URL` / `PURCHASE_RETURN_FORM_URL` /
 //      `PURCHASE_FORMS` **一个都没删**（删 or 留由业务负责人定；隐藏的老「采购管理」页面里
 //      已经没有任何地方再引用它们了）。
-import { PRODUCT_NEW_FORM_URL } from './links.js';
+import { PRODUCT_NEW_FORM_URL, SCAN_APPLINK } from './links.js';
 
 export const DOMAIN_TABS = [
   // ── ⓿ 扫一扫（2026-10-13 她裁定：与销售/采购/库存**同级**、**放最前** ✓）──────────
@@ -231,13 +231,26 @@ export const DOMAIN_TABS = [
       {
         id: 'product-labels',
         label: '标签打印',
+        // ⭐⭐ 2026-10-14（业务负责人逐字）：「货品 tab 里的**打印标签支持两类**，一类是**单个打印**，
+        //   一类是**批量打印**，**单个打印支持扫码打印和选择编号打印**」
+        //   ⇒ 这一页 = **单个打印**（这里那颗 ✅ 表单 =「选择编号打印」；下面的扫码 =「扫码打印」）
+        //      ＋ 下面那条「批量打印」✓
         kind: 'entry',
-        // 「单个」= 把**货号**带进标签打印页（那一页的 `keyword` 认货号 ⇒ 只出这一款）。
+        // 「选择编号打印」= 把**货号**带进标签打印页（那一页的 `keyword` 认货号 ⇒ 只出这一款）。
+        // ⚠️ 只是**预填筛选框**，不新增请求、不绕过后端过滤 ✓
         targetTemplate: '/workbench/label-print.html?keyword={itemNo}',
         fieldLabel: '编号 / 货号',
         placeholder: '编号（货号|颜色|类别）或货号，例如 XHB8095',
-        buttonLabel: '只打这一款的标签 →',
+        buttonLabel: '选择编号打印 →',
         links: [
+          {
+            icon: '📷',
+            // ⭐「扫码打印」：**复用**工作台最前面那颗「扫一扫」的**同一把** AppLink（飞书原生扫码 ✓
+            //   与 `config/links.js` 的 `SCAN_APPLINK` 同源 ✓ 不新造 ✗）；扫到的编号填进上面那个框即可打 ✓
+            title: '扫码打印',
+            href: SCAN_APPLINK,
+            arrow: '打开扫一扫 →',
+          },
           {
             icon: '🖨️',
             title: '批量打印',

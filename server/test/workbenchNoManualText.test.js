@@ -485,7 +485,12 @@ test('AC8 功能性内容一个都不能少：子 tab / 卡片标题与动作 / 
   const labelsEntry = byId.get('product').pages.find((page) => page.id === 'product-labels');
   const create = pages.entryPageHtml(labelsEntry);
   assert.ok(create.includes('data-entry-form') && create.includes('name="number"'), '入口页仍有编号输入');
-  assert.ok(create.includes('只打这一款的标签'), '入口页的按钮照旧');
+// 2026-10-14（她逐字）：「打印标签支持两类：单个打印（扫码打印 / 选择编号打印）与批量打印」
+//   ⇒ 单个打印的「选编号」那颗改名；并新增「扫码打印」那颗（复用同一把扫一扫 AppLink）
+//   不是放宽：判据加强了（多了一条「扫码打印必须在」）
+  assert.ok(create.includes('选择编号打印'), '入口页的按钮 = 选择编号打印（她：单个打印两种方式之一）');
+  // 加强：单个打印的另一半是「扫码打印」——必须也在
+  assert.ok(JSON.stringify(labelsEntry.links || []).includes('扫码打印'), '「扫码打印」也要在（单个打印的第二种方式）');
   assert.equal(labelsEntry.targetTemplate, '/workbench/label-print.html?keyword={itemNo}');
 
   // ④ 外链子页：多维表格那两张卡的标题与 href 照旧 ——
