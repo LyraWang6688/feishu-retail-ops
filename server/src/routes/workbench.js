@@ -27,6 +27,9 @@ const { SCAN_NEXT } = require('../config/scanPage');
 // ⭐⭐ 2026-10-14：工作台「销售 → 配品」子 tab（业务负责人：「整体都迁移过去」✓）
 const { createScanWriteService } = require('../services/scanWriteService');
 const { SCAN_WRITE } = require('../config/scanWrite');
+// 2026-10-14: the old acceptance flow moves into the workbench (reuse the existing arrival session service)
+const arrivalTab = require('../config/workbenchArrival');
+const { createScanArrivalService } = require('../services/scanArrivalService');
 const accessoryTab = require('../config/workbenchAccessory');
 const { canScanNextWithFeishu } = require('../views/scanPageRenderer');
 
@@ -115,6 +118,91 @@ const createWorkbenchRouter = (options = {}) => {
       });
       // 失败口径与 `workbenchOrderActions` 同一套：她填错的 400 / 业务拒绝 502，
       // **两种都把原因原样回到页面**（页面上看得见原因，不许静默）。
+      const status = error?.statusCode === 400 ? 400 : error?.statusCode === 503 ? 503 : 502;
+      return res.status(status).json({ success: false, error: error.message });
+    }
+  });
+  /**
+   * ⭐⭐ 2026-10-14 晚（业务负责人：「把老验收整块搬进工作台」✓ 真源 `docs/acceptance-into-workbench-full-2026-10-14.md`）
+   *   · `GET /purchase/arrivals/detail`  —— **只读**该批采购明细（既有 `listPurchaseRequests` ✓ 不新造读取口 ✗）
+   *   · `POST /purchase/arrivals/accept` —— 走**既有** `scanArrivalService`（start → addScan… → finish ✓
+   *     幂等键 = 它自己的 `submitKeyOf(session)` ✓ 同键两跑只写一次 ✗）· 加库存仍走 `InventoryService.applyPurchase` ✓
+   *     🔴 失败**如实**（人话 + 不当成功 ✗）
+   */
+  const purchaseQueryForArrival = () => {
+    if (options.purchaseQuery) return options.purchaseQuery;
+    if (options.gateway) return createPurchaseQueryService({ gateway: options.gateway });
+    return createPurchaseQueryService({ gateway: new V1BitableGateway() });
+  };
+  const arrivalService = options.arrival || createScanArrivalService({
+    gateway: options.gateway || new V1BitableGateway(),
+    config: (options.writeConfig || SCAN_WRITE).acceptance,
+    store: options.arrivalStore,
+  });
+  router.get(arrivalTab.api.detail, async (req, res) => {
+    const batchNo = String(req.query?.[arrivalTab.fields.batchNo] || '').trim();
+    if (!batchNo) return res.status(400).json({ success: false, error: arrivalTab.texts.batchMissing });
+    try {
+      const rows = (await purchaseQueryForArrival().listPurchaseRequests({
+        batchNo, reportBehavior: 'purchase_request',
+      })) || [];
+      if (!rows.length) return res.json({ success: true, rows: [], notice: arrivalTab.texts.emptyDetail });
+      // ⭐ **只读**：只回 货号 / 尺码 / 数量（前端渲染成不可输入的清单 ✓）
+      return res.json({
+        success: true,
+        rows: rows.map((row) => ({
+          item_no: row.item_no || row.product_item_no || '',
+          size: row.size ?? '',
+          quantity: row.quantity ?? 0,
+          product_record_id: row.product_record_id || '',
+        })),
+      });
+    } catch (error) {
+      logError('workbench.purchase.arrival_detail.failed', { request_id: req.requestId, batch_no: batchNo, error: error.message });
+      return res.status(400).json({ success: false, error: arrivalTab.texts.detailFailed });
+    }
+  });
+  router.post(arrivalTab.api.accept, async (req, res) => {
+    const openId = req.workbenchUser?.open_id;
+    const batchNo = String(req.body?.[arrivalTab.fields.batchNo] || '').trim();
+    const lines = Array.isArray(req.body?.[arrivalTab.fields.lines]) ? req.body[arrivalTab.fields.lines] : [];
+    if (!batchNo) return res.status(400).json({ success: false, error: arrivalTab.texts.batchMissing });
+    try {
+      // ① 开会话（既有 `start` 读该批采购明细 ✓ 读不到 ⇒ 它自己的人话 `no_request_rows` ✓ 如实回 400 ✗）
+      const started = await arrivalService.start({ openId, batchNo, operatorOpenId: openId });
+      if (!started?.ok) {
+        const status = started?.reason === 'not_wired' ? 503 : 400;
+        return res.status(status).json({ success: false, error: started?.message || arrivalTab.texts.detailFailed });
+      }
+      // ② 逐行 `addScan`（**既有自定义路** ✓：认得出 productRecordId 才收；认不出**如实**回 400 ✗ 不静默丢）
+      for (const line of lines) {
+        const productRecordId = String(line?.[arrivalTab.fields.productRecordId] || '').trim();
+        const size = Number(line?.[arrivalTab.fields.size]);
+        const quantity = Number(line?.[arrivalTab.fields.quantity]);
+        if (!productRecordId) {
+          // 自定义货号：既有 `addScan` 只吃 `productRecordId` ⇒ 认不出就**如实说**（不许静默丢 ✗）
+          return res.status(400).json({ success: false, error: arrivalTab.texts.itemNoUnresolved });
+        }
+        if (!Number.isSafeInteger(size) || !Number.isSafeInteger(quantity) || size <= 0 || quantity <= 0) {
+          return res.status(400).json({ success: false, error: arrivalTab.texts.sizeInvalid });
+        }
+        // eslint-disable-next-line no-await-in-loop
+        const added = await arrivalService.addScan({ openId, productRecordId, size, quantity });
+        if (!added?.ok) return res.status(400).json({ success: false, error: added?.message || arrivalTab.texts.acceptFailed });
+      }
+      // ③ 完成（🔴 **同一把** `submitKey`：来自既有 `submitKeyOf(session)` ✓ 幂等不许拆 ✗）
+      const session = await arrivalService.get(openId);
+      const result = await arrivalService.finish({
+        openId,
+        actualAmount: req.body?.[arrivalTab.fields.actualAmount],
+        submitKey: arrivalService.submitKeyOf(session),
+        operatorOpenId: openId,
+      });
+      if (!result?.ok) return res.status(400).json({ success: false, error: result?.message || arrivalTab.texts.acceptFailed });
+      ordersCache.invalidate();
+      return res.json({ success: true, reused: result.reused === true, notice: arrivalTab.texts.accepted, ...result });
+    } catch (error) {
+      logError('workbench.purchase.arrival_accept.failed', { request_id: req.requestId, batch_no: batchNo, error: error.message });
       const status = error?.statusCode === 400 ? 400 : error?.statusCode === 503 ? 503 : 502;
       return res.status(status).json({ success: false, error: error.message });
     }
