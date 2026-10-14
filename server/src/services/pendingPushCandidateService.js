@@ -56,6 +56,16 @@ const { isAfterSalesFulfillment } = require('../config/afterSales');
 const { postedOf, isPosted } = require('../config/salesStatusDimensions');
 // 「最近 7 天」的窗口口径与上海自然日工具：与「二次交付成交提醒」**同一处实现**。
 const { asDate, isWithinLookupWindow } = require('../utils/salesDateWindows');
+// ⭐⭐ 2026-10-14（业务负责人逐字）：「**数据从 20261015 开始**」＋ 更早的同源口径
+//   「**存量行不用管，就看增量**」
+//   ⇒ 「自动挑出来提醒 / 列出来」这一类**只看 `DATA_SINCE`（含）之后** ✓；之前的存量**一律不管** ✗。
+//   🔴 **判据只有一处实现**（`config/dataSince` 的 `isOnOrAfterSince`，上海时区）——
+//      本文件**不自己比日期字符串、也不写第二套时区折算** ✗，只把它**合成**进既有的窗口判据
+//      （见构造函数里的 `withinLookupWindowSince`：**两个条件只在一处合并** ✗ 不散写）。
+//   ⚠️ **故意不受它约束**（她当下正在做的那一单必须照常处理 ✓）：扫码页的提交 / 交付 ·
+//      工作台的**单笔**补记收款 / 交付并扣库存 · 群里她**点名**的那一单 ·
+//      「未完成，可点重试」她**点重试那一刻** —— 那几条链路**不经过**本文件 ✓。
+const { isOnOrAfterSince } = require('../config/dataSince');
 // 「报货日」在消息里的样子（上海自然日）：与渲染层**共用同一处实现**。
 const { formatReportedAtText } = require('./reportedAt');
 const { withSalesReadRetry } = require('./salesReadRetry');
@@ -78,6 +88,14 @@ class PendingPushCandidateService {
     this.secondDelivery = options.secondDelivery || null;
     this.settings = options.settings || resolvePendingPushCandidateConfig();
     this.windowDays = Number(options.windowDays) > 0 ? Number(options.windowDays) : REMINDER_WINDOW_DAYS;
+    // ⭐⭐ 2026-10-14 她的数据口径：「数据从 20261015 开始」＋「存量行不用管，就看增量」。
+    //   ⇒ 本文件里**所有**"最近 N 天窗口"的判据**只在 `this` 这一处合成**（既有窗口 && 数据起点）：
+    //     · 为什么不散写：她在两处分别定过口径（窗口「最近 7 天」+ 数据起点「20261015」），
+    //       任何一处漏改都会变成"某块悄悄多推存量"—— 合成一处 ⇒ **改一处就全改**；
+    //     · `isOnOrAfterSince` 仍是**唯一**的日期判据（`config/dataSince`，上海时区）✗ 本文件不另写。
+    //   ⚠️ 顺带天然覆盖"日期读不出来"：`isWithinLookupWindow(null)` 本来就是 false ⇒ 照旧不进候选。
+    this.withinLookupWindowSince = (date, now) => isWithinLookupWindow(date, { now, days: this.windowDays })
+      && isOnOrAfterSince(date);
     // 采购那半边（「报货批次」里 到货状态 = 未到货）；没注入就不产采购候选。
     this.purchasePending = options.purchasePending || null;
     // ⚠️ 名字与它要接的东西同名（`resolveDetailSize`）：注入的优先，否则从
@@ -190,8 +208,7 @@ class PendingPushCandidateService {
     return eligible.some((item) => {
       const undeliveredInWindow = item.details.some((detail) =>
         textValue(detail.fields?.[detailFields.fulfillmentStatus]).trim() !== this.settings.deliveredStatus
-        && isWithinLookupWindow(asDate(detail.fields?.[detailFields.soldAt]),
-          { now, days: this.windowDays }));
+        && this.withinLookupWindowSince(asDate(detail.fields?.[detailFields.soldAt]), now));
       if (undeliveredInWindow) return true;
       // ⭐ 2026-10-11 晚：**"还没收清"也是一个结构性候选**（现算待收 ≠ 0）。
       //    ⚠️ 为什么必须加这一条：未付的单**没有**那条【未收款】行、现货行又往往**已交付**
@@ -200,7 +217,7 @@ class PendingPushCandidateService {
       if (this.hasOutstanding(item, context, warnings)) return true;
       return item.payments.some((payment) =>
         textValue(payment.fields?.[paymentFields.status]).trim() === this.settings.unpaidPaymentStatus
-        && isWithinLookupWindow(asDate(payment.fields?.[paymentFields.createdAt]), { now, days: this.windowDays }));
+        && this.withinLookupWindowSince(asDate(payment.fields?.[paymentFields.createdAt]), now));
     });
   }
 
@@ -472,8 +489,7 @@ class PendingPushCandidateService {
         if (textValue(detail.fields?.[detailFields.fulfillmentStatus]).trim() === this.settings.deliveredStatus) {
           continue;
         }
-        if (!isWithinLookupWindow(asDate(detail.fields?.[detailFields.soldAt]),
-          { now, days: this.windowDays })) continue;
+        if (!this.withinLookupWindowSince(asDate(detail.fields?.[detailFields.soldAt]), now)) continue;
         const type = this.matchesTradeType(
           detail.fields?.[detailFields.tradeType], this.settings.prepaidTradeTypeCode, behaviorCodeById,
         );
@@ -533,8 +549,7 @@ class PendingPushCandidateService {
     for (const item of eligible) {
       // ① 窗口内**有没有现货件**（判据只看明细；读不到交易类型 ⇒ **照进**，不静默丢单）
       const cashDetails = (item.details || []).filter((detail) => {
-        if (!isWithinLookupWindow(asDate(detail.fields?.[detailFields.soldAt]),
-          { now, days: this.windowDays })) return false;
+        if (!this.withinLookupWindowSince(asDate(detail.fields?.[detailFields.soldAt]), now)) return false;
         const type = this.matchesTradeType(
           detail.fields?.[detailFields.tradeType], this.settings.cashTradeTypeCode, behaviorCodeById,
         );

@@ -343,11 +343,19 @@ test('主表没有交易类型时明细也不写这一列（不猜一个方向�
 // 六、每日提醒：选单范围、群卡片、两层防重复
 // ─────────────────────────────────────────────────────────────────────────────
 
-// 上海 2026-10-05 10:00（UTC 02:00），"最近 7 天" = 09-29 起。
-const NOW = new Date('2026-10-05T02:00:00Z');
-const TOMORROW = new Date('2026-10-06T02:00:00Z');
+// ⚠️ 2026-10-14 夹具整体**后移 17 天**（相对关系不变）——
+//   改前逐字：`NOW = 上海 2026-10-05`（注释「"最近 7 天" = 09-29 起」）
+//   改后逐字：`NOW = 上海 2026-10-22`（"最近 7 天" = 10-16 起）
+//   依据：她 2026-10-14 逐字「**数据从 20261015 开始**」＋「**存量行不用管，就看增量**」
+//     ⇒ 判据已接进这份每日提醒（`isWithinLookupWindow` **且** `isOnOrAfterSince`），
+//       原来 10-01 ~ 10-03 的夹具全落在起点之前、被**正确**过滤 ⇒
+//       **把夹具日期移到 2026-10-15 之后**（不是改判据、不是 skip）。
+//   ⭐ `OUT_OF_WINDOW` 特意落在 **2026-10-15（数据起点当天）**：它 ≥ 起点 ⇒
+//     被排除的**唯一**理由仍是我们本来就要钉的"7 天窗口" ✓（新窗口起点 = 10-16）。
+const NOW = new Date('2026-10-22T02:00:00Z');
+const TOMORROW = new Date('2026-10-23T02:00:00Z');
 const inWindow = (iso) => Date.parse(iso);
-const OUT_OF_WINDOW = Date.parse('2026-09-20T10:00:00+08:00');
+const OUT_OF_WINDOW = Date.parse('2026-10-15T10:00:00+08:00');
 
 const reminderSeed = () => ({
   behavior: BEHAVIOR_ROWS,
@@ -360,22 +368,22 @@ const reminderSeed = () => ({
     // 要推的：**现货待收**（货已交付、钱没收清）—— 新口径下这类单必须进候选。
     { record_id: 'order_cash_pending', fields: {
       '资金状态': '已写入', 销售单号: 'XSD-U-2', 交易类型: ['behavior_cash'],
-      录单日: inWindow('2026-10-02T10:00:00+08:00'),
+      录单日: inWindow('2026-10-19T10:00:00+08:00'),
     } },
     // 要推的：预定、已入账、7 天内、货没交 + 钱没收清（录单更早，应排在前面）。
     { record_id: 'order_prepaid_pending', fields: {
       '资金状态': '已写入', 销售单号: 'XSD-P-2', 交易类型: ['behavior_prepaid'],
-      录单日: inWindow('2026-10-01T10:00:00+08:00'),
+      录单日: inWindow('2026-10-18T10:00:00+08:00'),
     } },
     // 不推：现货、钱货两清（已完成履约）。
     { record_id: 'order_cash', fields: {
       '资金状态': '已写入', 销售单号: 'XSD-C-2', 交易类型: ['behavior_cash'],
-      录单日: inWindow('2026-10-03T10:00:00+08:00'),
+      录单日: inWindow('2026-10-20T10:00:00+08:00'),
     } },
     // 不推：钱货都齐了（已完成履约）。
     { record_id: 'order_cash_done', fields: {
       '资金状态': '已写入', 销售单号: 'XSD-U-3', 交易类型: ['behavior_cash'],
-      录单日: inWindow('2026-10-03T10:00:00+08:00'),
+      录单日: inWindow('2026-10-20T10:00:00+08:00'),
     } },
     // 不推：7 天以外的单。
     { record_id: 'order_cash_old', fields: {
@@ -430,7 +438,7 @@ test('每日提醒：只推「尚未完成履约（预定 / 现货待收）+ 7 �
 
   const result = await service.sendDailyReminder({ now: NOW });
 
-  assert.equal(result.day, '2026-10-05');
+  assert.equal(result.day, '2026-10-22');
   assert.equal(result.pushedOrderCount, 2);
   assert.equal(sent.length, 1, '一天只发一张卡');
   assert.equal(sent[0].params.receive_id_type, 'chat_id');
@@ -455,7 +463,7 @@ test('每日提醒：只推「尚未完成履约（预定 / 现货待收）+ 7 �
   assert.deepEqual(buttons.map((button) => button.value.method), ['微信', '现金', '微信', '现金']);
   assert.ok(buttons.every((button) => button.value.action === 'confirm_second_delivery'));
   // 按钮取值里还要带「这张卡是哪天的」：点完之后要靠它把这张卡取回来改成已成交。
-  assert.deepEqual([...new Set(buttons.map((button) => button.value.reminder_day))], ['2026-10-05']);
+  assert.deepEqual([...new Set(buttons.map((button) => button.value.reminder_day))], ['2026-10-22']);
   assert.deepEqual(buttons.map((button) => button.text.content),
     ['成交·微信', '成交·现金', '成交·微信', '成交·现金']);
 });
@@ -535,12 +543,44 @@ test('没配群 id 时不发、也不抛异常（第二天配置好之后还能�
   assert.equal((await service.sendDailyReminder({ now: TOMORROW })).pushedOrderCount, 2);
 });
 
+// ⭐⭐ 2026-10-14 她的数据口径：「**数据从 20261015 开始**」＋「**存量行不用管，就看增量**」
+//   判据 = 既有的 7 天窗口 **且** `config/dataSince` 的 `isOnOrAfterSince`（同一行判断）。
+//   本用例是那句话在这份提醒上的验收判据：**注入 10-14 与 10-15 两单 ⇒ 只有 10-15 被挑出来**。
+test('⭐⭐ 数据起点：注入 10-14 与 10-15 两单 ⇒ **只有 10-15 被挑出来**', async () => {
+  const DAY = new Date('2026-10-20T02:00:00Z'); // 起点之后；10-15 仍落在 7 天窗口内
+  const seed = { ...reminderSeed() };
+  seed.salesEntry = [
+    { record_id: 'order_before', fields: {
+      '资金状态': '已写入', 销售单号: 'XSD-B4', 交易类型: ['behavior_cash'],
+      录单日: Date.parse('2026-10-14T10:00:00+08:00'),
+    } },
+    { record_id: 'order_since', fields: {
+      '资金状态': '已写入', 销售单号: 'XSD-SINCE', 交易类型: ['behavior_cash'],
+      录单日: Date.parse('2026-10-15T10:00:00+08:00'),
+    } },
+  ];
+  seed.salesDetail = [
+    { record_id: 'd_before', fields: { 销售单号: ['order_before'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 260 } },
+    { record_id: 'd_since', fields: { 销售单号: ['order_since'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 260 } },
+  ];
+  seed.paymentRecord = [
+    { record_id: 'r_before', fields: { 关联销售单: ['order_before'], 收款金额: 260, 收款状态: '未收款' } },
+    { record_id: 'r_since', fields: { 关联销售单: ['order_since'], 收款金额: 260, 收款状态: '未收款' } },
+  ];
+  const service = new SecondDeliveryService({
+    gateway: fakeGateway(seed), store: tmpStore('second-delivery-since-'), client: {},
+  });
+  const orders = await service.listPendingDeliveries({ now: DAY });
+  assert.deepEqual(orders.map((order) => order.salesEntryRecordId), ['order_since'],
+    '10-14（起点之前）= 存量 ⇒ 不推；10-15（起点当天，含）⇒ 推');
+});
+
 test('这一单是哪天的：明细「销售日」优先、主表「录单日」兜底，两个都读不到就跳过这单', async () => {
   const seed = reminderSeed();
   // 现货待收那单：主表日期清掉，靠明细的「销售日」判在窗口内。
   delete seed.salesEntry.find((row) => row.record_id === 'order_cash_pending').fields['录单日'];
   seed.salesDetail.find((row) => row.record_id === 'd_c1').fields['销售日'] =
-    Date.parse('2026-10-02T10:00:00+08:00');
+    Date.parse('2026-10-19T10:00:00+08:00');
   // 预定那单：主表和明细都没有日期 —— 不能当成"太老了"悄悄丢掉，要跳过并记警告。
   delete seed.salesEntry.find((row) => row.record_id === 'order_prepaid_pending').fields['录单日'];
 
@@ -594,7 +634,7 @@ const reminderHarness = (options = {}) => {
 // 点的是卡里的哪一单（按钮取值就带这个），外加回调带上来的消息 id 和日期键。
 const clickFirstCard = (service, salesEntryRecordId, extra = {}) => service.confirm({
   salesEntryRecordId, method: '微信', operatorOpenId: 'ou_wangying',
-  cardMessageId: 'om_1', reminderDay: '2026-10-05', settledAt: NOW, ...extra,
+  cardMessageId: 'om_1', reminderDay: '2026-10-22', settledAt: NOW, ...extra,
 });
 
 // 手搓"某一单有 N 种收款方式"的按钮行：结构与 larkCards.buttonRows 一致
@@ -773,7 +813,7 @@ test('patch 失败不影响成交结果（只记一条 warn，账已经写完）
   assert.equal(result.alreadyCompleted, false);
   assert.equal(result.collectedAmount, 260);
   assert.equal(gateway.records.get('paymentRecord').find((row) => row.record_id === 'r_c1').fields['收款状态'], '已收款');
-  assert.equal(await service.markCardSettled({ reminderDay: '2026-10-05', cardMessageId: 'om_1',
+  assert.equal(await service.markCardSettled({ reminderDay: '2026-10-22', cardMessageId: 'om_1',
     salesEntryRecordId: 'order_cash_pending' }), false);
 });
 
@@ -860,13 +900,13 @@ test('卡片动作 confirm_second_delivery 按销售单号分派，不要求草�
     operator: { operator_id: { open_id: 'ou_1' } },
     context: { open_message_id: 'om_9' },
     action: { value: { action: 'confirm_second_delivery', draft_id: '',
-      sales_entry_record_id: 'order_1', method: '微信', reminder_day: '2026-10-05' } },
+      sales_entry_record_id: 'order_1', method: '微信', reminder_day: '2026-10-22' } },
   });
 
   // 卡片消息 id 从回调事件里取（成交成功后要拿它把那张卡改成已成交），
   // 日期键从按钮取值里带回来（用来取回当初发出去的那张卡）。
   assert.deepEqual(captured, { salesEntryRecordId: 'order_1', method: '微信', operatorOpenId: 'ou_1',
-    cardMessageId: 'om_9', reminderDay: '2026-10-05' });
+    cardMessageId: 'om_9', reminderDay: '2026-10-22' });
   assert.equal(result.toast.type, 'success');
   assert.match(result.toast.content, /补收款 ￥260/);
 });

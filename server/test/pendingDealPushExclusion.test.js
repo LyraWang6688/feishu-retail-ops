@@ -29,8 +29,15 @@ const { AFTER_SALES_FULFILLMENT, AFTER_SALES_FULFILLMENT_EXCLUDED } = require('.
 const tmpStore = (prefix) =>
   new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), prefix)), idField: 'task_id' });
 
-const NOW = new Date('2026-10-08T02:00:00.000Z');
-const SOLD_AT = Date.parse('2026-10-07T00:00:00.000Z');
+// ⚠️ 2026-10-14 夹具整体**后移 14 天**（相对关系不变）——改前逐字
+//   `NOW = new Date('2026-10-08T02:00:00.000Z')` / `SOLD_AT = Date.parse('2026-10-07T00:00:00.000Z')`；
+//   改后逐字 `NOW = 2026-10-22` / `SOLD_AT = 2026-10-21`。
+//   依据：她 2026-10-14 逐字「**数据从 20261015 开始**」＋「**存量行不用管，就看增量**」
+//   ⇒ 判据已接进「待成交提醒候选」（`isWithinLookupWindow` **且** `isOnOrAfterSince`），
+//     原来 10-07 的销售日落在起点之前、被**正确**过滤 ⇒ **把夹具日期移到 2026-10-15 之后**
+//     （不是改判据、不是 skip）；两者仍相差 1 天，7 天窗口内的关系一字不变。
+const NOW = new Date('2026-10-22T02:00:00.000Z');
+const SOLD_AT = Date.parse('2026-10-21T00:00:00.000Z');
 
 // 假 Base：语义字段名 → 真实字段名映射与 schema 一致（写错字段名会当场露馅）。
 const fakeGateway = (seed = {}) => {

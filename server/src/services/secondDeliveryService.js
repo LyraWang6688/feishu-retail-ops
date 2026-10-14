@@ -8,6 +8,15 @@ const { SalesProgressService, progressFromRecords } = require('./salesProgressSe
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { itemFactsForDetails } = require('./salesDetailItemFacts');
 const { asDate, isWithinLookupWindow, shanghaiDayKey } = require('../utils/salesDateWindows');
+// ⭐⭐ 2026-10-14（业务负责人逐字）：「**数据从 20261015 开始**」＋「**存量行不用管，就看增量**」
+//   ⇒ 这份**每日提醒**只看 `DATA_SINCE`（含）之后录的单；之前的存量**一律不管** ✗。
+//   🔴 判据只有一处实现（`config/dataSince` 的 `isOnOrAfterSince`，上海时区）——
+//      本文件只把它**与既有的「最近 7 天」窗口并排用在同一个判断里**（见下面那一行 continue），
+//      **不自己比日期字符串、也不另写时区折算** ✗。
+//   ⚠️ **故意不受它约束**的是"她当下正在做的那一单"：扫码页提交 / 交付 ·
+//      工作台**单笔**补记收款 / 交付并扣库存 · 群里她点名的那一单 ·
+//      「未完成，可点重试」她**点重试那一刻** —— 那些**不经过**这份每日提醒 ✓。
+const { isOnOrAfterSince } = require('../config/dataSince');
 const { resolvePurchaseChatId } = require('../config/groupPurchase');
 const { postedOf, isPosted } = require('../config/salesStatusDimensions');
 const { secondDeliveryCard, settleSecondDeliveryOrder } = require('../utils/larkCards');
@@ -56,6 +65,22 @@ const {
 
 // 「最近 7 天」：今天 + 往前 6 个上海自然日（复用查找链路的窗口口径，含边界）。
 const REMINDER_WINDOW_DAYS = 7;
+
+/**
+ * ⭐⭐ 这份**每日提醒**的候选日期判据 —— **两个条件只在这一处合并** ✗ 不散写：
+ *   `isWithinLookupWindow(...)`（既有口径：「最近 7 天」）
+ *   **且** `isOnOrAfterSince(...)`（她 2026-10-14：「**数据从 20261015 开始**」＋
+ *        「**存量行不用管，就看增量**」）。
+ *
+ * ⚠️ 为什么合在一处：她这两条口径是**先后**定下的（窗口「最近 7 天」先有，数据起点后加）——
+ *    任何一处漏改都会变成"某块悄悄多推存量"；合成一个函数 ⇒ **改一处就全改**。
+ * ⚠️ 判据本身仍然只有一处实现（`config/dataSince` 的 `isOnOrAfterSince`，上海时区）：
+ *    本文件**不自己比日期字符串、也不另写时区折算** ✗。
+ * ⚠️ 「故意不受它约束」的是**她当下正在做的那一单**（扫码提交 / 交付 · 工作台**单笔** ·
+ *    群里她点名的那一单 · 「未完成，可点重试」她点重试那一刻）—— 那些**不经过**这份每日提醒 ✓。
+ */
+const withinReminderWindow = (date, now) => isWithinLookupWindow(date, { now, days: REMINDER_WINDOW_DAYS })
+  && isOnOrAfterSince(date);
 
 // 「每日只推一次」的认领键。⚠️ 只有这一层：业务负责人明确否掉了"按单只推一次"
 // （"只要他还在 7 天范围内，你就继续发"），所以同一笔单**跨天照发**，不做任何按单标记。
@@ -471,8 +496,12 @@ class SecondDeliveryService {
         });
         continue;
       }
-      // 「最近 7 天」按上海自然日算（线上服务器是 UTC，用本地时区会把凌晨的单算错一天）。
-      if (!isWithinLookupWindow(orderDate, { now, days: REMINDER_WINDOW_DAYS })) continue;
+      // ⭐⭐ 候选日期判据 = 「最近 7 天」**且**「数据起点之后」，**合在一处**（见上面的
+      //    `withinReminderWindow`）：窗口按上海自然日算（线上服务器是 UTC，用本地时区会把
+      //    凌晨的单算错一天）；数据起点是业务负责人 2026-10-14 的口径。
+      // ⚠️ 存量单是**有意**不推的（不是读表失败、也不是数据缺）⇒ 与这条窗口一样不刷日志：
+      //    每天几十条存量单逐条打日志只会把日志刷满，反而盖住真正的异常。
+      if (!withinReminderWindow(orderDate, now)) continue;
       // ⭐ 2026-10-08（业务负责人逐字：「**不需要退货和换货的**，销售就是预定和现货待收的」）：
       //   明细里含「已退货 / 已换货 / 已赔货」的单**不进**这两份待处理清单。
       // ⚠️ 这是**明确规则**，不是兜底：改动前这些单会走到 `progressFromRecords` 抛

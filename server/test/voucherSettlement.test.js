@@ -28,9 +28,18 @@ const { visibleCardText } = require('../src/utils/pendingDealPushCard');
 const { fakeCandidates } = require('./helpers/pendingPushTestData');
 
 const CHAT_ID = 'oc_test_voucher_settle';
-// 上海时间：**今天 = 2026-10-08**（UTC 02:00 = 北京 10:00）。
-const NOW = new Date('2026-10-08T02:00:00.000Z');
-const TODAY = '2026-10-08';
+// 上海时间：**今天 = 2026-10-26**（UTC 02:00 = 北京 10:00）。
+// ⚠️ 2026-10-14 夹具后移（改前逐字：`NOW = new Date('2026-10-08T02:00:00.000Z')` / `TODAY = '2026-10-08'`）：
+//   依据：她 2026-10-14 逐字「**数据从 20261015 开始**」＋「**存量行不用管，就看增量**」
+//   ⇒ 判据已接进这块的**自动挑**（`listSettlements`：核销日在起点之前的**存量**不再进候选），
+//     原来 09-27 ~ 10-04 的核销日全落在起点之前、被**正确**过滤 ⇒ **把夹具日期移到 2026-10-15 之后**
+//     （不是改判据、不是 skip）。核销日 +5 天 = 结算日，所以"今天"也得跟着移到 **10-26**
+//     （相对关系一字不变：最早那笔仍逾期 6 天、明天那笔仍不显示）。
+//   ⚠️ 三个 `confirmSettlementDay(...)` 用例（她**手动点**「确认到账」）**故意一个字都没改**：
+//     那条路**不受数据起点约束**（她点了就办），它们的核销日仍是 10-01 / 10-03 —— 这本身就是
+//     「故意不受约束」的**活证据** ✓（改动只落在 `listSettlements` 那几条用例上）。
+const NOW = new Date('2026-10-26T02:00:00.000Z');
+const TODAY = '2026-10-26';
 
 const paymentFields = V1_BITABLE_SCHEMA.tables.paymentRecord.fields;
 const voucherFields = V1_BITABLE_SCHEMA.tables.groupBuyVoucher.fields;
@@ -113,36 +122,39 @@ const newSettlementService = ({ payments, vouchers, fieldOverrides, now = NOW, t
 test('结算日 = 创建时间(上海日) + 5 个自然日；只显示 ≤ 今天；一行一个结算日、倒序、逾期加后缀', async () => {
   const { service } = newSettlementService({
     payments: [
-      // 核销 09-27 ⇒ 结算 10-02（逾期 6 天）
-      paymentRecord('pay_overdue', { id: 'sale_overdue', createdAt: '2026-09-27' }),
-      // 核销 10-01 ⇒ 结算 10-06（逾期 2 天）；与上一笔同一个结算日的**另一笔**
-      paymentRecord('pay_overdue_2', { id: 'sale_overdue_2', createdAt: '2026-10-01' }),
-      // 核销 10-02 ⇒ 结算 10-07（昨天，逾期 1 天）
-      paymentRecord('pay_yesterday', { id: 'sale_yesterday', createdAt: '2026-10-02' }),
-      // 核销 10-03 ⇒ 结算 10-08（**今天**，逾期 0 天）
-      paymentRecord('pay_today', { id: 'sale_today', createdAt: '2026-10-03' }),
-      // 核销 10-04 ⇒ 结算 10-09（**明天**）⇒ 不显示
-      paymentRecord('pay_tomorrow', { id: 'sale_tomorrow', createdAt: '2026-10-04' }),
+      // ⚠️ 2026-10-14：核销日整体后移 18 天（结算日 = 核销日 + 5 天），相对关系不变。
+      // 核销 10-15 ⇒ 结算 10-20（逾期 6 天）
+      paymentRecord('pay_overdue', { id: 'sale_overdue', createdAt: '2026-10-15' }),
+      // 核销 10-19 ⇒ 结算 10-24（逾期 2 天）；与上一笔同一个结算日的**另一笔**
+      paymentRecord('pay_overdue_2', { id: 'sale_overdue_2', createdAt: '2026-10-19' }),
+      // 核销 10-20 ⇒ 结算 10-25（昨天，逾期 1 天）
+      paymentRecord('pay_yesterday', { id: 'sale_yesterday', createdAt: '2026-10-20' }),
+      // 核销 10-21 ⇒ 结算 10-26（**今天**，逾期 0 天）
+      paymentRecord('pay_today', { id: 'sale_today', createdAt: '2026-10-21' }),
+      // 核销 10-22 ⇒ 结算 10-27（**明天**）⇒ 不显示
+      paymentRecord('pay_tomorrow', { id: 'sale_tomorrow', createdAt: '2026-10-22' }),
     ],
     vouchers: [voucherRecord('vch_899')],
   });
   const { rows, pendingRowCount } = await service.listSettlements({ now: NOW });
   // ⚠️ 5 笔待结算、只显示 4 笔（明天那一笔不进这一屏）。
   assert.equal(pendingRowCount, 5);
-  assert.deepEqual(rows.map((row) => row.settleDay), ['2026-10-08', '2026-10-07', '2026-10-06', '2026-10-02']);
+  // 改前逐字：`['2026-10-08', '2026-10-07', '2026-10-06', '2026-10-02']`（整体 +18 天，次序不变）
+  assert.deepEqual(rows.map((row) => row.settleDay), ['2026-10-26', '2026-10-25', '2026-10-24', '2026-10-20']);
   assert.deepEqual(rows.map((row) => row.isToday), [true, false, false, false]);
   assert.deepEqual(rows.map((row) => row.overdueDays), [0, 1, 2, 6]);
   assert.deepEqual(rows.map((row) => row.count), [1, 1, 1, 1]);
-  // 同一结算日的两笔合成一行（10-02 那行那一笔；10-06 那行是 10-01 核销的那笔）
-  assert.equal(rows.find((row) => row.settleDay === '2026-10-06').count, 1);
+  // 同一结算日的两笔合成一行（10-20 那行那一笔；10-24 那行是 10-19 核销的那笔）
+  assert.equal(rows.find((row) => row.settleDay === '2026-10-24').count, 1);
 });
 
 test('同一结算日的多笔合成一行：金额是那几笔的合计（不是每笔一行）', async () => {
   const { service } = newSettlementService({
     payments: [
-      paymentRecord('pay_a', { id: 'sale_a', createdAt: '2026-10-01' }), // 结算 10-06
-      paymentRecord('pay_b', { id: 'sale_b', createdAt: '2026-10-01' }), // 结算 10-06
-      paymentRecord('pay_c', { id: 'sale_c', createdAt: '2026-10-01', method: '抖音代金券（49.9）' }),
+      // ⚠️ 2026-10-14：核销日 10-01 → 10-19（结算 10-06 → 10-24）；相对关系不变。
+      paymentRecord('pay_a', { id: 'sale_a', createdAt: '2026-10-19' }), // 结算 10-24
+      paymentRecord('pay_b', { id: 'sale_b', createdAt: '2026-10-19' }), // 结算 10-24
+      paymentRecord('pay_c', { id: 'sale_c', createdAt: '2026-10-19', method: '抖音代金券（49.9）' }),
     ],
     vouchers: [
       voucherRecord('vch_899', { purchasePrice: 89.9, settlementAmount: 85.4 }),
@@ -151,10 +163,28 @@ test('同一结算日的多笔合成一行：金额是那几笔的合计（不�
   });
   const { rows } = await service.listSettlements({ now: NOW });
   assert.equal(rows.length, 1);
-  assert.equal(rows[0].settleDay, '2026-10-06');
+  assert.equal(rows[0].settleDay, '2026-10-24');
   assert.equal(rows[0].count, 3);
   // 85.4 + 85.4 + 47.4 = 218.2（**券的平台结算款**，不是收款金额 / 售价 / 面值）
   assert.equal(rows[0].totalAmount, 218.2);
+});
+
+// ⭐⭐ 2026-10-14 她的数据口径：「**数据从 20261015 开始**」＋「**存量行不用管，就看增量**」
+//   判据 = `config/dataSince` 的 `isOnOrAfterSince`（按**核销日** = 收款明细.创建时间）。
+//   本用例是那句话在这块**自动挑**上的验收判据：**注入 10-14 与 10-15 两笔 ⇒ 只有 10-15 被挑出来**。
+test('⭐⭐ 数据起点：注入 10-14 与 10-15 两笔核销 ⇒ **只有 10-15 那笔被挑出来**', async () => {
+  const { service } = newSettlementService({
+    payments: [
+      // 核销 10-14（起点之前）= 存量 ⇒ **不挑**（本来该显示成结算日 10-19）
+      paymentRecord('pay_before', { id: 'sale_before', createdAt: '2026-10-14' }),
+      // 核销 10-15（起点当天，含）⇒ **挑**（结算日 10-20）
+      paymentRecord('pay_since', { id: 'sale_since', createdAt: '2026-10-15' }),
+    ],
+    vouchers: [voucherRecord('vch_899')],
+  });
+  const { rows } = await service.listSettlements({ now: NOW });
+  assert.deepEqual(rows.map((row) => row.settleDay), ['2026-10-20'], '只剩 10-15 核销的那笔');
+  assert.deepEqual(rows[0].records, ['pay_since'], '10-14 那笔（存量）不进候选');
 });
 
 test('结算日的日期算术：1001 → 1006（跨月 / 跨年也算得对）', () => {
@@ -165,6 +195,9 @@ test('结算日的日期算术：1001 → 1006（跨月 / 跨年也算得对）'
 });
 
 test('创建时间读不出来 ⇒ 按**今天**当结算日照进候选（绝不静默丢一笔）', async () => {
+  // 🔴 2026-10-14：这条**故意不动** —— 它钉的正是"核销日**读不到**时**不动**"那条口径：
+  //   数据起点只切"读得到、且在起点之前"的存量；读不到 ⇒ 照进 + warn（与文件头同一档），
+  //   否则她在起点前核销、但那一格读不出来的一笔待结算会**永远点不到**。夹具见下（createdAt 被清空）。
   const { service } = newSettlementService({
     payments: [paymentRecord('pay_no_time', { id: 'sale_no_time', createdAt: '2026-09-27',
       extraFields: { [paymentFields.createdAt]: '' } })],
@@ -181,7 +214,7 @@ test('金额取券的「平台结算款」：收款方式名字里的价 → 券
   const { service } = newSettlementService({
     payments: [paymentRecord('pay_1', { id: 'sale_1', method: '抖音代金券（89.9）',
       // ⚠️ 收款金额是 85.4（她当天已改对）；这里故意写成 99 看金额到底取哪一边
-      amount: 99, createdAt: '2026-10-03' })],
+      amount: 99, createdAt: '2026-10-21' })],
     vouchers: [voucherRecord('vch_899', { purchasePrice: 89.9, settlementAmount: 85.4 })],
   });
   const { rows } = await service.listSettlements({ now: NOW });
@@ -192,7 +225,7 @@ test('金额取券的「平台结算款」：收款方式名字里的价 → 券
 test('解析不到券（名字里没有价）⇒ **退回该笔「收款金额」**，并且不静默（warn 带 record_id）', async () => {
   const { service } = newSettlementService({
     payments: [paymentRecord('pay_no_price', { id: 'sale_no_price', method: '抖音团购券',
-      amount: 85.4, createdAt: '2026-10-03' })],
+      amount: 85.4, createdAt: '2026-10-21' })],
     vouchers: [voucherRecord('vch_899')],
   });
   // ⚠️ service 是**模块级** `const { logWarn } = require('../utils/logger')` ⇒ 给模块对象换一个
@@ -217,7 +250,7 @@ test('解析不到券（名字里没有价）⇒ **退回该笔「收款金额�
 test('名字里有价、但券表里没有这一档 ⇒ 同样退回收款金额（不拿别的券顶替）', async () => {
   const { service } = newSettlementService({
     payments: [paymentRecord('pay_other', { id: 'sale_other', method: '抖音代金券（199）',
-      amount: 188, createdAt: '2026-10-03' })],
+      amount: 188, createdAt: '2026-10-21' })],
     vouchers: [voucherRecord('vch_899')],
   });
   const { rows } = await service.listSettlements({ now: NOW });
@@ -226,7 +259,7 @@ test('名字里有价、但券表里没有这一档 ⇒ 同样退回收款金额
 
 test('券表整表读挂了 ⇒ 全部退回收款金额，**一笔都不丢**', async () => {
   const fake = fakeGateway({
-    payments: [paymentRecord('pay_1', { id: 'sale_1', amount: 85.4, createdAt: '2026-10-03' })],
+    payments: [paymentRecord('pay_1', { id: 'sale_1', amount: 85.4, createdAt: '2026-10-21' })],
     vouchers: [voucherRecord('vch_899')],
   });
   const failing = { ...fake.gateway, listAll: async (key) => {
@@ -244,7 +277,7 @@ test('券表整表读挂了 ⇒ 全部退回收款金额，**一笔都不丢**',
 test('金额读不出来 ⇒ 那一行照出、金额给占位（amountKnown=false），绝不静默丢一行', async () => {
   const { service } = newSettlementService({
     payments: [paymentRecord('pay_bad', { id: 'sale_bad', amount: '',
-      extraFields: { [paymentFields.amount]: '' }, createdAt: '2026-10-03' })],
+      extraFields: { [paymentFields.amount]: '' }, createdAt: '2026-10-21' })],
     vouchers: [],
   });
   const { rows } = await service.listSettlements({ now: NOW });
