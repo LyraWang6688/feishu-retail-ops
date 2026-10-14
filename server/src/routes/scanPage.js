@@ -1529,10 +1529,16 @@ const createScanPageRouter = (options = {}) => {
           const pendingLines = Array.isArray(paySession?.sale?.lines) ? paySession.sale.lines : [];
           const pendingInfo = paySession?.sale?.submitPending || paySession?.submitPending || {};
           // ⚠️ 与提交那一下**同一套**解析（`parsePaymentRows` / `asList` ✓ 不新造 ✗）
-          const pendingPayments = parsePaymentRows(body, fields);
-          const pendingLineAmounts = asList(body[fields.lineAmount]);
-          const pendingPaymentStatus = String(body[fields.paymentStatus] || '').trim();
-          const pendingPaidAmount = body[fields.paidAmount] ?? '';
+          //   ⭐ 资金页那张表单**不带**"每件实收"（`line_amount`）⇒ ⭐ **优先用她提交时就填好的那份** ✓
+          //     （实测 `AC-E2E-8`："她填的实收照旧落表" 就是靠这一条 ✓ 拿不到就退回表单 ✓ 不编 ✗）
+          const pendingPayments = parsePaymentRows(body, fields).length
+            ? parsePaymentRows(body, fields)
+            : (Array.isArray(pendingInfo.payments) ? pendingInfo.payments : []);
+          const pendingLineAmounts = asList(body[fields.lineAmount]).some((v) => String(v ?? '').trim())
+            ? asList(body[fields.lineAmount])
+            : (Array.isArray(pendingInfo.lineAmounts) ? pendingInfo.lineAmounts : []);
+          const pendingPaymentStatus = String(body[fields.paymentStatus] || pendingInfo.paymentStatus || '').trim();
+          const pendingPaidAmount = body[fields.paidAmount] ?? pendingInfo.paidAmount ?? '';
           const pendingSize = String(pendingInfo.size || '').trim();
           // ⭐⭐ 2026-10-14（她：配置先行 · 不散写 if-else）⇒ 用**已合入的那份纯函数**先做一次结算校验 ✓
           //   🔴 它在 `config/saleSettlement.js`（表 + 纯函数 = 一份真源 ✓）
@@ -1713,7 +1719,10 @@ const createScanPageRouter = (options = {}) => {
             requestId,
             submitKey: body[fields.submitKey],
             payments: [],
-            lineAmounts: asList(body[fields.lineAmount]),
+            // ⭐ 同上：**每件实收**优先用她提交时填好的那份 ✓（资金页表单不带这个字段 ✗ 丢掉就落不了表 ✓）
+            lineAmounts: asList(body[fields.lineAmount]).some((v) => String(v ?? '').trim())
+              ? asList(body[fields.lineAmount])
+              : (Array.isArray(skipInfo.lineAmounts) ? skipInfo.lineAmounts : []),
             paymentStatus: writeConfig.sale.paymentStatus.default,
             paidAmount: '',
             timing: {},
@@ -1835,6 +1844,13 @@ const createScanPageRouter = (options = {}) => {
             size: String(body[fields.size] ?? '').trim(),
             amount: String(body[fields.amount] ?? '').trim(),
             gift: String(body[fields.gift] ?? '').trim(),
+            // ⭐⭐ 她在**销售页**填的"每件实收 / 收款行 / 付款情况 / 实付多少"也要一起存下来 ✓
+            //   （资金页那张表单**不带**这些字段 ✗ ⇒ 不在这一步存 ⇒ 点按钮建单时它们就丢了 ✗
+            //     实测：`AC-E2E-8` 的"她填的实收照旧落表"就是因为丢了这个 ✗）
+            lineAmounts: asList(body[fields.lineAmount]),
+            payments: parsePaymentRows(body, fields),
+            paymentStatus: String(body[fields.paymentStatus] || '').trim(),
+            paidAmount: String(body[fields.paidAmount] ?? ''),
           },
         });
         // ⭐ 资金页：还没建单 ⇒ `orderNo: ''`（**不编** ✗）· `count` 用草稿行数 ✓
