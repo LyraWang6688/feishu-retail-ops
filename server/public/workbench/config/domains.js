@@ -62,7 +62,7 @@
 //   ⚠️ `config/links.js` 里的 `PURCHASE_REQUEST_FORM_URL` / `PURCHASE_RETURN_FORM_URL` /
 //      `PURCHASE_FORMS` **一个都没删**（删 or 留由业务负责人定；隐藏的老「采购管理」页面里
 //      已经没有任何地方再引用它们了）。
-import { PRODUCT_NEW_FORM_URL, SCAN_APPLINK } from './links.js';
+import { SUPPLIER_DIRECTORY_URL, PRODUCT_NEW_FORM_URL, SCAN_APPLINK } from './links.js';
 
 export const DOMAIN_TABS = [
   // ── ⓿ 扫一扫（2026-10-13 她裁定：与销售/采购/库存**同级**、**放最前** ✓）──────────
@@ -200,6 +200,24 @@ export const DOMAIN_TABS = [
         id: 'purchase-supplier-money',
         label: '供应商往来款',
         kind: 'placeholder',
+      },
+      // ⭐⭐ 2026-10-14（业务负责人逐字）：「在工作台的**采购**页面加一个子 tab 是**供应商名录**，
+      //   我会给一个链接，也是**点击了之后直接跳转**」⇒ 与「货品上新」同一形状（**点一次就到** ✓）：
+      //   目标 = 下面那张卡的 href ✓ 唯一来源仍是 `config/links.js` 的 `SUPPLIER_DIRECTORY_URL`
+      //   （⚠️ 本文件**不复制 URL 字面量** ✗ · 既有 `directJump` 机制 ✓ 不新造 ✗）
+      {
+        id: 'purchase-suppliers',
+        label: '供应商名录',
+        kind: 'links',
+        directJump: true,
+        cards: [
+          {
+            icon: '📇',
+            title: '供应商名录',
+            href: SUPPLIER_DIRECTORY_URL,
+            arrow: '打开名录 →',
+          },
+        ],
       },
     ],
   },

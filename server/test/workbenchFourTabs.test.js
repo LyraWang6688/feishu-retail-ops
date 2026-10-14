@@ -302,7 +302,11 @@ test('AC2 四个 tab 的子页面清单与她要的映射逐条对上（含 2026
   //      **只删/改工作台入口**，后端链路（扫码建单 / 验收接口）一条没删。
   assert.deepEqual(pageLabels(byId.get('sales')), ['订单列表', '销售查询', '客户往来款', '配品']);
   assert.deepEqual(pageLabels(byId.get('inventory')), ['全仓查询', '手工调整']);
-  assert.deepEqual(pageLabels(byId.get('purchase')), ['验收', '订单列表', '供应商往来款']);
+  // 2026-10-14（她逐字）：「在工作台的**采购**页面加一个子 tab 是**供应商名录**，
+  //   我会给一个链接，也是**点击了之后直接跳转**」⇒ 采购子页**多一格**（`links` + `directJump` ✓）
+  //   判据没松：逐字列出 ✓（只是把新那一格加进来）
+  assert.deepEqual(pageLabels(byId.get('purchase')), ['验收', '订单列表', '供应商往来款', '供应商名录'],
+    '采购子页逐字（含 2026-10-14 新增的供应商名录）');
   assert.deepEqual(pageLabels(byId.get('product')), ['货品上新', '标签打印']);
 
   // ③ 销售：建单 → 扫码页的**销售领域**（共用同一套业务处理层）；订单列表 = 既有模块的销售模式；
@@ -353,8 +357,8 @@ test('AC2 四个 tab 的子页面清单与她要的映射逐条对上（含 2026
   //    且钉着「验收到货」是独立子页（kind:'orders'）。现在**入口已删**（扫码页已做验收）
   //    ⇒ 只剩两个占位页；「采购订单列表」同时改名「订单列表」。
   assert.deepEqual(purchase.pages.map((page) => page.id),
-    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money']);
-  assert.deepEqual(purchase.pages.map((page) => page.label), ['验收', '订单列表', '供应商往来款']);
+    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money', 'purchase-suppliers']);
+  assert.deepEqual(purchase.pages.map((page) => page.label), ['验收', '订单列表', '供应商往来款', '供应商名录']);
   assert.equal(purchase.pages.some((page) => page.kind === 'entry'), false, '采购没有"填编号"的入口页');
   // ⭐ 2026-10-13 翻转（她要求「验收」挂回第一个子 tab）—— 改前逐字：
   //    `assert.equal(purchase.pages.some((page) => page.kind === 'orders'), false, '「验收到货」入口已删（扫码页已做）');`
@@ -362,9 +366,17 @@ test('AC2 四个 tab 的子页面清单与她要的映射逐条对上（含 2026
   assert.equal(purchase.pages[0].label, '验收', '名字逐字两个字');
   assert.equal(purchase.pages.some((page) => page.kind === 'orders' && page.mode === 'purchase'), true,
     '验收挂的是既有 orders/purchase 模块（不新造页面 ✓）');
-  // 采购子页上不再挂任何飞书表单外链（那两张卡写的表已被删除 ⇒ 死链，已清掉）
+  // 2026-10-14 改指向（她逐字）：「在工作台的采购页面加一个子 tab 是供应商名录，
+  //   我会给一个链接，也是点击了之后直接跳转」
+  //   ⚠️ 原口径「采购子页上没有任何外链卡」说的是那两张飞书表单死链（表已被删）
+  //   ⇒ 改后：死链一个都不许有，而那一格供应商名录的外链必须在（判据更强）
   const purchaseCardHrefs = purchase.pages.flatMap((page) => (page.cards || []).map((card) => card.href));
-  assert.deepEqual(purchaseCardHrefs, [], '采购子页上没有外链卡');
+  assert.deepEqual(purchaseCardHrefs, [links.SUPPLIER_DIRECTORY_URL],
+    '采购下只有供应商名录这一条外链（旧的飞书表单死链一个都不许有）');
+  const supplierPage = purchase.pages.find((page) => page.id === 'purchase-suppliers');
+  assert.ok(supplierPage, '供应商名录子页要在');
+  assert.equal(supplierPage.label, '供应商名录', '名字逐字');
+  assert.equal(supplierPage.directJump, true, '点一次就跳走（她要的点了之后直接跳转）');
   // ⚠️ 2026-10-11：报货子页已隐藏 ⇒ 原先对 `report.embed/anchor` 的两句改成"整份采购配置里都不许有"。
   for (const page of purchase.pages) {
     assert.equal(page.embed, undefined, `${page.id} 不许有内嵌宿主`);
@@ -425,7 +437,12 @@ test('AC2b 领域子 tab 是渲染出来的（不是写死的 HTML）：按钮 /
   //    "扫码入口 / 目标模板"断言不再适用；改成"采购页都是能渲染的静态子页（没有 entry）"。
   const purchasePages = domains.domainById('purchase').pages;
   assert.equal(purchasePages.some((page) => page.kind === 'entry'), false, '采购没有入口页了');
-  for (const page of purchasePages.filter((item) => item.kind !== 'orders')) {
+  // 2026-10-14：directJump 的页本来就不渲染中间内容（点一次就走，见 nav.domainPageHtml）
+  //   ⇒ 静态渲染检查要跳过它们（与货品上新那条同一个口径）
+  const directJumpIds = new Set(purchasePages
+    .filter((item) => item.directJump && (item.cards || []).some((card) => card.href))
+    .map((item) => item.id));
+  for (const page of purchasePages.filter((item) => item.kind !== 'orders' && !directJumpIds.has(item.id))) {
     const html = nav.domainPageHtml(page);
     assert.ok(html.includes('data-page-kind='), `${page.id} 必须能渲染`);
     assert.equal(html.includes('#purchase-arrival'), false);
@@ -583,7 +600,8 @@ test('AC3 四个老页面已按她的口令删掉（代码从仓库里删）—�
   // ⚠️ 2026-10-12 改写：改前 = ['purchase-arrival','purchase-orders','purchase-supplier-money']。
   //    「验收到货」入口已按她口径删除（扫码页已做）⇒ 只剩两个占位页；验收链路一行没删。
   assert.deepEqual(purchase.pages.map((page) => page.id),
-    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money'], '采购入口只剩两个占位页（验收入口已删）');
+    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money', 'purchase-suppliers'],
+    '采购入口逐字（含 2026-10-14 供应商名录；验收入口已删 ✓）');
   const purchaseFormHrefs = purchase.pages.flatMap((page) => (page.cards || []).map((card) => card.href));
   assert.equal(purchaseFormHrefs.includes(links.PURCHASE_REQUEST_FORM_URL), false, '死链的报货表单不再是入口');
   assert.equal(purchaseFormHrefs.includes(links.PURCHASE_RETURN_FORM_URL), false, '死链的退货表单不再是入口');

@@ -39,7 +39,8 @@ async function loadDomainPages() {
 
 test('AC1 ⭐ 采购子 tab 顺序逐字 = 验收 · **退货** · 订单列表 · 供应商往来款', () => {
   const pages = [...purchaseSlice().matchAll(/\n        id: '([^']+)',\n        label: '([^']+)',/g)].map((m) => `${m[1]}:${m[2]}`);
-  assert.deepEqual(pages, ['purchase-acceptance:验收', 'purchase-orders:订单列表', 'purchase-supplier-money:供应商往来款'],
+  assert.deepEqual(pages, ['purchase-acceptance:验收', 'purchase-orders:订单列表', 'purchase-supplier-money:供应商往来款',
+    'purchase-suppliers:供应商名录'],
     '⭐ 退货**紧跟验收**；订单列表 / 供应商往来款 与改前逐字相同 ✓');
 });
 

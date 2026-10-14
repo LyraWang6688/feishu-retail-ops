@@ -135,7 +135,7 @@ function loadFrontendModules() {
 // AC-P1 采购子 tab 的顺序（配置先行）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-P1 采购子 tab 顺序逐字 = 订单列表 · 供应商往来款（验收入口已删 + 改名）', async () => {
+test('AC-P1 采购子 tab 顺序逐字 = 订单列表 · 供应商往来款（验收入口已删 + 改名 + 2026-10-14 供应商名录）', async () => {
   const modules = loadFrontendModules();
   const [domains, nav] = await Promise.all([modules.domains, modules.domainNav]);
   const purchase = domains.domainById('purchase');
@@ -143,15 +143,15 @@ test('AC-P1 采购子 tab 顺序逐字 = 订单列表 · 供应商往来款（�
   // ⚠️ 2026-10-12 改写：改前 = ['验收到货','采购订单列表','供应商往来款'] / 对应 id。
   //    现在「验收到货」入口删了、「采购订单列表」改名「订单列表」（见文件头）。
   assert.deepEqual(purchase.pages.map((page) => page.label),
-    ['验收', '订单列表', '供应商往来款']);
+    ['验收', '订单列表', '供应商往来款', '供应商名录']);
   // 2026-10-14（她逐字）：「工作台的采购 tab 里的退货不需要了」⇒ 这一步翻成「必须没有」（不放宽 ✗）
   assert.deepEqual(purchase.pages.map((page) => page.id),
-    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money']);
+    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money', 'purchase-suppliers']);
   assert.equal(purchase.pages.some((page) => page.id === 'purchase-arrival'), false, '验收入口已删');
 
   // 子 tab 上真的点得到（渲染层不写死）
   const tabs = nav.domainSubTabsHtml(purchase);
-  for (const label of ['验收', '订单列表', '供应商往来款']) {
+  for (const label of ['验收', '订单列表', '供应商往来款', '供应商名录']) {
     assert.ok(tabs.includes(`>${label}</button>`), `子 tab 上少了「${label}」`);
   }
   assert.equal(tabs.includes('>验收到货</button>'), false, '子 tab 上不该再有「验收到货」');
@@ -244,7 +244,7 @@ test('AC-P3 报货 / 退货两个子页已隐藏：采购子页上没有任何�
   //    ⇒ 去掉已删的验收入口。
   // 2026-10-14（她逐字）：「工作台的采购 tab 里的退货不需要了」⇒ 这一步翻成「必须没有」（不放宽 ✗）
   assert.deepEqual(purchase.pages.map((page) => page.id),
-    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money']);
+    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money', 'purchase-suppliers']);
   // 采购子页上**一条飞书表单外链都没有**（那两张卡写的表已被删除 ⇒ 死链，已清掉）
   const html = purchase.pages.map((page) => nav.domainPageHtml(page)).join('\n');
   assert.equal(html.includes(links.PURCHASE_REQUEST_FORM_URL), false);

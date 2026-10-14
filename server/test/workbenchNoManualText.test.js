@@ -185,7 +185,7 @@ test('AC1 领域 tab 页内没有一级大标题与它下面那行描述（tab �
   }
   // 那两行解释句的原文（逐字）也不许再留在配置里
   for (const gone of [
-    '报货 / 验收 / 退货 · 采购订单列表（待建设）· 供应商往来款（待建设）',
+    '报货 / 验收 / 退货 · 采购订单列表（待建设）· 供应商往来款（待建设）· 供应商名录（外链直接跳转）',
     '扫码建单 → 订单列表（补收款 / 交付 / 售后）→ 销售查询',
     '单款查询 · 全仓查询 · 手工调整',
     '货品上新 · 标签打印（单个 / 批量）',
@@ -445,8 +445,10 @@ test('AC8 功能性内容一个都不能少：子 tab / 卡片标题与动作 / 
     ['订单列表', '销售查询', '客户往来款', '配品']);
   assert.deepEqual(byId.get('inventory').pages.map((page) => page.label),
     ['全仓查询', '手工调整']);
+  // 2026-10-14（她逐字）：「在工作台的采购页面加一个子 tab 是供应商名录，我会给一个链接，
+  //   也是点击了之后直接跳转」⇒ 采购子页多一格（判据照旧逐字列，只是多它）
   assert.deepEqual(byId.get('purchase').pages.map((page) => page.label),
-    ['验收', '订单列表', '供应商往来款']);
+    ['验收', '订单列表', '供应商往来款', '供应商名录']);
   assert.deepEqual(byId.get('product').pages.map((page) => page.label),
     ['货品上新', '标签打印']);
 
@@ -463,7 +465,7 @@ test('AC8 功能性内容一个都不能少：子 tab / 卡片标题与动作 / 
   //    ＋ `arrivalPage.kind === 'orders'`。她把「验收到货」入口删了（扫码页已做验收）
   //    ⇒ 采购只剩两个占位页；验收台代码 / 接口保留（另钉在 AC3 ② 与 AC5）。
   assert.deepEqual(purchase.pages.map((page) => page.id),
-    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money']);
+    ['purchase-acceptance', 'purchase-orders', 'purchase-supplier-money', 'purchase-suppliers']);
   // ⚠️ 2026-10-13：**只翻"退货"这一件事**（她：「把退货放在工作台采购单独一个子 tab」✗）
   //    改前逐字：`for (const gone of ['purchase-report', 'purchase-return', 'purchase-arrival']) { ... }`
   for (const gone of ['purchase-report', 'purchase-arrival']) {
@@ -473,8 +475,14 @@ test('AC8 功能性内容一个都不能少：子 tab / 卡片标题与动作 / 
   assert.equal(purchase.pages.some((page) => page.id === 'purchase-return'), false,
     '⭐「退货」子页已按她 2026-10-14 的话退场 ✓');
   const purchaseCardHrefs = purchase.pages.flatMap((page) => (page.cards || []).map((card) => card.href));
-  assert.deepEqual(purchaseCardHrefs, [], '采购子页上没有外链卡（死链已清）');
-  for (const page of purchase.pages.filter((item) => item.kind !== 'orders')) {
+  // 2026-10-14 改指向（她逐字）：供应商名录那一格是**她点名要的外链**（点了直接跳转）
+  //   ⇒ 死链一个不许有，但这条必须恰好在（判据更强）
+  assert.deepEqual(purchaseCardHrefs, [links.SUPPLIER_DIRECTORY_URL],
+    '采购下只有供应商名录这一条外链（旧飞书表单死链一个都不许有）');
+  // 2026-10-14：directJump 页不渲染中间内容（点一次就走）⇒ 静态检查跳过它
+  const purchaseDirectJump = purchase.pages.filter((item) => item.directJump && (item.cards || []).length);
+  assert.deepEqual(purchaseDirectJump.map((item) => item.id), ['purchase-suppliers'], '只有供应商名录是直跳页');
+  for (const page of purchase.pages.filter((item) => item.kind !== 'orders' && !item.directJump)) {
     assert.ok(nav.domainPageHtml(page).includes('data-page-kind='), `${page.id} 必须能渲染`);
   }
 
