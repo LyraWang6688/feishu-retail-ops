@@ -10,10 +10,39 @@ const { createSizeReferenceAccess } = require('./sizeReferenceService');
 //    （`config/sellableKinds`），`itemLinkOfDetail` 是既有的事实解析（谁的关联字段有值）。
 const { SELLABLE_KINDS } = require('../config/sellableKinds');
 const { itemLinkOfDetail } = require('./salesDetailItemFacts');
-const { postedOf, isPosted } = require('../config/salesStatusDimensions');
+const {
+  postedOf, isPosted,
+  // ⭐⭐ 2026-10-15（⑰b-1 UI）：那三个维度的**只读取用器**（与工作台其他地方同一份 ✓ 不另写判据 ✗）
+  salesStatusOf, stockStatusOf, SALES_STATUS_FIELDS,
+} = require('../config/salesStatusDimensions');
+// ⭐ 「这一单写完了没」的**唯一判据**（已合并：`services/v1WorkbenchService.js` 导出 ✓）
+//   ⚠️ 页面不自己判 ✗；本文件也**不另发明**一套 ✗
+const { isOrderIncomplete } = require('./v1WorkbenchService');
 const { ORDER_FIELD_KEYS, readWorkbenchOrdersConfig } = require('../config/workbenchOrders');
 const { createWorkbenchOrdersCache } = require('./workbenchOrdersCache');
 const { logWarn } = require('../utils/logger');
+
+/**
+ * ⭐⭐ 2026-10-15（⑰b-1 UI · 她逐字）：「失败落「**写入失败**」、工作台显示「**未完成，可点重试**」」
+ *   ⇒ 每一单带上**那三个维度**（`salesStatus / stockStatus / fundsStatus`）与
+ *     **`write_incomplete`**（工作台列表据它决定要不要显示那句话 + 那颗按钮 ✓）。
+ *
+ * 🔴 三条纪律：
+ *   · **不额外读表** ✗：只从**已经读到的那条记录**（`order.fields`）里取 ✓
+ *   · **不另写判据** ✗：用**已合并的** `isOrderIncomplete`（与页面/其他读侧同一份 ✓）
+ *   · **取不到就空着**：维度读不到 ⇒ 空串（`isOrderIncomplete` 对空串不会乱说"完成了" ✓ 也不会乱发按钮 ✗）
+ */
+const writeFlagsOf = (order, fields) => {
+  const salesStatus = salesStatusOf(order, fields);
+  const stockStatus = stockStatusOf(order, fields);
+  // 「资金状态」没有现成的取用器（上面那两个有）⇒ 按**同一份字段映射**取（`SALES_STATUS_FIELDS.funds` 是内置名 ✓）
+  const fundsName = fields?.['funds'] || SALES_STATUS_FIELDS.funds;
+  const fundsStatus = textValue(order?.fields?.[fundsName]);
+  return {
+    salesStatus, stockStatus, fundsStatus: String(fundsStatus || '').trim(),
+    write_incomplete: isOrderIncomplete({ salesStatus, stockStatus, fundsStatus: String(fundsStatus || '').trim() }),
+  };
+};
 
 class SalesFollowupService {
   constructor(options = {}) {
@@ -52,6 +81,7 @@ class SalesFollowupService {
    * 订单列表（**带缓存的门面**）—— 页面读的就是它。
    * ⚠️ 语义与优化前**逐字一致**：命中/未命中返回的是同一份计算结果（只有"读不读飞书"不同）。
    */
+
   async listOrders() {
     const cached = this.ordersCache.get();
     if (cached !== undefined) return cached;
@@ -205,6 +235,9 @@ class SalesFollowupService {
             return {
               record_id: order.record_id,
               order_no: orderNo,
+              // ⭐⭐ 2026-10-15（⑰b-1 UI）：三个维度 + 「写完了没」的判据（上面那个纯函数 ✓）
+              //   ⚠️ 它只读**已经读到的** `order.fields` ⇒ 零额外请求 ✓
+              ...writeFlagsOf(order, orderFields),
               fulfillment_status: progress.fulfillmentStatus,
               payment_status: progress.paymentStatus,
               receivable_amount: progress.receivableAmount,
@@ -489,4 +522,8 @@ class SalesFollowupService {
   }
 }
 
-module.exports = { SalesFollowupService };
+module.exports = {
+  SalesFollowupService,
+  // ⭐ 纯函数暴露给用例（不用起网关就能验那三个维度 → `write_incomplete` 的映射 ✓）
+  writeFlagsOf,
+};

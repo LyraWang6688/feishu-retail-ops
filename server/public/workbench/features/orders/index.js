@@ -165,17 +165,26 @@ const detailsBlock = (order) => {
  */
 export function ordersListHtml(orders = []) {
   if (!orders.length) return `<p class="empty" data-view="orders-empty">${escapeHtml(P.empty)}</p>`;
-  return `<div class="orders-list" data-view="orders">${orders.map((order) => `
+  return `<div class="orders-list" data-view="orders">${orders.map((order) => {
+    // ⭐⭐ 2026-10-15（⑨b-1 UI · 她逐字）：「失败落「**写入失败**」、工作台显示「**未完成，可点重试**」」
+    //   ⇒ **只有没写完的单**才出那一句 + 那颗按钮（写完了的不该出现"可点重试" ✗）。
+    //   ⚠️ 判据来自**服务端**已经算好的 `write_incomplete`（`salesFollowupService` 用已合并的
+    //      `isOrderIncomplete` 算的 ✓）—— 页面**不自己判** ✗、也不另发明一套 ✗。
+    const incomplete = order.write_incomplete === true;
+    return `
       <article class="order-card" data-order="${escapeHtml(order.record_id)}">
         <div class="order-card-head">
           <h3 class="order-no">${escapeHtml(order.order_no || order.record_id)}</h3>
           <div class="order-tags">
             <span class="tag ${statusClass(order.fulfillment_status)}">${escapeHtml(order.fulfillment_status || '')}</span>
+            ${incomplete ? `<span class="tag tag-warning" data-view="order-incomplete">${escapeHtml(P.incomplete)}</span>` : ''}
           </div>
           <button class="btn btn-ghost order-open" type="button" data-action="open-order" data-order="${escapeHtml(order.record_id)}">${escapeHtml(P.open)} ›</button>
+          ${incomplete ? `<button class="btn btn-primary order-retry" type="button" data-action="retry-write" data-order-no="${escapeHtml(order.order_no || '')}">${escapeHtml(P.retry)}</button>` : ''}
         </div>
         ${detailsBlock(order)}
-      </article>`).join('')}
+      </article>`;
+  }).join('')}
     </div>`;
 }
 
@@ -1086,6 +1095,27 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     });
   }
 
+  // ── ⭐⭐ 2026-10-15（⑨b-1 UI）「未完成，可点重试」──────────────────────────
+  /**
+   * 续写那一单（**同一把 `submitKey`**，服务端 = 既有 `POST /sales/retry`）。
+   *
+   * 🔴 三条：
+   *   · **不新开写库** ✗ —— 服务端走的是既有 `submitSale`（幂等不拆 ✓ 绝不直调 `_confirm` ✓）；
+   *   · **失败如实显示** ✗ 不许假成功 —— `runAction` 的 catch 会把服务端那句人话原样摆出来
+   *     （400 = "没有待续的单 / 单号对不上"、500 = "没写成"）；
+   *   · 成功 ⇒ `runAction` 里的 `refreshAfterAction` **强制拉新**（`freshOnly`）⇒ 她那一眼看到的是
+   *     真实状态（服务端同时作废了订单缓存 ✓）。
+   */
+  async function submitRetryWrite(button) {
+    const orderNo = String(button?.dataset?.orderNo || '').trim();
+    await runAction(button, T.retrying, async () => {
+      const result = await api.post(ORDERS_API.retry, orderNo ? { order_no: orderNo } : {});
+      // ⭐ `reused:true` = 这一单刚才已经交过了（不是又写了一遍）⇒ 如实说"已经写完了"
+      if (result?.reused === true) return T.retryAlreadyDone;
+      return result?.message || T.retryDone;
+    });
+  }
+
   // ── 售后 ─────────────────────────────────────────────────────────────────
   function afterSalesInput() {
     const action = valueOf('after-sales-action');
@@ -1232,6 +1262,8 @@ export function createOrdersModule({ mode = 'both' } = {}) {
         const order = state.orders.find((item) => item.record_id === trigger.dataset.order);
         return order ? openOrder(order) : undefined;
       }
+      // ⭐⭐ 2026-10-15（⑨b-1 UI）：「未完成，可点重试」那颗按钮 —— 调**既有**服务端路由续写
+      if (action === 'retry-write') return submitRetryWrite(trigger);
       if (action === 'back') return renderList();
       if (action === 'search-product') return searchProduct();
       if (action === 'submit-payment') return submitPayment(trigger);
