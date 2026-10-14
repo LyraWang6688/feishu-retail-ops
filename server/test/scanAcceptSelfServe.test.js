@@ -350,7 +350,10 @@ test('AC-AS6 回归：另外五个领域里不出现本轮那一块（销售/库
   }
   // 既有片段仍在（抽查两个领域，防"顺手改了别人"）
   const sales = blockOf(renderScanPage(VIEW, SCAN_PAGE, WRITE, 'sales', {}), 'sales');
-  assert.ok(sales.includes('加入本单'), '销售领域照旧');
+  // 2026-10-14 晚（她逐字）：「实收金额下的两行文字说明不需要」⇒ 那句空态提示**整条退场** ✗
+  //   ⚠️ 原来这条是拿提示里的「加入本单」四个字当证据 ✗ ⇒ 改判**真正的写入口**（结构标记 ✓ 判据没松 ✗）
+  assert.ok(sales.includes('data-stock-group="in_stock"') || sales.includes('<form'),
+    '销售领域照旧（写入口的结构标记在 ✓）');
   const inventory = blockOf(renderScanPage(VIEW, SCAN_PAGE, WRITE, 'inventory', {}), 'inventory');
   assert.ok(inventory.includes('库存（共 2 双）'), '库存领域照旧');
 });

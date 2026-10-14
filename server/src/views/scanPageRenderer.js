@@ -822,7 +822,8 @@ const draftLinesHtml = (write) => {
   const t = write.texts;
   const fields = write.fields;
   const lines = write.draft?.lines || [];
-  if (!lines.length) return `<p class="hint">${escapeHtml(t.draftEmpty)}</p>`;
+  // ⭐ 2026-10-14 晚（她：「实收金额下的两行文字说明不需要」）⇒ 空态那句整条退场 ✗
+  if (!lines.length) return '';
   const rows = lines.map((line) => {
     const label = line.accessory_record_id ? t.accessoryLineAmountLabel : t.lineAmountLabel;
     const value = line.amount === null || line.amount === undefined ? '' : String(line.amount);
@@ -958,7 +959,6 @@ ${draftLinesHtml(write)}
 ${String(write.errorText || '').trim() ? `${paymentStatusHtml(write)}${paymentRowsHtml(write)}` : ''}
 <!-- ⭐⭐ 2026-10-13（金额两步走）：整单那一组（档位 / 收款行 / 备注）**整块挪到第 2 步页**
      ⇒ 录入页只留：每双 颜色 · 尺码 · 这一双的金额 ✓（那一组的字段名与标签字面量一个都不许留，否则 AC-2S1/AC-1 会打红） -->
-<p class="hint">${escapeHtml(t.amountOptionalHint || '')}</p>
 <button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}" data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(countLabel)}</button>
 <button type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.addLine)}"${submitFeedbackAttrs(write)}>${escapeHtml(t.addAnotherButton || t.addButton)}</button>
 </form>

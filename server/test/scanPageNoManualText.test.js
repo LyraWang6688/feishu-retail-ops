@@ -209,7 +209,8 @@ test('AC-S3 功能性的东西一个都不能少：⚠️ 缺 / 状态小标签 
   assert.ok(step2Of().includes('<option value="微信" selected>微信</option>'), '默认微信在第 2 步页');
   const sales = pageFor('sales');
   for (const needle of ['data-stock-group="in_stock"', 'data-stock-group="prepaid"',
-    '加入本单', '提交这一单']) {
+    // 2026-10-14 晚：那句空态提示退场 ⇒ 不再拿它当证据 ✗；判**结构标记**（尺码两组 ✓）+ 提交那颗 ✓
+    'data-stock-group="prepaid"', '提交这一单']) {
     assert.ok(sales.includes(needle), `销售表单少了 ${needle}`);
   }
   // ⑤ 货品标签页照旧（只是不再解释这一页怎么用）
