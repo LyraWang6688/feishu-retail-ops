@@ -624,25 +624,33 @@ test('AC-E2E-6 幂等：同一提交键连点两次（含并发）⇒ 只建一�
         payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['', ''],
       };
 
-      // 第1步：**并发**两个一模一样的提交（她手滑连点 / 网络重发）
+      // ⭐⭐ 2026-10-14（她逐字：「**确认状态是资金那页点击了按钮之后，才算是用户确认了**」）：
+      //   ⇒ 新流程**两步**：① 点提交 ⇒ **只到资金页、零写入** ✓；② 点资金页按钮 ⇒ **才建单** ✓
+      //   ⇒ 幂等的判据（只建一张单、只扣一次库存）**挪到第二步之后** ✓ **强度一条不松** ✗
+      // 第1步：**并发**两个一模一样的提交（她手滑连点 / 网络重发）⇒ 都只到资金页、都零写入
       const [first, second] = await Promise.all([
         postForm(pageUrlOf(base, NUMBER_A), cookie, body),
         postForm(pageUrlOf(base, NUMBER_A), cookie, body),
       ]);
-      const [firstHtml, secondHtml] = [await first.text(), await second.text()];
+      const [firstHtml, secondHtml] = [await first.clone().text(), await second.text()];
       assert.equal(first.status, 200, `第1步：第一次要成功：${firstHtml.slice(0, 200)}`);
-      assert.equal(second.status, 200, `第1步：第二次也要给她一个成功页（可能是"已提交过"）：${secondHtml.slice(0, 200)}`);
+      assert.equal(second.status, 200, `第1步：第二次也要给她一个成功页：${secondHtml.slice(0, 200)}`);
+      assert.ok(firstHtml.includes('data-view="payment-step"'), '第1步：第一次到资金页');
+      assert.ok(secondHtml.includes('data-view="payment-step"'), '第1步：第二次也到资金页');
+      assert.equal(rowsOf(e2e, 'salesEntry').length, 0, '第1步：**一个字都不写**（主表 0）');
+      assert.equal(rowsOf(e2e, 'salesDetail').length, 0, '第1步：明细 0');
+      assert.equal(rowsOf(e2e, 'inventoryLedger').length, 0, '第1步：库存流水 0');
 
-      // 第2步：只写了一次
+      // 第2步：点资金页那颗【跳过】（未付 ⇒ 不写收款 ✓）⇒ **才建单**
+      const step2 = await followPaymentStep(base, cookie, first);
+      assert.equal(step2.status, 200, '第2步：要能建单');
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第2步：销售主表只有 1 条');
       assert.equal(rowsOf(e2e, 'salesDetail').length, 2, '第2步：明细只有 2 行');
       assert.equal(rowsOf(e2e, 'inventoryLedger').length, 1, '第2步：库存流水只有 1 条');
       assert.equal(rowsOf(e2e, 'liveInventory').length, 0, '第2步：库存只扣了一次');
       assert.equal(rowsOf(e2e, 'paymentRecord').length, 0, '第2步：资金全空 ⇒ 一条收款明细都没有');
 
-      // 第3步：**再点一次**（串行）也只有一个结果 —— 而且拿到的是"已经提交过"那一页
-      // ⭐ 2026-10-13 改指向：提交成功先落第 2 步「整单付款」页，她点【跳过】才到成功页
-      //    （能力去哪：renderSalePaymentStepPage → payment_skip 动作）⇒ 跟着那一跳再取页面 ✓
+      // 第3步：**再点一次**（提交 + 跳过，都是同一把键）⇒ 只有一个结果 + "已经交过了"那一页
       const third = await followPaymentStep(base, cookie, await postForm(pageUrlOf(base, NUMBER_A), cookie, body));
       const thirdHtml = await third.text();
       assert.equal(third.status, 200, '第3步：第三次也是 200');
@@ -1739,12 +1747,20 @@ test('AC-ACT1 🔴 不带 action 的真提交 ⇒ 窄化兜底认出"提交这�
       await getPage(pageUrlOf(base, NUMBER_A), cookie);
       await addLine(base, cookie, NUMBER_A, '40');
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
-      const response = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+      // ⭐⭐ 2026-10-14（她逐字：「**确认状态是资金那页点击了按钮之后，才算是用户确认了**」）：
+      //   ⇒ 真提交（不带 action ⇒ 窄化兜底认出"提交这一单" ✓）现在**只到资金页** ✓
+      //      ⇒ 跟着【跳过】那一跳（未付 ✓）⇒ **才建单** ⇒ 成功页带单号 ✓
+      const first = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         submit_key: submitKeyOf(page.html),
         payment_status: PAYMENT_STATUS.unpaid,
         size: '40',
         amount: '399',
       });
+      assert.equal(first.status, 200, `第一步要能到资金页（实际 ${first.status}）`);
+      const firstHtml = await first.clone().text();
+      assert.ok(firstHtml.includes('data-view="payment-step"'), '第一步到的是资金页（她不再被卡 ✓）');
+      assert.equal((firstHtml.match(/<script/g) || []).length, 1, '资金页仍只有一段脚本');
+      const response = await followPaymentStep(base, cookie, first);
       assert.equal(response.status, 200, `要能建单（实际 ${response.status}）`);
       const html = await response.text();
       assert.match(html, /XSD-/, '成功页要带单号（她那次是 400 ✗）');

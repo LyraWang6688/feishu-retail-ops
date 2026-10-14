@@ -1610,8 +1610,10 @@ const createScanPageRouter = (options = {}) => {
             }
             return respondWriteFailure(res, createdResult, requestId);
           }
-          // ⭐ 建单成功 ⇒ **清掉标记** ✓（否则她刷新会永远停在资金页 ✗）
-          await writeService.saveDraftLines?.(openIdOf(req), { paymentStep: '' });
+          // ⭐ 建单成功 ⇒ 标记从「已到资金页」改成「**这一单已经建过**」✓
+          //   🔴 **不能清成空串** ✗ —— 否则她**再点一次**时服务端就"忘了"，只会再渲染资金页 ✗，
+          //      而她要的是「**这一单刚才已经交过了**」✓（幂等不许拆 ✓ 只写一次但要如实说 ✓）
+          await writeService.saveDraftLines?.(openIdOf(req), { paymentStep: 'created' });
         }
         const payTarget = backTargetFor(req, decodeURIComponent(String(req.params.number || '')));
         // ⭐ 单号/双数：**优先用刚建单的返回值** ✓（没建单时退回表单里的那两个 ✓ 一律**不编** ✗）
@@ -1693,7 +1695,11 @@ const createScanPageRouter = (options = {}) => {
         //   （跳过 = "钱稍后去工作台补" ✓ 但**货那一单必须先成立** ✓ 否则"跳过"就成了"什么都没发生"✗）
         //   🔴 与 `payment_pay` **同一把 `submitKey`**（幂等不许拆 ✗）· 校验仍由 `submitSale` 兜 ✓
         const skipSession = await writeService?.sessions?.get?.(openIdOf(req)).catch(() => null);
-        const skipPending = (skipSession?.sale?.paymentStep || skipSession?.paymentStep) === 'pending';
+        const skipMark = skipSession?.sale?.paymentStep || skipSession?.paymentStep;
+        // ⭐ `pending` = 还没建单 ⇒ 现在建 ✓；`created` = **这一单已经建过** ⇒ ⭐ 再点也要**如实**告诉她
+        //   「这一单刚才已经交过了」✓（**同一把 `submitKey`** ⇒ `submitSale` 自己幂等 ⇒ **只写一次** ✓
+        //    🔴 **幂等不许拆** ✗ 绝不直调 `_confirm` ✓）
+        const skipPending = skipMark === 'pending' || skipMark === 'created';
         let skipCreated = null;
         if (skipPending) {
           const skipInfo = skipSession?.sale?.submitPending || skipSession?.submitPending || {};
@@ -1744,13 +1750,15 @@ const createScanPageRouter = (options = {}) => {
             }
             return respondWriteFailure(res, skipCreated, requestId);
           }
-          // ⭐ 建单成功 ⇒ **清掉标记** ✓（否则她刷新会一直停在资金页 ✗）
-          await writeService.saveDraftLines?.(openIdOf(req), { paymentStep: '' });
+          // ⭐ 建单成功 ⇒ 标记改成「**这一单已经建过**」✓（**不清成空串** ✗ —— 见 `payment_pay` 那段注释）
+          await writeService.saveDraftLines?.(openIdOf(req), { paymentStep: 'created' });
         }
         // ⭐ 单号/双数：**优先用刚建单的返回值** ✓（没建单时退回表单里的那两个 ✓ 一律**不编** ✗）
         const skippedOrderNo = String(skipCreated?.order_no || body.order_no || '').trim().slice(0, 40);
         const skippedCount = Number(String(skipCreated?.detail_count ?? body.count ?? '').trim() || 0) || 0;
-        const skippedReused = String(body.reused || '') === '1';
+        // ⭐ 她**再点一次**（同一把 `submitKey`）⇒ `submitSale` 返回 `reused` ✓ ⇒ 成功页要**如实**说
+        //   「这一单刚才已经交过了」✓（不是失败 ✗ 也不是又写一遍 ✗）
+        const skippedReused = String(body.reused || '') === '1' || skipCreated?.reused === true;
         const skipTarget = backTargetFor(req, decodeURIComponent(String(req.params.number || '')));
         // ⚠️ 成功页那两行（单号 / 双数）在**提交成功**那条路里是由 `details` 拼的 —— 跳过这条路
         //    也必须给她**同样的两行**（否则页面只剩标题 ⇒ 她看不到单号/双数 ✗）
