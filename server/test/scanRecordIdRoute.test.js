@@ -111,6 +111,9 @@ const withServer = async (app, run) => {
 /** ⭐ 渲染器被调用了几次、带的是哪一条路 —— AC-R6 用它证明"两条路共用同一套渲染"。 */
 const scannedRenders = [];
 const appWith = (gateway, writes = [], submitResult = null) => {
+  // ⭐ 假会话（**会记忆** ✓ 与真会话同形）：新流程"点提交"写 `paymentStep:'pending'` ✓
+  //    "点资金页按钮"读它 ⇒ 决定**现在建单** ✓（见下面 `sessions.get` / `saveDraftLines`）
+  let fakeSession = { sale: {} };
   const service = createScanPageService(gateway, { config: SCAN_PAGE, startSnapshot: false });
   const app = express();
   app.use(express.urlencoded({ extended: true }));
@@ -122,7 +125,18 @@ const appWith = (gateway, writes = [], submitResult = null) => {
     },
     writeService: {
       listPaymentMethods: async () => require('../src/config/scanWrite').SCAN_WRITE.sale.paymentMethods,
-      sessions: { get: async () => null, submitKeyFor: (openId, session, flow = 'sale') => `scan_${flow}:test:1` },
+      // ⭐⭐ 2026-10-14：假会话要**会记忆**（真会话就是这样 ✓）—— 新流程里"点提交"把
+      //    `paymentStep:'pending'` 写进会话 ✓ 点资金页按钮时读它决定"要不要建单" ✓
+      //    ⚠️ 返回 `null` 的假会话 ⇒ 那颗按钮会以为"没有正在进行的单"⇒ 不建单 ✗（实测 AC-R9 就卡在这 ✓）
+      sessions: {
+        get: async () => fakeSession,
+        submitKeyFor: (openId, session, flow = 'sale') => `scan_${flow}:test:1`,
+      },
+      saveDraftLines: async (openId, patch) => {
+        fakeSession = { ...fakeSession, ...patch };
+        fakeSession.sale = { ...(fakeSession.sale || {}), ...patch };
+        return { ok: true };
+      },
       addSaleLine: async (input) => { writes.push(input); return { ok: true, count: writes.length }; },
       submitSale: async (input) => {
         writes.push({ submit: input });
@@ -286,6 +300,11 @@ test('AC-R9 成功页那条【再录一单】**回跳 /r/{recordId}**', async ()
     await postR(base, RECORD_ID, sessionCookie('ou_r_submit'), {
       action: SCAN_WRITE.actions.submitOrder, submit_key: 'k', size: '37',
       payment_status: '', payment_method: '', payment_amount: '', line_amount: '',
+    });
+    // ⭐⭐ 2026-10-14（新流程**两步**：她：「确认状态是资金那页点击了按钮之后，才算是用户确认了」）：
+    //   ① 点提交 ⇒ **只到资金页**（还不建单 ✓）② 点资金页那颗【跳过】⇒ **才建单** ✓
+    await postR(base, RECORD_ID, sessionCookie('ou_r_submit'), {
+      action: SCAN_PAGE.paymentStep.skipAction, submit_key: 'k',
     });
     const submit = writes.find((item) => item.submit)?.submit;
     assert.ok(submit, '要真的走到提交那一步');
