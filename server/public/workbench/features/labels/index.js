@@ -20,6 +20,9 @@ import { FILTER_OPTIONS, TEXTS, pageStyleText, sheetHtml, sheetStyleVars, summar
 //    店里那台 Windows 电脑出纸）。与旁边那颗「打印这些标签」（浏览器打印）是两条路，
 //    但"印什么"共用同一份 service/config。
 import { createLabelQueuePanel, queueBarHtml, submittedText } from './queue.js';
+// ⭐⭐ 2026-10-14：「**扫码打印**」—— 扫到的那一张**直接排进既有队列**（她选了 ⓐ「扫完直接打印」）。
+//    飞书 JSAPI 扫一扫（`h5sdk.config` + `tt.scanCode`）+ 既有 `/jobs` 接口，见该文件头。
+import { createScanPrintAction, scanPrintBarHtml, wantsScanFromSearch } from './scan-print.js';
 
 const $ = (container, selector) => container.querySelector(selector);
 
@@ -82,6 +85,7 @@ function renderShell(container) {
         <span class="muted">${escapeHtml(TEXTS.printHint)}</span>
       </div>
       ${queueBarHtml()}
+      ${scanPrintBarHtml()}
       <p class="data-caption" data-view="scan-url"></p>
     </section>
     <section class="label-preview">
@@ -110,6 +114,12 @@ export function createLabelPrintModule() {
       return null;
     },
   });
+
+  /**
+   * ⭐⭐ 2026-10-14「**扫码打印**」那一块（点一下 ⇒ 飞书扫一扫 ⇒ 直接排进既有队列）。
+   * ⚠️ 与上面的队列面板**共用同一个 api 与同一个既有 `/jobs` 接口**（不新开打印接口 ✗）。
+   */
+  const scanPrint = createScanPrintAction({ api });
 
   /** 把服务端来的排版参数落到 `@page` 与 CSS 变量上（配置驱动，页面不写死 mm）。 */
   function applyLayout(layout, labels) {
@@ -249,6 +259,13 @@ export function createLabelPrintModule() {
       // ⚠️ 没有定时器 —— 实时性由店里那台电脑的长连接负责，这个页面只看快照）。
       queuePanel.mount(panel(), () => currentFilters());
       void queuePanel.refresh();
+      // ⭐⭐「扫码打印」：挂上按钮 + （`?scan=1` 进来的话）**进页面就自动弹一次扫一扫** ——
+      //    那一格在「货品 → 标签打印 → 扫码打印」是一个**链接**（她点一下就是一次用户手势），
+      //    落到这一页时直接弹相机；弹不起来 / 取消 ⇒ 按钮还在，她再点一次即可（**不留死按钮** ✗）。
+      scanPrint.mount(panel());
+      if (wantsScanFromSearch(typeof window === 'undefined' ? '' : window.location.search)) {
+        void scanPrint.runWithFeedback();
+      }
       applyLayout(fallbackLayout(), []);
       // 打开页面就先查一次（不填条件 = 全部库存，最多 config 里的张数）：
       // 免得她一进来看到一片空白、以为坏了。

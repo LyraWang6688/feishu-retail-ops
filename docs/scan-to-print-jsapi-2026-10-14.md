@@ -42,3 +42,36 @@
 ## 五、⚠️ 需要你/运维配合的一步（我会提前报你 ✓）
 - 飞书开发者后台 ⇒ 网页应用 ⇒ **H5 可信域名** 里要有 `hm.bamamei.online` ✓（原本是"极易漏"的一步 ✓）
 - ⚠️ 我**不会**去改后台配置 ✗ —— 到时我会把"要加哪一条、在哪个页面"写成一小步给你 ✓
+
+## 六、实施落点（2026-10-14 夜 · 子代理 `label-scan-print` 落地 · **实施后补记**）
+
+> 口径不变（她的 ⓐ + 她 2026-10-12 的二维码口径），下面只记"实际落在哪"与**与上面计划的偏差**。
+
+| 要做的事 | 实际落点 |
+|---|---|
+| 签名接口 | `server/src/routes/workbench.js` 新增 `GET /lark/jsapi-signature`（挂在**既有** `requireWorkbenchAccess` 之后；响应 = `appId/timestamp/nonceStr/signature/url/jssdkUrl/jsApiList`，**无任何密钥**）；服务用既有 `services/larkJsapiService.js`（**单例复用** ⇒ ticket 缓存有效） |
+| JSSDK 地址 | `server/src/config/larkJsapi.js` 新增 `jssdkUrl`（`LARK_JSAPI_JSSDK_URL` 可覆盖；默认 `…/lark/op/h5-js-sdk-1.5.22.js`）——**随签名响应下发**，页面不抄第二份 |
+| 扫到的字符串 ⇒ 记录 ID | `server/src/services/labelPrintService.js` 新增 `parseLabelScanUrl`（**与 `buildLabelScanUrl` 一对反函数**；形状唯一真源仍是 `config/tagQrCode.js` 的 `SCAN_URL`） |
+| 按记录 ID 精确一张 | `labelPrintService.labelForRecord(recordId)`（只读 `gateway.get('product', id)` 一条 → 编号 → 走**既有** `listLabels` → 精确筛到那一张）；`labelPrintQueueService.normalizeRequest/requestKeyOf/buildArtifact` **并列新增** `recordId` 一种 `single`（既有 `number` 语义一字未改） |
+| 排进**既有**队列 | 页面 `POST /api/workbench/label-print/jobs`（**不新开打印接口** ✗）；`scan` = 扫到的字符串，解析在**服务端**做 |
+| 页面 | 新增 `server/public/workbench/features/labels/scan-print.js`（`h5sdk.config` → `ready` → `tt.scanCode` → 提交；`runWriteAction` 保证"点了立刻置灰 + 换文案"）；挂在标签打印页（`features/labels/index.js`）＋ 入口那一格改成 `/workbench/label-print.html?scan=1`（进页面自动弹一次） |
+| 文案 / 44px | `config/labelPrint.js#SCAN_PRINT.texts`（含旧码"重打新标签"的可操作人话）；`.scan-print-bar .btn { min-height: 44px }` |
+
+### ⭐ 与上面计划的一处**偏差**（Lead 2026-10-14 夜裁决 ⓐ，依据在文件里）
+
+- 计划第 3 行写的是"把 `record_id` 传给打印队列"，但当时 `buildLabelScanUrl(number)` 产出的是
+  **`/s/{编号}`**（旧格式）⇒ 与 AC-SP4「扫到的内容 = `/r/{记录ID}`」自相矛盾。
+- ⇒ 裁决：**把标签二维码改成 `/r/{记录 ID}`**（走 `SCAN_URL.recordIdTemplate`，record_id 取
+  **接口读到的那一条**「货品信息」）；依据 = 她 2026-10-12 逐字「**新二维码一律
+  `https://hm.bamamei.online/r/{recordId}`**（旧贴纸**重打**；`/s/{编号}` 路径保留但不再加功能）」＋
+  「**不需要保持兼容**」（`docs/qr-record-id-and-js-2026-10-12.md`）。
+- 影响：`labelPrintService` 的 `scan_url` 形状变了（拿不到记录 ID 时**退回 `/s/{编号}`** +
+  `missing_qr_record_id` 计数 + warn ⇒ **不静默丢码**）；钉 `/s/` 的哨兵**成对翻新**（每条都写了
+  "改前逐字 → 改后逐字 → 依据"）。
+- **旧贴纸的实际影响**：扫到 `/s/…` ⇒ **人话拒绝**（"这是旧版二维码……请重新打印一张新标签再扫"），
+  按她的口径**重打**即可。
+
+### 🔴 运维那一步（**不是代码**）
+- 飞书开发者后台 ⇒ 网页应用 ⇒ **安全设置 → H5 可信域名** 必须有 **`hm.bamamei.online`**
+  （缺了的现象 = 页面点了没反应 / `h5sdk.config` 失败 ⇒ 我们有**人话**兜底，但功能不可用）。
+- 本机/服务器**不需要**新增任何密钥：签名用的仍是 `LARK_AGENT_APP_ID` / `LARK_AGENT_APP_SECRET`。

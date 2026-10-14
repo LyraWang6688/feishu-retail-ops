@@ -31,6 +31,10 @@
    ⚠️ 状态徽标只是显示，不是按钮 —— 所以它不占 44px 命中区。 */
 .label-queue-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0 0; }
 .label-queue-bar .btn { min-height: 44px; }
+/* ⭐⭐ 2026-10-14「扫码打印」那一颗：手机硬规矩 **≥44px**（与队列那两颗同一条口径）。
+   ⚠️ 它自己也带 `.label-queue-bar`（上面那条已经兜住）；这一条是**显式**的哨兵位
+   （用例 `scanToPrint.test.js` 直接读这条规则 —— 别删）。 */
+.scan-print-bar .btn { min-height: 44px; }
 /* ⭐ 打印方向：**试 90°/270° 用的**（默认"跟随服务器设置"，不选就什么都不变）。
    ⚠️ 是控制项、不是说明书 —— 只有一个标签 + 一个下拉。 */
 .queue-rotate { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted); }

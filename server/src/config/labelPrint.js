@@ -358,6 +358,42 @@ const TEXTS = Object.freeze({
   stateSeparator: '/',
 });
 
+/**
+ * ⭐⭐ 「**扫码打印**」（2026-10-14 晚）—— 扫标签上的二维码 ⇒ **直接把这一张排进打印队列**。
+ *
+ * 依据（**都在文件里**，不是偏好）：
+ *   · 业务负责人 2026-10-14 晚选了 **ⓐ**「扫完直接打印这一张」
+ *     ⇒ `docs/scan-to-print-jsapi-2026-10-14.md`（第 8 行 / AC-SP4 / AC-SP5）；
+ *   · 她 2026-10-12 逐字：「**新二维码一律 `https://hm.bamamei.online/r/{recordId}`**（旧贴纸**重打**；
+ *     `/s/{编号}` 路径保留但**不再加功能**）」＋「**不需要保持兼容**」
+ *     ⇒ `docs/qr-record-id-and-js-2026-10-12.md` / `AGENTS.md`。
+ *
+ * ⚠️ 这里**只放文案**：URL 的**形状**唯一真源仍是 `config/tagQrCode.js` 的 `SCAN_URL`
+ *    （解析器与 `buildLabelScanUrl` 是**一对反函数**，都在 `services/labelPrintService.js`，
+ *     都不许抄第二份模板 ✗）。
+ * ⚠️ 被拒时的人话必须**可操作**（Lead 2026-10-14 裁决）：旧码要告诉她"这是什么 + 该怎么办"，
+ *    不是干巴巴的"格式不对"。
+ */
+const SCAN_PRINT = Object.freeze({
+  texts: Object.freeze({
+    // 一个字符都没有（扫码器回了空串）。
+    empty: '没有扫到内容，请对着标签上的二维码再扫一次。',
+    // ⭐ 旧贴纸（`/s/{编号}`）：说清"这是什么 + 该怎么办"。
+    legacySticker: '这是旧版二维码（编号版），扫码打印只认新版标签。'
+      + '请到「货品」里找到这一款，重新打印一张新标签再扫。',
+    // 压根不是我们的码（别人的二维码 / 一段文字）。
+    notLabelCode: '这个码不是我们的标签码（只认「货品」里那个带「记录 ID」的标签码）。'
+      + '请扫鞋盒上我们打印的标签。',
+    // 记录 ID 读得到，但那一条「货品信息」已经不在了。
+    recordMissing: '这个码对应的货品找不到了（记录可能已被删除）。'
+      + '请到「货品」里确认这一款，或改用「选择编号打印」。',
+    // 货品记录在，但「编号」列是空的 ⇒ 打不了标签（**不猜**）。
+    recordNoNumber: '这个码对应的货品还没有「编号」，打不了标签。请先在「货品信息」里补上编号。',
+    // 编号读到了，但这一款现在一张可打印的标签都没有（库存 0 / 所属状态为空）。
+    noStock: '这个码对应的那一款现在没有可打印的标签（可能库存是 0）。',
+  }),
+});
+
 const LABEL_PRINT = Object.freeze({
   label: LABEL,
   page: PAGE,
@@ -375,6 +411,8 @@ const LABEL_PRINT = Object.freeze({
   limits: LIMITS,
   fieldNamesPendingSchema: FIELD_NAMES_PENDING_SCHEMA,
   texts: TEXTS,
+  // ⭐ 「扫码打印」的文案（形状仍来自 config/tagQrCode.js，见上面 SCAN_PRINT 的注释）。
+  scanPrint: SCAN_PRINT,
 });
 
 /**
@@ -398,6 +436,7 @@ const resolveGrid = (config = LABEL_PRINT) => {
 
 module.exports = {
   LABEL_PRINT,
+  SCAN_PRINT,
   ROW_IDS,
   resolveGrid,
   LABEL,

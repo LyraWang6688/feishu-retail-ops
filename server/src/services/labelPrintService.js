@@ -45,7 +45,7 @@ const QRCode = require('qrcode');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { LABEL_PRINT, resolveGrid } = require('../config/labelPrint');
 const { SCAN_URL } = require('../config/tagQrCode');
-const { buildScanUrl } = require('./tagQrCodeService');
+const { buildScanUrl, buildRecordIdScanUrl } = require('./tagQrCodeService');
 const { textValue } = require('./v1BitableGateway');
 const { parseStockKey } = require('./liveInventoryIndex');
 const { logInfo, logWarn } = require('../utils/logger');
@@ -184,26 +184,91 @@ const rowFromRecord = (record, { fieldNames, createdTimeField }) => {
 };
 
 /**
- * 「货品信息」→ `编号 ⇒ { price, brand }` 的索引（只读一次表就够）。
+ * 「货品信息」→ `编号 ⇒ { price, brand, record_id }` 的索引（只读一次表就够）。
  * 同一个编号出现多条时：**第一条非空**的价格 / 品牌为准（不覆盖已有值）。
+ *
+ * ⭐ 2026-10-14：多留一个 `record_id` —— 标签上的二维码从 `/s/{编号}` 改成
+ *   `/r/{记录 ID}`（她 2026-10-12 定案：「新二维码一律 `https://hm.bamamei.online/r/{recordId}`」；
+ *   依据见 `docs/qr-record-id-and-js-2026-10-12.md`）。QR 里装的是**接口读到的** record_id
+ *   （她那个「记录 ID」公式列有延迟 ⇒ 只作交叉校验，以接口值为准）。
  */
 const buildProductIndex = (records, fields = {}, brandFieldName = '') => {
   const index = new Map();
   for (const record of records || []) {
     const number = fields.number ? textValue(record?.fields?.[fields.number]).trim() : '';
     if (!number) continue;
-    const entry = index.get(number) || { price: null, brand: '' };
+    const entry = index.get(number) || { price: null, brand: '', record_id: '' };
     const price = fields.price ? asAmount(record?.fields?.[fields.price]) : null;
     if (entry.price === null && price !== null) entry.price = price;
     const brand = brandFieldName ? textValue(record?.fields?.[brandFieldName]).trim() : '';
     if (!entry.brand && brand) entry.brand = brand;
+    if (!entry.record_id && record?.record_id) entry.record_id = String(record.record_id);
     index.set(number, entry);
   }
   return index;
 };
 
-/** 按**编号**出码（URL 模板与替换实现都复用 `tagQrCode` 那一份，**不抄第二份**）。 */
-const buildLabelScanUrl = (number) => buildScanUrl(SCAN_URL.urlTemplate, number);
+/**
+ * 按**记录 ID**出码（URL 模板与替换实现都复用 `tagQrCode` 那一份，**不抄第二份**）。
+ *
+ * ⚠️ 2026-10-14（业务负责人 2026-10-12 定案 + Lead 当晚裁决走 ⓐ）：
+ *   标签上的二维码从 `/s/{编号}` 换成 **`/r/{记录 ID}`** —— 编号是**会变的快照**
+ *   （她打印时类别还空着、事后补上 ⇒ 旧码对不上），record_id 是飞书**永不变**的身份证。
+ *   旧贴纸按她的口径**重打**（`/s/{编号}` 路径保留，但扫码打印**不认它** ⇒ 人话提示重打）。
+ */
+const buildLabelScanUrl = (recordId) => buildRecordIdScanUrl(recordId, { scanUrl: SCAN_URL });
+
+/**
+ * 从 URL 模板里拆出「前缀 / 后缀」（`https://hm.bamamei.online/r/{recordId}` ⇒ 前缀 `…/r/`、后缀 `''`）。
+ * 模板里没有占位符 ⇒ 返回 `null`（**不猜**：那种模板本来就生成不出可解析的码）。
+ */
+const templateParts = (template) => {
+  const source = String(template ?? '');
+  const open = source.indexOf('{');
+  const close = open === -1 ? -1 : source.indexOf('}', open);
+  if (open === -1 || close === -1) return null;
+  return { prefix: source.slice(0, open), suffix: source.slice(close + 1) };
+};
+
+/** 记录 ID 允许的字符（飞书 `record_id` 是字母数字）—— 认不出的形状**不猜**，当场拒。 */
+const RECORD_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
+/**
+ * 「扫码打印」的文案（**唯一真源** = `config/labelPrint.js` 的 `SCAN_PRINT.texts`）。
+ * ⚠️ 服务里**一句中文都不写死**（`test/noHardcodedChinese.test.js` 会红 ✗）：
+ *    自定义 config 缺这一块时回落到模块默认配置（`LABEL_PRINT`）的那一份 ⇒ 永远有文案。
+ */
+const scanPrintTextsOf = (config) => config?.scanPrint?.texts || LABEL_PRINT.scanPrint.texts;
+
+/**
+ * ⭐⭐ 「扫码打印」：**扫到的字符串 ⇒ 记录 ID**（与 `buildLabelScanUrl` 是**一对反函数**）。
+ *
+ * 形状唯一真源 = `config/tagQrCode.js` 的 `SCAN_URL`（本函数里**没有第二个 URL 模板** ✗）。
+ * 三种结果：
+ *   · `/r/{recordId}` ⇒ `{ ok:true, mode:'recordId', value }` ✓
+ *   · `/s/{编号}`（旧贴纸）⇒ `{ ok:false, reason:'legacy_sticker', message }`（**可操作**的人话 ✓）
+ *   · 别的 / 空 ⇒ `{ ok:false, reason:'not_label_code' | 'empty', message }`（**不猜** ✗）
+ * ⚠️ **绝不**"从随便一段文字里抠一个像 ID 的串" —— 形状不对就是不对（那是替她乱打一张纸）。
+ */
+const parseLabelScanUrl = (raw, config = LABEL_PRINT) => {
+  const texts = scanPrintTextsOf(config);
+  const value = String(raw ?? '').trim();
+  if (!value) return { ok: false, reason: 'empty', message: texts.empty };
+  const recordParts = templateParts(SCAN_URL.recordIdTemplate);
+  if (recordParts && value.startsWith(recordParts.prefix) && value.endsWith(recordParts.suffix)) {
+    const sliced = value.slice(recordParts.prefix.length, value.length - recordParts.suffix.length);
+    let id = sliced;
+    try { id = decodeURIComponent(sliced); } catch { id = sliced; }
+    if (RECORD_ID_PATTERN.test(id)) return { ok: true, mode: 'recordId', value: id };
+    return { ok: false, reason: 'not_label_code', message: texts.notLabelCode };
+  }
+  const numberParts = templateParts(SCAN_URL.numberTemplate);
+  if (numberParts && value.startsWith(numberParts.prefix) && value.endsWith(numberParts.suffix)) {
+    // ⭐ 旧贴纸（`/s/{编号}`）：**认得出是什么** ⇒ 给她一句能照做的人话（Lead 要求的"可操作"）。
+    return { ok: false, reason: 'legacy_sticker', message: texts.legacySticker };
+  }
+  return { ok: false, reason: 'not_label_code', message: texts.notLabelCode };
+};
 
 const createLabelPrintService = (gateway, options = {}) => {
   if (!gateway) throw new Error('LabelPrintService requires gateway');
@@ -348,6 +413,8 @@ const createLabelPrintService = (gateway, options = {}) => {
     };
     let missingPrice = 0;
     let missingPriceNoProduct = 0;
+    // ⭐ 这一轮有几张标签**拿不到记录 ID**（那条编号在「货品信息」里没有对应记录）⇒ 二维码退回编号版。
+    let missingQrRecordId = 0;
     const prepared = visible.map((group) => {
       const product = productIndex.get(group.number) || null;
       const price = product ? product.price : null;
@@ -366,6 +433,17 @@ const createLabelPrintService = (gateway, options = {}) => {
       const states = [...group.states].sort((left, right) => stateRank(left) - stateRank(right));
       const totalQty = sizes.reduce((sum, item) => sum + item.qty, 0);
       const brandText = (brandFieldName && product?.brand) || String(config.brand?.text ?? '');
+      // ⭐ 二维码里装**记录 ID**（接口读到的那个，见 buildProductIndex 的注释）。
+      // ⚠️ 编号在「货品信息」里找不到对应记录 ⇒ **退回旧的编号版 URL** + 计数（**不静默丢码** ✗；
+      //    那张码扫开仍能看货品，只是"扫码打印"不认它 —— 会给她一句"重打新标签"的人话）。
+      const productRecordId = String(product?.record_id || '').trim();
+      let scanUrl;
+      if (productRecordId) {
+        scanUrl = buildLabelScanUrl(productRecordId);
+      } else {
+        missingQrRecordId += 1;
+        scanUrl = buildScanUrl(SCAN_URL.numberTemplate, group.number);
+      }
       const footerValues = {
         number: group.number,
         itemNo: group.item_no,
@@ -401,7 +479,7 @@ const createLabelPrintService = (gateway, options = {}) => {
         record_ids: group.record_ids,
         record_count: group.record_ids.length,
         created_at: group.created_at ? new Date(group.created_at).toISOString() : '',
-        scan_url: buildLabelScanUrl(group.number),
+        scan_url: scanUrl,
         footer_text: buildText(config.footer.template, footerValues, config.texts.missingValue),
       };
     });
@@ -437,6 +515,7 @@ const createLabelPrintService = (gateway, options = {}) => {
       missing_created_at: missingCreatedAt || undefined,
       missing_price: missingPrice || undefined,
       missing_price_no_product: missingPriceNoProduct || undefined,
+      missing_qr_record_id: missingQrRecordId || undefined,
     });
     if (skipped.stock_key || skipped.state) {
       logWarn('workbench.labels.skipped_records', {
@@ -450,6 +529,15 @@ const createLabelPrintService = (gateway, options = {}) => {
         missing_price: missingPrice,
         missing_price_no_product: missingPriceNoProduct,
         hint: '按「编号」在「货品信息」里取「单价」，这些编号没有读到价格 —— 标签照常打印，只是不印价格',
+      });
+    }
+    if (missingQrRecordId) {
+      // **不静默**：这几张标签的二维码退回旧的编号版（扫开能看货品，但"扫码打印"不认它）。
+      // ⚠️ 这句写成**一条字面量**（不跨 `+` 拼接、串里也不带花括号）—— 守门用例
+      //    `noHardcodedChinese.test.js` 靠"最近一个 `;` / `}`"认日志语句，串里带 `}` 会把它截断 ⇒ 误报 ✗。
+      logWarn('workbench.labels.missing_qr_record_id', {
+        missing_qr_record_id: missingQrRecordId,
+        hint: '这些编号在「货品信息」里没有对应记录 ⇒ 二维码退回旧的编号版格式；扫码打印只认记录 ID 版（她会收到"请重打新标签"的人话）',
       });
     }
 
@@ -470,6 +558,8 @@ const createLabelPrintService = (gateway, options = {}) => {
       missing_created_at: missingCreatedAt,
       missing_price: missingPrice,
       missing_price_no_product: missingPriceNoProduct,
+      // ⭐ 二维码拿不到记录 ID 的张数（那几张退回了旧的编号版 URL，见上面的 warn 日志）。
+      missing_qr_record_id: missingQrRecordId,
       filters: {
         keyword,
         state,
@@ -495,17 +585,65 @@ const createLabelPrintService = (gateway, options = {}) => {
         texts: config.texts,
       },
       // 二维码 URL 的**出处**也回给页面（让她一眼看到码里是什么域名，且只有一个来源）。
-      qr: { url_template: SCAN_URL.urlTemplate, source: 'config/tagQrCode.js#SCAN_URL' },
+      // ⭐ 2026-10-14：主模板 = **记录 ID 版**（她 2026-10-12 定案）；`fallback_url_template` =
+      //    那条编号在「货品信息」里找不到记录时退回的旧版（见 `missing_qr_record_id`）。
+      qr: {
+        url_template: SCAN_URL.recordIdTemplate,
+        fallback_url_template: SCAN_URL.numberTemplate,
+        source: 'config/tagQrCode.js#SCAN_URL',
+      },
       labels,
     };
   };
 
-  return { listLabels };
+  /**
+   * ⭐⭐ 「扫码打印」的**按记录 ID 精确一张**（2026-10-14）。
+   *
+   * 链路：扫到的 `/r/{记录 ID}` ⇒ 本方法 ⇒ **恰好这一款的那一张**标签（0 张 ⇒ 400 + 人话）。
+   *   · 记录 ID 来自**接口读到的那一份**（她 2026-10-12：公式列有延迟 ⇒ 以接口值为准）；
+   *   · 读法 = `gateway.get('product', recordId)` **只读一条**（不整表读、不按编号猜 ✗）；
+   *   · 再用**既有** `listLabels({ keyword })` 挑标签（"印什么"逻辑一个字都不重写 ✓），
+   *     最后**按编号精确筛到那一张**（一个货号可以有多个颜色/类别 ⇒ 不筛就会多打 ✗）。
+   *   · **不新增筛选语义**：本方法不进 `listLabels` 的 filters，`keyword/state/category/size` 一条都没改。
+   */
+  const labelForRecord = async (recordId) => {
+    const texts = scanPrintTextsOf(config);
+    const id = String(recordId || '').trim();
+    if (!id) throw userError(texts.notLabelCode);
+    const productFields = V1_BITABLE_SCHEMA.tables.product?.fields || {};
+    if (!productFields.number) {
+      throw new Error('「货品信息」缺少必要的字段映射（编号），请先补 v1BitableSchema.product');
+    }
+    let record = null;
+    try {
+      record = await gateway.get('product', id);
+    } catch (error) {
+      // 读不到那一条（记录被删 / 跨 Base）⇒ **人话**，不是 500（与扫码页同一条口径）。
+      logWarn('workbench.labels.record_read_failed', { product_record_id: id, error: error.message });
+      throw userError(texts.recordMissing);
+    }
+    if (!record) throw userError(texts.recordMissing);
+    const number = textValue(record?.fields?.[productFields.number]).trim();
+    if (!number) throw userError(texts.recordNoNumber);
+
+    const data = await listLabels({ keyword: number.split('|')[0] || number });
+    const exact = (data.labels || []).filter((label) => label.number === number);
+    if (!exact.length) throw userError(texts.noStock);
+    logInfo('workbench.labels.record_resolved', {
+      product_record_id: id,
+      number,
+      labels: exact.length,
+    });
+    return { ...data, labels: exact, total_matched: exact.length, total_returned: exact.length };
+  };
+
+  return { listLabels, labelForRecord };
 };
 
 module.exports = {
   createLabelPrintService,
   buildLabelScanUrl,
+  parseLabelScanUrl,
   buildSizeLines,
   compareSizes,
   buildProductIndex,

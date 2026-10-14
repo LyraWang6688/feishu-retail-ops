@@ -395,10 +395,17 @@ test('AC2 四个 tab 的子页面清单与她要的映射逐条对上（含 2026
   const labels = product.pages.find((page) => page.id === 'product-labels');
   assert.equal(labels.targetTemplate, '/workbench/label-print.html?keyword={itemNo}', '单个 = 把货号带进既有标签打印页');
 // 2026-10-14（她逐字）：「打印标签支持两类：单个打印（扫码打印 / 选择编号打印）与批量打印」
-//   ⇒ 单个打印的「选编号」那颗改名；并新增「扫码打印」那颗（复用同一把扫一扫 AppLink）
+//   ⇒ 单个打印的「选编号」那颗改名；并新增「扫码打印」那颗
 //   不是放宽：判据加强了（多了一条「扫码打印必须在」）
-  assert.deepEqual(labels.links.map((link) => link.href), [links.SCAN_APPLINK, '/workbench/label-print.html'],
-    '扫码打印 = 复用同一把扫一扫 AppLink；批量打印 = 打开既有标签打印页 ✓');
+// ⚠️ 2026-10-14 晚**成对翻新**（她选了 ⓐ「扫完**直接打印这一张**」）：
+//   改前逐字：`assert.deepEqual(labels.links.map((link) => link.href), [links.SCAN_APPLINK, '/workbench/label-print.html'],`
+//            ＋ `'扫码打印 = 复用同一把扫一扫 AppLink；批量打印 = 打开既有标签打印页 ✓'`
+//   改后逐字：第一颗 = `'/workbench/label-print.html?scan=1'`（落到标签打印页 ⇒ **JSAPI 扫一扫** ⇒ 直接排进既有队列）
+//   依据：`docs/scan-to-print-jsapi-2026-10-14.md` AC-SP7「**JSAPI ✓ 不是跳外链 ✗**」＋
+//        她 2026-10-12「我们是能够进行动态交互的」（页面允许 JS ✗ 不再是零 JS）；
+//   ⭐ **判据没放宽**：仍是"两颗入口、标题逐字、都落到既有页面/同一条队列"，只是第一颗的落点从 AppLink 换成 JSAPI 那条路。
+  assert.deepEqual(labels.links.map((link) => link.href), ['/workbench/label-print.html?scan=1', '/workbench/label-print.html'],
+    '扫码打印 = 标签打印页 scan=1（JSAPI 直扫 ⇒ 排队打印）；批量打印 = 打开既有标签打印页 ✓');
   assert.deepEqual(labels.links.map((link) => link.title), ['扫码打印', '批量打印'], '两颗的标题逐字 ✓');
 });
 
