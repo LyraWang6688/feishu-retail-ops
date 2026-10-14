@@ -893,13 +893,24 @@ test('AC-E2E-11 🔴 全付 + 收款 0 笔 + 每件实收也全空 ⇒ 400 + 人
       await getPage(pageUrlOf(base, NUMBER_A), cookie);
       await addLine(base, cookie, NUMBER_A, '40');
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
-      const rejected = await followPaymentStep(base, cookie, await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+      // ⭐⭐ 2026-10-14（她：「确认状态是资金那页点击了按钮之后，才算是用户确认了」）⇒ **两步**：
+      //   ① 点提交 ⇒ **只到资金页、零写入** ✓；② 点资金页那颗【提交整单付款】（带钱）⇒ **才校验 + 才建单** ✓
+      const step1 = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
+      });
+      assert.equal(step1.status, 200, '第一步：到资金页');
+      assert.ok((await step1.clone().text()).includes('data-view="payment-step"'), '第一步：是资金页');
+      for (const table of ['salesEntry', 'salesDetail', 'paymentRecord', 'inventoryLedger']) {
+        assert.equal(rowsOf(e2e, table).length, 0, `第一步：一个字都不写（${table} 0）`);
+      }
+      const rejected = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+        action: SCAN_PAGE.paymentStep.payAction, submit_key: submitKeyOf(page.html),
         payment_status: PAYMENT_STATUS.full, payment_method: '', payment_amount: '', line_amount: [''],
-      }));
+      });
       const html = await rejected.text();
       assert.equal(rejected.status, 400, `🔴 这种"零元全付单"必须拦住（不许静默落库）：${html.slice(0, 200)}`);
       assert.match(html, /全付/, '人话里要指名「全付」');
+      assert.ok(html.includes('data-view="payment-step"'), '拦住时**原地重渲染资金页**（不是干巴巴的失败页）');
       for (const table of ['salesEntry', 'salesDetail', 'paymentRecord', 'inventoryLedger']) {
         assert.equal(rowsOf(e2e, table).length, 0, `第2步：拦住时「${table}」不许写（零写入）`);
       }
@@ -924,13 +935,20 @@ test('AC-E2E-12 ⭐ 销售块提交「全付 + 微信 280 + 每件实收 280」�
       await addLine(base, cookie, NUMBER_A, '40');
       await addLine(base, cookie, NUMBER_B, '41');
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
-      const done = await followPaymentStep(base, cookie, await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+      // ⭐⭐ 2026-10-14 新流程**两步**：① 点提交 ⇒ 资金页、零写入；② 点资金页那颗【提交整单付款】（带钱）⇒ 才建单 ✓
+      const step1 = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
+      });
+      assert.equal(step1.status, 200, '第一步：到资金页');
+      assert.ok((await step1.clone().text()).includes('data-view="payment-step"'), '第一步：是资金页');
+      assert.equal(rowsOf(e2e, 'salesEntry').length, 0, '第一步：零写入');
+      const done = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+        action: SCAN_PAGE.paymentStep.payAction, submit_key: submitKeyOf(page.html),
         payment_status: PAYMENT_STATUS.full,
         // ⚠️ 收款行是**重复的同名字段**（一 row 一份）⇒ 必须传数组（页面就是这么发的）
         payment_method: ['微信'], payment_amount: ['280'],
         line_amount: ['150', '130'],
-      }));
+      });
       const html = await done.text();
       const mismatch = (html.match(/<p class="form-alert">([^<]*)<\/p>/) || [])[1] || '';
       assert.equal(done.status, 200, `第1步：提交要成功（400 时页面上那句人话 = ${mismatch}）：${html.slice(0, 200)}`);
