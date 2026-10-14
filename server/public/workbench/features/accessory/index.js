@@ -21,7 +21,7 @@ const newSubmitKey = () => {
 const optionHtml = (item) => `<option value="${escapeHtml(item.record_id)}">${escapeHtml(item.name || '')}</option>`;
 
 export const createAccessoryModule = () => {
-  const state = { submitKey: newSubmitKey(), items: [] };
+  const state = { submitKey: newSubmitKey(), items: [], methods: [] };
 
   const cardHtml = () => {
     if (!state.items.length) {
@@ -36,6 +36,9 @@ export const createAccessoryModule = () => {
   </label>
   <label class="form-field">${escapeHtml(T.quantityLabel)}
     <input data-field="accessory-quantity" type="number" min="1" inputmode="numeric" value="${ACCESSORY_DEFAULT_QUANTITY}">
+  </label>
+  <label class="form-field">${escapeHtml(T.methodLabel)}
+    <select data-field="accessory-method">${state.methods.map((m) => `<option value="${escapeHtml(m.name || m)}">${escapeHtml(m.name || m)}</option>`).join('')}</select>
   </label>
   <label class="form-field">${escapeHtml(T.amountLabel)}
     <input data-field="accessory-amount" type="text" inputmode="decimal" placeholder="${escapeHtml(T.amountLabel)}">
@@ -72,6 +75,7 @@ export const createAccessoryModule = () => {
         [ACCESSORY_FIELDS.accessoryId]: name?.value || '',
         [ACCESSORY_FIELDS.quantity]: String(quantityInput?.value ?? ACCESSORY_DEFAULT_QUANTITY),
         [ACCESSORY_FIELDS.amount]: amount,
+        [ACCESSORY_FIELDS.method]: String(host.querySelector('[data-field="accessory-method"]')?.value ?? '').trim(),
         [ACCESSORY_FIELDS.submitKey]: state.submitKey,
       });
       noticeOf(host, `${T.created} ${result?.order_no || ''}`.trim(), false);
@@ -89,6 +93,19 @@ export const createAccessoryModule = () => {
     async mount(host) {
       host.innerHTML = `<div class="card" data-view="accessory-loading"><p>${escapeHtml(T.title)}</p></div>`;
       try {
+        // ⭐ 收款方式：**读「收款方式管理」表**（只读 ✓）—— 读不到 ⇒ 人话 + **不进录入** ✗
+        let listed;
+        try {
+          listed = await api.get(ACCESSORY_API.methods);
+        } catch (error) {
+          host.innerHTML = `<div class="card" data-view="accessory-methods-error"><p>${escapeHtml(error?.message || T.methodsFailed)}</p></div>`;
+          return;
+        }
+        state.methods = Array.isArray(listed?.methods) ? listed.methods : [];
+        if (!state.methods.length) {
+          host.innerHTML = `<div class="card" data-view="accessory-methods-error"><p>${escapeHtml(T.methodsFailed)}</p></div>`;
+          return;
+        }
         const result = await api.get(ACCESSORY_API.list);
         state.items = Array.isArray(result?.accessories) ? result.accessories : [];
       } catch (error) {

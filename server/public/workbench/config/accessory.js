@@ -6,6 +6,7 @@
  */
 export const ACCESSORY_API = {
   list: '/api/workbench/sales/accessories',
+  methods: '/api/workbench/sales/payment-methods',
   submit: '/api/workbench/sales/accessory-sales',
 };
 
@@ -30,5 +31,7 @@ export const ACCESSORY_TEXTS = {
   submitFailed: '没写成功，请稍后再试',
   // 成交金额必填（她 2026-10-14）—— 与服务端 `workbenchAccessory.texts.amountRequired` 逐字一致 ✓
   amountRequired: '请先填成交金额再提交',
+  methodLabel: '收款方式',
+  methodsFailed: '收款方式没读到，先别提交，稍后再试',
   created: '已建单',
 };

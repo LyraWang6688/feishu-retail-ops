@@ -44,10 +44,10 @@ const withServer = async (app, run) => {
   try { await run(base); } finally { await new Promise((resolve) => server.close(resolve)); }
 };
 /** 挂真正的 router，只把**写服务**换成探针（既有测试的同一姿势 ✓） */
-const appFor = (scanWrite) => {
+const appFor = (scanWrite, extra = {}) => {
   const app = express();
   app.use(express.json());
-  app.use('/api/workbench', createWorkbenchRouter({ gateway: {}, scanWrite }));
+  app.use('/api/workbench', createWorkbenchRouter({ gateway: {}, scanWrite, ...extra }));
   app.use((error, req, res, next) => res.status(500).json({ success: false, error: error.message }));
   return app;
 };
@@ -72,9 +72,16 @@ test('AC-AC10 ⭐ 面板里**不再重复写「配品」**＋ 名称/数量/金�
   // ① 子 tab 已叫「配品」⇒ 面板里不许再重复渲染一次那个标题（她：「面板你用再写配品里」）
   assert.equal(/<h3>/.test(src), false, '面板里不许再有重复的标题元素（子 tab 已经叫配品）');
   // ② 三个字段各占一行：复用工作台既有 .form-field（一字段一行）⇒ 三个都要有，且**不许**把它们塞进同一行容器
+  // ⚠️ 2026-10-14 **改指向**（她当次又给了口径：「配品收款方式**读『收款方式管理』表**」）——
+  //   面板从 **3** 个字段变成 **4** 个（多一个「收款方式」下拉）✓
+  //   改前逐字：`assert.equal(fields, 3, '名称/数量/金额三个字段都要用 .form-field 各占一行')` + 三条 needle
+  //   依据：她 2026-10-14 原话「配品收款方式读『收款方式管理』表」✓（选项清单来自表 ✓ 前端不内置 ✗）
   const fields = (src.match(/<label class="form-field">/g) || []).length;
-  assert.equal(fields, 3, `名称/数量/金额三个字段都要用 .form-field 各占一行（实际 ${fields}）`);
-  for (const needle of ['data-field="accessory-name"', 'data-field="accessory-quantity"', 'data-field="accessory-amount"']) {
+  assert.equal(fields, 4, `名称/数量/金额/收款方式四个字段都要用 .form-field 各占一行（实际 ${fields}）`);
+  for (const needle of [
+    'data-field="accessory-name"', 'data-field="accessory-quantity"',
+    'data-field="accessory-amount"', 'data-field="accessory-method"',
+  ]) {
     assert.ok(src.includes(needle), `字段要在：${needle}`);
   }
 });
@@ -295,4 +302,55 @@ test('AC-A4b ⭐ 没传方式时沿用**配置默认**（不猜、也不静默�
     const sub = spy.calls.find((c) => c.method === 'submitSale');
     assert.equal(sub.input.payments[0].method, SCAN_WRITE.sale.defaultPaymentMethod, '沿用配置默认 ✓');
   });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2026-10-14 晚（她逐字）：「配品收款方式**读『收款方式管理』表**」
+// ═══════════════════════════════════════════════════════════════════════════
+const SIX = ['支付宝', '微信', '现金', '抖音代金券（89.9）', '抖音代金券（49.9）', '工商银行'];
+const fakeMethods = (items) => ({ calls: [], list: async () => { fakeMethods.last = items; return { ok: true, items }; } });
+
+test('AC-A3 ⭐⭐ 收款方式选项 = 表里那几条（表里加一条 ⇒ 自动多一个 ✓ 能真红）', async () => {
+  const svc = fakeMethods(SIX);
+  await withServer(appFor(spyOf(), { paymentMethods: svc }), async (base) => {
+    const res = await fetch(`${base}/api/workbench${accessoryTab.api.methods}`, { headers: { cookie: COOKIE } });
+    const body = await res.json();
+    assert.equal(res.status, 200);
+    assert.equal(body.success, true);
+    assert.deepEqual(body.methods, SIX, '选项逐字 = 表里 6 条（含两种抖音券 ✓）');
+  });
+  const svc7 = fakeMethods([...SIX, '新加的券']);
+  await withServer(appFor(spyOf(), { paymentMethods: svc7 }), async (base) => {
+    const body = await (await fetch(`${base}/api/workbench${accessoryTab.api.methods}`, { headers: { cookie: COOKIE } })).json();
+    assert.equal(body.methods.length, 7, '表里加一条 ⇒ 选项多一个 ✓');
+    assert.equal(body.methods.includes('新加的券'), true);
+  });
+  // 前端：**一条一项**（没有第二份清单 ✗）
+  const FE = fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench', 'features', 'accessory', 'index.js'), 'utf8');
+  assert.ok(FE.includes('state.methods.map('), '选项由接口数据渲染 ✓');
+  assert.ok(FE.includes("data-field=\"accessory-method\""), '有收款方式下拉 ✓');
+  assert.equal(/支付宝|微信|工商银行/.test(FE), false, '前端**不许**内置清单（表是唯一来源 ✗）');
+});
+
+test('AC-A5 ⭐⭐ 读不到表 ⇒ **503 + 人话**；前端**不进录入**（零写入 ✓ 不拿配置兜底 ✗）', async () => {
+  const broken = { list: async () => ({ ok: false, items: [], reason: 'payment_methods_unreadable' }) };
+  await withServer(appFor(spyOf(), { paymentMethods: broken }), async (base) => {
+    const res = await fetch(`${base}/api/workbench${accessoryTab.api.methods}`, { headers: { cookie: COOKIE } });
+    const body = await res.json();
+    assert.equal(res.status, 503, '读不到 ⇒ 503（不是 200 空清单 ✗）');
+    assert.equal(body.success, false);
+    assert.equal(body.error, accessoryTab.texts.methodsFailed, '人话来自配置 ✓');
+  });
+  const throwing = { list: async () => { throw new Error('gateway down'); } };
+  await withServer(appFor(spyOf(), { paymentMethods: throwing }), async (base) => {
+    const res = await fetch(`${base}/api/workbench${accessoryTab.api.methods}`, { headers: { cookie: COOKIE } });
+    assert.equal(res.status, 503, '抛错也如实 503 ✗');
+    assert.equal((await res.json()).error, accessoryTab.texts.methodsFailed);
+  });
+  // 前端：读不到 ⇒ 只画人话卡并 **return**（⇒ 表单/提交按钮都不存在 ⇒ 零写入 ✓）
+  const FE = fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench', 'features', 'accessory', 'index.js'), 'utf8');
+  const mountBody = FE.slice(FE.indexOf('async mount(host)'), FE.indexOf('async mount(host)') + 1200);
+  assert.ok(mountBody.includes('accessory-methods-error'), '读不到 ⇒ 人话卡 ✓');
+  const afterMethods = mountBody.slice(mountBody.indexOf('state.methods = '), mountBody.indexOf('state.methods = ') + 260);
+  assert.ok(/return;/.test(afterMethods), '没有可选项 ⇒ **直接 return**（不进录入 ✗）');
 });
