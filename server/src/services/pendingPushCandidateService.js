@@ -80,6 +80,28 @@ const { logInfo, logWarn } = require('../utils/logger');
 // 将来要改窗口，**两处一起改**（或者把它提到一份共享配置里）。
 const REMINDER_WINDOW_DAYS = 7;
 
+/**
+ * ⭐⭐ 2026-10-14 **夜**（业务负责人**追加**的裁决，覆盖 Lead 先前那条保守口径）：
+ *   【采购】未到货那半**也**按**同一个**数据起点（`2026-10-15`）切。
+ *
+ * 🔴 **硬边界**（本文件头那条规矩的落地：**读不到 ≠ 不符合判据 ⇒ 照出 + 占位**）：
+ *    · `报货日`**读不到**（`asDate` 返回 null）⇒ **照出** ✓ —— 不许"读不到就切" ✗，
+ *      那会让她**静默看不到还在等他处理的待办**（那是**待办**，不是噪音）；
+ *    · `报货日`**读到了、且在起点之前** ⇒ 存量 ⇒ 切掉 ✓（这就是她要的"存量行不用管"）；
+ *    · `报货日` ≥ 起点（含当天）⇒ 出 ✓。
+ *
+ * ⚠️ 判据仍然**只有一处实现**（`config/dataSince` 的 `isOnOrAfterSince`，上海时区）：
+ *    本文件**不自己比日期字符串、也不另写时区折算** ✗。
+ * ⚠️ 与销售侧的区别：那两块有「最近 7 天」窗口、所以合成成 `withinLookupWindowSince`；
+ *    【采购】这半**没有窗口**（它是"到货状态 = 未到货"的全量清单）⇒ 这里只有"起点"这一条，
+ *    形状不同但**判据同源**（同一个 `isOnOrAfterSince`）。
+ */
+const keepPurchaseBatchSince = (batch) => {
+  const reportedAt = asDate(batch?.reportedAt);
+  if (!reportedAt) return true; // 报货日读不到 ⇒ **照出**（不拿读不到的值判存量）
+  return isOnOrAfterSince(reportedAt);
+};
+
 class PendingPushCandidateService {
   constructor(options = {}) {
     if (!options.gateway) throw new Error('PendingPushCandidateService 需要 gateway');
@@ -141,7 +163,10 @@ class PendingPushCandidateService {
     let purchase = [];
     if (this.purchasePending) {
       try {
-        purchase = await this.purchasePending.listPendingBatches();
+        // ⭐⭐ 2026-10-14 夜（她追加的裁决）：【采购】未到货那半**也**按数据起点切
+        //   ⇒ 只留下"**报货日读得到且 ≥ 起点**"或"**报货日读不到**"的批次
+        //     （判据与"读不到怎么办"全在 `keepPurchaseBatchSince` 那一处）。
+        purchase = (await this.purchasePending.listPendingBatches()).filter(keepPurchaseBatchSince);
       } catch (error) {
         logWarn('sales.pending_deal_push.purchase_candidates_failed', {
           error: error.message,
