@@ -50,12 +50,18 @@ test('AC-AW1b ⭐ 那一屏**有**提交到既有 confirm 接口的表单（判�
   assert.ok(/data-purchase-batch=/.test(FEATURE) && /order-line/.test(FEATURE), '明细那一块还在 ✓');
 });
 
-test('AC-AW4 🔴 `/s/accept` **保留、仍能用**（不许删 ✗ —— 扫码那半还在它那儿）', () => {
-  assert.ok(ORDERS_CONFIG.includes("pagePath: '/s/accept'"), '`ARRIVAL_SCAN` 常量保留 ✓（只是不再是工作台入口）');
+test('AC-AW4 🔴 `/s/accept` 那条路**已彻底拆掉**（本 AC 换判据 —— 旧口径被她晚间的原话覆盖）', () => {
+  // ⭐⭐ 2026-10-14 晚 **改指向**（依据：业务负责人逐字「**`/s/accept` 这条路要彻底拆掉**」）
+  //   改前逐字：`assert.ok(ORDERS_CONFIG.includes("pagePath: '/s/accept'"), '`ARRIVAL_SCAN` 常量保留 ✓（只是不再是工作台入口）')`
+  //             ＋ `assert.ok(/accept/.test(route), '扫码页那条验收路由仍在 ✓')`
+  //             ＋ `assert.ok(/renderAcceptancePage/.test(renderer), '扫码页那张落地页仍在 ✓')`  ← **旧口径"不许删"** ✗
+  //   改后：**扫码页那边必须没有**（路由不再注册 `/accept`；三个渲染函数一个都不在 ✓）
+  //    ⚠️ 工作台那屏**照旧**（能力搬进工作台 ✓ 由本文件 AC-AW1/AW1b 罩着 ✓）
   const route = read('src/routes/scanPage.js');
-  assert.ok(/accept/.test(route), '扫码页那条验收路由仍在 ✓');
+  assert.equal(/router\.(get|post|all)\('\/accept'/.test(route), false, '扫码页那条验收路由必须已退场 ✗');
   const renderer = read('src/views/scanPageRenderer.js');
-  assert.ok(/renderAcceptancePage/.test(renderer), '扫码页那张落地页仍在 ✓');
+  assert.equal(/renderAcceptance(Page|DonePage|SelfServe)/.test(renderer), false, '三个验收渲染函数必须已退场 ✗');
+  assert.equal(/data-view="acceptance"/.test(renderer), false, '验收块也一并退场 ✗');
 });
 
 test('AC-AW5 ⭐ 命中区 ≥44px · 文案走配置（工作台侧不写死中文 ✗）', () => {
@@ -84,7 +90,12 @@ test('AC-AW7 ⭐ 既有断言：没有"工作台点验收会跳扫码页"的哨�
     .filter((name) => /^workbench.*\.test\.js$/.test(name) && name !== SELF);
   const hits = [];
   for (const name of files) {
-    const src = fs.readFileSync(path.join(__dirname, name), 'utf8');
+    // ⚠️ **先剥注释**（改指向，判据没放宽 ✗）：注释里写清"已退场 + 依据"是**必须**的 ✓
+    //    只有**活引用**（代码里真去跳 `/s/accept`）才算命中 ✓
+    const src = fs.readFileSync(path.join(__dirname, name), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n').filter((line) => !/^\s*(\*|\/\/)/.test(line)).join('\n')
+      .replace(/\/\/[^\n]*/g, '');
     if (/scan-arrival|\/s\/accept/.test(src)) hits.push(name);
   }
   assert.deepEqual(hits, [],

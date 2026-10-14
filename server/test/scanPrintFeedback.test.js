@@ -304,10 +304,12 @@ test('AC-PF7 ⭐ 逐按钮：**每一个写操作按钮**点下去都会置灰 +
   // 渲染层里"会发起写操作的提交按钮"必须**统一**走 `submitFeedbackAttrs`（一处定义）
   const submitButtons = renderer.match(/<button[^>]*type="submit"[^>]*>/g) || [];
   assert.ok(submitButtons.length >= 8, `提交按钮总得有几个（实际 ${submitButtons.length}）`);
-  // ⚠️ 例外只有一个：验收领域"手输批次号"那个按钮是 **GET 导航**（不发起写操作，提交即跳转，
-  //    不等服务端处理）⇒ 按她的口径（"凡发起**写操作**的按钮"）不挂反馈属性。
+  // ⭐⭐ 2026-10-14 晚 **改指向**（依据：她「`/s/accept` 这条路要彻底拆掉」）：
+  //   改前逐字：`assert.equal(navButtons.length, 1, '手输批次号那个 GET 导航按钮要在（且只有它豁免）')`
+  //   改后：那颗「手输批次号 → 进入验收」的按钮**随验收页退场** ⇒ 现在**一个豁免都没有** ✓
+  //    ⇒ 判据反而**更严**：渲染层里每一个 `type="submit"` 都必须有即时反馈 ✓（没放宽 ✗）
   const navButtons = (renderer.match(/<button[^>]*type="submit"[^>]*>\$\{escapeHtml\(t\.acceptPendingManualSubmit\)\}<\/button>/g) || []);
-  assert.equal(navButtons.length, 1, '手输批次号那个 GET 导航按钮要在（且只有它豁免）');
+  assert.equal(navButtons.length, 0, '那颗 GET 导航按钮已随验收页退场（豁免数必须是 0 ✓）');
   const missing = submitButtons.filter((tag) => !tag.includes('submitFeedbackAttrs')
     && !tag.includes('data-submit-feedback')
     && !tag.includes('class="btn btn--primary">'));

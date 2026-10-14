@@ -197,7 +197,13 @@ const WRITE = {
 //   （那时 `product`=标签 在条上、`purchase_return`=配品 ✗）；现在 product 撤下条 ✓ 但仍能解析 ✓
 // ⭐ 2026-10-14 晚：配品搬去工作台「销售 → 配品」+ 上新去掉 ⇒ 扫码页剩 4 领域
 //   （`product` 已撤下条、`accept` 有会话才切进来 ⇒ 仍在 REALMS 里能解析 ✓）
-const ALL_REALMS = ['sales', 'replenish', 'inventory', 'purchase_return', 'product', 'accept'];
+// ⭐⭐ 2026-10-14 晚（改指向）：`accept` 已从 REALMS 退场 ⇒ 这里不再列它 ✓
+//   依据：她「`/s/accept` 这条路要彻底拆掉」· 改前逐字：`ALL_REALMS` 含 `'accept'`
+// ⭐⭐ 2026-10-14 晚 **改指向**（依据：她「`/s/accept` 这条路要彻底拆掉」）：
+//   改前逐字：`const ALL_REALMS = ['sales', 'replenish', 'inventory', 'purchase_return', 'product', 'accept'];`
+//     ＋ `EXPECT.accept = { has: [那份自助块…] }`（验收页必须存在 ✗）
+//   改后：`accept` **不再是页面领域** ⇒ 从清单摘掉 ✓；它的旧链接**回落销售**（见文件末尾那条显式断言 ✓）
+const ALL_REALMS = ['sales', 'replenish', 'inventory', 'purchase_return', 'product'];
 const EXPECT = {
   sales: { has: ['加入本单', '提交这一单'], hasNot: ['库存（共', '一键补货', '货品标签', '生成采购退货'] },
   // ⭐ 2026-10-11：原 `purchase` 那一块 = 现在的 **`replenish`（补货）**（标记与文案一个字没变）。
@@ -208,7 +214,6 @@ const EXPECT = {
   purchase_return: { has: ['data-view="purchase-return"'], hasNot: ['加入本单', '库存（共', '一键补货'] },
   // ⭐ 2026-10-12：验收领域没有活跃会话时 = **她自己开工那一块**（列未到货批次 + 手输兜底），
   //    不是白屏、也不再是「回工作台」那张卡（她不去工作台）。
-  accept: { has: ['data-view="accept-pending"', SCAN_PAGE.texts.acceptPendingTitle], hasNot: ['加入本单', '库存（共', '一键补货', '生成采购退货'] },
   inventory: { has: ['库存（共 5 双）'], hasNot: ['加入本单', '一键补货', '货品标签'] },
   // ⚠️ 2026-10-13 改写：块里的标题已从「货品标签」改成「**标签**」（真渲染字面量：`<h2 class="stock__heading">标签</h2>`）
   product: { has: ['<h2 class="stock__heading">标签</h2>', '/workbench/label-print.html'], hasNot: ['加入本单', '库存（共', '一键补货'] },
@@ -397,7 +402,12 @@ test('AC-W7 路由按 `?from` 分派（认不出的回落**销售**，任何情�
     ['?from=inventory', 'inventory', ['加入本单', '补货报单']],
     ['?from=replenish', 'replenish', ['加入本单', '库存（共']],
     ['?from=purchase_return', 'purchase_return', ['加入本单', '库存（共', '一键补货']],
-    ['?from=accept', 'accept', ['加入本单', '库存（共', '一键补货']],
+    // ⭐⭐ 2026-10-14 晚 **改指向**（依据：她「`/s/accept` 这条路要彻底拆掉」）
+    //   改前逐字：`['?from=accept', 'accept', ['加入本单', '库存（共', '一键补货']]`
+    //     （那时这一页是**验收自助块** ⇒ 那句"不该出现 加入本单"成立 ✗）
+    //   改后：这一页**回落成建单那块的正文**（`accept` 仍能解析 ⇒ 标记还是 `realm-block--accept` ✓）
+    //     ⇒ 「加入本单」**现在应当出现** ✓（它不再是验收页 ✗）
+    ['?from=accept', 'accept', ['库存（共', '一键补货']],
     // ⚠️ 已退役的领域名（`purchase`）⇒ **回落销售**（既有口径：认不出的值一律回落缺省）
     ['?from=purchase', 'sales', ['库存（共']],
     ['?from=product', 'product', ['加入本单', '库存（共']],
@@ -453,7 +463,13 @@ test('AC-W4/W7 结果页（没找到 / 链接不对）也永远有人话（既�
 });
 
 test('领域配置是唯一真源（加减领域只改 views/scanPageRealm.js）', () => {
-  assert.deepEqual(REALMS.map((realm) => realm.id), ALL_REALMS);
+  // ⭐⭐ 2026-10-14 晚 **改指向**（依据：她「`/s/accept` 这条路要彻底拆掉」）：
+  //   改前逐字：`assert.deepEqual(REALMS.map((realm) => realm.id), ALL_REALMS)`
+  //   改后：`accept` 在 REALMS 里**还能解析**（旧链接回落销售 ✓）但**不再是页面领域** ⇒ 它不在本文件的清单里 ✓
+  assert.deepEqual(REALMS.map((realm) => realm.id).filter((id) => id !== 'accept'), ALL_REALMS,
+    '页面领域 = 清单（`accept` 已退场 ⇒ 不再算页面领域 ✓）');
+  assert.equal(REALMS.some((realm) => realm.id === 'accept'), true,
+    'cut A：`accept` 仍在 REALMS（能解析 ⇒ 旧链接不报错 ✓）；cut B 删它时这条会翻成 false ✓');
   assert.equal(DEFAULT_REALM, 'sales');
   // 领域文案也在配置里（渲染层不写死句子）—— ⭐ 2026-10-10 之后只留**功能性的字**
   for (const key of ['barLabel', 'labelHeading', 'labelSingleButton', 'labelBatchButton',
@@ -467,4 +483,22 @@ test('领域配置是唯一真源（加减领域只改 views/scanPageRealm.js）
     assert.equal(REALM_TEXTS[key], undefined, `REALM_TEXTS.${key} 是说明句 ⇒ 必须删掉`);
   }
   assert.equal(REALM_TEXTS.oneTapReplenish, '一键补货', '「一键补货」压成最短');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-14 晚（改指向 · 依据：她「`/s/accept` 这条路要彻底拆掉」）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-W9 🔴 旧 `?from=accept` ⇒ **回落销售**（验收那一屏已退场；不再有它自己的块）', () => {
+  // 改前逐字：`EXPECT.accept = { has: [SCAN_PAGE.texts.acceptPendingTitle, …], hasNot: ['加入本单', …] }`
+  //   ⇒ 那时 `?from=accept` 必须渲染"列未到货批次 + 手输兜底"那一块 ✗
+  // 改后：那一屏整块退场 ⇒ 旧链接**按既有口径回落销售**（页面上是建单块 ✓）✓
+  const html = renderScanPage(VIEW, SCAN_PAGE, WRITE, 'accept');
+  const body = html.slice(html.indexOf('</head>'));
+  assert.ok(body.includes('realm-block--accept') || body.includes('realm-block--sales'),
+    '这一页必须有正文（回落销售 ⇒ 销售块 ✓ 不许白屏 ✗）');
+  assert.equal(body.includes(SCAN_PAGE.texts.acceptPendingTitle || '\u0000'), false,
+    '「未到货的批次」那块自助块必须没有了 ✗');
+  assert.equal(/data-view="acceptance"/.test(body), false, '验收块必须没有了 ✗');
+  assert.ok(body.includes('加入本单'), '回落销售 ⇒ 建单块在（「加入本单」✓）');
 });

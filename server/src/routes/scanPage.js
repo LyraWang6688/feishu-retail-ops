@@ -41,10 +41,10 @@ const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { sizesForCategory, parseNumberSegments, createScanPageService } = require('../services/scanPageService');
 const { createScanWriteService } = require('../services/scanWriteService');
 const { SalesFollowupService } = require('../services/salesFollowupService');
-const { renderSalesHome, renderScanSkeleton, renderScanPage, renderScanMessagePage, renderMinimalPage, renderAcceptancePage, renderAcceptanceDonePage, renderAcceptanceSelfServe, renderSaleSuccessPage, renderSalePaymentStepPage, buildPaymentRows } = require('../views/scanPageRenderer');
+const { renderSalesHome, renderScanSkeleton, renderScanPage, renderScanMessagePage, renderMinimalPage, renderSaleSuccessPage, renderSalePaymentStepPage, buildPaymentRows } = require('../views/scanPageRenderer');
 // ⚠️ 只借这两个**纯函数**：所选尺码在「样品 + 门盒」有没有货（= 页面上那两个分组的判据），
 //    以及 `?from=` → 领域 id（认不出来回落缺省，不报错、不白屏）。
-const { sellableSizeTexts, resolveRealm, DEFAULT_REALM, ACCEPTANCE_REALM } = require('../views/scanPageRealm');
+const { sellableSizeTexts, resolveRealm, DEFAULT_REALM } = require('../views/scanPageRealm');
 // ⭐ 写操作之后**立刻作废**「实时库存」内存快照（她：库存必须准确，不是等 30 秒）。
 const { invalidateLiveInventorySnapshot } = require('../services/liveInventorySnapshot');
 const { requireWorkbenchAccess } = require('./workbench');
@@ -147,38 +147,90 @@ const createScanPageRouter = (options = {}) => {
    * ⚠️ **同一个 catch**：读表失败 ⇒ 只记一条 warn + 返回 `{ok:false, batches:[]}`
    *    ⇒ 页面照旧 **200**、走手输兜底（她的"别卡住她"）。
    */
-  const loadPendingBatches = async (requestId, timing = null) => {
-    if (!arrival()) return null;
-    return arrival().pendingBatches({ timing }).catch((error) => {
+  const buildWriteContext = async (req, view, realm = DEFAULT_REALM, extra = {}) => {
+    if (!writeService) return null;
+    const openId = openIdOf(req);
+    if (!openId) return null;
+    const texts = writeConfig.texts;
+    const fields = writeConfig.fields;
+    // ⭐ 本单是**按人（登录会话）**存的（`scanSessionService.idOf(openId)`），
+    //    **不是按编号** ⇒ 扫 A 加一双、再扫 B 加一双，读到的**是同一份本单**
+    //    （"一单跨款累积"就是这么成立的；见 `services/scanSessionService.js` 的文件头）。
+    const session = await writeService.sessions.get(openId).catch((error) => {
+      // 读自己的会话失败**不影响看库存**：把表单退化成"还没加任何一双"，
+      // 她照样能加单（加的时候会重建）。只记一条 warn，不给她报错。
       logWarn(writeConfig.events.failed, {
-        request_id: requestId, reason: 'accept_pending_batches_failed', error: error.message,
+        request_id: req.requestId, reason: 'session_read_failed', error: error.message,
       });
-      return { ok: false, batches: [] };
+      return null;
     });
+    const sizes = (view.rows || [])
+      .filter((row) => !row.unknown_size)
+      .map((row) => ({ size_text: row.size_text, missing: Boolean(row.missing) }));
+    const defaultPaymentMethod = writeConfig.sale.defaultPaymentMethod;
+    const paymentMethods = [...new Set([defaultPaymentMethod, ...(writeConfig.sale.paymentMethods || [])].filter(Boolean))];
+    const lines = session?.sale?.lines || [];
+    // ⭐ 2026-10-11（B）：配品下拉的候选（「其他配品」的名称）——**只在销售那一块要**
+    //   （表单只在 `from=sales` 渲染），别的领域一次表都不读（她的"一次扫码 0~1 次飞书调用"）。
+    //   ⚠️ 读不到配品表**不影响卖鞋**：`listAccessories` 自己吞掉错误并记 warn，给空清单。
+    const accessories = realm === 'sales' && typeof writeService.listAccessories === 'function'
+      ? await writeService.listAccessories().catch(() => [])
+      : [];
+    return {
+      enabled: true,
+      saleEnabled: writeConfig.sale.enabled !== false,
+      replenishEnabled: writeConfig.replenish.enabled !== false,
+      // ⭐ 2026-10-11：采购领域的第二个动作（退货）—— 关掉它，那一块就不渲染（与补货同一条口径）。
+      returnEnabled: writeConfig.purchaseReturn?.enabled !== false,
+      texts,
+      fields,
+      actions: writeConfig.actions,
+      // ⭐⭐ `/r/{recordId}` 底下表单必须 POST 回 `/r/{recordId}`（否则提交会落到"按编号"那条路）。
+      postAction: postActionFor(backTargetFor(req, view.number), realm),
+      sizes,
+      draft: { lines },
+      // ⭐ 配品行要的东西（没有配品时渲染层不画那个表单）。
+      accessories: accessories.map((item) => ({ record_id: item.record_id, name: item.name })),
+      saleKey: writeService.sessions.submitKeyFor(openId, session, 'sale'),
+      replenishKey: writeService.sessions.submitKeyFor(openId, session, 'replenish'),
+      // ⭐ 退货那把键（第三条链；与销售 / 补货**互不覆盖** —— 会话语义见 scanSessionService）
+      returnKey: writeService.sessions.submitKeyFor(openId, session, 'purchase_return'),
+      paymentMethods,
+      defaultPaymentMethod,
+      // ⭐⭐ 总单层的**「付款情况」**（整单三档）：默认档来自配置（**全付**）；
+      //     校验失败原地重渲染时，用**她刚才选的那一档**（`extra.paymentStatus`）。
+      paymentStatus: String(extra.paymentStatus || writeConfig.sale.paymentStatus?.default || ''),
+      defaultPaymentStatus: writeConfig.sale.paymentStatus?.default || '',
+      // ⭐ 「部分付」时资金区填的**实付多少**（另外两档服务端不看它）；同样原样回填。
+      paidAmount: extra.paidAmount === undefined || extra.paidAmount === null
+        ? '' : String(extra.paidAmount),
+      // ⭐⭐ 总单层的多笔收款行：预置 N 行（第一行默认「微信」）；校验失败重渲染时
+      //     用**她刚填的那几行**（值原样带回来，她改一改就能再提交）。
+      paymentRows: buildPaymentRows({
+        count: writeConfig.sale.paymentRowCount,
+        defaultMethod: defaultPaymentMethod,
+        rows: extra.paymentRows,
+      }),
+      // 校验失败时挂在表单上方的那句人话（差额）；成功路径上是空串。
+      errorText: String(extra.errorText || ''),
+      // 「刚加入本单」那一句（**文案来自配置**，只有数字来自会话 ⇒ 没有回显注入面）。
+      notice: String(req.query?.added || '') === '1' && lines.length
+        ? fillWriteText(texts.lineAddedBanner, { count: lines.length })
+        : '',
+    };
   };
 
-  // ⭐⭐ 2026-10-11（方案A）：**扫码验收**（工作台点【验收】→ 在这一页连续扫 → 完成验收）。
-  //    ⚠️ 依赖**延迟构造**（在 `services/scanArrivalService.js` 里就地构造：
-  //      `GET /s/{编号}` 那一步只用来读会话 —— **零飞书调用**，扫码页"一次扫码 0 次飞书调用"
-  //      那条硬要求不能被这个功能破坏；真正要开批次 / 入库时它才构造采购查询与到货核对）。
-  //    ⚠️ 本文件因此**只认识 `scanArrivalService` 一个名字**（不 require 任何写链路的 service）——
-  //      既有的"路由层不出现写链路服务"哨兵照旧绿。
-  //    ⚠️ 用例可以注入 `options.arrivalService`；`false` = 这一版不挂验收模式。
-  let arrivalInstance = options.arrivalService || null;
-  const arrival = () => {
-    if (arrivalInstance === null && options.arrivalService !== false) {
-      // eslint-disable-next-line global-require
-      const { createScanArrivalService } = require('../services/scanArrivalService');
-      arrivalInstance = createScanArrivalService({
-        gateway,
-        config: writeConfig.acceptance,
-        store: options.arrivalSessionStore,
-      });
-    }
-    return arrivalInstance;
-  };
+  /**
+   * ⭐⭐ 2026-10-13 **口径变更**（她的原话，逐字）：
+   *   「"提交这一单"就说明**这一单已经结了**呀，如果我再操作的话，**应该就跟这一单没关系了**，
+   *     除非我是选"**再加一双**"呀」
+   *  ⇒ `/s`（**不带编号**）= **销售领域入口页**（= 她说的"销售首页" ✓）：
+   *    · 提交成功后回跳这里（回跳 URL 带 `?done=<单号>` ⇒ 顶部"上一单已提交（单号）" ✓ 无状态）
+   *    · 手输编号 ⇒ **302 到 `/s/<编号>`**（兜底 ✓）
+   *  ⚠️ 改前这里是"缺编号 ⇒ 400 这个链接不对" ✗；**改后 `GET /s` 是有意义的入口** ✓
+   *     （**认不出的编号**仍走原来的 400 人话页 ✓ 那条没动 ✗）
+   */
   const router = express.Router();
-
   router.use((req, res, next) => {
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     next();
@@ -231,6 +283,51 @@ const createScanPageRouter = (options = {}) => {
   });
 
   router.use(requireWorkbenchAccess);
+  /**
+   * ⭐⭐ **`GET /s/:number?from=<领域>`** —— 手机扫开的那一页。
+   *
+   * 2026-10-09 真机（飞书 webview 白屏）之后这一条重做过：
+   *   · **服务端按 `from` 只渲染那一块**（不再靠 `<head>` 内联脚本 + CSS 显隐）；
+   *   · 页面里**一行前端脚本都没有** ⇒ 飞书 webview 执不执行脚本都一个样；
+   *   · 认不出的 `from` 回落缺省（销售），**永不报错、永不空白**。
+   *   · 任何异常（取数 / 渲染）都落到 `respondFailure` → **人话页**（还有 `renderMinimalPage` 兜底）。
+   */
+  // ⭐⭐ 2026-10-12：**两条路共用这两个处理函数**（同一个 router 实例挂在 `/s` 与 `/r` 上）：
+  //    · `/s/:number`   ⇒ `req.params.number`   = 编号
+  //    · `/r/:recordId` ⇒ `req.params.recordId` = 记录 ID（**新二维码走这条**）
+  //    ⚠️ 用**路径数组**把同一个 handler 挂到两个模式上 —— **不复制一份处理逻辑**；
+  //      "这一页在取哪一样东西"由挂载点判定（`scanTargetOf`），其余一行都不分叉。
+  const loadPendingBatches = async (requestId, timing = null) => {
+    if (!arrival()) return null;
+    return arrival().pendingBatches({ timing }).catch((error) => {
+      logWarn(writeConfig.events.failed, {
+        request_id: requestId, reason: 'accept_pending_batches_failed', error: error.message,
+      });
+      return { ok: false, batches: [] };
+    });
+  };
+
+  // ⭐⭐ 2026-10-11（方案A）：**扫码验收**（工作台点【验收】→ 在这一页连续扫 → 完成验收）。
+  //    ⚠️ 依赖**延迟构造**（在 `services/scanArrivalService.js` 里就地构造：
+  //      `GET /s/{编号}` 那一步只用来读会话 —— **零飞书调用**，扫码页"一次扫码 0 次飞书调用"
+  //      那条硬要求不能被这个功能破坏；真正要开批次 / 入库时它才构造采购查询与到货核对）。
+  //    ⚠️ 本文件因此**只认识 `scanArrivalService` 一个名字**（不 require 任何写链路的 service）——
+  //      既有的"路由层不出现写链路服务"哨兵照旧绿。
+  //    ⚠️ 用例可以注入 `options.arrivalService`；`false` = 这一版不挂验收模式。
+  let arrivalInstance = options.arrivalService || null;
+  const arrival = () => {
+    if (arrivalInstance === null && options.arrivalService !== false) {
+      // eslint-disable-next-line global-require
+      const { createScanArrivalService } = require('../services/scanArrivalService');
+      arrivalInstance = createScanArrivalService({
+        gateway,
+        config: writeConfig.acceptance,
+        store: options.arrivalSessionStore,
+      });
+    }
+    return arrivalInstance;
+  };
+
 
   /**
    * 🔴 **绝不空白**：所有"人话页"都从这里发出去 —— 连渲染本身抛错都还有最后一道兜底
@@ -635,511 +732,6 @@ const createScanPageRouter = (options = {}) => {
 
   // ── ⭐⭐ 2026-10-11（方案A）：扫码验收 ──────────────────────────────────────
   /** 验收表单的 POST 目标：落地页（没有编号那一刻）与逐码页（有编号）各一个。 */
-  const acceptanceLandingPath = (batchNo) =>
-    `${config.route.basePath}${String(config.route.acceptanceLandingPath || '/accept?batch={batchNo}')
-      .replace('{batchNo}', encodeURIComponent(String(batchNo || '')))}`;
-  /** 渲染层要的验收上下文（只放"事实"：批次号 / 已扫 / 应到 / 表单目标 / 一句提示）。 */
-  /**
-   * ⭐⭐ 2026-10-12（她选的方案 A：「系统把 40、41 列出来（标注"未报货"）⇒ 你点一下就加到货」）：
-   *
-   * **候选 = 这一款在该类别下应有的尺码 − 已报的尺码 − 已加的尺码。**
-   *   · "应有尺码"借**缺码判定那一份**（`sizesForCategory` = `SCAN_PAGE.sizeSegments.ranges`，
-   *     纯配置、零读表）；类别代码借**编号分段**（`parseNumberSegments`）——**都不另发明一套** ✓；
-   *   · 没有"款"可归（一个款都没扫 / 多个款说不清）⇒ 返回 `null` + 一句引导（列了也没用）；
-   *   · 一个候选都没有（该类别全报过了）⇒ 返回 `null`（**整块不渲染**，不给空标题）；
-   *   · 类别为空 / 配置里没这个类别 / 段配坏（`degraded`）⇒ 返回 `null`（**翻不出错就别列**）。
-   * 🔴 **绝不写死尺码表**：候选只从配置推出来（表里改了尺码 → 改配置，见 `sizeSegments` 的一致性 warn）。
-   */
-  const unreportedSizesFor = (session) => {
-    try {
-      const products = Array.isArray(session?.products) ? session.products : [];
-      if (products.length !== 1) return { sizes: [], noProduct: products.length === 0 };
-      const number = String(products[0].number || '').trim();
-      if (!number) return { sizes: [], noProduct: true };
-      const { categoryCode } = parseNumberSegments(number, config);
-      const scope = sizesForCategory(categoryCode, config);
-      if (scope.degraded || !scope.sizes.length) return { sizes: [], noProduct: false };
-      const productRecordId = products[0].product_record_id;
-      const taken = new Set((Array.isArray(session?.rows) ? session.rows : [])
-        .filter((row) => row.product_record_id === productRecordId)
-        .map((row) => Number(row.size)));
-      for (const line of (Array.isArray(session?.scans) ? session.scans : [])) {
-        if (line.product_record_id === productRecordId) taken.add(Number(line.size));
-      }
-      // ⚠️ 统一成 `{ size }` 对象（与清单里其它列表同形状）——渲染层不认裸数字。
-      const sizes = scope.sizes
-        .filter((size) => !taken.has(Number(size)))
-        .map((size) => ({ size: Number(size) }));
-      return { sizes, noProduct: false };
-    } catch (error) {
-      // 读/推不出来 ⇒ **不列**（页面照旧 200）；只记一条 warn，不把她打红。
-      logWarn(writeConfig.events.failed, {
-        reason: 'accept_unreported_sizes_failed', error: error.message,
-      });
-      return { sizes: [], noProduct: false };
-    }
-  };
-
-  const acceptanceContext = (session, extra = {}) => {
-    const scans = Array.isArray(session?.scans) ? session.scans : [];
-    const reported = Array.isArray(session?.rows) ? session.rows : [];
-    const findScan = (row) => scans.find((line) => (
-      line.product_record_id === row.product_record_id && Number(line.size) === Number(row.size)
-    ));
-    // ⭐⭐ 2026-10-12（她的口述版）：**报货行** —— 每个尺码一行，数量**默认 = 报货数量**；
-    //    她已经改过（会话里已有 scans）⇒ 显示**她改过的那个数**（刷新不丢她刚填的）。
-    const rows = writeConfig.acceptance.prefillEnabled === false ? null : reported.map((row) => ({
-      size: Number(row.size),
-      reported: Number(row.quantity),
-      actual: Number(findScan(row)?.quantity ?? row.quantity),
-    }));
-    // ⭐ 已经加过的"自定义行"（扫进来的 / 上次手输的）：**必须跟着表单回去**，否则一次提交就冲掉了。
-    const customRows = scans.filter((line) => !reported.some((row) => (
-      row.product_record_id === line.product_record_id && Number(row.size) === Number(line.size)
-    ))).map((line) => ({ size: Number(line.size), quantity: Number(line.quantity) }));
-    return {
-      batchNo: String(session?.batch_no || ''),
-      scanned: Number(session?.scanned || 0),
-      expected: Number(session?.expected || 0),
-      postAction: extra.postAction || acceptanceLandingPath(session?.batch_no),
-      // ⭐ 清单表单**固定回落地页**（哪一页渲染它都一样）：改数量 / 加行 / 完成都在那一处处理。
-      rowsPostAction: acceptanceLandingPath(session?.batch_no),
-      notice: String(extra.notice || ''),
-      defaultQuantity: writeConfig.acceptance.defaultQuantity,
-      // ⭐⭐ P0：**"完成验收"的幂等键**（服务端算、画进表单、提交带回来）——
-      //    她连点两次 / 网络重试都只执行一次 ✓。
-      submitKey: arrival()?.submitKeyOf ? arrival().submitKeyOf(session) : '',
-      // `null` = 不开预填（渲染层据此退回"只收金额"的老那一版，逐字不变）。
-      rows,
-      customRows,
-      // ⭐ "没报货的尺码"候选（点一下 = 加到货）；空 / 推不出来 ⇒ 渲染层整块不渲染。
-      ...(() => {
-        if (writeConfig.acceptance.prefillEnabled === false) return { unreported: [], unreportedNoProduct: false };
-        const found = unreportedSizesFor(session);
-        return { unreported: found.sizes, unreportedNoProduct: found.noProduct };
-      })(),
-      amountRequired: writeConfig.acceptance.amountRequired !== false,
-    };
-  };
-  /**
-   * ⭐⭐ 2026-10-12（她的口述版）：**带清单的完成**（预填清单那一版的主入口）。
-   *
-   * 一次提交做三件事（**顺序不能换**）：
-   *   ① 把清单落进会话（`setActualRows`：改后的数量 + 自定义行，**不写业务表**）；
-   *   ② 数量全 0 / 自定义不知款 ⇒ **在人话页上如实说**（既有的 `no_scan_lines` / `custom_*` 文案）；
-   *   ③ 落完再走**既有** `finish` ⇒ 写「实际数量（= 各行之和）」「实际金额」+ **逐尺码加库存**。
-   */
-  /**
-   * ⭐⭐ P0 2026-10-12：「这一批**已经入库过了**」⇒ **幂等返回**（200 + 已完成的页），
-   * 不是再执行一次、也不是一张 400 的错页 ✗（她连点两次时第二次应该安静地看到"已完成"）。
-   */
-  const acceptAlreadyDonePage = (res, session, body, fields) => sendHtml(res, 200, renderAcceptanceDonePage({
-    config,
-    write: { texts: writeConfig.texts },
-    acceptance: {
-      batchNo: String(session?.batch_no || ''),
-      scanned: Number(session?.scanned || 0),
-      amountText: String(body?.[fields.acceptAmount] ?? ''),
-      reused: true,
-    },
-    backHref: `${res.req?.baseUrl || ''}${config.route?.acceptancePath || '/accept'}`,
-  }));
-
-  const handleAcceptFinishRows = async (req, res, requestId) => {
-    const openId = openIdOf(req);
-    const body = req.body || {};
-    const fields = writeConfig.fields;
-    // ⭐ P0：这一场验收**已经入库** ⇒ 幂等返回（零写入、200、给她"已完成"）✓
-    const current = await arrival().get(openId).catch(() => null);
-    if (current && current.status === 'posted') {
-      logInfo(writeConfig.events.acceptReused, {
-        request_id: requestId, batch_no: current.batch_no,
-        submit_key: String(body[fields.submitKey] || ''), reason: 'session_already_posted',
-      });
-      return acceptAlreadyDonePage(res, current, body, fields);
-    }
-    const wantedBatch = String(body[fields.acceptBatch] || req.query?.batch || '').trim();
-    const saved = await arrival().setActualRows({
-      openId,
-      quantities: asList(body[fields.acceptRowQty]),
-      customSize: asList(body[fields.acceptCustomSize]),
-      customQuantity: asList(body[fields.acceptCustomQuantity]),
-    });
-    if (!saved.ok) {
-      logWarn(writeConfig.events.acceptFailed, {
-        request_id: requestId, reason: saved.reason, batch_no: wantedBatch,
-      });
-      // ⭐ P0：并发下第二份会撞到 `already_posted` ⇒ 同样按"已完成"幂等返回（不报错）✓
-      if (saved.reason === 'already_posted') {
-        const latest = await arrival().get(openId).catch(() => null);
-        if (latest) return acceptAlreadyDonePage(res, latest, body, fields);
-      }
-      return sendHuman(res, 400, {
-        title: writeConfig.texts.acceptModeTitle,
-        body: saved.message || writeConfig.texts.acceptNoScansBody,
-        requestId,
-        retryHint: writeConfig.texts.failedRetryHint,
-      });
-    }
-    // ⭐⭐ 2026-10-12 21:20（她"一直点那个按钮"）：**失败也要把她填的东西还回去**——
-    //    数量在会话里（`setActualRows` 已经落过）✓，金额从这次提交的 body 带回 ⇒ 页面原样回来 + 一句人话。
-    return handleAcceptFinish(req, res, requestId, { amountValue: body[fields.acceptAmount] });
-  };
-
-  /**
-   * ⭐⭐ 2026-10-12（方案 A）：「列出来（标注"未报货"）⇒ 你**点一下就加到货**」。
-   *
-   * 一次点击做三件事（顺序不能换）：
-   *   ① 把**当前清单**落进会话（她刚改的数量 / 自定义行**不能因为点一下就丢**）；
-   *   ② 目标尺码：**已在清单里 ⇒ 取消**（这就是"再点一下"）；不在 ⇒ **加进来、数量默认 1**
-   *      —— 与自定义行走**同一条路**（归到**这一款** ⇒ 完成验收时计入库存 ✓）；
-   *   ③ **302 回清单**（GET）⇒ 她看到的就是"刚点完"的真实状态（不会重复提交、刷新也不重复记）。
-   *
-   * 🔴 款说不清（多个款）⇒ 照旧**拒**（不猜款 ✗）；数量上限沿用既有 `maxQuantity`。
-   */
-  const handleAcceptToggleSize = async (req, res, requestId) => {
-    const openId = openIdOf(req);
-    const body = req.body || {};
-    const fields = writeConfig.fields;
-    const session = await arrival().get(openId).catch(() => null);
-    if (!session) {
-      return sendHuman(res, 400, {
-        title: writeConfig.texts.acceptModeTitle,
-        body: writeConfig.texts.acceptNoSessionBody,
-        requestId,
-        retryHint: writeConfig.texts.failedRetryHint,
-      });
-    }
-    const products = Array.isArray(session.products) ? session.products : [];
-    const toggled = asList(body[fields.acceptToggleSize]).map((value) => positiveSize(value)).filter((v) => v !== null);
-    if (products.length !== 1 || !toggled.length) {
-      return sendHuman(res, 400, {
-        title: writeConfig.texts.acceptModeTitle,
-        body: writeConfig.texts.acceptCustomProductNeededBody,
-        requestId,
-        retryHint: writeConfig.texts.failedRetryHint,
-      });
-    }
-    const productRecordId = products[0].product_record_id;
-    const rows = Array.isArray(session.rows) ? session.rows : [];
-    const reportedSizes = new Set(rows
-      .filter((row) => row.product_record_id === productRecordId).map((row) => Number(row.size)));
-    const scans = Array.isArray(session.scans) ? session.scans : [];
-    // 已加的行（自定义 / 扫进来的）原样带回 —— 其中**属于报货行**的不当自定义处理（它们有自己的输入框）。
-    const customSize = [];
-    const customQuantity = [];
-    for (const line of scans) {
-      if (line.product_record_id !== productRecordId) continue;
-      if (reportedSizes.has(Number(line.size))) continue;
-      customSize.push(Number(line.size));
-      customQuantity.push(Number(line.quantity));
-    }
-    for (const size of toggled) {
-      const index = customSize.indexOf(size);
-      if (index >= 0) {
-        customSize.splice(index, 1);
-        customQuantity.splice(index, 1);
-      } else if (!reportedSizes.has(size)) {
-        customSize.push(size);
-        customQuantity.push(writeConfig.acceptance.defaultQuantity);
-      }
-    }
-    const saved = await arrival().setActualRows({
-      openId,
-      quantities: asList(body[fields.acceptRowQty]),
-      customSize,
-      customQuantity,
-    });
-    if (!saved.ok) {
-      return sendHuman(res, 400, {
-        title: writeConfig.texts.acceptModeTitle,
-        body: saved.message || writeConfig.texts.acceptNoScansBody,
-        requestId,
-        retryHint: writeConfig.texts.failedRetryHint,
-      });
-    }
-    logInfo(writeConfig.events.acceptRowsSet, {
-      request_id: requestId, batch_no: session.batch_no,
-      toggled_sizes: toggled.join(','), action: 'toggle_size',
-    });
-    // ⭐ 302（不是 200 + 重渲染）：她看到的一定是"刚点完"的真实清单，刷新也不会重复记。
-    return res.redirect(303, acceptanceLandingPath(session.batch_no));
-  };
-
-  /** 【完成验收】：两个页面（落地页 / 逐码页）共用这一份处理 —— 校验与写库都在既有链路里。 */
-  const handleAcceptFinish = async (req, res, requestId, extra = {}) => {
-    const openId = openIdOf(req);
-    const body = req.body || {};
-    const fields = writeConfig.fields;
-    const texts = writeConfig.texts;
-    const result = await arrival().finish({
-      openId,
-      actualAmount: body[fields.acceptAmount],
-      submitKey: body[fields.submitKey],
-      operatorOpenId: openId,
-    });
-    if (!result.ok) {
-      // ⭐⭐ 2026-10-12 21:20：**回填重画**（不许罚她重填）——她那 5 行的数量在会话里，
-      //    金额从这次 body 带回来；页面顶部一句人话（`acceptance.notice`）。
-      const session = await arrival().get(openId).catch(() => null);
-      if (session && Array.isArray(session.rows) && session.rows.length) {
-        return sendHtml(res, 400, renderAcceptancePage({
-          acceptance: acceptanceContext(session, {
-            notice: result.message || texts.acceptNoScansBody,
-            amountValue: extra.amountValue !== undefined ? extra.amountValue : body[fields.acceptAmount],
-          }),
-          config,
-          write: {
-            texts: writeConfig.texts,
-            fields: writeConfig.fields,
-            actions: writeConfig.actions,
-          },
-          userAgent: req.headers['user-agent'],
-        }));
-      }
-      return sendHuman(res, 400, {
-        title: texts.acceptModeTitle,
-        body: result.message || texts.acceptNoScansBody,
-        requestId,
-        retryHint: texts.failedRetryHint,
-      });
-    }
-    // 入库成功 ⇒ 「实时库存」快照立刻作废（她：库存必须准确）。
-    invalidateInventorySnapshot(requestId, 'scan_accept_finished');
-    markRealmUsed(openId, realmOfAction(writeConfig.actions.acceptFinishRows));
-    const batchNo = result.batch_no || '';
-    // ⭐ 2026-10-13：落点**真读配置**（`pendingBatches` ⇒ 批次列表 / `lastBatch` ⇒ 刚验完那一批 ✓）
-    const acceptHomePath = SCAN_PAGE.resolveAcceptHomePath(
-      (config.successReturn && config.successReturn.acceptHome) || 'pendingBatches',
-      { baseUrl: req.baseUrl, acceptancePath: config.route?.acceptancePath || '/accept', batchNo },
-    );
-    // ⭐⭐ 2026-10-12 21:20：**成功后给明确成功页**（实际数量 + 实际金额 + 回未到货批次）——
-    //    「点了没反应」里有一半就是"成功了却没交代"。
-    return sendHtml(res, 200, renderAcceptanceDonePage({
-      config,
-      write: { texts: writeConfig.texts },
-      // ⭐⭐ 2026-10-13：**真读配置** `SUCCESS_RETURN.acceptHome`（映射表在 `config/scanPage.js` ✓）——
-      //   复核发现原来是**假配置**（零读取点 + 注释谎称"走配置" ✗）⇒ 现在一处改即可 ✓
-      //   ⚠️ 服务端拼**确定 URL** ✓（不用空编号去拼 ✗）。
-      returnPath: acceptHomePath,
-      returnLabel: (config.successReturn && config.successReturn.label) || '',
-      returnDelaySeconds: Number((config.successReturn && config.successReturn.delaySeconds) || 0),
-      autoReturnUrl: acceptHomePath,
-      acceptance: {
-        batchNo,
-        scanned: result.scanned || 0,
-        amountText: String(body[fields.acceptAmount] ?? ''),
-        reused: result.reused === true,
-      },
-      // 【返回扫码】/ 【回到未到货批次】与自动跳转**同一个 URL**（唯一来源 ✓ 随 `acceptHome` 变 ✓）
-      backHref: acceptHomePath,
-    }));
-  };
-
-  /**
-   * **验收模式落地页**（工作台点【验收】跳过来的第一屏，**没有编号**）：
-   * 开一次验收会话 → 本单条（已验收 N / 应到 M）+【继续扫下一个】+【完成验收】。
-   * ⚠️ 之后每扫一个标签，打开的是 `/s/{编号}` —— 那一页会自己认出"正处在验收模式"。
-   */
-  router.get('/accept', async (req, res) => {
-    const requestId = req.requestId;
-    if (!arrival()) {
-      return sendHuman(res, 503, {
-        title: writeConfig.texts.acceptModeTitle,
-        body: writeConfig.texts.writeDisabledBody,
-        requestId,
-      });
-    }
-    try {
-      const openId = openIdOf(req);
-      const wantedBatch = String(req.query?.batch || '').trim();
-      const wantedBatchRecord = String(req.query?.batch_record_id || '').trim();
-      // ⭐⭐ 2026-10-12：**没带批次号 ⇒ 直接给自助块**（列未到货批次 + 手输兜底），**200**。
-      //    改前这里会 `start({batchNo: undefined})` ⇒ `no_batch_no` ⇒ **400** +
-      //    「这一页没带报货批次号：回【验收】领域…」—— 她**就是从【验收】领域进来的**，
-      //    而且那一页**没有输入框**（"或填批次号"根本做不到）⇒ 死循环。
-      if (!wantedBatch && !wantedBatchRecord) {
-        // ⭐ 2026-10-13：`/accept`（**批次列表**那一页）也要有分段耗时（她点了 4、5 次才过去 ✗）
-        const pendingTiming = {};
-        const pendingStartedAt = Date.now();
-        // ⭐⭐ 2026-10-12 21:11：**区分"裸进来"与"空着点【进入验收】"** ——
-        //    后者是**表单提交**（URL 上有 `batch=`，值是空）⇒ 必须**即时反馈**（她的"任何点击都要有反应"）；
-        //    前者是她第一次进来，不该先喊一句提示。
-        const submittedEmpty = Object.prototype.hasOwnProperty.call(req.query || {}, 'batch');
-        const acceptPending = await loadPendingBatches(requestId, pendingTiming);
-        const renderStartedAt = Date.now();
-        const html = renderAcceptanceSelfServe({
-          config,
-          acceptPending,
-          emptySubmitHint: submittedEmpty,
-          // 链接/表单用**当前挂载前缀**（`/s` 或 `/r`），不写死 `/s/`。
-          basePath: req.baseUrl,
-        });
-        pendingTiming.render_ms = Math.max(0, Date.now() - renderStartedAt);
-        pendingTiming.total_ms = Math.max(0, Date.now() - pendingStartedAt);
-        pendingTiming.batch_count = Array.isArray(acceptPending?.batches) ? acceptPending.batches.length : 0;
-        logInfo(config.events.pendingTiming, { request_id: requestId, ...pendingTiming });
-        return sendHtml(res, 200, html);
-      }
-      const started = await arrival().start({
-        openId,
-        batchNo: wantedBatch,
-        batchRecordId: wantedBatchRecord,
-        operatorOpenId: openId,
-      });
-      if (!started.ok) {
-        logWarn(writeConfig.events.acceptFailed, {
-          request_id: requestId, reason: started.reason, message: started.message,
-        });
-        return sendHuman(res, 400, {
-          title: writeConfig.texts.acceptModeTitle,
-          body: started.message,
-          requestId,
-          retryHint: writeConfig.texts.failedRetryHint,
-        });
-      }
-      const html = renderAcceptancePage({
-        acceptance: acceptanceContext(started.session),
-        config,
-        write: {
-          texts: writeConfig.texts,
-          fields: writeConfig.fields,
-          actions: writeConfig.actions,
-        },
-        userAgent: req.headers['user-agent'],
-      });
-      return sendHtml(res, 200, html);
-    } catch (error) {
-      return respondFailure(res, error, requestId);
-    }
-  });
-
-  /** 落地页上的【完成验收】表单 POST 到这里（逐码页上那一颗 POST 到 `/s/{编号}`）。 */
-  router.post('/accept', async (req, res) => {
-    if (!arrival()) {
-      return sendHuman(res, 503, {
-        title: writeConfig.texts.acceptModeTitle,
-        body: writeConfig.texts.writeDisabledBody,
-        requestId: req.requestId,
-      });
-    }
-    const acceptAction = String(req.body?.[writeConfig.fields.action] || '');
-    try {
-      // ⭐⭐ 2026-10-12（她的口述版）：**带清单的完成**（改数量 + 自定义 + 实际金额，一次提交）。
-      if (acceptAction === writeConfig.actions.acceptFinishRows) {
-        return await handleAcceptFinishRows(req, res, req.requestId);
-      }
-      // ⭐ 点一下"未报货"的尺码（再点一下 = 取消）——落清单 → 加/取消 → 302 回清单。
-      if (acceptAction === writeConfig.actions.acceptToggleSize) {
-        return await handleAcceptToggleSize(req, res, req.requestId);
-      }
-      if (acceptAction !== writeConfig.actions.acceptFinish) {
-        return unknownActionFailure(req, res, req.requestId, acceptAction);
-      }
-      return await handleAcceptFinish(req, res, req.requestId);
-    } catch (error) {
-      return respondFailure(res, error, req.requestId);
-    }
-  });
-
-  /**
-   * 页面上的两个写入口要用的东西（尺寸清单 / 本单已加几双 / 两张表单的幂等键 / 文案）。
-   *
-   * ⚠️ **只读**：这里最多读一次自己的会话文件（`sessions.get`，**不是** ensure）——
-   *    连"新建会话"都不做 ⇒ 她只是看一眼库存、什么都没点，本地不会多出任何记录。
-   *    会话的建立发生在**第一次点「加入本单」**那一刻（`addLine` 内部会 ensure）。
-   *
-   * ⭐⭐ 2026-10-11（两层结构）：
-   *   · **每件层**：`draft.lines` 逐行带上她填过的「这一双实收」（渲染层把它画成每行一个输入框）；
-   *   · **总单层**：`paymentRows` = 预置的多笔收款行（第一行默认选中「微信」）；
-   *   · `errorText`（可选）= **校验失败时原地给她的人话**（差额），不是一张干巴巴的失败页。
-   *
-   * @param {object} [extra] `{ paymentRows, errorText }` —— 校验失败**原地重渲染**时把她刚填的
-   *  收款行原样带回来（她不用重打），以及在表单上方挂一句差额人话。
-   */
-  const buildWriteContext = async (req, view, realm = DEFAULT_REALM, extra = {}) => {
-    if (!writeService) return null;
-    const openId = openIdOf(req);
-    if (!openId) return null;
-    const texts = writeConfig.texts;
-    const fields = writeConfig.fields;
-    // ⭐ 本单是**按人（登录会话）**存的（`scanSessionService.idOf(openId)`），
-    //    **不是按编号** ⇒ 扫 A 加一双、再扫 B 加一双，读到的**是同一份本单**
-    //    （"一单跨款累积"就是这么成立的；见 `services/scanSessionService.js` 的文件头）。
-    const session = await writeService.sessions.get(openId).catch((error) => {
-      // 读自己的会话失败**不影响看库存**：把表单退化成"还没加任何一双"，
-      // 她照样能加单（加的时候会重建）。只记一条 warn，不给她报错。
-      logWarn(writeConfig.events.failed, {
-        request_id: req.requestId, reason: 'session_read_failed', error: error.message,
-      });
-      return null;
-    });
-    const sizes = (view.rows || [])
-      .filter((row) => !row.unknown_size)
-      .map((row) => ({ size_text: row.size_text, missing: Boolean(row.missing) }));
-    const defaultPaymentMethod = writeConfig.sale.defaultPaymentMethod;
-    const paymentMethods = [...new Set([defaultPaymentMethod, ...(writeConfig.sale.paymentMethods || [])].filter(Boolean))];
-    const lines = session?.sale?.lines || [];
-    // ⭐ 2026-10-11（B）：配品下拉的候选（「其他配品」的名称）——**只在销售那一块要**
-    //   （表单只在 `from=sales` 渲染），别的领域一次表都不读（她的"一次扫码 0~1 次飞书调用"）。
-    //   ⚠️ 读不到配品表**不影响卖鞋**：`listAccessories` 自己吞掉错误并记 warn，给空清单。
-    const accessories = realm === 'sales' && typeof writeService.listAccessories === 'function'
-      ? await writeService.listAccessories().catch(() => [])
-      : [];
-    return {
-      enabled: true,
-      saleEnabled: writeConfig.sale.enabled !== false,
-      replenishEnabled: writeConfig.replenish.enabled !== false,
-      // ⭐ 2026-10-11：采购领域的第二个动作（退货）—— 关掉它，那一块就不渲染（与补货同一条口径）。
-      returnEnabled: writeConfig.purchaseReturn?.enabled !== false,
-      texts,
-      fields,
-      actions: writeConfig.actions,
-      // ⭐⭐ `/r/{recordId}` 底下表单必须 POST 回 `/r/{recordId}`（否则提交会落到"按编号"那条路）。
-      postAction: postActionFor(backTargetFor(req, view.number), realm),
-      sizes,
-      draft: { lines },
-      // ⭐ 配品行要的东西（没有配品时渲染层不画那个表单）。
-      accessories: accessories.map((item) => ({ record_id: item.record_id, name: item.name })),
-      saleKey: writeService.sessions.submitKeyFor(openId, session, 'sale'),
-      replenishKey: writeService.sessions.submitKeyFor(openId, session, 'replenish'),
-      // ⭐ 退货那把键（第三条链；与销售 / 补货**互不覆盖** —— 会话语义见 scanSessionService）
-      returnKey: writeService.sessions.submitKeyFor(openId, session, 'purchase_return'),
-      paymentMethods,
-      defaultPaymentMethod,
-      // ⭐⭐ 总单层的**「付款情况」**（整单三档）：默认档来自配置（**全付**）；
-      //     校验失败原地重渲染时，用**她刚才选的那一档**（`extra.paymentStatus`）。
-      paymentStatus: String(extra.paymentStatus || writeConfig.sale.paymentStatus?.default || ''),
-      defaultPaymentStatus: writeConfig.sale.paymentStatus?.default || '',
-      // ⭐ 「部分付」时资金区填的**实付多少**（另外两档服务端不看它）；同样原样回填。
-      paidAmount: extra.paidAmount === undefined || extra.paidAmount === null
-        ? '' : String(extra.paidAmount),
-      // ⭐⭐ 总单层的多笔收款行：预置 N 行（第一行默认「微信」）；校验失败重渲染时
-      //     用**她刚填的那几行**（值原样带回来，她改一改就能再提交）。
-      paymentRows: buildPaymentRows({
-        count: writeConfig.sale.paymentRowCount,
-        defaultMethod: defaultPaymentMethod,
-        rows: extra.paymentRows,
-      }),
-      // 校验失败时挂在表单上方的那句人话（差额）；成功路径上是空串。
-      errorText: String(extra.errorText || ''),
-      // 「刚加入本单」那一句（**文案来自配置**，只有数字来自会话 ⇒ 没有回显注入面）。
-      notice: String(req.query?.added || '') === '1' && lines.length
-        ? fillWriteText(texts.lineAddedBanner, { count: lines.length })
-        : '',
-    };
-  };
-
-  /**
-   * ⭐⭐ 2026-10-13 **口径变更**（她的原话，逐字）：
-   *   「"提交这一单"就说明**这一单已经结了**呀，如果我再操作的话，**应该就跟这一单没关系了**，
-   *     除非我是选"**再加一双**"呀」
-   *  ⇒ `/s`（**不带编号**）= **销售领域入口页**（= 她说的"销售首页" ✓）：
-   *    · 提交成功后回跳这里（回跳 URL 带 `?done=<单号>` ⇒ 顶部"上一单已提交（单号）" ✓ 无状态）
-   *    · 手输编号 ⇒ **302 到 `/s/<编号>`**（兜底 ✓）
-   *  ⚠️ 改前这里是"缺编号 ⇒ 400 这个链接不对" ✗；**改后 `GET /s` 是有意义的入口** ✓
-   *     （**认不出的编号**仍走原来的 400 人话页 ✓ 那条没动 ✗）
-   */
   router.get('/', async (req, res) => {
     const requestId = req.requestId;
     const number = String(req.query?.number || '').trim();
@@ -1185,6 +777,7 @@ const createScanPageRouter = (options = {}) => {
     });
     return res.status(204).end();
   });
+
 
   router.get(ROUTE_PATTERNS, async (req, res) => {
     const requestId = req.requestId;
@@ -1247,7 +840,6 @@ const createScanPageRouter = (options = {}) => {
     //    路由开销）。实测它正是"total 减去各分段之后那 1.0~2.6 秒"的主要来源 ✗ ——
     //    现在把它也归到一段里，`stages_gap_ms` 才说明得了问题。
     const handlerStartedAt = Date.now();
-    let acceptance = null;
     try {
       // ⚠️ Express 已经把路由参数解码过一次（`%7C` → `|`，未编码的中文也照收）；
       //    service 里再解一次是为了容忍双重编码，并且对孤立 `%` 的输入不抛。
@@ -1268,27 +860,6 @@ const createScanPageRouter = (options = {}) => {
           number: view.number, fallback: view.fallback, realm, target: scanTargetOf(req),
         });
       }
-      // ⭐⭐ 2026-10-11（方案A + 六领域）：**服务器记住她正在做什么** ——
-      //    「每次扫码都会打开一个新页面」（标签上的码内容固定、不带参数）⇒ 新页面不知道她刚在哪个领域。
-      //    规则只有一条、且**只覆盖缺省领域**：正开着一场验收（会话未完成、未过期）时，
-      //    **裸扫**（没有 `?from=`）这一页 = **【验收】领域**；
-      //    她点【销售】/【补货】/【退货】/【库存】/【货品】照旧去那些领域（**随时能离开**）；
-      //    她点【验收】而这一场已结束/过期 ⇒ 验收领域自己那张人话卡（"回工作台点【验收】"）。
-      //    ⚠️ 本轮**只做验收接管**（业务负责人批的就是这一条）；退货 / 补货**暂不接管**。
-      if (arrival() && !explicitRealm) {
-        const session = await arrival().get(openIdOf(req)).catch(() => null);
-        if (session && session.status === 'open') {
-          realm = ACCEPTANCE_REALM;
-          acceptance = acceptanceContext(session, {
-            postAction: postActionFor(backTargetFor(req, view.number), ACCEPTANCE_REALM),
-            notice: String(req.query?.duplicate || '') === '1'
-              ? writeConfig.texts.acceptDuplicateBanner
-              : (String(req.query?.accepted || '') === '1'
-                ? fillWriteText(writeConfig.texts.acceptAddedBanner, { scanned: session.scanned || 0 })
-                : ''),
-          });
-        }
-      }
       // ⭐⭐ 2026-10-12（她拍板）：「扫 16 ⇒ 补货 ⇒ 提交 ⇒ 继续扫 ⇒ **自动还是补货**」——
       //   **裸扫**（标签码不带 `?from=`）时用**她最近用过**的那个领域；从来没记过 ⇒ 仍是缺省（销售 ✓）。
       //   ⚠️ 显式 `?from=` 永远优先 ✓；⚠️ 上面"正开着验收 ⇒ 裸扫进验收"的接管**优先于**这条 ✓。
@@ -1304,17 +875,7 @@ const createScanPageRouter = (options = {}) => {
       // ⚠️ 验收模式那一块**只用到文案 / 字段名 / 动作名**（它们都在配置里）——
       //    所以即使扫码写入口整个关着（`write` 为 null），验收模式照旧可用：
       //    这里给它一个最小的上下文（不构造销售 / 补货那两条链的任何东西）。
-      const writeForRender = write || (acceptance ? {
-        enabled: true,
-        texts: writeConfig.texts,
-        fields: writeConfig.fields,
-        actions: writeConfig.actions,
-        postAction: acceptance.postAction,
-        acceptDefaultQuantity: writeConfig.acceptance.defaultQuantity,
-        saleEnabled: false,
-        replenishEnabled: false,
-        returnEnabled: false,
-      } : null);
+      const writeForRender = write;  // ⭐ 2026-10-14 晚：验收模式的"最小上下文"随验收退场 ✓
       const renderStartedAt = Date.now();
       // ⭐ 2026-10-11「货品」领域：把**打印队列的真实状态**带进渲染层（在线 / 未连接 +
       //    这一款最近一次任务）。⚠️ 只在这个领域取 —— 别的领域一次都不碰打印那条链路。
@@ -1331,18 +892,8 @@ const createScanPageRouter = (options = {}) => {
         : null;
       // ⭐ 2026-10-11：把 UA 交给渲染层 —— 它只用来决定本单条上【继续扫下一个】
       //    是"飞书客户端内的扫一扫 AppLink"还是那句如实的人话（`canScanNextWithFeishu`）。
-      // ⭐⭐ 2026-10-12（业务负责人）：「**验收还是只在扫码页**，我不需要在工作台」
-      //    ⇒ 验收领域**没有正在进行的验收**时，不给她"回工作台"那张卡：
-      //    **自己去列未到货的批次**（点一条就进），再给手输兜底。
-      //    ⚠️ 只在这个领域读一次那张表；读表失败**不把页面打红**（服务层如实返回 ok:false，
-      //    这里记一条 warn，页面走手输兜底 —— 与她的"别卡住她"一致）。
-      const acceptPending = realm === ACCEPTANCE_REALM && !acceptance
-        ? await loadPendingBatches(requestId)
-        : null;
       const html = renderScan(view, config, writeForRender, realm, {
         userAgent: req.headers['user-agent'],
-        acceptance,
-        acceptPending,
         // ⭐⭐ 2026-10-13：提交后回跳带过来的单号 ⇒ 顶部那条"上一单已提交"的指引（没有就不显示 ✓）
         justSubmittedOrderNo: String(req.query?.[config.successReturn?.noticeKey || 'done'] || '').slice(0, 40),
         // ⭐ 这一页挂在哪个前缀上（`/s` 或 `/r`）—— 自助块里的批次链接/手输表单必须**留在同一前缀**。
@@ -2207,53 +1758,10 @@ const createScanPageRouter = (options = {}) => {
         });
       }
 
-      // ── ⭐⭐ 2026-10-11（方案A）扫码验收：把这一双记进本次验收 ────────────────
-      //    与其它写入口同一形状：**只动本地会话**（业务表一字不写）＋ 303 回同一页。
-      if (action === actions.acceptAdd) {
-        if (!arrival()) {
-          return sendHuman(res, 503, {
-            title: writeConfig.texts.acceptModeTitle, body: writeConfig.texts.writeDisabledBody, requestId,
-          });
-        }
-        const view = await service.lookup({ ...lookupInputOf(req), requestId });
-        if (!view.found) {
-          return notFoundPage(res, requestId, {
-            number: view.number, fallback: view.fallback, realm, target: scanTargetOf(req),
-          });
-        }
-        const result = await arrival().addScan({
-          openId,
-          productRecordId: view.product_record_id,
-          size: body[fields.acceptSize],
-          quantity: body[fields.acceptQuantity],
-        });
-        const back = postActionFor(backTargetFor(req, view.number), ACCEPTANCE_REALM);
-        if (!result.ok) {
-          // 不在本批 / 没会话 / 数量不合法：**如实说一句人话**（她原地刷新就能接着扫）。
-          logWarn(writeConfig.events.acceptNotInBatch, {
-            request_id: requestId, reason: result.reason, number: view.number,
-          });
-          return sendHuman(res, 400, {
-            title: writeConfig.texts.acceptModeTitle,
-            body: result.message,
-            requestId,
-            retryHint: writeConfig.texts.failedRetryHint,
-          });
-        }
-        return res.redirect(303, `${back}${result.duplicate ? '&duplicate=1' : '&accepted=1'}`);
-      }
-
-      // 【完成验收】⇒ 入库 + 批次改「已到货」（实际到货 = 已扫合计；只收「实际金额」）
-      if (action === actions.acceptFinish) {
-        if (!arrival()) {
-          return sendHuman(res, 503, {
-            title: writeConfig.texts.acceptModeTitle, body: writeConfig.texts.writeDisabledBody, requestId,
-          });
-        }
-        return await handleAcceptFinish(req, res, requestId);
-      }
-
-      // 动作名不认识（老页面 / 手改表单）：**明确回一张人话页**，不静默。
+      // ⭐⭐ 2026-10-14：**所有动作分支都不匹配 ⇒ 照旧给人话**（`unknownActionFailure`）——
+      //   ⚠️ 拆验收那几刀时，这个**通用兜底调用点**被连带摘掉过 ✗ ⇒ 症状：未知动作的 POST
+      //      **永远没人应答** ⇒ 客户端 `fetch` 挂住 ≈301 秒 ✗（`test/scanPageWrite.test.js` 的 ⑨ 抓到 ✓）
+      //   ⇒ 这里按 HEAD 的原样补回（**产品行为修复** ✓ 不是改测试绕开 ✗）
       return unknownActionFailure(req, res, requestId, action);
     } catch (error) {
       // 走到这里说明是**没预料到**的异常（写服务内部已把业务失败都收敛成人话结果）。

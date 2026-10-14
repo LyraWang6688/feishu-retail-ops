@@ -34,8 +34,6 @@ const ROUTE = Object.freeze({
   // ⭐ 2026-10-12：**验收落地页**的路径模板（**唯一来源**）—— 路由用它拼跳转与表单目标，
   //    渲染层用它给「未到货批次」那几条链接（两边各写一份必然漂）。
   //    `{batchNo}` 会被 URL 编码后填进去；手输兜底那个 GET 表单用 `acceptPath`。
-  acceptancePath: '/accept',
-  acceptanceLandingPath: '/accept?batch={batchNo}',
   // ⭐⭐ 2026-10-12（治根）：**新二维码 = 记录 ID 直达** —— `GET/POST /r/{recordId}`。
   //
   // 起因（她今天的口径，逐字）：「如果必须得要一个完全不变的标识，那我们是不是可以用
@@ -185,23 +183,13 @@ const TEXTS = Object.freeze({
   // ⭐ 验收领域自己开工（她点【验收】时看到的那一块）：
   //    ① 列未到货批次（每条一行、点进 `/s/accept?batch=…`）；② 手输批次号兜底。
   //    ⚠️ 全是**功能名/事实**，没有说明书腔。
-  acceptPendingTitle: '未到货的批次',
   // ⭐⭐ 2026-10-12 21:11（她真机）：输入框空着点【进入验收】⇒ 表单 GET 不带 batch ⇒ **原地重画同一页**
   //    ⇒ 她的感受是"点了之后里面啥也没有" ✗ ⇒ 空提交必须**即时给一句人话**（就在那颗按钮上方）。
-  acceptPendingEmptySubmitHint: '请先点上面那一条批次，或在下面输入批次号。',
   // ⭐⭐ 2026-10-12 21:20（她"一直点那个按钮"）：反馈脚本的**兜底文案**（属性为空时用它，**绝不许把按钮变空白**）。
   submitSubmittingFallback: '正在提交，请不要重复点…',
   // ⭐ 金额是必填（>0）：前端**即时**就能感知（点按钮就有提示，**不发请求**）。
-  acceptAmountRequiredLabel: '实际金额（必填）',
-  acceptAmountRequiredHint: '请填一个大于 0 的实际金额。',
-  acceptPendingEmptyBody: '现在没有未到货的批次：可以直接填批次号进验收。',
-  acceptPendingManualTitle: '填批次号',
-  acceptPendingManualPlaceholder: '输入批次号',
-  acceptPendingManualSubmit: '进入验收',
   // 批次行上那个数量的前缀（她那边叫「录入数量」—— 与 9 点推送同一口径）。
-  acceptPendingQuantityLabel: '录入数量',
   // 每一条批次行右边那句事实（供应商 / 录入数量，**读得到才显示**）。
-  acceptPendingMetaSeparator: ' · ',
   realmEmptyAction: '看看这一款的库存 →',
   // 空编号（`/s/` 或全是空白）与解码失败都回这一页。
   badNumberTitle: '这个链接不对',
@@ -470,26 +458,6 @@ const PAGE_BUILD = [
   String(process.env.APP_COMMIT || '').slice(0, 7),
 ].filter(Boolean).join('@');
 
-/**
- * ⭐⭐ 2026-10-13（独立复核挖出）：`SUCCESS_RETURN.acceptHome` 原来是**假配置** ✗
- * —— 有定义、有注释，**零读取点**；验收成功页的落点写死在路由里 ✗（注释还谎称"走配置"✗）。
- * 现在**真接上**：配置值 ⇒ 确定 URL（**一处改** ✓ 别写死 ✗）。
- *  · `pendingBatches` ⇒ **未到货批次列表**（她 2026-10-12 选的 ① ✓ 默认）
- *  · `lastBatch`      ⇒ **刚验完那一批**的验收页（另一个**真实可用**的落点）
- * ⚠️ 用**函数声明**（会提升）：config 对象字面量在上面就把它导出去了 ⇒ `const` 箭头会撞 TDZ ✗（踩过）
- * ⚠️ 认不出的值 ⇒ **回落默认**（不炸 ✓）
- */
-const ACCEPT_HOME_PATHS = Object.freeze({
-  pendingBatches: ({ baseUrl, acceptancePath }) => `${baseUrl}${acceptancePath}`,
-  lastBatch: ({ baseUrl, acceptancePath, batchNo }) =>
-    `${baseUrl}${acceptancePath}?batch=${encodeURIComponent(String(batchNo || ''))}`,
-});
-
-function resolveAcceptHomePath(acceptHome, ctx = {}) {
-  const pick = ACCEPT_HOME_PATHS[String(acceptHome || '').trim()];
-  return (pick || ACCEPT_HOME_PATHS.pendingBatches)(ctx);
-}
-
 const SUCCESS_RETURN = Object.freeze({
   enabled: true,
   // 先让她**看到结果**，约 2 秒后再跳（不许秒跳 ✗）
@@ -632,7 +600,6 @@ const EVENTS = Object.freeze({
     // ⭐ 2026-10-13：`/accept`（批次列表页）的分段耗时（她点 4、5 次才过去 ✗）
     // ⭐ 2026-10-13：销售首页（不带编号）被打开过（手输编号那条也记一条 ✓）
     salesHomeOpened: 'scan.sales_home.opened',
-    pendingTiming: 'scan.accept.pending_timing',
   viewed: 'scan.page.viewed',
   notFound: 'scan.page.not_found',
   // ⭐⭐ 2026-10-12：`/r/{recordId}` 这条路的正向证据 / 失败证据。
@@ -793,7 +760,6 @@ const SCAN_PAGE = Object.freeze({
   //   ⚠️ 唯一来源：她哪天要改回"回补货"，**只改这一处**（别散在两处 ✗）。
   successReturn: SUCCESS_RETURN,
   // ⭐ 2026-10-13：验收成功页的落点映射（**函数声明** ⇒ 提升 ✓ 不会 TDZ）
-  resolveAcceptHomePath,
   productSnapshot: PRODUCT_SNAPSHOT,
   events: EVENTS,
   // ⭐ 2026-10-11：【继续扫下一个】的手段（飞书扫一扫 AppLink，见上面的长注释）。
