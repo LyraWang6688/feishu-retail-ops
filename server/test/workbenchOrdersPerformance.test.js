@@ -254,15 +254,21 @@ test('AC6 每张表只读一次（无重复读），且 6 次是并行发出的'
 //   2026-10-14: +accessory-sale and +acceptance (both add/change sales rows -> must invalidate)
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC7 六条写入路径（补收款/补实收/交付/售后/二次交付/补样品）写成功后都作废缓存', () => {
+test('AC7 七条写入路径（补收款/补实收/交付/售后/二次交付/补样品/续写重试）写成功后都作废缓存', () => {
   const workbench = readSrc('src/routes/workbench.js');
   const orderActions = readSrc('src/routes/workbenchOrderActions.js');
 
   // ① `routes/workbench.js` 里四条：sample-fill / payments / detail-amounts / deliveries
   // 2026-10-14: +1 = the accessory-sale write entry (a new sale must invalidate the orders cache)
-  assert.equal((workbench.match(/ordersCache\.invalidate\(\)/g) || []).length, 6,
-    'workbench.js 里四条写入口各作废一次');
-  for (const route of ["'/sales/sample-fill'", "'/sales/payments'", "'/sales/detail-amounts'", "'/sales/deliveries'"]) {
+  // ⭐⭐ 2026-10-15（⑨b-1）**成对翻新**：6 → 7
+  //   改前逐字：`(workbench.match(/ordersCache\.invalidate\(\)/g) || []).length, 6, 'workbench.js 里四条写入口各作废一次'`
+  //   改后逐字：`… .length, 7, 'workbench.js 里五条写入口各作废一次（+ 2026-10-15 的「续写/重试」）'`
+  //   依据：⑨b-1 新增 `POST /sales/retry`（工作台「续写/重试」）—— 它**会写业务表**（把没写完的单接着写完）
+  //        ⇒ **必须**跟着作废订单缓存（否则她重试完刷新看到的还是旧数据 ✗）⇒ 本哨兵的**本意完全成立**，
+  //        只是"已登记的写入路径"从 6 条变 7 条 ✓（判据**没放宽**：新那条也进了下面那个逐条邻近检查 ✓）
+  assert.equal((workbench.match(/ordersCache\.invalidate\(\)/g) || []).length, 7,
+    'workbench.js 里五条写入口各作废一次（含 2026-10-15 的「续写/重试」）');
+  for (const route of ["'/sales/sample-fill'", "'/sales/payments'", "'/sales/detail-amounts'", "'/sales/deliveries'", "'/sales/retry'"]) {
     const at = workbench.indexOf(`router.post(${route}`);
     assert.ok(at > 0, `找不到写入口 ${route}`);
     const body = workbench.slice(at, workbench.indexOf('router.', at + 10));
