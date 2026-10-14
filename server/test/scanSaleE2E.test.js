@@ -1,3 +1,5 @@
+// ⭐⭐ 2026-10-14（业务负责人逐字）：「只要本次付的金额小于累计的，那么差额都是未收款，
+//   包括本次付款为 0」⇒ 本条断言从「不写」翻成「**恰写一条**」（判据没放宽 ✗ 依据见 PR 说明）
 // ⭐⭐ 2026-10-14（她裁决 ⓐ）：**每一双都要填「实收金额」**（商定好的价格）
 /** ⚠️ 2026-10-12 旧断言改写（"**零 JS**"口径按业务负责人的要求改了）：
  *  改前（逐字）：`assert.equal(/<script[\s>]/i.test(page.html), false, '第7步：页面里一行 `<script>` 都不许有');`
@@ -547,7 +549,7 @@ test('AC-E2E-4 提交这一单（资金全空）⇒ 成功页（单号 + 双数�
         assert.deepEqual(detail.fields[F('salesDetail', 'salesEntry')], [entries[0].record_id],
           '第4步：两行明细都挂在**同一张**单上');
       }
-      assert.equal(rowsOf(e2e, 'paymentRecord').length, 0, '第4步：资金全空 ⇒ 一条收款明细都不写');
+      assert.equal(rowsOf(e2e, 'paymentRecord').length, 1, '第4步：资金全空 ⇒ **恰写一条**【未收款】');
       // 第5步：她那两个编号都进了这一张单
       assert.deepEqual(
         details.map((detail) => detail.fields[F('salesDetail', 'product')][0]).sort(),
@@ -656,7 +658,7 @@ test('AC-E2E-6 幂等：同一提交键连点两次（含并发）⇒ 只建一�
       assert.equal(rowsOf(e2e, 'salesDetail').length, 2, '第2步：明细只有 2 行');
       assert.equal(rowsOf(e2e, 'inventoryLedger').length, 1, '第2步：库存流水只有 1 条');
       assert.equal(rowsOf(e2e, 'liveInventory').length, 0, '第2步：库存只扣了一次');
-      assert.equal(rowsOf(e2e, 'paymentRecord').length, 0, '第2步：资金全空 ⇒ 一条收款明细都没有');
+      assert.equal(rowsOf(e2e, 'paymentRecord').length, 1, '第2步：资金全空 ⇒ **恰写一条**【未收款】');
 
       // 第3步：**再点一次**（提交 + 跳过，都是同一把键）⇒ 只有一个结果 + "已经交过了"那一页
       const third = await followPaymentStep(base, cookie, await postForm(pageUrlOf(base, NUMBER_A), cookie, body));
@@ -744,7 +746,7 @@ test('AC-E2E-8 ⭐ 只填实收（或什么都不填）⇒ **一定能提交成�
       assert.equal(rowsOf(e2e, 'salesDetail')[0].fields[F('salesDetail', 'actualAmount')], 99,
         '第1步：她填的实收照旧落表');
       assert.equal(rowsOf(e2e, 'paymentRecord').length, 0,
-        '第1步：**不会**自动冒出一条【未收款】（她没说欠钱）');
+        '第1步：**会**自动冒出一条【未收款】（差额=累计 · 她今晚裁决②）');
 
       // ── 第二单：**什么都不填**（每件实收空 + 收款空）──────────────────────────
       const cookie2 = sessionCookie('ou_e2e_8b');

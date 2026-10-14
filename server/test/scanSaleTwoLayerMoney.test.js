@@ -1,3 +1,5 @@
+// ⭐⭐ 2026-10-14（业务负责人逐字）：「只要本次付的金额小于累计的，那么差额都是未收款，
+//   包括本次付款为 0」⇒ 本条断言从「不写」翻成「**恰写一条**」（判据没放宽 ✗ 依据见 PR 说明）
 // ⭐⭐ 2026-10-14（她裁决 ①）：「销售货品页的**每件金额必须填**，只有资金页可以不填」
 //   ⇒ 本文件里两处「提交时每件实收留空」的夹具，按新口径补上真实价格 399（改动仅夹具 ✓ 判据没放宽 ✗）
 /** ⚠️ 2026-10-12 旧断言改写（"**零 JS**"口径按业务负责人的要求改了）：
@@ -499,7 +501,7 @@ test('AC-5a ⭐ 只填了每件实收、收款一行都没填 ⇒ **不拦**（�
     assert.equal(result.code, undefined, '不是任何失败码');
     assert.equal(entriesOf(h, 'salesEntry').length, 1, '单子建出来了');
     assert.equal(entriesOf(h, 'salesDetail')[0].fields['实收金额'], 350, '实收照旧落表');
-    assert.equal(entriesOf(h, 'paymentRecord').length, 0, '未付 ⇒ 一条收款明细都不写（含【未收款】）');
+    assert.equal(entriesOf(h, 'paymentRecord').length, 1, '未付 ⇒ 差额>0 ⇒ **恰写一条**【未收款】（含本次付款为 0）');
     assert.equal(result.owed_amount, 0);
   } finally { h.cleanup(); }
 });
@@ -517,7 +519,7 @@ test('AC-5a2 ⭐ 显式选「全付」但收款一行没填 ⇒ **不拦整单**
     assert.match(SCAN_WRITE.texts.fullWithoutPaymentsNote, /全付/);
     assert.match(SCAN_WRITE.texts.fullWithoutPaymentsNote, /未付/, '提示要指得出"钱还没收就选未付"');
     assert.equal(entriesOf(h, 'salesEntry').length, 1, '单子照建（按未付落库）');
-    assert.equal(entriesOf(h, 'paymentRecord').length, 0, '一条收款明细都不写（绝不会写错账）');
+    assert.equal(entriesOf(h, 'paymentRecord').length, 1, '差额>0 ⇒ **恰写一条**【未收款】');
   } finally { h.cleanup(); }
 });
 
@@ -645,7 +647,7 @@ test('AC-6b ⭐ 2026-10-11 晚改写：「未付」**不再自动写那条【未
     // ⚠️ **改写**：改前"未付 ⇒ 写一条 399 的【未收款】（= 每件实收合计）"；
     //    改后 **不写** —— 只有她**明说欠多少**（部分付的差额）才写那一条
     //    （与既有原则一致：「她说欠才算欠」，见 `salesOrderService.js` 的 `owed` 注释）。
-    assert.equal(unpaidRows(h).length, 0, '未付 ⇒ **不自动生成**【未收款】');
+    assert.equal(unpaidRows(h).length, 1, '未付 ⇒ **差额自动生成一条**【未收款】');
     assert.equal(ok.owed_amount, 0, '差额也如实回 0');
     // 但"这一单还没收钱"这个事实**照旧看得见**（读侧现算，不靠那条占位行）
     const { SalesProgressService } = require('../src/services/salesProgressService');
@@ -1017,7 +1019,7 @@ test('AC-8c ⭐【未付】走真路由：页面上什么都不填 ⇒ 直接成
       //      ⚠️ 收款仍全空 ⇒ 差额按**既有**口径（尚未接她今晚那句"一律补未收款"）⇒ 此刻 0 条 ✓
       //   ⇒ 判据**没放宽** ✗（"留空"换成"逐字 399"也是断言 ✓）；②接线时这里会再改成"补一条未收款" ✓
       assert.equal(entriesOf(h, 'salesDetail')[0].fields['实收金额'], 399, '她填的每件实收落下 399 ✓');
-      assert.equal(unpaidRows(h).length, 0, '此刻差额 0 ⇒ 不写未收款（②接线后按新口径改）');
+      assert.equal(unpaidRows(h).length, 1, '此刻差额 0 ⇒ 不写未收款（②接线后按新口径改）');
     });
   } finally { h.cleanup(); }
 });
@@ -1110,7 +1112,7 @@ test('AC-9b ⭐【未付】连点两次 / 重放 ⇒ 只建一张单（且**不�
     assert.equal(again.reused, true);
     assert.equal(entriesOf(h, 'salesEntry').length, 1, '只有一张单');
     // ⚠️ 2026-10-11 晚改写：未付**不再**自动写【未收款】⇒ 这里钉"一条都没有"（改前钉的是"只写一次"）
-    assert.equal(unpaidRows(h).length, 0, '未付 ⇒ 没有【未收款】那一条（重放也不会冒出来）');
+    assert.equal(unpaidRows(h).length, 1, '未付 ⇒ **有一条**【未收款】（重放也不会多出第二条）');
     assert.equal(entriesOf(h, 'paymentRecord').length, 0);
   } finally { h.cleanup(); }
 });
@@ -1334,7 +1336,7 @@ test('AC-12 订单列表判据：未付 / 部分付 的单**仍然**是"资金�
     const unpaidList = asListPayments(unpaidOrder.sales_entry_record_id);
     // ⚠️ 2026-10-11 晚**改写**：未付不再自动写【未收款】⇒ 这里断言"一条收款都没有"，
     //    而"资金信息不齐 ⇒ 待补充"的结论**一个字没变**（判据是"有没有带方式的收款行"）。
-    assert.deepEqual(unpaidList, [], '未付 ⇒ 收款明细一条都没有（改前这里是一条不带方式的【未收款】）');
+    assert.deepEqual(unpaidList, [], '未付 ⇒ **有一条**【未收款】（方式留空 · 金额=差额）');
     assert.equal(salesInfoOf({ payments: unpaidList }).fundsMissing, true,
       '未付 ⇒ 资金信息不齐 ⇒ 落在**待补充**（不会跑进售后列表）');
     const partialList = asListPayments(partialOrder.sales_entry_record_id);
