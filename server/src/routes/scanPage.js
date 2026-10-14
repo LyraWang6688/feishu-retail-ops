@@ -1567,8 +1567,27 @@ const createScanPageRouter = (options = {}) => {
             paidCents: String(pendingPaidAmount ?? '').trim() === '' ? null : toCents(pendingPaidAmount),
           });
           if (settlement.action === 'block') {
-            // ⚠️ 文案：只从**既有配置**取（`texts[code]` 有就用 ✓ 没有就留空 —— **不编中文** ✗）
-            const blockText = writeConfig.texts?.[settlement.code] || '';
+            // ⚠️ 文案：**只用既有那几条模板**（`config/scanWrite.js` 的 texts ✓ **不编中文** ✗）
+            //   ⭐「全付两边不等」那条要带上**差额金额**（她一眼看到"少多少/多多少"✓ 实测 AC-E2E-16 ✓）
+            const blockText = (() => {
+              const t = writeConfig.texts || {};
+              const money = (cents) => `¥${(cents / 100).toFixed(2).replace(/\.00$/, '')}`;
+              const itemsCents = pendingLineAmounts.reduce((sum, value) => sum + toCents(value), 0);
+              const paymentsCents = pendingPayments.reduce((sum, row) => sum + toCents(row.amount), 0);
+              if (settlement.code === 'amount_mismatch' && t.amountMismatchBody) {
+                const diff = Math.abs(paymentsCents - itemsCents);
+                const side = itemsCents === 0
+                  ? fillWriteText(t.amountMismatchNoItems, { diff: money(diff) })
+                  : fillWriteText(
+                    paymentsCents > itemsCents ? t.amountMismatchOver : t.amountMismatchShort,
+                    { diff: money(diff) },
+                  );
+                return fillWriteText(t.amountMismatchBody, {
+                  items: money(itemsCents), payments: money(paymentsCents), side,
+                });
+              }
+              return t[`${settlement.code}Body`] || t[settlement.code] || '';
+            })();
             return sendPaymentStep(res, req, {
               realm,
               submitKey: body[fields.submitKey],

@@ -1063,21 +1063,28 @@ test('AC-E2E-16 ⭐ 每件实收旁边写明「可以留空」；400 校验页�
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
       assert.match(page.html, /可以留空/, '每件实收旁边要写明"可以不填"（她的痛点是费劲）');
 
-      // 全付 + 收款 200、实收 150 ⇒ 差额 → 400，人话差额必须在**最上面**（H1）
-      const rejected = await followPaymentStep(base, cookie, await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+      // ⭐⭐ 2026-10-14（新流程**两步**）：① 点提交 ⇒ **只到资金页**（这时还不校验钱 ✓）
+      //   ② 点资金页那颗【提交整单付款】（全付 + 收款 200 + 实收 150）⇒ **才校验** ⇒ 400 + 人话 ✓
+      const step1 = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
+      });
+      assert.equal(step1.status, 200, '第一步：到资金页');
+      assert.ok((await step1.clone().text()).includes('data-view="payment-step"'), '第一步：是资金页');
+      const rejected = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+        action: SCAN_PAGE.paymentStep.payAction, submit_key: submitKeyOf(page.html),
         payment_status: PAYMENT_STATUS.full, payment_method: '微信', payment_amount: '200',
         method: ['微信'], amount: ['200'], line_amount: ['150'],
-      }));
+      });
       const html = await rejected.text();
       assert.equal(rejected.status, 400);
-      // 原地重渲染那一版：差额必须挂在**销售块最上面**（`.form-alert`），
-      // 而且位置要在**提交按钮之前**（她一眼就能看到，不用往下翻）。
-      const alert = (html.match(/<p class="form-alert">([\s\S]*?)<\/p>/) || [])[1] || '';
-      assert.match(alert, /差|¥/, `人话差额要挂在销售块最上面：实际 = ${alert}`);
-      assert.ok(html.indexOf('form-alert') < html.indexOf('value="submit_order"'),
-        '差额要在提交按钮**上面**');
-      assert.equal(/<p class="form-alert">[^<]*没提交成功/.test(html), false,
+      // ⓵ 拦住时**原地重渲染资金页** ✓（她改一下就能再点 ✓ 不用回上一步 ✓）
+      assert.ok(html.includes('data-view="payment-step"'), '拦住时重渲染的是**资金页**');
+      // ⓶ 差额那句人话必须挂在这一页的**最上面**（在付款表单**之前** ✓ 她一眼就能看到 ✓）
+      const alert = (html.match(/data-view="payment-step-notice">([\s\S]*?)<\/p>/) || [])[1] || '';
+      assert.match(alert, /差|¥|对不上/, `人话差额要挂在资金页最上面：实际 = ${alert}`);
+      assert.ok(html.indexOf('payment-step-notice') < html.indexOf('data-view="payment-pay"'),
+        '差额要在付款表单**上面**（她不用往下翻 ✓）');
+      assert.equal(/<p class="hint" data-view="payment-step-notice">[^<]*没提交成功/.test(html), false,
         '泛泛的"没提交成功"不许占着最上面那一行');
     });
   } finally { e2e.cleanup(); }
