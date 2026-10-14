@@ -1401,7 +1401,9 @@ const createScanWriteService = (options = {}) => {
    * @param {Array<{size:number|string, quantity:number|string}>} input.entries 勾选的尺码与退货数量
    * @returns {Promise<object>} 成功时带 `batch_no / request_count / taken_count / shortfall / shortfalls`
    */
-  const submitPurchaseReturn = async ({ openId, submitKey, productRecordId = '', number = '', entries = [], requestId = '' }) => queue.run(`sale:${openId}`, async () => {
+  const submitPurchaseReturn = async ({
+    openId, submitKey, productRecordId = '', number = '', entries = [], requestId = '', orderAmount = '',
+  }) => queue.run(`sale:${openId}`, async () => {
     if (!config.purchaseReturn.enabled) {
       return fail({ code: 'disabled', message: texts.writeDisabledBody, requestId });
     }
@@ -1505,6 +1507,10 @@ const createScanWriteService = (options = {}) => {
         behavior_record_id: behavior.recordId,
         operator_open_id: openId,
         items,
+        // ⭐ 2026-10-15（她裁决ⓐ）：这一次填的**整单金额**
+        //   ⇒ 写进退货批次行的「实际金额」（由 `purchaseReturnService` 在批次行建好后落）。
+        //   ⚠️ 页面那道闸门已拦了空与非数字；这里原样透传（不重算 ✗）。
+        order_amount: String(orderAmount ?? '').trim(),
       };
       // task id 由**这一次提交的幂等键**推出来 ⇒ 重放同一个键 = 同一个任务
       // ⇒ 批次行 / 明细行 / 库存操作都命中既有幂等（只写一次）。
