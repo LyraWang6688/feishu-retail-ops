@@ -351,8 +351,9 @@ test('AC-R1 【退货】领域里是退货表单：与【一键补货】同形�
       //    改后：断言这一页 = **配品页**（没有可选配品 ⇒ 人话空态卡）；
       //         退货**能力没删**：`returnFormHtml` 仍在渲染层里（下面的源码哨兵）✓
       //    去向：退货链路的行为断言在本文件 **AC-R2…R10**（直接调 `submitPurchaseReturn`，6 条均绿）✓
-      assert.ok(returnHtml.includes('<section class="card state-msg">'), '这一页现在 = 配品页（没配品 ⇒ 人话空态卡）');
-      assert.equal(returnHtml.includes('生成采购退货'), false, '退货表单不再渲染在这一页（她改成配品了）');
+      // 2026-10-14 re-pointed: purchase_return is the RETURNS form again (add-ons moved to `accessory`)
+      assert.ok(returnHtml.includes('data-view="purchase-return"'), 'this page is the returns form');
+      assert.equal(returnHtml.includes(SCAN_WRITE.fields.accessory), false, 'the add-on select is NOT on the returns page (its own realm now)');
       const rendererSrc = require('node:fs').readFileSync(
         require('node:path').join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
       assert.ok(rendererSrc.includes('returnFormHtml'), '退货表单的**能力保留**（returnFormHtml 仍在）✓');

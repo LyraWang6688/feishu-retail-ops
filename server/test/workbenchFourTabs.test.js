@@ -718,9 +718,10 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
   //    改前：['sales','replenish','purchase_return','accept','inventory','product'] / ['销售','补货','退货','验收','库存','货品']
   //    改后：销售·补货·库存 / 标签·上新·配品，验收仍在（有会话才切进来）
   assert.deepEqual(REALMS.map((realm) => realm.id),
-    ['sales', 'replenish', 'inventory', 'product', 'new', 'purchase_return', 'accept']);
-  assert.deepEqual(REALMS.map((realm) => realm.label),
-    ['销售', '补货', '库存', '标签', '上新', '配品', '验收']);
+    // ⚠️ 2026-10-14 改指向（业务负责人最终口径：销售·补货·库存·退货·配品·上新 ✓
+//   见 docs/scan-page-tabs-2026-10-14.md）；改前逐字：['sales', 'replenish', 'inventory', 'product', 'new', 'purchase_return', 'accept']
+['sales', 'replenish', 'inventory', 'purchase_return', 'accessory', 'new', 'product', 'accept']);
+  assert.deepEqual(REALMS.map((realm) => realm.label),['\u9500\u552e', '\u8865\u8d27', '\u5e93\u5b58', '\u9000\u8d27', '\u914d\u54c1', '\u4e0a\u65b0', '\u6807\u7b7e', '\u9a8c\u6536']);
   assert.equal(DEFAULT_REALM, 'sales', '缺省 = 销售（她 2026-10-11：「默认打开是销售页」）');
   // ⚠️ 2026-10-13：解析集 = 7 条（含验收与上新）；条上只六个
   for (const realm of REALMS) assert.equal(resolveRealm(realm.id), realm.id);
@@ -756,7 +757,7 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
     // ⚠️ 2026-10-11：原「采购」那一块 = 现在的 **`replenish`（补货）**（识别句一个字没变）
     ['replenish', 'data-view="one-tap-replenish"', '加入本单'],
     // ⚠️ 2026-10-13 改写：「退货」那一块现在是**配品页**（本用例没配品 ⇒ 人话空态卡）
-    ['purchase_return', '<section class="card state-msg">', '加入本单'],
+    ['purchase_return', 'data-view="purchase-return"', '加入本单'],
     // ⚠️ 2026-10-13 改写：块里标题已从「货品标签」改成「标签」（真字面量）
     ['product', '<h2 class="stock__heading">标签</h2>', '加入本单'],
   ]) {
@@ -819,7 +820,7 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
   //    改后：这一块现在 = **配品页**（本用例没配品 ⇒ 人话空态卡）
   //    理由：她 2026-10-13 明确「你先把扫码页的退货改成配品页面」；退货**能力保留**
   //         （`returnFormHtml` 仍在渲染层，行为断言在 `test/scanPurchaseReturn.test.js`）
-  assert.ok(blockOf('purchase_return', 'purchase_return').includes('<section class="card state-msg">'), '配品页 = 人话空态卡（没配品时）');
+  assert.ok(blockOf('accessory', 'accessory').includes('<section class="card state-msg">'), '配品页 = 人话空态卡（没配品时）');
   // ⭐ 2026-10-12：验收领域没有活跃会话 = **自助块**（列未到货批次 + 手输批次号），不再是「回工作台」卡
   const acceptBlock = blockOf('accept', 'accept');
   assert.ok(acceptBlock.includes('data-view="accept-pending"'), '验收领域（没有活跃会话）= 自助块');

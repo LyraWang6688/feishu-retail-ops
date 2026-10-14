@@ -185,17 +185,21 @@ const WRITE = {
  *     功能标记 `data-view="purchase-sizes"` / `一键补货`。 */
 // ⚠️ 2026-10-13 改写：领域清单换成她的最终版（销售·补货·库存 / 标签·上新·配品），验收仍在解析集里；
 //    改前：['sales','replenish','purchase_return','accept','inventory','product']
-//    改后：['sales', 'replenish', 'inventory', 'product', 'new', 'purchase_return', 'accept']
-const ALL_REALMS = ['sales', 'replenish', 'inventory', 'product', 'new', 'purchase_return', 'accept'];
+//    改后：// ⚠️ 2026-10-14 改指向（业务负责人最终口径：销售·补货·库存·退货·配品·上新 ✓
+//   见 docs/scan-page-tabs-2026-10-14.md）；改前逐字：['sales', 'replenish', 'inventory', 'product', 'new', 'purchase_return', 'accept']
+['sales', 'replenish', 'inventory', 'purchase_return', 'accessory', 'new', 'product', 'accept']
+// ⚠️ 2026-10-14 改指向（业务负责人最终口径）：条上 = 销售·补货·库存·退货·配品·上新 ✓
+//   改前逐字：`['sales', 'replenish', 'inventory', 'purchase_return', 'accessory', 'new', 'product', 'accept']`
+//   （那时 `product`=标签 在条上、`purchase_return`=配品 ✗）；现在 product 撤下条 ✓ 但仍能解析 ✓
+const ALL_REALMS = ['sales', 'replenish', 'inventory', 'purchase_return', 'accessory', 'new', 'product', 'accept'];
 const EXPECT = {
   sales: { has: ['加入本单', '提交这一单'], hasNot: ['库存（共', '一键补货', '货品标签', '生成采购退货'] },
   // ⭐ 2026-10-11：原 `purchase` 那一块 = 现在的 **`replenish`（补货）**（标记与文案一个字没变）。
   replenish: { has: ['data-view="purchase-sizes"', '一键补货'], hasNot: ['加入本单', '库存（共', '货品标签', '生成采购退货'] },
-  // ⚠️ 2026-10-13 改写：这一块从「退货表单」变成「**配品页**」
-  //    改前：has 里是 `data-view="purchase-return"` + 「生成采购退货」
-  //    改后：本用例的写上下文里**没有配品** ⇒ 渲染的是**人话空态卡**（配品那句）
-  //    去向：退货表单那些断言在 `test/scanPurchaseReturn.test.js`（能力没删）
-  purchase_return: { has: [SCAN_PAGE.texts.realmEmptyPurchaseReturnBody], hasNot: ['加入本单', '库存（共', '一键补货'] },
+  // ⚠️ 2026-10-14 改指向：这一块**回到退货表单**（「退货」回条上 ✓ 配品另开 `accessory` ✓）
+  //    改前逐字：`purchase_return: { has: [SCAN_PAGE.texts.realmEmptyPurchaseReturnBody], hasNot: [...] }`
+  //    （那是"配品页 + 没人话空态卡"的口径 ✗）；退货能力一直在 `returnFormHtml` ✓ 一个字没删 ✗
+  purchase_return: { has: ['data-view="purchase-return"'], hasNot: ['加入本单', '库存（共', '一键补货'] },
   // ⭐ 2026-10-12：验收领域没有活跃会话时 = **她自己开工那一块**（列未到货批次 + 手输兜底），
   //    不是白屏、也不再是「回工作台」那张卡（她不去工作台）。
   accept: { has: ['data-view="accept-pending"', SCAN_PAGE.texts.acceptPendingTitle], hasNot: ['加入本单', '库存（共', '一键补货', '生成采购退货'] },
@@ -203,6 +207,9 @@ const EXPECT = {
   // ⚠️ 2026-10-13 改写：块里的标题已从「货品标签」改成「**标签**」（真渲染字面量：`<h2 class="stock__heading">标签</h2>`）
   product: { has: ['<h2 class="stock__heading">标签</h2>', '/workbench/label-print.html'], hasNot: ['加入本单', '库存（共', '一键补货'] },
   // ⚠️ 2026-10-13 新增：「上新」是**外链 tab**（不是页面领域），但它仍在解析集里 ⇒ 渲染出自己那一块
+  // ⭐ 2026-10-14 新增：**配品独立成领域 `accessory`**（配品的单独销售 ✓ docs/scan-page-tabs-2026-10-14.md 任务 B）
+  //   写上下文里没有配品名单 ⇒ 渲染**配品的人话空态卡**（不留空表单 ✗）——与退货块同一种降级 ✓
+  accessory: { has: [SCAN_PAGE.texts.realmEmptyPurchaseReturnBody], hasNot: ['加入本单', '库存（共', '一键补货'] },
   new: { has: ['realm-block--new'], hasNot: ['加入本单', '库存（共', '一键补货'] },
 };
 

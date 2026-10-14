@@ -68,22 +68,25 @@ const SIZE_GROUP_RANGES = SCAN_PAGE.sizeSegments.ranges;
  *    同一条既有口径；工作台那边指向它的入口已全部撤掉（见 `public/workbench/config/domains.js`）。
  */
 const REALMS = Object.freeze([
+  // ⭐⭐ 2026-10-14（业务负责人最终口径，逐字）：「销售 · 补货 · 库存 · 退货 · 配品 · 上新」
   Object.freeze({ id: 'sales', label: '销售' }),
   Object.freeze({ id: 'replenish', label: '补货' }),
   Object.freeze({ id: 'inventory', label: '库存' }),
-  // ⭐ 2026-10-13：**货品 → 标签**（改名 ✓ 内部 id `product` 保留 ✓）
-  Object.freeze({ id: 'product', label: '标签' }),
-  // ⭐⭐ 2026-10-13（她最终顺序）：「第一行 销售·补货·库存；第二行 标签·上新·配品」
-  //    · `new`   = **上新**：不是页面领域，是**直达外链**（服务端配置 `realmBar.newFormUrl` ✓）
-  //    · `purchase_return` = **配品**（原"退货"那一位换成配品；退货挪去工作台 ✓）
+  // ⭐ 「退货」**回到条上**（内部 id `purchase_return` 保留 ✓ 原来 label 被"配品"占着 ⇒ 改回"退货" ✓）
+  Object.freeze({ id: 'purchase_return', label: '退货' }),
+  // ⭐ 「配品」= **新领域**（配品的单独销售 ✓ 见 `docs/scan-page-tabs-2026-10-14.md` 任务 B）
+  Object.freeze({ id: 'accessory', label: '配品' }),
+  // 「上新」= 不是页面领域，是**直达外链**（配置 `realmBar.newFormUrl` ✓）
   Object.freeze({ id: 'new', label: '上新', external: true }),
-  Object.freeze({ id: 'purchase_return', label: '配品' }),
-  // ⚠️ **验收仍在 REALMS 里**（它是"有活跃会话就切进来"的模式 ⇒ 必须能解析 ✓ 只是**不上条**✗）
+  // ⚠️ 「标签」**整格撤下条**（只不上条 ✓ **功能不删** ✗ —— 与验收同样处理：
+  //    留在 REALMS 里 ⇒ 旧 `?from=product` 链接照旧能开 ✓）
+  Object.freeze({ id: 'product', label: '标签' }),
+  // ⚠️ 「验收」仍在 REALMS（有活跃会话就切进来）⇒ 必须能解析 ✓ 只是**不上条** ✗
   Object.freeze({ id: 'accept', label: '验收' }),
 ]);
 
 /** ⭐ 切换条上的**六个 tab**（两行三列 3+3）——「验收」**不在**条上 ✓（见上面那条注释）。 */
-const REALM_TABS = Object.freeze(REALMS.filter((realm) => realm.id !== 'accept'));
+const REALM_TABS = Object.freeze(REALMS.filter((realm) => realm.id !== 'accept' && realm.id !== 'product'));
 
 
 /** ⭐ 切换条上的**六个 tab**（两行三列：3 + 3）——`验收` **不在**条上（它是"有活跃会话才切进来"的模式 ✓）。 */
@@ -103,6 +106,8 @@ const REALM_EMPTY_TEXT_KEYS = Object.freeze({
   sales: 'realmEmptySalesBody',
   replenish: 'realmEmptyPurchaseBody',
   purchase_return: 'realmEmptyPurchaseReturnBody', // ⭐ 2026-10-13 配品页自己的人话（原借用补货那句 ✗）
+  // ⭐ 2026-10-14：配品独立成领域 `accessory` ⇒ 复用上面那句**配品的人话**（零新增文案 ✓）
+  accessory: 'realmEmptyPurchaseReturnBody',
   accept: 'realmEmptyAcceptanceBody',
   new: 'realmEmptyNewBody', // ⭐ 2026-10-13 上新（外链 tab）的人话
 });
