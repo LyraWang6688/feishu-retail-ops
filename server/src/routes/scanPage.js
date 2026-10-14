@@ -1463,6 +1463,21 @@ const createScanPageRouter = (options = {}) => {
         //    **原样交给写服务**，校验（含"全付必须相等"那条）在写服务里做 —— 路由不判业务。
         const payments = parsePaymentRows(body, fields);
         const lineAmounts = asList(body[fields.lineAmount]);
+        // ⭐⭐ 2026-10-14（她裁决 ⓐ）：**每一双都要填「实收金额」**（现货/预订**同一处判** ✓）
+        //   🔴 有空 ⇒ **400 + 人话 + 一个字都不写表** ✗（幂等键/会话都不动 ✓ 不许假成功 ✓）
+        //   ⚠️ **整单收款仍可全空** ✓（「待补充」那条老路保留 ✓）
+        if (writeConfig.lineAmountRequired !== false
+          && lineAmounts.some((value) => String(value ?? '').trim() === '')) {
+          logWarn('scan.write.line_amount_required', { request_id: requestId, lines: lineAmounts.length });
+          return sendPaymentStep(res, req, {
+            realm,
+            status: 400,
+            notice: String(writeConfig.texts.lineAmountRequiredNote || ''),
+            totalAmountText: 0,
+            submitKey: writeService?.sessions?.submitKeyFor?.(openId, false, 'sale') || '',
+            count: lineAmounts.length,
+          });
+        }
         const paymentStatus = String(body[fields.paymentStatus] || '').trim();
         const paidAmount = body[fields.paidAmount] ?? '';
         // ⭐⭐ 2026-10-12：**提交这一步的分阶段耗时** —— 真机被卡住 / 收过 504 之后要的

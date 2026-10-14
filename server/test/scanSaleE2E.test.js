@@ -1,3 +1,4 @@
+// ⭐⭐ 2026-10-14（她裁决 ⓐ）：**每一双都要填「实收金额」**（商定好的价格）
 /** ⚠️ 2026-10-12 旧断言改写（"**零 JS**"口径按业务负责人的要求改了）：
  *  改前（逐字）：`assert.equal(/<script[\s>]/i.test(page.html), false, '第7步：页面里一行 `<script>` 都不许有');`
  *  改后（逐字）：销售页有【提交这一单】⇒ **整页只有那一段**
@@ -498,7 +499,7 @@ const addTwoAndSubmit = async (e2e, cookie, base) => {
     payment_status: PAYMENT_STATUS.unpaid,
     payment_method: '',
     payment_amount: '',
-    line_amount: ['', ''],
+    line_amount: ['280', '280'],
   });
 };
 
@@ -529,7 +530,7 @@ test('AC-E2E-4 提交这一单（资金全空）⇒ 成功页（单号 + 双数�
       // 第2步：**资金全空**（每件实收留空 + 没有收款行）照样提交 —— 门槛只要"货品信息齐"
       const done = await followPaymentStep(base, cookie, await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKey,
-        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['', ''],
+        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['280', '280'],
       }));
       const doneHtml = await done.text();
       assert.equal(done.status, 200, `第2步：资金全空应该直接成单（不是 400）：${doneHtml.slice(0, 200)}`);
@@ -574,7 +575,7 @@ test('AC-E2E-5 ⭐ 现货行已交付 + 库存真的少 1（流水 1 条）；�
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
       const done = await followPaymentStep(base, cookie, await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
-        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['', ''],
+        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['280', '280'],
       }));
       assert.equal(done.status, 200, `第2步：提交要成功：${(await done.text()).slice(0, 200)}`);
 
@@ -628,7 +629,7 @@ test('AC-E2E-6 幂等：同一提交键连点两次（含并发）⇒ 只建一�
       const submitKey = submitKeyOf(page.html);
       const body = {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKey,
-        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['', ''],
+        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['280', '280'],
       };
 
       // ⭐⭐ 2026-10-14（她逐字：「**确认状态是资金那页点击了按钮之后，才算是用户确认了**」）：
@@ -692,7 +693,7 @@ test('AC-E2E-7 提交后本单归零：再打开 ⇒ 本单：0 双，本单条�
 
       const done = await followPaymentStep(base, cookie, await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
-        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['', ''],
+        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['280', '280'],
       }));
       assert.equal(done.status, 200, `第2步：提交要成功：${(await done.text()).slice(0, 200)}`);
 
@@ -753,7 +754,7 @@ test('AC-E2E-8 ⭐ 只填实收（或什么都不填）⇒ **一定能提交成�
       const second = await followPaymentStep(base, cookie2, await postForm(pageUrlOf(base, NUMBER_B), cookie2, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page2.html),
         payment_status: PAYMENT_STATUS.unpaid,
-        payment_method: '', payment_amount: '', line_amount: [''],
+        payment_method: '', payment_amount: '', line_amount: ['280'],
       }));
       const secondHtml = await second.text();
       assert.equal(second.status, 200, `第2步：什么都不填也要能提交：${secondHtml.slice(0, 300)}`);
@@ -804,7 +805,7 @@ test('AC-E2E-9 🔴 会话过期后：页面照旧打得开 ⇒ 用页面上那�
       const done = await followPaymentStep(base, cookie, await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(refreshed.html),
         payment_status: PAYMENT_STATUS.unpaid,
-        payment_method: '', payment_amount: '', line_amount: ['', ''],
+        payment_method: '', payment_amount: '', line_amount: ['280', '280'],
       }));
       const doneHtml = await done.text();
       assert.equal(done.status, 200,
@@ -914,7 +915,7 @@ test('AC-E2E-11 🔴 全付 + 收款 0 笔 + 每件实收也全空 ⇒ 400 + 人
       }
       const rejected = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_PAGE.paymentStep.payAction, submit_key: submitKeyOf(page.html),
-        payment_status: PAYMENT_STATUS.full, payment_method: '', payment_amount: '', line_amount: [''],
+        payment_status: PAYMENT_STATUS.full, payment_method: '', payment_amount: '', line_amount: ['280'],
       });
       const html = await rejected.text();
       assert.equal(rejected.status, 400, `🔴 这种"零元全付单"必须拦住（不许静默落库）：${html.slice(0, 200)}`);
@@ -926,7 +927,7 @@ test('AC-E2E-11 🔴 全付 + 收款 0 笔 + 每件实收也全空 ⇒ 400 + 人
       // 同一把键、改成「未付」（= 页面默认那一档）⇒ 立刻能提交成单（她不会被卡住）
       const ok = await followPaymentStep(base, cookie, await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
-        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: [''],
+        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['280'],
       }));
       assert.equal(ok.status, 200, `第3步：改成「未付」就能提交：${(await ok.text()).slice(0, 200)}`);
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第3步：成了一张单');
@@ -1006,7 +1007,7 @@ test('AC-E2E-14 ⭐ 结果页：✅ 一眼成功 + 单号 + 双数 + 下一步�
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
       const done = await followPaymentStep(base, cookie, await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
-        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: [''],
+        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['280'],
       }));
       const html = await done.text();
       assert.equal(done.status, 200);
@@ -1032,7 +1033,7 @@ test('AC-E2E-15 ⭐ 重复提交的文案：✅「这一单刚才已经交过了
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
       const body = {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
-        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: [''],
+        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['280'],
       };
       // ⭐⭐ 2026-10-14（她：「确认状态是资金那页点击了按钮之后，才算是用户确认了」）⇒ **两步**：
       //   ① 点提交 ⇒ 资金页；② 点资金页那颗【跳过】⇒ **才建单** ✓
@@ -1403,7 +1404,7 @@ const measureOneSubmit = async (base, gateway, cookie, number, size) => {
       // 下单时把这一双一起带进来（选尺码 + 提交两下）。
       size,
       payment_status: PAYMENT_STATUS.unpaid,
-      payment_method: '', payment_amount: '', line_amount: [''],
+      payment_method: '', payment_amount: '', line_amount: ['280'],
     }),
   ));
   const timing = entries.filter((entry) => entry.event === SCAN_WRITE.events.saleTiming).pop();
@@ -1939,7 +1940,7 @@ test('AC-H1/H2 ⭐ 「提交这一单」⇒ 落到**不带编号**的销售首�
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
       const submitted = await followPaymentStep(base, cookie, await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
-        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: [''],
+        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['280'],
       }));
       const sHtml = await submitted.text();
       const orderNo = (/XSD-[0-9-]+/.exec(sHtml) || [''])[0];
@@ -1982,7 +1983,7 @@ test('AC-H3 ⭐⭐ 回归（最关键）：「继续再加一双」⇒ **仍在�
       // 提交后**同一个 session** 里那一单只落一次、单号唯一 ✓
       const submitted = await followPaymentStep(base, cookie, await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
-        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['', ''],
+        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['280', '280'],
       }));
       const sHtml = await submitted.text();
       // ⚠️ 单号在成功页会出现多次（标题/正文/回跳标记 ✓）⇒ 断言**去重后只有一个** ✓
@@ -2007,7 +2008,7 @@ test('AC-H4/H5 回归：编号页**不显示**"上一单已提交"；提交后�
       let page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
       const subRes = await followPaymentStep(base, cookie, await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
-        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: [''],
+        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['280'],
       }));
       const subHtml = await subRes.text();
       // ⭐⭐ **强化断言**（原来这里**忽略了提交结果** ✗ ⇒ 提交一旦没成，后面那条"新单只有 1 双"会**莫名其妙地红** ✗）：

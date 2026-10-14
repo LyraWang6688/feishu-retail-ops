@@ -1,3 +1,5 @@
+// ⭐⭐ 2026-10-14（她裁决 ①）：「销售货品页的**每件金额必须填**，只有资金页可以不填」
+//   ⇒ 本文件里两处「提交时每件实收留空」的夹具，按新口径补上真实价格 399（改动仅夹具 ✓ 判据没放宽 ✗）
 /** ⚠️ 2026-10-12 旧断言改写（"**零 JS**"口径按业务负责人的要求改了）：
  *  改前（逐字）：`assert.equal(/<script[\s>]/i.test(html), false, '页面里一行前端脚本都没有');`
  *  改后（逐字）：**有提交按钮的页面**（销售提交 / 打印这一款）= 整页**只有那一段**
@@ -1004,15 +1006,18 @@ test('AC-8c ⭐【未付】走真路由：页面上什么都不填 ⇒ 直接成
       });
       const done = await followPaymentStep(base, cookie, await formPost(base, cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: saleKey,
-        payment_status: PAYMENT_STATUS.unpaid, line_amount: '',
+        payment_status: PAYMENT_STATUS.unpaid, line_amount: ['399'],
       }));
       assert.equal(done.status, 200);
       assert.match(await done.text(), /您的提交已成功/);
       assert.equal(paidRows(h).length, 0);
-      // ⚠️ 2026-10-11（方案甲）改写：改前留空按单价 399 定稿、写一条 399 的【未收款】；
-      //    现在没填 ⇒ 那一列留空、差额 0 ⇒ **一条未收款都不写**。
-      assert.equal(unpaidRows(h).length, 0, '差额 0 ⇒ 一条未收款都不写');
-      assert.equal('实收金额' in entriesOf(h, 'salesDetail')[0].fields, false, '没填 ⇒ 那一列留空');
+      // ⭐⭐ 2026-10-14（她裁决 ①）：「**销售货品页的每件金额必须填**，只有资金页可以不填」
+      //   ⚠️ 改前逐字：这条走真路由的用例**每件实收留空**也提交 ⇒ 那一列留空、差额 0、不写未收款
+      //   ⇒ 改后逐字：**每件实收必填**（本用例已填 399 ✓）⇒ 那一列**落下 399** ✓
+      //      ⚠️ 收款仍全空 ⇒ 差额按**既有**口径（尚未接她今晚那句"一律补未收款"）⇒ 此刻 0 条 ✓
+      //   ⇒ 判据**没放宽** ✗（"留空"换成"逐字 399"也是断言 ✓）；②接线时这里会再改成"补一条未收款" ✓
+      assert.equal(entriesOf(h, 'salesDetail')[0].fields['实收金额'], 399, '她填的每件实收落下 399 ✓');
+      assert.equal(unpaidRows(h).length, 0, '此刻差额 0 ⇒ 不写未收款（②接线后按新口径改）');
     });
   } finally { h.cleanup(); }
 });
@@ -1400,7 +1405,7 @@ test('AC-13b ⭐ 走真路由：销售页**什么都不填** ⇒ 提交成单（
         payment_status: PAYMENT_STATUS.unpaid,
         payment_method: '',
         payment_amount: '',
-        line_amount: '',
+        line_amount: ['399'],
       }));
       assert.equal(done.status, 200, `资金全空应该直接成单，而不是 400：${await done.text()}`);
       assert.equal(entriesOf(h, 'salesEntry').length, 1);
