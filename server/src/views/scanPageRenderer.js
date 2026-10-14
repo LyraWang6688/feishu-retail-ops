@@ -34,7 +34,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { SCAN_PAGE, fillText } = require('../config/scanPage');
-const { NEW_REALM, REALMS, REALM_TABS, DEFAULT_REALM, REALM_TEXTS, REALM_EMPTY_TEXT_KEYS, REPLENISH_REALM, PURCHASE_RETURN_REALM, ACCEPTANCE_REALM, resolveRealm, labelPrintUrls, saleSizeGroups, purchaseSizeLines } = require('./scanPageRealm');
+const { NEW_REALM, REALMS, REALM_TABS, DEFAULT_REALM, REALM_TEXTS, REALM_EMPTY_TEXT_KEYS, REPLENISH_REALM, PURCHASE_RETURN_REALM, ACCEPTANCE_REALM, resolveRealm, labelPrintUrls, saleSizeGroups, purchaseSizeLines, purchaseSizeGroups, foldedSpecialRowsOf, sellableCountOf } = require('./scanPageRealm');
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -235,6 +235,17 @@ summary { cursor: pointer; }
 .size-chip input { flex: none; width: 20px; height: 20px; margin: 0; }
 .size-chip__size { font-size: var(--font-size-md); font-weight: 700; white-space: nowrap; }
 /* ── 采购：各尺码（样品 + 门盒）数量 + 一键补货 ──────────────────────────── */
+/* ⭐ 2026-10-14（她：「尺码×数量 · 一行 3 个 · 多了换行 · 保持一行 3 个」）：
+   固定列数（--size-cols 来自配置）+ 每列**平分宽度**（minmax(0, 1fr) ⇒ 内容再长也不撑爆 ⇒ 不会变 2 个 ✗）
+   ⚠️ 不用 auto-fit / auto-fill（那会随宽度变 2/4 列 ✗）· 超出自动换行（grid 天生行为 ✓）
+   ⚠️ 本段在模板字符串里 ⇒ 注释里**不许出现反引号**（会提前结束字符串）。 */
+.purchase-size-grid { display: grid; grid-template-columns: repeat(var(--size-cols, 3), minmax(0, 1fr)); gap: var(--space-2); margin: var(--space-3) 0; padding: 0; list-style: none; }
+.purchase-size-cell { min-height: var(--control-height); display: flex; align-items: center; justify-content: space-between; gap: var(--space-1); overflow-wrap: anywhere; padding: var(--space-1) var(--space-2); border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--surface-soft); }
+.purchase-size__amount { display: inline-flex; align-items: center; gap: 2px; font-variant-numeric: tabular-nums; }
+.purchase-size__times { color: var(--text-muted); }
+.size-fold__list { display: grid; grid-template-columns: repeat(var(--size-cols, 3), minmax(0, 1fr)); gap: var(--space-2); margin: var(--space-2) 0 0; padding: 0; list-style: none; }
+.size-fold__item { min-height: var(--control-height); display: flex; align-items: center; justify-content: space-between; gap: var(--space-1); padding: var(--space-1) var(--space-2); border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--surface-soft); }
+.size-fold__times { color: var(--text-muted); }
 .purchase-sizes { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); margin: var(--space-3) 0; padding: 0; list-style: none; }
 .purchase-size { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-height); padding: var(--space-2) var(--space-3); border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--surface-soft); }
 .purchase-size__size { font-size: var(--font-size-lg); font-weight: 700; }
@@ -978,7 +989,7 @@ const sizeGroupHtml = ({ id, heading, tag, tone, items, empty }) => `
  *   · 文案全走 `config.specialSizes.toggleLabel`（**渲染层不写死中文** ✗）
  *   ⚠️ 里面那张卡与外面**同规则**（`name="size"` 的 radio、`.size-chip` ⇒ 命中区一样 ✓）
  */
-const specialFoldHtml = (items) => {
+const specialFoldShellHtml = (items, inner) => {
   const cfg = SCAN_PAGE.specialSizes || {};
   if (cfg.foldable === false || !items.length) return '';
   const open = cfg.collapsedByDefault === false ? ' open' : '';
@@ -988,12 +999,23 @@ const specialFoldHtml = (items) => {
 <span class="size-group__title">${escapeHtml(cfg.toggleLabel || '')}</span>
 <span class="tag tag--warning">${escapeHtml(String(items.length))}</span>
 </summary>
-<div class="size-chips">${items.map((item) => `<label class="size-chip">
-<input type="radio" name="size" value="${escapeHtml(item.size_text)}">
-<span class="size-chip__size">${escapeHtml(item.size_text)} 码</span>
-</label>`).join('\n')}</div>
+${inner}
 </details>`;
 };
+
+/** 销售页那一块（#515）：折叠块里是**能选的尺码卡**（与外面同规则：`name="size"` 的 radio ✓） */
+const specialFoldHtml = (items) => specialFoldShellHtml(items, `<div class="size-chips">${items.map((item) => `<label class="size-chip">
+<input type="radio" name="size" value="${escapeHtml(item.size_text)}">
+<span class="size-chip__size">${escapeHtml(item.size_text)} 码</span>
+</label>`).join('\n')}</div>`);
+
+/** 库存 / 补货共用：折叠块里的条目**只是事实**（尺码 + 数量），不是可点的卡 ✓ */
+const specialFactsHtml = (items, v) => specialFoldShellHtml(items, `<ul class="size-fold__list">${items.map((item) => `
+<li class="size-fold__item" data-folded-size="${escapeHtml(item.size_text)}">
+<span class="size-fold__size">${escapeHtml(item.size_text)} 码</span>
+<span class="size-fold__times">\u00d7</span>
+<span class="size-fold__count">${escapeHtml(fillText(v.saleCountTemplate, { count: item.sellable ?? 0 }))}</span>
+</li>`).join('')}</ul>`);
 
 const sizeGroupsHtml = (view, write) => {
   const t = REALM_TEXTS;
@@ -1044,12 +1066,24 @@ const replenishFormHtml = (view, write) => {
     size_text: item.size_text, sellable: null, missing: Boolean(item.missing), checked: Boolean(item.missing),
   }));
   if (!sizes.length) return '';
-  const stockList = `<ul class="purchase-sizes" data-view="purchase-sizes">${sizes.map((item) => `
-<li class="purchase-size" data-purchase-size="${escapeHtml(item.size_text)}">
+  // ⭐⭐ 2026-10-14 版式改版（她：「按照**尺码×数量**的形式……**一行 3 个**，多了就换行，保持一行 3 个」）
+  //   · 列数**走配置**（`--size-cols` ⇒ CSS `repeat(var(--size-cols), minmax(0, 1fr))` ⇒ 每列平分、自动换行 ✓）
+  //   · 🔴 不用 `auto-fit/auto-fill`（那会随宽度变 2/4 列 ✗ 她要的是"保持一行 3 个"）
+  const columnsPerRow = Number(SCAN_PAGE.purchaseSizes?.columnsPerRow) > 0
+    ? Number(SCAN_PAGE.purchaseSizes.columnsPerRow) : 3;
+  const cellHtml = (item, extraClass = '') => `
+<li class="purchase-size-cell${extraClass}" data-purchase-size="${escapeHtml(item.size_text)}">
 <span class="purchase-size__size">${escapeHtml(item.size_text)} 码</span>
-<span class="purchase-size__count">${escapeHtml(fillText(v.saleCountTemplate, { count: item.sellable ?? 0 }))}</span>
+<span class="purchase-size__amount"><span class="purchase-size__times">\u00d7</span>${escapeHtml(fillText(v.saleCountTemplate, { count: item.sellable ?? 0 }))}</span>
 <span class="tag tag--${item.sellable > 0 ? 'success' : 'warning'}">${escapeHtml(item.sellable > 0 ? v.purchaseInStockTag : (item.missing ? v.purchaseMissingTag : v.purchaseNoneTag))}</span>
-</li>`).join('')}</ul>`;
+</li>`;
+  // ⚠️ 判据在 realm 的 `purchaseSizeGroups`（一处逻辑 ✓）；这里只做"视图模型没给 ⇒ 退回写上下文"的兜底 ✗
+  const groups = purchaseSizeGroups(view);
+  const hasLines = groups.lines.length > 0 || groups.folded.length > 0;
+  const visible = hasLines ? groups.lines : sizes;
+  const folded = hasLines ? groups.folded : [];
+  const stockList = `<ul class="purchase-size-grid purchase-sizes" data-view="purchase-sizes" style="--size-cols: ${escapeHtml(String(columnsPerRow))}">${visible.map((item) => cellHtml(item)).join('')}</ul>`
+    + specialFoldShellHtml(folded, `<ul class="purchase-size-grid purchase-sizes" data-view="purchase-sizes-folded" style="--size-cols: ${escapeHtml(String(columnsPerRow))}">${folded.map((item) => cellHtml(item, ' size-fold__item')).join('')}</ul>`);
   const rows = sizeRowsHtml({
     sizes,
     name: fields.replenishSizes,
@@ -1437,7 +1471,13 @@ const realmBlockHtml = (realm, view, config, write, page = {}) => {
       // （标题 + 为什么 + 一个下一步），绝不留空 div。
       : realmEmptyHtml(ACCEPTANCE_REALM, config));
   }
-  if (id === 'inventory') return wrap(stockTableHtml(view, config));
+  if (id === 'inventory') {
+    // ⭐ 2026-10-14：缺货的**特殊码**在库存页也要看得到 ⇒ 折叠块放在**库存表之外**（表本体逐字不变 ✓ AC1 ✓）
+    const foldedInventory = foldedSpecialRowsOf(view).map((row) => ({
+      size_text: String(row.size_text), sellable: sellableCountOf(row, view?.columns),
+    }));
+    return wrap(stockTableHtml(view, config) + specialFactsHtml(foldedInventory, REALM_TEXTS));
+  }
   if (id === 'product') return wrap(labelBlockHtml(view, page?.print));
   if (id === REPLENISH_REALM) {
     // ⭐ 2026-10-11：**补货**从原「采购」领域里独立成一块（内容一个字没变）。

@@ -542,6 +542,11 @@ const displaySizes = (category, presentSpecialSizes = []) => {
 };
 
 // ⭐ 2026-10-14：特殊码折叠块（**显式布尔** —— 不许 `|| 兜底`：那样"清空变量"会关不掉 ✗）
+// ⭐ 2026-10-14：补货列表版式（每格「尺码 × 数量」· 一行几格**走配置** ✓）
+const PURCHASE_SIZES = Object.freeze({
+  columnsPerRow: 3,
+});
+
 const SPECIAL_SIZES = Object.freeze({
   foldable: true,             // 缺货的特殊码收进折叠块
   collapsedByDefault: true,   // 默认收起（原生 `<details>` 不带 `open`）✓
@@ -752,6 +757,9 @@ const SCAN_PAGE = Object.freeze({
   // ⭐ 2026-10-14（她的最终口径 · docs/special-size-fold-and-enterable-base-2026-10-14.md）：
   //   缺货的**特殊码**收进「特殊码」折叠块（原生 details ⇒ 默认收起、不占高度 ✓ 零 JS ✓）
   specialSizes: SPECIAL_SIZES,
+  // ⭐ 2026-10-14（她：「按照**尺码×数量**的形式……**一行 3 个**，多了就换行，保持一行 3 个」）：
+  //   补货列表版式 —— 列数**走配置**（以后改 2/4 只改这里 ✓ 显式数字 ✓ 不许 `|| 兜底` ✗）
+  purchaseSizes: PURCHASE_SIZES,
   texts: TEXTS,
   price: PRICE,
   fieldNamesPendingSchema: FIELD_NAMES_PENDING_SCHEMA,

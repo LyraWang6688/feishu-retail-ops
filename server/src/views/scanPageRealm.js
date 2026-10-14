@@ -287,6 +287,28 @@ const purchaseSizeLines = (view, behavior = SCAN_PAGE.REALM_SIZE_BEHAVIOR.replen
   checked: behavior.checkMissingByDefault ? Boolean(row.missing) : false,
 }));
 
+/**
+ * ⭐⭐ 2026-10-14：**缺货 ∩ 特殊码** —— 销售 / 库存 / 补货**三处共用这一处判据** ✓
+ *   🔴 不许三处各写一遍 if ✗（她定的"配置先行 · 解耦 · 模块化"）
+ *   ⚠️ 只认**已标缺货**的行（`row.missing` 来自服务层：缺货 = 可录范围 − 有货 ✓ 含特殊码 ✓）
+ */
+const foldedSpecialRowsOf = (view) => {
+  const specialSet = specialSizesOfView(view);
+  if (!specialSet.size) return [];
+  return sizeRowsOf(view).filter((row) => Boolean(row.missing) && specialSet.has(String(row.size_text)));
+};
+
+/** 补货那一边：**缺货的特殊码单独一组**（⇒ 折叠块 ✓）· 其余照旧（缺码/默认勾语义不变 ✗） */
+const purchaseSizeGroups = (view, behavior = SCAN_PAGE.REALM_SIZE_BEHAVIOR.replenish) => {
+  const foldedSizes = new Set(foldedSpecialRowsOf(view).map((row) => String(row.size_text)));
+  const lines = purchaseSizeLines(view, behavior);
+  return {
+    lines: lines.filter((item) => !foldedSizes.has(item.size_text)),
+    folded: lines.filter((item) => foldedSizes.has(item.size_text)),
+  };
+};
+
+
 
 /** 「货品标签」的去处（工作台里那个**既有**标签打印页；本文件只拼 URL，不实现打印）。 */
 const LABEL_PRINT_PATH = '/workbench/label-print.html';
@@ -329,4 +351,6 @@ module.exports = {
   saleSizeGroups,
   sellableSizeTexts,
   purchaseSizeLines,
+  purchaseSizeGroups,
+  foldedSpecialRowsOf,
 };
