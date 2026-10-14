@@ -1525,6 +1525,8 @@ const createScanPageRouter = (options = {}) => {
         const paySession = await writeService?.sessions?.get?.(openIdOf(req)).catch(() => null);
         const payPending = (paySession?.sale?.paymentStep || paySession?.paymentStep) === 'pending';
         let createdResult = null;
+        // ⭐ 这一步的墙钟起点（打点用 ✓ 见下面那条 `scan.sale.timing`）
+        const payStepStartedAt = Date.now();
         if (payPending) {
           const pendingLines = Array.isArray(paySession?.sale?.lines) ? paySession.sale.lines : [];
           const pendingInfo = paySession?.sale?.submitPending || paySession?.submitPending || {};
@@ -1620,6 +1622,29 @@ const createScanPageRouter = (options = {}) => {
           //   🔴 **不能清成空串** ✗ —— 否则她**再点一次**时服务端就"忘了"，只会再渲染资金页 ✗，
           //      而她要的是「**这一单刚才已经交过了**」✓（幂等不许拆 ✓ 只写一次但要如实说 ✓）
           await writeService.saveDraftLines?.(openIdOf(req), { paymentStep: 'created' });
+        }
+        // ⭐⭐ 2026-10-14：**建单那一步的打点**要跟着挪到"点按钮"这里 ✓
+        //   （旧流程在"点提交"那一段打 ✓ ⇒ 新流程里那一段不再建单 ✗ ⇒ 不打 ⇒ 她就看不到"卡在哪一段"✗
+        //    实测 `AC-E2E-16/17/18/16b`：都要 `scan.sale.timing` ✓ 一条一条要 ✓ 事件名/形状**照旧** ✗）
+        if (createdResult) {
+          logInfo(writeConfig.events.saleTiming, {
+            request_id: requestId,
+            ok: createdResult.ok === true,
+            code: createdResult.code || '',
+            order_no: createdResult.order_no || '',
+            reused: createdResult.reused === true,
+            partial: createdResult.code === 'sale_partial_failed',
+            lines: Number(createdResult.detail_count) || 0,
+            // ⚠️ 这一步的墙钟（含排队等前面的写 —— 她连点 14 次时这一段会明显变大 ✓）
+            submit_ms: Math.max(0, Date.now() - payStepStartedAt),
+            queue_wait_ms: Number(createdResult.timing?.queue_wait_ms) || 0,
+            lookup_ms: Number(createdResult.timing?.lookup_ms) || 0,
+            prepare_ms: Number(createdResult.timing?.prepare_ms) || 0,
+            master_ms: Number(createdResult.timing?.master_ms) || 0,
+            status_ms: Number(createdResult.timing?.status_ms) || 0,
+            detail_ms: Number(createdResult.timing?.detail_ms) || 0,
+            stock_ms: Number(createdResult.timing?.stock_ms) || 0,
+          });
         }
         // ⭐ 建单成功 ⇒ 记下"她刚在销售里干过活" ✓（下次**裸扫**默认还回销售 ✓）
         //   ⚠️ 旧流程在"点提交"那一段记 ✓ —— 新流程改成"**点按钮才建单**"⇒ 这一句也要跟着挪过来 ✗
