@@ -652,7 +652,8 @@ test('⑧ 页面上的两个写入口：默认收款方式「微信」+ 缺码�
       //    卡片标题「销售（可以连着扫，最后一起提交）」（`saleHeading`）**要在页面上**；
       //    现在它必须不存在。**不放宽**：能填能点的（加入本单 / 提交这一单 / 默认微信）照旧。
       assert.equal(saleHtml.includes('销售（可以连着扫，最后一起提交）'), false, '销售那句说明必须删掉');
-      assert.match(saleHtml, /加入本单/);
+      // 2026-10-14 晚改指向：提示句退场 ✗ ⇒ 判**真正的写入口**（尺码两组的结构标记 ✓ 不放宽 ✗）
+      assert.match(saleHtml, /data-stock-group="in_stock"/);
       // 默认选中「微信」
       // ⭐ 2026-10-13 改指向：默认微信那一行**挪到第 2 步页**（能力去哪：renderSalePaymentStepPage）
       assert.match(step2Of(), new RegExp(`<option value="微信" selected>微信</option>`));

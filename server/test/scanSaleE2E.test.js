@@ -1070,7 +1070,8 @@ test('AC-E2E-16 ⭐ 每件实收旁边写明「可以留空」；400 校验页�
       await getPage(pageUrlOf(base, NUMBER_A), cookie);
       await addLine(base, cookie, NUMBER_A, '40');
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
-      assert.match(page.html, /可以留空/, '每件实收旁边要写明"可以不填"（她的痛点是费劲）');
+      // ⭐ 2026-10-14 晚（她逐字）：「实收金额下的两行文字说明不需要」⇒ 这条**翻成"必须没有"** ✗
+      assert.equal(/可以留空/.test(page.html), false, '那两行说明已按她的话删掉 ✓');
 
       // ⭐⭐ 2026-10-14（新流程**两步**）：① 点提交 ⇒ **只到资金页**（这时还不校验钱 ✓）
       //   ② 点资金页那颗【提交整单付款】（全付 + 收款 200 + 实收 150）⇒ **才校验** ⇒ 400 + 人话 ✓

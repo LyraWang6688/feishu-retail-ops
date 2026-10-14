@@ -445,7 +445,6 @@ const TEXTS = Object.freeze({
   draftItem: '{itemNo} · {size} 码',
   // 配品行在本单里的那一行（没有尺码、没有货号 —— 只有名称）。
   draftAccessoryItem: '配品 · {name}',
-  draftEmpty: '还没加入任何一双：选好尺码，点「加入本单」。',
   sizeLabel: '尺码',
   sizePlaceholder: '选尺码',
   amountLabel: '实收金额（可不填）',
@@ -475,7 +474,6 @@ const TEXTS = Object.freeze({
   submitButtonCount: '✅ 提交这一单（{count} 双）',
   addAnotherButton: '➕ 还要加一双',
   // 每件实收**可以留空**（她："不然太费劲"）—— 就写一句事实，不写说明书。
-  amountOptionalHint: '实收可以留空，之后到工作台补。',
   clearButton: '清空本单',
   // ── ⭐⭐ 总单层：每件实收（逐行）+ 多笔收款 ────────────────────────────────
   // ⚠️ 提交表单里那个「每件实收」输入框是**每行一个**的（同名 `line_amount` 重复出现），
