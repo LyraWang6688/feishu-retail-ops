@@ -417,6 +417,88 @@ const createWorkbenchRouter = (options = {}) => {
   const scanWrite = options.scanWrite || createScanWriteService({
     gateway: options.gateway || new V1BitableGateway(), config: SCAN_WRITE,
   });
+  /**
+   * ⭐⭐ 2026-10-15（⑰b-1 · 她逐字）：「失败落「**写入失败**」、工作台显示「**未完成，可点重试**」」
+   *   ⇒ **工作台「续写 / 重试」入口**：那一单**能点、点了真能续上** ✓
+   *
+   * 口径（Lead 2026-10-15 批准）：
+   *   · 🔴 **复用** `submitSale`（**不新开写库** ✗）：**同一把 `session.sale.key`**
+   *     ＋ `session.sale.submitPending` 里那套资金入参 —— 与她点资金页那颗按钮**同一次调用** ✓
+   *     （幂等一字没拆 ✗；同一把键 + 同一份入参 ⇒ 重试不会写第二遍 ✓）
+   *   · ⭐ 主表已经建过（`master_record_id` 在会话里）⇒ `wasResume=true` ⇒ **不再往后丢**、
+   *     这一次**同步跑完** ⇒ 她点下去能看到"好了 / 还没好" ✓
+   *   · 🔴 **绝不直调 `_confirm`** ✓（走的是既有 `sales().confirm`）
+   *   · 🔴 **不新开鉴权**：它挂在本文件上方那条既有 `router.use(requireWorkbenchAccess)` 之后 ✓
+   *   · 🔴 **没有待续的单 / 单号对不上** ⇒ **如实 400 + 人话**（绝不假成功 ✗）
+   */
+  router.post('/sales/retry', async (req, res) => {
+    const openId = req.workbenchUser?.open_id;
+    const requestId = req.body?.requestId || req.requestId;
+    const texts = SCAN_WRITE.texts || {};
+    try {
+      const session = await scanWrite.sessions?.get?.(openId).catch(() => null);
+      const key = String(session?.sale?.key || '').trim();
+      const masterRecordId = String(session?.sale?.master_record_id || '').trim();
+      const orderNo = String(session?.sale?.order_no || '').trim();
+      const pending = session?.sale?.submitPending || {};
+      // 🔴 没有"已经建过主表、还没写完"的单 ⇒ 如实告诉她（不假成功 ✗）
+      if (!key || !masterRecordId) {
+        logWarn('workbench.sales.retry.no_pending', {
+          request_id: requestId, open_id: String(openId || ''), has_key: Boolean(key),
+        });
+        return res.status(400).json({ success: false, code: 'no_pending_order', error: texts.saleRetryNoPendingBody });
+      }
+      // 🔴 点的是哪一单就重试哪一单：她给的单号与会话里那一单不一致 ⇒ 不动手 ✗
+      const askedOrderNo = String(req.body?.order_no ?? '').trim();
+      if (askedOrderNo && orderNo && askedOrderNo !== orderNo) {
+        logWarn('workbench.sales.retry.order_mismatch', {
+          request_id: requestId, asked_order_no: askedOrderNo, order_no: orderNo,
+        });
+        return res.status(400).json({ success: false, code: 'order_mismatch', error: texts.saleRetryMismatchBody });
+      }
+      const result = await scanWrite.submitSale({
+        openId,
+        requestId,
+        // 🔴 **同一把 `submitKey`**（幂等不许拆 ✗）
+        submitKey: key,
+        payments: Array.isArray(pending.payments) ? pending.payments : [],
+        lineAmounts: Array.isArray(pending.lineAmounts) ? pending.lineAmounts : [],
+        paymentStatus: String(pending.paymentStatus || '').trim(),
+        paidAmount: String(pending.paidAmount ?? ''),
+        timing: {},
+      });
+      if (result?.ok) {
+        // 写成了 ⇒ 让她下一次读到的是**真的新数据**（不看缓存 ✗）
+        if (typeof ordersCache?.invalidate === 'function') ordersCache.invalidate();
+        logInfo('workbench.sales.retry.done', {
+          request_id: requestId, order_no: result.order_no || orderNo,
+          detail_count: result.detail_count, payment_count: result.payment_count,
+        });
+        return res.json({
+          success: true, order_no: result.order_no || orderNo,
+          detail_count: result.detail_count || 0, payment_count: result.payment_count || 0,
+          // ⭐ 她刷新/回看时看到的是**真实状态**：`reused:true` = "这一单刚才已经交过了"（不是又写了一遍 ✗）
+          reused: result.reused === true,
+          message: texts.saleRetryDoneBody,
+        });
+      }
+      logWarn('workbench.sales.retry.failed', {
+        request_id: requestId, order_no: orderNo,
+        code: String(result?.code || ''), reason: String(result?.message || ''),
+      });
+      // 部成那类（主表已在、后面没写完）= 500（系统没写成）；她填错类 = 400 ✓
+      const status = result?.code === 'sale_partial_failed' ? 500 : 400;
+      return res.status(status).json({
+        success: false, code: String(result?.code || ''),
+        error: result?.message || texts.saleRetryFailedBody, order_no: orderNo,
+      });
+    } catch (error) {
+      logError('workbench.sales.retry.error', {
+        request_id: requestId, error: String(error?.message || error),
+      });
+      return res.status(500).json({ success: false, code: 'retry_failed', error: texts.saleRetryFailedBody });
+    }
+  });
   router.get(accessoryTab.api.methods, async (req, res) => {
     // ⭐⭐ 2026-10-14（她：「配品收款方式读『收款方式管理』表」）—— **只读**表 ✓ 有缓存 ✓
     //   🔴 读不到 ⇒ **如实**（503 + 人话）⇒ 前端**不进录入** ✗ 绝不拿配置默认列表兜底 ✗
