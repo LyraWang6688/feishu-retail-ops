@@ -1132,6 +1132,18 @@ const createScanPageRouter = (options = {}) => {
             paidCents: String(pendingPaidAmount ?? '').trim() === '' ? null : toCents(pendingPaidAmount),
           });
           if (settlement.action === 'block') {
+            // ⭐ 2026-10-14 晚（她批准埋点补充③：「失败日志带**人话原因码**」）——
+            //   今天真机上她点了 6 次「提交整单付款」都只看到 400、日志里**没有任何原因** ✗ ⇒
+            //   这里补一条：**只加打点** ✓ 状态码/人话/零写入**一个字都不改** ✗
+            //   （她那天那次的原因就是 `amount_mismatch`：选了全付但「实付多少」空着 ✓）
+            logWarn('scan.write.settlement_blocked', {
+              request_id: requestId,
+              code: String(settlement.code || ''),
+              reason: String(settlement.reason || ''),
+              mode: String(pendingMode || ''),
+              items_cents: pendingLineAmounts.reduce((sum, value) => sum + Math.round(Number(value || 0) * 100), 0),
+              payments_cents: pendingPayments.reduce((sum, row) => sum + Math.round(Number(row.amount || 0) * 100), 0),
+            });
             // ⚠️ 文案：**只用既有那几条模板**（`config/scanWrite.js` 的 texts ✓ **不编中文** ✗）
             //   ⭐「全付两边不等」那条要带上**差额金额**（她一眼看到"少多少/多多少"✓ 实测 AC-E2E-16 ✓）
             const blockText = (() => {
