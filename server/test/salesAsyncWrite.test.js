@@ -420,3 +420,52 @@ test('AC-AS8 配置先行：开关是显式布尔（默认 false）· 那句文�
   assert.equal((cfgSource.match(/本单已创建成功（\{orderNo\}）/g) || []).length, 1,
     '那句文案只许有**一处**定义（销售与配品共用 ✓）');
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-AS11（⑨b-1）：后台句柄 —— "等后台那一跑跑完"的口子（**不是页面字段** ✗）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-AS11 ⭐ 后台句柄：`await result.background` 之后端状态**全都就绪**（等于"等后台跑完"）', async () => {
+  const h = createHarness({ slowMs: 200 });
+  try {
+    const session = await sessionOf(h);
+    const result = await h.service.submitSale(submitInputOf(session));
+    assert.equal(result.deferred, true);
+    // 句柄是个 thenable（Promise）——不是字符串、不是被序列化过的什么 ✗
+    assert.equal(typeof result.background?.then, 'function', '`background` 必须是可 await 的句柄 ✓');
+    // 立刻看：后台还没跑完（慢在 200ms 上）
+    assert.equal(h.calls.confirm.length, 0, '拿到句柄那一刻后台还没跑 ✓');
+    // ⭐ 等它 ⇒ 后台那一跑跑完 ⇒ 业务写入与状态都就绪
+    await result.background;
+    assert.equal(h.calls.confirm.length, 1, 'await 句柄之后，后台那一跑**跑完了** ✓');
+    assert.equal(h.calls.underscoreConfirm.length, 0, '（顺带）仍然没有直调 `_confirm` ✓');
+    // 端状态就绪 = 明细/收款那一份入参已交给业务层（用例语义的"写完了"）
+    assert.ok(h.calls.confirm[0].input.salesEntryRecordId, '入参带主表记录 id ✓');
+  } finally { h.cleanup(); }
+});
+
+test('AC-AS11b 🔴 句柄**不进页面**：渲染出的 HTML 里一个字都不许出现（公开形状没变 ✓）', async () => {
+  await withRoute(async ({ base, sessions }) => {
+    await sessions.saveSaleProgress(OPEN_ID, {
+      paymentStep: 'pending',
+      lines: [{ size: 41, quantity: 1, item_no: 'YD6693-2', number: NUMBER, color: '黑色', amount: '399' }],
+      submitPending: { size: '41', amount: '399' },
+    });
+    const response = await fetch(`${base}/s/${encodeURIComponent(NUMBER)}?from=sales`, {
+      method: 'POST',
+      headers: { cookie: cookieOf(OPEN_ID), 'content-type': 'application/x-www-form-urlencoded' },
+      body: payBody(),
+    });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    // ① 页面照旧只有那一句（含真单号）
+    assert.ok(html.includes(`本单已创建成功（${ORDER_NO}）`), '那一句照旧 ✓');
+    // ② 🔴 句柄（Promise）**不许**被渲染进去
+    assert.equal(html.includes('[object Promise]'), false, '页面里**不许**出现 `[object Promise]` ✗');
+    // ⚠️ 不能拿"页面里有没有 background 这个词"当判据 —— 页面的 CSS 里就有 `background:` ✗（我第一版写错了）；
+    //    换成**源码哨兵**：路由**没有**把这个句柄当数据读（`.background` 这种属性访问一处都不许有 ✓）
+    const routeSource = fs.readFileSync(path.join(SERVER_SRC, 'routes', 'scanPage.js'), 'utf8');
+    assert.equal(/\.background\b/.test(routeSource), false,
+      '路由不许读 `createdResult.background`（句柄不是页面字段 ✗）');
+  });
+});
