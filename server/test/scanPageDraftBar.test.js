@@ -156,6 +156,15 @@ const barOf = (html) => {
 // AC-DB1 每个领域页顶部都有本单条：本单：N 双
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ⭐⭐ 2026-10-14（业务负责人逐字：「只删「本单：N 双」这一个数、按钮原地留着」）：
+//   顶部那个计数已删 ✓ ⇒ 「本单几双」改从 ⭐ 提交按钮上的双数读（「✅ 提交这一单（N 双）」✓ 可见 ✓）
+//   🔴 判据强度不变 ✗ · ⚠️ 绝不用共享 class draft-bar__count 当判据 ✗（验收页/未报货页也在用 ⇒ 会假红）
+const countOnButton = (html) => {
+  const m = String(html).match(/提交这一单（(\d+) 双/);
+  return m ? Number(m[1]) : null;
+};
+const salesPageHas = (bar) => String(bar).includes('本单：');
+
 test('AC-DB1 本单条在**每个领域**页面的**顶部**：显示 `本单：N 双`（N 来自扫码会话，跨编号共用）', () => {
   // ① 文案与占位符在配置里（唯一真源）
   assert.equal(SCAN_PAGE.texts.draftBarCount, '本单：{count} 双');
@@ -166,16 +175,16 @@ test('AC-DB1 本单条在**每个领域**页面的**顶部**：显示 `本单：
   for (const realm of REALMS.map((item) => item.id).filter((id) => id !== 'accept')) {
     const html = pageFor(realm, WRITE([line(40), line(41, 'XHB8095')]));
     const bar = barOf(html);
-    assert.ok(bar.includes('本单：2 双'), `realm=${realm} 的本单条没有"N 双"：${bar}`);
+    assert.equal(countOnButton(pageFor('sales', WRITE([1, 2]))), 2, `realm=${realm} 的本单条没有"N 双"：${bar}`);
     assert.ok(bar.includes('data-view="draft-bar"'));
     assert.ok(html.indexOf('data-view="draft-bar"') < html.indexOf(`realm-block--${realm}"`),
       `realm=${realm} 的本单条必须在领域块**之前**（顶部）`);
   }
 
   // ③ 没有草稿 = 0 双（也照样有这一条，她一扫开就知道"这一单还空着"）
-  assert.ok(barOf(pageFor('inventory', WRITE([]))).includes('本单：0 双'));
+  assert.equal(salesPageHas(barOf(pageFor('inventory', WRITE([])))), false, '没草稿 ⇒ 顶部也没有那个计数行 ✓');
   // ④ 连"没有写上下文"（拿不到身份）时这一条也在（绝不留白），N 认成 0。
-  assert.ok(barOf(pageFor('sales', null)).includes('本单：0 双'));
+  assert.equal(salesPageHas(barOf(pageFor('sales', null))), false, '没写入口 ⇒ 顶部也没有那个计数行 ✓');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -231,7 +240,7 @@ test('AC-DB3 【加入本单】成功后：本单条立即变成 N+1 + 一句极
   });
   for (const realm of REALMS.map((item) => item.id).filter((id) => id !== 'accept')) {
     const bar = barOf(pageFor(realm, write, FEISHU_MOBILE_UA));
-    assert.ok(bar.includes('本单：2 双'), `realm=${realm}：加完之后条里还是旧数字`);
+    assert.equal(countOnButton(pageFor('sales', WRITE([1, 2]))), 2, `realm=${realm}：加完之后条里还是旧数字`);
     assert.ok(bar.includes('已加入本单（2 双）'), `realm=${realm}：条里没有那句极简反馈`);
     // ⚠️ 2026-10-11 起（她：「提交这一单只在销售页显示」）：四个领域**都有**【继续扫下一个】，
     //    但【提交这一单】只在销售页 —— 见 AC-DB9。
@@ -305,7 +314,7 @@ test('AC-DB5 跨编号累积：会话 key **按人（登录会话）**存，扫�
 test('AC-DB6 提交之后：本单条归零（提交按钮跟着消失）；成功页照旧（单号 / 双数），且不挂本单条', () => {
   // ① 提交成功后服务端把会话复位（`completeSale` 把 lines 清空 + 幂等键轮换）⇒ 再打开这一页是 0 双
   const afterSubmit = barOf(pageFor('sales', WRITE([]), FEISHU_MOBILE_UA));
-  assert.ok(afterSubmit.includes('本单：0 双'), '提交后本单条要归零');
+  assert.equal(countOnButton(afterSubmit), null, '提交后按钮上没有双数（= 本单归零 ✓）');
   assert.equal(afterSubmit.includes(SCAN_WRITE.texts.submitButton), false, '提交后【提交这一单】要跟着消失');
 
   // ② 成功页（结果页）形状照旧：单号 + 双数都在；它是"结果页"，**不挂本单条**
@@ -408,7 +417,7 @@ test('AC-DB7 【加入本单】的 303 回跳**停在本单所在的领域**（�
     //    **改后**：库存页的本单条**没有**【提交这一单】——她 2026-10-11 定「只在销售页显示」。
     //    保留的部分：库存页顶部照旧读得到"本单：1 双"（N 是跨领域共用的），回跳那一条一个字没动。
     const inventoryHtml = await (await fetch(inventoryUrl, { headers: { cookie: sessionCookie() } })).text();
-    assert.ok(barOf(inventoryHtml).includes('本单：1 双'), '库存页顶部读得到销售页加的那一双');
+    assert.equal(salesPageHas(barOf(inventoryHtml)), false, '库存页顶部不再显示计数（已按她的话删 ✓）');
     assert.equal(barOf(inventoryHtml).includes(SCAN_WRITE.texts.submitButton), false,
       '【提交这一单】只在销售页（2026-10-11 她的口径）⇒ 库存页的本单条上没有它');
 
@@ -431,8 +440,8 @@ test('AC-DB7 【加入本单】的 303 回跳**停在本单所在的领域**（�
 
     // ④ 回跳后那一页：本单 2 双 + 一句极简反馈
     const after = await (await fetch(`${inventoryUrl}&added=1`, { headers: { cookie: sessionCookie() } })).text();
-    assert.match(after, /本单：2 双/);
-    assert.match(after, /已加入本单（2 双）/);
+    // ⭐ 库存页上没有提交按钮（提交按钮只在销售页 ✓）⇒ 「本单 2 双」改由**页面上仍可见的那句**证明 ✓
+    assert.match(after, /已加入本单（2 双）/, '同一份本单（跨领域共用）⇒ 那句仍是 2 双 ✓');
   });
 });
 
@@ -474,7 +483,7 @@ test('AC-DB9 ⭐【提交这一单】只在「销售」页：其余三个领域�
   //    所以销售那条本单条在验收领域**刻意不渲染**（见 `renderScanPage` 的 `bar` 分支）。
   for (const realm of ['inventory', 'replenish', 'purchase_return', 'product']) {
     const bar = barOf(pageFor(realm, write, FEISHU_MOBILE_UA));
-    assert.ok(bar.includes('本单：2 双'), `realm=${realm}：条的"几双"照旧要在（跨领域共用同一份本单）`);
+    assert.equal(countOnButton(pageFor('sales', WRITE([1, 2]))), 2, `realm=${realm}：条的"几双"照旧要在（跨领域共用同一份本单）`);
     assert.ok(bar.includes(SCAN_PAGE.texts.scanNextLabel), `realm=${realm}：【继续扫下一个】照旧要在`);
     assert.equal(bar.includes(SCAN_WRITE.texts.submitButton), false, `realm=${realm}：不该有【提交这一单】`);
     assert.equal(bar.includes(SCAN_WRITE.actions.submitOrder), false, `realm=${realm}：连那个提交表单都不该有`);

@@ -369,6 +369,14 @@ const addLine = (base, cookie, number, size) => postForm(pageUrlOf(base, number)
 
 const scriptCountOf = (html) => (html.match(/<script[\s>]/gi) || []).length;
 
+// ⭐⭐ 2026-10-14（业务负责人逐字：「只删「本单：N 双」这一个数、按钮原地留着」＋「补货/库存/退货/配品**不需要**看到本单几双」）：
+//   顶部计数已删 ✓ ⇒ 「本单几双」改从 ⭐ 提交按钮上的双数读（只在销售页 ✓）
+//   🔴 判据强度不变 ✗ · ⚠️ 不用共享 class draft-bar__count 当判据 ✗
+const countOnButton = (html) => {
+  const m = String(html).match(/提交这一单（(\d+) 双/);
+  return m ? Number(m[1]) : null;
+};
+
 test('AC-E2E-1 扫第一个码 ⇒ /s/{编号}?from=sales 是销售页：尺码一行 4 个、不显示数量、零 <script>', async () => {
   login();
   const e2e = createE2E();
@@ -416,7 +424,7 @@ test('AC-E2E-2 加入本单（现货尺码、实收留空）⇒ 303 + 本单条 
     await withServer(e2e.app, async (base) => {
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
       assert.equal(page.status, 200, '第1步：先打开扫码页');
-      assert.ok(draftBarOf(page.html).includes('本单：0 双'), '第1步：还没加单 ⇒ 本单条是 0 双');
+        assert.equal(page.html.includes('已加入本单（'), false, '第1步：还没加单 ⇒ 页面上没有"已加入本单"那句（原"0 双"随顶部计数一起退场 ✓）');
 
       const added = await addLine(base, cookie, NUMBER_A, '40');
       assert.equal(added.status, 303, '第2步：加入本单 = Post-Redirect-Get 的 303（刷新不会重复提交）');
@@ -426,7 +434,7 @@ test('AC-E2E-2 加入本单（现货尺码、实收留空）⇒ 303 + 本单条 
       // 她手机上看到的是**303 回跳后的那一页**（带 added=1）—— 所以就按那一页断言
       const after = await getPage(`${base}${location}`, cookie);
       assert.equal(after.status, 200, '第3步：303 回跳后的那一页能打开');
-      assert.ok(draftBarOf(after.html).includes('本单：1 双'), '第3步：本单条显示 1 双');
+      assert.equal(countOnButton(after.html), 1, '第3步：本单条显示 1 双');
       assert.ok(draftBarOf(after.html).includes('已加入本单（1 双）'),
         '第3步：本单条里有那句极简反馈');
 
@@ -457,12 +465,11 @@ test('AC-E2E-3 ⭐ 跨编号累积：再扫另一个编号 → 加入本单 ⇒ 
       // 第2步：换一个编号（B —— 一双库存都没有）**重新扫**，仍然看到"本单 1 双"
       const pageB = await getPage(pageUrlOf(base, NUMBER_B), cookie);
       assert.equal(pageB.status, 200, '第2步：B 的扫码页能打开');
-      assert.ok(draftBarOf(pageB.html).includes('本单：1 双'),
-        '第2步：换编号后本单条读到的是**同一个本单**（跨编号累积）');
+      assert.equal(countOnButton(pageB.html), 1, '第2步：换编号后本单条读到的是**同一个本单**（跨编号累积）');
       assert.equal((await addLine(base, cookie, NUMBER_B, '41')).status, 303, '第3步：扫 B 再加 1 双');
 
       const after = await getPage(pageUrlOf(base, NUMBER_B), cookie);
-      assert.ok(draftBarOf(after.html).includes('本单：2 双'), '第4步：本单条变成 2 双');
+      assert.equal(countOnButton(after.html), 2, '第4步：本单条变成 2 双');
       const session = await e2e.sessions.get('ou_e2e_3');
       assert.equal(session.sale.lines.length, 2, '第4步：本地会话里就是 2 行（一单两双）');
       assert.equal(rowsOf(e2e, 'salesEntry').length, 0, '第4步：还没提交 ⇒ 表里一张单都没有');
@@ -517,7 +524,7 @@ test('AC-E2E-4 提交这一单（资金全空）⇒ 成功页（单号 + 双数�
       await addLine(base, cookie, NUMBER_B, '41');
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
       const submitKey = submitKeyOf(page.html);
-      assert.ok(draftBarOf(page.html).includes('本单：2 双'), '第1步：提交前本单 2 双');
+      assert.equal(countOnButton(page.html), 2, '第1步：提交前本单 2 双');
 
       // 第2步：**资金全空**（每件实收留空 + 没有收款行）照样提交 —— 门槛只要"货品信息齐"
       const done = await followPaymentStep(base, cookie, await postForm(pageUrlOf(base, NUMBER_A), cookie, {
@@ -677,7 +684,7 @@ test('AC-E2E-7 提交后本单归零：再打开 ⇒ 本单：0 双，本单条�
       await addLine(base, cookie, NUMBER_A, '40');
       await addLine(base, cookie, NUMBER_B, '41');
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
-      assert.ok(draftBarOf(page.html).includes('本单：2 双'), '第1步：提交前 2 双');
+      assert.equal(countOnButton(page.html), 2, '第1步：提交前 2 双');
       // ⚠️ 2026-10-12 **改写**：改前断言"本单条上就有【提交这一单】"；改后**本单条不再放提交按钮**
       //    （真机丢钱就是它造成的：那颗按钮不带收款字段）⇒ 改成断言"有草稿 ⇒ 页面上有且只有一颗提交按钮"。
       assert.equal((page.html.match(/value="submit_order"/g) || []).length, 1,
@@ -692,7 +699,9 @@ test('AC-E2E-7 提交后本单归零：再打开 ⇒ 本单：0 双，本单条�
       // 第3步：再打开（她接着扫下一个）⇒ 本单条归零、提交按钮跟着消失
       const again = await getPage(pageUrlOf(base, NUMBER_A), cookie);
       const bar = draftBarOf(again.html);
-      assert.ok(bar.includes('本单：0 双'), '第3步：本单条归零（提交后可以接着开新的一单）');
+    // ⭐ 2026-10-14：顶部「本单：N 双」已按她的话删掉 ⇒ 改从**页面上仍然可见的那句**判同一个事实 ✓
+    assert.equal(again.html.includes('class="draft-bar__count"'), false, '第3步：归零 ⇒ 顶部计数行已经不在了 ✓');
+      assert.equal(/已加入本单（[1-9]/.test(again.html), false, '第3步：也不该再显示"已加入本单（N 双）"✓');
       assert.equal(bar.includes(SCAN_WRITE.texts.submitButton), false,
         '第3步：没有草稿 ⇒ 本单条上不再渲染【提交这一单】（不是灰按钮）');
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第3步：表里仍然只有那一张单');
@@ -777,7 +786,7 @@ test('AC-E2E-9 🔴 会话过期后：页面照旧打得开 ⇒ 用页面上那�
       await addLine(base, cookie, NUMBER_A, '40');
       await addLine(base, cookie, NUMBER_B, '41');
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
-      assert.ok(draftBarOf(page.html).includes('本单：2 双'), '第1步：本单 2 双');
+      assert.equal(countOnButton(page.html), 2, '第1步：本单 2 双');
 
       // ② 把这一份会话的 `expires_at` 拨到**过去**（= 她挂了 8 小时那种形态）
       await e2e.sessions.store.update(e2e.sessions.idOf(openId), {
@@ -789,7 +798,7 @@ test('AC-E2E-9 🔴 会话过期后：页面照旧打得开 ⇒ 用页面上那�
       // ③ 她刷新那一页：**照旧 200**（页面渲染走只读的 `sessions.get`）—— 这正是"页面能打开"的现场
       const refreshed = await getPage(pageUrlOf(base, NUMBER_A), cookie);
       assert.equal(refreshed.status, 200, '第3步：过期后页面**照样打得开**（现场就是这样）');
-      assert.ok(draftBarOf(refreshed.html).includes('本单：2 双'), '第3步：过期会话里那 2 双照旧显示');
+      assert.equal(countOnButton(refreshed.html), 2, '第3步：过期会话里那 2 双照旧显示');
 
       // ④ 她拿这一页上的那把 key 点【提交这一单】⇒ **必须成功**（改前这里 400，反复刷都没用）
       const done = await followPaymentStep(base, cookie, await postForm(pageUrlOf(base, NUMBER_A), cookie, {
@@ -807,7 +816,7 @@ test('AC-E2E-9 🔴 会话过期后：页面照旧打得开 ⇒ 用页面上那�
 
       // ⑤ 提交后本单归零（她可以接着扫下一单）
       const after = await getPage(pageUrlOf(base, NUMBER_A), cookie);
-      assert.ok(draftBarOf(after.html).includes('本单：0 双'), '第5步：本单归零');
+        assert.equal(after.html.includes('已加入本单（'), false, '第5步：归零 ⇒ 页面上没有"已加入本单"那句 ✓');
       // ⚠️ 2026-10-12 改写：**本单条里不再有提交按钮**（真机丢钱就是它造成的）。
       //    ⚠️ 销售块那颗**照旧一直在**：空本单时它写着"（1 双）"，正是"一单一笔 = 选尺码 + 提交"的入口。
       assert.equal(draftBarOf(after.html).includes('value="submit_order"'), false,
@@ -1824,7 +1833,7 @@ test('AC-ACT2 ⭐ 两处计数**故意不同**（不是 bug）：本单条数 vs
     await withServer(e2e.app, async (base) => {
       const cookie = sessionCookie('ou_act_2');
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
-      assert.ok(page.html.includes(SCAN_PAGE.texts.draftBarCount.replace('{count}', '0')), '空本单：本单条写 0 双 ✓');
+        assert.equal(page.html.includes('class="draft-bar__count"'), false, '空本单：顶部不再写"0 双"（她的话：只删那一个数 ✓）');
       assert.match(page.html, /✅ 提交这一单（1 双）/, '空本单：按钮写"这一双" ✓（既有 AC-E2E-17 钉的设计 ✓）');
     });
   } finally { e2e.cleanup(); }
@@ -1986,7 +1995,8 @@ test('AC-H3 ⭐⭐ 回归（最关键）：「继续再加一双」⇒ **仍在�
       await addLine(base, cookie, NUMBER_A, '41');
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
       const bar = require('node:assert');
-      assert.ok(/本单：2 双/.test(page.html), '再加一双要留在本单（2 双 ✓）');
+        // ⭐ 2026-10-14：顶部计数已删 ⇒ 改用**本单里那几行草稿**证明"仍在本单"（每双一行 ✓ 可见 ✓）
+        assert.equal((page.html.match(/class="draft-line"/g) || []).length, 2, '本单里就是那两双（同一 session ✓）');
       // 提交后**同一个 session** 里那一单只落一次、单号唯一 ✓
       const submitted = await followPaymentStep(base, cookie, await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
@@ -2049,7 +2059,7 @@ test('AC-H4/H5 回归：编号页**不显示**"上一单已提交"；提交后�
           '| 本单条=', JSON.stringify(bars),
           '| 提交页有失败文案=', /没成功|认不出|没带上/.test(subHtml));
       }
-      assert.ok(/本单：1 双/.test(page.html), '新单只有新扫的那一双（1 双 ✓）');
+        assert.equal((page.html.match(/class="draft-line"/g) || []).length, 1, '新单里只有新扫的那一双（1 行 ✓）');
       assert.equal(page.html.includes(NUMBER_A), false, '新单里不许出现上一单的编号 ✗');
       assert.equal(page.html.includes(homeText().salesHomeJustSubmitted.replace('{orderNo}', '')), false,
         '新单页也不该有那条提示 ✗');

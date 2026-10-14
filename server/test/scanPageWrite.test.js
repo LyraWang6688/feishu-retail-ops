@@ -1129,7 +1129,7 @@ test('AC-DB5 ⭐ 一单多双·多次扫码：扫 A 加单 → 扫 B 加单 → 
       // ② 扫 B（XHB8095，**另一个编号**）：本单条上已经读得到 A 那一双
       const pageB = await fetch(urlB, { headers: { cookie } });
       const htmlB = await pageB.text();
-      assert.match(htmlB, /本单：1 双/, 'B 页顶部的本单条要读到 A 那一双（跨编号累积 = 一单，不是新开一单）');
+      assert.equal((htmlB.match(/class="draft-line"/g) || []).length, 1, 'B 页本单里读到 A 那一双（跨编号累积 = 一单）');
 
       // ③ 就在 B 页加第二双
       const keyB = keyOf(htmlB);
@@ -1138,7 +1138,7 @@ test('AC-DB5 ⭐ 一单多双·多次扫码：扫 A 加单 → 扫 B 加单 → 
 
       // ④ B 页（回跳后）：本单 2 双 + 极简反馈 + 这一页就能提交（不用回第 1 双那一页）
       const afterHtml = await (await fetch(urlB, { headers: { cookie } })).text();
-      assert.match(afterHtml, /本单：2 双/);
+      assert.equal((afterHtml.match(/class="draft-line"/g) || []).length, 2, 'B 页上本单里是那两双（A+B ✓ 跨编号同一单）');
       // ⚠️ 2026-10-12 **改写**：改前断言"**本单条上**就有【提交这一单】"——
       //    那颗按钮不带收款字段，真机丢钱就是它（她在销售块填了钱、按了本单条那颗）。
       //    改后本单条只留 `本单：N 双` +【继续扫下一个】，提交按钮在**销售块那唯一的表单**里，
@@ -1170,7 +1170,7 @@ test('AC-DB5 ⭐ 一单多双·多次扫码：扫 A 加单 → 扫 B 加单 → 
 
       // ⑥ 提交完再打开任一一页：本单条归零（提交按钮跟着消失）
       const afterSubmit = await (await fetch(urlA, { headers: { cookie } })).text();
-      assert.match(afterSubmit, /本单：0 双/);
+      assert.equal(afterSubmit.includes('class="draft-bar__count"'), false, '提交后顶部那个计数行确实不在了 ✓');
       const barAfter = afterSubmit.slice(afterSubmit.indexOf('data-view="draft-bar"'));
       assert.equal(barAfter.slice(0, barAfter.indexOf('</section>')).includes(SCAN_WRITE.texts.submitButton),
         false, '提交后本单条上不该还有【提交这一单】');
