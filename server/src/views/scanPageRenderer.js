@@ -1623,6 +1623,9 @@ const renderSalePaymentStepPage = ({
   postAction = '', submitKey = '', count = 0, reused = false,
   // ⭐ 第 2 步付款要写进「收款明细」⇒ 需要刚提交那张销售主表的 record_id（`submitSale` 返回里有 ✓）
   salesEntryRecordId = '',
+  // ⭐⭐ 2026-10-14（她：**点资金页按钮才建单**）：结算校验没过时**原地重渲染这一页**并把这句人话带回来 ✓
+  //   （文案由**调用方**给 —— 用的是既有那几条文案真源 ✓ 这里只负责画 ✗ 不新造中文 ✓）
+  notice = '',
 } = {}) => {
   const step = { ...(config.paymentStep || {}) };
   const t = (write && write.texts) || {};
@@ -1659,6 +1662,9 @@ ${paymentFieldsHtml}
 <h1>${escapeHtml(step.heading)}</h1>
 ${orderNo ? `<p class="foot">${escapeHtml(orderNo)}</p>` : ''}
 <p class="hint">${escapeHtml(step.pendingNote || '')}</p>
+${String(notice || '').trim()
+    ? `<p class="hint" data-view="payment-step-notice">${escapeHtml(String(notice).trim())}</p>`
+    : ''}
 ${payForm}
 <p class="hint">${escapeHtml(step.workbenchHint || '')}</p>
 <p><a class="btn btn--primary" href="${escapeHtml(workbench)}">${escapeHtml(config.saleSuccess?.fillPaymentButton)}</a></p>

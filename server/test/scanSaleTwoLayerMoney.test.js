@@ -929,36 +929,43 @@ test('AC-8a 【全付】不等 ⇒ 400 + **还是销售那一块** + 差额人�
         });
         assert.equal(added.status, 303);
       }
-      // 全付 + 总单只记了 200（少 300）⇒ 拦住
-      const failed = await followPaymentStep(base, cookie, await formPost(base, cookie, {
+      // ⭐⭐ 2026-10-14（业务负责人逐字：「**确认状态是资金那页点击了按钮之后，才算是用户确认了，
+      //    然后就是单号创建成功的页面**」）⇒ 这条用例改成**两段**：
+      //    ① 点「提交这一单」⇒ **只到资金页、一个字都不写表** ✓
+      //    ② 点资金页那颗【提交整单付款】⇒ **这时才校验钱**：不齐 ⇒ 400 + 原地重渲染资金页 + 零写入 ✓
+      const moneyPage = await formPost(base, cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: saleKey,
+      });
+      assert.equal(moneyPage.status, 200, '第一步只到资金页（200）');
+      const moneyHtml = await moneyPage.text();
+      assert.ok(moneyHtml.includes('data-view="payment-step"'), '第一步到的是**资金页**');
+      assert.equal(entriesOf(h, 'salesEntry').length, 0, '第一步**一个字都不写**（主表 0）');
+      assert.equal(entriesOf(h, 'salesDetail').length, 0, '第一步**一个字都不写**（明细 0）');
+      assert.equal(entriesOf(h, 'paymentRecord').length, 0, '第一步**一个字都不写**（收款 0）');
+      // 全付 + 总单只记了 200（少 300）⇒ 第二步（点那颗按钮）**拦住**
+      const failed = await formPost(base, cookie, {
+        action: SCAN_PAGE.paymentStep.payAction, submit_key: saleKey,
         payment_status: PAYMENT_STATUS.full,
         payment_method: '现金', payment_amount: '200',
         line_amount: ['200', '300'],
-      }));
+      });
       assert.equal(failed.status, 400, '校验失败是"她能改"的那一类 ⇒ 400 而不是 500');
       const failedHtml = await failed.text();
-      assert.ok(failedHtml.includes('realm-block--sales'), '原地回到销售那一块（不是一张干巴巴的失败页）');
-      assert.match(failedHtml, /每件实收合计 ¥500，收款合计 ¥200；收款比每件实收少 ¥300/,
-        '差额人话就在页面上');
-      // 她刚填的值还在（不用重打）：每件实收两行 + 付款情况 + 她选的方式 / 金额
-      assert.equal((failedHtml.match(/name="line_amount"/g) || []).length, 2);
-      assert.match(failedHtml, /name="line_amount"[^>]*value="200"/);
-      assert.match(failedHtml, /name="line_amount"[^>]*value="300"/);
-      assert.match(failedHtml, new RegExp(`value="${PAYMENT_STATUS.full}" checked`), '她选的那一档还在');
+      assert.ok(failedHtml.includes('data-view="payment-step"'), '原地**重渲染资金页**（不是一张干巴巴的失败页）');
+      // 她刚填的钱还在（不用重打）：她选的方式 / 金额
       assert.match(failedHtml, /<option value="现金" selected>现金<\/option>/);
       assert.match(failedHtml, /name="payment_amount"[^>]*value="200"/);
       // **一个字都没写库**
       assert.equal(entriesOf(h, 'salesEntry').length, 0);
       assert.equal(entriesOf(h, 'salesDetail').length, 0);
       assert.equal(entriesOf(h, 'paymentRecord').length, 0);
-      // 照着上面那句话改对 ⇒ 同一把键再提交 ⇒ 成单（只写一次，见 AC-9）
-      const fixed = await followPaymentStep(base, cookie, await formPost(base, cookie, {
-        action: SCAN_WRITE.actions.submitOrder, submit_key: saleKey,
+      // 改对 ⇒ 同一把键**再点一次那颗按钮** ⇒ 成单（只写一次）
+      const fixed = await formPost(base, cookie, {
+        action: SCAN_PAGE.paymentStep.payAction, submit_key: saleKey,
         payment_status: PAYMENT_STATUS.full,
         payment_method: ['微信', '现金'], payment_amount: ['200', '300'],
         line_amount: ['200', '300'],
-      }));
+      });
       assert.equal(fixed.status, 200, await fixed.text());
       assert.equal(entriesOf(h, 'salesEntry').length, 1);
       assert.equal(entriesOf(h, 'salesDetail').length, 2);
@@ -1027,12 +1034,20 @@ test('AC-8d ⭐【部分付】走真路由：实付 200 + 差额 300 落在收�
           body: new URLSearchParams({ action: SCAN_WRITE.actions.addLine, submit_key: saleKey, size, amount }).toString(),
         });
       }
-      const done = await followPaymentStep(base, cookie, await formPost(base, cookie, {
+      // ⭐⭐ 2026-10-14（她逐字：「**确认状态是资金那页点击了按钮之后，才算是用户确认了**」）：
+      //    ⇒ 钱（部分付 / 实付 200）要填在**第二步**（点资金页那颗按钮）✓，
+      //      第一步（点提交）**不看钱** ✓ 只到资金页、零写入 ✓
+      const moneyPage = await formPost(base, cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: saleKey,
+      });
+      assert.equal(moneyPage.status, 200, await moneyPage.text());
+      assert.equal(entriesOf(h, 'salesEntry').length, 0, '第一步零写入（主表 0）');
+      const done = await formPost(base, cookie, {
+        action: SCAN_PAGE.paymentStep.payAction, submit_key: saleKey,
         payment_status: PAYMENT_STATUS.partial, paid_amount: '200',
         payment_method: '微信', payment_amount: '200',
         line_amount: ['200', '300'],
-      }));
+      });
       assert.equal(done.status, 200, await done.text());
       assert.deepEqual(paidRows(h).map((row) => row.fields['收款金额']), [200]);
       assert.deepEqual(unpaidRows(h).map((row) => row.fields['收款金额']), [300]);

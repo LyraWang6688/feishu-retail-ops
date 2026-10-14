@@ -96,6 +96,44 @@ const createScanPageRouter = (options = {}) => {
   // ⭐ 2026-10-12：提交成功页（逐字「您的提交已成功」+「再录一单」回扫码页）——
   //    单独一个注入点，用例可以钉"成功页长什么样"而不用碰别的页。
   const renderSuccess = options.render?.success || renderSaleSuccessPage;
+  /**
+   * ⭐⭐ 2026-10-14（业务负责人口径：**点「提交这一单」只到资金页、点资金页按钮才建单**）：
+   *   资金页的渲染**只留这一处**（GET 刷新认标记 / 点提交 / 点按钮 三处共用 ✓ 一份实现 ✗ 不复制）；
+   *   原来它写在 `submitSale` 之后 ⇒ 只有"提交成功"用得到 ✗；且一度写在 POST 处理器里
+   *   ⇒ ⭐ GET 看不到它（真机 `ReferenceError` ✗）⇒ 现在放在**工厂作用域** ✓
+   *   ⚠️ **逐字**：`step2Write` 的字段与渲染入参一个都没改 ✗（不许顺手改口径 ✓）
+   */
+  const step2WriteOf = (opts = {}) => ({
+    texts: writeConfig.texts, fields: writeConfig.fields, actions: writeConfig.actions,
+    paymentMethods: writeConfig.sale.paymentMethods,
+    defaultPaymentMethod: writeConfig.sale.defaultPaymentMethod,
+    paymentRowCount: writeConfig.sale.paymentRowCount,
+    // ⭐ 她刚填的那一档 / 实付多少 / 收款行 ⇒ **原样带回**（她不用重打 ✓ 她明确要过这条 ✓）
+    paymentStatus: String(opts.paymentStatus || writeConfig.sale.paymentStatus.default),
+    defaultPaymentStatus: writeConfig.sale.paymentStatus.default,
+    paidAmount: String(opts.paidAmount || ''),
+    ...(Array.isArray(opts.paymentRows) ? { paymentRows: opts.paymentRows } : {}),
+    draft: { lines: [] },
+  });
+  const sendPaymentStep = (res, req, opts = {}) => {
+    const target = backTargetFor(req, decodeURIComponent(String(req.params.number || '')));
+    // ⚠️ 默认 200 ✓；⭐ 结算没过那一次要 **400**（"她能改"的那一类 ⇒ 与既有口径一致 ✓ 旧行为也是 400 ✓）
+    const status = Number(opts.status) === 400 ? 400 : 200;
+    return sendHtml(res, status, renderSalePaymentStepPage({
+      write: step2WriteOf(opts),
+      // ⚠️ **不编**：还没建单时它是空串 ✓（她在资金页阶段本来就没有单号 ✓）
+      orderNo: String(opts.orderNo || ''),
+      config,
+      basePath: req.baseUrl,
+      postAction: postActionFor(target, opts.realm || 'sales'),
+      submitKey: String(opts.submitKey || ''),
+      count: Number(opts.count) || 0,
+      reused: Boolean(opts.reused),
+      salesEntryRecordId: String(opts.salesEntryRecordId || ''),
+      // ⭐ 结算没过时那一句人话（原地重渲染资金页 ✓）
+      notice: String(opts.notice || ''),
+    }));
+  };
   // ⚠️ 写服务**只为 POST 与"本单还有几双"服务**；`GET` 的库存表一个字都不依赖它。
   //    用例可以注入一个假的（`options.writeService`），`false` = 这一版不挂写入口。
   const writeService = writeConfig && options.writeService !== false
@@ -403,6 +441,11 @@ const createScanPageRouter = (options = {}) => {
   };
 
   const respondWriteFailure = (res, result, requestId) => {
+    // 2026-10-14 (real gap): a write failure used to log NOTHING. Only-add, existing event name.
+    logError(writeConfig.events.failed, {
+      request_id: requestId, reason: 'write_failed', code: String(result?.code || ''),
+      where: 'respondWriteFailure',
+    });
     // 500 = 系统那边没处理成（写库失败）；400 = 她填错了 / 数据不满足业务（一个字节都没写）。
     // ⭐ `sale_partial_failed` 也归 500：单子记上了、后面某步没写完 —— 不是她填错。
     const status = ['sale_write_failed', 'sale_partial_failed', 'replenish_write_failed', 'return_write_failed'].includes(result.code)
@@ -1171,6 +1214,26 @@ const createScanPageRouter = (options = {}) => {
       logInfo(SCAN_PAGE.events?.skeletonServed || 'scan.page.skeleton', { request_id: requestId });
       return sendHtml(res, 200, renderScanSkeleton(lookupInputOf(req), config));
     }
+    // ⭐⭐ 2026-10-14（业务负责人：**点「提交这一单」只到资金页**）：她**刷新**这一页时，
+    //   如果会话里记着"已经走到资金这一步"（`paymentStep === 'pending'`）⇒ ⭐ **仍给资金页** ✓
+    //   （否则刷新会掉回普通录入页 ⇒ 她会以为"白填了"✗）。其它情况**一个字都不改** ✓走老逻辑。
+    //   ⚠️ 只认会话标记（**不认任何查询串** ✗）⇒ 别人/别的情况下拿不到这一页 ✓
+    if (String(req.query?.data || '') !== '1'
+      && (lookupInputOf(req).number || lookupInputOf(req).recordId)) {
+      const pendingSession = await writeService?.sessions?.get?.(openIdOf(req)).catch(() => null);
+      const pendingMark = pendingSession?.sale?.paymentStep || pendingSession?.paymentStep;
+      if (pendingMark === 'pending') {
+        const pendingView = await service.lookup({ ...lookupInputOf(req), requestId }).catch(() => null);
+        if (pendingView?.found) {
+          const pendingLines = Array.isArray(pendingSession?.sale?.lines) ? pendingSession.sale.lines : [];
+          return sendPaymentStep(res, req, {
+            realm,
+            submitKey: writeService?.sessions?.submitKeyFor?.(openIdOf(req), pendingSession, 'sale') || '',
+            count: pendingLines.length,
+          });
+        }
+      }
+    }
     const timing = {};
     // ⭐ 2026-10-13：`session_ms` = **从进这个处理函数到真正开始取数**这一段（认证 / 读会话 /
     //    路由开销）。实测它正是"total 减去各分段之后那 1.0~2.6 秒"的主要来源 ✗ ——
@@ -1459,9 +1522,163 @@ const createScanPageRouter = (options = {}) => {
       //    🔴 三条红线：① 只有**写成功**才说"已收" ✓ ② 没填 ⇒ 待补充（不是失败）✓
       //                ③ 幂等沿既有 `requestId`（**不自造** ✓）
       if (action === (config.paymentStep?.payAction || 'payment_pay')) {
+        // ⭐⭐ 2026-10-14（业务负责人口径，逐字）：「**确认状态是资金那页点击了按钮之后，才算是用户确认了**」
+        //   ⇒ **建单就发生在这一刻** ✓（点「提交这一单」时只到资金页、一个字都没写 ✓）
+        //   · 会话里记着 `paymentStep:'pending'` ⇒ 说明她刚点过「提交这一单」、还没建单 ✓ ⇒ **现在建** ✓
+        //   · ⚠️ 不是 pending ⇒ 走**既有**老流程（一字不改 ✗）
+        //   · 🔴 金额/收款不齐 ⇒ `submitSale` 自己会拒（**它才是那份校验的真源** ✓ 路由不重算 ✗）
+        //      ⇒ 拒了 ⇒ ⭐ **原地重渲染资金页 + 那句人话** ✓ **一个字都不写表** ✗（不会假成功 ✓）
+        const paySession = await writeService?.sessions?.get?.(openIdOf(req)).catch(() => null);
+        const payPending = (paySession?.sale?.paymentStep || paySession?.paymentStep) === 'pending';
+        let createdResult = null;
+        // ⭐ 这一步的墙钟起点（打点用 ✓ 见下面那条 `scan.sale.timing`）
+        const payStepStartedAt = Date.now();
+        if (payPending) {
+          const pendingLines = Array.isArray(paySession?.sale?.lines) ? paySession.sale.lines : [];
+          const pendingInfo = paySession?.sale?.submitPending || paySession?.submitPending || {};
+          // ⚠️ 与提交那一下**同一套**解析（`parsePaymentRows` / `asList` ✓ 不新造 ✗）
+          //   ⭐ 资金页那张表单**不带**"每件实收"（`line_amount`）⇒ ⭐ **优先用她提交时就填好的那份** ✓
+          //     （实测 `AC-E2E-8`："她填的实收照旧落表" 就是靠这一条 ✓ 拿不到就退回表单 ✓ 不编 ✗）
+          const pendingPayments = parsePaymentRows(body, fields).length
+            ? parsePaymentRows(body, fields)
+            : (Array.isArray(pendingInfo.payments) ? pendingInfo.payments : []);
+          const pendingLineAmounts = asList(body[fields.lineAmount]).some((v) => String(v ?? '').trim())
+            ? asList(body[fields.lineAmount])
+            : (Array.isArray(pendingInfo.lineAmounts) ? pendingInfo.lineAmounts : []);
+          const pendingPaymentStatus = String(body[fields.paymentStatus] || pendingInfo.paymentStatus || '').trim();
+          const pendingPaidAmount = body[fields.paidAmount] ?? pendingInfo.paidAmount ?? '';
+          const pendingSize = String(pendingInfo.size || '').trim();
+          // ⭐⭐ 2026-10-14（她：配置先行 · 不散写 if-else）⇒ 用**已合入的那份纯函数**先做一次结算校验 ✓
+          //   🔴 它在 `config/saleSettlement.js`（表 + 纯函数 = 一份真源 ✓）
+          //   🔴 没过 ⇒ **原地重渲染资金页 + 一句话** ⇒ **一个字都不写表** ✗（不许假成功 ✓ 不许建单 ✓）
+          //   ⚠️ 它只是**前置**：`submitSale` 内部那条校验**仍然在**（双保险 ✓ 不改它 ✗）
+          // eslint-disable-next-line global-require
+          const { resolveSettlement } = require('../config/saleSettlement');
+          // ⭐ 档位的真源在 `config/scanWrite.js` 的 `PAYMENT_STATUS`（语义键 full/partial/unpaid ↔ 中文档位 ✓）
+          //   ⚠️ 走 `writeConfig.paymentStatus` 拿不到（那份配置没把它摊平 ✗）⇒ 直接 require 真源 ✓ 不猜 ✗
+          // eslint-disable-next-line global-require
+          const { PAYMENT_STATUS } = require('../config/scanWrite');
+          const payStatusMap = PAYMENT_STATUS || {};
+          const pendingMode = Object.keys(payStatusMap)
+            .find((key) => payStatusMap[key] === pendingPaymentStatus) || '';
+          const toCents = (value) => Math.round(Number(value || 0) * 100);
+          const settlement = resolveSettlement({
+            mode: pendingMode,
+            itemsCents: pendingLineAmounts.reduce((sum, value) => sum + toCents(value), 0),
+            paymentsCents: pendingPayments.reduce((sum, row) => sum + toCents(row.amount), 0),
+            hasPaymentRows: pendingPayments.filter((row) => String(row.amount ?? '').trim()).length > 0,
+            anyLineAmount: pendingLineAmounts.some((value) => String(value ?? '').trim()),
+            // ⭐ 「部分付」还要"实付多少"（她填的那个 ✓）—— 纯函数按 `paidCents` 判 ✓
+            //   ⚠️ 空串 ⇒ 传 `null`（= "没填"✓ 会被判 `partial_amount_missing`），**不许传 0** ✗
+            paidCents: String(pendingPaidAmount ?? '').trim() === '' ? null : toCents(pendingPaidAmount),
+          });
+          if (settlement.action === 'block') {
+            // ⚠️ 文案：**只用既有那几条模板**（`config/scanWrite.js` 的 texts ✓ **不编中文** ✗）
+            //   ⭐「全付两边不等」那条要带上**差额金额**（她一眼看到"少多少/多多少"✓ 实测 AC-E2E-16 ✓）
+            const blockText = (() => {
+              const t = writeConfig.texts || {};
+              const money = (cents) => `¥${(cents / 100).toFixed(2).replace(/\.00$/, '')}`;
+              const itemsCents = pendingLineAmounts.reduce((sum, value) => sum + toCents(value), 0);
+              const paymentsCents = pendingPayments.reduce((sum, row) => sum + toCents(row.amount), 0);
+              if (settlement.code === 'amount_mismatch' && t.amountMismatchBody) {
+                const diff = Math.abs(paymentsCents - itemsCents);
+                const side = itemsCents === 0
+                  ? fillWriteText(t.amountMismatchNoItems, { diff: money(diff) })
+                  : fillWriteText(
+                    paymentsCents > itemsCents ? t.amountMismatchOver : t.amountMismatchShort,
+                    { diff: money(diff) },
+                  );
+                return fillWriteText(t.amountMismatchBody, {
+                  items: money(itemsCents), payments: money(paymentsCents), side,
+                });
+              }
+              return t[`${settlement.code}Body`] || t[settlement.code] || '';
+            })();
+            return sendPaymentStep(res, req, {
+              realm,
+              submitKey: body[fields.submitKey],
+              count: pendingLines.length,
+              notice: blockText,
+              // ⭐ 她刚填的钱**原样带回**（她改一下就能再点 ✓ 这就是旧流程那条"值还在"的要求 ✓）
+              paymentStatus: pendingPaymentStatus,
+              paidAmount: pendingPaidAmount,
+              paymentRows: pendingPayments,
+              // ⭐ 400 = "她能改"的那一类（与既有口径一致 ✓ 旧流程这条也是 400 ✓ 不放宽 ✗）
+              status: 400,
+            });
+          }
+          const pendingView = pendingSize
+            ? await service.lookup({ ...lookupInputOf(req), requestId }).catch(() => null) : null;
+          // eslint-disable-next-line no-await-in-loop
+          createdResult = await writeService.submitSale({
+            openId: openIdOf(req),
+            requestId,
+            // 🔴 **同一把 `submitKey`**（幂等不许拆 ✗）：连点两次 / 重试都走这一个键 ✓
+            submitKey: body[fields.submitKey],
+            payments: pendingPayments,
+            lineAmounts: pendingLineAmounts,
+            paymentStatus: pendingPaymentStatus,
+            paidAmount: pendingPaidAmount,
+            timing: {},
+            pendingLine: pendingView?.found ? {
+              productRecordId: pendingView.product_record_id,
+              number: pendingView.number,
+              itemNo: pendingView.item_no,
+              color: pendingView.color,
+              size: pendingSize,
+              amount: String(pendingInfo.amount || ''),
+              gift: String(pendingInfo.gift || ''),
+              inStock: sellableSizeTexts(pendingView).has(pendingSize),
+            } : null,
+          });
+          if (!createdResult?.ok) {
+            // ⭐ 校验类失败（金额/收款不齐那些 code ✓）⇒ **原地重渲染资金页**：人话挂上去、改一下再点 ✓
+            if ((writeConfig.sale.formFailureCodes || []).includes(createdResult?.code)) {
+              return sendPaymentStep(res, req, {
+                realm,
+                submitKey: body[fields.submitKey],
+                count: pendingLines.length,
+                notice: createdResult.message,
+              });
+            }
+            return respondWriteFailure(res, createdResult, requestId);
+          }
+          // ⭐ 建单成功 ⇒ 标记从「已到资金页」改成「**这一单已经建过**」✓
+          //   🔴 **不能清成空串** ✗ —— 否则她**再点一次**时服务端就"忘了"，只会再渲染资金页 ✗，
+          //      而她要的是「**这一单刚才已经交过了**」✓（幂等不许拆 ✓ 只写一次但要如实说 ✓）
+          await writeService.saveDraftLines?.(openIdOf(req), { paymentStep: 'created' });
+        }
+        // ⭐⭐ 2026-10-14：**建单那一步的打点**要跟着挪到"点按钮"这里 ✓
+        //   （旧流程在"点提交"那一段打 ✓ ⇒ 新流程里那一段不再建单 ✗ ⇒ 不打 ⇒ 她就看不到"卡在哪一段"✗
+        //    实测 `AC-E2E-16/17/18/16b`：都要 `scan.sale.timing` ✓ 一条一条要 ✓ 事件名/形状**照旧** ✗）
+        if (createdResult) {
+          logInfo(writeConfig.events.saleTiming, {
+            request_id: requestId,
+            ok: createdResult.ok === true,
+            code: createdResult.code || '',
+            order_no: createdResult.order_no || '',
+            reused: createdResult.reused === true,
+            partial: createdResult.code === 'sale_partial_failed',
+            lines: Number(createdResult.detail_count) || 0,
+            // ⚠️ 这一步的墙钟（含排队等前面的写 —— 她连点 14 次时这一段会明显变大 ✓）
+            submit_ms: Math.max(0, Date.now() - payStepStartedAt),
+            queue_wait_ms: Number(createdResult.timing?.queue_wait_ms) || 0,
+            lookup_ms: Number(createdResult.timing?.lookup_ms) || 0,
+            prepare_ms: Number(createdResult.timing?.prepare_ms) || 0,
+            master_ms: Number(createdResult.timing?.master_ms) || 0,
+            status_ms: Number(createdResult.timing?.status_ms) || 0,
+            detail_ms: Number(createdResult.timing?.detail_ms) || 0,
+            stock_ms: Number(createdResult.timing?.stock_ms) || 0,
+          });
+        }
+        // ⭐ 建单成功 ⇒ 记下"她刚在销售里干过活" ✓（下次**裸扫**默认还回销售 ✓）
+        //   ⚠️ 旧流程在"点提交"那一段记 ✓ —— 新流程改成"**点按钮才建单**"⇒ 这一句也要跟着挪过来 ✗
+        //      （实测 `AC-RF4`：写成功要记 `last_realm = sales` ✓ 不挪就丢了 ✓）
+        if (createdResult) markRealmUsed(openIdOf(req), realmOfAction(writeConfig.actions.submitOrder));
         const payTarget = backTargetFor(req, decodeURIComponent(String(req.params.number || '')));
-        const paidOrderNo = String(body.order_no || '').trim().slice(0, 40);
-        const paidCount = Number(String(body.count || '').trim() || 0) || 0;
+        // ⭐ 单号/双数：**优先用刚建单的返回值** ✓（没建单时退回表单里的那两个 ✓ 一律**不编** ✗）
+        const paidOrderNo = String(createdResult?.order_no || body.order_no || '').trim().slice(0, 40);
+        const paidCount = Number(String(createdResult?.detail_count ?? body.count ?? '').trim() || 0) || 0;
         const paidReused = String(body.reused || '') === '1';
         const paidDetails = [
           fillWriteText(writeConfig.texts.submittedOrderLine, { orderNo: paidOrderNo || '—' }),
@@ -1481,6 +1698,17 @@ const createScanPageRouter = (options = {}) => {
         // 🔴 只认**填了金额**的行（PAY2 抓到的真 bug：空金额行也曾被当成「要记一笔」⇒ 会写出空账 ✗）
         const rowsToPay = parsePaymentRows(body, fields)
           .filter((row) => String(row.amount ?? '').trim());
+        // ⭐⭐ 2026-10-14（她：**点资金页按钮 = 确认 ⇒ 才建单**）：
+        //   · 刚建单那一次（`createdResult` 有值 ✓）⇒ **这一单的收款已经由 `submitSale` 按同一份入参写好了** ✓
+        //     ⇒ 🔴 **不能再走下面那条 `addPayment`** ✗（否则就是**第二遍写收款**✗ ——
+        //       写库时会被如实拦住"本次收款超过待收金额 ￥0"✓ 这正是它该有的样子 ✓）
+        //   · 而"**补记收款**"（工作台那条既有用法 / 老流程的 order_no 路径）⇒ 照旧走 `addPayment` ✓ **一字不改** ✗
+        if (createdResult) {
+          invalidateInventorySnapshot(requestId, 'scan_sale_paid');
+          // ⭐ 成功页那句人话：与"提交成功"那条**逐字同形**（她 2026-10-12 定的那一句 ✓）
+          //   ⚠️ `paidPayload(retryHint)` 的参数就是**那句提示** ✓ 不是 note 文本 ✗
+          return sendSuccess(res, 200, paidPayload(writeConfig.texts.submittedNextHint));
+        }
         // ⭐ 没填金额（或行数为 0）⇒ **待补充**：**一个字都不写**、成功页照给、**不报错** ✓
         if (!rowsToPay.length) {
           return sendSuccess(res, 200, paidPayload(config.paymentStep?.payPendingNote));
@@ -1492,7 +1720,9 @@ const createScanPageRouter = (options = {}) => {
           for (const row of rowsToPay) {
             // eslint-disable-next-line no-await-in-loop
             const paid = await followup.addPayment({
-              salesEntryRecordId: String(body.sales_entry_record_id || '').trim(),
+              // ⭐ 主表 record_id：**优先用刚建单的返回值** ✓（资金页那份表单里它是空的 —— 那时还没建单 ✗
+              //   用空串去写收款 ⇒ 会撞"销售订单尚未确认入账"✗ 这正是新流程多出来的一处 ✓）
+              salesEntryRecordId: String(createdResult?.sales_entry_record_id || body.sales_entry_record_id || '').trim(),
               method: row.method,
               amount: row.amount,
               requestId,
@@ -1521,9 +1751,102 @@ const createScanPageRouter = (options = {}) => {
       //    ⭐ 走**既有 POST 动作分发**（不是我原先那条 GET 分支 —— 那条落错函数、已删 ✗）
       //    🔴 跳过**不是失败**：不写任何收款、不说"已收"、也不报错 ✓（她口径：「可写可不写」✓）
       if (action === (config.paymentStep?.skipAction || 'payment_skip')) {
-        const skippedOrderNo = String(body.order_no || '').trim().slice(0, 40);
-        const skippedCount = Number(String(body.count || '').trim() || 0) || 0;
-        const skippedReused = String(body.reused || '') === '1';
+        // ⭐⭐ 2026-10-14（她：**点资金页按钮 = 用户确认**）⇒ 【跳过】那颗按钮**同样要先把单建出来** ✓
+        //   （跳过 = "钱稍后去工作台补" ✓ 但**货那一单必须先成立** ✓ 否则"跳过"就成了"什么都没发生"✗）
+        //   🔴 与 `payment_pay` **同一把 `submitKey`**（幂等不许拆 ✗）· 校验仍由 `submitSale` 兜 ✓
+        const skipSession = await writeService?.sessions?.get?.(openIdOf(req)).catch(() => null);
+        const skipMark = skipSession?.sale?.paymentStep || skipSession?.paymentStep;
+        // ⭐ `pending` = 还没建单 ⇒ 现在建 ✓；`created` = **这一单已经建过** ⇒ ⭐ 再点也要**如实**告诉她
+        //   「这一单刚才已经交过了」✓（**同一把 `submitKey`** ⇒ `submitSale` 自己幂等 ⇒ **只写一次** ✓
+        //    🔴 **幂等不许拆** ✗ 绝不直调 `_confirm` ✓）
+        const skipPending = skipMark === 'pending' || skipMark === 'created';
+        let skipCreated = null;
+        // ⭐ 这一步的墙钟起点 + **打点载体**（服务端把各分段**写进这个对象** ✓ 与旧流程同一个形状 ✓）
+        const skipStepStartedAt = Date.now();
+        const skipStepTiming = {};
+        if (skipPending) {
+          const skipInfo = skipSession?.sale?.submitPending || skipSession?.submitPending || {};
+          const skipSize = String(skipInfo.size || '').trim();
+          const skipView = skipSize
+            ? await service.lookup({ ...lookupInputOf(req), requestId }).catch(() => null) : null;
+          // ⭐ 跳过 = **不写收款** ✓（"钱稍后补"✓）⇒ 空的 payments + 默认档（未付）+ 实收空 ✓
+          // eslint-disable-next-line no-await-in-loop
+          skipCreated = await writeService.submitSale({
+            openId: openIdOf(req),
+            requestId,
+            submitKey: body[fields.submitKey],
+            payments: [],
+            // ⭐ 同上：**每件实收**优先用她提交时填好的那份 ✓（资金页表单不带这个字段 ✗ 丢掉就落不了表 ✓）
+            lineAmounts: asList(body[fields.lineAmount]).some((v) => String(v ?? '').trim())
+              ? asList(body[fields.lineAmount])
+              : (Array.isArray(skipInfo.lineAmounts) ? skipInfo.lineAmounts : []),
+            paymentStatus: writeConfig.sale.paymentStatus.default,
+            paidAmount: '',
+            timing: skipStepTiming,
+            pendingLine: skipView?.found ? {
+              productRecordId: skipView.product_record_id,
+              number: skipView.number,
+              itemNo: skipView.item_no,
+              color: skipView.color,
+              size: skipSize,
+              amount: String(skipInfo.amount || ''),
+              gift: String(skipInfo.gift || ''),
+              inStock: sellableSizeTexts(skipView).has(skipSize),
+            } : null,
+          });
+          if (!skipCreated?.ok) {
+            // ⭐⭐ 2026-10-12（她口径）：**主表已建、明细那一步没写成功** ⇒ 给她**如实**的"半成"页
+            //   （单子记上了 + 单号 + 怎么出去）🔴 **绝不许**说"提交已成功"✗、也**不许**说"一个字都没写"✗
+            if (skipCreated?.code === 'sale_partial_failed') {
+              return sendHuman(res, 500, {
+                title: writeConfig.texts.partialFailedTitle,
+                body: fillWriteText(writeConfig.texts.partialFailedBody, {
+                  orderNo: skipCreated.order_no || '—',
+                }),
+                requestId,
+                details: [fillWriteText(writeConfig.texts.submittedOrderLine, {
+                  orderNo: skipCreated.order_no || '—',
+                })],
+                retryHint: writeConfig.texts.partialFailedRetryHint,
+                backPath: postActionFor(
+                  backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realm,
+                ),
+                backLabel: writeConfig.texts.submittedRecordAnother,
+              });
+            }
+            return respondWriteFailure(res, skipCreated, requestId);
+          }
+          // ⭐ 建单成功 ⇒ 标记改成「**这一单已经建过**」✓（**不清成空串** ✗ —— 见 `payment_pay` 那段注释）
+          await writeService.saveDraftLines?.(openIdOf(req), { paymentStep: 'created' });
+        }
+        // ⭐ 同上：跳过那颗按钮建单成功也要记"她刚在销售里干过活" ✓（否则裸扫默认领域会丢 ✓）
+        if (skipCreated) markRealmUsed(openIdOf(req), realmOfAction(writeConfig.actions.submitOrder));
+        // ⭐⭐ 同上：**建单那一步的打点**（事件名/形状照旧 ✓ 她"一查日志就知道卡在哪段"✓）
+        if (skipCreated) {
+          logInfo(writeConfig.events.saleTiming, {
+            request_id: requestId,
+            ok: skipCreated.ok === true,
+            code: skipCreated.code || '',
+            order_no: skipCreated.order_no || '',
+            reused: skipCreated.reused === true,
+            partial: skipCreated.code === 'sale_partial_failed',
+            lines: Number(skipCreated.detail_count) || 0,
+            submit_ms: Math.max(0, Date.now() - skipStepStartedAt),
+            queue_wait_ms: Number(skipStepTiming.queue_wait_ms) || 0,
+            lookup_ms: Number(skipStepTiming.lookup_ms) || 0,
+            prepare_ms: Number(skipStepTiming.prepare_ms) || 0,
+            master_ms: Number(skipStepTiming.master_ms) || 0,
+            status_ms: Number(skipStepTiming.status_ms) || 0,
+            detail_ms: Number(skipStepTiming.detail_ms) || 0,
+            stock_ms: Number(skipStepTiming.stock_ms) || 0,
+          });
+        }
+        // ⭐ 单号/双数：**优先用刚建单的返回值** ✓（没建单时退回表单里的那两个 ✓ 一律**不编** ✗）
+        const skippedOrderNo = String(skipCreated?.order_no || body.order_no || '').trim().slice(0, 40);
+        const skippedCount = Number(String(skipCreated?.detail_count ?? body.count ?? '').trim() || 0) || 0;
+        // ⭐ 她**再点一次**（同一把 `submitKey`）⇒ `submitSale` 返回 `reused` ✓ ⇒ 成功页要**如实**说
+        //   「这一单刚才已经交过了」✓（不是失败 ✗ 也不是又写一遍 ✗）
+        const skippedReused = String(body.reused || '') === '1' || skipCreated?.reused === true;
         const skipTarget = backTargetFor(req, decodeURIComponent(String(req.params.number || '')));
         // ⚠️ 成功页那两行（单号 / 双数）在**提交成功**那条路里是由 `details` 拼的 —— 跳过这条路
         //    也必须给她**同样的两行**（否则页面只剩标题 ⇒ 她看不到单号/双数 ✗）
@@ -1554,6 +1877,13 @@ const createScanPageRouter = (options = {}) => {
         });
       }
 
+      /**
+       * ⚠️ 2026-10-14：`step2WriteOf` / `sendPaymentStep` **已上移到工厂作用域** ✗ ——
+       *   原来写在这里（POST 处理器内部）⇒ ⭐ GET 那条路（刷新认标记）**看不到它** ✗
+       *   ⇒ 真机/测试都会炸 `ReferenceError: sendPaymentStep is not defined` ✓
+       *   ⇒ 现在定义在工厂里（GET / POST 两个处理器都看得见 ✓ 一份实现 ✓ 不复制 ✗）
+       */
+
       // ── 提交销售单 ──────────────────────────────────────────────────────────
       if (action === actions.submitOrder) {
         // ⭐⭐ 2026-10-11（**最终口径**）：总单层 = ①每件实收（同名重复 ⇒ 有序数组，下标 = 明细行）
@@ -1577,6 +1907,38 @@ const createScanPageRouter = (options = {}) => {
         // `lookup_ms` = 提交前那一次"取商品"（缓存命中⇒很短；没命中⇒就是飞书那几读）。
         saleTiming.lookup_ms = Math.max(0, Date.now() - submitLookupStartedAt);
         const submitStartedAt = Date.now();
+        // ⭐⭐ 2026-10-14（业务负责人口径，逐字）：「**确认状态是资金那页点击了按钮之后，才算是用户确认了**」
+        //   ⇒ 点「提交这一单」**只到资金页、一个字都不写表** ✗（不建单 / 不写明细 / 不动库存 ✓）
+        //   ⇒ 把"这一单要写什么"**记进服务端会话** ✓（第二小步：点资金页按钮时才据此建单 ✓；刷新时 GET 也认它 ✓）
+        //   ⚠️ 用**既有**会话机制（`saveSaleProgress` 的薄透传 `saveDraftLines` ✓ 不新造 ✓）
+        const submitSession = await writeService.sessions?.get?.(openId).catch(() => null);
+        const pendingDraftLines = Array.isArray(submitSession?.sale?.lines) ? submitSession.sale.lines
+          : (Array.isArray(submitSession?.lines) ? submitSession.lines : []);
+        await writeService.saveDraftLines?.(openId, {
+          lines: pendingDraftLines,
+          // ⭐ 她（或 GET）据此判断"已经走到资金这一步了" ⇒ 刷新仍停在资金页 ✓
+          paymentStep: 'pending',
+          // ⭐ 点按钮那一刻要写的那一双（尺码/金额/赠品）—— **从提交这一下原样存下来**（拿不到就不存 ✓ 不编 ✗）
+          submitPending: {
+            size: String(body[fields.size] ?? '').trim(),
+            amount: String(body[fields.amount] ?? '').trim(),
+            gift: String(body[fields.gift] ?? '').trim(),
+            // ⭐⭐ 她在**销售页**填的"每件实收 / 收款行 / 付款情况 / 实付多少"也要一起存下来 ✓
+            //   （资金页那张表单**不带**这些字段 ✗ ⇒ 不在这一步存 ⇒ 点按钮建单时它们就丢了 ✗
+            //     实测：`AC-E2E-8` 的"她填的实收照旧落表"就是因为丢了这个 ✗）
+            lineAmounts: asList(body[fields.lineAmount]),
+            payments: parsePaymentRows(body, fields),
+            paymentStatus: String(body[fields.paymentStatus] || '').trim(),
+            paidAmount: String(body[fields.paidAmount] ?? ''),
+          },
+        });
+        // ⭐ 资金页：还没建单 ⇒ `orderNo: ''`（**不编** ✗）· `count` 用草稿行数 ✓
+        return sendPaymentStep(res, req, {
+          realm,
+          submitKey: body[fields.submitKey],
+          count: pendingDraftLines.length,
+        });
+        // eslint-disable-next-line no-unreachable
         const result = await writeService.submitSale({
           openId,
           requestId,
@@ -1704,29 +2066,17 @@ const createScanPageRouter = (options = {}) => {
         //    提交成功 ⇒ **先落「整单付款」页**（三档横向 + 收款多行 + 赠品，可填可不填）
         //    ⇒ 她点【跳过（稍后去工作台补）】⇒ 走 `payment_skip` 动作 ⇒ 成功页 ✓
         //    🔴 跳过 = 记成「待补充的信息单」：**不写收款 / 不说已收 / 也不报失败** ✓
-        //    ⚠️ 落点用**既有 POST 动作分发**（不新造取数路径 ✓ 也不依赖 GET 分支 ✓）。
-        const step2Write = {
-          texts: writeConfig.texts, fields: writeConfig.fields, actions: writeConfig.actions,
-          paymentMethods: writeConfig.sale.paymentMethods,
-          defaultPaymentMethod: writeConfig.sale.defaultPaymentMethod,
-          paymentRowCount: writeConfig.sale.paymentRowCount,
-          paymentStatus: writeConfig.sale.paymentStatus.default,
-          defaultPaymentStatus: writeConfig.sale.paymentStatus.default,
-          paidAmount: '', draft: { lines: [] },
-        };
+        //    ⚠️ 2026-10-14：渲染搬去 `sendPaymentStep`（逐字搬迁 ✓ 提交与按钮两处共用 ✓）
         try {
-          return sendHtml(res, 200, renderSalePaymentStepPage({
-            write: step2Write,
+          return sendPaymentStep(res, req, {
+            realm,
+            submitKey: body[fields.submitKey],
             orderNo: result.order_no || '',
-            config,
-            basePath: req.baseUrl,
-            postAction: postActionFor(submitTarget, realm),
-            submitKey: String(body[fields.submitKey] || ''),
             count: result.detail_count || 0,
-            reused: Boolean(result.reused),
+            reused: result.reused,
             // ⭐ 第 2 步的付款要写「收款明细」⇒ 用**这次提交就有**的主表 record_id（不反查 ✓）
             salesEntryRecordId: result.sales_entry_record_id || '',
-          }));
+          });
         } catch (error) {
           logError(config.events.failed, {
             request_id: requestId, reason: 'payment_step_render_failed', error: error.message,

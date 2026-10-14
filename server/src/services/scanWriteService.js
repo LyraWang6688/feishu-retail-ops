@@ -1539,6 +1539,8 @@ const createScanWriteService = (options = {}) => {
     sessions,
     addSaleLine,
     clearDraft,
+    // 2026-10-14 资金页前置：只加一个薄透传（内部仍是既有 saveSaleProgress ✓）
+    saveDraftLines: (openId, patch) => sessions.saveSaleProgress(openId, patch),
     submitSale,
     submitReplenish,
     // ⭐ 采购退货（与补货同形；业务负责人 2026-10-11 定的「和"报货"逻辑一样，也走扫码」）
