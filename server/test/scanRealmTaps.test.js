@@ -65,7 +65,8 @@ test('AC4 ⭐ `?from=inventory` 进来后**那一格是选中态**（她要有"�
   assert.match(realm, /const resolveRealm = \(value\) => \{[\s\S]*?REALMS\.some\(\(realm\) => realm\.id === raw\) \? raw : DEFAULT_REALM;/,
     'from=inventory ⇒ inventory；认不出 ⇒ 缺省 ✓');
   assert.match(realm, /Object\.freeze\(\{ id: 'inventory', label: '库存' \}\)/, '库存这一格确实存在 ✓');
-  assert.match(realm, /Object\.freeze\(\{ id: 'new', label: '上新', external: true \}\)/, '上新 = 唯一 external ✓');
+  // ⭐ 2026-10-14 晚：**上新已从扫码页去掉** ⇒ 断言翻成"条上没有任何 external" ✓（判据不放宽 ✗）
+  assert.equal(/external: true/.test(realm.replace(/^\s*\/\/.*$/gm, '')), false, '条上不再有外链 tab（上新已去掉 ✓）');
 });
 
 test('AC5 ⭐ 每一格的可点高度 ≥44px（`--control-height`，她的老规矩 ✓）', () => {

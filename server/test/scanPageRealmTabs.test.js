@@ -1,3 +1,7 @@
+// ⭐⭐ 2026-10-14 晚（业务负责人逐字，**覆盖 10-13 的六 tab 口径**）：
+//   「把配品迁移到工作台销售里，新建一个子 tab，整体都迁移过去」＋「把上新 tab 也给去掉」
+//   ⇒ 扫码页**只剩 4 个领域**：销售 · 补货 · 库存 · 退货 ✓
+//   🔴 不是放宽 ✗：判据从"六 tab 必须在"翻成"**四 tab + 配品/上新必须不在**" ✓
 /**
  * ⭐⭐ 2026-10-13 扫码页**六 tab + 配品页**的验收标准（业务负责人的最终版）：
  *   她逐字：「第一行：销售 · 补货 · 库存；第二行：标签 · 上新 · 配品」
@@ -55,15 +59,18 @@ test('AC-RB1 ⭐ 六 tab 名称与顺序逐字 = 销售·补货·库存·退货�
   //   ⇒ 变化：**退货回到条上**（`purchase_return` label 改回"退货"✓）· **配品 = 新领域 `accessory`** ✓ ·
   //             **标签整格撤下条** ✗（功能不删 ✓ 仍能解析 ✓）· 「货品」这个词一个都不许回来 ✗
   assert.deepEqual(REALM_TABS.map((realm) => `${realm.id}=${realm.label}`),
-    ['sales=销售', 'replenish=补货', 'inventory=库存', 'purchase_return=退货', 'accessory=配品', 'new=上新']);
-  assert.equal(REALM_TABS.length, 6, '条上就六个');
+    ['sales=销售', 'replenish=补货', 'inventory=库存', 'purchase_return=退货']);
+  // ⭐ 2026-10-14 晚：条上**只剩四个**（配品搬去工作台 ✓ 上新去掉 ✓）
+  assert.equal(REALM_TABS.length, 4, '条上就四个');
+  assert.equal(REALM_TABS.some((realm) => realm.id === 'accessory'), false, '配品不在扫码页 ✓');
+  assert.equal(REALM_TABS.some((realm) => realm.id === 'new'), false, '上新不在扫码页 ✓');
   assert.equal(REALM_TABS.some((realm) => realm.id === 'accept'), false, '验收不上条（有会话才切进来）');
   assert.equal(REALMS.some((realm) => realm.id === 'accept'), true, '但验收必须仍能解析 ✓');
   // ⭐ 标签：**不在条上**，但**必须仍能解析**（旧 `?from=product` 链接不能死 ✗）
   assert.equal(REALM_TABS.some((realm) => realm.id === 'product'), false, '标签整格撤下条 ✓');
   assert.equal(REALMS.some((realm) => realm.id === 'product'), true, '但标签必须仍能解析 ✓');
   assert.equal(resolveRealm('product'), 'product', '旧 ?from=product 照旧能开 ✓');
-  assert.equal(resolveRealm('accessory'), 'accessory', '新领域配品能解析 ✓');
+  assert.equal(resolveRealm('accessory'), 'sales', '配品已从扫码页撤下 ⇒ 旧 ?from=accessory 回落销售 ✓');
   assert.equal(resolveRealm('purchase_return'), 'purchase_return', '退货仍解析到自己 ✓');
 });
 
@@ -75,7 +82,7 @@ test('AC-RB2 ⭐ 一行六格（2026-10-14 她：「没有铺满屏幕的水平�
   //              `assert.match(barRule, /repeat\(3,/, '三列（六个 = 两行）')` + `不许横滑`
   //   改后：**一行六格、等分铺满**（顺序不变 ✓）；窄屏允许横向滚动（不裁切 ✗）
   // ⚠️ 2026-10-14 改指向（同上）：条上六个 = 销售·补货·库存·退货·配品·上新 ✓
-  assert.deepEqual(ids, ['sales', 'replenish', 'inventory', 'purchase_return', 'accessory', 'new'], '一行六个、顺序逐字 ✓');
+  assert.deepEqual(ids, ['sales', 'replenish', 'inventory', 'purchase_return'], '四个领域、顺序逐字 ✓');
   const style = fs.readFileSync(RENDERER_SRC, 'utf8');
   const barRule = style.match(/\.realm-bar \{[^}]*\}/)[0];
   assert.match(barRule, /grid-template-columns:\s*1fr;/, '容器一整列（每行占满整宽 ✓）');
@@ -107,12 +114,16 @@ test('AC-RB3 ⭐ 「退货」回到条上（逐字 ✓）而「货品」一个�
 test('AC-RB4 其余领域落点与改前逐字相同（`?from=` 值一个没变）', () => {
   const bar = barOf(htmlFor('sales'));
   // ⚠️ 2026-10-14 改指向：**条上六个**的落点逐字 ✓（标签撤下条 ✗ ⇒ 它不在这张单子里 ✓）
-  for (const id of ['sales', 'replenish', 'inventory', 'purchase_return', 'accessory']) {
+  for (const id of ['sales', 'replenish', 'inventory', 'purchase_return']) {
     assert.ok(bar.includes(`href="?from=${id}"`), `落点逐字不变：?from=${id}`);
     assert.equal(resolveRealm(id), id, `${id} 仍解析得出来`);
   }
-  // ⭐ 标签（不在条上）与上新（外链 ✗ 不带 from）另判 ✓
-  assert.ok(bar.includes('target="_blank"'), '上新仍是外链 ✓');
+  // ⭐ 2026-10-14（她：「把**上新 tab** 也给**去掉**」）：
+  //   ⇒ 条上**不再有**上新外链 ✓ · 配品也**不再在扫码页** ✓（它整体搬去工作台「销售 → 配品」✓）
+  //   🔴 不是放宽 ✗：判据从"必须有"翻成"**必须没有**" ✓
+  assert.equal(bar.includes('target="_blank"'), false, '上新外链已从扫码页去掉 ✓');
+  assert.equal(bar.includes('?from=new'), false, '条上不再有 ?from=new ✓');
+  assert.equal(bar.includes('?from=accessory'), false, '条上不再有 ?from=accessory（配品搬去工作台 ✓）');
   assert.equal(resolveRealm('product'), 'product', '?from=product 照旧能解析 ✓（只是不上条 ✗）');
   // 已退役的 `purchase` 仍回落销售（既有口径不回归）
   assert.equal(resolveRealm('purchase'), 'sales');
@@ -123,54 +134,25 @@ test('AC-RB4 其余领域落点与改前逐字相同（`?from=` 值一个没变�
   }
 });
 
-test('AC-RB5 ⭐ 上新外链与工作台**同一份 URL** + 缺 URL 不静默', () => {
-  // ① 与工作台那份逐字同源（**只读**那个文件；它在另一位手里 ⇒ 不碰 ✓）
-  const workbench = fs.readFileSync(WORKBENCH_LINKS, 'utf8');
-  const match = workbench.match(/PRODUCT_NEW_FORM_URL\s*=\s*\n?\s*'([^']+)'/);
-  assert.ok(match, '工作台那份要有 PRODUCT_NEW_FORM_URL');
-  assert.equal(SCAN_PAGE.realmBar.newFormUrl, match[1], '扫码页与工作台**逐字**同一个 URL');
-  // ② 渲染出来的也是它（外链开新窗口）
-  const external = barOf(htmlFor('sales')).match(/data-realm-id="new" href="([^"]+)"[^>]*>/);
-  assert.ok(external, '条上要有「上新」那一颗');
-  assert.equal(external[1], SCAN_PAGE.realmBar.newFormUrl);
-  assert.match(external[0], /target="_blank"/);
-  // ③ 缺 / 写错 ⇒ **当场报错**（绝不静默渲染一颗点不动的死链 ✗）——**真行为**：清缓存 + 设坏值 + 重新 require
-  const CONFIG_PATH = require.resolve('../src/config/scanPage');
-  const original = process.env.PRODUCT_NEW_FORM_URL;
-  try {
-    for (const bad of ['', '   ', 'not-a-url', 'ftp://x/y']) {
-      process.env.PRODUCT_NEW_FORM_URL = bad;
-      delete require.cache[CONFIG_PATH];
-      assert.throws(() => require('../src/config/scanPage'),
-        /「上新」外链|PRODUCT_NEW_FORM_URL/, `PRODUCT_NEW_FORM_URL=${JSON.stringify(bad)} 必须当场报错`);
-    }
-    // 正常值 ⇒ 解析得出来（别把守卫写成"一律报错"）
-    process.env.PRODUCT_NEW_FORM_URL = 'https://example.com/form/x';
-    delete require.cache[CONFIG_PATH];
-    assert.equal(require('../src/config/scanPage').SCAN_PAGE.realmBar.newFormUrl, 'https://example.com/form/x');
-  } finally {
-    if (original === undefined) delete process.env.PRODUCT_NEW_FORM_URL;
-    else process.env.PRODUCT_NEW_FORM_URL = original;
-    delete require.cache[CONFIG_PATH];
-  }
+test('AC-RB5 ⭐ 上新**已从扫码页退场**（能力搬到工作台；扫码页不再渲染它）', () => {
+  // ⭐⭐ 2026-10-14（业务负责人逐字）：「把**上新 tab** 也给**去掉吧**」
+  //   ⇒ 扫码页**不再渲染**上新外链 ✓（配置 `realmBar.newFormUrl` 仍在 ✓ 归工作台侧用 ✓）
+  //   🔴 **不是放宽** ✗：原判据"扫码页外链 URL 与工作台逐字相同"已随"扫码页不再有外链"退场 ✓
+  const ids = REALM_TABS.map((item) => item.id);
+  assert.equal(ids.includes('new'), false, '条上没有 new ✓');
+  const bar = barOf(htmlFor('sales'));
+  assert.equal(bar.includes('target="_blank"'), false, '条上没有任何外链了 ✓');
 });
 
-test('AC-RB6 配品页：有配品才出表单；没有配品 ⇒ **人话空态卡**（不留空 div）', () => {
-  const empty = htmlFor('purchase_return');
-  const emptyBlock = empty.slice(empty.indexOf('realm-block--purchase_return'));
-  assert.ok(emptyBlock.includes('<section class="card state-msg">'), '空态是**人话卡**');
-  assert.ok(emptyBlock.includes(SCAN_PAGE.texts.realmEmptyPurchaseReturnBody), '空态那句是配品的人话');
-  assert.equal(emptyBlock.includes('<form'), false, '空态不留空表单 ✗');
-
-  // ⚠️ 2026-10-14 改指向：配品**独立成领域 `accessory`** ✓（原来挤在 `purchase_return` 里 ✗）
-  //   能力一个字没删 ✗：选名称 + 「加进本单」那颗 + 配品名逐字 ✓
-  const withAccessory = htmlFor('accessory', {
-    enabled: true, texts: SCAN_WRITE.texts, fields: SCAN_WRITE.fields, actions: SCAN_WRITE.actions,
-    postAction: '/s/XHB8095%7C%E6%A3%95%E8%89%B2%7CA', saleKey: 'k',
-    accessories: [{ record_id: 'acc_1', name: '腰带' }],
-  });
-  const block = withAccessory.slice(withAccessory.indexOf('realm-block--accessory'));
-  assert.ok(block.includes(`name="${SCAN_WRITE.fields.accessory}"`), '能看到并选配品');
-  assert.ok(block.includes(SCAN_WRITE.actions.addAccessory), '有"加进本单"那颗');
-  assert.ok(block.includes('腰带'), '配品名逐字出现');
+test('AC-RB6 ⭐ 配品**已从扫码页退场**（整块搬到工作台「销售 → 配品」）', () => {
+  // ⭐⭐ 2026-10-14（业务负责人逐字）：「把**配品**给**迁移到工作台销售里**，新建一个子 tab，
+  //   **整体都迁移过去**，**只是入口变了，逻辑没有变**」
+  //   ⇒ 扫码页**不再有配品领域/表单** ✓（`?from=accessory` 回落销售 ✓）
+  //   ⭐ 配品的验收（选名称 + 数量默认 1 + **成交金额必填** + 一步成单 + **不扣库存**）
+  //      改到**工作台那一页的测试**里判 ✓（本文件不再重复判 ✗）
+  assert.equal(REALMS.map((item) => item.id).includes('accessory'), false, 'REALMS 里没有 accessory ✓');
+  assert.equal(resolveRealm('accessory'), 'sales', '旧 ?from=accessory 回落销售 ✓');
+  const html = htmlFor('sales');
+  assert.equal(html.includes('realm-block--accessory'), false, '扫码页不再渲染配品那一块 ✓');
+  assert.equal(html.includes('data-view="accessory-sell"'), false, '扫码页不再有配品表单 ✓');
 });

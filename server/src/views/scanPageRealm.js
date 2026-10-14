@@ -74,10 +74,12 @@ const REALMS = Object.freeze([
   Object.freeze({ id: 'inventory', label: '库存' }),
   // ⭐ 「退货」**回到条上**（内部 id `purchase_return` 保留 ✓ 原来 label 被"配品"占着 ⇒ 改回"退货" ✓）
   Object.freeze({ id: 'purchase_return', label: '退货' }),
-  // ⭐ 「配品」= **新领域**（配品的单独销售 ✓ 见 `docs/scan-page-tabs-2026-10-14.md` 任务 B）
-  Object.freeze({ id: 'accessory', label: '配品' }),
-  // 「上新」= 不是页面领域，是**直达外链**（配置 `realmBar.newFormUrl` ✓）
-  Object.freeze({ id: 'new', label: '上新', external: true }),
+  // ⭐⭐ 2026-10-14（业务负责人逐字，最新口径 —— **覆盖 2026-10-13 那次**）：
+  //    「**配品**给**迁移到工作台销售里**，新建一个子 tab，**整体都迁移过去**，**只是入口变了，逻辑没有变**」
+  //    「把**上新 tab** 也给**去掉吧**」⇒ ⭐ 扫码页**只剩 4 个领域**：销售 · 补货 · 库存 · **退货**
+  //    ⇒ `accessory`（配品）与 `new`（上新）**从这里撤掉** ✓
+  //    ⚠️ 配品**不是删功能** ✓ —— 它**整体搬到工作台「销售 → 配品」子 tab**（逻辑一字不改 ✗）
+  //    ⚠️ 旧 `?from=accessory` / `?from=new` ⇒ 按既有口径**认不出的值一律回落销售** ✓
   // ⚠️ 「标签」**整格撤下条**（只不上条 ✓ **功能不删** ✗ —— 与验收同样处理：
   //    留在 REALMS 里 ⇒ 旧 `?from=product` 链接照旧能开 ✓）
   Object.freeze({ id: 'product', label: '标签' }),

@@ -1,3 +1,7 @@
+// ⭐⭐ 2026-10-14 晚（业务负责人逐字，**覆盖 10-13 的六领域口径**）：
+//   「配品给迁移到工作台销售里…整体都迁移过去」＋「把上新 tab 也给去掉」
+//   ⇒ 扫码页**只剩 4 个领域**：销售 · 补货 · 库存 · 退货 ✓
+//   🔴 不是放宽 ✗：判据从"六个都在"翻成"**四个在 + 配品/上新必须不在**" ✓
 /**
  * ⚠️ 2026-10-12 旧断言改写（**"零 JS"口径按业务负责人的要求改了**）：
  *  改前（逐字）：`assert.equal(/<script[\\s>]/i.test(html), false, '页面里一行前端脚本都没有');`
@@ -187,11 +191,13 @@ const WRITE = {
 //    改前：['sales','replenish','purchase_return','accept','inventory','product']
 //    改后：// ⚠️ 2026-10-14 改指向（业务负责人最终口径：销售·补货·库存·退货·配品·上新 ✓
 //   见 docs/scan-page-tabs-2026-10-14.md）；改前逐字：['sales', 'replenish', 'inventory', 'product', 'new', 'purchase_return', 'accept']
-['sales', 'replenish', 'inventory', 'purchase_return', 'accessory', 'new', 'product', 'accept']
+['sales', 'replenish', 'inventory', 'purchase_return', 'product', 'accept']
 // ⚠️ 2026-10-14 改指向（业务负责人最终口径）：条上 = 销售·补货·库存·退货·配品·上新 ✓
-//   改前逐字：`['sales', 'replenish', 'inventory', 'purchase_return', 'accessory', 'new', 'product', 'accept']`
+//   改前逐字：`['sales', 'replenish', 'inventory', 'purchase_return', 'product', 'accept']`
 //   （那时 `product`=标签 在条上、`purchase_return`=配品 ✗）；现在 product 撤下条 ✓ 但仍能解析 ✓
-const ALL_REALMS = ['sales', 'replenish', 'inventory', 'purchase_return', 'accessory', 'new', 'product', 'accept'];
+// ⭐ 2026-10-14 晚：配品搬去工作台「销售 → 配品」+ 上新去掉 ⇒ 扫码页剩 4 领域
+//   （`product` 已撤下条、`accept` 有会话才切进来 ⇒ 仍在 REALMS 里能解析 ✓）
+const ALL_REALMS = ['sales', 'replenish', 'inventory', 'purchase_return', 'product', 'accept'];
 const EXPECT = {
   sales: { has: ['加入本单', '提交这一单'], hasNot: ['库存（共', '一键补货', '货品标签', '生成采购退货'] },
   // ⭐ 2026-10-11：原 `purchase` 那一块 = 现在的 **`replenish`（补货）**（标记与文案一个字没变）。
@@ -277,8 +283,9 @@ test('AC-W3 领域切换是真链接 `?from=<id>`，当前那一颗高亮（没�
     assert.ok(body.includes(`href="?from=${realm.id}"`), `缺 ${realm.id} 的真链接`);
     assert.ok(body.includes(`data-realm-id="${realm.id}"`), `缺 ${realm.id} 的标记`);
   }
-  assert.ok(body.includes(`data-realm-id="new" href="${SCAN_PAGE.realmBar.newFormUrl}" target="_blank"`),
-    '「上新」= 直达外链（与工作台同一份 URL）');
+  // ⭐ 2026-10-14 晚（她：「把**上新 tab** 也给**去掉吧**」）：
+  //   ⇒ 条上**不再有**上新外链 ✓ ⇒ 原"必须是指达外链"翻成"**必须没有**" ✓（判据不放宽 ✗）
+  assert.equal(body.includes('data-realm-id="new"'), false, '条上不再有「上新」那一格 ✓');
   // 只有当前领域那一颗是 active（数一遍，别数错）
   const active = body.match(/realm-tab--active/g) || [];
   assert.equal(active.length, 1, '有且只有一颗按钮高亮');
@@ -314,7 +321,8 @@ test('AC-W4 拿不到写上下文时销售领域给一张人话卡片；每页�
     for (const other of REALM_TABS.filter((item) => item.external !== true)) {
       assert.ok(noScript.includes(`href="?from=${other.id}"`), `<noscript> 里缺 ${other.id} 的链接`);
     }
-    assert.ok(noScript.includes(SCAN_PAGE.realmBar.newFormUrl), '<noscript> 里「上新」也是那条外链');
+    // ⭐ 2026-10-14 晚：上新已去掉 ⇒ noscript 里也不该再有那条外链 ✓（对**每一页**都判 ✓）
+    assert.equal(noScript.includes(SCAN_PAGE.realmBar.newFormUrl), false, `<noscript> 里不再有「上新」外链（realm=${realm}）✓`);
     // ⚠️ 2026-10-10 断言翻转（她：「删掉解释我怎么用的句子」）：原先这里钉着
     //    `<noscript>` 里要有一句解释（`noScriptHint`）；现在那句必须不存在，
     //    而**四条领域链接**（能点的）照旧 —— 上面那段已经逐条断言。

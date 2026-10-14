@@ -1,3 +1,6 @@
+// ⭐⭐ 2026-10-14 晚（业务负责人逐字）：配品搬到工作台「销售 → 配品」+ 上新去掉
+//   ⇒ 扫码页**只剩 4 个领域**：销售 · 补货 · 库存 · 退货 ✓
+//   🔴 不是放宽 ✗：判据从"六个都在"翻成"**四个在 + 配品/上新不在**" ✓
 /** ⚠️ 2026-10-12 旧断言改写（"**零 JS**"口径按业务负责人的要求改了）：
  *  改前（逐字）：`assert.equal(/<script[\s>]/i.test(html), false, '页面里一行前端脚本都没有');`
  *  改后（逐字）：**有提交按钮的页面**（销售提交 / 打印这一款）= 整页**只有那一段**
@@ -720,8 +723,11 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
   assert.deepEqual(REALMS.map((realm) => realm.id),
     // ⚠️ 2026-10-14 改指向（业务负责人最终口径：销售·补货·库存·退货·配品·上新 ✓
 //   见 docs/scan-page-tabs-2026-10-14.md）；改前逐字：['sales', 'replenish', 'inventory', 'product', 'new', 'purchase_return', 'accept']
-['sales', 'replenish', 'inventory', 'purchase_return', 'accessory', 'new', 'product', 'accept']);
-  assert.deepEqual(REALMS.map((realm) => realm.label),['\u9500\u552e', '\u8865\u8d27', '\u5e93\u5b58', '\u9000\u8d27', '\u914d\u54c1', '\u4e0a\u65b0', '\u6807\u7b7e', '\u9a8c\u6536']);
+['sales', 'replenish', 'inventory', 'purchase_return', 'product', 'accept']);
+  // ⭐ 2026-10-14 晚：配品搬去工作台「销售 → 配品」+ 上新去掉 ⇒ 扫码页只剩 4 领域
+  //   （`product` 已撤下条、`accept` 有会话才切进来 ⇒ 仍在 REALMS 里能解析 ✓）
+  assert.deepEqual(REALMS.map((realm) => realm.label),
+    ['\u9500\u552e', '\u8865\u8d27', '\u5e93\u5b58', '\u9000\u8d27', '\u6807\u7b7e', '\u9a8c\u6536']);
   assert.equal(DEFAULT_REALM, 'sales', '缺省 = 销售（她 2026-10-11：「默认打开是销售页」）');
   // ⚠️ 2026-10-13：解析集 = 7 条（含验收与上新）；条上只六个
   for (const realm of REALMS) assert.equal(resolveRealm(realm.id), realm.id);
@@ -739,7 +745,9 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
     assert.ok(body.includes(`data-realm-id="${realm.id}"`), '领域按钮的标记');
   }
   assert.equal(body.includes('?from=accept'), false, '验收不在切换条上');
-  assert.ok(body.includes(`data-realm-id="new" href="${SCAN_PAGE.realmBar.newFormUrl}"`), '「上新」= 直达外链');
+  // ⭐ 2026-10-14 晚（她：「把**上新 tab** 也给**去掉吧**」）：
+  //   ⇒ 条上**不再有**上新外链 ✓ ⇒ 判据从"必须是直达外链"翻成"**必须没有**" ✓（不放宽 ✗）
+  assert.equal(body.includes('data-realm-id="new"'), false, '条上不再有「上新」（已从扫码页去掉 ✓）');
   // ⚠️ 2026-10-14 改写（同一能力、改了指向；**没有放宽** ✗）：
   //   改前逐字：`assert.equal((X.match(/realm-tab--active/g) || []).length, 1, '当前领域那一颗高亮（服务端决定）')`
   //   今天起渲染层里多了一处**脚本**里的同名字符串（点下去**立刻预标**那一格 = 她要的即时反馈 ✓）
@@ -788,7 +796,8 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
     for (const other of REALM_TABS.filter((item) => item.external !== true)) {
       assert.ok(noScript.includes(`href="?from=${other.id}"`), `<noscript> 里缺 ${other.id} 的链接`);
     }
-    assert.ok(noScript.includes(SCAN_PAGE.realmBar.newFormUrl), '<noscript> 里「上新」也是那条外链');
+    // ⭐ 2026-10-14 晚：上新已从扫码页去掉 ⇒ noscript 里也**不该再有**那条外链 ✓（判据翻向、不放宽 ✗）
+  assert.equal(noScript.includes(SCAN_PAGE.realmBar.newFormUrl), false, '<noscript> 里不再有「上新」外链 ✓');
     assert.equal(noScript.includes('?from=accept'), false, '验收不在 noscript 那一排');
   }
 
@@ -820,7 +829,10 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
   //    改后：这一块现在 = **配品页**（本用例没配品 ⇒ 人话空态卡）
   //    理由：她 2026-10-13 明确「你先把扫码页的退货改成配品页面」；退货**能力保留**
   //         （`returnFormHtml` 仍在渲染层，行为断言在 `test/scanPurchaseReturn.test.js`）
-  assert.ok(blockOf('accessory', 'accessory').includes('<section class="card state-msg">'), '配品页 = 人话空态卡（没配品时）');
+  // ⭐ 2026-10-14 晚：配品已从扫码页搬去工作台「销售 → 配品」⇒ 扫码页不再有配品块 ✓
+  // ⭐ 2026-10-14 晚：配品已从扫码页搬去工作台 ⇒ 用**领域清单**判它不在 ✓（不用本文件没有的 helper ✗）
+  assert.equal(REALMS.map((realm) => realm.id).includes('accessory'), false, '扫码页领域清单里不再有配品（已搬到工作台 ✓）');
+  assert.equal(resolveRealm('accessory'), 'sales', '旧 ?from=accessory 回落销售 ✓');
   // ⭐ 2026-10-12：验收领域没有活跃会话 = **自助块**（列未到货批次 + 手输批次号），不再是「回工作台」卡
   const acceptBlock = blockOf('accept', 'accept');
   assert.ok(acceptBlock.includes('data-view="accept-pending"'), '验收领域（没有活跃会话）= 自助块');
