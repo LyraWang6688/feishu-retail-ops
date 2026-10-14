@@ -15,6 +15,8 @@ module.exports = {
   // 接口路径（`routes/workbench.js` 挂的就是这两个；前端只读这一份 ✓）
   api: Object.freeze({
     list: '/sales/accessories',
+    // ⭐ 收款方式选项 = **只读**「收款方式管理」表（她 2026-10-14：「配品收款方式读『收款方式管理』表」）
+    methods: '/sales/payment-methods',
     submit: '/sales/accessory-sales',
   }),
   // 表单字段名（前端 `<input name>` 与后端取值都用这一份 ✓）
@@ -40,6 +42,9 @@ module.exports = {
     emptyList: '「其他配品」里还没有可选的名称',
     listFailed: '配品清单读取失败',
     submitFailed: '没写成功，请稍后再试',
+    methodLabel: '收款方式',
+    // 读不到表 ⇒ **如实**（不进录入 ✓ 不拿配置默认列表兜底 ✗）
+    methodsFailed: '收款方式没读到，先别提交，稍后再试',
     submitting: '正在提交…',
   }),
 };

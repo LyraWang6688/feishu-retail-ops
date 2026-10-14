@@ -32,6 +32,7 @@ const arrivalTab = require('../config/workbenchArrival');
 const { createScanArrivalService } = require('../services/scanArrivalService');
 const accessoryTab = require('../config/workbenchAccessory');
 const { sellableKindOf } = require('../config/sellableKinds');
+const { createPaymentMethodsService } = require('../services/paymentMethodsService');
 const { canScanNextWithFeishu } = require('../views/scanPageRenderer');
 
 // ⚠️ 准入闸门只有这一份实现：语义与文案**逐字不变**（2026-10-08 的《工作台准入口径》沿用它）。
@@ -328,6 +329,23 @@ const createWorkbenchRouter = (options = {}) => {
    */
   const scanWrite = options.scanWrite || createScanWriteService({
     gateway: options.gateway || new V1BitableGateway(), config: SCAN_WRITE,
+  });
+  router.get(accessoryTab.api.methods, async (req, res) => {
+    // ⭐⭐ 2026-10-14（她：「配品收款方式读『收款方式管理』表」）—— **只读**表 ✓ 有缓存 ✓
+    //   🔴 读不到 ⇒ **如实**（503 + 人话）⇒ 前端**不进录入** ✗ 绝不拿配置默认列表兜底 ✗
+    try {
+      const service = options.paymentMethods
+        || createPaymentMethodsService(options.gateway || new V1BitableGateway(), {});
+      const listed = await service.list();
+      if (!listed?.ok) {
+        logError('workbench.sales.payment_methods.unreadable', { request_id: req.requestId, reason: listed?.reason || '' });
+        return res.status(503).json({ success: false, error: accessoryTab.texts.methodsFailed });
+      }
+      return res.json({ success: true, methods: listed.items || [] });
+    } catch (error) {
+      logError('workbench.sales.payment_methods.failed', { request_id: req.requestId, error: error.message });
+      return res.status(503).json({ success: false, error: accessoryTab.texts.methodsFailed });
+    }
   });
   router.get(accessoryTab.api.list, async (req, res) => {
     try {
