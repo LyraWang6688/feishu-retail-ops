@@ -521,3 +521,101 @@ test('源码哨兵：配品走既有 SalesOrderService 的可售品通路（扫�
   assert.match(order, /accessoryRecordId/, '配品那一行落哪个字段由既有业务层说了算');
   assert.ok(SalesOrderService && typeof SalesOrderService === 'function');
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-15（task-19 ② · Lead 批准的口子）：**会话键**与**操作人**拆开
+//
+// 起因（真事，不是假想）：「配品销售」那张表是**表变更事件**驱动的，一行 = 一次独立成单。
+//   上一位实现里所有行共用一个写死的 `openId` 当会话键 ⇒ 第 2 条记录进来时，引擎的
+//   `submitSale` 走到「键对不上 ⇒ 把上一单的结果还给你」那条分支 ⇒ 第 2 条记录
+//   **拿到上一条的单号、自己一个字都没写** = 假成功（她最恨的那一类 ✗）。
+//   ⚠️ 它**在单测里看不出来**（那条链路的用例用的是引擎替身）；只有**真引擎**才现形。
+//
+// 做法（两条都必须成立）：
+//   · `sessionKey` **可选**，不传 = 按 `openId` 分 ⇒ **工作台 / 扫码两条老路一个字都不变** ✓；
+//   · 传了 ⇒ 会话（草稿 / 幂等 / 进度）按它分，而 `openId` **只**当操作人写 User 字段 ✓
+//     （`openId` 必须是真 open_id：它要写进「录单人」「操作人」这些 **User** 字段）。
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('②1 🔴 同一个操作人 + 两条**各自独立会话**的记录 ⇒ 各自成单 / 各自单号 / 各自明细（第 2 条绝不返回上一条的单号）', async () => {
+  const h = createHarness();
+  try {
+    const openId = 'ou_same_operator';       // ⚠️ **同一个人**（真实场景：她连着填了两行）
+    const recordA = 'rec_accessory_sale_A';
+    const recordB = 'rec_accessory_sale_B';
+    const sessionA = `accessory_sale:${recordA}`;
+    const sessionB = `accessory_sale:${recordB}`;
+
+    assert.equal((await h.write.addSaleLine({
+      openId, sessionKey: sessionA, kind: 'accessory', accessoryRecordId: 'acc_oil', amount: 34, inStock: true,
+    })).ok, true);
+    const a = await h.write.submitSale({
+      openId, sessionKey: sessionA, submitKey: recordA,
+      payments: [{ method: '微信', amount: '34' }], paymentStatus: PAYMENT_STATUS.full, paidAmount: '34',
+    });
+    assert.equal(a.ok, true, JSON.stringify(a));
+    assert.equal(a.reused === true, false, '第 1 条是**新成单** ✓');
+
+    assert.equal((await h.write.addSaleLine({
+      openId, sessionKey: sessionB, kind: 'accessory', accessoryRecordId: 'acc_oil', amount: 15, inStock: true,
+    })).ok, true);
+    const b = await h.write.submitSale({
+      openId, sessionKey: sessionB, submitKey: recordB,
+      payments: [{ method: '微信', amount: '15' }], paymentStatus: PAYMENT_STATUS.full, paidAmount: '15',
+    });
+    assert.equal(b.ok, true, JSON.stringify(b));
+    assert.notEqual(b.order_no, a.order_no,
+      '🔴 **第 2 条必须有自己的单号**（拿到上一条的单号 = 假成功 ✗）');
+    assert.equal(b.reused === true, false, '第 2 条也不许被当成"重放" ✓');
+    assert.equal(entriesOf(h, 'salesEntry').length, 2, '两张销售主表 ✓');
+    assert.equal(entriesOf(h, 'salesDetail').length, 2, '两条明细（各写各的）✓');
+    // 会话确实按 sessionKey 分：两个会话各自留档自己的那把键
+    assert.equal((await h.sessions.get(sessionA)).sale.completed[0].key, recordA);
+    assert.equal((await h.sessions.get(sessionB)).sale.completed[0].key, recordB);
+  } finally { h.cleanup(); }
+});
+
+test('②2 ⭐ 同一个会话 + 同一把 `submitKey` 再来一次 ⇒ **幂等**（同一单号、不写第二遍）', async () => {
+  const h = createHarness();
+  try {
+    const openId = 'ou_same_operator';
+    const recordId = 'rec_accessory_sale_idem';
+    const sessionKey = `accessory_sale:${recordId}`;
+    await h.write.addSaleLine({
+      openId, sessionKey, kind: 'accessory', accessoryRecordId: 'acc_oil', amount: 34, inStock: true,
+    });
+    const first = await h.write.submitSale({
+      openId, sessionKey, submitKey: recordId,
+      payments: [{ method: '微信', amount: '34' }], paymentStatus: PAYMENT_STATUS.full, paidAmount: '34',
+    });
+    // 同一行**再触发一次**（没有再加行）：引擎按 submitKey 认旧结果 ⇒ 不许写第二张单
+    const again = await h.write.submitSale({
+      openId, sessionKey, submitKey: recordId,
+      payments: [{ method: '微信', amount: '34' }], paymentStatus: PAYMENT_STATUS.full, paidAmount: '34',
+    });
+    assert.equal(again.ok, true);
+    assert.equal(again.reused, true, '第二次必须走"认旧键"✓');
+    assert.equal(again.order_no, first.order_no, '同一张单 ✓');
+    assert.equal(entriesOf(h, 'salesEntry').length, 1, '🔴 只成一次单 ✓');
+    assert.equal(entriesOf(h, 'salesDetail').length, 1, '🔴 明细不许写第二遍 ✓');
+  } finally { h.cleanup(); }
+});
+
+test('②3 ⭐ 不传 `sessionKey` ⇒ 会话**仍按 openId**（工作台 / 扫码那条老路一个字都没变）', async () => {
+  const h = createHarness();
+  try {
+    const openId = 'ou_old_path';
+    await addAccessory(h, openId, { amount: 15 });
+    const key = await currentKey(h, openId);   // 老路的幂等键 = 页面上那把会话键
+    const result = await h.write.submitSale({
+      openId, submitKey: key,
+      payments: [{ method: '微信', amount: '15' }], paymentStatus: PAYMENT_STATUS.full, paidAmount: '15',
+    });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const session = await h.sessions.get(openId);
+    assert.equal(session.sale.completed[0].key, key, '不传 sessionKey ⇒ 会话就是 openId 那一个 ✓');
+    assert.equal(await h.sessions.get('accessory_sale:whatever'), null, '绝不会凭空另起一个会话 ✓');
+    assert.equal(entriesOf(h, 'salesEntry').length, 1);
+  } finally { h.cleanup(); }
+});
+

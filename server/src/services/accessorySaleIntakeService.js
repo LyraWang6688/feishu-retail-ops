@@ -16,8 +16,13 @@
  *   ④ **回写只许写「写入状态 / 失败原因」两列** ✗ —— 她填的列（名称/数量/收款方式/金额/销售日）**一个都不许碰**
  *      （**手滑带上「金额」= 篡改她的输入** ✗ 比"少写一列"严重得多）
  *   ⑤ 🔴 **「销售日」零写入点**（她：「销售日不用管，自动字段」）✓
- *   ⑥ 失败**如实**：金额缺失/≤0 · 数量非法 · 关联为空 · 引擎报错 ⇒ **不成单** + 如实日志（**不许假成功** ✗）
+ *   ⑥ 失败**如实**：金额缺失/≤0 · 数量非法（0/负/小数）· 关联为空 · 引擎报错 ⇒ **不成单** + 如实日志 ✗
  *   ⑦ 回写**列不在** ⇒ 捕获 + 只记日志（**不许假写 / 不许报错打断成单** ✗）
+ *   ⑧ ⭐⭐ 2026-10-15（她逐字：「**销售明细里是一行一件，如果配品是两件，那就拆开，
+ *      按照数量拆成对应的记录数**」）：**数量 = N ⇒ 拆成 N 条明细（一行一件）**，
+ *      金额摊到 N 行、**Σ 严格 = 她填的总额**；收款明细**仍只有 1 行**（总额 ⇒ **Σ 不翻倍** ✗）✓
+ *   ⑨ 录单人 = **事件里的操作人**（谁填的表谁是录单人；取不到 ⇒ 配置兜底 ⇒ **空**，**绝不编 id** ✗）；
+ *      会话键 = **前缀 + 记录 ID**（每行独立会话 ⇒ 第 2 条不会被上一单结果吸收 ✗）
  */
 const { logInfo, logWarn, logError } = require('../utils/logger');
 const { findFieldValue } = require('./tagQrCodeService');
@@ -52,6 +57,62 @@ const linkTextOf = (value) => {
 };
 
 const textOf = (value) => (value == null ? '' : String(value).trim());
+
+/**
+ * ⭐⭐ 她 2026-10-15 逐字（Lead 转达）：「**我们销售明细里是一行一件，如果配品是两件，那就拆开，
+ *   按照数量拆成对应的记录数**」⇒ 数量 = N ⇒ **N 条明细（一行一件）**，金额**摊到 N 行**。
+ *
+ * 分摊规则（`splitAmount`）：
+ *   · 用**整数**运算（元 / 角 / 分），不拿浮点数摊（0.1+0.2 那类误差会让 Σ ≠ 总额）；
+ *   · **分摊单位 = 她填的那个金额的最小单位**：整数元 ⇒ 按**整元**摊（100 ÷ 3 ⇒ 34/33/33，
+ *     与 Lead 裁决里那条判据逐字一致 ✓）；带角分 ⇒ 按**分摊**（100.5 ÷ 3 ⇒ 33.50/33.50/33.50）
+ *     —— 总之**不凭空造出她没填的精度**；
+ *   · **前 r 行各 +1**，**最后一行 = 总额 − 前面之和**（兜底差额）⇒ **Σ 严格 = 她填的总额** ✓
+ *     （Σ 必须准：引擎的「全付」闸门就是拿"每件实收合计"跟"收款合计"比分的，差一分就成不了单）。
+ *   · 摊不开（金额的最小单位**比件数还少**）⇒ 如实返回 `ok:false`（调用方拒单，**零写入** ✗ 不静默记 1 件）。
+ */
+const splitAmount = (total, count) => {
+  const totalCents = Math.round(Number(total) * 100);
+  const n = Math.max(1, Math.trunc(Number(count) || 1));
+  const unit = totalCents % 100 === 0 ? 100 : 1;
+  const minor = Math.round(totalCents / unit);
+  if (minor < n) return { ok: false, reason: 'too_small', totalCents };
+  const base = Math.floor(minor / n);
+  const remainder = minor - base * n;
+  const parts = [];
+  let used = 0;
+  for (let index = 0; index < n; index += 1) {
+    const value = index === n - 1 ? minor - used : base + (index < remainder ? 1 : 0);
+    used += value;
+    parts.push(value * unit);
+  }
+  return { ok: true, parts };
+};
+
+/** 分 → 她填金额那套文本（整数不带小数点；带角分两位）—— 与 `scanWriteService` 的金额口径一致。 */
+const centsToAmountText = (cents) => (cents % 100 === 0 ? String(cents / 100) : (cents / 100).toFixed(2));
+
+/**
+ * ⭐ **谁填的表，谁就是录单人**（Lead 2026-10-15 裁决）——
+ *   `drive.file.bitable_record_changed_v1` 的**官方事件形状**里操作人在**顶层**
+ *   （`@larksuiteoapi/node-sdk` 的类型：`operator_id?: { union_id?, user_id?, open_id? }`）。
+ *   ⚠️ 容错几种历史/卡片形状（同一个语义，别因为包一层就取不到）。
+ *   ⚠️ **取不到就返回空串** —— **绝不编一个 id** ✗（配置兜底由调用方处理）。
+ */
+const operatorOpenIdOf = (event) => {
+  const candidates = [
+    event?.operator_id?.open_id,
+    event?.operator?.operator_id?.open_id,
+    event?.operator?.open_id,
+    event?.event?.operator_id?.open_id,
+    event?.event?.operator?.operator_id?.open_id,
+  ];
+  for (const candidate of candidates) {
+    const value = textOf(candidate);
+    if (value) return value;
+  }
+  return '';
+};
 
 const createAccessorySaleIntakeService = (options = {}) => {
   const gateway = options.gateway || null;
@@ -112,16 +173,20 @@ const createAccessorySaleIntakeService = (options = {}) => {
     if (!Number.isFinite(quantityNumber) || !Number.isInteger(quantityNumber) || quantityNumber <= 0) {
       return { ok: false, reason: reasons.quantityInvalid(quantity) };
     }
-    // 🔴 2026-10-15（Lead 裁决 · **有证据**）：工作台那条配品成单就是「**一次 1 件**」
-    //   —— 引擎写明细是 `quantity: 1`，而且「销售明细」表**根本没有「数量」列** ✓
-    //   ⇒ 她逐字要的是"**同样的处理**" ⇒ 这里也只认 1 件 ✓
-    //   🔴 数量 > 1 ⇒ **如实拒单**（**绝不静默按 1 记** ✗ —— 她填 3 件你记 1 件 = 假成功，比拒单坏得多）；
-    //     多件怎么落明细（一行+总金额？N 行？单价×数量）等她的口径，**这一刀不做** ✓
-    if (quantityNumber > 1) {
-      return { ok: false, reason: reasons.quantityMultiple(quantityNumber) };
+    // 🔴 2026-10-15 口径**已更新**（Lead 转达她逐字：「销售明细里是一行一件，如果配品是两件，
+    //   那就拆开，按照数量拆成对应的记录数」）⇒ 数量 = N **不再拒单**，改成**拆 N 行**（见下面 handleOne）。
+    //   ⚠️ 改前逐字（本刀第一次实现）：`if (quantityNumber > 1) return { ok:false, reason: reasons.quantityMultiple(...) }`
+    //      改后逐字：删掉那一段，改为"件数只做上限校验（引擎的 `config.session.maxLines`），
+    //      金额摊不开才拒"。
+    //      依据：她的口径从"这一版一次只记 1 件"升级为"按数量拆成对应的记录数"✓
+    // 上限：引擎每单最多 `maxLines` 行（既有配置）⇒ 超过就**如实拒单**（零写入），
+    //   而不是加到一半被引擎拒（那会在本地草稿里留下半截 ✗）
+    const maxLines = Number(SCAN_WRITE?.session?.maxLines) || 0;
+    if (maxLines && quantityNumber > maxLines) {
+      return { ok: false, reason: reasons.quantityOverLineLimit(quantityNumber, maxLines) };
     }
     if (!methodText) return { ok: false, reason: reasons.paymentMethodMissing };
-    return { ok: true, quantity: quantityNumber, amountText: String(amountNumber) };
+    return { ok: true, quantity: quantityNumber, amountText: String(amountNumber), amountNumber };
   };
 
   /** 回写（**只许这两列** ✗ 其它列一个都不许碰；列不在 ⇒ 只记日志）。 */
@@ -156,8 +221,8 @@ const createAccessorySaleIntakeService = (options = {}) => {
     }
   };
 
-  /** 办一行。 */
-  const handleOne = async (actionItem) => {
+  /** 办一行。`operatorOpenId` = 事件里的操作人（Lead 裁决：谁填的表谁是录单人；取不到 ⇒ 配置兜底 ⇒ 空）。 */
+  const handleOne = async (actionItem, { operatorOpenId = '' } = {}) => {
     const recordId = textOf(actionItem?.record_id);
     const action = textOf(actionItem?.action);
     if (!recordId) return { ok: false, skipped: 'no_record_id' };
@@ -192,35 +257,70 @@ const createAccessorySaleIntakeService = (options = {}) => {
       return { ok: false, record_id: recordId, reason: checked.reason };
     }
     // ⚠️ 幂等键 = **记录 ID**（同一行重复/并发触发只成一次单 ✓ —— 引擎按 `submitKey` 认旧结果）
-    const openId = 'accessory-sale-intake';
-    const requestId = `accessory_sale:${recordId}`;
-    try {
-      const line = await scanWrite.addSaleLine({
-        openId,
-        requestId,
-        kind: 'accessory',
-        accessoryRecordId: values.nameIds[0],
-        // ⭐ 2026-10-14 她的口径（与工作台**同源**）：配品默认现货来自**可售品配置**（不散写 if ✗）
-        inStock: sellableKindOf({ kind: 'accessory' }).defaultInStock === true,
-        amount: checked.amountText,
-        quantity: checked.quantity,
+    // ⚠️ 会话键 = **前缀 + 记录 ID**（每行一个**独立会话**）：绝不能用 openId 当会话键 ——
+    //    所有行共用一个人做会话键时，第 2 条记录会被引擎的 `reused/stale` 分支**吸收成假成功** ✗
+    // ⚠️ 录单人 = **事件里的操作人**（取不到 ⇒ 配置兜底 ⇒ 空 ⇒ 这一列不写，**不编 id** ✗）
+    const requestId = `${config.sessionKeyPrefix || 'accessory_sale:'}${recordId}`;
+    const sessionKey = requestId;
+    // 金额按件数摊到 N 行（一行一件）；摊不开 ⇒ 如实拒单（**零写入** ✗）
+    const split = splitAmount(checked.amountNumber, checked.quantity);
+    if (!split.ok) {
+      const reason = reasons.amountTooSmallForSplit(checked.amountText, checked.quantity);
+      logError('accessory_sale_intake.rejected', { record_id: recordId, reason });
+      await writeBackStatus(recordId, {
+        [writeBack.statusField]: writeBack.failedValue, [writeBack.reasonField]: reason,
       });
-      if (!line?.ok) throw new Error(line?.message || '明细行没记上');
+      return { ok: false, record_id: recordId, reason };
+    }
+    const lineAmounts = split.parts.map(centsToAmountText);
+    try {
+      for (const lineAmount of lineAmounts) {
+        // eslint-disable-next-line no-await-in-loop
+        const line = await scanWrite.addSaleLine({
+          openId: operatorOpenId,
+          sessionKey,
+          requestId,
+          kind: 'accessory',
+          accessoryRecordId: values.nameIds[0],
+          // ⭐ 2026-10-14 她的口径（与工作台**同源**）：配品默认现货来自**可售品配置**（不散写 if ✗）
+          inStock: sellableKindOf({ kind: 'accessory' }).defaultInStock === true,
+          // ⭐ 这一行的**实收金额**（分摊后的那一份）；引擎一行 = 一件 ⇒ 调 N 次就是 N 行 ✓
+          amount: lineAmount,
+        });
+        if (!line?.ok) throw new Error(line?.message || '明细行没记上');
+      }
       const result = await scanWrite.submitSale({
-        openId,
+        openId: operatorOpenId,
+        sessionKey,
         requestId,
         submitKey: recordId,
+        // ⚠️ 收款明细**只有 1 行**、金额 = **她填的总额**（明细那 N 行的和 = 总额 ⇒ **Σ 不翻倍** ✗）
         payments: [{ method: values.methodText || SCAN_WRITE.sale.defaultPaymentMethod, amount: checked.amountText }],
         paymentStatus: SCAN_WRITE.sale.paymentStatus.full,
         paidAmount: checked.amountText,
       });
       if (!result?.ok) throw new Error(result?.message || '成单失败');
+      // ⚠️⚠️ 2026-10-15（⑰ 异步**默认开**）：`submitSale` 在"主表刚落"时会**先把单号回出来**，
+      //   把明细 / 收款 / 库存交给**后台那一跑**（`result.background` 是它的句柄）。
+      //   工作台那条**故意不等**（她盯着页面，单号先出是她的口径 ✓）；
+      //   而本入口是**表变更事件**、没有人在等 ⇒ **等它跑完**再回写「已写入」：
+      //   否则后台失败时她那张表里写着「已写入」、单子其实只写了一半 —— 那正是**假成功** ✗。
+      //   ⚠️ 后台句柄**抛异常时**解析成 `undefined`（`saleWriteBackgroundService` 里 catch 掉了）
+      //   ⇒ 所以 `!settled` 也算失败（它那边已经如实把主表落成「写入失败」）。
+      const settled = typeof result.background?.then === 'function' ? await result.background : result;
+      if (!settled || settled.ok === false) throw new Error(settled?.message || '明细/收款那一跑没成');
+      const finalResult = settled || result;
       logInfo('accessory_sale_intake.posted', {
-        record_id: recordId, order_no: result.order_no || '', reused: result.reused === true,
-        amount: checked.amountText, quantity: checked.quantity,
+        record_id: recordId, order_no: finalResult.order_no || result.order_no || '',
+        reused: finalResult.reused === true || result.reused === true,
+        amount: checked.amountText, quantity: checked.quantity, line_count: lineAmounts.length,
+        line_amounts: lineAmounts.join(','), operator_open_id: operatorOpenId || '',
       });
       await writeBackStatus(recordId, { [writeBack.statusField]: writeBack.doneValue });
-      return { ok: true, record_id: recordId, order_no: result.order_no || '', reused: result.reused === true };
+      return {
+        ok: true, record_id: recordId, order_no: finalResult.order_no || result.order_no || '',
+        reused: finalResult.reused === true || result.reused === true, line_count: lineAmounts.length,
+      };
     } catch (error) {
       logError('accessory_sale_intake.failed', { record_id: recordId, error: error.message });
       await writeBackStatus(recordId, {
@@ -230,20 +330,32 @@ const createAccessorySaleIntakeService = (options = {}) => {
     }
   };
 
-  const handleTableChanges = async (actionList) => {
+  /**
+   * 办一个事件包。
+   * @param {Array} actionList 飞书事件的 `action_list`（原样传进来，不在路由层筛）
+   * @param {{event?:object, operatorOpenId?:string}} [intakeOptions]
+   *        `event` = 原始事件（用来取**操作人** ⇒ 录单人）；`operatorOpenId` = 显式覆盖（用例注入用）
+   */
+  const handleTableChanges = async (actionList, intakeOptions = {}) => {
     if (!config.enabled) {
       logInfo('accessory_sale_intake.disabled', { action_count: (actionList || []).length });
       return { enabled: false, results: [] };
     }
+    // ⭐ 录单人优先级：显式注入 → **事件里的操作人** → 配置出口 → **空**（不写这一列，**绝不编 id** ✗）
+    const operatorOpenId = textOf(intakeOptions.operatorOpenId)
+      || operatorOpenIdOf(intakeOptions.event)
+      || textOf(config.operatorOpenId);
     const results = [];
     for (const actionItem of Array.isArray(actionList) ? actionList : []) {
       // eslint-disable-next-line no-await-in-loop
-      results.push(await handleOne(actionItem));
+      results.push(await handleOne(actionItem, { operatorOpenId }));
     }
-    return { enabled: true, results };
+    return { enabled: true, operator_open_id: operatorOpenId || '', results };
   };
 
   return { handleTableChanges, handleOne, config };
 };
 
-module.exports = { createAccessorySaleIntakeService, linkIdsOf, linkTextOf };
+module.exports = {
+  createAccessorySaleIntakeService, linkIdsOf, linkTextOf, splitAmount, centsToAmountText, operatorOpenIdOf,
+};

@@ -9,7 +9,10 @@
  *   **AC-AS1** 关联齐全 + 金额 > 0 + 数量 = 1 ⇒ 走既有引擎成单（**同形**：`addSaleLine(kind:'accessory')` + `submitSale`）✓
  *   **AC-AS2** **同一记录 ID** ⇒ `submitKey` **逐字相同**（幂等靠引擎的"认旧键"⇒ 只成一次单）✓
  *   **AC-AS3** 🔴 源码哨兵：**没有任何路径直调 `_confirm`** ✗
- *   **AC-AS4** 金额缺失/≤0 · **数量 > 1** · 数量非法 · 关联为空 ⇒ **不成单** + 回写 `写入失败` + 人话原因 ✓
+ *   **AC-AS4** 金额缺失/≤0 · 数量非法（0/负/小数）· 关联为空 ⇒ **不成单** + 回写 `写入失败` + 人话原因 ✓
+ *   **AC-AS4b** ⭐ 数量 = N ⇒ **拆成 N 行**（她 2026-10-15：「销售明细里是一行一件…按数量拆成对应的记录数」）
+ *              ＋ 金额摊到 N 行（整元按整元摊：100/3 ⇒ 34/33/33；Σ **严格** = 总额）＋ 收款明细只有 1 行 ✓
+ *   **AC-AS9** 录单人 = **事件里的操作人**（谁填的表谁是录单人）；会话键 = 前缀 + 记录 ID（每行独立会话）✓
  *   **AC-AS6** 字段名/开关**全可配**（注入不同 config ⇒ 行为跟着变）✓
  *   **AC-AS7** 回写：开关**关** ⇒ **一次写都不发**；**列不在** ⇒ 捕获 + 只记日志（**不假写** ✗）✓
  *   ⭐ **Lead 2026-10-15 加的硬约束**：回写 `fields` 的 key **恰好 ⊆ {写入状态, 失败原因}**（多带一列 ⇒ 红）✗
@@ -52,7 +55,9 @@ const actionItem = (values = {}) => ({
 });
 
 /** 假引擎：只记调用（真引擎的幂等/写库口径由它自己的用例钉着 ✓）。 */
-const fakeEngine = ({ lineOk = true, saleOk = true, saleReused = false } = {}) => {
+const fakeEngine = ({
+  lineOk = true, saleOk = true, saleReused = false, backgroundOf = null,
+} = {}) => {
   const lines = [];
   const sales = [];
   return {
@@ -61,7 +66,11 @@ const fakeEngine = ({ lineOk = true, saleOk = true, saleReused = false } = {}) =
       addSaleLine: async (input) => { lines.push(input); return lineOk ? { ok: true } : { ok: false, message: '明细没记上' }; },
       submitSale: async (input) => {
         sales.push(input);
-        return saleOk ? { ok: true, order_no: `XSD-${sales.length}`, reused: saleReused } : { ok: false, message: '成单失败' };
+        if (!saleOk) return { ok: false, message: '成单失败' };
+        const result = { ok: true, order_no: `XSD-${sales.length}`, reused: saleReused };
+        // ⚠️ 异步那一跑（⑰ 默认开）：真引擎会回一个 `background` 句柄
+        if (backgroundOf) result.background = backgroundOf(sales.length);
+        return result;
       },
     },
   };
@@ -125,6 +134,12 @@ test('AC-AS1 ⭐ 关联齐全 + 金额 > 0 + 数量 = 1 ⇒ **走既有引擎成
   assert.deepEqual(Object.keys(h.writes[0].fields), ['写入状态'], '成功 ⇒ 只写状态那一列 ✓');
   assert.equal(h.writes[0].fields['写入状态'], '已写入');
   assert.equal(h.writes[0].tableId, 'tblkT1QTUsESnl5b', '回写到**她那张表** ✓');
+  // ⭐⭐ 2026-10-15（Lead 裁决）：**会话键**与**操作人**是两个概念 ——
+  //   会话键 = 前缀 + 记录 ID（每行独立会话）；操作人 = 事件里的操作人（没有 ⇒ 配置兜底 ⇒ 空 = 不写那一列）
+  assert.equal(h.lines[0].sessionKey, `accessory_sale:${RECORD_ID}`, '⭐ 会话键 = 前缀 + 记录 ID ✓');
+  assert.equal(h.sales[0].sessionKey, `accessory_sale:${RECORD_ID}`, '提交也走**同一个**会话 ✓');
+  assert.equal(h.lines[0].openId, '', '没带操作人 / 没配 ⇒ 录单人**留空**（绝不编一个 id ✗）');
+  assert.equal(h.sales[0].openId, '', '同上 ✓');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -194,14 +209,74 @@ test('AC-AS4 🔴 金额缺失/≤0 ⇒ **不成单** + 回写「写入失败」
   }
 });
 
-test('AC-AS4b 🔴 **数量 > 1 ⇒ 如实拒单**（**绝不静默按 1 记** ✗）—— 原因里要说清"1 件"', async () => {
+// ⭐⭐ 2026-10-15 **口径更新**（Lead 转达业务负责人逐字）：
+//   「**我们销售明细里是一行一件，如果配品是两件，那就拆开，按照数量拆成对应的记录数**」
+//   ⇒ 数量 = N ⇒ **拆成 N 条明细**（不再是"数量 > 1 就拒单"）。
+//
+//   改前逐字（本刀第一版）：`assert.equal(result.results[0].ok, false, '3 件必须拒 ✓')`
+//     ＋ `assert.match(h.writes[0].fields['失败原因'], /1 件/, '…一次只记 1 件…')`
+//   改后逐字：`assert.equal(h.lines.length, 3, 'N 件 ⇒ **恰好 N 行**（一行一件）')`
+//     ＋ `assert.equal(sum(金额), 300, '🔴 Σ = 她填的总额（不许翻倍 ✗）')`
+//   依据：她的口径从"这一版一次只记 1 件"升级为"**按数量拆成对应的记录数**" ✓
+//         改判据这件事本身**只这一次**，且是**跟着她的口径走**（不是为了让测试变绿 ✗）。
+
+test('AC-AS4b ⭐ 数量 = 3 ⇒ **明细恰好 3 行**（一行一件），金额摊成 34/33/33、Σ = 100、收款明细只有 1 行', async () => {
   logs.length = 0;
   const h = build();
-  const result = await h.service.handleTableChanges([actionItem({ quantity: 3 })]);
-  assert.equal(result.results[0].ok, false, '3 件必须拒 ✓');
-  assert.equal(h.lines.length + h.sales.length, 0, '🔴 **零写入**（不静默记 1 件 ✗）');
+  const result = await h.service.handleTableChanges([actionItem({ quantity: 3, amount: 100 })]);
+  assert.equal(result.results[0].ok, true, '3 件要**办得成**（拆行，不再拒单 ✓）');
+  assert.equal(h.lines.length, 3, '🔴 **恰好 3 行**（不是 1 行 ✗）');
+  assert.deepEqual(h.lines.map((line) => line.amount), ['34', '33', '33'],
+    '⭐ 金额摊到 3 行：前 r 行各 +1、最后一行 = 总额 − 前和（100 ⇒ 34/33/33）✓');
+  assert.equal(h.lines.reduce((sum, line) => sum + Number(line.amount), 0), 100,
+    '🔴 **Σ = 她填的总额**（不许翻倍 / 不许少 ✗）');
+  assert.deepEqual(h.lines.map((line) => line.accessoryRecordId), [NAME_ID, NAME_ID, NAME_ID], '每行都是那件配品 ✓');
+  assert.equal(h.sales.length, 1, '只提交**一次** ✓');
+  assert.equal(h.sales[0].submitKey, RECORD_ID, '幂等键一个字没变（= 记录 ID）✓');
+  // ⚠️ 收款明细**只有 1 行**、金额 = 总额（否则 Σ 会翻倍 ✗）
+  assert.deepEqual(h.sales[0].payments, [{ method: '微信', amount: '100' }], '🔴 收款明细 1 行 = 总额 ✓');
+  assert.equal(h.sales[0].paidAmount, '100');
+  // 每一行都走同一个会话（同一把会话键）
+  assert.deepEqual([...new Set(h.lines.map((line) => line.sessionKey))], [`accessory_sale:${RECORD_ID}`]);
+});
+
+test('AC-AS4b2 ⭐ 金额 100 / 数量 1 ⇒ 仍是 1 行、金额 = 全额（回归）', async () => {
+  logs.length = 0;
+  const h = build();
+  await h.service.handleTableChanges([actionItem({ quantity: 1, amount: 100 })]);
+  assert.equal(h.lines.length, 1, '1 件 ⇒ 1 行 ✓');
+  assert.deepEqual(h.lines.map((line) => line.amount), ['100']);
+});
+
+test('AC-AS4b3 ⭐ 金额带角分 ⇒ 按**分**摊（100.5 / 3 ⇒ 33.50 × 3，Σ 一分不差）', async () => {
+  logs.length = 0;
+  const h = build();
+  await h.service.handleTableChanges([actionItem({ quantity: 3, amount: 100.5 })]);
+  assert.deepEqual(h.lines.map((line) => line.amount), ['33.50', '33.50', '33.50'],
+    '她填到角 ⇒ 按分摊（不凭空造出整元 ✗）✓');
+  assert.equal(h.lines.reduce((sum, line) => sum + Number(line.amount), 0), 100.5, 'Σ = 100.5 ✓');
+  assert.deepEqual(h.sales[0].payments, [{ method: '微信', amount: '100.5' }], '收款明细仍是 1 行 = 总额 ✓');
+});
+
+test('AC-AS4b4 🔴 金额摊不开（1 元 / 3 件）⇒ 拒单 + 零写入（**绝不静默记 1 件** ✗）', async () => {
+  logs.length = 0;
+  const h = build();
+  const result = await h.service.handleTableChanges([actionItem({ quantity: 3, amount: 1 })]);
+  assert.equal(result.results[0].ok, false, '摊不成 3 行（一行至少 1 元）⇒ 拒 ✓');
+  assert.equal(h.lines.length + h.sales.length, 0, '🔴 **零写入**（不许只加一行、也不许记 1 件 ✗）');
   assert.equal(h.writes[0].fields['写入状态'], '写入失败');
-  assert.match(h.writes[0].fields['失败原因'], /1 件/, '人话原因必须说清"一次只记 1 件" ✓');
+  assert.match(h.writes[0].fields['失败原因'], /摊不成/, '人要能看懂为什么拒 ✓');
+});
+
+test('AC-AS4b5 🔴 数量超过引擎的单据行数上限 ⇒ 拒单 + 零写入（不是加到一半被引擎拒）', async () => {
+  logs.length = 0;
+  const { SCAN_WRITE } = require('../src/config/scanWrite');
+  const over = Number(SCAN_WRITE.session.maxLines) + 1;
+  const h = build();
+  const result = await h.service.handleTableChanges([actionItem({ quantity: over, amount: over * 10 })]);
+  assert.equal(result.results[0].ok, false, `${over} 件超过上限 ⇒ 拒 ✓`);
+  assert.equal(h.lines.length + h.sales.length, 0, '🔴 零写入（本地草稿里也不留半截 ✗）');
+  assert.match(h.writes[0].fields['失败原因'], /上限/);
 });
 
 test('AC-AS4c 🔴 数量非法（0 / 负数 / 小数）⇒ 拒单；**数量不填 ⇒ 按 1 正常成单** ✓', async () => {
@@ -215,6 +290,7 @@ test('AC-AS4c 🔴 数量非法（0 / 负数 / 小数）⇒ 拒单；**数量不
   const ok = build();
   const result = await ok.service.handleTableChanges([actionItem({ quantity: undefined })]);
   assert.equal(result.results[0].ok, true, '不填数量 ⇒ 按 1 办（与工作台同形 ✓）');
+  assert.equal(ok.lines.length, 1, '1 件 ⇒ 1 行 ✓');
 });
 
 test('AC-AS4d 🔴 「名称」关联为空 ⇒ 拒单（不知道卖的是哪件配品）', async () => {
@@ -225,6 +301,95 @@ test('AC-AS4d 🔴 「名称」关联为空 ⇒ 拒单（不知道卖的是哪�
   assert.equal(result.results[0].ok, false);
   assert.equal(h.lines.length + h.sales.length, 0, '零写入 ✓');
   assert.equal(h.writes[0].fields['写入状态'], '写入失败');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-AS9 录单人 = **事件里的操作人**（谁填的表谁是录单人）；会话键 = 前缀 + 记录 ID
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-AS9 ⭐ 录单人 = 事件里的操作人（官方事件形状 `operator_id.open_id`）⇒ 就是引擎的 openId', async () => {
+  logs.length = 0;
+  const h = build();
+  // ⚠️ `drive.file.bitable_record_changed_v1` 的官方形状：操作人在**顶层** `operator_id`
+  const event = { operator_id: { union_id: 'on_x', open_id: 'ou_who_filled' } };
+  const result = await h.service.handleTableChanges([actionItem()], { event });
+  assert.equal(result.results[0].ok, true);
+  assert.equal(h.lines[0].openId, 'ou_who_filled', '⭐ 谁填的表，谁就是「录单人」✓');
+  assert.equal(h.sales[0].openId, 'ou_who_filled', '提交那一跑也是他 ✓');
+  assert.equal(result.operator_open_id, 'ou_who_filled', '结果里如实带出来（可排查 ✓）');
+});
+
+test('AC-AS9b ⭐ 事件没带操作人 ⇒ 配置出口；配置也没有 ⇒ **空**（不写这一列，绝不编 id ✗）', async () => {
+  logs.length = 0;
+  const configured = build({ config: configWithIds({ operatorOpenId: 'ou_configured' }) });
+  await configured.service.handleTableChanges([actionItem()], { event: { operator_id: {} } });
+  assert.equal(configured.lines[0].openId, 'ou_configured', '事件没带 ⇒ 用配置出口 ✓');
+
+  const empty = build({ config: configWithIds({ operatorOpenId: '' }) });
+  await empty.service.handleTableChanges([actionItem()], { event: {} });
+  assert.equal(empty.lines[0].openId, '', '两处都没有 ⇒ **空**（空 id = 这一列不写 ✓，绝不编 ✗）');
+
+  const explicit = build();
+  await explicit.service.handleTableChanges([actionItem()], { operatorOpenId: 'ou_explicit', event: {} });
+  assert.equal(explicit.lines[0].openId, 'ou_explicit', '显式注入优先（用例/其它入口可以点名）✓');
+});
+
+test('AC-AS9c ⭐ 会话键**与操作人无关**（同一行换谁操作 ⇒ 还是**同一个会话** ⇒ 幂等不许被拆开）', async () => {
+  logs.length = 0;
+  const a = build();
+  await a.service.handleTableChanges([actionItem()], { event: { operator_id: { open_id: 'ou_a' } } });
+  const b = build();
+  await b.service.handleTableChanges([actionItem()], { event: { operator_id: { open_id: 'ou_b' } } });
+  assert.equal(a.lines[0].sessionKey, b.lines[0].sessionKey, '会话键只认**记录 ID** ✓（换人不变）');
+  assert.equal(a.sales[0].submitKey, b.sales[0].submitKey, '幂等键同样只认记录 ID ✓');
+});
+
+test('AC-AS10 ⭐ `splitAmount` 纯件：整元按整元摊 / 带角分按分摊 / **Σ 永远 = 总额**', () => {
+  const { splitAmount, centsToAmountText } = require('../src/services/accessorySaleIntakeService');
+  const text = (total, n) => splitAmount(total, n).parts.map(centsToAmountText);
+  assert.deepEqual(text(100, 3), ['34', '33', '33'], '整元 ⇒ 34/33/33（Lead 裁决的那条判据）✓');
+  assert.deepEqual(text(100, 1), ['100']);
+  assert.deepEqual(text(101, 3), ['34', '34', '33']);
+  assert.deepEqual(text(100.5, 3), ['33.50', '33.50', '33.50'], '带角分 ⇒ 按分摊 ✓');
+  assert.deepEqual(text(0.03, 3), ['0.01', '0.01', '0.01']);
+  for (const [total, n] of [[100, 3], [101, 3], [100.5, 3], [0.03, 3], [999.99, 7], [1, 1]]) {
+    const sum = splitAmount(total, n).parts.reduce((acc, cents) => acc + cents, 0);
+    assert.equal(sum, Math.round(total * 100), `${total} / ${n}：Σ 必须 = 总额（分）✓`);
+    assert.ok(splitAmount(total, n).parts.every((cents) => cents > 0), `${total} / ${n}：每行都 > 0 ✓`);
+  }
+  assert.equal(splitAmount(1, 3).ok, false, '1 元 / 3 件摊不开 ⇒ 如实 false ✓');
+  assert.equal(splitAmount(0.02, 3).ok, false, '2 分 / 3 件也摊不开 ⇒ 如实 false ✓');
+});
+
+test('AC-AS11 ⭐⭐ 异步那一跑（**默认开**）⇒ **等它跑完**再回写：跑成 ⇒ 已写入；没跑成 ⇒ **写入失败**（不假成功 ✗）', async () => {
+  logs.length = 0;
+  // ① 后台跑成 ⇒ 已写入（而且要等它 —— 用"跑完才 resolve"的 promise 钉住）
+  let settled = false;
+  const okRun = build({
+    engineOpts: {
+      backgroundOf: () => new Promise((resolve) => {
+        setImmediate(() => { settled = true; resolve({ ok: true, order_no: 'XSD-1' }); });
+      }),
+    },
+  });
+  const okResult = await okRun.service.handleTableChanges([actionItem()]);
+  assert.equal(settled, true, '必须**等后台那一跑**跑完才继续 ✓');
+  assert.equal(okResult.results[0].ok, true);
+  assert.equal(okRun.writes[0].fields['写入状态'], '已写入');
+
+  // ② 后台**抛了**（句柄解析成 undefined，引擎那边已把主表落「写入失败」）⇒ 我们也不许写"已写入"
+  const threw = build({ engineOpts: { backgroundOf: () => Promise.resolve(undefined) } });
+  const threwResult = await threw.service.handleTableChanges([actionItem()]);
+  assert.equal(threwResult.results[0].ok, false, '🔴 后台没跑成 ⇒ 这一行**不许算成功** ✗');
+  assert.equal(threw.writes[0].fields['写入状态'], '写入失败');
+  assert.ok(logs.some((entry) => entry.event === 'accessory_sale_intake.failed'), '如实记日志 ✓');
+
+  // ③ 后台**回了 ok:false** ⇒ 把它的原因写回「失败原因」
+  const failed = build({ engineOpts: { backgroundOf: () => Promise.resolve({ ok: false, message: '明细没记上' }) } });
+  const failedResult = await failed.service.handleTableChanges([actionItem()]);
+  assert.equal(failedResult.results[0].ok, false);
+  assert.equal(failed.writes[0].fields['写入状态'], '写入失败');
+  assert.match(failed.writes[0].fields['失败原因'], /明细没记上/);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

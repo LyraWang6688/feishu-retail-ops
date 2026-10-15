@@ -27,6 +27,16 @@ const DEFAULT_ACCESSORY_SALE_TABLE_ID = 'tblkT1QTUsESnl5b';
 const ACCESSORY_SALE_TABLE_ID_ENV_KEY = 'ACCESSORY_SALE_INTAKE_TABLE_ID';
 const ACCESSORY_SALE_ENABLED_ENV_KEY = 'ACCESSORY_SALE_INTAKE_ENABLED';
 const ACCESSORY_SALE_WRITEBACK_ENABLED_ENV_KEY = 'ACCESSORY_SALE_INTAKE_WRITEBACK_ENABLED';
+const ACCESSORY_SALE_OPERATOR_ENV_KEY = 'ACCESSORY_SALE_INTAKE_OPERATOR_OPEN_ID';
+
+/**
+ * ⭐ 本地会话键前缀（**不是**飞书列的 id）：一行「配品销售」= **一个独立会话** ⇒
+ *   `sessionKey = 前缀 + 记录 ID`。为什么必须独立：引擎的 `submitSale` 对"键对不上"的会话
+ *   会**把上一单的结果还给你**（`reused/stale`）⇒ 所有行共用一个会话时，第 2 条记录会被
+ *   上一单吸收成**假成功**（拿到上一条的单号、自己一个字没写 ✗）。
+ *   ⚠️ 它是**本地身份**、**绝不能**当 open_id 写进 User 字段（那会是个非法 id ⇒ 写库报错）。
+ */
+const ACCESSORY_SALE_SESSION_KEY_PREFIX = 'accessory_sale:';
 
 /** 列名（照她那张表的真列名；**全部可配** ⇒ 她改列名只改配置 ✓）。 */
 const ACCESSORY_SALE_FIELDS = Object.freeze({
@@ -58,8 +68,10 @@ const ACCESSORY_SALE_REASONS = Object.freeze({
   nameMissing: '「名称」没填（或关联记录取不到）⇒ 不知道卖的是哪件配品',
   amountInvalid: (raw) => `「金额」缺失或不合法（${raw == null || raw === '' ? '空' : raw}）⇒ 不记这一笔`,
   quantityInvalid: (raw) => `「数量」不合法（${raw}）⇒ 不记这一笔`,
-  // 🔴 数量 > 1 ⇒ **如实拒单**（绝不静默按 1 记 ✗）；原因里必须说清"一次只记 1 件"（她/Lead 点名）
-  quantityMultiple: (raw) => `这一版一次只记 1 件（她填了 ${raw} 件）⇒ 多件待支持`,
+  // 🔴 数量 = N ⇒ **拆成 N 条明细（一行一件）**（她 2026-10-15 逐字：「销售明细里是一行一件，
+  //   如果配品是两件，那就拆开，按照数量拆成对应的记录数」）⇒ 这两个是**摊不开**时的如实拒单：
+  quantityOverLineLimit: (raw, max) => `「数量」${raw} 件超过本单上限（最多 ${max} 行）⇒ 不记这一笔`,
+  amountTooSmallForSplit: (raw, count) => `「金额」${raw} 摊不成 ${count} 行（一行至少 1 个最小单位）⇒ 不记这一笔`,
   paymentMethodMissing: '「收款方式」取不到 ⇒ 不敢猜一个方式',
   fallbackUnavailable: (missing) => `事件未带全（缺：${(missing || []).join('/')}）且无法回退读表`,
 });
@@ -89,6 +101,15 @@ const resolveAccessorySaleIntakeConfig = (env = process.env) => ({
   events: { created: Object.freeze(['record_added']) },
   // 写回「失败原因」那一列的人话原文（**可注入/可覆盖** ✓，与字段名同一套配置先行口径）
   reasons: ACCESSORY_SALE_REASONS,
+  /**
+   * ⭐ **录单人 / 操作人**（Lead 2026-10-15 裁决）：优先用**飞书事件里的操作人**（谁填的表就是录单人 ✓，
+   * 取值见 `services/accessorySaleIntakeService.js` 的 `operatorOpenIdOf`：`event.operator_id.open_id`，
+   * 那是官方 SDK 里这个事件的形状）。事件**没带**操作人 ⇒ **不许编一个** ✗ ⇒ 落到这个配置出口；
+   * 这里**默认空串** ⇒ 连它也没有时就是"**不写这一列**"（`person('')` → undefined，飞书不报错 ✓）。
+   */
+  operatorOpenId: readString(env, ACCESSORY_SALE_OPERATOR_ENV_KEY, ''),
+  /** 本地会话键前缀（见上面 `ACCESSORY_SALE_SESSION_KEY_PREFIX` 的说明；**不是**飞书列 id）。 */
+  sessionKeyPrefix: ACCESSORY_SALE_SESSION_KEY_PREFIX,
   writeBack: Object.freeze({
     ...ACCESSORY_SALE_WRITEBACK,
     enabled: readFlag(env, ACCESSORY_SALE_WRITEBACK_ENABLED_ENV_KEY, ACCESSORY_SALE_WRITEBACK.enabled),
@@ -99,6 +120,8 @@ module.exports = {
   ACCESSORY_SALE_TABLE_ID_ENV_KEY,
   ACCESSORY_SALE_ENABLED_ENV_KEY,
   ACCESSORY_SALE_WRITEBACK_ENABLED_ENV_KEY,
+  ACCESSORY_SALE_OPERATOR_ENV_KEY,
+  ACCESSORY_SALE_SESSION_KEY_PREFIX,
   DEFAULT_ACCESSORY_SALE_TABLE_ID,
   ACCESSORY_SALE_FIELDS,
   ACCESSORY_SALE_WRITEBACK,

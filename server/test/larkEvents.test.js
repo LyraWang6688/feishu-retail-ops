@@ -480,14 +480,17 @@ const ACCESSORY_SALE_TABLE_ID = 'tblkT1QTUsESnl5b';
 // 「别的表」——用她原话里的形状，确保它**不等于**上面那个 id。
 const OTHER_TABLE_ID = 'tbl别的表';
 
-/** 计数替身：只记"被调用了几次、每次的 action_list 是什么"。 */
+/** 计数替身：只记"被调用了几次、每次的 `action_list` 是什么"，以及**第二参**（原始事件）。 */
 const createAccessoryIntakeRecordingDouble = () => {
   const calls = [];
+  const options = [];
   return {
     calls,
+    options,
     intake: {
-      handleTableChanges: async (actionList) => {
+      handleTableChanges: async (actionList, intakeOptions) => {
         calls.push(actionList);
+        options.push(intakeOptions);
         return { enabled: true, results: [] };
       },
     },
@@ -510,18 +513,22 @@ test('⑦ AC-AS5a 🔴 别的 table_id ⇒ 配品销售那条支路 **调用 0 �
 
 test('⑦ AC-AS5b ⭐ 她那张表 ⇒ 被调用 **恰好 1 次** ＋ `action_list` **原样**传下去（且等一拍才发生）', async () => {
   const { service } = createRecordingService();
-  const { intake, calls } = createAccessoryIntakeRecordingDouble();
+  const { intake, calls, options } = createAccessoryIntakeRecordingDouble();
   const handlers = createLarkEventHandlers(service, { accessorySaleIntake: intake });
   const actionList = [
     { record_id: 'rec_as_1', action: 'record_added', after_value: [{ field_id: 'fldVfSOmDg', field_value: 128 }] },
     { record_id: 'rec_as_2', action: 'record_added' },
   ];
-
-  const response = handlers['drive.file.bitable_record_changed_v1']({
+  // ⚠️ 事件里带上**操作人**（官方形状：顶层 `operator_id.open_id`）——
+  //    这条支路要拿它当「录单人」（谁填的表谁是录单人）⇒ 路由必须把**整个事件**传下去 ✓
+  const event = {
     file_token: APP_TOKEN,
     table_id: ACCESSORY_SALE_TABLE_ID,
+    operator_id: { open_id: 'ou_who_filled_the_row' },
     action_list: actionList,
-  });
+  };
+
+  const response = handlers['drive.file.bitable_record_changed_v1'](event);
 
   assert.deepEqual(response, {}, '飞书要求及时响应：handler 同步返回 {} ✓');
   assert.deepEqual(calls, [], '🔴 返回时还**没开始**处理（路由是 `setImmediate` 异步派发 ⇒ 用例要等一拍）✓');
@@ -532,6 +539,7 @@ test('⑦ AC-AS5b ⭐ 她那张表 ⇒ 被调用 **恰好 1 次** ＋ `action_li
   // 原样透传：**判定"哪条动作要办"不在这层**（口径在 config + service 里），所以
   // 连第二条 `record_added`、以及 `after_value` 也一起交下去，不在这里筛、不在这里改形状。
   assert.deepEqual(calls[0], actionList, '`action_list` **原样**传下去 ✓');
+  assert.equal(options[0]?.event, event, '第二参必须是**同一个事件对象**（录单人要从它里面取 ✓）');
 });
 
 test('⑦ AC-AS5c ⭐ table_id **走配置**（不硬编码）：换一份 config ⇒ 认的表跟着换', async () => {

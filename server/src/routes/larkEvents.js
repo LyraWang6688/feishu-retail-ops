@@ -201,7 +201,8 @@ const createLarkEventHandlers = (service, { heartbeat, ...options } = {}) => ({
       const intake = resolveAccessorySaleIntake(service, options);
       if (intake && typeof intake.handleTableChanges === 'function') {
         setImmediate(() => {
-          intake.handleTableChanges(actionList).catch((error) => {
+          // ⚠️ 把**整个事件**一起交下去：这条支路要用它取**操作人**（谁填的表谁是录单人 ⇒ 主表「录单人」列）
+          intake.handleTableChanges(actionList, { event }).catch((error) => {
             logError('accessory_sale_intake.dispatch_failed', { table_id: tableId, error: error.message });
           });
         });
