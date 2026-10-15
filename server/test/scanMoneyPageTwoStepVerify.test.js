@@ -16,7 +16,13 @@
  *   V1 点「提交这一单」⇒ 四张表一行都不许多（主表/明细/收款/库存流水）
  *   V2 点资金页按钮 ⇒ 才建单：主表 +1（单号）· 明细 +1 · **收款按她填的**（全付 ⇒ 1 条已收款）· 现货 ⇒ 流水 +1
  *   V3 同一把 submitKey 连点两次（含并发）⇒ 只写一次
- *   V4 金额不齐 ⇒ 零写入（实测 400 + 差额人话 + 原地重渲染）
+ *   V4 **金额不齐 ⇒ 零写入 + 差额人话 + 原地重渲染**（2026-10-16 迁移：
+ *      · 改前逐字：`{ action:'payment_pay', payment_status:'部分付', payment_method:'微信', payment_amount:'' }`
+ *        —— 用的是**已退场的档位字段** ✗（她 2026-10-16：「**去掉三个单选、按金额自动算**」）
+ *      · 改后逐字：`{ action:'payment_pay', payment_method:'微信', payment_amount:'' }`
+ *        —— **不带档位字段**（档位由金额自动算 ✓）；差额仍必须**拦住 + 人话 + 零写入** ✓
+ *      · 依据 = 她 2026-10-16 逐字 ×2：「**去掉三个单选、按金额自动算**」
+ *        ＋「**实收金额用户必须填写**……**不用做那个为空去单价的功能了**」）
  *   V5 写进「库存流水.关联销售」的 id 属于**哪张表**（该字段对端 = 销售主表，type=21 双向）
  */
 
@@ -287,8 +293,15 @@ test(`V4 · 金额不齐 ⇒ 零写入（如实记状态码）`, { skip: SKIP ||
   await withServer(async (base) => {
     await postPage(base, urlPath, cookie, { action: SCAN_WRITE.actions.submitOrder, [SCAN_WRITE.fields.size]: pick.size });
     const before = await counts(gateway);
+    // ⭐ 2026-10-16 迁移（改前逐字 → 改后逐字 → 依据）：
+    //   改前逐字：`{ action: 'payment_pay', payment_status: '部分付', payment_method: '微信', payment_amount: '' }`
+    //     —— 档位字段**已退场** ✗（她：「**去掉三个单选、按金额自动算**」）⇒ 带真凭证跑**会红** ✗
+    //   改后逐字：`{ action: 'payment_pay', payment_method: '微信', payment_amount: '' }`
+    //     —— **不带档位**（档位由「实收 / 收款」金额自动算 ✓）；差额仍必须**拦住 + 人话 + 零写入** ✓
+    //   依据 = 她 2026-10-16 逐字 ×2：「去掉三个单选、按金额自动算」
+    //          ＋「实收金额用户必须填写……不用做那个为空去单价的功能了」
     const bad = await postPage(base, urlPath, cookie, {
-      action: 'payment_pay', payment_status: '部分付',
+      action: 'payment_pay',
       [SCAN_WRITE.fields.paymentMethod]: '微信', [SCAN_WRITE.fields.paymentAmount]: '',
     });
     const after = await counts(gateway);
@@ -296,5 +309,7 @@ test(`V4 · 金额不齐 ⇒ 零写入（如实记状态码）`, { skip: SKIP ||
       '| 仍资金页?', /payment_pay/.test(bad.html), '| 有差额人话?', /差|不符|对不上|金额/.test(bad.html));
     assert.deepEqual(after, before, '金额不齐 ⇒ 零写入（不许假成功 ✗）');
     assert.match(bad.html, /payment_pay/, '应当原地重渲染资金页（她能改 ✓）');
+    // ⭐ 迁移时**加固**（不是放宽 ✓）：差额必须**给她一句人话** —— 她真机抱怨过"只看到 400、没有原因" ✓
+    assert.match(bad.html, /差|不符|对不上|金额|没提交成功/, '差额必须给她人话（不许干巴巴 400 ✗）');
   });
 });
