@@ -127,35 +127,27 @@ const createLabelPrintDeviceRouter = (options = {}) => {
     });
     if (typeof res.flushHeaders === 'function') res.flushHeaders();
 
-    service().heartbeat({ deviceId, info: { transport: 'sse' } });
-    sendEvent(res, 'hello', { server_time: new Date().toISOString(), transport: 'sse' });
-    let backlog = [];
-    try {
-      backlog = await service().listPending({ deviceId });
-    } catch (error) {
-      logWarn('label_print.stream.backlog_failed', { error: error.message });
-    }
-    sendEvent(res, 'backlog', { jobs: backlog });
-    logInfo('label_print.stream.connected', { device_id: deviceId, backlog: backlog.length });
-
-    const unsubscribe = service().subscribe((event) => {
-      if (!sendEvent(res, event.type, event.payload)) cleanup();
-    });
-    // `: ping` 注释心跳：① 顶住 Nginx/中间设备的空闲断链；② **兼作在线心跳**（长连接活着 = 电脑在线）。
-    const ping = setInterval(() => {
-      if (!sendEvent(res, 'ping', { at: new Date().toISOString() })) {
-        cleanup();
-        return;
-      }
-      service().heartbeat({ deviceId, info: { transport: 'sse' } });
-    }, Math.max(1000, Number(config.ssePingMs) || 20_000));
-    if (typeof ping.unref === 'function') ping.unref();
-
+    // ⭐⭐ 2026-10-15（#597 · task-24）：**断线清理必须在所有 `await` 之前挂上** ——
+    //   改前逐字：`req.on('close', cleanup)` / `res.on('close', cleanup)` 挂在 `await service().listPending()` **之后**
+    //     ⇒ 客户端若在 `sendEvent(hello)` 与"挂 close"之间断开，这次 close **没人听** ⇒ 订阅**残留**，
+    //       要等**下一次事件 / 心跳**（默认 20s）才被摘掉 ✗（她批准做掉；诊断脚本：
+    //       `SSE_ORDER_DIAG=1 node test/sseSubscriberOrderDiag.cjs` 会实测出"收到 hello 时计数为 0"这个窗口）。
+    //   改后逐字：**先声明闭包状态**（`ping` / `unsubscribe` / `closed`）＋**先挂三个断线监听**，
+    //     再去做 hello/backlog 那两步 `await` ✓（正常连接的行为**一个字没变** ✗）
+    //   ⚠️ 两条边界（都不许退化成新 bug）：
+    //     ① `cleanup` 要用的 `ping` / `unsubscribe` 此刻**还没建** ⇒ 先声明成 `null` / 空函数；
+    //     ② **断开发生在 `subscribe()` 之前** ⇒ 后面那道 `if (closed) return` 直接收工，**绝不订阅**
+    //        （否则会留下一个**永远没人摘**的订阅 ✗）。
+    //   ⚠️ 为什么 `req.on('close')` 提前挂是安全的（真机/探针实测）：本端点的请求**没有 body**、
+    //     而 `req` 一直没被 `.resume()` 读 ⇒ Node **不会**在"请求读完"时发 `close`；
+    //     实测量到的 `req close` 时刻 = **客户端真的断开那一刻**（与 `res close` 同一时刻）✓
+    let ping = null;
+    let unsubscribe = () => {};
     let closed = false;
     function cleanup() {
       if (closed) return;
       closed = true;
-      clearInterval(ping);
+      if (ping) clearInterval(ping);
       unsubscribe();
       try {
         res.end();
@@ -165,7 +157,36 @@ const createLabelPrintDeviceRouter = (options = {}) => {
       logInfo('label_print.stream.disconnected', { device_id: deviceId });
     }
     req.on('close', cleanup);
+    // ⚠️ `error` 也走同一条清理：半开连接 / 客户端 RST 时**不保证**先来 `close`。
+    req.on('error', cleanup);
     res.on('close', cleanup);
+    res.on('error', cleanup);
+
+    service().heartbeat({ deviceId, info: { transport: 'sse' } });
+    sendEvent(res, 'hello', { server_time: new Date().toISOString(), transport: 'sse' });
+    let backlog = [];
+    try {
+      backlog = await service().listPending({ deviceId });
+    } catch (error) {
+      logWarn('label_print.stream.backlog_failed', { error: error.message });
+    }
+    // 🔴 上面这一步 `await` 期间客户端可能已经断了（= 改前那个窗口）⇒ 立刻收工，**不订阅、也不再写**。
+    if (closed) return undefined;
+    sendEvent(res, 'backlog', { jobs: backlog });
+    logInfo('label_print.stream.connected', { device_id: deviceId, backlog: backlog.length });
+
+    unsubscribe = service().subscribe((event) => {
+      if (!sendEvent(res, event.type, event.payload)) cleanup();
+    });
+    // `: ping` 注释心跳：① 顶住 Nginx/中间设备的空闲断链；② **兼作在线心跳**（长连接活着 = 电脑在线）。
+    ping = setInterval(() => {
+      if (!sendEvent(res, 'ping', { at: new Date().toISOString() })) {
+        cleanup();
+        return;
+      }
+      service().heartbeat({ deviceId, info: { transport: 'sse' } });
+    }, Math.max(1000, Number(config.ssePingMs) || 20_000));
+    if (typeof ping.unref === 'function') ping.unref();
     return undefined;
   });
 
