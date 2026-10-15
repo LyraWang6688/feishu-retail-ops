@@ -141,7 +141,16 @@ test('AC-D1 ⭐⭐ 点「配品」⇒ **直接打开她那张飞书表单**（`k
 
   // ③ 文案走配置（标题 / 动作都在 domains.js 这一份配置里，非空）
   assert.ok(String(page.cards[0].title || '').length > 0, '卡片标题来自配置 ✓');
-  assert.ok(String(page.cards[0].arrow || '').length > 0, '动作文案来自配置 ✓');
+  // 🔴 **成对迁移（2026-10-16 当天下午 · 最后三处）**：
+  //   改前逐字：`assert.ok(String(page.cards[0].arrow || '').length > 0, '动作文案来自配置 ✓');`
+  //   改后逐字：`assert.equal(page.cards[0].arrow, undefined, …)` —— 那行 `arrow: '去填配品销售表单 →'` 删了
+  //   依据 = 她 **2026-10-16** 逐字「**我也没看到，可以删除**」＋ 只读核实：卡片本体是
+  //     `<a class="entry-card" href=…>`（**整张卡就是链接**）⇒ 箭头行没有跳转职责 ⇒ 多余 ⇒ 删
+  //     （判据见 `test/workbenchArrowTrimAll20261016.test.js`）。
+  //   ⚠️ **不是放宽**：**跳转能力**由下面 ④ 那几条（`resolveTabClick` / AppLink / 表单 URL）**完全钉住**，
+  //      本次一个字没动 ✗ —— 只是"卡面上那行提示语"退场。
+  assert.equal(page.cards[0].arrow, undefined,
+    '⭐ 改后逐字：那行箭头（`去填配品销售表单 →`）已删（配置里不再有 `arrow` 键）');
 
   // ④ **点一下真的会跳**：`resolveTabClick` 给出 jump（不是"切到本页再看卡片"）
   const action = nav.resolveTabClick(page);

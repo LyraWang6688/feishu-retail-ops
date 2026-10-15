@@ -237,6 +237,7 @@
 | [todo-trigger-only-by-card-button.md](todo-trigger-only-by-card-button.md) | 待办：触发入口只留【终态卡按钮】—— 说话不再触发后续流程（业务负责人 2026-10-07 定） |
 | [todo-workbench-purchase-columns.md](todo-workbench-purchase-columns.md) | 待办清单（业务负责人认过、暂不做的） |
 | [workbench-access-policy-2026-10-08.md](workbench-access-policy-2026-10-08.md) | 工作台准入口径（业务负责人 2026-10-08 定） |
+| [workbench-arrow-trim-all-2026-10-16.md](workbench-arrow-trim-all-2026-10-16.md) | 工作台「多余的箭头行」清理**全记录**（三批判据 / 逐条对照 / 证据 · #699 + #703 + 本次）|
 | [workbench-inventory-2026-10-12.md](workbench-inventory-2026-10-12.md) | 工作台现状清单（飞书网页工作台 · 2026-10-12） |
 | [workbench-purchase-return-split-2026-10-07.md](workbench-purchase-return-split-2026-10-07.md) | 工作台首页【常用功能】：把「采购」和「退货」拆成两个独立入口（2026-10-07） |
 | [workbench-requirements-2026-10-06.md](workbench-requirements-2026-10-06.md) | 工作台改造需求（业务负责人 2026-10-06 逐字确认 · **派活以此文件为准**） |

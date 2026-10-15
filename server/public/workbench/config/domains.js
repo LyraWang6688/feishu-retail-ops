@@ -120,6 +120,16 @@ export const DOMAIN_TABS = [
       //     表单记录由**既有引擎**成单（`services/accessorySaleIntakeService.js`）✓
       //   ⚠️ URL **只在 `config/links.js`**（`ACCESSORY_SALE_FORM_URL`，别处不复制字面量 ✗）；
       //      文案（标题 / 动作）也都在这里（配置先行 ✓）。
+      // ⭐⭐ 2026-10-16（业务负责人**亲口**点的"最后三处"之一 · 逐字）：
+      //   「**我也没看到，可以删除**」——
+      //   改前逐字：这一格里有 `arrow: '去填配品销售表单 →',`
+      //   改后逐字：**整行删掉**（#699 / #703 同一判据、同一形状）
+      //   依据：她 2026-10-16 逐字 ＋ 只读核实的证据（**卡片本体自己就能跳**）：
+      //     · `features/domains/pages.js` 的 `cardsHtml`（:54–:59）：配了 `href` 的卡
+      //       渲染成 `<a class="entry-card" href="…" rel="noopener">` ⇒ **整张卡就是那个链接**；
+      //     · 那行箭头**在 `<a>` 里面**，只是一句"快点点我"的提示语 ⇒ 没有跳转职责 ⇒ 多余 ⇒ 删。
+      //   ⚠️ **只删这一行箭头** ✗ —— 卡片的 `href` / `icon` / `title` 一个字不动，
+      //      **跳转能力零变化**（`workbenchArrowTrimAll20261016.test.js` AC-ATA2 钉着它仍整张可点）。
       {
         id: 'sales-accessory',
         label: '配品',
@@ -130,7 +140,6 @@ export const DOMAIN_TABS = [
             icon: '🛒',
             title: '配品销售',
             href: ACCESSORY_SALE_FORM_URL,
-            arrow: '去填配品销售表单 →',
           },
         ],
       },
@@ -223,6 +232,12 @@ export const DOMAIN_TABS = [
       //   我会给一个链接，也是**点击了之后直接跳转**」⇒ 与「货品上新」同一形状（**点一次就到** ✓）：
       //   目标 = 下面那张卡的 href ✓ 唯一来源仍是 `config/links.js` 的 `SUPPLIER_DIRECTORY_URL`
       //   （⚠️ 本文件**不复制 URL 字面量** ✗ · 既有 `directJump` 机制 ✓ 不新造 ✗）
+      // ⭐⭐ 2026-10-16（业务负责人**亲口**点的"最后三处"之二 · 逐字）：
+      //   「**我也没看到，可以删除**」——
+      //   改前逐字：这一格里有 `arrow: '打开名录 →',`
+      //   改后逐字：**整行删掉**（与上面「配品销售」同一判据、同一形状）
+      //   依据：卡片本体是 `<a class="entry-card" href=…>`（整张可点）⇒ 那行箭头纯多余 ⇒ 删。
+      //   ⚠️ **只删这一行箭头** ✗ —— `href` / `icon` / `title` 一个字不动。
       {
         id: 'purchase-suppliers',
         label: '供应商名录',
@@ -233,7 +248,6 @@ export const DOMAIN_TABS = [
             icon: '📇',
             title: '供应商名录',
             href: SUPPLIER_DIRECTORY_URL,
-            arrow: '打开名录 →',
           },
         ],
       },
@@ -254,13 +268,18 @@ export const DOMAIN_TABS = [
         //    **不用我再去点击那个消息卡片了**」
         //    ⇒ **点一次就到**：目标 = 下面那张卡的 href（唯一来源仍是 `config/links.js` 的
         //      `PRODUCT_NEW_FORM_URL`，本文件不复制字面量）。
+        // ⭐⭐ 2026-10-16（业务负责人**亲口**点的"最后三处"之三 · 逐字）：
+        //   「**我也没看到，可以删除**」——
+        //   改前逐字：这一格里有 `arrow: '去填写 →',`
+        //   改后逐字：**整行删掉**（与「配品销售」「供应商名录」同一判据、同一形状）
+        //   依据：卡片本体是 `<a class="entry-card" href=…>`（整张可点）⇒ 那行箭头纯多余 ⇒ 删。
+        //   ⚠️ **只删这一行箭头** ✗ —— `href` / `icon` / `title` 一个字不动。
         directJump: true,
         cards: [
           {
             icon: '🆕',
             title: '货品上新',
             href: PRODUCT_NEW_FORM_URL,
-            arrow: '去填写 →',
           },
         ],
       },
