@@ -211,7 +211,7 @@ const createScanWriteService = (options = {}) => {
     //   它的用途只有一个：**让调用方"等后台那一跑跑完"** ✓（用例回读端状态前先 await 它）；
     //   ⚠️ 它**不是页面字段** ✗：路由渲染只取它本来就认识的那几个（`paidPayload` 里那一批），
     //     所以句柄**不会**进 HTML（有用例钉住 ✓）。
-    return Promise.resolve()
+    return trackSaleBackground(Promise.resolve()
       .then(() => submitSale({ ...restInput, noDefer: true, requestId, timing }))
       .then(async (result) => {
         const durationMs = Date.now() - startedAt;
@@ -245,7 +245,7 @@ const createScanWriteService = (options = {}) => {
         logTiming({ ok: false, code: 'sale_background_threw', order_no: orderNo },
           Date.now() - startedAt);
         await markSaleWriteFailed({ salesEntryRecordId, correlation, requestId });
-      });
+      }));
   };
 
   /** 后台那一跑没写成 ⇒ 主表那一列如实落「写入失败」（**不许假成功** ✗）。 */
@@ -1718,10 +1718,40 @@ const createScanWriteService = (options = {}) => {
   };
 };
 
+/**
+ * ⭐⭐ 2026-10-15（⑨b-2）：**"在飞的后台那一跑"的登记簿** —— 只为一件小事：
+ *   让**HTTP 级**用例在回读**端状态**之前，能**确定性地**等到后台那一跑跑完。
+ *
+ * 为什么必须有它：`scanSaleE2E` 那条 E2E 是**打真实路由**的（`postForm`）⇒ 页面上
+ *   拿不到 `result.background` 句柄（那是**服务调用方**才看得到的东西，见上面那段注释）
+ *   ⇒ 用例"提交完就读表"会读到**后台还没写完**的那一刻 ⇒ 端状态断言假红。
+ * 🔴 **不是**"为测试放宽判据"：判据一个字没改，只是**先等它跑完**再读 ✓
+ *   （等价于"同步那一次"的时序 ⇒ 端状态断言与改前**逐字同形**）。
+ * ⚠️ **不用轮询**：轮询靠真实计时器，本机降速时会 flake（这一夜实测过）✗ ⇒ 这里等的是**真 Promise** ✓。
+ * ⚠️ 它只是**登记簿**（加入/移除各一行），不影响任何写入语义、幂等或返回值 ✓。
+ */
+const pendingSaleBackgrounds = new Set();
+const trackSaleBackground = (promise) => {
+  pendingSaleBackgrounds.add(promise);
+  const done = () => pendingSaleBackgrounds.delete(promise);
+  promise.then(done, done);
+  return promise;
+};
+
+/** 等到**当前所有在飞的后台那一跑**都跑完（空则立即返回）。用例专用入口 ✓ */
+const waitForPendingSaleBackgrounds = async () => {
+  // 反复取快照：后台那一跑自己也可能再排一个 ⇒ 循环到空为止（不会漏、也不会死循环）
+  while (pendingSaleBackgrounds.size) {
+    await Promise.allSettled([...pendingSaleBackgrounds]);
+  }
+};
+
 module.exports = {
   createScanWriteService,
   createSalesEntryWithOrderNo,
   // ⭐ 2026-10-12：只读引用缓存（白名单 + TTL）。**导出只为用例能直接钉它**：
   //    去重 / 白名单外一律直通 / 写方法原样透传 —— 这三条是"绝不影响写入判据"的证据。
   createReadOnlyReferenceCache,
+  // ⭐⭐ 2026-10-15（⑨b-2）：等"在飞的后台那一跑"跑完（HTTP 级用例回读端状态前用）✓
+  waitForPendingSaleBackgrounds,
 };

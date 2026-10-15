@@ -62,6 +62,8 @@ const { SCAN_WRITE, PAYMENT_STATUS } = require('../src/config/scanWrite');
 const { REALM_TEXTS } = require('../src/views/scanPageRealm');
 const { createScanPageService } = require('../src/services/scanPageService');
 const { createScanWriteService } = require('../src/services/scanWriteService');
+// ⭐⭐ 2026-10-15（⑨b-2）：等"在飞的后台那一跑"跑完（HTTP 级用例回读端状态前用）✓
+const { waitForPendingSaleBackgrounds } = require('../src/services/scanWriteService');
 const { createScanSessionService } = require('../src/services/scanSessionService');
 const { SalesDeliveryService } = require('../src/services/salesDeliveryService');
 // ⭐ 2026-10-12 新写用例回读"欠款"用（既有服务，只读）
@@ -305,18 +307,26 @@ const getPage = async (url, cookie) => {
 };
 // ⚠️ 页面上的收款行 / 每件实收是**同名字段重复出现**（`line_amount` 一行一个）⇒
 //    这里必须发**重复的键**（`URLSearchParams` 的"数组值"会拼成 `150,130`，那是错的）。
-const postForm = (url, cookie, body) => {
+const postForm = async (url, cookie, body) => {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(body)) {
     if (Array.isArray(value)) value.forEach((item) => params.append(key, String(item)));
     else params.append(key, String(value));
   }
-  return fetch(url, {
+  const response = await fetch(url, {
     method: 'POST',
     redirect: 'manual',
     headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
     body: params.toString(),
   });
+  // ⭐⭐ 2026-10-15（⑨b-2）：销售提交已改成**异步**（单号先出、余下转后台）——
+  //   这一条 E2E 是**打真实路由**的（`postForm`）⇒ 页面上拿不到那个后台句柄
+  //   （它是**服务调用方**才看得到的东西）⇒ 提交完立刻读表会读到"后台还没写完"的那一刻 ✗。
+  //   ⭐ 这里**确定性地等后台那一跑跑完**（等的是**真 Promise**，不是轮询、不靠计时器）✓
+  //   🔴 **判据一个字没改**：下面那些**端状态断言**（明细几行 / 库存少几 / 只建一张单…）
+  //     仍是**逐字比**，只是先等它跑完再比 ✓（不是我替它放宽 ✗）。
+  await waitForPendingSaleBackgrounds();
+  return response;
 };
 
 /**
@@ -341,12 +351,18 @@ const followPaymentStep = async (base, cookie, response) => {
     if (name) params.append(name.replace(/&amp;/g, '&'), value.replace(/&amp;/g, '&'));
   }
   const url = actionUrl.startsWith('http') ? actionUrl : `${base}${actionUrl.replace(/&amp;/g, '&')}`;
-  return fetch(url, {
+  const finalResponse = await fetch(url, {
     method: 'POST',
     redirect: 'manual',
     headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
     body: params.toString(),
   });
+  // ⭐⭐ 2026-10-15（⑨b-2）：**真正建单的是这一步**（点资金页【跳过】⇒ 才建主表 ⇒ 余下转后台）——
+  //   它走的是**裸 `fetch`**（不走上面那个 `postForm`）⇒ 这里也要**确定性地等后台跑完**
+  //   （等的是真 Promise ✓），否则下面那些**端状态断言**会读到"后台还没写完"的那一刻 ✗。
+  //   🔴 判据一个字没改：端状态仍**逐字比**，只是先等它跑完 ✓。
+  await waitForPendingSaleBackgrounds();
+  return finalResponse;
 };
 
 /** 「本单条」那一段（`data-view="draft-bar"`）：她是**看这一条**知道"本单几双、能不能提交"的。 */
