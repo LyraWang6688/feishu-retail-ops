@@ -2137,6 +2137,15 @@ test('AC-H4/H5 回归：编号页**不显示**"上一单已提交"；提交后�
         payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['280'],
       }));
       const subHtml = await subRes.text();
+      // ⭐⭐ 2026-10-15（⑨b-2）：**提交刚完成那一刻**的采样 —— 用来判定"待付款标记"是
+      //   从没被改成 `created`，还是后来又被谁写回 `pending` ✓
+      {
+        const s0 = await e2e.sessions.get('ou_home_5').catch(() => null);
+        console.log('FLAKE-EVIDENCE 提交刚完=', JSON.stringify({
+          paymentStep: s0?.sale?.paymentStep, status: s0?.sale?.status,
+          lines: (s0?.sale?.lines || []).length,
+        }));
+      }
       // ⭐⭐ **强化断言**（原来这里**忽略了提交结果** ✗ ⇒ 提交一旦没成，后面那条"新单只有 1 双"会**莫名其妙地红** ✗）：
       //   提交必须成功、并且**这一单已经结束**（草稿清空由上一条成功的提交保证 ✓）。
       assert.equal(subRes.status, 200, `提交必须成功（实际 ${subRes.status}）`);
@@ -2164,6 +2173,8 @@ test('AC-H4/H5 回归：编号页**不显示**"上一单已提交"；提交后�
           sale_status: snap.sale?.status, sale_lines: (snap.sale?.lines || []).length,
           sale_seq: snap.sale?.seq, sale_key: snap.sale?.key, completed: (snap.sale?.completed || []).length,
           session_status: snap.status,
+          // ⭐⭐ 2026-10-15（⑨b-2）：**关键标记** —— 它决定页面渲染"整单付款"那一页还是扫码页 ✓
+          sale_paymentStep: snap.sale?.paymentStep, top_paymentStep: snap.paymentStep,
         }));
         console.log('FLAKE-EVIDENCE 提交状态=', subRes.status,
           '| 单号=', (/XSD-[0-9-]+/.exec(subHtml) || [''])[0],
@@ -2171,6 +2182,14 @@ test('AC-H4/H5 回归：编号页**不显示**"上一单已提交"；提交后�
           '| addLine Location=', String(addRes.headers?.get?.('location') || ''),
           '| 本单条=', JSON.stringify(bars),
           '| 提交页有失败文案=', /没成功|认不出|没带上/.test(subHtml));
+        // ⭐ ⭐ 2026-10-15（⑨b-2）：**这一页到底是什么**（有 draft-bar 吗 / 是哪个 realm / 是不是结果页）
+        console.log('FLAKE-EVIDENCE 页=', JSON.stringify({
+          has_draft_bar: page.html.includes('data-view="draft-bar"'),
+          has_sales_block: page.html.includes('realm-block--sales'),
+          is_state_msg: /class="state-msg/.test(page.html),
+          len: page.html.length,
+          head: String(page.html).slice(0, 220),
+        }));
       }
         assert.equal((page.html.match(/class="draft-line"/g) || []).length, 1, '新单里只有新扫的那一双（1 行 ✓）');
       assert.equal(page.html.includes(NUMBER_A), false, '新单里不许出现上一单的编号 ✗');
