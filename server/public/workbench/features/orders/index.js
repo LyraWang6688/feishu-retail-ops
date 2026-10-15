@@ -170,6 +170,8 @@ export function ordersListHtml(orders = []) {
     //   ⇒ **只有没写完的单**才出那一句 + 那颗按钮（写完了的不该出现"可点重试" ✗）。
     //   ⚠️ 判据来自**服务端**已经算好的 `write_incomplete`（`salesFollowupService` 用已合并的
     //      `isOrderIncomplete` 算的 ✓）—— 页面**不自己判** ✗、也不另发明一套 ✗。
+    //   ⚠️ 文案一律从 `T`（= `ORDERS_TEXTS`）取：这一套「重试」文案**按读取口**归在那一处
+    //      （同一个对象里读，就不会再出现"配在 P、代码读 T ⇒ 读成 undefined"那个真 bug ✗）。
     const incomplete = order.write_incomplete === true;
     return `
       <article class="order-card" data-order="${escapeHtml(order.record_id)}">
@@ -177,10 +179,10 @@ export function ordersListHtml(orders = []) {
           <h3 class="order-no">${escapeHtml(order.order_no || order.record_id)}</h3>
           <div class="order-tags">
             <span class="tag ${statusClass(order.fulfillment_status)}">${escapeHtml(order.fulfillment_status || '')}</span>
-            ${incomplete ? `<span class="tag tag-warning" data-view="order-incomplete">${escapeHtml(P.incomplete)}</span>` : ''}
+            ${incomplete ? `<span class="tag tag-warning" data-view="order-incomplete">${escapeHtml(T.incomplete)}</span>` : ''}
           </div>
           <button class="btn btn-ghost order-open" type="button" data-action="open-order" data-order="${escapeHtml(order.record_id)}">${escapeHtml(P.open)} ›</button>
-          ${incomplete ? `<button class="btn btn-primary order-retry" type="button" data-action="retry-write" data-order-no="${escapeHtml(order.order_no || '')}">${escapeHtml(P.retry)}</button>` : ''}
+          ${incomplete ? `<button class="btn btn-primary order-retry" type="button" data-action="retry-write" data-order-no="${escapeHtml(order.order_no || '')}">${escapeHtml(T.retry)}</button>` : ''}
         </div>
         ${detailsBlock(order)}
       </article>`;
