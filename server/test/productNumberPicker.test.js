@@ -18,6 +18,12 @@
  *        `keyword` 会**传给服务端**（不在前端造第二份数据源 ✗）；选中 ⇒ 落点是**既有**那个。
  *  AC-U2 `hasStock:false` ⇒ 页面上有那句"还没入库 / 不印尺码行"的提示（**能真红**）。
  *  AC-U3 端点失败 / **超时** ⇒ 人话 + **仍可手输**（不死界面：输入框还在、跳转那条路一点没变）。
+ *  AC-U7 ⭐⭐ **懒加载**：**进页面一个请求都不发**；她"点开"（聚焦 / 点击）**才拉那一次**，
+ *        且拉的那一刻**立刻**显示「正在读取…」，拉回来才填选项（她今天抱怨过"点开不友好"）。
+ *  AC-U8 ⭐⭐ **输入防抖**（`inputDebounceMs`，默认 400ms，可配；0 = 不防抖）：连敲 4 个字
+ *        **只发 1 个请求**；**回车立即搜**（不等窗口）、Esc 取消挂起的那次。
+ *  AC-U9 ⭐⭐ **超时阈值来自配置**（冷启动实测 ≈11.4s ⇒ 现 15s，不写死）；
+ *        超时那条"人话 + 仍可手输"的出口**仍然有效**。
  *  AC-U6 🔴 扫码那一条（`?scan=1`）**一个字节没改** —— 源码哨兵（行为哨兵在 `scanToPrint.test.js`）。
  * ─────────────────────────────────────────────────────────────────────────
  */
@@ -154,9 +160,19 @@ test('AC-U1 选项来自只读端点（假 api 注入 ⇒ 选项 = 注入的编�
     },
   });
   const host = fakeHost();
+  // ⚠️ 2026-10-15 晚**改后逐字**（懒加载，见 AC-U7；判据一个字没放宽）：
+  //   改前逐字：`await picker.createNumberPicker({ api }).mount(host);`
+  //             `assert.equal(api.calls.length, 1, '进页面拉一次（只读）');`
+  //             `assert.ok(api.calls[0].startsWith(...))`
+  //   改后逐字：下面这三句 —— mount 之后**一个请求都没有**，聚焦（= 她真的点开选择器）才拉那一次；
+  //             紧接着的"地址来自配置 / limit=200"两句**原样不动**。
+  //   依据：Lead 2026-10-15 晚的口径 —— 这个端点要读整张「货品信息」+ 整张「实时库存」
+  //        （正是今天量到 23.6 秒那次读的来源）⇒ 进页面就拉 = 她点开选择器先干等十几秒，
+  //        那正是她今天抱怨的"不友好 / 点了没反应"✗。**懒加载**：进页不拉、聚焦/点开才拉。
   await picker.createNumberPicker({ api }).mount(host);
-
-  assert.equal(api.calls.length, 1, '进页面拉一次（只读）');
+  assert.equal(api.calls.length, 0, '进页面**一个请求都不发**（懒加载，见 AC-U7）');
+  await host.elements[INPUT].handlers.focus();
+  assert.equal(api.calls.length, 1, '她点开选择器（聚焦）才拉这一次（只读）');
   assert.ok(api.calls[0].startsWith('/api/workbench/products/numbers?'), `地址来自配置：${api.calls[0]}`);
   assert.ok(api.calls[0].includes('limit=200'), 'limit 走契约默认值（1..500 内）');
 
@@ -181,6 +197,9 @@ test('AC-U1 输入关键字 ⇒ `keyword` 传给服务端（选项始终由服�
   const api = fakeApi({ result: { success: true, total: 1, truncated: false, numbers: [numberItem()] } });
   const host = fakeHost();
   await picker.createNumberPicker({ api }).mount(host);
+  // ⚠️ 2026-10-15 晚新增这一行（懒加载）：改前 mount 就拉了，所以这里直接断言 `api.calls[0]`；
+  //   现在要先"点开"（聚焦）才有第一个请求 ⇒ 补上这一下触发。**下面每一句判据原样不动**。
+  await host.elements[INPUT].handlers.focus();
   assert.equal(api.calls[0].includes('keyword='), false, '没输关键字 ⇒ 不带 keyword（全量前 200 条）');
 
   host.elements[INPUT].value = 'XHB';
@@ -189,7 +208,7 @@ test('AC-U1 输入关键字 ⇒ `keyword` 传给服务端（选项始终由服�
   assert.ok(api.calls[1].includes('keyword=XHB'), `keyword 必须原样传上去：${api.calls[1]}`);
 
   // 聚焦时**不重复拉**（拉过成功的就不拉，免得她一点就一串请求）
-  host.elements[INPUT].handlers.focus();
+  await host.elements[INPUT].handlers.focus();
   assert.equal(api.calls.length, 2, '成功拉过 ⇒ 聚焦不再补一次');
 });
 
@@ -201,6 +220,9 @@ test('AC-U1 选中 ⇒ 填进既有输入框，落点仍是**既有**那个（�
   const api = fakeApi({ result: { success: true, total: 1, truncated: false, numbers: [numberItem()] } });
   const host = fakeHost();
   await picker.createNumberPicker({ api }).mount(host);
+  // ⚠️ 2026-10-15 晚新增这一行（懒加载）：有选项的前提是"她点开过" ⇒ 先聚焦再点选项。
+  //   **本用例的判据（填进既有输入框 + 既有落点 + 模块里不含落点）原样不动**。
+  await host.elements[INPUT].handlers.focus();
 
   host.elements[OPTIONS].handlers.click({
     target: { closest: () => ({ dataset: { number: 'XHB8095|棕色|A' } }) },
@@ -230,6 +252,9 @@ test('AC-U2 hasStock:false ⇒ 提示"还没入库 / 不印尺码行"；有库�
   });
   const host = fakeHost();
   await picker.createNumberPicker({ api }).mount(host);
+  // ⚠️ 2026-10-15 晚新增这一行（懒加载）：选项是"她点开之后"才有的 ⇒ 先聚焦。
+  //   **本用例的判据（选项带「还没入库」小标记 + 选中后那句提示正反两面）原样不动**。
+  await host.elements[INPUT].handlers.focus();
 
   // 选项上就看得见（不用等点下去）
   assert.ok(host.elements[OPTIONS].innerHTML.includes('还没入库'), '没库存的选项自己带小标记');
@@ -260,6 +285,12 @@ test('AC-U3 端点失败 ⇒ 人话 + 输入框照旧能手输（既有落点也
   const api = fakeApi({ error: new Error('读不到') });
   const host = fakeHost();
   await picker.createNumberPicker({ api }).mount(host);
+  // ⚠️ 2026-10-15 晚**改后逐字**（懒加载；判据一个字没放宽）：
+  //   改前逐字：mount 就拉了 ⇒ 下面直接断言失败后的那几句；结尾"再聚焦 ⇒ 补拉一次"是 `calls.length === 2`。
+  //   改后逐字：mount 之后先聚焦（= 她点开）**才**发生第一次拉取 —— 失败后的那几句**原样不动**，
+  //             结尾那句仍是 `calls.length === 2`（第一次 = 聚焦那一下，第二次 = 失败后再聚焦补拉）。
+  //   依据：Lead 2026-10-15 晚的懒加载口径（见 AC-U7）。
+  await host.elements[INPUT].handlers.focus();
 
   const status = host.elements[STATUS].textContent;
   assert.ok(status.length > 0, '失败必须说人话（不许只留一个空界面）');
@@ -274,7 +305,7 @@ test('AC-U3 端点失败 ⇒ 人话 + 输入框照旧能手输（既有落点也
     '/workbench/label-print.html?keyword=XHB8095');
 
   // 失败之后**再聚焦** ⇒ 补拉一次（她不用退出重进）
-  host.elements[INPUT].handlers.focus();
+  await host.elements[INPUT].handlers.focus();
   assert.equal(api.calls.length, 2, '上次失败 ⇒ 聚焦补一次');
 });
 
@@ -283,6 +314,8 @@ test('AC-U3 端点**超时**（永挂）⇒ 也给人话，不永挂、不白屏
   const api = fakeApi({ never: true });
   const host = fakeHost();
   await picker.createNumberPicker({ api, timeoutMs: 20 }).mount(host);
+  // ⚠️ 2026-10-15 晚新增这一行（懒加载）：**点开才拉** ⇒ 这一拉就是永不回的那一次，超时后走同一出口。
+  await host.elements[INPUT].handlers.focus();
   assert.match(host.elements[STATUS].textContent, /手输/, '超时也是同一个出口：人话 + 还能手输');
   assert.equal(host.elements[OPTIONS].attrs['aria-busy'], 'false', '忙态要收掉（否则她以为还在转）');
 });
@@ -293,12 +326,175 @@ test('AC-U3 端点回了空 / 形状不对 ⇒ 说"没匹配到 + 还能手输"�
   await picker.createNumberPicker({
     api: fakeApi({ result: { success: true, total: 0, truncated: false, numbers: [] } }),
   }).mount(host);
+  // ⚠️ 2026-10-15 晚新增（懒加载）：两处都先"点开"再断言（判据原样不动）。
+  await host.elements[INPUT].handlers.focus();
   assert.match(host.elements[STATUS].textContent, /手输/);
   assert.equal(host.elements[OPTIONS].innerHTML, '');
 
   const weird = fakeHost();
   await picker.createNumberPicker({ api: fakeApi({ result: {} }) }).mount(weird);
+  await weird.elements[INPUT].handlers.focus();
   assert.ok(weird.elements[STATUS].textContent.length > 0, '形状不对也要有一句人话（不许静默）');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-U7 ⭐⭐ 懒加载：**进页面一个请求都不发**；她"点开"（聚焦）才拉那一次
+//   （Lead 2026-10-15 晚定的口径 —— 这个端点要读整张「货品信息」+ 整张「实时库存」，
+//    正是今天量到 **23.6 秒** 那次读的来源 ⇒ 进页就拉 = 她点开选择器先干等十几秒，
+//    正好撞在她今天抱怨的"不友好 / 点了没反应"上 ✗）
+//   ⚠️ 拉的那一刻必须**立刻**有「正在读取…」（不然她还是会以为没反应）；拉回来才填选项。
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-U7 进页零请求 + 点开才拉 + 拉的那一刻立刻显示「正在读取…」+ 拉回来才填选项', async () => {
+  const { picker } = await loadFrontendModules();
+  // 一个"卡住不回"的假 api：用来**停在拉取那一刻**看页面说了什么（真机上那一下可能十几秒）。
+  let release;
+  const api = {
+    calls: [],
+    get(url) {
+      this.calls.push(url);
+      return new Promise((resolve) => { release = resolve; });
+    },
+  };
+  const host = fakeHost();
+  await picker.createNumberPicker({ api }).mount(host);
+
+  assert.equal(api.calls.length, 0, '🔴 进页面**一个请求都不发**（不许把整表读压在她没点开的时候）');
+  assert.equal(host.elements[OPTIONS].innerHTML, '', '进页面没有选项（也没在转）');
+  assert.ok(String(host.elements[STATUS].textContent).length > 0, '进页面先给一句人话（不白屏）');
+
+  // 她"点开"选择器（手机上 tap = 聚焦）⇒ 这一下才发请求
+  const pending = host.elements[INPUT].handlers.focus();
+  assert.equal(api.calls.length, 1, '点开 ⇒ 才拉这一次');
+  assert.equal(api.calls[0].startsWith('/api/workbench/products/numbers?'), true, '还是那个只读端点');
+  assert.match(String(host.elements[STATUS].textContent), /正在读取/,
+    '🔴 拉的那一刻**立刻**显示「正在读取…」（她不会以为点了没反应）');
+  assert.equal(host.elements[OPTIONS].attrs['aria-busy'], 'true', '忙态也要标出来（读屏可用）');
+  assert.equal(host.elements[OPTIONS].innerHTML, '', '还没回来 ⇒ 不画选项');
+
+  release({ success: true, total: 1, truncated: false, numbers: [numberItem()] });
+  await pending;
+  assert.ok(host.elements[OPTIONS].innerHTML.includes('XHB8095|棕色|A'), '拉回来**才**填选项');
+  assert.equal(host.elements[OPTIONS].attrs['aria-busy'], 'false', '忙态收掉');
+
+  // 已经拉过 ⇒ 她再点开 / 再点一下也不刷请求（免得一串重复请求）
+  await host.elements[INPUT].handlers.focus();
+  host.elements[INPUT].handlers.click();
+  assert.equal(api.calls.length, 1, '拉过就不再拉（聚焦 / 点开都算同一条路）');
+});
+
+test('AC-U7 「点开」走的是同一条路：没拉过时 `click` 也会拉（tap 上 focus/click 都来时只发一个请求）', async () => {
+  const { picker } = await loadFrontendModules();
+  const api = fakeApi({ result: { success: true, total: 1, truncated: false, numbers: [numberItem()] } });
+  const host = fakeHost();
+  await picker.createNumberPicker({ api }).mount(host);
+
+  const pending = host.elements[INPUT].handlers.click();
+  // tap 真机上 focus 与 click 都会来 ⇒ 第二次进来时必须在飞（`state.loading`）⇒ **不重复发**
+  host.elements[INPUT].handlers.focus();
+  assert.equal(api.calls.length, 1, '在飞的那一下不许再发第二个请求');
+  await pending;
+  assert.ok(host.elements[OPTIONS].innerHTML.includes('XHB8095|棕色|A'));
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-U8 ⭐⭐ 输入防抖（`inputDebounceMs`，默认 400ms，可配；0 = 不防抖）
+//   Lead 2026-10-15 晚批准：在 ≈11.4s/次（561 行 + 1362 行两张整表读）面前，
+//   "每敲一个字发一个请求"意味着敲 4 个字 ≈ 4 次整表读 ✗ ⇒ 她**停下来**才发那一次。
+//   ⚠️ **回车立即搜**（不等窗口）；**聚焦 / 点开那一次也不走防抖**（立刻发）。
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-U8 防抖：连敲 4 个字只发 1 个请求（停下才发最后那一次）；0 = 不防抖；点开那一次不走防抖', async () => {
+  const { picker, pickerConfig } = await loadFrontendModules();
+  assert.equal(pickerConfig.NUMBER_PICKER.inputDebounceMs, 400, '默认 400ms 在配置里（配置先行，不写死）');
+
+  const api = fakeApi({ result: { success: true, total: 1, truncated: false, numbers: [numberItem()] } });
+  const host = fakeHost();
+  await picker.createNumberPicker({ api }).mount(host);
+  // 「点开」那一次**不**走防抖 ⇒ 立刻发
+  await host.elements[INPUT].handlers.focus();
+  assert.equal(api.calls.length, 1, '点开（聚焦）那一次不走防抖：立刻发');
+
+  const input = host.elements[INPUT];
+  // 她连敲 4 下（不等前一次回来）—— 防抖窗口里**一个请求都不发**
+  const typing = ['X', 'XH', 'XHB', 'XHB8'].map((value) => {
+    input.value = value;
+    return input.handlers.input();
+  });
+  assert.equal(api.calls.length, 1, '正在打字 ⇒ 一个请求都不发（还在防抖窗口里）');
+  await Promise.all(typing);
+  assert.equal(api.calls.length, 2, '🔴 停下之后只发 1 个请求（4 次敲字合计 1 个，不是 4 个）');
+  assert.ok(api.calls[1].includes('keyword=XHB8'), `发的是**最后**那个关键字：${api.calls[1]}`);
+
+  // 配置可关：`inputDebounceMs: 0` ⇒ 输入立刻发
+  const fastApi = fakeApi({ result: { success: true, total: 1, truncated: false, numbers: [numberItem()] } });
+  const fastHost = fakeHost();
+  await picker.createNumberPicker({ api: fastApi, inputDebounceMs: 0 }).mount(fastHost);
+  await fastHost.elements[INPUT].handlers.focus();
+  fastHost.elements[INPUT].value = 'XHB';
+  await fastHost.elements[INPUT].handlers.input();
+  assert.equal(fastApi.calls.length, 2, 'inputDebounceMs = 0 ⇒ 输入立刻发（防抖可关）');
+});
+
+test('AC-U8 回车立即搜（不等防抖窗口）· Esc 取消挂起的那次 · 「回车提交表单」那条路没动', async () => {
+  const { picker } = await loadFrontendModules();
+  const api = fakeApi({ result: { success: true, total: 1, truncated: false, numbers: [numberItem()] } });
+  const host = fakeHost();
+  await picker.createNumberPicker({ api }).mount(host);
+  await host.elements[INPUT].handlers.focus();
+  assert.equal(api.calls.length, 1);
+
+  const input = host.elements[INPUT];
+  input.value = 'XHB';
+  const pending = input.handlers.input(); // 防抖挂起（400ms 窗口）
+  assert.equal(api.calls.length, 1, '防抖窗口里还没发');
+  input.handlers.keydown({ key: 'Enter' }); // 回车 ⇒ 立刻，不等 400ms
+  assert.equal(api.calls.length, 2, '🔴 回车**立刻**发（不等防抖窗口）');
+  assert.ok(api.calls[1].includes('keyword=XHB'));
+  await pending; // 被回车接管的那一次**当场了结**（不悬着）
+  assert.equal(api.calls.length, 2, '回车之后防抖那次不再重复发');
+
+  // Esc：只收起列表，不发请求、也不悬着
+  input.value = 'XH';
+  const escPending = input.handlers.input();
+  input.handlers.keydown({ key: 'Escape' });
+  await escPending;
+  assert.equal(api.calls.length, 2, 'Esc 不发请求（只收起列表）');
+
+  // ⚠️ 回车那条"提交表单 ⇒ 打开既有落点"的路一个字没改：选择器**不 preventDefault、也不碰落点**
+  //    （判据先**剥掉注释**再判 —— 注释里说明"不 preventDefault"不算实现，与其它用例同一口径）
+  const pickerSource = read('features/labels/number-picker.js');
+  const pickerCode = pickerSource
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+  assert.equal(/preventDefault/.test(pickerCode), false, '选择器不许拦回车的默认提交');
+  assert.equal(pickerSource.includes('label-print'), false, '落点仍只有 config/domains.js 一处');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-U9 ⭐⭐ 超时阈值**来自配置**（冷启动 ≈11.4s ⇒ 15s）＋ 超时那条人话路径仍有效
+//   依据：线上只读实测「货品信息」561 行 5.5s ＋「实时库存」1362 行 5.9s ≈ **11.4s**；
+//   原 8000 < 11.4s ⇒ 她**第一次（冷）点开**会看到"读不到编号 + 手输"，而不是真名单 ✗。
+//   （服务端已有 60s TTL 缓存 ⇒ 第二次起秒开；这个阈值管的是冷启动那一次。）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-U9 超时阈值走配置（冷启动 ≈11.4s ⇒ ≥15s，不写死）+ 超时那条人话路径仍有效', async () => {
+  const { picker, pickerConfig } = await loadFrontendModules();
+  const { NUMBER_PICKER } = pickerConfig;
+  assert.ok(Number(NUMBER_PICKER.timeoutMs) >= 15000,
+    `冷启动实测 ≈11.4s（561 行 5.5s + 1362 行 5.9s）⇒ 阈值必须 > 它：${NUMBER_PICKER.timeoutMs}`);
+
+  // **可配**：只换 config（不传 `options.timeoutMs`）⇒ 立刻按新阈值超时，并走同一条人话出口
+  const api = fakeApi({ never: true });
+  const host = fakeHost();
+  const started = Date.now();
+  await picker.createNumberPicker({ api, config: { ...NUMBER_PICKER, timeoutMs: 25 } }).mount(host);
+  await host.elements[INPUT].handlers.focus();
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 1000,
+    `超时阈值必须来自 config（这里配的 25ms）—— 写死成 15 秒的话这一条要等 15 秒才红：${elapsed}ms`);
+  assert.match(String(host.elements[STATUS].textContent), /手输/, '超时仍然走"人话 + 还能手输"那一条');
+  assert.equal(host.elements[OPTIONS].attrs['aria-busy'], 'false', '忙态收掉（她不会以为还在转）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
