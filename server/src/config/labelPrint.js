@@ -277,7 +277,7 @@ const PRICE = Object.freeze({
 /**
  * 二维码的**出图参数**（内容 = 一个能扫的 URL）。
  * ⚠️ **URL 模板不在这里**：唯一真源是 `config/tagQrCode.js` 的 `SCAN_URL.urlTemplate`
- *    （新规范：`https://hm.bamamei.online/s/{编号}`），由 `services/tagQrCodeService.js`
+ *    （**2026-10-12 起**：`https://hm.bamamei.online/r/{记录ID}`；旧 `/s/{编号}` 只作兼容），由 `services/tagQrCodeService.js`
  *    的 `buildScanUrl` 替换（**只编码值、不编码模板**）。
  *    本文件**刻意不放 urlTemplate** —— 抄第二份的下场是"两条链路各指一个域名"。
  */

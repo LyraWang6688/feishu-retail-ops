@@ -71,7 +71,7 @@ const ACTIONS = Object.freeze({
   purchaseReturn: readString(process.env, 'SCAN_WRITE_ACTION_RETURN', 'return_purchase'),
   // ⭐⭐ 2026-10-11（方案A）：「**扫码验收**」两个动作 —— 扫一码加进本次验收 / 完成验收并入库。
   //    它们挂在**扫码页**上（她的口径：「不管是扫码页还是工作台，都是在移动端完成的」；
-  //    标签二维码扫开就是 `/s/{编号}` ⇒ 连续扫只能落在这一页）。
+  //    **旧贴纸**（2026-10-12 之前的 `/s/{编号}`）扫开是编号版；**新贴纸**扫开是 `/r/{记录ID}`
   acceptAdd: readString(process.env, 'SCAN_WRITE_ACTION_ACCEPT_ADD', 'accept_add'),
   acceptFinish: readString(process.env, 'SCAN_WRITE_ACTION_ACCEPT_FINISH', 'accept_finish'),
   // ⭐⭐ 2026-10-12：**带清单的完成**（她改完数量 + 自定义行 + 实际金额，一次提交 = 一次写库）。
