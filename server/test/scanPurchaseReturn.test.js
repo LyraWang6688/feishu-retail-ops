@@ -76,6 +76,8 @@ const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
 const { createScanWriteService } = require('../src/services/scanWriteService');
+// ⭐⭐ 2026-10-16（task-52 · ②-⑭ 接线）：退货那条也转后台 ⇒ 回读端状态前先等"在飞的后台那一跑" ✓
+const { waitForPendingPurchaseBackgrounds } = require('../src/services/purchaseWriteBackgroundService');
 const { createScanSessionService } = require('../src/services/scanSessionService');
 const { createPurchaseReturnService } = require('../src/services/purchaseReturnService');
 const { PurchaseOrderBatchService } = require('../src/services/purchaseOrderBatchService');
@@ -535,10 +537,30 @@ test('AC-R5 超库存：报 5 双、库存 3 双 ⇒ 明细写 3、差额 2 如�
       });
       assert.equal(response.status, 200);
       const doneHtml = await response.text();
-      assert.match(doneHtml, /采购退货已生成/);
-      // 第一笔（服务级）用的是第 1 轮的键 ⇒ 页面这一次是**新一轮**的批次号（0002）。
-      assert.match(doneHtml, /CGD-20261011-0002/);
-      assert.match(doneHtml, /采购退货：1 条/);
+      // ⭐⭐ 2026-10-16（task-52 · ②-⑭ 接线）**成对迁移**（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字（成功页上给批次号 + 条数）：
+      //     `assert.match(doneHtml, /采购退货已生成/);`
+      //     `// 第一笔（服务级）用的是第 1 轮的键 ⇒ 页面这一次是**新一轮**的批次号（0002）。`
+      //     `assert.match(doneHtml, /CGD-20261011-0002/);`
+      //     `assert.match(doneHtml, /采购退货：1 条/);`
+      //   改后逐字（**先回统一成功页** ⇒ 批次号这一刻还没取；改"等后台那一跑跑完再读表"：
+      //     第二批**真的**建出来 ⇒ 判据**更强**：先回她 **且** 真落库 ✓）：
+      //     `assert.ok(doneHtml.includes(SCAN_PAGE.saleSuccess.message), …);`
+      //     `assert.equal(doneHtml.includes('采购退货已生成'), false, …);`
+      //     `await waitForPendingPurchaseBackgrounds();`
+      //     `assert.equal(entriesOf(h, 'purchaseOrderBatch').length, 2, …);`
+      //     `assert.equal(entriesOf(h, 'purchaseRequest').length, 2, …);`
+      //   依据：业务负责人 2026-10-16 逐字「**补货、退货还有验收，它都是异步的**……
+      //     用户提交之后**都是一个成功页**，说『**已提交成功，数据会更新**』」
+      //     （＋ `purchaseAsyncAcceptance.test.js` 的 AC-ASY1：先回成功页 ⇒ 等后台 ⇒ 数据真落库 ✓）。
+      assert.ok(doneHtml.includes(SCAN_PAGE.saleSuccess.message),
+        '成功页 = 配置里那一句统一文案（异步：批次号要等后台那一跑 ✓）');
+      assert.equal(doneHtml.includes('采购退货已生成'), false,
+        '🔴 异步之后成功页**不许**再说"已生成"（批次号这一刻还不存在 ✗）');
+      await waitForPendingPurchaseBackgrounds();
+      assert.equal(entriesOf(h, 'purchaseOrderBatch').length, 2,
+        '⭐ 等后台那一跑 ⇒ 第二批**真的**建出来（先回成功页 ≠ 没写 ✓）');
+      assert.equal(entriesOf(h, 'purchaseRequest').length, 2, '第二批的退货明细也写了 ✓');
     });
   } finally { h.cleanup(); }
 });
@@ -718,10 +740,33 @@ test('AC-R9 失败有人话：内部错误（表名/字段名/record_id）不回
           purchase_amount: '399',
         }).toString(),
       });
-      assert.equal(response.status, 500, '写库失败 → 500 + 人话页（不是静默、也不是 200 假成功）');
-      const failed = await response.text();
-      assert.match(failed, /这一步没成功/);
-      assert.equal(/FieldNameNotFound|record_id|数量 \(record_id/.test(failed), false, '内部细节不回显');
+      assert.equal(response.status, 200, '异步：她**先拿到成功页**（写库丢给后台那一跑 ✓）');
+      const done = await response.text();
+      // ⭐⭐ 2026-10-16（task-52 · ②-⑭ 接线）**成对迁移**（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字（写库失败是**同步**的 ⇒ 页面 500 + 人话）：
+      //     `assert.equal(response.status, 500, '写库失败 → 500 + 人话页（不是静默、也不是 200 假成功）');`
+      //     `assert.match(failed, /这一步没成功/);`
+      //     `assert.equal(/FieldNameNotFound|record_id|数量 \(record_id/.test(failed), false, '内部细节不回显');`
+      //   改后逐字（异步：**失败不再从这一页出去**；但"如实、可查、绝不假装写成了"一条都没少）：
+      //     · 页面 = 统一成功页 ⇒ 内部细节**照样一个字都不回显** ✓（这条判据**更强**了：那一页
+      //       本来就只有配置里那一句 ✓）；
+      //     · 后台那一跑如实失败 ⇒ **可查**：会话 `purchaseReturn.last_error` 落内部原因
+      //       （＋ 后台件一条 `purchase.write.background.failed` warn ✓ 不静默 ✗）；
+      //     · **零写入**：明细一条都没有 ✓。
+      //   依据：业务负责人 2026-10-16 逐字「补货、退货还有验收，它都是异步的……都是一个成功页」
+      //     ＋ `purchaseAsyncAcceptance.test.js` 的 **AC-ASY3**（后台失败 ⇒ `markFailed` ＋ `ok:false`，
+      //     **绝不吞成成功** ✗）—— 判据**没有放宽**：失败仍必须可查、且不许写成功任何一条 ✗。
+      assert.ok(done.includes(SCAN_PAGE.saleSuccess.message), '成功页 = 那一句统一文案 ✓');
+      assert.equal(/FieldNameNotFound|record_id|数量 \(record_id/.test(done), false,
+        '内部细节**照样不回显**（不给到她眼前 ✗）');
+      await waitForPendingPurchaseBackgrounds();
+      const session = await h.write.sessions.get(openId);
+      const lastError = String(session?.purchaseReturn?.last_error || '');
+      assert.ok(lastError.length > 0,
+        '⭐ 后台那一跑失败必须**留痕可查**（会话 `last_error` ✓ —— 别静默吞掉 ✗）');
+      assert.equal(/FieldNameNotFound|record_id|rec_1/.test(lastError), false,
+        '落档的那一句也是**配置好的通用人话**（内部细节照样不许进去 ✗）');
+      assert.equal(entriesOf(h, 'purchaseRequest').length, 0, '写库失败 ⇒ 明细**零写入** ✓');
     });
   } finally { h.cleanup(); }
 });

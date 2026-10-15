@@ -40,6 +40,12 @@ const express = require('express');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { sizesForCategory, parseNumberSegments, createScanPageService } = require('../services/scanPageService');
 const { createScanWriteService } = require('../services/scanWriteService');
+// ⭐⭐ 2026-10-16（task-52 · ②-⑭ · 业务负责人**逐字**）：
+//   「**补货、退货还有验收，它都是异步的**……都是一句『**已提交成功，数据会更新**』」
+//   ⇒ 补货 / 退货改成 **先回成功页（200）⇒ 「后台那一跑」写库**。
+//   后台件是**共用件**（`services/purchaseWriteBackgroundService.js`，已合在 main ✓）——
+//   🔴 本文件**只接线**：`runRest` 接的就是**既有**写入口（**不新开写库路径** ✗）。
+const { createPurchaseWriteBackgroundService } = require('../services/purchaseWriteBackgroundService');
 // ⭐⭐ 2026-10-16 A2a ③：**候选收款方式改读表**（她 2026-10-14 逐字：「**付款方式用交易方式管理，
 //    可选择**」）—— 只读 + TTL 缓存的那份 service（`services/paymentMethodsService.js`）。
 const { createPaymentMethodsService } = require('../services/paymentMethodsService');
@@ -186,6 +192,91 @@ const createScanPageRouter = (options = {}) => {
   const writeService = writeConfig && options.writeService !== false
     ? (options.writeService || createScanWriteService({ gateway, config: writeConfig }))
     : null;
+  /**
+   * ⭐⭐ 2026-10-16（task-52 · ②-⑭ 接线 · 业务负责人**逐字**）：
+   *   「**补货、退货还有验收，它都是异步的**……都是一句『**已提交成功，数据会更新**』」
+   *   ⇒ 补货 / 退货：**先把成功页回给她**（200）⇒ 「**后台那一跑**」再写库 ✓
+   *
+   * 🔴 三条红线都在这一处落地（判据见 `test/purchaseAsyncAcceptance.test.js` 的 AC-ASY1..4）：
+   *   ① **校验仍当场同步拦** ✗ —— **金额（空 / 非数字）** 与 **"这一款认不出"** 都在**排后台之前**
+   *      （本文件上面的 `purchaseAmount*Page` / `notFoundPage` ✓ AC-ASY2 判的就是这两道）。
+   *      ⚠️ **已知取舍**（如实写在这里，别当它不存在 ✗）：写层自己的**输入校验**
+   *      （尺码 / 数量 / 空单 —— `services/scanWriteService.js` 里那几条）**跟着写库那一步进了后台**
+   *      —— 因为本刀**一个字都不许改那个 service**（余量 0 硬红线 ✗），而校验与写库在它里面
+   *      是同一个函数。⇒ 真发生"她填错了"时：她**已拿到成功页**，而失败会以
+   *      `config/scanWrite.js` 的 `purchaseBackgroundFailed` 那条 warn ＋ 会话 `last_error`
+   *      **如实留痕**（**不静默** ✗）。
+   *      要把它挪回同步 ⇒ **必须**把那个函数拆成"先受理 / 后台续写"两半（= 动 `scanWriteService.js`）
+   *      ⇒ **超出本刀授权**，留给 Lead 决策（见 PR 说明）。
+   *   ② **后台失败绝不假装成功** ✗ —— 共用件记一条 warn ＋ 调 `markFailed`（落会话 `last_error`
+   *      ⇒ **可查**；幂等键**不轮换** ⇒ 她再点一次 = 同一把键**重试** ✓）。
+   *   ③ **`submitKey` 原样透传** ✗ —— 幂等责任在写层（本文件一个字不拼、不加后缀 ✓）。
+   */
+  const purchaseBackground = options.purchaseBackground || createPurchaseWriteBackgroundService({
+    // 🔴 `runRest` = **既有写入口**（不新开写库路径 ✗）：补货 / 退货各自的写服务方法。
+    //    ⚠️ **实参形状与改前那次 `await writeService.…(…)` 逐字同形**（键名一个不改 ✗）——
+    //      判据 `test/multiItemOrderRoute.test.js` 的 **RT2-static** 逐字钉着这张参数清单
+    //      （task-46「N=1 与老路径逐字等价」的护栏 ✓ 本刀**不放宽它** ✗）。
+    runRest: async ({ chain, requestId, submitKey, restInput = {} }) => {
+      if (!writeService) {
+        return { ok: false, code: 'write_disabled', message: writeConfig.texts.writeDisabledBody };
+      }
+      if (chain === 'replenish') {
+        return writeService.submitReplenish({
+          openId: restInput.openId,
+          requestId,
+          submitKey,
+          productRecordId: restInput.productRecordId,
+          number: restInput.number,
+          entries: restInput.entries,
+        });
+      }
+      if (chain === 'purchase_return') {
+        return writeService.submitPurchaseReturn({
+          openId: restInput.openId,
+          requestId,
+          submitKey,
+          productRecordId: restInput.productRecordId,
+          number: restInput.number,
+          orderAmount: restInput.orderAmount,
+          entries: restInput.entries,
+        });
+      }
+      return { ok: false, code: 'unknown_chain', message: String(chain || '') };
+    },
+    markFailed: async ({ chain, context = {}, result, error }) => {
+      const openId = String(context.openId || '');
+      const message = String(result?.message || error?.message || '').trim();
+      try {
+        const sessions = writeService && writeService.sessions;
+        if (chain === 'replenish' && typeof sessions?.markReplenishFailed === 'function') {
+          await sessions.markReplenishFailed(openId, message);
+        } else if (chain === 'purchase_return' && typeof sessions?.markPurchaseReturnFailed === 'function') {
+          await sessions.markPurchaseReturnFailed(openId, message);
+        }
+      } catch (markError) {
+        logWarn(writeConfig.events.purchaseBackgroundMarkFailed, {
+          request_id: context.requestId, chain,
+          error: String(markError?.message || markError).slice(0, 200),
+        });
+      }
+    },
+    purchaseAsync: writeConfig.purchaseAsync || {},
+    config: {
+      events: {
+        restTiming: writeConfig.events.purchaseBackgroundTiming,
+        restFailed: writeConfig.events.purchaseBackgroundFailed,
+        markFailedError: writeConfig.events.purchaseBackgroundMarkFailed,
+      },
+      // ⚠️ 这里**刻意不注入** `timing`：后台件的默认阶段名就是 `background`（与
+      //   `SCAN_SALE_TIMING_PHASE_BACKGROUND` 的缺省一致 ✓）—— 而本文件有一条**既有哨兵**
+      //   （`test/salesAsyncWrite.test.js` 的 AC-AS11b：「路由不许把后台句柄当数据读」，
+      //   它按"点 + background"这种属性访问扫源码）⇒ **不放宽那条哨兵** ✗、也不写那种写法 ✓。
+    },
+  });
+  /** 排一次「后台那一跑」（共用件登记在册 ✓ 用例可以 `waitForPendingPurchaseBackgrounds()` 等它）。 */
+  const schedulePurchaseWrite = ({ chain, requestId, submitKey, context, restInput }) =>
+    purchaseBackground.schedulePurchaseRest({ chain, requestId, submitKey, context, restInput });
   /**
    * ⭐⭐ 2026-10-12：**未到货批次**（要列出来的那几条）—— **全仓只有这一处**读它。
    *
@@ -2212,35 +2303,40 @@ return sendPaymentStep(res, req, {
         //     **不是**页面领域 id（那个恰好同名，但**别指望**它是同一个概念 —— 见下面退货那处）。
         if (purchaseAmountMissing(body, 'replenish')) return purchaseAmountMissingPage(req, res, requestId, realm);
         if (purchaseAmountInvalid(body, 'replenish')) return purchaseAmountInvalidPage(req, res, requestId, realm);
-        const result = await writeService.submitReplenish({
-          openId,
+        // ⭐⭐ 2026-10-16（task-52 · ②-⑭ 接线 · 她 2026-10-16 逐字）：
+        //   「**补货、退货还有验收，它都是异步的**……都是一句『**已提交成功，数据会更新**』」
+        //   ⇒ **金额 / 单号认不出**仍留在**同步路径**（上面两道闸门 + 上面的 `notFoundPage`），
+        //     **写库那一步**丢给后台那一跑 ⇒ 她**先拿到成功页** ✓
+        //   🔴 顺序不能反：先排后台再校验 = 把"她填错了"变成"看起来成功" ✗（她最恨的那条）。
+        const disabledError = purchaseWriteDisabledError(writeConfig.replenish, writeConfig.texts);
+        if (disabledError) return respondWriteFailure(res, disabledError, requestId);
+        // 🔴 **同一把 `submitKey` 原样透传**（幂等责任在写层：本文件不拼、不加后缀 ✗）
+        const replenishSubmitKey = body[fields.submitKey];
+        schedulePurchaseWrite({
+          chain: 'replenish',
           requestId,
-          submitKey: body[fields.submitKey],
-          productRecordId: view.product_record_id,
-          number: view.number,
-          entries,
+          submitKey: replenishSubmitKey,
+          context: { openId, requestId, number: view.number },
+          // ⚠️ 只给**写层要的那几个实参**（`requestId` / `submitKey` 由 `runRest` 原样带上 ✓）
+          restInput: {
+            openId,
+            productRecordId: view.product_record_id,
+            number: view.number,
+            entries,
+          },
         });
-        if (!result.ok) return respondWriteFailure(res, result, requestId);
-        // ⭐ 补货报单写成功 ⇒ 同样失效快照（她点名了「补货」也要；这一步不动库存，
+        // ⭐ 补货报单**已经收下**（后台接着写）⇒ 同样失效快照（她点名了「补货」也要；这一步不动库存，
         //    但"写完就失效"永远比"猜它动没动库存"安全）。
         invalidateInventorySnapshot(requestId, 'scan_replenish_submitted');
         markRealmUsed(openIdOf(req), realmOfAction(writeConfig.actions.submitReplenish));
-        const texts = writeConfig.texts;
-        return sendHuman(res, 200, {
+        // ⭐⭐ 2026-10-16（她逐字：「用户提交之后**都是一个成功页**，说『**已提交成功，数据会更新**』」）
+        //   ⇒ 成功页 = **统一那一句**（文案的家在 `config/scanPage.js` 的 `saleSuccess` ✓ 本文件不新造 ✗）。
+        //   ⚠️ **批次号 / 明细数这一刻还没有**（后台那一跑才取号）⇒ 成功页**不许**承诺它们 ✗
+        //     （真失败仍有出口：后台件的 warn ＋ 会话 `last_error` ⇒ 可查、可重试 ✓）。
+        return sendSuccess(res, 200, {
           // ⭐ 补货成功 ⇒ **同样自动回首页**（销售 ✓ 方案 A 三路一致）
           ...successReturnFields(req, backTargetFor(req, decodeURIComponent(String(req.params.number || '')))),
-          title: result.reused ? texts.replenishAgainTitle : texts.replenishDoneTitle,
-          body: result.reused
-            ? fillWriteText(texts.replenishAgainBody, { batchNo: result.batch_no || '—' })
-            : fillWriteText(texts.replenishDoneBody, {
-              batchNo: result.batch_no || '—', count: result.request_count || 0,
-            }),
           requestId,
-          details: [
-            fillWriteText(texts.replenishBatchLine, { batchNo: result.batch_no || '—' }),
-            fillWriteText(texts.replenishDetailLine, { count: result.request_count || 0 }),
-          ],
-          retryHint: texts.submittedNextHint,
         });
       }
 
@@ -2279,46 +2375,40 @@ return sendPaymentStep(res, req, {
         //   ⚠️ 写库仍在**既有**构件里：`scanWriteService.submitPurchaseReturn` → `purchaseReturnService`
         //     → `purchaseOrderBatchService.writeOrderAmount`（**不新开写库路径** ✗）；
         //     同一把 `submitKey` 幂等（批次行只建一条、金额是同一个值 ⇒ 不累加）✓
-        const result = await writeService.submitPurchaseReturn({
-          openId,
+        // ⭐⭐ 2026-10-16（task-52 · ②-⑭ 接线）：与补货那条**同形** —— **金额 / 单号认出与否**
+        //   留在这里（同步 ✗）、**写库丢给后台那一跑**（她先拿到统一成功页 ✓）。
+        const disabledError = purchaseWriteDisabledError(writeConfig.purchaseReturn, writeConfig.texts);
+        if (disabledError) return respondWriteFailure(res, disabledError, requestId);
+        // 🔴 **同一把 `submitKey` 原样透传**（幂等责任在写层：本文件不拼、不加后缀 ✗）
+        const returnSubmitKey = body[fields.submitKey];
+        //   ⚠️ 金额入参**逐字不带**：金额闸门在**上面**已经判过（空 / 非数字当场 400 + 零写入 ✓），
+        //      这里仍按改前的形状把金额透传给写层（它要落「实际金额」✓）。
+        const returnOrderAmount = String(body[fields.purchaseAmount] ?? '').trim();
+        schedulePurchaseWrite({
+          chain: 'purchase_return',
           requestId,
-          submitKey: body[fields.submitKey],
-          productRecordId: view.product_record_id,
-          number: view.number,
-          orderAmount: String(body[fields.purchaseAmount] ?? '').trim(),
-          entries,
+          submitKey: returnSubmitKey,
+          context: { openId, requestId, number: view.number },
+          // ⚠️ 只给**写层要的那几个实参**（`requestId` / `submitKey` 由 `runRest` 原样带上 ✓）
+          restInput: {
+            openId,
+            productRecordId: view.product_record_id,
+            number: view.number,
+            orderAmount: returnOrderAmount,
+            entries,
+          },
         });
-        if (!result.ok) return respondWriteFailure(res, result, requestId);
         // ⭐ 退货**真的动了库存** ⇒ 立刻作废「实时库存」内存快照（她：库存必须准确）。
         invalidateInventorySnapshot(requestId, 'scan_purchase_return_submitted');
         markRealmUsed(openIdOf(req), realmOfAction(writeConfig.actions.submitPurchaseReturn));
-        const texts = writeConfig.texts;
-        const details = [
-          fillWriteText(texts.returnBatchLine, { batchNo: result.batch_no || '—' }),
-          fillWriteText(texts.returnDetailLine, { count: result.request_count || 0 }),
-        ];
-        // ⭐ 超库存 ⇒ 如实回报差额（退能退的：说清一共几双没退成、哪些尺码不够）。
-        if (Number(result.shortfall || 0) > 0) {
-          const sizes = (result.shortfalls || [])
-            .filter((item) => Number(item.shortfall || 0) > 0)
-            .map((item) => `${item.size} 码`)
-            .join('、');
-          details.push(fillWriteText(texts.returnShortfallLine, {
-            shortfall: result.shortfall, sizes: sizes || '—',
-          }));
-        }
-        return sendHuman(res, 200, {
+        // ⭐⭐ 2026-10-16（她逐字：「都是一个成功页，说『已提交成功，数据会更新』」）：
+        //   成功页 = **统一那一句**（文案的家在 `config/scanPage.js` ✓）。
+        //   ⚠️ 批次号 / 明细数 / **超库存差额**这一刻都还没有（后台那一跑才知道）⇒ 页面**不许**承诺 ✗
+        //     —— 差额那件事仍在后台日志与会话 `last_error` 里（**已知取舍，见 PR 说明** ✓）。
+        return sendSuccess(res, 200, {
           // ⭐ 退货成功 ⇒ **同样自动回首页**（销售 ✓ 方案 A 三路一致）
           ...successReturnFields(req, backTargetFor(req, decodeURIComponent(String(req.params.number || '')))),
-          title: result.reused ? texts.returnAgainTitle : texts.returnDoneTitle,
-          body: result.reused
-            ? fillWriteText(texts.returnAgainBody, { batchNo: result.batch_no || '—' })
-            : fillWriteText(texts.returnDoneBody, {
-              batchNo: result.batch_no || '—', count: result.request_count || 0,
-            }),
           requestId,
-          details,
-          retryHint: texts.submittedNextHint,
         });
       }
 
@@ -2405,6 +2495,25 @@ const positiveSize = (value) => {
   const text = String(value ?? '').trim();
   return /^[1-9]\d*$/.test(text) ? Number(text) : null;
 };
+
+/**
+ * ⭐⭐ 2026-10-16（task-52 · ②-⑭ 接线）：**写入口关着 ⇒ 不许收单** ——
+ *   这条闸门必须在**同步那一半**（排后台之前）：否则开关关着时她也会看到成功页，
+ *   而**一个字都没写** ✗（val-cp 盘点的 X-6：「关着还收单 = 骗她」）。
+ *
+ * ⚠️ 它是**运维开关**（`SCAN_REPLENISH_WRITE_ENABLED` / `SCAN_RETURN_WRITE_ENABLED`，显式布尔 ✓），
+ *    不是她的输入 ⇒ 与「她填错了」那类校验**分开**：
+ *   · **金额 / 单号认不出** ⇒ 仍在**同步路径**（`purchaseAmount*Page` / `notFoundPage` ✓）；
+ *   · **尺码 / 数量 / 空单** ⇒ 在**写层**（`services/scanWriteService.js`，本刀**一个字不改** ✗）——
+ *     它们跟着"写库那一步"进后台（**已知取舍**：写层失败 ⇒ 后台 warn ＋ 会话 `last_error`，
+ *     不会静默；🔴 见 PR 说明，别当它不存在 ✗）。
+ *
+ * @returns {null|{code:string, message:string}} `null` = 放行；否则调用方照旧
+ *   `respondWriteFailure` ⇒ **400 + 人话 + 零写入**（与改前那张页逐字同形 ✓）。
+ */
+const purchaseWriteDisabledError = (chainConfig, texts) => (chainConfig?.enabled === false
+  ? { code: 'disabled', message: texts.writeDisabledBody }
+  : null);
 
 const asList = (value) => {
   if (Array.isArray(value)) return value.map((item) => (item === undefined || item === null ? '' : item));
