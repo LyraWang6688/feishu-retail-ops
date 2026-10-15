@@ -63,6 +63,9 @@ const { SCAN_URL } = require('../config/tagQrCode');
 const { buildScanUrl, buildRecordIdScanUrl } = require('./tagQrCodeService');
 const { textValue } = require('./v1BitableGateway');
 const { parseStockKey } = require('./liveInventoryIndex');
+// ⭐⭐ task-15：飞书 `filter` 公式的拼装**只有那一处实现**（`bitableFilterFormula.js`）——
+//    这里只 import 复用（**值的安全字符检查也在它那里**），**不抄第二份** ✗。
+const { containsFormula, orFormula } = require('./bitableFilterFormula');
 const { logInfo, logWarn } = require('../utils/logger');
 
 // 她填错了（400，原样回显）vs 远端出错（其余，页面只说"查询失败"）——与
@@ -370,37 +373,90 @@ const parseLabelScanUrl = (raw, config = LABEL_PRINT) => {
  *   · 时钟往回跳（`age < 0`）**不当命中**，宁可重读。
  *
  * `load()` 只在**未命中**时被调用一次，返回 `{ value, meta }`（`meta` 只进日志，不参与逻辑）。
+ *
+ * ⭐⭐ 2026-10-15（task-15）：**可以按 key 分槽**（`get(key)`）—— 端点的"服务端模糊查询"
+ *    是**按关键字**去飞书取数的，缓存也必须**按关键字分槽**（否则 A 关键字的清单会被 B 关键字命中 ✗）。
+ *    `maxEntries` 是槽位上限（超了丢最旧的），默认 1 = 单槽（`listLabels` 与老路径就是单槽）。
+ *    `load(key)` 会收到那个 key（单槽时是 `''`）。
  */
-const createShortTtlCache = ({ now, ttlMs, event, load }) => {
-  let entry = null; // { at, value, meta }
+const createShortTtlCache = ({ now, ttlMs, event, load, maxEntries = 1 }) => {
+  const capacity = Number.isInteger(maxEntries) && maxEntries > 0 ? maxEntries : 1;
+  // ⚠️ 用**数组**（最旧在前）而不是 `Map`：这里要"去重 + 丢最旧"，数组一句 `filter` / `slice` 就够 ——
+  //    也避开 `Map.delete`（`labelPrintService.test.js` 的**只读哨兵**把 `.delete(` 当作"网关删除调用"，
+  //    那是给"这条链路只读"用的判据；**不许**为了这里去放宽它 ✗）。
+  let entries = []; // [{ slot, at, value, meta }]
   return {
-    async get() {
+    async get(key = '') {
+      const slot = String(key ?? '');
       const at = now();
+      const entry = entries.find((item) => item.slot === slot) || null;
       const age = entry ? at - entry.at : null;
       if (ttlMs > 0 && entry && age >= 0 && age < ttlMs) {
         logInfo(`${event}.cache_hit`, { age_ms: age, ttl_ms: ttlMs, ...(entry.meta || {}) });
         return entry.value;
       }
       const reason = ttlMs <= 0 ? 'disabled' : (entry ? 'expired' : 'empty');
-      const loaded = await load();
+      const loaded = await load(slot);
       const meta = (loaded && loaded.meta) || {};
       // `ttlMs = 0` ⇒ **不写缓存**（配置说关就关；下次照样真读）。
-      if (ttlMs > 0) entry = { at, value: loaded.value, meta };
+      if (ttlMs > 0) {
+        // 重新排到队尾（最近用过的最后被挤掉）+ 超容量丢最旧。
+        entries = entries.filter((item) => item.slot !== slot);
+        entries.push({ slot, at, value: loaded.value, meta });
+        if (entries.length > capacity) entries = entries.slice(entries.length - capacity);
+      }
       logInfo(`${event}.cache_miss`, { reason, ttl_ms: ttlMs, ...meta });
       return loaded.value;
     },
   };
 };
 
+/**
+ * ⭐⭐ 2026-10-15（task-15）：「货品信息」的**服务端模糊查询公式**
+ *    （她逐字：「**用户输入一个编号，然后系统再给出与这个模糊编号相关的选项**」）。
+ *
+ * `OR(编号 contains 关键字, 货号 contains 关键字)`。**为什么只这两列**：
+ *   · `编号` = `货号|颜色|类别`（飞书公式列，真表核过）⇒ 命中**颜色 / 类别**的关键字
+ *     **也必然命中编号** ⇒ 不用再拼那两列 ✓；
+ *   · ⚠️ `颜色` 是**关联列（type 18）** —— 仓库里已有硬事实：**关联列拼 filter 会
+ *     `InvalidFilter (1254018)`**（见 `services/bitableFilterFormula.js` 顶部那段），
+ *     所以**绝不**把它拼进公式 ✓。
+ * 实测（2026-10-15 · 测试 Base **只读** · 项目代码）：`.contains()` **大小写不敏感**
+ *   （`contains("xhb8095")` 能命中 `XHB8095E2E|全黑|A`）⇒ **不用**为大小写各拼一遍，
+ *   也**不用**"命中 0 条就换大小写重试"那套退避 ✓。
+ * 值里有双引号 / 反斜杠 / 方括号 / 换行 ⇒ `containsFormula` 回 `null` ⇒ 调用方**如实拒绝**
+ *   （**不硬拼**：拼坏了的公式要么报错、要么按错的条件返回，错数据比慢更坏 ✗）。
+ */
+const productNumbersFilterOf = (productFields, keyword) => orFormula([
+  containsFormula(productFields?.number, keyword),
+  containsFormula(productFields?.itemNo, keyword),
+]);
+
 const createLabelPrintService = (gateway, options = {}) => {
   if (!gateway) throw new Error('LabelPrintService requires gateway');
   const config = options.config || LABEL_PRINT;
   const now = options.now || (() => Date.now());
-
   /** 缓存 TTL 从 config 取（**0 是一个合法值** = 关掉；没配才用兜底值）。 */
   const ttlOf = (group, fallback) => (Number.isInteger(group?.cacheTtlMs) && group.cacheTtlMs >= 0
     ? group.cacheTtlMs
     : fallback);
+
+  /**
+   * 列表端点那几档旋钮（**构造时读一次 config**）。全部可配：换值只改 `config/labelPrint.js`。
+   * `serverFilter` 是显式布尔（`!== false` = 默认开）：关掉 ⇒ 回退"整表读 + 内存过滤"那条老路。
+   */
+  const numbersLimits = (() => {
+    const group = config.productNumbers || {};
+    const positive = (value, fallback) => (Number.isInteger(value) && value > 0 ? value : fallback);
+    return {
+      defaultLimit: positive(group.limitDefault, 200),
+      maxLimit: positive(group.limitMax, 500),
+      cacheTtlMs: ttlOf(group, 60000),
+      serverFilter: group.serverFilter !== false,
+      maxCacheEntries: positive(group.maxCacheEntries, 50),
+      stockScanMax: positive(group.stockScanMax, 500),
+    };
+  })();
 
   /**
    * ⭐ `listLabels` 的两次全表读（**只缓存原始记录**；筛选 /「最近新增」**每请求现算**）。
@@ -1012,32 +1068,171 @@ const createLabelPrintService = (gateway, options = {}) => {
     };
   };
 
-  const productNumbersCache = createShortTtlCache({
+  const productNumbersFullCache = createShortTtlCache({
     now,
-    ttlMs: ttlOf(config.productNumbers, 60000),
+    ttlMs: numbersLimits.cacheTtlMs,
     event: 'workbench.products.numbers',
     load: loadProductNumbersSnapshot,
   });
 
   /**
+   * ⭐ **老路径**（`serverFilter` 关掉 / 网关没有按条件读能力时才走）：整表底表（缓存）+ 内存过滤。
+   * ⚠️ 它**不是死代码**：它是这个端点的**退路**，也是"服务端过滤不好用"时的开关（配置驱动）。
+   */
+  const listProductNumbersFromFullTable = async ({ keyword, limit, startedAt }) => {
+    const snapshot = await productNumbersFullCache.get();
+    const needle = keyword.toLowerCase();
+    const matched = snapshot.numbers
+      .filter((item) => [item.number, item.itemNo, item.color, item.category]
+        .some((value) => String(value ?? '').toLowerCase().includes(needle)))
+      // 排序**稳定、可预期**：按编号中文序升序。
+      .sort((left, right) => String(left.number).localeCompare(String(right.number), 'zh-CN'));
+    const total = matched.length;
+    const truncated = total > limit;
+    const page = matched.slice(0, limit);
+    logInfo('workbench.products.numbers.listed', {
+      source: 'full_table',
+      keyword: keyword || undefined,
+      limit,
+      product_records: snapshot.product_records,
+      product_records_no_number: snapshot.product_records_no_number || undefined,
+      stock_records: snapshot.stock_records,
+      total,
+      returned: page.length,
+      with_stock: matched.filter((item) => item.hasStock === true).length,
+      without_stock: matched.filter((item) => item.hasStock === false).length,
+      truncated: truncated || undefined,
+      elapsed_ms: Math.max(0, Math.round(now() - startedAt)),
+    });
+    return { total, truncated, numbers: page };
+  };
+
+  /**
+   * ⭐⭐ task-15：**按条件读**（飞书 `filter`）—— 让飞书**只回匹配的那几条**，不再读整表。
+   *
+   * 两次读**并行**（`Promise.all`：两张表互不依赖 ⇒ 省掉一次串行的等待）；
+   * `load(key)` 的 key = **小写关键字**（`.contains` 实测大小写不敏感 ⇒ 同一个关键字只占一个缓存槽）。
+   *
+   * `hasStock` 的**如实**口径（绝不许猜 ✗）：
+   *   · 库存那次过滤读用的是**同一个关键字**；而"命中编号"按定义**含这个关键字**
+   *     ⇒ 该编号的库存行**一定也在**这次返回里 ⇒ **没查到 = 真的没有库存**（`false`）✓；
+   *   · 三种情况**只回 `null`（未知）**：① 库存那次读**失败**；② 库存读**撞到扫描上限**
+   *     （可能还有没看全的行）；③ 这个编号**本身不含**关键字（例：靠「货号」命中的那种边角）
+   *     ⇒ 上面那条推理**不成立** ⇒ 不许说 `false` ✗。
+   */
+  const loadFilteredProductNumbers = async (keyword) => {
+    const productFields = V1_BITABLE_SCHEMA.tables.product?.fields || {};
+    const inventoryFields = V1_BITABLE_SCHEMA.tables.liveInventory?.fields || {};
+    const productFilter = productNumbersFilterOf(productFields, keyword);
+    if (!productFilter) {
+      // 关键字里带了**拼不进公式**的字符 ⇒ 如实告诉她（**不硬拼**；错的数据比慢更坏 ✗）。
+      throw userError('编号里不能有引号 / 反斜杠 / 方括号这类符号，请只输编号、货号、颜色或类别');
+    }
+    const stockFilter = containsFormula(inventoryFields.stockKey, keyword);
+    const [rows, stockRows] = await Promise.all([
+      gateway.listByFilter('product', productFilter, { maxRecords: numbersLimits.maxLimit + 1 }),
+      (stockFilter
+        ? gateway.listByFilter('liveInventory', stockFilter, { maxRecords: numbersLimits.stockScanMax + 1 })
+        : Promise.resolve([])
+      ).catch((error) => {
+        // 库存那次读失败 ⇒ **不猜**（下面一律回 `hasStock: null`），并如实 warn。
+        logWarn('workbench.products.numbers.stock_read_failed', {
+          error: error.message,
+          hint: '「实时库存」那次按条件读失败了 ⇒ 这一轮的编号一律回 hasStock=null（未确认），绝不猜成"没入库"',
+        });
+        return null;
+      }),
+    ]);
+
+    const stockedNumbers = new Set();
+    for (const record of stockRows || []) {
+      const key = parseStockKey(record?.fields?.[inventoryFields.stockKey]);
+      if (key) stockedNumbers.add(compoundNumber(key.itemNo, key.color, key.category));
+    }
+    const stockUnknown = stockRows === null;
+    const stockCapHit = !stockUnknown && (stockRows || []).length > numbersLimits.stockScanMax;
+
+    const needle = keyword.toLowerCase();
+    const seen = new Set();
+    const numbers = [];
+    let withoutNumber = 0;
+    for (const record of rows || []) {
+      const number = textValue(record?.fields?.[productFields.number]).trim();
+      if (!number) { withoutNumber += 1; continue; }
+      if (seen.has(number)) continue;
+      seen.add(number);
+      const parts = partsOfNumber(number);
+      const itemNo = (productFields.itemNo ? textValue(record?.fields?.[productFields.itemNo]).trim() : '') || parts.item_no;
+      const color = (productFields.color ? textValue(record?.fields?.[productFields.color]).trim() : '') || parts.color;
+      const category = (productFields.category ? textValue(record?.fields?.[productFields.category]).trim() : '') || parts.category_code;
+      let hasStock;
+      if (stockedNumbers.has(number)) hasStock = true;
+      else if (stockUnknown || stockCapHit || !number.toLowerCase().includes(needle)) hasStock = null;
+      else hasStock = false;
+      numbers.push({
+        number,
+        itemNo,
+        color,
+        category,
+        hasStock,
+        recordId: String(record?.record_id || ''),
+      });
+    }
+    numbers.sort((left, right) => String(left.number).localeCompare(String(right.number), 'zh-CN'));
+
+    const capHit = (rows || []).length > numbersLimits.maxLimit;
+    return {
+      value: {
+        numbers,
+        product_records: (rows || []).length,
+        stock_records: (stockRows || []).length,
+        cap_hit: capHit,
+        read: true,
+      },
+      meta: {
+        keyword_length: keyword.length,
+        numbers: numbers.length,
+        product_records: (rows || []).length,
+        product_records_no_number: withoutNumber || undefined,
+        stock_records: (stockRows || []).length,
+        stock_unknown: stockUnknown || undefined,
+        cap_hit: capHit || undefined,
+      },
+    };
+  };
+
+  const productNumbersKeywordCache = createShortTtlCache({
+    now,
+    ttlMs: numbersLimits.cacheTtlMs,
+    event: 'workbench.products.numbers',
+    maxEntries: numbersLimits.maxCacheEntries,
+    load: loadFilteredProductNumbers,
+  });
+
+  /**
    * ⭐⭐ 2026-10-15：`GET /api/workbench/products/numbers` 的取数（**只读**）。
    *
-   * 契约（**冻结**，前端同学并行按它写）：
+   * 契约（**冻结**）：
    *   `{ total, truncated, numbers: [{ number, itemNo, color, category, hasStock, recordId }] }`
-   *   · 数据源 = 只读**「货品信息」**整张（`listAll('product')`），按**编号**去重（同一编号多条记录取第一条）；
-   *   · `keyword`：按 编号 / 货号 / 颜色 / 类别 模糊（**大小写不敏感**）；空 = 全部；
-   *   · `hasStock`：该「编号」在**「实时库存」里有没有行**（只读一次、只算一次 —— 前端用它提示"还没入库"）；
-   *   · `limit`：1..500，默认 200；超出上限**如实**回 `truncated: true`（**不静默截断**）；
+   *   · **`keyword` 非空 ⇒ 服务端模糊查询**（飞书 `filter`，**只回匹配的那几条**，不再读整表）；
+   *   · 🔴 **`keyword` 为空 ⇒ 空列表 + 一次飞书都不读**（她逐字：「用户输入一个编号，然后系统再给出
+   *     与这个模糊编号相关的选项」⇒ 从根上取消"读全表"那条路径 ✗）；
+   *   · `keyword` 按 编号 / 货号 / 颜色 / 类别 模糊（**大小写不敏感** —— 公式列 `编号` = `货号|颜色|类别`，
+   *     所以只拼「编号 / 货号」两列就够，见 `productNumbersFilterOf` 的说明）；
+   *   · `hasStock`：`true` / `false`（**真没有库存**）/ `null`（**未知**，前端显示"入库情况未确认"）
+   *     —— 绝不把"没查全/没读成"说成 false ✗（口径见 `loadFilteredProductNumbers`）；
+   *   · `limit`：1..500，默认 200；命中超过上限 ⇒ `truncated: true`（**不静默截断**）；
    *   · 排序：按「编号」`localeCompare('zh-CN')` 升序（稳定、可预期）。
-   * 🔴 **只读诊断/查询**：不写任何业务表、不改任何状态（只有 `listAll` 两次读 + 日志）。
+   * 🔴 **只读诊断/查询**：不写任何业务表、不改任何状态（只有 `listByFilter` 两次读 + 日志）。
    *
-   * ⭐⭐ 2026-10-15（task-10）：**这两次全表读带短 TTL 缓存**（Lead 线上只读实测：
-   *   `listAll('product')` 561 行 **5478 ms** ＋ `listAll('liveInventory')` 1362 行 **5924 ms**
-   *   ⇒ 冷启动一次 ≈ **11.4 秒**）。口径全在 `config/labelPrint.js` 的 `PRODUCT_NUMBERS`：
-   *   · `cacheTtlMs`（默认 60000；**0 = 关掉缓存**，每次真读）—— TTL 内重复调用**不再读飞书**；
-   *   · `limitDefault` / `limitMax`（默认 200 / 500）—— 换值只改 config，不用动代码。
+   * ⭐⭐ 2026-10-15（task-10/11/15）三层性能口径，**都在 config**（`config/labelPrint.js`）：
+   *   · `PRODUCT_NUMBERS.cacheTtlMs`（默认 60000；**0 = 关掉**）—— **按关键字分槽**的短 TTL 缓存
+   *     （同一个关键字重复搜 ⇒ 秒开；A 关键字不会串到 B 关键字 ✗）；
+   *   · `serverFilter`（默认开）—— 关掉就回退"整表读 + 内存过滤"那条老路（退路 + 开关）；
+   *   · `maxCacheEntries` / `stockScanMax` —— 缓存槽位上限 / 库存那次扫描上限；
+   *   · `limitDefault` / `limitMax`（默认 200 / 500）。
    * ⚠️ task-11 起 `listLabels`（批量 / 编号打印那一页）也走**同一个**缓存 factory
-   *    （`config.labelList`）—— 两处各一个实例、互不干扰。
+   *    （`config.labelList`）—— 各处一个实例、互不干扰。
    */
   const listProductNumbers = async (filters = {}) => {
     const productFields = V1_BITABLE_SCHEMA.tables.product?.fields || {};
@@ -1046,12 +1241,8 @@ const createLabelPrintService = (gateway, options = {}) => {
     }
 
     const numbersConfig = config.productNumbers || {};
-    const defaultLimit = Number.isInteger(numbersConfig.limitDefault) && numbersConfig.limitDefault > 0
-      ? numbersConfig.limitDefault
-      : 200;
-    const maxLimit = Number.isInteger(numbersConfig.limitMax) && numbersConfig.limitMax > 0
-      ? numbersConfig.limitMax
-      : 500;
+    const defaultLimit = numbersLimits.defaultLimit;
+    const maxLimit = numbersLimits.maxLimit;
     const limitText = String(filters.limit ?? '').trim();
     let limit = defaultLimit;
     if (limitText) {
@@ -1061,34 +1252,61 @@ const createLabelPrintService = (gateway, options = {}) => {
       limit = Number(limitText);
       if (limit > maxLimit) throw userError(`limit 最多 ${maxLimit}`);
     }
-    const keyword = String(filters.keyword ?? '').trim().toLowerCase();
+    const keyword = String(filters.keyword ?? '').trim();
 
-    // ⭐ 编号底表（**与 keyword / limit 无关**的那部分）走**共用**的短 TTL 缓存 ——
-    //    命中就一次飞书都不读（TTL 与日志口径来自 `createShortTtlCache`）。
-    const snapshot = await productNumbersCache.get();
+    // ⭐⭐ task-15（她逐字：「**用户输入一个编号，然后系统再给出与这个模糊编号相关的选项**」）：
+    //   ① **空关键字 = 一次飞书都不读**（从根上取消"读全表"那条路径 ✗）—— 前端会显示
+    //      「输入编号 / 货号，我就列出匹配的编号」；
+    //   ② 非空关键字 ⇒ **走"按条件读"**（飞书 `filter`，只回匹配的那几条）⇒ 第一次也快
+    //      （原来要整表 554 个编号 ≈ 13.9 秒 ✗）。
+    const startedAt = now();
+    if (!keyword) {
+      logInfo('workbench.products.numbers.filtered', {
+        source: 'empty_keyword',
+        read: false,
+        keyword_length: 0,
+        limit,
+        total: 0,
+        returned: 0,
+        elapsed_ms: Math.max(0, Math.round(now() - startedAt)),
+      });
+      return { total: 0, truncated: false, numbers: [] };
+    }
 
-    const matched = snapshot.numbers
-      .filter((item) => !keyword || [item.number, item.itemNo, item.color, item.category]
-        .some((value) => String(value ?? '').toLowerCase().includes(keyword)))
-      // 排序**稳定、可预期**：按编号中文序升序。
-      .sort((left, right) => String(left.number).localeCompare(String(right.number), 'zh-CN'));
+    const serverFilterEnabled = numbersLimits.serverFilter
+      && typeof gateway.listByFilter === 'function';
+    if (!serverFilterEnabled) {
+      // 配置关掉 / 假网关没有这个能力 ⇒ **回退老路径**（整表读 + 内存过滤），并**如实 warn**。
+      const reason = numbersLimits.serverFilter === false ? 'disabled_by_config' : 'gateway_without_filter';
+      logWarn('workbench.products.numbers.server_filter_off', {
+        reason,
+        hint: '这个端点没有走"按条件读"（飞书 filter），而是回退成整表读 + 内存过滤 —— 会慢很多；把 config/labelPrint.js 的 productNumbers.serverFilter 打开即可',
+      });
+      return listProductNumbersFromFullTable({ keyword, limit, startedAt });
+    }
 
-    const total = matched.length;
-    const truncated = total > limit;
-    const page = matched.slice(0, limit);
-    logInfo('workbench.products.numbers.listed', {
-      keyword: keyword || undefined,
+    // ⭐ 按**关键字**分槽的短 TTL 缓存（同一个关键字重复搜 ⇒ 秒开；A 关键字不会串到 B 关键字 ✗）。
+    const snapshot = await productNumbersKeywordCache.get(keyword.toLowerCase());
+    const matched = snapshot.numbers;
+    const selected = matched.slice(0, limit);
+    const truncated = snapshot.cap_hit || matched.length > limit;
+    logInfo('workbench.products.numbers.filtered', {
+      source: 'server_filter',
+      read: snapshot.read,
+      keyword_length: keyword.length,
       limit,
       product_records: snapshot.product_records,
-      product_records_no_number: snapshot.product_records_no_number || undefined,
       stock_records: snapshot.stock_records,
-      total,
-      returned: page.length,
-      with_stock: matched.filter((item) => item.hasStock).length,
-      without_stock: matched.filter((item) => !item.hasStock).length,
+      total: matched.length,
+      returned: selected.length,
+      with_stock: matched.filter((item) => item.hasStock === true).length,
+      without_stock: matched.filter((item) => item.hasStock === false).length,
+      stock_unknown: matched.filter((item) => item.hasStock === null).length || undefined,
+      cap_hit: snapshot.cap_hit || undefined,
       truncated: truncated || undefined,
+      elapsed_ms: Math.max(0, Math.round(now() - startedAt)),
     });
-    return { total, truncated, numbers: page };
+    return { total: matched.length, truncated, numbers: selected };
   };
 
   return { listLabels, labelForRecord, listProductNumbers };
