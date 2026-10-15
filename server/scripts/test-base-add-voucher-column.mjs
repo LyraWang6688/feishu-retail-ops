@@ -18,14 +18,34 @@
  *
  * ## 用法
  * ```bash
- * node scripts/test-base-add-voucher-column.mjs --check-only   # **只读**：看有没有那一列（0 写入）
- * node scripts/test-base-add-voucher-column.mjs               # 缺则**建**（幂等；已存在则跳过）
+ * cd server
+ * node --env-file=.env scripts/test-base-add-voucher-column.mjs --check-only   # **只读**：看有没有那一列（0 写入）
+ * node --env-file=.env scripts/test-base-add-voucher-column.mjs                # 缺则**建**（幂等；已存在则跳过）
  * ```
+ * ⚠️ 本脚本**刻意不自己 `dotenv.config()`**（与既有闸门脚本同形状）：env 由 `--env-file` 注入
+ *    ⇒ **不带 `--env-file` 直接跑 ⇒ 第 ① 条闸门当场拒绝** ✓（这条是可复现的实证，见 `docs/test-base-voucher-column-2026-10-16.md`）
  * 🔴 **绝不硬编码任何 token**（全从 env 读 ✓）· 🔴 **不用飞书 CLI**（走官方 SDK ✓）· 🔴 **不碰 `src/**`** ✓
  *
  * ## 生产真表那列的属性（**来源**：业务负责人侧的**只读**核对结果，本机够不着生产 ✗）
- * · 名字 `团购券管理` · type `21`（关联字段）· `property.table_id = tblz2kM1CIGkcWsM`
+ * · 名字 `团购券管理` · type `21`（双向关联）·
+ *   `property = {"back_field_id":"fldC5OAhpK","back_field_name":"券名称","multiple":false,`
+ *   `"table_id":"tblz2kM1CIGkcWsM","table_name":"团购券管理"}`
  * ⚠️ 本脚本**不读生产**（本机没有生产凭证 ✓）⇒ 这行属性是**照抄已核结果**，由 `docs/test-base-voucher-column-2026-10-16.md` 留档 ✓
+ *
+ * ## ⚠️ 为什么不能把上面那串 `property` **逐字**提交（2026-10-16 接手时查清）
+ * ① `table_id` / `back_field_id` **都是"每个 Base 自己的" id** ✗ —— **测试 Base 与生产不是同一套**：
+ *    · 券表：生产 `tblz2kM1CIGkcWsM` ✗ ｜ 测试 `tblF7KD85JHA4hVi`（`FEISHU_V1_GROUP_BUY_VOUCHER_TABLE_ID` ✓）
+ *    · `fldC5OAhpK` 在生产是**反向关联字段「券名称」**，在**测试 Base 里却是「券ID」（文本 type=1）** ✗
+ *    ⇒ 逐字照抄 = 指着别的 Base 的 id ⇒ **必失败** ✗（这正是"照抄完整 property"这条建议的坑）
+ * ② `back_field_id` / `table_name` 是 `appTableField.create` 的**响应字段**，不是**请求参数** ✗
+ *    —— 官方 create 文档的 property 只收 `multiple` / `table_id` / `back_field_name`
+ *    （本机核过：`curl .../app-table-field/create.md?lang=zh-CN` ＋ `.../app-table-field/guide.md`「双向关联字段」
+ *      ＋ SDK 类型 `node_modules/@larksuiteoapi/node-sdk/types/index.d.ts` ✓）
+ *    ⭐ **实测**：把 `table_name` 一起提交（`{table_id, table_name, back_field_name, multiple}`）⇒ **仍回
+ *      `1254092 DuplexLinkFieldPropertyError`** ✗；**去掉 `table_name`**（只留文档允许的三个键）⇒ **当场建成** ✓
+ *    ⇒ 建列**只许**提交 `{ table_id, back_field_name, multiple }` ✓
+ * ③ ⭐ **等价判据**：建完后回读的 `property` 必须与生产**逐键对齐**，
+ *    只有 `table_id` / `back_field_id` 两个"每 Base 各自"的 id 允许不同 ✓（其余 `back_field_name` / `multiple` / `table_name` 逐字相同 ✓）
  */
 
 import { createRequire } from 'node:module';
@@ -36,7 +56,9 @@ const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema.js');
 
 const VOUCHER_FIELD_NAME = '团购券管理';
 const VOUCHER_FIELD_TYPE = 21;
-const VOUCHER_LINK_TABLE_ID = 'tblz2kM1CIGkcWsM';
+/** 反向关联字段名 —— 与生产那列的 `back_field_name` 逐字相同 ✓（列名不写进逻辑，见下方 schema 读取） */
+const VOUCHER_BACK_FIELD_NAME = '券名称';
+const VOUCHER_MULTIPLE = false;
 const CHECK_ONLY = process.argv.includes('--check-only');
 
 const say = (message) => process.stdout.write(`${message}\n`);
@@ -81,6 +103,24 @@ const main = async () => {
   if (!tableId) fail('从 `V1_BITABLE_SCHEMA` 取不到「收款方式管理」的 tableId，拒绝运行');
   say(`· 目标表（收款方式管理）tableId = ${tableId}`);
 
+  // ⭐ 关联的目标表 **从配置读**（配置先行 ✗ 不写死）—— 这样它自然取到**本 Base 自己**的券表 id ✓
+  const voucherTable = V1_BITABLE_SCHEMA?.tables?.groupBuyVoucher;
+  const voucherTableId = String(voucherTable?.tableId || '').trim();
+  const voucherTableName = String(voucherTable?.tableName || '').trim();
+  if (!voucherTableId) fail('从 `V1_BITABLE_SCHEMA` 取不到「团购券管理」（券表）的 tableId，拒绝运行');
+  say(`· 关联目标表（团购券管理）tableId = ${voucherTableId} · tableName = ${voucherTableName}`);
+
+  /**
+   * create 请求里允许的 property 子键 —— **官方 create 文档 / 字段编辑指南「双向关联字段」逐字**：
+   * `multiple`（否·默认 true）· `table_id`（**是·必填**）· `back_field_name`（否）
+   * ⚠️ `table_name` / `back_field_id` **只在响应里**（是服务端算出来的）⇒ **不放进请求** ✗
+   */
+  const property = {
+    table_id: voucherTableId,
+    back_field_name: VOUCHER_BACK_FIELD_NAME,
+    multiple: VOUCHER_MULTIPLE,
+  };
+
   const client = new lark.Client({ appId, appSecret });
   const list = async () => {
     const response = await client.bitable.appTableField.list({ path: { app_token: appToken, table_id: tableId }, params: { page_size: 200 } });
@@ -91,19 +131,22 @@ const main = async () => {
   const hit = before.find((field) => String(field.field_name) === VOUCHER_FIELD_NAME);
   say(`· 回读（建之前）：共 ${before.length} 列${hit ? `；已存在「${VOUCHER_FIELD_NAME}」✓` : `；**没有**「${VOUCHER_FIELD_NAME}」✗`}`);
   if (!CHECK_ONLY && !hit) {
-    say(`· 开始建列：name=${VOUCHER_FIELD_NAME} type=${VOUCHER_FIELD_TYPE} property.table_id=${VOUCHER_LINK_TABLE_ID}`);
+    say(`· 开始建列：name=${VOUCHER_FIELD_NAME} type=${VOUCHER_FIELD_TYPE} property=${JSON.stringify(property)}`);
     await client.bitable.appTableField.create({
       path: { app_token: appToken, table_id: tableId },
       data: {
         field_name: VOUCHER_FIELD_NAME,
         type: VOUCHER_FIELD_TYPE,
-        property: { table_id: VOUCHER_LINK_TABLE_ID },
+        property,
       },
     });
     const after = await list();
     const now = after.find((field) => String(field.field_name) === VOUCHER_FIELD_NAME);
     if (!now) fail('建完后**回读不到**那一列 ⇒ 如实报失败（不假装成功 ✗）');
-    say(`✓ 回读（建之后）：「${now.field_name}」 type=${now.type} property.table_id=${now.property?.table_id || '(未回)'}`);
+    say(`✓ 回读（建之后）：「${now.field_name}」 type=${now.type}（ui_type=${now.ui_type}）`);
+    say(`  property（原样回读）= ${JSON.stringify(now.property)}`);
+    say(`  ⇒ 与生产逐键比对：back_field_name=${now.property?.back_field_name} · multiple=${now.property?.multiple}`
+      + ` · table_name=${now.property?.table_name} · table_id=${now.property?.table_id} · back_field_id=${now.property?.back_field_id}`);
   } else if (CHECK_ONLY) {
     say('（--check-only ⇒ **只读**，0 写入 ✓）');
   } else {
@@ -111,4 +154,10 @@ const main = async () => {
   }
 };
 
-main().catch((error) => fail(`运行失败：${error?.message || error}`));
+main().catch((error) => {
+  // ⚠️ 飞书 SDK 把 code / msg / log_id 塞在 `error.response.data` 里 —— 只打 `error.message` 会丢诊断信息 ✗
+  const data = error?.response?.data || error?.response || {};
+  const detail = [data?.code ? `code=${data.code}` : '', data?.msg || '', data?.log_id ? `log_id=${data.log_id}` : '']
+    .filter(Boolean).join(' · ');
+  fail(`运行失败：${error?.message || error}${detail ? ` ⇒ ${detail}` : ''}`);
+});
