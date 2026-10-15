@@ -168,6 +168,22 @@ const createHarness = (options = {}) => {
     purchase: {},
     purchaseStore: new JsonTaskStore({ dir: replenishDir, idField: 'task_id' }),
   });
+  // ⭐⭐ 2026-10-15（⑨b-2）：开关默认翻成 `true` 之后，`submitSale` 变成"**单号先出、余下转后台**"——
+  //   ⇒ 用例要**先等后台那一跑跑完**再回读端状态（不然读到的是"还没写完"的那一刻 ✗）。
+  //   ⭐ 在这里**包一层** ⇒ 本文件**所有** `write.submitSale(...)` 调用点**一个字都不用动** ✓
+  //   （改前逐字：`write` 直接用服务实例；改后逐字：包成"等后台 + 把它那半结果合回来" ✓）
+  //   依据：她 2026-10-15「**单号一出立刻回**…明细/库存/交付转后台」⇒ 端状态在后台跑完才齐 ✓
+  //   🔴 **判据没放宽**：仍是"端状态逐字比"，只是**先等它跑完** ✓（不是我替它放宽 ✗）
+  const rawSubmitSale = write.submitSale;
+  write.submitSale = async (input) => {
+    const result = await rawSubmitSale(input);
+    if (!result?.background) return result;
+    const rest = await result.background;
+    const defined = Object.fromEntries(
+      Object.entries(rest || {}).filter(([, value]) => value !== undefined),
+    );
+    return { ...result, ...defined };
+  };
   return {
     gateway, sessions, inventory, delivery, write,
     tables: gateway._tables,

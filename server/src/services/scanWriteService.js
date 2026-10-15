@@ -196,7 +196,9 @@ const createScanWriteService = (options = {}) => {
             duration_ms: durationMs, request_id: requestId,
             ...(timeoutMs && durationMs > timeoutMs ? { over_timeout_ms: timeoutMs } : {}),
           });
-          return;
+          // ⭐ 2026-10-15（⑰b-2）：**把后台那一跑的结果作为句柄的解析值** ⇒
+          //   "等它跑完"的人拿到的就是**端状态齐了之后的那一份** ✓（用例回读时不必改断言 ✓）
+          return result;
         }
         logWarn(config.events.saleBackgroundFailed, {
           sales_entry_record_id: salesEntryRecordId, order_no: orderNo,
@@ -204,6 +206,7 @@ const createScanWriteService = (options = {}) => {
           duration_ms: durationMs, request_id: requestId,
         });
         await markSaleWriteFailed({ salesEntryRecordId, correlation, requestId });
+        return result;
       })
       .catch(async (error) => {
         logWarn(config.events.saleBackgroundFailed, {

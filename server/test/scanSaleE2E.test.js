@@ -1217,9 +1217,21 @@ const submitSaleAt = async (e2e, openId, { size, amount, payments, paymentStatus
   });
   assert.equal(added.ok, true, JSON.stringify(added));
   const session = await e2e.sessions.get(openId);
-  const result = await e2e.writeService.submitSale({
+  let result = await e2e.writeService.submitSale({
     openId, submitKey: session.sale.key, payments, paymentStatus, paidAmount,
   });
+  // ⭐⭐ 2026-10-15（⑨b-2）：开关默认翻成 `true` 之后，提交变成"**单号先出、余下转后台**" ——
+  //   ⇒ 这里**先等后台那一跑跑完**（并把它那半结果合回来）再往下断言 ✓
+  //   （改前逐字：`const result = await …submitSale(…)` 直接用；改后逐字：`let result = …` + 等句柄 + 合并 ✓）
+  //   依据：她 2026-10-15「**单号一出立刻回**…明细/库存/交付转后台」⇒ 端状态在后台跑完才齐 ✓
+  //   🔴 **判据没放宽**：本文件所有"端状态"断言**一个字都没改**，只是**先等它做完** ✓
+  if (result?.background) {
+    const rest = await result.background;
+    const defined = Object.fromEntries(
+      Object.entries(rest || {}).filter(([, value]) => value !== undefined),
+    );
+    result = { ...result, ...defined };
+  }
   assert.equal(result.ok, true, JSON.stringify(result));
   return result;
 };
