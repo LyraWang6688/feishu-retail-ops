@@ -20,6 +20,7 @@
 | [multi-item-route-anchors-2026-10-16.md](multi-item-route-anchors-2026-10-16.md) | 「一单多货品」**路由半**锚点刷新（task-46 · 只读准备） |
 | [open-risk-notes-2026-10-16.md](open-risk-notes-2026-10-16.md) | 两条"会咬人"的欠账（落档 · 不动冻结文件） |
 | [stage-gate-audit-2026-10-16.md](stage-gate-audit-2026-10-16.md) | 「分阶段判据（待激活）」体检 —— 谁是真分阶段、谁是**永远变不真的自足替身**（本刀整改 4 条 ✗） |
+| [douyin-voucher-payment-rules-2026-10-16.md](douyin-voucher-payment-rules-2026-10-16.md) | 抖音团购券收款口径（#704 落地 · **补登记索引**：AC-DI1 一直红，不补则任何 PR 都过不去 ✗） |
 | [orders-read-path-perf-2026-10-16.md](orders-read-path-perf-2026-10-16.md) | 订单列表读路径性能修复（2026-10-16） |
 | [owner-requests-backlog.md](owner-requests-backlog.md) | 业务负责人的口径总账 —— **单一来源**（owner requests backlog） |
 | [page-annotate-mode-2026-10-16.md](page-annotate-mode-2026-10-16.md) | 页面标注模式（业务负责人 2026-10-16 亲口点的功能） |
