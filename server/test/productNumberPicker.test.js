@@ -22,7 +22,9 @@
  *  AC-U3 端点失败 / **超时** ⇒ 人话 + **仍可手输**（不死界面：输入框还在、跳转那条路一点没变）。
  *  AC-U7 ⭐⭐ **懒加载**：**进页面一个请求都不发**；她"点开"（聚焦 / 点击）**才拉那一次**，
  *        且拉的那一刻**立刻**显示「正在读取…」，拉回来才填选项（她今天抱怨过"点开不友好"）。
- *        ⭐ task-15 追加：**空关键字点开 ⇒ 仍然零请求**（只显示"输入编号 / 货号，我就列出匹配的编号"）
+ *        ⭐ task-15 追加：**空关键字点开 ⇒ 仍然零请求**。
+ *        ⭐⭐ 2026-10-16 改后逐字（业务负责人**亲口**点的三处改动之二 · 逐字：「**那段文字说明删掉**」）：
+ *        零请求时状态区**一个字都不写**（改前逐字：只显示"输入编号 / 货号，我就列出匹配的编号" ✗）
  *        —— 端点侧空关键字也是**零飞书读**（她逐字：「用户输入一个编号，然后系统再给出与这个模糊编号
  *        相关的选项」）⇒ 用例里"点开就拉"那一步现在必须**先有关键字**（助手 `typeAndFocus`）。
  *  AC-U8 ⭐⭐ **输入防抖**（`inputDebounceMs`，默认 400ms，可配；0 = 不防抖）：连敲 4 个字
@@ -150,7 +152,7 @@ const fakeApi = (options = {}) => {
 /**
  * ⭐⭐ task-15 的**触发方式**（不改任何业务判据，只改"她怎么点"）：
  *   端点改成了**服务端模糊查询** —— **空关键字一次飞书都不读**（服务端侧也是零读）
- *   ⇒ 前端**空关键字也不再发请求**（只把"输入编号 / 货号，我就列出匹配的编号"摆出来）。
+ *   ⇒ 前端**空关键字也不再发请求**；⭐ 2026-10-16 起**状态区也不再写那句提示语**（改后逐字 = 空）。
  * 所以下面这些用例里"点开就拉"那一步，现在必须先有关键字：这个助手把"输入 + 点开"一次做完。
  * ⚠️ 依据：她逐字「**用户输入一个编号，然后系统再给出与这个模糊编号相关的选项**」（task-15）。
  */
@@ -222,13 +224,19 @@ test('AC-U1 输入关键字 ⇒ `keyword` 传给服务端（选项始终由服�
   // ⚠️ task-15 **改写**（口径翻转，逐字写了改前/改后/依据；判据没放宽）：
   //   改前逐字：`await host.elements[INPUT].handlers.focus();`
   //             `assert.equal(api.calls[0].includes('keyword='), false, '没输关键字 ⇒ 不带 keyword（全量前 200 条）');`
-  //   改后逐字：空关键字聚焦 ⇒ `api.calls.length === 0` **＋ 状态行就是那句提示语**（零请求、零飞书读）；
+  //   改后逐字：空关键字聚焦 ⇒ `api.calls.length === 0` **＋ 状态行一个字都没有**（零请求、零飞书读）；
   //             然后 `value='XHB'` + 一次 input（防抖 400ms 后）⇒ 1 个请求且带 `keyword=XHB`。
   //   依据：task-15 第 2 条 —— **空关键字不再有"全量前 200 条"这回事**（她要从"输入编号"开始）；
   //         所以这一条从"空关键字也拉"翻成"空关键字不拉、有字才拉"。**"选项始终由服务端过滤"没变** ✓。
+  // ⭐⭐ 2026-10-16 **再改写一次**（业务负责人**亲口**点的三处改动之二 · 逐字：「**那段文字说明删掉**」）：
+  //   改前逐字：`assert.match(String(host.elements[STATUS].textContent), /输入编号/, '只把"你输入、我就列"那句提示摆出来');`
+  //   改后逐字：下面这一句 —— 零请求 ⇔ 状态区**一个字符都不写**（`role="status"` 只装真实状态）✓
+  //   依据：她 2026-10-16 的截图 + 逐字（那一格是 `aria-live` 状态区，**不装"怎么用"** ✗）。
+  //   🔴 **不是放宽** ✗：判据从"必须写那句提示语"翻成"**必须不写**" ✓（塞回去就红，见
+  //      `workbenchTrimThreeFixes20261016.test.js` 的反向哨兵）。
   await host.elements[INPUT].handlers.focus();
   assert.equal(api.calls.length, 0, '⭐ 空关键字 ⇒ **一个请求都不发**（服务端那边也是零读）');
-  assert.match(String(host.elements[STATUS].textContent), /输入编号/, '只把"你输入、我就列"那句提示摆出来');
+  assert.equal(String(host.elements[STATUS].textContent), '', '⭐ 零请求 ⇒ 状态区**一个字都不写**（她那句使用说明已删）');
   assert.equal(host.elements[OPTIONS].innerHTML, '', '也没有选项（上一次的清掉）');
 
   host.elements[INPUT].value = 'XHB';
@@ -337,7 +345,11 @@ test('AC-U2b ⭐ task-15：`hasStock: null`（**未确认**）⇒ 既不报"没�
   const { NUMBER_PICKER } = await loadFrontendModules().then((m) => m.pickerConfig);
   assert.ok(String(NUMBER_PICKER.texts.optionUnknown || '').includes('未确认'));
   assert.ok(String(NUMBER_PICKER.texts.pickedUnknown || '').includes('未确认'));
-  assert.ok(String(NUMBER_PICKER.texts.idle || '').includes('输入编号'), '空关键字的提示语也在配置里');
+  // ⭐⭐ 2026-10-16 **成对迁移**（业务负责人**亲口**点的三处改动之二 · 逐字：「**那段文字说明删掉**」）：
+  //   改前逐字：`assert.ok(String(NUMBER_PICKER.texts.idle || '').includes('输入编号'), '空关键字的提示语也在配置里');`
+  //   改后逐字：下面这一句 —— 配置里那一句**必须正好是空串**（那种"使用说明"配置里也不许再有）✓
+  //   依据：她 2026-10-16 的截图 + 逐字。🔴 **不是放宽** ✗：从"必须含"翻成"**必须为空**" ✓。
+  assert.equal(NUMBER_PICKER.texts.idle, '', '⭐ 零请求那一档 = **空串**（那句使用说明配置里也不许再有）✓');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -429,16 +441,20 @@ test('AC-U7 进页零请求 + 点开才拉 + 拉的那一刻立刻显示「正�
 
   assert.equal(api.calls.length, 0, '🔴 进页面**一个请求都不发**（不许把整表读压在她没点开的时候）');
   assert.equal(host.elements[OPTIONS].innerHTML, '', '进页面没有选项（也没在转）');
-  assert.ok(String(host.elements[STATUS].textContent).length > 0, '进页面先给一句人话（不白屏）');
+  // ⭐⭐ 2026-10-16 **成对迁移**（业务负责人**亲口**点的三处改动之二 · 逐字：「**那段文字说明删掉**」）：
+  //   改前逐字：`assert.ok(String(host.elements[STATUS].textContent).length > 0, '进页面先给一句人话（不白屏）');`
+  //   改后逐字：下面这一句 —— 进页面时状态区**是空的**（不是"不白屏"，而是"状态区只装真实状态"）✓
+  //   依据：她 2026-10-16 的截图 + 逐字。🔴 **不是放宽** ✗：从"必须有字"翻成"**必须没字**" ✓。
+  assert.equal(String(host.elements[STATUS].textContent), '', '⭐ 进页面状态区**一个字都不写**（那句使用说明已删）✓');
 
   // ⭐⭐ task-15：**空关键字点开 ⇒ 仍然零请求**（端点那边也是零飞书读）——
-  //    只把「输入编号 / 货号，我就列出匹配的编号」摆出来（她逐字：「用户输入一个编号，
-  //    然后系统再给出与这个模糊编号相关的选项」）。
+  //    ⭐ 2026-10-16 起**状态区也不再写那句提示语**（她逐字：「用户输入一个编号，
+  //    然后系统再给出与这个模糊编号相关的选项」＋「**那段文字说明删掉**」）。
   //    改前逐字：`const pending = host.elements[INPUT].handlers.focus();`（空关键字就发请求）
-  //    改后逐字：先断言"空关键字 ⇒ 仍是 0 个请求 + 提示语"，**再**输入关键字才拿到那一次请求。
+  //    改后逐字：先断言"空关键字 ⇒ 仍是 0 个请求 + 状态区为空"，**再**输入关键字才拿到那一次请求。
   await host.elements[INPUT].handlers.focus();
   assert.equal(api.calls.length, 0, '⭐ 空关键字 ⇒ 一次请求都不发（服务端那边也是零读）');
-  assert.match(String(host.elements[STATUS].textContent), /输入编号/, '换成"你输入、我就列"的提示语');
+  assert.equal(String(host.elements[STATUS].textContent), '', '零请求 ⇒ 状态区**一个字都不写**（她那句使用说明已删）');
 
   // 她**输入关键字**（手机上 tap = 聚焦；这里输入后点开）⇒ 这一下才发请求
   host.elements[INPUT].value = 'XHB';

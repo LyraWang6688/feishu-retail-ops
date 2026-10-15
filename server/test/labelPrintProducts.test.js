@@ -70,7 +70,7 @@
  *   公式 = `OR(编号.contains(k), 货号.contains(k))` —— **不拼「颜色」**（关联列 type 18 拼 filter
  *   会 `InvalidFilter 1254018`，仓库里已有硬事实）；库存那次按「库存键」contains 同一个关键字。
  * · **AC-F1b** 缓存**按关键字分槽**（`maxCacheEntries`）：A 关键字的结果不会被 B 关键字命中（能真红）。
- * · **AC-F2** `keyword` 为空 ⇒ **一次飞书都不读** + 空列表（前端显示"输入编号 / 货号，我就列出匹配的编号"）。
+ * · **AC-F2** `keyword` 为空 ⇒ **一次飞书都不读** + 空列表（前端 2026-10-16 起**不再**写那句提示语）。
  * · **AC-F3** `hasStock` 三种取值都对：`true` / `false`（过滤读没查到 **且** 编号含关键字 ⇒ 结论可靠）
  *   / **`null` 未确认**（三种情形：库存那次读失败 · 撞 `stockScanMax` 扫描上限 · 编号本身不含关键字）
  *   —— **绝不许猜** ✗。
@@ -518,9 +518,12 @@ test('AC-N5 `listProductNumbers`：按编号去重 / keyword 大小写不敏感 
     ],
   });
   // ⭐ task-15：**空关键字 ⇒ 空列表 + 一次飞书都不读**（原来这里是"回全表前 200 条"）。
+  // ⚠️ 2026-10-16：`labelPrintProducts` 是**服务端**这一半 —— 空关键字仍然**空列表 + 零读**，
+  //    一个字没变 ✓（她那天点的是**前端状态区**那句话，与这里的服务端契约无关）
+  //    ⇒ 这一句只把消息里的"前端显示…"改成"前端不再显示那句话"。**判据本身一个字没动** ✓。
   const empty = await service.listProductNumbers({});
   assert.deepEqual(empty, { total: 0, truncated: false, numbers: [] },
-    '空关键字 ⇒ 空列表（前端显示"输入编号 / 货号，我就列出匹配的编号"，AC-F2）');
+    '空关键字 ⇒ 空列表（前端 2026-10-16 起不再写那句提示语，见 productNumberPicker.test.js，AC-F2）');
   assert.deepEqual(gateway.calls, [], '空关键字**一次整表读都没有**');
   assert.deepEqual(gateway.filterCalls, [], '空关键字连按条件读都不发');
   // ⭐ 「棕色」一次命中两条编号 ⇒ 验证去重（`rec_a_dup` 不重复出）+ 中文升序。
