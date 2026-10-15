@@ -38,6 +38,8 @@
 | [telemetry-audit-2026-10-15.md](telemetry-audit-2026-10-15.md) | 埋点体检表 · 2026-10-15（task-48） |
 | [workbench-domains-trim-three-fixes-2026-10-16.md](workbench-domains-trim-three-fixes-2026-10-16.md) | 工作台 · 货品（domains 页）三处改动（业务负责人 2026-10-16 截图 + 亲口逐字） |
 | [workbench-input-landing-audit-2026-10-16.md](workbench-input-landing-audit-2026-10-16.md) | 工作台「输入框 → 落点」审计（2026-10-16 · **只读**） |
+| [ai-parsing-removal-2026-10-16.md](ai-parsing-removal-2026-10-16.md) | 业务负责人「与 AI 分析有关的都停掉」的逐字口径 · A/B/C 三类清单 · 保留清单 · 执行顺序（含"采购那条 2026-10-09 已删"的事实核对） |
+| [frontend-copy-ownership.md](frontend-copy-ownership.md) | 前端「静态文案 vs 动态交互」分工章程 —— 给另一个 AI 看的边界；同一文件同一时刻一个写入者 |
 | [workbench-query-contract.md](workbench-query-contract.md) | 工作台查询接口契约 |
 | [sales-line-plan.md](sales-line-plan.md) | 销售线的推进计划与判据 |
 | [arrival-conversation-reconcile-2026-10-06.md](arrival-conversation-reconcile-2026-10-06.md) | 采购到货「群话题对话式核对」：业务负责人 2026-10-06 当天口述的**权威口径**与验收标准（**已实现**）。⚠️ 其中「实际到货不会为 0 / 不为实际为 0 写规则」一条已被 2026-10-07 的口径**收窄**（见下一行） |
@@ -167,6 +169,7 @@
 | [channel-decoupling-2026-10-06.md](channel-decoupling-2026-10-06.md) | 🔴 渠道解耦决定（业务负责人 2026-10-06） |
 | [confirm-deal-short-stock-and-card-selfheal-2026-10-07.md](confirm-deal-short-stock-and-card-selfheal-2026-10-07.md) | 【确认成交】两条严重 bug 的修复：假成交 / 卡面永不修复 |
 | [deploy-post-restart-selfcheck-2026-10-07.md](deploy-post-restart-selfcheck-2026-10-07.md) | 部署后版本自检 —— 不让 `/health` 再骗人（2026-10-07） |
+| [douyin-voucher-payment-rules-2026-10-16.md](douyin-voucher-payment-rules-2026-10-16.md) | 抖音团购券三条口径：差额按【面值】· 收款明细按【平台结算款】· 状态【待平台结算】；实收 = 成交额 −（面值−结算款） |
 | [deposit-and-prepay-stock-fix-2026-10-07.md](deposit-and-prepay-stock-fix-2026-10-07.md) | 定金「已收到金额」误报 + 预付不该查库存 —— 实现与验收（2026-10-07） |
 | [domain-contracts.md](domain-contracts.md) | 领域间数据契约（销售 / 采购 / 库存 / 资金） |
 | [e2e-group-thread-2026-10-07.md](e2e-group-thread-2026-10-07.md) | 群聊 / 话题 · 六场景自动化 E2E —— 验收标准（**跑之前先写下来的**） |
