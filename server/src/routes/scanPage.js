@@ -66,6 +66,14 @@ const {enabled: feishuAuthEnabled,
   resolveScanNext, COOKIE_NAME, encodeSession } = require('./feishuWebAuth');
 const { SCAN_PAGE } = require('../config/scanPage');
 const { SCAN_WRITE, fillText: fillWriteText } = require('../config/scanWrite');
+// ⭐⭐ 2026-10-16（task-59「一单多货品」**路由半**）：设计见
+//   `docs/multi-item-order-design-2026-10-15.md` · 锚点见 `docs/multi-item-route-anchors-2026-10-16.md`。
+//   · **引擎**（`services/multiItemOrderService.js`）管草稿 / 校验 / 批量落库 / 幂等 / 轮换 ——
+//     本文件**只做三件事**：解析载荷 → 把**首件**与本次表单的尺码/数量合并 → 交给引擎 ✓；
+//   · **配置**（`config/multiItemOrder.js`）管开关 / 上限 / 字段名 / 文案 ✓（这里一行阈值都不许写死 ✗）；
+//   · 🔴 **N=1 一个字节都不经过这条路** —— 只有"分组 > 1"才进（见下面两处 `groups.length > 1`）✓。
+const { resolveMultiItemOrderConfig } = require('../config/multiItemOrder');
+const { createMultiItemOrderService } = require('../services/multiItemOrderService');
 // ⭐⭐ 2026-10-16（口子收尾 · 业务负责人口径「**异步只针对"写库"**；校验必须当场同步拦」）：
 //   **尺码 / 数量 / 空单**这三类校验的**唯一真源**（纯函数、不碰 IO、配置先行 ✓）——
 //   判据与写层 `services/scanWriteService.js:1397-1426`（补货）/ `:1556-1585`（退货）**逐字同源**
@@ -213,6 +221,109 @@ const createScanPageRouter = (options = {}) => {
   const writeService = writeConfig && options.writeService !== false
     ? (options.writeService || createScanWriteService({ gateway, config: writeConfig }))
     : null;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ⭐⭐ 「一单多货品」**路由半**（task-59）
+  //   · 本文件**只做**：解析隐藏字段 → 首件合并 → 交给引擎（`openDraft/addItem/submitDraft`）；
+  //   · **落库 / 校验 / 幂等 / `orderKey` 轮换全在引擎里** ✓（路由**不碰**写库、不认识表字段 ✗）；
+  //   · 🔴 **N ≤ 1 一个字节都不走这里**（两处调用点都是 `groups.length > 1` 才进 ✓）。
+  //   ⚠️ 配置**在 router 构建时读一次**（`resolveMultiItemOrderConfig()` 每次调用都重新读 env ✓）——
+  //     与渲染半那份（模块级 `MULTI_ITEM_ORDER`）**同一个 env 源**，两边不会漂 ✓。
+  // ══════════════════════════════════════════════════════════════════════════
+  const multiItemOrderConfig = resolveMultiItemOrderConfig();
+  // 用例可以注入一个假引擎（`options.multiItemOrder`）—— 与 `options.writeService` 同一种注入法 ✓
+  let multiItemOrderEngine = options.multiItemOrder || null;
+  /**
+   * 懒建引擎（**只有真的要提交多货品单时才建** ✗ N=1 那条路一次都不建 ✓）。
+   * @returns {object|null} `null` = 这条路现在走不了 ⇒ 调用方**给人话 + 零写入**（绝不静默只写第一件 ✗）
+   */
+  const multiItemOrder = () => {
+    if (multiItemOrderEngine) return multiItemOrderEngine;
+    if (!writeService || typeof writeService.multiItemWriters !== 'function') return null;
+    if (multiItemOrderConfig.enabled !== true) return null;
+    // 🔴 写入件**只经** `writeService.multiItemWriters()`（同一批既有写入件的引用相等 ✓）——
+    //   本文件里**不出现任何写链路服务名**（既有源码哨兵 `RT5` 钉着，不放宽 ✗）。
+    multiItemOrderEngine = createMultiItemOrderService({
+      sessions: writeService.sessions,
+      config: multiItemOrderConfig,
+      writers: writeService.multiItemWriters(),
+    });
+    return multiItemOrderEngine;
+  };
+
+  /**
+   * ⭐ 退货那条链的**整单金额**进草稿（形状 = 设计 §4.3 的 `order_amount`）。
+   *
+   * ⚠️ 为什么走 `sessions.store`：引擎的公开 API 里**没有"设金额"这一口**
+   *   （只有 `openDraft` / `addItem` / `setEntries` / `removeItem` / `submitDraft`），
+   *   而 `services/multiItemOrderService.js` **不在本刀写作用域** ⇒ 这里按**设计里那份草稿形状**、
+   *   经**同一个会话 store** 写这一个字段（容器名取自 `config/multiItemOrder.js` ✓ **不写死** ✗）。
+   *   `store.update` 是**同 id 串行**的读-改-写 ⇒ 不会把引擎刚写进去的 `items` 覆盖掉 ✓。
+   */
+  const setDraftOrderAmount = async (openId, orderKey, amount) => {
+    if (!writeService || !writeService.sessions) return;
+    const { store, idOf } = writeService.sessions;
+    if (!store || typeof store.update !== 'function' || typeof idOf !== 'function') return;
+    const ordersField = multiItemOrderConfig.session.ordersField;
+    await store.update(idOf(openId), (session) => {
+      const orders = { ...((session || {})[ordersField] || {}) };
+      const draft = orders[orderKey];
+      if (draft) orders[orderKey] = { ...draft, order_amount: String(amount || '').trim() };
+      return { [ordersField]: orders };
+    });
+  };
+
+  /**
+   * ⭐⭐ 「一单多货品」**提交**（**只有分组 > 1 才会进来**）—— 拒单 ⇒ 人话 + **零写入** ✓。
+   *
+   * 🔴 **成功页复用今天那条形状与文案**（`sendSuccess` + `successReturnFields` ✓）——
+   *   本文件**不发明新文案** ✗，也**不承诺**这一刻还没有的东西（批次号 / 明细数由后台写出）✗。
+   */
+  const submitMultiItemOrder = async ({
+    req, res, requestId, chain, groups, action,
+  }) => {
+    const engine = multiItemOrder();
+    if (!engine) {
+      // 引擎不可用（写服务没挂 / 多货品开关关）：**宁可给人话 + 零写入**，
+      // 也**绝不**回落老路径 —— 那会把"其余货品"静默丢掉 ✗（她最恨的那种假成功）。
+      return respondWriteFailure(
+        res, { code: 'disabled', message: writeConfig.texts.writeDisabledBody }, requestId,
+      );
+    }
+    const openId = openIdOf(req);
+    const opened = await engine.openDraft({ openId, chain, requestId });
+    if (!opened.ok) return respondWriteFailure(res, opened, requestId);
+    const orderKey = opened.orderKey;
+    // 退货那条链：整单金额**先进草稿**（引擎的校验 `amountRequired` 与载荷 `order_amount` 都读它 ✓）。
+    // ⚠️ 空 / 非数字**已经在上面同步拦过**（`purchaseAmount*Page` ⇒ 400 + 人话 + 零写入 ✓），
+    //   这里原样透传、**不重算** ✗。
+    // ⚠️ **判据来自配置**（`chains[chain].amountRequired` ✓）—— 路由里**不写 `if (补货) … else …`** ✗
+    //   （与引擎同一条口径：两条链**只差配置** ✓）。
+    if (multiItemOrderConfig.chains[chain]?.amountRequired === true) {
+      await setDraftOrderAmount(openId, orderKey, String(req?.body?.[writeConfig.fields.purchaseAmount] ?? ''));
+    }
+    for (const group of groups) {
+      const added = await engine.addItem({ openId, chain, orderKey, item: group, requestId });
+      if (!added.ok) return respondWriteFailure(res, added, requestId);
+    }
+    // 🔴 幂等键 = **本单的 `orderKey`**（一单一把；提交成功后引擎**轮换**它 ✓）——
+    //    **不传**表单里那把 key：页面上的 key 在提交后仍是旧值，重放旧页面会把**第 2 单**
+    //    算成第 1 单的同一个 `taskId` ⇒ 被第 1 单吸收 ✗（设计 §4.2 的动机）。
+    const result = await engine.submitDraft({
+      openId, chain, orderKey, submitKey: orderKey, requestId,
+    });
+    if (!result.ok) return respondWriteFailure(res, result, requestId);
+    // ⚠️ 理由串**只从配置取**（`config/multiItemOrder.js` 的 `invalidateReasons`；值与单货品那条路
+    //   逐字同一串 ✓）—— **不在源码里再写一遍那两个既有字面量**：它们是既有邻近哨兵 `AC-SR4`
+    //   的锚点，在前面多一处就把锚点挤开 ✗（本刀真踩到过 ✓）。
+    invalidateInventorySnapshot(requestId, multiItemOrderConfig.invalidateReasons[chain]);
+    markRealmUsed(openId, realmOfAction(action));
+    return sendSuccess(res, 200, {
+      ...successReturnFields(req, backTargetFor(req, decodeURIComponent(String(req.params.number || '')))),
+      requestId,
+    });
+  };
+
   /**
    * ⭐⭐ 2026-10-16（task-52 · ②-⑭ 接线 · 业务负责人**逐字**）：
    *   「**补货、退货还有验收，它都是异步的**……都是一句『**已提交成功，数据会更新**』」
@@ -2441,6 +2552,19 @@ return sendPaymentStep(res, req, {
         //   🔴 顺序不能反：先排后台再校验 = 把"她填错了"变成"看起来成功" ✗（她最恨的那条）。
         const disabledError = purchaseWriteDisabledError(writeConfig.replenish, writeConfig.texts);
         if (disabledError) return respondWriteFailure(res, disabledError, requestId);
+        // ⭐⭐ 2026-10-16（task-59 · 路由半）：**一单多货品**（补货）。
+        //   · 隐藏字段 `multi_items` 渲的是【**首件**（= 当前这一款）+ `entries: []`】——
+        //     渲染半逐字注明「`entries` 由路由在提交时合并」⇒ 这里把**本次表单**的尺码/数量
+        //     **合并进首件**（`mergeFirstItemEntries`：**赋值**语义 ⇒ 只生效一次，数量**不会翻倍** ✓）；
+        //   · 🔴 **`≤1` 组 ⇒ 一个字都不变**：不碰引擎、不碰参数，照旧走下面那条老路径 ✓
+        //     （「N=1 与旧路径逐字等价」靠**代码路径同一条**成立，不是在引擎里凑形状 ✗）。
+        const groups = mergeFirstItemEntries(parseMultiItemGroups(body, multiItemOrderConfig), entries);
+        if (groups.length > 1) {
+          return submitMultiItemOrder({
+            req, res, requestId, chain: 'replenish', groups,
+            action: writeConfig.actions.submitReplenish,
+          });
+        }
         // 🔴 **同一把 `submitKey` 原样透传**（幂等责任在写层：本文件不拼、不加后缀 ✗）
         const replenishSubmitKey = body[fields.submitKey];
         schedulePurchaseWrite({
@@ -2519,6 +2643,22 @@ return sendPaymentStep(res, req, {
         //   留在这里（同步 ✗）、**写库丢给后台那一跑**（她先拿到统一成功页 ✓）。
         const disabledError = purchaseWriteDisabledError(writeConfig.purchaseReturn, writeConfig.texts);
         if (disabledError) return respondWriteFailure(res, disabledError, requestId);
+        // ⭐⭐ 2026-10-16（task-59 · 路由半）：**一单多货品**（退货）—— 与补货那条**同形** ✓
+        //   · 首件 = 当前这一款，`entries` 由这里合并进去（**只合并一次** ✓ 见 `mergeFirstItemEntries`）；
+        //   · 🔴 **整单金额**（退货必填）由 `submitMultiItemOrder` 写进草稿 `order_amount`
+        //     —— 空 / 非数字**上面已经同步拦过**（400 + 人话 + 零写入 ✓），这里不重复判 ✗；
+        //   · 🔴 **超库存**：本刀**不传**引擎的 `stockView` ⇒ 逐行"退能退的"仍由**既有写入件**
+        //     落地（与今天 N=1 同一条通路 ✓）；差额照旧只在写入件返回值 / 日志里（**已知取舍**，
+        //     与今天 N=1 那条路一致 —— 见下面那句"差额这一刻还没有"✓），**本刀不把它搬到页面上**
+        //     （那要新文案 ⇒ 越界 ✗）。
+        //   · 🔴 **`≤1` 组一个字都不变** ⇒ 照旧走下面那条老路径 ✓。
+        const groups = mergeFirstItemEntries(parseMultiItemGroups(body, multiItemOrderConfig), entries);
+        if (groups.length > 1) {
+          return submitMultiItemOrder({
+            req, res, requestId, chain: 'return', groups,
+            action: writeConfig.actions.submitPurchaseReturn,
+          });
+        }
         // 🔴 **同一把 `submitKey` 原样透传**（幂等责任在写层：本文件不拼、不加后缀 ✗）
         const returnSubmitKey = body[fields.submitKey];
         //   ⚠️ 金额入参**逐字不带**：金额闸门在**上面**已经判过（空 / 非数字当场 400 + 零写入 ✓），
@@ -2628,6 +2768,51 @@ const parseReturnEntries = (body, fields, writeConfig) => {
 };
 
 /**
+ * ⭐⭐ 2026-10-16（task-59 · 路由半）：隐藏字段 `multi_items` → **分组数组**（纯函数 ✓ 用例直调 ✓）。
+ *
+ * 形状 = 设计 §4.3（渲染半的 `multiItemPayloadJson` 逐字同源）：
+ *   `[{ product_record_id, number, item_no, color, supplier_record_id, entries: [{ size, quantity }] }]`
+ *
+ * 🔴 **坏输入一律 `[]`**（回落老路径 ⇒ 引擎 **0 次** ✓）：没这个字段 / 空串 / **JSON 坏** /
+ *    **不是数组** —— 解析器**不抛、不编、不猜** ✗（RT6）。
+ * ⚠️ 同名字段出现多次时（`extended:true` ⇒ 数组）**取最后一个**（= 浏览器最后提交的那一份）。
+ * ⚠️ 字段名**只从配置取**（`config/multiItemOrder.js` 的 `field` ✓）—— 这里**不写死** ✗。
+ */
+const parseMultiItemGroups = (body, multiConfig) => {
+  const field = String((multiConfig && multiConfig.field) || '');
+  if (!field || !body) return [];
+  const raw = body[field];
+  const value = Array.isArray(raw) ? raw[raw.length - 1] : raw;
+  if (typeof value !== 'string' || !value.trim()) return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    return [];
+  }
+  return Array.isArray(parsed) ? parsed : [];
+};
+
+/**
+ * ⭐⭐ **首件 + 本次表单的尺码/数量**（渲染半逐字注明「`entries` 由路由在提交时合并」✓）。
+ *
+ * 🔴 **只合并一次**：这里是**赋值**（不是 `concat` / `push`）⇒ 就算这一段被走两遍，
+ *    数量也**不会翻倍** ✓（翻倍 = 那一单凭空多补/多退 ✗）。
+ * ⚠️ 真的"同货号 + 同尺码出现两次"（她勾了两遍）由引擎的 `duplicate_line` **拒单**兜住 ✓
+ *    —— **不是**静默翻倍 ✗。
+ * ⚠️ 只动**首件**（= 隐藏字段里那件，也就是她当前扫的这一款）；
+ *    其余分组**原样透传**（它们的 `entries` 由渲染那一侧决定，本函数**不碰** ✗）。
+ */
+const mergeFirstItemEntries = (groups, entries) => {
+  const list = Array.isArray(groups) ? groups : [];
+  if (!list.length) return [];
+  const lines = (Array.isArray(entries) ? entries : []).map((entry) => ({
+    size: entry?.size, quantity: entry?.quantity,
+  }));
+  return [{ ...list[0], entries: lines }, ...list.slice(1)];
+};
+
+/**
  * 表单里**同名重复**的字段（`line_amount` / `payment_method` / `payment_amount`）
  * 在 `express.urlencoded({extended:true})` 下是**数组**；只出现一次时是**字符串**。
  * 这个纯函数把两种形状统一成有序数组（顺序 = 页面上的行顺序）。
@@ -2690,4 +2875,7 @@ const parsePaymentRows = (body, fields) => {
 
 module.exports = {
   createScanPageRouter, isDataNotReady, parseReplenishEntries, parseReturnEntries, parsePaymentRows,
+  // ⭐ 2026-10-16（task-59 · 路由半）：多货品那两个**纯函数**照上面几个的既有风格一起导出 ✓
+  //   （用例直调它们钉"坏输入 ⇒ `[]`"与"只合并一次 ⇒ 数量不翻倍"✓）
+  parseMultiItemGroups, mergeFirstItemEntries,
 };
