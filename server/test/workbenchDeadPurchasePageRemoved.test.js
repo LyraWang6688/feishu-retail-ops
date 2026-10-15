@@ -27,9 +27,13 @@ const SERVER_ROOT = path.join(__dirname, '..');
 const WORKBENCH = path.join(SERVER_ROOT, 'public/workbench');
 const read = (relative) => fs.readFileSync(path.join(WORKBENCH, relative), 'utf8');
 
-/** 去注释（JS / CSS / HTML 三种都去）——「注释里留沿革」不算活引用。 */
+/**
+ * 去注释（**JS / CSS**）——「注释里留沿革」不算活引用。
+ * ⚠️ 这里**故意不剥 HTML 注释**（`<!--…-->` 那种正则会被 CodeQL 判成
+ *    `js/incomplete-multi-character-sanitization`（high）——那是给"净化不可信 HTML"用的规则，
+ *    在测试里剥离注释属于误报，但**不加豁免**：改成对 `.html` **原样更严地要求 0 处**见下）。
+ */
 const stripComments = (source) => source
-  .replace(/<!--[\s\S]*?-->/g, '')
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/^\s*\/\/.*$/gm, '')
   .replace(/([^:])\/\/.*$/gm, '$1');
@@ -59,10 +63,12 @@ test('AC-DL1 ⭐⭐ 老「采购管理」页目录不存在；工作台源码 / 
     assert.equal(fs.existsSync(path.join(WORKBENCH, gone)), false, `${gone} 必须不存在`);
   }
 
-  // ② **去注释后**，工作台里的 js / css / html 一处都不许再提这个路径（注释里留沿革可以 ✓）
+  // ② 工作台里的 js / css **去注释后**、`.html` **原样**，一处都不许再提这个路径
+  //    （js/css 的注释里留沿革可以 ✓；`.html` 里连注释都不许提 —— 现状本来就是 0 处，更严 ✓）
   const offenders = [];
   for (const file of walkWorkbench()) {
-    const code = stripComments(fs.readFileSync(file, 'utf8'));
+    const raw = fs.readFileSync(file, 'utf8');
+    const code = /\.(js|css)$/.test(file) ? stripComments(raw) : raw;
     if (code.includes('features/purchase')) offenders.push(path.relative(WORKBENCH, file));
   }
   assert.deepEqual(offenders, [], `这些文件里还有**活引用**：${offenders.join(' / ')}`);
