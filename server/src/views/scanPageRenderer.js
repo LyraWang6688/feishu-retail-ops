@@ -1427,7 +1427,19 @@ const realmBlockHtml = (realm, view, config, write, page = {}) => {
     //   只是 2026-10-13 那版被"配品页"占着 ✗）· 能力一个字没删 ✗
     //   ⇒ 「配品」另开新领域 `accessory`（任务 B ✓ 待接路由/动作配置 ✓）
     const form = write && write.enabled !== false ? returnFormHtml(view, write) : '';
-    return wrap(form || realmEmptyHtml(PURCHASE_RETURN_REALM, config));
+    // ⭐⭐ 2026-10-15（task-31 · 她真机 21:47「有库存点退货 ⇒ 只有一颗按钮」）：
+    //   只读复现：**同一款 `HL55173-1|黑色|A` ⇒ `rows=11`、退货块 11 行** ✓（不是"有数据不画" ✗）；
+    //   唯一能画出"一句人话 + **一颗**按钮"的是 `realmEmptyHtml` **通用兜底卡** —— 它只在
+    //   "退货表单**根本没画出来**"时出现（写入口没接上 ⇒ `write` 为空 / `enabled:false` ✗）。
+    //   🔴 那张卡的句子是「**这一款现在没有可退的尺码。**」＋ 一颗"看看这一款的库存 →" ⇒
+    //      **有库存时这么说就是假话** ✗（她今晚看到的形状 ✓）。
+    //   ⇒ 表单没画出来 ⇒ **如实说**（`returnForm.formMissing` ✓ 文案在 config 里）；
+    //      "这一款真的没有可退的库存"是**另一件事**（task-28 的 `noReturnableStock` ✓）—— 两者分开 ✗。
+    if (form) return wrap(form);
+    return wrap(`<section class="card state-msg" data-view="return-form-missing">
+<h1>${escapeHtml(config.texts.realmEmptyTitle)}</h1>
+<p>${escapeHtml(SCAN_PAGE.returnForm.formMissing)}</p>
+</section>`);
   }
 
   if (id === 'accessory') {
