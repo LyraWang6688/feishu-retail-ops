@@ -62,7 +62,7 @@
 //   ⚠️ `config/links.js` 里的 `PURCHASE_REQUEST_FORM_URL` / `PURCHASE_RETURN_FORM_URL` /
 //      `PURCHASE_FORMS` **一个都没删**（删 or 留由业务负责人定；隐藏的老「采购管理」页面里
 //      已经没有任何地方再引用它们了）。
-import { SUPPLIER_DIRECTORY_URL, PRODUCT_NEW_FORM_URL } from './links.js';
+import { SUPPLIER_DIRECTORY_URL, PRODUCT_NEW_FORM_URL, ACCESSORY_SALE_FORM_URL } from './links.js';
 
 export const DOMAIN_TABS = [
   // ── ⓿ 扫一扫（2026-10-13 她裁定：与销售/采购/库存**同级**、**放最前** ✓）──────────
@@ -111,10 +111,28 @@ export const DOMAIN_TABS = [
         kind: 'placeholder',
       },
       // 2026-10-14: accessory sub-tab sits AFTER the last sales page
+      // ⭐⭐ 2026-10-15（业务负责人逐字）：「**配品就是走表单了～工作台自建写服务"可以删除了，
+      //   也就说在工作台点击配品就是直接跳转表单链接**」——
+      //   改前逐字：`{ id: 'sales-accessory', label: '配品', kind: 'accessory' }`（挂工作台自建的配品面板）
+      //   改后逐字：下面这一格 —— **点一下直接打开她新建的「配品销售」表单**（`kind:'links'` +
+      //     `directJump:true`，与「货品上新」「供应商名录」**同一套直跳机制** ✓ 不新造 ✗）
+      //   依据：她 2026-10-15 拍板"配品走表单" ⇒ 工作台那套自建写服务整个删除；
+      //     表单记录由**既有引擎**成单（`services/accessorySaleIntakeService.js`）✓
+      //   ⚠️ URL **只在 `config/links.js`**（`ACCESSORY_SALE_FORM_URL`，别处不复制字面量 ✗）；
+      //      文案（标题 / 动作）也都在这里（配置先行 ✓）。
       {
         id: 'sales-accessory',
         label: '配品',
-        kind: 'accessory',
+        kind: 'links',
+        directJump: true,
+        cards: [
+          {
+            icon: '🛒',
+            title: '配品销售',
+            href: ACCESSORY_SALE_FORM_URL,
+            arrow: '去填配品销售表单 →',
+          },
+        ],
       },
 
     ],

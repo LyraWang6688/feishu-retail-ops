@@ -50,6 +50,19 @@ export const PRODUCT_NEW_FORM_URL =
   'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnX0GlNcSOujePgWOLTTWr4m';
 
 /**
+ * ⭐⭐ 2026-10-15（业务负责人逐字）：「**配品就是走表单了～工作台自建写服务"可以删除了，
+ *   也就说在工作台点击配品就是直接跳转表单链接**」⇒ 她新建的「配品销售」表单（**只此一处** ✓
+ *   别处不复制字面量 ✗）。
+ *
+ * ⚠️ 与 `PRODUCT_NEW_FORM_URL` **同一套**：URL 只写在这里，`config/domains.js` 只 `import`；
+ *   点「销售 → 配品」那一格 ⇒ **一次就跳**（`kind:'links'` + `directJump:true`，走既有直跳机制）。
+ * ⚠️ 提交上来的记录由**既有引擎**成单（`services/accessorySaleIntakeService.js`，她那张
+ *   「配品销售」表 = `tblkT1QTUsESnl5b`）—— 工作台那套**自建写服务已删** ✓
+ */
+export const ACCESSORY_SALE_FORM_URL =
+  'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnCUHxarWSWhoQRiv6qJeKWh';
+
+/**
  * 两个飞书表单，按这个顺序渲染。**消费方**（只负责画，不改这张表）：
  *   `config/domains.js` —— 「采购」tab 的「报货」/「退货」**两个子页各一张卡**（当前正式入口；
  *   ⚠️ 2026-10-10 起「验收到货」不再是一张卡，它成了**独立子页**）。

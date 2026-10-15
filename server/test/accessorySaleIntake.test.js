@@ -118,15 +118,23 @@ const configWithIds = (over = {}) => ({
   ...resolveAccessorySaleIntakeConfig({}), fieldIds: FIELD_IDS, ...over,
 });
 
-const build = ({ config, engineOpts, gatewayOpts } = {}) => {
+const build = ({ config, engineOpts, gatewayOpts, ordersCache } = {}) => {
   const fake = fakeEngine(engineOpts);
   const gw = fakeGateway(gatewayOpts);
   const service = createAccessorySaleIntakeService({
     gateway: gw.gateway,
     scanWrite: fake.engine,
     config: config || configWithIds(),
+    // ⭐ 2026-10-15：订单缓存**可注入**（AC-MIG5 用它验"成单后作废"✓；不传 = 进程级共享实例）
+    ...(ordersCache ? { ordersCache } : {}),
   });
   return { service, ...fake, ...gw };
+};
+
+/** 假订单缓存：只记 `invalidate()` 被调了几次（真缓存的口径由它自己的用例钉着 ✓）。 */
+const fakeOrdersCache = () => {
+  const calls = [];
+  return { calls, invalidate: () => calls.push('invalidate') };
 };
 
 const WRITE_KEYS = new Set(['写入状态', '失败原因']);
@@ -570,4 +578,145 @@ test('AC-AS7d 🔴 `updateByTableId` 空 `fields` ⇒ **当场抛**（白跑一�
   const gateway = new V1BitableGateway({ client: { bitable: { appTableRecord: { update: async () => ({ code: 0 }) } } } });
   await assert.rejects(() => gateway.updateByTableId({ tableId: 'tbl_a', recordId: 'rec_a', fields: {} }), /需要 fields/);
   await assert.rejects(() => gateway.updateByTableId({ tableId: '', recordId: 'rec_a', fields: { 写入状态: 'x' } }), /需要 tableId/);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-15 **判据迁移**（业务负责人逐字：「**配品就是走表单了～工作台自建写服务
+//   "可以删除了**」）—— 工作台那套自建写服务（`features/accessory` + `config/workbenchAccessory`
+//   + `GET /sales/accessories` / `POST /sales/accessory-sales`）**已整段删除**，
+//   但它当年钉的**业务判据**一条都不能跟着消失 ⇒ **迁到这条新链路上继续钉** ✓
+//
+//   迁移清单（原判据 → 现承载）：
+//   · AC-AC3「一步成单：addSaleLine(kind:accessory) ×1 + submitSale ×1、收款明细 1 行、
+//     付款状态=全付、已收金额=金额」⇒ AC-AS1（前四样）＋ **AC-MIG1**（后三样：`inStock` /
+//     `paymentStatus` / `paidAmount`）
+//   · AC-AC4「零库存动作：这一趟只调那两个既有写方法」⇒ **AC-MIG2**
+//   · AC-A2「配品不扣库存（闸门：`tracksInventory:false` + `requiresFulfillment:false`）」⇒ **AC-MIG3**
+//   · AC-A4b「没传收款方式 ⇒ 沿用配置默认」⇒ ⚠️ **这条口径随自建链路一起退场**：
+//     新链路是「**收款方式关联为空 ⇒ 拒单**」（task-19 口径：关联为空 ⇒ 不成单）⇒ 由 **AC-MIG4** 钉住新口径 ✓
+//   · AC-AC6「金额必填」⇒ AC-AS4（空/0/负数 ⇒ 拒单 + 零写入）✓ 已在
+//   · AC-AC5「幂等：同一把 submitKey」⇒ AC-AS2 ✓ 已在（新链路的键 = **记录 ID**）
+//   · 其余（收款方式清单接口 / 配品清单接口 / 面板 UI / `kind:'accessory'` 分派）只为那具死代码存在
+//     ⇒ 随它一起删（依据：接口与页面都已不存在 ✓）；「配品」子 tab 本身仍在
+//     ⇒ 改由 `test/workbenchAccessoryTab.test.js` 钉"点一下就是打开表单" ✓
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-MIG1 ⭐【迁移自 AC-AC3】一步成单的引擎入参：配品默认**现货**（`inStock:true`）· 付款状态=全付 · 已收金额=金额', async () => {
+  logs.length = 0;
+  const h = build();
+  const result = await h.service.handleTableChanges([actionItem()]);
+  assert.equal(result.results[0].ok, true);
+  // 改前逐字（原 AC-AC3，钉在**已删的**工作台路由上）：
+  //   `assert.equal(add[0].input.inStock, undefined)`（那时它由**路由**给 `sellableKindOf(...).defaultInStock`）
+  //   ＋ `assert.equal(sub[0].input.paymentStatus, SCAN_WRITE.sale.paymentStatus.full)` / `paidAmount`
+  // 改后逐字：下面三条 —— **同一批入参**，改钉在**活着的**新链路上 ✓
+  // 依据：工作台自建写服务已删（她 2026-10-15「可以删除了」）⇒ 判据迁到新链路，语义一个字没变 ✗
+  assert.equal(h.lines[0].inStock, true, '配品默认**现货**（可售品配置的默认 ⇒ 不是路由现编 ✗）');
+  const { SCAN_WRITE } = require('../src/config/scanWrite');
+  assert.equal(h.sales[0].paymentStatus, SCAN_WRITE.sale.paymentStatus.full, '付款状态 = 已拍板值域里的「全付」✓');
+  assert.equal(h.sales[0].paidAmount, '128', '已收金额 = 这一行的金额（一分不差 ✓）');
+});
+
+test('AC-MIG2 🔴【迁移自 AC-AC4】**零库存动作**：这一趟只走 `addSaleLine` + `submitSale`（源码哨兵：新链路不碰任何库存件）', async () => {
+  logs.length = 0;
+  const h = build();
+  await h.service.handleTableChanges([actionItem()]);
+  // 行为：假引擎**只有**那两个方法（真引擎的库存写入走 `InventoryService`，本链路一次都不该经过）✓
+  assert.equal(h.lines.length, 1, '只加一行配品（走既有 addSaleLine）✓');
+  assert.equal(h.sales.length, 1, '只提交一次（走既有 submitSale）✓');
+  // 改前逐字（原 AC-AC4，钉在**已删的**工作台路由上）：`const methods = [...new Set(spy.calls.map(c => c.method))]`
+  //   ＋ `assert.deepEqual(methods, ['addSaleLine', 'submitSale'])`（探针挂在被删的那两条路由上 ✗）
+  // 改后逐字：**源码哨兵 + 上面的调用计数** —— 同一个本意（配品不产生任何库存动作）✓
+  // 依据：判据是"配品不扣库存"，与"入口是工作台还是表单"无关 ⇒ 迁到活链路继续钉 ✗ 不许丢
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src/services/accessorySaleIntakeService.js'), 'utf8');
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+  for (const word of ['Inventory', 'inventory', 'stockMovements', 'liveInventory', 'applyPurchase', 'applySale']) {
+    assert.equal(code.includes(word), false, `配品这条链路里不该出现库存件：${word}`);
+  }
+});
+
+test('AC-MIG3 🔴【迁移自 AC-A2】配品不跟踪库存：可售品配置两个属性 + 引擎那道闸门**逐字还在**', () => {
+  const { SELLABLE_KINDS, sellableKindOf } = require('../src/config/sellableKinds');
+  const kind = SELLABLE_KINDS.accessory;
+  assert.equal(kind.tracksInventory, false, '配品不跟踪库存 ✓');
+  assert.equal(kind.requiresFulfillment, false, '配品不需要履约（当场结清 ✓）');
+  assert.equal(sellableKindOf({ kind: 'accessory' }).defaultInStock, true, '默认现货 ✓');
+  // 改前逐字（原 AC-A2，文件头指向**已删的**工作台自建链路）：
+  //   `const svc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'scanWriteService.js'), 'utf8');`
+  //   ＋ `assert.ok(svc.includes('if (!(kind.requiresFulfillment && kind.tracksInventory)) return false;'))`
+  // 改后逐字：**同一句闸门**照旧逐字钉着（这两行一个字没改，只是它的消费者换成了新链路）✓
+  // 依据：删的是工作台那套入口，**引擎与可售品配置一个字没动** ⇒ 判据原地保留 ✗ 不许跟着入口消失
+  const svc = fs.readFileSync(path.join(__dirname, '..', 'src/services/scanWriteService.js'), 'utf8');
+  assert.ok(svc.includes('if (!(kind.requiresFulfillment && kind.tracksInventory)) return false;'),
+    '既有闸门逐字还在（配品 ⇒ false ⇒ 不交付、不扣库存 ✓）');
+});
+
+test('AC-MIG4 🔴【AC-A4b 的口径**已更新**】新链路：`收款方式` 关联为空 ⇒ **拒单 + 零写入**（不再"沿用配置默认"）', async () => {
+  logs.length = 0;
+  // ⚠️ 事件里「收款方式」为空 ⇒ 服务会**兜底读那一行**补齐缺的列（`getByTableId`）——
+  //   所以假网关要能给出**除了收款方式以外**都齐全的那一行，否则拒单原因会先撞上「名称」✗
+  //   ⚠️ 兜底读回来的 `recordFields` 是按**列名**（`fields.name` = 「名称」等）索引的（不是列 id ✗）
+  const saleFields = resolveAccessorySaleIntakeConfig({}).fields;
+  const h = build({
+    gatewayOpts: {
+      recordFields: {
+        [saleFields.name]: [{ record_ids: [NAME_ID] }],
+        [saleFields.quantity]: 1,
+        [saleFields.amount]: 128,
+      },
+    },
+  });
+  const result = await h.service.handleTableChanges([actionItem({ method: '' })]);
+  // 改前逐字（原 AC-A4b，钉在**已删的**工作台路由上）：
+  //   `assert.equal(sub.input.payments[0].method, SCAN_WRITE.sale.defaultPaymentMethod, '沿用配置默认 ✓')`
+  // 改后逐字：**拒单**（`ok:false` + 零写入 + 人话原因）——
+  // 依据：task-19 她/Lead 定的新口径「**收款方式或名称（关联）为空/取不到 ⇒ 不成单**、如实记日志」
+  //   （入口换成她那张表单，收款方式是必填关联列）⇒ 老口径"没传就用默认"**随自建入口一起退场** ✓
+  //   ⚠️ 这条是**有意的行为变化**，在 PR 的迁移清单里单列（不是静默丢判据 ✗）
+  assert.equal(result.results[0].ok, false, '收款方式取不到 ⇒ 拒单 ✓（不敢猜一个方式）');
+  assert.equal(h.lines.length + h.sales.length, 0, '🔴 一个写调用都没有（不成单 ✓）');
+  assert.equal(h.writes[0].fields['写入状态'], '写入失败');
+  assert.match(String(h.writes[0].fields['失败原因']), /收款方式/, '原因要写清是「收款方式」✓');
+  assert.equal(logs.some((entry) => entry.event === 'accessory_sale_intake.rejected'), true, '如实记日志 ✓');
+});
+
+test('AC-MIG5 ⭐⭐【迁移自工作台 AC-AC3 的"写入口必须作废订单缓存"】配品成单**真的落下之后**作废**同一份**工作台订单缓存', async () => {
+  // 依据（Lead 2026-10-15 晚授权顺手修）：工作台那套自建写服务删除后，`POST /sales/accessory-sales`
+  //   原本那一次 `ordersCache.invalidate()` **跟着没了**；而配品成单搬到这条新链路 ⇒
+  //   "写入口作废订单缓存"这条判据必须在新链路上继续钉 ✗ 不许消失。
+  //   ⚠️ 位置铁律（Lead 点名）：必须在**单子真的落下之后**（异步那一半跑完 + 回写「已写入」之后）作废 ——
+  //      提前作废 ⇒ 后台还没落完、缓存被**旧数据重新填满** ⇒ 她刷新还是看不到这一单 ✗
+  logs.length = 0;
+
+  // ① 同步成单 ⇒ 恰好作废一次
+  const syncCache = fakeOrdersCache();
+  const syncRun = build({ ordersCache: syncCache });
+  const syncResult = await syncRun.service.handleTableChanges([actionItem()]);
+  assert.equal(syncResult.results[0].ok, true);
+  assert.deepEqual(syncCache.calls, ['invalidate'], '成单成功 ⇒ 作废一次 ✓');
+
+  // ② 拒单（金额 0）⇒ **不作废**（没有新数据落地，白作废只会丢一次缓存 ✓）
+  const rejectCache = fakeOrdersCache();
+  const rejectRun = build({ ordersCache: rejectCache });
+  const rejected = await rejectRun.service.handleTableChanges([actionItem({ amount: 0 })]);
+  assert.equal(rejected.results[0].ok, false);
+  assert.deepEqual(rejectCache.calls, [], '拒单 ⇒ 不作废 ✓');
+
+  // ③ ⭐⭐ 异步那一半（⑰ 默认开）：**后台跑完那一刻**才作废（提前作废 = 缓存被旧数据填满 ✗）
+  let releaseBackground;
+  const background = new Promise((resolve) => { releaseBackground = resolve; });
+  const asyncCache = fakeOrdersCache();
+  const asyncRun = build({ engineOpts: { backgroundOf: () => background }, ordersCache: asyncCache });
+  const pending = asyncRun.service.handleTableChanges([actionItem()]);
+  await new Promise((resolve) => { setImmediate(resolve); });
+  assert.deepEqual(asyncCache.calls, [], '🔴 后台还没跑完 ⇒ **一次都不许作废**（否则缓存会被旧数据填满 ✗）');
+  releaseBackground({ ok: true, order_no: 'XSD-BG-1' });
+  const asyncResult = await pending;
+  assert.equal(asyncResult.results[0].ok, true);
+  assert.deepEqual(asyncCache.calls, ['invalidate'], '后台跑完（单子真的落下）⇒ 作废一次 ✓');
+
+  // ④ 它拿的是**进程级共享实例**（与工作台 router 同一个 ⇒ 才能让工作台那边看到新单 ✓）
+  const intake = fs.readFileSync(path.join(__dirname, '..', 'src/services/accessorySaleIntakeService.js'), 'utf8');
+  assert.ok(intake.includes("require('./workbenchOrdersCache').sharedWorkbenchOrdersCache()"),
+    '默认拿**进程级共享**那一份缓存 ✓');
 });

@@ -1,358 +1,259 @@
 /**
- * ⭐⭐ 2026-10-14 晚：把「配品」整体搬进工作台「销售 → 配品」子 tab
- *   业务负责人逐字：「把配品给迁移到工作台销售里，新建一个子 tab，整体都迁移过去，只是入口变了，逻辑没有变」
- *                ＋「配品页的成交金额确实要必填」
- * 口径真源：`docs/accessory-in-workbench-2026-10-14.md`（AC-AC1…AC-AC9）· 配置真源：`config/workbenchAccessory.js`
+ * ⭐⭐ 2026-10-15（业务负责人逐字）：「**配品就是走表单了～工作台自建写服务"可以删除了，
+ *   也就说在工作台点击配品就是直接跳转表单链接**」
  *
- * ⚠️ 本文件钉的是**工作台这一层**（路由编排 + 配置）：一步成单（1 次 addSaleLine + 1 次 submitSale ✓）·
- *    **零库存动作**（只调这两个既有写方法 ✓ 没有任何库存调用 ✓）· 同键两跑**同一把** `submitKey` ✓ ·
- *    成交金额必填（空/非正数 ⇒ 400 + 人话 **且一个字都不写** ✓）。
- * ⚠️ 「测试 Base 真跑数表」属于**带凭证的环境**（服务器/CI）该跑的那一步 ✓：本文件把它拆成
- *    "路由必须调这两个既有方法 + 只调它们" ✓（写入语义本身由 `test/scanSaleAccessoryAndRemark.test.js` 覆盖 ✓）。
+ * ⚠️⚠️ 本文件是**重写**（不是新增）：它 2026-10-15 之前钉的是"工作台自建配品面板 + 自建写服务"
+ *   （`public/workbench/features/accessory/**` + `config/workbenchAccessory.js` +
+ *    `GET /sales/payment-methods` / `GET /sales/accessories` / `POST /sales/accessory-sales`）。
+ *   那一套**已整段删除** ⇒ 本文件改成钉**新入口**与**"判据没有跟着消失"**这两件事。
+ *
+ * ── 判据迁移清单（原 `AC-AC*` / `AC-A*` → 现在由谁承载）────────────────────────
+ * | 原判据（钉在**已删**的自建链路上）                                        | 现在由谁承载 |
+ * | ------------------------------------------------------------------------ | ------------ |
+ * | AC-AC3 一步成单：`addSaleLine(kind:accessory)` + `submitSale`、收款明细 1 行 | `test/accessorySaleIntake.test.js` **AC-AS1** |
+ * | AC-AC3 的 `inStock` / `paymentStatus=全付` / `paidAmount`                  | 同文件 **AC-MIG1** ⭐ 迁移 |
+ * | AC-AC4 零库存动作（这一趟只调那两个既有写方法）                             | 同文件 **AC-MIG2** ⭐ 迁移 |
+ * | AC-A2 配品不扣库存（`tracksInventory:false` + 引擎那道闸门逐字）            | 同文件 **AC-MIG3** ⭐ 迁移 |
+ * | AC-A4b「没传收款方式 ⇒ 沿用配置默认」                                      | ⚠️ **口径已更新**：新链路「关联为空 ⇒ 拒单」⇒ 同文件 **AC-MIG4**（**有意的行为变化**，PR 单列） |
+ * | AC-AC6 金额必填（空 / 0 / 负数 ⇒ 不成单 + 零写入）                          | 同文件 **AC-AS4** |
+ * | AC-AC5 幂等（同一把键只成一次单）                                          | 同文件 **AC-AS2**（键 = **记录 ID**） |
+ * | AC-AC3 的「写入口必须作废工作台订单缓存」（`ordersCache.invalidate()`）      | 同文件 **AC-MIG5** ⭐ 迁移（**成单真的落下之后**作废**进程级共享**那一份）；`workbenchOrdersPerformance.test.js` **AC7 ③b** 逐条钉住位置 ✓ |
+ * | AC-AC1 子 tab「配品」在、位置在订单列表 / 销售查询 / 客户往来款之后           | 本文件 **AC-AC1**（判据照旧 ✓） |
+ * | AC-AC10 字段各占一行 / AC-AC7 数量默认 1 / AC-AC8 UI 硬规矩                 | ❌ 随面板一起删（依据：面板已不存在 ✓） |
+ * | AC-AC2 清单接口 200+空数组 / AC-A3 收款方式选项来自表 / AC-A5 读不到表 ⇒ 503 | ❌ 随那三条接口一起删（依据：接口已不存在 ✓） |
+ * | AC-AC1b `kind:'accessory'` 分派                                            | 翻转成本文件 **AC-D1b**（"那条分派不再存在"✓） |
+ *
+ * ── 验收标准（先写后做；每条能真红）─────────────────────────────────────────
+ *   AC-D1 ⭐⭐ 「配品」那一格 ⇒ **点一下就是打开表单**（链接**只来自** `config/links.js`；
+ *           能真红：把 kind 改回自建 / 把 href 改空 / 把 URL 抄进 domains.js ⇒ 红）
+ *   AC-D2 🔴 全仓 **0 处活引用**（`features/accessory` / `workbenchAccessory` /
+ *           `/sales/accessory-sales` / `/sales/accessories` / `/sales/payment-methods`）——
+ *           注释 / 文档留痕允许 ✓
+ *   AC-D3 ⭐ **判据迁移收口**：新链路上的 `AC-MIG1..AC-MIG4` **必须还在**（不许跟着死文件消失 ✗）
+ *   AC-D4 🔴 `require('./src/routes/workbench')` ＋ `require('./src/app')` **能加载**（无悬空引用）
+ * ─────────────────────────────────────────────────────────────────────────
  */
 'use strict';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const crypto = require('node:crypto');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
-const express = require('express');
+const { spawnSync } = require('node:child_process');
+const { pathToFileURL } = require('node:url');
 
-process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_acc_tab_test';
-process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'acc_tab_test_secret';
+// 路由模块的 require 链会在模块级求值凭证 / 表 ID（为了让模块能加载；本文件一次飞书都不打）。
+process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_accessory_form_test';
+process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'accessory_form_test_secret';
 
-const { createWorkbenchRouter } = require('../src/routes/workbench');
-const accessoryTab = require('../src/config/workbenchAccessory');
-const { SCAN_WRITE } = require('../src/config/scanWrite');
+const SERVER_ROOT = path.join(__dirname, '..');
+const WORKBENCH = path.join(SERVER_ROOT, 'public/workbench');
+const readWorkbench = (relative) => fs.readFileSync(path.join(WORKBENCH, relative), 'utf8');
 
-// pass the workbench gate the same way the other route tests do (auth on + signed cookie)
-const SESSION_SECRET = 'workbench_accessory_tab_test_secret';
-process.env.LARK_WEB_AUTH_ENABLED = 'true';
-process.env.LARK_WEB_SESSION_SECRET = SESSION_SECRET;
-delete process.env.WORKBENCH_ALLOWED_OPEN_IDS;
-const sessionCookie = (openId = 'ou_acc_tab') => {
-  const payload = Buffer.from(JSON.stringify({ open_id: openId, name: 'T', exp: Date.now() + 3600 * 1000 })).toString('base64url');
-  const signature = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
-  return `workbench_session=${payload}.${signature}`;
-};
-const COOKIE = sessionCookie();
+/** 去注释（JS / CSS）——「注释里留沿革」不算活引用。 */
+const stripComments = (source) => source
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^\s*\/\/.*$/gm, '')
+  .replace(/([^:])\/\/.*$/gm, '$1');
 
-const withServer = async (app, run) => {
-  const server = await new Promise((resolve) => { const i = app.listen(0, () => resolve(i)); });
-  // 2026-10-15 task-17：测试服务器不保持 keep-alive（根因与实测见 test/stabilityRepro.cjs）
-  server.keepAliveTimeout = 1;
-  const base = `http://127.0.0.1:${server.address().port}`;
-  try { await run(base); } finally { await new Promise((resolve) => server.close(resolve)); }
-};
-/** 挂真正的 router，只把**写服务**换成探针（既有测试的同一姿势 ✓） */
-const appFor = (scanWrite, extra = {}) => {
-  const app = express();
-  app.use(express.json());
-  app.use('/api/workbench', createWorkbenchRouter({ gateway: {}, scanWrite, ...extra }));
-  app.use((error, req, res, next) => res.status(500).json({ success: false, error: error.message }));
-  return app;
-};
-const spyOf = (list = []) => {
-  const calls = [];
-  return {
-    calls,
-    listAccessories: async () => { calls.push({ method: 'listAccessories' }); return list; },
-    addSaleLine: async (input) => { calls.push({ method: 'addSaleLine', input }); return { ok: true, count: 1 }; },
-    submitSale: async (input) => {
-      calls.push({ method: 'submitSale', input });
-      return { ok: true, order_no: 'XSD-ACC-1', detail_count: 1, payment_count: 1, reused: calls.filter((c) => c.method === 'submitSale').length > 1 };
-    },
-  };
-};
-const post = (base, p, body) => fetch(`${base}${p}`, {
-  method: 'POST', headers: { cookie: COOKIE, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-});
-
-test('AC-AC10 ⭐ 面板里**不再重复写「配品」**＋ 名称/数量/金额**各占一行**（2026-10-14 真机）', () => {
-  const src = fs.readFileSync(path.join(__dirname, '../public/workbench/features/accessory/index.js'), 'utf8');
-  // ① 子 tab 已叫「配品」⇒ 面板里不许再重复渲染一次那个标题（她：「面板你用再写配品里」）
-  assert.equal(/<h3>/.test(src), false, '面板里不许再有重复的标题元素（子 tab 已经叫配品）');
-  // ② 三个字段各占一行：复用工作台既有 .form-field（一字段一行）⇒ 三个都要有，且**不许**把它们塞进同一行容器
-  // ⚠️ 2026-10-14 **改指向**（她当次又给了口径：「配品收款方式**读『收款方式管理』表**」）——
-  //   面板从 **3** 个字段变成 **4** 个（多一个「收款方式」下拉）✓
-  //   改前逐字：`assert.equal(fields, 3, '名称/数量/金额三个字段都要用 .form-field 各占一行')` + 三条 needle
-  //   依据：她 2026-10-14 原话「配品收款方式读『收款方式管理』表」✓（选项清单来自表 ✓ 前端不内置 ✗）
-  const fields = (src.match(/<label class="form-field">/g) || []).length;
-  assert.equal(fields, 4, `名称/数量/金额/收款方式四个字段都要用 .form-field 各占一行（实际 ${fields}）`);
-  for (const needle of [
-    'data-field="accessory-name"', 'data-field="accessory-quantity"',
-    'data-field="accessory-amount"', 'data-field="accessory-method"',
-  ]) {
-    assert.ok(src.includes(needle), `字段要在：${needle}`);
-  }
-});
-
-test('AC-AC1 ⭐ 工作台「销售」下出现子 tab「配品」（位置 = 订单列表/销售查询/客户往来款之后 ✓）', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench', 'config', 'domains.js'), 'utf8');
-  const sales = src.slice(src.indexOf("id: 'sales'"));
-  const order = sales.indexOf("id: 'sales-orders'");
-  const query = sales.indexOf("id: 'sales-query'");
-  const acc = sales.indexOf("id: 'sales-accessory'");
-  assert.ok(order > -1 && query > -1 && acc > -1, '三个子页都必须在');
-  assert.ok(acc > order && acc > query, '配品必须排在订单列表 / 销售查询**之后** ✓');
-  assert.match(sales.slice(acc, acc + 120), /kind: 'accessory'/, "配品子页 kind 必须是 'accessory' ✓");
-  assert.match(sales.slice(acc, acc + 120), /label: '配品'/, 'label 逐字「配品」✓');
-});
-
-test('AC-AC2 ⭐ 清单来自**既有**只读接口（`GET /sales/accessories`）· 空清单 ⇒ 照样 200 + 空数组 ✓', async () => {
-  const spy = spyOf([{ record_id: 'acc_1', name: '腰带' }]);
-  await withServer(appFor(spy), async (base) => {
-    const res = await fetch(`${base}/api/workbench${accessoryTab.api.list}`, { headers: { cookie: COOKIE } });
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.equal(body.success, true);
-    assert.deepEqual(body.accessories, [{ record_id: 'acc_1', name: '腰带' }]);
-    assert.equal(spy.calls.filter((c) => c.method === 'listAccessories').length, 1, '走的就是既有 listAccessories ✓');
-  });
-  const empty = spyOf([]);
-  await withServer(appFor(empty), async (base) => {
-    const res = await fetch(`${base}/api/workbench${accessoryTab.api.list}`, { headers: { cookie: COOKIE } });
-    const body = await res.json();
-    assert.equal(res.status, 200, `empty list must be 200 (got ${res.status} ${JSON.stringify(body)})`);
-    assert.deepEqual(body.accessories, [], 'empty list -> []');
-  });
-});
-
-test('AC-AC3 ⭐⭐ 一步成单：提交一次 ⇒ addSaleLine(kind=accessory) 1 次 + submitSale 1 次（收款 1 行 ✓）', async () => {
-  const spy = spyOf();
-  await withServer(appFor(spy), async (base) => {
-    const res = await post(base, `/api/workbench${accessoryTab.api.submit}`, {
-      accessoryRecordId: 'acc_1', amount: '199', submitKey: 'k-1', requestId: 'r-1',
-    });
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.equal(body.success, true);
-    assert.equal(body.order_no, 'XSD-ACC-1');
-    const add = spy.calls.filter((c) => c.method === 'addSaleLine');
-    const sub = spy.calls.filter((c) => c.method === 'submitSale');
-    assert.equal(add.length, 1, '只加一行配品 ✓');
-    assert.equal(add[0].input.kind, 'accessory', 'kind 由**路由**给（不取表单 ✗）');
-    assert.equal(add[0].input.accessoryRecordId, 'acc_1');
-    assert.equal(add[0].input.amount, '199');
-    assert.equal(sub.length, 1, '只提交一次 ✓');
-    assert.equal(sub[0].input.payments.length, 1, '收款只写 1 行 ✓');
-    assert.equal(sub[0].input.payments[0].amount, '199', '金额原样 ✓');
-    assert.equal(sub[0].input.paymentStatus, SCAN_WRITE.sale.paymentStatus.full, "付款方式 = 已拍板值域里的「全付」✓");
-    assert.equal(sub[0].input.paidAmount, '199');
-  });
-});
-
-test('AC-AC4 🔴 零库存动作：这一趟**只**调那两个既有写方法（没有任何库存/流水调用 ✓）', async () => {
-  const spy = spyOf();
-  await withServer(appFor(spy), async (base) => {
-    await post(base, `/api/workbench${accessoryTab.api.submit}`, {
-      accessoryRecordId: 'acc_1', amount: '88', submitKey: 'k-stock', requestId: 'r-stock',
-    });
-  });
-  const methods = [...new Set(spy.calls.map((c) => c.method))].sort();
-  assert.deepEqual(methods, ['addSaleLine', 'submitSale'],
-    `配品这条路**只许**调这两个既有写方法（实际 ${JSON.stringify(methods)}）—— 零库存动作 ✓`);
-  // 源码哨兵：工作台配品那两条接口里不许出现库存相关的调用 ✗
-  const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'workbench.js'), 'utf8');
-  const block = route.slice(route.indexOf('accessoryTab.api.list'), route.indexOf("router.post('/sales/detail-amounts'"));
-  for (const word of ['Inventory', 'inventory', 'stockMovements', 'liveInventory']) {
-    assert.equal(block.includes(word), false, `配品接口里不该出现 ${word}（配品不产生库存动作 ✗）`);
-  }
-});
-
-test('AC-AC5 ⭐ 幂等：**同一把 submitKey**原样下传（同键两跑 ⇒ 服务层只建一单 ✓ 路由不另造键 ✗）', async () => {
-  const spy = spyOf();
-  await withServer(appFor(spy), async (base) => {
-    for (const rid of ['r-a', 'r-b']) {
-      // eslint-disable-next-line no-await-in-loop
-      const res = await post(base, `/api/workbench${accessoryTab.api.submit}`, {
-        accessoryRecordId: 'acc_1', amount: '50', submitKey: 'same-key', requestId: rid,
-      });
-      assert.equal(res.status, 200);
+/**
+ * 把要跑的前端模块复制成 `.mjs`（**只改 import 的文件名，逻辑一个字不改**）——
+ * 与 `workbenchFourTabs.test.js` / `workbenchNoManualText.test.js` 同一套做法。
+ */
+async function loadFrontendModules() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'accessory-form-entry-'));
+  const copy = (from, to, replacements = []) => {
+    let source = readWorkbench(from);
+    for (const [needle, replacement] of replacements) {
+      assert.ok(source.includes(needle), `${from} 里没有找到要改的 import：${needle}`);
+      source = source.split(needle).join(replacement);
     }
-  });
-  const keys = spy.calls.filter((c) => c.method === 'submitSale').map((c) => c.input.submitKey);
-  assert.deepEqual(keys, ['same-key', 'same-key'], '两跑必须带**同一把**键 ✓（幂等不许拆 ✗）');
-  assert.equal(spy.calls.filter((c) => c.method === 'submitSale').length, 2, '路由不自己去重（去重在服务层 / 同一把键 ✓）');
+    fs.writeFileSync(path.join(dir, to), source, 'utf8');
+  };
+  copy('config/links.js', 'links.mjs');
+  copy('config/query.js', 'query.mjs', [["from './links.js'", "from './links.mjs'"]]);
+  copy('config/domains.js', 'domains.mjs', [["from './links.js'", "from './links.mjs'"]]);
+  copy('core/formatters.js', 'formatters.mjs');
+  copy('features/query/index.js', 'query-index.mjs', [
+    ["from '../../config/links.js'", "from './links.mjs'"],
+    ["from '../../config/query.js'", "from './query.mjs'"],
+    ["from '../../core/formatters.js'", "from './formatters.mjs'"],
+  ]);
+  copy('features/shared/placeholder.js', 'placeholder.mjs', [
+    ["from '../../core/formatters.js'", "from './formatters.mjs'"],
+  ]);
+  copy('features/domains/pages.js', 'domains-pages.mjs', [
+    ["from '../../core/formatters.js'", "from './formatters.mjs'"],
+    ["from '../shared/placeholder.js'", "from './placeholder.mjs'"],
+  ]);
+  copy('features/domains/nav.js', 'domains-nav.mjs', [
+    ["from '../../config/query.js'", "from './query.mjs'"],
+    ["from '../../core/formatters.js'", "from './formatters.mjs'"],
+    ["from '../query/index.js'", "from './query-index.mjs'"],
+    ["from './pages.js'", "from './domains-pages.mjs'"],
+  ]);
+  const load = (name) => import(pathToFileURL(path.join(dir, `${name}.mjs`)).href);
+  return {
+    domains: await load('domains'),
+    nav: await load('domains-nav'),
+    links: await load('links'),
+  };
+}
+
+const salesAccessoryPage = (domains) => domains.domainById('sales').pages.find((page) => page.id === 'sales-accessory');
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-AC1 子 tab「配品」仍在（位置不变）—— 判据照旧
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-AC1 ⭐ 工作台「销售」下仍有子 tab「配品」（位置 = 订单列表 / 销售查询 / 客户往来款 **之后**）', async () => {
+  const { domains } = await loadFrontendModules();
+  const sales = domains.domainById('sales');
+  const ids = sales.pages.map((page) => page.id);
+  assert.deepEqual(ids, ['sales-orders', 'sales-query', 'sales-customer-money', 'sales-accessory'],
+    '配品仍是销售下的最后一格（顺序与 id 逐字未变 ✓）');
+  assert.equal(salesAccessoryPage(domains).label, '配品', 'label 逐字「配品」✓');
 });
 
-test('AC-AC6 ⭐⭐ 成交金额必填：空 / 0 / 负数 ⇒ **HTTP 400 + 人话**，且**一个字都不写** ✗', async () => {
-  for (const amount of ['', '   ', '0', '-5', 'abc']) {
-    const spy = spyOf();
-    // eslint-disable-next-line no-await-in-loop
-    await withServer(appFor(spy), async (base) => {
-      const res = await post(base, `/api/workbench${accessoryTab.api.submit}`, {
-        accessoryRecordId: 'acc_1', amount, submitKey: 'k-bad', requestId: 'r-bad',
-      });
-      assert.equal(res.status, 400, `amount=${JSON.stringify(amount)} 必须 400 ✗`);
-      const body = await res.json();
-      assert.equal(body.success, false, '绝不返回成功 ✗');
-      assert.equal(body.error, accessoryTab.texts.amountRequired, '人话来自配置 ✓');
-      assert.deepEqual(spy.calls, [], `amount=${JSON.stringify(amount)} 时**四表零写入** ✓（实际 ${JSON.stringify(spy.calls)}）`);
-    });
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-D1 点「配品」⇒ 直接打开表单（链接只来自 config/links.js）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-D1 ⭐⭐ 点「配品」⇒ **直接打开她那张飞书表单**（`kind:"links"` + `directJump`，URL 只在 config/links.js）', async () => {
+  const { domains, nav, links } = await loadFrontendModules();
+  const page = salesAccessoryPage(domains);
+  assert.ok(page, '「配品」子页必须在');
+
+  // ① 改前逐字：`{ id: 'sales-accessory', label: '配品', kind: 'accessory' }`（挂工作台自建的配品面板）
+  //    改后逐字：`kind: 'links'` + `directJump: true` + 恰好一张卡（与「货品上新」「供应商名录」**同一套** ✓）
+  //    依据：她 2026-10-15「**在工作台点击配品就是直接跳转表单链接**」✓
+  assert.equal(page.kind, 'links', '改成"外链卡"那种页（不再是自建面板 accessory）');
+  assert.equal(page.directJump, true, '点一次就跳（既有直跳机制 ✓ 不新造 ✗）');
+  assert.equal((page.cards || []).length, 1, '恰好一张卡（直跳机制要求恰好一张 ✓）');
+
+  // ② **链接只来自 `config/links.js`**（配置/模板里不复制字面量 ✗）
+  assert.equal(page.cards[0].href, links.ACCESSORY_SALE_FORM_URL, 'href = config/links.js 里那个常量 ✓');
+  assert.equal(links.ACCESSORY_SALE_FORM_URL,
+    'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnCUHxarWSWhoQRiv6qJeKWh', 'URL 逐字是她给的那条 ✓');
+  assert.equal(readWorkbench('config/domains.js').includes('scnzoiwpgxik'), false,
+    'domains.js 里不许复制 URL 字面量（单一来源 = config/links.js ✗）');
+
+  // ③ 文案走配置（标题 / 动作都在 domains.js 这一份配置里，非空）
+  assert.ok(String(page.cards[0].title || '').length > 0, '卡片标题来自配置 ✓');
+  assert.ok(String(page.cards[0].arrow || '').length > 0, '动作文案来自配置 ✓');
+
+  // ④ **点一下真的会跳**：`resolveTabClick` 给出 jump（不是"切到本页再看卡片"）
+  const action = nav.resolveTabClick(page);
+  assert.ok(String(action.jump || '').length > 0, '点一下子 tab ⇒ 直接跳（jump 非空 ✓）');
+  // 默认走**飞书端内 AppLink**（与「货品上新」同一条路 ✓）
+  assert.ok(nav.directJumpUrlForPage(page).includes('applink.feishu.cn'), '默认端内打开（AppLink ✓）');
+  assert.equal(nav.directJumpUrlForPage(page, { applinkEnabled: false }), links.ACCESSORY_SALE_FORM_URL,
+    '关掉 AppLink ⇒ 就是她那条表单 URL（判据没放宽 ✓）');
+  // 直跳页**不渲染中间内容**（点一次就走）
+  assert.equal(nav.domainPageHtml(page), '', '直跳页不渲染中间卡片 ✓');
+});
+
+test('AC-D1b 🔴 反向哨兵：`kind:"accessory"` 那条**分派与模块**都不在了（改回去 ⇒ 红）', () => {
+  const skeleton = stripComments(readWorkbench('features/domains/index.js'));
+  assert.equal(skeleton.includes('accessory'), false,
+    '领域骨架里不许再有 accessory 的分派 / import（那条路已删 ✗）');
+  assert.equal(fs.existsSync(path.join(WORKBENCH, 'features/accessory')), false, '配品面板目录必须不存在');
+  assert.equal(fs.existsSync(path.join(WORKBENCH, 'config/accessory.js')), false, '配品前端配置必须不存在');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-D2 全仓 0 处活引用（注释 / 文档留痕允许）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-D2 🔴 全仓 0 处**活引用**：features/accessory · workbenchAccessory · 那三条自建接口', () => {
+  const NEEDLES = [
+    ['features', 'accessory'].join('/'),         // 前端面板目录
+    ['workbench', 'Accessory'].join(''),         // 服务端那份配置
+    ['/sales/accessory', '-sales'].join(''),     // 自建成单接口
+    ['/sales/', 'accessories'].join(''),         // 自建清单接口
+    ['/sales/payment', '-methods'].join(''),     // 只服务那个面板的收款方式接口
+    ['ACCESSORY_', 'API'].join(''),
+    ['ACCESSORY_', 'TEXTS'].join(''),
+  ];
+  // ⚠️ 排除本哨兵自己（上面这些 needle 是拼出来的，但错误信息里会出现 ⇒ 排除更稳 ✓）
+  const SELF = path.join(__dirname, 'workbenchAccessoryTab.test.js');
+  const offenders = [];
+  const walk = (current) => {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) { walk(full); continue; }
+      if (full === SELF) continue;
+      if (!/\.(js|css|html)$/.test(entry.name)) continue;
+      const raw = fs.readFileSync(full, 'utf8');
+      const code = /\.(js|css)$/.test(entry.name) ? stripComments(raw) : raw;
+      for (const needle of NEEDLES) {
+        if (code.includes(needle)) offenders.push(`${path.relative(SERVER_ROOT, full)} ← ${needle}`);
+      }
+    }
+  };
+  for (const root of [path.join(SERVER_ROOT, 'src'), WORKBENCH, path.join(SERVER_ROOT, 'test')]) walk(root);
+  assert.deepEqual(offenders, [], `还有活引用：\n  ${offenders.join('\n  ')}`);
+
+  // 那三个已被删掉的文件 / 目录，一个都不是"还在"
+  for (const gone of [
+    'public/workbench/features/accessory',
+    'public/workbench/config/accessory.js',
+    'src/config/workbenchAccessory.js',
+  ]) {
+    assert.equal(fs.existsSync(path.join(SERVER_ROOT, gone)), false, `${gone} 必须已删`);
   }
-});
-
-test('AC-AC9 ⭐ 旧入口不死：扫码页 `?from=accessory` 仍**回落销售** ✓（#523 已定 · 不回归 ✗）', () => {
-  const { resolveRealm } = require('../src/views/scanPageRealm');
-  assert.equal(resolveRealm('accessory'), 'sales', 'accessory 已搬走 ⇒ 扫码页回落销售 ✓');
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 前端（AC-AC7 / AC-AC8）—— 源码级哨兵：默认值 · 配置化文案 · 44px · 即时反馈
-// ═══════════════════════════════════════════════════════════════════════════
-const FEATURE = fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench', 'features', 'accessory', 'index.js'), 'utf8');
-const FE_CONFIG = fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench', 'config', 'accessory.js'), 'utf8');
-const DOMAINS_FEATURE = fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench', 'features', 'domains', 'index.js'), 'utf8');
-
-test('AC-AC1b: the sub-page is really mounted (kind accessory has its own module)', () => {
-  assert.ok(DOMAINS_FEATURE.includes("page.kind === 'accessory'"), 'domains 特性必须分派 accessory ✓');
-  assert.ok(DOMAINS_FEATURE.includes("from '../accessory/index.js'"), 'import 必须指向新模块 ✓');
-  assert.ok(FEATURE.includes('export const createAccessoryModule'), '模块必须导出 createAccessoryModule ✓');
-});
-
-test('AC-AC7 ⭐ 数量默认 **1**（页面渲染值 ✓ 不填也能提交 ✓）', () => {
-  assert.match(FE_CONFIG, /ACCESSORY_DEFAULT_QUANTITY\s*=\s*1;/, '默认值必须在配置里且 = 1 ✓');
-  assert.ok(FEATURE.includes('value="${ACCESSORY_DEFAULT_QUANTITY}"'), '渲染时用配置里的默认值 ✓');
-  assert.ok(FEATURE.includes('inputmode="numeric"'), '数量是数字输入 ✓');
-});
-
-test('AC-AC8 ⭐⭐ UI 硬规矩：文案**全部走配置** ✓ · 控件 ≥44px（既有令牌 ✓）· 点击**即时反馈** ✓', () => {
-  // ① 文案零硬编码：这个 feature 文件里**不许有中文**（全部来自 `config/accessory.js` ✓）
-  // ⚠️ 先剥注释（注释里解释口径会用中文 ✗）—— 判据本意是**渲染文案**零硬编码 ✓
-  const featureCode = FEATURE.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  assert.equal(/[\u4e00-\u9fff]/.test(featureCode), false, '前端 feature 的**代码**里不许有中文字面量（走配置 ✗）');
-  assert.ok(FE_CONFIG.includes('ACCESSORY_TEXTS'), '文案配置必须在 ✓');
-  // ② 44px：控件用的是既有 `.btn` / `input` / `select`（base.css 里给了 --control-height ✓）
-  const base = fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench', 'styles', 'base.css'), 'utf8');
-  assert.match(base, /\.btn,\s*input,\s*select\s*\{[^}]*min-height:\s*var\(--control-height\)/, '既有控件样式必须给 ≥44px ✓');
-  assert.ok(FEATURE.includes('class="btn btn-primary"'), '提交按钮用既有按钮样式 ✓');
-  // ③ 即时反馈：请求**之前**就置灰 + 换文案 ✓（不是等响应 ✗）
-  const submitBody = FEATURE.slice(FEATURE.indexOf('const submit = async'), FEATURE.indexOf('return {'));
-  assert.ok(submitBody.indexOf('button.disabled = true') < submitBody.indexOf('await api.post'),
-    '必须先置灰再发请求（点击即时反馈 ✓）');
-  assert.ok(submitBody.includes('button.textContent = T.submitting'), '文案也要立刻换 ✓');
-  // ④ 失败**如实**：有 catch + 人话，且不吞错 ✗
-  assert.ok(submitBody.includes('catch (error)'), '要有 catch ✓');
-  assert.ok(submitBody.includes('error?.message || T.submitFailed'), '失败给服务端人话或兜底人话 ✓');
-  // ⑤ 空清单 ⇒ 人话空态卡（不留空下拉 ✗）
-  assert.ok(FEATURE.includes('data-view="accessory-empty"'), '空清单要有人话卡 ✓');
+  // 路由源码里也不许再出现那三条（源码哨兵）
+  const routes = fs.readFileSync(path.join(SERVER_ROOT, 'src/routes/workbench.js'), 'utf8');
+  assert.equal(/router\.(get|post)\(\s*accessoryTab/.test(routes), false, '那三条自建路由必须整段删掉');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 2026-10-14 晚（她逐字）：「**并且配品都是默认的现货**」＋「配品收款方式读『收款方式管理』表」
+// AC-D3 判据迁移收口（新链路上必须还钉着）
 // ═══════════════════════════════════════════════════════════════════════════
-const { SELLABLE_KINDS, sellableKindOf } = require('../src/config/sellableKinds');
-const { salesTradeTypeForStock } = require('../src/config/salesTradeTypePolicy');
 
-test('AC-A1 ⭐⭐ 配品（新行）默认**现货**：状态字段真值 = 现货编码（逐字 ✓ 能真红 ✓）', () => {
-  // ⭐ 真值来源：可售品配置里声明的默认 ⇒ 走**既有**判据 `salesTradeTypeForStock`
-  assert.equal(sellableKindOf({ kind: 'accessory' }).defaultInStock, true, '配品默认现货（配置 ✓）');
-  assert.equal(salesTradeTypeForStock({ inStock: true }), 'SALE_CASH', '现货 ⇒ 既有编码 SALE_CASH ✓');
-  // 路由必须把这条默认**真的传下去**（不是只写在配置里 ✗）
-  const spy = spyOf();
-  return withServer(appFor(spy), async (base) => {
-    await post(base, `/api/workbench${accessoryTab.api.submit}`, {
-      accessoryRecordId: 'acc_1', amount: '99', submitKey: 'k-default-instock', requestId: 'r-di',
-    });
-    const add = spy.calls.find((c) => c.method === 'addSaleLine');
-    assert.equal(add.input.inStock, true, '配品行必须带 inStock:true（⇒ 落表状态 = 现货 ✓）');
-    assert.equal(add.input.kind, 'accessory');
-  });
-});
-
-test('AC-A2 🔴 「配品不扣库存」**一个字没变**：交付/扣库存闸门对配品永远不放行 ✓', () => {
-  const kind = SELLABLE_KINDS.accessory;
-  assert.equal(kind.tracksInventory, false, '配品不跟踪库存 ✓');
-  assert.equal(kind.requiresFulfillment, false, '配品不需要履约（当场结清 ✓）');
-  // 源码哨兵：那道闸门就是这两个属性一起判（所以"默认现货"**不会**带来任何库存动作 ✗）
-  const svc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'scanWriteService.js'), 'utf8');
-  assert.ok(svc.includes('if (!(kind.requiresFulfillment && kind.tracksInventory)) return false;'),
-    '既有闸门逐字还在（配品 ⇒ false ⇒ 不交付、不扣库存 ✓）');
-  // 路由侧：配品这条路**只**调那两个既有写方法 ✓（复用 AC-AC4 的探针口径）
-  const spy = spyOf();
-  return withServer(appFor(spy), async (base) => {
-    await post(base, `/api/workbench${accessoryTab.api.submit}`, {
-      accessoryRecordId: 'acc_1', amount: '50', submitKey: 'k-no-stock', requestId: 'r-ns',
-    });
-    const methods = [...new Set(spy.calls.map((c) => c.method))].sort();
-    assert.deepEqual(methods, ['addSaleLine', 'submitSale'], `只许这两个既有写方法（实际 ${JSON.stringify(methods)}）`);
-  });
-});
-
-test('AC-A4 ⭐⭐ 收款方式 = **她选的那条**（原样落「收款明细」✓ 不被默认值顶掉 ✗）', () => {
-  const spy = spyOf();
-  const chosen = '抖音代金券（49.9）';
-  return withServer(appFor(spy), async (base) => {
-    await post(base, `/api/workbench${accessoryTab.api.submit}`, {
-      accessoryRecordId: 'acc_1', amount: '49.9', method: chosen, submitKey: 'k-method', requestId: 'r-m',
-    });
-    const sub = spy.calls.find((c) => c.method === 'submitSale');
-    assert.equal(sub.input.payments.length, 1, '仍只落一行收款 ✓');
-    assert.equal(sub.input.payments[0].method, chosen, '落表的就是她选的那条 ✓');
-    assert.equal(sub.input.payments[0].amount, '49.9');
-  });
-});
-
-test('AC-A4b ⭐ 没传方式时沿用**配置默认**（不猜、也不静默写空 ✗）', () => {
-  const spy = spyOf();
-  return withServer(appFor(spy), async (base) => {
-    await post(base, `/api/workbench${accessoryTab.api.submit}`, {
-      accessoryRecordId: 'acc_1', amount: '20', submitKey: 'k-defmethod', requestId: 'r-dm',
-    });
-    const sub = spy.calls.find((c) => c.method === 'submitSale');
-    assert.equal(sub.input.payments[0].method, SCAN_WRITE.sale.defaultPaymentMethod, '沿用配置默认 ✓');
-  });
+test('AC-D3 ⭐⭐ 判据迁移收口：`AC-MIG1..AC-MIG4` 仍在**新链路**的用例里（不许跟着死文件消失 ✗）', () => {
+  const intake = fs.readFileSync(path.join(__dirname, 'accessorySaleIntake.test.js'), 'utf8');
+  for (const ac of ['AC-MIG1', 'AC-MIG2', 'AC-MIG3', 'AC-MIG4', 'AC-MIG5']) {
+    assert.ok(intake.includes(ac), `${ac} 必须还在（它是原工作台那条判据的新家 ✓）`);
+  }
+  // 逐条对得上"迁移自哪一条"
+  for (const from of ['AC-AC3', 'AC-AC4', 'AC-A2', 'AC-A4b']) {
+    assert.ok(intake.includes(from), `迁移说明里要点名原判据（${from}）✓`);
+  }
+  // ⭐ 真判据的四根钉子（内容级，不是只有名字）
+  assert.ok(intake.includes('inStock, true'), 'AC-MIG1：配品默认现货 ✓');
+  assert.ok(intake.includes('paymentStatus'), 'AC-MIG1：付款状态 ✓');
+  assert.ok(intake.includes('paidAmount'), 'AC-MIG1：已收金额 ✓');
+  assert.ok(intake.includes('tracksInventory'), 'AC-MIG3：配品不跟踪库存 ✓');
+  assert.ok(intake.includes('paymentMethodMissing') || intake.includes('收款方式'),
+    'AC-MIG4：收款方式为空的口径 ✓');
+  assert.ok(intake.includes('AC-MIG5'), 'AC-MIG5：成单后作废订单缓存 ✓');
+  const intakeService = fs.readFileSync(path.join(SERVER_ROOT, 'src/services/accessorySaleIntakeService.js'), 'utf8');
+  assert.ok(intakeService.includes('ordersCache?.invalidate?.()'), 'AC-MIG5 的承载点：服务里真的作废 ✓');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 2026-10-14 晚（她逐字）：「配品收款方式**读『收款方式管理』表**」
+// AC-D4 require 能加载（无悬空引用）
 // ═══════════════════════════════════════════════════════════════════════════
-const SIX = ['支付宝', '微信', '现金', '抖音代金券（89.9）', '抖音代金券（49.9）', '工商银行'];
-const fakeMethods = (items) => ({ calls: [], list: async () => { fakeMethods.last = items; return { ok: true, items }; } });
 
-test('AC-A3 ⭐⭐ 收款方式选项 = 表里那几条（表里加一条 ⇒ 自动多一个 ✓ 能真红）', async () => {
-  const svc = fakeMethods(SIX);
-  await withServer(appFor(spyOf(), { paymentMethods: svc }), async (base) => {
-    const res = await fetch(`${base}/api/workbench${accessoryTab.api.methods}`, { headers: { cookie: COOKIE } });
-    const body = await res.json();
-    assert.equal(res.status, 200);
-    assert.equal(body.success, true);
-    assert.deepEqual(body.methods, SIX, '选项逐字 = 表里 6 条（含两种抖音券 ✓）');
+test('AC-D4 ⭐⭐ `require("./src/routes/workbench")` 与 `require("./src/app")` 都能加载（无悬空引用）', () => {
+  // ① 路由模块：本进程直接 require（已设 fixture 凭证）
+  assert.doesNotThrow(() => require('../src/routes/workbench'), '工作台路由必须能加载');
+  // ② app.js：**子进程**里 require —— 它 require 期会起后台快照刷新（不污染本进程），
+  //    `process.exit(0)` ⇒ 判据就是"require 有没有抛 / 有没有找不到模块"✓
+  const probe = spawnSync(process.execPath, ['-e', "require('./src/app'); process.exit(0);"], {
+    cwd: SERVER_ROOT,
+    encoding: 'utf8',
+    timeout: 60000,
+    env: {
+      ...process.env,
+      LARK_AGENT_APP_ID: process.env.LARK_AGENT_APP_ID,
+      LARK_AGENT_APP_SECRET: process.env.LARK_AGENT_APP_SECRET,
+    },
   });
-  const svc7 = fakeMethods([...SIX, '新加的券']);
-  await withServer(appFor(spyOf(), { paymentMethods: svc7 }), async (base) => {
-    const body = await (await fetch(`${base}/api/workbench${accessoryTab.api.methods}`, { headers: { cookie: COOKIE } })).json();
-    assert.equal(body.methods.length, 7, '表里加一条 ⇒ 选项多一个 ✓');
-    assert.equal(body.methods.includes('新加的券'), true);
-  });
-  // 前端：**一条一项**（没有第二份清单 ✗）
-  const FE = fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench', 'features', 'accessory', 'index.js'), 'utf8');
-  assert.ok(FE.includes('state.methods.map('), '选项由接口数据渲染 ✓');
-  assert.ok(FE.includes("data-field=\"accessory-method\""), '有收款方式下拉 ✓');
-  assert.equal(/支付宝|微信|工商银行/.test(FE), false, '前端**不许**内置清单（表是唯一来源 ✗）');
-});
-
-test('AC-A5 ⭐⭐ 读不到表 ⇒ **503 + 人话**；前端**不进录入**（零写入 ✓ 不拿配置兜底 ✗）', async () => {
-  const broken = { list: async () => ({ ok: false, items: [], reason: 'payment_methods_unreadable' }) };
-  await withServer(appFor(spyOf(), { paymentMethods: broken }), async (base) => {
-    const res = await fetch(`${base}/api/workbench${accessoryTab.api.methods}`, { headers: { cookie: COOKIE } });
-    const body = await res.json();
-    assert.equal(res.status, 503, '读不到 ⇒ 503（不是 200 空清单 ✗）');
-    assert.equal(body.success, false);
-    assert.equal(body.error, accessoryTab.texts.methodsFailed, '人话来自配置 ✓');
-  });
-  const throwing = { list: async () => { throw new Error('gateway down'); } };
-  await withServer(appFor(spyOf(), { paymentMethods: throwing }), async (base) => {
-    const res = await fetch(`${base}/api/workbench${accessoryTab.api.methods}`, { headers: { cookie: COOKIE } });
-    assert.equal(res.status, 503, '抛错也如实 503 ✗');
-    assert.equal((await res.json()).error, accessoryTab.texts.methodsFailed);
-  });
-  // 前端：读不到 ⇒ 只画人话卡并 **return**（⇒ 表单/提交按钮都不存在 ⇒ 零写入 ✓）
-  const FE = fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench', 'features', 'accessory', 'index.js'), 'utf8');
-  const mountBody = FE.slice(FE.indexOf('async mount(host)'), FE.indexOf('async mount(host)') + 1200);
-  assert.ok(mountBody.includes('accessory-methods-error'), '读不到 ⇒ 人话卡 ✓');
-  const afterMethods = mountBody.slice(mountBody.indexOf('state.methods = '), mountBody.indexOf('state.methods = ') + 260);
-  assert.ok(/return;/.test(afterMethods), '没有可选项 ⇒ **直接 return**（不进录入 ✗）');
+  const output = `${probe.stdout || ''}\n${probe.stderr || ''}`;
+  assert.equal(/MODULE_NOT_FOUND|Cannot find module/.test(output), false,
+    `app.js 不许有悬空引用：\n${output.slice(-800)}`);
+  assert.equal(probe.status, 0, `app.js 必须能加载（exit=${probe.status}）：\n${output.slice(-800)}`);
 });

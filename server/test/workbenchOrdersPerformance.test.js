@@ -254,20 +254,27 @@ test('AC6 每张表只读一次（无重复读），且 6 次是并行发出的'
 //   2026-10-14: +accessory-sale and +acceptance (both add/change sales rows -> must invalidate)
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC7 七条写入路径（补收款/补实收/交付/售后/二次交付/补样品/续写重试）写成功后都作废缓存', () => {
+test('AC7 七条写入路径（补收款/补实收/交付/售后/二次交付/补样品/续写重试/配品新链路）写成功后都作废缓存', () => {
   const workbench = readSrc('src/routes/workbench.js');
   const orderActions = readSrc('src/routes/workbenchOrderActions.js');
 
-  // ① `routes/workbench.js` 里四条：sample-fill / payments / detail-amounts / deliveries
-  // 2026-10-14: +1 = the accessory-sale write entry (a new sale must invalidate the orders cache)
-  // ⭐⭐ 2026-10-15（⑨b-1）**成对翻新**：6 → 7
-  //   改前逐字：`(workbench.match(/ordersCache\.invalidate\(\)/g) || []).length, 6, 'workbench.js 里四条写入口各作废一次'`
-  //   改后逐字：`… .length, 7, 'workbench.js 里五条写入口各作废一次（+ 2026-10-15 的「续写/重试」）'`
-  //   依据：⑨b-1 新增 `POST /sales/retry`（工作台「续写/重试」）—— 它**会写业务表**（把没写完的单接着写完）
-  //        ⇒ **必须**跟着作废订单缓存（否则她重试完刷新看到的还是旧数据 ✗）⇒ 本哨兵的**本意完全成立**，
-  //        只是"已登记的写入路径"从 6 条变 7 条 ✓（判据**没放宽**：新那条也进了下面那个逐条邻近检查 ✓）
-  assert.equal((workbench.match(/ordersCache\.invalidate\(\)/g) || []).length, 7,
-    'workbench.js 里五条写入口各作废一次（含 2026-10-15 的「续写/重试」）');
+  // ① `routes/workbench.js` 里四条：sample-fill / payments / detail-amounts / deliveries / retry
+  //    ⭐⭐ 2026-10-15（⑨b-1）第一次翻新：6 → 7（新增 `POST /sales/retry` ⇒ 它也要作废缓存 ✓）
+  //    ⭐⭐ 2026-10-15 晚**第二次翻新**：7 → **6**（业务负责人逐字：「**配品就是走表单了～工作台自建写服务
+  //       "可以删除了**」）——
+  //      改前逐字：`(workbench.match(/ordersCache\.invalidate\(\)/g) || []).length, 7,
+  //                 'workbench.js 里五条写入口各作废一次（含 2026-10-15 的「续写/重试」）'`
+  //      改后逐字：`… .length, 6, 'workbench.js 里**剩下的**那条链路各作废一次（配品自建入口已整段删除）'`
+  //      依据：**被减掉的那一次**正是 `POST /sales/accessory-sales`（工作台自建配品成单）—— 它随整块路由
+  //        一起删了（她的"配品走表单"拍板）⇒ 这一条"写入口必须作废缓存"的本意**仍然成立**，
+  //        只是"工作台 router 里登记的写入口"少了一个 ✓
+  //      ⭐⭐ **配品那第 7 处已由新链路承载（Lead 2026-10-15 晚授权本任务顺手修）**：飞书表单 → `accessorySaleIntakeService`，
+  //        在**成单真的落下之后**（含异步那一半跑完）调 `ordersCache?.invalidate?.()`，
+  //        用的正是**进程级共享实例**（`services/workbenchOrdersCache.js` 的 `sharedWorkbenchOrdersCache`）✓
+  //        ⇒ 判据**恢复成本来该有的形态**：7 处写入各作废一次，只是"第 7 处"从工作台 router 换到了这条新链路 ✓
+  //        （下面 ③b 逐条钉住它在哪儿）。
+  assert.equal((workbench.match(/ordersCache\.invalidate\(\)/g) || []).length, 6,
+    'workbench.js 里**剩下的**写入口各作废一次（`/sales/retry` 那条仍在 ✓；配品自建入口已删 ✓）');
   for (const route of ["'/sales/sample-fill'", "'/sales/payments'", "'/sales/detail-amounts'", "'/sales/deliveries'", "'/sales/retry'"]) {
     const at = workbench.indexOf(`router.post(${route}`);
     assert.ok(at > 0, `找不到写入口 ${route}`);
@@ -288,11 +295,46 @@ test('AC7 七条写入路径（补收款/补实收/交付/售后/二次交付/�
     '三条 service 写入（补样品 / 补收款 / 补实收）各一次 + 门面方法 invalidateOrders() 一次');
 
   // ③ 同一个缓存实例必须同时给"读"和"写"用（否则失效的是另一份，白失效）
-  assert.ok(workbench.includes('createWorkbenchOrdersCache({ ttlMs: ordersConfig.ordersCacheMs })'));
+  // ⚠️ 2026-10-15 晚**成对翻新**（配品入口搬到另一条链 ⇒ 必须跨 router 共享）：
+  //   改前逐字：`assert.ok(workbench.includes('createWorkbenchOrdersCache({ ttlMs: ordersConfig.ordersCacheMs })'));`
+  //   改后逐字：`assert.ok(workbench.includes('sharedWorkbenchOrdersCache({ ttlMs: ordersConfig.ordersCacheMs })'));`
+  //   依据：工作台 router 与配品那条新链路（另一个 router！）**必须拿到同一个缓存实例**，
+  //        否则"那边作废、这边照旧"⇒ 她填完表单看订单列表最多 30s 内还是旧数据 ✗
+  //        ⇒ 默认值从"各建一份"改成"进程级共享那一份"✓（判据本意没变：读写必须同一实例 ✓）
+  assert.ok(workbench.includes('sharedWorkbenchOrdersCache({ ttlMs: ordersConfig.ordersCacheMs })'));
   assert.ok(/new SalesFollowupService\(\{ ordersCache, ordersConfig \}\)/.test(workbench),
     '读路径（SalesFollowupService）用的必须是同一个缓存实例');
   assert.ok(/createWorkbenchOrderActionsRouter\(\{[\s\S]*?ordersCache,/.test(workbench),
     '写路径（订单动作）拿到的也必须是同一个实例');
+
+  // ③b ⭐⭐ 2026-10-15：**第 7 处写入路径 = 配品（新链路）** —— 逐条钉住它在哪儿、怎么作废：
+  const intake = readSrc('src/services/accessorySaleIntakeService.js');
+  // ⚠️ 不自己写「去注释」（那个文件里 `/*` 有 17 个、`*/` 只有 15 个 ⇒ 粗暴剥注释会把半个文件吃掉 ✗，
+  //    我第一版就是这么挂的）—— 改成**锚在行首的代码位置**：注释里那段是**行中**的反引号引用，
+  //    锚 `^\s*ordersCache` 就只认真正的调用行 ✓（删掉调用 ⇒ 红，变异 M11 已验 ✓）
+  const callMatch = /^\s{2,8}ordersCache\?\.invalidate\?\.\(\);$/m.exec(intake);
+  assert.ok(callMatch, '配品成单（accessorySaleIntakeService）也要作废订单缓存（与 orderActions 同一形状 ✓）');
+  const invalidateAt = callMatch.index;
+  assert.match(intake, /const ordersCache = options\.ordersCache \|\| require\('\.\/workbenchOrdersCache'\)\.sharedWorkbenchOrdersCache\(\);/,
+    '它拿的是**进程级共享实例**（与工作台 router 是同一个 ✓）');
+  // ⚠️ 位置：必须在「后台那一跑跑完 + 回写已写入」之后（提前作废 ⇒ 缓存被旧数据重新填满 ✗）
+  const settledAt = intake.indexOf('const settled = typeof result.background');
+  const writeBackDoneAt = intake.lastIndexOf('writeBack.doneValue', invalidateAt);
+  assert.ok(settledAt > 0 && settledAt < invalidateAt, '作废必须在「等后台跑完」之后（不许在 submitSale 刚回单号时 ✗）');
+  assert.ok(writeBackDoneAt > 0 && writeBackDoneAt < invalidateAt, '作废必须在回写「已写入」之后 ✓');
+  // 拒单 / 成单失败那条路（catch 分支）里**不许**有作废
+  const catchAt = intake.indexOf("logError('accessory_sale_intake.failed'");
+  assert.ok(catchAt > 0, '必须能找到失败分支');
+  const catchBlock = intake.slice(catchAt, catchAt + 500);
+  assert.equal(/invalidate/.test(catchBlock), false, '拒单 / 成单失败 ⇒ 不作废缓存（没有新数据落地 ✓）');
+
+  // ③c 共享实例本身：同一次进程里取到的是**同一个对象**（跨 router 共享的前提 ✓）
+  const { sharedWorkbenchOrdersCache, resetSharedWorkbenchOrdersCache } = require('../src/services/workbenchOrdersCache');
+  resetSharedWorkbenchOrdersCache();
+  const a = sharedWorkbenchOrdersCache({ ttlMs: 0 });
+  const b = sharedWorkbenchOrdersCache({ ttlMs: 30 });
+  assert.equal(a, b, '进程级共享实例：第二次调用必须还是同一个（ttl 由第一次定 ✓）');
+  resetSharedWorkbenchOrdersCache();
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
