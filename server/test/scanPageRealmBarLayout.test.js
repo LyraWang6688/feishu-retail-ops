@@ -59,7 +59,7 @@ test('AC-BAR1 ⭐ 这一排的名称与顺序逐字 = 库存·销售·补货·�
   const feishuNames = labels(feishu);
   assert.deepEqual(feishuNames, [...NAMES, SCAN_PAGE.realmBar.scanLabel],
     `飞书：4 个领域 + 第 5 格「扫一扫」（实际 ${JSON.stringify(feishuNames)}）`);
-  assert.match(feishu, new RegExp(`<a class="realm-tab realm-tab--scan"[^>]*href="${SCAN_PAGE.scanNext.applink.replace(/[/.]/g, '\\$&')}"`),
+  assert.match(feishu, new RegExp(`<a class="realm-tab realm-tab--scan"[^>]*href="${SCAN_PAGE.scanNext.applink.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`),
     '第 5 格是**真 AppLink**（点一下就能扫下一个 ✓ 不是死按钮）');
 });
 
