@@ -67,7 +67,7 @@ const headerThenCleanFin = async () => {
     res.socket.end();
     res.socket.destroy();
   });
-  const server = await new Promise((resolve) => { const s = app.listen(0, () => resolve(s)); });
+  const server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
   try {
     const response = await fetch(`http://127.0.0.1:${server.address().port}/x`);
     try {

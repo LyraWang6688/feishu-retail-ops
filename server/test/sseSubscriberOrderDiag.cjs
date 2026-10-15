@@ -65,7 +65,7 @@ const main = async () => {
   app.use(express.json());
   app.use('/api/workbench/label-print', createLabelPrintQueueRouter({ service }));
   app.use('/api/label-print', createLabelPrintDeviceRouter({ service, config: { ...LABEL_PRINT_QUEUE, device: { ...LABEL_PRINT_QUEUE.device, token: DEVICE_TOKEN } } }));
-  const server = await new Promise((resolve) => { const s = app.listen(0, () => resolve(s)); });
+  const server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
   server.keepAliveTimeout = 1;
   const base = `http://127.0.0.1:${server.address().port}`;
 

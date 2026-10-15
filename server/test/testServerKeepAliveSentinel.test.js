@@ -55,6 +55,13 @@ test('AC-P1 凡起临时服务器的用例文件都必须 `server.keepAliveTimeo
   // 豁免清单也钉住（**新增豁免 = 显式过一遍 review**）：目前只有一个 ——
   //   `larkHeartbeatEmptyBodyRepro.cjs` 要**对照** `keepAliveTimeout` 三档（1/默认/0）才能证明
   //   "空 body 与 keepAliveTimeout 无关"（task-25 · #600）⇒ 它不能一律设 1。
-  assert.deepEqual(exempt.sort(), ['larkHeartbeatEmptyBodyRepro.cjs'],
+  // ⭐ 2026-10-15（task-29）**成对改指向**：
+  //   改前逐字：`assert.deepEqual(exempt.sort(), ['larkHeartbeatEmptyBodyRepro.cjs'], …)`
+  //   改后逐字：`assert.deepEqual(exempt.sort(), ['larkHeartbeatEmptyBodyRepro.cjs', 'listenLoopbackSentinel.test.js'], …)`
+  //   依据：新增的那个是**源码哨兵**文件（task-29 · AC-LB1）——它**不启任何服务器**，
+  //     只是源码里带了"拼出来的探针字符串"（用来证明哨兵真能红 ✓）⇒ 命中 `/\\.listen\\(/` 的探测，
+  //     但它**没有**需要 `keepAliveTimeout` 的临时服务器 ⇒ 按本文件既有的豁免机制写明理由 ✓
+  //   （⚠️ 豁免**仍然**要显式过一遍 review：清单是**逐字钉住**的，多一个就红 ✓）
+  assert.deepEqual(exempt.sort(), ['larkHeartbeatEmptyBodyRepro.cjs', 'listenLoopbackSentinel.test.js'],
     '豁免要逐个写明理由（文件里要有 `// keep-alive-exempt: <理由>`）并把这里一起更新');
 });

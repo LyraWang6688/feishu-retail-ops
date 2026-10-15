@@ -82,7 +82,7 @@ const sessionCookie = (openId = OPEN_ID) => {
 };
 
 const withServer = async (app, run) => {
-  const server = await new Promise((resolve) => { const instance = app.listen(0, () => resolve(instance)); });
+  const server = await new Promise((resolve) => { const instance = app.listen(0, '127.0.0.1', () => resolve(instance)); });
   // ⭐ 2026-10-15 task-17（AC-P1）：测试服务器**不保持 keep-alive** ——
   //   undici 的进程级连接池按 origin 池化，临时端口会被 OS 复用 ⇒ 下一次 fetch 可能挑到**已死 socket**
   //   ⇒ 偶发 `ECONNRESET`（根因与实测见 `test/stabilityRepro.cjs`）⇒ 响应一完就关连接。
