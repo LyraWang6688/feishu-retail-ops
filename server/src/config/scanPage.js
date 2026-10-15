@@ -688,6 +688,28 @@ const SALE_SUCCESS = Object.freeze({
   fillPaymentButton: '补整单付款',
 });
 
+/**
+ * 退货表单的**用户可见文案**（task-23）——
+ *   · `stockLabel` / `stockUnknown`：每行那个"当前库存数量"列（**取不到就如实说，不显示假数字** ✗）；
+ *   · `sizesUnknown`：连尺码都取不到时那句人话（**不硬编一串假尺码** ✗）；
+ *   · 后三条 = **前端拦截**时给她的人话（`AC-RT3` / `AC-RT4`）；
+ *   · `hintView` = 那句人话挂在哪儿（脚本按它找元素，**脚本里不写死任何文字** ✗）。
+ */
+const RETURN_FORM = Object.freeze({
+  stockLabel: '当前库存',
+  stockUnknown: '库存数量暂时取不到，请以实物为准',
+  sizesUnknown: '暂时取不到这一款的尺码，请稍后重试或手动核对',
+  sizesRequiredText: '请先勾选要退货的尺码（至少一个）',
+  quantityInvalidText: '退货数量要填 1 以上的整数，且不超过上限',
+  sizesLimitText: '一次勾选的尺码太多了，请分批退',
+  // ⭐⭐ 2026-10-15 晚（业务负责人拍板，逐字）：「**退货数量要限制"不能超过当前库存数量"**」
+  //   ⇒ `{size}` / `{stock}` 两个占位由**客户端**填（脚本里不出现任何汉字 ✗）：
+  //      例「43 码库存只有 2 双，退货不能超过它」✓
+  //   ⚠️ **库存取不到的行不许按 0 拦** ✗ —— 那一行**不带**上限（她只会看到"库存暂时取不到"那句人话 ✓）。
+  stockLimitText: '{size} 码库存只有 {stock} 双，退货不能超过它',
+  hintView: 'return-form-hint',
+});
+
 const SCAN_PAGE = Object.freeze({
   route: ROUTE,
   // ⭐⭐ 2026-10-13（她：加载到中间一直白屏）：**骨架屏开关**（**显式布尔**，缺省 false）。
@@ -713,6 +735,18 @@ const SCAN_PAGE = Object.freeze({
   // 2026-10-14：**三个领域"怎么列尺码"的唯一来源**（业务负责人：「需要做配置～」）。
   //   只收代码里**真实存在**的轴：`sizeRowsOf` 的 special 规则已经是一份真源 ⇒ 不动 ✗；
   //   库存 0 占位的真源在 `views/scanPageRenderer.js` ⇒ 不入表 ✗；`product` 真源未定位 ⇒ 不入表 ✓。
+  /**
+   * ⭐⭐ 2026-10-15（task-23 · 业务负责人真机逐字）：
+   *   「**退货这里的逻辑不好，应该是用户点了退货 tab 页之后呢，直接就是出来实时库存里的尺码和数量，
+   *     用户可以勾选退货的尺码及其对应的数量～用户填好之后，可以点击退货按钮，前端交互按照这个**」
+   *   ⇒ 退货那一块**只补三件事**：① 每行显示**当前库存数量** ② 数量**默认值走配置**
+   *      ③ **前端拦住"一个都没勾 / 数量非法"**（后端那道 `return_empty` **仍在** ⇒ 两层 ✓）
+   *   ⚠️ **默认数量与上限不在这一份里再抄一遍** —— 唯一真源是写侧配置
+   *      `SCAN_WRITE.purchaseReturn`（`defaultQuantity` / `maxQuantity` / `maxSizes`），
+   *      渲染层**直接读那一份** ✓（抄一份必漂 ✗）。
+   *   ⚠️ 用户可见文案都在 `src/config/**`（中文的家）✓ —— 渲染层与那段脚本**一个汉字都不写** ✗。
+   */
+  returnForm: RETURN_FORM,
   SIZE_ROW_GROUPS: Object.freeze({ GROUPED: 'instock+reserve' }),
   REALM_SIZE_BEHAVIOR: Object.freeze({
     sales: Object.freeze({ group: 'instock+reserve', groupWhenDegraded: false, missing: false, checkMissingByDefault: false }),
