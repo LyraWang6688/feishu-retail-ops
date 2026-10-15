@@ -238,12 +238,12 @@ const createScanWriteService = (options = {}) => {
     return purchaseReturnInstance;
   };
 
-  // ⭐ task-46：多货品引擎拿同一批既有写入件（两次调用引用相等 ✓）· 理由见 test/multiItemOrderWriters
   let multiItemWritersInstance = null;
   const multiItemWriters = () => {
     multiItemWritersInstance = multiItemWritersInstance || Object.freeze({
       purchase: (taskId, task) => purchase().publishPurchaseRequest(taskId, task),
       purchaseReturn: (taskId, draft) => purchaseReturn().submit(taskId, draft),
+      behavior: (chain) => references.resolveBehavior((chain === 'return' ? config.purchaseReturn : config.replenish).behaviorCode),
     });
     return multiItemWritersInstance;
   };
