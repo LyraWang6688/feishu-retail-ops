@@ -145,6 +145,28 @@ const ORDER_FIELD_KEYS = Object.freeze({
 });
 
 /**
+ * ⭐⭐ 2026-10-16（性能）：**支撑表的按需列**（订单列表读路径上"顺手读"的那两张）。
+ *
+ * 为什么与 `ORDER_FIELD_KEYS` **分开**（而不是加进去）：
+ *   · `ORDER_FIELD_KEYS` 的语义是"**页面上真正用到的列**"，它有一条既有判据
+ *     （`test/workbenchOrdersPerformance.test.js` 的 AC5a）**逐字**钉着它的形状
+ *     —— 往里加列会把那条判据**放宽**，而这次只做性能、不许放宽判据；
+ *   · 这两张不是"页面的列"，而是**判据的输入**：
+ *     · `liveInventory`：「实时库存」整表快照（待补样品的候选：按码数门盒 / 样品 / 仓库）
+ *       —— 只用 **编号 / 尺码 / 所属状态** 三列（`sampleReplacementCandidates` 的全部消费点）；
+ *       ⚠️ `record_id` 不需要写进来（它是记录自带的，不是"列"）。
+ *     · `sizeManagement`：**故意不列** —— `SizeReferenceService` 要的是「尺码」这一列，
+ *       而它的读取口径归它自己（本文件不认识那个 service 的实现细节）；
+ *       它那次读**已经**只服务一张 20~30 行的小表，加列收益可忽略。
+ *
+ * ⚠️ 与 `ORDER_FIELD_KEYS` 同一套用法：语义键 → 飞书列名；**一个都映射不到就不传**
+ *   （宁可慢，不许少列）。
+ */
+const ORDER_SUPPORT_FIELD_KEYS = Object.freeze({
+  liveInventory: Object.freeze(['product', 'size', 'state']),
+});
+
+/**
  * 开关（**显式布尔**，见 `config/envValue.readFlag`：没设 = 默认；设成空串 = 关掉）。
  * ⚠️ 开关只放后端这一处 —— 页面不复制一份，免得两边漂移（关了之后页面会照实显示原因）。
  */
@@ -169,5 +191,6 @@ module.exports = {
   WORKBENCH_ARRIVAL_INPUT_REASONS,
   DEFAULT_ORDERS_CACHE_MS,
   ORDER_FIELD_KEYS,
+  ORDER_SUPPORT_FIELD_KEYS,
   readWorkbenchOrdersConfig,
 };

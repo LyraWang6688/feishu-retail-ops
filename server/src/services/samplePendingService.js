@@ -62,9 +62,18 @@ const createSamplePendingService = (options = {}) => {
   /** 待办明细 id 集合（订单列表用它挂 `sample_pending`；只读）。 */
   const pendingDetailIds = async () => new Set((await listPending()).map((task) => task.sales_detail_record_id));
 
-  /** 「这一款还有哪些码有门盒」——与群里那条卡片**同一个取数实现**（`inventoryService.js:1308`）。 */
-  const candidatesFor = async (productRecordId, { excludeRecordIds = [] } = {}) =>
-    inventory.sampleReplacementCandidates(productRecordId, { excludeRecordIds });
+  /**
+   * 「这一款还有哪些码有门盒」——与群里那条卡片**同一个取数实现**（`inventoryService.js:1308`）。
+   *
+   * ⭐ 2026-10-16（性能）：**可选的 `liveRecords`** —— 调用方**已经**把「实时库存」整表读进来的那一次
+   *   快照，原样透传给 `InventoryService.sampleReplacementCandidates`（**一个字节都不再看那张表**）。
+   *   为什么要有这条路：订单列表**每条待补样品**都会问一次候选，问一次就是一次整表读
+   *   ⇒ 几条待办 = 几次串行整表读（线上 27~42 秒的真凶）。
+   *   ⚠️ **不传就与以前逐字同行为**（`InventoryService` 那一侧自己读）；本层的 `fill()` 也**不传**
+   *     （它要的是"此刻"的真实库存，不是别处传进来的快照）。
+   */
+  const candidatesFor = async (productRecordId, { excludeRecordIds = [], liveRecords = null } = {}) =>
+    inventory.sampleReplacementCandidates(productRecordId, { excludeRecordIds, liveRecords });
 
   /**
    * 补掉一条待办：**门盒 → 样品**（1 双）。

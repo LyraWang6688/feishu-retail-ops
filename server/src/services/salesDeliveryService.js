@@ -17,12 +17,23 @@ class SalesDeliveryService {
   constructor({ gateway, inventory, progress, sizeReferences, status } = {}) {
     if (!gateway) throw new Error('SalesDeliveryService requires gateway');
     this.gateway = gateway;
-    this.inventory = inventory || new InventoryService({ gateway });
-    this.progress = progress || new SalesProgressService({ gateway });
     // 「库存状态」的写入口（名字与取值都在 config/salesStatusDimensions）。
     this.status = status || new SalesStatusWriter({ gateway });
     // 「尺码」是关联字段：走共享服务解析，不靠关联单元格自带的显示文本。
     this.getSizeReferences = createSizeReferenceAccess({ gateway: this.gateway, sizeReferences });
+    /**
+     * ⭐ 2026-10-16（性能）：**库存引擎共用同一份「尺码」解析**（同一份缓存）。
+     *
+     * 改前：`InventoryService` 没拿到 `sizeReferences` ⇒ 它**自己 new 一个**
+     *   `SizeReferenceService` ⇒ 与上面那份**各读一次**「尺码管理」小表
+     *   （订单列表实测：`sizeManagement` 一次请求读两遍）。
+     * 改后：把**同一个访问器**交给它 ⇒ 同一个尺码快照，读表次数去重，
+     *   解析出来的取值**必然一致**（本来就是同一张表、同一列）。
+     * 🔴 **不改判据**：`SizeReferenceService` 的 TTL / single-flight / 抛错口径一个字没动。
+     * ⚠️ 只在**没有显式注入** `inventory` 时接线（用例自己给的那份自己负责）。
+     */
+    this.inventory = inventory || new InventoryService({ gateway, sizeReferences: this.getSizeReferences() });
+    this.progress = progress || new SalesProgressService({ gateway });
     this.queue = Promise.resolve();
   }
 
