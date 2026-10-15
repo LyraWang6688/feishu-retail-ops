@@ -27,6 +27,9 @@
  *   ＋ **有一条 `scan.payment_step.stale_cleared` 日志**（**删掉任何一条就红** ✓）
  * · **AC-SM2** `pending` + 草稿 **有 N 行** ⇒ **照旧给资金页**（`data-view="payment-step"` + `count=N`），
  *   而且**不许**清标记（把 ① 的判据写宽（例如只按 `pending` 接管）也会红 ✓）
+ * · **AC-SM2b**（⭐ 2026-10-16 **成对迁移 · task-60**）：`?from=sales`（= 她点「销售」那一下）+
+ *   草稿有行 ⇒ 按**她当日亲口选的方案 ②** 改成 **货品页 ＋ 清掉那条未完成**（改前逐字 → 改后逐字 →
+ *   依据都写在那条用例上 ✓）；⚠️ **"资金页刷新不丢"照旧由 AC-SM2 / AC-SM8 的【裸扫】那两条钉着** ✓
  * · **AC-SM3** `pending` + **有已建单号**（`order_no` / `master_record_id`）但没付 ⇒ **照旧给资金页** ✓
  * · **AC-SM4** 非销售领域（`from=inventory|replenish|return`）⇒ **一律不接管**（既有行为不变 ✓，
  *   且**不许**顺手清标记 —— 那不是这一块的账 ✗）
@@ -303,16 +306,42 @@ test('AC-SM2 ⭐ `pending` + 草稿**有 N 行** ⇒ 照旧给资金页（count=
   assert.deepEqual(write.patches, [], '⭐ **一个字都不许清**（那是她故意留着要回来付的 ✗）');
 });
 
-test('AC-SM2b ⭐ `pending` + 草稿有行 ⇒ 刷新**不丢**（这就是原来那条 AC，判据没放宽）', async () => {
+test('AC-SM2b ⭐⭐【成对迁移 · 2026-10-16 task-60】`?from=sales` + 草稿有行 ⇒ **货品页**（她选的 ②：点销售就从货品页开始）+ 那条"未完成"被清', async () => {
+  // ⭐⭐ 2026-10-16 **成对迁移**（本仓纪律：**不许删 / 不许 skip / 不许放宽** ⇒ 逐条写清）——
+  //   依据 = **业务负责人当日亲口选的方案 ②**（逐字）：
+  //     「**② 还是重扫同一个货品就从头开始（清掉那条未完成 ✓）**」
+  //   · **改前逐字**：
+  //       `const first = await getPage(base, '?from=sales');`
+  //       `const second = await getPage(base, '?from=sales');`
+  //       `assert.ok(first.html.includes(PAYMENT_PAGE_MARK), 'from=sales 刷新 ⇒ 资金页 ✓');`
+  //       `assert.ok(second.html.includes(PAYMENT_PAGE_MARK), '再刷一次仍是资金页 ✓（她在资金页刷新不丢）');`
+  //       `assert.deepEqual(write.patches, [], '两次刷新都不许清标记 ✓');`
+  //   · **改后逐字**：见下面每一条 —— **同两发 `?from=sales` 请求**，断言翻成"货品页 ＋ 清掉那两个键"，
+  //     并且**另加**一条"草稿行原样还在"（\*\*只加不减\*\* ⇒ 强度没降 ✓）。
+  //   · **为什么（判据自身的意思也变了）**：`?from=sales` 就是**她点「销售」那个 realm tab**
+  //     （`views/scanPageRenderer.js` 的 `href="?from=<领域>"`）⇒ 按她选的 ②：**这一发要把那条
+  //     未完成清掉、从货品页开始**（`test/scanLandingResetOnScan.test.js` 的 AC-LR1 是同一件事的正面判据 ✓）。
+  //   🔴 **"刷新不丢"这条既有体验没有被删掉**：真正会被刷新的是**资金页自己那张表单**，
+  //     而它的 POST 目标是 `postActionFor(target, 'sales')` = **裸 URL**（`?from=` 只在**非缺省领域**才带）
+  //     ⇒ **刷新那条路是裸扫**，由**同文件 AC-SM2**（裸扫 + 有行 ⇒ 资金页）与
+  //       **AC-SM8**（裸扫 + 刚提交 ⇒ 仍资金页、不许清）**原样钉着** ✓（那两条**一个字没动** ✓）。
   login();
   const write = fakeWriteService({ paymentStep: 'pending', lines: [{ product_number: 'N05', size: 41, quantity: 1 }] });
   await withServer(appFor({ write }), async (base) => {
     const first = await getPage(base, '?from=sales');
     const second = await getPage(base, '?from=sales');
-    assert.ok(first.html.includes(PAYMENT_PAGE_MARK), 'from=sales 刷新 ⇒ 资金页 ✓');
-    assert.ok(second.html.includes(PAYMENT_PAGE_MARK), '再刷一次仍是资金页 ✓（她在资金页刷新不丢）');
+    assert.equal(first.html.includes(PAYMENT_PAGE_MARK), false,
+      '⭐ 她选的 ②：点「销售」⇒ **货品页**（那条未完成被清掉 ⇒ 不再被资金页顶掉 ✗）');
+    assert.ok(first.html.includes('realm-block--sales'), '照旧渲染销售那一块（货品页 ✓）');
+    assert.equal(second.html.includes(PAYMENT_PAGE_MARK), false, '再点一次仍是货品页 ✓');
   });
-  assert.deepEqual(write.patches, [], '两次刷新都不许清标记 ✓');
+  assert.equal(write.patches.length, 1, '只在**第一发**清一次（清完就没有可清的了 ✓）');
+  assert.deepEqual(Object.keys(write.patches[0]).sort(), ['paymentStep', 'submitPending'],
+    '⭐ 同笔清这两个键（别的字段一个都不许碰 ✓）');
+  assert.equal(write.patches[0].paymentStep, undefined, '清成"没走到资金这一步"的既有表示 ✓');
+  // ⭐ **只加不减**：草稿行本身**不在清除范围**（清的是"未完成标记"，不是她的清单 ✗）
+  assert.equal(Array.isArray(write.session.sale.lines) ? write.session.sale.lines.length : -1, 1,
+    '⭐ 草稿行**原样还在**（她还能在本单条上看到那一双 ✓）');
 });
 
 test('AC-SM3 ⭐ `pending` + **已建单号**但没付 ⇒ 照旧给资金页（`order_no` / `master_record_id` 都认）', async () => {

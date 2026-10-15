@@ -97,6 +97,7 @@
 | [scan-amount-required-and-owed-2026-10-14.md](scan-amount-required-and-owed-2026-10-14.md) | 每件实收必填 + 差额一律补【未收款】（她 2026-10-14 夜两条裁决） |
 | [scan-and-workbench-structure-2026-10-14.md](scan-and-workbench-structure-2026-10-14.md) | scan-and-workbench-structure-2026-10-14.md |
 | [scan-landing-diag-2026-10-16.md](scan-landing-diag-2026-10-16.md) | ⭐ **扫货品码却落到「资金页」的定位报告**（真机 2026-10-16 05:34）：GET 落点判定条件逐条（`routes/scanPage.js:1144–1307`）＋ 本地真路由复现表（4 种会话 × 5 种请求）＋ 结论（**接管只认会话、不认货品** ⇒ 扫 A 看到上一单的资金页）＋ `scan.page.rendered` 日志的**待执行清单**（已批准、未落地）＋ 两个候选修法（要她点头） |
+| [scan-landing-reset-on-scan-2026-10-16.md](scan-landing-reset-on-scan-2026-10-16.md) | ⭐⭐ **按她当日亲口选的方案 ② 落地**（task-60）：点「销售」（`?from=sales`）那一发**先清掉那条未完成** ⇒ 从货品页开始；清的范围 / **不清什么**（裸扫仍走"刷新不丢"）逐条 ＋ `scan.page.rendered` 七个出口落地 ＋ 两条成对迁移 ＋ 4 组变异真红 |
 | [scan-page-architecture-2026-10-15.md](scan-page-architecture-2026-10-15.md) | 「扫一扫」页架构（2026-10-15 晚 · 她口述的落档） |
 | [scan-page-tabs-2026-10-14.md](scan-page-tabs-2026-10-14.md) | 扫码页 tab 最新口径（2026-10-14） |
 | [scan-pay-front-async-constraint-2026-10-14.md](scan-pay-front-async-constraint-2026-10-14.md) | 资金页两刀 · 第二刀的**硬约束**（业务负责人原话，逐字） |

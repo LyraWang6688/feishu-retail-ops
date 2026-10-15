@@ -613,6 +613,24 @@ const EVENTS = Object.freeze({
     // ⭐ 2026-10-13：销售首页（不带编号）被打开过（手输编号那条也记一条 ✓）
     salesHomeOpened: 'scan.sales_home.opened',
   viewed: 'scan.page.viewed',
+  // ⭐⭐ 2026-10-16（task-58 · 她真机 05:34「扫货品码却出现资金页」）：
+  //   `scan.page.viewed` **证明不了**最后渲染了哪一页 —— 资金页接管那条路**也要**先
+  //   `service.lookup()`（`routes/scanPage.js:1167`），而 `viewed` 正是 lookup 里面打的
+  //   （`services/scanPageService.js:1356` / 命中缓存 `:1070`）⇒ 两种落点的日志**长得一模一样** ✗。
+  //   这一条补上"**到底渲染了哪一页 + 哪条条件命中**"（**只加日志，零判定改动** ✗）。
+  //   字段：`page`（skeleton | pay | goods | success | not_found | bad_number | failed）·
+  //        `trigger`（`skeleton_first_entry` / `pending_mark:lines|order|status_not_submitted` /
+  //        `realm:<领域>:<explicit|remembered|default>` / `write_ok` / `lookup_not_found` …）·
+  //        `query_keys`（**只字段名** ✗ 不记值）· `number`。
+  rendered: 'scan.page.rendered',
+  // ⭐⭐ 2026-10-16（task-60 · 业务负责人**当日亲口选的方案 ②**，逐字）：
+  //   「**② 还是重扫同一个货品就从头开始（清掉那条未完成 ✓）**」
+  //   ⇒ 她点「销售」那一发（显式 `?from=sales`）**先把那条"未完成"的标记清掉** ⇒ 从货品页开始 ✓。
+  //   ⚠️ 与既有那条 `scan.payment_step.stale_cleared`（**残标记**自清理 · **逐字未动** ✓）
+  //     **各司其职**：那条治"有 pending 但**没东西要付**"（2026-10-15 #598/#601），
+  //     这条是"**她主动重扫/点销售 ⇒ 从头开始**"（2026-10-16 她选的 ②）—— 两条都会带旧状态 ✓。
+  paymentStepResetOnScan: 'scan.payment_step.reset_on_scan',
+  paymentStepResetFailed: 'scan.payment_step.reset_failed',
   notFound: 'scan.page.not_found',
   // ⭐⭐ 2026-10-12：`/r/{recordId}` 这条路的正向证据 / 失败证据。
   recordViewed: 'scan.page.record_viewed',
