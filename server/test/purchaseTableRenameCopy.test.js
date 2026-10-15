@@ -164,8 +164,9 @@ test('AC-R2 扫描器可信度：正则里的引号 / 字符串里的 `//` / 注
 test('AC-R1 源码哨兵：`src/**` ＋ `public/workbench/**` 的字符串字面量里不再出现旧表名（`报货批次号` 字段名放行；注释跳过）', () => {
   const offenders = [];
   // ⚠️ 2026-10-12：范围从 `src/**` 扩到**也扫工作台前端** —— 那个**没有挂载点**的老「采购管理」页
-  //    （`public/workbench/features/purchase/index.js`）里的旧文案这一轮也清了，
-  //    不扫它 = 清完就会回潮（那页将来若被 C5 删掉，这条也只是少一个文件）。
+  //    里的旧文案那一轮也清了（不扫它 = 清完就会回潮）。
+  // ⭐ 2026-10-15：那一页 `features/purchase/**` **已被整目录删除**（她：「是死代码，给删除了吧」）
+  //    ⇒ 本哨兵照旧扫整个 `public/workbench/**`（范围一个字没缩：将来别的页写回旧表名照样红 ✓）。
   for (const [root, file] of [
     ...walkJs(SRC).map((file) => [SRC, file]),
     ...walkJs(WORKBENCH).map((file) => [WORKBENCH, file]),
@@ -212,17 +213,28 @@ test('AC-R3 新叫法逐字：给她看的用「采购单」/「采购明细」�
   );
   assert.ok(ordersCopy.includes("purchaseEmpty: '还没有采购单记录'"), '采购子页空态用「采购单」');
   assert.equal(ordersCopy.includes('（报货批次）'), false);
-  // ⑧ 那个**没有挂载点**的老「采购管理」页：这一轮也清了旧文案（Lead 2026-10-12 批准），
-  //    ⚠️ 顺带发现它调的两个接口在路由里**已不存在**（`GET /purchase/{requests,arrivals}`）
-  //      —— 那是**逻辑**问题，按"只清文案不改逻辑"留给 C5，这里只钉文案。
-  const deadPage = fs.readFileSync(
-    path.join(WORKBENCH, 'features', 'purchase', 'index.js'), 'utf8',
-  );
-  for (const needle of ['采购明细与到货核对情况', '>采购明细情况</button>', '正在加载采购明细…', '没有匹配的采购明细。']) {
-    assert.ok(deadPage.includes(needle), `老采购管理页要用新表名：${needle}`);
+  // ⑧ ⚠️⚠️ 2026-10-15 **判据迁移 + 死代码删除**（业务负责人逐字：「**采购页的老文件是死代码，给删除了吧**」）——
+  //   改前逐字：
+  //     `const deadPage = fs.readFileSync(path.join(WORKBENCH, 'features', 'purchase', 'index.js'), 'utf8');`
+  //     ＋对着它断言 `采购明细与到货核对情况` / `>采购明细情况</button>` / `正在加载采购明细…` /
+  //       `没有匹配的采购明细。` 都在、`报货信息` 不在、文件头写着「**已无挂载点**」（"留给 C5 评估"）。
+  //   改后逐字：下面三条 ——
+  //     ① 那个目录**整个不存在了**（"留给 C5"那个钩子**收口**，能真红）；
+  //     ② "给她看的字必须用当下表名「采购明细」"这条**真判据**迁到**活着的**采购文案
+  //        （`config/orders.js` 的明细三条：标题 / 空态 / 读失败）；
+  //     ③ 旧表名「报货信息」在活文案里不许出现。
+  //   依据：老页已删 ⇒ 对着一具不存在的文件断言毫无意义；但这两句判据的本意
+  //     （用当下表名、旧名不许回来）**一个字没变** ⇒ 必须迁到活页面上继续钉 ✗ 不许跟着死文件消失。
+  assert.equal(fs.existsSync(path.join(WORKBENCH, 'features', 'purchase')), false,
+    '老「采购管理」页必须已整目录删除（那正是当年"留给 C5"的那个钩子 ⇒ 现在收口 ✓）');
+  for (const needle of [
+    "detailTitle: '这一批的采购明细'",
+    "detailEmpty: '这一批没有可验收的采购明细'",
+    "detailFailed: '这一批的采购明细没读到，请稍后再试'",
+  ]) {
+    assert.ok(ordersCopy.includes(needle), `活着的采购文案要用当下表名「采购明细」：${needle}`);
   }
-  assert.equal(deadPage.includes('报货信息'), false, '老采购管理页里不该再有「报货信息」');
-  assert.ok(deadPage.includes('已无挂载点'), '文件头要写明"已无挂载点"（别删文件，留给 C5 评估）');
+  assert.equal(ordersCopy.includes('报货信息'), false, '活着的采购文案里不该再有旧表名「报货信息」');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

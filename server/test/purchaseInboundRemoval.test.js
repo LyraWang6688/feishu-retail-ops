@@ -468,20 +468,33 @@ test('F 「具体信息」→「报货信息」→（2026-10-12）「采购明�
   }
 });
 
-test('F-补 工作台采购页的用户可见文案里没有「具体信息」了', () => {
-  // ⚠️ 2026-10-12 旧断言改写（她改表名 + Lead 定口径 + 死页文案清理）：
-  //   改前（逐字）：`assert.ok(codeOnly.includes('报货信息'), `${rel} 要改成「报货信息」`);`
-  //   改后（逐字）：`assert.ok(codeOnly.includes('采购明细'), `${rel} 要改成「采购明细」（表名的新叫法）`);`
-  //                ＋ 新增 `assert.equal(codeOnly.includes('报货信息'), false, …)`
-  //   理由：这条断言的本意是"那一页必须用**当下**的表名，不许停在更早的旧名"
-  //        （它当年正是在改写「具体信息」）；2026-10-12 她把这表改名成「采购明细」⇒ 断言跟着表名走，
-  //        **保护的语义一个字没变**（不许停在旧名），只是把"当下"从「报货信息」换成「采购明细」。
-  const rel = 'public/workbench/features/purchase/index.js';
-  const source = fs.readFileSync(path.join(SERVER_ROOT, rel), 'utf8');
-  const codeOnly = stripComments(source);
-  assert.equal(codeOnly.includes('具体信息'), false, `${rel} 里还有「具体信息」文案`);
-  assert.ok(codeOnly.includes('采购明细'), `${rel} 要改成「采购明细」（表名的新叫法）`);
-  assert.equal(codeOnly.includes('报货信息'), false, `${rel} 里不该再出现上一版的表名「报货信息」`);
+test('F-补 ⭐ 工作台采购页的用户可见文案用的是**当下**的表名「采购明细」（旧名不许回来）', () => {
+  // ⚠️⚠️ 2026-10-15 **判据迁移**（业务负责人逐字：「**采购页的老文件是死代码，给删除了吧**」）——
+  //   改前逐字：
+  //     `const rel = 'public/workbench/features/purchase/index.js';`
+  //     `const source = fs.readFileSync(path.join(SERVER_ROOT, rel), 'utf8');`
+  //     `assert.equal(codeOnly.includes('具体信息'), false, …)` ＋ `assert.ok(codeOnly.includes('采购明细'), …)`
+  //     ＋ `assert.equal(codeOnly.includes('报货信息'), false, …)`
+  //   改后逐字：**同一批断言**，源码换成**活着的**采购文案真源 ——
+  //     `config/orders.js`（采购子 tab 的文案，含「采购明细」那三条）＋ `features/orders/index.js`（画它的那一页）。
+  //   依据：老「采购管理」页已整目录删除；而这条判据的本意是"**不许停在旧表名**"
+  //     （2026-10-12 她把这表改名成「采购明细」，当年正是在改写「具体信息」）
+  //     ⇒ 它承载的是**真判据**，必须迁到活页面上继续钉，**语义一个字没变** ✗
+  const copy = fs.readFileSync(path.join(SERVER_ROOT, 'public/workbench/config/orders.js'), 'utf8');
+  const page = fs.readFileSync(path.join(SERVER_ROOT, 'public/workbench/features/orders/index.js'), 'utf8');
+  const living = `${stripComments(copy)}\n${stripComments(page)}`;
+  assert.equal(living.includes('具体信息'), false, '活着的采购文案里还有旧表名「具体信息」');
+  assert.equal(living.includes('报货信息'), false, '不该再出现上一版的表名「报货信息」');
+  // ⭐ **逐条**钉住"明细那三条文案都用当下表名「采购明细」"——
+  //   ⚠️ 不许只写 `includes('采购明细')`：`config/orders.js` 里 `detailTitle` 有**两处**
+  //     （销售那边也有一个）⇒ "某处出现过"太弱，改坏其中一条抓不到 ✗；**逐条钉子**才真红 ✓
+  for (const expected of [
+    "detailTitle: '这一批的采购明细'",
+    "detailEmpty: '这一批没有可验收的采购明细'",
+    "detailFailed: '这一批的采购明细没读到，请稍后再试'",
+  ]) {
+    assert.ok(copy.includes(expected), `活着的采购文案要用当下表名「采购明细」：${expected}`);
+  }
 });
 
 test('G ⛔ 「报货批次.确认状态」整条退场 ⇒ 它的单选取值契约也删掉（契约只剩到货状态）', () => {

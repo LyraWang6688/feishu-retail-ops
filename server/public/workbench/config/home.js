@@ -10,7 +10,9 @@
  *      **一并清掉**（首页已经没有任何外链入口了）。
  *   ⚠️ **功能 / 链接一个都没丢**：`config/links.js` 的 `PURCHASE_REQUEST_FORM_URL` /
  *      `PURCHASE_RETURN_FORM_URL` / `PURCHASE_FORMS` 都还在 —— 现在由**「采购」领域那两张卡 / 验收**
- *      用着（见 `config/domains.js` 与 `features/purchase/**`），**首页不再引用它们**。
+ *      用着（见 `config/domains.js`），**首页不再引用它们**。
+ *      ⚠️ 2026-10-15：老「采购管理」页 `features/purchase/**` 已整目录删除（她：「是死代码，给删除了吧」）——
+ *      这两个 URL 常量**照旧保留** ✓
  *
  * 历史（口径演进，留个记号）：
  *   · 2026-10-06：首页【常用功能】= 采购 + 库存手工调整（她：「采购放在库存上面」）；

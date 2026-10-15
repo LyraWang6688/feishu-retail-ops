@@ -253,7 +253,7 @@ test('AC-P3 报货 / 退货两个子页已隐藏：采购子页上没有任何�
   // 也不再有任何指向**已退役领域**（`?from=purchase`）的入口
   assert.equal(/from=purchase(&|"|')/.test(JSON.stringify(purchase)), false, '不再指 ?from=purchase');
   // ⚠️ `config/links.js` 的两个 URL 与 `PURCHASE_FORMS` **仍在**（删 or 留由业务负责人定；
-  //    隐藏的老「采购管理」页面里已经没有任何地方再引用它们 —— 见 `features/purchase/**`）
+  //    老「采购管理」页（唯一还引用它们的那个页面）已于 **2026-10-15 整目录删除** ⇒ 现在没有页面消费它们）
   assert.deepEqual(links.PURCHASE_FORMS.map((form) => form.id), ['purchase-request', 'purchase-return']);
 });
 

@@ -138,18 +138,37 @@ test('AC-W3 ⭐ 两个占位页保留（待建设）；「验收」那条**不�
 // AC-W4 死链清掉（隐藏的老「采购管理」页面）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-W4 死链清掉：features/purchase/** 里不再有飞书表单 URL；链接常量仍在 config/links.js', async () => {
+test('AC-W4 ⭐ 死链清掉：老「采购管理」页 `features/purchase/**` **整个目录已不存在**；链接常量仍在 config/links.js', async () => {
+  // ⚠️⚠️ 2026-10-15 **判据提升**（业务负责人逐字：「**采购页的老文件是死代码，给删除了吧**」）——
+  //   改前逐字：
+  //     `const dir = path.join(WORKBENCH, 'features/purchase');`
+  //     `const files = fs.readdirSync(dir).filter(...)` ＋逐个文件断言"不许有 feishu.cn / share/base/form /
+  //     PURCHASE_*_FORM_URL" ＋ `assert.equal(fs.existsSync(path.join(dir,'links.js')), false, …)`
+  //   改后逐字：下面这几条 —— 判据从"**目录里那几个文件干净**"提升成"**目录整个不存在**"
+  //     （更强：目录都没了 ⇒ 不可能再挂任何死链），并保留"两个 URL 常量仍在 config/links.js"那一条 ✓。
+  //   依据：她 2026-10-15 拍板删死代码 ⇒ 目录已删；那两个 URL **照旧保留**（删 or 留不由这次处置）。
+  //   ⚠️ 仍然**能真红**：把 `index.html` 那行 `<link>` 加回去 ⇒ 下面第 ② 条红；把目录恢复 ⇒ 第 ① 条红 ✓
   const dir = path.join(WORKBENCH, 'features/purchase');
-  const files = fs.readdirSync(dir).filter((name) => name.endsWith('.js') || name.endsWith('.css'));
-  const sources = files.map((name) => ({ name, code: stripComments(fs.readFileSync(path.join(dir, name), 'utf8')) }));
-  for (const { name, code } of sources) {
-    assert.equal(/feishu\.cn/.test(code), false, `${name} 里不许再有飞书表单 URL`);
-    assert.equal(/share\/base\/form/.test(code), false, `${name} 里不许再有飞书表单外链`);
-    assert.equal(/PURCHASE_(REQUEST|RETURN)_FORM_URL/.test(code), false, `${name} 里不许再引用那两个表单 URL`);
-  }
-  // 已被删掉的那个模块（两张死链卡）**不在仓库里**了
-  assert.equal(fs.existsSync(path.join(dir, 'links.js')), false, 'features/purchase/links.js（两张死链卡）已删');
-  // ⚠️ `config/links.js` 的两个 URL 常量**仍在**（删 or 留由业务负责人定；这里只钉"没被顺手删掉"）
+  assert.equal(fs.existsSync(dir), false, '🔴 `features/purchase/**` 必须整个不存在（死代码删干净，不残留）');
+  // ② 那条**活引用**（`index.html` 曾挂着的 `<link … purchase.css>`）也不许回来
+  const indexHtml = readWorkbench('index.html');
+  assert.equal(indexHtml.includes('features/purchase'), false,
+    '`index.html` 不许再引用那个目录下的静态资源（`purchase.css` 那行已摘）');
+  assert.equal(indexHtml.includes('purchase.css'), false, '那行 `<link … purchase.css>` 不许回来');
+  // ③ 源码里也不许再有活引用（注释里留沿革不算；去注释后再扫）
+  const offenders = [];
+  const walk = (current) => {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) { walk(full); continue; }
+      if (!/\.(js|css|html)$/.test(entry.name)) continue;
+      const code = stripComments(fs.readFileSync(full, 'utf8'));
+      if (code.includes('features/purchase')) offenders.push(path.relative(WORKBENCH, full));
+    }
+  };
+  walk(WORKBENCH);
+  assert.deepEqual(offenders, [], `工作台源码 / HTML 里不许再有活引用：${offenders.join(' / ')}`);
+  // ④ ⚠️ `config/links.js` 的两个 URL 常量**仍在**（删 or 留由业务负责人定；这里只钉"没被顺手删掉"）
   const { links } = await loadFrontendModules();
   assert.equal(typeof links.PURCHASE_REQUEST_FORM_URL, 'string');
   assert.equal(typeof links.PURCHASE_RETURN_FORM_URL, 'string');
