@@ -486,7 +486,16 @@ test('AC-SP7 ⭐ 点一下 ⇒ `h5sdk.config` ⇒ `tt.scanCode`（**JSAPI，不�
   assert.equal(reportPosts[0].body.ok, true);
   assert.equal(reportPosts[0].body.phase, 'done');
   // ④ 结果如实说 + 按钮恢复（她还能再扫一个）。
-  assert.equal(container.elements['[data-view="scan-print-notice"]'].textContent, '✅ 已提交打印：这一张');
+  // ⭐⭐ 2026-10-15 晚 **成对翻新**（她真机截图：同一句话说两遍 ✗）：
+  //   改前逐字：`assert.equal(container.elements['[data-view="scan-print-notice"]'].textContent, '✅ 已提交打印：这一张');`
+  //   改后逐字：下面两句 —— 小字那行**必须为空**（成功只说一遍）；成功那句话移到**大字**那行，
+  //             并且**还是同一句话**（这个假响应没给 `numbers` ⇒ 仍是"这一张"，不编 ✗）。
+  //   依据：她 2026-10-15 真机截图「大绿字 + 小字说同一件事」⇒ **只留一行** ✓；
+  //     判据**没放宽**：成功那句话一条没丢（换成"在哪一行"），而且**多钉了一条**（不许重复）✓。
+  assert.equal(container.elements['[data-view="scan-print-notice"]'].textContent, '',
+    '成功时小字那行不许再说一遍（同一件事说两遍 ✗）');
+  assert.equal(container.elements['[data-view="scan-print-result"]'].textContent, '✅ 已提交打印：这一张',
+    '成功那一句只留**大字**那行（这个假响应没有 numbers ⇒ 不编编号 ✓）');
   assert.equal(container.elements['[data-action="scan-print"]'].disabled, false);
   // ⑤ **不是跳外链** ✗：这一块里不许出现任何 AppLink / 飞书外链。
   const source = read('features/labels/scan-print.js');

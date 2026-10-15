@@ -258,9 +258,18 @@ export function createScanPrintAction(options = {}) {
         // 一次扫码 = 一次提交意图（同一把幂等键 ⇒ 连点也只建一个任务）。
         submit_key: options.submitKey ? String(options.submitKey()) : `${Date.now()}`,
       });
-      notice(result?.reused ? texts.reused : texts.enqueued);
+      // ⭐⭐ 2026-10-15 晚 **成对翻新**（她真机截图：大绿字「✅ 已提交打印：这一张」＋
+      //   下面小字**同一句话**又说一遍 ⇒ 同一件事说两遍 ✗）：
+      //   改前逐字：`notice(result?.reused ? texts.reused : texts.enqueued);`
+      //             `resultLine(scanResultText(result, texts));`
+      //   改后逐字：**成功只留大字那一行** —— 小字那行清空（不然还留着"正在打印这一张…"那句旧的），
+      //             成功/重复提交的措辞**全在** `scanResultText` 里（`reused` 那支照旧说"刚刚已经发过"✓）
+      //   依据：她 2026-10-15 真机截图**两行重复** ✗；判据**没放宽**——成功那句话一条没丢，
+      //        只是从"两行"收成"一行（大字）" ✓；失败 / 取消 / 超时 / 没扫到**仍走 `notice(...)`** ✗
+      notice('');
       // ⭐⭐ 2026-10-15：**大字结果**（编号是主角）+ 按钮改成「再扫一张」——
       //   她真机反馈"扫完又回到这一页、不知道刚才打了哪张" ⇒ 结果必须**一眼看见** ✓
+      //   ⚠️ 编号来自服务端响应里的 `numbers`（`/label-print/jobs` 加的那个字段 ✓ 不编假话 ✗）。
       resultLine(scanResultText(result, texts));
       // ⚠️ 按钮文案**不在这里改**：`runWriteAction` 在动作结束时会**把文案还原成点击前那份**
       //   （它的职责就是"忙完复原"）⇒ 在这里改会被它覆盖掉 ✗ ⇒ 交给 `runWithFeedback` 在**它之后**改 ✓
@@ -351,14 +360,38 @@ export function createScanPrintAction(options = {}) {
 }
 
 /**
+ * ⭐⭐ 2026-10-15（业务负责人逐字：「**可以，给隐藏掉吧**」）：`?scan=1` **「只扫码」聚焦页**上，
+ *   **导航胶囊只留「返回完整工作台」**（那是"回家的路"，不许一起藏 ✗），
+ *   其余两颗（库存手工调整 / 鞋盒标签打印 —— 后者就是这一页自己）隐藏。
+ *
+ * ⚠️ **只在 `?scan=1` 这条入口上生效**：标记打在 `<html>` 上，隐藏规则在 `features/labels/labels.css`
+ *   （`html[data-scan-only="1"] .standalone-nav [data-nav-scan-only-hide]`）——
+ *   **不带 `?scan` 的批量打印页一个字节都不改** ✓（这个属性只有本函数会标）。
+ * ⚠️ 用**属性 + CSS**，不是逐个改 `style`、也不是删节点：一处规则管住所有被标记的胶囊，
+ *   DOM 结构不动（既有判据照旧：导航条还在、`返回完整工作台` 逐字还在 ✓）。
+ */
+export const SCAN_ONLY_ATTR = 'data-scan-only';
+
+/** 给 `<html>` 标上"这一屏是只扫码聚焦页"（没有 `document` 时**老实返回 false**，不炸 ✓）。 */
+export const markScanOnlyPage = (doc) => {
+  const root = doc || (typeof document === 'undefined' ? null : document);
+  const element = root?.documentElement;
+  if (!element || typeof element.setAttribute !== 'function') return false;
+  element.setAttribute(SCAN_ONLY_ATTR, '1');
+  return true;
+};
+
+/**
  * ⭐⭐ 2026-10-15：**挂载「只扫码」的聚焦页**（`?scan=1` 那条入口）——这是**唯一的编排点**，
  *   `features/labels/index.js` 命中这条入口时**只调它一下就 return**。
  *   🔴 **一个字节的批量逻辑都不碰**：不查 `/labels`、不挂筛选 / 预览纸张 / 打印队列 ——
  *     真机实测原来那次批量查询要 **23.6 秒**（扫 1362 条货品记录），正是"进页先看到批量页干等"的根因 ✗。
- *   ⭐ 它只做三件事：渲染聚焦壳 → 挂扫码块 → **进页自动弹一次相机** ✓
- *   ⚠️ `autoOpen: false` 供用例关掉自动弹（真机那条路是默认开的）。
+ *   ⭐ 它只做四件事：标上"这一屏只扫码"（导航只留回家的路 ⇒ 她要的"隐藏掉" ✓）→ 渲染聚焦壳
+ *     → 挂扫码块 → **进页自动弹一次相机** ✓
+ *   ⚠️ `autoOpen: false` 供用例关掉自动弹（真机那条路是默认开的）；`doc` 供用例注入假 document。
  */
 export const mountScanOnlyPage = (container, scanPrint, options = {}) => {
+  markScanOnlyPage(options.doc);
   container.innerHTML = scanOnlyShellHtml();
   const panel = container.querySelector('.panel') || container;
   scanPrint.mount(panel);

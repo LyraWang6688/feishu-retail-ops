@@ -135,6 +135,23 @@ const createLabelPrintQueueService = (deps = {}) => {
     printed_by: job.printed_by || '',
   } : null);
 
+  /**
+   * ⭐⭐ 2026-10-15 晚：**入队结果的统一形状**（`/label-print/jobs` 的响应就是它展开出去的）。
+   *
+   * 为什么要单独一处：她真机日志里那一单是 `L6950|黑色|A`，**页面上却只能显示"这一张"** ✗ ——
+   *   根因 = 响应里**没有 `numbers`**（服务端日志有、HTTP 响应没有）。这里补上，并且
+   *   **三条返回路径（新建 / 快路复用 / 持锁后复用）共用同一份** ⇒ 不会再出现"某一条路漏了" ✗。
+   * ⚠️ **加字段，不改既有字段**：`job` / `job_id` / `total_labels` / `reused` / `reused_reason` 逐字照旧 ✓。
+   */
+  const enqueuedOf = (job, extra = {}) => ({
+    job: summaryOf(job),
+    job_id: job.job_id,
+    total_labels: job.total_labels,
+    // 这一单是哪些编号（页面大字结果用的就是它 —— 她一眼知道刚才打的是哪张 ✓）。
+    numbers: job.numbers || [],
+    ...extra,
+  });
+
   const notify = (event) => {
     for (const listener of subscribers) {
       try {
@@ -228,7 +245,7 @@ const createLabelPrintQueueService = (deps = {}) => {
     const fast = await findReusable();
     if (fast) {
       logInfo('label_print.job.reused', { job_id: fast.job.job_id, request_key: requestKey, reason: fast.reason });
-      return { job: summaryOf(fast.job), job_id: fast.job.job_id, total_labels: fast.job.total_labels, reused: true, reused_reason: fast.reason };
+      return enqueuedOf(fast.job, { reused: true, reused_reason: fast.reason });
     }
 
     // ── 挑出要打的标签（**只读**「实时库存」+「货品信息」，与页面预览同一条 service）──────
@@ -302,13 +319,7 @@ const createLabelPrintQueueService = (deps = {}) => {
         logInfo('label_print.job.reused', {
           job_id: second.job.job_id, request_key: requestKey, reason: second.reason, phase: 'locked',
         });
-        return {
-          job: summaryOf(second.job),
-          job_id: second.job.job_id,
-          total_labels: second.job.total_labels,
-          reused: true,
-          reused_reason: second.reason,
-        };
+        return enqueuedOf(second.job, { reused: true, reused_reason: second.reason });
       }
       return createJob({ request, requestKey, labels, data, rendered, actor, source, submitKey: key, rotate: rendered.meta?.rotate });
     });
@@ -387,7 +398,7 @@ const createLabelPrintQueueService = (deps = {}) => {
     // 顺手清理过期任务（**不是定时器**：每次入队试一次，有节流；小 VPS 不想多养一个 setInterval）。
     void cleanup().catch((error) => logWarn('label_print.cleanup.failed', { error: error.message }));
 
-    return { job: summaryOf(job), job_id: jobId, total_labels: labels.length };
+    return enqueuedOf(job);
   };
 
   /** 手机侧：按**编号**打这一款（扫码页「货品」领域那颗【打印这一款】）。 */
