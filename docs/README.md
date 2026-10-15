@@ -26,6 +26,7 @@
 | [owner-requests-backlog.md](owner-requests-backlog.md) | 业务负责人的口径总账 —— **单一来源**（owner requests backlog） |
 | [page-annotate-mode-2026-10-16.md](page-annotate-mode-2026-10-16.md) | 页面标注模式（业务负责人 2026-10-16 亲口点的功能） |
 | [payment-method-voucher-link-2026-10-16.md](payment-method-voucher-link-2026-10-16.md) | 「收款方式管理 · 团购券管理（关联列）」同步记录（2026-10-16） |
+| [sales-entry-total-amount-2026-10-16.md](sales-entry-total-amount-2026-10-16.md) | ⭐ **生产「销售主表」新增「总金额」→ 同步 schema ＋ 接进写入**（业务负责人 2026-10-16 逐字：「用来记录一单多货时需要判断的**累计金额**，也是**它的写入地方**」）：生产列属性（她给的只读事实）· **测试 Base 没有这一列**（附只读证据）· 改前逐字→改后逐字 · 写入点 = `salesOrderService._confirm` 与**赠品同一次 PATCH**（不新增请求）· 累计口径（含券 / 少付 / 多件）· 缺金额 ⇒ **不写 0**（留空 + 如实记 skip）· N=1 建议 · 10 条判据（AC-TA0…TA8）· 未做项 |
 | [pending-confirmations.md](pending-confirmations.md) | 🔔 待业务负责人确认（只放"需要你一句话"的事，别的一律不放） |
 | [project-progress.md](project-progress.md) | 项目进展、已确认决策与后续路线 |
 | [feishu-v1-operations.md](feishu-v1-operations.md) | 飞书 V1 的运行与运维手册（部署、日志、排查） |

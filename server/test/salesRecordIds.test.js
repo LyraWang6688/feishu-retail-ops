@@ -320,8 +320,18 @@ test('AC-REG 其余字段一字未变：主表 / 明细 / 收款行的字段**�
     owed: 140,
   });
   const entry = await h.gateway.get('salesEntry', ORDER_ID);
-  assert.deepEqual(Object.keys(entry.fields).sort(), [ENTRY.orderNo, ENTRY.tradeType, ENTRY.userAction, ENTRY.gift, ENTRY.sales, ENTRY.funds].sort(),
-    '主表这次写到的列：销售单号(原有) / 交易类型(新) / 确认状态 / 赠品 / 销售状态 / 资金状态 —— 没有多出来的列');
+  // ⭐ 2026-10-16 **成对迁移**（加一列，判据的严格度不变：仍是"这一单写到的列**逐个**对上"）——
+  //   · 改前逐字：
+  //     `assert.deepEqual(Object.keys(entry.fields).sort(), [ENTRY.orderNo, ENTRY.tradeType, ENTRY.userAction, ENTRY.gift, ENTRY.sales, ENTRY.funds].sort(),`
+  //   · 改后逐字：下面这一行（数组末尾加了 `ENTRY.totalAmount`，期望里同时加了 `ENTRY.totalAmount`）
+  //   · 依据 = 业务负责人 2026-10-16 逐字：「我在销售主表里面加了一个货币字段，叫做「**总金额**」。
+  //     这个就是用来记录我们「**一单多货**」时需要判断的**累计金额**，也是**它的写入地方**。」
+  //     ⇒ 这一单（1 行、实收 240）写到的「总金额」= 240，**多出来的这一列是她的口径**，不是漂移。
+  //   ⚠️ 本用例**没有放宽**：仍是 `deepEqual` 全等（少一列 / 多一列都红）。
+  assert.deepEqual(Object.keys(entry.fields).sort(),
+    [ENTRY.orderNo, ENTRY.tradeType, ENTRY.userAction, ENTRY.gift, ENTRY.sales, ENTRY.funds, ENTRY.totalAmount].sort(),
+    '主表这次写到的列：销售单号(原有) / 交易类型(新) / 确认状态 / 赠品 / 销售状态 / 资金状态 / 总金额(她 2026-10-16 新增) —— 没有多出来的列');
+  assert.equal(cell(entry, ENTRY.totalAmount), 240, '「总金额」= 各行实收之和（这一单只有一行 240）');
   assert.deepEqual(Object.keys(detailsOf(h)[0].fields).sort(),
     [DETAIL.salesEntry, DETAIL.product, DETAIL.size, DETAIL.actualAmount, DETAIL.fulfillmentStatus, DETAIL.tradeType, DETAIL.detailId].sort(),
     '明细行：原有 6 列 + 新的「销售明细ID」，其余不变');

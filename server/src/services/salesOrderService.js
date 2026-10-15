@@ -234,7 +234,48 @@ class SalesOrderService {
       //    ⇒ 为了省 1 次 PATCH 去改别人 3 条哨兵，是**坏的交换**。要省它必须先与 Lead 对齐
       //      "赠品列被写过的痕迹算不算语义"。
       // 写空也要写（与 2026-10-08 之前的明细语义一致：没有赠品 ⇒ 这一列是**空串**）。
-      await this.gateway.update('salesEntry', salesEntryRecordId, { gift: orderGift }, { correlation });
+      //
+      // ⭐⭐ 2026-10-16：**「总金额」**（业务负责人在生产「销售主表」新增的**货币/数字**列）——
+      //   她的原话（逐字）：「我在销售主表里面加了一个货币字段，叫做「**总金额**」。
+      //   这个就是用来记录我们「**一单多货**」时需要判断的**累计金额**，也是**它的写入地方**。」
+      //
+      // 【口径】**累计金额 = 该单所有明细行「实收金额」之和**。
+      //   = 上面那个**既有的** `totalCents`（全仓只有这一个"每件实收合计"的算法 ⇒
+      //     **不新写第二个** ✗）。它天然覆盖：逐行实收（她 2026-10-16「每一双都要填实收金额」）·
+      //     券（行金额已被入口按"面值 − 结算款"调过 ⇒ 这里跟着走）· 少付（**不改差额**：
+      //     差额仍是 `totalCents - paidCents` ⇒「总金额 − 收款合计 = 还差多少钱」自洽 ✓）。
+      //
+      // 【写在哪儿】与**赠品同一次 PATCH**（同一笔写库）⇒ **不新增一次请求** ✗。
+      //   这一处 `_confirm` 是所有销售入账的唯一出口（群聊 / 扫码 / 工作台 / 一单多货
+      //   都经 `v1PostingService.postSale` 或 `scanWriteService.submitSale` 走到这里）
+      //   ⇒ 不需要第二条写入点（两处各写会漂移）。
+      //
+      // 🔴 【有行没填实收金额 ⇒ 一个字都不写】（那一格**留空**，**绝不写 0** ✗）：
+      //   与 2026-10-11「方案甲」（空 = 不写这一列）以及下面 `amountsKnown` 的
+      //   `no_known_total` 同一条口径 —— **累计不可知 ⇒ 不编**。写 0 会把"还没填"说成
+      //   "这一单收了 0 元"，那是错账。
+      //   ⚠️ 每个已知的行金额都 > 0（上面：`actualAmountCents <= 0` 当场抛）⇒
+      //      `amountsKnown` 为真时 `totalCents` **必然 > 0**，不会悄悄写 0；负值也进不来。
+      //
+      //   改前逐字：`const amountsKnown = expected.every((item) => item.amountKnown);`（只此一处，
+      //     位置在下面「差额」那一段）；
+      //   改后逐字：挪到**这里**（本段），下面那一处改成 `const amountsKnown = orderAmountsKnown;`
+      //     —— 依据：同一个判断被两处用（总金额 / 差额），**只许有一个来源** ✓。
+      const orderAmountsKnown = expected.every((item) => item.amountKnown);
+      await this.gateway.update('salesEntry', salesEntryRecordId, {
+        gift: orderGift,
+        ...(orderAmountsKnown ? { totalAmount: totalCents / 100 } : {}),
+      }, { correlation });
+      if (orderAmountsKnown) {
+        logInfo('sales.entry.total_amount.written', {
+          sales_entry_record_id: salesEntryRecordId, total_amount: totalCents / 100, ...correlation,
+        });
+      } else {
+        // 如实记一条（**不是**静默跳过）：有行没填实收金额 ⇒ 算不出累计 ⇒ 这一格留空。
+        logWarn('sales.entry.total_amount.skipped', {
+          sales_entry_record_id: salesEntryRecordId, reason: 'line_amount_missing', ...correlation,
+        });
+      }
       detailPlan = rows.length;
       // ⭐ 2026-10-12：**销售明细ID** = `{销售单号}-{两位序号}`（业务负责人定的格式）。
       //    序号的来源 = **这一单已有的行**（`existing` 上面刚读过，零额外请求）⇒
@@ -335,7 +376,9 @@ class SalesOrderService {
       const statedOwedCents = owedStated ? cents(input.owed, '欠款金额') : 0;
       // 🔴 2026-10-11（方案甲）：**只要有明细没填「实收金额」，差额就算不出来** ⇒
       //    这时**不许**下"差额"的结论（宁可拦住 / 不挂，也不写一条金额算错的欠款）。
-      const amountsKnown = expected.every((item) => item.amountKnown);
+      //   ⚠️ 这个判断的**唯一来源**在上面（「总金额」那一段，`orderAmountsKnown`）——
+      //     同一个事实不许算两遍（改前逐字：这里再写一遍 `expected.every(...)`）。
+      const amountsKnown = orderAmountsKnown;
       if (statedOwedCents > 0 && !amountsKnown) {
         throw new Error('还有明细没填「实收金额」，算不出欠款差额；请先补上实收金额再确认');
       }
