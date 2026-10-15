@@ -287,6 +287,30 @@ test('判据：预定（未交付）→ 要按钮；现货 + 欠款 → 要；�
   }), { needed: true, reason: 'delivery_failed' });
 });
 
+// ⭐⭐ 2026-10-16 晚迁移（改前逐字 → 改后逐字 → 依据）：
+//   改前逐字：「「钱没结清」的判据**刻意不拿「成交 − 已收」去猜**……「有未收款」⇔「`draft.owed` 非空」」
+//     ⇒ 她**没明说欠**的单（`draft.owed` 空）即使差额 > 0 也判成 `completed` ✗
+//     （那条差额在入账层会被**自动**记成【未收款】⇒ 判据与业务表里的真相相反 ✗）
+//   改后逐字：「「钱没结清」= 她明说欠多少 **或** 已挂着一条「未收款」 **或** ⭐ **差额 > 0**」
+//   依据 = 她 2026-10-16 晚裁定「**客户少付 ⇒ 自动记一条【未收款】（差额）**」
+//          ＋ 她 2026-10-14 逐字「只要本次付的金额小于累计的，那么差额都是未收款，包括本次付款为 0」
+test('⭐ 2026-10-16 新口径：她**没明说欠**、但差额 > 0 ⇒ 也要按钮（那条差额会被自动记成【未收款】）', () => {
+  // 货品 260、只收 100 ⇒ 差额 160 ⇒ 入账层自动挂一条【未收款 160】⇒ 钱没结清 ⇒ 要按钮。
+  assert.deepEqual(needsConfirmDeal({ draft: draftFor({ tradeTypeCode: 'SALE_CASH', paidTotal: 100 }) }),
+    { needed: true, reason: 'unsettled' });
+  // 一分没收 ⇒ 差额 = 全额 ⇒ 同样要（与 `autoModeOf()` 的"包括本次付款为 0"同一口径）。
+  assert.deepEqual(needsConfirmDeal({ draft: draftFor({ tradeTypeCode: 'SALE_CASH' }) }),
+    { needed: true, reason: 'unsettled' });
+  // 🔴 反向钉住：收齐（差额 = 0）⇒ 仍然**不许**打扰她（新口径只加"差额>0"这一支，不放开别的）。
+  assert.deepEqual(needsConfirmDeal({ draft: draftFor({ tradeTypeCode: 'SALE_CASH', paidTotal: 260 }) }),
+    { needed: false, reason: 'completed' });
+  // 🔴 反向钉住（**不编**差额）：明细没填实收金额 ⇒ 累计不可知 ⇒ 不判"未结清" ✓
+  assert.deepEqual(needsConfirmDeal({ draft: {
+    items: [{ trade_type_code: 'SALE_CASH', trade_type: '现货', quantity: 1 }],
+    payments: [], agreed_total: 260,
+  } }), { needed: false, reason: 'completed' });
+});
+
 
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -117,6 +117,14 @@ const needsConfirmDeal = ({ draft = {}, deliveryFailures = [] } = {}) => {
 - 「钱」那一维**不拿「成交 − 已收」去猜**：入账层只在她**明说欠多少**时才补那条「未收款」占位
   （`salesOrderService`：「她说欠才算欠；后端不拿差额去猜是还价还是欠款」）
   ⇒ 「有未收款」⇔「`draft.owed` 非空」，所以按钮**不会出现在"其实没什么可做"的单上**。
+  > ⚠️ **已被取代（2026-10-16 晚 · 业务负责人裁定）**：上面这一条是**老口径**（"她说欠才算欠"）。
+  > 她的原话：「**客户少付 ⇒ 自动记一条【未收款】（差额）**」＋「那个还是**群聊文字识别**的时候，
+  > **现在已经不需要，直接对比金额就可以了**」
+  > ⇒ **现在**：「钱没结清」= 她明说欠多少 **或** 已挂着一条【未收款】 **或** ⭐ **差额 > 0**
+  > （差额 > 0 时入账层会**自动**挂那条【未收款】⇒ 按钮照样要有）。
+  > 落点：`config/salesConfirmDeal.js` 的 `hasOutstandingMoney` / `outstandingCentsOf`；
+  > 判据：`server/test/terminalCardConfirmDeal.test.js`（"差额 > 0 ⇒ 也要按钮" ＋ 两条反向钉住）。
+  > 口径总账：`docs/owner-requests-backlog.md` 的 **R-18**。本段其余内容为**历史留痕**，不改 ✓
 
 ### ② 按钮**画在哪**：`src/utils/larkCards.js`（`salesStatusCard` 多一个可选开关）
 

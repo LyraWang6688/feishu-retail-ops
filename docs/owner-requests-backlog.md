@@ -110,3 +110,39 @@
    ⇒ 券判定 = 「收款方式管理」的「团购券管理」**关联列非空**（生产已只读核实：type 21 关联，见 `docs/payment-method-voucher-link-2026-10-16.md`）。
    ⇒ 先例：群聊链路 `services/groupBuyVoucherPolicy.js:93-100`（金额=平台结算款、状态=待平台结算）；该文件**只读参考，不许改**。
 4. **既存问题**：「测试 Base ≠ 生产」（生产收款方式表 4 列含关联列 / 测试 Base 3 列且「券名称」是文本）⇒ 依赖真表的实测会被误导；部署闸门在服务器上跑才对着生产。
+
+---
+
+## 2026-10-16 **晚** · 裁定落账：客户少付 ⇒ **自动**记一条【未收款】（差额）（Lead 弹窗逐字确认）
+
+> **只追加**（不改上面任何一行 ✓）。本 PR 的实现与判据迁移见 `feat/owed-auto-shortfall`。
+
+| # | 她的原话（逐字） | 日期（上海） | 状态 | owner | 判据（能真红） | 落点（文件:行 / PR） |
+| --- | --- | --- | --- | --- | --- | --- |
+| **R-18** | ⭐**裁定**：「**客户少付 ⇒ 自动记一条【未收款】（差额）**」——Lead 问的原话：「客户少付钱时…那 200 差额**要不要系统自动**写一条【未收款】？」⇒ 她选 **「A：自动记（差额⇒未收款）」**；例：货品 300、客户只付 100 ⇒ 系统自动写一条【未收款 200】 | **2026-10-16 晚**（弹窗逐字确认） | **已上线**（本 PR） | `owed-auto` | ① `test/owedAutoOnShortfall.test.js` **AC-OWED-1**：货品 300 / 已收 100 ⇒ 收款行 = `[100 已收款, 200 未收款]`（**不带 `owed`**）—— 把 salesOrderService 的 auto-owed 去掉 ⇒ **红**；② **AC-OWED-3** 反向：收齐 ⇒ 一条不挂（借"自动"乱挂 ⇒ 红）；③ **AC-OWED-7/8** 源码哨兵：旧决策行/旧注释**塞回即红** | `server/src/services/salesOrderService.js`（auto-owed）· `server/src/config/scanWrite.js`（未付档注释成对更正）· `server/src/config/salesConfirmDeal.js`（`hasOutstandingMoney` 加"差额>0"）· 真表 E2E 期望激活：`server/test/scanMoneyPageTwoStepVerify.test.js` V2/V3 |
+
+**依据（她逐字，两条老的在先、裁定在后）**
+1. 她 **2026-10-14** 逐字：「**只要本次付的金额小于累计的，那么差额都是未收款，包括本次付款为 0**」
+2. 她 **2026-10-14** 逐字：「**去掉三个单选、按金额自动算**」
+3. 她 **2026-10-16 晚** 裁定（上表逐字）：「**客户少付 ⇒ 自动记一条【未收款】（差额）**」
+4. 她 **2026-10-16 晚 追加逐字**：「那个还是**群聊文字识别**的时候，**现在已经不需要，直接对比金额就可以了**」
+   ⇒ 「未收款只在**她明说欠**时才补」（`salesOrderService.js` 老注释）＋「**不再**自动补【未收款】」
+   （`config/scanWrite.js:116` 老注释）**都是"群聊文字识别"那个时代的老口径、已不需要** ✗；
+   现在 = **直接对比金额**（收款合计 vs 货品/应收合计）✓。
+
+**生效范围（**按代码实际**核出来的，不是按草案抄的）**
+- **销售** — ✅ **适用**：`SalesOrderService.confirm` 是销售入账的**唯一落库口**，也是全仓**唯一**挂【未收款】的地方（`PaymentService.recordInitialBatch` 只按给定状态落行）。差额 = 「每件实收合计 − 已收合计」（**只有这一个算法**，与 `config/saleSettlement.autoModeOf()` 同一语义）；**明细实收金额不齐 ⇒ 不编差额**（与 `autoModeOf()` 的 `no_known_total` 同口径）。
+- **补货** — ❌ **不适用**：不经过 `SalesOrderService`，没有"收款明细 / 未收款"这条口径（金额在 `config/scanWrite.js` 的 `PURCHASE_AMOUNT`，且按她 2026-10-16 口径**补货不问金额**）。
+- **退货** — ❌ **不适用**：同上（采购退货链路）。
+- **验收（到货核对）** — ❌ **不适用**：同上；「实际金额」是到货核对那一列，不是收款。
+- **售后（退货/换货/赔货）** — ❌ **不适用**：`config/afterSales.js` 明确【未收款】**不在可改状态里**（那笔钱根本没收到，没有"退款"可言）。
+
+**本 PR 成对迁移的判据（一个不落）**
+1. `server/test/scanMoneyPageTwoStepVerify.test.js` **V2/V3**（真表 E2E，**未真跑**；只做 `node --check` ＋ 静态哨兵 `scanMoneyPageTwoStepShape.test.js`）：货品页补 `line_amount`（她 P0「实收金额必填」）＋ 期望从「收款行不增」翻成「**恰 +1 条【未收款】**、状态未收款 / 方式留空 / 金额 = 每件实收合计」（V3 幂等判据更严：两枪只许落一条）。
+2. `server/test/salesMvp.test.js`（旧口径的理由段 + 两条注释）：改后逐字把理由从"她没说欠"换成"**差额 0**"（**断言一个数值都没动**）。
+3. `server/test/scanSaleTwoLayerMoney.test.js`：AC-6 摘要 / 小节标题 / 路由用例那句**说反了的断言消息**（`=== 1` 一直没变）＋ AC-13 的理由 ⇒ 全部改成"**差额 0**"。
+4. `server/test/terminalCardConfirmDeal.test.js`：**新增**"差额 > 0 ⇒ 也要【确认成交】按钮"＋两条反向钉住（收齐 ⇒ 不要；实收不齐 ⇒ 不编）。
+5. `server/src/config/salesConfirmDeal.js` 的「钱没结清」判据：加"差额 > 0"这一支（**只加不放松** ✓）。
+6. 注释成对更正：`server/src/config/scanWrite.js` 未付档（**那句与实现相反的"不再自动补"已作废**）· `saleSettlement.js`（"不写欠款行"→ 本表 `owedCents` 无消费者，差额不在这里算）· `afterSales.js`（"她明说欠款的占位"→ 差额>0 自动记）。
+
+⚠️ **本轮【没有】改、但注释仍是旧口径的一处（**碰不得**）**：`server/src/services/scanWriteService.js`（🔴 本任务红线：一个字不许加/删/改）—— 它的**实现早就是新口径**（`if (itemsCents - paidCents > 0) owedCents = …`，2026-10-14 落的），但文件里 `:659` / `:906` / `:947-949` / `:1038-1044` 几段注释仍写着"未付不写【未收款】"（**注释与实现相反**）。⇒ 已如实回报 Lead，**等它从红线里让出**再成对更正。

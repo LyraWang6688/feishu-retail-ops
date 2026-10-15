@@ -23,7 +23,18 @@
  *     ⇒ 后者抽成共享的 `overpaid` 规则；
  *   · 一共 **4 个 fail code**：`full_without_money` · `amount_mismatch` · `partial_amount_missing` ·
  *     `partial_amount_mismatch`；
- *   · 「未付」= **状态未付 + 不写欠款行**（`owedCents = 0`）⇒ 这里叫 `action: 'pending'`（语义不变）；
+ *   · 「未付」在本表里 = `action: 'pending'`（**本表只用来判 block / 档位**）——
+ *     ⚠️ 2026-10-16 晚**注释成对更正**（改前逐字 → 改后逐字 → 依据）：
+ *       改前逐字：「「未付」= **状态未付 + 不写欠款行**（`owedCents = 0`）⇒ 这里叫 `action: 'pending'`（语义不变）」
+ *       改后逐字：「「未付」= `action: 'pending'`；**差额不在这里算、也不在这里判** ——
+ *         本表的 `owedCents` **一个消费者都没有**（只读 `action`/`code`/`reason`，见 `routes/scanPage.js`）；
+ *         真正的差额 = `每件实收合计 − 已收合计`，由 `services/scanWriteService.js` 与
+ *         `services/salesOrderService.js` 算 ⇒ **未付（本次付 0）也照补那条【未收款】**
+ *         （差额 = 累计）」
+ *       依据 = 她 2026-10-14 逐字「**只要本次付的金额小于累计的，那么差额都是未收款，
+ *         包括本次付款为 0**」＋ 她 2026-10-16 晚裁定「**客户少付 ⇒ 自动记一条【未收款】（差额）**」。
+ *     ⇒ 表的**取值一个字没改**（判据没放宽 ✗）—— 只是把"不写欠款行"这句**与实现相反**的注释更正 ✓
+ *       （新口径的真源是纯函数 `autoModeOf()` 的 `owedCents` ＋ 落库那一层）。
  *   · ⚠️ **`SUBMIT_WRITES` 故意没有**：`scanWriteService` 这段**没有任何"按交易类型决定写几处"的分支**
  *     （库存/入库在别的链路决定）⇒ 加了就是"没人读的假真源" ✗。
  */
@@ -57,7 +68,11 @@ const SETTLEMENTS = Object.freeze({
   unpaid: Object.freeze({
     labelKey: 'paymentStatusUnpaid',
     requirePaymentRows: false,
-    // 未付 = 状态未付 + **不写欠款行**（`owed = 0`；她明说"先付 X、还欠 Y"才算欠）
+    // 未付 = `action: 'pending'`（本表只用来判 block / 档位）。
+    // ⚠️ 2026-10-16 晚注释更正：**这里不再代表"不写欠款行"** ——
+    //    新口径（她 2026-10-14「包括本次付款为 0」＋ 2026-10-16 晚裁定「客户少付 ⇒ 自动记一条【未收款】」）
+    //    下，**未付也照补那条【未收款】**（差额 = 累计）。差额与那条记录都不由本表产生：
+    //    差额算法在 `scanWriteService` / `salesOrderService`，落库在 `PaymentService.recordInitialBatch`。
     whenNoMoney: Object.freeze({ action: 'pending', reason: 'pending_supplement' }),
   }),
 });

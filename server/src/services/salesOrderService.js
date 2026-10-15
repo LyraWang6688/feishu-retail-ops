@@ -304,22 +304,51 @@ class SalesOrderService {
       // 她也能从表里一眼看出"明细是好的、坏在钱那一列"。
       await this.status.write(salesEntryRecordId, { sales: WRITE.sales.done }, correlation);
       const detailRecordIds = rows.map((row) => row.recordId);
+      // ⭐ **差额（分）** = 「每件实收合计 − 已收合计」—— 全仓**只有这一个**差额算法
+      //   （整数分相减，落库时 ÷100 还原成元）。这里**不新写**一个 ✗。
       const outstandingCents = totalCents - paidCents;
-      // 未收款只在**她明说欠**时才补（业务负责人口径：「如果用户说欠多少钱，你再做欠款，
-      // 用户又没说呀」）。owed 是她原话里说出的欠款金额（AI 解析出来的）：
-      //   · 「119 的腰带，是收到了 100 元微信」→ owed 为空 → 这一单成交就是 100，不挂未收款；
-      //   · 「卖了 119，先给 100，还欠 19」    → owed=19 → 补一条未收款 19。
-      // 后端不拿「成交 − 已收」的差额去猜是还价还是欠款：她说欠才算欠。
-      const owedCents = input.owed ? cents(input.owed, '欠款金额') : 0;
+      // ⭐⭐ 2026-10-16 晚（业务负责人**裁定** · 她亲口选的「A」，弹窗逐字确认过）：
+      //   「**客户少付 ⇒ 自动记一条【未收款】（差额）**」
+      //   例：货品 300、客户只付 100 ⇒ **系统自动**写一条【未收款 200】✓
+      //   ⚠️ **改后逐字**：差额 > 0 ⇒ **自动补**那条【未收款】—— **不必等她明说欠** ✓
+      //   ⚠️ **改前逐字**（老口径，已作废）✗：
+      //      「未收款只在**她明说欠**时才补（业务负责人口径：「如果用户说欠多少钱，你再做欠款，
+      //       用户又没说呀」）…… 后端不拿「成交 − 已收」的差额去猜是还价还是欠款：她说欠才算欠。」
+      //   依据 = ① 她 2026-10-16 晚裁定 —— 我问的原话：
+      //            「客户少付钱时…那 200 差额**要不要系统自动**写一条【未收款】？」
+      //            ⇒ 她选「**A：自动记（差额⇒未收款）**」；
+      //          ② 她 2026-10-16 晚**追加逐字**：「那个还是**群聊文字识别**的时候，
+      //             **现在已经不需要，直接对比金额就可以了**」
+      //             ⇒ 老口径（"她明说欠才算欠"）是**群聊文字识别那个时代**的产物，**已不需要** ✗；
+      //               现在的口径 = **直接对比金额**（收款合计 vs 货品/应收合计）✓；
+      //          ③ 她 2026-10-14 逐字：「**只要本次付的金额小于累计的，那么差额都是未收款，
+      //             包括本次付款为 0**」；
+      //          ④ 她 2026-10-14 逐字：「**去掉三个单选、按金额自动算**」
+      //             （档位不再由她选 ⇒ 钱只能按差额算，没有"她明说欠"这个动作了）。
+      //   ⚠️ 与 `config/saleSettlement.js` 的纯函数 `autoModeOf()` **同一套语义**
+      //      （差额 = 累计 − 已收；**累计不可知 ⇒ 不编差额** ✗）。
+      const owedStated = !(input.owed === undefined || input.owed === null
+        || String(input.owed).trim() === '');
+      // 她**明说**的欠款金额（AI 解析出来的）：新口径下它**只是交叉校验**，不再是唯一依据。
+      //   · 「卖了 119，先给 100，还欠 19」→ owed=19，与差额一致 ⇒ 照旧补一条 19 ✓
+      //   · 「卖 300、收到 100」（她没提欠）   → owed 空 ⇒ **自动**按差额补一条 200 ✓（本次改动）
+      const statedOwedCents = owedStated ? cents(input.owed, '欠款金额') : 0;
       // 🔴 2026-10-11（方案甲）：**只要有明细没填「实收金额」，差额就算不出来** ⇒
-      //    这时**不许**传 `owed > 0`（宁可拦住，也不写一条金额算错的欠款）。
-      if (owedCents > 0 && !expected.every((item) => item.amountKnown)) {
+      //    这时**不许**下"差额"的结论（宁可拦住 / 不挂，也不写一条金额算错的欠款）。
+      const amountsKnown = expected.every((item) => item.amountKnown);
+      if (statedOwedCents > 0 && !amountsKnown) {
         throw new Error('还有明细没填「实收金额」，算不出欠款差额；请先补上实收金额再确认');
       }
-      if (owedCents > 0 && owedCents !== outstandingCents) {
+      if (statedOwedCents > 0 && statedOwedCents !== outstandingCents) {
         // 说出的欠款和「成交 − 已收」对不上：宁可拦下来人工核对，也不静默写一条错账。
         throw new Error('她说的欠款与「实收金额−已收金额」不一致，请核对后再确认');
       }
+      // 差额 > 0 且明细金额都齐 ⇒ **自动**挂那条【未收款】（金额 = 差额，方式留空、
+      // 状态 = 表里既有的「未收款」—— 形状由 `PaymentService.recordInitialBatch` 决定）。
+      //   ⚠️ 明细金额不齐 ⇒ **不编**差额（与 `autoModeOf()` 的 `no_known_total` 同一口径 ✓）。
+      const owedCents = statedOwedCents > 0
+        ? statedOwedCents
+        : (amountsKnown ? outstandingCents : 0);
       const expectedPayments = owedCents > 0
         ? [...payments, { amount: outstandingCents / 100, status: '未收款' }] : payments;
       const paymentRecordIds = await this.payments.recordInitialBatch(salesEntryRecordId, expectedPayments, {

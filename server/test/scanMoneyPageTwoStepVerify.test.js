@@ -14,8 +14,10 @@
  *
  * 验的是我自己要问的五件事（不是复述作者 AC）：
  *   V1 点「提交这一单」⇒ 四张表一行都不许多（主表/明细/收款/库存流水）
- *   V2 点资金页按钮 ⇒ 才建单：主表 +1（单号）· 明细 +1 · **收款按她填的**（全付 ⇒ 1 条已收款）· 现货 ⇒ 流水 +1
+ *   V2 点资金页按钮 ⇒ 才建单：主表 +1（单号）· 明细 +1 · **收款按她填的**（全套见下面 2026-10-16 晚迁移：
+ *      货品页带「实收金额」、资金页不填收款 ⇒ ⭐ **自动一条【未收款】，金额 = 每件实收合计**）· 现货 ⇒ 流水 +1
  *   V3 同一把 submitKey 连点两次（含并发）⇒ 只写一次
+ *      （⭐ 2026-10-16 晚迁移后含**那条自动【未收款】**：两枪也**只许落一条**）
  *   V4 **金额不齐 ⇒ 零写入 + 差额人话 + 原地重渲染**（2026-10-16 迁移：
  *      · 改前逐字：`{ action:'payment_pay', payment_status:'部分付', payment_method:'微信', payment_amount:'' }`
  *        —— 用的是**已退场的档位字段** ✗（她 2026-10-16：「**去掉三个单选、按金额自动算**」）
@@ -80,6 +82,18 @@ if (SKIP) console.log(`[verify] 跳过：${SKIP}（有凭证时这条会真跑�
 
 const TAG = `v${Date.now().toString(36)}${crypto.randomBytes(2).toString('hex')}`;
 const SAY = (...args) => console.log(`[verify ${TAG}]`, ...args);
+
+/**
+ * ⭐⭐ 2026-10-16 迁移（改前逐字 → 改后逐字 → 依据）：
+ *   改前逐字：货品页那一枪**不带实收金额**（`{ action: submitOrder, size }`）—— 那时候
+ *     「实收金额可不填」还能跳资金页 ✗
+ *   改后逐字：货品页那一枪**必须**带 `line_amount`（`{ …, [fields.lineAmount]: LINE_AMOUNT }`）✓
+ *   依据 = 她 2026-10-16 逐字 ×2：「**实收金额用户必须填写**」
+ *          ＋「**不用做那个为空去单价的功能了**」（P0 第二刀：尺码 + 实收金额都填了才跳资金页）
+ *   ⚠️ 金额取一个**确定**的数：本用例验的是"钱按差额落成【未收款】"，
+ *      金额本身没有业务含义（不是按货品单价推的假数据 ✗）。
+ */
+const LINE_AMOUNT = '100';
 
 const resetSessions = () => {
   const dir = process.env.SCAN_SESSION_DIR || path.join(__dirname, '..', 'data', 'scan_sessions');
@@ -210,22 +224,30 @@ test(`V1/V2/V5 · 点提交=零写入 ⇒ 点资金页按钮才建单（+ 读回
   await withServer(async (base) => {
     const before = await counts(gateway);
     SAY('① 点提交前四表 =', JSON.stringify(before));
-    const step1 = await postPage(base, urlPath, cookie, { action: SCAN_WRITE.actions.submitOrder, [SCAN_WRITE.fields.size]: pick.size });
+    const step1 = await postPage(base, urlPath, cookie, { action: SCAN_WRITE.actions.submitOrder, [SCAN_WRITE.fields.size]: pick.size, [SCAN_WRITE.fields.lineAmount]: LINE_AMOUNT });
     const afterStep1 = await counts(gateway);
     SAY('① 点提交 HTTP', step1.status, '后四表 =', JSON.stringify(afterStep1), '| 是资金页?', /payment_pay/.test(step1.html));
     assert.deepEqual(afterStep1, before, '点「提交这一单」**不许**写任何一张表');
     assert.match(step1.html, /payment_pay/, '应当渲染资金页');
 
-    // ⭐⭐ 2026-10-16 迁移（改前逐字 → 改后逐字 → 依据）：
+    // ⭐⭐ 2026-10-16 晚**第二次迁移**（改前逐字 → 改后逐字 → 依据）：
     //   改前逐字：`{ action: 'payment_pay', payment_status: '未付' }` —— **已退场的档位字段** ✗
-    //   改后逐字：`{ action: 'payment_pay' }` —— **不填收款**（一分钱都没收到 ✓）
+    //     （#687 已把它改成 `{ action: 'payment_pay' }`，但当时**期望没翻** —— 见下面那段"待激活"）
+    //   改后逐字：`{ action: 'payment_pay' }` —— **不填收款**（一分钱都没收到 ✓，档位由金额自动算 ✓）
     //   依据 = 她 2026-10-16 逐字：「**去掉三个单选、按金额自动算**」
-    //   ⚠️ 期望**暂不翻**：现行实现口径 =「她说欠才算欠」（`config/scanWrite.js:116` 未付档注释
-    //      ＋ `services/salesOrderService.js:308-324`：`owed` 为空 ⇒ 不挂未收款）⇒
-    //      "只记货、不写收款行"**仍与实现一致** ✓
-    //   🔴 **待激活**：Lead 2026-10-16 的口径「**差额（= 全额）写一条【未收款】**」是 **P1 未实现**那条
-    //      ⇒ 上线后本用例下面两条要**对调**成 `payment +1` ＋ 状态「未收款」/方式留空/金额 = 每件实收合计 ✗
-    //      （**不许提前改** ✓ 否则真表 E2E 会"假红"：判据要求了实现还没做的事 ✓）
+    //   ⭐ 期望**本次翻过来**（老的那段"待激活"指的正是本次改动）：
+    //     改前逐字（旧口径）：「不填收款 ⇒ 现行「她说欠才算欠」⇒ **不挂未收款**」
+    //        ＋ 断言 `payment 不增` / `payments.length === 0`
+    //     改后逐字（新口径）：「差额 = 每件实收合计 − 已收 = LINE_AMOUNT − 0 > 0 ⇒
+    //        **自动**挂一条【未收款】（金额 = 每件实收合计、方式留空）」
+    //        ＋ 断言 `payment +1` / `payments.length === 1` 且 状态「未收款」/ 方式留空 / 金额 = LINE_AMOUNT
+    //   依据 = 她 2026-10-16 晚**裁定**「**客户少付 ⇒ 自动记一条【未收款】（差额）**」
+    //          ＋ 她 2026-10-16 晚**追加逐字**：「那个还是**群聊文字识别**的时候，
+    //             **现在已经不需要，直接对比金额就可以了**」
+    //             ⇒ 老口径（"她明说欠才算欠"）是群聊文字识别时代的产物、**已不需要** ✗；
+    //               现在 = **直接对比金额**（收款合计 vs 货品/应收合计）✓
+    //          ＋ 她 2026-10-14 逐字「**只要本次付的金额小于累计的，那么差额都是未收款，
+    //             包括本次付款为 0**」（实现：`services/salesOrderService.js` 的 auto-owed）
     const step2 = await postPage(base, urlPath, cookie, { action: 'payment_pay' });
     const afterStep2 = await counts(gateway);
     const orderNo = (step2.html.match(/XSD-\d{8}-\d{4}/) || [])[0] || '';
@@ -245,9 +267,13 @@ test(`V1/V2/V5 · 点提交=零写入 ⇒ 点资金页按钮才建单（+ 读回
       JSON.stringify(payments.map((r) => ({ 金额: textValue(r.fields?.[PF.amount]), 状态: textValue(r.fields?.[PF.status]), 方式: textValue(r.fields?.[PF.method]) }))));
     assert.equal(mine.entryRows.length, 1, '单号唯一（只建一张单）');
     assert.equal(mine.detailRows.length, 1, '这一单只有一条明细');
-    assert.equal(afterStep2.payment - before.payment, 0,
-      '不填收款 ⇒ 现行「她说欠才算欠」⇒ **不挂未收款**（`salesOrderService.js:308-324` ✓）');
-    assert.equal(payments.length, 0, '这一单不该有收款行（同上；P1「差额进未收款」上线后 ⇒ 这两条要对调 ✗）');
+    assert.equal(afterStep2.payment - before.payment, 1,
+      '⭐ 新口径：差额（= 每件实收合计 − 已收 = LINE_AMOUNT）= 全额 > 0 ⇒ **自动**挂一条【未收款】');
+    assert.equal(payments.length, 1, '这一单正好一条收款行 = 那条【未收款】（改前这里是 0 ✗）');
+    assert.equal(textValue(payments[0]?.fields?.[PF.status]), '未收款', '状态 = 表里既有的「未收款」');
+    assert.equal(Number(textValue(payments[0]?.fields?.[PF.amount])), Number(LINE_AMOUNT),
+      '金额 = 每件实收合计（差额 = 累计 − 0）');
+    assert.equal(textValue(payments[0]?.fields?.[PF.method]), '', '【未收款】方式留空（钱还没到）');
     
 
     // ── V5：「库存流水.关联销售」写进去的 id 属于哪张表 ──────────────────────
@@ -276,7 +302,7 @@ test(`V3 · 同一把 submitKey 连点两次（含并发）⇒ 只写一次`, { 
   const urlPath = `${SCAN_PAGE.route.basePath}/${encodeURIComponent(pick.number)}`;
   await withServer(async (base) => {
     const before = await counts(gateway);
-    await postPage(base, urlPath, cookie, { action: SCAN_WRITE.actions.submitOrder, [SCAN_WRITE.fields.size]: pick.size });
+    await postPage(base, urlPath, cookie, { action: SCAN_WRITE.actions.submitOrder, [SCAN_WRITE.fields.size]: pick.size, [SCAN_WRITE.fields.lineAmount]: LINE_AMOUNT });
     const afterSubmit = await counts(gateway);
     assert.deepEqual(afterSubmit, before, '点提交仍然零写入');
     const [a, b] = await Promise.all([
@@ -284,7 +310,13 @@ test(`V3 · 同一把 submitKey 连点两次（含并发）⇒ 只写一次`, { 
       //   改前逐字：两发都带 `payment_status: '未付'`（档位**已退场** ✗）
       //   改后逐字：两发都**不带档位**（`{ action: 'payment_pay' }` ✓）
       //   依据 = 她 2026-10-16 逐字：「去掉三个单选、按金额自动算」
-      //   ⚠️ 本用例**只补输入**：断言（并发两枪只建一张单 / 明细+1 / 库存+1 / 收款行不增）**一个字不动** ✓
+      //   ⭐⭐ 2026-10-16 晚**第二次迁移**（改前逐字 → 改后逐字 → 依据）：
+      //     改前逐字：「本用例**只补输入**：断言（… 收款行**不增**）**一个字不动** ✓」
+      //       ＋ 断言 `after.payment - before.payment === 0`
+      //     改后逐字：断言 `=== 1` —— 差额（LINE_AMOUNT）⇒ **自动**一条【未收款】；
+      //       并发两枪 ⇒ **仍然只有这一条**（幂等判据不但没松，反而更严了：从"没有"变成"正好一条"）✓
+      //     依据 = 她 2026-10-16 晚裁定「**客户少付 ⇒ 自动记一条【未收款】（差额）**」
+      //            ＋ 她 2026-10-14 逐字「只要本次付的金额小于累计的，那么差额都是未收款」
       postPage(base, urlPath, cookie, { action: 'payment_pay' }),
       postPage(base, urlPath, cookie, { action: 'payment_pay' }),
     ]);
@@ -294,7 +326,8 @@ test(`V3 · 同一把 submitKey 连点两次（含并发）⇒ 只写一次`, { 
     assert.equal(after.entry - before.entry, 1, '并发两枪**只许建一张单**');
     assert.equal(after.detail - before.detail, 1, '明细只 +1');
     assert.equal(after.ledger - before.ledger, 1, '库存只扣一次（流水只 +1）');
-    assert.equal(after.payment - before.payment, 0, '不填收款 ⇒ 收款行不增（同上口径：她说欠才算欠 ✓）');
+    assert.equal(after.payment - before.payment, 1,
+      '并发两枪 ⇒ 那条自动【未收款】**只许写一次**（改前断言 0；新口径下差额必须落，且只能落一条）');
     if (orderNo) {
       const mine = await rowsOfOrder(gateway, orderNo);
       SAY('V3 该单号在主表有', mine.entryRows.length, '行 · 明细', mine.detailRows.length, '行');
