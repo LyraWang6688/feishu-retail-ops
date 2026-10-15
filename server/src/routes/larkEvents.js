@@ -19,7 +19,17 @@ const recordBusinessHeartbeat = (heartbeat) => {
   if (heartbeat && typeof heartbeat.recordEvent === 'function') heartbeat.recordEvent({ business: true });
 };
 
-const createLarkEventHandlers = (service, { heartbeat } = {}) => ({
+/**
+ * ⚠️ 2026-10-15（intake-finish 接手时修的**真 bug**，不是口径问题）：
+ *   第二位实现者给「配品销售」支路写了 `options.accessorySaleIntakeConfig` / `options.accessorySaleIntake`，
+ *   但本工厂的第二个形参当时是**解构**写法 `({ heartbeat } = {})` ⇒ 函数体里**根本没有 `options` 这个名字**
+ *   ⇒ 每个 `drive.file.bitable_record_changed_v1` 事件都在这一行抛 `ReferenceError: options is not defined`，
+ *   **整条表变更事件（含既有的「货品信息 → 标签二维码」）都会炸** —— `test/larkEvents.test.js` 当场红。
+ *   ⇒ 改成 `{ heartbeat, ...options }`：既有调用 `(service)` / `(service, { heartbeat })` **逐字兼容** ✓，
+ *   同时把其余配置（`accessorySaleIntake` / `accessorySaleIntakeConfig` / `accessorySaleScanWrite` /
+ *   `gateway`）**原样透传**给下面那条支路（用例可注入计数替身 ✓）。
+ */
+const createLarkEventHandlers = (service, { heartbeat, ...options } = {}) => ({
   'im.message.receive_v1': (event) => {
     recordBusinessHeartbeat(heartbeat);
     logInfo('lark.event.received', {
@@ -172,12 +182,73 @@ const createLarkEventHandlers = (service, { heartbeat } = {}) => ({
       }
     }
 
+    // ── 配品销售（她 2026-10-15 新建的那张表）：**入口换了，处理照旧** ─────────────
+    //   她逐字：「这就相当于实际上我们只是换了一个让用户交互的入口。但是我们**一旦收到这样的一个请求，
+    //   还是要做同样的处理：销售主表、销售明细以及收款明细**」✓
+    //   ⚠️ table_id **走配置**（`config/accessorySaleIntake`，不写死 ✗）；字段名/触发动作/开关也都在那份配置里
+    //   ⚠️ 写服务**在路由内现场建**（`options.accessorySaleIntake` 优先 ⇒ 用例可注入；**不动 `app.js`** ✓）
+    //   ⚠️ 配置读不出来（例如环境变量被填成认不出的值 ⇒ `readFlag` 当场抛）**只许影响这一条新支路** ✗：
+    //      同一次事件里「货品信息 → 标签二维码」那条支路**必须照跑**（解耦 ✓ 一条链路的配置问题
+    //      绝不许把另一条在线链路一起带走 —— 这正是本项目"换掉一条链路不影响别的"的要求）。
+    let accessorySaleTableId = '';
+    try {
+      accessorySaleTableId = (options.accessorySaleIntakeConfig
+        || require('../config/accessorySaleIntake').resolveAccessorySaleIntakeConfig()).tableId;
+    } catch (error) {
+      logError('accessory_sale_intake.config_invalid', { table_id: tableId, error: error.message });
+    }
+    if (accessorySaleTableId && tableId === accessorySaleTableId) {
+      const intake = resolveAccessorySaleIntake(service, options);
+      if (intake && typeof intake.handleTableChanges === 'function') {
+        setImmediate(() => {
+          // ⚠️ 把**整个事件**一起交下去：这条支路要用它取**操作人**（谁填的表谁是录单人 ⇒ 主表「录单人」列）
+          intake.handleTableChanges(actionList, { event }).catch((error) => {
+            logError('accessory_sale_intake.dispatch_failed', { table_id: tableId, error: error.message });
+          });
+        });
+      } else {
+        logWarn('accessory_sale_intake.not_wired', { table_id: tableId, action_count: actionList.length });
+      }
+    }
+
     return {};
   },
 });
 
 // 飞书事件回调的 envelope 形状：challenge（URL 验证）/ header（v2 事件）/ type（v1 事件）。
 // 只用来决定"要不要记心跳"，不参与任何业务判据。
+/**
+ * ⭐ 2026-10-15：把那条约会写库的链**在路由内建起来**（`options.accessorySaleIntake` 优先 ⇒ 用例可注入 ✓）。
+ * 为什么不放 `app.js`：本刀只想碰"入口那半边"（写作用域 ✓），
+ * 而它要的只是**一个既有网关实例**（`service.gateway` / `options.gateway`）⇒ 现场建最省、也不改别人文件 ✓
+ * ⚠️ 同一个进程只建一次（延迟 + 缓存）；建不起来 ⇒ 返 `null`（调用方记 `not_wired` 排查线索 ✓）
+ */
+let lazyAccessorySaleIntake = null;
+const resolveAccessorySaleIntake = (service, options = {}) => {
+  if (options.accessorySaleIntake) return options.accessorySaleIntake;
+  if (lazyAccessorySaleIntake) return lazyAccessorySaleIntake;
+  const gateway = options.gateway || service?.gateway;
+  if (!gateway) return null;
+  try {
+    // eslint-disable-next-line global-require
+    const { createAccessorySaleIntakeService } = require('../services/accessorySaleIntakeService');
+    // eslint-disable-next-line global-require
+    const { createScanWriteService } = require('../services/scanWriteService');
+    // eslint-disable-next-line global-require
+    const { SCAN_WRITE } = require('../config/scanWrite');
+    lazyAccessorySaleIntake = createAccessorySaleIntakeService({
+      gateway,
+      config: options.accessorySaleIntakeConfig,
+      scanWrite: options.accessorySaleScanWrite
+        || createScanWriteService({ gateway, config: SCAN_WRITE }),
+    });
+    return lazyAccessorySaleIntake;
+  } catch (error) {
+    logWarn('accessory_sale_intake.build_failed', { error: error.message });
+    return null;
+  }
+};
+
 const looksLikeLarkEnvelope = (body) =>
   Boolean(body && typeof body === 'object' && (body.challenge || body.header || body.event || body.type));
 
@@ -196,8 +267,10 @@ const createLarkEventsRouter = (options = {}) => {
   // EventDispatcher validates the callback signature/token before invoking these handlers.
   // The parsed card/menu payload does not consistently retain a top-level token, so handlers
   // must not perform a second token check against the parsed business event.
+  // ⚠️ 2026-10-15：路由的 `options` 也要透传下去（否则从路由建的实例拿不到
+  //    `accessorySaleIntake` / `accessorySaleIntakeConfig` / `gateway` ⇒ 那条支路只能靠"自己 require 默认配置"）
   const dispatcher = new lark.EventDispatcher({ verificationToken, encryptKey, logger: larkLogger }).register(
-    createLarkEventHandlers(service, { heartbeat }),
+    createLarkEventHandlers(service, { ...options, heartbeat }),
   );
 
   // 手动处理飞书 URL 验证的 challenge 请求（SDK 的 autoChallenge 未生效）

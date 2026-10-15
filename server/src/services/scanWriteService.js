@@ -428,6 +428,20 @@ const createScanWriteService = (options = {}) => {
     return textValue(record?.fields?.[field]).trim();
   };
 
+  /**
+   * ⭐⭐ 2026-10-15（task-19 ② · Lead 批准的口子）：**会话键**与**操作人**拆成两个概念 ——
+   *   · `openId`     = **录单人 / 操作人**：会写进「录单人」「操作人」这些 **User 字段**，
+   *                    所以**必须是真 open_id**（假字符串会被飞书判非法 id ⇒ 写库报错）；
+   *   · `sessionKey` = **本地草稿会话的身份**，**可选、默认 = openId** ⇒
+   *                    **工作台 / 扫码两条既有链路一个字都不变** ✓。
+   * 为什么两个必须能分开：「配品销售」表那条入口**没有飞书登录态**，一行 = 一次独立成单 ——
+   *   若所有行都拿同一个人当会话键，第 2 条记录会撞上 `submitSale` 里"键对不上 ⇒ 把上一单的结果
+   *   还给你"那条分支（**拿到上一条的单号、自己一个字都没写 = 假成功** ✗）；
+   *   而那个会话键又**不能**当 open_id 写进 User 字段。⇒ 两个概念各走各的 ✓。
+   */
+  const sessionKeyOf = (openId, sessionKey = '') =>
+    String(sessionKey || '').trim() || String(openId || '');
+
   // ── 销售：加入本单（**只写本地会话**）────────────────────────────────────
   /**
    * 加一双进"本单"。**业务表一个字都不写** —— 她说"点【提交】才写"。
@@ -444,7 +458,10 @@ const createScanWriteService = (options = {}) => {
   const addSaleLine = async ({
     openId, kind = '', productRecordId = '', number = '', itemNo = '', color = '',
     size, amount = '', gift = '', accessoryRecordId = '', inStock, requestId = '',
+    // ⭐ 2026-10-15：**可选** —— 不传 ⇒ 会话按 openId 分（既有链路逐字不变 ✓）
+    sessionKey = '',
   }) => {
+    const sessionId = sessionKeyOf(openId, sessionKey);
     if (!config.sale.enabled) {
       return fail({ code: 'disabled', message: texts.writeDisabledBody, requestId });
     }
@@ -477,7 +494,7 @@ const createScanWriteService = (options = {}) => {
         error.scanUserMessage = texts.accessoryUnknownBody;
         return fail({ code: 'accessory_unknown', message: userMessageFor(error), requestId, error });
       }
-      const added = await queue.run(`sale:${openId}`, () => sessions.addLine(openId, {
+      const added = await queue.run(`sale:${sessionId}`, () => sessions.addLine(sessionId, {
         kind: kindKey,
         accessory_record_id: accessoryId,
         // 本单里要能看出是哪一件（**只落本地会话**；业务表那边由既有业务层按关联写）。
@@ -514,7 +531,7 @@ const createScanWriteService = (options = {}) => {
     }
     // ⭐ 「现货 / 预订」：判据是**既有**的 `salesTradeTypeForStock`（有货 → 现货 / 没货 → 预订）。
     const tradeTypeCode = typeof inStock === 'boolean' ? salesTradeTypeForStock({ inStock }) : '';
-    const added = await queue.run(`sale:${openId}`, () => sessions.addLine(openId, {
+    const added = await queue.run(`sale:${sessionId}`, () => sessions.addLine(sessionId, {
       kind: kindKey,
       number: String(number || '').trim(),
       item_no: String(itemNo || '').trim(),
@@ -549,9 +566,10 @@ const createScanWriteService = (options = {}) => {
     return { ok: true, count: added.count, limit: config.session.maxLines, session: added.session };
   };
 
-  /** 清空本单（她加错了一双时的退路）。 */
-  const clearDraft = async ({ openId, requestId = '' }) => {
-    const session = await queue.run(`sale:${openId}`, () => sessions.clearSale(openId));
+  /** 清空本单（她加错了一双时的退路）。`sessionKey` 同 `addSaleLine`（可选，默认 = openId）。 */
+  const clearDraft = async ({ openId, sessionKey = '', requestId = '' }) => {
+    const sessionId = sessionKeyOf(openId, sessionKey);
+    const session = await queue.run(`sale:${sessionId}`, () => sessions.clearSale(sessionId));
     return { ok: true, count: 0, session, request_id: requestId };
   };
 
@@ -668,21 +686,29 @@ const createScanWriteService = (options = {}) => {
     paymentStatus = '', paidAmount = '', requestId = '', pendingLine = null, timing = null,
     // ⭐⭐ 2026-10-15（⑰ 异步）：`noDefer` = "这一跑就是**后台那一跑**"（不再往后丢 ✗）
     noDefer = false,
+    // ⭐⭐ 2026-10-15（task-19 ② · Lead 批准）：**可选**的会话键 ——
+    //   · 不传 ⇒ 会话按 `openId` 分 ⇒ **工作台 / 扫码两条既有链路一个字都不变** ✓；
+    //   · 传了 ⇒ 会话（草稿 / 幂等 completed / 进度）按它分，而 `openId` **只**当操作人写 User 字段 ✓
+    //     （「配品销售」那条入口：一行 = 一个会话 ⇒ 第 2 条记录不会被上一单的结果吸收 ✓）
+    sessionKey = '',
   }) => {
     // ⭐⭐ 2026-10-15（⑨ 异步）：**先把"后台那一跑"的入参固化在这里** ——
     //   ⚠️ 必须在函数**最顶上**取：函数体后面有同名局部（`paidAmount` / `payments` …），
     //     在 try 里引用它们会撞 **TDZ**（`Cannot access 'paidAmount' before initialization` ✗
     //     —— 我在用例里真撞到过一次，所以固化点放在这里 ✓ 不在闸门那一行现取 ✗）。
     //   🔴 入参形状与"她点按钮那一次"**逐字相同**（同一把 `submitKey` ⇒ 走既有续写路径 ✓）
+    //   ⚠️ `sessionKey` 也在里面：后台那一跑必须落回**同一个会话**（否则会另起一单 ✗）
     const saleRestInput = {
-      openId, submitKey, payments: paymentRows, lineAmounts, paymentStatus, paidAmount,
+      openId, submitKey, payments: paymentRows, lineAmounts, paymentStatus, paidAmount, sessionKey,
     };
     // ⭐⭐ 2026-10-12：**分阶段耗时**（业务负责人真机被卡住 / 收过 504 网关超时）——
     //    `timing` 是一个**可选出参**（与 `scanPageService.lookup` 那条 `timing` 同一套约定）：
     //    路由拿它去打**一条** `scan.sale.timing` 汇总日志，"卡在哪一步"一眼看得出。
     //    🔴 它**只读时间**：不进 `input`、不影响任何判据与写入。
+    // ⚠️ 会话身份 = `sessionKeyOf(openId, sessionKey)`（不传 sessionKey ⇒ 就是 openId ⇒ 老路不变 ✓）
+    const sessionId = sessionKeyOf(openId, sessionKey);
     const enqueuedAt = Date.now();
-    return queue.run(`sale:${openId}`, async () => {
+    return queue.run(`sale:${sessionId}`, async () => {
     const startedAt = Date.now();
     if (timing) timing.queue_wait_ms = Math.max(0, startedAt - enqueuedAt);
     const markStage = (field, from) => {
@@ -691,10 +717,10 @@ const createScanWriteService = (options = {}) => {
     if (!config.sale.enabled) {
       return fail({ code: 'disabled', message: texts.writeDisabledBody, requestId });
     }
-    let current = await sessions.get(openId);
+    let current = await sessions.get(sessionId);
     // 会话还没建（她扫开就看、什么都没加过）：页面上那把键就是**第 1 轮**的键，
     // 这里把会话建出来即可对上 —— 否则她第一次提交会被判成"页面过期"，莫名其妙。
-    if (!current) current = await sessions.ensure(openId);
+    if (!current) current = await sessions.ensure(sessionId);
     const key = String(submitKey || '').trim();
     let sale = current.sale || {};
     let completed = sale.completed || [];
@@ -729,7 +755,7 @@ const createScanWriteService = (options = {}) => {
         session_id: current.session_id, open_id: String(openId || ''), reason: 'revived_on_submit',
         request_id: requestId,
       });
-      current = await sessions.revive(openId, { submitKey: key, flow: 'sale' });
+      current = await sessions.revive(sessionId, { submitKey: key, flow: 'sale' });
       sale = current.sale || {};
       completed = sale.completed || [];
     }
@@ -760,7 +786,7 @@ const createScanWriteService = (options = {}) => {
         session_id: current.session_id, submit_key: key, adopted: true,
         session_key: sale.key, request_id: requestId,
       });
-      current = await sessions.revive(openId, { submitKey: key, flow: 'sale' });
+      current = await sessions.revive(sessionId, { submitKey: key, flow: 'sale' });
       sale = current.sale || {};
     }
     // ⭐⭐ 2026-10-12（她的意见：**一单一笔居多**）：「选尺码 + 提交」= **两下**就是一张单。
@@ -778,7 +804,7 @@ const createScanWriteService = (options = {}) => {
         error.scanUserMessage = texts.sizeMissingBody;
         return fail({ code: 'size_missing', message: userMessageFor(error), requestId, error });
       }
-      const added = await sessions.addLine(openId, {
+      const added = await sessions.addLine(sessionId, {
         kind: 'shoe',
         number: String(pendingLine.number || '').trim(),
         item_no: String(pendingLine.itemNo || '').trim(),
@@ -833,7 +859,7 @@ const createScanWriteService = (options = {}) => {
       resolvedLines.push({ ...line, amount: parsed.value, explicit_amount: parsed.value !== null });
     }
     if (hasPostedLineAmounts) {
-      await sessions.saveSaleProgress(openId, { lines: resolvedLines });
+      await sessions.saveSaleProgress(sessionId, { lines: resolvedLines });
     }
 
     // ── ①' ⭐⭐ 每件实收**不再兜底读「单价」**（业务负责人 2026-10-11 选"方案甲"）──────────
@@ -1123,7 +1149,7 @@ const createScanWriteService = (options = {}) => {
         salesEntryRecordId = String(created?.recordId || '').trim();
         if (!salesEntryRecordId) throw new Error('创建销售主表后没有拿到 record_id');
         orderNo = await salesEntryOrderNo(salesEntryRecordId, created);
-        await sessions.saveSaleProgress(openId, {
+        await sessions.saveSaleProgress(sessionId, {
           master_record_id: salesEntryRecordId, order_no: orderNo,
         });
       }
@@ -1188,11 +1214,11 @@ const createScanWriteService = (options = {}) => {
           payments: sale.payment_ids || [],
         },
         onRecordPersisted: async (kind, index, recordId) => {
-          const fresh = await sessions.get(openId);
+          const fresh = await sessions.get(sessionId);
           const key2 = kind === 'payments' ? 'payment_ids' : 'detail_ids';
           const ids = [...((fresh?.sale?.[key2]) || [])];
           ids[index] = recordId;
-          await sessions.saveSaleProgress(openId, { [key2]: ids });
+          await sessions.saveSaleProgress(sessionId, { [key2]: ids });
         },
       }, { correlation });
       markStage('detail_ms', detailStartedAt);
@@ -1246,7 +1272,7 @@ const createScanWriteService = (options = {}) => {
         });
         return { ok: true, reused: false, stock, ...summary, order_no: summary.order_no };
       }
-      await sessions.completeSale(openId, { key, result: summary });
+      await sessions.completeSale(sessionId, { key, result: summary });
       logInfo(config.events.saleSubmitted, {
         session_id: current.session_id, submit_key: key, ...summary,
         funds_recorded: paymentCount > 0,
@@ -1255,7 +1281,7 @@ const createScanWriteService = (options = {}) => {
       return { ok: true, reused: false, stock, ...summary };
     } catch (error) {
       const message = userMessageFor(error);
-      await sessions.markSaleFailed(openId, String(error.message || error)).catch(() => undefined);
+      await sessions.markSaleFailed(sessionId, String(error.message || error)).catch(() => undefined);
       // ⭐⭐ 2026-10-12：**建单成功、后面某一步（明细 / 收款 / 进度）抛错** ⇒ 分类成
       //    `sale_partial_failed`，路由据此给她一张**如实**的"半成"页（**不许显示成功**）。
       //    🔴 判据用的是**既有**那一条：会话 / 本次调用里**已经落了主表 record_id** ——
