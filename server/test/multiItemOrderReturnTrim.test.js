@@ -47,6 +47,8 @@ delete process.env.WORKBENCH_ALLOWED_OPEN_IDS;
 
 const { createScanPageRouter } = require('../src/routes/scanPage');
 const { SCAN_PAGE, MULTI_ITEM_RENDER_TEXTS } = require('../src/config/scanPage');
+// ⭐ 2026-10-16（task-59 · 加货 / 删货那一刀）：那颗入口的字段名**只从配置取** ✓（判据不写死字符串 ✗）
+const { MULTI_ITEM_ORDER } = require('../src/config/multiItemOrder');
 const renderer = require('../src/views/scanPageRenderer');
 
 const RENDERER_SRC = fs.readFileSync(
@@ -159,11 +161,24 @@ test('AC-RT4 ⭐⭐ **有第二个货品时列表仍要出现**（她删的是"�
 
 test('AC-RT5 🔴 最下面那颗蓝色按钮的文字 = 「退货」（改前逐字 `生成采购退货` ⇒ 塞回即红）', async () => {
   const block = await fetchRealm('purchase_return');
-  const button = block.match(/<button type="submit" class="btn btn--primary"[^>]*>([^<]*)<\/button>/);
-  assert.ok(button, '退货块里要有一颗提交按钮 ✓');
+  // ⭐⭐ 2026-10-16 **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`const button = block.match(/<button type="submit" class="btn btn--primary"[^>]*>([^<]*)<\/button>/);`
+  //     —— 它取的是**第一颗**这种按钮；当时那一块里**只有**提交那一颗 ⇒ 等价 ✓
+  //   改后逐字：下面两行（`matchAll` ＋ 取**最后一颗**）
+  //     —— ⭐ **判据原意一个字没改**：她逐字说的是「把**最下面的蓝色按钮**改为「退货」」✓
+  //       而且本刀新加的「＋ 再加一个货品」也是 `btn btn--primary` ⇒ 不改成"取最后一颗"会**假红** ✗
+  //       （那是**检测器写窄了**，不是行为变了 ✗ —— 所以是"改指向、不放宽" ✓）。
+  //   依据 = 业务负责人 2026-10-16 真机截图 + 逐字（见文件头）。
+  const buttons = [...block.matchAll(/<button type="submit" class="btn btn--primary"[^>]*>([^<]*)<\/button>/g)];
+  assert.ok(buttons.length >= 1, '退货块里要有一颗提交按钮 ✓');
+  const button = buttons[buttons.length - 1];
   assert.equal(button[1], NEW_BUTTON,
     `改前逐字「${OLD_BUTTON}」⇒ 改后逐字「${NEW_BUTTON}」（依据 = 她 2026-10-16 真机截图 + 逐字）`);
   assert.equal(block.includes(OLD_BUTTON), false, `🔴 旧按钮名塞回即红：${OLD_BUTTON}`);
+  // ⭐ 本刀新加的那一颗**是另一颗**（同表单的「＋ 再加一个货品」✓）——顺带把"最下面那颗"这个指向钉住 ✓
+  assert.equal(buttons.length >= 2, true, '本刀之后那一块里会有**两颗**蓝色按钮（加货 + 提交 ✓）');
+  assert.equal(buttons[0][1], MULTI_ITEM_RENDER_TEXTS.addButton,
+    '第一颗蓝色 = 「＋ 再加一个货品」（所以上面必须取**最后一颗**才还是"最下面那颗" ✓）');
   // ⭐ 配置先行：那颗按钮的文字**只来自这一处**（她下次改字只改配置 ✓ 不散写成中文字面量 ✗）
   assert.equal(block.includes(SCAN_PAGE.returnForm.submitLabel), true,
     '⚠️ 那颗按钮的文字必须来自 `SCAN_PAGE.returnForm.submitLabel`（配置先行 ✓）');
@@ -173,7 +188,17 @@ test('AC-RT5b 🔴 她这次**没点**的几处一个字都不许动（尺码行
   const block = await fetchRealm('purchase_return');
   assert.match(block, /class="size-row"/, '尺码行还在 ✓');
   assert.match(block, /整单金额/, '「整单金额（必填）」还在 ✓');
-  assert.match(block, /data-multi-add[^>]*href="/, '「＋ 再加一个货品」那颗链接还在 ✓（零 JS 下唯一的"加"法 ✓）');
+  // ⭐⭐ 2026-10-16 **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.match(block, /data-multi-add[^>]*href="/, '「＋ 再加一个货品」那颗链接还在 ✓（零 JS 下唯一的"加"法 ✓）');`
+  //   改后逐字：下面这一行（**改指向、不放宽** ✓ —— 她这一刀点的是退货 tab 那三处，
+  //     没说"加货入口"本身 ⇒ 它**必须还在** ✓，只是形态从链接变成 **submit** ✓）
+  //   依据 = 业务负责人 **2026-10-16 本 bug**（填了值点那颗链接 ⇒ 值丢 / 点了没反应）
+  //     ＋ 她 **2026-10-12 逐字**「我可没有说过，**我们是能够进行动态交互的**」
+  //     ⇒ GET 链接带不走表单字段 ✗，只有 POST 能 ⇒ 那颗入口改成同表单第二颗 `submit`（零 JS ✓）。
+  assert.match(block, new RegExp(`data-multi-add[^>]*name="${MULTI_ITEM_ORDER.addField}"`),
+    '「＋ 再加一个货品」那颗入口还在 ✓（形态 = 同表单第二颗 `submit` ✓ 零 JS ✓）');
+  assert.equal(/data-multi-add[^>]*href=/.test(block), false,
+    '🔴 旧的 `href="…?add=1"` 链接形态**去掉** ✗（两种入口并存 ⇒ 判据混乱 ✗）');
   assert.match(block, /name="multi_items"/, '字段名 `multi_items` 原样透传 ✓');
   assert.match(block, /name="return_sizes"/, '字段名原样 ✓');
   assert.match(block, /name="action" value="return_purchase"/, '动作名原样 ✓');

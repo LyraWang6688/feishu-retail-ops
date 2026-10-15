@@ -1229,9 +1229,17 @@ const sizeGroupsHtml = (view, write) => {
 const purchaseAmountRowHtml = (write) => {
   const texts = write?.texts || {};
   const fields = write?.fields || {};
+  // ⭐⭐ 2026-10-16（task-59 · 加货那一刀）：**「整单金额」也要原地留住**。
+  //   她点「＋ 再加一个货品」时整张表单会 POST 出去、回来是**重新渲染**的一页 ⇒
+  //   这一格不预填的话，她刚敲的那个数就**没了**（与"尺码/数量丢了"是**同一个 bug 类** ✗）。
+  //   ⚠️ 值来自**草稿**（`write.multiItemDraft.order_amount`，补货 / 退货各自那一份 ✓）——
+  //     草稿里没有就**一个属性都不加**（`value=""` 那种也加 ✗）⇒ 既有页面的 HTML **逐字节不变** ✓
+  //     （本刀不动既有判据靠的就是这一条 ✓）。
+  const draftAmount = String(write?.multiItemDraft?.order_amount || '').trim();
   return `<div class="form-row"><label>${escapeHtml(texts.purchaseAmountLabel || '')}</label>`
     + `<input name="${escapeHtml(fields.purchaseAmount)}" inputmode="decimal"`
     + ` placeholder="${escapeHtml(texts.purchaseAmountPlaceholder || '')}"`
+    + (draftAmount ? ` value="${escapeHtml(draftAmount)}"` : '')
     + ` aria-label="${escapeHtml(texts.purchaseAmountLabel || '')}"></div>`;
 };
 
@@ -1253,10 +1261,12 @@ const purchaseAmountRowHtml = (write) => {
  *   · 形状 = 设计 §4.3（`[{product_record_id, number, item_no, color, supplier_record_id, entries:[{size, quantity}]}]`）✓
  *   · 🔴 **N=1 与今天逐字不变**：开关 `MULTI_ITEM_ORDER.enabled === false` ⇒ 本函数返回 **空串** ⇒
  *     两个表单**一个字节都不变** ✓（既有断言原样绿 ✓）
- *   · 🔴 **不新开提交路径**：整块只是往**既有那个 `<form>`** 里加一个 hidden 字段 ＋ 一个按钮 ＋ 一段脚本；
+ *   · 🔴 **不新开提交路径**：整块只是往**既有那个 `<form>`** 里加一个 hidden 字段 ＋ 两颗 `submit`
+ *     （加货 / 删货 ✓）；
  *     `action` / `submitKey` / 尺码字段 / 金额行 / 提交按钮**顺序与内容都不动** ✗
  *   · ⚠️ 允许 JS 动态交互（她 2026-10-12 明确「**我们是能够进行动态交互的**」✓）——
- *     这是**我方**的技术选择，**不是"她的要求"** ✗
+ *     这是**我方**的技术选择，**不是"她的要求"** ✗；⚠️ **但本刀仍然一行 JS 都不加**：
+ *     一颗原生 `submit` 按钮就够（服务端会话记草稿 ＋ PRG 回本页 ✓ 见下）。
  *
  * ⚠️ 载荷**键名只在这里定义一次**（`*_KEYS`）：服务端纯函数与页面脚本**共用同一份** ⇒ 不会两处写漂 ✓
  */
@@ -1286,9 +1296,9 @@ const multiItemPayloadJson = (items = []) => JSON.stringify(
 /**
  * 🔴 **零 JS**（既有哨兵钉着：扫码页 HTML 里**一行 `<script>` 都不许有** —— `AC-W2` / `AC-6R5`）⇒
  *   这一块**不用任何前端脚本**：
- *   · `multi_items` 的**首件**由**服务端**渲进 hidden 字段（形状 = 设计 §4.3；`entries` 由路由在提交时合并 ✓）
- *   · 「再加一个货品」是一颗**链接**（同一路径带参数 ⇒ 路由侧去记草稿；**路由没接前 = 能点、但没人读** ✓ 自洽）
- *   · 「已加货品」列表**由服务端**从 `view.multi_items` 渲染（拿不到 ⇒ 按下面的口径处理 ✓ 不编 ✗）
+ *   · `multi_items` 的首件由**服务端**渲进 hidden 字段（形状 = 设计 §4.3；`entries` 由路由在提交时合并 ✓）
+ *   · 「已加货品」列表**由服务端**从 `view.multi_items` 渲染（那是**草稿**里的东西 ⇒ 加过之后
+ *     再打开这一页也看得见 ✓；拿不到 ⇒ 按下面的口径处理 ✓ 不编 ✗）
  *
  * ⭐⭐ 2026-10-16（`mode` 参数 · 业务负责人真机截图 + 逐字）—— **两个领域先后各点了一次，同一个形状**：
  *   · **退货 tab**（第一次）：「退货确实没有了那个退货按钮，需要你**删除不必要的文字提示**」
@@ -1298,6 +1308,19 @@ const multiItemPayloadJson = (items = []) => JSON.stringify(
  *     ⇒ 「不需要的文字说明」= **与退货同一条**（那次她选的是"说明 + 整块都删"）⇒ 这里**同样处理** ✓。
  *     ⚠️ 她那次的选择**只对退货生效过**（补货那块当时**一个字没动** ✗）；**这一次她才点了补货** ✓
  *       ⇒ 现在两块**都进精简档**（**依据 = 她 2026-10-16 补货 tab 的截图 + 逐字** ✓）。
+ *
+ * ⭐⭐ 2026-10-16（task-59 · **加货 / 删货**那一刀 —— 依据：她**当天**本 bug ＋ 她 2026-10-12 逐字
+ *   「我可没有说过，**我们是能够进行动态交互的**」）：
+ *   · 改前逐字：`<a class="btn btn--primary" data-multi-add href="${addHref}">…`（一颗 `?add=1` 的**链接**）
+ *   · 改后逐字：那一颗「＋ 再加一个货品」= **同一张表单里的第二颗 `submit`**
+ *     （`class="btn btn--primary"` ＋ `data-multi-add` ＋ `name="${addField}"` ＋ `value="${addValue}"`）
+ *     ⚠️ 这一行**刻意不写成完整的尖括号标签**：既有判据 `scanPrintFeedback.test.js` 的 **AC-PF7**
+ *       是**按源码正则**数"每一个 `type="submit"` 的写操作按钮"的（**不剥注释**）⇒
+ *       注释里出现一颗假的按钮会把那条判据**假红** ✗（我没放宽它，而是把注释写干净 ✓）。
+ *   · 依据：链接是 **GET** ⇒ **天生带不走她刚填的尺码 / 数量**（她真机就是"填了值，点一下，值没了"✗）；
+ *     只有 **POST** 会把她填的一起发出去 ⇒ 路由接住它记进草稿、再 303 回本页（PRG ✓）。
+ *   🔴 再加**每一行一颗删除按钮**（`name` = 配置里的删货字段 · `value` = 那一件的 `product_record_id`）；
+ *     "改"不加按钮：**重扫那一件再点一次加货**就行（引擎按 `productKey` **覆盖** ✓）。
  *
  *   ⚠️ **改前**这一块在**补货 / 退货两块共用同一份 DOM**（`t.hint` 那一段 + `t.title` 那个 `<h3>`
  *     + 空态那句 `t.empty` **无条件**渲染）。
@@ -1329,40 +1352,76 @@ const multiItemBlockHtml = (write, view = {}, mode = '') => {
   //   ⭐⭐ 2026-10-16（补货那三处 · 她真机截图 + 逐字）⇒ `'replenish'` 也进精简档 ✓
   //     依据：她这次点的是**补货**（退货那次她已点过 ✓）—— 两边**同一个形状**、同一句依据 ✓。
   const trimmed = mode === 'return' || mode === 'replenish';
+  // ⭐ 加 / 删货那两颗按钮的字段名（配置先行 ✓）——**缺一个就整块不渲染**：
+  //   宁可不给她那颗按钮，也不发一个没人认的键 ✗（与 `field` 同一口径 ✓）。
+  const addField = String(MULTI_ITEM_ORDER.addField || '');
+  const addValue = String(MULTI_ITEM_ORDER.addValue || '');
+  const removeField = String(MULTI_ITEM_ORDER.removeField || '');
+  if (!field || !addField || !addValue || !removeField) return '';
   const first = {
     product_record_id: view.product_record_id, number: view.number, item_no: view.item_no,
     color: view.color, supplier_record_id: view.supplier_record_id, entries: [],
   };
   const already = Array.isArray(view.multi_items) ? view.multi_items : [];
+  /**
+   * 货品身份（**与引擎 `productKeyOf` 同一条优先级**：`product_record_id` → `number` → `item_no`）。
+   * ⚠️ 它**只**用来把"当前这一件"从**载荷**里排掉 —— **不是第二份幂等判据** ✗（幂等键仍在引擎里 ✓）。
+   */
+  const keyOf = (item) => String(
+    (item || {}).product_record_id || (item || {}).number || (item || {}).item_no || '',
+  ).trim();
+  const currentKey = keyOf(first);
+  // 🔴 **必须把"当前这件"从已加列表里排掉**：引擎的 `addItem` 按 `productKey` **覆盖**、而且**后写的赢**
+  //    ⇒ 草稿里那份**旧的同一件**（`entries` 是旧的）会把她**刚填的**尺码/数量覆盖掉 = **静默丢值** ✗
+  //    （`test/multiItemOrderAddRemove.test.js` 的 **AC-MI-A④** 用**真引擎**把这条证了一遍 ✓）。
+  // ⚠️ 身份取不到（空串）⇒ **一个都不排**：宁可让引擎按 `product_missing` 当场拒单，
+  //    也不误把别人从载荷里删掉 ✗。
+  const others = currentKey ? already.filter((item) => keyOf(item) !== currentKey) : already;
   const attr = (name, value) => (value === undefined || value === null || value === ''
     ? '' : ` ${name}="${escapeHtml(value)}"`);
   // 列表行：两种 mode **共用同一份拼法**（一处定义 ✓ 不各抄一份 ✗）
+  //   ⭐ 加货 / 删货那一刀：每行多一颗**删除**按钮（`name` = 删货字段 · `value` = 该件的 `product_record_id`）
+  //     ⚠️ 取不到 id ⇒ **不画这颗按钮**：`removeItem` 是拿这个值去比 `productKeyOf` 的，
+  //       空值会把**所有空 key 的行**一起删掉 ✗（宁可少一颗按钮，也不做一件说不清的事 ✓）。
+  //   ⚠️ **两颗按钮都要挂 `submitFeedbackAttrs`**（既有判据 `scanPrintFeedback.test.js` 的
+  //     **AC-PF7**：**每一个** `type="submit"` 的写操作按钮点下去都要置灰 + 换文案 ✓
+  //     —— 她 2026-10-12 的交互纪律：「不然用户以为点了没反应，就会多次提交」）。
+  //     本刀**不放宽那条判据** ✗：这两颗也是**真的会写会话**的写操作 ⇒ 一样要有反馈 ✓。
   const listRows = already.map((item) => {
     const rows = Array.isArray(item?.entries) ? item.entries.length : 0;
+    const id = String(item?.product_record_id || '').trim();
+    const removeButton = id
+      ? `<button type="submit" class="btn btn--ghost"${submitFeedbackAttrs(write)} data-multi-remove name="${escapeHtml(removeField)}" value="${escapeHtml(id)}">${escapeHtml(t.remove)}</button>`
+      : '';
     return `<li class="multi-item-row">${escapeHtml(String(item?.number || item?.item_no || ''))}`
-      + ` <span class="hint">${escapeHtml(fillText(t.rowsTemplate, { count: rows }))}</span></li>`;
+      + ` <span class="hint">${escapeHtml(fillText(t.rowsTemplate, { count: rows }))}</span>${removeButton}</li>`;
   }).join('');
   // 🔴 精简档（退货 / **补货**）：**空 ⇒ 整块（含 <ul>）不渲染** ✓；缺省档：**空 ⇒ 保留那句空态人话** ✓
   const listHtml = trimmed
     ? (already.length ? `<ul class="multi-item__list" data-view="multi-item-list">${listRows}</ul>` : '')
     : `<ul class="multi-item__list" data-view="multi-item-list">`
       + `${already.length ? listRows : `<li class="hint">${escapeHtml(t.empty)}</li>`}</ul>`;
-  // 「再加一个货品」：**零 JS** ⇒ 一颗指向本页的链接（路由按参数去记草稿；没接前点了不报错 ✓）
-  const addHref = `${escapeHtml(write.postAction || '')}${String(write.postAction || '').includes('?') ? '&' : '?'}add=1`;
+  // 「＋ 再加一个货品」= **同一张表单里的第二颗 `submit`**（改前是一颗 `?add=1` 的链接 ✗，见函数头）——
+  //   🔴 它是"她填的尺码/数量**不丢**"的**唯一**办法：只有 POST 会把她填的一起发出去 ✓。
+  const addButton = `<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)} data-multi-add name="${escapeHtml(addField)}" value="${escapeHtml(addValue)}">${escapeHtml(t.addButton)}</button>`;
   // 🔴 说明那一段 + 标题：**精简档（退货 / 补货）不渲染**（她那句"不必要的文字提示"）✓
   //   ⚠️ 拼法上把"删掉的行"做成**整行**（不是行内空串）—— 空串留在模板里会多出空行，
   //     "删掉"就应该是**那一行不在**（也让她截图里不会看到一段莫名的空隙 ✓）。
   const lines = [];
   if (!trimmed) lines.push(`<p class="hint">${escapeHtml(t.hint)}</p>`);
-  lines.push(`<a class="btn btn--primary" data-multi-add href="${addHref}">${escapeHtml(t.addButton)}</a>`);
-  lines.push(`<input type="hidden" name="${escapeHtml(field)}" value="${escapeHtml(multiItemPayloadJson([first]))}">`);
+  lines.push(addButton);
+  // ⚠️ 载荷 = **首件（当前这一件，`entries` 留空）＋ 已加的每一件**（草稿里那份**当前这件**已经被排掉 ✓）。
+  //    🔴 首件的 `entries` 仍然是空的：本次表单的尺码/数量由**路由在提交（或加货）时合并进首件** ✓
+  //      （`mergeFirstItemEntries` 是**赋值**语义 ⇒ 只生效一次、**不会翻倍** ✓ —— 既有判据不放宽 ✗）。
+  //    ⚠️ `view.multi_items` **由路由半保证"不含当前这一件"**的另一种情况（`/r` 底下同一个货品
+  //      被两个 record id 指到）这里不猜 ✗ —— 按上面 `keyOf` 的那条判据办 ✓。
+  lines.push(`<input type="hidden" name="${escapeHtml(field)}" value="${escapeHtml(multiItemPayloadJson([first, ...others]))}">`);
   if (!trimmed) lines.push(`<h3 class="multi-item__title">${escapeHtml(t.title)}</h3>`);
   if (listHtml) lines.push(listHtml);
   return `<div class="card multi-item" data-view="multi-item"${attr('data-product-record-id', view.product_record_id)}${attr('data-product-number', view.number)}${attr('data-product-item-no', view.item_no)}${attr('data-product-color', view.color)}${attr('data-product-supplier-record-id', view.supplier_record_id)}>
 ${lines.join('\n')}
 </div>`;
 };
-
 const replenishFormHtml = (view, write) => {
   const t = write.texts;
   const v = REALM_TEXTS;

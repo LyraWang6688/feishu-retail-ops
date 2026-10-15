@@ -36,6 +36,18 @@ const resolveShared = (env) => ({
   // ⭐ 2026-10-16（渲染半）：**提交时那个载荷的字段名** —— 配置先行（换名不用改代码 ✓）。
   //   ⚠️ 显式 `readString`（**禁 `||` 兜底** ✗）：空串 = 空字段名 ⇒ 下游按空处理，不会偷偷回落。
   field: readString(env, 'SCAN_MULTI_ITEM_FIELD', 'multi_items'),
+  // ⭐⭐ 2026-10-16（task-59 · **两半一刀**）：**加货 / 删货**那两颗 submit 的字段名 ＋ 加货的取值。
+  //   🔴 **为什么刻意不复用 `action`**：那张表单里已经有 `<input type="hidden" name="action" value="replenish">`
+  //      —— `express.urlencoded({ extended: true })` 下**同名再来一个会变成数组** ⇒
+  //      `String(body[fields.action])` 当场坏掉（整个动作分派认不出来 ✗ —— 这一页所有动作都从它走）。
+  //   ⚠️ 显式 `readString`（**禁 `||` 兜底** ✗）：空串 = 空字段名 ⇒ 渲染层**宁可不发那颗按钮** ✓
+  //      （"宁可不给按钮，也不发一个没人认的键" —— 与上面 `field` 同一条口径 ✓）。
+  addField: readString(env, 'SCAN_MULTI_ITEM_ADD_FIELD', 'multi_item_add'),
+  // 加货那一颗的 `value`（**明示**"这是加货"；路由按 `字段名 + 取值` 两条一起认 ✓ 不只看名字 ✗）
+  addValue: readString(env, 'SCAN_MULTI_ITEM_ADD_VALUE', '1'),
+  // 删货那一颗的 `value` = **那一行的 `product_record_id`**（每一行一颗 ✓ 值不同 ✓）——
+  //   所以这一个是**字段名**配置，值不走配置 ✓。
+  removeField: readString(env, 'SCAN_MULTI_ITEM_REMOVE_FIELD', 'multi_item_remove'),
   // 幂等键口径：**一单一把**（`orderKey` 就是这把键；提交成功后轮换 ⇒ 第 2 单不会被第 1 单吸收 ✓）。
   submitKeyTemplate: readString(env, 'SCAN_MULTI_ITEM_KEY_TEMPLATE', 'multi_item:{sessionId}:{seq}'),
   // ⭐ **明细幂等键模板**：必须**同时含「货品 + 尺码」** —— 否则两个货品同尺码会撞车 ✗
@@ -127,6 +139,12 @@ const resolveEvents = (env) => Object.freeze({
   reused: readString(env, 'SCAN_MULTI_ITEM_EVENT_REUSED', 'multi_item_order.reused'),
   rejected: readString(env, 'SCAN_MULTI_ITEM_EVENT_REJECTED', 'multi_item_order.rejected'),
   draftOpened: readString(env, 'SCAN_MULTI_ITEM_EVENT_DRAFT_OPENED', 'multi_item_order.draft_opened'),
+  // ⭐⭐ 2026-10-16（task-59 · 加货 / 删货）：她点那两颗按钮**真的被路由接住了**这一条留痕 ——
+  //   改前她点了那颗链接**没有任何痕迹**（"点了没反应"最难受的地方就是查不到 ✗）。
+  //   字段：`kind`（add | remove）· `chain` · `order_key` · `product_record_id` · `entries_count`。
+  draftItemChanged: readString(
+    env, 'SCAN_MULTI_ITEM_EVENT_DRAFT_CHANGED', 'multi_item_order.draft_item_changed',
+  ),
 });
 
 /**

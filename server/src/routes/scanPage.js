@@ -54,7 +54,7 @@ const { SalesFollowupService } = require('../services/salesFollowupService');
 const { renderSalesHome, renderScanSkeleton, renderScanPage, renderScanMessagePage, renderMinimalPage, renderSaleSuccessPage, renderSalePaymentStepPage, buildPaymentRows } = require('../views/scanPageRenderer');
 // ⚠️ 只借这两个**纯函数**：所选尺码在「样品 + 门盒」有没有货（= 页面上那两个分组的判据），
 //    以及 `?from=` → 领域 id（认不出来回落缺省，不报错、不白屏）。
-const { sellableSizeTexts, resolveRealm, DEFAULT_REALM } = require('../views/scanPageRealm');
+const { sellableSizeTexts, resolveRealm, DEFAULT_REALM, REPLENISH_REALM, PURCHASE_RETURN_REALM } = require('../views/scanPageRealm');
 // ⭐ 写操作之后**立刻作废**「实时库存」内存快照（她：库存必须准确，不是等 30 秒）。
 const { invalidateLiveInventorySnapshot } = require('../services/liveInventorySnapshot');
 const { requireWorkbenchAccess } = require('./workbench');
@@ -72,7 +72,7 @@ const { SCAN_WRITE, fillText: fillWriteText } = require('../config/scanWrite');
 //     本文件**只做三件事**：解析载荷 → 把**首件**与本次表单的尺码/数量合并 → 交给引擎 ✓；
 //   · **配置**（`config/multiItemOrder.js`）管开关 / 上限 / 字段名 / 文案 ✓（这里一行阈值都不许写死 ✗）；
 //   · 🔴 **N=1 一个字节都不经过这条路** —— 只有"分组 > 1"才进（见下面两处 `groups.length > 1`）✓。
-const { resolveMultiItemOrderConfig } = require('../config/multiItemOrder');
+const { resolveMultiItemOrderConfig, MULTI_ITEM_ORDER } = require('../config/multiItemOrder');
 const { createMultiItemOrderService } = require('../services/multiItemOrderService');
 // ⭐⭐ 2026-10-16（口子收尾 · 业务负责人口径「**异步只针对"写库"**；校验必须当场同步拦」）：
 //   **尺码 / 数量 / 空单**这三类校验的**唯一真源**（纯函数、不碰 IO、配置先行 ✓）——
@@ -261,6 +261,19 @@ const createScanPageRouter = (options = {}) => {
   //     与渲染半那份（模块级 `MULTI_ITEM_ORDER`）**同一个 env 源**，两边不会漂 ✓。
   // ══════════════════════════════════════════════════════════════════════════
   const multiItemOrderConfig = resolveMultiItemOrderConfig();
+  /**
+   * ⭐⭐ 2026-10-16（task-59 · 两半一刀）：**领域 → 链** 的映射（**只有补货 / 退货两条** ✓）。
+   *
+   * 🔴 为什么映射**故意只有这两条**：加 / 删货那颗 `submit` 是靠"这一页在哪个领域"认链的
+   *   （表单 `action` 带着 `?from=` ✓ 见 `postActionFor`）。映射里**多一条** ⇒ 那个领域也会去开草稿 ✗
+   *   ⇒ "别的领域行为不变"（**AC-MI-E**）就没了 ⇒ `test/multiItemOrderAddRemove.test.js` 反着钉住它 ✓。
+   * ⚠️ 链名**从配置取**（`config/multiItemOrder.js` 的 `chains.<id>.id` ✓）—— 这里**不写死** ✗；
+   *   领域 id 从**视图那份常量**取（`views/scanPageRealm.js`，**唯一真源** ✓ 不抄一份 ✗）。
+   */
+  const CHAIN_BY_REALM = Object.freeze({
+    [REPLENISH_REALM]: String(multiItemOrderConfig.chains?.replenish?.id || ''),
+    [PURCHASE_RETURN_REALM]: String(multiItemOrderConfig.chains?.return?.id || ''),
+  });
   // 用例可以注入一个假引擎（`options.multiItemOrder`）—— 与 `options.writeService` 同一种注入法 ✓
   let multiItemOrderEngine = options.multiItemOrder || null;
   /**
@@ -279,6 +292,123 @@ const createScanPageRouter = (options = {}) => {
       writers: writeService.multiItemWriters(),
     });
     return multiItemOrderEngine;
+  };
+
+  /**
+   * ⭐⭐ 2026-10-16（task-59 · 两半一刀）：从**已经读到的那份会话**里挑出「这条链**正在写的那份草稿**」。
+   *
+   * 🔴 **只读**：`status === 'draft'` 才算（提交成功后引擎会把它置成 `submitted` ✓ 并轮换 `orders_seq` ✓）
+   *   —— 她只是**看一眼**这一页，**不许**在会话里凭空多出一份草稿 ✗（所以这里**不调** `engine.openDraft`）。
+   * 🔴 **不按 `orderKey` 去算**：那要在这里重抄一遍引擎的键规则（`orders_seq` + 前缀 + 会话 id）✗
+   *   —— 判据只有两条：`chain` 对得上 ＋ `status === 'draft'`（`config/multiItemOrder.js` 的 `draftStatus` ✓）。
+   * ⚠️ 正常只有一份；万一有多的（提交轮换失败那类残留）⇒ 取 `updated_at` **最新**的那一份 ✓（不猜 ✗）。
+   *
+   * @returns {{chain:string, items:Array, order_amount:string}|null}
+   */
+  const multiItemDraftOf = (session, realm) => {
+    const chain = CHAIN_BY_REALM[String(realm || '')] || '';
+    if (!chain || !session) return null;
+    const orders = session[multiItemOrderConfig.session.ordersField] || {};
+    const drafts = Object.values(orders).filter((draft) => draft
+      && String(draft.chain || '') === chain
+      && String(draft.status || '') === multiItemOrderConfig.session.draftStatus);
+    if (!drafts.length) return null;
+    const latest = drafts.reduce((best, one) => (
+      String(one.updated_at || '') >= String(best.updated_at || '') ? one : best
+    ));
+    return {
+      chain,
+      items: Array.isArray(latest.items) ? latest.items : [],
+      order_amount: String(latest.order_amount || ''),
+    };
+  };
+
+  /**
+   * ⭐⭐ 2026-10-16（task-59 · 两半一刀）：「＋ 再加一个货品」/「移除」那两颗 `submit` 的**接住点**。
+   *
+   * 🔴 **为什么必须由路由接住**：那两颗按钮就在**既有那张表单里** ⇒ 点它们时**整个表单**（含
+   *   hidden `action=replenish|return_purchase`）一起发出来 ✗ ⇒ 不先拦，她这一点就会
+   *   **把这一单直接提交走、页面也跳走**（比改前"点了没反应"**更糟** ✗✗）。
+   *
+   * 它**只做三件事**（写库 / 校验 / 幂等全在引擎里 ✓ 路由不认识表字段 ✗）：
+   *   ① `engine.openDraft`（拿本单的 `orderKey`）；
+   *   ② `engine.addItem`（**当前这一件**，`entries` = **本次表单**的尺码/数量 —— 既有
+   *      `parseReplenishEntries` / `parseReturnEntries` ＋ `mergeFirstItemEntries` ✓ **不抄第二份** ✗）
+   *      或 `engine.removeItem`（那一行的 `product_record_id` ✓）；
+   *   ③ **303 PRG 回本页**（刷新不会重复加货 ✓；列表与表单由 GET 重新渲染 ✓）。
+   *
+   * ⚠️ 这里**刻意不跑**尺码 / 数量 / 空单那几道校验（`purchaseEntryViolation`）：
+   *   她的这一次动作是"**先记下来**"，不是提交 ⇒ 校验失败若当场 400，她就**又丢一次刚填的值** ✗
+   *   （那正是本刀要修的 bug）—— 真正的闸门在**提交那一步**（同步拦 ＋ 引擎的 `validateDraft` ✓）。
+   */
+  const handleMultiItemAction = async ({ req, res, requestId, realm, action }) => {
+    const body = req.body || {};
+    const engine = multiItemOrder();
+    if (!engine) {
+      // 引擎不可用（写服务没挂 / 多货品开关关）：**宁可给人话 + 零写入**，也绝不回落老路径 ✗
+      return respondWriteFailure(
+        res, { code: 'disabled', message: writeConfig.texts.writeDisabledBody }, requestId,
+      );
+    }
+    const chain = CHAIN_BY_REALM[String(realm || '')] || '';
+    if (!chain) {
+      return respondWriteFailure(
+        res, { code: 'chain_unknown', message: multiItemOrderConfig.texts.chainUnknown }, requestId,
+      );
+    }
+    const openId = openIdOf(req);
+    const opened = await engine.openDraft({ openId, chain, requestId });
+    if (!opened.ok) return respondWriteFailure(res, opened, requestId);
+    const orderKey = opened.orderKey;
+    let item = null;
+    // ⭐⭐ 整单金额（**只有"必填"的那条链看它** —— 判据来自配置 ✓ 路由里不写 `if (补货) …` ✗）：
+    //   她在那张表单里敲的总额**也要原地留住** —— 不然点一下加货回来那一格就空了 ✗
+    //   （与"尺码/数量丢了"是同一个 bug 类 ✓）。草稿里存着 ⇒ 渲染半会把它预填回输入框 ✓。
+    //   ⚠️ 提交那一步仍会按**那次表单**的值覆盖它（`submitMultiItemOrder` 做 ✓）⇒ 不会串笔 ✓。
+    if (multiItemOrderConfig.chains[chain]?.amountRequired === true) {
+      await setDraftOrderAmount(openId, orderKey, String(body[writeConfig.fields.purchaseAmount] ?? ''));
+    }
+    if (action.kind === 'remove') {
+      const removed = await engine.removeItem({
+        openId, chain, orderKey, productRecordId: action.productRecordId, requestId,
+      });
+      if (!removed.ok) return respondWriteFailure(res, removed, requestId);
+    } else {
+      // ⚠️ **当前这一件的身份直接从 hidden `multi_items[0]` 取** —— 这一次请求**不再 lookup** ✗
+      //    （lookup 是飞书那一次读表；她这一页刚刚才读过 ✓ 再读一次纯属浪费 ＋ 可能不一致 ✗）。
+      const groups = parseMultiItemGroups(body, multiItemOrderConfig);
+      if (!groups.length) {
+        return respondWriteFailure(
+          res, { code: 'product_missing', message: multiItemOrderConfig.texts.productMissing }, requestId,
+        );
+      }
+      // ⚠️ 用**哪一份**解析器看的是"她在哪一块"（补货块 = `replenish_sizes` / 退货块 = `return_sizes`）
+      //    ⇒ 判据是**领域**（`REPLENISH_REALM` / `PURCHASE_RETURN_REALM` ✓ 与渲染半同一处真源 ✓），
+      //    不是"哪条链"（那是引擎的事 ✓）。既有那两个纯函数**原样复用** ✓ 不抄第二份 ✗。
+      const entries = String(realm) === PURCHASE_RETURN_REALM
+        ? parseReturnEntries(body, writeConfig.fields, writeConfig)
+        : parseReplenishEntries(body, writeConfig.fields, writeConfig);
+      // ⭐ 与提交那条**同一个**纯函数：首件（当前这件）的 `entries` = **本次表单**那一份 ✓
+      //   （赋值语义 ⇒ 数量不翻倍 ✓ 既有判据 `AC-MIRW-3` 不放宽 ✗）
+      [item] = mergeFirstItemEntries(groups, entries);
+      const added = await engine.addItem({ openId, chain, orderKey, item, requestId });
+      if (!added.ok) return respondWriteFailure(res, added, requestId);
+    }
+    // **不静默**：她点的那一下**真的被接住了** —— 按这条 grep 就能回答"加货到底有没有生效" ✓
+    //   （改前那颗链接点了**一个字都不留** ✗：这正是"点了没反应"最难查的地方）
+    logInfo(multiItemOrderConfig.events.draftItemChanged, {
+      request_id: requestId,
+      kind: action.kind,
+      chain,
+      order_key: orderKey,
+      product_record_id: action.kind === 'remove' ? action.productRecordId : String(item?.product_record_id || ''),
+      entries_count: Array.isArray(item?.entries) ? item.entries.length : 0,
+    });
+    markRealmUsed(openId, realm);
+    // ⭐ PRG：303 回**本页 + 本领域**（`postActionFor` 会带上 `?from=`，与表单 action 同一处拼法 ✓）
+    return res.redirect(303, postActionFor(
+      backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realm,
+    ));
   };
 
   /**
@@ -497,6 +627,11 @@ const createScanPageRouter = (options = {}) => {
       postAction: postActionFor(backTargetFor(req, view.number), realm),
       sizes,
       draft: { lines },
+      // ⭐⭐ 2026-10-16（task-59 · 两半一刀）：「一单多货品」**正在进行的那份草稿**（补货 / 退货才有 ✓）。
+      //   🔴 **只读**（`multiItemDraftOf` 只认 `status === 'draft'` ⇒ **不建草稿** ✗）；
+      //   ⚠️ 复用**这一次已经读到的**那份会话（上面 `writeService.sessions.get` ✓）⇒ **零额外读盘** ✓；
+      //   ⚠️ 别的领域（销售 / 库存 / 货品）拿到的**永远是 `null`**（`CHAIN_BY_REALM` 里没有它们 ✓）。
+      multiItemDraft: multiItemDraftOf(session, realm),
       // ⭐ 配品行要的东西（没有配品时渲染层不画那个表单）。
       accessories: accessories.map((item) => ({ record_id: item.record_id, name: item.name })),
       saleKey: writeService.sessions.submitKeyFor(openId, session, 'sale'),
@@ -1519,6 +1654,15 @@ const createScanPageRouter = (options = {}) => {
         if (remembered) { realm = resolveRealm(remembered); realmSource = 'remembered'; }
       }
       const write = await buildWriteContext(req, view, realm);
+      // ⭐⭐ 2026-10-16（task-59 · 两半一刀）：**一单多货品** —— 把**草稿里已加的货品**交给渲染半。
+      //   · 渲染半据此：① 列出"本单已加的货品" ② 让 hidden `multi_items` **带上它们**
+      //     ⇒ 她再点「提交」就是**一单多货品一起提交** ✓（#710 那条 `groups.length > 1` 的路 ✓）。
+      //   · 🔴 **草稿里没有东西时一个字节都不盖** —— 既有渲染判据是往 `lookup` 的返回值里
+      //     **注入** `multi_items` 的（`test/multiItemOrderReturnTrim.test.js` 的 AC-RT4 等 ✓）
+      //     ⇒ 本刀**一个字都不动它们** ✓（"没有草稿" ≠ "清空她视图里的那份" ✗）。
+      //   · ⚠️ 别的领域 `write.multiItemDraft` 恒为 `null` ⇒ 这里整段是**空转**（行为不变 ✓ AC-MI-E）。
+      const pendingMultiItems = write?.multiItemDraft?.items || [];
+      if (pendingMultiItems.length) view.multi_items = pendingMultiItems;
       // ⚠️ 验收模式那一块**只用到文案 / 字段名 / 动作名**（它们都在配置里）——
       //    所以即使扫码写入口整个关着（`write` 为 null），验收模式照旧可用：
       //    这里给它一个最小的上下文（不构造销售 / 补货那两条链的任何东西）。
@@ -1678,6 +1822,18 @@ const createScanPageRouter = (options = {}) => {
       });
     }
     try {
+      // ── ⭐⭐ 2026-10-16（task-59 · 两半一刀）：「＋ 再加一个货品 / 移除」那两颗 `submit` ──────
+      //   🔴 **必须排在动作分派之前**（判据 `test/multiItemOrderAddRemove.test.js` 的 **AC-MI-D**）：
+      //     那两颗按钮就在**既有那张表单里** ⇒ 点它们时 hidden `action=…` **也一起发出来** ✗
+      //     ⇒ 不先拦，她这一点就会被"既有补货/退货提交"吃掉：**直接报单走人、页面跳走** ✗✗
+      //       （比改前"点了没反应"更糟 —— 这正是 Lead 裁决"两半必须同一刀"的原因 ✓）。
+      //   ⚠️ 判据是**配置里的字段名 + 取值**（`multiItemActionOf` ✓）—— 本文件不写死字符串 ✗；
+      //     ⚠️ 尤其**不碰 `action`**（表单里已经有它 ⇒ 同名会被 `extended:true` 挤成数组 ✗）。
+      const multiItemAction = multiItemActionOf(body, multiItemOrderConfig);
+      if (multiItemAction.kind) {
+        return handleMultiItemAction({ req, res, requestId, realm, action: multiItemAction });
+      }
+
       // ── 加入本单 ────────────────────────────────────────────────────────────
       if (action === actions.addLine) {
         const view = await service.lookup({ ...lookupInputOf(req), requestId });
@@ -2944,6 +3100,36 @@ const parseMultiItemGroups = (body, multiConfig) => {
 };
 
 /**
+ * ⭐⭐ 2026-10-16（task-59 · 两半一刀）：这一发 POST 是不是「＋ 再加一个货品 / 移除」那两颗 `submit`？
+ *
+ * 🔴 **必须在动作分派之前问这一句**：那两颗按钮就在**既有那张表单里** ⇒ 点它们时
+ *   `hidden action=replenish|return_purchase` **也一起发出来** —— 不先拦，她这一点就会被
+ *   "既有补货/退货提交"吃掉（**直接报单走人、页面跳走** ✗✗，比改前"点了没反应"更糟）。
+ *
+ * ⚠️ **字段名 / 取值都从配置取**（`config/multiItemOrder.js` ✓）—— 这里**一个字符串都不写死** ✗；
+ *   尤其**不许拿 `action` 当字段名**（表单里已经有它 ⇒ `extended:true` 下会被挤成**数组** ✗）。
+ * ⚠️ 同名字段出现多次（她连点 / 手工构造）⇒ 取**最后一个**（与 `parseMultiItemGroups` 同一条口径 ✓）。
+ * ⚠️ **坏输入 ⇒ `{ kind: '' }`**（回落"这不是加/删货"⇒ 照旧走既有分派 ✓ 不抛、不猜 ✗）。
+ *
+ * @returns {{kind:'add'|'remove'|'', productRecordId?:string}}
+ */
+const multiItemActionOf = (body, config = MULTI_ITEM_ORDER) => {
+  if (!body || typeof body !== 'object') return { kind: '' };
+  const addField = String((config && config.addField) || '');
+  const addValue = String((config && config.addValue) || '');
+  const removeField = String((config && config.removeField) || '');
+  const last = (value) => (Array.isArray(value) ? value[value.length - 1] : value);
+  // 删货优先判：它的 `value` 是**每一行各不相同**的货品 id（不是那个固定取值 ✓）
+  if (removeField && body[removeField] !== undefined) {
+    return { kind: 'remove', productRecordId: String(last(body[removeField]) ?? '').trim() };
+  }
+  if (addField && String(last(body[addField]) ?? '').trim() === addValue && addValue !== '') {
+    return { kind: 'add' };
+  }
+  return { kind: '' };
+};
+
+/**
  * ⭐⭐ **首件 + 本次表单的尺码/数量**（渲染半逐字注明「`entries` 由路由在提交时合并」✓）。
  *
  * 🔴 **只合并一次**：这里是**赋值**（不是 `concat` / `push`）⇒ 就算这一段被走两遍，
@@ -3028,4 +3214,6 @@ module.exports = {
   // ⭐ 2026-10-16（task-59 · 路由半）：多货品那两个**纯函数**照上面几个的既有风格一起导出 ✓
   //   （用例直调它们钉"坏输入 ⇒ `[]`"与"只合并一次 ⇒ 数量不翻倍"✓）
   parseMultiItemGroups, mergeFirstItemEntries,
+  // ⭐⭐ 2026-10-16（task-59 · 两半一刀）：**加 / 删货**那一发的判据（同样导出，用例直调 ✓）
+  multiItemActionOf,
 };

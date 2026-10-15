@@ -67,6 +67,8 @@ delete process.env.WORKBENCH_ALLOWED_OPEN_IDS;
 
 const { createScanPageRouter } = require('../src/routes/scanPage');
 const { SCAN_PAGE, MULTI_ITEM_RENDER_TEXTS } = require('../src/config/scanPage');
+// ⭐ 2026-10-16（task-59 · 加货 / 删货）：那颗入口的字段名**只从配置取** ✓（判据不写死字符串 ✗）
+const { MULTI_ITEM_ORDER } = require('../src/config/multiItemOrder');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
 const renderer = require('../src/views/scanPageRenderer');
 
@@ -166,10 +168,20 @@ const blockOf = (html, realm) => {
   return html.slice(at, html.indexOf('</section>', at) + 10);
 };
 
+// ⚠️ 这颗是"**最下面那颗蓝色按钮**"（她逐字就是这么说的 ✓）——
+//   ⭐⭐ 2026-10-16 **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+//     改前逐字：`const button = block.match(/<button type="submit" class="btn btn--primary"[^>]*>([^<]*)<\/button>/);`
+//       —— 取的是**第一颗**；当时那一块里**只有**提交那一颗 ⇒ 等价 ✓
+//     改后逐字：下面两行（`matchAll` ＋ 取**最后一颗**）
+//       —— ⭐ **判据原意一个字没改**：她说的就是「把**最下面的蓝色按钮**改为…」✓
+//         而 `task-59`（一单多货品 · 加货/删货）在**同一张表单里**加了一颗
+//         「＋ 再加一个货品」（也是 `btn btn--primary`）⇒ 不改指向会**假红** ✗
+//         （**检测器写窄了**，不是行为变了 ✗ —— 所以是"改指向、不放宽" ✓）。
+//     依据 = 她 2026-10-16 真机截图 + 逐字（见本文件头）＋ `test/multiItemOrderAddRemove.test.js`（AC-MI-A①）。
 const submitButtonTextOf = (block) => {
-  const button = block.match(/<button type="submit" class="btn btn--primary"[^>]*>([^<]*)<\/button>/);
-  assert.ok(button, '这一块里要有一颗提交按钮 ✓');
-  return button[1];
+  const buttons = [...block.matchAll(/<button type="submit" class="btn btn--primary"[^>]*>([^<]*)<\/button>/g)];
+  assert.ok(buttons.length >= 1, '这一块里要有一颗提交按钮 ✓');
+  return buttons[buttons.length - 1][1];
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -475,7 +487,20 @@ test('AC-RP8 ⭐⭐ 功能零变化：补货表单的**字段名与顺序**逐�
     'action', 'page_build', 'submit_key',
     ...['36', '37', '38', '39', '40', '41', '42', '43', '44', '45']
       .flatMap((size) => ['sizes', `qty_${size}`]),
-    'multi_items',
+    // ⭐⭐ 2026-10-16 **成对迁移**（改前逐字 → 改后逐字 → 依据）—— 由 `task-59`（一单多货品 ·
+    //   **加货 / 删货**那一刀）追加：
+    //   改前逐字：`'multi_items',`（多货品块里**只有**那个 hidden 字段）
+    //   改后逐字：下面这一行 —— 在 `multi_items` **之前**多一个 `multi_item_add`
+    //     （那颗「＋ 再加一个货品」= **同一张表单里的第二颗 `submit`**，它的 `name` 出现在 hidden 之前 ✓）
+    //   依据 = 她 **2026-10-16 本 bug**（填了尺码/数量点那颗**链接** ⇒ 值丢 / 点了没反应）
+    //     ＋ 她 **2026-10-12 逐字**「我可没有说过，**我们是能够进行动态交互的**」
+    //     ⇒ 那颗入口从 **GET 链接**改成 **POST 提交**（只有 POST 带得走她填的字段 ✗）
+    //     ⇒ 表单里**新增一个控件名**是这一刀的**必然结果**（不是"改版式时顺手动了提交" ✗）。
+    //   🔴 **不放宽**：既有那 24 个名字与它们的**相对顺序**仍逐字钉在这儿（改名 / 调序 / 漏一个 ⇒ 红 ✓）；
+    //     新增的那一个也必须**在它真实的位置**（塞到别处 / 换名 ⇒ 红 ✓）。
+    //   ⚠️ "这颗按钮的语义"另有判据管着：`multiItemOrderAddRemove.test.js` 的 **AC-MI-A①**
+    //     （字段名**来自配置** ✓ 且**不叫 `action`** ✗）＋ **AC-MI-C**（N=1 老路径一个字不变 ✓）。
+    MULTI_ITEM_ORDER.addField, 'multi_items',
   ];
   assert.deepEqual(names, expected,
     '🔴 补货表单的控件**名字与出现顺序**必须与改版式之前**逐字相同**（她："功能零变化" ✗）');

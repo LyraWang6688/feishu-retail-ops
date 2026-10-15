@@ -82,9 +82,21 @@ test('AC-MIR1 🔴 补货 / 退货**两块都有**那个入口（去掉任一处
   assert.match(html, new RegExp(`name="${MULTI_ITEM_ORDER.field}"`),
     '必须有那个 hidden 字段（字段名来自配置 ✓）');
   // 🔴 **零 JS**：扫码页有既有哨兵（`AC-W2` / `AC-6R5`）钉着"一行 `<script>` 都不许有" ⇒
-  //   这一块**必须是纯 HTML**（入口做成链接，提交时由路由侧去记草稿）✓
+  //   这一块**必须是纯 HTML**（**一颗原生 `submit` 按钮**就够：加货由服务端记草稿、再 303 回本页 ✓）
   assert.doesNotMatch(html, /<script/i, '这一块里**不许有任何 `<script>`**（扫码页零 JS 是既有判据 ✗ 不放宽）');
-  assert.match(html, /data-multi-add[^>]*href="/, '「再加一个货品」必须是一颗**链接**（零 JS 下唯一的"加"法 ✓）');
+  // ⭐⭐ 2026-10-16 **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.match(html, /data-multi-add[^>]*href="/, '「再加一个货品」必须是一颗**链接**（零 JS 下唯一的"加"法 ✓）');`
+  //   改后逐字：下面这一行（**改指向、不放宽** ✓ —— 入口本身照旧必须存在 ✓ 只是形态从链接变成 submit）
+  //   依据 = 业务负责人 **2026-10-16 本 bug**（她真机：填了尺码/数量，点那颗链接 ⇒
+  //     **值丢了 / 点了没反应**）+ 她 **2026-10-12 逐字**「我可没有说过，**我们是能够进行动态交互的**」：
+  //     🔴 链接是 **GET** ⇒ **天生带不走她刚填的表单字段** ✗ ⇒ 只有 **POST** 能把她填的一起发出去 ✓；
+  //       所以那颗入口改成**同一张表单里的第二颗 `submit`**（字段名是配置里的**新名字**，
+  //       **不许叫 `action`** —— 表单里已经有 hidden `action=replenish`，`extended:true` 下会变成数组 ✗）。
+  //   ⚠️ 零 JS 这条哨兵**一个字没动**（本刀**仍然一行 JS 都不加** ✓）。
+  assert.match(html, new RegExp(`data-multi-add[^>]*name="${MULTI_ITEM_ORDER.addField}"`),
+    '「＋ 再加一个货品」必须是**同一张表单里的第二颗 `submit`**（带配置里的新字段名 ✓ 零 JS ✓）');
+  assert.equal(/data-multi-add[^>]*href=/.test(html), false,
+    '🔴 旧的 `href="…?add=1"` 链接形态**去掉**（两种入口并存 ⇒ 判据混乱 ✗）');
   // 首件**由服务端**渲进 hidden 字段（形状 = §4.3；`entries` 由路由在提交时合并 ✓）
   const hiddenValue = html.match(new RegExp(`name="${MULTI_ITEM_ORDER.field}" value="([^"]*)"`))[1];
   const baked = JSON.parse(hiddenValue.replace(/&quot;/g, '"'));
