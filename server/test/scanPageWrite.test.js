@@ -887,24 +887,24 @@ test('⑨ 【迁移·甲】没填实收 ⇒ **拦住 + 必填人话（醒目）*
           payment_status: PAYMENT_STATUS.unpaid,
         }).toString(),
       }));
-      // ⭐⭐ 2026-10-16【迁移·甲 · 按她逐字规格】（她 2026-10-16：
-      //   「能跳资金页的前提 = 拿得到**尺码** +（**她填的金额** ‖ **货品信息里的单价**）；
-      //     这两个都取不到，用户就无法跳转到资金页」）
-      //   · **改前逐字**：「没单价又没填金额 ⇒ **照样成单**（那一列留空）、给成功结果页」
-      //   · **改后逐字**：「没单价又没填金额 ⇒ **拦住、不跳资金页** ⇒ **停在货品页 + 那句人话**、**零写入**」
-      //   · **依据** = 她 2026-10-16 逐字（上引）+ P0（"240 不丢"：填了就一定带得走 ⇒ 见 AC-P0a/b ✓）
-      //   · ⚠️ 旧判据**只在 bug 存在时为真**（闸门原来看裸 body、静默 0 ⇒ 才"照样成单"）
-      assert.equal(response.status, 400, '两个都取不到 ⇒ 拦住（不跳资金页）');
+      // ⭐⭐ 2026-10-16【迁移 · **钉现状**】（她 2026-10-16 逐字授权拆刀：
+      //   「同意拆」⇒ 这一刀只发 ①（240 不丢 / 资金页两颗 / 跳过语义 / 假成功兜底 / 拦截醒目 ✓），
+      //   **跳转前置判定（"两个都取不到 ⇒ 不许跳资金页"）单独第二刀** ✓）
+      //   · 改前逐字：`assert.equal(response.status, 400, '两个都取不到 ⇒ 拦住（不跳资金页）')`
+      //     ＋「必须给她那句『这一款没录单价，请填金额』的人话」＋「零写入」
+      //   · 改后逐字（**钉现状**）：`assert.equal(response.status, 200, '现状：放行到资金页（判定未上线）')`
+      //     ＋ 成功页 ＋ **单子真建出来** ＋ 明细「实收金额」**空**（留空就留空 ✓ 不写 0 ✗ 不猜 ✗）
+      //     ＋ 跳过 ⇒ **不写收款明细** ✓（= 她昨天的"跳过 ⇒ 待补充"✓）
+      //   · 依据 = 她 2026-10-16 逐字「同意拆」＋ Lead 裁决
+      //   🔴 **第二刀必须逐字改回 400**（已原文写进 PR 描述 ✓ 任务书另存 ✓ 不许丢 ✗）
+      assert.equal(response.status, 200, '现状（判定未上线）⇒ 放行到资金页');
       const html = await response.text();
-      assert.ok(!/您的提交已成功/.test(html), '**绝不**给"提交成功"页 ✗（不许假成功）');
-      assert.ok(html.includes(String(SCAN_WRITE.texts.jumpNeedsAmountBody)), '要把那句人话给她（文案走 config ✓）');
-      assert.ok(!html.includes('data-view="payment-step"'), '**不许**跳到资金页 ✗（停在货品页 ✓）');
-      assert.ok(html.includes('data-view="draft-bar"') || html.includes('name="submit_key"'),
-        '给的是**货品页**那一形（本单条/提交表单还在 ✓）');
-      assert.equal(entriesOf(h.gateway, 'salesEntry').length, 0, '一个字都不写（主表都没落）');
-      // 幂等/重复提交那条路**不许被堵死**（她的规格只管"第一次能不能跳"✓ 见 AC-E2E-6/15/17 ✓）：
-      // 再点一次同一把键 ⇒ 仍然拦住、仍然零写入（不会因为重放而漏写成单也不写第二遍）
-      assert.equal(entriesOf(h.gateway, 'salesDetail').length, 0, '明细也不许落');
+      assert.ok(/您的提交已成功|本单已创建成功/.test(html), '走成功页 ✓');
+      assert.equal(entriesOf(h.gateway, 'salesEntry').length, 1, '单子真建出来（一张）');
+      const details = entriesOf(h.gateway, 'salesDetail');
+      assert.equal(details.length, 1, '一行明细');
+      assert.equal(String(details[0].fields['实收金额'] ?? ''), '', '实收留空 ⇒ **就留空**（不写 0 ✗ 不猜 ✗）');
+      assert.equal(entriesOf(h.gateway, 'paymentRecord').length, 0, '跳过 ⇒ 不写收款明细 ✓（待补充 ✓）');
     });
   } finally { h.cleanup(); }
 });
