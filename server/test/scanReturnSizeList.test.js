@@ -338,8 +338,24 @@ const runSubmitGuard = (html, form) => {
 
 /** 照**页面真实属性**搭一个退货表单（属性值全部从渲染结果里抄 ⇒ 判据不是"另写一份"✓）。 */
 const returnFormFrom = (html, { checked = [], quantities = {} } = {}) => {
+  // ⚠️ **切片边界的迁移（2026-10-16 晚 · 与"退货块去折叠壳"同一刀）** —— AC-RT3 / AC-RT4 / AC-RT7 /
+  //    AC-RT7b 四条都经这个工具，所以边界只在这里改一次（**判据本身一个字没放宽** ✓）：
+  //   改前逐字：
+  //     const start = html.indexOf('data-view="purchase-return"');
+  //     const formTag = html.slice(html.indexOf('<form', start), html.indexOf('>', html.indexOf('<form', start)) + 1);
+  //   改后逐字：下面这五行
+  //   依据：业务负责人 **2026-10-16 真机截图 + 逐字**「那个**退货按钮为什么还有呢，不需要了**」
+  //     ⇒ 退货块的 `<details class="disclosure" data-view="purchase-return" open>` 与 `<summary …>` 两行**删掉**；
+  //       ⭐ 定位标记 `data-view="purchase-return"` **迁到 `<form>` 自己的属性行上**（标记不许删 ✗）
+  //   ⇒ 旧写法从锚**往后**找 `<form`：锚已在**本表单自己的属性行里** ⇒ 找不到本表单（返 -1）
+  //     ⇒ `formTag` 切出空串 ⇒ `data-return-sizes-field` 抄不到 ⇒ 四条判据在这里**假红** ✗
+  //   ⇒ 起点要在锚**之前**找回那个 `<form>`（`lastIndexOf` ✓）；两条 `assert.notEqual` 是**加严**：
+  //     锚被删 / 标记没挂在 `<form>` 上 ⇒ 当场红，**绝不让切片静默空跑**（空切片 = 假绿 ✗）
   const start = html.indexOf('data-view="purchase-return"');
-  const formTag = html.slice(html.indexOf('<form', start), html.indexOf('>', html.indexOf('<form', start)) + 1);
+  assert.notEqual(start, -1, '退货表单的定位标记必须在（标记被删 ⇒ 这里就该红，别让切片静默空跑 ✗）');
+  const formStart = html.lastIndexOf('<form', start);
+  assert.notEqual(formStart, -1, '定位标记必须挂在那个 `<form>` 上（结构变了 ⇒ 红 ✓）');
+  const formTag = html.slice(formStart, html.indexOf('>', formStart) + 1);
   const attrs = {};
   for (const match of formTag.matchAll(/(data-[a-z-]+)="([^"]*)"/g)) attrs[match[1]] = match[2];
   const form = fakeElement(attrs, { tagName: 'form' });
@@ -366,6 +382,11 @@ const returnFormFrom = (html, { checked = [], quantities = {} } = {}) => {
 };
 
 test('AC-RT3 ⭐ 一个都不勾 ⇒ **前端就拦住**（`preventDefault` + 人话 + **不发请求**）', async () => {
+  // ⚠️ **切片边界迁移（2026-10-16 晚 · 与退货块去折叠壳同一刀）** —— 本用例的表单夹具走共享工具 `returnFormFrom`：
+  //   改前逐字：`html.indexOf('<form', start)`（从锚 `data-view="purchase-return"` **往后**找表单）
+  //   改后逐字：`html.lastIndexOf('<form', start)`（锚已迁到 `<form>` 自己的属性行上 ⇒ 起点要在锚**之前**找）
+  //   依据：业务负责人 **2026-10-16 真机截图 + 逐字**「那个**退货按钮为什么还有呢，不需要了**」
+  //     ⇒ `<details>` / `<summary>` 删掉、标记迁到 `<form>`；本用例的判据（拦住 / 人话 / 不置灰）一个字没放宽 ✓
   const write = fakeWriteService();
   let html;
   await withServer(appFor(write), async (base) => { html = (await getReturnBlock(base)).html; });
@@ -381,6 +402,11 @@ test('AC-RT3 ⭐ 一个都不勾 ⇒ **前端就拦住**（`preventDefault` + �
 });
 
 test('AC-RT4 ⭐ 退货数量非法 ⇒ 前端拦住 + 人话；**合法 ⇒ 不拦**（不许修过头 ✗）', async () => {
+  // ⚠️ **切片边界迁移（2026-10-16 晚 · 与退货块去折叠壳同一刀）** —— 本用例的表单夹具走共享工具 `returnFormFrom`：
+  //   改前逐字：`html.indexOf('<form', start)`（从锚 `data-view="purchase-return"` **往后**找表单）
+  //   改后逐字：`html.lastIndexOf('<form', start)`（锚已迁到 `<form>` 自己的属性行上 ⇒ 起点要在锚**之前**找）
+  //   依据：业务负责人 **2026-10-16 真机截图 + 逐字**「那个**退货按钮为什么还有呢，不需要了**」
+  //     ⇒ `<details>` / `<summary>` 删掉、标记迁到 `<form>`；本用例的判据（非法拦 / 合法放 / 人话）一个字没放宽 ✓
   const write = fakeWriteService();
   let html;
   await withServer(appFor(write), async (base) => { html = (await getReturnBlock(base)).html; });
@@ -449,6 +475,11 @@ test('AC-RT5 尺码取不到 / 库存取不到 ⇒ **如实提示**（那句人�
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-RT7 ⭐⭐ 退货数量**不许超过当前库存**：库存 2 填 3 ⇒ 拦住（人话带尺码与库存）；填 2 ⇒ 放行', async () => {
+  // ⚠️ **切片边界迁移（2026-10-16 晚 · 与退货块去折叠壳同一刀）** —— 本用例的表单夹具走共享工具 `returnFormFrom`：
+  //   改前逐字：`html.indexOf('<form', start)`（从锚 `data-view="purchase-return"` **往后**找表单）
+  //   改后逐字：`html.lastIndexOf('<form', start)`（锚已迁到 `<form>` 自己的属性行上 ⇒ 起点要在锚**之前**找）
+  //   依据：业务负责人 **2026-10-16 真机截图 + 逐字**「那个**退货按钮为什么还有呢，不需要了**」
+  //     ⇒ `<details>` / `<summary>` 删掉、标记迁到 `<form>`；本用例的判据（超库存拦 / 等于库存放 / 逐码算）一个字没放宽 ✓
   const write = fakeWriteService();
   let html;
   await withServer(appFor(write), async (base) => { html = (await getReturnBlock(base)).html; });
@@ -476,6 +507,11 @@ test('AC-RT7 ⭐⭐ 退货数量**不许超过当前库存**：库存 2 填 3 �
 });
 
 test('AC-RT7b ⭐ 库存**取不到**的行：**不许拿 0 当库存**拦住她（只显示"取不到"那句人话 ✓）', async () => {
+  // ⚠️ **切片边界迁移（2026-10-16 晚 · 与退货块去折叠壳同一刀）** —— 本用例的表单夹具走共享工具 `returnFormFrom`：
+  //   改前逐字：`html.indexOf('<form', start)`（从锚 `data-view="purchase-return"` **往后**找表单）
+  //   改后逐字：`html.lastIndexOf('<form', start)`（锚已迁到 `<form>` 自己的属性行上 ⇒ 起点要在锚**之前**找）
+  //   依据：业务负责人 **2026-10-16 真机截图 + 逐字**「那个**退货按钮为什么还有呢，不需要了**」
+  //     ⇒ `<details>` / `<summary>` 删掉、标记迁到 `<form>`；本用例的判据（取不到 ⇒ 不许按 0 拦 / 如实说）一个字没放宽 ✓
   const { renderScanPage } = require('../src/views/scanPageRenderer');
   const fallbackWrite = {
     enabled: true, texts: SCAN_WRITE.texts, fields: SCAN_WRITE.fields, actions: SCAN_WRITE.actions,

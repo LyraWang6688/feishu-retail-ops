@@ -1322,6 +1322,7 @@ ${purchaseAmountRowHtml(write)}
 ${multiItemBlockHtml(write, view)}
 <button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.replenishButton)}</button>
 </form>
+</details>
 </section>`;
 };
 
@@ -1431,6 +1432,16 @@ const returnFormHtml = (view, write) => {
   //      ⇒ 标记一起删掉会得到 `indexOf === -1` 的空切片 —— 那是**静默假绿** ✗（比红更坏）
   //      ⇒ 标记留在语义相同的位置（**退货表单那一元素**上）✓ 那些用例一个字都不用改 ✓
   //   ⚠️ 「一键补货」那个同形的 `<details>`（下面 one-tap-replenish）**这一刀不动** ✗
+  //   🔴 **2026-10-16 晚 收尾（标签配对 · 改前逐字 → 改后逐字 → 依据）**：
+  //      改前逐字（WIP 那一版把 `</details>` **删错了地方**）：补货块 `</form>` 之后**少了** `</details>` ✗，
+  //        而本函数 `</form>` 之后**多留了一个** `</details>` ✗（开始标签已删、闭合标签还在 ⇒ 标签不配对）
+  //      改后逐字：`</details>` **还给补货块**（`</form>` 后一行，与 WIP 前逐字一致 ✓）；
+  //        本函数 `</form>` 后那个 `</details>` **删掉**（退货块**一个 `<details>` 标签都不剩** ✓）
+  //      依据：本刀的口径是「**只去退货那一个折叠壳**」＋「**补货块一个字不动**」
+  //        ⇒ 开始标签与闭合标签必须**同进同出**；`</section>` 虽然能让浏览器容错补上，
+  //          但源码不再逐字可信，且"删错了那一个"正是最该被拦住的错 ✗
+  //      判据：`test/collapseSemanticsSentinel.test.js` ①（补货块**自己**的 `</details>` 必须在 ⇒ 少一个即红 ✓）
+  //        ＋ `test/returnBlockFirstScreen.test.js` AC-RF1a（退货块里 `</details>` 也不许有 ✓）
   return `<section class="card">
 <form method="post" action="${escapeHtml(write.postAction)}" class="write-form"
 data-view="purchase-return"
@@ -1452,7 +1463,6 @@ ${sizes.length ? `${purchaseAmountRowHtml(write)}
 ${multiItemBlockHtml(write, view)}
 <button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.returnButton)}</button>` : ''}
 </form>
-</details>
 </section>`;
 };
 

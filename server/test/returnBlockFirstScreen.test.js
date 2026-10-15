@@ -85,6 +85,8 @@ test('AC-RF1a 🔴 退货块**不再是折叠块**：没有 `<details>` / `<summ
   // 依据：她 **2026-10-16 真机截图 + 逐字**「但是那个**退货按钮为什么还有呢，不需要了**」
   //   ⇒ 上一刀加 `open` 之后表单**已经首屏可见** ✓，那颗 summary 纯多余 ⇒ **连 `<details>` 一起去掉** ✓
   assert.equal(/<details/i.test(block), false, '🔴 退货块里不许再有 `<details>` ✗（塞回即红 ✓）');
+  assert.equal(/<\/details>/i.test(block), false,
+    '🔴 也不许留一个孤零零的 `</details>`（只删开始标签 ⇒ 标签不配对 ✗；2026-10-16 晚收尾真的抓到过这一处 ✓）');
   assert.equal(/disclosure__summary/.test(block), false, '🔴 也不许再有那颗 `<summary>`（她截图指的就是它 ✗）');
   assert.match(block, /<form method="post"/, '表单**直接在块里** ⇒ 首屏可见 ✓（不靠 open ✗）');
 });
@@ -103,22 +105,33 @@ test('AC-RF1c ⭐ 这一刀**只动退货那一个**：一键补货的同形 `<d
     '「一键补货」那个 `<details>` 这一刀**不许动** ✗（Lead 另去问她要不要一起改 ✓）');
   // 改前逐字（上一刀）：assert.match(source, /<details class="disclosure" data-view="purchase-return" open>/,
   //   '退货那个才是本刀改的 ✓');
-  // 改后逐字：下面这一行
-  // 依据：本刀（2026-10-16 晚）把退货的 `<details>` + `<summary>` **一并去掉** ✓（她："不需要了"）
+  // 改前逐字（本刀第一版 · **假红**）：
+  //   assert.equal(codeOnly.includes('data-view="purchase-return"'), false, '退货那个 `<details>` 本刀已删 ✓…');
+  //   —— 标记**迁到 `<form>` 上**之后这一句**恒为 true** ⇒ 红得没有信息量 ✗（它钉的是"标记在不在"，
+  //      而本刀**刻意不删标记**：全仓 6+ 处用例拿它当"退货表单从哪开始"的锚 ✓）
+  // 改后逐字：下面两条（**改指向、不放宽** ✓）
+  // 依据：业务负责人 **2026-10-16 真机截图 + 逐字**「那个**退货按钮为什么还有呢，不需要了**」
+  //   ⇒ 退货块的 `<details class="disclosure" data-view="purchase-return" open>` + `<summary>` 两行**删掉** ✓；
+  //     ⭐ 标记 `data-view="purchase-return"` **迁到 `<form>` 自己的属性行上**（标记**不许删** ✗：
+  //       删了 ⇒ 6+ 处 `indexOf('data-view="purchase-return"')` 变 -1 ⇒ **空切片的静默假绿**，比红更坏 ✗）
   // ⚠️ **必须【剥注释后】判** —— 本文件/渲染器里为了写「改前逐字」**引用了那串标记**，
   //    不剥注释就会**假红** ✗（与 `test/multiItemOrderRoute.test.js` 的 RT5 同一个老教训 ✓）
   //    剥法用**行位锚定**（只丢"整行是注释"的行）—— 不用 `[\s\S]*?` 多字符清洗（CodeQL 会点名 ✗）
   const codeOnly = source.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n');
-  assert.equal(codeOnly.includes('data-view="purchase-return"'), false,
-    '退货那个 `<details>` 本刀已删 ✓（塞回代码 ⇒ 红 ✓）；「一键补货」那个**一个字没动** ✓');
+  assert.equal(/<details[^>]*data-view="purchase-return"/.test(codeOnly), false,
+    '退货那个 `<details>` 本刀已删 ✓（把 `<details … data-view="purchase-return">` 塞回代码 ⇒ 红 ✓）');
+  assert.match(codeOnly, /<form[^>]*data-view="purchase-return"/,
+    '⭐ 标记**迁到 `<form>` 上**、一个字没删 ✓（全仓 6+ 处用例拿它当退货表单起点的锚 ⇒ 删了就是 -1 空切片的静默假绿 ✗）');
 });
 
 test('AC-RF1d ⭐ **探针**：把 `<details>` / `<summary>` 塞回退货块 ⇒ 检测器**必须报红** ✓（证明 AC-RF1a 不空跑）', () => {
-  const offenders = (html) => /<details/i.test(html) || /disclosure__summary/.test(html);
+  const offenders = (html) => /<details/i.test(html) || /<\/details>/i.test(html) || /disclosure__summary/.test(html);
   assert.equal(offenders('<section class="card"><form method="post" class="write-form"></form></section>'), false,
     '干净的表单块 ⇒ 不报红 ✓');
   assert.equal(offenders('<details class="disclosure" data-view="purchase-return" open>'), true,
     '塞回 `<details>` ⇒ **必须**报红 ✓');
+  assert.equal(offenders('</details>'), true,
+    '只留一个孤零零的 `</details>`（标签不配对）⇒ **必须**报红 ✓');
   assert.equal(offenders('<summary class="disclosure__summary">退货</summary>'), true,
     '塞回那颗 `<summary>` ⇒ **必须**报红 ✓');
 });
