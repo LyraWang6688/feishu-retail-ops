@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * test-base-add-voucher-column.mjs —— 给**测试 Base** 的「收款方式管理」补上「团购券管理」那一列（**关联字段 type 21**）
+ * add-voucher-column-to-test-base.mjs —— 给**测试 Base** 的「收款方式管理」补上「团购券管理」那一列（**关联字段 type 21**）
  *
  * ## 为什么需要它
  * 券机制（#704 已合 ✓）的真机端到端**验收不了** —— 因为**测试 Base 缺这一列** ✗
@@ -19,11 +19,19 @@
  * ## 用法
  * ```bash
  * cd server
- * node --env-file=.env scripts/test-base-add-voucher-column.mjs --check-only   # **只读**：看有没有那一列（0 写入）
- * node --env-file=.env scripts/test-base-add-voucher-column.mjs                # 缺则**建**（幂等；已存在则跳过）
+ * node --env-file=.env scripts/add-voucher-column-to-test-base.mjs --check-only   # **只读**：看有没有那一列（0 写入）
+ * node --env-file=.env scripts/add-voucher-column-to-test-base.mjs                # 缺则**建**（幂等；已存在则跳过）
  * ```
  * ⚠️ 本脚本**刻意不自己 `dotenv.config()`**（与既有闸门脚本同形状）：env 由 `--env-file` 注入
  *    ⇒ **不带 `--env-file` 直接跑 ⇒ 第 ① 条闸门当场拒绝** ✓（这条是可复现的实证，见 `docs/test-base-voucher-column-2026-10-16.md`）
+ *
+ * ## 🔴 文件名**绝不能**以 `test-` 开头（2026-10-16 真实 CI 红，PR #718）
+ * `pnpm test` = `node --test`（**不带路径**）⇒ Node 的默认发现规则里有 **`**\/test-*.?(c|m)js`**
+ *    ⇒ 本脚本会被**当成一个测试文件**去跑 ✗；而它**没有 env 时按闸门 ① 主动 `exit(1)`**
+ *    ⇒ **CI 报 `not ok 1 - server/scripts/<本脚本>`、整套红** ✗（本地用显式文件清单跑**永远抓不到**这一点）
+ * ⭐ 所以本文件叫 `add-voucher-column-to-test-base.mjs`（**不**以 `test-` 开头）✓
+ *    —— 它是**一次性写库脚本**，不是测试；`server/scripts/` 下**不要再出现 `test-*.mjs`** ✗
+ *
  * 🔴 **绝不硬编码任何 token**（全从 env 读 ✓）· 🔴 **不用飞书 CLI**（走官方 SDK ✓）· 🔴 **不碰 `src/**`** ✓
  *
  * ## 生产真表那列的属性（**来源**：业务负责人侧的**只读**核对结果，本机够不着生产 ✗）

@@ -2,7 +2,7 @@
 
 > 任务来源：解开券机制（#704 已合）的**真机端到端验收** —— 它卡在**测试 Base 缺这一列** ✗
 > 她的规则（逐字）：「**测试 Base …… 可以随便写，不用问她**」✓ ⇒ 测试 Base 就是拿来造的 ✓
-> 对应脚本：`server/scripts/test-base-add-voucher-column.mjs`（**只从 env 读凭证** ✗ 不硬编码 ✓ · **不用飞书 CLI** ✓ 走官方 SDK）
+> 对应脚本：`server/scripts/add-voucher-column-to-test-base.mjs`（**只从 env 读凭证** ✗ 不硬编码 ✓ · **不用飞书 CLI** ✓ 走官方 SDK）
 > ⭐ **本文件 2026-10-16 由接手者更新**：上一刀（`bec93ac`）**建列失败**；本刀**已建成** ✓ 下面是**真跑**的完整证据。
 
 ## 0. 结论（一句话）
@@ -102,7 +102,7 @@
   同名列谁生效不确定 ⇒ **建议**：把**遗留的那列文本**改名（非破坏性 ✓）或按她口径删掉（**删列 = 删值、不可恢复** ⚠️ **须她拍板**）
 - 🔴 **本刀不删/不改**：任务是"**补列**"✗，动别人的表（删列不可恢复）超出授权 ✗ ⇒ **只如实上报** ✓
 
-## 7. 闸门（防生产）—— **5 条原封不动** ✓（代码行，`server/scripts/test-base-add-voucher-column.mjs`）
+## 7. 闸门（防生产）—— **5 条原封不动** ✓（代码行，`server/scripts/add-voucher-column-to-test-base.mjs`）
 
 ```js
 if (targetEnv !== 'test') fail(...)                      // ① 环境标记必须是 test
@@ -122,6 +122,27 @@ if (!forbidden.length) say('⚠️ warn：禁写清单空转…')      // ⑤ �
 
 ⚠️ 本机 `.env` 没有 `FEISHU_V1_FORBIDDEN_APP_TOKENS`（AGENTS §8 刻意如此）⇒ 第 ④ 条**空转**，
 但 第 ③ 条（**必须等于授权测试 Base**）是**实拦** ✓ —— 两道合起来仍拦住"写生产" ✓
+
+## 7b. 🔴 文件名**绝不能**以 `test-` 开头（2026-10-16 **真实 CI 红**，PR #718 第一次跑）
+
+`server/package.json` 的 `test` = **`node --test --test-concurrency=1`（不带路径）** ⇒ Node 的**默认发现规则**
+里有一条 **`**\/test-*.?(c|m)js`** ⇒ 上一刀把这个脚本命名成 `test-base-add-voucher-column.mjs`
+⇒ **它被当成一个"测试文件"去跑** ✗；而它没有 env 时按**闸门 ① 主动 `exit(1)`** ⇒
+CI 逐字报：
+
+```
+not ok 1 - /home/runner/work/feishu-retail-ops/feishu-retail-ops/server/scripts/test-base-add-voucher-column.mjs
+# tests 2748 · pass 2740 · fail 1 · skipped 7    ⇒ ELIFECYCLE  Test failed（exit 1）
+```
+
+⚠️ ⭐ **为什么本地一直没发现**：本仓库跑"两遍全量"用的是**显式文件清单**
+（`$(ls test/*.test.js | grep -v scanMoneyPageTwoStepVerify.test.js)`）⇒ **永远扫不到 `scripts/`** ✗；
+而 CI 是**裸 `node --test`**（会扫全仓）⇒ 只有 CI 抓得到。
+
+⭐ **处置**：改名为 **`server/scripts/add-voucher-column-to-test-base.mjs`**（**不**以 `test-` 开头 ✓）
+⇒ 它不再被当成测试；`server/scripts/` 下**不要再出现 `test-*.mjs`** ✗
+⭐ **教训**：本地"全量"命令与 CI 的 `node --test` **形状不同** ⇒ 这一类"被误当测试"的红
+**只有 CI 能抓**；本刀之后另跑了一次**CI 同形状**的裸 `node --test` 复验 ✓
 
 ## 8. 建完后：项目代码 / SDK **只读**复验 ⇒ 自检转绿 ✓
 
@@ -159,10 +180,33 @@ PR #707 起先回 200、后台再写库），而该用例在 HTTP 200 之后**�
 ⇒ **"券列建成 ⇒ 这条 e2e 就绿"这个假设不成立** ✗ —— 它卡在**另一条链路（异步入账 vs 同步计数断言）**上。
 🔴 **本刀没有去改这条 e2e、也没有改 `src/**`**（各有主 ✗）⇒ **如实标"未通过"** ✓
 
+## 9b. 两遍全量 —— **EXIT=0 ×2** ✓（跑的是 **CI 同形状**那条命令）
+
+```bash
+cd server && rm -rf data && FEISHU_V1_E2E_TEST_APP_TOKEN= node --test --test-concurrency=1
+```
+（⭐ **刻意用裸 `node --test`** —— 与 CI `pnpm test` 逐字同形状，才抓得到第 7b 节那类"被误当测试"的红 ✗；
+   `FEISHU_V1_E2E_TEST_APP_TOKEN=` **置空** = 复刻 CI 里"没有测试 Base 凭证"的条件 ⇒ 第 9 节那条真表 e2e **明确 skip**（不进红 ✓））
+
+| 遍 | tests | pass | fail | skipped | EXIT |
+|---|---|---|---|---|---|
+| A | 2718 | 2711 | **0** | 7 | **0** |
+| B | 2718 | 2711 | **0** | 7 | **0** |
+
+两遍**背靠背**跑同一份工作区，并在「第 1 遍前 / 两遍之间 / 第 2 遍后」各取一次
+`git diff HEAD | shasum -a 256` ⇒ **三次逐字相同** ✓ ⇒ 自证两遍跑的是**同一份改动**、中间没人动过它 ✓
+
+⚠️ 具体哈希值**刻意不写进本文件** —— 本文件自身也在那份 diff 里，写进去就变成自指（永远对不上 ✗）；
+   值的记录见 **PR #718 的正文 / 提交信息**（那里不参与 diff ✓）
+
+⚠️ 本机 2718 ＜ CI 的 2748：CI 的 `pull_request` 检出的**是 merge commit**（本分支 ＋ 当时的 `main`），
+比本分支多 30 条 —— 与本刀无关 ✓
+
 ## 10. 边界（逐条）
 
 - ✅ **只写测试 Base**（`tblNg7yInC6pNLJR` 新增一列 ＋ Feishu 自动在券表建的反向列）—— **生产一个字未写** ✓（本机也够不着 ✓）
 - ✅ **没用飞书 CLI**：建列与回读**全走官方 SDK / 项目代码** ✓
 - ✅ **没硬编码 token**：全部从 env 读 ✓（`server/test/scriptProductionGate.test.js` 哨兵 ✓）
 - ✅ **没碰 `server/src/**`** ✓ · `scanWriteService.js` 一个字没动 ✓ · **未部署** ✓ · **未合并 PR** ✓
+- ✅ **CI 红已修**（第 7b 节）：脚本改名去 `test-` 前缀 ⇒ 不再被 `node --test` 误当测试 ✓
 - ⚠️ **未做**：① 券表遗留同名文本列的清理（**等她/他定**，见第 6 节）② `scanMoneyPageTwoStepVerify` 那条既有红（**不归本刀**）
