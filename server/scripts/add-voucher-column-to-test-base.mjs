@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * test-base-add-voucher-column.mjs —— 给**测试 Base** 的「收款方式管理」补上「团购券管理」那一列（**关联字段 type 21**）
+ * add-voucher-column-to-test-base.mjs —— 给**测试 Base** 的「收款方式管理」补上「团购券管理」那一列（**关联字段 type 21**）
  *
  * ## 为什么需要它
  * 券机制（#704 已合 ✓）的真机端到端**验收不了** —— 因为**测试 Base 缺这一列** ✗
@@ -19,8 +19,8 @@
  * ## 用法
  * ```bash
  * cd server
- * node --env-file=.env scripts/test-base-add-voucher-column.mjs --check-only   # **只读**：看有没有那一列（0 写入）
- * node --env-file=.env scripts/test-base-add-voucher-column.mjs                # 缺则**建**（幂等；已存在则跳过）
+ * node --env-file=.env scripts/add-voucher-column-to-test-base.mjs --check-only   # **只读**：看有没有那一列（0 写入）
+ * node --env-file=.env scripts/add-voucher-column-to-test-base.mjs                # 缺则**建**（幂等；已存在则跳过）
  * ```
  * ⚠️ 本脚本**刻意不自己 `dotenv.config()`**（与既有闸门脚本同形状）：env 由 `--env-file` 注入
  *    ⇒ **不带 `--env-file` 直接跑 ⇒ 第 ① 条闸门当场拒绝** ✓（这条是可复现的实证，见 `docs/test-base-voucher-column-2026-10-16.md`）
