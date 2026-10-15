@@ -1132,7 +1132,8 @@ test('AC-8c ⭐【未付】走真路由：页面上什么都不填 ⇒ 直接成
       });
       const done = await followPaymentStep(base, cookie, await formPost(base, cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: saleKey,
-        payment_status: PAYMENT_STATUS.unpaid, line_amount: ['399'],
+        // 迁移依据（她 2026-10-16 逐字：「去掉三个单选…按金额自动算」）：新形状页面已无档位字段 ⇒ 请求体不再带它
+        line_amount: ['399'],
       }));
       assert.equal(done.status, 200);
       assert.match(await done.text(), /您的提交已成功/);
@@ -1175,7 +1176,8 @@ test('AC-8d ⭐【部分付】走真路由：实付 200 + 差额 300 落在收�
       assert.equal(entriesOf(h, 'salesEntry').length, 0, '第一步零写入（主表 0）');
       const done = await formPost(base, cookie, {
         action: SCAN_PAGE.paymentStep.payAction, submit_key: saleKey,
-        payment_status: PAYMENT_STATUS.partial, paid_amount: '200',
+        // 迁移依据（同上）：这里要钉的是「部分付 ⇒ 差额进未收款」，档位改由金额自动定出来 ⇒ 不再传档位
+        paid_amount: '200',
         payment_method: '微信', payment_amount: '200',
         line_amount: ['200', '300'],
       });
@@ -1541,7 +1543,6 @@ test('AC-13b ⭐ 走真路由：**只填每件实收、收款行全空** ⇒ 提
       const done = await followPaymentStep(base, cookie, await formPost(base, cookie, {
         action: SCAN_WRITE.actions.submitOrder,
         submit_key: saleKey,
-        payment_status: PAYMENT_STATUS.unpaid,
         payment_method: '',
         payment_amount: '',
         line_amount: ['399'],
