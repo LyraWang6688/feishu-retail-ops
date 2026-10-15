@@ -1791,7 +1791,10 @@ await writeService.saveDraftLines?.(openId, {
               }
             }
           }
-          if (!jumpHasSize || lineAmounts.some((value) => String(value ?? '').trim() === '')) {
+          // ⚠️ **空数组也算"两个都取不到"** ✓（她逐字：她填的 ‖ 单价 —— 一个都没有 ⇒ 不能跳 ✗）；
+          //   有值但有空项 ⇒ 同样不能跳（那一项既没填、也没单价可顶 ✓）
+          if (!jumpHasSize || !lineAmounts.length
+            || lineAmounts.some((value) => String(value ?? '').trim() === '')) {
             const jumpMessage = jumpHasSize
               ? String(writeConfig.texts.jumpNeedsAmountBody || '')
               : String(writeConfig.texts.jumpNeedsSizeBody || '');

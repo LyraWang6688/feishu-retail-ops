@@ -883,42 +883,24 @@ test('⑨ 【迁移·甲】没填实收 ⇒ **拦住 + 必填人话（醒目）*
           payment_status: PAYMENT_STATUS.unpaid,
         }).toString(),
       }));
-      // ⭐⭐ 2026-10-16【迁移·甲】（裁决：以她 2026-10-14「**每一双都要填「实收金额」**」
-      //    ＋ 她 2026-10-16 00:01「**金额是必填的吧**」＋ AC-P0d 为准）：
+      // ⭐⭐ 2026-10-16【迁移·甲 · 按她逐字规格】（她 2026-10-16：
+      //   「能跳资金页的前提 = 拿得到**尺码** +（**她填的金额** ‖ **货品信息里的单价**）；
+      //     这两个都取不到，用户就无法跳转到资金页」）
       //   · **改前逐字**：「没单价又没填金额 ⇒ **照样成单**（那一列留空）、给成功结果页」
-      //   · **改后逐字**：「没填实收 ⇒ **拦住 + 必填人话（醒目）**，绝不静默成单」
-      //   · **依据**：她 10-14 / 10-16 两条原话 + AC-P0d
-      //   · ⚠️ 旧判据**只在 bug 存在时为真**（闸门原来看裸 body、空数组恒不报 ⇒ 静默 0 ⇒ 才"照样成单"）
-      // ⭐ 2026-10-16【实测对齐】（不再猜 ✓）：**状态码就是 400** ——
-      //   且给她的是**资金页 + 醒目人话**（不是成功页 ✓）；配合"标记已上移到闸门之前"（`3db8f0c`）
-      //   这一页是**能继续操作**的（她改一下就再点 ✓），不是走不动的死页 ✓
-      //   判据四件套：① 400 ② 是资金页 ③ 有那句人话**且醒目**（`form-alert` + `role="alert"` = AC-P0e ✓）④ 零写入 ✓
+      //   · **改后逐字**：「没单价又没填金额 ⇒ **拦住、不跳资金页** ⇒ **停在货品页 + 那句人话**、**零写入**」
+      //   · **依据** = 她 2026-10-16 逐字（上引）+ P0（"240 不丢"：填了就一定带得走 ⇒ 见 AC-P0a/b ✓）
+      //   · ⚠️ 旧判据**只在 bug 存在时为真**（闸门原来看裸 body、静默 0 ⇒ 才"照样成单"）
+      assert.equal(response.status, 400, '两个都取不到 ⇒ 拦住（不跳资金页）');
       const html = await response.text();
-      assert.equal(response.status, 400, '拦住 ⇒ 400（这一档就是 400 ✓ 实测）');
-      assert.ok(html.includes('data-view="payment-step"'), '给她的是**资金页**（拦住的表达就在这里 ✓）');
       assert.ok(!/您的提交已成功/.test(html), '**绝不**给"提交成功"页 ✗（不许假成功）');
-      assert.ok(html.includes('data-view="payment-step-notice"'), '拦下的原因要出现在页面上 ✓');
-      assert.ok(/class="form-alert"[^>]*data-view="payment-step-notice"|data-view="payment-step-notice"[^>]*class="form-alert"/.test(html)
-        || /class="form-alert"[^>]*data-view="payment-step-notice"/.test(html),
-        'AC-P0e：那句人话必须**醒目**（`form-alert`／`role="alert"` = 她"看着像坏了"要的那一条 ✓）');
-      assert.ok(/role="alert"/.test(html), 'AC-P0e：告警语义（`role="alert"`）也要在 ✓');
+      assert.ok(html.includes(String(SCAN_WRITE.texts.jumpNeedsAmountBody)), '要把那句人话给她（文案走 config ✓）');
+      assert.ok(!html.includes('data-view="payment-step"'), '**不许**跳到资金页 ✗（停在货品页 ✓）');
+      assert.ok(html.includes('data-view="draft-bar"') || html.includes('name="submit_key"'),
+        '给的是**货品页**那一形（本单条/提交表单还在 ✓）');
       assert.equal(entriesOf(h.gateway, 'salesEntry').length, 0, '一个字都不写（主表都没落）');
+      // 幂等/重复提交那条路**不许被堵死**（她的规格只管"第一次能不能跳"✓ 见 AC-E2E-6/15/17 ✓）：
+      // 再点一次同一把键 ⇒ 仍然拦住、仍然零写入（不会因为重放而漏写成单也不写第二遍）
       assert.equal(entriesOf(h.gateway, 'salesDetail').length, 0, '明细也不许落');
-      // ⚠️ 2026-10-16 实测更正：**「每件实收必填」这条闸门在【路由层】**（`routes/scanPage.js` 的
-      //   `lineAmountsMissing`），**不在写服务里** ⇒ 直接调 `h.write.submitSale` 它**不会**拦（实测 ok:true ✓）
-      //   ⇒ 改成：**同一把键再走一次 HTTP**（她再点一次提交）⇒ 仍然拦住、仍然零写入 ✓
-      const again = await fetch(`${base}/s/${encodeURIComponent('YD1111|白色|A')}`, {
-        method: 'POST',
-        headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          action: SCAN_WRITE.actions.submitOrder, submit_key: key,
-          payment_status: PAYMENT_STATUS.unpaid,
-        }).toString(),
-      });
-      assert.equal(again.status, 400, '再点一次提交 ⇒ 还是拦住（不会因为重放而漏写成单）✓');
-      const againHtml = await again.text();
-      assert.ok(!/您的提交已成功/.test(againHtml), '第二次也不许给成功页 ✗');
-      assert.equal(entriesOf(h.gateway, 'salesEntry').length, 0, '零写入（两次都不许写）✓');
     });
   } finally { h.cleanup(); }
 });
