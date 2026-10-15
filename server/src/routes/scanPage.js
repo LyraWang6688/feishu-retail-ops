@@ -934,10 +934,54 @@ const createScanPageRouter = (options = {}) => {
         const pendingView = await service.lookup({ ...lookupInputOf(req), requestId }).catch(() => null);
         if (pendingView?.found) {
           const pendingLines = Array.isArray(pendingSession?.sale?.lines) ? pendingSession.sale.lines : [];
-          return sendPaymentStep(res, req, {
-            realm,
-            submitKey: writeService?.sessions?.submitKeyFor?.(openIdOf(req), pendingSession, 'sale') || '',
-            count: pendingLines.length,
+          // ⭐⭐ 2026-10-15 晚（task-21 · 她真机 20:22：「我扫码一双鞋点击销售，出来的是**资金页面**」）：
+          //   🔴 上面那半（10-14 晚）只把接管**限到销售上下文**，**没看"有没有东西要付"** ✗ ——
+          //      她那次的会话是 `paymentStep:'pending'` + 草稿 **0 行** + 没有已建单号
+          //      ＋ **`sale.status:'submitted'`**（**那一单早就交出去了**）⇒ 照样被顶到
+          //      「整单付款（可填可不填）」，而且**之后每次扫码都这样** ✗✗。
+          //   ⚠️ **光看"0 行"是不够的**（我第一版就是"0 行 + 没单号 ⇒ 残标记"，被全量挡下 ✓）：
+          //      **刚点过「提交这一单」、正停在资金页**时，草稿**本来就是 0 行** —— 扫码那一双是走
+          //      `submitPending`（提交那一步存下来的尺码/金额/收款）在**点按钮时**才落单的
+          //      （见上面提交分支的 `lines: pendingDraftLines` ＋ 下面 pay 分支用 `pendingInfo`）✓
+          //      ⇒ 拿"0 行"判残标记会把**正常**的资金页清掉 ⇒ 她点按钮就建不了单 ✗
+          //        （`test/scanSalePayFront.test.js` 的 AC-PF1/PF2/PF4 正是这么挡住我的第一版 ✓）。
+          //   ⇒ 判据收成她**真机那个状态**才有的特征：0 行 + 没单号 + **这一单已经 `submitted`**
+          //      （`completeSale` 把 `status` 落成 submitted，它清的是 `lines`/`order_no`，
+          //       **没清** `paymentStep` ⇒ 标记留成了残的 —— 正是她那次的形状 ✓）。
+          const hasOrder = Boolean(String(pendingSession?.sale?.order_no || '').trim())
+            || Boolean(String(pendingSession?.sale?.master_record_id || '').trim());
+          const saleStatus = String(pendingSession?.sale?.status || '').trim();
+          const submittedStatus = String(writeConfig?.statuses?.submitted || 'submitted');
+          // 「有东西要付」= 草稿有行 ∨ **已经建过单**（order_no / master_record_id）∨
+          //                **这一单还没交出去**（status 不是 submitted ⇒ 她刚点过提交、正停在资金页 ✓）
+          if (pendingLines.length > 0 || hasOrder || saleStatus !== submittedStatus) {
+            return sendPaymentStep(res, req, {
+              realm,
+              submitKey: writeService?.sessions?.submitKeyFor?.(openIdOf(req), pendingSession, 'sale') || '',
+              count: pendingLines.length,
+            });
+          }
+          // 🔴 **残标记**（0 行 + 没单号 + 已 `submitted`）⇒ **不给资金页**，并把标记清成"**没走到资金这一步**"
+          //   的**既有表示** = 这个键**不在**（`services/scanSessionService.js` 的默认 `sale` 里就**没有**
+          //   `paymentStep` ✓）⇒ 清成 `undefined`：`saveSaleProgress` 是 `{...当前 sale, ...patch}`、
+          //   store 是 `JSON.stringify`（`jsonTaskStore`）⇒ 这个键就**没了** ✓。
+          //   ⚠️ **不是** `'created'`（那是"**这一单已经建过**"的既有含义，写上去就是撒谎 ✗）；
+          //   ⚠️ **不是**空串（那是**另造一个值**，注释里也点名过不许 ✗）；
+          //   ⚠️ 清标记**失败不许破她的页面**（这是 GET 渲染路径）⇒ 只 warn，照旧出正常页 ✓。
+          const clearing = writeService.saveDraftLines?.(openIdOf(req), { paymentStep: undefined });
+          await Promise.resolve(clearing).catch((error) => {
+            logWarn('scan.payment_step.stale_clear_failed', {
+              request_id: requestId, error: error.message,
+            });
+          });
+          // **不静默**：真机排查时这一条说明"那次残标记是被我们清掉的，不是她自己清掉的"。
+          logWarn('scan.payment_step.stale_cleared', {
+            request_id: requestId,
+            open_id: openIdOf(req),
+            raw: String(pendingMark).slice(0, 32),
+            lines: pendingLines.length,
+            has_order: hasOrder,
+            sale_status: saleStatus,
           });
         }
       }
