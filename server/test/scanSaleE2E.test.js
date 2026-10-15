@@ -1819,7 +1819,7 @@ test('AC-RF4 只在**写成功**时记：真提交一次销售 ⇒ 会话 last_r
 //   AC-SR5 验收成功页：自动跳转目标 = **未到货批次列表** · 返回按钮**同一 URL** · 首屏有实际数量/金额
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-SR4 接线哨兵：**五路**成功页都走同一个 successReturnFields（唯一来源 ✓）', () => {
+test('AC-SR4 接线哨兵：**六路**成功页都走同一个 successReturnFields（唯一来源 ✓）', () => {
   // ⭐ 2026-10-13 **改指向**（不是放宽 ✓）：原来只数销售/补货/退货**三路**；「金额两步走」之后
   //    第 2 步【跳过（稍后去工作台补）】也**复用同一个** `successReturnFields(...)`
   //    （她 2026-10-13 口径：第 2 步「**可写可不写**」⇒ 跳过 ⇒ 成功页 ✓）
@@ -1827,11 +1827,20 @@ test('AC-SR4 接线哨兵：**五路**成功页都走同一个 successReturnFiel
   //    ⇒ ⭐ 第 5 路 = `payment_pay` 动作分支（第 2 步【提交整单付款】写成功后给的成功页 ✓ 同一天加）
   //    本哨兵的**本意不变**：成功页 payload **只能有一个来源**，各路**不许各写一遍** ✓
   //    （下面两条断言都还在；如有第 6 处未登记 ⇒ 立刻红 ✓）
+  // ⭐⭐ 2026-10-16（task-59「一单多货品 · 路由半」）**成对迁移** —— 上面那句"如有第 6 处未登记
+  //    ⇒ 立刻红"**正是这次走的流程** ✓（本哨兵照设计抓到并逼我登记，**不是放宽** ✗）：
+  //    · **改前逐字**：`assert.equal(calls.length, 5,` ＋ 标题/口径写「**五路**」；
+  //    · **改后逐字**：`assert.equal(calls.length, 6,` ＋ 标题/口径写「**六路**」；
+  //    · **依据**：第 6 路 = **多货品单**（`groups.length > 1`）那条成功页 —— 它
+  //      **只调既有引擎**（`multiItemOrderService.submitDraft` ✓）、**不新写成功页**，
+  //      payload 仍**只从这一处** `successReturnFields(...)` 出（设计 §3「不发明新文案」✓）；
+  //      🔴 强度**未降**：仍是"**恰好** N 处调用"＋"定义只许一处"两条**精确**断言 ✓
+  //      （第 7 处进来照样红 ✓）。
   const source = fs.readFileSync(path.join(__dirname, '../src/routes/scanPage.js'), 'utf8');
   // ⚠️ 只数**调用**（定义那行是 `const successReturnFields = (req, target)` ⇒ 带空格，不被这个正则算进来 ✓）
   const calls = source.match(/successReturnFields\(/g) || [];
-  assert.equal(calls.length, 5,
-    `五路（销售 / 补货 / 退货 / 第 2 步跳过 / 第 2 步付款）都要接上（实际 ${calls.length} 处调用）`);
+  assert.equal(calls.length, 6,
+    `六路（销售 / 补货 / 退货 / 第 2 步跳过 / 第 2 步付款 / 多货品单）都要接上（实际 ${calls.length} 处调用）`);
   // ⭐ 单一来源的**强度照保**：定义处只许有**一处**
   assert.equal((source.match(/const successReturnFields\s*=/g) || []).length, 1,
     'successReturnFields 只许有**一个**定义（不许各路各写一遍 ✗）');

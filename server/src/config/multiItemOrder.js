@@ -130,6 +130,21 @@ const resolveEvents = (env) => Object.freeze({
 });
 
 /**
+ * ⭐ 提交成功后**作废「实时库存」内存快照**时用的理由串（`invalidateInventorySnapshot(reqId, reason)` ✓）。
+ *
+ * ⚠️ 值**与单货品那条路逐字相同**（`routes/scanPage.js` 里那两处既有字面量）——
+ *   同一个业务动作在日志里**只有一个理由** ✓（按它 grep，两条路都看得见 ✓）。
+ * ⚠️ 为什么放进配置、而不是在路由里再写一遍那两个字面量：路由里那两处字面量是**既有邻近哨兵**
+ *   （`test/scanSaleE2E.test.js` 的 `AC-SR4`：按"`scan_replenish_submitted` 之后 400 字内要有
+ *   `markRealmUsed(`"判）的**锚点** —— 在它前面多写一处同样的字面量会把那个锚点挤开 ✗
+ *   （本刀**真踩到过**，见 PR 说明）。**配置先行**在这里同时解决了两件事 ✓。
+ */
+const resolveInvalidateReasons = (env) => Object.freeze({
+  replenish: readString(env, 'SCAN_MULTI_ITEM_INVALIDATE_REPLENISH', 'scan_replenish_submitted'),
+  return: readString(env, 'SCAN_MULTI_ITEM_INVALIDATE_RETURN', 'scan_purchase_return_submitted'),
+});
+
+/**
  * 解析一份配置（**每次调用都重新读 env** ⇒ 用例可以传不同的 env 验"改配置即改行为" ✓）。
  * @param {object} [env] 默认 `process.env`
  */
@@ -152,6 +167,8 @@ const resolveMultiItemOrderConfig = (env = process.env) => {
     }),
     chains: resolveChains(env),
     events: resolveEvents(env),
+    // ⭐ 提交成功后作废「实时库存」快照的理由串（值 = 单货品那条路**逐字**同一串 ✓）
+    invalidateReasons: resolveInvalidateReasons(env),
   });
 };
 
