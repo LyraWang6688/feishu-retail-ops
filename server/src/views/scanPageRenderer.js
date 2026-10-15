@@ -33,12 +33,14 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
-const { SCAN_PAGE, fillText } = require('../config/scanPage');
+const { SCAN_PAGE, MULTI_ITEM_RENDER_TEXTS, fillText } = require('../config/scanPage');
 // ⭐ 2026-10-15（task-23）：退货表单的**默认数量 / 上限**（`defaultQuantity` / `maxQuantity` / `maxSizes`）
 //   唯一真源在**写侧**那一份配置里（后端 `parseReturnEntries` 的兜底用的就是它 ✓）——
 //   页面**直接读同一份**，不在 `config/scanPage.js` 再抄一遍（抄一份必漂 ✗）。
 //   ⚠️ 反向不行：`config/scanWrite.js` **require 了** `config/scanPage.js` ⇒ 在那边 require 这边会成环 ✗。
 const { SCAN_WRITE } = require('../config/scanWrite');
+// ⭐ 2026-10-16（**一单多货品 · 渲染半**）：提交载荷的**字段名**与开关走 `config/multiItemOrder.js` ✓
+const { MULTI_ITEM_ORDER } = require('../config/multiItemOrder');
 const { NEW_REALM, REALMS, REALM_TABS, DEFAULT_REALM, REALM_TEXTS, REALM_EMPTY_TEXT_KEYS, REPLENISH_REALM, PURCHASE_RETURN_REALM, resolveRealm, labelPrintUrls, saleSizeGroups, purchaseSizeLines, purchaseSizeGroups, foldedSpecialRowsOf, sellableCountOf } = require('./scanPageRealm');
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -1213,6 +1215,81 @@ const purchaseAmountRowHtml = (write) => {
  *     既有采购免确认链路（`publishPurchaseRequest`；「信息填写」表变更那条入口
  *     已于 2026-10-09 退场，函数本身没变）—— 渲染层一行业务逻辑都没有。
  */
+
+/**
+ * ⭐⭐ 2026-10-16（**一单多货品 · 渲染半**）—— 补货 / 退货**共用**那一块。
+ *
+ * 她的口径（逐字）：「核心就是…**销售、补货、退货支持一单多货**」⇒ 补货/退货也要能**一单加多个货品** ✓。
+ *   · 形状 = 设计 §4.3（`[{product_record_id, number, item_no, color, supplier_record_id, entries:[{size, quantity}]}]`）✓
+ *   · 🔴 **N=1 与今天逐字不变**：开关 `MULTI_ITEM_ORDER.enabled === false` ⇒ 本函数返回 **空串** ⇒
+ *     两个表单**一个字节都不变** ✓（既有断言原样绿 ✓）
+ *   · 🔴 **不新开提交路径**：整块只是往**既有那个 `<form>`** 里加一个 hidden 字段 ＋ 一个按钮 ＋ 一段脚本；
+ *     `action` / `submitKey` / 尺码字段 / 金额行 / 提交按钮**顺序与内容都不动** ✗
+ *   · ⚠️ 允许 JS 动态交互（她 2026-10-12 明确「**我们是能够进行动态交互的**」✓）——
+ *     这是**我方**的技术选择，**不是"她的要求"** ✗
+ *
+ * ⚠️ 载荷**键名只在这里定义一次**（`*_KEYS`）：服务端纯函数与页面脚本**共用同一份** ⇒ 不会两处写漂 ✓
+ */
+const MULTI_ITEM_ITEM_KEYS = Object.freeze([
+  'product_record_id', 'number', 'item_no', 'color', 'supplier_record_id', 'entries',
+]);
+const MULTI_ITEM_ENTRY_KEYS = Object.freeze(['size', 'quantity']);
+
+/** 一单多货品的载荷 JSON（**纯函数**，用例直接钉它 ✓；形状 = 设计 §4.3）。 */
+const multiItemPayloadJson = (items = []) => JSON.stringify(
+  (Array.isArray(items) ? items : []).map((item) => {
+    const out = {};
+    for (const key of MULTI_ITEM_ITEM_KEYS) {
+      out[key] = key === 'entries' ? undefined : String((item || {})[key] ?? '');
+    }
+    out.entries = (Array.isArray((item || {}).entries) ? item.entries : []).map((entry) => {
+      const line = {};
+      for (const key of MULTI_ITEM_ENTRY_KEYS) {
+        line[key] = key === 'quantity' ? Number((entry || {})[key]) : String((entry || {})[key] ?? '');
+      }
+      return line;
+    });
+    return out;
+  }),
+);
+
+/**
+ * 🔴 **零 JS**（既有哨兵钉着：扫码页 HTML 里**一行 `<script>` 都不许有** —— `AC-W2` / `AC-6R5`）⇒
+ *   这一块**不用任何前端脚本**：
+ *   · `multi_items` 的**首件**由**服务端**渲进 hidden 字段（形状 = 设计 §4.3；`entries` 由路由在提交时合并 ✓）
+ *   · 「再加一个货品」是一颗**链接**（同一路径带参数 ⇒ 路由侧去记草稿；**路由没接前 = 能点、但没人读** ✓ 自洽）
+ *   · 「已加货品」列表**由服务端**从 `view.multi_items` 渲染（拿不到 ⇒ 如实空态 ✓ 不编 ✗）
+ */
+const multiItemBlockHtml = (write, view = {}) => {
+  if (!MULTI_ITEM_ORDER.enabled) return ''; // 🔴 开关关 ⇒ 空串 ⇒ 既有页面逐字不变 ✓
+  const t = MULTI_ITEM_RENDER_TEXTS;
+  const field = String(MULTI_ITEM_ORDER.field || '');
+  if (!field) return ''; // 字段名空 ⇒ 宁可不渲染，也不发一个没人认的键 ✗
+  const first = {
+    product_record_id: view.product_record_id, number: view.number, item_no: view.item_no,
+    color: view.color, supplier_record_id: view.supplier_record_id, entries: [],
+  };
+  const already = Array.isArray(view.multi_items) ? view.multi_items : [];
+  const attr = (name, value) => (value === undefined || value === null || value === ''
+    ? '' : ` ${name}="${escapeHtml(value)}"`);
+  const listHtml = already.length
+    ? already.map((item) => {
+      const rows = Array.isArray(item?.entries) ? item.entries.length : 0;
+      return `<li class="multi-item-row">${escapeHtml(String(item?.number || item?.item_no || ''))}`
+        + ` <span class="hint">${escapeHtml(fillText(t.rowsTemplate, { count: rows }))}</span></li>`;
+    }).join('')
+    : `<li class="hint">${escapeHtml(t.empty)}</li>`;
+  // 「再加一个货品」：**零 JS** ⇒ 一颗指向本页的链接（路由按参数去记草稿；没接前点了不报错 ✓）
+  const addHref = `${escapeHtml(write.postAction || '')}${String(write.postAction || '').includes('?') ? '&' : '?'}add=1`;
+  return `<div class="card multi-item" data-view="multi-item"${attr('data-product-record-id', view.product_record_id)}${attr('data-product-number', view.number)}${attr('data-product-item-no', view.item_no)}${attr('data-product-color', view.color)}${attr('data-product-supplier-record-id', view.supplier_record_id)}>
+<p class="hint">${escapeHtml(t.hint)}</p>
+<a class="btn btn--primary" data-multi-add href="${addHref}">${escapeHtml(t.addButton)}</a>
+<input type="hidden" name="${escapeHtml(field)}" value="${escapeHtml(multiItemPayloadJson([first]))}">
+<h3 class="multi-item__title">${escapeHtml(t.title)}</h3>
+<ul class="multi-item__list" data-view="multi-item-list">${listHtml}</ul>
+</div>`;
+};
+
 const replenishFormHtml = (view, write) => {
   const t = write.texts;
   const v = REALM_TEXTS;
@@ -1257,6 +1334,7 @@ ${hiddenField(fields.action, write.actions.replenish)}${pageBuildField()}
 ${hiddenField(fields.submitKey, write.replenishKey)}
 ${rows}
 ${purchaseAmountRowHtml(write)}
+${multiItemBlockHtml(write, view)}
 <button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.replenishButton)}</button>
 </form>
 </details>
@@ -1381,6 +1459,7 @@ ${sizesNotice}
 <p class="hint" data-view="${escapeHtml(rf.hintView)}" hidden></p>
 ${rows}
 ${sizes.length ? `${purchaseAmountRowHtml(write)}
+${multiItemBlockHtml(write, view)}
 <button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.returnButton)}</button>` : ''}
 </form>
 </details>
@@ -1915,6 +1994,11 @@ module.exports = {
   renderMinimalPage,
   // ⭐⭐ 2026-10-12：提交成功页（逐字「您的提交已成功」+「再录一单」链接回扫码页）
   renderSaleSuccessPage,
+  // ⭐ 2026-10-16（一单多货品 · 渲染半）：那一块 + 载荷纯函数（用例直接钉 ✓）
+  multiItemBlockHtml,
+  multiItemPayloadJson,
+  MULTI_ITEM_ITEM_KEYS,
+  MULTI_ITEM_ENTRY_KEYS,
   escapeHtml,
   STYLE,
   readThemeTokens,

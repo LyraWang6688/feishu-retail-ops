@@ -33,6 +33,9 @@ const resolveShared = (env) => ({
   // 但**各管各的**：一个是"本单几双"，一个是"一单多货品最多几行"。
   maxProducts: readInt(env, 'SCAN_MULTI_ITEM_MAX_PRODUCTS', 20, { min: 1, max: 200 }),
   maxLines: readInt(env, 'SCAN_MULTI_ITEM_MAX_LINES', 50, { min: 1, max: 500 }),
+  // ⭐ 2026-10-16（渲染半）：**提交时那个载荷的字段名** —— 配置先行（换名不用改代码 ✓）。
+  //   ⚠️ 显式 `readString`（**禁 `||` 兜底** ✗）：空串 = 空字段名 ⇒ 下游按空处理，不会偷偷回落。
+  field: readString(env, 'SCAN_MULTI_ITEM_FIELD', 'multi_items'),
   // 幂等键口径：**一单一把**（`orderKey` 就是这把键；提交成功后轮换 ⇒ 第 2 单不会被第 1 单吸收 ✓）。
   submitKeyTemplate: readString(env, 'SCAN_MULTI_ITEM_KEY_TEMPLATE', 'multi_item:{sessionId}:{seq}'),
   // ⭐ **明细幂等键模板**：必须**同时含「货品 + 尺码」** —— 否则两个货品同尺码会撞车 ✗
