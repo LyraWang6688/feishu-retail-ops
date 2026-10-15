@@ -367,6 +367,9 @@ const createWorkbenchRouter = (options = {}) => {
       phase: String(body.phase || '').slice(0, 32),
       reason: String(body.reason || '').slice(0, 64),
       err_msg: String(body.err_msg || '').slice(0, 200),
+      // ⭐⭐ 2026-10-15：**飞书回的原始内容**（它 `config` 失败时常常既不回 `errMsg` 也不回 `message`
+      //   ⇒ 只报"失败"我们查不下去 ✗）—— 原样带上，一眼看出飞书自己怎么说 ✓
+      raw: String(body.raw || '').slice(0, 300),
       url: String(body.url || '').slice(0, 300),
     });
     return res.json({ success: true });
