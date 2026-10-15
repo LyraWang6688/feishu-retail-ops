@@ -10,13 +10,34 @@
 
 | 文档 | 内容 |
 |---|---|
+| [README.md](README.md) | 文档索引 |
+| [async-and-success-page-plan-2026-10-16.md](async-and-success-page-plan-2026-10-16.md) | 补货 / 退货 / 验收 接异步 ＋ 成功页统一极简 —— **只读设计 + 改动清单 + 判据草案** |
+| [ci-two-real-findings-2026-10-16.md](ci-two-real-findings-2026-10-16.md) | CI 两条红灯的两份体检（2026-10-16 · 都不是 flake ✗） |
+| [collapse-semantics-audit-2026-10-16.md](collapse-semantics-audit-2026-10-16.md) | 全仓「折叠/收起语义」审计（task-48 · **只读** ✓ 不改任何行为 ✗） |
+| [event-link-field-shape-2026-10-16.md](event-link-field-shape-2026-10-16.md) | 关联字段（link）事件形状 · 实测留档（2026-10-16） |
 | [handoff.md](handoff.md) | 交接说明：当前状态、硬约束、幂等现状、待办、采购改造方案与下一步建议 |
 | [handoff-douyin-content-co-creation.md](handoff-douyin-content-co-creation.md) | **抖音共创交接**（2026-10-04 新增协作线）：家族生意背景、既有飞书资产索引、能力边界与第一步请求 |
+| [multi-item-route-anchors-2026-10-16.md](multi-item-route-anchors-2026-10-16.md) | 「一单多货品」**路由半**锚点刷新（task-46 · 只读准备） |
+| [open-risk-notes-2026-10-16.md](open-risk-notes-2026-10-16.md) | 两条"会咬人"的欠账（落档 · 不动冻结文件） |
+| [orders-read-path-perf-2026-10-16.md](orders-read-path-perf-2026-10-16.md) | 订单列表读路径性能修复（2026-10-16） |
+| [owner-requests-backlog.md](owner-requests-backlog.md) | 业务负责人的口径总账 —— **单一来源**（owner requests backlog） |
+| [page-annotate-mode-2026-10-16.md](page-annotate-mode-2026-10-16.md) | 页面标注模式（业务负责人 2026-10-16 亲口点的功能） |
+| [payment-method-voucher-link-2026-10-16.md](payment-method-voucher-link-2026-10-16.md) | 「收款方式管理 · 团购券管理（关联列）」同步记录（2026-10-16） |
+| [pending-confirmations.md](pending-confirmations.md) | 🔔 待业务负责人确认（只放"需要你一句话"的事，别的一律不放） |
 | [project-progress.md](project-progress.md) | 项目进展、已确认决策与后续路线 |
 | [feishu-v1-operations.md](feishu-v1-operations.md) | 飞书 V1 的运行与运维手册（部署、日志、排查） |
 | [module-boundaries.md](module-boundaries.md) | 模块边界与职责划分 |
 | [idempotency-contract.md](idempotency-contract.md) | 采购与库存的远端幂等契约 |
 | [inventory-size-reference-contract.md](inventory-size-reference-contract.md) | 库存与尺码关联字段契约 |
+| [purchase-amount-and-label-plan-2026-10-16.md](purchase-amount-and-label-plan-2026-10-16.md) | 补货不问金额 ＋ 「实收金额（可不填）」文案对齐 —— 只读盘点与改动计划（2026-10-16） |
+| [purchase-async-wiring-2026-10-16.md](purchase-async-wiring-2026-10-16.md) | 补货 / 退货 接异步（先回成功页 ⇒ 后台写库）—— 接线落地记录 |
+| [return-block-repro-2026-10-15.md](return-block-repro-2026-10-15.md) | 退货块"还是一个退货按钮" —— 本地实测渲染报告（task-41） |
+| [return-block-task44-2026-10-16.md](return-block-task44-2026-10-16.md) | task-44 交付说明：退货块"空块"是**我 task-41 的误报**（已更正）+ 生产真数据（未能在本机执行） |
+| [return-tab-root-cause-2026-10-16.md](return-tab-root-cause-2026-10-16.md) | task-47（第二刀）：用**她日志里的真实形状**渲染退货块 —— **代码路径本来就直出表单** ✓（附真实日志行） |
+| [task-53-jump-gate-plan-2026-10-16.md](task-53-jump-gate-plan-2026-10-16.md) | task-53 改动计划 + 判据草案 —— P0 第二刀「跳转前置判定」＋ 恢复 `⑨` 期望 400 |
+| [telemetry-audit-2026-10-15.md](telemetry-audit-2026-10-15.md) | 埋点体检表 · 2026-10-15（task-48） |
+| [workbench-domains-trim-three-fixes-2026-10-16.md](workbench-domains-trim-three-fixes-2026-10-16.md) | 工作台 · 货品（domains 页）三处改动（业务负责人 2026-10-16 截图 + 亲口逐字） |
+| [workbench-input-landing-audit-2026-10-16.md](workbench-input-landing-audit-2026-10-16.md) | 工作台「输入框 → 落点」审计（2026-10-16 · **只读**） |
 | [workbench-query-contract.md](workbench-query-contract.md) | 工作台查询接口契约 |
 | [sales-line-plan.md](sales-line-plan.md) | 销售线的推进计划与判据 |
 | [arrival-conversation-reconcile-2026-10-06.md](arrival-conversation-reconcile-2026-10-06.md) | 采购到货「群话题对话式核对」：业务负责人 2026-10-06 当天口述的**权威口径**与验收标准（**已实现**）。⚠️ 其中「实际到货不会为 0 / 不为实际为 0 写规则」一条已被 2026-10-07 的口径**收窄**（见下一行） |
