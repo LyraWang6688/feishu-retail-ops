@@ -20,6 +20,43 @@
 .entry-open { margin: 0; }
 .entry-open input { width: 100%; }
 
+/* ⭐⭐ 2026-10-15：「选择编号打印」的**可搜索编号选择器**（她：「选项是来自于货品信息里面的编号」）。
+   选项是一颗颗**真按钮**（≥44px 命中区、点得到）；列表可滚（最多 200 个编号，不把页面撑开）；
+   状态那一行是"人话"的落点（拉不到 / 没匹配到 / 这一款还没入库）。
+   颜色 / 间距 / 圆角 / 字号全部 `var(--…)` —— 值只在 `styles/tokens.css`。 */
+.number-picker { display: grid; gap: var(--space-2); margin-top: var(--space-2); }
+.number-picker-options {
+  display: grid;
+  gap: var(--space-1);
+  /* 列表可滚：最多显示 7 个命中区那么高（高度也由令牌算出来，不写死像素）。 */
+  max-height: calc(var(--control-height) * 7);
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.number-picker-options:empty { display: none; }
+.number-option { min-width: 0; }
+.number-option-button {
+  display: grid;
+  gap: var(--space-1);
+  width: 100%;
+  min-height: var(--control-height);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.number-option-button:hover { border-color: var(--primary); background: var(--primary-soft); }
+.number-option-main { font-weight: var(--weight-bold); overflow-wrap: anywhere; }
+.number-option-sub { color: var(--text-secondary); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+.number-option-tag { justify-self: start; }
+.number-picker-status { color: var(--text-secondary); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+.number-picker-status:empty { display: none; }
+
 /* 卡片组：查询板块那种"只有一张卡"的页面不要铺成三列。 */
 .domain-cards-single { grid-template-columns: minmax(0, 1fr); }
 

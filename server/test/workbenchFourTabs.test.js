@@ -467,6 +467,60 @@ test('AC2b 领域子 tab 是渲染出来的（不是写死的 HTML）：按钮 /
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// AC2e 「选择编号打印」= **可搜索的编号选择器**（业务负责人 2026-10-15 逐字：
+//   「是否可以就让用户选择呢？然后它的选项是来自于货品信息里面的编号」）
+//   ⚠️ 落点**一个字不改**：还是既有 `/workbench/label-print.html?keyword={itemNo}`；
+//      选择器只是一层"能搜、能选"的壳，**不新开页面、不新开接口** ✗。
+//   ⚠️ 无障碍：`combobox` + `listbox` + `status`（她手机上用，读屏 / 键盘都要能用）。
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC2e 编号那一格 = 配置驱动的可搜索选择器（落点不变 · 无障碍 · 未打开时不多画）', async () => {
+  const modules = loadFrontendModules();
+  const [domains, pagesModule] = await Promise.all([modules.domains, modules.domainPages]);
+  const labels = domains.domainById('product').pages.find((page) => page.id === 'product-labels');
+
+  // ① 配置先行：选择器由**配置**打开（不是渲染层写死"标签打印这一页特殊"）
+  assert.equal(labels.numberPicker, true, '配置里显式打开编号选择器');
+  assert.equal(labels.targetTemplate, '/workbench/label-print.html?keyword={itemNo}', '落点模板一个字不改');
+
+  // ② 渲染出来的壳：还是**同一个**表单（既有提交那条路照旧）+ 一格选择器 + 无障碍语义
+  const html = pagesModule.entryPageHtml(labels);
+  assert.ok(html.includes('data-entry-form') && html.includes('name="number"'), '仍是既有编号表单');
+  assert.ok(html.includes('data-target-template="/workbench/label-print.html?keyword={itemNo}"'), '模板原样带到表单上');
+  assert.ok(html.includes('选择编号打印'), '按钮文案照旧（她 2026-10-14 定的那颗）');
+  assert.ok(html.includes('data-number-picker'), '有一格编号选择器');
+  assert.ok(html.includes('data-view="number-options"') && html.includes('role="listbox"'),
+    '选项区有 listbox 语义（选项由 JS 按端点回填）');
+  assert.ok(html.includes('data-view="number-status"') && html.includes('role="status"'),
+    '状态区有 status 语义（读不到时要给人话）');
+  assert.ok(!/<p[ >]/.test(html), '这一页仍然一个 <p> 都没有（既有"界面不留说明书"哨兵照旧）');
+
+  // ③ 没打开选择器的入口页（历史形状）**不许**多画那一格（配置先行 = 只在配置点上生效）
+  const plain = pagesModule.entryPageHtml({
+    targetTemplate: '/s/{number}?from=sales', fieldLabel: '编号', buttonLabel: '打开 →',
+  });
+  assert.equal(plain.includes('data-number-picker'), false, '没配 numberPicker 的入口页不多画选择器');
+  assert.ok(plain.includes('name="number"'), '但既有表单照旧');
+
+  // ④ 接线：选择器必须真的挂在**领域骨架**上（不是画了个空壳没人管）
+  const skeleton = stripComments(readWorkbench('features/domains/index.js'));
+  assert.ok(skeleton.includes('createNumberPicker'), '领域骨架把选择器挂上（配置点上才挂）');
+  assert.ok(!/\bfetch\s*\(/.test(skeleton) && !/\bapi\.(get|post)\s*\(/.test(skeleton),
+    '领域骨架自己仍然一次网络调用都没有（取数在选择器模块里）');
+
+  // ⑤ 渲染层与选择器模块的「接口」必须对得上（对不上 = 真机上"点了没反应"，她最恨这个）
+  const pickerSource = readWorkbench('features/labels/number-picker.js');
+  for (const selector of ['input[name="number"]', '[data-view="number-options"]', '[data-view="number-status"]']) {
+    assert.ok(pickerSource.includes(`'${selector}'`), `选择器按 ${selector} 找元素（两边必须同一个锚）`);
+  }
+  assert.ok(/<input name="number"/.test(html), '壳里的输入框名字就是选择器找的那个');
+  // ⚠️ 选项是"真按钮"（不是纯文字）：样式类必须真的存在于工作台的 CSS 里（否则手机上点不着）
+  assert.ok(pickerSource.includes('number-option-button'));
+  assert.ok(readWorkbench('features/domains/domains.css').includes('.number-option-button'),
+    '选项按钮的样式在 domains.css 里（≥44px 命中区）');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // AC2c / AC2d 领域骨架不写业务逻辑 · 订单列表的三份单子
 // ═══════════════════════════════════════════════════════════════════════════
 

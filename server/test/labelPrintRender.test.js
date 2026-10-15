@@ -375,6 +375,42 @@ test('单价缺失的标签照画（只是没有价格那一行）—— 页面�
   assert.ok(!html.includes('label-price'), '没有单价就不画价格那一行');
 });
 
+// ⭐⭐ 2026-10-15 业务负责人（逐字，选 ①）：新品（**还没有库存**）那张标签上，
+//   「尺码 + 库存数量」那一行**不印**。
+//   ⇒ 判据：`sizes` 为空数组 / 缺失 ⇒ **那一行整块不出现**（不是印「0 双」、不是印「—」✗）。
+//   ⚠️ 有 `sizes` 时**逐字不变**（既有版式 / 字号 / 角标一个像素都不许动）—— 上面那批既有用例全部照旧 ✓
+test('AC-U4 没有尺码（新品 / 无库存）⇒ 不画「尺码」那一行；有尺码时逐字不变', async () => {
+  const render = await loadRenderModule();
+
+  // ① 服务端 union「货品信息 ∪ 实时库存」之后，新品标签 = `sizes: []`（没有库存行）⇒ 整行不出现
+  const noSizes = render.labelHtml(label({ sizes: [], size_lines: [], total_qty: 0 }), layout());
+  assert.ok(!noSizes.includes('label-sizes'), '尺码那一行整块不出现');
+  assert.ok(!noSizes.includes('label-size-qty'), '连数量角标都不许有');
+  assert.ok(!noSizes.includes('0 双') && !noSizes.includes('>0<'), '不是印「0 双」');
+  assert.ok(noSizes.includes('XHB') || noSizes.includes('YD6693-2'), '标签本身照画（只是少了那一行）');
+
+  // ② 老形状的兜底：`sizes` 为空、但 `size_lines` 里塞的是占位符（`—`）⇒ 也不许印出来
+  //    （改前这里会印一个「—」出来 —— 这条就是能真红的那一条）
+  const placeholders = render.labelHtml(label({
+    sizes: [], size_lines: [[{ size: '—', qty: '—' }]], total_qty: 0,
+  }), layout());
+  assert.ok(!placeholders.includes('label-sizes'), '占位尺码也不许印成一行（不是印 —）');
+
+  // ③ 有尺码 ⇒ 那一行**逐字不变**（她把版式定案过，一个字节都不许动）
+  const withSizes = render.labelHtml(label(), layout());
+  assert.ok(withSizes.includes(
+    '<div class="label-sizes">'
+    + '<span class="label-size">38<span class="label-size-qty">1</span></span>'
+    + '<span class="label-size">39<span class="label-size-qty">2</span></span>'
+    + '<span class="label-size">40<span class="label-size-qty">1</span></span>'
+    + '</div>',
+  ), '有尺码时那一行逐字不变（角标仍是真的 span）');
+
+  // ④ 关掉尺码开关 / 只有尺码行没有 sizes 字段，也都不许冒出空行
+  assert.equal(render.labelHtml(label(), layout({ fields: { size: false } })).includes('label-sizes'), false);
+  assert.equal(render.labelHtml(label({ sizes: undefined, size_lines: [] }), layout()).includes('label-sizes'), false);
+});
+
 test('空结果不炸：给一块明确的空白提示（不是空白页，也不是异常）', async () => {
   const render = await loadRenderModule();
   const html = render.sheetHtml([], layout());
@@ -406,6 +442,44 @@ test('结果概要：匹配几个编号 / 一共几双 / 每页张数 + 截断 +
   assert.ok(summary.includes('已跳过'), '跳过的库存记录必须明说');
   assert.ok(summary.includes('没有「创建时间」'), '「最近新增」漏掉的要明说');
   assert.ok(summary.includes('读不到「单价」'), '缺单价必须明说（标签照发）');
+});
+
+// ⭐⭐ 2026-10-15 业务负责人（逐字）：「批量，我觉得**当前的页面不太美观**，
+//   **我不知道批量要做什么**」⇒ 她当场确认用途 = **一次给一批新货打码**（新店开业 / 换季上架）。
+//   ⇒ ① 用途**写在页面上**（文案走这一页唯一的文案真源 `TEXTS`，不散写）；
+//      ② 做清爽只许动 CSS 与文案，**数据流一个字节不动** ⇒ 既有 AC「整页只发一次只读请求」继续成立 ✓
+const BATCH_PURPOSE_PHRASES = ['一批新货', '新店开业', '换季上架'];
+
+test('AC-U5 批量打印页：用途（一次给一批新货打码 · 新店开业 / 换季上架）写在页面上', async () => {
+  const render = await loadRenderModule();
+
+  // ① 文案在页面的文案真源里（`TEXTS` —— 这一页的用户可见字只有这一处，改文案只改它）
+  const purposeText = `${render.TEXTS.batchPurposeTitle || ''}${render.TEXTS.batchPurposeText || ''}`;
+  for (const phrase of BATCH_PURPOSE_PHRASES) {
+    assert.ok(purposeText.includes(phrase), `批量打印的用途要写清「${phrase}」（她的话：我不知道批量要做什么）`);
+  }
+
+  // ② 真的渲染得出来（不是只躺在配置里没人用）
+  const html = render.batchPurposeHtml();
+  for (const phrase of BATCH_PURPOSE_PHRASES) {
+    assert.ok(html.includes(phrase), `页面上要看得到「${phrase}」`);
+  }
+  assert.ok(!/<p[ >]/.test(html), '这一块不用 <p> 承载（与领域页"不留说明书"的既有哨兵同一形状）');
+
+  // ③ 页面接线：批量那一屏（**不带** `?keyword=`）画这一块；单款那一屏（带 `?keyword=`）不画
+  //    （免得"批量"的说明出现在只打一款的屏上，文不对题）
+  const page = read('features/labels/index.js');
+  assert.ok(page.includes('batchPurposeHtml'), '页面真的把这一块画出来');
+  assert.match(page, /batchPurpose/, '且是按"是不是批量那一屏"决定画不画');
+
+  // ④ 做清爽**不许动数据流**：整页仍然只发一次只读请求（她最恨"点了没反应"，也不许偷偷多打请求）
+  assert.equal((page.match(/api\.get\(/g) || []).length, 1,
+    '整页只发一次只读请求（做清爽只动了 CSS 与文案）');
+
+  // ⑤ 清爽只许用 tokens.css 的令牌（本仓哨兵：工作台 CSS 里一个十六进制颜色都不许有）
+  const css = read('features/labels/labels.css');
+  assert.ok(css.includes('.label-batch-purpose'), '这一块的样式在标签页自己的 CSS 里');
+  assert.equal(/#[0-9a-fA-F]{3,8}\b/.test(css), false, '配色只许走 tokens.css 的变量');
 });
 
 // ── 接线（静态）────────────────────────────────────────────────────────────

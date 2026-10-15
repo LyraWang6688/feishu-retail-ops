@@ -257,6 +257,14 @@ export const DOMAIN_TABS = [
         // 「选择编号打印」= 把**货号**带进标签打印页（那一页的 `keyword` 认货号 ⇒ 只出这一款）。
         // ⚠️ 只是**预填筛选框**，不新增请求、不绕过后端过滤 ✓
         targetTemplate: '/workbench/label-print.html?keyword={itemNo}',
+        // ⭐⭐ 2026-10-15（业务负责人逐字）：
+        //   「编号对呀，我们的编号**只要它在货品信息里就行了**」
+        //   「这个编号现在有个问题，**是否可以就让用户选择呢？然后它的选项是来自于货品信息里面的编号**」
+        //   ⇒ 这一格从"手输编号"升级成**可搜索的编号选择器**：选项实时来自只读端点
+        //     `GET /api/workbench/products/numbers`（端点 / 文案 / 上限 / 超时都在 `config/numberPicker.js`）。
+        //   ⚠️ **只多打开这一格**：落点（`targetTemplate`）一个字不改，选中只是把编号填进既有输入框，
+        //      跳转仍走既有表单提交 ⇒ **不新开页面、不新开接口** ✓
+        numberPicker: true,
         fieldLabel: '编号 / 货号',
         placeholder: '编号（货号|颜色|类别）或货号，例如 XHB8095',
         buttonLabel: '选择编号打印 →',

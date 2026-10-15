@@ -15,7 +15,7 @@
 import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { describeError, setBusy, showPageError } from '../../core/ui.js';
-import { FILTER_OPTIONS, TEXTS, pageStyleText, sheetHtml, sheetStyleVars, summaryHtml } from './render.js';
+import { FILTER_OPTIONS, TEXTS, batchPurposeHtml, pageStyleText, sheetHtml, sheetStyleVars, summaryHtml } from './render.js';
 // ⭐ 2026-10-11：「**打印到店里那台电脑**」= 扫码页那条**同一条队列**（服务器出 PDF、
 //    店里那台 Windows 电脑出纸）。与旁边那颗「打印这些标签」（浏览器打印）是两条路，
 //    但"印什么"共用同一份 service/config。
@@ -43,43 +43,59 @@ const stateLabel = (state) => FILTER_OPTIONS.stateLabels[state] || state;
 const recentLabel = (days) => FILTER_OPTIONS.recentDayLabels[days] || `最近 ${days} 天`;
 const sortLabel = (sort) => FILTER_OPTIONS.sortLabels[sort] || sort;
 
-function renderShell(container) {
+/**
+ * 页面外壳。⭐ 2026-10-15（业务负责人逐字）：
+ *   「批量，我觉得**当前的页面不太美观**，**我不知道批量要做什么**」
+ *   ⇒ ① 批量那一屏把**用途**写在页面上（`batchPurposeHtml()`，文案在 `render.js` 的 `TEXTS` 里）；
+ *      ② 做清爽只动**分组与留白**（筛选收进一张卡、主按钮单独一行）——
+ *         ⚠️ **数据流一个字节没动**：`data-field` / `data-action` / `data-view` 全部照旧，
+ *           整页仍然只发**一次**只读请求（既有哨兵照旧成立 ✓）。
+ * ⚠️ `?scan=1` 那条路在 `mount()` 开头就 return 去挂聚焦页了，**根本走不到这里**（扫码那一条一个字没改 ✓）。
+ * @param {object} options `{ batch }` —— 批量那一屏（不带 `?keyword=`）才画那句用途。
+ */
+function renderShell(container, options = {}) {
+  const batch = options.batch !== false;
   container.innerHTML = `
     <section class="panel no-print">
-      <div class="panel-header">
+      <div class="panel-header label-page-head">
         <div>
           <h2>${escapeHtml(TEXTS.title)}</h2>
           <p class="subtitle">${escapeHtml(TEXTS.subtitle)}</p>
         </div>
       </div>
-      <div class="toolbar compact-toolbar label-filters">
-        <label class="form-field grow">货号 / 颜色 / 类别
-          <input data-field="keyword" placeholder="例如 XHB8095；留空 = 不按关键字过滤">
-        </label>
-        <label class="form-field">所属状态
-          <select data-field="state">
-            ${FILTER_OPTIONS.states.map((state) => `<option value="${escapeHtml(state)}">${escapeHtml(stateLabel(state))}</option>`).join('')}
-          </select>
-        </label>
-        <label class="form-field">类别
-          <select data-field="category"><option value="">全部类别</option></select>
-        </label>
-      </div>
-      <div class="toolbar compact-toolbar label-filters">
-        <label class="form-field">尺码
-          <input data-field="size" type="number" min="1" step="1" inputmode="numeric" placeholder="例如 42">
-        </label>
-        <label class="form-field">最近新增
-          <select data-field="recent-days">
-            ${FILTER_OPTIONS.recentDays.map((days) => `<option value="${days}">${escapeHtml(recentLabel(days))}</option>`).join('')}
-          </select>
-        </label>
-        <label class="form-field grow">排序
-          <select data-field="sort">
-            ${FILTER_OPTIONS.sorts.map((sort) => `<option value="${escapeHtml(sort)}">${escapeHtml(sortLabel(sort))}</option>`).join('')}
-          </select>
-        </label>
-        <button class="btn btn-primary" type="button" data-action="query">${escapeHtml(TEXTS.queryButton)}</button>
+      ${batch ? batchPurposeHtml() : ''}
+      <div class="label-filter-card">
+        <div class="toolbar compact-toolbar label-filters">
+          <label class="form-field grow">货号 / 颜色 / 类别
+            <input data-field="keyword" placeholder="例如 XHB8095；留空 = 不按关键字过滤">
+          </label>
+          <label class="form-field">所属状态
+            <select data-field="state">
+              ${FILTER_OPTIONS.states.map((state) => `<option value="${escapeHtml(state)}">${escapeHtml(stateLabel(state))}</option>`).join('')}
+            </select>
+          </label>
+          <label class="form-field">类别
+            <select data-field="category"><option value="">全部类别</option></select>
+          </label>
+        </div>
+        <div class="toolbar compact-toolbar label-filters">
+          <label class="form-field">尺码
+            <input data-field="size" type="number" min="1" step="1" inputmode="numeric" placeholder="例如 42">
+          </label>
+          <label class="form-field">最近新增
+            <select data-field="recent-days">
+              ${FILTER_OPTIONS.recentDays.map((days) => `<option value="${days}">${escapeHtml(recentLabel(days))}</option>`).join('')}
+            </select>
+          </label>
+          <label class="form-field grow">排序
+            <select data-field="sort">
+              ${FILTER_OPTIONS.sorts.map((sort) => `<option value="${escapeHtml(sort)}">${escapeHtml(sortLabel(sort))}</option>`).join('')}
+            </select>
+          </label>
+        </div>
+        <div class="label-filter-actions">
+          <button class="btn btn-primary" type="button" data-action="query">${escapeHtml(TEXTS.queryButton)}</button>
+        </div>
       </div>
       <div data-view="summary"><p class="label-summary">${escapeHtml(TEXTS.initial)}</p></div>
       <div class="label-print-bar">
@@ -258,9 +274,11 @@ export function createLabelPrintModule() {
         mountScanOnlyPage(container, scanPrint);
         return;
       }
-      renderShell(container);
-      // ⭐ 「单个」入口带进来的编号 / 货号 → 预填筛选框（见上面 keywordFromUrl 的说明）。
+      // ⭐ 2026-10-15：「单个」入口带进来的编号 / 货号（`?keyword=`）⇒ **单款那一屏**；
+      //   不带参数 = **批量打印那一屏**（她 2026-10-15 确认用途 = 一次给一批新货打码）。
+      //   ⇒ 只有批量那一屏画那句用途（单款那屏不写"批量"，免得文不对题）。
       const preset = keywordFromUrl();
+      renderShell(container, { batch: !preset });
       if (preset) $(panel(), '[data-field="keyword"]').value = preset;
       $(panel(), '[data-action="query"]').addEventListener('click', (event) => query(event.currentTarget));
       $(panel(), '[data-field="keyword"]').addEventListener('keydown', (event) => {
