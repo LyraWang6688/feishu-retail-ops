@@ -21,8 +21,9 @@
  *   删掉那条 warn 或那个计数，这两条断言当场红）；`keyword` / `category` 两侧**都参与**。
  * · **AC-N4** `recentDays` 对没有库存的那批按「货品信息」的**创建时间列**筛 ——
  *   ⚠️ 那一列在真表里**不叫「创建时间」**（只读核过：名字是「上架日期」、`type:1001 = CreatedTime`）
- *   ⇒ 按**飞书字段类型**解析（`gateway.listFields` 取第一个 `type:1001`），配置可覆盖
- *   （`config.fieldNamesPendingSchema.productCreatedTime`）。**能真红**：把这条筛掉就是红。
+ *   ⇒ 口径在 `config/labelPrint.js` 的 `PRODUCT_CREATED_TIME`（名字 + 类型两条）：名字在记录里就用名字
+ *   （零额外请求）；记录里没有这一列 ⇒ 按 `fieldType`（1001）去字段表里认 ＋ **如实 warn**。
+ *   **能真红**：把这条筛掉就是红。
  * · **AC-N5** `GET /api/workbench/products/numbers`：`keyword` 过滤 / `limit` 截断
  *   （`truncated:true`）/ `hasStock` 正确 / 响应**不含任何密钥** / 挂在**既有**
  *   `requireWorkbenchAccess` 之后（行为 503/401 ＋ 源码哨兵）。
@@ -33,8 +34,18 @@
  *   不再回「没有可打印的标签」。这是数据源改成并集的**必然结果**，本文件把它**钉出来**
  *   （要退回旧行为 = 显式改这里，不是"悄悄变了"）。
  *
- * ⚠️ 本文件**不修改、不放宽任何既有断言**：`test/labelPrintService.test.js` 的 42 条**原文未动**、
- *    全绿（改判据必须写"改前逐字 → 改后逐字 → 依据"——本次**没有需要改的判据**）。
+ * ── task-10（2026-10-15）追加的两条 AC ────────────────────────────────────────
+ * · **AC-N8（性能：短 TTL 缓存）** 端点的那两次全表读**在 TTL 内只读一次**（Lead 线上实测
+ *   单次 ≈ 11.4 秒 ⇒ 必须缓存）：TTL 内第二次调用 **0 次飞书读**（假网关计数能真红）；`cacheTtlMs = 0`
+ *   ⇒ **每次真读**（能真红）；TTL 过期 ⇒ 重读（能真红）；命中 / 未命中都有**日志**（能真红）；
+ *   ⚠️ **只影响这个端点**：`listLabels` 两次调用仍然是 2 次真读（**不许被缓存**）。
+ * · **AC-N9（配置先行）** `cacheTtlMs` / `limitDefault` / `limitMax` / 创建时间列（名字 + 类型）
+ *   **全在 `config/labelPrint.js`**：换一份注入的 config ⇒ 行为跟着变（能真红），**不用改代码**。
+ *
+ * ⚠️ 本文件**不放宽也不删除任何既有断言**：`test/labelPrintService.test.js` 的 42 条**原文未动**、
+ *    全绿。task-10 只动了本文件里**两条 AC-N4 用例的「注入哪一组 config」**（配置项从
+ *    `fieldNamesPendingSchema.productCreatedTime` 那个"散读"口径，搬成 config 的**正规一项**
+ *    `productCreatedTime`）—— 两条都逐字写了「改前 / 改后 / 依据」，**断言本身一条没改**。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -291,7 +302,16 @@ test('AC-N3 keyword / category 两侧**都参与**（新货也能被关键词与
 // AC-N4 recentDays：没入库的那批按「货品信息」的创建时间列（真表里叫「上架日期」）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-N4 按**飞书字段类型 1001** 找到「货品信息」的创建时间列 ⇒ recentDays 真的筛得动新货（能真红）', async () => {
+test('AC-N4 配置里的列名跟真表对不上 ⇒ 按**飞书字段类型 1001** 兜底认出来（＋如实 warn）（能真红）', async () => {
+  // ⚠️ task-10 改（**只改"注入哪一组 config"，断言一条都没放**）：
+  //   改前逐字：`const service = createLabelPrintService(gateway, { now: () => now });`
+  //   改后逐字：多注入一份 `productCreatedTime: { fieldName: '这个列名她后来改掉了', fieldType: 1001 }`
+  //             （模拟"配置里的名字跟真表已经对不上"）⇒ 才走**类型兜底**那条路；
+  //             `assert.ok(gateway.calls.includes('listFields:product'), …)` 等三条断言**原文一字未动**，
+  //             另**加**一条 `workbench.labels.product_created_time_renamed` 的 warn 断言（**加强**，不是放宽）。
+  //   依据：task-10 的 B2 —— 创建时间那套口径搬进 config 的正规一项后，**名字是配置的第一优先**
+  //         （记录里有这一列就零额外请求），所以"按 type 1001 兜底"只能用"名字对不上"来触发。
+  //         **判据没放宽**：仍是"记录里没有配置的那一列 ⇒ 按 type 1001 认出来，能真红"。
   const now = Date.parse('2026-10-15T12:00:00+08:00');
   const day = 24 * 60 * 60 * 1000;
   const gateway = fakeGateway({
@@ -304,15 +324,36 @@ test('AC-N4 按**飞书字段类型 1001** 找到「货品信息」的创建时�
     // 真表实测：创建时间列**被改名**成「上架日期」，但**类型仍是 1001**；「更新日期」是 1002。
     fieldLists: { product: [{ field_name: '上架日期', type: 1001 }, { field_name: '更新日期', type: 1002 }] },
   });
-  const service = createLabelPrintService(gateway, { now: () => now });
-  const data = await service.listLabels({ recentDays: 7 });
+  const service = createLabelPrintService(gateway, {
+    now: () => now,
+    // 配置里的名字**已经对不上真表**（她改过名）⇒ 必须走类型兜底，并且**如实 warn** 提醒改配置。
+    config: configWith({ productCreatedTime: { fieldName: '这个列名她后来改掉了', fieldType: 1001 } }),
+  });
+  const logs = captureLogs();
+  let data;
+  try {
+    data = await service.listLabels({ recentDays: 7 });
+  } finally {
+    logs.restore();
+  }
   assert.deepEqual(data.labels.map((label) => label.number), ['NEW2026|黑色|A', 'XHB8095|棕色|A'],
     '⭐ 最近 7 天：新货（按货品信息的创建时间列）＋ 有库存的（按实时库存的创建时间）都进来，30 天前的老货出去');
   assert.equal(data.missing_created_at_without_stock, 0);
   assert.ok(gateway.calls.includes('listFields:product'), '创建时间列是按**字段类型**解析的（不是写死列名）');
+  const renamed = logs.events('workbench.labels.product_created_time_renamed');
+  assert.equal(renamed.length, 1, '⭐ 名字对不上必须**如实 warn**（删掉这条日志 ⇒ 本断言当场红）');
+  const payload = JSON.parse(renamed[0]);
+  assert.equal(payload.configured_name, '这个列名她后来改掉了');
+  assert.equal(payload.resolved_name, '上架日期', '按类型认出来的是真表那一列');
 });
 
-test('AC-N4 配置可覆盖字段名（`fieldNamesPendingSchema.productCreatedTime`）⇒ 不再问字段表', async () => {
+test('AC-N4 配置可覆盖字段名（`productCreatedTime.fieldName`）⇒ 不再问字段表', async () => {
+  // ⚠️ task-10 改（**只改"注入哪一组 config"，断言一条都没放**）：
+  //   改前逐字：`config: configWith({ fieldNamesPendingSchema: { createdTime: '创建时间', productCreatedTime: '创建时间' } }),`
+  //   改后逐字：`config: configWith({ productCreatedTime: { fieldName: '创建时间', fieldType: 1001 } }),`
+  //   依据：那个键从"service 散读的兜底口径"搬成了 config 的正规一项
+  //         （task-10 B2 ⇒ `config/labelPrint.js#PRODUCT_CREATED_TIME`）；**判据没放宽**：
+  //         两条断言的原文一字未动 —— 仍是"配置给了字段名 ⇒ 不去读字段表（零额外请求）"。
   const now = Date.parse('2026-10-15T12:00:00+08:00');
   const day = 24 * 60 * 60 * 1000;
   const gateway = fakeGateway({
@@ -324,12 +365,30 @@ test('AC-N4 配置可覆盖字段名（`fieldNamesPendingSchema.productCreatedTi
   });
   const service = createLabelPrintService(gateway, {
     now: () => now,
-    config: configWith({ fieldNamesPendingSchema: { createdTime: '创建时间', productCreatedTime: '创建时间' } }),
+    config: configWith({ productCreatedTime: { fieldName: '创建时间', fieldType: 1001 } }),
   });
   const data = await service.listLabels({ recentDays: 7 });
   assert.deepEqual(data.labels.map((label) => label.number), ['NEW2026|黑色|A', 'XHB8095|棕色|A'],
     '新货（按配置的字段名）＋ 有库存的（按实时库存的创建时间）都在；30 天前的老货不在');
   assert.ok(!gateway.calls.includes('listFields:product'), '配置给了字段名 ⇒ 不去读字段表（零额外请求）');
+});
+
+test('AC-N4 默认 config 的列名「上架日期」在记录里 ⇒ 直接用它，**零额外请求**（不为了兜底白问字段表）', async () => {
+  const now = Date.parse('2026-10-15T12:00:00+08:00');
+  const day = 24 * 60 * 60 * 1000;
+  const gateway = fakeGateway({
+    liveInventory: [stockRecord('st1', { stockKey: 'XHB8095|棕色|A|36', createdAt: now - 1 * day })],
+    product: [
+      productRecord('rec_old', { number: 'OLD2026|黑色|A', price: 100, createdAt: now - 30 * day }),
+      productRecord('rec_new', { number: 'NEW2026|黑色|A', price: 200, createdAt: now - 1 * day }),
+    ],
+    fieldLists: { product: [{ field_name: '上架日期', type: 1001 }, { field_name: '更新日期', type: 1002 }] },
+  });
+  const service = createLabelPrintService(gateway, { now: () => now });
+  const data = await service.listLabels({ recentDays: 7 });
+  assert.deepEqual(data.labels.map((label) => label.number), ['NEW2026|黑色|A', 'XHB8095|棕色|A']);
+  assert.ok(!gateway.calls.includes('listFields:product'),
+    '⭐ 配置的名字在记录里 ⇒ **不**去问字段表（兜底只在"名字对不上"时才动）');
 });
 
 test('AC-N4 读不到创建时间列 ⇒ 没入库的那批**如实排除并计数 + warn**（不静默当成"没有新货"）', async () => {
@@ -515,6 +574,173 @@ test('AC-N6 只读：`listLabels` 与 `listProductNumbers` 一次 create/update/
   for (const forbidden of ['.create(', '.update(', '.delete(', 'applyChange', 'transitionState']) {
     assert.ok(!code.includes(forbidden), `只读功能里不许出现 ${forbidden}`);
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-N8 性能（task-10）：短 TTL 缓存 —— 只服务这个端点
+//   线上只读实测：listAll('product') 561 行 5478ms ＋ listAll('liveInventory') 1362 行 5924ms
+//   ⇒ 一次 ≈ 11.4 秒。所以：TTL 内只读一次；= 0 关闭；过期重读；命中/未命中都记日志。
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** 假时钟（可拨）—— 缓存 TTL 全靠它驱动，用例**不依赖 wall-clock**（免得又出 flaky）。 */
+const fakeClock = (start = Date.parse('2026-10-15T12:00:00+08:00')) => {
+  let current = start;
+  return { now: () => current, advance: (ms) => { current += ms; } };
+};
+
+const numbersFixture = () => ({
+  liveInventory: [stockRecord('st1', { stockKey: 'XHB8095|棕色|A|36' })],
+  product: [
+    productRecord('rec_new', { number: 'NEW2026|黑色|A', price: 399 }),
+    productRecord('rec_stock', { number: 'XHB8095|棕色|A', price: 198 }),
+  ],
+});
+
+test('AC-N8 ⭐ TTL 内第二次调用 **0 次飞书读**（假网关计数能真红）＋ 命中/未命中都有日志', async () => {
+  const clock = fakeClock();
+  const gateway = fakeGateway(numbersFixture());
+  const service = createLabelPrintService(gateway, {
+    now: clock.now, config: configWith({ productNumbers: { cacheTtlMs: 60000 } }),
+  });
+  const logs = captureLogs();
+  let first; let second;
+  try {
+    first = await service.listProductNumbers({});
+    clock.advance(30 * 1000);
+    second = await service.listProductNumbers({});
+  } finally {
+    logs.restore();
+  }
+  assert.deepEqual(gateway.calls, ['product', 'liveInventory'],
+    '⭐ 第二次**一次飞书都没读**（两次调用只留下初始那两次全表读）');
+  assert.deepEqual(second, first, '命中的结果与未命中逐字一致');
+  assert.equal(logs.events('workbench.products.numbers.cache_miss').length, 1, '第一次未命中');
+  assert.equal(logs.events('workbench.products.numbers.cache_hit').length, 1, '第二次命中');
+  const hit = JSON.parse(logs.events('workbench.products.numbers.cache_hit')[0]);
+  assert.equal(hit.age_ms, 30000, '如实记"缓存多大了"');
+  assert.equal(hit.ttl_ms, 60000);
+  assert.equal(JSON.parse(logs.events('workbench.products.numbers.cache_miss')[0]).reason, 'empty',
+    '第一次未命中的原因 = 还没有缓存');
+});
+
+test('AC-N8 关掉缓存（`cacheTtlMs: 0`）⇒ **每次真读**（能真红）', async () => {
+  const clock = fakeClock();
+  const gateway = fakeGateway(numbersFixture());
+  const service = createLabelPrintService(gateway, {
+    now: clock.now, config: configWith({ productNumbers: { cacheTtlMs: 0 } }),
+  });
+  const logs = captureLogs();
+  try {
+    await service.listProductNumbers({});
+    clock.advance(1);
+    await service.listProductNumbers({});
+  } finally {
+    logs.restore();
+  }
+  assert.deepEqual(gateway.calls, ['product', 'liveInventory', 'product', 'liveInventory'],
+    '⭐ 0 = 关掉 ⇒ 每次都真读飞书');
+  assert.equal(logs.events('workbench.products.numbers.cache_hit').length, 0, '一次都没命中');
+  assert.deepEqual(logs.events('workbench.products.numbers.cache_miss')
+    .map((line) => JSON.parse(line).reason), ['disabled', 'disabled'], '未命中的原因如实写 disabled');
+});
+
+test('AC-N8 TTL 过期 ⇒ 重读（能真红）', async () => {
+  const clock = fakeClock();
+  const gateway = fakeGateway(numbersFixture());
+  const service = createLabelPrintService(gateway, {
+    now: clock.now, config: configWith({ productNumbers: { cacheTtlMs: 60000 } }),
+  });
+  const logs = captureLogs();
+  try {
+    await service.listProductNumbers({});
+    clock.advance(59999);
+    await service.listProductNumbers({});   // 差 1ms 没过期 ⇒ 命中
+    clock.advance(1);                        // 正好到 TTL ⇒ 过期
+    await service.listProductNumbers({});
+  } finally {
+    logs.restore();
+  }
+  assert.deepEqual(gateway.calls, ['product', 'liveInventory', 'product', 'liveInventory'],
+    '⭐ 过期后必须重读（不能拿过期的清单一直糊弄她）');
+  assert.equal(logs.events('workbench.products.numbers.cache_hit').length, 1);
+  assert.deepEqual(logs.events('workbench.products.numbers.cache_miss')
+    .map((line) => JSON.parse(line).reason), ['empty', 'expired']);
+});
+
+test('AC-N8 缓存**只影响这个端点**：`listLabels` 两次调用仍然 2 次真读（不许动它）', async () => {
+  const clock = fakeClock();
+  const gateway = fakeGateway(numbersFixture());
+  const service = createLabelPrintService(gateway, {
+    now: clock.now, config: configWith({ productNumbers: { cacheTtlMs: 60000 } }),
+  });
+  const logs = captureLogs();
+  try {
+    await service.listLabels({});
+    clock.advance(1);
+    await service.listLabels({});
+  } finally {
+    logs.restore();
+  }
+  assert.deepEqual(gateway.calls, ['liveInventory', 'product', 'liveInventory', 'product'],
+    '⚠️ 批量/编号打印那一页这次**不动** —— 它照旧每次真读（它那 11 秒另开任务）');
+  assert.equal(logs.events('workbench.products.numbers.cache_hit').length, 0);
+  assert.equal(logs.events('workbench.products.numbers.cache_miss').length, 0, 'listLabels 根本不碰这个缓存');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-N9 配置先行（task-10）：换值只改 config，不用改代码
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-N9 `config/labelPrint.js` 就是这几档的家（默认 60s / 200 / 500 ＋「上架日期」+ 1001）', () => {
+  assert.equal(LABEL_PRINT.productNumbers.cacheTtlMs, 60000, '默认 TTL = 60 秒（task-10 定的）');
+  assert.equal(LABEL_PRINT.productNumbers.limitDefault, 200, '默认 limit = 200（契约）');
+  assert.equal(LABEL_PRINT.productNumbers.limitMax, 500, 'limit 上限 = 500（契约）');
+  assert.equal(LABEL_PRINT.productCreatedTime.fieldName, '上架日期',
+    '真表里那一列的名字（只读核过：type 1001 = CreatedTime，她把它改了名）');
+  assert.equal(LABEL_PRINT.productCreatedTime.fieldType, 1001,
+    '类型兜底：1001 = 飞书自动 CreatedTime（1002 = ModifiedTime，**不能**拿来当最近新增）');
+});
+
+test('AC-N9 注入不同的 `productNumbers` ⇒ limit 默认 / 上限跟着变（不用改代码，能真红）', async () => {
+  const { service } = serviceFor({
+    product: [1, 2, 3].map((n) => productRecord(`p${n}`, { number: `N${n}|黑色|A`, price: 1 })),
+  }, { productNumbers: { limitDefault: 1, limitMax: 2 } });
+  const data = await service.listProductNumbers({});
+  assert.equal(data.numbers.length, 1, '默认 limit = 注入的 1');
+  assert.equal(data.truncated, true);
+  assert.equal((await service.listProductNumbers({ limit: '2' })).numbers.length, 2, '上限 = 注入的 2');
+  await assert.rejects(() => service.listProductNumbers({ limit: '3' }),
+    (error) => error.statusCode === 400 && /limit 最多 2/.test(error.message),
+    '超过注入的上限 ⇒ 400（不是 500，也不静默截断）');
+});
+
+test('AC-N9 注入不同的 `productCreatedTime.fieldType` ⇒ 认出来的列跟着变（不用改代码，能真红）', async () => {
+  const now = Date.parse('2026-10-15T12:00:00+08:00');
+  const day = 24 * 60 * 60 * 1000;
+  const gateway = fakeGateway({
+    liveInventory: [stockRecord('st1', { stockKey: 'XHB8095|棕色|A|36', createdAt: now - 1 * day })],
+    product: [
+      productRecord('rec_new', { number: 'NEW2026|黑色|A', price: 200, createdAt: now - 1 * day, createdField: '更新日期' }),
+    ],
+    fieldLists: { product: [{ field_name: '上架日期', type: 1001 }, { field_name: '更新日期', type: 1002 }] },
+  });
+  const service = createLabelPrintService(gateway, {
+    now: () => now,
+    // 故意把"创建时间列的字段类型"配成 1002 ⇒ 它就该去认「更新日期」（证明**类型也是配置说了算**）
+    config: configWith({ productCreatedTime: { fieldName: '对不上的名字', fieldType: 1002 } }),
+  });
+  const logs = captureLogs();
+  let data;
+  try {
+    data = await service.listLabels({ recentDays: 7 });
+  } finally {
+    logs.restore();
+  }
+  assert.ok(data.labels.some((label) => label.number === 'NEW2026|黑色|A'),
+    '换一份 config（fieldType: 1002）⇒ 就按 1002 找到那一列（配置驱动，不是写死在代码里）');
+  const renamed = JSON.parse(logs.events('workbench.labels.product_created_time_renamed')[0]);
+  assert.equal(renamed.resolved_name, '更新日期');
+  assert.equal(renamed.resolved_by, 'field_type');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

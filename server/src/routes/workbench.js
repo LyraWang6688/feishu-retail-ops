@@ -365,7 +365,12 @@ const createWorkbenchRouter = (options = {}) => {
    *   · `hasStock` = 该编号在「实时库存」里**有没有行**（前端提示"还没入库"）；
    *   · 排序 = 按编号 `localeCompare('zh-CN')` 升序；`limit` 超出上限**如实**回 `truncated:true`。
    * 🔴 **只读诊断/查询**（**不写任何业务表、不改任何状态** ✗）：取数全在
-   *    `services/labelPrintService.js#listProductNumbers`（两次 `listAll` + 一条 info 日志）。
+   *    `services/labelPrintService.js#listProductNumbers`（两次 `listAll` + 日志）。
+   * ⭐⭐ 2026-10-15（task-10）：那两次全表读**带短 TTL 缓存**（线上只读实测单次 ≈ 11.4 秒）——
+   *    口径在 `config/labelPrint.js#PRODUCT_NUMBERS`（`cacheTtlMs` 默认 60000、**0 = 关掉**；
+   *    `limitDefault/limitMax` 默认 200/500）；命中 / 未命中都有日志
+   *    （`workbench.products.numbers.cache_hit` / `.cache_miss`），真机一眼看出"到底读没读表"。
+   *    ⚠️ 这个缓存**只服务本端点**；`listLabels`（批量那一页）**这次不动**。
    * 🔴 **不新开鉴权**：它就挂在本文件既有那道 `requireWorkbenchAccess` 之后（未启用认证 503 /
    *    未登录 401 / 白名单外 403 —— 与其它工作台接口**同一个函数**）。
    * ⚠️ 失败口径**复用**控制器那一份（`respondQueryFailure`：她填错的 400 原样回显 /

@@ -348,6 +348,48 @@ const FIELD_NAMES_PENDING_SCHEMA = Object.freeze({
   createdTime: '创建时间',
 });
 
+/**
+ * ⭐⭐ 2026-10-15（task-10）：「**货品信息**的创建时间列」—— `recentDays`（最近新增）
+ * 筛"**还没有入库的新货**"要用它。**这一项就是它的家**（原先只散在 service 里的兜底值）。
+ *
+ * 🔴 **只读核过真表**（`appTableField.list`，测试 Base 2026-10-15）：
+ *   · 她那一列**叫「上架日期」**（**不是**「创建时间」），但**类型仍是 `1001 = CreatedTime`**
+ *     （飞书自动字段）—— 她只是把它**改了名**；
+ *   · 「更新日期」是 **`1002 = ModifiedTime`** ⇒ **不能**拿它当「最近新增」
+ *     （会把"她刚改过的老货"当成新货 ✗）。
+ * ⚠️ **改名闸门拦不住**（`v1:schema-check` 按 tableId 比对字段名 —— `AGENTS.md` 里那条）
+ *   ⇒ 所以这里**名字 + 类型两条都留**（解析顺序见 `services/labelPrintService.js`）：
+ *     ① `fieldName` 优先：这次读到的记录里**有这一列**就直接用（**零额外请求**；她再改名只改这一行）；
+ *     ② 记录里**没有这一列** ⇒ 按 `fieldType`（1001）去字段表里找那一列（改多少次名都认），
+ *        并**如实 warn**（`workbench.labels.product_created_time_renamed`：配置的名字跟真表对不上了）；
+ *     ③ 两条都拿不到 ⇒ 那一条 `created_at = 0`：如实计数（`missing_created_at_without_stock`）＋ warn，
+ *        **不猜** ✗。
+ */
+const PRODUCT_CREATED_TIME = Object.freeze({
+  fieldName: '上架日期',
+  fieldType: 1001,
+});
+
+/**
+ * ⭐⭐ 2026-10-15（task-10）：**只读清单端点** `GET /api/workbench/products/numbers` 的那几档旋钮。
+ *
+ * 为什么要有短 TTL 缓存：Lead 线上**只读实测** ——
+ *   `listAll('product')` **561 行 / 5478 ms** ＋ `listAll('liveInventory')` **1362 行 / 5924 ms**
+ *   ⇒ 冷启动走一次这个端点 **≈ 11.4 秒**（她的手机等不了）。
+ * ⚠️ **只影响这个端点**：`listLabels`（批量 / 编号打印那一页）**这次不动** ——
+ *    它那 11 秒是另一个更大的话题（另开任务）。
+ * ⚠️ `cacheTtlMs = 0` **= 关掉缓存**（每次真读；数值口径，没有"空串等于关"那种坑）。
+ * ⚠️ 缓存只存**与请求无关**的那部分（编号底表 + 计数）；`keyword` / `limit` 每个请求现算。
+ */
+const PRODUCT_NUMBERS = Object.freeze({
+  // 缓存有效期（毫秒）。0 = 关掉缓存（每次真读飞书）。
+  cacheTtlMs: 60000,
+  // 一次默认回多少条编号（契约：默认 200）。
+  limitDefault: 200,
+  // limit 的上限（契约：1..500；超过 ⇒ 400 如实告诉她，**不静默截断**）。
+  limitMax: 500,
+});
+
 /** 用户可见文案（服务端要拼进标签里的那些）。 */
 const TEXTS = Object.freeze({
   // 颜色/品类/尺码这类值取不到时的占位（**不留空**，否则标签上看着像漏印了）。
@@ -413,6 +455,11 @@ const LABEL_PRINT = Object.freeze({
   texts: TEXTS,
   // ⭐ 「扫码打印」的文案（形状仍来自 config/tagQrCode.js，见上面 SCAN_PRINT 的注释）。
   scanPrint: SCAN_PRINT,
+  // ⭐⭐ 2026-10-15（task-10）：**配置先行补齐** —— 这两组原先散在 service 的兜底值里。
+  //    · `productNumbers` = 只读清单端点的缓存 TTL / limit 默认与上限（**换值不用改代码**）；
+  //    · `productCreatedTime` = 「货品信息」创建时间列的**名字 + 类型**两条口径（见上面的说明）。
+  productNumbers: PRODUCT_NUMBERS,
+  productCreatedTime: PRODUCT_CREATED_TIME,
 });
 
 /**
@@ -454,4 +501,7 @@ module.exports = {
   SORT_MODES,
   LIMITS,
   TEXTS,
+  // ⭐⭐ 2026-10-15（task-10）：这两组也单独导出（用例/排查脚本可以直接 import 拿默认值）。
+  PRODUCT_NUMBERS,
+  PRODUCT_CREATED_TIME,
 };
