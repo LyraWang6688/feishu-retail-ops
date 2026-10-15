@@ -221,6 +221,20 @@ const createFakeLarkClient = () => ({
  * 一套"真的在跑"的扫码写链路：真 service + 真业务层（SalesOrderService /
  * PurchaseWebhookService），只有飞书那一层是内存替身。
  */
+/**
+ * ⭐⭐ 2026-10-15（⑨b-2）：**等后台那一跑写完**（轮询，最多 ~3s）。
+ *   异步之后"明细/收款/库存"转后台了 ⇒ 端状态的断言要**先等它做完**再回读 ✓
+ *   🔴 **判据一个字节都没放宽**：还是"端状态逐字比"，只是**等它做完** ✓（不是替它放宽 ✗）
+ */
+const waitFor = async (predicate, timeoutMs = 3000) => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (predicate()) return true;
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+  }
+  return predicate();
+};
+
 const createHarness = (options = {}) => {
   const gateway = options.gateway || createFakeGateway(options.tables);
   const sessionDir = options.sessionDir || tempDir('session');
@@ -251,6 +265,22 @@ const createHarness = (options = {}) => {
     delivery,
     now: options.now,
   });
+  // ⭐⭐ 2026-10-15（⑨b-2）：开关默认翻成 `true` 之后，`submitSale` 变成"**单号先出、余下转后台**"——
+  //   ⇒ 用例要**先等后台那一跑跑完**再回读端状态（不然读到的是"还没写完"的那一刻 ✗）。
+  //   ⭐ 在这里**包一层** ⇒ 本文件**所有** `write.submitSale(...)` 调用点**一个字都不用动** ✓
+  //   （改前逐字：`write` 直接用服务实例；改后逐字：包成"等后台 + 把它那半结果合回来" ✓）
+  //   依据：她 2026-10-15「**单号一出立刻回**…明细/库存/交付转后台」⇒ 端状态在后台跑完才齐 ✓
+  //   🔴 **判据没放宽**：仍是"端状态逐字比"，只是**先等它跑完** ✓（不是我替它放宽 ✗）
+  const rawSubmitSale = write.submitSale;
+  write.submitSale = async (input) => {
+    const result = await rawSubmitSale(input);
+    if (!result?.background) return result;
+    const rest = await result.background;
+    const defined = Object.fromEntries(
+      Object.entries(rest || {}).filter(([, value]) => value !== undefined),
+    );
+    return { ...result, ...defined };
+  };
   return {
     gateway, sessions, purchase, purchaseStore, write, renders, batchMessages,
     cleanup: () => { rmDir(sessionDir); rmDir(taskDir); },
