@@ -90,7 +90,7 @@ class WorkbenchOrderActionService {
    *     requestId,                       幂等分片（重试复用同一个）
    *   }
    */
-  async afterSales(input = {}) {
+  async afterSales(input = {}, options = {}) {
     if (!this.config.afterSalesEnabled) throw badRequest(TEXTS.afterSalesDisabled);
     // ⚠️ 动作枚举只认 `config/afterSales`：未声明的动作 `actionSpecOf` 会当场抛。
     const action = String(input.action || '').trim();
@@ -155,6 +155,9 @@ class WorkbenchOrderActionService {
       `明细 ${[...detailRecordIds].sort().join('、')}`,
     ].join(' ');
 
+    // ⭐ 2026-10-15（task-48 b）：同上 —— 关联键走**第二参**（入参形状逐字不变 ✓）
+    //    ⚠️ **如实说明**：售后那条链路的下游（`afterSalesService.js`）目前**没有任何
+    //    `correlation` 读取点** ⇒ 这一跳**到此为止**，要真贯穿得改那个文件（不在本次放行的清单里）
     const result = await this.afterSalesExecutor.execute({
       action,
       originalText,
@@ -170,7 +173,7 @@ class WorkbenchOrderActionService {
       taskId: `workbench_${requestId}`,
       operatorOpenId: String(input.operatorOpenId || '').trim(),
       receivedAt: input.receivedAt,
-    });
+    }, { correlation: options.correlation });
     logInfo('workbench.orders.after_sales.completed', {
       sales_entry_record_id: salesEntryRecordId,
       order_no: orderNo,
@@ -256,15 +259,18 @@ class WorkbenchOrderActionService {
    * ⚠️ 收款方式缺省用**工作台这一页**的默认值（`DEFAULT_COLLECTION_METHOD`，默认微信）；
    *    有「未收款」记录时才真的用到它 —— 没有待收款时它是无意义的。
    */
-  async secondDelivery(input = {}) {
+  async secondDelivery(input = {}, options = {}) {
     if (!this.config.secondDeliveryEnabled) throw badRequest(TEXTS.secondDeliveryDisabled);
     const salesEntryRecordId = requiredText(input.salesEntryRecordId, TEXTS.needOrder);
     const method = String(input.method || '').trim() || this.config.defaultCollectionMethod;
+    // ⭐ 2026-10-15（task-48 b）：关联键走**第二参**（`options.correlation`）——
+    //    下游 `secondDeliveryService.confirm(input, options)` 本来就收它 ✓；
+    //    ⚠️ 放第二参是**故意的**：第一个入参**逐字不变** ⇒ 既有 AC6 那条 deepEqual 一行都不用改 ✓
     const result = await this.secondDeliveryExecutor.confirm({
       salesEntryRecordId,
       method,
       operatorOpenId: String(input.operatorOpenId || '').trim(),
-    });
+    }, { correlation: options.correlation });
     logInfo('workbench.orders.second_delivery.completed', {
       sales_entry_record_id: salesEntryRecordId,
       method,
