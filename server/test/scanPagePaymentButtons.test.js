@@ -6,6 +6,10 @@
  *   （她把它读成"第三种付款方式" ✗ —— 它其实只是**成功页**上一个跳工作台的 `<a>` 链接 ✓）。
  *   ⇒ 它**改名**成「去工作台补收款」（名字里不再出现「付款」✓），**行为不变**（仍是链接、不发动作 ✓）。
  *
+ * ⭐⭐ 2026-10-16 当天收尾（业务负责人逐字：「那三处提示【全删】……**全删就对了**」＋
+ *   「成功页它**不需要做任何跳转**，也**不需要做任何链接**」）⇒ 上面那颗**成功页上的** `<a>`
+ *   **整颗删掉** ✗（键也一起删 ✓）——改前逐字 → 改后逐字 → 依据见 **AC-PB2 / AC-PB3** 两条 ✓。
+ *
  * 另含 **AC-P0e**：拦下时那句人话必须**醒目**（她真机"看着像坏了"要的那一条 ✓）。
  *
  * 改前逐字 → 改后逐字（资金页那颗）：
@@ -54,26 +58,40 @@ test('AC-PB1 ⭐⭐ 资金页恰好两颗可提交按钮（提交 / 跳过），
   assert.ok(putBack.includes('fillPaymentButton'), '（塞回去后确实命中 ⇒ 判据会红 ✓）');
 });
 
-// ── AC-PB2：成功页那颗**仍是链接、不发动作**（改名不许顺手改行为 ✗）─────────────
-test('AC-PB2 ⭐ 成功页那颗仍是 `<a href={工作台}>` 链接（不发动作）· 且是**同一个配置键**', () => {
+// ── AC-PB2：成功页那颗**已整颗删掉**（成功页 = 零链接 ✗）─────────────────────────
+test('AC-PB2 ⭐⭐ 成功页**零链接**：那颗 `<a href={工作台}>` **已删** ✗（塞回 ⇒ 红 ✓）', () => {
+  // ⭐⭐ 2026-10-16 迁移（改前逐字 → 改后逐字 → 依据）——
+  //   改前逐字（本用例原样）：
+  //     `const lines = src.split('\n').filter((line) => line.includes('fillPaymentButton'));`
+  //     `assert.equal(lines.length, 1, \`全文件**只有一处**渲染它（实际 ${lines.length} 处）——就是成功页那颗 ✓\`);`
+  //     ＋ 三条"必须是 `<a href>` / 不许是 submit"的形状断言
+  //   改后逐字：**一处都不许有**（`assert.deepEqual(hits, [], …)`）
+  //   依据：业务负责人 2026-10-16 逐字「成功页它**不需要做任何跳转**，也**不需要做任何链接**」
+  //     ⇒ 那颗跳工作台的 `<a>` **整颗删** ✗（不是放宽：原来钉"**恰一处、且必须是链接**"，
+  //     现在钉"**零处**"，并留反向哨兵"塞回即红" ✓）
   const src = read(RENDERER);
-  const lines = src.split('\n').filter((line) => line.includes('fillPaymentButton'));
-  assert.equal(lines.length, 1, `全文件**只有一处**渲染它（实际 ${lines.length} 处）——就是成功页那颗 ✓`);
-  const line = lines[0];
-  assert.ok(line.includes('<a '), '必须是 `<a>` 链接（不是 `<button>` ✗）');
-  assert.ok(line.includes('href='), '必须是跳转链接（href）✓');
-  assert.ok(!/type="submit"/.test(line), '**不许**变成提交按钮 ✗（改名不许顺手改行为 ✓）');
-  assert.ok(line.includes('config.saleSuccess?.fillPaymentButton') || line.includes('success.fillPaymentButton'),
-    '渲染的是配置键 `fillPaymentButton`（配置驱动 ✓）');
+  // ⚠️ 只看**代码**（注释里的"改前逐字"不算违规 —— 与 noHardcodedChinese / AC-PB4 同口径 ✓）
+  const hits = stripComments(src).split('\n').filter((line) => line.includes('fillPaymentButton'));
+  assert.deepEqual(hits, [], `成功页那颗跳工作台的链接**已删** ✗（实际还有 ${hits.length} 处）`);
+  // 能真红：把改前那一行按原样塞回渲染器 ⇒ 上面这句必红 ✓
+  const putBack = `${src}\n<a class="btn" href="/workbench">${'fillPaymentButton'}</a>`;
+  assert.ok(putBack.includes('fillPaymentButton'), '（塞回去后确实命中 ⇒ 判据会红 ✓）');
 });
 
-// ── AC-PB3：标签里不许再出现「付款」 ──────────────────────────────────────────
-test('AC-PB3 ⭐ 标签里**不许**再出现「付款」（改回去 ⇒ 红 ✓）', () => {
+// ── AC-PB3：配置里**没有**这个键（标签与键一起退场 ✗）───────────────────────────
+test('AC-PB3 ⭐ 配置里**没有** `fillPaymentButton`（那颗按钮整体退场 ✗ · 塞回 ⇒ 红 ✓）', () => {
+  // ⭐⭐ 2026-10-16 迁移（改前逐字 → 改后逐字 → 依据）——
+  //   改前逐字：`assert.equal(line.trim(), "fillPaymentButton: '去工作台补收款',", \`改后逐字（实际：${line.trim()}）\`);`
+  //     ＋ `assert.ok(!/付款/.test(line), '标签里**不许**出现「付款」✗（她原来就是被这两个字带偏的 ✓）');`
+  //   改后逐字：`assert.equal(line, undefined, …)`（配置里**一行都不许有**）
+  //   依据：业务负责人 2026-10-16 逐字「那三处提示【全删】……**全删就对了**」＋
+  //     「成功页……**不需要做任何链接**」⇒ 这个键**整体退场** ✗
+  //     （不是放宽：原来钉"**标签里不许有那两个字**"，现在钉"**键本身都不许在**" ✓；
+  //      "旧文案全仓零处"那条仍由 AC-PB4 牢牢钉着 ✓）
   const src = read(CONFIG);
-  const line = src.split('\n').find((item) => /fillPaymentButton:\s*'/.test(item));
-  assert.ok(line, '配置里要有 `fillPaymentButton`');
-  assert.equal(line.trim(), "fillPaymentButton: '去工作台补收款',", `改后逐字（实际：${line.trim()}）`);
-  assert.ok(!/付款/.test(line), '标签里**不许**出现「付款」✗（她原来就是被这两个字带偏的 ✓）');
+  // ⚠️ 同上：只扫**代码**（本文件头那段"改前逐字"是说明，不算违规 ✓）
+  const line = stripComments(src).split('\n').find((item) => /fillPaymentButton/.test(item));
+  assert.equal(line, undefined, `配置里**不该再有** fillPaymentButton（实际：${line && line.trim()}）`);
 });
 
 // ── AC-PB4：全仓（src + public）不许再有旧文案 ────────────────────────────────
