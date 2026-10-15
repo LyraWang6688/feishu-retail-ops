@@ -81,6 +81,8 @@ const startExistingHelper = async (marker = { app: 'label-print-helper', pid: 1 
   const port = await new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => resolve(server.address().port));
   });
+  // 2026-10-15 task-17：测试服务器不保持 keep-alive（根因与实测见 test/stabilityRepro.cjs）
+  server.keepAliveTimeout = 1;
   return { server, port, close: () => new Promise((resolve) => { server.closeAllConnections?.(); server.close(resolve); }) };
 };
 
@@ -209,6 +211,8 @@ test('AC-D2 ⭐ 端口被**别的程序**占着 ⇒ 不许误判成"已在运行
   // 占着端口的是"别人"（标记接口不是我们的）
   const foreign = http.createServer((req, res) => { res.writeHead(404); res.end('nope'); });
   const port = await new Promise((resolve) => { foreign.listen(0, '127.0.0.1', () => resolve(foreign.address().port)); });
+  // 2026-10-15 task-17：测试服务器不保持 keep-alive（根因与实测见 test/stabilityRepro.cjs）
+  foreign.keepAliveTimeout = 1;
   const server = fakeServer();
   const logs = [];
   const dir = tmpDir();
@@ -277,6 +281,8 @@ test('AC-D2 `probeHelperMarker`：是我们 ⇒ true；别人 / 连不上 ⇒ fa
   const mine = await startExistingHelper();
   const foreign = http.createServer((req, res) => { res.writeHead(404); res.end('x'); });
   const foreignPort = await new Promise((resolve) => { foreign.listen(0, '127.0.0.1', () => resolve(foreign.address().port)); });
+  // 2026-10-15 task-17：测试服务器不保持 keep-alive（根因与实测见 test/stabilityRepro.cjs）
+  foreign.keepAliveTimeout = 1;
   try {
     assert.equal(await helper.probeHelperMarker({ port: mine.port, fetchImpl: fetch }), true);
     assert.equal(await helper.probeHelperMarker({ port: foreignPort, fetchImpl: fetch }), false);

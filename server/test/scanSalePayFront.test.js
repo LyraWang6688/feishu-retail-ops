@@ -69,6 +69,8 @@ const withServer = async (run) => {
   app.use(SCAN_PAGE.route.basePath, router);
   app.use(SCAN_PAGE.route.recordBasePath, router);
   const server = await new Promise((resolve) => { const i = app.listen(0, () => resolve(i)); });
+  // 2026-10-15 task-17：测试服务器不保持 keep-alive（根因与实测见 test/stabilityRepro.cjs）
+  server.keepAliveTimeout = 1;
   const base = `http://127.0.0.1:${server.address().port}`;
   try { return await run({ base, calls }); } finally { await new Promise((resolve) => server.close(resolve)); }
 };
