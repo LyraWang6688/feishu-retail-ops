@@ -18,7 +18,7 @@ const {
 // ⭐ 「这一单写完了没」的**唯一判据**（已合并：`services/v1WorkbenchService.js` 导出 ✓）
 //   ⚠️ 页面不自己判 ✗；本文件也**不另发明**一套 ✗
 const { isOrderIncomplete } = require('./v1WorkbenchService');
-const { ORDER_FIELD_KEYS, readWorkbenchOrdersConfig } = require('../config/workbenchOrders');
+const { ORDER_FIELD_KEYS, ORDER_SUPPORT_FIELD_KEYS, readWorkbenchOrdersConfig } = require('../config/workbenchOrders');
 const { createWorkbenchOrdersCache } = require('./workbenchOrdersCache');
 const { logWarn } = require('../utils/logger');
 // ⭐⭐ 2026-10-15（她逐字「**需要加上**」）：订单列表的"读表瞬时错误自动重试"——
@@ -58,10 +58,26 @@ class SalesFollowupService {
     this.sleep = options.sleep
       || ((ms) => (ms > 0 ? new Promise((resolve) => { setTimeout(resolve, ms); }) : Promise.resolve()));
     this.payments = options.payments || new PaymentService({ gateway: this.gateway });
-    this.delivery = options.delivery || new SalesDeliveryService({ gateway: this.gateway });
-    this.progress = options.progress || new SalesProgressService({ gateway: this.gateway });
     // 「尺码」是关联字段：待交付列表里的尺码要走共享解析，不靠关联单元格的显示文本。
+    // ⚠️ 2026-10-16（性能）：**访问器必须在交付服务之前建好** —— 下面把它透传给
+    //    `SalesDeliveryService` → `InventoryService`（详情见交付服务那一行的注释）。
     this.getSizeReferences = createSizeReferenceAccess({ gateway: this.gateway, sizeReferences: options.sizeReferences });
+    /**
+     * ⭐⭐ 2026-10-16（性能）：**交付服务里的 `InventoryService` 与这里共用同一份「尺码」解析**。
+     *
+     * 为什么：本文件（订单列表 / 交付 / 补收款）与库存引擎**都要**把"尺码关联单元格"解成数字，
+     *   而 `SizeReferenceService` 的缓存是**按实例**的 —— 各建一份 ⇒ 一次 `/sales/orders`
+     *   会把「尺码管理」小表**整表读两遍**（实测：`AC-P2` 的调用序里 `sizeManagement` 出现**两次**）。
+     *   共用一份之后：**同一秒里的同一个尺码只解一次**，两边的取值**必然一致**（同一个快照）。
+     * 🔴 **语义一个字没变**：`SizeReferenceService` 自己带 30 秒 TTL 与 single-flight
+     *   （`loadPromise`），"解析结果"与"读表次数"的关系只是**去重**，不是改判据；
+     *   它读的仍是**同一张表、同一列**（`sizeManagement.尺码`）。
+     * ⚠️ 只在**没有显式注入** `options.delivery` 时透传（用例自己给的那份自己负责）。
+     */
+    this.delivery = options.delivery || new SalesDeliveryService({
+      gateway: this.gateway, sizeReferences: this.getSizeReferences(),
+    });
+    this.progress = options.progress || new SalesProgressService({ gateway: this.gateway });
     this.store = options.store || new JsonTaskStore({
       dir: path.join(__dirname, '../../data/sales_followup_tasks'), idField: 'task_id',
     });
@@ -174,9 +190,12 @@ class SalesFollowupService {
     const accessoryConfigured = Boolean(this.gateway.table?.('accessory')?.tableId);
     // ⭐ 2026-10-12：**按需取字段** —— 语义键（`ORDER_FIELD_KEYS`，一处定义）→ 飞书列名；
     //    一个都映射不到（例：schema 改了列名）就**不传**这个参数 ⇒ 退回整表读（宁可慢，不许少列）。
+    //    ⭐ 2026-10-16（性能）：「实时库存」快照也按需取字段（`ORDER_SUPPORT_FIELD_KEYS`）——
+    //       编号 / 尺码 / 所属状态 三列就够算候选，整表全字段读一张"一双一行"的大表纯属浪费。
     const fieldOptions = (tableKey) => {
       const fields = this.gateway.table?.(tableKey)?.fields || {};
-      const names = (ORDER_FIELD_KEYS[tableKey] || []).map((key) => fields[key]).filter(Boolean);
+      const keys = ORDER_FIELD_KEYS[tableKey] || ORDER_SUPPORT_FIELD_KEYS[tableKey] || [];
+      const names = keys.map((key) => fields[key]).filter(Boolean);
       return names.length ? { fieldNames: names } : {};
     };
     // ⭐⭐ 2026-10-15：这六次读**全部走带重试的那条路**（瞬时错误自动重试一次；确定性错误不重试）——
@@ -190,6 +209,35 @@ class SalesFollowupService {
       this.listAllWithRetry('product', fieldOptions('product')),
       accessoryConfigured ? this.listAllWithRetry('accessory', fieldOptions('accessory')) : Promise.resolve([]),
     ]);
+    /**
+     * ⭐⭐ 2026-10-16（性能 · 线上 27~42 秒的真凶）：**「实时库存」一次请求只整表读一次**。
+     *
+     * 改前：`samplePending.candidatesFor` 里**每条待补样品**都让
+     *   `InventoryService.sampleReplacementCandidates` 自己 `listAll('liveInventory')`
+     *   ——「实时库存」是**一双一行**的最大一张表，而这几读在
+     *   `Promise.all(orderDetails.map(async …))` 里**逐个 await** ⇒ **串行 N 次整表读**
+     *   （她 2026-10-12 那条通知里待补样品 = 8 ⇒ 8 次串行）。
+     * 改后：这里读**一次**当快照，原样透传下去；下面每条待办都从**同一批记录**里算
+     *   ⇒ 读表次数从 N 变 1，**算出来的候选逐字不变**（同一批记录、同一段判据）。
+     *
+     * 🔴 三条边界：
+     *   · **没有待办就一次都不读**（`pendingSampleByDetail.size === 0`）—— 不给没有待办的
+     *     请求平白加一次飞书读；
+     *   · 快照读失败 ⇒ **不打断整页**，退回"逐条自己读"（与改前完全同路）—— 待办照旧看得见；
+     *   · 不用 `listAllWithRetry`：这一次读**失败不再是错误**（下面逐条读那条路本来就有自己的
+     *     兜底 `candidates_unreadable`），为它重试只会让"读不到"更慢地被发现。
+     */
+    let liveSnapshot = null;
+    if (pendingSampleByDetail.size > 0) {
+      try {
+        liveSnapshot = await this.gateway.listAll('liveInventory', fieldOptions('liveInventory'));
+      } catch (error) {
+        logWarn('workbench.sales.sample_pending.live_snapshot_unreadable', {
+          error: error.message,
+          hint: '这一次退回"每条待办各自读一次实时库存"（待办照旧显示，只是慢一点）',
+        });
+      }
+    }
     const orderFields = this.gateway.table('salesEntry').fields;
     const detailFields = this.gateway.table('salesDetail').fields;
     const paymentFields = this.gateway.table('paymentRecord').fields;
@@ -272,8 +320,11 @@ class SalesFollowupService {
               try {
                 // ⚠️ 只列**还有门盒**的码：她选中一个码就是要拿它补 ⇒ 不给"门盒 0 双"的选项
                 //    （群里那张卡片列全部码，是因为那边失败后会重发一张 —— 这里直接不给不能选的）。
+                // ⭐ 2026-10-16（性能）：带上**本次请求已经读到的那一份**「实时库存」快照
+                //    ⇒ 这里**不再整表读**（改前是每条待办读一次、串行）。快照读失败时
+                //    `liveSnapshot` 是 `null` ⇒ 回到"逐条自己读"，与改前同路。
                 candidates = (await this.samplePending.candidatesFor(task.product_record_id,
-                  { excludeRecordIds: task.consumed_live_record_ids || [] }))
+                  { excludeRecordIds: task.consumed_live_record_ids || [], liveRecords: liveSnapshot }))
                   .filter((candidate) => Number(candidate.doorBoxCount || 0) > 0);
               } catch (error) {
                 logWarn('workbench.sales.sample_pending.candidates_unreadable', {
