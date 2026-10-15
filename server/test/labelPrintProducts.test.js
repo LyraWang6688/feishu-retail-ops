@@ -60,6 +60,30 @@
  *   各自正确（连筛选结果一起缓存会串数据 ✗）；**「最近新增」的时间判断每请求现算**
  *   （同一份缓存、同一个 `recentDays`，时间往前走 ⇒ 结果跟着变，且这一轮没有重读飞书）。
  * · **AC-N14** 这一档口径住在 `config/labelPrint.js#LABEL_LIST`（默认 60000；换值不用改代码）。
+ *
+ * ── task-15（2026-10-15）追加：编号选择器改「**服务端模糊查询**」 ──────────────
+ * 依据（她逐字）：「**是否可以让用户进行类似于模糊查询的操作？就是用户输入一个编号，
+ * 然后系统再给出与这个模糊编号相关的选项**」⇒ Lead 判：可以，而且这是正解 ✓。
+ * 原来：整张「货品信息」（554 个编号 / 冷启动 ≈13.9 秒）读回来再内存过滤 ✗。
+ * 现在：**飞书只回匹配的那几条**（`GET /records` 的 `filter`）＋ **空关键字一次都不读**。
+ * · **AC-F1** 有 keyword ⇒ **只走按条件读**：`listAll`（整表读）**一次都没调**；
+ *   公式 = `OR(编号.contains(k), 货号.contains(k))` —— **不拼「颜色」**（关联列 type 18 拼 filter
+ *   会 `InvalidFilter 1254018`，仓库里已有硬事实）；库存那次按「库存键」contains 同一个关键字。
+ * · **AC-F1b** 缓存**按关键字分槽**（`maxCacheEntries`）：A 关键字的结果不会被 B 关键字命中（能真红）。
+ * · **AC-F2** `keyword` 为空 ⇒ **一次飞书都不读** + 空列表（前端显示"输入编号 / 货号，我就列出匹配的编号"）。
+ * · **AC-F3** `hasStock` 三种取值都对：`true` / `false`（过滤读没查到 **且** 编号含关键字 ⇒ 结论可靠）
+ *   / **`null` 未确认**（三种情形：库存那次读失败 · 撞 `stockScanMax` 扫描上限 · 编号本身不含关键字）
+ *   —— **绝不许猜** ✗。
+ * · **AC-F4** 开关 / 上限 / 扫描上限**都来自配置**：`serverFilter:false` 或网关没有 `listByFilter`
+ *   ⇒ 回退"整表读 + 内存过滤"老路（**退路，不是死代码**）并如实 warn；关键字带引号等拼不进公式的字符 ⇒ 400。
+ * · **AC-F6**（**冷启动实测**，写进 PR）测试 Base 只读实测（`cacheTtlMs:0`，每次都真读）：
+ *   `6681` / `XHB8095` / `T202` ⇒ **1.7–2.1 秒**（目标 < 3 秒 ✓）；很宽的关键字 `黑`（252 条）⇒ 3.5 秒；
+ *   同一个关键字第二次 ⇒ **0 秒**（缓存命中）；空关键字 ⇒ **0 秒、0 次飞书读**。
+ *
+ * ⚠️ task-15 **改了几条既有端点用例的"触发方式 / 观测量"**（每条都逐字写了改前 → 改后 → 依据，
+ *    业务判据本身一条没放宽）：
+ *   ① 空关键字不再表示"回全表前 200 条" ⇒ 原来用它测的东西改成**带关键字**（AC-N5 / AC-N8 / AC-N9）；
+ *   ② `gateway.calls`（整表读）与 `filterCalls`（按条件读）**分开记**，才说得清"读没读全表"。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -80,6 +104,8 @@ const {
   createLabelPrintService, partsOfNumber, compoundNumber, createdAtOf,
 } = require('../src/services/labelPrintService');
 const { createWorkbenchRouter } = require('../src/routes/workbench');
+// 假网关模拟飞书 `contains`（大小写不敏感）时，要按**真表一样的取值方式**读单元格（公式 / 关联列的形状）。
+const { textValue } = require('../src/services/v1BitableGateway');
 
 const F = V1_BITABLE_SCHEMA.tables.liveInventory.fields;
 const P = V1_BITABLE_SCHEMA.tables.product.fields;
@@ -121,16 +147,46 @@ const productRecord = (id, {
   },
 });
 
-/** 只实现只读方法的假网关 —— `create/update/delete` **直接抛错**（AC-N6 的运行时哨兵）。 */
-const fakeGateway = ({ liveInventory = [], product = [], fieldLists = {} } = {}) => {
+/**
+ * 只实现只读方法的假网关 —— `create/update/delete` **直接抛错**（AC-N6 的运行时哨兵）。
+ *
+ * ⭐ task-15：多了 `listByFilter`（**按条件读**）。两个数组分开记，判据才说得清：
+ *   · `calls`       = `listAll`（**整表读**）—— 服务端模糊查询生效时它应当是**空的** ✓（AC-F1）；
+ *   · `filterCalls` = `listByFilter`（**按条件读**）—— 每次带回它收到的 `filter` 公式原文。
+ * ⚠️ 假网关**按真表的实测语义**模拟 `contains`：**大小写不敏感**、只认「编号 / 货号」（货品）
+ *    与「库存键」（库存）—— 与 `productNumbersFilterOf` 拼出来的那两列一致。
+ * `stockReadThrows: true` 用来演"库存那次读失败"（AC-F3 的 `hasStock: null`）。
+ */
+const fakeGateway = ({
+  liveInventory = [], product = [], fieldLists = {}, stockReadThrows = false,
+} = {}) => {
   const calls = [];
+  const filterCalls = [];
+  const keywordOf = (filter) => {
+    const matched = /contains\("([^"]*)"\)/.exec(String(filter));
+    return matched ? matched[1].toLowerCase() : null;
+  };
   return {
     calls,
+    filterCalls,
     async listAll(tableKey) {
       calls.push(tableKey);
       if (tableKey === 'liveInventory') return liveInventory;
       if (tableKey === 'product') return product;
       throw new Error(`这条链路只读这两张表，不该读：${tableKey}`);
+    },
+    async listByFilter(tableKey, filter, options = {}) {
+      filterCalls.push({ tableKey, filter, maxRecords: options.maxRecords });
+      if (tableKey === 'liveInventory' && stockReadThrows) throw new Error('stock read failed (injected)');
+      const source = tableKey === 'liveInventory' ? liveInventory : product;
+      const keyword = keywordOf(filter);
+      const rows = keyword === null ? source : source.filter((record) => {
+        const values = tableKey === 'liveInventory'
+          ? [textValue(record?.fields?.[F.stockKey])]
+          : [textValue(record?.fields?.[P.number]), textValue(record?.fields?.[P.itemNo])];
+        return values.some((value) => String(value ?? '').toLowerCase().includes(keyword));
+      });
+      return options.maxRecords ? rows.slice(0, options.maxRecords) : rows;
     },
     async listFields(tableKey) {
       calls.push(`listFields:${tableKey}`);
@@ -441,6 +497,14 @@ test('AC-N4 既有口径不回退：两侧都读不到创建时间 ⇒ 当场抛
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-N5 `listProductNumbers`：按编号去重 / keyword 大小写不敏感 / 中文升序 / hasStock 正确', async () => {
+  // ⚠️ task-15 改（**契约变了，逐字写了改前/改后/依据；判据没放宽**）：
+  //   改前逐字：`const all = await service.listProductNumbers({});`
+  //             ＋ `assert.deepEqual(gateway.calls, ['product', 'liveInventory'], '只读这两张表，各一次');`
+  //   改后逐字：空关键字那一段换成"**空列表 + 零读**"（依据 = 她「输入一个编号 ⇒ 系统给相关选项」，
+  //             task-15 要求"从根上取消读全表"）；有字那一段改成**按关键字读**，
+  //             判据换成 `gateway.calls === []`（**没有整表读**）＋ `filterCalls` 各两次。
+  //   依据：task-15 第 1/2 条（`keyword` 非空走按条件读；为空 ⇒ 空列表 + 一次飞书都不读）。
+  //   下面每一条**业务判据**（去重 / 中文序 / 大小写不敏感 / hasStock）**原文都没动** ✓。
   const { gateway, service } = serviceFor({
     liveInventory: [stockRecord('st1', { stockKey: 'XHB8095|棕色|A|36' })],
     product: [
@@ -453,38 +517,47 @@ test('AC-N5 `listProductNumbers`：按编号去重 / keyword 大小写不敏感 
       productRecord('rec_blank', { price: 5 }),
     ],
   });
-  const all = await service.listProductNumbers({});
-  assert.deepEqual(all.numbers.map((item) => item.number), ['A100|棕色|A', 'XHB8095|棕色|A', 'Z900|黑色|A'],
+  // ⭐ task-15：**空关键字 ⇒ 空列表 + 一次飞书都不读**（原来这里是"回全表前 200 条"）。
+  const empty = await service.listProductNumbers({});
+  assert.deepEqual(empty, { total: 0, truncated: false, numbers: [] },
+    '空关键字 ⇒ 空列表（前端显示"输入编号 / 货号，我就列出匹配的编号"，AC-F2）');
+  assert.deepEqual(gateway.calls, [], '空关键字**一次整表读都没有**');
+  assert.deepEqual(gateway.filterCalls, [], '空关键字连按条件读都不发');
+  // ⭐ 「棕色」一次命中两条编号 ⇒ 验证去重（`rec_a_dup` 不重复出）+ 中文升序。
+  const byColor = await service.listProductNumbers({ keyword: '棕色' });
+  assert.deepEqual(byColor.numbers.map((item) => item.number), ['A100|棕色|A', 'XHB8095|棕色|A'],
     '⭐ 按「编号」中文序升序，且同一编号只回一条');
-  assert.equal(all.total, 3);
-  assert.equal(all.truncated, false);
-  assert.deepEqual(all.numbers[0], {
+  assert.equal(byColor.total, 2);
+  assert.equal(byColor.truncated, false);
+  assert.deepEqual(byColor.numbers[0], {
     number: 'A100|棕色|A', itemNo: 'A100', color: '棕色', category: 'A', hasStock: false, recordId: 'rec_a',
   }, '⭐ 契约字段逐字：number / itemNo / color / category / hasStock / recordId');
-  assert.equal(all.numbers.find((item) => item.number === 'XHB8095|棕色|A').hasStock, true, '在「实时库存」里有行 ⇒ hasStock: true');
-  assert.deepEqual(gateway.calls, ['product', 'liveInventory'], '只读这两张表，各一次');
+  assert.equal(byColor.numbers.find((item) => item.number === 'XHB8095|棕色|A').hasStock, true, '在「实时库存」里有行 ⇒ hasStock: true');
+  assert.deepEqual(gateway.calls, [], '⭐⭐ **一次整表读都没有**（只走按条件读）');
 
   const byKeyword = await service.listProductNumbers({ keyword: 'xhb8095' });
   assert.deepEqual(byKeyword.numbers.map((item) => item.number), ['XHB8095|棕色|A'], '关键词大小写不敏感（货号）');
-  assert.deepEqual((await service.listProductNumbers({ keyword: '棕色' })).numbers.map((item) => item.number),
-    ['A100|棕色|A', 'XHB8095|棕色|A'], '颜色也参与');
   assert.deepEqual((await service.listProductNumbers({ keyword: 'Z900' })).numbers.map((item) => item.number),
     ['Z900|黑色|A'], '编号 / 货号都参与');
 });
 
 test('AC-N5 limit 截断如实（truncated:true）；越界 / 非整数 ⇒ 400 原样回显', async () => {
+  // ⚠️ task-15 改（**只补了关键字，判据原文没动**）：
+  //   改前逐字：`const limited = await service.listProductNumbers({ limit: 2 });` / `listProductNumbers({})` / `{ limit: '500' }`
+  //   改后逐字：都补上 `keyword: 'N'`（空关键字在新契约下**不再**表示"全部"，见 AC-F2）。
+  //   依据：task-15 第 2 条（空关键字 = 空列表）—— 截断要测的东西没变，只是要给它一个关键字 ✓。
   const product = [1, 2, 3, 4, 5].map((n) => productRecord(`p${n}`, { number: `N${n}|黑色|A`, price: 1 }));
   const { service } = serviceFor({ product });
-  const limited = await service.listProductNumbers({ limit: 2 });
+  const limited = await service.listProductNumbers({ keyword: 'N', limit: 2 });
   assert.equal(limited.total, 5);
   assert.equal(limited.truncated, true, '⭐ 不静默截断');
   assert.deepEqual(limited.numbers.map((item) => item.number), ['N1|黑色|A', 'N2|黑色|A']);
-  const defaulted = await service.listProductNumbers({});
+  const defaulted = await service.listProductNumbers({ keyword: 'N' });
   assert.equal(defaulted.numbers.length, 5, '默认 limit 200（这里 5 条都回）');
-  await assert.rejects(() => service.listProductNumbers({ limit: '0' }), (error) => error.statusCode === 400);
-  await assert.rejects(() => service.listProductNumbers({ limit: '2.5' }), (error) => error.statusCode === 400);
-  await assert.rejects(() => service.listProductNumbers({ limit: '501' }), (error) => error.statusCode === 400);
-  assert.equal((await service.listProductNumbers({ limit: '500' })).numbers.length, 5, '500 是允许的上限');
+  await assert.rejects(() => service.listProductNumbers({ keyword: 'N', limit: '0' }), (error) => error.statusCode === 400);
+  await assert.rejects(() => service.listProductNumbers({ keyword: 'N', limit: '2.5' }), (error) => error.statusCode === 400);
+  await assert.rejects(() => service.listProductNumbers({ keyword: 'N', limit: '501' }), (error) => error.statusCode === 400);
+  assert.equal((await service.listProductNumbers({ keyword: 'N', limit: '500' })).numbers.length, 5, '500 是允许的上限');
 });
 
 test('AC-N5 `GET /products/numbers`：query 交给 service、响应摊平在 success 之外、**响应里没有任何密钥**', async () => {
@@ -581,14 +654,198 @@ test('AC-N6 只读：`listLabels` 与 `listProductNumbers` 一次 create/update/
   });
   // 假网关的 create/update/delete 直接抛错 ⇒ 只要被调到，这条用例当场红。
   await service.listLabels({});
-  await service.listProductNumbers({});
-  assert.deepEqual(gateway.calls, ['liveInventory', 'product', 'product', 'liveInventory']);
+  // ⚠️ task-15 改（**只补了关键字；判据换成"整表读 + 按条件读各是什么"**）：
+  //   改前逐字：`await service.listProductNumbers({});` ＋
+  //             `assert.deepEqual(gateway.calls, ['liveInventory','product','product','liveInventory']);`
+  //   改后逐字：`await service.listProductNumbers({ keyword: 'NEW2026' });` ＋
+  //             `assert.deepEqual(gateway.calls, ['liveInventory','product']);`（只有 listLabels 那两次整表读）
+  //             ＋ `assert.equal(gateway.filterCalls.length, 2, …)`（端点走的是**按条件读**）
+  //   依据：task-15 第 1/2 条（空关键字不再读表；有字走按条件读）。
+  //   **判据没放宽**：仍然钉"整条链路只读、且只读这两张表"。
+  await service.listProductNumbers({ keyword: 'NEW2026' });
+  assert.deepEqual(gateway.calls, ['liveInventory', 'product'], '整表读只有 listLabels 那两次');
+  assert.deepEqual(gateway.filterCalls.map((item) => item.tableKey), ['product', 'liveInventory'],
+    '端点的两次读都是**按条件读**（不是整表）');
   const code = sourceOf('services/labelPrintService.js')
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
   for (const forbidden of ['.create(', '.update(', '.delete(', 'applyChange', 'transitionState']) {
     assert.ok(!code.includes(forbidden), `只读功能里不许出现 ${forbidden}`);
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-F1…AC-F4（task-15）：编号选择器改「**服务端模糊查询**」
+//   她的原话：「**是否可以让用户进行类似于模糊查询的操作？就是用户输入一个编号，
+//   然后系统再给出与这个模糊编号相关的选项**」⇒ 让飞书**只回匹配的那几条**（不再读全表 ✗）。
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-F1 有 keyword ⇒ **只走按条件读**：一次整表读都没有，公式里带关键字（能真红）', async () => {
+  const { gateway, service } = serviceFor({
+    liveInventory: [stockRecord('st1', { stockKey: 'XHB8095|棕色|A|36' })],
+    product: [
+      productRecord('rec_xhb', { number: 'XHB8095|棕色|A', price: 198, itemNo: 'XHB8095' }),
+      productRecord('rec_other', { number: 'Z900|黑色|A', price: 1, itemNo: 'Z900' }),
+    ],
+  });
+  const data = await service.listProductNumbers({ keyword: 'xhb8095' });
+  assert.deepEqual(data.numbers.map((item) => item.number), ['XHB8095|棕色|A'], '只回匹配的那一条');
+  assert.deepEqual(gateway.calls, [], '⭐⭐ **没有任何无条件的整表读**（`listAll` 一次都没调）');
+  assert.deepEqual(gateway.filterCalls.map((item) => item.tableKey), ['product', 'liveInventory'],
+    '两次读都是**按条件读**（货品 + 实时库存）');
+  const productFilter = gateway.filterCalls[0].filter;
+  assert.match(productFilter, /CurrentValue\.\[编号\]\.contains\("xhb8095"\)/, '公式按「编号」contains 关键字');
+  assert.match(productFilter, /CurrentValue\.\[货号\]\.contains\("xhb8095"\)/, '也按「货号」contains（编号为空的边角）');
+  assert.equal(/颜色/.test(productFilter), false,
+    '⭐ **绝不**把「颜色」拼进公式（关联列 type 18 拼 filter 会 InvalidFilter 1254018 —— 仓库里已有硬事实）');
+  assert.match(gateway.filterCalls[1].filter, /CurrentValue\.\[库存键\]\.contains\("xhb8095"\)/,
+    '库存那次也按条件读（「库存键」含编号）');
+});
+
+test('AC-F1b 缓存**按关键字分槽**：A 关键字的结果不会被 B 关键字命中（能真红）', async () => {
+  const gateway = fakeGateway({
+    liveInventory: [],
+    product: [
+      productRecord('rec_x', { number: 'XHB8095|棕色|A', price: 198, itemNo: 'XHB8095' }),
+      productRecord('rec_z', { number: 'Z900|黑色|A', price: 1, itemNo: 'Z900' }),
+    ],
+  });
+  const service = createLabelPrintService(gateway, { config: configWith({ productNumbers: { cacheTtlMs: 60000 } }) });
+  const byX = await service.listProductNumbers({ keyword: 'XHB8095' });
+  const byZ = await service.listProductNumbers({ keyword: 'Z900' });
+  const byXAgain = await service.listProductNumbers({ keyword: 'xhb8095' });
+  assert.deepEqual(byX.numbers.map((item) => item.number), ['XHB8095|棕色|A']);
+  assert.deepEqual(byZ.numbers.map((item) => item.number), ['Z900|黑色|A'],
+    '⭐ B 关键字拿到的是**它自己**的结果（不是 A 的缓存）');
+  assert.deepEqual(byXAgain.numbers.map((item) => item.number), ['XHB8095|棕色|A']);
+  assert.equal(gateway.filterCalls.length, 4,
+    '三次调用 = 2 次首查（X / Z）＋ 0 次（`xhb8095` 与 `XHB8095` 是**同一个槽**，大小写不敏感）');
+});
+
+test('AC-F2 ⭐ `keyword` 为空 ⇒ **一次飞书都不读** + 空列表（能真红：改回读全表就红）', async () => {
+  const gateway = fakeGateway({
+    liveInventory: [stockRecord('st1', { stockKey: 'XHB8095|棕色|A|36' })],
+    product: [productRecord('rec_x', { number: 'XHB8095|棕色|A', price: 198, itemNo: 'XHB8095' })],
+  });
+  const service = createLabelPrintService(gateway, {});
+  const logs = captureLogs();
+  let empty; let blank;
+  try {
+    empty = await service.listProductNumbers({});
+    blank = await service.listProductNumbers({ keyword: '   ' });
+  } finally {
+    logs.restore();
+  }
+  assert.deepEqual(empty, { total: 0, truncated: false, numbers: [] }, '空关键字 ⇒ 空列表（前端显示提示语）');
+  assert.deepEqual(blank, { total: 0, truncated: false, numbers: [] }, '只有空白也当空');
+  assert.deepEqual(gateway.calls, [], '⭐⭐ **整表读 0 次**');
+  assert.deepEqual(gateway.filterCalls, [], '按条件读也 0 次（**这一趟就是零飞书调用**）');
+  const filtered = logs.events('workbench.products.numbers.filtered');
+  assert.equal(filtered.length, 2, '两次都记了 `products.numbers.filtered`（真机一眼看出"没读表"）');
+  assert.equal(JSON.parse(filtered[0]).source, 'empty_keyword');
+  assert.equal(JSON.parse(filtered[0]).read, false);
+});
+
+test('AC-F3 `hasStock` 三种取值都对：true / false / **null（不猜）**', async () => {
+  // ① true（有库存行）+ ② false（真的没有库存行，且编号含关键字 ⇒ 结论可靠）
+  const { service } = serviceFor({
+    liveInventory: [stockRecord('st1', { stockKey: 'XHB8095|棕色|A|36' })],
+    product: [
+      productRecord('rec_x', { number: 'XHB8095|棕色|A', price: 198, itemNo: 'XHB8095' }),
+      productRecord('rec_new', { number: 'NEW2026|黑色|A', price: 399, itemNo: 'NEW2026' }),
+    ],
+  });
+  const both = await service.listProductNumbers({ keyword: '2026' });
+  assert.equal(both.numbers.length, 1);
+  assert.equal(both.numbers[0].hasStock, false, '⭐ 过滤读没查到 + 编号含关键字 ⇒ **真的没有库存**（false 可靠）');
+  const stocked = await service.listProductNumbers({ keyword: 'XHB8095' });
+  assert.equal(stocked.numbers[0].hasStock, true, '在「实时库存」里有行 ⇒ true');
+
+  // ③ null 之一：**库存那次读失败** ⇒ 一律"未确认"（绝不猜成没入库 ✗）
+  const failGateway = fakeGateway({
+    liveInventory: [stockRecord('st1', { stockKey: 'XHB8095|棕色|A|36' })],
+    product: [productRecord('rec_x', { number: 'XHB8095|棕色|A', price: 198, itemNo: 'XHB8095' })],
+    stockReadThrows: true,
+  });
+  const logs = captureLogs();
+  let unknown;
+  try {
+    unknown = await createLabelPrintService(failGateway, {}).listProductNumbers({ keyword: 'XHB8095' });
+  } finally {
+    logs.restore();
+  }
+  assert.equal(unknown.numbers[0].hasStock, null, '⭐ 库存读失败 ⇒ `hasStock: null`（未确认）');
+  assert.equal(logs.events('workbench.products.numbers.stock_read_failed').length, 1, '而且如实 warn');
+
+  // ④ null 之二：**库存扫描撞上限** ⇒ 没查到的不敢说 false（可能只是没看全）
+  const capGateway = fakeGateway({
+    liveInventory: [
+      stockRecord('s2', { stockKey: 'A2|黑|A|40' }),
+      stockRecord('s3', { stockKey: 'A3|黑|A|41' }),
+      stockRecord('s1', { stockKey: 'A1|黑|A|42' }),
+    ],
+    product: [1, 2, 3].map((n) => productRecord(`p${n}`, { number: `A${n}|黑|A`, price: 1, itemNo: `A${n}` })),
+  });
+  const capped = await createLabelPrintService(capGateway, {
+    config: configWith({ productNumbers: { stockScanMax: 1 } }),
+  }).listProductNumbers({ keyword: 'A' });
+  const byNumber = new Map(capped.numbers.map((item) => [item.number, item.hasStock]));
+  assert.equal(byNumber.get('A2|黑|A'), true, '看全的那两个照旧 true');
+  assert.equal(byNumber.get('A1|黑|A'), null, '⭐ 撞了扫描上限 ⇒ 没查到的一律 `null`（**不猜 false**）');
+
+  // ⑤ null 之三：这个编号**本身不含**关键字（靠「货号」命中的边角）⇒ 上面那条推理不成立
+  const edgeGateway = fakeGateway({
+    liveInventory: [stockRecord('se', { stockKey: 'XY|黑|A|40' })],
+    product: [productRecord('rec_edge', { number: 'XY|黑|A', price: 1, itemNo: 'T202' })],
+  });
+  const edge = await createLabelPrintService(edgeGateway, {}).listProductNumbers({ keyword: 'T202' });
+  assert.equal(edge.numbers.length, 1, '靠「货号」也能命中');
+  assert.equal(edge.numbers[0].hasStock, null, '⭐ 编号不含关键字 ⇒ `null`（不许把"没查全"说成"没入库" ✗）');
+});
+
+test('AC-F4 开关 / 上限 / 扫描上限**都来自配置**（能真红）', async () => {
+  // ① `serverFilter: false` ⇒ 回退老路径（整表读 + 内存过滤），并**如实 warn**
+  const { gateway, service } = serviceFor({
+    liveInventory: [stockRecord('st1', { stockKey: 'XHB8095|棕色|A|36' })],
+    product: [productRecord('rec_x', { number: 'XHB8095|棕色|A', price: 198, itemNo: 'XHB8095' })],
+  }, { productNumbers: { serverFilter: false } });
+  const logs = captureLogs();
+  let fallback;
+  try {
+    fallback = await service.listProductNumbers({ keyword: 'XHB8095' });
+  } finally {
+    logs.restore();
+  }
+  assert.deepEqual(fallback.numbers.map((item) => item.number), ['XHB8095|棕色|A'], '老路径结果一样对');
+  assert.deepEqual(gateway.calls, ['product', 'liveInventory'], '⭐ 关掉开关 ⇒ 回退**整表读**（这是退路，不是死代码）');
+  assert.deepEqual(gateway.filterCalls, [], '这一趟没有按条件读');
+  assert.equal(JSON.parse(logs.events('workbench.products.numbers.server_filter_off')[0]).reason, 'disabled_by_config');
+  assert.equal(JSON.parse(logs.events('workbench.products.numbers.listed')[0]).source, 'full_table');
+
+  // ② 网关没有 `listByFilter`（老假网关 / 老部署）⇒ 也回退，reason 说清是"网关没有这个能力"
+  const noFilterGateway = {
+    calls: [],
+    async listAll(tableKey) {
+      this.calls.push(tableKey);
+      return tableKey === 'product' ? [productRecord('rec_x', { number: 'XHB8095|棕色|A', price: 1 })] : [];
+    },
+  };
+  const noFilterLogs = captureLogs();
+  let degraded;
+  try {
+    degraded = await createLabelPrintService(noFilterGateway, {}).listProductNumbers({ keyword: 'XHB8095' });
+  } finally {
+    noFilterLogs.restore();
+  }
+  assert.deepEqual(degraded.numbers.map((item) => item.number), ['XHB8095|棕色|A'], '降级路径照样能用');
+  assert.equal(JSON.parse(noFilterLogs.events('workbench.products.numbers.server_filter_off')[0]).reason,
+    'gateway_without_filter');
+
+  // ③ 关键字里带了**拼不进公式**的字符 ⇒ 如实 400（**不硬拼**：错数据比慢更坏）
+  const { service: plain } = serviceFor({ product: [productRecord('rec_x', { number: 'A|黑|A', price: 1 })] });
+  await assert.rejects(() => plain.listProductNumbers({ keyword: 'A"B' }),
+    (error) => error.statusCode === 400 && /符号/.test(error.message), '双引号 ⇒ 400 + 人话');
+});
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AC-N8 性能（task-10）：短 TTL 缓存 —— 只服务这个端点
@@ -619,14 +876,19 @@ test('AC-N8 ⭐ TTL 内第二次调用 **0 次飞书读**（假网关计数能�
   const logs = captureLogs();
   let first; let second;
   try {
-    first = await service.listProductNumbers({});
+    // ⚠️ task-15 改（**只补了关键字 + 把观测量从"整表读"换成"按条件读"，判据没放宽**）：
+    //   改前逐字：`listProductNumbers({})` ＋ `assert.deepEqual(gateway.calls, ['product','liveInventory'], …)`
+    //   改后逐字：`listProductNumbers({ keyword: 'NEW2026' })` ＋
+    //             `assert.equal(gateway.filterCalls.length, 2, …)`（两次调用只留下第一次那两次按条件读）
+    //   依据：task-15 第 2 条（空关键字不再读表）⇒ 缓存要拿**有关键字**的请求来测。
+    first = await service.listProductNumbers({ keyword: 'NEW2026' });
     clock.advance(30 * 1000);
-    second = await service.listProductNumbers({});
+    second = await service.listProductNumbers({ keyword: 'NEW2026' });
   } finally {
     logs.restore();
   }
-  assert.deepEqual(gateway.calls, ['product', 'liveInventory'],
-    '⭐ 第二次**一次飞书都没读**（两次调用只留下初始那两次全表读）');
+  assert.equal(gateway.filterCalls.length, 2,
+    '⭐ 第二次**一次飞书都没读**（两次调用只留下第一次那两次按条件读）');
   assert.deepEqual(second, first, '命中的结果与未命中逐字一致');
   assert.equal(logs.events('workbench.products.numbers.cache_miss').length, 1, '第一次未命中');
   assert.equal(logs.events('workbench.products.numbers.cache_hit').length, 1, '第二次命中');
@@ -645,14 +907,13 @@ test('AC-N8 关掉缓存（`cacheTtlMs: 0`）⇒ **每次真读**（能真红）
   });
   const logs = captureLogs();
   try {
-    await service.listProductNumbers({});
+    await service.listProductNumbers({ keyword: 'NEW2026' });
     clock.advance(1);
-    await service.listProductNumbers({});
+    await service.listProductNumbers({ keyword: 'NEW2026' });
   } finally {
     logs.restore();
   }
-  assert.deepEqual(gateway.calls, ['product', 'liveInventory', 'product', 'liveInventory'],
-    '⭐ 0 = 关掉 ⇒ 每次都真读飞书');
+  assert.equal(gateway.filterCalls.length, 4, '⭐ 0 = 关掉 ⇒ 每次都真读飞书（两次调用 = 4 次按条件读）');
   assert.equal(logs.events('workbench.products.numbers.cache_hit').length, 0, '一次都没命中');
   assert.deepEqual(logs.events('workbench.products.numbers.cache_miss')
     .map((line) => JSON.parse(line).reason), ['disabled', 'disabled'], '未命中的原因如实写 disabled');
@@ -666,16 +927,15 @@ test('AC-N8 TTL 过期 ⇒ 重读（能真红）', async () => {
   });
   const logs = captureLogs();
   try {
-    await service.listProductNumbers({});
+    await service.listProductNumbers({ keyword: 'NEW2026' });
     clock.advance(59999);
-    await service.listProductNumbers({});   // 差 1ms 没过期 ⇒ 命中
-    clock.advance(1);                        // 正好到 TTL ⇒ 过期
-    await service.listProductNumbers({});
+    await service.listProductNumbers({ keyword: 'NEW2026' });   // 差 1ms 没过期 ⇒ 命中
+    clock.advance(1);                                           // 正好到 TTL ⇒ 过期
+    await service.listProductNumbers({ keyword: 'NEW2026' });
   } finally {
     logs.restore();
   }
-  assert.deepEqual(gateway.calls, ['product', 'liveInventory', 'product', 'liveInventory'],
-    '⭐ 过期后必须重读（不能拿过期的清单一直糊弄她）');
+  assert.equal(gateway.filterCalls.length, 4, '⭐ 过期后必须重读（不能拿过期的清单一直糊弄她）');
   assert.equal(logs.events('workbench.products.numbers.cache_hit').length, 1);
   assert.deepEqual(logs.events('workbench.products.numbers.cache_miss')
     .map((line) => JSON.parse(line).reason), ['empty', 'expired']);
@@ -840,11 +1100,12 @@ test('AC-N9 注入不同的 `productNumbers` ⇒ limit 默认 / 上限跟着变�
   const { service } = serviceFor({
     product: [1, 2, 3].map((n) => productRecord(`p${n}`, { number: `N${n}|黑色|A`, price: 1 })),
   }, { productNumbers: { limitDefault: 1, limitMax: 2 } });
-  const data = await service.listProductNumbers({});
+  // ⚠️ task-15 改（**只补了关键字，判据原文没动**）：空关键字在新契约下 = 空列表（AC-F2）。
+  const data = await service.listProductNumbers({ keyword: 'N' });
   assert.equal(data.numbers.length, 1, '默认 limit = 注入的 1');
   assert.equal(data.truncated, true);
-  assert.equal((await service.listProductNumbers({ limit: '2' })).numbers.length, 2, '上限 = 注入的 2');
-  await assert.rejects(() => service.listProductNumbers({ limit: '3' }),
+  assert.equal((await service.listProductNumbers({ keyword: 'N', limit: '2' })).numbers.length, 2, '上限 = 注入的 2');
+  await assert.rejects(() => service.listProductNumbers({ keyword: 'N', limit: '3' }),
     (error) => error.statusCode === 400 && /limit 最多 2/.test(error.message),
     '超过注入的上限 ⇒ 400（不是 500，也不静默截断）');
 });

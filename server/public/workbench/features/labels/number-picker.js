@@ -60,7 +60,8 @@ export const pickerOptionSub = (item) => {
 /**
  * 选项列表的 HTML —— 每个选项是一个**真按钮**（`type="button"`：不会误提交表单；手机上 ≥44px 命中区，
  * 见 `features/domains/domains.css`），`data-number` 就是选中时要填进输入框的**编号原文**。
- * `hasStock === false` 的选项自己带一个「还没入库」小标签（她 2026-10-15 的口径）。
+ * `hasStock` 三种取值各有各的小标签（她 2026-10-15 的口径 + task-15 的"不猜"）：
+ *   · `false` ⇒ 「还没入库」✓ · `true` ⇒ 不加标签 · **`null` ⇒ 「入库情况未确认」**（服务端没读成 / 撞扫描上限）。
  */
 export const pickerOptionsHtml = (numbers, config = NUMBER_PICKER) => {
   const texts = pickerTexts(config.texts);
@@ -69,8 +70,11 @@ export const pickerOptionsHtml = (numbers, config = NUMBER_PICKER) => {
   return list.map((item) => {
     const number = String(item.number).trim();
     const sub = pickerOptionSub(item);
-    const tag = item.hasStock === false
-      ? `<span class="tag tag-warning number-option-tag">${escapeHtml(texts.optionNoStock)}</span>`
+    const tagText = item.hasStock === false
+      ? texts.optionNoStock
+      : (item.hasStock === null ? texts.optionUnknown : '');
+    const tag = tagText
+      ? `<span class="tag tag-warning number-option-tag">${escapeHtml(tagText)}</span>`
       : '';
     return `<li class="number-option" role="none">`
       + `<button class="number-option-button" type="button" role="option" data-number="${escapeHtml(number)}">`
@@ -83,19 +87,26 @@ export const pickerOptionsHtml = (numbers, config = NUMBER_PICKER) => {
 
 /**
  * 那**一行**状态字（她的三种情形各有各的人话）：
- *   · 选中了 ⇒ 有库存 / 还没入库（她 2026-10-15 的"尺码行不印"口径）；
- *   · 正在拉 / 拉失败 / 没匹配到 ⇒ 都是人话，且后两者明说"还能手输"。
+ *   · 选中了 ⇒ 有库存 / 还没入库 / **未确认**（`hasStock: null`；她 2026-10-15 的"尺码行不印"口径
+ *     ＋ task-15 的"不猜"：没读成就不说是哪个）；
+ *   · 正在拉 / 拉失败 / 没匹配到 ⇒ 都是人话，且后两者明说"还能手输"；
+ *   · **还没输入关键字 ⇔ 零请求** ⇒ 「输入编号 / 货号，我就列出匹配的编号」（task-15）。
  */
 export const pickerStatusText = (state = {}, config = NUMBER_PICKER) => {
   const texts = pickerTexts(config.texts);
   if (state.picked) {
     if (state.picked.hasStock === false) return texts.noStock;
     if (state.picked.hasStock === true) return texts.pickedOk;
+    if (state.picked.hasStock === null) return texts.pickedUnknown;
     return texts.picked;
   }
   if (state.loading) return texts.loading;
   if (state.failed) return texts.failed;
-  if (state.loaded && state.count > 0) return String(texts.ready).replace('{count}', String(state.count));
+  if (state.loaded && state.count > 0) {
+    return String(texts.ready)
+      .replace('{count}', String(state.count))
+      .replace('{keyword}', String(state.keyword ?? ''));
+  }
   if (state.loaded) return texts.empty;
   return texts.idle;
 };
@@ -127,7 +138,8 @@ export function createNumberPicker(options = {}) {
     ? Number(options.inputDebounceMs)
     : Number(config.inputDebounceMs);
   const debounceMs = Number.isFinite(rawDebounce) && rawDebounce >= 0 ? rawDebounce : 0;
-  const state = { loading: false, failed: false, loaded: false, count: 0, picked: null };
+  // `keyword` = **这一次真正发给服务端**的关键字（状态行里回显它；空 = 还没输入 ⇒ 零请求）。
+  const state = { loading: false, failed: false, loaded: false, count: 0, keyword: '', picked: null };
 
   let input = null;
   let optionsHost = null;
@@ -164,9 +176,32 @@ export function createNumberPicker(options = {}) {
   /**
    * 拉一次选项（`keyword` 原样交给服务端）。
    * 失败 / 超时 / 空**都不抛**：落到 status 那一句人话上，输入框照旧能手输。
+   *
+   * ⭐⭐ task-15：**关键字为空 ⇒ 一个请求都不发**（服务端那边空关键字也是**零飞书读**）——
+   *   只把「输入编号 / 货号，我就列出匹配的编号」那句话摆出来，并把**上一次的结果清掉**
+   *   （不然她删光关键字后，屏幕上还留着上一次的旧选项 ✗）。`++seq` 同时作废在途的旧回包。
    */
   async function load(keyword) {
     const my = ++seq;
+    const wanted = String(keyword ?? '').trim();
+    if (!wanted) {
+      cancelDebounce();
+      state.loading = false;
+      state.failed = false;
+      state.loaded = false;
+      state.count = 0;
+      state.keyword = '';
+      state.picked = null;
+      items = new Map();
+      if (optionsHost) {
+        optionsHost.innerHTML = '';
+        optionsHost.setAttribute('aria-busy', 'false');
+      }
+      setExpanded(false);
+      renderStatus();
+      return state;
+    }
+    state.keyword = wanted;
     state.loading = true;
     state.picked = null;
     setExpanded(false);
