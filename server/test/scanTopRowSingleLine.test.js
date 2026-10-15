@@ -126,7 +126,8 @@ test('AC-L2 ⭐⭐ 原来那条「扫一扫」（本单条里独占一行）→ 
     assert.equal(draftBar.includes(`>${SCAN_LABEL}<`), false, '本单条里不许再出现「扫一扫」这一格 ✓');
   }
   // ② AppLink 在**整页只出现一次**（= 就在那一排里；没有第二处 ⇒ 也就没有第二条行 ✓）
-  assert.equal((page.match(new RegExp(SCAN_PAGE.scanNext.applink.replace(/[/.?]/g, '\\$&'), 'g')) || []).length, 1,
+  // ⚠️ 不用 URL 去拼正则（CodeQL：`js/incomplete-sanitization` ✗）⇒ `split` 数出现次数（零正则 ✓）
+  assert.equal(page.split(SCAN_PAGE.scanNext.applink).length - 1, 1,
     '扫码 AppLink 全页**只出现一次**（在顶部那一排里 ✓）');
   // ③ 飞书端 + 空本单 ⇒ **整页连本单条都不渲染**（她就是要"少占地方" ✓）
   const empty = pageFor('sales', { write: { ...WRITE, draft: { lines: [] } } });

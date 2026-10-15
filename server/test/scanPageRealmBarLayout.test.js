@@ -59,7 +59,12 @@ test('AC-BAR1 ⭐ 这一排的名称与顺序逐字 = 库存·销售·补货·�
   const feishuNames = labels(feishu);
   assert.deepEqual(feishuNames, [...NAMES, SCAN_PAGE.realmBar.scanLabel],
     `飞书：4 个领域 + 第 5 格「扫一扫」（实际 ${JSON.stringify(feishuNames)}）`);
-  assert.match(feishu, new RegExp(`<a class="realm-tab realm-tab--scan"[^>]*href="${SCAN_PAGE.scanNext.applink.replace(/[/.]/g, '\\$&')}"`),
+  // ⚠️ 不用 URL 去拼正则（CodeQL：`js/incomplete-sanitization` —— 只转义 `/` `.` 不算完整转义 ✗）
+  //   ⇒ 直接**切出第 5 格那一段**再 `includes`（更直白、也不会漏转义 ✓）
+  const scanCellAt = feishu.indexOf('class="realm-tab realm-tab--scan"');
+  assert.ok(scanCellAt > -1, '飞书端必须有第 5 格（`realm-tab--scan`）');
+  const scanCell = feishu.slice(scanCellAt, feishu.indexOf('>', scanCellAt));
+  assert.ok(scanCell.includes(`href="${SCAN_PAGE.scanNext.applink}"`),
     '第 5 格是**真 AppLink**（点一下就能扫下一个 ✓ 不是死按钮）');
 });
 
