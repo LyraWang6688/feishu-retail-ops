@@ -1747,9 +1747,9 @@ const renderSalePaymentStepPage = ({
   const step = { ...(config.paymentStep || {}) };
   const t = (write && write.texts) || {};
   const fields = (write && write.fields) || {};
-  // ⚠️ 没有 `successPath`（单测直接渲染这一页时）就退回销售首页 —— 绝不给出一个点不动的链接 ✗
-  const salesHome = successPath || `${basePath || ''}/s?from=sales`;
-  const workbench = workbenchPath || `${basePath || ''}/workbench`;
+  // ⚠️ `successPath` / `workbenchPath` 两个入参**保留**（调用方还在传 ⇒ 签名不动 ✓）——
+  //    但 2026-10-16 那一刀之后，本页**不再渲染任何"跳走"的东西**（那颗 `<a href={销售首页}>`
+  //    与工作台提示都删了 ✗）⇒ 原来"没有 successPath 就会给出一个点不动的链接"那个风险**没了** ✓。
   // ⭐ 2026-10-16 A2a：**三档那一块不再渲染**（`paymentStatusHtml` 已退场 ✓ 见上面那条注释）——
   //    资金页现在只剩：**收款行**（`paymentRowsHtml`）＋ 赠品 ✓；档位由金额自动定（路由那一步 ✓）。
   const rowsBlock = paymentRowsHtml(write);
@@ -1785,7 +1785,8 @@ ${String(notice || '').trim()
     ? `<p class="hint" role="alert" data-emphasis="alert" data-view="payment-step-notice">${escapeHtml(String(notice).trim())}</p>`
     : ''}
 ${payForm}
-<p class="hint">${escapeHtml(step.workbenchHint || '')}</p>
+<!-- 🔴 2026-10-16（她逐字：「资金页上……那三处提示【全删】……全删就对了」）：
+     原来这里还有一句工作台提示（step.workbenchHint）——**整句删** ✗（键也一起删了 ✓）。 -->
 <!-- 🔴 2026-10-16（她逐字：「资金页实际上就应该有两个按钮」= 提交 / 跳过）⇒ **资金页不再渲染
      那颗跳工作台的链接** ✗（她把它误读成第三种付款方式）——补收款去成功页那颗 ✓ -->
 ${postAction ? `<form method="post" action="${escapeHtml(postAction)}">
@@ -1795,7 +1796,7 @@ ${submitKey ? `<input type="hidden" name="${escapeHtml(fields.submitKey || 'subm
 <input type="hidden" name="count" value="${escapeHtml(String(count))}">
 ${reused ? '<input type="hidden" name="reused" value="1">' : ''}
 <button type="submit" class="btn"${submitFeedbackAttrs(write)} data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(step.skipButton)}</button>
-</form>` : `<p><a class="btn" href="${escapeHtml(salesHome)}">${escapeHtml(step.skipButton)}</a></p>`}
+</form>` : ''}
 </section>`,
   });
 };
@@ -1804,22 +1805,22 @@ const renderSaleSuccessPage = (input = {}, config = SCAN_PAGE) => {
   const success = { ...(config.saleSuccess || {}) };
   const orderNo = String(input.order_no || input.orderNo || '').trim();
   const number = String(input.number || '').trim();
-  const basePath = String(input.basePath || '').trim();
   // ⚠️ 单号按 `order_no` 原样显示（形如 `XSD-…`）；没有就不编一个 ✗。
   const orderLine = orderNo ? `<p class="foot">${escapeHtml(orderNo)}</p>` : '';
-  const salesHome = `${basePath}/s?from=sales`;
-  const workbench = `${basePath}/workbench`;
   return renderScanMessagePage({
     ...input,
     tone: 'success',
     // 主文案「本单提交成功」+ **单号**（她的口径：成功页要能一眼看到单号）
     title: input.title || success.title,
+    // ⭐⭐ 2026-10-16（她逐字：「用户提交之后**都是一个成功页**，说『**已提交成功，数据会更新**』
+    //   类似这类的话就行了……」）⇒ 四条链路**同一句**；文案的家在 `config/scanPage.js` ✓
+    //   ⚠️ 调用方另有正事要说时**以它为准**（例：异步那条已给她「本单已创建成功（单号）」✓
+    //      —— 那是她 2026-10-15 的逐字口径，本刀**不推翻** ✗）；没人给正文时 = **那一句** ✓
+    body: input.body || success.message,
     details: [...(input.details || []), orderLine].filter(Boolean),
-    // ⭐ 三入口：主 = 继续录下一单；次 = 去工作台看这一单 / 补整单付款
-    extraActionsHtml: `<p class="success-actions">
-<a class="btn btn--primary" href="${escapeHtml(salesHome)}">${escapeHtml(success.continueButton)}</a>
-<a class="btn" href="${escapeHtml(`${workbench}?order=${encodeURIComponent(orderNo)}`)}">${escapeHtml(success.workbenchButton)}</a>
-<a class="btn" href="${escapeHtml(workbench)}">${escapeHtml(success.fillPaymentButton)}</a></p>`,
+    // 🔴 三入口（`continueButton` / `workbenchButton` / `fillPaymentButton`）**已全删** ✗ ——
+    //   她逐字：「成功页它**不需要做任何跳转**，也**不需要做任何链接**」⇒ 这里**一个 `<a>` 都不给** ✗
+    //   （路由自己给的「再录一单 / 回扫码页」那几个既有去向**不归这一刀管** ✓ 见 `successReturnFields`）
     ...(number ? { number } : {}),
   }, config);
 };

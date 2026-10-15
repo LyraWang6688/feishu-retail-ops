@@ -163,7 +163,15 @@ test('PAY2 ⭐ 没填 / 跳过 ⇒ **零写入** + 记成「待补充」（不�
     const paidHtml = await paid.text();
     assert.equal(paid.status, 200, '不填**不是**失败 ✓');
     assert.equal(followup.calls.length, 0, '不填 ⇒ **一个字都不写** ✓');
-    assert.ok(paidHtml.includes(SCAN_PAGE.paymentStep.payPendingNote), '要给她「待补充」那句话');
+    // ⭐⭐ 2026-10-16 迁移（改前逐字 → 改后逐字 → 依据）——
+    //   改前逐字：`assert.ok(paidHtml.includes(SCAN_PAGE.paymentStep.payPendingNote), '要给她「待补充」那句话');`
+    //   改后逐字：下面这条（**反向**：那句提示**不许再出现**）
+    //   依据：业务负责人 2026-10-16 逐字「资金页上……**跳过也是成功页**……那三处提示【**全删**】……
+    //     **全删就对了**」⇒ `payPendingNote`（"跳过之后的提示"）**整句删** ✗
+    //     （不是放宽：原来钉"**必须出现那句提示**"，现在钉"**那句提示不许出现**"＋页面照旧是成功页 ✓；
+    //      序号②那条"跳过 ⇒ 成功页"的断言**逐字未动** ✓、③"待补充不许说成失败"也**逐字未动** ✓）
+    assert.equal(/待补充|去工作台补收款/.test(paidHtml), false,
+      '「跳过之后的提示」**已删** ✗（她：「那三处提示【全删】」——塞回 ⇒ 本判据红 ✓）');
     assert.equal(/没记上/.test(paidHtml), false, '待补充**不许**说成失败 ✗');
     // ② 走【跳过】⇒ 同样零写入 + 到成功页
     const skipped = await post(base, cookie, {
