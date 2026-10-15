@@ -146,10 +146,15 @@ const PURCHASE_AMOUNT = Object.freeze({
    *   · `accept`    —— 验收那条链路（今天没有金额闸门 ⇒ 先钉 true，将来接上直接用 ✓）。
    * ⚠️ 三个都走 `readFlag`（**显式布尔**：清空/写 0/false 就真关掉 ✓ **不用 `||` 兜底** ✗）。
    * ⚠️ 默认值 = `required` 那一档 **不是**这里写死 `true`：**旧键说什么就是什么** ⇒
-   *    今天（`required=true`）三条链路全 `true` ⇒ **生产行为零变化** ✓。
+   *    今天 `required=true` 时，**退货/验收**仍 `true`（行为不变 ✓）；**补货改为 `false`** —— 按她
+   *    「**补货不问金额**」的口径，这是目标的终态 ✓（路由尚未读这一档 ⇒ 生产行为暂时仍不变 ✓）。
    */
   requiredByRealm: Object.freeze({
-    replenish: readFlag(process.env, 'SCAN_PURCHASE_AMOUNT_REQUIRED_REPLENISH', true),
+    // ⭐ 2026-10-16 修（Lead）：她的口径是「**补货不问金额**」⇒ 补货这一档默认必须是 **false** ✓
+    //   （改前逐字：`…_REPLENISH', true)` ⇒ 与 task-55 的判据 `replenish === false` 冲突 ⇒ main 自己红 ✗）
+    //   ⚠️ 路由还没读这一档（接线未落）⇒ **本次改动对生产行为零影响** ✓ 只是把配置的默认值改对 ✓
+    //   依据 = 她 2026-10-16 逐字：「不用做那个为空去单价的功能了」＋「补货不问金额」（她 2026-10-16 口径）
+    replenish: readFlag(process.env, 'SCAN_PURCHASE_AMOUNT_REQUIRED_REPLENISH', false),
     return: readFlag(process.env, 'SCAN_PURCHASE_AMOUNT_REQUIRED_RETURN', true),
     accept: readFlag(process.env, 'SCAN_PURCHASE_AMOUNT_REQUIRED_ACCEPT', true),
   }),
