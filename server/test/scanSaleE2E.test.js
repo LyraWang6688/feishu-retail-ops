@@ -2153,7 +2153,11 @@ test('AC-H4/H5 回归：编号页**不显示**"上一单已提交"；提交后�
       // ⭐⭐ 失败现场打印（**不是 retry、也没有放宽断言** ✗）：
       //   2026-10-13 这条在全量里偶发红过一次（同一提交连跑 10 次全绿、整文件 6 次全绿 ✗ 未复现），
       //   所以先把"失败那一刻的现场"打出来 ⇒ 下次一红就能直接定位根因（提交被 reuse？被限流？草稿没清？）。
-      if (!/本单：1 双/.test(page.html)) {
+      // ⭐⭐ 2026-10-15（⑨b-2）**把钩子补全**：原来只钩「本单：1 双」那一种失败，
+      //   而本用例**下面那条断言**断的是 `class="draft-line"` 的行数 ⇒ 它红的时候**现场一次都没打出来** ✗。
+      //   ⇒ 钩子加上"行数不对"这一种（**只是多打印现场，判据一个字没变** ✓）。
+      if (!/本单：1 双/.test(page.html)
+        || (page.html.match(/class="draft-line"/g) || []).length !== 1) {
         const bars = page.html.match(/本单：[0-9]+ 双/g) || [];
         const snap = await e2e.sessions.get('ou_home_5').catch(() => null);
         console.log('FLAKE-EVIDENCE 会话=', JSON.stringify(snap && {
