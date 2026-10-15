@@ -92,7 +92,6 @@ const makeService = (options = {}) => {
       }),
       resolveSupplier: async () => ({ recordId: 'sup_1', record: { record_id: 'sup_1', fields: { 供应商名称: '金猴' } } }),
     },
-    recognizer: { parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }] },
     inventory: { applyPurchase: async () => ({}) },
     client: {
       im: {

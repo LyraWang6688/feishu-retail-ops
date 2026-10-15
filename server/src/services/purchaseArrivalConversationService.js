@@ -4,12 +4,10 @@ const crypto = require('node:crypto');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const {
-  purchaseArrivalReconcileCard,
   purchaseArrivalReconcileStatusCard,
 } = require('../utils/larkCards');
 const {
   ARRIVAL_CONVERSATION_ACTIONS,
-  ARRIVAL_BATCH_KINDS,
   resolveArrivalConversationConfig,
 } = require('../config/arrivalConversation');
 const { logError, logInfo, logWarn } = require('../utils/logger');
@@ -113,7 +111,6 @@ class PurchaseArrivalConversationService {
   constructor({
     gateway,
     store,
-    recognizer,
     sizeReferences,
     confirmArrival,
     markBatchArrived,
@@ -130,7 +127,11 @@ class PurchaseArrivalConversationService {
     // ⚠️ 刻意**共用采购任务存储**（PurchaseWebhookService 的 store）：
     // `confirmArrival` 是从这个 store 里读草稿的，会话状态放别处就得复制一份过去。
     this.store = store;
-    this.recognizer = recognizer;
+    // 🔴 2026-10-16：`this.recognizer = recognizer` 已删 —— 「群话题对话式核对」的
+    //    **解析**那一半（`handleTopicMessage` / `handleTopicMessageLocked`）随
+    //    「与 AI 分析有关的都停掉」整体退场，本类现在只留**确认**那一半
+    //    （`confirmLocked` / `confirmBatchArrival` / `buildPlan` / `loadRequestRows`）。
+    //    依据=业务负责人 2026-10-16 逐字「**都停掉，与 AI 分析有关的都停掉**」＋「**连代码一起删**」。
     // 尺码解析（「尺码」是关联字段，要读回数字）。缺了它只是这条链路读不出明细——
     // 那一步会明确报错，不会静默按错尺码入库。
     this.getSizeReferences = sizeReferences || (() => {
@@ -211,316 +212,6 @@ class PurchaseArrivalConversationService {
       });
       return { updated: false, reason: 'failed', error: error.message };
     }
-  }
-
-  /**
-   * 群话题里定位到某一批之后进来（调用方已判定"是哪一批"）。
-   *
-   * ⭐ 2026-10-07 起：**收到她的到货反馈就直接处理**（算计划 + 出卡片），
-   *    不再要求她先说一句"核对完毕"（见 `handleTopicMessageLocked` 里的注释）。
-   *
-   * @param {{batch?: object, text: string, messageId: string, threadId?: string, senderOpenId?: string}} input
-   * @returns {Promise<{handled: boolean, reason?: string, complete?: boolean, card?: boolean, card_message_id?: string}>}
-   *   `complete` 是**模型判断她有没有说完**（诊断用），**不是**"有没有处理"。
-   *   `card` = 卡片发出去了没有；`card_message_id` = 飞书给的那条卡片消息 id（排查入口）。
-   *   ⚠️ 2026-10-07 晚：`card_updated` **已经删掉** —— 出口只剩 `card_sent` 一个
-   *   （"更新已有那张"这条路正是真机 23:37「日志说更新了、她什么都看不到」的来源）。
-   */
-  async handleTopicMessage({ batch, text, messageId, threadId = '', senderOpenId = '' } = {}) {
-    if (!this.config.enabled) {
-      logInfo('purchase.arrival.reconcile.disabled', { message_id: messageId, env: 'PURCHASE_ARRIVAL_CONVERSATION_ENABLED' });
-      return { handled: false, reason: 'disabled' };
-    }
-    const batchNo = textValue(batch?.batch_no);
-    if (!messageId || !batchNo) {
-      logWarn('purchase.arrival.reconcile.skipped', {
-        message_id: messageId || '', batch_no: batchNo, reason: 'missing_identity',
-      });
-      return { handled: false, reason: 'missing_identity' };
-    }
-    // 群里同一套话题既发**采购申请单**也发**采购退货单**。退货单不是到货核对的对象，
-    // 所以先按映射里的批次类型挡住（旧映射没有 batch_kind 时按默认值"采购申请"处理，
-    // 后面读明细时还有一道"退货行没有尺码"的数据闸门兜底）。
-    const kind = textValue(batch?.batch_kind) || textValue(batch?.kind) || ARRIVAL_BATCH_KINDS.PURCHASE_REQUEST;
-    if (kind !== ARRIVAL_BATCH_KINDS.PURCHASE_REQUEST) {
-      logInfo('purchase.arrival.reconcile.skipped', {
-        message_id: messageId, batch_no: batchNo, reason: 'batch_kind_not_purchase_request', kind,
-      });
-      return { handled: false, reason: 'batch_kind_not_purchase_request' };
-    }
-    const taskId = taskIdForBatch(batchNo);
-    return this.queue.run(taskId, () => this.handleTopicMessageLocked({
-      taskId, batch, batchNo, text, messageId, threadId, senderOpenId,
-    }));
-  }
-
-  /**
-   * 话题那条**锁定管道**：一条"她说的到货反馈"从记原话 → 调模型 → 算计划 → 发卡片，
-   * **整条链路只有这一份实现**。
-   *
-   * ⭐⭐ 2026-10-08（表单提交那条路的关键）：卡片表单提交**也走这个方法**，
-   *    只是把 `messageId` 传成**被提交的那张卡片的消息 id**、`text` 传成
-   *    `form_value.actual_arrival` 的文字 —— 于是"提交"与"在话题里说同一句"
-   *    **喂给模型的原话、算出来的计划、发出去的卡片逐字一致**（用例钉住）。
-   *    这就是需求里那句「把 form_value 的文字当作她在话题里说的那句话」的落地，
-   *    **没有第二套解析**。
-   *
-   * @param {string} [callerHandledCardId] ⭐ 调用方**自己会收掉**的那张卡片
-   *   （表单提交路径 = 她提交的那张卡：提交成功后由调用方 patch 成「已提交」终态）。
-   *   命中它时这里**跳过作废**，免得同一张卡被 patch 两次（一次"已作废"、一次"已提交"）。
-   *   ⚠️ **不传时行为与改动前逐字不变**（话题那条路走的就是默认值）。
-   */
-  async handleTopicMessageLocked({
-    taskId, batch, batchNo, text, messageId, threadId, senderOpenId, callerHandledCardId = '',
-  }) {
-    const { replies } = this.config;
-    let task = await this.store.get(taskId);
-    if (task?.status === 'posted') {
-      // 已经入过库还继续说：**一个字都不写**，明确告诉她这批处理过了（不静默）。
-      logInfo('purchase.arrival.reconcile.after_posted', { task_id: taskId, message_id: messageId });
-      await this.safeReplyText(messageId, replies.afterPosted, { threadId });
-      return { handled: true, reason: 'already_posted' };
-    }
-    if (!task) {
-      task = await this.store.create({
-        task_id: taskId,
-        type: TASK_TYPE,
-        status: 'collecting',
-        batch_no: batchNo,
-        batch_record_id: textValue(batch?.batch_record_id),
-        thread_id: String(threadId || ''),
-        chat_id: textValue(batch?.chat_id),
-        transcript: [],
-      });
-      logInfo('purchase.arrival.reconcile.started', {
-        task_id: taskId, batch_no: batchNo, message_id: messageId, thread_id: threadId || '',
-      });
-    }
-    // 这张任务上**已经发出去的那张卡片**（她之前说过一句，卡片在某个话题里等她确认）。
-    // ⚠️ 它可能是**另一个话题**里那张、甚至根本不是卡片 ⇒ 只用来**尽力作废**，
-    //   **不再**用来当"这一轮要更新哪张"的判据（见下面发卡片那段）。
-    const existingCardMessageId = String(task?.card_message_id || '').trim();
-    const existing = Array.isArray(task.transcript) ? task.transcript : [];
-    // 飞书会重投事件：同一条 message_id 只记一次，否则同一句话会被模型看两遍。
-    if (existing.some((item) => String(item?.message_id || '') === String(messageId))) {
-      return { handled: true, reason: 'duplicate_message' };
-    }
-    const transcript = [...existing, {
-      message_id: String(messageId),
-      text: String(text || ''),
-      sender_open_id: String(senderOpenId || ''),
-      at: new Date(this.now()).toISOString(),
-    }];
-    task = await this.store.update(taskId, {
-      transcript,
-      thread_id: String(threadId || task.thread_id || ''),
-      chat_id: textValue(batch?.chat_id) || task.chat_id || '',
-      sender_open_id: task.sender_open_id || String(senderOpenId || ''),
-    });
-
-    // ── 读这批的采购申请明细（只读）─────────────────────────────────────────
-    const snapshot = await this.loadRequestRows(batch);
-    if (!snapshot.ok) {
-      // 读不到明细就不猜、也不回话（回一句"我认不出"会刷屏；日志是排查入口）。
-      logWarn('purchase.arrival.reconcile.request_rows_unavailable', {
-        task_id: taskId, batch_no: batchNo, reason: snapshot.reason,
-      });
-      return { handled: false, reason: snapshot.reason };
-    }
-
-    // ── 让模型判：说完了没有 + 差异是哪一类、多少 ─────────────────────────────
-    let parsed;
-    const transcriptTexts = transcript.map((item) => item.text);
-    try {
-      parsed = await this.recognizer.parseArrivalReconciliation({
-        taskId,
-        rows: snapshot.rows.map((row) => ({
-          item_no: row.item_no, color: row.color, size: row.size, quantity: row.quantity,
-        })),
-        messages: this.trimTranscript(transcriptTexts),
-      });
-    } catch (error) {
-      // 模型/网络抖一下不能影响业务：**不入库、不回错误刷屏**，她再说一遍还会走同一条路。
-      logWarn('purchase.arrival.reconcile.parse_failed', { task_id: taskId, error: error.message });
-      return { handled: true, reason: 'parse_failed' };
-    }
-    await this.store.update(taskId, {
-      request_rows: snapshot.rows,
-      request_ids: snapshot.requestIds,
-      batch_record_id: snapshot.batchRecordId || task.batch_record_id || '',
-      last_parse: { complete: parsed.complete, same: parsed.same, difference_count: parsed.differences.length },
-    });
-    // ⭐ 2026-10-07 业务负责人口径（逐字）：「**用户一般一句话就能够说清楚这个事情，
-    //    所以收到用户关于到货情况的反馈时，直接处理就可以。**」
-    //    ⇒ ⚠️ 这里**不再**因为 `complete === false` 就"只记录、不回话" ——
-    //       原来那条 `purchase.arrival.reconcile.collecting` + 提前 return 已经删掉。
-    //       `complete` 只说明"模型认为她有没有说完"，**不是"要不要处理"的闸门**。
-    //    但"能核对"这件事仍然要有内容 —— 见下面的 `hasArrivalContent`：
-    //      · `differences` 非空  → 她在说实际到货（多/少/某行一样）→ 直接算；
-    //      · `same === true`     → 她说「都到了 / 跟单子一样」→ 也是到货反馈 → 直接算；
-    //      · 两者都没有          → 这句话里**没有可核对的到货信息**（半句话，或话题里的闲聊）。
-    logInfo('purchase.arrival.reconcile.processing', {
-      task_id: taskId, batch_no: batchNo, message_count: transcript.length,
-      // 诊断字段：模型当时判断她说完了没有 / 说没说"都一样"。**只作排查用**，不参与业务判断。
-      parse_complete: Boolean(parsed.complete), parse_same: Boolean(parsed.same),
-      difference_count: parsed.differences.length,
-    });
-    const hasArrivalContent = parsed.differences.length > 0 || parsed.same === true;
-    if (!hasArrivalContent) {
-      // ⚠️ 这句话里没有任何可核对的到货信息 → **不发卡片、不写任何业务表**。
-      //    绝不能当成"全部到货"：那会让她一点「是」就按**申请数整单入库**。
-      logInfo('purchase.arrival.reconcile.no_arrival_content', {
-        task_id: taskId, batch_no: batchNo, message_count: transcript.length,
-        parse_complete: Boolean(parsed.complete),
-        note: '这句话里没有可核对的到货信息：不发卡片、不写业务表',
-      });
-      // `complete` 在这里**只**决定"要不要回一句"（纯体验，不是闸门）：
-      //   · 她说完了却什么都没给出 → 回一句教她怎么说（否则她会以为机器人没反应）；
-      //   · 她还在说（半句话）     → 静默（也可能就是闲聊，回话会刷屏）。
-      if (parsed.complete === true && replies.noArrivalContent) {
-        await this.safeReplyText(messageId, replies.noArrivalContent, { threadId });
-      }
-      return { handled: true, complete: Boolean(parsed.complete), reason: 'no_arrival_content' };
-    }
-
-    // ── 算实际到货 = 申请数 ± 她说的差异 ────────────────────────────────────
-    const plan = this.buildPlan(snapshot.rows, parsed);
-    if (!plan.ok) {
-      // ⚠️ 两种"不算数"要分得清清楚楚（2026-10-07）：
-      //   · `difference_unmatched` = **她说的货号/尺码对不上明细**（真 unmatched，原样保留）；
-      //   · `actual_not_positive`  = 算出来**是负数**（数字对不上，不是没对上明细）。
-      //   两者都不入库，但回话不同 —— 让她知道该改哪儿。
-      const negative = plan.reason === 'actual_not_positive';
-      logWarn(negative ? 'purchase.arrival.reconcile.plan_negative' : 'purchase.arrival.reconcile.plan_unmatched', {
-        task_id: taskId, batch_no: batchNo, reason: plan.reason,
-      });
-      await this.safeReplyText(messageId, negative ? replies.negative : replies.unmatched, { threadId });
-      return { handled: true, complete: true, plan_ok: false, reason: plan.reason };
-    }
-    // ⭐ `实际 = 0` 的行是**正常结果**（她 2026-10-07 拍板）：照常发卡片，
-    //    只是这些行在卡片上写"这双没到"、点「是」时也不会入库。这里先记一条可排查的日志。
-    const zeroRows = plan.rows.filter((row) => Number(row.actual) === 0);
-    if (zeroRows.length) {
-      logInfo('purchase.arrival.reconcile.plan_zero_actual', {
-        task_id: taskId, batch_no: batchNo, zero_actual_count: zeroRows.length,
-        request_row_count: plan.rows.length,
-        rows: zeroRows.map((row) => ({
-          item_no: row.item_no, color: row.color, size: row.size, quantity: row.quantity,
-        })),
-        note: '这些行实际 0 双：卡照样发、点「是」时不入库（不写库存流水），不阻断整单',
-      });
-    }
-
-    // ── 发卡片（是 / 否）────────────────────────────────────────────────────
-    // ⭐⭐ 2026-10-07 晚（真机 23:37：日志说「卡片已更新」，她那边**一张卡都没有**）：
-    //    「有核对内容」的出口**一律是"在她说这句话的那个话题里发一张新卡"**（`card_sent`）。
-    //
-    //    为什么不再"更新已有那张"（改动前那条路正是真机事故的来源）：
-    //      · 卡片 id 记在**批次级**的会话任务上（同一批**含她另开一个话题**永远是同一条记录，
-    //        见 `taskIdForBatch`），而"她看不看得见"是**话题级**的 ⇒
-    //        更新可能落到**另一个话题**那张卡上：`code = 0` 一切正常，她在本话题里什么都看不到；
-    //      · `im.v1.message.patch` 的成功判据**只有 `code === 0`**（官方文档：该接口
-    //        "仅支持更新卡片（消息类型为 interactive）"，可错误码表里**没有**
-    //        "目标不是卡片"这一条）⇒ 对一条文字/图片消息它完全可能回 0 却什么都没改。
-    //    ⇒ **可见性不再依赖"猜她在看哪张卡"**：每次都把卡发到**她刚说的那条消息下面**，
-    //      这一步的成功判据是"飞书回了 message_id"（回空 = 发没发出去说不清 = 判失败）。
-    //    旧卡由 `retirePreviousCard` **尽力作废**（先读一眼确认它真是卡片、改完再读一眼校验），
-    //    作废成功/跳过/失败都记日志 —— 但它**不参与**"卡片发出去没有"这件事。
-    const card = purchaseArrivalReconcileCard({
-      taskId,
-      batchNo,
-      rows: plan.rows,
-      differences: plan.differences,
-      copy: this.config.card,
-    });
-    let cardMessageId = '';
-    try {
-      // ⭐ ④ 卡片回到**她说话的那个话题**（`{ threadId }` 一路传到飞书发送适配器，
-      //    由它决定用不用 `reply_in_thread`）。主群 @ 进来（threadId 为空）时行为不变。
-      cardMessageId = await this.replyCard(messageId, card, { threadId });
-    } catch (error) {
-      // 卡片发不出去：她再说一句就会重算重发（nothing was written）。
-      logWarn('purchase.arrival.reconcile.card_send_failed', { task_id: taskId, error: error.message });
-      return { handled: true, complete: Boolean(parsed.complete), card: false, reason: 'card_send_failed' };
-    }
-    if (!cardMessageId) {
-      // `code === 0` 但没回带 message_id = "发没发出去说不清"。**不许**当成发成功
-      //（记一个空 id，下一轮会再发一张，可她这一轮可能一张都没看到 —— 那正是这次要消灭的现象）。
-      logWarn('purchase.arrival.reconcile.card_send_failed', {
-        task_id: taskId, error: 'replyCard 没有回带 message_id（发没发出去无法确认）',
-      });
-      return { handled: true, complete: Boolean(parsed.complete), card: false, reason: 'card_send_failed' };
-    }
-    // ⭐ 可验证证据：**读一眼刚发出去的那条消息**（`im.v1.message.get`）——
-    //    日志从此能直接回答"卡片到底发出去没有、message_id 是什么、是不是 interactive、
-    //    落在哪个话题"。⚠️ 它只是**证据**：读不到（缺权限/网络）也只记 `unavailable`，
-    //    绝不因为"读不到"就把发卡判成失败（发送本身已经 `code = 0`）。
-    const evidence = await this.cardEvidence(cardMessageId, threadId);
-    // 旧卡（若有）**尽力作废**：把按钮收掉，免得话题里同时留着两张都能点的卡。
-    // ⚠️ 2026-10-08：`callerHandledCardId` 命中时**跳过** —— 那张卡由**调用方**收成
-    //    「已提交」终态（表单提交那条路 —— ⚠️ 2026-10-12 C1 已随群聊入口删除；
-    //    本参数保留给将来的入口复用，不传时行为与改动前逐字相同）。
-    //    否则同一张卡会被 patch 两次（先"已作废"、再"已提交"），白白多一次远端调用。
-    const supersede = existingCardMessageId
-      && existingCardMessageId === String(callerHandledCardId || '').trim()
-      ? { attempted: false, result: 'none', reason: 'handled_by_caller' }
-      : await this.retirePreviousCard(existingCardMessageId, {
-        taskId, batchNo, newCardMessageId: cardMessageId,
-      });
-    const nowIso = new Date(this.now()).toISOString();
-    await this.store.update(taskId, {
-      status: 'awaiting_confirmation',
-      plan: plan.rows,
-      differences: plan.differences,
-      acceptance_text: transcriptTexts.join(this.config.acceptanceTextSeparator),
-      request_rows: snapshot.rows,
-      request_ids: snapshot.requestIds,
-      batch_record_id: snapshot.batchRecordId || task.batch_record_id || '',
-      // 记**最新**那张卡；`card_thread_id` = 它长在哪个话题里（排查"她说的话题与卡片所在话题
-      // 一不一致"时一眼可见 —— 真机 2026-10-07 23:37 那种事故正是这件事没人看得见）。
-      card_message_id: cardMessageId,
-      card_thread_id: String(threadId || ''),
-      operator_open_id: String(senderOpenId || task.operator_open_id || ''),
-      card_sent_at: nowIso,
-    });
-    logInfo('purchase.arrival.reconcile.card_sent', {
-      task_id: taskId, batch_no: batchNo, card_message_id: cardMessageId,
-      row_count: plan.rows.length, difference_count: plan.differences.length,
-      // 0 双的行数（她 2026-10-07 起的正常情况）：卡片上写了「这双没到」。
-      zero_actual_count: zeroRows.length,
-      adjustment_total: plan.rows.reduce((sum, row) => sum + (row.actual - row.quantity), 0),
-      // ⭐ `complete` 只作**诊断**（模型判断她说完了没有），不再是闸门。
-      parse_complete: Boolean(parsed.complete),
-      // ⭐ 出口只剩这一个（旧的 `card_updated` 已随这次改动删掉，见方法头注释）。
-      card_action: 'sent',
-      // ⭐⭐ 可验证四件套：请求的类型 · 读回来的**事实**类型 · 是否被撤回 · 落在哪个话题
-      //    （外加"与她这次说话的话题一不一致"）。`card_msg_type_source: 'unavailable'`
-      //    = 没读成（缺权限/网络），此时飞书已经回了 message_id，卡片照样是发出去了的。
-      card_requested_msg_type: 'interactive',
-      card_msg_type: evidence.msgType,
-      card_msg_type_source: evidence.source,
-      card_msg_type_reason: evidence.reason,
-      card_deleted: evidence.deleted,
-      card_thread_id: evidence.threadId,
-      card_thread_match: evidence.threadMatch,
-      thread_id: String(threadId || ''),
-      // 旧卡的去向（她换话题 / 补充一句时，上一张卡会被作废）：
-      superseded_card_message_id: String(existingCardMessageId || ''),
-      supersede_attempted: supersede.attempted,
-      supersede_result: supersede.result,
-      supersede_reason: supersede.reason,
-    });
-    // ⭐ 她补充/修正过（或换了话题）→ 回一句，说明**哪张卡才是准的**。
-    //    🔴 文案**不许再说"上面那张卡片已经更新"**：新出口是**重发一张**，
-    //    说"更新了"会让她去找那张（可能根本不存在的）旧卡 —— 真机 2026-10-07 23:37
-    //    那句回话正是这么把她带偏的。文案在配置里（`replies.recalculatedCard`，可置空）。
-    if (existingCardMessageId && replies.recalculatedCard) {
-      await this.safeReplyText(messageId, replies.recalculatedCard, { threadId });
-    }
-    return {
-      handled: true, complete: Boolean(parsed.complete), card: true,
-      card_message_id: cardMessageId, taskId,
-    };
   }
 
   /**
@@ -1133,13 +824,6 @@ class PurchaseArrivalConversationService {
       if (linked) return linked;
     }
     return '';
-  }
-
-  /** 交给模型的原话：超长只截断投喂，本地记录原样保留（配置先行：阈值在 config 里）。 */
-  trimTranscript(messages) {
-    const joined = messages.join('\n');
-    if (joined.length <= this.config.maxTranscriptChars) return messages;
-    return [joined.slice(-this.config.maxTranscriptChars)];
   }
 
   replyTarget(event, task) {

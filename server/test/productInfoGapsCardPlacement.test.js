@@ -334,7 +334,7 @@ const runCardAction = async ({ taskId, draft, status = 'ready_to_confirm', actio
     } } } } },
     // 网关只用来证伪"为了这段文字又读了一次表"：任何 listAll 都被记下来。
     gateway: { listAll: async (key) => { tableReads.push(key); return []; }, update: async () => undefined },
-    references: {}, recognizer: {}, store,
+    references: {}, store,
     posting: posting || { postSale: async () => ({ sourceNo: 'XSD-001', detailRecordIds: ['detail_1'] }) },
     delivery: delivery || OK_DELIVERY,
   });

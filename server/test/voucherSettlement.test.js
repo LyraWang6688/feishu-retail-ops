@@ -606,8 +606,7 @@ const dispatchService = () => {
     },
   };
   const service = new LarkMvpService({
-    client: {}, gateway: {}, references: {}, posting: {}, recognizer: {},
-    store: new JsonTaskStore({
+    client: {}, gateway: {}, references: {}, posting: {},     store: new JsonTaskStore({
       dir: fs.mkdtempSync(path.join(os.tmpdir(), 'voucher-dispatch-')), idField: 'task_id',
     }),
     botOpenId: 'ou_bot',

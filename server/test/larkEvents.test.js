@@ -91,8 +91,7 @@ const createRealService = (client) => new LarkMvpService({
   client,
   gateway: { table: () => ({ fields: {} }), listAll: async () => [], validateTables: async () => [] },
   posting: {},
-  recognizer: {},
-  store: new JsonTaskStore({
+      store: new JsonTaskStore({
     dir: fs.mkdtempSync(path.join(os.tmpdir(), 'lark-card-toast-')), idField: 'task_id',
   }),
   botOpenId: 'ou_test_bot',

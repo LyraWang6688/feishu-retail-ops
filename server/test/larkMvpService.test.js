@@ -61,12 +61,7 @@ const makeStore = () =>
 const makeService = (options = {}) => {
   const sent = [];
   const service = new LarkMvpService({
-    client: options.client || {},
-    gateway: options.gateway || {},
-    references: options.references || {},
-    posting: options.posting || {},
-    recognizer: options.recognizer || {},
-    store: options.store || makeStore(),
+    client: options.client || {}, gateway: options.gateway || {}, references: options.references || {}, posting: options.posting || {}, store: options.store || makeStore(),
     // 群聊定位器指向临时目录：**不受**构造时默认的 data/purchase_group_messages 影响。
     purchaseBatchLocator: options.purchaseBatchLocator,
     purchaseBatchLocatorStore: options.purchaseBatchLocatorStore,
@@ -76,8 +71,7 @@ const makeService = (options = {}) => {
       store: new JsonTaskStore({
         dir: fs.mkdtempSync(path.join(os.tmpdir(), 'group-sales-thread-')), idField: 'task_id',
       }),
-    }),
-    botOpenId: options.botOpenId === undefined ? TEST_BOT_OPEN_ID : options.botOpenId,
+    }), botOpenId: options.botOpenId === undefined ? TEST_BOT_OPEN_ID : options.botOpenId,
     // `undefined` → 走 config/groupAdmission 的默认（放宽）；显式 true/false → 钉死口径。
     mainChatRequireMention: options.mainChatRequireMention,
     groupPurchaseFlow: options.groupPurchaseFlow,
@@ -132,8 +126,7 @@ const makeAdmissionSpyService = (options = {}) => {
   let recognized = 0;
   const { service } = makeService({
     ...options, client, gateway,
-    recognizer: { parseSalesText: async () => { recognized += 1; return {}; } },
-  });
+      });
   return { service, calls, recognized: () => recognized };
 };
 
@@ -167,10 +160,8 @@ test('selling a sample sends a per-order size choice card and only its recipient
     ],
     promoteToSample: async (input) => { promoted.push(input); return { liveRecordId: 'door_40' }; },
   } };
-  const service = new LarkMvpService({ client: {}, store,
-    gateway: { table: () => ({ fields: { number: '编号' } }),
-      get: async () => ({ fields: { 编号: 'A100黑' } }) },
-    references: {}, posting: {}, recognizer: {}, purchaseWebhooks: {}, delivery });
+  const service = new LarkMvpService({ client: {}, store, gateway: { table: () => ({ fields: { number: '编号' } }),
+      get: async () => ({ fields: { 编号: 'A100黑' } }) }, references: {}, posting: {}, purchaseWebhooks: {}, delivery });
   service.updateSalesActionCard = async (_task, _event, card) => { cards.push(card); return true; };
   // ⚠️ 这条用例测的是**补样品提醒本身**（不是入口），所以渠道用"群销售那条任务"显式给出来，
   //    发送出口打桩记账 —— 传输层（`reply_in_thread`）由 groupThreadReplyRouting /
@@ -207,7 +198,7 @@ test('concurrent sample choices promote only one size and end with a feedback ca
   await store.create({ task_id: 'sample_race', type: 'sample_replacement', status: 'pending',
     sender_open_id: 'ou_1', product_record_id: 'product_1', product_number: 'A100黑',
     sales_detail_record_id: 'detail_1', card_message_id: 'om_card' });
-  const service = new LarkMvpService({ client: {}, gateway: {}, references: {}, recognizer: {}, store,
+  const service = new LarkMvpService({ client: {}, gateway: {}, references: {}, store,
     purchaseWebhooks: {}, delivery: { inventory: {
       sampleReplacementCandidates: async () => [{ size: 40, doorBoxCount: 1, sampleCount: 0, warehouseCount: 0 }],
       promoteToSample: async ({ size }) => {
@@ -232,7 +223,7 @@ test('sample refresh failure replaces processing view with a retryable card', as
   await store.create({ task_id: 'sample_refresh_error', type: 'sample_replacement', status: 'pending',
     sender_open_id: 'ou_1', product_record_id: 'product_1', product_number: 'A100黑',
     sales_detail_record_id: 'detail_1', card_message_id: 'om_card' });
-  const service = new LarkMvpService({ client: {}, gateway: {}, references: {}, recognizer: {}, store,
+  const service = new LarkMvpService({ client: {}, gateway: {}, references: {}, store,
     purchaseWebhooks: {}, delivery: { inventory: {
       sampleReplacementCandidates: async () => { throw new Error('查询库存失败'); },
     } } });
@@ -326,8 +317,7 @@ const accessoryService = (accessoryRows, parsedItem) => {
   const store = makeStore();
   const cards = [];
   const service = new LarkMvpService({
-    client: {},
-    gateway: {
+    client: {}, gateway: {
       validateTables: async () => [],
       table: (key) => (key === 'accessory'
         ? { tableId: 'tbl_acc', fields: { name: '名称', category: '种类' } }
@@ -346,18 +336,8 @@ const accessoryService = (accessoryRows, parsedItem) => {
         : []),
       create: async () => ({ recordId: 'rec_sales_entry' }),
       update: async () => {},
-    },
-    references: {},
-    posting: {},
-    recognizer: {
-      // 整单金额跟着这一件的实收金额走，测试里不必手写两份、也不会互相打架。
-      parseSalesText: async () => ({
-        intent: 'sale', items: [parsedItem],
-        payments: [{ method: '微信', amount: Number(parsedItem.actual_amount) || 0 }],
-        agreed_total: Number(parsedItem.actual_amount) || 0, missing_fields: [],
-      }),
-    },
-    store,
+    }, references: {}, posting: {},
+        store,
   });
   // 卡片出口 = **渠道感知**那条（生产同款）：群任务回到那条销售话题。
   service.sendTaskCard = async (task, card) => { cards.push({ messageId: task.message_id, card }); return 'card_reply'; };
@@ -425,327 +405,27 @@ const productInfoResolver = (products) => ({
     };
   },
 });
-
-const runSaleScenario = async ({ taskId, text, rows, parsed, products = [], productIndexRows = null }) => {
-  const { normalizeSalesResult } = require('../src/services/doubaoService');
-  const store = makeStore();
-  const cards = [];
-  const messages = [];
-  const baseGateway = liveInventoryGateway(rows, { products: productIndexRows || [] });
-  // `productIndexRows` 传了才把「缺失信息说明」映射上：那样 `loadProductIndex` 才会真的
-  // 整表读一次「货品信息」（**生产就是这么配的**，见 v1BitableSchema）。
-  // 「这个货号有没有建档」那道判据的**正证据**正是这份索引 —— 不传 = 模拟"读不到货品信息"。
-  const productTable = productIndexRows
-    ? { tableId: 'tbl_product', fields: { number: '编号', itemNo: '货号', color: '颜色',
-        completeness: '缺失信息说明', sampleImage: '样例图' } }
-    : { tableId: 'tbl_product', fields: { number: '编号', itemNo: '货号', color: '颜色' } };
-  // 「实时库存」整表到底读了几次：**录单时那次读取还在**（单颜色货号靠它定现货 / 预定），
-  // 而且**一次都不许多读**（多读 = 新增远端请求）。这里把它数出来当证据。
-  let liveReads = 0;
-  const service = new LarkMvpService({
-    client: {},
-    gateway: {
-      ...baseGateway,
-      listAll: async (key) => {
-        if (key === 'liveInventory') liveReads += 1;
-        return baseGateway.listAll(key);
-      },
-      // 解析 A 读的是「货品信息」，颜色字段在这里声明。
-      table: (key) => (key === 'product' ? productTable : baseGateway.table(key)),
-      validateTables: async () => [],
-      create: async () => ({ recordId: `entry_${taskId}` }),
-      update: async () => undefined,
-    },
-    references: productInfoResolver(products),
-    posting: {},
-    recognizer: { parseSalesText: async () => normalizeSalesResult(parsed, text) },
-    store,
-  });
-  // 解析 B 到底跑没跑：包一层计数（"多颜色未选色时 B 一次都不跑"这件事要看得见，
-  // 不能只靠结果反推）。⚠️ 计数是**跨这次调用**的 —— 录单 + 之后的卡片动作都在里面。
-  let stockLookups = 0;
-  const stockLookupInputs = [];
-  const originalStockParse = service.resolveStockAvailabilityForSale.bind(service);
-  service.resolveStockAvailabilityForSale = (...args) => {
-    stockLookups += 1;
-    stockLookupInputs.push(args[0]);
-    return originalStockParse(...args);
-  };
-  // 🚨 哨兵：非群那条回复路一次都不许走（群任务必须走 sendTaskCard）。
-  service.replyCard = async () => { throw new Error('非群回复路径不该被走到：群任务必须走 sendTaskCard'); };
-  service.sendTaskCard = async (_task, card) => { cards.push(card); return 'om_card'; };
-  service.sendTaskText = async (_task, message) => messages.push(message);
-  await store.create({ task_id: taskId, type: 'sale', status: 'received',
-    chat_type: 'group', chat_id: GROUP_CHAT_ID, message_id: `om_${taskId}`,
-    sender_open_id: 'ou_1', sent_at: Date.now(), original_text: text });
-  await service.processSalesTask(taskId);
-  return { task: await store.get(taskId), cards, messages, stockLookups, stockLookupInputs, service, store,
-    readStockLookups: () => stockLookups, readLiveReads: () => liveReads,
-    readStockLookupInputs: () => stockLookupInputs };
-};
-
-
-
-
-
-
-
-
-
-// ─── 第三刀：颜色由 A 定死、B 拿"她选定的颜色"去查库存（业务负责人 2026-10-07）────
-// 她的原话（逐字）：「A 一定要有选颜色的机制……如果有多个颜色，一定要让用户去选择」
-//  「B 应该是拿着 A 环节用户选的那个颜色，然后再去找库存，这样子的话，
-//   这个流程其实三个类型都是要这样走的，只不过对于预付来说，它不会再走 B 了」
-// 设计落档：docs/ab-color-first-design-2026-10-07.md（含验收标准与逐条对照）。
-//   · 多颜色未选色 ⇒ 卡片给候选（**只显示颜色名**），**B 一次都不跑**；
-//   · 她选定颜色 ⇒ 用**那条候选的 recordId**，**这时才跑 B**，由它定现货 / 预定；
-//   · ⭐ 2026-10-07 后续口径（业务负责人逐字「**甲 去掉**」）：候选上**没有**
-//     「有货 / 无货」预览标注了（候选只显示颜色名）—— 见
-//     `docs/color-candidate-no-stock-preview-2026-10-07.md`；
-//   · 单颜色不问她，A 直接定（三种类型）；
-//   · 预付选完颜色**仍然不跑** B（指"选之前不跑"；选完那次是类型判据，照跑）。
-
-// 多颜色货品的两个颜色（A 的「货品信息」里同一个货号两条记录）。
-const MULTI_COLOR_PRODUCTS = [
-  productRow('26002-52', '黑', 'p_black'),
-  productRow('26002-52', '白', 'p_white'),
-];
-const multiColorParsed = (tradeType) => ({
-  intent: 'sale', trade_type: tradeType,
-  items: [{ item_no: '26002-52', size: 37, quantity: 1, actual_amount: 210 }],
-  payments: [{ amount: 210, method: '微信' }], agreed_total: 210,
-});
-// 未付那一档：整单 260 全都还没收（金额前后要自洽 —— 否则会被"金额不一致"拦成 needs_info）。
-const unpaidParsed = () => ({
-  intent: 'sale', trade_type: '未付',
-  items: [{ item_no: '26002-52', size: 37, quantity: 1, actual_amount: 260 }],
-  payments: [], agreed_total: 260, owed: 260,
-});
-const chooseColorAction = (draftId, { recordId, colorName, productNumber }) => ({
-  operator: { operator_id: { open_id: 'ou_1' } },
-  action: { value: { action: 'choose_sale_color', draft_id: draftId, item_index: 0,
-    record_id: recordId, product_number: productNumber, color_name: colorName } },
-});
-
-// 卡片上「选颜色」那些按钮的**逐字**文字（按出现顺序）——
-// 用来钉住 2026-10-07 的口径：**候选只显示颜色名**（没有「有货 / 无货」后缀）。
-const colorButtonTexts = (card) => (card.elements || [])
-  .filter((element) => element.tag === 'column_set')
-  .flatMap((element) => element.columns.flatMap((column) => column.elements))
-  .filter((child) => child.tag === 'button' && child.value?.action === 'choose_sale_color')
-  .map((child) => child.text.content);
-
-// 候选对象上**不许再有** `stock_status`（预览标注已删）。
-const assertNoStockStatus = (options) => {
-  for (const option of options) {
-    assert.ok(!('stock_status' in option), `候选上不许再有 stock_status：${JSON.stringify(option)}`);
-  }
-};
-
-
-
-
-// ⚠️ 假缺货的坑：颜色来自**两个不同的列** —— A 的是「货品信息.颜色」，B 的是「库存键」里的那一段。
-//    比色必须走 `normalizeColor`（与 resolver 同一套：「棕」=「棕色」），否则会出现
-//    "货其实有、却被判成没货"（对她来说就是把一笔正常销售挡在门外）。
-
-
-
-
-
-
-
-// 抓结构化日志（info → console.log → stdout；warn/error → stderr），只旁听、照样转发。
-const captureLogs = async (fn) => {
-  const lines = [];
-  const patch = (stream) => {
-    const original = stream.write;
-    stream.write = function write(chunk, ...rest) {
-      const text = String(chunk);
-      if (text.includes('"event"')) lines.push(text);
-      return original.apply(stream, [chunk, ...rest]);
-    };
-    return () => { stream.write = original; };
-  };
-  const restoreOut = patch(process.stdout);
-  const restoreErr = patch(process.stderr);
-  try { await fn(); } finally { restoreOut(); restoreErr(); }
-  return lines.join('');
-};
-
-// 🔴 2026-10-07 三次收尾：销售确认卡片的**非群分支**不再回落"回她那条私聊消息"。
-//    生产上 `acceptMessage` 已不再为非群消息建任务，所以这条只会走到
-//    **磁盘上遗留的旧任务 JSON**（`chat_type` 缺失）被重放时 —— 概率低但不是零。
-//    因此这条用例照那个形状造任务，钉住"非群 → 不发 + 记 skip + 不留 card_message_id"。
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 判据 A′：A（读「货品信息」）之后 —— **这个货号到底有没有建档**（业务负责人 2026-10-07）
-//
-// 她的口径（逐字）：「对，所以三种交易类型，在看完货品信息之后，如果在货架上没有找到，
-// 都应该给到这个提示，而不是说等到 B」
-//
-// 判据的**正证据**口径：只有「「货品信息」整表读成功」＋「里面确实没有这个货号」才拦；
-// 读不到就不下结论、不拦单（AGENTS.md 第 17 条）。
-// ⚠️ 与「货号找到了、只是齐备公式说缺字段」是**两件事**：后者仍然不拦（见 AC-3 那条用例）。
-// ─────────────────────────────────────────────────────────────────────────────
-
-// 「货品信息」里的一条记录（判据读的整表索引）。
-const productIndexRow = (itemNo, color, recordId, completeness = '齐备') => ({
-  record_id: recordId,
-  fields: { 货号: itemNo, 颜色: [{ text: color }], 缺失信息说明: completeness, 样例图: [{ file_token: 't' }] },
-});
-
-const REGISTRATION_TEXT = (itemNo) =>
-  `货品信息里没有 ${itemNo}，请先在「货品信息」建档或核对货号，再发一次～`;
-
-
-
-
-
-
-// ⭐ 旧行为哨兵（有意改掉，见汇报）：这条原来用「A=黑 / 实时库存=白」来演示
-//    "B 认得出来时以 B 为准"。第三刀之后**颜色由 A 定死**，那样的 fixture 会（正确地）
-//    变成"库存里没有"；所以把实时库存那条改成与 A 同色（生产上两者本来就该同色），
-//    断言也随之改成"货品 / 颜色以 A 为准"。这条用例的本意（已建档 + 有货 ⇒ 不拦、出卡片）不变。
-
-
-
-
-
-
-// ─── 交易类型：AI 判断性质，脚本决定交付，用户只核对 ───
-
-const tradeTypeService = ({ store, cards, updates, counters, parsed,
-  rows = [liveRow({ itemNo: '26632', color: '黑', size: 37, productRecordId: 'p37' })] }) => {
-  const service = new LarkMvpService({
-    client: {},
-    gateway: {
-      ...liveInventoryGateway(rows),
-      validateTables: async () => [],
-      create: async () => ({ recordId: 'entry_trade' }),
-      update: async (tableKey, recordId, fields) => { updates.push({ tableKey, recordId, fields }); },
-    },
-    references: { resolveSalesTradeType: async (code) => ({ recordId: `behavior_${code}` }) },
-    posting: { postSale: async () => ({ sourceNo: 'XSD-TRADE', detailRecordIds: ['d1'], paymentRecordIds: ['p1'] }) },
-    delivery: { deliver: async () => { counters.delivered += 1; return { sampleReplacements: [] }; } },
-    // ⚠️ 把**她原话**透给 fixture：资金口径（定金 / 尾款 / 欠）只看原话里的词。
-    recognizer: { parseSalesText: async (text) => parsed(text) },
-    store,
-  });
-  service.sendTaskCard = async (_task, card) => { cards.push(card); return 'card_trade'; };
-  service.updateSalesActionCard = async (_task, _event, card) => { cards.push(card); return true; };
-  return service;
-};
-
-
-
-
 test('团购券目录只认「在售」的券：下架的券不能拿来算结算金额', async () => {
   const store = makeStore();
-  const service = new LarkMvpService({ client: {},
-    gateway: liveInventoryGateway([], {
+  const service = new LarkMvpService({ client: {}, gateway: liveInventoryGateway([], {
       vouchers: [
         voucherRow({ purchasePrice: 89.9, faceValue: 100, settlementAmount: 85.4, status: '已下架' }),
         voucherRow({ purchasePrice: 49.9, faceValue: 100, settlementAmount: 47.4, status: '在售' }),
       ],
-    }),
-    references: {}, posting: {}, recognizer: {}, store });
+    }), references: {}, posting: {}, store });
   const vouchers = await service.listGroupBuyVouchers();
   assert.deepEqual(vouchers.map((voucher) => voucher.purchasePrice), [49.9]);
 });
 
 test('券表读不到时返回空目录，让券的说法落到"未配置"追问，而不是算一个错的金额', async () => {
   const store = makeStore();
-  const service = new LarkMvpService({ client: {},
-    gateway: {
+  const service = new LarkMvpService({ client: {}, gateway: {
       table: (key) => (key === 'groupBuyVoucher' ? { tableId: 'tbl_voucher', fields: {} } : {}),
       listAll: async () => { throw new Error('飞书暂时不可用'); },
-    },
-    references: {}, posting: {}, recognizer: {}, store });
+    }, references: {}, posting: {}, store });
   assert.deepEqual(await service.listGroupBuyVouchers(), []);
 });
 
-// ─── 3B：卖样品要补哪个门盒，在确认卡片上一次问完 ───
-
-const sampleSaleService = ({ store, cards, promoted, counter }) => {
-  const { normalizeSalesResult } = require('../src/services/doubaoService');
-  const service = new LarkMvpService({
-    client: {},
-    gateway: {
-      ...liveInventoryGateway([
-        // 卖的这一双只有样品（门盒 0）；同货号 36 / 38 码还有门盒能补。
-        liveRow({ itemNo: '6V637-7', color: '黑', size: 41, state: '样品', productRecordId: 'prod_a', recordId: 'live_sample' }),
-        liveRow({ itemNo: '6V637-7', color: '黑', size: 36, productRecordId: 'prod_a', recordId: 'live_36' }),
-        liveRow({ itemNo: '6V637-7', color: '黑', size: 38, productRecordId: 'prod_a', recordId: 'live_38' }),
-      ]),
-      validateTables: async () => [], create: async () => ({ recordId: 'entry_sample' }), update: async () => undefined,
-    },
-    references: {},
-    posting: { postSale: async () => ({ sourceNo: 'XSD-S', detailRecordIds: ['detail_1'], paymentRecordIds: ['pay_1'] }) },
-    delivery: { deliver: async () => ({ sampleReplacements: [
-      { salesDetailRecordId: 'detail_1', productRecordId: 'prod_a', consumedLiveRecordIds: ['live_sample'] }] }) },
-    recognizer: { parseSalesText: async () => normalizeSalesResult({ intent: 'sale', trade_type: '现货',
-      items: [{ item_no: '6V637-7', color: '黑', size: 41, quantity: 1, actual_amount: 150 }],
-      payments: [{ amount: 150, method: '现金' }], agreed_total: 150 }) },
-    store,
-  });
-  service.sampleReplacements = {
-    applyPreChosen: async (replacements) => {
-      promoted.push(...replacements);
-      return new Set(replacements.map((item) => item.salesDetailRecordId));
-    },
-    notifySampleReplacements: async (_result, _openId, options) => { counter.notices += 1; counter.handled = options?.handledDetailIds; },
-  };
-  service.sendTaskCard = async (_task, card) => { cards.push(card); return 'card_sample'; };
-  service.updateSalesActionCard = async (_task, _event, card) => { cards.push(card); return true; };
-  return service;
-};
-
-const openSampleSale = async (store, taskId) => store.create({ task_id: taskId,
-  chat_type: 'group', chat_id: GROUP_CHAT_ID, type: 'sale',
-  status: 'received', message_id: `om_${taskId}`, sender_open_id: 'ou_1', sent_at: Date.now(),
-  original_text: '6V637-7黑41一双150现金' });
-
-const act = (service, value) => service.handleCardAction({
-  operator: { operator_id: { open_id: 'ou_1' } }, action: { value } });
-
-
-
-// ─── 销售确认卡片第三区：货品资料缺口 ───
-
-const PRODUCT_FIELDS = { number: '编号', itemNo: '货号', color: '颜色',
-  completeness: '信息是否齐备', sampleImage: '样例图' };
-
-// 货品信息现在是**整表读一次**（listAll），不再是逐条 get。
-const gapService = ({ store, cards, productRecord, productListFails = false }) => {
-  const { normalizeSalesResult } = require('../src/services/doubaoService');
-  const base = liveInventoryGateway(
-    [liveRow({ itemNo: '66356', color: '黑', size: 42, productRecordId: 'prod_gap' })],
-    { products: productRecord ? [productRecord] : [] },
-  );
-  const service = new LarkMvpService({
-    client: {},
-    gateway: {
-      ...base,
-      table: (key) => (key === 'product' ? { tableId: 'tbl_product', fields: PRODUCT_FIELDS } : base.table(key)),
-      listAll: async (key) => {
-        if (key === 'product' && productListFails) throw new Error('飞书暂时不可用');
-        return base.listAll(key);
-      },
-      validateTables: async () => [], create: async () => ({ recordId: 'entry_gap' }), update: async () => undefined,
-    },
-    references: {}, posting: {},
-    recognizer: { parseSalesText: async () => normalizeSalesResult({ intent: 'sale', trade_type: '现货',
-      items: [{ item_no: '66356', color: '黑', size: 42, quantity: 1, actual_amount: 99 }],
-      payments: [{ amount: 99, method: '微信' }], agreed_total: 99 }) },
-    store,
-  });
-  service.sendTaskCard = async (_task, card) => { cards.push(card); return 'card_gap'; };
-  return service;
-};
-
-const openSale = (store, taskId) => store.create({ task_id: taskId, chat_type: 'group', chat_id: GROUP_CHAT_ID, type: 'sale', status: 'received',
-  message_id: `om_${taskId}`, sender_open_id: 'ou_1', sent_at: Date.now(), original_text: '66356黑42一双99微信' });
 
 // ⚠️ 2026-10-07 改写（**只因为"位置变了"，不是放宽**）：她拍板把「补货品信息」段落
 //   从确认卡片挪到**点确认之后的卡片**。⭐ 最终口径 = 处理中卡 ＋ 已入账终态卡**都带**
@@ -839,18 +519,13 @@ const makeSpyService = () => {
         },
         messageReaction: { create: spy('im.messageReaction.create', { code: 0, data: {} }) },
       },
-    },
-    gateway: {
+    }, gateway: {
       table: () => ({}),
       listAll: spy('gateway.listAll', []),
       get: spy('gateway.get', null),
       create: spy('gateway.create', { recordId: 'rec_x' }),
       update: spy('gateway.update', {}),
-    },
-    references: {},
-    recognizer: { parseSalesText: spy('recognizer.parseSalesText', { intent: 'sale', items: [] }) },
-    posting: {},
-    store: {
+    }, references: {}, posting: {}, store: {
       get: spy('store.get', null),
       create: spy('store.create', { task_id: 't' }),
       update: spy('store.update', {}),

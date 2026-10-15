@@ -140,11 +140,7 @@ const makeHarness = ({ records = baseRecords(), parseResult, inboundCreated } = 
   const service = new PurchaseArrivalConversationService({
     gateway,
     store,
-    recognizer: {
-      calls: [],
-      async parseArrivalReconciliation(input) { this.calls.push(input); return parseResult; },
-    },
-    sizeReferences: webhook.getSizeReferences,
+        sizeReferences: webhook.getSizeReferences,
     confirmArrival: (taskId, task, operatorOpenId) => webhook.confirmArrival(taskId, task, operatorOpenId),
     markBatchArrived: (batchNo, options) => webhook.orderBatches.markArrived(batchNo, options),
     replyText: async () => 'om_reply',
@@ -164,26 +160,28 @@ const topicBatch = (overrides = {}) => ({
   ...overrides,
 });
 
-// ⭐⭐ 2026-10-08：「实际金额」是**必填**（业务负责人：「必须让用户填」）——
-//   点「是」那条路没有金额输入 ⇒ 这一批还没有金额时 `confirmLocked` 会拒绝（不写空的金额、
-//   一个字都不写业务表）。生产上金额由卡片表单提交进来；这里直接补上前置条件。
+// ⭐⭐ 2026-10-08：「实际金额」是**必填**（业务负责人：「必须让用户填」）。
+// 🔴 2026-10-16（「与 AI 分析有关的都停掉」）**判据迁移**（逐字留痕）：
+//   · 删前逐字：`const arriveAndConfirm = async (harness, text = '都到了') => { await harness.service.handleTopicMessage({ batch: topicBatch(), text, messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1' }); const taskId = taskIdForBatch(BATCH_NO); await seedActualAmount(harness); const result = await harness.service.handleCardAction({ action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: taskId }, { context: { open_message_id: 'om_card_1' } }, 'ou_1'); return { taskId, result }; };`
+//   · 为什么改：那两步（`handleTopicMessage` 解析出计划 → 卡片点「是」）里**第一步已删**
+//     —— 它把她的自然语言喂给模型算差异，正是"AI 解析"。而**第二步（确认入库）是保留项** ✓
+//   · 迁移到哪：`confirmBatchArrival` —— **现役入口**（扫码验收 / 工作台都在用它），
+//     它内部走的是**同一个** `buildPlan` + **同一个** `confirmLocked`（判据一字未动 ✗）。
+//     不传 `scanLines` 时 = 「全部按申请数到货」（`{ same: true, differences: [] }`），
+//     与改前那些用例的 `parseResult` **逐字同义** ✓
+//   · 依据=业务负责人 2026-10-16 逐字「**都停掉，与 AI 分析有关的都停掉**」＋「**连代码一起删**」。
 const AMOUNT = 12800;
-const seedActualAmount = async (harness, amount = AMOUNT) => {
-  await harness.store.update(taskIdForBatch(BATCH_NO), { actual_amount: amount });
-  return amount;
-};
 
-/** 说一句话 → 点卡片「是」。返回 { taskId, result }。 */
-const arriveAndConfirm = async (harness, text = '都到了') => {
-  await harness.service.handleTopicMessage({
-    batch: topicBatch(), text, messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1',
-  });
+/** 现役入口一次性验收（= 改前"一句话 → 点卡片「是」"两步的同义迁移）。返回 { taskId, result }。 */
+const arriveAndConfirm = async (harness, { scanLines = null, acceptanceText = '都到了', batch = null } = {}) => {
   const taskId = taskIdForBatch(BATCH_NO);
-  await seedActualAmount(harness);
-  const result = await harness.service.handleCardAction(
-    { action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: taskId },
-    { context: { open_message_id: 'om_card_1' } }, 'ou_1',
-  );
+  const result = await harness.service.confirmBatchArrival({
+    batch: batch || topicBatch(),
+    acceptanceText,
+    actualAmount: AMOUNT,
+    operatorOpenId: 'ou_1',
+    ...(scanLines ? { scanLines } : {}),
+  });
   return { taskId, result };
 };
 
@@ -196,9 +194,9 @@ test('① 点「是」之后：到货信息的落点 = **「报货批次」那�
     // 12 件那种现场：她说完差异 → 实际数按申请数算。
     parseResult: { complete: true, same: true, differences: [] },
   });
-  const { result } = await arriveAndConfirm(harness, '都到了\n完毕');
+  const { result } = await arriveAndConfirm(harness, { acceptanceText: '都到了\n完毕' });
 
-  assert.equal(result.toast.type, 'success');
+  assert.equal(result.ok, true, '验收成功（改前那一步是卡片 toast，现役入口是 ok）');
   const fields = batchFields(harness.records);
   // ⛔ 2026-10-09：这两列在生产真表上已经被删掉 ⇒ **一个字都不许写**
   //   （不是"写了空值"，而是根本没进那次 values）。
@@ -346,32 +344,31 @@ test('⑤ 12 件全链路：3 行实际 0 双 → 其余 9 行**加库存**，�
       fields: { 报货批次号: [BATCH_RECORD_ID], 编号: [row.productId], 尺码: sizeLink(row.size), 数量: 1 },
     })),
   };
-  const harness = makeHarness({
-    records,
-    parseResult: {
-      complete: true,
-      same: false,
-      differences: [
-        { item_no: 'XHB8090', color: '黑', size: 38, type: 'less', quantity: 1 },
-        { item_no: 'XHB8091', color: '棕', size: 39, type: 'less', quantity: 1 },
-        { item_no: 'XHB8091', color: '棕', size: 40, type: 'less', quantity: 1 },
-      ],
-    },
-  });
+  const harness = makeHarness({ records });
 
-  await harness.service.handleTopicMessage({
+  // 🔴 2026-10-16 判据迁移（逐字留痕）：
+  //   · 删前逐字：`parseResult: { complete: true, same: false, differences: [
+  //       { item_no: 'XHB8090', color: '黑', size: 38, type: 'less', quantity: 1 },
+  //       { item_no: 'XHB8091', color: '棕', size: 39, type: 'less', quantity: 1 },
+  //       { item_no: 'XHB8091', color: '棕', size: 40, type: 'less', quantity: 1 } ] }`
+  //     ＋ `handleTopicMessage({ text: '8230黑色少一双38码\n93827黑色少39 40码各一双\n完毕' })`。
+  //   · 为什么改：那是**模型输出 → 算差异**（AI 解析）⇒ 已删 ✗
+  //   · 迁移到哪：`scanLines` = **逐码实际到货**（扫码验收那条**现役**入口）——
+  //     "12 行里 3 行 0 双"用**数据**表达：只列出扫到的 9 行，没扫到的行 = 0 ✓
+  //     （`buildPlan` 的 `scanLines` 分支与 `differences` 分支是**同一个函数的两条入参**，
+  //       产出的 `plan.rows` 形状逐字相同 ⇒ 下面每一条断言**一字未动** ✓）
+  //   · 依据=业务负责人 2026-10-16 逐字「**都停掉，与 AI 分析有关的都停掉**」＋「**连代码一起删**」。
+  const notArrived = new Set(['p2|39', 'p2|40', 'p3|37']);
+  const scanLines = rows
+    .filter((row) => !notArrived.has(`${row.productId}|${row.size}`))
+    .map((row) => ({ product_record_id: row.productId, size: row.size, quantity: 1 }));
+
+  const { result } = await arriveAndConfirm(harness, {
+    scanLines,
     batch: topicBatch({ request_ids: rows.map((row) => row.record_id) }),
-    text: '8230黑色少一双38码\n93827黑色少39 40码各一双\n完毕',
-    messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1',
   });
-  const taskId = taskIdForBatch(BATCH_NO);
-  await seedActualAmount(harness);
-  const result = await harness.service.handleCardAction(
-    { action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: taskId },
-    { context: { open_message_id: 'om_card_1' } }, 'ou_1',
-  );
 
-  assert.equal(result.toast.type, 'success');
+  assert.equal(result.ok, true, '验收成功（改前那一步是卡片 toast，现役入口是 ok）');
   // ⭐ 12 行里 3 行 0 双 → 只有 9 行加库存；**没有**任何入库明细行（那张表已被整表删除）。
   assert.equal(harness.inventory.calls.length, 9, '12 行里 3 行 0 双 → 只给 9 行加库存');
   assert.equal(harness.gateway.writes.filter((item) => item.op === 'create').length, 0,

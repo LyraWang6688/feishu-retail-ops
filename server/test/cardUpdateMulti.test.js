@@ -110,7 +110,7 @@ test('卡片可见内容零变化：header / elements 与改动前（origin/main
 test('patch 出口 ①：采购到货核对接的 `updateCard` 走 updateInteractiveCard，payload 里带 update_multi', async () => {
   const { client, payloads } = capturePatch();
   const service = new LarkMvpService({
-    client, gateway: {}, references: {}, recognizer: {}, store: makeStore(), posting: {},
+    client, gateway: {}, references: {}, store: makeStore(), posting: {},
   });
   const card = larkCards.purchaseArrivalReconcileStatusCard({
     batchNo: 'BH-20261007-0001', message: '已入库 2 双。', template: 'green',
@@ -150,7 +150,7 @@ test('patch 出口 ②：updateInteractiveCard（她点确认后第一次更新�
 
 test('patch 出口 ③：PurchaseWebhookService.updatePurchaseActionCard 打到飞书的 payload 里带 update_multi', async () => {
   const { client, payloads } = capturePatch();
-  const service = new PurchaseWebhookService({ client, gateway: {}, references: {}, recognizer: {} });
+  const service = new PurchaseWebhookService({ client, gateway: {}, references: {} });
   const card = larkCards.purchaseStatusCard({ items: ITEMS }, '采购申请处理中',
     '已收到确认，正在生成采购申请；请勿重复点击。', 'blue');
 
@@ -234,7 +234,7 @@ test('getMessageMeta：payload 只有 message_id，并把 msg_type / deleted / u
     }] },
   });
   const service = new LarkMvpService({
-    client, gateway: {}, references: {}, recognizer: {}, store: makeStore(), posting: {},
+    client, gateway: {}, references: {}, store: makeStore(), posting: {},
   });
 
   const meta = await service.getMessageMeta('om_x100b636b253ca430c453e956f10f224');
@@ -256,7 +256,7 @@ test('getMessageMeta：非 0 / 抛错 / 没接线 一律 `{ok:false}`，**永不
   for (const [label, response, reason] of cases) {
     const { client } = captureMessageGet(response);
     const service = new LarkMvpService({
-      client, gateway: {}, references: {}, recognizer: {}, store: makeStore(), posting: {},
+      client, gateway: {}, references: {}, store: makeStore(), posting: {},
     });
     const meta = await service.getMessageMeta('om_x');
     assert.equal(meta.ok, false, label);
@@ -265,7 +265,7 @@ test('getMessageMeta：非 0 / 抛错 / 没接线 一律 `{ok:false}`，**永不
 
   // 没接线（SDK 里没有 get）/ 空 id：同样只是"读不到"，不许抛。
   const bare = new LarkMvpService({
-    client: {}, gateway: {}, references: {}, recognizer: {}, store: makeStore(), posting: {},
+    client: {}, gateway: {}, references: {}, store: makeStore(), posting: {},
   });
   assert.deepEqual(await bare.getMessageMeta('om_x'), { ok: false, reason: 'sdk_missing' });
   assert.deepEqual(await bare.getMessageMeta(''), { ok: false, reason: 'no_message_id' });
@@ -276,7 +276,7 @@ test('接线：到货核对的 `getMessageMeta` 端口**真的接到了** LarkMv
     code: 0, data: { items: [{ message_id: 'om_card_1', msg_type: 'text', deleted: false }] },
   });
   const service = new LarkMvpService({
-    client, gateway: {}, references: {}, recognizer: {}, store: makeStore(), posting: {},
+    client, gateway: {}, references: {}, store: makeStore(), posting: {},
   });
 
   const meta = await service.arrivalConversation.getMessageMeta('om_card_1');
