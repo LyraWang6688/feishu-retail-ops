@@ -197,7 +197,37 @@ const createScanPageRouter = (options = {}) => {
     ...(Array.isArray(opts.paymentRows) ? { paymentRows: opts.paymentRows } : {}),
     draft: { lines: [] },
   });
+  /**
+   * ⭐⭐ 2026-10-16（task-58 · 业务负责人真机 05:34，逐字）：
+   *   「静态感觉很好，扫描了几个货品二维码，**但是有一个货品点击了之后出现的是这个资金页** ✗」
+   *
+   * 🔴 **为什么非要有这条**：她拉的线上日志里**每一次都打了 `scan.page.viewed`** —— 因为
+   *   "资金页接管"那条路（本文件下面）**也**要先 `service.lookup()`，而 `viewed` 就在 lookup 里打
+   *   （`services/scanPageService.js:1356` / 命中缓存 `:1070`）⇒ **日志长得一模一样**，
+   *   分不出"渲染的是货品页还是资金页" ✗✗ ⇒ 真机再来一次还是只能猜。
+   *
+   * 这条只记**事实**（哪个落点 + 哪条条件命中 + 这次带了哪些查询字段 + 扫的是哪个编号）：
+   *   · **不读表、不判定、不改任何返回** ✗ —— 判定那几行一个字都没动 ✓
+   *   · `query_keys` **只字段名**（与 `app.js:80` 同一口径 ✗ 不记值）
+   *   · `number` = 这次扫的编号 / 记录 ID（与 `scan.page.viewed` 同口径 ✓）
+   *   · 事件名落 `config/scanPage.js` 的 `EVENTS.rendered`（配置先行 ✓）
+   */
+  const logRendered = (req, { page, trigger, number = '' } = {}) => {
+    logInfo(config.events?.rendered || 'scan.page.rendered', {
+      request_id: req?.requestId,
+      page: String(page || ''),
+      trigger: String(trigger || ''),
+      query_keys: Object.keys(req?.query || {}).sort(),
+      number: String(number || ''),
+    });
+  };
   const sendPaymentStep = (res, req, opts = {}) => {
+    // ⭐ 她看到的这一页 = 这条日志记的（**在发页面之前**打 ⇒ 两件事不会分家 ✓）
+    logRendered(req, {
+      page: 'pay',
+      trigger: String(opts.renderedTrigger || 'payment_step'),
+      number: String(scanTargetOf(req)?.value || ''),
+    });
     const target = backTargetFor(req, decodeURIComponent(String(req.params.number || '')));
     // ⚠️ 默认 200 ✓；⭐ 结算没过那一次要 **400**（"她能改"的那一类 ⇒ 与既有口径一致 ✓ 旧行为也是 400 ✓）
     const status = Number(opts.status) === 400 ? 400 : 200;
@@ -706,7 +736,12 @@ const createScanPageRouter = (options = {}) => {
     };
   };
 
-  const sendSuccess = (res, status, payload) => {
+  // ⚠️ `req` 是**第 4 个可选参数**（task-58 加，只为那条 `scan.page.rendered` 日志 —— 成功页 =
+  //    扫码这条链路的第三个落点 ✓）。不传照样能用（老调用点 / 用例不会炸 ✓），只是日志里
+  //    `query_keys` 为空、`number` 为空 —— **判定与页面一个字都不受它影响** ✗。
+  const sendSuccess = (res, status, payload, req = null) => {
+    // ⭐ 成功页 = 她看到的落点之一（先记，再渲染 ⇒ "她看到的"与"日志记的"一致 ✓）
+    logRendered(req, { page: 'success', trigger: 'write_ok' });
     try {
       return sendHtml(res, status, renderSuccess(payload, config));
     } catch (error) {
@@ -1241,6 +1276,11 @@ const createScanPageRouter = (options = {}) => {
     const askedRaw = String(req.query?.from ?? '').trim();
     const explicitRealm = askedRaw !== '';
     let realm = resolveRealm(askedRaw);
+    // ⭐ task-58：**这一页的领域是怎么来的**（只为那条 `scan.page.rendered` 日志，不参与任何判定 ✗）：
+    //   `explicit`   —— URL 上带了 `?from=`（她点的那个 tab）
+    //   `remembered` —— 裸扫 + 她最近一次做过写操作的领域（下面那一支）
+    //   `default`    —— 裸扫且从没记过 ⇒ 缺省（销售）
+    let realmSource = explicitRealm ? 'explicit' : 'default';
     // ⭐ 分阶段耗时（出参）：失败 / 找不到时同样能看出卡在哪一步。
     // ⭐⭐ 2026-10-13（她：加载到中间一直白屏）：**骨架屏开关**（默认关 ⇒ 这一页与改动前逐字相同）。
     //   打开时：**先回骨架**（不读任何表）⇒ 她立刻有东西看；数据由骨架里那**同一段脚本**
@@ -1256,6 +1296,13 @@ const createScanPageRouter = (options = {}) => {
       && !(skeletonFirstEntryOnly && hasRealmQuery)
       && (lookupInputOf(req).number || lookupInputOf(req).recordId)) {
       logInfo(SCAN_PAGE.events?.skeletonServed || 'scan.page.skeleton', { request_id: requestId });
+      // ⭐ task-58：骨架屏也是一个落点（她那一发 `?data=1` 才是真正的货品页）——
+      //   两条都留痕，才分得出"这一发只是骨架"与"这一发已经出货品页" ✓
+      logRendered(req, {
+        page: 'skeleton',
+        trigger: 'skeleton_first_entry',
+        number: String(lookupInputOf(req).number || lookupInputOf(req).recordId || ''),
+      });
       return sendHtml(res, 200, renderScanSkeleton(lookupInputOf(req), config));
     }
     // ⭐⭐ 2026-10-14（业务负责人：**点「提交这一单」只到资金页**）：她**刷新**这一页时，
@@ -1309,6 +1356,11 @@ const createScanPageRouter = (options = {}) => {
               realm,
               submitKey: writeService?.sessions?.submitKeyFor?.(openIdOf(req), pendingSession, 'sale') || '',
               count: pendingLines.length,
+              // ⭐⭐ task-58：**哪一条判据把她顶到了资金页** —— 就是上面那个三选一。
+              //   （她真机再出现这个现象时，grep `scan.page.rendered` 一眼看出是哪种形状 ✓）
+              renderedTrigger: pendingLines.length > 0
+                ? 'pending_mark:lines'
+                : (hasOrder ? 'pending_mark:order' : 'pending_mark:status_not_submitted'),
             });
           }
           // 🔴 **残标记**（0 行 + 没单号 + 已 `submitted`）⇒ **不给资金页**，并把标记清成"**没走到资金这一步**"
@@ -1363,10 +1415,21 @@ const createScanPageRouter = (options = {}) => {
         if (view.reason === 'empty') {
           logWarn(config.events.badNumber, { request_id: requestId, reason: 'empty_number' });
           service.logTiming?.(timing, { requestId, found: false });
+          // ⭐ task-58：**没渲染出货品页**这件事也要留痕（否则"扫了但一条 rendered 都没有"）
+          logRendered(req, {
+            page: 'bad_number',
+            trigger: 'lookup_bad_number',
+            number: String(lookupInputOf(req).number || lookupInputOf(req).recordId || ''),
+          });
           return badNumberPage(res, 400, requestId);
         }
         service.logTiming?.(timing, { requestId, found: false });
         // ⭐ `/r/{recordId}` 那条路读不到记录（记录被删 / 跨 Base）⇒ **同一条人话出口**，不是 500。
+        logRendered(req, {
+          page: 'not_found',
+          trigger: 'lookup_not_found',
+          number: String(view.number || lookupInputOf(req).recordId || ''),
+        });
         return notFoundPage(res, requestId, {
           number: view.number, fallback: view.fallback, realm, target: scanTargetOf(req),
         });
@@ -1380,7 +1443,7 @@ const createScanPageRouter = (options = {}) => {
         const remembered = await writeService?.sessions?.get?.(openIdOf(req))
           .then((session) => String(session?.last_realm || '').trim())
           .catch(() => '');
-        if (remembered) realm = resolveRealm(remembered);
+        if (remembered) { realm = resolveRealm(remembered); realmSource = 'remembered'; }
       }
       const write = await buildWriteContext(req, view, realm);
       // ⚠️ 验收模式那一块**只用到文案 / 字段名 / 动作名**（它们都在配置里）——
@@ -1412,11 +1475,25 @@ const createScanPageRouter = (options = {}) => {
         print: printContext,
       });
       timing.render_ms = Math.max(0, Date.now() - renderStartedAt);
+      // ⭐⭐ task-58：**这就是"她最后看到货品页"那条正证据** —— 与资金页那条（`page:'pay'`）
+      //   在日志里一眼分得开 ✓（改前两条都只打 `scan.page.viewed`，长得一模一样 ✗）
+      logRendered(req, {
+        page: 'goods',
+        // `realm:<领域>:<explicit|remembered|default>` —— 说得出"这一页是哪个领域、怎么来的"
+        trigger: `realm:${realm}:${realmSource}`,
+        number: String(view.number || lookupInputOf(req).recordId || ''),
+      });
       // `total_ms` = 取数 + 渲染（整条链路的墙钟）—— 她要的是"这一页到底花了多久"。
       timing.total_ms = (Number(timing.total_ms) || 0) + timing.render_ms;
       service.logTiming?.(timing, { requestId, found: true });
       return sendHtml(res, 200, html);
     } catch (error) {
+      // ⭐ task-58：**没渲染出页面**也要留痕（不然"扫了、日志里一条 rendered 都没有"）
+      logRendered(req, {
+        page: 'failed',
+        trigger: 'render_failed',
+        number: String(lookupInputOf(req).number || lookupInputOf(req).recordId || ''),
+      });
       return respondFailure(res, error, requestId, timing);
     }
   });
@@ -1919,15 +1996,15 @@ const createScanPageRouter = (options = {}) => {
               { orderNo: paidOrderNo || '—' },
             );
             // ⚠️ 走**同一个** `paidPayload`（不另起一份 payload ✗）⇒ 成功页来源仍只有一处 ✓
-            return sendSuccess(res, 200, paidPayload('', asyncSentence));
+            return sendSuccess(res, 200, paidPayload('', asyncSentence), req);
           }
           // ⭐ 成功页那句人话：与"提交成功"那条**逐字同形**（她 2026-10-12 定的那一句 ✓）
           //   ⚠️ `paidPayload(retryHint)` 的参数就是**那句提示** ✓ 不是 note 文本 ✗
-          return sendSuccess(res, 200, paidPayload(writeConfig.texts.submittedNextHint));
+          return sendSuccess(res, 200, paidPayload(writeConfig.texts.submittedNextHint), req);
         }
         // ⭐ 没填金额（或行数为 0）⇒ **待补充**：**一个字都不写**、成功页照给、**不报错** ✓
         if (!rowsToPay.length) {
-          return sendSuccess(res, 200, paidPayload(config.paymentStep?.payPendingNote));
+          return sendSuccess(res, 200, paidPayload(config.paymentStep?.payPendingNote), req);
         }
         try {
           // eslint-disable-next-line no-await-in-loop
@@ -1960,7 +2037,7 @@ const createScanPageRouter = (options = {}) => {
           });
         }
         // ✅ 写成功 ⇒ 这**才**能说"已收" ✓
-        return sendSuccess(res, 200, paidPayload(config.paymentStep?.paidNote));
+        return sendSuccess(res, 200, paidPayload(config.paymentStep?.paidNote), req);
       }
 
       // ── 第 2 步【跳过（稍后去工作台补）】⇒ 成功页 ──────────────────────────────
@@ -2135,7 +2212,7 @@ const createScanPageRouter = (options = {}) => {
           ),
           backLabel: writeConfig.texts.submittedRecordAnother,
           backHint: writeConfig.texts.submittedRecordAnotherHint,
-        });
+        }, req);
       }
 
       /**
@@ -2491,7 +2568,7 @@ return sendPaymentStep(res, req, {
           ),
           backLabel: texts.submittedRecordAnother,
           backHint: texts.submittedRecordAnotherHint,
-        });
+        }, req);
       }
 
       // ── 补货报单 ────────────────────────────────────────────────────────────
@@ -2592,7 +2669,7 @@ return sendPaymentStep(res, req, {
           // ⭐ 补货成功 ⇒ **同样自动回首页**（销售 ✓ 方案 A 三路一致）
           ...successReturnFields(req, backTargetFor(req, decodeURIComponent(String(req.params.number || '')))),
           requestId,
-        });
+        }, req);
       }
 
       // ── ⭐ 采购退货（业务负责人 2026-10-11：「和"报货"逻辑一样，也走扫码」）────────
@@ -2689,7 +2766,7 @@ return sendPaymentStep(res, req, {
           // ⭐ 退货成功 ⇒ **同样自动回首页**（销售 ✓ 方案 A 三路一致）
           ...successReturnFields(req, backTargetFor(req, decodeURIComponent(String(req.params.number || '')))),
           requestId,
-        });
+        }, req);
       }
 
       // ⭐⭐ 2026-10-14：**所有动作分支都不匹配 ⇒ 照旧给人话**（`unknownActionFailure`）——
