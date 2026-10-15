@@ -37,6 +37,7 @@
 | [return-block-repro-2026-10-15.md](return-block-repro-2026-10-15.md) | 退货块"还是一个退货按钮" —— 本地实测渲染报告（task-41） |
 | [return-block-task44-2026-10-16.md](return-block-task44-2026-10-16.md) | task-44 交付说明：退货块"空块"是**我 task-41 的误报**（已更正）+ 生产真数据（未能在本机执行） |
 | [return-tab-root-cause-2026-10-16.md](return-tab-root-cause-2026-10-16.md) | task-47（第二刀）：用**她日志里的真实形状**渲染退货块 —— **代码路径本来就直出表单** ✓（附真实日志行） |
+| [stale-worktrees-audit-2026-10-16.md](stale-worktrees-audit-2026-10-16.md) | 陈旧 worktree / 孤儿分支逐个判定（只读 · 2026-10-16）|
 | [task-53-jump-gate-plan-2026-10-16.md](task-53-jump-gate-plan-2026-10-16.md) | task-53 改动计划 + 判据草案 —— P0 第二刀「跳转前置判定」＋ 恢复 `⑨` 期望 400 |
 | [telemetry-audit-2026-10-15.md](telemetry-audit-2026-10-15.md) | 埋点体检表 · 2026-10-15（task-48） |
 | [workbench-domains-trim-three-fixes-2026-10-16.md](workbench-domains-trim-three-fixes-2026-10-16.md) | 工作台 · 货品（domains 页）三处改动（业务负责人 2026-10-16 截图 + 亲口逐字） |
