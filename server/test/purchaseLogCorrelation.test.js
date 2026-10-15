@@ -179,8 +179,6 @@ const makeWorld = (seed = {}, options = {}) => {
     store,
     inventory,
     references: options.references || fakeReferences,
-    recognizer: options.recognizer
-      || { parsePurchaseReportText: async () => [{ size: 36, quantity: 2 }, { size: 37, quantity: 1 }] },
     images: { render: async ({ supplierName }) => Buffer.from(`fake-png:${supplierName || ''}`) },
     // 群 id 走构造入参（显式沙箱通道），不读环境变量：并发用例之间不会互相污染。
     sandboxChatId: 'oc_test_purchase_group',

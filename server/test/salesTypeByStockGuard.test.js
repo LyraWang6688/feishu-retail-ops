@@ -22,7 +22,6 @@ const { resolvePendingDealPushConfig } = require('../src/config/pendingDealPush'
 const { resolveSalesColorChoiceConfig } = require('../src/config/salesColorChoice');
 const { resolveSecondDeliveryCardConfig } = require('../src/config/secondDeliveryCard');
 const { SALES_CARD_FACTS_DEFAULTS } = require('../src/config/salesCardFacts');
-const { SALES_MISSING_INFO_DEFAULTS, renderSalesMissingInfo } = require('../src/config/salesMissingInfoText');
 const { SALES_MOVEMENTS, SALES_TRADE_TYPE_CODES, tradeTypeCodeFromLabel } = require('../src/config/salesMovements');
 
 const FORBIDDEN = ['未付', '预付', 'SALE_UNPAID'];
@@ -81,26 +80,21 @@ test('① 待处理单推送渲染 0 命中「未付 / 预付」（分区标题�
   assert.match(text, /【现货待收】1 笔/);
 });
 
-test('① 「销售信息还缺…」追问渲染 0 命中「未付 / 预付」（含"哪一件付了定金"那句）', () => {
-  const { SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS } = require('../src/config/salesTradeTypePolicy');
-  const rendered = renderSalesMissingInfo({
-    missingFields: [SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS, 'items[0].actual_amount', '请明确已经收到的定金金额'],
-    items: [{ item_no: 'A100', size: 38 }, { item_no: 'B200', size: 40 }],
-  });
-  const text = [rendered.text, ...rendered.lines].join('\n');
-  for (const word of FORBIDDEN_IN_TEXT) {
-    assert.ok(!text.includes(word), `追问文案里出现了「${word}」：\n${text}`);
-  }
-  assert.match(text, /哪一件付了定金/);
-});
-
-test('② 配置默认值 0 命中：三段文案 / 颜色候选 / 待处理单推送 / 成交提醒卡 / 追问文案', () => {
+// 🔴 2026-10-16（「与 AI 分析有关的都停掉」）：**删掉一条**（判据迁移，逐字留痕）——
+//   · 删前逐字：`test('① 「销售信息还缺…」追问渲染 0 命中「未付 / 预付」（含"哪一件付了定金"那句）', …)`
+//   · 为什么删：它断言的**渲染结果**由 `config/salesMissingInfoText.renderSalesMissingInfo` 产出，
+//     而那正是**"销售文字录单缺项追问"那一层文案**（AI 解析输出 `missing_fields` → 翻人话）；
+//     该配置随 AI 解析整体删除 ⇒ 这条判据**没有可断言的对象**了 ✗
+//   · 依据=业务负责人 2026-10-16 逐字：「**都停掉，与 AI 分析有关的都停掉**」＋「**连代码一起删**」
+//   · ⭐ 它的**红线本意**（用户可见文案里不许出现「未付 / 预付」）**没有被放宽**：
+//     ① ② ③ 三条照旧逐条断言**在用的**卡片 / 推送 / 配置 / 源码字面量 ✓
+//   · ⚠️ 同一条判据的**残留哨兵**已迁到 `test/aiParsingRemoval.test.js` AC-2（塞回即红）✓
+test('② 配置默认值 0 命中：三段文案 / 颜色候选 / 待处理单推送 / 成交提醒卡（追问文案那份配置 2026-10-16 已随 AI 解析删除）', () => {
   const blobs = [
     JSON.stringify(SALES_CARD_FACTS_DEFAULTS),
     JSON.stringify(resolveSalesColorChoiceConfig({})),
     JSON.stringify(resolvePendingDealPushConfig({})),
     JSON.stringify(resolveSecondDeliveryCardConfig({})),
-    JSON.stringify(SALES_MISSING_INFO_DEFAULTS),
   ];
   for (const [index, blob] of blobs.entries()) {
     for (const word of FORBIDDEN_IN_TEXT) {

@@ -52,16 +52,29 @@ test('哨兵-2 12 个零读取点键在 .env.example / 代码里 0 残留（能�
   }
 });
 
-test('哨兵-3 ⭐ 反方向：`SALES_MISSING_INFO_*` / `PURCHASE_GROUP_NOTICE_*` / `TEXT_LLM*` 一族没被误杀（能真红：删掉一族 ⇒ 红）', () => {
+// 🔴 2026-10-16（「与 AI 分析有关的都停掉」）**成对迁移**（逐字留痕）——
+//   · 改前逐字：`test('哨兵-3 ⭐ 反方向：\`SALES_MISSING_INFO_*\` / \`PURCHASE_GROUP_NOTICE_*\` / \`TEXT_LLM*\` 一族没被误杀（能真红：删掉一族 ⇒ 红）', …)`
+//     其中三行断言：
+//       `assert.ok((env.match(/^SALES_MISSING_INFO_/gm) || []).length >= 20, 'SALES_MISSING_INFO_* 族必须还在 ✓');`
+//       `assert.ok((env.match(/^PURCHASE_GROUP_NOTICE_/gm) || []).length >= 3, 'PURCHASE_GROUP_NOTICE_* 族必须还在 ✓');`
+//       `assert.ok((env.match(/^TEXT_LLM/gm) || []).length >= 3, 'TEXT_LLM* 族必须还在 ✓');`
+//   · 为什么必须改：这三族里 `SALES_MISSING_INFO_*` 与 `TEXT_LLM*` 的**读取实现**
+//     （`config/salesMissingInfoText.js` / `config/llmModels.js`）**本次已删** ——
+//     它们服务的正是 AI 解析那条链路。**读取实现没了，配置族就不该"必须还在"** ✗
+//     （留着 = 死配置 + 反向哨兵指着已删文件 ⇒ 文件一读就 ENOENT 假红）。
+//   · 依据=业务负责人 2026-10-16 逐字：「**都停掉，与 AI 分析有关的都停掉**」＋「**连代码一起删**」。
+//   · ⭐ **判据本意没丢**（反方向哨兵的责任 = 挡住"按前缀动态拼的族被误杀"）：
+//     ① 保留下来、**仍在被读**的 `PURCHASE_GROUP_NOTICE_*` 族照旧 >= 3 ✓
+//     ② 被删的两族改成**正方向**钉住（`test/aiParsingRemoval.test.js` AC-6："塞回即红"）✓
+test('哨兵-3 ⭐ 反方向：`PURCHASE_GROUP_NOTICE_*` 一族没被误杀（能真红：删掉这一族 ⇒ 红）', () => {
   const env = read('.env.example');
-  // 三族都是「按前缀动态拼」读的（审计 §7.1）⇒ 字面量 grep 0 命中**不代表没人读** ✗
-  assert.ok((env.match(/^SALES_MISSING_INFO_/gm) || []).length >= 20, 'SALES_MISSING_INFO_* 族必须还在 ✓');
+  // 这一族是「按前缀动态拼」读的（审计 §7.1）⇒ 字面量 grep 0 命中**不代表没人读** ✗
   assert.ok((env.match(/^PURCHASE_GROUP_NOTICE_/gm) || []).length >= 3, 'PURCHASE_GROUP_NOTICE_* 族必须还在 ✓');
-  assert.ok((env.match(/^TEXT_LLM/gm) || []).length >= 3, 'TEXT_LLM* 族必须还在 ✓');
-  const src = read('server/src/config/salesMissingInfoText.js') + read('server/src/config/purchaseGroupNoticeText.js')
-    + read('server/src/config/llmModels.js');
-  assert.match(src, /SALES_MISSING_INFO_/, '读取实现仍在 ✓');
+  const src = read('server/src/config/purchaseGroupNoticeText.js');
   assert.match(src, /PURCHASE_GROUP_NOTICE_/, '读取实现仍在 ✓');
+  // ⚠️ 与它同批被判"必须还在"的另外两族**已随 AI 解析删除**（见上面的迁移留痕）：
+  //    `SALES_MISSING_INFO_*`（缺项追问渲染，读它的配置模块已删）· `TEXT_LLM*`（文字模型）
+  //    ⇒ 它们**不该**在这条反方向哨兵里；正方向的"塞回即红"在 aiParsingRemoval AC-6 ✓
 });
 
 test('哨兵-4 `V1ReferenceResolver.findLiveInventory` 已删、能力由 InventoryService 承载（能真红：塞回那个方法 ⇒ 红）', () => {

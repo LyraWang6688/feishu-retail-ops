@@ -122,7 +122,6 @@ const makeHarness = () => {
     posting: {},
     // 「第二次交付」在构造时会再包一层 delivery，这里不需要它。
     secondDelivery: {},
-    recognizer: { parseSalesText: async () => { parseCalls += 1; return { intent: 'unsupported', items: [] }; } },
     store: tempStore('private-chat-lark-'),
     botOpenId: TEST_BOT_OPEN_ID,
     salesGroupThreads: new SalesGroupThreadLocator({ store: tempStore('private-chat-threads-') }),

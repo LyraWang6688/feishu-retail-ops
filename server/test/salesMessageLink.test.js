@@ -81,7 +81,7 @@ test('replyMessage 把发送响应里的 message_app_link 一起交回来（历�
   const service = new LarkMvpService({
     client,
     gateway: { table: () => ({}), listAll: async () => [], validateTables: async () => [] },
-    posting: {}, recognizer: {},
+    posting: {},
     store: tempStore('sales-link-reply-'),
     botOpenId: 'ou_test',
     salesGroupThreads: new SalesGroupThreadLocator({ store: tempStore('sales-link-reply-map-') }),
@@ -100,7 +100,7 @@ test('发送响应里没有 message_app_link 时交回空串（不抛、不编�
   const service = new LarkMvpService({
     client,
     gateway: { table: () => ({}), listAll: async () => [], validateTables: async () => [] },
-    posting: {}, recognizer: {},
+    posting: {},
     store: tempStore('sales-link-nolink-'),
     botOpenId: 'ou_test',
     salesGroupThreads: new SalesGroupThreadLocator({ store: tempStore('sales-link-nolink-map-') }),
@@ -280,7 +280,7 @@ const wiredService = ({ chatType = 'group', appLink = APP_LINK } = {}) => {
   };
   const locator = new SalesGroupThreadLocator({ store: tempStore('sales-link-wired-map-') });
   const service = new LarkMvpService({
-    client, gateway, posting: {}, recognizer: {},
+    client, gateway, posting: {},
     store: tempStore('sales-link-wired-'),
     botOpenId: 'ou_test_bot',
     salesGroupThreads: locator,

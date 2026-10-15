@@ -192,7 +192,7 @@ const makeHarness = ({ seed, draft, status = 'posted', inventoryOptions = {},
   const service = new LarkMvpService({
     client, gateway, store,
     references: new V1ReferenceResolver(gateway),
-    recognizer: {}, posting: {},
+    posting: {},
     delivery: salesDelivery,
     secondDelivery,
     purchaseBatchLocatorStore: tmpStore('confirm-deal-locator-'),
@@ -462,7 +462,7 @@ test('预定单货到了再点一次：这次真成交（上一次什么都没�
   const store = tmpStore('confirm-deal-retry-');
   const salesDelivery = new SalesDeliveryService({ gateway, inventory });
   const service = new LarkMvpService({
-    client, gateway, store, references: new V1ReferenceResolver(gateway), recognizer: {}, posting: {},
+    client, gateway, store, references: new V1ReferenceResolver(gateway), posting: {},
     delivery: salesDelivery,
     secondDelivery: new SecondDeliveryService({ gateway, delivery: salesDelivery, store: tmpStore('cd2-'), chatId: '' }),
     purchaseBatchLocatorStore: tmpStore('cd3-'), salesGroupThreadStore: tmpStore('cd4-'),

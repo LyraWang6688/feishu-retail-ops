@@ -216,7 +216,16 @@ test('AC-H1（F-1/F-2）报告与退出码集中在纯函数里：失败 ⇒ 非
 });
 
 test('AC-H2（F-1/F-2）群场景脚本：用了那个纯函数（不能自己算一套、退出码不能丢）', async () => {
-  const source = fs.readFileSync(path.join(scriptsDir, 'e2e-sales-group-scenarios.mjs'), 'utf8');
+  // 🔴 2026-10-16（「与 AI 分析有关的都停掉」）：这个脚本**已整体删除** ——
+  //    ① 它驱动的是 **2026-10-12 已退场的群聊销售入口**；
+  //    ② 它 import 的 `config/afterSalesFlow`（本次已删）里那两个符号
+  //       （`AFTER_SALES_CARD_ACTIONS` / `AFTER_SALES_TASK_STATUS`）**本来就不在那份配置的导出里**
+  //       ⇒ 这个脚本**在改动前就已经跑不起来了**（import 之后一用就是 undefined）。
+  //    ⇒ 与 AC-H3 同一条既成口径（"已归档/删除 ⇒ 也算处置过"）：**文件不在就跳过** ✓
+  //    依据=业务负责人 2026-10-16 逐字「**连代码一起删**」。
+  const file = path.join(scriptsDir, 'e2e-sales-group-scenarios.mjs');
+  if (!fs.existsSync(file)) return;                           // 已归档/删除 ⇒ 也算处置过
+  const source = fs.readFileSync(file, 'utf8');
   assert.ok(source.includes("scripts/lib/e2e-report.mjs") || source.includes('./lib/e2e-report.mjs'),
     '群场景脚本要 import 那个报告/退出码模块（唯一判定处）');
   assert.ok(/process\.exitCode\s*=\s*exitCodeFor\(/.test(source),
@@ -256,7 +265,10 @@ test('AC-H5（F-6）闸门必须在创建客户端**之前**（缺凭证也要�
 });
 
 test('AC-H6（F-9）`--real-im` 必须显式开闸才生效（默认**禁止**发真群）', () => {
-  const source = fs.readFileSync(path.join(scriptsDir, 'e2e-sales-group-scenarios.mjs'), 'utf8');
+  // 🔴 2026-10-16：脚本已整体删除 ⇒ **文件不在就跳过**（口径同 AC-H2 / AC-H3）✓
+  const file = path.join(scriptsDir, 'e2e-sales-group-scenarios.mjs');
+  if (!fs.existsSync(file)) return;                           // 已归档/删除 ⇒ 也算处置过
+  const source = fs.readFileSync(file, 'utf8');
   assert.ok(/FEISHU_E2E_ALLOW_REAL_IM/.test(source),
     'F-9：本机 .env 里有**真实**的群/机器人 id ⇒ `--real-im` 要再用一个显式环境变量开闸');
 });

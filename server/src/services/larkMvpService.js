@@ -4,7 +4,11 @@ const os = require('node:os');
 const path = require('node:path');
 const lark = require('@larksuiteoapi/node-sdk');
 const { larkLogger } = require('../utils/larkLogger');
-const doubaoService = require('./doubaoService');
+// 🔴 2026-10-16：「与 AI 分析有关的都停掉」⇒ `require('./doubaoService')`（文字解析层）已删。
+//    它是本类**唯一**的模型接线（`this.recognizer`），而 recognizer 的两个去处
+//    （`purchaseWebhooks` / `arrivalConversation`）**都不再有人读它**。
+//    依据=业务负责人 2026-10-16 逐字「**连代码一起删**」；她在**扫码 / 表单 / 前端 UI** 之外
+//    的录入方式「**其余录入方式不支持**」。详见 `docs/ai-parsing-removal-2026-10-16.md`。
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { updateInteractiveCard } = require('../infrastructure/interactiveCardFeedback');
@@ -54,16 +58,19 @@ const {
 // ⚠️ 2026-10-11（清群聊入口 C0）：`withSalesReadRetry` 随 `listSalesOrderNos` 一起搬去
 //    `services/salesEntryService.js`（本文件不再直接用它）。
 const { isDataNotReady } = require('./salesReadRetry');
-// 「销售信息还缺…」那句追问的**文案**：把 `missing_fields` 这份**机器清单**
-//（里面有 `items[0].actual_amount` 这类代码标识符）翻成**一件事一行的人话**。
-// ⚠️ 它**只翻译、不判断** —— 什么情况下报缺项、报几条，一字未动（见该文件头注释）。
-const { renderSalesMissingInfo } = require('../config/salesMissingInfoText');
 // ⚠️ 2026-10-11（清群聊入口 C0）：`allocateSalesOrderNo` 随 `createSalesEntryWithOrderNo`
 //    一起搬去 `services/salesEntryService.js`（本文件不再直接用它）。
 const { resolveAccessory } = require('./accessoryMatchPolicy');
 const { AfterSalesService } = require('./afterSalesService');
-const { isAfterSalesIntent, normalizeMessageIntent } = require('../config/saleIntents');
-const { isSalesCandidate, UNSUPPORTED_INTENT_REPLY } = require('../config/messageGate');
+// 🔴 2026-10-16（「与 AI 分析有关的都停掉」）：这里原先还有三行 import ——
+//    `config/salesMissingInfoText` 的 `renderSalesMissingInfo`、
+//    `config/saleIntents` 的 `isAfterSalesIntent` / `normalizeMessageIntent`、
+//    `config/messageGate` 的 `isSalesCandidate` / `UNSUPPORTED_INTENT_REPLY`
+//    —— 它们的调用方是**销售文字录单那条链路**（`acceptSalesText` / `processSalesTask`），
+//       而那条链路 **2026-10-12 清群聊入口时就已整体退场**（方法本身都不在了）
+//       ⇒ 这三行 import 从那天起就是**孤儿**，随这次删除一起清掉。
+//    依据=业务负责人 2026-10-16 逐字：「**都停掉，与 AI 分析有关的都停掉**……**其余录入方式不支持**」
+//    ＋「**连代码一起删**」。详见 `docs/ai-parsing-removal-2026-10-16.md`。
 // ⭐ 未知 / 已退场卡片动作的兜底人话（2026-10-12，业务负责人明确要的）：文案可配。
 const { UNKNOWN_CARD_ACTION_TOAST } = require('../config/unknownCardAction');
 const { salesStatusCard, keepOnlyCardButton, SECOND_DELIVERY_ACTION } = require('../utils/larkCards');
@@ -161,13 +168,12 @@ const aggregateRecognizedItems = (items) => {
   return [...map.values()];
 };
 
-// 入口闸门：**含数字** 或 **含业务关键词** 的消息才送进 AI。
-//
-// 原来是"必须含数字"，会误伤"我要退货""查一下我买的鞋"这类明确诉求 —— 它们
-// 被静默忽略，用户以为机器人坏了。关键词表在 config/messageGate（配置先行），
-// 这里只做一行委托，加词不去改函数。
-// 名字沿用 looksLikeSalesText：它是既有导出，改语义不改名字，避免动无关调用点。
-const looksLikeSalesText = (text) => isSalesCandidate(text);
+// 🔴 2026-10-16：这里原先有 `looksLikeSalesText = (text) => isSalesCandidate(text)`
+//    （消息入口闸门：含数字 / 含业务关键词才送进 AI）。它是**销售文字录单入口的闸门**，
+//    而那条入口 2026-10-12 已退场 ⇒ 它随 `config/messageGate` 一起删除。
+//    依据=她 2026-10-16 逐字「**都停掉，与 AI 分析有关的都停掉**」「**连代码一起删**」。
+//    ⚠️ 它的旧判据**迁到了** `test/aiParsingRemoval.test.js` 的 AC-2/AC-3（反向钉"塞回即红"）✓
+
 
 // 🔴 2026-10-07「私聊链路移除」：原来的 `shanghaiDay(now)` 只有 `sendTodaySales`（机器人菜单
 //    「今日销售」，只有私聊点得到）在用，随它一起删了。上海自然日的算法仍在
@@ -216,7 +222,11 @@ class LarkMvpService {
     }
     this.gateway = options.gateway || new V1BitableGateway({ client: this.client });
     this.references = options.references || new V1ReferenceResolver(this.gateway);
-    this.recognizer = options.recognizer || doubaoService;
+    // 🔴 2026-10-16：`this.recognizer = options.recognizer || doubaoService` 已删。
+    //    它原先只被**往下传**（`purchaseWebhooks` / `arrivalConversation`），
+    //    而那两个收方对它的使用**都随各自的 AI 解析入口退场了**（采购 2026-10-09、
+    //    到货对话 2026-10-12）⇒ 本类现在**不持有、也不传**任何模型。
+    //    依据=她 2026-10-16 逐字「**都停掉，与 AI 分析有关的都停掉**」。
     this.posting = options.posting || new V1PostingService({ gateway: this.gateway, references: this.references });
     this.delivery = options.delivery || new SalesDeliveryService({ gateway: this.gateway });
     // 「第二次交付」：已入账、尚未完成履约的单点「成交」→ 补收款 + 交付。
@@ -229,7 +239,9 @@ class LarkMvpService {
       client: this.client,
       gateway: this.gateway,
       references: this.references,
-      recognizer: this.recognizer,
+      // 🔴 2026-10-16：`recognizer` 不再传 —— `PurchaseWebhookService` 自 2026-10-09 起
+      //    就**不读**这个选项了（它唯一的调用方 `parseReportQuantities` 已随入口退场），
+      //    传一个没人读的模型进来只会让人以为"采购还在用 AI" ✗
     });
     // 「货品信息.标签二维码」的自动补齐（2026-10-08 业务负责人定的能力）。
     // ⚠️ 只**新增**这一个成员：上面报货那条链路（`purchaseWebhooks`）一行都没动。
@@ -318,7 +330,9 @@ class LarkMvpService {
       // PurchaseWebhookService 的 store。`|| this.store` 只是给"注入了采购服务桩"
       // 的单元测试兜底（那种桩不跑本链路），生产上永远走前面那一个。
       store: this.purchaseWebhooks.store || this.store,
-      recognizer: this.recognizer,
+      // 🔴 2026-10-16：`recognizer` 不再传（"群话题对话式核对"的**解析**那一半已删，
+      //    这个 service 现在只保留**确认**那一半：`confirmLocked` / `confirmBatchArrival`）。
+      //    依据=她 2026-10-16 逐字「**都停掉，与 AI 分析有关的都停掉**」。
       sizeReferences: this.purchaseWebhooks.getSizeReferences,
       confirmArrival: (taskId, task, operatorOpenId) =>
         this.purchaseWebhooks.confirmArrival(taskId, task, operatorOpenId),
@@ -1517,6 +1531,5 @@ module.exports = {
   LarkMvpService,
   aggregateRecognizedItems,
   idFor,
-  looksLikeSalesText,
   parseContent,
 };

@@ -78,7 +78,9 @@
 | [acceptance-into-workbench-full-2026-10-14.md](acceptance-into-workbench-full-2026-10-14.md) | 老验收**整块搬进工作台**（2026-10-14 晚 · 业务负责人逐字） |
 | [accessory-in-workbench-2026-10-14.md](accessory-in-workbench-2026-10-14.md) | 配品迁进工作台「销售 → 配品」子 tab（2026-10-14 晚） |
 | [architecture-audit-2026-10-15.md](architecture-audit-2026-10-15.md) | 架构审计报告（2026-10-15）—— 「保留 / 待删 / 要她定」三类清单 |
+| [ai-parsing-removal-2026-10-16.md](ai-parsing-removal-2026-10-16.md) | 🔴 **「与 AI 分析有关的都停掉」**（业务负责人 2026-10-16，逐字：「**都停掉，与 AI 分析有关的都停掉**，目前我们就是**扫码和表单或者在前端 UI 交互**，**其余录入方式不支持**」；追问后 ① 停掉自动出单 ② **连代码一起删**，照 2026-10-07 停私聊那次）。含 Lead 的事实核对（采购 AI 出单 2026-10-09 已删、群聊文字入口 2026-10-12 已退场 ⇒ **当前运行期没有任何可达的 AI 解析调用**，这一刀 = **删死代码**）、C1–C6 裁决、⭐ **保留清单**（B 类：`purchaseWebhookService` 全体 / 卡片动作骨架 / 扫码链路 / 配品 / 共享落库层 / 9 点推送 …）、**执行顺序 0–6**。🔴 **采购申请的人工入口 = 扫码页「补货」**（`publishPurchaseRequest`，免确认），**不新做工作台表单** |
 | [async-submit-copy-and-plan-2026-10-14.md](async-submit-copy-and-plan-2026-10-14.md) | 异步提交 · 统一文案（2026-10-14 晚 · 业务负责人逐字） |
+| [douyin-voucher-payment-rules-2026-10-16.md](douyin-voucher-payment-rules-2026-10-16.md) | ⭐ **抖音团购券 · 资金页三条口径落地**（业务负责人 2026-10-16 逐字：「差额的计算**按照面值**来」「收款明细里的收款金额**按照平台结算款**来」「抖音团购券是**待平台结算**」）—— 面值算差额 / 平台结算款写那笔收款金额 / 状态写「待平台结算」。⚠️ **本条是补登记**：该文档由 #704 带入 main，但**漏进本索引** ⇒ `docsIndexCompleteness` 的 AC-DI1 在 main 上就是**红的**，这里顺带补上（一个字未改文档正文） |
 | [label-print-entries-2026-10-14.md](label-print-entries-2026-10-14.md) | 「货品 → 标签打印」的入口结构（2026-10-14 晚 · 业务负责人逐字） |
 | [money-page-v2-spec-2026-10-14.md](money-page-v2-spec-2026-10-14.md) | 资金页 v2 · 施工规格（2026-10-14 晚 · 业务负责人逐字） |
 | [multi-item-order-design-2026-10-15.md](multi-item-order-design-2026-10-15.md) | 「一单多货品」设计（单据草稿 + 批量提交 · 共用模块） |

@@ -184,7 +184,6 @@ const makeArrivalHarness = (options = {}) => {
   const service = new PurchaseArrivalConversationService({
     gateway,
     store,
-    recognizer: { parseArrivalReconcile: async () => ({ complete: true, same: true, differences: [] }) },
     sizeReferences: { resolveByNumber: async (size) => ({ recordId: `size_${size}`, size }) },
     confirmArrival: options.confirmArrival || (async (taskId, task) => {
       await store.update(taskId, { status: 'posted' });

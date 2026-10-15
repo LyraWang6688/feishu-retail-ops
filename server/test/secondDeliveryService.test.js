@@ -887,7 +887,7 @@ test('定时器：9 点前不跑，过了 9 点就跑一次', async () => {
 test('卡片动作 confirm_second_delivery 按销售单号分派，不要求草稿 id（并带上卡片消息 id 与日期键）', async () => {
   let captured = null;
   const service = new LarkMvpService({
-    client: {}, gateway: {}, references: {}, posting: {}, recognizer: {},
+    client: {}, gateway: {}, references: {}, posting: {},
     store: tmpStore('second-delivery-mvp-'),
     purchaseBatchLocatorStore: tmpStore('second-delivery-locator-'),
     secondDelivery: { confirm: async (input) => {
@@ -913,7 +913,7 @@ test('卡片动作 confirm_second_delivery 按销售单号分派，不要求草�
 
 test('卡片动作 confirm_second_delivery 对已成交的单回 info，不报错', async () => {
   const service = new LarkMvpService({
-    client: {}, gateway: {}, references: {}, posting: {}, recognizer: {},
+    client: {}, gateway: {}, references: {}, posting: {},
     store: tmpStore('second-delivery-mvp-'),
     purchaseBatchLocatorStore: tmpStore('second-delivery-locator-'),
     secondDelivery: { confirm: async () => ({ alreadyCompleted: true }) },
@@ -927,7 +927,7 @@ test('卡片动作 confirm_second_delivery 对已成交的单回 info，不报�
 
 test('交付只成了一半时如实说"还有几双没交"，不报成功', async () => {
   const service = new LarkMvpService({
-    client: {}, gateway: {}, references: {}, posting: {}, recognizer: {},
+    client: {}, gateway: {}, references: {}, posting: {},
     store: tmpStore('second-delivery-mvp-'),
     purchaseBatchLocatorStore: tmpStore('second-delivery-locator-'),
     secondDelivery: { confirm: async () => ({
