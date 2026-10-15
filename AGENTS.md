@@ -579,9 +579,17 @@ Schema Check 只回答「目标 Base 的字段与关联结构是否满足契约�
 - ⭐ **测试应用的凭证由业务负责人自己配到环境变量**
   - **代码一律从环境变量读**（`.env` 里的 `FEISHU_V1_E2E_*` / `LARK_*` 等）
   - 🔴 **不许把任何 token / secret 硬编码进源码**
-    （⚠️ **已知违规**：`server/scripts/e2e-run.mjs` / `ws-poke-event.cjs` / `ws-subscribe.cjs`
-      里硬编码了生产 token **当闸门** —— **待改**：应改成**从 `.env` 读**或**指纹比对**，
-      **不是删掉闸门**。已列入待办）
+    ⭐ **现状（2026-10-15 晚复核 · 三个脚本已从 env 读）**：`server/scripts/e2e-run.mjs` ·
+    `ws-poke-event.cjs` · `ws-subscribe.cjs` 里的生产 Base 闸门**都不是硬编码**，而是**从 env 读**
+    （键名逐字）：
+    · **禁止写入清单** = `FEISHU_V1_FORBIDDEN_APP_TOKENS`（或单数 `FEISHU_V1_PROD_APP_TOKEN`；逗号分隔，命中即拒绝执行）
+      —— 取值那一行：`e2e-run.mjs:111` · `ws-poke-event.cjs:49` · `ws-subscribe.cjs:53`
+    · **授权可写的测试 Base** = `FEISHU_V1_E2E_TEST_APP_TOKEN`（`e2e-run.mjs:109` 的保守闸门：**取不到就拒绝运行** ✓）
+    ⚠️ **本机 `.env` 刻意不放生产 token**（第 8 条：物理上够不着）⇒ 那条"禁止写入清单"**在本机是空转的**；
+    `ws-poke-event` / `ws-subscribe` **运行期会如实打一条 warn 说这件事**（"空转"看得见，不是只写在注释里 ✓）；
+    真正的保护是「本机 / 本地测试应用**根本够不着**生产 Base」＋ `e2e-run` 那句"**不等于授权测试 Base ⇒ 拒绝**" ✓。
+    ⭐ 判据已钉在测试里：`server/test/scriptProductionGate.test.js`（**零明文凭证** + **键名逐字从 env 读** +
+    命中清单**拒绝执行** + 没配清单**如实 warn**）＋ 既有 `server/test/e2eHygiene.test.js`（④ 全 `server/scripts/` 静态扫 + `e2e-run` 的三条闸门）。
 
 ### 8. 🔴 本机禁止配置生产凭证与生产多维表格（**第 1 条的"物理层"加固**）
 

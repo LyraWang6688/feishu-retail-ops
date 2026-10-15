@@ -267,6 +267,19 @@
 | 6 | **`tools/**`（5 个探针）** | `flaky-suite-loop.mjs` / `repro-missing-tests.mjs` / `probe-clock-dependence.mjs` / `probe-git-state-invariance.mjs` / `sentinel-loop.sh`：测试稳定性排查工具；`sentinel-loop.sh` 全仓零提及（其余各有 1 篇 docs 提到） | 属"开发者工具"、不属业务架构；留着不碍事，删了下次排查要重写 |
 | 7 | **`server/scripts/ws-*.mjs/cjs`（4 个）** | 飞书事件订阅/调试工具（`ws-listen` / `ws-selftest` / `ws-poke-event` / `ws-subscribe`）；`docs/**` 有 4-5 处引用。⚠️ `ws-poke-event.cjs` / `ws-subscribe.cjs` / `e2e-run.mjs` 里**硬编码生产 token 当闸门**（`AGENTS.md` 已记为**待改**：改成从 `.env` 读或指纹比对，**不是删闸门**） | 工具本身是活的（排查事件用）；但那条**已知违规**要不要现在修，得她/Lead 排期 |
 
+> 🔁 **后续状态（2026-10-15 晚 · 复核后更正；上面的**原结论保留以留痕**）**
+> 上表第 7 项里「**硬编码生产 token**」这半句**经复核为误** ✗ —— 它是**照抄 `AGENTS.md` 第 7 条的措辞、
+> 没有先核脚本**（写这份审计时的疏漏，如实记在这里）。
+> **实测事实（只读 grep + 真跑闸门）**：
+> · **零明文 token**：`cli_…` / `ou_…` / `oc_…` / `app_token: '…'` / 32+ 位引号串 ⇒ 三个脚本**全 0**；
+> · **闸门本来就"从 env 读"**：`FEISHU_V1_FORBIDDEN_APP_TOKENS`（或单数 `FEISHU_V1_PROD_APP_TOKEN`）
+>   —— 取值那一行：`e2e-run.mjs:111` · `ws-poke-event.cjs:49` · `ws-subscribe.cjs:53`；
+> · `e2e-run.mjs` 的闸门还是**保守**的（取不到 `FEISHU_V1_E2E_TEST_APP_TOKEN` ⇒ **拒绝运行**）。
+> ⇒ **第 7 项"工具是活的、不用删"这个判断不变** ✓，但**"已知违规"这个理由不成立**；
+> `AGENTS.md` 第 7 条那句**已同步成事实**（脚本从 env 读 ＋ 本机刻意不配 ⇒ 该闸门在本机**空转**，
+> `ws-*` 运行期会如实 warn 说这件事）；判据已钉进 `server/test/scriptProductionGate.test.js`
+> （零明文 ＋ 键名逐字从 env 读 ＋ 命中清单**拒绝执行** ＋ 没配清单**如实 warn**）。
+
 ---
 
 ## 4. 判据迁移表（删之前先确认"这条判据现在由谁承载"）
