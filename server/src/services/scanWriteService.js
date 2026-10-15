@@ -238,6 +238,15 @@ const createScanWriteService = (options = {}) => {
     return purchaseReturnInstance;
   };
 
+  // ⭐ task-46：多货品引擎拿同一批既有写入件（两次调用引用相等 ✓）· 理由见 test/multiItemOrderWriters
+  let multiItemWritersInstance = null;
+  const multiItemWriters = () => {
+    multiItemWritersInstance = multiItemWritersInstance || Object.freeze({
+      purchase: (taskId, task) => purchase().publishPurchaseRequest(taskId, task),
+      purchaseReturn: (taskId, draft) => purchaseReturn().submit(taskId, draft),
+    });
+    return multiItemWritersInstance;
+  };
   const fieldOf = (tableKey, semanticKey) => schema?.tables?.[tableKey]?.fields?.[semanticKey] || '';
 
   // ── 小工具 ────────────────────────────────────────────────────────────────
@@ -1670,6 +1679,8 @@ const createScanWriteService = (options = {}) => {
     taskIdFor: (key) => `${config.replenish.taskIdPrefix}_${String(key || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`,
     // 退货那条链的 task id 同一个算法（前缀来自配置）。
     returnTaskIdFor: (key) => `${config.purchaseReturn.taskIdPrefix}_${String(key || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+    // ⭐ 只读：**同一批**既有写入件（引用相等 ✓ 见上面的注释）——「一单多货品」引擎用它当 `writers`
+    multiItemWriters,
   };
 };
 
