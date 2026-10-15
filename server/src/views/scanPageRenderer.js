@@ -1350,8 +1350,20 @@ const returnFormHtml = (view, write) => {
   const sizesNotice = noReturnableStock
     ? `<p class="hint" data-view="return-no-stock">${escapeHtml(rf.noReturnableStock)}</p>`
     : (sizes.length ? '' : `<p class="hint" data-view="return-sizes-unknown">${escapeHtml(rf.sizesUnknown)}</p>`);
+  // ⭐⭐ 2026-10-16（task-47 · 业务负责人真机逐字：「我首先是点击了退货的 tab 页，**然后只有一个退货按钮**，
+  //   点击了退货按钮之后，才出现的下面的内容」）：
+  //   🔴 **改前逐字**：`<details class="disclosure" data-view="purchase-return">`（**没有 open**）
+  //      —— `<details>` **默认收起** ⇒ 首屏**只剩那颗 `<summary>`**：实心主色、通栏
+  //      （:215 「.disclosure__summary」= background var(--primary) + color var(--surface)），
+  //      文案 = v.purchaseReturn = **「退货」** ⇒ 她看到的就是「**一颗退货按钮**」✓，点它才展开出表单 ✓
+  //   ✅ **改后逐字**：`<details class="disclosure" data-view="purchase-return" open>`
+  //      —— 加 **`open`** ⇒ **进退货 tab 首屏即见**尺码清单 + 整单金额 + 「生成采购退货」✓
+  //      （保留 `<details>` 语义 ✓ 零 JS ✓；**只加一个属性**，领域条样式一个字没动 ✓）
+  //   **依据**：她 2026-10-16 逐字 ＋ 代码级根因（本行 ；Lead 2026-10-16 批准「加 open」✓）
+  //   ⚠️ 「一键补货」那个同形的 `<details>`（下面 one-tap-replenish）**这一刀不动** ✗（Lead 另去问她 ✓）
+  //   **判据**：`test/returnBlockFirstScreen.test.js`（去掉 open ⇒ 红 ✓）
   return `<section class="card">
-<details class="disclosure" data-view="purchase-return">
+<details class="disclosure" data-view="purchase-return" open>
 <summary class="disclosure__summary">${escapeHtml(v.purchaseReturn)}</summary>
 <form method="post" action="${escapeHtml(write.postAction)}" class="write-form"
 data-return-sizes-field="${escapeHtml(fields.returnSizes)}"
