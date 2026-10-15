@@ -14,16 +14,23 @@
  *   ④ 「券方式 ⇒ 金额可空」的判据 = 收款方式表里那个「**团购券管理**」**关联列非空** ✓
  *      （语义键在 `config/v1BitableSchema.js` 的 `voucher: '团购券管理'` ✓）
  *
- * ⚠️ **分两段（如实，不假装已覆盖 ✗）**：
- *   · **今天就是真判据**：目录查表（`findVoucher`/`voucherKey`）· 语义键没被改名 · **夹具本身**（供 ⑤ 接线那刀直接用 ✓）
- *   · **待激活闸门**：差额按面值 / 明细按结算款 / 状态待平台结算 / 券方式金额可空 / 未映射 warn
- *     —— 它们要等**路由接线落地**（`routes/scanPage.js` · `views/scanPageRenderer.js` · `config/scanWrite.js` ✗ 不是本刀范围）
- *      ⇒ 条件一到**自动变真判据** ✓；今天**如实打 `[待激活]`** ✗ 不假装通过 ✗ ＋ **探针**证明闸门不空跑 ✓
+ * ⭐⭐ **2026-10-16 迁移（分阶段判据体检）**：这里原有 **4 条"自足替身闸门"** —— 只测**文件内本地 lambda**、
+ *   **不 import 任何实现** ⇒ **永远变不成真判据** ✗，却一直打"待激活"字样，让人误以为"这功能还没做" ✗。
+ *   · 改前逐字（4 条，逐条）：`test('③ 待激活闸门：**差额按面值**…')` /
+ *     `…('③ 待激活闸门：**明细金额 = 平台结算款**、**状态 = 待平台结算**…')` /
+ *     `…('③ 待激活闸门：**券方式金额可空**…')` / `…('③ 待激活闸门 + 探针：**券没映射到方式…**')`
+ *   · 改后逐字：**删掉这 4 条** ⇒ 换成 **`AC-VR-COVER` 机器可查的覆盖证明**（指到真判据的 AC 编号 ✓）
+ *   · 依据：① 业务负责人 2026-10-16 逐字（差额按面值 / 明细按结算款 / 状态待平台结算）
+ *           ② **#704 已落地** ⇒ 这 5 条规则的**真判据**已在 `voucherPaymentRoute.test.js`（路由级，**能真红** ✓）
+ *           ③ 它们的真实实现都在**路由 / 服务内部**（**没有**导出成纯函数）⇒ **无法 import 成真判据** ✗
+ *              ⇒ 按本仓纪律取**方案 B（删 + 覆盖证明）** ✓，**不留"永远变不真"的壳** ✗
  *
  * 🔴 只动 `server/test/**` ✓（`routes/**` / `views/**` / `config/**` / `scanWriteService.js` 一个字没改 ✗）
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { findVoucher, voucherKey, toCents } = require('../src/config/groupBuyVouchers');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
@@ -78,50 +85,34 @@ test('⭐ 今天能钉（真判据）：夹具本身 —— 4 行方式里**恰�
   assert.deepEqual(voucherMethods.map((row) => row.voucher.settlementAmount), [47.4, 85.4], '两条券的结算款逐字 ✓');
 });
 
-test('③ 待激活闸门：**差额按面值**（300 货品 + 面值 100 的券 ⇒ 未收款 200 ✓）', () => {
-  const { vouchers } = voucherFixture();
-  const unpaid = unpaidByFaceValue(300, [vouchers[0]]);
-  assert.equal(unpaid, 200, '差额必须按**面值**算（按结算款算 ⇒ 252.6 ⇒ 红 ✓）');
-  const bySettlement = 300 - vouchers[0].settlementAmount;
-  assert.notEqual(unpaid, bySettlement, '⭐ 两种算法**必须不同**（否则这条判据是空跑 ✗）');
-  console.log('[待激活] 差额按面值：待路由接线落地后对真实链路生效 ✓（先例/口径已在本文件钉住 ✓）');
-});
+// ═══════════════════════════════════════════════════════════════════════════
+// 迁移落点：4 条"自足替身闸门"**已删** ⇒ 换成**机器可查的覆盖证明**
+// ═══════════════════════════════════════════════════════════════════════════
+/**
+ * 这 5 条规则**各有**真判据（`voucherPaymentRoute.test.js` 路由级 ✓ 能真红 ✓）——
+ * ⚠️ 覆盖者**写死在这里**：谁把那边的判据**改名 / 删掉** ⇒ 本文件**红** ✓（覆盖关系不是口头承诺 ✗）
+ */
+const COVERAGE = Object.freeze([
+  ['① 差额 = 券的【面值】（未收款 = 货品 − (面值 − 结算款)）', ['AC-VP1', 'AC-VP2b']],
+  ['② 收款明细那一笔 = 【平台结算款】', ['AC-VP1', 'AC-VP4b']],
+  ['③ 那一笔的状态 = 【待平台结算】', ['AC-VP3']],
+  ['④ 券方式 ⇒ 金额可空（关联列非空 ✓）', ['AC-VP2b', 'AC-VP7']],
+  ['⑤ 券没映射到收款方式 ⇒ `scan.write.voucher_method_unmapped`', ['AC-VP5', 'AC-VP6']],
+]);
 
-test('③ 待激活闸门：**明细金额 = 平台结算款**、**状态 = 待平台结算**（与你给的先例逐字同形 ✓）', () => {
-  const { vouchers } = voucherFixture();
-  const line = paymentLineOf({ voucher: vouchers[0] });
-  assert.equal(line.amount, 47.4, '明细那一笔取**结算款**（取面值 ⇒ 100 ⇒ 红 ✓）');
-  assert.equal(line.status, '待平台结算', '状态逐字「待平台结算」（与 `groupBuyVoucherPolicy` 先例一致 ✓）');
-  console.log('[待激活] 明细金额/状态：待接线后对真实链路生效 ✓');
-});
-
-test('③ 待激活闸门：**券方式金额可空**（关联列非空 ⇒ 可空不拦 ✓；关联列空 ⇒ 照旧要金额 ✓）', () => {
-  const { paymentMethods } = voucherFixture();
-  const canBeEmpty = (row) => isVoucherMethod(row);          // 券方式 ⇒ 金额可空 ✓
-  const mustHaveAmount = (row) => !isVoucherMethod(row);     // 其它方式 ⇒ 照旧要金额 ✓
-  assert.equal(canBeEmpty(paymentMethods[2]), true, '券方式 ⇒ 可空 ✓');
-  assert.equal(mustHaveAmount(paymentMethods[0]), true, '微信 ⇒ 仍要金额 ✓');
-  console.log('[待激活] 金额可空：待接线后对真实校验生效 ✓');
-});
-
-test('③ 待激活闸门 + 探针：**券没映射到方式 ⇒ 必须打 `scan.write.voucher_method_unmapped`**', () => {
-  const EVENT = 'scan.write.voucher_method_unmapped';
-  const logs = [];
-  /** 待接线后的真实实现应长这样（探针先证明"能红"✓）：券表有券、候选里找不到对应方式 ⇒ warn。 */
-  const detectUnmapped = (paymentMethods, vouchers) => {
-    const linked = new Set(paymentMethods.filter(isVoucherMethod).map((row) => voucherKey(row.voucher)));
-    const missing = vouchers.filter((row) => !linked.has(voucherKey(row)));
-    if (missing.length) logs.push({ event: EVENT, count: missing.length });
-    return missing;
-  };
-  // 探针①：两张券都映射上了 ⇒ **没有** warn ✓
-  const okFixture = voucherFixture();
-  assert.deepEqual(detectUnmapped(okFixture.paymentMethods, okFixture.vouchers), [], '都映射上 ⇒ 不 warn ✓');
-  assert.equal(logs.length, 0, '不 warn ✓');
-  // 探针②：**故意**去掉一条券的关联 ⇒ 必须 warn ✓（证明闸门真能红 ✓）
-  const broken = voucherFixture();
-  broken.paymentMethods[3] = { ...broken.paymentMethods[3], voucher: null };
-  assert.equal(detectUnmapped(broken.paymentMethods, broken.vouchers).length, 1, '缺映射 ⇒ 检出 ✓');
-  assert.equal(logs.at(-1)?.event, EVENT, `🔴 必须打 \`${EVENT}\`（不打 ⇒ 红 ✓）`);
-  console.log('[待激活] 未映射 warn：待接线后对真实链路生效 ✓（探针已证能红 ✓）');
+test('AC-VR-COVER 🔴 覆盖证明：上面 5 条规则**各有**真判据（覆盖者改名/删掉 ⇒ 红 ✓）', () => {
+  const routeTests = fs.readFileSync(path.join(__dirname, 'voucherPaymentRoute.test.js'), 'utf8');
+  // ⚠️ 三种引号都匹配（`voucherPaymentRoute` 里有反引号模板写法的用例名 ✓）
+  const ids = new Set([...routeTests.matchAll(/test\(['"`](AC-VP\w+)/g)].map((match) => match[1]));
+  assert.ok(ids.size >= 10, `路由级真判据应当有 10+ 条（实得 ${ids.size}）✓`);
+  for (const [rule, covers] of COVERAGE) {
+    assert.ok(covers.length > 0, `${rule} 必须至少有一个覆盖者 ✓`);
+    for (const id of covers) {
+      assert.ok(ids.has(id), `🔴 ${rule} 的覆盖者 ${id} 在 voucherPaymentRoute.test.js 里**不存在** ✗（删错/改名 ⇒ 红 ✓）`);
+    }
+  }
+  // 🔴 本文件不许再有**打印**「待激活」的壳（正文里引用旧写法作历史记录是允许的 ✓）
+  const self = fs.readFileSync(__filename, 'utf8');
+  assert.equal(/^\s*console\.log\('[^']*待激活/m.test(self), false, '不许再有打印「待激活」的 console.log ✗');
+  assert.equal(/^test\('[^']*待激活/m.test(self), false, '不许再有名字里带「待激活」的用例 ✗');
 });
