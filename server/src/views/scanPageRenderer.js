@@ -980,35 +980,20 @@ const buildPaymentRows = ({ count, defaultMethod, rows } = {}) => {
 };
 
 /**
- * ⭐⭐ 2026-10-11（**最终口径**）：「付款情况」（**整单**）三档单选 —— 全付（默认）/ 部分付 / 未付。
+ * ⭐⭐ 2026-10-16 A2a：**「付款情况」三档单选（全付 / 部分付 / 未付）＋「实付多少」从页面上退场** ✓
  *
- * 她的原话：「**「付款情况」= 全付（默认）/ 部分付 / 未付 ← 这是整单的收款情况**」。
- *   · **全付** ⇒ 收款合计**必须 == 每件实收合计** ⇒ 按收款方式写收款明细；
- *   · **部分付** ⇒ 只写付了的那几条 ＋ 差额一条【未收款】；
- *   · **未付** ⇒ 一条【未收款】。
- *
- * ⚠️ **零 JS**（她 2026-10-10 的硬要求；两条哨兵钉着"页面里不许有 `<script>`"）：
- *    三档就是三个同名的 `radio`，默认选中配置里的那一档（**全付**），
- *    剩下的判断全在服务端（`services/scanWriteService.js` 的 `submitSale`）。
- * ⚠️ 取值与组名都来自 `config/scanWrite.js`（配置先行；这里一个字面量都不写死）。
- * ⚠️ 「部分付」那个「实付多少」输入框**照常渲染**（没有 JS 就藏不起来）：
- *    另外两档服务端**不看它**（全付必须两边相等；未付本来就不填）—— 取舍写在交付报告里。
+ * 改前逐字：这里原来有一个 `paymentStatusHtml(write)` —— 渲染 `<fieldset class="pay-status">`
+ *   三个同名 `radio`（`name="payment_status"`，取值来自 `config/scanWrite.js` 的
+ *   `texts.paymentStatusOptions`）＋「实付多少」那个 `input`（`fields.paidAmount`）。
+ * 改后逐字：**这一块整个不渲染**（定义删除 ＋ 两处调用点去掉 ✓）——
+ *   ⇒ 页面里**没有** `name="payment_status"`、**也没有**「实付多少」✓
+ * 依据 = 她 2026-10-16 逐字（「加校验，别让他带着这三个单选提交」）的**前半刀**：
+ *   页面与判据**都不再依赖档位**；**档位由金额自动定**（`config/saleSettlement.js` 的 `autoModeOf` ✓，
+ *   路由 `routes/scanPage.js` 在资金页那一步用它 ✓）。
+ * ⚠️ **本刀不拒绝**旧档位（请求里带着它照样能提交 ✓ —— 拒绝是 A3 ✓）；
+ *    `config/scanWrite.js` 里的 `PAYMENT_STATUS` / `texts.paymentStatusOptions` **仍保留**
+ *    （写服务与路由换档时还要用它们 ✓ 只是**不再渲染**成控件 ✗）。
  */
-const paymentStatusHtml = (write) => {
-  const t = write.texts;
-  const fields = write.fields;
-  const options = Array.isArray(t.paymentStatusOptions) ? t.paymentStatusOptions : [];
-  const selected = String(write.paymentStatus || write.defaultPaymentStatus || '');
-  const chips = options.map((option) => `<label class="pay-status__option">
-<input type="radio" name="${escapeHtml(fields.paymentStatus)}" value="${escapeHtml(option.value)}"${String(option.value) === selected ? ' checked' : ''}>
-<span class="pay-status__label">${escapeHtml(option.label || option.value)}</span>
-</label>`).join('\n');
-  return `<fieldset class="pay-status">
-<legend class="pay-status__legend">${escapeHtml(t.paymentStatusLabel)}</legend>
-<div class="pay-status__options">${chips}</div>
-</fieldset>
-<div class="form-row"><label>${escapeHtml(t.paidAmountLabel)}</label><input name="${escapeHtml(fields.paidAmount)}" inputmode="decimal" placeholder="${escapeHtml(t.paidAmountPlaceholder)}" value="${escapeHtml(String(write.paidAmount || ''))}"></div>`;
-};
 
 /**
  * ⭐⭐ 总单层的**多笔收款**（收款方式 + 金额，一行一笔）。
@@ -1078,7 +1063,7 @@ ${sizeInput}
 <div class="form-row"><label>${escapeHtml(t.amountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" placeholder="${escapeHtml(t.amountPlaceholder)}"></div>
 ${alert}
 ${draftLinesHtml(write)}
-${String(write.errorText || '').trim() ? `${paymentStatusHtml(write)}${paymentRowsHtml(write)}` : ''}
+${String(write.errorText || '').trim() ? `${paymentRowsHtml(write)}` : ''}
 <!-- ⭐⭐ 2026-10-13（金额两步走）：整单那一组（档位 / 收款行 / 备注）**整块挪到第 2 步页**
      ⇒ 录入页只留：每双 颜色 · 尺码 · 这一双的金额 ✓（那一组的字段名与标签字面量一个都不许留，否则 AC-2S1/AC-1 会打红） -->
 <button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}" data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(countLabel)}</button>
@@ -1765,15 +1750,15 @@ const renderSalePaymentStepPage = ({
   // ⚠️ 没有 `successPath`（单测直接渲染这一页时）就退回销售首页 —— 绝不给出一个点不动的链接 ✗
   const salesHome = successPath || `${basePath || ''}/s?from=sales`;
   const workbench = workbenchPath || `${basePath || ''}/workbench`;
-  // ⭐ 复用**既有**那两块（`paymentStatusHtml` / `paymentRowsHtml`）—— 默认档、预置行数、
-  //    44px 命中区、零 JS 的约定都只有一处定义（不在这里重写第二份 ✗）。
-  const statusBlock = paymentStatusHtml(write);
+  // ⭐ 2026-10-16 A2a：**三档那一块不再渲染**（`paymentStatusHtml` 已退场 ✓ 见上面那条注释）——
+  //    资金页现在只剩：**收款行**（`paymentRowsHtml`）＋ 赠品 ✓；档位由金额自动定（路由那一步 ✓）。
   const rowsBlock = paymentRowsHtml(write);
   const giftFieldHtml = `<div class="form-row"><label>${escapeHtml(t.giftLabel || '')}</label><input name="${escapeHtml(fields.gift || 'gift')}"></div>`;
   // ⭐⭐ 2026-10-13 结构重排（**行为不变**）：三件套（三档 / 收款行 / 赠品）先攒成一块，
   //    由 `payForm` 统一放进"提交整单付款"那张表单里（**在表单外就是"提交上去什么都没有"** ✗）。
   //    ⚠️ 还没配 `payAction` 时 ⇒ 退化成原来那个 `<div class="payment-step">`（逐字同形 ✓ 不吃亏 ✓）
-  const paymentFieldsHtml = `${statusBlock}${rowsBlock}${giftFieldHtml}`;
+  //    ⭐ 2026-10-16 A2a：三件套里的**「三档」那件已退场** ⇒ 现在只有**收款行 + 赠品** ✓
+  const paymentFieldsHtml = `${rowsBlock}${giftFieldHtml}`;
   const payForm = (postAction && step.payAction)
     ? `<form method="post" action="${escapeHtml(postAction)}" data-view="payment-pay">
 <input type="hidden" name="${escapeHtml(fields.action || 'action')}" value="${escapeHtml(step.payAction)}">
