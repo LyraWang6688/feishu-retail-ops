@@ -386,7 +386,23 @@ test('AC-T6/T7/T8/T10 分段字典加厚：每段都有值 · 缺段显式 -1 ·
   });
   const app = express();
   app.use((req, res, next) => { req.requestId = 'req_t_seg'; next(); });
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({ gateway, config: SCAN_PAGE, startSnapshot: false }));
+  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+    gateway,
+    config: SCAN_PAGE,
+    startSnapshot: false,
+    // ⭐⭐ 2026-10-16 A2a **用例迁移**（改前逐字 → 改后逐字 → 依据）：
+    //   改前逐字：`createScanPageRouter({ gateway, config: SCAN_PAGE, startSnapshot: false })`
+    //     ＋ 下面那句 `assert.equal(line.feishu_reads, counts.reads, …)`。
+    //   改后逐字：**只多传一个注入口** `paymentMethodsService`（与 `service` / `writeService` 同一套设计 ✓）；
+    //     —— A2a 起，**页面渲染**会去读「收款方式管理」那一张表（只读 + 5 分钟 TTL 缓存 ✓ 见路由里那份注释）；
+    //        那一次读发生在 `lookup` **之后**、**不在** `scan.lookup.timing` 的分段范围内
+    //        ⇒ 照原样跑，`counts.reads` 会比日志多 1 ⇒ 这条**关于分段计数的**断言会被**另一件事**打红
+    //        （测量噪声 ✗ 不是它要守的东西）。
+    //   依据 = 本文件 2026-10-13 的教训「**插桩改动本身也要先证伪** —— 别拿被自己打坏的现场当结论」。
+    //   🔴 **那条判据一个字都没改**（`feishu_reads === counts.reads` 仍在、仍逐字 ✓）；
+    //      A2a 那个新读**另有专门用例**钉住（`test/scanPaymentMethodsFromTable.test.js` ✓ 读表 ✓ 读不到退回配置+warn ✓）
+    paymentMethodsService: { list: async () => ({ ok: true, items: ['微信'] }) },
+  }));
   const { entries } = await captureInfo(() => withServer(app, async (base) => {
     const response = await fetch(`${base}/s/${ENCODED}`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 200);

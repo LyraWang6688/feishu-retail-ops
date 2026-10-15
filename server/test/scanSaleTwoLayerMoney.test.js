@@ -258,7 +258,7 @@ const unpaidRows = (h) => entriesOf(h, 'paymentRecord').filter((row) => row.fiel
 const paidRows = (h) => entriesOf(h, 'paymentRecord').filter((row) => row.fields[statusField()] === '已收款');
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AC-1 表单只有两层 + 付款情况三档 + 收款行预置 1 行
+// AC-1 表单只有两层 + 资金区**没有**付款情况三档（A2a）+ 收款行预置 1 行
 // ═══════════════════════════════════════════════════════════════════════════
 
 const VIEW = {
@@ -293,7 +293,7 @@ const WRITE = (overrides = {}) => ({
 
 const scriptCountOf = (html) => (html.match(/<script[\s>]/gi) || []).length;
 
-test('AC-1 销售页只有两层：每件填「实收金额」；资金区有「付款情况」三档；收款行预置 1 行', () => {
+test('AC-1 销售页只有两层：每件填「实收金额」；资金区**没有**「付款情况」三档、收款行预置 1 行', () => {
   const write0 = WRITE();
   const html = renderScanPage(VIEW, SCAN_PAGE, write0, 'sales');
   // ① 页面上**没有**第二个金额概念（旧名整体退场）
@@ -313,25 +313,60 @@ test('AC-1 销售页只有两层：每件填「实收金额」；资金区有「
     '录入页（第 1 步）不许再有整单付款控件（AC-2S1 同口径）');
   const { renderSalePaymentStepPage } = require('../src/views/scanPageRenderer');
   const stepHtml = renderSalePaymentStepPage({ write: write0, config: SCAN_PAGE });
-  assert.match(stepHtml, new RegExp(`name="${SCAN_WRITE.fields.paymentStatus}"`), '第 2 步要有「付款情况」这个控件');
-  assert.ok(stepHtml.includes(SCAN_WRITE.texts.paymentStatusLabel), '组名来自配置');
+  // ⭐⭐ 2026-10-16 A2a **用例迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字（五条，都在断言"控件在"）：
+  //     `assert.match(stepHtml, new RegExp(`name="${SCAN_WRITE.fields.paymentStatus}"`), '第 2 步要有「付款情况」这个控件');`
+  //     `assert.ok(stepHtml.includes(SCAN_WRITE.texts.paymentStatusLabel), '组名来自配置');`
+  //     `for (const option of …paymentStatusOptions) assert.ok(stepHtml.includes(`value="${option.value}"`), …);`
+  //     `assert.match(stepHtml, new RegExp(`value="${PAYMENT_STATUS.unpaid}" checked`), '默认选中「未付」');`
+  //     `assert.match(stepHtml, new RegExp(`name="${SCAN_WRITE.fields.paidAmount}"`), '要有「实付多少」输入框');`
+  //   改后逐字：**全部翻成反向哨兵**（"必须没有"）——
+  //     资金区**没有** `name="payment_status"`、**没有**「付款情况」组名、三档取值**一个都不出现**、
+  //     **没有**「实付多少」输入框（`paymentStatusHtml` 整块退场 ✓ 见 `views/scanPageRenderer.js`）。
+  //   依据 = 她 2026-10-16 逐字（"别让他带着这三个单选提交"）⇒ 档位改由**金额自动定**
+  //     （`config/saleSettlement.js` 的 `autoModeOf` ✓ 路由那一步用它 ✓）。
+  //   🔴 **判据没放宽、也没删**：是**翻向更严的一侧**（塞回控件即红 ✓）。
+  assert.equal(stepHtml.includes(`name="${SCAN_WRITE.fields.paymentStatus}"`), false,
+    '资金页**不许**再有「付款情况」这个控件（A2a：档位按金额自动定）');
+  assert.equal(stepHtml.includes('<fieldset class="pay-status">'), false,
+    '三档那个 `fieldset.pay-status` 整块退场（A2a）');
+  assert.equal(stepHtml.includes(`<legend class="pay-status__legend">${SCAN_WRITE.texts.paymentStatusLabel}</legend>`), false,
+    '「付款情况」不再作为**控件组名**渲染出来（⚠️ 只按标签判 —— STYLE 里那条历史 CSS 注释里还有这四个字 ✓ 不算控件）');
   for (const option of SCAN_WRITE.texts.paymentStatusOptions) {
-    assert.ok(stepHtml.includes(`value="${option.value}"`), `三档里少了「${option.value}」`);
+    assert.equal(stepHtml.includes(`value="${option.value}"`), false,
+      `三档取值「${option.value}」**不许**再出现在页面上（她不该再带着它提交）`);
   }
-  // ⚠️ 默认档「未付」的契约**原样保留**（她真机被"全付必须相等"卡住过）
-  assert.match(stepHtml, new RegExp(`value="${PAYMENT_STATUS.unpaid}" checked`), '默认选中「未付」');
-  assert.match(stepHtml, new RegExp(`name="${SCAN_WRITE.fields.paidAmount}"`), '要有「实付多少」输入框');
+  assert.equal(new RegExp(`value="${PAYMENT_STATUS.unpaid}" checked`).test(stepHtml), false,
+    '「默认选中未付」那条单选项契约随控件一起退场（档位不再由页面选）');
+  assert.equal(stepHtml.includes(`name="${SCAN_WRITE.fields.paidAmount}"`), false,
+    '「实付多少」输入框随三档一起退场（本次已收 = 收款行合计 ✓）');
   const methods = stepHtml.match(new RegExp(`name="${SCAN_WRITE.fields.paymentMethod}"`, 'g')) || [];
   const amounts = stepHtml.match(new RegExp(`name="${SCAN_WRITE.fields.paymentAmount}"`, 'g')) || [];
   assert.equal(methods.length, SCAN_WRITE.sale.paymentRowCount, '收款行数 = 配置的预置行数');
-  assert.equal(SCAN_WRITE.sale.paymentRowCount, 1, '她 2026-10-11：**收款行预置 1 行**');
+  // ⭐⭐ 2026-10-16 **口径**（Lead 更正 ① · 业务负责人最新逐字 → 改前逐字 → 改后逐字 → 依据）：
+  //   她看到两行之后当场纠正：「**我怎么默认两行了，一行都是一行啊，微信默认**」
+  //   ⇒ 改前逐字（先在别处改成 2 的那一版，**已作废**）：`assert.equal(…, 1, '她 2026-10-11：**收款行预置 1 行**');`
+  //      ⇒ `assert.equal(…, 2, '她 2026-10-16：**收款行默认 2 行（定金微信＋尾款现金）**');`
+  //   改后逐字：**按她最新那句恢复成 1**（判据**一个字不动** —— 与 `config/scanWrite.js:254` 同一处真源 ✓）
+  //   依据 = 业务负责人 2026-10-16 逐字（Lead 更正 ①，见 PR 描述）：**收款行默认 1 行、默认微信**。
+  assert.equal(SCAN_WRITE.sale.paymentRowCount, 1,
+    '她 2026-10-16 最新逐字：**收款行默认 1 行（一行都是一行，微信默认）**');
   assert.equal(amounts.length, SCAN_WRITE.sale.paymentRowCount);
   assert.ok(stepHtml.includes('<option value="微信" selected>微信</option>'), '第一行默认选中「微信」');
-  // ⭐ 出错要改时，那一组**回到录入页**（她填的值原样在 ⇒ 能原地改，不用重打）
+  // ⭐ 出错要改时，**收款行照旧回填**（她填的值原样在 ⇒ 能原地改，不用重打）。
+  //    ⚠️ 2026-10-16 A2a：这一组里**随三档一起退场的只有「三档 + 实付多少」**，收款行**没变** ✓
   const withError = WRITE({ errorText: '每件实收合计 ¥500，收款合计 ¥200；收款比每件实收少 ¥300' });
   const errorHtml = renderScanPage(VIEW, SCAN_PAGE, withError, 'sales');
-  assert.match(errorHtml, new RegExp(`name="${SCAN_WRITE.fields.paymentStatus}"`),
-    '校验失败原地重渲染时，整单那一组要带回来（否则她改不了）');
+  // ⭐⭐ 2026-10-16 A2a **用例迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.match(errorHtml, new RegExp(`name="${SCAN_WRITE.fields.paymentStatus}"`),
+  //                '校验失败原地重渲染时，整单那一组要带回来（否则她改不了）');`
+  //   改后逐字：`assert.equal(errorHtml.includes(`name="${SCAN_WRITE.fields.paymentStatus}"`), false, …)`
+  //     ＋ **补一条正向的**：`name="payment_method"`（收款行）**必须在**（"要带回来"这条契约的落点换了 ✓）
+  //   依据 = 同一条（她 2026-10-16 逐字）⇒ 整单那一组**不再是三档**；"她改一下就能再点"由收款行承接 ✓
+  assert.equal(errorHtml.includes(`name="${SCAN_WRITE.fields.paymentStatus}"`), false,
+    '校验失败原地重渲染时也**不许**带回三档控件（A2a：档位不再由页面选）');
+  assert.ok(errorHtml.includes(`name="${SCAN_WRITE.fields.paymentMethod}"`),
+    '但**收款行照旧带回来**（她填的值原样在 ⇒ 能原地改 ✓）');
   // ⑤ 提交表单里**逐行**一个「每件实收」（同名重复 ⇒ POST 上来是有序数组）
   const withLines = WRITE({ draft: { lines: [{ item_no: 'YD6693-2', size: 40, amount: 350 }] } });
   const lineHtml = renderScanPage(VIEW, SCAN_PAGE, withLines, 'sales');
@@ -349,7 +384,12 @@ test('AC-1 销售页只有两层：每件填「实收金额」；资金区有「
 });
 
 test('AC-1b 收款行的预置规则（配置先行）：预置 1 行、第一行默认微信；回填时不替她选', () => {
-  assert.equal(SCAN_WRITE.sale.paymentRowCount, 1, '预置行数可配（SCAN_SALE_PAYMENT_ROWS），默认 1');
+  // ⭐⭐ 2026-10-16 **口径**（Lead 更正 ① · 业务负责人最新逐字「**我怎么默认两行了，一行都是一行啊，微信默认**」）：
+  //   ⇒ 这条判据**恢复原样、一个字不动**（`paymentRowCount` 默认 **1**）。
+  //   ⚠️ 先前那版按旧口径改成 2 的做法**已作废** —— 配置那一行也已 `git checkout` 回**逐字节同基点** ✓
+  // 🔴 下面那三条 `buildPaymentRows({ count: N })` 是**显式传 count** 的纯函数契约 ⇒ 本来就与"预置几行"无关 ✓
+  assert.equal(SCAN_WRITE.sale.paymentRowCount, 1,
+    '预置行数可配（SCAN_SALE_PAYMENT_ROWS），默认 1（她 2026-10-16 最新逐字：一行都是一行，微信默认）');
   assert.deepEqual(buildPaymentRows({ count: 1, defaultMethod: '微信' }), [{ method: '微信', amount: '' }]);
   assert.deepEqual(buildPaymentRows({ count: 2, defaultMethod: '微信' }), [
     { method: '微信', amount: '' }, { method: '', amount: '' },
@@ -944,7 +984,7 @@ const formPost = (base, cookie, body) => fetch(`${base}/s/${encodeURIComponent(N
   body: formBody(body),
 });
 
-test('AC-8a 【全付】不等 ⇒ 400 + **还是销售那一块** + 差额人话 + 她刚填的值原样还在', async () => {
+test('AC-8a ⭐【少收】两边不等 ⇒ **合法**：成单 + 差额一条【未收款】+ 幂等照旧', async () => {
   login();
   const h = createHarness();
   try {
@@ -964,9 +1004,11 @@ test('AC-8a 【全付】不等 ⇒ 400 + **还是销售那一块** + 差额人�
         assert.equal(added.status, 303);
       }
       // ⭐⭐ 2026-10-14（业务负责人逐字：「**确认状态是资金那页点击了按钮之后，才算是用户确认了，
-      //    然后就是单号创建成功的页面**」）⇒ 这条用例改成**两段**：
+      //    然后就是单号创建成功的页面**」）⇒ 这条用例仍然是**两段**：
       //    ① 点「提交这一单」⇒ **只到资金页、一个字都不写表** ✓
-      //    ② 点资金页那颗【提交整单付款】⇒ **这时才校验钱**：不齐 ⇒ 400 + 原地重渲染资金页 + 零写入 ✓
+      //    ② 点资金页那颗【提交整单付款】⇒ **这时才校验钱**：
+      //       ⭐ 2026-10-16 A2a 起 —— **"少收"合法**（成单 + 差额一条【未收款】✓ 见下面那段注释）；
+      //         "收多了"才拦住（`AC-8a2` ✓）
       const moneyPage = await formPost(base, cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: saleKey,
       });
@@ -976,34 +1018,86 @@ test('AC-8a 【全付】不等 ⇒ 400 + **还是销售那一块** + 差额人�
       assert.equal(entriesOf(h, 'salesEntry').length, 0, '第一步**一个字都不写**（主表 0）');
       assert.equal(entriesOf(h, 'salesDetail').length, 0, '第一步**一个字都不写**（明细 0）');
       assert.equal(entriesOf(h, 'paymentRecord').length, 0, '第一步**一个字都不写**（收款 0）');
-      // 全付 + 总单只记了 200（少 300）⇒ 第二步（点那颗按钮）**拦住**
-      const failed = await formPost(base, cookie, {
+      // ⭐⭐ 2026-10-16 A2a **用例迁移**（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字（这一段）：`payment_status: PAYMENT_STATUS.full, … payment_amount: '200'`
+      //     （= 全付 + 只记 200、少 300）⇒ `assert.equal(failed.status, 400, …)` ＋
+      //      「原地重渲染 ✓ 她刚填的值还在 ✓ **零写入** ✓」那一组。
+      //   改后逐字：**"少收"合法** ⇒ 200 ＋ **成单** ＋ **差额一条【未收款】**；
+      //      旧的"拦住"那半（400 / 重渲染 / 值还在 / 零写入）**一条不删**，整组搬到**"收多了"**
+      //      （本文件紧邻的 `AC-8a2` ✓ —— 新形状里也只有"收多了"还能撞上"钱对不上"✓）。
+      //   依据 = 业务负责人裁决（2026-10-16）：**「本次收款金额 vs 货品累计金额」两边不等 = 合法**
+      //      （自动判为"部分付"，差额写一条「未收款」）；**只有"收多了"才拦住**（400 ＋ 人话 ＋ 零写入）。
+      //   ⚠️ 新形状的页面**没有** `payment_status` / `paid_amount` 了 ⇒ 这两项**刻意不传**
+      //      （传了也不再是判据 ✓ 档位由金额自动定 ✓）—— 这本身就是"页面去掉三档后仍能提交"的判据 ✓
+      const under = await formPost(base, cookie, {
         action: SCAN_PAGE.paymentStep.payAction, submit_key: saleKey,
-        payment_status: PAYMENT_STATUS.full,
         payment_method: '现金', payment_amount: '200',
         line_amount: ['200', '300'],
       });
-      assert.equal(failed.status, 400, '校验失败是"她能改"的那一类 ⇒ 400 而不是 500');
+      const underHtml = await under.text();
+      assert.equal(under.status, 200, `"少收"必须成单（改前这条是 400）：${underHtml.slice(0, 300)}`);
+      assert.equal(entriesOf(h, 'salesEntry').length, 1, '成单（主表 1 行）');
+      assert.equal(entriesOf(h, 'salesDetail').length, 2, '明细 2 行');
+      assert.deepEqual(paidRows(h).map((row) => row.fields['收款金额']), [200], '她填的 200 ⇒ 一条【已收款】');
+      assert.deepEqual(unpaidRows(h).map((row) => row.fields['收款金额']), [300], '差额 300 ⇒ 一条【未收款】');
+      // ⭐ 幂等**照旧**：同一把键**再点一次那颗按钮** ⇒ 不再写第二遍（旧流程那条"只写一次"原样保留 ✓）
+      const again = await formPost(base, cookie, {
+        action: SCAN_PAGE.paymentStep.payAction, submit_key: saleKey,
+        payment_method: '现金', payment_amount: '200',
+        line_amount: ['200', '300'],
+      });
+      assert.equal(again.status, 200, await again.text());
+      assert.equal(entriesOf(h, 'salesEntry').length, 1, '同一把键再点 ⇒ 仍是**一张单**（幂等不许拆 ✗）');
+      assert.equal(entriesOf(h, 'salesDetail').length, 2, '明细仍是 2 行（不写第二遍）');
+      assert.equal(entriesOf(h, 'paymentRecord').length, 2, '收款行仍是 2 条（200 已收 ＋ 300 未收）');
+    });
+  } finally { h.cleanup(); }
+});
+
+// ⭐⭐ 2026-10-16 A2a：原 `AC-8a` 里那半"**拦住**"的判据（400 ✓ 原地重渲染 ✓ 她刚填的值还在 ✓ 零写入 ✓）
+//   —— 新形状下**只有"收多了"还能撞上它** ⇒ 整组判据**逐字搬到这里**（一条都没删、也没放宽 ✓）。
+test('AC-8a2 🔴【收多了】收款 > 每件实收 ⇒ 400 + 原地重渲染 + 她刚填的值还在 + **零写入**', async () => {
+  login();
+  const h = createHarness();
+  try {
+    const openId = 'ou_two_layer_route_over';
+    const cookie = sessionCookie(openId);
+    await withServer(formApp(h), async (base) => {
+      const pageUrl = `${base}/s/${encodeURIComponent(NUMBER)}?from=sales`;
+      const html = await (await fetch(pageUrl, { headers: { cookie } })).text();
+      const saleKey = html.match(/name="submit_key" value="(scan_sale:[^"]+)"/)[1];
+      // 加两双（每件实收 200 / 300 ⇒ 合计 500）
+      for (const [size, amount] of [['40', '200'], ['41', '300']]) {
+        const added = await fetch(pageUrl, {
+          method: 'POST', redirect: 'manual',
+          headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ action: SCAN_WRITE.actions.addLine, submit_key: saleKey, size, amount }).toString(),
+        });
+        assert.equal(added.status, 303);
+      }
+      const moneyPage = await formPost(base, cookie, {
+        action: SCAN_WRITE.actions.submitOrder, submit_key: saleKey,
+      });
+      assert.equal(moneyPage.status, 200, '第一步只到资金页（200）');
+      // 收款填 600 > 每件实收 500 ⇒ **收多了** ⇒ 拦住
+      const failed = await formPost(base, cookie, {
+        action: SCAN_PAGE.paymentStep.payAction, submit_key: saleKey,
+        payment_method: '现金', payment_amount: '600',
+        line_amount: ['200', '300'],
+      });
+      assert.equal(failed.status, 400, '"她能改"的那一类 ⇒ 400 而不是 500');
       const failedHtml = await failed.text();
       assert.ok(failedHtml.includes('data-view="payment-step"'), '原地**重渲染资金页**（不是一张干巴巴的失败页）');
       // 她刚填的钱还在（不用重打）：她选的方式 / 金额
       assert.match(failedHtml, /<option value="现金" selected>现金<\/option>/);
-      assert.match(failedHtml, /name="payment_amount"[^>]*value="200"/);
+      assert.match(failedHtml, /name="payment_amount"[^>]*value="600"/);
+      // 差额人话（"多多少"要说出来 —— 她一眼看到该改哪儿）
+      const notice = (failedHtml.match(/data-view="payment-step-notice">([\s\S]*?)<\/p>/) || [])[1] || '';
+      assert.match(notice, /收款比每件实收多/, `人话要指出"收多了"：实际 = ${notice}`);
       // **一个字都没写库**
       assert.equal(entriesOf(h, 'salesEntry').length, 0);
       assert.equal(entriesOf(h, 'salesDetail').length, 0);
       assert.equal(entriesOf(h, 'paymentRecord').length, 0);
-      // 改对 ⇒ 同一把键**再点一次那颗按钮** ⇒ 成单（只写一次）
-      const fixed = await formPost(base, cookie, {
-        action: SCAN_PAGE.paymentStep.payAction, submit_key: saleKey,
-        payment_status: PAYMENT_STATUS.full,
-        payment_method: ['微信', '现金'], payment_amount: ['200', '300'],
-        line_amount: ['200', '300'],
-      });
-      assert.equal(fixed.status, 200, await fixed.text());
-      assert.equal(entriesOf(h, 'salesEntry').length, 1);
-      assert.equal(entriesOf(h, 'salesDetail').length, 2);
-      assert.equal(entriesOf(h, 'paymentRecord').length, 2, '两笔收款写两条');
     });
   } finally { h.cleanup(); }
 });

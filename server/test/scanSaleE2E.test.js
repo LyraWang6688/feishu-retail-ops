@@ -942,13 +942,25 @@ test('AC-E2E-10 🔴 销售页**只有一颗**提交按钮，而且它**带着�
           draft: { lines: [] },
         },
       });
+      // ⭐⭐ 2026-10-16 A2a **用例迁移**（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字（三件套都断言"必须在"）：
+      //     `for (const [name, field] of [['付款情况', SCAN_WRITE.fields.paymentStatus],
+      //        ['收款方式', SCAN_WRITE.fields.paymentMethod], ['收款金额', SCAN_WRITE.fields.paymentAmount]]) {
+      //        assert.ok(stepPage.includes(`name="${field}"`), `🔴 第 2 步那张表单里缺「${name}」（${field}）…`); }`
+      //   改后逐字：**收款方式 / 收款金额照旧"必须在"**（能力一个字没丢 ✓ 那两条断言原样保留）；
+      //     「付款情况」那一条**翻成"必须没有"** —— 她 2026-10-16 逐字「别让他带着这三个单选提交」，
+      //     档位改由**金额自动定**（`config/saleSettlement.js` 的 `autoModeOf`）⇒ 页面**不该**再有那个控件 ✓
+      //   依据 = 她 2026-10-16 逐字（同上）。
+      //   🔴 本用例其余断言（①只允许一颗提交按钮 / ②录入页不许有整单控件 / ③本单条不许有第二颗）**一条没动** ✓
       for (const [name, field] of [
-        ['付款情况', SCAN_WRITE.fields.paymentStatus], ['收款方式', SCAN_WRITE.fields.paymentMethod],
+        ['收款方式', SCAN_WRITE.fields.paymentMethod],
         ['收款金额', SCAN_WRITE.fields.paymentAmount],
       ]) {
         assert.ok(stepPage.includes(`name="${field}"`),
           `🔴 第 2 步那张表单里缺「${name}」（${field}）—— 少一个就会静默丢钱`);
       }
+      assert.equal(stepPage.includes(`name="${SCAN_WRITE.fields.paymentStatus}"`), false,
+        '🔴 第 2 步那张表单里**不许**再有「付款情况」控件（A2a：档位按金额自动定，不再由页面选）');
       // ③ 本单条里**不再有**任何提交表单（只剩 本单：N 双 + 继续扫下一个）
       assert.equal(draftBarOf(html).includes('value="submit_order"'), false,
         '本单条里不许再有第二颗提交按钮（它带不了钱）');
@@ -956,15 +968,14 @@ test('AC-E2E-10 🔴 销售页**只有一颗**提交按钮，而且它**带着�
   } finally { e2e.cleanup(); }
 });
 
-// ⭐⭐ 2026-10-14 翻新（业务负责人裁决①「销售货品页的每件金额必须填，只有资金页可以不填」）：
-//   这条用例**原来钉的是** `scanWriteService` 的 2026-10-12 兜底 `full_without_money`
-//   （"全付 + 一笔收款都没填 + 每件实收也全空 ⇒ 拦住"）。裁决①之后，同一个组合会被
-//   **路由上更早的「每件实收必填」闸门**先拦下（`routes/scanPage.js` 的 `line_amount_required`）
-//   ⇒ 用例的**三条判据一个字都没放宽**（400 ✓ 人话 ✓ 零写入 ✓），只是"人话"现在指名的
-//   是**实收金额**（而不是「全付」）。
-//   ⚠️ 那条 2026-10-12 兜底**没有被删**：它是纵深防御（服务层仍会拦），
-//      并且继续在 `test/saleSettlementConfig.test.js` 里被钉住（`full_without_money` 作为 block 规则）。
-test('AC-E2E-11 🔴 全付 + 收款 0 笔 + 每件实收也全空 ⇒ 400 + 人话；**零写入**', async () => {
+// ⭐⭐ 2026-10-16 A2a **用例重写**（改前逐字 → 改后逐字 → 依据，详见用例体内那段）：
+//   改前：这条钉的是"全付 + 收款 0 笔 + 每件实收也全空 ⇒ 400"（2026-10-14 裁决①之后由路由的
+//     `line_amount_required` 闸门先拦）。
+//   改后：新形状**没有"全付"这个输入** ⇒ 它钉的是**0 收款 ⇒ 自动档 = 未付 ⇒ 成单 + 差额进未收款**。
+//   ⚠️ 服务层那条 `full_without_money` 兜底**没有被删**：它是纵深防御，继续在
+//      `test/saleSettlementConfig.test.js` 里被钉住（作为 block 规则）。
+//   依据 = 业务负责人裁决（2026-10-16）：两边不等 = 合法；只有"收多了"才拦住。
+test('AC-E2E-11 ⭐ 0 收款 ⇒ 自动档＝未付 ⇒ **成单** + 差额一条【未收款】', async () => {
   login();
   const e2e = createE2E();
   const cookie = sessionCookie('ou_e2e_11');
@@ -983,43 +994,38 @@ test('AC-E2E-11 🔴 全付 + 收款 0 笔 + 每件实收也全空 ⇒ 400 + 人
       for (const table of ['salesEntry', 'salesDetail', 'paymentRecord', 'inventoryLedger']) {
         assert.equal(rowsOf(e2e, table).length, 0, `第一步：一个字都不写（${table} 0）`);
       }
-      const rejected = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+      // ⭐⭐ 2026-10-16 A2a **用例迁移**（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字（本用例名 =「全付 + 收款 0 笔 + 每件实收也全空 ⇒ 400 + 人话；零写入」）：
+      //     `payment_status: PAYMENT_STATUS.full, payment_method: '', payment_amount: '', line_amount: ['']`
+      //     ⇒ `assert.equal(rejected.status, 400, …)` ＋ 人话 `data-view="payment-step-notice"` 必须指名「实收金额」
+      //        ＋「拦住时 4 张表零写入」。
+      //   改后逐字：新形状**没有"全付"这个输入**（页面已去三档 ✓ 请求里也不再传它 ✓）⇒
+      //     **0 收款 + 每件实收 280** ⇒ 自动档 = **未付**（`autoModeOf`：本次已收 0 ⇒ 未付）⇒
+      //     **成单** ＋ **差额一条【未收款】280**（`owed = 累计 − 已收` ⇒ 既有业务层按既有协议补那一条 ✓）。
+      //     "400 ＋ 人话 ＋ 零写入"那半**一条不删**，整组落在**"收多了"**那条
+      //     （`test/scanSaleTwoLayerMoney.test.js` 的 `AC-8a2` ✓ ＋ `test/scanSalePayFront.test.js` 的 `AC-PF5` ✓
+      //      —— 新形状里只有"收多了"还能撞上"钱对不上"✓）。
+      //   依据 = 业务负责人裁决（2026-10-16）：**两边不等 = 合法**（自动判"部分付"/"未付"，差额进未收款）；
+      //     **只有"收多了"才拦住**（400 ＋ 人话 ＋ 零写入）。
+      const done = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_PAGE.paymentStep.payAction, submit_key: submitKeyOf(page.html),
-        // 🔴 `line_amount: ['']` = **每件实收也全空**（与本用例名字逐字一致，也是"零元全付单"的定义）。
-        //    基线上就是 `['']`；中间那版为了让新的必填闸门放行改成了 `['280']` ——
-        //    那**恰好把本用例要验的前提打掉了**（实收有值 ⇒ 2026-10-12 那条兜底不触发）。
-        //    现在改回来：由**更早的「每件实收必填」闸门**拦（依据 = 她 2026-10-14 裁决①）。
-        payment_status: PAYMENT_STATUS.full, payment_method: '', payment_amount: '', line_amount: [''],
+        // ⚠️ 新形状**没有** `payment_status`（页面已去三档 ✓）⇒ **刻意不传**：档位由**金额自动定** ✓
+        // ⚠️ 每件实收**必须填**（她 2026-10-14 裁决①）；整单收款仍**全空** ⇒ 差额 = 280 ✓
+        payment_method: '', payment_amount: '', line_amount: ['280'],
       });
-      const html = await rejected.text();
-      assert.equal(rejected.status, 400, `🔴 这种"零元全付单"必须拦住（不许静默落库）：${html.slice(0, 200)}`);
-      // 🔴 改前逐字：`assert.match(html, /全付/, '人话里要指名「全付」')`
-      //    ⚠️ 那条**一直是空断言**：这一页**本身就是资金页**，里面必有「全付」那个单选项
-      //    ⇒ 正则永远为真，根本测不到"有没有给她一句人话"（实测：人话那一段当时是**空的**）。
-      // ⭐ 改后逐字：**钉住人话那一段本身**（`data-view="payment-step-notice"`）非空、且指名「实收金额」。
-      //    依据 = 她 2026-10-14 裁决①「销售货品页的每件金额必须填」+ 她真机"只看到 400、没有原因"的抱怨
-      //    ⇒ 判据**收紧**（不是放宽 ✗）。为此同步修了 `routes/scanPage.js` 里
-      //    snake_case→camelCase 的文案映射（那三条 block 的人话原本渲染成空串）。
-      const notice = (html.match(/data-view="payment-step-notice">([\s\S]*?)<\/p>/) || [])[1] || '';
-      assert.ok(notice.trim(), `拦住时必须给她一句人话（不许只剩干巴巴的 400）：${html.slice(0, 400)}`);
-      assert.match(notice, /实收金额/, `人话里要指名「实收金额」：实际 = ${notice}`);
-      assert.ok(html.includes('data-view="payment-step"'), '拦住时**原地重渲染资金页**（不是干巴巴的失败页）');
-      for (const table of ['salesEntry', 'salesDetail', 'paymentRecord', 'inventoryLedger']) {
-        assert.equal(rowsOf(e2e, table).length, 0, `第2步：拦住时「${table}」不许写（零写入）`);
-      }
-      // 同一把键、改成「未付」（= 页面默认那一档）+ **把每件实收填上**（裁决①：不填就 400）
-      // ⇒ 立刻能提交成单（她不会被卡住）
-      const ok = await followPaymentStep(base, cookie, await postForm(pageUrlOf(base, NUMBER_A), cookie, {
-        action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
-        payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['280'],
-      }));
-      assert.equal(ok.status, 200, `第3步：改成「未付」+ 填上实收就能提交：${(await ok.text()).slice(0, 200)}`);
-      assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第3步：成了一张单');
+      const html = await done.text();
+      assert.equal(done.status, 200, `0 收款必须**成单**（改前这条是 400）：${html.slice(0, 300)}`);
+      // 单号一出就回她那一句（她 2026-10-15 逐字：「统一文字改成：本单已创建成功（单号）」✓
+      //   —— 0 收款这一支同样走 `createdResult.deferred` ⇒ 与有收款那条**同一句** ✓）
+      assert.match(html, /本单已创建成功（XSD-/, '给她成功页（含真单号）');
+      // ⭐ 2026-10-15（⑨b-2）：明细/库存转后台 ⇒ 端状态断言前**先等它跑完**（判据没放宽 ✓）
+      await waitForPendingSaleBackgrounds();
+      assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '成了一张单');
       // ⭐ 裁决②（2026-10-14）：本次付 0 < 累计 280 ⇒ **恰写一条**【未收款】，金额 = 差额 280。
       const owedRows = rowsOf(e2e, 'paymentRecord');
-      assert.equal(owedRows.length, 1, '第3步：差额一律补一条【未收款】（她 2026-10-14 裁决②）');
-      assert.equal(owedRows[0].fields[F('paymentRecord', 'amount')], 280, '第3步：那一条的金额 = 差额 280');
-      assert.equal(owedRows[0].fields[F('paymentRecord', 'status')], '未收款', '第3步：状态逐字「未收款」');
+      assert.equal(owedRows.length, 1, '差额一律补一条【未收款】（她 2026-10-14 裁决②）');
+      assert.equal(owedRows[0].fields[F('paymentRecord', 'amount')], 280, '那一条的金额 = 差额 280');
+      assert.equal(owedRows[0].fields[F('paymentRecord', 'status')], '未收款', '状态逐字「未收款」');
     });
   } finally { e2e.cleanup(); }
 });

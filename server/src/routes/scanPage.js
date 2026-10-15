@@ -40,6 +40,9 @@ const express = require('express');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { sizesForCategory, parseNumberSegments, createScanPageService } = require('../services/scanPageService');
 const { createScanWriteService } = require('../services/scanWriteService');
+// ⭐⭐ 2026-10-16 A2a ③：**候选收款方式改读表**（她 2026-10-14 逐字：「**付款方式用交易方式管理，
+//    可选择**」）—— 只读 + TTL 缓存的那份 service（`services/paymentMethodsService.js`）。
+const { createPaymentMethodsService } = require('../services/paymentMethodsService');
 const { SalesFollowupService } = require('../services/salesFollowupService');
 const { renderSalesHome, renderScanSkeleton, renderScanPage, renderScanMessagePage, renderMinimalPage, renderSaleSuccessPage, renderSalePaymentStepPage, buildPaymentRows } = require('../views/scanPageRenderer');
 // ⚠️ 只借这两个**纯函数**：所选尺码在「样品 + 门盒」有没有货（= 页面上那两个分组的判据），
@@ -102,6 +105,41 @@ const createScanPageRouter = (options = {}) => {
   //    单独一个注入点，用例可以钉"成功页长什么样"而不用碰别的页。
   const renderSuccess = options.render?.success || renderSaleSuccessPage;
   /**
+   * ⭐⭐ 2026-10-16 A2a ③：**候选收款方式 = 读「收款方式管理」那张表**（只读 + TTL 缓存那一份 service）。
+   *
+   *   她 2026-10-14 逐字：「**付款方式用交易方式管理，可选择**」⇒ 页面上的候选不再只吃
+   *   `config/scanWrite.js` 里那几个名字，而是**表里真实的那几条**（她点名要过「抖音团购券」）。
+   *   🔴 **读不到表**（或读出来是空的）⇒ **大声 `logWarn` + 退回配置里的方式**：
+   *      · **不许静默**（静默 ⇒ 表坏了没人知道 ✗）；
+   *      · **不许留白**（这一页是**展示** —— 候选为空 ⇒ 她"点不出来"，收款这一步就走不下去 ✗）。
+   *   ⚠️ 与 `listAccessories`（`:181`）**口径不同**：配品读不到给**空清单**（少一个下拉项不挡卖鞋 ✓），
+   *      收款方式读不到**必须退回配置**（挡的是"她能不能记账"✗）—— 这里刻意**不照抄**那一条。
+   *   ⚠️ 默认方式照旧**排在第一位**（`defaultPaymentMethod`，她 2026-10-08：「默认微信」）——
+   *      表里没有它时也保留：与改前那句 `[...new Set([default, ...config])]` 同口径 ✓。
+   */
+  const paymentMethodsService = options.paymentMethodsService
+    || createPaymentMethodsService(gateway, options.paymentMethodsServiceOptions);
+  const configuredPaymentMethods = () => [...new Set([
+    writeConfig.sale.defaultPaymentMethod, ...(writeConfig.sale.paymentMethods || []),
+  ].filter(Boolean))];
+  const candidatePaymentMethods = async (req) => {
+    const fallback = configuredPaymentMethods();
+    const listed = await paymentMethodsService.list().catch((error) => ({
+      ok: false, items: [], reason: 'payment_methods_unreadable', error: error?.message || 'unknown',
+    }));
+    if (listed?.ok === true && Array.isArray(listed.items) && listed.items.length) {
+      return [...new Set([writeConfig.sale.defaultPaymentMethod, ...listed.items].filter(Boolean))];
+    }
+    logWarn('scan.sale.payment_methods_unreadable', {
+      request_id: req?.requestId,
+      reason: String(listed?.reason || 'payment_methods_empty'),
+      error: listed?.error ? String(listed.error) : undefined,
+      message: '收款方式表读不到 / 退回配置里的方式',
+      fallback,
+    });
+    return fallback;
+  };
+  /**
    * ⭐⭐ 2026-10-14（业务负责人口径：**点「提交这一单」只到资金页、点资金页按钮才建单**）：
    *   资金页的渲染**只留这一处**（GET 刷新认标记 / 点提交 / 点按钮 三处共用 ✓ 一份实现 ✗ 不复制）；
    *   原来它写在 `submitSale` 之后 ⇒ 只有"提交成功"用得到 ✗；且一度写在 POST 处理器里
@@ -110,7 +148,11 @@ const createScanPageRouter = (options = {}) => {
    */
   const step2WriteOf = (opts = {}) => ({
     texts: writeConfig.texts, fields: writeConfig.fields, actions: writeConfig.actions,
-    paymentMethods: writeConfig.sale.paymentMethods,
+    // ⭐⭐ 2026-10-16 A2a ③：候选清单**由调用方传进来**（= 上面读表那一份 ✓ 一份真源 ✗ 不在这儿再拼一份）——
+    //   拿不到（用例直接调这一页 / 还没接线的老路径）⇒ 退回配置里的方式（与改前同一个退路 ✓）。
+    paymentMethods: Array.isArray(opts.paymentMethods) && opts.paymentMethods.length
+      ? opts.paymentMethods
+      : writeConfig.sale.paymentMethods,
     defaultPaymentMethod: writeConfig.sale.defaultPaymentMethod,
     paymentRowCount: writeConfig.sale.paymentRowCount,
     // ⭐ 她刚填的那一档 / 实付多少 / 收款行 ⇒ **原样带回**（她不用重打 ✓ 她明确要过这条 ✓）
@@ -173,7 +215,13 @@ const createScanPageRouter = (options = {}) => {
       .filter((row) => !row.unknown_size)
       .map((row) => ({ size_text: row.size_text, missing: Boolean(row.missing) }));
     const defaultPaymentMethod = writeConfig.sale.defaultPaymentMethod;
-    const paymentMethods = [...new Set([defaultPaymentMethod, ...(writeConfig.sale.paymentMethods || [])].filter(Boolean))];
+    // ⭐⭐ 2026-10-16 A2a ③（改前逐字 → 改后逐字 → 依据）：
+    //   改前逐字：`const paymentMethods = [...new Set([defaultPaymentMethod, ...(writeConfig.sale.paymentMethods || [])].filter(Boolean))];`
+    //     —— 候选**只从配置拼**（表里真实那几条看不到 ✗）
+    //   改后逐字：`const paymentMethods = await candidatePaymentMethods(req);`
+    //     —— **读「收款方式管理」表**（只读 + TTL 缓存 ✓）；读不到 ⇒ 大声 warn + **退回配置**（见上面那份注释）
+    //   依据 = 她 2026-10-14 逐字「**付款方式用交易方式管理，可选择**」
+    const paymentMethods = await candidatePaymentMethods(req);
     const lines = session?.sale?.lines || [];
     // ⭐ 2026-10-11（B）：配品下拉的候选（「其他配品」的名称）——**只在销售那一块要**
     //   （表单只在 `from=sales` 渲染），别的领域一次表都不读（她的"一次扫码 0~1 次飞书调用"）。
@@ -960,6 +1008,8 @@ const createScanPageRouter = (options = {}) => {
           //                **这一单还没交出去**（status 不是 submitted ⇒ 她刚点过提交、正停在资金页 ✓）
           if (pendingLines.length > 0 || hasOrder || saleStatus !== submittedStatus) {
             return sendPaymentStep(res, req, {
+              // ⭐ 2026-10-16 A2a ③：候选收款方式 = 读表那一份（读不到 ⇒ 退回配置 + warn ✓ 见工厂里那份注释）
+              paymentMethods: await candidatePaymentMethods(req),
               realm,
               submitKey: writeService?.sessions?.submitKeyFor?.(openIdOf(req), pendingSession, 'sale') || '',
               count: pendingLines.length,
@@ -1303,6 +1353,10 @@ const createScanPageRouter = (options = {}) => {
           // ⭐ 交给写服务的档位 = **自动定出来的那一档**（不是请求体里那个旧档位 ✗）——
           //   ⇒ "带着旧档位提交"也照新口径走 ⇒ 旧档位**不会**再把请求带进老分支 ✓（她 2026-10-16 口径 ✓）
           const effectivePaymentStatus = payStatusMap[pendingMode] || '';
+          // ⭐⭐ 2026-10-16 A2a：交给写服务的「本次已收」（`paidAmount`）—— **就是收款行合计** ✓
+          //   （与下面 `resolveSettlement` 的 `paidCents: paymentsCents` **同一个口径** ✗ 不两套算法）
+          //   ⚠️ 一行收款都没有 ⇒ 用原来那个值（空串 ⇒ 不写；未付/全付两支**本来就不读它** ✓ 逐字同旧行为）
+          const effectivePaidAmount = paymentsCents > 0 ? String(paymentsCents / 100) : pendingPaidAmount;
           // 收多了 ⇒ 纯函数已经给了 `block`（与既有 `amount_mismatch` **同一句话** ✓ 不新编中文 ✗）
           const settlement = auto.action === 'block' ? auto : resolveSettlement({
             mode: pendingMode,
@@ -1360,12 +1414,15 @@ const createScanPageRouter = (options = {}) => {
               return t[`${codeCamel}Body`] || t[settlement.code] || '';
             })();
             return sendPaymentStep(res, req, {
+              paymentMethods: await candidatePaymentMethods(req),
               realm,
               submitKey: body[fields.submitKey],
               count: pendingLines.length,
               notice: blockText,
               // ⭐ 她刚填的钱**原样带回**（她改一下就能再点 ✓ 这就是旧流程那条"值还在"的要求 ✓）
-              paymentStatus: pendingPaymentStatus,
+              // ⭐ 2026-10-16 A2a（接线）：档位改用**自动定出来的那一档**（`effectivePaymentStatus`）——
+              //   旧档位（请求体那个）**不再是判据**，这里也不该再把它带回去（带回去只会误导下一屏）。
+              paymentStatus: effectivePaymentStatus,
               paidAmount: pendingPaidAmount,
               paymentRows: pendingPayments,
               // ⭐ 400 = "她能改"的那一类（与既有口径一致 ✓ 旧流程这条也是 400 ✓ 不放宽 ✗）
@@ -1382,8 +1439,21 @@ const createScanPageRouter = (options = {}) => {
             submitKey: body[fields.submitKey],
             payments: pendingPayments,
             lineAmounts: pendingLineAmounts,
-            paymentStatus: pendingPaymentStatus,
-            paidAmount: pendingPaidAmount,
+            // ⭐⭐ 2026-10-16 A2a **接线**（改前逐字 → 改后逐字 → 依据）：
+            //   改前逐字：`paymentStatus: pendingPaymentStatus,` —— 传的是**请求体 / 会话暂存里那个旧档位** ✗
+            //     ⇒ 页面去掉那三个单选框之后，她这一下**必然不带档位** ⇒ 旧档位恒为 `''` ⇒
+            //       写服务按配置默认档（未付）落库 —— 与"按金额自动定档"**对不上**（`partial` 会被落成未付 ✗）
+            //   改后逐字：`paymentStatus: effectivePaymentStatus,` —— 传**上面刚按金额自动定出来的那一档** ✓
+            //   依据 = 她 2026-10-16 逐字（"别让他带着这三个单选提交"）⇒ 档位**只认金额**（一份真源 ✓）
+            paymentStatus: effectivePaymentStatus,
+            // ⭐⭐ 同一条接线（**不传就等于把"部分付"堵死**）：写服务「部分付」那一支要的
+            //   `paidAmount`（= **本次已收**）在旧形状里来自那个**已退场的「实付多少」输入框**；
+            //   改前逐字：`paidAmount: pendingPaidAmount,` ⇒ 新形状下恒为 `''` ⇒ `positiveAmount('')`
+            //     ⇒ `partial_amount_missing` ⇒ **她已经确认的这一单被自己的旧形状拦住** ✗
+            //   改后逐字：`paidAmount: effectivePaidAmount,` —— 有收款行 ⇒ **收款行合计（元）**；
+            //     一行都没有 ⇒ 沿用原来那个值（空 ⇒ 不写；未付/全付两支本来就**不看它** ✓）
+            //   依据 = 同一个口径：「本次已收」**就是收款行合计**（与上面 `resolveSettlement` 的 `paidCents` 一致 ✓）
+            paidAmount: effectivePaidAmount,
             timing: payStepTiming,
             pendingLine: pendingView?.found ? {
               productRecordId: pendingView.product_record_id,
@@ -1400,6 +1470,7 @@ const createScanPageRouter = (options = {}) => {
             // ⭐ 校验类失败（金额/收款不齐那些 code ✓）⇒ **原地重渲染资金页**：人话挂上去、改一下再点 ✓
             if ((writeConfig.sale.formFailureCodes || []).includes(createdResult?.code)) {
               return sendPaymentStep(res, req, {
+                paymentMethods: await candidatePaymentMethods(req),
                 realm,
                 submitKey: body[fields.submitKey],
                 count: pendingLines.length,
@@ -1573,7 +1644,22 @@ const createScanPageRouter = (options = {}) => {
           // ⚠️ 2026-10-16（裁决=甲）：**跳过 = 她明说"钱稍后去工作台补"** ⇒ **实收空在这一步是合法的** ✓
           //   （用"每一双都要填实收"去拦它 = 把"跳过"这个出口堵死 ✗）⇒ **这一步不放必填闸门** ✓
           //   ⭐ "假成功"改由**下面那道"写失败如实可见"**兜（不是靠必填挡 ✓）
-          // ⭐ 跳过 = **不写收款** ✓（"钱稍后补"✓）⇒ 空的 payments + 默认档（未付）+ 实收按上面那份 ✓
+          const skipItemsCents = skipResolvedAmounts
+            .reduce((sum, value) => sum + Math.round(Number(value || 0) * 100), 0);
+          // ⭐⭐ 2026-10-16 A2a **接线**（改前逐字 → 改后逐字 → 依据）：
+          //   改前逐字：`paymentStatus: writeConfig.sale.paymentStatus.default,` —— **写死配置默认档** ✗
+          //     （"档位由金额自动定"这条在这条出口上**没接线** ⇒ 与建单那条出口两套口径 ✗）
+          //   改后逐字：`skipAutoPaymentStatus` = **同一个纯函数**按金额定出来的那一档
+          //     （`payments: []` ⇒ 本次已收 = 0 ⇒ 自动档 = **未付** ✓ 与旧行为**同值**，但真源只剩一处 ✓）
+          //   依据 = 她 2026-10-16 逐字（"别让他带着这三个单选提交"）⇒ 档位**只认金额**（不看页面/请求体 ✓）
+          // eslint-disable-next-line global-require
+          const { autoModeOf: autoModeOfSkip } = require('../config/saleSettlement');
+          // eslint-disable-next-line global-require
+          const { PAYMENT_STATUS: PAYMENT_STATUS_SKIP } = require('../config/scanWrite');
+          const skipAutoPaymentStatus = (PAYMENT_STATUS_SKIP || {})[
+            autoModeOfSkip({ itemsCents: skipItemsCents, paymentsCents: 0 }).mode
+          ] || '';
+          // ⭐ 跳过 = **不写收款** ✓（"钱稍后补"✓）⇒ 空的 payments + **自动定的档** + 实收按上面那份 ✓
           // eslint-disable-next-line no-await-in-loop
           skipCreated = await writeService.submitSale({
             openId: openIdOf(req),
@@ -1582,7 +1668,7 @@ const createScanPageRouter = (options = {}) => {
             payments: [],
             // ⭐ 同上：用**取值后的那一份**（body → 会话暂存 → 会话草稿行 ✓ 与上面同一口径）
             lineAmounts: skipResolvedAmounts,
-            paymentStatus: writeConfig.sale.paymentStatus.default,
+            paymentStatus: skipAutoPaymentStatus,
             paidAmount: '',
             timing: skipStepTiming,
             pendingLine: skipView?.found ? {
@@ -1781,6 +1867,7 @@ await writeService.saveDraftLines?.(openId, {
           logWarn('scan.write.line_amount_required', { request_id: requestId, lines: lineAmounts.length });
 
 return sendPaymentStep(res, req, {
+            paymentMethods: await candidatePaymentMethods(req),
             realm,
             status: 400,
             notice: String(writeConfig.texts.lineAmountRequiredNote || ''),
@@ -1814,6 +1901,7 @@ return sendPaymentStep(res, req, {
 
         // ⭐ 资金页：还没建单 ⇒ `orderNo: ''`（**不编** ✗）· `count` 用草稿行数 ✓
         return sendPaymentStep(res, req, {
+          paymentMethods: await candidatePaymentMethods(req),
           realm,
           submitKey: body[fields.submitKey],
           count: pendingDraftLines.length,
@@ -1951,6 +2039,7 @@ return sendPaymentStep(res, req, {
         //    ⚠️ 2026-10-14：渲染搬去 `sendPaymentStep`（逐字搬迁 ✓ 提交与按钮两处共用 ✓）
         try {
           return sendPaymentStep(res, req, {
+            paymentMethods: await candidatePaymentMethods(req),
             realm,
             submitKey: body[fields.submitKey],
             orderNo: result.order_no || '',

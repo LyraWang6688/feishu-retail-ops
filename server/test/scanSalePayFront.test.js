@@ -162,13 +162,28 @@ test('AC-PF4 🔴 未点按钮前刷新 ⇒ **仍是资金页**（不是成功�
   });
 });
 
-test('AC-PF5 🔴 金额填错 ⇒ 点按钮时**原地重渲染资金页** + 同一 code/文案', async () => {
+test('AC-PF5 🔴 **收多了**（收款 > 每件实收）⇒ 点按钮时 400 + **原地重渲染资金页** + 零写入', async () => {
   await withServer(async ({ base, calls }) => {
     await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: SCAN_WRITE.actions.submitOrder });
+    // ⭐⭐ 2026-10-16 A2a **用例迁移**（改前逐字 → 改后逐字 → 依据）：
+    //   改前逐字：`{ action: 'payment_pay', payment_status: '部分付', payment_method: '微信', payment_amount: '' }`
+    //     （"部分付 + 实付空"⇒ 服务层 `partial_amount_missing`）⇒ 断言「零建单 ✓ + 重渲染资金页 ✓」。
+    //   改后逐字：空额行在新形状下**被服务层丢掉**（"本次已收 = 收款行合计"）⇒ 空额**不再是失败** ✗
+    //     ⇒ 换成**收多了**：每件实收 280、收款填 600（> 280）⇒ **400 + 原地重渲染 + 零写入** ✓
+    //   依据 = 业务负责人裁决（2026-10-16）：**两边不等 = 合法**；**只有"收多了"才拦住**
+    //     （400 + 人话 + 零写入）。
+    //   🔴 原有那两条判据（零建单 ✓ 资金页 ✓）**一条没删**；另补 status=400 / 人话 / 值原样回填（**只加不减** ✓）
     const bad = await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, {
-      action: 'payment_pay', payment_status: '部分付', payment_method: '微信', payment_amount: '',
+      action: 'payment_pay', payment_method: '微信', payment_amount: '600', line_amount: ['280'],
     });
-    assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 0, '金额不对**不许**建单 ✓（不许假成功 ✗）');
+    assert.equal(bad.status, 400, '"她能改"的那一类 ⇒ 400（不是 500、也不是假成功）');
+    assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 0, '收多了**不许**建单 ✓（不许假成功 ✗）');
     assert.match(bad.html, /payment_pay|资金|全付|部分付/, '应当**重渲染资金页**（带提示 ✓）');
+    // 她刚填的钱原样在（改一下就能再点）
+    assert.match(bad.html, /<option value="微信" selected>微信<\/option>/);
+    assert.match(bad.html, /name="payment_amount"[^>]*value="600"/);
+    // 人话要指出是"收多了"（她一眼看到该改哪儿）
+    const notice = (bad.html.match(/data-view="payment-step-notice">([\s\S]*?)<\/p>/) || [])[1] || '';
+    assert.match(notice, /收款比每件实收多/, `人话要指出"收多了"：实际 = ${notice}`);
   });
 });
