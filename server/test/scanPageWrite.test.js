@@ -872,6 +872,10 @@ test('⑨ 【迁移·甲】没填实收 ⇒ **拦住 + 必填人话（醒目）*
     const key = await currentKey(h, openId);
     await withServer(formApp(h, async () => view({
       number: 'YD1111|白色|A', item_no: 'YD1111', product_record_id: 'prod_2',
+      // 🔴 2026-10-16（迁移·甲′）：**这一款本来就没有单价**（`PRODUCT_NO_PRICE.单价 = null` ✓）
+      //   ⇒ mock 的取数视图也**必须如实**（不许给它一个 ¥399 ✗）——
+      //   不然闸门会"以为取到了单价"而放行 ✗（这就是这条用例一直红的原因 ✓ 不是代码错 ✗）
+      price_text: '',
     })), async (base) => {
       // ⭐ 2026-10-13 改指向：提交成功先落第 2 步「整单付款」页 ⇒ 跟着【跳过】那一跳再取页面 ✓
       //    （能力去哪：renderSalePaymentStepPage → payment_skip 动作）
