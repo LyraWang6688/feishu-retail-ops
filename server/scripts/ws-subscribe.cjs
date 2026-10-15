@@ -52,6 +52,13 @@ const lark = require('@larksuiteoapi/node-sdk');
 const forbiddenAppTokens = String(
   process.env.FEISHU_V1_FORBIDDEN_APP_TOKENS || process.env.FEISHU_V1_PROD_APP_TOKEN || '',
 ).split(',').map((item) => item.trim()).filter(Boolean);
+// ⭐ 2026-10-15：**"空转"要让它在运行期看得见** —— 下面那句"本机闸门是空转的"原先只写在注释里，
+//   跑起来完全看不出来 ✗。这里补一条**如实 warn**（只在没配清单时打；**不改判据、不拦** ✗）。
+if (!forbiddenAppTokens.length) {
+  console.warn('⚠️ 未配置 FEISHU_V1_FORBIDDEN_APP_TOKENS（或 FEISHU_V1_PROD_APP_TOKEN）'
+    + ' ⇒ **本机这道"生产 Base"闸门是空转的**（没有任何 token 在黑名单里）。'
+    + '真正的保护是「本机/本地测试应用根本够不着生产 Base」（AGENTS.md 第 7 / 8 条）。');
+}
 const fileToken = String(process.env.FEISHU_V1_BITABLE_APP_TOKEN || '').trim();
 if (!fileToken) { console.error('缺少 FEISHU_V1_BITABLE_APP_TOKEN'); process.exit(1); }
 if (forbiddenAppTokens.includes(fileToken)) { console.error('拒绝执行：目标 Base 在禁止写入清单里（生产 Base）'); process.exit(1); }
