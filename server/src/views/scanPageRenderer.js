@@ -1275,13 +1275,39 @@ const multiItemPayloadJson = (items = []) => JSON.stringify(
  *   这一块**不用任何前端脚本**：
  *   · `multi_items` 的**首件**由**服务端**渲进 hidden 字段（形状 = 设计 §4.3；`entries` 由路由在提交时合并 ✓）
  *   · 「再加一个货品」是一颗**链接**（同一路径带参数 ⇒ 路由侧去记草稿；**路由没接前 = 能点、但没人读** ✓ 自洽）
- *   · 「已加货品」列表**由服务端**从 `view.multi_items` 渲染（拿不到 ⇒ 如实空态 ✓ 不编 ✗）
+ *   · 「已加货品」列表**由服务端**从 `view.multi_items` 渲染（拿不到 ⇒ 按下面的口径处理 ✓ 不编 ✗）
+ *
+ * ⭐⭐ 2026-10-16（`mode` 参数 · 业务负责人真机截图 + 逐字，**只点退货 tab 那三处**）：
+ *   「退货确实没有了那个退货按钮，需要你**删除不必要的文字提示**」＋ 弹窗确认她选的是
+ *   「**说明 + 「本单已加的货品」那整块都删**」（逐字在 lead 的弹窗记录里 ✓）。
+ *
+ *   ⚠️ **改前**这一块在**补货 / 退货两块共用同一份 DOM**（`t.hint` 那一段 + `t.title` 那个 `<h3>`
+ *     + 空态那句 `t.empty` **无条件**渲染）⇒ 她那句"不必要的文字提示"在**两块**上都成立，
+ *     但她**只点了退货** ✗ ⇒ 必须**按 tab 分叉**，不许顺手把补货那块一起删 ✗。
+ *
+ *   ⇒ **`mode === 'return'`（退货 tab 专用）**：
+ *     · 🔴 **删** `t.hint` 那一段说明（她逐字：「删除不必要的文字提示」）；
+ *     · 🔴 **删** `t.title` 那个标题 ＋ 空态那句 `t.empty`（弹窗：**"说明 + 整块都删"**）；
+ *     · ⭐ **但"已加的货品列表"本身要保留** —— **只有真的加了第二个货品时才出现**
+ *       ⇒ 空的时候 `data-view="multi-item-list"` 那个 `<ul>` **整块不渲染** ✓（有内容才显示 ✓）；
+ *     · 🔴 **一个字都不动**：`data-multi-add` 那颗「＋ 再加一个货品」、那个 hidden `multi_items`
+ *       字段、`data-view="multi-item"` 容器、以及 `attr(...)` 那几个 `data-product-*`（表单行为 ✓）。
+ *   ⇒ **`mode` 缺省（= 补货那一块 + 既有直接调用它的用例）逐字不变** ✓
+ *     —— 走**老分支**（`t.hint` / `t.title` / `t.empty` / 列表照旧）✓。
+ *
+ *   📌 判据（成对迁移，改前逐字 → 改后逐字 → 依据 = 她 2026-10-16 真机截图 + 逐字
+ *     ＋ 弹窗选择「说明 + 整块都删」）在 `test/multiItemOrderReturnTrim.test.js`（**新增**）：
+ *     · 退货块：删掉的那三处 **塞回即红** ✓（反向哨兵）；
+ *     · 退货块：**有第二个货品时列表仍要出现** ✓（**正向**判据 —— 防"删过头" ✗）；
+ *     · 补货块：**那三处逐字还在** ✓（防扩大范围 ✗）。
  */
-const multiItemBlockHtml = (write, view = {}) => {
+const multiItemBlockHtml = (write, view = {}, mode = '') => {
   if (!MULTI_ITEM_ORDER.enabled) return ''; // 🔴 开关关 ⇒ 空串 ⇒ 既有页面逐字不变 ✓
   const t = MULTI_ITEM_RENDER_TEXTS;
   const field = String(MULTI_ITEM_ORDER.field || '');
   if (!field) return ''; // 字段名空 ⇒ 宁可不渲染，也不发一个没人认的键 ✗
+  // ⭐ 退货 tab = **精简那一版**（她没有说"补货也这样" ✗ ⇒ 只按 `mode` 分叉 ✓ 不按环境/全局开关 ✗）
+  const trimmed = mode === 'return';
   const first = {
     product_record_id: view.product_record_id, number: view.number, item_no: view.item_no,
     color: view.color, supplier_record_id: view.supplier_record_id, entries: [],
@@ -1289,21 +1315,30 @@ const multiItemBlockHtml = (write, view = {}) => {
   const already = Array.isArray(view.multi_items) ? view.multi_items : [];
   const attr = (name, value) => (value === undefined || value === null || value === ''
     ? '' : ` ${name}="${escapeHtml(value)}"`);
-  const listHtml = already.length
-    ? already.map((item) => {
-      const rows = Array.isArray(item?.entries) ? item.entries.length : 0;
-      return `<li class="multi-item-row">${escapeHtml(String(item?.number || item?.item_no || ''))}`
-        + ` <span class="hint">${escapeHtml(fillText(t.rowsTemplate, { count: rows }))}</span></li>`;
-    }).join('')
-    : `<li class="hint">${escapeHtml(t.empty)}</li>`;
+  // 列表行：两种 mode **共用同一份拼法**（一处定义 ✓ 不各抄一份 ✗）
+  const listRows = already.map((item) => {
+    const rows = Array.isArray(item?.entries) ? item.entries.length : 0;
+    return `<li class="multi-item-row">${escapeHtml(String(item?.number || item?.item_no || ''))}`
+      + ` <span class="hint">${escapeHtml(fillText(t.rowsTemplate, { count: rows }))}</span></li>`;
+  }).join('');
+  // 🔴 退货 tab：**空 ⇒ 整块（含 <ul>）不渲染** ✓；补货 tab：**空 ⇒ 保留那句空态人话**（**逐字不变** ✓）
+  const listHtml = trimmed
+    ? (already.length ? `<ul class="multi-item__list" data-view="multi-item-list">${listRows}</ul>` : '')
+    : `<ul class="multi-item__list" data-view="multi-item-list">`
+      + `${already.length ? listRows : `<li class="hint">${escapeHtml(t.empty)}</li>`}</ul>`;
   // 「再加一个货品」：**零 JS** ⇒ 一颗指向本页的链接（路由按参数去记草稿；没接前点了不报错 ✓）
   const addHref = `${escapeHtml(write.postAction || '')}${String(write.postAction || '').includes('?') ? '&' : '?'}add=1`;
+  // 🔴 说明那一段 + 标题：**退货 tab 不渲染**（她那两句"不必要的文字提示"）；补货 tab 逐字不变 ✓
+  //   ⚠️ 拼法上把"删掉的行"做成**整行**（不是行内空串）—— 空串留在模板里会多出空行，
+  //     "删掉"就应该是**那一行不在**（也让她截图里不会看到一段莫名的空隙 ✓）。
+  const lines = [];
+  if (!trimmed) lines.push(`<p class="hint">${escapeHtml(t.hint)}</p>`);
+  lines.push(`<a class="btn btn--primary" data-multi-add href="${addHref}">${escapeHtml(t.addButton)}</a>`);
+  lines.push(`<input type="hidden" name="${escapeHtml(field)}" value="${escapeHtml(multiItemPayloadJson([first]))}">`);
+  if (!trimmed) lines.push(`<h3 class="multi-item__title">${escapeHtml(t.title)}</h3>`);
+  if (listHtml) lines.push(listHtml);
   return `<div class="card multi-item" data-view="multi-item"${attr('data-product-record-id', view.product_record_id)}${attr('data-product-number', view.number)}${attr('data-product-item-no', view.item_no)}${attr('data-product-color', view.color)}${attr('data-product-supplier-record-id', view.supplier_record_id)}>
-<p class="hint">${escapeHtml(t.hint)}</p>
-<a class="btn btn--primary" data-multi-add href="${addHref}">${escapeHtml(t.addButton)}</a>
-<input type="hidden" name="${escapeHtml(field)}" value="${escapeHtml(multiItemPayloadJson([first]))}">
-<h3 class="multi-item__title">${escapeHtml(t.title)}</h3>
-<ul class="multi-item__list" data-view="multi-item-list">${listHtml}</ul>
+${lines.join('\n')}
 </div>`;
 };
 
@@ -1492,8 +1527,8 @@ ${sizesNotice}
 <p class="hint" data-view="${escapeHtml(rf.hintView)}" hidden></p>
 ${rows}
 ${sizes.length ? `${purchaseAmountRowHtml(write)}
-${multiItemBlockHtml(write, view)}
-<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.returnButton)}</button>` : ''}
+${multiItemBlockHtml(write, view, 'return')}
+<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(rf.submitLabel)}</button>` : ''}
 </form>
 </section>`;
 };

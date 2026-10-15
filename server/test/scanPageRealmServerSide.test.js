@@ -148,7 +148,13 @@ const WRITE = {
     replenishQuantityLabel: '数量',
     replenishButton: '生成采购申请',
     // ⭐ 2026-10-11 六领域：退货块与验收块各自要的文案（配置里的键名照 `config/scanWrite.js`）
-    returnButton: '生成采购退货',
+    // ⭐⭐ 2026-10-16 **成对迁移**（业务负责人真机截图 + 逐字：「把最下面的蓝色按钮改为「退货」」）：
+    //   改前逐字：这个夹具里有个 `returnButton: '生成采购退货'`（照抄写侧键名）；
+    //   改后逐字：**这一行删掉** —— 退货 tab 那颗按钮的文字**不再来自写侧** `texts.returnButton`，
+    //     而是来自**渲染侧** `SCAN_PAGE.returnForm.submitLabel`（= `'退货'`，见 `config/scanPage.js`）✓
+    //   依据：她 2026-10-16 真机截图（退货 tab · 货品 832-500）＋ 逐字「最下面的蓝色按钮改为「退货」」
+    //   ⚠️ **不是放宽**：`EXPECT.purchase_return` 里补了一条**逐字**断言（下面）——
+    //     原来"按钮文案"这一项在这一页**根本没判据**（夹具给的值没人读 ⇒ 静默假绿 ✗）✓
     acceptSummary: '已验收 {scanned} 双 / 应到 {expected} 双',
     acceptAddButton: '加入本次验收',
     acceptFinishAmountLabel: '实际金额',
@@ -213,7 +219,35 @@ const EXPECT = {
   // ⚠️ 2026-10-14 改指向：这一块**回到退货表单**（「退货」回条上 ✓ 配品另开 `accessory` ✓）
   //    改前逐字：`purchase_return: { has: [SCAN_PAGE.texts.realmEmptyPurchaseReturnBody], hasNot: [...] }`
   //    （那是"配品页 + 没人话空态卡"的口径 ✗）；退货能力一直在 `returnFormHtml` ✓ 一个字没删 ✗
-  purchase_return: { has: ['data-view="purchase-return"'], hasNot: ['加入本单', '库存（共', '一键补货'] },
+  // ⭐⭐ 2026-10-16 **成对迁移 · 新增两条逐字判据**（改前 → 改后 → 依据）：
+  //   改前逐字：`purchase_return: { has: ['data-view="purchase-return"'], hasNot: […] }`
+  //     —— ⚠️ 那一版**没有**任何"按钮文案 / 那三处提示"的判据（夹具里的 `returnButton` 没人读 ✗）
+  //   改后逐字：下面这两条（**新增**，不是替换）
+  //   依据：业务负责人 **2026-10-16 真机截图 + 逐字**（退货 tab · 货品 832-500）：
+  //     「**删除不必要的文字提示**」＋「把**最下面的蓝色按钮改为「退货」**」＋弹窗选择「说明 + 整块都删」
+  //   ⇒ 这一页**必须**有「退货」那颗 ✓（`has` 含 `SCAN_PAGE.returnForm.submitLabel`）；
+  //     那三处（说明 / 标题 / 空态）与旧按钮名**绝不该**有 ✓（`hasNot`）——
+  //     ⚠️ `hasNot` 是**逐字** `body.includes(needle) === false`（见 AC-W1 的断言），
+  //       所以这几条就是**反向哨兵**：谁把它们塞回来 ⇒ 当场红 ✓
+  //     ⚠️ 为什么那三处文案写**字面量**而不是引 `MULTI_ITEM_RENDER_TEXTS`：
+  //       引配置的话，**改配置就能让哨兵跟着一起变**（= 哨兵失效 ✗）；字面量才钉得住"她已经不要的那几句" ✓
+  purchase_return: {
+    // ⚠️ 这里**只放"这一页独有"的逐字**（`has` 是 `body.includes`，body 里还有**领域条** ——
+    //   例如裸字 `'退货'` 是**条上那颗 tab** 的文字、**每一页都有** ⇒ 放进 `hasNot` 会假红 ✗；
+    //   所以"那颗按钮的文字"改用下面 `hasExact` 的**整段按钮 HTML**判 ✓）
+    has: ['data-view="purchase-return"'],
+    // ⭐ 逐字判"那颗按钮的文字" —— 用 `{label}</button>` 这一段：**这一页独有**、
+    //   且任何别的领域的提交按钮都不会长成这样（比裸词 `'退货'` 稳 ✓ 比整段 `<button …>` 准 ✓
+    //   —— 整段前缀每个领域都有，会被"别块绝不该有"那条误判成假红 ✗）。
+    hasExact: [`${SCAN_PAGE.returnForm.submitLabel}</button>`],
+    hasNot: [
+      '加入本单', '库存（共', '一键补货',
+      '生成采购退货',
+      '加进来的货品会和上面对着的这一个一起提交；每个货品的尺码与数量在它自己的块里填。',
+      '本单已加的货品',
+      '还没有加第二个货品。',
+    ],
+  },
   // ⭐ 2026-10-12：验收领域没有活跃会话时 = **她自己开工那一块**（列未到货批次 + 手输兜底），
   //    不是白屏、也不再是「回工作台」那张卡（她不去工作台）。
   inventory: { has: ['库存（共 5 双）'], hasNot: ['加入本单', '一键补货', '货品标签'] },
@@ -272,6 +306,12 @@ test('AC-W1 服务端按 `?from` 只渲染那一块：另外三块连 HTML 都�
       for (const needle of expect.has) {
         assert.equal(body.includes(needle), wanted,
           `realm=${realm} 时「${needle}」${wanted ? '必须' : '绝不该'}出现`);
+      }
+      // ⭐ 2026-10-16 新增（与上面同一条成对迁移）：`hasExact` = **整段 HTML 逐字**判
+      //   （用在"那颗提交按钮"上 —— 独立一个词 `'退货'` 是条上 tab、每页都有 ⇒ 不能用裸词 ✓）
+      for (const needle of expect.hasExact || []) {
+        assert.equal(body.includes(needle), wanted,
+          `realm=${realm} 时（整段）「${needle}」${wanted ? '必须' : '绝不该'}出现`);
       }
     }
     // 四块里只留了当前这一块的标记

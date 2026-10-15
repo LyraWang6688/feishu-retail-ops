@@ -95,7 +95,16 @@ test('AC-RF1b 🔴 **首屏**即见：尺码行 + 整单金额 + 生成按钮（
   const block = await blockOf();
   assert.equal((block.match(/class="size-row"/g) || []).length, 1, '她那款只 1 个尺码有数 ⇒ 就列 1 行 ✓');
   assert.match(block, /整单金额/, '整单金额（必填）在块里 ✓');
-  assert.match(block, /生成采购退货/, '生成按钮在块里 ✓');
+  // ⭐⭐ 2026-10-16 **成对迁移**（依据：业务负责人真机截图 + 逐字「把**最下面的蓝色按钮**改为「**退货**」」）：
+  //   改前逐字：`assert.match(block, /生成采购退货/, '生成按钮在块里 ✓');`
+  //   改后逐字：下面这两行（**改指向、不放宽** ✓）
+  //   依据：她 2026-10-16 真机截图（退货 tab · 货品 832-500）＋ 逐字「最下面的蓝色按钮改为「退货」」
+  //   ⚠️ 判的仍是**同一件事**（"首屏那颗提交按钮在不在"）—— 只是把它**逐字钉死**成配置里那一句 ✓
+  //     （原来那条 `/生成采购退货/` 是**写侧**文案；现在那颗按钮的文字来自
+  //      `SCAN_PAGE.returnForm.submitLabel`，见 `config/scanPage.js` ✓）
+  assert.match(block, new RegExp(`<button type="submit"[^>]*>${SCAN_PAGE.returnForm.submitLabel}</button>`),
+    '最下面那颗提交按钮 = 配置里那句（现为「退货」）✓');
+  assert.equal(block.includes('生成采购退货'), false, '🔴 旧按钮名不许回来（塞回即红 ✓）');
   assert.match(block, /data-view="return-stock"/, '每行那个"当前库存数量"列也在 ✓');
 });
 
