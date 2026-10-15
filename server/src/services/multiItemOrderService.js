@@ -391,7 +391,16 @@ const createMultiItemOrderService = (options = {}) => {
         return checked;
       }
       const effectiveKey = String(submitKey || '').trim() || key;
-      const plan = planSubmission({ draft, chainConfig, submitKey: effectiveKey, behavior });
+      // 🔴 **必须用校验后的那份（`normalized`）去算载荷** —— 尺码在那里变成数字、空数量补成默认值、
+      //   超库存的行在那里被压到"能退的" ✓。改前逐字（我第一版就是错的）：
+      //     `const plan = planSubmission({ draft, chainConfig, submitKey: effectiveKey, behavior });`
+      //   改后逐字：下面这一行（用 `checked.normalized.items`）
+      //   依据：`test/multiItemOrderEntry.test.js` 的 **AC-ENT2/AC-ENT5** 当场抓到 ——
+      //     提交时用**未规范化**的草稿 ⇒ 写出去的是 `'40'`（字符串）与 `5`（超库存的那 5 双）✗
+      const plan = planSubmission({
+        draft: { ...draft, items: checked.normalized.items },
+        chainConfig, submitKey: effectiveKey, behavior,
+      });
       const shadow = config.enabled !== true;
       if (shadow) {
         // ⭐⭐ **影子跑**：只把"这一单会提交什么"记进日志 —— **一个字节都不写业务表** ✗（§12 第 ① 步）
@@ -455,6 +464,44 @@ const createMultiItemOrderService = (options = {}) => {
     }
   };
 
+  // ── ⭐ 入口（多货品）载荷：把"按货品分组"的表单载荷变成草稿里的 `items` ────────────
+  /**
+   * 她 2026-10-15 晚改口径：「**直接走新逻辑（一单多货品），不需要影子**」⇒ 入口要吃多货品载荷。
+   *
+   * ⚠️ **形状照设计 §4.3**（`items: [{ product_record_id, number, item_no, color, supplier_record_id,
+   *    entries: [{ size, quantity }] }]`）；**单货品载荷原样可用**（一个 group 就是今天那种）✓
+   *    ⇒ 这是"**N=1 与旧路径逐字等价**"能成立的前提（同一个 `planSubmission` 出来的载荷）。
+   *
+   * @param {object} input
+   * @param {Array<object>} input.groups 每个货品一组（路由从表单里解析出来）
+   */
+  const groupPayload = ({ groups = [] } = {}) => ({
+    ok: true,
+    items: (Array.isArray(groups) ? groups : []).map((group) => ({
+      product_record_id: String(group?.productRecordId ?? group?.product_record_id ?? '').trim(),
+      number: String(group?.number ?? '').trim(),
+      item_no: String(group?.itemNo ?? group?.item_no ?? '').trim(),
+      color: String(group?.color ?? '').trim(),
+      supplier_record_id: String(group?.supplierRecordId ?? group?.supplier_record_id ?? '').trim(),
+      entries: (Array.isArray(group?.entries) ? group.entries : []).map((entry) => ({
+        size: String(entry?.size ?? '').trim(), quantity: entry?.quantity ?? '',
+      })),
+    })),
+  });
+
+  /**
+   * ⭐ **入口把"我们自己的两个既有写入件"装进来** —— 引擎只认 `writers` 的**键名**（`config.chains[].writer`），
+   *   键名与写入件的对应只在这一处 ✗（引擎里**没有** `if (补货)`）。
+   * ⚠️ 传进来的必须是**既有业务件**（`purchaseWebhookService.publishPurchaseRequest` /
+   *   `purchaseReturnService.submit`）——**不许**把 gateway 塞进来 ✗（源码哨兵钉着）。
+   */
+  const resolveWriters = ({ purchase, purchaseReturn } = {}) => {
+    const map = {};
+    if (typeof purchase === 'function') map[config.chains.replenish.writer] = purchase;
+    if (typeof purchaseReturn === 'function') map[config.chains.return.writer] = purchaseReturn;
+    return map;
+  };
+
   return {
     openDraft,
     addItem,
@@ -464,6 +511,9 @@ const createMultiItemOrderService = (options = {}) => {
     validateDraft,
     planSubmission,
     submitDraft,
+    // ⭐ 入口用：多货品载荷 → `items`；把既有写入件装成 `writers`
+    groupPayload,
+    resolveWriters,
     // 只读暴露（排查 / 用例）
     productKeyOf,
     sanitizeKey,

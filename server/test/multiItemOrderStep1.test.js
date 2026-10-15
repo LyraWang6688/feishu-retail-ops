@@ -399,7 +399,11 @@ test('AC-MI8 ⭐⭐ 改配置即改行为 + **显式布尔**（空串 = 关掉�
   assert.equal(resolveMultiItemOrderConfig({ SCAN_MULTI_ITEM_ENABLED: 'true' }).enabled, true);
   assert.equal(resolveMultiItemOrderConfig({ SCAN_MULTI_ITEM_ENABLED: '' }).enabled, false,
     '**空串 = 关掉**（这就是"不许 `||` 兜底"要防的那个坑 ✓）');
-  assert.equal(resolveMultiItemOrderConfig({}).enabled, false, '没配 ⇒ 默认影子跑 ✓');
+  // ⚠️ 2026-10-15 晚**成对翻新**（她逐字：「**直接走新逻辑（一单多货品），不需要影子**」）：
+  //   改前逐字：`assert.equal(resolveMultiItemOrderConfig({}).enabled, false, '没配 ⇒ 默认影子跑 ✓');`
+  //   改后逐字：下面这一行（默认 `true`）
+  //   依据：她那句 —— 影子阶段取消 ✗ ⇒ 真实写入成为默认；`''`（空串=关掉）那条**照旧**成立 ✓
+  assert.equal(resolveMultiItemOrderConfig({}).enabled, true, '没配 ⇒ **默认直接走新逻辑**（不再影子）✓');
   assert.equal(resolveMultiItemOrderConfig({ SCAN_MULTI_ITEM_ASYNC_ENABLED: 'true' }).asyncEnabled, true,
     '异步开关也在配置里（第二步才用 ✓）');
   assert.throws(() => resolveMultiItemOrderConfig({ SCAN_MULTI_ITEM_ENABLED: '也许' }),
