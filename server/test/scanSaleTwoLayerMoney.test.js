@@ -1530,3 +1530,161 @@ test('AC-15 ⭐ 方案甲的两条边界：**填了 0 照旧拦住**；货品有
     assert.equal(progress.fulfillmentStatus, '已交付', '货那一维照旧（现货提交即交付）');
   } finally { h.cleanup(); }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-16（业务负责人逐字 · 资金页两点之一）：
+//    「**1. 未付、全付的差额怎么进未收款**」
+//    ＋ 她 2026-10-14 那句权威口径：「**只要本次付的金额小于累计的，那么差额都是未收款，
+//      包括本次付款为 0**」（`services/scanWriteService.js` 的 `:1047-1053` 就是它）
+//
+// ⇒ 资金页**不再让她选档**：档位由 `config/saleSettlement.js` 的纯函数 `autoModeOf(累计, 本次已收)`
+//    自动定出来（她 2026-10-16 逐字：「**不用用户选择是全付、部分付或者未付**」，
+//    见 `docs/money-page-v2-spec-2026-10-14.md` 第 3-6 行）。
+//
+// 下面这几条钉的是「**定档结果 ⇒ 真落库几行**」——**真网关 + 真业务层**，
+// 断的是「收款明细」表里的**行数 + 那一行的金额 / 状态 / 方式**（不是"页面上显示了什么" ✗）。
+// ⚠️ 依据（她逐字）：「差额**怎么进**未收款」⇒ **进不去就是没做到** ✗ —— 所以判据必须落在表上 ✓。
+// ⚠️ 这一批**不改任何既有 AC**（既有三档那几条一个字没动）；只**新增**"自动定档"这一层。
+// ═══════════════════════════════════════════════════════════════════════════
+
+// `autoModeOf` = 她的"自动定档"（配置先行；语义键 full/partial/unpaid 的真源仍在 scanWrite）
+// eslint-disable-next-line global-require
+const { autoModeOf } = require('../src/config/saleSettlement');
+
+/** 语义键 → 表里那个中文档位（真源：`config/scanWrite.js` 的 `PAYMENT_STATUS`）。 */
+const modeValueOf = (key) => SCAN_WRITE.sale.paymentStatus.mode[key];
+
+const amountField = () => V1_BITABLE_SCHEMA.tables.paymentRecord.fields.amount;
+
+/**
+ * 「她在资金页填了什么」⇒ 自动定档 ⇒ 用**既有** `submitSale` 的入参形状提交
+ * （这一步就是路由要做的：档位由金额推出来，「实付多少」那个输入框不再存在 ⇒ 由收款合计顶上）。
+ */
+const submitAuto = async (h, openId, { itemsYuan, payments = [], submitKey } = {}) => {
+  const toCents = (value) => Math.round(Number(value || 0) * 100);
+  const itemsCents = toCents(itemsYuan);
+  const paymentsCents = payments.reduce((sum, row) => sum + toCents(row.amount), 0);
+  const auto = autoModeOf({ itemsCents, paymentsCents });
+  const result = await h.write.submitSale({
+    openId,
+    submitKey: submitKey || await currentKey(h, openId),
+    paymentStatus: auto.mode ? modeValueOf(auto.mode) : '',
+    payments,
+    paidAmount: auto.mode === 'partial' ? String(paymentsCents / 100) : '',
+  });
+  return { auto, result };
+};
+
+test('AC-AM-E2E-1 ⭐⭐ 累计 ¥300 + 本次只填「微信 100」⇒ 定成部分付 ⇒ **真落库两行**：微信 100 已收款 ＋ 未收款 200', async () => {
+  const h = createHarness();
+  try {
+    const openId = 'ou_auto_partial';
+    await addShoe(h, openId, { size: 40, amount: 300 });
+
+    const { auto, result } = await submitAuto(h, openId, {
+      itemsYuan: 300, payments: [{ method: '微信', amount: 100 }],
+    });
+
+    // ① 自动定档（不问她）
+    assert.equal(auto.action, 'allow', '这一单不该被拦住');
+    assert.equal(auto.mode, 'partial', '0 < 已收 < 累计 ⇒ **部分付**（她自己没选过）');
+    assert.equal(auto.owedCents, 20000, '差额 = ¥200（分：20000）');
+
+    // ② 她点完之后**表里真的多出两行**（这才是"差额进未收款"）
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(entriesOf(h, 'paymentRecord').length, 2, '**恰两行**：一条已收款 + 一条未收款');
+    const paid = paidRows(h);
+    const owed = unpaidRows(h);
+    assert.equal(paid.length, 1, '微信那 100 是「已收款」一行');
+    assert.equal(String(paid[0].fields[amountField()]), '100', '那一行的金额 = ¥100（她填的数）');
+    assert.deepEqual(paid[0].fields[methodField()], ['pm_wechat'], '方式 = 微信（关联字段：她在页面上选的那个）');
+    assert.equal(owed.length, 1, '差额那一条是【未收款】');
+    assert.equal(String(owed[0].fields[amountField()]), '200', '**未收款 = ¥200**（差额，不是 0、也不是全额）');
+    assert.equal(result.owed_amount, 200, '端上如实回报差额（元）');
+    // ③ 方式留空（那一条的形状归既有业务层，2026-10-11 口径）
+    assert.equal(owed[0].fields[methodField()], undefined, '【未收款】那一条**方式留空**');
+  } finally { h.cleanup(); }
+});
+
+test('AC-AM-E2E-2 ⭐ 一分没填 ⇒ 定成未付 ⇒ **一条【未收款】= 累计**（她逐字「包括本次付款为 0」）', async () => {
+  const h = createHarness();
+  try {
+    const openId = 'ou_auto_unpaid';
+    await addShoe(h, openId, { size: 40, amount: 300 });
+
+    const { auto, result } = await submitAuto(h, openId, { itemsYuan: 300, payments: [] });
+
+    assert.equal(auto.mode, 'unpaid', '一分没付 ⇒ 未付');
+    assert.equal(auto.owedCents, 30000, '差额 = 累计（¥300）');
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(entriesOf(h, 'paymentRecord').length, 1, '恰一条【未收款】');
+    assert.equal(paidRows(h).length, 0, '没有「已收款」那一行（她一分钱都没填）');
+    assert.equal(String(unpaidRows(h)[0].fields[amountField()]), '300', '那一条的金额 = 累计 ¥300');
+  } finally { h.cleanup(); }
+});
+
+test('AC-AM-E2E-3 ⭐ 填满 ⇒ 定成全付 ⇒ 只有那一条已收款、**一条【未收款】都不写**', async () => {
+  const h = createHarness();
+  try {
+    const openId = 'ou_auto_full';
+    await addShoe(h, openId, { size: 40, amount: 300 });
+
+    const { auto, result } = await submitAuto(h, openId, {
+      itemsYuan: 300, payments: [{ method: '微信', amount: 300 }],
+    });
+
+    assert.equal(auto.mode, 'full', '已收 = 累计 ⇒ 全付');
+    assert.equal(auto.owedCents, 0, '收齐了 ⇒ 没有差额');
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(entriesOf(h, 'paymentRecord').length, 1, '只有她填的那一条');
+    assert.equal(paidRows(h).length, 1);
+    assert.equal(unpaidRows(h).length, 0, '**一条【未收款】都不写**（收齐了）');
+  } finally { h.cleanup(); }
+});
+
+test('AC-AM-E2E-4 🔴 收多了（本次 > 累计）⇒ 自动定档**就是拦住** ⇒ 一个字都不写（既有口径不放宽 ✗）', async () => {
+  const h = createHarness();
+  try {
+    const openId = 'ou_auto_over';
+    await addShoe(h, openId, { size: 40, amount: 300 });
+
+    const auto = autoModeOf({ itemsCents: 30000, paymentsCents: 40000 });
+    assert.equal(auto.action, 'block', '"收多了"必须拦住（她没说过"多收的算预存" ✗）');
+    assert.equal(auto.code, 'amount_mismatch', '复用既有错误码 ⇒ 路由直接取既有那句人话 ✓');
+    assert.equal(auto.mode, null, '拦住的这一次**不定档**（不许拿一个档位去写库 ✗）');
+
+    // 服务层同一条口径（双保险）：未付档 + 已收 > 累计 ⇒ 也拦住、零写入
+    const { result } = await submitAuto(h, openId, {
+      itemsYuan: 300, payments: [{ method: '微信', amount: 400 }],
+    });
+    assert.equal(result.ok, false, '服务层也必须拦住');
+    assert.equal(result.code, 'amount_mismatch');
+    assert.equal(entriesOf(h, 'salesEntry').length, 0, '主表一个字都不写');
+    assert.equal(entriesOf(h, 'paymentRecord').length, 0, '收款明细一个字都不写');
+  } finally { h.cleanup(); }
+});
+
+test('AC-AM-E2E-5 ⭐ 幂等不变：同一把 `submitKey` 连点两次 ⇒ 收款行 / 未收款行**都不重复**', async () => {
+  const h = createHarness();
+  try {
+    const openId = 'ou_auto_idempotent';
+    await addShoe(h, openId, { size: 40, amount: 300 });
+    const key = await currentKey(h, openId);
+
+    const first = await submitAuto(h, openId, {
+      itemsYuan: 300, payments: [{ method: '微信', amount: 100 }], submitKey: key,
+    });
+    assert.equal(first.result.ok, true, JSON.stringify(first.result));
+    assert.equal(entriesOf(h, 'paymentRecord').length, 2, '第一跑：两行');
+
+    // 她连点 / 刷新又点了一次（**同一把键** —— 幂等一字没拆）
+    const second = await submitAuto(h, openId, {
+      itemsYuan: 300, payments: [{ method: '微信', amount: 100 }], submitKey: key,
+    });
+    assert.equal(second.result.reused, true, '第二跑 = 把上一次的结果还给她（不重复记账）');
+    assert.equal(entriesOf(h, 'paymentRecord').length, 2, '收款明细**还是两行**（没写第二遍）');
+    assert.equal(paidRows(h).length, 1, '「已收款」那一条只有一条');
+    assert.equal(unpaidRows(h).length, 1, '【未收款】那一条也只有一条');
+    assert.equal(entriesOf(h, 'salesEntry').length, 1, '主表也没有建第二张');
+  } finally { h.cleanup(); }
+});

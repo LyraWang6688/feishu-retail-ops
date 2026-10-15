@@ -135,4 +135,71 @@ const resolveSettlement = (input = {}, table = SETTLEMENTS) => {
   return { ...entry.whenNoMoney, code: null, effectiveMode: 'unpaid', owedCents: 0 };
 };
 
-module.exports = { PAY_MODES, SETTLEMENTS, OVERPAID, settlementOf, resolveSettlement };
+/**
+ * ⭐⭐ 2026-10-16（业务负责人逐字 · 她的两点之二/之一）：
+ *   「**1. 未付、全付的差额怎么进未收款**」
+ *   ⇒ 资金页**不再让她选档**：档位由「**本次填写的金额 vs 货品累计金额**」**自动定**出来。
+ *     这条纯函数就是那个"自动定档"——**只算档位与差额，不碰任何 IO、不产生文案**。
+ *
+ * 规则（与 `config/scanWrite.js` 的「未付/部分付/全付」三档同一个语义，**语义键不新造** ✗）：
+ *   · 本次已收 **>** 累计        ⇒ `block`（`amount_mismatch`，沿用既有那条"收多了"的口径 ✗ 不放宽）；
+ *   · 累计不可知（≤ 0）          ⇒ `unpaid`（**不猜"全付"** ✗ —— 累计都没有，说"收齐了"是编）；
+ *   · 本次已收 **= 0**           ⇒ `unpaid`，差额 = 累计（她逐字：「**包括本次付款为 0**」✓）；
+ *   · 0 < 本次已收 < 累计        ⇒ `partial`，差额 = 累计 − 本次已收（那一笔差额 ⇒ 既有业务层写一条【未收款】✓）；
+ *   · 本次已收 **=** 累计        ⇒ `full`，差额 0（**一条【未收款】都不写** ✓）。
+ *
+ * ⚠️ 差额的**落库**不在本文件（也不由扫码侧拼那条记录）：本函数只把 `owedCents` 交出去，
+ *    写那一条的是既有业务层（`services/salesOrderService.js` 的 `owed` 协议）。
+ * ⚠️ `code` / `reason` 一律**复用既有词汇**（`amount_mismatch`）：路由能直接拿它取既有文案 ✓
+ *    （既不新造错误码、也不在这里放中文 ✗ —— 文案只给 labelKey/码，与 `SETTLEMENTS` 同规矩）。
+ * ⚠️ 规则表**可注入**（第 2 参）⇒ 用例能"换配置即换行为"，代码零改动 ✓。
+ */
+const AUTO_MODES = Object.freeze({
+  /** 本次已收 = 0 ⇒ 未付（差额 = 累计）。 */
+  zeroPaid: 'unpaid',
+  /** 0 < 本次已收 < 累计 ⇒ 部分付（差额 = 累计 − 已收）。 */
+  underItems: 'partial',
+  /** 本次已收 = 累计 ⇒ 全付（差额 0）。 */
+  exact: 'full',
+  /** 累计 ≤ 0（还没填实收 / 读不到）⇒ 未付：**不猜"全付"**。 */
+  unknownItems: 'unpaid',
+  /** 本次已收 > 累计 ⇒ 拦住（既有那条"收多了"的口径）。 */
+  over: Object.freeze({ action: 'block', reason: 'amount_mismatch', code: 'amount_mismatch' }),
+});
+
+/**
+ * ⭐ 纯函数：给定「货品累计」与「本次填写的金额」（**分**）⇒ 档位 + 差额（**分**）。
+ *
+ * @param {object} input `itemsCents`（累计）· `paymentsCents`（本次已收）
+ * @param {object} [rules] 规则表（**可注入**）
+ * @returns {{action:'allow'|'block', mode:(string|null), owedCents:number, reason:string, code:(string|null)}}
+ *   `mode` 只可能是 `settlementOf()` 认得的语义键（`full` / `partial` / `unpaid`）或 `null`（block）。
+ */
+const autoModeOf = (input = {}, rules = AUTO_MODES) => {
+  // 只接受非负数（负数/非数字一律当 0 ⇒ 与 `money()` 同一套保守口径，不猜 ✗）。
+  const itemsCents = Math.max(0, money(input.itemsCents));
+  const paymentsCents = Math.max(0, money(input.paymentsCents));
+  if (paymentsCents > itemsCents) {
+    return { ...rules.over, mode: null, owedCents: 0 };
+  }
+  if (itemsCents <= 0) {
+    return { action: 'allow', mode: rules.unknownItems, owedCents: 0, reason: 'no_known_total', code: null };
+  }
+  if (paymentsCents <= 0) {
+    return { action: 'allow', mode: rules.zeroPaid, owedCents: itemsCents, reason: 'nothing_paid', code: null };
+  }
+  if (paymentsCents === itemsCents) {
+    return { action: 'allow', mode: rules.exact, owedCents: 0, reason: 'paid_in_full', code: null };
+  }
+  return {
+    action: 'allow',
+    mode: rules.underItems,
+    owedCents: itemsCents - paymentsCents,
+    reason: 'partial_paid',
+    code: null,
+  };
+};
+
+module.exports = {
+  PAY_MODES, SETTLEMENTS, OVERPAID, settlementOf, resolveSettlement, AUTO_MODES, autoModeOf,
+};
