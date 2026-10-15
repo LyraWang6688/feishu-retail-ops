@@ -38,6 +38,8 @@
 | [telemetry-audit-2026-10-15.md](telemetry-audit-2026-10-15.md) | 埋点体检表 · 2026-10-15（task-48） |
 | [workbench-domains-trim-three-fixes-2026-10-16.md](workbench-domains-trim-three-fixes-2026-10-16.md) | 工作台 · 货品（domains 页）三处改动（业务负责人 2026-10-16 截图 + 亲口逐字） |
 | [workbench-input-landing-audit-2026-10-16.md](workbench-input-landing-audit-2026-10-16.md) | 工作台「输入框 → 落点」审计（2026-10-16 · **只读**） |
+| [AI 全停（批准与执行范围）](ai-parsing-removal-2026-10-16.md) — 业务负责人"与 AI 分析有关的都停掉"的逐字口径、A/B/C 三类清单、保留清单与执行顺序
+| [前端「静态文案 vs 动态交互」分工章程](frontend-copy-ownership.md) — 给另一个 AI 看的边界：静态文案归它、动态交互归 Lead；同一文件同一时刻一个写入者
 | [workbench-query-contract.md](workbench-query-contract.md) | 工作台查询接口契约 |
 | [sales-line-plan.md](sales-line-plan.md) | 销售线的推进计划与判据 |
 | [arrival-conversation-reconcile-2026-10-06.md](arrival-conversation-reconcile-2026-10-06.md) | 采购到货「群话题对话式核对」：业务负责人 2026-10-06 当天口述的**权威口径**与验收标准（**已实现**）。⚠️ 其中「实际到货不会为 0 / 不为实际为 0 写规则」一条已被 2026-10-07 的口径**收窄**（见下一行） |
