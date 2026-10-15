@@ -29,10 +29,18 @@ const { SCAN_PAGE } = require('../src/config/scanPage');
 const RENDERER = readSrc('views/scanPageRenderer.js');
 const ROUTE = readSrc('routes/scanPage.js');
 
-/** 她点名要删干净的那两串**逐字**（① 的括号那句 + ② 的整句）。 */
+/** 她点名要删干净的那三串**逐字**（① 的括号那句 + ② 的整句 + ③ 跳过之后那句）。
+ *  ⭐ 2026-10-16 落地时把 **③ 也钉进来**（改前逐字 → 改后逐字 → 依据）：
+ *    · 改前逐字：`const BANNED = Object.freeze({ skipParenthetical: '…', workbenchHint: '…' });`（只两串）
+ *    · 改后逐字：多一条 `payPendingNote: '没填金额 ⇒ 这一单先记成「待补充」的信息单，之后去工作台补收款即可。',`
+ *    · 依据：业务负责人 2026-10-16 逐字「那三处提示【**全删**】……**全删就对了**」——
+ *      三处 = ①`skipButton` 括号 ②`workbenchHint` ③「跳过之后的提示」（`payPendingNote`，成功页上那句）；
+ *      只钉两串 ⇒ 第 ③ 处塞回来本文件**一点反应都没有**（漏网 ✗）⇒ 补齐 ✓
+ */
 const BANNED = Object.freeze({
   skipParenthetical: '稍后去工作台补',
   workbenchHint: '要补实收 / 收款：去工作台「销售」那一页。',
+  payPendingNote: '没填金额 ⇒ 这一单先记成「待补充」的信息单，之后去工作台补收款即可。',
 });
 /** ① 改完的样子：那颗按钮**只写这两个字**。 */
 const SKIP_LABEL_MINIMAL = '跳过';
@@ -55,18 +63,26 @@ const bannedSurvivors = (config = SCAN_PAGE) => {
 // AC-SK1 反向哨兵（分阶段）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-SK1 🔴 分阶段反向哨兵：三处提示删干净之后 ⇒ **谁塞回来就红**（今天如实标 [待激活]）', () => {
-  const step = SCAN_PAGE.paymentStep || {};
-  const survivors = bannedSurvivors();
-  const labelIsMinimal = String(step.skipButton || '') === SKIP_LABEL_MINIMAL;
-  if (survivors.length > 0 || !labelIsMinimal) {
-    // ⚠️ 如实：改 config 那一刀**还没落** ⇒ 本段今天**没有条件真判** ✓（不假装通过 ✗）
-    console.log('[AC-SK1] 待激活：`skipButton` 仍是「%s」；配置里仍有 %s'
-      + ' ⇒ task-54 的 config 那一刀落地后本段**自动生效** ✓',
-    String(step.skipButton || ''), JSON.stringify(survivors));
+test('AC-SK1 🔴 反向哨兵（**落地后就是真判据**）：三处提示谁塞回来就红', () => {
+  // ⭐⭐ 2026-10-16 迁移（改前逐字 → 改后逐字 → 依据）—— 把「激活标志」换掉：
+  //   改前逐字：`const survivors = bannedSurvivors();`
+  //     `const labelIsMinimal = String(step.skipButton || '') === SKIP_LABEL_MINIMAL;`
+  //     `if (survivors.length > 0 || !labelIsMinimal) { console.log('[AC-SK1] 待激活：…'); return; }`
+  //   改后逐字：`const landed = JSON.stringify(SCAN_PAGE.saleSuccess || {}).includes(UNIFIED_SENTENCE);`
+  //     `if (!landed) { console.log('[AC-SK1] 待激活：…'); return; }`
+  //   依据：本段的承诺就是「**谁塞回来就红**」—— 而原来的激活标志**正是它要钉的那两样东西**
+  //     ⇒ 把提示塞回来 ⇒ 本段退回 [待激活] 并**变绿** ✗（2026-10-16 落地时**变异 M3 实测**：
+  //     塞回 `workbenchHint` + 括号那句 ⇒ 原写法 `EXIT=0` ✗ 纸老虎）⇒ 换成"这一刀的**地标**"
+  //     （`saleSuccess` 的**值**里有那句统一文案 —— 提示塞回来不会动它 ⇒ 真判据照跑 ⇒ 红 ✓）
+  const landed = JSON.stringify(SCAN_PAGE.saleSuccess || {}).includes(UNIFIED_SENTENCE);
+  if (!landed) {
+    // ⚠️ 如实：这一刀**还没落** ⇒ 本段今天**没有条件真判** ✓（不假装通过 ✗）
+    console.log('[AC-SK1] 待激活：`saleSuccess` 的**值**里还没有「%s」'
+      + ' ⇒ task-54 落地后本段**自动生效** ✓', UNIFIED_SENTENCE);
     return;
   }
-  // 到这里 = 删干净了 ⇒ 从这一行起是**真判据**（塞回即红 ✓）
+  const step = SCAN_PAGE.paymentStep || {};
+  // 到这里 = 这一刀已落地 ⇒ 从这一行起是**真判据**（塞回即红 ✓）
   assert.equal(step.skipButton, SKIP_LABEL_MINIMAL, '① 跳过那颗按钮**只写「跳过」**（括号那句删掉 ✗）');
   assert.equal(step.workbenchHint === undefined || step.workbenchHint === '', true,
     '② 工作台提示**整句删**（键删掉、或留空串都算删 ✓）');
@@ -86,6 +102,9 @@ test('AC-SK2 ⭐ 探针：检测器**真能红**（证明 AC-SK1 / AC-SK3 **不�
     ['skipParenthetical'], '塞回①括号那句 ⇒ **必须**报红 ✓');
   assert.deepEqual(bannedSurvivors({ paymentStep: { workbenchHint: BANNED.workbenchHint } }),
     ['workbenchHint'], '塞回②工作台提示 ⇒ **必须**报红 ✓');
+  // ⭐ 2026-10-16 落地时补的探针：③「跳过之后的提示」塞回 ⇒ 也必须报红 ✓
+  assert.deepEqual(bannedSurvivors({ paymentStep: { payPendingNote: BANNED.payPendingNote } }),
+    ['payPendingNote'], '塞回③「跳过之后的提示」⇒ **必须**报红 ✓');
   assert.deepEqual(offendersOf('<p>已提交成功，数据会更新</p>'), [], '极简成功页 ⇒ 干净 ✓');
   assert.notDeepEqual(offendersOf('<p>已提交成功，数据会更新</p><a href="/s/NEW">再录一单</a>'), [],
     '塞回链接 ⇒ **必须**报红 ✓');
