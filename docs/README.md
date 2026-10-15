@@ -51,6 +51,34 @@
 | [exchange-same-item-size-2026-10-07.md](exchange-same-item-size-2026-10-07.md) | ⭐ **修复（2026-10-07 真机 23:06）**：业务负责人逐字「换货是这两种：**1. 换尺码  2. 换另一双鞋**」⇒ ① **提示词**（`doubaoService` 规则 13）逐字写明两种换货 ＋ 两个逐字例子（她真机那句「6C98012-15L 换成41码」＋「把 6035 黑 38 换成 1366-33 黑 40」）＋ 重申"return/exchange 不许把货号填进 items"；② **接线层判据放宽**（`afterSalesFlowService.resolveOutgoing`）：从"必须有 `new_item_no`"改成 **`new_item_no` / `new_color` / `new_size` 三者任一有值即算齐全**，只有三者全空才追问 ——「换尺码」本来就不该有新货号（同款换码时货号/颜色/金额取**原明细**，同一双鞋换个码 ⇒ 差价 0、不动钱）；③ **追问话术分情况**并全部搬进 `config/afterSalesFlow.js` 的 `AFTER_SALES_ASK_TEXTS`（三者全空 → 「换成哪一双？发我货号，或者只说新尺码也行。」）；④ 排查日志补 `new_color` / `new_size` / `new_amount`。⚠️ **追问之后的多轮接续本件不做**（先核过：销售链路没有这套机制，按口径停下汇报，另立队列串行做）。含**验收标准 AC-1～AC-10 + 逐条对照**、**先红后绿证据**（改动前 4 条红）、全量 2 次（rebase 到 `e2ec040` 之后 1290/1290）与 CI 证据 |
 | [sales-gift-landing-on-entry-2026-10-08.md](sales-gift-landing-on-entry-2026-10-08.md) | 🔴 **口径（权威 · 2026-10-08，业务负责人逐字：「好的，**写入的落点放在销售主表里的赠品**，**销售明细没有赠品了**」）**：赠品的落点从**「销售明细」**搬到**「销售主表」**（她在生产表新加主表「赠品」[文本]、**把明细「赠品」整列删掉**）⇒ ① schema **删** `salesDetail.fields.gift`、**加** `salesEntry.fields.gift='赠品'`；② **一单一条**：逐件算赠品文本 → 按明细顺序用「、」连起来、**按单个赠品去重**（与解析层同一套归一），写进**主表那一行**；`gift=true` 无描述沿用占位「有赠品」（挪进 `config/salesGift.js`）；**明细写库不再带 `gift`**（带了会抛）；③ 幂等/回读比对从"明细的赠品列"改成**"主表的赠品串"**（串相同判一致、变了要能被识别 ⇒ 停止重试）；⚠️ **解析层 `items[].gift / gift_description` 一个字不动**；④ **读侧补刀**：工作台赠品列改读**主表那一行**（不改就静默变空）。含**验收标准 AC①～⑥ + 逐条对照**、**先红后绿证据**（新用例改动前 9 红 / 1 绿；工作台守卫单独验过一次 `actual: ['','']` 的静默变空）、全量 2 次与 CI 证据，以及**一处需她知情的语义代价**（工作台同一单多行显示同一个赠品串）与**两处本机核不到的事实**（生产真表由她给的只读核对为准；部署前须在服务器上跑 `v1:schema-check:all`） |
 | [pending-push-card-and-retry-2026-10-08.md](pending-push-card-and-retry-2026-10-08.md) | ⭐⭐ **口径（权威 · 2026-10-08，业务负责人逐字：「甲 **改成消息卡片**（interactive）—— 单号加粗、类型用彩色标签、【待收金额】突出显示 · 长链接改成「**查看原话**」这样的**文字链接** · 分区块加**分割线**、采购区单独一块 · 客户端不支持时降级成纯文本」「其实**不需要单号**，需要的是那个**编号和尺码信息**……**不需要退货和换货的**」「① 日志 bug `[object]` ⇒ 打**真实 code/msg**」「② **推送失败自动重试**：失败后隔 **5/15 分钟**各重试一次」）**：9 点「待处理单推送」① 默认发**卡片**（`msg_type:'interactive'`：标题含日期与总计 → 【预定】区 → 分割线 → 【现货待收】区 → 分割线 → 【采购】区 → 脚注；每行 = **加粗的货号+尺码** + 彩色类型标签 + 高亮待收金额 + `[查看原话](深链)`；**行里不再有单号**；待收 0 → 「已付清」，金额读不出来 → **整段不渲染**；只有一个区块时标题不再重复计数）；② 降级 = `PENDING_DEAL_PUSH_MESSAGE_FORMAT=text` 或**卡片发送失败自动改发纯文本**（飞书卡片自带的 `fallback` 只给系统占位图、承载不了我们的文本 —— 官方文档 curl 实查见该文 1.1）；③ **明细含 已退货/已换货/已赔货 的单不进候选**（判据只从 `config/afterSales` 取；不再打「未知销售明细履约状态」的 warn）；④ 🔴 **日志真实错误**：`lark.sdk.error`（SDK `formatErrors` 那个"两个普通对象"的形状）与推送失败日志都打真实 `code` / `msg` / `log_id` / `method_id`（新件 `utils/larkError` 是唯一取用口，**绝不**带 `config.data`）；⑤ 失败**自动重试**：首次失败后 +5 / +15 分钟各一次（`PENDING_DEAL_PUSH_RETRY_DELAYS_MS` 可配、空串 = 不重试），**第一次失败不再算"今天跑过了"**，`sent:true` 之后绝不重发。含**验收标准 A1–A13 / B1–B6 / C1–C6 / D1–D9 + 逐条对照**、**先红后绿证据**（新用例在未改动的 `main` 上 20 条里 **18 红 / 2 绿**）、既有"销售区逐字哨兵"**逐条口径变更说明**、全量 2 次与 CI 证据，以及**四处需她知情的判断**（`{tag:'a'}` 不是飞书卡片组件、飞书 `fallback` 承载不了文本、成交提醒**只修日志不加自动重试**、只有采购候选时卡片没有标题） |
+| [HANDOVER-2026-10-14-night.md](HANDOVER-2026-10-14-night.md) | 交接单 · 2026-10-14 夜（新会话照这份直接开工） |
+| [HANDOVER-2026-10-15-async-9b2.md](HANDOVER-2026-10-15-async-9b2.md) | 交接：⑨b-2「销售提交转异步」收口（2026-10-15） |
+| [acceptance-into-workbench-2026-10-14.md](acceptance-into-workbench-2026-10-14.md) | 验收进工作台（2026-10-14 业务负责人口径 · **先写 AC 再动手**） |
+| [acceptance-into-workbench-full-2026-10-14.md](acceptance-into-workbench-full-2026-10-14.md) | 老验收**整块搬进工作台**（2026-10-14 晚 · 业务负责人逐字） |
+| [accessory-in-workbench-2026-10-14.md](accessory-in-workbench-2026-10-14.md) | 配品迁进工作台「销售 → 配品」子 tab（2026-10-14 晚） |
+| [architecture-audit-2026-10-15.md](architecture-audit-2026-10-15.md) | 架构审计报告（2026-10-15）—— 「保留 / 待删 / 要她定」三类清单 |
+| [async-submit-copy-and-plan-2026-10-14.md](async-submit-copy-and-plan-2026-10-14.md) | 异步提交 · 统一文案（2026-10-14 晚 · 业务负责人逐字） |
+| [label-print-entries-2026-10-14.md](label-print-entries-2026-10-14.md) | 「货品 → 标签打印」的入口结构（2026-10-14 晚 · 业务负责人逐字） |
+| [money-page-v2-spec-2026-10-14.md](money-page-v2-spec-2026-10-14.md) | 资金页 v2 · 施工规格（2026-10-14 晚 · 业务负责人逐字） |
+| [multi-item-order-design-2026-10-15.md](multi-item-order-design-2026-10-15.md) | 「一单多货品」设计（单据草稿 + 批量提交 · 共用模块） |
+| [parallel-development-protocol-2026-10-15.md](parallel-development-protocol-2026-10-15.md) | 并行开发协作约定（Lead + 其他 AI 同时在这个仓库干活时用） |
+| [remaining-queue-2026-10-14-night.md](remaining-queue-2026-10-14-night.md) | 剩余队列 · 落点与依据（2026-10-14 夜 · 业务负责人逐字） |
+| [sales-async-write-2026-10-14.md](sales-async-write-2026-10-14.md) | 销售提交「异步写入」验收标准（2026-10-14 晚 · 业务负责人逐字） |
+| [sales-money-required-2026-10-14.md](sales-money-required-2026-10-14.md) | 「实收金额必填」与"删说明文字"的口径（2026-10-14） |
+| [scan-amount-required-and-owed-2026-10-14.md](scan-amount-required-and-owed-2026-10-14.md) | 每件实收必填 + 差额一律补【未收款】（她 2026-10-14 夜两条裁决） |
+| [scan-and-workbench-structure-2026-10-14.md](scan-and-workbench-structure-2026-10-14.md) | scan-and-workbench-structure-2026-10-14.md |
+| [scan-page-architecture-2026-10-15.md](scan-page-architecture-2026-10-15.md) | 「扫一扫」页架构（2026-10-15 晚 · 她口述的落档） |
+| [scan-page-tabs-2026-10-14.md](scan-page-tabs-2026-10-14.md) | 扫码页 tab 最新口径（2026-10-14） |
+| [scan-pay-front-async-constraint-2026-10-14.md](scan-pay-front-async-constraint-2026-10-14.md) | 资金页两刀 · 第二刀的**硬约束**（业务负责人原话，逐字） |
+| [scan-to-print-jsapi-2026-10-14.md](scan-to-print-jsapi-2026-10-14.md) | 「扫码打印」= 扫完**直接打印这一张**（2026-10-14 晚 · 业务负责人选了 ⓐ） |
+| [scan-write-fields-audit-2026-10-15.md](scan-write-fields-audit-2026-10-15.md) | 扫码页 · **写入字段核对表**（销售 / 补货 / 退货 / 配品） |
+| [special-size-and-return-amount-2026-10-14.md](special-size-and-return-amount-2026-10-14.md) | 特殊码逻辑（三处统一）· 退货整单金额 · 货品卡品类+类别（2026-10-14 晚） |
+| [special-size-fold-and-enterable-base-2026-10-14.md](special-size-fold-and-enterable-base-2026-10-14.md) | 特殊码折叠 + 缺货基准 = 可录范围（2026-10-14 业务负责人口径） |
+| [test-plan-2026-10-15.md](test-plan-2026-10-15.md) | 测试计划 · 2026-10-15（前端交互流畅性 ＋ 后端写入正确性） |
+| [verify-2026-10-14-money-page-and-fold.md](verify-2026-10-14-money-page-and-fold.md) | 独立复核报告 · 资金页前置（#516）＋ 特殊码折叠（#515 / #517） |
+| [workbench-architecture-rationale-2026-10-15.md](workbench-architecture-rationale-2026-10-15.md) | 工作台架构与「什么进扫一扫、什么进独立 Tab」的两条判据 |
+| [workbench-tabs-and-subpages-2026-10-15.md](workbench-tabs-and-subpages-2026-10-15.md) | 工作台各一级 Tab 下**子页**的逻辑（业务负责人 2026-10-15 晚口述落档） |
+| [write-verification-2026-10-15.md](write-verification-2026-10-15.md) | 配品链路 · 写入正确性核对报告（测试 Base 端到端 · 2026-10-15） |
 
 
 ## 2. 架构决策记录（Architecture Decision Records）
@@ -103,3 +131,90 @@
 | [reports/arrival-zero-actual-2026-10-07.md](reports/arrival-zero-actual-2026-10-07.md) | ⭐ **到货核对「某尺码实际到 0 双」放行**（2026-10-07 真机误报的修复）：0 双的行**不入库、不阻断整单**；真「对不上明细」与「算出来是负数」各自有自己的提示与日志事件。含**动手前先写的验收标准**、实现落点、逐条对照、两个判断（负数 / 全 0）的理由与两次全量测试证据 |
 | [reports/purchase-group-notice-wording-2026-10-07.md](reports/purchase-group-notice-wording-2026-10-07.md) | ⭐ **采购群那条话术改成"只说双数"**（业务负责人 2026-10-07 逐字：「不用说几条，只给出多少双就可以了」）：`@… 三星 这批 12 条（共 13 双），图可以直接转给供应商。` → `@… 三星 这批 13 双，图可以直接转给供应商。`（「N 条」与「共」都去掉）。含**唯一拼接点**、**双数口径（`quantity` 求和，未改）**、**配置先行**（`config/purchaseGroupNoticeText.js`）、**同类文案排查清单**（改了哪些 / 没动哪些）、验收标准逐条对照与两次全量 + CI 证据 |
 | [purchase-batch-time-field-rename-2026-10-07.md](purchase-batch-time-field-rename-2026-10-07.md) | ⭐ **「报货批次」自动时间列改名同步**（部署闸门红的修复）：她把「创建时间」改名**「报货日」**、「更新时间」改名**「到货日」**（类型没变，仍是自动 `1001`/`1002`）⇒ schema 只改**字段名映射**（语义键 `createdAt` 不变），**到货日仍不建映射、两列都不写**；含**旧字段名全仓扫描**（改了哪些 / 为什么没改哪些）、**闸门"下一条"可疑清单**（按校验顺序推出"从未被核到的 5 张表"）、先红后绿 + 全量 2 次证据 |
+| [ab-color-first-design-2026-10-07.md](ab-color-first-design-2026-10-07.md) | 设计：颜色由 **A 环节**定死，B 只是拿它去查库存（业务负责人 2026-10-07 拍板） |
+| [acceptance-complete-asking-and-refund-method-2026-10-06.md](acceptance-complete-asking-and-refund-method-2026-10-06.md) | 验收口径：「已完毕」问不出方式时的收口 ＋ 退款写她说的方式（2026-10-06） |
+| [acceptance-moves-to-workbench-2026-10-13.md](acceptance-moves-to-workbench-2026-10-13.md) | 验收整体移到工作台（采购 → 子 tab）；扫码页不再做验收（业务负责人 2026-10-13 裁定） |
+| [acceptance-scan-design-2026-10-12.md](acceptance-scan-design-2026-10-12.md) | 验收（到货核对）设计 · 业务负责人 2026-10-12 口述版 |
+| [after-sales-card-retirement-2026-10-12.md](after-sales-card-retirement-2026-10-12.md) | 售后卡片退场口径（业务负责人 2026-10-12 定） |
+| [arrival-card-visibility-2026-10-07.md](arrival-card-visibility-2026-10-07.md) | 到货核对：日志说「卡片已更新」，她那边**一张卡都没有** —— 2026-10-07 23:37 真机 |
+| [arrival-no-complete-gate-2026-10-07.md](arrival-no-complete-gate-2026-10-07.md) | 到货核对：去掉「先说一句核对完毕」这道闸门（2026-10-07） |
+| [arrival-trigger-and-prompt-2026-10-07.md](arrival-trigger-and-prompt-2026-10-07.md) | 到货核对的触发方式与提示词（业务负责人 2026-10-07 拍板） |
+| [backlog-2026-10-12.md](backlog-2026-10-12.md) | 待办与已知事项（2026-10-12） |
+| [card-update-multi-2026-10-07.md](card-update-multi-2026-10-07.md) | 「点了卡片没反应」根因修复：`config.update_multi = true`（2026-10-07） |
+| [channel-decoupling-2026-10-06.md](channel-decoupling-2026-10-06.md) | 🔴 渠道解耦决定（业务负责人 2026-10-06） |
+| [confirm-deal-short-stock-and-card-selfheal-2026-10-07.md](confirm-deal-short-stock-and-card-selfheal-2026-10-07.md) | 【确认成交】两条严重 bug 的修复：假成交 / 卡面永不修复 |
+| [deploy-post-restart-selfcheck-2026-10-07.md](deploy-post-restart-selfcheck-2026-10-07.md) | 部署后版本自检 —— 不让 `/health` 再骗人（2026-10-07） |
+| [deposit-and-prepay-stock-fix-2026-10-07.md](deposit-and-prepay-stock-fix-2026-10-07.md) | 定金「已收到金额」误报 + 预付不该查库存 —— 实现与验收（2026-10-07） |
+| [domain-contracts.md](domain-contracts.md) | 领域间数据契约（销售 / 采购 / 库存 / 资金） |
+| [e2e-group-thread-2026-10-07.md](e2e-group-thread-2026-10-07.md) | 群聊 / 话题 · 六场景自动化 E2E —— 验收标准（**跑之前先写下来的**） |
+| [e2e-sales-status-method.md](e2e-sales-status-method.md) | 销售四维状态 · 端到端自测方法（2026-10-06 摸清并跑通） |
+| [e2e-verifier-checklist-2026-10-12.md](e2e-verifier-checklist-2026-10-12.md) | E2E 独立复核清单（2026-10-12 v2） |
+| [engineering-lessons-2026-10-12.md](engineering-lessons-2026-10-12.md) | 工程教训（2026-10-12 起，逐条追加） |
+| [entry-isolation-2026-10-08.md](entry-isolation-2026-10-08.md) | 「话题群入口」与「扫码入口」的隔离约定（业务负责人 2026-10-08 定） |
+| [feishu-console-checklist.md](feishu-console-checklist.md) | 飞书开放平台配置清单（业务负责人照着做） |
+| [flow-status-audit-2026-10-08.md](flow-status-audit-2026-10-08.md) | 四条链路现状核查（只读，2026-10-08） |
+| [goods-and-money-flows-2026-10-08.md](goods-and-money-flows-2026-10-08.md) | 货流与资金流对照（2026-10-08） |
+| [group-chat-entry-freeze-2026-10-11.md](group-chat-entry-freeze-2026-10-11.md) | 群聊入口「冻结」说明 + 清除方案（2026-10-11） |
+| [group-chat-test-removal-2026-10-12.md](group-chat-test-removal-2026-10-12.md) | 群聊入口清除 · 测试移除对照表（2026-10-12） |
+| [group-live-test-env.md](group-live-test-env.md) | 群聊真机测试环境（2026-10-06 搭好并验证） |
+| [group-sale-lookup-retirement-2026-10-12.md](group-sale-lookup-retirement-2026-10-12.md) | 群查单链路退场（2026-10-12，业务负责人拍板） |
+| [hardcoded-chinese-guard-redesign-2026-10-13.md](hardcoded-chinese-guard-redesign-2026-10-13.md) | 「硬编码中文」守门测试的一次性改造（业务负责人 2026-10-13 批准「做吧～」） |
+| [id-and-trade-type-decisions-2026-10-12.md](id-and-trade-type-decisions-2026-10-12.md) | 明细 ID / 交易类型 / 采购行为 —— 业务负责人口径（2026-10-12 定） |
+| [incident-backfill-not-stopped-2026-10-08.md](incident-backfill-not-stopped-2026-10-08.md) | 事故记录：批量脚本「以为停了、其实在跑」（2026-10-08） |
+| [incident-restart-during-submit-2026-10-13.md](incident-restart-during-submit-2026-10-13.md) | 【事故】我在她提交销售单的过程中重启了服务，打断了"交付 + 扣库存"那一步（2026-10-13） |
+| [inventory-adjustment-plan-2026-10-06.md](inventory-adjustment-plan-2026-10-06.md) | 人工库存行为（调增 / 调减 / 转冻结 / 转释放 / 样品转门盒 / 门盒转样品）改动方案 |
+| [js-literal-extraction-lessons-2026-10-13.md](js-literal-extraction-lessons-2026-10-13.md) | 「字符串手术」的工程教训（2026-10-13） |
+| [label-v1-frozen-2026-10-08.md](label-v1-frozen-2026-10-08.md) | 标签（40×30mm）**第一版定稿** —— 业务负责人 2026-10-08 |
+| [log-correlation-and-stock-key-label-2026-10-07.md](log-correlation-and-stock-key-label-2026-10-07.md) | 日志可读性：写入类日志补「能串起来」的键 ＋ 库存键两种写法并列（2026-10-07） |
+| [migration-test-policy-2026-10-13.md](migration-test-policy-2026-10-13.md) | 架构/入口迁移时，自动化测试怎么改（业务负责人 2026-10-13：「自动化测试的你记得改一下～」） |
+| [module-split-and-main-flow-2026-10-06.md](module-split-and-main-flow-2026-10-06.md) | 主链路与板块划分（业务负责人 2026-10-06 逐字确认） |
+| [pending-deal-push-blocks-2026-10-12.md](pending-deal-push-blocks-2026-10-12.md) | 9 点推送（③ 待处理单推送）· 口径确认（她 2026-10-12） |
+| [pending-deal-push-pin-2026-10-07.md](pending-deal-push-pin-2026-10-07.md) | 「待处理单推送」发送后置顶（Pin）实现与验收（2026-10-07） |
+| [prepaid-color-resolution-2026-10-07.md](prepaid-color-resolution-2026-10-07.md) | 修：预付单的「选颜色」链路没生效（真机 B26002-52，2026-10-07） |
+| [prepaid-stock-check-decoupling-2026-10-07.md](prepaid-stock-check-decoupling-2026-10-07.md) | 设计：按交易类型「拆开」销售录单里的两个解析（业务负责人 2026-10-07 确认） |
+| [production-base-changes-2026-10-08.md](production-base-changes-2026-10-08.md) | 生产 Base 变更复核（2026-10-08，只读） |
+| [purchase-chain-new-landing-2026-10-09.md](purchase-chain-new-landing-2026-10-09.md) | 采购链路换落点 + 数据表对齐（业务负责人 2026-10-09 定） |
+| [purchase-return-batch-and-topic-acceptance-2026-10-06.md](purchase-return-batch-and-topic-acceptance-2026-10-06.md) | 采购退货「归批 + 话题」验收标准（2026-10-06 业务负责人拍板） |
+| [purchase-return-batch-row-2026-10-07.md](purchase-return-batch-row-2026-10-07.md) | 退货批次也落「报货批次」一行（到货状态留空）· 退货单 PNG 有落点 · 9 点推送不受影响 |
+| [push-blocks-caliber-2026-10-08.md](push-blocks-caliber-2026-10-08.md) | 9 点推送：四个区域的口径（验收标准，业务负责人 2026-10-08 定） |
+| [qr-record-id-and-js-2026-10-12.md](qr-record-id-and-js-2026-10-12.md) | 二维码改用「记录 ID」+ 扫码页/工作台允许 JS（业务负责人 2026-10-12 定） |
+| [qr-sweep-and-recheck-2026-10-13.md](qr-sweep-and-recheck-2026-10-13.md) | 二维码「延迟复查 / 每日巡检」两个开关的处置（业务负责人 2026-10-13 拍板） |
+| [refund-status-options-and-cost-difference-2026-10-08.md](refund-status-options-and-cost-difference-2026-10-08.md) | 「收款状态」新增两个选项 + 换货差价口径（2026-10-08） |
+| [releases.md](releases.md) | 版本记录（一行一版） |
+| [roadmap-purchase-forecast-and-stock-alert-2026-10-07.md](roadmap-purchase-forecast-and-stock-alert-2026-10-07.md) | 未来规划：采购预测 + 库存预警（业务负责人 2026-10-07 提出） |
+| [sales-color-candidate-scope-2026-10-07.md](sales-color-candidate-scope-2026-10-07.md) | 颜色候选的范围：现货 / 未付只推「在售」，预付推全部（配置先行 · 第四刀） |
+| [sales-group-thread-implementation-2026-10-06.md](sales-group-thread-implementation-2026-10-06.md) | 实现说明：销售链路搬进群聊话题（2026-10-06） |
+| [sales-order-states-and-gifts-2026-10-09.md](sales-order-states-and-gifts-2026-10-09.md) | 销售单三态判据 + 配品/备注口径（业务负责人 2026-10-09 定） |
+| [sales-purchase-group-thread-2026-10-06.md](sales-purchase-group-thread-2026-10-06.md) | 销售 / 采购链路改造：私聊 → 群聊话题（业务负责人 2026-10-06 **逐字确认**） |
+| [sales-query-page-and-system-caliber-2026-10-08.md](sales-query-page-and-system-caliber-2026-10-08.md) | 「销售查询」页面的统计口径 vs 我们系统的口径（2026-10-08） |
+| [sales-text-trigger-off-card-only-2026-10-08.md](sales-text-trigger-off-card-only-2026-10-08.md) | 触发入口只留卡片按钮：说话不再触发（2026-10-08） |
+| [sales-total-and-accessory-render-2026-10-07.md](sales-total-and-accessory-render-2026-10-07.md) | 销售：总额 + 分项金额同时出现时的解析口径 · 配品行不渲染「码」 |
+| [sample-replacement-keep-current-logic-2026-10-07.md](sample-replacement-keep-current-logic-2026-10-07.md) | 口径：补样品（门盒转样品）**保持现状，不修** |
+| [scan-page-tabs-2026-10-13.md](scan-page-tabs-2026-10-13.md) | 扫码页 6 个 tab 的名称与顺序（业务负责人 2026-10-13 定稿） |
+| [scan-payment-step-write-or-not-2026-10-13.md](scan-payment-step-write-or-not-2026-10-13.md) | 扫码页第 2 步（整单付款）到底写不写表（业务负责人 2026-10-13） |
+| [scan-sales-payment-flow-2026-10-13.md](scan-sales-payment-flow-2026-10-13.md) | 销售扫码页：**录入**与**整单付款**必须分成两步（业务负责人 2026-10-13 口径） |
+| [scan-selling-caliber-2026-10-09.md](scan-selling-caliber-2026-10-09.md) | 扫码销售口径（业务负责人 2026-10-09 定） |
+| [scan-speed-decisions-2026-10-09.md](scan-speed-decisions-2026-10-09.md) | 扫码页提速与缺省领域（业务负责人 2026-10-09 定） |
+| [size-range-special-sizes-2026-10-13.md](size-range-special-sizes-2026-10-13.md) | 尺码范围与「特殊尺码」口径（业务负责人 2026-10-13） |
+| [state-and-prompt-matrix-2026-10-08.md](state-and-prompt-matrix-2026-10-08.md) | 状态 → 处理规则 → 提示 → 出口 总表（2026-10-08） |
+| [task-sample-image-drive-sync-2026-10-13.md](task-sample-image-drive-sync-2026-10-13.md) | 【待做任务】把每条货品的「样例图」自动写入云盘指定文件夹（业务负责人 2026-10-13 交办） |
+| [todo-arrival-card-form-input.md](todo-arrival-card-form-input.md) | 待办：到货核对卡片改成「表单填写 + 提交」触发（业务负责人 2026-10-07 深夜定） |
+| [todo-behavior-lexicon-sale-cash.md](todo-behavior-lexicon-sale-cash.md) | 待办：行为管理的「一码两用」（SALE_CASH）+ 出货量统计口径 |
+| [todo-delete-original-sales-status-write.md](todo-delete-original-sales-status-write.md) | 🔴 待删：「售后回写原单销售状态」那套代码 |
+| [todo-followup-supplement-multiturn.md](todo-followup-supplement-multiturn.md) | 待办：追问后的"补充"要接着上一轮（多轮接续）—— Lead 已批准最小改法（2026-10-07 晚） |
+| [todo-inventory-query-page-logic.md](todo-inventory-query-page-logic.md) | 「库存查询」页面逻辑审查（2026-10-08） |
+| [todo-purchase-inbound-removal.md](todo-purchase-inbound-removal.md) | 口径补记（业务负责人 2026-10-07 深夜，逐字） |
+| [todo-purchase-return-unified-parsing.md](todo-purchase-return-unified-parsing.md) | 待办：采购退货解析并入"采购（报货）"那条路线（业务负责人 2026-10-07 定，等前件落地后排） |
+| [todo-push-card-table-layout.md](todo-push-card-table-layout.md) | 待办：9 点推送卡片改成「三列表格布局 + 每组一行标题 + 跳转按钮」（业务负责人 2026-10-08 拍板） |
+| [todo-trigger-only-by-card-button.md](todo-trigger-only-by-card-button.md) | 待办：触发入口只留【终态卡按钮】—— 说话不再触发后续流程（业务负责人 2026-10-07 定） |
+| [todo-workbench-purchase-columns.md](todo-workbench-purchase-columns.md) | 待办清单（业务负责人认过、暂不做的） |
+| [workbench-access-policy-2026-10-08.md](workbench-access-policy-2026-10-08.md) | 工作台准入口径（业务负责人 2026-10-08 定） |
+| [workbench-inventory-2026-10-12.md](workbench-inventory-2026-10-12.md) | 工作台现状清单（飞书网页工作台 · 2026-10-12） |
+| [workbench-purchase-return-split-2026-10-07.md](workbench-purchase-return-split-2026-10-07.md) | 工作台首页【常用功能】：把「采购」和「退货」拆成两个独立入口（2026-10-07） |
+| [workbench-requirements-2026-10-06.md](workbench-requirements-2026-10-06.md) | 工作台改造需求（业务负责人 2026-10-06 逐字确认 · **派活以此文件为准**） |
+| [workbench-scan-entry-2026-10-13.md](workbench-scan-entry-2026-10-13.md) | 工作台里加「扫一扫」直接进扫码页（业务负责人 2026-10-13 提问） |
+| [workbench-single-entry-and-block-2026-10-13.md](workbench-single-entry-and-block-2026-10-13.md) | 工作台作为"唯一入口"：扫一扫放第一 + 是否做成飞书工作台小组件（Block） |
+| [workbench-tabs-and-inventory-adjustment-2026-10-06.md](workbench-tabs-and-inventory-adjustment-2026-10-06.md) | 工作台改造：3 个一级 tab ＋ 库存手工调整（2026-10-06） |
+| [workbench-two-tabs-and-external-query-2026-10-08.md](workbench-two-tabs-and-external-query-2026-10-08.md) | 工作台：3 个 tab → 2 个 tab ＋「信息查询」两个板块 = 飞书多维表格**外链**（2026-10-08） |
+| [扫码页访问控制-2026-10-11.md](扫码页访问控制-2026-10-11.md) | 扫码页（标签二维码）的访问控制 —— 2026-10-11 实测结论 |
+| [扫码页销售-操作说明书.md](扫码页销售-操作说明书.md) | 扫码页 · 销售 操作说明书 |
