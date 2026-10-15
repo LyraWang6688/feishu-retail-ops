@@ -849,6 +849,17 @@ const EVENTS = Object.freeze({
   saleBackgroundQueued: 'scan.sale.background_queued',
   saleBackgroundDone: 'scan.sale.background_done',
   saleBackgroundFailed: 'scan.sale.background_failed',
+  // ⭐⭐ 2026-10-16（task-52 · ②-⑭ 接线 · 业务负责人**逐字**）：
+  //   「**补货、退货还有验收，它都是异步的**……都是一句『**已提交成功，数据会更新**』」
+  //   ⇒ 补货 / 退货 **先回成功页、后台写库**（共用件 `services/purchaseWriteBackgroundService.js`）——
+  //     下面这三个事件名就是"后台那一跑"的**可排查路径**（形状照上面销售那三条 ✓ 不另发明 ✗）：
+  //    · `…Timing`：后台那一跑的耗时（**转后台 ≠ 日志断档** ✗）；
+  //    · `…Failed`：后台那一跑**没写成** ⇒ 她已经拿到成功页了，这条 warn ＋ 会话 `last_error`
+  //      就是"**可查 + 可重试**"的落点 ✓（🔴 **绝不假装成功** ✗）；
+  //    · `…MarkFailed`：连"落失败状态"这一步都失败了（**不许静默** ✗）。
+  purchaseBackgroundTiming: 'scan.purchase.background.timing',
+  purchaseBackgroundFailed: 'scan.purchase.background_failed',
+  purchaseBackgroundMarkFailed: 'scan.purchase.background_mark_failed',
   // ⭐⭐ 2026-10-13（验收提速）：**一条**验收的分阶段耗时汇总（与销售那条同形状）。
   //    为什么要有它：真账量出「每批 5 码 = 143.9 秒，其中逐码"库存+流水" = 119.5 秒（83%）」——
   //    没有分段就打不出"卡在哪一步"，也就证不了批量写到底省了多少。
@@ -948,6 +959,20 @@ const READ_CACHE = Object.freeze({
   tables: Object.freeze(['sizeManagement', 'product', 'behavior', 'paymentMethod']),
 });
 
+/**
+ * ⭐⭐ 2026-10-16（task-52 · ②-⑭ · 业务负责人**逐字**）：
+ *   「**补货、退货还有验收，它都是异步的**……都是一句『**已提交成功，数据会更新**』」
+ *
+ * ⇒ 补货 / 退货的「**后台那一跑**」配置（形状照销售那份 `SALE.asyncWrite` ✓ 不另发明 ✗）。
+ *   · `backgroundTimeoutMs`：看门狗阈值（毫秒）—— **只用于记一条日志**（**不取消写入** ✗）。
+ *   ⚠️ 与销售那三个键（`SCAN_SALE_ASYNC_*`）**分开**：那三个**不改名、不改语义** ✗。
+ *   ⚠️ 开关不在这里：异步是**这一刀的产品行为**（先回成功页）；要退回同步 = 回滚这一刀 ✗
+ *     （刻意**不做**"翻一个开关就退回同步"—— 那会让"到底哪条是真行为"变得说不清）。
+ */
+const PURCHASE_ASYNC = Object.freeze({
+  backgroundTimeoutMs: readInt(process.env, 'SCAN_PURCHASE_ASYNC_TIMEOUT_MS', 180000, { min: 1000, max: 1800000 }),
+});
+
 const SCAN_WRITE = Object.freeze({
   route: ROUTE,
   actions: ACTIONS,
@@ -956,6 +981,8 @@ const SCAN_WRITE = Object.freeze({
   sale: SALE,
   // ⭐⭐ 2026-10-14 晚：**整单金额**（补货 / 退货**共用一套**：一个字段名 + 一个必填开关）。
   purchaseAmount: PURCHASE_AMOUNT,
+  // ⭐⭐ 2026-10-16（task-52 · ②-⑭）：**补货 / 退货的「后台那一跑」**配置（形状照 `sale.asyncWrite` ✓）。
+  purchaseAsync: PURCHASE_ASYNC,
   replenish: REPLENISH,
   purchaseReturn: PURCHASE_RETURN,
   // ⭐⭐ 只读引用缓存（白名单 + TTL；写与写入判据一律不经过它）

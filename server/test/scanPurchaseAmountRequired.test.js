@@ -289,17 +289,36 @@ test('AC-PA3b ⭐⭐ 补货不问金额：空金额 ⇒ **照样提交**（200 +
 
 test('AC-PA4 整单金额非空 ⇒ 照旧提交（200）：退货**逐字带上**金额 · 补货**先不带**（待她裁）', async () => {
   login();
+  // ⭐⭐ 2026-10-16（task-52 · ②-⑭ 接线）**成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字（cases 带第三列"结果页标题"，断言它出现在成功页上）：
+  //     `const cases = [`
+  //       `['purchase_return', SCAN_WRITE.actions.purchaseReturn, '采购退货已生成'],`
+  //       `['replenish', SCAN_WRITE.actions.replenish, '采购申请已生成'],`
+  //     `];`
+  //     `` `assert.ok(html.includes(doneTitle), \`${realm}：照旧给她结果页\`);` ``
+  //   改后逐字（cases 只留两列；断言换成**统一成功页那一句**）：
+  //     `const cases = [`
+  //       `['purchase_return', SCAN_WRITE.actions.purchaseReturn],`
+  //       `['replenish', SCAN_WRITE.actions.replenish],`
+  //     `];`
+  //     `` `assert.ok(html.includes(SCAN_PAGE.saleSuccess.message), \`${realm}：成功页 = 统一那一句\`);` ``
+  //   依据：业务负责人 2026-10-16 逐字「**补货、退货还有验收，它都是异步的**……
+  //     用户提交之后**都是一个成功页**，说『**已提交成功，数据会更新**』」——
+  //     "批次号 / 已生成"那两句要等**后台那一跑**（写入口已进过一次=数据会更新 ✓），
+  //     所以本用例把"哪句文案"改指向统一那一句 ⇒ **判据没放宽**（写入口仍须恰进一次 +
+  //     入参形状两条断言**逐字未动** ✗）。
   const cases = [
-    ['purchase_return', SCAN_WRITE.actions.purchaseReturn, '采购退货已生成'],
-    ['replenish', SCAN_WRITE.actions.replenish, '采购申请已生成'],
+    ['purchase_return', SCAN_WRITE.actions.purchaseReturn],
+    ['replenish', SCAN_WRITE.actions.replenish],
   ];
-  for (const [realm, action, doneTitle] of cases) {
+  for (const [realm, action] of cases) {
     const write = createWriteSpy();
     await withServer(appWith(write), async (base) => {
       const response = await postAction(base, realm, action, '399');
       assert.equal(response.status, 200, `${realm}：非空 ⇒ 照旧提交`);
       const html = await response.text();
-      assert.ok(html.includes(doneTitle), `${realm}：照旧给她结果页`);
+      assert.ok(html.includes(SCAN_PAGE.saleSuccess.message),
+        `${realm}：成功页 = 配置里那一句统一文案（异步：批次号要等后台 ✓）`);
       assert.equal(write.calls.length, 1, `${realm}：写入口恰被调用一次`);
       assert.equal(write.calls[0].flow, realm === 'replenish' ? 'replenish' : 'purchase_return');
       // ⚠️ **入参形状一个字没变**：金额**不在**传给写服务的那个对象里

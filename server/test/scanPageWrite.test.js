@@ -85,6 +85,8 @@ const { SCAN_WRITE, PAYMENT_STATUS } = require('../src/config/scanWrite');
 const { createScanWriteService } = require('../src/services/scanWriteService');
 // ⭐⭐ 2026-10-15（⑨b-2）：等"在飞的后台那一跑"跑完（HTTP 级用例回读端状态前用）✓
 const { waitForPendingSaleBackgrounds } = require('../src/services/scanWriteService');
+// ⭐⭐ 2026-10-16（task-52 · ②-⑭ 接线）：补货 / 退货的「后台那一跑」登记簿 —— 同上那个用途 ✓
+const { waitForPendingPurchaseBackgrounds } = require('../src/services/purchaseWriteBackgroundService');
 const { createScanSessionService } = require('../src/services/scanSessionService');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { PurchaseWebhookService } = require('../src/services/purchaseWebhookService');
@@ -818,7 +820,12 @@ test('⑧ 路由：加入本单 → 回跳带上"本单几双"；提交整单 �
   } finally { h.cleanup(); }
 });
 
-test('⑧ 路由：补货表单勾两个尺码 → 采购申请结果页（批次号 + 条数）', async () => {
+// ⭐⭐ 2026-10-16（task-52 · ②-⑭ 接线）**成对迁移**（用例名也算判据 ⇒ 一起改）：
+//   改前逐字：`test('⑧ 路由：补货表单勾两个尺码 → 采购申请结果页（批次号 + 条数）', async () => {`
+//   改后逐字：`test('⑧ 路由：补货表单勾两个尺码 → **先回统一成功页**；“后台那一跑”再把采购申请写上（批次号 / 条数要等它）', …)`
+//   依据：业务负责人 2026-10-16 逐字「补货、退货还有验收，它都是异步的……都是一个成功页」——
+//     成功页上**只有那一句**；批次号与条数由后台那一跑产生（本用例改成"等它跑完再读表"✓ 判据没放宽 ✗）。
+test('⑧ 路由：补货表单勾两个尺码 → **先回统一成功页**；“后台那一跑”再把采购申请写上（批次号 / 条数要等它）', async () => {
   login();
   const h = createHarness();
   try {
@@ -852,10 +859,29 @@ test('⑧ 路由：补货表单勾两个尺码 → 采购申请结果页（批�
       }));
       assert.equal(response.status, 200);
       const doneHtml = await response.text();
-      assert.match(doneHtml, /采购申请已生成/);
-      assert.match(doneHtml, /CGD-20261008-0001/);
-      assert.match(doneHtml, /采购申请：1 条/);
-      assert.equal(entriesOf(h.gateway, 'purchaseRequest')[0].fields['数量'], 3);
+      // ⭐⭐ 2026-10-16（task-52 · ②-⑭ 接线）**成对迁移**（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字（本条原来的四条）：
+      //     `assert.match(doneHtml, /采购申请已生成/);`
+      //     `assert.match(doneHtml, /CGD-20261008-0001/);`
+      //     `assert.match(doneHtml, /采购申请：1 条/);`
+      //     `assert.equal(entriesOf(h.gateway, 'purchaseRequest')[0].fields['数量'], 3);`
+      //   改后逐字（**成功页 = 统一那一句**；批次号 / 条数要等后台那一跑 ⇒ 页面上不再有；
+      //             数据落库改用"等后台跑完再读"⇒ 判据**更强**：先回她 **且** 真落库 ✓）：
+      //     `assert.ok(doneHtml.includes(SCAN_PAGE.saleSuccess.message), …);`
+      //     `assert.equal(doneHtml.includes('采购申请已生成'), false, …);`
+      //     `await waitForPendingPurchaseBackgrounds();`
+      //     `assert.equal(entriesOf(h.gateway, 'purchaseRequest')[0].fields['数量'], 3, …);`
+      //   依据：业务负责人 2026-10-16 逐字「**补货、退货还有验收，它都是异步的**……
+      //     **用户提交之后都是一个成功页**，说『**已提交成功，数据会更新**』」——
+      //     批次号那一刻**还没取出来**（写库在后台）⇒ 成功页**不许**承诺它 ✗；
+      //     条数据落库仍在（`purchaseAsyncAcceptance.test.js` 的 AC-ASY1 同一条口径 ✓）。
+      assert.ok(doneHtml.includes(SCAN_PAGE.saleSuccess.message),
+        `成功页 = 配置里那一句统一文案（${SCAN_PAGE.saleSuccess.message}）✓`);
+      assert.equal(doneHtml.includes('采购申请已生成'), false,
+        '🔴 异步之后成功页**不许**再说"已生成"（批次号这一刻还不存在 ⇒ 说了就是假承诺 ✗）');
+      await waitForPendingPurchaseBackgrounds();
+      assert.equal(entriesOf(h.gateway, 'purchaseRequest')[0].fields['数量'], 3,
+        '⭐ 等后台那一跑跑完 ⇒ 数据**真落库**（先回成功页 ≠ 没写 ✓）');
     });
   } finally { h.cleanup(); }
 });
