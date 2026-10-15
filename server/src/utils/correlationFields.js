@@ -55,6 +55,15 @@ const CORRELATION_KEYS = Object.freeze([
   //                            "她点的是哪一行"（卡片上那一行就是这个键）。
   'payment_record_id',
   'settle_day',
+  // ⭐⭐ 2026-10-15（task-48 · 埋点 b「一次点击 → 一次写入」贯穿）—— **新键名，附理由（AC-LOG4）**：
+  //   `tap_id` **不是**我另起的新名字：它是**既有**点击埋点那一套里的关联键
+  //   （唯一真源 `src/config/uiTap.js` 的 `fields.tapId`，2026-10-14 晚 P0 ② 就定下了：
+  //    「同一次点击的 beacon 与它后面那笔写请求带的是**同一个** tap_id」）。
+  //   ⇒ 这次**只是把它也认成"能进写库日志的关联键"**，让 `ui.tap.result` 与
+  //     `bitable.record.created/updated` / `v1.sale.posted` 能用**同一个 id** 串起来 ✓。
+  //   ⚠️ 任务书里写的 `client_tap_id` **没有采用**：同一个东西若有两个名字，
+  //      `grep '"tap_id":"xxx"'` 就串不起整条链 —— 那正是本文件开头点名要消灭的现象 ✗。
+  'tap_id',
 ]);
 
 /**
@@ -85,4 +94,24 @@ const correlationFields = (source) => {
 const mergeCorrelation = (...sources) =>
   Object.assign({}, ...sources.map((source) => correlationFields(source)));
 
-module.exports = { CORRELATION_KEYS, correlationFields, mergeCorrelation };
+/**
+ * ⭐ 2026-10-15（task-48 b）：把一次点击的 `tap_id` 从**请求**里取出来（给写路径用）。
+ *
+ * 为什么需要它：`tap_id` 是**既有**埋点字段（`config/uiTap.js` 的 `fields.tapId`），
+ *   客户端一直随写请求带回来（表单隐藏字段 / body 同名字段）。要让写库日志也带它，
+ *   写路径只要 `correlationFields({ ...tapIdFromRequest(req) })` 就能接上 ——
+ *   **不新增键、不新增机制**（沿用 2026-10-07 那套「显式传参 → 网关不透明合并」✓）。
+ *
+ * ⚠️ 只读**客户端上报的那个 id**，取不到就是 `{}`（**绝不编一个** ✗）；
+ *   长度按配置截断（与 `utils/uiTapReport` 同一个上限口径）。
+ */
+const tapIdFromRequest = (req, UI_TAP_CONFIG) => {
+  const config = UI_TAP_CONFIG || require('../config/uiTap').UI_TAP;
+  const field = config.fields.tapId;
+  const raw = (req && req.body ? req.body[field] : undefined) ?? (req && req.query ? req.query[field] : undefined);
+  const text = String(raw ?? '').trim();
+  if (!text) return {};
+  return { tap_id: text.slice(0, Number(config.maxTapIdLength) || 64) };
+};
+
+module.exports = { CORRELATION_KEYS, correlationFields, mergeCorrelation, tapIdFromRequest };
