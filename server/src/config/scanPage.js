@@ -138,6 +138,17 @@ const TEXTS = Object.freeze({
   updatedAtUnknown: '—',
   footerNumberLabel: '编号',
 
+  // ⭐⭐⭐ 2026-10-16（task-53 · P0 **第二刀**）：「跳转资金页」前置判定拦住时的那句人话。
+  //   业务负责人逐字：「算了，这样吧，**实收金额的输入框用户必须填写**，只有用户填了**尺码和金额**，
+  //     才可以点击提交跳转到资金页，**不用做那个为空去单价的功能了**」
+  //   ⇒ 缺尺码或实收金额 ⇒ 400 停在货品页 + 这一句 + 零写入 ✓
+  //   🔴 措辞里**不许**出现「成交金额」「交易方式」两个**旧列名**（有既有判据钉着：
+  //     `test/scanSaleTwoLayerMoney.test.js:300` 的页面哨兵 ＋ `:1369` 对
+  //     `routes/scanPage.js` 的**字符串字面量**扫描 —— #659 就栽在这 ✗）⇒ 只用她这一刀的原话。
+  //   ⚠️ 文案的家在 `src/config/**`（用户可见中文只许在这里 ✓ `test/noHardcodedChinese.test.js` 的扫描根
+  //     只有 `services/routes/views`）⇒ 路由里**一个字都不写** ✗，只引这个键 ✓
+  jumpGateNoticeTitle: '请先填尺码和实收金额',
+
   // ⭐ 2026-10-13（她："开新单子系统挂一个 86900" ✗）：提交后回跳页顶部那条指引（配置先行 ✓）
   justSubmittedPrefix: '✅ 上一单已提交',
   justSubmitted: '✅ 上一单已提交（{orderNo}）· 请扫下一个标签',

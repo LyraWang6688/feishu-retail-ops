@@ -169,6 +169,15 @@ const submitOrder = (base, extra = {}) => fetch(`${base}/s/${ENCODED}`, {
   body: new URLSearchParams({
     action: SCAN_WRITE.actions.submitOrder,
     [SCAN_WRITE.fields.size]: '41',
+    // ⭐⭐ 2026-10-16【迁移 · **补环境**】（task-53 · P0 第二刀）：
+    //   · 改前逐字：这一发**只带尺码**（`[SCAN_WRITE.fields.size]: '41'`，一分钱都不带）
+    //   · 改后逐字：`[SCAN_WRITE.fields.amount]: '399',`（**只补这一行输入**；下面所有断言**逐字不动** ✗）
+    //   · 依据 = 业务负责人 2026-10-16 逐字「**实收金额的输入框用户必须填写**，只有用户填了**尺码和金额**，
+    //     才可以点击提交跳转到资金页」⇒ **真机她这一下必然带着尺码和金额**（同一个表单）；
+    //     本文件主题是"提交那一步写 `paymentStep`/`status`、刷新仍是资金页"（AC-SM8/9/11），
+    //     与"她填了多少钱"无关 ⇒ 补上她本来就会填的金额 = **补环境**
+    //     （与本文件先前补 `requestId` 同一手法 ✓）——**判据强度一点没降** ✓。
+    [SCAN_WRITE.fields.amount]: '399',
     ...extra,
   }).toString(),
 });
