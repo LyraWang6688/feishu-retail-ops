@@ -17,7 +17,11 @@ const { createWorkbenchOrderActionsRouter } = require('./workbenchOrderActions')
 const { WorkbenchPurchaseArrivalService } = require('../services/workbenchPurchaseArrivalService');
 const { createPurchaseQueryService } = require('../services/purchaseQueryService');
 const { PurchaseWebhookService } = require('../services/purchaseWebhookService');
-const { PurchaseArrivalConversationService } = require('../services/purchaseArrivalConversationService');
+// ⭐⭐ 2026-10-16（task-56）：异步之后**金额这道校验留在同步路径** —— 规则与文案**都取既有那一份**
+//    （`parseActualAmount` 只有一处实现 ✓ `config/purchaseArrivalTexts` 的 `pageMessages` ✓）
+//    ⇒ 本文件**不抄第二份规则、也不新写一句中文** ✗。
+const { PurchaseArrivalConversationService, parseActualAmount } = require('../services/purchaseArrivalConversationService');
+const { pageMessages } = require('../config/purchaseArrivalTexts');
 const { createLabelPrintService } = require('../services/labelPrintService');
 const { SampleReplacementService } = require('../services/sampleReplacementService');
 const { logError, logInfo, logWarn } = require('../utils/logger');
@@ -37,6 +41,9 @@ const { SCAN_WRITE } = require('../config/scanWrite');
 // 2026-10-14: the old acceptance flow moves into the workbench (reuse the existing arrival session service)
 const arrivalTab = require('../config/workbenchArrival');
 const { createScanArrivalService } = require('../services/scanArrivalService');
+// ⭐⭐ 2026-10-16（task-56）：工作台【确认到货】也接异步 ⇒ 「后台那一跑」用**补货 / 退货同一件**
+//   共用件（#664 ✓ 形状照销售那件）—— **不另造第二个后台件** ✗。
+const { createPurchaseWriteBackgroundService } = require('../services/purchaseWriteBackgroundService');
 const { canScanNextWithFeishu } = require('../views/scanPageRenderer');
 // ⭐⭐ 2026-10-14：「扫码打印」要的飞书 JSAPI 签名（服务在 `services/larkJsapiService.js`，
 //    密钥只从 env 读；本文件只把它挂到**既有**工作台闸门之后 —— 不新开鉴权 ✗）。
@@ -215,6 +222,8 @@ const createWorkbenchRouter = (options = {}) => {
    *   · `POST /purchase/arrivals/accept` —— 走**既有** `scanArrivalService`（start → addScan… → finish ✓
    *     幂等键 = 它自己的 `submitKeyOf(session)` ✓ 同键两跑只写一次 ✗）· 加库存仍走 `InventoryService.applyPurchase` ✓
    *     🔴 失败**如实**（人话 + 不当成功 ✗）
+   *     ⭐⭐ **2026-10-16（task-56）起这一条是异步的**：start / addScan（= 校验那一半）仍**同步**，
+   *       `finish`（= 写库那一半）丢给下面那件共用后台件 ⇒ 她**先拿到统一成功页** ✓（见下方注释）。
    */
   const purchaseQueryForArrival = () => {
     if (options.purchaseQuery) return options.purchaseQuery;
@@ -225,6 +234,62 @@ const createWorkbenchRouter = (options = {}) => {
     gateway: options.gateway || new V1BitableGateway(),
     config: (options.writeConfig || SCAN_WRITE).acceptance,
     store: options.arrivalStore,
+  });
+  /**
+   * ⭐⭐ 2026-10-16（task-56 · 业务负责人**弹窗选定 B**：「**工作台那半也接异步**」；她当天逐字
+   *   「**补货、退货还有验收，它都是异步的**……都是一句『**已提交成功，数据会更新**』」）：
+   *   工作台【确认到货】= **先回成功页（200 ＋ 统一那一句）⇒ 「后台那一跑」再写库** ✓
+   *
+   * 🔴 三条硬要求都落在这一处（判据见 `test/acceptAsyncWrite.test.js`）：
+   *   ① **校验仍当场同步拦** ✗ —— 批次号缺失 / 明细读不到 / 空单 / 货号认不出 /
+   *      尺码数量非法 / 不在本批 全部在**排后台之前**（拦住 ＋ 人话 ＋ **零业务写入** ＋ **一次后台都不排** ✓）。
+   *   ② **绝不假装成功** ✗ —— 后台那一跑没成就记一条 warn ＋ 把原因落回会话 `last_error`
+   *      （共用件 `services/purchaseWriteBackgroundService.js` 的 `markFailed` ✓）⇒ 可查、可重试 ✓。
+   *   ③ **同一把 `submitKey` 原样透传** ✗ —— 键仍由既有 `arrivalService.submitKeyOf(session)` 算
+   *      （**不取表单** ✗、不拼、不加后缀 ✓）；幂等三层（会话键 ｜ 批次任务闸门 ｜ 库存三元组）**一层都不拆** ✓。
+   *
+   * ⚠️ **复用既有共用件**（`createPurchaseWriteBackgroundService` ✓ #664）—— 不另造后台件 ✗；
+   *    事件名 / 看门狗阈值都取既有配置（`SCAN_WRITE.events.purchaseBackground*` /
+   *    `SCAN_WRITE.purchaseAsync` ⇒ `config/scanWrite.js` **一个字不动** ✓）。
+   */
+  const acceptBackground = options.acceptBackground || createPurchaseWriteBackgroundService({
+    // 🔴 `runRest` = **既有写入口**（`scanArrivalService.finish` ✓ 不新开写库路径 ✗）——
+    //    实参形状与改前那一次 `await arrivalService.finish(...)` **逐字同形**（键名一个不改 ✗）。
+    runRest: async ({ requestId, submitKey, restInput = {} }) => {
+      const result = await arrivalService.finish({
+        openId: restInput.openId,
+        actualAmount: restInput.actualAmount,
+        submitKey,
+        operatorOpenId: restInput.operatorOpenId,
+      });
+      // 写完才作废订单列表缓存（她下一次读一定是新数据 ✓）——改前是"写成功后立刻作废"，语义不变 ✓
+      if (result?.ok) ordersCache.invalidate();
+      return result;
+    },
+    // 🔴 失败如实：共用件已经记了 warn；这里把**原因**落回会话（可查、可重试 ✓ 绝不吞成成功 ✗）。
+    markFailed: async ({ requestId, context = {}, result, error }) => {
+      const message = String(result?.message || error?.message || '').trim();
+      if (!message) return;
+      try {
+        const session = await arrivalService.get(String(context.openId || ''));
+        if (session?.session_id) {
+          await arrivalService.store.update(session.session_id, { last_error: message });
+        }
+      } catch (markError) {
+        logWarn(SCAN_WRITE.events.purchaseBackgroundMarkFailed, {
+          request_id: requestId, chain: 'accept',
+          error: String(markError?.message || markError).slice(0, 200),
+        });
+      }
+    },
+    purchaseAsync: (options.writeConfig && options.writeConfig.purchaseAsync) || SCAN_WRITE.purchaseAsync || {},
+    config: {
+      events: {
+        restTiming: SCAN_WRITE.events.purchaseBackgroundTiming,
+        restFailed: SCAN_WRITE.events.purchaseBackgroundFailed,
+        markFailedError: SCAN_WRITE.events.purchaseBackgroundMarkFailed,
+      },
+    },
   });
   router.get(arrivalTab.api.detail, async (req, res) => {
     const batchNo = String(req.query?.[arrivalTab.fields.batchNo] || '').trim();
@@ -277,17 +342,55 @@ const createWorkbenchRouter = (options = {}) => {
         const added = await arrivalService.addScan({ openId, productRecordId, size, quantity });
         if (!added?.ok) return res.status(400).json({ success: false, error: added?.message || arrivalTab.texts.acceptFailed });
       }
-      // ③ 完成（🔴 **同一把** `submitKey`：来自既有 `submitKeyOf(session)` ✓ 幂等不许拆 ✗）
+      // ③ 同步闸门（🔴 **校验必须留在同步路径** ✗ —— 不许顺手挪进后台）：
+      //    · `no_session` / `no_scan_lines`（空单）＝ **写层自己的判据与文案**（`scanArrivalService.finish`
+      //      用的就是这两条 ✓ 本文件照它那两句回，不新写中文 ✗）；
+      //    · 金额 = `PurchaseArrivalConversationService` 里**唯一那一份** `parseActualAmount`
+      //      ＋ `config/purchaseArrivalTexts` 的 `pageMessages.m2/m3` ✓（不抄第二份规则 ✗）。
+      //    ⚠️ 顺序与**改前那一版同步路径**逐字一致（会话 ⇒ 空单 ⇒ 金额）——两个都错时提示不换 ✗。
+      //    命中 ⇒ **400 ＋ 人话 ＋ 零业务写入 ＋ 一次后台都不排** ✓。
       const session = await arrivalService.get(openId);
-      const result = await arrivalService.finish({
-        openId,
-        actualAmount: req.body?.[arrivalTab.fields.actualAmount],
-        submitKey: arrivalService.submitKeyOf(session),
-        operatorOpenId: openId,
+      if (!session) {
+        return res.status(400).json({ success: false, error: SCAN_WRITE.texts.acceptNoSessionBody });
+      }
+      if (!(session.scans || []).length) {
+        return res.status(400).json({ success: false, error: SCAN_WRITE.texts.acceptNoScansBody });
+      }
+      const amount = parseActualAmount(req.body?.[arrivalTab.fields.actualAmount]);
+      if (!amount.ok) {
+        return res.status(400).json({
+          success: false,
+          error: amount.reason === 'amount_missing' ? pageMessages.m2 : pageMessages.m3,
+        });
+      }
+      // ④ 幂等键：**服务端算**（既有 `submitKeyOf(session)` ✓ 不取表单里的键 ✗）——
+      //    ⚠️ 它**只在这里算一次**，原样交给后台那一跑（同一把键 ⇒ 幂等第一层仍在 ✓）。
+      const submitKey = arrivalService.submitKeyOf(session);
+      // ⑤ 排「后台那一跑」（🔴 **不 await** ⇒ 她**先拿到成功页** ✓；写库仍在既有 `finish` 里 ✗ 不新开路径）。
+      //    ⚠️ 位置**必须在上面那几道校验之后**：先排后台再校验 = 把"她填错了"变成"看起来成功" ✗。
+      acceptBackground.schedulePurchaseRest({
+        chain: 'accept',
+        requestId: req.requestId,
+        submitKey,
+        context: { openId, requestId: req.requestId, batchNo },
+        restInput: {
+          openId,
+          // ⚠️ 金额**原样**透传（不改成 `amount.value`）—— 形状与改前那一次 `finish(...)` 逐字同形 ✓；
+          //    金额规则在写层还会再走一遍同一份解析（幂等、无副作用 ✓）。
+          actualAmount: req.body?.[arrivalTab.fields.actualAmount],
+          operatorOpenId: openId,
+        },
       });
-      if (!result?.ok) return res.status(400).json({ success: false, error: result?.message || arrivalTab.texts.acceptFailed });
-      ordersCache.invalidate();
-      return res.json({ success: true, reused: result.reused === true, notice: arrivalTab.texts.accepted, ...result });
+      // ⑥ 成功页 = **统一那一句**（「已提交成功，数据会更新」· 真源在 `config/scanPage.js` 的
+      //    `SCAN_PAGE.saleSuccess` ✓ 本文件不新造字面量 ✗）。
+      //    ⚠️ **不许**回 "已确认到货"：这一刻后台还没写 ⇒ 那是假成功 ✗（真失败另有出口：
+      //       后台件的 warn ＋ 会话 `last_error` ⇒ 可查、可重试 ✓）。
+      return res.json({
+        success: true,
+        accepted: true,
+        batchNo,
+        message: arrivalTab.texts.submitted,
+      });
     } catch (error) {
       logError('workbench.purchase.arrival_accept.failed', { request_id: req.requestId, batch_no: batchNo, error: error.message });
       const status = error?.statusCode === 400 ? 400 : error?.statusCode === 503 ? 503 : 502;

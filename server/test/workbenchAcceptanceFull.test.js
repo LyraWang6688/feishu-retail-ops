@@ -23,6 +23,9 @@ process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'acc_fu
 
 const { createWorkbenchRouter } = require('../src/routes/workbench');
 const arrivalTab = require('../src/config/workbenchArrival');
+// ⭐⭐ 2026-10-16（task-56）：工作台【确认到货】接异步 ⇒ 用例要能"等后台那一跑跑完"再断言写入口
+//    （与 `test/purchaseAsyncAcceptance.test.js` 同一个入口 ✓ 不轮询、等真 Promise ✓）。
+const { waitForPendingPurchaseBackgrounds } = require('../src/services/purchaseWriteBackgroundService');
 
 const SESSION_SECRET = 'workbench_acceptance_full_test_secret';
 process.env.LARK_WEB_AUTH_ENABLED = 'true';
@@ -43,9 +46,19 @@ const withServer = async (app, run) => {
 
 const fakeArrival = (overrides = {}) => {
   const calls = [];
+  // ⭐⭐ 2026-10-16（task-56 · **成对迁移**）：替身会话补上 `scans`（改前这里没有它 ✗）。
+  //   改前逐字：`rows: [{ product_record_id: 'p1', size: 40, quantity: 2 }], posted_keys: [],`
+  //   改后逐字：`rows: [{ product_record_id: 'p1', size: 40, quantity: 2 }], posted_keys: [],`
+  //             `scans: [{ product_record_id: 'p1', size: 40, quantity: 1 }],`
+  //   依据：她 2026-10-16『**验收也是异步**』＋弹窗选 B —— 异步之后「空单」这道校验
+  //     **必须留在同步路径**（`session.scans` 为空 ⇒ 400 + 写层那句人话 + 零写入 ✗），
+  //     于是路由第一次真的去读 `session.scans` ⇒ 替身必须像**真会话**一样带上它
+  //     （真会话由 `scanArrivalService.start` 建，**从来都有** `scans: []` ✓）。
+  //   ⚠️ 这不是放宽判据：断言一个字没改，只是把**残缺的替身**补成真形状 ✓。
   const session = {
     session_id: 'sess-1', batch_no: 'BH-1', status: 'open', submit_round: 3,
     rows: [{ product_record_id: 'p1', size: 40, quantity: 2 }], posted_keys: [],
+    scans: [{ product_record_id: 'p1', size: 40, quantity: 1 }],
   };
   return {
     calls, session,
@@ -53,6 +66,8 @@ const fakeArrival = (overrides = {}) => {
     addScan: async (input) => { calls.push({ m: 'addScan', input }); return overrides.addScan ? overrides.addScan(input) : { ok: true }; },
     get: async () => session,
     submitKeyOf: (s) => `accept:${s?.session_id}:${Number(s?.submit_round || 0)}`,
+    // ⚠️ 后台失败时共用件会调 `markFailed` ⇒ 它要能读会话、也要有 store（替身给一个空实现 ✓）
+    store: { update: async () => ({}) },
     finish: async (input) => {
       calls.push({ m: 'finish', input });
       if (overrides.finish) return overrides.finish(input, calls);
@@ -151,6 +166,18 @@ test('AC-AW12 ⭐⭐ 自定义货号（采购申请里没有的款）⇒ **如�
 
 test('AC-AW13 ⭐⭐ 幂等：**同一把 `submitKey`**（服务自己的 `submitKeyOf` ✓ 不取表单 ✗）串行+并发两跑', async () => {
   const arrival = fakeArrival();
+  // ⭐⭐ 2026-10-16（task-56 · **成对迁移**）：异步之后"判重那一跑"在**后台**，
+  //   HTTP 回执不再可能带写库结果 ⇒ 判据改成"**等后台那一跑跑完，再由它的结果证明判重**" ✓
+  //   改前逐字：`assert.equal(second.body.reused, true, '第二跑由服务层判重 ⇒ reused ✓（只写一次 ✗）');`
+  //   改后逐字：`await waitForPendingPurchaseBackgrounds();`
+  //             `assert.equal(finishResults[1].reused, true, '第二跑由服务层判重 ⇒ reused ✓（只写一次 ✗）');`
+  //   依据：业务负责人 2026-10-16「**工作台那半也接异步**」（弹窗选 B）＋「用户提交之后
+  //     **都是一个成功页**」——她那一屏只等"系统已收到"，**写库结果不再随 HTTP 回执回来** ✗；
+  //     ⇒ 判据**一个字没放宽**：仍然要求"同键两跑 ⇒ 只有一次真写"，只是**取证位置**从
+  //     响应体挪到"后台那一跑的返回值"（那就写入口自己的结果 ✓）。
+  const finishResults = [];
+  const realFinish = arrival.finish;
+  arrival.finish = async (input) => { const result = await realFinish(input); finishResults.push(result); return result; };
   await withServer(appFor({ arrival, purchaseQuery: fakeQuery(ROWS) }), async (base) => {
     const body = {
       batchNo: 'BH-1', actualAmount: '100', lines: [{ productRecordId: 'p1', size: 40, quantity: 1 }],
@@ -160,17 +187,25 @@ test('AC-AW13 ⭐⭐ 幂等：**同一把 `submitKey`**（服务自己的 `submi
     const second = await postJson(base, arrivalTab.api.accept, body);
     assert.equal(first.status, 200);
     assert.equal(second.status, 200);
-    assert.equal(second.body.reused, true, '第二跑由服务层判重 ⇒ reused ✓（只写一次 ✗）');
+    // ⭐ 异步：两跑都只承诺"已提交成功，数据会更新"（写库结果由后台那一跑给 ✓）
+    assert.equal(first.body.message, arrivalTab.texts.submitted, '成功页 = 统一那一句 ✓');
+    assert.equal(second.body.message, arrivalTab.texts.submitted, '第二跑同样是那一句 ✓');
+    // ⭐ 等后台那一跑 ⇒ 判重的那次**由写入口自己**给出 `reused: true`（零写入 ✓）
+    await waitForPendingPurchaseBackgrounds();
+    assert.equal(finishResults.length, 2, '两跑都排了后台那一跑 ✓（本件不做去重 ✗ —— 幂等在写层 ✓）');
+    assert.equal(finishResults[1].reused, true, '第二跑由服务层判重 ⇒ reused ✓（只写一次 ✗）');
     const keys = arrival.calls.filter((c) => c.m === 'finish').map((c) => c.input.submitKey);
     assert.equal(keys.length, 2);
     assert.deepEqual(keys, ['accept:sess-1:3', 'accept:sess-1:3'], '两跑必须带**同一把**服务端键 ✓');
     assert.equal(keys.includes('form-controlled-key-should-be-ignored'), false, '表单里的键不许被采用 ✗');
     // 并发两跑：键也必须一致 ✓
     arrival.calls.length = 0;
+    finishResults.length = 0;
     const [a, b] = await Promise.all([
       postJson(base, arrivalTab.api.accept, body), postJson(base, arrivalTab.api.accept, body),
     ]);
     assert.equal(a.status, 200); assert.equal(b.status, 200);
+    await waitForPendingPurchaseBackgrounds();
     const ckeys = arrival.calls.filter((c) => c.m === 'finish').map((c) => c.input.submitKey);
     assert.deepEqual(ckeys, ['accept:sess-1:3', 'accept:sess-1:3'], '并发两跑的键也必须一致 ✓');
   });

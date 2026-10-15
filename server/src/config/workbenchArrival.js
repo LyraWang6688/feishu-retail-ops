@@ -8,8 +8,18 @@
  *    加库存仍由它内部走 `InventoryService.applyPurchase` ✓（**绝不直连表** ✗）·
  *    幂等 = 它自己的 `submitKeyOf(session)` ✓ 状态值只用已拍板值域 ✓
  * 口径真源：`docs/acceptance-into-workbench-full-2026-10-14.md`（AC-AW10…AW17）
+ *
+ * ⭐⭐ 2026-10-16（task-56 · 业务负责人**弹窗选定 B**：「**工作台那半也接异步**」）：
+ *   本屏【确认到货】从"当场写完再回页"改成"**先回成功页 ⇒ 后台那一跑写库**" ✓
+ *   ⇒ 成功页那一句 = **统一那一句**「已提交成功，数据会更新」——
+ *     ⚠️ **唯一真源在 `config/scanPage.js` 的 `SCAN_PAGE.saleSuccess.message`**
+ *     （四条链路共用 · 一处定义 ✓）⇒ 这里**只指向它、不抄第二份** ✗。
+ *   ⚠️ `texts.accepted`（『已确认到货』）**保留但不再是本链路的成功页** ——
+ *     异步之后那一刻**还没确认到货**（后台才写）⇒ 拿它当成功页就是**假成功** ✗。
  */
 'use strict';
+
+const { SCAN_PAGE } = require('./scanPage');
 
 module.exports = {
   api: Object.freeze({
@@ -34,5 +44,10 @@ module.exports = {
     sizeInvalid: '尺码要填数字，数量要大于 0',
     acceptFailed: '没验收成功，请稍后再试',
     accepted: '已确认到货',
+    // ⭐⭐ 2026-10-16（task-56）：**异步成功页那一句** —— 唯一真源是 `SCAN_PAGE.saleSuccess.message`
+    //   （「已提交成功，数据会更新」· 四条链路共用一处定义 ✓）⇒ 这里**只引用、不抄一份字面量** ✗。
+    //   ⚠️ 它只承诺"**系统已收到**"（数据会更新 ✓），**不承诺"已入账/已写完"** ✗
+    //     —— 真失败仍有出口：后台件那条 warn ＋ 会话 `last_error`（可查、可重试 ✓）。
+    submitted: SCAN_PAGE.saleSuccess.message,
   }),
 };

@@ -1149,4 +1149,14 @@ class PurchaseArrivalConversationService {
   }
 }
 
-module.exports = { PurchaseArrivalConversationService, taskIdForBatch, TASK_TYPE };
+module.exports = {
+  PurchaseArrivalConversationService,
+  taskIdForBatch,
+  TASK_TYPE,
+  // ⭐⭐ 2026-10-16（task-56）：工作台【确认到货】接异步之后，**金额这道校验必须留在同步路径**
+  //   （拦住 + 人话 + 零写入 + 不排后台 ✗）—— 而规则**只有本文件上面那唯一一份实现**
+  //   ⇒ **导出给路由复用**，路由**不抄第二份** ✗。
+  //   ⚠️ 它是**纯函数**（零副作用、不碰 gateway）⇒ 导出不会让路由绕开任何服务边界 ✓。
+  //   ⚠️ `arrivalConversation.test.js` 那条"金额解析只有一份实现"的哨兵**照旧成立**（不放宽 ✗）。
+  parseActualAmount,
+};
