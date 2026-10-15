@@ -429,7 +429,9 @@ class SalesFollowupService {
       //    ⇒ 改成：**每次提交各记一条收款行**（方式照她说、每笔可不同），
       //      累计到**收满待收**为止；那条【未收款】每次提交后同步成**当前剩余**（见下）。
       await this.store.create({ task_id: taskId, fingerprint, status: 'pending' });
-      const created = await this.payments.record(input);
+      // ⭐ 2026-10-15（task-48 b）：**原样转发**入口给的关联键（`paymentService.record` 本来就收
+      //    `options.correlation` 并原样进日志 ⇒ 这里只是别把它丢在中途 ✓）。**不改入参形状** ✗
+      const created = await this.payments.record(input, { correlation: input.correlation });
       const recorded = { recordId: created.recordId };
       await this.store.update(taskId, { status: 'recorded', result: recorded });
       await this.progress.sync(input.salesEntryRecordId, { paymentRecordIds: [recorded.recordId] });

@@ -21,6 +21,7 @@ const { PurchaseArrivalConversationService } = require('../services/purchaseArri
 const { createLabelPrintService } = require('../services/labelPrintService');
 const { SampleReplacementService } = require('../services/sampleReplacementService');
 const { logError, logInfo, logWarn } = require('../utils/logger');
+const { tapIdFromRequest } = require('../utils/correlationFields');
 // ⭐⭐ 2026-10-14 晚（埋点 P0 ⑤「**工作台接同一套上报**」）：端点处理与结果事件都来自
 //   `utils/uiTapReport.js` —— 与**扫码页共用同一份实现**（事件名 / 字段 / ④ 判据 / ② 结果事件
 //   全是同一套 ✓ 不抄第二份 ✗）；本文件只负责"挂在工作台这道闸门之后"。
@@ -456,6 +457,9 @@ const createWorkbenchRouter = (options = {}) => {
         salesEntryRecordId: req.body?.salesEntryRecordId,
         method: req.body?.method, amount: req.body?.amount,
         requestId: req.body?.requestId, operatorOpenId: req.workbenchUser.open_id,
+        // ⭐ 2026-10-15（task-48 b）：把这次点击的 `tap_id` 带下去 ⇒ 写库日志与 `ui.tap` 同一个 id ✓
+        //    （取不到就是 `{}` ⇒ 字段压根不出现，**绝不编一个** ✗）
+        correlation: tapIdFromRequest(req),
       });
       // ⭐ 补收款成功 ⇒ 作废缓存（金额 / 状态都变了）。
       ordersCache.invalidate();
@@ -595,6 +599,9 @@ const createWorkbenchRouter = (options = {}) => {
       const result = await followup.delivery.deliver({
         salesEntryRecordId: req.body?.salesEntryRecordId,
         detailRecordIds: req.body?.detailRecordIds,
+      }, {
+        // ⭐ 2026-10-15（task-48 b）：同上 —— 交付（含扣库存）那一半也带同一个 `tap_id` ✓
+        correlation: tapIdFromRequest(req),
       });
       // ⭐ 交付（含扣库存）成功 ⇒ 作废缓存。
       ordersCache.invalidate();

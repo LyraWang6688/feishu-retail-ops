@@ -16,6 +16,7 @@
  */
 const express = require('express');
 const { WorkbenchOrderActionService } = require('../services/workbenchOrderActionService');
+const { tapIdFromRequest } = require('../utils/correlationFields');
 const { logError } = require('../utils/logger');
 
 /**
@@ -48,16 +49,21 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
 
   router.post('/sales/after-sales', handle(
     'workbench.orders.after_sales.failed', '售后没做成',
-    (req) => resolveService().afterSales({
-      ...req.body, operatorOpenId: req.workbenchUser?.open_id,
-    }),
+    // ⭐ 2026-10-15（task-48 b）：关联键走**尾部可选参数**（既有约定 ✓）——
+    //    ⚠️ **不塞进入参**：入参形状逐字不变 ⇒ 既有 AC6 那条 deepEqual 一行都不用改 ✓
+    (req) => resolveService().afterSales(
+      { ...req.body, operatorOpenId: req.workbenchUser?.open_id },
+      { correlation: tapIdFromRequest(req) },
+    ),
   ));
 
   router.post('/sales/second-delivery', handle(
     'workbench.orders.second_delivery.failed', '二次交付没做成',
-    (req) => resolveService().secondDelivery({
-      ...req.body, operatorOpenId: req.workbenchUser?.open_id,
-    }),
+    // ⭐ 2026-10-15（task-48 b）：同上 —— 尾部可选参数，**不动入参形状** ✓
+    (req) => resolveService().secondDelivery(
+      { ...req.body, operatorOpenId: req.workbenchUser?.open_id },
+      { correlation: tapIdFromRequest(req) },
+    ),
   ));
 
   return router;
