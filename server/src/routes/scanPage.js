@@ -261,6 +261,12 @@ const createScanPageRouter = (options = {}) => {
   //     与渲染半那份（模块级 `MULTI_ITEM_ORDER`）**同一个 env 源**，两边不会漂 ✓。
   // ══════════════════════════════════════════════════════════════════════════
   const multiItemOrderConfig = resolveMultiItemOrderConfig();
+  // ⭐⭐ 2026-10-16（task-59 · **表单半**的接线位）：加/删货那两颗 submit 的**字段名 / 动作名**。
+  //   🔴 **缺省 = null ⇒ 渲染层照旧是今天那颗 `<a href="?add=1">`** ⇒ **一个字都不变** ✓
+  //     （既有判据 `multiItemOrderRender.test.js:73` / `multiItemOrderReturnTrim.test.js:166` 原样绿 ✓）。
+  //   ⚠️ 只有**路由半把那个 POST 接住之后**才给它 —— 否则她点一下按钮会把这一单直接提交走 ✗
+  //     （比现在"点了没反应"**更糟**）⇒ 门是**显式**的，不是"渲染层自己猜" ✓。
+  const multiItemWire = options.multiItemWire === undefined ? null : options.multiItemWire;
   // 用例可以注入一个假引擎（`options.multiItemOrder`）—— 与 `options.writeService` 同一种注入法 ✓
   let multiItemOrderEngine = options.multiItemOrder || null;
   /**
@@ -493,6 +499,9 @@ const createScanPageRouter = (options = {}) => {
       texts,
       fields,
       actions: writeConfig.actions,
+      // ⭐⭐ 2026-10-16（task-59 · 表单半）：加/删货那两颗 submit 的接线位（缺省 `null` ⇒ 今天那颗链接 ✓）
+      //   ⚠️ 形状见 `views/scanPageRenderer.js` 的 `multiItemBlockHtml`（渲染层缺一个键就不接线 ✓）。
+      multiItem: multiItemWire,
       // ⭐⭐ `/r/{recordId}` 底下表单必须 POST 回 `/r/{recordId}`（否则提交会落到"按编号"那条路）。
       postAction: postActionFor(backTargetFor(req, view.number), realm),
       sizes,
