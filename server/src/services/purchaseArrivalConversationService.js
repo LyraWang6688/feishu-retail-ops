@@ -31,7 +31,7 @@ const formatCopy = (template, values = {}) =>
 // 一行明细在卡片/日志里的身份（货号+颜色+尺码）。
 const rowLabel = (row) => `${textValue(row?.item_no) || '（未知货号）'}${textValue(row?.color) || ''} ${Number(row?.size)} 码`;
 
-// ⭐⭐ 2026-10-08：「实际金额」那一项的**服务端**解析（业务负责人：必填、必须让用户填）。
+// ⭐⭐ 2026-10-08：「发生金额」那一项的**服务端**解析（业务负责人：必填、必须让用户填）。
 //
 // 🔴 为什么数字校验在**服务端**：飞书卡片的输入框**没有数字类型** —— 官方 `input_type`
 //   只有 `text` / `multiline_text` / `password` 三个取值（curl 实查的原文与出处见
@@ -258,9 +258,9 @@ class PurchaseArrivalConversationService {
         toastType: 'info',
       });
     }
-    // ⭐⭐ 2026-10-08（业务负责人亲自批准）：**「实际金额」必填** —— 点「是」这条路
+    // ⭐⭐ 2026-10-08（业务负责人亲自批准）：**「发生金额」必填** —— 点「是」这条路
     //   **没有金额输入**（输入框在表单里），所以这一批**还没有金额**时：
-    //     · 🔴 **不许**写一个空的「实际金额」（她的口径："必须让用户填"）；
+    //     · 🔴 **不许**写一个空的「发生金额」（她的口径："必须让用户填"）；
     //     · 🔴 也**不许静默跳过** —— 明确把话指回表单那条路（可见失败：patch 卡 + 回文字）。
     //   ⚠️ 位置**在任何写入之前**（连 `status:'posting'` 都还没落）⇒ 这一批一个字都没动。
     //   ⚠️ 这**不是**放宽"提交"那条路的必填，而是它的对称面：金额只能从表单进来，
@@ -268,7 +268,7 @@ class PurchaseArrivalConversationService {
     if (!hasActualAmount(task)) {
       logWarn('purchase.arrival.reconcile.amount_missing', {
         task_id: taskId, batch_no: task.batch_no || '', operator_open_id: operatorOpenId || '',
-        note: '点「是」但这一批还没有金额：不写空的「实际金额」、不写任何业务表，明确提示她先在表单里填',
+        note: '点「是」但这一批还没有金额：不写空的「发生金额」、不写任何业务表，明确提示她先在表单里填',
       });
       return this.visibleFailure({
         tier: 'amount_missing', taskId, operator: operatorOpenId, event, task,
@@ -420,7 +420,7 @@ class PurchaseArrivalConversationService {
       skipped_zero_count: zeroRows.length,
       skipped_zero_rows: zeroRows.map(rowLabel),
       total_quantity: total,
-      // ⭐⭐ 2026-10-08：这两个值就是这次写到「报货批次」那一行的「实际数量」「实际金额」
+      // ⭐⭐ 2026-10-08：这两个值就是这次写到「报货批次」那一行的「实际数量」「发生金额」
       //   （正向证据：日志能直接回答"到底写了什么数"，而不用去表里翻）。
       actual_quantity: actualQuantity,
       actual_amount: actualAmount,
@@ -446,14 +446,14 @@ class PurchaseArrivalConversationService {
    *   ② 「全部按申请数到货」 —— 复用**既有** `buildPlan(rows, { same: true, differences: [] })`
    *      （不新增第二条"算实际到货"的算法）；
    *   ③ 把结果种进**同一批**的会话任务（task id 用同一个 `taskIdForBatch`），
-   *      然后调**既有** `confirmLocked` —— 建草稿、写「验收原话 / 实际数量 / 实际金额」、
+   *      然后调**既有** `confirmLocked` —— 建草稿、写「验收原话 / 实际数量 / 发生金额」、
    *      逐条 `inventory.applyPurchase`、写「确认状态」「到货状态」**全部还是那一份实现**。
    *
    * 🔴 为什么不直接调 `PurchaseWebhookService.confirmArrival`：
    *    它读的是**任务上的草稿**，草稿由 `confirmLocked` 按核对计划建。绕过它 = 自己拼草稿、
    *    自己拼入库明细 = **第二套写库逻辑**（明令禁止）。
    *
-   * ⚠️ 「实际金额」**必填**（业务负责人 2026-10-08：「金额这个是必填的，必须让用户填」）
+   * ⚠️ 「发生金额」**必填**（业务负责人 2026-10-08：「金额这个是必填的，必须让用户填」）
    *    —— 工作台表单收的就是它；缺失 / 非数字 / 0 / 负数一律**一个字都不写**（与卡片
    *    表单那条路**同一个** `parseActualAmount`）。
    * ⚠️ 「到货说明」（本地草稿里的 `acceptance_text`，也是**她给的**，默认值由前端配置给）：

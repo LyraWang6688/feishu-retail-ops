@@ -171,7 +171,7 @@ const createWorkbenchRouter = (options = {}) => {
   //      原样交给 `WorkbenchPurchaseArrivalService` → 既有
   //      `PurchaseArrivalConversationService.confirmBatchArrival` →
   //      既有 `PurchaseWebhookService.confirmArrival`（逐条 `InventoryService.applyPurchase`）。
-  //   ⚠️ 「实际金额」是**既有必填口径**（业务负责人 2026-10-08：「金额这个是必填的」），
+  //   ⚠️ 「发生金额」是**既有必填口径**（业务负责人 2026-10-08：「金额这个是必填的」），
   //      所以那个按钮点开的是一个小表单，不是一个"点了就入库"的裸按钮。
   //   ⚠️ 依赖**延迟构建**：只想注入一个桩的调用方（测试）不必先配好飞书凭证。
   let purchaseArrival = options.purchaseArrival || null;

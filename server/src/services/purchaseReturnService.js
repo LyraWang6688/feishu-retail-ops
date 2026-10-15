@@ -167,9 +167,9 @@ const createPurchaseReturnService = (options = {}) => {
     });
 
     // ⭐⭐ 2026-10-15（业务负责人裁决ⓐ）：**退货这一批的「整单金额」**
-    //   写到这一行的「实际金额」（`purchaseOrderBatch.actualAmount`）。
+    //   写到这一行的「发生金额」（`purchaseOrderBatch.actualAmount`）。
     //   依据：她 2026-10-14 晚逐字「退货整单金额（必填），与补货同一套配置」
-    //     （必填 + 配置已在 PR #561）＋她 **2026-10-15 裁决ⓐ**：列名 = 复用「实际金额」。
+    //     （必填 + 配置已在 PR #561）＋她 **2026-10-15 裁决ⓐ**：列名 = 复用「发生金额」。
     //   🔴 **只有退货走这里**：补货（报货）那条的批次行带「到货状态 = 未到货」
     //     （`purchaseWebhookService` 的 `confirmPurchaseRequest`）⇒ 她之后的到货核对会写同一行同一列
     //     （本仓库已只读核实、Lead 已在问她）⇒ **先不写**（见 `routes/scanPage.js` 里保留的 TODO）。

@@ -84,7 +84,7 @@ const ACTIONS = Object.freeze({
   //    **旧贴纸**（2026-10-12 之前的 `/s/{编号}`）扫开是编号版；**新贴纸**扫开是 `/r/{记录ID}`
   acceptAdd: readString(process.env, 'SCAN_WRITE_ACTION_ACCEPT_ADD', 'accept_add'),
   acceptFinish: readString(process.env, 'SCAN_WRITE_ACTION_ACCEPT_FINISH', 'accept_finish'),
-  // ⭐⭐ 2026-10-12：**带清单的完成**（她改完数量 + 自定义行 + 实际金额，一次提交 = 一次写库）。
+  // ⭐⭐ 2026-10-12：**带清单的完成**（她改完数量 + 自定义行 + 发生金额，一次提交 = 一次写库）。
   //    ⚠️ 与 `acceptFinish`（只带金额的老路）**并存**：老页面 / 既有用例一个字都没动。
   acceptFinishRows: readString(process.env, 'SCAN_WRITE_ACTION_ACCEPT_FINISH_ROWS', 'accept_finish_rows'),
   // ⭐⭐ 2026-10-12（她选的方案 A）：「系统把 40、41 列出来（标注"未报货"）⇒ 你**点一下就加到货**」
@@ -147,7 +147,7 @@ const PAYMENT_STATUS = Object.freeze({
  *   ⚠️ 本套只管"**填没填**"（判据就是她说的「必填」）——**数字格式不做额外校验** ✗
  *     （与销售那条「每件实收必填」同一个形状：非空照旧能提交 ✓）。
  *   🔴 **本版不落表**：金额落**哪一列**待她裁决 —— 采购明细 `purchaseRequest` 没有任何金额列；
- *     采购主表 `purchaseOrderBatch` 唯一的金额列「实际金额」**已被"到货核对"占用**（见
+ *     采购主表 `purchaseOrderBatch` 唯一的金额列「发生金额」**已被"到货核对"占用**（见
  *     `v1BitableSchema.js:487-493`）⇒ 见 `routes/scanPage.js` 的 `TODO(purchase-amount)`。
  *     **绝不自己挑一列写** ✗（挑错会污染到货那条链路的钱）。
  *   ⚠️ 开关是**显式布尔**（`readFlag`）：**不用** `process.env.X || fallback`（那种"清空关不掉"✗）。
@@ -222,7 +222,7 @@ const FIELDS = Object.freeze({
   // ⭐⭐ 2026-10-14 晚：**整单金额**（她：「**只写一个整单金额**（一次填一个总额，和补货一样～）」）
   //   —— 补货 / 退货**共用同一个 `name`**（唯一来源 = `PURCHASE_AMOUNT.field` ✓ 不抄两份 ✗）。
   purchaseAmount: PURCHASE_AMOUNT.field,
-  // 扫码验收：单选一个尺码 + 一个数量 + 最后一步的「实际金额」。
+  // 扫码验收：单选一个尺码 + 一个数量 + 最后一步的「发生金额」。
   acceptSize: 'accept_size',
   acceptQuantity: 'accept_quantity',
   acceptAmount: 'accept_amount',
@@ -491,7 +491,7 @@ const PURCHASE_RETURN = Object.freeze({
  * 口径（她自己补的）：
  *   · 扫到**不属于本批**的货 ⇒ 提示"这一双不在本批"、**不记**；**重复扫** ⇒ **只记一次**；
  *   · **不写差异说明**：「我们已经通过扫码解决了具体到货情况，所以就**不用到货说明了**」；
- *     ⇒ 【完成验收】**只收「实际金额」（必填）**。⚠️ 「到货说明」那一步只留给**工作台既有那条
+ *     ⇒ 【完成验收】**只收「发生金额」（必填）**。⚠️ 「到货说明」那一步只留给**工作台既有那条
  *     「全额验收」链路**（它的表单与载荷一个字不改）—— 这里是**加法**，不是替换。
  *   · 本地草稿里的 `acceptance_text`（那张表上**没有**这一列，写了也不会落库）由**扫码事实**
  *     拼出来（`acceptanceTextTemplate`）—— 是"她扫了什么"的复述，不是替她编的一句话。
@@ -515,7 +515,7 @@ const ACCEPTANCE = Object.freeze({
   // 单条扫码明细的数量上限 / 默认值（页面默认 1，可改）。
   maxQuantity: readInt(process.env, 'SCAN_ACCEPT_MAX_QUANTITY', 99, { min: 1, max: 999 }),
   defaultQuantity: readInt(process.env, 'SCAN_ACCEPT_DEFAULT_QUANTITY', 1, { min: 1, max: 99 }),
-  // 「实际金额」必填（既有业务口径，业务负责人 2026-10-08：「金额这个是必填的」）
+  // 「发生金额」必填（既有业务口径，业务负责人 2026-10-08：「金额这个是必填的」）
   amountRequired: readFlag(process.env, 'SCAN_ACCEPT_AMOUNT_REQUIRED', true),
   // ⭐⭐ 2026-10-12（业务负责人口述版）：「用户点验收的时候，**先默认带出我们采购申请里的尺码和数量**。
   //    用户可以在给定的区域里直接修改，同时也可以自定义；自定义的时候同样支持扫码。」
@@ -721,7 +721,7 @@ const TEXTS = Object.freeze({
   //   她的原话（逐字）：「**退货整单金额（必填），与补货同一套配置**」
   //   ＋「**只写一个整单金额**（一次填一个总额，**和补货一样**～）」。
   //   ⇒ 一个标签 / 一个占位 / 一句人话**管两边**（改文案只改这里 ✓ 不写两套 ✗）。
-  //   ⚠️ 标签里直接写「（必填）」—— 与验收那条「实际金额（必填）」同一条规矩：
+  //   ⚠️ 标签里直接写「（必填）」—— 与验收那条「发生金额（必填）」同一条规矩：
   //      必填要在页面上**看得出来**（她第一次被拒就是因为看不出来）。
   purchaseAmountLabel: '整单金额（必填）',
   purchaseAmountPlaceholder: '这一单的总额',
@@ -731,9 +731,9 @@ const TEXTS = Object.freeze({
   purchaseAmountMissingBody: '这一单要填「整单金额」——填一个总额就行，不用按行分填；填好再提交。',
   // 那张页面上的"回上一页"链接（不然她只能靠浏览器的返回键）。
   purchaseAmountBackLabel: '回上一页填整单金额',
-  // ⭐⭐ 2026-10-15（③ 写入 · 她裁决 ⓐ「复用「实际金额」」）：**不是数字** ⇒ 400 + 这一句。
+  // ⭐⭐ 2026-10-15（③ 写入 · 她裁决 ⓐ「复用「发生金额」」）：**不是数字** ⇒ 400 + 这一句。
   //   为什么这一刀才有：那个数现在要**落进数字列** `purchaseOrderBatch.actualAmount`
-  //   （`config/v1BitableSchema.js` 的 `actualAmount: '实际金额'`）⇒ **放它过去就是"页面填了、
+  //   （`config/v1BitableSchema.js` 的 `actualAmount: '发生金额'`）⇒ **放它过去就是"页面填了、
   //   表里没有" = 假成功** ✗（她最在意的一条）⇒ 当场拦住，人话指得出怎么改 ✓。
   //   ⚠️ 判据是**收紧**（原来只判"填没填"），**不是放宽** ✓。
   purchaseAmountInvalidTitle: '整单金额要填数字',
@@ -765,7 +765,7 @@ const TEXTS = Object.freeze({
   acceptNotInBatchBody: '这一双不在本批，没有记。',
   acceptFinish: '完成验收',
   // ⭐⭐ 2026-10-12 21:20：金额**必填**要在页面上看得出来（她第一次提交被拒就是因为看不出来）。
-  acceptFinishAmountLabel: '实际金额（必填）',
+  acceptFinishAmountLabel: '发生金额（必填）',
   acceptFinishSubmit: '确认完成验收',
   acceptNoScansBody: '还没扫到任何一双：先扫一双，再点【完成验收】。',
   // ⭐⭐ 2026-10-12（她的口述版）：「先默认带出我们采购申请里的尺码和数量」——
@@ -795,7 +795,7 @@ const TEXTS = Object.freeze({
   // 她拍的成功页那句（2026-10-12）；`acceptDoneTitle` 留给别的口径用，不动。
   acceptDoneHeading: '验收已完成',
   acceptDoneQuantityLabel: '实际数量',
-  acceptDoneAmountLabel: '实际金额',
+  acceptDoneAmountLabel: '发生金额',
   acceptDoneBackLabel: '回到未到货批次',
   acceptAgainBody: '批次号 {batchNo}，已经验收入库过了，没有重复入库。',
   acceptNoSessionBody: '这次验收已经结束了：回上面【验收】领域重新选一个批次（或填批次号）就能继续。',
@@ -1014,7 +1014,7 @@ const SCAN_WRITE = Object.freeze({
   purchaseReturn: PURCHASE_RETURN,
   // ⭐⭐ 只读引用缓存（白名单 + TTL；写与写入判据一律不经过它）
   readCache: READ_CACHE,
-  // ⭐ 扫码验收（方案A）：会话 + 数量上限 + 「实际金额」必填
+  // ⭐ 扫码验收（方案A）：会话 + 数量上限 + 「发生金额」必填
   acceptance: ACCEPTANCE,
   texts: TEXTS,
   events: EVENTS,

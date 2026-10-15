@@ -79,7 +79,7 @@ const resolveShared = (env) => ({
     sizeUnknown: '有一个尺码认不出来（{product}）——先回上一步重扫一次。',
     stockExceeded: '{size} 码最多退 {stock} 双（她填了 {declared} 双）——已按能退的记。',
     stockUnknown: '{size} 码的库存现在取不到，先别退这一码。',
-    amountRequired: '退货要填整单实际金额（一个数就够，不用按货品拆）。',
+    amountRequired: '退货要填整单发生金额（一个数就够，不用按货品拆）。',
     chainUnknown: '认不出这一次要办的是哪一种单（补货 / 退货），先回上一步重进。',
     shadowLogged: '影子模式：这一单只做了校验与算账，一个字都没写。',
   },
