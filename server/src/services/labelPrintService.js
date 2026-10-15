@@ -335,34 +335,46 @@ const parseLabelScanUrl = (raw, config = LABEL_PRINT) => {
 };
 
 /**
- * ⭐ 2026-10-15：「货品信息」那个**创建时间**列怎么找（**只看飞书字段类型，不写死列名**）。
+ * ⭐ 2026-10-15：「货品信息」那个**创建时间**列怎么找 —— **口径全在 config**
+ *    （`config/labelPrint.js` 的 `PRODUCT_CREATED_TIME`：`fieldName` + `fieldType`）。
  *
- * ⚠️ 为什么不能写死「创建时间」：**只读核过测试 Base 真表**（`appTableField.list`，2026-10-15）——
+ * 为什么不能写死「创建时间」：**只读核过测试 Base 真表**（`appTableField.list`，2026-10-15）——
  *   「货品信息」里**没有**叫「创建时间」的列：她把它改名叫 **「上架日期」**，
  *   但**类型仍是 `1001 = CreatedTime`（飞书自动字段）**；而「更新日期」是 `1002 = ModifiedTime`
  *   （**不是**创建时间 —— 拿它当"最近新增"会把"她刚改过的老货"当成新货 ✗）。
  *   ⚠️ 这正是 `AGENTS.md` 里说的**表改名闸门拦不住**的那类静默失效（闸门按 tableId 校验字段名）。
- * ⇒ 解析顺序：
- *   ① `config.fieldNamesPendingSchema.productCreatedTime`（**字段名归配置**，最优先）；
- *   ② 读「货品信息」的字段表（`gateway.listFields`，**只读**、网关自己有缓存）⇒
- *      取**第一个 `type: 1001`** 的列（= 飞书自动的"创建时间"，改多少次名都认）；
- *   ③ 都拿不到 ⇒ 那一条 `created_at = 0`：「最近新增」时计进 `missing_created_at` 并**如实 warn**，不猜。
+ * ⇒ 解析顺序（实现在 `resolveProductCreatedTimeFields`）：
+ *   ① `config.productCreatedTime.fieldName`（**字段名归配置**）：这次读到的记录里**有这一列**就用它
+ *      （**零额外请求**；她再改名只改 config 那一行）；
+ *   ② 记录里**没有这一列** ⇒ 按 `config.productCreatedTime.fieldType`（1001）去字段表里找那一列
+ *      （`gateway.listFields`，**只读**、网关自己有缓存；改多少次名都认）＋ **如实 warn**
+ *      （`workbench.labels.product_created_time_renamed`：配置的名字跟真表对不上了）；
+ *   ③ 都拿不到 ⇒ 那一条 `created_at = 0`：计进 `missing_created_at_without_stock` 并**如实 warn**，不猜。
  */
-const PRODUCT_CREATED_TIME_TYPES = Object.freeze({ createdTime: 1001 });
-
 const createLabelPrintService = (gateway, options = {}) => {
   if (!gateway) throw new Error('LabelPrintService requires gateway');
   const config = options.config || LABEL_PRINT;
   const now = options.now || (() => Date.now());
 
   /**
-   * 「货品信息」的创建时间列候选名（见 `PRODUCT_CREATED_TIME_TYPES` 的说明）。
+   * 「货品信息」的创建时间列候选名（见上面那段说明）。
    * 只有「最近新增」真的要用时才解析（平时**一次都不问**，不给这条只读链路加请求）。
    */
-  const resolveProductCreatedTimeFields = async () => {
-    const configured = String(config.fieldNamesPendingSchema?.productCreatedTime || '').trim();
-    if (configured) return [configured];
-    if (typeof gateway.listFields !== 'function') return [];
+  const resolveProductCreatedTimeFields = async (productRecords) => {
+    const createdTimeConfig = config.productCreatedTime || {};
+    // ⚠️ 兼容 #580 那个「可注入、没配用兜底」的旧口径（`fieldNamesPendingSchema.productCreatedTime`）——
+    //    现在它只是**后备**：正规的家是 `config.productCreatedTime`（见 `config/labelPrint.js`）。
+    const configuredName = String(
+      createdTimeConfig.fieldName || config.fieldNamesPendingSchema?.productCreatedTime || '',
+    ).trim();
+    const fieldType = Number.isInteger(createdTimeConfig.fieldType) ? createdTimeConfig.fieldType : 1001;
+    // ① 配置里的那一列**这次读到的记录里真的在**（任意一条带这个键）⇒ 直接用它，**零额外请求**。
+    const hasConfiguredColumn = configuredName
+      && (productRecords || []).some((record) => Object.prototype.hasOwnProperty.call(record?.fields || {}, configuredName));
+    if (hasConfiguredColumn) return [configuredName];
+    // 「货品信息」这次一条记录都没有 ⇒ 无从判断列名，也就没必要去问字段表（读了也没有值可读）。
+    if (!productRecords || !productRecords.length) return configuredName ? [configuredName] : [];
+    if (typeof gateway.listFields !== 'function') return configuredName ? [configuredName] : [];
     let fields = [];
     try {
       fields = (await gateway.listFields('product')) || [];
@@ -372,19 +384,31 @@ const createLabelPrintService = (gateway, options = {}) => {
         error: error.message,
         hint: '读「货品信息」的字段表失败，没有库存的编号在这次「最近新增」里按"读不到创建时间"处理（会计数并 warn，不静默）',
       });
-      return [];
+      return configuredName ? [configuredName] : [];
     }
-    const created = fields.find((field) => Number(field?.type) === PRODUCT_CREATED_TIME_TYPES.createdTime);
+    const created = fields.find((field) => Number(field?.type) === fieldType);
     const name = created ? String(created.field_name || '').trim() : '';
     if (!name) {
       logWarn('workbench.labels.product_created_time_unresolved', {
-        hint: '「货品信息」里没有飞书自动的创建时间列（字段类型 1001），没有库存的编号用不了「最近新增」筛选',
+        configured_name: configuredName || undefined,
+        field_type: fieldType,
+        hint: '「货品信息」里没有飞书自动的创建时间列（字段类型 = config 的 productCreatedTime.fieldType），没有库存的编号用不了「最近新增」筛选',
       });
-      return [];
+      return configuredName ? [configuredName] : [];
+    }
+    if (configuredName && configuredName !== name) {
+      // ⚠️ **表改名闸门拦不住**的那类：配置里的名字跟真表对不上了 —— 按类型认出来了，但必须**如实说**。
+      logWarn('workbench.labels.product_created_time_renamed', {
+        configured_name: configuredName,
+        resolved_name: name,
+        resolved_by: 'field_type',
+        hint: '配置里「货品信息」创建时间列的名字跟真表对不上了（她改过名），这次按飞书字段类型（config 里的 productCreatedTime.fieldType）认出来了；请把 config/labelPrint.js 的 productCreatedTime.fieldName 改成真表的名字',
+      });
+      return [name];
     }
     logInfo('workbench.labels.product_created_time_resolved', {
       field_name: name,
-      source: 'field_type_1001',
+      source: 'field_type',
     });
     return [name];
   };
@@ -453,7 +477,9 @@ const createLabelPrintService = (gateway, options = {}) => {
     // ── 读二：整张「货品信息」（原来只为补价格 / 品牌；现在**没有库存行的编号也由它出标签**）──
     const brandFieldName = config.brand?.from === 'table' ? String(config.brand.tableFieldName || '').trim() : '';
     const productRecords = await gateway.listAll('product');
-    const productCreatedTimeFields = recentDays > 0 ? await resolveProductCreatedTimeFields() : [];
+    const productCreatedTimeFields = recentDays > 0
+      ? await resolveProductCreatedTimeFields(productRecords)
+      : [];
     const productIndex = buildProductIndex(productRecords, productFields, brandFieldName, productCreatedTimeFields);
 
     // ⭐ **没有库存行、但在「货品信息」里的编号 ⇒ 每个编号一张「新品标签」**
@@ -853,40 +879,31 @@ const createLabelPrintService = (gateway, options = {}) => {
   };
 
   /**
-   * ⭐⭐ 2026-10-15：`GET /api/workbench/products/numbers` 的取数（**只读**）。
+   * ⭐⭐ 2026-10-15（task-10）：**编号底表**（`GET /products/numbers` 那两次全表读的产物）。
    *
-   * 契约（**冻结**，前端同学并行按它写）：
-   *   `{ total, truncated, numbers: [{ number, itemNo, color, category, hasStock, recordId }] }`
-   *   · 数据源 = 只读**「货品信息」**整张（`listAll('product')`），按**编号**去重（同一编号多条记录取第一条）；
-   *   · `keyword`：按 编号 / 货号 / 颜色 / 类别 模糊（**大小写不敏感**）；空 = 全部；
-   *   · `hasStock`：该「编号」在**「实时库存」里有没有行**（只读一次、只算一次 —— 前端用它提示"还没入库"）；
-   *   · `limit`：1..500，默认 200；超出上限**如实**回 `truncated: true`（**不静默截断**）；
-   *   · 排序：按「编号」`localeCompare('zh-CN')` 升序（稳定、可预期）。
-   * 🔴 **只读诊断/查询**：不写任何业务表、不改任何状态（只有 `listAll` 两次读 + 一条 info 日志）。
-   *
-   * ⚠️ 阈值的家本应在 `config/labelPrint.js`（**本轮不在本任务的写作用域里**）⇒ 这里读
-   *    `config.productNumbers` 这一组（注入了就用注入的），没配才用契约里写死的默认 200 / 500。
+   * · **与请求无关**（keyword / limit 每请求现算）⇒ 整个快照缓存；
+   * · `cacheTtlMs > 0`：TTL 内重复调用**不再读飞书**（命中）；`= 0`：**关掉缓存**，每次真读；
+   * · 命中 / 未命中都**如实记日志**（`workbench.products.numbers.cache_hit` / `.cache_miss`
+   *   ＋ `reason: empty | expired | disabled`）—— 真机一眼看出"到底读没读表"。
+   * ⚠️ 只服务 `listProductNumbers`：`listLabels` **一次都不碰这个缓存**（它那 11 秒另开任务）。
    */
-  const listProductNumbers = async (filters = {}) => {
-    const productFields = V1_BITABLE_SCHEMA.tables.product?.fields || {};
-    if (!productFields.number) {
-      throw new Error('「货品信息」缺少必要的字段映射（编号），请先补 v1BitableSchema.product');
+  let productNumbersSnapshot = null;
+  const readProductNumbersSnapshot = async (cacheTtlMs) => {
+    const at = now();
+    const age = productNumbersSnapshot ? at - productNumbersSnapshot.at : null;
+    // `age >= 0`：时钟往回跳（或被注入的假时钟往前拨过）时**不当命中**，宁可重读。
+    if (cacheTtlMs > 0 && productNumbersSnapshot && age >= 0 && age < cacheTtlMs) {
+      logInfo('workbench.products.numbers.cache_hit', {
+        age_ms: age,
+        ttl_ms: cacheTtlMs,
+        numbers: productNumbersSnapshot.numbers.length,
+      });
+      return productNumbersSnapshot;
     }
-    const inventoryFields = V1_BITABLE_SCHEMA.tables.liveInventory?.fields || {};
+    const reason = cacheTtlMs <= 0 ? 'disabled' : (productNumbersSnapshot ? 'expired' : 'empty');
 
-    const limits = config.productNumbers || {};
-    const defaultLimit = Number.isInteger(limits.defaultLimit) && limits.defaultLimit > 0 ? limits.defaultLimit : 200;
-    const maxLimit = Number.isInteger(limits.maxLimit) && limits.maxLimit > 0 ? limits.maxLimit : 500;
-    const limitText = String(filters.limit ?? '').trim();
-    let limit = defaultLimit;
-    if (limitText) {
-      if (!/^\d+$/.test(limitText) || Number(limitText) < 1) {
-        throw userError(`limit 必须是 1 到 ${maxLimit} 之间的整数`);
-      }
-      limit = Number(limitText);
-      if (limit > maxLimit) throw userError(`limit 最多 ${maxLimit}`);
-    }
-    const keyword = String(filters.keyword ?? '').trim().toLowerCase();
+    const productFields = V1_BITABLE_SCHEMA.tables.product?.fields || {};
+    const inventoryFields = V1_BITABLE_SCHEMA.tables.liveInventory?.fields || {};
 
     // ── 读一：「货品信息」整张（这个端点的主数据）────────────────────────────
     const products = await gateway.listAll('product');
@@ -922,7 +939,75 @@ const createLabelPrintService = (gateway, options = {}) => {
       });
     }
 
-    const matched = numbers
+    const snapshot = {
+      at,
+      numbers,
+      product_records: (products || []).length,
+      product_records_no_number: withoutNumber,
+      stock_records: (stockRecords || []).length,
+    };
+    // `cacheTtlMs = 0` ⇒ **不写缓存**（下次照样真读；配置说关就关）。
+    if (cacheTtlMs > 0) productNumbersSnapshot = snapshot;
+    logInfo('workbench.products.numbers.cache_miss', {
+      reason,
+      ttl_ms: cacheTtlMs,
+      numbers: numbers.length,
+      product_records: snapshot.product_records,
+      stock_records: snapshot.stock_records,
+    });
+    return snapshot;
+  };
+
+  /**
+   * ⭐⭐ 2026-10-15：`GET /api/workbench/products/numbers` 的取数（**只读**）。
+   *
+   * 契约（**冻结**，前端同学并行按它写）：
+   *   `{ total, truncated, numbers: [{ number, itemNo, color, category, hasStock, recordId }] }`
+   *   · 数据源 = 只读**「货品信息」**整张（`listAll('product')`），按**编号**去重（同一编号多条记录取第一条）；
+   *   · `keyword`：按 编号 / 货号 / 颜色 / 类别 模糊（**大小写不敏感**）；空 = 全部；
+   *   · `hasStock`：该「编号」在**「实时库存」里有没有行**（只读一次、只算一次 —— 前端用它提示"还没入库"）；
+   *   · `limit`：1..500，默认 200；超出上限**如实**回 `truncated: true`（**不静默截断**）；
+   *   · 排序：按「编号」`localeCompare('zh-CN')` 升序（稳定、可预期）。
+   * 🔴 **只读诊断/查询**：不写任何业务表、不改任何状态（只有 `listAll` 两次读 + 日志）。
+   *
+   * ⭐⭐ 2026-10-15（task-10）：**这两次全表读带短 TTL 缓存**（Lead 线上只读实测：
+   *   `listAll('product')` 561 行 **5478 ms** ＋ `listAll('liveInventory')` 1362 行 **5924 ms**
+   *   ⇒ 冷启动一次 ≈ **11.4 秒**）。口径全在 `config/labelPrint.js` 的 `PRODUCT_NUMBERS`：
+   *   · `cacheTtlMs`（默认 60000；**0 = 关掉缓存**，每次真读）—— TTL 内重复调用**不再读飞书**；
+   *   · `limitDefault` / `limitMax`（默认 200 / 500）—— 换值只改 config，不用动代码。
+   * ⚠️ **只影响这个端点**：`listLabels`（批量 / 编号打印那一页）**这次不动**（它那 11 秒另开任务）。
+   */
+  const listProductNumbers = async (filters = {}) => {
+    const productFields = V1_BITABLE_SCHEMA.tables.product?.fields || {};
+    if (!productFields.number) {
+      throw new Error('「货品信息」缺少必要的字段映射（编号），请先补 v1BitableSchema.product');
+    }
+
+    const numbersConfig = config.productNumbers || {};
+    const cacheTtlMs = Number.isInteger(numbersConfig.cacheTtlMs) && numbersConfig.cacheTtlMs >= 0
+      ? numbersConfig.cacheTtlMs
+      : 60000;
+    const defaultLimit = Number.isInteger(numbersConfig.limitDefault) && numbersConfig.limitDefault > 0
+      ? numbersConfig.limitDefault
+      : 200;
+    const maxLimit = Number.isInteger(numbersConfig.limitMax) && numbersConfig.limitMax > 0
+      ? numbersConfig.limitMax
+      : 500;
+    const limitText = String(filters.limit ?? '').trim();
+    let limit = defaultLimit;
+    if (limitText) {
+      if (!/^\d+$/.test(limitText) || Number(limitText) < 1) {
+        throw userError(`limit 必须是 1 到 ${maxLimit} 之间的整数`);
+      }
+      limit = Number(limitText);
+      if (limit > maxLimit) throw userError(`limit 最多 ${maxLimit}`);
+    }
+    const keyword = String(filters.keyword ?? '').trim().toLowerCase();
+
+    // ⭐ 编号底表（**与 keyword / limit 无关**的那部分）走短 TTL 缓存 —— 命中就一次飞书都不读。
+    const snapshot = await readProductNumbersSnapshot(cacheTtlMs);
+
+    const matched = snapshot.numbers
       .filter((item) => !keyword || [item.number, item.itemNo, item.color, item.category]
         .some((value) => String(value ?? '').toLowerCase().includes(keyword)))
       // 排序**稳定、可预期**：按编号中文序升序。
@@ -934,9 +1019,9 @@ const createLabelPrintService = (gateway, options = {}) => {
     logInfo('workbench.products.numbers.listed', {
       keyword: keyword || undefined,
       limit,
-      product_records: (products || []).length,
-      product_records_no_number: withoutNumber || undefined,
-      stock_records: (stockRecords || []).length,
+      product_records: snapshot.product_records,
+      product_records_no_number: snapshot.product_records_no_number || undefined,
+      stock_records: snapshot.stock_records,
       total,
       returned: page.length,
       with_stock: matched.filter((item) => item.hasStock).length,
