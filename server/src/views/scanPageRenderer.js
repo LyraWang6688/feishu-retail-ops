@@ -34,6 +34,11 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { SCAN_PAGE, fillText } = require('../config/scanPage');
+// ⭐ 2026-10-15（task-23）：退货表单的**默认数量 / 上限**（`defaultQuantity` / `maxQuantity` / `maxSizes`）
+//   唯一真源在**写侧**那一份配置里（后端 `parseReturnEntries` 的兜底用的就是它 ✓）——
+//   页面**直接读同一份**，不在 `config/scanPage.js` 再抄一遍（抄一份必漂 ✗）。
+//   ⚠️ 反向不行：`config/scanWrite.js` **require 了** `config/scanPage.js` ⇒ 在那边 require 这边会成环 ✗。
+const { SCAN_WRITE } = require('../config/scanWrite');
 const { NEW_REALM, REALMS, REALM_TABS, DEFAULT_REALM, REALM_TEXTS, REALM_EMPTY_TEXT_KEYS, REPLENISH_REALM, PURCHASE_RETURN_REALM, resolveRealm, labelPrintUrls, saleSizeGroups, purchaseSizeLines, purchaseSizeGroups, foldedSpecialRowsOf, sellableCountOf } = require('./scanPageRealm');
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -711,6 +716,57 @@ ${UI_TAP_SHARED_SOURCE}
           return;
         }
       }
+      // Return form: she taps the button with nothing checked, or with a quantity that is not a positive
+      //    integer. Field names / limits / all wording live on THIS form as data-* attributes
+      //    (no field-name concatenation and no user-visible text inside this script).
+      var returnSizesField = form.getAttribute('data-return-sizes-field') || '';
+      if (returnSizesField) {
+        var boxes = form.querySelectorAll('[name="' + returnSizesField + '"]');
+        var picked = [];
+        for (var b = 0; b < boxes.length; b += 1) { if (boxes[b].checked) picked.push(boxes[b]); }
+        var returnHintView = form.getAttribute('data-return-hint-view') || '';
+        var showReturnHint = function (text, focusEl) {
+          event.preventDefault();
+          var hint = returnHintView ? form.querySelector('[data-view="' + returnHintView + '"]') : null;
+          if (hint) { hint.textContent = text; hint.removeAttribute('hidden'); }
+          if (focusEl && focusEl.focus) focusEl.focus();
+        };
+        if (!picked.length) {
+          showReturnHint(form.getAttribute('data-return-required-text') || '', null);
+          return;
+        }
+        var maxSizes = parseInt(form.getAttribute('data-return-max-sizes') || '', 10);
+        if (maxSizes > 0 && picked.length > maxSizes) {
+          showReturnHint(form.getAttribute('data-return-limit-text') || '', null);
+          return;
+        }
+        var maxQuantity = parseInt(form.getAttribute('data-return-max-quantity') || '', 10);
+        for (var p = 0; p < picked.length; p += 1) {
+          var quantityName = picked[p].getAttribute('data-qty-name') || '';
+          var quantityInput = quantityName ? form.querySelector('[name="' + quantityName + '"]') : null;
+          var raw = String((quantityInput && quantityInput.value) || '').replace(/^\s+|\s+$/g, '');
+          var isInteger = /^[0-9]+$/.test(raw);
+          var quantity = isInteger ? parseInt(raw, 10) : 0;
+          if (!isInteger || quantity < 1 || (maxQuantity > 0 && quantity > maxQuantity)) {
+            showReturnHint(form.getAttribute('data-return-quantity-text') || '', quantityInput);
+            return;
+          }
+          // Her rule (2026-10-15): a return may not exceed the stock this size still has.
+          //    The row's cap is on the checkbox as data-stock; a row WITHOUT it means "stock unknown"
+          //    -- never treated as zero (that would block every size when the read failed).
+          var stockAttr = picked[p].getAttribute('data-stock');
+          if (stockAttr !== null && stockAttr !== '') {
+            var stockCap = parseInt(stockAttr, 10);
+            if (!isNaN(stockCap) && quantity > stockCap) {
+              var stockText = String(form.getAttribute('data-return-stock-text') || '')
+                .split('{size}').join(String(picked[p].value))
+                .split('{stock}').join(String(stockCap));
+              showReturnHint(stockText, quantityInput);
+              return;
+            }
+          }
+        }
+      }
       button.disabled = true;
       button.setAttribute('aria-busy', 'true');
       button.textContent = label || button.textContent;
@@ -1174,11 +1230,31 @@ ${purchaseAmountRowHtml(write)}
  * ⚠️ 两个表单各自是独立的 `<form>`，所以同名控件互不影响；但**字段名仍然各用各的**
  *   （配置里的 `sizes` / `return_sizes`），断言与将来的合并提交都不至于互相串。
  */
-const sizeRowsHtml = ({ sizes, name, quantityPrefix, quantityLabel, checkedOf }) => sizes.map((item) => {
+/**
+ * 尺码行（补货 / 退货**共用**一份 ✓ 她是对照着看的）。
+ * ⚠️ 2026-10-15（task-23）：多了两个**可选**参数 —— **不传就与改动前逐字相同** ✓
+ *   · `defaultQuantity`：数量输入的默认值（**不再写死 `1`** ✗ —— 走配置 ✓）
+ *   · `stockOf(item)`：**退货**那一块要的"当前库存数量"列；返回 `null` = 这一块不要这一列
+ *     （补货不传 ⇒ 一个字都不变 ✓ —— 有既有断言逐字钉着 'value="1"' ✓）
+ *   · 勾选框上的 `data-qty-name`：给"前端拦截"那段脚本用（**脚本里不写死字段名拼接** ✗）。
+ */
+const sizeRowsHtml = ({
+  sizes, name, quantityPrefix, quantityLabel, checkedOf, defaultQuantity = 1, stockOf = null,
+}) => sizes.map((item) => {
   const size = item.size_text;
+  const quantityName = `${quantityPrefix}${size}`;
+  const stock = stockOf ? stockOf(item) : null;
+  // ⭐ 2026-10-15 晚：这一行的**库存上限**挂在勾选框上（脚本据此拦"退货数量 > 当前库存" ✓）；
+  //   **取不到库存 ⇒ 不带这个属性** ⇒ 脚本不拿 0 当库存拦她 ✗（她只会看到"取不到"那句人话 ✓）。
+  const stockCapAttr = stock && Number.isFinite(stock.cap)
+    ? ` data-stock="${escapeHtml(String(stock.cap))}"` : '';
+  // ⚠️ 新属性**放在 `name` 之前**、`checked` 仍**紧跟在 `value` 后面** ——
+  //   既有断言钉着逐字 `name="sizes" value="41" checked`（不许为了加属性把它改红 ✗ 我第一版就踩了）。
+  const dataQtyNameAttr = ` data-qty-name="${escapeHtml(quantityName)}"`;
   return `<div class="size-row">
-<label class="size-check"><input type="checkbox" name="${escapeHtml(name)}" value="${escapeHtml(size)}"${checkedOf(item) ? ' checked' : ''}> ${escapeHtml(size)} 码</label>
-<input class="size-qty" name="${escapeHtml(`${quantityPrefix}${size}`)}" value="1" inputmode="numeric" aria-label="${escapeHtml(`${size} ${quantityLabel}`)}" placeholder="${escapeHtml(quantityLabel)}">
+<label class="size-check"><input type="checkbox"${stockCapAttr}${dataQtyNameAttr} name="${escapeHtml(name)}" value="${escapeHtml(size)}"${checkedOf(item) ? ' checked' : ''}> ${escapeHtml(size)} 码</label>
+${stock ? `<span class="hint" data-view="${escapeHtml(stock.view)}">${escapeHtml(stock.text)}</span>` : ''}
+<input class="size-qty" name="${escapeHtml(quantityName)}" value="${escapeHtml(String(defaultQuantity))}" inputmode="numeric" aria-label="${escapeHtml(`${size} ${quantityLabel}`)}" placeholder="${escapeHtml(quantityLabel)}">
 </div>`;
 }).join('');
 
@@ -1200,20 +1276,48 @@ const returnFormHtml = (view, write) => {
   const sizes = lines.length ? lines : (write.sizes || []).map((item) => ({
     size_text: item.size_text, sellable: null, missing: Boolean(item.missing), checked: false,
   }));
-  if (!sizes.length) return '';
+  // ⭐⭐ 2026-10-15（task-23 · 她逐字：「直接就是出来实时库存里的**尺码和数量**」）：
+  //   ① 每行多一个"当前库存数量"列 —— 数从**扫码那一次已经取到的** `sellable` 来（**不新增读表** ✗）；
+  //      取不到（`sellable` 不是数字）⇒ **如实说"暂时取不到"**，**绝不用假数字占位** ✗；
+  //   ② 数量默认值 = 写侧那一份配置（`purchaseReturn.defaultQuantity`）—— **不再写死 1** ✗；
+  //   ③ 表单上挂几个 `data-*`（字段名 / 上限 / 三句人话）⇒ 那段**唯一**脚本据此拦截 ✓
+  //      （脚本里**不写死任何字段名/文字** ✗ —— 她 2026-10-09 白屏之后"只许一段脚本"那条规矩照旧 ✓）。
+  const rf = SCAN_PAGE.returnForm;
+  const returnConfig = SCAN_WRITE.purchaseReturn;
   const rows = sizeRowsHtml({
     sizes,
     name: fields.returnSizes,
     quantityPrefix: fields.returnQuantityPrefix,
     quantityLabel: t.replenishQuantityLabel,
     checkedOf: () => false,
+    defaultQuantity: returnConfig.defaultQuantity,
+    stockOf: (item) => (Number.isFinite(item.sellable)
+      // ⚠️ 0 沿用全页既有口径「—」（不写 0 ⇒ 与库存表那一列一致 ✓）
+      // ⭐ `cap` = 她那条口径的判据（**退货数量 ≤ 当前库存**）：库存 0 ⇒ 上限 0（她说了不许超 ✓）
+      ? { view: 'return-stock', text: item.sellable > 0 ? String(item.sellable) : '—', cap: item.sellable }
+      : { view: 'return-stock-unknown', text: rf.stockUnknown, cap: null }),
   });
+  // ⚠️ 连尺码都取不到 ⇒ **不渲染假尺码** ✗，但那一块**仍在**（挂一句"取不到"的人话 ✓ 不整块消失 ✗）
+  const sizesNotice = sizes.length
+    ? ''
+    : `<p class="hint" data-view="return-sizes-unknown">${escapeHtml(rf.sizesUnknown)}</p>`;
   return `<section class="card">
 <details class="disclosure" data-view="purchase-return">
 <summary class="disclosure__summary">${escapeHtml(v.purchaseReturn)}</summary>
-<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
+<form method="post" action="${escapeHtml(write.postAction)}" class="write-form"
+data-return-sizes-field="${escapeHtml(fields.returnSizes)}"
+data-return-qty-prefix="${escapeHtml(fields.returnQuantityPrefix)}"
+data-return-max-sizes="${escapeHtml(String(returnConfig.maxSizes))}"
+data-return-max-quantity="${escapeHtml(String(returnConfig.maxQuantity))}"
+data-return-required-text="${escapeHtml(rf.sizesRequiredText)}"
+data-return-quantity-text="${escapeHtml(rf.quantityInvalidText)}"
+data-return-limit-text="${escapeHtml(rf.sizesLimitText)}"
+data-return-stock-text="${escapeHtml(rf.stockLimitText)}"
+data-return-hint-view="${escapeHtml(rf.hintView)}">
 ${hiddenField(fields.action, write.actions.purchaseReturn)}${pageBuildField()}
 ${hiddenField(fields.submitKey, write.returnKey)}
+${sizesNotice}
+<p class="hint" data-view="${escapeHtml(rf.hintView)}" hidden></p>
 ${rows}
 ${purchaseAmountRowHtml(write)}
 <button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.returnButton)}</button>
