@@ -988,6 +988,12 @@ test('AC-E2E-11 ⭐ 0 收款 ⇒ 自动档＝未付 ⇒ **成单** + 差额一�
       //   ① 点提交 ⇒ **只到资金页、零写入** ✓；② 点资金页那颗【提交整单付款】（带钱）⇒ **才校验 + 才建单** ✓
       const step1 = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
+        // ⭐⭐ 2026-10-16【迁移 · **补环境**】（task-53 · P0 第二刀）
+        //   · 改前逐字：这一发**不带** `line_amount`  · 改后逐字：`line_amount: ['280'],`
+        //   · 依据 = 她 2026-10-16 逐字（必须填尺码和金额才许跳资金页）⇒ 真机她这一下必然带金额；
+        //     本用例主题 = "0 收款 ⇒ 自动档未付 ⇒ 成单 + 差额一条"（与"能不能跳"无关）
+        //     ⇒ 只补输入，**断言一条没动** ✓
+        line_amount: ['280'],
       });
       assert.equal(step1.status, 200, '第一步：到资金页');
       assert.ok((await step1.clone().text()).includes('data-view="payment-step"'), '第一步：是资金页');
@@ -1043,6 +1049,12 @@ test('AC-E2E-12 ⭐ 销售块提交「全付 + 微信 280 + 每件实收 280」�
       // ⭐⭐ 2026-10-14 新流程**两步**：① 点提交 ⇒ 资金页、零写入；② 点资金页那颗【提交整单付款】（带钱）⇒ 才建单 ✓
       const step1 = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
+        // ⭐⭐ 2026-10-16【迁移 · **补环境**】（task-53 · P0 第二刀）
+        //   · 改前逐字：这一发**不带** `line_amount`  · 改后逐字：`line_amount: ['280'],`
+        //   · 依据 = 她 2026-10-16 逐字（必须填尺码和金额才许跳资金页）⇒ 真机她这一下必然带金额；
+        //     本用例主题 = "收款明细那 1 行（方式/金额/状态）"（与"能不能跳"无关）
+        //     ⇒ 只补输入，**断言一条没动** ✓
+        line_amount: ['280'],
       });
       assert.equal(step1.status, 200, '第一步：到资金页');
       assert.ok((await step1.clone().text()).includes('data-view="payment-step"'), '第一步：是资金页');
@@ -1176,11 +1188,37 @@ test('AC-E2E-16 ⭐ 每件实收旁边写明「可以留空」；400 校验页�
 
       // ⭐⭐ 2026-10-14（新流程**两步**）：① 点提交 ⇒ **只到资金页**（这时还不校验钱 ✓）
       //   ② 点资金页那颗【提交整单付款】（全付 + 收款 200 + 实收 150）⇒ **才校验** ⇒ 400 + 人话 ✓
+      // ⭐⭐ 2026-10-16【迁移 · **改 400**】（task-53 · P0 第二刀；Lead 点名迁移 ✓）
+      //   · 改前逐字（①刀当时的"钉现状"）：
+      //       `assert.equal(step1.status, 200, '第一步：到资金页');`
+      //       `assert.ok((await step1.clone().text()).includes('data-view="payment-step"'), '第一步：是资金页');`
+      //   · 改后逐字：
+      //       `assert.equal(step1.status, 400, '第一步：缺金额 ⇒ 拦住（不跳资金页）');`
+      //       `assert.equal(step1Html.includes('data-view="payment-step"'), false, '第一步：不许是资金页');`
+      //       ＋ 人话 `SCAN_PAGE.texts.jumpGateNoticeTitle` ＋ **零写入**（四张表全 0）
+      //   · 依据 = 业务负责人 2026-10-16 逐字「**实收金额的输入框用户必须填写**，只有用户填了
+      //     **尺码和金额**，才可以点击提交跳转到资金页」＋ Lead 点名（**判据加强**，不是放宽 ✗：
+      //     放行 ⇒ 拦住，并且多钉了人话与四张表零写入）。
+      //   ⚠️ 连带后果（如实标）：这一发被拦之后，下面"点按钮 ⇒ 差额 400"那一段**得自己走到资金页**
+      //     （原来靠 step1 那一跳）⇒ 下面**显式再发一次带金额的 `submitOrder`**（**不**直接发 `payAction`，
+      //     免得把"被拦时标记已写"那条隐式依赖钉进用例 ✗）。差额那一段的断言**一条没动** ✓。
       const step1 = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
       });
-      assert.equal(step1.status, 200, '第一步：到资金页');
-      assert.ok((await step1.clone().text()).includes('data-view="payment-step"'), '第一步：是资金页');
+      const step1Html = await step1.text();
+      assert.equal(step1.status, 400, '第一步：缺金额 ⇒ 拦住（不跳资金页）');
+      assert.equal(step1Html.includes('data-view="payment-step"'), false, '第一步：不许是资金页');
+      assert.ok(step1Html.includes(SCAN_PAGE.texts.jumpGateNoticeTitle),
+        `第一步：要给那句人话「${SCAN_PAGE.texts.jumpGateNoticeTitle}」`);
+      for (const table of ['salesEntry', 'salesDetail', 'paymentRecord', 'inventoryLedger']) {
+        assert.equal(rowsOf(e2e, table).length, 0, `第一步被拦 ⇒ 零写入（${table} 0）`);
+      }
+      // ⭐ 走到资金页（她填了金额的那一发）—— 上面"被拦"那条判据不依赖它 ✓
+      const step1Done = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+        action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page.html),
+        line_amount: ['150'],
+      });
+      assert.equal(step1Done.status, 200, '填了金额的那一发照旧到资金页 ✓');
       const rejected = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_PAGE.paymentStep.payAction, submit_key: submitKeyOf(page.html),
         payment_status: PAYMENT_STATUS.full, payment_method: '微信', payment_amount: '200',
@@ -1407,6 +1445,15 @@ const submitOnceForTiming = async (base, cookie, page, extra = {}) => followPaym
     action: SCAN_WRITE.actions.submitOrder,
     submit_key: submitKeyOf(page.html),
     payment_status: PAYMENT_STATUS.unpaid,
+    // ⭐⭐ 2026-10-16【迁移 · **补环境**】（task-53 · P0 第二刀）
+    //   · 改前逐字：这一发**不带** `line_amount`（⇒ 缺"她填的实收金额"）
+    //   · 改后逐字：`line_amount: ['280'],`（**只补输入，下面那些断言一条不动** ✗）
+    //   · 依据 = 业务负责人 2026-10-16 逐字「**实收金额的输入框用户必须填写**，只有用户填了
+    //     **尺码和金额**，才可以点击提交跳转到资金页」⇒ **真机她这一下必然带着金额**（表单里她填的）；
+    //     本 helper 的主题是"**量一次提交的耗时 / 幂等**"，与"能不能跳转"无关
+    //     ⇒ 补上她本来就会填的金额 = **补环境**（与本文件先前补 `request_id` 同一手法 ✓）
+    //     ⇒ 判据强度**一点没降**（判据是 `scan.sale.timing` 那些分段与 `reused`，逐字未动 ✓）。
+    line_amount: ['280'],
     ...extra,
   }),
 );

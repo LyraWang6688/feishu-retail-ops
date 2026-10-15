@@ -59,6 +59,11 @@ const spyWriteService = (calls) => ({
 
 const withServer = async (run) => {
   const calls = [];
+  // ⭐⭐ 2026-10-16【迁移 · **补环境**】（task-53 · P0 第二刀）：
+  //   `spySession` 是**模块级**那一份（跨用例复用）⇒ 前面用例点过提交之后
+  //   `paymentStep` 会留成 `'pending'`，后面用例"第一次点提交"就会被当成重复提交
+  //   （跳转前置判定的入口条件）⇒ **每个用例开头把会话复位**（判据一条没动 ✗ 只是隔离环境 ✓）。
+  spySession.sale = { lines: [] };
   const app = express();
   app.use(express.urlencoded({ extended: true }));
   const router = createScanPageRouter({
@@ -125,9 +130,17 @@ const get = async (base, path) => {
   return { status: response.status, html: await response.text() };
 };
 
+// ⭐⭐ 2026-10-16【迁移 · **补环境** ×5】（task-53 · P0 第二刀）——本文件那 5 处"裸提交"：
+//   · 改前逐字：`post(base, …, { action: SCAN_WRITE.actions.submitOrder })`（裸体 ⇒ 既没尺码也没金额）
+//   · 改后逐字：`post(base, …, { action: SCAN_WRITE.actions.submitOrder, size: '40', line_amount: ['399'] })`
+//   · 依据 = 业务负责人 2026-10-16 逐字「**实收金额的输入框用户必须填写**，只有用户填了**尺码和金额**，
+//     才可以点击提交跳转到资金页」⇒ **真机她这一下必然带着尺码和金额**（同一个表单）；
+//     本文件主题是"**什么时候才写库**"（点提交 ⇒ 不写；点按钮 ⇒ 才写），与"能不能跳转"无关
+//     ⇒ 补上她本来就会填的那两项 = **补环境**（与本文件先前补 `request_id` 同一手法 ✓）。
+//   🔴 5 条用例的**断言一个字都没动** ✗（下面逐条仍在）；只是把请求补成真机那一发 ✓。
 test('AC-PF1 🔴 点「提交这一单」⇒ **不写任何表**（主表/明细/收款/库存都不动）', async () => {
   await withServer(async ({ base, calls }) => {
-    const r = await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: SCAN_WRITE.actions.submitOrder });
+    const r = await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: SCAN_WRITE.actions.submitOrder, size: '40', line_amount: ['399'] });
     assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 0,
       `点提交**不许**建单（实际调用：${JSON.stringify(calls)}）`);
     assert.match(r.html, /payment_pay|资金|全付|部分付/, '应当渲染**资金页**（不是直接完成 ✓）');
@@ -136,7 +149,7 @@ test('AC-PF1 🔴 点「提交这一单」⇒ **不写任何表**（主表/明�
 
 test('AC-PF2 🔴 点资金页按钮 ⇒ **才**建单（拿单号）', async () => {
   await withServer(async ({ base, calls }) => {
-    await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: SCAN_WRITE.actions.submitOrder });
+    await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: SCAN_WRITE.actions.submitOrder, size: '40', line_amount: ['399'] });
     await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: 'payment_pay', payment_status: '未付' });
     assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 1, '点按钮那一刻才建单 ✓');
   });
@@ -144,7 +157,7 @@ test('AC-PF2 🔴 点资金页按钮 ⇒ **才**建单（拿单号）', async ()
 
 test('AC-PF3 🔴 同一 `submitKey` 两跑 ⇒ 两次都用**同一把键**（幂等不许拆 ✗）', async () => {
   await withServer(async ({ base, calls }) => {
-    await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: SCAN_WRITE.actions.submitOrder });
+    await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: SCAN_WRITE.actions.submitOrder, size: '40', line_amount: ['399'] });
     await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: 'payment_pay', payment_status: '未付' });
     await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: 'payment_pay', payment_status: '未付' });
     const keys = calls.filter((c) => c.kind === 'submitSale').map((c) => c.submitKey);
@@ -155,7 +168,7 @@ test('AC-PF3 🔴 同一 `submitKey` 两跑 ⇒ 两次都用**同一把键**（�
 
 test('AC-PF4 🔴 未点按钮前刷新 ⇒ **仍是资金页**（不是成功页/首页 ✗）', async () => {
   await withServer(async ({ base, calls }) => {
-    await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: SCAN_WRITE.actions.submitOrder });
+    await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: SCAN_WRITE.actions.submitOrder, size: '40', line_amount: ['399'] });
     const again = await get(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`);
     assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 0, '刷新也不许建单 ✓');
     assert.match(again.html, /payment_pay|资金|全付|部分付/, '仍是资金页 ✓');
@@ -164,7 +177,7 @@ test('AC-PF4 🔴 未点按钮前刷新 ⇒ **仍是资金页**（不是成功�
 
 test('AC-PF5 🔴 **收多了**（收款 > 每件实收）⇒ 点按钮时 400 + **原地重渲染资金页** + 零写入', async () => {
   await withServer(async ({ base, calls }) => {
-    await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: SCAN_WRITE.actions.submitOrder });
+    await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: SCAN_WRITE.actions.submitOrder, size: '40', line_amount: ['399'] });
     // ⭐⭐ 2026-10-16 A2a **用例迁移**（改前逐字 → 改后逐字 → 依据）：
     //   改前逐字：`{ action: 'payment_pay', payment_status: '部分付', payment_method: '微信', payment_amount: '' }`
     //     （"部分付 + 实付空"⇒ 服务层 `partial_amount_missing`）⇒ 断言「零建单 ✓ + 重渲染资金页 ✓」。
