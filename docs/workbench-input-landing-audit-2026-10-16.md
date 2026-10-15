@@ -89,3 +89,48 @@
 - **限制 1**：§1 里标 🔎 的那些**只追到写入服务**，**没有逐列核对**（⇒ 不写进"结论" ✓ 见 §3）
 - **限制 2**：`routes/scanPage.js` / `views/**` / 扫码页那条线**不在本次范围**（热点文件，Lead 明令别碰 ✗）
 - 🔴 本报告**不改一行代码** ✓ · 未部署 ✓ · 生产 Base 只读 ✓
+
+---
+
+## 5. 补核（2026-10-16 · task「落点哨兵」这一步的只读核对）
+
+### 5.1 ✅ T2：`arrival-amount`（实际金额）的列级落点 —— **已核到列**
+
+`features/orders/index.js`（`arrival-amount`）→ `api.post(ARRIVAL_FULL_API.accept)` →
+`src/routes/workbench.js:252` `router.post(arrivalTab.api.accept, …)`（**变量路径**，常量在 `config/workbenchArrival.js`：
+`accept: '/purchase/arrivals/accept'` ✓）→ `workbenchPurchaseArrivalService.confirmArrival({ batchNo, actualAmount })` →
+`purchaseArrivalConversationService`（`:735` / `:871` / `:880` 的 `actual_amount`）⇒
+**落 `采购主表`（报货批次）·「实际金额」**（`v1BitableSchema.tables.purchaseOrderBatch.fields.actualAmount = '实际金额'` ✓；
+schema 注释 `:477` 逐字写着**保留**「到货状态 ＋ 实际数量 ＋ **实际金额**」✓）⇒ **不是"写进已删列"** ✓
+
+### 5.2 🔎 T3：售后那条链的列级落点 —— **已核到写入调用（未逐列命名）**
+
+`afterSalesService` 的写入点（只读核过）：`gateway.create('salesEntry'`（`:573`）· `create('salesDetail'`（`:777`）·
+`update('salesDetail'`（`:838`）· `create('paymentRecord'`（`:934`）· `update('paymentRecord'`（`:1068`）·
+`update('salesEntry', { afterSalesCount })`（`:1205`）⇒ 落点 = **销售主表·售后次数 / 销售明细 / 收款明细** ✓
+⚠️ **未逐列命名**（每个 create/update 的具体列没一列列核）⇒ 仍标 🔎 ✓
+
+### 5.3 ✗ 未核：**样品补货**那条链的列级落点
+
+本刀没核（`sample-fill-*` → `POST /sales/sample-fill` → `SampleReplacementService`）⇒ **如实标 ✗ 待核** ✓
+
+### 5.4 ⭐ 顺带核到的一件事（**值得记**）：端点可能是**变量路径**
+
+`POST /purchase/arrivals/accept` 在 `routes/workbench.js` 里**不是字面量**，
+而是 `router.post(arrivalTab.api.accept, …)`（`:252`，常量在 `config/workbenchArrival.js`）✗
+⇒ 我一开始按"字面量"grep **找不到**，差点误判成"端点不存在 / 走 catch-all" ✗
+⇒ **教训（写进哨兵）**：查"某个前端 POST 由谁收"时，**必须同时查【字面量】和【变量路径】** ✓
+（现已在 `test/workbenchInputLanding.test.js` 的 `ARRIVAL_FULL_API.accept` 那一链里**钉住这个形状** ✓）
+
+## 6. 落点哨兵（本刀新增用例 · `server/test/workbenchInputLanding.test.js`）
+
+| AC | 钉什么 |
+|---|---|
+| **AC-LANDING-1** | 从源码抽出**所有** `api.post(…)`；凡不在 `CHAINS`（已核链）/ `PENDING_LANDING`（已登记待核）里 ⇒ **红** ⇒ **新增输入必须写清"落到哪张表哪一列"** ✓ |
+| **AC-LANDING-2** | 6 条已核链的**四跳**：① 前端真的发 ② 路由真的读到（**含变量路径那种形状** ✓） ③ 服务真的消费 ④ **落点列在 schema 里真的存在** ⇒ 任一环断就红 ✓ |
+| **AC-LANDING-3** | ⭐ **范例**：`purchaseOrderBatch` 里**没有** `acceptanceText` ⇒ **「到货说明」当时那条链会在这里红** ✓（反向钉住 ✓） |
+| **AC-LANDING-4** | 标签打印那一屏**不许有 POST**（防"筛选参数被误存进表" ✗） |
+
+**变异（实测）**：把某条链的落点列换成已删的 `acceptanceText` ⇒ **红** ✓（就是「到货说明」那种 ✗）；
+还原 ⇒ 全绿 ✓。（⚠️ 另一处"去掉一个已登记提交"的变异**没生效**（我的替换没命中）⇒ **不宣称**那条的实测，
+按构造它由 AC-LANDING-1 的差集保证 ✓）
