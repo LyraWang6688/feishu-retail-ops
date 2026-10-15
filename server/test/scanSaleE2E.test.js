@@ -1425,15 +1425,31 @@ test('AC-E2E-16 ⭐ 提交链路**逐步耗时**：一条 `scan.sale.timing` 带
       // ⚠️ 只算**这一趟提交**打出去的飞书调用（GET 渲染那几趟不算进来）。
       const submitCalls = gateway.calls.slice(callsBefore);
       assert.equal(response.status, 200, `提交要成（${response.status}）`);
-      const timing = entries.filter((entry) => entry.event === SCAN_WRITE.events.saleTiming).pop();
+      // ⭐⭐ 2026-10-15（⑨b-2）**成对翻新**（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`const timing = entries.filter((entry) => entry.event === SCAN_WRITE.events.saleTiming).pop();`
+      //            ＋（同一条事件上）`assert.ok(timing.master_ms > 0, '建主表那一段要能量出来…')`
+      //            ＋ `assert.ok(timing.detail_ms > 0, '明细/收款那一段要能量出来…')`
+      //   改后逐字：**两段都断言** —— 请求段（`phase` 不是 background）量出"建主表"；
+      //            后台段（`phase === 'background'`）量出"明细/收款" ⇒ 覆盖**更全**（不是更少）✓
+      //   依据：Lead 2026-10-15 拍板「**观测不缩水**」（她与仓库的硬口径：
+      //     「每个关键流程节点都要有日志和可排查路径」）—— 异步之后"建主表"在**请求阶段**、
+      //     "明细/收款/库存"在**后台那一跑** ⇒ 两段各自都要能查 ✓，不能因为转后台就断档 ✗。
+      const timings = entries.filter((entry) => entry.event === SCAN_WRITE.events.saleTiming);
+      const backgroundPhase = (SCAN_WRITE.timing && SCAN_WRITE.timing.phase
+        && SCAN_WRITE.timing.phase.background) || 'background';
+      const requestTiming = timings.find((entry) => entry.phase !== backgroundPhase);
+      const backgroundTiming = timings.find((entry) => entry.phase === backgroundPhase);
+      assert.ok(requestTiming, '请求阶段必须有一条 scan.sale.timing（她那一次请求走到哪一段）');
+      assert.ok(backgroundTiming, '后台那一跑**也必须有一条**（观测不缩水：转后台 ≠ 日志断档）✓');
+      const timing = requestTiming;
       assert.ok(timing, '必须打出一条 scan.sale.timing（"一查日志就知道卡在哪一步"）');
       for (const key of TIMING_KEYS) {
         assert.equal(typeof timing[key], 'number', `timing 里要有数字 ${key}`);
       }
       assert.equal(timing.ok, true);
       assert.ok(submitCalls.length > 0, '这一趟提交至少要打一次飞书');
-      assert.ok(timing.master_ms > 0, `建主表那一段要能量出来（假网关每趟 60ms）：${timing.master_ms}`);
-      assert.ok(timing.detail_ms > 0, `明细/收款那一段要能量出来：${timing.detail_ms}`);
+      assert.ok(requestTiming.master_ms > 0, `建主表那一段要能量出来（请求段；假网关每趟 60ms）：${requestTiming.master_ms}`);
+      assert.ok(backgroundTiming.detail_ms > 0, `明细/收款那一段要能量出来（**后台段**）：${backgroundTiming.detail_ms}`);
       // 分段之和**不许超过**这一趟的墙钟（分段是墙钟的子集；差值 = 本文件没打点的零头 + 渲染）。
       const parts = timing.queue_wait_ms + timing.lookup_ms + timing.prepare_ms
         + timing.master_ms + timing.status_ms + timing.detail_ms + timing.stock_ms;
