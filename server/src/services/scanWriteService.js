@@ -181,12 +181,38 @@ const createScanWriteService = (options = {}) => {
   const scheduleSaleRest = ({ openId, requestId, salesEntryRecordId, orderNo, correlation, restInput }) => {
     const startedAt = Date.now();
     const timeoutMs = Number(saleAsync.backgroundTimeoutMs) || 0;
+    // ⭐⭐ 2026-10-15（⑨b-2）：**后台那一跑也要打 timing**（观测不缩水）——
+    //   与她那次请求打的是**同一个事件名** `scan.sale.timing`，只多一个 `phase` 标记
+    //   （取值走 `config.timing.phase.background` ✓ 不散写字符串 ✗）。
+    //   ⇒ 「明细 / 收款 / 库存」每段耗时**照旧看得见**（转后台不等于日志断档 ✗）。
+    const timing = {};
+    const logTiming = (result, durationMs) => {
+      logInfo(config.events.saleTiming, {
+        request_id: requestId,
+        phase: config.timing?.phase?.background || 'background',
+        ok: result?.ok === true,
+        code: result?.code || '',
+        order_no: result?.order_no || orderNo,
+        reused: result?.reused === true,
+        partial: result?.code === 'sale_partial_failed',
+        sales_entry_record_id: salesEntryRecordId,
+        // 后台这一跑自己的墙钟（含排队等前面那次写 ✓ 与 request 段同一套读法）
+        submit_ms: durationMs,
+        queue_wait_ms: Number(timing.queue_wait_ms) || 0,
+        lookup_ms: Number(timing.lookup_ms) || 0,
+        prepare_ms: Number(timing.prepare_ms) || 0,
+        master_ms: Number(timing.master_ms) || 0,
+        status_ms: Number(timing.status_ms) || 0,
+        detail_ms: Number(timing.detail_ms) || 0,
+        stock_ms: Number(timing.stock_ms) || 0,
+      });
+    };
     // ⭐⭐ 2026-10-15（⑰b-1）：这一跑的句柄**当作返回值交出去**（见下面 `background`）——
     //   它的用途只有一个：**让调用方"等后台那一跑跑完"** ✓（用例回读端状态前先 await 它）；
     //   ⚠️ 它**不是页面字段** ✗：路由渲染只取它本来就认识的那几个（`paidPayload` 里那一批），
     //     所以句柄**不会**进 HTML（有用例钉住 ✓）。
     return Promise.resolve()
-      .then(() => submitSale({ ...restInput, noDefer: true, requestId }))
+      .then(() => submitSale({ ...restInput, noDefer: true, requestId, timing }))
       .then(async (result) => {
         const durationMs = Date.now() - startedAt;
         if (result?.ok) {
@@ -196,6 +222,7 @@ const createScanWriteService = (options = {}) => {
             duration_ms: durationMs, request_id: requestId,
             ...(timeoutMs && durationMs > timeoutMs ? { over_timeout_ms: timeoutMs } : {}),
           });
+          logTiming(result, durationMs);
           // ⭐ 2026-10-15（⑰b-2）：**把后台那一跑的结果作为句柄的解析值** ⇒
           //   "等它跑完"的人拿到的就是**端状态齐了之后的那一份** ✓（用例回读时不必改断言 ✓）
           return result;
@@ -205,6 +232,8 @@ const createScanWriteService = (options = {}) => {
           code: result?.code || '', reason: result?.message || '',
           duration_ms: durationMs, request_id: requestId,
         });
+        // 🔴 失败那条也打 timing：**卡在哪一段**正是这条日志最有用的时候（不许只在成功时打 ✗）
+        logTiming(result, durationMs);
         await markSaleWriteFailed({ salesEntryRecordId, correlation, requestId });
         return result;
       })
@@ -213,6 +242,8 @@ const createScanWriteService = (options = {}) => {
           sales_entry_record_id: salesEntryRecordId, order_no: orderNo,
           error: String(error?.message || error), duration_ms: Date.now() - startedAt, request_id: requestId,
         });
+        logTiming({ ok: false, code: 'sale_background_threw', order_no: orderNo },
+          Date.now() - startedAt);
         await markSaleWriteFailed({ salesEntryRecordId, correlation, requestId });
       });
   };
