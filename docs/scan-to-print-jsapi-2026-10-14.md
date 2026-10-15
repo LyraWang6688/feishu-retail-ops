@@ -12,7 +12,7 @@
 ## 二、要新建的两块（**都是既有能力之上接一层** ✓ 不另起一套 ✗）
 | # | 要做的 | 复用/约束 |
 |---|---|---|
-| 1 | ⭐ **服务端 JSAPI 签名接口**：`access_token → jsapi_ticket → signature` | 用**既有** app 凭证（服务端 env ✓）· **不写死任何密钥** ✗ · 带上 `appId` `timestamp` `nonceStr` `url` ✓ · **缓存 ticket**（有效期 2h ✓ 可配 ✓） |
+| 1 | ⭐ **服务端 JSAPI 签名接口**：`access_token → jsapi_ticket → signature` | 用**既有** app 凭证（服务端 env ✓）· **不写死任何密钥** ✗ · 带上 `appId` `timestamp` `nonceStr` `url` ✓ · **缓存 ticket**（**以飞书回的 `expire_in` 为准**，见文末"坑 ②"） |
 | 2 | ⭐ **客户端**：在那一页 `h5sdk.config(...)` ⇒ 调 **扫一扫** ⇒ 拿到扫到的字符串 | 需要**配 H5 可信域名**（飞书后台 ✓ 变更是**运维动作** ⇒ 我会先报你一声 ✗） |
 | 3 | ⭐ **按"扫到的那一张"打印**：把 `record_id`（从 URL 里解出来 ✓）传给打印队列 | 打印队列现有 filters = `keyword/category/size/state` ✗ ⇒ **加一条"按记录 ID 精确一张"** ✓（配置先行 ✓ 不改既有 filters 语义 ✗） |
 | 4 | 结果如实 | 成功 ⇒ 「已提交打印（这一张）」✓ · 失败/离线 ⇒ **人话**（既有文案 ✓）**不假成功** ✗ |
@@ -75,3 +75,74 @@
 - 飞书开发者后台 ⇒ 网页应用 ⇒ **安全设置 → H5 可信域名** 必须有 **`hm.bamamei.online`**
   （缺了的现象 = 页面点了没反应 / `h5sdk.config` 失败 ⇒ 我们有**人话**兜底，但功能不可用）。
 - 本机/服务器**不需要**新增任何密钥：签名用的仍是 `LARK_AGENT_APP_ID` / `LARK_AGENT_APP_SECRET`。
+
+---
+
+## 🔴🔴 2026-10-15 真机排查：上线后"扫码打印点了没反应"的两个坑（**都已修**）
+
+> 这一节是**当天真机事故的完整复盘**：现象 → 怎么定位 → 根因 → 修法 → 证据。
+> 记它的价值在于：**飞书的报错信息会把我们带偏**，而正确的排查路径是可复用的。
+
+### 现象
+她在手机飞书点「货品 → 标签打印 → 去扫码打印」⇒ **相机不弹、页面只有一行小字**、服务端**一条日志都没有**。
+
+### 怎么定位（这条路径很有用，值得复用）
+1. **先让"看不见的失败"看得见**：给三步（`config` / `ready` / `scanCode`）**都加超时**
+   ＋ 失败时**上报一条只读诊断**（`POST /api/workbench/labels/scan-report`，只 `logInfo`、不写业务表）
+   ⇒ 客户端那一刻的 `phase`（精确子步骤）＋ 原因码＋ **飞书回的原始内容 `raw`** 才有地方落
+   （⚠️ 手机上**开不了控制台**，这是唯一能拿到证据的口子）。
+2. **`raw` 一击命中**：飞书客户端原生层回的其实**不是**空对象，而是
+   ```json
+   {"errno":"2601002","errorMessage":"signature is expired",
+    "errString":"Authentication failed. signature is expired (error code: 333444)","errorCode":"333444"}
+   ```
+   （⚠️ 它**同时带 `errMsg`/`message` 的场合也有** —— 所以诊断要**既取已知字段、也把整个对象序列化**。）
+3. **拿错误码 curl 官方文档**（**不用网搜**）：
+   `https://open.feishu.cn/document/uYjL24iN/uAjMuAjMuAjM/errno.md?lang=zh-CN`
+   ⇒ `333444 = 签名过期（签名有效期 10 分钟）`、`333443 = 签名重复`、`333445 = JSAPI 未授权`。
+4. **再 curl 那篇参数文档**（错误码那页里有链接）：
+   `https://open.feishu.cn/document/uYjL24iN/uQjMuQjMuQjM/authentication/h5sdkconfig.md?lang=zh-CN`
+
+### 坑 ①（**真凶**）：`timestamp` 必须是**毫秒**
+官方《h5sdk.config》参数表逐字：
+
+> `timestamp` | long | 是 | 生成签名的**毫秒级**时间戳
+
+我们改前用的是 **`Math.floor(now() / 1000)`（秒）** ⇒ 飞书按**毫秒**解读 ⇒ 时间落在 **1970 年**
+⇒ 每次都判 **`333444 签名过期`** ✗。
+
+⚠️ **为什么它极难查**：**服务器时钟零偏移、URL 正确、appId 与 access_token 同源、sha1 算法正确**
+—— 四项排查项（官方 333441 那串）**全都过关**，错的只是**单位**。
+⇒ **看到"过期/时间类"报错，先怀疑单位（秒 / 毫秒），再怀疑时钟。**
+
+⚠️ 另一条同样重要：**签名串里用的 `timestamp` 必须与 `config` 里发出去的值是同一个**
+（官方 333441 排查项逐字）⇒ 改单位时**两处一起改**，否则会从 `333444` 变成 `333441`。
+
+**修法**：`larkJsapiService.signatureFor` 里 `const timestamp = now();`（毫秒）。
+
+### 坑 ②（顺手挖出的同类隐患）：`jsapi_ticket` 的 TTL **不能写死**
+线上实测飞书回的是 **`expire_in: 3844` 秒（≈64 分钟）**，而代码里写死 **110 分钟**
+⇒ **后 46 分钟里算出来的签名都建在已过期的 ticket 上**（同样会被判过期）✗。
+
+**修法**：TTL = **`expire_in − 5 分钟`**；飞书没回该字段才退回配置值（`LARK_JSAPI_TICKET_TTL_MS`）。
+
+### 已排除的嫌疑（都留了证据，免得下次重走）
+| 嫌疑 | 排除依据 |
+|---|---|
+| 服务器时钟偏移 | 服务器 `date -u` 与飞书 HTTP `Date` 头**逐秒一致**（`08:46:17Z` / `08:46:17Z`） |
+| 我们算的签名不对 | 线上实测：`timestamp` = 当前时间、`url` 与页面 `location.href` 一致、`appId` 与取 token 同源 |
+| URL 带了 `?scan=1` | 她按指引**用不带查询串**的页面重试 ⇒ **照样失败**（错误码一模一样） |
+| H5 可信域名 / `jsApiList` | 域名早在白名单里；`jsApiList` 含 `scanCode`（`333445` 才对应用错 API，我们没有这个码） |
+| JSSDK 版本 / API 名 | 把官方 SDK 源码拉下来核过：`scanCode` 是**正确**的 API 名，且 SDK 里**没有** `signature is expired` ⇒ 是**客户端原生层**判的 |
+
+### 修完的真机证据（**端到端**）
+```
+17:11:34  label_print.job.enqueued   job_id=99f84def…  标签 T202-8|米色|B（1 张）
+17:11:34  label_print.scan.report    {ok:true, phase:"done", reason:"enqueued"}
+17:11:35  label_print.job.claimed    device_id="store-pc"
+17:11:35  label_print.job.done       device_id="store-pc"  queue_ms=890
+```
+
+### ⚠️ 这条链路的**端限制**（官方文档）
+`tt.scanCode` 支持**小程序**与**网页应用**；网页应用 **Android / iOS 需飞书 V3.44.0+**，
+**PC 端「X」不支持** ⇒ **电脑飞书里永远扫不了**，别在那儿试。
