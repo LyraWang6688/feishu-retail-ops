@@ -1778,7 +1778,14 @@ await writeService.saveDraftLines?.(openId, {
         //      那条正常路堵死了 ✗（`AC-E2E-6/15/17` 就是这条路的**反向哨兵** ✓ 它们必须原样绿 ✓）
         //   🔴 优先级：**她填的 > 货品单价**；取到的值**落回 `lineAmounts`**（既有通道 ✓）
         //   ⚠️ 读次数：这条判定里**只调一次 `service.lookup`**（生产吃内存快照 ⇒ 0 次读 ✓ 不做逐行读 ✗）
-        {
+        // ⭐⭐ 2026-10-16（边界①改写版）：**这条判定只对【第一次点提交】生效** ✓
+        //   · 幂等短路在**写服务层**（`submitSale` 的 `reused`）⇒ 路由这一支**看不到它** ✗
+        //     ⇒ 靠"放在短路之后"避开**做不到**（今晚实测：拆包后 13 条新红 ✗）
+        //   · 改用**会话标记**做判据：`submitSession` 快照取于**标记写入之前**（1708 < 1730 ✓）
+        //     ⇒ 第一次点提交：快照里**没有** `paymentStep` ⇒ 判定生效 ✓
+        //     ⇒ 第二次点提交 / 刷新 / 资金页动作：快照里**已有** `pending` ⇒ 判定**自动跳过** ✓
+        const jumpGateApplies = (submitSession?.sale?.paymentStep || submitSession?.paymentStep) !== 'pending';
+        if (jumpGateApplies) {
           const jumpHasSize = pendingDraftLines.length > 0 || Boolean(String(body[fields.size] ?? '').trim());
           let jumpView = null;
           if (jumpHasSize && lineAmounts.some((value) => String(value ?? '').trim() === '')) {
