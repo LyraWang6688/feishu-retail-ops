@@ -39,15 +39,28 @@ const VIEW = Object.freeze({
 });
 
 test('AC-MIR1 🔴 补货 / 退货**两块都有**那个入口（去掉任一处 ⇒ 红）', () => {
-  const callSites = rendererSource.split('multiItemBlockHtml(write, view)').length - 1;
+  // ⭐⭐ 2026-10-16 **成对迁移**（依据：业务负责人真机截图 + 逐字「把最下面的蓝色按钮改为「退货」」
+  //   ＋ 弹窗选择「说明 + 整块都删」）：
+  //   改前逐字：
+  //     `const callSites = rendererSource.split('multiItemBlockHtml(write, view)').length - 1;`
+  //   改后逐字：下面这一行（**改指向、不放宽** ✓）——
+  //     ⚠️ 退货那一处现在多传一个 `'return'`（**退货 tab 专用**的精简那一版），
+  //       所以字面量 `multiItemBlockHtml(write, view)` **只剩补货那一处**；
+  //       旧写法把"退货那一处"也数进去 ⇒ 现在会数成 1 ⇒ **假红** ✗。
+  //   ⚠️ 这条的原意一个字没改：**"两块各接一次、少一处就是某一块加不了第二个货品"** ✓
+  //     ⇒ 用**带参数的正则**把两种形状都数上（`[^)]*` 只含 `view` / `, 'return'`，不会跨到别的调用 ✗）。
+  const callSites = (rendererSource.match(/multiItemBlockHtml\(write, view[^)]*\)/g) || []).length;
   assert.equal(callSites, 2,
     `补货/退货**各一处**调用（实得 ${callSites} 处）—— 少一处就是"某一块加不了第二个货品" ✗`);
   // 补货块与退货块各自的函数体里都要有（防止两处都塞在同一块里 ✗）
   const replenish = rendererSource.slice(rendererSource.indexOf('const replenishFormHtml'),
     rendererSource.indexOf('const sizeRowsHtml'));
   const ret = rendererSource.slice(rendererSource.indexOf('const returnFormHtml'));
-  assert.ok(replenish.includes('multiItemBlockHtml(write, view)'), '补货块里必须接这个入口');
-  assert.ok(ret.includes('multiItemBlockHtml(write, view)'), '退货块里必须接这个入口');
+  assert.ok(/multiItemBlockHtml\(write, view[^)]*\)/.test(replenish), '补货块里必须接这个入口');
+  assert.ok(/multiItemBlockHtml\(write, view[^)]*\)/.test(ret), '退货块里必须接这个入口');
+  // 🔴 补货那一处**不许传 mode**（`'return'` 只是退货 tab 的精简版 ⇒ 传错就是"顺手把补货也删了" ✗）
+  assert.ok(replenish.includes('multiItemBlockHtml(write, view)'),
+    '补货那一处**不传 mode** ⇒ 走缺省 = 逐字不变 ✓（传上 `\'return\'` ⇒ 红）');
 
   const html = renderer.multiItemBlockHtml({}, VIEW);
   assert.match(html, /data-multi-add/, '那一块必须有「再加一个货品」的按钮');

@@ -372,8 +372,17 @@ test('AC-6R3 认不出的 ?from=（含已退役的 purchase）⇒ 回落销售�
   // ⭐ 2026-10-14 晚：配品块已从扫码页搬走 ⇒ 这里改判**退货那一块**（`purchase_return` ✓）
   //   🔴 原"配品空态 = 人话卡"那三条随配品一起**搬去工作台那一页的测试**（判据不删不松 ✗ 只是换位置 ✓）
   const returnBlock = blockOf(purchaseReturn, 'purchase_return');
-  assert.ok(returnBlock.includes('data-view="purchase-return"') || returnBlock.includes('生成采购退货')
-    || returnBlock.includes('<form'), '退货那一块照旧在（表单/动作至少有一个 ✓）');
+  // ⭐⭐ 2026-10-16 **成对迁移**（依据：业务负责人真机截图 + 逐字「把最下面的蓝色按钮改为「退货」」）：
+  //   改前逐字：`assert.ok(returnBlock.includes('data-view="purchase-return"') || returnBlock.includes('生成采购退货')
+  //     || returnBlock.includes('<form'), '退货那一块照旧在（表单/动作至少有一个 ✓）');`
+  //   改后逐字：下面这两行（**改指向、不放宽** ✓）
+  //   依据：她 2026-10-16 真机截图（退货 tab · 货品 832-500）＋ 逐字「最下面的蓝色按钮改为「退货」」
+  //   ⚠️ 这一条钉的是"**退货表单那一块在不在**" ⇒ 锚一个**稳定标记**（`data-return-sizes-field`）
+  //     ＋ 那颗按钮**现在**的文字（配置里那一句）✓；旧按钮名那一段已是**死分支**（恒假 ⇒ 假绿 ✗）⇒ 摘掉 ✓
+  assert.ok(returnBlock.includes('data-view="purchase-return"') || returnBlock.includes('<form'),
+    '退货那一块照旧在（表单/动作至少有一个 ✓）');
+  assert.ok(returnBlock.includes(SCAN_PAGE.returnForm.submitLabel),
+    '⭐ 那颗按钮的文字 = 配置里那句（现为「退货」✓）');
 
   // ⭐⭐ 2026-10-14 晚（业务负责人逐字）：「/s/accept 这条路要彻底拆掉」
   //   改前逐字：断言「验收领域自己有内容」（accept-pending / accept-manual）
