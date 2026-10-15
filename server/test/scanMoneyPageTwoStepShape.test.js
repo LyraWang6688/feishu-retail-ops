@@ -55,20 +55,20 @@ test('AC-V4-2 🔴 V4 仍钉住三件：**零写入** ＋ **差额人话** ＋ *
     'V4 必须仍钉「差额给她一句人话」**那一条断言**（删掉 ⇒ 红 ✓；不许只靠别处出现「金额」二字 ✗）');
 });
 
-// ── AC-V4-3：**其余旧形状的位置必须"正好是已知那几处"**（新增/挪走 ⇒ 红 ✓）──────────
-// ⚠️ 如实登记：V2 / V3 仍是旧形状（用 `payment_status:'未付'` 表达"不写收款行"）⇒ **待迁移** ✓
-//    本哨兵把数量与位置**钉死** ⇒ 谁再往这个文件里加旧形状的东西，CI 立刻红 ✓（不必有真凭证 ✓）
-test('AC-V4-3 🔴 档位字段只允许出现在**已登记的 V2/V3 那几处**（数量与位置都不许多 ✗）', () => {
+// ── AC-V4-3：**整份真表 E2E 里一处都不许再有档位字段**（塞回 ⇒ 红 ✓）─────────────────
+// ⭐ 2026-10-16 收紧：V2（:220 附近）/ V3（:286 附近）已随本刀一起去掉档位 ⇒ 现在应当是 **0 处** ✓
+//    （改前逐字写在注释里 ✓ 不算 ✗ —— 本哨兵先剥注释再数 ✓）
+test('AC-V4-3 🔴 整份真表 E2E 里**一处都不许**再有档位字段（塞回即红 ✗）', () => {
   const code = stripComments(source);
   const hits = code.split('\n')
     .map((line, index) => ({ line: line.trim(), no: index + 1 }))
     .filter((x) => /payment_status/.test(x.line));
-  assert.equal(hits.length, 3,
-    `档位字段在**代码里**只允许剩 **3** 处（V2 一行 + V3 两行 ⇒ 待迁移 ✓）；实际 ${hits.length} 处：`
+  assert.equal(hits.length, 0,
+    `真表 E2E 里**一处都不许**再有档位字段（V2/V3/V4 都已迁移 ✓）；实际 ${hits.length} 处：`
     + hits.map((h) => `${h.no}: ${h.line}`).join(' | '));
-  for (const h of hits) {
-    assert.ok(h.line.includes("'未付'") || h.line.includes('未付'),
-      `第 ${h.no} 行不是已登记的形状（只允许 V2/V3 的「未付」那几处 ✗）：${h.line}`);
+  for (const tier of ['全付', '部分付', '未付']) {
+    assert.equal(code.includes(`'${tier}'`), false,
+      `真表 E2E 里**一处都不许**再有档位字面量「${tier}」✗（档位由金额自动算 ✓）`);
   }
   // ⭐ 并且 V4 那一块**一处都不许有**（与 AC-V4-1 双重钉 ✓）
   const block = stripComments(caseBlock('V4 · '));
