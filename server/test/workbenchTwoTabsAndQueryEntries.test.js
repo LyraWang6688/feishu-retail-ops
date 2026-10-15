@@ -238,7 +238,13 @@ test('AC5 当前配置：两个板块都有 URL，两张卡都是可点的 <a>',
   assert.equal(blocks[1].href, INVENTORY_QUERY_URL, '库存查询卡 href 逐字 = 配置值');
   for (const block of blocks) {
     assert.ok(block.attrs.includes('rel="noopener"'), '外链必须带 rel="noopener"');
-    assert.equal(block.arrow, '进入 →', '有 URL 时 arrow = 进入 →');
+    // ⭐ 2026-10-16 成对迁移（业务负责人逐字：「虽然我看不到，但是没用，所以也可以删除掉！」）：
+    //    改前逐字：`assert.equal(block.arrow, '进入 →', '有 URL 时 arrow = 进入 →');`
+    //    改后逐字：有 URL 的这张卡**不再画那一行箭头**（`arrow` 键都不出现）
+    //    依据：`renderQueryEntries` 把**整张卡**渲染成 `<a class="entry-card" href=… rel="noopener">`
+    //          ⇒ 卡片本体就是那个链接（点哪都跳）⇒ 那行箭头没有跳转职责 ✓
+    //    ⚠️ 下面 href / tag / rel / disabled-card 四条**一条没放宽**（跳转能力零变化）✓
+    assert.equal(block.arrow, undefined, '⭐ 改后逐字：整张卡可点的外链卡不再多画那一行箭头');
     assert.ok(!block.classes.includes('disabled-card'), '有 URL 的卡不许带 disabled-card');
   }
   assert.ok(!/href\s*=\s*""/.test(html), '整块 HTML 里不许出现空 href（含 href=""）');
@@ -259,7 +265,12 @@ test('AC5b 非空 URL（她给了之后）：href 逐字 = 配置值、rel="noop
   assert.equal(blocks[0].href, SALES, 'href 必须逐字等于配置值（不加工、不拼接）');
   assert.ok(blocks[0].attrs.includes('rel="noopener"'), '外链必须带 rel="noopener"');
   assert.ok(!html.includes('target='), '同窗口跳转（与「报货与退货」那张卡一个风格，不加 target）');
-  assert.equal(blocks[0].arrow, '进入 →', '有 URL 时 arrow = 进入 →');
+  // ⭐ 2026-10-16 成对迁移：改前逐字 `assert.equal(blocks[0].arrow, '进入 →', …)` →
+  //    改后逐字：有 URL 那一块**不再画那行箭头**；**空值那一块（blocks[1]）的「链接待配置」
+  //    按它自己的语义保留**（它不是链接、那行是卡面的如实交代 ⇒ 见下面那条反向断言）✓
+  assert.equal(blocks[0].arrow, undefined, '⭐ 有 URL 的卡不再画那行箭头（她 2026-10-16）');
+  assert.equal(blocks[1].arrow, LINK_PENDING,
+    '⚠️ 空 URL 的 `disabled-card` 那一种**按它自己的语义保留**（「链接待配置」逐字照旧）');
   assert.equal(blocks[1].tag, 'div', '同一份配置里空值那一块仍然不是 <a>');
   assert.ok(!html.includes('href=""'), '不许出现空 href');
 });
@@ -345,15 +356,18 @@ test('AC2 哨兵：信息录入（原「常用功能」只改名）里的两个�
     '【信息录入】只剩「库存手工调整」+「鞋盒标签打印」');
   assert.equal(home.COMMON_ENTRIES.some((entry) => entry.id === 'purchase'), false,
     '「报货与退货」那条入口已删（她：直接去掉）');
+  // ⭐ 2026-10-16 成对迁移（业务负责人逐字：「虽然我看不到，但是没用，所以也可以删除掉！」）：
+  //    改前逐字：这份逐字定义里有 `arrow: '进入 →',`；
+  //    改后逐字：**整行删掉**（卡片本体就是整张可点的 `<a class="entry-card" href=…>`）✓
+  //    ⚠️ 其余字段（id / icon / title / desc / href / wide）**仍逐字钉死**（不是放宽）✓
   assert.deepEqual(home.COMMON_ENTRIES.find((entry) => entry.id === 'inventory-adjustment'), {
     id: 'inventory-adjustment',
     icon: '🧮',
     title: '库存手工调整',
     desc: '盘点调整（改数量，盘多了加、盘少了减）· 换季调整（门盒/样品 ↔ 仓库，数量不变）',
     href: '/workbench/inventory-adjustment.html',
-    arrow: '进入 →',
     wide: true,
-  }, '「库存手工调整」那条（含 wide）一个字节不动');
+  }, '「库存手工调整」那条（除已退场的 arrow 行外含 wide）一个字节不动');
   assert.equal(parseEntryBlocks(html).length, 2, '信息录入 = 库存手工调整 / 鞋盒标签打印');
 });
 
