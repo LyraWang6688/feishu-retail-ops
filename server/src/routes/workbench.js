@@ -465,14 +465,13 @@ const createWorkbenchRouter = (options = {}) => {
       return res.status(400).json({ success: false, error: error.message });
     }
   });
-  /**
-   * ⭐⭐ 2026-10-14（业务负责人：「把配品迁移到工作台销售里，新建一个子 tab」✓ 入口变了、逻辑没变 ✗）
-   *   · `GET /sales/accessories`  —— **只读**：名称清单复用既有 `listAccessories()`（30 秒短缓存 ✓
-   *     与扫码页**同一个**读取口 ✓ 不另造 ✗）
-   *   · `POST /sales/accessory-sales` —— **一步成单**：数量默认 1 · 成交金额**必填** ✓ · 付款方式 **全付** ✓
-   *     ⇒ 复用既有 `addSaleLine(kind:'accessory')` + `submitSale`（**同一把** `submitKey` ✓ 幂等 ✓）
-   *     🔴 **零库存动作**（配品没有鞋 ✓）· 失败**如实 400 + 人话** ✗ 绝不返回"成功" ✗
-   */
+  // ⭐ 2026-10-15 收尾（只改注释）：这里原来挂着一整段说明**工作台自建配品两条路由**的 JSDoc
+  //   （`GET /sales/accessories` 只读清单 / `POST /sales/accessory-sales` 自建成单）。
+  //   那两条路由**已随她那句「配品就是走表单了～工作台自建写服务可以删除了」整段删除**（见下面那块注释 ✓）
+  //   ⇒ 这段"它还在这儿"的旧说明**留着就是误导** ✗ 换成这一句沿革即可。
+  //   ⚠️ 那两条路由当年的**业务判据没有丢**：一步成单 / 收款明细形状 / 不动库存 / 幂等 / 失败如实
+  //     ⇒ 已迁到新链路 `services/accessorySaleIntakeService.js` ＋ `test/accessorySaleIntake.test.js`
+  //     的 **AC-MIG1…AC-MIG5**（迁移清单见 `test/workbenchAccessoryTab.test.js` 文件头 ✓）。
   const scanWrite = options.scanWrite || createScanWriteService({
     gateway: options.gateway || new V1BitableGateway(), config: SCAN_WRITE,
   });
