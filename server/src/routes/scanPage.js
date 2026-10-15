@@ -1768,12 +1768,11 @@ await writeService.saveDraftLines?.(openId, {
           },
         });
 
-        const hasSomethingToPay = pendingDraftLines.length > 0
-          || Boolean(String(body[fields.size] ?? '').trim());
-        const lineAmountsMissing = lineAmounts.length === 0
-          ? hasSomethingToPay
-          : lineAmounts.some((value) => String(value ?? '').trim() === '');
-        if (writeConfig.lineAmountRequired !== false && lineAmountsMissing) {
+        // ⚠️ 2026-10-16（裁决=甲 · **窄化**）：**提交步维持原状** —— 只判"她带着的那份"里的空项；
+        //   "空数组也算缺"那条**只留在资金页（跳过）那一支** ✓
+        //   （理由：拦下的**原因码/人话**是她真机看到的东西 ⇒ 不许在没问她之前换掉 ✗）
+        if (writeConfig.lineAmountRequired !== false
+          && lineAmounts.some((value) => String(value ?? '').trim() === '')) {
           logWarn('scan.write.line_amount_required', { request_id: requestId, lines: lineAmounts.length });
           return sendPaymentStep(res, req, {
             realm,
