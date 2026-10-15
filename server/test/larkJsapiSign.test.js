@@ -40,8 +40,15 @@ test('AC-SP1/SP2 ⭐ 签名四件套齐 + 算得对 + 不含密钥', async () =>
   assert.equal(out.ok, true, JSON.stringify(out));
   assert.equal(out.appId, 'cli_test_jsapi');
   assert.equal(out.nonceStr, 'nonce_fixed');
-  assert.equal(out.timestamp, 1700000000);
-  const expected = sign({ ticket: 'ticket_abc', nonceStr: 'nonce_fixed', timestamp: 1700000000, url: out.url });
+  // ⭐⭐ 2026-10-15 **成对翻新**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.equal(out.timestamp, 1700000000);` ＋
+  //            `const expected = sign({ …, timestamp: 1700000000, … });`
+  //   改后逐字：改成 **毫秒**（`1700000000000`）——两次都改，**签名串里的值与发出去的值仍必须一致** ✓
+  //   依据：**飞书官方《h5sdk.config》参数表逐字：「timestamp | long | 是 | 生成签名的<u>毫秒级</u>时间戳」**
+  //     ＋ 真机实测（改前用秒 ⇒ 飞书报 `333444 签名过期`：`signature is expired`，
+  //       因为它把秒当毫秒解读、时间落在 1970 年 ✗）。
+  assert.equal(out.timestamp, 1700000000000, '必须是**毫秒级**时间戳（官方要求 ✓）');
+  const expected = sign({ ticket: 'ticket_abc', nonceStr: 'nonce_fixed', timestamp: 1700000000000, url: out.url });
   assert.equal(out.signature, expected, 'sha1 签名与服务端自算逐字一致 ✓');
   // 别把密钥漏出去（**能真红**：谁把 secret 塞进返回就红 ✓）
   const json = JSON.stringify(out);
@@ -93,4 +100,30 @@ test('AC-SP6 ⭐ 上游失败 ⇒ upstream_failed + 人话', async () => {
   assert.equal(out.ok, false);
   assert.equal(out.reason, 'jsapi_ticket_http');
   assert.ok(out.message.length > 4);
+});
+
+test('AC-SP14 ⭐⭐ ticket 的 TTL **以飞书回的 `expire_in` 为准**（它远小于我们原来写死的 110 分钟）', async () => {
+  const calls = [];
+  let clock = 1700000000000;
+  // 飞书实测线上回的是 `expire_in: 3844` 秒（≈64 分钟），而配置里写死 110 分钟 ⇒
+  // 后 46 分钟里算出来的签名都建在**已过期**的 ticket 上 ✗（今天真机排查时发现的同类隐患）。
+  const fake = (url) => {
+    calls.push(url);
+    if (String(url).includes('tenant_access_token')) {
+      return { ok: true, status: 200, json: async () => ({ tenant_access_token: 'tok', expire: 7200 }) };
+    }
+    if (String(url).includes('jssdk/ticket')) {
+      return { ok: true, status: 200, json: async () => ({ data: { ticket: 'ticket_abc', expire_in: 3844 } }) };
+    }
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const service = createLarkJsapiService({ env: ENV, fetch: fake, now: () => clock, randomNonce: () => 'n' });
+  await service.signatureFor('https://hm.bamamei.online/a.html');
+  assert.equal(calls.filter((u) => u.includes('jssdk/ticket')).length, 1);
+  // 走到「配置写的 TTL」处**还不该重取**（因为飞书给的 TTL 更短，早就该重取了）——
+  // ⚠️ 关键判据：只要**超过飞书给的 expire_in（−5 分钟余量）**就必须重取 ✓
+  clock += (3844 - 300) * 1000 + 1000;
+  await service.signatureFor('https://hm.bamamei.online/b.html');
+  assert.equal(calls.filter((u) => u.includes('jssdk/ticket')).length, 2,
+    '超过飞书给的 expire_in ⇒ 必须重取（不再用写死的 110 分钟 ✓）');
 });

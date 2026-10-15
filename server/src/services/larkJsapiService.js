@@ -90,7 +90,11 @@ const createLarkJsapiService = (options = {}) => {
   };
 
   const jsapiTicket = async () => {
-    const cached = ticketCache.value && now() - ticketCache.at < config.ticketTtlMs;
+    // ⭐⭐ 2026-10-15：TTL **以飞书回的 `expire_in` 为准**（实测线上只有 **3844 秒 ≈ 64 分钟**，
+    //   而我们原来写死 **110 分钟** ⇒ 后 46 分钟里算出来的签名都建在**已过期**的 ticket 上 ✗）。
+    //   这里用「`expire_in` − 5 分钟安全余量」；飞书没回该字段才退回配置那个保守值 ✓。
+    const ttl = ticketCache.ttlMs || config.ticketTtlMs;
+    const cached = ticketCache.value && now() - ticketCache.at < ttl;
     if (cached) return ticketCache.value;
     const token = await tenantToken();
     const { ok, payload } = await withTimeout(async (signal) => {
@@ -105,7 +109,11 @@ const createLarkJsapiService = (options = {}) => {
     if (!ok) throw Object.assign(new Error('jsapi_ticket_http'), { reason: 'jsapi_ticket_http' });
     const ticket = String(payload?.data?.ticket || payload?.ticket || '').trim();
     if (!ticket) throw Object.assign(new Error('jsapi_ticket_empty'), { reason: 'jsapi_ticket_empty' });
-    ticketCache = { value: ticket, at: now() };
+    const expireInSec = Number(payload?.data?.expire_in || payload?.expire_in || 0);
+    const ttlMs = expireInSec > 0
+      ? Math.max(60 * 1000, (expireInSec - 300) * 1000)
+      : config.ticketTtlMs;
+    ticketCache = { value: ticket, at: now(), ttlMs };
     return ticket;
   };
 
@@ -123,7 +131,14 @@ const createLarkJsapiService = (options = {}) => {
     if (!appId) return { ok: false, reason: 'not_configured', message: config.texts.notConfigured };
     try {
       const ticket = await jsapiTicket();
-      const timestamp = Math.floor(now() / 1000);
+      // 🔴🔴 2026-10-15（真机实测 + 官方文档）：`h5sdk.config` 的 `timestamp` 必须是
+      //   **毫秒级**时间戳 —— 官方《h5sdk.config》参数表逐字：「生成签名的**毫秒级**时间戳」。
+      //   改前用的是**秒**（`Math.floor(now()/1000)`）⇒ 飞书按毫秒解读 ⇒ 时间落在 1970 年
+      //   ⇒ 每次都被判 **`333444 签名过期`**（真机 raw：`{"errorMessage":"signature is expired",
+      //     "errno":"2601002","errorCode":"333444"}`）✗ —— 而时钟 / URL / appId / 签名算法全都正确。
+      //   ⚠️ 签名串里用的 `timestamp` **必须与 config 里发出去的一致**（官方 333441 排查项逐字）
+      //     ⇒ 这里一并改成同一个**毫秒值** ✓。
+      const timestamp = now();
       const nonceStr = randomNonce();
       return { ok: true, appId, timestamp, nonceStr, signature: sign({ ticket, nonceStr, timestamp, url }), url };
     } catch (error) {

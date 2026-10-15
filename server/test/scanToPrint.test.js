@@ -125,11 +125,16 @@ test('AC-SP1/SP2 ⭐ 签名接口：四件套齐 + 算得对 + **响应里一个
     assert.equal(body.success, true);
     assert.equal(body.appId, 'cli_scan_to_print_app');
     assert.equal(body.nonceStr, 'nonce_scan_print');
-    assert.equal(body.timestamp, 1700000000);
+    // ⭐⭐ 2026-10-15 **成对翻新**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.equal(body.timestamp, 1700000000);`
+  //   改后逐字：`assert.equal(body.timestamp, 1700000000000);`（**毫秒**）
+  //   依据：**飞书官方《h5sdk.config》参数表逐字：「timestamp | long | 是 | 生成签名的<u>毫秒级</u>时间戳」**
+  //     ＋ 真机实测：改前用秒 ⇒ 飞书判 `333444 签名过期`（`signature is expired`）✗
+  assert.equal(body.timestamp, 1700000000000, '必须是**毫秒级**时间戳（官方要求 ✓）');
     assert.equal(body.url, pageUrl, '签名用的就是页面 URL');
     // ⭐ AC-SP2：与服务端自算逐字一致（换 ticket 就红 ⇒ 这条能真红）。
     assert.equal(body.signature, sign({
-      ticket: 'ticket_scan_print', nonceStr: 'nonce_scan_print', timestamp: 1700000000, url: pageUrl,
+      ticket: 'ticket_scan_print', nonceStr: 'nonce_scan_print', timestamp: 1700000000000, url: pageUrl,
     }));
     // ⭐ AC-SP1：**形状钉死** —— 只有这七样，多一个键（例如谁顺手把 secret 塞进去）就红。
     assert.deepEqual(Object.keys(body).sort(), [
