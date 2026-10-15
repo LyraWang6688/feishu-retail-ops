@@ -3,6 +3,7 @@ const { V1ReferenceResolver, relation } = require('./v1ReferenceResolver');
 const { readSaleLinkedRecord } = require('./salesRecordReader');
 const { withSalesReadRetry } = require('./salesReadRetry');
 const { nextId, orderNoOf, stateFor, createState } = require('./salesRecordIds');
+const { voucherLinkFieldName, resolveVoucherPaymentConfig } = require('../config/voucherPayment');
 
 const amount = (value) => {
   const number = Number(value);
@@ -12,6 +13,30 @@ const amount = (value) => {
   return number;
 };
 const normalizedStatus = (value) => ['已收清', '已结清'].includes(value) ? '已收款' : value || '已收款';
+
+/**
+ * ⭐⭐ 2026-10-16（业务负责人口径 · 逐字）：「**是的，抖音团购券的是待平台结算**」。
+ *
+ * 券的判定与别处**同一份语义键**：收款方式那条记录上的「**团购券管理**」关联列**非空** ⇒ 这条是券
+ *   （列名从 `config/v1BitableSchema` 取，**逻辑里不写中文** ✗）。
+ *
+ * ⇒ 领券那一笔收款**默认**落成【待平台结算】（钱还在平台上，**不算"已收"** ✗）：
+ *   · **显式传了 status** ⇒ 以调用方为准（群聊那条链路本来就是显式传的 ✓ 一字不改 ✓）；
+ *   · 关联列**读不到**（列没配 / 没关联 / 收款方式记录里没这一列）⇒ **不猜**：照旧「已收款」✓
+ *     （"读不到"与"不是券"在这里都不该改行为 —— 改错方向就是把没到账的钱记成已收 ✗）。
+ *
+ * ⚠️ 只影响**状态**：金额仍由调用方给（她口径：「收款金额按照**平台结算款**来」——
+ *    那个数只有券目录知道，由 `services/voucherPaymentService.js` 在入口处换好 ✓ 本层不查券目录 ✗）。
+ */
+const voucherPendingStatusOf = (record, explicitStatus) => {
+  const normalized = normalizedStatus(explicitStatus);
+  if (explicitStatus) return normalized;
+  const field = voucherLinkFieldName();
+  if (!field) return normalized;
+  const linked = linkedRecordIds(record?.fields?.[field]);
+  if (!linked.length) return normalized;
+  return resolveVoucherPaymentConfig().pendingStatus || normalized;
+};
 
 // 「收款明细.交易方向」是单选（收入 / 退回），和售后链路写「退回」用的是同一套选项。
 //
@@ -57,15 +82,26 @@ class PaymentService {
   // ⚠️ 关联键走**尾部可选参数**（`options.correlation`），不塞进 `input`
   //    —— 收款这两条路的入参形状一个字段都不变（既有测试逐字 deepEqual 就是证明）。
   async record(input = {}, options = {}) {
-    let { salesEntryRecordId, method, amount: rawAmount, operatorOpenId, receivedAt,
-      status = '已收款' } = input;
-    status = normalizedStatus(status);
+    let { salesEntryRecordId, method, amount: rawAmount, operatorOpenId, receivedAt } = input;
+    // ⚠️ `input.status` 的**显式性**是本刀的一处判据（券 ⇒ 默认待平台结算 ✓ 显式给过 ⇒ 以调用方为准 ✗）：
+    //    所以这里**不用解构默认值**（`= '已收款'` 会把"没给"与"给了已收款"抹平 ✗）。
+    const explicitStatus = input.status;
+    let status = normalizedStatus(explicitStatus);
     if (!salesEntryRecordId) throw new Error('收款缺少销售主表 record_id');
     if (!['已收款', '未收款', '待平台结算'].includes(status)) throw new Error('收款状态无效');
     if (status !== '已收款' && receivedAt != null) throw new Error('尚未到账的收款不能填写收款时间');
     const paid = amount(rawAmount);
     const paymentMethod = status === '未收款' ? null : await this.references.resolvePaymentMethod(method);
     if (status !== '未收款' && !paymentMethod) throw new Error('收款缺少支付方式');
+    // ⭐⭐ 2026-10-16：**券（「团购券管理」关联列非空）⇒ 这笔钱默认【待平台结算】**
+    //   （她逐字：「抖音团购券的是**待平台结算**」）—— 券的钱还在平台上，**不算"已收"** ✗。
+    //   ⚠️ 只在**调用方没显式给状态**时改（群聊那条链路显式传「待平台结算」⇒ 逐字不变 ✓）；
+    //   ⚠️ 判据与金额都**不在这里**：金额 = 平台结算款，由入口（`voucherPaymentService`）换好 ✓
+    //      —— 本层**不查券目录**（少一次飞书读 ✓ 也不把券目录耦合进收款写入层 ✓）。
+    if (!explicitStatus && paymentMethod) {
+      status = voucherPendingStatusOf(paymentMethod.record, '');
+      if (status !== '已收款' && receivedAt != null) throw new Error('尚未到账的收款不能填写收款时间');
+    }
     // ⭐ 2026-10-12：**收款明细ID** = `{销售单号}-收款-{两位序号}`（业务负责人定的格式）。
     //    号来自"这一单已有的行"（含**售后单**，它与原单共用同一个销售单号 ⇒ 一起数，
     //    否则售后那批会从 -01 重来、与原单撞号）；`options.usedReceiptIds` 由**批量建单**

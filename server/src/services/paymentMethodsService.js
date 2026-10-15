@@ -14,11 +14,12 @@
  */
 
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
-const { textValue } = require('./v1BitableGateway');
+const { textValue, linkedRecordIds } = require('./v1BitableGateway');
 
 /**
  * @param {{ listAll: Function }} gateway
- * @param {{ ttlMs?: number, now?: Function, tableKey?: string, fieldName?: string }} [options]
+ * @param {{ ttlMs?: number, now?: Function, tableKey?: string, fieldName?: string,
+ *           voucherFieldName?: string }} [options]
  */
 const createPaymentMethodsService = (gateway, options = {}) => {
   if (!gateway) throw new Error('PaymentMethodsService requires gateway');
@@ -26,35 +27,83 @@ const createPaymentMethodsService = (gateway, options = {}) => {
   const fieldName = options.fieldName
     || V1_BITABLE_SCHEMA.tables?.[tableKey]?.fields?.name
     || '收款方式';
+  // ⭐ 2026-10-16：这张表上还有一列「**团购券管理**」（type 21 关联列）——**列非空 = 这条收款方式是券**
+  //    （生产真表只读核实：`properties.table_id = tblz2kM1CIGkcWsM` ✓；语义键在 `v1BitableSchema`）。
+  //    ⚠️ 列名**只从配置/语义键取**，逻辑里**不写中文** ✗；取不到 ⇒ 空串 ⇒ `listWithVouchers()` 一律
+  //       当作"非券"（但**不静默**：券那一刀会因此打 `scan.write.voucher_method_unmapped` ✓）。
+  const voucherFieldName = options.voucherFieldName
+    || V1_BITABLE_SCHEMA.tables?.[tableKey]?.fields?.voucher
+    || '';
   const ttlMs = options.ttlMs === undefined ? 5 * 60 * 1000 : Number(options.ttlMs);
   const now = options.now || (() => Date.now());
   let cache = null;
 
-  /** ⭐ 读出表里那几条（按表里的顺序 ✓ 去重 ✓ 去空 ✓）。 */
-  const list = async () => {
-    const stamp = now();
-    if (cache && (Number(ttlMs) <= 0 ? false : stamp - cache.at < Number(ttlMs))) {
-      return { ok: true, items: cache.items, cached: true };
-    }
+  /**
+   * 一趟读表 → `{ at, items, detailed }`（`items` = 名字那份；`detailed` = 带券关联那份）。
+   * ⚠️ **只读一次**：`list()` / `listWithVouchers()` 共用这一趟与这一份缓存
+   *    （页面那一趟渲染会同时要名字与券关联 ⇒ 不许因此多打一次飞书 ✗）。
+   */
+  const load = async (stamp, cached) => {
+    if (cached) return { ok: true, cached: true };
     try {
       const rows = await gateway.listAll(tableKey);
       const items = [];
+      const detailed = [];
       const seen = new Set();
       for (const row of rows || []) {
         const value = textValue(row?.fields?.[fieldName]).trim();
         if (!value || seen.has(value)) continue;
         seen.add(value);
         items.push(value);
+        detailed.push({
+          name: value,
+          recordId: String(row?.record_id || ''),
+          // 关联列**非空** ⇒ 这条收款方式是券；拿不到（列没配 / 没关联）⇒ ''。
+          voucherRecordId: voucherFieldName
+            ? String(linkedRecordIds(row?.fields?.[voucherFieldName])[0] || '')
+            : '',
+        });
       }
-      cache = { at: stamp, items };
-      return { ok: true, items, cached: false };
+      cache = { at: stamp, items, detailed };
+      return { ok: true, cached: false };
     } catch (error) {
       // 🔴 读不到 ⇒ **如实**（调用方去说人话 ✓ 不静默兜底 ✗）
-      return { ok: false, items: [], reason: 'payment_methods_unreadable', error: error?.message || 'unknown' };
+      return { ok: false, reason: 'payment_methods_unreadable', error: error?.message || 'unknown' };
     }
   };
 
-  return { list, tableKey, fieldName, ttlMs };
+  /** ⭐ 读出表里那几条（按表里的顺序 ✓ 去重 ✓ 去空 ✓）。返回值与改前**逐字同形**。 */
+  const list = async () => {
+    const stamp = now();
+    const fresh = cache && (Number(ttlMs) <= 0 ? false : stamp - cache.at < Number(ttlMs));
+    const loaded = await load(stamp, fresh);
+    if (!loaded.ok) return { ok: false, items: [], reason: loaded.reason, error: loaded.error };
+    return { ok: true, items: cache.items, cached: loaded.cached === true };
+  };
+
+  /**
+   * ⭐⭐ 2026-10-16：**带「团购券管理」关联列的那一份**（只读 ✓ 与 `list()` **同一趟读、同一份缓存**）。
+   *
+   * 券的判定（她 ④ + 生产真表只读核实）：这条收款方式的「团购券管理」关联列**非空** ⇒ 它是券。
+   *   · `items[i] = { name, recordId, voucherRecordId }`；`voucherRecordId` 拿不到 = `''` ✓
+   *   · ⚠️ 关联列的**形状**用 `linkedRecordIds` 认（type 21 在事件 / GET 两种接口下形状不同 ✓
+   *     `[{record_ids:[…]}]` / 直接 `rec…` —— 这个函数是全仓唯一的那个认法 ✓ 不另写一份 ✗）
+   *   · `list()` 的返回值**一个字都没变**（页面候选那一列只认名字 ✓ 不破坏既有调用方 ✓）
+   *
+   * 🔴 与既有那条纪律同一条：**读不到 ⇒ `ok:false` + 原因**，不静默兜底 ✗
+   *   （**空券关联 ≠ 读不到** —— 那条就是"不是券"，`ok:true` ✓ 两件事不许混 ✗）。
+   */
+  const listWithVouchers = async () => {
+    const stamp = now();
+    const fresh = cache && (Number(ttlMs) <= 0 ? false : stamp - cache.at < Number(ttlMs));
+    const loaded = await load(stamp, fresh);
+    if (!loaded.ok) return { ok: false, items: [], reason: loaded.reason, error: loaded.error };
+    return { ok: true, items: cache.detailed, cached: loaded.cached === true };
+  };
+
+  return {
+    list, listWithVouchers, tableKey, fieldName, voucherFieldName, ttlMs,
+  };
 };
 
 module.exports = { createPaymentMethodsService };
