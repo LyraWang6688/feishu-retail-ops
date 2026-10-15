@@ -1706,7 +1706,7 @@ ${orderNo ? `<p class="foot">${escapeHtml(orderNo)}</p>` : ''}
 ${String(notice || '').trim()
     // 🔴 2026-10-16 P0：拦下的原因**必须醒目**（她真机"看着像坏了"✗）——从 `hint`（小字）
     //   提到 `form-alert`（红色告警级 ✓）；`data-view` 钩子**保留**（既有判据还在用 ✓）
-    ? `<p class="form-alert" data-view="payment-step-notice" role="alert">${escapeHtml(String(notice).trim())}</p>`
+    ? `<p class="hint form-alert" data-view="payment-step-notice" role="alert">${escapeHtml(String(notice).trim())}</p>`
     : ''}
 ${payForm}
 <p class="hint">${escapeHtml(step.workbenchHint || '')}</p>

@@ -1562,23 +1562,9 @@ const createScanPageRouter = (options = {}) => {
           const skipResolvedAmounts = skipLineAmounts.some((v) => String(v ?? '').trim())
             ? skipLineAmounts
             : skipDraftLines.map((line) => String(line?.amount ?? '').trim()).filter(Boolean);
-          const skipNeedsAmount = skipResolvedAmounts.length === 0
-            ? (skipDraftLines.length > 0 || Boolean(skipSize))
-            : skipResolvedAmounts.some((value) => String(value ?? '').trim() === '');
-          if (writeConfig.lineAmountRequired !== false && skipNeedsAmount) {
-            logWarn('scan.write.line_amount_required', {
-              request_id: requestId, lines: skipResolvedAmounts.length, where: 'payment_skip',
-            });
-            // 🔴 拦住 ⇒ **返回资金页 + 醒目人话**（不是成功页 ✗）—— 与提交那一步同一句文案 ✓
-            return sendPaymentStep(res, req, {
-              realm,
-              status: 400,
-              notice: String(writeConfig.texts.lineAmountRequiredNote || ''),
-              totalAmountText: 0,
-              submitKey: writeService?.sessions?.submitKeyFor?.(openIdOf(req), false, 'sale') || '',
-              count: skipResolvedAmounts.length,
-            });
-          }
+          // ⚠️ 2026-10-16（裁决=甲）：**跳过 = 她明说"钱稍后去工作台补"** ⇒ **实收空在这一步是合法的** ✓
+          //   （用"每一双都要填实收"去拦它 = 把"跳过"这个出口堵死 ✗）⇒ **这一步不放必填闸门** ✓
+          //   ⭐ "假成功"改由**下面那道"写失败如实可见"**兜（不是靠必填挡 ✓）
           // ⭐ 跳过 = **不写收款** ✓（"钱稍后补"✓）⇒ 空的 payments + 默认档（未付）+ 实收按上面那份 ✓
           // eslint-disable-next-line no-await-in-loop
           skipCreated = await writeService.submitSale({
@@ -1602,7 +1588,12 @@ const createScanPageRouter = (options = {}) => {
               inStock: sellableSizeTexts(skipView).has(skipSize),
             } : null,
           });
-          if (!skipCreated?.ok) {
+          // ⭐⭐ 2026-10-16（裁决甲配套）：**"说 ok 但其实什么都没写"⇒ 不许给成功页** ✗
+          //   （她真机那条「假成功」的形状：页面 200 + 成功页 + `salesEntry` 0 条）
+          //   判据：既没有单号、也不是"把上一单结果还给她"（reused）⇒ 当成**没写成功**如实报 ✓
+          const skipWroteNothing = Boolean(skipCreated?.ok)
+            && !skipCreated?.order_no && skipCreated?.reused !== true;
+          if (!skipCreated?.ok || skipWroteNothing) {
             // ⭐⭐ 2026-10-12（她口径）：**主表已建、明细那一步没写成功** ⇒ 给她**如实**的"半成"页
             //   （单子记上了 + 单号 + 怎么出去）🔴 **绝不许**说"提交已成功"✗、也**不许**说"一个字都没写"✗
             if (skipCreated?.code === 'sale_partial_failed') {
@@ -1622,7 +1613,13 @@ const createScanPageRouter = (options = {}) => {
                 backLabel: writeConfig.texts.submittedRecordAnother,
               });
             }
-            return respondWriteFailure(res, skipCreated, requestId);
+            return respondWriteFailure(
+              res,
+              skipWroteNothing && !skipCreated?.code
+                ? { ...skipCreated, code: 'sale_write_failed' }
+                : skipCreated,
+              requestId,
+            );
           }
           // ⭐ 建单成功 ⇒ 标记改成「**这一单已经建过**」✓（**不清成空串** ✗ —— 见 `payment_pay` 那段注释）
           await writeService.saveDraftLines?.(openIdOf(req), { paymentStep: 'created' });

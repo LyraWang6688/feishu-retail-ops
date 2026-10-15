@@ -95,9 +95,9 @@ test('AC-P0e ⭐⭐ 资金页那条拦截人话必须醒目（`form-alert` + `ro
   const src = read(RENDERER);
   const tag = src.split('\n').find((line) => line.includes('data-view="payment-step-notice"'));
   assert.ok(tag, '要有那句人话的渲染点（`data-view="payment-step-notice"`）✓');
-  assert.ok(/class="form-alert"/.test(tag), '必须是**醒目告警**级（`form-alert` ✓ 不再是 `hint` 小字 ✗）');
+  assert.ok(/class="[^"]*form-alert/.test(tag), '必须是**醒目告警**级（`form-alert` ✓；`hint` 可共存 ✓）');
   assert.ok(/role="alert"/.test(tag), '要有告警语义（`role="alert"` ✓）');
   // 能真红：把 class 退回 `hint` ⇒ 上面那条断言必红 ✓
-  const degraded = tag.replace('class="form-alert"', 'class="hint"');
-  assert.ok(!/class="form-alert"/.test(degraded), '（退回 `hint` 的写法确实会让判据红 ✓）');
+  const degraded = tag.replace(/class="[^"]*"/, 'class="hint"');
+  assert.ok(!/class="[^"]*form-alert/.test(degraded), '（退回纯 `hint` 的写法确实会让判据红 ✓）');
 });
