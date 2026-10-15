@@ -45,6 +45,10 @@ const ACCESSORY_SALE_FIELDS = Object.freeze({
   paymentMethod: '收款方式',     // 关联 ⇒ 拿**名字/值**（写收款明细用）
   amount: '金额',               // 数字（缺失 / ≤0 ⇒ 拒单）
   saleDate: '销售日',           // 🔴 **只声明、绝不写**（她：「不用管，自动字段」）
+  // ⭐⭐ 2026-10-15（她逐字）：「目前配品销售表加了一个**录单人**字段，是飞书的**自动字段**，
+  //   就是**提交表单的人**」⇒ 这正是「销售主表.录单人」要的那个人 ✓
+  //   🔴 本入口对它**只读**：**绝不写回去** ✗（飞书自动字段由飞书填；回写 patch 里不许出现它）
+  operator: '录单人',
 });
 
 /** 回写那两列（她 2026-10-15 确认要加 ⇒ **默认开**）。 */
@@ -97,15 +101,21 @@ const resolveAccessorySaleIntakeConfig = (env = process.env) => ({
     amount: readString(env, 'ACCESSORY_SALE_INTAKE_FIELD_ID_AMOUNT', 'fldVfSOmDg'),
     // ⚠️「销售日」(`fldyGccTWp`, 日期) 只**声明读用**；**零写入点** ✓（她：「销售日不用管，自动字段」）
     saleDate: readString(env, 'ACCESSORY_SALE_INTAKE_FIELD_ID_SALE_DATE', 'fldyGccTWp'),
+    // ⭐⭐ 2026-10-15（Lead 只读核过）：「录单人」= `fldyWkZRXF`（type 11 人员字段，飞书自动填**提交表单的人**）
+    //   ⇒ 主路径从事件的这一列拿 open_id；事件没带 ⇒ **只读这一列**兜底（别读整行 ✗）
+    operator: readString(env, 'ACCESSORY_SALE_INTAKE_FIELD_ID_OPERATOR', 'fldyWkZRXF'),
   }),
   events: { created: Object.freeze(['record_added']) },
   // 写回「失败原因」那一列的人话原文（**可注入/可覆盖** ✓，与字段名同一套配置先行口径）
   reasons: ACCESSORY_SALE_REASONS,
   /**
-   * ⭐ **录单人 / 操作人**（Lead 2026-10-15 裁决）：优先用**飞书事件里的操作人**（谁填的表就是录单人 ✓，
-   * 取值见 `services/accessorySaleIntakeService.js` 的 `operatorOpenIdOf`：`event.operator_id.open_id`，
-   * 那是官方 SDK 里这个事件的形状）。事件**没带**操作人 ⇒ **不许编一个** ✗ ⇒ 落到这个配置出口；
-   * 这里**默认空串** ⇒ 连它也没有时就是"**不写这一列**"（`person('')` → undefined，飞书不报错 ✓）。
+   * ⭐ **录单人（谁填的表）** —— 优先级（Lead 2026-10-15 裁决，**这一版替换了早前那条**）：
+   *   ① 她那张表里的**自动字段「录单人」**（= 提交表单的人）：先看**事件** `after_value`，
+   *      没带 ⇒ **只读那一列**兜底（`getByTableId({ fieldNames: ['录单人'] })`）；
+   *   ② 事件里的**操作人**（`event.operator_id.open_id`）；
+   *   ③ 本配置项（`ACCESSORY_SALE_INTAKE_OPERATOR_OPEN_ID`，**默认空**）；
+   *   ④ 都没有 ⇒ **空 = 不写这一列**（`person('')` → undefined，飞书不报错 ✓）—— **绝不编一个 id** ✗。
+   * （另有"显式注入"在最前面，只给用例 / 别的入口点名用。）
    */
   operatorOpenId: readString(env, ACCESSORY_SALE_OPERATOR_ENV_KEY, ''),
   /** 本地会话键前缀（见上面 `ACCESSORY_SALE_SESSION_KEY_PREFIX` 的说明；**不是**飞书列 id）。 */

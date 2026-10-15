@@ -21,8 +21,11 @@
  *   ⑧ ⭐⭐ 2026-10-15（她逐字：「**销售明细里是一行一件，如果配品是两件，那就拆开，
  *      按照数量拆成对应的记录数**」）：**数量 = N ⇒ 拆成 N 条明细（一行一件）**，
  *      金额摊到 N 行、**Σ 严格 = 她填的总额**；收款明细**仍只有 1 行**（总额 ⇒ **Σ 不翻倍** ✗）✓
- *   ⑨ 录单人 = **事件里的操作人**（谁填的表谁是录单人；取不到 ⇒ 配置兜底 ⇒ **空**，**绝不编 id** ✗）；
+ *   ⑨ 录单人 = **她表里那个自动字段「录单人」（= 提交表单的人）** → 事件没带 ⇒ **只读那一列** →
+ *      事件操作人 → 配置兜底 → **空（不写「销售主表.录单人」）**；🔴 **绝不编 id** ✗，
+ *      也**绝不写回她表那个自动列** ✗（本入口对它只读）；
  *      会话键 = **前缀 + 记录 ID**（每行独立会话 ⇒ 第 2 条不会被上一单结果吸收 ✗）
+ *   ⑩ 回写 patch 的 key **恰好 ⊆ {写入状态, 失败原因}**：她填的列与她的自动字段一律只读 ✗
  */
 const { logInfo, logWarn, logError } = require('../utils/logger');
 const { findFieldValue } = require('./tagQrCodeService');
@@ -57,6 +60,37 @@ const linkTextOf = (value) => {
 };
 
 const textOf = (value) => (value == null ? '' : String(value).trim());
+
+/**
+ * ⭐⭐ 2026-10-15：**人员（User）字段**的 open_id 取值 —— 专给「配品销售.录单人」这类列用。
+ *
+ * 飞书 User 字段在事件里可能长成好几种形状（同一语义，别因为包一层就取不到 ✗）：
+ *   · `after_value[].field_value` = `[{ id: 'ou_…' }]`（她那张表的实测形状 ✓）
+ *   · `[{ open_id: 'ou_…' }]` / `[{ user_id: { open_id: 'ou_…' } }]`
+ *   · 官方 SDK 里另有一支 `field_identity_value.users[].user_id.open_id` ✓
+ *   · 纯字符串 `'ou_…'`
+ * ⚠️ **只认 open_id 系**（本仓所有 User 字段写入都用 open_id）；取不到 ⇒ 空数组，
+ *   **不猜、不编** ✗（调用方按四级优先级继续往下走）。
+ */
+const userIdsOf = (value) => {
+  const out = [];
+  const push = (id) => {
+    const text = textOf(id);
+    if (text && !out.includes(text)) out.push(text);
+  };
+  const visit = (item) => {
+    if (!item) return;
+    if (typeof item === 'string') { push(item); return; }
+    if (Array.isArray(item)) { item.forEach(visit); return; }
+    push(item.user_id?.open_id);
+    push(item.open_id);
+    push(item.id);
+    if (item.users) visit(item.users);
+    if (item.field_identity_value) visit(item.field_identity_value.users);
+  };
+  visit(value);
+  return out;
+};
 
 /**
  * ⭐⭐ 她 2026-10-15 逐字（Lead 转达）：「**我们销售明细里是一行一件，如果配品是两件，那就拆开，
@@ -133,11 +167,15 @@ const createAccessorySaleIntakeService = (options = {}) => {
    */
   const fieldIds = config.fieldIds || {};
   const eventKey = (key) => fieldIds[key] || fields[key];
+  /** 销售那几列（**不含**「录单人」—— 那个是**只读**的自动字段，见 `readOperatorByFallback`）。 */
+  const saleFieldNames = [fields.name, fields.quantity, fields.paymentMethod, fields.amount].filter(Boolean);
   const readFromEvent = (afterValue) => ({
     nameIds: linkIdsOf(findFieldValue(afterValue, eventKey('name'))),
     quantity: findFieldValue(afterValue, eventKey('quantity')),
     methodText: linkTextOf(findFieldValue(afterValue, eventKey('paymentMethod'))),
     amount: findFieldValue(afterValue, eventKey('amount')),
+    // ⭐ 她表里那个**自动字段**「录单人」（= 提交表单的人）—— 主路径就把它当录单人 ✓
+    operatorIds: userIdsOf(findFieldValue(afterValue, eventKey('operator'))),
   });
 
   /** 兜底：事件没带全 ⇒ 按原始 table_id 读那一条（**如实记 warn** ✗ 不许静默）。 */
@@ -150,7 +188,9 @@ const createAccessorySaleIntakeService = (options = {}) => {
       hint: '事件没带全这几列 ⇒ 回退按 table_id 读一次（读取失败即拒单）',
     });
     const record = await gateway.getByTableId({
-      tableId: config.tableId, recordId, fieldNames: Object.values(fields).filter(Boolean),
+      tableId: config.tableId, recordId,
+      // 销售那 4 列 + 「录单人」那一列（**都是点名的列**，不是整行 ✗）
+      fieldNames: [...saleFieldNames, fields.operator].filter(Boolean),
       reason: 'accessory_sale_intake.fallback',
     });
     const recordFields = record?.fields || {};
@@ -159,7 +199,35 @@ const createAccessorySaleIntakeService = (options = {}) => {
       quantity: recordFields[fields.quantity],
       methodText: linkTextOf(recordFields[fields.paymentMethod]),
       amount: recordFields[fields.amount],
+      operatorIds: userIdsOf(recordFields[fields.operator]),
     };
+  };
+
+  /**
+   * ⭐⭐ 录单人的**第二级**：事件没带「录单人」那一列 ⇒ **只读那一列**（Lead 点名：别读整行 ✗）。
+   *   ⚠️ 读不到 **不是错**：如实记一条 warn，然后继续往下一级走（事件操作人 ⇒ 配置 ⇒ 空）✓
+   *   ⚠️ **绝不**因为读不到就编一个 id ✗
+   */
+  const readOperatorByFallback = async (recordId, reasonLabel) => {
+    if (!gateway || typeof gateway.getByTableId !== 'function') return '';
+    const operatorField = fields.operator;
+    if (!operatorField) return '';
+    logWarn('accessory_sale_intake.operator_fallback_read', {
+      table_id: config.tableId, record_id: recordId, field: operatorField, why: reasonLabel,
+      hint: `事件没带「${operatorField}」⇒ **只读这一列**兜底（读不到就往下一级走，绝不编 id）`,
+    });
+    try {
+      const record = await gateway.getByTableId({
+        tableId: config.tableId, recordId, fieldNames: [operatorField],
+        reason: 'accessory_sale_intake.operator_fallback',
+      });
+      return userIdsOf(record?.fields?.[operatorField])[0] || '';
+    } catch (error) {
+      logWarn('accessory_sale_intake.operator_fallback_failed', {
+        table_id: config.tableId, record_id: recordId, error: error.message,
+      });
+      return '';
+    }
   };
 
   /** 校验（失败 ⇒ 人话原因；**不成单** ✗）。原因原文全部来自 `config.reasons` ✓ */
@@ -189,7 +257,10 @@ const createAccessorySaleIntakeService = (options = {}) => {
     return { ok: true, quantity: quantityNumber, amountText: String(amountNumber), amountNumber };
   };
 
-  /** 回写（**只许这两列** ✗ 其它列一个都不许碰；列不在 ⇒ 只记日志）。 */
+  /**
+   * 回写（**只许这两列** ✗ 其它列一个都不许碰；她表那个「录单人」自动字段更是**只读** ✗；
+   * 列不在 ⇒ 只记日志、不报错、不假写）。
+   */
   const writeBackStatus = async (recordId, payload) => {
     if (!writeBack.enabled) return { written: false, reason: 'disabled' };
     const patch = {};
@@ -198,8 +269,11 @@ const createAccessorySaleIntakeService = (options = {}) => {
     }
     // 🔴 双保险：即使上面被改坏，也只可能带出这两列（业务列永不出现在这里）
     const allowed = new Set([writeBack.statusField, writeBack.reasonField].filter(Boolean));
+    // 🔴 她填的列 + 她的**自动字段**一律**只读**：就算配置被写歪（比如有人把「写入状态」配成「录单人」），
+    //    这两列也**绝不许**出现在回写 patch 里 ✗（「录单人」是飞书自动字段：写了就是篡改她表里的事实）
+    const neverWrite = new Set([fields.operator, fields.saleDate].filter(Boolean));
     for (const key of Object.keys(patch)) {
-      if (!allowed.has(key)) {
+      if (!allowed.has(key) || neverWrite.has(key)) {
         logError('accessory_sale_intake.writeback.refused', { record_id: recordId, key });
         delete patch[key];
       }
@@ -221,8 +295,19 @@ const createAccessorySaleIntakeService = (options = {}) => {
     }
   };
 
-  /** 办一行。`operatorOpenId` = 事件里的操作人（Lead 裁决：谁填的表谁是录单人；取不到 ⇒ 配置兜底 ⇒ 空）。 */
-  const handleOne = async (actionItem, { operatorOpenId = '' } = {}) => {
+  /**
+   * 办一行。
+   * @param {object} actionItem 飞书事件里的一条（`record_id` / `action` / `after_value`）
+   * @param {{eventOperatorOpenId?:string, operatorOverride?:string}} [input]
+   *        `eventOperatorOpenId` = 事件里的操作人（`operator_id.open_id`，**第三级**）；
+   *        `operatorOverride`    = **显式点名**（用例 / 别的入口用，**最优先**）
+   *
+   * ⭐ 录单人的**四级**优先级（Lead 2026-10-15 裁决）：
+   *    ① 显式点名 → ② 她表**自动字段「录单人」**（事件带的那一列）
+   *    → ③ **只读那一列**兜底（事件没带）→ ④ 事件操作人 → ⑤ 配置出口 → ⑥ **空（不写）**
+   *    ⚠️ 任何一级都**不许编一个 id** ✗
+   */
+  const handleOne = async (actionItem, { eventOperatorOpenId = '', operatorOverride = '' } = {}) => {
     const recordId = textOf(actionItem?.record_id);
     const action = textOf(actionItem?.action);
     if (!recordId) return { ok: false, skipped: 'no_record_id' };
@@ -259,9 +344,23 @@ const createAccessorySaleIntakeService = (options = {}) => {
     // ⚠️ 幂等键 = **记录 ID**（同一行重复/并发触发只成一次单 ✓ —— 引擎按 `submitKey` 认旧结果）
     // ⚠️ 会话键 = **前缀 + 记录 ID**（每行一个**独立会话**）：绝不能用 openId 当会话键 ——
     //    所有行共用一个人做会话键时，第 2 条记录会被引擎的 `reused/stale` 分支**吸收成假成功** ✗
-    // ⚠️ 录单人 = **事件里的操作人**（取不到 ⇒ 配置兜底 ⇒ 空 ⇒ 这一列不写，**不编 id** ✗）
     const requestId = `${config.sessionKeyPrefix || 'accessory_sale:'}${recordId}`;
     const sessionKey = requestId;
+    // ⭐ 录单人：四级优先级（见 handleOne 的注释）——**任何一级都不许编一个 id** ✗
+    const fromRecord = (values.operatorIds || []).map(textOf).find(Boolean);
+    const operatorOpenId = textOf(operatorOverride)
+      || fromRecord
+      // ⚠️ 第二参是**机器可读的原因码**（不是文案）——中文只能出现在 logX 那一行里
+      //    （`test/noHardcodedChinese.test.js` 的守门口径：`src/services/**` 不许新增硬编码用户可见中文）
+      || await readOperatorByFallback(recordId, 'operator_column_absent_in_event')
+      || textOf(eventOperatorOpenId)
+      || textOf(config.operatorOpenId);
+    if (!operatorOpenId) {
+      logWarn('accessory_sale_intake.operator_missing', {
+        record_id: recordId,
+        hint: '她表「录单人」/ 事件操作人 / 配置 都没有 ⇒ **不写「销售主表.录单人」**（绝不编 id ✗）',
+      });
+    }
     // 金额按件数摊到 N 行（一行一件）；摊不开 ⇒ 如实拒单（**零写入** ✗）
     const split = splitAmount(checked.amountNumber, checked.quantity);
     if (!split.ok) {
@@ -334,23 +433,25 @@ const createAccessorySaleIntakeService = (options = {}) => {
    * 办一个事件包。
    * @param {Array} actionList 飞书事件的 `action_list`（原样传进来，不在路由层筛）
    * @param {{event?:object, operatorOpenId?:string}} [intakeOptions]
-   *        `event` = 原始事件（用来取**操作人** ⇒ 录单人）；`operatorOpenId` = 显式覆盖（用例注入用）
+   *        `event` = 原始事件（① 取她表「录单人」那一列用的是**每条 action 的 after_value**；
+   *        ② 第三级"事件操作人"取的是 `event.operator_id.open_id`）；
+   *        `operatorOpenId` = **显式点名**（最优先，用例 / 别的入口用）
    */
   const handleTableChanges = async (actionList, intakeOptions = {}) => {
     if (!config.enabled) {
       logInfo('accessory_sale_intake.disabled', { action_count: (actionList || []).length });
       return { enabled: false, results: [] };
     }
-    // ⭐ 录单人优先级：显式注入 → **事件里的操作人** → 配置出口 → **空**（不写这一列，**绝不编 id** ✗）
-    const operatorOpenId = textOf(intakeOptions.operatorOpenId)
-      || operatorOpenIdOf(intakeOptions.event)
-      || textOf(config.operatorOpenId);
+    // 事件里的**操作人**（第三级兜底）；她表那个自动「录单人」在每条 action 的 `after_value` 里（第一级）
+    const eventOperatorOpenId = operatorOpenIdOf(intakeOptions.event);
     const results = [];
     for (const actionItem of Array.isArray(actionList) ? actionList : []) {
       // eslint-disable-next-line no-await-in-loop
-      results.push(await handleOne(actionItem, { operatorOpenId }));
+      results.push(await handleOne(actionItem, {
+        eventOperatorOpenId, operatorOverride: intakeOptions.operatorOpenId,
+      }));
     }
-    return { enabled: true, operator_open_id: operatorOpenId || '', results };
+    return { enabled: true, event_operator_open_id: eventOperatorOpenId || '', results };
   };
 
   return { handleTableChanges, handleOne, config };

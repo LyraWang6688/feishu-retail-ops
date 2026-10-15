@@ -38,9 +38,19 @@ const { resolveAccessorySaleIntakeConfig, ACCESSORY_SALE_FIELDS } = require('../
 
 const RECORD_ID = 'rec_accessory_sale_1';
 const NAME_ID = 'rec_acc_oil';
-const FIELD = { name: 'fld_name', quantity: 'fld_qty', method: 'fld_method', amount: 'fld_amount' };
+const FIELD = {
+  name: 'fld_name', quantity: 'fld_qty', method: 'fld_method', amount: 'fld_amount',
+  // ⭐ 她表里那个**自动字段**「录单人」（User 字段；飞书自动填**提交表单的人**）
+  operator: 'fld_operator',
+};
 
-/** 事件里 `action_item` 的形状（`after_value` 是 `[{field_id, field_value}]` ✓）。 */
+/**
+ * 事件里 `action_item` 的形状（`after_value` 是 `[{field_id, field_value}]` ✓）。
+ * ⚠️ `operatorId` 是**可选**的：
+ *   · 给了值 ⇒ 事件带「录单人」那一列（形状按她表的实测：`[{ id: 'ou_…' }]` ✓）
+ *   · 给 `''`/`null` ⇒ **带这一列但值为空**（模拟"飞书没填上"）
+ *   · **不给** ⇒ **整列都不在事件里**（模拟"事件没带这一列" ⇒ 走只读兜底 ✓）
+ */
 const actionItem = (values = {}) => ({
   record_id: RECORD_ID,
   action: 'record_added',
@@ -51,6 +61,9 @@ const actionItem = (values = {}) => ({
     // ⚠️ 显式给了 key ⇒ 就用它（**哪怕是 null**）；没给才用默认 128
     //   （原来是 `values.amount ?? 128` ⇒ `null` 也被换成 128 ⇒ "金额为空"那条根本造不出来 ✗）
     { field_id: FIELD.amount, field_value: 'amount' in values ? values.amount : 128 },
+    ...('operatorId' in values
+      ? [{ field_id: FIELD.operator, field_value: values.operatorId ? [{ id: values.operatorId }] : [] }]
+      : []),
   ].filter((item) => item.field_value !== undefined),
 });
 
@@ -76,14 +89,17 @@ const fakeEngine = ({
   };
 };
 
-/** 假网关：**只**记 `updateByTableId` 收到的 `fields`（用来钉"只许写那两列" ✓）。 */
-const fakeGateway = ({ failWrite = null } = {}) => {
+/**
+ * 假网关：**只**记 `updateByTableId` 收到的 `fields`（用来钉"只许写那两列" ✓）；
+ * `getByTableId` 的返回可用 `recordFields` 指定（只读兜底那几条要它给回真值）。
+ */
+const fakeGateway = ({ failWrite = null, recordFields = {} } = {}) => {
   const writes = [];
   const reads = [];
   return {
     writes, reads,
     gateway: {
-      getByTableId: async (input) => { reads.push(input); return { record_id: input.recordId, fields: {} }; },
+      getByTableId: async (input) => { reads.push(input); return { record_id: input.recordId, fields: recordFields }; },
       updateByTableId: async (input) => {
         writes.push(input);
         if (failWrite) throw new Error(failWrite);
@@ -96,6 +112,7 @@ const fakeGateway = ({ failWrite = null } = {}) => {
 /** 她那张表的列 id（把"主路径零读取"这条路打通 ⇒ 事件里的 `field_id` 就是它们 ✓）。 */
 const FIELD_IDS = {
   name: FIELD.name, quantity: FIELD.quantity, paymentMethod: FIELD.method, amount: FIELD.amount,
+  operator: FIELD.operator,
 };
 const configWithIds = (over = {}) => ({
   ...resolveAccessorySaleIntakeConfig({}), fieldIds: FIELD_IDS, ...over,
@@ -307,44 +324,119 @@ test('AC-AS4d 🔴 「名称」关联为空 ⇒ 拒单（不知道卖的是哪�
 // AC-AS9 录单人 = **事件里的操作人**（谁填的表谁是录单人）；会话键 = 前缀 + 记录 ID
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-AS9 ⭐ 录单人 = 事件里的操作人（官方事件形状 `operator_id.open_id`）⇒ 就是引擎的 openId', async () => {
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-AS9 / AS10 / AS11 录单人 = 她表那个**自动字段「录单人」**（= 提交表单的人）
+//
+// 她逐字：「目前配品销售表加了一个**录单人**字段，是飞书的**自动字段**，就是**提交表单的人**」
+// Lead 只读核到：`录单人` = `fldyWkZRXF`（type 11 人员字段）。
+//
+// 四级优先级（Lead 2026-10-15 裁决；**这一版替换了早前的"优先事件操作人"**）：
+//   ① 显式点名 → ② 她表「录单人」（事件带的那一列）→ ③ **只读那一列**兜底（事件没带）
+//   → ④ 事件操作人（`operator_id.open_id`）→ ⑤ 配置出口 → ⑥ **空（不写这一列）**
+//   ⚠️ 任何一级都**不许编一个 id** ✗；她表那个自动列**本入口只读**，**绝不许写回去** ✗
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-AS9 ⭐ 事件带「录单人」那一列 ⇒ 录单人 = **那个人**（就是引擎的 openId ⇒ 落「销售主表.录单人」）', async () => {
   logs.length = 0;
   const h = build();
-  // ⚠️ `drive.file.bitable_record_changed_v1` 的官方形状：操作人在**顶层** `operator_id`
-  const event = { operator_id: { union_id: 'on_x', open_id: 'ou_who_filled' } };
-  const result = await h.service.handleTableChanges([actionItem()], { event });
+  // 事件**同时**带着"事件操作人"和配置 ⇒ 也必须听**她表那一列**的（优先级更高 ✓）
+  const event = { operator_id: { union_id: 'on_x', open_id: 'ou_event_operator' } };
+  const result = await h.service.handleTableChanges(
+    [actionItem({ operatorId: 'ou_who_filled' })],
+    { event },
+  );
   assert.equal(result.results[0].ok, true);
-  assert.equal(h.lines[0].openId, 'ou_who_filled', '⭐ 谁填的表，谁就是「录单人」✓');
+  assert.equal(h.lines[0].openId, 'ou_who_filled', '⭐ 她表那一列说的才是录单人 ✓');
   assert.equal(h.sales[0].openId, 'ou_who_filled', '提交那一跑也是他 ✓');
-  assert.equal(result.operator_open_id, 'ou_who_filled', '结果里如实带出来（可排查 ✓）');
+  assert.deepEqual(h.reads, [], '🔴 主路径**零读取**（事件已经带了那一列 ⇒ 不去读表）✓');
 });
 
-test('AC-AS9b ⭐ 事件没带操作人 ⇒ 配置出口；配置也没有 ⇒ **空**（不写这一列，绝不编 id ✗）', async () => {
+test('AC-AS10 ⭐ 事件**没带**那一列 ⇒ 只读**那一列**兜底（`fieldNames` 只含它；能真红）', async () => {
   logs.length = 0;
-  const configured = build({ config: configWithIds({ operatorOpenId: 'ou_configured' }) });
-  await configured.service.handleTableChanges([actionItem()], { event: { operator_id: {} } });
-  assert.equal(configured.lines[0].openId, 'ou_configured', '事件没带 ⇒ 用配置出口 ✓');
+  // ⚠️ 假网关按**列名**回值（`fields.operator` = 「录单人」；`FIELD.operator` 是**列 id**）
+  const h = build({ gatewayOpts: { recordFields: { [ACCESSORY_SALE_FIELDS.operator]: [{ id: 'ou_from_table' }] } } });
+  // ⚠️ 事件里**没有** operator 那一列（`operatorId` 不给）；销售那几列都在 ⇒ 不走销售兜底
+  const result = await h.service.handleTableChanges([actionItem()], { event: {} });
+  assert.equal(result.results[0].ok, true);
+  assert.equal(h.reads.length, 1, '恰好读一次 ✓');
+  assert.deepEqual(h.reads[0].fieldNames, ['录单人'],
+    '🔴 **只读那一列**（`fields.operator` 的**列名**；不是整行、也不含别的列 ✗）');
+  assert.equal(h.reads[0].tableId, 'tblkT1QTUsESnl5b', '读的是**她那张表** ✓');
+  assert.equal(h.lines[0].openId, 'ou_from_table', '读回来的那个人就是录单人 ✓');
+  assert.equal(logs.some((entry) => entry.event === 'accessory_sale_intake.operator_fallback_read'), true,
+    '只读兜底要**如实记一条 warn**（可排查 ✓）');
+});
 
-  const empty = build({ config: configWithIds({ operatorOpenId: '' }) });
-  await empty.service.handleTableChanges([actionItem()], { event: {} });
-  assert.equal(empty.lines[0].openId, '', '两处都没有 ⇒ **空**（空 id = 这一列不写 ✓，绝不编 ✗）');
+test('AC-AS11 🔴 三级都拿不到 ⇒ **不写**「销售主表.录单人」（`openId` 留空，**绝不编 id** ✗）', async () => {
+  logs.length = 0;
+  const h = build();   // 只读兜底返回 `{}`（读得到记录、但那一列是空的）
+  // 事件里：没有「录单人」那一列；也没有事件操作人 ⇒ 配置也是空 ⇒ 空
+  await h.service.handleTableChanges([actionItem()], { event: {} });
+  assert.equal(h.lines[0].openId, '', '🔴 留空（引擎那边 `person(``) = undefined` ⇒ 这一列**不写** ✓）');
+  assert.equal(h.sales[0].openId, '', '提交那一跑同样留空 ✓');
+  assert.equal(logs.some((entry) => entry.event === 'accessory_sale_intake.operator_missing'), true,
+    '要**如实记一条 warn**说清"三级都没有 ⇒ 不写这一列"（绝不编 ✗）');
+
+  // 反向钉：**只要有一级拿得到**，就不许留空（防止"一律留空"把功能做没了）
+  const byEventOperator = build();
+  await byEventOperator.service.handleTableChanges([actionItem()], {
+    event: { operator_id: { open_id: 'ou_event_operator' } },
+  });
+  assert.equal(byEventOperator.lines[0].openId, 'ou_event_operator', '④ 事件操作人 ✓');
+
+  const byConfig = build({ config: configWithIds({ operatorOpenId: 'ou_configured' }) });
+  await byConfig.service.handleTableChanges([actionItem()], { event: {} });
+  assert.equal(byConfig.lines[0].openId, 'ou_configured', '⑤ 配置出口 ✓');
 
   const explicit = build();
-  await explicit.service.handleTableChanges([actionItem()], { operatorOpenId: 'ou_explicit', event: {} });
-  assert.equal(explicit.lines[0].openId, 'ou_explicit', '显式注入优先（用例/其它入口可以点名）✓');
+  await explicit.service.handleTableChanges([actionItem({ operatorId: 'ou_from_table' })], {
+    operatorOpenId: 'ou_explicit', event: {},
+  });
+  assert.equal(explicit.lines[0].openId, 'ou_explicit', '① 显式点名最优先（用例 / 别的入口）✓');
 });
 
-test('AC-AS9c ⭐ 会话键**与操作人无关**（同一行换谁操作 ⇒ 还是**同一个会话** ⇒ 幂等不许被拆开）', async () => {
+test('AC-AS12 🔴 回写 patch **绝不含**「录单人」（她表那个自动列本入口**只读** ✗）', async () => {
+  logs.length = 0;
+  // 故意把「写入状态」配到「录单人」那一列（配置被写歪的极端情形）⇒ **也必须被拒** ✗
+  const misconfigured = build({
+    config: configWithIds({
+      writeBack: {
+        enabled: true, statusField: '录单人', reasonField: '失败原因',
+        doneValue: '已写入', failedValue: '写入失败',
+      },
+    }),
+  });
+  await misconfigured.service.handleTableChanges([actionItem({ operatorId: 'ou_who_filled' })]);
+  for (const write of misconfigured.writes) {
+    assert.equal(Object.keys(write.fields).includes('录单人'), false,
+      '🔴 回写里**绝不许**出现「录单人」（它是飞书自动字段：写了就是篡改她表里的事实 ✗）');
+  }
+  assert.equal(logs.some((entry) => entry.event === 'accessory_sale_intake.writeback.refused'), true,
+    '被拒要**如实记日志**（不是静默丢掉 ✓）');
+
+  // 正常配置下同样钉一遍：成功 / 失败两条路都不许带「录单人」或「销售日」
+  const done = build();
+  await done.service.handleTableChanges([actionItem({ operatorId: 'ou_who_filled' })]);
+  const failed = build();
+  await failed.service.handleTableChanges([actionItem({ amount: 0, operatorId: 'ou_who_filled' })]);
+  for (const write of [...done.writes, ...failed.writes]) {
+    for (const forbidden of ['名称', '数量', '收款方式', '金额', '销售日', '录单人']) {
+      assert.equal(Object.keys(write.fields).includes(forbidden), false, `🔴 不许把「${forbidden}」写回去 ✗`);
+    }
+  }
+});
+
+test('AC-AS9c ⭐ 会话键**与录单人无关**（同一行换谁操作 ⇒ 还是**同一个会话** ⇒ 幂等不许被拆开）', async () => {
   logs.length = 0;
   const a = build();
-  await a.service.handleTableChanges([actionItem()], { event: { operator_id: { open_id: 'ou_a' } } });
+  await a.service.handleTableChanges([actionItem({ operatorId: 'ou_a' })], { event: {} });
   const b = build();
-  await b.service.handleTableChanges([actionItem()], { event: { operator_id: { open_id: 'ou_b' } } });
+  await b.service.handleTableChanges([actionItem({ operatorId: 'ou_b' })], { event: {} });
   assert.equal(a.lines[0].sessionKey, b.lines[0].sessionKey, '会话键只认**记录 ID** ✓（换人不变）');
   assert.equal(a.sales[0].submitKey, b.sales[0].submitKey, '幂等键同样只认记录 ID ✓');
 });
 
-test('AC-AS10 ⭐ `splitAmount` 纯件：整元按整元摊 / 带角分按分摊 / **Σ 永远 = 总额**', () => {
+test('AC-AS-SPLIT ⭐ 金额分摊纯件：整元按整元摊 / 带角分按分摊 / **Σ 永远 = 总额**', () => {
   const { splitAmount, centsToAmountText } = require('../src/services/accessorySaleIntakeService');
   const text = (total, n) => splitAmount(total, n).parts.map(centsToAmountText);
   assert.deepEqual(text(100, 3), ['34', '33', '33'], '整元 ⇒ 34/33/33（Lead 裁决的那条判据）✓');
@@ -361,7 +453,7 @@ test('AC-AS10 ⭐ `splitAmount` 纯件：整元按整元摊 / 带角分按分摊
   assert.equal(splitAmount(0.02, 3).ok, false, '2 分 / 3 件也摊不开 ⇒ 如实 false ✓');
 });
 
-test('AC-AS11 ⭐⭐ 异步那一跑（**默认开**）⇒ **等它跑完**再回写：跑成 ⇒ 已写入；没跑成 ⇒ **写入失败**（不假成功 ✗）', async () => {
+test('AC-AS-ASYNC ⭐⭐ 异步那一跑（**默认开**）⇒ **等它跑完**再回写：跑成 ⇒ 已写入；没跑成 ⇒ **写入失败**（不假成功 ✗）', async () => {
   logs.length = 0;
   // ① 后台跑成 ⇒ 已写入（而且要等它 —— 用"跑完才 resolve"的 promise 钉住）
   let settled = false;
@@ -419,7 +511,10 @@ test('AC-AS6 ⭐ 字段名可配（她改列名 ⇒ 行为跟着变）＋ 总开
   const h = build({ config });
   const result = await h.service.handleTableChanges([item]);
   assert.equal(result.results[0].ok, false, '列名对不上 ⇒ **拒单**（不猜 ✗）');
-  assert.equal(h.reads.length, 1, '取不到 ⇒ 走 `getByTableId` **兜底读表** ✓（路径打通）');
+  // ⚠️ **只有一次**读：销售那几列一个都没认出来 ⇒ 走整条兜底读（`fieldNames` = 那几列 + 「录单人」）。
+  //   🔴 录单人那一次**只读兜底不再发生** —— 因为这一行**在写库之前就被拒了**（拒单只要回写状态，
+  //      不需要录单人）⇒ **不多读一次** ✓（AC-AS10 钉的是"要办的时候"那条路）
+  assert.equal(h.reads.length, 1, '取不到 ⇒ 走 `getByTableId` **兜底读表**一次 ✓（拒单路径不多读 ✗）');
   assert.equal(logs.some((entry) => entry.event === 'accessory_sale_intake.fallback_read'), true,
     '🔴 兜底必须**如实记一条 warn**（"事件没带全 ⇒ 回退读表"）✗ 不许静默');
 

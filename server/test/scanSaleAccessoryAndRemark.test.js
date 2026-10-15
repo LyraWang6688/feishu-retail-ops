@@ -619,3 +619,75 @@ test('②3 ⭐ 不传 `sessionKey` ⇒ 会话**仍按 openId**（工作台 / 扫
   } finally { h.cleanup(); }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-15（她逐字）：「目前配品销售表加了一个**录单人**字段，是飞书的**自动字段**，
+//    就是**提交表单的人**」⇒ 那个人 = 「**销售主表.录单人**」（`sender`）。
+//
+// 下面两条是**端到端**（入口 service + **真引擎** + 假网关）：只钉"落进销售主表那一列"的真实形状 ——
+//   ① 事件带了那一列 ⇒ 主表「录单人」= **那个人**（`[{ id: 'ou_…' }]`）
+//   ② 三级都拿不到 ⇒ 主表 payload 里**没有这一列**（空 id ⇒ `person('')` = undefined ⇒ 飞书不报错 ✓）
+//      ⚠️ **绝不编一个 id** ✗（编了就会出现一个假的"录单人"，AC-AS11 那条会红）
+// ═══════════════════════════════════════════════════════════════════════════
+
+const { createAccessorySaleIntakeService } = require('../src/services/accessorySaleIntakeService');
+const { resolveAccessorySaleIntakeConfig } = require('../src/config/accessorySaleIntake');
+
+const INTAKE_FIELD = {
+  name: 'fld_t_name', quantity: 'fld_t_qty', paymentMethod: 'fld_t_method',
+  amount: 'fld_t_amount', operator: 'fld_t_operator',
+};
+const intakeActionItem = ({ operatorId } = {}) => ({
+  record_id: 'rec_intake_e2e_1',
+  action: 'record_added',
+  after_value: [
+    { field_id: INTAKE_FIELD.name, field_value: [{ record_ids: ['acc_oil'] }] },
+    { field_id: INTAKE_FIELD.quantity, field_value: 1 },
+    { field_id: INTAKE_FIELD.paymentMethod, field_value: [{ text: '微信' }] },
+    { field_id: INTAKE_FIELD.amount, field_value: 15 },
+    ...(operatorId ? [{ field_id: INTAKE_FIELD.operator, field_value: [{ id: operatorId }] }] : []),
+  ],
+});
+/** 入口 service + **真引擎**（`h.write`）；回写关掉（这张假表没有那两列，本组只验成单那一侧）。 */
+const buildIntake = (h, over = {}) => {
+  const base = resolveAccessorySaleIntakeConfig({});
+  return createAccessorySaleIntakeService({
+    gateway: h.gateway,
+    scanWrite: h.write,
+    config: {
+      ...base,
+      tableId: 'tbl_intake_e2e',
+      fieldIds: INTAKE_FIELD,
+      writeBack: { ...base.writeBack, enabled: false },
+      ...over,
+    },
+  });
+};
+
+test('AC-AS9（端到端）⭐ 她表「录单人」= 提交表单的人 ⇒ **销售主表.录单人**就是那个人', async () => {
+  const h = createHarness();
+  try {
+    const intake = buildIntake(h);
+    const result = await intake.handleTableChanges([intakeActionItem({ operatorId: 'ou_who_filled' })], { event: {} });
+    assert.equal(result.results[0].ok, true, JSON.stringify(result.results[0]));
+    const rows = entriesOf(h, 'salesEntry');
+    assert.equal(rows.length, 1, '销售主表写好 ✓');
+    assert.deepEqual(rows[0].fields[V1_BITABLE_SCHEMA.tables.salesEntry.fields.sender],
+      [{ id: 'ou_who_filled' }], '🔴 「销售主表.录单人」= 她表那一列的人 ✓');
+    assert.equal(entriesOf(h, 'salesDetail').length, 1, '销售明细写好 ✓');
+    assert.equal(entriesOf(h, 'paymentRecord').length, 1, '收款明细写好 ✓');
+  } finally { h.cleanup(); }
+});
+
+test('AC-AS11（端到端）🔴 三级都拿不到 ⇒ 销售主表 payload 里**没有**「录单人」那一列（绝不编 id ✗）', async () => {
+  const h = createHarness();
+  try {
+    const intake = buildIntake(h);   // 事件没带那一列；假网关也没有 `getByTableId`（第三级也不可用）
+    const result = await intake.handleTableChanges([intakeActionItem()], { event: {} });
+    assert.equal(result.results[0].ok, true, '成单照办（录单人缺失**不是**拒单理由 ✓）');
+    const rows = entriesOf(h, 'salesEntry');
+    assert.equal(rows.length, 1);
+    assert.equal(Object.keys(rows[0].fields).includes('录单人'), false,
+      '🔴 payload 里**不许**出现「录单人」（不写这一列 ✓；编一个假 id 会在这条红 ✗）');
+  } finally { h.cleanup(); }
+});
+
