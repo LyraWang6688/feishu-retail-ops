@@ -29,8 +29,9 @@ const { readFlag, readString } = require('./envValue');
 // 「待平台结算」是**收款明细里的取值**（表里的事实，不是文案）——真源在 `config/salesCardFacts`，
 // 这里**只引用**，不另抄一个中文字面量（换取值时只改那一处）。
 const { PENDING_SETTLEMENT_STATUS } = require('./salesCardFacts');
-// 券目录「在售」的口径与 9 点推送【团购券待结算】那一块**同一份**（真源 `config/voucherSettlement`）。
-const { DEFAULT_ON_SALE_STATUS } = require('./voucherSettlement');
+// 券目录「在售」的口径与 9 点推送【团购券待结算】那一块**同一份**（真源 `config/voucherSettlement`）：
+//   连**环境变量名**都用它那一个 ⇒ 一处换个值，两块一起变 ✓（**不新造第二个旋钮** ✗）。
+const { DEFAULT_ON_SALE_STATUS, VOUCHER_ON_SALE_STATUS_ENV_KEY } = require('./voucherSettlement');
 
 // ── 语义键（**只读** `config/v1BitableSchema`，不复制字段名）────────────────────
 const PAYMENT_METHOD_TABLE_KEY = 'paymentMethod';
@@ -64,11 +65,17 @@ const PAYMENT_METHODS_UNREADABLE_EVENT = 'scan.sale.payment_methods_unreadable';
 
 // ── 开关与取值 ────────────────────────────────────────────────────────────────
 const VOUCHER_PAYMENT_ENABLED_ENV_KEY = 'SCAN_VOUCHER_PAYMENT_ENABLED';
-const VOUCHER_ON_SALE_STATUS_ENV_KEY = 'SCAN_VOUCHER_PAYMENT_ON_SALE_STATUS';
 // 券方式**认不出那张券**时给她的那句人话（**拦住 + 一个字都不写**，绝不当普通收款记一笔 ✗）。
 const VOUCHER_UNRESOLVED_TEXT_ENV_KEY = 'SCAN_VOUCHER_PAYMENT_UNRESOLVED_TEXT';
 const DEFAULT_VOUCHER_UNRESOLVED_TEXT = '这张团购券没在「团购券管理」里找到（或券目录暂时读不到），'
   + '先别提交这一单：请核对收款方式与券目录，或改用其它收款方式。';
+
+// 日志里的 `hint`（**用户可见中文只许在 config** ✗ 不许写进 service —— 有源码哨兵扫它 ✓）。
+const VOUCHER_HINT_METHODS_UNREADABLE = '收款方式表读不到 ⇒ 认不出哪条是券；有金额空的行就拦住'
+  + '（不静默当普通收款 / 不被整行丢掉）';
+const VOUCHER_HINT_CATALOG_UNREADABLE = '券目录读不到 ⇒ 认不出面值/结算款 ⇒ 拦住这一单（不静默拿收款金额顶替）';
+const VOUCHER_HINT_UNREACHABLE = '这些在售券没有任何收款方式关联 ⇒ 她在页面上点不到它（请到「收款方式管理」补关联）';
+const VOUCHER_HINT_METHOD_UNMAPPED = '券方式在「团购券管理」里找不到对应那张券 ⇒ 拦住这一单（不静默当普通收款）';
 
 /**
  * 一次把整份配置读出来。**用错一眼能看出来**：字段名 / 状态名 / 事件名都在这儿。
@@ -85,6 +92,9 @@ const resolveVoucherPaymentConfig = (env = process.env) => ({
   // 收款明细那一笔的状态（**表里的取值**；钱还在平台上，不算"已收"）。
   pendingStatus: PENDING_SETTLEMENT_STATUS,
   // 券目录只取这一种「销售状态」的券（与 `LarkMvpService.listGroupBuyVouchers` / 9 点推送同一口径）。
+  // ⚠️ 它只用来判"这张券**在不在售**"（下架的券没人点得到 = 正常 ✓）——
+  //    **认券**一律按收款方式那条关联记录的 record_id 认（关联就是事实 ✓ 不看销售状态 ✗），
+  //    否则一条陈旧的关联会因为她下架了券而把这一单**拦住** ✗。
   onSaleStatus: readString(env, VOUCHER_ON_SALE_STATUS_ENV_KEY, DEFAULT_ON_SALE_STATUS),
   // 认不出券时拦住她那句话（**用户可见中文只许在 config** ✗ 不许在逻辑里写）。
   unresolvedText: readString(env, VOUCHER_UNRESOLVED_TEXT_ENV_KEY, DEFAULT_VOUCHER_UNRESOLVED_TEXT),
@@ -92,6 +102,13 @@ const resolveVoucherPaymentConfig = (env = process.env) => ({
     methodUnmapped: VOUCHER_METHOD_UNMAPPED_EVENT,
     catalogUnreadable: VOUCHER_CATALOG_UNREADABLE_EVENT,
     paymentMethodsUnreadable: PAYMENT_METHODS_UNREADABLE_EVENT,
+  },
+  // 日志里那句 `hint`（同一件事的"人话"只有一份，service 里不写中文 ✗）。
+  hints: {
+    methodsUnreadable: VOUCHER_HINT_METHODS_UNREADABLE,
+    catalogUnreadable: VOUCHER_HINT_CATALOG_UNREADABLE,
+    unreachable: VOUCHER_HINT_UNREACHABLE,
+    methodUnmapped: VOUCHER_HINT_METHOD_UNMAPPED,
   },
 });
 
@@ -103,7 +120,6 @@ module.exports = {
   VOUCHER_METHOD_UNMAPPED_EVENT,
   VOUCHER_CATALOG_UNREADABLE_EVENT,
   VOUCHER_PAYMENT_ENABLED_ENV_KEY,
-  VOUCHER_ON_SALE_STATUS_ENV_KEY,
   VOUCHER_UNRESOLVED_TEXT_ENV_KEY,
   DEFAULT_VOUCHER_UNRESOLVED_TEXT,
   voucherLinkFieldName,

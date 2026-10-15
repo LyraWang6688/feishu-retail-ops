@@ -268,6 +268,10 @@ module.exports = {
   DEFAULT_VOUCHER_SETTLE_ACTION,
   DEFAULT_SETTLE_DAY_FIELD,
   DEFAULT_PENDING_STATUS,
+  // ⭐ 2026-10-16（task-57）：券目录「在售」那一个字面量也导出去 ——
+  //   扫码页资金页那一刀（`config/voucherPayment`）也要用**同一个**「在售」口径，
+  //   **不许**在别处再抄一份中文（两份真源一定会漂 ✗）。
+  DEFAULT_ON_SALE_STATUS,
   DEFAULT_SETTLED_STATUS,
   DEFAULT_TRADE_DIRECTION,
   DEFAULT_SETTLE_DAYS,

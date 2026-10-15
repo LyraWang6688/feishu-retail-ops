@@ -49,6 +49,7 @@ const { createPurchaseWriteBackgroundService } = require('../services/purchaseWr
 // ⭐⭐ 2026-10-16 A2a ③：**候选收款方式改读表**（她 2026-10-14 逐字：「**付款方式用交易方式管理，
 //    可选择**」）—— 只读 + TTL 缓存的那份 service（`services/paymentMethodsService.js`）。
 const { createPaymentMethodsService } = require('../services/paymentMethodsService');
+const { createVoucherPaymentService } = require('../services/voucherPaymentService');
 const { SalesFollowupService } = require('../services/salesFollowupService');
 const { renderSalesHome, renderScanSkeleton, renderScanPage, renderScanMessagePage, renderMinimalPage, renderSaleSuccessPage, renderSalePaymentStepPage, buildPaymentRows } = require('../views/scanPageRenderer');
 // ⚠️ 只借这两个**纯函数**：所选尺码在「样品 + 门盒」有没有货（= 页面上那两个分组的判据），
@@ -134,6 +135,17 @@ const createScanPageRouter = (options = {}) => {
    */
   const paymentMethodsService = options.paymentMethodsService
     || createPaymentMethodsService(gateway, options.paymentMethodsServiceOptions);
+  /**
+   * ⭐⭐ 2026-10-16（task-57 · 抖音团购券）：**券行**的解析器（只读 ✓ 与上面那份收款方式 service
+   *   **共用同一趟读与同一份缓存** ⇒ 不为券多打一次飞书 ✓）。
+   *   它只干一件事：把资金页那几行认成"券行"，并把一张券的**两个数各归各位**（面值→差额 / 结算款→明细）。
+   */
+  const voucherPayments = options.voucherPaymentService
+    || createVoucherPaymentService({
+      gateway,
+      paymentMethods: paymentMethodsService,
+      config: options.voucherPaymentConfig,
+    });
   const configuredPaymentMethods = () => [...new Set([
     writeConfig.sale.defaultPaymentMethod, ...(writeConfig.sale.paymentMethods || []),
   ].filter(Boolean))];
@@ -1505,15 +1517,66 @@ const createScanPageRouter = (options = {}) => {
           const pendingPaymentStatus = String(body[fields.paymentStatus] || pendingInfo.paymentStatus || '').trim();
           const pendingPaidAmount = body[fields.paidAmount] ?? pendingInfo.paidAmount ?? '';
           const pendingSize = String(pendingInfo.size || '').trim();
+          // ⭐⭐⭐ 2026-10-16（task-57 · 抖音团购券 · 业务负责人逐字）：
+          //   「**差额的计算按照面值来**，但是**收款明细里的收款金额按照平台结算款**来」
+          //   「是的，抖音团购券的是**待平台结算**」
+          //   ⇒ 一张券 = **两个数各归各位**（口径与算式见 `services/voucherPaymentService.js`）：
+          //      · 收款行交给写层的金额 = 【**平台结算款**】（收款明细那一笔的事实 ✓）
+          //      · 差额按【**面值**】算 ⇒ 把 (面值 − 结算款) 从**货品那一侧**扣掉
+          //        （差额的全仓唯一算法是 `累计 − 已收`，不扣就变成 `货品 − 结算款` ✗）
+          //   🔴 **认不出那张券 / 券目录读不到** ⇒ **大声 warn + 拦住这一单**（400 + 人话 + 零写入）——
+          //      **绝不静默把一条券当成普通收款记一笔** ✗（那会写一个错的金额进账，她事后对不上）
+          //   ⚠️ 一行券都没有 ⇒ 原样返回、**券目录一次都不读** ⇒ 既有链路逐字不变 ✓（`voucherRows` 空）
+          const voucher = voucherPayments.settings.enabled
+            ? await voucherPayments.resolveRows(pendingPayments).catch((error) => ({
+              ok: false, reason: 'voucher_resolve_failed', error: error?.message || 'unknown',
+            }))
+            : { ok: true, payments: pendingPayments, voucherRows: [], balanceDeltaCents: 0, faceValueCents: 0 };
+          if (voucher.ok !== true) {
+            logWarn('scan.write.voucher_blocked', {
+              request_id: requestId,
+              reason: String(voucher.reason || 'voucher_unresolved'),
+              unresolved: Array.isArray(voucher.unresolved) ? voucher.unresolved.map((row) => row.method) : [],
+            });
+            // ⚠️ 与既有那条"能改的 ⇒ 400 + 原样带回她填的"**同一形状**（`sendPaymentStep` ✓ 一份实现 ✗ 不另起）
+            //   ⚠️ 不传 `paymentStatus` / `paidAmount`：那一组控件（三档 + 实付多少）**已从资金页退场**
+            //      ⇒ 传旧值只会误导下一屏（与 A2a 那条注释同一个理由 ✓）
+            return sendPaymentStep(res, req, {
+              paymentMethods: await candidatePaymentMethods(req),
+              realm,
+              submitKey: body[fields.submitKey],
+              count: pendingLines.length,
+              notice: voucherPayments.settings.unresolvedText,
+              // ⭐ 她刚填的钱**原样带回**（她改一下就能再点 ✓）—— **不是**解析后的那一份（那会替她改数 ✗）
+              paymentRows: pendingPayments,
+              status: 400,
+            });
+          }
+          // 交给写层的收款行（券行金额 = 平台结算款 ✓）＋ 货品那一侧（券的抽佣已扣 ✓）
+          const paidPayments = voucher.payments;
+          const effectiveLineAmounts = voucherPayments
+            .adjustLineAmounts(pendingLineAmounts, voucher.balanceDeltaCents).amounts;
+          if (voucher.voucherRows.length) {
+            logInfo('scan.write.voucher_resolved', {
+              request_id: requestId,
+              voucher_count: voucher.voucherRows.length,
+              voucher_methods: voucher.voucherRows.map((row) => row.method),
+              face_value_cents: voucher.faceValueCents,
+              balance_delta_cents: voucher.balanceDeltaCents,
+              voucher_names: voucher.voucherRows.map((row) => row.name),
+            });
+          }
           // ⭐⭐ 2026-10-16 A2a（她：**页面去三档** ⇒ 档位**按金额自动定**）——
           //   改前逐字：档位 = `Object.keys(payStatusMap).find((key) => payStatusMap[key] === pendingPaymentStatus) || ''`
           //     （**从"请求体 / 已存档"反查** ✗）⇒ 页面去掉那三个单选框之后**必然查不到** ⇒ 被判 `unknown_mode` **拦住** ✓
           //   改后逐字：`autoModeOf({ itemsCents, paymentsCents })` —— **按金额推档**（纯函数 ＋ 配置表 ✓ 真源一份 ✓）
           //   依据 = 她 2026-10-16 逐字（"别让他带着这三个单选提交"）⇒ 本段是它的**前半刀**（页面 + 判据去档）✓
           //   🔴 **本段仍然接受** body 里的旧档位（**不拒绝** ✗ —— 拒绝留到 A3 ✓）；它只是**不再是判据**了 ✓
+          //   ⭐ 券那一刀（2026-10-16）只换了**两个入参**（`effectiveLineAmounts` / `paidPayments`）——
+          //      档位怎么算、后面怎么校验，**一个字没改** ✗
           const toCents = (value) => Math.round(Number(value || 0) * 100);
-          const itemsCents = pendingLineAmounts.reduce((sum, value) => sum + toCents(value), 0);
-          const paymentsCents = pendingPayments.reduce((sum, row) => sum + toCents(row.amount), 0);
+          const itemsCents = effectiveLineAmounts.reduce((sum, value) => sum + toCents(value), 0);
+          const paymentsCents = paidPayments.reduce((sum, row) => sum + toCents(row.amount), 0);
           // eslint-disable-next-line global-require
           const { resolveSettlement, autoModeOf } = require('../config/saleSettlement');
           const auto = autoModeOf({ itemsCents, paymentsCents });
@@ -1535,8 +1598,11 @@ const createScanPageRouter = (options = {}) => {
             mode: pendingMode,
             itemsCents,
             paymentsCents,
-            hasPaymentRows: pendingPayments.filter((row) => String(row.amount ?? '').trim()).length > 0,
-            anyLineAmount: pendingLineAmounts.some((value) => String(value ?? '').trim()),
+            // ⚠️ 这两处用**解析后**的那一份（券行已经有金额了 / 货品那一侧已扣掉券的抽佣）——
+            //    判据形状一个字没变，只是喂给它的是**真正要落库的那两个数** ✓（不然"券金额可空"
+            //    会把券行当成"没填钱"，与后面写进去的东西对不上 ✗）。
+            hasPaymentRows: paidPayments.filter((row) => String(row.amount ?? '').trim()).length > 0,
+            anyLineAmount: effectiveLineAmounts.some((value) => String(value ?? '').trim()),
             // ⭐ 新形状**页面上没有**「实付多少」这个框了（随三档一起去掉 ✓）⇒ "本次已收"**就是收款行合计** ✓
             //   ⚠️ 若传 `null` 会被判 `partial_amount_missing` —— 那是**旧形状**才有的失败 ✗ 不传 ✗
             paidCents: paymentsCents,
@@ -1551,16 +1617,17 @@ const createScanPageRouter = (options = {}) => {
               code: String(settlement.code || ''),
               reason: String(settlement.reason || ''),
               mode: String(pendingMode || ''),
-              items_cents: pendingLineAmounts.reduce((sum, value) => sum + Math.round(Number(value || 0) * 100), 0),
-              payments_cents: pendingPayments.reduce((sum, row) => sum + Math.round(Number(row.amount || 0) * 100), 0),
+              items_cents: itemsCents,
+              payments_cents: paymentsCents,
             });
             // ⚠️ 文案：**只用既有那几条模板**（`config/scanWrite.js` 的 texts ✓ **不编中文** ✗）
             //   ⭐「全付两边不等」那条要带上**差额金额**（她一眼看到"少多少/多多少"✓ 实测 AC-E2E-16 ✓）
             const blockText = (() => {
               const t = writeConfig.texts || {};
               const money = (cents) => `¥${(cents / 100).toFixed(2).replace(/\.00$/, '')}`;
-              const itemsCents = pendingLineAmounts.reduce((sum, value) => sum + toCents(value), 0);
-              const paymentsCents = pendingPayments.reduce((sum, row) => sum + toCents(row.amount), 0);
+              // ⚠️ 用**解析后**那两个数（与上面 `settlement` / 与真正要落库的金额**同一份** ✓ 不两套算法）
+              const itemsCents = effectiveLineAmounts.reduce((sum, value) => sum + toCents(value), 0);
+              const paymentsCents = paidPayments.reduce((sum, row) => sum + toCents(row.amount), 0);
               if (settlement.code === 'amount_mismatch' && t.amountMismatchBody) {
                 const diff = Math.abs(paymentsCents - itemsCents);
                 const side = itemsCents === 0
@@ -1597,7 +1664,9 @@ const createScanPageRouter = (options = {}) => {
               //   旧档位（请求体那个）**不再是判据**，这里也不该再把它带回去（带回去只会误导下一屏）。
               paymentStatus: effectivePaymentStatus,
               paidAmount: pendingPaidAmount,
-              paymentRows: pendingPayments,
+              // ⭐ 券那一刀：带回去的是**解析后**那一份（券行她本来就没填金额 ⇒ 只是把这一行的
+              //    **真实金额（平台结算款）**显示出来 ✓ 既不是替她改数、也不是藏起来 ✗）。
+              paymentRows: paidPayments,
               // ⭐ 400 = "她能改"的那一类（与既有口径一致 ✓ 旧流程这条也是 400 ✓ 不放宽 ✗）
               status: 400,
             });
@@ -1610,8 +1679,12 @@ const createScanPageRouter = (options = {}) => {
             requestId,
             // 🔴 **同一把 `submitKey`**（幂等不许拆 ✗）：连点两次 / 重试都走这一个键 ✓
             submitKey: body[fields.submitKey],
-            payments: pendingPayments,
-            lineAmounts: pendingLineAmounts,
+            // ⭐⭐ 券那一刀（2026-10-16）：交给写层的是**解析后**那一份 ——
+            //   · `paidPayments`：券行的金额 = 【平台结算款】（收款明细那一笔的事实 ✓）
+            //   · `effectiveLineAmounts`：货品那一侧已扣掉券的 (面值 − 结算款) ⇒ 差额按【面值】算 ✓
+            //   ⚠️ 没有券时这两个变量与 `pendingPayments` / `pendingLineAmounts` **同一个对象内容** ✓
+            payments: paidPayments,
+            lineAmounts: effectiveLineAmounts,
             // ⭐⭐ 2026-10-16 A2a **接线**（改前逐字 → 改后逐字 → 依据）：
             //   改前逐字：`paymentStatus: pendingPaymentStatus,` —— 传的是**请求体 / 会话暂存里那个旧档位** ✗
             //     ⇒ 页面去掉那三个单选框之后，她这一下**必然不带档位** ⇒ 旧档位恒为 `''` ⇒

@@ -41,9 +41,12 @@ const createVoucherPaymentService = ({ gateway, paymentMethods, config, log } = 
   const warn = typeof log === 'function' ? log : logWarn;
 
   /**
-   * 「团购券管理」目录（**只取在售**）——与 `LarkMvpService.listGroupBuyVouchers` 同一套映射 ✓。
-   * @returns {{ ok:boolean, vouchers:Array<{recordId:string,name:string,faceValueCents:number,
-   *            settlementCents:number}>, reason:string, error?:string }}
+   * 「团购券管理」目录（**认券按 record_id**；「在售」只用来判"这张券她点不点得到" ✓）。
+   *
+   * ⚠️ 认券**不过滤销售状态**：收款方式那条「团购券管理」关联列指到哪张就是哪张（关联就是事实 ✓）。
+   *    若按"在售"过滤，一条陈旧关联（券下架了）会让她**提交不了**这一单 ✗ —— 那是两件事。
+   * @returns {{ ok:boolean, vouchers:Array<{recordId:string,name:string,status:string,
+   *            faceValueCents:number,settlementCents:number}>, reason:string, error?:string }}
    */
   const loadCatalog = async () => {
     const table = gateway.table?.(settings.voucherTableKey);
@@ -67,7 +70,6 @@ const createVoucherPaymentService = ({ gateway, paymentMethods, config, log } = 
           settlementCents: toCents(row[fields.settlementAmount]),
         };
       }).filter((voucher) => voucher.recordId
-        && voucher.status === settings.onSaleStatus
         && voucher.faceValueCents !== null
         && voucher.settlementCents !== null);
       return { ok: true, vouchers, reason: '' };
@@ -106,11 +108,26 @@ const createVoucherPaymentService = ({ gateway, paymentMethods, config, log } = 
     if (!list.length) return empty;
 
     const methods = await loadMethods();
+    // 🔴 收款方式表**读不到** ⇒ 认不出哪条是券。按"能不能静默出错"分两种（**不猜** ✗）：
+    //   · 有行的**金额是空的**（可能是券 —— 券的金额本来就可以空 ✓）⇒ **拦住这一单**：
+    //     放过去要么被写层当成"没填钱"整行丢掉（券的差额就变成"一分没付" ✗），要么写一个错金额 ✗；
+    //   · 每行都有金额 ⇒ **原样放行** + **大声 warn** ✓
+    //     （没有"金额可空"的行 ⇒ 没有"券被静默丢掉"这条风险；真写错也会被写层
+    //      `resolvePaymentMethod` 那条"收款方式管理中找不到：X"当场拒掉 ✓ 不静默 ✗）。
     if (!methods.ok) {
-      warn(settings.events.paymentMethodsUnreadable, {
-        reason: methods.reason, hint: '收款方式读不到 ⇒ 无法判定哪条是券 ⇒ 拦住这一单（不静默当普通收款）',
+      // ⚠️ 只看"**选了方式、但金额空**"的行：那才可能是券（券的金额本来就可以空 ✓）。
+      //   一行**方式都没选**的行只是"她没用到的那一行"（既有口径：空行不用 ✓）——不许拿它拦人 ✗。
+      const emptyAmountRows = list.filter((row) => String(row?.method ?? '').trim()
+        && !String(row?.amount ?? '').trim());
+      warn(settings.events.methodUnmapped, {
+        reason: methods.reason,
+        empty_amount_rows: emptyAmountRows.length,
+        hint: settings.hints.methodsUnreadable,
       });
-      return { ...empty, ok: false, reason: 'payment_methods_unreadable' };
+      if (emptyAmountRows.length) {
+        return { ...empty, ok: false, reason: 'payment_methods_unreadable' };
+      }
+      return { ...empty, payments: list.map((row) => ({ ...row })) };
     }
     // 名字 → 券记录 id（**关联列非空**才是券 ✓；同一名字只在表里有一条 —— 与写层同一条口径）
     const linkByName = new Map();
@@ -121,14 +138,16 @@ const createVoucherPaymentService = ({ gateway, paymentMethods, config, log } = 
       if (recordId) linkByName.set(name, recordId);
     }
     const voucherNames = new Set(linkByName.keys());
-    // 一行都不是券 ⇒ 一个字都不用读券目录（券目录读不到也不该拦住普通收款 ✓ 也不该多打一次飞书 ✗）
-    if (!list.some((row) => voucherNames.has(String(row?.method || '').trim()))) return empty;
+    // 一行都不是券 ⇒ **原样返回**（券目录一次都不读 ✓ 既有链路逐字不变 ✓ 也不多打一次飞书 ✗）
+    if (!list.some((row) => voucherNames.has(String(row?.method || '').trim()))) {
+      return { ...empty, payments: list.map((row) => ({ ...row })) };
+    }
 
     const catalog = await loadCatalog();
     if (!catalog.ok) {
       warn(settings.events.catalogUnreadable, {
         reason: catalog.reason, error: catalog.error,
-        hint: '券目录读不到 ⇒ 认不出面值/结算款 ⇒ 拦住这一单（不静默拿收款金额顶替）',
+        hint: settings.hints.catalogUnreadable,
       });
       return { ...empty, ok: false, reason: 'voucher_catalog_unreadable' };
     }
@@ -137,12 +156,13 @@ const createVoucherPaymentService = ({ gateway, paymentMethods, config, log } = 
     //   券目录里**在售**、却**没有任何收款方式**关联到它 ⇒ 她根本点不到这张券。
     //   ⚠️ 这一条**不拦单**（与她这一单无关），但**必须大声**（否则"券上了、没人点得到"没人知道 ✗）。
     const linkedIds = new Set(linkByName.values());
-    const unreachable = catalog.vouchers.filter((voucher) => !linkedIds.has(voucher.recordId));
+    const unreachable = catalog.vouchers
+      .filter((voucher) => voucher.status === settings.onSaleStatus && !linkedIds.has(voucher.recordId));
     if (unreachable.length) {
       warn(VOUCHER_METHOD_UNMAPPED_EVENT, {
         count: unreachable.length,
         voucher_record_ids: unreachable.map((voucher) => voucher.recordId),
-        hint: '这些在售券没有任何收款方式关联 ⇒ 她在页面上点不到它（请到「收款方式管理」补关联）',
+        hint: settings.hints.unreachable,
       });
     }
 
@@ -164,7 +184,7 @@ const createVoucherPaymentService = ({ gateway, paymentMethods, config, log } = 
         // 🔴 是券方式、却认不出那张券 ⇒ **大声 warn** + 拦住（**绝不**静默当普通收款 ✗）
         warn(VOUCHER_METHOD_UNMAPPED_EVENT, {
           method, voucher_record_id: recordId,
-          hint: '券方式在「团购券管理」里找不到对应那张券 ⇒ 拦住这一单（不静默当普通收款）',
+          hint: settings.hints.methodUnmapped,
         });
         unresolved.push({ method, voucherRecordId: recordId });
         continue;
@@ -191,7 +211,41 @@ const createVoucherPaymentService = ({ gateway, paymentMethods, config, log } = 
     };
   };
 
-  return { resolveRows, loadCatalog, loadMethods, settings };
+  /**
+   * ⭐⭐ 差额要按【**面值**】算 ⇒ 券的「面值 − 结算款」那一截（平台抽佣）必须从**货品那一侧**扣掉。
+   *
+   * 为什么：差额的算法全仓只有一个 —— `salesOrderService` 的 `outstandingCents = 累计 − 已收`
+   *   （`scanWriteService` 里是 `owedCents = itemsCents − paymentsCents`）。而收款行那一笔的金额
+   *   已经按口径换成【平台结算款】了 ⇒ 若不扣，差额会算成 `货品 − 结算款` ✗（她例：300 − 47.40
+   *   = **252.60** ✗；口径是 **200** ✓）。
+   *
+   * 算式与**群聊先例逐字同形**（`services/groupBuyVoucherPolicy.js:83`）：
+   *   `netCents = cashCents + settlementCents` ≡ `成交额 − 面值 + 结算款` ≡ `成交额 − (面值 − 结算款)` ✓
+   *   ⇒ 「货品那一侧」= 成交额 − (面值 − 结算款) = 店里**实际拿到的净额**（客户补的 + 平台结算的）。
+   *
+   * 落法：从**第一行有金额的那一行**起逐行往下扣（券是**整单**级的、行是明细级的 ⇒ 谁先填谁先扣，
+   *   顺序确定、总额不丢 ✓）；单行不够就继续扣下一行 ✓；**绝不扣成负数** ✗
+   *   （扣不下的部分如实回传 `unappliedCents`，由调用方去说人话 —— **不静默丢一笔钱** ✗）。
+   *
+   * @returns {{ amounts:Array<string>, appliedCents:number, unappliedCents:number }}
+   */
+  const adjustLineAmounts = (lineAmounts = [], balanceDeltaCents = 0) => {
+    const list = Array.isArray(lineAmounts) ? [...lineAmounts] : [];
+    let remain = Math.max(0, Math.round(Number(balanceDeltaCents) || 0));
+    const wanted = remain;
+    for (let index = 0; index < list.length && remain > 0; index += 1) {
+      const raw = String(list[index] ?? '').trim();
+      if (!raw) continue;
+      const cents = toCents(raw);
+      if (cents === null || cents <= 0) continue;
+      const take = Math.min(cents, remain);
+      remain -= take;
+      list[index] = String((cents - take) / 100);
+    }
+    return { amounts: list, appliedCents: wanted - remain, unappliedCents: remain };
+  };
+
+  return { resolveRows, adjustLineAmounts, loadCatalog, loadMethods, settings };
 };
 
 module.exports = { createVoucherPaymentService, VOUCHER_METHOD_UNMAPPED_EVENT, VOUCHER_CATALOG_UNREADABLE_EVENT };
