@@ -138,6 +138,18 @@ const V1_BITABLE_SCHEMA = {
     },
     salesEntry: {
       tableName: '销售主表',
+      // ⭐⭐ 2026-10-16（业务负责人逐字）：「我加了一个在**销售主表**里面加了一个**查找引用字段**。
+      //   它是多维表格的**自动字段**，叫做「**金额核对**」，是为了**判断你的累计金额有没有填对**。」
+      // 🔴 **只读登记**（**绝不放进下面的 `fields`** ✗）—— 依据（逐字证据）：
+      //   本仓的"可写字段集"**就是** `fields` 的键名
+      //   （`services/salesStatusWriter.js:16`：「允许写的语义键（= `v1BitableSchema.tables.salesEntry.fields` 里的键名）」）
+      //   ⇒ 把 type **19**（ui `Lookup`，**只读** ✗）登记进 `fields` = **把它变成"可写"** ⇒ 写入会**报错** ✗
+      readOnlyFields: Object.freeze({
+        // 「金额核对」· 查找引用（自动字段）· 引用的对端表 = 「销售明细」（`tblxW5WMKDULyolA` · 回填字段「销售单号」）
+        amountCheck: Object.freeze({
+          name: '金额核对', type: 19, uiType: 'Lookup', writable: false,
+        }),
+      }),
       tableId: getEnv('FEISHU_V1_SALES_ENTRY_TABLE_ID', 'tblLjFe3NjU61xKB'),
       fields: {
         orderNo: '销售单号',
