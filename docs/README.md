@@ -33,6 +33,7 @@
 | [inventory-size-reference-contract.md](inventory-size-reference-contract.md) | 库存与尺码关联字段契约 |
 | [purchase-amount-and-label-plan-2026-10-16.md](purchase-amount-and-label-plan-2026-10-16.md) | 补货不问金额 ＋ 「实收金额（可不填）」文案对齐 —— 只读盘点与改动计划（2026-10-16） |
 | [purchase-async-wiring-2026-10-16.md](purchase-async-wiring-2026-10-16.md) | 补货 / 退货 接异步（先回成功页 ⇒ 后台写库）—— 接线落地记录 |
+| [replenish-trim-three-fixes-2026-10-16.md](replenish-trim-three-fixes-2026-10-16.md) | 补货（报货）页三处（不填金额 / 删多余文字 / 按钮改「补货」）＋ 尺码清单「一行 3 组」—— 含**静默失效根因**（旧 CSS 类顶掉 3 列规则）+ 成对迁移 + 6 组变异 |
 | [return-block-repro-2026-10-15.md](return-block-repro-2026-10-15.md) | 退货块"还是一个退货按钮" —— 本地实测渲染报告（task-41） |
 | [return-block-task44-2026-10-16.md](return-block-task44-2026-10-16.md) | task-44 交付说明：退货块"空块"是**我 task-41 的误报**（已更正）+ 生产真数据（未能在本机执行） |
 | [return-tab-root-cause-2026-10-16.md](return-tab-root-cause-2026-10-16.md) | task-47（第二刀）：用**她日志里的真实形状**渲染退货块 —— **代码路径本来就直出表单** ✓（附真实日志行） |
