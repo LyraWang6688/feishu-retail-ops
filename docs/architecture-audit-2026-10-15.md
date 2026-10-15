@@ -267,6 +267,16 @@
 | 6 | **`tools/**`（5 个探针）** | `flaky-suite-loop.mjs` / `repro-missing-tests.mjs` / `probe-clock-dependence.mjs` / `probe-git-state-invariance.mjs` / `sentinel-loop.sh`：测试稳定性排查工具；`sentinel-loop.sh` 全仓零提及（其余各有 1 篇 docs 提到） | 属"开发者工具"、不属业务架构；留着不碍事，删了下次排查要重写 |
 | 7 | **`server/scripts/ws-*.mjs/cjs`（4 个）** | 飞书事件订阅/调试工具（`ws-listen` / `ws-selftest` / `ws-poke-event` / `ws-subscribe`）；`docs/**` 有 4-5 处引用。⚠️ `ws-poke-event.cjs` / `ws-subscribe.cjs` / `e2e-run.mjs` 里**硬编码生产 token 当闸门**（`AGENTS.md` 已记为**待改**：改成从 `.env` 读或指纹比对，**不是删闸门**） | 工具本身是活的（排查事件用）；但那条**已知违规**要不要现在修，得她/Lead 排期 |
 
+> 🔁 **后续状态（2026-10-15 深夜 · 她拍板 ⇒ 本次执行；上表第 4 项的**原结论保留以留痕**）**
+> 业务负责人 2026-10-15 深夜决定（逐字）：
+> 「「手机里跟-AI-助手聊天-需求说明」这份文档**移动到 workplace 里的临时仓库**吧」，
+> ＋她给的路径 `/Users/wangying/Documents/workplace/temp repo`。
+> ⇒ **已移出本仓** ✓：删前核过目标那份与本仓那份 **md5 逐字节一致**（`768314b4…`，4973 字节 ✓），
+> 那个目录**不是 git 仓库** ⇒ 复制即可、不需要提交；
+> 本仓这一份**已删除** ✓，全仓（`README.md` / `AGENTS.md` / `docs/**` / 脚本 / CI）**0 悬空引用** ✓
+> —— 由 `server/test/personalDocMovedOut.test.js` 钉住（文件不存在 ＋ 除本篇外**任何文件都不许再提它** ＋
+> 本篇必须留「已移出本仓」这句更正）。⚠️ 上表第 4 项那行**原样留在这里**（历史审计结论，**不改写** ✓）。
+
 > 🔁 **后续状态（2026-10-15 晚 · 复核后更正；上面的**原结论保留以留痕**）**
 > 上表第 7 项里「**硬编码生产 token**」这半句**经复核为误** ✗ —— 它是**照抄 `AGENTS.md` 第 7 条的措辞、
 > 没有先核脚本**（写这份审计时的疏漏，如实记在这里）。
