@@ -35,9 +35,12 @@ const moneyStepBlock = (src) => {
 };
 
 /** 去掉行注释 / 块注释 / HTML 注释（判据只看**代码**，不看注释里的说明 ✓）。 */
-const stripComments = (text) => text
+// 只剥**JS 注释**（`//` 与 `/* */`）—— 用途是"扫源码里有没有旧文案"时**不把自己写的注释算进去** ✓
+// ⚠️ 2026-10-16（CodeQL 真告警 · 已修）：原来这里用"剥 HTML 注释"的正则 ✗
+//   CodeQL 判它「字符串里可能仍含 HTML 开注释符 ⇒ 元素注入面」（high severity ✓ 真告警 ✗）——
+//   本处**根本不需要剥 HTML 注释**（扫的是 `.js` 源码 ✓）⇒ 改成只剥 JS 注释，那个字面量一并去掉 ✓
+const stripComments = (text) => String(text)
   .replace(/\/\*[\s\S]*?\*\//g, '')
-  .replace(/<!--[\s\S]*?-->/g, '')
   .split('\n').map((line) => line.replace(/\/\/.*$/, '')).join('\n');
 
 // ── AC-PB1：资金页**恰好两颗**（提交 / 跳过）·「补整单付款」不许出现 ──────────────
