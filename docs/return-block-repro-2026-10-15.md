@@ -55,14 +55,32 @@
    `test/scanReturnStockFilter.test.js`（AC-RT11）里是用**假写服务给的 `sizes` 形状**钉住的 ✓ ——
    要精确复刻它需要真实 degraded 数据形状，本机拿不到 ⇒ **如实标注，不假装覆盖** ✗
 
-## 四、⭐ 附带发现（**不是她这次的形态**，但属"不撒谎"的同类缺口 —— **未改代码，等你派** ✗）
+## 四、🔴 更正（2026-10-15 深夜 · task-44）：本节原来的"附带发现"是**我看错了锚** —— 那一格**不是空的** ✗
 
-`rows: []`（连一行尺码都没有）时，退货块渲染成**空块**：既没有清单、也没有 `return-no-stock` 那句人话 ✗。
-判据侧：`#614` 补的人话只覆盖「**有尺码行、但全是 0**」这一种 ✗，没覆盖「**一行尺码都没有**」。
-建议修法（**具体到行**）：`src/views/scanPageRenderer.js` 的 `returnFormHtml` 里
-`const noReturnableStock = declaredSizes.length > 0 && sizes.length === 0;`
-⇒ 补一条"`declaredSizes.length === 0` ⇒ 也给一句人话（例如"这一款没有可退的尺码"）"的分支 ✓
-（与 `return-no-stock` 同一套配置驱动 ✓ 不写死文案 ✗）
+**改前逐字**（本报告 v1，**已随 PR #634 合进 main** ✗）：
+> `rows: []`（连一行尺码都没有）时，退货块渲染成**空块**：既没有清单、也没有 `return-no-stock` 那句人话 ✗。
+> 判据侧：`#614` 补的人话只覆盖「有尺码行、但全是 0」这一种 ✗，没覆盖「一行尺码都没有」。
+> 建议修法（具体到行）：`returnFormHtml` 里 `const noReturnableStock = declaredSizes.length > 0 && sizes.length === 0;` ⇒ 补一条分支 ✓
+
+**改后逐字**（用**同一个真路由 + 真渲染器**重跑 `rows: []`，HTTP 200 实测）：
+```html
+<section class="realm-block realm-block--purchase_return" ...>
+  <p class="hint" data-view="return-sizes-unknown">暂时取不到这一款的尺码，请稍后重试或手动核对</p>
+  <p class="hint" data-view="return-form-hint" hidden>…</p>   <!-- 表单提示（隐藏，等脚本用） -->
+</section>
+```
+⇒ **那一格有人话** ✓（`return-sizes-unknown`，文案来自 `config/scanPage.js` 的 `sizesUnknown`）✗ 不是空块。
+
+**依据（我错在哪）**：v1 那次统计只看了 `return-no-stock` 与 **`return-stock-unknown`**（后者是**每一行**的锚 ✗），
+**漏看了块级的 `return-sizes-unknown`**（`scanPageRenderer.js:1352` 那条 `sizes.length ? '' : …` 分支）——
+"空块"是**我的统计口径漏了一个锚**造成的**误报** ✗，不是页面的真缺口。
+🔴 **教训**：报"某格是空的"之前，必须把该块**所有** `data-view` 锚**逐个列出来**（本次已改成先列锚、再下结论 ✓）。
+
+**另外更正一处措辞**：三句人话**本来就分得开** ✓（`task-28`/`#614` 已经做了）：
+① 有货/缺码 ⇒ 每行 `return-stock`（＋行内"取不到"是 `return-stock-unknown`）；
+② **整款 0** ⇒ `return-no-stock`（「这一款现在没有可退的库存」）；
+③ **尺码整块读不到 / 一行都没有** ⇒ `return-sizes-unknown`（「暂时取不到这一款的尺码，请稍后重试或手动核对」）✓
+（⇒ **不需要新增第三种文案** ✗ —— task-44 的第 1 项据此**撤单**：没有缺口要补 ✓）
 
 ## 五、她的操作建议（怎么拿到新页面）
 
