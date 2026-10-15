@@ -58,9 +58,23 @@ test('AC-MIR1 🔴 补货 / 退货**两块都有**那个入口（去掉任一处
   const ret = rendererSource.slice(rendererSource.indexOf('const returnFormHtml'));
   assert.ok(/multiItemBlockHtml\(write, view[^)]*\)/.test(replenish), '补货块里必须接这个入口');
   assert.ok(/multiItemBlockHtml\(write, view[^)]*\)/.test(ret), '退货块里必须接这个入口');
-  // 🔴 补货那一处**不许传 mode**（`'return'` 只是退货 tab 的精简版 ⇒ 传错就是"顺手把补货也删了" ✗）
-  assert.ok(replenish.includes('multiItemBlockHtml(write, view)'),
-    '补货那一处**不传 mode** ⇒ 走缺省 = 逐字不变 ✓（传上 `\'return\'` ⇒ 红）');
+  // 🔴 补货那一处**只许传它自己那一档**（`'replenish'`）——
+  //   ⭐⭐ 2026-10-16 **成对迁移**（依据 = 业务负责人真机截图 · 补货 tab · 货品 832-500 ＋ 逐字：
+  //     「这个是报货的页面，还是需要填写金额啊，以及**不需要的文字说明给删除**，
+  //       **生成报货订单按钮文字改为补货**」）：
+  //   改前逐字：
+  //     `assert.ok(replenish.includes('multiItemBlockHtml(write, view)'),
+  //        '补货那一处**不传 mode** ⇒ 走缺省 = 逐字不变 ✓（传上 \\'return\\' ⇒ 红）');`
+  //     （那时缺省档 = 把说明 / 标题 / 空态**照旧画出来** ⇒ 补货那边要的正是"不传" ✗）
+  //   改后逐字：下面这一行 —— 补货那一处**显式传 `'replenish'`**（= 走**补货自己的**精简档 ✓
+  //     她这一次点的就是补货那三处 ✓）。⚠️ **不是放宽**：原来禁的是"传成 `'return'`"，
+  //     现在钉的是"**必须恰好传 `'replenish'`**"（传空 / 传 `'return'` / 乱传 ⇒ 都红 ✓ 更严 ✓）。
+  //     ⚠️ `mode` 的**缺省档 `''` 本身一个字没动**（仍是老形状 ⇒ AC-RT7 / 本文件 AC-MIR3 的
+  //       子进程探针照旧靠它 ✓）。
+  assert.ok(replenish.includes("multiItemBlockHtml(write, view, 'replenish')"),
+    '补货那一处**显式传自己那一档** `\'replenish\'` ⇒ 走补货的精简版 ✓（传空 / 传 `\'return\'` ⇒ 红 ✓）');
+  assert.equal(replenish.includes("multiItemBlockHtml(write, view, 'return')"), false,
+    '🔴 补货那一处**绝不许**传 `\'return\'`（那是退货 tab 的档 ⇒ 传错就是"顺手把补货按退货办" ✗）');
 
   const html = renderer.multiItemBlockHtml({}, VIEW);
   assert.match(html, /data-multi-add/, '那一块必须有「再加一个货品」的按钮');
@@ -103,7 +117,9 @@ test('AC-MIR3 ⭐ N=1 逐字不变：开关关 ⇒ 那一块**空串**、两个�
   // ① 闸门在源码里（关 ⇒ 立刻返回空串，不做任何别的事）
   assert.match(rendererSource, /if \(!MULTI_ITEM_ORDER\.enabled\) return '';/,
     '必须有"开关关 ⇒ 返回空串"的闸门（这是 N=1 逐字不变的物理保证）');
-  // ② 旧字段**逐字还在**、顺序不变（新块只**插**在金额行与提交按钮之间 ✓）
+  // ② 旧字段**逐字还在**、顺序不变（多货品块仍**插**在"金额行那一格"与提交按钮之间 ✓
+  //    ⚠️ 那一格现在**按配置**渲染 —— 缺省 false ⇒ 页面上看不到金额行，但**位置留着** ✓
+  //      ⇒ 她哪天打开那个开关，金额行仍回到原位（见下面那两条逐字断言 ✓））
   for (const line of [
     '${hiddenField(fields.action, write.actions.replenish)}${pageBuildField()}',
     '${hiddenField(fields.submitKey, write.replenishKey)}',
@@ -111,8 +127,22 @@ test('AC-MIR3 ⭐ N=1 逐字不变：开关关 ⇒ 那一块**空串**、两个�
   ]) {
     assert.ok(rendererSource.includes(line), `补货块既有字段必须逐字还在：${line}`);
   }
-  assert.ok(rendererSource.includes('${rows}\n${purchaseAmountRowHtml(write)}\n${multiItemBlockHtml(write, view)}\n<button type="submit"'),
-    '新块必须**插在**金额行之后、提交按钮之前（既有顺序不动）');
+  // ⭐⭐ 2026-10-16 **成对迁移**（同一句依据：她真机截图 + 逐字「还是需要填写金额啊」✗
+  //   ＋「不需要的文字说明给删除」）：
+  //   改前逐字（那一行**同时**钉住了"金额行在"＋"入口紧跟在它后面"）：
+  //     `assert.ok(rendererSource.includes('${rows}\n${purchaseAmountRowHtml(write)}\n${multiItemBlockHtml(write, view)}\n<button type="submit"'),
+  //        '新块必须**插在**金额行之后、提交按钮之前（既有顺序不动）');`
+  //   改后逐字：下面两行 —— 把"顺序"与"金额行"**拆开**钉（**更严** ✓）：
+  //     ① 补货表单里 **`rows` → 那个多货品块 → 提交按钮** 的**相对顺序**逐字不动 ✓
+  //        （只是中间那一格从"金额行"换成"**按配置的金额行插槽**"—— 缺省 `false` ⇒ 渲染出来是空 ✗
+  //          但**源码里那一格还在**：她哪天把 `SCAN_PAGE_REPLENISH_AMOUNT_ROW_ENABLED` 打开，
+  //          金额行仍然**回到原位**（在 `rows` 之后、多货品块之前）✓ —— 这就是"顺序不动"的真意 ✓）；
+  //     ② 补货块的**金额行插槽确实按配置**（不是被删掉了 ✗）。
+  //   ⚠️ 依据里的"既有顺序不动"**一个字没放宽**：上面①把三件的相对顺序逐字钉住了 ✓。
+  assert.ok(rendererSource.includes('${rows}\n${rp.amountRow ? purchaseAmountRowHtml(write) : \'\'}\n${multiItemBlockHtml(write, view, \'replenish\')}\n<button type="submit"'),
+    '补货表单的顺序必须仍是 **`rows` → 金额行那一格 → 多货品块 → 提交按钮**（既有顺序不动 ✓）');
+  assert.ok(rendererSource.includes("${rp.amountRow ? purchaseAmountRowHtml(write) : ''}"),
+    '⭐ 中间那一格必须**按配置**决定画不画（缺省 false ⇒ 她截图上那个框不再出现 ✓）');
   // ③ **真跑一个子进程**：开关关 ⇒ 那一块空串（不是靠读源码猜 ✓）
   const probe = spawnSync(process.execPath, ['-e', `
     const r = require(${JSON.stringify(rendererPath)});

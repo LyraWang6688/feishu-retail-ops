@@ -197,10 +197,18 @@ test('AC-PA1 「整单金额」是**一套**配置：字段名唯一来源 + 显
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AC-PA2 两个表单各恰有一个「整单金额」输入，且**同一个 name**（同一套配置）
+// AC-PA2 **退货**表单恰有一个「整单金额」输入 ＋ **补货那块一个都没有**（同一个 name / 同一套配置）
+//
+// ⭐⭐ 2026-10-16 **成对迁移**（依据 = 业务负责人真机截图 + 逐字：
+//   「这个是**报货的页面，还是需要填写金额啊**」✗）：
+//   改前逐字：`补货 / 退货两个表单各**恰有一个**「整单金额」输入`（两块**都**画 ⇒ 各 1 ✓）；
+//   改后逐字：**补货那一块翻成 0**（她的话 ⇒ 页面上不再画那个框 ✓）、**退货那一半一个字没动**（仍 1 ✓）。
+//   ⚠️ **不是放宽**：补货那两条从「必须有 1 个」翻成「**必须一个都没有**」= **变强** ✓；
+//     更强的**反向哨兵**（连字段名 / 标签都塞回即红）在
+//     `test/replenishTrimThreeFixes.test.js` 的 **AC-RP1** ✓。
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-PA2 补货 / 退货两个表单各**恰有一个**「整单金额」输入（同一个 name，标签来自配置）', async () => {
+test('AC-PA2 **退货**表单恰有一个「整单金额」输入 · **补货那块一个都没有**（同一个 name，标签来自配置）', async () => {
   login();
   const write = createWriteSpy();
   const field = SCAN_WRITE.fields.purchaseAmount;
@@ -211,14 +219,21 @@ test('AC-PA2 补货 / 退货两个表单各**恰有一个**「整单金额」输
     const replenish = await (await fetch(pageUrl(base, 'replenish'), { headers: { cookie: sessionCookie() } })).text();
     const returns = await (await fetch(pageUrl(base, 'purchase_return'), { headers: { cookie: sessionCookie() } })).text();
 
-    // 两块表单都在；各**恰有一个**整单金额（"一次一个总额" ✓ 不是按行分填 ✗）
+    // 两块表单都在；**退货**恰有一个整单金额（"一次一个总额" ✓ 不是按行分填 ✗）
     assert.ok(replenish.includes('data-view="one-tap-replenish"'), '补货表单在');
     assert.ok(returns.includes('data-view="purchase-return"'), '退货表单在');
-    assert.equal(occurrences(replenish), 1, '补货表单里恰有一个「整单金额」输入');
-    assert.equal(occurrences(returns), 1, '退货表单里恰有一个「整单金额」输入');
+    // 改前逐字：`assert.equal(occurrences(replenish), 1, '补货表单里恰有一个「整单金额」输入');`
+    // 改后逐字：下面这一行（**反向**钉住 ⇒ 变强 ✓）
+    assert.equal(occurrences(replenish), 0,
+      '⭐ 补货表单里**一个「整单金额」输入都没有**（她 2026-10-16 逐字：报货页不该还要填金额 ✗）');
+    assert.equal(occurrences(returns), 1, '退货表单里恰有一个「整单金额」输入（本刀一个字没动 ✗）');
     // 标签来自配置（改配置两处一起变 —— 同一套 ✓）
-    assert.equal((replenish.match(new RegExp(`<label>${label}</label>`, 'g')) || []).length, 1);
-    assert.equal((returns.match(new RegExp(`<label>${label}</label>`, 'g')) || []).length, 1);
+    // 改前逐字：`assert.equal((replenish.match(new RegExp(`<label>${label}</label>`, 'g')) || []).length, 1);`
+    // 改后逐字：下面这一行（补货 ⇒ 0 ✓ 连那个标签都不画 ✓）
+    assert.equal((replenish.match(new RegExp(`<label>${label}</label>`, 'g')) || []).length, 0,
+      '⭐ 补货那块连那个标签都不画（塞回即红 —— 强判据在 replenishTrimThreeFixes.test.js AC-RP1 ✓）');
+    assert.equal((returns.match(new RegExp(`<label>${label}</label>`, 'g')) || []).length, 1,
+      '退货那块标签仍来自配置 ✓（逐字未动 ✗）');
     // 且**两边的 name 完全相同**（同一套配置，不是各写各的 ✗）
     assert.equal(field, SCAN_WRITE.fields.purchaseAmount);
     void write;
@@ -374,10 +389,27 @@ test('AC-PA5 源码哨兵：补货 / 退货共用同一个闸门；开关读配�
   assert.ok(configSrc.includes("readFlag(process.env, 'SCAN_PURCHASE_AMOUNT_REQUIRED', true)"));
   assert.equal(configSrc.includes("'SCAN_PURCHASE_AMOUNT_REQUIRED') ||"), false,
     '不许 `process.env.X || fallback`（清空变量会静默回退 ⇒ 关不掉）');
-  // ④ 渲染层：那一行**只有一处定义**，两个表单都用它（改一处两边一起变 ✓）
-  assert.equal((viewSrc.match(/const purchaseAmountRowHtml = /g) || []).length, 1);
-  assert.equal((viewSrc.match(/purchaseAmountRowHtml\(write\)/g) || []).length, 2,
-    '补货表单 + 退货表单各用一次（共用同一个片段）');
+  // ④ 渲染层：那一行**只有一处定义**；两处引用各自的**画法**逐字钉住
+  //   ⭐⭐ 2026-10-16 **成对迁移**（依据 = 她真机截图 + 逐字「这个是报货的页面，**还是需要填写金额啊**」）：
+  //     改前逐字（**一行**）：
+  //       `assert.equal((viewSrc.match(/purchaseAmountRowHtml\(write\)/g) || []).length, 2,`
+  //         `'补货表单 + 退货表单各用一次（共用同一个片段）');`
+  //     改后逐字（**三行** —— 把"两次调用"拆成"各自的画法"来钉 ⇒ 比原来更严 ✓）：
+  //       · 定义仍**恰一处** ✓；
+  //       · **退货**那一处仍是**无条件**的那一行 ✓（本刀一个字没动 ✗）；
+  //       · **补货**那一处改成**按配置**（`rp.amountRow` 三元）✓ —— 缺省 false ⇒ 那个框不再画 ✓。
+  //     ⚠️ **不是放宽**：从"两处都无条件画"改成"退货无条件画 + 补货按配置画"，
+  //       并且**新增**了更严的反向判据（`test/replenishTrimThreeFixes.test.js` AC-RP1：
+  //       **连字段名 / 标签都塞回即红** ✓）。
+  //     ⚠️ 顺带记一笔踩过的坑：注释里**抄一遍那两处代码原文**会让这个计数**凭空多出来**
+  //       （我第一版就在 `views/scanPageRenderer.js` 的注释里抄了 ⇒ 计数变 4 ⇒ 假红 ✗）
+  //       ⇒ 渲染层那段注释**刻意不抄代码原文** ✓。
+  assert.equal((viewSrc.match(/const purchaseAmountRowHtml = /g) || []).length, 1,
+    '那个片段仍**只有一处定义**（改一处两边一起变 ✓）');
+  assert.equal((viewSrc.match(/\$\{purchaseAmountRowHtml\(write\)\}/g) || []).length, 1,
+    '⭐ **退货**那一处仍是**无条件**的（逐字未动 ✓ 谁给它也加开关 ⇒ 红 ✓）');
+  assert.equal((viewSrc.match(/rp\.amountRow \? purchaseAmountRowHtml\(write\) : ''/g) || []).length, 1,
+    '⭐ **补货**那一处**按配置**决定画不画（缺省 false = 她这次要的终态 ✓）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

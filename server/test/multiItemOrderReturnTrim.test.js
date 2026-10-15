@@ -19,6 +19,16 @@
  *   ⑥ **AC-RT6**（防扩大范围）**补货那一块逐字不变**：三处照旧 + 按钮文案照旧 ✓
  *   ⑦ **AC-RT7** 探针：上面那几条检测器**真能红** ✓（不空跑）
  *
+ * ⭐⭐ 2026-10-16 **同日第二次成对迁移**（**她随后又点了补货那三处**，逐字：
+ *   「这个是**报货的页面，还是需要填写金额啊**，以及**不需要的文字说明给删除**，
+ *     **生成报货订单按钮文字改为补货**」）：
+ *   ⇒ 本文件第 ⑥ 节（AC-RT6 / AC-RT6b）原来钉的是『**补货那块逐字不变**（防扩大范围 ✗）』，
+ *     那个**前提**已经不成立（她**这一次**点的就是补货 ✓）⇒ 翻成『**补货也进精简档**』
+ *     （**不是删 / 不是放宽** ✗：那三处与旧按钮名从"必须有"翻成"必须没有" = **变强** ✓）。
+ *   ⚠️ **①~⑤ 与 ⑦ 一个字没动、仍逐字生效** ✓（退货那一半照旧 ✓）。
+ *   ⭐ 补货那三处的**独立强反向哨兵**（连字段名 / 标签都塞回即红 ＋ 范围哨兵）在
+ *     **新文件** `test/replenishTrimThreeFixes.test.js` ✓（AC-RP1..AC-RP6）。
+ *
  * ⚠️ 全部**只读**：纯函数渲染 + 一次**真路由**（express 监听 0 端口，不联网、不写任何 Base）✓
  */
 
@@ -175,30 +185,52 @@ test('AC-RT5b 🔴 她这次**没点**的几处一个字都不许动（尺码行
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ⑥ 防扩大范围：补货那一块**逐字不变**
+// ⑥ 范围：**退货**那一半逐字不变 —— ⭐⭐ 2026-10-16 **成对迁移**
+//
+//   改前逐字（本节的用意 = 「她这次**只点了退货** ⇒ 补货那块一个字不许动 ✗」）：
+//     · AC-RT6  『补货块里那句说明 / 那个标题 / 那句空态 **必须还在**』＋
+//                『补货那颗按钮文案照旧 = `生成报货订单`』；
+//     · AC-RT6b 『补货那一处**不传 mode**』（`multiItemBlockHtml(write, view)`）。
+//   改后逐字（依据 = **她 2026-10-16 又点了补货那三处**，逐字：
+//     「这个是**报货的页面，还是需要填写金额啊**，以及**不需要的文字说明给删除**，
+//       **生成报货订单按钮文字改为补货**」）：
+//     ⚠️ 那个"只动退货"的**前提**已经不成立了（她**这一次**点的就是补货 ✓）
+//       ⇒ 本节**翻成"补货也进精简档"**（**不是删掉判据、也不是放宽** ✗ ——
+//         补货那三处与旧按钮名**从"必须有"翻成"必须没有"** = **变强** ✓）。
+//     · AC-RT6  → 补货块：那三处**必须没有** ✓ ＋ 那颗按钮 = 「**补货**」✓；
+//     · AC-RT6b → 两处调用**各自显式传自己那一档** ✓（补货 `'replenish'` / 退货 `'return'`）。
+//   ⭐ 退货那一半的判据（AC-RT1..RT5）**一个字没动**、仍逐字生效 ✓；
+//     补货那三处的**强反向哨兵**（连字段名 / 标签都塞回即红）在**新文件**
+//     `test/replenishTrimThreeFixes.test.js`（AC-RP1 / AC-RP3 / AC-RP4 / AC-RP5）✓。
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-RT6 ⭐ 这一刀**只动退货**：补货那块的三处照旧（她没点它 ✗）', async () => {
+test('AC-RT6 ⭐ 补货那一块**也**进精简档了（她 2026-10-16 点了它 ⇒ 那三处必须没有 ＋ 按钮 = 「补货」）', async () => {
   const block = await fetchRealm('replenish');
-  assert.equal(block.includes(OLD_HINT), true, `补货块里那句说明必须还在 ✓：${OLD_HINT}`);
-  assert.equal(block.includes(OLD_TITLE), true, `补货块里那个标题必须还在 ✓：${OLD_TITLE}`);
-  assert.equal(block.includes(OLD_EMPTY), true, `补货块里那句空态必须还在 ✓：${OLD_EMPTY}`);
-  assert.equal(block.includes('multi-item__title'), true, '补货块里那个标题元素也在 ✓');
-  assert.equal(block.includes('data-view="multi-item-list"'), true, '补货块里那个列表元素也在 ✓');
-  // 补货那颗按钮照旧（她 2026-10-14 定的「生成报货订单」✓ 本刀一个字不动 ✗）
-  assert.match(block, /生成报货订单/, '补货那颗按钮文案照旧 ✓');
+  assert.equal(block.includes(OLD_HINT), false, `补货块里那句说明必须**删掉**（塞回即红 ✓）：${OLD_HINT}`);
+  assert.equal(block.includes(OLD_TITLE), false, `补货块里那个标题必须**删掉**（塞回即红 ✓）：${OLD_TITLE}`);
+  assert.equal(block.includes(OLD_EMPTY), false, `补货块里那句空态必须**删掉**（塞回即红 ✓）：${OLD_EMPTY}`);
+  assert.equal(block.includes('multi-item__title'), false, '那个标题元素也一起删 ✓');
+  assert.equal(block.includes('data-view="multi-item-list"'), false, '空的时候那个列表元素**整块不渲染** ✓');
+  // 改前逐字：`assert.match(block, /生成报货订单/, '补货那颗按钮文案照旧 ✓');`
+  // 改后逐字（依据 = 她 2026-10-16 逐字「**生成报货订单按钮文字改为补货**」）：
+  assert.equal(block.includes('生成报货订单'), false, '🔴 旧按钮名必须没有（塞回即红 ✓）');
+  assert.match(block, /补货<\/button>/, '补货那颗按钮文案 = 「补货」✓（配置里那一句 ✓）');
 });
 
-test('AC-RT6b 🔴 源码哨兵：`multiItemBlockHtml` 的**调用处**只按退货那一处传 `\'return\'`', () => {
+test('AC-RT6b 🔴 源码哨兵：`multiItemBlockHtml` 的**两处调用各自显式传自己那一档**', () => {
   const calls = RENDERER_SRC.match(/multiItemBlockHtml\(write, view[^)]*\)/g) || [];
+  // 改前逐字：`['multiItemBlockHtml(write, view)', "multiItemBlockHtml(write, view, 'return')"]`
+  //   （补货那一处**不传 mode** = 走缺省 = 那三句照旧画 ✗）
+  // 改后逐字：下面这一行（补货那一处**显式传** `'replenish'` ✓）
+  //   ⚠️ 依据 = 她 2026-10-16 逐字（补货页要删那三句）；**缺省档本身没动** ✓
+  //     （`mode` 缺省 `''` 仍是老形状 ⇒ AC-RT7 的探针照旧靠它 ✓）
   assert.deepEqual(calls,
-    ['multiItemBlockHtml(write, view)', "multiItemBlockHtml(write, view, 'return')"],
-    '补货那一处**不传 mode**（走缺省 = 逐字不变 ✓）；退货那一处传 `\'return\'` ✓ —— '
-    + '把补货也传上 ⇒ 红（那是扩大范围 ✗）');
+    ["multiItemBlockHtml(write, view, 'replenish')", "multiItemBlockHtml(write, view, 'return')"],
+    '补货 / 退货各自显式传自己那一档 ✓ —— 谁把补货那一处改回"不传"（= 又画那三句）⇒ 红 ✓');
   // 配置一处定义：那三句中文只该在 **config** 里（渲染层不许散写 ✗）
   assert.equal(RENDERER_SRC.includes(OLD_HINT), false, '渲染层不许散写那句说明 ✗（走配置 ✓）');
   assert.equal(RENDERER_SRC.includes(OLD_EMPTY), false, '渲染层不许散写那句空态 ✗（走配置 ✓）');
-  assert.equal(MULTI_ITEM_RENDER_TEXTS.hint, OLD_HINT, '配置里那句说明**仍在**（补货还要用 ✓ 只删渲染 ✓）');
+  assert.equal(MULTI_ITEM_RENDER_TEXTS.hint, OLD_HINT, '配置里那句说明**仍在**（一处定义 ✓ 只是两块都不渲染它 ✓）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
