@@ -31,7 +31,7 @@
 - 协议 §6 的「已没人用但故意保留」清单（`purchaseArrivalIntake.js` / `purchaseSizeReader.js` / `writeTargetGuard.js`）
   **一条都没进"待删"** ✓；代码注释里点名"故意留着"的（`features/common` + `config/home.js`、`finance/douyin/platform`、
   `paymentMethodsService`、`v1WorkbenchService.getSalesReport/getTodaySales`…）同样**只进"保留"** ✓。
-- 她点名的**占位 / 待开发 / 等她定**项（采购订单列表 · 供应商往来款 · 供应商名录 · 库存手工调整 · 销售订单列表 ·
+- 她点名的**占位 / 待优化 / 待开发 / 等她定**项（采购订单列表 · 供应商往来款 · 供应商名录 · 库存手工调整【她 2026-10-15 改口径 = **待优化**】· 销售订单列表 ·
   客户往来款）**一条都没进"待删"** ✓（见 §6）。
 - **没有**用「`grep` 0 命中」单独定案：`.env.example` 的 43 个"字面量 0 读取点"里，**31 个**被查出是
   按前缀动态读的（**活的**：`SALES_MISSING_INFO_*` 28 + `PURCHASE_GROUP_NOTICE_*` 3），
@@ -71,7 +71,7 @@
 | 环节 | 架构上的形态 |
 | --- | --- |
 | 分析 | 查询类**外链**飞书多维表格 AI 页面（不自建接口）；订单列表这类"要处理"的才自建 |
-| 处理 | 验收（扫码验收 + 采购页「验收」子 tab）· 售后（退换货）· 订单列表的单条操作（交付/收款/售后/二次交付）· 库存手工调整（**待开发**） |
+| 处理 | 验收（扫码验收 + 采购页「验收」子 tab）· 售后（退换货）· 订单列表的单条操作（交付/收款/售后/二次交付）· 库存手工调整（**待优化**） |
 | 查询 | 工作台订单列表（自建）· 销售查询 / 全仓查询 / 客户往来款 / 供应商往来款 / 供应商名录（**外链**） |
 | 分发 | 每天 9 点待处理单推送（群）· 采购群提醒 · 销售卡片 · 事件心跳自检 |
 
@@ -132,7 +132,7 @@
 | 架构项 | 现有实现 | 状态 |
 | --- | --- | --- |
 | 订单列表 / 交付 / 收款 | `routes/workbench.js` + `services/workbenchOrderActionService.js` + `workbenchOrderSections.js` + `workbenchOrdersCache.js` + `config/workbenchOrders.js` + `config/orderReadRetry.js` | ✅ 齐 |
-| 人工库存调整（**待开发** = 方案未定） | `routes/workbenchInventoryAdjustment.js` + `services/inventoryAdjustmentService.js` + `config/inventoryAdjustment.js`（**现有实现**） | ⚠️ 她口径是"待开发/方案未定" ⇒ 现状与口径有差（**不是死代码**，见 §6） |
+| 人工库存调整（**待优化**：她 2026-10-15 确认「可以是待优化」⇒ 代码里**已有一套内嵌实现** ✓ 不是死代码 ✗；issue #595） | `routes/workbenchInventoryAdjustment.js` + `services/inventoryAdjustmentService.js` + `config/inventoryAdjustment.js`（**现有实现**） | ⭐ 她 2026-10-15 改口径 = 「**可以是待优化**」⇒ **不再有"口径 vs 现状"的差**：现有内嵌实现就是它的底子，要做的是**优化**（落点 issue #595 ✓），**不是死代码** ✗ |
 | 采购查询 | `routes/purchaseQuery.js` + `services/purchaseQueryService.js` + `services/workbenchPurchaseArrivalService.js` + `config/workbenchArrival.js` | ✅ 齐 |
 | 老的销售/库存查询（已删接口） | `services/v1WorkbenchService.js` 的 `getSalesReport`/`getTodaySales` **刻意保留、无生产调用方**（`controllers/workbenchController.js:29` 注释点名） | ✅ 保留（协议 §6 同源） |
 
@@ -259,7 +259,7 @@
 
 | # | 项 | 事实（证据） | 为什么我不拍 |
 | --- | --- | --- | --- |
-| 1 | **`Dockerfile` + `.dockerignore`** | 部署**实际走** PM2 + Nginx（`scripts/deploy_run.sh` 读 `ecosystem.config.js`、`ops/nginx/**`）；`Dockerfile` 只被 `README.md:56`/`AGENTS.md:129` 的**目录树注释**提到，**CI/脚本都不用它**。⚠️ `.dockerignore` 里还有两条**指向不存在路径**的忽略项（`.trae`、`server/test_feishu.js` ⇒ 两个都不在仓库里） | 「怎么部署」是她的地盘；而且万一她哪天要容器化，删了就白删 |
+| 1 | ~~**`Dockerfile` + `.dockerignore`**~~ ⭐ **她 2026-10-15 已同意删除 ⇒ 已执行**；容器化入口不再存在，部署仍走 PM2 + Nginx ✓ | 部署**实际走** PM2 + Nginx（`scripts/deploy_run.sh` 读 `ecosystem.config.js`、`ops/nginx/**`）；`Dockerfile` 只被 `README.md:56`/`AGENTS.md:129` 的**目录树注释**提到，**CI/脚本都不用它**。⚠️ `.dockerignore` 里还有两条**指向不存在路径**的忽略项（`.trae`、`server/test_feishu.js` ⇒ 两个都不在仓库里） | 「怎么部署」是她的地盘；而且万一她哪天要容器化，删了就白删 |
 | 2 | **`config/modules.js` + `config/modules.shared.js` + 根 `config/module-manifest.json` + `scripts/generate_modules.js` + `npm run generate:modules`（＋`test/modules.test.js`、`test/moduleGeneration.test.js`）** | 整条链**生产零消费者**：`MODULES` / `getModuleDefinition` / `normalizeModule` 在 `server/src` 里**没有任何 require 点**（唯一 require 者 = `test/modules.test.js`）；`generate_modules.js` 的唯一产物 `modules.shared.js` 也只被 `modules.js` 用。它服务的是 **`/api/sync` 时代**的"模块化录入字段映射"（`docs/handoff.md:300` 已记：「`/api/sync` 时代遗留、已无读取方的 … 以及 `MODULES[*].sync` 段，仍留在仓库里」） | **协议 §7 说"测试里的引用 = 被使用"** ⇒ 按判据它不是死代码；要删必须**连 2 个测试 + 生成器 + manifest 一起删**，这是"要不要留一套历史录入映射"的产品决定 |
 | 3 | **`supabase/migrations/**`（3 个 SQL）** | `init_tables.sql` / `add_feishu_token.sql` / `add_anomaly_fields.sql`：全仓**零代码/CI/Dockerfile 引用**；`README.md:53`/`AGENTS.md:126` 把它标成「**历史**数据库迁移脚本」；`docs/handoff.md:295` 提到它是退役小程序的遗留 | 它确实是历史留档，但"留档要不要留"她说了算（删了 git 历史里也还在） |
 | 4 | **根目录 `手机里跟-AI-助手聊天-需求说明-2026-10-08.md`** | 文里**自己写着**：「⚠️ 这是**个人工具接入**需求，**与 feishu-retail-ops 业务项目无关** —— 不要改动那个仓库的业务代码与生产数据」 | 它是"误放进业务仓"的**个人需求文档** ⇒ 建议挪走/删除，但**不许我替她处理文档归属** |
@@ -325,7 +325,7 @@
 | 采购 · 供应商往来款（`purchase-supplier-money`） | **占位** | `:217-221` `kind:'placeholder'` ✓ | ✅ 保留 |
 | 采购 · 供应商名录（`purchase-suppliers`） | **后续外链**（她给链接） | `:226-239` `kind:'links'` + `directJump` → `config/links.js` 的 `SUPPLIER_DIRECTORY_URL` ⇒ **已实现** | ✅ 保留 |
 | 库存 · 全仓查询（`inventory-all`） | **已外链** | `:153-159` `kind:'query'` ✓ | ✅ 保留 |
-| 库存 · 手工调整（`inventory-adjust`） | **待开发**（方案未定 ⇒ issue #595） | `:161-170` `kind:'inventory-adjustment'` ⇒ **已有内嵌实现**（`features/inventory/adjustment.js` + 后端 `inventoryAdjustmentService`） | ⚠️ **口径 vs 现状有差**：她有"方案未定"的口径、代码里已有一套 ⇒ **要她定**（是不是就是她要的那套），**绝不当死代码** |
+| 库存 · 手工调整（`inventory-adjust`） | **待优化**（她 2026-10-15 确认「可以是待优化」；内嵌实现**已在** ⇒ issue #595） | `:161-170` `kind:'inventory-adjustment'` ⇒ **已有内嵌实现**（`features/inventory/adjustment.js` + 后端 `inventoryAdjustmentService`） | ⭐ 她 2026-10-15 改口径 = 「可以是**待优化**」⇒ **不再有"口径 vs 现状"的差**：这套内嵌实现就是它的底子，要做的是**优化**（issue #595）⇒ **绝不当死代码** ✗ |
 | 销售 · 订单列表（`sales-orders`） | **等她定改法** ⇒ issue #602 | `:91-97` `kind:'orders'`（自建） | ✅ 保留 |
 | 销售 · 客户往来款（`sales-customer-money`） | **后续外链** | `:109-114` `kind:'placeholder'` ✓ | ✅ 保留 |
 | 销售 · 配品（`sales-accessory`） | 入口改**跳飞书表单**（task-20） | `:124-126` `kind:'links'`（已改成跳表单 ✓ 见 #618） | ✅ 保留（**已完成**） |
@@ -378,7 +378,7 @@
 | --- | --- | --- | --- |
 | 1 | **零风险清理** | 待删-1（坏 script 行）· 待删-2（12 个孤儿键）· 待删-3（1 个死方法） | 极低（判据迁移表已确认"能力另有承载"） |
 | 2 | **模板补全** | §7.3 里"值得补"的那批键 + `PRIVATE_CHAT_DISABLED_NOTICE_*` | 低（只动 `.env.example` 注释与默认值） |
-| 3 | **要她定**（逐项问） | Dockerfile/.dockerignore · `modules` 生成链 · `supabase/` · 根个人需求 md · 一次性脚本/探针 | 需要她逐条点头 |
+| 3 | **要她定**（逐项问） | ~~Dockerfile/.dockerignore~~（她 2026-10-15 已同意删除 ⇒ 已执行 ✓）· `modules` 生成链（已删 ✓）· `supabase/`（已删 ✓）· 根个人需求 md · 一次性脚本/探针 | 需要她逐条点头 |
 | 4 | **不属本次审计** | 架构待做项（§6：领域顺序 / 一单多货品 / 补货退货异步 / 合并卡片） | 是**新功能**，另开任务 |
 
 ---
