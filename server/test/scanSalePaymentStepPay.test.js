@@ -70,6 +70,14 @@ const view = () => ({
 
 const withServer = async (app, run) => {
   const server = await new Promise((resolve) => { const i = app.listen(0, () => resolve(i)); });
+  // ⭐⭐ 2026-10-15（task-16 · T-3）：**测试服务器不保持 keep-alive 空闲连接** ——
+  //   根因（实测复现见 `test/stabilityRepro.cjs`）：内置 `fetch`（undici）按 origin 池化 socket；
+  //   本助手每开一个用例起一个 `listen(0)` 临时服务器、收尾 `server.close()` ⇒ 那条池化 socket
+  //   在**临时端口被 OS 复用**给下一个用例的服务器时会被重新挑中 ⇒ 对端不识这个连接 ⇒ RST
+  //   ⇒ `TypeError: fetch failed` / `cause: read ECONNRESET`（**不是**断言错）。
+  //   设 `keepAliveTimeout = 1` 后响应一完连接就关（实测：响应后 20ms 服务器上 0 条连接）⇒ 池里没有死 socket ✓
+  //   🔴 只改这一行启动参数：任何用例的**判据一个字都没动** ✗（去掉它 ⇒ 复现脚本那 40/40 又回来）
+  server.keepAliveTimeout = 1;
   const base = `http://127.0.0.1:${server.address().port}`;
   try { return await run(base); } finally {
     await new Promise((resolve) => server.close(resolve));

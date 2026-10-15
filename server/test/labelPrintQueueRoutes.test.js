@@ -88,6 +88,15 @@ const buildHarness = (patch = {}) => {
 
 const withServer = async (app, run) => {
   const server = await new Promise((resolve) => { const instance = app.listen(0, () => resolve(instance)); });
+  // ⭐⭐ 2026-10-15（task-16 · T-3）：**测试服务器不保持 keep-alive 空闲连接** ——
+  //   根因（实测复现见 `test/stabilityRepro.cjs`，AC-R4 那一次偶发就是这个）：
+  //   内置 `fetch`（undici）按 origin 池化 socket；本助手每个用例起一个 `listen(0)` 临时服务器、
+  //   收尾 `server.close()`（**下面那句 `closeAllConnections()` 救不了这一条** —— 实测 40/40 照旧红）
+  //   ⇒ 那条池化 socket 在**临时端口被 OS 复用**给下一个用例的服务器时会被重新挑中
+  //   ⇒ 对端不识这个连接 ⇒ RST ⇒ `fetch failed` / `cause: read ECONNRESET`（**不是**断言错）。
+  //   ⚠️ 它**不影响**下面的 SSE 长连接收尾：`keepAliveTimeout` 只在**响应结束之后**才计时。
+  //   🔴 只加这一行启动参数：任何用例的**判据一个字都没动** ✗
+  server.keepAliveTimeout = 1;
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
     return await run(base);
