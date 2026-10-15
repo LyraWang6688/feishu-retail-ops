@@ -1375,10 +1375,24 @@ const multiItemBlockHtml = (write, view = {}, mode = '') => {
   //     ⇒ 已加那几件的数量**只能靠这个字段带走**（不然点一下"加"，前面加的就全丢 ✗）。
   //   🔴 为什么首件的 `entries` 仍是空：本次表单的尺码/数量由**路由在提交时合并进首件**
   //     （`mergeFirstItemEntries` 是**赋值**语义 ⇒ 只生效一次、**不会翻倍** ✓ —— 既有判据不放宽 ✗）。
+  //   🔴🔴 **必须把"当前这一件"从已加列表里排掉**（改前逐字：`const payload = wired ? [first, ...already] : [first];`）
+  //     —— 因为 `view.multi_items` 是**草稿里的全部 items**（`routes/scanPage.js` 的
+  //     `readMultiItemPending` 只拿到 `(openId, chain)`，**它不知道"当前是哪一件"** ⇒ **排不掉** ✗；
+  //     那段注释里写的"由路由半保证不含当前这一件"**当时并没有实现**）。
+  //     ⇒ 不排的话，当前这件会在载荷里**出现两次**：首件（她刚填的）＋ 草稿那份**旧的**
+  //       ⇒ 提交时 `addItem` 按顺序跑、**后写的赢** ⇒ 她刚填的尺码/数量被**静默覆盖成旧值** ✗✗
+  //       （`test/multiItemCurrentItemDup.test.js` 用**真引擎**把这条证了一遍 ✓）；
+  //       而且"同一个货品出现两次"还会让 `groups.length` 平白多 1（本该 N=1 的那一单被当成多货品 ✗）。
+  //   ⚠️ **列表照旧画全部 `already`**（她刚加的那一件**必须看得见** ✓ —— 只排**载荷**、不排列表 ✗）。
+  //   ⚠️ 身份取不到（空串）⇒ **一个都不排**：宁可让引擎按 `product_missing` 当场拒单，也别误删别人 ✗。
+  //   ⚠️ 身份口径**与引擎 `productKeyOf` 同一条优先级**（`product_record_id` → `number` → `item_no`）✓。
+  const keyOf = (item) => String(
+    (item || {}).product_record_id || (item || {}).number || (item || {}).item_no || '',
+  ).trim();
+  const currentKey = keyOf(first);
+  const others = currentKey ? already.filter((item) => keyOf(item) !== currentKey) : already;
   //   ⚠️ 接线关 ⇒ 逐字仍是 `[first]`（既有判据 AC-MIR1 读的就是它 ✓ 零迁移 ✓）。
-  //   ⚠️ `view.multi_items` **由路由半保证"不含当前这一件"**（当前这件就是首件 ✓）——
-  //     否则提交时 `addItem` 会拿草稿旧 entries 覆盖她刚填的 = **静默丢值** ✗。
-  const payload = wired ? [first, ...already] : [first];
+  const payload = wired ? [first, ...others] : [first];
   // 🔴 说明那一段 + 标题：**精简档（退货 / 补货）不渲染**（她那句"不必要的文字提示"）✓
   //   ⚠️ 拼法上把"删掉的行"做成**整行**（不是行内空串）—— 空串留在模板里会多出空行，
   //     "删掉"就应该是**那一行不在**（也让她截图里不会看到一段莫名的空隙 ✓）。
