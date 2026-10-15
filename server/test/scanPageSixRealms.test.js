@@ -355,8 +355,15 @@ test('AC-6R3 认不出的 ?from=（含已退役的 purchase）⇒ 回落销售�
   const accessoryPage = renderScanPage(VIEW, SCAN_PAGE,
     { ...WRITE, accessories: [{ record_id: 'acc_1', name: '腰带' }] }, 'accessory');
   assert.equal(accessoryPage.includes('realm-block--accessory'), false, '扫码页不再有配品块 ✓（已搬去工作台 ✓）');
-  assert.equal(blockOf(purchaseReturn, 'purchase_return').includes('data-view="purchase-return"'), true,
-    '退货那一块照旧在（她从一开始就要的退货表单 ✓）');
+  // 改前逐字（本行）：
+  //   assert.equal(blockOf(purchaseReturn, 'purchase_return').includes('data-view="purchase-return"'), true,
+  //     '退货那一块照旧在（她从一开始就要的退货表单 ✓）');
+  // 改后逐字：下面这两行（**改指向、不放宽** ✓）
+  // 依据：业务负责人 **2026-10-16 真机截图 + 逐字**「退货那个确实点击了之后确实是出现了表单，
+  //   但是那个**退货按钮为什么还有呢，不需要了**」⇒ 退货块的 `<details data-view="purchase-return">`
+  //   折叠壳（连同 `<summary>`）**已整块退场** ✗ ⇒ 判据改钉**退货表单本身**的稳定标记 ✓
+  assert.equal(blockOf(purchaseReturn, 'purchase_return').includes('data-return-sizes-field'), true,
+    '退货那一块照旧在（折叠壳没了 ✓ 但**退货表单**还在 ✓）');
   // ⚠️ 2026-10-13 **改写**（逐字）：
   //   改前：`assert.ok(blockOf(purchaseReturn, 'purchase_return').includes('生成采购退货'));`
   //   改后：**不再断言它**（这一块现在是**配品页**）；改钉「空态不留空 div + 是人话卡」。

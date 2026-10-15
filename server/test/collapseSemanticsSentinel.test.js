@@ -38,12 +38,29 @@ test('① 一键补货 `one-tap-replenish`：🔴 **默认收起是她的口径*
   assert.equal(tags.length, 1, '恰一处（改结构 ⇒ 红 ✓）');
   assert.equal(/\sopen(\s|>)/.test(tags[0]), false,
     '🔴 它**就该是收起**（她 2026-10-16：「补货不用动，因为补货和退货的页面不一样」）⇒ 加 open ⇒ 红 ✓');
+  // ⭐ **闭合标签也要在**（2026-10-16 晚收尾补 · 反向哨兵）—— `tagsOf` 只看**开始标签**，
+  //   少一个 `</details>` 它抓不到：WIP 那一版就把 `</details>` **删错了地方**
+  //   （退货块的没删、**补货块的被删了** ✗）—— 判据取**这一块自己的模板**
+  //   （从它那个 `<details>` 到**本块**的 `</section>`）⇒ 别处有闭合标签**顶不了** ✓
+  const stripped = strip(RAW_SCAN);
+  const at = stripped.indexOf('<details class="disclosure" data-view="one-tap-replenish">');
+  assert.notEqual(at, -1, '开始标签要在（结构变了 ⇒ 红 ✓）');
+  assert.equal(stripped.slice(at, stripped.indexOf('</section>', at)).includes('</details>'), true,
+    '🔴 这一块**自己**的 `</details>` 必须在（少一个 ⇒ 标签不闭合 ⇒ 红 ✓；塞到别处也顶不了 ✓）');
 });
 
-test('① 退货 `purchase-return`：**展开**（task-47 口径：她不该多点那一次 ✗）', () => {
+test('① 退货 `purchase-return`：**已不再是折叠块**（0 处 `<details>` ⇒ 表单恒可见 ✓ 没有折叠状态可言）', () => {
+  // 改前逐字（task-47 那一刀的判据）：
+  //   const tags = tagsOf(RAW_SCAN, 'data-view="purchase-return"');
+  //   assert.equal(tags.length, 1, '恰一处 ✓');
+  //   assert.equal(/\sopen(\s|>)/.test(tags[0]), true, '去掉 open ⇒ 首屏又只剩一颗「退货」⇒ 红 ✓');
+  // 改后逐字：下面这三行
+  // 依据：业务负责人 **2026-10-16 真机截图 + 逐字**「退货那个确实点击了之后确实是出现了表单，
+  //   但是那个**退货按钮为什么还有呢，不需要了**」—— 上一刀已加 `open`（表单首屏可见 ✓）
+  //   ⇒ 那颗实心通栏 `<summary>` 连同 `<details>` 包壳**一起去掉** ✓
+  // 🔴 反向哨兵：把 `<details data-view="purchase-return">` 塞回来 ⇒ `tags.length` 变 1 ⇒ **红** ✓
   const tags = tagsOf(RAW_SCAN, 'data-view="purchase-return"');
-  assert.equal(tags.length, 1, '恰一处 ✓');
-  assert.equal(/\sopen(\s|>)/.test(tags[0]), true, '去掉 open ⇒ 首屏又只剩一颗「退货」⇒ 红 ✓');
+  assert.equal(tags.length, 0, '退货块**不该再有 `<details>`** ✗（塞回即红 ✓）');
 });
 
 test('① 特殊码折叠 `size-fold`：**条件**展开（`${open}` —— 不许改成固定收起/展开 ✗）', () => {

@@ -1451,16 +1451,32 @@ const returnFormHtml = (view, write) => {
   //      —— `<details>` **默认收起** ⇒ 首屏**只剩那颗 `<summary>`**：实心主色、通栏
   //      （:215 「.disclosure__summary」= background var(--primary) + color var(--surface)），
   //      文案 = v.purchaseReturn = **「退货」** ⇒ 她看到的就是「**一颗退货按钮**」✓，点它才展开出表单 ✓
-  //   ✅ **改后逐字**：`<details class="disclosure" data-view="purchase-return" open>`
-  //      —— 加 **`open`** ⇒ **进退货 tab 首屏即见**尺码清单 + 整单金额 + 「生成采购退货」✓
-  //      （保留 `<details>` 语义 ✓ 零 JS ✓；**只加一个属性**，领域条样式一个字没动 ✓）
-  //   **依据**：她 2026-10-16 逐字 ＋ 代码级根因（本行 ；Lead 2026-10-16 批准「加 open」✓）
-  //   ⚠️ 「一键补货」那个同形的 `<details>`（下面 one-tap-replenish）**这一刀不动** ✗（Lead 另去问她 ✓）
-  //   **判据**：`test/returnBlockFirstScreen.test.js`（去掉 open ⇒ 红 ✓）
+  //   ✅ **2026-10-16 晚 改后逐字（本刀）**：**去掉 `<details>` / `<summary>` 包壳**，表单直接渲染 ——
+  //      改前逐字：`<details class="disclosure" data-view="purchase-return" open>` + 下一行
+  //                 `<summary class="disclosure__summary">${escapeHtml(v.purchaseReturn)}</summary>`
+  //      改后逐字：**这两行都删掉**（`<section class="card">` 外层保留 ✓，`<form …>` 紧跟其后 ✓）
+  //      **依据**：她 2026-10-16 真机截图 + 逐字「退货那个确实点击了之后确实是出现了表单，
+  //        但是那个**退货按钮为什么还有呢，不需要了**」—— 上一刀加了 `open` ⇒ 表单**已经首屏可见** ✓
+  //        ⇒ 那颗实心通栏 `<summary>`（写着「退货」）就**纯多余**了 ✗（她还以为要多点一下 ✓）
+  //      **判据**：`test/returnBlockFirstScreen.test.js`（塞回 `<details>`/`<summary>` ⇒ 红 ✓）
+  //   ⭐⭐ **定位标记 `data-view="purchase-return"` 迁到 `<form>` 上**（**只去折叠壳、不动标记** ✓）：
+  //      全仓有 6+ 处用例拿它当"退货表单从哪开始"的**锚**（例：`html.indexOf('data-view="purchase-return"')`）
+  //      ⇒ 标记一起删掉会得到 `indexOf === -1` 的空切片 —— 那是**静默假绿** ✗（比红更坏）
+  //      ⇒ 标记留在语义相同的位置（**退货表单那一元素**上）✓ 那些用例一个字都不用改 ✓
+  //   ⚠️ 「一键补货」那个同形的 `<details>`（下面 one-tap-replenish）**这一刀不动** ✗
+  //   🔴 **2026-10-16 晚 收尾（标签配对 · 改前逐字 → 改后逐字 → 依据）**：
+  //      改前逐字（WIP 那一版把 `</details>` **删错了地方**）：补货块 `</form>` 之后**少了** `</details>` ✗，
+  //        而本函数 `</form>` 之后**多留了一个** `</details>` ✗（开始标签已删、闭合标签还在 ⇒ 标签不配对）
+  //      改后逐字：`</details>` **还给补货块**（`</form>` 后一行，与 WIP 前逐字一致 ✓）；
+  //        本函数 `</form>` 后那个 `</details>` **删掉**（退货块**一个 `<details>` 标签都不剩** ✓）
+  //      依据：本刀的口径是「**只去退货那一个折叠壳**」＋「**补货块一个字不动**」
+  //        ⇒ 开始标签与闭合标签必须**同进同出**；`</section>` 虽然能让浏览器容错补上，
+  //          但源码不再逐字可信，且"删错了那一个"正是最该被拦住的错 ✗
+  //      判据：`test/collapseSemanticsSentinel.test.js` ①（补货块**自己**的 `</details>` 必须在 ⇒ 少一个即红 ✓）
+  //        ＋ `test/returnBlockFirstScreen.test.js` AC-RF1a（退货块里 `</details>` 也不许有 ✓）
   return `<section class="card">
-<details class="disclosure" data-view="purchase-return" open>
-<summary class="disclosure__summary">${escapeHtml(v.purchaseReturn)}</summary>
 <form method="post" action="${escapeHtml(write.postAction)}" class="write-form"
+data-view="purchase-return"
 data-return-sizes-field="${escapeHtml(fields.returnSizes)}"
 data-return-qty-prefix="${escapeHtml(fields.returnQuantityPrefix)}"
 data-return-max-sizes="${escapeHtml(String(returnConfig.maxSizes))}"
@@ -1479,7 +1495,6 @@ ${sizes.length ? `${purchaseAmountRowHtml(write)}
 ${multiItemBlockHtml(write, view)}
 <button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.returnButton)}</button>` : ''}
 </form>
-</details>
 </section>`;
 };
 
