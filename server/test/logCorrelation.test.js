@@ -195,6 +195,17 @@ test('correlationFields：只放行白名单里的业务键，其余（含疑似
     //    只有逐笔的 `payment_record_id` 才能把 `bitable.record.updated` 对回那一条收款明细；
     //    `settle_day` = 她点的那一行（卡面上一行就是一个结算日）。
     'payment_record_id', 'settle_day',
+    // ⭐⭐ 2026-10-15（task-48 b「一次点击 → 一次写入」贯穿）—— **改前逐字 → 改后逐字 → 依据**：
+    //   改前逐字：上面 7 个键（到 `'settle_day'` 为止）
+    //   改后逐字：多一个 `'tap_id'`
+    //   依据：`tap_id` **不是新造的名字** —— 它是**既有**点击埋点那一套的关联键
+    //        （唯一真源 `src/config/uiTap.js` 的 `fields.tapId`，2026-10-14 晚 P0 ② 定的：
+    //         「同一次点击的 beacon 与它后面那笔写请求带的是**同一个** tap_id」）。
+    //        这次只是让**写库日志也能带上它**，好把 `ui.tap.result` 与
+    //        `bitable.record.created/updated` / `v1.sale.posted` 用**同一个 id** 串起来 ✓
+    //   ⚠️ 本断言**没有放宽**：仍然是**逐字 deepEqual**（多一个键就得有人来这里改一次 ✓），
+    //      而且下面「混进来的可疑键」那一段**一个都没删** ✓。
+    'tap_id',
   ]);
 
   const picked = correlationFields({
@@ -203,8 +214,12 @@ test('correlationFields：只放行白名单里的业务键，其余（含疑似
     sales_entry_record_id: 'rec_sale',
     batch_no: '202610071',
     purchase_batch_record_id: 'rec_purchase_batch',
+    tap_id: 'tap-20261015-1',
     // ⛔ 已经退场的那个键：**混进来也必须被拒**（白名单里没有它了）。
     purchase_report_record_id: 'rec_purchase_report_retired',
+    // ⛔ task-48：任务书里建议的**另一个名字**（`client_tap_id`）**故意混进来** ⇒ 必须被拒 ✓
+    //    （同一个东西两个名字会让 `grep '"tap_id":…'` 串不起整条链 ⇒ 理由写在 correlationFields.js 里）
+    client_tap_id: 'tap_should_never_be_logged_under_this_name',
     // 下面这些**故意**混进来：白名单是"以后谁顺手塞了密钥"的唯一一道闸门。
     app_secret: 'cli_secret_should_never_be_logged',
     authorization: 'Bearer xyz',
@@ -217,7 +232,11 @@ test('correlationFields：只放行白名单里的业务键，其余（含疑似
   assert.deepEqual(picked, {
     task_id: 'sale_om_1', order_no: 'XSD-20261007-0004', sales_entry_record_id: 'rec_sale',
     batch_no: '202610071', purchase_batch_record_id: 'rec_purchase_batch',
+    // ⭐ 2026-10-15（task-48 b）：**唯一**新增的那一个键（既有 `fields.tapId` 的名字，不新造 ✓）
+    tap_id: 'tap-20261015-1',
   });
+  // ⛔ 混进来的那个**另一个名字**（`client_tap_id`）必须被拒 ⇒ 白名单里没有它 ✓
+  assert.equal(JSON.stringify(picked).includes('client_tap_id'), false, '不许出现第二个名字 ✗');
   assert.equal(JSON.stringify(picked).includes('secret'), false, '密钥不许出现在日志字段里');
   assert.equal(JSON.stringify(picked).includes('stock_key'), false, '非白名单键一个都不许进');
 });
