@@ -31,22 +31,31 @@ export function entryTarget(template, rawNumber) {
  * ⭐ 2026-10-10（业务负责人真机反馈：「下面的这些文字解释就不用了」）：
  *    卡片**只留标题 + 动作** —— 那句副标题（`desc`，例「供应商报货（飞书表单）—— 填完直接生成报货单」）
  *    **一个字都不再渲染**（配置里的 `desc` 字段也一并退场，免得将来又长回来）。
+ *
+ * ⭐⭐ 2026-10-16（业务负责人**亲口**点的三处改动之三 · 逐字）：
+ *    她问「那两行箭头**是否就是多余的，点开入口卡片就可以实现跳转吧**」——
+ *    核实结论：**是多余的** ✓。配了 `href` 的卡整张就是 `<a>`（见下面 `cardsHtml`）⇒
+ *    箭头那行只是"快点这里"的提示语，卡片本体早就可点。
+ *    ⇒ 渲染层改成：**只有配置里显式给了 `arrow` 才画那一行**（缺省 = 不画 ✗ 不再补
+ *      `'打开 →'` / `'进入 →'` 的默认值 —— 那个默认值会让"删掉箭头"变成"换成另一句箭头"，
+ *      等于没删 ✓）。⚠️ 卡片的 `href` / `jumpTo` / 可点性**一个字没变** ✗。
  */
 const cardBody = (card, arrow) => `
         <div class="icon">${escapeHtml(card.icon || '')}</div>
-        <h3>${escapeHtml(card.title || '')}</h3>
-        <div class="arrow">${escapeHtml(arrow)}</div>`;
+        <h3>${escapeHtml(card.title || '')}</h3>${arrow ? `
+        <div class="arrow">${escapeHtml(arrow)}</div>` : ''}`;
 
 /**
  * 卡片组：`href` = 外链 / 工作台内页；`jumpTo` = 同一个 tab 里的另一个子页。
  * ⚠️ 2026-10-10：`anchor`（本页锚点）与内嵌宿主**整层退场** —— 「验收到货」已经是独立子页，
  *    报货 / 退货页上只剩"去飞书表单"的外链卡（她：「不应该是一点完之后在同一个 tab 页里下面出现」）。
+ * ⚠️ 2026-10-16：`arrow` 缺省 = **不画那一行**（不再有默认动作文案，见 `cardBody` 上方）。
  */
 export function cardsHtml(cards = []) {
   return cards.map((card) => (card.jumpTo
-    ? `<button class="entry-card card-button" type="button" data-jump="${escapeHtml(card.jumpTo)}">${cardBody(card, card.arrow || '打开 →')}
+    ? `<button class="entry-card card-button" type="button" data-jump="${escapeHtml(card.jumpTo)}">${cardBody(card, card.arrow)}
       </button>`
-    : `<a class="entry-card" href="${escapeHtml(card.href || '')}" rel="noopener">${cardBody(card, card.arrow || '进入 →')}
+    : `<a class="entry-card" href="${escapeHtml(card.href || '')}" rel="noopener">${cardBody(card, card.arrow)}
       </a>`)).join('\n');
 }
 

@@ -284,7 +284,12 @@ export const DOMAIN_TABS = [
         //      跳转仍走既有表单提交 ⇒ **不新开页面、不新开接口** ✓
         numberPicker: true,
         fieldLabel: '编号 / 货号',
-        placeholder: '编号（货号|颜色|类别）或货号，例如 XHB8095',
+        // ⭐⭐ 2026-10-16（业务负责人**亲口**点的三处改动之一 · 逐字）：
+        //   改前逐字：'编号（货号|颜色|类别）或货号，例如 XHB8095'
+        //   改后逐字：'输入货号，例如 XHB8095'
+        //   依据：她 2026-10-16 的工作台 · 货品（domains 页）截图 + 逐字 ——
+        //     ⇒ **只换 `placeholder` 整句** ✓；⚠️ **标题（`fieldLabel`）与下拉选项文字一个字不动** ✗。
+        placeholder: '输入货号，例如 XHB8095',
         buttonLabel: '选择编号打印 →',
         links: [
           {
@@ -298,13 +303,22 @@ export const DOMAIN_TABS = [
             //      **不是**她点名 AppLink ✗。
             title: '扫码打印',
             href: '/workbench/label-print.html?scan=1',
-            arrow: '去扫码打印 →',
+            // ⭐⭐ 2026-10-16（业务负责人**亲口**点的三处改动之三 · 逐字）：
+            //   改前逐字：这里有一行 `arrow: '去扫码打印 →'`
+            //   改后逐字：**整行删掉**（下面这颗也一样：`arrow: '打开标签打印页 →'` 整行删掉）
+            //   依据：她 2026-10-16 逐字「**是否就是多余的，点开入口卡片就可以实现跳转吧，
+            //     需要你实际核对一下代码**」＋ 只读核实的证据（**卡片本体自己就能跳**）：
+            //     · `features/domains/pages.js` 的 `cardsHtml`（:47–:50）：配了 `href` 的卡
+            //       渲染成 `<a class="entry-card" href="…" rel="noopener">` ⇒ **整张卡就是那个链接**
+            //       （`base.css` 的 `.entry-card` 铺满卡面、`workbenchMobileVisual.test.js:114` 钉着它）；
+            //     · 换句话说那行箭头**只是一句"快点点我"的提示语**，卡片本体早就可点 ⇒ 多余 ⇒ 删。
+            //   ⚠️ **只删这两行箭头** ✗ —— 卡片的 `href` / `icon` / `title` 一个字不动，
+            //      **跳转能力零变化**（`workbenchFourTabs.test.js` AC2e 仍钉着两颗 href 逐字）。
           },
           {
             icon: '🖨️',
             title: '批量打印',
             href: '/workbench/label-print.html',
-            arrow: '打开标签打印页 →',
           },
         ],
       },
