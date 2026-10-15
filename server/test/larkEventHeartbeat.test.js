@@ -201,8 +201,18 @@ test('业务事件处理器会记一次业务心跳；没注入心跳时静默�
 // ── GET /api/lark/events/health ─────────────────────────────────────────────
 
 const withServer = async (app, run) => {
+  // ⭐⭐ 2026-10-15 task-25（#600）：**必须绑 `127.0.0.1`，不能绑通配地址** ——
+  //   改前逐字：`app.listen(0, () => resolve(instance))`（Node 默认绑 `::` 通配）。
+  //   根因（本机实测，诊断脚本 `EMPTY_BODY_DIAG=1 node test/larkHeartbeatEmptyBodyRepro.cjs`）：
+  //   macOS 上**桌面应用**（现场抓到的是 Electron / `DoubaoWor` = 豆包桌面端）会占住
+  //   `127.0.0.1:<某临时端口>`；而通配地址的监听能与它**共存**（不同地址范围）⇒ 客户端按
+  //   `http://127.0.0.1:<port>` 发请求时，内核把连接交给**更具体的那个** `127.0.0.1` 监听者（= 别人的应用）
+  //   ⇒ 测试拿到别人应用的 **404 + 空 body** ⇒ `response.json()` 抛
+  //   `SyntaxError: Unexpected end of JSON input`（就是那条偶发 ✗）。
+  //   绑 `127.0.0.1`（与客户端同一个地址）后：内核不会把已被 `127.0.0.1` 占用的端口再分给我们，
+  //   请求一定打到**本用例的服务器**上 ✓（实测：改前 404/空 body → 改后 200 + 正确 JSON）。
   const server = await new Promise((resolve) => {
-    const instance = app.listen(0, () => resolve(instance));
+    const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
   });
   // 2026-10-15 task-17：测试服务器不保持 keep-alive（根因与实测见 test/stabilityRepro.cjs）
   server.keepAliveTimeout = 1;

@@ -52,6 +52,9 @@ test('AC-P1 凡起临时服务器的用例文件都必须 `server.keepAliveTimeo
     `这些文件起了临时服务器却没有 \`keepAliveTimeout = 1\`（端口一复用就会偶发 ECONNRESET ✗）：`
     + `${JSON.stringify(offenders)} —— 修法见 test/stabilityRepro.cjs；`
     + `确有理由不设的，请在文件里写一行 \`// ${EXEMPT_MARKER} <理由>\``);
-  // 豁免清单也钉住：目前**一个都没有**（将来真要豁免，改这一行等于显式过一遍 review ✓）
-  assert.deepEqual(exempt.sort(), [], '当前不该有豁免；有的话把理由写进 PR 并更新这条断言');
+  // 豁免清单也钉住（**新增豁免 = 显式过一遍 review**）：目前只有一个 ——
+  //   `larkHeartbeatEmptyBodyRepro.cjs` 要**对照** `keepAliveTimeout` 三档（1/默认/0）才能证明
+  //   "空 body 与 keepAliveTimeout 无关"（task-25 · #600）⇒ 它不能一律设 1。
+  assert.deepEqual(exempt.sort(), ['larkHeartbeatEmptyBodyRepro.cjs'],
+    '豁免要逐个写明理由（文件里要有 `// keep-alive-exempt: <理由>`）并把这里一起更新');
 });
