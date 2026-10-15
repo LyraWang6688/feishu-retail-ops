@@ -248,3 +248,4 @@
 | [workbench-two-tabs-and-external-query-2026-10-08.md](workbench-two-tabs-and-external-query-2026-10-08.md) | 工作台：3 个 tab → 2 个 tab ＋「信息查询」两个板块 = 飞书多维表格**外链**（2026-10-08） |
 | [扫码页访问控制-2026-10-11.md](扫码页访问控制-2026-10-11.md) | 扫码页（标签二维码）的访问控制 —— 2026-10-11 实测结论 |
 | [扫码页销售-操作说明书.md](扫码页销售-操作说明书.md) | 扫码页 · 销售 操作说明书 |
+| [test-base-voucher-column-2026-10-16.md](test-base-voucher-column-2026-10-16.md) | 测试 Base 补「团购券管理」列 —— 留档（**建列失败** + 闸门代码 + 未核项 ✓） |
