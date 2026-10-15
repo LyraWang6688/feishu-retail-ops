@@ -328,8 +328,13 @@ const createScanSessionService = (options = {}) => {
    */
   const saveSaleProgress = async (openId, patch) => {
     const session = await ensure(openId);
-    const next = await store.update(session[sessionConfig.idField], touch({
-      sale: { ...(session.sale || {}), ...patch },
+    // ⭐⭐ 2026-10-15（⑨b-2）：**合成点在 store 的锁内**（基于**最新**记录）——
+    //   改前是"先在锁外读一份 `session`，再把它整份拼进 patch" ⇒ 那一份可能是**旧快照**，
+    //   写回来就会把别人刚改的字段覆盖掉 ✗（实测：后台那一跑的 `{lines}` 写把路由刚设的
+    //   `paymentStep:'created'` 冲回 `'pending'` ⇒ 她扫下一个标签又看到「整单付款」页 ✗）。
+    //   ⚠️ 其它键的合并语义**逐字不变**（`{...(最新).sale, ...patch}`）✓ 同步路径行为一个字没变 ✓。
+    const next = await store.update(session[sessionConfig.idField], (current) => ({
+      sale: { ...(current.sale || {}), ...patch },
     }));
     return next;
   };
@@ -341,25 +346,29 @@ const createScanSessionService = (options = {}) => {
    */
   const completeSale = async (openId, { key, result }) => {
     const session = await ensure(openId);
-    const sale = session.sale || {};
-    const completed = [...(sale.completed || []), { key, ...result }].slice(-5);
-    const next = await store.update(session[sessionConfig.idField], touch({
-      sale: {
-        ...sale,
-        key: keyFor(
-          sessionConfig.saleKeyPrefix, session[sessionConfig.idField], (sale.seq || 1) + 1,
-        ),
-        seq: (sale.seq || 1) + 1,
-        status: sessionConfig.statuses.submitted,
-        lines: [],
-        master_record_id: '',
-        order_no: '',
-        detail_ids: [],
-        payment_ids: [],
-        last_error: '',
-        completed,
-      },
-    }));
+    // ⭐⭐ 2026-10-15（⑨b-2）：同上 —— **在 store 的锁内、基于最新记录**合成，
+    //   不再拿锁外那份旧快照整份写回（那正是"标记被冲回 pending"的根因 ✓）。
+    const next = await store.update(session[sessionConfig.idField], (current) => {
+      const sale = current.sale || {};
+      const completed = [...(sale.completed || []), { key, ...result }].slice(-5);
+      return {
+        sale: {
+          ...sale,
+          key: keyFor(
+            sessionConfig.saleKeyPrefix, session[sessionConfig.idField], (sale.seq || 1) + 1,
+          ),
+          seq: (sale.seq || 1) + 1,
+          status: sessionConfig.statuses.submitted,
+          lines: [],
+          master_record_id: '',
+          order_no: '',
+          detail_ids: [],
+          payment_ids: [],
+          last_error: '',
+          completed,
+        },
+      };
+    });
     return next;
   };
 

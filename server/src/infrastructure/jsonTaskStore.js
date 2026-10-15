@@ -81,12 +81,22 @@ class JsonTaskStore {
     }
   }
 
-  async update(recordId, patch) {
+  async update(recordId, patchOrMutator) {
     // ⭐⭐ 2026-10-13：「读 → 改 → 写」**整体**在同一个 id 的互斥里跑 ✗ 不许三步之间被插队 ✓
+    //
+    // ⭐⭐ 2026-10-15（⑨b-2）：**patch 也可以是一个函数** `(current) => next` ——
+    //   在**锁内、基于刚刚读到的最新记录**合成 ⇒ 调用方**不必**自己在外面先读一份
+    //   （那样读到的是**旧快照**，写回来就会把别人刚改的字段**覆盖掉** ✗）。
+    //   ⚠️ 这是 `saveSaleProgress` 那条丢更新（后台写把路由刚设的 `paymentStep:'created'`
+    //     冲回 `'pending'`）的**根因修复**：合成点必须在锁内 ✓
+    //   ⚠️ 传对象时行为**逐字不变**（`{...current, ...patch}`）⇒ 既有调用方一个字不用改 ✓
     return this._serializeWrite(recordId, async () => {
       const current = await this.get(recordId);
       if (!current) throw new Error(`任务不存在: ${recordId}`);
-      const next = { ...current, ...patch, updated_at: new Date().toISOString() };
+      const computed = typeof patchOrMutator === 'function'
+        ? await patchOrMutator(current)
+        : patchOrMutator;
+      const next = { ...current, ...computed, updated_at: new Date().toISOString() };
       await writeFileAtomic(this._filePath(recordId), JSON.stringify(next, null, 2));
       return next;
     });

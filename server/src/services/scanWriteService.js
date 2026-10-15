@@ -181,12 +181,38 @@ const createScanWriteService = (options = {}) => {
   const scheduleSaleRest = ({ openId, requestId, salesEntryRecordId, orderNo, correlation, restInput }) => {
     const startedAt = Date.now();
     const timeoutMs = Number(saleAsync.backgroundTimeoutMs) || 0;
+    // ⭐⭐ 2026-10-15（⑨b-2）：**后台那一跑也要打 timing**（观测不缩水）——
+    //   与她那次请求打的是**同一个事件名** `scan.sale.timing`，只多一个 `phase` 标记
+    //   （取值走 `config.timing.phase.background` ✓ 不散写字符串 ✗）。
+    //   ⇒ 「明细 / 收款 / 库存」每段耗时**照旧看得见**（转后台不等于日志断档 ✗）。
+    const timing = {};
+    const logTiming = (result, durationMs) => {
+      logInfo(config.events.saleTiming, {
+        request_id: requestId,
+        phase: config.timing?.phase?.background || 'background',
+        ok: result?.ok === true,
+        code: result?.code || '',
+        order_no: result?.order_no || orderNo,
+        reused: result?.reused === true,
+        partial: result?.code === 'sale_partial_failed',
+        sales_entry_record_id: salesEntryRecordId,
+        // 后台这一跑自己的墙钟（含排队等前面那次写 ✓ 与 request 段同一套读法）
+        submit_ms: durationMs,
+        queue_wait_ms: Number(timing.queue_wait_ms) || 0,
+        lookup_ms: Number(timing.lookup_ms) || 0,
+        prepare_ms: Number(timing.prepare_ms) || 0,
+        master_ms: Number(timing.master_ms) || 0,
+        status_ms: Number(timing.status_ms) || 0,
+        detail_ms: Number(timing.detail_ms) || 0,
+        stock_ms: Number(timing.stock_ms) || 0,
+      });
+    };
     // ⭐⭐ 2026-10-15（⑰b-1）：这一跑的句柄**当作返回值交出去**（见下面 `background`）——
     //   它的用途只有一个：**让调用方"等后台那一跑跑完"** ✓（用例回读端状态前先 await 它）；
     //   ⚠️ 它**不是页面字段** ✗：路由渲染只取它本来就认识的那几个（`paidPayload` 里那一批），
     //     所以句柄**不会**进 HTML（有用例钉住 ✓）。
-    return Promise.resolve()
-      .then(() => submitSale({ ...restInput, noDefer: true, requestId }))
+    return trackSaleBackground(Promise.resolve()
+      .then(() => submitSale({ ...restInput, noDefer: true, requestId, timing }))
       .then(async (result) => {
         const durationMs = Date.now() - startedAt;
         if (result?.ok) {
@@ -196,6 +222,7 @@ const createScanWriteService = (options = {}) => {
             duration_ms: durationMs, request_id: requestId,
             ...(timeoutMs && durationMs > timeoutMs ? { over_timeout_ms: timeoutMs } : {}),
           });
+          logTiming(result, durationMs);
           // ⭐ 2026-10-15（⑰b-2）：**把后台那一跑的结果作为句柄的解析值** ⇒
           //   "等它跑完"的人拿到的就是**端状态齐了之后的那一份** ✓（用例回读时不必改断言 ✓）
           return result;
@@ -205,6 +232,8 @@ const createScanWriteService = (options = {}) => {
           code: result?.code || '', reason: result?.message || '',
           duration_ms: durationMs, request_id: requestId,
         });
+        // 🔴 失败那条也打 timing：**卡在哪一段**正是这条日志最有用的时候（不许只在成功时打 ✗）
+        logTiming(result, durationMs);
         await markSaleWriteFailed({ salesEntryRecordId, correlation, requestId });
         return result;
       })
@@ -213,8 +242,10 @@ const createScanWriteService = (options = {}) => {
           sales_entry_record_id: salesEntryRecordId, order_no: orderNo,
           error: String(error?.message || error), duration_ms: Date.now() - startedAt, request_id: requestId,
         });
+        logTiming({ ok: false, code: 'sale_background_threw', order_no: orderNo },
+          Date.now() - startedAt);
         await markSaleWriteFailed({ salesEntryRecordId, correlation, requestId });
-      });
+      }));
   };
 
   /** 后台那一跑没写成 ⇒ 主表那一列如实落「写入失败」（**不许假成功** ✗）。 */
@@ -1687,10 +1718,40 @@ const createScanWriteService = (options = {}) => {
   };
 };
 
+/**
+ * ⭐⭐ 2026-10-15（⑨b-2）：**"在飞的后台那一跑"的登记簿** —— 只为一件小事：
+ *   让**HTTP 级**用例在回读**端状态**之前，能**确定性地**等到后台那一跑跑完。
+ *
+ * 为什么必须有它：`scanSaleE2E` 那条 E2E 是**打真实路由**的（`postForm`）⇒ 页面上
+ *   拿不到 `result.background` 句柄（那是**服务调用方**才看得到的东西，见上面那段注释）
+ *   ⇒ 用例"提交完就读表"会读到**后台还没写完**的那一刻 ⇒ 端状态断言假红。
+ * 🔴 **不是**"为测试放宽判据"：判据一个字没改，只是**先等它跑完**再读 ✓
+ *   （等价于"同步那一次"的时序 ⇒ 端状态断言与改前**逐字同形**）。
+ * ⚠️ **不用轮询**：轮询靠真实计时器，本机降速时会 flake（这一夜实测过）✗ ⇒ 这里等的是**真 Promise** ✓。
+ * ⚠️ 它只是**登记簿**（加入/移除各一行），不影响任何写入语义、幂等或返回值 ✓。
+ */
+const pendingSaleBackgrounds = new Set();
+const trackSaleBackground = (promise) => {
+  pendingSaleBackgrounds.add(promise);
+  const done = () => pendingSaleBackgrounds.delete(promise);
+  promise.then(done, done);
+  return promise;
+};
+
+/** 等到**当前所有在飞的后台那一跑**都跑完（空则立即返回）。用例专用入口 ✓ */
+const waitForPendingSaleBackgrounds = async () => {
+  // 反复取快照：后台那一跑自己也可能再排一个 ⇒ 循环到空为止（不会漏、也不会死循环）
+  while (pendingSaleBackgrounds.size) {
+    await Promise.allSettled([...pendingSaleBackgrounds]);
+  }
+};
+
 module.exports = {
   createScanWriteService,
   createSalesEntryWithOrderNo,
   // ⭐ 2026-10-12：只读引用缓存（白名单 + TTL）。**导出只为用例能直接钉它**：
   //    去重 / 白名单外一律直通 / 写方法原样透传 —— 这三条是"绝不影响写入判据"的证据。
   createReadOnlyReferenceCache,
+  // ⭐⭐ 2026-10-15（⑨b-2）：等"在飞的后台那一跑"跑完（HTTP 级用例回读端状态前用）✓
+  waitForPendingSaleBackgrounds,
 };

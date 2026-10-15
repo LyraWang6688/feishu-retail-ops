@@ -1200,7 +1200,15 @@ const createScanPageRouter = (options = {}) => {
         const payPending = (paySession?.sale?.paymentStep || paySession?.paymentStep) === 'pending';
         let createdResult = null;
         // ⭐ 这一步的墙钟起点（打点用 ✓ 见下面那条 `scan.sale.timing`）
+        //   ＋ ⭐⭐ 2026-10-15（⑨b-2）：**打点载体**要**留一个名字** —— 写服务把各分段**写进传进去的
+        //   这个对象**（`submitSale({ timing })` ✓），而它**不把 timing 放回返回值** ✗。
+        //   改前逐字：`timing: {}` 传进去、打点时却读 `createdResult.timing?.master_ms`
+        //     ⇒ 取到 `undefined` ⇒ **七个分段全是 0**（`payment_pay` 这条**她最常走**的路上
+        //       "卡在哪一步"其实**一直打不出来** ✗ —— 与"每个关键节点都要有日志"冲突）。
+        //   改后逐字：`timing: payStepTiming` 传进去、打点时读 `payStepTiming.*` ⇒ **真的数** ✓。
+        //   🔴 **只改读取口**：事件名 / 字段名 / 形状一个都没变 ✗，也不影响任何写入判据 ✓。
         const payStepStartedAt = Date.now();
+        const payStepTiming = {};
         if (payPending) {
           const pendingLines = Array.isArray(paySession?.sale?.lines) ? paySession.sale.lines : [];
           const pendingInfo = paySession?.sale?.submitPending || paySession?.submitPending || {};
@@ -1310,7 +1318,7 @@ const createScanPageRouter = (options = {}) => {
             lineAmounts: pendingLineAmounts,
             paymentStatus: pendingPaymentStatus,
             paidAmount: pendingPaidAmount,
-            timing: {},
+            timing: payStepTiming,
             pendingLine: pendingView?.found ? {
               productRecordId: pendingView.product_record_id,
               number: pendingView.number,
@@ -1345,6 +1353,9 @@ const createScanPageRouter = (options = {}) => {
         if (createdResult) {
           logInfo(writeConfig.events.saleTiming, {
             request_id: requestId,
+            // ⭐⭐ 2026-10-15（⑨b-2）：**她那次请求**这一段（`request`）—— 与后台那一跑
+            //   **同一事件名**、靠 `phase` 分得清（取值走配置 ✓ 不散写字符串 ✗）。
+            phase: writeConfig.timing.phase.request,
             ok: createdResult.ok === true,
             code: createdResult.code || '',
             order_no: createdResult.order_no || '',
@@ -1353,13 +1364,13 @@ const createScanPageRouter = (options = {}) => {
             lines: Number(createdResult.detail_count) || 0,
             // ⚠️ 这一步的墙钟（含排队等前面的写 —— 她连点 14 次时这一段会明显变大 ✓）
             submit_ms: Math.max(0, Date.now() - payStepStartedAt),
-            queue_wait_ms: Number(createdResult.timing?.queue_wait_ms) || 0,
-            lookup_ms: Number(createdResult.timing?.lookup_ms) || 0,
-            prepare_ms: Number(createdResult.timing?.prepare_ms) || 0,
-            master_ms: Number(createdResult.timing?.master_ms) || 0,
-            status_ms: Number(createdResult.timing?.status_ms) || 0,
-            detail_ms: Number(createdResult.timing?.detail_ms) || 0,
-            stock_ms: Number(createdResult.timing?.stock_ms) || 0,
+            queue_wait_ms: Number(payStepTiming.queue_wait_ms) || 0,
+            lookup_ms: Number(payStepTiming.lookup_ms) || 0,
+            prepare_ms: Number(payStepTiming.prepare_ms) || 0,
+            master_ms: Number(payStepTiming.master_ms) || 0,
+            status_ms: Number(payStepTiming.status_ms) || 0,
+            detail_ms: Number(payStepTiming.detail_ms) || 0,
+            stock_ms: Number(payStepTiming.stock_ms) || 0,
           });
         }
         // ⭐ 建单成功 ⇒ 记下"她刚在销售里干过活" ✓（下次**裸扫**默认还回销售 ✓）
@@ -1536,6 +1547,8 @@ const createScanPageRouter = (options = {}) => {
         if (skipCreated) {
           logInfo(writeConfig.events.saleTiming, {
             request_id: requestId,
+            // ⭐⭐ 2026-10-15（⑨b-2）：同上（`request` 段；后台那一段由写服务自己打 ✓）。
+            phase: writeConfig.timing.phase.request,
             ok: skipCreated.ok === true,
             code: skipCreated.code || '',
             order_no: skipCreated.order_no || '',
@@ -1690,6 +1703,8 @@ const createScanPageRouter = (options = {}) => {
         //    就能看出"这一次提交卡在哪一段"，不必再靠猜。
         logInfo(writeConfig.events.saleTiming, {
           request_id: requestId,
+          // ⭐⭐ 2026-10-15（⑨b-2）：她那次请求这一段（后台那一跑另打一条，同事件名 + `phase`）。
+          phase: writeConfig.timing.phase.request,
           ok: result.ok === true,
           code: result.code || '',
           order_no: result.order_no || '',

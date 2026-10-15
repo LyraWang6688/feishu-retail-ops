@@ -83,6 +83,8 @@ const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_WRITE, PAYMENT_STATUS } = require('../src/config/scanWrite');
 const { createScanWriteService } = require('../src/services/scanWriteService');
+// ⭐⭐ 2026-10-15（⑨b-2）：等"在飞的后台那一跑"跑完（HTTP 级用例回读端状态前用）✓
+const { waitForPendingSaleBackgrounds } = require('../src/services/scanWriteService');
 const { createScanSessionService } = require('../src/services/scanSessionService');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { PurchaseWebhookService } = require('../src/services/purchaseWebhookService');
@@ -791,11 +793,22 @@ test('⑧ 路由：加入本单 → 回跳带上"本单几双"；提交整单 �
         }).toString(),
       });
       assert.equal(submitted.status, 200);
+      // ⭐⭐ 2026-10-15（⑨b-2）：提交已改成**异步**（单号先出、余下转后台）⇒ 先**确定性地等后台跑完**
+      //   再断端状态（判据一条没放宽 ✓ 只是时序与"同步那一次"对齐 ✓）。
+      await waitForPendingSaleBackgrounds();
       const doneHtml = await submitted.text();
-      assert.match(doneHtml, /您的提交已成功/);
-      assert.match(doneHtml, /XSD-\d{8}-\d{4}/);
-      assert.match(doneHtml, /明细：1 双/);
-      assert.match(doneHtml, /接着扫下一款就可以开新的一单。/);
+      // ⭐⭐ 2026-10-15（⑨b-2）**成对翻新**（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.match(doneHtml, /您的提交已成功/);`
+      //            `assert.match(doneHtml, /明细：1 双/);`
+      //            `assert.match(doneHtml, /接着扫下一款就可以开新的一单。/);`
+      //   改后逐字：只断言**她逐字那一句 + 真单号**，并**明确断言那三样都不在**
+      //            （她：「**其余文字不需要**」）✓
+      //   依据：她 2026-10-15 逐字「**统一文字改成：本单已创建成功（单号），其余文字不需要**」——
+      //     异步那一刻明细**还没写完** ⇒ 结果页**不可能**也不该报「明细：1 双」✗
+      //     （明细那一半改由下面**端状态**断言覆盖 ✓ 覆盖没缩水）。
+      assert.match(doneHtml, /本单已创建成功（XSD-\d{8}-\d{4}）/, '结果页给她逐字那一句 + 真单号');
+      assert.equal(/您的提交已成功|明细：\d+ 双|接着扫下一款/.test(doneHtml), false,
+        '异步那一刻只给她那一句，其余文字都不要 ✗（她逐字）');
       assert.equal(entriesOf(h.gateway, 'salesEntry').length, 1);
       const methodField = V1_BITABLE_SCHEMA.tables.paymentRecord.fields.method;
       assert.equal(entriesOf(h.gateway, 'paymentRecord')[0].fields[methodField][0], 'pm_cash');

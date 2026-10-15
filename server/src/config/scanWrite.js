@@ -325,14 +325,15 @@ const SALE = Object.freeze({
   //   ⇒ 配置先行：开关 / 那句话 / 后台看门狗超时 **全部可配** ✓（不散写 if-else ✗）。
   //   ⚠️ 那句话**销售与配品共用**（一处配置 ✓）；`{orderNo}` 占位用**真单号**填 ✓（拿不到就不编 ✗）。
   asyncWrite: Object.freeze({
-    // 🔴 **默认 `false`**（有意的！—— Lead 2026-10-15 的硬约束）：
-    //   异步一旦默认开着，后台写失败会让她看到「**未完成，可点重试**」，
-    //   而**重试入口还没做**（那是第二刀）⇒ 她会**卡在"点不了的重试"**，
-    //   比现在（同步报错、能重交）**更坏** ✗。
-    //   ⇒ 本刀（⑰a）**行为零变化**（默认走老同步路径 ✓）；
-    //     **第二刀（⑰b）才把它翻成 `true`**（那时重试入口已就位 ✓）。
-    //   ⚠️ 写成 `=== true` 才算"开"（显式布尔；空串 / 未设 ⇒ 关 ✓）。
-    enabled: readFlag(process.env, 'SCAN_SALE_ASYNC_WRITE_ENABLED', false),
+    // ⭐⭐ **2026-10-15（⑨b-2）：默认翻成 `true`** —— 她这才**真正看到异步**（单号先出立刻回）。
+    //   为什么现在才翻（历史顺序，别再翻回去 ✗）：
+    //     · ⑨a 默认刻意 `false`：那时后台写失败会让她看到「**未完成，可点重试**」，
+    //       而**重试入口还没做** ⇒ 她会卡在"点不了的重试"，比同步报错**更坏** ✗；
+    //     · ⑨b-1（#568/#569/#570）**重试入口已就位**（工作台 `POST /api/workbench/sales/retry`
+    //       + UI「未完成，可点重试」）⇒ 翻开关的前置条件成立 ✓。
+    //   ⚠️ 仍是**显式布尔**（`readFlag`）：显式 `SCAN_SALE_ASYNC_WRITE_ENABLED=false` / 空串 ⇒ **关** ✓；
+    //      **不许**写 `||` 兜底（那样"清空变量"关不掉 ✗ —— 本仓被这条坑过）。
+    enabled: readFlag(process.env, 'SCAN_SALE_ASYNC_WRITE_ENABLED', true),
     doneBodyTemplate: readString(
       process.env, 'SCAN_SALE_ASYNC_DONE_BODY', '本单已创建成功（{orderNo}）',
     ),
@@ -853,6 +854,25 @@ const EVENTS = Object.freeze({
 });
 
 /**
+ * ⭐⭐ 2026-10-15（⑨b-2）：`scan.sale.timing` 的**阶段标记**（`phase`）—— **配置先行** ✓ 不散写字符串 ✗。
+ *
+ * 为什么要有它：异步之后**同一次提交被劈成两段** ——
+ *   · `request` 段：她点按钮那一次（会话/校验 + 建主表 + 单号 + 确认状态）⇒ **单号一出立刻回**；
+ *   · `background` 段：**后台那一跑**（同一把 `submitKey` 的续写：明细 / 收款 / 库存）。
+ * 🔴 硬口径（业务负责人 + 本仓《长期工程原则》）：「**每个关键流程节点都要有日志和可排查路径**」
+ *    ⇒ **转后台不等于看不见** —— 后台那一段**照旧**打一条**同一事件名** `scan.sale.timing`
+ *      （`detail_ms` / `stock_ms` 那些每段耗时照旧在 ✓），只是多一个 `phase` 把两段分开。
+ *    ⚠️ **事件名不新开**（她按 `scan.sale.timing` grep 一次就能把两段都收齐 ✓）。
+ * ⚠️ 取值可配（`SCAN_SALE_TIMING_PHASE_*`）：换一个叫法**不必改代码** ✓。
+ */
+const TIMING = Object.freeze({
+  phase: Object.freeze({
+    request: readString(process.env, 'SCAN_SALE_TIMING_PHASE_REQUEST', 'request'),
+    background: readString(process.env, 'SCAN_SALE_TIMING_PHASE_BACKGROUND', 'background'),
+  }),
+});
+
+/**
  * ⭐⭐ 2026-10-12：**只读引用数据的进程内短缓存**（提交链路提速 —— 她真机收过 504 网关超时）。
  *
  * 起因（线上量级实测）：一趟"提交这一单"会打 **47 次飞书调用**，其中相当一部分是
@@ -891,6 +911,8 @@ const SCAN_WRITE = Object.freeze({
   acceptance: ACCEPTANCE,
   texts: TEXTS,
   events: EVENTS,
+  // ⭐⭐ 2026-10-15（⑨b-2）：`scan.sale.timing` 的两段标记（`request` / `background`）—— 配置先行。
+  timing: TIMING,
 });
 
 /** `{name}` 占位符替换（与 `config/scanPage.js` 同一套规则：缺的值用 `—` 顶，不留空段）。 */
@@ -913,6 +935,7 @@ module.exports = {
   REPLENISH,
   PURCHASE_RETURN,
   ACCEPTANCE,
+  TIMING,
   TEXTS,
   EVENTS,
   fillText,

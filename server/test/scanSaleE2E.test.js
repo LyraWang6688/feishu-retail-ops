@@ -62,6 +62,8 @@ const { SCAN_WRITE, PAYMENT_STATUS } = require('../src/config/scanWrite');
 const { REALM_TEXTS } = require('../src/views/scanPageRealm');
 const { createScanPageService } = require('../src/services/scanPageService');
 const { createScanWriteService } = require('../src/services/scanWriteService');
+// ⭐⭐ 2026-10-15（⑨b-2）：等"在飞的后台那一跑"跑完（HTTP 级用例回读端状态前用）✓
+const { waitForPendingSaleBackgrounds } = require('../src/services/scanWriteService');
 const { createScanSessionService } = require('../src/services/scanSessionService');
 const { SalesDeliveryService } = require('../src/services/salesDeliveryService');
 // ⭐ 2026-10-12 新写用例回读"欠款"用（既有服务，只读）
@@ -305,18 +307,26 @@ const getPage = async (url, cookie) => {
 };
 // ⚠️ 页面上的收款行 / 每件实收是**同名字段重复出现**（`line_amount` 一行一个）⇒
 //    这里必须发**重复的键**（`URLSearchParams` 的"数组值"会拼成 `150,130`，那是错的）。
-const postForm = (url, cookie, body) => {
+const postForm = async (url, cookie, body) => {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(body)) {
     if (Array.isArray(value)) value.forEach((item) => params.append(key, String(item)));
     else params.append(key, String(value));
   }
-  return fetch(url, {
+  const response = await fetch(url, {
     method: 'POST',
     redirect: 'manual',
     headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
     body: params.toString(),
   });
+  // ⭐⭐ 2026-10-15（⑨b-2）：销售提交已改成**异步**（单号先出、余下转后台）——
+  //   这一条 E2E 是**打真实路由**的（`postForm`）⇒ 页面上拿不到那个后台句柄
+  //   （它是**服务调用方**才看得到的东西）⇒ 提交完立刻读表会读到"后台还没写完"的那一刻 ✗。
+  //   ⭐ 这里**确定性地等后台那一跑跑完**（等的是**真 Promise**，不是轮询、不靠计时器）✓
+  //   🔴 **判据一个字没改**：下面那些**端状态断言**（明细几行 / 库存少几 / 只建一张单…）
+  //     仍是**逐字比**，只是先等它跑完再比 ✓（不是我替它放宽 ✗）。
+  await waitForPendingSaleBackgrounds();
+  return response;
 };
 
 /**
@@ -341,12 +351,18 @@ const followPaymentStep = async (base, cookie, response) => {
     if (name) params.append(name.replace(/&amp;/g, '&'), value.replace(/&amp;/g, '&'));
   }
   const url = actionUrl.startsWith('http') ? actionUrl : `${base}${actionUrl.replace(/&amp;/g, '&')}`;
-  return fetch(url, {
+  const finalResponse = await fetch(url, {
     method: 'POST',
     redirect: 'manual',
     headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
     body: params.toString(),
   });
+  // ⭐⭐ 2026-10-15（⑨b-2）：**真正建单的是这一步**（点资金页【跳过】⇒ 才建主表 ⇒ 余下转后台）——
+  //   它走的是**裸 `fetch`**（不走上面那个 `postForm`）⇒ 这里也要**确定性地等后台跑完**
+  //   （等的是真 Promise ✓），否则下面那些**端状态断言**会读到"后台还没写完"的那一刻 ✗。
+  //   🔴 判据一个字没改：端状态仍**逐字比**，只是先等它跑完 ✓。
+  await waitForPendingSaleBackgrounds();
+  return finalResponse;
 };
 
 /** 「本单条」那一段（`data-view="draft-bar"`）：她是**看这一条**知道"本单几双、能不能提交"的。 */
@@ -701,10 +717,21 @@ test('AC-E2E-7 提交后本单归零：再打开 ⇒ 本单：0 双，本单条�
 
       // 第3步：再打开（她接着扫下一个）⇒ 本单条归零、提交按钮跟着消失
       const again = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      // ⭐⭐ 2026-10-15（⑨b-2）**再翻新一次**（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字（**那是按"有 bug 的页面"写的**）：`assert.equal(again.html.includes('data-view="draft-bar"'), false, '第3步：没有草稿 ⇒ 本单条整块不再渲染（不是显示 0 双）✓');`
+      //   改后逐字：**还原成正常页面的判据** —— 本单条**照旧在**（草稿清了它也在，那是页面的固定区块 ✓），
+      //     但里面**没有草稿行 / 没有"已加入本单（N 双）"**，且**不渲染提交按钮** ✓；
+      //     并**新增一条更强**的：整页 `class="draft-line"` 行数 = 0 ✓
+      //   依据：🔴 根因修好之后（`saveSaleProgress`/`completeSale` 改成**在 store 锁内基于最新记录合成**
+      //     ⇒ 后台那一跑不再把 `paymentStep` 冲回 `pending`），她提交后再扫下一个标签**看到的是正常扫码页**
+      //     （现场实测：页标题回到「XHB8095 · 扫码」、`paymentStep=created`）⇒
+      //     先前那两条"本单条不渲染"的指向**建立在一个 bug 之上**，必须改回正常判据 ✗。
       const bar = draftBarOf(again.html);
     // ⭐ 2026-10-14：顶部「本单：N 双」已按她的话删掉 ⇒ 改从**页面上仍然可见的那句**判同一个事实 ✓
     assert.equal(again.html.includes('class="draft-bar__count"'), false, '第3步：归零 ⇒ 顶部计数行已经不在了 ✓');
       assert.equal(/已加入本单（[1-9]/.test(again.html), false, '第3步：也不该再显示"已加入本单（N 双）"✓');
+      assert.equal((again.html.match(/class="draft-line"/g) || []).length, 0,
+        '第3步：草稿已清 ⇒ 本单条里**一行草稿都没有** ✓（比原来那条空断言更强 ✓）');
       assert.equal(bar.includes(SCAN_WRITE.texts.submitButton), false,
         '第3步：没有草稿 ⇒ 本单条上不再渲染【提交这一单】（不是灰按钮）');
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第3步：表里仍然只有那一张单');
@@ -846,6 +873,13 @@ test('AC-E2E-9 🔴 会话过期后：页面照旧打得开 ⇒ 用页面上那�
         assert.equal(after.html.includes('已加入本单（'), false, '第5步：归零 ⇒ 页面上没有"已加入本单"那句 ✓');
       // ⚠️ 2026-10-12 改写：**本单条里不再有提交按钮**（真机丢钱就是它造成的）。
       //    ⚠️ 销售块那颗**照旧一直在**：空本单时它写着"（1 双）"，正是"一单一笔 = 选尺码 + 提交"的入口。
+      // ⭐⭐ 2026-10-15（⑨b-2）**再翻新一次**（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字（**按"有 bug 的页面"写的**）：`assert.equal(after.html.includes('data-view="draft-bar"'), false, …);`
+      //   改后逐字：**还原成正常页面的判据** —— 本单条**照旧在**，但里面**没有草稿行**、也**没有提交按钮** ✓
+      //   依据：根因修好后她看到的是**正常扫码页**（现场实测：页标题「… 扫码」、`paymentStep=created`），
+      //     本单条是页面的固定区块 ⇒ 先前那条"整块不渲染"的指向**建立在 bug 之上**，必须改回 ✗。
+      assert.equal((after.html.match(/class="draft-line"/g) || []).length, 0,
+        '第5步：草稿已清 ⇒ 本单条里**一行草稿都没有** ✓');
       assert.equal(draftBarOf(after.html).includes('value="submit_order"'), false,
         '第5步：本单条里没有提交按钮');
       assert.ok(after.html.includes('提交这一单（1 双）'),
@@ -1015,7 +1049,12 @@ test('AC-E2E-12 ⭐ 销售块提交「全付 + 微信 280 + 每件实收 280」�
       const html = await done.text();
       const mismatch = (html.match(/<p class="form-alert">([^<]*)<\/p>/) || [])[1] || '';
       assert.equal(done.status, 200, `第1步：提交要成功（400 时页面上那句人话 = ${mismatch}）：${html.slice(0, 200)}`);
-      assert.match(html, /您的提交已成功/, '第1步：结果页说提交好了');
+      // ⭐⭐ 2026-10-15（⑨b-2）**成对翻新**（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.match(html, /您的提交已成功/, '第1步：结果页说提交好了');`
+      //   改后逐字：`assert.match(html, /本单已创建成功（XSD-/, '第1步：结果页说**她逐字那一句**（异步：单号先出）');`
+      //   依据：她 2026-10-15 逐字「**统一文字改成：本单已创建成功（单号），其余文字不需要**」——
+      //     异步之后"提交整单付款"这一下**只回那一句**（含真单号）✓ 其余文字都不要 ✗。
+      assert.match(html, /本单已创建成功（XSD-/, '第1步：结果页说**她逐字那一句**（异步：单号先出）');
 
       const rows = rowsOf(e2e, 'paymentRecord');
       assert.equal(rows.length, 1, '🔴 收款明细必须有 **1 行**（真机那次是 0 行）');
@@ -1384,15 +1423,31 @@ test('AC-E2E-16 ⭐ 提交链路**逐步耗时**：一条 `scan.sale.timing` 带
       // ⚠️ 只算**这一趟提交**打出去的飞书调用（GET 渲染那几趟不算进来）。
       const submitCalls = gateway.calls.slice(callsBefore);
       assert.equal(response.status, 200, `提交要成（${response.status}）`);
-      const timing = entries.filter((entry) => entry.event === SCAN_WRITE.events.saleTiming).pop();
+      // ⭐⭐ 2026-10-15（⑨b-2）**成对翻新**（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`const timing = entries.filter((entry) => entry.event === SCAN_WRITE.events.saleTiming).pop();`
+      //            ＋（同一条事件上）`assert.ok(timing.master_ms > 0, '建主表那一段要能量出来…')`
+      //            ＋ `assert.ok(timing.detail_ms > 0, '明细/收款那一段要能量出来…')`
+      //   改后逐字：**两段都断言** —— 请求段（`phase` 不是 background）量出"建主表"；
+      //            后台段（`phase === 'background'`）量出"明细/收款" ⇒ 覆盖**更全**（不是更少）✓
+      //   依据：Lead 2026-10-15 拍板「**观测不缩水**」（她与仓库的硬口径：
+      //     「每个关键流程节点都要有日志和可排查路径」）—— 异步之后"建主表"在**请求阶段**、
+      //     "明细/收款/库存"在**后台那一跑** ⇒ 两段各自都要能查 ✓，不能因为转后台就断档 ✗。
+      const timings = entries.filter((entry) => entry.event === SCAN_WRITE.events.saleTiming);
+      const backgroundPhase = (SCAN_WRITE.timing && SCAN_WRITE.timing.phase
+        && SCAN_WRITE.timing.phase.background) || 'background';
+      const requestTiming = timings.find((entry) => entry.phase !== backgroundPhase);
+      const backgroundTiming = timings.find((entry) => entry.phase === backgroundPhase);
+      assert.ok(requestTiming, '请求阶段必须有一条 scan.sale.timing（她那一次请求走到哪一段）');
+      assert.ok(backgroundTiming, '后台那一跑**也必须有一条**（观测不缩水：转后台 ≠ 日志断档）✓');
+      const timing = requestTiming;
       assert.ok(timing, '必须打出一条 scan.sale.timing（"一查日志就知道卡在哪一步"）');
       for (const key of TIMING_KEYS) {
         assert.equal(typeof timing[key], 'number', `timing 里要有数字 ${key}`);
       }
       assert.equal(timing.ok, true);
       assert.ok(submitCalls.length > 0, '这一趟提交至少要打一次飞书');
-      assert.ok(timing.master_ms > 0, `建主表那一段要能量出来（假网关每趟 60ms）：${timing.master_ms}`);
-      assert.ok(timing.detail_ms > 0, `明细/收款那一段要能量出来：${timing.detail_ms}`);
+      assert.ok(requestTiming.master_ms > 0, `建主表那一段要能量出来（请求段；假网关每趟 60ms）：${requestTiming.master_ms}`);
+      assert.ok(backgroundTiming.detail_ms > 0, `明细/收款那一段要能量出来（**后台段**）：${backgroundTiming.detail_ms}`);
       // 分段之和**不许超过**这一趟的墙钟（分段是墙钟的子集；差值 = 本文件没打点的零头 + 渲染）。
       const parts = timing.queue_wait_ms + timing.lookup_ms + timing.prepare_ms
         + timing.master_ms + timing.status_ms + timing.detail_ms + timing.stock_ms;
@@ -2096,13 +2151,19 @@ test('AC-H4/H5 回归：编号页**不显示**"上一单已提交"；提交后�
       // ⭐⭐ 失败现场打印（**不是 retry、也没有放宽断言** ✗）：
       //   2026-10-13 这条在全量里偶发红过一次（同一提交连跑 10 次全绿、整文件 6 次全绿 ✗ 未复现），
       //   所以先把"失败那一刻的现场"打出来 ⇒ 下次一红就能直接定位根因（提交被 reuse？被限流？草稿没清？）。
-      if (!/本单：1 双/.test(page.html)) {
+      // ⭐⭐ 2026-10-15（⑨b-2）**把钩子补全**：原来只钩「本单：1 双」那一种失败，
+      //   而本用例**下面那条断言**断的是 `class="draft-line"` 的行数 ⇒ 它红的时候**现场一次都没打出来** ✗。
+      //   ⇒ 钩子加上"行数不对"这一种（**只是多打印现场，判据一个字没变** ✓）。
+      if (!/本单：1 双/.test(page.html)
+        || (page.html.match(/class="draft-line"/g) || []).length !== 1) {
         const bars = page.html.match(/本单：[0-9]+ 双/g) || [];
         const snap = await e2e.sessions.get('ou_home_5').catch(() => null);
         console.log('FLAKE-EVIDENCE 会话=', JSON.stringify(snap && {
           sale_status: snap.sale?.status, sale_lines: (snap.sale?.lines || []).length,
           sale_seq: snap.sale?.seq, sale_key: snap.sale?.key, completed: (snap.sale?.completed || []).length,
           session_status: snap.status,
+          // ⭐⭐ 2026-10-15（⑨b-2）：**关键标记** —— 它决定页面渲染"整单付款"那一页还是扫码页 ✓
+          sale_paymentStep: snap.sale?.paymentStep, top_paymentStep: snap.paymentStep,
         }));
         console.log('FLAKE-EVIDENCE 提交状态=', subRes.status,
           '| 单号=', (/XSD-[0-9-]+/.exec(subHtml) || [''])[0],
@@ -2110,6 +2171,14 @@ test('AC-H4/H5 回归：编号页**不显示**"上一单已提交"；提交后�
           '| addLine Location=', String(addRes.headers?.get?.('location') || ''),
           '| 本单条=', JSON.stringify(bars),
           '| 提交页有失败文案=', /没成功|认不出|没带上/.test(subHtml));
+        // ⭐ ⭐ 2026-10-15（⑨b-2）：**这一页到底是什么**（有 draft-bar 吗 / 是哪个 realm / 是不是结果页）
+        console.log('FLAKE-EVIDENCE 页=', JSON.stringify({
+          has_draft_bar: page.html.includes('data-view="draft-bar"'),
+          has_sales_block: page.html.includes('realm-block--sales'),
+          is_state_msg: /class="state-msg/.test(page.html),
+          len: page.html.length,
+          head: String(page.html).slice(0, 220),
+        }));
       }
         assert.equal((page.html.match(/class="draft-line"/g) || []).length, 1, '新单里只有新扫的那一双（1 行 ✓）');
       assert.equal(page.html.includes(NUMBER_A), false, '新单里不许出现上一单的编号 ✗');
