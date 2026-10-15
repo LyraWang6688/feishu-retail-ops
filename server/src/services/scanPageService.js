@@ -271,6 +271,22 @@ const createScanPageService = (rawGateway, options = {}) => {
   const proxyNow = () => (options.now || Date.now)();
   let activeTiming = null;
   let activeDepth = 0;
+  /**
+   * ⭐⭐ 2026-10-16（业务负责人「**扫完之后数据加载慢**」—— 那 11 秒）：
+   *   **`lookup` 返回之后、`logTiming` 之前**那一段的落点。
+   *
+   * 为什么要有它：路由在 `lookup` 之后、`renderScan` 之前还有几次 `await`
+   *   （读会话 / 读「收款方式管理」/ 读配品表 —— 见 `routes/scanPage.js` 的 `buildWriteContext`），
+   *   它们既**不在** `lookup` 的 `total_ms` 里、也**不在** `render_ms` 里
+   *   ⇒ 那一段**一个字段都看不见**，而"慢"恰恰可能就藏在里面（冷 TTL 时那里会真读飞书，
+   *     而那几次读**不经过本文件的计数代理** ⇒ `feishu_reads=0` 也不代表"没打飞书"）。
+   *
+   * ⚠️ 用 **WeakMap**（不是往出参 `timing` 上挂键）：出参的形状是既有用例钉着的
+   *   （AC-T1「不污染视图模型」同一口径）⇒ 记在这里，`timing` 一个键都不多 ✓ 也自动回收 ✓。
+   * ⚠️ 声明在**最前面**（与 `activeTiming` 同一处）：`logTiming` 在源码里比 `lookup` 靠前，
+   *   若把它声明在 `lookup` 那一段，`logTiming` 里就是 TDZ 抛错（`clockRef` 那次事故同形 ✗）。
+   */
+  const lookupEndedAt = new WeakMap();
   const READ_METHODS = new Set(['listAll', 'listByFilter', 'get', 'batchGet', 'listFields']);
   const gateway = new Proxy(rawGateway, {
     get(target, prop) {
@@ -396,6 +412,29 @@ const createScanPageService = (rawGateway, options = {}) => {
     .map((key) => msOrNull(timing[key])).filter((value) => value >= 0)
     .reduce((sum, value) => sum + value, 0);
 
+  /**
+   * ⭐⭐ 2026-10-16：**`lookup` 返回之后 → 本条日志打出之前**那一段的毫秒数。
+   *
+   * 那一路上路由还做了三件 `await` 的事（`routes/scanPage.js` 的 `buildWriteContext`：
+   * 读会话 / 读「收款方式管理」（TTL 5 分钟）/ 读配品表），它们在 `total_ms` 与 `render_ms`
+   * **之外** ⇒ 线上"整请求 11 秒"里有哪几秒落在这儿，原来**任何日志都看不见** ✗。
+   *
+   * 口径（**不要**把 `render_ms` 算进来 —— 渲染那一段已单独计，否则两个桶重复计）：
+   *   `post_lookup_ms = (现在 − lookup 的落点) − render_ms`
+   *   · `-1` = 没有 `lookup` 的落点（有人直接调 `logTiming`）⇒ 显式"没打点"，不假装 0 ✓
+   *   · `found:false` / 抛错那两条路同样有值（那时没有 `buildWriteContext`，通常就是 0）✓
+   *
+   * ⚠️ 与 `stages_sum_ms` / `stages_gap_ms` **不重叠**：那两个量只统计 `lookup` **内部**的分段，
+   *   本字段在 `lookup` **之外** ⇒ 既有字段的语义一个字不变 ✗。
+   */
+  const postLookupMsOf = (timing) => {
+    const endedAt = lookupEndedAt.get(timing);
+    if (!Number.isFinite(endedAt)) return -1;
+    const since = Math.max(0, clock() - endedAt);
+    const rendered = msOrNull(timing.render_ms);
+    return Math.max(0, since - (rendered > 0 ? rendered : 0));
+  };
+
   const logTiming = (timing, { requestId = '', found = false } = {}) => {
     if (!timing || typeof timing !== 'object') return;
     const stagesSum = stagesSumOf(timing);
@@ -429,6 +468,11 @@ const createScanPageService = (rawGateway, options = {}) => {
       // ⭐ 分段之和 vs total：差值直接写进日志 ⇒ "还有多少毫秒没归属"一眼看得见 ✓
       stages_sum_ms: stagesSum,
       stages_gap_ms: Number.isFinite(Number(timing.total_ms)) ? Math.max(0, Number(timing.total_ms) - stagesSum) : -1,
+      // ⭐⭐ 2026-10-16（她「扫完之后数据加载慢」）：`total_ms` / `render_ms` **之外**那一段
+      //   （路由在取数之后、渲染之前读会话 / 收款方式 / 配品表那几次 await）。
+      //   ⇒ 配合 `http.request.completed.duration_ms` 与两条日志的 `ts`，整请求可**逐段归账**：
+      //     `duration_ms` − `total_ms` − `post_lookup_ms` − 写出（= 两条日志 ts 之差）= 认证+路由开销
+      post_lookup_ms: postLookupMsOf(timing),
       // ⭐ 「打了几次飞书」：服务层自己数（不依赖 `bitable.record.*` 事件 —— 取数走 SDK 直调，一条都不打）
       feishu_reads: Number.isFinite(Number(timing.feishu_reads)) ? Number(timing.feishu_reads) : -1,
       feishu_read_ms: Number.isFinite(Number(timing.feishu_read_ms)) ? Number(timing.feishu_read_ms) : -1,
@@ -928,6 +972,9 @@ const createScanPageService = (rawGateway, options = {}) => {
       activeDepth -= 1;
       if (claimed) activeTiming = null;
       if (timing) timing.total_ms = elapsed(totalStartedAt);
+      // ⭐ 2026-10-16：记下"取数这一段到此为止"的落点 ⇒ `logTiming` 才能把
+      //   **路由在 lookup 之后、渲染之前**那几次 await 的时间单独算出来（见 `postLookupMsOf`）。
+      if (timing) lookupEndedAt.set(timing, clock());
     }
   };
 
