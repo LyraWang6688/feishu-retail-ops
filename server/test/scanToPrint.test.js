@@ -435,11 +435,22 @@ test('AC-SP7 ⭐ 点一下 ⇒ `h5sdk.config` ⇒ `tt.scanCode`（**JSAPI，不�
   assert.equal(winState.scanCalls.length, 1);
   assert.deepEqual(winState.scanCalls[0].scanType, ['qrCode']);
   // ③ **既有队列接口**（不新开打印接口 ✗）：`mode:single` + 原样交上扫到的字符串。
-  assert.equal(calls.post.length, 1);
-  assert.equal(calls.post[0].url, '/api/workbench/label-print/jobs');
+  // ⭐⭐ 2026-10-15 **成对翻新**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.equal(calls.post.length, 1);` ＋ `assert.equal(calls.post[0].url, '/api/workbench/label-print/jobs');`（后同 `calls.post[0]`）
+  //   改后逐字：**按 url 分开数** —— 既有 `/jobs` 那一条**必须还是恰 1 条** ✓，
+  //     并且**新增**断言：成功那趟**也**发了一条 `scan-report`（`ok:true` / `phase:'done'`）✓
+  //   依据：她 2026-10-15 真机反馈「扫码打印好像没调用成功」⇒ 加了**只读诊断上报**
+  //     （成功/失败都报 ⇒ 日志里才看得出"到底走没走到排打印" ✓）——**判据没放宽**：又**多钉**了一条 ✓
+  const jobPosts = calls.post.filter((item) => item.url === '/api/workbench/label-print/jobs');
+  const reportPosts = calls.post.filter((item) => item.url === module.SCAN_PRINT_ENDPOINTS.report);
+  assert.equal(jobPosts.length, 1, '既有的排打印请求**还是恰 1 条** ✓');
+  assert.equal(jobPosts[0].url, '/api/workbench/label-print/jobs');
   assert.equal(module.SCAN_PRINT_ENDPOINTS.jobs, '/api/workbench/label-print/jobs');
-  assert.equal(calls.post[0].body.mode, 'single');
-  assert.equal(calls.post[0].body.scan, 'https://hm.bamamei.online/r/rec_brown');
+  assert.equal(jobPosts[0].body.mode, 'single');
+  assert.equal(jobPosts[0].body.scan, 'https://hm.bamamei.online/r/rec_brown');
+  assert.equal(reportPosts.length, 1, '成功那趟也要上报（日志里查得到 ✓）');
+  assert.equal(reportPosts[0].body.ok, true);
+  assert.equal(reportPosts[0].body.phase, 'done');
   // ④ 结果如实说 + 按钮恢复（她还能再扫一个）。
   assert.equal(container.elements['[data-view="scan-print-notice"]'].textContent, '✅ 已提交打印：这一张');
   assert.equal(container.elements['[data-action="scan-print"]'].disabled, false);
@@ -535,4 +546,62 @@ test('AC-SP4 纯函数：签名地址 / config 入参 / 扫到值 / 取消文案
   assert.equal(module.wantsScanFromSearch('?scan=1'), true);
   assert.equal(module.wantsScanFromSearch('?keyword=x'), false);
   assert.equal(module.wantsScanFromSearch(''), false);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-15（她真机反馈「扫码打印好像没调用成功」）新增：
+//   AC-SP11 **`h5sdk.ready` 不回调 ⇒ 超时给人话 + 上报原因**（改前是**永挂** ✗）
+//   AC-SP12 诊断端点**只读**（只 logInfo）且挂在**既有**鉴权之后
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-SP11 ⭐⭐ `ready` 不回调（真机那种"装死"）⇒ **超时 + 人话 + 上报原因**，不再永挂', async () => {
+  const module = await loadScanPrintModule();
+  const container = fakeContainer();
+  const calls = { get: [], post: [] };
+  const api = {
+    async get() {
+      return { appId: 'cli_x', timestamp: 1, nonceStr: 'n', signature: 's', jssdkUrl: 'https://cdn.test/h5sdk.js' };
+    },
+    async post(url, body) { calls.post.push({ url, body }); return { success: true }; },
+  };
+  // 🔴 真机实测的形态：`config` 成功返回，但 `ready` **永远不回调**（改前 ⇒ Promise 永挂、
+  //    按钮一直灰着、既不结束也不报错 ⇒ 她看到的就是"点了没反应" ✗）
+  const win = {
+    location: { href: 'https://hm.bamamei.online/workbench/label-print.html?scan=1' },
+    h5sdk: { config() { return Promise.resolve(); }, ready() { /* 永不回调 */ } },
+    tt: { scanCode() { throw new Error('不该走到这里'); } },
+  };
+  const action = module.createScanPrintAction({ api, doc: null, win, readyTimeoutMs: 20 });
+  const button = action.mount(container);
+  await button.handlers.click();
+
+  // ① 必须**给人话**（不是永远"正在唤起扫一扫…"）
+  const notice = container.elements['[data-view="scan-print-notice"]'].textContent;
+  assert.match(notice, /超时/, `超时要说清楚（实际：${notice}）`);
+  // ② 原因必须**上报**（手机上她看不到控制台 ⇒ 这是我们唯一能查的地方 ✓）
+  const reports = calls.post.filter((item) => item.url === module.SCAN_PRINT_ENDPOINTS.report);
+  assert.equal(reports.length, 1, '失败/超时也必须上报 ✓');
+  assert.equal(reports[0].body.ok, false);
+  assert.equal(reports[0].body.reason, 'ready_timeout', '原因码要能区分"卡在哪一步" ✓');
+  assert.equal(reports[0].body.phase, 'config');
+  // ③ 按钮必须**恢复**（改前永挂 ⇒ 她再也点不动 ✗）
+  assert.equal(container.elements['[data-action="scan-print"]'].disabled, false, '按钮必须恢复 ✓');
+  // ④ 它**不许**因此排一个打印任务（失败就是失败 ✗ 不许假成功）
+  assert.equal(calls.post.filter((item) => item.url === '/api/workbench/label-print/jobs').length, 0);
+});
+
+test('AC-SP12 ⭐⭐ 诊断上报是**只读**的：端点只 `logInfo`、不写业务表；且挂在**既有**鉴权之后', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../src/routes/workbench.js'), 'utf8');
+  const at = src.indexOf("router.post('/labels/scan-report'");
+  assert.ok(at > -1, '诊断端点要在（`POST /labels/scan-report`）');
+  const guardAt = src.indexOf('router.use(requireWorkbenchAccess)');
+  assert.ok(guardAt > -1 && guardAt < at, '必须挂在**既有**身份闸门之后 ⇒ **不新开鉴权** ✓');
+  const block = src.slice(at, at + 900);
+  assert.match(block, /logInfo\('label_print\.scan\.report'/, '只记一条日志 ✓');
+  assert.equal(/\.create\(|\.update\(|gateway\./.test(block), false,
+    '🔴 不许写任何业务表（它是**只读诊断** ✓）');
+  // 客户端的两个阈值都要能配（超时不许写死在逻辑里 ✗）
+  const client = read('features/labels/scan-print.js');
+  assert.match(client, /readyTimeoutMs/, 'ready/config 的超时要可配 ✓');
+  assert.ok(client.includes('scanTimeoutMs'), '扫码那一步的超时要可配 ✓');
 });

@@ -23,6 +23,11 @@ import { describeError, runWriteAction } from '../../core/ui.js';
 /** 两个端点（**唯一真源**；AC-SP6 的源码哨兵钉的就是这里）。 */
 export const SCAN_PRINT_ENDPOINTS = Object.freeze({
   signature: '/api/workbench/lark/jsapi-signature',
+  // ⭐⭐ 2026-10-15（真机反馈「扫码打印好像没调用成功」）：**只读诊断**上报 ——
+  //   飞书 JSSDK 在手机里"装死"时**只有客户端知道原因**（页面上只有一行小字、服务端一条日志都没有 ✗）。
+  //   ⇒ 把 phase（config/ready/scan）+ 原因码 + errMsg 报上去，**一条一条进日志** ✓
+  //   ⚠️ 它**不写任何业务表**、**不改任何状态**（服务端只 logInfo）✓
+  report: '/api/workbench/labels/scan-report',
   // ⭐ **既有**队列接口（与扫码页同一把队列 / 同一个 `/jobs`）——**不新开打印接口** ✗
   jobs: '/api/workbench/label-print/jobs',
 });
@@ -38,6 +43,10 @@ export const SCAN_PRINT_TEXTS = Object.freeze({
   enqueued: '✅ 已提交打印：这一张',
   reused: '刚刚已经发过这一张（没有重复提交）',
   nothing: '没有扫到内容，请对着标签上的二维码再扫一次。',
+  // ⭐⭐ 2026-10-15：**超时**也必须给人话（改前是 Promise 永挂 ⇒ 按钮一直灰着、既不结束也不报错 ✗）
+  timeout: '飞书扫一扫没响应（超时了）：请退出这一页重进再试一次；还不行就用上面「选择编号打印」。',
+  // ⭐⭐ 2026-10-15：**失败原因已上报**（她看到人话的同时，我们日志里能查到确切原因 ✓）
+  reported: '（已把失败原因记到日志，方便工程师查）',
 });
 
 /** 签名请求的地址：**页面地址原样带上**（签名必须与页面 URL 逐字一致，服务端只去掉 `#fragment`）。 */
@@ -95,6 +104,32 @@ export function createScanPrintAction(options = {}) {
   const state = { busy: false };
   let root = null;
 
+  // ⭐⭐ 2026-10-15：**每个可能永挂的等待都要有超时**（真机实测：`h5sdk.ready` 不回调 ⇒ 她那边
+  //   "点了没反应"、按钮一直灰着 ✗）。三个阈值都可配（`options.*Ms`，用例注入小值 ⇒ 不用真等 ✓）。
+  const readyTimeoutMs = Number(options.readyTimeoutMs) > 0 ? Number(options.readyTimeoutMs) : 8000;
+  const scanTimeoutMs = Number(options.scanTimeoutMs) > 0 ? Number(options.scanTimeoutMs) : 120000;
+
+  /** 给一个 Promise 加超时：**超时按失败处理**（人话 + 上报），绝不永挂 ✓ */
+  const withTimeout = (promise, ms, code) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(code)), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+
+  /**
+   * ⭐⭐ 2026-10-15：把这一趟的结果（成功 / 失败原因）**只读上报**给服务端 ⇒ 日志里查得到 ✓
+   *   ⚠️ **fire-and-forget**：上报本身**绝不影响她的操作**、失败也**不抛**（吞掉）✗。
+   *   ⚠️ 用 `api.post`（既有客户端）⇒ 带上工作台身份 ✓
+   */
+  const report = (payload) => {
+    try {
+      const sending = api.post(SCAN_PRINT_ENDPOINTS.report, payload);
+      if (sending && typeof sending.catch === 'function') sending.catch(() => undefined);
+    } catch (_) { /* 上报失败绝不影响她 ✓ */ }
+  };
+
   const pick = (name) => (root ? root.querySelector(`[data-action="${name}"]`) : null);
   const view = (name) => (root ? root.querySelector(`[data-view="${name}"]`) : null);
   const notice = (text) => {
@@ -116,14 +151,20 @@ export function createScanPrintAction(options = {}) {
 
   /** 真正的扫一扫：`config` ⇒ `ready` ⇒ `tt.scanCode`（官方链路，全在客户端）。 */
   const scanOnce = async (signature) => {
-    await loadJssdk(signature?.jssdkUrl || '');
+    await withTimeout(loadJssdk(signature?.jssdkUrl || ''), readyTimeoutMs, 'jssdk_timeout');
     if (!win?.h5sdk?.config) throw new Error('jssdk_missing');
-    await win.h5sdk.config(jsapiConfigOf(signature));
-    await new Promise((resolve) => { win.h5sdk.ready(resolve); });
-    return await new Promise((resolve, reject) => {
+    // ⭐⭐ 2026-10-15：`config` 与 `ready` **都要超时** —— 真机上只要 config 没成，
+    //   `ready` 就**永远不回调**（改前 ⇒ 永挂、按钮一直灰、她只看到"没反应" ✗、日志里也没有任何线索 ✗）。
+    await withTimeout(
+      Promise.resolve(win.h5sdk.config(jsapiConfigOf(signature))), readyTimeoutMs, 'config_timeout',
+    );
+    await withTimeout(
+      new Promise((resolve) => { win.h5sdk.ready(resolve); }), readyTimeoutMs, 'ready_timeout',
+    );
+    return await withTimeout(new Promise((resolve, reject) => {
       if (!win?.tt?.scanCode) return reject(new Error('scan_unsupported'));
       return win.tt.scanCode({ scanType: ['qrCode'], success: resolve, fail: reject });
-    });
+    }), scanTimeoutMs, 'scan_timeout');
   };
 
   /**
@@ -133,13 +174,18 @@ export function createScanPrintAction(options = {}) {
   async function run() {
     if (state.busy) return null;
     state.busy = true;
+    // ⭐⭐ 2026-10-15：**每一步都带着"我是哪一步挂的"**（真机看不到控制台 ⇒ 这是唯一的线索来源 ✓）
+    let phase = 'signature';
     try {
       notice(texts.scanning);
       const signature = await api.get(signaturePath(win?.location?.href || ''));
+      phase = 'config';
       const scanned = await scanOnce(signature);
       const value = scannedValueOf(scanned);
+      phase = 'scan';
       if (!value) {
         notice(texts.nothing);
+        report({ ok: false, phase: 'scan', reason: 'empty' });
         return null;
       }
       notice(texts.printing);
@@ -151,15 +197,39 @@ export function createScanPrintAction(options = {}) {
         submit_key: options.submitKey ? String(options.submitKey()) : `${Date.now()}`,
       });
       notice(result?.reused ? texts.reused : texts.enqueued);
+      report({ ok: true, phase: 'done', reason: result?.reused ? 'reused' : 'enqueued' });
       return result || null;
     } catch (error) {
-      if (error instanceof Error && ['jssdk_missing', 'jssdk_load_failed', 'scan_unsupported'].includes(error.message)) {
+      const code = error instanceof Error ? String(error.message || '') : '';
+      const errMsg = String((error && error.errMsg) || '');
+      const noSdk = ['jssdk_missing', 'jssdk_load_failed', 'scan_unsupported'].includes(code);
+      const timedOut = ['jssdk_timeout', 'config_timeout', 'ready_timeout', 'scan_timeout'].includes(code);
+      // ⭐⭐ 2026-10-15：**先把线索报上去**（失败/取消/超时都要）—— 手机上她看不到控制台，
+      //   这一条是我们唯一能查到"到底卡在哪一步、原因码是什么"的地方 ✓
+      //   ⚠️ 上报**不影响她**：fire-and-forget、出错吞掉 ✓
+      report({
+        ok: false,
+        phase,
+        reason: timedOut ? code : (code || (/cancel/i.test(errMsg) ? 'cancelled' : 'failed')),
+        err_msg: errMsg,
+        url: String(win?.location?.href || ''),
+      });
+      if (noSdk) {
         notice(texts.noSdk);
+        return null;
+      }
+      // ⭐ 超时 ⇒ **必须给人话**（改前是永挂：按钮一直灰着、既不结束也不报错 ✗）
+      if (timedOut) {
+        notice(`${texts.timeout}${texts.reported}`);
         return null;
       }
       // `tt.scanCode` 的 fail 对象 / 服务端 400 的人话 / 别的网络错 —— 分三种如实说。
       if (error && typeof error === 'object' && (error.errMsg || error.errno !== undefined)) {
-        notice(scanFailureText(error, texts));
+        // ⭐⭐ 2026-10-15：**她自己取消**不是失败 ⇒ 不加"已上报"那句（那样读起来像出错了 ✗），
+        //   但**仍然上报**（原因码 `cancelled`，用来区分"取消"与"真失败" ✓）。
+        notice(/cancel/i.test(errMsg)
+          ? scanFailureText(error, texts)
+          : `${scanFailureText(error, texts)}${texts.reported}`);
         return null;
       }
       notice(error && typeof error === 'object' && 'message' in error ? describeError(error) : String(error ?? ''));
