@@ -970,6 +970,10 @@ const createTagQrCodeService = ({
 
 module.exports = {
   createTagQrCodeService,
+  // ⭐ 2026-10-15：把事件里"按 field_id 取值"的那个**纯件**导出 —— 「配品销售」入口那条路
+  //   （`services/accessorySaleIntakeService`）要**复用同一份**读法（Lead 明确要求"复用既有 ✓ 不抄 ✗"）。
+  //   ⚠️ 它一个字都没改（原样导出）✓
+  findFieldValue,
   buildScanUrl,
   buildRecordIdScanUrl,
   buildFileName,

@@ -382,6 +382,41 @@ class V1BitableGateway {
    *     （空会被上层当成"这一单没有明细" ⇒ 重复建行 = 钱/货的错）
    *   · `options.correlation` 与其它方法同一条口径：**不透明**地进日志，不改任何请求内容 ✓
    */
+  /**
+   * ⭐⭐ 2026-10-15（Lead 批准）：按**原始 table_id** 读一条记录 —— 服务**不在 schema 里**的表
+   *   （第一个用户：业务负责人新建的「**配品销售**」表 `tblkT1QTUsESni5b` 那类**入口表**）✓
+   *
+   * 🔴 为什么要有它：本网关其它方法都按**语义键 + `schema.tableId`** 取表 ⇒ 不在 schema 里的表
+   *   **没有任何门**；而"绕过网关直连飞书 SDK"会破坏「**全仓只有网关直连飞书**」这条纪律 ✗
+   *   ⇒ 加这一个**只读**口，把"读非 schema 表"也收进同一个门里 ✓
+   *
+   * 口径：
+   *   · **只读**（`appTableRecord.get`）；**不提供**对应的写口（要写必须先有 schema 映射 ✗）
+   *   · `tableId` 空 / `recordId` 空 ⇒ **当场抛**（不猜、不发请求）✓
+   *   · `options.fieldNames` 只取需要的列（与既有的"按需取字段"同一口径 ✓）
+   *   · 失败 ⇒ `assertSuccess` 往上抛（**绝不静默返回空** ✗ —— 空会被上层当成"这一行没有值"）
+   *   · `options.correlation` 与其它方法同一条口径：**不透明**地进日志 ✓
+   *   · `options.reason` 只为排查（例如 `accessory_sale_intake.fallback` ⇒ 一眼看出"事件没带全、回退读表"）✓
+   *
+   * @returns {Promise<object|null>} 飞书那条 record（形状与 `get` 相同）；读不到 ⇒ `null`
+   */
+  async getByTableId({
+    tableId = '', recordId = '', fieldNames = [], correlation = {}, reason = '',
+  } = {}) {
+    const wantedTableId = String(tableId || '').trim();
+    const wantedRecordId = String(recordId || '').trim();
+    if (!wantedTableId) throw new Error('getByTableId 需要 tableId（空表 ID 会打到 .../tables//records）');
+    if (!wantedRecordId) throw new Error('getByTableId 需要 recordId');
+    const names = (Array.isArray(fieldNames) ? fieldNames : []).filter((name) => String(name || '').trim());
+    const response = await this.client.bitable.appTableRecord.get({
+      path: { app_token: this.schema.appToken, table_id: wantedTableId, record_id: wantedRecordId },
+      ...(names.length ? { params: { field_names: JSON.stringify(names) } } : {}),
+    });
+    // ⚠️ 读不到（飞书 404 之类）**如实抛** ⇒ 调用方自己决定"当失败还是当没有"（不许在这里吞 ✗）
+    this.assertSuccess(response, `按 table_id 读取记录（${reason || 'get_by_table_id'}）`);
+    return response.data?.record || null;
+  }
+
   async getBatch(tableKey, ids = [], options = {}) {
     const table = this.tableWithId(tableKey);
     const wanted = (Array.isArray(ids) ? ids : [])
