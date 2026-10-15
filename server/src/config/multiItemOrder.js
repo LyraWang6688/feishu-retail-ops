@@ -23,9 +23,12 @@ const { SCAN_WRITE } = require('./scanWrite');
 
 /** 共用块（与哪条链无关的那些）。 */
 const resolveShared = (env) => ({
-  // 🔴 **总开关**：她 2026-10-15 的清单 = **`false`（先影子跑）** —— 只把"这一单会提交什么"算进日志，
-  //    **一个字节都不写业务表** ✓。第二步（并存）才翻成 `true`。
-  enabled: readFlag(env, 'SCAN_MULTI_ITEM_ENABLED', false),
+  // 🔴 **总开关**：她 2026-10-15 晚**改口径**了（逐字）：「**直接走新逻辑（一单多货品），不需要影子**」
+  //    ⇒ 默认 **`true`**（真实写入 ✓）——影子阶段取消 ✗（第 1 步那个"只算不写"不再需要）。
+  //    ⚠️ 改前逐字：`readFlag(env, 'SCAN_MULTI_ITEM_ENABLED', false)`（先影子跑）
+  //      改后逐字：下面这一行（默认 `true`）
+  //      依据：她那句（上）＋「好的，**按照（20 货品 / 50 行）**」⇒ 上限值不变 ✓。
+  enabled: readFlag(env, 'SCAN_MULTI_ITEM_ENABLED', true),
   // 每单上限（她确认 ✓ 是可配置项，不是写死 ✗）。与 `SESSION.maxLines`（销售本单上限）**同形**，
   // 但**各管各的**：一个是"本单几双"，一个是"一单多货品最多几行"。
   maxProducts: readInt(env, 'SCAN_MULTI_ITEM_MAX_PRODUCTS', 20, { min: 1, max: 200 }),
