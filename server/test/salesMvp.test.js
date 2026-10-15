@@ -300,7 +300,9 @@ test('invalid initial receipt cannot silently become unpaid', async () => {
 test('unpaid sale can be delivered once, then later payment does not touch inventory', async () => {
   const gateway = fake();
   const sales = new SalesOrderService({ gateway, references });
-  // 「260 元未付」＝她明说欠：owed=100 才补一条未收款（她没说欠就不补，见下面还价那两条）。
+  // 「260 元未付」这一单：一分钱都没收到 ⇒ 差额 = 每件实收合计（100）⇒ **自动**补一条【未收款 100】。
+  // ⚠️ 2026-10-16 晚更正（改前逐字：「owed=100 才补一条未收款（她没说欠就不补…）」—— 那是老口径）：
+  //    新口径下**差额自己就会挂**；她明说的 `owed: 100` 现在只作**交叉校验**（说错要拦住，见下面那条）。
   const posted = await sales.confirm({ salesEntryRecordId: 'order_1',
     items: [{ itemNo: 'A100', size: 38, quantity: 1, actualAmount: 100 }], owed: 100 });
   assert.equal(gateway.records.get('paymentRecord').length, 1);
@@ -319,19 +321,28 @@ test('unpaid sale can be delivered once, then later payment does not touch inven
   assert.equal(calls.length, 1);
 });
 
-// ─── 未收款只在「她明说欠」时才补，实收金额 = 她说的收款额（业务负责人口径） ───
+// ─── ⭐ 2026-10-16 晚起：未收款 = **差额**（`每件实收合计 − 已收` > 0 就**自动**补一条）───
+//   改前逐字（已作废 ✗）：「未收款只在「她明说欠」时才补，实收金额 = 她说的收款额（业务负责人口径）」
+//   改后逐字：差额 = 0 ⇒ 一条不补；差额 > 0 ⇒ **自动**补（她有没有说"欠"都一样）✓
+//   依据 = 她 2026-10-16 晚裁定「**客户少付 ⇒ 自动记一条【未收款】（差额）**」
+//          ＋ 她 2026-10-14 逐字「只要本次付的金额小于累计的，那么差额都是未收款」
+//   ⚠️ 下面这条用例**数据自洽**（成交 = 实收 = 100 ⇒ 差额 0）⇒ 断言**一个字不动**、仍然绿 ✓
+//      （新口径下它不再靠"她没说欠"，而是靠"差额 0"—— 见用例内注释。）
 
-test('她说了"收了 100"、没说欠：成交即实收，不补未收款，订单直接到已完成', async () => {
+test('她说了"收了 100"、没说欠：成交即实收（差额 0），不补未收款，订单直接到已完成', async () => {
   const gateway = fake();
   const sales = new SalesOrderService({ gateway, references });
   // 她的真实一单：119 的腰带，收到了 100 元微信。解析层已经定好成交=100、owed 为空
-  // （119 只是用来对档位的价位，不落库），入账层就该一条未收款都不写。
+  // （119 只是用来对档位的价位，不落库）。
+  // ⚠️ 2026-10-16 晚更正**理由**（改前逐字：「入账层就该一条未收款都不写」—— 那是"她说欠才算欠"）；
+  //    改后逐字：这一单 `每件实收合计 (100) − 已收 (100) = 0` ⇒ **没有差额** ⇒ 一条未收款都不挂 ✓
+  //    （差额 > 0 的单会**自动**挂 —— 见 `test/owedAutoOnShortfall.test.js` 的 AC-OWED-1。）
   const posted = await sales.confirm({ salesEntryRecordId: 'order_1',
     items: [{ kind: 'accessory', accessoryRecordId: 'acc_belt', quantity: 1, actualAmount: 100 }],
     payments: [{ method: '微信', amount: 100 }] });
 
   const receipts = gateway.records.get('paymentRecord');
-  assert.equal(receipts.length, 1, '说了收了 100 且没说欠，绝不能挂未收款');
+  assert.equal(receipts.length, 1, '差额 0（成交=实收=100）⇒ 绝不能挂未收款');
   assert.equal(receipts[0].fields['收款金额'], 100);
   assert.equal(receipts[0].fields['收款状态'], '已收款');
   const progress = await new SalesProgressService({ gateway }).forOrder('order_1',

@@ -144,13 +144,24 @@ const fill = (template, values = {}) => String(template ?? '')
  *
  * 与业务负责人的两句话一一对应：「判定这一单是**预订或者现货未收**」：
  *   ① **货没交完**（预定 = 不交付，见 `config/salesMovements` 的 `delivery`）；
- *   ② **钱没结清**（她明说过的欠款 / 已经挂着的那条「未收款」占位）。
+ *   ② **钱没结清**（她明说过的欠款 / 已经挂着的那条「未收款」占位 /
+ *      ⭐ 2026-10-16 晚起**还包括"差额 > 0"**：差额会被**自动**记成一条【未收款】）。
  * 两条都不成立 ⇒ 现货已交付已结清 = **干净的单一，不许打扰她**（她明确要求）。
  *
- * ⚠️ 「钱没结清」的判据**刻意不拿「成交 − 已收」去猜**：入账层只在她**明说欠多少**时
- *    才补那条「未收款」占位（`salesOrderService`：「她说欠才算欠；后端不拿差额去猜是还价还是欠款」）。
- *    ⇒ 「有未收款」⇔「`draft.owed` 非空」。这也是**业务表里真有一条待收**的判据，
- *      所以按钮不会出现在"其实没什么可做"的单上（那种点了只会回"已经成交"）。
+ * ⚠️⭐ 2026-10-16 晚**口径变更**（业务负责人裁定 · 弹窗逐字确认「A：自动记（差额⇒未收款）」）：
+ *   「**客户少付 ⇒ 自动记一条【未收款】（差额）**」⇒ 入账层**不再**要求"她明说欠多少"，
+ *   只要「每件实收合计 − 已收合计」> 0 就会**自动**挂那条「未收款」
+ *   （`services/salesOrderService.js` 的 auto-owed；差额算法只有那一个）。
+ *   ⇒ **改前逐字**（已作废 ✗）：「「钱没结清」的判据**刻意不拿「成交 − 已收」去猜**：入账层只在
+ *      她**明说欠多少**时才补那条「未收款」占位（`salesOrderService`：「她说欠才算欠；后端不拿差额
+ *      去猜是还价还是欠款」）。⇒ 「有未收款」⇔「`draft.owed` 非空」。」
+ *   ⇒ **改后逐字**：「「钱没结清」= 她明说欠多少 / 已挂着一条「未收款」 / **或者差额 > 0**」
+ *      （差额 > 0 ⇒ 入账层必然会挂那条【未收款】⇒ 这一单确实有钱没结清 ⇒ 按钮照样要有 ✓）。
+ *   依据 = ① 她 2026-10-16 晚裁定「**客户少付 ⇒ 自动记一条【未收款】（差额）**」；
+ *          ② 她 2026-10-14 逐字「**只要本次付的金额小于累计的，那么差额都是未收款，
+ *             包括本次付款为 0**」。
+ *   ⚠️ 差额算法**借用既有那一套**（与 `config/saleSettlement.js` 的 `autoModeOf()` 同一口径），
+ *      **这里不新写第二个** ✗；明细金额不齐 ⇒ **不编**（当作没有差额 ✓）。
  *
  * @param {{draft?: object, deliveryFailures?: Array}} input
  *   `deliveryFailures` = 本地任务上记着的上一次交付失败（`task.delivery_failures`）：
@@ -167,17 +178,46 @@ const needsConfirmDeal = ({ draft = {}, deliveryFailures = [] } = {}) => {
   if (codes.some((code) => !deliversForTradeType(code))) {
     return { needed: true, reason: 'undelivered' };
   }
-  // ② 钱：她说过的欠款 / 已经挂着「未收款」占位。
+  // ② 钱：她说过的欠款 / 已经挂着「未收款」占位 / 差额 > 0（会被自动记成【未收款】）。
   if (hasOutstandingMoney(draft)) return { needed: true, reason: 'unsettled' };
   return { needed: false, reason: 'completed' };
 };
 
-/** 「钱没结清」= 她明说欠多少，或这条单上已经挂着一条「未收款」。 */
+/**
+ * ⭐ **差额（分）** = 「每件实收合计 − 已收合计」——**借用既有那一套**（不新写第二个算法 ✗）。
+ *   ⚠️ 只要有一条明细**没填实收金额**（累计不可知）⇒ 返回 `0`（**不编**差额 ✗，
+ *      与 `config/saleSettlement.autoModeOf()` 的 `no_known_total` 同一口径）。
+ *   ⚠️ `draft.items[].actual_amount` 是解析层/会话层的既有字段名（`doubaoService` 输出）。
+ */
+const outstandingCentsOf = (draft = {}) => {
+  const items = Array.isArray(draft?.items) ? draft.items : [];
+  const amounts = items.map((item) => {
+    const raw = item?.actual_amount;
+    if (raw === undefined || raw === null || String(raw).trim() === '') return null;
+    const value = Number(raw);
+    return Number.isFinite(value) ? Math.round(value * 100) : null;
+  });
+  if (!amounts.length || amounts.some((value) => value === null)) return 0;
+  const paid = (Array.isArray(draft?.payments) ? draft.payments : [])
+    .reduce((sum, payment) => {
+      const value = Number(payment?.amount);
+      return sum + (Number.isFinite(value) ? Math.round(value * 100) : 0);
+    }, 0);
+  const total = amounts.reduce((sum, value) => sum + value, 0);
+  return Math.max(0, total - paid);
+};
+
+/**
+ * 「钱没结清」= 她明说欠多少 **或** 这条单上已经挂着一条「未收款」 **或**
+ * ⭐ 差额 > 0（新口径：差额会被**自动**记成一条【未收款】⇒ 它同样是"业务表里真有一条待收"）。
+ */
 const hasOutstandingMoney = (draft = {}) => {
   const owed = Number(String(draft?.owed ?? '').trim());
   if (Number.isFinite(owed) && owed > 0) return true;
-  return (Array.isArray(draft?.payments) ? draft.payments : [])
-    .some((payment) => String(payment?.status || '').trim() === PAYMENT_STATUS_UNPAID);
+  if ((Array.isArray(draft?.payments) ? draft.payments : [])
+    .some((payment) => String(payment?.status || '').trim() === PAYMENT_STATUS_UNPAID)) return true;
+  // ⭐ 2026-10-16 晚（裁定：客户少付 ⇒ 自动记一条【未收款】）—— 差额 > 0 也算"钱没结清"。
+  return outstandingCentsOf(draft) > 0;
 };
 
 // 环境变量名 → 默认值。给「`.env.example` 与默认值逐字一致」那条回归用
