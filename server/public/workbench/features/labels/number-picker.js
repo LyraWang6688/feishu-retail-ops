@@ -11,6 +11,8 @@
  *      （`config/domains.js` 的 `targetTemplate`）⇒ 本文件里**一个字都不提**标签打印页的地址；
  *   ③ **不留死界面** ✗ —— 拉不到 / 超时 / 空的统一出口 = **一句人话 + 输入框照旧能手输**
  *      （她最恨"点了没反应"，见 `config/numberPicker.js` 的文案）。
+ *   ④ ⭐⭐ **懒加载** —— **进页面一个请求都不发**；她**聚焦 / 点开**输入框时才拉（那一拉可能十几秒，
+ *      也正是今天量到 23.6 秒的那种整表读）。拉的那一刻**立刻**显示「正在读取…」，拉回来才填选项。
  *
  * ⚠️ 文案 / 端点 / 条数上限 / 超时**全部在 `config/numberPicker.js`**（配置先行），本文件只负责行为与摆法。
  * ⚠️ 用例把本文件当模块跑（`test/productNumberPicker.test.js`）：所有 DOM 访问都走注入的 `host`
@@ -197,11 +199,24 @@ export function createNumberPicker(options = {}) {
     return state;
   }
 
+  /**
+   * ⭐⭐ **懒加载的入口**（Lead 2026-10-15 晚定的口径）：
+   *   **进页面一个请求都不发**；只有她**聚焦 / 点开**输入框时才去拉。
+   *   为什么：这个端点要读整张「货品信息」、`hasStock` 还要读整张「实时库存」——
+   *   正是今天量到 **23.6 秒**那次读的来源 ⇒ 进页面就拉 = 她**点开选择器先干等十几秒**，
+   *   正好撞在她今天抱怨的"不友好 / 点了没反应"上 ✗。
+   *   ⚠️ 拉过一次（`loaded`）就不再重复拉；上次**失败**过再聚焦 ⇒ 补一次（她不用退出重进）。
+   */
+  const ensureLoaded = () => (state.loading || state.loaded
+    ? Promise.resolve(state)
+    : load(input?.value || ''));
+
   return {
     state,
     texts,
     load,
     pick,
+    ensureLoaded,
     mount(host) {
       input = host?.querySelector ? host.querySelector('input[name="number"]') : null;
       optionsHost = host?.querySelector ? host.querySelector('[data-view="number-options"]') : null;
@@ -218,9 +233,12 @@ export function createNumberPicker(options = {}) {
       optionsHost.setAttribute('role', 'listbox');
       optionsHost.setAttribute('aria-label', String(config.aria?.listLabel || ''));
 
-      // 输入即搜（关键字**交给服务端**过滤）；聚焦时**只在上次没拉到时**补一次（免得一点就一串请求）。
+      // ⭐ 她**点开 / 聚焦**输入框 ⇒ 才拉（`focus` 与 `click` 都接上；tap 上两个都会来，
+      //   `ensureLoaded` 的 `state.loading` 兜底 ⇒ 只会发一个请求）。
+      input.addEventListener('focus', () => ensureLoaded());
+      input.addEventListener('click', () => ensureLoaded());
+      // 输入即搜（关键字**交给服务端**过滤）；已经在拉 / 已拉过时由序号守卫决定谁算数。
       input.addEventListener('input', () => load(input.value));
-      input.addEventListener('focus', () => (state.loaded ? undefined : load(input.value)));
       input.addEventListener('keydown', (event) => {
         if (event?.key === 'Escape') setExpanded(false);
       });
@@ -232,7 +250,9 @@ export function createNumberPicker(options = {}) {
       });
 
       state.loaded = false;
-      return load(String(input.value || ''));
+      // ⭐ **零请求**也要先说一句人话（"点一下框子就能列出编号"）—— 不留一块空白 ✗
+      renderStatus();
+      return Promise.resolve(state);
     },
   };
 }
