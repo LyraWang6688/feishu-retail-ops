@@ -887,24 +887,31 @@ test('⑨ 【迁移·甲】没填实收 ⇒ **拦住 + 必填人话（醒目）*
           payment_status: PAYMENT_STATUS.unpaid,
         }).toString(),
       }));
-      // ⭐⭐ 2026-10-16【迁移 · **钉现状**】（她 2026-10-16 逐字授权拆刀：
-      //   「同意拆」⇒ 这一刀只发 ①（240 不丢 / 资金页两颗 / 跳过语义 / 假成功兜底 / 拦截醒目 ✓），
-      //   **跳转前置判定（"两个都取不到 ⇒ 不许跳资金页"）单独第二刀** ✓）
-      //   · 改前逐字：`assert.equal(response.status, 400, '两个都取不到 ⇒ 拦住（不跳资金页）')`
-      //     ＋「必须给她那句『这一款没录单价，请填金额』的人话」＋「零写入」
-      //   · 改后逐字（**钉现状**）：`assert.equal(response.status, 200, '现状：放行到资金页（判定未上线）')`
-      //     ＋ 成功页 ＋ **单子真建出来** ＋ 明细「实收金额」**空**（留空就留空 ✓ 不写 0 ✗ 不猜 ✗）
-      //     ＋ 跳过 ⇒ **不写收款明细** ✓（= 她昨天的"跳过 ⇒ 待补充"✓）
-      //   · 依据 = 她 2026-10-16 逐字「同意拆」＋ Lead 裁决
-      //   🔴 **第二刀必须逐字改回 400**（已原文写进 PR 描述 ✓ 任务书另存 ✓ 不许丢 ✗）
-      assert.equal(response.status, 200, '现状（判定未上线）⇒ 放行到资金页');
+      // ⭐⭐ 2026-10-16【迁移 · **恢复判据**】（task-53 · P0 **第二刀**：把"钉现状"逐字改回 400 ✓）
+      //   · 改前逐字（①刀当时**按业务负责人授权拆刀**钉的现状，本刀逐字抄下来）：
+      //       `assert.equal(response.status, 200, '现状（判定未上线）⇒ 放行到资金页');`
+      //       ＋ `assert.ok(/您的提交已成功|本单已创建成功/.test(html), '走成功页 ✓');`
+      //       ＋ `assert.equal(entriesOf(h.gateway, 'salesEntry').length, 1, '单子真建出来（一张）');`
+      //       ＋ `assert.equal(String(details[0].fields['实收金额'] ?? ''), '', '实收留空 ⇒ **就留空**（不写 0 ✗ 不猜 ✗）');`
+      //       ＋ `assert.equal(entriesOf(h.gateway, 'paymentRecord').length, 0, '跳过 ⇒ 不写收款明细 ✓（待补充 ✓）');`
+      //   · 改后逐字（**恢复 400 + 人话 + 零写入**）：
+      //       `assert.equal(response.status, 400, '缺尺码或金额 ⇒ 拦住（不跳资金页）');`
+      //       ＋ 页面 HTML **不含** `data-view="payment-step"`（**停在货品页**，不许跳资金页 ✗）
+      //       ＋ **人话** = `SCAN_PAGE.texts.jumpGateNoticeTitle`（逐字「请先填尺码和实收金额」）
+      //       ＋ **零写入**：`salesEntry` / `salesDetail` / `paymentRecord` / `inventoryLedger` **全 0**
+      //   · 依据 = 业务负责人 2026-10-16 逐字「算了，这样吧，**实收金额的输入框用户必须填写**，
+      //     只有用户填了**尺码和金额**，才可以点击提交跳转到资金页，**不用做那个为空去单价的功能了**」
+      //     ＋ Lead 裁决（**判据加强**，不是放宽 ✗：放行 ⇒ 拦住；并且多钉了人话与四张表零写入）
+      //   ⚠️ 原「①刀钉现状」那段注释**两边对调**后仍留在上面（可追溯 ✓ 没丢 ✗）。
+      assert.equal(response.status, 400, '缺尺码或金额 ⇒ 拦住（不跳资金页）');
       const html = await response.text();
-      assert.ok(/您的提交已成功|本单已创建成功/.test(html), '走成功页 ✓');
-      assert.equal(entriesOf(h.gateway, 'salesEntry').length, 1, '单子真建出来（一张）');
-      const details = entriesOf(h.gateway, 'salesDetail');
-      assert.equal(details.length, 1, '一行明细');
-      assert.equal(String(details[0].fields['实收金额'] ?? ''), '', '实收留空 ⇒ **就留空**（不写 0 ✗ 不猜 ✗）');
-      assert.equal(entriesOf(h.gateway, 'paymentRecord').length, 0, '跳过 ⇒ 不写收款明细 ✓（待补充 ✓）');
+      assert.equal(html.includes('data-view="payment-step"'), false, '不许跳资金页（停在货品页 ✓）');
+      assert.ok(html.includes(SCAN_PAGE.texts.jumpGateNoticeTitle),
+        `必须给她那句人话「${SCAN_PAGE.texts.jumpGateNoticeTitle}」`);
+      assert.equal(entriesOf(h.gateway, 'salesEntry').length, 0, '拦住 ⇒ 主表 0 条（零写入 ✓）');
+      assert.equal(entriesOf(h.gateway, 'salesDetail').length, 0, '拦住 ⇒ 明细 0 行（零写入 ✓）');
+      assert.equal(entriesOf(h.gateway, 'paymentRecord').length, 0, '拦住 ⇒ 收款明细 0 行（零写入 ✓）');
+      assert.equal(entriesOf(h.gateway, 'inventoryLedger').length, 0, '拦住 ⇒ 库存流水 0 行（零写入 ✓）');
     });
   } finally { h.cleanup(); }
 });

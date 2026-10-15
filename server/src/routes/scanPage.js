@@ -1890,6 +1890,61 @@ return sendPaymentStep(res, req, {
           ? await service.lookup({ ...lookupInputOf(req), requestId }).catch(() => null) : null;
         // `lookup_ms` = 提交前那一次"取商品"（缓存命中⇒很短；没命中⇒就是飞书那几读）。
         saleTiming.lookup_ms = Math.max(0, Date.now() - submitLookupStartedAt);
+        // ⭐⭐⭐ 2026-10-16（task-53 · P0 **第二刀**）：「跳转资金页」的**前置判定** —— 缺尺码或金额 ⇒ 拦住。
+        //
+        // 业务负责人口径（逐字）：「算了，这样吧，**实收金额的输入框用户必须填写**，只有用户填了**尺码和金额**，
+        //   才可以点击提交跳转到资金页，**不用做那个为空去单价的功能了**」
+        //   ⇒ 判据 = **尺码已填 且 她填的实收金额已填**；缺任一 ⇒ **400 + 停在货品页 + 人话 + 零写入** ✓
+        //
+        // ⚠️ 落点三条理由（计划书 §1，都实测过）：
+        //   ① **贴住那一个出口**（下面 `return sendPaymentStep(...)` 就是"点提交要跳资金页"的唯一出口）
+        //      ⇒ 跳了就必须先过它，结构上不可能"跳了又拦" ✓；
+        //   ② **不能往前挪**：`:1712` 起那几条更早的出口会连带罩住**幂等连点 / 重复提交 / 刷新 /
+        //      资金页动作**（①刀那 6～13 条红就是挪早了 ✗）；
+        //   ③ 仍在 `:1889` 那次 `service.lookup` **之后**（不挪动既有语句 ⇒ diff 最小 ✓）。
+        //      ⚠️ 判定本体**不需要** `submitView` ⇒ **一次表都不读**（少一次飞书读 ✓）。
+        //
+        // ⚠️ 这是**独立的一块**：既有的那道闸门（`:1865` 的 `lineAmountRequired && lineAmounts.some(空)`）
+        //    **一个字都没动**，新判定**没有**塞进那个 `if` 里 ✗（它是"她带着的那份里的空项"，
+        //    与"缺尺码 / 缺金额 ⇒ 根本不许跳"是两件事）。
+        //
+        // ⚠️ 入口三条（缺一不进判定 ⇒ 不许拦）：
+        //   ① `action === submitOrder`（资金页那两颗是 `payAction` / `skipAction` ⇒ 天然分开 ✓）；
+        //   ② 这一发**不带收款字段**（带了 = 资金页那一跳 / 或本单流程还在往前走 ⇒ 不进 ✓）；
+        //   ③ 会话标记 `paymentStep !== 'pending'`（她**再点一次** / 刷新与 ⑨ 同形 ⇒ 只能靠它
+        //      区分"第一次点提交"与"已经放行过的重复提交" ✓）。
+        const jumpGateHasPaymentField = asList(body[fields.paymentMethod]).length > 0
+          || asList(body[fields.paymentAmount]).length > 0
+          || asList(body[fields.lineAmount]).length > 0;
+        const jumpGateIsFirstSubmit = String(submitSession?.sale?.paymentStep || '') !== 'pending';
+        if (!jumpGateHasPaymentField && jumpGateIsFirstSubmit) {
+          // 尺码 = 尺码区那一选（`body[fields.size]`）**或**本单草稿行里任一行有尺码
+          //   （多行时这一发 body 不带 size ⇒ 必须看会话草稿行 ✓ 见 v2 计划 §3）。
+          // ⚠️ 取舍（计划书 §6「配品行天生没有尺码」那一处）：本刀**按她字面**做 ——
+          //   **尺码必须填**（不按 `requiresSize` 分叉）；"配品单"那条口子若要做，
+          //   由她拍板后另开一刀（PR 里如实标注 ✓ 不擅自放宽 ✗）。
+          const jumpGateHasSize = String(body[fields.size] ?? '').trim() !== ''
+            || pendingDraftLines.some((line) => String(line?.size ?? '').trim() !== '');
+          const jumpGateHasAmount = lineAmounts.some((value) => String(value ?? '').trim() !== '');
+          if (!jumpGateHasSize || !jumpGateHasAmount) {
+            // 日志：她（和我）"一查就知道卡在哪一段" ⇒ 与既有事件同一形状（不新造事件名 ✗）。
+            logWarn('scan.write.jump_gate_blocked', {
+              request_id: requestId, has_size: jumpGateHasSize, has_amount: jumpGateHasAmount,
+            });
+            return sendHuman(res, 400, {
+              // 🔴 措辞从配置读（用户可见中文只许在 `src/config/**` ✗ 不许在本文件写死）：
+              //   真源 = `config/scanPage.js` 的 `TEXTS.jumpGateNoticeTitle`（= 她这一刀的原话口径）。
+              title: config.texts.jumpGateNoticeTitle,
+              body: writeConfig.texts.lineAmountRequiredNote || '',
+              requestId,
+              // 「停在货品页」：回跳就是她自己扫的那一页（既有 `postActionFor` / `backTargetFor` ✓ 不新造 ✓）
+              backPath: postActionFor(
+                backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realm,
+              ),
+              backLabel: writeConfig.texts.submittedRecordAnother,
+            });
+          }
+        }
         const submitStartedAt = Date.now();
         // ⭐⭐ 2026-10-14（业务负责人口径，逐字）：「**确认状态是资金那页点击了按钮之后，才算是用户确认了**」
         //   ⇒ 点「提交这一单」**只到资金页、一个字都不写表** ✗（不建单 / 不写明细 / 不动库存 ✓）
