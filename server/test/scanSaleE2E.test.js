@@ -717,27 +717,23 @@ test('AC-E2E-7 提交后本单归零：再打开 ⇒ 本单：0 双，本单条�
 
       // 第3步：再打开（她接着扫下一个）⇒ 本单条归零、提交按钮跟着消失
       const again = await getPage(pageUrlOf(base, NUMBER_A), cookie);
-      // ⭐⭐ 2026-10-15（⑨b-2）**成对翻新**（改前逐字 → 改后逐字 → 依据）：
-      //   改前逐字：`const bar = draftBarOf(again.html);` ＋
-      //            `assert.equal(bar.includes(SCAN_WRITE.texts.submitButton), false, '第3步：没有草稿 ⇒ 本单条上不再渲染【提交这一单】（不是灰按钮）');`
-      //   改后逐字：改成断言**本单条整块不再渲染**（草稿已清）＋ 仍断言**不渲染提交按钮**（见下）
-      //   依据：异步之后余下转后台；**后台跑完才清草稿**（本文件在两个提交助手处都
-      //     `await waitForPendingSaleBackgrounds()` ⇒ 这里读到的就是"那一刻"）⇒ 草稿没了 ⇒
-      //     页面**根本不渲染本单条** ✓ —— 判据语义与改前一致（都是"本单归零、不能再提交"）✓，
-      //     只是从"本单条上显示 0 双"改成"本单条整块不渲染"（页面早先已按她的话把「本单：N 双」删了 ✓）。
-      assert.equal(again.html.includes('data-view="draft-bar"'), false,
-        '第3步：没有草稿 ⇒ 本单条**整块不再渲染**（不是显示 0 双）✓');
+      // ⭐⭐ 2026-10-15（⑨b-2）**再翻新一次**（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字（**那是按"有 bug 的页面"写的**）：`assert.equal(again.html.includes('data-view="draft-bar"'), false, '第3步：没有草稿 ⇒ 本单条整块不再渲染（不是显示 0 双）✓');`
+      //   改后逐字：**还原成正常页面的判据** —— 本单条**照旧在**（草稿清了它也在，那是页面的固定区块 ✓），
+      //     但里面**没有草稿行 / 没有"已加入本单（N 双）"**，且**不渲染提交按钮** ✓；
+      //     并**新增一条更强**的：整页 `class="draft-line"` 行数 = 0 ✓
+      //   依据：🔴 根因修好之后（`saveSaleProgress`/`completeSale` 改成**在 store 锁内基于最新记录合成**
+      //     ⇒ 后台那一跑不再把 `paymentStep` 冲回 `pending`），她提交后再扫下一个标签**看到的是正常扫码页**
+      //     （现场实测：页标题回到「XHB8095 · 扫码」、`paymentStep=created`）⇒
+      //     先前那两条"本单条不渲染"的指向**建立在一个 bug 之上**，必须改回正常判据 ✗。
+      const bar = draftBarOf(again.html);
     // ⭐ 2026-10-14：顶部「本单：N 双」已按她的话删掉 ⇒ 改从**页面上仍然可见的那句**判同一个事实 ✓
     assert.equal(again.html.includes('class="draft-bar__count"'), false, '第3步：归零 ⇒ 顶部计数行已经不在了 ✓');
       assert.equal(/已加入本单（[1-9]/.test(again.html), false, '第3步：也不该再显示"已加入本单（N 双）"✓');
-      // ⚠️ 2026-10-15（⑨b-2）**删掉一条空断言**（不是放宽判据，是它**从来就没判过东西**）：
-      //   改前逐字：`assert.equal(bar.includes(SCAN_WRITE.texts.submitButton), false,
-      //              '第3步：没有草稿 ⇒ 本单条上不再渲染【提交这一单】（不是灰按钮）');`
-      //   为什么删：2026-10-12 起**本单条根本不放提交按钮**（见本用例第1步的注释：
-      //     「本单条不再放提交按钮（真机丢钱就是它造成的）」）⇒ 在 `bar` 里找那颗按钮
-      //     **恒为 false**，它从被写下的那天起就是空断言 ✗。
-      //   ⇒ 它想表达的"没有草稿就不能再提交"由上面那条**更强的事实**覆盖：
-      //     **本单条整块不渲染** ✓（草稿没了，本单那一段就整个不存在）。
+      assert.equal((again.html.match(/class="draft-line"/g) || []).length, 0,
+        '第3步：草稿已清 ⇒ 本单条里**一行草稿都没有** ✓（比原来那条空断言更强 ✓）');
+      assert.equal(bar.includes(SCAN_WRITE.texts.submitButton), false,
+        '第3步：没有草稿 ⇒ 本单条上不再渲染【提交这一单】（不是灰按钮）');
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第3步：表里仍然只有那一张单');
     });
   } finally { e2e.cleanup(); }
@@ -877,13 +873,15 @@ test('AC-E2E-9 🔴 会话过期后：页面照旧打得开 ⇒ 用页面上那�
         assert.equal(after.html.includes('已加入本单（'), false, '第5步：归零 ⇒ 页面上没有"已加入本单"那句 ✓');
       // ⚠️ 2026-10-12 改写：**本单条里不再有提交按钮**（真机丢钱就是它造成的）。
       //    ⚠️ 销售块那颗**照旧一直在**：空本单时它写着"（1 双）"，正是"一单一笔 = 选尺码 + 提交"的入口。
-      // ⭐⭐ 2026-10-15（⑨b-2）**成对翻新**（改前逐字 → 改后逐字 → 依据）：
-      //   改前逐字：`assert.equal(draftBarOf(after.html).includes('value="submit_order"'), false, '第5步：本单条里没有提交按钮');`
-      //   改后逐字：`assert.equal(after.html.includes('data-view="draft-bar"'), false, '第5步：草稿已清 ⇒ 本单条整块不渲染（"本单条里没有提交按钮"更强地成立 ✓）');`
-      //   依据：同 AC-E2E-7 —— 异步之后余下转后台、**后台跑完才清草稿**（本文件提交助手已 await）⇒
-      //     草稿没了 ⇒ 本单条**整块不渲染** ✓（判据语义不变、还更强：连"本单条"都不存在了）。
-      assert.equal(after.html.includes('data-view="draft-bar"'), false,
-        '第5步：草稿已清 ⇒ 本单条整块不渲染（"本单条里没有提交按钮"更强地成立 ✓）');
+      // ⭐⭐ 2026-10-15（⑨b-2）**再翻新一次**（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字（**按"有 bug 的页面"写的**）：`assert.equal(after.html.includes('data-view="draft-bar"'), false, …);`
+      //   改后逐字：**还原成正常页面的判据** —— 本单条**照旧在**，但里面**没有草稿行**、也**没有提交按钮** ✓
+      //   依据：根因修好后她看到的是**正常扫码页**（现场实测：页标题「… 扫码」、`paymentStep=created`），
+      //     本单条是页面的固定区块 ⇒ 先前那条"整块不渲染"的指向**建立在 bug 之上**，必须改回 ✗。
+      assert.equal((after.html.match(/class="draft-line"/g) || []).length, 0,
+        '第5步：草稿已清 ⇒ 本单条里**一行草稿都没有** ✓');
+      assert.equal(draftBarOf(after.html).includes('value="submit_order"'), false,
+        '第5步：本单条里没有提交按钮');
       assert.ok(after.html.includes('提交这一单（1 双）'),
         '第5步：销售块那颗还在，文案回到"（1 双）"');
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第5步：没有再建第二张单');
@@ -2137,15 +2135,6 @@ test('AC-H4/H5 回归：编号页**不显示**"上一单已提交"；提交后�
         payment_status: PAYMENT_STATUS.unpaid, payment_method: '', payment_amount: '', line_amount: ['280'],
       }));
       const subHtml = await subRes.text();
-      // ⭐⭐ 2026-10-15（⑨b-2）：**提交刚完成那一刻**的采样 —— 用来判定"待付款标记"是
-      //   从没被改成 `created`，还是后来又被谁写回 `pending` ✓
-      {
-        const s0 = await e2e.sessions.get('ou_home_5').catch(() => null);
-        console.log('FLAKE-EVIDENCE 提交刚完=', JSON.stringify({
-          paymentStep: s0?.sale?.paymentStep, status: s0?.sale?.status,
-          lines: (s0?.sale?.lines || []).length,
-        }));
-      }
       // ⭐⭐ **强化断言**（原来这里**忽略了提交结果** ✗ ⇒ 提交一旦没成，后面那条"新单只有 1 双"会**莫名其妙地红** ✗）：
       //   提交必须成功、并且**这一单已经结束**（草稿清空由上一条成功的提交保证 ✓）。
       assert.equal(subRes.status, 200, `提交必须成功（实际 ${subRes.status}）`);

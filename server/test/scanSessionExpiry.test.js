@@ -171,6 +171,18 @@ const createHarness = (options = {}) => {
     purchase: {},
     purchaseStore: new JsonTaskStore({ dir: dirs.replenishDir, idField: 'task_id' }),
   });
+  // ⭐⭐ 2026-10-15（⑨b-2）：**销售提交已异步**（开关默认已翻成 `true`）⇒ 本文件所有
+  //   `h.write.submitSale(...)` 之后，用例读的"端状态"（明细几行 / 键轮换到第几轮…）
+  //   都要**先等后台那一跑跑完** ✓ —— 在这里**包一层**（一处 ✓ 6 个调用点一个字不用改 ✓）。
+  //   ⭐ 等的是**真句柄** `result.background`（**不轮询、不靠计时器** ✓）；关着开关时它是 undefined
+  //     ⇒ 直接返回（同步路径**逐字同形** ✓）。
+  //   🔴 判据**一个字没改**：只是先等它跑完再比 ✓（不是我替它放宽 ✗）。
+  const rawSubmitSale = write.submitSale.bind(write);
+  write.submitSale = async (input) => {
+    const result = await rawSubmitSale(input);
+    if (result && result.background) await result.background;
+    return result;
+  };
   return {
     gateway, sessions, write, tables: gateway._tables,
     advance: (ms) => { clock += ms; },

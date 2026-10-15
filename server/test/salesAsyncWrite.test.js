@@ -230,13 +230,22 @@ test('AC-AS6 🔴 源码 + 行为双哨兵：**没有任何路径**直调 `sales
 // AC-AS-LOCK：开关关着 ⇒ 与老同步路径逐字同形（⑨a 行为零变化）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-AS-LOCK ⭐⭐ 开关**默认 false** ⇒ 行为与老同步路径**逐字同形**（⑨a 不改变现状 ✓）', async () => {
-  // ① 配置默认值：**显式布尔 false**（不是 `||` 兜底、默认不是 true ✓）
-  assert.equal(SCAN_WRITE.sale.asyncWrite.enabled, false,
-    '默认必须是 `false`（Lead 的硬约束：重试入口还没做 ⇒ 不许让 main 出现"可点重试却点不了" ✗）');
+test('AC-AS-LOCK ⭐⭐ 开关**默认 true**（⑨b-2 已翻）· 显式布尔 · 关着时与老路径**逐字同形**', async () => {
+  // ⭐⭐ 2026-10-15（⑨b-2）**成对翻新**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.equal(SCAN_WRITE.sale.asyncWrite.enabled, false,
+  //              '默认必须是 `false`（Lead 的硬约束：重试入口还没做 ⇒ 不许让 main 出现"可点重试却点不了" ✗）');`
+  //            ＋ `assert.match(cfgSource, /readFlag\(process\.env, 'SCAN_SALE_ASYNC_WRITE_ENABLED', false\)/, …)`
+  //   改后逐字：默认 **`true`**（⑨b-2 的**全部意义**就是把开关打开）+ 同样的 `readFlag` 显式布尔检查（默认值改 `true`）
+  //   依据：**她 2026-10-15 的裁决**「单号一出立刻回…明细/库存/交付转后台」——
+  //     ⑨b-1 的三件（后台句柄 #568 / 工作台续写入口 #569 / 工作台「未完成，可点重试」UI #570）
+  //     **都已合并进 main** ⇒ ⑨a 当时那条硬约束「重试入口还没做 ⇒ 不许默认开」
+  //     （怕她在 main 上看到"可点重试却点不了"）**已经解除** ✓。
+  //   ⚠️ 判据**没放宽**：显式布尔 / 不许 `||` 兜底 / "关着时与老路径逐字同形"三条**一条不少** ✓
+  assert.equal(SCAN_WRITE.sale.asyncWrite.enabled, true,
+    '⑨b-2：默认**开**（重试入口三件已合并 ⇒ 先前那条"不许默认开"的约束解除 ✓）');
   const cfgSource = fs.readFileSync(path.join(SERVER_SRC, 'config', 'scanWrite.js'), 'utf8');
-  assert.match(cfgSource, /readFlag\(process\.env, 'SCAN_SALE_ASYNC_WRITE_ENABLED', false\)/,
-    '开关走 `readFlag` + 显式默认 `false` ✓');
+  assert.match(cfgSource, /readFlag\(process\.env, 'SCAN_SALE_ASYNC_WRITE_ENABLED', true\)/,
+    '开关走 `readFlag` + 显式默认 `true` ✓');
   assert.equal(/SCAN_SALE_ASYNC_WRITE_ENABLED[\s\S]{0,40}\|\|/.test(cfgSource), false,
     '不许用 `||` 兜底（那样"清空变量"关不掉 ✗）');
 
