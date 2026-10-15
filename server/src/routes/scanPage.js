@@ -1549,17 +1549,31 @@ const createScanPageRouter = (options = {}) => {
           const skipSize = String(skipInfo.size || '').trim();
           const skipView = skipSize
             ? await service.lookup({ ...lookupInputOf(req), requestId }).catch(() => null) : null;
-          // ⭐ 跳过 = **不写收款** ✓（"钱稍后补"✓）⇒ 空的 payments + 默认档（未付）+ 实收空 ✓
+          // 🔴🔴 2026-10-16 P0 第二处（**"假成功"**）：她真机那条路上，「跳过付款」在**实收确实缺**时
+          //   会走到下面这通 `submitSale` ⇒ 页面拿到**成功页**、`salesEntry` **0 条** ✗
+          //   = 她最恨的「看着像好了」✗ ⇒ **实收缺就在这一步拦住**（绝不给成功页 ✓ 人话要给醒目的 ✓）
+          //   ⚠️ 与提交那一步**同一套取值口径**（body → 会话暂存的那份 ✓ 一份真源 ✓ 不发明形状 ✗）
+          const skipLineAmounts = asList(body[fields.lineAmount]).some((v) => String(v ?? '').trim())
+            ? asList(body[fields.lineAmount])
+            : (Array.isArray(skipInfo.lineAmounts) ? skipInfo.lineAmounts : []);
+          const skipDraftSession = await writeService.sessions?.get?.(openIdOf(req)).catch(() => null);
+          const skipDraftLines = Array.isArray(skipDraftSession?.sale?.lines) ? skipDraftSession.sale.lines
+            : (Array.isArray(skipDraftSession?.lines) ? skipDraftSession.lines : []);
+          const skipResolvedAmounts = skipLineAmounts.some((v) => String(v ?? '').trim())
+            ? skipLineAmounts
+            : skipDraftLines.map((line) => String(line?.amount ?? '').trim()).filter(Boolean);
+          // ⚠️ 2026-10-16（裁决=甲）：**跳过 = 她明说"钱稍后去工作台补"** ⇒ **实收空在这一步是合法的** ✓
+          //   （用"每一双都要填实收"去拦它 = 把"跳过"这个出口堵死 ✗）⇒ **这一步不放必填闸门** ✓
+          //   ⭐ "假成功"改由**下面那道"写失败如实可见"**兜（不是靠必填挡 ✓）
+          // ⭐ 跳过 = **不写收款** ✓（"钱稍后补"✓）⇒ 空的 payments + 默认档（未付）+ 实收按上面那份 ✓
           // eslint-disable-next-line no-await-in-loop
           skipCreated = await writeService.submitSale({
             openId: openIdOf(req),
             requestId,
             submitKey: body[fields.submitKey],
             payments: [],
-            // ⭐ 同上：**每件实收**优先用她提交时填好的那份 ✓（资金页表单不带这个字段 ✗ 丢掉就落不了表 ✓）
-            lineAmounts: asList(body[fields.lineAmount]).some((v) => String(v ?? '').trim())
-              ? asList(body[fields.lineAmount])
-              : (Array.isArray(skipInfo.lineAmounts) ? skipInfo.lineAmounts : []),
+            // ⭐ 同上：用**取值后的那一份**（body → 会话暂存 → 会话草稿行 ✓ 与上面同一口径）
+            lineAmounts: skipResolvedAmounts,
             paymentStatus: writeConfig.sale.paymentStatus.default,
             paidAmount: '',
             timing: skipStepTiming,
@@ -1574,7 +1588,12 @@ const createScanPageRouter = (options = {}) => {
               inStock: sellableSizeTexts(skipView).has(skipSize),
             } : null,
           });
-          if (!skipCreated?.ok) {
+          // ⭐⭐ 2026-10-16（裁决甲配套）：**"说 ok 但其实什么都没写"⇒ 不许给成功页** ✗
+          //   （她真机那条「假成功」的形状：页面 200 + 成功页 + `salesEntry` 0 条）
+          //   判据：既没有单号、也不是"把上一单结果还给她"（reused）⇒ 当成**没写成功**如实报 ✓
+          const skipWroteNothing = Boolean(skipCreated?.ok)
+            && !skipCreated?.order_no && skipCreated?.reused !== true;
+          if (!skipCreated?.ok || skipWroteNothing) {
             // ⭐⭐ 2026-10-12（她口径）：**主表已建、明细那一步没写成功** ⇒ 给她**如实**的"半成"页
             //   （单子记上了 + 单号 + 怎么出去）🔴 **绝不许**说"提交已成功"✗、也**不许**说"一个字都没写"✗
             if (skipCreated?.code === 'sale_partial_failed') {
@@ -1594,7 +1613,13 @@ const createScanPageRouter = (options = {}) => {
                 backLabel: writeConfig.texts.submittedRecordAnother,
               });
             }
-            return respondWriteFailure(res, skipCreated, requestId);
+            return respondWriteFailure(
+              res,
+              skipWroteNothing && !skipCreated?.code
+                ? { ...skipCreated, code: 'sale_write_failed' }
+                : skipCreated,
+              requestId,
+            );
           }
           // ⭐ 建单成功 ⇒ 标记改成「**这一单已经建过**」✓（**不清成空串** ✗ —— 见 `payment_pay` 那段注释）
           await writeService.saveDraftLines?.(openIdOf(req), { paymentStep: 'created' });
@@ -1673,45 +1698,36 @@ const createScanPageRouter = (options = {}) => {
         //    + ③多笔收款（同名重复 ⇒ 两个数组按下标对齐）+ 「部分付」的实付多少。
         //    **原样交给写服务**，校验（含"全付必须相等"那条）在写服务里做 —— 路由不判业务。
         const payments = parsePaymentRows(body, fields);
-        const lineAmounts = asList(body[fields.lineAmount]);
-        // ⭐⭐ 2026-10-14（她裁决 ⓐ）：**每一双都要填「实收金额」**（现货/预订**同一处判** ✓）
-        //   🔴 有空 ⇒ **400 + 人话 + 一个字都不写表** ✗（幂等键/会话都不动 ✓ 不许假成功 ✓）
-        //   ⚠️ **整单收款仍可全空** ✓（「待补充」那条老路保留 ✓）
-        if (writeConfig.lineAmountRequired !== false
-          && lineAmounts.some((value) => String(value ?? '').trim() === '')) {
-          logWarn('scan.write.line_amount_required', { request_id: requestId, lines: lineAmounts.length });
-          return sendPaymentStep(res, req, {
-            realm,
-            status: 400,
-            notice: String(writeConfig.texts.lineAmountRequiredNote || ''),
-            totalAmountText: 0,
-            submitKey: writeService?.sessions?.submitKeyFor?.(openId, false, 'sale') || '',
-            count: lineAmounts.length,
-          });
-        }
-        const paymentStatus = String(body[fields.paymentStatus] || '').trim();
-        const paidAmount = body[fields.paidAmount] ?? '';
-        // ⭐⭐ 2026-10-12：**提交这一步的分阶段耗时** —— 真机被卡住 / 收过 504 之后要的
-        //    "一查日志就知道卡在哪一步"。`timing` 是写服务的**可选出参**（只读时间、不进业务入参）。
-        const saleTiming = {};
-        // ⭐ 2026-10-12：整页只有**一个表单** ⇒ 提交这一下**天然带着**她在尺码区选中的那一双。
-        //    本单为空时 ⇒ 「选尺码 + 提交」两下就是一张单（一单一笔的默认路径）；
-        //    本单已有几双 ⇒ 这一项**忽略**（多笔必须显式点【➕ 还要加一双】），
-        //    判据在写服务里（`pendingLine` 只在本单为空时生效）。
-        const submitLookupStartedAt = Date.now();
-        const submitView = String(body[fields.size] ?? '').trim()
-          ? await service.lookup({ ...lookupInputOf(req), requestId }).catch(() => null) : null;
-        // `lookup_ms` = 提交前那一次"取商品"（缓存命中⇒很短；没命中⇒就是飞书那几读）。
-        saleTiming.lookup_ms = Math.max(0, Date.now() - submitLookupStartedAt);
-        const submitStartedAt = Date.now();
-        // ⭐⭐ 2026-10-14（业务负责人口径，逐字）：「**确认状态是资金那页点击了按钮之后，才算是用户确认了**」
-        //   ⇒ 点「提交这一单」**只到资金页、一个字都不写表** ✗（不建单 / 不写明细 / 不动库存 ✓）
-        //   ⇒ 把"这一单要写什么"**记进服务端会话** ✓（第二小步：点资金页按钮时才据此建单 ✓；刷新时 GET 也认它 ✓）
-        //   ⚠️ 用**既有**会话机制（`saveSaleProgress` 的薄透传 `saveDraftLines` ✓ 不新造 ✓）
+        // 🔴🔴 2026-10-16 P0（她真机：「货品信息里填了 240 ⇒ 资金页显示 0 ⇒ 提交没反应」）：
+        //   这一步原来看**裸 body** ✗ —— 而货品页每行的「每件实收」是先写进**会话草稿行**的
+        //   （`:1201/:1230` → `services/scanWriteService.js:512/554` 的 `amount` ✓），
+        //   资金页那张表单**完全不带** `line_amount`（`:1274` 的注释早就写明 ✓）
+        //   ⇒ 空数组 ⇒ ① 必填闸门对空数组恒不报（`.some()` ✗ = 静默 0 的第二个口子）
+        //            ② 结算读点拿到 0 ⇒ 26 次 `amount_mismatch items_cents=0`（她的 240 丢在这 ✗）
+        //   ⇒ **照 `:1281`/`:1561` 那两处一模一样的回落写法**（一份真源 = 会话草稿行 ✓ 不发明形状 ✗）
         const submitSession = await writeService.sessions?.get?.(openId).catch(() => null);
         const pendingDraftLines = Array.isArray(submitSession?.sale?.lines) ? submitSession.sale.lines
           : (Array.isArray(submitSession?.lines) ? submitSession.lines : []);
-        await writeService.saveDraftLines?.(openId, {
+        const bodyLineAmounts = asList(body[fields.lineAmount]);
+        const draftLineAmounts = pendingDraftLines
+          .map((line) => String(line?.amount ?? '').trim()).filter(Boolean);
+        // 第三档：**一单一笔那条默认路径**（草稿 0 行 ⇒ 她那一下填的就在 `fields.amount` ✓）
+        const singleRowAmount = String(body[fields.amount] ?? '').trim();
+        const lineAmounts = bodyLineAmounts.some((value) => String(value ?? '').trim())
+          ? bodyLineAmounts
+          : (draftLineAmounts.length ? draftLineAmounts : (singleRowAmount ? [singleRowAmount] : []));
+        // ⭐⭐ 2026-10-14（她裁决 ⓐ）：**每一双都要填「实收金额」**（现货/预订**同一处判** ✓）
+        //   🔴 有空 ⇒ **400 + 人话 + 一个字都不写表** ✗（幂等键/会话都不动 ✓ 不许假成功 ✓）
+        //   ⚠️ **整单收款仍可全空** ✓（「待补充」那条老路保留 ✓）
+        // 🔴 2026-10-16（裁决=甲）：闸门判**取值后的那份**；且**空数组也算缺** ——
+        //   只要"这一单确实有东西要付"（草稿有行 ‖ 这次带了尺码 ⇒ 一单一笔默认路径 ✓）。
+        //   依据：她 2026-10-14「每一双都要填「实收金额」」+ 她 2026-10-16 00:01「金额是必填的吧」。
+        // 🔴🔴 2026-10-16 P0（定论 · 顺序修正）：**状态标记必须先写** ——
+        //   闸门原来在这段之前返回 ⇒ `paymentStep:'pending'` 永远没被写上
+        //   ⇒ `routes/scanPage.js:1542` 的 `skipPending` 恒 false ⇒ 跳过那支整块被跳过
+        //   ⇒ 拦住后她**再也走不动这一单**（页面 200、一条都不写）= 真机「点了提交没反应」✗
+        //   ⇒ 标记照写（拦住时看到的仍是同一页 + 醒目人话 ✓）
+await writeService.saveDraftLines?.(openId, {
           lines: pendingDraftLines,
           // ⭐ 她（或 GET）据此判断"已经走到资金这一步了" ⇒ 刷新仍停在资金页 ✓
           paymentStep: 'pending',
@@ -1739,12 +1755,55 @@ const createScanPageRouter = (options = {}) => {
             // ⭐⭐ 她在**销售页**填的"每件实收 / 收款行 / 付款情况 / 实付多少"也要一起存下来 ✓
             //   （资金页那张表单**不带**这些字段 ✗ ⇒ 不在这一步存 ⇒ 点按钮建单时它们就丢了 ✗
             //     实测：`AC-E2E-8` 的"她填的实收照旧落表"就是因为丢了这个 ✗）
-            lineAmounts: asList(body[fields.lineAmount]),
+            // ⭐⭐ 2026-10-16 P0（**写点一处收口**）：存**取值后的那一份**（不是裸 body ✗）——
+            //   资金页两个读点（`:1281` pending / `:1561` skip）都回落到这里存的这份
+            //   ⇒ 存空 ⇒ 它们也空 ⇒ `items_cents=0` ⇒ 拦住 ✗（= 她那个现场）
+            lineAmounts,
             payments: parsePaymentRows(body, fields),
             paymentStatus: String(body[fields.paymentStatus] || '').trim(),
             paidAmount: String(body[fields.paidAmount] ?? ''),
           },
         });
+
+        // ⚠️ 2026-10-16（裁决=甲 · **窄化**）：**提交步维持原状** —— 只判"她带着的那份"里的空项；
+        //   "空数组也算缺"那条**只留在资金页（跳过）那一支** ✓
+        //   （理由：拦下的**原因码/人话**是她真机看到的东西 ⇒ 不许在没问她之前换掉 ✗）
+        if (writeConfig.lineAmountRequired !== false
+          && lineAmounts.some((value) => String(value ?? '').trim() === '')) {
+          logWarn('scan.write.line_amount_required', { request_id: requestId, lines: lineAmounts.length });
+
+return sendPaymentStep(res, req, {
+            realm,
+            status: 400,
+            notice: String(writeConfig.texts.lineAmountRequiredNote || ''),
+            totalAmountText: 0,
+            submitKey: writeService?.sessions?.submitKeyFor?.(openId, false, 'sale') || '',
+            count: lineAmounts.length,
+          });
+        }
+        const paymentStatus = String(body[fields.paymentStatus] || '').trim();
+        const paidAmount = body[fields.paidAmount] ?? '';
+        // ⭐⭐ 2026-10-12：**提交这一步的分阶段耗时** —— 真机被卡住 / 收过 504 之后要的
+        //    "一查日志就知道卡在哪一步"。`timing` 是写服务的**可选出参**（只读时间、不进业务入参）。
+        const saleTiming = {};
+        // ⭐ 2026-10-12：整页只有**一个表单** ⇒ 提交这一下**天然带着**她在尺码区选中的那一双。
+        //    本单为空时 ⇒ 「选尺码 + 提交」两下就是一张单（一单一笔的默认路径）；
+        //    本单已有几双 ⇒ 这一项**忽略**（多笔必须显式点【➕ 还要加一双】），
+        //    判据在写服务里（`pendingLine` 只在本单为空时生效）。
+        const submitLookupStartedAt = Date.now();
+        const submitView = String(body[fields.size] ?? '').trim()
+          ? await service.lookup({ ...lookupInputOf(req), requestId }).catch(() => null) : null;
+        // `lookup_ms` = 提交前那一次"取商品"（缓存命中⇒很短；没命中⇒就是飞书那几读）。
+        saleTiming.lookup_ms = Math.max(0, Date.now() - submitLookupStartedAt);
+        const submitStartedAt = Date.now();
+        // ⭐⭐ 2026-10-14（业务负责人口径，逐字）：「**确认状态是资金那页点击了按钮之后，才算是用户确认了**」
+        //   ⇒ 点「提交这一单」**只到资金页、一个字都不写表** ✗（不建单 / 不写明细 / 不动库存 ✓）
+        //   ⇒ 把"这一单要写什么"**记进服务端会话** ✓（第二小步：点资金页按钮时才据此建单 ✓；刷新时 GET 也认它 ✓）
+        //   ⚠️ 用**既有**会话机制（`saveSaleProgress` 的薄透传 `saveDraftLines` ✓ 不新造 ✓）
+        // ⚠️ 2026-10-16 P0：`submitSession` / `pendingDraftLines` **已上移**到本分支开头
+        //   （`lineAmounts` 的回落要用它 ✓）—— **这里不许再声明一次** ✗（重复声明 = SyntaxError）
+                // ⚠️ 2026-10-16 P0：这一段 `saveDraftLines({ paymentStep:'pending', … })` **已上移到闸门之前** —— **这里不许再写第二份** ✗
+
         // ⭐ 资金页：还没建单 ⇒ `orderNo: ''`（**不编** ✗）· `count` 用草稿行数 ✓
         return sendPaymentStep(res, req, {
           realm,

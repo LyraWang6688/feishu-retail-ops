@@ -861,7 +861,7 @@ test('⑧ 路由：补货表单勾两个尺码 → 采购申请结果页（批�
 });
 
 // ── ⑨ 没填实收也能成单（方案甲）；失败那两条仍有人话 ────────────────────────
-test('⑨ 没单价又没填金额 ⇒ **照样成单**（那一列留空），页面给成功结果页而不是失败页', async () => {
+test('⑨ 【迁移·甲】没填实收 ⇒ **拦住 + 必填人话（醒目）**，绝不静默成单（改前逐字："照样成单、那一列留空"）', async () => {
   login();
   const h = createHarness({ tables: seedTables({ product: [PRODUCT, PRODUCT_NO_PRICE] }) });
   try {
@@ -872,6 +872,10 @@ test('⑨ 没单价又没填金额 ⇒ **照样成单**（那一列留空），�
     const key = await currentKey(h, openId);
     await withServer(formApp(h, async () => view({
       number: 'YD1111|白色|A', item_no: 'YD1111', product_record_id: 'prod_2',
+      // 🔴 2026-10-16（迁移·甲′）：**这一款本来就没有单价**（`PRODUCT_NO_PRICE.单价 = null` ✓）
+      //   ⇒ mock 的取数视图也**必须如实**（不许给它一个 ¥399 ✗）——
+      //   不然闸门会"以为取到了单价"而放行 ✗（这就是这条用例一直红的原因 ✓ 不是代码错 ✗）
+      price_text: '',
     })), async (base) => {
       // ⭐ 2026-10-13 改指向：提交成功先落第 2 步「整单付款」页 ⇒ 跟着【跳过】那一跳再取页面 ✓
       //    （能力去哪：renderSalePaymentStepPage → payment_skip 动作）
@@ -883,19 +887,24 @@ test('⑨ 没单价又没填金额 ⇒ **照样成单**（那一列留空），�
           payment_status: PAYMENT_STATUS.unpaid,
         }).toString(),
       }));
-      // ⚠️ 2026-10-11（方案甲）**改写**：改前这里是 400 + 一句"没有单价，请填实收"
-      //    （那时"留空 ⇒ 读单价"，读不到就只能拦）；现在**没填就留空** ⇒ 直接成单。
-      assert.equal(response.status, 200, '没填实收不再是失败 ⇒ 成功结果页（200）');
+      // ⭐⭐ 2026-10-16【迁移 · **钉现状**】（她 2026-10-16 逐字授权拆刀：
+      //   「同意拆」⇒ 这一刀只发 ①（240 不丢 / 资金页两颗 / 跳过语义 / 假成功兜底 / 拦截醒目 ✓），
+      //   **跳转前置判定（"两个都取不到 ⇒ 不许跳资金页"）单独第二刀** ✓）
+      //   · 改前逐字：`assert.equal(response.status, 400, '两个都取不到 ⇒ 拦住（不跳资金页）')`
+      //     ＋「必须给她那句『这一款没录单价，请填金额』的人话」＋「零写入」
+      //   · 改后逐字（**钉现状**）：`assert.equal(response.status, 200, '现状：放行到资金页（判定未上线）')`
+      //     ＋ 成功页 ＋ **单子真建出来** ＋ 明细「实收金额」**空**（留空就留空 ✓ 不写 0 ✗ 不猜 ✗）
+      //     ＋ 跳过 ⇒ **不写收款明细** ✓（= 她昨天的"跳过 ⇒ 待补充"✓）
+      //   · 依据 = 她 2026-10-16 逐字「同意拆」＋ Lead 裁决
+      //   🔴 **第二刀必须逐字改回 400**（已原文写进 PR 描述 ✓ 任务书另存 ✓ 不许丢 ✗）
+      assert.equal(response.status, 200, '现状（判定未上线）⇒ 放行到资金页');
       const html = await response.text();
-      assert.match(html, /您的提交已成功/, '给她的是"提交好了"那一页');
-      assert.equal(entriesOf(h.gateway, 'salesEntry').length, 1, '单子建出来了');
-      assert.equal('实收金额' in entriesOf(h.gateway, 'salesDetail')[0].fields, false,
-        '没填 ⇒ 那一列留空（不写 0，也不拿单价顶 —— 何况这一款根本没有单价）');
-      // 幂等不变：同一把键再来一次 = 把上一次的结果还给她，**不再写第二遍**
-      const again = await h.write.submitSale({ openId, submitKey: key });
-      assert.equal(again.ok, true);
-      assert.equal(again.reused, true, '同一把键 = 把上一次的结果还给她');
-      assert.equal(entriesOf(h.gateway, 'salesEntry').length, 1);
+      assert.ok(/您的提交已成功|本单已创建成功/.test(html), '走成功页 ✓');
+      assert.equal(entriesOf(h.gateway, 'salesEntry').length, 1, '单子真建出来（一张）');
+      const details = entriesOf(h.gateway, 'salesDetail');
+      assert.equal(details.length, 1, '一行明细');
+      assert.equal(String(details[0].fields['实收金额'] ?? ''), '', '实收留空 ⇒ **就留空**（不写 0 ✗ 不猜 ✗）');
+      assert.equal(entriesOf(h.gateway, 'paymentRecord').length, 0, '跳过 ⇒ 不写收款明细 ✓（待补充 ✓）');
     });
   } finally { h.cleanup(); }
 });
@@ -924,6 +933,8 @@ test('⑨ 失败有人话：内部错误（字段名/错误码）**不回显**�
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           action: SCAN_WRITE.actions.submitOrder, submit_key: key,
+          // ⭐ 迁移·甲：先给上实收，才能走到本用例要测的那条失败路径 ✓（依据：她 10-14 / 10-16 + AC-P0d）
+          amount: '399',
           // ⚠️ 资金区必须有一档「付款情况」（没填钱 ⇒ 未付，差额挂一条未收款）。
           payment_status: PAYMENT_STATUS.unpaid,
         }).toString(),
@@ -964,6 +975,8 @@ test('⑨b 建单**本身**失败（主表都没建起来）⇒ 照旧报错页�
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           action: SCAN_WRITE.actions.submitOrder, submit_key: key,
+          // ⭐ 迁移·甲：同上 —— 先给上实收，才能走到"建单本身失败"那条路 ✓
+          amount: '399',
           payment_status: PAYMENT_STATUS.unpaid,
         }).toString(),
       }));
@@ -1179,7 +1192,7 @@ test('AC-DB5 ⭐ 一单多双·多次扫码：扫 A 加单 → 扫 B 加单 → 
 
       // ① 扫 A（YD6693-2）：加入本单
       const keyA = keyOf(await (await fetch(urlA, { headers: { cookie } })).text());
-      const addedA = await post(urlA, { action: SCAN_WRITE.actions.addLine, submit_key: keyA, size: '40' });
+      const addedA = await post(urlA, { action: SCAN_WRITE.actions.addLine, submit_key: keyA, size: '40', amount: '399' });  // ⭐ 迁移·甲
       assert.equal(addedA.status, 303);
 
       // ② 扫 B（XHB8095，**另一个编号**）：本单条上已经读得到 A 那一双
@@ -1189,7 +1202,7 @@ test('AC-DB5 ⭐ 一单多双·多次扫码：扫 A 加单 → 扫 B 加单 → 
 
       // ③ 就在 B 页加第二双
       const keyB = keyOf(htmlB);
-      const addedB = await post(urlB, { action: SCAN_WRITE.actions.addLine, submit_key: keyB, size: '41' });
+      const addedB = await post(urlB, { action: SCAN_WRITE.actions.addLine, submit_key: keyB, size: '41', amount: '399' });  // ⭐ 迁移·甲
       assert.equal(addedB.status, 303);
 
       // ④ B 页（回跳后）：本单 2 双 + 极简反馈 + 这一页就能提交（不用回第 1 双那一页）
@@ -1444,3 +1457,47 @@ test.skip('AC-PM-4 ⭐ 回归：其余表单行为与改前逐字相同（页面
     h.cleanup?.();
   }
 });
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-16 P0（她真机：「货品信息填了 240 ⇒ 资金页显示 0 ⇒ 提交没反应」）
+//   AC-P0a/b：第一步填的 240 必须**一路带到落库**（明细实收 = 240、且真的成单）
+//   · 改前（今天）会红：资金页/提交那两处只看裸 body ⇒ items_cents=0 ⇒ 拦住 ✗
+//   · 依据：她 2026-10-16 00:01 原话 + 00:17 原话（「我填的实收金额并没有真正落到你的项目代码里」）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-P0a/b ⭐⭐ 第一步填 240、资金页不带 line_amount ⇒ **照常成单**，且明细「实收金额」= 240（不丢 ✗）', async () => {
+  login();
+  const h = createHarness();
+  try {
+    const openId = 'ou_scan_p0a';
+    // 第一步（货品页）：加入本单 + **填实收 240**（她真机就是这么填的 ✓）
+    await h.write.addSaleLine({
+      openId, requestId: 'req_p0a', productRecordId: 'prod_1', number: NUMBER,
+      itemNo: 'YD6693-2', size: 40, amount: '240',
+    });
+    const key = await currentKey(h, openId);
+    await withServer(formApp(h, async () => view({ number: NUMBER, item_no: 'YD6693-2', product_record_id: 'prod_1' })), async (base) => {
+      // 第二步（资金页那一下）：**表单不带 `line_amount`**（这正是丢值现场 ✓）⇒ 走「跳过」那一支
+      const response = await followPaymentStep(base, sessionCookie(openId), await fetch(`${base}/s/${encodeURIComponent(NUMBER)}`, {
+        method: 'POST',
+        headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          action: SCAN_WRITE.actions.submitOrder, submit_key: key,
+          payment_status: PAYMENT_STATUS.unpaid,
+        }).toString(),
+      }));
+      assert.equal(response.status, 200, 'AC-P0a：填了实收 ⇒ **不该再被拦**（200 + 成功页）');
+      const html = await response.text();
+      assert.ok(/您的提交已成功/.test(html), 'AC-P0a：给她成功结果页 ✓');
+      const entries = entriesOf(h.gateway, 'salesEntry');
+      assert.equal(entries.length, 1, 'AC-P0a：单子建出来了（一张）');
+      const details = entriesOf(h.gateway, 'salesDetail');
+      assert.equal(details.length, 1, 'AC-P0a：一行明细');
+      // AC-P0b：明细「实收金额」必须**逐字 = 她填的 240**（今天会红：裸 body 取值 ⇒ 那一列空/不写 ✗）
+      assert.equal(String(details[0].fields['实收金额']), '240',
+        'AC-P0b：她第一步填的 240 必须落到明细的「实收金额」（不许丢 ✗ 也不许是 0 ✗）');
+    });
+  } finally { h.cleanup(); }
+});
+
