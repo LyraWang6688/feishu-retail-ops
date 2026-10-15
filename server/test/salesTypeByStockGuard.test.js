@@ -30,11 +30,13 @@ const FORBIDDEN_IN_TEXT = ['未付', '预付'];
 
 const ITEMS = [{ item_no: 'A100', size: 38, quantity: 1, actual_amount: 99, trade_type_code: 'SALE_CASH' }];
 
-test('① 卡片渲染 0 命中「未付 / 预付」：处理中卡 / 终态卡 / 成交提醒卡（原确认卡已退场，红线口径照旧）', () => {
+// ⭐⭐ 2026-10-15（清理死代码）**成对改指向**：
+//   改前逐字：`'① 卡片渲染 0 命中「未付 / 预付」：处理中卡 / 终态卡 / 成交提醒卡（原确认卡已退场，红线口径照旧）'`
+//   改后逐字：`'① 卡片渲染 0 命中「未付 / 预付」：终态卡 / 成交提醒卡（原确认卡与处理中卡已退场，红线口径照旧）'`
+//   依据：这条是**她定的红线**（卡面上不许出现「未付 / 预付」那种词）⇒ 判据本意 = "**在用的每一张卡**都 0 命中"
+//     ⇒ 处理中卡退场后，**终态卡 + 成交提醒卡**（＋ 到货核对卡）照旧逐张断言 ✓（判据没放宽 ✗）
+test('① 卡片渲染 0 命中「未付 / 预付」：终态卡 / 成交提醒卡（原确认卡与处理中卡已退场，红线口径照旧）', () => {
   const cards = [
-    larkCards.salesProcessingCard({ items: ITEMS }, {
-      title: '⏳ 处理中', template: 'blue', itemColor: 'grey', progressLine: '正在写入…', note: '请勿重复点击',
-    }),
     larkCards.salesStatusCard({ items: ITEMS }, '销售订单已入账', '销售单号：XSD-1。', 'green'),
     larkCards.secondDeliveryCard({
       orders: [{ orderNo: 'XSD-1', salesEntryRecordId: 'rec_1', tradeTypeLabel: '现货',

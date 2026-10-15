@@ -43,11 +43,12 @@ const PATCHABLE_CARD_SCENARIOS = [
   //    它随销售草稿卡片一起退场（导出已删）⇒ 场景清单 **14 → 13**。
   { name: 'salesStatusCard',
     build: (c) => c.salesStatusCard({ items: ITEMS }, '销售订单已入账', '销售单号：XSD-001。', 'green') },
-  { name: 'salesProcessingCard',
-    build: (c) => c.salesProcessingCard({ items: ITEMS }, {
-      title: '⏳ 处理中，正在写入', template: 'blue', itemColor: 'grey',
-      progressLine: '⏳ 正在写入销售记录与收款…', note: '已收到确认，请勿重复点击。',
-    }) },
+  // ⭐⭐ 2026-10-15（清理死代码）**成对改指向**：
+  //   改前逐字：`{ name: 'salesProcessingCard', build: (c) => c.salesProcessingCard({ items: ITEMS }, {…}) },`
+  //   改后逐字：**删掉这一项**（9 → 8）
+  //   依据：那张卡已随死代码清理退场（她 2026-10-15 拍板「清掉吧」）⇒ 它不再"会被 patch"；
+  //     本清单的**本意不变**：「**每一张会被 patch 的在用卡** builder 直出都带 `update_multi`」
+  //     ⇒ 剩下的 8 张**逐张照旧**断言 ✓（判据没放宽 ✗；少的是**已不存在的那张卡**）
   { name: 'sampleReplacementCard',
     build: (c) => c.sampleReplacementCard('task_sample', { productNumber: 'A100',
       remainingSizes: [{ size: 38, doorBoxCount: 1, sampleCount: 0, warehouseCount: 2 }] }) },
