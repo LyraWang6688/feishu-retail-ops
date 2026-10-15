@@ -3,8 +3,8 @@
  *
  * 背景（业务负责人 2026-10-08 定的第一件事）：
  *   她给「货品信息」每一条出了**标签二维码**，码里的 URL 是
- *   `https://hm.bamamei.online/s/{编号}`（唯一真源在 `config/tagQrCode.js` 的
- *   `scanUrl.urlTemplate`，`编号` = `货号|颜色|类别`，做 URL 编码）。
+ *   `https://hm.bamamei.online/s/{编号}`（**那是 2026-10-08 当时的形状**；**2026-10-12 起**新码一律 `/r/{记录ID}`，唯一真源在
+ *   `config/tagQrCode.js` 的 `recordIdTemplate` / `numberTemplate`；旧 `/s/` 只作兼容 ✓）。
  *   ⇒ **那些码今天扫开是 404** —— 这个文件配的就是"扫开以后那一页"。
  *
  * 本版**只读**：页面只回答"这个编号有多少双、都在哪儿、缺哪些码"，
