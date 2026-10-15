@@ -36,6 +36,25 @@ const resolveShared = (env) => ({
   // ⭐ 2026-10-16（渲染半）：**提交时那个载荷的字段名** —— 配置先行（换名不用改代码 ✓）。
   //   ⚠️ 显式 `readString`（**禁 `||` 兜底** ✗）：空串 = 空字段名 ⇒ 下游按空处理，不会偷偷回落。
   field: readString(env, 'SCAN_MULTI_ITEM_FIELD', 'multi_items'),
+  // ⭐⭐ 2026-10-16（task-59 · **加/删货那一半**）：把「＋ 再加一个货品」那颗入口从
+  //   `<a href="…?add=1">`（GET —— **天生带不走**她刚填的尺码/数量 ✗）改成
+  //   **同一张表单里的第二颗 submit**（POST ⇒ 她填的那些一起到 ✓）。
+  //
+  //   🔴 **默认 `false`（= 今天的页面，一个字都不变）**：这一颗按钮**只在路由真的接住那个 POST
+  //     之后才能开** —— 否则她点一下会把**这一单直接提交走** ✗（比"点了没反应"更糟 ✗✗）。
+  //     ⇒ 开关与"接住者"是**一对**，必须一起经过真机验证才翻（她 2026-10-15 那条"别留影子"的口径
+  //       说的是**多货品引擎**那件事，不是说这一颗按钮可以不经验证就往线上放 ✓）。
+  //   ⚠️ 显式布尔（`readFlag` ✓ 空串 = 关掉 ⇒ **关得掉**；认不出的值当场抛 ✗ 不静默）。
+  addWireEnabled: readFlag(env, 'SCAN_MULTI_ITEM_ADD_WIRE', false),
+  // 那两颗 submit 的**字段名 / 动作名**（配置先行 ⇒ 换名不用改代码 ✓）。
+  //   ⚠️ **不能用既有的 `action` 字段名**：表单里已经有 `hidden action=…`，
+  //     同名会被 `express.urlencoded({extended:true})` 变成**数组** ⇒ 既有 `String(body[action])` 坏掉 ✗
+  //     （前一位执行者钉过的坑 ②）⇒ 这里另起一个专用字段名 ✓。
+  wire: Object.freeze({
+    addAction: readString(env, 'SCAN_MULTI_ITEM_ADD_ACTION_FIELD', 'multi_item_add'),
+    addValue: readString(env, 'SCAN_MULTI_ITEM_ADD_ACTION_VALUE', 'add'),
+    removeField: readString(env, 'SCAN_MULTI_ITEM_REMOVE_FIELD', 'multi_item_remove'),
+  }),
   // 幂等键口径：**一单一把**（`orderKey` 就是这把键；提交成功后轮换 ⇒ 第 2 单不会被第 1 单吸收 ✓）。
   submitKeyTemplate: readString(env, 'SCAN_MULTI_ITEM_KEY_TEMPLATE', 'multi_item:{sessionId}:{seq}'),
   // ⭐ **明细幂等键模板**：必须**同时含「货品 + 尺码」** —— 否则两个货品同尺码会撞车 ✗

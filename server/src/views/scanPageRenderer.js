@@ -1329,6 +1329,15 @@ const multiItemBlockHtml = (write, view = {}, mode = '') => {
   //   ⭐⭐ 2026-10-16（补货那三处 · 她真机截图 + 逐字）⇒ `'replenish'` 也进精简档 ✓
   //     依据：她这次点的是**补货**（退货那次她已点过 ✓）—— 两边**同一个形状**、同一句依据 ✓。
   const trimmed = mode === 'return' || mode === 'replenish';
+  // ⭐⭐ 2026-10-16（task-59 · **表单半**）：加/删货那一套**只在路由半接住那个 POST 时才开** ✓
+  //   —— 接线位由路由半经 `buildWriteContext` 传进来（`write.multiItem`）；
+  //   🔴 缺一个键就**不接线**（退回今天那颗链接）—— **宁可不给按钮，也不发一个没人接的动作** ✗。
+  //   ⚠️ 与"精简档"是**两件事**（一个是删文案、一个是那颗入口是按钮还是链接）⇒ 各读各的位 ✓。
+  const wire = (write && write.multiItem) || null;
+  const addAction = String((wire && wire.addAction) || '');
+  const addValue = String((wire && wire.addValue) || '');
+  const removeField = String((wire && wire.removeField) || '');
+  const wired = Boolean(addAction && addValue);
   const first = {
     product_record_id: view.product_record_id, number: view.number, item_no: view.item_no,
     color: view.color, supplier_record_id: view.supplier_record_id, entries: [],
@@ -1337,25 +1346,46 @@ const multiItemBlockHtml = (write, view = {}, mode = '') => {
   const attr = (name, value) => (value === undefined || value === null || value === ''
     ? '' : ` ${name}="${escapeHtml(value)}"`);
   // 列表行：两种 mode **共用同一份拼法**（一处定义 ✓ 不各抄一份 ✗）
+  //   ⭐ 表单半：每行多一颗**删除**按钮（`name` = 接线字段 · `value` = 该件 `product_record_id`）；
+  //     接线关 ⇒ **一个字都不加**（既有判据原样绿 ✓）。
   const listRows = already.map((item) => {
     const rows = Array.isArray(item?.entries) ? item.entries.length : 0;
+    const removeButton = removeField && item?.product_record_id
+      ? `<button type="submit" class="btn btn--ghost" data-multi-remove name="${escapeHtml(removeField)}" value="${escapeHtml(String(item.product_record_id))}"${submitFeedbackAttrs(write)}>${escapeHtml(t.remove)}</button>`
+      : '';
     return `<li class="multi-item-row">${escapeHtml(String(item?.number || item?.item_no || ''))}`
-      + ` <span class="hint">${escapeHtml(fillText(t.rowsTemplate, { count: rows }))}</span></li>`;
+      + ` <span class="hint">${escapeHtml(fillText(t.rowsTemplate, { count: rows }))}</span>${removeButton}</li>`;
   }).join('');
   // 🔴 精简档（退货 / **补货**）：**空 ⇒ 整块（含 <ul>）不渲染** ✓；缺省档：**空 ⇒ 保留那句空态人话** ✓
   const listHtml = trimmed
     ? (already.length ? `<ul class="multi-item__list" data-view="multi-item-list">${listRows}</ul>` : '')
     : `<ul class="multi-item__list" data-view="multi-item-list">`
       + `${already.length ? listRows : `<li class="hint">${escapeHtml(t.empty)}</li>`}</ul>`;
-  // 「再加一个货品」：**零 JS** ⇒ 一颗指向本页的链接（路由按参数去记草稿；没接前点了不报错 ✓）
+  // 「再加一个货品」：
+  //   · **接线关**（今天）⇒ 一颗指向本页的**链接**（`?add=1`）—— 既有判据 `Render:73` / `ReturnTrim:166`
+  //     逐字钉着它，本刀**不动**它 ✓；
+  //   · **接线开** ⇒ 改成**同一张表单里的第二颗 submit**：🔴 这是"她填的尺码/数量不丢"的**唯一**办法
+  //     （GET 链接天生带不走表单字段 ✗ —— 只有 POST 会把她填的那些一起发出去 ✓）。
   const addHref = `${escapeHtml(write.postAction || '')}${String(write.postAction || '').includes('?') ? '&' : '?'}add=1`;
+  const addEntry = wired
+    ? `<button type="submit" class="btn btn--primary" data-multi-add name="${escapeHtml(addAction)}" value="${escapeHtml(addValue)}"${submitFeedbackAttrs(write)}>${escapeHtml(t.addButton)}</button>`
+    : `<a class="btn btn--primary" data-multi-add href="${addHref}">${escapeHtml(t.addButton)}</a>`;
+  // ⭐⭐ 隐藏字段：**首件 + 已加的每一件**（每件**带着它自己的 `entries`**）✓
+  //   🔴 为什么要带上已加的：她点「＋ 再加一个货品」时，表单里**只有当前这一件**的尺码/数量控件
+  //     ⇒ 已加那几件的数量**只能靠这个字段带走**（不然点一下"加"，前面加的就全丢 ✗）。
+  //   🔴 为什么首件的 `entries` 仍是空：本次表单的尺码/数量由**路由在提交时合并进首件**
+  //     （`mergeFirstItemEntries` 是**赋值**语义 ⇒ 只生效一次、**不会翻倍** ✓ —— 既有判据不放宽 ✗）。
+  //   ⚠️ 接线关 ⇒ 逐字仍是 `[first]`（既有判据 AC-MIR1 读的就是它 ✓ 零迁移 ✓）。
+  //   ⚠️ `view.multi_items` **由路由半保证"不含当前这一件"**（当前这件就是首件 ✓）——
+  //     否则提交时 `addItem` 会拿草稿旧 entries 覆盖她刚填的 = **静默丢值** ✗。
+  const payload = wired ? [first, ...already] : [first];
   // 🔴 说明那一段 + 标题：**精简档（退货 / 补货）不渲染**（她那句"不必要的文字提示"）✓
   //   ⚠️ 拼法上把"删掉的行"做成**整行**（不是行内空串）—— 空串留在模板里会多出空行，
   //     "删掉"就应该是**那一行不在**（也让她截图里不会看到一段莫名的空隙 ✓）。
   const lines = [];
   if (!trimmed) lines.push(`<p class="hint">${escapeHtml(t.hint)}</p>`);
-  lines.push(`<a class="btn btn--primary" data-multi-add href="${addHref}">${escapeHtml(t.addButton)}</a>`);
-  lines.push(`<input type="hidden" name="${escapeHtml(field)}" value="${escapeHtml(multiItemPayloadJson([first]))}">`);
+  lines.push(addEntry);
+  lines.push(`<input type="hidden" name="${escapeHtml(field)}" value="${escapeHtml(multiItemPayloadJson(payload))}">`);
   if (!trimmed) lines.push(`<h3 class="multi-item__title">${escapeHtml(t.title)}</h3>`);
   if (listHtml) lines.push(listHtml);
   return `<div class="card multi-item" data-view="multi-item"${attr('data-product-record-id', view.product_record_id)}${attr('data-product-number', view.number)}${attr('data-product-item-no', view.item_no)}${attr('data-product-color', view.color)}${attr('data-product-supplier-record-id', view.supplier_record_id)}>

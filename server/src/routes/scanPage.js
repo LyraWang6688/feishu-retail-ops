@@ -54,7 +54,7 @@ const { SalesFollowupService } = require('../services/salesFollowupService');
 const { renderSalesHome, renderScanSkeleton, renderScanPage, renderScanMessagePage, renderMinimalPage, renderSaleSuccessPage, renderSalePaymentStepPage, buildPaymentRows } = require('../views/scanPageRenderer');
 // ⚠️ 只借这两个**纯函数**：所选尺码在「样品 + 门盒」有没有货（= 页面上那两个分组的判据），
 //    以及 `?from=` → 领域 id（认不出来回落缺省，不报错、不白屏）。
-const { sellableSizeTexts, resolveRealm, DEFAULT_REALM } = require('../views/scanPageRealm');
+const { sellableSizeTexts, resolveRealm, DEFAULT_REALM, PURCHASE_RETURN_REALM } = require('../views/scanPageRealm');
 // ⭐ 写操作之后**立刻作废**「实时库存」内存快照（她：库存必须准确，不是等 30 秒）。
 const { invalidateLiveInventorySnapshot } = require('../services/liveInventorySnapshot');
 const { requireWorkbenchAccess } = require('./workbench');
@@ -261,6 +261,17 @@ const createScanPageRouter = (options = {}) => {
   //     与渲染半那份（模块级 `MULTI_ITEM_ORDER`）**同一个 env 源**，两边不会漂 ✓。
   // ══════════════════════════════════════════════════════════════════════════
   const multiItemOrderConfig = resolveMultiItemOrderConfig();
+  // ⭐⭐ 2026-10-16（task-59 · **加/删货那一半**）：加货 / 删除那两颗 submit 的**字段名 / 动作名**。
+  //   🔴 **缺省 = `null` ⇒ 渲染层照旧是今天那颗 `<a href="?add=1">`** ⇒ **一个字都不变** ✓
+  //     （既有判据 `multiItemOrderRender.test.js:73` / `multiItemOrderReturnTrim.test.js:166` 原样绿 ✓）。
+  //   ⚠️ 只有**本文件真的把那个 POST 接住之后**才把它交给渲染层 —— 否则她点一下按钮会把这一单
+  //     直接提交走 ✗（比现在"点了没反应"**更糟**）⇒ 门是**显式**的，不是"渲染层自己猜" ✓。
+  //   🔴 **默认关**（`config/multiItemOrder.js` 的 `addWireEnabled`，缺省 `false`）⇒ 页面上仍是
+  //     今天那颗 `<a href="?add=1">` ⇒ 既有一切逐字不变 ✓（她真机验证过再把那个开关打开 ✓）。
+  //   ⚠️ 用例可以注入一份假的（`options.multiItemWire`）—— 与 `options.writeService` 同一种注入法 ✓。
+  const multiItemWire = options.multiItemWire !== undefined
+    ? options.multiItemWire
+    : (multiItemOrderConfig.addWireEnabled === true ? multiItemOrderConfig.wire : null);
   // 用例可以注入一个假引擎（`options.multiItemOrder`）—— 与 `options.writeService` 同一种注入法 ✓
   let multiItemOrderEngine = options.multiItemOrder || null;
   /**
@@ -299,6 +310,63 @@ const createScanPageRouter = (options = {}) => {
       const orders = { ...((session || {})[ordersField] || {}) };
       const draft = orders[orderKey];
       if (draft) orders[orderKey] = { ...draft, order_amount: String(amount || '').trim() };
+      return { [ordersField]: orders };
+    });
+  };
+
+  /**
+   * ⭐⭐ 2026-10-16（task-59 · **加/删货那一半**）：草稿里"**已经加进来的那几个货品**"的读写。
+   *
+   * 为什么需要它（前一位执行者验证过的结论 ②③）：
+   *   · 她点「＋ 再加一个货品」时必须走 **POST**（GET 链接带不走她刚填的尺码/数量 ✗）
+   *     ⇒ 那个 POST 要**存下当前这一件**，再 **303 回本页**（PRG ⇒ 刷新不重复加 ✓）；
+   *   · 回来渲染时，**已加的那几件**要回到页面上 ⇒ 只有**服务端**记得住（页面零 JS ⇒ 浏览器里没处放 ✗）。
+   *
+   * 落点：**引擎那同一份会话**（`config.session.ordersField` 下、按链分段的一个小块 ✓）——
+   *   **不新建存储** ✗、也不碰业务表 ✗；⚠️ 它是"**还没开放提交的**这一单"的暂存，
+   *   与引擎那份"已提交的草稿"**同一个容器、不同的键**（`:*:pending`）⇒ 两者不会互相覆盖 ✓。
+   *
+   * 🔴 **必须排除当前这一件**：`view.multi_items`（喂给渲染层、进 hidden 字段的那一份）
+   *   只放**已加的** —— 当前这一件是表单里那个**首件** ✓。否则提交时 `addItem` 会拿草稿里
+   *   那份旧 `entries` 覆盖她**刚填的** = **静默丢值** ✗（她最恨的那种假成功）。
+   */
+  const multiItemPendingKey = (chain) => `${String(chain || '')}:pending`;
+  const readMultiItemPending = async (openId, chain) => {
+    if (!writeService || !writeService.sessions || !openId) return { orderKey: '', items: [] };
+    const { store, idOf } = writeService.sessions;
+    if (!store || typeof store.get !== 'function' || typeof idOf !== 'function') return { orderKey: '', items: [] };
+    const session = await store.get(idOf(openId)).catch(() => null);
+    const block = (session || {})[multiItemOrderConfig.session.ordersField] || {};
+    const entry = block[multiItemPendingKey(chain)] || {};
+    return {
+      orderKey: String(entry.orderKey || ''),
+      items: Array.isArray(entry.items) ? entry.items : [],
+    };
+  };
+  const writeMultiItemPending = async (openId, chain, { orderKey, items }) => {
+    if (!writeService || !writeService.sessions || !openId) return;
+    const { store, idOf } = writeService.sessions;
+    if (!store || typeof store.update !== 'function' || typeof idOf !== 'function') return;
+    const ordersField = multiItemOrderConfig.session.ordersField;
+    await store.update(idOf(openId), (session) => {
+      const orders = { ...((session || {})[ordersField] || {}) };
+      const key = multiItemPendingKey(chain);
+      const next = { ...(orders[key] || {}), items: Array.isArray(items) ? items : [] };
+      // ⚠️ 只在**真的拿到** `orderKey` 时写它 —— 否则会把先前那份**抹掉** ✗
+      if (orderKey) next.orderKey = String(orderKey);
+      orders[key] = next;
+      return { [ordersField]: orders };
+    });
+  };
+  /** 清掉那一段暂存（提交走掉 / 这一单结束时叫）—— 不留残留，免得下一单看见上一单的 ✓。 */
+  const clearMultiItemPending = async (openId, chain) => {
+    if (!writeService || !writeService.sessions || !openId) return;
+    const { store, idOf } = writeService.sessions;
+    if (!store || typeof store.update !== 'function' || typeof idOf !== 'function') return;
+    const ordersField = multiItemOrderConfig.session.ordersField;
+    await store.update(idOf(openId), (session) => {
+      const orders = { ...((session || {})[ordersField] || {}) };
+      delete orders[multiItemPendingKey(chain)];
       return { [ordersField]: orders };
     });
   };
@@ -348,6 +416,10 @@ const createScanPageRouter = (options = {}) => {
     //   的锚点，在前面多一处就把锚点挤开 ✗（本刀真踩到过 ✓）。
     invalidateInventorySnapshot(requestId, multiItemOrderConfig.invalidateReasons[chain]);
     markRealmUsed(openId, realmOfAction(action));
+    // ⭐⭐ 2026-10-16（加/删货那一半）：这一单**已经交出去了** ⇒ 把"已加的货品"那段暂存清掉 ✓
+    //   （不清 ⇒ 下一单会看见上一单加的那些 ⇒ 凭空多货 ✗）。⚠️ 只在**成功之后**清：
+    //   拒单 / 失败那条路要留着，让她改一改再点（同一 `orderKey` 重试 ✓）。
+    await clearMultiItemPending(openId, chain).catch(() => {});
     // ⚠️ task-60：`req` 作**第 4 个实参**传进去 ⇒ 这条成功页的 `scan.page.rendered`
     //    也带得上 `number`（字段齐 ✓）；🔴 **页面本身一个字都不受影响** ✗（那个参数只喂日志）。
     return sendSuccess(res, 200, {
@@ -493,6 +565,9 @@ const createScanPageRouter = (options = {}) => {
       texts,
       fields,
       actions: writeConfig.actions,
+      // ⭐⭐ 2026-10-16（task-59 · 表单半）：加/删货那两颗 submit 的接线位（缺省 `null` ⇒ 今天那颗链接 ✓）
+      //   ⚠️ 形状见 `views/scanPageRenderer.js` 的 `multiItemBlockHtml`（渲染层缺一个键就不接线 ✓）。
+      multiItem: multiItemWire,
       // ⭐⭐ `/r/{recordId}` 底下表单必须 POST 回 `/r/{recordId}`（否则提交会落到"按编号"那条路）。
       postAction: postActionFor(backTargetFor(req, view.number), realm),
       sizes,
@@ -1537,6 +1612,20 @@ const createScanPageRouter = (options = {}) => {
           target: backTargetFor(req, view.number),
         })
         : null;
+      // ⭐⭐ 2026-10-16（task-59 · **加/删货那一半**）：把草稿里**已经加进来的那几个货品**
+      //   喂给渲染层（`view.multi_items`）—— 渲染层据此渲「已加货品」列表 **＋** 把它并进
+      //   那个 hidden 字段（`[首件, ...已加]`）⇒ 她**点一下"加"、前面加的不丢** ✓。
+      //   🔴 **只在采购那两块**（补货 / 退货）读 —— 别的领域一次都不碰这段（她那句"一次扫码 0~1 次飞书"的同一条口径 ✓）。
+      //   🔴 **取不到 / 没有 ⇒ 就是今天的空态**（`view.multi_items` 一个字都不加 ⇒ 页面逐字不变 ✓）。
+      //   ⚠️ **绝不含当前这一件**：当前这件是表单里那个**首件** ✓（含了 ⇒ 提交时用它那份旧 `entries`
+      //     覆盖她刚填的 = **静默丢值** ✗）。
+      //   ⚠️ 位置在**渲染之前**（`readMultiItemPending` 是工厂里上面的 `const` ⇒ 这里已初始化 ✓）。
+      const multiItemChain = realm === 'replenish' ? 'replenish'
+        : (realm === PURCHASE_RETURN_REALM ? 'return' : '');
+      if (multiItemChain && writeService?.sessions) {
+        const pending = await readMultiItemPending(openIdOf(req), multiItemChain).catch(() => ({ items: [] }));
+        if (pending.items.length) view.multi_items = pending.items;
+      }
       // ⭐ 2026-10-11：把 UA 交给渲染层 —— 它只用来决定本单条上【继续扫下一个】
       //    是"飞书客户端内的扫一扫 AppLink"还是那句如实的人话（`canScanNextWithFeishu`）。
       const html = renderScan(view, config, writeForRender, realm, {
@@ -1590,12 +1679,22 @@ const createScanPageRouter = (options = {}) => {
     const fields = writeConfig.fields;
     const actions = writeConfig.actions;
     let action = String(body[fields.action] || '');
+    // ⭐⭐ 2026-10-16（task-59 · 加/删货那一半）：那两颗按钮**各自带自己的 name**（不是 `action` ✓）——
+    //   所以下面那条"没 action 就猜成销售提交"的兜底**必须先把它们排除** ✗，
+    //   否则她点「＋ 再加一个货品」会被当成**销售提交**（`submit_order`）✗✗。
+    //   ⚠️ 字段名只从**工厂里那一份** `multiItemWire` 取（渲染与识别**同一个源** ⇒ 不会漂 ✓）。
+    //   ⚠️ 只在**接线开着**时才认（缺省那两个字段名在页面上根本不存在 ⇒ 一个字都不影响既有逻辑 ✓）。
+    const wireAddAction = String(multiItemWire?.addAction || '');
+    const wireRemoveField = String(multiItemWire?.removeField || '');
+    const isMultiItemAdd = Boolean(wireAddAction) && body[wireAddAction] !== undefined;
+    const isMultiItemRemove = Boolean(wireRemoveField) && body[wireRemoveField] !== undefined;
     // ⭐⭐ 2026-10-12（她真机 400 / 1ms，`scan.write.unknown_action` 的 `action_kind=missing`、
     //   但 `body_keys` 里**该带的都带了**：submit_key / size / amount / gift / payment_* ✗）：
     //   ⇒ 那是"**没有提交者的提交**"（webview 里 JS/回车/隐式提交 ⇒ 浏览器**不送**按钮的 name/value ✗）。
     //   窄化兜底：**只有**在"没 action + 带幂等键 + 像销售提交"时，认作 `submitOrder`（并留痕 ✓）。
     //   ⚠️ 不碰标记（零哨兵风险 ✓）；只在这一页（编号页 POST）✓。
-    if (!action && String(body[fields.submitKey] || '').trim()
+    if (!action && !isMultiItemAdd && !isMultiItemRemove
+      && String(body[fields.submitKey] || '').trim()
       && (body[fields.size] !== undefined || body[fields.amount] !== undefined)) {
       action = actions.submitOrder;
       logWarn('scan.write.action_inferred', {
@@ -1606,6 +1705,76 @@ const createScanPageRouter = (options = {}) => {
     const openId = openIdOf(req);
     // 「回跳到哪一块」= 这一页的领域（认不出来一律回落缺省；两个入口同一条口径）。
     const realm = resolveRealm(req.query?.from);
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ⭐⭐ 2026-10-16（task-59 · **加/删货那一半**）
+    //   · **加货** = 同一张表单里的第二颗 submit ⇒ 它**带着她刚填的尺码/数量**（`sizes` / `qty_*`
+    //     或 `return_sizes` / `return_qty_*`）一起 POST 过来 ✓ —— 这正是"值不丢"的物理保证
+    //     （改前那颗 `<a href="…?add=1">` 是 GET：**天生带不走**表单字段 ✗）。
+    //   · 这里把它**存进草稿**（`readMultiItemPending` / `writeMultiItemPending`）再 **303 回本页**
+    //     （PRG：刷新不重复加 ✓；回来那一页由 GET 把"已加的货品"渲出来 ✓）。
+    //   · **删除** = 列表行里那颗 submit（`name=<删货字段> value=<该件 record_id>`）⇒ 从草稿里摘掉它 ✓。
+    //   🔴 **只认草稿里的那一份**，**不查表、不写业务表**（这一半一个字节都不落业务表 ✓）。
+    //   🔴 N=1 那条老路径**一个字都不变**：这里只吃「加货 / 删货」那两个动作，别的一个都不碰 ✓。
+    //   ⚠️ `isMultiItemAdd` / `isMultiItemRemove` / 两个字段名**在上面那个兜底之前就取好了** ✓
+    //     （不然她点"加"会被当成销售提交 ✗）。
+    // ══════════════════════════════════════════════════════════════════════════
+    if (isMultiItemAdd || isMultiItemRemove) {
+      // ⚠️ 回跳口径与页面上的表单 `action` **同一处**（`:` 下面别的分支用的也是它 ✓ 不另拼一份 ✗）
+      const backPath = () => postActionFor(
+        backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realm,
+      );
+      // 认不出是哪条链（不是补货 / 退货那两块）⇒ 与既有的"认不出的动作"同一条口径：给它一句人话 ✓
+      const draftChain = realm === 'replenish' ? 'replenish'
+        : (realm === PURCHASE_RETURN_REALM ? 'return' : '');
+      if (!draftChain) {
+        markTapCode(res, 'multi_item_chain_unknown');
+        return respondWriteFailure(res, {
+          code: 'multi_item_chain_unknown', message: writeConfig.texts.unknownActionBody,
+        }, requestId);
+      }
+      if (!writeService) {
+        markTapCode(res, 'write_disabled');
+        return respondWriteFailure(res, {
+          code: 'write_disabled', message: writeConfig.texts.writeDisabledBody,
+        }, requestId);
+      }
+      const chainKind = draftChain === 'replenish' ? 'replenish' : 'purchase_return';
+      // 「哪一件」的身份口径**与引擎的 `addItem` / `removeItem` 同一套**（`product_record_id` 优先，
+      //   回落 `number` / `item_no` ✓）—— 两边不一致的话，删除会摘不掉那一件 ✗。
+      const keyOfItem = (item) => String(
+        (item && (item.product_record_id || item.productRecordId || item.number || item.item_no)) || '',
+      ).trim();
+      const pending = await readMultiItemPending(openId, draftChain);
+      if (isMultiItemRemove) {
+        const removed = String(body[wireRemoveField] || '').trim();
+        const left = pending.items.filter((item) => keyOfItem(item) !== removed);
+        await writeMultiItemPending(openId, draftChain, { orderKey: pending.orderKey, items: left });
+        return res.redirect(303, backPath());
+      }
+      // ── 加货：本次表单的尺码/数量（**与提交那条路同一个解析器、同一份校验** ✓ 不手抄 if-else ✗）
+      const entries = draftChain === 'replenish'
+        ? parseReplenishEntries(body, fields, writeConfig)
+        : parseReturnEntries(body, fields, writeConfig);
+      const groups = mergeFirstItemEntries(parseMultiItemGroups(body, multiItemOrderConfig), entries);
+      if (!groups.length) {
+        // 表单里没有那个首件（手改表单 / 老页面）⇒ 不猜、不存空件 ⇒ 与人话页（400）✓
+        markTapCode(res, 'multi_item_no_item');
+        return respondWriteFailure(res, {
+          code: 'multi_item_no_item', message: writeConfig.texts.unknownActionBody,
+        }, requestId);
+      }
+      // 🔴 她填错了 ⇒ **当场同步拦**（400 + 写层那一句人话 + **零写入**）—— 与提交那条路同一条口径 ✓
+      const violation = purchaseEntryViolation({ chain: chainKind, entries });
+      if (violation) return purchaseEntryInvalidPage(req, res, requestId, realm, violation);
+      // 把"已经加进来的"与"刚加的这件"接上（同一货品 ⇒ 覆盖那一件 ✓ 与引擎的 `addItem` 同口径）
+      const added = groups[0];
+      const at = pending.items.findIndex((item) => keyOfItem(item) === keyOfItem(added));
+      const items = pending.items.slice();
+      if (at >= 0) items[at] = added; else items.push(added);
+      await writeMultiItemPending(openId, draftChain, { orderKey: pending.orderKey, items });
+      return res.redirect(303, backPath());
+    }
 
     // ── ⭐⭐ 2026-10-11：扫码页「货品」领域 →【打印这一款】──────────────────────
     // 🔴 它**排在下面"扫码写入口关着 ⇒ 503"那道闸门之前**：打印这一款**不写任何业务表**
