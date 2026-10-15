@@ -32,6 +32,12 @@ import { escapeHtml } from '../../core/formatters.js';
 //    `QUERY_JUMP_TARGET` 决定"直跳 or 老路卡片"、以及走普通跳转还是飞书端内 AppLink）；
 //    **直跳时这一页不渲染卡片**（见 `features/domains/nav.js` 的 `domainPageHtml`）。
 //    本文件仍**没有任何网络调用**，跳转只是 `window.location.assign` 一次。
+//
+// ⭐ 2026-10-16（业务负责人逐字）：「**虽然我看不到，但是没用，所以也可以删除掉！**」
+//    ⇒ 两张**外链卡**（**整张卡就是那个 `<a>`**、点哪都跳）不再多画那行 `进入 →` ✓
+//      （改法 = `cardBody` 只在**显式给了 `arrow`** 时才画那一行，见它的说明）
+//    ⚠️ **空 URL 的 `disabled-card`（`链接待配置`）那一种按它自己的语义保留** ✓
+//    ⚠️ 跳转能力**零变化**（`href` / `rel="noopener"` 一个字没动）· 🔴 **不部署**（只开 PR）
 
 /** 还没配 URL 时卡面显示的文案（配置为空值时**明确**告诉用户，而不是点了没反应）。 */
 export const LINK_PENDING_TEXT = '链接待配置';
@@ -74,12 +80,24 @@ export function buildDirectJumpUrl(href, options = {}) {
  *
  * ⭐ 2026-10-10（业务负责人真机反馈「下面的这些文字解释就不用了」）：**只留标题** ——
  *    那句副标题（`desc`）已从 `config/query.js` 整字段退场，这里也不再拼 `<p>`。
+ *
+ * ⭐⭐ 2026-10-16（业务负责人逐字）：「**虽然我看不到，但是没用，所以也可以删除掉！**」
+ *    —— 与同一天「货品」页点掉的那两处（#699）**同一形状、同一个判据**：
+ *      **整张卡片本身就是链接** —— `renderQueryEntries` 把卡渲染成
+ *      `<a class="entry-card" href="…" rel="noopener">${cardBody(…)}</a>`
+ *      ⇒ **卡体全在这个 `<a>` 里面**（点卡片任意一处都跳）⇒ 那行箭头**没有任何跳转职责、纯多余** ✓
+ *    ⇒ 改前逐字：外链卡调用点写死了 `cardBody(section, '进入 →')` ⇒ 卡面永远多一行 `进入 →`
+ *      改后逐字：`cardBody(section)` —— **只有显式给了 `arrow` 才画那一行**（缺省 = 不画）
+ *    ⚠️ **"链接待配置"那一种（`disabled-card`）按它自己的语义保留** ✓ —— 它不是链接
+ *      （`<div class="entry-card disabled-card" aria-disabled="true">`），那行**不是**"快点点我"的
+ *      提示语，而是**卡面的如实交代**（她还没给链接）⇒ 照旧逐字画 `LINK_PENDING_TEXT` ✓
+ *    ⚠️ 跳转能力**零变化**：`href` / `rel="noopener"` / 整张卡可点，一个字没动 ✓
  */
 function cardBody(section, arrow) {
   return `
                 <div class="icon">${escapeHtml(section.icon)}</div>
-                <h3>${escapeHtml(section.title)}</h3>
-                <div class="arrow">${escapeHtml(arrow)}</div>`;
+                <h3>${escapeHtml(section.title)}</h3>${arrow ? `
+                <div class="arrow">${escapeHtml(arrow)}</div>` : ''}`;
 }
 
 /**
@@ -88,7 +106,7 @@ function cardBody(section, arrow) {
  */
 export function renderQueryEntries(sections = QUERY_SECTIONS) {
   return sections.map((section) => (hasLink(section.href)
-    ? `<a class="entry-card" href="${escapeHtml(section.href)}" rel="noopener">${cardBody(section, '进入 →')}
+    ? `<a class="entry-card" href="${escapeHtml(section.href)}" rel="noopener">${cardBody(section)}
               </a>`
     : `<div class="entry-card disabled-card" aria-disabled="true">${cardBody(section, LINK_PENDING_TEXT)}
               </div>`)).join('');

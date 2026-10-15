@@ -41,14 +41,21 @@ const { pathToFileURL } = require('node:url');
 const WORKBENCH = path.join(__dirname, '../public/workbench');
 const read = (relative) => fs.readFileSync(path.join(WORKBENCH, relative), 'utf8');
 
-/** 「库存手工调整」那条入口的**逐字**定义 —— 本次改动**一个字都不许动**（哨兵）。 */
+/**
+ * 「库存手工调整」那条入口的**逐字**定义 —— 本次改动**一个字都不许动**（哨兵）。
+ * ⚠️ 2026-10-16 成对迁移（业务负责人逐字：「**虽然我看不到，但是没用，所以也可以删除掉！**」）：
+ *    · 改前逐字：这一条里有 `arrow: '进入 →',`；
+ *    · 改后逐字：**整行删掉**（卡片本体就是整张可点的 `<a class="entry-card" href=…>`
+ *      ⇒ 那行箭头没有任何跳转职责、纯多余）；
+ *    · 依据：她 2026-10-16 逐字 + 只读核实（见 `config/home.js` 的 2026-10-16 历史条目）。
+ *    ⚠️ **不是放宽**：`id` / `icon` / `title` / `desc` / `href` / `wide` **仍逐字钉死** ✓
+ */
 const INVENTORY_ADJUSTMENT_ENTRY = {
   id: 'inventory-adjustment',
   icon: '🧮',
   title: '库存手工调整',
   desc: '盘点调整（改数量，盘多了加、盘少了减）· 换季调整（门盒/样品 ↔ 仓库，数量不变）',
   href: '/workbench/inventory-adjustment.html',
-  arrow: '进入 →',
   wide: true,
 };
 
@@ -108,7 +115,7 @@ function parseCards(html) {
       href,
       title: body.match(/<h3>([\s\S]*?)<\/h3>/)[1],
       desc: body.match(/<p>([\s\S]*?)<\/p>/)[1],
-      arrow: body.match(/<div class="arrow">([\s\S]*?)<\/div>/)[1],
+      arrow: body.match(/<div class="arrow">([\s\S]*?)<\/div>/)?.[1],
     };
   });
 }
@@ -136,7 +143,15 @@ test('首页【常用功能】：**只剩两张卡**（库存手工调整 / 鞋�
     '首页不再有飞书表单外链入口（那张卡是死链，已删）');
   assert.ok(!cards.some((card) => card.href.includes('purchase-return.html')),
     '首页那张卡不许再指向内页 purchase-return.html');
-  assert.deepEqual(cards.map((card) => card.arrow), ['进入 →', '进入 →']);
+  // ⭐ 2026-10-16 成对迁移（业务负责人逐字：「虽然我看不到，但是没用，所以也可以删除掉！」）：
+  //    改前逐字：`assert.deepEqual(cards.map((card) => card.arrow), ['进入 →', '进入 →']);`
+  //    改后逐字：两张卡**都不再有那一行箭头**（卡体里连 `<div class="arrow">` 都不出现）
+  //    依据：卡片本体就是整张可点的 `<a class="entry-card" href=…>` ⇒ 那行没有跳转职责 ✓
+  //    ⚠️ **不是放宽** ✗：这是「必须有」翻成「必须没有」—— 而且下面还钉着 href / 标题 / 卡数不变 ✓
+  assert.deepEqual(cards.map((card) => card.arrow), [undefined, undefined],
+    '有 URL 的两张卡都不再画那一行箭头（`arrow` 键也没了）');
+  assert.equal(/<div class="arrow">/.test(html), false,
+    '🔴 整份首页 HTML 里都不许再出现 `<div class="arrow">`（那两行已删）');
 
   // ② 配置里那一条也必须真的删掉（不是渲染层藏起来）
   assert.ok(Array.isArray(home.COMMON_ENTRIES));
@@ -213,7 +228,8 @@ test('哨兵：「库存手工调整」那条入口（含 wide / 文案 / 目标
   assert.ok(card, '「库存手工调整」那张卡必须还在');
   assert.equal(card.href, '/workbench/inventory-adjustment.html');
   assert.equal(card.desc, INVENTORY_ADJUSTMENT_ENTRY.desc);
-  assert.equal(card.arrow, '进入 →');
+  assert.equal(card.arrow, undefined,
+    '⭐ 改后逐字：那一行箭头不再画（她 2026-10-16：「虽然我看不到，但是没用，所以也可以删除掉！」）');
   assert.ok(card.classes.includes('entry-wide'), '「库存手工调整」仍然带 entry-wide（配置里 wide: true）');
 });
 

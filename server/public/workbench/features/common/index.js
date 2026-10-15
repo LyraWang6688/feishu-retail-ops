@@ -25,6 +25,16 @@ import { escapeHtml } from '../../core/formatters.js';
 // ⚠️ 外链**同窗口跳转**（故意不加 `target="_blank"`）：用户实际是在手机上、多半是
 //    飞书内置浏览器里打开工作台，新窗口/新标签页在内置浏览器里体验差、还可能被拦；
 //    同一窗口一跳就走，返回键直接回工作台。`rel="noopener"` 保底。
+//
+// ⭐⭐ 2026-10-16（业务负责人逐字）：「**虽然我看不到，但是没用，所以也可以删除掉！**」
+//    —— 与同一天「货品」页点掉的那两处（#699）**同一形状、同一个判据**：
+//      **整张卡片本身就是链接** —— `<a class="entry-card" href=… rel="noopener">`
+//      把 icon / 标题 / 说明 / 箭头**全包在里面**（见下面 `mount()` 的模板）
+//      ⇒ **底下那行箭头没有任何跳转职责、纯多余** ✓
+//    ⇒ 改前逐字：`<div class="arrow">${escapeHtml(entry.arrow || '进入 →')}</div>`（永远画一行）
+//      改后逐字：**只有配置里显式给了 `arrow` 才画那一行**（`config/home.js` 那两行已整行删掉）
+//    ⚠️ **不许留 `|| '进入 →'` 兜底** ✗ —— 留着兜底 = 删掉配置那行反而显示「进入 →」，等于没删 ✗
+//    ⚠️ 跳转能力**零变化**：`href` / `rel="noopener"` / 整张卡可点，一个字没动 ✓
 export function createCommonModule({ focused = false } = {}) {
   return {
     mount(container) {
@@ -41,8 +51,8 @@ export function createCommonModule({ focused = false } = {}) {
               <a class="entry-card${entry.wide ? ' entry-wide' : ''}" href="${escapeHtml(entry.href)}" rel="noopener">
                 <div class="icon">${entry.icon}</div>
                 <h3>${escapeHtml(entry.title)}</h3>
-                <p>${escapeHtml(entry.desc)}</p>
-                <div class="arrow">${escapeHtml(entry.arrow || '进入 →')}</div>
+                <p>${escapeHtml(entry.desc)}</p>${entry.arrow ? `
+                <div class="arrow">${escapeHtml(entry.arrow)}</div>` : ''}
               </a>`).join('')}
           </div>
         </section>`;
