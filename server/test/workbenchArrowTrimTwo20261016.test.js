@@ -11,6 +11,12 @@
  *    ② **信息查询两张外链卡**（`features/query/index.js` 的 `cardBody(section, '进入 →')`）
  * 🔴 **别的箭头一个字不动**：`config/domains.js` 那三处（去填配品销售表单 → / 打开名录 → / 去填写 →）
  *    —— 她这次没点它们（见 AC-AR4 的范围哨兵）。
+ * ⭐⭐ **成对迁移（2026-10-16 当天下午 · 最后三处）**：她当天稍后又把上面那三处也点了
+ *    （新逐字「**我也没看到，可以删除**」）⇒ 那三句**已全部退场**，`config/domains.js` 的
+ *    `arrow` 集合现在 = **空集**。本次只把 **AC-AR4 的范围哨兵**从「逐字仍在」翻成「必须没有」，
+ *    **改前逐字 → 改后逐字 → 依据 = 她 2026-10-16 逐字**（**没删 / 没 skip / 没放宽** ✓）；
+ *    AC-AR1 / AC-AR2 / AC-AR3 与本次无关，**一个字不动** ✗。新判据见
+ *    `test/workbenchArrowTrimAll20261016.test.js`（AC-ATA1..AC-ATA4）。
  *
  * ─────────────────────────────────────────────────────────────────────────
  * 验收标准（**先写后做** —— 她定的流程）
@@ -32,8 +38,11 @@
  *  AC-AR3 渲染层契约：**显式给了 `arrow` ⇒ 照画（逐字）**；**没给 ⇒ 一行都不画**
  *         —— 证明这是"**删掉那一行**"，不是把画箭头的能力整个拆掉（**不是放宽** ✓）。
  *
- *  AC-AR4 🔴 **范围哨兵**：她这次**没点**的另外三处箭头**逐字仍在**
- *         （`config/domains.js`：`去填配品销售表单 →` / `打开名录 →` / `去填写 →`）。
+ *  AC-AR4 🔴 **范围哨兵（成对迁移：改前逐字 → 改后逐字 → 依据 = 她 2026-10-16 逐字）**：
+ *         改前逐字（当天上午）＝ 她**没点**的那三处箭头**逐字仍在**
+ *           （`config/domains.js`：`去填配品销售表单 →` / `打开名录 →` / `去填写 →`）；
+ *         改后逐字（当天下午）＝ 这三句**必须没有** —— 她逐字「**我也没看到，可以删除**」
+ *           ⇒ 删完后 domains 这套渲染里的 `arrow` 集合 = **空集**（**变强，不是放宽** ✓）。
  *
  * ⚠️ 判据**不靠子串锚点凑数**：都是**整行 / 整句**逐字比较；
  *    且"有没有那句话"是在**去注释后**的源码上判的（历史沿革写在注释里，不算实现）。
@@ -57,8 +66,10 @@ const stripComments = (source) => source
 /** 她 2026-10-16 点掉的这一处**旧逐字**（首页入口卡那行箭头文案）。 */
 const OLD_HOME_ARROW = '进入 →';
 
-/** 🔴 她这次**没点**的三处箭头（范围哨兵，逐字）。 */
-const UNTOUCHED_ARROWS = ['去填配品销售表单 →', '打开名录 →', '去填写 →'];
+/** 🔴 「当时她没点」的那三处箭头（逐字）——**留档用**：
+ *  2026-10-16 上午这一批的范围哨兵写的是"逐字仍在"；同一天下午她把这**最后三处**也点了
+ *  （逐字「**我也没看到，可以删除**」）⇒ 这三句**必须没有**（见下面 AC-AR4 的成对迁移）。 */
+const THEN_UNTOUCHED_ARROWS = ['去填配品销售表单 →', '打开名录 →', '去填写 →'];
 
 /** 把前端模块复制成 `.mjs` 平铺到临时目录（**只改 import 的文件名，逻辑一个字不改**）。 */
 async function loadModules() {
@@ -235,21 +246,27 @@ test('AC-AR3 渲染层契约：**显式给了 `arrow` ⇒ 照画（逐字）**�
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AC-AR4 范围哨兵：她这次**没点**的另外三处箭头逐字仍在
+// AC-AR4 范围哨兵（**成对迁移**）：当天上午"逐字仍在" → 当天下午"必须没有"
+//   · 改前逐字：`assert.deepEqual(arrows, [...UNTOUCHED_ARROWS].sort(), …)`
+//     （她当时**没点**那三处：`去填配品销售表单 →` / `打开名录 →` / `去填写 →`）
+//   · 改后逐字：`assert.deepEqual(arrows, [], …)` —— 这三句**已全部退场**
+//   · 依据：她 **2026-10-16** 逐字「**我也没看到，可以删除**」（最后三处）
+//   ⚠️ **不是放宽，是变强**：从"必须有三条"翻成"必须一条都没有"（domains 的 `arrow` 集合 = 空集）。
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-AR4 🔴 范围哨兵：她没点的另外三处箭头（domains.js）逐字仍在', async () => {
+test('AC-AR4 🔴 范围哨兵（迁移后）：domains.js 那三处箭头**已全部退场** ⇒ `arrow` 集合 = 空集', async () => {
   const modules = await loadModules();
   const domains = await modules.domains;
 
   const arrows = domains.DOMAIN_TABS.flatMap((domain) => domain.pages)
     .flatMap((page) => [...(page.cards || []), ...(page.links || [])])
-    .map((card) => card.arrow).filter((arrow) => arrow !== undefined).sort();
-  assert.deepEqual(arrows, [...UNTOUCHED_ARROWS].sort(),
-    '⭐ 只有她点的那两处（首页入口卡 / 信息查询外链卡）退场，其余三条箭头一个字没动');
+    .map((card) => card.arrow).filter((arrow) => arrow !== undefined);
+  assert.deepEqual(arrows, [],
+    '⭐ 改后逐字：domains（cards ∪ links）里的 arrow 集合 = 空集（最后三条也删了）');
 
   const source = stripComments(read('config/domains.js'));
-  for (const arrow of UNTOUCHED_ARROWS) {
-    assert.ok(source.includes(arrow), `🔴 这三处箭头逐字仍在：${arrow}`);
+  for (const arrow of THEN_UNTOUCHED_ARROWS) {
+    assert.equal(source.includes(arrow), false, `🔴 这三处箭头已退场（塞回即红）：${arrow}`);
   }
+  assert.equal(/(^|\s)arrow\s*:/.test(source), false, '🔴 配置代码里不许再有任何 `arrow:` 键（去注释后）');
 });

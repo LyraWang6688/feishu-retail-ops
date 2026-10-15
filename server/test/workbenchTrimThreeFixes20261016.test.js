@@ -19,7 +19,7 @@
  *
  *  AC-TR3 ③ 那两行箭头**是不是多余** —— 她逐字：「**是否就是多余的，点开入口卡片就可以实现跳转吧，
  *            需要你实际核对一下代码**」。
- *         核实结论：**是多余的** ✓ —— 依据 = `features/domains/pages.js` 的 `cardsHtml`（:47–:50）：
+ *         核实结论：**是多余的** ✓ —— 依据 = `features/domains/pages.js` 的 `cardsHtml`（:54–:59）：
  *            配了 `href` 的卡渲染成 `<a class="entry-card" href="…" rel="noopener">`，
  *            **整张卡就是那个链接**（`.entry-card` 铺满卡面，`workbenchMobileVisual.test.js:114` 钉着）。
  *         ⇒ 改前逐字 `arrow: '去扫码打印 →'` / `arrow: '打开标签打印页 →'` → 改后逐字 = **两行都删掉**
@@ -280,12 +280,17 @@ test('AC-TR3 ③ 核实：卡片本体自己是 <a href>（整张可点）⇒ �
   const withArrow = pages.cardsHtml([{ title: '乙', href: '/y', arrow: '去那里 →' }]);
   assert.ok(withArrow.includes('<div class="arrow">去那里 →</div>'), '给了 arrow ⇒ 那一行照画（别的卡不受影响）');
 
-  // ⑤ 🔴 **不是放宽** ✗：**她点的那两行之外，三条箭头逐字还在**（本次范围只有那两行）
+  // ⑤ 🔴 **不是放宽** ✗ —— **成对迁移（2026-10-16 当天下午）**：
+  //    改前逐字：`assert.deepEqual(allArrows, ['去填配品销售表单 →', '去填写 →', '打开名录 →'].sort(), …)`
+  //      （当时她只点了#699 那两行 ⇒ 其余三条逐字仍在）
+  //    改后逐字：`assert.deepEqual(allArrows, [], …)` —— 她当天下午把**最后三处**也点了
+  //      （新逐字「**我也没看到，可以删除**」）⇒ domains 的 `arrow` 集合 = **空集**
+  //    依据 = 她 2026-10-16 逐字；⚠️ **变强，不是放宽**（从"必须有三条"翻成"必须一条都没有"）。
   const allArrows = domains.DOMAIN_TABS.flatMap((domain) => domain.pages)
     .flatMap((page) => [...(page.cards || []), ...(page.links || [])])
-    .map((card) => card.arrow).filter((arrow) => arrow !== undefined).sort();
-  assert.deepEqual(allArrows, ['去填配品销售表单 →', '去填写 →', '打开名录 →'].sort(),
-    '⭐ 只有她点的那两行退场，其余三条箭头一个字没动');
+    .map((card) => card.arrow).filter((arrow) => arrow !== undefined);
+  assert.deepEqual(allArrows, [],
+    '⭐ 改后逐字：domains 里的 arrow 集合 = 空集（最后三条箭头也已退场）');
 
   // ⑥ **跳转能力零变化**（这才是"删箭头"敢做的前提）：href / 标题 / 落点 / 选择器 / 按钮全照旧
   assert.deepEqual(labels.links.map((link) => link.title), ['扫码打印', '批量打印'], '两颗标题逐字照旧');
