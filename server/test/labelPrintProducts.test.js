@@ -46,6 +46,20 @@
  *    全绿。task-10 只动了本文件里**两条 AC-N4 用例的「注入哪一组 config」**（配置项从
  *    `fieldNamesPendingSchema.productCreatedTime` 那个"散读"口径，搬成 config 的**正规一项**
  *    `productCreatedTime`）—— 两条都逐字写了「改前 / 改后 / 依据」，**断言本身一条没改**。
+ *
+ * ── task-11（2026-10-15）追加：`listLabels` 也加短 TTL 缓存 ───────────────────
+ * 依据：她真机逐字「我扫完之后…等了一会儿才出现扫描框…整个链路我觉得不太友好」＋ Lead 线上只读实测
+ *     `listAll('liveInventory')` 1362 行 5924ms ＋ `listAll('product')` 561 行 5478ms
+ *     ⇒ **她每打开一次「批量打印 / 选择编号打印」那一页都要等 ≈ 11 秒**（`GET /labels` 进页自动查一次）。
+ * · **AC-N10** `listLabels` 走**同一套**短 TTL 缓存（`createShortTtlCache` —— 与端点是**同一份实现**，
+ *   不抄第二份）：TTL 内第二次调用 **0 次飞书读**，且 `workbench.labels.cache_hit` / `.cache_miss`
+ *   各如实记一条；两个缓存**互不干扰**。
+ * · **AC-N11** `config.labelList.cacheTtlMs = 0` ⇒ **每次真读**（`reason:'disabled'`）。
+ * · **AC-N12** TTL 过期 ⇒ **重读**（`reason:'expired'`）。
+ * · **AC-N13** ⭐⭐ **缓存的是原始行，不是筛选结果**：同一个 TTL 里不同 `keyword` / `size`
+ *   各自正确（连筛选结果一起缓存会串数据 ✗）；**「最近新增」的时间判断每请求现算**
+ *   （同一份缓存、同一个 `recentDays`，时间往前走 ⇒ 结果跟着变，且这一轮没有重读飞书）。
+ * · **AC-N14** 这一档口径住在 `config/labelPrint.js#LABEL_LIST`（默认 60000；换值不用改代码）。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -667,11 +681,52 @@ test('AC-N8 TTL 过期 ⇒ 重读（能真红）', async () => {
     .map((line) => JSON.parse(line).reason), ['empty', 'expired']);
 });
 
-test('AC-N8 缓存**只影响这个端点**：`listLabels` 两次调用仍然 2 次真读（不许动它）', async () => {
+test('AC-N10 ⭐ `listLabels` 也走**同一套**短 TTL 缓存：TTL 内第二次 **0 次飞书读** ＋ 命中日志', async () => {
+  // ⚠️ task-11 **改写**（这条原来是 task-10 的"缓存**只影响**这个端点、listLabels 两次仍 4 次真读"）：
+  //   改前逐字：`assert.deepEqual(gateway.calls, ['liveInventory','product','liveInventory','product'],
+  //               '⚠️ 批量/编号打印那一页这次**不动** —— 它照旧每次真读（它那 11 秒另开任务）');`
+  //               ＋ `assert.equal(logs.events('workbench.products.numbers.cache_miss').length, 0, 'listLabels 根本不碰这个缓存');`
+  //   改后逐字：`assert.deepEqual(gateway.calls, ['liveInventory','product'],
+  //               '⭐⭐ 第二次**一次飞书都没读**（她每开一次那页少等 ≈ 11 秒）');`
+  //               ＋ 断言 `workbench.labels.cache_hit` / `.cache_miss` 各一条（**加强**：现在还看它有没有记日志）。
+  //   依据：**task-11 的口径直接要求**给 `listLabels` 加缓存（她每打开一次「批量打印」都要等 ~11 秒，
+  //         这是她最能感受到的一笔）⇒ 上一轮的"只影响端点"这条**被新口径取代**（不是放宽，
+  //         而是观测点从"`listLabels` 不缓存"翻成"`listLabels` 也缓存、且记日志"）。
   const clock = fakeClock();
   const gateway = fakeGateway(numbersFixture());
   const service = createLabelPrintService(gateway, {
-    now: clock.now, config: configWith({ productNumbers: { cacheTtlMs: 60000 } }),
+    now: clock.now, config: configWith({ labelList: { cacheTtlMs: 60000 } }),
+  });
+  const logs = captureLogs();
+  let first; let second;
+  try {
+    first = await service.listLabels({});
+    clock.advance(30 * 1000);
+    second = await service.listLabels({});
+  } finally {
+    logs.restore();
+  }
+  assert.deepEqual(gateway.calls, ['liveInventory', 'product'],
+    '⭐⭐ 第二次**一次飞书都没读**（她每开一次那页少等 ≈ 11 秒）');
+  assert.equal(second.total_matched, first.total_matched, '命中的清单与未命中一致');
+  assert.deepEqual(second.labels.map((label) => label.number), first.labels.map((label) => label.number));
+  assert.equal(logs.events('workbench.labels.cache_miss').length, 1, '第一次未命中（read 了飞书）');
+  assert.equal(logs.events('workbench.labels.cache_hit').length, 1, '第二次命中（一次都没读）');
+  assert.equal(JSON.parse(logs.events('workbench.labels.cache_hit')[0]).age_ms, 30000);
+  // 两个缓存**互不干扰**：listLabels 命中不等于端点也命中（各自一个实例）。
+  assert.equal(logs.events('workbench.products.numbers.cache_hit').length, 0);
+  assert.equal(logs.events('workbench.products.numbers.cache_miss').length, 0);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-N11/N12/N13（task-11）：`listLabels` 缓存的关闭 / 过期 / **筛选每请求现算**
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-N11 关掉 `labelList` 缓存（`cacheTtlMs: 0`）⇒ `listLabels` **每次真读**（能真红）', async () => {
+  const clock = fakeClock();
+  const gateway = fakeGateway(numbersFixture());
+  const service = createLabelPrintService(gateway, {
+    now: clock.now, config: configWith({ labelList: { cacheTtlMs: 0 } }),
   });
   const logs = captureLogs();
   try {
@@ -682,9 +737,89 @@ test('AC-N8 缓存**只影响这个端点**：`listLabels` 两次调用仍然 2 
     logs.restore();
   }
   assert.deepEqual(gateway.calls, ['liveInventory', 'product', 'liveInventory', 'product'],
-    '⚠️ 批量/编号打印那一页这次**不动** —— 它照旧每次真读（它那 11 秒另开任务）');
-  assert.equal(logs.events('workbench.products.numbers.cache_hit').length, 0);
-  assert.equal(logs.events('workbench.products.numbers.cache_miss').length, 0, 'listLabels 根本不碰这个缓存');
+    '⭐ 0 = 关掉 ⇒ 每次都真读飞书（拿到的永远是最新的货）');
+  assert.equal(logs.events('workbench.labels.cache_hit').length, 0, '一次都没命中');
+  assert.deepEqual(logs.events('workbench.labels.cache_miss').map((line) => JSON.parse(line).reason),
+    ['disabled', 'disabled'], '未命中的原因如实写 disabled');
+});
+
+test('AC-N12 `listLabels` 缓存 TTL 过期 ⇒ 重读（能真红）', async () => {
+  const clock = fakeClock();
+  const gateway = fakeGateway(numbersFixture());
+  const service = createLabelPrintService(gateway, {
+    now: clock.now, config: configWith({ labelList: { cacheTtlMs: 60000 } }),
+  });
+  const logs = captureLogs();
+  try {
+    await service.listLabels({});
+    clock.advance(59999);
+    await service.listLabels({});   // 差 1ms 没过期 ⇒ 命中
+    clock.advance(1);               // 正好到 TTL ⇒ 过期 ⇒ 重读
+    await service.listLabels({});
+  } finally {
+    logs.restore();
+  }
+  assert.deepEqual(gateway.calls, ['liveInventory', 'product', 'liveInventory', 'product'],
+    '⭐ 过期后必须重读（新到的货不能一直看不到）');
+  assert.equal(logs.events('workbench.labels.cache_hit').length, 1);
+  assert.deepEqual(logs.events('workbench.labels.cache_miss').map((line) => JSON.parse(line).reason),
+    ['empty', 'expired']);
+});
+
+test('AC-N13 ⭐⭐ 不同筛选参数**在缓存之上各自正确**（缓存的是原始行，不是筛选结果）', async () => {
+  const clock = fakeClock();
+  const gateway = fakeGateway({
+    liveInventory: [
+      stockRecord('st_x', { stockKey: 'XHB8095|棕色|A|36' }),
+      stockRecord('st_y', { stockKey: 'YD6693|米白|A|38' }),
+    ],
+    product: [
+      productRecord('rec_x', { number: 'XHB8095|棕色|A', price: 198 }),
+      productRecord('rec_y', { number: 'YD6693|米白|A', price: 298 }),
+    ],
+  });
+  const service = createLabelPrintService(gateway, {
+    now: clock.now, config: configWith({ labelList: { cacheTtlMs: 60000 } }),
+  });
+  const all = await service.listLabels({});
+  const byX = await service.listLabels({ keyword: 'XHB8095' });
+  const byY = await service.listLabels({ keyword: 'YD6693' });
+  const bySize = await service.listLabels({ size: 38 });
+  assert.equal(all.total_matched, 2);
+  assert.deepEqual(byX.labels.map((label) => label.number), ['XHB8095|棕色|A'],
+    '⭐ 同一个 TTL 里的另一个 keyword 拿到的是**它自己**的结果（连筛选结果一起缓存就会串数据）');
+  assert.deepEqual(byY.labels.map((label) => label.number), ['YD6693|米白|A']);
+  assert.deepEqual(bySize.labels.map((label) => label.number), ['YD6693|米白|A']);
+  assert.deepEqual(gateway.calls, ['liveInventory', 'product'], '4 次查询共用**一次**真读');
+});
+
+test('AC-N13 ⭐⭐ 「最近新增」按时间过滤**每请求现算**（时间往前走 ⇒ 同一份缓存里筛出不同结果）', async () => {
+  const clock = fakeClock();
+  const day = 24 * 60 * 60 * 1000;
+  // ⚠️ 时间账要算清（否则测的不是"现算"而是"缓存过期"）：
+  //   · 货是**1 天前差 30 秒**到的 ⇒ t0 时在「最近 1 天」**里**（勉强）；
+  //   · 时钟往前拨 **59 秒** ⇒ 货变成"1 天零 29 秒前" ⇒ 出了窗口；
+  //   · 而 59 秒 **< TTL 60 秒** ⇒ 这一轮**仍然命中缓存**（没有重读飞书）。
+  //   ⇒ 同一份缓存、同一个 recentDays=1，结果从 2 张变 0 张 = **时间判断在缓存之外每请求现算** ✓
+  const arrivedAt = clock.now() - (day - 30 * 1000);
+  const gateway = fakeGateway({
+    liveInventory: [stockRecord('st1', { stockKey: 'XHB8095|棕色|A|36', createdAt: arrivedAt })],
+    product: [productRecord('rec_new', { number: 'NEW2026|黑色|A', price: 399, createdAt: arrivedAt })],
+  });
+  const service = createLabelPrintService(gateway, {
+    now: clock.now, config: configWith({ labelList: { cacheTtlMs: 60000 } }),
+  });
+  const fresh = await service.listLabels({ recentDays: 1 });
+  assert.equal(fresh.total_matched, 2, 't0：刚到的货还在「最近 1 天」里');
+  clock.advance(59 * 1000);                                 // 窗口内、但货已经出了"最近 1 天"
+  const stale = await service.listLabels({ recentDays: 1 });
+  assert.equal(stale.total_matched, 0, '⭐⭐ 同一份缓存、同一个条件：时间判断**每请求现算** ⇒ 它们已经不在"最近 1 天"里了');
+  assert.deepEqual(gateway.calls, ['liveInventory', 'product'], '这一轮没有重读飞书（命中缓存的是**原始行**）');
+});
+
+test('AC-N14 这一档口径住在 config：`LABEL_PRINT.labelList.cacheTtlMs` 默认 60000（换值不用改代码）', () => {
+  assert.equal(LABEL_PRINT.labelList.cacheTtlMs, 60000, 'task-11 定的默认：60 秒（她连着翻几次都是秒开）');
+  // 「换值不用改代码」由 AC-N10/N11/N12 证明：三处都是**注入不同的 `labelList`** ⇒ 行为跟着变。
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

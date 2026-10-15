@@ -351,10 +351,79 @@ const parseLabelScanUrl = (raw, config = LABEL_PRINT) => {
  *      （`workbench.labels.product_created_time_renamed`：配置的名字跟真表对不上了）；
  *   ③ 都拿不到 ⇒ 那一条 `created_at = 0`：计进 `missing_created_at_without_stock` 并**如实 warn**，不猜。
  */
+
+/**
+ * ⭐⭐ 2026-10-15（task-11）：**这条只读链路的短 TTL 缓存** —— 两个用途**共用同一份实现**
+ *    （收敛 `#582` 落在端点里的那一套，**不抄第二份** ✗）：
+ *      · `listProductNumbers`（编号清单端点：`GET /products/numbers`）；
+ *      · `listLabels`（批量 / 编号打印那一页：`GET /labels`）。
+ *
+ * 为什么要有它（Lead 线上**只读实测**）：`listAll('liveInventory')` 1362 行 5924ms ＋
+ *   `listAll('product')` 561 行 5478ms ⇒ **一次 ≈ 11.4 秒**；而她**每打开一次**那一页都要等 ✗。
+ *
+ * 口径（与 #582 落地的那套逐条一致）：
+ *   · `ttlMs > 0`：TTL 内重复调用**不再读飞书**（命中）；`= 0`：**关掉缓存**，每次真读；
+ *   · 缓存里**只放与请求无关的数据**（原始记录 / 编号底表）；**筛选、排序、
+ *     「最近新增」的时间判断一律在缓存之外每请求现算** ✗（连筛选结果一起缓存会串数据）；
+ *   · 命中 / 未命中都**如实记日志**：`<event>.cache_hit`（`age_ms` / `ttl_ms`）·
+ *     `<event>.cache_miss`（`reason: empty | expired | disabled`）—— 真机一眼看出"到底读没读表"；
+ *   · 时钟往回跳（`age < 0`）**不当命中**，宁可重读。
+ *
+ * `load()` 只在**未命中**时被调用一次，返回 `{ value, meta }`（`meta` 只进日志，不参与逻辑）。
+ */
+const createShortTtlCache = ({ now, ttlMs, event, load }) => {
+  let entry = null; // { at, value, meta }
+  return {
+    async get() {
+      const at = now();
+      const age = entry ? at - entry.at : null;
+      if (ttlMs > 0 && entry && age >= 0 && age < ttlMs) {
+        logInfo(`${event}.cache_hit`, { age_ms: age, ttl_ms: ttlMs, ...(entry.meta || {}) });
+        return entry.value;
+      }
+      const reason = ttlMs <= 0 ? 'disabled' : (entry ? 'expired' : 'empty');
+      const loaded = await load();
+      const meta = (loaded && loaded.meta) || {};
+      // `ttlMs = 0` ⇒ **不写缓存**（配置说关就关；下次照样真读）。
+      if (ttlMs > 0) entry = { at, value: loaded.value, meta };
+      logInfo(`${event}.cache_miss`, { reason, ttl_ms: ttlMs, ...meta });
+      return loaded.value;
+    },
+  };
+};
+
 const createLabelPrintService = (gateway, options = {}) => {
   if (!gateway) throw new Error('LabelPrintService requires gateway');
   const config = options.config || LABEL_PRINT;
   const now = options.now || (() => Date.now());
+
+  /** 缓存 TTL 从 config 取（**0 是一个合法值** = 关掉；没配才用兜底值）。 */
+  const ttlOf = (group, fallback) => (Number.isInteger(group?.cacheTtlMs) && group.cacheTtlMs >= 0
+    ? group.cacheTtlMs
+    : fallback);
+
+  /**
+   * ⭐ `listLabels` 的两次全表读（**只缓存原始记录**；筛选 /「最近新增」**每请求现算**）。
+   * 读序仍是「实时库存 → 货品信息」（与改动前逐字一致）。
+   */
+  const loadLabelListTables = async () => {
+    const records = await gateway.listAll('liveInventory');
+    const productRecords = await gateway.listAll('product');
+    return {
+      value: { records, productRecords },
+      meta: {
+        scanned_records: (records || []).length,
+        product_records: (productRecords || []).length,
+      },
+    };
+  };
+
+  const labelListCache = createShortTtlCache({
+    now,
+    ttlMs: ttlOf(config.labelList, 60000),
+    event: 'workbench.labels',
+    load: loadLabelListTables,
+  });
 
   /**
    * 「货品信息」的创建时间列候选名（见上面那段说明）。
@@ -451,8 +520,10 @@ const createLabelPrintService = (gateway, options = {}) => {
       throw userError(`排序方式只能是：${Object.keys(config.sortModes).join(' / ')}`);
     }
 
-    // ── 读一：整张「实时库存」（分页由网关负责）──────────────────────────────
-    const records = await gateway.listAll('liveInventory');
+    // ── 读一 / 读二：「实时库存」＋「货品信息」两张整表（**短 TTL 缓存**；分页由网关负责）──
+    //    ⚠️ 缓存里只有**原始记录**：下面所有筛选 / 排序 /「最近新增」的时间判断**每请求现算** ✗
+    //       （连筛选结果一起缓存会串数据 —— 她 A 条件看到的清单跑到 B 条件上）。
+    const { records, productRecords } = await labelListCache.get();
 
     const skipped = { stock_key: 0, state: 0 };
     let rows = [];
@@ -474,9 +545,8 @@ const createLabelPrintService = (gateway, options = {}) => {
     }
     const parsedTotal = rows.length;
 
-    // ── 读二：整张「货品信息」（原来只为补价格 / 品牌；现在**没有库存行的编号也由它出标签**）──
+    // ── 「货品信息」那份记录**已在上面同一个缓存快照里**一起读回来了（不再第二次 listAll）──
     const brandFieldName = config.brand?.from === 'table' ? String(config.brand.tableFieldName || '').trim() : '';
-    const productRecords = await gateway.listAll('product');
     const productCreatedTimeFields = recentDays > 0
       ? await resolveProductCreatedTimeFields(productRecords)
       : [];
@@ -881,27 +951,11 @@ const createLabelPrintService = (gateway, options = {}) => {
   /**
    * ⭐⭐ 2026-10-15（task-10）：**编号底表**（`GET /products/numbers` 那两次全表读的产物）。
    *
-   * · **与请求无关**（keyword / limit 每请求现算）⇒ 整个快照缓存；
-   * · `cacheTtlMs > 0`：TTL 内重复调用**不再读飞书**（命中）；`= 0`：**关掉缓存**，每次真读；
-   * · 命中 / 未命中都**如实记日志**（`workbench.products.numbers.cache_hit` / `.cache_miss`
-   *   ＋ `reason: empty | expired | disabled`）—— 真机一眼看出"到底读没读表"。
-   * ⚠️ 只服务 `listProductNumbers`：`listLabels` **一次都不碰这个缓存**（它那 11 秒另开任务）。
+   * · **与请求无关**（keyword / limit 每请求现算）⇒ 整份快照交给**共用的** `createShortTtlCache`
+   *   （task-11 收敛：`listLabels` 用的是**同一个** factory，不抄第二份 ✗）；
+   * · TTL / 命中日志口径见 `createShortTtlCache` 的说明（事件前缀 `workbench.products.numbers`）。
    */
-  let productNumbersSnapshot = null;
-  const readProductNumbersSnapshot = async (cacheTtlMs) => {
-    const at = now();
-    const age = productNumbersSnapshot ? at - productNumbersSnapshot.at : null;
-    // `age >= 0`：时钟往回跳（或被注入的假时钟往前拨过）时**不当命中**，宁可重读。
-    if (cacheTtlMs > 0 && productNumbersSnapshot && age >= 0 && age < cacheTtlMs) {
-      logInfo('workbench.products.numbers.cache_hit', {
-        age_ms: age,
-        ttl_ms: cacheTtlMs,
-        numbers: productNumbersSnapshot.numbers.length,
-      });
-      return productNumbersSnapshot;
-    }
-    const reason = cacheTtlMs <= 0 ? 'disabled' : (productNumbersSnapshot ? 'expired' : 'empty');
-
+  const loadProductNumbersSnapshot = async () => {
     const productFields = V1_BITABLE_SCHEMA.tables.product?.fields || {};
     const inventoryFields = V1_BITABLE_SCHEMA.tables.liveInventory?.fields || {};
 
@@ -939,24 +993,31 @@ const createLabelPrintService = (gateway, options = {}) => {
       });
     }
 
-    const snapshot = {
-      at,
-      numbers,
-      product_records: (products || []).length,
-      product_records_no_number: withoutNumber,
-      stock_records: (stockRecords || []).length,
+    const productRecordsNoNumber = withoutNumber;
+    return {
+      // `value` = 与请求无关的编号底表（listProductNumbers 只读它；keyword/limit 现算）。
+      value: {
+        numbers,
+        product_records: (products || []).length,
+        product_records_no_number: productRecordsNoNumber,
+        stock_records: (stockRecords || []).length,
+      },
+      // `meta` 只进缓存命中/未命中日志（口径与 #582 落地的那两条一致）。
+      meta: {
+        numbers: numbers.length,
+        product_records: (products || []).length,
+        product_records_no_number: productRecordsNoNumber || undefined,
+        stock_records: (stockRecords || []).length,
+      },
     };
-    // `cacheTtlMs = 0` ⇒ **不写缓存**（下次照样真读；配置说关就关）。
-    if (cacheTtlMs > 0) productNumbersSnapshot = snapshot;
-    logInfo('workbench.products.numbers.cache_miss', {
-      reason,
-      ttl_ms: cacheTtlMs,
-      numbers: numbers.length,
-      product_records: snapshot.product_records,
-      stock_records: snapshot.stock_records,
-    });
-    return snapshot;
   };
+
+  const productNumbersCache = createShortTtlCache({
+    now,
+    ttlMs: ttlOf(config.productNumbers, 60000),
+    event: 'workbench.products.numbers',
+    load: loadProductNumbersSnapshot,
+  });
 
   /**
    * ⭐⭐ 2026-10-15：`GET /api/workbench/products/numbers` 的取数（**只读**）。
@@ -975,7 +1036,8 @@ const createLabelPrintService = (gateway, options = {}) => {
    *   ⇒ 冷启动一次 ≈ **11.4 秒**）。口径全在 `config/labelPrint.js` 的 `PRODUCT_NUMBERS`：
    *   · `cacheTtlMs`（默认 60000；**0 = 关掉缓存**，每次真读）—— TTL 内重复调用**不再读飞书**；
    *   · `limitDefault` / `limitMax`（默认 200 / 500）—— 换值只改 config，不用动代码。
-   * ⚠️ **只影响这个端点**：`listLabels`（批量 / 编号打印那一页）**这次不动**（它那 11 秒另开任务）。
+   * ⚠️ task-11 起 `listLabels`（批量 / 编号打印那一页）也走**同一个**缓存 factory
+   *    （`config.labelList`）—— 两处各一个实例、互不干扰。
    */
   const listProductNumbers = async (filters = {}) => {
     const productFields = V1_BITABLE_SCHEMA.tables.product?.fields || {};
@@ -984,9 +1046,6 @@ const createLabelPrintService = (gateway, options = {}) => {
     }
 
     const numbersConfig = config.productNumbers || {};
-    const cacheTtlMs = Number.isInteger(numbersConfig.cacheTtlMs) && numbersConfig.cacheTtlMs >= 0
-      ? numbersConfig.cacheTtlMs
-      : 60000;
     const defaultLimit = Number.isInteger(numbersConfig.limitDefault) && numbersConfig.limitDefault > 0
       ? numbersConfig.limitDefault
       : 200;
@@ -1004,8 +1063,9 @@ const createLabelPrintService = (gateway, options = {}) => {
     }
     const keyword = String(filters.keyword ?? '').trim().toLowerCase();
 
-    // ⭐ 编号底表（**与 keyword / limit 无关**的那部分）走短 TTL 缓存 —— 命中就一次飞书都不读。
-    const snapshot = await readProductNumbersSnapshot(cacheTtlMs);
+    // ⭐ 编号底表（**与 keyword / limit 无关**的那部分）走**共用**的短 TTL 缓存 ——
+    //    命中就一次飞书都不读（TTL 与日志口径来自 `createShortTtlCache`）。
+    const snapshot = await productNumbersCache.get();
 
     const matched = snapshot.numbers
       .filter((item) => !keyword || [item.number, item.itemNo, item.color, item.category]

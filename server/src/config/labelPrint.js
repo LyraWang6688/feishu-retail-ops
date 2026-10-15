@@ -390,6 +390,23 @@ const PRODUCT_NUMBERS = Object.freeze({
   limitMax: 500,
 });
 
+/**
+ * ⭐⭐ 2026-10-15（task-11）：**`listLabels`**（`GET /api/workbench/labels` —— 「批量打印 / 选择编号打印」
+ * 那一页**进页就自动查一次**）的短 TTL 缓存。
+ *
+ * 为什么（她原话，2026-10-15 真机）：「我扫完之后…等了一会儿才出现扫描框…整个链路我觉得不太友好」；
+ * Lead 线上**只读实测**：`listAll('liveInventory')` 1362 行 5924ms ＋
+ * `listAll('product')` 561 行 5478ms ⇒ **她每打开一次那一页都要等 ≈ 11 秒** ✗。
+ *
+ * ⚠️ `cacheTtlMs = 0` **= 关掉缓存**（每次真读）；默认 60000（她连着翻几次都是秒开）。
+ * 🔴 缓存里**只有原始记录**：`keyword` / `state` / `category` / `size` / `recentDays` / `sort`
+ *    与「最近新增」的时间判断**一律每请求现算** ✗（连筛选结果一起缓存会串数据）。
+ */
+const LABEL_LIST = Object.freeze({
+  // 缓存有效期（毫秒）。0 = 关掉缓存（每次真读飞书）。
+  cacheTtlMs: 60000,
+});
+
 /** 用户可见文案（服务端要拼进标签里的那些）。 */
 const TEXTS = Object.freeze({
   // 颜色/品类/尺码这类值取不到时的占位（**不留空**，否则标签上看着像漏印了）。
@@ -460,6 +477,8 @@ const LABEL_PRINT = Object.freeze({
   //    · `productCreatedTime` = 「货品信息」创建时间列的**名字 + 类型**两条口径（见上面的说明）。
   productNumbers: PRODUCT_NUMBERS,
   productCreatedTime: PRODUCT_CREATED_TIME,
+  // ⭐⭐ 2026-10-15（task-11）：`listLabels`（批量那一页）自己的短 TTL 缓存。
+  labelList: LABEL_LIST,
 });
 
 /**
@@ -504,4 +523,5 @@ module.exports = {
   // ⭐⭐ 2026-10-15（task-10）：这两组也单独导出（用例/排查脚本可以直接 import 拿默认值）。
   PRODUCT_NUMBERS,
   PRODUCT_CREATED_TIME,
+  LABEL_LIST,
 };

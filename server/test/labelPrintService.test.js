@@ -604,13 +604,21 @@ test('筛选：货号关键字 / 所属状态 / 品类 / 尺码 都能单独与�
 });
 
 test('品类候选来自同一份数据：filters.category_options 去重排序，且不随筛选条件变少', async () => {
+  // ⚠️ task-11 改（**只加了一句"关掉缓存"，四条断言原文一字未动**）：
+  //   改前逐字：`const { gateway, service } = serviceFor({ liveInventory: [ … ] });`
+  //   改后逐字：多传一份 `{ labelList: { cacheTtlMs: 0 } }` 的 config patch（**关掉缓存**）。
+  //   依据：task-11 给 `listLabels` 加了短 TTL 缓存 ⇒ 同一个 service 上第二次 `listLabels`
+  //         不再读飞书；而**本用例钉的是"品类候选在筛选之前算出来"**（与读几次表无关），
+  //         所以要**显式关掉缓存**才能保持原来那条"读两次表"的观测量。
+  //   判据没放宽：`assert.deepEqual(gateway.calls, ['liveInventory','product','liveInventory','product'])`
+  //         以及其他三条断言**逐字不变**；缓存本身的 AC 在 `labelPrintProducts.test.js`（AC-N10）。
   const { gateway, service } = serviceFor({
     liveInventory: [
       record('r1', { stockKey: 'XHB8095|黑色|A|42', category: '休闲鞋' }),
       record('r2', { stockKey: 'YD6693|米白|A|38', category: '单鞋' }),
       record('r3', { stockKey: 'YD6693|米白|A|39', category: '单鞋' }),
     ],
-  });
+  }, { labelList: { cacheTtlMs: 0 } });
   const all = await service.listLabels({});
   assert.deepEqual(all.filters.category_options, ['单鞋', '休闲鞋'], '去重 + 按中文排序');
   const filtered = await service.listLabels({ state: '门盒' });
