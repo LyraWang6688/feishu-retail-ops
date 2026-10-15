@@ -351,6 +351,26 @@ const createWorkbenchRouter = (options = {}) => {
       });
     }
   });
+  /**
+   * ⭐⭐ 2026-10-15：**扫码打印的客户端诊断上报**（她真机反馈「扫码打印好像没调用成功」之后加的）。
+   *   为什么需要：飞书 JSSDK 在手机里"装死"（`h5sdk.ready` 不回调）时**只有客户端知道原因** ——
+   *   页面上只有一行小字、服务端**一条日志都没有** ✗ ⇒ 她一说"没成功"，我们只能猜。
+   *   ⇒ 客户端把 `phase`（signature/config/scan/done）+ 原因码 + `errMsg` + 页面 URL 报上来，这里**记一条** ✓。
+   *   🔴 **它不写任何业务表、不改任何状态**（只有一条 `logInfo` ✓）；
+   *     挂在**既有** `requireWorkbenchAccess` 之后 ⇒ **不新开鉴权** ✓。
+   */
+  router.post('/labels/scan-report', (req, res) => {
+    const body = req.body || {};
+    logInfo('label_print.scan.report', {
+      request_id: req.requestId,
+      ok: body.ok === true,
+      phase: String(body.phase || '').slice(0, 32),
+      reason: String(body.reason || '').slice(0, 64),
+      err_msg: String(body.err_msg || '').slice(0, 200),
+      url: String(body.url || '').slice(0, 300),
+    });
+    return res.json({ success: true });
+  });
   router.get('/sales/orders', async (req, res) => {
     try { return res.json({ success: true, ...await followup.listOrders() }); }
     catch (error) {
