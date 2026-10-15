@@ -102,12 +102,27 @@ export function createScanPrintAction(options = {}) {
   const win = options.win || (typeof window === 'undefined' ? null : window);
   const texts = { ...SCAN_PRINT_TEXTS, ...(options.texts || {}) };
   const state = { busy: false };
+  // ⭐⭐ 2026-10-15：**当前走到哪一小步**（signature → loadSdk → config → ready → scanCode → enqueue）
+  //   —— 写进上报里 ⇒ 一眼看出卡在哪 ✓（真机实测：只报一个 `config` 分不清是哪一小步 ✗）
+  const progress = { step: 'signature' };
   let root = null;
 
   // ⭐⭐ 2026-10-15：**每个可能永挂的等待都要有超时**（真机实测：`h5sdk.ready` 不回调 ⇒ 她那边
   //   "点了没反应"、按钮一直灰着 ✗）。三个阈值都可配（`options.*Ms`，用例注入小值 ⇒ 不用真等 ✓）。
   const readyTimeoutMs = Number(options.readyTimeoutMs) > 0 ? Number(options.readyTimeoutMs) : 8000;
   const scanTimeoutMs = Number(options.scanTimeoutMs) > 0 ? Number(options.scanTimeoutMs) : 120000;
+
+  /**
+   * ⭐⭐ 2026-10-15：**把飞书回的原始内容原样序列化** —— 真机实测它 `config` 失败时
+   *   **既不回 `errMsg` 也不回 `message`**（我们只看到"失败"、看不到为什么 ✗）
+   *   ⇒ 不管是字符串 / 对象 / Error，一律**原样**带上 ⇒ 下一刀就能看到飞书自己那句话 ✓
+   */
+  const describeRaw = (error) => {
+    if (error === undefined || error === null) return '';
+    if (typeof error === 'string') return error;
+    if (error instanceof Error) return `${error.name}: ${error.message}`;
+    try { return JSON.stringify(error); } catch (_) { return String(error); }
+  };
 
   /** 给一个 Promise 加超时：**超时按失败处理**（人话 + 上报），绝不永挂 ✓ */
   const withTimeout = (promise, ms, code) => new Promise((resolve, reject) => {
@@ -151,16 +166,20 @@ export function createScanPrintAction(options = {}) {
 
   /** 真正的扫一扫：`config` ⇒ `ready` ⇒ `tt.scanCode`（官方链路，全在客户端）。 */
   const scanOnce = async (signature) => {
+    progress.step = 'loadSdk';
     await withTimeout(loadJssdk(signature?.jssdkUrl || ''), readyTimeoutMs, 'jssdk_timeout');
     if (!win?.h5sdk?.config) throw new Error('jssdk_missing');
     // ⭐⭐ 2026-10-15：`config` 与 `ready` **都要超时** —— 真机上只要 config 没成，
     //   `ready` 就**永远不回调**（改前 ⇒ 永挂、按钮一直灰、她只看到"没反应" ✗、日志里也没有任何线索 ✗）。
+    progress.step = 'config';
     await withTimeout(
       Promise.resolve(win.h5sdk.config(jsapiConfigOf(signature))), readyTimeoutMs, 'config_timeout',
     );
+    progress.step = 'ready';
     await withTimeout(
       new Promise((resolve) => { win.h5sdk.ready(resolve); }), readyTimeoutMs, 'ready_timeout',
     );
+    progress.step = 'scanCode';
     return await withTimeout(new Promise((resolve, reject) => {
       if (!win?.tt?.scanCode) return reject(new Error('scan_unsupported'));
       return win.tt.scanCode({ scanType: ['qrCode'], success: resolve, fail: reject });
@@ -175,17 +194,16 @@ export function createScanPrintAction(options = {}) {
     if (state.busy) return null;
     state.busy = true;
     // ⭐⭐ 2026-10-15：**每一步都带着"我是哪一步挂的"**（真机看不到控制台 ⇒ 这是唯一的线索来源 ✓）
-    let phase = 'signature';
+    progress.step = 'signature';
     try {
       notice(texts.scanning);
       const signature = await api.get(signaturePath(win?.location?.href || ''));
-      phase = 'config';
       const scanned = await scanOnce(signature);
       const value = scannedValueOf(scanned);
-      phase = 'scan';
+      progress.step = 'enqueue';
       if (!value) {
         notice(texts.nothing);
-        report({ ok: false, phase: 'scan', reason: 'empty' });
+        report({ ok: false, phase: 'scanCode', reason: 'empty' });
         return null;
       }
       notice(texts.printing);
@@ -209,9 +227,12 @@ export function createScanPrintAction(options = {}) {
       //   ⚠️ 上报**不影响她**：fire-and-forget、出错吞掉 ✓
       report({
         ok: false,
-        phase,
+        // ⭐ 精确子步骤：signature / loadSdk / config / ready / scanCode / enqueue ✓
+        phase: progress.step,
         reason: timedOut ? code : (code || (/cancel/i.test(errMsg) ? 'cancelled' : 'failed')),
+        // ⭐ 飞书自己的话（`errMsg`）+ **原始内容**（它常常两个都不给 ✓）
         err_msg: errMsg,
+        raw: describeRaw(error),
         url: String(win?.location?.href || ''),
       });
       if (noSdk) {

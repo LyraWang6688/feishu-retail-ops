@@ -583,7 +583,13 @@ test('AC-SP11 ⭐⭐ `ready` 不回调（真机那种"装死"）⇒ **超时 + �
   assert.equal(reports.length, 1, '失败/超时也必须上报 ✓');
   assert.equal(reports[0].body.ok, false);
   assert.equal(reports[0].body.reason, 'ready_timeout', '原因码要能区分"卡在哪一步" ✓');
-  assert.equal(reports[0].body.phase, 'config');
+  // ⭐⭐ 2026-10-15 **成对翻新**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.equal(reports[0].body.phase, 'config');`
+  //   改后逐字：`assert.equal(reports[0].body.phase, 'ready');`
+  //   依据：真机实测`config` 失败时 `phase` 只报了个 `config`、**分不清是加载 / config / ready 哪一小步** ✗
+  //     ⇒ 上报改成**精确子步骤**（signature → loadSdk → config → ready → scanCode → enqueue）
+  //     ⇒ 卡在 `ready` 就该报 `ready` ✓（判据**更精确**，不是放宽 ✓）。
+  assert.equal(reports[0].body.phase, 'ready', '要报**精确子步骤**（不再是笼统的 config ✓）');
   // ③ 按钮必须**恢复**（改前永挂 ⇒ 她再也点不动 ✗）
   assert.equal(container.elements['[data-action="scan-print"]'].disabled, false, '按钮必须恢复 ✓');
   // ④ 它**不许**因此排一个打印任务（失败就是失败 ✗ 不许假成功）
@@ -604,4 +610,36 @@ test('AC-SP12 ⭐⭐ 诊断上报是**只读**的：端点只 `logInfo`、不写
   const client = read('features/labels/scan-print.js');
   assert.match(client, /readyTimeoutMs/, 'ready/config 的超时要可配 ✓');
   assert.ok(client.includes('scanTimeoutMs'), '扫码那一步的超时要可配 ✓');
+});
+
+test('AC-SP13 ⭐⭐ 飞书**不回原因**（真机实测：`config` 失败但 `errMsg`/`message` 都空）⇒ **原始内容照样上报**', async () => {
+  const module = await loadScanPrintModule();
+  const container = fakeContainer();
+  const calls = { get: [], post: [] };
+  const api = {
+    async get() {
+      return { appId: 'cli_x', timestamp: 1, nonceStr: 'n', signature: 's', jssdkUrl: 'https://cdn.test/h5sdk.js' };
+    },
+    async post(url, body) { calls.post.push({ url, body }); return { success: true }; },
+  };
+  // 🔴 真机实测的形态：`config` **直接 reject**，而且回的东西**既不是 Error、也没有 errMsg** ——
+  //    改前 ⇒ 上报里 `err_msg` 是空串、我们只看到"失败"、**查不下去** ✗
+  const win = {
+    location: { href: 'https://hm.bamamei.online/workbench/label-print.html?scan=1' },
+    h5sdk: { config() { return Promise.reject('h5jssdk_get_sdk_config_error:10002'); } },
+    tt: { scanCode() { throw new Error('不该走到这里'); } },
+  };
+  const action = module.createScanPrintAction({ api, doc: null, win, readyTimeoutMs: 50 });
+  const button = action.mount(container);
+  await button.handlers.click();
+
+  const reports = calls.post.filter((item) => item.url === module.SCAN_PRINT_ENDPOINTS.report);
+  assert.equal(reports.length, 1, '失败必须上报 ✓');
+  assert.equal(reports[0].body.ok, false);
+  assert.equal(reports[0].body.phase, 'config', '精确到 `config` 这一小步 ✓');
+  assert.equal(reports[0].body.reason, 'failed', '它不是超时、是**被拒绝** ✓');
+  assert.match(String(reports[0].body.raw), /h5jssdk_get_sdk_config_error/,
+    '🔴 飞书**原样回的那句话**必须带上去（这是我们唯一的线索来源 ✓）');
+  // 她那边仍要有人话（不许装死）
+  assert.ok(String(container.elements['[data-view="scan-print-notice"]'].textContent || '').length > 0);
 });
