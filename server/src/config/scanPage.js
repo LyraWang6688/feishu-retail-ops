@@ -685,7 +685,10 @@ const SALE_SUCCESS = Object.freeze({
   title: '✅ 本单提交成功',
   continueButton: '继续录下一单（去扫码）',
   workbenchButton: '去工作台看这一单',
-  fillPaymentButton: '补整单付款',
+  // 🔴 2026-10-16（她逐字：「资金页实际上就应该有两个按钮…」）⇒ 资金页那颗**已删** ✗，
+  //   这颗只留在**成功页**（`views/scanPageRenderer.js` 里那个 `<a href={工作台}>` 链接、不发动作 ✓）；
+  //   名字里**不带「付款」**（她原来把它读成另一种付款方式 ✗）⇒ 改叫「去工作台补收款」✓
+  fillPaymentButton: '去工作台补收款',
 });
 
 /**

@@ -1704,11 +1704,14 @@ ${paymentFieldsHtml}
 ${orderNo ? `<p class="foot">${escapeHtml(orderNo)}</p>` : ''}
 <p class="hint">${escapeHtml(step.pendingNote || '')}</p>
 ${String(notice || '').trim()
-    ? `<p class="hint" data-view="payment-step-notice">${escapeHtml(String(notice).trim())}</p>`
+    // 🔴 2026-10-16 P0：拦下的原因**必须醒目**（她真机"看着像坏了"✗）——从 `hint`（小字）
+    //   提到 `form-alert`（红色告警级 ✓）；`data-view` 钩子**保留**（既有判据还在用 ✓）
+    ? `<p class="form-alert" data-view="payment-step-notice" role="alert">${escapeHtml(String(notice).trim())}</p>`
     : ''}
 ${payForm}
 <p class="hint">${escapeHtml(step.workbenchHint || '')}</p>
-<p><a class="btn btn--primary" href="${escapeHtml(workbench)}">${escapeHtml(config.saleSuccess?.fillPaymentButton)}</a></p>
+<!-- 🔴 2026-10-16（她逐字：「资金页实际上就应该有两个按钮」= 提交 / 跳过）⇒ **资金页不再渲染
+     那颗跳工作台的链接** ✗（她把它误读成第三种付款方式）——补收款去成功页那颗 ✓ -->
 ${postAction ? `<form method="post" action="${escapeHtml(postAction)}">
 <input type="hidden" name="${escapeHtml(fields.action || 'action')}" value="${escapeHtml(step.skipAction)}">
 ${submitKey ? `<input type="hidden" name="${escapeHtml(fields.submitKey || 'submit_key')}" value="${escapeHtml(submitKey)}">` : ''}
