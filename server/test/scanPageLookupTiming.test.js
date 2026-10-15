@@ -26,6 +26,18 @@ process.env.SCAN_PAGE_CACHE_ENABLED = 'true';
  *  AC-T5 `whole_table_fallback` 的语义**只有一个**：本次取数有没有走「整表回退」
  *        （过滤读用不了 / 一条没读到 / 飞书不认公式）；
  *        「尺码管理」本来就是整表读，**不算**回退（它有独立的 `size_ms`）。
+ *
+ *  ── 2026-10-16 追加（她「**扫完之后数据加载慢**」：整请求 11.4s / 9.7s 那次）──────────
+ *  改前逐字：日志里只有 `total_ms`（取数+渲染）与 `render_ms`；`lookup` 返回之后、
+ *            `renderScan` 之前那三次 `await`（`routes/scanPage.js` 的 `buildWriteContext`：
+ *            读会话 / 读「收款方式管理」/ 读配品表）**一个字段都看不见** ✗
+ *  改后逐字：`scan.lookup.timing` **新增一个字段** `post_lookup_ms`（= 那一段的毫秒，
+ *            已扣掉 `render_ms`；没有落点时显式 `-1`）——
+ *            ⇒ 配合 `http.request.completed.duration_ms` 与两条日志的 `ts`，**整请求可逐段归账** ✓
+ *  依据：业务负责人 2026-10-16「扫完之后数据加载慢」＋ 线上只读日志（整请求 11363ms / 9692ms、
+ *        而取数那一段是毫秒级）⇒ 那 11 秒必须有字段能看见，否则只能猜 ✗
+ *  AC-PL1 见文件末尾（假时钟 ⇒ 精确断言；去掉落点 / 不扣 render / 恒 0 三组变异都真红 ✓）
+ *  🔴 只加字段：`stages_sum_ms` / `stages_gap_ms` / `total_ms` / `render_ms` 的语义**一个字不变** ✗
  * ─────────────────────────────────────────────────────────────────────────
  */
 const test = require('node:test');
@@ -547,4 +559,86 @@ test('AC-NS1 ⭐⭐ 一次查款**不再读「采购明细」**（她拍板删�
   //    ⇒ 这里如实钉**当前实测**（货品 + 实时库存 + 尺码管理，后者来自货品的关联读/缺码范围 ✓），
   //      并要求**不许超过实测值**（将来再省下来会变少 ✓、绝不悄悄变多 ✗）
   assert.ok(started.feishu_reads <= 3, `一次查款的飞书读不应超过实测值（实际 ${started.feishu_reads}）`);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-PL1（2026-10-16）⭐ 她「**扫完之后数据加载慢**」（那次整请求 11.4 秒 / 9.7 秒）
+//
+// 病灶（确定的，只读核过源码与线上日志形状）：路由在 `lookup` 返回之后、`renderScan` 之前
+//   还有三次 `await`（`routes/scanPage.js` 的 `buildWriteContext`：读会话 / 读「收款方式管理」
+//   （TTL 5 分钟）/ 读配品表）—— 它们**既不在 `total_ms`、也不在 `render_ms`** 里
+//   ⇒ 那一段一个字段都看不见 ✗，而 `feishu_reads=0` **也不能排除**它：
+//      收款方式 / 配品那两次读走的是**原始网关**（不在本文件的计数代理后面）✗。
+//
+// 本 AC 钉住**新字段 `post_lookup_ms`**（一条日志、一个字段，零行为变化）：
+//   · AC-PL1a 这一段**真的被测到**：假时钟推进 5000ms ⇒ 字段就是 5000 − render_ms ✓
+//   · AC-PL1b 没有 `lookup` 落点时**显式 -1**（"没打点"不许装成 0 ✗）
+//   · AC-PL1c **不污染出参**：这个量**不许**写进 `timing`（出参形状既有用例钉着 ✗）
+//   · AC-PL1d 走真路由时字段**照样有值**（证明线上那个日志点真的会被触发 ✓）
+//   · AC-PL1e 既有分段口径**一个字不变**（`gap = total − sum` 仍成立、`post` 不在 sum 里 ✓）
+//
+// ⚠️ 用**注入的假时钟**（`createScanPageService(..., { now })`）⇒ 与 CI 负载无关、不偶发红 ✓；
+//   变了什么就红什么：去掉落点 ⇒ -1；把 `render_ms` 也算进去 ⇒ 5000 ≠ 4988 ✓
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-PL1 `post_lookup_ms`：取数之后、渲染之前那一段（她「数据加载慢」的 11 秒就藏在这儿）', async () => {
+  // 假时钟：`startStage`/`elapsed`/`post_lookup_ms` 全走它 ⇒ 断言是**精确值**，不是"差不多" ✓
+  let fakeNow = 1_000_000;
+  const now = () => fakeNow;
+
+  // ── AC-PL1a：lookup 之后调用方干了 5000ms（= buildWriteContext 那几次 await），渲染 12ms ──
+  const service = createScanPageService(fakeGateway({}), {
+    config: SCAN_PAGE, startSnapshot: false, now,
+  });
+  const timing = {};
+  const view = await service.lookup({ number: NUMBER, requestId: 'req_pl1', timing });
+  assert.equal(view.found, true);
+  fakeNow += 5000;          // ← 模拟"路由在 lookup 之后那三次 await 一共等了 5 秒"
+  timing.render_ms = 12;    // ← 渲染这一段由路由补（它**已经**单独计时 ⇒ 不许重复计 ✗）
+  const { entries } = await captureInfo(() => service.logTiming(timing, { requestId: 'req_pl1', found: true }));
+  const line = entries.filter((entry) => entry.event === 'scan.lookup.timing');
+  assert.equal(line.length, 1, '一条汇总（不许多打）');
+  assert.equal(line[0].post_lookup_ms, 5000 - 12,
+    'post_lookup_ms = (lookup 之后到现在) − render_ms（渲染那一段已单独计，不许重复 ✗）');
+
+  // ── AC-PL1b：没有落点 ⇒ 显式 -1（与 `record_ms` 同一条口径：0 会被读成"用了 0ms"✗） ──
+  const { entries: orphan } = await captureInfo(
+    () => service.logTiming({ number: NUMBER, total_ms: 1 }, { requestId: 'req_pl1b' }),
+  );
+  assert.equal(orphan.filter((entry) => entry.event === 'scan.lookup.timing')[0].post_lookup_ms, -1,
+    '没走过 `lookup` 的 timing ⇒ 显式 -1，不许装成 0 ✗');
+
+  // ── AC-PL1c：**不污染出参**：这个量只在日志里，不许挂到 timing 上 ──
+  assert.equal(Object.prototype.hasOwnProperty.call(timing, 'post_lookup_ms'), false,
+    '`post_lookup_ms` 是**算出来打进日志**的，不许写进出参 timing（形状与视图模型都被既有用例钉着 ✗）');
+  assert.equal(Object.keys(timing).every((key) => !key.startsWith('_')), true,
+    `出参里不许出现内部记账键（实际：${Object.keys(timing).join(', ')}）`);
+
+  // ── AC-PL1e：既有分段口径一个字不变（post 不进 sum，gap 仍 = total − sum） ──
+  assert.equal(String(line[0].stages_sum_ms).includes('5000'), false,
+    'post 那一段在 `lookup` **之外** ⇒ 不许混进 `stages_sum_ms`（混进去既有 gap 就废了 ✗）');
+  assert.equal(line[0].stages_gap_ms, Math.max(0, line[0].total_ms - line[0].stages_sum_ms),
+    'gap = total − sum 这条不变式照旧（本次差分只加字段、不改任何既有量 ✓）');
+
+  // ── AC-PL1d：真路由上也照样有值（证明线上那个日志点真的会被触发 ✓） ──
+  login();
+  const gateway = fakeGateway({ delays: { 'filter:product': 15, 'filter:liveInventory': 15 } });
+  const app = express();
+  app.use((req, res, next) => { req.requestId = 'req_pl1d'; next(); });
+  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+    gateway, config: SCAN_PAGE, startSnapshot: false,
+    paymentMethodsService: { list: async () => ({ ok: true, items: ['微信'] }) },
+  }));
+  const { entries: routed } = await captureInfo(() => withServer(app, async (base) => {
+    const response = await fetch(`${base}/s/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    assert.equal(response.status, 200);
+    return response.text();
+  }));
+  const routedLine = routed.filter((entry) => entry.event === 'scan.lookup.timing')[0];
+  assert.equal(typeof routedLine.post_lookup_ms, 'number',
+    '真路由上必须有这个字段（缺 = 线上又变成"看不见那一段"✗）');
+  assert.ok(routedLine.post_lookup_ms === -1 || routedLine.post_lookup_ms >= 0,
+    `只能是 -1（没打点）或 ≥0：${routedLine.post_lookup_ms}`);
+  assert.ok(routedLine.post_lookup_ms >= 0,
+    '走的就是 `lookup` 那条路 ⇒ 落点必然在（-1 只允许出现在"有人直接调 logTiming"的用例里）');
 });
