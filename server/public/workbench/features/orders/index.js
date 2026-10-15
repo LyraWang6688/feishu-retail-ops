@@ -347,7 +347,12 @@ export function ordersSectionsHtml(orders = [], { openSections = [] } = {}) {
 export function groupPurchaseOrders(rows = []) {
   const byBatch = new Map();
   for (const row of rows || []) {
-    const key = String(row?.batch_no || '').trim() || '（无批次号）';
+    const key = String(row?.batch_no || '').trim();
+    // ⭐⭐ 2026-10-15（task-27 · 她追加口径，逐字）：「（无批次号）……后续不会出现了，然后最新的逻辑，
+    //   这些数据也不会出现，**因为首先得在采购主表有批次号才会展示**」
+    //   ⇒ 明细**挂不上批次**（批次号空 / 旧的「（无批次号）」）⇒ **根本不进这一屏** ✓
+    //   （**不是**"留着 + 写一句说明" ✗ 也别在这儿兜数据侧的孤儿明细 —— 那是 #606 的数据问题 ✓）
+    if (!key || key === NO_BATCH_KEY) continue;
     if (!byBatch.has(key)) byBatch.set(key, { batch_no: key, rows: [] });
     byBatch.get(key).rows.push(row);
   }
@@ -368,7 +373,12 @@ const arrivalStatusOf = (batch) => {
  */
 const isArrivedBatch = (batch) => arrivalStatusOf(batch) === ARRIVAL_STATUS_ARRIVED;
 
-/** 一张报货批次的卡（未到货 / 已到货共用 —— 内容一个字不变，只是摆放位置不同）。 */
+/** 旧分组用的占位键（历史数据里出现过）—— 现在**只用来识别并跳过**它 ✓（不再往页面上渲染）。 */
+export const NO_BATCH_KEY = '（无批次号）';
+
+// 2026-10-15 task-27: first screen = batch no + arrival status only; the purchase detail rows
+//   are loaded after she opens the disclosure (see arrivalDetailHtml / loadArrivalDetail below).
+//   (Kept in ASCII on purpose: test/workbenchAcceptanceInPlace.test.js AC-AW5 scans this window.)
 const purchaseBatchCardHtml = (batch) => `
       <article class="order-card" data-purchase-batch="${escapeHtml(batch.batch_no)}">
         <div class="order-card-head">
@@ -377,12 +387,6 @@ const purchaseBatchCardHtml = (batch) => `
             <span class="tag ${statusClass(arrivalStatusOf(batch))}">${escapeHtml(arrivalStatusOf(batch) || ARRIVAL_STATUS_PENDING)}</span>
           </div>
         </div>
-        <ul class="order-lines">${batch.rows.map((row) => `
-          <li class="order-line">
-            <span class="line-product">${escapeHtml(row.product_number || '未填货号')}</span>
-            <span class="line-size">${sizeText(row.size)}</span>
-            <span class="line-amount">×${escapeHtml(Number(row.quantity || 0))}</span>
-          </li>`).join('')}</ul>
         <div class="order-card-actions">
           <!-- ⭐ 2026-10-14（业务负责人逐字：「**连它一起改造进工作台（变成工作台自己的页面）**」）：
                这里原来还有一颗【扫码验收】= 一颗指向 /s/accept?batch=… 的链接（**跳到扫码页** ✗）
@@ -394,6 +398,7 @@ const purchaseBatchCardHtml = (batch) => `
         </div>
         <details class="action-form" data-action-block="verify-arrival" data-arrival-batch="${escapeHtml(batch.batch_no)}">
           <summary>${escapeHtml(T.arrivalVerifyTitle)}</summary>
+          <p class="order-note" data-view="arrival-detail-hint">${escapeHtml(ARRIVAL_FULL_TEXTS.detailOpenHint)}</p>
           <div class="action-body">
             <div data-view="arrival-detail" data-batch="${escapeHtml(batch.batch_no)}"></div>
             <div class="form-field" data-view="arrival-custom-size">
@@ -439,6 +444,68 @@ export function purchaseOrdersHtml(rows = []) {
       </details>` : '';
   return `<div class="purchase-orders" data-view="purchase-orders">${pendingHtml}${arrivedHtml}
     </div>`;
+}
+
+/**
+ * ⭐⭐ 2026-10-15（task-27 · 她逐字）：「点进去之后才是对应的采购明细情况，然后**可以自行补充**这个货号下的
+ *   其余尺码和数量」＋「**实际到多少就是到多少**」
+ *
+ * `arrivalDetailHtml(rows)` = 那一批的**明细 + 每行一个「实际到货数量」输入**
+ *   · 默认值 = 该行的**申请数量**（她要"改"，不是"从空开始填" ✓）；
+ *   · 行的身份挂在 `data-*` 上（`product_record_id` / `size` / `declared`）⇒ 提交时**不用猜** ✓。
+ */
+export const arrivalLineKey = (row = {}) => `${String(row.product_record_id || '').trim()}|${String(row.size ?? '').trim()}`;
+
+export function arrivalDetailHtml(rows = []) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return `<p data-view="arrival-detail-empty">${escapeHtml(ARRIVAL_FULL_TEXTS.detailEmpty)}</p>`;
+  return `<ul class="order-lines" data-view="arrival-detail-list">${list.map((row) => `
+          <li class="order-line" data-view="arrival-detail-row"
+              data-product-record-id="${escapeHtml(String(row.product_record_id || ''))}"
+              data-size="${escapeHtml(String(row.size ?? ''))}"
+              data-declared="${escapeHtml(String(Number(row.quantity || 0)))}">
+            <span class="line-product">${escapeHtml(row.item_no || '')}</span>
+            <span class="line-size">${escapeHtml(sizeText(row.size))}</span>
+            <span class="line-amount">${escapeHtml(ARRIVAL_FULL_TEXTS.declaredQuantityLabel)} ${escapeHtml(String(Number(row.quantity || 0)))}</span>
+            <input class="line-actual" data-field="arrival-actual" type="text" inputmode="numeric"
+              data-product-record-id="${escapeHtml(String(row.product_record_id || ''))}"
+              data-size="${escapeHtml(String(row.size ?? ''))}"
+              value="${escapeHtml(String(Number(row.quantity || 0)))}"
+              placeholder="${escapeHtml(ARRIVAL_FULL_TEXTS.zeroMeansNotArrived)}"
+              aria-label="${escapeHtml(ARRIVAL_FULL_TEXTS.actualQuantityLabel)}">
+          </li>`).join('')}</ul>`;
+}
+
+/**
+ * 🔴 **她填的实际到货数量** ⇒ 提交用的 `lines`（**唯一来源** ✓ 绝不按申请数补齐 ✗）：
+ *   · 某个尺码**填 0** ⇒ **不提交那一行**（没到就是没到 ✓）；
+ *   · **没填**（清空）⇒ **不猜**（`ok:false` + 人话，页面上拦住 ✓）—— 「没填」与「填 0」是两件事 ✗；
+ *   · 没碰过的行 ⇒ 用页面**预填值**（= 申请数量 ✓ 这与"按申请数补齐"不是一回事：
+ *     预填是**页面给她看的默认**，她改了就按她的值，提交的永远是**她确认过的那个值** ✓）。
+ *   · `extra` = 她自行补充的行（自定义尺码 / 自定义货号）—— 由调用方解析好 `productRecordId` ✓。
+ */
+export function arrivalSubmitLines({ rows = [], actuals = {}, extra = [] } = {}) {
+  const lines = [];
+  for (const row of rows || []) {
+    const key = arrivalLineKey(row);
+    const has = Object.prototype.hasOwnProperty.call(actuals || {}, key);
+    const raw = String((has ? actuals[key] : row.quantity) ?? '').trim();
+    if (raw === '') return { ok: false, reason: 'actual_missing', lines: [] };
+    if (!/^\d+$/.test(raw)) return { ok: false, reason: 'actual_invalid', lines: [] };
+    const quantity = Number(raw);
+    if (quantity === 0) continue;
+    lines.push({ productRecordId: String(row.product_record_id || ''), size: Number(row.size), quantity });
+  }
+  for (const line of extra || []) {
+    const size = Number(line?.size);
+    const quantity = Number(line?.quantity);
+    if (!line?.productRecordId) return { ok: false, reason: 'extra_unresolved', lines: [] };
+    if (!Number.isSafeInteger(size) || size <= 0 || !Number.isSafeInteger(quantity) || quantity <= 0) {
+      return { ok: false, reason: 'extra_invalid', lines: [] };
+    }
+    lines.push({ productRecordId: String(line.productRecordId), size, quantity });
+  }
+  return { ok: true, reason: '', lines };
 }
 
 /** 交付区：**只列未交付的明细**（已交付的库存早扣了，不再给勾）。 */
@@ -894,10 +961,9 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     try {
       const res = await api.get(`${ARRIVAL_FULL_API.detail}?${ARRIVAL_FULL_FIELDS.batchNo}=${encodeURIComponent(batchNo)}`);
       const rows = Array.isArray(res?.rows) ? res.rows : [];
-      state.arrivalRows = rows;
-      box.innerHTML = rows.length
-        ? `<ul class="order-lines">${rows.map((row) => `<li class="order-line"><span class="line-product">${escapeHtml(row.item_no || '')}</span><span class="line-size">${escapeHtml(String(row.size ?? ''))}</span><span class="line-amount">×${escapeHtml(String(row.quantity ?? 0))}</span></li>`).join('')}</ul>`
-        : `<p>${escapeHtml(ARRIVAL_FULL_TEXTS.detailEmpty)}</p>`;
+      // ⚠️ **按批次存**：她可能开了 A 批又开 B 批 —— 提交时只能读**这一批**的明细 ✓（不许串 ✗）
+      state.arrivalRowsByBatch = { ...(state.arrivalRowsByBatch || {}), [batchNo]: rows };
+      box.innerHTML = arrivalDetailHtml(rows);
     } catch (error) {
       box.innerHTML = `<p>${escapeHtml(ARRIVAL_FULL_TEXTS.detailFailed)}</p>`;
     }
@@ -918,8 +984,8 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     }
   }
 
-  /** 这一批的第一条明细（自定义尺码要挂在某个款上 ⇒ 用刚读到的明细 ✓ 不猜 ✗） */
-  const firstArrivalRow = () => (Array.isArray(state.arrivalRows) ? state.arrivalRows[0] : null);
+  /** 这一批的第一条明细（自定义尺码要挂在某个款上 ⇒ 用**这一批**刚读到的明细 ✓ 不猜 ✗） */
+  const firstArrivalRow = (batchNo) => ((state.arrivalRowsByBatch || {})[batchNo] || [])[0] || null;
 
   async function submitArrival(button) {
     const batchNo = button.dataset.batch || '';
@@ -936,38 +1002,56 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     return runWriteAction(button, async () => {
       renderResult('');
       try {
-        // 2026-10-14: custom size + custom item-no lines go through the NEW accept endpoint
-        //   (it reuses the same arrival session service; the session's own submitKey keeps it idempotent)
-        const lines = [];
+        // ⭐⭐ 2026-10-15（task-27 · 她逐字：「**实际到多少就是到多少**」）：
+        //   🔴 改前：没有自定义行 ⇒ 走 `ORDERS_API.arrivalConfirm`（= **全部按申请数到货**）✗
+        //      —— 与她的口径**正面冲突**（少到的会被按申请数补齐 ✗）。
+        //   改后：**一律走 `accept`**，`lines` = **她在明细里填的实际到货数量**（填 0 的那一行**不提交** ✓）
+        //      ＋ 她自行补充的行（自定义尺码 / 自定义货号）✓ —— **没有任何"按申请数补齐"的路径** ✗。
+        const actuals = {};
+        for (const input of form.querySelectorAll('[data-field="arrival-actual"]')) {
+          actuals[arrivalLineKey({
+            product_record_id: input.dataset.productRecordId, size: input.dataset.size,
+          })] = input.value;
+        }
+        const extraLines = [];
         const customSize = read('custom-size');
         const customQuantity = read('custom-quantity');
         if (customSize || customQuantity) {
-          const row = firstArrivalRow() || {};
+          const row = firstArrivalRow(batchNo) || {};
           if (!row.product_record_id) return renderResult(ARRIVAL_FULL_TEXTS.detailFailed, true);
-          lines.push({
-            [ARRIVAL_FULL_FIELDS.productRecordId]: row.product_record_id,
-            [ARRIVAL_FULL_FIELDS.size]: Number(customSize),
-            [ARRIVAL_FULL_FIELDS.quantity]: Number(customQuantity || 1),
+          extraLines.push({
+            productRecordId: row.product_record_id, size: customSize,
+            quantity: customQuantity === '' ? row.quantity : customQuantity,
           });
         }
         const itemNo = read('custom-item-no');
         if (itemNo) {
           const found = await resolveItemNo(itemNo);
           if (!found) return renderResult(ARRIVAL_FULL_TEXTS.itemNoNotFound, true);
-          lines.push({
-            [ARRIVAL_FULL_FIELDS.productRecordId]: found,
-            [ARRIVAL_FULL_FIELDS.size]: Number(read('custom-item-size')),
-            [ARRIVAL_FULL_FIELDS.quantity]: Number(read('custom-item-quantity') || 1),
+          extraLines.push({
+            productRecordId: found,
+            size: read('custom-item-size'),
+            quantity: read('custom-item-quantity') || 1,
           });
         }
-        const result = lines.length === 0
-          // 没有自定义行 ⇒ 仍走**既有**整批一键（口径一字不变 ✓）
-          ? await api.post(ORDERS_API.arrivalConfirm, { batchNo, actualAmount: Number(rawAmount), acceptanceText })
-          : await api.post(ARRIVAL_FULL_API.accept, {
+        const built = arrivalSubmitLines({
+          rows: (state.arrivalRowsByBatch || {})[batchNo] || [],
+          actuals,
+          extra: extraLines,
+        });
+        // ⚠️ 「**没填**」与「填 0」是两件事：填 0 = 这一码没到（不提交 ✓）；没填 = **不猜** ⇒ 拦住 + 人话 ✗
+        if (!built.ok) {
+          const text = built.reason === 'actual_missing' ? ARRIVAL_FULL_TEXTS.actualQuantityRequired
+            : built.reason === 'extra_unresolved' ? ARRIVAL_FULL_TEXTS.itemNoNotFound
+              : ARRIVAL_FULL_TEXTS.sizeInvalid;
+          return renderResult(text, true);
+        }
+        if (!built.lines.length) return renderResult(ARRIVAL_FULL_TEXTS.noArrivalLines, true);
+        const result = await api.post(ARRIVAL_FULL_API.accept, {
           [ARRIVAL_FULL_FIELDS.batchNo]: batchNo,
           [ARRIVAL_FULL_FIELDS.actualAmount]: Number(rawAmount),
           [ARRIVAL_FULL_FIELDS.acceptanceText]: acceptanceText,
-          [ARRIVAL_FULL_FIELDS.lines]: lines,
+          [ARRIVAL_FULL_FIELDS.lines]: built.lines,
         });
         // 列表数据是唯一事实来源：重新读一次（到货状态会跟着更新）
         await loadPurchaseOrders();

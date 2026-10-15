@@ -771,8 +771,28 @@ test('AC11 采购子 tab：按报货批次一张一行，字段口径与既有�
   assert.equal((html.match(/data-purchase-batch=/g) || []).length, 2, '一条报货批次 = 一行');
   // 字段口径与既有「采购管理」的报货信息面板一致：批次号 / 货品编号 / 尺码 / 数量 / 到货状态
   assert.ok(html.includes('CGD-20261009-0001') && html.includes('CGD-20261008-0002'));
-  assert.ok(html.includes('XHB8095') && html.includes('YD6693'), '货品编号');
-  assert.ok(/38\s*码/.test(html) && /40\s*码/.test(html), '尺码');
+  // ⭐⭐ 2026-10-15（task-27 · 她真机逐字：「验收页展示应该是**采购主表里未到货的批次号**，
+  //   然后**用户点击之后才是对应的采购明细情况**」）⇒ **第一屏不再铺明细** ✗。
+  //   ⚠️ 逐字记录（改前 → 改后 → 依据），**判据一条没丢、只是换了承载层** ✓：
+  //     改前逐字：
+  //       assert.ok(html.includes('XHB8095') && html.includes('YD6693'), '货品编号');
+  //       assert.ok(/38\s*码/.test(html) && /40\s*码/.test(html), '尺码');
+  //     改后逐字（同一条判据挂在**"点开之后"的明细层** —— `arrivalDetailHtml` ✓）：
+  //       const detail = module.arrivalDetailHtml([...那几条明细...]);
+  //       assert.ok(detail.includes('XHB8095') && detail.includes('YD6693'), '货品编号（明细层）');
+  //       assert.ok(/38\s*码/.test(detail) && /40\s*码/.test(detail), '尺码（明细层）');
+  //     依据：她 2026-10-15 逐字（同上）＋「点进去之后才是对应的采购明细情况」
+  //       ⇒ 第一屏只有批次号；**"字段口径（货号/尺码/数量）"这条判据仍然被钉着**，只是钉在明细层 ✓
+  //       （另一侧由新用例 `test/workbenchArrivalBatchFirst.test.js` 的 AC-RC1/AC-RC2 钉 ✓）
+  assert.equal(html.includes('XHB8095') || html.includes('YD6693'), false,
+    '⭐ 第一屏**只有批次号**（明细不铺开 —— 能真红：把明细加回来 ⇒ 红）');
+  const detail = module.arrivalDetailHtml([
+    { item_no: 'XHB8095', size: 38, quantity: 2, product_record_id: 'pr1' },
+    { item_no: 'YD6693', size: 40, quantity: 3, product_record_id: 'pr3' },
+  ]);
+  assert.ok(detail.includes('XHB8095') && detail.includes('YD6693'), '货品编号（明细层 ✓ 判据没丢）');
+  assert.ok(/38\s*码/.test(detail) && /40\s*码/.test(detail), '尺码（明细层 ✓ 判据没丢）');
+  assert.ok(detail.includes('申请 2') && detail.includes('申请 3'), '申请数量（明细层 ✓ 判据没丢）');
   assert.ok(html.includes('未到货') && html.includes('已到货'), '到货状态来自既有字段（不造词）');
   // 每行都有「验收到货」按钮 + 一个收「实际金额」的表单（金额是既有必填口径）
   assert.equal((html.match(/data-action="verify-arrival"/g) || []).length, 2, '每一行都有一个验收按钮');

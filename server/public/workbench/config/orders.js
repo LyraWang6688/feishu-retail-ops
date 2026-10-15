@@ -338,6 +338,20 @@ export const ARRIVAL_FULL_TEXTS = {
   detailTitle: '这一批的采购明细',
   detailEmpty: '这一批没有可验收的采购明细',
   detailFailed: '这一批的采购明细没读到，请稍后再试',
+  // ⭐⭐ 2026-10-15（task-27 · 她逐字：「点进去之后才是对应的采购明细情况，然后**可以自行补充**这个
+  //   货号下的其余尺码和数量」＋「**实际到多少就是到多少**」）：
+  //   · 第一屏只列批次，**点开**才看明细 ⇒ `detailOpenHint` 是那个"点开"的提示；
+  //   · 每个明细行一个**实际到货数量**输入（默认 = 申请数量）⇒ `actualQuantityLabel` / `declaredQuantityLabel`；
+  //   · **没填**（清空）与**填 0** 是两件事 ✗：填 0 = 这一码没到（**不提交那一行** ✓）；
+  //     没填 = 我们不猜 ⇒ 拦住 + `actualQuantityRequired` 那句人话 ✓。
+  detailOpenHint: '点开看这一批的采购明细（可以改实际到货数量）',
+  actualQuantityLabel: '实际到货数量',
+  declaredQuantityLabel: '申请',
+  zeroMeansNotArrived: '没到的填 0',
+  actualQuantityRequired: '每个尺码都要填「实际到货数量」（没到的填 0），再点确认到货并入库',
+  // 与**服务端**那一份同口径（`src/config/workbenchArrival.js` 的 `texts.sizeInvalid` ✓）
+  sizeInvalid: '尺码要填数字，数量要大于 0',
+  noArrivalLines: '这一批没有可提交的实际到货数量，请先点开批次、把实际到货数量填上',
   customSizeLabel: '自定义尺码',
   customSizePlaceholder: '尺码',
   customQuantityPlaceholder: '数量',
@@ -346,4 +360,6 @@ export const ARRIVAL_FULL_TEXTS = {
   itemNoNotFound: '这个货号没找到，请核对后再填',
   submitting: '正在确认到货…',
   accepted: '已确认到货',
+  // ⚠️ 2026-10-15（她追加口径）：明细**挂不上批次** ⇒ **不进这一屏**（见 `groupPurchaseOrders` ✓）——
+  //    所以这里**不需要**"这批没有批次号、无法验收"那句文案了 ✗（我上一版加过，她口径一改就作废 ✓）。
 };

@@ -73,15 +73,20 @@ test('AC-AW5 ⭐ 命中区 ≥44px · 文案走配置（工作台侧不写死中
   assert.ok(/min-height:\s*var\(--control-height\)/.test(all),
     '可点元素 ≥44px（`--control-height` = 44px ✓）');
   const block = FEATURE.slice(FEATURE.indexOf('const purchaseBatchCardHtml'), FEATURE.indexOf('const purchaseBatchCardHtml') + 2000);
-  // ⚠️ 卡片模板里**本来是**有一处既有中文字面量（`row.product_number || '未填货号'`，见 `purchaseBatchCardHtml`）
-  //    —— 那是**既有债**，本刀**不碰**（不扩大改动面 ✗）。本刀只要求：**按钮文案全部走 config** ✓
+  // ⚠️ 卡片模板里**本来是**有一处既有中文字面量（`row.product_number || '未填货号'`）
+  //    —— 那是**既有债**。
   assert.ok(/T\.verifyArrival/.test(block), '【验收到货】文案走 `T.verifyArrival`（config ✓）');
-  // ⭐ 本刀新增的只是一段**注释**（不引入任何用户可见文字 ✓）
-  //   ⇒ 把注释整段剥掉后，模板里剩下的中文字面量**只该是那一处既有债**（`未填货号`）✓
   const stripped = block.replace(/<!--[\s\S]*?-->/g, '');
   const literals = stripped.match(/[\u4e00-\u9fff]+/g) || [];
-  assert.deepEqual(literals, ['未填货号'],
-    `除既有那一处外不许再有中文字面量（实际 ${literals.join(' / ')}）—— 新文案一律走 config ✓`);
+  // ⭐⭐ 2026-10-15（task-27）**逐字记录，判据只紧不松** ✓：
+  //   改前逐字：`assert.deepEqual(literals, ['未填货号'], ...)`
+  //   改后逐字：`assert.deepEqual(literals, [], ...)`
+  //   依据：那处既有债（`未填货号`）**唯一的使用者**是"第一屏把明细铺开"那张列表；
+  //     她 2026-10-15 逐字「验收页展示应该是采购主表里未到货的**批次号**，然后**用户点击之后**
+  //     才是对应的采购明细情况」⇒ 那张列表（连同 `未填货号`）**整块撤出第一屏** ✓
+  //     ⇒ 卡片模板里现在**一个中文字面量都没有**（比原来**更严** —— 原来允许债，现在零容忍 ✓）。
+  assert.deepEqual(literals, [],
+    `卡片模板里不许有中文字面量（新文案一律走 config，实际 ${literals.join(' / ')}）✓`);
 });
 
 test('AC-AW7 ⭐ 既有断言：没有"工作台点验收会跳扫码页"的哨兵被放宽（也没有被删/跳过）', () => {

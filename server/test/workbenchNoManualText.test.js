@@ -355,7 +355,20 @@ test('AC5 验收台那句说明必须不存在；验收台本身（批次卡 + �
     { record_id: 'pr1', batch_no: 'CGD-1', product_number: 'XHB8095', size: 38, quantity: 2, arrival_status: '未到货' },
   ]);
   assert.ok(purchaseHtml.includes('CGD-1'), '批次号照旧是卡片的标题');
-  assert.ok(purchaseHtml.includes('XHB8095') && /38\s*码/.test(purchaseHtml), '明细行照旧');
+  // ⭐⭐ 2026-10-15（task-27 · **Lead 放行**，逐字记录）：
+  //   改前逐字：`assert.ok(purchaseHtml.includes('XHB8095') && /38\s*码/.test(purchaseHtml), '明细行照旧');`
+  //   改后逐字：**同两条判据挂到"点开之后的明细层"**（`arrivalDetailHtml` ✓）：
+  //     `const detail = orders.arrivalDetailHtml([{ item_no: 'XHB8095', size: 38, quantity: 2, product_record_id: 'pr1' }]);`
+  //     `assert.ok(detail.includes('XHB8095') && /38\s*码/.test(detail), '明细行照旧（明细层）');`
+  //   依据：业务负责人 2026-10-15 逐字「验收页展示应该是采购主表里未到货的**批次号**，然后**用户点击之后**
+  //     才是对应的采购明细情况」⇒ 第一屏**只有批次号** ✗；⇒ 要钉的是"**明细画得出来**"、
+  //     不是"第一屏就有明细" ⇒ **判据本身保留、只是换到它该在的那一层** ✓
+  assert.equal(purchaseHtml.includes('XHB8095') || /38\s*码/.test(purchaseHtml), false,
+    '⭐ 第一屏**只有批次号**（明细不铺开 —— 能真红）✓');
+  const detail = orders.arrivalDetailHtml([
+    { item_no: 'XHB8095', size: 38, quantity: 2, product_record_id: 'pr1' },
+  ]);
+  assert.ok(detail.includes('XHB8095') && /38\s*码/.test(detail), '明细行照旧（明细层 ✓ 判据没丢）');
   assert.ok(purchaseHtml.includes('未到货'), '到货状态小标签照旧');
   assert.ok(purchaseHtml.includes('data-action="verify-arrival"'), '每张卡都有【验收到货】按钮');
   assert.ok(purchaseHtml.includes('data-field="arrival-amount"'), '验收要填「实际金额」（既有必填口径）');
