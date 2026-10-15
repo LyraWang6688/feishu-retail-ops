@@ -46,7 +46,7 @@ const withServer = async (config, run) => {
   const app = express();
   app.use((req, res, next) => { req.requestId = 'req_skel'; next(); });
   app.use(SCAN_PAGE.route.basePath, createScanPageRouter({ gateway: fakeGateway(), config, startSnapshot: false }));
-  const server = await new Promise((resolve) => { const instance = app.listen(0, () => resolve(instance)); });
+  const server = await new Promise((resolve) => { const instance = app.listen(0, '127.0.0.1', () => resolve(instance)); });
   // 2026-10-15 task-17：测试服务器不保持 keep-alive（根因与实测见 test/stabilityRepro.cjs）
   server.keepAliveTimeout = 1;
   const base = `http://127.0.0.1:${server.address().port}`;

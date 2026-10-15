@@ -69,7 +69,7 @@ const view = () => ({
 });
 
 const withServer = async (app, run) => {
-  const server = await new Promise((resolve) => { const i = app.listen(0, () => resolve(i)); });
+  const server = await new Promise((resolve) => { const i = app.listen(0, '127.0.0.1', () => resolve(i)); });
   // ⭐⭐ 2026-10-15（task-16 · T-3）：**测试服务器不保持 keep-alive 空闲连接** ——
   //   根因（实测复现见 `test/stabilityRepro.cjs`）：内置 `fetch`（undici）按 origin 池化 socket；
   //   本助手每开一个用例起一个 `listen(0)` 临时服务器、收尾 `server.close()` ⇒ 那条池化 socket

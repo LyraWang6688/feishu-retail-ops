@@ -153,7 +153,7 @@ const login = () => {
   delete process.env.WORKBENCH_ALLOWED_OPEN_IDS;
 };
 const withServer = async (app, run) => {
-  const server = await new Promise((resolve) => { const instance = app.listen(0, () => resolve(instance)); });
+  const server = await new Promise((resolve) => { const instance = app.listen(0, '127.0.0.1', () => resolve(instance)); });
   // 2026-10-15 task-17：测试服务器不保持 keep-alive（根因与实测见 test/stabilityRepro.cjs）
   server.keepAliveTimeout = 1;
   const base = `http://127.0.0.1:${server.address().port}`;

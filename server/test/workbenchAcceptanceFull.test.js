@@ -34,7 +34,7 @@ const COOKIE = (() => {
 })();
 
 const withServer = async (app, run) => {
-  const server = await new Promise((resolve) => { const i = app.listen(0, () => resolve(i)); });
+  const server = await new Promise((resolve) => { const i = app.listen(0, '127.0.0.1', () => resolve(i)); });
   // 2026-10-15 task-17：测试服务器不保持 keep-alive（根因与实测见 test/stabilityRepro.cjs）
   server.keepAliveTimeout = 1;
   const base = `http://127.0.0.1:${server.address().port}`;

@@ -52,7 +52,7 @@ const sessionCookie = (openId = 'ou_job_numbers') => {
 };
 
 const withServer = async (app, run) => {
-  const server = await new Promise((resolve) => { const instance = app.listen(0, () => resolve(instance)); });
+  const server = await new Promise((resolve) => { const instance = app.listen(0, '127.0.0.1', () => resolve(instance)); });
   // ⭐ 与 task-16 的诊断结论同一行加固：`fetch`（undici）**进程级 keep-alive 池**会复用到
   //    临时端口被 OS 复用后的**死 socket** ⇒ 偶发 `ECONNRESET`。给临时服务器 1ms keep-alive
   //    ⇒ socket 不会活着被下一个用例捡到（本仓正在全仓推广，这里先在自己的新文件里加上）。

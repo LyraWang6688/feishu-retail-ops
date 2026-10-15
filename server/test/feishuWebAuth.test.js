@@ -45,7 +45,7 @@ test('safeReturnTo 只接受站内相对路径', () => {
 const withServer = async (run) => {
   const app = express();
   app.use('/api/auth/feishu', createFeishuWebAuthRouter());
-  const server = app.listen(0);
+  const server = app.listen(0, '127.0.0.1');
   // 2026-10-15 task-17：测试服务器不保持 keep-alive（根因与实测见 test/stabilityRepro.cjs）
   server.keepAliveTimeout = 1;
   await new Promise((resolve) => server.once('listening', resolve));

@@ -210,7 +210,7 @@ const withRoute = async (service, run) => {
   const app = express();
   app.use(express.json());
   app.use('/api/workbench', router);
-  const server = await new Promise((resolve) => { const s = app.listen(0, () => resolve(s)); });
+  const server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
   // 2026-10-15 task-17：测试服务器不保持 keep-alive（根因与实测见 test/stabilityRepro.cjs）
   server.keepAliveTimeout = 1;
   const base = `http://127.0.0.1:${server.address().port}`;

@@ -101,7 +101,7 @@ test('AC-DL2 ⭐⭐ 真起一次静态服务：`features/purchase/purchase.css` 
   // 与生产同一条挂载（`src/app.js`：`app.use('/workbench', express.static(workbenchPath, { index: 'index.html' }))`）
   const app = express();
   app.use('/workbench', express.static(WORKBENCH, { index: 'index.html' }));
-  const server = await new Promise((resolve) => { const instance = app.listen(0, () => resolve(instance)); });
+  const server = await new Promise((resolve) => { const instance = app.listen(0, '127.0.0.1', () => resolve(instance)); });
   // ⚠️ 与 task-16 的诊断结论同一行加固（fetch 的 keep-alive 池 + 临时端口复用 ⇒ 偶发 ECONNRESET）
   server.keepAliveTimeout = 1;
   const base = `http://127.0.0.1:${server.address().port}`;
